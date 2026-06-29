@@ -1,0 +1,12 @@
+//! 核心模块，包含认证、权限、Token 的核心抽象。
+//!
+//! [借鉴 Sa-Token] stp 模块的核心子模块，提供认证、权限校验、Token 模型的基础抽象。
+
+/// 认证逻辑模块，定义登录 / 登出抽象。
+pub mod auth;
+
+/// 权限校验模块，定义权限 / 角色校验抽象。
+pub mod permission;
+
+/// Token 模型模块，定义 Token 数据结构。
+pub mod token;

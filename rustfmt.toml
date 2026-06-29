@@ -1,0 +1,12 @@
+# Rust formatting configuration for Bulwark
+# 仅使用 stable channel 支持的选项；unstable 选项需 nightly，CI 用 stable 会报警告。
+edition = "2021"
+max_width = 100
+hard_tabs = false
+tab_spaces = 4
+newline_style = "Unix"
+use_small_heuristics = "Default"
+reorder_imports = true
+reorder_modules = true
+match_block_trailing_comma = true
+fn_params_layout = "Tall"

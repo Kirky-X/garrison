@@ -1,0 +1,130 @@
+# Bulwark - 身份认证鉴权框架
+# oxcache 与 dbnexus 均使用 crates.io 发布版本（owner: Kirky-X）。
+
+[package]
+name = "bulwark"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"  # MSRV: 部分 deps（如 inventory 0.3）要求 edition2024 → Rust 1.85+
+authors = ["Kirky.X"]
+license = "Apache-2.0"
+description = "Bulwark - 面向 Rust 生态的身份认证鉴权框架，借鉴 Sa-Token v1.45.0 设计"
+homepage = "https://github.com/Kirky-X/bulwark"
+repository = "https://github.com/Kirky-X/bulwark"
+documentation = "https://docs.rs/bulwark"
+readme = "README.md"
+keywords = ["auth", "authentication", "authorization", "jwt", "rbac"]
+categories = ["authentication", "web-programming"]
+
+[lib]
+name = "bulwark"
+path = "src/lib.rs"
+
+[dependencies]
+# === Required dependencies ===
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1", features = ["sync", "macros", "rt-multi-thread"] }
+once_cell = "1.19"
+inventory = "0.3"
+thiserror = "1.0"
+tracing = "0.1"
+async-trait = "0.1"
+parking_lot = "0.12"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# === Optional dependencies (feature-gated) ===
+axum = { version = "0.7", optional = true, default-features = false, features = ["json"] }
+actix-web = { version = "4", optional = true, default-features = false }
+warp = { version = "0.3", optional = true, default-features = false }
+jsonwebtoken = { version = "9", optional = true }
+reqwest = { version = "0.12", optional = true, default-features = false, features = ["json", "rustls-tls"] }
+totp-rs = { version = "5", optional = true }
+sha2 = { version = "0.10", optional = true }
+hmac = { version = "0.12", optional = true }
+base64 = { version = "0.22", optional = true }
+# oxcache 0.2: L1 (moka) + L2 (redis) 两级缓存，默认 full features
+oxcache = { version = "0.2", optional = true }
+# dbnexus 0.2: 默认 sqlite + permission + sql-parser + macros + config-env + with-time
+dbnexus = { version = "0.2", optional = true }
+prometheus = { version = "0.13", optional = true }
+
+[dev-dependencies]
+tokio-test = "0.4"
+mockall = "0.12"
+
+[features]
+default = ["cache-memory", "db-sqlite", "web-axum"]
+
+# === 核心模块（always on，无开关） ===
+# core / stp / annotation / router / dao / strategy / session / config / context / json / exception / manager / plugin
+# 这些模块无 feature flag，总是编译
+
+# === 缓存后端（通过 oxcache 0.2，默认 full 包含 L1 moka + L2 redis） ===
+# cache-memory 与 cache-redis 均启用 oxcache（语义别名，区分用途）
+cache-memory = ["oxcache"]
+cache-redis = ["oxcache"]
+# 注意：oxcache 无 caffeine feature（L1 用 moka），cache-caffeine 已移除
+
+# === 数据库后端（通过 dbnexus 0.2） ===
+# dbnexus 默认启用 sqlite + permission + sql-parser + macros + config-env
+db-sqlite = ["dbnexus"]
+# 注意：dbnexus 0.2 未暴露 postgres/mysql features，以下标注为 0.2.0+ 待 dbnexus 添加
+# db-postgres = ["dbnexus", "dbnexus/postgres"]  # TODO: 0.2.0+
+# db-mysql = ["dbnexus", "dbnexus/mysql"]  # TODO: 0.2.0+
+
+# === 协议层插件 ===
+protocol-oauth2 = ["reqwest"]
+protocol-sso = ["reqwest"]
+protocol-jwt = ["jsonwebtoken"]
+protocol-sign = ["sha2", "hmac", "base64"]
+protocol-apikey = []
+protocol-temp = []
+
+# === 安全模块 ===
+secure-totp = ["totp-rs"]
+secure-sign = ["sha2", "hmac", "base64"]
+secure-httpbasic = ["base64"]
+secure-httpdigest = ["sha2", "base64"]
+
+# === Web 框架适配 ===
+web-axum = ["axum"]
+web-actix = ["actix-web"]
+web-warp = ["warp"]
+
+# === 可观测性 ===
+listener = []
+tracing-log = ["tracing/log"]
+metrics-prometheus = ["prometheus"]
+
+# === 聚合特性 ===
+full = [
+    "cache-memory", "cache-redis",
+    "db-sqlite",
+    "protocol-oauth2", "protocol-sso", "protocol-jwt", "protocol-sign", "protocol-apikey", "protocol-temp",
+    "secure-totp", "secure-sign", "secure-httpbasic", "secure-httpdigest",
+    "web-axum", "web-actix", "web-warp",
+    "listener", "metrics-prometheus",
+]
+
+# 注意：production 原用 db-postgres，但 dbnexus 0.2 不支持，0.1.0 降级为 db-sqlite
+production = [
+    "cache-redis", "db-sqlite", "web-axum",
+    "protocol-jwt", "protocol-sign", "secure-sign",
+    "listener", "tracing-log", "metrics-prometheus",
+]
+
+development = [
+    "cache-memory", "db-sqlite", "web-axum",
+]
+
+[profile.dev]
+opt-level = 0
+debug = true
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true

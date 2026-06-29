@@ -1,0 +1,13 @@
+# Default owner
+* @kirky
+
+# Rust source
+/src/ @kirky
+
+# Documentation
+/docs/ @kirky
+
+# CI/CD
+/.github/ @kirky
+/.pre-commit-config.yaml @kirky
+/Cargo.toml @kirky
