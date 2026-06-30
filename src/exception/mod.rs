@@ -94,6 +94,35 @@ impl BulwarkException {
             extras: HashMap::new(),
         }
     }
+
+    /// 链式设置 token_value（依据 spec Builder 模式）。
+    pub fn with_token(mut self, token: impl Into<String>) -> Self {
+        self.token_value = Some(token.into());
+        self
+    }
+
+    /// 链式设置 login_id（依据 spec Builder 模式）。
+    pub fn with_login_id(mut self, login_id: i64) -> Self {
+        self.login_id = Some(login_id);
+        self
+    }
+
+    /// 链式设置 login_type（依据 spec Builder 模式）。
+    pub fn with_login_type(mut self, login_type: i32) -> Self {
+        self.login_type = login_type;
+        self
+    }
+
+    /// 链式添加额外上下文键值对（依据 spec Builder 模式）。
+    pub fn with_extra(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.extras.insert(key.into(), value.into());
+        self
+    }
+
+    /// 构建最终实例（依据 spec Builder 模式，返回 self）。
+    pub fn build(self) -> Self {
+        self
+    }
 }
 
 impl From<BulwarkException> for BulwarkError {
@@ -103,9 +132,63 @@ impl From<BulwarkException> for BulwarkError {
     }
 }
 
+impl From<BulwarkError> for BulwarkException {
+    /// 将 `BulwarkError` 转换为 `BulwarkException`（依据 spec exception-system Requirement: BulwarkError 集成）。
+    ///
+    /// 仅 `Exception` 变体直接返回原始 `BulwarkException`，其他变体根据语义映射 code：
+    /// - `NotLogin` / `InvalidToken` / `ExpiredToken` → code=-1（未登录）
+    /// - `NotPermission` / `NotRole` → code=-2（无权限）
+    /// - 其他 → code=500（业务异常）
+    fn from(err: BulwarkError) -> Self {
+        match err {
+            BulwarkError::Exception(ex) => ex,
+            BulwarkError::NotLogin(msg) => BulwarkException::new(-1, msg),
+            BulwarkError::InvalidToken(msg) => BulwarkException::new(-1, msg),
+            BulwarkError::ExpiredToken(msg) => BulwarkException::new(-1, msg),
+            BulwarkError::NotPermission(msg) => BulwarkException::new(-2, msg),
+            BulwarkError::NotRole(msg) => BulwarkException::new(-2, msg),
+            other => BulwarkException::new(500, other.to_string()),
+        }
+    }
+}
+
 impl std::fmt::Display for BulwarkException {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "业务异常[{}]: {}", self.code, self.message)
+    }
+}
+
+// ============================================================================
+// IntoResponse 实现（cfg feature = "web-axum"，依据 spec exception-system Requirement: IntoResponse 实现）
+// ============================================================================
+
+/// 实现 `IntoResponse` 以便 `BulwarkException` 可直接作为 axum 响应返回。
+///
+/// 状态码映射规则（与 `BulwarkError::IntoResponse` 的 Exception 分支一致）：
+/// - code = -1 → 401 Unauthorized
+/// - code = -2 → 403 Forbidden
+/// - 其他 → 500 Internal Server Error
+///
+/// 响应体为 JSON，包含 `code`、`message` 与 `extras` 字段。
+#[cfg(feature = "web-axum")]
+impl axum::response::IntoResponse for BulwarkException {
+    fn into_response(self) -> axum::response::Response {
+        use axum::http::StatusCode;
+
+        // 完整异常记录到日志（不返回给客户端）
+        tracing::error!(exception = ?self, "bulwark exception");
+
+        let status = match self.code {
+            -1 => StatusCode::UNAUTHORIZED,
+            -2 => StatusCode::FORBIDDEN,
+            _ => StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        let body = axum::Json(serde_json::json!({
+            "code": self.code,
+            "message": self.message,
+            "extras": self.extras,
+        }));
+        (status, body).into_response()
     }
 }
 
@@ -245,5 +328,111 @@ mod tests {
             BulwarkError::Exception(BulwarkException::new(-1, "b")),
         ];
         assert_eq!(errors.len(), 2);
+    }
+
+    // ========================================================================
+    // Builder 链式调用测试（依据 spec exception-system Requirement: Builder 模式构造）
+    // ========================================================================
+
+    /// 验证 Builder 链式构造带上下文的异常（依据 spec Scenario: 链式构造带上下文的异常）。
+    #[test]
+    fn builder_chain_with_all_setters() {
+        let ex = BulwarkException::new(-1, "请先登录")
+            .with_token("T1")
+            .with_login_id(1001)
+            .with_login_type(1)
+            .with_extra("device", "web")
+            .build();
+        assert_eq!(ex.code, -1);
+        assert_eq!(ex.message, "请先登录");
+        assert_eq!(ex.token_value, Some("T1".to_string()));
+        assert_eq!(ex.login_id, Some(1001));
+        assert_eq!(ex.login_type, 1);
+        assert_eq!(ex.extras.get("device"), Some(&"web".to_string()));
+    }
+
+    /// 验证 Builder 接受 String 类型参数。
+    #[test]
+    fn builder_accepts_string_args() {
+        let token = String::from("T2");
+        let key = String::from("ip");
+        let val = String::from("127.0.0.1");
+        let ex = BulwarkException::new(-1, "msg")
+            .with_token(token)
+            .with_extra(key, val)
+            .build();
+        assert_eq!(ex.token_value, Some("T2".to_string()));
+        assert_eq!(ex.extras.get("ip"), Some(&"127.0.0.1".to_string()));
+    }
+
+    // ========================================================================
+    // From<BulwarkError> for BulwarkException 测试（依据 spec Requirement: BulwarkError 集成）
+    // ========================================================================
+
+    /// 验证 `From<BulwarkError>` 对 Exception 变体直接返回原始 BulwarkException。
+    #[test]
+    fn from_bulwark_error_exception_variant() {
+        let original = BulwarkException::new(-1, "请先登录")
+            .with_token("T1")
+            .with_login_id(1001)
+            .build();
+        let err = BulwarkError::Exception(original.clone());
+        let converted: BulwarkException = err.into();
+        assert_eq!(converted.code, -1);
+        assert_eq!(converted.message, "请先登录");
+        assert_eq!(converted.token_value, Some("T1".to_string()));
+        assert_eq!(converted.login_id, Some(1001));
+    }
+
+    /// 验证 `From<BulwarkError>` 对非 Exception 变体根据语义映射 code。
+    #[test]
+    fn from_bulwark_error_other_variants_map_code() {
+        // NotLogin → code=-1
+        let ex: BulwarkException = BulwarkError::NotLogin("请先登录".to_string()).into();
+        assert_eq!(ex.code, -1);
+        assert_eq!(ex.message, "请先登录");
+        // NotPermission → code=-2
+        let ex: BulwarkException = BulwarkError::NotPermission("无权限".to_string()).into();
+        assert_eq!(ex.code, -2);
+        // 其他 → code=500
+        let ex: BulwarkException = BulwarkError::Dao("db down".to_string()).into();
+        assert_eq!(ex.code, 500);
+    }
+
+    // ========================================================================
+    // IntoResponse for BulwarkException 测试（依据 spec Requirement: IntoResponse 实现）
+    // ========================================================================
+
+    /// 验证 code=-1 的 BulwarkException 映射为 401 Unauthorized（独立 IntoResponse 实现）。
+    #[cfg(feature = "web-axum")]
+    #[test]
+    fn bulwark_exception_into_response_401() {
+        use axum::http::StatusCode;
+        use axum::response::IntoResponse;
+        let ex = BulwarkException::new(-1, "请先登录").build();
+        let response = ex.into_response();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    /// 验证 code=-2 的 BulwarkException 映射为 403 Forbidden（独立 IntoResponse 实现）。
+    #[cfg(feature = "web-axum")]
+    #[test]
+    fn bulwark_exception_into_response_403() {
+        use axum::http::StatusCode;
+        use axum::response::IntoResponse;
+        let ex = BulwarkException::new(-2, "无权限").build();
+        let response = ex.into_response();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    /// 验证其他 code 的 BulwarkException 映射为 500 Internal Server Error（独立 IntoResponse 实现）。
+    #[cfg(feature = "web-axum")]
+    #[test]
+    fn bulwark_exception_into_response_500() {
+        use axum::http::StatusCode;
+        use axum::response::IntoResponse;
+        let ex = BulwarkException::new(500, "业务异常").build();
+        let response = ex.into_response();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 }
