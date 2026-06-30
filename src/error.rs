@@ -132,4 +132,146 @@ mod tests {
         ];
         assert_eq!(errors.len(), 4);
     }
+
+    // ========================================================================
+    // BulwarkResult 类型别名与 IntoResponse 实现测试
+    // ========================================================================
+
+    /// 验证 `BulwarkResult` 类型别名可用于返回 Ok 值。
+    ///
+    /// 覆盖 `pub type BulwarkResult<T> = Result<T, BulwarkError>;` 的使用。
+    #[test]
+    fn bulwark_result_ok_carries_value() {
+        fn ok_fn() -> BulwarkResult<i32> {
+            Ok(42)
+        }
+        assert_eq!(ok_fn().unwrap(), 42);
+    }
+
+    /// 验证 `BulwarkResult` 类型别名可用于返回 Err 值，且 `?` 可透传错误。
+    ///
+    /// 覆盖 `pub type BulwarkResult<T> = Result<T, BulwarkError>;` 在错误传播路径中的使用。
+    #[test]
+    fn bulwark_result_err_propagates_via_question_mark() {
+        fn inner() -> BulwarkResult<()> {
+            Err(BulwarkError::Dao("db down".to_string()))
+        }
+        fn outer() -> BulwarkResult<()> {
+            inner()?;
+            Ok(())
+        }
+        assert!(matches!(outer(), Err(BulwarkError::Dao(_))));
+    }
+
+    /// 验证 Dao 变体的 Display 输出包含原始消息。
+    #[test]
+    fn dao_variant_display_includes_message() {
+        let err = BulwarkError::Dao("连接失败".to_string());
+        assert_eq!(err.to_string(), "DAO 错误: 连接失败");
+    }
+
+    /// 验证 Config 变体的 Display 输出包含原始消息。
+    #[test]
+    fn config_variant_display_includes_message() {
+        let err = BulwarkError::Config("配置非法".to_string());
+        assert_eq!(err.to_string(), "配置错误: 配置非法");
+    }
+
+    /// 验证 InvalidToken 变体的 Display 输出包含原始消息。
+    #[test]
+    fn invalid_token_variant_display_includes_message() {
+        let err = BulwarkError::InvalidToken("格式错误".to_string());
+        assert_eq!(err.to_string(), "Token 无效: 格式错误");
+    }
+
+    /// 验证 ExpiredToken 变体的 Display 输出包含原始消息。
+    #[test]
+    fn expired_token_variant_display_includes_message() {
+        let err = BulwarkError::ExpiredToken("已过期".to_string());
+        assert_eq!(err.to_string(), "Token 已过期: 已过期");
+    }
+
+    /// 验证 NotPermission 变体的 Display 输出包含原始消息。
+    #[test]
+    fn not_permission_variant_display_includes_message() {
+        let err = BulwarkError::NotPermission("无权限".to_string());
+        assert_eq!(err.to_string(), "无权限: 无权限");
+    }
+
+    /// 验证 NotRole 变体的 Display 输出包含原始消息。
+    #[test]
+    fn not_role_variant_display_includes_message() {
+        let err = BulwarkError::NotRole("无角色".to_string());
+        assert_eq!(err.to_string(), "无角色: 无角色");
+    }
+
+    /// 验证 NotLogin 变体的 Display 输出包含原始消息。
+    #[test]
+    fn not_login_variant_display_includes_message() {
+        let err = BulwarkError::NotLogin("请先登录".to_string());
+        assert_eq!(err.to_string(), "未登录: 请先登录");
+    }
+
+    /// 验证 Internal 变体的 Display 输出包含原始消息。
+    #[test]
+    fn internal_variant_display_includes_message() {
+        let err = BulwarkError::Internal("内部错误".to_string());
+        assert_eq!(err.to_string(), "内部错误: 内部错误");
+    }
+
+    // ========================================================================
+    // IntoResponse 实现测试（cfg feature = "web-axum"）
+    // ========================================================================
+
+    /// 验证 Dao 错误映射为 500 Internal Server Error。
+    ///
+    /// 覆盖 `IntoResponse for BulwarkError` 的 `_ =>` 分支（Dao 变体）。
+    #[cfg(feature = "web-axum")]
+    #[test]
+    fn dao_error_returns_500() {
+        use axum::http::StatusCode;
+        use axum::response::IntoResponse;
+        let err = BulwarkError::Dao("db down".to_string());
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    /// 验证 Config 错误映射为 500 Internal Server Error。
+    ///
+    /// 覆盖 `IntoResponse for BulwarkError` 的 `_ =>` 分支（Config 变体）。
+    #[cfg(feature = "web-axum")]
+    #[test]
+    fn config_error_returns_500() {
+        use axum::http::StatusCode;
+        use axum::response::IntoResponse;
+        let err = BulwarkError::Config("invalid".to_string());
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    /// 验证 Annotation 错误映射为 500 Internal Server Error。
+    ///
+    /// 覆盖 `IntoResponse for BulwarkError` 的 `_ =>` 分支（Annotation 变体）。
+    #[cfg(feature = "web-axum")]
+    #[test]
+    fn annotation_error_returns_500() {
+        use axum::http::StatusCode;
+        use axum::response::IntoResponse;
+        let err = BulwarkError::Annotation("conflict".to_string());
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    /// 验证 Context 错误映射为 500 Internal Server Error。
+    ///
+    /// 覆盖 `IntoResponse for BulwarkError` 的 `_ =>` 分支（Context 变体）。
+    #[cfg(feature = "web-axum")]
+    #[test]
+    fn context_error_returns_500() {
+        use axum::http::StatusCode;
+        use axum::response::IntoResponse;
+        let err = BulwarkError::Context("missing".to_string());
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
 }

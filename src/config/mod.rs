@@ -710,4 +710,156 @@ throw_on_not_login = false
         assert!(parse_bool("maybe").is_err());
         assert!(parse_bool("").is_err());
     }
+
+    // ========================================================================
+    // 环境变量覆盖错误路径补充测试
+    // ========================================================================
+
+    /// 验证 BULWARK_IS_READ_COOKIE 非法布尔值时 apply_env_overrides 抛错。
+    ///
+    /// 覆盖 `apply_env_overrides` 中 `parse_bool(&v)?` 错误路径（IS_READ_COOKIE 分支）。
+    #[test]
+    #[serial]
+    fn env_invalid_is_read_cookie_errors() {
+        std::env::set_var("BULWARK_IS_READ_COOKIE", "maybe");
+        let config = BulwarkConfig::default_config();
+        let result = DefaultConfigLoader::apply_env_overrides(config);
+        assert!(result.is_err(), "非法布尔值应导致 apply_env_overrides 失败");
+        assert!(
+            matches!(result, Err(BulwarkError::Config(ref msg)) if msg.contains("invalid boolean")),
+            "应返回 'invalid boolean' 错误，实际: {:?}",
+            result
+        );
+        std::env::remove_var("BULWARK_IS_READ_COOKIE");
+    }
+
+    /// 验证 BULWARK_IS_READ_HEADER 非法布尔值时 apply_env_overrides 抛错。
+    ///
+    /// 覆盖 `apply_env_overrides` 中 `parse_bool(&v)?` 错误路径（IS_READ_HEADER 分支）。
+    #[test]
+    #[serial]
+    fn env_invalid_is_read_header_errors() {
+        std::env::set_var("BULWARK_IS_READ_HEADER", "yesno");
+        let config = BulwarkConfig::default_config();
+        let result = DefaultConfigLoader::apply_env_overrides(config);
+        assert!(result.is_err());
+        assert!(matches!(result, Err(BulwarkError::Config(_))));
+        std::env::remove_var("BULWARK_IS_READ_HEADER");
+    }
+
+    /// 验证 BULWARK_IS_WRITE_HEADER 非法布尔值时 apply_env_overrides 抛错。
+    ///
+    /// 覆盖 `apply_env_overrides` 中 `parse_bool(&v)?` 错误路径（IS_WRITE_HEADER 分支）。
+    #[test]
+    #[serial]
+    fn env_invalid_is_write_header_errors() {
+        std::env::set_var("BULWARK_IS_WRITE_HEADER", "unknown");
+        let config = BulwarkConfig::default_config();
+        let result = DefaultConfigLoader::apply_env_overrides(config);
+        assert!(result.is_err());
+        assert!(matches!(result, Err(BulwarkError::Config(_))));
+        std::env::remove_var("BULWARK_IS_WRITE_HEADER");
+    }
+
+    /// 验证 BULWARK_THROW_ON_NOT_LOGIN 非法布尔值时 apply_env_overrides 抛错。
+    ///
+    /// 覆盖 `apply_env_overrides` 中 `parse_bool(&v)?` 错误路径（THROW_ON_NOT_LOGIN 分支）。
+    #[test]
+    #[serial]
+    fn env_invalid_throw_on_not_login_errors() {
+        std::env::set_var("BULWARK_THROW_ON_NOT_LOGIN", "yes_no");
+        let config = BulwarkConfig::default_config();
+        let result = DefaultConfigLoader::apply_env_overrides(config);
+        assert!(result.is_err());
+        assert!(matches!(result, Err(BulwarkError::Config(_))));
+        std::env::remove_var("BULWARK_THROW_ON_NOT_LOGIN");
+    }
+
+    /// 验证 BULWARK_ACTIVE_TIMEOUT 非数字时 apply_env_overrides 抛错。
+    ///
+    /// 覆盖 `apply_env_overrides` 中 ACTIVE_TIMEOUT 分支的 parse 错误路径。
+    #[test]
+    #[serial]
+    fn env_invalid_active_timeout_errors() {
+        std::env::set_var("BULWARK_ACTIVE_TIMEOUT", "not-a-number");
+        let config = BulwarkConfig::default_config();
+        let result = DefaultConfigLoader::apply_env_overrides(config);
+        assert!(result.is_err());
+        assert!(
+            matches!(result, Err(BulwarkError::Config(ref msg)) if msg.contains("ACTIVE_TIMEOUT invalid")),
+            "应包含 'ACTIVE_TIMEOUT invalid'，实际: {:?}",
+            result
+        );
+        std::env::remove_var("BULWARK_ACTIVE_TIMEOUT");
+    }
+
+    /// 验证 BULWARK_TOKEN_STYLE 非法值导致 apply_env_overrides 校验失败。
+    ///
+    /// 覆盖 `apply_env_overrides` 末尾 `config.validate()?` 错误路径
+    /// （环境变量覆盖后配置校验未通过）。
+    #[test]
+    #[serial]
+    fn env_invalid_token_style_fails_validation() {
+        std::env::set_var("BULWARK_TOKEN_STYLE", "unknown_style");
+        let config = BulwarkConfig::default_config();
+        let result = DefaultConfigLoader::apply_env_overrides(config);
+        assert!(result.is_err());
+        assert!(
+            matches!(result, Err(BulwarkError::Config(ref msg)) if msg.contains("unknown token_style")),
+            "应返回 'unknown token_style' 错误，实际: {:?}",
+            result
+        );
+        std::env::remove_var("BULWARK_TOKEN_STYLE");
+    }
+
+    /// 验证 BULWARK_TIMEOUT 负值导致 apply_env_overrides 校验失败。
+    ///
+    /// 覆盖 `apply_env_overrides` 末尾 `config.validate()?` 错误路径
+    /// （环境变量覆盖后 timeout 非法）。
+    #[test]
+    #[serial]
+    fn env_negative_timeout_fails_validation() {
+        std::env::set_var("BULWARK_TIMEOUT", "-100");
+        let config = BulwarkConfig::default_config();
+        let result = DefaultConfigLoader::apply_env_overrides(config);
+        assert!(result.is_err());
+        assert!(
+            matches!(result, Err(BulwarkError::Config(ref msg)) if msg.contains("timeout must be positive")),
+            "应返回 'timeout must be positive' 错误，实际: {:?}",
+            result
+        );
+        std::env::remove_var("BULWARK_TIMEOUT");
+    }
+
+    /// 验证通过 `ConfigLoader` trait 调用 `load_from_toml_str` 与具体类型一致。
+    ///
+    /// 覆盖 trait 方法签名行（确保通过 trait dispatch 也能调用）。
+    #[test]
+    fn trait_dispatch_load_from_toml_str() {
+        let config: BulwarkConfig = <DefaultConfigLoader as ConfigLoader>::load_from_toml_str("")
+            .expect("通过 trait 调用应与具体类型行为一致");
+        assert_eq!(config.token_style, "uuid");
+        assert_eq!(config.timeout, DEFAULT_TIMEOUT);
+    }
+
+    /// 验证通过 `ConfigLoader` trait 调用 `apply_env_overrides` 与具体类型一致。
+    ///
+    /// 覆盖 trait 方法签名行（确保通过 trait dispatch 也能调用）。
+    #[test]
+    fn trait_dispatch_apply_env_overrides() {
+        let config = BulwarkConfig::default_config();
+        let result: BulwarkResult<BulwarkConfig> =
+            <DefaultConfigLoader as ConfigLoader>::apply_env_overrides(config);
+        assert!(result.is_ok());
+    }
+
+    /// 验证通过 `ConfigLoader` trait 调用 `load` 完整流程。
+    ///
+    /// 覆盖 trait 默认方法 `load` 的实现（调用 load_from_toml_str + apply_env_overrides）。
+    #[test]
+    fn trait_dispatch_load_full_pipeline() {
+        let config: BulwarkConfig =
+            <DefaultConfigLoader as ConfigLoader>::load("").expect("通过 trait 调用 load 应成功");
+        assert_eq!(config.token_style, "uuid");
+    }
 }

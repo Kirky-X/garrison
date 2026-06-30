@@ -49,3 +49,63 @@ impl std::fmt::Display for NotLoginException {
 }
 
 impl std::error::Error for NotLoginException {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 验证 `NotLoginException::new` 创建实例并设置默认 login_type 为空字符串。
+    #[test]
+    fn new_creates_exception_with_empty_login_type() {
+        let ex = NotLoginException::new("请先登录");
+        assert_eq!(ex.message, "请先登录");
+        assert_eq!(ex.login_type, "");
+    }
+
+    /// 验证 `NotLoginException::new` 接受 String 与 &str 等可转换类型。
+    #[test]
+    fn new_accepts_string() {
+        let msg = String::from("会话已过期");
+        let ex = NotLoginException::new(msg);
+        assert_eq!(ex.message, "会话已过期");
+    }
+
+    /// 验证 `with_login_type` 设置 login_type 并返回 self（builder 模式）。
+    #[test]
+    fn with_login_type_sets_login_type() {
+        let ex = NotLoginException::new("未登录").with_login_type("account");
+        assert_eq!(ex.login_type, "account");
+        assert_eq!(ex.message, "未登录");
+    }
+
+    /// 验证 `with_login_type` 接受 String 类型。
+    #[test]
+    fn with_login_type_accepts_string() {
+        let lt = String::from("wechat");
+        let ex = NotLoginException::new("未登录").with_login_type(lt);
+        assert_eq!(ex.login_type, "wechat");
+    }
+
+    /// 验证 `Display` 实现输出 "未登录: {message}" 格式。
+    #[test]
+    fn display_formats_correctly() {
+        let ex = NotLoginException::new("token 已过期");
+        assert_eq!(format!("{}", ex), "未登录: token 已过期");
+    }
+
+    /// 验证 `NotLoginException` 实现 `std::error::Error` trait。
+    #[test]
+    fn implements_std_error() {
+        fn assert_error<T: std::error::Error>(_: &T) {}
+        let ex = NotLoginException::new("test");
+        assert_error(&ex);
+    }
+
+    /// 验证 builder 链式调用：new + with_login_type。
+    #[test]
+    fn builder_chain_works() {
+        let ex = NotLoginException::new("未登录").with_login_type("oauth2");
+        assert_eq!(ex.message, "未登录");
+        assert_eq!(ex.login_type, "oauth2");
+    }
+}

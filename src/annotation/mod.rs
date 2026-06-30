@@ -563,6 +563,42 @@ mod tests {
         req.into_parts().0
     }
 
+    /// 构建带 Authorization: Bearer header 的 axum Parts。
+    fn make_parts_with_bearer(token: &str) -> axum::http::request::Parts {
+        let req = Request::builder()
+            .method("GET")
+            .uri("/protected")
+            .header("authorization", format!("Bearer {}", token))
+            .body(Body::empty())
+            .unwrap();
+        req.into_parts().0
+    }
+
+    /// 构建带 bulwark_token header 的 axum Parts。
+    fn make_parts_with_bulwark_header(token: &str) -> axum::http::request::Parts {
+        let req = Request::builder()
+            .method("GET")
+            .uri("/protected")
+            .header("bulwark_token", token)
+            .body(Body::empty())
+            .unwrap();
+        req.into_parts().0
+    }
+
+    /// 构建带 Cookie: bulwark_token=<token> 的 axum Parts（含额外 cookie 测试循环分支）。
+    fn make_parts_with_cookie_token(token: &str) -> axum::http::request::Parts {
+        let req = Request::builder()
+            .method("GET")
+            .uri("/protected")
+            .header(
+                "cookie",
+                format!("other=val; bulwark_token={}; foo=bar", token),
+            )
+            .body(Body::empty())
+            .unwrap();
+        req.into_parts().0
+    }
+
     // ----------------------------------------------------------------
     // CheckLogin 测试
     // ----------------------------------------------------------------
@@ -803,5 +839,128 @@ mod tests {
         let err = BulwarkError::Session("test".to_string());
         let response = err.into_response();
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    // ----------------------------------------------------------------
+    // Annotation::name 测试
+    // ----------------------------------------------------------------
+
+    /// Annotation::name 尚未实现，调用应 panic（todo!）。
+    #[test]
+    #[should_panic(expected = "not yet implemented")]
+    fn annotation_name_panics_with_todo() {
+        let _ = Annotation::CheckLogin.name();
+    }
+
+    // ----------------------------------------------------------------
+    // token 提取（header / cookie）分支测试
+    // ----------------------------------------------------------------
+
+    /// CheckLogin 从 Authorization: Bearer header 提取 token 并校验通过。
+    #[tokio::test]
+    #[serial]
+    async fn check_login_extracts_token_from_bearer_header() {
+        init_manager(false, &[], &[]);
+        let token = BulwarkUtil::login(1001).await.unwrap();
+
+        let mut parts = make_parts_with_bearer(&token);
+        let result = CheckLogin::from_request_parts(&mut parts, &()).await;
+        assert!(result.is_ok(), "Bearer header 提取 token 后校验应通过");
+
+        BulwarkManager::reset_for_test();
+    }
+
+    /// CheckLogin 从 bulwark_token header 提取 token 并校验通过。
+    #[tokio::test]
+    #[serial]
+    async fn check_login_extracts_token_from_bulwark_header() {
+        init_manager(false, &[], &[]);
+        let token = BulwarkUtil::login(1001).await.unwrap();
+
+        let mut parts = make_parts_with_bulwark_header(&token);
+        let result = CheckLogin::from_request_parts(&mut parts, &()).await;
+        assert!(
+            result.is_ok(),
+            "bulwark_token header 提取 token 后校验应通过"
+        );
+
+        BulwarkManager::reset_for_test();
+    }
+
+    /// CheckLogin 从 Cookie: bulwark_token=<token> 提取 token 并校验通过。
+    #[tokio::test]
+    #[serial]
+    async fn check_login_extracts_token_from_cookie() {
+        init_manager(false, &[], &[]);
+        let token = BulwarkUtil::login(1001).await.unwrap();
+
+        let mut parts = make_parts_with_cookie_token(&token);
+        let result = CheckLogin::from_request_parts(&mut parts, &()).await;
+        assert!(result.is_ok(), "Cookie 提取 token 后校验应通过");
+
+        BulwarkManager::reset_for_test();
+    }
+
+    // ----------------------------------------------------------------
+    // extractor 通过 header 提取 token 的 if-let-Some 分支测试
+    // ----------------------------------------------------------------
+
+    /// CheckRole<AdminRole> 从 Bearer header 提取 token 并校验角色通过。
+    #[tokio::test]
+    #[serial]
+    async fn check_role_extracts_token_from_header() {
+        init_manager(true, &[], &[(1001, &["admin"])]);
+        let token = BulwarkUtil::login(1001).await.unwrap();
+
+        let mut parts = make_parts_with_bearer(&token);
+        let result = CheckRole::<AdminRole>::from_request_parts(&mut parts, &()).await;
+        assert!(result.is_ok(), "持有角色时通过 header token 校验应通过");
+
+        BulwarkManager::reset_for_test();
+    }
+
+    /// CheckPermission<UserRead> 从 Bearer header 提取 token 并校验权限通过。
+    #[tokio::test]
+    #[serial]
+    async fn check_permission_extracts_token_from_header() {
+        init_manager(true, &[(1001, &["user:read"])], &[]);
+        let token = BulwarkUtil::login(1001).await.unwrap();
+
+        let mut parts = make_parts_with_bearer(&token);
+        let result = CheckPermission::<UserRead>::from_request_parts(&mut parts, &()).await;
+        assert!(result.is_ok(), "持有权限时通过 header token 校验应通过");
+
+        BulwarkManager::reset_for_test();
+    }
+
+    /// Mode<Strict> 从 Bearer header 提取 token，已登录时校验通过。
+    #[tokio::test]
+    #[serial]
+    async fn mode_strict_extracts_token_from_header() {
+        init_manager(false, &[], &[]);
+        let token = BulwarkUtil::login(1001).await.unwrap();
+
+        let mut parts = make_parts_with_bearer(&token);
+        let result = Mode::<Strict>::from_request_parts(&mut parts, &()).await;
+        assert!(
+            result.is_ok(),
+            "Mode<Strict> 已登录时通过 header token 校验应通过"
+        );
+
+        BulwarkManager::reset_for_test();
+    }
+
+    /// Mode<Loose> 从 Bearer header 提取 token，已登录时校验通过（宽松模式不抛错）。
+    #[tokio::test]
+    #[serial]
+    async fn mode_loose_logged_in_with_header() {
+        init_manager(false, &[], &[]);
+        let token = BulwarkUtil::login(1001).await.unwrap();
+
+        let mut parts = make_parts_with_bearer(&token);
+        let result = Mode::<Loose>::from_request_parts(&mut parts, &()).await;
+        assert!(result.is_ok(), "Mode<Loose> 已登录时应返回 Ok");
+
+        BulwarkManager::reset_for_test();
     }
 }

@@ -663,4 +663,84 @@ mod tests {
         let token = logic.login(1001).await.unwrap();
         assert!(!token.is_empty());
     }
+
+    // ------------------------------------------------------------------------
+    // init 配置分支补充测试
+    // ------------------------------------------------------------------------
+
+    /// 验证 init 处理 active_timeout > 0 的非负值（else 分支）。
+    ///
+    /// 覆盖 `init_with_factory_selector` 中 `else { u64::try_from(active_timeout)... }` 分支：
+    /// 当 active_timeout >= 0 时，直接转换为 u64，不使用 timeout 兜底。
+    #[tokio::test]
+    #[serial]
+    async fn init_with_positive_active_timeout() {
+        BulwarkManager::reset_for_test();
+        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let mut config = BulwarkConfig::default_config();
+        config.timeout = 3600;
+        config.active_timeout = 1800; // 正值，走 else 分支
+        let config = Arc::new(config);
+        let interface: Arc<dyn BulwarkInterface> = Arc::new(MockInterface::new());
+
+        let result = BulwarkManager::init(dao, config, interface);
+        assert!(
+            result.is_ok(),
+            "active_timeout=1800 应走 else 分支并成功: {:?}",
+            result.map(|_| ())
+        );
+        assert!(BulwarkManager::is_initialized());
+
+        // 验证 login 仍可正常工作
+        let token = BulwarkUtil::login(1001).await.unwrap();
+        assert!(!token.is_empty());
+
+        BulwarkManager::reset_for_test();
+    }
+
+    /// 验证 init 处理 active_timeout = 0 的边界值（else 分支）。
+    ///
+    /// 覆盖 `init_with_factory_selector` 中 `else` 分支的边界值 0。
+    #[tokio::test]
+    #[serial]
+    async fn init_with_zero_active_timeout() {
+        BulwarkManager::reset_for_test();
+        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let mut config = BulwarkConfig::default_config();
+        config.timeout = 3600;
+        config.active_timeout = 0; // 边界值 0，走 else 分支
+        let config = Arc::new(config);
+        let interface: Arc<dyn BulwarkInterface> = Arc::new(MockInterface::new());
+
+        let result = BulwarkManager::init(dao, config, interface);
+        assert!(result.is_ok(), "active_timeout=0 应走 else 分支并成功");
+        assert!(BulwarkManager::is_initialized());
+
+        BulwarkManager::reset_for_test();
+    }
+
+    /// 验证 init 校验配置：非法 token_style 抛 Config 错误。
+    ///
+    /// 覆盖 `init_with_factory_selector` 中 `config.validate()?` 的另一种错误分支
+    /// （非法 token_style，区别于 timeout 非法）。
+    #[tokio::test]
+    #[serial]
+    async fn init_rejects_invalid_token_style() {
+        BulwarkManager::reset_for_test();
+        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let mut config = BulwarkConfig::default_config();
+        config.token_style = "unknown_style".to_string(); // 非法
+        let config = Arc::new(config);
+        let interface: Arc<dyn BulwarkInterface> = Arc::new(MockInterface::new());
+
+        let result = BulwarkManager::init(dao, config, interface);
+        assert!(result.is_err());
+        assert!(
+            matches!(result.unwrap_err(), BulwarkError::Config(ref msg) if msg.contains("unknown token_style")),
+            "应返回 'unknown token_style' 错误"
+        );
+        assert!(!BulwarkManager::is_initialized());
+
+        BulwarkManager::reset_for_test();
+    }
 }

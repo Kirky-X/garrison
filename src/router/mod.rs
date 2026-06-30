@@ -762,4 +762,123 @@ mod tests {
 
         BulwarkManager::reset_for_test();
     }
+
+    // ----------------------------------------------------------------
+    // DefaultBulwarkInterceptor 其他注解变体测试（catch-all 分支）
+    // ----------------------------------------------------------------
+
+    /// DefaultBulwarkInterceptor.pre_handle 对未明确处理的注解变体（CheckSafe /
+    /// CheckDisable / CheckOr / CheckAnd / CheckNot / CheckBasicAuth /
+    /// CheckDigestAuth / CheckSign）直接放行返回 Ok。
+    ///
+    /// 覆盖 `match annotation { ... _ => Ok(()) }` 的 catch-all 分支。
+    #[tokio::test]
+    #[serial]
+    async fn default_interceptor_other_annotations_returns_ok() {
+        init_manager(&[], &[]);
+        let interceptor = DefaultBulwarkInterceptor;
+        let others = [
+            Annotation::CheckSafe,
+            Annotation::CheckDisable,
+            Annotation::CheckOr,
+            Annotation::CheckAnd,
+            Annotation::CheckNot,
+            Annotation::CheckBasicAuth,
+            Annotation::CheckDigestAuth,
+            Annotation::CheckSign,
+        ];
+        for ann in &others {
+            let result = interceptor.pre_handle("/x", ann).await;
+            assert!(
+                result.is_ok(),
+                "pre_handle({:?}) 应通过 catch-all 分支返回 Ok",
+                ann
+            );
+        }
+
+        BulwarkManager::reset_for_test();
+    }
+
+    // ----------------------------------------------------------------
+    // BulwarkRouter::with_interceptor / Default 测试
+    // ----------------------------------------------------------------
+
+    /// 自定义拦截器：记录调用次数，用于验证 with_interceptor 注入。
+    struct CountingInterceptor {
+        count: std::sync::atomic::AtomicU32,
+    }
+
+    impl CountingInterceptor {
+        fn new() -> Self {
+            Self {
+                count: std::sync::atomic::AtomicU32::new(0),
+            }
+        }
+
+        fn get(&self) -> u32 {
+            self.count.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    #[async_trait]
+    impl BulwarkInterceptor for CountingInterceptor {
+        async fn pre_handle(&self, _path: &str, _annotation: &Annotation) -> BulwarkResult<()> {
+            self.count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    /// 验证 `BulwarkRouter::with_interceptor` 注入自定义拦截器后，
+    /// middleware 会调用自定义拦截器的 pre_handle。
+    ///
+    /// 覆盖 `with_interceptor` 方法体（设置 self.interceptor）。
+    #[tokio::test]
+    #[serial]
+    async fn with_interceptor_uses_custom_interceptor() {
+        init_manager(&[], &[]);
+        let token = BulwarkUtil::login(1001).await.unwrap();
+
+        let interceptor = CountingInterceptor::new();
+        let count_ptr = interceptor.get();
+        assert_eq!(count_ptr, 0, "初始调用次数应为 0");
+
+        let app = BulwarkRouter::new(Arc::new(make_config()))
+            .with_interceptor(interceptor)
+            .route_protected("/protected", || async { "ok" }, Annotation::CheckLogin)
+            .build();
+
+        let response = app
+            .oneshot(make_request("/protected", Some(&token)))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        BulwarkManager::reset_for_test();
+    }
+
+    /// 验证 `BulwarkRouter::default()` 使用 `BulwarkConfig::default_config()`
+    /// 创建路由器，拦截器为 `DefaultBulwarkInterceptor`。
+    ///
+    /// 覆盖 `impl Default for BulwarkRouter` 的 `default()` 方法。
+    #[tokio::test]
+    #[serial]
+    async fn default_router_handles_request() {
+        init_manager(&[], &[]);
+        let token = BulwarkUtil::login(1001).await.unwrap();
+
+        let app = BulwarkRouter::default()
+            .route_protected("/protected", || async { "ok" }, Annotation::CheckLogin)
+            .build();
+        let response = app
+            .oneshot(make_request("/protected", Some(&token)))
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "Default 创建的 router 应能正常处理请求"
+        );
+
+        BulwarkManager::reset_for_test();
+    }
 }

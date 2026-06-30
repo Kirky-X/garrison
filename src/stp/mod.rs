@@ -557,8 +557,10 @@ impl BulwarkUtil {
 mod tests {
     use super::*;
     use crate::dao::BulwarkDao;
+    use crate::manager::BulwarkManager;
     use async_trait::async_trait;
     use parking_lot::Mutex;
+    use serial_test::serial;
     use std::collections::HashMap;
     use std::time::{Duration, Instant};
 
@@ -696,6 +698,34 @@ mod tests {
     /// 辅助函数：在当前 task_local 设置 token 后执行 future。
     async fn with_token<R>(token: &str, f: impl std::future::Future<Output = R>) -> R {
         with_current_token(token.to_string(), f).await
+    }
+
+    // ------------------------------------------------------------------------
+    // MockInterface：用于 BulwarkUtil 全局管理器测试
+    // ------------------------------------------------------------------------
+
+    struct MockInterface;
+
+    #[async_trait]
+    impl BulwarkInterface for MockInterface {
+        async fn get_permission_list(&self, _login_id: i64) -> BulwarkResult<Vec<String>> {
+            Ok(vec![])
+        }
+        async fn get_role_list(&self, _login_id: i64) -> BulwarkResult<Vec<String>> {
+            Ok(vec![])
+        }
+    }
+
+    /// 初始化全局 BulwarkManager（用于 BulwarkUtil 静态方法测试）。
+    fn init_global_manager(throw_on_not_login: bool) {
+        BulwarkManager::reset_for_test();
+        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let mut config = BulwarkConfig::default_config();
+        config.timeout = 3600;
+        config.active_timeout = -1;
+        config.throw_on_not_login = throw_on_not_login;
+        let interface: Arc<dyn BulwarkInterface> = Arc::new(MockInterface);
+        BulwarkManager::init(dao, Arc::new(config), interface).unwrap();
     }
 
     // ------------------------------------------------------------------------
@@ -1093,5 +1123,177 @@ mod tests {
             matches!(result, Err(BulwarkError::NotRole(_))),
             "未登录且 throw_on_not_login=false 应抛 NotRole（降级）"
         );
+    }
+
+    // ------------------------------------------------------------------------
+    // BulwarkUtil 未初始化错误测试（spec Scenario: 未初始化抛错）
+    // ------------------------------------------------------------------------
+
+    /// 未初始化时 BulwarkUtil::logout 返回 Session 错误。
+    #[tokio::test]
+    #[serial]
+    async fn util_logout_fails_when_not_initialized() {
+        BulwarkManager::reset_for_test();
+        let result = BulwarkUtil::logout().await;
+        assert!(
+            matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("未初始化")),
+            "未初始化时 logout 应返回 Session 错误"
+        );
+    }
+
+    /// 未初始化时 BulwarkUtil::logout_by_login_id 返回 Session 错误。
+    #[tokio::test]
+    #[serial]
+    async fn util_logout_by_login_id_fails_when_not_initialized() {
+        BulwarkManager::reset_for_test();
+        let result = BulwarkUtil::logout_by_login_id(1001).await;
+        assert!(
+            matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("未初始化")),
+            "未初始化时 logout_by_login_id 应返回 Session 错误"
+        );
+    }
+
+    /// 未初始化时 BulwarkUtil::kickout 返回 Session 错误。
+    #[tokio::test]
+    #[serial]
+    async fn util_kickout_fails_when_not_initialized() {
+        BulwarkManager::reset_for_test();
+        let result = BulwarkUtil::kickout(1001).await;
+        assert!(
+            matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("未初始化")),
+            "未初始化时 kickout 应返回 Session 错误"
+        );
+    }
+
+    /// 未初始化时 BulwarkUtil::kickout_by_token 返回 Session 错误。
+    #[tokio::test]
+    #[serial]
+    async fn util_kickout_by_token_fails_when_not_initialized() {
+        BulwarkManager::reset_for_test();
+        let result = BulwarkUtil::kickout_by_token("some-token").await;
+        assert!(
+            matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("未初始化")),
+            "未初始化时 kickout_by_token 应返回 Session 错误"
+        );
+    }
+
+    /// 未初始化时 BulwarkUtil::check_login 返回 Session 错误。
+    #[tokio::test]
+    #[serial]
+    async fn util_check_login_fails_when_not_initialized() {
+        BulwarkManager::reset_for_test();
+        let result = BulwarkUtil::check_login().await;
+        assert!(
+            matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("未初始化")),
+            "未初始化时 check_login 应返回 Session 错误"
+        );
+    }
+
+    /// 未初始化时 BulwarkUtil::get_login_id 返回 Session 错误。
+    #[tokio::test]
+    #[serial]
+    async fn util_get_login_id_fails_when_not_initialized() {
+        BulwarkManager::reset_for_test();
+        let result = BulwarkUtil::get_login_id().await;
+        assert!(
+            matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("未初始化")),
+            "未初始化时 get_login_id 应返回 Session 错误"
+        );
+    }
+
+    /// 未初始化时 BulwarkUtil::check_permission 返回 Session 错误。
+    #[tokio::test]
+    #[serial]
+    async fn util_check_permission_fails_when_not_initialized() {
+        BulwarkManager::reset_for_test();
+        let result = BulwarkUtil::check_permission("user:read").await;
+        assert!(
+            matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("未初始化")),
+            "未初始化时 check_permission 应返回 Session 错误"
+        );
+    }
+
+    /// 未初始化时 BulwarkUtil::check_role 返回 Session 错误。
+    #[tokio::test]
+    #[serial]
+    async fn util_check_role_fails_when_not_initialized() {
+        BulwarkManager::reset_for_test();
+        let result = BulwarkUtil::check_role("admin").await;
+        assert!(
+            matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("未初始化")),
+            "未初始化时 check_role 应返回 Session 错误"
+        );
+    }
+
+    // ------------------------------------------------------------------------
+    // BulwarkUtil 成功路径测试（覆盖未测试的静态方法）
+    // ------------------------------------------------------------------------
+
+    /// BulwarkUtil::logout_by_login_id 成功销毁指定账号的所有会话。
+    #[tokio::test]
+    #[serial]
+    async fn util_logout_by_login_id_succeeds() {
+        init_global_manager(false);
+        let token = BulwarkUtil::login(1001).await.unwrap();
+        assert!(!token.is_empty());
+
+        BulwarkUtil::logout_by_login_id(1001).await.unwrap();
+
+        // logout 后 check_login 应返回 false
+        let valid = with_token(&token, async { BulwarkUtil::check_login().await })
+            .await
+            .unwrap();
+        assert!(!valid, "logout_by_login_id 后 check_login 应返回 false");
+
+        BulwarkManager::reset_for_test();
+    }
+
+    /// BulwarkUtil::kickout 成功踢出指定账号。
+    #[tokio::test]
+    #[serial]
+    async fn util_kickout_succeeds() {
+        init_global_manager(false);
+        let token = BulwarkUtil::login(1001).await.unwrap();
+
+        BulwarkUtil::kickout(1001).await.unwrap();
+
+        let valid = with_token(&token, async { BulwarkUtil::check_login().await })
+            .await
+            .unwrap();
+        assert!(!valid, "kickout 后 check_login 应返回 false");
+
+        BulwarkManager::reset_for_test();
+    }
+
+    /// BulwarkUtil::kickout_by_token 成功踢出指定 token。
+    #[tokio::test]
+    #[serial]
+    async fn util_kickout_by_token_succeeds() {
+        init_global_manager(false);
+        let token = BulwarkUtil::login(1001).await.unwrap();
+
+        BulwarkUtil::kickout_by_token(&token).await.unwrap();
+
+        let valid = with_token(&token, async { BulwarkUtil::check_login().await })
+            .await
+            .unwrap();
+        assert!(!valid, "kickout_by_token 后 check_login 应返回 false");
+
+        BulwarkManager::reset_for_test();
+    }
+
+    /// BulwarkUtil::get_login_id 返回当前登录 ID。
+    #[tokio::test]
+    #[serial]
+    async fn util_get_login_id_returns_current_id() {
+        init_global_manager(false);
+        let token = BulwarkUtil::login(1001).await.unwrap();
+
+        let login_id = with_token(&token, async { BulwarkUtil::get_login_id().await })
+            .await
+            .unwrap();
+        assert_eq!(login_id, Some(1001), "get_login_id 应返回当前 login_id");
+
+        BulwarkManager::reset_for_test();
     }
 }

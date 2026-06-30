@@ -39,3 +39,40 @@ pub struct PluginEntry {
 
 // 编译期插件注册收集点
 inventory::collect!(PluginEntry);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 占位实现结构体，仅用于触发 trait 默认方法的 todo!() panic。
+    ///
+    /// 空结构体自动实现 `Send + Sync`，满足 `BulwarkPlugin: Send + Sync` 约束。
+    struct DummyPlugin;
+
+    impl BulwarkPlugin for DummyPlugin {}
+
+    /// 验证 `BulwarkPlugin::name` 默认实现调用 `todo!()` 必 panic。
+    /// Rust `todo!()` panic 消息为 "not yet implemented: ..."。
+    #[test]
+    #[should_panic(expected = "not yet implemented")]
+    fn plugin_name_panics_with_todo() {
+        let plugin = DummyPlugin;
+        let _ = plugin.name();
+    }
+
+    /// 验证 `BulwarkPlugin::init` 默认实现调用 `todo!()` 必 panic。
+    #[test]
+    #[should_panic(expected = "not yet implemented")]
+    fn plugin_init_panics_with_todo() {
+        let plugin = DummyPlugin;
+        let _ = plugin.init();
+    }
+
+    /// 验证 `BulwarkPlugin::destroy` 默认实现调用 `todo!()` 必 panic。
+    #[test]
+    #[should_panic(expected = "not yet implemented")]
+    fn plugin_destroy_panics_with_todo() {
+        let plugin = DummyPlugin;
+        let _ = plugin.destroy();
+    }
+}

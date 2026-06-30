@@ -493,4 +493,39 @@ mod tests {
         let perms = fw.get_permission_list(9999).await.unwrap();
         assert!(perms.is_empty(), "未配置权限的 login_id 应返回空列表");
     }
+
+    // ------------------------------------------------------------------------
+    // BulwarkStrategy 占位实现测试（todo!() panic 验证）
+    // ------------------------------------------------------------------------
+
+    /// 验证 `BulwarkStrategy::create_token` 在 0.2.0+ 实现前调用必 panic。
+    ///
+    /// 覆盖 `create_token` 方法体（`let _ = login_id;` + `todo!(...)`）。
+    /// Rust `todo!()` panic 消息为 "not yet implemented: ..."。
+    #[test]
+    #[should_panic(expected = "not yet implemented")]
+    fn strategy_create_token_panics_with_todo() {
+        let strategy = BulwarkStrategy::new();
+        let _ = strategy.create_token(1001);
+    }
+
+    /// 验证 `BulwarkStrategy::parse_login_id` 在 0.2.0+ 实现前调用必 panic。
+    ///
+    /// 覆盖 `parse_login_id` 方法体（`let _ = token;` + `todo!(...)`）。
+    /// Rust `todo!()` panic 消息为 "not yet implemented: ..."。
+    #[test]
+    #[should_panic(expected = "not yet implemented")]
+    fn strategy_parse_login_id_panics_with_todo() {
+        let strategy = BulwarkStrategy::new();
+        let _ = strategy.parse_login_id("some-token");
+    }
+
+    /// 验证 `BulwarkStrategy::default()` 等价于 `new()`。
+    ///
+    /// 覆盖 `impl Default for BulwarkStrategy` 的 `default()` 方法。
+    #[test]
+    fn strategy_default_eq_new() {
+        let _strategy = BulwarkStrategy::default();
+        // 仅验证可构造（占位结构体无字段可断言）
+    }
 }

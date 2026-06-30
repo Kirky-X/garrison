@@ -42,3 +42,46 @@ pub trait PermissionChecker {
         todo!()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 占位实现结构体，仅用于触发 trait 默认方法的 todo!() panic。
+    struct DummyPermissionChecker;
+
+    impl PermissionChecker for DummyPermissionChecker {}
+
+    /// 验证 `PermissionChecker::has_permission` 默认实现调用 `todo!()` 必 panic。
+    /// Rust `todo!()` panic 消息为 "not yet implemented: ..."。
+    #[test]
+    #[should_panic(expected = "not yet implemented")]
+    fn permission_checker_has_permission_panics_with_todo() {
+        let checker = DummyPermissionChecker;
+        let _ = checker.has_permission("user:read");
+    }
+
+    /// 验证 `PermissionChecker::has_role` 默认实现调用 `todo!()` 必 panic。
+    #[test]
+    #[should_panic(expected = "not yet implemented")]
+    fn permission_checker_has_role_panics_with_todo() {
+        let checker = DummyPermissionChecker;
+        let _ = checker.has_role("admin");
+    }
+
+    /// 验证 `PermissionChecker::check_and_permission` 默认实现调用 `todo!()` 必 panic。
+    #[test]
+    #[should_panic(expected = "not yet implemented")]
+    fn permission_checker_check_and_permission_panics_with_todo() {
+        let checker = DummyPermissionChecker;
+        let _ = checker.check_and_permission(&["user:read", "user:write"]);
+    }
+
+    /// 验证 `PermissionChecker::check_or_permission` 默认实现调用 `todo!()` 必 panic。
+    #[test]
+    #[should_panic(expected = "not yet implemented")]
+    fn permission_checker_check_or_permission_panics_with_todo() {
+        let checker = DummyPermissionChecker;
+        let _ = checker.check_or_permission(&["user:read", "user:write"]);
+    }
+}

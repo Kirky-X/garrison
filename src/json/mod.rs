@@ -55,3 +55,53 @@ pub trait BulwarkSerializerTemplate {
         todo!()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 占位实现结构体，仅用于触发 trait 默认方法的 todo!() panic。
+    struct DummyJsonTemplate;
+
+    impl BulwarkJsonTemplate for DummyJsonTemplate {}
+
+    /// 占位实现结构体，仅用于触发 trait 默认方法的 todo!() panic。
+    struct DummySerializerTemplate;
+
+    impl BulwarkSerializerTemplate for DummySerializerTemplate {}
+
+    /// 验证 `BulwarkJsonTemplate::to_json_string` 默认实现调用 `todo!()` 必 panic。
+    /// Rust `todo!()` panic 消息为 "not yet implemented: ..."。
+    #[test]
+    #[should_panic(expected = "not yet implemented")]
+    fn json_template_to_json_string_panics_with_todo() {
+        let template = DummyJsonTemplate;
+        let value = serde_json::json!({"key": "value"});
+        let _ = template.to_json_string(&value);
+    }
+
+    /// 验证 `BulwarkJsonTemplate::parse_json` 默认实现调用 `todo!()` 必 panic。
+    #[test]
+    #[should_panic(expected = "not yet implemented")]
+    fn json_template_parse_json_panics_with_todo() {
+        let template = DummyJsonTemplate;
+        let _ = template.parse_json(r#"{"key":"value"}"#);
+    }
+
+    /// 验证 `BulwarkSerializerTemplate::serialize` 默认实现调用 `todo!()` 必 panic。
+    #[test]
+    #[should_panic(expected = "not yet implemented")]
+    fn serializer_template_serialize_panics_with_todo() {
+        let template = DummySerializerTemplate;
+        let value = serde_json::json!({"key": "value"});
+        let _ = template.serialize(&value);
+    }
+
+    /// 验证 `BulwarkSerializerTemplate::deserialize` 默认实现调用 `todo!()` 必 panic。
+    #[test]
+    #[should_panic(expected = "not yet implemented")]
+    fn serializer_template_deserialize_panics_with_todo() {
+        let template = DummySerializerTemplate;
+        let _ = template.deserialize::<serde_json::Value>(r#"{"key":"value"}"#);
+    }
+}

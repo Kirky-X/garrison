@@ -33,3 +33,46 @@ pub trait AuthLogic {
         todo!()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 占位实现结构体，仅用于触发 trait 默认方法的 todo!() panic。
+    struct DummyAuthLogic;
+
+    impl AuthLogic for DummyAuthLogic {}
+
+    /// 验证 `AuthLogic::login` 默认实现调用 `todo!()` 必 panic。
+    /// Rust `todo!()` panic 消息为 "not yet implemented: ..."。
+    #[test]
+    #[should_panic(expected = "not yet implemented")]
+    fn auth_logic_login_panics_with_todo() {
+        let logic = DummyAuthLogic;
+        let _ = logic.login(1001);
+    }
+
+    /// 验证 `AuthLogic::logout` 默认实现调用 `todo!()` 必 panic。
+    #[test]
+    #[should_panic(expected = "not yet implemented")]
+    fn auth_logic_logout_panics_with_todo() {
+        let logic = DummyAuthLogic;
+        let _ = logic.logout();
+    }
+
+    /// 验证 `AuthLogic::is_login` 默认实现调用 `todo!()` 必 panic。
+    #[test]
+    #[should_panic(expected = "not yet implemented")]
+    fn auth_logic_is_login_panics_with_todo() {
+        let logic = DummyAuthLogic;
+        let _ = logic.is_login();
+    }
+
+    /// 验证 `AuthLogic::get_login_id` 默认实现调用 `todo!()` 必 panic。
+    #[test]
+    #[should_panic(expected = "not yet implemented")]
+    fn auth_logic_get_login_id_panics_with_todo() {
+        let logic = DummyAuthLogic;
+        let _ = logic.get_login_id();
+    }
+}

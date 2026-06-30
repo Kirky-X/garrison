@@ -642,4 +642,231 @@ mod tests {
         let _response = ctx.response().unwrap();
         let _storage = ctx.storage().unwrap();
     }
+
+    // ========================================================================
+    // 新增测试：覆盖 AxumRequest 的错误分支与边界
+    // ========================================================================
+
+    /// 验证 AxumRequest::header() 在 header name 非法时返回 Context 错误。
+    #[test]
+    fn axum_request_header_invalid_name_errors() {
+        let req = make_request("/", "GET", &[]);
+        let axum_req = AxumRequest::new(&req);
+        // header name 不能包含空格
+        let result = axum_req.header("invalid header");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, BulwarkError::Context(_)));
+        assert!(err.to_string().contains("invalid header name"));
+    }
+
+    /// 验证 AxumRequest::cookie() 在没有 Cookie header 时返回 None（空 header 分支）。
+    #[test]
+    fn axum_request_cookie_empty_header_returns_none() {
+        let req = make_request("/", "GET", &[]);
+        let axum_req = AxumRequest::new(&req);
+        assert_eq!(axum_req.cookie("any").unwrap(), None);
+    }
+
+    /// 验证 AxumRequest::cookie() 跳过没有 '=' 的 cookie 项。
+    #[test]
+    fn axum_request_cookie_skips_pair_without_equals() {
+        let req = make_request("/", "GET", &[("Cookie", "invalidpair; valid=val")]);
+        let axum_req = AxumRequest::new(&req);
+        assert_eq!(axum_req.cookie("valid").unwrap(), Some("val".to_string()));
+        assert_eq!(axum_req.cookie("invalidpair").unwrap(), None);
+    }
+
+    // ========================================================================
+    // 新增测试：覆盖 AxumResponse 错误分支与 Default 实现
+    // ========================================================================
+
+    /// 验证 AxumResponse::set_status() 在状态码非法（> 999）时返回 Context 错误。
+    #[test]
+    fn axum_response_set_status_invalid_code_errors() {
+        let mut resp = AxumResponse::new();
+        // StatusCode::from_u16 仅接受 0..=999
+        let result = resp.set_status(1000);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, BulwarkError::Context(_)));
+        assert!(err.to_string().contains("invalid status code"));
+    }
+
+    /// 验证 AxumResponse::set_header() 在 header value 非法时返回 Context 错误。
+    #[test]
+    fn axum_response_set_header_invalid_value_errors() {
+        let mut resp = AxumResponse::new();
+        // header value 不能包含控制字符（如 '\0'）
+        let result = resp.set_header("X-Test", "bad\0value");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, BulwarkError::Context(_)));
+        assert!(err.to_string().contains("invalid header value"));
+    }
+
+    /// 验证 AxumResponse::default() 等价于 new()，状态码为 200 OK 且 headers 为空。
+    #[test]
+    fn axum_response_default_impl() {
+        let resp = AxumResponse::default();
+        assert_eq!(resp.status, StatusCode::OK);
+        assert!(resp.headers.is_empty());
+    }
+
+    /// 验证 AxumStorage::default() 等价于 new()，返回空 storage。
+    #[test]
+    fn axum_storage_default_impl() {
+        let storage = AxumStorage::default();
+        assert_eq!(storage.get("any").unwrap(), None);
+    }
+
+    // ========================================================================
+    // 新增测试：覆盖 AxumRequestWrapper（通过 AxumContext::request() 访问）
+    // ========================================================================
+
+    /// 验证 AxumContext::request() 返回的 wrapper 正确提取 path（去掉 query string）。
+    #[test]
+    fn axum_context_wrapper_path_strips_query() {
+        let req = make_request("/api/v1/users?page=2&size=10", "GET", &[]);
+        let ctx = AxumContext::new(&req);
+        let request = ctx.request().unwrap();
+        assert_eq!(request.path().unwrap(), "/api/v1/users");
+    }
+
+    /// 验证 AxumContext::request() 返回的 wrapper 正确返回 method。
+    #[test]
+    fn axum_context_wrapper_method() {
+        let req = make_request("/", "PUT", &[]);
+        let ctx = AxumContext::new(&req);
+        let request = ctx.request().unwrap();
+        assert_eq!(request.method().unwrap(), "PUT");
+    }
+
+    /// 验证 AxumContext::request() 返回的 wrapper 正确读取 header（命中与未命中）。
+    #[test]
+    fn axum_context_wrapper_header() {
+        let req = make_request("/", "GET", &[("X-Custom", "hello"), ("X-Other", "world")]);
+        let ctx = AxumContext::new(&req);
+        let request = ctx.request().unwrap();
+        assert_eq!(
+            request.header("X-Custom").unwrap(),
+            Some("hello".to_string())
+        );
+        assert_eq!(
+            request.header("X-Other").unwrap(),
+            Some("world".to_string())
+        );
+        assert_eq!(request.header("Missing").unwrap(), None);
+    }
+
+    /// 验证 AxumContext::request() 返回的 wrapper 在 header name 非法时返回 Context 错误。
+    #[test]
+    fn axum_context_wrapper_header_invalid_name_errors() {
+        let req = make_request("/", "GET", &[]);
+        let ctx = AxumContext::new(&req);
+        let request = ctx.request().unwrap();
+        let result = request.header("bad name");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, BulwarkError::Context(_)));
+        assert!(err.to_string().contains("invalid header name"));
+    }
+
+    /// 验证 AxumContext::request() 返回的 wrapper 在没有 Cookie header 时返回 None。
+    #[test]
+    fn axum_context_wrapper_cookie_no_header_returns_none() {
+        let req = make_request("/", "GET", &[]);
+        let ctx = AxumContext::new(&req);
+        let request = ctx.request().unwrap();
+        assert_eq!(request.cookie("any").unwrap(), None);
+    }
+
+    /// 验证 AxumContext::request() 返回的 wrapper 解析 Cookie header（命中与未命中）。
+    #[test]
+    fn axum_context_wrapper_cookie_found() {
+        let req = make_request("/", "GET", &[("Cookie", "session=abc; user=xyz")]);
+        let ctx = AxumContext::new(&req);
+        let request = ctx.request().unwrap();
+        assert_eq!(request.cookie("session").unwrap(), Some("abc".to_string()));
+        assert_eq!(request.cookie("user").unwrap(), Some("xyz".to_string()));
+        assert_eq!(request.cookie("missing").unwrap(), None);
+    }
+
+    /// 验证 AxumContext::request() 返回的 wrapper 跳过没有 '=' 的 cookie 项。
+    #[test]
+    fn axum_context_wrapper_cookie_skips_pair_without_equals() {
+        let req = make_request("/", "GET", &[("Cookie", "invalidpair; valid=val")]);
+        let ctx = AxumContext::new(&req);
+        let request = ctx.request().unwrap();
+        assert_eq!(request.cookie("valid").unwrap(), Some("val".to_string()));
+        assert_eq!(request.cookie("invalidpair").unwrap(), None);
+    }
+
+    /// 验证 AxumContext::request() 返回的 wrapper 从 cookie 提取 token。
+    #[test]
+    fn axum_context_wrapper_get_token_from_cookie() {
+        let req = make_request("/", "GET", &[("Cookie", "bulwark_token=cookie_tok")]);
+        let ctx = AxumContext::new(&req);
+        let request = ctx.request().unwrap();
+        let mut config = BulwarkConfig::default_config();
+        // 关闭 header 读取，强制走 cookie 路径以覆盖 wrapper 的 cookie 分支
+        config.is_read_header = false;
+        config.is_read_cookie = true;
+        let token = request.get_token(&config).unwrap();
+        assert_eq!(token, Some("cookie_tok".to_string()));
+    }
+
+    /// 验证 AxumContext::request() 返回的 wrapper 在无 token 时返回 None。
+    #[test]
+    fn axum_context_wrapper_get_token_returns_none() {
+        let req = make_request("/", "GET", &[]);
+        let ctx = AxumContext::new(&req);
+        let request = ctx.request().unwrap();
+        let config = BulwarkConfig::default_config();
+        let token = request.get_token(&config).unwrap();
+        assert_eq!(token, None);
+    }
+
+    // ========================================================================
+    // 新增测试：覆盖 AxumContext::response() / storage() / into_response()
+    // ========================================================================
+
+    /// 验证 AxumContext::response() 返回可写的独立 response 实例。
+    #[test]
+    fn axum_context_response_returns_writable_instance() {
+        let req = make_request("/", "GET", &[]);
+        let ctx = AxumContext::new(&req);
+        let mut response = ctx.response().unwrap();
+        // 验证返回的 response 可设置状态码与 header（不抛错）
+        response.set_status(404).unwrap();
+        response.set_header("X-Trace", "trace-123").unwrap();
+        // 再次获取应为新的实例，可独立写入
+        let mut another = ctx.response().unwrap();
+        another.set_status(500).unwrap();
+    }
+
+    /// 验证 AxumContext::storage() 返回可读写的独立 storage 实例。
+    #[test]
+    fn axum_context_storage_returns_writable_instance() {
+        let req = make_request("/", "GET", &[]);
+        let ctx = AxumContext::new(&req);
+        let mut storage = ctx.storage().unwrap();
+        // 初始为空
+        assert_eq!(storage.get("key").unwrap(), None);
+        // 可写入并读回
+        storage.set("key", "value").unwrap();
+        assert_eq!(storage.get("key").unwrap(), Some("value".to_string()));
+        // 删除后为空
+        storage.delete("key").unwrap();
+        assert_eq!(storage.get("key").unwrap(), None);
+    }
+
+    /// 验证 AxumContext::into_response() 转换为 axum Response（默认 200 OK）。
+    #[test]
+    fn axum_context_into_response_default() {
+        let req = make_request("/", "GET", &[]);
+        let ctx = AxumContext::new(&req);
+        let response = ctx.into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
 }

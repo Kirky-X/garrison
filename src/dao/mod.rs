@@ -526,5 +526,56 @@ mod tests {
                 "update 不应重置 TTL，原 TTL 过期后应返回 None"
             );
         }
+
+        /// 验证 expire(key, 0) 将键设为永久驻留（不删除）。
+        ///
+        /// 覆盖 BulwarkDaoOxcache::expire 的 `seconds == 0` 分支：
+        /// 通过 get + set_with_ttl(None) 实现 0=永久语义。
+        #[tokio::test]
+        async fn oxcache_expire_zero_seconds_makes_permanent() {
+            let dao = BulwarkDaoOxcache::new().await.unwrap();
+            // 设置短 TTL，键会在 1 秒后过期
+            dao.set("oc_perm", "value1", 1).await.unwrap();
+            // expire(0) 将键改为永久驻留
+            dao.expire("oc_perm", 0).await.unwrap();
+            // 等待原 TTL 过期
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            // 键应仍存在（已改为永久驻留）
+            let got = dao.get("oc_perm").await.unwrap();
+            assert_eq!(
+                got,
+                Some("value1".to_string()),
+                "expire(0) 应将键改为永久驻留，不应过期"
+            );
+        }
+
+        /// 验证 expire(0) 对不存在的键返回 Dao 错误。
+        ///
+        /// 覆盖 BulwarkDaoOxcache::expire 的 `seconds == 0` 分支中
+        /// `ok_or_else(|| BulwarkError::Dao(...))` 错误路径。
+        #[tokio::test]
+        async fn oxcache_expire_zero_seconds_missing_key_errors() {
+            let dao = BulwarkDaoOxcache::new().await.unwrap();
+            let result = dao.expire("oc_missing_perm", 0).await;
+            assert!(
+                matches!(result, Err(BulwarkError::Dao(_))),
+                "expire(0) 不存在的键应返回 Dao 错误"
+            );
+        }
+
+        /// 验证 expire 对不存在的键返回 Dao 错误（seconds > 0 分支）。
+        ///
+        /// 覆盖 BulwarkDaoOxcache::expire 的 `else` 分支中
+        /// `if !updated { return Err(...) }` 错误路径。
+        #[tokio::test]
+        async fn oxcache_expire_missing_key_errors() {
+            let dao = BulwarkDaoOxcache::new().await.unwrap();
+            let result = dao.expire("oc_missing_expire", 3600).await;
+            assert!(
+                matches!(result, Err(BulwarkError::Dao(ref msg)) if msg.contains("键不存在")),
+                "expire 不存在的键应返回含 '键不存在' 的 Dao 错误，实际: {:?}",
+                result
+            );
+        }
     }
 }

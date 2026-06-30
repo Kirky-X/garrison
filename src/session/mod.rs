@@ -799,4 +799,86 @@ mod tests {
         let result = session.logout("nonexistent").await;
         assert!(result.is_ok());
     }
+
+    // ------------------------------------------------------------------------
+    // 错误分支补充测试：反序列化失败 / touch 不存在的 token
+    // ------------------------------------------------------------------------
+
+    /// 验证 get_token_session 在 DAO 中存储了非法 JSON 时返回 Session 错误。
+    ///
+    /// 覆盖 `get_token_session` 中 `serde_json::from_str(&json).map_err(...)` 错误路径。
+    #[tokio::test]
+    async fn get_token_session_corrupt_json_errors() {
+        let (dao, session) = make_session(3600, 86400);
+        // 直接写入非法 JSON 到 token key
+        dao.set(&token_key("corrupt"), "not-a-valid-json", 3600)
+            .await
+            .unwrap();
+        let result = session.get_token_session("corrupt").await;
+        assert!(
+            matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("反序列化 TokenSession 失败")),
+            "非法 JSON 应返回 '反序列化 TokenSession 失败' 错误，实际: {:?}",
+            result
+        );
+    }
+
+    /// 验证 get_account_session 在 DAO 中存储了非法 JSON 时返回 Session 错误。
+    ///
+    /// 覆盖 `get_account_session` 中 `serde_json::from_str(&json).map_err(...)` 错误路径。
+    #[tokio::test]
+    async fn get_account_session_corrupt_json_errors() {
+        let (dao, session) = make_session(3600, 86400);
+        // 直接写入非法 JSON 到 account key
+        dao.set(&account_key(2001), "{invalid-json", 3600)
+            .await
+            .unwrap();
+        let result = session.get_account_session(2001).await;
+        assert!(
+            matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("反序列化 AccountSession 失败")),
+            "非法 JSON 应返回 '反序列化 AccountSession 失败' 错误，实际: {:?}",
+            result
+        );
+    }
+
+    /// 验证 touch 不存在的 token 返回 InvalidToken 错误。
+    ///
+    /// 覆盖 `touch` 方法中 `ok_or_else(|| BulwarkError::InvalidToken(...))` 错误路径。
+    #[tokio::test]
+    async fn touch_nonexistent_token_errors() {
+        let (_dao, session) = make_session(3600, 86400);
+        let result = session.touch("nonexistent").await;
+        assert!(
+            matches!(result, Err(BulwarkError::InvalidToken(_))),
+            "touch 不存在的 token 应返回 InvalidToken 错误"
+        );
+    }
+
+    /// 验证 get 在 token 不存在时返回 None（不抛错）。
+    ///
+    /// 覆盖 `get` 方法中 `None => Ok(None)` 分支。
+    #[tokio::test]
+    async fn get_attr_nonexistent_token_returns_none() {
+        let (_dao, session) = make_session(3600, 86400);
+        let result = session.get("nonexistent", "key").await.unwrap();
+        assert!(result.is_none(), "token 不存在时 get 属性应返回 None");
+    }
+
+    /// 验证 create 在已存在 Account-Session 时追加 token 而非覆盖。
+    ///
+    /// 覆盖 `create` 中 `unwrap_or_else` 的 Some 分支（读取已存在的 account）。
+    /// 此场景实际已被 account_session_records_multiple_tokens 覆盖，
+    /// 但此处显式断言已存在的 token 列表被保留。
+    #[tokio::test]
+    async fn create_appends_to_existing_account_session() {
+        let (_dao, session) = make_session(3600, 86400);
+        session.create(1001, "T1").await.unwrap();
+        session.create(1001, "T2").await.unwrap();
+        session.create(1001, "T3").await.unwrap();
+
+        let as_ = session.get_account_session(1001).await.unwrap().unwrap();
+        assert_eq!(as_.tokens.len(), 3, "三次 login 后应有 3 个 token");
+        assert_eq!(as_.tokens[0].token, "T1");
+        assert_eq!(as_.tokens[1].token, "T2");
+        assert_eq!(as_.tokens[2].token, "T3");
+    }
 }
