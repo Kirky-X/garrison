@@ -2,6 +2,20 @@
 //!
 //! [借鉴 Sa-Token] 对应 Sa-Token 的上下文抽象层，
 //! 通过 trait 隔离 Web 框架差异，实现框架无关的鉴权逻辑。
+//!
+//! ## 架构（依据 spec context-abstraction）
+//!
+//! - `BulwarkContext`：上下文入口，提供 request/response/storage 访问
+//! - `BulwarkRequest`：HTTP 请求抽象（path/method/header/cookie/get_token）
+//! - `BulwarkResponse`：HTTP 响应抽象（set_status/set_header/set_cookie）
+//! - `BulwarkStorage`：请求级临时存储（set/get/delete，请求结束清理）
+//!
+//! ## axum 适配器
+//!
+//! `feature = "web-axum"` 时提供 `AxumContext` 实现：
+//! - `AxumRequest` 包装 `&http::Request<axum::body::Body>`
+//! - `AxumResponse` 持有 `HeaderMap + StatusCode`，`to_response()` 转换为 axum Response
+//! - `AxumStorage` 用 `HashMap<String, String>`
 
 use crate::error::BulwarkResult;
 
@@ -25,82 +39,91 @@ pub trait BulwarkContext {
 /// [借鉴 Sa-Token] 对应 `SaTokenRequest`。
 pub trait BulwarkRequest {
     /// 获取请求路径。
-    fn path(&self) -> BulwarkResult<String> {
-        todo!()
-    }
+    fn path(&self) -> BulwarkResult<String>;
 
     /// 获取请求方法（GET / POST 等）。
-    fn method(&self) -> BulwarkResult<String> {
-        todo!()
-    }
+    fn method(&self) -> BulwarkResult<String>;
 
     /// 获取请求头。
     ///
     /// # 参数
     /// - `name`: 头部字段名。
-    fn header(&self, name: &str) -> BulwarkResult<Option<String>> {
-        todo!()
-    }
+    fn header(&self, name: &str) -> BulwarkResult<Option<String>>;
 
     /// 获取 Cookie 值。
     ///
     /// # 参数
     /// - `name`: Cookie 名称。
-    fn cookie(&self, name: &str) -> BulwarkResult<Option<String>> {
-        todo!()
-    }
+    fn cookie(&self, name: &str) -> BulwarkResult<Option<String>>;
+
+    /// 从请求中提取 Token（依据 spec context-abstraction Requirement: BulwarkRequest）。
+    ///
+    /// 提取顺序依据 `BulwarkConfig`：
+    /// - 若 `is_read_header` 为 true，从 `Authorization: Bearer <token>` 或自定义 header 提取
+    /// - 若 `is_read_cookie` 为 true，从 cookie `token_name` 提取
+    /// - 返回第一个找到的 token，若都不存在返回 None
+    ///
+    /// # 参数
+    /// - `config`: 配置，决定从 header 还是 cookie 提取。
+    fn get_token(&self, config: &crate::config::BulwarkConfig) -> BulwarkResult<Option<String>>;
 }
 
 /// 响应抽象 trait，提供 HTTP 响应数据写入。
 ///
 /// [借鉴 Sa-Token] 对应 `SaTokenResponse`。
 pub trait BulwarkResponse {
+    /// 设置响应状态码（依据 spec context-abstraction Requirement: BulwarkResponse）。
+    ///
+    /// # 参数
+    /// - `code`: HTTP 状态码（如 401 未登录、403 无权限）。
+    fn set_status(&mut self, code: u16) -> BulwarkResult<()>;
+
     /// 设置响应头。
     ///
     /// # 参数
     /// - `name`: 头部字段名。
     /// - `value`: 头部字段值。
-    fn set_header(&mut self, name: &str, value: &str) -> BulwarkResult<()> {
-        todo!()
-    }
+    fn set_header(&mut self, name: &str, value: &str) -> BulwarkResult<()>;
 
-    /// 设置响应 Cookie。
+    /// 设置响应 Cookie（HttpOnly，依据 spec context-abstraction）。
     ///
     /// # 参数
     /// - `name`: Cookie 名称。
     /// - `value`: Cookie 值。
-    fn set_cookie(&mut self, name: &str, value: &str) -> BulwarkResult<()> {
-        todo!()
-    }
+    fn set_cookie(&mut self, name: &str, value: &str) -> BulwarkResult<()>;
 }
 
 /// 存储抽象 trait，提供请求级临时数据存储。
 ///
 /// [借鉴 Sa-Token] 对应 `SaTokenStorage`，
-/// 用于在单次请求范围内传递数据。
+/// 用于在单次请求范围内传递数据（如 trace_id、用户上下文）。
 pub trait BulwarkStorage {
     /// 存储键值对。
     ///
     /// # 参数
     /// - `key`: 存储键。
     /// - `value`: 存储值。
-    fn set(&mut self, key: &str, value: &str) -> BulwarkResult<()> {
-        todo!()
-    }
+    fn set(&mut self, key: &str, value: &str) -> BulwarkResult<()>;
 
     /// 获取存储值。
     ///
     /// # 参数
     /// - `key`: 存储键。
-    fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
-        todo!()
-    }
+    fn get(&self, key: &str) -> BulwarkResult<Option<String>>;
 
     /// 删除存储值。
     ///
     /// # 参数
     /// - `key`: 存储键。
-    fn delete(&mut self, key: &str) -> BulwarkResult<()> {
-        todo!()
-    }
+    fn delete(&mut self, key: &str) -> BulwarkResult<()>;
 }
+
+// ============================================================================
+// axum 适配器（feature = "web-axum"）
+// ============================================================================
+
+#[cfg(feature = "web-axum")]
+pub mod axum_adapter;
+
+#[cfg(feature = "web-axum")]
+pub use axum_adapter::{AxumContext, AxumRequest, AxumResponse, AxumStorage};
