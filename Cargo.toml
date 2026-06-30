@@ -45,6 +45,7 @@ totp-rs = { version = "5", optional = true }
 sha2 = { version = "0.11", optional = true }
 hmac = { version = "0.13", optional = true }
 base64 = { version = "0.22", optional = true }
+md5 = { version = "0.7", optional = true }
 # oxcache 0.3: L1 (moka) + L2 (redis) 两级缓存，默认 full features，0.3 支持 per-entry TTL + ttl() 查询
 # 使用本地 path 依赖（crates.io 0.3.0 未暴露 Cache<K,V>::ttl()，本地仓库已暴露）
 oxcache = { path = "/home/kirky/projects/oxcache", optional = true }
@@ -102,7 +103,7 @@ protocol-temp = []
 
 # === 安全模块 ===
 secure-totp = ["totp-rs"]
-secure-sign = ["sha2", "hmac", "base64"]
+secure-sign = ["sha2", "hmac", "base64", "md5"]
 secure-httpbasic = ["base64"]
 secure-httpdigest = ["sha2", "base64"]
 
