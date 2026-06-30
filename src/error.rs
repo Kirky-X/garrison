@@ -57,6 +57,34 @@ pub enum BulwarkError {
 /// Bulwark 框架统一 Result 类型别名。
 pub type BulwarkResult<T> = Result<T, BulwarkError>;
 
+// ============================================================================
+// IntoResponse 实现（cfg feature = "web-axum"）
+// ============================================================================
+
+/// 实现 `IntoResponse` 以便 extractor 的 `Rejection = BulwarkError` 可直接作为 axum 响应返回。
+///
+/// 状态码映射：
+/// - `NotLogin` / `InvalidToken` / `ExpiredToken` → 401 Unauthorized
+/// - `NotPermission` / `NotRole` → 403 Forbidden
+/// - 其他 → 500 Internal Server Error
+#[cfg(feature = "web-axum")]
+impl axum::response::IntoResponse for BulwarkError {
+    fn into_response(self) -> axum::response::Response {
+        use axum::http::StatusCode;
+        use axum::response::IntoResponse as _;
+
+        let status = match &self {
+            BulwarkError::NotLogin(_)
+            | BulwarkError::InvalidToken(_)
+            | BulwarkError::ExpiredToken(_) => StatusCode::UNAUTHORIZED,
+            BulwarkError::NotPermission(_) | BulwarkError::NotRole(_) => StatusCode::FORBIDDEN,
+            _ => StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        let body = axum::Json(serde_json::json!({ "error": self.to_string() }));
+        (status, body).into_response()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

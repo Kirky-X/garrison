@@ -1,7 +1,70 @@
-//! 注解模块，定义鉴权注解枚举。
+//! 注解模块，定义鉴权注解枚举与 axum extractor。
 //!
 //! [借鉴 Sa-Token] 对应 Sa-Token 的注解体系（`@SaCheckLogin` 等），
-//! Rust 中以枚举变体表达，配合路由拦截使用。
+//! Rust 中以枚举变体表达（用于 router 中间件配置），
+//! 同时提供 axum extractor（`CheckLogin` 等）用于 handler 参数提取。
+//!
+//! ## 设计
+//!
+//! - `Annotation` 枚举：保留用于 router 中间件配置
+//! - marker trait（`RoleName` / `PermissionName` / `ModeSpec`）：通过关联常量表达类型级参数
+//! - extractor struct（`CheckLogin` 等）：实现 `FromRequestParts`，仅在 `web-axum` feature 下编译
+
+// ============================================================================
+// Marker traits（用于泛型 extractor 的类型级参数，always compiled）
+// ============================================================================
+
+/// 角色 marker trait，通过关联常量 `NAME` 指定角色名。
+///
+/// 业务方定义类型实现此 trait，用作 `CheckRole<R>` 的类型参数：
+/// ```ignore
+/// struct AdminRole;
+/// impl RoleName for AdminRole { const NAME: &'static str = "admin"; }
+/// async fn handler(CheckRole::<AdminRole>: CheckRole<AdminRole>) { ... }
+/// ```
+pub trait RoleName: Send + Sync {
+    /// 角色名称（如 "admin"）。
+    const NAME: &'static str;
+}
+
+/// 权限 marker trait，通过关联常量 `NAME` 指定权限名。
+///
+/// 业务方定义类型实现此 trait，用作 `CheckPermission<P>` 的类型参数。
+pub trait PermissionName: Send + Sync {
+    /// 权限名称（如 "user:read"）。
+    const NAME: &'static str;
+}
+
+/// 模式 marker trait，通过关联常量 `STRICT` 指定是否严格模式。
+///
+/// - `STRICT=true`：未登录抛 `NotLogin` 异常（严格模式）
+/// - `STRICT=false`：未登录不抛错，允许匿名访问（宽松模式）
+pub trait ModeSpec: Send + Sync {
+    /// 是否严格模式。
+    const STRICT: bool;
+}
+
+// ============================================================================
+// 预定义模式（always compiled）
+// ============================================================================
+
+/// 严格模式：未登录抛 `NotLogin` 异常。
+pub struct Strict;
+
+impl ModeSpec for Strict {
+    const STRICT: bool = true;
+}
+
+/// 宽松模式：未登录不抛错，允许匿名访问。
+pub struct Loose;
+
+impl ModeSpec for Loose {
+    const STRICT: bool = false;
+}
+
+// ============================================================================
+// Annotation 枚举（保留用于 router 中间件配置，always compiled）
+// ============================================================================
 
 /// 鉴权注解枚举，列出 12 个核心注解。
 ///
@@ -49,5 +112,675 @@ impl Annotation {
     /// 获取注解的字符串名称。
     pub fn name(&self) -> &'static str {
         todo!()
+    }
+}
+
+// ============================================================================
+// axum extractor（cfg(feature = "web-axum")）
+// ============================================================================
+
+#[cfg(feature = "web-axum")]
+mod extractors {
+    use super::{ModeSpec, PermissionName, RoleName};
+    use crate::error::BulwarkError;
+    use crate::stp::{with_current_token, BulwarkUtil};
+    use async_trait::async_trait;
+    use axum::extract::FromRequestParts;
+    use axum::http::header;
+    use axum::http::request::Parts;
+    use std::marker::PhantomData;
+
+    // ----------------------------------------------------------------
+    // 辅助函数：从请求 parts 提取 token（按默认配置）
+    // ----------------------------------------------------------------
+
+    /// 从请求 parts 提取 token。
+    ///
+    /// 提取顺序：
+    /// 1. `Authorization: Bearer <token>` header
+    /// 2. `bulwark_token` header
+    /// 3. `Cookie: bulwark_token=<token>` cookie
+    fn extract_token_from_parts(parts: &Parts) -> Option<String> {
+        // 1. Authorization: Bearer <token>
+        if let Some(auth) = parts.headers.get(header::AUTHORIZATION) {
+            if let Ok(auth_str) = auth.to_str() {
+                if let Some(token) = auth_str.strip_prefix("Bearer ") {
+                    return Some(token.to_string());
+                }
+            }
+        }
+        // 2. bulwark_token header
+        if let Some(token) = parts.headers.get("bulwark_token") {
+            if let Ok(token_str) = token.to_str() {
+                return Some(token_str.to_string());
+            }
+        }
+        // 3. Cookie: bulwark_token=<token>
+        if let Some(cookie) = parts.headers.get(header::COOKIE) {
+            if let Ok(cookie_str) = cookie.to_str() {
+                for c in cookie_str.split(';') {
+                    let c = c.trim();
+                    if let Some(rest) = c.strip_prefix("bulwark_token=") {
+                        return Some(rest.to_string());
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    // ----------------------------------------------------------------
+    // 辅助函数：执行登录校验（严格模式，未登录返回 NotLogin）
+    // ----------------------------------------------------------------
+
+    /// 执行登录校验：调用 `BulwarkUtil::check_login()`，未登录返回 `NotLogin`。
+    ///
+    /// - `throw_on_not_login=true`：check_login 返回 Err(Session)，`?` 透传
+    /// - `throw_on_not_login=false`：check_login 返回 Ok(false)，手动返回 Err(NotLogin)
+    async fn enforce_login() -> Result<(), BulwarkError> {
+        let logged_in = BulwarkUtil::check_login().await?;
+        if !logged_in {
+            return Err(BulwarkError::NotLogin("未登录".to_string()));
+        }
+        Ok(())
+    }
+
+    // ----------------------------------------------------------------
+    // CheckLogin
+    // ----------------------------------------------------------------
+
+    /// 登录校验 extractor（对应 `@SaCheckLogin`）。
+    ///
+    /// 从请求中提取 token 并校验登录状态。校验失败返回 `BulwarkError`。
+    pub struct CheckLogin;
+
+    #[async_trait]
+    impl<S: Send + Sync> FromRequestParts<S> for CheckLogin {
+        type Rejection = BulwarkError;
+
+        async fn from_request_parts(
+            parts: &mut Parts,
+            _state: &S,
+        ) -> Result<Self, Self::Rejection> {
+            if let Some(t) = extract_token_from_parts(parts) {
+                with_current_token(t, enforce_login()).await?;
+            } else {
+                enforce_login().await?;
+            }
+            Ok(CheckLogin)
+        }
+    }
+
+    // ----------------------------------------------------------------
+    // CheckRole<R>
+    // ----------------------------------------------------------------
+
+    /// 角色校验 extractor（对应 `@SaCheckRole`）。
+    ///
+    /// 通过泛型参数 `R: RoleName` 指定角色名，校验当前用户是否持有该角色。
+    pub struct CheckRole<R: RoleName>(PhantomData<R>);
+
+    #[async_trait]
+    impl<R: RoleName, S: Send + Sync> FromRequestParts<S> for CheckRole<R> {
+        type Rejection = BulwarkError;
+
+        async fn from_request_parts(
+            parts: &mut Parts,
+            _state: &S,
+        ) -> Result<Self, Self::Rejection> {
+            if let Some(t) = extract_token_from_parts(parts) {
+                with_current_token(t, async {
+                    BulwarkUtil::check_role(R::NAME).await?;
+                    Ok::<(), BulwarkError>(())
+                })
+                .await?;
+            } else {
+                BulwarkUtil::check_role(R::NAME).await?;
+            }
+            Ok(CheckRole(PhantomData))
+        }
+    }
+
+    // ----------------------------------------------------------------
+    // CheckPermission<P>
+    // ----------------------------------------------------------------
+
+    /// 权限校验 extractor（对应 `@SaCheckPermission`）。
+    ///
+    /// 通过泛型参数 `P: PermissionName` 指定权限名，校验当前用户是否持有该权限。
+    pub struct CheckPermission<P: PermissionName>(PhantomData<P>);
+
+    #[async_trait]
+    impl<P: PermissionName, S: Send + Sync> FromRequestParts<S> for CheckPermission<P> {
+        type Rejection = BulwarkError;
+
+        async fn from_request_parts(
+            parts: &mut Parts,
+            _state: &S,
+        ) -> Result<Self, Self::Rejection> {
+            if let Some(t) = extract_token_from_parts(parts) {
+                with_current_token(t, async {
+                    BulwarkUtil::check_permission(P::NAME).await?;
+                    Ok::<(), BulwarkError>(())
+                })
+                .await?;
+            } else {
+                BulwarkUtil::check_permission(P::NAME).await?;
+            }
+            Ok(CheckPermission(PhantomData))
+        }
+    }
+
+    // ----------------------------------------------------------------
+    // Ignore
+    // ----------------------------------------------------------------
+
+    /// 忽略鉴权 extractor（对应 `@SaIgnore`）。
+    ///
+    /// 不执行任何校验，直接返回 `Ok`，用于路由配置标记。
+    pub struct Ignore;
+
+    #[async_trait]
+    impl<S: Send + Sync> FromRequestParts<S> for Ignore {
+        type Rejection = BulwarkError;
+
+        async fn from_request_parts(
+            _parts: &mut Parts,
+            _state: &S,
+        ) -> Result<Self, Self::Rejection> {
+            Ok(Ignore)
+        }
+    }
+
+    // ----------------------------------------------------------------
+    // Mode<M>
+    // ----------------------------------------------------------------
+
+    /// 模式 extractor（对应严格/宽松模式）。
+    ///
+    /// 通过泛型参数 `M: ModeSpec` 指定模式：
+    /// - `Mode<Strict>`：未登录抛 `NotLogin` 异常
+    /// - `Mode<Loose>`：未登录不抛错，允许匿名访问
+    pub struct Mode<M: ModeSpec>(PhantomData<M>);
+
+    /// 执行模式校验：根据 `M::STRICT` 决定行为。
+    async fn enforce_mode<M: ModeSpec>() -> Result<(), BulwarkError> {
+        if M::STRICT {
+            enforce_login().await
+        } else {
+            // 宽松模式：忽略登录状态
+            let _ = BulwarkUtil::check_login().await;
+            Ok(())
+        }
+    }
+
+    #[async_trait]
+    impl<M: ModeSpec, S: Send + Sync> FromRequestParts<S> for Mode<M> {
+        type Rejection = BulwarkError;
+
+        async fn from_request_parts(
+            parts: &mut Parts,
+            _state: &S,
+        ) -> Result<Self, Self::Rejection> {
+            if let Some(t) = extract_token_from_parts(parts) {
+                with_current_token(t, enforce_mode::<M>()).await?;
+            } else {
+                enforce_mode::<M>().await?;
+            }
+            Ok(Mode(PhantomData))
+        }
+    }
+}
+
+#[cfg(feature = "web-axum")]
+pub use extractors::{CheckLogin, CheckPermission, CheckRole, Ignore, Mode};
+
+// ============================================================================
+// 测试（cfg all(test, feature = "web-axum")）
+// ============================================================================
+
+#[cfg(all(test, feature = "web-axum"))]
+mod tests {
+    use super::*;
+    use crate::dao::BulwarkDao;
+    use crate::error::BulwarkError;
+    use crate::manager::BulwarkManager;
+    use crate::stp::{with_current_token, BulwarkInterface, BulwarkUtil};
+    use async_trait::async_trait;
+    use axum::body::Body;
+    use axum::extract::FromRequestParts;
+    use axum::http::Request;
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+    use parking_lot::Mutex;
+    use serial_test::serial;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+
+    // ----------------------------------------------------------------
+    // MockDao（复用 manager 测试的 HashMap + Instant 模拟 TTL）
+    // ----------------------------------------------------------------
+
+    struct MockDao {
+        store: Mutex<HashMap<String, (String, Option<Instant>)>>,
+    }
+
+    impl MockDao {
+        fn new() -> Self {
+            Self {
+                store: Mutex::new(HashMap::new()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl BulwarkDao for MockDao {
+        async fn get(&self, key: &str) -> crate::error::BulwarkResult<Option<String>> {
+            let mut store = self.store.lock();
+            match store.get(key) {
+                Some((value, expire_at)) => {
+                    if let Some(deadline) = expire_at {
+                        if Instant::now() >= *deadline {
+                            store.remove(key);
+                            return Ok(None);
+                        }
+                    }
+                    Ok(Some(value.clone()))
+                },
+                None => Ok(None),
+            }
+        }
+
+        async fn set(
+            &self,
+            key: &str,
+            value: &str,
+            ttl_seconds: u64,
+        ) -> crate::error::BulwarkResult<()> {
+            let expire_at = if ttl_seconds == 0 {
+                None
+            } else {
+                Some(Instant::now() + Duration::from_secs(ttl_seconds))
+            };
+            self.store
+                .lock()
+                .insert(key.to_string(), (value.to_string(), expire_at));
+            Ok(())
+        }
+
+        async fn update(&self, key: &str, value: &str) -> crate::error::BulwarkResult<()> {
+            let mut store = self.store.lock();
+            match store.get_mut(key) {
+                Some((existing, _)) => {
+                    *existing = value.to_string();
+                    Ok(())
+                },
+                None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
+            }
+        }
+
+        async fn expire(&self, key: &str, seconds: u64) -> crate::error::BulwarkResult<()> {
+            let mut store = self.store.lock();
+            match store.get_mut(key) {
+                Some((_, expire_at)) => {
+                    *expire_at = if seconds == 0 {
+                        None
+                    } else {
+                        Some(Instant::now() + Duration::from_secs(seconds))
+                    };
+                    Ok(())
+                },
+                None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
+            }
+        }
+
+        async fn delete(&self, key: &str) -> crate::error::BulwarkResult<()> {
+            self.store.lock().remove(key);
+            Ok(())
+        }
+    }
+
+    // ----------------------------------------------------------------
+    // MockInterface（权限/角色数据回调）
+    // ----------------------------------------------------------------
+
+    struct MockInterface {
+        permissions: HashMap<i64, Vec<String>>,
+        roles: HashMap<i64, Vec<String>>,
+    }
+
+    impl MockInterface {
+        fn new() -> Self {
+            Self {
+                permissions: HashMap::new(),
+                roles: HashMap::new(),
+            }
+        }
+
+        fn with_permission(mut self, login_id: i64, perms: &[&str]) -> Self {
+            self.permissions
+                .insert(login_id, perms.iter().map(|s| s.to_string()).collect());
+            self
+        }
+
+        fn with_role(mut self, login_id: i64, roles: &[&str]) -> Self {
+            self.roles
+                .insert(login_id, roles.iter().map(|s| s.to_string()).collect());
+            self
+        }
+    }
+
+    #[async_trait]
+    impl BulwarkInterface for MockInterface {
+        async fn get_permission_list(
+            &self,
+            login_id: i64,
+        ) -> crate::error::BulwarkResult<Vec<String>> {
+            Ok(self.permissions.get(&login_id).cloned().unwrap_or_default())
+        }
+
+        async fn get_role_list(&self, login_id: i64) -> crate::error::BulwarkResult<Vec<String>> {
+            Ok(self.roles.get(&login_id).cloned().unwrap_or_default())
+        }
+    }
+
+    // ----------------------------------------------------------------
+    // 测试用 marker 类型
+    // ----------------------------------------------------------------
+
+    struct AdminRole;
+    impl RoleName for AdminRole {
+        const NAME: &'static str = "admin";
+    }
+
+    struct UserRead;
+    impl PermissionName for UserRead {
+        const NAME: &'static str = "user:read";
+    }
+
+    // ----------------------------------------------------------------
+    // 辅助函数
+    // ----------------------------------------------------------------
+
+    /// 创建测试配置（throw_on_not_login 可配置）。
+    fn make_config(throw_on_not_login: bool) -> crate::config::BulwarkConfig {
+        let mut config = crate::config::BulwarkConfig::default_config();
+        config.timeout = 3600;
+        config.active_timeout = -1;
+        config.throw_on_not_login = throw_on_not_login;
+        config
+    }
+
+    /// 初始化 BulwarkManager（带权限/角色数据）。
+    fn init_manager(
+        throw_on_not_login: bool,
+        permissions: &[(i64, &[&str])],
+        roles: &[(i64, &[&str])],
+    ) {
+        BulwarkManager::reset_for_test();
+        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let config = Arc::new(make_config(throw_on_not_login));
+        let mut interface = MockInterface::new();
+        for (id, perms) in permissions {
+            interface = interface.with_permission(*id, perms);
+        }
+        for (id, roles) in roles {
+            interface = interface.with_role(*id, roles);
+        }
+        let interface: Arc<dyn BulwarkInterface> = Arc::new(interface);
+        BulwarkManager::init(dao, config, interface).unwrap();
+    }
+
+    /// 构建空的 axum Parts（无 header）。
+    fn make_parts() -> axum::http::request::Parts {
+        let req = Request::builder()
+            .method("GET")
+            .uri("/protected")
+            .body(Body::empty())
+            .unwrap();
+        req.into_parts().0
+    }
+
+    // ----------------------------------------------------------------
+    // CheckLogin 测试
+    // ----------------------------------------------------------------
+
+    /// 已登录时 CheckLogin 返回 Ok。
+    #[tokio::test]
+    #[serial]
+    async fn check_login_logged_in_returns_ok() {
+        init_manager(false, &[], &[]);
+        let token = BulwarkUtil::login(1001).await.unwrap();
+
+        let mut parts = make_parts();
+        let result = with_current_token(token, async {
+            CheckLogin::from_request_parts(&mut parts, &()).await
+        })
+        .await;
+        assert!(result.is_ok(), "已登录应返回 Ok");
+
+        BulwarkManager::reset_for_test();
+    }
+
+    /// 未登录且 throw_on_not_login=false 时 CheckLogin 返回 Err(NotLogin)。
+    #[tokio::test]
+    #[serial]
+    async fn check_login_not_logged_in_returns_not_login() {
+        init_manager(false, &[], &[]);
+        // 不调用 login，直接 extractor（无 token）
+        let mut parts = make_parts();
+        let result = CheckLogin::from_request_parts(&mut parts, &()).await;
+        assert!(
+            matches!(result, Err(BulwarkError::NotLogin(_))),
+            "未登录且 throw_on_not_login=false 应返回 Err(NotLogin)"
+        );
+
+        BulwarkManager::reset_for_test();
+    }
+
+    /// 未登录且 throw_on_not_login=true 时 CheckLogin 返回 Err(Session)。
+    #[tokio::test]
+    #[serial]
+    async fn check_login_not_logged_in_returns_session() {
+        init_manager(true, &[], &[]);
+        let mut parts = make_parts();
+        let result = CheckLogin::from_request_parts(&mut parts, &()).await;
+        assert!(
+            matches!(result, Err(BulwarkError::Session(_))),
+            "未登录且 throw_on_not_login=true 应返回 Err(Session)"
+        );
+
+        BulwarkManager::reset_for_test();
+    }
+
+    // ----------------------------------------------------------------
+    // CheckRole<R> 测试
+    // ----------------------------------------------------------------
+
+    /// 持有角色时 CheckRole<AdminRole> 返回 Ok。
+    #[tokio::test]
+    #[serial]
+    async fn check_role_held_returns_ok() {
+        init_manager(true, &[], &[(1001, &["admin"])]);
+        let token = BulwarkUtil::login(1001).await.unwrap();
+
+        let mut parts = make_parts();
+        let result = with_current_token(token, async {
+            CheckRole::<AdminRole>::from_request_parts(&mut parts, &()).await
+        })
+        .await;
+        assert!(result.is_ok(), "持有角色应返回 Ok");
+
+        BulwarkManager::reset_for_test();
+    }
+
+    /// 未持有角色时 CheckRole<AdminRole> 返回 Err(NotRole)。
+    #[tokio::test]
+    #[serial]
+    async fn check_role_not_held_returns_not_role() {
+        init_manager(true, &[], &[]); // 无角色数据
+        let token = BulwarkUtil::login(1001).await.unwrap();
+
+        let mut parts = make_parts();
+        let result = with_current_token(token, async {
+            CheckRole::<AdminRole>::from_request_parts(&mut parts, &()).await
+        })
+        .await;
+        assert!(
+            matches!(result, Err(BulwarkError::NotRole(_))),
+            "未持有角色应返回 Err(NotRole)"
+        );
+
+        BulwarkManager::reset_for_test();
+    }
+
+    // ----------------------------------------------------------------
+    // CheckPermission<P> 测试
+    // ----------------------------------------------------------------
+
+    /// 持有权限时 CheckPermission<UserRead> 返回 Ok。
+    #[tokio::test]
+    #[serial]
+    async fn check_permission_held_returns_ok() {
+        init_manager(true, &[(1001, &["user:read"])], &[]);
+        let token = BulwarkUtil::login(1001).await.unwrap();
+
+        let mut parts = make_parts();
+        let result = with_current_token(token, async {
+            CheckPermission::<UserRead>::from_request_parts(&mut parts, &()).await
+        })
+        .await;
+        assert!(result.is_ok(), "持有权限应返回 Ok");
+
+        BulwarkManager::reset_for_test();
+    }
+
+    /// 未持有权限时 CheckPermission<UserRead> 返回 Err(NotPermission)。
+    #[tokio::test]
+    #[serial]
+    async fn check_permission_not_held_returns_not_permission() {
+        init_manager(true, &[], &[]); // 无权限数据
+        let token = BulwarkUtil::login(1001).await.unwrap();
+
+        let mut parts = make_parts();
+        let result = with_current_token(token, async {
+            CheckPermission::<UserRead>::from_request_parts(&mut parts, &()).await
+        })
+        .await;
+        assert!(
+            matches!(result, Err(BulwarkError::NotPermission(_))),
+            "未持有权限应返回 Err(NotPermission)"
+        );
+
+        BulwarkManager::reset_for_test();
+    }
+
+    // ----------------------------------------------------------------
+    // Ignore 测试
+    // ----------------------------------------------------------------
+
+    /// Ignore 总是返回 Ok（不校验）。
+    #[tokio::test]
+    #[serial]
+    async fn ignore_always_returns_ok() {
+        init_manager(false, &[], &[]);
+        // 未登录状态下 Ignore 仍返回 Ok
+        let mut parts = make_parts();
+        let result = Ignore::from_request_parts(&mut parts, &()).await;
+        assert!(result.is_ok(), "Ignore 应总是返回 Ok");
+
+        BulwarkManager::reset_for_test();
+    }
+
+    // ----------------------------------------------------------------
+    // Mode<M> 测试
+    // ----------------------------------------------------------------
+
+    /// Mode<Strict> 未登录时抛 NotLogin。
+    #[tokio::test]
+    #[serial]
+    async fn mode_strict_not_logged_in_throws_not_login() {
+        init_manager(false, &[], &[]); // throw_on_not_login=false
+        let mut parts = make_parts();
+        let result = Mode::<Strict>::from_request_parts(&mut parts, &()).await;
+        assert!(
+            matches!(result, Err(BulwarkError::NotLogin(_))),
+            "Mode<Strict> 未登录应抛 Err(NotLogin)"
+        );
+
+        BulwarkManager::reset_for_test();
+    }
+
+    /// Mode<Loose> 未登录时返回 Ok（宽松模式）。
+    #[tokio::test]
+    #[serial]
+    async fn mode_loose_not_logged_in_returns_ok() {
+        init_manager(false, &[], &[]);
+        let mut parts = make_parts();
+        let result = Mode::<Loose>::from_request_parts(&mut parts, &()).await;
+        assert!(result.is_ok(), "Mode<Loose> 未登录应返回 Ok");
+
+        BulwarkManager::reset_for_test();
+    }
+
+    // ----------------------------------------------------------------
+    // IntoResponse for BulwarkError 测试
+    // ----------------------------------------------------------------
+
+    /// NotLogin 映射为 401。
+    #[test]
+    fn not_login_returns_401() {
+        let err = BulwarkError::NotLogin("test".to_string());
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    /// InvalidToken 映射为 401。
+    #[test]
+    fn invalid_token_returns_401() {
+        let err = BulwarkError::InvalidToken("test".to_string());
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    /// ExpiredToken 映射为 401。
+    #[test]
+    fn expired_token_returns_401() {
+        let err = BulwarkError::ExpiredToken("test".to_string());
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    /// NotPermission 映射为 403。
+    #[test]
+    fn not_permission_returns_403() {
+        let err = BulwarkError::NotPermission("test".to_string());
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    /// NotRole 映射为 403。
+    #[test]
+    fn not_role_returns_403() {
+        let err = BulwarkError::NotRole("test".to_string());
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    /// 其他错误映射为 500。
+    #[test]
+    fn internal_error_returns_500() {
+        let err = BulwarkError::Internal("test".to_string());
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    /// Session 错误映射为 500。
+    #[test]
+    fn session_error_returns_500() {
+        let err = BulwarkError::Session("test".to_string());
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 }
