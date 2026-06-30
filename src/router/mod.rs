@@ -14,6 +14,7 @@ use crate::annotation::Annotation;
 use crate::error::{BulwarkError, BulwarkResult};
 use crate::stp::BulwarkUtil;
 use async_trait::async_trait;
+#[cfg(feature = "web-axum")]
 use std::sync::Arc;
 
 // ============================================================================

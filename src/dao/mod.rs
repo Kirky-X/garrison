@@ -76,11 +76,13 @@ mod oxcache_impl {
     ///
     /// - L1（moka）+ L2（redis）由 oxcache 0.3 自动管理（0.3 起 moka 后端支持 per-entry TTL）。
     /// - Bulwark 自身不实现任何缓存逻辑，全部委托给 oxcache。
+    /// - 启用 `sync_mode(true)` 后使用 `_sync` API（依据 codebase-hardening Task 2），
+    ///   要求调用方在 multi_thread tokio runtime 中执行。
     ///
     /// # TTL 保留
-    /// - `update` 通过 `cache.ttl()` 读取剩余 TTL，用 `set_with_ttl` 保留原 TTL（不重置过期时间）
-    /// - `expire` 通过 `cache.expire()` 原子更新 TTL（不触碰 value）
-    /// - 依赖本地 oxcache 仓库（crates.io 0.3.0 未暴露 `Cache<K,V>::ttl()`，本地仓库已暴露）
+    /// - `update` 通过 `cache.ttl_sync()` 读取剩余 TTL，用 `set_with_ttl_sync` 保留原 TTL（不重置过期时间）
+    /// - `expire` 通过 `cache.expire_sync()` 原子更新 TTL（不触碰 value）
+    /// - 依赖本地 oxcache 仓库（crates.io 0.3.0 未暴露 `Cache<K,V>::ttl_sync()`，本地仓库已暴露）
     pub struct BulwarkDaoOxcache {
         cache: Cache<String, String>,
     }
@@ -88,15 +90,16 @@ mod oxcache_impl {
     impl BulwarkDaoOxcache {
         /// 创建默认的 oxcache DAO 实例。
         ///
-        /// 使用 oxcache 默认配置（minimal/core/full features 取决于 Cargo.toml）。
+        /// 启用 `sync_mode(true)` 以支持 `_sync` API（依据 codebase-hardening Task 2.1）。
         ///
         /// # 返回
-        /// 已初始化的 `BulwarkDaoOxcache` 实例（内部 `oxcache::Cache` 已就绪）。
+        /// 已初始化的 `BulwarkDaoOxcache` 实例（内部 `oxcache::Cache` 已就绪，sync_mode 启用）。
         ///
         /// # 错误
         /// - `BulwarkError::Dao`：oxcache 初始化失败（消息含 "oxcache 初始化失败"）。
         pub async fn new() -> BulwarkResult<Self> {
             let cache = Cache::builder()
+                .sync_mode(true)
                 .build()
                 .await
                 .map_err(|e| BulwarkError::Dao(format!("oxcache 初始化失败: {}", e)))?;
@@ -108,9 +111,8 @@ mod oxcache_impl {
     impl BulwarkDao for BulwarkDaoOxcache {
         async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
             self.cache
-                .get(&key.to_string())
-                .await
-                .map_err(|e| BulwarkError::Dao(format!("oxcache get 失败: {}", e)))
+                .get_sync(&key.to_string())
+                .map_err(|e| BulwarkError::Dao(format!("oxcache get_sync 失败: {}", e)))
         }
 
         async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> BulwarkResult<()> {
@@ -120,56 +122,49 @@ mod oxcache_impl {
                 Some(Duration::from_secs(ttl_seconds))
             };
             self.cache
-                .set_with_ttl(&key.to_string(), &value.to_string(), ttl)
-                .await
-                .map_err(|e| BulwarkError::Dao(format!("oxcache set 失败: {}", e)))
+                .set_with_ttl_sync(&key.to_string(), &value.to_string(), ttl)
+                .map_err(|e| BulwarkError::Dao(format!("oxcache set_with_ttl_sync 失败: {}", e)))
         }
 
         async fn update(&self, key: &str, value: &str) -> BulwarkResult<()> {
-            // 通过 cache.ttl() 读取剩余 TTL，用 set_with_ttl 保留原 TTL（不重置过期时间）。
-            // ttl() 返回 None 表示永久驻留（set_with_ttl 接受 None 表示无 TTL）。
+            // 通过 cache.ttl_sync() 读取剩余 TTL，用 set_with_ttl_sync 保留原 TTL（不重置过期时间）。
+            // ttl_sync() 返回 None 表示永久驻留（set_with_ttl_sync 接受 None 表示无 TTL）。
             // 但 None 也可能表示键不存在，需要先检查键存在性。
             if !self
                 .cache
-                .exists(&key.to_string())
-                .await
-                .map_err(|e| BulwarkError::Dao(format!("oxcache exists 失败: {}", e)))?
+                .exists_sync(&key.to_string())
+                .map_err(|e| BulwarkError::Dao(format!("oxcache exists_sync 失败: {}", e)))?
             {
                 return Err(BulwarkError::Dao(format!("键不存在: {}", key)));
             }
             let remaining_ttl = self
                 .cache
-                .ttl(&key.to_string())
-                .await
-                .map_err(|e| BulwarkError::Dao(format!("oxcache ttl 失败: {}", e)))?;
+                .ttl_sync(&key.to_string())
+                .map_err(|e| BulwarkError::Dao(format!("oxcache ttl_sync 失败: {}", e)))?;
             self.cache
-                .set_with_ttl(&key.to_string(), &value.to_string(), remaining_ttl)
-                .await
-                .map_err(|e| BulwarkError::Dao(format!("oxcache update 失败: {}", e)))
+                .set_with_ttl_sync(&key.to_string(), &value.to_string(), remaining_ttl)
+                .map_err(|e| BulwarkError::Dao(format!("oxcache update (set_with_ttl_sync) 失败: {}", e)))
         }
 
         async fn expire(&self, key: &str, seconds: u64) -> BulwarkResult<()> {
-            // oxcache 0.3 的 Cache<K,V> 暴露了 expire(key, ttl) 方法（原子更新 TTL，不触碰 value）。
-            // expire 返回 bool：true=更新成功，false=键不存在。
-            // 注意：seconds=0 表示永久驻留，需要用 get + set_with_ttl(None) 实现
-            // （cache.expire(key, Duration::from_secs(0)) 会让键立即过期，不符合 spec 的 0=永久语义）。
+            // oxcache 0.3 的 Cache<K,V> 暴露了 expire_sync(key, ttl) 方法（原子更新 TTL，不触碰 value）。
+            // expire_sync 返回 bool：true=更新成功，false=键不存在。
+            // 注意：seconds=0 表示永久驻留，需要用 get_sync + set_with_ttl_sync(None) 实现
+            // （cache.expire_sync(key, Duration::from_secs(0)) 会让键立即过期，不符合 spec 的 0=永久语义）。
             if seconds == 0 {
                 let value = self
                     .cache
-                    .get(&key.to_string())
-                    .await
-                    .map_err(|e| BulwarkError::Dao(format!("oxcache get 失败: {}", e)))?
+                    .get_sync(&key.to_string())
+                    .map_err(|e| BulwarkError::Dao(format!("oxcache get_sync 失败: {}", e)))?
                     .ok_or_else(|| BulwarkError::Dao(format!("键不存在: {}", key)))?;
                 self.cache
-                    .set_with_ttl(&key.to_string(), &value, None)
-                    .await
-                    .map_err(|e| BulwarkError::Dao(format!("oxcache expire 失败: {}", e)))
+                    .set_with_ttl_sync(&key.to_string(), &value, None)
+                    .map_err(|e| BulwarkError::Dao(format!("oxcache expire (set_with_ttl_sync) 失败: {}", e)))
             } else {
                 let updated = self
                     .cache
-                    .expire(&key.to_string(), Duration::from_secs(seconds))
-                    .await
-                    .map_err(|e| BulwarkError::Dao(format!("oxcache expire 失败: {}", e)))?;
+                    .expire_sync(&key.to_string(), Duration::from_secs(seconds))
+                    .map_err(|e| BulwarkError::Dao(format!("oxcache expire_sync 失败: {}", e)))?;
                 if !updated {
                     return Err(BulwarkError::Dao(format!("键不存在: {}", key)));
                 }
@@ -179,9 +174,8 @@ mod oxcache_impl {
 
         async fn delete(&self, key: &str) -> BulwarkResult<()> {
             self.cache
-                .delete(&key.to_string())
-                .await
-                .map_err(|e| BulwarkError::Dao(format!("oxcache delete 失败: {}", e)))
+                .delete_sync(&key.to_string())
+                .map_err(|e| BulwarkError::Dao(format!("oxcache delete_sync 失败: {}", e)))
         }
     }
 }
@@ -189,24 +183,8 @@ mod oxcache_impl {
 #[cfg(any(feature = "cache-memory", feature = "cache-redis"))]
 pub use oxcache_impl::BulwarkDaoOxcache;
 
-/// 初始化 oxcache DAO 实例。
-///
-/// 对应 tasks.md 2.4：封装 oxcache 初始化逻辑。
-///
-/// 返回的 `BulwarkDaoOxcache` 已实现 `BulwarkDao` trait，可直接用于业务代码。
-///
-/// # 返回
-/// 已初始化的 `BulwarkDaoOxcache` 实例。
-///
-/// # 错误
-/// 透传 `BulwarkDaoOxcache::new()` 的错误（`BulwarkError::Dao`）。
-#[cfg(any(feature = "cache-memory", feature = "cache-redis"))]
-pub async fn init_oxcache_dao() -> BulwarkResult<BulwarkDaoOxcache> {
-    BulwarkDaoOxcache::new().await
-}
-
 // ============================================================================
-// dbnexus 实现（feature = "db-sqlite"）
+// dbnexus 实现（feature = "db-sqlite")
 // ============================================================================
 
 #[cfg(feature = "db-sqlite")]
@@ -439,7 +417,7 @@ mod tests {
         use super::*;
 
         /// Scenario: set 与 get 配对。
-        #[tokio::test]
+        #[tokio::test(flavor = "multi_thread")]
         async fn oxcache_set_get_pair() {
             let dao = BulwarkDaoOxcache::new().await.unwrap();
             dao.set("oc_key1", "value1", 3600).await.unwrap();
@@ -448,7 +426,7 @@ mod tests {
         }
 
         /// Scenario: 过期自动删除。
-        #[tokio::test]
+        #[tokio::test(flavor = "multi_thread")]
         async fn oxcache_expire_auto_delete() {
             let dao = BulwarkDaoOxcache::new().await.unwrap();
             dao.set("oc_key2", "value1", 1).await.unwrap();
@@ -458,7 +436,7 @@ mod tests {
         }
 
         /// Scenario: delete 删除键。
-        #[tokio::test]
+        #[tokio::test(flavor = "multi_thread")]
         async fn oxcache_delete_removes_key() {
             let dao = BulwarkDaoOxcache::new().await.unwrap();
             dao.set("oc_key3", "value1", 3600).await.unwrap();
@@ -468,7 +446,7 @@ mod tests {
         }
 
         /// 验证 oxcache update 更新值（仅验证值，TTL 保留见 ignore 测试）。
-        #[tokio::test]
+        #[tokio::test(flavor = "multi_thread")]
         async fn oxcache_update_changes_value() {
             let dao = BulwarkDaoOxcache::new().await.unwrap();
             dao.set("oc_key4", "value1", 3600).await.unwrap();
@@ -478,7 +456,7 @@ mod tests {
         }
 
         /// 验证 update 不存在的键返回错误。
-        #[tokio::test]
+        #[tokio::test(flavor = "multi_thread")]
         async fn oxcache_update_missing_key_errors() {
             let dao = BulwarkDaoOxcache::new().await.unwrap();
             let result = dao.update("oc_missing", "value").await;
@@ -489,7 +467,7 @@ mod tests {
         }
 
         /// 验证 expire 重置过期时间。
-        #[tokio::test]
+        #[tokio::test(flavor = "multi_thread")]
         async fn oxcache_expire_resets_ttl() {
             let dao = BulwarkDaoOxcache::new().await.unwrap();
             dao.set("oc_key5", "value1", 1).await.unwrap();
@@ -499,10 +477,10 @@ mod tests {
             assert_eq!(got, Some("value1".to_string()));
         }
 
-        /// 验证 init_oxcache_dao 辅助函数。
-        #[tokio::test]
-        async fn init_oxcache_dao_works() {
-            let dao = init_oxcache_dao().await.unwrap();
+        /// 验证 BulwarkDaoOxcache::new() 直接构造（init_oxcache_dao 包装已移除）。
+        #[tokio::test(flavor = "multi_thread")]
+        async fn oxcache_new_direct_construction() {
+            let dao = BulwarkDaoOxcache::new().await.unwrap();
             dao.set("oc_init", "init_value", 60).await.unwrap();
             let got = dao.get("oc_init").await.unwrap();
             assert_eq!(got, Some("init_value".to_string()));
@@ -513,7 +491,7 @@ mod tests {
         /// oxcache 0.3 的 Cache<K,V> 暴露了 ttl() 方法，update 用 ttl() + set_with_ttl 保留原 TTL。
         ///
         /// 参见：dao-oxcache-basic spec Requirement "BulwarkDao 抽象 trait" Scenario "update 更新值（保留 TTL）"
-        #[tokio::test]
+        #[tokio::test(flavor = "multi_thread")]
         async fn oxcache_update_preserves_ttl() {
             let dao = BulwarkDaoOxcache::new().await.unwrap();
             dao.set("oc_ttl", "value1", 2).await.unwrap();
@@ -531,7 +509,7 @@ mod tests {
         ///
         /// 覆盖 BulwarkDaoOxcache::expire 的 `seconds == 0` 分支：
         /// 通过 get + set_with_ttl(None) 实现 0=永久语义。
-        #[tokio::test]
+        #[tokio::test(flavor = "multi_thread")]
         async fn oxcache_expire_zero_seconds_makes_permanent() {
             let dao = BulwarkDaoOxcache::new().await.unwrap();
             // 设置短 TTL，键会在 1 秒后过期
@@ -553,7 +531,7 @@ mod tests {
         ///
         /// 覆盖 BulwarkDaoOxcache::expire 的 `seconds == 0` 分支中
         /// `ok_or_else(|| BulwarkError::Dao(...))` 错误路径。
-        #[tokio::test]
+        #[tokio::test(flavor = "multi_thread")]
         async fn oxcache_expire_zero_seconds_missing_key_errors() {
             let dao = BulwarkDaoOxcache::new().await.unwrap();
             let result = dao.expire("oc_missing_perm", 0).await;
@@ -567,7 +545,7 @@ mod tests {
         ///
         /// 覆盖 BulwarkDaoOxcache::expire 的 `else` 分支中
         /// `if !updated { return Err(...) }` 错误路径。
-        #[tokio::test]
+        #[tokio::test(flavor = "multi_thread")]
         async fn oxcache_expire_missing_key_errors() {
             let dao = BulwarkDaoOxcache::new().await.unwrap();
             let result = dao.expire("oc_missing_expire", 3600).await;
@@ -575,6 +553,25 @@ mod tests {
                 matches!(result, Err(BulwarkError::Dao(ref msg)) if msg.contains("键不存在")),
                 "expire 不存在的键应返回含 '键不存在' 的 Dao 错误，实际: {:?}",
                 result
+            );
+        }
+
+        /// 验证 set(ttl=0) 写入永久驻留的键（依据 codebase-hardening Task 3.7）。
+        ///
+        /// 覆盖 BulwarkDaoOxcache::set 的 `ttl_seconds == 0` 分支（ttl=None）：
+        /// 键应永久驻留，不会因短时间等待而过期。
+        #[tokio::test(flavor = "multi_thread")]
+        async fn oxcache_set_with_zero_ttl() {
+            let dao = BulwarkDaoOxcache::new().await.unwrap();
+            // set(ttl=0) 表示永久驻留
+            dao.set("oc_zero_ttl", "permanent_value", 0).await.unwrap();
+            // 等待 2 秒，验证键未过期
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            let got = dao.get("oc_zero_ttl").await.unwrap();
+            assert_eq!(
+                got,
+                Some("permanent_value".to_string()),
+                "set(ttl=0) 应写入永久驻留的键，2 秒后仍应存在"
             );
         }
     }

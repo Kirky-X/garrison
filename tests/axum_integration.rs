@@ -354,18 +354,23 @@ async fn unauthorized_response_body_contains_error_json() {
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let body_str = String::from_utf8(body.to_vec()).unwrap();
     assert!(
-        body_str.contains("\"error\""),
-        "响应体应是 JSON 且包含 error 字段: {}",
+        body_str.contains("\"error_code\":\"NOT_LOGIN\""),
+        "响应体应是 JSON 且包含 error_code 字段: {}",
         body_str
     );
     assert!(
-        body_str.contains("未登录"),
-        "响应体应包含 '未登录' 消息: {}",
+        body_str.contains("\"message\":\"未登录\""),
+        "响应体应包含 '未登录' 通用消息: {}",
+        body_str
+    );
+    assert!(
+        !body_str.contains("BulwarkManager"),
+        "响应体不应泄漏内部细节: {}",
         body_str
     );
 }
 
-/// 403 响应体包含 JSON error 字段。
+/// 403 响应体包含结构化 JSON 错误。
 #[tokio::test]
 #[serial]
 async fn forbidden_response_body_contains_error_json() {
@@ -382,8 +387,13 @@ async fn forbidden_response_body_contains_error_json() {
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let body_str = String::from_utf8(body.to_vec()).unwrap();
     assert!(
-        body_str.contains("\"error\""),
-        "响应体应是 JSON 且包含 error 字段: {}",
+        body_str.contains("\"error_code\":\"NOT_PERMISSION\""),
+        "响应体应是 JSON 且包含 error_code 字段: {}",
+        body_str
+    );
+    assert!(
+        body_str.contains("\"message\":\"无权限\""),
+        "响应体应包含 '无权限' 通用消息: {}",
         body_str
     );
 }

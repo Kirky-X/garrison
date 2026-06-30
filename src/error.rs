@@ -67,6 +67,11 @@ pub type BulwarkResult<T> = Result<T, BulwarkError>;
 /// - `NotLogin` / `InvalidToken` / `ExpiredToken` → 401 Unauthorized
 /// - `NotPermission` / `NotRole` → 403 Forbidden
 /// - 其他 → 500 Internal Server Error
+///
+/// # 安全性
+///
+/// 响应体仅暴露结构化错误码 + 通用消息（不泄漏内部错误细节）；
+/// 完整错误通过 `tracing::error!` 记录到日志（依据 codebase-hardening Task 0.4）。
 #[cfg(feature = "web-axum")]
 impl axum::response::IntoResponse for BulwarkError {
     fn into_response(self) -> axum::response::Response {
@@ -74,14 +79,52 @@ impl axum::response::IntoResponse for BulwarkError {
         #[allow(unused_imports)]
         use axum::response::IntoResponse as _;
 
-        let status = match &self {
-            BulwarkError::NotLogin(_)
-            | BulwarkError::InvalidToken(_)
-            | BulwarkError::ExpiredToken(_) => StatusCode::UNAUTHORIZED,
-            BulwarkError::NotPermission(_) | BulwarkError::NotRole(_) => StatusCode::FORBIDDEN,
-            _ => StatusCode::INTERNAL_SERVER_ERROR,
+        // 完整错误记录到日志（不返回给客户端）
+        tracing::error!(error = ?self, "bulwark rejection");
+
+        let (status, error_code, message) = match &self {
+            BulwarkError::NotLogin(_) => (StatusCode::UNAUTHORIZED, "NOT_LOGIN", "未登录"),
+            BulwarkError::InvalidToken(_) => (StatusCode::UNAUTHORIZED, "INVALID_TOKEN", "Token 无效"),
+            BulwarkError::ExpiredToken(_) => (StatusCode::UNAUTHORIZED, "EXPIRED_TOKEN", "Token 已过期"),
+            BulwarkError::NotPermission(_) => {
+                (StatusCode::FORBIDDEN, "NOT_PERMISSION", "无权限")
+            }
+            BulwarkError::NotRole(_) => (StatusCode::FORBIDDEN, "NOT_ROLE", "无角色"),
+            BulwarkError::Dao(_) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DAO_ERROR",
+                "数据访问错误",
+            ),
+            BulwarkError::Config(_) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "CONFIG_ERROR",
+                "配置错误",
+            ),
+            BulwarkError::Internal(_) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL_ERROR",
+                "内部错误",
+            ),
+            BulwarkError::Session(_) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "SESSION_ERROR",
+                "会话错误",
+            ),
+            BulwarkError::Annotation(_) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "ANNOTATION_ERROR",
+                "注解错误",
+            ),
+            BulwarkError::Context(_) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "CONTEXT_ERROR",
+                "上下文错误",
+            ),
         };
-        let body = axum::Json(serde_json::json!({ "error": self.to_string() }));
+        let body = axum::Json(serde_json::json!({
+            "error_code": error_code,
+            "message": message,
+        }));
         (status, body).into_response()
     }
 }
@@ -273,5 +316,64 @@ mod tests {
         let err = BulwarkError::Context("missing".to_string());
         let response = err.into_response();
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    // ========================================================================
+    // 鉴权错误状态码映射测试（依据 codebase-hardening Task 3.1-3.5）
+    // ========================================================================
+
+    /// 验证 NotLogin 错误映射为 401 Unauthorized（依据 codebase-hardening Task 3.1）。
+    #[cfg(feature = "web-axum")]
+    #[test]
+    fn not_login_error_returns_401() {
+        use axum::http::StatusCode;
+        use axum::response::IntoResponse;
+        let err = BulwarkError::NotLogin("请先登录".to_string());
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    /// 验证 NotPermission 错误映射为 403 Forbidden（依据 codebase-hardening Task 3.2）。
+    #[cfg(feature = "web-axum")]
+    #[test]
+    fn not_permission_error_returns_403() {
+        use axum::http::StatusCode;
+        use axum::response::IntoResponse;
+        let err = BulwarkError::NotPermission("无权限".to_string());
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    /// 验证 InvalidToken 错误映射为 401 Unauthorized（依据 codebase-hardening Task 3.3）。
+    #[cfg(feature = "web-axum")]
+    #[test]
+    fn invalid_token_returns_401() {
+        use axum::http::StatusCode;
+        use axum::response::IntoResponse;
+        let err = BulwarkError::InvalidToken("格式错误".to_string());
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    /// 验证 ExpiredToken 错误映射为 401 Unauthorized（依据 codebase-hardening Task 3.4）。
+    #[cfg(feature = "web-axum")]
+    #[test]
+    fn expired_token_returns_401() {
+        use axum::http::StatusCode;
+        use axum::response::IntoResponse;
+        let err = BulwarkError::ExpiredToken("已过期".to_string());
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    /// 验证 NotRole 错误映射为 403 Forbidden（依据 codebase-hardening Task 3.5）。
+    #[cfg(feature = "web-axum")]
+    #[test]
+    fn not_role_returns_403() {
+        use axum::http::StatusCode;
+        use axum::response::IntoResponse;
+        let err = BulwarkError::NotRole("无角色".to_string());
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
 }

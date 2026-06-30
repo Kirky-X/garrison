@@ -17,6 +17,24 @@ use axum::http::{HeaderMap, HeaderName, HeaderValue, Request, StatusCode};
 use std::collections::HashMap;
 
 // ============================================================================
+// 辅助函数：大小写不敏感地剥离 `Bearer ` 前缀（依据 RFC 7235）
+// ============================================================================
+
+/// 大小写不敏感地剥离 `Bearer ` 前缀。
+///
+/// 支持 `Bearer xxx`、`bearer xxx`、`BEARER xxx` 等任意大小写组合。
+fn strip_bearer_prefix(auth_str: &str) -> Option<&str> {
+    let prefix = "bearer ";
+    if auth_str.len() >= prefix.len()
+        && auth_str[..prefix.len()].eq_ignore_ascii_case(prefix)
+    {
+        Some(&auth_str[prefix.len()..])
+    } else {
+        None
+    }
+}
+
+// ============================================================================
 // AxumRequest：包装 &http::Request<Body>
 // ============================================================================
 
@@ -85,9 +103,9 @@ impl<'a> BulwarkRequest for AxumRequest<'a> {
     fn get_token(&self, config: &BulwarkConfig) -> BulwarkResult<Option<String>> {
         // 1. 从 header 提取（Authorization: Bearer <token> 或自定义 token_name header）
         if config.is_read_header {
-            // 先尝试 Authorization: Bearer <token>
+            // 先尝试 Authorization: Bearer <token>（RFC 7235 大小写不敏感）
             if let Some(auth) = self.header("Authorization")? {
-                if let Some(token) = auth.strip_prefix("Bearer ") {
+                if let Some(token) = strip_bearer_prefix(&auth) {
                     return Ok(Some(token.to_string()));
                 }
             }
@@ -164,8 +182,26 @@ impl BulwarkResponse for AxumResponse {
     }
 
     fn set_cookie(&mut self, name: &str, value: &str) -> BulwarkResult<()> {
-        // Set-Cookie: name=value; HttpOnly; Path=/
-        let cookie_value = format!("{}={}; HttpOnly; Path=/", name, value);
+        // 安全默认：HttpOnly; Secure; SameSite=Lax; Path=/
+        let cookie_value = format!(
+            "{}={}; HttpOnly; Secure; SameSite=Lax; Path=/",
+            name, value
+        );
+        self.set_header("Set-Cookie", &cookie_value)
+    }
+
+    fn set_cookie_with_config(
+        &mut self,
+        name: &str,
+        value: &str,
+        config: &crate::config::BulwarkConfig,
+    ) -> BulwarkResult<()> {
+        // 依据 config.cookie_secure / cookie_same_site 构建 Set-Cookie 头部
+        let secure_flag = if config.cookie_secure { "Secure; " } else { "" };
+        let cookie_value = format!(
+            "{}={}; HttpOnly; {}SameSite={}; Path=/",
+            name, value, secure_flag, config.cookie_same_site,
+        );
         self.set_header("Set-Cookie", &cookie_value)
     }
 }
@@ -211,15 +247,19 @@ impl BulwarkStorage for AxumStorage {
 }
 
 // ============================================================================
-// AxumContext：组合 Request + Response + Storage
+// AxumContext：组合 Request + Response
 // ============================================================================
 
-/// axum 上下文适配器，组合 Request 引用 + Response + Storage。
+/// axum 上下文适配器，组合 Request 引用 + Response。
+///
+/// # 设计
+///
+/// - 仅持有 `&Request<Body>` 引用 + `AxumResponse`
+/// - 通过 `into_response()` 消费 context 生成 axum Response
+/// - 不再提供 `response()` / `storage()` trait 方法（返回新实例违反 trait 契约）
 pub struct AxumContext<'a> {
     request: &'a Request<Body>,
     response: AxumResponse,
-    #[allow(dead_code)]
-    storage: AxumStorage,
 }
 
 impl<'a> AxumContext<'a> {
@@ -229,12 +269,11 @@ impl<'a> AxumContext<'a> {
     /// - `request`: axum `Request<Body>` 引用，生命周期绑定到返回的 `AxumContext`。
     ///
     /// # 返回
-    /// 绑定该请求的 `AxumContext` 实例（内部已初始化空的 `AxumResponse` 与 `AxumStorage`）。
+    /// 绑定该请求的 `AxumContext` 实例（内部已初始化空的 `AxumResponse`）。
     pub fn new(request: &'a Request<Body>) -> Self {
         Self {
             request,
             response: AxumResponse::new(),
-            storage: AxumStorage::new(),
         }
     }
 
@@ -244,6 +283,16 @@ impl<'a> AxumContext<'a> {
     /// 底层 `&Request<Body>` 引用，用于直接访问 axum 原生请求字段。
     pub fn raw_request(&self) -> &Request<Body> {
         self.request
+    }
+
+    /// 获取底层响应的不可变引用（用于读取已设置的 headers / status）。
+    pub fn raw_response(&self) -> &AxumResponse {
+        &self.response
+    }
+
+    /// 获取底层响应的可变引用（用于设置 status / headers / cookies）。
+    pub fn raw_response_mut(&mut self) -> &mut AxumResponse {
+        &mut self.response
     }
 
     /// 消费 context，生成 axum Response。
@@ -261,18 +310,6 @@ impl<'a> BulwarkContext for AxumContext<'a> {
         // 但 AxumRequest<'a> 的生命周期与 self 不同
         // 简化方案：直接克隆必要数据，避免生命周期问题
         Ok(Box::new(AxumRequestWrapper::new(self.request)))
-    }
-
-    fn response(&self) -> BulwarkResult<Box<dyn BulwarkResponse>> {
-        // 返回新的 AxumResponse（不共享 self.response）
-        // 注意：这设计有局限，实际使用时需要调整
-        Ok(Box::new(AxumResponse::new()))
-    }
-
-    fn storage(&self) -> BulwarkResult<Box<dyn BulwarkStorage>> {
-        // 返回新的空 AxumStorage
-        // 注意：这设计有局限，实际使用时需要调整
-        Ok(Box::new(AxumStorage::new()))
     }
 }
 
@@ -435,6 +472,27 @@ mod tests {
         assert_eq!(token, Some("my_token_123".to_string()));
     }
 
+    /// 验证 Bearer 前缀大小写不敏感（依据 codebase-hardening Task 3.9，RFC 7235）。
+    ///
+    /// 覆盖 `strip_bearer_prefix` 的 `eq_ignore_ascii_case` 分支：
+    /// `bearer xxx` / `BEARER xxx` / `BeArEr xxx` 均应能提取 token。
+    #[test]
+    fn bearer_prefix_case_insensitive() {
+        let config = BulwarkConfig::default_config();
+        for prefix in &["Bearer", "bearer", "BEARER", "BeArEr"] {
+            let auth_value = format!("{} tok_{}", prefix, prefix);
+            let req = make_request("/", "GET", &[("Authorization", auth_value.as_str())]);
+            let axum_req = AxumRequest::new(&req);
+            let token = axum_req.get_token(&config).unwrap();
+            assert_eq!(
+                token,
+                Some(format!("tok_{}", prefix)),
+                "前缀 '{}' 应能提取 token（大小写不敏感）",
+                prefix
+            );
+        }
+    }
+
     /// 验证从自定义 header 提取 token。
     #[test]
     fn get_token_from_custom_header() {
@@ -519,7 +577,7 @@ mod tests {
         );
     }
 
-    /// 验证 set_cookie 设置 HttpOnly Cookie（spec Scenario: 写入 token 到 cookie）。
+    /// 验证 set_cookie 设置安全属性（HttpOnly + Secure + SameSite=Lax + Path=/）。
     #[test]
     fn response_set_cookie() {
         let mut resp = AxumResponse::new();
@@ -531,6 +589,28 @@ mod tests {
             .unwrap();
         assert!(set_cookie.contains("bulwark_token=cookie_value"));
         assert!(set_cookie.contains("HttpOnly"));
+        assert!(set_cookie.contains("Secure"));
+        assert!(set_cookie.contains("SameSite=Lax"));
+        assert!(set_cookie.contains("Path=/"));
+    }
+
+    /// 验证 set_cookie_with_config 依据 config 调整 Secure/SameSite（dev 场景关闭 Secure）。
+    #[test]
+    fn response_set_cookie_with_config_dev() {
+        let mut resp = AxumResponse::new();
+        let mut config = BulwarkConfig::default_config();
+        config.cookie_secure = false;
+        config.cookie_same_site = "Strict".to_string();
+        resp.set_cookie_with_config("token", "v", &config)
+            .unwrap();
+        let set_cookie = resp
+            .headers
+            .get("Set-Cookie")
+            .and_then(|v| v.to_str().ok())
+            .unwrap();
+        assert!(set_cookie.contains("HttpOnly"));
+        assert!(!set_cookie.contains("Secure"));
+        assert!(set_cookie.contains("SameSite=Strict"));
     }
 
     /// 验证 to_response 转换为 axum Response。
@@ -639,8 +719,12 @@ mod tests {
         let token = request.get_token(&config).unwrap();
         assert_eq!(token, Some("abc".to_string()));
 
-        let _response = ctx.response().unwrap();
-        let _storage = ctx.storage().unwrap();
+        // 验证 raw_response_mut() 可写入 status / header
+        let mut ctx = ctx;
+        ctx.raw_response_mut().set_status(403).unwrap();
+        ctx.raw_response_mut().set_header("X-Trace", "v").unwrap();
+        let resp = ctx.into_response();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     }
 
     // ========================================================================
@@ -831,34 +915,21 @@ mod tests {
     // 新增测试：覆盖 AxumContext::response() / storage() / into_response()
     // ========================================================================
 
-    /// 验证 AxumContext::response() 返回可写的独立 response 实例。
+    /// 验证 AxumContext::raw_response_mut() 返回可写的内部 response 引用。
     #[test]
-    fn axum_context_response_returns_writable_instance() {
+    fn axum_context_raw_response_mut_writable() {
         let req = make_request("/", "GET", &[]);
-        let ctx = AxumContext::new(&req);
-        let mut response = ctx.response().unwrap();
-        // 验证返回的 response 可设置状态码与 header（不抛错）
-        response.set_status(404).unwrap();
-        response.set_header("X-Trace", "trace-123").unwrap();
-        // 再次获取应为新的实例，可独立写入
-        let mut another = ctx.response().unwrap();
-        another.set_status(500).unwrap();
-    }
-
-    /// 验证 AxumContext::storage() 返回可读写的独立 storage 实例。
-    #[test]
-    fn axum_context_storage_returns_writable_instance() {
-        let req = make_request("/", "GET", &[]);
-        let ctx = AxumContext::new(&req);
-        let mut storage = ctx.storage().unwrap();
-        // 初始为空
-        assert_eq!(storage.get("key").unwrap(), None);
-        // 可写入并读回
-        storage.set("key", "value").unwrap();
-        assert_eq!(storage.get("key").unwrap(), Some("value".to_string()));
-        // 删除后为空
-        storage.delete("key").unwrap();
-        assert_eq!(storage.get("key").unwrap(), None);
+        let mut ctx = AxumContext::new(&req);
+        // 通过 raw_response_mut 设置状态码与 header
+        ctx.raw_response_mut().set_status(404).unwrap();
+        ctx.raw_response_mut().set_header("X-Trace", "trace-123").unwrap();
+        // 通过 into_response 消费 context 并验证设置生效
+        let resp = ctx.into_response();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            resp.headers().get("X-Trace").and_then(|v| v.to_str().ok()),
+            Some("trace-123")
+        );
     }
 
     /// 验证 AxumContext::into_response() 转换为 axum Response（默认 200 OK）。

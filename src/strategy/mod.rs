@@ -50,10 +50,12 @@ impl BulwarkStrategy {
     /// 生成的 token 字符串。
     ///
     /// # 错误
-    /// 0.2.0+ 实现前调用必 panic（`todo!`）。
+    /// 0.2.0+ 实现前返回 `BulwarkError::Internal`（不 panic）。
     pub fn create_token(&self, login_id: i64) -> BulwarkResult<String> {
         let _ = login_id;
-        todo!("0.2.0+ 实现：委托具体 Token 生成策略")
+        Err(BulwarkError::Internal(
+            "create_token not yet implemented (planned for 0.2.0+)".to_string(),
+        ))
     }
 
     /// 根据 Token 解析登录主体标识。
@@ -66,10 +68,12 @@ impl BulwarkStrategy {
     /// - `None`: token 无效或已过期。
     ///
     /// # 错误
-    /// 0.2.0+ 实现前调用必 panic（`todo!`）。
+    /// 0.2.0+ 实现前返回 `BulwarkError::Internal`（不 panic）。
     pub fn parse_login_id(&self, token: &str) -> BulwarkResult<Option<i64>> {
         let _ = token;
-        todo!("0.2.0+ 实现：委托具体 Token 解析策略")
+        Err(BulwarkError::Internal(
+            "parse_login_id not yet implemented (planned for 0.2.0+)".to_string(),
+        ))
     }
 }
 
@@ -229,6 +233,9 @@ impl BulwarkFirewallStrategy for BulwarkFirewallStrategyDefault {
     }
 
     async fn check_role(&self, login_id: i64, role: &str) -> BulwarkResult<bool> {
+        if role.is_empty() {
+            return Err(BulwarkError::InvalidToken("角色字符串不能为空".to_string()));
+        }
         let roles = self.get_role_list(login_id).await?;
         Ok(roles.iter().any(|r| r == role))
     }
@@ -385,6 +392,22 @@ mod tests {
         );
     }
 
+    /// 验证空角色字符串返回 Err（依据 codebase-hardening Task 3.10）。
+    ///
+    /// 与 `check_permission_empty_string_errors` 对称：
+    /// 空角色字符串应抛 `InvalidToken` 错误。
+    #[tokio::test]
+    async fn check_role_empty_string_errors() {
+        let iface = MockInterface::new();
+        let fw = make_firewall(iface);
+
+        let result = fw.check_role(1001, "").await;
+        assert!(
+            matches!(result, Err(BulwarkError::InvalidToken(_))),
+            "空角色字符串应抛 InvalidToken"
+        );
+    }
+
     // ------------------------------------------------------------------------
     // spec scenario: 多角色任一匹配 / 全部匹配
     // ------------------------------------------------------------------------
@@ -495,29 +518,35 @@ mod tests {
     }
 
     // ------------------------------------------------------------------------
-    // BulwarkStrategy 占位实现测试（todo!() panic 验证）
+    // BulwarkStrategy 占位实现测试（返回 Internal 错误而非 panic）
     // ------------------------------------------------------------------------
 
-    /// 验证 `BulwarkStrategy::create_token` 在 0.2.0+ 实现前调用必 panic。
+    /// 验证 `BulwarkStrategy::create_token` 在 0.2.0+ 实现前返回 `Internal` 错误。
     ///
-    /// 覆盖 `create_token` 方法体（`let _ = login_id;` + `todo!(...)`）。
-    /// Rust `todo!()` panic 消息为 "not yet implemented: ..."。
+    /// 覆盖 `create_token` 方法体（占位实现返回 `Err(BulwarkError::Internal)`）。
     #[test]
-    #[should_panic(expected = "not yet implemented")]
-    fn strategy_create_token_panics_with_todo() {
+    fn strategy_create_token_returns_internal_error() {
         let strategy = BulwarkStrategy::new();
-        let _ = strategy.create_token(1001);
+        let result = strategy.create_token(1001);
+        assert!(
+            matches!(result, Err(BulwarkError::Internal(_))),
+            "占位实现应返回 Internal 错误，实际: {:?}",
+            result
+        );
     }
 
-    /// 验证 `BulwarkStrategy::parse_login_id` 在 0.2.0+ 实现前调用必 panic。
+    /// 验证 `BulwarkStrategy::parse_login_id` 在 0.2.0+ 实现前返回 `Internal` 错误。
     ///
-    /// 覆盖 `parse_login_id` 方法体（`let _ = token;` + `todo!(...)`）。
-    /// Rust `todo!()` panic 消息为 "not yet implemented: ..."。
+    /// 覆盖 `parse_login_id` 方法体（占位实现返回 `Err(BulwarkError::Internal)`）。
     #[test]
-    #[should_panic(expected = "not yet implemented")]
-    fn strategy_parse_login_id_panics_with_todo() {
+    fn strategy_parse_login_id_returns_internal_error() {
         let strategy = BulwarkStrategy::new();
-        let _ = strategy.parse_login_id("some-token");
+        let result = strategy.parse_login_id("some-token");
+        assert!(
+            matches!(result, Err(BulwarkError::Internal(_))),
+            "占位实现应返回 Internal 错误，实际: {:?}",
+            result
+        );
     }
 
     /// 验证 `BulwarkStrategy::default()` 等价于 `new()`。

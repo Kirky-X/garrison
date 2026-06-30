@@ -333,7 +333,7 @@ async fn public_without_token_returns_200() {
     assert_eq!(response.status(), StatusCode::OK);
 }
 
-/// 验证 401 响应体包含 JSON error 字段。
+/// 验证 401 响应体包含结构化 JSON 错误（不泄漏内部细节，依据 codebase-hardening Task 0.4）。
 #[tokio::test]
 #[serial]
 async fn unauthorized_response_body_contains_error_json() {
@@ -346,13 +346,19 @@ async fn unauthorized_response_body_contains_error_json() {
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let body_str = String::from_utf8(body.to_vec()).unwrap();
     assert!(
-        body_str.contains("\"error\""),
-        "响应体应是 JSON 且包含 error 字段: {}",
+        body_str.contains("\"error_code\":\"NOT_LOGIN\""),
+        "响应体应是 JSON 且包含 error_code 字段: {}",
         body_str
     );
     assert!(
-        body_str.contains("未登录"),
-        "响应体应包含 '未登录' 消息: {}",
+        body_str.contains("\"message\":\"未登录\""),
+        "响应体应包含 '未登录' 通用消息: {}",
+        body_str
+    );
+    // 不应包含内部错误细节（如 "BulwarkManager 未初始化" 等实现细节）
+    assert!(
+        !body_str.contains("BulwarkManager"),
+        "响应体不应泄漏 BulwarkManager 内部细节: {}",
         body_str
     );
 }

@@ -24,11 +24,11 @@ path = "src/lib.rs"
 # === Required dependencies ===
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-toml = "0.8"
+toml = "1.0"
 tokio = { version = "1", features = ["sync", "macros", "rt-multi-thread", "time"] }
 once_cell = "1.19"
 inventory = "0.3"
-thiserror = "1.0"
+thiserror = "2.0"
 tracing = "0.1"
 async-trait = "0.1"
 parking_lot = "0.12"
@@ -36,14 +36,14 @@ chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 
 # === Optional dependencies (feature-gated) ===
-axum = { version = "0.7", optional = true, default-features = false, features = ["json"] }
+axum = { version = "0.8", optional = true, default-features = false, features = ["json"] }
 actix-web = { version = "4", optional = true, default-features = false }
-warp = { version = "0.3", optional = true, default-features = false }
-jsonwebtoken = { version = "9", optional = true }
-reqwest = { version = "0.12", optional = true, default-features = false, features = ["json", "rustls-tls"] }
+warp = { version = "0.4", optional = true, default-features = false }
+jsonwebtoken = { version = "10", optional = true }
+reqwest = { version = "0.13", optional = true, default-features = false, features = ["json", "rustls", "rustls-native-certs"] }
 totp-rs = { version = "5", optional = true }
-sha2 = { version = "0.10", optional = true }
-hmac = { version = "0.12", optional = true }
+sha2 = { version = "0.11", optional = true }
+hmac = { version = "0.13", optional = true }
 base64 = { version = "0.22", optional = true }
 # oxcache 0.3: L1 (moka) + L2 (redis) 两级缓存，默认 full features，0.3 支持 per-entry TTL + ttl() 查询
 # 使用本地 path 依赖（crates.io 0.3.0 未暴露 Cache<K,V>::ttl()，本地仓库已暴露）
@@ -51,11 +51,11 @@ oxcache = { path = "/home/kirky/projects/oxcache", optional = true }
 # dbnexus 0.2: 默认 sqlite + permission + sql-parser + macros + config-env + with-time
 # auto-migrate feature 由 db-sqlite feature 显式启用（提供 MigrationExecutor::run_migrations）
 dbnexus = { version = "0.2", optional = true }
-prometheus = { version = "0.13", optional = true }
+prometheus = { version = "0.14", optional = true }
 
 [dev-dependencies]
 tokio-test = "0.4"
-mockall = "0.12"
+mockall = "0.15"
 tempfile = "3.27"
 # serial_test 用于串行化依赖 std::env::set_var 的测试，避免多线程并发污染环境变量
 serial_test = "3"
@@ -67,11 +67,14 @@ tower = { version = "0.5", default-features = false, features = ["util"] }
 http-body-util = "0.1"
 
 [features]
-default = ["cache-memory", "db-sqlite", "web-axum"]
+default = []
 
 # === 核心模块（always on，无开关） ===
 # core / stp / annotation / router / dao / strategy / session / config / context / json / exception / manager / plugin
 # 这些模块无 feature flag，总是编译
+
+# === 聚合特性：等价于原 default，方便快速启用全部默认后端 ===
+all-defaults = ["cache-memory", "db-sqlite", "web-axum"]
 
 # === 缓存后端（通过 oxcache 0.2，默认 full 包含 L1 moka + L2 redis） ===
 # cache-memory 与 cache-redis 均启用 oxcache（语义别名，区分用途）

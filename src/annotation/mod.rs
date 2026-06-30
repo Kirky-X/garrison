@@ -110,8 +110,23 @@ pub enum Annotation {
 
 impl Annotation {
     /// 获取注解的字符串名称。
+    ///
+    /// 返回对应 Sa-Token 注解的字符串标识（用于 router 中间件配置与日志记录）。
     pub fn name(&self) -> &'static str {
-        todo!()
+        match self {
+            Annotation::CheckLogin => "CheckLogin",
+            Annotation::CheckPermission(_) => "CheckPermission",
+            Annotation::CheckRole(_) => "CheckRole",
+            Annotation::CheckSafe => "CheckSafe",
+            Annotation::CheckDisable => "CheckDisable",
+            Annotation::CheckOr => "CheckOr",
+            Annotation::CheckAnd => "CheckAnd",
+            Annotation::CheckNot => "CheckNot",
+            Annotation::Ignore => "Ignore",
+            Annotation::CheckBasicAuth => "CheckBasicAuth",
+            Annotation::CheckDigestAuth => "CheckDigestAuth",
+            Annotation::CheckSign => "CheckSign",
+        }
     }
 }
 
@@ -122,51 +137,74 @@ impl Annotation {
 #[cfg(feature = "web-axum")]
 mod extractors {
     use super::{ModeSpec, PermissionName, RoleName};
+    use crate::config::BulwarkConfig;
     use crate::error::BulwarkError;
     use crate::stp::{with_current_token, BulwarkUtil};
-    use async_trait::async_trait;
     use axum::extract::FromRequestParts;
     use axum::http::header;
     use axum::http::request::Parts;
     use std::marker::PhantomData;
 
     // ----------------------------------------------------------------
-    // 辅助函数：从请求 parts 提取 token（按默认配置）
+    // 辅助函数：从请求 parts 提取 token（按 config 决定提取顺序与字段名）
     // ----------------------------------------------------------------
 
-    /// 从请求 parts 提取 token。
+    /// 从请求 parts 提取 token（依据 RFC 7235 大小写不敏感匹配 `Bearer` 前缀）。
     ///
-    /// 提取顺序：
-    /// 1. `Authorization: Bearer <token>` header
-    /// 2. `bulwark_token` header
-    /// 3. `Cookie: bulwark_token=<token>` cookie
-    fn extract_token_from_parts(parts: &Parts) -> Option<String> {
-        // 1. Authorization: Bearer <token>
-        if let Some(auth) = parts.headers.get(header::AUTHORIZATION) {
-            if let Ok(auth_str) = auth.to_str() {
-                if let Some(token) = auth_str.strip_prefix("Bearer ") {
-                    return Some(token.to_string());
+    /// 提取顺序（受 config 开关控制）：
+    /// 1. 若 `is_read_header=true`：
+    ///    a. `Authorization: Bearer <token>` header（Bearer 大小写不敏感，依据 RFC 7235）
+    ///    b. 自定义 `token_name` header（如 `bulwark_token: <token>`）
+    /// 2. 若 `is_read_cookie=true`：
+    ///    `Cookie: <token_name>=<token>` cookie
+    fn extract_token_from_parts(parts: &Parts, config: &BulwarkConfig) -> Option<String> {
+        // 1. 从 header 提取
+        if config.is_read_header {
+            // a. Authorization: Bearer <token>（RFC 7235 大小写不敏感）
+            if let Some(auth) = parts.headers.get(header::AUTHORIZATION) {
+                if let Ok(auth_str) = auth.to_str() {
+                    // 大小写不敏感匹配 "Bearer " 前缀
+                    if let Some(token) = strip_bearer_prefix(auth_str) {
+                        return Some(token.to_string());
+                    }
+                }
+            }
+            // b. 自定义 token_name header
+            if let Some(token) = parts.headers.get(config.token_name.as_str()) {
+                if let Ok(token_str) = token.to_str() {
+                    return Some(token_str.to_string());
                 }
             }
         }
-        // 2. bulwark_token header
-        if let Some(token) = parts.headers.get("bulwark_token") {
-            if let Ok(token_str) = token.to_str() {
-                return Some(token_str.to_string());
-            }
-        }
-        // 3. Cookie: bulwark_token=<token>
-        if let Some(cookie) = parts.headers.get(header::COOKIE) {
-            if let Ok(cookie_str) = cookie.to_str() {
-                for c in cookie_str.split(';') {
-                    let c = c.trim();
-                    if let Some(rest) = c.strip_prefix("bulwark_token=") {
-                        return Some(rest.to_string());
+        // 2. 从 cookie 提取
+        if config.is_read_cookie {
+            if let Some(cookie) = parts.headers.get(header::COOKIE) {
+                if let Ok(cookie_str) = cookie.to_str() {
+                    let cookie_prefix = format!("{}=", config.token_name);
+                    for c in cookie_str.split(';') {
+                        let c = c.trim();
+                        if let Some(rest) = c.strip_prefix(&cookie_prefix) {
+                            return Some(rest.to_string());
+                        }
                     }
                 }
             }
         }
         None
+    }
+
+    /// 大小写不敏感地剥离 `Bearer ` 前缀（依据 RFC 7235）。
+    ///
+    /// 支持 `Bearer xxx`、`bearer xxx`、`BEARER xxx` 等任意大小写组合。
+    fn strip_bearer_prefix(auth_str: &str) -> Option<&str> {
+        let prefix = "bearer ";
+        if auth_str.len() >= prefix.len()
+            && auth_str[..prefix.len()].eq_ignore_ascii_case(prefix)
+        {
+            Some(&auth_str[prefix.len()..])
+        } else {
+            None
+        }
     }
 
     // ----------------------------------------------------------------
@@ -199,7 +237,6 @@ mod extractors {
     /// # 错误
     /// - `BulwarkError::NotLogin`：未登录且 `throw_on_not_login=false`。
     /// - `BulwarkError::Session`：未登录且 `throw_on_not_login=true`（严格模式）。
-    #[async_trait]
     impl<S: Send + Sync> FromRequestParts<S> for CheckLogin {
         type Rejection = BulwarkError;
 
@@ -207,7 +244,8 @@ mod extractors {
             parts: &mut Parts,
             _state: &S,
         ) -> Result<Self, Self::Rejection> {
-            if let Some(t) = extract_token_from_parts(parts) {
+            let config = BulwarkUtil::config()?;
+            if let Some(t) = extract_token_from_parts(parts, &config) {
                 with_current_token(t, enforce_login()).await?;
             } else {
                 enforce_login().await?;
@@ -230,7 +268,6 @@ mod extractors {
     /// # 错误
     /// - `BulwarkError::NotRole`：当前用户未持有角色 `R::NAME`。
     /// - `BulwarkError::NotLogin`：未登录（严格模式下）。
-    #[async_trait]
     impl<R: RoleName, S: Send + Sync> FromRequestParts<S> for CheckRole<R> {
         type Rejection = BulwarkError;
 
@@ -238,7 +275,8 @@ mod extractors {
             parts: &mut Parts,
             _state: &S,
         ) -> Result<Self, Self::Rejection> {
-            if let Some(t) = extract_token_from_parts(parts) {
+            let config = BulwarkUtil::config()?;
+            if let Some(t) = extract_token_from_parts(parts, &config) {
                 with_current_token(t, async {
                     BulwarkUtil::check_role(R::NAME).await?;
                     Ok::<(), BulwarkError>(())
@@ -265,7 +303,6 @@ mod extractors {
     /// # 错误
     /// - `BulwarkError::NotPermission`：当前用户未持有权限 `P::NAME`。
     /// - `BulwarkError::NotLogin`：未登录（严格模式下）。
-    #[async_trait]
     impl<P: PermissionName, S: Send + Sync> FromRequestParts<S> for CheckPermission<P> {
         type Rejection = BulwarkError;
 
@@ -273,7 +310,8 @@ mod extractors {
             parts: &mut Parts,
             _state: &S,
         ) -> Result<Self, Self::Rejection> {
-            if let Some(t) = extract_token_from_parts(parts) {
+            let config = BulwarkUtil::config()?;
+            if let Some(t) = extract_token_from_parts(parts, &config) {
                 with_current_token(t, async {
                     BulwarkUtil::check_permission(P::NAME).await?;
                     Ok::<(), BulwarkError>(())
@@ -296,7 +334,6 @@ mod extractors {
     pub struct Ignore;
 
     /// 实现 `FromRequestParts`：不执行任何校验，直接返回 `Ok(Ignore)`。
-    #[async_trait]
     impl<S: Send + Sync> FromRequestParts<S> for Ignore {
         type Rejection = BulwarkError;
 
@@ -335,7 +372,6 @@ mod extractors {
     /// # 错误
     /// - `Mode<Strict>`：未登录时返回 `BulwarkError::NotLogin`。
     /// - `Mode<Loose>`：不返回错误（宽松模式允许匿名访问）。
-    #[async_trait]
     impl<M: ModeSpec, S: Send + Sync> FromRequestParts<S> for Mode<M> {
         type Rejection = BulwarkError;
 
@@ -343,7 +379,8 @@ mod extractors {
             parts: &mut Parts,
             _state: &S,
         ) -> Result<Self, Self::Rejection> {
-            if let Some(t) = extract_token_from_parts(parts) {
+            let config = BulwarkUtil::config()?;
+            if let Some(t) = extract_token_from_parts(parts, &config) {
                 with_current_token(t, enforce_mode::<M>()).await?;
             } else {
                 enforce_mode::<M>().await?;
@@ -845,11 +882,21 @@ mod tests {
     // Annotation::name 测试
     // ----------------------------------------------------------------
 
-    /// Annotation::name 尚未实现，调用应 panic（todo!）。
+    /// Annotation::name 返回注解变体名称。
     #[test]
-    #[should_panic(expected = "not yet implemented")]
-    fn annotation_name_panics_with_todo() {
-        let _ = Annotation::CheckLogin.name();
+    fn annotation_name_returns_variant_string() {
+        assert_eq!(Annotation::CheckLogin.name(), "CheckLogin");
+        assert_eq!(Annotation::CheckPermission("p".to_string()).name(), "CheckPermission");
+        assert_eq!(Annotation::CheckRole("r".to_string()).name(), "CheckRole");
+        assert_eq!(Annotation::CheckSafe.name(), "CheckSafe");
+        assert_eq!(Annotation::CheckDisable.name(), "CheckDisable");
+        assert_eq!(Annotation::CheckOr.name(), "CheckOr");
+        assert_eq!(Annotation::CheckAnd.name(), "CheckAnd");
+        assert_eq!(Annotation::CheckNot.name(), "CheckNot");
+        assert_eq!(Annotation::Ignore.name(), "Ignore");
+        assert_eq!(Annotation::CheckBasicAuth.name(), "CheckBasicAuth");
+        assert_eq!(Annotation::CheckDigestAuth.name(), "CheckDigestAuth");
+        assert_eq!(Annotation::CheckSign.name(), "CheckSign");
     }
 
     // ----------------------------------------------------------------

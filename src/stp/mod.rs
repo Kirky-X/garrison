@@ -186,6 +186,12 @@ pub trait BulwarkLogic: Send + Sync {
     /// - 未登录且 `throw_on_not_login=false`：降级为 `BulwarkError::NotRole`。
     /// - 未持有角色：`BulwarkError::NotRole`。
     async fn check_role(&self, role: &str) -> BulwarkResult<()>;
+
+    /// 获取当前 `BulwarkConfig` 引用（用于 token 提取、Cookie 配置等需要配置的场景）。
+    ///
+    /// # 返回
+    /// 全局配置的 `Arc` 引用。
+    fn config(&self) -> Arc<BulwarkConfig>;
 }
 
 // ============================================================================
@@ -348,6 +354,10 @@ impl BulwarkLogic for BulwarkLogicDefault {
         } else {
             Err(BulwarkError::NotRole(role.to_string()))
         }
+    }
+
+    fn config(&self) -> Arc<BulwarkConfig> {
+        Arc::clone(&self.config)
     }
 }
 
@@ -546,6 +556,17 @@ impl BulwarkUtil {
         crate::manager::BulwarkManager::logic()?
             .check_role(role)
             .await
+    }
+
+    /// 获取当前 `BulwarkConfig` 引用（用于 extractor / middleware 等需要配置的场景）。
+    ///
+    /// # 返回
+    /// 全局配置的 `Arc` 引用。
+    ///
+    /// # 错误
+    /// - `BulwarkManager` 未初始化：`BulwarkError::Session`。
+    pub fn config() -> BulwarkResult<Arc<BulwarkConfig>> {
+        Ok(crate::manager::BulwarkManager::logic()?.config())
     }
 }
 
@@ -781,6 +802,20 @@ mod tests {
         let logic = make_logic(3600, 86400, false, "simple", true, true);
         let token = logic.login(1001).await.unwrap();
         assert_eq!(token.len(), 32, "simple 应生成 32 字符 token");
+    }
+
+    /// 验证未知 token_style 时 login 返回 Err（依据 codebase-hardening Task 3.6）。
+    ///
+    /// 覆盖 `generate_token` 的 `other =>` 分支，断言返回 `BulwarkError::Config`。
+    #[tokio::test]
+    async fn create_token_unknown_style_errors() {
+        let logic = make_logic(3600, 86400, false, "unknown_style", true, true);
+        let result = logic.login(1001).await;
+        assert!(
+            matches!(result, Err(BulwarkError::Config(ref msg)) if msg.contains("unknown token_style")),
+            "未知 token_style 应返回含 'unknown token_style' 的 Config 错误，实际: {:?}",
+            result
+        );
     }
 
     /// 验证 login_with_token 用自定义 token 创建会话。

@@ -26,6 +26,9 @@ use tokio::sync::watch;
 /// 依据 spec config-system Requirement: 配置校验——token_style 必须是以下 4 个合法值之一。
 pub const TOKEN_STYLES: &[&str] = &["uuid", "random_64", "simple", "jwt"];
 
+/// Cookie SameSite 合法值（依据 RFC 6265bis）。
+pub const COOKIE_SAME_SITE_VALUES: &[&str] = &["Lax", "Strict", "None"];
+
 /// 默认 Token 名称（对应 HTTP Header / Cookie 字段名）。
 pub const DEFAULT_TOKEN_NAME: &str = "bulwark_token";
 
@@ -34,6 +37,12 @@ pub const DEFAULT_TIMEOUT: i64 = 2_592_000;
 
 /// 默认活动超时检测值（-1 表示不启用，保留 Sa-Token 语义）。
 pub const DEFAULT_ACTIVE_TIMEOUT: i64 = -1;
+
+/// 默认 Cookie Secure 标志（生产环境应为 true，dev 环境可设为 false 以支持 HTTP 调试）。
+pub const DEFAULT_COOKIE_SECURE: bool = true;
+
+/// 默认 Cookie SameSite 策略（"Lax" 平衡安全与可用性）。
+pub const DEFAULT_COOKIE_SAME_SITE: &str = "Lax";
 
 /// 环境变量前缀（BULWARK_）。
 pub const ENV_PREFIX: &str = "BULWARK_";
@@ -98,6 +107,12 @@ pub struct BulwarkConfig {
     /// 未登录时是否抛出异常（false 则返回 false，依据 spec config-system）。
     pub throw_on_not_login: bool,
 
+    /// Cookie 是否标记 `Secure`（仅 HTTPS 传输，dev 环境 HTTP 调试时可设为 false）。
+    pub cookie_secure: bool,
+
+    /// Cookie 的 `SameSite` 策略（"Lax" / "Strict" / "None"）。
+    pub cookie_same_site: String,
+
     /// 配置变更广播通道（serde 跳过，反序列化后通过 `with_watcher` 重建）。
     #[serde(skip)]
     watcher: Option<watch::Sender<BulwarkConfig>>,
@@ -120,6 +135,8 @@ impl BulwarkConfig {
             is_write_header: true,
             token_style: "uuid".to_string(),
             throw_on_not_login: true,
+            cookie_secure: DEFAULT_COOKIE_SECURE,
+            cookie_same_site: DEFAULT_COOKIE_SAME_SITE.to_string(),
             watcher: None,
         };
         config.with_watcher()
@@ -138,17 +155,9 @@ impl BulwarkConfig {
 
     /// 克隆实例但不复制 watcher（用于 watcher 初始化时避免递归）。
     fn clone_for_watcher(&self) -> Self {
-        Self {
-            token_name: self.token_name.clone(),
-            timeout: self.timeout,
-            active_timeout: self.active_timeout,
-            is_read_cookie: self.is_read_cookie,
-            is_read_header: self.is_read_header,
-            is_write_header: self.is_write_header,
-            token_style: self.token_style.clone(),
-            throw_on_not_login: self.throw_on_not_login,
-            watcher: None,
-        }
+        let mut c = self.clone();
+        c.watcher = None;
+        c
     }
 
     /// 校验配置字段合法性。
@@ -172,6 +181,12 @@ impl BulwarkConfig {
         }
         if self.timeout <= 0 {
             return Err(BulwarkError::Config("timeout must be positive".to_string()));
+        }
+        if !COOKIE_SAME_SITE_VALUES.contains(&self.cookie_same_site.as_str()) {
+            return Err(BulwarkError::Config(format!(
+                "unknown cookie_same_site: {} (expected Lax/Strict/None)",
+                self.cookie_same_site
+            )));
         }
         Ok(())
     }
@@ -325,6 +340,12 @@ impl ConfigLoader for DefaultConfigLoader {
         }
         if let Ok(v) = std::env::var(format!("{}THROW_ON_NOT_LOGIN", ENV_PREFIX)) {
             config.throw_on_not_login = parse_bool(&v)?;
+        }
+        if let Ok(v) = std::env::var(format!("{}COOKIE_SECURE", ENV_PREFIX)) {
+            config.cookie_secure = parse_bool(&v)?;
+        }
+        if let Ok(v) = std::env::var(format!("{}COOKIE_SAME_SITE", ENV_PREFIX)) {
+            config.cookie_same_site = v;
         }
         config.validate()?;
         Ok(config)
@@ -637,6 +658,8 @@ throw_on_not_login = false
             is_write_header: true,
             token_style: "uuid".to_string(),
             throw_on_not_login: true,
+            cookie_secure: true,
+            cookie_same_site: "Lax".to_string(),
             watcher: None,
         };
         assert!(config.update(|c| c.timeout = 999).is_ok());
@@ -857,6 +880,7 @@ throw_on_not_login = false
     ///
     /// 覆盖 trait 默认方法 `load` 的实现（调用 load_from_toml_str + apply_env_overrides）。
     #[test]
+    #[serial_test::serial]
     fn trait_dispatch_load_full_pipeline() {
         let config: BulwarkConfig =
             <DefaultConfigLoader as ConfigLoader>::load("").expect("通过 trait 调用 load 应成功");

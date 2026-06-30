@@ -195,3 +195,5 @@ flamegraph.svg
 .node_modules/
 *.code-workspace
 .history/
+.claude/
+/coverage_report/

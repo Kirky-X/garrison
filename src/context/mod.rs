@@ -19,19 +19,19 @@
 
 use crate::error::BulwarkResult;
 
-/// 上下文 trait，提供请求 / 响应 / 存储的统一访问入口。
+/// 上下文 trait，提供请求访问入口。
 ///
 /// [借鉴 Sa-Token] 对应 `SaTokenContext`，
 /// 各 Web 框架适配需实现此 trait。
+///
+/// # 设计
+///
+/// 仅暴露 `request()` 方法获取请求对象。
+/// 响应数据写入由具体适配器（如 `AxumContext::raw_response_mut()` / `into_response()`）提供，
+/// 避免 trait 方法返回新实例破坏状态共享。
 pub trait BulwarkContext {
     /// 获取当前请求对象。
     fn request(&self) -> BulwarkResult<Box<dyn BulwarkRequest>>;
-
-    /// 获取当前响应对象。
-    fn response(&self) -> BulwarkResult<Box<dyn BulwarkResponse>>;
-
-    /// 获取存储对象。
-    fn storage(&self) -> BulwarkResult<Box<dyn BulwarkStorage>>;
 }
 
 /// 请求抽象 trait，提供 HTTP 请求数据访问。
@@ -97,12 +97,30 @@ pub trait BulwarkResponse {
     /// - `value`: 头部字段值。
     fn set_header(&mut self, name: &str, value: &str) -> BulwarkResult<()>;
 
-    /// 设置响应 Cookie（HttpOnly，依据 spec context-abstraction）。
+    /// 设置响应 Cookie（默认带 `HttpOnly; Secure; SameSite=Lax; Path=/` 安全属性）。
+    ///
+    /// 安全默认：调用此方法不需要任何额外参数即可获得安全属性。
+    /// 如需自定义 Secure/SameSite（如 dev HTTP 环境关闭 Secure），使用 `set_cookie_with_config`。
     ///
     /// # 参数
     /// - `name`: Cookie 名称。
     /// - `value`: Cookie 值。
-    fn set_cookie(&mut self, name: &str, value: &str) -> BulwarkResult<()>;
+    fn set_cookie(&mut self, name: &str, value: &str) -> BulwarkResult<()> {
+        self.set_cookie_with_config(name, value, &crate::config::BulwarkConfig::default_config())
+    }
+
+    /// 设置响应 Cookie（依据 config 自定义 Secure/SameSite）。
+    ///
+    /// # 参数
+    /// - `name`: Cookie 名称。
+    /// - `value`: Cookie 值。
+    /// - `config`: 全局配置，读取 `cookie_secure` / `cookie_same_site` 字段。
+    fn set_cookie_with_config(
+        &mut self,
+        name: &str,
+        value: &str,
+        config: &crate::config::BulwarkConfig,
+    ) -> BulwarkResult<()>;
 }
 
 /// 存储抽象 trait，提供请求级临时数据存储。
