@@ -17,6 +17,7 @@
 use crate::config::BulwarkConfig;
 use crate::error::{BulwarkError, BulwarkResult};
 use crate::session::BulwarkSession;
+use crate::strategy::BulwarkFirewallStrategy;
 use async_trait::async_trait;
 use std::future::Future;
 use std::sync::Arc;
@@ -113,19 +114,34 @@ pub trait BulwarkLogic: Send + Sync {
 // BulwarkLogicDefault：默认实现
 // ============================================================================
 
-/// `BulwarkLogic` 的默认实现，组合 `BulwarkSession` + `BulwarkConfig`。
+/// `BulwarkLogic` 的默认实现，组合 `BulwarkSession` + `BulwarkConfig` + `BulwarkFirewallStrategy`。
 ///
 /// [借鉴 Sa-Token] 对应 `StpLogic` 默认实现（design.md Decision 8）。
 pub struct BulwarkLogicDefault {
     /// 会话管理器（pub(crate) 供测试验证）。
     pub(crate) session: Arc<BulwarkSession>,
     config: Arc<BulwarkConfig>,
+    /// 权限策略（pub(crate) 供测试验证）。
+    pub(crate) firewall: Arc<dyn BulwarkFirewallStrategy>,
 }
 
 impl BulwarkLogicDefault {
     /// 创建默认实现实例。
-    pub fn new(session: Arc<BulwarkSession>, config: Arc<BulwarkConfig>) -> Self {
-        Self { session, config }
+    ///
+    /// # 参数
+    /// - `session`: 会话管理器。
+    /// - `config`: 全局配置。
+    /// - `firewall`: 权限策略（默认 `BulwarkFirewallStrategyDefault`，持有 `BulwarkInterface` 回调）。
+    pub fn new(
+        session: Arc<BulwarkSession>,
+        config: Arc<BulwarkConfig>,
+        firewall: Arc<dyn BulwarkFirewallStrategy>,
+    ) -> Self {
+        Self {
+            session,
+            config,
+            firewall,
+        }
     }
 
     /// 根据 `config.token_style` 生成 token。
@@ -209,40 +225,76 @@ impl BulwarkLogic for BulwarkLogicDefault {
         }
     }
 
-    async fn check_permission(&self, _permission: &str) -> BulwarkResult<()> {
-        // 任务组 7 实现（复用 dbnexus PermissionProvider）
-        Err(BulwarkError::Session(
-            "check_permission 未实现（任务组 7）".to_string(),
-        ))
+    async fn check_permission(&self, permission: &str) -> BulwarkResult<()> {
+        // spec scenario "未登录抛出异常"：未登录时依据 throw_on_not_login 抛错
+        let login_id = match self.get_login_id().await? {
+            Some(id) => id,
+            None => {
+                return if self.config.throw_on_not_login {
+                    Err(BulwarkError::NotLogin("未登录，无法校验权限".to_string()))
+                } else {
+                    // throw_on_not_login=false：未登录视为无权限，抛 NotPermission
+                    Err(BulwarkError::NotPermission(permission.to_string()))
+                };
+            },
+        };
+        // 委托 BulwarkFirewallStrategy 做权限校验
+        let has_perm = self.firewall.check_permission(login_id, permission).await?;
+        if has_perm {
+            Ok(())
+        } else {
+            Err(BulwarkError::NotPermission(permission.to_string()))
+        }
     }
 
-    async fn check_role(&self, _role: &str) -> BulwarkResult<()> {
-        // 任务组 7 实现
-        Err(BulwarkError::Session(
-            "check_role 未实现（任务组 7）".to_string(),
-        ))
+    async fn check_role(&self, role: &str) -> BulwarkResult<()> {
+        // spec scenario "未登录抛出异常"：未登录时依据 throw_on_not_login 抛错
+        let login_id = match self.get_login_id().await? {
+            Some(id) => id,
+            None => {
+                return if self.config.throw_on_not_login {
+                    Err(BulwarkError::NotLogin("未登录，无法校验角色".to_string()))
+                } else {
+                    // throw_on_not_login=false：未登录视为无角色，抛 NotRole
+                    Err(BulwarkError::NotRole(role.to_string()))
+                };
+            },
+        };
+        // 委托 BulwarkFirewallStrategy 做角色校验
+        let has_role = self.firewall.check_role(login_id, role).await?;
+        if has_role {
+            Ok(())
+        } else {
+            Err(BulwarkError::NotRole(role.to_string()))
+        }
     }
 }
 
 // ============================================================================
-// BulwarkInterface trait：权限数据回调（任务组 7 实现）
+// BulwarkInterface trait：权限数据回调（由业务方实现）
 // ============================================================================
 
 /// 接口 trait，定义获取权限 / 角色数据的回调。
 ///
 /// [借鉴 Sa-Token] 对应 `StpInterface`，由业务方实现以提供权限数据。
+///
+/// # 数据来源
+///
+/// 业务方可自由选择数据来源（数据库 / YAML / 内存 / 外部服务等），
+/// 框架不假定具体来源。`BulwarkFirewallStrategyDefault` 通过此回调获取数据后做字符串匹配。
+#[async_trait]
 pub trait BulwarkInterface: Send + Sync {
     /// 获取指定主体的权限列表。
-    fn get_permission_list(&self, login_id: i64) -> BulwarkResult<Vec<String>> {
-        let _ = login_id;
-        todo!("任务组 7 实现：委托 dbnexus PermissionProvider")
-    }
+    ///
+    /// # 参数
+    /// - `login_id`: 登录主体标识。
+    async fn get_permission_list(&self, login_id: i64) -> BulwarkResult<Vec<String>>;
 
     /// 获取指定主体的角色列表。
-    fn get_role_list(&self, login_id: i64) -> BulwarkResult<Vec<String>> {
-        let _ = login_id;
-        todo!("任务组 7 实现：委托 dbnexus PermissionProvider")
-    }
+    ///
+    /// # 参数
+    /// - `login_id`: 登录主体标识。
+    async fn get_role_list(&self, login_id: i64) -> BulwarkResult<Vec<String>>;
 }
 
 // ============================================================================
@@ -367,19 +419,62 @@ mod tests {
         }
     }
 
-    /// 辅助函数：创建 BulwarkLogicDefault 实例（throw_on_not_login 可配置）。
+    // ------------------------------------------------------------------------
+    // MockFirewall：模拟 BulwarkFirewallStrategy，控制权限/角色校验返回值
+    // ------------------------------------------------------------------------
+
+    /// 测试用 BulwarkFirewallStrategy mock，可控制 check_permission/check_role 返回值。
+    struct MockFirewall {
+        has_permission: bool,
+        has_role: bool,
+    }
+
+    #[async_trait]
+    impl BulwarkFirewallStrategy for MockFirewall {
+        async fn get_permission_list(&self, _login_id: i64) -> BulwarkResult<Vec<String>> {
+            Ok(vec![])
+        }
+        async fn get_role_list(&self, _login_id: i64) -> BulwarkResult<Vec<String>> {
+            Ok(vec![])
+        }
+        async fn check_permission(&self, _login_id: i64, _permission: &str) -> BulwarkResult<bool> {
+            Ok(self.has_permission)
+        }
+        async fn check_role(&self, _login_id: i64, _role: &str) -> BulwarkResult<bool> {
+            Ok(self.has_role)
+        }
+        async fn check_role_any(&self, _login_id: i64, _roles: &[&str]) -> BulwarkResult<bool> {
+            Ok(self.has_role)
+        }
+        async fn check_role_all(&self, _login_id: i64, _roles: &[&str]) -> BulwarkResult<bool> {
+            Ok(self.has_role)
+        }
+    }
+
+    /// 辅助函数：创建 BulwarkLogicDefault 实例（throw_on_not_login + firewall 返回值可配置）。
     fn make_logic(
         timeout: u64,
         active_timeout: u64,
         throw_on_not_login: bool,
         token_style: &str,
+        has_permission: bool,
+        has_role: bool,
     ) -> BulwarkLogicDefault {
         let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
         let session = Arc::new(BulwarkSession::new(dao, timeout, active_timeout));
         let mut config = BulwarkConfig::default_config();
         config.throw_on_not_login = throw_on_not_login;
         config.token_style = token_style.to_string();
-        BulwarkLogicDefault::new(session, Arc::new(config))
+        let firewall: Arc<dyn BulwarkFirewallStrategy> = Arc::new(MockFirewall {
+            has_permission,
+            has_role,
+        });
+        BulwarkLogicDefault::new(session, Arc::new(config), firewall)
+    }
+
+    /// 辅助函数：在当前 task_local 设置 token 后执行 future。
+    async fn with_token<R>(token: &str, f: impl std::future::Future<Output = R>) -> R {
+        with_current_token(token.to_string(), f).await
     }
 
     // ------------------------------------------------------------------------
@@ -389,7 +484,7 @@ mod tests {
     /// 验证 login 返回非空 token 并创建会话。
     #[tokio::test]
     async fn login_creates_session_and_returns_token() {
-        let logic = make_logic(3600, 86400, false, "uuid");
+        let logic = make_logic(3600, 86400, false, "uuid", true, true);
         let token = logic.login(1001).await.unwrap();
         assert!(!token.is_empty(), "login 应返回非空 token");
 
@@ -406,7 +501,7 @@ mod tests {
     /// 验证重复登录生成不同 token 并记录多 token。
     #[tokio::test]
     async fn login_repeated_creates_multiple_tokens() {
-        let logic = make_logic(3600, 86400, false, "uuid");
+        let logic = make_logic(3600, 86400, false, "uuid", true, true);
         let t1 = logic.login(1001).await.unwrap();
         let t2 = logic.login(1001).await.unwrap();
         assert_ne!(t1, t2, "重复登录应生成不同 token");
@@ -424,7 +519,7 @@ mod tests {
     /// 验证 token_style=random_64 生成 64 字符 token。
     #[tokio::test]
     async fn login_with_random_64_style() {
-        let logic = make_logic(3600, 86400, false, "random_64");
+        let logic = make_logic(3600, 86400, false, "random_64", true, true);
         let token = logic.login(1001).await.unwrap();
         assert_eq!(token.len(), 64, "random_64 应生成 64 字符 token");
     }
@@ -432,7 +527,7 @@ mod tests {
     /// 验证 token_style=simple 生成 32 字符 token。
     #[tokio::test]
     async fn login_with_simple_style() {
-        let logic = make_logic(3600, 86400, false, "simple");
+        let logic = make_logic(3600, 86400, false, "simple", true, true);
         let token = logic.login(1001).await.unwrap();
         assert_eq!(token.len(), 32, "simple 应生成 32 字符 token");
     }
@@ -440,7 +535,7 @@ mod tests {
     /// 验证 login_with_token 用自定义 token 创建会话。
     #[tokio::test]
     async fn login_with_custom_token() {
-        let logic = make_logic(3600, 86400, false, "uuid");
+        let logic = make_logic(3600, 86400, false, "uuid", true, true);
         logic
             .login_with_token(1001, "custom-token-123")
             .await
@@ -463,7 +558,7 @@ mod tests {
     /// 验证 logout 销毁当前 token 的会话。
     #[tokio::test]
     async fn logout_destroys_current_token() {
-        let logic = Arc::new(make_logic(3600, 86400, false, "uuid"));
+        let logic = Arc::new(make_logic(3600, 86400, false, "uuid", true, true));
         let token = logic.login(1001).await.unwrap();
 
         // 在 task_local 作用域内调用 logout
@@ -480,7 +575,7 @@ mod tests {
     /// 验证 logout 未登录时幂等返回 Ok。
     #[tokio::test]
     async fn logout_when_not_logged_in_is_noop() {
-        let logic = make_logic(3600, 86400, false, "uuid");
+        let logic = make_logic(3600, 86400, false, "uuid", true, true);
         // 未设置 task_local，logout 应幂等返回 Ok
         let result = logic.logout().await;
         assert!(result.is_ok(), "未登录时 logout 应幂等返回 Ok");
@@ -489,7 +584,7 @@ mod tests {
     /// 验证 logout_by_login_id 销毁所有 token。
     #[tokio::test]
     async fn logout_by_login_id_destroys_all_tokens() {
-        let logic = make_logic(3600, 86400, false, "uuid");
+        let logic = make_logic(3600, 86400, false, "uuid", true, true);
         let t1 = logic.login(1001).await.unwrap();
         let t2 = logic.login(1001).await.unwrap();
 
@@ -518,7 +613,7 @@ mod tests {
     /// 验证 kickout 按账号踢出（语义等同 logout_by_login_id）。
     #[tokio::test]
     async fn kickout_by_account_destroys_session() {
-        let logic = make_logic(3600, 86400, false, "uuid");
+        let logic = make_logic(3600, 86400, false, "uuid", true, true);
         let token = logic.login(1001).await.unwrap();
 
         logic.kickout(1001).await.unwrap();
@@ -540,7 +635,7 @@ mod tests {
     /// 验证 kickout_by_token 按 token 踢出。
     #[tokio::test]
     async fn kickout_by_token_destroys_token_session() {
-        let logic = make_logic(3600, 86400, false, "uuid");
+        let logic = make_logic(3600, 86400, false, "uuid", true, true);
         let token = logic.login(1001).await.unwrap();
 
         logic.kickout_by_token(&token).await.unwrap();
@@ -560,7 +655,7 @@ mod tests {
     /// 验证 check_login 有效 token 返回 true。
     #[tokio::test]
     async fn check_login_returns_true_for_valid_token() {
-        let logic = Arc::new(make_logic(3600, 86400, false, "uuid"));
+        let logic = Arc::new(make_logic(3600, 86400, false, "uuid", true, true));
         let token = logic.login(1001).await.unwrap();
 
         with_current_token(token, async {
@@ -573,7 +668,7 @@ mod tests {
     /// 验证 check_login 无效 token 返回 false（throw_on_not_login=false）。
     #[tokio::test]
     async fn check_login_returns_false_for_invalid_token() {
-        let logic = Arc::new(make_logic(3600, 86400, false, "uuid"));
+        let logic = Arc::new(make_logic(3600, 86400, false, "uuid", true, true));
 
         with_current_token("invalid-token".to_string(), async {
             let valid = logic.check_login().await.unwrap();
@@ -585,7 +680,7 @@ mod tests {
     /// 验证 check_login 未设置 token 返回 false（throw_on_not_login=false）。
     #[tokio::test]
     async fn check_login_returns_false_when_no_token() {
-        let logic = make_logic(3600, 86400, false, "uuid");
+        let logic = make_logic(3600, 86400, false, "uuid", true, true);
         // 未设置 task_local，check_login 返回 false
         let valid = logic.check_login().await.unwrap();
         assert!(!valid, "未设置 token 应返回 false");
@@ -596,7 +691,7 @@ mod tests {
     /// spec config-system Requirement: 配置校验——throw_on_not_login。
     #[tokio::test]
     async fn check_login_throws_when_throw_on_not_login() {
-        let logic = make_logic(3600, 86400, true, "uuid");
+        let logic = make_logic(3600, 86400, true, "uuid", true, true);
         let result = logic.check_login().await;
         assert!(
             matches!(result, Err(BulwarkError::Session(_))),
@@ -607,7 +702,7 @@ mod tests {
     /// 验证 check_login 过期 token 返回 false。
     #[tokio::test]
     async fn check_login_returns_false_for_expired_token() {
-        let logic = Arc::new(make_logic(1, 86400, false, "uuid"));
+        let logic = Arc::new(make_logic(1, 86400, false, "uuid", true, true));
         let token = logic.login(1001).await.unwrap();
 
         // 等待 token 过期（1 秒 TTL）
@@ -627,7 +722,7 @@ mod tests {
     /// 验证 get_login_id 返回当前 login_id。
     #[tokio::test]
     async fn get_login_id_returns_current_login_id() {
-        let logic = Arc::new(make_logic(3600, 86400, false, "uuid"));
+        let logic = Arc::new(make_logic(3600, 86400, false, "uuid", true, true));
         let token = logic.login(1001).await.unwrap();
 
         with_current_token(token, async {
@@ -640,7 +735,7 @@ mod tests {
     /// 验证 get_login_id 未登录返回 None。
     #[tokio::test]
     async fn get_login_id_returns_none_when_not_logged_in() {
-        let logic = make_logic(3600, 86400, false, "uuid");
+        let logic = make_logic(3600, 86400, false, "uuid", true, true);
         let login_id = logic.get_login_id().await.unwrap();
         assert_eq!(login_id, None, "未登录应返回 None");
     }
@@ -648,7 +743,7 @@ mod tests {
     /// 验证 get_login_id 无效 token 返回 None。
     #[tokio::test]
     async fn get_login_id_returns_none_for_invalid_token() {
-        let logic = Arc::new(make_logic(3600, 86400, false, "uuid"));
+        let logic = Arc::new(make_logic(3600, 86400, false, "uuid", true, true));
 
         with_current_token("invalid-token".to_string(), async {
             let login_id = logic.get_login_id().await.unwrap();
@@ -682,25 +777,100 @@ mod tests {
     }
 
     // ------------------------------------------------------------------------
-    // check_permission/check_role 未实现占位
+    // spec scenario: check_permission 持有/未持有/未登录抛异常
     // ------------------------------------------------------------------------
 
-    /// 验证 check_permission 未实现抛错（任务组 7 实现）。
+    /// spec scenario "持有权限返回 true"：已登录且 firewall 返回 true 时 check_permission 通过。
     #[tokio::test]
-    async fn check_permission_not_implemented() {
-        let logic = make_logic(3600, 86400, false, "uuid");
-        let result = logic.check_permission("user:read").await;
+    async fn check_permission_held_returns_ok() {
+        let logic = make_logic(3600, 86400, true, "uuid", true, true);
+        let token = logic.login(1001).await.unwrap();
+        let result = with_token(&token, logic.check_permission("user:read")).await;
+        assert!(result.is_ok(), "持有权限应返回 Ok");
+    }
+
+    /// spec scenario "未持有权限返回 false"：已登录但 firewall 返回 false 时抛 NotPermission。
+    #[tokio::test]
+    async fn check_permission_not_held_throws_not_permission() {
+        let logic = make_logic(3600, 86400, true, "uuid", false, true);
+        let token = logic.login(1001).await.unwrap();
+        let result = with_token(&token, logic.check_permission("user:delete")).await;
         assert!(
-            result.is_err(),
-            "check_permission 应返回错误（任务组 7 实现）"
+            matches!(result, Err(BulwarkError::NotPermission(_))),
+            "未持有权限应抛 NotPermission"
         );
     }
 
-    /// 验证 check_role 未实现抛错（任务组 7 实现）。
+    /// spec scenario "未登录抛出异常"：未登录且 throw_on_not_login=true 时抛 NotLogin。
     #[tokio::test]
-    async fn check_role_not_implemented() {
-        let logic = make_logic(3600, 86400, false, "uuid");
+    async fn check_permission_not_login_throws_when_throw_on_not_login() {
+        let logic = make_logic(3600, 86400, true, "uuid", true, true);
+        // 不调用 login，直接 check_permission（无 task_local token）
+        let result = logic.check_permission("user:read").await;
+        assert!(
+            matches!(result, Err(BulwarkError::NotLogin(_))),
+            "未登录且 throw_on_not_login=true 应抛 NotLogin"
+        );
+    }
+
+    /// 未登录且 throw_on_not_login=false 时 check_permission 抛 NotPermission（降级为无权限）。
+    #[tokio::test]
+    async fn check_permission_not_login_throws_not_permission_when_silent() {
+        let logic = make_logic(3600, 86400, false, "uuid", true, true);
+        // 不调用 login，直接 check_permission（无 task_local token）
+        let result = logic.check_permission("user:read").await;
+        assert!(
+            matches!(result, Err(BulwarkError::NotPermission(_))),
+            "未登录且 throw_on_not_login=false 应抛 NotPermission（降级）"
+        );
+    }
+
+    // ------------------------------------------------------------------------
+    // spec scenario: check_role 持有/未持有/未登录抛异常
+    // ------------------------------------------------------------------------
+
+    /// spec scenario "持有角色返回 true"：已登录且 firewall 返回 true 时 check_role 通过。
+    #[tokio::test]
+    async fn check_role_held_returns_ok() {
+        let logic = make_logic(3600, 86400, true, "uuid", true, true);
+        let token = logic.login(1001).await.unwrap();
+        let result = with_token(&token, logic.check_role("admin")).await;
+        assert!(result.is_ok(), "持有角色应返回 Ok");
+    }
+
+    /// spec scenario "未持有角色返回 false"：已登录但 firewall 返回 false 时抛 NotRole。
+    #[tokio::test]
+    async fn check_role_not_held_throws_not_role() {
+        let logic = make_logic(3600, 86400, true, "uuid", true, false);
+        let token = logic.login(1001).await.unwrap();
+        let result = with_token(&token, logic.check_role("admin")).await;
+        assert!(
+            matches!(result, Err(BulwarkError::NotRole(_))),
+            "未持有角色应抛 NotRole"
+        );
+    }
+
+    /// spec scenario "未登录抛出异常"：未登录且 throw_on_not_login=true 时 check_role 抛 NotLogin。
+    #[tokio::test]
+    async fn check_role_not_login_throws_when_throw_on_not_login() {
+        let logic = make_logic(3600, 86400, true, "uuid", true, true);
+        // 不调用 login，直接 check_role（无 task_local token）
         let result = logic.check_role("admin").await;
-        assert!(result.is_err(), "check_role 应返回错误（任务组 7 实现）");
+        assert!(
+            matches!(result, Err(BulwarkError::NotLogin(_))),
+            "未登录且 throw_on_not_login=true 应抛 NotLogin"
+        );
+    }
+
+    /// 未登录且 throw_on_not_login=false 时 check_role 抛 NotRole（降级为无角色）。
+    #[tokio::test]
+    async fn check_role_not_login_throws_not_role_when_silent() {
+        let logic = make_logic(3600, 86400, false, "uuid", true, true);
+        // 不调用 login，直接 check_role（无 task_local token）
+        let result = logic.check_role("admin").await;
+        assert!(
+            matches!(result, Err(BulwarkError::NotRole(_))),
+            "未登录且 throw_on_not_login=false 应抛 NotRole（降级）"
+        );
     }
 }

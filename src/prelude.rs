@@ -11,4 +11,6 @@ pub use crate::plugin::BulwarkPlugin;
 pub use crate::router::{BulwarkInterceptor, BulwarkRouter};
 pub use crate::session::BulwarkSession;
 pub use crate::stp::{BulwarkInterface, BulwarkLogic, BulwarkUtil};
-pub use crate::strategy::{BulwarkFirewallStrategy, BulwarkStrategy};
+pub use crate::strategy::{
+    BulwarkFirewallStrategy, BulwarkFirewallStrategyDefault, BulwarkStrategy,
+};

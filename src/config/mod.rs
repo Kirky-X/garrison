@@ -19,7 +19,6 @@
 
 use crate::error::{BulwarkError, BulwarkResult};
 use serde::{Deserialize, Serialize};
-use serial_test::serial;
 use tokio::sync::watch;
 
 /// Token 风格枚举（对应 Sa-Token 的 token 风格）。
@@ -297,6 +296,7 @@ fn parse_bool(s: &str) -> BulwarkResult<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     // ========================================================================
     // 代码默认值测试（spec Scenario: 代码默认值生效）
