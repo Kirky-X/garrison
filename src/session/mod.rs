@@ -112,6 +112,9 @@ impl BulwarkSession {
     /// - `dao`: DAO 引用（oxcache / dbnexus）。
     /// - `timeout`: token 级超时秒数（0 表示永久驻留）。
     /// - `active_timeout`: Account-Session 级 activity 超时秒数。
+    ///
+    /// # 返回
+    /// 新建的 `BulwarkSession` 实例。
     pub fn new(dao: Arc<dyn BulwarkDao>, timeout: u64, active_timeout: u64) -> Self {
         Self {
             dao,
@@ -127,6 +130,13 @@ impl BulwarkSession {
     /// # 参数
     /// - `login_id`: 登录主体标识。
     /// - `token`: 新创建的 token 字符串。
+    ///
+    /// # 返回
+    /// 成功返回 `Ok(())`。
+    ///
+    /// # 错误
+    /// - 序列化 `TokenSession` / `AccountSession` 失败：`BulwarkError::Session`。
+    /// - DAO 写入失败：透传 `BulwarkError`。
     pub async fn create(&self, login_id: i64, token: &str) -> BulwarkResult<()> {
         let now = Utc::now().timestamp();
 
@@ -175,6 +185,17 @@ impl BulwarkSession {
     /// 获取 Token-Session。
     ///
     /// 对应 spec scenario "创建 Token-Session"（读取验证）。
+    ///
+    /// # 参数
+    /// - `token`: token 字符串。
+    ///
+    /// # 返回
+    /// - `Some(TokenSession)`: token 存在。
+    /// - `None`: token 不存在或已过期。
+    ///
+    /// # 错误
+    /// - 反序列化失败：`BulwarkError::Session`。
+    /// - DAO 读取失败：透传 `BulwarkError`。
     pub async fn get_token_session(&self, token: &str) -> BulwarkResult<Option<TokenSession>> {
         match self.dao.get(&token_key(token)).await? {
             Some(json) => {
@@ -188,6 +209,17 @@ impl BulwarkSession {
     }
 
     /// 获取 Account-Session。
+    ///
+    /// # 参数
+    /// - `login_id`: 登录主体标识。
+    ///
+    /// # 返回
+    /// - `Some(AccountSession)`: 账号会话存在。
+    /// - `None`: 账号会话不存在或已过期。
+    ///
+    /// # 错误
+    /// - 反序列化失败：`BulwarkError::Session`。
+    /// - DAO 读取失败：透传 `BulwarkError`。
     pub async fn get_account_session(
         &self,
         login_id: i64,
@@ -206,6 +238,14 @@ impl BulwarkSession {
     /// 设置 Token-Session 自定义属性。
     ///
     /// 对应 spec scenario "Token-Session 存储自定义属性"。
+    ///
+    /// # 参数
+    /// - `token`: token 字符串。
+    /// - `key`: 属性键。
+    /// - `value`: 属性值。
+    ///
+    /// # 返回
+    /// 成功返回 `Ok(())`。
     ///
     /// # 错误
     /// - 若 token 不存在，返回 `BulwarkError::InvalidToken`。
@@ -226,6 +266,17 @@ impl BulwarkSession {
     /// 获取 Token-Session 自定义属性。
     ///
     /// 对应 spec scenario "Token-Session 存储自定义属性"（读取验证）。
+    ///
+    /// # 参数
+    /// - `token`: token 字符串。
+    /// - `key`: 属性键。
+    ///
+    /// # 返回
+    /// - `Some(String)`: 属性存在。
+    /// - `None`: token 不存在或属性不存在。
+    ///
+    /// # 错误
+    /// - DAO 读取失败：透传 `BulwarkError`。
     pub async fn get(&self, token: &str, key: &str) -> BulwarkResult<Option<String>> {
         match self.get_token_session(token).await? {
             Some(ts) => Ok(ts.attrs.get(key).cloned()),
@@ -239,6 +290,16 @@ impl BulwarkSession {
     /// 即使 Token-Session 仍存在，也视为无效（spec scenario "Activity 超时"）。
     ///
     /// 注意：此方法只读，不更新 last_active_at。活跃续期请调用 `touch`。
+    ///
+    /// # 参数
+    /// - `token`: 待校验的 token 字符串。
+    ///
+    /// # 返回
+    /// - `true`: Token-Session 存在且 Account-Session 未过期。
+    /// - `false`: token 不存在或 Account-Session 已过期。
+    ///
+    /// # 错误
+    /// - DAO 读取失败：透传 `BulwarkError`。
     pub async fn is_valid(&self, token: &str) -> BulwarkResult<bool> {
         let ts = match self.get_token_session(token).await? {
             Some(ts) => ts,
@@ -255,6 +316,12 @@ impl BulwarkSession {
     ///
     /// 对应 spec scenario "活跃续期"。
     /// 同时更新 Token-Session 与 Account-Session 的 last_active_at 和 TTL。
+    ///
+    /// # 参数
+    /// - `token`: 待续期的 token 字符串。
+    ///
+    /// # 返回
+    /// 成功返回 `Ok(())`。
     ///
     /// # 错误
     /// - 若 token 不存在，返回 `BulwarkError::InvalidToken`。
@@ -295,6 +362,12 @@ impl BulwarkSession {
     ///
     /// 对应 spec scenario "主动续期重置过期时间"。
     ///
+    /// # 参数
+    /// - `token`: 待续期的 token 字符串。
+    ///
+    /// # 返回
+    /// 成功返回 `Ok(())`。
+    ///
     /// # 错误
     /// - 若 token 不存在，返回 `BulwarkError::InvalidToken`（spec scenario "续期不存在的 token"）。
     pub async fn renew(&self, token: &str) -> BulwarkResult<()> {
@@ -315,6 +388,16 @@ impl BulwarkSession {
     ///
     /// 删除 Token-Session，并从 Account-Session 的 token 列表移除该 token。
     /// 若列表为空，Account-Session 保留（不删除，保留历史）。
+    ///
+    /// # 参数
+    /// - `token`: 待登出的 token 字符串。
+    ///
+    /// # 返回
+    /// 成功返回 `Ok(())`；token 不存在时幂等返回 `Ok(())`。
+    ///
+    /// # 错误
+    /// - 序列化 `AccountSession` 失败：`BulwarkError::Session`。
+    /// - DAO 删除/更新失败：透传 `BulwarkError`。
     pub async fn logout(&self, token: &str) -> BulwarkResult<()> {
         let ts = self.get_token_session(token).await?;
         // 删除 Token-Session
@@ -340,6 +423,15 @@ impl BulwarkSession {
     /// 按账号登出：删除所有关联 token + Account-Session。
     ///
     /// 对应 Sa-Token 的 `logout(login_id)` 语义。
+    ///
+    /// # 参数
+    /// - `login_id`: 登录主体标识。
+    ///
+    /// # 返回
+    /// 成功返回 `Ok(())`。
+    ///
+    /// # 错误
+    /// - DAO 删除失败：透传 `BulwarkError`。
     pub async fn logout_by_login_id(&self, login_id: i64) -> BulwarkResult<()> {
         if let Some(account) = self.get_account_session(login_id).await? {
             for ti in &account.tokens {

@@ -34,6 +34,9 @@ pub struct BulwarkStrategy {
 
 impl BulwarkStrategy {
     /// 创建新的策略实例。
+    ///
+    /// # 返回
+    /// 新建的 `BulwarkStrategy` 实例（占位实现，0.2.0+ 完善）。
     pub fn new() -> Self {
         Self { _inner: () }
     }
@@ -42,6 +45,12 @@ impl BulwarkStrategy {
     ///
     /// # 参数
     /// - `login_id`: 登录主体标识。
+    ///
+    /// # 返回
+    /// 生成的 token 字符串。
+    ///
+    /// # 错误
+    /// 0.2.0+ 实现前调用必 panic（`todo!`）。
     pub fn create_token(&self, login_id: i64) -> BulwarkResult<String> {
         let _ = login_id;
         todo!("0.2.0+ 实现：委托具体 Token 生成策略")
@@ -51,6 +60,13 @@ impl BulwarkStrategy {
     ///
     /// # 参数
     /// - `token`: Token 字符串。
+    ///
+    /// # 返回
+    /// - `Some(login_id)`: token 有效，返回关联的登录主体标识。
+    /// - `None`: token 无效或已过期。
+    ///
+    /// # 错误
+    /// 0.2.0+ 实现前调用必 panic（`todo!`）。
     pub fn parse_login_id(&self, token: &str) -> BulwarkResult<Option<i64>> {
         let _ = token;
         todo!("0.2.0+ 实现：委托具体 Token 解析策略")
@@ -82,12 +98,24 @@ pub trait BulwarkFirewallStrategy: Send + Sync {
     ///
     /// # 参数
     /// - `login_id`: 登录主体标识。
+    ///
+    /// # 返回
+    /// 权限标识字符串列表（如 `["user:read", "user:write"]`）。
+    ///
+    /// # 错误
+    /// - 数据回调失败：透传 `BulwarkError`。
     async fn get_permission_list(&self, login_id: i64) -> BulwarkResult<Vec<String>>;
 
     /// 获取主体的角色列表。
     ///
     /// # 参数
     /// - `login_id`: 登录主体标识。
+    ///
+    /// # 返回
+    /// 角色标识字符串列表（如 `["admin", "user"]`）。
+    ///
+    /// # 错误
+    /// - 数据回调失败：透传 `BulwarkError`。
     async fn get_role_list(&self, login_id: i64) -> BulwarkResult<Vec<String>>;
 
     /// 校验权限：检查主体是否持有指定权限。
@@ -107,16 +135,45 @@ pub trait BulwarkFirewallStrategy: Send + Sync {
     /// # 参数
     /// - `login_id`: 登录主体标识。
     /// - `role`: 角色标识字符串。
+    ///
+    /// # 返回
+    /// - `Ok(true)`: 主体持有该角色。
+    /// - `Ok(false)`: 主体未持有该角色。
+    ///
+    /// # 错误
+    /// - 数据回调失败：透传 `BulwarkError`。
     async fn check_role(&self, login_id: i64, role: &str) -> BulwarkResult<bool>;
 
     /// 校验角色（任一匹配）：主体持有 `roles` 中任意一个即通过。
     ///
     /// 对应 spec scenario "多角色任一匹配"。
+    ///
+    /// # 参数
+    /// - `login_id`: 登录主体标识。
+    /// - `roles`: 候选角色列表。
+    ///
+    /// # 返回
+    /// - `Ok(true)`: 主体持有 `roles` 中任一角色。
+    /// - `Ok(false)`: 主体不持有 `roles` 中任何角色。
+    ///
+    /// # 错误
+    /// - 数据回调失败：透传 `BulwarkError`。
     async fn check_role_any(&self, login_id: i64, roles: &[&str]) -> BulwarkResult<bool>;
 
     /// 校验角色（全部匹配）：主体需持有 `roles` 中所有角色。
     ///
     /// 对应 spec scenario "多角色全部匹配"。
+    ///
+    /// # 参数
+    /// - `login_id`: 登录主体标识。
+    /// - `roles`: 必须全部持有的角色列表。
+    ///
+    /// # 返回
+    /// - `Ok(true)`: 主体持有 `roles` 中所有角色（空列表平凡满足）。
+    /// - `Ok(false)`: 主体仅持有部分或未持有任何角色。
+    ///
+    /// # 错误
+    /// - 数据回调失败：透传 `BulwarkError`。
     async fn check_role_all(&self, login_id: i64, roles: &[&str]) -> BulwarkResult<bool>;
 }
 
@@ -144,6 +201,9 @@ impl BulwarkFirewallStrategyDefault {
     ///
     /// # 参数
     /// - `interface`: 权限/角色数据回调（业务方实现）。
+    ///
+    /// # 返回
+    /// 新建的 `BulwarkFirewallStrategyDefault` 实例。
     pub fn new(interface: Arc<dyn BulwarkInterface>) -> Self {
         Self { interface }
     }

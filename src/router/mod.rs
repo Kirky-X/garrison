@@ -198,6 +198,7 @@ mod web_axum {
         }
     }
 
+    /// 实现 `Default`：使用 `BulwarkConfig::default_config()` 创建路由器，拦截器为 `DefaultBulwarkInterceptor`。
     impl Default for BulwarkRouter {
         fn default() -> Self {
             Self::new(Arc::new(BulwarkConfig::default_config()))

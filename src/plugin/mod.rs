@@ -2,6 +2,8 @@
 //!
 //! [借鉴 Sa-Token] 通过 `inventory` crate 实现编译期插件注册（替代 Java SPI），
 //! 插件在编译期通过 `inventory::submit!` 注册，运行期通过 `inventory::iter!` 收集。
+//!
+//! 该模块在 0.1.0 为占位实现，完整功能将在 0.2.0+ 提供。
 
 use crate::error::BulwarkResult;
 

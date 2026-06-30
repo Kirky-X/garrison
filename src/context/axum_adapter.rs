@@ -27,6 +27,12 @@ pub struct AxumRequest<'a> {
 
 impl<'a> AxumRequest<'a> {
     /// 创建新的 AxumRequest。
+    ///
+    /// # 参数
+    /// - `request`: axum `Request<Body>` 引用，生命周期绑定到返回的 `AxumRequest`。
+    ///
+    /// # 返回
+    /// 包装该请求引用的 `AxumRequest` 实例。
     pub fn new(request: &'a Request<Body>) -> Self {
         Self { request }
     }
@@ -128,6 +134,9 @@ impl Default for AxumResponse {
 
 impl AxumResponse {
     /// 转换为 axum Response（空 body）。
+    ///
+    /// # 返回
+    /// 携带当前 `HeaderMap` 与 `StatusCode` 的 axum `Response`（body 为空）。
     pub fn to_response(self) -> axum::response::Response {
         let mut response = axum::response::Response::new(Body::empty());
         *response.status_mut() = self.status;
@@ -214,6 +223,12 @@ pub struct AxumContext<'a> {
 
 impl<'a> AxumContext<'a> {
     /// 创建新的 AxumContext，绑定到指定请求。
+    ///
+    /// # 参数
+    /// - `request`: axum `Request<Body>` 引用，生命周期绑定到返回的 `AxumContext`。
+    ///
+    /// # 返回
+    /// 绑定该请求的 `AxumContext` 实例（内部已初始化空的 `AxumResponse` 与 `AxumStorage`）。
     pub fn new(request: &'a Request<Body>) -> Self {
         Self {
             request,
@@ -223,11 +238,17 @@ impl<'a> AxumContext<'a> {
     }
 
     /// 获取底层请求引用。
+    ///
+    /// # 返回
+    /// 底层 `&Request<Body>` 引用，用于直接访问 axum 原生请求字段。
     pub fn raw_request(&self) -> &Request<Body> {
         self.request
     }
 
     /// 消费 context，生成 axum Response。
+    ///
+    /// # 返回
+    /// 由内部 `AxumResponse` 转换而来的 axum `Response`（携带已设置的 status 与 headers）。
     pub fn into_response(self) -> axum::response::Response {
         self.response.to_response()
     }

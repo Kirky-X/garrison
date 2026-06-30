@@ -1,6 +1,8 @@
 //! 权限校验模块，定义权限 / 角色校验抽象。
 //!
 //! [借鉴 Sa-Token] 权限认证核心逻辑，对应 Sa-Token 的 `StpLogic.checkPermission / checkRole` 方法。
+//!
+//! 该模块在 0.1.0 为占位实现，完整功能将在 0.2.0+ 提供。
 
 use crate::error::BulwarkResult;
 

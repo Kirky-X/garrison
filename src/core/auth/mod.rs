@@ -1,6 +1,8 @@
 //! 认证逻辑模块，定义登录 / 登出核心抽象。
 //!
 //! [借鉴 Sa-Token] 登录认证核心逻辑，对应 Sa-Token 的 `StpLogic.login / logout` 方法。
+//!
+//! 该模块在 0.1.0 为占位实现，完整功能将在 0.2.0+ 提供。
 
 use crate::error::BulwarkResult;
 

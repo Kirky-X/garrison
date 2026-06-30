@@ -156,6 +156,13 @@ impl BulwarkConfig {
     /// 依据 spec config-system Requirement: 配置校验：
     /// - `token_style` 必须是 `TOKEN_STYLES` 中的合法值
     /// - `timeout` 必须 > 0（-1 抛错 "timeout must be positive"）
+    ///
+    /// # 返回
+    /// 校验通过返回 `Ok(())`。
+    ///
+    /// # 错误
+    /// - `BulwarkError::Config`：`token_style` 非法（消息含 "unknown token_style"）。
+    /// - `BulwarkError::Config`：`timeout` 非正（消息 "timeout must be positive"）。
     pub fn validate(&self) -> BulwarkResult<()> {
         if !TOKEN_STYLES.contains(&self.token_style.as_str()) {
             return Err(BulwarkError::Config(format!(
@@ -173,6 +180,10 @@ impl BulwarkConfig {
     ///
     /// 返回 `watch::Receiver<BulwarkConfig>`，调用 `rx.borrow_and_update()` 获取最新配置。
     /// 若实例未调用 `with_watcher()`，返回 `None`。
+    ///
+    /// # 返回
+    /// - `Some(receiver)`：成功订阅配置变更通道，后续可通过 receiver 接收 `update()` 广播的新配置。
+    /// - `None`：实例未通过 `with_watcher()` 启用 watcher。
     pub fn watch(&self) -> Option<watch::Receiver<BulwarkConfig>> {
         self.watcher.as_ref().map(|tx| tx.subscribe())
     }
@@ -183,6 +194,16 @@ impl BulwarkConfig {
     /// ```ignore
     /// config.update(|c| c.timeout = 3600)?;
     /// ```
+    ///
+    /// # 参数
+    /// - `f`: 接收 `&mut BulwarkConfig` 的闭包，在闭包内修改字段值。
+    ///
+    /// # 返回
+    /// 更新并广播成功返回 `Ok(())`；若实例未启用 watcher，亦返回 `Ok(())`（no-op）。
+    ///
+    /// # 错误
+    /// - `BulwarkError::Config`：闭包修改后的配置未通过 `validate()`（如非法 `token_style` 或非正 `timeout`）。
+    /// - `BulwarkError::Config`：watcher 已关闭（消息 "config watcher closed"）。
     ///
     /// # 行为
     /// 1. 从 watcher 读取当前配置
@@ -218,15 +239,44 @@ pub trait ConfigLoader {
     /// 完整加载流程：toml 文件 → 环境变量覆盖。
     ///
     /// `toml_str` 为空时使用代码默认值。
+    ///
+    /// # 参数
+    /// - `toml_str`: toml 配置字符串，空字符串使用代码默认值。
+    ///
+    /// # 返回
+    /// 合并后的 `BulwarkConfig`（已附加 watcher 并通过 `validate()`）。
+    ///
+    /// # 错误
+    /// - `BulwarkError::Config`：toml 解析失败、环境变量非法或配置校验未通过。
     fn load(toml_str: &str) -> BulwarkResult<BulwarkConfig> {
         let config = Self::load_from_toml_str(toml_str)?;
         Self::apply_env_overrides(config)
     }
 
     /// 从 toml 字符串加载配置（空字符串返回默认值）。
+    ///
+    /// # 参数
+    /// - `toml_str`: toml 配置字符串，空字符串使用代码默认值。
+    ///
+    /// # 返回
+    /// 解析得到的 `BulwarkConfig`（已附加 watcher 并通过 `validate()`）。
+    ///
+    /// # 错误
+    /// - `BulwarkError::Config`：toml 解析失败（消息含 "toml parse error"）。
+    /// - `BulwarkError::Config`：配置校验未通过（如非法 `token_style`）。
     fn load_from_toml_str(toml_str: &str) -> BulwarkResult<BulwarkConfig>;
 
     /// 应用环境变量覆盖（`BULWARK_` 前缀）。
+    ///
+    /// # 参数
+    /// - `config`: 待覆盖的配置实例。
+    ///
+    /// # 返回
+    /// 应用环境变量覆盖后的 `BulwarkConfig`（已通过 `validate()`）。
+    ///
+    /// # 错误
+    /// - `BulwarkError::Config`：环境变量值非法（如非数字、非布尔）。
+    /// - `BulwarkError::Config`：覆盖后配置校验未通过。
     fn apply_env_overrides(config: BulwarkConfig) -> BulwarkResult<BulwarkConfig>;
 }
 

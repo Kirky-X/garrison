@@ -194,6 +194,11 @@ mod extractors {
     /// 从请求中提取 token 并校验登录状态。校验失败返回 `BulwarkError`。
     pub struct CheckLogin;
 
+    /// 实现 `FromRequestParts`：从请求 parts 提取 token（若有），调用 `enforce_login` 校验登录状态。
+    ///
+    /// # 错误
+    /// - `BulwarkError::NotLogin`：未登录且 `throw_on_not_login=false`。
+    /// - `BulwarkError::Session`：未登录且 `throw_on_not_login=true`（严格模式）。
     #[async_trait]
     impl<S: Send + Sync> FromRequestParts<S> for CheckLogin {
         type Rejection = BulwarkError;
@@ -220,6 +225,11 @@ mod extractors {
     /// 通过泛型参数 `R: RoleName` 指定角色名，校验当前用户是否持有该角色。
     pub struct CheckRole<R: RoleName>(PhantomData<R>);
 
+    /// 实现 `FromRequestParts`：从请求 parts 提取 token（若有），调用 `BulwarkUtil::check_role(R::NAME)` 校验角色。
+    ///
+    /// # 错误
+    /// - `BulwarkError::NotRole`：当前用户未持有角色 `R::NAME`。
+    /// - `BulwarkError::NotLogin`：未登录（严格模式下）。
     #[async_trait]
     impl<R: RoleName, S: Send + Sync> FromRequestParts<S> for CheckRole<R> {
         type Rejection = BulwarkError;
@@ -250,6 +260,11 @@ mod extractors {
     /// 通过泛型参数 `P: PermissionName` 指定权限名，校验当前用户是否持有该权限。
     pub struct CheckPermission<P: PermissionName>(PhantomData<P>);
 
+    /// 实现 `FromRequestParts`：从请求 parts 提取 token（若有），调用 `BulwarkUtil::check_permission(P::NAME)` 校验权限。
+    ///
+    /// # 错误
+    /// - `BulwarkError::NotPermission`：当前用户未持有权限 `P::NAME`。
+    /// - `BulwarkError::NotLogin`：未登录（严格模式下）。
     #[async_trait]
     impl<P: PermissionName, S: Send + Sync> FromRequestParts<S> for CheckPermission<P> {
         type Rejection = BulwarkError;
@@ -280,6 +295,7 @@ mod extractors {
     /// 不执行任何校验，直接返回 `Ok`，用于路由配置标记。
     pub struct Ignore;
 
+    /// 实现 `FromRequestParts`：不执行任何校验，直接返回 `Ok(Ignore)`。
     #[async_trait]
     impl<S: Send + Sync> FromRequestParts<S> for Ignore {
         type Rejection = BulwarkError;
@@ -314,6 +330,11 @@ mod extractors {
         }
     }
 
+    /// 实现 `FromRequestParts`：从请求 parts 提取 token（若有），调用 `enforce_mode::<M>` 执行模式校验。
+    ///
+    /// # 错误
+    /// - `Mode<Strict>`：未登录时返回 `BulwarkError::NotLogin`。
+    /// - `Mode<Loose>`：不返回错误（宽松模式允许匿名访问）。
     #[async_trait]
     impl<M: ModeSpec, S: Send + Sync> FromRequestParts<S> for Mode<M> {
         type Rejection = BulwarkError;

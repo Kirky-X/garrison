@@ -4,6 +4,8 @@
 //! 基于 `reqwest` crate 实现授权码、隐式、密码、客户端凭证四种授权流程。
 //!
 //! 仅在启用 `protocol-oauth2` 特性时编译。
+//!
+//! 该模块在 0.1.0 为占位实现，完整功能将在 0.2.0+ 提供。
 
 use crate::error::BulwarkResult;
 

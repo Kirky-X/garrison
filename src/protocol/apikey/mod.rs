@@ -4,6 +4,8 @@
 //! 提供基于 API Key 的认证机制，适用于服务间调用与开放 API 场景。
 //!
 //! 仅在启用 `protocol-apikey` 特性时编译。
+//!
+//! 该模块在 0.1.0 为占位实现，完整功能将在 0.2.0+ 提供。
 
 use crate::error::BulwarkResult;
 

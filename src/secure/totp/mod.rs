@@ -2,6 +2,8 @@
 //!
 //! [借鉴 Sa-Token] 基于 `totp-rs` crate 实现，
 //! 提供二步验证（2FA）能力。
+//!
+//! 该模块在 0.1.0 为占位实现，完整功能将在 0.2.0+ 提供。
 
 use crate::error::BulwarkResult;
 

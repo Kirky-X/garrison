@@ -102,7 +102,7 @@ secure-httpbasic = ["base64"]
 secure-httpdigest = ["sha2", "base64"]
 
 # === Web 框架适配 ===
-web-axum = ["axum"]
+web-axum = ["axum", "axum/tokio", "axum/http1"]
 web-actix = ["actix-web"]
 web-warp = ["warp"]
 

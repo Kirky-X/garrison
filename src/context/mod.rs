@@ -48,12 +48,20 @@ pub trait BulwarkRequest {
     ///
     /// # 参数
     /// - `name`: 头部字段名。
+    ///
+    /// # 返回
+    /// - `Some(value)`: 头部存在。
+    /// - `None`: 头部不存在。
     fn header(&self, name: &str) -> BulwarkResult<Option<String>>;
 
     /// 获取 Cookie 值。
     ///
     /// # 参数
     /// - `name`: Cookie 名称。
+    ///
+    /// # 返回
+    /// - `Some(value)`: Cookie 存在。
+    /// - `None`: Cookie 不存在。
     fn cookie(&self, name: &str) -> BulwarkResult<Option<String>>;
 
     /// 从请求中提取 Token（依据 spec context-abstraction Requirement: BulwarkRequest）。
@@ -65,6 +73,10 @@ pub trait BulwarkRequest {
     ///
     /// # 参数
     /// - `config`: 配置，决定从 header 还是 cookie 提取。
+    ///
+    /// # 返回
+    /// - `Some(token)`: 成功提取的 Token 字符串（header 优先于 cookie）。
+    /// - `None`: 未在 header 或 cookie 中找到 Token。
     fn get_token(&self, config: &crate::config::BulwarkConfig) -> BulwarkResult<Option<String>>;
 }
 
@@ -109,6 +121,10 @@ pub trait BulwarkStorage {
     ///
     /// # 参数
     /// - `key`: 存储键。
+    ///
+    /// # 返回
+    /// - `Some(value)`: 键存在。
+    /// - `None`: 键不存在。
     fn get(&self, key: &str) -> BulwarkResult<Option<String>>;
 
     /// 删除存储值。

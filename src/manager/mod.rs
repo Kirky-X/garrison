@@ -76,6 +76,9 @@ impl BulwarkManager {
     /// 6. 若无 factory 注册，使用默认 `BulwarkLogicFactoryDefault` 构造 `BulwarkLogicDefault`
     /// 7. 覆盖式更新全局单例（允许重复 init，便于测试）
     ///
+    /// # 返回
+    /// 成功返回 `Ok(())`。
+    ///
     /// # 错误
     /// - 配置非法（timeout ≤ 0 等）：`BulwarkError::Config`
     /// - timeout/active_timeout 溢出 u64：`BulwarkError::Config`
@@ -132,6 +135,9 @@ impl BulwarkManager {
 
     /// 获取全局 `BulwarkLogic` 引用。
     ///
+    /// # 返回
+    /// 已初始化时返回 `Arc<dyn BulwarkLogic>`。
+    ///
     /// # 错误
     /// - 若未初始化，返回 `BulwarkError::Session("BulwarkManager 未初始化")`。
     pub fn logic() -> BulwarkResult<Arc<dyn BulwarkLogic>> {
@@ -143,6 +149,10 @@ impl BulwarkManager {
     }
 
     /// 检查管理器是否已初始化。
+    ///
+    /// # 返回
+    /// - `true`: 已调用 `init` 且全局单例持有 `BulwarkLogic`。
+    /// - `false`: 未初始化或已 `reset_for_test`。
     pub fn is_initialized() -> bool {
         BULWARK_MANAGER.logic.read().is_some()
     }
@@ -208,6 +218,17 @@ inventory::collect!(BulwarkLogicFactoryEntry);
 ///
 /// 此函数通过 `inventory::submit!` 在编译期注册到全局工厂列表，
 /// `BulwarkManager::init()` 会找到它并调用以构造 `Arc<dyn BulwarkLogic>`。
+///
+/// # 参数
+/// - `session`: 会话管理器。
+/// - `config`: 全局配置。
+/// - `firewall`: 权限策略。
+///
+/// # 返回
+/// 新建的 `Arc<dyn BulwarkLogic>`（实际类型为 `BulwarkLogicDefault`）。
+///
+/// # 错误
+/// 当前实现始终返回 `Ok`，保留 `BulwarkResult` 以匹配工厂签名便于扩展。
 pub fn bulwark_logic_factory_default(
     session: Arc<BulwarkSession>,
     config: Arc<BulwarkConfig>,

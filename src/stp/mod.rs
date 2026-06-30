@@ -69,44 +69,121 @@ pub trait BulwarkLogic: Send + Sync {
     ///
     /// # 返回
     /// 生成的 token 字符串。
+    ///
+    /// # 错误
+    /// - token 生成失败（如 `token_style` 非法）：`BulwarkError::Config`。
+    /// - 会话创建失败：透传 `BulwarkError`。
     async fn login(&self, login_id: i64) -> BulwarkResult<String>;
 
     /// 执行登录（自定义 token）：用指定 token 创建会话。
     ///
     /// 用于 token 转发、自定义 token 生成等场景。
+    ///
+    /// # 参数
+    /// - `login_id`: 登录主体标识。
+    /// - `token`: 自定义 token 字符串。
+    ///
+    /// # 返回
+    /// 成功返回 `Ok(())`。
+    ///
+    /// # 错误
+    /// - 会话创建失败：透传 `BulwarkError`。
     async fn login_with_token(&self, login_id: i64, token: &str) -> BulwarkResult<()>;
 
     /// 执行登出：从 task_local 获取当前 token 并销毁。
     ///
     /// 未登录时调用幂等返回 Ok（不抛错）。
+    ///
+    /// # 返回
+    /// 成功返回 `Ok(())`；未设置 token 时幂等返回 `Ok(())`。
+    ///
+    /// # 错误
+    /// - 会话销毁失败：透传 `BulwarkError`。
     async fn logout(&self) -> BulwarkResult<()>;
 
     /// 按账号登出：销毁指定 login_id 的所有会话。
+    ///
+    /// # 参数
+    /// - `login_id`: 登录主体标识。
+    ///
+    /// # 返回
+    /// 成功返回 `Ok(())`。
+    ///
+    /// # 错误
+    /// - 会话销毁失败：透传 `BulwarkError`。
     async fn logout_by_login_id(&self, login_id: i64) -> BulwarkResult<()>;
 
     /// 踢出用户：按账号踢出（语义等同 logout_by_login_id）。
+    ///
+    /// # 参数
+    /// - `login_id`: 登录主体标识。
+    ///
+    /// # 返回
+    /// 成功返回 `Ok(())`。
+    ///
+    /// # 错误
+    /// - 会话销毁失败：透传 `BulwarkError`。
     async fn kickout(&self, login_id: i64) -> BulwarkResult<()>;
 
     /// 踢出会话：按 token 踢出（语义等同 logout(token)）。
+    ///
+    /// # 参数
+    /// - `token`: 待踢出的 token 字符串。
+    ///
+    /// # 返回
+    /// 成功返回 `Ok(())`。
+    ///
+    /// # 错误
+    /// - 会话销毁失败：透传 `BulwarkError`。
     async fn kickout_by_token(&self, token: &str) -> BulwarkResult<()>;
 
     /// 检查登录状态：从 task_local 获取 token 验证有效性。
     ///
-    /// - 返回 `Ok(true)`: token 有效且 Account-Session 未过期
-    /// - 返回 `Ok(false)`: token 无效或未登录（`throw_on_not_login=false`）
-    /// - 返回 `Err`: 未登录且 `throw_on_not_login=true`（抛 `BulwarkError::Session`）
+    /// # 返回
+    /// - `Ok(true)`: token 有效且 Account-Session 未过期。
+    /// - `Ok(false)`: token 无效或未登录（`throw_on_not_login=false`）。
+    ///
+    /// # 错误
+    /// - 未登录且 `throw_on_not_login=true`：抛 `BulwarkError::Session`。
+    /// - DAO 读取失败：透传 `BulwarkError`。
     async fn check_login(&self) -> BulwarkResult<bool>;
 
     /// 获取当前登录 ID。
     ///
-    /// - `Some(login_id)`: token 有效，返回关联的 login_id
-    /// - `None`: 未登录或 token 无效
+    /// # 返回
+    /// - `Some(login_id)`: token 有效，返回关联的 login_id。
+    /// - `None`: 未登录或 token 无效。
+    ///
+    /// # 错误
+    /// - DAO 读取失败：透传 `BulwarkError`。
     async fn get_login_id(&self) -> BulwarkResult<Option<i64>>;
 
     /// 校验权限（任务组 7 实现，复用 dbnexus PermissionProvider）。
+    ///
+    /// # 参数
+    /// - `permission`: 权限标识字符串。
+    ///
+    /// # 返回
+    /// 成功（持有权限）返回 `Ok(())`。
+    ///
+    /// # 错误
+    /// - 未登录且 `throw_on_not_login=true`：`BulwarkError::NotLogin`。
+    /// - 未登录且 `throw_on_not_login=false`：降级为 `BulwarkError::NotPermission`。
+    /// - 未持有权限：`BulwarkError::NotPermission`。
     async fn check_permission(&self, permission: &str) -> BulwarkResult<()>;
 
     /// 校验角色（任务组 7 实现）。
+    ///
+    /// # 参数
+    /// - `role`: 角色标识字符串。
+    ///
+    /// # 返回
+    /// 成功（持有角色）返回 `Ok(())`。
+    ///
+    /// # 错误
+    /// - 未登录且 `throw_on_not_login=true`：`BulwarkError::NotLogin`。
+    /// - 未登录且 `throw_on_not_login=false`：降级为 `BulwarkError::NotRole`。
+    /// - 未持有角色：`BulwarkError::NotRole`。
     async fn check_role(&self, role: &str) -> BulwarkResult<()>;
 }
 
@@ -132,6 +209,9 @@ impl BulwarkLogicDefault {
     /// - `session`: 会话管理器。
     /// - `config`: 全局配置。
     /// - `firewall`: 权限策略（默认 `BulwarkFirewallStrategyDefault`，持有 `BulwarkInterface` 回调）。
+    ///
+    /// # 返回
+    /// 新建的 `BulwarkLogicDefault` 实例。
     pub fn new(
         session: Arc<BulwarkSession>,
         config: Arc<BulwarkConfig>,
@@ -288,12 +368,24 @@ pub trait BulwarkInterface: Send + Sync {
     ///
     /// # 参数
     /// - `login_id`: 登录主体标识。
+    ///
+    /// # 返回
+    /// 权限标识字符串列表（如 `["user:read", "user:write"]`）。
+    ///
+    /// # 错误
+    /// - 数据源访问失败：由业务方实现决定具体 `BulwarkError`。
     async fn get_permission_list(&self, login_id: i64) -> BulwarkResult<Vec<String>>;
 
     /// 获取指定主体的角色列表。
     ///
     /// # 参数
     /// - `login_id`: 登录主体标识。
+    ///
+    /// # 返回
+    /// 角色标识字符串列表（如 `["admin", "user"]`）。
+    ///
+    /// # 错误
+    /// - 数据源访问失败：由业务方实现决定具体 `BulwarkError`。
     async fn get_role_list(&self, login_id: i64) -> BulwarkResult<Vec<String>>;
 }
 
@@ -315,18 +407,42 @@ pub struct BulwarkUtil;
 impl BulwarkUtil {
     /// 执行登录：生成 token + 创建会话。
     ///
+    /// # 参数
+    /// - `id`: 登录主体标识。
+    ///
     /// # 返回
     /// 生成的 token 字符串。
+    ///
+    /// # 错误
+    /// - `BulwarkManager` 未初始化：`BulwarkError::Session`。
+    /// - token 生成或会话创建失败：透传 `BulwarkError`。
     pub async fn login(id: i64) -> BulwarkResult<String> {
         crate::manager::BulwarkManager::logic()?.login(id).await
     }
 
     /// 执行登出：从 task_local 获取当前 token 并销毁。
+    ///
+    /// # 返回
+    /// 成功返回 `Ok(())`；未设置 token 时幂等返回 `Ok(())`。
+    ///
+    /// # 错误
+    /// - `BulwarkManager` 未初始化：`BulwarkError::Session`。
+    /// - 会话销毁失败：透传 `BulwarkError`。
     pub async fn logout() -> BulwarkResult<()> {
         crate::manager::BulwarkManager::logic()?.logout().await
     }
 
     /// 按账号登出：销毁指定 login_id 的所有会话。
+    ///
+    /// # 参数
+    /// - `login_id`: 登录主体标识。
+    ///
+    /// # 返回
+    /// 成功返回 `Ok(())`。
+    ///
+    /// # 错误
+    /// - `BulwarkManager` 未初始化：`BulwarkError::Session`。
+    /// - 会话销毁失败：透传 `BulwarkError`。
     pub async fn logout_by_login_id(login_id: i64) -> BulwarkResult<()> {
         crate::manager::BulwarkManager::logic()?
             .logout_by_login_id(login_id)
@@ -334,6 +450,16 @@ impl BulwarkUtil {
     }
 
     /// 踢出用户：按账号踢出（语义等同 logout_by_login_id）。
+    ///
+    /// # 参数
+    /// - `login_id`: 登录主体标识。
+    ///
+    /// # 返回
+    /// 成功返回 `Ok(())`。
+    ///
+    /// # 错误
+    /// - `BulwarkManager` 未初始化：`BulwarkError::Session`。
+    /// - 会话销毁失败：透传 `BulwarkError`。
     pub async fn kickout(login_id: i64) -> BulwarkResult<()> {
         crate::manager::BulwarkManager::logic()?
             .kickout(login_id)
@@ -341,6 +467,16 @@ impl BulwarkUtil {
     }
 
     /// 踢出会话：按 token 踢出。
+    ///
+    /// # 参数
+    /// - `token`: 待踢出的 token 字符串。
+    ///
+    /// # 返回
+    /// 成功返回 `Ok(())`。
+    ///
+    /// # 错误
+    /// - `BulwarkManager` 未初始化：`BulwarkError::Session`。
+    /// - 会话销毁失败：透传 `BulwarkError`。
     pub async fn kickout_by_token(token: &str) -> BulwarkResult<()> {
         crate::manager::BulwarkManager::logic()?
             .kickout_by_token(token)
@@ -348,11 +484,27 @@ impl BulwarkUtil {
     }
 
     /// 检查登录状态。
+    ///
+    /// # 返回
+    /// - `Ok(true)`: 当前已登录且 token 有效。
+    /// - `Ok(false)`: 未登录或 token 无效（`throw_on_not_login=false`）。
+    ///
+    /// # 错误
+    /// - `BulwarkManager` 未初始化：`BulwarkError::Session`。
+    /// - 未登录且 `throw_on_not_login=true`：`BulwarkError::Session`。
     pub async fn check_login() -> BulwarkResult<bool> {
         crate::manager::BulwarkManager::logic()?.check_login().await
     }
 
     /// 获取当前登录 ID。
+    ///
+    /// # 返回
+    /// - `Some(login_id)`: 已登录，返回关联的 login_id。
+    /// - `None`: 未登录或 token 无效。
+    ///
+    /// # 错误
+    /// - `BulwarkManager` 未初始化：`BulwarkError::Session`。
+    /// - DAO 读取失败：透传 `BulwarkError`。
     pub async fn get_login_id() -> BulwarkResult<Option<i64>> {
         crate::manager::BulwarkManager::logic()?
             .get_login_id()
@@ -360,6 +512,17 @@ impl BulwarkUtil {
     }
 
     /// 校验权限。
+    ///
+    /// # 参数
+    /// - `permission`: 权限标识字符串。
+    ///
+    /// # 返回
+    /// 成功（持有权限）返回 `Ok(())`。
+    ///
+    /// # 错误
+    /// - `BulwarkManager` 未初始化：`BulwarkError::Session`。
+    /// - 未登录：`BulwarkError::NotLogin` 或降级为 `BulwarkError::NotPermission`。
+    /// - 未持有权限：`BulwarkError::NotPermission`。
     pub async fn check_permission(permission: &str) -> BulwarkResult<()> {
         crate::manager::BulwarkManager::logic()?
             .check_permission(permission)
@@ -367,6 +530,17 @@ impl BulwarkUtil {
     }
 
     /// 校验角色。
+    ///
+    /// # 参数
+    /// - `role`: 角色标识字符串。
+    ///
+    /// # 返回
+    /// 成功（持有角色）返回 `Ok(())`。
+    ///
+    /// # 错误
+    /// - `BulwarkManager` 未初始化：`BulwarkError::Session`。
+    /// - 未登录：`BulwarkError::NotLogin` 或降级为 `BulwarkError::NotRole`。
+    /// - 未持有角色：`BulwarkError::NotRole`。
     pub async fn check_role(role: &str) -> BulwarkResult<()> {
         crate::manager::BulwarkManager::logic()?
             .check_role(role)

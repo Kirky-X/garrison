@@ -1,6 +1,8 @@
 //! Token 模型模块，定义 Token 数据结构。
 //!
 //! [借鉴 Sa-Token] Token 信息模型，对应 Sa-Token 的 `SaTokenInfo` / `TokenSign` 数据结构。
+//!
+//! 该模块在 0.1.0 为占位实现，完整功能将在 0.2.0+ 提供。
 
 use serde::{Deserialize, Serialize};
 

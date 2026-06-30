@@ -2,6 +2,47 @@
 //!
 //! Bulwark 是一个面向 Rust 生态的身份认证鉴权框架，借鉴 Sa-Token v1.45.0 的设计理念。
 //!
+//! ## 快速开始
+//!
+//! 最小可用示例：初始化管理器 → 执行登录 → 校验登录状态。
+//!
+//! ```ignore
+//! use std::sync::Arc;
+//! use bulwark::prelude::*;
+//!
+//! // 1. 准备依赖（业务方实现 BulwarkDao / BulwarkInterface）
+//! let dao: Arc<dyn BulwarkDao> = /* oxcache / dbnexus 实现 */;
+//! let config = Arc::new(BulwarkConfig::default_config());
+//! let interface: Arc<dyn BulwarkInterface> = Arc::new(MyInterface);
+//!
+//! // 2. 初始化全局管理器（覆盖式注入 dao / config / interface）
+//! BulwarkManager::init(dao, config, interface).unwrap();
+//!
+//! // 3. 执行登录：生成 token 并写入会话
+//! //    注意：login / check_login 依赖 task_local 上下文中的当前 token，
+//! //    通常由 web 中间件（如 axum middleware）设置。
+//! let token = BulwarkUtil::login(1001).await.unwrap();
+//!
+//! // 4. 校验登录状态
+//! let logged_in = BulwarkUtil::check_login().await.unwrap();
+//! assert!(logged_in);
+//! ```
+//!
+//! ## 特性
+//!
+//! Bulwark 通过 Cargo feature flags 控制各能力域的编译：
+//!
+//! | 类别 | Feature | 说明 |
+//! |:---|:---|:---|
+//! | 默认 | `default` | `cache-memory` + `db-sqlite` + `web-axum` |
+//! | 缓存 | `cache-memory` / `cache-redis` | 基于 oxcache 的 L1(moka) + L2(redis) |
+//! | 数据库 | `db-sqlite` | 基于 dbnexus 0.2 + auto-migrate |
+//! | Web 框架 | `web-axum` / `web-actix` / `web-warp` | 路由拦截器与 extractor 适配 |
+//! | 协议层 | `protocol-jwt` / `protocol-oauth2` / `protocol-sso` / `protocol-sign` / `protocol-apikey` / `protocol-temp` | 鉴权协议插件 |
+//! | 安全模块 | `secure-totp` / `secure-sign` / `secure-httpbasic` / `secure-httpdigest` | TOTP / 签名 / Basic / Digest |
+//! | 可观测性 | `listener` / `tracing-log` / `metrics-prometheus` | 事件监听 / 日志 / 指标 |
+//! | 聚合 | `full` / `production` / `development` | 一键启用一组特性 |
+//!
 //! ## 特性域
 //!
 //! Bulwark 借鉴 Sa-Token 的 13 个特性域设计：
@@ -19,6 +60,19 @@
 //! - **Digest 认证** - HTTP Digest Auth
 //! - **路由拦截鉴权** - Web 框架适配
 //! - **插件化扩展** - 编译期插件注册
+//!
+//! ## 架构
+//!
+//! Bulwark 采用双抽象层 + 全局单例的架构：
+//!
+//! - **双抽象层**
+//!   - `dbnexus`：数据库抽象层（SQLite / PostgreSQL / MySQL），由 [`BulwarkDao`] trait 屏蔽后端差异
+//!   - `oxcache`：缓存抽象层（L1 moka + L2 redis），承载 Token-Session 与 Account-Session
+//! - **BulwarkManager 单例模式**
+//!   - [`BulwarkManager`] 持有全局 `Arc<dyn BulwarkLogic>`（基于 `parking_lot::RwLock`，支持覆盖式 `init`）
+//!   - 业务方启动时调用 [`BulwarkManager::init`] 注入 dao / config / interface 依赖
+//!   - `BulwarkLogicFactory` 通过 `inventory::submit!` 在编译期注册，运行时由 `inventory::iter` 选取
+//!   - [`BulwarkUtil::login`] / [`BulwarkUtil::check_login`] 等静态方法委托到全局单例
 //!
 //! ## 双抽象层
 //!

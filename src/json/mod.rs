@@ -2,6 +2,8 @@
 //!
 //! [借鉴 Sa-Token] 对应 Sa-Token 的 JSON 模板层，
 //! 隔离具体 JSON 库（serde_json / simd-json 等）。
+//!
+//! 该模块在 0.1.0 为占位实现，完整功能将在 0.2.0+ 提供。
 
 use crate::error::BulwarkResult;
 

@@ -89,6 +89,12 @@ mod oxcache_impl {
         /// 创建默认的 oxcache DAO 实例。
         ///
         /// 使用 oxcache 默认配置（minimal/core/full features 取决于 Cargo.toml）。
+        ///
+        /// # 返回
+        /// 已初始化的 `BulwarkDaoOxcache` 实例（内部 `oxcache::Cache` 已就绪）。
+        ///
+        /// # 错误
+        /// - `BulwarkError::Dao`：oxcache 初始化失败（消息含 "oxcache 初始化失败"）。
         pub async fn new() -> BulwarkResult<Self> {
             let cache = Cache::builder()
                 .build()
@@ -188,6 +194,12 @@ pub use oxcache_impl::BulwarkDaoOxcache;
 /// 对应 tasks.md 2.4：封装 oxcache 初始化逻辑。
 ///
 /// 返回的 `BulwarkDaoOxcache` 已实现 `BulwarkDao` trait，可直接用于业务代码。
+///
+/// # 返回
+/// 已初始化的 `BulwarkDaoOxcache` 实例。
+///
+/// # 错误
+/// 透传 `BulwarkDaoOxcache::new()` 的错误（`BulwarkError::Dao`）。
 #[cfg(any(feature = "cache-memory", feature = "cache-redis"))]
 pub async fn init_oxcache_dao() -> BulwarkResult<BulwarkDaoOxcache> {
     BulwarkDaoOxcache::new().await
