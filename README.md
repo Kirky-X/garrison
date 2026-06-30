@@ -1,0 +1,363 @@
+<p align="center">
+  <img src="https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=A%20modern%20minimalist%20shield%20logo%20for%20Bulwark%20authentication%20framework%2C%20geometric%20fortress%20wall%20motif%2C%20deep%20blue%20and%20steel%20gradient%2C%20flat%20design%2C%20white%20background%2C%20centered%20composition&image_size=square_hd" alt="Bulwark Logo" width="160" />
+</p>
+
+<h1 align="center">Bulwark</h1>
+
+<p align="center">
+  <b>面向 Rust 生态的身份认证鉴权框架，借鉴 Sa-Token v1.45.0 设计理念</b><br/>
+  <a href="#quick-start">🚀 快速开始</a> •
+  <a href="#features">📖 特性</a> •
+  <a href="./docs/architecture.md">🏗 架构</a> •
+  <a href="./CHANGELOG.md">📝 更新日志</a> •
+  <a href="./docs/CONTRIBUTING.md">🤝 贡献</a>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/version-0.1.0-blue" alt="version" />
+  <img src="https://img.shields.io/badge/license-Apache--2.0-green" alt="license" />
+  <img src="https://img.shields.io/badge/MSRV-1.85+-orange" alt="msrv" />
+  <img src="https://img.shields.io/badge/coverage-97.81%25-brightgreen" alt="coverage" />
+  <img src="https://img.shields.io/badge/tests-323%20passed-success" alt="tests" />
+  <img src="https://img.shields.io/badge/clippy-zero%20warnings-success" alt="clippy" />
+</p>
+
+---
+
+## 📑 目录
+
+- [概述](#-概述)
+- [特性](#-特性)
+- [架构](#-架构)
+- [快速开始](#-quick-start)
+  - [前置依赖](#前置依赖)
+  - [安装](#安装)
+  - [最小示例](#最小示例)
+  - [axum 集成示例](#axum-集成示例)
+- [配置](#️-配置)
+- [特性门控](#-特性门控)
+- [API 文档](#-api-文档)
+- [贡献](#-贡献)
+- [路线图](#-路线图)
+- [许可证](#-许可证)
+- [致谢](#-致谢)
+
+---
+
+## 🔭 概述
+
+**Bulwark** 是一个面向 Rust 生态的身份认证鉴权框架，借鉴 Sa-Token v1.45.0 的设计理念，
+提供基于 Token 的会话管理、RBAC 权限模型、axum Web 框架集成等核心能力。
+
+框架采用**双抽象层 + 全局单例**架构：
+
+- **dbnexus** 数据库抽象层（SQLite / PostgreSQL / MySQL，由 `BulwarkDao` trait 屏蔽后端差异）
+- **oxcache** 缓存抽象层（L1 moka + L2 redis，承载会话与 Token 存储）
+- **BulwarkManager** 全局单例，持有 `Arc<dyn BulwarkLogic>`，业务方启动时一次性注入依赖即可使用静态 API
+
+### 适用场景
+
+- **Web 应用认证**：基于 axum/actix/warp 的 Web 服务需要登录认证、权限校验
+- **微服务网关**：API 网关层统一鉴权，支持 JWT/OAuth2/API Key 多种协议
+- **企业级后台**：RBAC 权限模型 + 会话管理 + 审计日志
+- **多端 SSO**：跨子系统单点登录，ticket 模型 + 一次性消费
+
+---
+
+## ✨ 特性
+
+| 特性 | 说明 |
+| --- | --- |
+| ⚡ **零运行时开销** | 编译期 `inventory::submit!` 工厂注册，无反射、无动态加载 |
+| 🔒 **完整鉴权链** | 登录认证 → 权限校验 → 会话管理 → 路由拦截，开箱即用 |
+| 📦 **多后端抽象** | `BulwarkDao` + `oxcache` + `dbnexus`，切换存储后端零业务代码改动 |
+| 🔧 **可插拔扩展** | trait + Default 实现模式，替换任意组件（DAO / 策略 / 逻辑）无需改业务 |
+| 🎯 **Feature 门控** | 13 个特性域独立 feature flag，按需编译减小体积 |
+| 📊 **高可观测** | `tracing` 日志 + `listener` 事件订阅 + `prometheus` 指标（可选） |
+| 🧪 **高覆盖** | 323 个测试通过，97.81% 行覆盖率，clippy 零警告 |
+| 🌐 **Web 框架适配** | axum 注解式 extractor（`CheckLogin` / `CheckRole` / `CheckPermission`） |
+
+### 特性域覆盖（13 个，对标 Sa-Token）
+
+| 特性域 | 状态 | 说明 |
+|--------|------|------|
+| 登录认证 | ✅ 0.1.0 完成 | 基于 Token 的会话管理 |
+| 权限认证 | ✅ 0.1.0 完成 | RBAC 权限模型 |
+| Session 会话 | ✅ 0.1.0 完成 | 双模会话生命周期管理（Account + Token） |
+| 路由拦截鉴权 | ✅ 0.1.0 完成 | axum Web 框架适配 |
+| JWT | 🚧 0.2.0 规划中 | JSON Web Token 签发与验证 |
+| OAuth2 | 🚧 0.2.0 规划中 | 授权码 / 客户端凭证 / 密码模式 |
+| 单点登录 (SSO) | 🚧 0.2.0 规划中 | ticket 模型单点登录 |
+| 微服务网关鉴权 | 🚧 0.2.0 规划中 | API 签名 + nonce 防重放 |
+| API 接口鉴权 | 🚧 0.2.0 规划中 | API Key 生成 / 校验 / 吊销 |
+| TOTP 动态验证码 | 🚧 0.2.0 规划中 | RFC 6238 二次验证 |
+| Basic 认证 | 🚧 0.2.0 规划中 | HTTP Basic Auth (RFC 7617) |
+| Digest 认证 | 🚧 0.2.0 规划中 | HTTP Digest Auth (RFC 7616) |
+| 插件化扩展 | 🚧 0.2.0 规划中 | `BulwarkPlugin` trait + inventory 注册 |
+
+---
+
+## 🏗 架构
+
+```mermaid
+graph TD
+    User["业务代码"] --> Util["BulwarkUtil 静态 API"]
+    Util --> Manager["BulwarkManager 单例"]
+    Manager --> Logic["BulwarkLogic trait"]
+    Logic --> Session["BulwarkSession"]
+    Logic --> Strategy["BulwarkFirewallStrategy"]
+    Session --> Dao["BulwarkDao trait"]
+    Strategy --> Interface["BulwarkInterface 业务回调"]
+    Dao --> Oxcache["oxcache (L1 moka + L2 redis)"]
+    Dao --> Dbnexus["dbnexus (SQLite)"]
+    Logic --> Plugin["BulwarkPlugin (inventory)"]
+    Logic --> Listener["BulwarkListener (inventory)"]
+    Annotation["axum 注解<br/>CheckLogin / CheckRole / CheckPermission"] --> Logic
+    Router["BulwarkRouter"] --> Interceptor["BulwarkInterceptor"]
+    Interceptor --> Util
+```
+
+核心模块说明：
+
+- `bulwark-stp`：核心 API（`BulwarkLogic` trait + `BulwarkUtil` 静态委托 + task_local 上下文）
+- `bulwark-session`：双模会话管理（Account-Session + Token-Session）
+- `bulwark-strategy`：权限校验策略（`BulwarkFirewallStrategy` trait）
+- `bulwark-manager`：全局单例 + inventory 工厂注册
+- `bulwark-annotation`：axum extractor 注解系统
+- `bulwark-router`：axum Router 包装 + middleware 拦截
+- `bulwark-dao`：`BulwarkDao` trait + oxcache / dbnexus 实现
+
+完整架构设计见 [docs/architecture.md](./docs/architecture.md)。
+
+---
+
+## 🚀 Quick Start
+
+### 前置依赖
+
+| 依赖 | 版本 | 说明 |
+| --- | --- | --- |
+| Rust | >= 1.85 | 工具链（部分 deps 要求 edition2024） |
+| cargo | 随 Rust 安装 | 包管理器 |
+| libssl-dev | 系统包 | `cargo tarpaulin` 覆盖率工具需要 |
+| pkg-config | 系统包 | `cargo tarpaulin` 覆盖率工具需要 |
+
+> 注：运行时无需额外系统依赖，`oxcache` 与 `dbnexus` 均为纯 Rust 实现。
+
+### 安装
+
+在 `Cargo.toml` 中添加依赖：
+
+```toml
+[dependencies]
+bulwark = { version = "0.1", features = ["web-axum"] }
+tokio = { version = "1", features = ["full"] }
+```
+
+如需启用全部协议层与安全模块：
+
+```toml
+[dependencies]
+bulwark = { version = "0.1", features = ["full"] }
+```
+
+### 最小示例
+
+完整业务场景：初始化管理器 → 执行登录 → 校验登录状态 → 登出。
+
+```rust
+use std::sync::Arc;
+use bulwark::prelude::*;
+use async_trait::async_trait;
+
+// 1. 业务方实现 BulwarkInterface（提供权限/角色数据）
+struct MyInterface;
+#[async_trait]
+impl BulwarkInterface for MyInterface {
+    async fn get_permission_list(&self, _login_id: i64) -> BulwarkResult<Vec<String>> {
+        Ok(vec!["user:read".into(), "user:write".into()])
+    }
+    async fn get_role_list(&self, _login_id: i64) -> BulwarkResult<Vec<String>> {
+        Ok(vec!["user".into()])
+    }
+}
+
+#[tokio::main]
+async fn main() -> BulwarkResult<()> {
+    // 2. 准备依赖
+    let dao: Arc<dyn BulwarkDao> = Arc::new(BulwarkDaoOxcache::new().await?);
+    let config = Arc::new(BulwarkConfig::default_config());
+    let interface: Arc<dyn BulwarkInterface> = Arc::new(MyInterface);
+
+    // 3. 初始化全局管理器（覆盖式注入 dao / config / interface）
+    BulwarkManager::init(dao, config, interface)?;
+
+    // 4. 在 task_local 上下文中执行登录
+    let token = bulwark::stp::with_current_token(
+        String::new(),
+        BulwarkUtil::login(1001),
+    ).await?;
+    println!("登录成功，token = {}", token);
+
+    // 5. 校验登录状态
+    let logged_in = bulwark::stp::with_current_token(
+        token.clone(),
+        BulwarkUtil::check_login(),
+    ).await?;
+    assert!(logged_in);
+
+    // 6. 校验权限
+    let has_perm = bulwark::stp::with_current_token(
+        token.clone(),
+        BulwarkUtil::check_permission("user:read"),
+    ).await?;
+    assert!(has_perm);
+
+    // 7. 登出
+    bulwark::stp::with_current_token(
+        token.clone(),
+        BulwarkUtil::logout(),
+    ).await?;
+
+    Ok(())
+}
+```
+
+**预期输出：**
+
+```text
+登录成功，token = a1b2c3d4e5f6...
+```
+
+### axum 集成示例
+
+完整 Web 应用示例见 [examples/axum_integration.rs](./examples/axum_integration.rs)（244 行），包含：
+
+- `BulwarkRouter` 包装 axum Router
+- 4 个 `route_protected` 路由（带 `CheckLogin` / `CheckRole<AdminRole>` / `CheckPermission<ReadPerm>` 注解）
+- axum middleware 自动从 Authorization header 提取 token 并设置 task_local
+
+---
+
+## ⚙️ 配置
+
+`BulwarkConfig` 支持三级配置源（优先级从高到低）：
+
+1. **环境变量**：`BULWARK_TIMEOUT` / `BULWARK_ACTIVE_TIMEOUT` / `BULWARK_TOKEN_NAME` 等
+2. **toml 配置文件**：`bulwark.toml`（通过 `ConfigLoader::load_from_file` 加载）
+3. **代码默认值**：`BulwarkConfig::default_config()`
+
+核心配置项：
+
+| 字段 | 默认值 | 说明 |
+| --- | --- | --- |
+| `timeout` | `2592000`（30 天） | 会话超时秒数 |
+| `active_timeout` | `-1`（不启用） | 活跃超时秒数，-1 表示跟随 `timeout` |
+| `is_share` | `true` | 同账号多端共享会话 |
+| `is_concurrent` | `true` | 允许同账号并发登录 |
+| `token_name` | `bulwark-token` | Cookie / Header 名 |
+| `token_style` | `random-64` | Token 风格（`uuid` / `random-64` / `simple` / `jwt`） |
+| `throw_on_not_login` | `true` | 未登录时抛异常而非返回 false |
+
+支持通过 `tokio::sync::watch` 实现配置热更新，详见 [docs/configuration.md](./docs/configuration.md)。
+
+---
+
+## 🎛 特性门控
+
+| 特性 | 默认 | 说明 |
+| --- | :---: | --- |
+| `cache-memory` | ✅ | 内存缓存后端（oxcache moka） |
+| `cache-redis` | ✅ | Redis 缓存后端（oxcache L2） |
+| `db-sqlite` | ✅ | SQLite 数据库后端（dbnexus + auto-migrate） |
+| `web-axum` | ✅ | axum Web 框架适配 |
+| `web-actix` | ❌ | actix-web Web 框架适配 |
+| `web-warp` | ❌ | warp Web 框架适配 |
+| `protocol-jwt` | ❌ | JWT 签发与验证 |
+| `protocol-oauth2` | ❌ | OAuth2 三种模式 |
+| `protocol-sso` | ❌ | SSO 单点登录 ticket |
+| `protocol-sign` | ❌ | API 签名 + nonce 防重放 |
+| `protocol-apikey` | ❌ | API Key 认证 |
+| `protocol-temp` | ❌ | 临时凭证 |
+| `secure-totp` | ❌ | TOTP 动态验证码 (RFC 6238) |
+| `secure-sign` | ❌ | HMAC-SHA256/SHA512 工具 |
+| `secure-httpbasic` | ❌ | HTTP Basic 认证 (RFC 7617) |
+| `secure-httpdigest` | ❌ | HTTP Digest 认证 (RFC 7616) |
+| `listener` | ❌ | 事件监听器 |
+| `tracing-log` | ❌ | tracing 日志桥接 |
+| `metrics-prometheus` | ❌ | Prometheus 指标 |
+| `full` | ❌ | 聚合所有特性 |
+| `production` | ❌ | 生产环境推荐组合 |
+| `development` | ❌ | 开发环境组合 |
+
+---
+
+## 📚 API 文档
+
+- **在线文档**：[https://docs.rs/bulwark](https://docs.rs/bulwark)
+- **本地生成**：`cargo doc --no-deps --features full --open`
+- **示例代码**：
+  - [examples/basic_login.rs](./examples/basic_login.rs)：完整业务场景（144 行）
+  - [examples/axum_integration.rs](./examples/axum_integration.rs)：完整 Web 应用（244 行）
+
+---
+
+## 🤝 贡献
+
+欢迎所有形式的贡献！请先阅读 [贡献指南](./docs/CONTRIBUTING.md)。
+
+### 提交 Issue
+
+- 使用 [Issue 模板](https://github.com/Kirky-X/bulwark/issues/new/choose)（Bug Report / Feature Request）
+- 描述问题时请提供复现步骤与 Rust 版本
+
+### 提交 PR
+
+1. Fork 本仓库
+2. 创建特性分支：`git checkout -b feat/your-feature`
+3. 遵循 [Conventional Commits](https://conventionalcommits.org/zh-hans/) 规范提交
+4. 确保 `cargo test --features full` + `cargo clippy -- -D warnings` 通过
+5. 创建 Pull Request
+
+### 开发规范
+
+- **TDD 工作流**：先写接口 → 写测试 → 实现 → 测试通过 → commit
+- **clippy**：零警告（`-D warnings`）
+- **文档**：所有 public API 必须有 `///` 文档注释
+- **测试串行化**：修改全局 `BulwarkManager` 单例的测试需标注 `#[serial_test::serial]`
+
+---
+
+## 🗺 路线图
+
+- [x] **v0.1.0**（2026-06-30）核心基础设施：登录认证 + 权限校验 + 双模会话 + axum 集成
+- [ ] **v0.2.0** 协议与安全层：JWT / OAuth2 / SSO / Sign / API Key / TOTP / Basic / Digest
+- [ ] **v0.3.0** 多后端与可观测：PostgreSQL / MySQL 后端 + OpenTelemetry 集成
+- [ ] **v0.4.0** 高级特性：Refresh Token 自动轮换 + RBAC 层级角色 + ABAC 模型
+- [ ] **v1.0.0** 稳定版：API 冻结 + 性能基准 + 生产案例
+
+完整规划见 [docs/roadmap.md](./docs/roadmap.md)。
+
+---
+
+## 📄 许可证
+
+本项目基于 [Apache-2.0](./LICENSE) 许可证开源。
+
+为何选择 Apache-2.0 而非 MIT：Apache-2.0 包含专利授权条款，更适合企业级框架使用。
+
+---
+
+## 🙏 致谢
+
+- [Sa-Token](https://github.com/dromara/sa-token)：本项目的设计灵感来源，Java 生态最优秀的认证鉴权框架之一
+- [axum](https://github.com/tokio-rs/axum)：tokio 团队出品的 Rust Web 框架
+- [oxcache](https://github.com/Kirky-X/oxcache)：Rust 多级缓存库（L1 moka + L2 redis）
+- [dbnexus](https://github.com/Kirky-X/dbnexus)：Rust 数据库抽象层（SQLite / PostgreSQL / MySQL）
+- [inventory](https://github.com/dtolnay/inventory)：David Tolnay 的编译期插件注册库
+
+---
+
+<p align="center">
+  Built with ❤️ by <a href="https://github.com/Kirky-X">Kirky.X</a>
+</p>
