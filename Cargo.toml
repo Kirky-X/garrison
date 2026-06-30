@@ -65,6 +65,8 @@ sea-orm = { version = "2.0.0-rc.37", default-features = false, features = ["sqlx
 tower = { version = "0.5", default-features = false, features = ["util"] }
 # http-body-util 用于 axum 测试中的 body 读取
 http-body-util = "0.1"
+# wiremock 用于 OAuth2/SSO 集成测试的 HTTP mock（0.2.0 新增）
+wiremock = "0.6"
 
 [features]
 default = []

@@ -2,6 +2,7 @@
 //!
 //! [借鉴 Sa-Token] Sa-TokenException 异常体系，提供框架统一的错误类型与 Result 别名。
 
+use crate::exception::BulwarkException;
 use thiserror::Error;
 
 /// Bulwark 框架统一错误类型。
@@ -52,6 +53,10 @@ pub enum BulwarkError {
     /// 上下文错误（对应 BulwarkContext / Request / Response / Storage 异常）。
     #[error("上下文错误: {0}")]
     Context(String),
+
+    /// 业务异常（携带上下文的可恢复异常，0.2.0 新增，依据 spec exception-system）。
+    #[error("{0}")]
+    Exception(BulwarkException),
 }
 
 /// Bulwark 框架统一 Result 类型别名。
@@ -120,6 +125,25 @@ impl axum::response::IntoResponse for BulwarkError {
                 "CONTEXT_ERROR",
                 "上下文错误",
             ),
+            // Exception 依据 BulwarkException.code 字段映射状态码（依据 spec exception-system Requirement: IntoResponse 实现）
+            // code = -1 → 未登录 → 401；code = -2 → 无权限 → 403；其他 → 500
+            BulwarkError::Exception(ex) => {
+                let (status, error_code, message) = match ex.code {
+                    -1 => (StatusCode::UNAUTHORIZED, "NOT_LOGIN", "未登录"),
+                    -2 => (StatusCode::FORBIDDEN, "NOT_PERMISSION", "无权限"),
+                    _ => (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "EXCEPTION",
+                        "业务异常",
+                    ),
+                };
+                let body = axum::Json(serde_json::json!({
+                    "error_code": error_code,
+                    "message": message,
+                    "code": ex.code,
+                }));
+                return (status, body).into_response();
+            }
         };
         let body = axum::Json(serde_json::json!({
             "error_code": error_code,
@@ -375,5 +399,53 @@ mod tests {
         let err = BulwarkError::NotRole("无角色".to_string());
         let response = err.into_response();
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    // ========================================================================
+    // Exception 变体测试（依据 spec exception-system Requirement: IntoResponse 实现）
+    // ========================================================================
+
+    /// 验证 Exception 变体的 Display 输出（委托给 BulwarkException::Display）。
+    #[test]
+    fn exception_variant_display_includes_code_and_message() {
+        use crate::exception::BulwarkException;
+        let err = BulwarkError::Exception(BulwarkException::new(-1, "请先登录"));
+        assert_eq!(err.to_string(), "业务异常[-1]: 请先登录");
+    }
+
+    /// 验证 code=-1 的 Exception 映射为 401 Unauthorized（依据 spec Scenario: 未登录异常返回 401 JSON）。
+    #[cfg(feature = "web-axum")]
+    #[test]
+    fn exception_not_login_returns_401() {
+        use crate::exception::BulwarkException;
+        use axum::http::StatusCode;
+        use axum::response::IntoResponse;
+        let err = BulwarkError::Exception(BulwarkException::new(-1, "请先登录"));
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    /// 验证 code=-2 的 Exception 映射为 403 Forbidden（依据 spec Scenario: 无权限异常返回 403 JSON）。
+    #[cfg(feature = "web-axum")]
+    #[test]
+    fn exception_not_permission_returns_403() {
+        use crate::exception::BulwarkException;
+        use axum::http::StatusCode;
+        use axum::response::IntoResponse;
+        let err = BulwarkError::Exception(BulwarkException::new(-2, "无权限"));
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    /// 验证其他 code 的 Exception 映射为 500 Internal Server Error（依据 spec Scenario: 其他异常返回 500 JSON）。
+    #[cfg(feature = "web-axum")]
+    #[test]
+    fn exception_other_code_returns_500() {
+        use crate::exception::BulwarkException;
+        use axum::http::StatusCode;
+        use axum::response::IntoResponse;
+        let err = BulwarkError::Exception(BulwarkException::new(500, "业务异常"));
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 }

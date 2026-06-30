@@ -44,6 +44,15 @@ pub const DEFAULT_COOKIE_SECURE: bool = true;
 /// 默认 Cookie SameSite 策略（"Lax" 平衡安全与可用性）。
 pub const DEFAULT_COOKIE_SAME_SITE: &str = "Lax";
 
+/// 默认 JWT 签名算法（HS256，兼容 HS512 可选，依据 spec protocol-jwt）。
+pub const DEFAULT_JWT_ALGORITHM: &str = "HS256";
+
+/// 默认签名校验时间窗口秒数（5 分钟，依据 spec protocol-sign 防重放）。
+pub const DEFAULT_SIGN_WINDOW_SECONDS: i64 = 300;
+
+/// 默认 SSO ticket TTL 秒数（60 秒，依据 spec protocol-sso 短时票据）。
+pub const DEFAULT_SSO_TICKET_TTL_SECONDS: u64 = 60;
+
 /// 环境变量前缀（BULWARK_）。
 pub const ENV_PREFIX: &str = "BULWARK_";
 
@@ -113,6 +122,15 @@ pub struct BulwarkConfig {
     /// Cookie 的 `SameSite` 策略（"Lax" / "Strict" / "None"）。
     pub cookie_same_site: String,
 
+    /// JWT 签名算法（"HS256" 默认 / "HS512" 可选，依据 spec protocol-jwt）。
+    pub jwt_algorithm: String,
+
+    /// 签名校验时间窗口秒数（默认 300 秒，依据 spec protocol-sign 防重放）。
+    pub sign_window_seconds: i64,
+
+    /// SSO ticket TTL 秒数（默认 60 秒，依据 spec protocol-sso 短时票据）。
+    pub sso_ticket_ttl_seconds: u64,
+
     /// 配置变更广播通道（serde 跳过，反序列化后通过 `with_watcher` 重建）。
     #[serde(skip)]
     watcher: Option<watch::Sender<BulwarkConfig>>,
@@ -137,6 +155,9 @@ impl BulwarkConfig {
             throw_on_not_login: true,
             cookie_secure: DEFAULT_COOKIE_SECURE,
             cookie_same_site: DEFAULT_COOKIE_SAME_SITE.to_string(),
+            jwt_algorithm: DEFAULT_JWT_ALGORITHM.to_string(),
+            sign_window_seconds: DEFAULT_SIGN_WINDOW_SECONDS,
+            sso_ticket_ttl_seconds: DEFAULT_SSO_TICKET_TTL_SECONDS,
             watcher: None,
         };
         config.with_watcher()
@@ -347,6 +368,22 @@ impl ConfigLoader for DefaultConfigLoader {
         if let Ok(v) = std::env::var(format!("{}COOKIE_SAME_SITE", ENV_PREFIX)) {
             config.cookie_same_site = v;
         }
+        if let Ok(v) = std::env::var(format!("{}JWT_ALGORITHM", ENV_PREFIX)) {
+            config.jwt_algorithm = v;
+        }
+        if let Ok(v) = std::env::var(format!("{}SIGN_WINDOW_SECONDS", ENV_PREFIX)) {
+            config.sign_window_seconds = v.parse().map_err(|_| {
+                BulwarkError::Config(format!("{}SIGN_WINDOW_SECONDS invalid: {}", ENV_PREFIX, v))
+            })?;
+        }
+        if let Ok(v) = std::env::var(format!("{}SSO_TICKET_TTL_SECONDS", ENV_PREFIX)) {
+            config.sso_ticket_ttl_seconds = v.parse().map_err(|_| {
+                BulwarkError::Config(format!(
+                    "{}SSO_TICKET_TTL_SECONDS invalid: {}",
+                    ENV_PREFIX, v
+                ))
+            })?;
+        }
         config.validate()?;
         Ok(config)
     }
@@ -384,6 +421,10 @@ mod tests {
         assert!(config.is_read_cookie);
         assert!(config.is_read_header);
         assert!(config.is_write_header);
+        // 0.2.0 新增字段默认值（依据 spec protocol-jwt / protocol-sign / protocol-sso）
+        assert_eq!(config.jwt_algorithm, "HS256");
+        assert_eq!(config.sign_window_seconds, 300);
+        assert_eq!(config.sso_ticket_ttl_seconds, 60);
     }
 
     /// 验证 Default::default() 等价于 default_config()。
@@ -660,6 +701,9 @@ throw_on_not_login = false
             throw_on_not_login: true,
             cookie_secure: true,
             cookie_same_site: "Lax".to_string(),
+            jwt_algorithm: "HS256".to_string(),
+            sign_window_seconds: 300,
+            sso_ticket_ttl_seconds: 60,
             watcher: None,
         };
         assert!(config.update(|c| c.timeout = 999).is_ok());
@@ -885,5 +929,64 @@ throw_on_not_login = false
         let config: BulwarkConfig =
             <DefaultConfigLoader as ConfigLoader>::load("").expect("通过 trait 调用 load 应成功");
         assert_eq!(config.token_style, "uuid");
+    }
+
+    // ========================================================================
+    // 0.2.0 新增字段环境变量覆盖测试（依据 spec protocol-jwt / protocol-sign / protocol-sso）
+    // ========================================================================
+
+    /// 验证 `BULWARK_JWT_ALGORITHM` 环境变量覆盖 jwt_algorithm 字段。
+    #[test]
+    #[serial]
+    fn env_overrides_jwt_algorithm() {
+        std::env::set_var(format!("{}JWT_ALGORITHM", ENV_PREFIX), "HS512");
+        let config = BulwarkConfig::default_config();
+        let config = DefaultConfigLoader::apply_env_overrides(config).unwrap();
+        assert_eq!(config.jwt_algorithm, "HS512");
+        std::env::remove_var(format!("{}JWT_ALGORITHM", ENV_PREFIX));
+    }
+
+    /// 验证 `BULWARK_SIGN_WINDOW_SECONDS` 环境变量覆盖 sign_window_seconds 字段。
+    #[test]
+    #[serial]
+    fn env_overrides_sign_window_seconds() {
+        std::env::set_var(format!("{}SIGN_WINDOW_SECONDS", ENV_PREFIX), "600");
+        let config = BulwarkConfig::default_config();
+        let config = DefaultConfigLoader::apply_env_overrides(config).unwrap();
+        assert_eq!(config.sign_window_seconds, 600);
+        std::env::remove_var(format!("{}SIGN_WINDOW_SECONDS", ENV_PREFIX));
+    }
+
+    /// 验证 `BULWARK_SSO_TICKET_TTL_SECONDS` 环境变量覆盖 sso_ticket_ttl_seconds 字段。
+    #[test]
+    #[serial]
+    fn env_overrides_sso_ticket_ttl_seconds() {
+        std::env::set_var(format!("{}SSO_TICKET_TTL_SECONDS", ENV_PREFIX), "120");
+        let config = BulwarkConfig::default_config();
+        let config = DefaultConfigLoader::apply_env_overrides(config).unwrap();
+        assert_eq!(config.sso_ticket_ttl_seconds, 120);
+        std::env::remove_var(format!("{}SSO_TICKET_TTL_SECONDS", ENV_PREFIX));
+    }
+
+    /// 验证 `BULWARK_SIGN_WINDOW_SECONDS` 非数字时 apply_env_overrides 抛错。
+    #[test]
+    #[serial]
+    fn env_overrides_sign_window_seconds_invalid() {
+        std::env::set_var(format!("{}SIGN_WINDOW_SECONDS", ENV_PREFIX), "not-a-number");
+        let config = BulwarkConfig::default_config();
+        let result = DefaultConfigLoader::apply_env_overrides(config);
+        assert!(result.is_err(), "非数字 SIGN_WINDOW_SECONDS 应导致 apply_env_overrides 失败");
+        std::env::remove_var(format!("{}SIGN_WINDOW_SECONDS", ENV_PREFIX));
+    }
+
+    /// 验证 `BULWARK_SSO_TICKET_TTL_SECONDS` 非数字时 apply_env_overrides 抛错。
+    #[test]
+    #[serial]
+    fn env_overrides_sso_ticket_ttl_seconds_invalid() {
+        std::env::set_var(format!("{}SSO_TICKET_TTL_SECONDS", ENV_PREFIX), "abc");
+        let config = BulwarkConfig::default_config();
+        let result = DefaultConfigLoader::apply_env_overrides(config);
+        assert!(result.is_err(), "非数字 SSO_TICKET_TTL_SECONDS 应导致 apply_env_overrides 失败");
+        std::env::remove_var(format!("{}SSO_TICKET_TTL_SECONDS", ENV_PREFIX));
     }
 }
