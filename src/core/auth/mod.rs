@@ -14,7 +14,7 @@ pub trait AuthLogic {
     ///
     /// # 参数
     /// - `id`: 登录主体标识（如用户 ID）。
-    fn login(&self, id: i64) -> BulwarkResult<String> {
+    fn login(&self, _id: i64) -> BulwarkResult<String> {
         todo!()
     }
 

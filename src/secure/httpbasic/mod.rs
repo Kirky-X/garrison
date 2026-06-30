@@ -23,7 +23,7 @@ impl BasicAuthChecker {
     ///
     /// # 参数
     /// - `header`: Authorization 头部值（如 `Basic dXNlcjpwYXNz`）。
-    pub fn parse(&self, header: &str) -> BulwarkResult<(String, String)> {
+    pub fn parse(&self, _header: &str) -> BulwarkResult<(String, String)> {
         todo!()
     }
 
@@ -32,7 +32,7 @@ impl BasicAuthChecker {
     /// # 参数
     /// - `username`: 用户名。
     /// - `password`: 密码。
-    pub fn format(&self, username: &str, password: &str) -> BulwarkResult<String> {
+    pub fn format(&self, _username: &str, _password: &str) -> BulwarkResult<String> {
         todo!()
     }
 }

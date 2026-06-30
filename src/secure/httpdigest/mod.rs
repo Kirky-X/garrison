@@ -23,7 +23,7 @@ impl DigestAuthChecker {
     ///
     /// # 参数
     /// - `realm`: 认证域。
-    pub fn challenge(&self, realm: &str) -> BulwarkResult<String> {
+    pub fn challenge(&self, _realm: &str) -> BulwarkResult<String> {
         todo!()
     }
 
@@ -32,7 +32,7 @@ impl DigestAuthChecker {
     /// # 参数
     /// - `header`: Authorization 头部值。
     /// - `password`: 用户密码（用于计算预期摘要）。
-    pub fn verify(&self, header: &str, password: &str) -> BulwarkResult<bool> {
+    pub fn verify(&self, _header: &str, _password: &str) -> BulwarkResult<bool> {
         todo!()
     }
 }

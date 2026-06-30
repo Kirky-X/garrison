@@ -45,10 +45,7 @@ impl MyInterface {
         );
         let mut roles = HashMap::new();
         roles.insert(1001, vec!["admin".to_string()]);
-        Self {
-            permissions,
-            roles,
-        }
+        Self { permissions, roles }
     }
 }
 
@@ -126,8 +123,8 @@ async fn main() -> BulwarkResult<()> {
     // 7. 验证登出后校验失败
     // ----------------------------------------------------------------
     // 登出后再次 check_login：由于默认 throw_on_not_login=true，会返回 Session 错误。
-    let result = with_current_token(token.clone(), async { BulwarkUtil::check_login().await })
-        .await;
+    let result =
+        with_current_token(token.clone(), async { BulwarkUtil::check_login().await }).await;
 
     match result {
         Ok(false) => println!("[8] 登出后 check_login 返回 false（校验失败，符合预期）"),
@@ -135,8 +132,11 @@ async fn main() -> BulwarkResult<()> {
             return Err(BulwarkError::Session(
                 "登出后 check_login 应返回 false 或错误".to_string(),
             ))
-        }
-        Err(e) => println!("[8] 登出后 check_login 返回错误（校验失败，符合预期）: {}", e),
+        },
+        Err(e) => println!(
+            "[8] 登出后 check_login 返回错误（校验失败，符合预期）: {}",
+            e
+        ),
     }
 
     println!("\n=== 示例执行完成 ===");

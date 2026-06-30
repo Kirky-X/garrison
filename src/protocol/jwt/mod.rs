@@ -34,7 +34,7 @@ impl JwtHandler {
     ///
     /// # 参数
     /// - `secret`: 签名密钥。
-    pub fn new(secret: impl Into<String>) -> Self {
+    pub fn new(_secret: impl Into<String>) -> Self {
         todo!()
     }
 
@@ -43,7 +43,7 @@ impl JwtHandler {
     /// # 参数
     /// - `login_id`: 登录主体标识。
     /// - `timeout`: 有效期（秒）。
-    pub fn sign(&self, login_id: i64, timeout: i64) -> BulwarkResult<String> {
+    pub fn sign(&self, _login_id: i64, _timeout: i64) -> BulwarkResult<String> {
         todo!()
     }
 
@@ -51,7 +51,7 @@ impl JwtHandler {
     ///
     /// # 参数
     /// - `token`: JWT 字符串。
-    pub fn verify(&self, token: &str) -> BulwarkResult<JwtClaims> {
+    pub fn verify(&self, _token: &str) -> BulwarkResult<JwtClaims> {
         todo!()
     }
 }

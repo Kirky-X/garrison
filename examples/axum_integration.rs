@@ -181,11 +181,7 @@ async fn main() -> BulwarkResult<()> {
         // Ignore 注解：跳过鉴权，匿名可访问 → 200
         .route_protected("/api/public", public_handler, Annotation::Ignore)
         // CheckLogin 注解：校验登录状态（未登录 → 401）
-        .route_protected(
-            "/api/user/info",
-            user_info_handler,
-            Annotation::CheckLogin,
-        )
+        .route_protected("/api/user/info", user_info_handler, Annotation::CheckLogin)
         // CheckRole 注解：校验角色 "admin"（未持有 → 403）
         // 注：此处用字符串形式与 route_protected 配合；marker struct AdminRole
         // 主要用于 handler 参数形式的 extractor 用法。
@@ -227,7 +223,9 @@ async fn main() -> BulwarkResult<()> {
     println!("  # 2. 设置 token 后访问受保护接口");
     println!("  TOKEN=\"{}\"", token);
     println!("  curl -H \"Authorization: Bearer $TOKEN\" http://127.0.0.1:3000/api/user/info");
-    println!("  curl -H \"Authorization: Bearer $TOKEN\" http://127.0.0.1:3000/api/admin/dashboard");
+    println!(
+        "  curl -H \"Authorization: Bearer $TOKEN\" http://127.0.0.1:3000/api/admin/dashboard"
+    );
     println!("  curl -H \"Authorization: Bearer $TOKEN\" http://127.0.0.1:3000/api/data/query");
     println!();
     println!("  # 3. 无 token 访问受保护接口 → 401 未登录");

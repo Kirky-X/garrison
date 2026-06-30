@@ -71,6 +71,7 @@ pub type BulwarkResult<T> = Result<T, BulwarkError>;
 impl axum::response::IntoResponse for BulwarkError {
     fn into_response(self) -> axum::response::Response {
         use axum::http::StatusCode;
+        #[allow(unused_imports)]
         use axum::response::IntoResponse as _;
 
         let status = match &self {
@@ -123,7 +124,7 @@ mod tests {
     /// 验证新增变体与已有变体共存于同一枚举。
     #[test]
     fn new_variants_coexist_with_existing() {
-        let errors = vec![
+        let errors = [
             BulwarkError::NotLogin("a".to_string()),
             BulwarkError::Session("b".to_string()),
             BulwarkError::Annotation("c".to_string()),

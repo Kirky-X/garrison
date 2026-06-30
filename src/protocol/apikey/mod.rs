@@ -34,7 +34,7 @@ impl ApiKeyHandler {
     ///
     /// # 参数
     /// - `header_value`: 请求头字段值。
-    pub fn extract(&self, header_value: &str) -> BulwarkResult<String> {
+    pub fn extract(&self, _header_value: &str) -> BulwarkResult<String> {
         todo!()
     }
 
@@ -42,7 +42,13 @@ impl ApiKeyHandler {
     ///
     /// # 参数
     /// - `api_key`: 待校验的 API Key。
-    pub fn verify(&self, api_key: &str) -> BulwarkResult<i64> {
+    pub fn verify(&self, _api_key: &str) -> BulwarkResult<i64> {
         todo!()
+    }
+}
+
+impl Default for ApiKeyHandler {
+    fn default() -> Self {
+        Self::new()
     }
 }

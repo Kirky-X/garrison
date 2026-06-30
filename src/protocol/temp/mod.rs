@@ -29,7 +29,7 @@ impl TempTokenHandler {
     ///
     /// # 参数
     /// - `timeout`: 凭证有效期（秒）。
-    pub fn new(timeout: i64) -> Self {
+    pub fn new(_timeout: i64) -> Self {
         todo!()
     }
 
@@ -37,7 +37,7 @@ impl TempTokenHandler {
     ///
     /// # 参数
     /// - `login_id`: 关联的登录主体标识。
-    pub fn create(&self, login_id: i64) -> BulwarkResult<String> {
+    pub fn create(&self, _login_id: i64) -> BulwarkResult<String> {
         todo!()
     }
 
@@ -45,7 +45,7 @@ impl TempTokenHandler {
     ///
     /// # 参数
     /// - `token`: 临时凭证字符串。
-    pub fn verify(&self, token: &str) -> BulwarkResult<i64> {
+    pub fn verify(&self, _token: &str) -> BulwarkResult<i64> {
         todo!()
     }
 }

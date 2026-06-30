@@ -15,7 +15,7 @@ pub trait BulwarkJsonTemplate {
     ///
     /// # 参数
     /// - `value`: 待序列化对象。
-    fn to_json_string(&self, value: &serde_json::Value) -> BulwarkResult<String> {
+    fn to_json_string(&self, _value: &serde_json::Value) -> BulwarkResult<String> {
         todo!()
     }
 
@@ -23,7 +23,7 @@ pub trait BulwarkJsonTemplate {
     ///
     /// # 参数
     /// - `json`: JSON 字符串。
-    fn parse_json(&self, json: &str) -> BulwarkResult<serde_json::Value> {
+    fn parse_json(&self, _json: &str) -> BulwarkResult<serde_json::Value> {
         todo!()
     }
 }
@@ -40,7 +40,7 @@ pub trait BulwarkSerializerTemplate {
     ///
     /// # 参数
     /// - `value`: 待序列化对象。
-    fn serialize<T: serde::Serialize>(&self, value: &T) -> BulwarkResult<String> {
+    fn serialize<T: serde::Serialize>(&self, _value: &T) -> BulwarkResult<String> {
         todo!()
     }
 
@@ -51,7 +51,7 @@ pub trait BulwarkSerializerTemplate {
     ///
     /// # 参数
     /// - `json`: JSON 字符串。
-    fn deserialize<T: serde::de::DeserializeOwned>(&self, json: &str) -> BulwarkResult<T> {
+    fn deserialize<T: serde::de::DeserializeOwned>(&self, _json: &str) -> BulwarkResult<T> {
         todo!()
     }
 }

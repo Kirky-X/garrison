@@ -14,7 +14,7 @@ pub trait PermissionChecker {
     ///
     /// # 参数
     /// - `permission`: 权限标识字符串。
-    fn has_permission(&self, permission: &str) -> BulwarkResult<bool> {
+    fn has_permission(&self, _permission: &str) -> BulwarkResult<bool> {
         todo!()
     }
 
@@ -22,7 +22,7 @@ pub trait PermissionChecker {
     ///
     /// # 参数
     /// - `role`: 角色标识字符串。
-    fn has_role(&self, role: &str) -> BulwarkResult<bool> {
+    fn has_role(&self, _role: &str) -> BulwarkResult<bool> {
         todo!()
     }
 
@@ -30,7 +30,7 @@ pub trait PermissionChecker {
     ///
     /// # 参数
     /// - `permissions`: 权限标识列表。
-    fn check_and_permission(&self, permissions: &[&str]) -> BulwarkResult<()> {
+    fn check_and_permission(&self, _permissions: &[&str]) -> BulwarkResult<()> {
         todo!()
     }
 
@@ -38,7 +38,7 @@ pub trait PermissionChecker {
     ///
     /// # 参数
     /// - `permissions`: 权限标识列表。
-    fn check_or_permission(&self, permissions: &[&str]) -> BulwarkResult<()> {
+    fn check_or_permission(&self, _permissions: &[&str]) -> BulwarkResult<()> {
         todo!()
     }
 }

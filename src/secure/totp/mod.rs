@@ -24,7 +24,7 @@ impl TotpConfig {
     ///
     /// # 参数
     /// - `secret`: Base32 编码的密钥。
-    pub fn new(secret: impl Into<String>) -> Self {
+    pub fn new(_secret: impl Into<String>) -> Self {
         todo!()
     }
 
@@ -32,7 +32,7 @@ impl TotpConfig {
     ///
     /// # 参数
     /// - `code`: 用户输入的验证码。
-    pub fn verify(&self, code: &str) -> BulwarkResult<bool> {
+    pub fn verify(&self, _code: &str) -> BulwarkResult<bool> {
         todo!()
     }
 }

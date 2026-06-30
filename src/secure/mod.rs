@@ -18,7 +18,7 @@ pub trait TotpVerifier {
     ///
     /// # 参数
     /// - `code`: 用户输入的验证码。
-    fn verify_totp(&self, code: &str) -> BulwarkResult<bool> {
+    fn verify_totp(&self, _code: &str) -> BulwarkResult<bool> {
         todo!()
     }
 
@@ -40,7 +40,7 @@ pub trait SignVerifier {
     /// - `data`: 原始数据。
     /// - `sign`: 待校验的签名。
     /// - `secret`: 签名密钥。
-    fn verify_sign(&self, data: &str, sign: &str, secret: &str) -> BulwarkResult<bool> {
+    fn verify_sign(&self, _data: &str, _sign: &str, _secret: &str) -> BulwarkResult<bool> {
         todo!()
     }
 
@@ -49,7 +49,7 @@ pub trait SignVerifier {
     /// # 参数
     /// - `data`: 待签名数据。
     /// - `secret`: 签名密钥。
-    fn create_sign(&self, data: &str, secret: &str) -> BulwarkResult<String> {
+    fn create_sign(&self, _data: &str, _secret: &str) -> BulwarkResult<String> {
         todo!()
     }
 }

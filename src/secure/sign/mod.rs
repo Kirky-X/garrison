@@ -33,7 +33,7 @@ impl SignChecker {
     /// # 参数
     /// - `algorithm`: 签名算法。
     /// - `secret`: 签名密钥。
-    pub fn new(algorithm: SignAlgorithm, secret: impl Into<String>) -> Self {
+    pub fn new(_algorithm: SignAlgorithm, _secret: impl Into<String>) -> Self {
         todo!()
     }
 
@@ -41,7 +41,7 @@ impl SignChecker {
     ///
     /// # 参数
     /// - `data`: 待签名数据。
-    pub fn sign(&self, data: &str) -> BulwarkResult<String> {
+    pub fn sign(&self, _data: &str) -> BulwarkResult<String> {
         todo!()
     }
 
@@ -50,7 +50,7 @@ impl SignChecker {
     /// # 参数
     /// - `data`: 原始数据。
     /// - `sign`: 待校验签名。
-    pub fn verify(&self, data: &str, sign: &str) -> BulwarkResult<bool> {
+    pub fn verify(&self, _data: &str, _sign: &str) -> BulwarkResult<bool> {
         todo!()
     }
 }

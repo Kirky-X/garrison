@@ -37,7 +37,7 @@ impl SsoHandler {
     ///
     /// # 参数
     /// - `ticket`: 登录票据。
-    pub fn validate_ticket(&self, ticket: &str) -> BulwarkResult<i64> {
+    pub fn validate_ticket(&self, _ticket: &str) -> BulwarkResult<i64> {
         todo!()
     }
 
@@ -45,7 +45,7 @@ impl SsoHandler {
     ///
     /// # 参数
     /// - `login_id`: 登录主体标识。
-    pub fn logout(&self, login_id: i64) -> BulwarkResult<()> {
+    pub fn logout(&self, _login_id: i64) -> BulwarkResult<()> {
         todo!()
     }
 }

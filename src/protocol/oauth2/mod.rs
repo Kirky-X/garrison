@@ -43,7 +43,7 @@ impl OAuth2Handler {
     ///
     /// # 参数
     /// - `code`: 授权码。
-    pub fn exchange_token(&self, code: &str) -> BulwarkResult<String> {
+    pub fn exchange_token(&self, _code: &str) -> BulwarkResult<String> {
         todo!()
     }
 }

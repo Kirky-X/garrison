@@ -19,7 +19,7 @@ pub trait BulwarkListener: Send + Sync {
     /// # 参数
     /// - `login_id`: 登录主体标识。
     /// - `token`: 生成的 Token。
-    fn on_login(&self, login_id: i64, token: &str) -> BulwarkResult<()> {
+    fn on_login(&self, _login_id: i64, _token: &str) -> BulwarkResult<()> {
         todo!()
     }
 
@@ -27,7 +27,7 @@ pub trait BulwarkListener: Send + Sync {
     ///
     /// # 参数
     /// - `login_id`: 登录主体标识。
-    fn on_logout(&self, login_id: i64) -> BulwarkResult<()> {
+    fn on_logout(&self, _login_id: i64) -> BulwarkResult<()> {
         todo!()
     }
 
@@ -39,9 +39,9 @@ pub trait BulwarkListener: Send + Sync {
     /// - `pass`: 是否通过。
     fn on_check_permission(
         &self,
-        login_id: i64,
-        permission: &str,
-        pass: bool,
+        _login_id: i64,
+        _permission: &str,
+        _pass: bool,
     ) -> BulwarkResult<()> {
         todo!()
     }
@@ -52,7 +52,7 @@ pub trait BulwarkListener: Send + Sync {
     /// - `login_id`: 登录主体标识。
     /// - `role`: 被校验的角色。
     /// - `pass`: 是否通过。
-    fn on_check_role(&self, login_id: i64, role: &str, pass: bool) -> BulwarkResult<()> {
+    fn on_check_role(&self, _login_id: i64, _role: &str, _pass: bool) -> BulwarkResult<()> {
         todo!()
     }
 }

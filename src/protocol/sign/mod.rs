@@ -29,7 +29,7 @@ impl GatewaySignChecker {
     ///
     /// # 参数
     /// - `secret`: 签名密钥。
-    pub fn new(secret: impl Into<String>) -> Self {
+    pub fn new(_secret: impl Into<String>) -> Self {
         todo!()
     }
 
@@ -42,10 +42,10 @@ impl GatewaySignChecker {
     /// - `sign`: 请求签名。
     pub fn verify(
         &self,
-        timestamp: i64,
-        nonce: &str,
-        data: &str,
-        sign: &str,
+        _timestamp: i64,
+        _nonce: &str,
+        _data: &str,
+        _sign: &str,
     ) -> BulwarkResult<bool> {
         todo!()
     }

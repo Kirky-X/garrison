@@ -218,6 +218,7 @@ impl BulwarkStorage for AxumStorage {
 pub struct AxumContext<'a> {
     request: &'a Request<Body>,
     response: AxumResponse,
+    #[allow(dead_code)]
     storage: AxumStorage,
 }
 

@@ -290,7 +290,7 @@ impl ConfigLoader for DefaultConfigLoader {
             config.validate()?;
             Ok(config)
         } else {
-            let mut config: BulwarkConfig = toml::from_str(toml_str)
+            let config: BulwarkConfig = toml::from_str(toml_str)
                 .map_err(|e| BulwarkError::Config(format!("toml parse error: {}", e)))?;
             config.validate()?;
             Ok(config.with_watcher())
@@ -358,11 +358,11 @@ mod tests {
         let config = BulwarkConfig::default_config();
         assert_eq!(config.token_style, "uuid");
         assert_eq!(config.timeout, 2_592_000); // 30 天
-        assert_eq!(config.throw_on_not_login, true);
+        assert!(config.throw_on_not_login);
         assert_eq!(config.token_name, "bulwark_token");
-        assert_eq!(config.is_read_cookie, true);
-        assert_eq!(config.is_read_header, true);
-        assert_eq!(config.is_write_header, true);
+        assert!(config.is_read_cookie);
+        assert!(config.is_read_header);
+        assert!(config.is_write_header);
     }
 
     /// 验证 Default::default() 等价于 default_config()。
@@ -449,7 +449,7 @@ mod tests {
         let config = DefaultConfigLoader::load_from_toml_str(toml_str).unwrap();
         assert_eq!(config.token_style, "random_64");
         assert_eq!(config.timeout, DEFAULT_TIMEOUT); // 保持默认
-        assert_eq!(config.throw_on_not_login, true); // 保持默认
+        assert!(config.throw_on_not_login); // 保持默认
     }
 
     /// 验证 toml 多字段覆盖。
@@ -464,11 +464,11 @@ throw_on_not_login = false
         let config = DefaultConfigLoader::load_from_toml_str(toml_str).unwrap();
         assert_eq!(config.token_style, "jwt");
         assert_eq!(config.timeout, 1800);
-        assert_eq!(config.is_read_cookie, false);
-        assert_eq!(config.throw_on_not_login, false);
+        assert!(!config.is_read_cookie);
+        assert!(!config.throw_on_not_login);
         // 未覆盖的字段保持默认
         assert_eq!(config.token_name, DEFAULT_TOKEN_NAME);
-        assert_eq!(config.is_read_header, true);
+        assert!(config.is_read_header);
     }
 
     /// 验证空 toml 字符串返回默认配置。
@@ -531,8 +531,8 @@ throw_on_not_login = false
         let config = BulwarkConfig::default_config();
         let config = DefaultConfigLoader::apply_env_overrides(config).unwrap();
 
-        assert_eq!(config.is_read_cookie, false);
-        assert_eq!(config.throw_on_not_login, false);
+        assert!(!config.is_read_cookie);
+        assert!(!config.throw_on_not_login);
 
         std::env::remove_var("BULWARK_IS_READ_COOKIE");
         std::env::remove_var("BULWARK_THROW_ON_NOT_LOGIN");
@@ -595,7 +595,7 @@ throw_on_not_login = false
         let new_config = rx.borrow_and_update();
         assert_eq!(new_config.timeout, 7200);
         assert_eq!(new_config.token_style, "jwt");
-        assert_eq!(new_config.throw_on_not_login, false);
+        assert!(!new_config.throw_on_not_login);
     }
 
     /// 验证 update() 中非法值被拒绝（不广播）。
@@ -676,7 +676,7 @@ throw_on_not_login = false
 
         let parsed: BulwarkConfig = serde_json::from_str(&json_str).expect("json 反序列化应成功");
         assert_eq!(parsed.timeout, 1800);
-        assert_eq!(parsed.is_read_cookie, false);
+        assert!(!parsed.is_read_cookie);
     }
 
     /// 验证 watcher 字段不被序列化。
@@ -694,15 +694,15 @@ throw_on_not_login = false
 
     #[test]
     fn parse_bool_accepts_various_formats() {
-        assert_eq!(parse_bool("true").unwrap(), true);
-        assert_eq!(parse_bool("TRUE").unwrap(), true);
-        assert_eq!(parse_bool("1").unwrap(), true);
-        assert_eq!(parse_bool("yes").unwrap(), true);
-        assert_eq!(parse_bool("on").unwrap(), true);
-        assert_eq!(parse_bool("false").unwrap(), false);
-        assert_eq!(parse_bool("0").unwrap(), false);
-        assert_eq!(parse_bool("no").unwrap(), false);
-        assert_eq!(parse_bool("off").unwrap(), false);
+        assert!(parse_bool("true").unwrap());
+        assert!(parse_bool("TRUE").unwrap());
+        assert!(parse_bool("1").unwrap());
+        assert!(parse_bool("yes").unwrap());
+        assert!(parse_bool("on").unwrap());
+        assert!(!parse_bool("false").unwrap());
+        assert!(!parse_bool("0").unwrap());
+        assert!(!parse_bool("no").unwrap());
+        assert!(!parse_bool("off").unwrap());
     }
 
     #[test]

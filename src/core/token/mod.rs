@@ -28,7 +28,7 @@ impl Token {
     /// # 参数
     /// - `value`: Token 字符串值。
     /// - `login_id`: 登录主体标识。
-    pub fn new(value: impl Into<String>, login_id: i64) -> Self {
+    pub fn new(_value: impl Into<String>, _login_id: i64) -> Self {
         todo!()
     }
 

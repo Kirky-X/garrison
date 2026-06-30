@@ -45,6 +45,7 @@ pub async fn with_current_token<R>(token: String, f: impl Future<Output = R>) ->
 ///
 /// # 错误
 /// - 若未在 `with_current_token` 作用域内调用，返回 `BulwarkError::Session`。
+#[allow(clippy::map_clone)]
 pub fn current_token() -> BulwarkResult<String> {
     CURRENT_TOKEN.try_get().map(|t| t.clone()).map_err(|_| {
         BulwarkError::Session("未设置当前请求上下文（未调用 with_current_token）".to_string())
