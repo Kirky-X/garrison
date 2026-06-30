@@ -1,0 +1,518 @@
+//! dbnexus 集成模块。
+//!
+//! [借鉴 Sa-Token] 对应 Sa-Token 的二级持久化层（DB），
+//! 通过 dbnexus 0.2 提供 SQLite/PostgreSQL/MySQL 连接池、Session、迁移能力。
+//!
+//! Bulwark 不定义 `BulwarkDb` trait，直接复用 `dbnexus::DbPool`：
+//! - dbnexus 本身就是 DB 适配库，通过特性切换后端
+//! - `init_dbnexus(url)` 返回 `dbnexus::DbPool`，业务代码直接调用其方法
+//! - `BulwarkMigration` 包装 `DbPool::run_migrations`，按 spec 分层管理迁移脚本
+
+use crate::error::{BulwarkError, BulwarkResult};
+use dbnexus::DbPool;
+use std::path::{Path, PathBuf};
+
+/// 初始化 dbnexus 连接池（最常用入口）。
+///
+/// 对应 tasks.md 3.4：封装 dbnexus 初始化逻辑。
+///
+/// # 参数
+/// - `url`: 数据库连接 URL。
+///   - SQLite 内存：`sqlite::memory:`
+///   - SQLite 文件：`sqlite:///path/to/db.sqlite`
+///
+/// # 示例
+/// ```ignore
+/// use bulwark::dao::init_dbnexus;
+/// let pool = init_dbnexus("sqlite::memory:").await?;
+/// ```
+pub async fn init_dbnexus(url: &str) -> BulwarkResult<DbPool> {
+    DbPool::new(url)
+        .await
+        .map_err(|e| BulwarkError::Dao(format!("dbnexus 初始化失败: {}", e)))
+}
+
+/// Bulwark schema 迁移管理器。
+///
+/// 包装 `dbnexus::DbPool::run_migrations`，按 extensible-schema spec 分层管理：
+/// - `migrate_core`: 执行 `migrations/sqlite/core/*.sql`（8 张核心表 + app_user_ext）
+/// - `migrate_extensions`: 执行 `migrations/sqlite/extensions/*.sql`（用户自定义扩展表）
+/// - `migrate_tenant`: 执行 `migrations/sqlite/tenant/*.sql`（多租户特定表）
+///
+/// 调用 `run_all()` 一次性按 core→extensions→tenant 顺序执行。
+///
+/// 迁移文件命名约定：`{version}_{description}.sql`（如 `001_init.sql`）
+/// 内容格式：用 `-- UP:` 与 `-- DOWN:` 分隔（参见 dbnexus MigrationExecutor::extract_up_sql）
+///
+/// # 版本号全局唯一约束
+/// dbnexus 的 `dbnexus_migrations` 历史表按 version 全局去重（不区分目录）。
+/// 因此跨目录的版本号必须互不冲突，建议约定：
+/// - `core/`: 1–999（核心表迁移，随版本发布）
+/// - `extensions/`: 1000+（用户自定义扩展，从 1000 开始避免冲突）
+/// - `tenant/`: 2000+（多租户特定表，从 2000 开始）
+pub struct BulwarkMigration {
+    pool: DbPool,
+    base_dir: PathBuf,
+}
+
+impl BulwarkMigration {
+    /// 创建迁移管理器，使用默认 `migrations/sqlite/` 基目录。
+    pub fn new(pool: DbPool) -> Self {
+        Self::with_base_dir(pool, PathBuf::from("migrations/sqlite"))
+    }
+
+    /// 创建迁移管理器，指定基目录（用于测试或自定义路径）。
+    pub fn with_base_dir(pool: DbPool, base_dir: PathBuf) -> Self {
+        Self { pool, base_dir }
+    }
+
+    /// 获取底层 `DbPool` 引用（用于查询、Session 等操作）。
+    pub fn pool(&self) -> &DbPool {
+        &self.pool
+    }
+
+    /// 执行核心表迁移（`{base_dir}/core/*.sql`）。
+    ///
+    /// 对应 extensible-schema spec：8 张核心表 + app_user_ext。
+    pub async fn migrate_core(&self) -> BulwarkResult<u32> {
+        self.run_dir(&self.base_dir.join("core")).await
+    }
+
+    /// 执行扩展表迁移（`{base_dir}/extensions/*.sql`）。
+    ///
+    /// 对应 extensible-schema spec：用户自定义扩展表（如表名以 `app_` 前缀）。
+    pub async fn migrate_extensions(&self) -> BulwarkResult<u32> {
+        self.run_dir(&self.base_dir.join("extensions")).await
+    }
+
+    /// 执行多租户表迁移（`{base_dir}/tenant/*.sql`）。
+    ///
+    /// 对应 extensible-schema spec：多租户特定表。
+    pub async fn migrate_tenant(&self) -> BulwarkResult<u32> {
+        self.run_dir(&self.base_dir.join("tenant")).await
+    }
+
+    /// 一次性按 core→extensions→tenant 顺序执行所有迁移。
+    ///
+    /// 任一阶段失败立即返回错误（不继续后续阶段）。
+    pub async fn run_all(&self) -> BulwarkResult<u32> {
+        let mut total = 0;
+        total += self.migrate_core().await?;
+        total += self.migrate_extensions().await?;
+        total += self.migrate_tenant().await?;
+        Ok(total)
+    }
+
+    /// 执行指定目录的迁移文件。
+    ///
+    /// 不存在的目录返回 0（不报错，符合 dbnexus scan_migrations 行为）。
+    async fn run_dir(&self, dir: &Path) -> BulwarkResult<u32> {
+        self.pool
+            .run_migrations(dir)
+            .await
+            .map_err(|e| BulwarkError::Dao(format!("dbnexus 迁移失败 ({:?}): {}", dir, e)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
+
+    // ========================================================================
+    // init_dbnexus 辅助函数测试
+    // ========================================================================
+
+    /// 验证 init_dbnexus 用 sqlite::memory: 创建池成功。
+    #[tokio::test]
+    async fn init_dbnexus_sqlite_memory() {
+        let pool = init_dbnexus("sqlite::memory:").await;
+        assert!(
+            pool.is_ok(),
+            "init_dbnexus sqlite::memory: 应成功: {:?}",
+            pool.err()
+        );
+    }
+
+    /// 验证 init_dbnexus 用无效 URL 返回错误（Fail Loud 原则）。
+    #[tokio::test]
+    async fn init_dbnexus_invalid_url_errors() {
+        let result = init_dbnexus("not-a-valid-url").await;
+        assert!(
+            matches!(result, Err(BulwarkError::Dao(_))),
+            "无效 URL 应返回 Dao 错误，实际: {:?}",
+            result.map(|_| ())
+        );
+    }
+
+    // ========================================================================
+    // BulwarkMigration 测试（使用临时目录 + sqlite::memory:）
+    // ========================================================================
+
+    /// 验证 migrate_core 在空目录上返回 0。
+    #[tokio::test]
+    async fn migrate_core_empty_dir_returns_zero() {
+        let pool = init_dbnexus("sqlite::memory:").await.unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        // 不创建 core/ 目录，run_dir 应返回 0
+        let migration = BulwarkMigration::with_base_dir(pool, tmp.path().to_path_buf());
+        let result = migration.migrate_core().await;
+        assert!(result.is_ok(), "空目录迁移应成功: {:?}", result.err());
+        assert_eq!(result.unwrap(), 0);
+    }
+
+    /// 验证 migrate_core 执行单个 SQL 文件后返回 1。
+    #[tokio::test]
+    async fn migrate_core_single_file() {
+        let pool = init_dbnexus("sqlite::memory:").await.unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let core_dir = tmp.path().join("core");
+        std::fs::create_dir_all(&core_dir).unwrap();
+        std::fs::write(
+            core_dir.join("001_init.sql"),
+            "-- UP:\nCREATE TABLE test_table (id INTEGER PRIMARY KEY, name TEXT);\n-- DOWN:\nDROP TABLE test_table;\n",
+        )
+        .unwrap();
+
+        let migration = BulwarkMigration::with_base_dir(pool, tmp.path().to_path_buf());
+        let applied = migration.migrate_core().await.unwrap();
+        assert_eq!(applied, 1, "应执行 1 个迁移文件");
+
+        // 再次执行应返回 0（幂等性）
+        // 注意：内存数据库每次 run_migrations 会重新扫描，但 dbnexus_migrations 表记录了已应用版本
+        // 此处不重复执行（避免复杂化），由后续集成测试覆盖幂等性
+    }
+
+    /// 验证 run_all 按顺序执行 core/extensions/tenant。
+    ///
+    /// 注意：dbnexus 版本号全局唯一（不区分目录），三个目录用不同版本号避免冲突：
+    /// - core/001_init.sql → version=1
+    /// - extensions/1000_ext.sql → version=1000
+    /// - tenant/2000_tenant.sql → version=2000
+    #[tokio::test]
+    async fn run_all_executes_in_order() {
+        let pool = init_dbnexus("sqlite::memory:").await.unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path();
+
+        // core: 001_init.sql (version=1)
+        let core_dir = base.join("core");
+        std::fs::create_dir_all(&core_dir).unwrap();
+        std::fs::write(
+            core_dir.join("001_init.sql"),
+            "-- UP:\nCREATE TABLE core_t (id INTEGER PRIMARY KEY);\n",
+        )
+        .unwrap();
+
+        // extensions: 1000_ext.sql (version=1000)
+        let ext_dir = base.join("extensions");
+        std::fs::create_dir_all(&ext_dir).unwrap();
+        std::fs::write(
+            ext_dir.join("1000_ext.sql"),
+            "-- UP:\nCREATE TABLE ext_t (id INTEGER PRIMARY KEY);\n",
+        )
+        .unwrap();
+
+        // tenant: 2000_tenant.sql (version=2000)
+        let tenant_dir = base.join("tenant");
+        std::fs::create_dir_all(&tenant_dir).unwrap();
+        std::fs::write(
+            tenant_dir.join("2000_tenant.sql"),
+            "-- UP:\nCREATE TABLE tenant_t (id INTEGER PRIMARY KEY);\n",
+        )
+        .unwrap();
+
+        let migration = BulwarkMigration::with_base_dir(pool, base.to_path_buf());
+        let total = migration.run_all().await.unwrap();
+        assert_eq!(total, 3, "run_all 应执行 3 个迁移文件");
+    }
+
+    /// 验证 BulwarkMigration::new 使用默认 base_dir。
+    #[tokio::test]
+    async fn new_uses_default_base_dir() {
+        let pool = init_dbnexus("sqlite::memory:").await.unwrap();
+        let migration = BulwarkMigration::new(pool);
+        assert_eq!(migration.base_dir, PathBuf::from("migrations/sqlite"));
+    }
+
+    // ========================================================================
+    // CRUD 测试：验证 Session execute_raw_ddl / execute_raw / query
+    // ========================================================================
+
+    /// 辅助函数：查询单行单列字符串值。
+    async fn query_one_string(session: &dbnexus::Session, sql: &str) -> String {
+        let conn = session
+            .connection()
+            .expect("connection should be available");
+        let stmt = Statement::from_sql_and_values(DbBackend::Sqlite, sql, vec![]);
+        let row = conn
+            .query_one_raw(stmt)
+            .await
+            .expect("query_one should succeed")
+            .expect("row should exist");
+        row.try_get::<String>("", "val")
+            .expect("column 'val' should be present")
+    }
+
+    /// 辅助函数：查询 count(*) 结果。
+    async fn query_count(session: &dbnexus::Session, sql: &str) -> i64 {
+        let conn = session
+            .connection()
+            .expect("connection should be available");
+        let stmt = Statement::from_sql_and_values(DbBackend::Sqlite, sql, vec![]);
+        let row = conn
+            .query_one_raw(stmt)
+            .await
+            .expect("query_one should succeed")
+            .expect("row should exist");
+        row.try_get::<i64>("", "cnt")
+            .expect("column 'cnt' should be present")
+    }
+
+    /// Scenario: CRUD 完整流程。
+    /// WHEN CREATE TABLE → INSERT → SELECT → UPDATE → SELECT → DELETE → SELECT
+    /// THEN 各步骤的 rows_affected 与查询结果符合预期
+    #[tokio::test]
+    async fn dbnexus_crud_full_cycle() {
+        let pool = init_dbnexus("sqlite::memory:").await.unwrap();
+        let session = pool.get_session("admin").await.unwrap();
+
+        // CREATE TABLE（DDL 用 execute_raw_ddl，execute_raw 会拒绝 DDL）
+        session
+            .execute_raw_ddl("CREATE TABLE test_crud (id INTEGER PRIMARY KEY, name TEXT NOT NULL)")
+            .await
+            .expect("CREATE TABLE 应成功");
+
+        // INSERT
+        let result = session
+            .execute_raw("INSERT INTO test_crud (id, name) VALUES (1, 'alice')")
+            .await
+            .expect("INSERT 应成功");
+        assert_eq!(result.rows_affected(), 1, "INSERT 应影响 1 行");
+
+        // SELECT 验证
+        let name =
+            query_one_string(&session, "SELECT name AS val FROM test_crud WHERE id = 1").await;
+        assert_eq!(name, "alice", "INSERT 后应查到 alice");
+
+        // UPDATE
+        let result = session
+            .execute_raw("UPDATE test_crud SET name = 'bob' WHERE id = 1")
+            .await
+            .expect("UPDATE 应成功");
+        assert_eq!(result.rows_affected(), 1, "UPDATE 应影响 1 行");
+
+        // 验证 UPDATE
+        let name =
+            query_one_string(&session, "SELECT name AS val FROM test_crud WHERE id = 1").await;
+        assert_eq!(name, "bob", "UPDATE 后应查到 bob");
+
+        // DELETE
+        let result = session
+            .execute_raw("DELETE FROM test_crud WHERE id = 1")
+            .await
+            .expect("DELETE 应成功");
+        assert_eq!(result.rows_affected(), 1, "DELETE 应影响 1 行");
+
+        // 验证 DELETE
+        let count = query_count(&session, "SELECT count(*) AS cnt FROM test_crud").await;
+        assert_eq!(count, 0, "DELETE 后表应为空");
+    }
+
+    // ========================================================================
+    // 事务测试：验证 begin/commit/rollback
+    // ========================================================================
+
+    /// Scenario: 事务回滚后未提交的数据不可见。
+    /// WHEN begin → INSERT → rollback → SELECT count(*)
+    /// THEN count == 0（回滚清除未提交的 INSERT）
+    #[tokio::test]
+    async fn dbnexus_transaction_rollback() {
+        let pool = init_dbnexus("sqlite::memory:").await.unwrap();
+        let session = pool.get_session("admin").await.unwrap();
+
+        session
+            .execute_raw_ddl("CREATE TABLE test_txn (id INTEGER PRIMARY KEY, name TEXT)")
+            .await
+            .unwrap();
+
+        // 开始事务
+        session.begin_transaction().await.expect("begin 应成功");
+
+        // 在事务中 INSERT
+        session
+            .execute_raw("INSERT INTO test_txn (id, name) VALUES (1, 'temp')")
+            .await
+            .expect("事务内 INSERT 应成功");
+
+        // 回滚
+        session.rollback().await.expect("rollback 应成功");
+
+        // 验证表为空
+        let count = query_count(&session, "SELECT count(*) AS cnt FROM test_txn").await;
+        assert_eq!(count, 0, "回滚后表应为空");
+    }
+
+    /// Scenario: 事务提交后数据持久化。
+    /// WHEN begin → INSERT → commit → SELECT count(*)
+    /// THEN count == 1（提交后数据可见）
+    #[tokio::test]
+    async fn dbnexus_transaction_commit() {
+        let pool = init_dbnexus("sqlite::memory:").await.unwrap();
+        let session = pool.get_session("admin").await.unwrap();
+
+        session
+            .execute_raw_ddl("CREATE TABLE test_txn_c (id INTEGER PRIMARY KEY, name TEXT)")
+            .await
+            .unwrap();
+
+        session.begin_transaction().await.unwrap();
+        session
+            .execute_raw("INSERT INTO test_txn_c (id, name) VALUES (1, 'committed')")
+            .await
+            .unwrap();
+        session.commit().await.expect("commit 应成功");
+
+        let count = query_count(&session, "SELECT count(*) AS cnt FROM test_txn_c").await;
+        assert_eq!(count, 1, "提交后应有 1 条记录");
+    }
+
+    // ========================================================================
+    // 8 表验证测试：用项目根目录的 migrations/sqlite/core/001_init.sql
+    // ========================================================================
+
+    /// Scenario: migrate_core 创建 8 张核心表 + app_user_ext。
+    /// WHEN BulwarkMigration::migrate_core() 执行 001_init.sql
+    /// THEN sqlite_master 中应包含 9 张表：
+    ///   app_user / app_role / app_permission / app_user_role / app_role_permission
+    ///   / app_auth_method / app_session / app_login_log / app_user_ext
+    #[tokio::test]
+    async fn migrate_core_creates_all_core_tables() {
+        let pool = init_dbnexus("sqlite::memory:").await.unwrap();
+
+        // 用 CARGO_MANIFEST_DIR 定位项目根目录的 migrations/sqlite/
+        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR 应可用");
+        let base_dir = PathBuf::from(manifest_dir).join("migrations/sqlite");
+
+        let migration = BulwarkMigration::with_base_dir(pool, base_dir);
+        let applied = migration.migrate_core().await.expect("migrate_core 应成功");
+        assert_eq!(applied, 1, "应执行 1 个迁移文件（001_init.sql）");
+
+        // 查询 sqlite_master 验证 9 张表存在
+        let pool = migration.pool();
+        let session = pool.get_session("admin").await.unwrap();
+        let conn = session.connection().unwrap();
+        let stmt = Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name",
+            vec![],
+        );
+        let rows = conn.query_all_raw(stmt).await.expect("query_all 应成功");
+        let table_names: Vec<String> = rows
+            .iter()
+            .map(|row| row.try_get::<String>("", "name").unwrap_or_default())
+            .collect();
+
+        // 8 张核心表 + app_user_ext = 9 张表（不含 dbnexus_migrations）
+        let expected_tables = [
+            "app_auth_method",
+            "app_login_log",
+            "app_permission",
+            "app_role",
+            "app_role_permission",
+            "app_session",
+            "app_user",
+            "app_user_ext",
+            "app_user_role",
+        ];
+        for expected in &expected_tables {
+            assert!(
+                table_names.contains(&expected.to_string()),
+                "核心表 {} 应存在于 sqlite_master，实际表: {:?}",
+                expected,
+                table_names
+            );
+        }
+        assert_eq!(
+            expected_tables.len(),
+            9,
+            "应有 9 张表（8 核心 + app_user_ext）"
+        );
+    }
+
+    /// Scenario: 迁移幂等性——重复执行 migrate_core 不重复建表。
+    /// WHEN migrate_core() → migrate_core() 再次执行
+    /// THEN 第二次返回 0（无新增迁移），9 张表仍存在
+    #[tokio::test]
+    async fn migrate_core_idempotent() {
+        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+        let base_dir = PathBuf::from(manifest_dir).join("migrations/sqlite");
+
+        let pool = init_dbnexus("sqlite::memory:").await.unwrap();
+        let migration = BulwarkMigration::with_base_dir(pool, base_dir);
+
+        // 第一次：应用迁移
+        let first = migration
+            .migrate_core()
+            .await
+            .expect("第一次 migrate 应成功");
+        assert_eq!(first, 1, "第一次应执行 1 个迁移");
+
+        // 第二次：应跳过（已应用）
+        let second = migration
+            .migrate_core()
+            .await
+            .expect("第二次 migrate 应成功");
+        assert_eq!(second, 0, "第二次应跳过已应用的迁移");
+
+        // 验证表仍存在
+        let pool = migration.pool();
+        let session = pool.get_session("admin").await.unwrap();
+        let count = query_count(
+            &session,
+            "SELECT count(*) AS cnt FROM sqlite_master WHERE type='table' AND name LIKE 'app_%'",
+        )
+        .await;
+        assert_eq!(count, 9, "应有 9 张 app_ 前缀的表");
+    }
+
+    /// Scenario: 迁移后 app_user 表可正常 CRUD（端到端验证）。
+    /// WHEN migrate_core() → INSERT INTO app_user → SELECT
+    /// THEN 数据可正常写入与读取
+    #[tokio::test]
+    async fn app_user_table_crud_after_migration() {
+        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+        let base_dir = PathBuf::from(manifest_dir).join("migrations/sqlite");
+
+        let pool = init_dbnexus("sqlite::memory:").await.unwrap();
+        let migration = BulwarkMigration::with_base_dir(pool, base_dir);
+        migration.migrate_core().await.expect("migrate 应成功");
+
+        let pool = migration.pool();
+        let session = pool.get_session("admin").await.unwrap();
+
+        // INSERT
+        session
+            .execute_raw(
+                "INSERT INTO app_user (id, username, password_hash, status, tenant_id) \
+                 VALUES ('u-001', 'alice', 'argon2$hash', 'active', 'tenant-1')",
+            )
+            .await
+            .expect("INSERT app_user 应成功");
+
+        // SELECT 验证
+        let username = query_one_string(
+            &session,
+            "SELECT username AS val FROM app_user WHERE id = 'u-001'",
+        )
+        .await;
+        assert_eq!(username, "alice", "应查到 alice");
+
+        let status = query_one_string(
+            &session,
+            "SELECT status AS val FROM app_user WHERE id = 'u-001'",
+        )
+        .await;
+        assert_eq!(status, "active", "status 应为 active");
+    }
+}

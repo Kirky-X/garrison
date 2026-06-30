@@ -194,6 +194,16 @@ pub async fn init_oxcache_dao() -> BulwarkResult<BulwarkDaoOxcache> {
 }
 
 // ============================================================================
+// dbnexus 实现（feature = "db-sqlite"）
+// ============================================================================
+
+#[cfg(feature = "db-sqlite")]
+mod dbnexus_impl;
+
+#[cfg(feature = "db-sqlite")]
+pub use dbnexus_impl::{init_dbnexus, BulwarkMigration};
+
+// ============================================================================
 // 测试
 // ============================================================================
 

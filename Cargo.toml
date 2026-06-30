@@ -48,12 +48,16 @@ base64 = { version = "0.22", optional = true }
 # 使用本地 path 依赖（crates.io 0.3.0 未暴露 Cache<K,V>::ttl()，本地仓库已暴露）
 oxcache = { path = "/home/kirky/projects/oxcache", optional = true }
 # dbnexus 0.2: 默认 sqlite + permission + sql-parser + macros + config-env + with-time
+# auto-migrate feature 由 db-sqlite feature 显式启用（提供 MigrationExecutor::run_migrations）
 dbnexus = { version = "0.2", optional = true }
 prometheus = { version = "0.13", optional = true }
 
 [dev-dependencies]
 tokio-test = "0.4"
 mockall = "0.12"
+tempfile = "3.27"
+# sea-orm 用于 dbnexus 集成测试的查询验证（版本与 dbnexus 0.2 一致）
+sea-orm = { version = "2.0.0-rc.37", default-features = false, features = ["sqlx-sqlite", "runtime-tokio-rustls"] }
 
 [features]
 default = ["cache-memory", "db-sqlite", "web-axum"]
@@ -70,7 +74,8 @@ cache-redis = ["oxcache"]
 
 # === 数据库后端（通过 dbnexus 0.2） ===
 # dbnexus 默认启用 sqlite + permission + sql-parser + macros + config-env
-db-sqlite = ["dbnexus"]
+# db-sqlite 启用 auto-migrate 以支持 BulwarkMigration::run_migrations
+db-sqlite = ["dbnexus", "dbnexus/auto-migrate"]
 # 注意：dbnexus 0.2 未暴露 postgres/mysql features，以下标注为 0.2.0+ 待 dbnexus 添加
 # db-postgres = ["dbnexus", "dbnexus/postgres"]  # TODO: 0.2.0+
 # db-mysql = ["dbnexus", "dbnexus/mysql"]  # TODO: 0.2.0+
