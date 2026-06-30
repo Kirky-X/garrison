@@ -44,8 +44,9 @@ totp-rs = { version = "5", optional = true }
 sha2 = { version = "0.10", optional = true }
 hmac = { version = "0.12", optional = true }
 base64 = { version = "0.22", optional = true }
-# oxcache 0.3: L1 (moka) + L2 (redis) 两级缓存，默认 full features，0.3 支持 per-entry TTL
-oxcache = { version = "0.3", optional = true }
+# oxcache 0.3: L1 (moka) + L2 (redis) 两级缓存，默认 full features，0.3 支持 per-entry TTL + ttl() 查询
+# 使用本地 path 依赖（crates.io 0.3.0 未暴露 Cache<K,V>::ttl()，本地仓库已暴露）
+oxcache = { path = "/home/kirky/projects/oxcache", optional = true }
 # dbnexus 0.2: 默认 sqlite + permission + sql-parser + macros + config-env + with-time
 dbnexus = { version = "0.2", optional = true }
 prometheus = { version = "0.13", optional = true }

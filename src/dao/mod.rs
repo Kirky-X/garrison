@@ -77,10 +77,10 @@ mod oxcache_impl {
     /// - L1（moka）+ L2（redis）由 oxcache 0.3 自动管理（0.3 起 moka 后端支持 per-entry TTL）。
     /// - Bulwark 自身不实现任何缓存逻辑，全部委托给 oxcache。
     ///
-    /// # 已知限制（0.1.0）
-    /// - `update` 无法真正保留原 TTL：oxcache 0.3 的 `Cache<K,V>` 未暴露 `ttl()` 方法，
-    ///   当前实现用 `set`（无 TTL）覆盖，会清除原 per-entry TTL（键变为永久驻留）。
-    ///   TODO: 待 oxcache 在 `Cache<K,V>` 上暴露 `ttl()` 后实现真正的 TTL 保留。
+    /// # TTL 保留
+    /// - `update` 通过 `cache.ttl()` 读取剩余 TTL，用 `set_with_ttl` 保留原 TTL（不重置过期时间）
+    /// - `expire` 通过 `cache.expire()` 原子更新 TTL（不触碰 value）
+    /// - 依赖本地 oxcache 仓库（crates.io 0.3.0 未暴露 `Cache<K,V>::ttl()`，本地仓库已暴露）
     pub struct BulwarkDaoOxcache {
         cache: Cache<String, String>,
     }
@@ -120,10 +120,9 @@ mod oxcache_impl {
         }
 
         async fn update(&self, key: &str, value: &str) -> BulwarkResult<()> {
-            // 已知限制：oxcache 0.3 的 Cache<K,V> 未暴露 ttl() 方法，无法读取剩余 TTL。
-            // 0.1.0 简化策略：先检查键存在性，再用 set（无 TTL）覆盖。
-            // 注意：这会清除原 per-entry TTL（键变为永久驻留）。
-            // TODO: 待 oxcache 在 Cache<K,V> 上暴露 ttl() 后实现真正的 TTL 保留。
+            // 通过 cache.ttl() 读取剩余 TTL，用 set_with_ttl 保留原 TTL（不重置过期时间）。
+            // ttl() 返回 None 表示永久驻留（set_with_ttl 接受 None 表示无 TTL）。
+            // 但 None 也可能表示键不存在，需要先检查键存在性。
             if !self
                 .cache
                 .exists(&key.to_string())
@@ -132,30 +131,44 @@ mod oxcache_impl {
             {
                 return Err(BulwarkError::Dao(format!("键不存在: {}", key)));
             }
+            let remaining_ttl = self
+                .cache
+                .ttl(&key.to_string())
+                .await
+                .map_err(|e| BulwarkError::Dao(format!("oxcache ttl 失败: {}", e)))?;
             self.cache
-                .set(&key.to_string(), &value.to_string())
+                .set_with_ttl(&key.to_string(), &value.to_string(), remaining_ttl)
                 .await
                 .map_err(|e| BulwarkError::Dao(format!("oxcache update 失败: {}", e)))
         }
 
         async fn expire(&self, key: &str, seconds: u64) -> BulwarkResult<()> {
-            // oxcache 0.3 的 Cache<K,V> 未暴露 expire() 方法（backend 层有，但 pub(crate)），
-            // 用 get + set_with_ttl 组合实现（会重置 TTL，符合 expire 语义）。
-            let value = self
-                .cache
-                .get(&key.to_string())
-                .await
-                .map_err(|e| BulwarkError::Dao(format!("oxcache get 失败: {}", e)))?
-                .ok_or_else(|| BulwarkError::Dao(format!("键不存在: {}", key)))?;
-            let ttl = if seconds == 0 {
-                None
+            // oxcache 0.3 的 Cache<K,V> 暴露了 expire(key, ttl) 方法（原子更新 TTL，不触碰 value）。
+            // expire 返回 bool：true=更新成功，false=键不存在。
+            // 注意：seconds=0 表示永久驻留，需要用 get + set_with_ttl(None) 实现
+            // （cache.expire(key, Duration::from_secs(0)) 会让键立即过期，不符合 spec 的 0=永久语义）。
+            if seconds == 0 {
+                let value = self
+                    .cache
+                    .get(&key.to_string())
+                    .await
+                    .map_err(|e| BulwarkError::Dao(format!("oxcache get 失败: {}", e)))?
+                    .ok_or_else(|| BulwarkError::Dao(format!("键不存在: {}", key)))?;
+                self.cache
+                    .set_with_ttl(&key.to_string(), &value, None)
+                    .await
+                    .map_err(|e| BulwarkError::Dao(format!("oxcache expire 失败: {}", e)))
             } else {
-                Some(Duration::from_secs(seconds))
-            };
-            self.cache
-                .set_with_ttl(&key.to_string(), &value, ttl)
-                .await
-                .map_err(|e| BulwarkError::Dao(format!("oxcache expire 失败: {}", e)))
+                let updated = self
+                    .cache
+                    .expire(&key.to_string(), Duration::from_secs(seconds))
+                    .await
+                    .map_err(|e| BulwarkError::Dao(format!("oxcache expire 失败: {}", e)))?;
+                if !updated {
+                    return Err(BulwarkError::Dao(format!("键不存在: {}", key)));
+                }
+                Ok(())
+            }
         }
 
         async fn delete(&self, key: &str) -> BulwarkResult<()> {
@@ -475,17 +488,15 @@ mod tests {
 
         /// Scenario: update 更新值（保留 TTL）。
         ///
-        /// 已知限制：oxcache 0.3 的 `Cache<K,V>` 未暴露 `ttl()` 方法，无法读取剩余 TTL。
-        /// 当前实现用 `set`（无 TTL）覆盖，会清除原 per-entry TTL。
-        /// 此测试标注为 `#[ignore]`，等待 oxcache 在 `Cache<K,V>` 上暴露 `ttl()` 后启用。
+        /// oxcache 0.3 的 Cache<K,V> 暴露了 ttl() 方法，update 用 ttl() + set_with_ttl 保留原 TTL。
         ///
         /// 参见：dao-oxcache-basic spec Requirement "BulwarkDao 抽象 trait" Scenario "update 更新值（保留 TTL）"
         #[tokio::test]
-        #[ignore = "等待 oxcache 在 Cache<K,V> 上暴露 ttl() 方法（当前 0.3 无法读取 per-entry TTL）"]
-        async fn oxcache_update_preserves_ttl_todo() {
+        async fn oxcache_update_preserves_ttl() {
             let dao = BulwarkDaoOxcache::new().await.unwrap();
             dao.set("oc_ttl", "value1", 2).await.unwrap();
             dao.update("oc_ttl", "value2").await.unwrap();
+            // update 保留了原 TTL（2 秒），sleep 后应过期
             tokio::time::sleep(Duration::from_secs(3)).await;
             let got = dao.get("oc_ttl").await.unwrap();
             assert!(
