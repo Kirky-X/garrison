@@ -298,33 +298,79 @@ pub trait BulwarkInterface: Send + Sync {
 }
 
 // ============================================================================
-// BulwarkUtil：静态方法入口（待全局初始化实现）
+// BulwarkUtil：静态方法入口（委托全局 BulwarkManager 单例）
 // ============================================================================
 
 /// 工具结构体，提供静态方法入口。
 ///
 /// [借鉴 Sa-Token] 对应 `StpUtil`，是面向使用者的便捷入口。
-/// 内部委托给全局注册的 `BulwarkLogic` 实现。
+/// 内部委托给 `BulwarkManager::logic()` 全局单例。
 ///
-/// # 注意
-/// 0.1.0 暂未实现全局 `BulwarkLogic` 注册（待 BulwarkManager 完整实现后补全）。
-/// 使用者请直接通过 `BulwarkLogicDefault` 调用。
+/// # 使用前提
+///
+/// 调用前必须先执行 `BulwarkManager::init(dao, config, interface)`，
+/// 否则返回 `BulwarkError::Session("BulwarkManager 未初始化")`。
 pub struct BulwarkUtil;
 
 impl BulwarkUtil {
-    /// 执行登录。
+    /// 执行登录：生成 token + 创建会话。
+    ///
+    /// # 返回
+    /// 生成的 token 字符串。
     pub async fn login(id: i64) -> BulwarkResult<String> {
-        todo!("待全局 BulwarkManager 初始化后实现委托")
+        crate::manager::BulwarkManager::logic()?.login(id).await
     }
 
-    /// 执行登出。
+    /// 执行登出：从 task_local 获取当前 token 并销毁。
     pub async fn logout() -> BulwarkResult<()> {
-        todo!("待全局 BulwarkManager 初始化后实现委托")
+        crate::manager::BulwarkManager::logic()?.logout().await
+    }
+
+    /// 按账号登出：销毁指定 login_id 的所有会话。
+    pub async fn logout_by_login_id(login_id: i64) -> BulwarkResult<()> {
+        crate::manager::BulwarkManager::logic()?
+            .logout_by_login_id(login_id)
+            .await
+    }
+
+    /// 踢出用户：按账号踢出（语义等同 logout_by_login_id）。
+    pub async fn kickout(login_id: i64) -> BulwarkResult<()> {
+        crate::manager::BulwarkManager::logic()?
+            .kickout(login_id)
+            .await
+    }
+
+    /// 踢出会话：按 token 踢出。
+    pub async fn kickout_by_token(token: &str) -> BulwarkResult<()> {
+        crate::manager::BulwarkManager::logic()?
+            .kickout_by_token(token)
+            .await
     }
 
     /// 检查登录状态。
     pub async fn check_login() -> BulwarkResult<bool> {
-        todo!("待全局 BulwarkManager 初始化后实现委托")
+        crate::manager::BulwarkManager::logic()?.check_login().await
+    }
+
+    /// 获取当前登录 ID。
+    pub async fn get_login_id() -> BulwarkResult<Option<i64>> {
+        crate::manager::BulwarkManager::logic()?
+            .get_login_id()
+            .await
+    }
+
+    /// 校验权限。
+    pub async fn check_permission(permission: &str) -> BulwarkResult<()> {
+        crate::manager::BulwarkManager::logic()?
+            .check_permission(permission)
+            .await
+    }
+
+    /// 校验角色。
+    pub async fn check_role(role: &str) -> BulwarkResult<()> {
+        crate::manager::BulwarkManager::logic()?
+            .check_role(role)
+            .await
     }
 }
 
