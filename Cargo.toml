@@ -105,7 +105,7 @@ protocol-temp = []
 secure-totp = ["totp-rs"]
 secure-sign = ["sha2", "hmac", "base64", "md5"]
 secure-httpbasic = ["base64"]
-secure-httpdigest = ["sha2", "base64"]
+secure-httpdigest = ["sha2", "base64", "md5"]
 
 # === Web 框架适配 ===
 web-axum = ["axum", "axum/tokio", "axum/http1"]
