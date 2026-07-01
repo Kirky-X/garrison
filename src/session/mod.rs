@@ -284,6 +284,45 @@ impl BulwarkSession {
         }
     }
 
+    /// 关联 SSO ticket 到 token 会话（0.2.0 新增，依据 spec session-management）。
+    ///
+    /// 将 SSO ticket 存入 Token-Session 的 `sso_ticket` 属性，
+    /// 便于 logout 时联动销毁 SSO ticket。
+    pub async fn link_sso_ticket(&self, token: &str, ticket: &str) -> BulwarkResult<()> {
+        self.set(token, "sso_ticket", ticket).await
+    }
+
+    /// 查询 token 关联的 SSO ticket（0.2.0 新增，依据 spec session-management）。
+    pub async fn get_sso_ticket(&self, token: &str) -> BulwarkResult<Option<String>> {
+        self.get(token, "sso_ticket").await
+    }
+
+    /// 关联 OAuth2 access_token 到 token 会话（0.2.0 新增，依据 spec session-management）。
+    ///
+    /// 将 OAuth2 access_token 存入 Token-Session 的 `oauth2_access_token` 属性，
+    /// 便于业务方在持有内部 token 时访问 OAuth2 资源服务器。
+    pub async fn link_oauth2_token(&self, token: &str, access_token: &str) -> BulwarkResult<()> {
+        self.set(token, "oauth2_access_token", access_token).await
+    }
+
+    /// 查询 token 关联的 OAuth2 access_token（0.2.0 新增，依据 spec session-management）。
+    pub async fn get_oauth2_token(&self, token: &str) -> BulwarkResult<Option<String>> {
+        self.get(token, "oauth2_access_token").await
+    }
+
+    /// 关联临时凭证 key 到 token 会话（0.2.0 新增，依据 spec session-management）。
+    ///
+    /// 将临时凭证的完整 dao key 存入 Token-Session 的 `temp_credential_key` 属性。
+    /// `is_valid` 会检查该 key 是否仍存在于 dao，若已被删除则会话失效。
+    pub async fn link_temp_credential(&self, token: &str, temp_key: &str) -> BulwarkResult<()> {
+        self.set(token, "temp_credential_key", temp_key).await
+    }
+
+    /// 查询 token 关联的临时凭证 key（0.2.0 新增）。
+    pub async fn get_temp_credential(&self, token: &str) -> BulwarkResult<Option<String>> {
+        self.get(token, "temp_credential_key").await
+    }
+
     /// 检查 token 是否有效（Token-Session 存在且 Account-Session 未过期）。
     ///
     /// 惰性检查 Account-Session 是否存在——若 Account-Session 已被 oxcache TTL 清理，
@@ -306,10 +345,18 @@ impl BulwarkSession {
             None => return Ok(false),
         };
         // 惰性检查 Account-Session 是否存在
-        match self.get_account_session(ts.login_id).await? {
-            Some(_) => Ok(true),
-            None => Ok(false),
+        if self.get_account_session(ts.login_id).await?.is_none() {
+            return Ok(false);
         }
+        // 0.2.0 新增：临时凭证过期联动（依据 spec session-management "临时凭证关联会话的自定义过期"）。
+        // 若 Token-Session 含 temp_credential_key 属性，检查该 key 是否仍存在于 dao；
+        // 临时凭证过期后 token 立即失效，不论 token 自身 timeout 是否到期。
+        if let Some(temp_key) = ts.attrs.get("temp_credential_key") {
+            if self.dao.get(temp_key).await?.is_none() {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     /// 活跃续期：更新 last_active_at 并重置 TTL。
@@ -405,6 +452,16 @@ impl BulwarkSession {
 
         // 从 Account-Session 移除该 token
         if let Some(ts) = ts {
+            // 0.2.0 新增：SSO ticket 销毁联动（依据 spec session-management "SSO 会话集成"）。
+            // 若 Token-Session 含 sso_ticket 属性，删除 dao 中的 `bulwark:sso:ticket:<ticket>` key。
+            // 失败仅记录不中断主流程（依据 design Decision 6: plugin/listener/集成失败不中断主流程）。
+            if let Some(ticket) = ts.attrs.get("sso_ticket") {
+                let sso_key = format!("bulwark:sso:ticket:{}", ticket);
+                if let Err(e) = self.dao.delete(&sso_key).await {
+                    tracing::warn!("logout 联动删除 SSO ticket 失败 (key={}): {}", sso_key, e);
+                }
+            }
+
             if let Some(mut account) = self.get_account_session(ts.login_id).await? {
                 account.tokens.retain(|ti| ti.token != token);
                 // spec: 若列表为空，Account-Session 标记为空（但不删除，保留历史）
@@ -880,5 +937,276 @@ mod tests {
         assert_eq!(as_.tokens[0].token, "T1");
         assert_eq!(as_.tokens[1].token, "T2");
         assert_eq!(as_.tokens[2].token, "T3");
+    }
+
+    // ------------------------------------------------------------------------
+    // 0.2.0 新增 spec scenario: Token-Session 存储 SSO ticket 引用
+    // ------------------------------------------------------------------------
+
+    /// 验证 link_sso_ticket / get_sso_ticket 往返。
+    ///
+    /// 对应 spec scenario "Token-Session 存储 SSO ticket 引用 (NEW - 0.2.0)"。
+    #[tokio::test]
+    async fn link_sso_ticket_stores_ticket_in_token_session() {
+        let (_dao, session) = make_session(3600, 86400);
+        session.create(1001, "T1").await.unwrap();
+
+        session.link_sso_ticket("T1", "ticket-abc-123").await.unwrap();
+        let ticket = session.get_sso_ticket("T1").await.unwrap();
+        assert_eq!(ticket, Some("ticket-abc-123".to_string()));
+    }
+
+    /// 验证 get_sso_ticket 对未关联 ticket 的 token 返回 None。
+    ///
+    /// 对应 spec scenario "查询未关联 ticket 的 token"。
+    #[tokio::test]
+    async fn get_sso_ticket_returns_none_when_not_linked() {
+        let (_dao, session) = make_session(3600, 86400);
+        session.create(1001, "T1").await.unwrap();
+
+        let ticket = session.get_sso_ticket("T1").await.unwrap();
+        assert!(ticket.is_none(), "未关联 ticket 时应返回 None");
+    }
+
+    /// 验证 get_sso_ticket 对不存在的 token 返回 None。
+    #[tokio::test]
+    async fn get_sso_ticket_returns_none_for_nonexistent_token() {
+        let (_dao, session) = make_session(3600, 86400);
+        let ticket = session.get_sso_ticket("nonexistent").await.unwrap();
+        assert!(ticket.is_none(), "token 不存在时应返回 None");
+    }
+
+    // ------------------------------------------------------------------------
+    // 0.2.0 新增 spec scenario: Token-Session 存储 OAuth2 access_token
+    // ------------------------------------------------------------------------
+
+    /// 验证 link_oauth2_token / get_oauth2_token 往返。
+    ///
+    /// 对应 spec scenario "Token-Session 存储 OAuth2 access_token (NEW - 0.2.0)"。
+    #[tokio::test]
+    async fn link_oauth2_token_stores_access_token_in_token_session() {
+        let (_dao, session) = make_session(3600, 86400);
+        session.create(1001, "T1").await.unwrap();
+
+        session
+            .link_oauth2_token("T1", "access-token-xyz")
+            .await
+            .unwrap();
+        let access_token = session.get_oauth2_token("T1").await.unwrap();
+        assert_eq!(access_token, Some("access-token-xyz".to_string()));
+    }
+
+    /// 验证 get_oauth2_token 对未关联 access_token 的 token 返回 None。
+    ///
+    /// 对应 spec scenario "查询未关联 access_token 的 token"。
+    #[tokio::test]
+    async fn get_oauth2_token_returns_none_when_not_linked() {
+        let (_dao, session) = make_session(3600, 86400);
+        session.create(1001, "T1").await.unwrap();
+
+        let access_token = session.get_oauth2_token("T1").await.unwrap();
+        assert!(access_token.is_none(), "未关联 access_token 时应返回 None");
+    }
+
+    /// 验证 get_oauth2_token 对不存在的 token 返回 None。
+    #[tokio::test]
+    async fn get_oauth2_token_returns_none_for_nonexistent_token() {
+        let (_dao, session) = make_session(3600, 86400);
+        let access_token = session.get_oauth2_token("nonexistent").await.unwrap();
+        assert!(access_token.is_none(), "token 不存在时应返回 None");
+    }
+
+    // ------------------------------------------------------------------------
+    // 0.2.0 新增 spec scenario: 临时凭证关联会话
+    // ------------------------------------------------------------------------
+
+    /// 验证 link_temp_credential / get_temp_credential 往返。
+    #[tokio::test]
+    async fn link_temp_credential_stores_key_in_token_session() {
+        let (_dao, session) = make_session(3600, 86400);
+        session.create(1001, "T1").await.unwrap();
+
+        let temp_key = "bulwark:temp:order:abc123";
+        session
+            .link_temp_credential("T1", temp_key)
+            .await
+            .unwrap();
+        let stored = session.get_temp_credential("T1").await.unwrap();
+        assert_eq!(stored, Some(temp_key.to_string()));
+    }
+
+    /// 验证 get_temp_credential 对未关联的 token 返回 None。
+    #[tokio::test]
+    async fn get_temp_credential_returns_none_when_not_linked() {
+        let (_dao, session) = make_session(3600, 86400);
+        session.create(1001, "T1").await.unwrap();
+
+        let stored = session.get_temp_credential("T1").await.unwrap();
+        assert!(stored.is_none(), "未关联临时凭证时应返回 None");
+    }
+
+    /// 验证 get_temp_credential 对不存在的 token 返回 None。
+    #[tokio::test]
+    async fn get_temp_credential_returns_none_for_nonexistent_token() {
+        let (_dao, session) = make_session(3600, 86400);
+        let stored = session.get_temp_credential("nonexistent").await.unwrap();
+        assert!(stored.is_none(), "token 不存在时应返回 None");
+    }
+
+    // ------------------------------------------------------------------------
+    // 0.2.0 新增 spec scenario: link 方法对不存在的 token 报错
+    // ------------------------------------------------------------------------
+
+    /// 验证 link_sso_ticket / link_oauth2_token / link_temp_credential
+    /// 对不存在的 token 返回 InvalidToken 错误。
+    #[tokio::test]
+    async fn link_methods_return_error_for_nonexistent_token() {
+        let (_dao, session) = make_session(3600, 86400);
+
+        let r1 = session.link_sso_ticket("nonexistent", "ticket").await;
+        assert!(
+            matches!(r1, Err(BulwarkError::InvalidToken(_))),
+            "link_sso_ticket 不存在的 token 应返回 InvalidToken"
+        );
+
+        let r2 = session
+            .link_oauth2_token("nonexistent", "access-token")
+            .await;
+        assert!(
+            matches!(r2, Err(BulwarkError::InvalidToken(_))),
+            "link_oauth2_token 不存在的 token 应返回 InvalidToken"
+        );
+
+        let r3 = session
+            .link_temp_credential("nonexistent", "temp-key")
+            .await;
+        assert!(
+            matches!(r3, Err(BulwarkError::InvalidToken(_))),
+            "link_temp_credential 不存在的 token 应返回 InvalidToken"
+        );
+    }
+
+    // ------------------------------------------------------------------------
+    // 0.2.0 新增 spec scenario: SSO ticket 销毁联动（logout 联动）
+    // ------------------------------------------------------------------------
+
+    /// 验证 logout 时联动删除 Token-Session 关联的 SSO ticket。
+    ///
+    /// 对应 spec scenario "SSO 会话集成"：logout 应销毁关联的 SSO ticket。
+    #[tokio::test]
+    async fn logout_destroys_linked_sso_ticket() {
+        let (dao, session) = make_session(3600, 86400);
+        session.create(1001, "T1").await.unwrap();
+
+        // 在 dao 中预置 SSO ticket
+        let sso_key = "bulwark:sso:ticket:ticket-abc-123";
+        dao.set(sso_key, r#"{"login_id":1001,"client_id":1}"#, 60)
+            .await
+            .unwrap();
+        // 关联 ticket 到 token
+        session
+            .link_sso_ticket("T1", "ticket-abc-123")
+            .await
+            .unwrap();
+        // 确认 ticket 存在
+        assert!(dao.get(sso_key).await.unwrap().is_some());
+
+        // logout 应联动删除 SSO ticket
+        session.logout("T1").await.unwrap();
+
+        // SSO ticket 应已被删除
+        assert!(
+            dao.get(sso_key).await.unwrap().is_none(),
+            "logout 后关联的 SSO ticket 应被删除"
+        );
+        // Token-Session 也应被删除
+        assert!(session.get_token_session("T1").await.unwrap().is_none());
+    }
+
+    /// 验证 logout 未关联 SSO ticket 的 token 时，不影响 dao 中的 SSO keys。
+    #[tokio::test]
+    async fn logout_without_sso_ticket_does_not_affect_sso_keys() {
+        let (dao, session) = make_session(3600, 86400);
+        session.create(1001, "T1").await.unwrap();
+
+        // 在 dao 中预置一个不相关的 SSO ticket
+        let unrelated_sso_key = "bulwark:sso:ticket:other-ticket";
+        dao.set(unrelated_sso_key, r#"{"login_id":2002,"client_id":2}"#, 60)
+            .await
+            .unwrap();
+
+        // logout T1（未关联 sso_ticket）
+        session.logout("T1").await.unwrap();
+
+        // 不相关的 SSO ticket 应仍然存在
+        assert!(
+            dao.get(unrelated_sso_key).await.unwrap().is_some(),
+            "logout 未关联 SSO ticket 的 token 不应影响其他 SSO keys"
+        );
+    }
+
+    // ------------------------------------------------------------------------
+    // 0.2.0 新增 spec scenario: 临时凭证过期联动（is_valid 联动）
+    // ------------------------------------------------------------------------
+
+    /// 验证 is_valid 在 token 关联的临时凭证仍存在时返回 true。
+    ///
+    /// 对应 spec scenario "临时凭证关联会话的自定义过期 (NEW - 0.2.0)"。
+    #[tokio::test]
+    async fn is_valid_returns_true_when_temp_credential_exists() {
+        let (dao, session) = make_session(3600, 86400);
+        session.create(1001, "T1").await.unwrap();
+
+        // 在 dao 中预置临时凭证
+        let temp_key = "bulwark:temp:order:abc123";
+        dao.set(temp_key, "secret-value", 300).await.unwrap();
+        // 关联临时凭证到 token
+        session
+            .link_temp_credential("T1", temp_key)
+            .await
+            .unwrap();
+
+        // 临时凭证仍存在，token 应有效
+        let valid = session.is_valid("T1").await.unwrap();
+        assert!(valid, "临时凭证存在时 token 应有效");
+    }
+
+    /// 验证 is_valid 在 token 关联的临时凭证已被删除时返回 false。
+    ///
+    /// 对应 spec scenario "临时凭证关联会话的自定义过期 (NEW - 0.2.0)"：
+    /// "临时凭证过期后 T1 立即失效，不论 token 自身 timeout 是否到期"。
+    #[tokio::test]
+    async fn is_valid_returns_false_when_temp_credential_expired() {
+        let (dao, session) = make_session(3600, 86400);
+        session.create(1001, "T1").await.unwrap();
+
+        // 在 dao 中预置临时凭证
+        let temp_key = "bulwark:temp:order:abc123";
+        dao.set(temp_key, "secret-value", 300).await.unwrap();
+        session
+            .link_temp_credential("T1", temp_key)
+            .await
+            .unwrap();
+
+        // 模拟临时凭证过期/被删除
+        dao.delete(temp_key).await.unwrap();
+
+        // 临时凭证已失效，token 应立即失效（即使 token 自身 timeout 未到期）
+        let valid = session.is_valid("T1").await.unwrap();
+        assert!(
+            !valid,
+            "临时凭证过期后 token 应立即失效，不论 token 自身 timeout 是否到期"
+        );
+    }
+
+    /// 验证 is_valid 在 token 未关联临时凭证时返回 true（向后兼容）。
+    #[tokio::test]
+    async fn is_valid_returns_true_when_no_temp_credential_linked() {
+        let (_dao, session) = make_session(3600, 86400);
+        session.create(1001, "T1").await.unwrap();
+
+        // 未关联临时凭证，token 应有效（0.1.0 既有行为不变）
+        let valid = session.is_valid("T1").await.unwrap();
+        assert!(valid, "未关联临时凭证时 token 有效性应遵循 0.1.0 既有行为");
     }
 }
