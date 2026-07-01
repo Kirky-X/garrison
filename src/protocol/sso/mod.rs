@@ -10,6 +10,11 @@
 //! 所有 SSO 票据存储在 `bulwark:sso:ticket:<ticket>` 命名空间下，
 //! 与 session/sign/apikey/temp 模块隔离。
 
+// SSO Server 独立抽象模块（依据 spec protocol-sso-server）。
+// 仅在启用 `protocol-sso-server` 特性时编译，依赖 `protocol-sso`。
+#[cfg(feature = "protocol-sso-server")]
+pub mod server;
+
 use crate::dao::BulwarkDao;
 use crate::error::{BulwarkError, BulwarkResult};
 use serde::{Deserialize, Serialize};
