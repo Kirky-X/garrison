@@ -5,6 +5,53 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.2.1] - 2026-07-01
+
+### 概述
+
+Bulwark 0.2.1 是 0.2.0 的 PATCH 版本，聚焦于：auto-wire gap 修复、协议层边界场景测试补全、
+examples 工程化重组与文档补充。本版本不引入新协议或新功能特性，仅包含 bug 修复与稳定性优化。
+
+### 修复
+
+- **auto-wire gap（TG4+TG5）**：修复 `BulwarkManager::init` 未注入 PluginManager /
+  ListenerManager / AuthLogic / PermissionChecker 的 gap。`BulwarkLogicDefault` 新增 4 个可选字段
+  与 builder 方法，`login` / `logout` / `kickout` / `login_by_token` / `refresh_token` 现自动触发
+  plugin 钩子与 listener 事件。`BulwarkLogicFactoryFn` 签名扩展为接收 `&BulwarkLogicFactoryContext`
+  以支持 factory 注入 manager。
+
+### 新增（测试与工程化）
+
+- **协议层边界场景测试（TG6-TG11）**：新增 6 个测试文件共 20 个边界场景测试
+  - OAuth2: refresh_token 失效 / scope 边界 / code 重放 / expires_in=0
+  - SSO: ticket 格式非法 / centerId 映射缺失 / 并发校验仅一次成功
+  - JWT: none 算法注入拒绝 / iat 未来时间容忍 / refresh 过期 / 空 claims
+  - Sign: nonce 重放拒绝 / timestamp 漂移超出窗口 / 缺失必填参数
+  - APIKey: namespace 隔离 / 过期校验 / 格式非法
+  - Temp: 一次性凭证失效 / 过期校验 / scope 越权
+- **auto-wire 集成测试（TG5.8）**：新增 3 个集成测试验证 `BulwarkUtil::login/logout` 自动触发
+  plugin/listener
+- **examples 工程化重组（TG2-TG3）**：examples 从零散 `.rs` 文件重组为 workspace member
+  （`bulwark-examples` crate，`publish = false`），每个 bin 配套独立 `tests/<name>.rs` 测试文件
+
+### 变更
+
+- `BulwarkLogicFactoryFn` 类型签名扩展（新增第 4 个参数 `&BulwarkLogicFactoryContext`）
+  — 0.x.x 阶段可接受的不兼容变更，自定义 factory 需适配新签名
+- `BulwarkLogicDefault` 新增 4 个字段（`plugin_manager` / `listener_manager` / `auth_logic` /
+  `permission_checker`），均通过 builder 方法注入，向后兼容（未注入时行为同 0.2.0）
+
+### 文档
+
+- 修复 `examples/src/context_request.rs` 模块 doc 中未闭合 HTML 标签 `Request<Body>`
+- `cargo doc --no-deps --features full --workspace` 零警告
+
+### 测试
+
+- 693 tests passing（+30 vs 0.2.0 的 663）
+- clippy 零警告（`-D warnings`）
+- 90%+ 覆盖率（保持 0.2.0 水平）
+
 ## [0.2.0] - 2026-07-01
 
 ### 概述
