@@ -1917,4 +1917,158 @@ mod tests {
         assert!(ts.is_some(), "login_by_token 后应建立会话");
         assert_eq!(ts.unwrap().login_id, 6006);
     }
+
+    // ------------------------------------------------------------------------
+    // refresh_token 覆盖率补充测试（0.2.1 新增 impl，依据 spec core-auth-api）
+    // ------------------------------------------------------------------------
+
+    /// refresh_token 在 token_style 非 jwt 时返回 NotImplemented。
+    #[cfg(feature = "protocol-jwt")]
+    #[tokio::test]
+    async fn refresh_token_non_jwt_style_returns_not_implemented() {
+        let logic = make_logic(3600, 86400, false, "uuid", true, true);
+        let result = logic.refresh_token("any-token").await;
+        assert!(
+            matches!(result, Err(BulwarkError::NotImplemented(ref msg)) if msg.contains("token_style=jwt")),
+            "非 jwt style 的 refresh_token 应返回 NotImplemented，实际: {:?}",
+            result
+        );
+    }
+
+    /// refresh_token 对无效 JWT token 返回 InvalidToken 错误。
+    #[cfg(feature = "protocol-jwt")]
+    #[tokio::test]
+    async fn refresh_token_invalid_jwt_returns_error() {
+        // 构造 token_style=jwt 的 logic（jwt_secret 来自 default_config）
+        let logic = make_logic(3600, 86400, false, "jwt", true, true);
+        // 无效 token：verify_token 返回 Err，refresh_token 应透传
+        let result = logic.refresh_token("invalid.jwt.token").await;
+        assert!(
+            result.is_err(),
+            "无效 JWT refresh_token 应返回 Err，实际: {:?}",
+            result
+        );
+    }
+
+    /// refresh_token 对有效 JWT token 成功刷新（0.2.1 auto-wire 触发 plugin/listener）。
+    #[cfg(feature = "protocol-jwt")]
+    #[tokio::test]
+    async fn refresh_token_valid_jwt_returns_new_token() {
+        // 构造 logic：token_style=jwt，使用明确 secret
+        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
+        let mut config = BulwarkConfig::default_config();
+        config.token_style = "jwt".to_string();
+        config.jwt_secret = "refresh-test-secret".to_string();
+        config.timeout = 3600;
+        let firewall: Arc<dyn BulwarkFirewallStrategy> = Arc::new(MockFirewall {
+            has_permission: true,
+            has_role: true,
+        });
+        let logic = BulwarkLogicDefault::new(session, Arc::new(config), firewall);
+
+        // 注入 plugin_manager + listener_manager 验证 auto-wire 不中断
+        let pm = Arc::new(BulwarkPluginManager::new());
+        let logic = logic.with_plugin_manager(pm);
+        #[cfg(feature = "listener")]
+        let logic = logic.with_listener_manager(Arc::new(BulwarkListenerManager::new()));
+
+        // 先生成一个有效 JWT token
+        let handler = crate::protocol::jwt::JwtHandler::new("refresh-test-secret");
+        let original_token = handler.sign(7007, 3600).unwrap();
+
+        // 刷新 token（同秒内 iat/exp 可能相同，不强制 new_token != original_token）
+        let new_token = logic.refresh_token(&original_token).await.unwrap();
+        assert!(!new_token.is_empty(), "refresh_token 应返回非空 token");
+
+        // 验证新 token 有效且 login_id 一致
+        let new_claims = handler.verify(&new_token).unwrap();
+        assert_eq!(new_claims.login_id, 7007);
+    }
+
+    // ------------------------------------------------------------------------
+    // trait default 方法覆盖率测试（login_by_token/verify_token/refresh_token）
+    // ------------------------------------------------------------------------
+
+    /// 最小化 BulwarkLogic mock，仅用于测试 trait default 方法。
+    /// 所有必需方法标记 unreachable!()，仅保留 default 方法（login_by_token/verify_token/refresh_token）。
+    struct MinimalLogic {
+        config: Arc<BulwarkConfig>,
+    }
+
+    #[async_trait]
+    impl BulwarkLogic for MinimalLogic {
+        async fn login(&self, _: i64) -> BulwarkResult<String> { unreachable!() }
+        async fn login_with_token(&self, _: i64, _: &str) -> BulwarkResult<()> { unreachable!() }
+        async fn logout(&self) -> BulwarkResult<()> { unreachable!() }
+        async fn logout_by_login_id(&self, _: i64) -> BulwarkResult<()> { unreachable!() }
+        async fn kickout(&self, _: i64) -> BulwarkResult<()> { unreachable!() }
+        async fn kickout_by_token(&self, _: &str) -> BulwarkResult<()> { unreachable!() }
+        async fn check_login(&self) -> BulwarkResult<bool> { unreachable!() }
+        async fn get_login_id(&self) -> BulwarkResult<Option<i64>> { unreachable!() }
+        async fn check_permission(&self, _: &str) -> BulwarkResult<()> { unreachable!() }
+        async fn check_role(&self, _: &str) -> BulwarkResult<()> { unreachable!() }
+        fn config(&self) -> Arc<BulwarkConfig> { Arc::clone(&self.config) }
+    }
+
+    /// trait default login_by_token 返回 NotImplemented（spec: 未启用协议层 feature）。
+    #[tokio::test]
+    async fn trait_default_login_by_token_returns_not_implemented() {
+        let logic = MinimalLogic { config: Arc::new(BulwarkConfig::default_config()) };
+        let result = logic.login_by_token("any-token").await;
+        assert!(
+            matches!(result, Err(BulwarkError::NotImplemented(ref msg)) if msg.contains("protocol-oauth2")),
+            "trait default login_by_token 应返回 NotImplemented，实际: {:?}",
+            result
+        );
+    }
+
+    /// trait default verify_token 返回 NotImplemented（spec: 需子类 override）。
+    #[tokio::test]
+    async fn trait_default_verify_token_returns_not_implemented() {
+        let logic = MinimalLogic { config: Arc::new(BulwarkConfig::default_config()) };
+        let result = logic.verify_token("any-token").await;
+        assert!(
+            matches!(result, Err(BulwarkError::NotImplemented(ref msg)) if msg.contains("override")),
+            "trait default verify_token 应返回 NotImplemented，实际: {:?}",
+            result
+        );
+    }
+
+    /// trait default refresh_token 返回 NotImplemented（spec: 需启用 protocol-jwt）。
+    #[tokio::test]
+    async fn trait_default_refresh_token_returns_not_implemented() {
+        let logic = MinimalLogic { config: Arc::new(BulwarkConfig::default_config()) };
+        let result = logic.refresh_token("any-token").await;
+        assert!(
+            matches!(result, Err(BulwarkError::NotImplemented(ref msg)) if msg.contains("protocol-jwt")),
+            "trait default refresh_token 应返回 NotImplemented，实际: {:?}",
+            result
+        );
+    }
+
+    // ------------------------------------------------------------------------
+    // login_by_token auto-wire 覆盖率补充（plugin + listener 钩子触发）
+    // ------------------------------------------------------------------------
+
+    /// login_by_token 注入 plugin_manager + listener_manager 后触发 auto-wire 钩子（simple style）。
+    #[tokio::test]
+    async fn login_by_token_with_managers_triggers_hooks() {
+        let logic = make_logic(3600, 86400, false, "simple", true, true);
+        let pm = Arc::new(BulwarkPluginManager::new());
+        let logic = logic.with_plugin_manager(pm);
+        #[cfg(feature = "listener")]
+        let logic = logic.with_listener_manager(Arc::new(BulwarkListenerManager::new()));
+
+        // 构造 simple 格式 token: "<login_id>-<uuid>"
+        let token = format!("8008-{}", uuid::Uuid::new_v4());
+
+        // login_by_token 应成功（plugin/listener 失败仅 warn 不中断）
+        logic.login_by_token(&token).await.unwrap();
+
+        // 验证会话已建立
+        let ts = logic.session.get_token_session(&token).await.unwrap();
+        assert!(ts.is_some(), "login_by_token 后应建立会话");
+        assert_eq!(ts.unwrap().login_id, 8008);
+    }
 }

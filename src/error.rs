@@ -472,4 +472,102 @@ mod tests {
         let response = err.into_response();
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
+
+    // ========================================================================
+    // 补充测试：覆盖剩余 IntoResponse 分支 + Display 变体（0.2.1 覆盖率提升）
+    // ========================================================================
+
+    /// 验证 Internal 错误映射为 500 Internal Server Error。
+    #[cfg(feature = "web-axum")]
+    #[test]
+    fn internal_error_returns_500() {
+        use axum::http::StatusCode;
+        use axum::response::IntoResponse;
+        let err = BulwarkError::Internal("内部错误".to_string());
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    /// 验证 Session 错误映射为 500 Internal Server Error。
+    #[cfg(feature = "web-axum")]
+    #[test]
+    fn session_error_returns_500() {
+        use axum::http::StatusCode;
+        use axum::response::IntoResponse;
+        let err = BulwarkError::Session("会话过期".to_string());
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    /// 验证 OAuth2 错误映射为 500 Internal Server Error。
+    #[cfg(feature = "web-axum")]
+    #[test]
+    fn oauth2_error_returns_500() {
+        use axum::http::StatusCode;
+        use axum::response::IntoResponse;
+        let err = BulwarkError::OAuth2("授权失败".to_string());
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    /// 验证 Network 错误映射为 502 Bad Gateway。
+    #[cfg(feature = "web-axum")]
+    #[test]
+    fn network_error_returns_502() {
+        use axum::http::StatusCode;
+        use axum::response::IntoResponse;
+        let err = BulwarkError::Network("连接超时".to_string());
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+    }
+
+    /// 验证 InvalidParam 错误映射为 400 Bad Request。
+    #[cfg(feature = "web-axum")]
+    #[test]
+    fn invalid_param_returns_400() {
+        use axum::http::StatusCode;
+        use axum::response::IntoResponse;
+        let err = BulwarkError::InvalidParam("参数缺失".to_string());
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    /// 验证 NotImplemented 错误映射为 501 Not Implemented。
+    #[cfg(feature = "web-axum")]
+    #[test]
+    fn not_implemented_returns_501() {
+        use axum::http::StatusCode;
+        use axum::response::IntoResponse;
+        let err = BulwarkError::NotImplemented("功能未实现".to_string());
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
+    }
+
+    /// 验证 OAuth2 变体的 Display 输出包含原始消息。
+    #[test]
+    fn oauth2_variant_display_includes_message() {
+        let err = BulwarkError::OAuth2("授权码无效".to_string());
+        assert_eq!(err.to_string(), "OAuth2 错误: 授权码无效");
+    }
+
+    /// 验证 Network 变体的 Display 输出包含原始消息。
+    #[test]
+    fn network_variant_display_includes_message() {
+        let err = BulwarkError::Network("DNS 解析失败".to_string());
+        assert_eq!(err.to_string(), "网络错误: DNS 解析失败");
+    }
+
+    /// 验证 InvalidParam 变体的 Display 输出包含原始消息。
+    #[test]
+    fn invalid_param_variant_display_includes_message() {
+        let err = BulwarkError::InvalidParam("client_id 为空".to_string());
+        assert_eq!(err.to_string(), "参数无效: client_id 为空");
+    }
+
+    /// 验证 NotImplemented 变体的 Display 输出包含原始消息。
+    #[test]
+    fn not_implemented_variant_display_includes_message() {
+        let err = BulwarkError::NotImplemented("refresh_token 未实现".to_string());
+        assert_eq!(err.to_string(), "未实现: refresh_token 未实现");
+    }
 }

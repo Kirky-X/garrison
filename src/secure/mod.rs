@@ -74,3 +74,50 @@ pub mod httpbasic;
 /// HTTP Digest 认证子模块。
 #[cfg(feature = "secure-httpdigest")]
 pub mod httpdigest;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// TotpVerifier trait default verify_totp 调用 todo!() panic（spec: 占位实现）。
+    #[test]
+    #[should_panic(expected = "not yet implemented")]
+    fn totp_verifier_default_verify_panics() {
+        struct MockTotpVerifier;
+        impl TotpVerifier for MockTotpVerifier {}
+        let v = MockTotpVerifier;
+        let _ = v.verify_totp("123456");
+    }
+
+    /// TotpVerifier trait default generate_totp 调用 todo!() panic（spec: 占位实现）。
+    #[test]
+    #[should_panic(expected = "not yet implemented")]
+    fn totp_verifier_default_generate_panics() {
+        struct MockTotpVerifier;
+        impl TotpVerifier for MockTotpVerifier {}
+        let v = MockTotpVerifier;
+        let _ = v.generate_totp();
+    }
+
+    /// SignVerifier trait default verify_sign 调用 todo!() panic（spec: 占位实现）。
+    #[cfg(feature = "secure-sign")]
+    #[test]
+    #[should_panic(expected = "not yet implemented")]
+    fn sign_verifier_default_verify_panics() {
+        struct MockSignVerifier;
+        impl SignVerifier for MockSignVerifier {}
+        let v = MockSignVerifier;
+        let _ = v.verify_sign("data", "sign", "secret");
+    }
+
+    /// SignVerifier trait default create_sign 调用 todo!() panic（spec: 占位实现）。
+    #[cfg(feature = "secure-sign")]
+    #[test]
+    #[should_panic(expected = "not yet implemented")]
+    fn sign_verifier_default_create_panics() {
+        struct MockSignVerifier;
+        impl SignVerifier for MockSignVerifier {}
+        let v = MockSignVerifier;
+        let _ = v.create_sign("data", "secret");
+    }
+}

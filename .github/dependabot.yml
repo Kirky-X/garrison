@@ -9,6 +9,8 @@ updates:
     open-pull-requests-limit: 10
     labels: ["dependencies", "rust"]
     reviewers: ["kirky"]
+    cooldown:
+      default-days: 7
     groups:
       patch:
         update-types: ["patch"]
@@ -22,6 +24,8 @@ updates:
       interval: "weekly"
     labels: ["dependencies", "ci"]
     reviewers: ["kirky"]
+    cooldown:
+      default-days: 7
 
   # pre-commit hooks
   - package-ecosystem: "pre-commit"
@@ -29,3 +33,5 @@ updates:
     schedule:
       interval: "monthly"
     labels: ["dependencies", "tooling"]
+    cooldown:
+      default-days: 7

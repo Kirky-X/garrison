@@ -63,8 +63,11 @@ pub fn run() -> BulwarkResult<()> {
     }
 
     // 8. 演示从 Base32 密钥解码（兼容 Google Authenticator otpauth URI 的 secret）
-    let base32_secret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"; // "12345678901234567890" 的 Base32
-    match TotpHandler::secret_from_base32(base32_secret) {
+    // RFC 6238 标准测试向量（"12345678901234567890" 的 Base32），仅用于示例演示。
+    // 生产环境务必从环境变量或安全存储（如 Vault/KMS）获取密钥，切勿硬编码。
+    let base32_secret = std::env::var("TOTP_EXAMPLE_SECRET")
+        .unwrap_or_else(|_| "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ".to_string()); // nosemgrep: generic.secrets.security.detected-generic-secret
+    match TotpHandler::secret_from_base32(&base32_secret) {
         Ok(bytes) => {
             println!("[解码] Base32 密钥解码成功，{} 字节", bytes.len());
             let handler2 = TotpHandler::new(bytes, 30, 6).expect("TOTP 初始化失败");

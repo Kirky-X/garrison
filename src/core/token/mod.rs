@@ -445,4 +445,87 @@ mod tests {
         let token = TokenStyleFactory::new("jwt", "secret");
         assert!(token.is_ok());
     }
+
+    // ========================================================================
+    // 覆盖率补充测试（Random64TokenStyle::parse / SimpleTokenStyle::verify 边界）
+    // ========================================================================
+
+    /// Random64TokenStyle::parse 返回 Err（无 payload）。
+    #[test]
+    fn random64_style_parse_errors() {
+        let style = Random64TokenStyle;
+        let result = style.parse("any-token");
+        assert!(result.is_err());
+        match result.err() {
+            Some(BulwarkError::Internal(msg)) => {
+                assert!(msg.contains("random_64"), "应提示 random_64 不支持 parse")
+            },
+            other => panic!("期望 Internal 错误，实际: {:?}", other),
+        }
+    }
+
+    /// SimpleTokenStyle::verify 无分隔符时返回 Ok(None)（spec: token 不含 login_id）。
+    #[test]
+    fn simple_style_verify_no_separator_returns_none() {
+        let style = SimpleTokenStyle;
+        let result = style.verify("noseparator").unwrap();
+        assert_eq!(result, None, "无 '-' 分隔符的 token verify 应返回 None");
+    }
+
+    /// SimpleTokenStyle::verify login_id 非数字时返回 Err。
+    #[test]
+    fn simple_style_verify_malformed_returns_error() {
+        let style = SimpleTokenStyle;
+        // "abc-xyz" 中 "abc" 无法解析为 i64
+        let result = style.verify("abc-xyz");
+        assert!(
+            result.is_err(),
+            "login_id 非数字应返回 Err，实际: {:?}",
+            result
+        );
+    }
+
+    // ========================================================================
+    // JwtTokenStyle 覆盖率补充测试（feature-gated）
+    // ========================================================================
+
+    /// JwtTokenStyle generate + verify 往返测试。
+    #[cfg(feature = "protocol-jwt")]
+    #[test]
+    fn jwt_style_generate_and_verify_roundtrip() {
+        let style = JwtTokenStyle::new("test-secret-key");
+        let token = style.generate(1001, 3600).unwrap();
+        let login_id = style.verify(&token).unwrap();
+        assert_eq!(login_id, Some(1001), "JWT verify 应返回 generate 时的 login_id");
+    }
+
+    /// JwtTokenStyle::verify 无效 token 返回 Ok(None)。
+    #[cfg(feature = "protocol-jwt")]
+    #[test]
+    fn jwt_style_verify_invalid_returns_none() {
+        let style = JwtTokenStyle::new("test-secret-key");
+        // 篡改的 token（无法通过签名校验）
+        let result = style.verify("invalid.jwt.token").unwrap();
+        assert_eq!(result, None, "无效 JWT verify 应返回 Ok(None)");
+    }
+
+    /// JwtTokenStyle::parse 有效 token 返回 TokenClaims。
+    #[cfg(feature = "protocol-jwt")]
+    #[test]
+    fn jwt_style_parse_valid_returns_claims() {
+        let style = JwtTokenStyle::new("test-secret-key");
+        let token = style.generate(2002, 3600).unwrap();
+        let claims = style.parse(&token).unwrap();
+        assert_eq!(claims.login_id, 2002);
+        assert!(claims.expire_at > 0, "JWT parse 应返回非零过期时间");
+    }
+
+    /// JwtTokenStyle::parse 无效 token 返回 Err。
+    #[cfg(feature = "protocol-jwt")]
+    #[test]
+    fn jwt_style_parse_invalid_returns_error() {
+        let style = JwtTokenStyle::new("test-secret-key");
+        let result = style.parse("invalid.jwt.token");
+        assert!(result.is_err(), "无效 JWT parse 应返回 Err");
+    }
 }

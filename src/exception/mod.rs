@@ -391,8 +391,17 @@ mod tests {
         let ex: BulwarkException = BulwarkError::NotLogin("请先登录".to_string()).into();
         assert_eq!(ex.code, -1);
         assert_eq!(ex.message, "请先登录");
+        // InvalidToken → code=-1
+        let ex: BulwarkException = BulwarkError::InvalidToken("bad token".to_string()).into();
+        assert_eq!(ex.code, -1);
+        // ExpiredToken → code=-1
+        let ex: BulwarkException = BulwarkError::ExpiredToken("expired".to_string()).into();
+        assert_eq!(ex.code, -1);
         // NotPermission → code=-2
         let ex: BulwarkException = BulwarkError::NotPermission("无权限".to_string()).into();
+        assert_eq!(ex.code, -2);
+        // NotRole → code=-2
+        let ex: BulwarkException = BulwarkError::NotRole("无角色".to_string()).into();
         assert_eq!(ex.code, -2);
         // 其他 → code=500
         let ex: BulwarkException = BulwarkError::Dao("db down".to_string()).into();

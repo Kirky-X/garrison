@@ -1,0 +1,12 @@
+# cargo-audit 配置（依据 spec protocol-jwt Known Risks 章节）
+#
+# RUSTSEC-2026-0173: proc-macro-error2 v2.0.1 unmaintained
+# 依赖链：bulwark → dbnexus → dbnexus-macros/sea-bae → proc-macro-error2
+# 影响范围：仅编译期（proc-macro），无运行时风险
+# 处置策略：上游 sea-bae/dbnexus-macros 升级前无法消除，记录为已知/接受
+
+[advisories]
+ignore = [
+    "RUSTSEC-2026-0173", # proc-macro-error2 unmaintained（编译期依赖，无运行时风险）
+    "RUSTSEC-2023-0071", # rsa 0.9.10 Marvin Attack（仅影响 RS256/RS384/RS512，默认 HS256/HS512 不触发）
+]
