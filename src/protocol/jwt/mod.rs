@@ -1,21 +1,20 @@
 //! JWT 协议插件模块。
 //!
 //! [借鉴 Sa-Token] 对应 Sa-Token 的 JWT 协议支持，
-//! 基于 `jsonwebtoken` crate 实现签发与校验。
+//! 基于 `jsonwebtoken` 10 crate 实现签发、校验与刷新。
 //!
 //! 仅在启用 `protocol-jwt` 特性时编译。
-//!
-//! 该模块在 0.1.0 为占位实现，完整功能将在 0.2.0+ 提供。
 
-use crate::error::BulwarkResult;
+use crate::error::{BulwarkError, BulwarkResult};
+use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
+use std::time::{SystemTime, UNIX_EPOCH};
 
-/// JWT Claims 载荷。
+/// Bulwark JWT Claims 载荷（依据 spec protocol-jwt）。
 ///
-/// 0.2.0 扩展 `login_id` 与 `device` 字段以支持 `core-token::JwtTokenStyle` 委托。
-/// Task Group 9 将重命名为 `BulwarkJwtClaims` 并完成完整签发/校验实现。
+/// 字段兼容 0.1.0 `JwtClaims`，0.2.0 扩展 `login_id` 与 `device` 字段。
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct JwtClaims {
+pub struct BulwarkJwtClaims {
     /// 主体标识（与 login_id 字符串一致）。
     pub sub: String,
 
@@ -32,37 +31,359 @@ pub struct JwtClaims {
     pub device: Option<String>,
 }
 
-/// JWT 处理器，提供签发与校验能力。
+/// 0.1.0 兼容别名。
+pub type JwtClaims = BulwarkJwtClaims;
+
+/// JWT 处理器，封装密钥与签名算法以供复用（依据 spec protocol-jwt）。
+///
+/// 默认采用 HS256 算法，可通过 `with_algorithm` 切换为 HS512 等。
+/// 通过 `with_device` 设置设备标识，签发时写入 claims。
 pub struct JwtHandler {
     /// 签名密钥。
     pub secret: String,
+    /// 签名算法（默认 HS256）。
+    pub algorithm: Algorithm,
+    /// 可选设备标识（签发时写入 claims）。
+    pub device: Option<String>,
 }
 
 impl JwtHandler {
-    /// 创建新的 JWT 处理器。
+    /// 创建新的 JWT 处理器，默认采用 HS256 算法（依据 spec protocol-jwt）。
     ///
     /// # 参数
-    /// - `secret`: 签名密钥。
+    /// - `secret`: 签名密钥（空字符串将在 `sign` 时拒绝）。
     pub fn new(secret: impl Into<String>) -> Self {
         Self {
             secret: secret.into(),
+            algorithm: Algorithm::HS256,
+            device: None,
         }
     }
 
-    /// 签发 JWT。
+    /// 切换签名算法（依据 spec protocol-jwt）。
+    ///
+    /// # 参数
+    /// - `algorithm`: 算法（如 `Algorithm::HS512`）。
+    pub fn with_algorithm(mut self, algorithm: Algorithm) -> Self {
+        self.algorithm = algorithm;
+        self
+    }
+
+    /// 设置设备标识（依据 spec protocol-jwt）。
+    ///
+    /// 签发时写入 claims 的 `device` 字段。
+    ///
+    /// # 参数
+    /// - `device`: 设备标识。
+    pub fn with_device(mut self, device: impl Into<String>) -> Self {
+        self.device = Some(device.into());
+        self
+    }
+
+    /// 签发 JWT（依据 spec protocol-jwt）。
     ///
     /// # 参数
     /// - `login_id`: 登录主体标识。
-    /// - `timeout`: 有效期（秒）。
-    pub fn sign(&self, _login_id: i64, _timeout: i64) -> BulwarkResult<String> {
-        todo!()
+    /// - `timeout`: 有效期（秒），不可为负数。
+    ///
+    /// # 返回
+    /// - `Ok(String)`: JWT 字符串（三段 Base64URL 通过 `.` 连接）。
+    /// - `Err(BulwarkError::Config)`: 密钥为空或 timeout 为负。
+    /// - `Err(BulwarkError::Internal)`: 签发失败。
+    pub fn sign(&self, login_id: i64, timeout: i64) -> BulwarkResult<String> {
+        if self.secret.is_empty() {
+            return Err(BulwarkError::Config("JWT secret 不能为空".to_string()));
+        }
+        if timeout < 0 {
+            return Err(BulwarkError::Config(format!(
+                "timeout 不能为负数: {}",
+                timeout
+            )));
+        }
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|e| BulwarkError::Internal(format!("系统时间错误: {}", e)))?
+            .as_secs() as i64;
+        let claims = BulwarkJwtClaims {
+            sub: login_id.to_string(),
+            iat: now,
+            exp: now + timeout,
+            login_id,
+            device: self.device.clone(),
+        };
+        let header = Header::new(self.algorithm);
+        let key = EncodingKey::from_secret(self.secret.as_bytes());
+        encode(&header, &claims, &key)
+            .map_err(|e| BulwarkError::Internal(format!("JWT 签发失败: {}", e)))
     }
 
-    /// 校验 JWT 并返回 Claims。
+    /// 校验 JWT 并返回 Claims（依据 spec protocol-jwt）。
     ///
     /// # 参数
     /// - `token`: JWT 字符串。
-    pub fn verify(&self, _token: &str) -> BulwarkResult<JwtClaims> {
-        todo!()
+    ///
+    /// # 返回
+    /// - `Ok(BulwarkJwtClaims)`: 校验成功。
+    /// - `Err(BulwarkError::ExpiredToken)`: token 已过期。
+    /// - `Err(BulwarkError::InvalidToken)`: 签名/格式/算法校验失败。
+    pub fn verify(&self, token: &str) -> BulwarkResult<BulwarkJwtClaims> {
+        let key = DecodingKey::from_secret(self.secret.as_bytes());
+        let mut validation = Validation::new(self.algorithm);
+        validation.validate_exp = true;
+        // leeway=0：不容忍时钟偏差，过期立即拒绝（安全框架默认严格）
+        validation.leeway = 0;
+        decode::<BulwarkJwtClaims>(token, &key, &validation)
+            .map(|data| data.claims)
+            .map_err(|e| {
+                let msg = e.to_string();
+                if msg.contains("ExpiredSignature") {
+                    BulwarkError::ExpiredToken(format!("JWT 已过期: {}", e))
+                } else {
+                    BulwarkError::InvalidToken(format!("JWT 校验失败: {}", e))
+                }
+            })
+    }
+
+    /// 刷新 JWT：解析旧 token 的 claims → 签发新 token（依据 spec protocol-jwt）。
+    ///
+    /// # 参数
+    /// - `token`: 旧 JWT 字符串（需可成功 verify）。
+    /// - `new_timeout`: 新 token 的有效期（秒）。
+    ///
+    /// # 返回
+    /// - `Ok(String)`: 新 JWT 字符串。
+    /// - `Err(BulwarkError)`: 旧 token 校验失败或新 token 签发失败。
+    pub fn refresh(&self, token: &str, new_timeout: i64) -> BulwarkResult<String> {
+        let claims = self.verify(token)?;
+        self.sign(claims.login_id, new_timeout)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ========================================================================
+    // BulwarkJwtClaims 测试（依据 spec protocol-jwt）
+    // ========================================================================
+
+    /// BulwarkJwtClaims 完整字段序列化（spec Scenario）。
+    #[test]
+    fn claims_serializes_full_fields() {
+        let claims = BulwarkJwtClaims {
+            sub: "1001".to_string(),
+            iat: 1700000000,
+            exp: 1700003600,
+            login_id: 1001,
+            device: Some("web".to_string()),
+        };
+        let json = serde_json::to_string(&claims).unwrap();
+        assert!(json.contains("\"sub\":\"1001\""));
+        assert!(json.contains("\"iat\":1700000000"));
+        assert!(json.contains("\"exp\":1700003600"));
+        assert!(json.contains("\"login_id\":1001"));
+        assert!(json.contains("\"device\":\"web\""));
+    }
+
+    /// BulwarkJwtClaims device 字段为 None 时序列化为 null（spec Scenario）。
+    #[test]
+    fn claims_device_none_serializes_as_null() {
+        let claims = BulwarkJwtClaims {
+            sub: "1001".to_string(),
+            iat: 1700000000,
+            exp: 1700003600,
+            login_id: 1001,
+            device: None,
+        };
+        let json = serde_json::to_string(&claims).unwrap();
+        assert!(json.contains("\"device\":null"));
+    }
+
+    /// BulwarkJwtClaims 可反序列化。
+    #[test]
+    fn claims_deserializes() {
+        let json = r#"{"sub":"1001","iat":1700000000,"exp":1700003600,"login_id":1001,"device":"web"}"#;
+        let claims: BulwarkJwtClaims = serde_json::from_str(json).unwrap();
+        assert_eq!(claims.sub, "1001");
+        assert_eq!(claims.iat, 1700000000);
+        assert_eq!(claims.exp, 1700003600);
+        assert_eq!(claims.login_id, 1001);
+        assert_eq!(claims.device, Some("web".to_string()));
+    }
+
+    // ========================================================================
+    // JwtHandler 构造测试（依据 spec protocol-jwt）
+    // ========================================================================
+
+    /// new 默认采用 HS256 算法（spec Scenario）。
+    #[test]
+    fn new_defaults_to_hs256() {
+        let handler = JwtHandler::new("my-secret-key");
+        assert_eq!(handler.algorithm, Algorithm::HS256);
+        assert_eq!(handler.secret, "my-secret-key");
+        assert!(handler.device.is_none());
+    }
+
+    /// with_algorithm 切换为 HS512（spec Scenario）。
+    #[test]
+    fn with_algorithm_switches_to_hs512() {
+        let handler = JwtHandler::new("my-secret-key").with_algorithm(Algorithm::HS512);
+        assert_eq!(handler.algorithm, Algorithm::HS512);
+    }
+
+    /// with_device 设置设备标识。
+    #[test]
+    fn with_device_sets_device() {
+        let handler = JwtHandler::new("secret").with_device("ios-app");
+        assert_eq!(handler.device, Some("ios-app".to_string()));
+    }
+
+    // ========================================================================
+    // sign 测试（依据 spec protocol-jwt）
+    // ========================================================================
+
+    /// sign 返回三段 Base64URL（spec Scenario）。
+    #[test]
+    fn sign_returns_three_segment_jwt() {
+        let handler = JwtHandler::new("secret");
+        let token = handler.sign(1001, 3600).unwrap();
+        let parts: Vec<&str> = token.split('.').collect();
+        assert_eq!(parts.len(), 3, "JWT 应由三段组成");
+        assert!(!parts[0].is_empty());
+        assert!(!parts[1].is_empty());
+        assert!(!parts[2].is_empty());
+    }
+
+    /// sign 空密钥返回 Config 错误（spec Scenario）。
+    #[test]
+    fn sign_rejects_empty_secret() {
+        let handler = JwtHandler::new("");
+        let result = handler.sign(1001, 3600);
+        assert!(result.is_err());
+        match result.err() {
+            Some(BulwarkError::Config(msg)) => assert!(msg.contains("secret")),
+            other => panic!("期望 Config 错误，实际: {:?}", other),
+        }
+    }
+
+    /// sign 负数 timeout 返回 Config 错误（spec Scenario）。
+    #[test]
+    fn sign_rejects_negative_timeout() {
+        let handler = JwtHandler::new("secret");
+        let result = handler.sign(1001, -1);
+        assert!(result.is_err());
+        match result.err() {
+            Some(BulwarkError::Config(msg)) => assert!(msg.contains("timeout")),
+            other => panic!("期望 Config 错误，实际: {:?}", other),
+        }
+    }
+
+    /// sign 带 device 写入 payload（spec Scenario）。
+    #[test]
+    fn sign_with_device_includes_device_in_claims() {
+        let handler = JwtHandler::new("secret").with_device("ios-app");
+        let token = handler.sign(1001, 3600).unwrap();
+        // verify 后检查 device
+        let claims = handler.verify(&token).unwrap();
+        assert_eq!(claims.device, Some("ios-app".to_string()));
+    }
+
+    // ========================================================================
+    // verify 测试（依据 spec protocol-jwt）
+    // ========================================================================
+
+    /// verify 有效 token 返回 claims（spec Scenario）。
+    #[test]
+    fn verify_valid_token_returns_claims() {
+        let handler = JwtHandler::new("secret");
+        let token = handler.sign(1001, 3600).unwrap();
+        let claims = handler.verify(&token).unwrap();
+        assert_eq!(claims.sub, "1001");
+        assert_eq!(claims.login_id, 1001);
+        assert!(claims.exp > claims.iat);
+    }
+
+    /// verify 篡改 payload 返回错误（spec Scenario）。
+    #[test]
+    fn verify_tampered_payload_fails() {
+        let handler = JwtHandler::new("secret");
+        let token = handler.sign(1001, 3600).unwrap();
+        let parts: Vec<&str> = token.split('.').collect();
+        // 篡改 payload 段（替换为另一个 base64url 串）
+        let tampered = format!("{}.{}.{}", parts[0], "ZmFrZS1wYXlsb2Fk", parts[2]);
+        let result = handler.verify(&tampered);
+        assert!(result.is_err());
+    }
+
+    /// verify 错误密钥返回错误（spec Scenario）。
+    #[test]
+    fn verify_wrong_secret_fails() {
+        let signer = JwtHandler::new("secret-a");
+        let token = signer.sign(1001, 3600).unwrap();
+        let verifier = JwtHandler::new("secret-b");
+        let result = verifier.verify(&token);
+        assert!(result.is_err());
+    }
+
+    /// verify 已过期 token 返回 ExpiredToken（spec Scenario）。
+    #[test]
+    fn verify_expired_token_returns_expired_error() {
+        let handler = JwtHandler::new("secret");
+        // sign timeout=1 秒，sleep 2 秒后 verify 应触发 ExpiredSignature
+        // （leeway=0，不容忍时钟偏差）
+        let token = handler.sign(1001, 1).unwrap();
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        let result = handler.verify(&token);
+        assert!(result.is_err());
+        match result.err() {
+            Some(BulwarkError::ExpiredToken(_)) => {}
+            other => panic!("期望 ExpiredToken，实际: {:?}", other),
+        }
+    }
+
+    /// verify 算法不匹配返回错误（spec Scenario）。
+    #[test]
+    fn verify_algorithm_mismatch_fails() {
+        let signer = JwtHandler::new("secret").with_algorithm(Algorithm::HS512);
+        let token = signer.sign(1001, 3600).unwrap();
+        let verifier = JwtHandler::new("secret"); // 默认 HS256
+        let result = verifier.verify(&token);
+        assert!(result.is_err());
+    }
+
+    // ========================================================================
+    // refresh 测试（依据 spec protocol-jwt）
+    // ========================================================================
+
+    /// refresh 返回新 token 且可 verify。
+    #[test]
+    fn refresh_issues_new_valid_token() {
+        let handler = JwtHandler::new("secret");
+        let token = handler.sign(1001, 3600).unwrap();
+        let new_token = handler.refresh(&token, 7200).unwrap();
+        assert_ne!(token, new_token);
+        let claims = handler.verify(&new_token).unwrap();
+        assert_eq!(claims.login_id, 1001);
+    }
+
+    /// refresh 旧 token 无效时返回错误。
+    #[test]
+    fn refresh_invalid_token_fails() {
+        let handler = JwtHandler::new("secret");
+        let result = handler.refresh("invalid.token.here", 3600);
+        assert!(result.is_err());
+    }
+
+    /// JwtClaims 类型别名兼容 0.1.0 代码。
+    #[test]
+    fn jwt_claims_alias_works() {
+        let claims: JwtClaims = BulwarkJwtClaims {
+            sub: "1".to_string(),
+            iat: 0,
+            exp: 0,
+            login_id: 1,
+            device: None,
+        };
+        assert_eq!(claims.login_id, 1);
     }
 }
