@@ -57,6 +57,18 @@ pub enum BulwarkError {
     /// 业务异常（携带上下文的可恢复异常，0.2.0 新增，依据 spec exception-system）。
     #[error("{0}")]
     Exception(BulwarkException),
+
+    /// OAuth2 协议错误（0.2.0 新增，依据 spec protocol-oauth2）。
+    #[error("OAuth2 错误: {0}")]
+    OAuth2(String),
+
+    /// 网络错误（0.2.0 新增，依据 spec protocol-oauth2）。
+    #[error("网络错误: {0}")]
+    Network(String),
+
+    /// 参数无效错误（0.2.0 新增，依据 spec protocol-oauth2）。
+    #[error("参数无效: {0}")]
+    InvalidParam(String),
 }
 
 /// Bulwark 框架统一 Result 类型别名。
@@ -124,6 +136,21 @@ impl axum::response::IntoResponse for BulwarkError {
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "CONTEXT_ERROR",
                 "上下文错误",
+            ),
+            BulwarkError::OAuth2(_) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "OAUTH2_ERROR",
+                "OAuth2 错误",
+            ),
+            BulwarkError::Network(_) => (
+                StatusCode::BAD_GATEWAY,
+                "NETWORK_ERROR",
+                "网络错误",
+            ),
+            BulwarkError::InvalidParam(_) => (
+                StatusCode::BAD_REQUEST,
+                "INVALID_PARAM",
+                "参数无效",
             ),
             // Exception 依据 BulwarkException.code 字段映射状态码（依据 spec exception-system Requirement: IntoResponse 实现）
             // code = -1 → 未登录 → 401；code = -2 → 无权限 → 403；其他 → 500
