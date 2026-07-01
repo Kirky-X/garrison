@@ -88,6 +88,8 @@ http-body-util = "0.1"
 wiremock = "0.6"
 # warp test feature 仅在测试时启用 warp::test 模块（不影响生产构建）
 warp = { version = "0.4", default-features = false, features = ["test"] }
+# base64 用于 OIDC 测试中解析 JWT header 段（与 protocol-sign 使用的 base64 0.22 版本一致）
+base64 = "0.22"
 
 [features]
 default = []

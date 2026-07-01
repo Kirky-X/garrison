@@ -14,6 +14,13 @@
 use crate::error::{BulwarkError, BulwarkResult};
 use serde::Deserialize;
 
+/// OIDC 扩展模块（0.4.0 新增，依据 spec oauth2-oidc）。
+///
+/// 提供 `OidcHandler` 用于签发/验证 OIDC id_token + discovery endpoint 元数据生成。
+/// 仅在启用 `protocol-oidc` feature 时编译。
+#[cfg(feature = "protocol-oidc")]
+pub mod oidc;
+
 /// OAuth2 令牌响应（依据 spec protocol-oauth2）。
 ///
 /// 授权服务器返回的 JSON 通过 `Deserialize` 解析。
