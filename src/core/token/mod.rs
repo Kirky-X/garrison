@@ -1,40 +1,249 @@
-//! Token 模型模块，定义 Token 数据结构。
+//! Token 抽象模块，定义 Token 生成/验证/解析的 trait 与多种风格实现。
 //!
-//! [借鉴 Sa-Token] Token 信息模型，对应 Sa-Token 的 `SaTokenInfo` / `TokenSign` 数据结构。
+//! [借鉴 Sa-Token] 对应 Sa-Token 的 Token 风格切换能力，
+//! 0.2.0 将 token 逻辑独立为 `core-token` 模块，
+//! `BulwarkStrategy` 内部委托 `Token` trait 实现。
 //!
-//! 该模块在 0.1.0 为占位实现，完整功能将在 0.2.0+ 提供。
+//! 支持 4 种风格：uuid / random_64 / simple / jwt（依据 spec core-token）。
 
+use crate::error::{BulwarkError, BulwarkResult};
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
-/// Token 数据结构，表示一个认证令牌。
+/// Token 声明信息，承载 token 解析后的声明（依据 spec core-token）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Token {
-    /// Token 字符串值。
-    pub value: String,
-
-    /// 关联的登录主体标识。
+pub struct TokenClaims {
+    /// 登录主体标识。
     pub login_id: i64,
-
-    /// 创建时间戳（Unix 秒）。
-    pub created_at: i64,
-
     /// 过期时间戳（Unix 秒）。
-    pub expires_at: i64,
+    pub expire_at: i64,
+    /// 设备标识（可选）。
+    pub device: Option<String>,
 }
 
-impl Token {
-    /// 创建新的 Token 实例。
+/// Token 抽象 trait，定义 token 生成、验证与解析的契约（依据 spec core-token）。
+///
+/// 实现方需提供 `generate`、`verify`、`parse` 三个方法。
+/// `verify` 在 token 有效时返回 `Ok(Some(login_id))`，无效时返回 `Ok(None)`。
+pub trait Token: Send + Sync {
+    /// 生成 token，关联指定 login_id 与过期时间。
     ///
     /// # 参数
-    /// - `value`: Token 字符串值。
     /// - `login_id`: 登录主体标识。
-    pub fn new(_value: impl Into<String>, _login_id: i64) -> Self {
-        todo!()
+    /// - `timeout`: 有效期（秒）。
+    fn generate(&self, login_id: i64, timeout: i64) -> BulwarkResult<String>;
+
+    /// 校验 token，返回关联的 login_id（如果 token 有效且可解析）。
+    ///
+    /// # 返回
+    /// - `Ok(Some(login_id))`: token 有效且包含 login_id。
+    /// - `Ok(None)`: token 无效或不包含 login_id（如 UUID 风格）。
+    fn verify(&self, token: &str) -> BulwarkResult<Option<i64>>;
+
+    /// 解析 token 为 `TokenClaims`。
+    ///
+    /// # 返回
+    /// - `Ok(TokenClaims)`: 解析成功。
+    /// - `Err(BulwarkError)`: 解析失败（token 风格不支持 parse / token 过期 / 格式错误）。
+    fn parse(&self, token: &str) -> BulwarkResult<TokenClaims>;
+}
+
+// ====================================================================
+// UuidTokenStyle（依据 spec core-token）
+// ====================================================================
+
+/// UUID v4 风格 Token（依据 spec core-token）。
+///
+/// 生成标准 UUID v4 格式 token（如 `6e56d6f8-2b31-4d8e-92c3-7a9c8f0d1234`）。
+/// UUID 不包含 login_id 或过期信息，`verify` 始终返回 `Ok(None)`。
+#[derive(Debug, Clone, Copy, Default)]
+pub struct UuidTokenStyle;
+
+impl Token for UuidTokenStyle {
+    fn generate(&self, _login_id: i64, _timeout: i64) -> BulwarkResult<String> {
+        Ok(Uuid::new_v4().to_string())
     }
 
-    /// 检查 Token 是否已过期。
-    pub fn is_expired(&self) -> bool {
-        todo!()
+    fn verify(&self, _token: &str) -> BulwarkResult<Option<i64>> {
+        // UUID 无 payload，无法提取 login_id
+        Ok(None)
+    }
+
+    fn parse(&self, _token: &str) -> BulwarkResult<TokenClaims> {
+        Err(BulwarkError::Internal(
+            "UUID token 风格不支持 parse（无 payload）".to_string(),
+        ))
+    }
+}
+
+// ====================================================================
+// Random64TokenStyle（依据 spec core-token）
+// ====================================================================
+
+/// 64 字符随机 hex 风格 Token（依据 spec core-token）。
+///
+/// 生成 64 字符随机十六进制串，多次调用返回不同 token。
+/// 不包含 login_id 或过期信息，`verify` 始终返回 `Ok(None)`。
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Random64TokenStyle;
+
+impl Token for Random64TokenStyle {
+    fn generate(&self, _login_id: i64, _timeout: i64) -> BulwarkResult<String> {
+        // 拼接两个 UUID v4 的 simple 表示（各 32 hex 字符 = 64 字符）
+        let token = format!(
+            "{}{}",
+            Uuid::new_v4().simple(),
+            Uuid::new_v4().simple()
+        );
+        Ok(token)
+    }
+
+    fn verify(&self, _token: &str) -> BulwarkResult<Option<i64>> {
+        // 随机 hex 无 payload，无法提取 login_id
+        Ok(None)
+    }
+
+    fn parse(&self, _token: &str) -> BulwarkResult<TokenClaims> {
+        Err(BulwarkError::Internal(
+            "random_64 token 风格不支持 parse（无 payload）".to_string(),
+        ))
+    }
+}
+
+// ====================================================================
+// SimpleTokenStyle（依据 spec core-token）
+// ====================================================================
+
+/// Simple 风格 Token（依据 spec core-token）。
+///
+/// 格式为 `<login_id>-<uuid>`，可通过前缀解析 login_id。
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SimpleTokenStyle;
+
+impl Token for SimpleTokenStyle {
+    fn generate(&self, login_id: i64, _timeout: i64) -> BulwarkResult<String> {
+        Ok(format!("{}-{}", login_id, Uuid::new_v4()))
+    }
+
+    fn verify(&self, token: &str) -> BulwarkResult<Option<i64>> {
+        match token.split_once('-') {
+            Some((id_str, _)) => {
+                let login_id = id_str.parse::<i64>().map_err(|e| {
+                    BulwarkError::Internal(format!("Simple token login_id 解析失败: {}", e))
+                })?;
+                Ok(Some(login_id))
+            }
+            None => Ok(None),
+        }
+    }
+
+    fn parse(&self, token: &str) -> BulwarkResult<TokenClaims> {
+        match token.split_once('-') {
+            Some((id_str, _)) => {
+                let login_id = id_str.parse::<i64>().map_err(|e| {
+                    BulwarkError::Internal(format!("Simple token login_id 解析失败: {}", e))
+                })?;
+                // Simple token 不包含过期时间，expire_at 设为 0
+                Ok(TokenClaims {
+                    login_id,
+                    expire_at: 0,
+                    device: None,
+                })
+            }
+            None => Err(BulwarkError::Internal(
+                "Simple token 格式错误：缺少 '-' 分隔符".to_string(),
+            )),
+        }
+    }
+}
+
+// ====================================================================
+// JwtTokenStyle（依据 spec core-token，feature-gated）
+// ====================================================================
+
+/// JWT 风格 Token（依据 spec core-token）。
+///
+/// 委托 `protocol-jwt::JwtHandler` 实现签发与校验。
+/// 仅在启用 `protocol-jwt` feature 时编译。
+#[cfg(feature = "protocol-jwt")]
+pub struct JwtTokenStyle {
+    /// 内部 JWT 处理器。
+    handler: crate::protocol::jwt::JwtHandler,
+}
+
+#[cfg(feature = "protocol-jwt")]
+impl JwtTokenStyle {
+    /// 创建新的 JWT Token 风格。
+    ///
+    /// # 参数
+    /// - `secret`: 签名密钥。
+    pub fn new(secret: &str) -> Self {
+        Self {
+            handler: crate::protocol::jwt::JwtHandler::new(secret),
+        }
+    }
+}
+
+#[cfg(feature = "protocol-jwt")]
+impl Token for JwtTokenStyle {
+    fn generate(&self, login_id: i64, timeout: i64) -> BulwarkResult<String> {
+        self.handler.sign(login_id, timeout)
+    }
+
+    fn verify(&self, token: &str) -> BulwarkResult<Option<i64>> {
+        match self.handler.verify(token) {
+            Ok(claims) => Ok(Some(claims.login_id)),
+            Err(_) => Ok(None),
+        }
+    }
+
+    fn parse(&self, token: &str) -> BulwarkResult<TokenClaims> {
+        let claims = self.handler.verify(token)?;
+        Ok(TokenClaims {
+            login_id: claims.login_id,
+            expire_at: claims.exp,
+            device: claims.device.clone(),
+        })
+    }
+}
+
+// ====================================================================
+// TokenStyleFactory（依据 spec core-token）
+// ====================================================================
+
+/// Token 风格工厂，依据 `BulwarkConfig.token_style` 创建对应的 `Token` 实现。
+pub struct TokenStyleFactory;
+
+impl TokenStyleFactory {
+    /// 依据风格字符串创建 Token 实现（依据 spec core-token）。
+    ///
+    /// # 参数
+    /// - `style`: 风格字符串（`"uuid"` / `"random_64"` / `"simple"` / `"jwt"`）。
+    /// - `secret`: 签名密钥（仅 `jwt` 风格使用，其他风格忽略）。
+    ///
+    /// # 返回
+    /// - `Ok(Box<dyn Token>)`: 创建成功。
+    /// - `Err(BulwarkError::Config)`: 未知风格，消息含 "unknown token_style"。
+    #[allow(clippy::new_ret_no_self)]
+    pub fn new(style: &str, secret: &str) -> BulwarkResult<Box<dyn Token>> {
+        match style {
+            "uuid" => Ok(Box::new(UuidTokenStyle)),
+            "random_64" => Ok(Box::new(Random64TokenStyle)),
+            "simple" => Ok(Box::new(SimpleTokenStyle)),
+            #[cfg(feature = "protocol-jwt")]
+            "jwt" => Ok(Box::new(JwtTokenStyle::new(secret))),
+            #[cfg(not(feature = "protocol-jwt"))]
+            "jwt" => {
+                let _ = secret; // 避免 unused 警告（jwt 风格需 protocol-jwt feature）
+                Err(BulwarkError::Config(
+                    "unknown token_style: jwt（需启用 protocol-jwt feature）".to_string(),
+                ))
+            }
+            other => Err(BulwarkError::Config(format!(
+                "unknown token_style: {}",
+                other
+            ))),
+        }
     }
 }
 
@@ -42,45 +251,202 @@ impl Token {
 mod tests {
     use super::*;
 
-    /// 验证 `Token::new` 在 0.2.0+ 实现前调用必 panic。
-    /// Rust `todo!()` panic 消息为 "not yet implemented: ..."。
+    // ========================================================================
+    // TokenClaims 测试
+    // ========================================================================
+
+    /// TokenClaims 可序列化/反序列化。
     #[test]
-    #[should_panic(expected = "not yet implemented")]
-    fn token_new_panics_with_todo() {
-        let _ = Token::new("some-token", 1001);
+    fn token_claims_serializes() {
+        let claims = TokenClaims {
+            login_id: 1001,
+            expire_at: 1700003600,
+            device: Some("web".to_string()),
+        };
+        let json = serde_json::to_string(&claims).unwrap();
+        let parsed: TokenClaims = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.login_id, 1001);
+        assert_eq!(parsed.expire_at, 1700003600);
+        assert_eq!(parsed.device, Some("web".to_string()));
     }
 
-    /// 验证 `Token::is_expired` 在 0.2.0+ 实现前调用必 panic。
-    ///
-    /// 通过反序列化构造一个 Token 实例（绕过 `new` 的 todo!()），
-    /// 然后调用 `is_expired` 验证其 panic。
+    /// TokenClaims device 字段可选。
     #[test]
-    #[should_panic(expected = "not yet implemented")]
-    fn token_is_expired_panics_with_todo() {
-        // 通过反序列化构造 Token（避开 new 的 todo!()）
-        let json = r#"{"value":"abc","login_id":1,"created_at":0,"expires_at":0}"#;
-        let token: Token = serde_json::from_str(json).unwrap();
-        let _ = token.is_expired();
+    fn token_claims_device_optional() {
+        let claims = TokenClaims {
+            login_id: 1,
+            expire_at: 0,
+            device: None,
+        };
+        assert!(claims.device.is_none());
     }
 
-    /// 验证 `Token` 结构体可序列化为 JSON。
+    // ========================================================================
+    // UuidTokenStyle 测试（依据 spec core-token）
+    // ========================================================================
+
+    /// UuidTokenStyle 生成 UUID v4 格式 token。
     #[test]
-    fn token_serializes_to_json() {
-        let json = r#"{"value":"abc","login_id":1,"created_at":0,"expires_at":0}"#;
-        let token: Token = serde_json::from_str(json).unwrap();
-        let serialized = serde_json::to_string(&token).unwrap();
-        assert!(serialized.contains("\"value\":\"abc\""));
-        assert!(serialized.contains("\"login_id\":1"));
+    fn uuid_style_generates_uuid_format() {
+        let style = UuidTokenStyle;
+        let token = style.generate(1001, 3600).unwrap();
+        // UUID v4 格式：8-4-4-4-12 十六进制
+        assert_eq!(token.len(), 36);
+        let parts: Vec<&str> = token.split('-').collect();
+        assert_eq!(parts.len(), 5);
+        assert_eq!(parts[0].len(), 8);
+        assert_eq!(parts[1].len(), 4);
+        assert_eq!(parts[2].len(), 4);
+        assert_eq!(parts[3].len(), 4);
+        assert_eq!(parts[4].len(), 12);
     }
 
-    /// 验证 `Token` 结构体实现了 Debug 与 Clone。
+    /// UuidTokenStyle verify 始终返回 None。
     #[test]
-    fn token_implements_debug_and_clone() {
-        let json = r#"{"value":"abc","login_id":1,"created_at":0,"expires_at":0}"#;
-        let token: Token = serde_json::from_str(json).unwrap();
-        let cloned = token.clone();
-        assert_eq!(token.value, cloned.value);
-        // 验证 Debug 实现可格式化
-        let _debug_str = format!("{:?}", token);
+    fn uuid_style_verify_returns_none() {
+        let style = UuidTokenStyle;
+        let token = style.generate(1001, 3600).unwrap();
+        assert_eq!(style.verify(&token).unwrap(), None);
+    }
+
+    /// UuidTokenStyle parse 返回错误。
+    #[test]
+    fn uuid_style_parse_errors() {
+        let style = UuidTokenStyle;
+        assert!(style.parse("some-token").is_err());
+    }
+
+    // ========================================================================
+    // Random64TokenStyle 测试（依据 spec core-token）
+    // ========================================================================
+
+    /// Random64TokenStyle 生成 64 字符随机 hex。
+    #[test]
+    fn random64_style_generates_64_hex() {
+        let style = Random64TokenStyle;
+        let token = style.generate(1001, 3600).unwrap();
+        assert_eq!(token.len(), 64);
+        assert!(token.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    /// Random64TokenStyle 多次调用返回不同 token。
+    #[test]
+    fn random64_style_generates_unique() {
+        let style = Random64TokenStyle;
+        let t1 = style.generate(1001, 3600).unwrap();
+        let t2 = style.generate(1001, 3600).unwrap();
+        assert_ne!(t1, t2);
+    }
+
+    /// Random64TokenStyle verify 始终返回 None。
+    #[test]
+    fn random64_style_verify_returns_none() {
+        let style = Random64TokenStyle;
+        assert_eq!(style.verify("abc123").unwrap(), None);
+    }
+
+    // ========================================================================
+    // SimpleTokenStyle 测试（依据 spec core-token）
+    // ========================================================================
+
+    /// SimpleTokenStyle 生成 `<login_id>-<uuid>` 格式。
+    #[test]
+    fn simple_style_generates_login_id_prefix() {
+        let style = SimpleTokenStyle;
+        let token = style.generate(1001, 3600).unwrap();
+        assert!(token.starts_with("1001-"));
+        // 后缀为 UUID v4 格式（36 字符）
+        let uuid_part = &token[5..]; // 跳过 "1001-"
+        assert_eq!(uuid_part.len(), 36);
+    }
+
+    /// SimpleTokenStyle verify 解析 login_id。
+    #[test]
+    fn simple_style_verify_extracts_login_id() {
+        let style = SimpleTokenStyle;
+        let token = style.generate(2002, 3600).unwrap();
+        let login_id = style.verify(&token).unwrap();
+        assert_eq!(login_id, Some(2002));
+    }
+
+    /// SimpleTokenStyle parse 返回 TokenClaims。
+    #[test]
+    fn simple_style_parse_returns_claims() {
+        let style = SimpleTokenStyle;
+        let token = style.generate(3003, 3600).unwrap();
+        let claims = style.parse(&token).unwrap();
+        assert_eq!(claims.login_id, 3003);
+    }
+
+    /// SimpleTokenStyle parse 非法 login_id 返回 Err。
+    #[test]
+    fn simple_style_parse_invalid_format_errors() {
+        let style = SimpleTokenStyle;
+        // "no-dash-here" split_once('-') => Some(("no", "dash-here"))
+        // "no".parse::<i64>() 会失败
+        let result = style.parse("no-dash-here");
+        assert!(result.is_err());
+    }
+
+    /// SimpleTokenStyle parse 无分隔符返回 Err。
+    #[test]
+    fn simple_style_parse_no_separator_errors() {
+        let style = SimpleTokenStyle;
+        assert!(style.parse("noseparator").is_err());
+    }
+
+    // ========================================================================
+    // TokenStyleFactory 测试（依据 spec core-token）
+    // ========================================================================
+
+    /// Factory 返回 UuidTokenStyle。
+    #[test]
+    fn factory_creates_uuid_style() {
+        let token = TokenStyleFactory::new("uuid", "secret").unwrap();
+        let t = token.generate(1, 60).unwrap();
+        assert_eq!(t.len(), 36);
+    }
+
+    /// Factory 返回 Random64TokenStyle。
+    #[test]
+    fn factory_creates_random64_style() {
+        let token = TokenStyleFactory::new("random_64", "secret").unwrap();
+        let t = token.generate(1, 60).unwrap();
+        assert_eq!(t.len(), 64);
+    }
+
+    /// Factory 返回 SimpleTokenStyle。
+    #[test]
+    fn factory_creates_simple_style() {
+        let token = TokenStyleFactory::new("simple", "secret").unwrap();
+        let t = token.generate(42, 60).unwrap();
+        assert!(t.starts_with("42-"));
+    }
+
+    /// Factory 未知风格返回 Config 错误（spec Scenario）。
+    #[test]
+    fn factory_rejects_unknown_style() {
+        let result = TokenStyleFactory::new("unknown", "secret");
+        assert!(result.is_err());
+        match result.err() {
+            Some(BulwarkError::Config(msg)) => assert!(msg.contains("unknown token_style")),
+            other => panic!("期望 Config 错误，实际: {:?}", other),
+        }
+    }
+
+    /// Factory jwt 风格在无 protocol-jwt feature 时返回错误。
+    #[cfg(not(feature = "protocol-jwt"))]
+    #[test]
+    fn factory_jwt_without_feature_errors() {
+        let result = TokenStyleFactory::new("jwt", "secret");
+        assert!(result.is_err());
+    }
+
+    /// Factory jwt 风格在有 protocol-jwt feature 时成功创建。
+    #[cfg(feature = "protocol-jwt")]
+    #[test]
+    fn factory_creates_jwt_style() {
+        let token = TokenStyleFactory::new("jwt", "secret");
+        assert!(token.is_ok());
     }
 }

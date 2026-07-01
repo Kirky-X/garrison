@@ -11,9 +11,12 @@ use crate::error::BulwarkResult;
 use serde::{Deserialize, Serialize};
 
 /// JWT Claims 载荷。
+///
+/// 0.2.0 扩展 `login_id` 与 `device` 字段以支持 `core-token::JwtTokenStyle` 委托。
+/// Task Group 9 将重命名为 `BulwarkJwtClaims` 并完成完整签发/校验实现。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JwtClaims {
-    /// 主体标识（登录 ID）。
+    /// 主体标识（与 login_id 字符串一致）。
     pub sub: String,
 
     /// 签发时间（Unix 秒）。
@@ -21,6 +24,12 @@ pub struct JwtClaims {
 
     /// 过期时间（Unix 秒）。
     pub exp: i64,
+
+    /// Bulwark 登录标识（数值形式，便于 Token trait 提取）。
+    pub login_id: i64,
+
+    /// 可选设备标识。
+    pub device: Option<String>,
 }
 
 /// JWT 处理器，提供签发与校验能力。
@@ -34,8 +43,10 @@ impl JwtHandler {
     ///
     /// # 参数
     /// - `secret`: 签名密钥。
-    pub fn new(_secret: impl Into<String>) -> Self {
-        todo!()
+    pub fn new(secret: impl Into<String>) -> Self {
+        Self {
+            secret: secret.into(),
+        }
     }
 
     /// 签发 JWT。
