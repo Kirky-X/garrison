@@ -7,13 +7,13 @@
 //! 4. `broadcast` 将事件分发到所有 listener
 //! 5. 单个 plugin/listener 失败不中断主流程（仅 tracing::warn!）
 //!
-//! ## 已知限制（auto-wire gap）
+//! ## auto-wire 集成（0.2.1 修复）
 //!
-//! 当前 `BulwarkLogicDefault` 不持有 `BulwarkPluginManager` / `BulwarkListenerManager`，
-//! 因此 `BulwarkUtil::login` 不会自动触发 `on_login` / `Login` 事件。
-//! 此 auto-wire 在延后任务 13.4/13.5 中实现。
-//! 本集成测试直接调用 `BulwarkPluginManager::on_login()` 与
-//! `BulwarkListenerManager::broadcast()`，验证扩展点本身工作正常。
+//! 0.2.1 起 `BulwarkManager::init` 自动注入 `BulwarkPluginManager` / `BulwarkListenerManager`
+//! 到 `BulwarkLogicDefault`，`BulwarkUtil::login` 会自动触发 `on_login` 钩子与 `Login` 事件。
+//! 本文件包含两组测试：
+//! 1. 扩展点本身行为（直接调用 plugin/listener 方法）
+//! 2. auto-wire 端到端（通过 `BulwarkManager::init` + `BulwarkUtil::login` 验证自动触发）
 //!
 //! 依据 spec plugin-system + listener-system。
 
@@ -257,7 +257,7 @@ fn listener_multiple_broadcasts_accumulate() {
 // ============================================================================
 
 /// 完整生命周期：login → permission_check → logout
-/// （auto-wire gap：当前需手动调用 plugin/listener，spec Scenario）。
+/// （扩展点本身行为：直接调用 plugin/listener 方法）。
 #[test]
 fn full_lifecycle_plugin_and_listener_cooperate() {
     reset_counters();
@@ -322,4 +322,238 @@ fn permission_denied_event_only_goes_to_listener() {
 
     assert!(PLUGIN_PERM_CHECK_CALLS.load(Ordering::SeqCst) >= 1);
     assert!(LISTENER_PERM_DENIED_EVENTS.load(Ordering::SeqCst) >= 1);
+}
+
+// ============================================================================
+// auto-wire 集成测试（0.2.1 新增）
+// 验证 BulwarkManager::init 自动注入 plugin/listener 后，
+// BulwarkUtil::login 会自动触发 on_login 钩子与 Login 事件。
+// ============================================================================
+
+/// 辅助 MockDao（复用 manager 测试的 HashMap 模式，适配 async）。
+mod auto_wire_helpers {
+    use async_trait::async_trait;
+    use bulwark::dao::BulwarkDao;
+    use bulwark::error::{BulwarkError, BulwarkResult};
+    use std::collections::HashMap;
+    use std::time::{Duration, Instant};
+    use tokio::sync::Mutex;
+
+    pub struct MockDao {
+        store: Mutex<HashMap<String, (String, Option<Instant>)>>,
+    }
+
+    impl MockDao {
+        pub fn new() -> Self {
+            Self {
+                store: Mutex::new(HashMap::new()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl BulwarkDao for MockDao {
+        async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
+            let mut store = self.store.lock().await;
+            match store.get(key) {
+                Some((value, expire_at)) => {
+                    if let Some(deadline) = expire_at {
+                        if Instant::now() >= *deadline {
+                            store.remove(key);
+                            return Ok(None);
+                        }
+                    }
+                    Ok(Some(value.clone()))
+                },
+                None => Ok(None),
+            }
+        }
+
+        async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> BulwarkResult<()> {
+            let expire_at = if ttl_seconds == 0 {
+                None
+            } else {
+                Some(Instant::now() + Duration::from_secs(ttl_seconds))
+            };
+            self.store
+                .lock()
+                .await
+                .insert(key.to_string(), (value.to_string(), expire_at));
+            Ok(())
+        }
+
+        async fn update(&self, key: &str, value: &str) -> BulwarkResult<()> {
+            let mut store = self.store.lock().await;
+            match store.get_mut(key) {
+                Some((existing, _)) => {
+                    *existing = value.to_string();
+                    Ok(())
+                },
+                None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
+            }
+        }
+
+        async fn expire(&self, key: &str, seconds: u64) -> BulwarkResult<()> {
+            let mut store = self.store.lock().await;
+            match store.get_mut(key) {
+                Some((_, expire_at)) => {
+                    *expire_at = if seconds == 0 {
+                        None
+                    } else {
+                        Some(Instant::now() + Duration::from_secs(seconds))
+                    };
+                    Ok(())
+                },
+                None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
+            }
+        }
+
+        async fn delete(&self, key: &str) -> BulwarkResult<()> {
+            self.store.lock().await.remove(key);
+            Ok(())
+        }
+    }
+}
+
+/// auto-wire: `BulwarkManager::init` + `BulwarkUtil::login` 自动触发 plugin on_login 钩子。
+///
+/// 验证 0.2.1 修复：init 阶段注入 PluginManager 后，
+/// `BulwarkUtil::login(1001)` 会自动调用编译期注册的 CountingPlugin.on_login。
+#[tokio::test]
+#[serial_test::serial]
+async fn auto_wire_login_triggers_plugin_on_login() {
+    use auto_wire_helpers::MockDao;
+    use bulwark::config::BulwarkConfig;
+    use bulwark::manager::BulwarkManager;
+    use bulwark::stp::{BulwarkInterface, BulwarkUtil};
+
+    // 测试用 BulwarkInterface（空权限/角色数据）
+    struct EmptyInterface;
+    #[async_trait::async_trait]
+    impl BulwarkInterface for EmptyInterface {
+        async fn get_permission_list(&self, _login_id: i64) -> BulwarkResult<Vec<String>> {
+            Ok(vec![])
+        }
+        async fn get_role_list(&self, _login_id: i64) -> BulwarkResult<Vec<String>> {
+            Ok(vec![])
+        }
+    }
+
+    reset_counters();
+
+    let dao: Arc<dyn bulwark::dao::BulwarkDao> = Arc::new(MockDao::new());
+    let config = Arc::new(BulwarkConfig::default_config());
+    let interface: Arc<dyn BulwarkInterface> = Arc::new(EmptyInterface);
+
+    // init 自动构造 PluginManager 并注入到 BulwarkLogicDefault（覆盖式更新全局单例）
+    BulwarkManager::init(dao, config, interface).unwrap();
+
+    // login 应自动触发 CountingPlugin.on_login（编译期通过 inventory 注册）
+    let token = BulwarkUtil::login(1001).await.unwrap();
+    assert!(!token.is_empty());
+
+    // 验证 plugin on_login 被触发
+    let calls = PLUGIN_LOGIN_CALLS.load(Ordering::SeqCst);
+    assert!(
+        calls >= 1,
+        "auto-wire: BulwarkUtil::login 应触发 plugin on_login，实际调用次数: {}",
+        calls
+    );
+}
+
+/// auto-wire: `BulwarkManager::init` + `BulwarkUtil::login` 自动广播 Login 事件到 listener。
+#[tokio::test]
+#[serial_test::serial]
+async fn auto_wire_login_broadcasts_listener_login_event() {
+    use auto_wire_helpers::MockDao;
+    use bulwark::config::BulwarkConfig;
+    use bulwark::manager::BulwarkManager;
+    use bulwark::stp::{BulwarkInterface, BulwarkUtil};
+
+    struct EmptyInterface;
+    #[async_trait::async_trait]
+    impl BulwarkInterface for EmptyInterface {
+        async fn get_permission_list(&self, _login_id: i64) -> BulwarkResult<Vec<String>> {
+            Ok(vec![])
+        }
+        async fn get_role_list(&self, _login_id: i64) -> BulwarkResult<Vec<String>> {
+            Ok(vec![])
+        }
+    }
+
+    reset_counters();
+
+    let dao: Arc<dyn bulwark::dao::BulwarkDao> = Arc::new(MockDao::new());
+    let config = Arc::new(BulwarkConfig::default_config());
+    let interface: Arc<dyn BulwarkInterface> = Arc::new(EmptyInterface);
+
+    BulwarkManager::init(dao, config, interface).unwrap();
+
+    let token = BulwarkUtil::login(2002).await.unwrap();
+    assert!(!token.is_empty());
+
+    // 验证 listener Login 事件被广播
+    let events = LISTENER_LOGIN_EVENTS.load(Ordering::SeqCst);
+    assert!(
+        events >= 1,
+        "auto-wire: BulwarkUtil::login 应广播 Login 事件，实际事件数: {}",
+        events
+    );
+}
+
+/// auto-wire: `BulwarkManager::init` + `with_current_token` + `BulwarkUtil::logout` 自动触发 on_logout + Logout 事件。
+#[tokio::test]
+#[serial_test::serial]
+async fn auto_wire_logout_triggers_hooks() {
+    use auto_wire_helpers::MockDao;
+    use bulwark::config::BulwarkConfig;
+    use bulwark::manager::BulwarkManager;
+    use bulwark::stp::{BulwarkInterface, BulwarkUtil};
+
+    struct EmptyInterface;
+    #[async_trait::async_trait]
+    impl BulwarkInterface for EmptyInterface {
+        async fn get_permission_list(&self, _login_id: i64) -> BulwarkResult<Vec<String>> {
+            Ok(vec![])
+        }
+        async fn get_role_list(&self, _login_id: i64) -> BulwarkResult<Vec<String>> {
+            Ok(vec![])
+        }
+    }
+
+    reset_counters();
+
+    let dao: Arc<dyn bulwark::dao::BulwarkDao> = Arc::new(MockDao::new());
+    let config = Arc::new(BulwarkConfig::default_config());
+    let interface: Arc<dyn BulwarkInterface> = Arc::new(EmptyInterface);
+
+    BulwarkManager::init(dao, config, interface).unwrap();
+
+    // login（触发 on_login + Login 事件）
+    let token = BulwarkUtil::login(3003).await.unwrap();
+
+    // logout（需在 with_current_token 上下文中执行）
+    let login_before = PLUGIN_LOGIN_CALLS.load(Ordering::SeqCst);
+    bulwark::stp::with_current_token(token, async {
+        BulwarkUtil::logout().await.unwrap();
+    })
+    .await;
+
+    // 验证 plugin on_logout 被触发
+    let logout_calls = PLUGIN_LOGOUT_CALLS.load(Ordering::SeqCst);
+    assert!(
+        logout_calls >= 1,
+        "auto-wire: BulwarkUtil::logout 应触发 plugin on_logout，实际调用次数: {}",
+        logout_calls
+    );
+    // login 钩子也应至少触发一次（login 阶段）
+    assert!(login_before >= 1, "login 钩子应已触发");
+
+    // 验证 listener Logout 事件被广播
+    let logout_events = LISTENER_LOGOUT_EVENTS.load(Ordering::SeqCst);
+    assert!(
+        logout_events >= 1,
+        "auto-wire: BulwarkUtil::logout 应广播 Logout 事件，实际事件数: {}",
+        logout_events
+    );
 }

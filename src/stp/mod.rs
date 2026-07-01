@@ -19,11 +19,11 @@ use crate::core::auth::AuthLogic;
 use crate::core::permission::PermissionChecker;
 use crate::core::token::TokenStyleFactory;
 use crate::error::{BulwarkError, BulwarkResult};
+#[cfg(feature = "listener")]
+use crate::listener::{BulwarkEvent, BulwarkListenerManager};
 use crate::plugin::BulwarkPluginManager;
 use crate::session::BulwarkSession;
 use crate::strategy::BulwarkFirewallStrategy;
-#[cfg(feature = "listener")]
-use crate::listener::{BulwarkEvent, BulwarkListenerManager};
 use async_trait::async_trait;
 use std::future::Future;
 use std::sync::Arc;
@@ -1843,11 +1843,9 @@ mod tests {
         // 先 login 获取 token
         let token = logic.login(2002).await.unwrap();
         // 在 token 上下文中 logout
-        with_current_token(token.clone(), async {
-            logic.logout().await
-        })
-        .await
-        .unwrap();
+        with_current_token(token.clone(), async { logic.logout().await })
+            .await
+            .unwrap();
     }
 
     /// kickout 注入 listener_manager 后广播 Kickout 事件。
@@ -1878,19 +1876,15 @@ mod tests {
         assert!(!token.is_empty());
 
         // check_login 成功
-        let is_valid = with_current_token(token.clone(), async {
-            logic.check_login().await
-        })
-        .await
-        .unwrap();
+        let is_valid = with_current_token(token.clone(), async { logic.check_login().await })
+            .await
+            .unwrap();
         assert!(is_valid);
 
         // logout 成功（在 token 上下文中）
-        with_current_token(token.clone(), async {
-            logic.logout().await
-        })
-        .await
-        .unwrap();
+        with_current_token(token.clone(), async { logic.logout().await })
+            .await
+            .unwrap();
 
         // kickout 成功
         logic.kickout(5005).await.unwrap();

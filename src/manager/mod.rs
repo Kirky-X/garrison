@@ -29,8 +29,14 @@
 //! ```
 
 use crate::config::BulwarkConfig;
+use crate::core::auth::{AuthLogic, AuthLogicDefault};
+use crate::core::permission::{PermissionChecker, PermissionCheckerDefault};
+use crate::core::token::TokenStyleFactory;
 use crate::dao::BulwarkDao;
 use crate::error::{BulwarkError, BulwarkResult};
+#[cfg(feature = "listener")]
+use crate::listener::BulwarkListenerManager;
+use crate::plugin::BulwarkPluginManager;
 use crate::session::BulwarkSession;
 use crate::stp::{BulwarkInterface, BulwarkLogic, BulwarkLogicDefault};
 use crate::strategy::{BulwarkFirewallStrategy, BulwarkFirewallStrategyDefault};
@@ -117,17 +123,67 @@ impl BulwarkManager {
         };
         let session = Arc::new(BulwarkSession::new(dao, timeout, active_timeout));
 
-        // 3. 构造 firewall
-        let firewall: Arc<dyn BulwarkFirewallStrategy> =
-            Arc::new(BulwarkFirewallStrategyDefault::new(interface));
+        // 3. auto-wire: 构造 4 个 manager（0.2.1 修复 gap）
+        // 3.1 PermissionChecker（委托 interface 查询权限/角色数据）
+        let permission_checker: Arc<dyn PermissionChecker> =
+            Arc::new(PermissionCheckerDefault::new(interface.clone()));
+        // 3.2 PluginManager（通过 inventory 收集编译期注册的插件）
+        let plugin_manager = Arc::new(BulwarkPluginManager::new());
+        // 3.3 ListenerManager（通过 inventory 收集编译期注册的监听器，需 listener feature）
+        #[cfg(feature = "listener")]
+        let listener_manager = Arc::new(BulwarkListenerManager::new());
+        // 3.4 AuthLogic（委托 session + token_handler 实现登录/校验）
+        //     token_handler 由 TokenStyleFactory 依据 config.token_style 创建
+        let token_handler: Arc<dyn crate::core::token::Token> = Arc::from(TokenStyleFactory::new(
+            &config.token_style,
+            &config.jwt_secret,
+        )?);
+        let auth_logic: Arc<dyn AuthLogic> = Arc::new(AuthLogicDefault::new(
+            session.clone(),
+            token_handler,
+            config.timeout,
+        ));
 
-        // 4. 通过 factory 构造 logic
-        let logic: Arc<dyn BulwarkLogic> = match factory_selector() {
-            Some(entry) => (entry.factory)(session, config, firewall)?,
-            None => Arc::new(BulwarkLogicDefault::new(session, config, firewall)),
+        // 4. 构造 firewall，注入 permission_checker + plugin_manager
+        let firewall: Arc<dyn BulwarkFirewallStrategy> = Arc::new(
+            BulwarkFirewallStrategyDefault::new(interface)
+                .with_permission_checker(permission_checker.clone())
+                .with_plugin_manager(plugin_manager.clone()),
+        );
+
+        // 5. 构造 factory context（持有 4 个 manager 引用）
+        #[cfg(feature = "listener")]
+        let factory_ctx = BulwarkLogicFactoryContext {
+            plugin_manager: Some(plugin_manager.clone()),
+            listener_manager: Some(listener_manager.clone()),
+            auth_logic: Some(auth_logic.clone()),
+            permission_checker: Some(permission_checker.clone()),
+        };
+        #[cfg(not(feature = "listener"))]
+        let factory_ctx = BulwarkLogicFactoryContext {
+            plugin_manager: Some(plugin_manager.clone()),
+            auth_logic: Some(auth_logic.clone()),
+            permission_checker: Some(permission_checker.clone()),
         };
 
-        // 5. 覆盖式更新全局单例（允许重复 init，便于测试）
+        // 6. 通过 factory 构造 logic（传递 context 以便 factory 使用 builder 链）
+        let logic: Arc<dyn BulwarkLogic> = match factory_selector() {
+            Some(entry) => (entry.factory)(session, config, firewall, &factory_ctx)?,
+            None => {
+                // 兜底路径：直接通过 builder 链构造 BulwarkLogicDefault
+                let mut builder = BulwarkLogicDefault::new(session, config, firewall)
+                    .with_plugin_manager(plugin_manager)
+                    .with_auth_logic(auth_logic)
+                    .with_permission_checker(permission_checker);
+                #[cfg(feature = "listener")]
+                {
+                    builder = builder.with_listener_manager(listener_manager);
+                }
+                Arc::new(builder)
+            },
+        };
+
+        // 7. 覆盖式更新全局单例（允许重复 init，便于测试）
         *BULWARK_MANAGER.logic.write() = Some(logic);
 
         Ok(())
@@ -184,13 +240,40 @@ pub static BULWARK_MANAGER: Lazy<BulwarkManager> = Lazy::new(BulwarkManager::new
 // BulwarkLogicFactory：编译期注册的工厂 trait（依据 design.md Decision 8）
 // ============================================================================
 
-/// 工厂函数签名：接收 session/config/firewall，返回 `Arc<dyn BulwarkLogic>`。
+/// 工厂上下文，持有 init 阶段构造的 4 个 manager（0.2.1 新增，用于 auto-wire）。
+///
+/// factory 函数通过此 context 获取 manager 引用，使用 builder 链式调用注入到
+/// `BulwarkLogicDefault`。所有字段为 `Option`，便于自定义 factory 选择性注入。
+///
+/// # 字段
+/// - `plugin_manager`: 插件管理器（login/logout 触发 on_login/on_logout 钩子）
+/// - `listener_manager`: 监听器管理器（需 `listener` feature，广播 Login/Logout/Kickout 事件）
+/// - `auth_logic`: 认证逻辑（login_by_token 优先委托此实现）
+/// - `permission_checker`: 权限校验器（check_permission/check_role 可委托此实现）
+pub struct BulwarkLogicFactoryContext {
+    /// 插件管理器（None 表示不注入，login/logout 不触发插件钩子）。
+    pub plugin_manager: Option<Arc<BulwarkPluginManager>>,
+    /// 监听器管理器（仅 `listener` feature 下存在；None 表示不注入）。
+    #[cfg(feature = "listener")]
+    pub listener_manager: Option<Arc<BulwarkListenerManager>>,
+    /// 认证逻辑（None 表示不注入，login_by_token 使用 trait default）。
+    pub auth_logic: Option<Arc<dyn AuthLogic>>,
+    /// 权限校验器（None 表示不注入，check_permission 委托 firewall）。
+    pub permission_checker: Option<Arc<dyn PermissionChecker>>,
+}
+
+/// 工厂函数签名：接收 session/config/firewall + factory context，返回 `Arc<dyn BulwarkLogic>`。
 ///
 /// 使用裸函数指针（`Fn` trait object 的简化形式）以便 `inventory::submit!` 静态注册。
+///
+/// # 0.2.1 变更
+/// 签名新增第 4 个参数 `&BulwarkLogicFactoryContext`，用于 auto-wire 4 个 manager。
+/// 自定义 factory 可选择忽略 context（保持旧行为）或使用 builder 链注入 manager。
 pub type BulwarkLogicFactoryFn = fn(
     session: Arc<BulwarkSession>,
     config: Arc<BulwarkConfig>,
     firewall: Arc<dyn BulwarkFirewallStrategy>,
+    ctx: &BulwarkLogicFactoryContext,
 ) -> BulwarkResult<Arc<dyn BulwarkLogic>>;
 
 /// 工厂 entry：通过 `inventory::submit!` 注册的具体工厂实例。
@@ -214,7 +297,7 @@ pub struct BulwarkLogicFactoryEntry {
 
 inventory::collect!(BulwarkLogicFactoryEntry);
 
-/// 默认工厂函数：构造 `BulwarkLogicDefault`。
+/// 默认工厂函数：构造 `BulwarkLogicDefault`，使用 builder 链注入 context 中的 4 个 manager。
 ///
 /// 此函数通过 `inventory::submit!` 在编译期注册到全局工厂列表，
 /// `BulwarkManager::init()` 会找到它并调用以构造 `Arc<dyn BulwarkLogic>`。
@@ -223,9 +306,10 @@ inventory::collect!(BulwarkLogicFactoryEntry);
 /// - `session`: 会话管理器。
 /// - `config`: 全局配置。
 /// - `firewall`: 权限策略。
+/// - `ctx`: 工厂上下文（持有 4 个可选 manager 引用）。
 ///
 /// # 返回
-/// 新建的 `Arc<dyn BulwarkLogic>`（实际类型为 `BulwarkLogicDefault`）。
+/// 新建的 `Arc<dyn BulwarkLogic>`（实际类型为 `BulwarkLogicDefault`，已注入 manager）。
 ///
 /// # 错误
 /// 当前实现始终返回 `Ok`，保留 `BulwarkResult` 以匹配工厂签名便于扩展。
@@ -233,10 +317,23 @@ pub fn bulwark_logic_factory_default(
     session: Arc<BulwarkSession>,
     config: Arc<BulwarkConfig>,
     firewall: Arc<dyn BulwarkFirewallStrategy>,
+    ctx: &BulwarkLogicFactoryContext,
 ) -> BulwarkResult<Arc<dyn BulwarkLogic>> {
-    Ok(Arc::new(BulwarkLogicDefault::new(
-        session, config, firewall,
-    )))
+    let mut builder = BulwarkLogicDefault::new(session, config, firewall);
+    if let Some(pm) = ctx.plugin_manager.clone() {
+        builder = builder.with_plugin_manager(pm);
+    }
+    #[cfg(feature = "listener")]
+    if let Some(lm) = ctx.listener_manager.clone() {
+        builder = builder.with_listener_manager(lm);
+    }
+    if let Some(auth) = ctx.auth_logic.clone() {
+        builder = builder.with_auth_logic(auth);
+    }
+    if let Some(pc) = ctx.permission_checker.clone() {
+        builder = builder.with_permission_checker(pc);
+    }
+    Ok(Arc::new(builder))
 }
 
 inventory::submit! {
@@ -659,7 +756,21 @@ mod tests {
         let firewall: Arc<dyn BulwarkFirewallStrategy> =
             Arc::new(BulwarkFirewallStrategyDefault::new(interface));
 
-        let logic = bulwark_logic_factory_default(session, config, firewall).unwrap();
+        // 0.2.1: factory 签名新增 ctx 参数，构造空 context 验证向后兼容
+        #[cfg(feature = "listener")]
+        let ctx = BulwarkLogicFactoryContext {
+            plugin_manager: None,
+            listener_manager: None,
+            auth_logic: None,
+            permission_checker: None,
+        };
+        #[cfg(not(feature = "listener"))]
+        let ctx = BulwarkLogicFactoryContext {
+            plugin_manager: None,
+            auth_logic: None,
+            permission_checker: None,
+        };
+        let logic = bulwark_logic_factory_default(session, config, firewall, &ctx).unwrap();
         let token = logic.login(1001).await.unwrap();
         assert!(!token.is_empty());
     }
