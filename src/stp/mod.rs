@@ -15,10 +15,15 @@
 //! stp 核心 API（logout/check_login/get_login_id）从 `current_token()` 读取。
 
 use crate::config::BulwarkConfig;
+use crate::core::auth::AuthLogic;
+use crate::core::permission::PermissionChecker;
 use crate::core::token::TokenStyleFactory;
 use crate::error::{BulwarkError, BulwarkResult};
+use crate::plugin::BulwarkPluginManager;
 use crate::session::BulwarkSession;
 use crate::strategy::BulwarkFirewallStrategy;
+#[cfg(feature = "listener")]
+use crate::listener::{BulwarkEvent, BulwarkListenerManager};
 use async_trait::async_trait;
 use std::future::Future;
 use std::sync::Arc;
@@ -263,6 +268,15 @@ pub struct BulwarkLogicDefault {
     config: Arc<BulwarkConfig>,
     /// 权限策略（pub(crate) 供测试验证）。
     pub(crate) firewall: Arc<dyn BulwarkFirewallStrategy>,
+    /// 插件管理器（可选，注入后 login/logout 触发插件钩子）。
+    plugin_manager: Option<Arc<BulwarkPluginManager>>,
+    /// 监听器管理器（可选，注入后 login/logout/kickout 广播事件）。
+    #[cfg(feature = "listener")]
+    listener_manager: Option<Arc<BulwarkListenerManager>>,
+    /// 认证逻辑（可选，注入后 login_by_token 优先委托此实现）。
+    auth_logic: Option<Arc<dyn AuthLogic>>,
+    /// 权限校验器（可选，注入后 check_permission/check_role 可委托此实现）。
+    permission_checker: Option<Arc<dyn PermissionChecker>>,
 }
 
 impl BulwarkLogicDefault {
@@ -284,7 +298,46 @@ impl BulwarkLogicDefault {
             session,
             config,
             firewall,
+            plugin_manager: None,
+            #[cfg(feature = "listener")]
+            listener_manager: None,
+            auth_logic: None,
+            permission_checker: None,
         }
+    }
+
+    /// 注入插件管理器（builder 模式，返回 Self 便于链式调用）。
+    ///
+    /// 注入后 `login` / `logout` 将触发 `on_login` / `on_logout` 钩子。
+    pub fn with_plugin_manager(mut self, pm: Arc<BulwarkPluginManager>) -> Self {
+        self.plugin_manager = Some(pm);
+        self
+    }
+
+    /// 注入监听器管理器（builder 模式，需启用 `listener` feature）。
+    ///
+    /// 注入后 `login` / `logout` / `kickout` 将广播 `BulwarkEvent` 事件。
+    #[cfg(feature = "listener")]
+    pub fn with_listener_manager(mut self, lm: Arc<BulwarkListenerManager>) -> Self {
+        self.listener_manager = Some(lm);
+        self
+    }
+
+    /// 注入认证逻辑（builder 模式）。
+    ///
+    /// 注入后 `login_by_token` 优先委托 `auth_logic.verify_token` 校验 token。
+    pub fn with_auth_logic(mut self, auth: Arc<dyn AuthLogic>) -> Self {
+        self.auth_logic = Some(auth);
+        self
+    }
+
+    /// 注入权限校验器（builder 模式）。
+    ///
+    /// 注入后可用于权限校验链路扩展（当前 `check_permission` 仍委托 firewall，
+    /// 此字段为未来扩展预留）。
+    pub fn with_permission_checker(mut self, pc: Arc<dyn PermissionChecker>) -> Self {
+        self.permission_checker = Some(pc);
+        self
     }
 
     /// 根据 `config.token_style` 生成 token。
@@ -330,6 +383,18 @@ impl BulwarkLogic for BulwarkLogicDefault {
     async fn login(&self, login_id: i64) -> BulwarkResult<String> {
         let token = self.generate_token(login_id)?;
         self.login_with_token(login_id, &token).await?;
+        // auto-wire: 触发 plugin on_login + listener Login 事件
+        if let Some(pm) = &self.plugin_manager {
+            pm.on_login(login_id, &token);
+        }
+        #[cfg(feature = "listener")]
+        if let Some(lm) = &self.listener_manager {
+            lm.broadcast(&BulwarkEvent::Login {
+                login_id,
+                token: token.clone(),
+                device: None,
+            });
+        }
         Ok(token)
     }
 
@@ -340,7 +405,27 @@ impl BulwarkLogic for BulwarkLogicDefault {
     async fn logout(&self) -> BulwarkResult<()> {
         // 未登录时幂等返回 Ok（不抛错）
         match current_token() {
-            Ok(token) => self.session.logout(&token).await,
+            Ok(token) => {
+                // 获取 login_id（用于 plugin/listener 回调），注销前查询
+                let login_id = self
+                    .session
+                    .get_token_session(&token)
+                    .await?
+                    .map(|ts| ts.login_id);
+                self.session.logout(&token).await?;
+                // auto-wire: 触发 plugin on_logout + listener Logout 事件
+                if let (Some(pm), Some(id)) = (&self.plugin_manager, login_id) {
+                    pm.on_logout(id, &token);
+                }
+                #[cfg(feature = "listener")]
+                if let (Some(lm), Some(id)) = (&self.listener_manager, login_id) {
+                    lm.broadcast(&BulwarkEvent::Logout {
+                        login_id: id,
+                        token: token.clone(),
+                    });
+                }
+                Ok(())
+            },
             Err(_) => Ok(()),
         }
     }
@@ -351,7 +436,17 @@ impl BulwarkLogic for BulwarkLogicDefault {
 
     async fn kickout(&self, login_id: i64) -> BulwarkResult<()> {
         // kickout 语义等同 logout_by_login_id
-        self.session.logout_by_login_id(login_id).await
+        self.session.logout_by_login_id(login_id).await?;
+        // auto-wire: 触发 listener Kickout 事件（plugin 无 kickout 钩子）
+        #[cfg(feature = "listener")]
+        if let Some(lm) = &self.listener_manager {
+            lm.broadcast(&BulwarkEvent::Kickout {
+                login_id,
+                token: String::new(),
+                reason: "管理员强制下线".to_string(),
+            });
+        }
+        Ok(())
     }
 
     async fn kickout_by_token(&self, token: &str) -> BulwarkResult<()> {
@@ -424,6 +519,30 @@ impl BulwarkLogic for BulwarkLogicDefault {
         }
     }
 
+    async fn login_by_token(&self, token: &str) -> BulwarkResult<()> {
+        // 获取 login_id：优先委托 auth_logic，否则使用 verify_token（TokenStyleFactory）
+        let login_id = if let Some(auth) = &self.auth_logic {
+            auth.verify_token(token).await?
+        } else {
+            self.verify_token(token).await?
+        };
+        // 建立内部会话（使用同一 token）
+        self.session.create(login_id, token).await?;
+        // auto-wire: 触发 plugin on_login + listener Login 事件
+        if let Some(pm) = &self.plugin_manager {
+            pm.on_login(login_id, token);
+        }
+        #[cfg(feature = "listener")]
+        if let Some(lm) = &self.listener_manager {
+            lm.broadcast(&BulwarkEvent::Login {
+                login_id,
+                token: token.to_string(),
+                device: None,
+            });
+        }
+        Ok(())
+    }
+
     async fn verify_token(&self, token: &str) -> BulwarkResult<i64> {
         // 依据 spec core-auth-api：委托 core-token::Token::verify
         // spec: "不泄露 token 具体失效原因（统一 InvalidToken）"
@@ -446,8 +565,23 @@ impl BulwarkLogic for BulwarkLogicDefault {
                 "refresh_token 仅在 token_style=jwt 时可用".to_string(),
             ));
         }
+        // 获取 login_id（用于 plugin/listener 回调）
+        let login_id = self.verify_token(token).await?;
         let handler = crate::protocol::jwt::JwtHandler::new(&self.config.jwt_secret);
-        handler.refresh(token, self.config.timeout)
+        let new_token = handler.refresh(token, self.config.timeout)?;
+        // auto-wire: 触发 plugin on_login + listener Login 事件（新 token）
+        if let Some(pm) = &self.plugin_manager {
+            pm.on_login(login_id, &new_token);
+        }
+        #[cfg(feature = "listener")]
+        if let Some(lm) = &self.listener_manager {
+            lm.broadcast(&BulwarkEvent::Login {
+                login_id,
+                token: new_token.clone(),
+                device: None,
+            });
+        }
+        Ok(new_token)
     }
 
     fn config(&self) -> Arc<BulwarkConfig> {
@@ -1482,14 +1616,17 @@ mod tests {
     // 0.2.0 新增 API 测试：login_by_token / verify_token / refresh_token
     // ------------------------------------------------------------------------
 
-    /// BulwarkLogicDefault::login_by_token default 返回 NotImplemented（spec Scenario）。
+    /// BulwarkLogicDefault::login_by_token 对 uuid style token 返回 InvalidToken（0.2.1 auto-wire 修复）。
+    ///
+    /// 0.2.1 起login_by_token 被 override：优先委托 auth_logic，否则使用 verify_token。
+    /// uuid token 不包含 login_id，verify_token 返回 InvalidToken。
     #[tokio::test]
-    async fn login_by_token_default_returns_not_implemented() {
+    async fn login_by_token_uuid_style_returns_invalid_token() {
         let logic = make_logic(3600, 86400, false, "uuid", true, true);
         let result = logic.login_by_token("any-token").await;
         assert!(
-            matches!(result, Err(BulwarkError::NotImplemented(_))),
-            "default login_by_token 应返回 NotImplemented，实际: {:?}",
+            matches!(result, Err(BulwarkError::InvalidToken(_))),
+            "uuid style login_by_token 应返回 InvalidToken，实际: {:?}",
             result
         );
     }
@@ -1642,5 +1779,148 @@ mod tests {
         );
 
         BulwarkManager::reset_for_test();
+    }
+
+    // ------------------------------------------------------------------------
+    // 0.2.1 auto-wire gap 修复测试：builder 方法 + plugin/listener 触发
+    // ------------------------------------------------------------------------
+
+    /// builder 方法链式调用返回 Self（spec Scenario: 4.8 builder 方法验证）。
+    #[tokio::test]
+    async fn builder_methods_return_self_for_chaining() {
+        let logic = make_logic(3600, 86400, false, "uuid", true, true);
+        // 链式调用所有 builder 方法，验证返回 Self
+        let pm = Arc::new(BulwarkPluginManager::new());
+        #[cfg(feature = "listener")]
+        let lm = Arc::new(BulwarkListenerManager::new());
+        #[cfg(feature = "listener")]
+        let _logic = logic.with_plugin_manager(pm).with_listener_manager(lm);
+        #[cfg(not(feature = "listener"))]
+        let _logic = logic.with_plugin_manager(pm);
+        // 验证 login 仍可正常工作（builder 未破坏核心功能）
+        let logic2 = make_logic(3600, 86400, false, "uuid", true, true);
+        let token = logic2.login(1001).await.unwrap();
+        assert!(!token.is_empty());
+    }
+
+    /// builder 方法注入 plugin_manager 后 login 触发 on_login 钩子（spec Scenario: auto-wire）。
+    #[tokio::test]
+    async fn login_with_plugin_manager_triggers_on_login() {
+        let logic = make_logic(3600, 86400, false, "uuid", true, true);
+        let pm = Arc::new(BulwarkPluginManager::new());
+        let logic = logic.with_plugin_manager(pm);
+        // login 应成功，plugin on_login 作为副作用被调用（失败仅 warn 不中断）
+        let token = logic.login(1001).await.unwrap();
+        assert!(!token.is_empty());
+    }
+
+    /// builder 方法注入 listener_manager 后 login 广播 Login 事件（spec Scenario: auto-wire）。
+    #[tokio::test]
+    async fn login_with_listener_manager_broadcasts_login_event() {
+        let logic = make_logic(3600, 86400, false, "uuid", true, true);
+        #[cfg(feature = "listener")]
+        {
+            let lm = Arc::new(BulwarkListenerManager::new());
+            let logic = logic.with_listener_manager(lm);
+            let token = logic.login(1001).await.unwrap();
+            assert!(!token.is_empty());
+        }
+        #[cfg(not(feature = "listener"))]
+        {
+            let _ = logic;
+        }
+    }
+
+    /// logout 注入 plugin_manager + listener_manager 后触发 on_logout + Logout 事件。
+    #[tokio::test]
+    async fn logout_with_managers_triggers_hooks() {
+        let logic = make_logic(3600, 86400, false, "uuid", true, true);
+        let pm = Arc::new(BulwarkPluginManager::new());
+        let logic = logic.with_plugin_manager(pm);
+        #[cfg(feature = "listener")]
+        let logic = logic.with_listener_manager(Arc::new(BulwarkListenerManager::new()));
+
+        // 先 login 获取 token
+        let token = logic.login(2002).await.unwrap();
+        // 在 token 上下文中 logout
+        with_current_token(token.clone(), async {
+            logic.logout().await
+        })
+        .await
+        .unwrap();
+    }
+
+    /// kickout 注入 listener_manager 后广播 Kickout 事件。
+    #[tokio::test]
+    async fn kickout_with_listener_manager_broadcasts_event() {
+        let logic = make_logic(3600, 86400, false, "uuid", true, true);
+        #[cfg(feature = "listener")]
+        {
+            let lm = Arc::new(BulwarkListenerManager::new());
+            let logic = logic.with_listener_manager(lm);
+            // kickout 应成功，Kickout 事件作为副作用被广播
+            logic.kickout(3003).await.unwrap();
+        }
+        #[cfg(not(feature = "listener"))]
+        {
+            logic.kickout(3003).await.unwrap();
+        }
+    }
+
+    /// 未注入 manager 时向后兼容：login/logout/kickout 行为与 0.2.0 一致（spec Scenario: 4.9）。
+    #[tokio::test]
+    async fn backward_compat_without_managers_works_same_as_0_2_0() {
+        // make_logic 不注入任何 manager，所有 Option 都是 None
+        let logic = make_logic(3600, 86400, false, "uuid", true, true);
+
+        // login 成功
+        let token = logic.login(5005).await.unwrap();
+        assert!(!token.is_empty());
+
+        // check_login 成功
+        let is_valid = with_current_token(token.clone(), async {
+            logic.check_login().await
+        })
+        .await
+        .unwrap();
+        assert!(is_valid);
+
+        // logout 成功（在 token 上下文中）
+        with_current_token(token.clone(), async {
+            logic.logout().await
+        })
+        .await
+        .unwrap();
+
+        // kickout 成功
+        logic.kickout(5005).await.unwrap();
+    }
+
+    /// login_by_token 注入 auth_logic 后优先委托 auth_logic.verify_token。
+    #[tokio::test]
+    async fn login_by_token_with_auth_logic_delegates_to_auth() {
+        use crate::core::auth::{AuthLogic, AuthLogicDefault};
+        use crate::core::token::{Token, UuidTokenStyle};
+
+        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
+        let token_handler: Arc<dyn Token> = Arc::new(UuidTokenStyle);
+        let auth_logic: Arc<dyn AuthLogic> =
+            Arc::new(AuthLogicDefault::new(session.clone(), token_handler, 3600));
+
+        // 先通过 auth_logic login 生成一个有效 token
+        let valid_token = auth_logic.login(6006, None).await.unwrap();
+
+        // 构造 logic 注入 auth_logic
+        let logic = make_logic(3600, 86400, false, "uuid", true, true);
+        let logic = logic.with_auth_logic(auth_logic);
+
+        // login_by_token 应委托 auth_logic.verify_token 并建立会话
+        logic.login_by_token(&valid_token).await.unwrap();
+
+        // 验证会话已建立
+        let ts = logic.session.get_token_session(&valid_token).await.unwrap();
+        assert!(ts.is_some(), "login_by_token 后应建立会话");
+        assert_eq!(ts.unwrap().login_id, 6006);
     }
 }
