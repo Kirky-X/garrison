@@ -919,6 +919,8 @@ mod tests {
         ctx.raw_response_mut()
             .set_header("X-Trace", "trace-123")
             .unwrap();
+        // 通过 raw_response() 不可变引用读取已设置的状态码
+        assert_eq!(ctx.raw_response().status, StatusCode::NOT_FOUND);
         // 通过 into_response 消费 context 并验证设置生效
         let resp = ctx.into_response();
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);

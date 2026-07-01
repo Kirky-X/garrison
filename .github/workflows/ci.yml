@@ -118,6 +118,27 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
+  # === cargo-deny（许可证 / 漏洞 / 禁用源 / 重复依赖） ===
+  deny:
+    name: Cargo Deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - uses: EmbarkStudios/cargo-deny-action@e2a4908d1097e728b8e290bb28f59d3ed6b01b68  # v2.0.11
+        with:
+          arguments: --all-features
+
+  # === 集成测试（tests/ 目录，仅 Linux + MSRV） ===
+  integration-test:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - uses: dtolnay/rust-toolchain@1.85  # nosemgrep
+      - uses: Swatinem/rust-cache@400e7407cfd7a091e5fbb6afec01ec146c432b7c  # v2.7.7
+      - name: Integration tests (full features)
+        run: cargo test --features "full" --test '*' --no-fail-fast
+
   # === 覆盖率（仅 Linux） ===
   coverage:
     name: Coverage
@@ -128,8 +149,8 @@ jobs:
       - uses: Swatinem/rust-cache@400e7407cfd7a091e5fbb6afec01ec146c432b7c  # v2.7.7
       - name: Install tarpaulin
         run: cargo install cargo-tarpaulin
-      - name: Run coverage
-        run: cargo tarpaulin --features "full" --out Lcov --output-dir coverage
+      - name: Run coverage (fail under 80%)
+        run: cargo tarpaulin --features "full" --out Lcov --output-dir coverage --fail-under 80
       - name: Upload coverage
         uses: codecov/codecov-action@0f8570b1a125f4937846a11fcfa3bcd548bd8c97  # v4.6.0
         with:

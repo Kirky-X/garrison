@@ -202,7 +202,8 @@ pub use dbnexus_impl::{init_dbnexus, BulwarkMigration};
 // ============================================================================
 
 #[cfg(test)]
-mod tests {
+/// DAO trait 契约测试与跨模块共享的 mock 实现（仅 `cfg(test)` 下编译）。
+pub mod tests {
     use super::*;
     use crate::error::BulwarkError;
     use parking_lot::Mutex;
@@ -219,13 +220,22 @@ mod tests {
     /// - `set(ttl=0)`: 永久驻留（expire_at = None）
     /// - `set(ttl=N)`: N 秒后过期（expire_at = Some(now + N)）
     /// - `update`: 保留原 expire_at，仅更新 value
-    /// - `expire(seconds)`: 重置 expire_at
-    struct MockDao {
+    /// - `expire`: 重置 expire_at
+    ///
+    /// `pub` 供跨模块测试（如 `strategy::hooks`）复用，仅在 `cfg(test)` 下编译。
+    pub struct MockDao {
         store: Mutex<HashMap<String, (String, Option<Instant>)>>,
     }
 
+    impl Default for MockDao {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
     impl MockDao {
-        fn new() -> Self {
+        /// 创建空的 mock DAO 实例（无任何键值）。
+        pub fn new() -> Self {
             Self {
                 store: Mutex::new(HashMap::new()),
             }

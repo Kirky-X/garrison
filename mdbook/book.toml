@@ -1,0 +1,22 @@
+[book]
+title = "Bulwark 身份认证鉴权框架"
+authors = ["Bulwark Contributors"]
+description = "面向 Rust 生态的身份认证鉴权框架，借鉴 Sa-Token v1.45.0 设计理念"
+language = "zh"
+src = "src"
+
+[output.html]
+git-repository-url = "https://github.com/bulwark-rs/bulwark"
+edit-url-template = "https://github.com/bulwark-rs/bulwark/edit/main/mdbook/src/{path}"
+default-theme = "light"
+preferred-dark-theme = "ayu"
+
+[output.html.search]
+enable = true
+limit-results = 30
+use-boolean-and = true
+boost-title = 2
+boost-hierarchy = 1
+boost-paragraph = 1
+expand = true
+heading-split-level = 3

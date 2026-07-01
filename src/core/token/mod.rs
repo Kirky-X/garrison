@@ -496,7 +496,11 @@ mod tests {
         let style = JwtTokenStyle::new("test-secret-key");
         let token = style.generate(1001, 3600).unwrap();
         let login_id = style.verify(&token).unwrap();
-        assert_eq!(login_id, Some(1001), "JWT verify 应返回 generate 时的 login_id");
+        assert_eq!(
+            login_id,
+            Some(1001),
+            "JWT verify 应返回 generate 时的 login_id"
+        );
     }
 
     /// JwtTokenStyle::verify 无效 token 返回 Ok(None)。

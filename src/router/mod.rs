@@ -66,7 +66,25 @@ impl BulwarkInterceptor for DefaultBulwarkInterceptor {
             },
             Annotation::CheckRole(role) => BulwarkUtil::check_role(role).await,
             Annotation::CheckPermission(perm) => BulwarkUtil::check_permission(perm).await,
+            // 0.3.0：二级认证检查（依据 spec annotation-handling）
+            Annotation::CheckSafe => BulwarkUtil::check_safe().await,
+            // 0.3.0：账号禁用检查（依据 spec annotation-handling）
+            Annotation::CheckDisable => BulwarkUtil::check_disable().await,
+            // 0.3.0：HTTP Basic/Digest/Sign 需 HTTP 请求上下文（Authorization header / method / body），
+            // pre_handle 签名仅有 path + annotation，无法获取请求头。
+            // Fail Loud（Rule 12）：明确返回 NotImplemented，指示用户使用 axum extractor 或 secure 模块直接调用。
+            Annotation::CheckBasicAuth => Err(BulwarkError::NotImplemented(
+                "CheckBasicAuth 需 HTTP 请求上下文，请在 handler 中使用 secure::httpbasic::HttpBasicAuth 或 axum extractor".to_string(),
+            )),
+            Annotation::CheckDigestAuth => Err(BulwarkError::NotImplemented(
+                "CheckDigestAuth 需 HTTP 请求上下文，请在 handler 中使用 secure::httpdigest::HttpDigestAuth 或 axum extractor".to_string(),
+            )),
+            Annotation::CheckSign => Err(BulwarkError::NotImplemented(
+                "CheckSign 需 HTTP 请求上下文，请在 handler 中使用 protocol::sign::SignHandler 或 axum extractor".to_string(),
+            )),
             Annotation::Ignore => Ok(()),
+            // 逻辑组合注解（CheckOr/CheckAnd/CheckNot）在 pre_handle 中为 no-op，
+            // 实际组合逻辑由注解处理器在编译期或路由配置层处理。
             _ => Ok(()),
         }
     }
@@ -768,35 +786,122 @@ mod tests {
     // DefaultBulwarkInterceptor 其他注解变体测试（catch-all 分支）
     // ----------------------------------------------------------------
 
-    /// DefaultBulwarkInterceptor.pre_handle 对未明确处理的注解变体（CheckSafe /
-    /// CheckDisable / CheckOr / CheckAnd / CheckNot / CheckBasicAuth /
-    /// CheckDigestAuth / CheckSign）直接放行返回 Ok。
+    /// DefaultBulwarkInterceptor.pre_handle 对逻辑组合注解（CheckOr / CheckAnd / CheckNot）
+    /// 直接放行返回 Ok（实际组合逻辑由注解处理器在编译期或路由配置层处理）。
     ///
     /// 覆盖 `match annotation { ... _ => Ok(()) }` 的 catch-all 分支。
     #[tokio::test]
     #[serial]
-    async fn default_interceptor_other_annotations_returns_ok() {
+    async fn default_interceptor_logical_combinator_annotations_returns_ok() {
         init_manager(&[], &[]);
         let interceptor = DefaultBulwarkInterceptor;
-        let others = [
-            Annotation::CheckSafe,
-            Annotation::CheckDisable,
+        let combinators = [
             Annotation::CheckOr,
             Annotation::CheckAnd,
             Annotation::CheckNot,
-            Annotation::CheckBasicAuth,
-            Annotation::CheckDigestAuth,
-            Annotation::CheckSign,
         ];
-        for ann in &others {
+        for ann in &combinators {
             let result = interceptor.pre_handle("/x", ann).await;
             assert!(
                 result.is_ok(),
-                "pre_handle({:?}) 应通过 catch-all 分支返回 Ok",
+                "pre_handle({:?}) 逻辑组合注解应通过 catch-all 分支返回 Ok",
                 ann
             );
         }
 
+        BulwarkManager::reset_for_test();
+    }
+
+    // ----------------------------------------------------------------
+    // 0.3.0 新增：CheckSafe / CheckDisable / CheckBasicAuth / CheckDigestAuth / CheckSign 测试
+    // ----------------------------------------------------------------
+
+    /// DefaultBulwarkInterceptor.pre_handle(CheckSafe) 默认实现返回 Ok（未启用 MFA）。
+    #[tokio::test]
+    #[serial]
+    async fn default_interceptor_check_safe_returns_ok_by_default() {
+        init_manager(&[], &[]);
+        let interceptor = DefaultBulwarkInterceptor;
+        let result = interceptor.pre_handle("/x", &Annotation::CheckSafe).await;
+        assert!(result.is_ok(), "默认 check_safe（未启用 MFA）应返回 Ok");
+        BulwarkManager::reset_for_test();
+    }
+
+    /// DefaultBulwarkInterceptor.pre_handle(CheckDisable) 默认实现返回 Ok（未禁用）。
+    #[tokio::test]
+    #[serial]
+    async fn default_interceptor_check_disable_returns_ok_by_default() {
+        init_manager(&[], &[]);
+        let interceptor = DefaultBulwarkInterceptor;
+        let result = interceptor
+            .pre_handle("/x", &Annotation::CheckDisable)
+            .await;
+        assert!(result.is_ok(), "默认 check_disable（未禁用账号）应返回 Ok");
+        BulwarkManager::reset_for_test();
+    }
+
+    /// DefaultBulwarkInterceptor.pre_handle(CheckBasicAuth) 返回 NotImplemented（需 HTTP 请求上下文）。
+    #[tokio::test]
+    #[serial]
+    async fn default_interceptor_check_basic_auth_returns_not_implemented() {
+        init_manager(&[], &[]);
+        let interceptor = DefaultBulwarkInterceptor;
+        let result = interceptor
+            .pre_handle("/x", &Annotation::CheckBasicAuth)
+            .await;
+        assert!(
+            matches!(result, Err(BulwarkError::NotImplemented(_))),
+            "CheckBasicAuth 应返回 NotImplemented（pre_handle 缺少 HTTP 请求上下文）"
+        );
+        BulwarkManager::reset_for_test();
+    }
+
+    /// DefaultBulwarkInterceptor.pre_handle(CheckDigestAuth) 返回 NotImplemented（需 HTTP 请求上下文）。
+    #[tokio::test]
+    #[serial]
+    async fn default_interceptor_check_digest_auth_returns_not_implemented() {
+        init_manager(&[], &[]);
+        let interceptor = DefaultBulwarkInterceptor;
+        let result = interceptor
+            .pre_handle("/x", &Annotation::CheckDigestAuth)
+            .await;
+        assert!(
+            matches!(result, Err(BulwarkError::NotImplemented(_))),
+            "CheckDigestAuth 应返回 NotImplemented（pre_handle 缺少 HTTP 请求上下文）"
+        );
+        BulwarkManager::reset_for_test();
+    }
+
+    /// DefaultBulwarkInterceptor.pre_handle(CheckSign) 返回 NotImplemented（需 HTTP 请求上下文）。
+    #[tokio::test]
+    #[serial]
+    async fn default_interceptor_check_sign_returns_not_implemented() {
+        init_manager(&[], &[]);
+        let interceptor = DefaultBulwarkInterceptor;
+        let result = interceptor.pre_handle("/x", &Annotation::CheckSign).await;
+        assert!(
+            matches!(result, Err(BulwarkError::NotImplemented(_))),
+            "CheckSign 应返回 NotImplemented（pre_handle 缺少 HTTP 请求上下文）"
+        );
+        BulwarkManager::reset_for_test();
+    }
+
+    /// NotImplemented 错误消息包含使用建议（指示用户使用 secure 模块或 extractor）。
+    #[tokio::test]
+    #[serial]
+    async fn default_interceptor_check_basic_auth_error_message_contains_guidance() {
+        init_manager(&[], &[]);
+        let interceptor = DefaultBulwarkInterceptor;
+        let result = interceptor
+            .pre_handle("/x", &Annotation::CheckBasicAuth)
+            .await;
+        if let Err(BulwarkError::NotImplemented(msg)) = result {
+            assert!(
+                msg.contains("secure::httpbasic") || msg.contains("extractor"),
+                "错误消息应包含使用建议，实际: {}",
+                msg
+            );
+        }
         BulwarkManager::reset_for_test();
     }
 

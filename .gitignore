@@ -187,6 +187,7 @@ flamegraph.svg
 /book/
 /book.toml.local
 /target/doc/
+/mdbook/book/
 
 # -----------------------------------------------------------------------------
 # 其他

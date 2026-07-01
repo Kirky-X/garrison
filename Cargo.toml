@@ -3,7 +3,7 @@
 
 [package]
 name = "bulwark"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2021"
 rust-version = "1.85"  # MSRV: 部分 deps（如 inventory 0.3）要求 edition2024 → Rust 1.85+
 authors = ["Kirky.X"]
@@ -33,7 +33,7 @@ tokio = { version = "1", features = ["sync", "macros", "rt-multi-thread", "time"
 once_cell = "1.19"
 inventory = "0.3"
 thiserror = "2.0"
-tracing = "0.1"
+tracing = "0.1.43"
 async-trait = "0.1"
 parking_lot = "0.12"
 chrono = { version = "0.4", features = ["serde"] }
@@ -58,6 +58,19 @@ oxcache = { path = "/home/kirky/projects/oxcache", optional = true }
 # auto-migrate feature 由 db-sqlite feature 显式启用（提供 MigrationExecutor::run_migrations）
 dbnexus = { version = "0.2", optional = true }
 prometheus = { version = "0.14", optional = true }
+# 可观测性：tracing-subscriber 用于 JSON 日志，opentelemetry 用于分布式追踪
+tracing-subscriber = { version = "0.3", optional = true, features = ["fmt", "json", "env-filter"] }
+opentelemetry = { version = "0.30", optional = true, default-features = false, features = ["trace"] }
+opentelemetry_sdk = { version = "0.30", optional = true, default-features = false, features = ["trace", "rt-tokio"] }
+opentelemetry-otlp = { version = "0.30", optional = true, default-features = false, features = ["trace", "grpc-tonic"] }
+# tracing-opentelemetry 桥接 tracing span 与 OpenTelemetry trace
+tracing-opentelemetry = { version = "0.31", optional = true, default-features = false }
+# tonic 用于 gRPC interceptor（feature = "grpc"），需 transport feature 以启用 Interceptor trait
+tonic = { version = "0.13", optional = true, default-features = false, features = ["transport"] }
+# fluent-rs 用于异常消息 i18n（feature = "i18n"），支持中英文切换
+fluent = { version = "0.17", optional = true, default-features = false }
+# unic-langid 用于构造 LanguageIdentifier（fluent-rs 内部依赖，显式声明以直接使用）
+unic-langid = { version = "0.9", optional = true, default-features = false }
 
 [dev-dependencies]
 tokio-test = "0.4"
@@ -73,6 +86,8 @@ tower = { version = "0.5", default-features = false, features = ["util"] }
 http-body-util = "0.1"
 # wiremock 用于 OAuth2/SSO 集成测试的 HTTP mock（0.2.0 新增）
 wiremock = "0.6"
+# warp test feature 仅在测试时启用 warp::test 模块（不影响生产构建）
+warp = { version = "0.4", default-features = false, features = ["test"] }
 
 [features]
 default = []
@@ -120,7 +135,13 @@ web-warp = ["warp"]
 # === 可观测性 ===
 listener = []
 tracing-log = ["tracing/log"]
-metrics-prometheus = ["prometheus"]
+metrics-prometheus = ["prometheus", "tracing-subscriber"]
+# OpenTelemetry 分布式追踪（OTLP gRPC 导出），独立门控以隔离重依赖
+observability-otlp = ["opentelemetry", "opentelemetry_sdk", "opentelemetry-otlp", "tracing-opentelemetry", "tracing-subscriber"]
+# gRPC 鉴权拦截器（tonic::Interceptor 实现）
+grpc = ["tonic"]
+# 异常消息国际化（中英文切换，fluent-rs）
+i18n = ["fluent", "unic-langid"]
 
 # === 聚合特性 ===
 full = [
@@ -129,7 +150,7 @@ full = [
     "protocol-oauth2", "protocol-sso", "protocol-jwt", "protocol-sign", "protocol-apikey", "protocol-temp",
     "secure-totp", "secure-sign", "secure-httpbasic", "secure-httpdigest",
     "web-axum", "web-actix", "web-warp",
-    "listener", "metrics-prometheus",
+    "listener", "metrics-prometheus", "observability-otlp", "grpc", "i18n",
 ]
 
 # 注意：production 原用 db-postgres，但 dbnexus 0.2 不支持，0.1.0 降级为 db-sqlite

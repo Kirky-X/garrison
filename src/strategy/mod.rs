@@ -19,9 +19,19 @@ use crate::dao::BulwarkDao;
 use crate::error::{BulwarkError, BulwarkResult};
 use crate::plugin::BulwarkPluginManager;
 use crate::stp::BulwarkInterface;
+use crate::strategy::hooks::{BulwarkFirewallCheckHook, LoginContext};
 use async_trait::async_trait;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+
+/// 防火墙安全钩子模块（0.3.0 新增）。
+pub mod hooks;
+
+// Re-export 核心 trait 与类型以便外部使用
+pub use hooks::{
+    BulwarkFirewallCheckHookDefault, LoginContext as FirewallLoginContext, BRUTE_FORCE_THRESHOLD,
+    BRUTE_FORCE_WINDOW, LOGIN_FREQUENCY_THRESHOLD, LOGIN_FREQUENCY_WINDOW,
+};
 
 // ============================================================================
 // BulwarkStrategy：Token 生成策略占位（0.2.0+ 实现）
@@ -183,6 +193,22 @@ pub trait BulwarkFirewallStrategy: Send + Sync {
     /// # 错误
     /// - 数据回调失败：透传 `BulwarkError`。
     async fn check_role_all(&self, login_id: i64, roles: &[&str]) -> BulwarkResult<bool>;
+
+    /// 登录前防火墙安全钩子检查（0.3.0 新增，依据 spec firewall-check-hook）。
+    ///
+    /// 默认实现为 no-op（向后兼容 0.2.x）。`BulwarkFirewallStrategyDefault` 在注入
+    /// `BulwarkFirewallCheckHook` 后按序调用 5 个 hook，任一 Err 阻断登录。
+    ///
+    /// # 参数
+    /// - `login_id`: 登录主体标识。
+    /// - `ctx`: 登录上下文（IP / 设备指纹 / 地理位置，可选）。
+    ///
+    /// # 返回
+    /// - `Ok(())`: 所有 hook 通过，允许登录。
+    /// - `Err`: 任一 hook 阻断，返回 `BulwarkError::Session`。
+    async fn check_login_hooks(&self, _login_id: i64, _ctx: &LoginContext) -> BulwarkResult<()> {
+        Ok(())
+    }
 }
 
 // ============================================================================
@@ -217,6 +243,8 @@ pub struct BulwarkFirewallStrategyDefault {
     role_hierarchy: HashMap<String, Vec<String>>,
     /// 0.2.0：可选插件管理器，注入后 check_permission 前后触发钩子。
     plugin_manager: Option<Arc<BulwarkPluginManager>>,
+    /// 0.3.0：可选防火墙安全钩子，注入后 login 前按序调用 5 个 hook（依据 spec firewall-check-hook）。
+    firewall_hook: Option<Arc<dyn BulwarkFirewallCheckHook>>,
 }
 
 impl BulwarkFirewallStrategyDefault {
@@ -235,6 +263,7 @@ impl BulwarkFirewallStrategyDefault {
             dao: None,
             role_hierarchy: HashMap::new(),
             plugin_manager: None,
+            firewall_hook: None,
         }
     }
 
@@ -271,6 +300,15 @@ impl BulwarkFirewallStrategyDefault {
     /// 插件返回 Err 仅 `tracing::warn!` 不中断主流程。
     pub fn with_plugin_manager(mut self, pm: Arc<BulwarkPluginManager>) -> Self {
         self.plugin_manager = Some(pm);
+        self
+    }
+
+    /// 注入 `BulwarkFirewallCheckHook`，启用登录前防火墙安全检查（0.3.0 新增，依据 spec firewall-check-hook）。
+    ///
+    /// 注入后 `check_login_hooks` 将按序调用 5 个 hook（登录频率 / 暴力破解 /
+    /// 异地登录 / Token 复用 / 设备异常），任一返回 `Err` 阻断登录。
+    pub fn with_firewall_hook(mut self, hook: Arc<dyn BulwarkFirewallCheckHook>) -> Self {
+        self.firewall_hook = Some(hook);
         self
     }
 
@@ -438,6 +476,23 @@ impl BulwarkFirewallStrategy for BulwarkFirewallStrategyDefault {
         } else {
             Ok(roles.iter().all(|r| user_roles.iter().any(|ur| ur == r)))
         }
+    }
+
+    /// 0.3.0：登录前防火墙安全钩子检查（依据 spec firewall-check-hook）。
+    ///
+    /// 注入 `firewall_hook` 后按序调用 5 个 hook，任一 Err 阻断登录。
+    /// 未注入时为 no-op（向后兼容 0.2.x）。
+    async fn check_login_hooks(&self, _login_id: i64, ctx: &LoginContext) -> BulwarkResult<()> {
+        let Some(hook) = &self.firewall_hook else {
+            return Ok(());
+        };
+        // 按序调用 5 个 hook，任一 Err 立即返回阻断登录
+        hook.check_login_frequency(ctx).await?;
+        hook.check_brute_force(ctx).await?;
+        hook.check_geo_anomaly(ctx).await?;
+        hook.check_token_reuse(ctx).await?;
+        hook.check_device_anomaly(ctx).await?;
+        Ok(())
     }
 }
 
@@ -1084,6 +1139,215 @@ mod tests {
         assert!(
             fw.check_permission(1001, "user:read").await.unwrap(),
             "应优先返回缓存结果 true，而非查询 interface"
+        );
+    }
+
+    // ------------------------------------------------------------------------
+    // 0.3.0 新增：防火墙安全钩子集成测试（依据 spec firewall-check-hook）
+    // ------------------------------------------------------------------------
+
+    /// 验证未注入 firewall_hook 时 check_login_hooks 为 no-op（向后兼容 0.2.x）。
+    ///
+    /// 对应 spec scenario "未注入 hook 时 check_login_hooks 为 no-op (NEW - 0.3.0)"。
+    #[tokio::test]
+    async fn check_login_hooks_noop_without_hook() {
+        let iface = MockInterface::new();
+        let fw = make_firewall(iface);
+        let ctx = LoginContext::new(1001);
+
+        // 未注入 hook，应直接返回 Ok
+        assert!(
+            fw.check_login_hooks(1001, &ctx).await.is_ok(),
+            "未注入 firewall_hook 时 check_login_hooks 应为 no-op"
+        );
+    }
+
+    /// 验证注入 hook 且所有检查通过时 check_login_hooks 返回 Ok。
+    ///
+    /// 对应 spec scenario "注入 hook 且全部通过 (NEW - 0.3.0)"。
+    #[tokio::test]
+    async fn check_login_hooks_passes_with_hook() {
+        let iface = MockInterface::new();
+        let hook = Arc::new(BulwarkFirewallCheckHookDefault::new());
+        let fw = BulwarkFirewallStrategyDefault::new(Arc::new(iface)).with_firewall_hook(hook);
+        let ctx = LoginContext::new(1001);
+
+        // hook 计数器为空，所有检查应通过
+        assert!(
+            fw.check_login_hooks(1001, &ctx).await.is_ok(),
+            "注入 hook 且无失败记录时 check_login_hooks 应返回 Ok"
+        );
+    }
+
+    /// 验证 hook 在登录频率超限时阻断 check_login_hooks。
+    ///
+    /// 对应 spec scenario "登录频率超限阻断 (NEW - 0.3.0)"。
+    #[tokio::test]
+    async fn check_login_hooks_blocks_on_frequency_exceeded() {
+        let iface = MockInterface::new();
+        let hook = Arc::new(BulwarkFirewallCheckHookDefault::new());
+        let fw =
+            BulwarkFirewallStrategyDefault::new(Arc::new(iface)).with_firewall_hook(hook.clone());
+        let ctx = LoginContext::new(1001).with_ip("1.2.3.4");
+
+        // 记录 10 次失败（达到阈值）
+        for _ in 0..10 {
+            hook.record_failure(&ctx).await.unwrap();
+        }
+
+        // check_login_hooks 应被 login_frequency hook 阻断
+        let result = fw.check_login_hooks(1001, &ctx).await;
+        assert!(result.is_err(), "登录频率超限时应被 check_login_hooks 阻断");
+        assert!(
+            matches!(result.unwrap_err(), BulwarkError::Session(_)),
+            "阻断错误应为 Session 类型"
+        );
+    }
+
+    /// 验证 hook 在暴力破解超限时阻断 check_login_hooks。
+    ///
+    /// 对应 spec scenario "暴力破解超限阻断 (NEW - 0.3.0)"。
+    #[tokio::test]
+    async fn check_login_hooks_blocks_on_brute_force_exceeded() {
+        let iface = MockInterface::new();
+        let hook = Arc::new(BulwarkFirewallCheckHookDefault::new());
+        let fw =
+            BulwarkFirewallStrategyDefault::new(Arc::new(iface)).with_firewall_hook(hook.clone());
+        let ctx = LoginContext::new(1001); // 无 IP，仅触发暴力破解检测
+
+        // 记录 5 次失败（达到阈值）
+        for _ in 0..5 {
+            hook.record_failure(&ctx).await.unwrap();
+        }
+
+        // check_login_hooks 应被 brute_force hook 阻断
+        let result = fw.check_login_hooks(1001, &ctx).await;
+        assert!(result.is_err(), "暴力破解超限时应被 check_login_hooks 阻断");
+    }
+
+    /// 验证 with_firewall_hook builder 方法正确注入 hook。
+    ///
+    /// 对应 spec scenario "with_firewall_hook 注入 hook (NEW - 0.3.0)"。
+    #[tokio::test]
+    async fn with_firewall_hook_injects_hook() {
+        let iface = MockInterface::new();
+        let hook = Arc::new(BulwarkFirewallCheckHookDefault::new());
+        let fw =
+            BulwarkFirewallStrategyDefault::new(Arc::new(iface)).with_firewall_hook(hook.clone());
+
+        // 注入后，记录失败并触发检测应能阻断
+        let ctx = LoginContext::new(1001).with_ip("9.9.9.9");
+        for _ in 0..10 {
+            hook.record_failure(&ctx).await.unwrap();
+        }
+        let result = fw.check_login_hooks(1001, &ctx).await;
+        assert!(result.is_err(), "注入 hook 后应能检测到频率超限并阻断");
+    }
+
+    /// 验证 check_login_hooks 按 5 个 hook 顺序调用（login_frequency 先于 brute_force）。
+    ///
+    /// 对应 spec scenario "hook 按序调用 (NEW - 0.3.0)"。
+    /// 当 IP 维度先达阈值时，应优先返回 login_frequency 错误。
+    #[tokio::test]
+    async fn check_login_hooks_calls_in_order() {
+        use crate::strategy::hooks::BulwarkFirewallCheckHook;
+        use std::sync::atomic::{AtomicU8, Ordering};
+
+        /// 记录调用顺序的测试 hook。
+        struct OrderTrackingHook {
+            order: Arc<AtomicU8>,
+        }
+
+        #[async_trait]
+        impl BulwarkFirewallCheckHook for OrderTrackingHook {
+            async fn check_login_frequency(&self, _ctx: &LoginContext) -> BulwarkResult<()> {
+                self.order.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            }
+            async fn check_brute_force(&self, _ctx: &LoginContext) -> BulwarkResult<()> {
+                self.order.fetch_add(2, Ordering::SeqCst);
+                Ok(())
+            }
+            async fn check_geo_anomaly(&self, _ctx: &LoginContext) -> BulwarkResult<()> {
+                self.order.fetch_add(4, Ordering::SeqCst);
+                Ok(())
+            }
+            async fn check_token_reuse(&self, _ctx: &LoginContext) -> BulwarkResult<()> {
+                self.order.fetch_add(8, Ordering::SeqCst);
+                Ok(())
+            }
+            async fn check_device_anomaly(&self, _ctx: &LoginContext) -> BulwarkResult<()> {
+                self.order.fetch_add(16, Ordering::SeqCst);
+                Ok(())
+            }
+        }
+
+        let order = Arc::new(AtomicU8::new(0));
+        let hook = Arc::new(OrderTrackingHook {
+            order: order.clone(),
+        });
+        let iface = MockInterface::new();
+        let fw = BulwarkFirewallStrategyDefault::new(Arc::new(iface)).with_firewall_hook(hook);
+        let ctx = LoginContext::new(1001);
+
+        fw.check_login_hooks(1001, &ctx).await.unwrap();
+
+        // 5 个 hook 按序调用：1 + 2 + 4 + 8 + 16 = 31
+        assert_eq!(order.load(Ordering::SeqCst), 31, "5 个 hook 应全部按序调用");
+    }
+
+    /// 验证 check_login_hooks 任一 hook Err 立即阻断后续 hook。
+    ///
+    /// 对应 spec scenario "任一 hook Err 阻断后续 (NEW - 0.3.0)"。
+    #[tokio::test]
+    async fn check_login_hooks_short_circuits_on_err() {
+        use crate::strategy::hooks::BulwarkFirewallCheckHook;
+        use std::sync::atomic::{AtomicU8, Ordering};
+
+        struct ShortCircuitHook {
+            called: Arc<AtomicU8>,
+        }
+
+        #[async_trait]
+        impl BulwarkFirewallCheckHook for ShortCircuitHook {
+            async fn check_login_frequency(&self, _ctx: &LoginContext) -> BulwarkResult<()> {
+                self.called.fetch_add(1, Ordering::SeqCst);
+                Err(BulwarkError::Session("frequency blocked".to_string()))
+            }
+            async fn check_brute_force(&self, _ctx: &LoginContext) -> BulwarkResult<()> {
+                self.called.fetch_add(2, Ordering::SeqCst);
+                Ok(())
+            }
+            async fn check_geo_anomaly(&self, _ctx: &LoginContext) -> BulwarkResult<()> {
+                self.called.fetch_add(4, Ordering::SeqCst);
+                Ok(())
+            }
+            async fn check_token_reuse(&self, _ctx: &LoginContext) -> BulwarkResult<()> {
+                self.called.fetch_add(8, Ordering::SeqCst);
+                Ok(())
+            }
+            async fn check_device_anomaly(&self, _ctx: &LoginContext) -> BulwarkResult<()> {
+                self.called.fetch_add(16, Ordering::SeqCst);
+                Ok(())
+            }
+        }
+
+        let called = Arc::new(AtomicU8::new(0));
+        let hook = Arc::new(ShortCircuitHook {
+            called: called.clone(),
+        });
+        let iface = MockInterface::new();
+        let fw = BulwarkFirewallStrategyDefault::new(Arc::new(iface)).with_firewall_hook(hook);
+        let ctx = LoginContext::new(1001);
+
+        let result = fw.check_login_hooks(1001, &ctx).await;
+        assert!(result.is_err(), "应在第一个 hook Err 时阻断");
+
+        // 仅第一个 hook 被调用（值为 1），后续 4 个未调用
+        assert_eq!(
+            called.load(Ordering::SeqCst),
+            1,
+            "第一个 hook Err 后应短路，后续 hook 不应被调用"
         );
     }
 }

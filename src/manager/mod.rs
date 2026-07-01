@@ -171,6 +171,8 @@ impl BulwarkManager {
             Some(entry) => (entry.factory)(session, config, firewall, &factory_ctx)?,
             None => {
                 // 兜底路径：直接通过 builder 链构造 BulwarkLogicDefault
+                // `mut` 仅在 `listener` feature 启用时需要（下方 cfg 块会 reassign）
+                #[cfg_attr(not(feature = "listener"), allow(unused_mut))]
                 let mut builder = BulwarkLogicDefault::new(session, config, firewall)
                     .with_plugin_manager(plugin_manager)
                     .with_auth_logic(auth_logic)

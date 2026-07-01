@@ -164,6 +164,45 @@ pub mod manager;
 /// 插件模块，定义插件 trait 与编译期注册。
 pub mod plugin;
 
+/// 可观测性模块，提供 Prometheus 指标 / 结构化 JSON 日志 / OpenTelemetry 分布式追踪。
+///
+/// 启用 `metrics-prometheus` feature 启用指标采集；启用 `observability-otlp` 启用 OTLP 追踪导出。
+/// 未启用任一 feature 时模块仍可导入但 API 为 no-op，保证向后兼容。
+#[cfg(any(
+    feature = "metrics-prometheus",
+    feature = "observability-otlp",
+    feature = "tracing-log"
+))]
+pub mod observability;
+
+/// gRPC 鉴权拦截器模块，提供 `tonic::Interceptor` 实现。
+///
+/// 启用 `grpc` feature 时编译。从 gRPC 请求 metadata 提取 Authorization Bearer token
+/// 并执行鉴权。
+#[cfg(feature = "grpc")]
+pub mod grpc;
+
+/// 国际化模块，提供异常消息中英文切换（fluent-rs）。
+///
+/// 启用 `i18n` feature 时编译。通过 `set_locale(BulwarkLocale::En)` 切换至英文，
+/// 默认 `Zh`（中文，向后兼容 0.2.x 硬编码行为）。
+#[cfg(feature = "i18n")]
+pub mod i18n;
+
+/// actix-web 框架适配模块（0.3.0 新增，依据 spec web-adapters）。
+///
+/// 启用 `web-actix` feature 时编译。提供 BulwarkRouter + FromRequest extractor +
+/// BulwarkMiddleware 完整集成，与 axum 适配对齐。
+#[cfg(feature = "web-actix")]
+pub mod web_actix;
+
+/// warp 框架适配模块（0.3.0 新增，依据 spec web-adapters）。
+///
+/// 启用 `web-warp` feature 时编译。提供 BulwarkRouter + Filter extractor +
+/// BulwarkRejection 完整集成，与 axum/actix-web 适配对齐。
+#[cfg(feature = "web-warp")]
+pub mod web_warp;
+
 // ====================================================================
 // 可选模块（特性门控）
 // ====================================================================

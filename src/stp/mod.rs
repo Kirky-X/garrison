@@ -23,7 +23,7 @@ use crate::error::{BulwarkError, BulwarkResult};
 use crate::listener::{BulwarkEvent, BulwarkListenerManager};
 use crate::plugin::BulwarkPluginManager;
 use crate::session::BulwarkSession;
-use crate::strategy::BulwarkFirewallStrategy;
+use crate::strategy::{BulwarkFirewallStrategy, FirewallLoginContext};
 use async_trait::async_trait;
 use std::future::Future;
 use std::sync::Arc;
@@ -193,6 +193,30 @@ pub trait BulwarkLogic: Send + Sync {
     /// - 未持有角色：`BulwarkError::NotRole`。
     async fn check_role(&self, role: &str) -> BulwarkResult<()>;
 
+    /// 检查二级认证（MFA）状态（0.3.0 新增，依据 spec annotation-handling）。
+    ///
+    /// 默认实现返回 `Ok(())`（未启用 MFA，向后兼容 0.2.x）。
+    /// 业务方覆写此方法以接入 TOTP MFA 校验：检查当前会话是否已完成二级认证。
+    ///
+    /// # 返回
+    /// - `Ok(())`: 已通过二级认证或未启用 MFA。
+    /// - `Err(BulwarkError::Session)`: 未通过二级认证。
+    async fn check_safe(&self) -> BulwarkResult<()> {
+        Ok(())
+    }
+
+    /// 检查账号是否被禁用（0.3.0 新增，依据 spec annotation-handling）。
+    ///
+    /// 默认实现返回 `Ok(())`（未实现禁用账号库，向后兼容 0.2.x）。
+    /// 业务方覆写此方法以接入禁用账号检查：查询当前 login_id 是否在禁用列表中。
+    ///
+    /// # 返回
+    /// - `Ok(())`: 账号未禁用。
+    /// - `Err(BulwarkError::Session)`: 账号已禁用。
+    async fn check_disable(&self) -> BulwarkResult<()> {
+        Ok(())
+    }
+
     /// 通过外部 token 反向建立会话（0.2.0 新增，依据 spec core-auth-api）。
     ///
     /// 用于 OAuth2/SSO 场景：外部 token 已通过协议层校验后，
@@ -277,6 +301,9 @@ pub struct BulwarkLogicDefault {
     auth_logic: Option<Arc<dyn AuthLogic>>,
     /// 权限校验器（可选，注入后 check_permission/check_role 可委托此实现）。
     permission_checker: Option<Arc<dyn PermissionChecker>>,
+    /// Prometheus 指标采集器（可选，注入后 login/check_login/check_permission/check_role emit 指标）。
+    #[cfg(feature = "metrics-prometheus")]
+    metrics: Option<Arc<crate::observability::BulwarkMetrics>>,
 }
 
 impl BulwarkLogicDefault {
@@ -303,6 +330,8 @@ impl BulwarkLogicDefault {
             listener_manager: None,
             auth_logic: None,
             permission_checker: None,
+            #[cfg(feature = "metrics-prometheus")]
+            metrics: None,
         }
     }
 
@@ -338,6 +367,42 @@ impl BulwarkLogicDefault {
     pub fn with_permission_checker(mut self, pc: Arc<dyn PermissionChecker>) -> Self {
         self.permission_checker = Some(pc);
         self
+    }
+
+    /// 注入 Prometheus 指标采集器（builder 模式，需启用 `metrics-prometheus` feature）。
+    ///
+    /// 注入后 `login` / `check_login` / `check_permission` / `check_role` 将自动 emit
+    /// Prometheus 指标（依据 spec observability-stack）。未注入时所有指标调用为 no-op。
+    #[cfg(feature = "metrics-prometheus")]
+    pub fn with_metrics(mut self, metrics: Arc<crate::observability::BulwarkMetrics>) -> Self {
+        self.metrics = Some(metrics);
+        self
+    }
+
+    /// login 实际逻辑（供 `login` 方法在 metrics 包装内调用）。
+    ///
+    /// 0.3.0 抽取此私有方法以保持 `login` trait 方法的 metrics 包装简洁。
+    async fn login_inner(&self, login_id: i64) -> BulwarkResult<String> {
+        // 0.3.0：登录前防火墙安全钩子检查（依据 spec firewall-check-hook）
+        // 任一 hook Err 阻断登录；未注入 hook 时为 no-op（向后兼容 0.2.x）
+        let ctx = FirewallLoginContext::new(login_id);
+        self.firewall.check_login_hooks(login_id, &ctx).await?;
+
+        let token = self.generate_token(login_id)?;
+        self.login_with_token(login_id, &token).await?;
+        // auto-wire: 触发 plugin on_login + listener Login 事件
+        if let Some(pm) = &self.plugin_manager {
+            pm.on_login(login_id, &token);
+        }
+        #[cfg(feature = "listener")]
+        if let Some(lm) = &self.listener_manager {
+            lm.broadcast(&BulwarkEvent::Login {
+                login_id,
+                token: token.clone(),
+                device: None,
+            });
+        }
+        Ok(token)
     }
 
     /// 根据 `config.token_style` 生成 token。
@@ -381,21 +446,16 @@ impl BulwarkLogicDefault {
 #[async_trait]
 impl BulwarkLogic for BulwarkLogicDefault {
     async fn login(&self, login_id: i64) -> BulwarkResult<String> {
-        let token = self.generate_token(login_id)?;
-        self.login_with_token(login_id, &token).await?;
-        // auto-wire: 触发 plugin on_login + listener Login 事件
-        if let Some(pm) = &self.plugin_manager {
-            pm.on_login(login_id, &token);
+        // emit metrics：登录尝试（成功/失败均记录，依据 spec observability-stack）
+        #[cfg(feature = "metrics-prometheus")]
+        let start = std::time::Instant::now();
+        let result = self.login_inner(login_id).await;
+        #[cfg(feature = "metrics-prometheus")]
+        if let Some(m) = &self.metrics {
+            m.record_login(result.is_ok());
+            m.observe_token_validation(start.elapsed());
         }
-        #[cfg(feature = "listener")]
-        if let Some(lm) = &self.listener_manager {
-            lm.broadcast(&BulwarkEvent::Login {
-                login_id,
-                token: token.clone(),
-                device: None,
-            });
-        }
-        Ok(token)
+        result
     }
 
     async fn login_with_token(&self, login_id: i64, token: &str) -> BulwarkResult<()> {
@@ -480,6 +540,11 @@ impl BulwarkLogic for BulwarkLogicDefault {
         let login_id = match self.get_login_id().await? {
             Some(id) => id,
             None => {
+                // emit metrics：未登录视为 deny
+                #[cfg(feature = "metrics-prometheus")]
+                if let Some(m) = &self.metrics {
+                    m.record_permission_query(false);
+                }
                 return if self.config.throw_on_not_login {
                     Err(BulwarkError::NotLogin("未登录，无法校验权限".to_string()))
                 } else {
@@ -490,6 +555,11 @@ impl BulwarkLogic for BulwarkLogicDefault {
         };
         // 委托 BulwarkFirewallStrategy 做权限校验
         let has_perm = self.firewall.check_permission(login_id, permission).await?;
+        // emit metrics：权限查询结果
+        #[cfg(feature = "metrics-prometheus")]
+        if let Some(m) = &self.metrics {
+            m.record_permission_query(has_perm);
+        }
         if has_perm {
             Ok(())
         } else {
@@ -502,6 +572,11 @@ impl BulwarkLogic for BulwarkLogicDefault {
         let login_id = match self.get_login_id().await? {
             Some(id) => id,
             None => {
+                // emit metrics：未登录视为 deny
+                #[cfg(feature = "metrics-prometheus")]
+                if let Some(m) = &self.metrics {
+                    m.record_role_query(false);
+                }
                 return if self.config.throw_on_not_login {
                     Err(BulwarkError::NotLogin("未登录，无法校验角色".to_string()))
                 } else {
@@ -512,6 +587,11 @@ impl BulwarkLogic for BulwarkLogicDefault {
         };
         // 委托 BulwarkFirewallStrategy 做角色校验
         let has_role = self.firewall.check_role(login_id, role).await?;
+        // emit metrics：角色查询结果
+        #[cfg(feature = "metrics-prometheus")]
+        if let Some(m) = &self.metrics {
+            m.record_role_query(has_role);
+        }
         if has_role {
             Ok(())
         } else {
@@ -783,6 +863,36 @@ impl BulwarkUtil {
     pub async fn check_role(role: &str) -> BulwarkResult<()> {
         crate::manager::BulwarkManager::logic()?
             .check_role(role)
+            .await
+    }
+
+    /// 检查二级认证（MFA）状态（0.3.0 新增，依据 spec annotation-handling）。
+    ///
+    /// 委托 `BulwarkLogic::check_safe()`，默认实现返回 `Ok(())`（未启用 MFA）。
+    ///
+    /// # 返回
+    /// - `Ok(())`: 已通过二级认证或未启用 MFA。
+    /// - `Err(BulwarkError::Session)`: 未通过二级认证。
+    ///
+    /// # 错误
+    /// - `BulwarkManager` 未初始化：`BulwarkError::Session`。
+    pub async fn check_safe() -> BulwarkResult<()> {
+        crate::manager::BulwarkManager::logic()?.check_safe().await
+    }
+
+    /// 检查账号是否被禁用（0.3.0 新增，依据 spec annotation-handling）。
+    ///
+    /// 委托 `BulwarkLogic::check_disable()`，默认实现返回 `Ok(())`（未实现禁用账号库）。
+    ///
+    /// # 返回
+    /// - `Ok(())`: 账号未禁用。
+    /// - `Err(BulwarkError::Session)`: 账号已禁用。
+    ///
+    /// # 错误
+    /// - `BulwarkManager` 未初始化：`BulwarkError::Session`。
+    pub async fn check_disable() -> BulwarkResult<()> {
+        crate::manager::BulwarkManager::logic()?
+            .check_disable()
             .await
     }
 
@@ -1540,6 +1650,30 @@ mod tests {
         );
     }
 
+    /// 未初始化时 BulwarkUtil::check_safe 返回 Session 错误（0.3.0 新增）。
+    #[tokio::test]
+    #[serial]
+    async fn util_check_safe_fails_when_not_initialized() {
+        BulwarkManager::reset_for_test();
+        let result = BulwarkUtil::check_safe().await;
+        assert!(
+            matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("未初始化")),
+            "未初始化时 check_safe 应返回 Session 错误"
+        );
+    }
+
+    /// 未初始化时 BulwarkUtil::check_disable 返回 Session 错误（0.3.0 新增）。
+    #[tokio::test]
+    #[serial]
+    async fn util_check_disable_fails_when_not_initialized() {
+        BulwarkManager::reset_for_test();
+        let result = BulwarkUtil::check_disable().await;
+        assert!(
+            matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("未初始化")),
+            "未初始化时 check_disable 应返回 Session 错误"
+        );
+    }
+
     // ------------------------------------------------------------------------
     // BulwarkUtil 成功路径测试（覆盖未测试的静态方法）
     // ------------------------------------------------------------------------
@@ -1608,6 +1742,46 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(login_id, Some(1001), "get_login_id 应返回当前 login_id");
+
+        BulwarkManager::reset_for_test();
+    }
+
+    /// BulwarkUtil::check_safe 默认实现返回 Ok（0.3.0 新增，依据 spec annotation-handling）。
+    ///
+    /// 默认 `BulwarkLogicDefault` 未启用 MFA，`check_safe` 返回 `Ok(())`。
+    #[tokio::test]
+    #[serial]
+    async fn util_check_safe_returns_ok_by_default() {
+        init_global_manager(false);
+        let _ = BulwarkUtil::login(1001).await.unwrap();
+
+        // 默认实现（未覆写 check_safe）应返回 Ok
+        let result = BulwarkUtil::check_safe().await;
+        assert!(
+            result.is_ok(),
+            "默认 check_safe 应返回 Ok，实际: {:?}",
+            result
+        );
+
+        BulwarkManager::reset_for_test();
+    }
+
+    /// BulwarkUtil::check_disable 默认实现返回 Ok（0.3.0 新增，依据 spec annotation-handling）。
+    ///
+    /// 默认 `BulwarkLogicDefault` 未实现禁用账号库，`check_disable` 返回 `Ok(())`。
+    #[tokio::test]
+    #[serial]
+    async fn util_check_disable_returns_ok_by_default() {
+        init_global_manager(false);
+        let _ = BulwarkUtil::login(1001).await.unwrap();
+
+        // 默认实现（未覆写 check_disable）应返回 Ok
+        let result = BulwarkUtil::check_disable().await;
+        assert!(
+            result.is_ok(),
+            "默认 check_disable 应返回 Ok，实际: {:?}",
+            result
+        );
 
         BulwarkManager::reset_for_test();
     }
@@ -1998,23 +2172,47 @@ mod tests {
 
     #[async_trait]
     impl BulwarkLogic for MinimalLogic {
-        async fn login(&self, _: i64) -> BulwarkResult<String> { unreachable!() }
-        async fn login_with_token(&self, _: i64, _: &str) -> BulwarkResult<()> { unreachable!() }
-        async fn logout(&self) -> BulwarkResult<()> { unreachable!() }
-        async fn logout_by_login_id(&self, _: i64) -> BulwarkResult<()> { unreachable!() }
-        async fn kickout(&self, _: i64) -> BulwarkResult<()> { unreachable!() }
-        async fn kickout_by_token(&self, _: &str) -> BulwarkResult<()> { unreachable!() }
-        async fn check_login(&self) -> BulwarkResult<bool> { unreachable!() }
-        async fn get_login_id(&self) -> BulwarkResult<Option<i64>> { unreachable!() }
-        async fn check_permission(&self, _: &str) -> BulwarkResult<()> { unreachable!() }
-        async fn check_role(&self, _: &str) -> BulwarkResult<()> { unreachable!() }
-        fn config(&self) -> Arc<BulwarkConfig> { Arc::clone(&self.config) }
+        async fn login(&self, _: i64) -> BulwarkResult<String> {
+            unreachable!()
+        }
+        async fn login_with_token(&self, _: i64, _: &str) -> BulwarkResult<()> {
+            unreachable!()
+        }
+        async fn logout(&self) -> BulwarkResult<()> {
+            unreachable!()
+        }
+        async fn logout_by_login_id(&self, _: i64) -> BulwarkResult<()> {
+            unreachable!()
+        }
+        async fn kickout(&self, _: i64) -> BulwarkResult<()> {
+            unreachable!()
+        }
+        async fn kickout_by_token(&self, _: &str) -> BulwarkResult<()> {
+            unreachable!()
+        }
+        async fn check_login(&self) -> BulwarkResult<bool> {
+            unreachable!()
+        }
+        async fn get_login_id(&self) -> BulwarkResult<Option<i64>> {
+            unreachable!()
+        }
+        async fn check_permission(&self, _: &str) -> BulwarkResult<()> {
+            unreachable!()
+        }
+        async fn check_role(&self, _: &str) -> BulwarkResult<()> {
+            unreachable!()
+        }
+        fn config(&self) -> Arc<BulwarkConfig> {
+            Arc::clone(&self.config)
+        }
     }
 
     /// trait default login_by_token 返回 NotImplemented（spec: 未启用协议层 feature）。
     #[tokio::test]
     async fn trait_default_login_by_token_returns_not_implemented() {
-        let logic = MinimalLogic { config: Arc::new(BulwarkConfig::default_config()) };
+        let logic = MinimalLogic {
+            config: Arc::new(BulwarkConfig::default_config()),
+        };
         let result = logic.login_by_token("any-token").await;
         assert!(
             matches!(result, Err(BulwarkError::NotImplemented(ref msg)) if msg.contains("protocol-oauth2")),
@@ -2026,7 +2224,9 @@ mod tests {
     /// trait default verify_token 返回 NotImplemented（spec: 需子类 override）。
     #[tokio::test]
     async fn trait_default_verify_token_returns_not_implemented() {
-        let logic = MinimalLogic { config: Arc::new(BulwarkConfig::default_config()) };
+        let logic = MinimalLogic {
+            config: Arc::new(BulwarkConfig::default_config()),
+        };
         let result = logic.verify_token("any-token").await;
         assert!(
             matches!(result, Err(BulwarkError::NotImplemented(ref msg)) if msg.contains("override")),
@@ -2038,7 +2238,9 @@ mod tests {
     /// trait default refresh_token 返回 NotImplemented（spec: 需启用 protocol-jwt）。
     #[tokio::test]
     async fn trait_default_refresh_token_returns_not_implemented() {
-        let logic = MinimalLogic { config: Arc::new(BulwarkConfig::default_config()) };
+        let logic = MinimalLogic {
+            config: Arc::new(BulwarkConfig::default_config()),
+        };
         let result = logic.refresh_token("any-token").await;
         assert!(
             matches!(result, Err(BulwarkError::NotImplemented(ref msg)) if msg.contains("protocol-jwt")),
@@ -2070,5 +2272,68 @@ mod tests {
         let ts = logic.session.get_token_session(&token).await.unwrap();
         assert!(ts.is_some(), "login_by_token 后应建立会话");
         assert_eq!(ts.unwrap().login_id, 8008);
+    }
+
+    // ------------------------------------------------------------------------
+    // 0.3.0 TG1: metrics 集成测试（依据 spec observability-stack）
+    // ------------------------------------------------------------------------
+
+    /// with_metrics builder 注入 BulwarkMetrics 后 login 触发 record_login(success)。
+    #[cfg(feature = "metrics-prometheus")]
+    #[tokio::test]
+    async fn login_with_metrics_records_success() {
+        let logic = make_logic(3600, 86400, false, "uuid", false, false);
+        let registry = prometheus::Registry::new();
+        let metrics =
+            Arc::new(crate::observability::BulwarkMetrics::register_to(&registry).unwrap());
+        let logic = logic.with_metrics(metrics.clone());
+
+        let _token = logic.login(1001).await.unwrap();
+
+        // 验证 login_total{result="success"} = 1
+        let output = prometheus::TextEncoder::new()
+            .encode_to_string(&registry.gather())
+            .unwrap();
+        assert!(
+            output.contains("bulwark_login_total{result=\"success\"} 1"),
+            "expected success counter=1, got: {}",
+            output
+        );
+    }
+
+    /// with_metrics 注入后 check_permission 触发 record_permission_query(allow/deny)。
+    #[cfg(feature = "metrics-prometheus")]
+    #[tokio::test]
+    async fn check_permission_with_metrics_records_query() {
+        let logic = make_logic(3600, 86400, true, "uuid", false, false);
+        let registry = prometheus::Registry::new();
+        let metrics =
+            Arc::new(crate::observability::BulwarkMetrics::register_to(&registry).unwrap());
+        let logic = logic.with_metrics(metrics.clone());
+
+        let token = logic.login(1001).await.unwrap();
+
+        // check_permission 应记录 deny（MockInterface 返回空权限列表）
+        let result = with_token(&token, async { logic.check_permission("user:read").await }).await;
+        assert!(result.is_err(), "未授权权限应返回 Err");
+
+        let output = prometheus::TextEncoder::new()
+            .encode_to_string(&registry.gather())
+            .unwrap();
+        assert!(
+            output.contains("bulwark_permission_query_total{result=\"deny\"} 1"),
+            "expected deny counter=1, got: {}",
+            output
+        );
+    }
+
+    /// 未注入 metrics 时 login 不 panic（零开销路径）。
+    #[cfg(feature = "metrics-prometheus")]
+    #[tokio::test]
+    async fn login_without_metrics_does_not_panic() {
+        let logic = make_logic(3600, 86400, false, "uuid", false, false);
+        // 不调用 with_metrics
+        let _token = logic.login(1001).await.unwrap();
+        // 不 panic 即通过
     }
 }

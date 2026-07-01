@@ -1,0 +1,45 @@
+# CodeQL 静态安全分析（GitHub 原生，跨语言自动检测）。
+# 触发: push 到主分支 / PR / 每周二定时全量扫描
+# 无需额外 secret：使用自动注入的 GITHUB_TOKEN。
+name: CodeQL
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  schedule:
+    - cron: "37 4 * * 2" # 每周二 04:37 UTC（避开整点）
+
+permissions:
+  contents: read
+  security-events: write # 上传 SARIF 到 Security 标签页
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      actions: read
+      contents: read
+    strategy:
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      # 不传 languages → CodeQL 自动检测仓库语言
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:autodetect"

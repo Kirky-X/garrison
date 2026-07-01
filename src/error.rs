@@ -8,75 +8,167 @@ use thiserror::Error;
 /// Bulwark 框架统一错误类型。
 ///
 /// 涵盖登录、权限、Token、DAO、配置等各层错误场景。
+///
+/// # Display 行为
+///
+/// - 未启用 `i18n` feature：硬编码中文（与 0.2.x 行为一致）
+/// - 启用 `i18n` feature：依据线程本地 locale 切换中英文（详见 [`crate::i18n`]）
 #[derive(Debug, Error)]
 pub enum BulwarkError {
     /// 未登录异常（对应 Sa-Token NotLoginException）。
-    #[error("未登录: {0}")]
     NotLogin(String),
 
     /// 无权限异常（对应 Sa-Token NotPermissionException）。
-    #[error("无权限: {0}")]
     NotPermission(String),
 
     /// 无角色异常（对应 Sa-Token NotRoleException）。
-    #[error("无角色: {0}")]
     NotRole(String),
 
     /// Token 无效异常。
-    #[error("Token 无效: {0}")]
     InvalidToken(String),
 
     /// Token 已过期异常。
-    #[error("Token 已过期: {0}")]
     ExpiredToken(String),
 
     /// DAO 层错误。
-    #[error("DAO 错误: {0}")]
     Dao(String),
 
     /// 配置错误。
-    #[error("配置错误: {0}")]
     Config(String),
 
     /// 内部错误。
-    #[error("内部错误: {0}")]
     Internal(String),
 
     /// 会话错误（对应会话创建/查询/过期/续期等场景）。
-    #[error("会话错误: {0}")]
     Session(String),
 
     /// 注解错误（对应注解校验失败、组合冲突等场景）。
-    #[error("注解错误: {0}")]
     Annotation(String),
 
     /// 上下文错误（对应 BulwarkContext / Request / Response / Storage 异常）。
-    #[error("上下文错误: {0}")]
     Context(String),
 
     /// 业务异常（携带上下文的可恢复异常，0.2.0 新增，依据 spec exception-system）。
-    #[error("{0}")]
     Exception(BulwarkException),
 
     /// OAuth2 协议错误（0.2.0 新增，依据 spec protocol-oauth2）。
-    #[error("OAuth2 错误: {0}")]
     OAuth2(String),
 
     /// 网络错误（0.2.0 新增，依据 spec protocol-oauth2）。
-    #[error("网络错误: {0}")]
     Network(String),
 
     /// 参数无效错误（0.2.0 新增，依据 spec protocol-oauth2）。
-    #[error("参数无效: {0}")]
     InvalidParam(String),
 
     /// 功能未实现（0.2.0 新增，依据 spec core-auth-api：default 实现返回此错误）。
-    #[error("未实现: {0}")]
     NotImplemented(String),
+}
+
+// ============================================================================
+// Display 实现：依据 i18n feature 切换硬编码中文 / fluent-rs 多语言
+// ============================================================================
+
+/// 启用 `i18n` feature 时：委托 `i18n::translate_error` 依据当前 locale 翻译。
+#[cfg(feature = "i18n")]
+impl std::fmt::Display for BulwarkError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&crate::i18n::translate_error(self))
+    }
+}
+
+/// 未启用 `i18n` feature 时：硬编码中文（与 0.2.x 行为一致，向后兼容）。
+#[cfg(not(feature = "i18n"))]
+impl std::fmt::Display for BulwarkError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BulwarkError::NotLogin(s) => write!(f, "未登录: {}", s),
+            BulwarkError::NotPermission(s) => write!(f, "无权限: {}", s),
+            BulwarkError::NotRole(s) => write!(f, "无角色: {}", s),
+            BulwarkError::InvalidToken(s) => write!(f, "Token 无效: {}", s),
+            BulwarkError::ExpiredToken(s) => write!(f, "Token 已过期: {}", s),
+            BulwarkError::Dao(s) => write!(f, "DAO 错误: {}", s),
+            BulwarkError::Config(s) => write!(f, "配置错误: {}", s),
+            BulwarkError::Internal(s) => write!(f, "内部错误: {}", s),
+            BulwarkError::Session(s) => write!(f, "会话错误: {}", s),
+            BulwarkError::Annotation(s) => write!(f, "注解错误: {}", s),
+            BulwarkError::Context(s) => write!(f, "上下文错误: {}", s),
+            BulwarkError::OAuth2(s) => write!(f, "OAuth2 错误: {}", s),
+            BulwarkError::Network(s) => write!(f, "网络错误: {}", s),
+            BulwarkError::InvalidParam(s) => write!(f, "参数无效: {}", s),
+            BulwarkError::NotImplemented(s) => write!(f, "未实现: {}", s),
+            BulwarkError::Exception(ex) => write!(f, "业务异常[{}]: {}", ex.code, ex.message),
+        }
+    }
 }
 
 /// Bulwark 框架统一 Result 类型别名。
 pub type BulwarkResult<T> = Result<T, BulwarkError>;
+
+// ============================================================================
+// response_parts：框架无关的响应分片（0.3.0 新增，依据 spec web-adapters）
+// ============================================================================
+
+impl BulwarkError {
+    /// 返回 HTTP 响应分片 `(status_code, error_code, message, exception_code)`。
+    ///
+    /// 框架无关方法，axum / actix-web / warp 适配器均复用此方法以保证三框架行为一致性
+    /// （依据 spec web-adapters Requirement: 适配器行为一致性）。
+    ///
+    /// # 返回
+    /// - `status_code`: HTTP 状态码（401/403/500/502/400/501）。
+    /// - `error_code`: 结构化错误码字符串（如 `"NOT_LOGIN"`）。
+    /// - `message`: 通用错误消息（不泄漏内部细节）。
+    /// - `exception_code`: 仅 `Exception` 变体返回 `Some(code)`，其他变体返回 `None`。
+    ///
+    /// # 安全性
+    ///
+    /// 返回的 `message` 仅暴露通用描述（如 "未登录"），完整错误通过 `tracing::error!` 记录。
+    pub fn response_parts(&self) -> (u16, &'static str, &'static str, Option<i32>) {
+        match &self {
+            BulwarkError::NotLogin(_) => (401, "NOT_LOGIN", "未登录", None),
+            BulwarkError::InvalidToken(_) => (401, "INVALID_TOKEN", "Token 无效", None),
+            BulwarkError::ExpiredToken(_) => (401, "EXPIRED_TOKEN", "Token 已过期", None),
+            BulwarkError::NotPermission(_) => (403, "NOT_PERMISSION", "无权限", None),
+            BulwarkError::NotRole(_) => (403, "NOT_ROLE", "无角色", None),
+            BulwarkError::Dao(_) => (500, "DAO_ERROR", "数据访问错误", None),
+            BulwarkError::Config(_) => (500, "CONFIG_ERROR", "配置错误", None),
+            BulwarkError::Internal(_) => (500, "INTERNAL_ERROR", "内部错误", None),
+            BulwarkError::Session(_) => (500, "SESSION_ERROR", "会话错误", None),
+            BulwarkError::Annotation(_) => (500, "ANNOTATION_ERROR", "注解错误", None),
+            BulwarkError::Context(_) => (500, "CONTEXT_ERROR", "上下文错误", None),
+            BulwarkError::OAuth2(_) => (500, "OAUTH2_ERROR", "OAuth2 错误", None),
+            BulwarkError::Network(_) => (502, "NETWORK_ERROR", "网络错误", None),
+            BulwarkError::InvalidParam(_) => (400, "INVALID_PARAM", "参数无效", None),
+            BulwarkError::NotImplemented(_) => (501, "NOT_IMPLEMENTED", "未实现", None),
+            // Exception 依据 BulwarkException.code 字段映射状态码
+            // code = -1 → 未登录 → 401；code = -2 → 无权限 → 403；其他 → 500
+            BulwarkError::Exception(ex) => {
+                let (status, error_code, message) = match ex.code {
+                    -1 => (401, "NOT_LOGIN", "未登录"),
+                    -2 => (403, "NOT_PERMISSION", "无权限"),
+                    _ => (500, "EXCEPTION", "业务异常"),
+                };
+                (status, error_code, message, Some(ex.code))
+            },
+        }
+    }
+
+    /// 构造 JSON 响应体（框架无关）。
+    ///
+    /// 返回 `serde_json::Value`，由各框架适配器自行序列化为响应 body。
+    /// `Exception` 变体额外包含 `code` 字段。
+    pub fn to_json_body(&self) -> serde_json::Value {
+        let (_, error_code, message, ex_code) = self.response_parts();
+        let mut body = serde_json::json!({
+            "error_code": error_code,
+            "message": message,
+        });
+        if let Some(code) = ex_code {
+            body["code"] = serde_json::json!(code);
+        }
+        body
+    }
+}
 
 // ============================================================================
 // IntoResponse 实现（cfg feature = "web-axum"）
@@ -103,76 +195,10 @@ impl axum::response::IntoResponse for BulwarkError {
         // 完整错误记录到日志（不返回给客户端）
         tracing::error!(error = ?self, "bulwark rejection");
 
-        let (status, error_code, message) = match &self {
-            BulwarkError::NotLogin(_) => (StatusCode::UNAUTHORIZED, "NOT_LOGIN", "未登录"),
-            BulwarkError::InvalidToken(_) => {
-                (StatusCode::UNAUTHORIZED, "INVALID_TOKEN", "Token 无效")
-            },
-            BulwarkError::ExpiredToken(_) => {
-                (StatusCode::UNAUTHORIZED, "EXPIRED_TOKEN", "Token 已过期")
-            },
-            BulwarkError::NotPermission(_) => (StatusCode::FORBIDDEN, "NOT_PERMISSION", "无权限"),
-            BulwarkError::NotRole(_) => (StatusCode::FORBIDDEN, "NOT_ROLE", "无角色"),
-            BulwarkError::Dao(_) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "DAO_ERROR",
-                "数据访问错误",
-            ),
-            BulwarkError::Config(_) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "CONFIG_ERROR",
-                "配置错误",
-            ),
-            BulwarkError::Internal(_) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "INTERNAL_ERROR",
-                "内部错误",
-            ),
-            BulwarkError::Session(_) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "SESSION_ERROR",
-                "会话错误",
-            ),
-            BulwarkError::Annotation(_) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "ANNOTATION_ERROR",
-                "注解错误",
-            ),
-            BulwarkError::Context(_) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "CONTEXT_ERROR",
-                "上下文错误",
-            ),
-            BulwarkError::OAuth2(_) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "OAUTH2_ERROR",
-                "OAuth2 错误",
-            ),
-            BulwarkError::Network(_) => (StatusCode::BAD_GATEWAY, "NETWORK_ERROR", "网络错误"),
-            BulwarkError::InvalidParam(_) => (StatusCode::BAD_REQUEST, "INVALID_PARAM", "参数无效"),
-            BulwarkError::NotImplemented(_) => {
-                (StatusCode::NOT_IMPLEMENTED, "NOT_IMPLEMENTED", "未实现")
-            },
-            // Exception 依据 BulwarkException.code 字段映射状态码（依据 spec exception-system Requirement: IntoResponse 实现）
-            // code = -1 → 未登录 → 401；code = -2 → 无权限 → 403；其他 → 500
-            BulwarkError::Exception(ex) => {
-                let (status, error_code, message) = match ex.code {
-                    -1 => (StatusCode::UNAUTHORIZED, "NOT_LOGIN", "未登录"),
-                    -2 => (StatusCode::FORBIDDEN, "NOT_PERMISSION", "无权限"),
-                    _ => (StatusCode::INTERNAL_SERVER_ERROR, "EXCEPTION", "业务异常"),
-                };
-                let body = axum::Json(serde_json::json!({
-                    "error_code": error_code,
-                    "message": message,
-                    "code": ex.code,
-                }));
-                return (status, body).into_response();
-            },
-        };
-        let body = axum::Json(serde_json::json!({
-            "error_code": error_code,
-            "message": message,
-        }));
+        // 0.3.0：复用 response_parts() 保证三框架行为一致（依据 spec web-adapters）
+        let (status_code, _, _, _) = self.response_parts();
+        let status = StatusCode::from_u16(status_code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+        let body = axum::Json(self.to_json_body());
         (status, body).into_response()
     }
 }

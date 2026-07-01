@@ -1,0 +1,25 @@
+# cargo-deny 配置 — `cargo deny check` 按此校验 漏洞/许可证/禁用源/重复依赖。
+# 完整字段见: https://embarkstudios.github.io/cargo-deny/
+
+[advisories]
+db-urls = ["https://github.com/RustSec/advisory-db"]
+yanked = "deny"
+
+[licenses]
+# 允许的宽松许可证；新增非宽松许可证需在此放行
+allow = [
+    "MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception",
+    "BSD-3-Clause", "BSD-2-Clause", "ISC",
+    "Unicode-3.0", "Unicode-DFS-2016",
+    "Zlib", "CC0-1.0", "MPL-2.0",
+]
+confidence-threshold = 0.8
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

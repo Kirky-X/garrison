@@ -36,6 +36,16 @@ repos:
         args: [--, -D, warnings, --all-features]
         pass_filenames: false
 
+  # === cargo-deny（许可证 / 漏洞 / 禁用源 / 重复依赖） ===
+  - repo: local
+    hooks:
+      - id: cargo-deny
+        name: cargo deny check (license/advisory/ban)
+        entry: bash -c 'cargo deny check 2>/dev/null || { echo "→ 先运行: cargo install cargo-deny && cargo deny init"; exit 1; }'
+        language: system
+        files: 'Cargo\.(toml|lock)'
+        pass_filenames: false
+
   # === 拼写检查 ===
   - repo: https://github.com/codespell-project/codespell
     rev: v2.3.0
