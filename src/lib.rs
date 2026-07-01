@@ -34,14 +34,39 @@
 //!
 //! | 类别 | Feature | 说明 |
 //! |:---|:---|:---|
-//! | 默认 | `default` | `cache-memory` + `db-sqlite` + `web-axum` |
-//! | 缓存 | `cache-memory` / `cache-redis` | 基于 oxcache 的 L1(moka) + L2(redis) |
+//! | 默认 | `default` | 空（按需启用所需 feature；`all-defaults` 可一键启用常用组合） |
+//! | 缓存 | `cache-memory` / `cache-redis` | 基于 oxcache 0.3 的 L1(moka) + L2(redis)，均启用 oxcache（语义别名） |
 //! | 数据库 | `db-sqlite` | 基于 dbnexus 0.2 + auto-migrate |
 //! | Web 框架 | `web-axum` / `web-actix` / `web-warp` | 路由拦截器与 extractor 适配 |
 //! | 协议层 | `protocol-jwt` / `protocol-oauth2` / `protocol-sso` / `protocol-sign` / `protocol-apikey` / `protocol-temp` | 鉴权协议插件 |
 //! | 安全模块 | `secure-totp` / `secure-sign` / `secure-httpbasic` / `secure-httpdigest` | TOTP / 签名 / Basic / Digest |
 //! | 可观测性 | `listener` / `tracing-log` / `metrics-prometheus` | 事件监听 / 日志 / 指标 |
 //! | 聚合 | `full` / `production` / `development` | 一键启用一组特性 |
+//!
+//! ## 0.2.0 新增模块概览
+//!
+//! 0.2.0 在 0.1.0 基础上扩展了协议层、安全模块与可插拔扩展点（依据 spec protocol-secure-v0-2-0）：
+//!
+//! - **核心扩展**（always on）
+//!   - [`core::token`]：`Token` trait + `TokenStyleFactory`（uuid / random_64 / simple / jwt 四种风格）
+//!   - [`core::auth`]：`AuthLogic` trait + `DefaultAuthLogic`（login_by_token / verify_token / refresh_token）
+//!   - [`core::permission`]：`PermissionChecker` trait + `DefaultPermissionChecker`
+//!   - [`plugin`]：`BulwarkPlugin` trait + `inventory` 编译期注册 + `BulwarkPluginManager`（on_login / on_logout / on_permission_check 钩子）
+//!   - [`strategy`]：`BulwarkFirewallStrategyDefault` 扩展 `with_permission_checker` / `with_role_hierarchy` / `with_plugin_manager` / `with_dao`（权限缓存）
+//!   - [`session`]：`BulwarkSession` 扩展 SSO / OAuth2 / 临时凭证关联（`link_sso_ticket` / `link_oauth2_token` / `link_temp_credential`）
+//! - **协议层**（特性门控）
+//!   - `protocol::jwt`：`JwtHandler`（sign / verify / refresh，HS256/HS512）
+//!   - `protocol::oauth2`：`OAuth2Client`（Authorization Code / Client Credentials / Password 三种流程）
+//!   - `protocol::sso`：`SsoClient`（ticket 签发 / 校验 / 销毁，一次性 60s TTL）
+//!   - `protocol::sign`：`SignHandler`（HMAC-SHA256 签名 + 防重放时间窗口）
+//!   - `protocol::apikey`：`ApiKeyHandler`（生成 / 校验 / 吊销 / 轮换）
+//!   - `protocol::temp`：`TempCredentialHandler`（issue / get / revoke / consume）
+//! - **安全模块**（特性门控）
+//!   - `secure::totp`：`TotpHandler`（RFC 6238，±1 时间窗口偏差）
+//!   - `secure::sign`：`SignVerifier` trait
+//!   - `secure::httpbasic` / `secure::httpdigest`：HTTP Basic / Digest 认证
+//! - **可观测性**
+//!   - `listener`：`BulwarkEvent` + `Listener` trait + `BulwarkListenerManager`（Login / Logout / PermissionCheck / Kickout 事件）
 //!
 //! ## 特性域
 //!
@@ -77,13 +102,13 @@
 //! ## 双抽象层
 //!
 //! - **dbnexus** - 数据库抽象层（SQLite / PostgreSQL / MySQL）
-//! - **oxcache** - 缓存抽象层（Memory / Redis Cluster / Caffeine）
+//! - **oxcache** - 缓存抽象层（L1 moka + L2 redis）
 //!
 //! ## 使用示例
 //!
 //! ```toml
 //! [dependencies]
-//! bulwark = { version = "0.1", features = ["web-axum", "protocol-jwt"] }
+//! bulwark = { version = "0.2", features = ["web-axum", "protocol-jwt"] }
 //! ```
 //!
 //! ```rust

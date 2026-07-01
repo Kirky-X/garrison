@@ -3,9 +3,8 @@
 //! [借鉴 Sa-Token] 对应 Sa-Token 的安全模块（`secure` 包），
 //! 提供二步验证、签名校验、HTTP Basic/Digest 认证能力。
 //!
-//! 此模块仅在启用 `secure-totp` 特性时编译。
-//!
-//! 该模块在 0.1.0 为占位实现，完整功能将在 0.2.0+ 提供。
+//! 该模块在启用任一 `secure-*` 特性时编译（见 `lib.rs` 的 `#[cfg(any(...))]`）。
+//! 0.2.0 已实现全部安全子模块。
 
 use crate::error::BulwarkResult;
 
@@ -13,6 +12,8 @@ use crate::error::BulwarkResult;
 ///
 /// [借鉴 Sa-Token] 对应 Sa-Token 的 TOTP 能力，
 /// 通过 `totp-rs` crate 实现基于时间的一次性密码。
+///
+/// 具体实现见 `totp::TotpHandler`（启用 `secure-totp` 特性）。
 pub trait TotpVerifier {
     /// 校验 TOTP 验证码。
     ///
