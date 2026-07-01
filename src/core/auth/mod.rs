@@ -286,14 +286,14 @@ mod tests {
     async fn is_login_valid_token_returns_true() {
         let auth = make_auth_logic(3600, 86400);
         let token = auth.login(1001, None).await.unwrap();
-        assert_eq!(auth.is_login(&token).await.unwrap(), true);
+        assert!(auth.is_login(&token).await.unwrap());
     }
 
     /// is_login 无效 token 返回 false（spec Scenario）。
     #[tokio::test]
     async fn is_login_invalid_token_returns_false() {
         let auth = make_auth_logic(3600, 86400);
-        assert_eq!(auth.is_login("invalid-token").await.unwrap(), false);
+        assert!(!auth.is_login("invalid-token").await.unwrap());
     }
 
     // ========================================================================

@@ -292,8 +292,8 @@ impl BulwarkLogicDefault {
     /// - `uuid`: UUID v4（36 字符，含连字符）
     /// - `random_64`: 两个 simple UUID 拼接（64 字符）
     /// - `simple`: simple UUID（32 字符）
-    /// - `jwt`: 需启用 `protocol-jwt` feature（0.1.0 暂不支持，抛错）
-    fn generate_token(&self) -> BulwarkResult<String> {
+    /// - `jwt`: 需启用 `protocol-jwt` feature，委托 `JwtHandler::sign`（0.2.0 修复）
+    fn generate_token(&self, login_id: i64) -> BulwarkResult<String> {
         match self.config.token_style.as_str() {
             "uuid" => Ok(uuid::Uuid::new_v4().to_string()),
             "random_64" => Ok(format!(
@@ -302,9 +302,21 @@ impl BulwarkLogicDefault {
                 uuid::Uuid::new_v4().simple()
             )),
             "simple" => Ok(uuid::Uuid::new_v4().simple().to_string()),
-            "jwt" => Err(BulwarkError::Config(
-                "jwt token_style 需启用 protocol-jwt feature".to_string(),
-            )),
+            "jwt" => {
+                // 0.2.0：委托 JwtHandler::sign（依据 spec protocol-jwt + core-auth-api）
+                #[cfg(feature = "protocol-jwt")]
+                {
+                    let handler = crate::protocol::jwt::JwtHandler::new(&self.config.jwt_secret);
+                    handler.sign(login_id, self.config.timeout)
+                }
+                #[cfg(not(feature = "protocol-jwt"))]
+                {
+                    let _ = login_id;
+                    Err(BulwarkError::Config(
+                        "jwt token_style 需启用 protocol-jwt feature".to_string(),
+                    ))
+                }
+            }
             other => Err(BulwarkError::Config(format!(
                 "unknown token_style: {}",
                 other
@@ -316,7 +328,7 @@ impl BulwarkLogicDefault {
 #[async_trait]
 impl BulwarkLogic for BulwarkLogicDefault {
     async fn login(&self, login_id: i64) -> BulwarkResult<String> {
-        let token = self.generate_token()?;
+        let token = self.generate_token(login_id)?;
         self.login_with_token(login_id, &token).await?;
         Ok(token)
     }

@@ -189,16 +189,15 @@ mod tests {
     #[tokio::test]
     async fn has_permission_held_returns_true() {
         let checker = make_checker();
-        assert_eq!(checker.has_permission(1001, "user:read").await.unwrap(), true);
+        assert!(checker.has_permission(1001, "user:read").await.unwrap());
     }
 
     /// has_permission 未持有权限返回 false（spec Scenario）。
     #[tokio::test]
     async fn has_permission_not_held_returns_false() {
         let checker = make_checker();
-        assert_eq!(
-            checker.has_permission(1001, "user:delete").await.unwrap(),
-            false
+        assert!(
+            !checker.has_permission(1001, "user:delete").await.unwrap()
         );
     }
 
@@ -218,14 +217,14 @@ mod tests {
     #[tokio::test]
     async fn has_role_held_returns_true() {
         let checker = make_checker();
-        assert_eq!(checker.has_role(1001, "admin").await.unwrap(), true);
+        assert!(checker.has_role(1001, "admin").await.unwrap());
     }
 
     /// has_role 未持有角色返回 false（spec Scenario）。
     #[tokio::test]
     async fn has_role_not_held_returns_false() {
         let checker = make_checker();
-        assert_eq!(checker.has_role(1001, "superadmin").await.unwrap(), false);
+        assert!(!checker.has_role(1001, "superadmin").await.unwrap());
     }
 
     // ========================================================================
@@ -282,9 +281,8 @@ mod tests {
     #[tokio::test]
     async fn has_any_permission_any_match_returns_true() {
         let checker = make_checker();
-        assert_eq!(
-            checker.has_any_permission(1001, &["user:read", "user:delete"]).await,
-            true
+        assert!(
+            checker.has_any_permission(1001, &["user:read", "user:delete"]).await
         );
     }
 
@@ -292,11 +290,10 @@ mod tests {
     #[tokio::test]
     async fn has_any_permission_no_match_returns_false() {
         let checker = make_checker();
-        assert_eq!(
-            checker
+        assert!(
+            !checker
                 .has_any_permission(1001, &["user:delete", "user:create"])
-                .await,
-            false
+                .await
         );
     }
 
@@ -308,11 +305,10 @@ mod tests {
     #[tokio::test]
     async fn has_all_permissions_all_match_returns_true() {
         let checker = make_checker();
-        assert_eq!(
+        assert!(
             checker
                 .has_all_permissions(1001, &["user:read", "user:write"])
-                .await,
-            true
+                .await
         );
     }
 
@@ -320,11 +316,10 @@ mod tests {
     #[tokio::test]
     async fn has_all_permissions_partial_match_returns_false() {
         let checker = make_checker();
-        assert_eq!(
-            checker
+        assert!(
+            !checker
                 .has_all_permissions(1001, &["user:read", "user:delete"])
-                .await,
-            false
+                .await
         );
     }
 
@@ -332,6 +327,6 @@ mod tests {
     #[tokio::test]
     async fn has_all_permissions_empty_list_returns_true() {
         let checker = make_checker();
-        assert_eq!(checker.has_all_permissions(1001, &[]).await, true);
+        assert!(checker.has_all_permissions(1001, &[]).await);
     }
 }
