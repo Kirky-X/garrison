@@ -28,6 +28,10 @@ use async_trait::async_trait;
 use std::future::Future;
 use std::sync::Arc;
 
+// 0.4.0 新增：ParameterQuery 参数化查询模块（feature-gated）
+#[cfg(feature = "parameter-query")]
+pub mod parameter;
+
 // ============================================================================
 // task_local：存储当前请求的 token（类似 Sa-Token 的 SaHolder）
 // ============================================================================
