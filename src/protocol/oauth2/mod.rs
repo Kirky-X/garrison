@@ -21,6 +21,13 @@ use serde::Deserialize;
 #[cfg(feature = "protocol-oidc")]
 pub mod oidc;
 
+/// Scope Handler 注册表模块（0.4.0 新增，依据 spec oauth2-scope-handler）。
+///
+/// 提供 `ScopeHandler` trait + `ScopeRegistry` 动态注册表，用于在 OAuth2 token
+/// 请求前对 scope 进行客户端策略校验。仅在启用 `oauth2-scope-handler` feature 时编译。
+#[cfg(feature = "oauth2-scope-handler")]
+pub mod scope;
+
 /// OAuth2 令牌响应（依据 spec protocol-oauth2）。
 ///
 /// 授权服务器返回的 JSON 通过 `Deserialize` 解析。
@@ -61,6 +68,11 @@ pub struct OAuth2Client {
     user_info_url: Option<String>,
     /// 可复用的 HTTP 客户端。
     http: reqwest::Client,
+    /// Scope 注册表（可选，仅在启用 `oauth2-scope-handler` feature 时存在）。
+    /// 注入后，`get_password_token` / `get_client_credentials_token` / `refresh_access_token`
+    /// 在发送 HTTP 请求前委托 `validate_scope` 校验。
+    #[cfg(feature = "oauth2-scope-handler")]
+    scope_registry: Option<std::sync::Arc<scope::ScopeRegistry>>,
 }
 
 impl OAuth2Client {
@@ -98,6 +110,8 @@ impl OAuth2Client {
             token_url: token_url.into(),
             user_info_url: None,
             http,
+            #[cfg(feature = "oauth2-scope-handler")]
+            scope_registry: None,
         })
     }
 
@@ -105,6 +119,46 @@ impl OAuth2Client {
     pub fn with_user_info_url(mut self, url: impl Into<String>) -> Self {
         self.user_info_url = Some(url.into());
         self
+    }
+
+    /// 注入 ScopeRegistry，启用 token 请求前的 scope 校验（0.4.0 新增，依据 spec oauth2-scope-handler）。
+    ///
+    /// 仅在启用 `oauth2-scope-handler` feature 时可用。
+    /// 注入后，`get_password_token` / `get_client_credentials_token` / `refresh_access_token`
+    /// 在发送 HTTP 请求前委托 `ScopeRegistry::validate` 校验 scope。
+    #[cfg(feature = "oauth2-scope-handler")]
+    pub fn with_scope_registry(mut self, registry: std::sync::Arc<scope::ScopeRegistry>) -> Self {
+        self.scope_registry = Some(registry);
+        self
+    }
+
+    /// 校验 scope（0.4.0 新增，依据 spec oauth2-scope-handler）。
+    ///
+    /// - 若 `scope_registry` 未注入 → 跳过校验（Ok(())）。
+    /// - 若 `scope` 为 None → 跳过校验（Ok(())）。
+    /// - 若 `ScopeRegistry::validate` 返回 `Ok(false)` → 返回 `OAuth2("scope validation failed: ...")`。
+    /// - 若 `ScopeRegistry::validate` 返回 `Err` → 向上传播。
+    ///
+    /// # 参数
+    /// - `scope`: OAuth2 请求中的 scope 参数（可能为 None）。
+    ///
+    /// # 关于 login_id
+    /// OAuth2 客户端流程在 token 请求时通常尚未解析出 login_id（password 流需先认证、
+    /// client_credentials 流无用户、refresh_token 流需先解码 refresh_token）。
+    /// 此处传入 `login_id = 0` 占位，handler 实现可按需通过其他上下文查询真实 login_id。
+    /// 详见 `scope` 模块文档说明。
+    #[cfg(feature = "oauth2-scope-handler")]
+    async fn validate_scope(&self, scope: Option<&str>) -> BulwarkResult<()> {
+        if let (Some(registry), Some(s)) = (&self.scope_registry, scope) {
+            let allowed = registry.validate(s, 0)?;
+            if !allowed {
+                return Err(BulwarkError::OAuth2(format!(
+                    "scope validation failed: {}",
+                    s
+                )));
+            }
+        }
+        Ok(())
     }
 
     /// 获取授权端点 URL。
@@ -157,6 +211,8 @@ impl OAuth2Client {
         &self,
         scope: Option<&str>,
     ) -> BulwarkResult<TokenResponse> {
+        #[cfg(feature = "oauth2-scope-handler")]
+        self.validate_scope(scope).await?;
         let mut params: Vec<(&str, &str)> = vec![
             ("grant_type", "client_credentials"),
             ("client_id", &self.client_id),
@@ -184,6 +240,8 @@ impl OAuth2Client {
         if username.is_empty() {
             return Err(BulwarkError::InvalidParam("username 不可为空".to_string()));
         }
+        #[cfg(feature = "oauth2-scope-handler")]
+        self.validate_scope(scope).await?;
         let mut params: Vec<(&str, &str)> = vec![
             ("grant_type", "password"),
             ("username", username),
@@ -220,6 +278,8 @@ impl OAuth2Client {
                 "refresh_token 不可为空".to_string(),
             ));
         }
+        #[cfg(feature = "oauth2-scope-handler")]
+        self.validate_scope(scope).await?;
         let mut params: Vec<(&str, &str)> = vec![
             ("grant_type", "refresh_token"),
             ("refresh_token", refresh_token),
@@ -694,5 +754,159 @@ mod tests {
     #[test]
     fn url_encode_encodes_special_chars() {
         assert_eq!(urlencoding::encode("a b/c:d"), "a%20b%2Fc%3Ad");
+    }
+
+    // ========================================================================
+    // OAuth2Client + ScopeRegistry 集成测试（0.4.0 新增，依据 spec oauth2-scope-handler）
+    // ========================================================================
+
+    /// 测试用 ScopeHandler：根据 allowed 字段返回结果。
+    #[cfg(feature = "oauth2-scope-handler")]
+    struct StubScopeHandler {
+        allowed: bool,
+    }
+
+    #[cfg(feature = "oauth2-scope-handler")]
+    impl scope::ScopeHandler for StubScopeHandler {
+        fn validate(&self, _scope: &str, _login_id: i64) -> BulwarkResult<bool> {
+            Ok(self.allowed)
+        }
+    }
+
+    /// 未注入 ScopeRegistry 时跳过校验（spec Scenario: 未注入跳过）。
+    /// 既有 client_credentials_without_scope_success 等测试已覆盖此场景（未调用 with_scope_registry）。
+    /// 这里追加验证：注入 registry 但 scope 为 None 时也跳过校验。
+    #[tokio::test]
+    #[cfg(feature = "oauth2-scope-handler")]
+    async fn scope_registry_injected_but_none_scope_skips_validation() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "access_token": "tok", "token_type": "Bearer"
+            })))
+            .mount(&server)
+            .await;
+
+        let registry = std::sync::Arc::new(scope::ScopeRegistry::new());
+        // 注册一个始终拒绝的 handler，但 scope=None 时不应触发
+        registry.register(
+            "blocked",
+            std::sync::Arc::new(StubScopeHandler { allowed: false }),
+        );
+        let client = make_client(&server)
+            .await
+            .with_scope_registry(registry);
+        let token = client.get_client_credentials_token(None).await.unwrap();
+        assert_eq!(token.access_token, "tok");
+    }
+
+    /// 注入 ScopeRegistry 后校验失败返回 OAuth2 错误，不发送 HTTP 请求（spec Scenario）。
+    #[tokio::test]
+    #[cfg(feature = "oauth2-scope-handler")]
+    async fn scope_registry_rejects_scope_returns_oauth2_error() {
+        let server = MockServer::start().await;
+        // 不挂载任何 mock → 若发送 HTTP 请求会因无匹配 mock 返回 404（但被 reqwest 接收为 response）
+        // 我们断言根本不会执行到 HTTP 调用阶段：validate_scope 失败时立即返回
+
+        let registry = std::sync::Arc::new(scope::ScopeRegistry::new());
+        registry.register(
+            "admin",
+            std::sync::Arc::new(StubScopeHandler { allowed: false }),
+        );
+        let client = make_client(&server)
+            .await
+            .with_scope_registry(registry);
+
+        let result = client
+            .get_password_token("user", "pass", Some("admin"))
+            .await;
+        assert!(result.is_err());
+        match result.err() {
+            Some(BulwarkError::OAuth2(msg)) => assert!(msg.contains("scope validation failed: admin")),
+            other => panic!("期望 OAuth2 错误，实际: {:?}", other),
+        }
+    }
+
+    /// 注入 ScopeRegistry 后校验通过发送 HTTP 请求（spec Scenario 反向验证）。
+    #[tokio::test]
+    #[cfg(feature = "oauth2-scope-handler")]
+    async fn scope_registry_allows_scope_proceeds_to_http() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "access_token": "ok", "token_type": "Bearer"
+            })))
+            .mount(&server)
+            .await;
+
+        let registry = std::sync::Arc::new(scope::ScopeRegistry::new());
+        registry.register(
+            "read",
+            std::sync::Arc::new(StubScopeHandler { allowed: true }),
+        );
+        let client = make_client(&server)
+            .await
+            .with_scope_registry(registry);
+
+        let token = client
+            .get_client_credentials_token(Some("read"))
+            .await
+            .unwrap();
+        assert_eq!(token.access_token, "ok");
+    }
+
+    /// ScopeHandler 返回错误时向上传播（Fail Loud），不发送 HTTP 请求。
+    #[tokio::test]
+    #[cfg(feature = "oauth2-scope-handler")]
+    async fn scope_handler_error_propagates_without_http() {
+        use crate::error::BulwarkError;
+
+        struct ErrScopeHandler;
+        impl scope::ScopeHandler for ErrScopeHandler {
+            fn validate(&self, _scope: &str, _login_id: i64) -> BulwarkResult<bool> {
+                Err(BulwarkError::Internal("handler failure".to_string()))
+            }
+        }
+
+        let server = MockServer::start().await;
+        let registry = std::sync::Arc::new(scope::ScopeRegistry::new());
+        registry.register("bad", std::sync::Arc::new(ErrScopeHandler));
+        let client = make_client(&server)
+            .await
+            .with_scope_registry(registry);
+
+        let result = client
+            .refresh_access_token("rtok", Some("bad"))
+            .await;
+        assert!(result.is_err());
+        match result.err() {
+            Some(BulwarkError::Internal(msg)) => assert!(msg.contains("handler failure")),
+            other => panic!("期望 Internal 错误，实际: {:?}", other),
+        }
+    }
+
+    /// 未注册的 scope 返回 OAuth2 错误，不发送 HTTP 请求。
+    #[tokio::test]
+    #[cfg(feature = "oauth2-scope-handler")]
+    async fn unregistered_scope_returns_oauth2_error_without_http() {
+        let server = MockServer::start().await;
+        let registry = std::sync::Arc::new(scope::ScopeRegistry::new());
+        // 不注册任何 handler
+        let client = make_client(&server)
+            .await
+            .with_scope_registry(registry);
+
+        let result = client
+            .get_password_token("user", "pass", Some("unregistered"))
+            .await;
+        assert!(result.is_err());
+        match result.err() {
+            Some(BulwarkError::OAuth2(msg)) => {
+                assert!(msg.contains("scope handler not registered: unregistered"))
+            }
+            other => panic!("期望 OAuth2 错误，实际: {:?}", other),
+        }
     }
 }
