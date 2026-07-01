@@ -1,0 +1,12 @@
+//! sso_flow 示例测试（protocol-sso feature）。
+//!
+//! 验证 run() 完整执行（内部已包含 ticket issue/exchange/consume 断言）。
+
+#![cfg(feature = "protocol-sso")]
+
+use bulwark_examples::sso_flow;
+
+#[tokio::test]
+async fn test_run_completes() {
+    sso_flow::run().await.unwrap();
+}

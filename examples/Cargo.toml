@@ -1,0 +1,152 @@
+# Bulwark 官方示例集（workspace member，不发布到 crates.io）
+# 每个 bin 演示 Bulwark 的一个特性模块，配套 tests/<name>.rs 独立测试。
+
+[package]
+name = "bulwark-examples"
+version = "0.2.1"
+edition = "2021"
+rust-version = "1.85"
+publish = false
+description = "Bulwark 官方示例集（workspace member，不发布到 crates.io）"
+
+[dependencies]
+bulwark = { path = "..", default-features = false }
+tokio = { version = "1", features = ["full"] }
+async-trait = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# 直接被 httpdigest_login 使用（计算 HA2/Response 摘要）
+md5 = "0.7"
+# 直接被 sso_flow 使用（InMemoryDao 内部 Mutex）
+parking_lot = "0.12"
+# 直接被 custom_plugin / event_listener 使用（inventory::submit! 编译时注册插件/监听器）
+inventory = "0.3"
+# 直接被 context_request / axum_integration 使用（仅 web-axum feature 启用时编译）
+axum = { version = "0.8", default-features = false, features = ["json", "tokio", "http1"], optional = true }
+
+[dev-dependencies]
+serial_test = "3"
+
+[features]
+default = []
+
+# 聚合特性：启用 bulwark 全部特性 + axum 依赖 + 所有转发特性
+# 必须显式列出所有转发特性，否则 tests/<name>.rs 中的 #![cfg(feature = "...")] 不会生效
+full = [
+    "bulwark/full", "dep:axum",
+    "secure-sign", "secure-httpbasic", "secure-httpdigest", "secure-totp",
+    "protocol-sign", "protocol-apikey", "protocol-temp",
+    "protocol-jwt", "protocol-oauth2", "protocol-sso",
+    "listener", "web-axum", "cache-memory", "db-sqlite",
+]
+
+# 单特性转发到 bulwark（保持与 bulwark feature 名一致）
+secure-sign = ["bulwark/secure-sign"]
+secure-httpbasic = ["bulwark/secure-httpbasic"]
+secure-httpdigest = ["bulwark/secure-httpdigest"]
+secure-totp = ["bulwark/secure-totp"]
+protocol-sign = ["bulwark/protocol-sign"]
+protocol-apikey = ["bulwark/protocol-apikey"]
+protocol-temp = ["bulwark/protocol-temp"]
+protocol-jwt = ["bulwark/protocol-jwt"]
+protocol-oauth2 = ["bulwark/protocol-oauth2"]
+protocol-sso = ["bulwark/protocol-sso"]
+listener = ["bulwark/listener"]
+web-axum = ["bulwark/web-axum", "dep:axum"]
+cache-memory = ["bulwark/cache-memory"]
+db-sqlite = ["bulwark/db-sqlite"]
+
+# ====================================================================
+# Feature-gated bins（required-features 防止 feature 关闭时编译失败）
+# always-on bins 由 cargo 自动发现 src/bin/*.rs，无需 [[bin]] 段。
+# ====================================================================
+
+[[bin]]
+name = "sign_utils"
+required-features = ["secure-sign"]
+path = "src/bin/sign_utils.rs"
+
+[[bin]]
+name = "httpbasic_login"
+required-features = ["secure-httpbasic"]
+path = "src/bin/httpbasic_login.rs"
+
+[[bin]]
+name = "httpdigest_login"
+required-features = ["secure-httpdigest"]
+path = "src/bin/httpdigest_login.rs"
+
+[[bin]]
+name = "sign_protocol"
+required-features = ["protocol-sign"]
+path = "src/bin/sign_protocol.rs"
+
+[[bin]]
+name = "apikey_management"
+required-features = ["protocol-apikey"]
+path = "src/bin/apikey_management.rs"
+
+[[bin]]
+name = "temp_credential"
+required-features = ["protocol-temp"]
+path = "src/bin/temp_credential.rs"
+
+[[bin]]
+name = "event_listener"
+required-features = ["listener"]
+path = "src/bin/event_listener.rs"
+
+[[bin]]
+name = "jwt_login"
+required-features = ["protocol-jwt"]
+path = "src/bin/jwt_login.rs"
+
+[[bin]]
+name = "oauth2_flow"
+required-features = ["protocol-oauth2"]
+path = "src/bin/oauth2_flow.rs"
+
+[[bin]]
+name = "sso_flow"
+required-features = ["protocol-sso"]
+path = "src/bin/sso_flow.rs"
+
+[[bin]]
+name = "totp_login"
+required-features = ["secure-totp"]
+path = "src/bin/totp_login.rs"
+
+[[bin]]
+name = "session_management"
+required-features = ["cache-memory"]
+path = "src/bin/session_management.rs"
+
+[[bin]]
+name = "dao_operations"
+required-features = ["cache-memory"]
+path = "src/bin/dao_operations.rs"
+
+[[bin]]
+name = "context_request"
+required-features = ["web-axum"]
+path = "src/bin/context_request.rs"
+
+[[bin]]
+name = "strategy_firewall"
+required-features = ["cache-memory", "web-axum"]
+path = "src/bin/strategy_firewall.rs"
+
+[[bin]]
+name = "manager_lifecycle"
+required-features = ["cache-memory", "web-axum"]
+path = "src/bin/manager_lifecycle.rs"
+
+[[bin]]
+name = "basic_login"
+required-features = ["cache-memory", "web-axum"]
+path = "src/bin/basic_login.rs"
+
+[[bin]]
+name = "axum_integration"
+required-features = ["cache-memory", "web-axum"]
+path = "src/bin/axum_integration.rs"

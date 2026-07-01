@@ -16,6 +16,10 @@ readme = "README.md"
 keywords = ["auth", "authentication", "authorization", "jwt", "rbac"]
 categories = ["authentication", "web-programming"]
 
+[workspace]
+members = [".", "examples"]
+resolver = "2"
+
 [lib]
 name = "bulwark"
 path = "src/lib.rs"
@@ -139,60 +143,8 @@ development = [
     "cache-memory", "db-sqlite", "web-axum",
 ]
 
-# === 示例文件（feature-gated 示例需指定 required-features） ===
-# always on 示例无需 required-features，显式声明便于文档化
-
-[[example]]
-name = "exception_handling"
-# always on
-
-[[example]]
-name = "json_template"
-# always on
-
-[[example]]
-name = "sign_utils"
-required-features = ["secure-sign"]
-
-[[example]]
-name = "httpbasic_login"
-required-features = ["secure-httpbasic"]
-
-[[example]]
-name = "httpdigest_login"
-required-features = ["secure-httpdigest"]
-
-[[example]]
-name = "token_styles"
-# always on（jwt 风格需 protocol-jwt，但示例用 cfg 处理）
-
-[[example]]
-name = "auth_logic_impl"
-# always on
-
-[[example]]
-name = "permission_check"
-# always on
-
-[[example]]
-name = "sign_protocol"
-required-features = ["protocol-sign"]
-
-[[example]]
-name = "apikey_management"
-required-features = ["protocol-apikey"]
-
-[[example]]
-name = "temp_credential"
-required-features = ["protocol-temp"]
-
-[[example]]
-name = "event_listener"
-required-features = ["listener"]
-
-[[example]]
-name = "custom_plugin"
-# always on
+# === 示例文件已迁移为独立 workspace member（examples/） ===
+# 详见 examples/Cargo.toml，可通过 `cargo run -p bulwark-examples --bin <name> --features full` 运行
 
 [profile.dev]
 opt-level = 0
