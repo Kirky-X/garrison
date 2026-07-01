@@ -125,6 +125,10 @@ pub struct BulwarkConfig {
     /// JWT 签名算法（"HS256" 默认 / "HS512" 可选，依据 spec protocol-jwt）。
     pub jwt_algorithm: String,
 
+    /// JWT 签名密钥（0.2.0 新增，依据 spec core-auth-api：verify_token/refresh_token 委托 JwtHandler 需要 secret）。
+    /// 默认空字符串，业务方使用 JWT 时必须配置非空 secret。
+    pub jwt_secret: String,
+
     /// 签名校验时间窗口秒数（默认 300 秒，依据 spec protocol-sign 防重放）。
     pub sign_window_seconds: i64,
 
@@ -156,6 +160,7 @@ impl BulwarkConfig {
             cookie_secure: DEFAULT_COOKIE_SECURE,
             cookie_same_site: DEFAULT_COOKIE_SAME_SITE.to_string(),
             jwt_algorithm: DEFAULT_JWT_ALGORITHM.to_string(),
+            jwt_secret: String::new(),
             sign_window_seconds: DEFAULT_SIGN_WINDOW_SECONDS,
             sso_ticket_ttl_seconds: DEFAULT_SSO_TICKET_TTL_SECONDS,
             watcher: None,
@@ -702,6 +707,7 @@ throw_on_not_login = false
             cookie_secure: true,
             cookie_same_site: "Lax".to_string(),
             jwt_algorithm: "HS256".to_string(),
+            jwt_secret: String::new(),
             sign_window_seconds: 300,
             sso_ticket_ttl_seconds: 60,
             watcher: None,

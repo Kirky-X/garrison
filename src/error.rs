@@ -69,6 +69,10 @@ pub enum BulwarkError {
     /// 参数无效错误（0.2.0 新增，依据 spec protocol-oauth2）。
     #[error("参数无效: {0}")]
     InvalidParam(String),
+
+    /// 功能未实现（0.2.0 新增，依据 spec core-auth-api：default 实现返回此错误）。
+    #[error("未实现: {0}")]
+    NotImplemented(String),
 }
 
 /// Bulwark 框架统一 Result 类型别名。
@@ -151,6 +155,11 @@ impl axum::response::IntoResponse for BulwarkError {
                 StatusCode::BAD_REQUEST,
                 "INVALID_PARAM",
                 "参数无效",
+            ),
+            BulwarkError::NotImplemented(_) => (
+                StatusCode::NOT_IMPLEMENTED,
+                "NOT_IMPLEMENTED",
+                "未实现",
             ),
             // Exception 依据 BulwarkException.code 字段映射状态码（依据 spec exception-system Requirement: IntoResponse 实现）
             // code = -1 → 未登录 → 401；code = -2 → 无权限 → 403；其他 → 500

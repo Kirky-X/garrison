@@ -15,6 +15,7 @@
 //! stp 核心 API（logout/check_login/get_login_id）从 `current_token()` 读取。
 
 use crate::config::BulwarkConfig;
+use crate::core::token::TokenStyleFactory;
 use crate::error::{BulwarkError, BulwarkResult};
 use crate::session::BulwarkSession;
 use crate::strategy::BulwarkFirewallStrategy;
@@ -187,6 +188,61 @@ pub trait BulwarkLogic: Send + Sync {
     /// - 未持有角色：`BulwarkError::NotRole`。
     async fn check_role(&self, role: &str) -> BulwarkResult<()>;
 
+    /// 通过外部 token 反向建立会话（0.2.0 新增，依据 spec core-auth-api）。
+    ///
+    /// 用于 OAuth2/SSO 场景：外部 token 已通过协议层校验后，
+    /// 调用此方法在当前上下文建立内部会话。
+    ///
+    /// # 参数
+    /// - `token`: 外部 token 字符串（如 OAuth2 access_token / SSO ticket）。
+    ///
+    /// # 错误
+    /// - default 实现：`BulwarkError::NotImplemented`（未启用 protocol-oauth2/protocol-sso）。
+    async fn login_by_token(&self, _token: &str) -> BulwarkResult<()> {
+        Err(BulwarkError::NotImplemented(
+            "login_by_token 需启用 protocol-oauth2 或 protocol-sso feature".to_string(),
+        ))
+    }
+
+    /// 验证显式传入的 token 并返回关联的 login_id（0.2.0 新增，依据 spec core-auth-api）。
+    ///
+    /// 委托 `core-token::Token::verify` 实现。与 `check_login` 区别：
+    /// `check_login` 从 task_local 读取 token；`verify_token` 接收显式 token 参数。
+    ///
+    /// # 参数
+    /// - `token`: 待验证的 token 字符串。
+    ///
+    /// # 返回
+    /// - `Ok(login_id)`: token 有效，返回关联的 login_id。
+    ///
+    /// # 错误
+    /// - `BulwarkError::InvalidToken`: token 无效或不包含 login_id。
+    /// - `BulwarkError::NotImplemented`: default 实现未委托 Token trait。
+    async fn verify_token(&self, _token: &str) -> BulwarkResult<i64> {
+        Err(BulwarkError::NotImplemented(
+            "verify_token 需子类 override 委托 core-token::Token::verify".to_string(),
+        ))
+    }
+
+    /// 刷新 token（0.2.0 新增，依据 spec core-auth-api）。
+    ///
+    /// 仅在启用 `protocol-jwt` feature 时由 `JwtHandler` 提供有效实现。
+    ///
+    /// # 参数
+    /// - `token`: 待刷新的旧 token 字符串。
+    ///
+    /// # 返回
+    /// - `Ok(new_token)`: 刷新后的新 token 字符串。
+    ///
+    /// # 错误
+    /// - `BulwarkError::NotImplemented`: 未启用 protocol-jwt feature。
+    /// - `BulwarkError::InvalidToken`: token 已过期或无效。
+    async fn refresh_token(&self, _token: &str) -> BulwarkResult<String> {
+        Err(BulwarkError::NotImplemented(
+            "refresh_token 需启用 protocol-jwt feature".to_string(),
+        ))
+    }
+
     /// 获取当前 `BulwarkConfig` 引用（用于 token 提取、Cookie 配置等需要配置的场景）。
     ///
     /// # 返回
@@ -354,6 +410,31 @@ impl BulwarkLogic for BulwarkLogicDefault {
         } else {
             Err(BulwarkError::NotRole(role.to_string()))
         }
+    }
+
+    async fn verify_token(&self, token: &str) -> BulwarkResult<i64> {
+        // 依据 spec core-auth-api：委托 core-token::Token::verify
+        // spec: "不泄露 token 具体失效原因（统一 InvalidToken）"
+        let token_handler = TokenStyleFactory::new(&self.config.token_style, &self.config.jwt_secret)?;
+        match token_handler.verify(token) {
+            Ok(Some(login_id)) => Ok(login_id),
+            Ok(None) => Err(BulwarkError::InvalidToken(
+                "token 无效或不包含 login_id".to_string(),
+            )),
+            Err(_) => Err(BulwarkError::InvalidToken("token 无效".to_string())),
+        }
+    }
+
+    #[cfg(feature = "protocol-jwt")]
+    async fn refresh_token(&self, token: &str) -> BulwarkResult<String> {
+        // 依据 spec core-auth-api：启用 protocol-jwt 时委托 JwtHandler::refresh
+        if self.config.token_style != "jwt" {
+            return Err(BulwarkError::NotImplemented(
+                "refresh_token 仅在 token_style=jwt 时可用".to_string(),
+            ));
+        }
+        let handler = crate::protocol::jwt::JwtHandler::new(&self.config.jwt_secret);
+        handler.refresh(token, self.config.timeout)
     }
 
     fn config(&self) -> Arc<BulwarkConfig> {
@@ -555,6 +636,58 @@ impl BulwarkUtil {
     pub async fn check_role(role: &str) -> BulwarkResult<()> {
         crate::manager::BulwarkManager::logic()?
             .check_role(role)
+            .await
+    }
+
+    /// 通过外部 token 反向建立会话（0.2.0 新增，依据 spec core-auth-api）。
+    ///
+    /// 用于 OAuth2/SSO 场景：外部 token 已通过协议层校验后，
+    /// 调用此方法在当前上下文建立内部会话。
+    ///
+    /// # 参数
+    /// - `token`: 外部 token 字符串。
+    ///
+    /// # 错误
+    /// - `BulwarkManager` 未初始化：`BulwarkError::Session`。
+    /// - 未启用协议层 feature：`BulwarkError::NotImplemented`。
+    pub async fn login_by_token(token: &str) -> BulwarkResult<()> {
+        crate::manager::BulwarkManager::logic()?
+            .login_by_token(token)
+            .await
+    }
+
+    /// 验证显式传入的 token 并返回关联的 login_id（0.2.0 新增，依据 spec core-auth-api）。
+    ///
+    /// # 参数
+    /// - `token`: 待验证的 token 字符串。
+    ///
+    /// # 返回
+    /// - `Ok(login_id)`: token 有效，返回关联的 login_id。
+    ///
+    /// # 错误
+    /// - `BulwarkManager` 未初始化：`BulwarkError::Session`。
+    /// - token 无效：`BulwarkError::InvalidToken`。
+    pub async fn verify_token(token: &str) -> BulwarkResult<i64> {
+        crate::manager::BulwarkManager::logic()?
+            .verify_token(token)
+            .await
+    }
+
+    /// 刷新 token（0.2.0 新增，依据 spec core-auth-api）。
+    ///
+    /// # 参数
+    /// - `token`: 待刷新的旧 token 字符串。
+    ///
+    /// # 返回
+    /// - `Ok(new_token)`: 刷新后的新 token 字符串。
+    ///
+    /// # 错误
+    /// - `BulwarkManager` 未初始化：`BulwarkError::Session`。
+    /// - 未启用 protocol-jwt：`BulwarkError::NotImplemented`。
+    /// - token 已过期：`BulwarkError::InvalidToken`。
+    pub async fn refresh_token(token: &str) -> BulwarkResult<String> {
+        crate::manager::BulwarkManager::logic()?
+            .refresh_token(token)
             .await
     }
 
@@ -1328,6 +1461,172 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(login_id, Some(1001), "get_login_id 应返回当前 login_id");
+
+        BulwarkManager::reset_for_test();
+    }
+
+    // ------------------------------------------------------------------------
+    // 0.2.0 新增 API 测试：login_by_token / verify_token / refresh_token
+    // ------------------------------------------------------------------------
+
+    /// BulwarkLogicDefault::login_by_token default 返回 NotImplemented（spec Scenario）。
+    #[tokio::test]
+    async fn login_by_token_default_returns_not_implemented() {
+        let logic = make_logic(3600, 86400, false, "uuid", true, true);
+        let result = logic.login_by_token("any-token").await;
+        assert!(
+            matches!(result, Err(BulwarkError::NotImplemented(_))),
+            "default login_by_token 应返回 NotImplemented，实际: {:?}",
+            result
+        );
+    }
+
+    /// BulwarkUtil::login_by_token 未初始化时返回 Session 错误。
+    #[tokio::test]
+    #[serial]
+    async fn util_login_by_token_fails_when_not_initialized() {
+        BulwarkManager::reset_for_test();
+        let result = BulwarkUtil::login_by_token("any-token").await;
+        assert!(
+            matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("未初始化")),
+            "未初始化时 login_by_token 应返回 Session 错误"
+        );
+    }
+
+    /// verify_token 对 simple style token 返回 login_id（spec Scenario）。
+    ///
+    /// 注意：0.1.0 `generate_token("simple")` 生成 32 字符 UUID，
+    /// 与 core-token `SimpleTokenStyle` 的 `<login_id>-<uuid>` 格式不同。
+    /// 此测试手动构造 simple-format token 验证 verify_token 委托逻辑。
+    #[tokio::test]
+    async fn verify_token_simple_style_returns_login_id() {
+        let logic = make_logic(3600, 86400, false, "simple", true, true);
+        // 手动构造 simple-format token: <login_id>-<uuid>
+        let token = format!("1001-{}", uuid::Uuid::new_v4());
+        let login_id = logic.verify_token(&token).await.unwrap();
+        assert_eq!(login_id, 1001, "verify_token 应返回 login_id");
+    }
+
+    /// verify_token 对 uuid style token 返回 InvalidToken（spec Scenario）。
+    ///
+    /// uuid token 不包含 login_id，Token::verify 返回 None → InvalidToken。
+    #[tokio::test]
+    async fn verify_token_uuid_style_returns_invalid_token() {
+        let logic = make_logic(3600, 86400, false, "uuid", true, true);
+        let token = logic.login(1001).await.unwrap();
+        let result = logic.verify_token(&token).await;
+        assert!(
+            matches!(result, Err(BulwarkError::InvalidToken(_))),
+            "uuid style verify_token 应返回 InvalidToken，实际: {:?}",
+            result
+        );
+    }
+
+    /// verify_token 对无效 token 返回 InvalidToken（spec Scenario）。
+    ///
+    /// "nodash" 无 '-' 分隔符，SimpleTokenStyle::verify 返回 Ok(None) → InvalidToken。
+    #[tokio::test]
+    async fn verify_token_invalid_returns_error() {
+        let logic = make_logic(3600, 86400, false, "simple", true, true);
+        let result = logic.verify_token("nodash").await;
+        assert!(
+            matches!(result, Err(BulwarkError::InvalidToken(_))),
+            "无效 token 应返回 InvalidToken，实际: {:?}",
+            result
+        );
+    }
+
+    /// verify_token 对格式错误 token（含 '-' 但 login_id 非数字）返回 InvalidToken（spec Scenario）。
+    ///
+    /// spec: "不泄露 token 具体失效原因（统一 InvalidToken）"
+    #[tokio::test]
+    async fn verify_token_malformed_returns_invalid_token() {
+        let logic = make_logic(3600, 86400, false, "simple", true, true);
+        let result = logic.verify_token("abc-xyz").await;
+        assert!(
+            matches!(result, Err(BulwarkError::InvalidToken(_))),
+            "格式错误 token 应返回 InvalidToken（统一错误），实际: {:?}",
+            result
+        );
+    }
+
+    /// BulwarkUtil::verify_token 未初始化时返回 Session 错误。
+    #[tokio::test]
+    #[serial]
+    async fn util_verify_token_fails_when_not_initialized() {
+        BulwarkManager::reset_for_test();
+        let result = BulwarkUtil::verify_token("any-token").await;
+        assert!(
+            matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("未初始化")),
+            "未初始化时 verify_token 应返回 Session 错误"
+        );
+    }
+
+    /// refresh_token default 返回 NotImplemented（spec Scenario: 未启用 protocol-jwt）。
+    #[tokio::test]
+    async fn refresh_token_default_returns_not_implemented() {
+        let logic = make_logic(3600, 86400, false, "uuid", true, true);
+        let result = logic.refresh_token("any-token").await;
+        assert!(
+            matches!(result, Err(BulwarkError::NotImplemented(_))),
+            "default refresh_token 应返回 NotImplemented，实际: {:?}",
+            result
+        );
+    }
+
+    /// BulwarkUtil::refresh_token 未初始化时返回 Session 错误。
+    #[tokio::test]
+    #[serial]
+    async fn util_refresh_token_fails_when_not_initialized() {
+        BulwarkManager::reset_for_test();
+        let result = BulwarkUtil::refresh_token("any-token").await;
+        assert!(
+            matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("未初始化")),
+            "未初始化时 refresh_token 应返回 Session 错误"
+        );
+    }
+
+    /// BulwarkUtil::verify_token 端到端：simple style token → 返回 login_id。
+    ///
+    /// 注意：BulwarkUtil::login 使用 0.1.0 generate_token，"simple" 生成 32 字符 UUID，
+    /// 与 core-token SimpleTokenStyle 格式不同。此测试手动构造 simple-format token。
+    #[tokio::test]
+    #[serial]
+    async fn util_verify_token_returns_login_id() {
+        BulwarkManager::reset_for_test();
+        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let mut config = BulwarkConfig::default_config();
+        config.timeout = 3600;
+        config.active_timeout = -1;
+        config.token_style = "simple".to_string();
+        let interface: Arc<dyn BulwarkInterface> = Arc::new(MockInterface);
+        BulwarkManager::init(dao, Arc::new(config), interface).unwrap();
+
+        // 手动构造 simple-format token: <login_id>-<uuid>
+        let token = format!("1001-{}", uuid::Uuid::new_v4());
+        let login_id = BulwarkUtil::verify_token(&token).await.unwrap();
+        assert_eq!(login_id, 1001);
+
+        BulwarkManager::reset_for_test();
+    }
+
+    /// BulwarkUtil::refresh_token 端到端：未启用 protocol-jwt → NotImplemented。
+    #[tokio::test]
+    #[serial]
+    async fn util_refresh_token_returns_not_implemented_without_jwt() {
+        BulwarkManager::reset_for_test();
+        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let mut config = BulwarkConfig::default_config();
+        config.timeout = 3600;
+        config.active_timeout = -1;
+        let interface: Arc<dyn BulwarkInterface> = Arc::new(MockInterface);
+        BulwarkManager::init(dao, Arc::new(config), interface).unwrap();
+
+        let result = BulwarkUtil::refresh_token("any-token").await;
+        assert!(
+            matches!(result, Err(BulwarkError::NotImplemented(_))),
+            "未启用 protocol-jwt 时 refresh_token 应返回 NotImplemented"
+        );
 
         BulwarkManager::reset_for_test();
     }
