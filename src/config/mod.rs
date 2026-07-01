@@ -919,6 +919,7 @@ throw_on_not_login = false
     ///
     /// 覆盖 trait 方法签名行（确保通过 trait dispatch 也能调用）。
     #[test]
+    #[serial]
     fn trait_dispatch_apply_env_overrides() {
         let config = BulwarkConfig::default_config();
         let result: BulwarkResult<BulwarkConfig> =

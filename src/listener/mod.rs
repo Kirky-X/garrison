@@ -148,6 +148,7 @@ impl Default for BulwarkListenerManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     // ========================================================================
@@ -205,6 +206,7 @@ mod tests {
 
     /// Login 事件携带 login_id、token 与 device（spec Scenario）。
     #[test]
+    #[serial]
     fn login_event_carries_login_id_token_device() {
         let event = BulwarkEvent::Login {
             login_id: 1001,
@@ -227,6 +229,7 @@ mod tests {
 
     /// Logout 事件携带 login_id 与 token（spec Scenario）。
     #[test]
+    #[serial]
     fn logout_event_carries_login_id_and_token() {
         let event = BulwarkEvent::Logout {
             login_id: 1001,
@@ -243,6 +246,7 @@ mod tests {
 
     /// Kickout 事件携带踢出原因（spec Scenario）。
     #[test]
+    #[serial]
     fn kickout_event_carries_reason() {
         let event = BulwarkEvent::Kickout {
             login_id: 1001,
@@ -265,6 +269,7 @@ mod tests {
 
     /// PermissionDenied 事件携带被拒权限（spec Scenario）。
     #[test]
+    #[serial]
     fn permission_denied_event_carries_permission() {
         let event = BulwarkEvent::PermissionDenied {
             login_id: 1001,
@@ -284,6 +289,7 @@ mod tests {
 
     /// RoleDenied 事件携带被拒角色（spec Scenario）。
     #[test]
+    #[serial]
     fn role_denied_event_carries_role() {
         let event = BulwarkEvent::RoleDenied {
             login_id: 1001,
@@ -300,6 +306,7 @@ mod tests {
 
     /// TokenExpired 事件携带过期 token（spec Scenario）。
     #[test]
+    #[serial]
     fn token_expired_event_carries_token() {
         let event = BulwarkEvent::TokenExpired {
             token: "T1".to_string(),
@@ -314,6 +321,7 @@ mod tests {
 
     /// BulwarkEvent 派生 Debug 与 Clone（spec Requirement）。
     #[test]
+    #[serial]
     fn event_derives_debug_and_clone() {
         let event = BulwarkEvent::Login {
             login_id: 1001,
@@ -337,6 +345,7 @@ mod tests {
 
     /// 默认 on_event 返回 Ok(())（spec Scenario：监听器需实现 on_event 方法）。
     #[test]
+    #[serial]
     fn default_on_event_returns_ok() {
         struct EmptyListener;
         impl BulwarkListener for EmptyListener {}
@@ -355,6 +364,7 @@ mod tests {
 
     /// manager 收集所有已注册监听器（spec Scenario）。
     #[test]
+    #[serial]
     fn manager_collects_registered_listeners() {
         let manager = BulwarkListenerManager::new();
         // 至少 2 个监听器（OkListener + ErrListener）
@@ -363,6 +373,7 @@ mod tests {
 
     /// broadcast 调用所有监听器（spec Scenario）。
     #[test]
+    #[serial]
     fn broadcast_invokes_all_listeners() {
         reset_counters();
         let manager = BulwarkListenerManager::new();
@@ -378,6 +389,7 @@ mod tests {
 
     /// 单个监听器失败不中断广播（spec Scenario）。
     #[test]
+    #[serial]
     fn broadcast_listener_failure_does_not_interrupt() {
         reset_counters();
         let manager = BulwarkListenerManager::new();
@@ -392,6 +404,7 @@ mod tests {
 
     /// Default trait 实现等价于 new()。
     #[test]
+    #[serial]
     fn default_equals_new() {
         let m1 = BulwarkListenerManager::new();
         let m2 = BulwarkListenerManager::default();
