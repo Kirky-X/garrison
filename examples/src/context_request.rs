@@ -1,7 +1,7 @@
 //! 上下文与请求示例：演示 BulwarkContext + AxumAdapter 的请求/响应操作。
 //!
 //! 流程：
-//! 1. 构造 axum Request<Body>
+//! 1. 构造 axum `Request<Body>`
 //! 2. 创建 AxumContext 并获取 BulwarkRequest
 //! 3. 从 header 提取 token（Bearer + 自定义 header）
 //! 4. 从 cookie 提取 token
