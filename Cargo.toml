@@ -139,6 +139,61 @@ development = [
     "cache-memory", "db-sqlite", "web-axum",
 ]
 
+# === 示例文件（feature-gated 示例需指定 required-features） ===
+# always on 示例无需 required-features，显式声明便于文档化
+
+[[example]]
+name = "exception_handling"
+# always on
+
+[[example]]
+name = "json_template"
+# always on
+
+[[example]]
+name = "sign_utils"
+required-features = ["secure-sign"]
+
+[[example]]
+name = "httpbasic_login"
+required-features = ["secure-httpbasic"]
+
+[[example]]
+name = "httpdigest_login"
+required-features = ["secure-httpdigest"]
+
+[[example]]
+name = "token_styles"
+# always on（jwt 风格需 protocol-jwt，但示例用 cfg 处理）
+
+[[example]]
+name = "auth_logic_impl"
+# always on
+
+[[example]]
+name = "permission_check"
+# always on
+
+[[example]]
+name = "sign_protocol"
+required-features = ["protocol-sign"]
+
+[[example]]
+name = "apikey_management"
+required-features = ["protocol-apikey"]
+
+[[example]]
+name = "temp_credential"
+required-features = ["protocol-temp"]
+
+[[example]]
+name = "event_listener"
+required-features = ["listener"]
+
+[[example]]
+name = "custom_plugin"
+# always on
+
 [profile.dev]
 opt-level = 0
 debug = true
