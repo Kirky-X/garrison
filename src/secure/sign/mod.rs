@@ -197,14 +197,8 @@ mod tests {
     /// MD5 输出 32 字符小写十六进制，与标准值一致。
     #[test]
     fn md5_known_values() {
-        assert_eq!(
-            Signer::md5(b"hello"),
-            "5d41402abc4b2a76b9719d911017c592"
-        );
-        assert_eq!(
-            Signer::md5(b""),
-            "d41d8cd98f00b204e9800998ecf8427e"
-        );
+        assert_eq!(Signer::md5(b"hello"), "5d41402abc4b2a76b9719d911017c592");
+        assert_eq!(Signer::md5(b""), "d41d8cd98f00b204e9800998ecf8427e");
     }
 
     // ========================================================================

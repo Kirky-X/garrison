@@ -175,9 +175,7 @@ impl OAuth2Client {
         scope: Option<&str>,
     ) -> BulwarkResult<TokenResponse> {
         if username.is_empty() {
-            return Err(BulwarkError::InvalidParam(
-                "username 不可为空".to_string(),
-            ));
+            return Err(BulwarkError::InvalidParam("username 不可为空".to_string()));
         }
         let mut params: Vec<(&str, &str)> = vec![
             ("grant_type", "password"),
@@ -285,7 +283,7 @@ mod tests {
         let result = OAuth2Client::new("", "secret", "redirect", "auth", "token");
         assert!(result.is_err());
         match result.err() {
-            Some(BulwarkError::Config(_)) => {}
+            Some(BulwarkError::Config(_)) => {},
             other => panic!("期望 Config 错误，实际: {:?}", other),
         }
     }
@@ -296,10 +294,7 @@ mod tests {
         let client = OAuth2Client::new("cid", "secret", "redirect", "auth", "token")
             .unwrap()
             .with_user_info_url("https://example.com/userinfo");
-        assert_eq!(
-            client.user_info_url(),
-            Some("https://example.com/userinfo")
-        );
+        assert_eq!(client.user_info_url(), Some("https://example.com/userinfo"));
     }
 
     // ========================================================================
@@ -403,12 +398,10 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/token"))
-            .respond_with(
-                ResponseTemplate::new(400).set_body_json(serde_json::json!({
-                    "error": "invalid_grant",
-                    "error_description": "Invalid authorization code"
-                })),
-            )
+            .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+                "error": "invalid_grant",
+                "error_description": "Invalid authorization code"
+            })))
             .mount(&server)
             .await;
 
@@ -416,7 +409,7 @@ mod tests {
         let result = client.exchange_code("invalid-code", "state").await;
         assert!(result.is_err());
         match result.err() {
-            Some(BulwarkError::OAuth2(_)) => {}
+            Some(BulwarkError::OAuth2(_)) => {},
             other => panic!("期望 OAuth2 错误，实际: {:?}", other),
         }
     }
@@ -441,7 +434,10 @@ mod tests {
             .await;
 
         let client = make_client(&server).await;
-        let token = client.get_client_credentials_token(Some("read write")).await.unwrap();
+        let token = client
+            .get_client_credentials_token(Some("read write"))
+            .await
+            .unwrap();
         assert_eq!(token.access_token, "cc-token");
         assert_eq!(token.scope, Some("read write".to_string()));
     }
@@ -471,11 +467,9 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/token"))
-            .respond_with(
-                ResponseTemplate::new(401).set_body_json(serde_json::json!({
-                    "error": "invalid_client"
-                })),
-            )
+            .respond_with(ResponseTemplate::new(401).set_body_json(serde_json::json!({
+                "error": "invalid_client"
+            })))
             .mount(&server)
             .await;
 
@@ -483,7 +477,7 @@ mod tests {
         let result = client.get_client_credentials_token(None).await;
         assert!(result.is_err());
         match result.err() {
-            Some(BulwarkError::OAuth2(_)) => {}
+            Some(BulwarkError::OAuth2(_)) => {},
             other => panic!("期望 OAuth2 错误，实际: {:?}", other),
         }
     }
@@ -521,11 +515,9 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/token"))
-            .respond_with(
-                ResponseTemplate::new(401).set_body_json(serde_json::json!({
-                    "error": "invalid_grant"
-                })),
-            )
+            .respond_with(ResponseTemplate::new(401).set_body_json(serde_json::json!({
+                "error": "invalid_grant"
+            })))
             .mount(&server)
             .await;
 
@@ -533,7 +525,7 @@ mod tests {
         let result = client.get_password_token("alice", "wrong-pwd", None).await;
         assert!(result.is_err());
         match result.err() {
-            Some(BulwarkError::OAuth2(_)) => {}
+            Some(BulwarkError::OAuth2(_)) => {},
             other => panic!("期望 OAuth2 错误，实际: {:?}", other),
         }
     }
@@ -546,7 +538,7 @@ mod tests {
         let result = client.get_password_token("", "pwd", None).await;
         assert!(result.is_err());
         match result.err() {
-            Some(BulwarkError::InvalidParam(_)) => {}
+            Some(BulwarkError::InvalidParam(_)) => {},
             other => panic!("期望 InvalidParam 错误，实际: {:?}", other),
         }
     }

@@ -49,7 +49,7 @@ impl BulwarkDao for MockDao {
                     }
                 }
                 Ok(Some(value.clone()))
-            }
+            },
             None => Ok(None),
         }
     }
@@ -72,7 +72,7 @@ impl BulwarkDao for MockDao {
             Some((existing, _)) => {
                 *existing = value.to_string();
                 Ok(())
-            }
+            },
             None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
         }
     }
@@ -87,7 +87,7 @@ impl BulwarkDao for MockDao {
                     Some(Instant::now() + Duration::from_secs(seconds))
                 };
                 Ok(())
-            }
+            },
             None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
         }
     }
@@ -152,7 +152,7 @@ async fn ticket_is_one_time_use_across_subsystems() {
     let second = client_b.validate_ticket(&ticket, 2001).await;
     assert!(second.is_err(), "一次性使用：第二次校验应失败");
     match second.err() {
-        Some(BulwarkError::InvalidToken(_)) => {}
+        Some(BulwarkError::InvalidToken(_)) => {},
         other => panic!("期望 InvalidToken，实际: {:?}", other),
     }
 }
@@ -169,7 +169,7 @@ async fn ticket_client_id_isolation_across_subsystems() {
     let result = client_b.validate_ticket(&ticket, 9999).await;
     assert!(result.is_err(), "错误 client_id 应校验失败");
     match result.err() {
-        Some(BulwarkError::Config(_)) => {}
+        Some(BulwarkError::Config(_)) => {},
         other => panic!("期望 Config 错误，实际: {:?}", other),
     }
 

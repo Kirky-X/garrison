@@ -77,7 +77,10 @@ async fn main() -> BulwarkResult<()> {
     println!("    expire(\"expire_key\", 3600)（重置为 3600 秒）");
     tokio::time::sleep(Duration::from_secs(2)).await;
     let survived = dao.get("expire_key").await?;
-    println!("    2 秒后 get → {:?}（原 TTL 已过，但 expire 重置后仍存在）", survived);
+    println!(
+        "    2 秒后 get → {:?}（原 TTL 已过，但 expire 重置后仍存在）",
+        survived
+    );
     println!();
 
     // ----------------------------------------------------------------

@@ -109,9 +109,7 @@ impl AuthLogic for AuthLogicDefault {
     async fn verify_token(&self, token: &str) -> BulwarkResult<i64> {
         match self.get_login_id(token).await? {
             Some(id) => Ok(id),
-            None => Err(BulwarkError::InvalidToken(
-                "token 无效或已过期".to_string(),
-            )),
+            None => Err(BulwarkError::InvalidToken("token 无效或已过期".to_string())),
         }
     }
 }
@@ -119,8 +117,8 @@ impl AuthLogic for AuthLogicDefault {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dao::BulwarkDao;
     use crate::core::token::UuidTokenStyle;
+    use crate::dao::BulwarkDao;
     use async_trait::async_trait;
     use std::collections::HashMap;
     use std::time::{Duration, Instant};
@@ -152,7 +150,7 @@ mod tests {
                         }
                     }
                     Ok(Some(value.clone()))
-                }
+                },
                 None => Ok(None),
             }
         }
@@ -176,7 +174,7 @@ mod tests {
                 Some((existing, _)) => {
                     *existing = value.to_string();
                     Ok(())
-                }
+                },
                 None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
             }
         }
@@ -191,7 +189,7 @@ mod tests {
                         Some(Instant::now() + Duration::from_secs(seconds))
                     };
                     Ok(())
-                }
+                },
                 None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
             }
         }
@@ -334,7 +332,7 @@ mod tests {
         let result = auth.verify_token("invalid-token").await;
         assert!(result.is_err());
         match result.err() {
-            Some(BulwarkError::InvalidToken(_)) => {}
+            Some(BulwarkError::InvalidToken(_)) => {},
             other => panic!("期望 InvalidToken，实际: {:?}", other),
         }
     }

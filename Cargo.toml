@@ -3,7 +3,7 @@
 
 [package]
 name = "bulwark"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.85"  # MSRV: 部分 deps（如 inventory 0.3）要求 edition2024 → Rust 1.85+
 authors = ["Kirky.X"]

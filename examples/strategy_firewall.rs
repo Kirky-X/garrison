@@ -100,7 +100,10 @@ struct MyInterface {
 impl MyInterface {
     fn new() -> Self {
         let mut permissions = HashMap::new();
-        permissions.insert(1001, vec!["user:read".to_string(), "user:write".to_string()]);
+        permissions.insert(
+            1001,
+            vec!["user:read".to_string(), "user:write".to_string()],
+        );
         let mut roles = HashMap::new();
         roles.insert(1001, vec!["admin".to_string()]);
         Self { permissions, roles }
@@ -159,11 +162,21 @@ async fn main() -> BulwarkResult<()> {
     // 3. check_role_any 任一匹配
     // ----------------------------------------------------------------
     println!("[3] check_role_any:");
-    let any_match = firewall.check_role_any(1001, &["admin", "superuser"]).await?;
-    println!("    check_role_any(1001, [\"admin\", \"superuser\"]) = {}", any_match);
+    let any_match = firewall
+        .check_role_any(1001, &["admin", "superuser"])
+        .await?;
+    println!(
+        "    check_role_any(1001, [\"admin\", \"superuser\"]) = {}",
+        any_match
+    );
 
-    let any_no_match = firewall.check_role_any(1002, &["admin", "superuser"]).await?;
-    println!("    check_role_any(1002, [\"admin\", \"superuser\"]) = {}", any_no_match);
+    let any_no_match = firewall
+        .check_role_any(1002, &["admin", "superuser"])
+        .await?;
+    println!(
+        "    check_role_any(1002, [\"admin\", \"superuser\"]) = {}",
+        any_no_match
+    );
     println!();
 
     // ----------------------------------------------------------------
@@ -171,10 +184,18 @@ async fn main() -> BulwarkResult<()> {
     // ----------------------------------------------------------------
     println!("[4] check_role_all:");
     let all_match = firewall.check_role_all(1001, &["admin", "user"]).await?;
-    println!("    check_role_all(1001, [\"admin\", \"user\"]) = {}", all_match);
+    println!(
+        "    check_role_all(1001, [\"admin\", \"user\"]) = {}",
+        all_match
+    );
 
-    let all_no_match = firewall.check_role_all(1001, &["admin", "superuser"]).await?;
-    println!("    check_role_all(1001, [\"admin\", \"superuser\"]) = {}", all_no_match);
+    let all_no_match = firewall
+        .check_role_all(1001, &["admin", "superuser"])
+        .await?;
+    println!(
+        "    check_role_all(1001, [\"admin\", \"superuser\"]) = {}",
+        all_no_match
+    );
     println!();
 
     // ----------------------------------------------------------------
@@ -182,10 +203,16 @@ async fn main() -> BulwarkResult<()> {
     // ----------------------------------------------------------------
     println!("[5] 空字符串校验:");
     let empty_perm = firewall.check_permission(1001, "").await;
-    println!("    check_permission(1001, \"\") → {:?}", empty_perm.err().map(|e| e.to_string()));
+    println!(
+        "    check_permission(1001, \"\") → {:?}",
+        empty_perm.err().map(|e| e.to_string())
+    );
 
     let empty_role = firewall.check_role(1001, "").await;
-    println!("    check_role(1001, \"\") → {:?}", empty_role.err().map(|e| e.to_string()));
+    println!(
+        "    check_role(1001, \"\") → {:?}",
+        empty_role.err().map(|e| e.to_string())
+    );
     println!();
 
     // ----------------------------------------------------------------

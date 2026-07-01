@@ -58,11 +58,7 @@ impl TotpHandler {
             secret,
         )
         .map_err(|e| BulwarkError::Internal(format!("TOTP 初始化失败: {}", e)))?;
-        Ok(Self {
-            totp,
-            step,
-            digits,
-        })
+        Ok(Self { totp, step, digits })
     }
 
     /// 生成 TOTP 验证码（依据 RFC 6238）。

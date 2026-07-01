@@ -951,7 +951,10 @@ mod tests {
         let (_dao, session) = make_session(3600, 86400);
         session.create(1001, "T1").await.unwrap();
 
-        session.link_sso_ticket("T1", "ticket-abc-123").await.unwrap();
+        session
+            .link_sso_ticket("T1", "ticket-abc-123")
+            .await
+            .unwrap();
         let ticket = session.get_sso_ticket("T1").await.unwrap();
         assert_eq!(ticket, Some("ticket-abc-123".to_string()));
     }
@@ -1027,10 +1030,7 @@ mod tests {
         session.create(1001, "T1").await.unwrap();
 
         let temp_key = "bulwark:temp:order:abc123";
-        session
-            .link_temp_credential("T1", temp_key)
-            .await
-            .unwrap();
+        session.link_temp_credential("T1", temp_key).await.unwrap();
         let stored = session.get_temp_credential("T1").await.unwrap();
         assert_eq!(stored, Some(temp_key.to_string()));
     }
@@ -1161,10 +1161,7 @@ mod tests {
         let temp_key = "bulwark:temp:order:abc123";
         dao.set(temp_key, "secret-value", 300).await.unwrap();
         // 关联临时凭证到 token
-        session
-            .link_temp_credential("T1", temp_key)
-            .await
-            .unwrap();
+        session.link_temp_credential("T1", temp_key).await.unwrap();
 
         // 临时凭证仍存在，token 应有效
         let valid = session.is_valid("T1").await.unwrap();
@@ -1183,10 +1180,7 @@ mod tests {
         // 在 dao 中预置临时凭证
         let temp_key = "bulwark:temp:order:abc123";
         dao.set(temp_key, "secret-value", 300).await.unwrap();
-        session
-            .link_temp_credential("T1", temp_key)
-            .await
-            .unwrap();
+        session.link_temp_credential("T1", temp_key).await.unwrap();
 
         // 模拟临时凭证过期/被删除
         dao.delete(temp_key).await.unwrap();

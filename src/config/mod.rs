@@ -981,7 +981,10 @@ throw_on_not_login = false
         std::env::set_var(format!("{}SIGN_WINDOW_SECONDS", ENV_PREFIX), "not-a-number");
         let config = BulwarkConfig::default_config();
         let result = DefaultConfigLoader::apply_env_overrides(config);
-        assert!(result.is_err(), "非数字 SIGN_WINDOW_SECONDS 应导致 apply_env_overrides 失败");
+        assert!(
+            result.is_err(),
+            "非数字 SIGN_WINDOW_SECONDS 应导致 apply_env_overrides 失败"
+        );
         std::env::remove_var(format!("{}SIGN_WINDOW_SECONDS", ENV_PREFIX));
     }
 
@@ -992,7 +995,10 @@ throw_on_not_login = false
         std::env::set_var(format!("{}SSO_TICKET_TTL_SECONDS", ENV_PREFIX), "abc");
         let config = BulwarkConfig::default_config();
         let result = DefaultConfigLoader::apply_env_overrides(config);
-        assert!(result.is_err(), "非数字 SSO_TICKET_TTL_SECONDS 应导致 apply_env_overrides 失败");
+        assert!(
+            result.is_err(),
+            "非数字 SSO_TICKET_TTL_SECONDS 应导致 apply_env_overrides 失败"
+        );
         std::env::remove_var(format!("{}SSO_TICKET_TTL_SECONDS", ENV_PREFIX));
     }
 }

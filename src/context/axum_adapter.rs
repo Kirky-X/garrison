@@ -25,9 +25,7 @@ use std::collections::HashMap;
 /// 支持 `Bearer xxx`、`bearer xxx`、`BEARER xxx` 等任意大小写组合。
 fn strip_bearer_prefix(auth_str: &str) -> Option<&str> {
     let prefix = "bearer ";
-    if auth_str.len() >= prefix.len()
-        && auth_str[..prefix.len()].eq_ignore_ascii_case(prefix)
-    {
+    if auth_str.len() >= prefix.len() && auth_str[..prefix.len()].eq_ignore_ascii_case(prefix) {
         Some(&auth_str[prefix.len()..])
     } else {
         None
@@ -183,10 +181,7 @@ impl BulwarkResponse for AxumResponse {
 
     fn set_cookie(&mut self, name: &str, value: &str) -> BulwarkResult<()> {
         // 安全默认：HttpOnly; Secure; SameSite=Lax; Path=/
-        let cookie_value = format!(
-            "{}={}; HttpOnly; Secure; SameSite=Lax; Path=/",
-            name, value
-        );
+        let cookie_value = format!("{}={}; HttpOnly; Secure; SameSite=Lax; Path=/", name, value);
         self.set_header("Set-Cookie", &cookie_value)
     }
 
@@ -601,8 +596,7 @@ mod tests {
         let mut config = BulwarkConfig::default_config();
         config.cookie_secure = false;
         config.cookie_same_site = "Strict".to_string();
-        resp.set_cookie_with_config("token", "v", &config)
-            .unwrap();
+        resp.set_cookie_with_config("token", "v", &config).unwrap();
         let set_cookie = resp
             .headers
             .get("Set-Cookie")
@@ -922,7 +916,9 @@ mod tests {
         let mut ctx = AxumContext::new(&req);
         // 通过 raw_response_mut 设置状态码与 header
         ctx.raw_response_mut().set_status(404).unwrap();
-        ctx.raw_response_mut().set_header("X-Trace", "trace-123").unwrap();
+        ctx.raw_response_mut()
+            .set_header("X-Trace", "trace-123")
+            .unwrap();
         // 通过 into_response 消费 context 并验证设置生效
         let resp = ctx.into_response();
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);

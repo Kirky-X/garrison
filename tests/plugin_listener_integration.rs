@@ -19,11 +19,11 @@
 
 #![cfg(feature = "listener")]
 
+use bulwark::error::BulwarkResult;
 use bulwark::listener::{BulwarkEvent, BulwarkListener, BulwarkListenerManager};
 use bulwark::plugin::{BulwarkPlugin, BulwarkPluginManager};
-use bulwark::error::BulwarkResult;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 // ============================================================================
 // 测试用 Plugin（计数器记录钩子调用）
@@ -76,14 +76,14 @@ impl BulwarkListener for CountingListener {
         match event {
             BulwarkEvent::Login { .. } => {
                 LISTENER_LOGIN_EVENTS.fetch_add(1, Ordering::SeqCst);
-            }
+            },
             BulwarkEvent::Logout { .. } => {
                 LISTENER_LOGOUT_EVENTS.fetch_add(1, Ordering::SeqCst);
-            }
+            },
             BulwarkEvent::PermissionDenied { .. } => {
                 LISTENER_PERM_DENIED_EVENTS.fetch_add(1, Ordering::SeqCst);
-            }
-            _ => {}
+            },
+            _ => {},
         }
         Ok(())
     }
@@ -284,11 +284,26 @@ fn full_lifecycle_plugin_and_listener_cooperate() {
     });
 
     // 验证全部钩子与事件被触发
-    assert!(PLUGIN_LOGIN_CALLS.load(Ordering::SeqCst) >= 1, "plugin on_login");
-    assert!(PLUGIN_PERM_CHECK_CALLS.load(Ordering::SeqCst) >= 1, "plugin on_permission_check");
-    assert!(PLUGIN_LOGOUT_CALLS.load(Ordering::SeqCst) >= 1, "plugin on_logout");
-    assert!(LISTENER_LOGIN_EVENTS.load(Ordering::SeqCst) >= 1, "listener Login 事件");
-    assert!(LISTENER_LOGOUT_EVENTS.load(Ordering::SeqCst) >= 1, "listener Logout 事件");
+    assert!(
+        PLUGIN_LOGIN_CALLS.load(Ordering::SeqCst) >= 1,
+        "plugin on_login"
+    );
+    assert!(
+        PLUGIN_PERM_CHECK_CALLS.load(Ordering::SeqCst) >= 1,
+        "plugin on_permission_check"
+    );
+    assert!(
+        PLUGIN_LOGOUT_CALLS.load(Ordering::SeqCst) >= 1,
+        "plugin on_logout"
+    );
+    assert!(
+        LISTENER_LOGIN_EVENTS.load(Ordering::SeqCst) >= 1,
+        "listener Login 事件"
+    );
+    assert!(
+        LISTENER_LOGOUT_EVENTS.load(Ordering::SeqCst) >= 1,
+        "listener Logout 事件"
+    );
 }
 
 /// PermissionDenied 事件不被 plugin 触发，仅由 listener 接收（spec Scenario）。

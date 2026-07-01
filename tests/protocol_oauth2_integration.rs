@@ -142,7 +142,10 @@ async fn client_credentials_returns_token() {
 
     assert_eq!(resp.access_token, "cc-token");
     assert_eq!(resp.expires_in, Some(7200));
-    assert_eq!(resp.refresh_token, None, "client_credentials 不应返回 refresh_token");
+    assert_eq!(
+        resp.refresh_token, None,
+        "client_credentials 不应返回 refresh_token"
+    );
 }
 
 // ============================================================================
@@ -199,8 +202,14 @@ async fn get_auth_url_includes_required_params() {
     let client = client_for(&server);
 
     let url = client.get_auth_url("xyz-state");
-    assert!(url.contains("response_type=code"), "URL 应含 response_type=code");
-    assert!(url.contains("client_id=test-client-id"), "URL 应含 client_id");
+    assert!(
+        url.contains("response_type=code"),
+        "URL 应含 response_type=code"
+    );
+    assert!(
+        url.contains("client_id=test-client-id"),
+        "URL 应含 client_id"
+    );
     assert!(url.contains("state=xyz-state"), "URL 应含 state");
     assert!(
         url.contains("redirect_uri="),

@@ -46,7 +46,10 @@ async fn main() -> BulwarkResult<()> {
     // ----------------------------------------------------------------
     // 3. 查询 Token-Session
     // ----------------------------------------------------------------
-    let ts = session.get_token_session(token).await?.expect("Token-Session 应存在");
+    let ts = session
+        .get_token_session(token)
+        .await?
+        .expect("Token-Session 应存在");
     println!("[3] Token-Session 查询:");
     println!("    login_id = {}", ts.login_id);
     println!("    token = {}", ts.token);
@@ -56,7 +59,10 @@ async fn main() -> BulwarkResult<()> {
     // ----------------------------------------------------------------
     // 4. 查询 Account-Session
     // ----------------------------------------------------------------
-    let as_ = session.get_account_session(login_id).await?.expect("Account-Session 应存在");
+    let as_ = session
+        .get_account_session(login_id)
+        .await?
+        .expect("Account-Session 应存在");
     println!("[4] Account-Session 查询:");
     println!("    login_id = {}", as_.login_id);
     println!("    关联 token 数 = {}", as_.tokens.len());
@@ -102,7 +108,10 @@ async fn main() -> BulwarkResult<()> {
     let valid_after = session.is_valid(token).await?;
     println!("    登出后 is_valid = {}", valid_after);
     let ts_after = session.get_token_session(token).await?;
-    println!("    登出后 get_token_session = {:?}", ts_after.map(|_| "存在").unwrap_or("None"));
+    println!(
+        "    登出后 get_token_session = {:?}",
+        ts_after.map(|_| "存在").unwrap_or("None")
+    );
     println!();
 
     // ----------------------------------------------------------------
@@ -113,7 +122,10 @@ async fn main() -> BulwarkResult<()> {
     session.create(login_id, "token_two").await?;
     println!("[10] 多 token 登录: token_one + token_two");
 
-    let as_ = session.get_account_session(login_id).await?.expect("Account-Session 应存在");
+    let as_ = session
+        .get_account_session(login_id)
+        .await?
+        .expect("Account-Session 应存在");
     println!("     Account-Session token 数 = {}", as_.tokens.len());
 
     // 登出整个账号
@@ -121,7 +133,10 @@ async fn main() -> BulwarkResult<()> {
     println!("     logout_by_login_id({}) 完成", login_id);
 
     let as_after = session.get_account_session(login_id).await?;
-    println!("     登出后 Account-Session = {:?}", as_after.map(|_| "存在").unwrap_or("None"));
+    println!(
+        "     登出后 Account-Session = {:?}",
+        as_after.map(|_| "存在").unwrap_or("None")
+    );
 
     println!("\n=== 示例执行完成 ===");
     Ok(())

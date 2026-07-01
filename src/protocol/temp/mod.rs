@@ -62,9 +62,7 @@ impl TempCredentialHandler {
         // 拼接两个 UUID v4 simple（各 32 hex = 64 字符）
         let random = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
         let key = format!("bulwark:temp:{}:{}", prefix, random);
-        self.dao
-            .set(&key, value, ttl_seconds as u64)
-            .await?;
+        self.dao.set(&key, value, ttl_seconds as u64).await?;
         Ok(key)
     }
 
@@ -212,7 +210,7 @@ mod tests {
         let result = handler.issue("invite", "data", 0).await;
         assert!(result.is_err());
         match result.err() {
-            Some(BulwarkError::InvalidParam(_)) => {}
+            Some(BulwarkError::InvalidParam(_)) => {},
             other => panic!("期望 InvalidParam 错误，实际: {:?}", other),
         }
     }
@@ -224,7 +222,7 @@ mod tests {
         let result = handler.issue("inv:ite", "data", 60).await;
         assert!(result.is_err());
         match result.err() {
-            Some(BulwarkError::InvalidParam(_)) => {}
+            Some(BulwarkError::InvalidParam(_)) => {},
             other => panic!("期望 InvalidParam 错误，实际: {:?}", other),
         }
     }
@@ -258,7 +256,10 @@ mod tests {
     #[tokio::test]
     async fn get_nonexistent_returns_none() {
         let handler = make_handler();
-        let result = handler.get("bulwark:temp:invite:nonexistent").await.unwrap();
+        let result = handler
+            .get("bulwark:temp:invite:nonexistent")
+            .await
+            .unwrap();
         assert_eq!(result, None);
     }
 
@@ -317,7 +318,10 @@ mod tests {
     #[tokio::test]
     async fn consume_nonexistent_returns_none() {
         let handler = make_handler();
-        let value = handler.consume("bulwark:temp:invite:nonexistent").await.unwrap();
+        let value = handler
+            .consume("bulwark:temp:invite:nonexistent")
+            .await
+            .unwrap();
         assert_eq!(value, None);
     }
 
@@ -340,8 +344,12 @@ mod tests {
     async fn temp_namespace_isolated() {
         let dao = Arc::new(MockDao::new());
         // 模拟同时存在 temp key 与 apikey key
-        dao.set("bulwark:temp:invite:abc", "temp-value", 60).await.unwrap();
-        dao.set("bulwark:apikey:abc", "apikey-value", 60).await.unwrap();
+        dao.set("bulwark:temp:invite:abc", "temp-value", 60)
+            .await
+            .unwrap();
+        dao.set("bulwark:apikey:abc", "apikey-value", 60)
+            .await
+            .unwrap();
         let handler = TempCredentialHandler::new(dao.clone());
         // consume temp key 不影响 apikey key
         let value = handler.consume("bulwark:temp:invite:abc").await.unwrap();

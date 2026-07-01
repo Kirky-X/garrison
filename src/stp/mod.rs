@@ -316,7 +316,7 @@ impl BulwarkLogicDefault {
                         "jwt token_style 需启用 protocol-jwt feature".to_string(),
                     ))
                 }
-            }
+            },
             other => Err(BulwarkError::Config(format!(
                 "unknown token_style: {}",
                 other
@@ -427,7 +427,8 @@ impl BulwarkLogic for BulwarkLogicDefault {
     async fn verify_token(&self, token: &str) -> BulwarkResult<i64> {
         // 依据 spec core-auth-api：委托 core-token::Token::verify
         // spec: "不泄露 token 具体失效原因（统一 InvalidToken）"
-        let token_handler = TokenStyleFactory::new(&self.config.token_style, &self.config.jwt_secret)?;
+        let token_handler =
+            TokenStyleFactory::new(&self.config.token_style, &self.config.jwt_secret)?;
         match token_handler.verify(token) {
             Ok(Some(login_id)) => Ok(login_id),
             Ok(None) => Err(BulwarkError::InvalidToken(

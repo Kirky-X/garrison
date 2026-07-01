@@ -44,9 +44,8 @@ impl BulwarkJsonTemplate {
     /// - `Ok(Self)`: 解析成功，struct 内部持有解析后的 `Value`。
     /// - `Err(BulwarkError::Internal)`: JSON 解析失败，消息含解析错误信息。
     pub fn new(template: &str) -> BulwarkResult<Self> {
-        let value: serde_json::Value = serde_json::from_str(template).map_err(|e| {
-            BulwarkError::Internal(format!("JSON 模板解析失败: {}", e))
-        })?;
+        let value: serde_json::Value = serde_json::from_str(template)
+            .map_err(|e| BulwarkError::Internal(format!("JSON 模板解析失败: {}", e)))?;
         Ok(Self { value })
     }
 
@@ -60,7 +59,8 @@ impl BulwarkJsonTemplate {
     /// - `Err(BulwarkError::Internal)`: 序列化失败。
     pub fn render(&self, params: &HashMap<String, String>) -> BulwarkResult<String> {
         let rendered = render_value(self.value.clone(), params);
-        serde_json::to_string(&rendered).map_err(|e| BulwarkError::Internal(format!("JSON 序列化失败: {}", e)))
+        serde_json::to_string(&rendered)
+            .map_err(|e| BulwarkError::Internal(format!("JSON 序列化失败: {}", e)))
     }
 
     /// 获取内部 `Value` 的引用（便于直接访问）。
@@ -75,7 +75,10 @@ impl BulwarkJsonTemplate {
 /// - `Object` 类型: 递归处理每个值
 /// - `Array` 类型: 递归处理每个元素
 /// - 其他类型: 原样返回
-fn render_value(mut value: serde_json::Value, params: &HashMap<String, String>) -> serde_json::Value {
+fn render_value(
+    mut value: serde_json::Value,
+    params: &HashMap<String, String>,
+) -> serde_json::Value {
     match &mut value {
         serde_json::Value::String(s) => {
             for (key, val) in params {
@@ -85,19 +88,19 @@ fn render_value(mut value: serde_json::Value, params: &HashMap<String, String>) 
                 }
             }
             value
-        }
+        },
         serde_json::Value::Object(map) => {
             for (_, v) in map.iter_mut() {
                 *v = render_value(v.clone(), params);
             }
             value
-        }
+        },
         serde_json::Value::Array(arr) => {
             for v in arr.iter_mut() {
                 *v = render_value(v.clone(), params);
             }
             value
-        }
+        },
         _ => value,
     }
 }
@@ -171,10 +174,8 @@ mod tests {
     /// 验证 `render` 递归替换嵌套对象占位符（依据 spec Scenario: render 递归替换嵌套对象占位符）。
     #[test]
     fn render_replaces_nested_placeholders() {
-        let template = BulwarkJsonTemplate::new(
-            r#"{"data":{"token":"${token}","user":"${user}"}}"#,
-        )
-        .unwrap();
+        let template =
+            BulwarkJsonTemplate::new(r#"{"data":{"token":"${token}","user":"${user}"}}"#).unwrap();
         let mut params = HashMap::new();
         params.insert("token".to_string(), "T1".to_string());
         params.insert("user".to_string(), "alice".to_string());
@@ -223,8 +224,7 @@ mod tests {
     /// 验证 `render` 同一占位符多次出现全部替换。
     #[test]
     fn render_replaces_multiple_occurrences() {
-        let template =
-            BulwarkJsonTemplate::new(r#"{"a":"${token}","b":"${token}"}"#).unwrap();
+        let template = BulwarkJsonTemplate::new(r#"{"a":"${token}","b":"${token}"}"#).unwrap();
         let mut params = HashMap::new();
         params.insert("token".to_string(), "T".to_string());
         let rendered = template.render(&params).unwrap();
@@ -254,7 +254,10 @@ mod tests {
     #[test]
     fn serializer_default_serialize_to_json() {
         let serializer = BulwarkSerializerDefault;
-        let data = TestData { name: "alice".to_string(), age: 30 };
+        let data = TestData {
+            name: "alice".to_string(),
+            age: 30,
+        };
         let json = serializer.serialize(&data).unwrap();
         assert!(json.contains("alice"));
         assert!(json.contains("30"));
@@ -282,7 +285,10 @@ mod tests {
     #[test]
     fn serializer_default_roundtrip() {
         let serializer = BulwarkSerializerDefault;
-        let original = TestData { name: "charlie".to_string(), age: 40 };
+        let original = TestData {
+            name: "charlie".to_string(),
+            age: 40,
+        };
         let json = serializer.serialize(&original).unwrap();
         let deserialized: TestData = serializer.deserialize(&json).unwrap();
         assert_eq!(original, deserialized);

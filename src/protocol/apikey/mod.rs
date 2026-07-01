@@ -64,9 +64,7 @@ impl ApiKeyHandler {
         timeout: i64,
     ) -> BulwarkResult<String> {
         if timeout <= 0 {
-            return Err(BulwarkError::InvalidParam(
-                "timeout 必须大于 0".to_string(),
-            ));
+            return Err(BulwarkError::InvalidParam("timeout 必须大于 0".to_string()));
         }
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -81,11 +79,7 @@ impl ApiKeyHandler {
         let value = serde_json::to_string(&info)
             .map_err(|e| BulwarkError::Internal(format!("序列化 ApiKeyInfo 失败: {}", e)))?;
         // 拼接两个 UUID v4 simple（各 32 hex = 64 字符）
-        let key = format!(
-            "{}{}",
-            Uuid::new_v4().simple(),
-            Uuid::new_v4().simple()
-        );
+        let key = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
         let dao_key = format!("bulwark:apikey:{}", key);
         self.dao.set(&dao_key, &value, timeout as u64).await?;
         Ok(key)
@@ -102,24 +96,19 @@ impl ApiKeyHandler {
     pub async fn verify(&self, key: &str) -> BulwarkResult<ApiKeyInfo> {
         let dao_key = format!("bulwark:apikey:{}", key);
         let value = self.dao.get(&dao_key).await?;
-        let value = value.ok_or_else(|| {
-            BulwarkError::InvalidToken("API Key 不存在".to_string())
-        })?;
+        let value =
+            value.ok_or_else(|| BulwarkError::InvalidToken("API Key 不存在".to_string()))?;
         let info: ApiKeyInfo = serde_json::from_str(&value)
             .map_err(|e| BulwarkError::Internal(format!("反序列化 ApiKeyInfo 失败: {}", e)))?;
         if info.revoked {
-            return Err(BulwarkError::InvalidToken(
-                "API Key 已吊销".to_string(),
-            ));
+            return Err(BulwarkError::InvalidToken("API Key 已吊销".to_string()));
         }
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
             .map_err(|e| BulwarkError::Internal(format!("获取系统时间失败: {}", e)))?;
         if info.expire_at <= now {
-            return Err(BulwarkError::ExpiredToken(
-                "API Key 已过期".to_string(),
-            ));
+            return Err(BulwarkError::ExpiredToken("API Key 已过期".to_string()));
         }
         Ok(info)
     }
@@ -133,9 +122,8 @@ impl ApiKeyHandler {
     pub async fn revoke(&self, key: &str) -> BulwarkResult<()> {
         let dao_key = format!("bulwark:apikey:{}", key);
         let value = self.dao.get(&dao_key).await?;
-        let value = value.ok_or_else(|| {
-            BulwarkError::InvalidToken("API Key 不存在".to_string())
-        })?;
+        let value =
+            value.ok_or_else(|| BulwarkError::InvalidToken("API Key 不存在".to_string()))?;
         let mut info: ApiKeyInfo = serde_json::from_str(&value)
             .map_err(|e| BulwarkError::Internal(format!("反序列化 ApiKeyInfo 失败: {}", e)))?;
         info.revoked = true;
@@ -169,7 +157,8 @@ impl ApiKeyHandler {
                 "API Key 已过期，无法轮换".to_string(),
             ));
         }
-        self.generate(info.login_id, info.scopes, remaining_ttl).await
+        self.generate(info.login_id, info.scopes, remaining_ttl)
+            .await
     }
 }
 
@@ -251,7 +240,10 @@ mod tests {
     #[tokio::test]
     async fn generate_returns_64_chars() {
         let handler = make_handler();
-        let key = handler.generate(1001, vec!["read".into()], 3600).await.unwrap();
+        let key = handler
+            .generate(1001, vec!["read".into()], 3600)
+            .await
+            .unwrap();
         assert_eq!(key.len(), 64);
         assert!(key.chars().all(|c| c.is_ascii_hexdigit()));
     }
@@ -278,7 +270,10 @@ mod tests {
     async fn generate_uses_correct_key_prefix() {
         let dao = Arc::new(MockDao::new());
         let handler = ApiKeyHandler::new(dao.clone());
-        let key = handler.generate(1001, vec!["read".into()], 3600).await.unwrap();
+        let key = handler
+            .generate(1001, vec!["read".into()], 3600)
+            .await
+            .unwrap();
         let dao_key = format!("bulwark:apikey:{}", key);
         let value = dao.get(&dao_key).await.unwrap();
         assert!(value.is_some());
@@ -296,7 +291,10 @@ mod tests {
     #[tokio::test]
     async fn verify_success_returns_info() {
         let handler = make_handler();
-        let key = handler.generate(1001, vec!["read".into(), "write".into()], 3600).await.unwrap();
+        let key = handler
+            .generate(1001, vec!["read".into(), "write".into()], 3600)
+            .await
+            .unwrap();
         let info = handler.verify(&key).await.unwrap();
         assert_eq!(info.login_id, 1001);
         assert_eq!(info.scopes, vec!["read".to_string(), "write".to_string()]);
@@ -310,7 +308,7 @@ mod tests {
         let result = handler.verify("nonexistent-key").await;
         assert!(result.is_err());
         match result.err() {
-            Some(BulwarkError::InvalidToken(_)) => {}
+            Some(BulwarkError::InvalidToken(_)) => {},
             other => panic!("期望 InvalidToken 错误，实际: {:?}", other),
         }
     }
@@ -324,7 +322,7 @@ mod tests {
         let result = handler.verify(&key).await;
         assert!(result.is_err());
         match result.err() {
-            Some(BulwarkError::InvalidToken(_)) => {}
+            Some(BulwarkError::InvalidToken(_)) => {},
             other => panic!("期望 InvalidToken 错误，实际: {:?}", other),
         }
     }
@@ -340,7 +338,7 @@ mod tests {
         let result = handler.verify(&key).await;
         assert!(result.is_err());
         match result.err() {
-            Some(BulwarkError::ExpiredToken(_)) => {}
+            Some(BulwarkError::ExpiredToken(_)) => {},
             other => panic!("期望 ExpiredToken 错误，实际: {:?}", other),
         }
     }
@@ -368,7 +366,7 @@ mod tests {
         let result = handler.revoke("nonexistent-key").await;
         assert!(result.is_err());
         match result.err() {
-            Some(BulwarkError::InvalidToken(_)) => {}
+            Some(BulwarkError::InvalidToken(_)) => {},
             other => panic!("期望 InvalidToken 错误，实际: {:?}", other),
         }
     }
@@ -381,7 +379,10 @@ mod tests {
     #[tokio::test]
     async fn rotate_success() {
         let handler = make_handler();
-        let old_key = handler.generate(1001, vec!["read".into()], 3600).await.unwrap();
+        let old_key = handler
+            .generate(1001, vec!["read".into()], 3600)
+            .await
+            .unwrap();
         let new_key = handler.rotate(&old_key).await.unwrap();
         assert_ne!(old_key, new_key);
         assert_eq!(new_key.len(), 64);

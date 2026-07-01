@@ -90,11 +90,7 @@ pub struct Random64TokenStyle;
 impl Token for Random64TokenStyle {
     fn generate(&self, _login_id: i64, _timeout: i64) -> BulwarkResult<String> {
         // 拼接两个 UUID v4 的 simple 表示（各 32 hex 字符 = 64 字符）
-        let token = format!(
-            "{}{}",
-            Uuid::new_v4().simple(),
-            Uuid::new_v4().simple()
-        );
+        let token = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
         Ok(token)
     }
 
@@ -132,7 +128,7 @@ impl Token for SimpleTokenStyle {
                     BulwarkError::Internal(format!("Simple token login_id 解析失败: {}", e))
                 })?;
                 Ok(Some(login_id))
-            }
+            },
             None => Ok(None),
         }
     }
@@ -149,7 +145,7 @@ impl Token for SimpleTokenStyle {
                     expire_at: 0,
                     device: None,
                 })
-            }
+            },
             None => Err(BulwarkError::Internal(
                 "Simple token 格式错误：缺少 '-' 分隔符".to_string(),
             )),
@@ -238,7 +234,7 @@ impl TokenStyleFactory {
                 Err(BulwarkError::Config(
                     "unknown token_style: jwt（需启用 protocol-jwt feature）".to_string(),
                 ))
-            }
+            },
             other => Err(BulwarkError::Config(format!(
                 "unknown token_style: {}",
                 other

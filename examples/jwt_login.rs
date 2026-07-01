@@ -23,8 +23,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Bulwark JWT 登录示例 ===\n");
 
     // 1. 创建 JwtHandler，指定签名密钥（生产环境应从配置 / KMS 读取）
-    let handler = JwtHandler::new("my-very-secret-key-please-rotate-me")
-        .with_device("web-browser-chrome");
+    let handler =
+        JwtHandler::new("my-very-secret-key-please-rotate-me").with_device("web-browser-chrome");
 
     // 2. 签发 JWT（模拟用户 1001 登录，有效期 1 小时）
     let login_id: i64 = 1001;

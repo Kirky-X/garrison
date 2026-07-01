@@ -5,6 +5,120 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.2.0] - 2026-07-01
+
+### 概述
+
+Bulwark 0.2.0 在 0.1.0 核心基础设施上补全了 13 个占位特性域，覆盖 Sa-Token v1.45.0 的全部能力。
+本版本新增 17 个 capability，修改 3 个 capability，新增 200+ 单元测试 + 32 个集成测试，
+覆盖率 92.56%。所有协议层与安全模块均通过 spec-driven TDD 工作流实现。
+
+### 新增（17 个 capability）
+
+#### 协议层模块（6 个）
+
+- **protocol-jwt**：JWT 签发与验证（HS256/HS512，自定义 claims，过期校验），
+  `JwtHandler` 提供 `sign(login_id, timeout)` / `verify(token)` / `refresh(token)`
+- **protocol-oauth2**：OAuth2 授权码模式（Authorization Code）、客户端凭证模式（Client Credentials）、
+  密码模式（Password），`OAuth2Client` 提供 `exchange_code` / `get_client_credentials_token` /
+  `get_password_token` / `get_auth_url`
+- **protocol-sso**：SSO 单点登录 ticket 模型（签发、校验、销毁），64 字符随机 ticket，
+  60 秒 TTL，一次性使用，`SsoClient` 跨子系统通过共享 `BulwarkDao` 实现 SSO
+- **protocol-sign**：API 签名认证（HMAC-SHA256 + nonce + timestamp 防重放）
+- **protocol-apikey**：API Key 认证（生成/校验/吊销/轮换）
+- **protocol-temp**：临时凭证（短期 token，自动过期，issue/get/revoke/consume）
+
+#### 安全模块（4 个）
+
+- **secure-totp**：TOTP 动态验证码（RFC 6238，30 秒窗口，6 位数字），
+  `TotpHandler` 提供 `generate(secret)` / `validate(secret, code)`
+- **secure-sign**：安全签名工具（HMAC-SHA256/SHA512，Base64 编码，MD5 工具）
+- **secure-httpbasic**：HTTP Basic 认证（RFC 7617，Base64 编解码）
+- **secure-httpdigest**：HTTP Digest 认证（RFC 7616，MD5/SHA256）
+
+#### 核心模块（3 个）
+
+- **core-auth**：`AuthLogic` trait + `DefaultAuthLogic`，整合 login/verify/refresh
+- **core-permission**：`PermissionChecker` trait + `DefaultPermissionChecker`，支持 RBAC/ABAC
+- **core-token**：`Token` trait + `TokenStyleFactory`，支持 uuid/random_64/simple/jwt 风格
+
+#### 辅助模块（4 个）
+
+- **exception-system**：`BulwarkException` 异常类型体系（含 login_type、token_value 等上下文）
+- **json-template**：`BulwarkJsonTemplate` / `BulwarkSerializer` trait（JSON 模板与序列化抽象）
+- **plugin-system**：`BulwarkPlugin` trait + `BulwarkPluginManager` + inventory 编译期注册，
+  生命周期钩子（on_login / on_logout / on_permission_check），插件失败仅 tracing::warn!
+- **listener-system**：`BulwarkListener` trait + `BulwarkListenerManager` + 事件广播，
+  6 个事件变体（Login / Logout / Kickout / PermissionDenied / RoleDenied / TokenExpired）
+
+### 修改（3 个 capability）
+
+- **core-auth-api**：扩展 `BulwarkLogic` trait，新增 `login_by_token` / `verify_token` / `refresh_token`
+  默认方法（向后兼容 0.1.0）；修复 `generate_token` 对 "jwt" style 的支持（委托 `JwtHandler::sign`）
+- **session-management**：扩展 `BulwarkSession`，支持 SSO ticket 关联与临时凭证关联
+- **permission-role-check**：扩展 `BulwarkFirewallStrategyDefault`，集成 `PermissionChecker`，
+  支持角色层级（hierarchy）、插件钩子、权限缓存短路
+
+### 文档与示例
+
+- **crate-level 文档**：新增 0.2.0 模块概览，修正 default feature 描述
+- **协议/安全模块文档**：移除占位描述，添加实现引用
+- **示例代码**：
+  - `examples/jwt_login.rs`：JwtHandler sign/verify/refresh 完整流程
+  - `examples/oauth2_flow.rs`：OAuth2Client 构造 + get_auth_url
+  - `examples/sso_flow.rs`：SsoClient ticket 签发/校验/销毁（含 InMemoryDao）
+  - `examples/totp_login.rs`：TotpHandler generate/validate + Base32 解码
+
+### 集成测试
+
+- **tests/protocol_jwt_integration.rs**（4 tests）：JWT 完整 login/verify/refresh/logout 流程
+- **tests/protocol_oauth2_integration.rs**（7 tests）：wiremock mock 授权服务器，
+  覆盖 Authorization Code / Client Credentials / Password 三种流程
+- **tests/protocol_sso_integration.rs**（9 tests）：跨子系统 ticket 签发 → 校验 → 销毁，
+  验证一次性使用、client_id 隔离、destroy 跨子系统生效
+- **tests/plugin_listener_integration.rs**（12 tests）：inventory 编译期注册 +
+  钩子调用 + 事件广播 + 端到端生命周期协同
+
+### 测试覆盖率
+
+- **lib tests**：565 个
+- **集成测试**：43 个（annotation 9 + axum 11 + dbnexus 10 + jwt 4 + oauth2 7 + sso 9 + plugin_listener 12）
+  - 注：部分测试在多 feature 组合下重复编译，全量运行时为 633 tests passed
+- **doc-tests**：6 passed, 9 ignored
+- **覆盖率**：92.56%（1430/1545 行），超过 90% 目标
+
+### 特性域
+
+| 特性域 | 状态 | 说明 |
+|--------|------|------|
+| 登录认证 | ✅ 完成 | 基于 Token 的会话管理 |
+| 权限认证 | ✅ 完成 | RBAC 权限模型 + PermissionChecker |
+| Session 会话 | ✅ 完成 | 双模会话 + SSO/temp 关联 |
+| 路由拦截鉴权 | ✅ 完成 | axum Web 框架适配 |
+| 插件化扩展 | ✅ 完成 | BulwarkPlugin + inventory 注册 |
+| OAuth2 | ✅ 完成 | 三种授权模式 |
+| 单点登录 (SSO) | ✅ 完成 | ticket 模型 + 跨子系统 |
+| JWT | ✅ 完成 | HS256/HS512 + refresh |
+| 微服务网关鉴权 | ✅ 完成 | API 签名认证 |
+| API 接口鉴权 | ✅ 完成 | API Key 认证 |
+| TOTP 动态验证码 | ✅ 完成 | RFC 6238 |
+| Basic 认证 | ✅ 完成 | RFC 7617 |
+| Digest 认证 | ✅ 完成 | RFC 7616 |
+
+### 已知限制
+
+- **auto-wire gap**：`BulwarkLogicDefault` 当前不持有 `BulwarkPluginManager` / `BulwarkListenerManager`，
+  `BulwarkUtil::login` 不会自动触发 `on_login` / `Login` 事件。需用户在业务层手动调用
+  plugin/listener manager。此 auto-wire 在延后任务 13.4/13.5 中实现
+- **login_by_token 默认实现**：`BulwarkLogicDefault` 未 override `login_by_token`（返回 `NotImplemented`），
+  OAuth2/SSO 场景需直接使用协议层 client
+- **oxcache 0.3 `Cache<K,V>::update`**：无法保留 per-entry TTL（同 0.1.0）
+- **dbnexus 0.2**：仅支持 SQLite（同 0.1.0）
+
+### 最低支持 Rust 版本
+
+- Rust 1.85+（同 0.1.0）
+
 ## [0.1.0] - 2026-06-30
 
 ### 概述

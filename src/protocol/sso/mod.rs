@@ -70,12 +70,11 @@ impl SsoClient {
     /// 64 字符的 ticket 字符串。
     pub async fn issue_ticket(&self, login_id: i64, client_id: i64) -> BulwarkResult<String> {
         // 拼接两个 UUID v4 simple（各 32 hex = 64 字符）
-        let ticket = format!(
-            "{}{}",
-            Uuid::new_v4().simple(),
-            Uuid::new_v4().simple()
-        );
-        let data = SsoTicketData { login_id, client_id };
+        let ticket = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
+        let data = SsoTicketData {
+            login_id,
+            client_id,
+        };
         let value = serde_json::to_string(&data)
             .map_err(|e| BulwarkError::Internal(format!("序列化 SSO ticket 失败: {}", e)))?;
         let key = format!("bulwark:sso:ticket:{}", ticket);
@@ -99,15 +98,12 @@ impl SsoClient {
     pub async fn validate_ticket(&self, ticket: &str, client_id: i64) -> BulwarkResult<i64> {
         let key = format!("bulwark:sso:ticket:{}", ticket);
         let value = self.dao.get(&key).await?;
-        let value = value.ok_or_else(|| {
-            BulwarkError::InvalidToken("SSO 票据不存在或已过期".to_string())
-        })?;
+        let value = value
+            .ok_or_else(|| BulwarkError::InvalidToken("SSO 票据不存在或已过期".to_string()))?;
         let data: SsoTicketData = serde_json::from_str(&value)
             .map_err(|e| BulwarkError::Internal(format!("反序列化 SSO ticket 失败: {}", e)))?;
         if data.client_id != client_id {
-            return Err(BulwarkError::Config(
-                "SSO client_id 不匹配".to_string(),
-            ));
+            return Err(BulwarkError::Config("SSO client_id 不匹配".to_string()));
         }
         // 校验成功，立即删除（一次性使用）
         self.dao.delete(&key).await?;
@@ -271,7 +267,7 @@ mod tests {
         let result = client.validate_ticket(&ticket, 9999).await;
         assert!(result.is_err());
         match result.err() {
-            Some(BulwarkError::Config(_)) => {}
+            Some(BulwarkError::Config(_)) => {},
             other => panic!("期望 Config 错误，实际: {:?}", other),
         }
     }
@@ -283,7 +279,7 @@ mod tests {
         let result = client.validate_ticket("nonexistent-ticket", 2001).await;
         assert!(result.is_err());
         match result.err() {
-            Some(BulwarkError::InvalidToken(_)) => {}
+            Some(BulwarkError::InvalidToken(_)) => {},
             other => panic!("期望 InvalidToken 错误，实际: {:?}", other),
         }
     }

@@ -55,7 +55,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                     Ok(Some(value.clone()))
-                }
+                },
                 None => Ok(None),
             }
         }
@@ -78,7 +78,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Some((existing, _)) => {
                     *existing = value.to_string();
                     Ok(())
-                }
+                },
                 None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
             }
         }
@@ -93,7 +93,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         Some(Instant::now() + Duration::from_secs(seconds))
                     };
                     Ok(())
-                }
+                },
                 None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
             }
         }
@@ -119,10 +119,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 3. 子系统 B 用 ticket 校验并完成登录
     let validated_login_id = sso.validate_ticket(&ticket, client_id).await?;
-    println!(
-        "[校验] 校验成功，返回 login_id={}",
-        validated_login_id
-    );
+    println!("[校验] 校验成功，返回 login_id={}", validated_login_id);
     assert_eq!(validated_login_id, login_id);
 
     // 4. 验证 ticket 一次性语义：再次校验应失败

@@ -52,7 +52,7 @@ impl BulwarkDao for MockDao {
                     }
                 }
                 Ok(Some(value.clone()))
-            }
+            },
             None => Ok(None),
         }
     }
@@ -75,7 +75,7 @@ impl BulwarkDao for MockDao {
             Some((existing, _)) => {
                 *existing = value.to_string();
                 Ok(())
-            }
+            },
             None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
         }
     }
@@ -90,7 +90,7 @@ impl BulwarkDao for MockDao {
                     Some(Instant::now() + Duration::from_secs(seconds))
                 };
                 Ok(())
-            }
+            },
             None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
         }
     }
@@ -147,11 +147,7 @@ async fn jwt_end_to_end_login_verify_refresh_logout() {
     // 1. 登录：生成 JWT token 并写入会话
     let token = BulwarkUtil::login(1001).await.unwrap();
     assert!(!token.is_empty(), "login 应返回非空 token");
-    assert!(
-        token.contains('.'),
-        "JWT 应为三段式（含 .）：{}",
-        token
-    );
+    assert!(token.contains('.'), "JWT 应为三段式（含 .）：{}", token);
     println!("[登录] token={}", &token[..40.min(token.len())]);
 
     // 2. verify_token：校验 JWT 并返回 login_id
@@ -188,10 +184,7 @@ async fn jwt_end_to_end_login_verify_refresh_logout() {
         BulwarkUtil::check_login().await.unwrap()
     })
     .await;
-    assert!(
-        !logged_in_after,
-        "logout 后 check_login 应返回 false"
-    );
+    assert!(!logged_in_after, "logout 后 check_login 应返回 false");
     println!("[校验登出] check_login=false");
 }
 
@@ -202,10 +195,7 @@ async fn verify_token_rejects_invalid_jwt() {
     init_jwt_manager();
 
     let result = BulwarkUtil::verify_token("not.a.valid.jwt").await;
-    assert!(
-        result.is_err(),
-        "无效 JWT 应校验失败"
-    );
+    assert!(result.is_err(), "无效 JWT 应校验失败");
     println!("[异常] 无效 JWT 被拒绝：{:?}", result.err());
 }
 

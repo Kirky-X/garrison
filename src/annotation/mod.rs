@@ -198,9 +198,7 @@ mod extractors {
     /// 支持 `Bearer xxx`、`bearer xxx`、`BEARER xxx` 等任意大小写组合。
     fn strip_bearer_prefix(auth_str: &str) -> Option<&str> {
         let prefix = "bearer ";
-        if auth_str.len() >= prefix.len()
-            && auth_str[..prefix.len()].eq_ignore_ascii_case(prefix)
-        {
+        if auth_str.len() >= prefix.len() && auth_str[..prefix.len()].eq_ignore_ascii_case(prefix) {
             Some(&auth_str[prefix.len()..])
         } else {
             None
@@ -886,7 +884,10 @@ mod tests {
     #[test]
     fn annotation_name_returns_variant_string() {
         assert_eq!(Annotation::CheckLogin.name(), "CheckLogin");
-        assert_eq!(Annotation::CheckPermission("p".to_string()).name(), "CheckPermission");
+        assert_eq!(
+            Annotation::CheckPermission("p".to_string()).name(),
+            "CheckPermission"
+        );
         assert_eq!(Annotation::CheckRole("r".to_string()).name(), "CheckRole");
         assert_eq!(Annotation::CheckSafe.name(), "CheckSafe");
         assert_eq!(Annotation::CheckDisable.name(), "CheckDisable");

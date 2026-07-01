@@ -138,17 +138,13 @@ impl SignHandler {
             .map(|d| d.as_secs() as i64)
             .map_err(|e| BulwarkError::Internal(format!("获取系统时间失败: {}", e)))?;
         if (now - timestamp).abs() > self.timestamp_window {
-            return Err(BulwarkError::ExpiredToken(
-                "签名时间戳超出窗口".to_string(),
-            ));
+            return Err(BulwarkError::ExpiredToken("签名时间戳超出窗口".to_string()));
         }
 
         // (2) nonce 防重放检查
         let nonce_key = format!("bulwark:sign:nonce:{}", nonce);
         if self.dao.get(&nonce_key).await?.is_some() {
-            return Err(BulwarkError::InvalidToken(
-                "nonce 重放".to_string(),
-            ));
+            return Err(BulwarkError::InvalidToken("nonce 重放".to_string()));
         }
 
         // (3) 重新计算签名并常量时间比较
@@ -165,12 +161,10 @@ impl SignHandler {
             .map_err(|e| BulwarkError::InvalidToken(format!("签名 Base64 解码失败: {}", e)))?;
         // 使用 verify_slice 进行常量时间比较
         match mac.verify_slice(&signature_bytes) {
-            Ok(_) => {}
+            Ok(_) => {},
             Err(_) => {
-                return Err(BulwarkError::InvalidToken(
-                    "签名不匹配".to_string(),
-                ));
-            }
+                return Err(BulwarkError::InvalidToken("签名不匹配".to_string()));
+            },
         }
 
         // (4) 校验成功，存储 nonce（TTL = timestamp_window）
@@ -268,7 +262,7 @@ mod tests {
         let result = SignHandler::new("", "secret", dao);
         assert!(result.is_err());
         match result.err() {
-            Some(BulwarkError::Config(_)) => {}
+            Some(BulwarkError::Config(_)) => {},
             other => panic!("期望 Config 错误，实际: {:?}", other),
         }
     }
@@ -288,10 +282,18 @@ mod tests {
     #[test]
     fn sign_returns_base64_string() {
         let handler = make_handler();
-        let sig = handler.sign("POST", "/api/v1/users", 1700000000, "nonce-abc", "d41d8cd98f00b204e9800998ecf8427e");
+        let sig = handler.sign(
+            "POST",
+            "/api/v1/users",
+            1700000000,
+            "nonce-abc",
+            "d41d8cd98f00b204e9800998ecf8427e",
+        );
         // Base64 编码的 HMAC-SHA256 应为 44 字符（32 字节 → 44 字符含 padding）
         assert_eq!(sig.len(), 44);
-        assert!(sig.chars().all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '='));
+        assert!(sig
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '='));
     }
 
     /// 不同 body_md5 产生不同签名（spec Scenario）。
@@ -322,7 +324,9 @@ mod tests {
         let handler = make_handler();
         let ts = now_ts();
         let sig = handler.sign("POST", "/api/v1/users", ts, "nonce-1", "body-md5");
-        let result = handler.validate("POST", "/api/v1/users", ts, "nonce-1", "body-md5", &sig).await;
+        let result = handler
+            .validate("POST", "/api/v1/users", ts, "nonce-1", "body-md5", &sig)
+            .await;
         assert!(result.is_ok());
     }
 
@@ -333,7 +337,10 @@ mod tests {
         let handler = SignHandler::new("app", "secret", dao.clone()).unwrap();
         let ts = now_ts();
         let sig = handler.sign("GET", "/api", ts, "nonce-store", "body");
-        handler.validate("GET", "/api", ts, "nonce-store", "body", &sig).await.unwrap();
+        handler
+            .validate("GET", "/api", ts, "nonce-store", "body", &sig)
+            .await
+            .unwrap();
         let key = "bulwark:sign:nonce:nonce-store";
         let stored = dao.get(key).await.unwrap();
         assert!(stored.is_some());
@@ -344,10 +351,19 @@ mod tests {
     async fn validate_signature_mismatch_returns_error() {
         let handler = make_handler();
         let ts = now_ts();
-        let result = handler.validate("POST", "/api", ts, "nonce-mismatch", "body", "forged-signature").await;
+        let result = handler
+            .validate(
+                "POST",
+                "/api",
+                ts,
+                "nonce-mismatch",
+                "body",
+                "forged-signature",
+            )
+            .await;
         assert!(result.is_err());
         match result.err() {
-            Some(BulwarkError::InvalidToken(_)) => {}
+            Some(BulwarkError::InvalidToken(_)) => {},
             other => panic!("期望 InvalidToken 错误，实际: {:?}", other),
         }
     }
@@ -358,10 +374,12 @@ mod tests {
         let handler = make_handler();
         let old_ts = now_ts() - 600; // 超过 300 秒窗口
         let sig = handler.sign("POST", "/api", old_ts, "nonce-exp", "body");
-        let result = handler.validate("POST", "/api", old_ts, "nonce-exp", "body", &sig).await;
+        let result = handler
+            .validate("POST", "/api", old_ts, "nonce-exp", "body", &sig)
+            .await;
         assert!(result.is_err());
         match result.err() {
-            Some(BulwarkError::ExpiredToken(_)) => {}
+            Some(BulwarkError::ExpiredToken(_)) => {},
             other => panic!("期望 ExpiredToken 错误，实际: {:?}", other),
         }
     }
@@ -372,10 +390,12 @@ mod tests {
         let handler = make_handler();
         let future_ts = now_ts() + 600;
         let sig = handler.sign("POST", "/api", future_ts, "nonce-fut", "body");
-        let result = handler.validate("POST", "/api", future_ts, "nonce-fut", "body", &sig).await;
+        let result = handler
+            .validate("POST", "/api", future_ts, "nonce-fut", "body", &sig)
+            .await;
         assert!(result.is_err());
         match result.err() {
-            Some(BulwarkError::ExpiredToken(_)) => {}
+            Some(BulwarkError::ExpiredToken(_)) => {},
             other => panic!("期望 ExpiredToken 错误，实际: {:?}", other),
         }
     }
@@ -387,13 +407,17 @@ mod tests {
         let ts = now_ts();
         let sig = handler.sign("POST", "/api", ts, "nonce-replay", "body");
         // 第一次校验成功
-        let first = handler.validate("POST", "/api", ts, "nonce-replay", "body", &sig).await;
+        let first = handler
+            .validate("POST", "/api", ts, "nonce-replay", "body", &sig)
+            .await;
         assert!(first.is_ok());
         // 第二次校验失败（nonce 重放）
-        let second = handler.validate("POST", "/api", ts, "nonce-replay", "body", &sig).await;
+        let second = handler
+            .validate("POST", "/api", ts, "nonce-replay", "body", &sig)
+            .await;
         assert!(second.is_err());
         match second.err() {
-            Some(BulwarkError::InvalidToken(_)) => {}
+            Some(BulwarkError::InvalidToken(_)) => {},
             other => panic!("期望 InvalidToken 错误，实际: {:?}", other),
         }
     }
@@ -404,7 +428,9 @@ mod tests {
         let handler = make_handler();
         let ts = now_ts();
         let sig = handler.sign("POST", "/api", ts, "nonce-case", "body");
-        let result = handler.validate("post", "/api", ts, "nonce-case", "body", &sig).await;
+        let result = handler
+            .validate("post", "/api", ts, "nonce-case", "body", &sig)
+            .await;
         assert!(result.is_err());
     }
 }

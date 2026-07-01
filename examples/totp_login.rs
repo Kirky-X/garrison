@@ -72,7 +72,7 @@ fn main() {
             let handler2 = TotpHandler::new(bytes, 30, 6).expect("TOTP 初始化失败");
             let code2 = handler2.generate(now);
             println!("       解码密钥生成的验证码：{}", code2);
-        }
+        },
         Err(e) => println!("[解码] Base32 解码失败：{}", e),
     }
 

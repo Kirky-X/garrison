@@ -15,11 +15,11 @@
 //! cargo run --example context_request --features "web-axum"
 //! ```
 
+use axum::body::Body;
+use axum::http::Request;
 use bulwark::config::BulwarkConfig;
 use bulwark::context::{AxumContext, AxumRequest, BulwarkContext, BulwarkRequest, BulwarkResponse};
 use bulwark::error::BulwarkResult;
-use axum::body::Body;
-use axum::http::Request;
 
 #[tokio::main]
 async fn main() -> BulwarkResult<()> {
@@ -101,7 +101,13 @@ async fn main() -> BulwarkResult<()> {
     println!("    set_header(\"X-Trace-Id\", \"trace-abc-123\")");
     let response = ctx4.into_response();
     println!("    Response status = {}", response.status());
-    println!("    Response header = {:?}", response.headers().get("X-Trace-Id").and_then(|v| v.to_str().ok()));
+    println!(
+        "    Response header = {:?}",
+        response
+            .headers()
+            .get("X-Trace-Id")
+            .and_then(|v| v.to_str().ok())
+    );
     println!();
 
     // ----------------------------------------------------------------
@@ -113,7 +119,11 @@ async fn main() -> BulwarkResult<()> {
         resp.set_cookie("auth_token", "tok_value")?;
     }
     let response = ctx5.into_response();
-    let set_cookie = response.headers().get("Set-Cookie").and_then(|v| v.to_str().ok()).unwrap_or("");
+    let set_cookie = response
+        .headers()
+        .get("Set-Cookie")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
     println!("[6] 设置安全 Cookie（默认）:");
     println!("    set_cookie(\"auth_token\", \"tok_value\")");
     println!("    Set-Cookie: {}", set_cookie);
@@ -136,12 +146,19 @@ async fn main() -> BulwarkResult<()> {
         resp.set_cookie_with_config("dev_token", "dev_value", &dev_config)?;
     }
     let response = ctx6.into_response();
-    let dev_cookie = response.headers().get("Set-Cookie").and_then(|v| v.to_str().ok()).unwrap_or("");
+    let dev_cookie = response
+        .headers()
+        .get("Set-Cookie")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
     println!("[7] 设置自定义 Cookie（dev 模式）:");
     println!("    set_cookie_with_config(\"dev_token\", \"dev_value\", dev_config)");
     println!("    Set-Cookie: {}", dev_cookie);
     assert!(!dev_cookie.contains("Secure"), "dev 模式不应包含 Secure");
-    assert!(dev_cookie.contains("SameSite=Strict"), "应包含 SameSite=Strict");
+    assert!(
+        dev_cookie.contains("SameSite=Strict"),
+        "应包含 SameSite=Strict"
+    );
     println!("    ✓ dev 模式：无 Secure; SameSite=Strict");
     println!();
 

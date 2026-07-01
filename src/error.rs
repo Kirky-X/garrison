@@ -105,11 +105,13 @@ impl axum::response::IntoResponse for BulwarkError {
 
         let (status, error_code, message) = match &self {
             BulwarkError::NotLogin(_) => (StatusCode::UNAUTHORIZED, "NOT_LOGIN", "未登录"),
-            BulwarkError::InvalidToken(_) => (StatusCode::UNAUTHORIZED, "INVALID_TOKEN", "Token 无效"),
-            BulwarkError::ExpiredToken(_) => (StatusCode::UNAUTHORIZED, "EXPIRED_TOKEN", "Token 已过期"),
-            BulwarkError::NotPermission(_) => {
-                (StatusCode::FORBIDDEN, "NOT_PERMISSION", "无权限")
-            }
+            BulwarkError::InvalidToken(_) => {
+                (StatusCode::UNAUTHORIZED, "INVALID_TOKEN", "Token 无效")
+            },
+            BulwarkError::ExpiredToken(_) => {
+                (StatusCode::UNAUTHORIZED, "EXPIRED_TOKEN", "Token 已过期")
+            },
+            BulwarkError::NotPermission(_) => (StatusCode::FORBIDDEN, "NOT_PERMISSION", "无权限"),
             BulwarkError::NotRole(_) => (StatusCode::FORBIDDEN, "NOT_ROLE", "无角色"),
             BulwarkError::Dao(_) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -146,32 +148,18 @@ impl axum::response::IntoResponse for BulwarkError {
                 "OAUTH2_ERROR",
                 "OAuth2 错误",
             ),
-            BulwarkError::Network(_) => (
-                StatusCode::BAD_GATEWAY,
-                "NETWORK_ERROR",
-                "网络错误",
-            ),
-            BulwarkError::InvalidParam(_) => (
-                StatusCode::BAD_REQUEST,
-                "INVALID_PARAM",
-                "参数无效",
-            ),
-            BulwarkError::NotImplemented(_) => (
-                StatusCode::NOT_IMPLEMENTED,
-                "NOT_IMPLEMENTED",
-                "未实现",
-            ),
+            BulwarkError::Network(_) => (StatusCode::BAD_GATEWAY, "NETWORK_ERROR", "网络错误"),
+            BulwarkError::InvalidParam(_) => (StatusCode::BAD_REQUEST, "INVALID_PARAM", "参数无效"),
+            BulwarkError::NotImplemented(_) => {
+                (StatusCode::NOT_IMPLEMENTED, "NOT_IMPLEMENTED", "未实现")
+            },
             // Exception 依据 BulwarkException.code 字段映射状态码（依据 spec exception-system Requirement: IntoResponse 实现）
             // code = -1 → 未登录 → 401；code = -2 → 无权限 → 403；其他 → 500
             BulwarkError::Exception(ex) => {
                 let (status, error_code, message) = match ex.code {
                     -1 => (StatusCode::UNAUTHORIZED, "NOT_LOGIN", "未登录"),
                     -2 => (StatusCode::FORBIDDEN, "NOT_PERMISSION", "无权限"),
-                    _ => (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "EXCEPTION",
-                        "业务异常",
-                    ),
+                    _ => (StatusCode::INTERNAL_SERVER_ERROR, "EXCEPTION", "业务异常"),
                 };
                 let body = axum::Json(serde_json::json!({
                     "error_code": error_code,
@@ -179,7 +167,7 @@ impl axum::response::IntoResponse for BulwarkError {
                     "code": ex.code,
                 }));
                 return (status, body).into_response();
-            }
+            },
         };
         let body = axum::Json(serde_json::json!({
             "error_code": error_code,

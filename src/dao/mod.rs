@@ -143,7 +143,9 @@ mod oxcache_impl {
                 .map_err(|e| BulwarkError::Dao(format!("oxcache ttl_sync 失败: {}", e)))?;
             self.cache
                 .set_with_ttl_sync(&key.to_string(), &value.to_string(), remaining_ttl)
-                .map_err(|e| BulwarkError::Dao(format!("oxcache update (set_with_ttl_sync) 失败: {}", e)))
+                .map_err(|e| {
+                    BulwarkError::Dao(format!("oxcache update (set_with_ttl_sync) 失败: {}", e))
+                })
         }
 
         async fn expire(&self, key: &str, seconds: u64) -> BulwarkResult<()> {
@@ -159,7 +161,9 @@ mod oxcache_impl {
                     .ok_or_else(|| BulwarkError::Dao(format!("键不存在: {}", key)))?;
                 self.cache
                     .set_with_ttl_sync(&key.to_string(), &value, None)
-                    .map_err(|e| BulwarkError::Dao(format!("oxcache expire (set_with_ttl_sync) 失败: {}", e)))
+                    .map_err(|e| {
+                        BulwarkError::Dao(format!("oxcache expire (set_with_ttl_sync) 失败: {}", e))
+                    })
             } else {
                 let updated = self
                     .cache

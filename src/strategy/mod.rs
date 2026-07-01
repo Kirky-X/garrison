@@ -786,8 +786,7 @@ mod tests {
     async fn check_permission_delegates_to_permission_checker() {
         let iface = MockInterface::new();
         let pc = Arc::new(MockPermissionChecker { perm_result: true });
-        let fw = BulwarkFirewallStrategyDefault::new(Arc::new(iface))
-            .with_permission_checker(pc);
+        let fw = BulwarkFirewallStrategyDefault::new(Arc::new(iface)).with_permission_checker(pc);
 
         // PermissionChecker 返回 true，即使 interface 中无权限记录
         assert!(
@@ -801,8 +800,7 @@ mod tests {
     async fn check_permission_delegates_returns_false() {
         let iface = MockInterface::new();
         let pc = Arc::new(MockPermissionChecker { perm_result: false });
-        let fw = BulwarkFirewallStrategyDefault::new(Arc::new(iface))
-            .with_permission_checker(pc);
+        let fw = BulwarkFirewallStrategyDefault::new(Arc::new(iface)).with_permission_checker(pc);
 
         assert!(
             !fw.check_permission(1001, "user:read").await.unwrap(),
@@ -867,10 +865,7 @@ mod tests {
         iface.set_roles(1001, &["superadmin"]);
         let mut hierarchy = HashMap::new();
         hierarchy.insert("admin".to_string(), vec!["user".to_string()]);
-        hierarchy.insert(
-            "superadmin".to_string(),
-            vec!["admin".to_string()],
-        );
+        hierarchy.insert("superadmin".to_string(), vec!["admin".to_string()]);
         let fw = make_firewall_with_hierarchy(iface, hierarchy);
 
         assert!(
@@ -934,8 +929,7 @@ mod tests {
         iface.set_permissions(1001, &["user:read"]);
         // BulwarkPluginManager::new() 收集所有 inventory 注册的插件
         let pm = Arc::new(BulwarkPluginManager::new());
-        let fw = BulwarkFirewallStrategyDefault::new(Arc::new(iface))
-            .with_plugin_manager(pm);
+        let fw = BulwarkFirewallStrategyDefault::new(Arc::new(iface)).with_plugin_manager(pm);
 
         // 插件钩子不应中断主流程，校验结果应正常返回
         assert!(
@@ -955,8 +949,7 @@ mod tests {
         // PluginManager 包含 ErrPlugin（on_permission_check 返回 Err），
         // 但主流程不应被中断
         let pm = Arc::new(BulwarkPluginManager::new());
-        let fw = BulwarkFirewallStrategyDefault::new(Arc::new(iface))
-            .with_plugin_manager(pm);
+        let fw = BulwarkFirewallStrategyDefault::new(Arc::new(iface)).with_plugin_manager(pm);
 
         assert!(
             fw.check_permission(1001, "user:read").await.unwrap(),
@@ -987,15 +980,11 @@ mod tests {
             Ok(self.store.lock().get(key).cloned())
         }
         async fn set(&self, key: &str, value: &str, _ttl_seconds: u64) -> BulwarkResult<()> {
-            self.store
-                .lock()
-                .insert(key.to_string(), value.to_string());
+            self.store.lock().insert(key.to_string(), value.to_string());
             Ok(())
         }
         async fn update(&self, key: &str, value: &str) -> BulwarkResult<()> {
-            self.store
-                .lock()
-                .insert(key.to_string(), value.to_string());
+            self.store.lock().insert(key.to_string(), value.to_string());
             Ok(())
         }
         async fn expire(&self, _key: &str, _seconds: u64) -> BulwarkResult<()> {
@@ -1014,10 +1003,11 @@ mod tests {
     async fn cache_permission_writes_and_reads_back() {
         let dao = Arc::new(MockCacheDao::new());
         let iface = MockInterface::new();
-        let fw = BulwarkFirewallStrategyDefault::new(Arc::new(iface))
-            .with_dao(dao.clone());
+        let fw = BulwarkFirewallStrategyDefault::new(Arc::new(iface)).with_dao(dao.clone());
 
-        fw.cache_permission(1001, "user:read", true, 300).await.unwrap();
+        fw.cache_permission(1001, "user:read", true, 300)
+            .await
+            .unwrap();
 
         let cached = fw.get_cached_permission(1001, "user:read").await.unwrap();
         assert_eq!(cached, Some(true), "缓存应命中并返回 true");
@@ -1039,13 +1029,9 @@ mod tests {
     async fn get_cached_permission_miss_returns_none() {
         let dao = Arc::new(MockCacheDao::new());
         let iface = MockInterface::new();
-        let fw = BulwarkFirewallStrategyDefault::new(Arc::new(iface))
-            .with_dao(dao);
+        let fw = BulwarkFirewallStrategyDefault::new(Arc::new(iface)).with_dao(dao);
 
-        let cached = fw
-            .get_cached_permission(1001, "user:delete")
-            .await
-            .unwrap();
+        let cached = fw.get_cached_permission(1001, "user:delete").await.unwrap();
         assert!(cached.is_none(), "未缓存的权限应返回 None");
     }
 
@@ -1056,18 +1042,21 @@ mod tests {
     async fn cache_permission_overwrite() {
         let dao = Arc::new(MockCacheDao::new());
         let iface = MockInterface::new();
-        let fw = BulwarkFirewallStrategyDefault::new(Arc::new(iface))
-            .with_dao(dao);
+        let fw = BulwarkFirewallStrategyDefault::new(Arc::new(iface)).with_dao(dao);
 
         // 第一次缓存 true
-        fw.cache_permission(1001, "user:read", true, 300).await.unwrap();
+        fw.cache_permission(1001, "user:read", true, 300)
+            .await
+            .unwrap();
         assert_eq!(
             fw.get_cached_permission(1001, "user:read").await.unwrap(),
             Some(true)
         );
 
         // 覆盖为 false
-        fw.cache_permission(1001, "user:read", false, 300).await.unwrap();
+        fw.cache_permission(1001, "user:read", false, 300)
+            .await
+            .unwrap();
         assert_eq!(
             fw.get_cached_permission(1001, "user:read").await.unwrap(),
             Some(false),
@@ -1084,11 +1073,12 @@ mod tests {
         let mut iface = MockInterface::new();
         // interface 中无 user:read 权限
         iface.set_permissions(1001, &[]);
-        let fw = BulwarkFirewallStrategyDefault::new(Arc::new(iface))
-            .with_dao(dao.clone());
+        let fw = BulwarkFirewallStrategyDefault::new(Arc::new(iface)).with_dao(dao.clone());
 
         // 预先写入缓存 true（与 interface 实际权限矛盾）
-        fw.cache_permission(1001, "user:read", true, 300).await.unwrap();
+        fw.cache_permission(1001, "user:read", true, 300)
+            .await
+            .unwrap();
 
         // check_permission 应短路返回缓存值 true，不查询 interface
         assert!(

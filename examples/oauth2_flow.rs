@@ -39,16 +39,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("[配置] 授权端点：{}", client.auth_url());
     println!("[配置] 令牌端点：{}", client.token_url());
-    println!(
-        "[配置] 用户信息端点：{:?}",
-        client.user_info_url()
-    );
+    println!("[配置] 用户信息端点：{:?}", client.user_info_url());
 
     // 2. 生成授权 URL（引导用户浏览器跳转至此 URL 完成授权）
     let state = "random-csrf-state-12345";
     let auth_url = client.get_auth_url(state);
     println!("\n[授权 URL]\n{}", auth_url);
-    println!("\n（用户在授权服务器登录并同意授权后，会被重定向到 redirect_uri，附带 code 与 state）");
+    println!(
+        "\n（用户在授权服务器登录并同意授权后，会被重定向到 redirect_uri，附带 code 与 state）"
+    );
 
     // 3. 使用授权码换取令牌（需要真实授权服务器，此处仅展示调用方式）
     //    实际流程中，redirect_uri 回调收到 code 后调用：

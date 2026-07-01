@@ -112,9 +112,10 @@ impl BulwarkListenerManager {
             .map(|entry| (entry.factory)())
             .collect();
         for l in &listeners {
-            tracing::info!("已加载监听器: {}", std::any::type_name::<
-                Arc<dyn BulwarkListener>,
-            >());
+            tracing::info!(
+                "已加载监听器: {}",
+                std::any::type_name::<Arc<dyn BulwarkListener>>()
+            );
             let _ = l; // 避免 unused 警告
         }
         Self { listeners }
@@ -211,11 +212,15 @@ mod tests {
             device: Some("web".to_string()),
         };
         match event {
-            BulwarkEvent::Login { login_id, token, device } => {
+            BulwarkEvent::Login {
+                login_id,
+                token,
+                device,
+            } => {
                 assert_eq!(login_id, 1001);
                 assert_eq!(token, "T1");
                 assert_eq!(device, Some("web".to_string()));
-            }
+            },
             _ => panic!("期望 Login 事件"),
         }
     }
@@ -231,7 +236,7 @@ mod tests {
             BulwarkEvent::Logout { login_id, token } => {
                 assert_eq!(login_id, 1001);
                 assert_eq!(token, "T1");
-            }
+            },
             _ => panic!("期望 Logout 事件"),
         }
     }
@@ -245,11 +250,15 @@ mod tests {
             reason: "管理员强制下线".to_string(),
         };
         match event {
-            BulwarkEvent::Kickout { login_id, token, reason } => {
+            BulwarkEvent::Kickout {
+                login_id,
+                token,
+                reason,
+            } => {
                 assert_eq!(login_id, 1001);
                 assert_eq!(token, "T1");
                 assert_eq!(reason, "管理员强制下线");
-            }
+            },
             _ => panic!("期望 Kickout 事件"),
         }
     }
@@ -262,10 +271,13 @@ mod tests {
             permission: "user:delete".to_string(),
         };
         match event {
-            BulwarkEvent::PermissionDenied { login_id, permission } => {
+            BulwarkEvent::PermissionDenied {
+                login_id,
+                permission,
+            } => {
                 assert_eq!(login_id, 1001);
                 assert_eq!(permission, "user:delete");
-            }
+            },
             _ => panic!("期望 PermissionDenied 事件"),
         }
     }
@@ -281,7 +293,7 @@ mod tests {
             BulwarkEvent::RoleDenied { login_id, role } => {
                 assert_eq!(login_id, 1001);
                 assert_eq!(role, "admin");
-            }
+            },
             _ => panic!("期望 RoleDenied 事件"),
         }
     }
@@ -295,7 +307,7 @@ mod tests {
         match event {
             BulwarkEvent::TokenExpired { token } => {
                 assert_eq!(token, "T1");
-            }
+            },
             _ => panic!("期望 TokenExpired 事件"),
         }
     }

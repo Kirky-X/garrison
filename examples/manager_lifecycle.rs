@@ -36,7 +36,10 @@ struct MyInterface {
 impl MyInterface {
     fn new() -> Self {
         let mut permissions = HashMap::new();
-        permissions.insert(1001, vec!["user:read".to_string(), "user:write".to_string()]);
+        permissions.insert(
+            1001,
+            vec!["user:read".to_string(), "user:write".to_string()],
+        );
         permissions.insert(1002, vec!["user:read".to_string()]);
 
         let mut roles = HashMap::new();
@@ -118,10 +121,9 @@ async fn main() -> BulwarkResult<()> {
     println!("    login(1002) → token={}...", &token2[..16]);
 
     // 1002 有 user:read 权限但无 user:write
-    let perm_result = with_current_token(
-        token2.clone(),
-        async { BulwarkUtil::check_permission("user:write").await },
-    )
+    let perm_result = with_current_token(token2.clone(), async {
+        BulwarkUtil::check_permission("user:write").await
+    })
     .await;
     println!(
         "    check_permission(1002, \"user:write\") → {:?}",
@@ -132,14 +134,14 @@ async fn main() -> BulwarkResult<()> {
     BulwarkUtil::kickout(1002).await?;
     println!("    kickout(1002) 完成");
 
-    let valid_after_kickout = with_current_token(
-        token2.clone(),
-        async { BulwarkUtil::check_login().await },
-    )
-    .await;
+    let valid_after_kickout =
+        with_current_token(token2.clone(), async { BulwarkUtil::check_login().await }).await;
     println!(
         "    踢出后 check_login → {:?}",
-        valid_after_kickout.err().map(|e| e.to_string()).unwrap_or_else(|| "Ok".to_string())
+        valid_after_kickout
+            .err()
+            .map(|e| e.to_string())
+            .unwrap_or_else(|| "Ok".to_string())
     );
     println!();
 
@@ -148,7 +150,10 @@ async fn main() -> BulwarkResult<()> {
     // ----------------------------------------------------------------
     println!("[6] BulwarkManager 底层访问:");
     let logic = BulwarkManager::logic()?;
-    println!("    logic.config().token_style = {}", logic.config().token_style);
+    println!(
+        "    logic.config().token_style = {}",
+        logic.config().token_style
+    );
     println!("    logic.config().timeout = {} 秒", logic.config().timeout);
 
     // ----------------------------------------------------------------

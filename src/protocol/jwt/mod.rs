@@ -202,7 +202,8 @@ mod tests {
     /// BulwarkJwtClaims 可反序列化。
     #[test]
     fn claims_deserializes() {
-        let json = r#"{"sub":"1001","iat":1700000000,"exp":1700003600,"login_id":1001,"device":"web"}"#;
+        let json =
+            r#"{"sub":"1001","iat":1700000000,"exp":1700003600,"login_id":1001,"device":"web"}"#;
         let claims: BulwarkJwtClaims = serde_json::from_str(json).unwrap();
         assert_eq!(claims.sub, "1001");
         assert_eq!(claims.iat, 1700000000);
@@ -336,7 +337,7 @@ mod tests {
         let result = handler.verify(&token);
         assert!(result.is_err());
         match result.err() {
-            Some(BulwarkError::ExpiredToken(_)) => {}
+            Some(BulwarkError::ExpiredToken(_)) => {},
             other => panic!("期望 ExpiredToken，实际: {:?}", other),
         }
     }

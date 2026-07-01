@@ -38,13 +38,13 @@ impl DigestAlgorithm {
             Self::Md5 => {
                 let digest = md5::compute(data);
                 hex_encode(&digest.0)
-            }
+            },
             Self::Sha256 => {
                 use sha2::Digest;
                 let mut hasher = sha2::Sha256::new();
                 hasher.update(data);
                 hex_encode(&hasher.finalize())
-            }
+            },
         }
     }
 }
@@ -147,13 +147,7 @@ impl HttpDigestAuth {
     /// # 返回
     /// - `true`: 校验通过。
     /// - `false`: 校验失败（密码错误 / method 不匹配 / qop 不支持 / 格式错误）。
-    pub fn validate(
-        &self,
-        authorization_header: &str,
-        method: &str,
-        uri: &str,
-        ha1: &str,
-    ) -> bool {
+    pub fn validate(&self, authorization_header: &str, method: &str, uri: &str, ha1: &str) -> bool {
         match self.parse_authorization(authorization_header) {
             Ok(resp) => {
                 // qop 必须为 auth，不支持 auth-int
@@ -171,7 +165,7 @@ impl HttpDigestAuth {
                 let expected = self.algorithm.hash(response_input.as_bytes());
                 // 常量时间比较，避免时序攻击
                 constant_time_eq(expected.as_bytes(), resp.response.as_bytes())
-            }
+            },
             Err(_) => false,
         }
     }
@@ -179,9 +173,9 @@ impl HttpDigestAuth {
     /// 解析 Authorization header 为 DigestResponse（依据 RFC 7616）。
     fn parse_authorization(&self, header: &str) -> BulwarkResult<DigestResponse> {
         let header = header.trim();
-        let (scheme, params) = header
-            .split_once(char::is_whitespace)
-            .ok_or_else(|| BulwarkError::Internal("Authorization header 格式错误：缺少参数部分".to_string()))?;
+        let (scheme, params) = header.split_once(char::is_whitespace).ok_or_else(|| {
+            BulwarkError::Internal("Authorization header 格式错误：缺少参数部分".to_string())
+        })?;
 
         if !scheme.eq_ignore_ascii_case("digest") {
             return Err(BulwarkError::Internal(format!(
@@ -209,7 +203,7 @@ impl HttpDigestAuth {
                 "qop" => qop = Some(value),
                 "nc" => nc = Some(value),
                 "cnonce" => cnonce = Some(value),
-                _ => {}
+                _ => {},
             }
         }
 
@@ -223,8 +217,7 @@ impl HttpDigestAuth {
                 .ok_or_else(|| BulwarkError::Internal("缺失 response 参数".to_string()))?,
             qop,
             nc: nc.ok_or_else(|| BulwarkError::Internal("缺失 nc 参数".to_string()))?,
-            cnonce: cnonce
-                .ok_or_else(|| BulwarkError::Internal("缺失 cnonce 参数".to_string()))?,
+            cnonce: cnonce.ok_or_else(|| BulwarkError::Internal("缺失 cnonce 参数".to_string()))?,
         })
     }
 }
@@ -275,7 +268,7 @@ fn parse_digest_params(s: &str) -> Vec<(String, String)> {
             break;
         }
         chars.next(); // 消费 '='
-        // 跳过空白
+                      // 跳过空白
         while matches!(chars.peek(), Some(c) if c.is_whitespace()) {
             chars.next();
         }
@@ -333,16 +326,28 @@ mod tests {
     /// from_str 解析 MD5。
     #[test]
     fn algorithm_from_str_md5() {
-        assert_eq!("MD5".parse::<DigestAlgorithm>().unwrap(), DigestAlgorithm::Md5);
+        assert_eq!(
+            "MD5".parse::<DigestAlgorithm>().unwrap(),
+            DigestAlgorithm::Md5
+        );
         // 大小写不敏感
-        assert_eq!("md5".parse::<DigestAlgorithm>().unwrap(), DigestAlgorithm::Md5);
+        assert_eq!(
+            "md5".parse::<DigestAlgorithm>().unwrap(),
+            DigestAlgorithm::Md5
+        );
     }
 
     /// from_str 解析 SHA256。
     #[test]
     fn algorithm_from_str_sha256() {
-        assert_eq!("SHA256".parse::<DigestAlgorithm>().unwrap(), DigestAlgorithm::Sha256);
-        assert_eq!("sha256".parse::<DigestAlgorithm>().unwrap(), DigestAlgorithm::Sha256);
+        assert_eq!(
+            "SHA256".parse::<DigestAlgorithm>().unwrap(),
+            DigestAlgorithm::Sha256
+        );
+        assert_eq!(
+            "sha256".parse::<DigestAlgorithm>().unwrap(),
+            DigestAlgorithm::Sha256
+        );
     }
 
     /// from_str 拒绝未知算法。

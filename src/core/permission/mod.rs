@@ -65,9 +65,7 @@ impl PermissionCheckerDefault {
 impl PermissionChecker for PermissionCheckerDefault {
     async fn has_permission(&self, login_id: i64, permission: &str) -> BulwarkResult<bool> {
         if permission.is_empty() {
-            return Err(BulwarkError::InvalidToken(
-                "权限字符串不能为空".to_string(),
-            ));
+            return Err(BulwarkError::InvalidToken("权限字符串不能为空".to_string()));
         }
         let perms = self.interface.get_permission_list(login_id).await?;
         Ok(perms.iter().any(|p| p == permission))
@@ -75,9 +73,7 @@ impl PermissionChecker for PermissionCheckerDefault {
 
     async fn has_role(&self, login_id: i64, role: &str) -> BulwarkResult<bool> {
         if role.is_empty() {
-            return Err(BulwarkError::InvalidToken(
-                "角色字符串不能为空".to_string(),
-            ));
+            return Err(BulwarkError::InvalidToken("角色字符串不能为空".to_string()));
         }
         let roles = self.interface.get_role_list(login_id).await?;
         Ok(roles.iter().any(|r| r == role))
@@ -145,18 +141,14 @@ mod tests {
         }
 
         fn with_perms(mut self, login_id: i64, perms: Vec<&str>) -> Self {
-            self.permissions.insert(
-                login_id,
-                perms.iter().map(|s| s.to_string()).collect(),
-            );
+            self.permissions
+                .insert(login_id, perms.iter().map(|s| s.to_string()).collect());
             self
         }
 
         fn with_roles(mut self, login_id: i64, roles: Vec<&str>) -> Self {
-            self.roles.insert(
-                login_id,
-                roles.iter().map(|s| s.to_string()).collect(),
-            );
+            self.roles
+                .insert(login_id, roles.iter().map(|s| s.to_string()).collect());
             self
         }
     }
@@ -196,9 +188,7 @@ mod tests {
     #[tokio::test]
     async fn has_permission_not_held_returns_false() {
         let checker = make_checker();
-        assert!(
-            !checker.has_permission(1001, "user:delete").await.unwrap()
-        );
+        assert!(!checker.has_permission(1001, "user:delete").await.unwrap());
     }
 
     /// has_permission 空字符串返回错误（spec Scenario）。
@@ -245,7 +235,7 @@ mod tests {
         let result = checker.check_permission(1001, "user:delete").await;
         assert!(result.is_err());
         match result.err() {
-            Some(BulwarkError::NotPermission(_)) => {}
+            Some(BulwarkError::NotPermission(_)) => {},
             other => panic!("期望 NotPermission，实际: {:?}", other),
         }
     }
@@ -268,7 +258,7 @@ mod tests {
         let result = checker.check_role(1001, "superadmin").await;
         assert!(result.is_err());
         match result.err() {
-            Some(BulwarkError::NotRole(_)) => {}
+            Some(BulwarkError::NotRole(_)) => {},
             other => panic!("期望 NotRole，实际: {:?}", other),
         }
     }
@@ -282,7 +272,9 @@ mod tests {
     async fn has_any_permission_any_match_returns_true() {
         let checker = make_checker();
         assert!(
-            checker.has_any_permission(1001, &["user:read", "user:delete"]).await
+            checker
+                .has_any_permission(1001, &["user:read", "user:delete"])
+                .await
         );
     }
 
