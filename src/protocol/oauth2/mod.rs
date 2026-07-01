@@ -1,4 +1,4 @@
-//! OAuth2 协议模块，提供 Authorization Code / Client Credentials / Password 三种授权流程。
+//! OAuth2 协议模块，提供 Authorization Code / Client Credentials / Password / Refresh Token 四种授权流程。
 //!
 //! [借鉴 Sa-Token] 对应 Sa-Token 的 OAuth2 协议支持，
 //! 基于 `reqwest` crate 实现 HTTP 请求。
@@ -9,7 +9,7 @@
 //!
 //! - `OAuth2Client` 不持久化 token，由业务方决定存储方式。
 //! - HTTP 客户端使用 `reqwest` 0.13（rustls-tls，禁用 native-tls）。
-//! - 仅实现三种授权流程，不实现 Refresh Token / Implicit / Device Code。
+//! - 实现四种授权流程：Authorization Code / Client Credentials / Password / Refresh Token（0.4.0 新增）。
 
 use crate::error::{BulwarkError, BulwarkResult};
 use serde::Deserialize;
@@ -181,6 +181,41 @@ impl OAuth2Client {
             ("grant_type", "password"),
             ("username", username),
             ("password", password),
+            ("client_id", &self.client_id),
+            ("client_secret", &self.client_secret),
+        ];
+        if let Some(s) = scope {
+            params.push(("scope", s));
+        }
+        self.post_token_request(&params).await
+    }
+
+    /// 使用 refresh_token 换取新的 access_token（0.4.0 新增，依据 spec protocol-oauth2 RefreshToken GrantType）。
+    ///
+    /// POST 请求 `token_url` 提交 `grant_type=refresh_token`、`refresh_token`、
+    /// `client_id`、`client_secret`，可选 `scope`（用于缩小/扩大授权范围）。
+    ///
+    /// # 参数
+    /// - `refresh_token`: 之前获取的刷新令牌，不可为空。
+    /// - `scope`: 可选，请求的 scope（可不同于原始授权范围）。
+    ///
+    /// # 错误
+    /// - `BulwarkError::InvalidParam`: refresh_token 为空。
+    /// - `BulwarkError::OAuth2`: token_endpoint 返回非 2xx 或 JSON 解析失败。
+    /// - `BulwarkError::Network`: reqwest 请求失败（DNS/连接超时等）。
+    pub async fn refresh_access_token(
+        &self,
+        refresh_token: &str,
+        scope: Option<&str>,
+    ) -> BulwarkResult<TokenResponse> {
+        if refresh_token.is_empty() {
+            return Err(BulwarkError::InvalidParam(
+                "refresh_token 不可为空".to_string(),
+            ));
+        }
+        let mut params: Vec<(&str, &str)> = vec![
+            ("grant_type", "refresh_token"),
+            ("refresh_token", refresh_token),
             ("client_id", &self.client_id),
             ("client_secret", &self.client_secret),
         ];
@@ -536,6 +571,101 @@ mod tests {
         let server = MockServer::start().await;
         let client = make_client(&server).await;
         let result = client.get_password_token("", "pwd", None).await;
+        assert!(result.is_err());
+        match result.err() {
+            Some(BulwarkError::InvalidParam(_)) => {},
+            other => panic!("期望 InvalidParam 错误，实际: {:?}", other),
+        }
+    }
+
+    // ========================================================================
+    // refresh_access_token 集成测试（0.4.0 新增，依据 spec protocol-oauth2 RefreshToken GrantType）
+    // ========================================================================
+
+    /// 成功使用 refresh_token 换取新 access_token（spec Scenario: refresh_access_token 成功）。
+    #[tokio::test]
+    async fn refresh_access_token_success() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "access_token": "new-access-token",
+                "token_type": "Bearer",
+                "expires_in": 3600,
+                "refresh_token": "new-refresh-token",
+                "scope": "openid profile"
+            })))
+            .mount(&server)
+            .await;
+
+        let client = make_client(&server).await;
+        let token = client
+            .refresh_access_token("old-refresh-token", None)
+            .await
+            .unwrap();
+        assert_eq!(token.access_token, "new-access-token");
+        assert_eq!(token.token_type, "Bearer");
+        assert_eq!(token.expires_in, Some(3600));
+        assert_eq!(token.refresh_token, Some("new-refresh-token".to_string()));
+        assert_eq!(token.scope, Some("openid profile".to_string()));
+    }
+
+    /// 带 scope 参数成功换取新 token（spec Scenario: refresh_access_token 成功）。
+    #[tokio::test]
+    async fn refresh_access_token_with_scope_success() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "access_token": "scoped-token",
+                "token_type": "Bearer",
+                "expires_in": 1800,
+                "scope": "admin"
+            })))
+            .mount(&server)
+            .await;
+
+        let client = make_client(&server).await;
+        let token = client
+            .refresh_access_token("old-refresh", Some("admin"))
+            .await
+            .unwrap();
+        assert_eq!(token.access_token, "scoped-token");
+        assert_eq!(token.scope, Some("admin".to_string()));
+    }
+
+    /// token_endpoint 返回 HTTP 400 错误响应（spec Scenario: refresh_access_token 错误响应）。
+    #[tokio::test]
+    async fn refresh_access_token_error_response() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+                "error": "invalid_grant",
+                "error_description": "The refresh token is invalid or expired."
+            })))
+            .mount(&server)
+            .await;
+
+        let client = make_client(&server).await;
+        let result = client
+            .refresh_access_token("expired-refresh-token", None)
+            .await;
+        assert!(result.is_err());
+        match result.err() {
+            Some(BulwarkError::OAuth2(msg)) => {
+                assert!(msg.contains("400"), "错误消息应包含 HTTP 状态码 400");
+            }
+            other => panic!("期望 OAuth2 错误，实际: {:?}", other),
+        }
+    }
+
+    /// refresh_token 为空返回 InvalidParam 错误（spec Scenario: refresh_access_token 参数校验）。
+    #[tokio::test]
+    async fn refresh_access_token_empty_token_returns_invalid_param() {
+        let server = MockServer::start().await;
+        let client = make_client(&server).await;
+        let result = client.refresh_access_token("", None).await;
         assert!(result.is_err());
         match result.err() {
             Some(BulwarkError::InvalidParam(_)) => {},
