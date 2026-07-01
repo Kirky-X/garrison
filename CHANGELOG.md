@@ -5,6 +5,52 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.4.0] - 2026-07-02
+
+### 概述
+
+Bulwark 0.4.0 聚焦于 0.2.0 协议层遗留 gap 的补齐。通过 openspec change
+`v0-2-0-protocol-layer-gap-closure` 实施 8 项 gap 中的 7 项（gap #4 注解系统因 spec
+错误 `OAuth2Client::validate_client_token` 不存在而延后至 0.5.0+）。
+
+### 新增
+
+- **OAuth2 RefreshToken GrantType（gap #1）**：`OAuth2Client::refresh_access_token` 方法
+  支持 grant_type=refresh_token 流程，可选 scope 参数（用于缩小/扩大授权范围）
+- **OAuth2 OIDC 支持（gap #2）**：新增 `protocol-oidc` feature + `OidcHandler` struct
+  （sign_id_token / verify_id_token / discovery_metadata），id_token 含标准 OIDC claims
+  （iss/sub/aud/exp/iat/nonce/login_id），三重校验（iss/aud/nonce）防重放
+- **OAuth2 Scope Handler 注册表（gap #3）**：新增 `oauth2-scope-handler` feature +
+  `ScopeHandler` trait + `ScopeRegistry` struct（parking_lot::RwLock + HashMap），
+  `OAuth2Client::with_scope_registry` 注入后 3 个 token 方法在 HTTP 请求前委托校验
+- **SSO Server 独立抽象（gap #5）**：新增 `protocol-sso-server` feature + `SsoServer`
+  trait + `CenterIdConverter` trait + `SsoChannel` trait + `DefaultSsoServer` +
+  `IdentityCenterIdConverter` + `NoopSsoChannel`，支持通过共享 BulwarkDao 与 SsoClient
+  间接通信
+- **AloneCache 多 Redis 实例隔离（gap #6）**：新增 `alone-cache` feature + `AloneCache`
+  装饰器（实现 BulwarkDao，入口拼接 key_prefix 后委托 inner dao）+ `AloneCacheManager`
+  （RwLock + HashMap 多实例管理）
+- **ParameterQuery 参数化查询（gap #7）**：新增 `parameter-query` feature +
+  `ParameterQuery` trait + `ParameterQueryBuilder`（链式 with_login_id/with_device/with_token
+  + async check_permission/check_role），token 上下文优先于 login_id
+
+### 变更
+
+- `Cargo.toml` 新增 5 个 feature flag：`protocol-oidc` / `oauth2-scope-handler` /
+  `protocol-sso-server` / `alone-cache` / `parameter-query`，均加入 `full` 聚合
+- `Cargo.toml` 新增 `base64` dev-dependency（OIDC 测试解析 JWT header 段）
+- `OAuth2Client` 新增 `scope_registry: Option<Arc<ScopeRegistry>>` 字段（feature-gated）
+- `OAuth2Client` 3 个 token 方法新增 `validate_scope` 调用（feature-gated，未注入跳过）
+- `src/protocol/oauth2/mod.rs` 模块文档注释更新（"三种"→"四种"，新增 RefreshToken）
+- `openspec/specs/dao-oxcache-basic/spec.md` 新增 Known Limitations 章节：oxcache 0.3
+  支持 standalone/sentinel/cluster，master-slave 由 sentinel 模式覆盖
+
+### 已知限制
+
+- **gap #4（OAuth2 @CheckAccessToken/@CheckClientToken 注解）延后至 0.5.0+**：spec 错误
+  引用 `OAuth2Client::validate_client_token`（方法不存在于代码库）。需先设计 token
+  introspection（RFC 7662）或复用 OidcHandler::verify_id_token 的方案。
+
 ## [0.2.1] - 2026-07-01
 
 ### 概述
