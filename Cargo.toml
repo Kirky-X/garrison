@@ -120,6 +120,12 @@ protocol-jwt = ["jsonwebtoken"]
 protocol-sign = ["sha2", "hmac", "base64"]
 protocol-apikey = []
 protocol-temp = []
+# 0.4.0 新增：OIDC 扩展（id_token 签发/验证 + discovery endpoint），依赖 protocol-jwt + protocol-oauth2
+protocol-oidc = ["protocol-jwt", "protocol-oauth2"]
+# 0.4.0 新增：OAuth2 Scope Handler 注册表（ScopeHandler trait + ScopeRegistry），依赖 protocol-oauth2
+oauth2-scope-handler = ["protocol-oauth2"]
+# 0.4.0 新增：SSO Server 独立抽象（SsoServer trait + CenterIdConverter + SsoChannel），依赖 protocol-sso
+protocol-sso-server = ["protocol-sso"]
 
 # === 安全模块 ===
 secure-totp = ["totp-rs", "base32"]
@@ -131,6 +137,12 @@ secure-httpdigest = ["sha2", "base64", "md5"]
 web-axum = ["axum", "axum/tokio", "axum/http1"]
 web-actix = ["actix-web"]
 web-warp = ["warp"]
+
+# === 0.4.0 新增扩展 ===
+# alone-cache：多 Redis 实例隔离（AloneCache 装饰器 + AloneCacheManager），无额外依赖
+alone-cache = []
+# parameter-query：参数化查询机制（ParameterQuery trait + Builder + async），无额外依赖
+parameter-query = []
 
 # === 可观测性 ===
 listener = []
@@ -148,8 +160,10 @@ full = [
     "cache-memory", "cache-redis",
     "db-sqlite",
     "protocol-oauth2", "protocol-sso", "protocol-jwt", "protocol-sign", "protocol-apikey", "protocol-temp",
+    "protocol-oidc", "oauth2-scope-handler", "protocol-sso-server",
     "secure-totp", "secure-sign", "secure-httpbasic", "secure-httpdigest",
     "web-axum", "web-actix", "web-warp",
+    "alone-cache", "parameter-query",
     "listener", "metrics-prometheus", "observability-otlp", "grpc", "i18n",
 ]
 
