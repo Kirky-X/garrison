@@ -32,6 +32,18 @@ use tonic::Status;
 /// 实现 `tonic::Interceptor` trait，从 gRPC 请求 metadata 提取 Authorization Bearer token
 /// 并调用 `BulwarkUtil::check_login()` 鉴权。鉴权失败时返回 `Status::UNAUTHENTICATED`。
 ///
+/// # 重要限制：仅提取 token，不执行 async 鉴权
+///
+/// `tonic::Interceptor::call` 是**同步** trait，无法直接调用异步的 `BulwarkUtil::check_login()`。
+/// 本拦截器仅完成 token 提取与基本格式校验（非空、`Bearer ` 前缀正确），
+/// **不**执行实际的登录态/权限校验。
+///
+/// 完整的 async 鉴权推荐方案：
+/// - 使用 `tonic` 的 `tower::Layer` middleware（async），在 layer 中调用 `BulwarkContext`
+///   执行 `check_login` 等异步 API；
+/// - 或在 tonic service handler 内通过 `task_local`（`with_current_token`）读取 token，
+///   显式调用 `BulwarkUtil::check_login()`。
+///
 /// # 使用
 ///
 /// ```ignore

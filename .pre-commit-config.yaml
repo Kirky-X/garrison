@@ -33,7 +33,7 @@ repos:
         args: [--, --check]
         pass_filenames: false
       - id: clippy
-        args: [--, -D, warnings, --all-features]
+        args: [--all-features, --, -D, warnings]
         pass_filenames: false
 
   # === cargo-deny（许可证 / 漏洞 / 禁用源 / 重复依赖） ===
@@ -41,7 +41,8 @@ repos:
     hooks:
       - id: cargo-deny
         name: cargo deny check (license/advisory/ban)
-        entry: bash -c 'cargo deny check 2>/dev/null || { echo "→ 先运行: cargo install cargo-deny && cargo deny init"; exit 1; }'
+        entry: >-
+          bash -c 'cargo deny check 2>/dev/null || { echo "run: cargo install cargo-deny && cargo deny init"; exit 1; }'
         language: system
         files: 'Cargo\.(toml|lock)'
         pass_filenames: false

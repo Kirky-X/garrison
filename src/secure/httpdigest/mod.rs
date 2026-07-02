@@ -184,10 +184,7 @@ impl HttpDigestAuth {
             )));
         }
 
-        let mut username = None;
-        let mut realm = None;
         let mut nonce = None;
-        let mut uri = None;
         let mut response = None;
         let mut qop = None;
         let mut nc = None;
@@ -195,10 +192,9 @@ impl HttpDigestAuth {
 
         for (key, value) in parse_digest_params(params) {
             match key.as_str() {
-                "username" => username = Some(value),
-                "realm" => realm = Some(value),
+                // username/realm/uri 由 RFC 7616 要求存在，但 validate() 不使用，仅校验存在性
+                "username" | "realm" | "uri" => {},
                 "nonce" => nonce = Some(value),
-                "uri" => uri = Some(value),
                 "response" => response = Some(value),
                 "qop" => qop = Some(value),
                 "nc" => nc = Some(value),
@@ -208,11 +204,7 @@ impl HttpDigestAuth {
         }
 
         Ok(DigestResponse {
-            username: username
-                .ok_or_else(|| BulwarkError::Internal("缺失 username 参数".to_string()))?,
-            realm: realm.ok_or_else(|| BulwarkError::Internal("缺失 realm 参数".to_string()))?,
             nonce: nonce.ok_or_else(|| BulwarkError::Internal("缺失 nonce 参数".to_string()))?,
-            uri: uri.ok_or_else(|| BulwarkError::Internal("缺失 uri 参数".to_string()))?,
             response: response
                 .ok_or_else(|| BulwarkError::Internal("缺失 response 参数".to_string()))?,
             qop,
@@ -223,15 +215,12 @@ impl HttpDigestAuth {
 }
 
 /// Digest 响应参数（解析自客户端 Authorization header）。
+///
+/// 仅保留 `validate()` 实际使用的字段；username/realm/uri 虽由 RFC 7616 要求且
+/// 在 `parse_authorization` 中校验存在性，但不存储（避免死字段）。
 #[derive(Debug, Clone)]
 struct DigestResponse {
-    #[allow(dead_code)]
-    username: String,
-    #[allow(dead_code)]
-    realm: String,
     nonce: String,
-    #[allow(dead_code)]
-    uri: String,
     response: String,
     qop: Option<String>,
     nc: String,

@@ -111,6 +111,10 @@ impl OidcHandler {
 
     /// 签发 OIDC id_token（依据 spec oauth2-oidc）。
     ///
+    /// **算法限制**：当前仅支持 HMAC 系列算法（HS256/HS384/HS512）。
+    /// 非对称算法（RS*/ES*/PS*）会返回 `BulwarkError::Config`，因为
+    /// `EncodingKey::from_secret` 仅接受对称密钥。JWKS + 非对称算法支持待 0.5.0+。
+    ///
     /// # 参数
     /// - `login_id`: 登录主体标识。
     /// - `nonce`: 客户端提供的 nonce（防重放）。
@@ -119,7 +123,7 @@ impl OidcHandler {
     ///
     /// # 返回
     /// - `Ok(String)`: JWT 格式的 id_token。
-    /// - `Err(BulwarkError::Config)`: timeout 为负。
+    /// - `Err(BulwarkError::Config)`: timeout 为负，或当前算法为非对称算法。
     /// - `Err(BulwarkError::Internal)`: 签发失败。
     pub fn sign_id_token(
         &self,
@@ -157,15 +161,20 @@ impl OidcHandler {
 
     /// 验证 OIDC id_token（依据 spec oauth2-oidc）。
     ///
+    /// **算法限制**：当前仅支持 HMAC 系列算法（HS256/HS384/HS512）。
+    /// 非对称算法（RS*/ES*/PS*）会返回 `BulwarkError::Config`，因为
+    /// `DecodingKey::from_secret` 仅接受对称密钥。JWKS + 非对称算法支持待 0.5.0+。
+    ///
     /// # 参数
     /// - `id_token`: JWT 格式的 id_token。
     /// - `expected_nonce`: 客户端期望的 nonce（用于防重放校验）。
     ///
     /// # 返回
     /// - `Ok(OidcClaims)`: 校验成功，返回 claims。
+    /// - `Err(BulwarkError::Config)`: 当前算法为非对称算法。
     /// - `Err(BulwarkError::OAuth2)`: nonce 不匹配。
     /// - `Err(BulwarkError::ExpiredToken)`: id_token 已过期。
-    /// - `Err(BulwarkError::InvalidToken)`: 签名/格式校验失败。
+    /// - `Err(BulwarkError::InvalidToken)`: 签名/格式/iss/aud 校验失败。
     pub fn verify_id_token(
         &self,
         id_token: &str,

@@ -28,10 +28,10 @@ use totp_rs::{Algorithm, TOTP};
 pub struct TotpHandler {
     /// 内部 TOTP 实例。
     totp: TOTP,
-    /// 时间步长（秒）。
+    /// 时间步长（秒）。元数据字段，供调试/日志使用；TOTP 验证由 totp-rs 库内部处理。
     #[allow(dead_code)]
     step: u64,
-    /// 验证码位数。
+    /// 验证码位数。元数据字段，供调试/日志使用；TOTP 验证由 totp-rs 库内部处理。
     #[allow(dead_code)]
     digits: u32,
 }
