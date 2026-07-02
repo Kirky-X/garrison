@@ -402,4 +402,51 @@ mod tests {
         let result = handler.rotate("nonexistent-key").await;
         assert!(result.is_err());
     }
+
+    // ========================================================================
+    // MockDao 方法覆盖测试
+    // ========================================================================
+
+    /// 验证 MockDao::expire 和 delete 方法可正常调用。
+    ///
+    /// 覆盖 MockDao 的 expire 和 delete trait 方法（此前测试未直接调用）。
+    #[tokio::test]
+    async fn mock_dao_expire_and_delete_covered() {
+        let dao = MockDao::new();
+        dao.set("k", "v", 3600).await.unwrap();
+
+        // expire 正常键
+        dao.expire("k", 7200).await.unwrap();
+        let got = dao.get("k").await.unwrap();
+        assert_eq!(got, Some("v".to_string()));
+
+        // delete 正常键
+        dao.delete("k").await.unwrap();
+        let got = dao.get("k").await.unwrap();
+        assert!(got.is_none());
+    }
+
+    /// 验证 generate 拒绝负数 timeout。
+    #[tokio::test]
+    async fn generate_negative_timeout_returns_error() {
+        let handler = make_handler();
+        let result = handler.generate(1001, vec![], -1).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), BulwarkError::InvalidParam(_)));
+    }
+
+    /// 验证 revoke 后 rotate 返回错误（old_key 已吊销）。
+    #[tokio::test]
+    async fn rotate_revoked_key_returns_error() {
+        let handler = make_handler();
+        let key = handler
+            .generate(1001, vec!["read".into()], 3600)
+            .await
+            .unwrap();
+        // 先吊销
+        handler.revoke(&key).await.unwrap();
+        // 再 rotate 应失败（verify 会因 revoked 返回 InvalidToken）
+        let result = handler.rotate(&key).await;
+        assert!(result.is_err());
+    }
 }

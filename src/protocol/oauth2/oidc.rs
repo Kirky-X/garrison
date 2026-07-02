@@ -481,6 +481,63 @@ mod tests {
     }
 
     // ========================================================================
+    // verify_id_token 错误路径补充测试
+    // ========================================================================
+
+    /// 验证过期 id_token 返回 ExpiredToken 错误。
+    ///
+    /// 覆盖 verify_id_token 中 `if msg.contains("ExpiredSignature")` 分支：
+    /// 创建 timeout=0 的 token，验证时已过期。
+    #[test]
+    fn verify_id_token_expired_returns_expired_token_error() {
+        let handler = make_handler();
+        // timeout=0 → exp=now，验证时已过期
+        let token = handler.sign_id_token(1001, "nonce", "openid", 0).unwrap();
+        // 等待极短时间确保 exp < 当前时间
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let result = handler.verify_id_token(&token, "nonce");
+        assert!(result.is_err());
+        match result.err() {
+            Some(BulwarkError::ExpiredToken(_)) => {},
+            other => panic!("期望 ExpiredToken 错误，实际: {:?}", other),
+        }
+    }
+
+    /// 验证 aud 不匹配返回 InvalidToken 错误。
+    ///
+    /// 覆盖 verify_id_token 中 `if claims.aud != self.audience` 分支。
+    #[test]
+    fn verify_id_token_aud_mismatch_fails() {
+        let signer = OidcHandler::new("https://auth.example.com", "correct-aud", "secret").unwrap();
+        let verifier = OidcHandler::new("https://auth.example.com", "wrong-aud", "secret").unwrap();
+        let token = signer.sign_id_token(1001, "nonce", "openid", 3600).unwrap();
+        let result = verifier.verify_id_token(&token, "nonce");
+        assert!(result.is_err());
+        match result.err() {
+            Some(BulwarkError::InvalidToken(msg)) => assert!(msg.contains("aud")),
+            other => panic!("期望 InvalidToken (aud) 错误，实际: {:?}", other),
+        }
+    }
+
+    // ========================================================================
+    // algorithm_str 非对称算法分支测试
+    // ========================================================================
+
+    /// 验证 discovery_metadata 对非 HMAC 算法返回 "unknown"。
+    ///
+    /// 覆盖 algorithm_str 中 `_ => "unknown"` 分支。
+    #[test]
+    fn discovery_metadata_non_hmac_algorithm_returns_unknown() {
+        let handler = make_handler().with_algorithm(Algorithm::RS256);
+        let metadata = handler.discovery_metadata();
+        // algorithm_str 对 RS256 返回 "unknown"
+        assert!(metadata["id_token_signing_alg_values_supported"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("unknown")));
+    }
+
+    // ========================================================================
     // 辅助函数
     // ========================================================================
 

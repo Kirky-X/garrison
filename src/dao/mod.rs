@@ -429,6 +429,32 @@ pub mod tests {
         assert!(got.is_none());
     }
 
+    /// 验证 MockDao::default() 等价于 new()。
+    ///
+    /// 覆盖 MockDao 的 Default trait 实现。
+    #[tokio::test]
+    async fn mock_dao_default_equals_new() {
+        let dao = MockDao::default();
+        dao.set("default_key", "default_value", 60).await.unwrap();
+        let got = dao.get("default_key").await.unwrap();
+        assert_eq!(got, Some("default_value".to_string()));
+    }
+
+    /// 验证 expire(key, 0) 将键设为永久驻留。
+    ///
+    /// 覆盖 MockDao::expire 的 `seconds == 0` 分支（expire_at = None）。
+    #[tokio::test]
+    async fn mock_expire_zero_seconds_means_permanent() {
+        let dao = MockDao::new();
+        dao.set("k", "v", 1).await.unwrap();
+        // expire(0) 改为永久驻留
+        dao.expire("k", 0).await.unwrap();
+        // 等待原 TTL 过期
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        let got = dao.get("k").await.unwrap();
+        assert_eq!(got, Some("v".to_string()), "expire(0) 应改为永久驻留");
+    }
+
     // ------------------------------------------------------------------------
     // oxcache 集成测试（feature = "cache-memory" 或 "cache-redis"）
     // ------------------------------------------------------------------------

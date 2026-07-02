@@ -410,4 +410,77 @@ mod tests {
         let m2 = BulwarkListenerManager::default();
         assert_eq!(m1.count(), m2.count());
     }
+
+    /// 验证 new() 在 tracing subscriber 已初始化时正确求值 info! 宏参数。
+    ///
+    /// 覆盖 BulwarkListenerManager::new() 中 `tracing::info!` 宏的参数求值路径
+    /// （line 117: `std::any::type_name::<Arc<dyn BulwarkListener>>()`）。
+    /// tracing::info! 在无 subscriber 时短路不求值参数，需确保 subscriber 已设置。
+    #[test]
+    #[serial]
+    fn manager_new_with_tracing_subscriber() {
+        // 确保 tracing subscriber 已初始化（幂等，已设置时返回 Err 被忽略）
+        #[cfg(any(feature = "tracing-log", feature = "metrics-prometheus"))]
+        {
+            let _ = tracing_subscriber::fmt().try_init();
+        }
+        let manager = BulwarkListenerManager::new();
+        assert!(manager.count() >= 2);
+    }
+
+    /// 验证 broadcast 对 PermissionDenied 事件正确分发。
+    #[test]
+    #[serial]
+    fn broadcast_permission_denied_event() {
+        reset_counters();
+        let manager = BulwarkListenerManager::new();
+        let event = BulwarkEvent::PermissionDenied {
+            login_id: 1001,
+            permission: "user:delete".to_string(),
+        };
+        manager.broadcast(&event);
+        assert!(EVENT_CALLS.load(Ordering::SeqCst) >= 1);
+    }
+
+    /// 验证 broadcast 对 RoleDenied 事件正确分发。
+    #[test]
+    #[serial]
+    fn broadcast_role_denied_event() {
+        reset_counters();
+        let manager = BulwarkListenerManager::new();
+        let event = BulwarkEvent::RoleDenied {
+            login_id: 1001,
+            role: "admin".to_string(),
+        };
+        manager.broadcast(&event);
+        assert!(EVENT_CALLS.load(Ordering::SeqCst) >= 1);
+    }
+
+    /// 验证 broadcast 对 TokenExpired 事件正确分发。
+    #[test]
+    #[serial]
+    fn broadcast_token_expired_event() {
+        reset_counters();
+        let manager = BulwarkListenerManager::new();
+        let event = BulwarkEvent::TokenExpired {
+            token: "expired-token".to_string(),
+        };
+        manager.broadcast(&event);
+        assert!(EVENT_CALLS.load(Ordering::SeqCst) >= 1);
+    }
+
+    /// 验证 broadcast 对 Kickout 事件正确分发。
+    #[test]
+    #[serial]
+    fn broadcast_kickout_event() {
+        reset_counters();
+        let manager = BulwarkListenerManager::new();
+        let event = BulwarkEvent::Kickout {
+            login_id: 1001,
+            token: "t1".to_string(),
+            reason: "强制下线".to_string(),
+        };
+        manager.broadcast(&event);
+        assert!(EVENT_CALLS.load(Ordering::SeqCst) >= 1);
+    }
 }

@@ -856,4 +856,64 @@ mod tests {
 
         BulwarkManager::reset_for_test();
     }
+
+    // ------------------------------------------------------------------------
+    // init_with_factory_selector 兜底路径测试
+    // ------------------------------------------------------------------------
+
+    /// 验证 init_with_factory_selector 在无 factory 注册时走兜底路径。
+    ///
+    /// 覆盖 init_with_factory_selector 中 `match factory_selector() { None => { ... } }` 分支：
+    /// 当 factory_selector 返回 None 时，直接通过 builder 链构造 BulwarkLogicDefault。
+    #[tokio::test]
+    #[serial]
+    async fn init_fallback_when_no_factory_registered() {
+        BulwarkManager::reset_for_test();
+        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let config = Arc::new(make_config());
+        let interface: Arc<dyn BulwarkInterface> = Arc::new(MockInterface::new());
+
+        // 使用返回 None 的 selector，触发兜底路径
+        let result = BulwarkManager::init_with_factory_selector(
+            dao,
+            config,
+            interface,
+            || None, // selector 返回 None，跳过 inventory factory
+        );
+        assert!(result.is_ok(), "兜底路径应成功: {:?}", result.map(|_| ()));
+        assert!(BulwarkManager::is_initialized());
+
+        // 验证 login 仍可正常工作
+        let token = BulwarkUtil::login(1001).await.unwrap();
+        assert!(!token.is_empty());
+
+        BulwarkManager::reset_for_test();
+    }
+
+    // ------------------------------------------------------------------------
+    // MockDao 方法覆盖测试
+    // ------------------------------------------------------------------------
+
+    /// 验证 MockDao::expire 和 delete 方法可正常调用。
+    ///
+    /// 覆盖 MockDao 的 expire 和 delete trait 方法（此前测试未直接调用）。
+    #[tokio::test]
+    async fn mock_dao_expire_and_delete_work() {
+        let dao = MockDao::new();
+        dao.set("key1", "value1", 3600).await.unwrap();
+
+        // 测试 expire
+        dao.expire("key1", 7200).await.unwrap();
+        let got = dao.get("key1").await.unwrap();
+        assert_eq!(got, Some("value1".to_string()));
+
+        // 测试 expire 不存在的键
+        let result = dao.expire("missing", 3600).await;
+        assert!(result.is_err());
+
+        // 测试 delete
+        dao.delete("key1").await.unwrap();
+        let got = dao.get("key1").await.unwrap();
+        assert!(got.is_none());
+    }
 }

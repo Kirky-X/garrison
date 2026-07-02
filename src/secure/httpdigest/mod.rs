@@ -566,6 +566,108 @@ mod tests {
     }
 
     // ========================================================================
+    // parse_authorization 边界路径测试
+    // ========================================================================
+
+    /// 验证 validate 对无参数部分的 header 返回 false。
+    ///
+    /// 覆盖 parse_authorization 中 `split_once(char::is_whitespace)` 返回 None 的错误路径
+    /// （"Authorization header 格式错误：缺少参数部分"）。
+    #[test]
+    fn validate_header_without_whitespace_returns_false() {
+        let auth = HttpDigestAuth::new("realm", "MD5").unwrap();
+        // "Digest" 后无空格，split_once 返回 None
+        assert!(!auth.validate("Digest", "GET", "/resource", "ha1"));
+    }
+
+    /// 验证 validate 对包含未知参数的 header 仍可解析。
+    ///
+    /// 覆盖 parse_digest_params 中 `_ => {}` 分支（未知 key 被忽略）。
+    #[test]
+    fn validate_header_with_unknown_params_returns_false() {
+        let auth = HttpDigestAuth::new("realm", "MD5").unwrap();
+        // 包含未知参数 custom_param，parse_digest_params 的 _ 分支应跳过
+        let header = r#"Digest username="admin", realm="realm", nonce="n", uri="/r", response="r", qop=auth, nc=1, cnonce="c", custom_param="x""#;
+        // response 不正确，应返回 false（但解析本身不应出错）
+        assert!(!auth.validate(header, "GET", "/r", "dummy_ha1"));
+    }
+
+    /// 验证 validate 对包含转义字符的 header 可解析。
+    ///
+    /// 覆盖 parse_digest_params 中 `if c == '\\' { ... }` 转义分支。
+    #[test]
+    fn validate_header_with_escaped_chars_returns_false() {
+        let auth = HttpDigestAuth::new("realm", "MD5").unwrap();
+        // response 包含转义字符 \"
+        let header = r#"Digest username="ad\"min", realm="realm", nonce="n", uri="/r", response="r", qop=auth, nc=1, cnonce="c""#;
+        // response 不正确，应返回 false
+        assert!(!auth.validate(header, "GET", "/r", "dummy_ha1"));
+    }
+
+    /// 验证 validate 对 key 后无等号的 header 返回 false。
+    ///
+    /// 覆盖 parse_digest_params 中 `if chars.peek() != Some(&'=') { break; }` 分支。
+    #[test]
+    fn validate_header_with_key_without_equals_returns_false() {
+        let auth = HttpDigestAuth::new("realm", "MD5").unwrap();
+        // "username" 后无 '='，parse_digest_params 应 break
+        let header = r#"Digest username realm="realm", nonce="n", uri="/r", response="r", qop=auth, nc=1, cnonce="c""#;
+        assert!(!auth.validate(header, "GET", "/r", "dummy_ha1"));
+    }
+
+    /// 验证 validate 对不含 qop 的 header 返回 false。
+    ///
+    /// 覆盖 validate 中 `resp.qop.as_deref() != Some("auth")` 分支（qop=None）。
+    #[test]
+    fn validate_header_without_qop_returns_false() {
+        let auth = HttpDigestAuth::new("realm", "MD5").unwrap();
+        let header = r#"Digest username="admin", realm="realm", nonce="n", uri="/r", response="r", nc=1, cnonce="c""#;
+        assert!(!auth.validate(header, "GET", "/r", "dummy_ha1"));
+    }
+
+    // ========================================================================
+    // constant_time_eq 测试
+    // ========================================================================
+
+    /// 验证 constant_time_eq 对不同长度字符串返回 false。
+    ///
+    /// 覆盖 constant_time_eq 中 `if a.len() != b.len() { return false; }` 分支。
+    #[test]
+    fn constant_time_eq_different_lengths_returns_false() {
+        assert!(!constant_time_eq(b"abc", b"ab"));
+        assert!(!constant_time_eq(b"ab", b"abc"));
+    }
+
+    /// 验证 constant_time_eq 对相同字符串返回 true。
+    #[test]
+    fn constant_time_eq_same_strings_returns_true() {
+        assert!(constant_time_eq(b"abc", b"abc"));
+        assert!(constant_time_eq(b"", b""));
+    }
+
+    /// 验证 constant_time_eq 对不同字符串返回 false。
+    #[test]
+    fn constant_time_eq_different_strings_returns_false() {
+        assert!(!constant_time_eq(b"abc", b"abd"));
+    }
+
+    // ========================================================================
+    // hex_encode 测试
+    // ========================================================================
+
+    /// 验证 hex_encode 对空字节返回空字符串。
+    #[test]
+    fn hex_encode_empty_bytes() {
+        assert_eq!(hex_encode(&[]), "");
+    }
+
+    /// 验证 hex_encode 对已知字节返回正确 hex。
+    #[test]
+    fn hex_encode_known_bytes() {
+        assert_eq!(hex_encode(&[0x00, 0xff, 0x0a]), "00ff0a");
+    }
+
+    // ========================================================================
     // 辅助函数
     // ========================================================================
 

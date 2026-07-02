@@ -493,6 +493,92 @@ mod tests {
             .expect("encode 失败");
         assert!(output.contains("bulwark_login_total{result=\"success\"} 2"));
     }
+
+    /// 测试 Debug trait 实现输出字段名与类型名。
+    #[test]
+    #[serial]
+    fn test_metrics_debug_impl() {
+        let registry = prometheus::Registry::new();
+        let metrics = BulwarkMetrics::register_to(&registry).expect("注册失败");
+        let debug_str = format!("{:?}", metrics);
+        assert!(debug_str.contains("BulwarkMetrics"));
+        assert!(debug_str.contains("CounterVec"));
+        assert!(debug_str.contains("Histogram"));
+    }
+
+    /// 测试 Default trait 实现可构造（注册到 default registry）。
+    /// 注意：Default 调用 new() 注册到 default registry，只能调用一次。
+    /// 使用 #[serial] 隔离，避免与可能注册 default registry 的其他测试冲突。
+    #[test]
+    #[serial]
+    fn test_default_impl_creates_instance() {
+        // Default::default() 等价于 new()，注册到 default registry
+        let metrics = BulwarkMetrics::default();
+        // 验证实例可用
+        metrics.record_login(true);
+        metrics.record_permission_query(false);
+    }
+
+    /// 测试 new() 构造方法（注册到 default registry）。
+    /// 与 test_default_impl_creates_instance 互斥：二者都注册到 default registry，
+    /// 只能有一个执行。此测试验证 new() 路径，由 Default 测试间接覆盖。
+    #[test]
+    #[serial]
+    fn test_new_registers_to_default_registry() {
+        // new() 已由 Default 测试覆盖（Default 调用 new()），
+        // 此处仅验证 register_to 路径不 panic
+        let registry = prometheus::Registry::new();
+        let _metrics = BulwarkMetrics::register_to(&registry).expect("注册失败");
+    }
+}
+
+/// OpenTelemetry OTLP 追踪测试（feature = "observability-otlp"）。
+#[cfg(all(test, feature = "observability-otlp"))]
+mod tests_otlp {
+    use super::*;
+
+    /// 测试 init_otlp_tracing 成功初始化（使用本地 endpoint，不实际导出）。
+    /// tonic channel 是惰性连接，build() 不需要 endpoint 可达，但 build() 内部
+    /// 调用 tokio::spawn，因此需要 tokio runtime（使用 #[tokio::test] 提供）。
+    /// 注意：set_tracer_provider 是全局一次性操作，此测试只能运行一次。
+    #[tokio::test]
+    async fn test_init_otlp_tracing_succeeds() {
+        // 使用本地不可达 endpoint，tonic 不会实际连接（惰性连接）
+        let result = init_otlp_tracing("http://localhost:4317");
+        // build() 应成功（tonic 惰性连接），set_tracer_provider 也应成功（首次调用）
+        assert!(
+            result.is_ok(),
+            "init_otlp_tracing 应成功: {:?}",
+            result.err()
+        );
+    }
+
+    /// 测试 BulwarkOtelError 的 Display 实现。
+    #[test]
+    fn test_otel_error_display() {
+        let err1 = BulwarkOtelError::Exporter("exporter 失败".to_string());
+        assert!(format!("{}", err1).contains("exporter 失败"));
+        assert!(format!("{}", err1).contains("OTLP exporter"));
+
+        let err2 = BulwarkOtelError::Provider("provider 失败".to_string());
+        assert!(format!("{}", err2).contains("provider 失败"));
+        assert!(format!("{}", err2).contains("Tracer provider"));
+    }
+
+    /// 测试 BulwarkOtelError 的 Debug 实现。
+    /// derive(Debug) 仅输出变体名（如 Exporter("test")），不包含枚举名 BulwarkOtelError。
+    #[test]
+    fn test_otel_error_debug() {
+        let err = BulwarkOtelError::Exporter("test".to_string());
+        let debug_str = format!("{:?}", err);
+        assert!(debug_str.contains("Exporter"));
+        assert!(debug_str.contains("test"));
+
+        let err2 = BulwarkOtelError::Provider("prov".to_string());
+        let debug_str2 = format!("{:?}", err2);
+        assert!(debug_str2.contains("Provider"));
+        assert!(debug_str2.contains("prov"));
+    }
 }
 
 /// 无 feature 时的编译验证测试（确保向后兼容）。

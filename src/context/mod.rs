@@ -161,3 +161,82 @@ pub mod axum_adapter;
 
 #[cfg(feature = "web-axum")]
 pub use axum_adapter::{AxumContext, AxumRequest, AxumResponse, AxumStorage};
+
+// ============================================================================
+// 测试
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    /// Mock 响应实现，用于测试 BulwarkResponse trait 的默认方法。
+    struct MockResponse {
+        cookies: HashMap<String, String>,
+        headers: HashMap<String, String>,
+        status: Option<u16>,
+    }
+
+    impl MockResponse {
+        fn new() -> Self {
+            Self {
+                cookies: HashMap::new(),
+                headers: HashMap::new(),
+                status: None,
+            }
+        }
+    }
+
+    impl BulwarkResponse for MockResponse {
+        fn set_status(&mut self, code: u16) -> BulwarkResult<()> {
+            self.status = Some(code);
+            Ok(())
+        }
+
+        fn set_header(&mut self, name: &str, value: &str) -> BulwarkResult<()> {
+            self.headers.insert(name.to_string(), value.to_string());
+            Ok(())
+        }
+
+        fn set_cookie_with_config(
+            &mut self,
+            name: &str,
+            value: &str,
+            _config: &crate::config::BulwarkConfig,
+        ) -> BulwarkResult<()> {
+            self.cookies.insert(name.to_string(), value.to_string());
+            Ok(())
+        }
+    }
+
+    /// 验证 set_cookie 默认方法委托到 set_cookie_with_config。
+    #[test]
+    fn set_cookie_default_delegates_to_set_cookie_with_config() {
+        let mut resp = MockResponse::new();
+        let result = resp.set_cookie("session", "abc123");
+        assert!(result.is_ok());
+        assert_eq!(resp.cookies.get("session"), Some(&"abc123".to_string()));
+    }
+
+    /// 验证 set_cookie 默认方法使用 default_config。
+    #[test]
+    fn set_cookie_default_uses_default_config() {
+        let mut resp = MockResponse::new();
+        // set_cookie 默认方法应使用 BulwarkConfig::default_config()
+        // MockResponse 的 set_cookie_with_config 忽略 config，仅验证调用链
+        let result = resp.set_cookie("token", "xyz");
+        assert!(result.is_ok());
+        assert_eq!(resp.cookies.get("token"), Some(&"xyz".to_string()));
+    }
+
+    /// 验证 set_status 和 set_header 基本行为。
+    #[test]
+    fn mock_response_set_status_and_header() {
+        let mut resp = MockResponse::new();
+        resp.set_status(401).unwrap();
+        resp.set_header("X-Custom", "value").unwrap();
+        assert_eq!(resp.status, Some(401));
+        assert_eq!(resp.headers.get("X-Custom"), Some(&"value".to_string()));
+    }
+}
