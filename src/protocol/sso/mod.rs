@@ -25,12 +25,14 @@ use uuid::Uuid;
 const DEFAULT_TICKET_TTL: u64 = 60;
 
 /// SSO ticket 存储的 JSON 数据（依据 spec protocol-sso）。
+///
+/// `pub(crate)` 暴露以供 `server` 模块复用，避免跨模块重复定义导致格式漂移（M6 修复）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct SsoTicketData {
+pub(crate) struct SsoTicketData {
     /// 登录主体标识。
-    login_id: i64,
+    pub(crate) login_id: i64,
     /// 客户端标识。
-    client_id: i64,
+    pub(crate) client_id: i64,
 }
 
 /// SSO 客户端，提供 ticket 签发/校验/销毁（依据 spec protocol-sso）。
@@ -98,8 +100,13 @@ impl SsoClient {
     ///
     /// # 返回
     /// - `Ok(login_id)`: 校验成功。
-    /// - `Err(BulwarkError::InvalidToken)`: 票据不存在或已过期。
-    /// - `Err(BulwarkError::Config)`: client_id 不匹配。
+    /// - `Err(BulwarkError::InvalidToken)`: 票据不存在、已过期或 client_id 不匹配。
+    ///
+    /// # 已知限制 — TOCTOU 竞态
+    ///
+    /// `validate_ticket` 的 get→delete 非原子，并发调用同一 ticket 时理论上可重放。
+    /// 60 秒 TTL 窗口内的影响有限，但安全敏感场景应通过外层加锁或单点校验保证。
+    /// 此限制同时影响 `SsoClient` 与 `DefaultSsoServer`，待 0.5.0+ 设计原子 get-and-delete 后统一修复。
     pub async fn validate_ticket(&self, ticket: &str, client_id: i64) -> BulwarkResult<i64> {
         let key = format!("bulwark:sso:ticket:{}", ticket);
         let value = self.dao.get(&key).await?;
@@ -108,7 +115,11 @@ impl SsoClient {
         let data: SsoTicketData = serde_json::from_str(&value)
             .map_err(|e| BulwarkError::Internal(format!("反序列化 SSO ticket 失败: {}", e)))?;
         if data.client_id != client_id {
-            return Err(BulwarkError::Config("SSO client_id 不匹配".to_string()));
+            // client_id 不匹配属于认证失败（票据被错误方持有），使用 InvalidToken 而非 Config
+            return Err(BulwarkError::InvalidToken(format!(
+                "SSO client_id 不匹配: 期望 {}, 实际 {}",
+                data.client_id, client_id
+            )));
         }
         // 校验成功，立即删除（一次性使用）
         self.dao.delete(&key).await?;
@@ -264,7 +275,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    /// client_id 不匹配返回错误（spec Scenario）。
+    /// client_id 不匹配返回 InvalidToken 错误（spec Scenario，0.4.1 修复 M5）。
     #[tokio::test]
     async fn validate_ticket_client_id_mismatch_returns_error() {
         let client = make_client();
@@ -272,8 +283,8 @@ mod tests {
         let result = client.validate_ticket(&ticket, 9999).await;
         assert!(result.is_err());
         match result.err() {
-            Some(BulwarkError::Config(_)) => {},
-            other => panic!("期望 Config 错误，实际: {:?}", other),
+            Some(BulwarkError::InvalidToken(_)) => {},
+            other => panic!("期望 InvalidToken 错误，实际: {:?}", other),
         }
     }
 

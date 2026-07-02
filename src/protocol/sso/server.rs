@@ -9,24 +9,14 @@
 use crate::dao::BulwarkDao;
 use crate::error::{BulwarkError, BulwarkResult};
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
 
+// 复用 `sso::mod.rs` 中的 `SsoTicketData`，避免重复定义导致格式漂移（M6 修复）。
+use super::SsoTicketData;
+
 /// SSO ticket 默认 TTL（秒），与 `SsoClient` 保持一致。
 const DEFAULT_TICKET_TTL: u64 = 60;
-
-/// SSO ticket 存储的 JSON 数据（与 `SsoClient::SsoTicketData` 格式一致）。
-///
-/// 字段名必须与 `sso::mod.rs` 中的 `SsoTicketData` 相同，
-/// 以保证 `SsoServer` 与 `SsoClient` 通过共享 `BulwarkDao` 间接通信时格式兼容。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct SsoTicketData {
-    /// 登录主体标识（经 `CenterIdConverter::to_center_id` 转换后的 center_id）。
-    login_id: i64,
-    /// 客户端标识。
-    client_id: i64,
-}
 
 // ============================================================================
 // Trait 定义
@@ -56,8 +46,12 @@ pub trait SsoServer: Send + Sync {
     ///
     /// # 返回
     /// - `Ok(login_id)`: 校验成功（经 `CenterIdConverter::to_login_id` 转换回原始 login_id）。
-    /// - `Err(BulwarkError::InvalidToken)`: 票据不存在或已过期。
-    /// - `Err(BulwarkError::Config)`: client_id 不匹配。
+    /// - `Err(BulwarkError::InvalidToken)`: 票据不存在、已过期或 client_id 不匹配。
+    ///
+    /// # 已知限制 — TOCTOU 竞态
+    ///
+    /// 与 `SsoClient::validate_ticket` 相同，get→delete 非原子。
+    /// 待 0.5.0+ 在 `BulwarkDao` 引入原子 get-and-delete 后统一修复。
     async fn validate_ticket(&self, ticket: &str, client_id: i64) -> BulwarkResult<i64>;
 
     /// 销毁 SSO ticket（幂等，即使票据不存在也返回 `Ok(())`）。
@@ -204,9 +198,7 @@ impl SsoServer for DefaultSsoServer {
         let value = serde_json::to_string(&data)
             .map_err(|e| BulwarkError::Internal(format!("序列化 SSO ticket 失败: {}", e)))?;
         let key = format!("bulwark:sso:ticket:{}", ticket);
-        self.dao
-            .set(&key, &value, self.ticket_ttl_seconds)
-            .await?;
+        self.dao.set(&key, &value, self.ticket_ttl_seconds).await?;
         Ok(ticket)
     }
 
@@ -218,7 +210,11 @@ impl SsoServer for DefaultSsoServer {
         let data: SsoTicketData = serde_json::from_str(&value)
             .map_err(|e| BulwarkError::Internal(format!("反序列化 SSO ticket 失败: {}", e)))?;
         if data.client_id != client_id {
-            return Err(BulwarkError::Config("SSO client_id 不匹配".to_string()));
+            // client_id 不匹配属于认证失败，使用 InvalidToken 而非 Config（M5 修复）
+            return Err(BulwarkError::InvalidToken(format!(
+                "SSO client_id 不匹配: 期望 {}, 实际 {}",
+                data.client_id, client_id
+            )));
         }
         // 校验成功，立即删除（一次性使用）
         self.dao.delete(&key).await?;
@@ -368,7 +364,7 @@ mod tests {
         assert!(second.is_err());
     }
 
-    /// validate_ticket client_id 不匹配返回 Config 错误。
+    /// validate_ticket client_id 不匹配返回 InvalidToken 错误（M5 修复）。
     #[tokio::test]
     async fn validate_ticket_client_id_mismatch_returns_error() {
         let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
@@ -377,8 +373,8 @@ mod tests {
         let result = server.validate_ticket(&ticket, 9999).await;
         assert!(result.is_err());
         match result.err() {
-            Some(BulwarkError::Config(_)) => {},
-            other => panic!("期望 Config 错误，实际: {:?}", other),
+            Some(BulwarkError::InvalidToken(_)) => {},
+            other => panic!("期望 InvalidToken 错误，实际: {:?}", other),
         }
     }
 
@@ -432,8 +428,7 @@ mod tests {
             }
         }
         let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
-        let server = DefaultSsoServer::new(dao)
-            .with_converter(Arc::new(OffsetConverter));
+        let server = DefaultSsoServer::new(dao).with_converter(Arc::new(OffsetConverter));
         let ticket = server.issue_ticket(1001, 2001).await.unwrap();
         let login_id = server.validate_ticket(&ticket, 2001).await.unwrap();
         // 往返一致：返回原始 login_id（而非 center_id）

@@ -86,12 +86,58 @@ impl ParameterQueryBuilder {
             token: None,
         }
     }
+
+    /// 公共 check 流程：根据 token / login_id 上下文执行校验（M7 提取，消除重复代码）。
+    ///
+    /// - token 优先于 login_id
+    /// - token 路径：直接 `with_current_token` 包装后委托 `BulwarkUtil::check_*`
+    /// - login_id 路径：临时 `login()` 获取 token 后校验，最后 `kickout_by_token` 清理
+    /// - 清理失败被忽略（不影响校验结果，但会通过 tracing 输出，符合 fail-soft 语义）
+    async fn check_common(&self, value: &str, kind: CheckKind) -> BulwarkResult<()> {
+        if let Some(token) = &self.token {
+            // Token 已设置：包装 task_local 调用 BulwarkUtil::check_*
+            let token = token.clone();
+            let value = value.to_string();
+            with_current_token(token, async move {
+                match kind {
+                    CheckKind::Permission => BulwarkUtil::check_permission(&value).await,
+                    CheckKind::Role => BulwarkUtil::check_role(&value).await,
+                }
+            })
+            .await
+        } else if let Some(login_id) = self.login_id {
+            // Login_id 已设置：创建临时会话获取 token，再委托 BulwarkUtil::check_* 校验
+            let token = BulwarkUtil::login(login_id).await?;
+            let value = value.to_string();
+            let token_for_cleanup = token.clone();
+            let result = with_current_token(token, async move {
+                match kind {
+                    CheckKind::Permission => BulwarkUtil::check_permission(&value).await,
+                    CheckKind::Role => BulwarkUtil::check_role(&value).await,
+                }
+            })
+            .await;
+            // 清理临时会话（忽略清理失败，不影响校验结果）
+            let _ = BulwarkUtil::kickout_by_token(&token_for_cleanup).await;
+            result
+        } else {
+            Err(BulwarkError::Internal(
+                "login_id not set in ParameterQuery context".to_string(),
+            ))
+        }
+    }
 }
 
 impl Default for ParameterQueryBuilder {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// 内部 check 种类（用于 `check_common` 委托，消除 check_permission/check_role 重复代码）。
+enum CheckKind {
+    Permission,
+    Role,
 }
 
 #[async_trait]
@@ -112,50 +158,11 @@ impl ParameterQuery for ParameterQueryBuilder {
     }
 
     async fn check_permission(&self, perm: &str) -> BulwarkResult<()> {
-        if let Some(token) = &self.token {
-            // Token 已设置：包装 task_local 调用 BulwarkUtil::check_permission
-            let token = token.clone();
-            let perm = perm.to_string();
-            with_current_token(token, async move { BulwarkUtil::check_permission(&perm).await }).await
-        } else if let Some(login_id) = self.login_id {
-            // Login_id 已设置：创建临时会话获取 token，再委托 BulwarkUtil::check_permission 校验
-            let token = BulwarkUtil::login(login_id).await?;
-            let perm_str = perm.to_string();
-            let token_for_cleanup = token.clone();
-            let result = with_current_token(token, async move {
-                BulwarkUtil::check_permission(&perm_str).await
-            })
-            .await;
-            // 清理临时会话（忽略清理失败，不影响校验结果）
-            let _ = BulwarkUtil::kickout_by_token(&token_for_cleanup).await;
-            result
-        } else {
-            Err(BulwarkError::Internal(
-                "login_id not set in ParameterQuery context".to_string(),
-            ))
-        }
+        self.check_common(perm, CheckKind::Permission).await
     }
 
     async fn check_role(&self, role: &str) -> BulwarkResult<()> {
-        if let Some(token) = &self.token {
-            let token = token.clone();
-            let role = role.to_string();
-            with_current_token(token, async move { BulwarkUtil::check_role(&role).await }).await
-        } else if let Some(login_id) = self.login_id {
-            let token = BulwarkUtil::login(login_id).await?;
-            let role_str = role.to_string();
-            let token_for_cleanup = token.clone();
-            let result = with_current_token(token, async move {
-                BulwarkUtil::check_role(&role_str).await
-            })
-            .await;
-            let _ = BulwarkUtil::kickout_by_token(&token_for_cleanup).await;
-            result
-        } else {
-            Err(BulwarkError::Internal(
-                "login_id not set in ParameterQuery context".to_string(),
-            ))
-        }
+        self.check_common(role, CheckKind::Role).await
     }
 }
 
@@ -287,10 +294,8 @@ mod tests {
         config.timeout = 3600;
         config.active_timeout = -1;
         config.throw_on_not_login = throw_on_not_login;
-        let interface: Arc<dyn BulwarkInterface> = Arc::new(MockInterfaceWithPerms {
-            permissions,
-            roles,
-        });
+        let interface: Arc<dyn BulwarkInterface> =
+            Arc::new(MockInterfaceWithPerms { permissions, roles });
         BulwarkManager::init(dao, Arc::new(config), interface).unwrap();
     }
 
@@ -335,7 +340,11 @@ mod tests {
         let builder = ParameterQueryBuilder::new()
             .with_login_id(1001)
             .with_device("dev1");
-        assert_eq!(builder.login_id, Some(1001), "链式调用后 login_id 应为 1001");
+        assert_eq!(
+            builder.login_id,
+            Some(1001),
+            "链式调用后 login_id 应为 1001"
+        );
         assert_eq!(
             builder.device.as_deref(),
             Some("dev1"),
@@ -417,7 +426,11 @@ mod tests {
             .with_token(&token)
             .check_permission("user:read")
             .await;
-        assert!(result.is_ok(), "token 上下文持有权限应返回 Ok，实际: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "token 上下文持有权限应返回 Ok，实际: {:?}",
+            result
+        );
 
         BulwarkManager::reset_for_test();
     }
@@ -514,7 +527,11 @@ mod tests {
             .with_token(&token)
             .check_role("admin")
             .await;
-        assert!(result.is_ok(), "token 上下文持有角色应返回 Ok，实际: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "token 上下文持有角色应返回 Ok，实际: {:?}",
+            result
+        );
 
         BulwarkManager::reset_for_test();
     }
@@ -558,7 +575,11 @@ mod tests {
             .with_login_id(2002)
             .check_permission("user:read")
             .await;
-        assert!(result.is_ok(), "async check_permission 应正常工作，实际: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "async check_permission 应正常工作，实际: {:?}",
+            result
+        );
 
         BulwarkManager::reset_for_test();
     }

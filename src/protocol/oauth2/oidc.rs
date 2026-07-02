@@ -82,9 +82,31 @@ impl OidcHandler {
     }
 
     /// 切换签名算法（依据 spec oauth2-oidc）。
+    ///
+    /// **注意**：当前实现仅支持 HMAC 系列算法（HS256/HS384/HS512），
+    /// 因为 `EncodingKey::from_secret` / `DecodingKey::from_secret` 只接受对称密钥。
+    /// 非对称算法（RS*/ES*/PS*）会在 `sign_id_token` / `verify_id_token` 时返回 `Config` 错误。
     pub fn with_algorithm(mut self, algorithm: Algorithm) -> Self {
         self.algorithm = algorithm;
         self
+    }
+
+    /// 校验算法是否为 HMAC 系列（HS256/HS384/HS512）。
+    ///
+    /// 非对称算法需通过 `EncodingKey::from_rsa_pem` 等接口加载密钥，
+    /// 当前 `OidcHandler` 仅持有 `secret: String`，不支持非对称密钥（M4 修复）。
+    fn require_hmac_algorithm(&self) -> BulwarkResult<()> {
+        if matches!(
+            self.algorithm,
+            Algorithm::HS256 | Algorithm::HS384 | Algorithm::HS512
+        ) {
+            Ok(())
+        } else {
+            Err(BulwarkError::Config(format!(
+                "OidcHandler 仅支持 HS256/HS384/HS512 算法，当前算法不支持: {:?}",
+                self.algorithm
+            )))
+        }
     }
 
     /// 签发 OIDC id_token（依据 spec oauth2-oidc）。
@@ -112,6 +134,8 @@ impl OidcHandler {
                 timeout
             )));
         }
+        // M4 修复：非对称算法无法用 from_secret 加载密钥，提前校验
+        self.require_hmac_algorithm()?;
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|e| BulwarkError::Internal(format!("系统时间错误: {}", e)))?
@@ -142,7 +166,13 @@ impl OidcHandler {
     /// - `Err(BulwarkError::OAuth2)`: nonce 不匹配。
     /// - `Err(BulwarkError::ExpiredToken)`: id_token 已过期。
     /// - `Err(BulwarkError::InvalidToken)`: 签名/格式校验失败。
-    pub fn verify_id_token(&self, id_token: &str, expected_nonce: &str) -> BulwarkResult<OidcClaims> {
+    pub fn verify_id_token(
+        &self,
+        id_token: &str,
+        expected_nonce: &str,
+    ) -> BulwarkResult<OidcClaims> {
+        // M4 修复：提前校验算法，避免 from_secret 在非对称算法下产生模糊错误
+        self.require_hmac_algorithm()?;
         let key = DecodingKey::from_secret(self.secret.as_bytes());
         let mut validation = Validation::new(self.algorithm);
         validation.validate_exp = true;
@@ -239,7 +269,7 @@ mod tests {
         let result = OidcHandler::new("issuer", "aud", "");
         assert!(result.is_err());
         match result.err() {
-            Some(BulwarkError::Config(_)) => {}
+            Some(BulwarkError::Config(_)) => {},
             other => panic!("期望 Config 错误，实际: {:?}", other),
         }
     }
@@ -318,12 +348,12 @@ mod tests {
         let result = handler.sign_id_token(1001, "nonce", "openid", -1);
         assert!(result.is_err());
         match result.err() {
-            Some(BulwarkError::Config(_)) => {}
+            Some(BulwarkError::Config(_)) => {},
             other => panic!("期望 Config 错误，实际: {:?}", other),
         }
     }
 
-    /// 篡改 id_token 返回 InvalidToken 错误。
+    /// 篡改 id_token 返回 InvalidToken 错误（L9 修复：强化断言错误类型）。
     #[test]
     fn verify_id_token_tampered_fails() {
         let handler = make_handler();
@@ -334,6 +364,41 @@ mod tests {
         let tampered = format!("{}.{}.{}", parts[0], "ZmFrZS1wYXlsb2Fk", parts[2]);
         let result = handler.verify_id_token(&tampered, "nonce");
         assert!(result.is_err());
+        match result.err() {
+            Some(BulwarkError::InvalidToken(_)) => {},
+            other => panic!("期望 InvalidToken 错误（签名校验失败），实际: {:?}", other),
+        }
+    }
+
+    /// M4 回归测试：非对称算法在 sign_id_token 时返回 Config 错误。
+    #[test]
+    fn sign_id_token_rejects_asymmetric_algorithm() {
+        let handler = make_handler().with_algorithm(Algorithm::RS256);
+        let result = handler.sign_id_token(1001, "nonce", "openid", 3600);
+        assert!(result.is_err());
+        match result.err() {
+            Some(BulwarkError::Config(msg)) => assert!(
+                msg.contains("HS256") && msg.contains("RS256"),
+                "错误消息应包含 HS256 与 RS256，实际: {}",
+                msg
+            ),
+            other => panic!("期望 Config 错误，实际: {:?}", other),
+        }
+    }
+
+    /// M4 回归测试：非对称算法在 verify_id_token 时返回 Config 错误。
+    #[test]
+    fn verify_id_token_rejects_asymmetric_algorithm() {
+        // 即使 token 是用 HS256 签发的，verifier 配置为 RS256 也应提前返回 Config 错误
+        let signer = make_handler();
+        let token = signer.sign_id_token(1001, "nonce", "openid", 3600).unwrap();
+        let verifier = make_handler().with_algorithm(Algorithm::RS256);
+        let result = verifier.verify_id_token(&token, "nonce");
+        assert!(result.is_err());
+        match result.err() {
+            Some(BulwarkError::Config(_)) => {},
+            other => panic!("期望 Config 错误，实际: {:?}", other),
+        }
     }
 
     /// iss 不匹配返回 InvalidToken 错误（使用不同 issuer 的 handler 验证）。
@@ -372,10 +437,7 @@ mod tests {
             .as_str()
             .unwrap()
             .ends_with("/userinfo"));
-        assert!(metadata["jwks_uri"]
-            .as_str()
-            .unwrap()
-            .ends_with("/jwks"));
+        assert!(metadata["jwks_uri"].as_str().unwrap().ends_with("/jwks"));
         assert!(metadata["response_types_supported"]
             .as_array()
             .unwrap()
@@ -393,8 +455,7 @@ mod tests {
     /// discovery_metadata issuer 与 handler 配置一致（spec Scenario）。
     #[test]
     fn discovery_metadata_issuer_matches_handler() {
-        let handler =
-            OidcHandler::new("https://my-provider.com", "client-1", "secret").unwrap();
+        let handler = OidcHandler::new("https://my-provider.com", "client-1", "secret").unwrap();
         let metadata = handler.discovery_metadata();
         assert_eq!(metadata["issuer"], "https://my-provider.com");
     }

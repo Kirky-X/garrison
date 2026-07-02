@@ -722,7 +722,7 @@ mod tests {
         match result.err() {
             Some(BulwarkError::OAuth2(msg)) => {
                 assert!(msg.contains("400"), "错误消息应包含 HTTP 状态码 400");
-            }
+            },
             other => panic!("期望 OAuth2 错误，实际: {:?}", other),
         }
     }
@@ -794,9 +794,7 @@ mod tests {
             "blocked",
             std::sync::Arc::new(StubScopeHandler { allowed: false }),
         );
-        let client = make_client(&server)
-            .await
-            .with_scope_registry(registry);
+        let client = make_client(&server).await.with_scope_registry(registry);
         let token = client.get_client_credentials_token(None).await.unwrap();
         assert_eq!(token.access_token, "tok");
     }
@@ -814,16 +812,16 @@ mod tests {
             "admin",
             std::sync::Arc::new(StubScopeHandler { allowed: false }),
         );
-        let client = make_client(&server)
-            .await
-            .with_scope_registry(registry);
+        let client = make_client(&server).await.with_scope_registry(registry);
 
         let result = client
             .get_password_token("user", "pass", Some("admin"))
             .await;
         assert!(result.is_err());
         match result.err() {
-            Some(BulwarkError::OAuth2(msg)) => assert!(msg.contains("scope validation failed: admin")),
+            Some(BulwarkError::OAuth2(msg)) => {
+                assert!(msg.contains("scope validation failed: admin"))
+            },
             other => panic!("期望 OAuth2 错误，实际: {:?}", other),
         }
     }
@@ -846,9 +844,7 @@ mod tests {
             "read",
             std::sync::Arc::new(StubScopeHandler { allowed: true }),
         );
-        let client = make_client(&server)
-            .await
-            .with_scope_registry(registry);
+        let client = make_client(&server).await.with_scope_registry(registry);
 
         let token = client
             .get_client_credentials_token(Some("read"))
@@ -873,13 +869,9 @@ mod tests {
         let server = MockServer::start().await;
         let registry = std::sync::Arc::new(scope::ScopeRegistry::new());
         registry.register("bad", std::sync::Arc::new(ErrScopeHandler));
-        let client = make_client(&server)
-            .await
-            .with_scope_registry(registry);
+        let client = make_client(&server).await.with_scope_registry(registry);
 
-        let result = client
-            .refresh_access_token("rtok", Some("bad"))
-            .await;
+        let result = client.refresh_access_token("rtok", Some("bad")).await;
         assert!(result.is_err());
         match result.err() {
             Some(BulwarkError::Internal(msg)) => assert!(msg.contains("handler failure")),
@@ -894,9 +886,7 @@ mod tests {
         let server = MockServer::start().await;
         let registry = std::sync::Arc::new(scope::ScopeRegistry::new());
         // 不注册任何 handler
-        let client = make_client(&server)
-            .await
-            .with_scope_registry(registry);
+        let client = make_client(&server).await.with_scope_registry(registry);
 
         let result = client
             .get_password_token("user", "pass", Some("unregistered"))
@@ -905,7 +895,7 @@ mod tests {
         match result.err() {
             Some(BulwarkError::OAuth2(msg)) => {
                 assert!(msg.contains("scope handler not registered: unregistered"))
-            }
+            },
             other => panic!("期望 OAuth2 错误，实际: {:?}", other),
         }
     }

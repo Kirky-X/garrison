@@ -173,7 +173,7 @@ mod tests {
         match result.err() {
             Some(BulwarkError::OAuth2(msg)) => {
                 assert!(msg.contains("scope handler not registered: unregistered_scope"))
-            }
+            },
             other => panic!("期望 OAuth2 错误，实际: {:?}", other),
         }
     }
@@ -188,7 +188,7 @@ mod tests {
         match result.err() {
             Some(BulwarkError::Internal(msg)) => {
                 assert!(msg.contains("handler error for scope: error_scope"))
-            }
+            },
             other => panic!("期望 Internal 错误，实际: {:?}", other),
         }
     }
@@ -201,7 +201,10 @@ mod tests {
         for i in 0..10 {
             let r = registry.clone();
             handles.push(std::thread::spawn(move || {
-                r.register(&format!("scope-{}", i), Arc::new(StubHandler { allowed: true }));
+                r.register(
+                    &format!("scope-{}", i),
+                    Arc::new(StubHandler { allowed: true }),
+                );
             }));
         }
         for h in handles {
