@@ -1,0 +1,12 @@
+//! scope_handler 示例测试（oauth2-scope-handler feature）。
+//!
+//! 验证 run() 完整执行（内部已包含 registry 校验 + OAuth2Client 集成断言）。
+
+#![cfg(feature = "oauth2-scope-handler")]
+
+use bulwark_examples::scope_handler;
+
+#[tokio::test]
+async fn test_run_completes() {
+    scope_handler::run().await.unwrap();
+}

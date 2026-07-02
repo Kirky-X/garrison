@@ -83,3 +83,22 @@ pub mod basic_login;
 
 #[cfg(all(feature = "cache-memory", feature = "web-axum"))]
 pub mod axum_integration;
+
+// ====================================================================
+// 0.4.0 新增 feature-gated 模块
+// ====================================================================
+
+#[cfg(feature = "protocol-oidc")]
+pub mod oidc_handler;
+
+#[cfg(feature = "oauth2-scope-handler")]
+pub mod scope_handler;
+
+#[cfg(feature = "protocol-sso-server")]
+pub mod sso_server;
+
+#[cfg(feature = "alone-cache")]
+pub mod alone_cache;
+
+#[cfg(feature = "parameter-query")]
+pub mod parameter_query;
