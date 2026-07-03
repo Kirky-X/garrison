@@ -29,6 +29,9 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
+// 0.4.2: LoginId newtype 接入（impl Into<LoginId> 公开 API + i64 内部层）
+use crate::stp::login_id::LoginId;
+use crate::stp::login_id_to_i64;
 
 /// Account-Session 的 token 信息条目。
 ///
@@ -128,16 +131,19 @@ impl BulwarkSession {
     /// 对应 spec scenario "创建 Account-Session" 与 "创建 Token-Session"。
     ///
     /// # 参数
-    /// - `login_id`: 登录主体标识。
+    /// - `login_id`: 登录主体标识（接受 `i64` / `LoginId::Numeric` / `LoginId::String`）。
+    ///   v0.4.2 仅支持 Numeric 形式；String 形式返回 `BulwarkError::Config`（待 v0.5.0+ 内部层迁移）。
     /// - `token`: 新创建的 token 字符串。
     ///
     /// # 返回
     /// 成功返回 `Ok(())`。
     ///
     /// # 错误
+    /// - `BulwarkError::Config`：传入 `LoginId::String` 形式，内部层尚未完成迁移。
     /// - 序列化 `TokenSession` / `AccountSession` 失败：`BulwarkError::Session`。
     /// - DAO 写入失败：透传 `BulwarkError`。
-    pub async fn create(&self, login_id: i64, token: &str) -> BulwarkResult<()> {
+    pub async fn create(&self, login_id: impl Into<LoginId>, token: &str) -> BulwarkResult<()> {
+        let login_id: i64 = login_id_to_i64(login_id.into())?;
         let now = Utc::now().timestamp();
 
         // 创建 Token-Session
@@ -211,19 +217,22 @@ impl BulwarkSession {
     /// 获取 Account-Session。
     ///
     /// # 参数
-    /// - `login_id`: 登录主体标识。
+    /// - `login_id`: 登录主体标识（接受 `i64` / `LoginId::Numeric` / `LoginId::String`）。
+    ///   v0.4.2 仅支持 Numeric 形式；String 形式返回 `BulwarkError::Config`（待 v0.5.0+ 内部层迁移）。
     ///
     /// # 返回
     /// - `Some(AccountSession)`: 账号会话存在。
     /// - `None`: 账号会话不存在或已过期。
     ///
     /// # 错误
+    /// - `BulwarkError::Config`：传入 `LoginId::String` 形式，内部层尚未完成迁移。
     /// - 反序列化失败：`BulwarkError::Session`。
     /// - DAO 读取失败：透传 `BulwarkError`。
     pub async fn get_account_session(
         &self,
-        login_id: i64,
+        login_id: impl Into<LoginId>,
     ) -> BulwarkResult<Option<AccountSession>> {
+        let login_id: i64 = login_id_to_i64(login_id.into())?;
         match self.dao.get(&account_key(login_id)).await? {
             Some(json) => {
                 let as_: AccountSession = serde_json::from_str(&json).map_err(|e| {
@@ -482,14 +491,17 @@ impl BulwarkSession {
     /// 对应 Sa-Token 的 `logout(login_id)` 语义。
     ///
     /// # 参数
-    /// - `login_id`: 登录主体标识。
+    /// - `login_id`: 登录主体标识（接受 `i64` / `LoginId::Numeric` / `LoginId::String`）。
+    ///   v0.4.2 仅支持 Numeric 形式；String 形式返回 `BulwarkError::Config`（待 v0.5.0+ 内部层迁移）。
     ///
     /// # 返回
     /// 成功返回 `Ok(())`。
     ///
     /// # 错误
+    /// - `BulwarkError::Config`：传入 `LoginId::String` 形式，内部层尚未完成迁移。
     /// - DAO 删除失败：透传 `BulwarkError`。
-    pub async fn logout_by_login_id(&self, login_id: i64) -> BulwarkResult<()> {
+    pub async fn logout_by_login_id(&self, login_id: impl Into<LoginId>) -> BulwarkResult<()> {
+        let login_id: i64 = login_id_to_i64(login_id.into())?;
         if let Some(account) = self.get_account_session(login_id).await? {
             for ti in &account.tokens {
                 self.dao.delete(&token_key(&ti.token)).await?;
@@ -1202,5 +1214,93 @@ mod tests {
         // 未关联临时凭证，token 应有效（0.1.0 既有行为不变）
         let valid = session.is_valid("T1").await.unwrap();
         assert!(valid, "未关联临时凭证时 token 有效性应遵循 0.1.0 既有行为");
+    }
+
+    // ------------------------------------------------------------------------
+    // 0.4.2 新增 spec scenario: LoginId newtype 接入（impl Into<LoginId>）
+    // ------------------------------------------------------------------------
+
+    use crate::stp::login_id::LoginId;
+
+    /// 验证 `BulwarkSession::create` 接受 `LoginId::Numeric`（i64 兼容路径）。
+    ///
+    /// 对应 spec R-login-id-type-003：所有 `login_id: i64` 签名改为 `impl Into<LoginId>`。
+    #[tokio::test]
+    async fn create_accepts_login_id_numeric() {
+        let (_dao, session) = make_session(3600, 86400);
+        session.create(LoginId::Numeric(1001), "T1").await.unwrap();
+        let ts = session.get_token_session("T1").await.unwrap().unwrap();
+        assert_eq!(ts.login_id, 1001);
+    }
+
+    /// 验证 `BulwarkSession::create` 接受 `LoginId::String` 形式但返回
+    /// `BulwarkError::Config`（v0.4.2 内部层尚未迁移 String 形式）。
+    ///
+    /// 对应 spec R-login-id-type-003 + design D1 偏差：v0.4.2 仅支持 Numeric，
+    /// String 形式待 v0.5.0+ 完成内部层迁移。
+    #[tokio::test]
+    async fn create_rejects_login_id_string_with_config_error() {
+        let (_dao, session) = make_session(3600, 86400);
+        let result = session
+            .create(LoginId::String("user-uuid-abc".to_string()), "T1")
+            .await;
+        assert!(
+            matches!(result, Err(BulwarkError::Config(_))),
+            "String-form login_id 在 v0.4.2 应返回 Config 错误，实际: {:?}",
+            result
+        );
+    }
+
+    /// 验证 `BulwarkSession::get_account_session` 接受 `LoginId::Numeric`。
+    #[tokio::test]
+    async fn get_account_session_accepts_login_id_numeric() {
+        let (_dao, session) = make_session(3600, 86400);
+        session.create(1001, "T1").await.unwrap();
+        let as_ = session
+            .get_account_session(LoginId::Numeric(1001))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(as_.login_id, 1001);
+    }
+
+    /// 验证 `BulwarkSession::get_account_session` 对 String 形式返回 Config 错误。
+    #[tokio::test]
+    async fn get_account_session_rejects_login_id_string() {
+        let (_dao, session) = make_session(3600, 86400);
+        let result = session
+            .get_account_session(LoginId::String("user-uuid".to_string()))
+            .await;
+        assert!(
+            matches!(result, Err(BulwarkError::Config(_))),
+            "String-form login_id 在 v0.4.2 应返回 Config 错误，实际: {:?}",
+            result
+        );
+    }
+
+    /// 验证 `BulwarkSession::logout_by_login_id` 接受 `LoginId::Numeric`。
+    #[tokio::test]
+    async fn logout_by_login_id_accepts_login_id_numeric() {
+        let (_dao, session) = make_session(3600, 86400);
+        session.create(1001, "T1").await.unwrap();
+        session
+            .logout_by_login_id(LoginId::Numeric(1001))
+            .await
+            .unwrap();
+        assert!(session.get_token_session("T1").await.unwrap().is_none());
+    }
+
+    /// 验证 `BulwarkSession::logout_by_login_id` 对 String 形式返回 Config 错误。
+    #[tokio::test]
+    async fn logout_by_login_id_rejects_login_id_string() {
+        let (_dao, session) = make_session(3600, 86400);
+        let result = session
+            .logout_by_login_id(LoginId::String("user-uuid".to_string()))
+            .await;
+        assert!(
+            matches!(result, Err(BulwarkError::Config(_))),
+            "String-form login_id 在 v0.4.2 应返回 Config 错误，实际: {:?}",
+            result
+        );
     }
 }

@@ -15,6 +15,9 @@
 //! - 默认 HS256 算法（与 `JwtHandler` 一致）
 
 use crate::error::{BulwarkError, BulwarkResult};
+// 0.4.2: LoginId newtype 接入（impl Into<LoginId> 公开 API + i64 内部层）
+use crate::stp::login_id::LoginId;
+use crate::stp::login_id_to_i64;
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -125,13 +128,15 @@ impl OidcHandler {
     /// - `Ok(String)`: JWT 格式的 id_token。
     /// - `Err(BulwarkError::Config)`: timeout 为负，或当前算法为非对称算法。
     /// - `Err(BulwarkError::Internal)`: 签发失败。
+    /// - `Err(BulwarkError::Config)`: 传入 `LoginId::String` 形式，内部层尚未完成迁移。
     pub fn sign_id_token(
         &self,
-        login_id: i64,
+        login_id: impl Into<LoginId>,
         nonce: &str,
         _scope: &str,
         timeout: i64,
     ) -> BulwarkResult<String> {
+        let login_id: i64 = login_id_to_i64(login_id.into())?;
         if timeout < 0 {
             return Err(BulwarkError::Config(format!(
                 "timeout 不能为负数: {}",
@@ -547,5 +552,39 @@ mod tests {
         base64::engine::general_purpose::URL_SAFE_NO_PAD
             .decode(s.as_bytes())
             .expect("Base64URL 解码失败")
+    }
+
+    // ========================================================================
+    // 0.4.2 新增: LoginId newtype 接入（impl Into<LoginId>）
+    // ========================================================================
+
+    use crate::stp::login_id::LoginId;
+
+    /// 验证 `OidcHandler::sign_id_token` 接受 `LoginId::Numeric`（i64 兼容路径）。
+    #[test]
+    fn sign_id_token_accepts_login_id_numeric() {
+        let handler = OidcHandler::new("https://auth.example.com", "aud-abc", "secret").unwrap();
+        let token = handler
+            .sign_id_token(LoginId::Numeric(1001), "nonce", "openid", 3600)
+            .unwrap();
+        let claims = handler.verify_id_token(&token, "nonce").unwrap();
+        assert_eq!(claims.login_id, 1001);
+    }
+
+    /// 验证 `OidcHandler::sign_id_token` 对 `LoginId::String` 返回 `BulwarkError::Config`。
+    #[test]
+    fn sign_id_token_rejects_login_id_string_with_config_error() {
+        let handler = OidcHandler::new("https://auth.example.com", "aud-abc", "secret").unwrap();
+        let result = handler.sign_id_token(
+            LoginId::String("user-uuid".to_string()),
+            "nonce",
+            "openid",
+            3600,
+        );
+        assert!(
+            matches!(result, Err(BulwarkError::Config(_))),
+            "String-form login_id 在 v0.4.2 应返回 Config 错误，实际: {:?}",
+            result
+        );
     }
 }

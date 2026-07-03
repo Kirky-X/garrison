@@ -24,6 +24,8 @@ use crate::listener::{BulwarkEvent, BulwarkListenerManager};
 use crate::plugin::BulwarkPluginManager;
 use crate::session::BulwarkSession;
 use crate::strategy::{BulwarkFirewallStrategy, FirewallLoginContext};
+// 0.4.2: LoginId newtype（支持 i64 与 String 双形式登录主体标识）
+use crate::stp::login_id::LoginId;
 use async_trait::async_trait;
 use std::future::Future;
 use std::sync::Arc;
@@ -31,6 +33,9 @@ use std::sync::Arc;
 // 0.4.0 新增：ParameterQuery 参数化查询模块（feature-gated）
 #[cfg(feature = "parameter-query")]
 pub mod parameter;
+
+// 0.4.2 新增：LoginId newtype（支持 i64 与 String 双形式登录主体标识）
+pub mod login_id;
 
 // ============================================================================
 // task_local：存储当前请求的 token（类似 Sa-Token 的 SaHolder）
@@ -727,20 +732,38 @@ pub trait BulwarkInterface: Send + Sync {
 /// 否则返回 `BulwarkError::Session("BulwarkManager 未初始化")`。
 pub struct BulwarkUtil;
 
+/// 将 `LoginId` 转换为 `i64`（v0.4.2 内部层仍使用 `i64`，String 形式待 v0.5.0+ 迁移）。
+///
+/// 公开为 `pub(crate)` 以便 `session` / `protocol` 等模块复用同一转换逻辑，
+/// 保证 String-form login_id 在 v0.4.2 全栈一致返回 `BulwarkError::Config`。
+///
+/// # 错误
+/// - `BulwarkError::Config`：传入 `LoginId::String` 形式，内部层尚未完成迁移。
+pub(crate) fn login_id_to_i64(login_id: LoginId) -> BulwarkResult<i64> {
+    login_id.as_i64().ok_or_else(|| {
+        BulwarkError::Config(
+            "String-form login_id 需内部层完整迁移（计划 v0.5.0+），v0.4.2 仅支持 Numeric 形式"
+                .to_string(),
+        )
+    })
+}
+
 impl BulwarkUtil {
     /// 执行登录：生成 token + 创建会话。
     ///
     /// # 参数
-    /// - `id`: 登录主体标识。
+    /// - `id`: 登录主体标识（支持 `i64`、`String`、`&str` 等 `Into<LoginId>` 类型）。
     ///
     /// # 返回
     /// 生成的 token 字符串。
     ///
     /// # 错误
     /// - `BulwarkManager` 未初始化：`BulwarkError::Session`。
+    /// - `LoginId::String` 形式：`BulwarkError::Config`（v0.4.2 限制，v0.5.0+ 支持）。
     /// - token 生成或会话创建失败：透传 `BulwarkError`。
-    pub async fn login(id: i64) -> BulwarkResult<String> {
-        crate::manager::BulwarkManager::logic()?.login(id).await
+    pub async fn login(id: impl Into<LoginId>) -> BulwarkResult<String> {
+        let id_i64 = login_id_to_i64(id.into())?;
+        crate::manager::BulwarkManager::logic()?.login(id_i64).await
     }
 
     /// 执行登出：从 task_local 获取当前 token 并销毁。
@@ -758,34 +781,38 @@ impl BulwarkUtil {
     /// 按账号登出：销毁指定 login_id 的所有会话。
     ///
     /// # 参数
-    /// - `login_id`: 登录主体标识。
+    /// - `login_id`: 登录主体标识（支持 `i64`、`String`、`&str` 等 `Into<LoginId>` 类型）。
     ///
     /// # 返回
     /// 成功返回 `Ok(())`。
     ///
     /// # 错误
     /// - `BulwarkManager` 未初始化：`BulwarkError::Session`。
+    /// - `LoginId::String` 形式：`BulwarkError::Config`（v0.4.2 限制，v0.5.0+ 支持）。
     /// - 会话销毁失败：透传 `BulwarkError`。
-    pub async fn logout_by_login_id(login_id: i64) -> BulwarkResult<()> {
+    pub async fn logout_by_login_id(login_id: impl Into<LoginId>) -> BulwarkResult<()> {
+        let id_i64 = login_id_to_i64(login_id.into())?;
         crate::manager::BulwarkManager::logic()?
-            .logout_by_login_id(login_id)
+            .logout_by_login_id(id_i64)
             .await
     }
 
     /// 踢出用户：按账号踢出（语义等同 logout_by_login_id）。
     ///
     /// # 参数
-    /// - `login_id`: 登录主体标识。
+    /// - `login_id`: 登录主体标识（支持 `i64`、`String`、`&str` 等 `Into<LoginId>` 类型）。
     ///
     /// # 返回
     /// 成功返回 `Ok(())`。
     ///
     /// # 错误
     /// - `BulwarkManager` 未初始化：`BulwarkError::Session`。
+    /// - `LoginId::String` 形式：`BulwarkError::Config`（v0.4.2 限制，v0.5.0+ 支持）。
     /// - 会话销毁失败：透传 `BulwarkError`。
-    pub async fn kickout(login_id: i64) -> BulwarkResult<()> {
+    pub async fn kickout(login_id: impl Into<LoginId>) -> BulwarkResult<()> {
+        let id_i64 = login_id_to_i64(login_id.into())?;
         crate::manager::BulwarkManager::logic()?
-            .kickout(login_id)
+            .kickout(id_i64)
             .await
     }
 

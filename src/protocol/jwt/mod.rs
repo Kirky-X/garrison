@@ -6,6 +6,9 @@
 //! 仅在启用 `protocol-jwt` 特性时编译。
 
 use crate::error::{BulwarkError, BulwarkResult};
+// 0.4.2: LoginId newtype 接入（impl Into<LoginId> 公开 API + i64 内部层）
+use crate::stp::login_id::LoginId;
+use crate::stp::login_id_to_i64;
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -90,7 +93,9 @@ impl JwtHandler {
     /// - `Ok(String)`: JWT 字符串（三段 Base64URL 通过 `.` 连接）。
     /// - `Err(BulwarkError::Config)`: 密钥为空或 timeout 为负。
     /// - `Err(BulwarkError::Internal)`: 签发失败。
-    pub fn sign(&self, login_id: i64, timeout: i64) -> BulwarkResult<String> {
+    /// - `Err(BulwarkError::Config)`: 传入 `LoginId::String` 形式，内部层尚未完成迁移。
+    pub fn sign(&self, login_id: impl Into<LoginId>, timeout: i64) -> BulwarkResult<String> {
+        let login_id: i64 = login_id_to_i64(login_id.into())?;
         if self.secret.is_empty() {
             return Err(BulwarkError::Config("JWT secret 不能为空".to_string()));
         }
@@ -390,5 +395,34 @@ mod tests {
             device: None,
         };
         assert_eq!(claims.login_id, 1);
+    }
+
+    // ========================================================================
+    // 0.4.2 新增: LoginId newtype 接入（impl Into<LoginId>）
+    // ========================================================================
+
+    use crate::stp::login_id::LoginId;
+
+    /// 验证 `JwtHandler::sign` 接受 `LoginId::Numeric`（i64 兼容路径）。
+    #[test]
+    fn sign_accepts_login_id_numeric() {
+        let handler = JwtHandler::new("secret");
+        let token = handler.sign(LoginId::Numeric(1001), 3600).unwrap();
+        let claims = handler.verify(&token).unwrap();
+        assert_eq!(claims.login_id, 1001);
+    }
+
+    /// 验证 `JwtHandler::sign` 对 `LoginId::String` 返回 `BulwarkError::Config`。
+    ///
+    /// v0.4.2 内部层仍使用 i64，String 形式待 v0.5.0+ 迁移。
+    #[test]
+    fn sign_rejects_login_id_string_with_config_error() {
+        let handler = JwtHandler::new("secret");
+        let result = handler.sign(LoginId::String("user-uuid".to_string()), 3600);
+        assert!(
+            matches!(result, Err(BulwarkError::Config(_))),
+            "String-form login_id 在 v0.4.2 应返回 Config 错误，实际: {:?}",
+            result
+        );
     }
 }

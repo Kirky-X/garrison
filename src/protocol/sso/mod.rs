@@ -17,6 +17,9 @@ pub mod server;
 
 use crate::dao::BulwarkDao;
 use crate::error::{BulwarkError, BulwarkResult};
+// 0.4.2: LoginId newtype 接入（impl Into<LoginId> 公开 API + i64 内部层）
+use crate::stp::login_id::LoginId;
+use crate::stp::login_id_to_i64;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
@@ -75,7 +78,15 @@ impl SsoClient {
     ///
     /// # 返回
     /// 64 字符的 ticket 字符串。
-    pub async fn issue_ticket(&self, login_id: i64, client_id: i64) -> BulwarkResult<String> {
+    ///
+    /// # 错误
+    /// - `BulwarkError::Config`: 传入 `LoginId::String` 形式，内部层尚未完成迁移。
+    pub async fn issue_ticket(
+        &self,
+        login_id: impl Into<LoginId>,
+        client_id: i64,
+    ) -> BulwarkResult<String> {
+        let login_id: i64 = login_id_to_i64(login_id.into())?;
         // 拼接两个 UUID v4 simple（各 32 hex = 64 字符）
         let ticket = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
         let data = SsoTicketData {
@@ -345,5 +356,38 @@ mod tests {
         let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
         let client = SsoClient::new(dao).with_ticket_ttl(120);
         assert_eq!(client.ticket_ttl_seconds, 120);
+    }
+
+    // ========================================================================
+    // 0.4.2 新增: LoginId newtype 接入（impl Into<LoginId>）
+    // ========================================================================
+
+    use crate::stp::login_id::LoginId;
+
+    /// 验证 `SsoClient::issue_ticket` 接受 `LoginId::Numeric`（i64 兼容路径）。
+    #[tokio::test]
+    async fn issue_ticket_accepts_login_id_numeric() {
+        let client = make_client();
+        let ticket = client
+            .issue_ticket(LoginId::Numeric(1001), 2001)
+            .await
+            .unwrap();
+        // 验证 ticket 可校验
+        let login_id = client.validate_ticket(&ticket, 2001).await.unwrap();
+        assert_eq!(login_id, 1001);
+    }
+
+    /// 验证 `SsoClient::issue_ticket` 对 `LoginId::String` 返回 `BulwarkError::Config`。
+    #[tokio::test]
+    async fn issue_ticket_rejects_login_id_string_with_config_error() {
+        let client = make_client();
+        let result = client
+            .issue_ticket(LoginId::String("user-uuid".to_string()), 2001)
+            .await;
+        assert!(
+            matches!(result, Err(BulwarkError::Config(_))),
+            "String-form login_id 在 v0.4.2 应返回 Config 错误，实际: {:?}",
+            result
+        );
     }
 }

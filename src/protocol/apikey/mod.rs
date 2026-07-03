@@ -12,6 +12,9 @@
 
 use crate::dao::BulwarkDao;
 use crate::error::{BulwarkError, BulwarkResult};
+// 0.4.2: LoginId newtype 接入（impl Into<LoginId> 公开 API + i64 内部层）
+use crate::stp::login_id::LoginId;
+use crate::stp::login_id_to_i64;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -57,12 +60,14 @@ impl ApiKeyHandler {
     ///
     /// # 错误
     /// - `BulwarkError::InvalidParam`: timeout <= 0。
+    /// - `BulwarkError::Config`: 传入 `LoginId::String` 形式，内部层尚未完成迁移。
     pub async fn generate(
         &self,
-        login_id: i64,
+        login_id: impl Into<LoginId>,
         scopes: Vec<String>,
         timeout: i64,
     ) -> BulwarkResult<String> {
+        let login_id: i64 = login_id_to_i64(login_id.into())?;
         if timeout <= 0 {
             return Err(BulwarkError::InvalidParam("timeout 必须大于 0".to_string()));
         }
@@ -448,5 +453,37 @@ mod tests {
         // 再 rotate 应失败（verify 会因 revoked 返回 InvalidToken）
         let result = handler.rotate(&key).await;
         assert!(result.is_err());
+    }
+
+    // ========================================================================
+    // 0.4.2 新增: LoginId newtype 接入（impl Into<LoginId>）
+    // ========================================================================
+
+    use crate::stp::login_id::LoginId;
+
+    /// 验证 `ApiKeyHandler::generate` 接受 `LoginId::Numeric`（i64 兼容路径）。
+    #[tokio::test]
+    async fn generate_accepts_login_id_numeric() {
+        let handler = make_handler();
+        let key = handler
+            .generate(LoginId::Numeric(1001), vec!["read".into()], 3600)
+            .await
+            .unwrap();
+        let info = handler.verify(&key).await.unwrap();
+        assert_eq!(info.login_id, 1001);
+    }
+
+    /// 验证 `ApiKeyHandler::generate` 对 `LoginId::String` 返回 `BulwarkError::Config`。
+    #[tokio::test]
+    async fn generate_rejects_login_id_string_with_config_error() {
+        let handler = make_handler();
+        let result = handler
+            .generate(LoginId::String("user-uuid".to_string()), vec![], 3600)
+            .await;
+        assert!(
+            matches!(result, Err(BulwarkError::Config(_))),
+            "String-form login_id 在 v0.4.2 应返回 Config 错误，实际: {:?}",
+            result
+        );
     }
 }
