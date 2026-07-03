@@ -169,8 +169,11 @@ async fn ticket_client_id_isolation_across_subsystems() {
     let result = client_b.validate_ticket(&ticket, 9999).await;
     assert!(result.is_err(), "错误 client_id 应校验失败");
     match result.err() {
-        Some(BulwarkError::Config(_)) => {},
-        other => panic!("期望 Config 错误，实际: {:?}", other),
+        Some(BulwarkError::InvalidToken(_)) => {},
+        other => panic!(
+            "期望 InvalidToken 错误（M5 修复：client_id 不匹配），实际: {:?}",
+            other
+        ),
     }
 
     // client_id 不匹配时不删除 ticket，正确 client_id 仍可校验

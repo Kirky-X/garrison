@@ -20,7 +20,5 @@ pub use crate::router::{BulwarkInterceptor, BulwarkRouter};
 pub use crate::session::BulwarkSession;
 /// 逻辑层抽象与静态入口（[BulwarkInterface]、[BulwarkLogic]、[BulwarkUtil]）。
 pub use crate::stp::{BulwarkInterface, BulwarkLogic, BulwarkUtil};
-/// 鉴权策略与防火墙策略（[BulwarkStrategy]、[BulwarkFirewallStrategy]、[BulwarkFirewallStrategyDefault]）。
-pub use crate::strategy::{
-    BulwarkFirewallStrategy, BulwarkFirewallStrategyDefault, BulwarkStrategy,
-};
+/// 防火墙策略（[BulwarkFirewallStrategy]、[BulwarkFirewallStrategyDefault]）。
+pub use crate::strategy::{BulwarkFirewallStrategy, BulwarkFirewallStrategyDefault};

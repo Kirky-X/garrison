@@ -253,7 +253,7 @@ impl BulwarkSession {
         let mut ts = self
             .get_token_session(token)
             .await?
-            .ok_or_else(|| BulwarkError::InvalidToken(format!("token 不存在: {}", token)))?;
+            .ok_or_else(|| BulwarkError::InvalidToken("token 不存在".to_string()))?;
         ts.attrs.insert(key.to_string(), value.to_string());
         ts.last_active_at = Utc::now().timestamp();
         let json = serde_json::to_string(&ts)

@@ -53,7 +53,7 @@ repos:
     hooks:
       - id: codespell
         exclude: '^(docs/archive|temp|vendor)/.*$'
-        args: [--ignore-words-list=crate,--check-filenames]
+        args: ['--ignore-words-list=crate,BU,aNULL', --check-filenames]
 
   # === Markdown 检查（仅检查 Bulwark 文档，跳过 archive/temp） ===
   - repo: https://github.com/igorshubovych/markdownlint-cli

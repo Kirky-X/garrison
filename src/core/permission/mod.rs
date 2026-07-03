@@ -21,7 +21,7 @@ pub trait PermissionChecker: Send + Sync {
     /// # 返回
     /// - `Ok(true)`: 持有权限。
     /// - `Ok(false)`: 未持有权限。
-    /// - `Err(BulwarkError::InvalidToken)`: 权限字符串为空。
+    /// - `Err(BulwarkError::InvalidParam)`: 权限字符串为空。
     async fn has_permission(&self, login_id: i64, permission: &str) -> BulwarkResult<bool>;
 
     /// 校验主体是否持有指定角色（依据 spec core-permission）。
@@ -65,7 +65,7 @@ impl PermissionCheckerDefault {
 impl PermissionChecker for PermissionCheckerDefault {
     async fn has_permission(&self, login_id: i64, permission: &str) -> BulwarkResult<bool> {
         if permission.is_empty() {
-            return Err(BulwarkError::InvalidToken("权限字符串不能为空".to_string()));
+            return Err(BulwarkError::InvalidParam("权限字符串不能为空".to_string()));
         }
         let perms = self.interface.get_permission_list(login_id).await?;
         Ok(perms.iter().any(|p| p == permission))
@@ -73,7 +73,7 @@ impl PermissionChecker for PermissionCheckerDefault {
 
     async fn has_role(&self, login_id: i64, role: &str) -> BulwarkResult<bool> {
         if role.is_empty() {
-            return Err(BulwarkError::InvalidToken("角色字符串不能为空".to_string()));
+            return Err(BulwarkError::InvalidParam("角色字符串不能为空".to_string()));
         }
         let roles = self.interface.get_role_list(login_id).await?;
         Ok(roles.iter().any(|r| r == role))

@@ -189,8 +189,6 @@ impl BulwarkError {
 impl axum::response::IntoResponse for BulwarkError {
     fn into_response(self) -> axum::response::Response {
         use axum::http::StatusCode;
-        #[allow(unused_imports)]
-        use axum::response::IntoResponse as _;
 
         // 完整错误记录到日志（不返回给客户端）
         tracing::error!(error = ?self, "bulwark rejection");

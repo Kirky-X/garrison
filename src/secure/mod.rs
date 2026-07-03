@@ -6,7 +6,7 @@
 //! 该模块在启用任一 `secure-*` 特性时编译（见 `lib.rs` 的 `#[cfg(any(...))]`）。
 //! 0.2.0 已实现全部安全子模块。
 
-use crate::error::BulwarkResult;
+use crate::error::{BulwarkError, BulwarkResult};
 
 /// TOTP 验证器 trait，定义动态验证码校验抽象。
 ///
@@ -20,12 +20,16 @@ pub trait TotpVerifier {
     /// # 参数
     /// - `code`: 用户输入的验证码。
     fn verify_totp(&self, _code: &str) -> BulwarkResult<bool> {
-        todo!()
+        Err(BulwarkError::NotImplemented(
+            "verify_totp 未实现".to_string(),
+        ))
     }
 
     /// 生成当前 TOTP 验证码。
     fn generate_totp(&self) -> BulwarkResult<String> {
-        todo!()
+        Err(BulwarkError::NotImplemented(
+            "generate_totp 未实现".to_string(),
+        ))
     }
 }
 
@@ -42,7 +46,9 @@ pub trait SignVerifier {
     /// - `sign`: 待校验的签名。
     /// - `secret`: 签名密钥。
     fn verify_sign(&self, _data: &str, _sign: &str, _secret: &str) -> BulwarkResult<bool> {
-        todo!()
+        Err(BulwarkError::NotImplemented(
+            "verify_sign 未实现".to_string(),
+        ))
     }
 
     /// 生成请求签名。
@@ -51,7 +57,9 @@ pub trait SignVerifier {
     /// - `data`: 待签名数据。
     /// - `secret`: 签名密钥。
     fn create_sign(&self, _data: &str, _secret: &str) -> BulwarkResult<String> {
-        todo!()
+        Err(BulwarkError::NotImplemented(
+            "create_sign 未实现".to_string(),
+        ))
     }
 }
 
@@ -79,45 +87,45 @@ pub mod httpdigest;
 mod tests {
     use super::*;
 
-    /// TotpVerifier trait default verify_totp 调用 todo!() panic（spec: 占位实现）。
+    /// TotpVerifier trait default verify_totp 返回 NotImplemented 错误（spec: 占位实现）。
     #[test]
-    #[should_panic(expected = "not yet implemented")]
-    fn totp_verifier_default_verify_panics() {
+    fn totp_verifier_default_verify_returns_not_implemented() {
         struct MockTotpVerifier;
         impl TotpVerifier for MockTotpVerifier {}
         let v = MockTotpVerifier;
-        let _ = v.verify_totp("123456");
+        let result = v.verify_totp("123456");
+        assert!(matches!(result, Err(BulwarkError::NotImplemented(_))));
     }
 
-    /// TotpVerifier trait default generate_totp 调用 todo!() panic（spec: 占位实现）。
+    /// TotpVerifier trait default generate_totp 返回 NotImplemented 错误（spec: 占位实现）。
     #[test]
-    #[should_panic(expected = "not yet implemented")]
-    fn totp_verifier_default_generate_panics() {
+    fn totp_verifier_default_generate_returns_not_implemented() {
         struct MockTotpVerifier;
         impl TotpVerifier for MockTotpVerifier {}
         let v = MockTotpVerifier;
-        let _ = v.generate_totp();
+        let result = v.generate_totp();
+        assert!(matches!(result, Err(BulwarkError::NotImplemented(_))));
     }
 
-    /// SignVerifier trait default verify_sign 调用 todo!() panic（spec: 占位实现）。
+    /// SignVerifier trait default verify_sign 返回 NotImplemented 错误（spec: 占位实现）。
     #[cfg(feature = "secure-sign")]
     #[test]
-    #[should_panic(expected = "not yet implemented")]
-    fn sign_verifier_default_verify_panics() {
+    fn sign_verifier_default_verify_returns_not_implemented() {
         struct MockSignVerifier;
         impl SignVerifier for MockSignVerifier {}
         let v = MockSignVerifier;
-        let _ = v.verify_sign("data", "sign", "secret");
+        let result = v.verify_sign("data", "sign", "secret");
+        assert!(matches!(result, Err(BulwarkError::NotImplemented(_))));
     }
 
-    /// SignVerifier trait default create_sign 调用 todo!() panic（spec: 占位实现）。
+    /// SignVerifier trait default create_sign 返回 NotImplemented 错误（spec: 占位实现）。
     #[cfg(feature = "secure-sign")]
     #[test]
-    #[should_panic(expected = "not yet implemented")]
-    fn sign_verifier_default_create_panics() {
+    fn sign_verifier_default_create_returns_not_implemented() {
         struct MockSignVerifier;
         impl SignVerifier for MockSignVerifier {}
         let v = MockSignVerifier;
-        let _ = v.create_sign("data", "secret");
+        let result = v.create_sign("data", "secret");
+        assert!(matches!(result, Err(BulwarkError::NotImplemented(_))));
     }
 }

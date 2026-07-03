@@ -2,7 +2,7 @@
 //!
 //! [借鉴 Sa-Token] 对应 Sa-Token 的 Token 风格切换能力，
 //! 0.2.0 将 token 逻辑独立为 `core-token` 模块，
-//! `BulwarkStrategy` 内部委托 `Token` trait 实现。
+//! 框架内部通过 `Token` trait 实现多种 token 风格切换。
 //!
 //! 支持 4 种风格：uuid / random_64 / simple / jwt（依据 spec core-token）。
 

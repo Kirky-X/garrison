@@ -296,7 +296,13 @@ impl BulwarkFirewallCheckHookDefault {
 /// DAO 操作本身的错误会向上传播。
 async fn read_dao_count(dao: &Arc<dyn crate::dao::BulwarkDao>, key: &str) -> BulwarkResult<u32> {
     match dao.get(key).await? {
-        Some(v) => Ok(v.parse::<u32>().unwrap_or(0)),
+        Some(v) => match v.parse::<u32>() {
+            Ok(n) => Ok(n),
+            Err(e) => {
+                tracing::warn!("DAO 计数器解析失败 (key 可能损坏): {}", e);
+                Ok(0)
+            },
+        },
         None => Ok(0),
     }
 }

@@ -34,70 +34,6 @@ pub use hooks::{
 };
 
 // ============================================================================
-// BulwarkStrategy：Token 生成策略占位（0.2.0+ 实现）
-// ============================================================================
-
-/// 鉴权策略，定义可定制的 Token 生成与解析行为。
-///
-/// [借鉴 Sa-Token] 对应 Sa-Token 的 `SaStrategy`，
-/// 提供 Token 生成、会话查询等可替换逻辑。
-pub struct BulwarkStrategy {
-    /// 占位字段。
-    _inner: (),
-}
-
-impl BulwarkStrategy {
-    /// 创建新的策略实例。
-    ///
-    /// # 返回
-    /// 新建的 `BulwarkStrategy` 实例（占位实现，0.2.0+ 完善）。
-    pub fn new() -> Self {
-        Self { _inner: () }
-    }
-
-    /// 生成 Token 字符串。
-    ///
-    /// # 参数
-    /// - `login_id`: 登录主体标识。
-    ///
-    /// # 返回
-    /// 生成的 token 字符串。
-    ///
-    /// # 错误
-    /// 0.2.0+ 实现前返回 `BulwarkError::Internal`（不 panic）。
-    pub fn create_token(&self, login_id: i64) -> BulwarkResult<String> {
-        let _ = login_id;
-        Err(BulwarkError::Internal(
-            "create_token not yet implemented (planned for 0.2.0+)".to_string(),
-        ))
-    }
-
-    /// 根据 Token 解析登录主体标识。
-    ///
-    /// # 参数
-    /// - `token`: Token 字符串。
-    ///
-    /// # 返回
-    /// - `Some(login_id)`: token 有效，返回关联的登录主体标识。
-    /// - `None`: token 无效或已过期。
-    ///
-    /// # 错误
-    /// 0.2.0+ 实现前返回 `BulwarkError::Internal`（不 panic）。
-    pub fn parse_login_id(&self, token: &str) -> BulwarkResult<Option<i64>> {
-        let _ = token;
-        Err(BulwarkError::Internal(
-            "parse_login_id not yet implemented (planned for 0.2.0+)".to_string(),
-        ))
-    }
-}
-
-impl Default for BulwarkStrategy {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-// ============================================================================
 // BulwarkFirewallStrategy trait：可插拔权限策略
 // ============================================================================
 
@@ -314,15 +250,15 @@ impl BulwarkFirewallStrategyDefault {
 
     /// 展开角色列表（含层级隐含角色）。
     ///
-    /// 使用 BFS 遍历 `role_hierarchy`，收集所有直接与间接持有的角色。
+    /// 使用 DFS 遍历 `role_hierarchy`，收集所有直接与间接持有的角色。
     /// 当 `role_hierarchy` 为空时，返回原列表的集合（无扩展）。
     fn expand_roles(&self, roles: &[String]) -> HashSet<String> {
         let mut result = HashSet::new();
-        let mut queue: Vec<String> = roles.to_vec();
-        while let Some(r) = queue.pop() {
+        let mut stack: Vec<String> = roles.to_vec();
+        while let Some(r) = stack.pop() {
             if result.insert(r.clone()) {
                 if let Some(implied) = self.role_hierarchy.get(&r) {
-                    queue.extend(implied.iter().cloned());
+                    stack.extend(implied.iter().cloned());
                 }
             }
         }
@@ -399,9 +335,9 @@ impl BulwarkFirewallStrategy for BulwarkFirewallStrategyDefault {
     }
 
     async fn check_permission(&self, login_id: i64, permission: &str) -> BulwarkResult<bool> {
-        // spec scenario "权限为空字符串"：空字符串抛 InvalidToken
+        // spec scenario "权限为空字符串"：空字符串抛 InvalidParam
         if permission.is_empty() {
-            return Err(BulwarkError::InvalidToken("权限字符串不能为空".to_string()));
+            return Err(BulwarkError::InvalidParam("权限字符串不能为空".to_string()));
         }
 
         // 0.2.0：插件钩子（before）— 内部已处理 Err 仅 warn 不中断（依据 task 21.3）
@@ -444,7 +380,7 @@ impl BulwarkFirewallStrategy for BulwarkFirewallStrategyDefault {
 
     async fn check_role(&self, login_id: i64, role: &str) -> BulwarkResult<bool> {
         if role.is_empty() {
-            return Err(BulwarkError::InvalidToken("角色字符串不能为空".to_string()));
+            return Err(BulwarkError::InvalidParam("角色字符串不能为空".to_string()));
         }
         let roles = self.get_role_list(login_id).await?;
         // 0.2.0：层级角色展开（依据 task 21.2 / spec "层级角色隐含匹配"）
@@ -582,7 +518,7 @@ mod tests {
         );
     }
 
-    /// spec scenario "权限为空字符串"：空字符串抛 InvalidToken。
+    /// spec scenario "权限为空字符串"：空字符串抛 InvalidParam。
     #[tokio::test]
     async fn check_permission_empty_string_errors() {
         let iface = MockInterface::new();
@@ -590,8 +526,8 @@ mod tests {
 
         let result = fw.check_permission(1001, "").await;
         assert!(
-            matches!(result, Err(BulwarkError::InvalidToken(_))),
-            "空权限字符串应抛 InvalidToken"
+            matches!(result, Err(BulwarkError::InvalidParam(_))),
+            "空权限字符串应抛 InvalidParam"
         );
     }
 
@@ -640,7 +576,7 @@ mod tests {
     /// 验证空角色字符串返回 Err（依据 codebase-hardening Task 3.10）。
     ///
     /// 与 `check_permission_empty_string_errors` 对称：
-    /// 空角色字符串应抛 `InvalidToken` 错误。
+    /// 空角色字符串应抛 `InvalidParam` 错误。
     #[tokio::test]
     async fn check_role_empty_string_errors() {
         let iface = MockInterface::new();
@@ -648,8 +584,8 @@ mod tests {
 
         let result = fw.check_role(1001, "").await;
         assert!(
-            matches!(result, Err(BulwarkError::InvalidToken(_))),
-            "空角色字符串应抛 InvalidToken"
+            matches!(result, Err(BulwarkError::InvalidParam(_))),
+            "空角色字符串应抛 InvalidParam"
         );
     }
 
@@ -760,47 +696,6 @@ mod tests {
 
         let perms = fw.get_permission_list(9999).await.unwrap();
         assert!(perms.is_empty(), "未配置权限的 login_id 应返回空列表");
-    }
-
-    // ------------------------------------------------------------------------
-    // BulwarkStrategy 占位实现测试（返回 Internal 错误而非 panic）
-    // ------------------------------------------------------------------------
-
-    /// 验证 `BulwarkStrategy::create_token` 在 0.2.0+ 实现前返回 `Internal` 错误。
-    ///
-    /// 覆盖 `create_token` 方法体（占位实现返回 `Err(BulwarkError::Internal)`）。
-    #[test]
-    fn strategy_create_token_returns_internal_error() {
-        let strategy = BulwarkStrategy::new();
-        let result = strategy.create_token(1001);
-        assert!(
-            matches!(result, Err(BulwarkError::Internal(_))),
-            "占位实现应返回 Internal 错误，实际: {:?}",
-            result
-        );
-    }
-
-    /// 验证 `BulwarkStrategy::parse_login_id` 在 0.2.0+ 实现前返回 `Internal` 错误。
-    ///
-    /// 覆盖 `parse_login_id` 方法体（占位实现返回 `Err(BulwarkError::Internal)`）。
-    #[test]
-    fn strategy_parse_login_id_returns_internal_error() {
-        let strategy = BulwarkStrategy::new();
-        let result = strategy.parse_login_id("some-token");
-        assert!(
-            matches!(result, Err(BulwarkError::Internal(_))),
-            "占位实现应返回 Internal 错误，实际: {:?}",
-            result
-        );
-    }
-
-    /// 验证 `BulwarkStrategy::default()` 等价于 `new()`。
-    ///
-    /// 覆盖 `impl Default for BulwarkStrategy` 的 `default()` 方法。
-    #[test]
-    fn strategy_default_eq_new() {
-        let _strategy = BulwarkStrategy::default();
-        // 仅验证可构造（占位结构体无字段可断言）
     }
 
     // ------------------------------------------------------------------------

@@ -124,9 +124,13 @@ impl JwtHandler {
     ///
     /// # 返回
     /// - `Ok(BulwarkJwtClaims)`: 校验成功。
+    /// - `Err(BulwarkError::Config)`: secret 为空。
     /// - `Err(BulwarkError::ExpiredToken)`: token 已过期。
     /// - `Err(BulwarkError::InvalidToken)`: 签名/格式/算法校验失败。
     pub fn verify(&self, token: &str) -> BulwarkResult<BulwarkJwtClaims> {
+        if self.secret.is_empty() {
+            return Err(BulwarkError::Config("JWT secret 不能为空".to_string()));
+        }
         let key = DecodingKey::from_secret(self.secret.as_bytes());
         let mut validation = Validation::new(self.algorithm);
         validation.validate_exp = true;

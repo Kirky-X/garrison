@@ -198,6 +198,7 @@ impl BulwarkConfig {
     /// # 错误
     /// - `BulwarkError::Config`：`token_style` 非法（消息含 "unknown token_style"）。
     /// - `BulwarkError::Config`：`timeout` 非正（消息 "timeout must be positive"）。
+    /// - `BulwarkError::Config`：`token_style=jwt` 但 `jwt_secret` 为空。
     pub fn validate(&self) -> BulwarkResult<()> {
         if !TOKEN_STYLES.contains(&self.token_style.as_str()) {
             return Err(BulwarkError::Config(format!(
@@ -213,6 +214,11 @@ impl BulwarkConfig {
                 "unknown cookie_same_site: {} (expected Lax/Strict/None)",
                 self.cookie_same_site
             )));
+        }
+        if self.token_style == "jwt" && self.jwt_secret.is_empty() {
+            return Err(BulwarkError::Config(
+                "jwt_secret 不能为空（当 token_style=jwt 时）".to_string(),
+            ));
         }
         Ok(())
     }
@@ -490,6 +496,9 @@ mod tests {
         for style in TOKEN_STYLES {
             let mut config = BulwarkConfig::default_config();
             config.token_style = style.to_string();
+            if *style == "jwt" {
+                config.jwt_secret = "test-secret".to_string();
+            }
             assert!(
                 config.validate().is_ok(),
                 "token_style '{}' 应通过校验",
@@ -527,6 +536,7 @@ token_style = "jwt"
 timeout = 1800
 is_read_cookie = false
 throw_on_not_login = false
+jwt_secret = "test-secret"
 "#;
         let config = DefaultConfigLoader::load_from_toml_str(toml_str).unwrap();
         assert_eq!(config.token_style, "jwt");
@@ -576,7 +586,8 @@ throw_on_not_login = false
         std::env::set_var("BULWARK_TIMEOUT", "3600");
         std::env::set_var("BULWARK_TOKEN_STYLE", "jwt");
 
-        let toml_str = r#"timeout = 1800"#;
+        let toml_str = r#"timeout = 1800
+jwt_secret = "test-secret""#;
         let config = DefaultConfigLoader::load_from_toml_str(toml_str).unwrap();
         let config = DefaultConfigLoader::apply_env_overrides(config).unwrap();
 
@@ -655,6 +666,7 @@ throw_on_not_login = false
             .update(|c| {
                 c.timeout = 7200;
                 c.token_style = "jwt".to_string();
+                c.jwt_secret = "test-secret".to_string();
                 c.throw_on_not_login = false;
             })
             .unwrap();
