@@ -8,7 +8,7 @@
 - MSRV：Rust 1.85+
 - 设计参考：Sa-Token v1.45.0
 
-> 贡献流程详见 [CONTRIBUTING.md](./CONTRIBUTING.md)；架构设计详见 [architecture.md](./architecture.md)。
+> 贡献流程详见 [CONTRIBUTING.md](./CONTRIBUTING.md)；架构设计详见 [architecture.md](./ARCHITECTURE.md)。
 
 ---
 
@@ -97,7 +97,7 @@ cargo fmt --all -- --check
 
 ## 2. 项目结构说明
 
-```
+```text
 bulwark/
 ├── src/                      # 源码
 │   ├── core/                 # 核心层：token / permission / auth
@@ -360,7 +360,7 @@ cargo doc --no-deps --features full
 
 采用 [Conventional Commits](https://www.conventionalcommits.org/zh-hans/v1.0.0/)：
 
-```
+```text
 <type>(<scope>): <subject>
 ```
 
@@ -472,4 +472,4 @@ cargo doc --no-deps --features full --open
 | `production` | 生产推荐组合（cache-redis + db-sqlite + web-axum + 协议/安全子集 + 可观测性） |
 | `development` | 开发推荐组合（cache-memory + db-sqlite + web-axum） |
 
-> 常见问题排查详见 [troubleshooting.md](./troubleshooting.md)。
+> 常见问题排查详见 [troubleshooting.md](./TROUBLESHOOTING.md)。

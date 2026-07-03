@@ -3,8 +3,7 @@
 Bulwark 是一个面向 Rust 生态的身份认证鉴权框架，安全是项目的核心价值之一。本文档说明支持的版本范围、漏洞报告流程、响应承诺与安全配置建议。
 
 > **协议与许可证**：项目以 Apache-2.0 协议开源。安全漏洞报告与披露遵循本文件描述的协调披露流程。
-
-> 部署安全加固详见 [deployment.md](./deployment.md)；配置项说明详见 [configuration.md](./configuration.md)。
+> 部署安全加固详见 [deployment.md](./DEPLOYMENT.md)；配置项说明详见 [configuration.md](./CONFIGURATION.md)。
 
 ---
 
@@ -34,7 +33,7 @@ Bulwark 仅对已发布版本提供安全修复，开发分支（`main`）不承
 
 ## 报告漏洞
 
-### 请勿公开提交 Issue！
+### 请勿公开提交 Issue
 
 **严禁通过公开的 GitHub Issue、Pull Request、Discussions 或任何公开渠道披露安全漏洞。** 公开提交可能导致漏洞在被修复前被利用，危害所有用户。
 
@@ -42,7 +41,7 @@ Bulwark 仅对已发布版本提供安全修复，开发分支（`main`）不承
 
 请通过以下私密渠道报告：
 
-1. **首选 — 邮箱**：发送邮件至 **security@kirky.org**
+1. **首选 — 邮箱**：发送邮件至 <security@kirky.org>
 2. **次选 — GitHub Security Advisory**：通过 [GitHub Security Advisory](https://github.com/Kirky-X/bulwark/security/advisories/new) 提交（建议使用，支持加密通信与 CVE 申请）
 
 ### 报告内容要求

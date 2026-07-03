@@ -197,4 +197,9 @@ flamegraph.svg
 *.code-workspace
 .history/
 .claude/
+.agents/
 /coverage_report/
+
+# specmark 工作目录与 skills lock 不入库
+/specmark/
+skills-lock.json

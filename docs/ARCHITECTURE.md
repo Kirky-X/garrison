@@ -2,14 +2,13 @@
 
 > Bulwark 是面向 Rust 生态的身份认证鉴权框架，借鉴 Sa-Token v1.45.0 设计理念。
 >
-> - 版本：0.1.0（核心基础设施已完成）/ 0.2.0（协议与安全层，规划中）
+> - 版本：0.4.0（0.2.0 协议层遗留 gap 已补齐）
 > - 运行时：tokio 1.x
 > - Web 适配：axum 0.8
-> - 存储：dbnexus 0.2（SQLite，PostgreSQL/MySQL 待 0.3+）
+> - 存储：dbnexus 0.2（SQLite，PostgreSQL/MySQL 待 0.5+）
 > - 缓存：oxcache 0.3（L1 moka + L2 redis，per-entry TTL）
 > - License：Apache-2.0
-
-> 配置相关字段说明详见 [configuration.md](./configuration.md)；开发规范详见 [development.md](./development.md)。
+> 配置相关字段说明详见 [configuration.md](./CONFIGURATION.md)；开发规范详见 [development.md](./DEVELOPMENT.md)。
 
 ---
 
@@ -71,6 +70,14 @@ graph TB
         sign[protocol-sign]
         apikey[protocol-apikey]
         temp[protocol-temp]
+        oidc[protocol-oidc<br/>0.4.0 新增]
+        scope-handler[oauth2-scope-handler<br/>0.4.0 新增]
+        sso-server[protocol-sso-server<br/>0.4.0 新增]
+    end
+
+    subgraph ExtensionLayer["扩展层（feature 门控，0.4.0 新增）"]
+        alone-cache[alone-cache<br/>多实例隔离]
+        parameter-query[parameter-query<br/>参数化查询]
     end
 
     subgraph SecureLayer["安全层（feature 门控）"]
@@ -91,6 +98,7 @@ graph TB
 
     CoreLayer --> InfraLayer
     ProtocolLayer --> CoreLayer
+    ExtensionLayer --> CoreLayer
     SecureLayer --> CoreLayer
     Observable --> CoreLayer
 ```
@@ -115,16 +123,26 @@ graph TB
 
 ### 2.2 协议层（feature 门控，默认关闭）
 
+| 模块 | Feature | 说明 | 引入版本 |
+|------|---------|------|---------|
+| `protocol/jwt` | `protocol-jwt` | JWT 签发与验证（HS256/HS512 + refresh） | 0.2.0 |
+| `protocol/oauth2` | `protocol-oauth2` | OAuth2 四种模式（授权码 / 客户端凭证 / 密码 / RefreshToken） | 0.2.0（0.4.0 扩展 RefreshToken） |
+| `protocol/sso` | `protocol-sso` | SSO 单点登录 ticket（一次性 60s TTL） | 0.2.0 |
+| `protocol/sign` | `protocol-sign` | API 签名 + nonce 防重放 | 0.2.0 |
+| `protocol/apikey` | `protocol-apikey` | API Key 认证（生成/校验/吊销/轮换） | 0.2.0 |
+| `protocol/temp` | `protocol-temp` | 临时凭证（issue/get/revoke/consume） | 0.2.0 |
+| `protocol/oauth2/oidc` | `protocol-oidc` | OIDC id_token 签发/验证 + discovery + 三重防重放（iss/aud/nonce） | 0.4.0 |
+| `protocol/oauth2/scope` | `oauth2-scope-handler` | `ScopeHandler` trait + `ScopeRegistry` 注册表，OAuth2Client 委托校验 | 0.4.0 |
+| `protocol/sso/server` | `protocol-sso-server` | `SsoServer` trait + `CenterIdConverter` + `SsoChannel` + `DefaultSsoServer` | 0.4.0 |
+
+### 2.3 扩展层（feature 门控，默认关闭，0.4.0 新增）
+
 | 模块 | Feature | 说明 |
 |------|---------|------|
-| `protocol/jwt` | `protocol-jwt` | JWT 签发与验证 |
-| `protocol/oauth2` | `protocol-oauth2` | OAuth2 第三方授权 |
-| `protocol/sso` | `protocol-sso` | SSO 单点登录 ticket |
-| `protocol/sign` | `protocol-sign` | API 签名 + nonce 防重放 |
-| `protocol/apikey` | `protocol-apikey` | API Key 认证 |
-| `protocol/temp` | `protocol-temp` | 临时凭证 |
+| `dao/alone_cache` | `alone-cache` | `AloneCache` 装饰器（实现 BulwarkDao，key_prefix 隔离）+ `AloneCacheManager`（多实例管理） |
+| `stp/parameter` | `parameter-query` | `ParameterQuery` trait + `ParameterQueryBuilder`（链式 with_login_id/with_device/with_token + async check_permission/check_role） |
 
-### 2.3 安全层（feature 门控，默认关闭）
+### 2.4 安全层（feature 门控，默认关闭）
 
 | 模块 | Feature | 说明 |
 |------|---------|------|
@@ -234,6 +252,7 @@ sequenceDiagram
 **问题**：Rust 无反射，无法在运行时枚举 trait 实现并自动选择。若用运行时注册，需要全局可变状态与锁，增加启动复杂度。
 
 **方案**：
+
 - 使用 `inventory::submit!` 宏在编译期把 `BulwarkLogicFactoryEntry` 注册到全局 link list。
 - `BulwarkManager::init()` 启动时遍历 `inventory::iter::<BulwarkLogicFactoryEntry>()`，按 `name` 选定默认实现。
 - 优点：**无反射、无运行时开销、跨 crate 注册**，与 feature flag 配合实现按需启用。
@@ -243,6 +262,7 @@ sequenceDiagram
 **问题**：async 请求级 token 在 `Arc<dyn BulwarkLogic>` 中无法通过参数传递（trait 方法签名固定），若用 thread_local 则跨 `.await` 不安全。
 
 **方案**：
+
 - `context` 模块定义 `CURRENT_TOKEN: tokio::task_local`。
 - axum middleware 在请求入口提取 token 后 `CURRENT_TOKEN.scope(token, fut)` 设置。
 - `BulwarkUtil::current_token()` 通过 `CURRENT_TOKEN.get()` 取值，自动落到当前请求作用域。
@@ -253,6 +273,7 @@ sequenceDiagram
 **问题**：框架需要提供「开箱即用」的默认行为，同时允许业务方按需替换任一组件。
 
 **方案**：
+
 - 所有核心抽象（`BulwarkLogic` / `BulwarkDao` / `BulwarkContext` / `BulwarkFirewallStrategy` / `BulwarkListener`）均以 trait 定义。
 - 框架提供默认实现，业务方实现 trait 后通过 `BulwarkManager::init()` 注入即可覆盖。
 - 优点：扩展点清晰，符合 Rust 的零成本抽象哲学。
@@ -262,6 +283,7 @@ sequenceDiagram
 **问题**：存储后端多样（SQLite/PostgreSQL/MySQL/Redis），缓存策略多变，业务代码不应感知具体后端。
 
 **方案**：
+
 - `BulwarkDao` trait 定义统一接口（`get_session` / `set_session` / `delete_token` 等），底层由 dbnexus + oxcache 实现。
 - `oxcache` 作为缓存抽象，L1 为 moka 进程内 LRU，L2 为 redis 分布式，per-entry TTL 精细控制。
 - 切换存储后端时仅替换 `BulwarkLogicFactoryEntry` 的实现，**上层零改动**。
@@ -271,6 +293,7 @@ sequenceDiagram
 **问题**：协议/安全/可观测层并非所有项目都需要，强行全量编译会带来依赖膨胀。
 
 **方案**：
+
 - 13 个特性域独立编译，通过 `#[cfg(feature = "...")]` 在编译期裁剪。
 - 默认 `default = []`（空），仅核心模块总是编译。
 - 聚合特性 `full` / `production` / `development` 一键启用一组特性。
@@ -325,9 +348,9 @@ impl BulwarkFirewallStrategy for MyStrategy {
 
 ## 七、参考
 
-- 配置字段说明：[configuration.md](./configuration.md)
-- 开发规范与 TDD 工作流：[development.md](./development.md)
-- 版本演进规划：[roadmap.md](./roadmap.md)
-- 部署指南：[deployment.md](./deployment.md)
+- 配置字段说明：[configuration.md](./CONFIGURATION.md)
+- 开发规范与 TDD 工作流：[development.md](./DEVELOPMENT.md)
+- 版本演进规划：[roadmap.md](./ROADMAP.md)
+- 部署指南：[deployment.md](./DEPLOYMENT.md)
 - Sa-Token v1.45.0 设计原型
 - OpenSpec specs：`openspec/specs/*`

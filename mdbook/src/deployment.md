@@ -2,7 +2,7 @@
 
 本页介绍 Bulwark 生产环境部署的 feature 推荐组合、Redis 配置、SQLite 初始化与环境变量。
 
-> 完整部署细节（Docker、反向代理、性能调优、健康检查、升级指南）详见 [../../docs/deployment.md](../../docs/deployment.md)。
+> 完整部署细节（Docker、反向代理、性能调优、健康检查、升级指南）详见 [../../docs/DEPLOYMENT.md](../../docs/DEPLOYMENT.md)。
 
 ## 部署模型
 

@@ -4,7 +4,7 @@
 
 Bulwark 是一个面向 Rust 生态的身份认证鉴权框架，借鉴 Sa-Token v1.45.0 设计。项目采用 TDD（测试驱动开发）工作流，对代码质量有严格要求：292 个单元测试 + 30 个集成测试 + doc-tests、97.81% 覆盖率、clippy 零警告、所有 public API 均带 `///` 文档注释。
 
-> 相关文档：[开发规范](./development.md) | [架构设计](./architecture.md) | [配置指南](./configuration.md)
+> 相关文档：[开发规范](./DEVELOPMENT.md) | [架构设计](./ARCHITECTURE.md) | [配置指南](./CONFIGURATION.md)
 
 ---
 
@@ -166,7 +166,7 @@ mod tests {
 
 > 禁止「先实现后补测试」的提交方式（除非是修复 bug 时复现已知行为）。
 
-详细 TDD 步骤与测试编写规范见 [development.md](./development.md)。
+详细 TDD 步骤与测试编写规范见 [development.md](./DEVELOPMENT.md)。
 
 ---
 
@@ -174,7 +174,7 @@ mod tests {
 
 Bulwark 采用 [Conventional Commits](https://www.conventionalcommits.org/zh-hans/v1.0.0/) 规范，提交信息格式：
 
-```
+```text
 <type>(<scope>): <subject>
 
 <body 可选>
@@ -206,7 +206,7 @@ scope 对应模块或功能域，常用值：
 
 ### 示例
 
-```
+```text
 feat(protocol-jwt): 实现 JWT 签发与验证
 
 - 新增 JwtIssuer 与 JwtValidator
@@ -216,11 +216,11 @@ feat(protocol-jwt): 实现 JWT 签发与验证
 Closes #42
 ```
 
-```
+```text
 fix(session): 修复 is_share=true 下并发续期竞态
 ```
 
-```
+```text
 chore(deps): 升级 oxcache 到 0.3 启用 per-entry TTL
 ```
 

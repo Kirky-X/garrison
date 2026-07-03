@@ -1,3 +1,3 @@
 # 开发指南
 
-参见 [../../docs/development.md](../../docs/development.md) 获取完整内容。
+参见 [../../docs/DEVELOPMENT.md](../../docs/DEVELOPMENT.md) 获取完整内容。

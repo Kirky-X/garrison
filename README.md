@@ -1,3 +1,4 @@
+<!-- markdownlint-disable MD041 -->
 <p align="center">
   <img src="https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=A%20modern%20minimalist%20shield%20logo%20for%20Bulwark%20authentication%20framework%2C%20geometric%20fortress%20wall%20motif%2C%20deep%20blue%20and%20steel%20gradient%2C%20flat%20design%2C%20white%20background%2C%20centered%20composition&image_size=square_hd" alt="Bulwark Logo" width="160" />
 </p>
@@ -8,19 +9,21 @@
   <b>面向 Rust 生态的身份认证鉴权框架，借鉴 Sa-Token v1.45.0 设计理念</b><br/>
   <a href="#quick-start">🚀 快速开始</a> •
   <a href="#features">📖 特性</a> •
-  <a href="./docs/architecture.md">🏗 架构</a> •
+  <a href="./docs/ARCHITECTURE.md">🏗 架构</a> •
   <a href="./CHANGELOG.md">📝 更新日志</a> •
   <a href="./docs/CONTRIBUTING.md">🤝 贡献</a>
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.1.0-blue" alt="version" />
+  <img src="https://img.shields.io/badge/version-0.4.0-blue" alt="version" />
   <img src="https://img.shields.io/badge/license-Apache--2.0-green" alt="license" />
   <img src="https://img.shields.io/badge/MSRV-1.85+-orange" alt="msrv" />
-  <img src="https://img.shields.io/badge/coverage-97.81%25-brightgreen" alt="coverage" />
-  <img src="https://img.shields.io/badge/tests-323%20passed-success" alt="tests" />
+  <img src="https://img.shields.io/badge/coverage-95.43%25-brightgreen" alt="coverage" />
+  <img src="https://img.shields.io/badge/tests-829%20passed-success" alt="tests" />
   <img src="https://img.shields.io/badge/clippy-zero%20warnings-success" alt="clippy" />
 </p>
+
+<!-- markdownlint-restore MD041 -->
 
 ---
 
@@ -72,12 +75,12 @@
 | 🔒 **完整鉴权链** | 登录认证 → 权限校验 → 会话管理 → 路由拦截，开箱即用 |
 | 📦 **多后端抽象** | `BulwarkDao` + `oxcache` + `dbnexus`，切换存储后端零业务代码改动 |
 | 🔧 **可插拔扩展** | trait + Default 实现模式，替换任意组件（DAO / 策略 / 逻辑）无需改业务 |
-| 🎯 **Feature 门控** | 13 个特性域独立 feature flag，按需编译减小体积 |
+| 🎯 **Feature 门控** | 18 个特性域独立 feature flag，按需编译减小体积 |
 | 📊 **高可观测** | `tracing` 日志 + `listener` 事件订阅 + `prometheus` 指标（可选） |
-| 🧪 **高覆盖** | 323 个测试通过，97.81% 行覆盖率，clippy 零警告 |
+| 🧪 **高覆盖** | 829 个测试通过，95.43% 行覆盖率，clippy 零警告 |
 | 🌐 **Web 框架适配** | axum 注解式 extractor（`CheckLogin` / `CheckRole` / `CheckPermission`） |
 
-### 特性域覆盖（13 个，对标 Sa-Token）
+### 特性域覆盖（18 个，对标 Sa-Token + 0.4.0 协议层补齐）
 
 | 特性域 | 状态 | 说明 |
 |--------|------|------|
@@ -85,15 +88,22 @@
 | 权限认证 | ✅ 0.1.0 完成 | RBAC 权限模型 |
 | Session 会话 | ✅ 0.1.0 完成 | 双模会话生命周期管理（Account + Token） |
 | 路由拦截鉴权 | ✅ 0.1.0 完成 | axum Web 框架适配 |
-| JWT | 🚧 0.2.0 规划中 | JSON Web Token 签发与验证 |
-| OAuth2 | 🚧 0.2.0 规划中 | 授权码 / 客户端凭证 / 密码模式 |
-| 单点登录 (SSO) | 🚧 0.2.0 规划中 | ticket 模型单点登录 |
-| 微服务网关鉴权 | 🚧 0.2.0 规划中 | API 签名 + nonce 防重放 |
-| API 接口鉴权 | 🚧 0.2.0 规划中 | API Key 生成 / 校验 / 吊销 |
-| TOTP 动态验证码 | 🚧 0.2.0 规划中 | RFC 6238 二次验证 |
-| Basic 认证 | 🚧 0.2.0 规划中 | HTTP Basic Auth (RFC 7617) |
-| Digest 认证 | 🚧 0.2.0 规划中 | HTTP Digest Auth (RFC 7616) |
-| 插件化扩展 | 🚧 0.2.0 规划中 | `BulwarkPlugin` trait + inventory 注册 |
+| JWT | ✅ 0.2.0 完成 | JSON Web Token 签发与验证（HS256/HS512 + refresh） |
+| OAuth2 | ✅ 0.2.0 完成 | 授权码 / 客户端凭证 / 密码模式 + 0.4.0 RefreshToken |
+| 单点登录 (SSO) | ✅ 0.2.0 完成 | ticket 模型单点登录（一次性 60s TTL） |
+| 微服务网关鉴权 | ✅ 0.2.0 完成 | API 签名 + nonce 防重放 |
+| API 接口鉴权 | ✅ 0.2.0 完成 | API Key 生成 / 校验 / 吊销 / 轮换 |
+| 临时凭证 | ✅ 0.2.0 完成 | 短期 token + issue/get/revoke/consume |
+| TOTP 动态验证码 | ✅ 0.2.0 完成 | RFC 6238 二次验证 |
+| Basic 认证 | ✅ 0.2.0 完成 | HTTP Basic Auth (RFC 7617) |
+| Digest 认证 | ✅ 0.2.0 完成 | HTTP Digest Auth (RFC 7616) |
+| 插件化扩展 | ✅ 0.2.0 完成 | `BulwarkPlugin` trait + inventory 注册 |
+| 事件监听器 | ✅ 0.2.0 完成 | `BulwarkListener` trait + 6 个事件变体 |
+| OIDC（OpenID Connect） | ✅ 0.4.0 完成 | id_token 签发/验证 + discovery + 三重防重放 |
+| OAuth2 Scope Handler | ✅ 0.4.0 完成 | `ScopeHandler` trait + `ScopeRegistry` 注册表 |
+| SSO Server 独立抽象 | ✅ 0.4.0 完成 | `SsoServer` trait + `CenterIdConverter` + `SsoChannel` |
+| AloneCache 多实例隔离 | ✅ 0.4.0 完成 | `AloneCache` 装饰器 + `AloneCacheManager` |
+| ParameterQuery 参数化查询 | ✅ 0.4.0 完成 | `ParameterQuery` trait + Builder + async check_permission/check_role |
 
 ---
 
@@ -127,7 +137,7 @@ graph TD
 - `bulwark-router`：axum Router 包装 + middleware 拦截
 - `bulwark-dao`：`BulwarkDao` trait + oxcache / dbnexus 实现
 
-完整架构设计见 [docs/architecture.md](./docs/architecture.md)。
+完整架构设计见 [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)。
 
 ---
 
@@ -150,7 +160,7 @@ graph TD
 
 ```toml
 [dependencies]
-bulwark = { version = "0.1", features = ["web-axum"] }
+bulwark = { version = "0.4", features = ["web-axum"] }
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -158,7 +168,7 @@ tokio = { version = "1", features = ["full"] }
 
 ```toml
 [dependencies]
-bulwark = { version = "0.1", features = ["full"] }
+bulwark = { version = "0.4", features = ["full"] }
 ```
 
 ### 最小示例
@@ -231,11 +241,16 @@ async fn main() -> BulwarkResult<()> {
 
 ### axum 集成示例
 
-完整 Web 应用示例见 [examples/axum_integration.rs](./examples/axum_integration.rs)（244 行），包含：
+完整 Web 应用示例见 [examples/src/bin/axum_integration.rs](./examples/src/bin/axum_integration.rs)（244 行），包含：
 
 - `BulwarkRouter` 包装 axum Router
 - 4 个 `route_protected` 路由（带 `CheckLogin` / `CheckRole<AdminRole>` / `CheckPermission<ReadPerm>` 注解）
 - axum middleware 自动从 Authorization header 提取 token 并设置 task_local
+
+> examples 已重组为独立 workspace member（`bulwark-examples` crate），运行方式：
+> `cargo run -p bulwark-examples --bin <name> --features full`。0.4.0 新增 5 个 example
+> （`oidc_handler` / `scope_handler` / `sso_server` / `alone_cache` / `parameter_query`），
+> 完整列表见 [examples/README](./examples/)。
 
 ---
 
@@ -259,7 +274,7 @@ async fn main() -> BulwarkResult<()> {
 | `token_style` | `random-64` | Token 风格（`uuid` / `random-64` / `simple` / `jwt`） |
 | `throw_on_not_login` | `true` | 未登录时抛异常而非返回 false |
 
-支持通过 `tokio::sync::watch` 实现配置热更新，详见 [docs/configuration.md](./docs/configuration.md)。
+支持通过 `tokio::sync::watch` 实现配置热更新，详见 [docs/CONFIGURATION.md](./docs/CONFIGURATION.md)。
 
 ---
 
@@ -274,11 +289,16 @@ async fn main() -> BulwarkResult<()> {
 | `web-actix` | ❌ | actix-web Web 框架适配 |
 | `web-warp` | ❌ | warp Web 框架适配 |
 | `protocol-jwt` | ❌ | JWT 签发与验证 |
-| `protocol-oauth2` | ❌ | OAuth2 三种模式 |
+| `protocol-oauth2` | ❌ | OAuth2 四种模式（含 RefreshToken） |
 | `protocol-sso` | ❌ | SSO 单点登录 ticket |
 | `protocol-sign` | ❌ | API 签名 + nonce 防重放 |
 | `protocol-apikey` | ❌ | API Key 认证 |
 | `protocol-temp` | ❌ | 临时凭证 |
+| `protocol-oidc` | ❌ | OIDC id_token 签发/验证 + discovery（0.4.0 新增） |
+| `oauth2-scope-handler` | ❌ | OAuth2 ScopeHandler 注册表（0.4.0 新增） |
+| `protocol-sso-server` | ❌ | SSO Server 独立抽象 + CenterIdConverter（0.4.0 新增） |
+| `alone-cache` | ❌ | AloneCache 多 Redis 实例隔离装饰器（0.4.0 新增） |
+| `parameter-query` | ❌ | ParameterQuery 参数化查询 + Builder（0.4.0 新增） |
 | `secure-totp` | ❌ | TOTP 动态验证码 (RFC 6238) |
 | `secure-sign` | ❌ | HMAC-SHA256/SHA512 工具 |
 | `secure-httpbasic` | ❌ | HTTP Basic 认证 (RFC 7617) |
@@ -286,6 +306,9 @@ async fn main() -> BulwarkResult<()> {
 | `listener` | ❌ | 事件监听器 |
 | `tracing-log` | ❌ | tracing 日志桥接 |
 | `metrics-prometheus` | ❌ | Prometheus 指标 |
+| `observability-otlp` | ❌ | OpenTelemetry OTLP 分布式追踪（0.3.0 新增） |
+| `grpc` | ❌ | gRPC 鉴权拦截器（tonic::Interceptor，0.3.0 新增） |
+| `i18n` | ❌ | 异常消息国际化（fluent-rs，0.3.0 新增） |
 | `full` | ❌ | 聚合所有特性 |
 | `production` | ❌ | 生产环境推荐组合 |
 | `development` | ❌ | 开发环境组合 |
@@ -296,9 +319,15 @@ async fn main() -> BulwarkResult<()> {
 
 - **在线文档**：[https://docs.rs/bulwark](https://docs.rs/bulwark)
 - **本地生成**：`cargo doc --no-deps --features full --open`
-- **示例代码**：
-  - [examples/basic_login.rs](./examples/basic_login.rs)：完整业务场景（144 行）
-  - [examples/axum_integration.rs](./examples/axum_integration.rs)：完整 Web 应用（244 行）
+- **示例代码**（独立 workspace member，`cargo run -p bulwark-examples --bin <name> --features full`）：
+  - [examples/src/bin/basic_login.rs](./examples/src/bin/basic_login.rs)：完整业务场景（144 行）
+  - [examples/src/bin/axum_integration.rs](./examples/src/bin/axum_integration.rs)：完整 Web 应用（244 行）
+  - [examples/src/bin/oidc_handler.rs](./examples/src/bin/oidc_handler.rs)：OIDC id_token 签发/验证（0.4.0 新增）
+  - [examples/src/bin/scope_handler.rs](./examples/src/bin/scope_handler.rs)：ScopeHandler 注册表（0.4.0 新增）
+  - [examples/src/bin/sso_server.rs](./examples/src/bin/sso_server.rs)：SSO Server 独立抽象（0.4.0 新增）
+  - [examples/src/bin/alone_cache.rs](./examples/src/bin/alone_cache.rs)：AloneCache 多实例隔离（0.4.0 新增）
+  - [examples/src/bin/parameter_query.rs](./examples/src/bin/parameter_query.rs)：ParameterQuery 参数化查询（0.4.0 新增）
+  - 完整列表见 [examples/src/lib.rs](./examples/src/lib.rs) 模块声明
 
 ---
 
@@ -331,12 +360,13 @@ async fn main() -> BulwarkResult<()> {
 ## 🗺 路线图
 
 - [x] **v0.1.0**（2026-06-30）核心基础设施：登录认证 + 权限校验 + 双模会话 + axum 集成
-- [ ] **v0.2.0** 协议与安全层：JWT / OAuth2 / SSO / Sign / API Key / TOTP / Basic / Digest
-- [ ] **v0.3.0** 多后端与可观测：PostgreSQL / MySQL 后端 + OpenTelemetry 集成
-- [ ] **v0.4.0** 高级特性：Refresh Token 自动轮换 + RBAC 层级角色 + ABAC 模型
+- [x] **v0.2.0**（2026-07-01）协议与安全层：JWT / OAuth2 / SSO / Sign / API Key / TOTP / Basic / Digest + 插件系统 + 事件监听器
+- [x] **v0.2.1**（2026-07-01）auto-wire 修复 + 协议层边界测试 + examples 工程化重组
+- [x] **v0.3.0** 生态完善与可观测：OpenTelemetry OTLP + gRPC 拦截器 + i18n + metrics-prometheus
+- [x] **v0.4.0**（2026-07-02）0.2.0 协议层遗留 gap 补齐：OIDC / ScopeHandler / SsoServer / AloneCache / ParameterQuery（gap #4 注解系统延后至 0.5.0+）
 - [ ] **v1.0.0** 稳定版：API 冻结 + 性能基准 + 生产案例
 
-完整规划见 [docs/roadmap.md](./docs/roadmap.md)。
+完整规划见 [docs/ROADMAP.md](./docs/ROADMAP.md)。
 
 ---
 

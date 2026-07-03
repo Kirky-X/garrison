@@ -6,7 +6,7 @@
 - License：Apache-2.0
 - MSRV：Rust 1.85+
 
-> 开发环境搭建详见 [development.md](./development.md)；部署问题详见 [deployment.md](./deployment.md)。
+> 开发环境搭建详见 [development.md](./DEVELOPMENT.md)；部署问题详见 [deployment.md](./DEPLOYMENT.md)。
 
 ---
 
@@ -16,7 +16,7 @@
 
 **现象**：
 
-```
+```text
 error: failed to load source for dependency `oxcache`
 Caused by:
   failed to read `/home/kirky/projects/oxcache/Cargo.toml`
@@ -43,7 +43,7 @@ oxcache = { path = "/your/path/oxcache", optional = true }
 
 **现象**：
 
-```
+```text
 error: linking with `cc` failed
 = note: /usr/bin/ld: cannot find -lssl
 ```
@@ -69,7 +69,7 @@ brew install openssl pkg-config
 
 **现象**：
 
-```
+```text
 error: feature `edition2024` is required
 The cargo feature `edition2024` requires nightly cargo
 ```

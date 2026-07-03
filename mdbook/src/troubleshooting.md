@@ -1,3 +1,3 @@
 # 故障排查
 
-参见 [../../docs/troubleshooting.md](../../docs/troubleshooting.md) 获取完整内容。
+参见 [../../docs/TROUBLESHOOTING.md](../../docs/TROUBLESHOOTING.md) 获取完整内容。

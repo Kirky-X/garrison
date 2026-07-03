@@ -32,7 +32,7 @@ Bulwark 0.4.0 聚焦于 0.2.0 协议层遗留 gap 的补齐。通过 openspec ch
   （RwLock + HashMap 多实例管理）
 - **ParameterQuery 参数化查询（gap #7）**：新增 `parameter-query` feature +
   `ParameterQuery` trait + `ParameterQueryBuilder`（链式 with_login_id/with_device/with_token
-  + async check_permission/check_role），token 上下文优先于 login_id
+  - async check_permission/check_role），token 上下文优先于 login_id
 
 ### 变更
 
@@ -45,11 +45,50 @@ Bulwark 0.4.0 聚焦于 0.2.0 协议层遗留 gap 的补齐。通过 openspec ch
 - `openspec/specs/dao-oxcache-basic/spec.md` 新增 Known Limitations 章节：oxcache 0.3
   支持 standalone/sentinel/cluster，master-slave 由 sentinel 模式覆盖
 
+### 修复（代码审查后，全维度 review pass）
+
+- **M5（MEDIUM）**：`SsoClient::validate_ticket` 与 `DefaultSsoServer::validate_ticket` 在
+  `client_id` 不匹配时错误类型由 `Config` 改为 `InvalidToken`（认证失败语义更准确，
+  票据被错误方持有属于认证失败而非配置错误）。同步修复 2 处集成测试断言
+  （`tests/protocol_sso_edge_cases.rs` / `tests/protocol_sso_integration.rs`）
+- **M6（MEDIUM）**：`SsoTicketData` 跨 `sso::mod.rs` 与 `sso::server.rs` 重复定义，
+  改为 `pub(crate)` 导出 + `use super::SsoTicketData` 复用，避免格式漂移
+- **M7（MEDIUM）**：`ParameterQueryBuilder::check_permission` / `check_role` ~40 行重复，
+  提取 `check_common` helper + `CheckKind` enum，消除重复
+- **M4（MEDIUM）**：`OidcHandler::with_algorithm` 接受非对称算法但实现只支持对称密钥，
+  新增 `require_hmac_algorithm()` 在 `sign_id_token` / `verify_id_token` 入口校验，
+  非对称算法返回 `Config` 错误。新增 2 个回归测试
+  （`sign_id_token_rejects_asymmetric_algorithm` /
+  `verify_id_token_rejects_asymmetric_algorithm`）
+- **L9（LOW）**：`verify_id_token_tampered_fails` 测试断言过弱（仅 `is_err()`），
+  强化断言错误类型为 `InvalidToken`
+- **M1（MEDIUM，文档警告）**：SSO `validate_ticket` 的 get→delete 非原子存在 TOCTOU 竞态，
+  在 `SsoClient` 与 `SsoServer` trait 的 doc 注释中添加显式警告，待 0.5.0+ 设计原子
+  get-and-delete 后统一修复
+
+### 文档与示例（代码审查后补全）
+
+- **examples 覆盖 0.4.0 全部新特性**：新增 5 个 example（`oidc_handler` / `scope_handler` /
+  `sso_server` / `alone_cache` / `parameter_query`），每个 bin 配套独立 `tests/<name>.rs`
+  测试文件；扩展 `oauth2_flow` 增加 `refresh_access_token` 演示段落
+- **examples/Cargo.toml**：新增 5 个 feature 转发（`protocol-oidc` / `oauth2-scope-handler` /
+  `protocol-sso-server` / `alone-cache` / `parameter-query`）+ 5 个 `[[bin]]` 段，
+  `full` 聚合特性同步更新
+
+### 按规则 7 暴露冲突（不修复）
+
+- **M2/M3（MEDIUM）**：`OAuth2Client::exchange_code` 的 `_state` 参数与
+  `OAuth2Client::get_password_token` 的 `_scope` 参数未使用。这是有意保留的
+  forward-compat API 参数（doc 注释已说明），移除会破坏 0.4.0 公共 API。维持现状
+
 ### 已知限制
 
 - **gap #4（OAuth2 @CheckAccessToken/@CheckClientToken 注解）延后至 0.5.0+**：spec 错误
   引用 `OAuth2Client::validate_client_token`（方法不存在于代码库）。需先设计 token
-  introspection（RFC 7662）或复用 OidcHandler::verify_id_token 的方案。
+  introspection（RFC 7662）或复用 OidcHandler::verify_id_token 的方案
+- **SSO TOCTOU 竞态（M1）**：`validate_ticket` 的 get→delete 非原子，并发调用同一 ticket
+  时理论上可重放。60 秒 TTL 窗口内影响有限，安全敏感场景应通过外层加锁或单点校验保证。
+  待 0.5.0+ 设计原子 get-and-delete 后统一修复
 
 ## [0.2.1] - 2026-07-01
 
@@ -250,7 +289,7 @@ axum Web 框架集成等核心能力。
 #### 全局管理器
 
 - **BulwarkManager 单例**：持有 `Arc<dyn BulwarkLogic>` 全局引用，支持显式 `init()` 初始化
-  + 覆盖式更新 + `reset_for_test()`（cfg(test)）
+  - 覆盖式更新 + `reset_for_test()`（cfg(test)）
 - **inventory 编译期注册**：`BulwarkLogicFactoryEntry` 通过 `inventory::submit!` 注册工厂函数，
   支持编译期扩展
 - **BulwarkUtil 静态委托**：8 个静态方法（login / logout / kickout / check_login / get_login_id /

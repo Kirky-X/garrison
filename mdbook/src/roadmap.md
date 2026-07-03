@@ -81,4 +81,4 @@
 - **编译期注册**：`inventory` 实现 zero-cost 插件与 factory 注册
 - **向后兼容**：新增能力通过 feature 开关，未启用时 no-op
 
-> 完整路线图详见 [../../docs/roadmap.md](../../docs/roadmap.md)。
+> 完整路线图详见 [../../docs/ROADMAP.md](../../docs/ROADMAP.md)。
