@@ -102,3 +102,25 @@ pub mod alone_cache;
 
 #[cfg(feature = "parameter-query")]
 pub mod parameter_query;
+
+// ====================================================================
+// 0.4.0 新增框架集成 / 可观测性 / 缓存示例模块
+// ====================================================================
+
+#[cfg(feature = "web-actix")]
+pub mod web_actix_example;
+
+#[cfg(feature = "web-warp")]
+pub mod web_warp_example;
+
+#[cfg(feature = "grpc")]
+pub mod grpc_interceptor;
+
+#[cfg(feature = "i18n")]
+pub mod i18n_usage;
+
+#[cfg(all(feature = "metrics-prometheus", feature = "observability-otlp"))]
+pub mod observability_setup;
+
+#[cfg(feature = "cache-redis")]
+pub mod cache_redis;
