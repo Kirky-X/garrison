@@ -2,6 +2,8 @@
 //!
 //! 验证 `CheckLogin` / `CheckRole` / `CheckPermission` extractor 在完整 axum 应用中的行为。
 
+#![cfg(feature = "web-axum")]
+
 use async_trait::async_trait;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};

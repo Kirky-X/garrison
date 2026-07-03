@@ -41,7 +41,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 `extract_token` 从 tonic 请求的 `MetadataMap` 提取 token：
 
 - 优先解析 `authorization: Bearer <token>`（RFC 7235，scheme 大小写不敏感）
-- 支持 `Bearer ` / `bearer ` / `BEARER ` 三种大小写前缀
+- 支持 `Bearer` / `bearer` / `BEARER` 三种大小写前缀
 - 兼容不带 Bearer 前缀的裸 token（至少需非空）
 - 缺失 header / 非 UTF-8 / 空 token → `Status::UNAUTHENTICATED`
 

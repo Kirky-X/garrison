@@ -61,7 +61,7 @@ repos:
     hooks:
       - id: markdownlint
         args: [--disable=MD013,--disable=MD024,--disable=MD033]
-        exclude: '^(docs/archive|temp)/.*$'
+        exclude: '^(docs/archive|temp|\.github|mdbook/src/SUMMARY\.md)(/.*)?$'
 
 # 全局配置
 default_language_version:

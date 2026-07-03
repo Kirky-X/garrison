@@ -10,6 +10,8 @@
 //!
 //! 运行：`cargo test --features db-sqlite --test dbnexus_integration`
 
+#![cfg(feature = "db-sqlite")]
+
 use bulwark::dao::{init_dbnexus, BulwarkMigration};
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 use std::path::PathBuf;

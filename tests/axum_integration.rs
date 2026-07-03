@@ -4,6 +4,8 @@
 //! middleware 自动从 header/cookie 提取 token + 设置 task_local、
 //! `DefaultBulwarkInterceptor` 根据 annotation 调用 `BulwarkUtil` 的完整链路。
 
+#![cfg(feature = "web-axum")]
+
 use async_trait::async_trait;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
