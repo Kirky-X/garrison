@@ -12,7 +12,10 @@
 //! - 实现四种授权流程：Authorization Code / Client Credentials / Password / Refresh Token（0.4.0 新增）。
 
 use crate::error::{BulwarkError, BulwarkResult};
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 
 /// OIDC 扩展模块（0.4.0 新增，依据 spec oauth2-oidc）。
 ///
@@ -176,9 +179,56 @@ impl OAuth2Client {
         self.user_info_url.as_deref()
     }
 
+    /// 生成 PKCE code_challenge（依据 RFC 7636 S256 方法 / spec oauth-2-1-upgrade R-oauth-2-1-002）。
+    ///
+    /// 计算方式：`code_challenge = base64url_no_pad(sha256(code_verifier))`
+    ///
+    /// # 参数
+    /// - `code_verifier`: 43-128 字符，仅包含 `[A-Z]/[a-z]/[0-9]/-./_/~`
+    ///
+    /// # 错误
+    /// - `BulwarkError::InvalidParam`: 长度不在 43-128 范围内或含非法字符。
+    ///
+    /// # 示例
+    /// RFC 7636 Appendix B 测试向量：
+    /// ```
+    /// # use bulwark::protocol::oauth2::OAuth2Client;
+    /// let challenge = OAuth2Client::generate_pkce_challenge(
+    ///     "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+    /// ).unwrap();
+    /// assert_eq!(challenge, "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM");
+    /// ```
+    pub fn generate_pkce_challenge(code_verifier: &str) -> BulwarkResult<String> {
+        // 1. 验证长度 43-128（RFC 7636 §4.1）
+        if code_verifier.len() < 43 || code_verifier.len() > 128 {
+            return Err(BulwarkError::InvalidParam(format!(
+                "code_verifier 长度必须在 43-128 之间，当前 {}",
+                code_verifier.len()
+            )));
+        }
+        // 2. 验证字符集 [A-Z]/[a-z]/[0-9]/-./_/~（RFC 7636 §4.1）
+        if !code_verifier
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.' || c == '_' || c == '~')
+        {
+            return Err(BulwarkError::InvalidParam(
+                "code_verifier 仅允许 [A-Z]/[a-z]/[0-9]/-/./_/~ 字符".to_string(),
+            ));
+        }
+        // 3. S256: SHA-256 → base64url 无填充
+        let mut hasher = Sha256::new();
+        hasher.update(code_verifier.as_bytes());
+        let digest = hasher.finalize();
+        Ok(URL_SAFE_NO_PAD.encode(digest))
+    }
+
     /// 构造 Authorization Code 流程的授权 URL（依据 spec protocol-oauth2）。
     ///
     /// URL 拼接 `response_type=code`、`client_id`、`redirect_uri`（URL 编码）、`state` 参数。
+    ///
+    /// # 弃用
+    /// OAuth 2.1 要求所有 Authorization Code 流程使用 PKCE。请改用 [`get_auth_url_with_pkce`](Self::get_auth_url_with_pkce)。
+    #[deprecated(note = "use get_auth_url_with_pkce for OAuth 2.1 compliance")]
     pub fn get_auth_url(&self, state: &str) -> String {
         format!(
             "{}?response_type=code&client_id={}&redirect_uri={}&state={}",
@@ -189,10 +239,44 @@ impl OAuth2Client {
         )
     }
 
+    /// 构造带 PKCE 的授权 URL（依据 spec oauth-2-1-upgrade R-oauth-2-1-001）。
+    ///
+    /// 在 [`get_auth_url`](Self::get_auth_url) 基础上追加 `code_challenge` 与 `code_challenge_method=S256` 参数。
+    ///
+    /// # 参数
+    /// - `state`: CSRF 防护随机串。
+    /// - `code_verifier`: PKCE code_verifier（43-128 字符，合法字符集见 [`generate_pkce_challenge`](Self::generate_pkce_challenge)）。
+    ///
+    /// # 返回
+    /// `(authorization_url, code_challenge)` 元组。`code_challenge` 供调用方与后续 token 交换时关联使用。
+    ///
+    /// # 错误
+    /// - `BulwarkError::InvalidParam`: `code_verifier` 不合法（透传自 `generate_pkce_challenge`）。
+    pub fn get_auth_url_with_pkce(
+        &self,
+        state: &str,
+        code_verifier: &str,
+    ) -> BulwarkResult<(String, String)> {
+        let code_challenge = Self::generate_pkce_challenge(code_verifier)?;
+        let url = format!(
+            "{}?response_type=code&client_id={}&redirect_uri={}&state={}&code_challenge={}&code_challenge_method=S256",
+            self.auth_url,
+            urlencoding::encode(&self.client_id),
+            urlencoding::encode(&self.redirect_uri),
+            urlencoding::encode(state),
+            urlencoding::encode(&code_challenge),
+        );
+        Ok((url, code_challenge))
+    }
+
     /// 使用授权码换取令牌（依据 spec protocol-oauth2）。
     ///
     /// POST 请求 `token_url`，以 `application/x-www-form-urlencoded` 格式提交
     /// `grant_type=authorization_code`、`code`、`redirect_uri`、`client_id`、`client_secret`。
+    ///
+    /// # 弃用
+    /// OAuth 2.1 要求所有 Authorization Code 流程使用 PKCE。请改用 [`exchange_code_with_pkce`](Self::exchange_code_with_pkce)。
+    #[deprecated(note = "use exchange_code_with_pkce for OAuth 2.1 compliance")]
     pub async fn exchange_code(&self, code: &str, _state: &str) -> BulwarkResult<TokenResponse> {
         let params = [
             ("grant_type", "authorization_code"),
@@ -200,6 +284,39 @@ impl OAuth2Client {
             ("redirect_uri", &self.redirect_uri),
             ("client_id", &self.client_id),
             ("client_secret", &self.client_secret),
+        ];
+        self.post_token_request(&params).await
+    }
+
+    /// 使用授权码 + PKCE 换取令牌（依据 spec oauth-2-1-upgrade R-oauth-2-1-001）。
+    ///
+    /// 在 [`exchange_code`](Self::exchange_code) 基础上，POST 请求体追加 `code_verifier` 字段。
+    /// 授权服务器重新计算 `SHA256(code_verifier)` 并与授权请求中的 `code_challenge` 比对，验证客户端身份。
+    ///
+    /// # 参数
+    /// - `code`: 授权码。
+    /// - `_state`: CSRF state（保留参数，与旧方法签名对齐）。
+    /// - `code_verifier`: PKCE code_verifier（需与构造授权 URL 时传入的 verifier 一致）。
+    ///
+    /// # 错误
+    /// - `BulwarkError::InvalidParam`: `code_verifier` 不合法（客户端预校验，透传自 `generate_pkce_challenge`）。
+    /// - `BulwarkError::OAuth2`: token 端点返回非 2xx 或 JSON 解析失败。
+    /// - `BulwarkError::Network`: reqwest 请求失败。
+    pub async fn exchange_code_with_pkce(
+        &self,
+        code: &str,
+        _state: &str,
+        code_verifier: &str,
+    ) -> BulwarkResult<TokenResponse> {
+        // 客户端预校验 code_verifier 合法性（即使服务器不校验，客户端也不应发送非法值）
+        Self::generate_pkce_challenge(code_verifier)?;
+        let params = [
+            ("grant_type", "authorization_code"),
+            ("code", code),
+            ("redirect_uri", &self.redirect_uri),
+            ("client_id", &self.client_id),
+            ("client_secret", &self.client_secret),
+            ("code_verifier", code_verifier),
         ];
         self.post_token_request(&params).await
     }
@@ -405,6 +522,7 @@ mod tests {
 
     /// 构造标准授权 URL（spec Scenario）。
     #[test]
+    #[allow(deprecated)]
     fn get_auth_url_contains_required_params() {
         let client = OAuth2Client::new(
             "my-client",
@@ -424,6 +542,7 @@ mod tests {
 
     /// state 为空时仍包含 state 参数（spec Scenario）。
     #[test]
+    #[allow(deprecated)]
     fn get_auth_url_empty_state_still_includes_state() {
         let client = OAuth2Client::new("cid", "secret", "redirect", "auth", "token").unwrap();
         let url = client.get_auth_url("");
@@ -471,6 +590,7 @@ mod tests {
 
     /// 成功换取令牌（spec Scenario）。
     #[tokio::test]
+    #[allow(deprecated)]
     async fn exchange_code_success() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
@@ -496,6 +616,7 @@ mod tests {
 
     /// code 无效返回 OAuth2 错误（spec Scenario）。
     #[tokio::test]
+    #[allow(deprecated)]
     async fn exchange_code_invalid_code_returns_oauth2_error() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
@@ -754,6 +875,166 @@ mod tests {
     #[test]
     fn url_encode_encodes_special_chars() {
         assert_eq!(urlencoding::encode("a b/c:d"), "a%20b%2Fc%3Ad");
+    }
+
+    // ========================================================================
+    // PKCE (RFC 7636 / OAuth 2.1) 测试（0.4.2 新增，依据 spec oauth-2-1-upgrade）
+    // ========================================================================
+
+    /// RFC 7636 Appendix B 测试向量：验证 S256 code_challenge 计算正确（spec R-oauth-2-1-002 硬性要求）。
+    ///
+    /// code_verifier: "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk" (43 字符)
+    /// code_challenge: "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+    #[test]
+    fn pkce_challenge_rfc_7636_test_vector() {
+        let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        let expected = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
+        let challenge =
+            OAuth2Client::generate_pkce_challenge(verifier).expect("RFC 7636 测试向量应成功");
+        assert_eq!(challenge, expected);
+    }
+
+    /// code_verifier < 43 字符返回 InvalidParam 错误（spec R-oauth-2-1-002）。
+    #[test]
+    fn pkce_challenge_short_verifier_returns_error() {
+        let verifier = "a".repeat(42);
+        let result = OAuth2Client::generate_pkce_challenge(&verifier);
+        assert!(result.is_err(), "42 字符的 verifier 应返回错误");
+        match result.err() {
+            Some(BulwarkError::InvalidParam(_)) => {},
+            other => panic!("期望 InvalidParam 错误，实际: {:?}", other),
+        }
+    }
+
+    /// code_verifier > 128 字符返回 InvalidParam 错误（spec R-oauth-2-1-002）。
+    #[test]
+    fn pkce_challenge_long_verifier_returns_error() {
+        let verifier = "a".repeat(129);
+        let result = OAuth2Client::generate_pkce_challenge(&verifier);
+        assert!(result.is_err(), "129 字符的 verifier 应返回错误");
+        match result.err() {
+            Some(BulwarkError::InvalidParam(_)) => {},
+            other => panic!("期望 InvalidParam 错误，实际: {:?}", other),
+        }
+    }
+
+    /// code_verifier 含非法字符返回 InvalidParam 错误（spec R-oauth-2-1-002）。
+    ///
+    /// 合法字符集：[A-Z]/[a-z]/[0-9]/-/./_/~。空格、!、@、# 均为非法。
+    #[test]
+    fn pkce_challenge_invalid_chars_returns_error() {
+        let test_cases = [
+            format!("{}{}", "a".repeat(42), " "),
+            format!("{}{}", "a".repeat(42), "!"),
+            format!("{}{}", "a".repeat(42), "@"),
+            format!("{}{}", "a".repeat(42), "#"),
+        ];
+        for verifier in &test_cases {
+            let result = OAuth2Client::generate_pkce_challenge(verifier);
+            assert!(
+                result.is_err(),
+                "含非法字符的 verifier 应返回错误: {}",
+                verifier
+            );
+            match result.err() {
+                Some(BulwarkError::InvalidParam(_)) => {},
+                other => panic!("期望 InvalidParam 错误，实际: {:?}", other),
+            }
+        }
+    }
+
+    /// 43-128 字符的合法 verifier 返回 43 字符的 challenge（spec R-oauth-2-1-002）。
+    ///
+    /// S256: SHA-256 输出 32 字节 → base64url 无填充编码 = 43 字符。
+    #[test]
+    fn pkce_challenge_valid_verifier_returns_correct_length() {
+        for &len in &[43usize, 64, 128] {
+            let verifier = "a".repeat(len);
+            let challenge = OAuth2Client::generate_pkce_challenge(&verifier)
+                .unwrap_or_else(|e| panic!("长度 {} 的 verifier 应成功: {}", len, e));
+            assert_eq!(
+                challenge.len(),
+                43,
+                "S256 challenge 应为 43 字符（32 字节 base64url 无填充），verifier 长度 {}",
+                len
+            );
+        }
+    }
+
+    /// get_auth_url_with_pkce 返回的 URL 包含 code_challenge 和 code_challenge_method=S256（spec R-oauth-2-1-001）。
+    #[test]
+    fn get_auth_url_with_pkce_returns_url_and_challenge() {
+        let client = OAuth2Client::new(
+            "my-client",
+            "secret",
+            "https://example.com/callback",
+            "https://auth.example.com/authorize",
+            "https://token.example.com/token",
+        )
+        .unwrap();
+        let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        let (url, challenge) = client
+            .get_auth_url_with_pkce("xyz-state", verifier)
+            .expect("get_auth_url_with_pkce 应成功");
+        assert!(url.starts_with("https://auth.example.com/authorize?"));
+        assert!(url.contains("response_type=code"));
+        assert!(url.contains("client_id=my-client"));
+        assert!(url.contains("state=xyz-state"));
+        assert!(url.contains("code_challenge_method=S256"));
+        assert!(url.contains("code_challenge="));
+        // 返回的 challenge 与 RFC 7636 测试向量一致
+        assert_eq!(challenge, "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM");
+        assert!(url.contains(&format!("code_challenge={}", challenge)));
+    }
+
+    /// exchange_code_with_pkce 请求体包含 code_verifier 字段（spec R-oauth-2-1-001）。
+    #[tokio::test]
+    async fn exchange_code_with_pkce_includes_code_verifier_in_body() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "access_token": "pkce-token",
+                "token_type": "Bearer"
+            })))
+            .mount(&server)
+            .await;
+
+        let client = make_client(&server).await;
+        let code_verifier = "a".repeat(43);
+        let token = client
+            .exchange_code_with_pkce("auth-code", "state", &code_verifier)
+            .await
+            .expect("exchange_code_with_pkce 应成功");
+        assert_eq!(token.access_token, "pkce-token");
+
+        // 验证请求体包含 code_verifier 字段
+        let received = server.received_requests().await.expect("应收到请求");
+        assert_eq!(received.len(), 1, "应只收到 1 个请求");
+        let body = std::str::from_utf8(&received[0].body).expect("body 应为 UTF-8");
+        assert!(
+            body.contains("code_verifier="),
+            "请求体应包含 code_verifier 字段，实际: {}",
+            body
+        );
+    }
+
+    /// 旧 get_auth_url 标记 deprecated 后仍可工作（向后兼容，spec R-oauth-2-1-003）。
+    #[test]
+    #[allow(deprecated)]
+    fn deprecated_get_auth_url_still_works() {
+        let client = OAuth2Client::new(
+            "cid",
+            "secret",
+            "https://example.com/cb",
+            "https://auth.example.com/authorize",
+            "https://token.example.com/token",
+        )
+        .unwrap();
+        let url = client.get_auth_url("state");
+        assert!(url.contains("response_type=code"));
+        assert!(url.contains("client_id=cid"));
+        assert!(url.contains("state=state"));
     }
 
     // ========================================================================

@@ -41,6 +41,7 @@ fn client_for(server: &MockServer) -> OAuth2Client {
 /// 未提供 `refresh_token` 方法。此测试用 `exchange_code` + 无效 code 验证等价的错误返回边界：
 /// 当授权服务器返回 4xx 错误时，客户端应返回 `BulwarkError::OAuth2`。
 #[tokio::test]
+#[allow(deprecated)]
 async fn refresh_token_invalid_returns_error() {
     let server = MockServer::start().await;
 
@@ -138,6 +139,7 @@ async fn scope_empty_string_vs_none_behavior_differs() {
 /// - 第一次请求返回 200（成功）
 /// - 第二次请求返回 400（invalid_grant，code 已被使用）
 #[tokio::test]
+#[allow(deprecated)]
 async fn authorization_code_replay_rejected() {
     let server = MockServer::start().await;
 

@@ -46,6 +46,7 @@ fn full_token_response_json() -> serde_json::Value {
 
 /// exchange_code 成功返回完整 TokenResponse（spec Scenario）。
 #[tokio::test]
+#[allow(deprecated)]
 async fn exchange_code_returns_full_token_response() {
     let server = MockServer::start().await;
 
@@ -71,6 +72,7 @@ async fn exchange_code_returns_full_token_response() {
 
 /// exchange_code 仅返回必填字段（access_token + token_type），可选字段为 None。
 #[tokio::test]
+#[allow(deprecated)]
 async fn exchange_code_handles_minimal_response() {
     let server = MockServer::start().await;
 
@@ -98,6 +100,7 @@ async fn exchange_code_handles_minimal_response() {
 
 /// 授权服务器返回 4xx 错误时 exchange_code 返回 Err。
 #[tokio::test]
+#[allow(deprecated)]
 async fn exchange_code_returns_error_on_4xx() {
     let server = MockServer::start().await;
 
@@ -197,6 +200,7 @@ async fn new_rejects_empty_client_id() {
 
 /// get_auth_url 正确拼接查询参数（spec Scenario）。
 #[tokio::test]
+#[allow(deprecated)]
 async fn get_auth_url_includes_required_params() {
     let server = MockServer::start().await;
     let client = client_for(&server);

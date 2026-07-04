@@ -21,6 +21,7 @@ use bulwark::protocol::oauth2::OAuth2Client;
 ///
 /// 构造 OAuth2Client、生成授权 URL，并展示 exchange_code 的调用方式。
 /// 不实际发起 HTTP 请求（避免依赖外部授权服务器）。
+#[allow(deprecated)]
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Bulwark OAuth2 Authorization Code 流程示例 ===\n");
 
