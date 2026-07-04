@@ -325,9 +325,10 @@ pub trait BulwarkLogic: Send + Sync {
     ///
     /// # 安全约束
     ///
-    /// 用户不存在与密码错误统一返回 `InvalidParam("invalid password")`，真实原因记录在
-    /// `tracing::warn!` 日志中（reason = "user_not_found" / "wrong_password"），
-    /// 防止攻击者通过返回值差异进行用户枚举。
+    /// 用户不存在与密码错误统一返回 `InvalidParam("invalid password")`，日志和事件
+    /// reason 统一为 "invalid_credentials"（v0.4.2 安全审计 A-014），防止攻击者通过
+    /// 返回值或日志差异进行用户枚举。哈希格式错误返回 "unsupported hash format"
+    /// （属配置错误，不构成枚举风险）。
     async fn login_with_password(&self, _login_id: i64, _password: &str) -> BulwarkResult<String> {
         Err(BulwarkError::NotImplemented(
             "login_with_password 未实现：需启用 secure-password + db-sqlite feature".to_string(),
@@ -989,9 +990,11 @@ impl BulwarkLogic for BulwarkLogicDefault {
         let user = match user {
             Some(u) => u,
             None => {
+                // v0.4.2 安全审计 A-014: 日志和事件统一为 "invalid_credentials"，
+                // 不区分 user_not_found/wrong_password，防止日志泄露用户存在性
                 tracing::warn!(
                     login_id = login_id,
-                    reason = "user_not_found",
+                    reason = "invalid_credentials",
                     "login_with_password 失败"
                 );
                 // v0.4.2: 广播 LoginFailure 事件（依据 spec listener-events-extend R-001）
@@ -999,7 +1002,7 @@ impl BulwarkLogic for BulwarkLogicDefault {
                 if let Some(lm) = &self.listener_manager {
                     lm.broadcast(&BulwarkEvent::LoginFailure {
                         login_id,
-                        reason: "user_not_found".to_string(),
+                        reason: "invalid_credentials".to_string(),
                     });
                 }
                 return Err(BulwarkError::InvalidParam("invalid password".to_string()));
@@ -1018,9 +1021,11 @@ impl BulwarkLogic for BulwarkLogicDefault {
         })?;
 
         if !verified {
+            // v0.4.2 安全审计 A-014: 日志和事件统一为 "invalid_credentials"，
+            // 不区分 user_not_found/wrong_password，防止日志泄露用户存在性
             tracing::warn!(
                 login_id = login_id,
-                reason = "wrong_password",
+                reason = "invalid_credentials",
                 "login_with_password 失败"
             );
             // v0.4.2: 广播 LoginFailure 事件（依据 spec listener-events-extend R-001）
@@ -1028,7 +1033,7 @@ impl BulwarkLogic for BulwarkLogicDefault {
             if let Some(lm) = &self.listener_manager {
                 lm.broadcast(&BulwarkEvent::LoginFailure {
                     login_id,
-                    reason: "wrong_password".to_string(),
+                    reason: "invalid_credentials".to_string(),
                 });
             }
             return Err(BulwarkError::InvalidParam("invalid password".to_string()));
@@ -2947,7 +2952,8 @@ mod tests {
     /// 覆盖 spec auth-password-login R-001 验收 case 3。
     /// 注：spec R-001 说"用户不存在返回 NotLogin"，但 Constraints 说"不泄露具体原因"。
     /// 决策：遵循 Constraints 安全要求，统一返回 InvalidParam 防止用户枚举。
-    /// 真实原因记录在 tracing::warn! 日志中（reason = "user_not_found"）。
+    /// v0.4.2 安全审计 A-014: 日志和事件 reason 也统一为 "invalid_credentials"，
+    /// 不区分 user_not_found/wrong_password。
     #[cfg(all(feature = "secure-password", feature = "db-sqlite"))]
     #[tokio::test]
     #[serial]

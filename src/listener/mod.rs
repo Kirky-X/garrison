@@ -64,13 +64,16 @@ pub enum BulwarkEvent {
     },
     /// 登录失败事件（v0.4.2 新增，依据 spec listener-events-extend R-001）。
     ///
-    /// 在 `login_with_password` 失败路径广播（user_not_found / wrong_password）。
+    /// 在 `login_with_password` 失败路径广播（invalid_credentials / hash_format_error）。
     /// 注意：login_id 字段使用 `i64` 而非 `LoginId` newtype，以保持与现有 6 个变体一致
     ///（偏差 D-Phase11-1，依据规则 11 惯例优先于新颖）。
     LoginFailure {
         /// 登录主体标识。
         login_id: i64,
-        /// 失败原因（"user_not_found" / "wrong_password"）。
+        /// 失败原因（"invalid_credentials" / "hash_format_error"）。
+        ///
+        /// v0.4.2 安全审计 A-014: user_not_found 与 wrong_password 统一为 "invalid_credentials"，
+        /// 防止日志/事件泄露用户存在性（防用户枚举）。
         reason: String,
     },
     /// Token 刷新事件（v0.4.2 新增，依据 spec listener-events-extend R-001）。

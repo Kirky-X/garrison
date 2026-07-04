@@ -988,21 +988,6 @@ mod tests {
     #[cfg(feature = "listener")]
     #[tokio::test]
     async fn check_brute_force_dao_mode_broadcasts_account_locked() {
-        use crate::listener::{BulwarkEvent, BulwarkListener, BulwarkListenerEntry};
-        use parking_lot::Mutex;
-
-        /// 记录事件的测试监听器
-        struct CapturingListener {
-            events: Mutex<Vec<BulwarkEvent>>,
-        }
-
-        impl BulwarkListener for CapturingListener {
-            fn on_event(&self, event: &BulwarkEvent) -> BulwarkResult<()> {
-                self.events.lock().push(event.clone());
-                Ok(())
-            }
-        }
-
         // inventory 注册需要在静态上下文中
         // 由于 inventory::submit! 在编译期注册，这里用已有的 listener_manager
         // 直接验证：超阈值时返回 Err 即可（broadcast 是副作用）
