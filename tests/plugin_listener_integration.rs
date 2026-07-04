@@ -126,6 +126,7 @@ fn plugin_manager_collects_registered_plugins() {
 
 /// on_login 钩子被调用（spec Scenario）。
 #[test]
+#[serial_test::serial]
 fn plugin_on_login_invoked() {
     reset_counters();
     let manager = BulwarkPluginManager::new();
@@ -138,6 +139,7 @@ fn plugin_on_login_invoked() {
 
 /// on_logout 钩子被调用（spec Scenario）。
 #[test]
+#[serial_test::serial]
 fn plugin_on_logout_invoked() {
     reset_counters();
     let manager = BulwarkPluginManager::new();
@@ -150,6 +152,7 @@ fn plugin_on_logout_invoked() {
 
 /// on_permission_check 钩子被调用（spec Scenario）。
 #[test]
+#[serial_test::serial]
 fn plugin_on_permission_check_invoked() {
     reset_counters();
     let manager = BulwarkPluginManager::new();
@@ -162,6 +165,7 @@ fn plugin_on_permission_check_invoked() {
 
 /// 多次调用累计计数（验证 plugin 是无状态可重入的，spec Scenario）。
 #[test]
+#[serial_test::serial]
 fn plugin_multiple_calls_accumulate() {
     reset_counters();
     let manager = BulwarkPluginManager::new();
@@ -190,6 +194,7 @@ fn listener_manager_collects_registered_listeners() {
 
 /// Login 事件广播到 listener（spec Scenario）。
 #[test]
+#[serial_test::serial]
 fn listener_receives_login_event() {
     reset_counters();
     let manager = BulwarkListenerManager::new();
@@ -206,6 +211,7 @@ fn listener_receives_login_event() {
 
 /// Logout 事件广播到 listener（spec Scenario）。
 #[test]
+#[serial_test::serial]
 fn listener_receives_logout_event() {
     reset_counters();
     let manager = BulwarkListenerManager::new();
@@ -221,6 +227,7 @@ fn listener_receives_logout_event() {
 
 /// PermissionDenied 事件广播到 listener（spec Scenario）。
 #[test]
+#[serial_test::serial]
 fn listener_receives_permission_denied_event() {
     reset_counters();
     let manager = BulwarkListenerManager::new();
@@ -236,6 +243,7 @@ fn listener_receives_permission_denied_event() {
 
 /// 多次广播累计计数（spec Scenario）。
 #[test]
+#[serial_test::serial]
 fn listener_multiple_broadcasts_accumulate() {
     reset_counters();
     let manager = BulwarkListenerManager::new();
@@ -259,6 +267,7 @@ fn listener_multiple_broadcasts_accumulate() {
 /// 完整生命周期：login → permission_check → logout
 /// （扩展点本身行为：直接调用 plugin/listener 方法）。
 #[test]
+#[serial_test::serial]
 fn full_lifecycle_plugin_and_listener_cooperate() {
     reset_counters();
 
@@ -308,6 +317,7 @@ fn full_lifecycle_plugin_and_listener_cooperate() {
 
 /// PermissionDenied 事件不被 plugin 触发，仅由 listener 接收（spec Scenario）。
 #[test]
+#[serial_test::serial]
 fn permission_denied_event_only_goes_to_listener() {
     reset_counters();
     let plugin_manager = BulwarkPluginManager::new();

@@ -3,16 +3,22 @@
 //! [借鉴 Sa-Token] 对应 Sa-Token 的 `SaTokenDao`，
 //! 通过 oxcache / dbnexus 提供多后端（缓存 / 关系型数据库）支持。
 
-use crate::error::BulwarkResult;
+use crate::error::{BulwarkError, BulwarkResult};
 use async_trait::async_trait;
+use std::time::Duration;
 
 /// DAO 抽象层 trait，定义 Token 与会话的持久化操作。
 ///
-/// [借鉴 Sa-Token] 对应 `SaTokenDao`，提供 get / set / update / delete / expire 五元操作。
+/// [借鉴 Sa-Token] 对应 `SaTokenDao`，提供 get / set / update / delete / expire 五元操作
+/// + v0.4.2 新增 set_permanent / get_timeout / keys / rename 四个扩展方法（依据 spec dao-bulwark-dao）。
 ///
 /// - `set` 必须指定 TTL（Token/Session 不应永久驻留，与 Sa-Token 语义一致）
 /// - `update` 更新值时保留原有 TTL（不重置过期时间）
 /// - `expire` 重置键的过期时间
+/// - `set_permanent` 存储永久键（无 TTL，默认实现委托 `set(key, value, 0)`）
+/// - `get_timeout` 查询剩余 TTL（默认返回 `NotImplemented`，需后端重写）
+/// - `keys` 按 glob pattern 扫描 key（默认返回 `NotImplemented`，需后端重写）
+/// - `rename` 重命名 key（默认 get→set→delete 三步，非原子）
 #[async_trait]
 pub trait BulwarkDao: Send + Sync {
     /// 获取指定键的值。
@@ -58,6 +64,94 @@ pub trait BulwarkDao: Send + Sync {
     /// # 参数
     /// - `key`: 存储键。
     async fn delete(&self, key: &str) -> BulwarkResult<()>;
+
+    /// 存储永久键（无 TTL）。
+    ///
+    /// v0.4.2 新增（依据 spec dao-bulwark-dao R-001）。
+    ///
+    /// # 参数
+    /// - `key`: 存储键。
+    /// - `value`: 存储值。
+    ///
+    /// # 默认实现
+    /// 委托 `self.set(key, value, 0)`（依据 spec 语义：ttl=0 表示永久驻留）。
+    /// 后端可重写以使用原生"无 TTL"API（如 oxcache `set_with_ttl_sync(None)`）。
+    async fn set_permanent(&self, key: &str, value: &str) -> BulwarkResult<()> {
+        self.set(key, value, 0).await
+    }
+
+    /// 查询键的剩余 TTL。
+    ///
+    /// v0.4.2 新增（依据 spec dao-bulwark-dao R-002）。
+    ///
+    /// # 参数
+    /// - `key`: 存储键。
+    ///
+    /// # 返回
+    /// - `Ok(Some(remaining))`: 键存在且设置了 TTL，返回剩余存活时间。
+    /// - `Ok(None)`: 键不存在，或键存在但未设置 TTL（永久驻留）。
+    ///
+    /// # 默认实现
+    /// 返回 `BulwarkError::NotImplemented`（需后端原生 TTL 查询 API 支持）。
+    /// `BulwarkDaoOxcache` 与 `MockDao` 已重写。
+    async fn get_timeout(&self, _key: &str) -> BulwarkResult<Option<Duration>> {
+        Err(BulwarkError::NotImplemented(format!(
+            "get_timeout 未实现：{} 后端不支持 TTL 查询",
+            std::any::type_name::<Self>()
+        )))
+    }
+
+    /// 按 glob pattern 扫描 key。
+    ///
+    /// v0.4.2 新增（依据 spec dao-bulwark-dao R-003）。
+    ///
+    /// # 参数
+    /// - `pattern`: glob 模式，支持 `*`（任意字符序列）与 `?`（单字符）。
+    ///
+    /// # 返回
+    /// - `Ok(Vec<String>)`: 匹配的 key 列表（无序），无匹配返回空 Vec。
+    ///
+    /// # 性能警告
+    /// - 大规模 key 场景下性能差（需全量扫描 + 过滤）
+    /// - `BulwarkDaoOxcache` 当前返回 `NotImplemented`（oxcache 0.3 不支持 key scan，待 v0.5.0+ 升级）
+    ///
+    /// # 默认实现
+    /// 返回 `BulwarkError::NotImplemented`。
+    async fn keys(&self, _pattern: &str) -> BulwarkResult<Vec<String>> {
+        Err(BulwarkError::NotImplemented(format!(
+            "keys 未实现：{} 后端不支持 key scan",
+            std::any::type_name::<Self>()
+        )))
+    }
+
+    /// 重命名 key。
+    ///
+    /// v0.4.2 新增（依据 spec dao-bulwark-dao R-004）。
+    ///
+    /// # 参数
+    /// - `old_key`: 原 key（必须已存在）。
+    /// - `new_key`: 新 key。
+    ///
+    /// # 错误
+    /// - `BulwarkError::InvalidParam`: `old_key` 不存在。
+    ///
+    /// # 非原子性警告
+    /// 默认实现为 `get → set_permanent → delete` 三步操作，存在竞态窗口：
+    /// 1. 读取 old_key 后、写入 new_key 前，old_key 可能被其他线程修改或删除
+    /// 2. 写入 new_key 后、删除 old_key 前，old_key 与 new_key 同时存在
+    /// 后端若支持原子 rename（如 Redis RENAME），应重写此方法。
+    ///
+    /// # TTL 保留
+    /// 默认实现**不保留**原键 TTL（用 `set_permanent` 写入新键）。
+    /// 后端若需保留 TTL，应重写此方法（如 `BulwarkDaoOxcache` 用 `ttl_sync` + `set_with_ttl_sync`）。
+    async fn rename(&self, old_key: &str, new_key: &str) -> BulwarkResult<()> {
+        let value = self
+            .get(old_key)
+            .await?
+            .ok_or_else(|| BulwarkError::InvalidParam(format!("键不存在: {}", old_key)))?;
+        self.set_permanent(new_key, &value).await?;
+        self.delete(old_key).await
+    }
 }
 
 // ============================================================================
@@ -179,6 +273,48 @@ mod oxcache_impl {
         async fn delete(&self, key: &str) -> BulwarkResult<()> {
             self.cache
                 .delete_sync(&key.to_string())
+                .map_err(|e| BulwarkError::Dao(format!("oxcache delete_sync 失败: {}", e)))
+        }
+
+        /// v0.4.2: set_permanent 用 set_with_ttl_sync(None) 写入永久键（依据 spec dao-bulwark-dao R-001）。
+        ///
+        /// 重写默认实现以使用 oxcache 原生"无 TTL"API（避免 ttl=0 歧义）。
+        async fn set_permanent(&self, key: &str, value: &str) -> BulwarkResult<()> {
+            self.cache
+                .set_with_ttl_sync(&key.to_string(), &value.to_string(), None)
+                .map_err(|e| BulwarkError::Dao(format!("oxcache set_with_ttl_sync 失败: {}", e)))
+        }
+
+        /// v0.4.2: get_timeout 用 ttl_sync 查询剩余 TTL（依据 spec dao-bulwark-dao R-002）。
+        ///
+        /// oxcache 0.3 的 `ttl_sync(key)` 返回 `Option<Duration>`：
+        /// - `Some(remaining)`: 键存在且设置了 TTL
+        /// - `None`: 键不存在，或键存在但未设置 TTL（永久驻留）
+        async fn get_timeout(&self, key: &str) -> BulwarkResult<Option<Duration>> {
+            self.cache
+                .ttl_sync(&key.to_string())
+                .map_err(|e| BulwarkError::Dao(format!("oxcache ttl_sync 失败: {}", e)))
+        }
+
+        /// v0.4.2: rename 用 get → ttl_sync → set_with_ttl_sync → delete 四步（依据 spec dao-bulwark-dao R-004）。
+        ///
+        /// 重写默认实现以保留原键 TTL（用 `ttl_sync` 读取剩余 TTL，用 `set_with_ttl_sync` 写入）。
+        /// 仍是**非原子**操作（oxcache 0.3 无原子 rename API，待 v0.5.0+ 升级）。
+        async fn rename(&self, old_key: &str, new_key: &str) -> BulwarkResult<()> {
+            let value = self
+                .cache
+                .get_sync(&old_key.to_string())
+                .map_err(|e| BulwarkError::Dao(format!("oxcache get_sync 失败: {}", e)))?
+                .ok_or_else(|| BulwarkError::InvalidParam(format!("键不存在: {}", old_key)))?;
+            let remaining_ttl = self
+                .cache
+                .ttl_sync(&old_key.to_string())
+                .map_err(|e| BulwarkError::Dao(format!("oxcache ttl_sync 失败: {}", e)))?;
+            self.cache
+                .set_with_ttl_sync(&new_key.to_string(), &value, remaining_ttl)
+                .map_err(|e| BulwarkError::Dao(format!("oxcache set_with_ttl_sync 失败: {}", e)))?;
+            self.cache
+                .delete_sync(&old_key.to_string())
                 .map_err(|e| BulwarkError::Dao(format!("oxcache delete_sync 失败: {}", e)))
         }
     }
@@ -309,6 +445,108 @@ pub mod tests {
             self.store.lock().remove(key);
             Ok(())
         }
+
+        /// v0.4.2: set_permanent 设置 expire_at = None（永久驻留）。
+        async fn set_permanent(&self, key: &str, value: &str) -> BulwarkResult<()> {
+            self.store
+                .lock()
+                .insert(key.to_string(), (value.to_string(), None));
+            Ok(())
+        }
+
+        /// v0.4.2: get_timeout 返回剩余 TTL。
+        ///
+        /// - `Some(remaining)`: 键存在且设置了 TTL（expire_at - now）
+        /// - `None`: 键不存在，或永久键（expire_at = None）
+        async fn get_timeout(&self, key: &str) -> BulwarkResult<Option<Duration>> {
+            let store = self.store.lock();
+            match store.get(key) {
+                Some((_, Some(deadline))) => {
+                    let now = Instant::now();
+                    if *deadline <= now {
+                        // 已过期（但还未被 get 清理）
+                        Ok(None)
+                    } else {
+                        Ok(Some(*deadline - now))
+                    }
+                },
+                _ => Ok(None),
+            }
+        }
+
+        /// v0.4.2: keys 按 glob pattern 扫描 key（支持 `*` 与 `?`）。
+        ///
+        /// 遍历所有 key，过滤已过期的，然后用 glob_match 匹配 pattern。
+        async fn keys(&self, pattern: &str) -> BulwarkResult<Vec<String>> {
+            let mut result = Vec::new();
+            let now = Instant::now();
+            let store = self.store.lock();
+            for (key, (_, expire_at)) in store.iter() {
+                // 跳过已过期的 key
+                if let Some(deadline) = expire_at {
+                    if *deadline <= now {
+                        continue;
+                    }
+                }
+                if glob_match(pattern, key) {
+                    result.push(key.clone());
+                }
+            }
+            Ok(result)
+        }
+
+        /// v0.4.2: rename 重命名 key，保留原 TTL（非原子）。
+        async fn rename(&self, old_key: &str, new_key: &str) -> BulwarkResult<()> {
+            let mut store = self.store.lock();
+            match store.get(old_key).cloned() {
+                Some((value, expire_at)) => {
+                    store.insert(new_key.to_string(), (value, expire_at));
+                    store.remove(old_key);
+                    Ok(())
+                },
+                None => Err(BulwarkError::InvalidParam(format!("键不存在: {}", old_key))),
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // glob 匹配 helper（用于 keys 方法，支持 `*` 与 `?`）
+    // ------------------------------------------------------------------------
+
+    /// 简单 glob 匹配：`*` 匹配 0+ 字符，`?` 匹配 1 字符。
+    ///
+    /// 使用经典双指针算法（O(n+m) 时间复杂度）。
+    fn glob_match(pattern: &str, text: &str) -> bool {
+        let pattern: Vec<char> = pattern.chars().collect();
+        let text: Vec<char> = text.chars().collect();
+        let mut p = 0; // pattern index
+        let mut t = 0; // text index
+        let mut star_p: Option<usize> = None; // 上一个 '*' 在 pattern 中的位置
+        let mut star_t = 0; // 上一个 '*' 匹配开始时的 text 位置
+
+        while t < text.len() {
+            if p < pattern.len() && (pattern[p] == '?' || pattern[p] == text[t]) {
+                p += 1;
+                t += 1;
+            } else if p < pattern.len() && pattern[p] == '*' {
+                star_p = Some(p);
+                star_t = t;
+                p += 1;
+            } else if let Some(sp) = star_p {
+                // 回溯：让上一个 '*' 多匹配一个字符
+                p = sp + 1;
+                star_t += 1;
+                t = star_t;
+            } else {
+                return false;
+            }
+        }
+
+        // 跳过 pattern 末尾的 '*'
+        while p < pattern.len() && pattern[p] == '*' {
+            p += 1;
+        }
+        p == pattern.len()
     }
 
     // ------------------------------------------------------------------------
@@ -453,6 +691,131 @@ pub mod tests {
         tokio::time::sleep(Duration::from_secs(2)).await;
         let got = dao.get("k").await.unwrap();
         assert_eq!(got, Some("v".to_string()), "expire(0) 应改为永久驻留");
+    }
+
+    // ------------------------------------------------------------------------
+    // 4 方法扩展测试（v0.4.2 spec dao-bulwark-dao）
+    // ------------------------------------------------------------------------
+
+    /// R-001: set_permanent 设置后 get 返回值（依据 spec dao-bulwark-dao R-001）。
+    #[tokio::test]
+    async fn mock_set_permanent_persists_value() {
+        let dao = MockDao::new();
+        dao.set_permanent("perm_key", "perm_value").await.unwrap();
+        let got = dao.get("perm_key").await.unwrap();
+        assert_eq!(got, Some("perm_value".to_string()));
+    }
+
+    /// R-001: set_permanent 永久键短时间等待不过期。
+    #[tokio::test]
+    async fn mock_set_permanent_does_not_expire_quickly() {
+        let dao = MockDao::new();
+        dao.set_permanent("perm_key", "perm_value").await.unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let got = dao.get("perm_key").await.unwrap();
+        assert_eq!(got, Some("perm_value".to_string()), "永久键不应过期");
+    }
+
+    /// R-002: get_timeout 永久键返回 None（依据 spec dao-bulwark-dao R-002）。
+    #[tokio::test]
+    async fn mock_get_timeout_returns_none_for_permanent_key() {
+        let dao = MockDao::new();
+        dao.set_permanent("perm", "v").await.unwrap();
+        let timeout = dao.get_timeout("perm").await.unwrap();
+        assert!(timeout.is_none(), "永久键应返回 None");
+    }
+
+    /// R-002: get_timeout TTL 键返回 Some(remaining)，剩余 ≤ 原 TTL。
+    #[tokio::test]
+    async fn mock_get_timeout_returns_some_for_ttl_key() {
+        let dao = MockDao::new();
+        dao.set("ttl_key", "v", 3600).await.unwrap();
+        let timeout = dao.get_timeout("ttl_key").await.unwrap();
+        assert!(timeout.is_some(), "TTL 键应返回 Some");
+        let remaining = timeout.unwrap();
+        assert!(
+            remaining <= Duration::from_secs(3600),
+            "剩余时间应 ≤ 原 TTL"
+        );
+    }
+
+    /// R-002: get_timeout 不存在的键返回 None。
+    #[tokio::test]
+    async fn mock_get_timeout_returns_none_for_missing_key() {
+        let dao = MockDao::new();
+        let timeout = dao.get_timeout("missing").await.unwrap();
+        assert!(timeout.is_none(), "不存在的键应返回 None");
+    }
+
+    /// R-003: keys("bulwark:apikey:*") 返回命名空间下所有 key（依据 spec dao-bulwark-dao R-003）。
+    #[tokio::test]
+    async fn mock_keys_returns_namespace_matches() {
+        let dao = MockDao::new();
+        dao.set("bulwark:apikey:abc123", "v1", 3600).await.unwrap();
+        dao.set("bulwark:apikey:def456", "v2", 3600).await.unwrap();
+        dao.set("bulwark:session:xyz", "v3", 3600).await.unwrap();
+        let keys = dao.keys("bulwark:apikey:*").await.unwrap();
+        assert_eq!(keys.len(), 2, "应匹配 2 个 apikey");
+        assert!(keys.contains(&"bulwark:apikey:abc123".to_string()));
+        assert!(keys.contains(&"bulwark:apikey:def456".to_string()));
+    }
+
+    /// R-003: keys("*") 返回所有 key。
+    #[tokio::test]
+    async fn mock_keys_star_returns_all() {
+        let dao = MockDao::new();
+        dao.set("k1", "v1", 3600).await.unwrap();
+        dao.set("k2", "v2", 3600).await.unwrap();
+        let keys = dao.keys("*").await.unwrap();
+        assert!(keys.len() >= 2, "应至少返回 2 个 key");
+    }
+
+    /// R-003: keys 无匹配返回空 Vec。
+    #[tokio::test]
+    async fn mock_keys_no_match_returns_empty() {
+        let dao = MockDao::new();
+        dao.set("k1", "v1", 3600).await.unwrap();
+        let keys = dao.keys("nonexistent:*").await.unwrap();
+        assert!(keys.is_empty(), "无匹配应返回空 Vec");
+    }
+
+    /// R-003: keys 支持 ? 单字符通配符。
+    #[tokio::test]
+    async fn mock_keys_supports_question_mark() {
+        let dao = MockDao::new();
+        dao.set("key1", "v1", 3600).await.unwrap();
+        dao.set("key2", "v2", 3600).await.unwrap();
+        dao.set("key10", "v3", 3600).await.unwrap();
+        let keys = dao.keys("key?").await.unwrap();
+        assert_eq!(
+            keys.len(),
+            2,
+            "? 应匹配单个字符，key1/key2 匹配，key10 不匹配"
+        );
+    }
+
+    /// R-004: rename 重命名后 old 不存在，new 存在（依据 spec dao-bulwark-dao R-004）。
+    #[tokio::test]
+    async fn mock_rename_moves_key() {
+        let dao = MockDao::new();
+        dao.set("old_key", "value", 3600).await.unwrap();
+        dao.rename("old_key", "new_key").await.unwrap();
+        let old = dao.get("old_key").await.unwrap();
+        let new = dao.get("new_key").await.unwrap();
+        assert!(old.is_none(), "rename 后 old_key 应不存在");
+        assert_eq!(new, Some("value".to_string()), "rename 后 new_key 应有值");
+    }
+
+    /// R-004: rename 不存在的 old_key 返回 InvalidParam。
+    #[tokio::test]
+    async fn mock_rename_missing_key_returns_invalid_param() {
+        let dao = MockDao::new();
+        let result = dao.rename("missing", "new").await;
+        assert!(
+            matches!(result, Err(BulwarkError::InvalidParam(_))),
+            "rename 不存在的键应返回 InvalidParam，实际: {:?}",
+            result
+        );
     }
 
     // ------------------------------------------------------------------------
@@ -619,6 +982,125 @@ pub mod tests {
                 got,
                 Some("permanent_value".to_string()),
                 "set(ttl=0) 应写入永久驻留的键，2 秒后仍应存在"
+            );
+        }
+
+        // --------------------------------------------------------------------
+        // v0.4.2 4 方法扩展测试（依据 spec dao-bulwark-dao）
+        // --------------------------------------------------------------------
+
+        /// R-001: set_permanent 写入永久键，短时间等待不过期。
+        ///
+        /// 覆盖 BulwarkDaoOxcache::set_permanent 重写实现（用 set_with_ttl_sync(None)）。
+        #[tokio::test(flavor = "multi_thread")]
+        async fn oxcache_set_permanent_persists_without_ttl() {
+            let dao = BulwarkDaoOxcache::new().await.unwrap();
+            dao.set_permanent("oc_perm", "perm_value").await.unwrap();
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            let got = dao.get("oc_perm").await.unwrap();
+            assert_eq!(
+                got,
+                Some("perm_value".to_string()),
+                "set_permanent 应写入永久键，2 秒后仍应存在"
+            );
+        }
+
+        /// R-002: get_timeout 永久键返回 None。
+        ///
+        /// 覆盖 BulwarkDaoOxcache::get_timeout 重写实现（用 ttl_sync）。
+        #[tokio::test(flavor = "multi_thread")]
+        async fn oxcache_get_timeout_returns_none_for_permanent_key() {
+            let dao = BulwarkDaoOxcache::new().await.unwrap();
+            dao.set_permanent("oc_perm_ttl", "v").await.unwrap();
+            let timeout = dao.get_timeout("oc_perm_ttl").await.unwrap();
+            assert!(timeout.is_none(), "永久键应返回 None");
+        }
+
+        /// R-002: get_timeout TTL 键返回 Some(remaining)，剩余 ≤ 原 TTL。
+        #[tokio::test(flavor = "multi_thread")]
+        async fn oxcache_get_timeout_returns_some_for_ttl_key() {
+            let dao = BulwarkDaoOxcache::new().await.unwrap();
+            dao.set("oc_ttl_key", "v", 3600).await.unwrap();
+            let timeout = dao.get_timeout("oc_ttl_key").await.unwrap();
+            assert!(timeout.is_some(), "TTL 键应返回 Some");
+            let remaining = timeout.unwrap();
+            assert!(
+                remaining <= Duration::from_secs(3600),
+                "剩余时间应 ≤ 原 TTL"
+            );
+        }
+
+        /// R-002: get_timeout 不存在的键返回 None。
+        #[tokio::test(flavor = "multi_thread")]
+        async fn oxcache_get_timeout_returns_none_for_missing_key() {
+            let dao = BulwarkDaoOxcache::new().await.unwrap();
+            let timeout = dao.get_timeout("oc_missing_ttl").await.unwrap();
+            assert!(timeout.is_none(), "不存在的键应返回 None");
+        }
+
+        /// R-003: keys 在 oxcache 0.3 返回 NotImplemented（oxcache 不支持 key scan）。
+        ///
+        /// 验证 design D2 偏差：BulwarkDaoOxcache::keys 使用默认实现返回 NotImplemented，
+        /// 因为 oxcache 0.3 不支持 key scan API（待 v0.5.0+ oxcache 升级）。
+        #[tokio::test(flavor = "multi_thread")]
+        async fn oxcache_keys_returns_not_implemented() {
+            let dao = BulwarkDaoOxcache::new().await.unwrap();
+            dao.set("oc_key1", "v1", 3600).await.unwrap();
+            let result = dao.keys("oc_*").await;
+            assert!(
+                matches!(result, Err(BulwarkError::NotImplemented(_))),
+                "oxcache 0.3 不支持 keys scan，应返回 NotImplemented，实际: {:?}",
+                result
+            );
+        }
+
+        /// R-004: rename 重命名后 old 不存在，new 存在。
+        ///
+        /// 覆盖 BulwarkDaoOxcache::rename 重写实现（用 get → ttl_sync → set_with_ttl_sync → delete）。
+        #[tokio::test(flavor = "multi_thread")]
+        async fn oxcache_rename_moves_key() {
+            let dao = BulwarkDaoOxcache::new().await.unwrap();
+            dao.set("oc_old", "value", 3600).await.unwrap();
+            dao.rename("oc_old", "oc_new").await.unwrap();
+            let old = dao.get("oc_old").await.unwrap();
+            let new = dao.get("oc_new").await.unwrap();
+            assert!(old.is_none(), "rename 后 oc_old 应不存在");
+            assert_eq!(new, Some("value".to_string()), "rename 后 oc_new 应有值");
+        }
+
+        /// R-004: rename 不存在的 old_key 返回 InvalidParam。
+        #[tokio::test(flavor = "multi_thread")]
+        async fn oxcache_rename_missing_key_returns_invalid_param() {
+            let dao = BulwarkDaoOxcache::new().await.unwrap();
+            let result = dao.rename("oc_missing_old", "oc_new").await;
+            assert!(
+                matches!(result, Err(BulwarkError::InvalidParam(_))),
+                "rename 不存在的键应返回 InvalidParam，实际: {:?}",
+                result
+            );
+        }
+
+        /// R-004: rename 保留原键 TTL（重写实现的核心价值）。
+        ///
+        /// 验证 BulwarkDaoOxcache::rename 用 ttl_sync + set_with_ttl_sync 保留 TTL，
+        /// 而非默认实现的 set_permanent（丢失 TTL）。
+        #[tokio::test(flavor = "multi_thread")]
+        async fn oxcache_rename_preserves_ttl() {
+            let dao = BulwarkDaoOxcache::new().await.unwrap();
+            // 设置短 TTL（2 秒）
+            dao.set("oc_short_ttl", "value", 2).await.unwrap();
+            // rename 到新 key
+            dao.rename("oc_short_ttl", "oc_renamed").await.unwrap();
+            // 验证新 key 存在
+            let got = dao.get("oc_renamed").await.unwrap();
+            assert_eq!(got, Some("value".to_string()));
+            // 等待原 TTL 过期（2 秒 + 1 秒余量）
+            tokio::time::sleep(Duration::from_secs(3)).await;
+            // rename 保留了原 TTL，应已过期
+            let got = dao.get("oc_renamed").await.unwrap();
+            assert!(
+                got.is_none(),
+                "rename 应保留原 TTL，原 TTL 过期后应返回 None"
             );
         }
     }
