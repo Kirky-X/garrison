@@ -152,6 +152,35 @@ pub trait BulwarkDao: Send + Sync {
         self.set_permanent(new_key, &value).await?;
         self.delete(old_key).await
     }
+
+    /// 原子地获取并删除键（v0.4.2 新增，依据 spec protocol-sso-toctou R-001）。
+    ///
+    /// 保证 get 与 delete 在同一临界区内执行，消除 TOCTOU 竞态。
+    /// 用于 SSO ticket 一次性消费等场景。
+    ///
+    /// # 参数
+    /// - `key`: 存储键。
+    ///
+    /// # 返回
+    /// - `Ok(Some(value))`: 键存在，已原子读取并删除。
+    /// - `Ok(None)`: 键不存在或已过期。
+    ///
+    /// # 默认实现（非原子）
+    /// 默认实现为 `get → delete` 两步操作，**存在 TOCTOU 竞态**：
+    /// 并发调用同一 key 时可能多个调用都返回 `Some`。
+    /// 后端若支持原子操作（如 Redis Lua / moka 内部锁），应重写此方法。
+    ///
+    /// # 已重写的实现
+    /// - `MockDao`：`parking_lot::Mutex` 保护，进程内原子
+    /// - `BulwarkDaoOxcache`：`parking_lot::Mutex` 保护，进程内原子
+    /// - `AloneCache`：委托内部 dao
+    async fn get_and_delete(&self, key: &str) -> BulwarkResult<Option<String>> {
+        let value = self.get(key).await?;
+        if value.is_some() {
+            self.delete(key).await?;
+        }
+        Ok(value)
+    }
 }
 
 // ============================================================================
@@ -179,6 +208,9 @@ mod oxcache_impl {
     /// - 依赖本地 oxcache 仓库（crates.io 0.3.0 未暴露 `Cache<K,V>::ttl_sync()`，本地仓库已暴露）
     pub struct BulwarkDaoOxcache {
         cache: Cache<String, String>,
+        /// 原子操作锁，仅用于 `get_and_delete` 的进程内原子性保护。
+        /// 其他操作（get/set/delete 等）不持有此锁，不影响并发性能。
+        atomic_lock: parking_lot::Mutex<()>,
     }
 
     impl BulwarkDaoOxcache {
@@ -197,7 +229,10 @@ mod oxcache_impl {
                 .build()
                 .await
                 .map_err(|e| BulwarkError::Dao(format!("oxcache 初始化失败: {}", e)))?;
-            Ok(Self { cache })
+            Ok(Self {
+                cache,
+                atomic_lock: parking_lot::Mutex::new(()),
+            })
         }
     }
 
@@ -317,6 +352,25 @@ mod oxcache_impl {
                 .delete_sync(&old_key.to_string())
                 .map_err(|e| BulwarkError::Dao(format!("oxcache delete_sync 失败: {}", e)))
         }
+
+        /// v0.4.2: get_and_delete 用 `parking_lot::Mutex` 保护 get+delete（依据 spec protocol-sso-toctou R-003）。
+        ///
+        /// 进程内原子：同一进程内并发调用同一 key 仅一个返回 `Some`。
+        /// 跨进程限制：多进程共享 Redis L2 时，仍存在 TOCTOU 竞态
+        /// （需 Redis Lua 脚本 `redis.call('GET',K[1]);redis.call('DEL',K[1])` 修复，待 v0.5.0+）。
+        async fn get_and_delete(&self, key: &str) -> BulwarkResult<Option<String>> {
+            let _guard = self.atomic_lock.lock();
+            let value = self
+                .cache
+                .get_sync(&key.to_string())
+                .map_err(|e| BulwarkError::Dao(format!("oxcache get_sync 失败: {}", e)))?;
+            if value.is_some() {
+                self.cache
+                    .delete_sync(&key.to_string())
+                    .map_err(|e| BulwarkError::Dao(format!("oxcache delete_sync 失败: {}", e)))?;
+            }
+            Ok(value)
+        }
     }
 }
 
@@ -359,6 +413,7 @@ pub mod tests {
     use crate::error::BulwarkError;
     use parking_lot::Mutex;
     use std::collections::HashMap;
+    use std::sync::Arc;
     use std::time::{Duration, Instant};
 
     // ------------------------------------------------------------------------
@@ -514,6 +569,14 @@ pub mod tests {
                 },
                 None => Err(BulwarkError::InvalidParam(format!("键不存在: {}", old_key))),
             }
+        }
+
+        /// v0.4.2: get_and_delete 用 `parking_lot::Mutex` 保护原子性（依据 spec protocol-sso-toctou R-001）。
+        ///
+        /// 在单个 `lock()` 作用域内完成 get + remove，保证进程内原子。
+        async fn get_and_delete(&self, key: &str) -> BulwarkResult<Option<String>> {
+            let mut store = self.store.lock();
+            Ok(store.remove(key).map(|(value, _)| value))
         }
     }
 
@@ -1114,5 +1177,109 @@ pub mod tests {
                 "rename 应保留原 TTL，原 TTL 过期后应返回 None"
             );
         }
+
+        /// R-001: oxcache get_and_delete 返回值并删除 key。
+        #[tokio::test(flavor = "multi_thread")]
+        async fn oxcache_get_and_delete_returns_value_and_removes_key() {
+            let dao = BulwarkDaoOxcache::new().await.unwrap();
+            dao.set("oc_atomic", "value", 3600).await.unwrap();
+            let got = dao.get_and_delete("oc_atomic").await.unwrap();
+            assert_eq!(got, Some("value".to_string()));
+            let after = dao.get("oc_atomic").await.unwrap();
+            assert!(after.is_none(), "get_and_delete 后 key 应不存在");
+        }
+
+        /// R-001: oxcache get_and_delete 不存在的 key 返回 None。
+        #[tokio::test(flavor = "multi_thread")]
+        async fn oxcache_get_and_delete_missing_returns_none() {
+            let dao = BulwarkDaoOxcache::new().await.unwrap();
+            let got = dao.get_and_delete("oc_missing").await.unwrap();
+            assert!(got.is_none());
+        }
+
+        /// R-001: oxcache get_and_delete 并发原子性验证。
+        #[tokio::test(flavor = "multi_thread")]
+        async fn oxcache_get_and_delete_concurrent_only_one_succeeds() {
+            let dao = Arc::new(BulwarkDaoOxcache::new().await.unwrap());
+            dao.set("oc_concurrent", "value", 3600).await.unwrap();
+
+            let mut handles = Vec::new();
+            for _ in 0..10 {
+                let d = dao.clone();
+                handles.push(tokio::spawn(async move {
+                    d.get_and_delete("oc_concurrent").await
+                }));
+            }
+
+            let mut success = 0;
+            let mut none_count = 0;
+            for handle in handles {
+                let result = handle.await.unwrap();
+                match result {
+                    Ok(Some(_)) => success += 1,
+                    Ok(None) => none_count += 1,
+                    Err(e) => panic!("get_and_delete 不应返回错误: {:?}", e),
+                }
+            }
+
+            assert_eq!(success, 1, "并发调用仅一个返回 Some");
+            assert_eq!(none_count, 9, "其他 9 个返回 None");
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // get_and_delete 原子方法测试（v0.4.2 spec protocol-sso-toctou R-001）
+    // ------------------------------------------------------------------------
+
+    /// R-001: get_and_delete 返回值并删除 key（依据 spec protocol-sso-toctou R-001）。
+    #[tokio::test]
+    async fn mock_get_and_delete_returns_value_and_removes_key() {
+        let dao = MockDao::new();
+        dao.set("atomic_key", "value", 3600).await.unwrap();
+        let got = dao.get_and_delete("atomic_key").await.unwrap();
+        assert_eq!(got, Some("value".to_string()));
+        // key 应已被删除
+        let after = dao.get("atomic_key").await.unwrap();
+        assert!(after.is_none(), "get_and_delete 后 key 应不存在");
+    }
+
+    /// R-001: get_and_delete 不存在的 key 返回 None。
+    #[tokio::test]
+    async fn mock_get_and_delete_missing_returns_none() {
+        let dao = MockDao::new();
+        let got = dao.get_and_delete("missing").await.unwrap();
+        assert!(got.is_none(), "不存在的 key 应返回 None");
+    }
+
+    /// R-001: get_and_delete 并发调用同一 key 仅一个返回 Some（原子性验证）。
+    ///
+    /// 使用 10 个并发任务同时调用 get_and_delete，仅一个应返回 Some。
+    /// 这是 TOCTOU 修复的核心验证测试。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn mock_get_and_delete_concurrent_only_one_succeeds() {
+        let dao = Arc::new(MockDao::new());
+        dao.set("concurrent_key", "value", 3600).await.unwrap();
+
+        let mut handles = Vec::new();
+        for _ in 0..10 {
+            let d = dao.clone();
+            handles.push(tokio::spawn(async move {
+                d.get_and_delete("concurrent_key").await
+            }));
+        }
+
+        let mut success = 0;
+        let mut none_count = 0;
+        for handle in handles {
+            let result = handle.await.unwrap();
+            match result {
+                Ok(Some(_)) => success += 1,
+                Ok(None) => none_count += 1,
+                Err(e) => panic!("get_and_delete 不应返回错误: {:?}", e),
+            }
+        }
+
+        assert_eq!(success, 1, "并发调用仅一个返回 Some");
+        assert_eq!(none_count, 9, "其他 9 个返回 None");
     }
 }

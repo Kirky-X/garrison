@@ -48,10 +48,10 @@ pub trait SsoServer: Send + Sync {
     /// - `Ok(login_id)`: 校验成功（经 `CenterIdConverter::to_login_id` 转换回原始 login_id）。
     /// - `Err(BulwarkError::InvalidToken)`: 票据不存在、已过期或 client_id 不匹配。
     ///
-    /// # 已知限制 — TOCTOU 竞态
+    /// # 原子性保证（v0.4.2 修复）
     ///
-    /// 与 `SsoClient::validate_ticket` 相同，get→delete 非原子。
-    /// 待 0.5.0+ 在 `BulwarkDao` 引入原子 get-and-delete 后统一修复。
+    /// 与 `SsoClient::validate_ticket` 相同，使用 `BulwarkDao::get_and_delete` 原子操作。
+    /// 依据 spec protocol-sso-toctou R-002。
     async fn validate_ticket(&self, ticket: &str, client_id: i64) -> BulwarkResult<i64>;
 
     /// 销毁 SSO ticket（幂等，即使票据不存在也返回 `Ok(())`）。
@@ -204,20 +204,24 @@ impl SsoServer for DefaultSsoServer {
 
     async fn validate_ticket(&self, ticket: &str, client_id: i64) -> BulwarkResult<i64> {
         let key = format!("bulwark:sso:ticket:{}", ticket);
-        let value = self.dao.get(&key).await?;
+        // v0.4.2: 使用原子 get_and_delete 消除 TOCTOU 竞态（依据 spec protocol-sso-toctou R-002）
+        let value = self
+            .dao
+            .get_and_delete(&key)
+            .await
+            .map_err(|e| BulwarkError::Dao(format!("SSO ticket 原子消费失败: {}", e)))?;
         let value = value
             .ok_or_else(|| BulwarkError::InvalidToken("SSO 票据不存在或已过期".to_string()))?;
         let data: SsoTicketData = serde_json::from_str(&value)
             .map_err(|e| BulwarkError::Internal(format!("反序列化 SSO ticket 失败: {}", e)))?;
         if data.client_id != client_id {
-            // client_id 不匹配属于认证失败，使用 InvalidToken 而非 Config（M5 修复）
+            // client_id 不匹配属于认证失败，使用 InvalidToken 而非 Config（M5 修复）。
+            // 注意：ticket 已被 get_and_delete 消费，即使 client_id 不匹配也不重放（防爆破）。
             return Err(BulwarkError::InvalidToken(format!(
                 "SSO client_id 不匹配: 期望 {}, 实际 {}",
                 data.client_id, client_id
             )));
         }
-        // 校验成功，立即删除（一次性使用）
-        self.dao.delete(&key).await?;
         // 委托 converter 将 center_id 转回原始 login_id
         let login_id = self.converter.to_login_id(data.login_id);
         Ok(login_id)

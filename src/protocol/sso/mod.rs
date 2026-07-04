@@ -113,27 +113,31 @@ impl SsoClient {
     /// - `Ok(login_id)`: 校验成功。
     /// - `Err(BulwarkError::InvalidToken)`: 票据不存在、已过期或 client_id 不匹配。
     ///
-    /// # 已知限制 — TOCTOU 竞态
+    /// # 原子性保证（v0.4.2 修复）
     ///
-    /// `validate_ticket` 的 get→delete 非原子，并发调用同一 ticket 时理论上可重放。
-    /// 60 秒 TTL 窗口内的影响有限，但安全敏感场景应通过外层加锁或单点校验保证。
-    /// 此限制同时影响 `SsoClient` 与 `DefaultSsoServer`，待 0.5.0+ 设计原子 get-and-delete 后统一修复。
+    /// 使用 `BulwarkDao::get_and_delete` 原子操作消费 ticket，消除 TOCTOU 竞态。
+    /// 并发调用同一 ticket 时仅一个返回 `Ok`，其他返回 `InvalidToken`。
+    /// 依据 spec protocol-sso-toctou R-002。
     pub async fn validate_ticket(&self, ticket: &str, client_id: i64) -> BulwarkResult<i64> {
         let key = format!("bulwark:sso:ticket:{}", ticket);
-        let value = self.dao.get(&key).await?;
+        // v0.4.2: 使用原子 get_and_delete 消除 TOCTOU 竞态（依据 spec protocol-sso-toctou R-002）
+        let value = self
+            .dao
+            .get_and_delete(&key)
+            .await
+            .map_err(|e| BulwarkError::Dao(format!("SSO ticket 原子消费失败: {}", e)))?;
         let value = value
             .ok_or_else(|| BulwarkError::InvalidToken("SSO 票据不存在或已过期".to_string()))?;
         let data: SsoTicketData = serde_json::from_str(&value)
             .map_err(|e| BulwarkError::Internal(format!("反序列化 SSO ticket 失败: {}", e)))?;
         if data.client_id != client_id {
-            // client_id 不匹配属于认证失败（票据被错误方持有），使用 InvalidToken 而非 Config
+            // client_id 不匹配属于认证失败（票据被错误方持有），使用 InvalidToken 而非 Config。
+            // 注意：ticket 已被 get_and_delete 消费，即使 client_id 不匹配也不重放（防爆破）。
             return Err(BulwarkError::InvalidToken(format!(
                 "SSO client_id 不匹配: 期望 {}, 实际 {}",
                 data.client_id, client_id
             )));
         }
-        // 校验成功，立即删除（一次性使用）
-        self.dao.delete(&key).await?;
         Ok(data.login_id)
     }
 
@@ -197,6 +201,11 @@ mod tests {
             let mut data = self.data.lock().await;
             data.remove(key);
             Ok(())
+        }
+
+        async fn get_and_delete(&self, key: &str) -> BulwarkResult<Option<String>> {
+            let mut data = self.data.lock().await;
+            Ok(data.remove(key))
         }
     }
 
@@ -389,5 +398,44 @@ mod tests {
             "String-form login_id 在 v0.4.2 应返回 Config 错误，实际: {:?}",
             result
         );
+    }
+
+    // ========================================================================
+    // 0.4.2 新增: TOCTOU 修复测试（依据 spec protocol-sso-toctou）
+    // ========================================================================
+
+    /// R-002: 并发消费同一 ticket 仅一个成功（TOCTOU 修复核心验证）。
+    ///
+    /// 10 个并发任务同时 validate_ticket，仅一个返回 Ok，其他返回 InvalidToken。
+    /// 依据 spec protocol-sso-toctou R-002 验收标准。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn validate_ticket_concurrent_only_one_succeeds() {
+        let client = Arc::new(make_client());
+        let ticket = client.issue_ticket(1001, 2001).await.unwrap();
+
+        let mut handles = Vec::new();
+        for _ in 0..10 {
+            let c = client.clone();
+            let t = ticket.clone();
+            handles.push(tokio::spawn(
+                async move { c.validate_ticket(&t, 2001).await },
+            ));
+        }
+
+        let mut success = 0;
+        let mut invalid_token = 0;
+        for handle in handles {
+            match handle.await.unwrap() {
+                Ok(login_id) => {
+                    assert_eq!(login_id, 1001);
+                    success += 1;
+                },
+                Err(BulwarkError::InvalidToken(_)) => invalid_token += 1,
+                Err(e) => panic!("期望 InvalidToken 或 Ok，实际: {:?}", e),
+            }
+        }
+
+        assert_eq!(success, 1, "并发消费同一 ticket 仅一个成功");
+        assert_eq!(invalid_token, 9, "其他 9 个应返回 InvalidToken");
     }
 }

@@ -75,6 +75,10 @@ impl BulwarkDao for AloneCache {
     async fn delete(&self, key: &str) -> BulwarkResult<()> {
         self.inner.delete(&self.prefixed_key(key)).await
     }
+
+    async fn get_and_delete(&self, key: &str) -> BulwarkResult<Option<String>> {
+        self.inner.get_and_delete(&self.prefixed_key(key)).await
+    }
 }
 
 /// AloneCacheManager 管理多个 AloneCache 实例，支持多 Redis 实例路由。
