@@ -13,6 +13,9 @@
 
 use crate::dao::BulwarkDao;
 use crate::error::{BulwarkError, BulwarkResult};
+// v0.4.2: listener_manager 注入（feature-gated，依据 spec listener-events-extend R-001）
+#[cfg(feature = "listener")]
+use crate::listener::{BulwarkEvent, BulwarkListenerManager};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -23,12 +26,31 @@ use uuid::Uuid;
 pub struct TempCredentialHandler {
     /// DAO 抽象层，用于临时凭据存储。
     dao: Arc<dyn BulwarkDao>,
+    /// v0.4.2：可选监听器管理器，注入后 consume 广播 TempCredentialConsumed 事件
+    ///（依据 spec listener-events-extend R-001）。
+    #[cfg(feature = "listener")]
+    listener_manager: Option<Arc<BulwarkListenerManager>>,
 }
 
 impl TempCredentialHandler {
     /// 创建新的临时凭证处理器（依据 spec protocol-temp）。
     pub fn new(dao: Arc<dyn BulwarkDao>) -> Self {
-        Self { dao }
+        Self {
+            dao,
+            #[cfg(feature = "listener")]
+            listener_manager: None,
+        }
+    }
+
+    /// 注入 `BulwarkListenerManager`，启用 TempCredentialConsumed 事件广播
+    ///（v0.4.2 新增，依据 spec listener-events-extend R-001）。
+    ///
+    /// 注入后 `consume` 成功消费（value 为 Some）时广播 `BulwarkEvent::TempCredentialConsumed`。
+    /// 未注入时为 no-op（向后兼容 0.4.1）。需启用 `listener` feature。
+    #[cfg(feature = "listener")]
+    pub fn with_listener_manager(mut self, lm: Arc<BulwarkListenerManager>) -> Self {
+        self.listener_manager = Some(lm);
+        self
     }
 
     /// 签发临时凭据（依据 spec protocol-temp）。
@@ -89,6 +111,9 @@ impl TempCredentialHandler {
     ///
     /// 原子地读取并删除凭据（get + delete 组合），保证一次性使用语义。
     ///
+    /// v0.4.2 扩展：成功消费（value 为 Some）时若注入了 `listener_manager`，
+    /// 广播 `BulwarkEvent::TempCredentialConsumed`（依据 spec listener-events-extend R-001）。
+    ///
     /// # 返回
     /// - `Ok(Some(value))`: 凭据存在且已被消费（删除）。
     /// - `Ok(None)`: 凭据不存在或已过期。
@@ -97,6 +122,16 @@ impl TempCredentialHandler {
         if value.is_some() {
             // 存在则删除（一次性使用语义）
             self.dao.delete(key).await?;
+        }
+        // v0.4.2: 广播 TempCredentialConsumed 事件（仅 value 为 Some 时，依据 spec listener-events-extend R-001）
+        #[cfg(feature = "listener")]
+        if let Some(lm) = &self.listener_manager {
+            if let Some(ref v) = value {
+                lm.broadcast(&BulwarkEvent::TempCredentialConsumed {
+                    key: key.to_string(),
+                    value: v.clone(),
+                });
+            }
         }
         Ok(value)
     }

@@ -649,8 +649,22 @@ impl BulwarkLogicDefault {
             }
         }
         let valid = self.session.is_valid(token).await?;
-        if !valid && self.config.throw_on_not_login {
-            return Err(BulwarkError::Session("未登录".to_string()));
+        if !valid {
+            // v0.4.2: token 无效时广播 SessionTimeout 事件（依据 spec listener-events-extend R-001）
+            // 若 token session 仍存在（account session 过期），可获取 login_id 并广播；
+            // token session 完全不存在时跳过广播（无法获取 login_id）。
+            #[cfg(feature = "listener")]
+            if let Some(lm) = &self.listener_manager {
+                if let Ok(Some(ts)) = self.session.get_token_session(token).await {
+                    lm.broadcast(&BulwarkEvent::SessionTimeout {
+                        login_id: ts.login_id,
+                        token: token.to_string(),
+                    });
+                }
+            }
+            if self.config.throw_on_not_login {
+                return Err(BulwarkError::Session("未登录".to_string()));
+            }
         }
         Ok(valid)
     }
@@ -660,8 +674,22 @@ impl BulwarkLogicDefault {
     /// session 不存在时按 `throw_on_not_login` 决定返回 `Ok(false)` 或 `Session` 错误。
     async fn check_login_simple(&self, token: &str) -> BulwarkResult<bool> {
         let valid = self.session.is_valid(token).await?;
-        if !valid && self.config.throw_on_not_login {
-            return Err(BulwarkError::Session("未登录".to_string()));
+        if !valid {
+            // v0.4.2: token 无效时广播 SessionTimeout 事件（依据 spec listener-events-extend R-001）
+            // 若 token session 仍存在（account session 过期），可获取 login_id 并广播；
+            // token session 完全不存在时跳过广播（无法获取 login_id）。
+            #[cfg(feature = "listener")]
+            if let Some(lm) = &self.listener_manager {
+                if let Ok(Some(ts)) = self.session.get_token_session(token).await {
+                    lm.broadcast(&BulwarkEvent::SessionTimeout {
+                        login_id: ts.login_id,
+                        token: token.to_string(),
+                    });
+                }
+            }
+            if self.config.throw_on_not_login {
+                return Err(BulwarkError::Session("未登录".to_string()));
+            }
         }
         Ok(valid)
     }
@@ -881,16 +909,17 @@ impl BulwarkLogic for BulwarkLogicDefault {
         let login_id = self.verify_token(token).await?;
         let handler = crate::protocol::jwt::JwtHandler::new(&self.config.jwt_secret);
         let new_token = handler.refresh(token, self.config.timeout)?;
-        // auto-wire: 触发 plugin on_login + listener Login 事件（新 token）
+        // auto-wire: 触发 plugin on_login（新 token）
         if let Some(pm) = &self.plugin_manager {
             pm.on_login(login_id, &new_token);
         }
+        // v0.4.2: 广播 TokenRefresh 事件（替换原 Login 事件，依据 spec listener-events-extend R-001）
         #[cfg(feature = "listener")]
         if let Some(lm) = &self.listener_manager {
-            lm.broadcast(&BulwarkEvent::Login {
+            lm.broadcast(&BulwarkEvent::TokenRefresh {
                 login_id,
-                token: new_token.clone(),
-                device: None,
+                old_token: token.to_string(),
+                new_token: new_token.clone(),
             });
         }
         Ok(new_token)
@@ -930,6 +959,14 @@ impl BulwarkLogic for BulwarkLogicDefault {
                     reason = "user_not_found",
                     "login_with_password 失败"
                 );
+                // v0.4.2: 广播 LoginFailure 事件（依据 spec listener-events-extend R-001）
+                #[cfg(feature = "listener")]
+                if let Some(lm) = &self.listener_manager {
+                    lm.broadcast(&BulwarkEvent::LoginFailure {
+                        login_id,
+                        reason: "user_not_found".to_string(),
+                    });
+                }
                 return Err(BulwarkError::InvalidParam("invalid password".to_string()));
             },
         };
@@ -951,6 +988,14 @@ impl BulwarkLogic for BulwarkLogicDefault {
                 reason = "wrong_password",
                 "login_with_password 失败"
             );
+            // v0.4.2: 广播 LoginFailure 事件（依据 spec listener-events-extend R-001）
+            #[cfg(feature = "listener")]
+            if let Some(lm) = &self.listener_manager {
+                lm.broadcast(&BulwarkEvent::LoginFailure {
+                    login_id,
+                    reason: "wrong_password".to_string(),
+                });
+            }
             return Err(BulwarkError::InvalidParam("invalid password".to_string()));
         }
 

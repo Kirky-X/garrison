@@ -13,6 +13,9 @@
 
 use crate::dao::BulwarkDao;
 use crate::error::{BulwarkError, BulwarkResult};
+// v0.4.2: listener_manager 注入（feature-gated，依据 spec listener-events-extend R-001）
+#[cfg(feature = "listener")]
+use crate::listener::{BulwarkEvent, BulwarkListenerManager};
 // 0.4.2: LoginId newtype 接入（impl Into<LoginId> 公开 API + i64 内部层）
 use crate::stp::login_id::LoginId;
 use crate::stp::login_id_to_i64;
@@ -85,12 +88,31 @@ fn validate_namespace(namespace: &str) -> BulwarkResult<()> {
 pub struct ApiKeyHandler {
     /// DAO 抽象层，用于 API Key 存储。
     dao: Arc<dyn BulwarkDao>,
+    /// v0.4.2：可选监听器管理器，注入后 rotate 广播 ApiKeyRotate 事件
+    ///（依据 spec listener-events-extend R-001）。
+    #[cfg(feature = "listener")]
+    listener_manager: Option<Arc<BulwarkListenerManager>>,
 }
 
 impl ApiKeyHandler {
     /// 创建新的 API Key 处理器（依据 spec protocol-apikey）。
     pub fn new(dao: Arc<dyn BulwarkDao>) -> Self {
-        Self { dao }
+        Self {
+            dao,
+            #[cfg(feature = "listener")]
+            listener_manager: None,
+        }
+    }
+
+    /// 注入 `BulwarkListenerManager`，启用 ApiKeyRotate 事件广播
+    ///（v0.4.2 新增，依据 spec listener-events-extend R-001）。
+    ///
+    /// 注入后 `rotate` 成功时广播 `BulwarkEvent::ApiKeyRotate`。
+    /// 未注入时为 no-op（向后兼容 0.4.1）。需启用 `listener` feature。
+    #[cfg(feature = "listener")]
+    pub fn with_listener_manager(mut self, lm: Arc<BulwarkListenerManager>) -> Self {
+        self.listener_manager = Some(lm);
+        self
     }
 
     /// 生成 API Key（依据 spec protocol-apikey）。
@@ -306,6 +328,9 @@ impl ApiKeyHandler {
     /// 轮换逻辑：(1) 读取 old_key 的 `ApiKeyInfo`；(2) 校验有效（未吊销、未过期）；
     /// (3) 吊销 old_key；(4) 生成新 key（保留 login_id/scopes/剩余 TTL）；(5) 返回新 key。
     ///
+    /// v0.4.2 扩展：成功时若注入了 `listener_manager`，广播 `BulwarkEvent::ApiKeyRotate`
+    ///（依据 spec listener-events-extend R-001）。
+    ///
     /// # 错误
     /// - `BulwarkError::InvalidToken`: old_key 不存在或已吊销。
     /// - `BulwarkError::ExpiredToken`: old_key 已过期。
@@ -325,8 +350,18 @@ impl ApiKeyHandler {
                 "API Key 已过期，无法轮换".to_string(),
             ));
         }
-        self.generate(info.login_id, info.scopes, remaining_ttl)
-            .await
+        let new_key = self
+            .generate(info.login_id, info.scopes, remaining_ttl)
+            .await?;
+        // v0.4.2: 广播 ApiKeyRotate 事件（依据 spec listener-events-extend R-001）
+        #[cfg(feature = "listener")]
+        if let Some(lm) = &self.listener_manager {
+            lm.broadcast(&BulwarkEvent::ApiKeyRotate {
+                old_key: old_key.to_string(),
+                new_key: new_key.clone(),
+            });
+        }
+        Ok(new_key)
     }
 }
 

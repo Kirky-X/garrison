@@ -19,6 +19,9 @@
 //! | 设备异常 | 未知设备指纹登录 | 阻断登录（0.3.0 简化：需设备库，无数据则 pass） |
 
 use crate::error::{BulwarkError, BulwarkResult};
+// v0.4.2: listener_manager 注入（feature-gated，依据 spec listener-events-extend R-001）
+#[cfg(feature = "listener")]
+use crate::listener::{BulwarkEvent, BulwarkListenerManager};
 use async_trait::async_trait;
 use parking_lot::Mutex;
 use std::collections::HashMap;
@@ -181,6 +184,10 @@ pub struct BulwarkFirewallCheckHookDefault {
     /// None 时使用内存计数器（开发/CI 场景，向后兼容）。
     /// Some 时使用 DAO（oxcache/redis）实现分布式计数（生产场景）。
     dao: Option<Arc<dyn crate::dao::BulwarkDao>>,
+    /// v0.4.2：可选监听器管理器，注入后 check_brute_force 阻断时广播 AccountLocked 事件
+    ///（依据 spec listener-events-extend R-001）。
+    #[cfg(feature = "listener")]
+    listener_manager: Option<Arc<BulwarkListenerManager>>,
 }
 
 impl BulwarkFirewallCheckHookDefault {
@@ -192,6 +199,8 @@ impl BulwarkFirewallCheckHookDefault {
             ip_failures: Mutex::new(HashMap::new()),
             account_failures: Mutex::new(HashMap::new()),
             dao: None,
+            #[cfg(feature = "listener")]
+            listener_manager: None,
         }
     }
 
@@ -201,6 +210,17 @@ impl BulwarkFirewallCheckHookDefault {
     /// 内存计数器不再使用。满足 ADD §7.6 分布式存储要求。
     pub fn with_dao(mut self, dao: Arc<dyn crate::dao::BulwarkDao>) -> Self {
         self.dao = Some(dao);
+        self
+    }
+
+    /// 注入 `BulwarkListenerManager`，启用 AccountLocked 事件广播
+    ///（v0.4.2 新增，依据 spec listener-events-extend R-001）。
+    ///
+    /// 注入后 `check_brute_force` 阻断时广播 `BulwarkEvent::AccountLocked`。
+    /// 未注入时为 no-op（向后兼容 0.4.1）。需启用 `listener` feature。
+    #[cfg(feature = "listener")]
+    pub fn with_listener_manager(mut self, lm: Arc<BulwarkListenerManager>) -> Self {
+        self.listener_manager = Some(lm);
         self
     }
 
@@ -363,11 +383,22 @@ impl BulwarkFirewallCheckHook for BulwarkFirewallCheckHookDefault {
     ///
     /// - DAO 模式：读取 `fw:acct:{login_id}` 计数，≥ 阈值则阻断（Fail Loud：DAO 错误向上传播）。
     /// - 内存模式：读取本地计数器，结合时间窗口判断。
+    ///
+    /// v0.4.2 扩展：阻断时若注入了 `listener_manager`，广播 `BulwarkEvent::AccountLocked`
+    ///（依据 spec listener-events-extend R-001）。
     async fn check_brute_force(&self, ctx: &LoginContext) -> BulwarkResult<()> {
         if let Some(dao) = &self.dao {
             let key = format!("fw:acct:{}", ctx.login_id);
             let count = read_dao_count(dao, &key).await?;
             if count >= BRUTE_FORCE_THRESHOLD {
+                // v0.4.2: 广播 AccountLocked 事件（依据 spec listener-events-extend R-001）
+                #[cfg(feature = "listener")]
+                if let Some(lm) = &self.listener_manager {
+                    lm.broadcast(&BulwarkEvent::AccountLocked {
+                        login_id: ctx.login_id,
+                        reason: format!("brute_force: {} failures in 1h", count),
+                    });
+                }
                 return Err(BulwarkError::Session(format!(
                     "账号锁定：login_id={} 在 1h 内失败 {} 次（阈值 {}）",
                     ctx.login_id, count, BRUTE_FORCE_THRESHOLD
@@ -383,6 +414,14 @@ impl BulwarkFirewallCheckHook for BulwarkFirewallCheckHookDefault {
             if now.duration_since(entry.first_failure_at) < BRUTE_FORCE_WINDOW
                 && entry.count >= BRUTE_FORCE_THRESHOLD
             {
+                // v0.4.2: 广播 AccountLocked 事件（依据 spec listener-events-extend R-001）
+                #[cfg(feature = "listener")]
+                if let Some(lm) = &self.listener_manager {
+                    lm.broadcast(&BulwarkEvent::AccountLocked {
+                        login_id: ctx.login_id,
+                        reason: format!("brute_force: {} failures in 1h", entry.count),
+                    });
+                }
                 return Err(BulwarkError::Session(format!(
                     "账号锁定：login_id={} 在 1h 内失败 {} 次（阈值 {}）",
                     ctx.login_id, entry.count, BRUTE_FORCE_THRESHOLD

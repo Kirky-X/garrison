@@ -17,6 +17,9 @@
 use crate::core::permission::PermissionChecker;
 use crate::dao::BulwarkDao;
 use crate::error::{BulwarkError, BulwarkResult};
+// v0.4.2: listener_manager 注入（feature-gated，依据 spec listener-events-extend R-001）
+#[cfg(feature = "listener")]
+use crate::listener::{BulwarkEvent, BulwarkListenerManager};
 use crate::plugin::BulwarkPluginManager;
 use crate::stp::BulwarkInterface;
 use crate::strategy::hooks::{BulwarkFirewallCheckHook, LoginContext};
@@ -181,6 +184,10 @@ pub struct BulwarkFirewallStrategyDefault {
     plugin_manager: Option<Arc<BulwarkPluginManager>>,
     /// 0.3.0：可选防火墙安全钩子，注入后 login 前按序调用 5 个 hook（依据 spec firewall-check-hook）。
     firewall_hook: Option<Arc<dyn BulwarkFirewallCheckHook>>,
+    /// v0.4.2：可选监听器管理器，注入后 check_login_hooks 阻断时广播 FirewallBlock 事件
+    ///（依据 spec listener-events-extend R-001）。
+    #[cfg(feature = "listener")]
+    listener_manager: Option<Arc<BulwarkListenerManager>>,
 }
 
 impl BulwarkFirewallStrategyDefault {
@@ -200,6 +207,8 @@ impl BulwarkFirewallStrategyDefault {
             role_hierarchy: HashMap::new(),
             plugin_manager: None,
             firewall_hook: None,
+            #[cfg(feature = "listener")]
+            listener_manager: None,
         }
     }
 
@@ -245,6 +254,17 @@ impl BulwarkFirewallStrategyDefault {
     /// 异地登录 / Token 复用 / 设备异常），任一返回 `Err` 阻断登录。
     pub fn with_firewall_hook(mut self, hook: Arc<dyn BulwarkFirewallCheckHook>) -> Self {
         self.firewall_hook = Some(hook);
+        self
+    }
+
+    /// 注入 `BulwarkListenerManager`，启用 FirewallBlock 事件广播
+    ///（v0.4.2 新增，依据 spec listener-events-extend R-001）。
+    ///
+    /// 注入后 `check_login_hooks` 任一 hook 返回 `Err` 时广播 `BulwarkEvent::FirewallBlock`。
+    /// 未注入时为 no-op（向后兼容 0.4.1）。需启用 `listener` feature。
+    #[cfg(feature = "listener")]
+    pub fn with_listener_manager(mut self, lm: Arc<BulwarkListenerManager>) -> Self {
+        self.listener_manager = Some(lm);
         self
     }
 
@@ -418,17 +438,50 @@ impl BulwarkFirewallStrategy for BulwarkFirewallStrategyDefault {
     ///
     /// 注入 `firewall_hook` 后按序调用 5 个 hook，任一 Err 阻断登录。
     /// 未注入时为 no-op（向后兼容 0.2.x）。
-    async fn check_login_hooks(&self, _login_id: i64, ctx: &LoginContext) -> BulwarkResult<()> {
+    ///
+    /// v0.4.2 扩展：任一 hook 返回 Err 时，若注入了 `listener_manager`，
+    /// 广播 `BulwarkEvent::FirewallBlock` 事件（依据 spec listener-events-extend R-001）。
+    async fn check_login_hooks(&self, login_id: i64, ctx: &LoginContext) -> BulwarkResult<()> {
         let Some(hook) = &self.firewall_hook else {
             return Ok(());
         };
-        // 按序调用 5 个 hook，任一 Err 立即返回阻断登录
-        hook.check_login_frequency(ctx).await?;
-        hook.check_brute_force(ctx).await?;
-        hook.check_geo_anomaly(ctx).await?;
-        hook.check_token_reuse(ctx).await?;
-        hook.check_device_anomaly(ctx).await?;
+        // 按序调用 5 个 hook，任一 Err 立即广播 FirewallBlock 并返回阻断登录
+        if let Err(e) = hook.check_login_frequency(ctx).await {
+            self.broadcast_firewall_block(login_id, &e);
+            return Err(e);
+        }
+        if let Err(e) = hook.check_brute_force(ctx).await {
+            self.broadcast_firewall_block(login_id, &e);
+            return Err(e);
+        }
+        if let Err(e) = hook.check_geo_anomaly(ctx).await {
+            self.broadcast_firewall_block(login_id, &e);
+            return Err(e);
+        }
+        if let Err(e) = hook.check_token_reuse(ctx).await {
+            self.broadcast_firewall_block(login_id, &e);
+            return Err(e);
+        }
+        if let Err(e) = hook.check_device_anomaly(ctx).await {
+            self.broadcast_firewall_block(login_id, &e);
+            return Err(e);
+        }
         Ok(())
+    }
+}
+
+impl BulwarkFirewallStrategyDefault {
+    /// 广播 FirewallBlock 事件（v0.4.2 新增，依据 spec listener-events-extend R-001）。
+    ///
+    /// 仅在注入 `listener_manager` 且启用 `listener` feature 时广播，否则为 no-op。
+    fn broadcast_firewall_block(&self, login_id: i64, e: &BulwarkError) {
+        #[cfg(feature = "listener")]
+        if let Some(lm) = &self.listener_manager {
+            lm.broadcast(&BulwarkEvent::FirewallBlock {
+                login_id,
+                reason: e.to_string(),
+            });
+        }
     }
 }
 
