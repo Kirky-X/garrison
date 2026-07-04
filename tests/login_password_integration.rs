@@ -67,15 +67,12 @@ struct PasswordLoginListener;
 
 impl BulwarkListener for PasswordLoginListener {
     fn on_event(&self, event: &BulwarkEvent) -> BulwarkResult<()> {
-        match event {
-            BulwarkEvent::LoginFailure { reason, .. } => {
-                if reason == "user_not_found" {
-                    LOGIN_FAILURE_NOT_FOUND.fetch_add(1, Ordering::SeqCst);
-                } else if reason == "wrong_password" {
-                    LOGIN_FAILURE_WRONG_PASSWORD.fetch_add(1, Ordering::SeqCst);
-                }
-            },
-            _ => {},
+        if let BulwarkEvent::LoginFailure { reason, .. } = event {
+            if reason == "user_not_found" {
+                LOGIN_FAILURE_NOT_FOUND.fetch_add(1, Ordering::SeqCst);
+            } else if reason == "wrong_password" {
+                LOGIN_FAILURE_WRONG_PASSWORD.fetch_add(1, Ordering::SeqCst);
+            }
         }
         Ok(())
     }
@@ -247,13 +244,12 @@ async fn make_logic_with_password() -> Arc<BulwarkLogicDefault> {
     // BulwarkListenerManager::new() 自动收集 inventory 注册的 listener
     let lm = Arc::new(BulwarkListenerManager::new());
 
-    let logic = Arc::new(
+    Arc::new(
         BulwarkLogicDefault::new(session, Arc::new(config), firewall)
             .with_password_hasher(Arc::new(hasher))
             .with_user_repository(user_repo)
             .with_listener_manager(lm),
-    );
-    logic
+    )
 }
 
 /// login_with_password 成功路径：用户存在 + 密码匹配 → 返回 token。
