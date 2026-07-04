@@ -504,94 +504,18 @@ impl Strategy {
 mod tests {
     use super::*;
     use crate::config::BulwarkConfig;
+    use crate::dao::tests::MockDao;
     use crate::dao::BulwarkDao;
-    use crate::error::BulwarkError;
     use crate::session::BulwarkSession;
     use crate::stp::{BulwarkInterface, BulwarkLogicDefault};
     use crate::strategy::BulwarkFirewallStrategyDefault;
     use async_trait::async_trait;
-    use parking_lot::Mutex;
     use serial_test::serial;
     use std::collections::HashMap;
-    use std::time::{Duration, Instant};
 
     // ------------------------------------------------------------------------
-    // MockDao + MockInterface + 辅助函数（复用 manager 测试模式）
+    // MockInterface + 辅助函数（MockDao 复用 dao::tests::MockDao）
     // ------------------------------------------------------------------------
-
-    struct MockDao {
-        store: Mutex<HashMap<String, (String, Option<Instant>)>>,
-    }
-
-    impl MockDao {
-        fn new() -> Self {
-            Self {
-                store: Mutex::new(HashMap::new()),
-            }
-        }
-    }
-
-    #[async_trait]
-    impl BulwarkDao for MockDao {
-        async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
-            let mut store = self.store.lock();
-            match store.get(key) {
-                Some((value, expire_at)) => {
-                    if let Some(deadline) = expire_at {
-                        if Instant::now() >= *deadline {
-                            store.remove(key);
-                            return Ok(None);
-                        }
-                    }
-                    Ok(Some(value.clone()))
-                },
-                None => Ok(None),
-            }
-        }
-
-        async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> BulwarkResult<()> {
-            let expire_at = if ttl_seconds == 0 {
-                None
-            } else {
-                Some(Instant::now() + Duration::from_secs(ttl_seconds))
-            };
-            self.store
-                .lock()
-                .insert(key.to_string(), (value.to_string(), expire_at));
-            Ok(())
-        }
-
-        async fn update(&self, key: &str, value: &str) -> BulwarkResult<()> {
-            let mut store = self.store.lock();
-            match store.get_mut(key) {
-                Some((existing, _)) => {
-                    *existing = value.to_string();
-                    Ok(())
-                },
-                None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
-            }
-        }
-
-        async fn expire(&self, key: &str, seconds: u64) -> BulwarkResult<()> {
-            let mut store = self.store.lock();
-            match store.get_mut(key) {
-                Some((_, expire_at)) => {
-                    *expire_at = if seconds == 0 {
-                        None
-                    } else {
-                        Some(Instant::now() + Duration::from_secs(seconds))
-                    };
-                    Ok(())
-                },
-                None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
-            }
-        }
-
-        async fn delete(&self, key: &str) -> BulwarkResult<()> {
-            self.store.lock().remove(key);
-            Ok(())
-        }
-    }
 
     struct MockInterface {
         permissions: HashMap<i64, Vec<String>>,
