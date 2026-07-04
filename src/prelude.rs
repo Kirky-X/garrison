@@ -6,6 +6,8 @@
 pub use crate::config::BulwarkConfig;
 /// 上下文类型：请求/响应/存储抽象（[BulwarkContext]、[BulwarkRequest]、[BulwarkResponse]、[BulwarkStorage]）。
 pub use crate::context::{BulwarkContext, BulwarkRequest, BulwarkResponse, BulwarkStorage};
+/// 鉴权决策与请求模型（[Decision]、[DecisionReason]、[AuthRequest]，0.5.0 新增）。
+pub use crate::core::permission::{AuthRequest, Decision, DecisionReason};
 /// DAO trait，持久化数据访问抽象（[BulwarkDao]）。
 pub use crate::dao::BulwarkDao;
 /// 错误类型与 Result 别名（[BulwarkError]、[BulwarkResult]）。

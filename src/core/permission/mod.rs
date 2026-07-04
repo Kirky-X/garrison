@@ -3,6 +3,11 @@
 //! [借鉴 Sa-Token] 权限认证核心逻辑，对应 Sa-Token 的 `StpLogic.checkPermission / checkRole` 方法。
 //!
 //! 0.2.0 将 API 改为 login_id-as-input，与 token 格式无关，便于在任意 token 风格下复用。
+//!
+//! 0.5.0 新增 [`decision`] 子模块：`Decision` / `DecisionReason` / `AuthRequest`，
+//! 支持决策溯源（依据 spec decision-trace）。
+
+pub mod decision;
 
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -10,10 +15,15 @@ use std::sync::Arc;
 use crate::error::{BulwarkError, BulwarkResult};
 use crate::stp::BulwarkInterface;
 
+pub use decision::{AuthRequest, Decision, DecisionReason};
+
 /// 权限校验 trait，定义以 login_id 为入参的权限与角色校验抽象（依据 spec core-permission）。
 ///
 /// 所有方法 MUST 使用 `async_trait` 标注，trait 绑定 `Send + Sync`。
 /// 入参为 `login_id: i64` 而非 token，使权限校验可在任意 token 风格下复用。
+///
+/// 0.5.0 新增 [`authorize`](Self::authorize) 方法支持决策溯源（依据 spec decision-trace）。
+/// `check_permission` / `check_role` 改为默认实现，委托 `authorize` 并返回断言结果。
 #[async_trait]
 pub trait PermissionChecker: Send + Sync {
     /// 校验主体是否持有指定权限（依据 spec core-permission）。
@@ -27,11 +37,72 @@ pub trait PermissionChecker: Send + Sync {
     /// 校验主体是否持有指定角色（依据 spec core-permission）。
     async fn has_role(&self, login_id: i64, role: &str) -> BulwarkResult<bool>;
 
+    /// 鉴权决策：基于 [`AuthRequest`] 返回完整 [`Decision`]（依据 spec decision-trace）。
+    ///
+    /// 默认实现调用 [`has_permission`](Self::has_permission) 并构造 [`Decision`]：
+    /// - 持有权限 → `Decision { allowed: true, reason: ExplicitAllow, .. }`
+    /// - 未持有权限 → `Decision { allowed: false, reason: NoMatchingPermission, .. }`
+    ///
+    /// `decision-trace` feature 启用时，实现者可覆盖此方法填充 `checked_permissions` /
+    /// `matched_roles` / `trace_id` 字段。
+    ///
+    /// # 错误
+    ///
+    /// 校验过程本身出错（如 DAO 故障、参数无效）返回 `Err(BulwarkError)`；
+    /// "未持有权限"不是错误，返回 `Ok(Decision { allowed: false, .. })`。
+    async fn authorize(&self, request: &AuthRequest) -> BulwarkResult<Decision> {
+        let allowed = self
+            .has_permission(request.login_id, &request.action)
+            .await?;
+        let decision = if allowed {
+            Decision {
+                allowed: true,
+                reason: DecisionReason::ExplicitAllow,
+                errors: Vec::new(),
+                checked_permissions: Vec::new(),
+                matched_roles: Vec::new(),
+                trace_id: None,
+            }
+        } else {
+            Decision {
+                allowed: false,
+                reason: DecisionReason::NoMatchingPermission,
+                errors: Vec::new(),
+                checked_permissions: Vec::new(),
+                matched_roles: Vec::new(),
+                trace_id: None,
+            }
+        };
+        Ok(decision)
+    }
+
     /// 断言权限：被拒绝时返回 `Err(BulwarkError::NotPermission)`（依据 spec core-permission）。
-    async fn check_permission(&self, login_id: i64, permission: &str) -> BulwarkResult<()>;
+    ///
+    /// 0.5.0 默认实现委托 [`authorize`](Self::authorize)，保持向后兼容。
+    async fn check_permission(&self, login_id: i64, permission: &str) -> BulwarkResult<()> {
+        let request = AuthRequest::new(login_id, permission);
+        let decision = self.authorize(&request).await?;
+        if decision.allowed {
+            Ok(())
+        } else {
+            Err(BulwarkError::NotPermission(format!(
+                "账号 {} 未持有权限: {}",
+                login_id, permission
+            )))
+        }
+    }
 
     /// 断言角色：被拒绝时返回 `Err(BulwarkError::NotRole)`（依据 spec core-permission）。
-    async fn check_role(&self, login_id: i64, role: &str) -> BulwarkResult<()>;
+    async fn check_role(&self, login_id: i64, role: &str) -> BulwarkResult<()> {
+        if self.has_role(login_id, role).await? {
+            Ok(())
+        } else {
+            Err(BulwarkError::NotRole(format!(
+                "账号 {} 未持有角色: {}",
+                login_id, role
+            )))
+        }
+    }
 
     /// 批量校验权限：任一满足即返回 true（依据 spec core-permission）。
     ///
@@ -79,27 +150,8 @@ impl PermissionChecker for PermissionCheckerDefault {
         Ok(roles.iter().any(|r| r == role))
     }
 
-    async fn check_permission(&self, login_id: i64, permission: &str) -> BulwarkResult<()> {
-        if self.has_permission(login_id, permission).await? {
-            Ok(())
-        } else {
-            Err(BulwarkError::NotPermission(format!(
-                "账号 {} 未持有权限: {}",
-                login_id, permission
-            )))
-        }
-    }
-
-    async fn check_role(&self, login_id: i64, role: &str) -> BulwarkResult<()> {
-        if self.has_role(login_id, role).await? {
-            Ok(())
-        } else {
-            Err(BulwarkError::NotRole(format!(
-                "账号 {} 未持有角色: {}",
-                login_id, role
-            )))
-        }
-    }
+    // check_permission / check_role 使用 trait 默认实现（委托 authorize / has_role），
+    // 保持与 0.5.0 决策溯源路径一致（依据 spec decision-trace）。
 
     async fn has_any_permission(&self, login_id: i64, perms: &[&str]) -> bool {
         for perm in perms {
@@ -320,5 +372,104 @@ mod tests {
     async fn has_all_permissions_empty_list_returns_true() {
         let checker = make_checker();
         assert!(checker.has_all_permissions(1001, &[]).await);
+    }
+
+    // ========================================================================
+    // authorize 测试（依据 spec decision-trace，0.5.0 新增）
+    // ========================================================================
+
+    /// T015: authorize 在权限匹配时返回 allowed=true 的 Decision。
+    ///
+    /// 验证 `authorize(&AuthRequest{ login_id: 1001, action: "user:read", .. })`
+    /// 返回 `Decision { allowed: true, reason: ExplicitAllow, .. }`。
+    #[tokio::test]
+    async fn authorize_returns_decision_with_allowed_true_when_permission_matches() {
+        let checker = make_checker();
+        let request = AuthRequest::new(1001, "user:read");
+        let decision = checker.authorize(&request).await.expect("authorize ok");
+        assert!(decision.allowed);
+        assert_eq!(decision.reason, DecisionReason::ExplicitAllow);
+    }
+
+    /// T015 补充: authorize 在权限不匹配时返回 allowed=false + NoMatchingPermission。
+    #[tokio::test]
+    async fn authorize_returns_deny_when_permission_not_matched() {
+        let checker = make_checker();
+        let request = AuthRequest::new(1001, "user:delete");
+        let decision = checker.authorize(&request).await.expect("authorize ok");
+        assert!(!decision.allowed);
+        assert_eq!(decision.reason, DecisionReason::NoMatchingPermission);
+    }
+
+    /// T015 补充: authorize 在权限字符串为空时返回 InvalidParam 错误。
+    #[tokio::test]
+    async fn authorize_returns_error_for_empty_permission() {
+        let checker = make_checker();
+        let request = AuthRequest::new(1001, "");
+        let result = checker.authorize(&request).await;
+        assert!(result.is_err());
+        match result.err() {
+            Some(BulwarkError::InvalidParam(_)) => {},
+            other => panic!("期望 InvalidParam，实际: {:?}", other),
+        }
+    }
+
+    /// T017: check_permission 与 authorize 行为一致（向后兼容）。
+    ///
+    /// 验证 `check_permission(login_id, perm)` 的返回值（Ok/Err）与
+    /// `authorize(&AuthRequest{..}).await?.allowed` 一致：
+    /// - allowed=true → check_permission 返回 Ok(())
+    /// - allowed=false → check_permission 返回 Err(NotPermission)
+    #[tokio::test]
+    async fn check_permission_delegates_to_authorize_and_returns_allowed() {
+        let checker = make_checker();
+
+        // 持有权限：authorize().allowed == true，check_permission == Ok
+        let req_ok = AuthRequest::new(1001, "user:read");
+        let decision_ok = checker.authorize(&req_ok).await.expect("authorize ok");
+        assert!(decision_ok.allowed);
+        assert!(checker.check_permission(1001, "user:read").await.is_ok());
+
+        // 未持有权限：authorize().allowed == false，check_permission == Err
+        let req_no = AuthRequest::new(1001, "user:delete");
+        let decision_no = checker.authorize(&req_no).await.expect("authorize ok");
+        assert!(!decision_no.allowed);
+        assert!(checker.check_permission(1001, "user:delete").await.is_err());
+    }
+
+    /// T017 补充: check_permission 的错误类型为 NotPermission（不是其他错误）。
+    #[tokio::test]
+    async fn check_permission_deny_returns_not_permission_error() {
+        let checker = make_checker();
+        let result = checker.check_permission(1001, "user:delete").await;
+        match result.err() {
+            Some(BulwarkError::NotPermission(msg)) => {
+                assert!(msg.contains("1001"), "错误消息应含 login_id");
+                assert!(msg.contains("user:delete"), "错误消息应含 permission");
+            },
+            other => panic!("期望 NotPermission，实际: {:?}", other),
+        }
+    }
+
+    /// T017 补充: check_role 仍保持原行为（未持有角色返回 NotRole）。
+    #[tokio::test]
+    async fn check_role_still_returns_not_role_when_unmatched() {
+        let checker = make_checker();
+        let result = checker.check_role(1001, "superadmin").await;
+        match result.err() {
+            Some(BulwarkError::NotRole(_)) => {},
+            other => panic!("期望 NotRole，实际: {:?}", other),
+        }
+    }
+
+    /// T017 补充: Decision 可从 authorize 序列化为 JSON（端到端 trace 输出验证）。
+    #[tokio::test]
+    async fn authorize_decision_serializes_to_json() {
+        let checker = make_checker();
+        let request = AuthRequest::new(1001, "user:read");
+        let decision = checker.authorize(&request).await.expect("authorize ok");
+        let json = serde_json::to_value(&decision).expect("serialize Decision");
+        assert_eq!(json["allowed"], serde_json::json!(true));
+        assert_eq!(json["reason"], serde_json::json!("ExplicitAllow"));
     }
 }

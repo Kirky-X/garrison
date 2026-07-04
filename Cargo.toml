@@ -110,6 +110,11 @@ default = []
 # core / stp / annotation / router / dao / strategy / session / config / context / json / exception / manager / plugin
 # 这些模块无 feature flag，总是编译
 
+# === 核心扩展：决策溯源（0.5.0 新增，依据 spec decision-trace） ===
+# 启用后 PermissionChecker::authorize 的实现者可填充 checked_permissions / matched_roles / trace_id 字段。
+# 不启用时这三字段为空 vec/None，仅保留 allowed 与 reason（性能优先）。
+decision-trace = []
+
 # === 聚合特性：等价于原 default，方便快速启用全部默认后端 ===
 all-defaults = ["cache-memory", "db-sqlite", "web-axum"]
 
