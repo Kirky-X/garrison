@@ -514,6 +514,29 @@ mod tests {
         assert!(config.validate().is_ok());
     }
 
+    /// 验证 token_style=jwt 但 jwt_secret 为空时校验失败（A-001 安全审计修复）。
+    ///
+    /// 依据 spec config-system Requirement: 配置校验——jwt_secret 不能为空当 token_style=jwt，
+    /// 防止攻击者用公开的空字符串密钥伪造 JWT。
+    #[test]
+    fn validate_rejects_empty_jwt_secret_when_token_style_is_jwt() {
+        let mut config = BulwarkConfig::default_config();
+        config.token_style = "jwt".to_string();
+        // jwt_secret 保持默认空字符串
+        let result = config.validate();
+        match result {
+            Err(BulwarkError::Config(msg)) => {
+                assert!(
+                    msg.contains("jwt_secret"),
+                    "错误消息应包含 jwt_secret，实际: {}",
+                    msg
+                );
+            },
+            Err(other) => panic!("期望 BulwarkError::Config，实际: {:?}", other),
+            Ok(_) => panic!("token_style=jwt 且 jwt_secret 为空时应返回 Err"),
+        }
+    }
+
     // ========================================================================
     // toml 文件覆盖测试（spec Scenario: toml 文件覆盖默认值）
     // ========================================================================
