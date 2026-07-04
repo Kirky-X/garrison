@@ -594,4 +594,63 @@ mod tests {
         let err = BulwarkError::NotImplemented("refresh_token 未实现".to_string());
         assert_eq!(err.to_string(), "未实现: refresh_token 未实现");
     }
+
+    // ========================================================================
+    // 覆盖率补充：to_json_body / response_parts / Exception 变体
+    // ========================================================================
+
+    /// 验证 `to_json_body` 对普通错误变体返回包含 error_code 和 message 的 JSON。
+    ///
+    /// 覆盖行 163-164（to_json_body 中的 json! 宏构造）。
+    #[test]
+    fn to_json_body_returns_error_code_and_message() {
+        let err = BulwarkError::NotLogin("token missing".to_string());
+        let body = err.to_json_body();
+        assert_eq!(body["error_code"], "NOT_LOGIN");
+        assert_eq!(body["message"], "未登录");
+        // 普通错误变体不应包含 code 字段
+        assert!(body.get("code").is_none(), "普通错误变体不应包含 code 字段");
+    }
+
+    /// 验证 `to_json_body` 对 Exception 变体额外包含 code 字段。
+    ///
+    /// 覆盖行 166-168（Exception 变体的 code 字段写入）。
+    #[test]
+    fn to_json_body_includes_code_for_exception_variant() {
+        let err = BulwarkError::Exception(crate::exception::BulwarkException {
+            code: 1001,
+            message: "自定义业务异常".to_string(),
+            login_type: 1,
+            token_value: None,
+            login_id: None,
+            extras: std::collections::HashMap::new(),
+        });
+        let body = err.to_json_body();
+        assert_eq!(body["error_code"], "EXCEPTION");
+        assert_eq!(body["code"], 1001);
+    }
+
+    /// 验证 `response_parts` 对各变体返回正确的 HTTP 状态码和错误码。
+    #[test]
+    fn response_parts_returns_correct_status_and_code() {
+        // NotLogin → 401
+        let (status, code, _, _) = BulwarkError::NotLogin("".to_string()).response_parts();
+        assert_eq!(status, 401);
+        assert_eq!(code, "NOT_LOGIN");
+
+        // NotPermission → 403
+        let (status, code, _, _) = BulwarkError::NotPermission("".to_string()).response_parts();
+        assert_eq!(status, 403);
+        assert_eq!(code, "NOT_PERMISSION");
+
+        // Dao → 500
+        let (status, code, _, _) = BulwarkError::Dao("".to_string()).response_parts();
+        assert_eq!(status, 500);
+        assert_eq!(code, "DAO_ERROR");
+
+        // NotImplemented → 501
+        let (status, code, _, _) = BulwarkError::NotImplemented("".to_string()).response_parts();
+        assert_eq!(status, 501);
+        assert_eq!(code, "NOT_IMPLEMENTED");
+    }
 }

@@ -997,4 +997,116 @@ mod tests {
             "未登录时默认权限策略应委托 logic.check_permission 返回 Err"
         );
     }
+
+    // ========================================================================
+    // 覆盖率补充：Default*Handler 各方法委托 logic 的验证
+    // ========================================================================
+
+    /// 验证 `DefaultLogoutHandler::handle_logout` 委托 `logic.logout`。
+    ///
+    /// 未登录时 logout 返回 Ok（幂等），验证委托路径被覆盖。
+    #[tokio::test]
+    #[serial]
+    async fn default_logout_handler_handle_logout_delegates() {
+        let logic = make_logic();
+        let strategy = Strategy::new(logic);
+        // 未登录时 logout 应返回 Ok（幂等语义）
+        let result = strategy.logout_handler().handle_logout().await;
+        assert!(
+            result.is_ok(),
+            "未登录时 handle_logout 应幂等返回 Ok，实际: {:?}",
+            result
+        );
+    }
+
+    /// 验证 `DefaultLogoutHandler::handle_logout_by_login_id` 委托 `logic.logout_by_login_id`。
+    #[tokio::test]
+    #[serial]
+    async fn default_logout_handler_handle_logout_by_login_id_delegates() {
+        let logic = make_logic();
+        let strategy = Strategy::new(logic);
+        // 注销不存在的 login_id 应返回 Ok（幂等语义）
+        let result = strategy
+            .logout_handler()
+            .handle_logout_by_login_id(99999)
+            .await;
+        assert!(
+            result.is_ok(),
+            "handle_logout_by_login_id 不存在的 login_id 应幂等返回 Ok，实际: {:?}",
+            result
+        );
+    }
+
+    /// 验证 `DefaultPermissionHandler::handle_check_role` 委托 `logic.check_role`。
+    ///
+    /// 未登录时 check_role 返回 Err（NotLogin 或 NotRole），验证委托路径被覆盖。
+    #[tokio::test]
+    #[serial]
+    async fn default_permission_handler_handle_check_role_delegates() {
+        let logic = make_logic();
+        let strategy = Strategy::new(logic);
+        let result = strategy
+            .permission_handler()
+            .handle_check_role("admin")
+            .await;
+        assert!(
+            result.is_err(),
+            "未登录时 handle_check_role 应委托 logic.check_role 返回 Err"
+        );
+    }
+
+    /// 验证 `DefaultTokenGenerator::generate_token` 委托 `logic.login`。
+    #[tokio::test]
+    #[serial]
+    async fn default_token_generator_generate_token_delegates() {
+        let logic = make_logic();
+        let strategy = Strategy::new(logic);
+        let result = strategy.token_generator().generate_token(1001).await;
+        assert!(
+            result.is_ok(),
+            "generate_token 应委托 logic.login 返回 token，实际: {:?}",
+            result
+        );
+        // 验证返回的 token 非空
+        let token = result.unwrap();
+        assert!(!token.is_empty(), "生成的 token 不应为空");
+    }
+
+    /// 验证 `DefaultTokenGenerator::refresh_token` 委托 `logic.refresh_token`。
+    ///
+    /// 使用一个无效的 token 调用 refresh_token，应返回 Err（InvalidToken）。
+    #[tokio::test]
+    #[serial]
+    async fn default_token_generator_refresh_token_delegates() {
+        let logic = make_logic();
+        let strategy = Strategy::new(logic);
+        let result = strategy
+            .token_generator()
+            .refresh_token("invalid-token-for-refresh")
+            .await;
+        assert!(
+            result.is_err(),
+            "refresh_token 无效 token 应委托 logic.refresh_token 返回 Err"
+        );
+    }
+
+    /// 验证 `DefaultSessionCreator::check_login` 委托 `logic.check_login`。
+    ///
+    /// 未登录时 check_login 的返回取决于 `throw_on_not_login` 配置：
+    /// - `true`（默认）：返回 `Err(NotLogin)`
+    /// - `false`：返回 `Ok(false)`
+    /// 两种情况都验证了委托路径被覆盖。
+    #[tokio::test]
+    #[serial]
+    async fn default_session_creator_check_login_delegates() {
+        let logic = make_logic();
+        let strategy = Strategy::new(logic);
+        let result = strategy.session_creator().check_login().await;
+        // 默认 throw_on_not_login=true，未登录应返回 Err(NotLogin)
+        assert!(
+            result.is_err(),
+            "默认 throw_on_not_login=true，未登录时应返回 Err，实际: {:?}",
+            result
+        );
+    }
 }

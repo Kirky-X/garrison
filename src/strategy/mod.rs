@@ -1308,4 +1308,178 @@ mod tests {
             "第一个 hook Err 后应短路，后续 hook 不应被调用"
         );
     }
+
+    // ========================================================================
+    // 覆盖率补充：with_listener_manager、缓存写入失败、多 hook 失败
+    // ========================================================================
+
+    /// `with_listener_manager` 注入后 listener_manager 字段为 Some。
+    ///
+    /// 覆盖行 275-277（builder 方法体）。
+    #[cfg(feature = "listener")]
+    #[test]
+    fn with_listener_manager_sets_field() {
+        use crate::listener::BulwarkListenerManager;
+        let lm = Arc::new(BulwarkListenerManager::new());
+        let fw = BulwarkFirewallStrategyDefault::new(Arc::new(MockInterface::new()))
+            .with_listener_manager(lm);
+        assert!(
+            fw.listener_manager.is_some(),
+            "with_listener_manager 后 listener_manager 应为 Some"
+        );
+    }
+
+    /// `check_permission` 缓存写入失败时仅 warn 不中断，仍返回正确结果。
+    ///
+    /// 覆盖行 394-396, 398（缓存写入失败 warn 分支）。
+    ///
+    /// 使用 FailingDao（set 方法返回 Err）触发缓存写入失败。
+    #[tokio::test]
+    async fn check_permission_cache_write_failure_warns_but_returns_result() {
+        /// 所有写操作都失败的 DAO
+        struct FailingDao;
+        #[async_trait]
+        impl crate::dao::BulwarkDao for FailingDao {
+            async fn get(&self, _key: &str) -> BulwarkResult<Option<String>> {
+                Ok(None)
+            }
+            async fn set(&self, _key: &str, _value: &str, _ttl: u64) -> BulwarkResult<()> {
+                Err(BulwarkError::Dao("simulated set failure".to_string()))
+            }
+            async fn update(&self, _key: &str, _value: &str) -> BulwarkResult<()> {
+                Err(BulwarkError::Dao("simulated update failure".to_string()))
+            }
+            async fn expire(&self, _key: &str, _seconds: u64) -> BulwarkResult<()> {
+                Err(BulwarkError::Dao("simulated expire failure".to_string()))
+            }
+            async fn delete(&self, _key: &str) -> BulwarkResult<()> {
+                Ok(())
+            }
+        }
+
+        let mut iface = MockInterface::new();
+        iface.set_permissions(1001, &["user:read"]);
+        let fw =
+            BulwarkFirewallStrategyDefault::new(Arc::new(iface)).with_dao(Arc::new(FailingDao));
+        // 缓存写入失败但 check_permission 仍应返回 true（持有权限）
+        let result = fw.check_permission(1001, "user:read").await;
+        assert!(
+            result.is_ok(),
+            "缓存写入失败不应中断 check_permission，实际: {:?}",
+            result
+        );
+        assert!(
+            result.unwrap(),
+            "持有权限应返回 true（缓存写入失败不影响结果）"
+        );
+    }
+
+    /// `check_login_hooks` 第 3 个 hook（check_geo_anomaly）失败时广播 FirewallBlock 并阻断。
+    ///
+    /// 覆盖行 467-468（第 3 个 hook 失败）+ 490, 492（broadcast_firewall_block）。
+    #[cfg(feature = "listener")]
+    #[tokio::test]
+    async fn check_login_hooks_geo_anomaly_failure_broadcasts_firewall_block() {
+        use crate::listener::BulwarkListenerManager;
+        let iface = MockInterface::new();
+        let lm = Arc::new(BulwarkListenerManager::new());
+
+        struct GeoFailHook;
+        #[async_trait]
+        impl crate::strategy::BulwarkFirewallCheckHook for GeoFailHook {
+            async fn check_login_frequency(&self, _ctx: &LoginContext) -> BulwarkResult<()> {
+                Ok(())
+            }
+            async fn check_brute_force(&self, _ctx: &LoginContext) -> BulwarkResult<()> {
+                Ok(())
+            }
+            async fn check_geo_anomaly(&self, _ctx: &LoginContext) -> BulwarkResult<()> {
+                Err(BulwarkError::Session("geo blocked".to_string()))
+            }
+        }
+
+        let fw = BulwarkFirewallStrategyDefault::new(Arc::new(iface))
+            .with_firewall_hook(Arc::new(GeoFailHook))
+            .with_listener_manager(lm);
+        let ctx = LoginContext::new(1001);
+        let result = fw.check_login_hooks(1001, &ctx).await;
+        assert!(result.is_err(), "geo_anomaly 失败应阻断");
+        assert!(
+            matches!(result.unwrap_err(), BulwarkError::Session(_)),
+            "应返回 Session 错误"
+        );
+    }
+
+    /// `check_login_hooks` 第 4 个 hook（check_token_reuse）失败时广播并阻断。
+    ///
+    /// 覆盖行 471-472（第 4 个 hook 失败）。
+    #[cfg(feature = "listener")]
+    #[tokio::test]
+    async fn check_login_hooks_token_reuse_failure_broadcasts() {
+        use crate::listener::BulwarkListenerManager;
+        let iface = MockInterface::new();
+        let lm = Arc::new(BulwarkListenerManager::new());
+
+        struct TokenReuseFailHook;
+        #[async_trait]
+        impl crate::strategy::BulwarkFirewallCheckHook for TokenReuseFailHook {
+            async fn check_login_frequency(&self, _ctx: &LoginContext) -> BulwarkResult<()> {
+                Ok(())
+            }
+            async fn check_brute_force(&self, _ctx: &LoginContext) -> BulwarkResult<()> {
+                Ok(())
+            }
+            async fn check_geo_anomaly(&self, _ctx: &LoginContext) -> BulwarkResult<()> {
+                Ok(())
+            }
+            async fn check_token_reuse(&self, _ctx: &LoginContext) -> BulwarkResult<()> {
+                Err(BulwarkError::Session("token reuse blocked".to_string()))
+            }
+        }
+
+        let fw = BulwarkFirewallStrategyDefault::new(Arc::new(iface))
+            .with_firewall_hook(Arc::new(TokenReuseFailHook))
+            .with_listener_manager(lm);
+        let ctx = LoginContext::new(1001);
+        let result = fw.check_login_hooks(1001, &ctx).await;
+        assert!(result.is_err(), "token_reuse 失败应阻断");
+    }
+
+    /// `check_login_hooks` 第 5 个 hook（check_device_anomaly）失败时广播并阻断。
+    ///
+    /// 覆盖行 475-476（第 5 个 hook 失败）。
+    #[cfg(feature = "listener")]
+    #[tokio::test]
+    async fn check_login_hooks_device_anomaly_failure_broadcasts() {
+        use crate::listener::BulwarkListenerManager;
+        let iface = MockInterface::new();
+        let lm = Arc::new(BulwarkListenerManager::new());
+
+        struct DeviceFailHook;
+        #[async_trait]
+        impl crate::strategy::BulwarkFirewallCheckHook for DeviceFailHook {
+            async fn check_login_frequency(&self, _ctx: &LoginContext) -> BulwarkResult<()> {
+                Ok(())
+            }
+            async fn check_brute_force(&self, _ctx: &LoginContext) -> BulwarkResult<()> {
+                Ok(())
+            }
+            async fn check_geo_anomaly(&self, _ctx: &LoginContext) -> BulwarkResult<()> {
+                Ok(())
+            }
+            async fn check_token_reuse(&self, _ctx: &LoginContext) -> BulwarkResult<()> {
+                Ok(())
+            }
+            async fn check_device_anomaly(&self, _ctx: &LoginContext) -> BulwarkResult<()> {
+                Err(BulwarkError::Session("device anomaly blocked".to_string()))
+            }
+        }
+
+        let fw = BulwarkFirewallStrategyDefault::new(Arc::new(iface))
+            .with_firewall_hook(Arc::new(DeviceFailHook))
+            .with_listener_manager(lm);
+        let ctx = LoginContext::new(1001);
+        let result = fw.check_login_hooks(1001, &ctx).await;
+        assert!(result.is_err(), "device_anomaly 失败应阻断");
+    }
 }

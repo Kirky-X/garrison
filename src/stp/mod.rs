@@ -3339,4 +3339,24 @@ mod tests {
         })
         .await;
     }
+
+    // ========================================================================
+    // 覆盖率补充：login_with_password trait default 实现
+    // ========================================================================
+
+    /// trait default `login_with_password` 返回 NotImplemented（spec: 需 secure-password + db-sqlite）。
+    ///
+    /// 覆盖行 331-333（login_with_password 默认实现）。
+    #[tokio::test]
+    async fn trait_default_login_with_password_returns_not_implemented() {
+        let logic = MinimalLogic {
+            config: Arc::new(BulwarkConfig::default_config()),
+        };
+        let result = logic.login_with_password(1001, "any-password").await;
+        assert!(
+            matches!(result, Err(BulwarkError::NotImplemented(ref msg)) if msg.contains("secure-password")),
+            "trait default login_with_password 应返回 NotImplemented（需 secure-password + db-sqlite），实际: {:?}",
+            result
+        );
+    }
 }

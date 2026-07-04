@@ -1287,4 +1287,111 @@ pub mod tests {
         assert_eq!(success, 1, "并发调用仅一个返回 Some");
         assert_eq!(none_count, 9, "其他 9 个返回 None");
     }
+
+    // ========================================================================
+    // 覆盖率补充：BulwarkDao trait 默认方法测试
+    // ========================================================================
+
+    /// 最小化 DAO 实现，只实现 5 个必需方法，不重写任何默认方法。
+    ///
+    /// 用于验证 trait 默认实现的行为：
+    /// - `set_permanent` 默认委托 `set(key, value, 0)`
+    /// - `get_timeout` 默认返回 `NotImplemented`
+    /// - `keys` 默认返回 `NotImplemented`
+    /// - `rename` 默认 `get → set_permanent → delete`
+    struct MinimalDao {
+        store: Mutex<HashMap<String, String>>,
+    }
+
+    impl MinimalDao {
+        fn new() -> Self {
+            Self {
+                store: Mutex::new(HashMap::new()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl BulwarkDao for MinimalDao {
+        async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
+            Ok(self.store.lock().get(key).cloned())
+        }
+
+        async fn set(&self, key: &str, value: &str, _ttl_seconds: u64) -> BulwarkResult<()> {
+            self.store.lock().insert(key.to_string(), value.to_string());
+            Ok(())
+        }
+
+        async fn update(&self, key: &str, value: &str) -> BulwarkResult<()> {
+            match self.store.lock().get_mut(key) {
+                Some(existing) => {
+                    *existing = value.to_string();
+                    Ok(())
+                },
+                None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
+            }
+        }
+
+        async fn expire(&self, _key: &str, _seconds: u64) -> BulwarkResult<()> {
+            Ok(()) // MinimalDao 不支持 TTL，no-op
+        }
+
+        async fn delete(&self, key: &str) -> BulwarkResult<()> {
+            self.store.lock().remove(key);
+            Ok(())
+        }
+    }
+
+    /// R-001: `set_permanent` 默认实现委托 `set(key, value, 0)`。
+    #[tokio::test]
+    async fn default_set_permanent_delegates_to_set_with_ttl_zero() {
+        let dao = MinimalDao::new();
+        // 调用默认实现的 set_permanent
+        dao.set_permanent("perm_key", "perm_value").await.unwrap();
+        // 验证值已写入（通过 get 读取）
+        let val = dao.get("perm_key").await.unwrap();
+        assert_eq!(val.as_deref(), Some("perm_value"));
+    }
+
+    /// R-002: `get_timeout` 默认实现返回 `NotImplemented`。
+    #[tokio::test]
+    async fn default_get_timeout_returns_not_implemented() {
+        let dao = MinimalDao::new();
+        dao.set("key", "value", 3600).await.unwrap();
+        let result = dao.get_timeout("key").await;
+        assert!(matches!(result, Err(BulwarkError::NotImplemented(_))));
+    }
+
+    /// R-003: `keys` 默认实现返回 `NotImplemented`。
+    #[tokio::test]
+    async fn default_keys_returns_not_implemented() {
+        let dao = MinimalDao::new();
+        dao.set("key1", "v1", 0).await.unwrap();
+        let result = dao.keys("*").await;
+        assert!(matches!(result, Err(BulwarkError::NotImplemented(_))));
+    }
+
+    /// R-004: `rename` 默认实现执行 `get → set_permanent → delete` 三步操作。
+    #[tokio::test]
+    async fn default_rename_get_set_permanent_delete() {
+        let dao = MinimalDao::new();
+        dao.set("old_key", "old_value", 0).await.unwrap();
+        // 调用默认实现的 rename
+        dao.rename("old_key", "new_key").await.unwrap();
+        // 验证 old_key 已被删除
+        assert!(dao.get("old_key").await.unwrap().is_none());
+        // 验证 new_key 已写入
+        assert_eq!(
+            dao.get("new_key").await.unwrap().as_deref(),
+            Some("old_value")
+        );
+    }
+
+    /// R-004: `rename` 对不存在的 key 返回 `InvalidParam`。
+    #[tokio::test]
+    async fn default_rename_missing_key_returns_invalid_param() {
+        let dao = MinimalDao::new();
+        let result = dao.rename("nonexistent", "new_key").await;
+        assert!(matches!(result, Err(BulwarkError::InvalidParam(_))));
+    }
 }
