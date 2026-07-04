@@ -320,6 +320,40 @@ pub trait BulwarkLogic: Send + Sync {
 }
 
 // ============================================================================
+// JwtMode：JWT 校验模式（依据 spec protocol-jwt-modes R-001）
+// ============================================================================
+
+/// JWT 校验模式（依据 spec protocol-jwt-modes R-001）。
+///
+/// 控制 `check_login` 在 JWT verify 与 oxcache session 查询之间的组合策略。
+/// 不依赖 `jsonwebtoken` crate，作为配置选项总是编译（即使未启用 `protocol-jwt`）。
+///
+/// # 变体
+///
+/// - `Stateless`：仅 JWT verify，不查询 oxcache session。适用于高可用场景
+///   （DAO 故障时仍可校验），要求启用 `protocol-jwt` feature 且 `token_style=jwt`。
+/// - `Mixin`（默认）：JWT verify + session 二级校验。推荐的平衡模式——
+///   JWT 提供无状态校验，session 提供主动注销能力。
+/// - `Simple`：仅 session 校验，JWT 仅作为 token 字符串载体（不验证签名）。
+///   适用于 token 已由网关层校验过的场景。
+///
+/// # feature 依赖
+///
+/// `jwt_mode` 字段本身不 feature gate，但 `Stateless`/`Mixin` 中的 JWT verify
+/// 调用需 `protocol-jwt` feature。未启用时 `Stateless` 返回 `Config` 错误，
+/// `Mixin` 退化为仅查 session（向后兼容 0.4.1 行为）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum JwtMode {
+    /// 仅 JWT verify，不查询 oxcache session（高可用场景）。
+    Stateless,
+    /// JWT verify + session 二级校验（推荐，默认）。
+    #[default]
+    Mixin,
+    /// 仅 session，JWT 仅作为 token 载体（不验证签名）。
+    Simple,
+}
+
+// ============================================================================
 // BulwarkLogicDefault：默认实现
 // ============================================================================
 
@@ -355,6 +389,13 @@ pub struct BulwarkLogicDefault {
     /// 未设置时默认 "default"，通过 `with_login_type` builder 设置。
     /// `pub(crate)` 供测试验证字段值。
     pub(crate) login_type: String,
+    /// JWT 校验模式（0.4.2 新增，依据 spec protocol-jwt-modes R-001）。
+    ///
+    /// 默认 `JwtMode::Mixin`，通过 `with_jwt_mode` builder 设置。
+    /// 字段不 feature gate（JwtMode 是配置 enum，无外部依赖）；
+    /// 实际 JWT verify 调用在 `check_login` 中由 `#[cfg(feature = "protocol-jwt")]` 门控。
+    /// `pub(crate)` 供测试验证字段值。
+    pub(crate) jwt_mode: JwtMode,
 }
 
 impl BulwarkLogicDefault {
@@ -388,6 +429,7 @@ impl BulwarkLogicDefault {
             #[cfg(all(feature = "secure-password", feature = "db-sqlite"))]
             user_repository: None,
             login_type: "default".to_string(),
+            jwt_mode: JwtMode::default(),
         }
     }
 
@@ -478,6 +520,31 @@ impl BulwarkLogicDefault {
         self
     }
 
+    /// 设置 JWT 校验模式（builder 模式，0.4.2 新增，依据 spec protocol-jwt-modes R-005）。
+    ///
+    /// 控制 `check_login` 在 JWT verify 与 session 查询之间的组合策略：
+    ///
+    /// - `JwtMode::Stateless`：仅 JWT verify，不查询 oxcache session（高可用场景）
+    /// - `JwtMode::Mixin`（默认）：JWT verify + session 二级校验（推荐）
+    /// - `JwtMode::Simple`：仅 session，JWT 仅作为 token 字符串载体
+    ///
+    /// 未设置时默认 `JwtMode::Mixin`。运行时不可切换（编译期配置）。
+    /// `JwtMode` 字段不依赖 `protocol-jwt` feature，但 `Stateless`/`Mixin` 中的
+    /// JWT verify 调用需启用 `protocol-jwt` feature，否则 `Stateless` 返回 `Config` 错误。
+    ///
+    /// # 参数
+    /// - `mode`: JWT 校验模式。
+    ///
+    /// # 示例
+    /// ```ignore
+    /// let logic = BulwarkLogicDefault::new(session, config, firewall)
+    ///     .with_jwt_mode(JwtMode::Stateless);
+    /// ```
+    pub fn with_jwt_mode(mut self, mode: JwtMode) -> Self {
+        self.jwt_mode = mode;
+        self
+    }
+
     /// login 实际逻辑（供 `login` 方法在 metrics 包装内调用）。
     ///
     /// 0.3.0 抽取此私有方法以保持 `login` trait 方法的 metrics 包装简洁。
@@ -539,6 +606,64 @@ impl BulwarkLogicDefault {
                 other
             ))),
         }
+    }
+
+    /// Stateless 模式：仅 JWT verify，不查询 session（依据 spec protocol-jwt-modes R-002）。
+    ///
+    /// 要求启用 `protocol-jwt` feature 且 `token_style=jwt`，否则返回 `Config` 错误。
+    /// JWT verify 失败时透传 `InvalidToken`/`ExpiredToken`（不查询 session）。
+    fn check_login_stateless(&self, token: &str) -> BulwarkResult<bool> {
+        #[cfg(feature = "protocol-jwt")]
+        {
+            if self.config.token_style != "jwt" {
+                return Err(BulwarkError::Config(
+                    "Stateless 模式要求 token_style=jwt".to_string(),
+                ));
+            }
+            let handler = crate::protocol::jwt::JwtHandler::new(&self.config.jwt_secret);
+            // spec R-002: 无效签名返回 InvalidToken，过期返回 ExpiredToken（透传 verify 错误）
+            handler.verify(token)?;
+            Ok(true)
+        }
+        #[cfg(not(feature = "protocol-jwt"))]
+        {
+            let _ = token;
+            Err(BulwarkError::Config(
+                "Stateless 模式要求启用 protocol-jwt feature".to_string(),
+            ))
+        }
+    }
+
+    /// Mixin 模式：JWT verify + session 二级校验（依据 spec protocol-jwt-modes R-003）。
+    ///
+    /// 启用 `protocol-jwt` feature 且 `token_style=jwt` 时先 JWT verify 再查 session
+    /// （JWT verify 失败直接返回错误，不查询 session）。否则仅查 session
+    /// （向后兼容 0.4.1 行为：无 protocol-jwt 或 token_style != jwt）。
+    async fn check_login_mixin(&self, token: &str) -> BulwarkResult<bool> {
+        #[cfg(feature = "protocol-jwt")]
+        {
+            if self.config.token_style == "jwt" {
+                let handler = crate::protocol::jwt::JwtHandler::new(&self.config.jwt_secret);
+                // spec R-003: JWT 签名无效直接返回错误（不查询 session）
+                handler.verify(token)?;
+            }
+        }
+        let valid = self.session.is_valid(token).await?;
+        if !valid && self.config.throw_on_not_login {
+            return Err(BulwarkError::Session("未登录".to_string()));
+        }
+        Ok(valid)
+    }
+
+    /// Simple 模式：仅 session 校验，不验证 JWT 签名（依据 spec protocol-jwt-modes R-004）。
+    ///
+    /// session 不存在时按 `throw_on_not_login` 决定返回 `Ok(false)` 或 `Session` 错误。
+    async fn check_login_simple(&self, token: &str) -> BulwarkResult<bool> {
+        let valid = self.session.is_valid(token).await?;
+        if !valid && self.config.throw_on_not_login {
+            return Err(BulwarkError::Session("未登录".to_string()));
+        }
+        Ok(valid)
     }
 }
 
@@ -614,14 +739,22 @@ impl BulwarkLogic for BulwarkLogicDefault {
     }
 
     async fn check_login(&self) -> BulwarkResult<bool> {
-        let valid = match current_token() {
-            Ok(token) => self.session.is_valid(&token).await?,
-            Err(_) => false, // 未设置 token = 未登录
+        let token = match current_token() {
+            Ok(t) => t,
+            Err(_) => {
+                // 未设置 token = 未登录（保持现有 throw_on_not_login 语义）
+                if self.config.throw_on_not_login {
+                    return Err(BulwarkError::Session("未登录".to_string()));
+                }
+                return Ok(false);
+            },
         };
-        if !valid && self.config.throw_on_not_login {
-            return Err(BulwarkError::Session("未登录".to_string()));
+
+        match self.jwt_mode {
+            JwtMode::Stateless => self.check_login_stateless(&token),
+            JwtMode::Mixin => self.check_login_mixin(&token).await,
+            JwtMode::Simple => self.check_login_simple(&token).await,
         }
-        Ok(valid)
     }
 
     async fn get_login_id(&self) -> BulwarkResult<Option<i64>> {
@@ -2897,5 +3030,143 @@ mod tests {
         // 验证 login 仍可工作（其他 builder 未被破坏）
         let token = logic.login(1001).await.unwrap();
         assert!(!token.is_empty());
+    }
+
+    // ------------------------------------------------------------------------
+    // spec protocol-jwt-modes: JwtMode 三模式（Stateless/Mixin/Simple）
+    // ------------------------------------------------------------------------
+
+    /// R-001: JwtMode::default() == JwtMode::Mixin（推荐模式为默认）。
+    ///
+    /// 覆盖 spec protocol-jwt-modes R-001 验收 case 1。
+    #[test]
+    fn jwt_mode_default_is_mixin() {
+        assert_eq!(JwtMode::default(), JwtMode::Mixin);
+    }
+
+    /// R-001: JwtMode 是 Copy（无需 Arc 包装）。
+    ///
+    /// 覆盖 spec protocol-jwt-modes R-001 验收 case 2。
+    #[test]
+    fn jwt_mode_is_copy() {
+        let mode = JwtMode::Stateless;
+        let copied = mode; // Copy 语义：复制后原值仍可用
+        assert_eq!(mode, copied);
+        assert_eq!(mode, JwtMode::Stateless);
+    }
+
+    /// R-005: with_jwt_mode builder 设置 jwt_mode 字段，默认 Mixin。
+    ///
+    /// 覆盖 spec protocol-jwt-modes R-005 验收 case 1（默认 Mixin + builder 切换）。
+    #[tokio::test]
+    #[serial]
+    async fn with_jwt_mode_builder_sets_mode() {
+        let logic = make_logic(3600, 86400, false, "uuid", true, true);
+        assert_eq!(
+            logic.jwt_mode,
+            JwtMode::Mixin,
+            "未设置时默认 JwtMode::Mixin"
+        );
+        let logic2 =
+            make_logic(3600, 86400, false, "uuid", true, true).with_jwt_mode(JwtMode::Stateless);
+        assert_eq!(
+            logic2.jwt_mode,
+            JwtMode::Stateless,
+            "with_jwt_mode 应设置 jwt_mode 为 Stateless"
+        );
+    }
+
+    /// R-002: Stateless 模式仅 JWT verify，不查询 session。
+    ///
+    /// 覆盖 spec protocol-jwt-modes R-002 验收 case 1（有效 JWT 通过 + 不查 DAO）。
+    #[cfg(feature = "protocol-jwt")]
+    #[tokio::test]
+    #[serial]
+    async fn check_login_stateless_only_jwt_verify() {
+        // 构造 logic：jwt_mode=Stateless + token_style=jwt + 明确 secret
+        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
+        let mut config = BulwarkConfig::default_config();
+        config.token_style = "jwt".to_string();
+        config.jwt_secret = "stateless-test-secret".to_string();
+        config.throw_on_not_login = true;
+        let firewall: Arc<dyn BulwarkFirewallStrategy> = Arc::new(MockFirewall {
+            has_permission: true,
+            has_role: true,
+        });
+        let logic = Arc::new(
+            BulwarkLogicDefault::new(session, Arc::new(config), firewall)
+                .with_jwt_mode(JwtMode::Stateless),
+        );
+
+        // 用 JwtHandler 直接签发 token，不通过 login（确保 DAO 无 session）
+        let handler = crate::protocol::jwt::JwtHandler::new("stateless-test-secret");
+        let token = handler.sign(1001, 3600).unwrap();
+
+        // Stateless 模式：仅 JWT verify，不查 session → 应返回 Ok(true)
+        with_current_token(token, async {
+            let valid = logic.check_login().await.unwrap();
+            assert!(
+                valid,
+                "Stateless 模式下有效 JWT 应返回 true（不查 session）"
+            );
+        })
+        .await;
+    }
+
+    /// R-003: Mixin 模式 JWT verify + session 二级校验。
+    ///
+    /// 覆盖 spec protocol-jwt-modes R-003 验收 case 2（有效 JWT + session 存在 → 通过）。
+    #[cfg(feature = "protocol-jwt")]
+    #[tokio::test]
+    #[serial]
+    async fn check_login_mixin_jwt_and_session() {
+        // 构造 logic：jwt_mode=Mixin（默认）+ token_style=jwt + 明确 secret
+        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
+        let mut config = BulwarkConfig::default_config();
+        config.token_style = "jwt".to_string();
+        config.jwt_secret = "mixin-test-secret".to_string();
+        config.throw_on_not_login = true;
+        let firewall: Arc<dyn BulwarkFirewallStrategy> = Arc::new(MockFirewall {
+            has_permission: true,
+            has_role: true,
+        });
+        let logic = Arc::new(
+            BulwarkLogicDefault::new(session, Arc::new(config), firewall)
+                .with_jwt_mode(JwtMode::Mixin),
+        );
+
+        // login 创建 session + 签发 JWT token
+        let token = logic.login(1001).await.unwrap();
+
+        // Mixin 模式：JWT verify 通过 + session 存在 → Ok(true)
+        with_current_token(token, async {
+            let valid = logic.check_login().await.unwrap();
+            assert!(valid, "Mixin 模式下有效 JWT + session 存在应返回 true");
+        })
+        .await;
+    }
+
+    /// R-004: Simple 模式仅 session 校验，不验证 JWT 签名。
+    ///
+    /// 覆盖 spec protocol-jwt-modes R-004 验收 case 1（session 存在 → 通过，不验证 JWT）。
+    #[tokio::test]
+    #[serial]
+    async fn check_login_simple_only_session() {
+        // 构造 logic：jwt_mode=Simple + token_style=uuid（非 JWT）
+        let logic = Arc::new(
+            make_logic(3600, 86400, true, "uuid", true, true).with_jwt_mode(JwtMode::Simple),
+        );
+
+        // login 创建 session（uuid token，非 JWT 格式）
+        let token = logic.login(1001).await.unwrap();
+
+        // Simple 模式：仅查 session，不验证 JWT → session 存在应返回 Ok(true)
+        with_current_token(token, async {
+            let valid = logic.check_login().await.unwrap();
+            assert!(valid, "Simple 模式下 session 存在应返回 true（不验证 JWT）");
+        })
+        .await;
     }
 }
