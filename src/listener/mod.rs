@@ -139,15 +139,6 @@ pub enum BulwarkEvent {
         /// 凭据载荷值。
         value: String,
     },
-    /// 配置热重载事件（v0.4.2 新增，依据 spec listener-events-extend R-001）。
-    ///
-    /// **注意**：当前未集成 broadcast，因为 `ConfigLoader` trait 未定义 `reload` 方法。
-    /// v0.5.0+ 实现 `ConfigLoader::reload` + 全局 `BulwarkManager::update_config` 后
-    /// 在对应路径补充广播（依据 spec listener-events-extend Out of Scope）。
-    ConfigReload {
-        /// 重载原因。
-        reason: String,
-    },
 }
 
 /// 监听器 trait，提供事件订阅抽象（依据 spec listener-system）。
@@ -752,25 +743,5 @@ mod tests {
         assert_eq!(event, cloned);
         let debug_str = format!("{:?}", event);
         assert!(debug_str.contains("TempCredentialConsumed"));
-    }
-
-    /// ConfigReload 事件携带 reason，派生 Debug/Clone/PartialEq
-    /// （依据 spec listener-events-extend R-001）。
-    #[test]
-    #[serial]
-    fn config_reload_event_carries_reason() {
-        let event = BulwarkEvent::ConfigReload {
-            reason: "manual".to_string(),
-        };
-        match event.clone() {
-            BulwarkEvent::ConfigReload { reason } => {
-                assert_eq!(reason, "manual");
-            },
-            _ => panic!("期望 ConfigReload 事件"),
-        }
-        let cloned = event.clone();
-        assert_eq!(event, cloned);
-        let debug_str = format!("{:?}", event);
-        assert!(debug_str.contains("ConfigReload"));
     }
 }

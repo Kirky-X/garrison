@@ -84,12 +84,12 @@ Token Introspection。
 
 #### 事件与策略
 
-- **BulwarkEvent 15 变体（Phase 11）**：新增 9 个事件（`LoginFailure`/`TokenRefresh`/
+- **BulwarkEvent 14 变体（Phase 11）**：新增 8 个事件（`LoginFailure`/`TokenRefresh`/
   `TokenRevoke`/`SessionTimeout`/`AccountLocked`/`FirewallBlock`/`ApiKeyRotate`/
-  `TempCredentialConsumed`/`ConfigReload`），7 个 broadcast 集成点（login_with_password
-  失败/refresh_token/check_login session timeout/FirewallCheckHook 锁定/FirewallStrategy
+  `TempCredentialConsumed`），8 个 broadcast 集成点（login_with_password
+  失败/refresh_token/revoke_token/check_login session timeout/FirewallCheckHook 锁定/FirewallStrategy
   阻止/ApiKeyHandler::rotate/TempCredentialHandler::consume）。`BulwarkEvent` 派生
-  `PartialEq`
+  `PartialEq`。`ConfigReload` 变体因 `ConfigLoader` 无 reload 方法未添加，待 v0.5.0+ 实现
 - **Strategy Registry（Phase 13）**：`src/strategy/registry.rs` 新增 6 个策略 trait
   （`LoginHandler`/`LogoutHandler`/`PermissionHandler`/`TokenGenerator`/`SessionCreator`/
   `FirewallStrategy`）+ 6 个默认实现（委托 `Arc<dyn BulwarkLogic>`）+ `Strategy` 注册表
@@ -151,8 +151,8 @@ Token Introspection。
 - `BulwarkDao::rename` 默认实现为 get→set_permanent→delete 三步，非原子；
   `BulwarkDaoOxcache` 重写为 get→ttl_sync→set_with_ttl_sync→delete 四步保留 TTL，
   但仍非原子（oxcache 0.3 无原子 rename API，待 v0.5.0+）
-- `BulwarkEvent::TokenRevoke` / `ConfigReload` 仅添加变体未集成 broadcast
-  （对应代码路径方法不存在，待 v0.5.0+ 实现后集成）
+- `BulwarkEvent::TokenRevoke` 已在 `revoke_token` 调用时集成 broadcast；
+  `ConfigReload` 变体未添加（`ConfigLoader` 无 reload 方法，待 v0.5.0+ 实现后添加变体 + 集成 broadcast）
 - `LoginId::String` 形式在内部层（i64）尚未完成迁移，公开 API 接受 `impl Into<LoginId>`
   但 `login_id_to_i64` 对 `String` 形式返回 `BulwarkError::Config`（待 v0.5.0+ 完成内部层迁移）
 - Strategy Registry 的 `DefaultFirewallStrategy` 为 no-op（`BulwarkLogic` 无
