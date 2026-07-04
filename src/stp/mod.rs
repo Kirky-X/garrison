@@ -350,6 +350,11 @@ pub struct BulwarkLogicDefault {
     /// 用户 Repository（可选，注入后 login_with_password 委托此实现查询用户）。
     #[cfg(all(feature = "secure-password", feature = "db-sqlite"))]
     user_repository: Option<Arc<dyn crate::dao::repository::UserRepository>>,
+    /// 默认 login_type（0.4.2 新增，依据 spec login-type-multi-account R-003）。
+    ///
+    /// 未设置时默认 "default"，通过 `with_login_type` builder 设置。
+    /// `pub(crate)` 供测试验证字段值。
+    pub(crate) login_type: String,
 }
 
 impl BulwarkLogicDefault {
@@ -382,6 +387,7 @@ impl BulwarkLogicDefault {
             password_hasher: None,
             #[cfg(all(feature = "secure-password", feature = "db-sqlite"))]
             user_repository: None,
+            login_type: "default".to_string(),
         }
     }
 
@@ -452,6 +458,23 @@ impl BulwarkLogicDefault {
         repo: Arc<dyn crate::dao::repository::UserRepository>,
     ) -> Self {
         self.user_repository = Some(repo);
+        self
+    }
+
+    /// 设置默认 login_type（builder 模式，0.4.2 新增，依据 spec login-type-multi-account R-003）。
+    ///
+    /// 注入后作为权限/角色查询的默认 `login_type` 上下文。未设置时默认 "default"。
+    ///
+    /// # 参数
+    /// - `login_type`: 登录类型字符串（业务方自定义，如 "admin"/"user"/"merchant"）。
+    ///
+    /// # 示例
+    /// ```ignore
+    /// let logic = BulwarkLogicDefault::new(session, config, firewall)
+    ///     .with_login_type("admin");
+    /// ```
+    pub fn with_login_type(mut self, login_type: &str) -> Self {
+        self.login_type = login_type.to_string();
         self
     }
 
@@ -840,6 +863,60 @@ pub trait BulwarkInterface: Send + Sync {
     /// # 错误
     /// - 数据源访问失败：由业务方实现决定具体 `BulwarkError`。
     async fn get_role_list(&self, login_id: i64) -> BulwarkResult<Vec<String>>;
+
+    /// 获取指定主体在特定 `login_type` 下的权限列表（0.4.2 新增，依据 spec login-type-multi-account R-001）。
+    ///
+    /// 多账号体系下，不同 `login_type`（如 "admin"/"user"/"merchant"）的权限相互隔离。
+    /// 业务方可 override 此方法以接入按 `login_type` 隔离的权限数据源。
+    ///
+    /// # 向后兼容
+    ///
+    /// 默认实现委托 [`get_permission_list`](Self::get_permission_list)（忽略 `login_type` 参数），
+    /// 现有 `BulwarkInterface` 实现者无需修改即可工作。
+    ///
+    /// # 参数
+    /// - `login_id`: 登录主体标识。
+    /// - `login_type`: 登录类型字符串（业务方自定义，如 "admin"/"user"/"merchant"）。
+    ///
+    /// # 返回
+    /// 权限标识字符串列表。
+    ///
+    /// # 错误
+    /// - 数据源访问失败：由业务方实现决定具体 `BulwarkError`。
+    async fn get_permission_list_with_type(
+        &self,
+        login_id: i64,
+        _login_type: &str,
+    ) -> BulwarkResult<Vec<String>> {
+        self.get_permission_list(login_id).await
+    }
+
+    /// 获取指定主体在特定 `login_type` 下的角色列表（0.4.2 新增，依据 spec login-type-multi-account R-001）。
+    ///
+    /// 多账号体系下，不同 `login_type`（如 "admin"/"user"/"merchant"）的角色相互隔离。
+    /// 业务方可 override 此方法以接入按 `login_type` 隔离的角色数据源。
+    ///
+    /// # 向后兼容
+    ///
+    /// 默认实现委托 [`get_role_list`](Self::get_role_list)（忽略 `login_type` 参数），
+    /// 现有 `BulwarkInterface` 实现者无需修改即可工作。
+    ///
+    /// # 参数
+    /// - `login_id`: 登录主体标识。
+    /// - `login_type`: 登录类型字符串（业务方自定义，如 "admin"/"user"/"merchant"）。
+    ///
+    /// # 返回
+    /// 角色标识字符串列表。
+    ///
+    /// # 错误
+    /// - 数据源访问失败：由业务方实现决定具体 `BulwarkError`。
+    async fn get_role_list_with_type(
+        &self,
+        login_id: i64,
+        _login_type: &str,
+    ) -> BulwarkResult<Vec<String>> {
+        self.get_role_list(login_id).await
+    }
 }
 
 // ============================================================================
@@ -2675,5 +2752,150 @@ mod tests {
         // 不调用 with_metrics
         let _token = logic.login(1001).await.unwrap();
         // 不 panic 即通过
+    }
+
+    // ------------------------------------------------------------------------
+    // 0.4.2 Phase 6: login_type Multi-Account 测试（依据 spec login-type-multi-account）
+    // ------------------------------------------------------------------------
+
+    /// 测试用 BulwarkInterface mock，支持 login_type 隔离（override 新方法）。
+    struct MockInterfaceWithLoginType {
+        perms: HashMap<String, Vec<String>>,
+        roles: HashMap<String, Vec<String>>,
+    }
+
+    #[async_trait]
+    impl BulwarkInterface for MockInterfaceWithLoginType {
+        async fn get_permission_list(&self, _login_id: i64) -> BulwarkResult<Vec<String>> {
+            Ok(self.perms.get("default").cloned().unwrap_or_default())
+        }
+        async fn get_role_list(&self, _login_id: i64) -> BulwarkResult<Vec<String>> {
+            Ok(self.roles.get("default").cloned().unwrap_or_default())
+        }
+        // override 新方法以支持多账号隔离
+        async fn get_permission_list_with_type(
+            &self,
+            _login_id: i64,
+            login_type: &str,
+        ) -> BulwarkResult<Vec<String>> {
+            Ok(self.perms.get(login_type).cloned().unwrap_or_default())
+        }
+        async fn get_role_list_with_type(
+            &self,
+            _login_id: i64,
+            login_type: &str,
+        ) -> BulwarkResult<Vec<String>> {
+            Ok(self.roles.get(login_type).cloned().unwrap_or_default())
+        }
+    }
+
+    /// R-001: 新方法 get_permission_list_with_type 默认委托旧方法。
+    ///
+    /// 偏差说明：spec R-001 要求"旧方法委托新方法"，实际实现为"新方法默认委托旧方法"
+    /// 以保持向后兼容（28 个现有 BulwarkInterface 实现者无需修改）。
+    /// MockInterface 旧方法返回空 Vec，新方法默认委托旧方法应返回相同结果。
+    #[tokio::test]
+    #[serial]
+    async fn get_permission_list_with_type_delegates_to_default() {
+        let interface = MockInterface;
+        let result = interface
+            .get_permission_list_with_type(1001, "default")
+            .await;
+        assert!(result.is_ok(), "新方法应成功，实际: {:?}", result);
+        assert!(result.unwrap().is_empty(), "默认委托旧方法应返回空 Vec");
+    }
+
+    /// R-001: 新方法 get_role_list_with_type 默认委托旧方法。
+    #[tokio::test]
+    #[serial]
+    async fn get_role_list_with_type_delegates_to_default() {
+        let interface = MockInterface;
+        let result = interface.get_role_list_with_type(1001, "default").await;
+        assert!(result.is_ok(), "新方法应成功，实际: {:?}", result);
+        assert!(result.unwrap().is_empty(), "默认委托旧方法应返回空 Vec");
+    }
+
+    /// R-002: admin login_type 的权限查询不返回 user 的权限。
+    ///
+    /// 覆盖 spec login-type-multi-account R-002 验收 case 1。
+    #[tokio::test]
+    #[serial]
+    async fn get_permission_list_with_type_admin_isolated_from_user() {
+        let mut perms = HashMap::new();
+        perms.insert("admin".to_string(), vec!["admin:*".to_string()]);
+        perms.insert("user".to_string(), vec!["user:*".to_string()]);
+        let interface = MockInterfaceWithLoginType {
+            perms,
+            roles: HashMap::new(),
+        };
+        let admin_perms = interface
+            .get_permission_list_with_type(1001, "admin")
+            .await
+            .unwrap();
+        assert_eq!(admin_perms, vec!["admin:*"]);
+        assert!(
+            !admin_perms.iter().any(|p| p == "user:*"),
+            "admin login_type 不应返回 user 的权限"
+        );
+    }
+
+    /// R-002: 同一 login_id 在不同 login_type 下可拥有不同权限。
+    ///
+    /// 覆盖 spec login-type-multi-account R-002 验收 case 2。
+    #[tokio::test]
+    #[serial]
+    async fn same_login_id_different_login_type_different_permissions() {
+        let mut perms = HashMap::new();
+        perms.insert("admin".to_string(), vec!["admin:*".to_string()]);
+        perms.insert("user".to_string(), vec!["user:*".to_string()]);
+        let interface = MockInterfaceWithLoginType {
+            perms,
+            roles: HashMap::new(),
+        };
+        let admin_perms = interface
+            .get_permission_list_with_type(1001, "admin")
+            .await
+            .unwrap();
+        let user_perms = interface
+            .get_permission_list_with_type(1001, "user")
+            .await
+            .unwrap();
+        assert_ne!(admin_perms, user_perms, "不同 login_type 应返回不同权限");
+        assert_eq!(admin_perms, vec!["admin:*"]);
+        assert_eq!(user_perms, vec!["user:*"]);
+    }
+
+    /// R-003: with_login_type builder 设置 login_type 字段。
+    ///
+    /// 覆盖 spec login-type-multi-account R-003 验收 case 1。
+    #[tokio::test]
+    #[serial]
+    async fn with_login_type_builder_sets_login_type() {
+        let logic = make_logic(3600, 86400, false, "uuid", true, true);
+        assert_eq!(
+            logic.login_type, "default",
+            "默认 login_type 应为 'default'"
+        );
+        let logic2 = make_logic(3600, 86400, false, "uuid", true, true).with_login_type("admin");
+        assert_eq!(
+            logic2.login_type, "admin",
+            "with_login_type 应设置 login_type 为 'admin'"
+        );
+    }
+
+    /// R-003: with_login_type 链式调用不破坏其他 builder。
+    ///
+    /// 覆盖 spec login-type-multi-account R-003 验收 case 1（链式调用兼容性）。
+    #[tokio::test]
+    #[serial]
+    async fn with_login_type_chains_with_other_builders() {
+        let pm = Arc::new(BulwarkPluginManager::new());
+        let logic = make_logic(3600, 86400, false, "uuid", true, true)
+            .with_plugin_manager(pm)
+            .with_login_type("merchant");
+        assert_eq!(logic.login_type, "merchant");
+        // 验证 login 仍可工作（其他 builder 未被破坏）
+        let token = logic.login(1001).await.unwrap();
+        assert!(!token.is_empty());
     }
 }
