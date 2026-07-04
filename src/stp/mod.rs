@@ -224,6 +224,70 @@ pub trait BulwarkLogic: Send + Sync {
     /// - 未持有角色：`BulwarkError::NotRole`。
     async fn check_role(&self, role: &str) -> BulwarkResult<()>;
 
+    /// 校验 access_token 类型会话（0.5.0 新增，依据 spec annotation-macros P2 前置）。
+    ///
+    /// 语义别名：默认实现委托 `check_login`，已登录返回 `Ok(())`，未登录返回 `Err(NotLogin)`。
+    /// 业务方可在子类 override 实现类型区分（如校验 token 是否为 access_token 类型）。
+    ///
+    /// # 返回
+    /// - `Ok(())`: 当前会话 token 有效（已登录）。
+    ///
+    /// # 错误
+    /// - 未登录：`BulwarkError::NotLogin`（`throw_on_not_login=false` 时由本方法显式抛出；
+    ///   `throw_on_not_login=true` 时由 `check_login` 透传 `Session` 错误）。
+    async fn check_access_token(&self) -> BulwarkResult<()> {
+        let valid = self.check_login().await?;
+        if valid {
+            Ok(())
+        } else {
+            Err(BulwarkError::NotLogin(
+                "access_token 无效或未登录".to_string(),
+            ))
+        }
+    }
+
+    /// 校验 client_token 类型会话（0.5.0 新增，依据 spec annotation-macros P2 前置）。
+    ///
+    /// 语义别名：默认实现委托 `check_login`，已登录返回 `Ok(())`，未登录返回 `Err(NotLogin)`。
+    /// 业务方可在子类 override 实现类型区分（如校验 token 是否为 client_token 类型）。
+    ///
+    /// # 返回
+    /// - `Ok(())`: 当前会话 token 有效（已登录）。
+    ///
+    /// # 错误
+    /// - 未登录：`BulwarkError::NotLogin`。
+    async fn check_client_token(&self) -> BulwarkResult<()> {
+        let valid = self.check_login().await?;
+        if valid {
+            Ok(())
+        } else {
+            Err(BulwarkError::NotLogin(
+                "client_token 无效或未登录".to_string(),
+            ))
+        }
+    }
+
+    /// 校验 temp_token 类型会话（0.5.0 新增，依据 spec annotation-macros P2 前置）。
+    ///
+    /// 语义别名：默认实现委托 `check_login`，已登录返回 `Ok(())`，未登录返回 `Err(NotLogin)`。
+    /// 业务方可在子类 override 实现类型区分（如校验 token 是否为 temp_token 类型）。
+    ///
+    /// # 返回
+    /// - `Ok(())`: 当前会话 token 有效（已登录）。
+    ///
+    /// # 错误
+    /// - 未登录：`BulwarkError::NotLogin`。
+    async fn check_temp_token(&self) -> BulwarkResult<()> {
+        let valid = self.check_login().await?;
+        if valid {
+            Ok(())
+        } else {
+            Err(BulwarkError::NotLogin(
+                "temp_token 无效或未登录".to_string(),
+            ))
+        }
+    }
+
     /// 检查二级认证（MFA）状态（0.3.0 新增，依据 spec annotation-handling）。
     ///
     /// 默认实现返回 `Ok(())`（未启用 MFA，向后兼容 0.2.x）。
@@ -1338,6 +1402,54 @@ impl BulwarkUtil {
             .await
     }
 
+    /// 校验 access_token 类型会话（0.5.0 新增，依据 spec annotation-macros P2 前置）。
+    ///
+    /// 委托 `BulwarkLogic::check_access_token()`，默认实现委托 `check_login`。
+    ///
+    /// # 返回
+    /// - `Ok(())`: 当前会话 token 有效（已登录）。
+    ///
+    /// # 错误
+    /// - `BulwarkManager` 未初始化：`BulwarkError::Session`。
+    /// - 未登录：`BulwarkError::NotLogin`。
+    pub async fn check_access_token() -> BulwarkResult<()> {
+        crate::manager::BulwarkManager::logic()?
+            .check_access_token()
+            .await
+    }
+
+    /// 校验 client_token 类型会话（0.5.0 新增，依据 spec annotation-macros P2 前置）。
+    ///
+    /// 委托 `BulwarkLogic::check_client_token()`，默认实现委托 `check_login`。
+    ///
+    /// # 返回
+    /// - `Ok(())`: 当前会话 token 有效（已登录）。
+    ///
+    /// # 错误
+    /// - `BulwarkManager` 未初始化：`BulwarkError::Session`。
+    /// - 未登录：`BulwarkError::NotLogin`。
+    pub async fn check_client_token() -> BulwarkResult<()> {
+        crate::manager::BulwarkManager::logic()?
+            .check_client_token()
+            .await
+    }
+
+    /// 校验 temp_token 类型会话（0.5.0 新增，依据 spec annotation-macros P2 前置）。
+    ///
+    /// 委托 `BulwarkLogic::check_temp_token()`，默认实现委托 `check_login`。
+    ///
+    /// # 返回
+    /// - `Ok(())`: 当前会话 token 有效（已登录）。
+    ///
+    /// # 错误
+    /// - `BulwarkManager` 未初始化：`BulwarkError::Session`。
+    /// - 未登录：`BulwarkError::NotLogin`。
+    pub async fn check_temp_token() -> BulwarkResult<()> {
+        crate::manager::BulwarkManager::logic()?
+            .check_temp_token()
+            .await
+    }
+
     /// 检查二级认证（MFA）状态（0.3.0 新增，依据 spec annotation-handling）。
     ///
     /// 委托 `BulwarkLogic::check_safe()`，默认实现返回 `Ok(())`（未启用 MFA）。
@@ -1859,6 +1971,67 @@ mod tests {
         with_current_token(token, async {
             let valid = logic.check_login().await.unwrap();
             assert!(!valid, "过期 token 应返回 false");
+        })
+        .await;
+    }
+
+    // ------------------------------------------------------------------------
+    // v0.5.0 新增: token 类型专用校验方法（依据 spec annotation-macros P2 前置）
+    // ------------------------------------------------------------------------
+
+    /// 验证 `check_access_token` 委托 `check_login`，已登录时返回 `Ok(())`。
+    ///
+    /// 依据 tasks.md T151。语义：access_token 类型校验入口，默认实现委托 check_login。
+    #[tokio::test]
+    async fn check_access_token_delegates_to_check_login() {
+        let logic = Arc::new(make_logic(3600, 86400, false, "uuid", true, true));
+        let token = logic.login(1001).await.unwrap();
+
+        with_current_token(token, async {
+            let result = logic.check_access_token().await;
+            assert!(
+                result.is_ok(),
+                "已登录时 check_access_token 应返回 Ok，实际: {:?}",
+                result
+            );
+        })
+        .await;
+    }
+
+    /// 验证 `check_client_token` 委托 `check_login`，已登录时返回 `Ok(())`。
+    ///
+    /// 依据 tasks.md T151。语义：client_token 类型校验入口，默认实现委托 check_login。
+    #[tokio::test]
+    async fn check_client_token_delegates_to_check_login() {
+        let logic = Arc::new(make_logic(3600, 86400, false, "uuid", true, true));
+        let token = logic.login(1001).await.unwrap();
+
+        with_current_token(token, async {
+            let result = logic.check_client_token().await;
+            assert!(
+                result.is_ok(),
+                "已登录时 check_client_token 应返回 Ok，实际: {:?}",
+                result
+            );
+        })
+        .await;
+    }
+
+    /// 验证 `check_temp_token` 委托 `check_login`，已登录时返回 `Ok(())`。
+    ///
+    /// 依据 tasks.md T151。语义：temp_token 类型校验入口，默认实现委托 check_login。
+    #[tokio::test]
+    async fn check_temp_token_delegates_to_check_login() {
+        let logic = Arc::new(make_logic(3600, 86400, false, "uuid", true, true));
+        let token = logic.login(1001).await.unwrap();
+
+        with_current_token(token, async {
+            let result = logic.check_temp_token().await;
+            assert!(
+                result.is_ok(),
+                "已登录时 check_temp_token 应返回 Ok，实际: {:?}",
+                result
+            );
         })
         .await;
     }
