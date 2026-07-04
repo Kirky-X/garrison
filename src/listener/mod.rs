@@ -86,8 +86,9 @@ pub enum BulwarkEvent {
     },
     /// Token 主动吊销事件（v0.4.2 新增，依据 spec listener-events-extend R-001）。
     ///
-    /// **注意**：当前未集成 broadcast，因为 `revoke_token` 方法尚未实现。
-    /// 待该方法实现后在对应路径补充广播（TODO: T-Phase11-TokenRevoke）。
+    /// 在 `BulwarkLogic::revoke_token` 调用时广播（携带被吊销的 token）。
+    /// 与 `Logout` 事件的区别：`revoke_token` 语义为"token 失效"（如 OAuth2 token revocation），
+    /// `Logout` 语义为"用户主动登出"（携带 login_id+token）。
     TokenRevoke {
         /// 被吊销的 token。
         token: String,
@@ -140,8 +141,9 @@ pub enum BulwarkEvent {
     },
     /// 配置热重载事件（v0.4.2 新增，依据 spec listener-events-extend R-001）。
     ///
-    /// **注意**：当前未集成 broadcast，因为 `ConfigLoader` 无 reload 方法。
-    /// 待该方法实现后在对应路径补充广播（TODO: T-Phase11-ConfigReload）。
+    /// **注意**：当前未集成 broadcast，因为 `ConfigLoader` trait 未定义 `reload` 方法。
+    /// v0.5.0+ 实现 `ConfigLoader::reload` + 全局 `BulwarkManager::update_config` 后
+    /// 在对应路径补充广播（依据 spec listener-events-extend Out of Scope）。
     ConfigReload {
         /// 重载原因。
         reason: String,

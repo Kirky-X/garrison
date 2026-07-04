@@ -17,7 +17,7 @@ use std::time::Duration;
 /// - `expire` 重置键的过期时间
 /// - `set_permanent` 存储永久键（无 TTL，默认实现委托 `set(key, value, 0)`）
 /// - `get_timeout` 查询剩余 TTL（默认返回 `NotImplemented`，需后端重写）
-/// - `keys` 按 glob pattern 扫描 key（默认返回 `NotImplemented`，需后端重写）
+/// - `keys` 按 glob pattern 扫描 key（默认返回 `NotImplemented`；`MockDao` 已实现；`BulwarkDaoOxcache` 因 oxcache 0.3 限制待 v0.5.0+ 实现）
 /// - `rename` 重命名 key（默认 get→set→delete 三步，非原子）
 #[async_trait]
 pub trait BulwarkDao: Send + Sync {
@@ -113,13 +113,18 @@ pub trait BulwarkDao: Send + Sync {
     ///
     /// # 性能警告
     /// - 大规模 key 场景下性能差（需全量扫描 + 过滤）
-    /// - `BulwarkDaoOxcache` 当前返回 `NotImplemented`（oxcache 0.3 不支持 key scan，待 v0.5.0+ 升级）
+    /// - `BulwarkDaoOxcache` 当前不重写此方法（走默认 `NotImplemented`）：
+    ///   oxcache 0.3 的 `CacheReader`/`CacheBackend` trait 未暴露 iter/keys/scan API，
+    ///   `Cache.backend` 字段为 `pub(crate)`，外部无法访问底层 DashMap。
+    ///   待 v0.5.0+ oxcache 升级暴露 iter API 后实现。
+    /// - 业务影响：`ApiKeyHandler::list_by_namespace` 在使用 `BulwarkDaoOxcache` 时
+    ///   返回 `NotImplemented`（生产可用性受限，业务方需自行维护 key 索引或使用 `MockDao` 测试）。
     ///
     /// # 默认实现
     /// 返回 `BulwarkError::NotImplemented`。
     async fn keys(&self, _pattern: &str) -> BulwarkResult<Vec<String>> {
         Err(BulwarkError::NotImplemented(format!(
-            "keys 未实现：{} 后端不支持 key scan",
+            "keys 未实现：{} 后端不支持 key scan（v0.5.0+ oxcache 升级后实现）",
             std::any::type_name::<Self>()
         )))
     }
