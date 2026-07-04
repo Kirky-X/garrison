@@ -63,6 +63,53 @@ impl BulwarkDao for MockDao {
         self.data.lock().await.remove(key);
         Ok(())
     }
+
+    /// v0.4.2: keys 实现以支持 `ApiKeyHandler::verify` 扫描新格式 key
+    /// `bulwark:apikey:*:<key>`（依据 spec protocol-apikey-namespace）。
+    async fn keys(&self, pattern: &str) -> BulwarkResult<Vec<String>> {
+        let data = self.data.lock().await;
+        let mut result = Vec::new();
+        for key in data.keys() {
+            if glob_match(pattern, key) {
+                result.push(key.clone());
+            }
+        }
+        Ok(result)
+    }
+}
+
+/// 简单 glob 匹配函数（支持 `*` 和 `?`）。
+///
+/// 复制自 `src/dao/mod.rs::tests::glob_match` + `tests/protocol_apikey_edge_cases.rs`
+/// （pub(crate) 限定，集成测试与 examples 无法访问）。
+fn glob_match(pattern: &str, text: &str) -> bool {
+    let pattern: Vec<char> = pattern.chars().collect();
+    let text: Vec<char> = text.chars().collect();
+    let mut p = 0;
+    let mut t = 0;
+    let mut star_p: Option<usize> = None;
+    let mut star_t = 0;
+
+    while t < text.len() {
+        if p < pattern.len() && (pattern[p] == '?' || pattern[p] == text[t]) {
+            p += 1;
+            t += 1;
+        } else if p < pattern.len() && pattern[p] == '*' {
+            star_p = Some(p);
+            star_t = t;
+            p += 1;
+        } else if let Some(sp) = star_p {
+            p = sp + 1;
+            star_t += 1;
+            t = star_t;
+        } else {
+            return false;
+        }
+    }
+    while p < pattern.len() && pattern[p] == '*' {
+        p += 1;
+    }
+    p == pattern.len()
 }
 
 /// 运行 API Key 管理示例。

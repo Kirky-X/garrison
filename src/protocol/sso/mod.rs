@@ -100,10 +100,11 @@ impl SsoClient {
         Ok(ticket)
     }
 
-    /// 校验 SSO ticket（依据 spec protocol-sso）。
+    /// 校验 SSO ticket（依据 spec protocol-sso + protocol-sso-toctou）。
     ///
-    /// 校验逻辑：(1) 票据存在；(2) 存储的 `client_id` 与传入 `client_id` 相等；
-    /// (3) 票据为一次性，校验成功后立即从 dao 删除。
+    /// 校验逻辑：
+    /// 1. `get` 读取票据（不删除），校验 `client_id` 是否匹配；
+    /// 2. `client_id` 匹配后，`get_and_delete` 原子消费票据（消除 TOCTOU）。
     ///
     /// # 参数
     /// - `ticket`: 票据字符串。
@@ -111,32 +112,48 @@ impl SsoClient {
     ///
     /// # 返回
     /// - `Ok(login_id)`: 校验成功。
-    /// - `Err(BulwarkError::InvalidToken)`: 票据不存在、已过期或 client_id 不匹配。
+    /// - `Err(BulwarkError::InvalidToken)`: 票据不存在、已过期、client_id 不匹配、或被并发消费。
+    ///
+    /// # client_id 不匹配时不消费票据
+    ///
+    /// 与"防爆破"设计相反，本实现优先用户友好：错误 `client_id` 不删除票据，
+    /// 允许正确 `client_id` 后续重试。适用于客户端配置错误、用户输错等场景。
     ///
     /// # 原子性保证（v0.4.2 修复）
     ///
-    /// 使用 `BulwarkDao::get_and_delete` 原子操作消费 ticket，消除 TOCTOU 竞态。
-    /// 并发调用同一 ticket 时仅一个返回 `Ok`，其他返回 `InvalidToken`。
-    /// 依据 spec protocol-sso-toctou R-002。
+    /// `client_id` 校验通过后使用 `BulwarkDao::get_and_delete` 原子消费票据，
+    /// 消除 TOCTOU 竞态。并发调用同一 ticket（同 client_id）仅一个返回 `Ok`，
+    /// 其他返回 `InvalidToken`（"已被并发消费"）。依据 spec protocol-sso-toctou R-002。
     pub async fn validate_ticket(&self, ticket: &str, client_id: i64) -> BulwarkResult<i64> {
         let key = format!("bulwark:sso:ticket:{}", ticket);
-        // v0.4.2: 使用原子 get_and_delete 消除 TOCTOU 竞态（依据 spec protocol-sso-toctou R-002）
+        // 步骤 1: 非原子 get，用于校验 client_id（不删除票据）
         let value = self
             .dao
-            .get_and_delete(&key)
+            .get(&key)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("SSO ticket 原子消费失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Dao(format!("SSO ticket 读取失败: {}", e)))?;
         let value = value
             .ok_or_else(|| BulwarkError::InvalidToken("SSO 票据不存在或已过期".to_string()))?;
         let data: SsoTicketData = serde_json::from_str(&value)
             .map_err(|e| BulwarkError::Internal(format!("反序列化 SSO ticket 失败: {}", e)))?;
         if data.client_id != client_id {
-            // client_id 不匹配属于认证失败（票据被错误方持有），使用 InvalidToken 而非 Config。
-            // 注意：ticket 已被 get_and_delete 消费，即使 client_id 不匹配也不重放（防爆破）。
+            // client_id 不匹配：不消费票据，允许正确 client_id 后续重试
             return Err(BulwarkError::InvalidToken(format!(
                 "SSO client_id 不匹配: 期望 {}, 实际 {}",
                 data.client_id, client_id
             )));
+        }
+        // 步骤 2: 原子 get_and_delete 消费票据（消除 TOCTOU 竞态）
+        // 并发场景：多个同 client_id 请求都通过步骤 1，但仅一个 get_and_delete 返回 Some
+        let consumed = self
+            .dao
+            .get_and_delete(&key)
+            .await
+            .map_err(|e| BulwarkError::Dao(format!("SSO ticket 原子消费失败: {}", e)))?;
+        if consumed.is_none() {
+            return Err(BulwarkError::InvalidToken(
+                "SSO 票据已被并发消费".to_string(),
+            ));
         }
         Ok(data.login_id)
     }
