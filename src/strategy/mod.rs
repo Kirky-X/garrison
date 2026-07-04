@@ -29,11 +29,20 @@ use std::sync::Arc;
 
 /// 防火墙安全钩子模块（0.3.0 新增）。
 pub mod hooks;
+/// 策略注册表模块（v0.4.2 新增，依据 spec strategy-registry）。
+pub mod registry;
 
 // Re-export 核心 trait 与类型以便外部使用
 pub use hooks::{
     BulwarkFirewallCheckHookDefault, LoginContext as FirewallLoginContext, BRUTE_FORCE_THRESHOLD,
     BRUTE_FORCE_WINDOW, LOGIN_FREQUENCY_THRESHOLD, LOGIN_FREQUENCY_WINDOW,
+};
+// Re-export 策略注册表的 6 个 trait + 默认实现 + Strategy 注册表
+// 注意：新 FirewallStrategy 与现有 BulwarkFirewallStrategy 名称不同，可直接 re-export 共存
+pub use registry::{
+    DefaultFirewallStrategy, DefaultLoginHandler, DefaultLogoutHandler, DefaultPermissionHandler,
+    DefaultSessionCreator, DefaultTokenGenerator, FirewallStrategy, LoginHandler, LogoutHandler,
+    PermissionHandler, SessionCreator, Strategy, TokenGenerator,
 };
 
 // ============================================================================

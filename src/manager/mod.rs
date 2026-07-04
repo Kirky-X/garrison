@@ -39,7 +39,7 @@ use crate::listener::BulwarkListenerManager;
 use crate::plugin::BulwarkPluginManager;
 use crate::session::BulwarkSession;
 use crate::stp::{BulwarkInterface, BulwarkLogic, BulwarkLogicDefault};
-use crate::strategy::{BulwarkFirewallStrategy, BulwarkFirewallStrategyDefault};
+use crate::strategy::{BulwarkFirewallStrategy, BulwarkFirewallStrategyDefault, Strategy};
 use once_cell::sync::Lazy;
 use parking_lot::RwLock;
 use std::sync::Arc;
@@ -56,6 +56,11 @@ use std::sync::Arc;
 pub struct BulwarkManager {
     /// 全局 BulwarkLogic 引用（RwLock 支持测试时重复 init 与 reset）。
     logic: RwLock<Option<Arc<dyn BulwarkLogic>>>,
+    /// 全局 Strategy 注册表引用（v0.4.2 新增，依据 spec strategy-registry）。
+    ///
+    /// 外层 `RwLock` 管理 Option（初始化/重置），内层 `Arc<RwLock<Strategy>>`
+    /// 允许运行时通过 `strategy.write().register_*()` 替换策略。
+    strategy: RwLock<Option<Arc<RwLock<Strategy>>>>,
 }
 
 impl BulwarkManager {
@@ -63,6 +68,7 @@ impl BulwarkManager {
     fn new() -> Self {
         Self {
             logic: RwLock::new(None),
+            strategy: RwLock::new(None),
         }
     }
 
@@ -186,7 +192,10 @@ impl BulwarkManager {
         };
 
         // 7. 覆盖式更新全局单例（允许重复 init，便于测试）
+        // v0.4.2：同时构造 Strategy 注册表（依据 spec strategy-registry R-003）
+        let strategy = Arc::new(RwLock::new(Strategy::new(logic.clone())));
         *BULWARK_MANAGER.logic.write() = Some(logic);
+        *BULWARK_MANAGER.strategy.write() = Some(strategy);
 
         Ok(())
     }
@@ -206,6 +215,39 @@ impl BulwarkManager {
             .ok_or_else(|| BulwarkError::Session("BulwarkManager 未初始化".to_string()))
     }
 
+    /// 获取全局 `Strategy` 注册表引用（v0.4.2 新增，依据 spec strategy-registry R-003）。
+    ///
+    /// 返回 `Arc<RwLock<Strategy>>`，业务方可通过 `strategy.write().register_*()`
+    /// 运行时替换策略，替换后立即生效（下次调用使用新策略）。
+    ///
+    /// # 返回
+    /// 已初始化时返回 `Arc<RwLock<Strategy>>`。
+    ///
+    /// # 错误
+    /// - 若未初始化，返回 `BulwarkError::Session("BulwarkManager 未初始化")`。
+    pub fn strategy() -> BulwarkResult<Arc<RwLock<Strategy>>> {
+        BULWARK_MANAGER
+            .strategy
+            .read()
+            .clone()
+            .ok_or_else(|| BulwarkError::Session("BulwarkManager 未初始化".to_string()))
+    }
+
+    /// 替换全局 `Strategy` 注册表（v0.4.2 新增，依据 spec strategy-registry R-003）。
+    ///
+    /// 用于运行时或测试时整体替换 Strategy 实例（如注入预配置的自定义策略集合）。
+    /// 替换后立即生效，旧 Strategy 被 drop。
+    ///
+    /// # 参数
+    /// - `strategy`: 新的 `Arc<RwLock<Strategy>>` 实例。
+    ///
+    /// # 返回
+    /// 成功返回 `Ok(())`。
+    pub fn with_strategy(strategy: Arc<RwLock<Strategy>>) -> BulwarkResult<()> {
+        *BULWARK_MANAGER.strategy.write() = Some(strategy);
+        Ok(())
+    }
+
     /// 检查管理器是否已初始化。
     ///
     /// # 返回
@@ -217,10 +259,12 @@ impl BulwarkManager {
 
     /// 重置管理器（仅供测试用，业务代码不应调用）。
     ///
-    /// 清空全局 `BulwarkLogic` 引用，使后续 `BulwarkUtil::login(id)` 等返回未初始化错误。
+    /// 清空全局 `BulwarkLogic` 与 `Strategy` 引用，
+    /// 使后续 `BulwarkUtil::login(id)` 等返回未初始化错误。
     #[cfg(test)]
     pub fn reset_for_test() {
         *BULWARK_MANAGER.logic.write() = None;
+        *BULWARK_MANAGER.strategy.write() = None;
     }
 }
 
@@ -915,5 +959,118 @@ mod tests {
         dao.delete("key1").await.unwrap();
         let got = dao.get("key1").await.unwrap();
         assert!(got.is_none());
+    }
+
+    // ------------------------------------------------------------------------
+    // v0.4.2 新增：Strategy 注册表集成测试（依据 spec strategy-registry R-003）
+    // ------------------------------------------------------------------------
+
+    /// 验证未初始化时 `BulwarkManager::strategy()` 返回 Session 错误。
+    #[tokio::test]
+    #[serial]
+    async fn strategy_returns_error_when_not_initialized() {
+        BulwarkManager::reset_for_test();
+        let result = BulwarkManager::strategy();
+        match result {
+            Err(BulwarkError::Session(ref msg)) if msg.contains("未初始化") => {},
+            other => panic!(
+                "应返回 'BulwarkManager 未初始化'，实际: {:?}",
+                other.map(|_| ())
+            ),
+        }
+    }
+
+    /// 验证 init 后 `strategy()` 返回 `Arc<RwLock<Strategy>>`。
+    #[tokio::test]
+    #[serial]
+    async fn strategy_available_after_init() {
+        BulwarkManager::reset_for_test();
+        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let config = Arc::new(make_config());
+        let interface: Arc<dyn BulwarkInterface> = Arc::new(MockInterface::new());
+        BulwarkManager::init(dao, config, interface).unwrap();
+
+        let strategy = BulwarkManager::strategy();
+        assert!(strategy.is_ok(), "init 后应能获取 strategy");
+
+        BulwarkManager::reset_for_test();
+    }
+
+    /// 验证 `with_strategy()` 整体替换 Strategy 注册表。
+    #[tokio::test]
+    #[serial]
+    async fn with_strategy_replaces_registry() {
+        use crate::strategy::LoginHandler;
+
+        BulwarkManager::reset_for_test();
+        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let config = Arc::new(make_config());
+        let interface: Arc<dyn BulwarkInterface> = Arc::new(MockInterface::new());
+        BulwarkManager::init(dao, config, interface).unwrap();
+
+        // 获取原 logic 并构造自定义 Strategy
+        let logic = BulwarkManager::logic().unwrap();
+        let custom_strategy = Arc::new(RwLock::new(Strategy::new(logic)));
+
+        // 注入自定义 LoginHandler
+        struct CustomLogin;
+        #[async_trait]
+        impl LoginHandler for CustomLogin {
+            async fn handle_login(&self, id: i64) -> BulwarkResult<String> {
+                Ok(format!("custom-{}", id))
+            }
+        }
+        custom_strategy
+            .write()
+            .register_login_handler(Arc::new(CustomLogin));
+
+        // with_strategy 替换
+        BulwarkManager::with_strategy(custom_strategy).unwrap();
+
+        // 验证替换后使用自定义策略
+        let strategy = BulwarkManager::strategy().unwrap();
+        let login_handler = strategy.read().login_handler().clone();
+        let token = login_handler.handle_login(1001).await.unwrap();
+        assert_eq!(token, "custom-1001", "with_strategy 后应使用自定义策略");
+
+        BulwarkManager::reset_for_test();
+    }
+
+    /// 验证运行时通过 `strategy().write().register_*()` 替换策略立即生效。
+    #[tokio::test]
+    #[serial]
+    async fn runtime_strategy_replacement_takes_effect_immediately() {
+        use crate::strategy::LoginHandler;
+
+        BulwarkManager::reset_for_test();
+        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let config = Arc::new(make_config());
+        let interface: Arc<dyn BulwarkInterface> = Arc::new(MockInterface::new());
+        BulwarkManager::init(dao, config, interface).unwrap();
+
+        // 替换前：默认策略生成 token（先 clone Arc 再 await，避免跨 await 持锁）
+        let strategy = BulwarkManager::strategy().unwrap();
+        let default_handler = strategy.read().login_handler().clone();
+        let default_token = default_handler.handle_login(1001).await.unwrap();
+        assert!(!default_token.is_empty());
+
+        // 运行时替换
+        struct CustomLogin;
+        #[async_trait]
+        impl LoginHandler for CustomLogin {
+            async fn handle_login(&self, id: i64) -> BulwarkResult<String> {
+                Ok(format!("runtime-{}", id))
+            }
+        }
+        strategy
+            .write()
+            .register_login_handler(Arc::new(CustomLogin));
+
+        // 替换后立即生效（先 clone Arc 再 await）
+        let custom_handler = strategy.read().login_handler().clone();
+        let token = custom_handler.handle_login(1001).await.unwrap();
+        assert_eq!(token, "runtime-1001", "运行时替换策略后应立即生效");
+
+        BulwarkManager::reset_for_test();
     }
 }
