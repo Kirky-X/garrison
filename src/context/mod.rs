@@ -16,6 +16,20 @@
 //! - `AxumRequest` 包装 `&http::Request<axum::body::Body>`
 //! - `AxumResponse` 持有 `HeaderMap + StatusCode`，`to_response()` 转换为 axum Response
 //! - `AxumStorage` 用 `HashMap<String, String>`
+//!
+//! ## actix-web 适配器
+//!
+//! `feature = "web-actix"` 时提供 `ActixContext` 实现：
+//! - `ActixRequest` 包装 `&actix_web::HttpRequest`
+//! - `ActixResponse` 持有 `HeaderMap + StatusCode`
+//! - `ActixStorage` 用 `HashMap<String, String>`
+//!
+//! ## warp 适配器
+//!
+//! `feature = "web-warp"` 时提供 `WarpContext` 实现：
+//! - `WarpRequest` 持有 `warp::http::HeaderMap` + path + method（owned）
+//! - `WarpResponse` 持有 `HeaderMap + StatusCode`
+//! - `WarpStorage` 用 `HashMap<String, String>`
 
 use crate::error::BulwarkResult;
 
@@ -161,6 +175,26 @@ pub mod axum_adapter;
 
 #[cfg(feature = "web-axum")]
 pub use axum_adapter::{AxumContext, AxumRequest, AxumResponse, AxumStorage};
+
+// ============================================================================
+// actix-web 适配器（feature = "web-actix"）
+// ============================================================================
+
+#[cfg(feature = "web-actix")]
+pub mod actix_adapter;
+
+#[cfg(feature = "web-actix")]
+pub use actix_adapter::{ActixContext, ActixRequest, ActixResponse, ActixStorage};
+
+// ============================================================================
+// warp 适配器（feature = "web-warp"）
+// ============================================================================
+
+#[cfg(feature = "web-warp")]
+pub mod warp_adapter;
+
+#[cfg(feature = "web-warp")]
+pub use warp_adapter::{WarpContext, WarpRequest, WarpResponse, WarpStorage};
 
 // ============================================================================
 // 测试

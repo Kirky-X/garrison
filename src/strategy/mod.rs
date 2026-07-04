@@ -474,6 +474,7 @@ impl BulwarkFirewallStrategyDefault {
     /// 广播 FirewallBlock 事件（v0.4.2 新增，依据 spec listener-events-extend R-001）。
     ///
     /// 仅在注入 `listener_manager` 且启用 `listener` feature 时广播，否则为 no-op。
+    #[cfg_attr(not(feature = "listener"), allow(unused_variables))]
     fn broadcast_firewall_block(&self, login_id: i64, e: &BulwarkError) {
         #[cfg(feature = "listener")]
         if let Some(lm) = &self.listener_manager {
