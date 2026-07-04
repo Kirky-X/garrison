@@ -281,6 +281,37 @@ pub trait BulwarkLogic: Send + Sync {
         ))
     }
 
+    /// 密码登录：校验密码后签发 token（0.4.2 新增，依据 spec auth-password-login）。
+    ///
+    /// 内部流程：1) UserRepository::find_by_username 查询用户
+    /// 2) PasswordHasher::verify 校验密码 3) 调用 [`login`](Self::login) 签发 token。
+    ///
+    /// # 参数
+    /// - `login_id`: 登录主体标识（i64，作为 username 字符串查询 UserRepository）。
+    /// - `password`: 明文密码（仅校验时临时持有，不存储）。
+    ///
+    /// # 返回
+    /// - `Ok(token)`: 密码校验通过，返回新签发的 token 字符串。
+    ///
+    /// # 错误
+    /// - 未启用 `secure-password` + `db-sqlite` feature：`BulwarkError::NotImplemented`。
+    /// - 未注入 `password_hasher`：`BulwarkError::Config("password hasher not configured")`。
+    /// - 未注入 `user_repository`：`BulwarkError::Config("user repository not configured")`。
+    /// - 用户不存在 / 密码错误：`BulwarkError::InvalidParam("invalid password")`（不泄露具体原因，防止用户枚举）。
+    /// - 哈希格式不支持：`BulwarkError::InvalidParam("unsupported hash format")`。
+    /// - DAO 查询失败：透传 `BulwarkError::Dao`。
+    ///
+    /// # 安全约束
+    ///
+    /// 用户不存在与密码错误统一返回 `InvalidParam("invalid password")`，真实原因记录在
+    /// `tracing::warn!` 日志中（reason = "user_not_found" / "wrong_password"），
+    /// 防止攻击者通过返回值差异进行用户枚举。
+    async fn login_with_password(&self, _login_id: i64, _password: &str) -> BulwarkResult<String> {
+        Err(BulwarkError::NotImplemented(
+            "login_with_password 未实现：需启用 secure-password + db-sqlite feature".to_string(),
+        ))
+    }
+
     /// 获取当前 `BulwarkConfig` 引用（用于 token 提取、Cookie 配置等需要配置的场景）。
     ///
     /// # 返回
@@ -313,6 +344,12 @@ pub struct BulwarkLogicDefault {
     /// Prometheus 指标采集器（可选，注入后 login/check_login/check_permission/check_role emit 指标）。
     #[cfg(feature = "metrics-prometheus")]
     metrics: Option<Arc<crate::observability::BulwarkMetrics>>,
+    /// 密码哈希器（可选，注入后 login_with_password 委托此实现校验密码）。
+    #[cfg(all(feature = "secure-password", feature = "db-sqlite"))]
+    password_hasher: Option<Arc<dyn crate::secure::password::PasswordHasher>>,
+    /// 用户 Repository（可选，注入后 login_with_password 委托此实现查询用户）。
+    #[cfg(all(feature = "secure-password", feature = "db-sqlite"))]
+    user_repository: Option<Arc<dyn crate::dao::repository::UserRepository>>,
 }
 
 impl BulwarkLogicDefault {
@@ -341,6 +378,10 @@ impl BulwarkLogicDefault {
             permission_checker: None,
             #[cfg(feature = "metrics-prometheus")]
             metrics: None,
+            #[cfg(all(feature = "secure-password", feature = "db-sqlite"))]
+            password_hasher: None,
+            #[cfg(all(feature = "secure-password", feature = "db-sqlite"))]
+            user_repository: None,
         }
     }
 
@@ -385,6 +426,32 @@ impl BulwarkLogicDefault {
     #[cfg(feature = "metrics-prometheus")]
     pub fn with_metrics(mut self, metrics: Arc<crate::observability::BulwarkMetrics>) -> Self {
         self.metrics = Some(metrics);
+        self
+    }
+
+    /// 注入密码哈希器（builder 模式，需启用 `secure-password` + `db-sqlite` feature）。
+    ///
+    /// 注入后 `login_with_password` 委托此 `PasswordHasher::verify` 校验密码哈希。
+    /// 未注入时 `login_with_password` 返回 `BulwarkError::Config("password hasher not configured")`。
+    #[cfg(all(feature = "secure-password", feature = "db-sqlite"))]
+    pub fn with_password_hasher(
+        mut self,
+        hasher: Arc<dyn crate::secure::password::PasswordHasher>,
+    ) -> Self {
+        self.password_hasher = Some(hasher);
+        self
+    }
+
+    /// 注入用户 Repository（builder 模式，需启用 `secure-password` + `db-sqlite` feature）。
+    ///
+    /// 注入后 `login_with_password` 委托此 `UserRepository::find_by_username` 查询用户。
+    /// 未注入时 `login_with_password` 返回 `BulwarkError::Config("user repository not configured")`。
+    #[cfg(all(feature = "secure-password", feature = "db-sqlite"))]
+    pub fn with_user_repository(
+        mut self,
+        repo: Arc<dyn crate::dao::repository::UserRepository>,
+    ) -> Self {
+        self.user_repository = Some(repo);
         self
     }
 
@@ -675,6 +742,64 @@ impl BulwarkLogic for BulwarkLogicDefault {
 
     fn config(&self) -> Arc<BulwarkConfig> {
         Arc::clone(&self.config)
+    }
+
+    /// 密码登录实现：校验密码后调用 [`login`](Self::login) 签发 token。
+    ///
+    /// 依据 spec auth-password-login R-002：1) UserRepository 查询 2) PasswordHasher 校验 3) login 签发。
+    /// 安全约束：用户不存在与密码错误统一返回 `InvalidParam("invalid password")`，真实原因记录在 tracing 日志。
+    #[cfg(all(feature = "secure-password", feature = "db-sqlite"))]
+    async fn login_with_password(&self, login_id: i64, password: &str) -> BulwarkResult<String> {
+        let hasher = self
+            .password_hasher
+            .as_ref()
+            .ok_or_else(|| BulwarkError::Config("password hasher not configured".to_string()))?;
+        let repo = self
+            .user_repository
+            .as_ref()
+            .ok_or_else(|| BulwarkError::Config("user repository not configured".to_string()))?;
+
+        // 1. 查询用户（login_id 转字符串作为 username 查询）
+        let username = login_id.to_string();
+        let user = repo
+            .find_by_username("default", &username)
+            .await
+            .map_err(|e| BulwarkError::Dao(format!("login_with_password 查询用户失败: {}", e)))?;
+
+        let user = match user {
+            Some(u) => u,
+            None => {
+                tracing::warn!(
+                    login_id = login_id,
+                    reason = "user_not_found",
+                    "login_with_password 失败"
+                );
+                return Err(BulwarkError::InvalidParam("invalid password".to_string()));
+            },
+        };
+
+        // 2. 校验密码（哈希格式不支持返回 "unsupported hash format"，可泄露）
+        let verified = hasher.verify(password, &user.password_hash).map_err(|e| {
+            tracing::warn!(
+                login_id = login_id,
+                reason = "hash_format_error",
+                error = %e,
+                "login_with_password 密码哈希格式不支持"
+            );
+            BulwarkError::InvalidParam("unsupported hash format".to_string())
+        })?;
+
+        if !verified {
+            tracing::warn!(
+                login_id = login_id,
+                reason = "wrong_password",
+                "login_with_password 失败"
+            );
+            return Err(BulwarkError::InvalidParam("invalid password".to_string()));
+        }
+
+        // 3. 调用 login 签发 token（触发 plugin/listener auto-wire）
+        self.login(login_id).await
     }
 }
 
@@ -2303,6 +2428,190 @@ mod tests {
         let ts = logic.session.get_token_session(&token).await.unwrap();
         assert!(ts.is_some(), "login_by_token 后应建立会话");
         assert_eq!(ts.unwrap().login_id, 8008);
+    }
+
+    // ------------------------------------------------------------------------
+    // 0.4.2 Phase 5: login_with_password 测试（依据 spec auth-password-login）
+    // ------------------------------------------------------------------------
+
+    #[cfg(all(feature = "secure-password", feature = "db-sqlite"))]
+    use crate::dao::repository::{NewUser, UpdateUser, UserRepository, UserRow};
+    #[cfg(all(feature = "secure-password", feature = "db-sqlite"))]
+    use crate::secure::password::{Argon2Hasher, PasswordHasher};
+
+    /// 测试用 UserRepository mock，用 HashMap 存储 UserRow，按 username 索引。
+    #[cfg(all(feature = "secure-password", feature = "db-sqlite"))]
+    struct MockUserRepository {
+        users: Mutex<HashMap<String, UserRow>>,
+    }
+
+    #[cfg(all(feature = "secure-password", feature = "db-sqlite"))]
+    impl MockUserRepository {
+        fn new() -> Self {
+            Self {
+                users: Mutex::new(HashMap::new()),
+            }
+        }
+        fn insert(&self, user: UserRow) {
+            self.users.lock().insert(user.username.clone(), user);
+        }
+    }
+
+    #[cfg(all(feature = "secure-password", feature = "db-sqlite"))]
+    #[async_trait]
+    impl UserRepository for MockUserRepository {
+        async fn find_by_id(&self, _tenant_id: &str, id: &str) -> BulwarkResult<Option<UserRow>> {
+            Ok(self.users.lock().values().find(|u| u.id == id).cloned())
+        }
+        async fn find_by_username(
+            &self,
+            _tenant_id: &str,
+            username: &str,
+        ) -> BulwarkResult<Option<UserRow>> {
+            Ok(self.users.lock().get(username).cloned())
+        }
+        async fn create(&self, _tenant_id: &str, _user: NewUser) -> BulwarkResult<String> {
+            Err(BulwarkError::Internal(
+                "MockUserRepository::create not implemented".to_string(),
+            ))
+        }
+        async fn update(
+            &self,
+            _tenant_id: &str,
+            _id: &str,
+            _user: UpdateUser,
+        ) -> BulwarkResult<()> {
+            Ok(())
+        }
+        async fn delete(&self, _tenant_id: &str, _id: &str) -> BulwarkResult<()> {
+            Ok(())
+        }
+        async fn list(
+            &self,
+            _tenant_id: &str,
+            _offset: i64,
+            _limit: i64,
+        ) -> BulwarkResult<Vec<UserRow>> {
+            Ok(vec![])
+        }
+    }
+
+    /// 构造测试用 UserRow（username 与 login_id 字符串一致）。
+    #[cfg(all(feature = "secure-password", feature = "db-sqlite"))]
+    fn make_user_row(login_id: i64, password_hash: &str) -> UserRow {
+        UserRow {
+            id: format!("u-{}", login_id),
+            username: login_id.to_string(),
+            password_hash: password_hash.to_string(),
+            status: "active".to_string(),
+            tenant_id: "default".to_string(),
+            created_at: "2026-07-04T00:00:00Z".to_string(),
+            updated_at: "2026-07-04T00:00:00Z".to_string(),
+            last_login_at: None,
+        }
+    }
+
+    /// R-001: 正确密码返回 token。
+    ///
+    /// 覆盖 spec auth-password-login R-001 验收 case 1：
+    /// 注入 Argon2Hasher + MockUserRepository（含正确 hash）→ 调用 login_with_password → Ok(token)。
+    #[cfg(all(feature = "secure-password", feature = "db-sqlite"))]
+    #[tokio::test]
+    #[serial]
+    async fn login_with_password_correct_returns_token() {
+        let hasher: Arc<dyn PasswordHasher> = Arc::new(Argon2Hasher::default());
+        let hash = hasher.hash("correct-password").unwrap();
+
+        let mock_repo = MockUserRepository::new();
+        mock_repo.insert(make_user_row(1001, &hash));
+        let repo: Arc<dyn UserRepository> = Arc::new(mock_repo);
+
+        let logic = make_logic(3600, 86400, false, "uuid", true, true)
+            .with_password_hasher(hasher)
+            .with_user_repository(repo);
+
+        let result = logic.login_with_password(1001, "correct-password").await;
+        assert!(result.is_ok(), "正确密码应返回 Ok，实际: {:?}", result);
+        let token = result.unwrap();
+        assert!(!token.is_empty(), "token 应非空");
+    }
+
+    /// R-001: 错误密码返回 InvalidParam("invalid password")。
+    ///
+    /// 覆盖 spec auth-password-login R-001 验收 case 2。
+    #[cfg(all(feature = "secure-password", feature = "db-sqlite"))]
+    #[tokio::test]
+    #[serial]
+    async fn login_with_password_wrong_password_returns_invalid_param() {
+        let hasher: Arc<dyn PasswordHasher> = Arc::new(Argon2Hasher::default());
+        let hash = hasher.hash("correct-password").unwrap();
+
+        let mock_repo = MockUserRepository::new();
+        mock_repo.insert(make_user_row(1001, &hash));
+        let repo: Arc<dyn UserRepository> = Arc::new(mock_repo);
+
+        let logic = make_logic(3600, 86400, false, "uuid", true, true)
+            .with_password_hasher(hasher)
+            .with_user_repository(repo);
+
+        let result = logic.login_with_password(1001, "wrong-password").await;
+        assert!(
+            matches!(result, Err(BulwarkError::InvalidParam(ref msg)) if msg == "invalid password"),
+            "错误密码应返回 InvalidParam(\"invalid password\")，实际: {:?}",
+            result
+        );
+    }
+
+    /// R-001: 用户不存在返回 InvalidParam("invalid password")。
+    ///
+    /// 覆盖 spec auth-password-login R-001 验收 case 3。
+    /// 注：spec R-001 说"用户不存在返回 NotLogin"，但 Constraints 说"不泄露具体原因"。
+    /// 决策：遵循 Constraints 安全要求，统一返回 InvalidParam 防止用户枚举。
+    /// 真实原因记录在 tracing::warn! 日志中（reason = "user_not_found"）。
+    #[cfg(all(feature = "secure-password", feature = "db-sqlite"))]
+    #[tokio::test]
+    #[serial]
+    async fn login_with_password_user_not_found_returns_invalid_param() {
+        let hasher: Arc<dyn PasswordHasher> = Arc::new(Argon2Hasher::default());
+        let repo: Arc<dyn UserRepository> = Arc::new(MockUserRepository::new());
+        // 不插入任何用户 → find_by_username 返回 None
+
+        let logic = make_logic(3600, 86400, false, "uuid", true, true)
+            .with_password_hasher(hasher)
+            .with_user_repository(repo);
+
+        let result = logic.login_with_password(9999, "any-password").await;
+        assert!(
+            matches!(result, Err(BulwarkError::InvalidParam(ref msg)) if msg == "invalid password"),
+            "用户不存在应返回 InvalidParam(\"invalid password\")（不泄露 NotLogin），实际: {:?}",
+            result
+        );
+    }
+
+    /// R-001: 密码哈希格式不支持返回 InvalidParam。
+    ///
+    /// 覆盖 spec auth-password-login R-001 验收 case 4。
+    /// 注：此错误可泄露（不暴露用户是否存在），返回 "unsupported hash format"。
+    #[cfg(all(feature = "secure-password", feature = "db-sqlite"))]
+    #[tokio::test]
+    #[serial]
+    async fn login_with_password_unsupported_hash_format_returns_invalid_param() {
+        let hasher: Arc<dyn PasswordHasher> = Arc::new(Argon2Hasher::default());
+
+        let mock_repo = MockUserRepository::new();
+        mock_repo.insert(make_user_row(1001, "unsupported_hash_format"));
+        let repo: Arc<dyn UserRepository> = Arc::new(mock_repo);
+
+        let logic = make_logic(3600, 86400, false, "uuid", true, true)
+            .with_password_hasher(hasher)
+            .with_user_repository(repo);
+
+        let result = logic.login_with_password(1001, "any-password").await;
+        assert!(
+            matches!(result, Err(BulwarkError::InvalidParam(ref msg)) if msg == "unsupported hash format"),
+            "不支持的哈希格式应返回 InvalidParam(\"unsupported hash format\")，实际: {:?}",
+            result
+        );
     }
 
     // ------------------------------------------------------------------------
