@@ -251,8 +251,10 @@ pub use prelude::*;
 
 /// 过程宏注解模块（feature = "annotation-macros"）。
 ///
-/// 启用 `annotation-macros` feature 时，re-export `bulwark-macros` crate 的 3 个
-/// `#[proc_macro_attribute]`：`#[check_login]` / `#[check_permission]` / `#[check_role]`。
+/// 启用 `annotation-macros` feature 时，re-export `bulwark-macros` crate 的 6 个
+/// `#[proc_macro_attribute]`：
+/// - `#[check_login]` / `#[check_permission]` / `#[check_role]`（0.4.2）
+/// - `#[check_access_token]` / `#[check_client_token]` / `#[check_temp_token]`（0.5.0 P2）
 ///
 /// 宏将 async fn 包装为 wrapper，在 body 前插入 `BulwarkUtil::check_*()` 调用，
 /// 失败时返回 `axum::response::Response`（401/403）。
@@ -269,4 +271,7 @@ pub use prelude::*;
 /// }
 /// ```
 #[cfg(feature = "annotation-macros")]
-pub use bulwark_macros::{check_login, check_permission, check_role};
+pub use bulwark_macros::{
+    check_access_token, check_client_token, check_login, check_permission, check_role,
+    check_temp_token,
+};

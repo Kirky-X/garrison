@@ -19,8 +19,9 @@ use async_trait::async_trait;
 use axum::body::Body;
 use axum::http::StatusCode;
 use bulwark::{
-    check_login, check_permission, check_role, BulwarkConfig, BulwarkDao, BulwarkError,
-    BulwarkInterface, BulwarkManager, BulwarkUtil,
+    check_access_token, check_client_token, check_login, check_permission, check_role,
+    check_temp_token, BulwarkConfig, BulwarkDao, BulwarkError, BulwarkInterface, BulwarkManager,
+    BulwarkUtil,
 };
 use http_body_util::BodyExt;
 use parking_lot::Mutex;
@@ -61,6 +62,24 @@ async fn role_handler() -> &'static str {
 #[check_role("admin", "superadmin")]
 async fn role_and_handler() -> &'static str {
     "role_and_ok"
+}
+
+/// access_token 类型校验 handler（0.5.0 新增，依据 spec annotation-macros P2）。
+#[check_access_token]
+async fn access_token_handler() -> &'static str {
+    "access_token_ok"
+}
+
+/// client_token 类型校验 handler（0.5.0 新增，依据 spec annotation-macros P2）。
+#[check_client_token]
+async fn client_token_handler() -> &'static str {
+    "client_token_ok"
+}
+
+/// temp_token 类型校验 handler（0.5.0 新增，依据 spec annotation-macros P2）。
+#[check_temp_token]
+async fn temp_token_handler() -> &'static str {
+    "temp_token_ok"
 }
 
 // ============================================================================
@@ -397,6 +416,96 @@ async fn check_role_and_all_returns_200() {
     assert_eq!(response.status(), StatusCode::OK);
     let body = read_body(response).await;
     assert_eq!(body, "role_and_ok");
+}
+
+// ============================================================================
+// #[check_access_token] / #[check_client_token] / #[check_temp_token] 测试
+// ============================================================================
+
+/// `#[check_access_token]` 宏展开后调用 `BulwarkUtil::check_access_token`，无 token 时返回 401。
+///
+/// 依据 tasks.md T004。验证宏展开为 wrapper 调用 `check_access_token`，
+/// loose 模式下未登录返回 401（NotLogin → 401）。
+#[tokio::test]
+#[serial]
+async fn check_access_token_expands_to_wrapper() {
+    init_manager(make_config_loose(), &[], &[]);
+    // 不 login，直接以无效 token 调用 handler
+    let response = bulwark::stp::with_current_token("invalid-token".to_string(), async {
+        access_token_handler().await
+    })
+    .await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+/// `#[check_access_token]` 已登录时返回 200 + body。
+#[tokio::test]
+#[serial]
+async fn check_access_token_with_valid_token_returns_200() {
+    init_manager(make_config_strict(), &[], &[]);
+    let token = BulwarkUtil::login(1001).await.unwrap();
+
+    let response =
+        bulwark::stp::with_current_token(token, async { access_token_handler().await }).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = read_body(response).await;
+    assert_eq!(body, "access_token_ok");
+}
+
+/// `#[check_client_token]` 宏展开后调用 `BulwarkUtil::check_client_token`，无 token 时返回 401。
+///
+/// 依据 tasks.md T006。
+#[tokio::test]
+#[serial]
+async fn check_client_token_expands_to_wrapper() {
+    init_manager(make_config_loose(), &[], &[]);
+    let response = bulwark::stp::with_current_token("invalid-token".to_string(), async {
+        client_token_handler().await
+    })
+    .await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+/// `#[check_client_token]` 已登录时返回 200 + body。
+#[tokio::test]
+#[serial]
+async fn check_client_token_with_valid_token_returns_200() {
+    init_manager(make_config_strict(), &[], &[]);
+    let token = BulwarkUtil::login(1001).await.unwrap();
+
+    let response =
+        bulwark::stp::with_current_token(token, async { client_token_handler().await }).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = read_body(response).await;
+    assert_eq!(body, "client_token_ok");
+}
+
+/// `#[check_temp_token]` 宏展开后调用 `BulwarkUtil::check_temp_token`，无 token 时返回 401。
+///
+/// 依据 tasks.md T008。
+#[tokio::test]
+#[serial]
+async fn check_temp_token_expands_to_wrapper() {
+    init_manager(make_config_loose(), &[], &[]);
+    let response = bulwark::stp::with_current_token("invalid-token".to_string(), async {
+        temp_token_handler().await
+    })
+    .await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+/// `#[check_temp_token]` 已登录时返回 200 + body。
+#[tokio::test]
+#[serial]
+async fn check_temp_token_with_valid_token_returns_200() {
+    init_manager(make_config_strict(), &[], &[]);
+    let token = BulwarkUtil::login(1001).await.unwrap();
+
+    let response =
+        bulwark::stp::with_current_token(token, async { temp_token_handler().await }).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = read_body(response).await;
+    assert_eq!(body, "temp_token_ok");
 }
 
 // ============================================================================

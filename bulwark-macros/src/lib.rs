@@ -149,6 +149,51 @@ pub fn check_role(attr: TokenStream, item: TokenStream) -> TokenStream {
     expand_check_with_args("check_role", &roles, item_fn)
 }
 
+/// access_token 类型校验属性宏（0.5.0 新增，依据 spec annotation-macros P2）。
+///
+/// 标注在 async fn 上，编译期生成 wrapper 在 fn body 前插入
+/// `BulwarkUtil::check_access_token()` 调用。未登录请求返回 401。
+///
+/// # 限制
+///
+/// - 仅支持 `async fn`
+/// - 仅支持 axum handler
+///
+/// # 示例
+///
+/// ```ignore
+/// use bulwark::check_access_token;
+/// use axum::response::IntoResponse;
+///
+/// #[check_access_token]
+/// async fn handler() -> impl IntoResponse { "ok" }
+/// ```
+#[proc_macro_attribute]
+pub fn check_access_token(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    let item_fn = parse_macro_input!(item as ItemFn);
+    expand_check_no_args("check_access_token", item_fn)
+}
+
+/// client_token 类型校验属性宏（0.5.0 新增，依据 spec annotation-macros P2）。
+///
+/// 标注在 async fn 上，编译期生成 wrapper 在 fn body 前插入
+/// `BulwarkUtil::check_client_token()` 调用。未登录请求返回 401。
+#[proc_macro_attribute]
+pub fn check_client_token(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    let item_fn = parse_macro_input!(item as ItemFn);
+    expand_check_no_args("check_client_token", item_fn)
+}
+
+/// temp_token 类型校验属性宏（0.5.0 新增，依据 spec annotation-macros P2）。
+///
+/// 标注在 async fn 上，编译期生成 wrapper 在 fn body 前插入
+/// `BulwarkUtil::check_temp_token()` 调用。未登录请求返回 401。
+#[proc_macro_attribute]
+pub fn check_temp_token(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    let item_fn = parse_macro_input!(item as ItemFn);
+    expand_check_no_args("check_temp_token", item_fn)
+}
+
 // ============================================================================
 // 内部展开逻辑
 // ============================================================================
@@ -188,6 +233,24 @@ fn expand_check_login(item_fn: ItemFn) -> TokenStream {
             ::std::result::Result::Err(__bulwark_err) => {
                 return ::axum::response::IntoResponse::into_response(__bulwark_err);
             }
+        }
+    };
+    expand_wrapper(&item_fn, checks)
+}
+
+/// 展开 `#[check_access_token]` / `#[check_client_token]` / `#[check_temp_token]`：
+/// 在 fn body 前插入 `BulwarkUtil::<method>()` 调用（无参数，返回 `BulwarkResult<()>`）。
+///
+/// 与 `expand_check_login` 区别：后者返回 `BulwarkResult<bool>`，需要处理 `Ok(false)` 路径；
+/// 本函数处理 `BulwarkResult<()>`，仅 `Err` 路径需转发。
+fn expand_check_no_args(method: &str, item_fn: ItemFn) -> TokenStream {
+    if let Err(err) = require_async(&item_fn) {
+        return err.into();
+    }
+    let method_ident = format_ident!("{}", method);
+    let checks = quote! {
+        if let ::std::result::Result::Err(__bulwark_err) = ::bulwark::BulwarkUtil::#method_ident().await {
+            return ::axum::response::IntoResponse::into_response(__bulwark_err);
         }
     };
     expand_wrapper(&item_fn, checks)
