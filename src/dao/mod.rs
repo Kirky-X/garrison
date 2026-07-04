@@ -524,7 +524,10 @@ pub mod tests {
     /// 简单 glob 匹配：`*` 匹配 0+ 字符，`?` 匹配 1 字符。
     ///
     /// 使用经典双指针算法（O(n+m) 时间复杂度）。
-    fn glob_match(pattern: &str, text: &str) -> bool {
+    ///
+    /// v0.4.2: 改为 `pub(crate)` 以供 `protocol::apikey` 模块的 `list_by_namespace` 复用
+    /// （依据 spec protocol-apikey-namespace R-003，避免重复实现 glob 逻辑）。
+    pub(crate) fn glob_match(pattern: &str, text: &str) -> bool {
         let pattern: Vec<char> = pattern.chars().collect();
         let text: Vec<char> = text.chars().collect();
         let mut p = 0; // pattern index
