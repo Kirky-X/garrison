@@ -334,6 +334,14 @@ mod dbnexus_impl;
 pub use dbnexus_impl::{init_dbnexus, BulwarkMigration};
 
 // ============================================================================
+// Repository 层（v0.4.2 新增，依据 spec repository-layer）
+// ============================================================================
+// 9 个核心表的 Repository trait + Row struct，与 dbnexus 解耦。
+// SQLite 实现见 `repository::sqlite` 子模块（启用 `db-sqlite` feature，
+// T019 Green 阶段创建后由 repository/mod.rs 内部声明）。
+pub mod repository;
+
+// ============================================================================
 // AloneCache 装饰器（feature = "alone-cache"）
 // ============================================================================
 

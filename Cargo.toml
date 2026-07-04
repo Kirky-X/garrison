@@ -62,6 +62,10 @@ oxcache = { path = "/home/kirky/projects/oxcache", optional = true }
 # dbnexus 0.2: 默认 sqlite + permission + sql-parser + macros + config-env + with-time
 # auto-migrate feature 由 db-sqlite feature 显式启用（提供 MigrationExecutor::run_migrations）
 dbnexus = { version = "0.2", optional = true }
+# sea-orm: Repository 层参数化查询依赖（Statement/Value/ConnectionTrait）。
+# 版本与 dbnexus 0.2 一致，由 db-sqlite feature 启用。
+# dbnexus 未 re-export Statement/Value/ConnectionTrait，需显式声明为直接依赖。
+sea-orm = { version = "2.0.0-rc.37", default-features = false, features = ["sqlx-sqlite", "runtime-tokio-rustls"], optional = true }
 prometheus = { version = "0.14", optional = true }
 # 可观测性：tracing-subscriber 用于 JSON 日志，opentelemetry 用于分布式追踪
 tracing-subscriber = { version = "0.3", optional = true, features = ["fmt", "json", "env-filter"] }
@@ -115,7 +119,8 @@ cache-redis = ["oxcache"]
 # === 数据库后端（通过 dbnexus 0.2） ===
 # dbnexus 默认启用 sqlite + permission + sql-parser + macros + config-env
 # db-sqlite 启用 auto-migrate 以支持 BulwarkMigration::run_migrations
-db-sqlite = ["dbnexus", "dbnexus/auto-migrate"]
+# db-sqlite 同时启用 sea-orm 以支持 Repository 层参数化查询（Statement/Value/ConnectionTrait）
+db-sqlite = ["dbnexus", "dbnexus/auto-migrate", "sea-orm"]
 # 注意：dbnexus 0.2 未暴露 postgres/mysql features，以下标注为 0.2.0+ 待 dbnexus 添加
 # db-postgres = ["dbnexus", "dbnexus/postgres"]  # TODO: 0.2.0+
 # db-mysql = ["dbnexus", "dbnexus/mysql"]  # TODO: 0.2.0+
