@@ -83,6 +83,12 @@ pub mod httpbasic;
 #[cfg(feature = "secure-httpdigest")]
 pub mod httpdigest;
 
+/// 密码哈希子模块（0.4.2 新增，依据 spec secure-password）。
+///
+/// 提供 `PasswordHasher` trait + `Argon2Hasher` / `BcryptHasher` 实现 + `PasswordVerifier` 自动识别。
+#[cfg(feature = "secure-password")]
+pub mod password;
+
 #[cfg(test)]
 mod tests {
     use super::*;
