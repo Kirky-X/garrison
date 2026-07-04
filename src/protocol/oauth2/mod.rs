@@ -10,11 +10,12 @@
 //! - `OAuth2Client` 不持久化 token，由业务方决定存储方式。
 //! - HTTP 客户端使用 `reqwest` 0.13（rustls-tls，禁用 native-tls）。
 //! - 实现四种授权流程：Authorization Code / Client Credentials / Password / Refresh Token（0.4.0 新增）。
+//! - 支持 Token Introspection (RFC 7662)：通过 `OAuth2Client::introspect_token` 查询 token 状态（0.4.2 新增）。
 
 use crate::error::{BulwarkError, BulwarkResult};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 /// OIDC 扩展模块（0.4.0 新增，依据 spec oauth2-oidc）。
@@ -52,6 +53,63 @@ pub struct TokenResponse {
     pub scope: Option<String>,
 }
 
+/// Token Introspection 响应（依据 RFC 7662 / spec token-introspection R-token-introspection-002）。
+///
+/// 表示授权服务器对 token 的 introspection 结果。`active` 字段为必填，
+/// 其他字段在 `active=true` 时由授权服务器按需返回；`active=false` 时通常省略。
+///
+/// # 字段语义（RFC 7662 §2.2）
+/// - `active`: token 是否当前有效（必填）。
+/// - `scope`: token 的 scope 列表（空格分隔字符串）。
+/// - `client_id`: token 关联的客户端 ID。
+/// - `username`: token 关联的人类可读用户名。
+/// - `token_type`: token 类型（如 "Bearer"）。
+/// - `exp`: token 过期时间（Unix 时间戳）。
+/// - `iat`: token 签发时间（Unix 时间戳）。
+/// - `nbf`: token 生效时间（Unix 时间戳，之前不可用）。
+/// - `sub`: token 主体标识（通常为用户 ID）。
+/// - `aud`: token 受众（预期消费者）。
+/// - `iss`: token 签发者。
+/// - `jti`: token 唯一标识。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TokenIntrospectionResponse {
+    /// token 是否当前有效（必填，RFC 7662 §2.2）。
+    pub active: bool,
+    /// token 的 scope 列表（空格分隔字符串，RFC 7662 §2.2）。
+    #[serde(default)]
+    pub scope: Option<String>,
+    /// token 关联的客户端 ID（RFC 7662 §2.2）。
+    #[serde(default)]
+    pub client_id: Option<String>,
+    /// token 关联的人类可读用户名（RFC 7662 §2.2）。
+    #[serde(default)]
+    pub username: Option<String>,
+    /// token 类型（如 "Bearer"，RFC 7662 §2.2）。
+    #[serde(default)]
+    pub token_type: Option<String>,
+    /// token 过期时间（Unix 时间戳，RFC 7662 §2.2）。
+    #[serde(default)]
+    pub exp: Option<i64>,
+    /// token 签发时间（Unix 时间戳，RFC 7662 §2.2）。
+    #[serde(default)]
+    pub iat: Option<i64>,
+    /// token 生效时间（Unix 时间戳，之前不可用，RFC 7662 §2.2）。
+    #[serde(default)]
+    pub nbf: Option<i64>,
+    /// token 主体标识（通常为用户 ID，RFC 7662 §2.2）。
+    #[serde(default)]
+    pub sub: Option<String>,
+    /// token 受众（预期消费者，RFC 7662 §2.2）。
+    #[serde(default)]
+    pub aud: Option<String>,
+    /// token 签发者（RFC 7662 §2.2）。
+    #[serde(default)]
+    pub iss: Option<String>,
+    /// token 唯一标识（RFC 7662 §2.2）。
+    #[serde(default)]
+    pub jti: Option<String>,
+}
+
 /// OAuth2 客户端（依据 spec protocol-oauth2）。
 ///
 /// 持有 OAuth2 协议所需的配置信息与可复用的 `reqwest::Client`。
@@ -69,6 +127,9 @@ pub struct OAuth2Client {
     token_url: String,
     /// 用户信息端点 URL（可选）。
     user_info_url: Option<String>,
+    /// Token Introspection 端点 URL（可选，0.4.2 新增，依据 spec token-introspection）。
+    /// 为 `None` 时由 `introspect_url()` 从 `token_url` 推导（`/token` → `/introspect`）。
+    introspect_url: Option<String>,
     /// 可复用的 HTTP 客户端。
     http: reqwest::Client,
     /// Scope 注册表（可选，仅在启用 `oauth2-scope-handler` feature 时存在）。
@@ -112,6 +173,7 @@ impl OAuth2Client {
             auth_url: auth_url.into(),
             token_url: token_url.into(),
             user_info_url: None,
+            introspect_url: None,
             http,
             #[cfg(feature = "oauth2-scope-handler")]
             scope_registry: None,
@@ -121,6 +183,18 @@ impl OAuth2Client {
     /// 设置用户信息端点 URL（依据 spec protocol-oauth2）。
     pub fn with_user_info_url(mut self, url: impl Into<String>) -> Self {
         self.user_info_url = Some(url.into());
+        self
+    }
+
+    /// 设置 Token Introspection 端点 URL（0.4.2 新增，依据 spec token-introspection 设计决策 1）。
+    ///
+    /// 不设置时，[`introspect_token`](Self::introspect_token) 从 `token_url` 推导：
+    /// `token_url` 末尾为 `/token` → 替换为 `/introspect`；否则在 `token_url` 末尾追加 `/introspect`。
+    ///
+    /// # 参数
+    /// - `url`: 完整的 introspection 端点 URL（如 `https://auth.example.com/oauth2/introspect`）。
+    pub fn with_introspect_url(mut self, url: impl Into<String>) -> Self {
+        self.introspect_url = Some(url.into());
         self
     }
 
@@ -437,6 +511,74 @@ impl OAuth2Client {
             .await
             .map_err(|e| BulwarkError::OAuth2(format!("解析 token 响应失败: {}", e)))?;
         Ok(token)
+    }
+
+    /// 查询 token 状态（0.4.2 新增，依据 RFC 7662 / spec token-introspection R-token-introspection-001）。
+    ///
+    /// 向授权服务器的 introspection 端点 POST 请求，请求体以
+    /// `application/x-www-form-urlencoded` 格式提交 `token` + `client_id` + `client_secret`，
+    /// 响应解析为 [`TokenIntrospectionResponse`]。
+    ///
+    /// # 不缓存（依据 spec Constraints）
+    /// 每次调用都请求授权服务器，业务方如需缓存可自行封装。
+    ///
+    /// # 参数
+    /// - `token`: 待查询的 access_token 或 refresh_token。
+    ///
+    /// # 返回
+    /// `TokenIntrospectionResponse`，其中 `active` 字段表示 token 是否有效。
+    ///
+    /// # 错误
+    /// - `BulwarkError::OAuth2`: 服务器返回非 2xx 或 JSON 解析失败。
+    /// - `BulwarkError::Network`: reqwest 请求失败（DNS/连接超时/服务器不可达等）。
+    pub async fn introspect_token(&self, token: &str) -> BulwarkResult<TokenIntrospectionResponse> {
+        let url = self.introspect_url();
+        let params = [
+            ("token", token),
+            ("client_id", &self.client_id),
+            ("client_secret", &self.client_secret),
+        ];
+        let resp = self
+            .http
+            .post(&url)
+            .form(&params)
+            .send()
+            .await
+            .map_err(|e| BulwarkError::Network(format!("请求 introspect 端点失败: {}", e)))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp
+                .text()
+                .await
+                .map_err(|e| BulwarkError::Network(format!("读取错误响应失败: {}", e)))?;
+            return Err(BulwarkError::OAuth2(format!(
+                "HTTP {}: {}",
+                status.as_u16(),
+                body
+            )));
+        }
+
+        let response = resp
+            .json::<TokenIntrospectionResponse>()
+            .await
+            .map_err(|e| BulwarkError::OAuth2(format!("解析 introspection 响应失败: {}", e)))?;
+        Ok(response)
+    }
+
+    /// 推导 introspection 端点 URL（依据 spec token-introspection 设计决策 1）。
+    ///
+    /// - 若 [`with_introspect_url`](Self::with_introspect_url) 已设置 → 使用该 URL。
+    /// - 否则若 `token_url` 末尾为 `/token` → 替换为 `/introspect`。
+    /// - 否则在 `token_url` 末尾追加 `/introspect`。
+    fn introspect_url(&self) -> String {
+        if let Some(url) = &self.introspect_url {
+            url.clone()
+        } else if self.token_url.ends_with("/token") {
+            self.token_url.replace("/token", "/introspect")
+        } else {
+            format!("{}/introspect", self.token_url)
+        }
     }
 }
 
@@ -1179,5 +1321,247 @@ mod tests {
             },
             other => panic!("期望 OAuth2 错误，实际: {:?}", other),
         }
+    }
+
+    // ========================================================================
+    // Token Introspection (RFC 7662) 测试（0.4.2 新增，依据 spec token-introspection）
+    // ========================================================================
+
+    /// 完整 introspection 响应解析：active=true 时所有字段正确解析（spec R-token-introspection-002/003）。
+    #[tokio::test]
+    async fn introspect_active_token_returns_full_response() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/introspect"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "active": true,
+                "scope": "read write",
+                "client_id": "test-client-id",
+                "username": "alice",
+                "token_type": "Bearer",
+                "exp": 1700000000,
+                "iat": 1690000000,
+                "nbf": 1695000000,
+                "sub": "user-123",
+                "aud": "aud-1",
+                "iss": "https://issuer.example.com",
+                "jti": "token-jti-001"
+            })))
+            .mount(&server)
+            .await;
+
+        let client = make_client(&server).await;
+        let resp = client
+            .introspect_token("active-token")
+            .await
+            .expect("introspect_token 应成功");
+        assert!(resp.active);
+        assert_eq!(resp.scope.as_deref(), Some("read write"));
+        assert_eq!(resp.client_id.as_deref(), Some("test-client-id"));
+        assert_eq!(resp.username.as_deref(), Some("alice"));
+        assert_eq!(resp.token_type.as_deref(), Some("Bearer"));
+        assert_eq!(resp.exp, Some(1700000000));
+        assert_eq!(resp.iat, Some(1690000000));
+        assert_eq!(resp.nbf, Some(1695000000));
+        assert_eq!(resp.sub.as_deref(), Some("user-123"));
+        assert_eq!(resp.aud.as_deref(), Some("aud-1"));
+        assert_eq!(resp.iss.as_deref(), Some("https://issuer.example.com"));
+        assert_eq!(resp.jti.as_deref(), Some("token-jti-001"));
+    }
+
+    /// 无效 token 返回 active=false，其他字段为 None（spec R-token-introspection-003）。
+    #[tokio::test]
+    async fn introspect_inactive_token_returns_active_false() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/introspect"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({"active": false})),
+            )
+            .mount(&server)
+            .await;
+
+        let client = make_client(&server).await;
+        let resp = client
+            .introspect_token("revoked-token")
+            .await
+            .expect("introspect_token 应成功");
+        assert!(!resp.active);
+        assert_eq!(resp.scope, None);
+        assert_eq!(resp.client_id, None);
+        assert_eq!(resp.username, None);
+        assert_eq!(resp.token_type, None);
+        assert_eq!(resp.exp, None);
+        assert_eq!(resp.iat, None);
+        assert_eq!(resp.nbf, None);
+        assert_eq!(resp.sub, None);
+        assert_eq!(resp.aud, None);
+        assert_eq!(resp.iss, None);
+        assert_eq!(resp.jti, None);
+    }
+
+    /// 服务器返回 HTTP 500 时返回 OAuth2 错误（spec R-token-introspection-001 错误处理）。
+    #[tokio::test]
+    async fn introspect_token_server_error_returns_oauth2_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/introspect"))
+            .respond_with(ResponseTemplate::new(500).set_body_string("internal server error"))
+            .mount(&server)
+            .await;
+
+        let client = make_client(&server).await;
+        let result = client.introspect_token("any-token").await;
+        assert!(result.is_err());
+        match result.err() {
+            Some(BulwarkError::OAuth2(msg)) => {
+                assert!(msg.contains("500"), "错误消息应包含状态码 500: {}", msg);
+            },
+            other => panic!("期望 OAuth2 错误，实际: {:?}", other),
+        }
+    }
+
+    /// 授权服务器不可达返回 Network 错误（spec R-token-introspection-003）。
+    ///
+    /// 端口 1 通常未启用，reqwest 连接会立即失败（connection refused）→ 触发 Network 错误。
+    #[tokio::test]
+    async fn introspect_token_network_error_returns_network_error() {
+        let client = OAuth2Client::new(
+            "cid",
+            "secret",
+            "redirect",
+            "http://127.0.0.1:1/auth",
+            "http://127.0.0.1:1/token",
+        )
+        .unwrap()
+        .with_introspect_url("http://127.0.0.1:1/introspect");
+
+        let result = client.introspect_token("any-token").await;
+        assert!(result.is_err());
+        match result.err() {
+            Some(BulwarkError::Network(_)) => {},
+            other => panic!("期望 Network 错误，实际: {:?}", other),
+        }
+    }
+
+    /// 请求体包含 token + client_id + client_secret 字段，Content-Type 为 form-urlencoded（spec R-token-introspection-001）。
+    #[tokio::test]
+    async fn introspect_token_sends_token_and_client_credentials_in_body() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/introspect"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({"active": true})),
+            )
+            .mount(&server)
+            .await;
+
+        let client = make_client(&server).await;
+        client.introspect_token("my-token").await.unwrap();
+
+        let received = server.received_requests().await.expect("应收到请求");
+        assert_eq!(received.len(), 1);
+        let req = &received[0];
+        // 验证 Content-Type 为 application/x-www-form-urlencoded
+        let content_type = req
+            .headers
+            .get("content-type")
+            .expect("应有 Content-Type header")
+            .to_str()
+            .unwrap();
+        assert!(
+            content_type.contains("application/x-www-form-urlencoded"),
+            "Content-Type 应为 application/x-www-form-urlencoded，实际: {}",
+            content_type
+        );
+        // 验证请求体字段
+        let body = std::str::from_utf8(&req.body).expect("body 应为 UTF-8");
+        assert!(
+            body.contains("token=my-token"),
+            "请求体应包含 token=my-token: {}",
+            body
+        );
+        assert!(
+            body.contains("client_id=test-client-id"),
+            "请求体应包含 client_id: {}",
+            body
+        );
+        assert!(
+            body.contains("client_secret=test-client-secret"),
+            "请求体应包含 client_secret: {}",
+            body
+        );
+    }
+
+    /// with_introspect_url 覆盖默认 URL，请求发到自定义端点（spec 设计决策 1）。
+    #[tokio::test]
+    async fn introspect_token_custom_url_uses_provided_endpoint() {
+        let server = MockServer::start().await;
+        // 仅挂载 /custom-introspect 路径，验证请求确实发到了自定义 URL
+        Mock::given(method("POST"))
+            .and(path("/custom-introspect"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({"active": true})),
+            )
+            .mount(&server)
+            .await;
+
+        let client = make_client(&server)
+            .await
+            .with_introspect_url(format!("{}/custom-introspect", server.uri()));
+        let resp = client.introspect_token("any").await.expect("应成功");
+        assert!(resp.active);
+    }
+
+    /// 默认 introspect URL 从 token_url 推导（token_url 末尾为 /token 时替换为 /introspect）（spec 设计决策 1）。
+    #[tokio::test]
+    async fn introspect_token_default_url_derived_from_token_url() {
+        let server = MockServer::start().await;
+        // 仅挂载 /introspect 路径，验证默认推导逻辑
+        // make_client 创建的 token_url = `{base}/token`，默认 introspect_url 应推导为 `{base}/introspect`
+        Mock::given(method("POST"))
+            .and(path("/introspect"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({"active": true})),
+            )
+            .mount(&server)
+            .await;
+
+        let client = make_client(&server).await;
+        let resp = client.introspect_token("any").await.expect("应成功");
+        assert!(resp.active);
+    }
+
+    /// TokenIntrospectionResponse 派生 Debug/Clone/Serialize/Deserialize（spec R-token-introspection-002）。
+    #[test]
+    fn token_introspection_response_derives_debug_clone_serde() {
+        let resp = TokenIntrospectionResponse {
+            active: true,
+            scope: Some("read".to_string()),
+            client_id: Some("cid".to_string()),
+            username: Some("alice".to_string()),
+            token_type: Some("Bearer".to_string()),
+            exp: Some(1700000000),
+            iat: Some(1690000000),
+            nbf: Some(1695000000),
+            sub: Some("user-123".to_string()),
+            aud: Some("aud".to_string()),
+            iss: Some("https://issuer.example.com".to_string()),
+            jti: Some("jti-1".to_string()),
+        };
+
+        // Debug
+        let _debug_str = format!("{:?}", resp);
+        // Clone
+        let cloned = resp.clone();
+        assert_eq!(cloned.active, resp.active);
+        // Serialize
+        let json = serde_json::to_string(&resp).expect("Serialize 应成功");
+        assert!(json.contains("\"active\":true"));
+        // Deserialize
+        let parsed: TokenIntrospectionResponse =
+            serde_json::from_str(&json).expect("Deserialize 应成功");
+        assert_eq!(parsed.active, resp.active);
+        assert_eq!(parsed.scope, resp.scope);
     }
 }
