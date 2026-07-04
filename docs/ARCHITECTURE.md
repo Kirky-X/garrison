@@ -2,10 +2,10 @@
 
 > Bulwark 是面向 Rust 生态的身份认证鉴权框架，借鉴 Sa-Token v1.45.0 设计理念。
 >
-> - 版本：0.4.0（0.2.0 协议层遗留 gap 已补齐）
+> - 版本：0.4.2（gap 闭合 + 新功能：LoginId newtype / Repository 层 / 密码哈希 / 密码登录 / 多账户 login_type / JWT 三模式 / API Key namespace / SSO TOCTOU 修复 / kickout_by_device / 事件扩展至 15 变体 / Actix+Warp 适配器 / Strategy 注册表 / 过程宏注解 / OAuth 2.1 PKCE / Token Introspection）
 > - 运行时：tokio 1.x
-> - Web 适配：axum 0.8
-> - 存储：dbnexus 0.2（SQLite，PostgreSQL/MySQL 待 0.5+）
+> - Web 适配：axum 0.8 / actix-web 4 / warp 0.4
+> - 存储：dbnexus 0.2（SQLite，PostgreSQL/MySQL 待 0.5+）+ Repository 层（9 trait + SqliteRepository）
 > - 缓存：oxcache 0.3（L1 moka + L2 redis，per-entry TTL）
 > - License：Apache-2.0
 > 配置相关字段说明详见 [configuration.md](./CONFIGURATION.md)；开发规范详见 [development.md](./DEVELOPMENT.md)。

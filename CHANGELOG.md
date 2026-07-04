@@ -5,6 +5,170 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.4.2] - 2026-07-05
+
+### 概述
+
+Bulwark 0.4.2 是 0.4.x 系列的 MINOR 版本，通过 specmark change
+`v0-4-2-gap-closure-and-features` 实施 origin 文档与代码实现对齐 gap 闭合 + 新功能增强。
+共完成 16 个 Phase（capability），覆盖：LoginId newtype、BulwarkDao 扩展、密码哈希、
+Repository 层、密码登录、多账户隔离、JWT 三模式、API Key namespace、SSO TOCTOU 修复、
+kickout_by_device、事件扩展、Web 适配器、Strategy 注册表、过程宏注解、OAuth 2.1 PKCE、
+Token Introspection。
+
+### 新增
+
+#### 核心类型
+
+- **LoginId newtype（Phase 1）**：`src/stp/login_id.rs` 新增 `LoginId` enum
+  （`Numeric(i64)` / `String(String)`），实现 `From<i64>`/`From<String>`/`From<&str>`/
+  `as_str`/`as_i64`/`Display`/`Serialize`/`Deserialize`。`stp`/`session`/
+  `protocol/{jwt,oauth2,sso,apikey}` 公开方法签名改为 `impl Into<LoginId>`，保留 i64
+  通过 `From<i64>` 兼容（`login_id_to_i64` 改 `pub(crate)` 复用）
+
+#### DAO 层（Phase 2）
+
+- **BulwarkDao 4 方法扩展**：新增 `set_permanent`（无 TTL）/`get_timeout`（查询剩余 TTL）/
+  `keys`（glob pattern 扫描）/`rename`（重命名 key），均提供默认实现保持向后兼容。
+  `BulwarkDaoOxcache` 重写 `set_permanent`/`get_timeout`/`rename` 使用 oxcache 原生 API
+  保留 TTL（`set_with_ttl_sync(None)` / `ttl_sync()` / `get→ttl_sync→set_with_ttl_sync→delete`）
+
+#### 安全模块
+
+- **PasswordHasher（Phase 3）**：新增 `secure-password` feature + `PasswordHasher` trait +
+  `Argon2Hasher` + `BcryptHasher` + `PasswordVerifier`（自动识别 hash 格式：argon2/bcrypt/BCrypt）。
+  依赖 argon2 0.5 + bcrypt 0.15 + rand 0.8
+- **JWT 三模式（Phase 7）**：`JwtMode` enum（`Stateless`/`Mixin`/`Simple`），
+  `BulwarkLogicDefault::with_jwt_mode` builder，`check_login` 按模式分支：
+  Stateless 仅 JWT verify / Mixin JWT+session / Simple 仅 session
+
+#### 数据访问
+
+- **Repository 层（Phase 4）**：`db-sqlite` 启用 `src/dao/repository/` 模块，定义 9 个
+  Repository trait（UserRepository/RoleRepository/PermissionRepository/UserRoleRepository/
+  RolePermissionRepository/AuthMethodRepository/SessionRepository/LoginLogRepository/
+  UserExtRepository），所有方法首参 `tenant_id: i64`。9 个 SqliteRepository 基于 dbnexus
+  DbPool + sea-orm 实现
+
+#### 认证路径
+
+- **密码登录（Phase 5）**：`BulwarkLogic::login_with_password(login_id, password)` 默认方法，
+  整合 `UserRepository::find_by_username` + `PasswordHasher::verify` + `login`。
+  `BulwarkLogicDefault::with_password_hasher` builder 注入 `Arc<dyn PasswordHasher>`
+- **多账户 login_type（Phase 6）**：`BulwarkInterface` 新增
+  `get_permission_list_with_type(login_id, login_type)` + `get_role_list_with_type`，
+  旧方法默认委托（login_type="default"）。`with_login_type` builder
+
+#### 协议层
+
+- **API Key namespace（Phase 8）**：`ApiKeyInfo` 新增 `namespace: String` 字段
+  （`#[serde(default = "default_namespace")]` 填充 "default"），key 格式升级为
+  `bulwark:apikey:<namespace>:<key>`。`generate_with_namespace` 方法 +
+  `list_by_namespace`（依赖 `BulwarkDao::keys`）。`verify` 兼容旧格式
+- **SSO TOCTOU 修复（Phase 9）**：`BulwarkDao::get_and_delete(key)` 原子方法（默认实现
+  get→delete 两步，`BulwarkDaoOxcache` 用 `parking_lot::Mutex` 保护进程内原子）。
+  `SsoClient::validate_ticket` / `DefaultSsoServer::validate_ticket` 改用原子消费消除竞态
+- **OAuth 2.1 PKCE（Phase 15）**：`OAuth2Client::generate_pkce_challenge`（S256 方法，
+  RFC 7636 测试向量验证）+ `get_auth_url_with_pkce(state, code_verifier)` +
+  `exchange_code_with_pkce(code, state, code_verifier)`。旧 `get_auth_url`/`exchange_code`
+  标记 `#[deprecated]`
+- **Token Introspection（Phase 16）**：`OAuth2Client::introspect_token(token)` 方法
+  （RFC 7662），`TokenIntrospectionResponse` struct（12 字段：active/scope/client_id/
+  username/token_type/exp/iat/nbf/sub/aud/iss/jti）。`with_introspect_url` builder，
+  URL 推导（显式 → token_url 替换 `/token`→`/introspect` → 追加 `/introspect`）
+
+#### 会话管理
+
+- **kickout_by_device（Phase 10）**：`BulwarkSession::kickout_by_device(login_id, device)`
+  方法，查询 account session → 过滤 device → 批量 logout_by_token
+
+#### 事件与策略
+
+- **BulwarkEvent 15 变体（Phase 11）**：新增 9 个事件（`LoginFailure`/`TokenRefresh`/
+  `TokenRevoke`/`SessionTimeout`/`AccountLocked`/`FirewallBlock`/`ApiKeyRotate`/
+  `TempCredentialConsumed`/`ConfigReload`），7 个 broadcast 集成点（login_with_password
+  失败/refresh_token/check_login session timeout/FirewallCheckHook 锁定/FirewallStrategy
+  阻止/ApiKeyHandler::rotate/TempCredentialHandler::consume）。`BulwarkEvent` 派生
+  `PartialEq`
+- **Strategy Registry（Phase 13）**：`src/strategy/registry.rs` 新增 6 个策略 trait
+  （`LoginHandler`/`LogoutHandler`/`PermissionHandler`/`TokenGenerator`/`SessionCreator`/
+  `FirewallStrategy`）+ 6 个默认实现（委托 `Arc<dyn BulwarkLogic>`）+ `Strategy` 注册表
+  struct（18 个 register/get/remove 方法）。`BulwarkManager` 持有
+  `Arc<RwLock<Strategy>>`，`strategy()` getter + `with_strategy` builder
+
+#### Web 适配器
+
+- **ActixContext + WarpContext（Phase 12）**：新增 `web-actix` 启用
+  `src/context/actix_adapter.rs`（`ActixContext`/`ActixRequest`/`ActixResponse`/
+  `ActixStorage` 4 件套，34 测试，`ActixRequestWrapper` 私有结构体绕过生命周期限制）。
+  新增 `web-warp` 启用 `src/context/warp_adapter.rs`（`WarpContext`/`WarpRequest`/
+  `WarpResponse`/`WarpStorage` 4 件套，33 测试，持有 owned 数据）。`strip_bearer_prefix`
+  大小写不敏感（RFC 7235）
+
+#### 过程宏
+
+- **bulwark-macros crate（Phase 14）**：新建 workspace member `bulwark-macros`，提供
+  `#[check_login]`/`#[check_permission]`/`#[check_role]` 三个 `#[proc_macro_attribute]`。
+  `annotation-macros` feature 启用（依赖 `web-axum`）。wrapper + inner function 模式：
+  原 fn 重命名为 `__bulwark_inner_<name>`，wrapper 使用原名称返回 `axum::response::Response`。
+  `check_login` 特殊处理：Ok(false) → 401，Err → forward。AND 语义：多参数生成多次调用。
+  13 个集成测试覆盖 login/permission/role scenarios
+
+### 变更
+
+- `Cargo.toml` version 0.4.1 → 0.4.2
+- `Cargo.toml` `[workspace].members` 新增 `"bulwark-macros"`
+- `Cargo.toml` 新增 4 个 feature：`secure-password` / `annotation-macros` / `web-actix` /
+  `web-warp`，均加入 `full` 聚合
+- `Cargo.toml` 新增依赖：argon2 0.5 / bcrypt 0.15 / rand 0.8 / bulwark-macros path 依赖；
+  `protocol-oauth2` feature 添加 `sha2` + `base64` 依赖（PKCE S256 复用）
+- `BulwarkDao` trait 新增 5 个方法（4 个 Phase 2 + get_and_delete Phase 9），均提供默认
+  实现保持向后兼容
+- `SsoClient::validate_ticket` / `DefaultSsoServer::validate_ticket` 改用两步法
+  （get 校验 client_id → get_and_delete 原子消费），client_id 不匹配时不消费 ticket
+- `OAuth2Client::get_auth_url` / `exchange_code` 标记 `#[deprecated]`
+- `BulwarkEvent` 派生 `PartialEq`
+- `ApiKeyInfo` 新增 `namespace: String` 字段（`#[serde(default)]` 向后兼容）
+
+### 修复
+
+- **SSO validate_ticket spec 冲突解决**：原实现"client_id 不匹配也消费 ticket"（防爆破）
+  与测试期望"client_id 不匹配不删除 ticket"（允许重试）冲突。改为两步法：先 `get` 校验
+  client_id，匹配后 `get_and_delete` 原子消费。同时满足"用户友好"（错误 client_id 不消费）
+  和"TOCTOU 修复"（并发仅一个成功）
+- **examples apikey_management MockDao keys() 缺失**：Phase 8 namespace isolation 引入
+  `BulwarkDao::keys` 后，`examples/src/apikey_management.rs` 的 MockDao 未实现 `keys()`，
+  导致 `ApiKeyHandler::verify` 扫描新格式 key 失败。添加 `keys()` 实现 + `glob_match` 函数
+  （与 `tests/protocol_apikey_edge_cases.rs` 保持一致）
+- **RFC 7636 测试向量修正**：spec 中 code_verifier `dBjftJeZ4CVP-mB92K29uhjUjUy5YGA`
+  （31 字符）不满足 43-128 长度要求，改为 RFC 7636 Appendix B 正确值
+  `dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk`（43 字符）
+
+### 已知限制
+
+- `BulwarkDao::keys` 默认实现返回 `NotImplemented`，`BulwarkDaoOxcache` 当前也返回
+  `NotImplemented`（oxcache 0.3 不支持 key scan，待 v0.5.0+ 升级）
+- `BulwarkDao::rename` 默认实现为 get→set_permanent→delete 三步，非原子；
+  `BulwarkDaoOxcache` 重写为 get→ttl_sync→set_with_ttl_sync→delete 四步保留 TTL，
+  但仍非原子（oxcache 0.3 无原子 rename API，待 v0.5.0+）
+- `BulwarkEvent::TokenRevoke` / `ConfigReload` 仅添加变体未集成 broadcast
+  （对应代码路径方法不存在，待 v0.5.0+ 实现后集成）
+- `LoginId::String` 形式在内部层（i64）尚未完成迁移，公开 API 接受 `impl Into<LoginId>`
+  但 `login_id_to_i64` 对 `String` 形式返回 `BulwarkError::Config`（待 v0.5.0+ 完成内部层迁移）
+- Strategy Registry 的 `DefaultFirewallStrategy` 为 no-op（`BulwarkLogic` 无
+  `check_login_hooks` 方法），`DefaultTokenGenerator::generate_token` 委托 `logic.login`
+  （最接近的方法）
+- Token Introspection 不缓存结果（每次调用请求授权服务器，待 v0.5.0+ 加缓存）
+- PKCE 仅实现 S256 方法（plain 方法已弃用，不实现）
+
+### 文档与示例
+
+- `bulwark-macros/Cargo.toml` + `bulwark-macros/src/lib.rs` 新建（proc-macro crate
+  manifest + 3 个 `#[proc_macro_attribute]` 实现）
+- `tests/annotation_macros_integration.rs` 新建（13 个集成测试）
+- `examples/src/oauth2_flow.rs` 添加 `#[allow(deprecated)]` 兼容旧 PKCE 方法
+- 测试统计：lib 1101 个 + 集成测试 80+ 个，全部通过；clippy 零警告；fmt 通过
+
 ## [0.4.0] - 2026-07-02
 
 ### 概述

@@ -15,11 +15,11 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.4.0-blue" alt="version" />
+  <img src="https://img.shields.io/badge/version-0.4.2-blue" alt="version" />
   <img src="https://img.shields.io/badge/license-Apache--2.0-green" alt="license" />
   <img src="https://img.shields.io/badge/MSRV-1.85+-orange" alt="msrv" />
-  <img src="https://img.shields.io/badge/coverage-95.43%25-brightgreen" alt="coverage" />
-  <img src="https://img.shields.io/badge/tests-829%20passed-success" alt="tests" />
+  <img src="https://img.shields.io/badge/coverage-95%25%2B-brightgreen" alt="coverage" />
+  <img src="https://img.shields.io/badge/tests-1101%2B%20passed-success" alt="tests" />
   <img src="https://img.shields.io/badge/clippy-zero%20warnings-success" alt="clippy" />
 </p>
 
@@ -75,12 +75,12 @@
 | 🔒 **完整鉴权链** | 登录认证 → 权限校验 → 会话管理 → 路由拦截，开箱即用 |
 | 📦 **多后端抽象** | `BulwarkDao` + `oxcache` + `dbnexus`，切换存储后端零业务代码改动 |
 | 🔧 **可插拔扩展** | trait + Default 实现模式，替换任意组件（DAO / 策略 / 逻辑）无需改业务 |
-| 🎯 **Feature 门控** | 18 个特性域独立 feature flag，按需编译减小体积 |
+| 🎯 **Feature 门控** | 29 个特性域独立 feature flag，按需编译减小体积 |
 | 📊 **高可观测** | `tracing` 日志 + `listener` 事件订阅 + `prometheus` 指标（可选） |
-| 🧪 **高覆盖** | 829 个测试通过，95.43% 行覆盖率，clippy 零警告 |
-| 🌐 **Web 框架适配** | axum 注解式 extractor（`CheckLogin` / `CheckRole` / `CheckPermission`） |
+| 🧪 **高覆盖** | 1101+ 个测试通过，95%+ 行覆盖率，clippy 零警告 |
+| 🌐 **Web 框架适配** | axum/actix/warp 三框架注解式 extractor（`CheckLogin` / `CheckRole` / `CheckPermission` + 过程宏） |
 
-### 特性域覆盖（18 个，对标 Sa-Token + 0.4.0 协议层补齐）
+### 特性域覆盖（27 个，对标 Sa-Token + 0.4.0/0.4.2 协议层补齐）
 
 | 特性域 | 状态 | 说明 |
 |--------|------|------|
@@ -98,12 +98,27 @@
 | Basic 认证 | ✅ 0.2.0 完成 | HTTP Basic Auth (RFC 7617) |
 | Digest 认证 | ✅ 0.2.0 完成 | HTTP Digest Auth (RFC 7616) |
 | 插件化扩展 | ✅ 0.2.0 完成 | `BulwarkPlugin` trait + inventory 注册 |
-| 事件监听器 | ✅ 0.2.0 完成 | `BulwarkListener` trait + 6 个事件变体 |
+| 事件监听器 | ✅ 0.2.0 完成 / 0.4.2 扩展 | `BulwarkListener` trait + 15 个事件变体（0.4.2 新增 9 个） |
 | OIDC（OpenID Connect） | ✅ 0.4.0 完成 | id_token 签发/验证 + discovery + 三重防重放 |
 | OAuth2 Scope Handler | ✅ 0.4.0 完成 | `ScopeHandler` trait + `ScopeRegistry` 注册表 |
 | SSO Server 独立抽象 | ✅ 0.4.0 完成 | `SsoServer` trait + `CenterIdConverter` + `SsoChannel` |
 | AloneCache 多实例隔离 | ✅ 0.4.0 完成 | `AloneCache` 装饰器 + `AloneCacheManager` |
 | ParameterQuery 参数化查询 | ✅ 0.4.0 完成 | `ParameterQuery` trait + Builder + async check_permission/check_role |
+| LoginId newtype | ✅ 0.4.2 完成 | `LoginId` enum（Numeric/String），公开 API 接受 `impl Into<LoginId>` |
+| Repository 层 | ✅ 0.4.2 完成 | 9 个 Repository trait + SqliteRepository（tenant_id 隔离） |
+| 密码哈希 | ✅ 0.4.2 完成 | `PasswordHasher` trait + Argon2/Bcrypt 实现 + 自动识别 |
+| 密码登录 | ✅ 0.4.2 完成 | `login_with_password` 整合 Repository + PasswordHasher |
+| 多账户 login_type | ✅ 0.4.2 完成 | `get_permission_list_with_type` / `get_role_list_with_type` |
+| JWT 三模式 | ✅ 0.4.2 完成 | `JwtMode` Stateless/Mixin/Simple |
+| API Key namespace | ✅ 0.4.2 完成 | `bulwark:apikey:<namespace>:<key>` 多租户隔离 |
+| SSO TOCTOU 修复 | ✅ 0.4.2 完成 | `BulwarkDao::get_and_delete` 原子消费 |
+| kickout_by_device | ✅ 0.4.2 完成 | 按设备维度踢出会话 |
+| ActixContext 适配器 | ✅ 0.4.2 完成 | actix-web 4 4 件套（ActixContext/Request/Response/Storage） |
+| WarpContext 适配器 | ✅ 0.4.2 完成 | warp 0.4 4 件套（WarpContext/Request/Response/Storage） |
+| Strategy Registry | ✅ 0.4.2 完成 | 6 个策略 trait + `Strategy` 注册表 + Manager 集成 |
+| 过程宏注解 | ✅ 0.4.2 完成 | `#[check_login]`/`#[check_permission]`/`#[check_role]` 属性宏 |
+| OAuth 2.1 PKCE | ✅ 0.4.2 完成 | RFC 7636 S256 方法，旧方法标记 deprecated |
+| Token Introspection | ✅ 0.4.2 完成 | RFC 7662 远程 token 状态查询 |
 
 ---
 
@@ -303,12 +318,14 @@ async fn main() -> BulwarkResult<()> {
 | `secure-sign` | ❌ | HMAC-SHA256/SHA512 工具 |
 | `secure-httpbasic` | ❌ | HTTP Basic 认证 (RFC 7617) |
 | `secure-httpdigest` | ❌ | HTTP Digest 认证 (RFC 7616) |
-| `listener` | ❌ | 事件监听器 |
+| `secure-password` | ❌ | 密码哈希（argon2 + bcrypt，0.4.2 新增） |
+| `listener` | ❌ | 事件监听器（15 个事件变体，0.4.2 扩展） |
 | `tracing-log` | ❌ | tracing 日志桥接 |
 | `metrics-prometheus` | ❌ | Prometheus 指标 |
 | `observability-otlp` | ❌ | OpenTelemetry OTLP 分布式追踪（0.3.0 新增） |
 | `grpc` | ❌ | gRPC 鉴权拦截器（tonic::Interceptor，0.3.0 新增） |
 | `i18n` | ❌ | 异常消息国际化（fluent-rs，0.3.0 新增） |
+| `annotation-macros` | ❌ | `#[check_login]`/`#[check_permission]`/`#[check_role]` 过程宏（0.4.2 新增） |
 | `full` | ❌ | 聚合所有特性 |
 | `production` | ❌ | 生产环境推荐组合 |
 | `development` | ❌ | 开发环境组合 |
