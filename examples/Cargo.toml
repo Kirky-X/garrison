@@ -33,6 +33,8 @@ tonic = { version = "0.13", default-features = false, features = ["transport"], 
 oxcache = { path = "/home/kirky/projects/oxcache", optional = true }
 # 直接被 oauth2_flow / scope_handler 使用（mock OAuth2 token / refresh 端点）
 wiremock = "0.6"
+# 直接被 macro_annotations 使用（读取 axum Response body）
+http-body-util = "0.1"
 
 [dev-dependencies]
 serial_test = "3"
@@ -52,10 +54,12 @@ full = [
     "listener", "web-axum", "cache-memory", "db-sqlite",
     "web-actix", "web-warp", "grpc", "i18n",
     "metrics-prometheus", "observability-otlp", "cache-redis",
+    "annotation-macros", "secure-password",
 ]
 
 # 单特性转发到 bulwark（保持与 bulwark feature 名一致）
 secure-sign = ["bulwark/secure-sign"]
+secure-password = ["bulwark/secure-password"]
 secure-httpbasic = ["bulwark/secure-httpbasic"]
 secure-httpdigest = ["bulwark/secure-httpdigest"]
 secure-totp = ["bulwark/secure-totp"]
@@ -83,6 +87,9 @@ i18n = ["bulwark/i18n"]
 metrics-prometheus = ["bulwark/metrics-prometheus"]
 observability-otlp = ["bulwark/observability-otlp"]
 cache-redis = ["bulwark/cache-redis", "dep:oxcache"]
+
+# 0.4.2 新增：过程宏注解（#[check_login]/#[check_permission]/#[check_role]）
+annotation-macros = ["bulwark/annotation-macros"]
 
 # ====================================================================
 # Feature-gated bins（required-features 防止 feature 关闭时编译失败）
@@ -233,3 +240,42 @@ path = "src/bin/observability_setup.rs"
 name = "cache_redis"
 required-features = ["cache-redis"]
 path = "src/bin/cache_redis.rs"
+
+# ====================================================================
+# 0.4.2 新增示例（gap closure）
+# ====================================================================
+
+[[bin]]
+name = "password_login"
+required-features = ["secure-password", "db-sqlite", "cache-memory"]
+path = "src/bin/password_login.rs"
+
+[[bin]]
+name = "jwt_modes"
+required-features = ["protocol-jwt", "cache-memory"]
+path = "src/bin/jwt_modes.rs"
+
+[[bin]]
+name = "apikey_namespace"
+required-features = ["protocol-apikey", "cache-memory"]
+path = "src/bin/apikey_namespace.rs"
+
+[[bin]]
+name = "oauth2_pkce"
+required-features = ["protocol-oauth2"]
+path = "src/bin/oauth2_pkce.rs"
+
+[[bin]]
+name = "token_introspection"
+required-features = ["protocol-oauth2"]
+path = "src/bin/token_introspection.rs"
+
+[[bin]]
+name = "strategy_registry"
+required-features = ["cache-memory"]
+path = "src/bin/strategy_registry.rs"
+
+[[bin]]
+name = "macro_annotations"
+required-features = ["annotation-macros", "cache-memory", "web-axum"]
+path = "src/bin/macro_annotations.rs"

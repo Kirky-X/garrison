@@ -124,3 +124,36 @@ pub mod observability_setup;
 
 #[cfg(feature = "cache-redis")]
 pub mod cache_redis;
+
+// ====================================================================
+// 0.4.2 新增示例模块（gap closure）
+// ====================================================================
+
+#[cfg(all(
+    feature = "secure-password",
+    feature = "db-sqlite",
+    feature = "cache-memory"
+))]
+pub mod password_login;
+
+#[cfg(all(feature = "protocol-jwt", feature = "cache-memory"))]
+pub mod jwt_modes;
+
+#[cfg(all(feature = "protocol-apikey", feature = "cache-memory"))]
+pub mod apikey_namespace;
+
+#[cfg(feature = "protocol-oauth2")]
+pub mod oauth2_pkce;
+
+#[cfg(feature = "protocol-oauth2")]
+pub mod token_introspection;
+
+#[cfg(feature = "cache-memory")]
+pub mod strategy_registry;
+
+#[cfg(all(
+    feature = "annotation-macros",
+    feature = "cache-memory",
+    feature = "web-axum"
+))]
+pub mod macro_annotations;
