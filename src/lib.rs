@@ -244,3 +244,29 @@ pub mod error;
 
 // Re-export prelude 以便 `use bulwark::prelude::*;` 可用
 pub use prelude::*;
+
+// ============================================================================
+// 过程宏注解（0.4.2 新增，依据 spec annotation-macros）
+// ============================================================================
+
+/// 过程宏注解模块（feature = "annotation-macros"）。
+///
+/// 启用 `annotation-macros` feature 时，re-export `bulwark-macros` crate 的 3 个
+/// `#[proc_macro_attribute]`：`#[check_login]` / `#[check_permission]` / `#[check_role]`。
+///
+/// 宏将 async fn 包装为 wrapper，在 body 前插入 `BulwarkUtil::check_*()` 调用，
+/// 失败时返回 `axum::response::Response`（401/403）。
+///
+/// # 示例
+///
+/// ```ignore
+/// use bulwark::check_login;
+/// use axum::response::IntoResponse;
+///
+/// #[check_login]
+/// async fn handler() -> impl IntoResponse {
+///     "hello"
+/// }
+/// ```
+#[cfg(feature = "annotation-macros")]
+pub use bulwark_macros::{check_login, check_permission, check_role};

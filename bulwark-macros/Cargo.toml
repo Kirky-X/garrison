@@ -1,0 +1,17 @@
+[package]
+name = "bulwark-macros"
+version = "0.4.2"
+edition = "2021"
+rust-version = "1.85"
+description = "Procedural macros for Bulwark auth framework"
+license = "Apache-2.0"
+repository = "https://github.com/Kirky-X/bulwark"
+documentation = "https://docs.rs/bulwark-macros"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { version = "2", features = ["full"] }
+quote = "1"
+proc-macro2 = "1"

@@ -17,7 +17,7 @@ keywords = ["auth", "authentication", "authorization", "jwt", "rbac"]
 categories = ["authentication", "web-programming"]
 
 [workspace]
-members = [".", "examples"]
+members = [".", "examples", "bulwark-macros"]
 resolver = "2"
 
 [lib]
@@ -80,6 +80,9 @@ tonic = { version = "0.13", optional = true, default-features = false, features 
 fluent = { version = "0.17", optional = true, default-features = false }
 # unic-langid 用于构造 LanguageIdentifier（fluent-rs 内部依赖，显式声明以直接使用）
 unic-langid = { version = "0.9", optional = true, default-features = false }
+# bulwark-macros 提供 #[check_login]/#[check_permission]/#[check_role] 过程宏
+# （feature = "annotation-macros"，依赖 web-axum 以使用 IntoResponse）
+bulwark-macros = { path = "bulwark-macros", version = "0.4.2", optional = true }
 
 [dev-dependencies]
 tokio-test = "0.4"
@@ -152,6 +155,10 @@ web-axum = ["axum", "axum/tokio", "axum/http1"]
 web-actix = ["actix-web"]
 web-warp = ["warp"]
 
+# === 0.4.2 新增：过程宏注解（#[check_login]/#[check_permission]/#[check_role]） ===
+# 依赖 web-axum（宏生成的 wrapper 返回 axum::response::Response）
+annotation-macros = ["dep:bulwark-macros", "web-axum"]
+
 # === 0.4.0 新增扩展 ===
 # alone-cache：多 Redis 实例隔离（AloneCache 装饰器 + AloneCacheManager），无额外依赖
 alone-cache = []
@@ -179,6 +186,7 @@ full = [
     "web-axum", "web-actix", "web-warp",
     "alone-cache", "parameter-query",
     "listener", "metrics-prometheus", "observability-otlp", "grpc", "i18n",
+    "annotation-macros",
 ]
 
 # 注意：production 原用 db-postgres，但 dbnexus 0.2 不支持，0.1.0 降级为 db-sqlite
