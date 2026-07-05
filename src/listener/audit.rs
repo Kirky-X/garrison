@@ -75,6 +75,23 @@ use dbnexus::DbPool;
 #[cfg(feature = "db-sqlite")]
 use sea_orm::{ConnectionTrait, DbBackend, Statement, Value};
 
+/// 构造 metadata JSON 字符串（T078 辅助函数）。
+///
+/// 接受 `&[(&str, &str)]` 键值对，序列化为 JSON 对象字符串。
+/// 字符串值自动转义（由 `serde_json` 处理）。
+fn json_metadata(pairs: &[(&str, &str)]) -> String {
+    let map: serde_json::Map<String, serde_json::Value> = pairs
+        .iter()
+        .map(|(k, v)| {
+            (
+                (*k).to_string(),
+                serde_json::Value::String((*v).to_string()),
+            )
+        })
+        .collect();
+    serde_json::Value::Object(map).to_string()
+}
+
 /// `audit_logs` 表行结构（T072 Green）。
 ///
 /// 对应 `migrations/sqlite/core/004_audit_logs.sql` 的表定义，
@@ -138,12 +155,16 @@ impl AuditLogListener {
         Self { pool, config }
     }
 
-    /// 将 `BulwarkEvent` 转换为 `AuditEntry`（T072: 仅 Login，T077-T078 扩展全 14 变体）。
+    /// 将 `BulwarkEvent` 转换为 `AuditEntry`（T078: 全 19 变体穷尽 match）。
     ///
-    /// Rule 12（失败显性化）：未覆盖的变体返回 `BulwarkError::Config`，不静默跳过。
+    /// spec R-audit-log-006 要求：`match` 无 `_ =>` 兜底，新增变体时编译错误提醒补实现。
+    ///
+    /// 14 个 spec 必需变体（R-audit-log-005）+ 5 个既有安全变体，全部转换为 AuditEntry。
+    /// `event_type` 使用变体名 snake_case（如 `LoginFailure` → `"login_failure"`）。
     ///
     /// T074: 转换后对 `metadata` 调用 `mask_metadata` 进行字段掩码。
     fn to_audit_entry(&self, event: &BulwarkEvent) -> BulwarkResult<AuditEntry> {
+        let now = Utc::now().timestamp();
         let mut entry = match event {
             BulwarkEvent::Login {
                 login_id,
@@ -156,16 +177,235 @@ impl AuditLogListener {
                 token: Some(token.clone()),
                 ip: None,
                 user_agent: None,
-                metadata: device.as_ref().map(|d| format!("{{\"device\":\"{}\"}}", d)),
+                metadata: device.as_ref().map(|d| json_metadata(&[("device", d)])),
                 success: true,
-                created_at: Utc::now().timestamp(),
+                created_at: now,
             },
-            // T077-T078 将扩展其余 13 个变体；当前未覆盖的返回 Err（Rule 12）
-            _ => {
-                return Err(BulwarkError::Config(format!(
-                    "AuditLogListener 暂不支持事件变体: {:?}",
-                    event
-                )));
+            BulwarkEvent::Logout { login_id, token } => AuditEntry {
+                tenant_id: 0,
+                event_type: "logout".to_string(),
+                login_id: Some(*login_id),
+                token: Some(token.clone()),
+                ip: None,
+                user_agent: None,
+                metadata: None,
+                success: true,
+                created_at: now,
+            },
+            BulwarkEvent::Kickout {
+                login_id,
+                token,
+                reason,
+            } => AuditEntry {
+                tenant_id: 0,
+                event_type: "kickout".to_string(),
+                login_id: Some(*login_id),
+                token: Some(token.clone()),
+                ip: None,
+                user_agent: None,
+                metadata: Some(json_metadata(&[("reason", reason)])),
+                success: false,
+                created_at: now,
+            },
+            BulwarkEvent::PermissionCheck {
+                login_id,
+                permission,
+            } => AuditEntry {
+                tenant_id: 0,
+                event_type: "permission_check".to_string(),
+                login_id: Some(*login_id),
+                token: None,
+                ip: None,
+                user_agent: None,
+                metadata: Some(json_metadata(&[("permission", permission)])),
+                success: false,
+                created_at: now,
+            },
+            BulwarkEvent::RoleCheck { login_id, role } => AuditEntry {
+                tenant_id: 0,
+                event_type: "role_check".to_string(),
+                login_id: Some(*login_id),
+                token: None,
+                ip: None,
+                user_agent: None,
+                metadata: Some(json_metadata(&[("role", role)])),
+                success: false,
+                created_at: now,
+            },
+            BulwarkEvent::TokenExpired { token } => AuditEntry {
+                tenant_id: 0,
+                event_type: "token_expired".to_string(),
+                login_id: None,
+                token: Some(token.clone()),
+                ip: None,
+                user_agent: None,
+                metadata: None,
+                success: false,
+                created_at: now,
+            },
+            BulwarkEvent::LoginFailure { login_id, reason } => AuditEntry {
+                tenant_id: 0,
+                event_type: "login_failure".to_string(),
+                login_id: Some(*login_id),
+                token: None,
+                ip: None,
+                user_agent: None,
+                metadata: Some(json_metadata(&[("reason", reason)])),
+                success: false,
+                created_at: now,
+            },
+            BulwarkEvent::TokenRefresh {
+                login_id,
+                old_token,
+                new_token,
+            } => AuditEntry {
+                tenant_id: 0,
+                event_type: "token_refresh".to_string(),
+                login_id: Some(*login_id),
+                token: Some(new_token.clone()),
+                ip: None,
+                user_agent: None,
+                metadata: Some(json_metadata(&[("old_token", old_token)])),
+                success: true,
+                created_at: now,
+            },
+            BulwarkEvent::RevokeToken { token } => AuditEntry {
+                tenant_id: 0,
+                event_type: "revoke_token".to_string(),
+                login_id: None,
+                token: Some(token.clone()),
+                ip: None,
+                user_agent: None,
+                metadata: None,
+                success: true,
+                created_at: now,
+            },
+            BulwarkEvent::SessionTimeout { login_id, token } => AuditEntry {
+                tenant_id: 0,
+                event_type: "session_timeout".to_string(),
+                login_id: Some(*login_id),
+                token: Some(token.clone()),
+                ip: None,
+                user_agent: None,
+                metadata: None,
+                success: false,
+                created_at: now,
+            },
+            BulwarkEvent::AccountLocked { login_id, reason } => AuditEntry {
+                tenant_id: 0,
+                event_type: "account_locked".to_string(),
+                login_id: Some(*login_id),
+                token: None,
+                ip: None,
+                user_agent: None,
+                metadata: Some(json_metadata(&[("reason", reason)])),
+                success: false,
+                created_at: now,
+            },
+            BulwarkEvent::FirewallBlock { login_id, reason } => AuditEntry {
+                tenant_id: 0,
+                event_type: "firewall_block".to_string(),
+                login_id: Some(*login_id),
+                token: None,
+                ip: None,
+                user_agent: None,
+                metadata: Some(json_metadata(&[("reason", reason)])),
+                success: false,
+                created_at: now,
+            },
+            BulwarkEvent::TokenRotate { old_key, new_key } => AuditEntry {
+                tenant_id: 0,
+                event_type: "token_rotate".to_string(),
+                login_id: None,
+                token: None,
+                ip: None,
+                user_agent: None,
+                metadata: Some(json_metadata(&[("old_key", old_key), ("new_key", new_key)])),
+                success: true,
+                created_at: now,
+            },
+            BulwarkEvent::TempCredentialConsumed { key, value } => AuditEntry {
+                tenant_id: 0,
+                event_type: "temp_credential_consumed".to_string(),
+                login_id: None,
+                token: None,
+                ip: None,
+                user_agent: None,
+                metadata: Some(json_metadata(&[("key", key), ("value", value)])),
+                success: true,
+                created_at: now,
+            },
+            BulwarkEvent::SocialLogin {
+                provider,
+                user_id,
+                login_id,
+            } => AuditEntry {
+                tenant_id: 0,
+                event_type: "social_login".to_string(),
+                login_id: *login_id,
+                token: None,
+                ip: None,
+                user_agent: None,
+                metadata: Some(json_metadata(&[
+                    ("provider", provider),
+                    ("user_id", user_id),
+                ])),
+                success: true,
+                created_at: now,
+            },
+            BulwarkEvent::TenantSwitch {
+                login_id,
+                from_tenant,
+                to_tenant,
+            } => AuditEntry {
+                tenant_id: 0,
+                event_type: "tenant_switch".to_string(),
+                login_id: Some(*login_id),
+                token: None,
+                ip: None,
+                user_agent: None,
+                metadata: Some(json_metadata(&[
+                    ("from_tenant", &from_tenant.to_string()),
+                    ("to_tenant", &to_tenant.to_string()),
+                ])),
+                success: true,
+                created_at: now,
+            },
+            BulwarkEvent::DeviceBlock { login_id, device } => AuditEntry {
+                tenant_id: 0,
+                event_type: "device_block".to_string(),
+                login_id: Some(*login_id),
+                token: None,
+                ip: None,
+                user_agent: None,
+                metadata: Some(json_metadata(&[("device", device)])),
+                success: false,
+                created_at: now,
+            },
+            BulwarkEvent::DeviceUnblock { login_id, device } => AuditEntry {
+                tenant_id: 0,
+                event_type: "device_unblock".to_string(),
+                login_id: Some(*login_id),
+                token: None,
+                ip: None,
+                user_agent: None,
+                metadata: Some(json_metadata(&[("device", device)])),
+                success: true,
+                created_at: now,
+            },
+            BulwarkEvent::ConfigReload { config_version } => AuditEntry {
+                tenant_id: 0,
+                event_type: "config_reload".to_string(),
+                login_id: None,
+                token: None,
+                ip: None,
+                user_agent: None,
+                metadata: Some(json_metadata(&[(
+                    "config_version",
+                    &config_version.to_string(),
+                )])),
+                success: true,
+                created_at: now,
             },
         };
         // T074: 对 metadata 进行字段掩码（如 password → ***）
@@ -447,5 +687,166 @@ mod db_sqlite_tests {
             "password 字段应被掩码为 ***，实际: {}",
             masked
         );
+    }
+
+    // ========================================================================
+    // T077-T078: AuditLogListener 覆盖全部 14 事件（spec R-audit-log-006）
+    // ========================================================================
+
+    /// T077 Red: AuditLogListener 应为 spec R-audit-log-005 的 14 个变体
+    /// 各生成一行 audit_logs 记录，event_type 对应变体名 snake_case。
+    ///
+    /// 对每个变体调用 `on_event(&event).await`，最终断言 `audit_logs` 表有 14 行，
+    /// 且每种 event_type 各一行。
+    ///
+    /// 当前 Red 状态：`to_audit_entry` 仅覆盖 Login，其余 13 个走 `_ =>` 返回 Err，
+    /// `on_event` 捕获 Err 后仅 `tracing::warn` 不持久化，因此 audit_logs 仅 1 行（断言 14 失败）。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn audit_log_listener_handles_all_14_events() {
+        let pool = setup_db().await;
+        let config = AuditConfig {
+            mask_fields: vec![],
+            retain_days: 0,
+            async_write: false,
+        };
+        let listener = AuditLogListener::new(pool.clone(), config);
+
+        // 14 个 spec 必需变体（R-audit-log-005）
+        let events: Vec<(BulwarkEvent, &str)> = vec![
+            (
+                BulwarkEvent::Login {
+                    login_id: 1,
+                    token: "t".into(),
+                    device: None,
+                },
+                "login",
+            ),
+            (
+                BulwarkEvent::Logout {
+                    login_id: 1,
+                    token: "t".into(),
+                },
+                "logout",
+            ),
+            (
+                BulwarkEvent::Kickout {
+                    login_id: 1,
+                    token: "t".into(),
+                    reason: "r".into(),
+                },
+                "kickout",
+            ),
+            (
+                BulwarkEvent::LoginFailure {
+                    login_id: 1,
+                    reason: "r".into(),
+                },
+                "login_failure",
+            ),
+            (
+                BulwarkEvent::RevokeToken { token: "t".into() },
+                "revoke_token",
+            ),
+            (
+                BulwarkEvent::PermissionCheck {
+                    login_id: 1,
+                    permission: "p".into(),
+                },
+                "permission_check",
+            ),
+            (
+                BulwarkEvent::RoleCheck {
+                    login_id: 1,
+                    role: "r".into(),
+                },
+                "role_check",
+            ),
+            (
+                BulwarkEvent::TokenRefresh {
+                    login_id: 1,
+                    old_token: "t1".into(),
+                    new_token: "t2".into(),
+                },
+                "token_refresh",
+            ),
+            (
+                BulwarkEvent::TokenRotate {
+                    old_key: "k1".into(),
+                    new_key: "k2".into(),
+                },
+                "token_rotate",
+            ),
+            (
+                BulwarkEvent::SocialLogin {
+                    provider: "wechat".into(),
+                    user_id: "u".into(),
+                    login_id: Some(1),
+                },
+                "social_login",
+            ),
+            (
+                BulwarkEvent::TenantSwitch {
+                    login_id: 1,
+                    from_tenant: 100,
+                    to_tenant: 200,
+                },
+                "tenant_switch",
+            ),
+            (
+                BulwarkEvent::DeviceBlock {
+                    login_id: 1,
+                    device: "d".into(),
+                },
+                "device_block",
+            ),
+            (
+                BulwarkEvent::DeviceUnblock {
+                    login_id: 1,
+                    device: "d".into(),
+                },
+                "device_unblock",
+            ),
+            (
+                BulwarkEvent::ConfigReload { config_version: 1 },
+                "config_reload",
+            ),
+        ];
+
+        // 对每个变体调用 on_event
+        for (event, _expected_type) in &events {
+            listener.on_event(event).await.expect("on_event 应返回 Ok");
+        }
+
+        // 查询 audit_logs 表总行数
+        let session = pool.get_session("admin").await.unwrap();
+        let conn = session.connection().unwrap();
+        let count_stmt = Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT COUNT(*) as cnt FROM audit_logs",
+            vec![],
+        );
+        let count_rows = conn.query_all_raw(count_stmt).await.expect("COUNT 应成功");
+        let total: i64 = count_rows[0].try_get("", "cnt").expect("cnt 应可读");
+        assert_eq!(
+            total, 14,
+            "audit_logs 应有 14 行（每变体一行），实际: {}",
+            total
+        );
+
+        // 逐变体验证 event_type 存在
+        for (_event, expected_type) in &events {
+            let stmt = Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT COUNT(*) as cnt FROM audit_logs WHERE event_type = ?",
+                vec![Value::String(Some(expected_type.to_string()))],
+            );
+            let rows = conn.query_all_raw(stmt).await.expect("query 应成功");
+            let cnt: i64 = rows[0].try_get("", "cnt").expect("cnt 应可读");
+            assert_eq!(
+                cnt, 1,
+                "event_type='{}' 应有 1 行，实际: {}",
+                expected_type, cnt
+            );
+        }
     }
 }
