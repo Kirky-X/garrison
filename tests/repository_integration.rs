@@ -33,8 +33,8 @@ use bulwark::dao::{
 };
 use std::path::PathBuf;
 
-const TENANT_A: &str = "tenant-a";
-const TENANT_B: &str = "tenant-b";
+const TENANT_A: i64 = 1;
+const TENANT_B: i64 = 2;
 
 // ============================================================================
 // 辅助：定位迁移目录 + 初始化 SQLite in-memory + 迁移

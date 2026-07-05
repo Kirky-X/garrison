@@ -153,7 +153,7 @@ async fn integration_rbac_full_flow() {
     session
         .execute_raw(
             "INSERT INTO app_user (id, username, password_hash, status, tenant_id) \
-             VALUES ('u1', 'alice', 'hash1', 'active', 't1')",
+             VALUES ('u1', 'alice', 'hash1', 'active', 1)",
         )
         .await
         .expect("INSERT user 应成功");
@@ -162,7 +162,7 @@ async fn integration_rbac_full_flow() {
     session
         .execute_raw(
             "INSERT INTO app_role (id, code, name, tenant_id, is_system) \
-             VALUES ('r1', 'admin', '管理员', 't1', 0)",
+             VALUES ('r1', 'admin', '管理员', 1, 0)",
         )
         .await
         .expect("INSERT role 应成功");
@@ -180,7 +180,7 @@ async fn integration_rbac_full_flow() {
     // 建立用户-角色关联
     session
         .execute_raw(
-            "INSERT INTO app_user_role (user_id, role_id, tenant_id) VALUES ('u1', 'r1', 't1')",
+            "INSERT INTO app_user_role (user_id, role_id, tenant_id) VALUES ('u1', 'r1', 1)",
         )
         .await
         .expect("INSERT user_role 应成功");
@@ -189,7 +189,7 @@ async fn integration_rbac_full_flow() {
     session
         .execute_raw(
             "INSERT INTO app_role_permission (role_id, permission_id, tenant_id) \
-             VALUES ('r1', 'p1', 't1'), ('r1', 'p2', 't1')",
+             VALUES ('r1', 'p1', 1), ('r1', 'p2', 1)",
         )
         .await
         .expect("INSERT role_permission 应成功");
@@ -224,7 +224,7 @@ async fn integration_user_ext_kv_crud() {
     session
         .execute_raw(
             "INSERT INTO app_user (id, username, password_hash, status, tenant_id) \
-             VALUES ('ue1', 'kv_user', 'hash', 'active', 't1')",
+             VALUES ('ue1', 'kv_user', 'hash', 'active', 1)",
         )
         .await
         .expect("INSERT user 应成功");
@@ -233,7 +233,7 @@ async fn integration_user_ext_kv_crud() {
     session
         .execute_raw(
             "INSERT INTO app_user_ext (id, user_id, field_key, field_value, field_type, tenant_id) \
-             VALUES ('e1', 'ue1', 'email', 'alice@example.com', 'string', 't1')",
+             VALUES ('e1', 'ue1', 'email', 'alice@example.com', 'string', 1)",
         )
         .await
         .expect("INSERT ext 应成功");
@@ -242,7 +242,7 @@ async fn integration_user_ext_kv_crud() {
     session
         .execute_raw(
             "INSERT INTO app_user_ext (id, user_id, field_key, field_value, field_type, tenant_id) \
-             VALUES ('e2', 'ue1', 'avatar', 'https://example.com/a.png', 'string', 't1')",
+             VALUES ('e2', 'ue1', 'avatar', 'https://example.com/a.png', 'string', 1)",
         )
         .await
         .expect("INSERT ext 应成功");
@@ -286,7 +286,7 @@ async fn integration_user_ext_kv_crud() {
     let dup_result = session
         .execute_raw(
             "INSERT INTO app_user_ext (id, user_id, field_key, field_value, field_type, tenant_id) \
-             VALUES ('e3', 'ue1', 'email', 'dup@example.com', 'string', 't1')",
+             VALUES ('e3', 'ue1', 'email', 'dup@example.com', 'string', 1)",
         )
         .await;
     assert!(
@@ -300,7 +300,7 @@ async fn integration_user_ext_kv_crud() {
 // ============================================================================
 
 /// Scenario: 不同租户下相同 username 可以共存。
-/// WHEN 在 tenant_id='t1' 和 tenant_id='t2' 下都创建 username='alice'
+/// WHEN 在 tenant_id=1 和 tenant_id=2 下都创建 username='alice'
 /// THEN 两条记录均存在，按 tenant_id 过滤互不影响
 #[tokio::test]
 async fn integration_multi_tenant_isolation() {
@@ -311,7 +311,7 @@ async fn integration_multi_tenant_isolation() {
     session
         .execute_raw(
             "INSERT INTO app_user (id, username, password_hash, status, tenant_id) \
-             VALUES ('t1-alice', 'alice', 'h1', 'active', 't1')",
+             VALUES ('t1-alice', 'alice', 'h1', 'active', 1)",
         )
         .await
         .expect("INSERT t1 alice 应成功");
@@ -320,7 +320,7 @@ async fn integration_multi_tenant_isolation() {
     session
         .execute_raw(
             "INSERT INTO app_user (id, username, password_hash, status, tenant_id) \
-             VALUES ('t2-alice', 'alice', 'h2', 'active', 't2')",
+             VALUES ('t2-alice', 'alice', 'h2', 'active', 2)",
         )
         .await
         .expect("INSERT t2 alice 应成功（多租户允许相同 username）");
@@ -328,14 +328,14 @@ async fn integration_multi_tenant_isolation() {
     // 按 tenant 查询
     let t1_count = query_count(
         &session,
-        "SELECT count(*) AS cnt FROM app_user WHERE tenant_id = 't1' AND username = 'alice'",
+        "SELECT count(*) AS cnt FROM app_user WHERE tenant_id = 1 AND username = 'alice'",
     )
     .await;
     assert_eq!(t1_count, 1, "t1 下应有 1 个 alice");
 
     let t2_count = query_count(
         &session,
-        "SELECT count(*) AS cnt FROM app_user WHERE tenant_id = 't2' AND username = 'alice'",
+        "SELECT count(*) AS cnt FROM app_user WHERE tenant_id = 2 AND username = 'alice'",
     )
     .await;
     assert_eq!(t2_count, 1, "t2 下应有 1 个 alice");
@@ -364,7 +364,7 @@ async fn integration_cascade_delete_user() {
     session
         .execute_raw(
             "INSERT INTO app_user (id, username, password_hash, status, tenant_id) \
-             VALUES ('cu1', 'cascade_user', 'h', 'active', 't1')",
+             VALUES ('cu1', 'cascade_user', 'h', 'active', 1)",
         )
         .await
         .expect("INSERT user 应成功");
@@ -373,7 +373,7 @@ async fn integration_cascade_delete_user() {
     session
         .execute_raw(
             "INSERT INTO app_role (id, code, name, tenant_id, is_system) \
-             VALUES ('cr1', 'user_role_c', 'CR', 't1', 0)",
+             VALUES ('cr1', 'user_role_c', 'CR', 1, 0)",
         )
         .await
         .expect("INSERT role 应成功");
@@ -382,7 +382,7 @@ async fn integration_cascade_delete_user() {
     session
         .execute_raw(
             "INSERT INTO app_user_role (user_id, role_id, tenant_id) \
-             VALUES ('cu1', 'cr1', 't1')",
+             VALUES ('cu1', 'cr1', 1)",
         )
         .await
         .expect("INSERT user_role 应成功");
@@ -391,7 +391,7 @@ async fn integration_cascade_delete_user() {
     session
         .execute_raw(
             "INSERT INTO app_user_ext (id, user_id, field_key, field_value, field_type, tenant_id) \
-             VALUES ('ce1', 'cu1', 'phone', '1234567890', 'string', 't1')",
+             VALUES ('ce1', 'cu1', 'phone', '1234567890', 'string', 1)",
         )
         .await
         .expect("INSERT user_ext 应成功");
@@ -457,7 +457,7 @@ async fn integration_check_constraint_status() {
     let invalid = session
         .execute_raw(
             "INSERT INTO app_user (id, username, password_hash, status, tenant_id) \
-             VALUES ('ck1', 'check_user', 'h', 'invalid_status', 't1')",
+             VALUES ('ck1', 'check_user', 'h', 'invalid_status', 1)",
         )
         .await;
     assert!(invalid.is_err(), "非法 status 应被 CHECK 约束拒绝");
@@ -468,7 +468,7 @@ async fn integration_check_constraint_status() {
         let result = session
             .execute_raw(&format!(
                 "INSERT INTO app_user (id, username, password_hash, status, tenant_id) \
-                 VALUES ('ck_{}', '{}', 'h', '{}', 't1')",
+                 VALUES ('ck_{}', '{}', 'h', '{}', 1)",
                 status, username, status
             ))
             .await;
@@ -491,7 +491,7 @@ async fn integration_check_constraint_auth_method() {
     session
         .execute_raw(
             "INSERT INTO app_user (id, username, password_hash, status, tenant_id) \
-             VALUES ('am1', 'am_user', 'h', 'active', 't1')",
+             VALUES ('am1', 'am_user', 'h', 'active', 1)",
         )
         .await
         .expect("INSERT user 应成功");
@@ -501,7 +501,7 @@ async fn integration_check_constraint_auth_method() {
         let result = session
             .execute_raw(&format!(
                 "INSERT INTO app_auth_method (id, user_id, method_type, tenant_id) \
-                 VALUES ('am_{}', 'am1', '{}', 't1')",
+                 VALUES ('am_{}', 'am1', '{}', 1)",
                 mt, mt
             ))
             .await;
@@ -512,7 +512,7 @@ async fn integration_check_constraint_auth_method() {
     let invalid = session
         .execute_raw(
             "INSERT INTO app_auth_method (id, user_id, method_type, tenant_id) \
-             VALUES ('am_bad', 'am1', 'unknown_method', 't1')",
+             VALUES ('am_bad', 'am1', 'unknown_method', 1)",
         )
         .await;
     assert!(invalid.is_err(), "非法 method_type 应被 CHECK 约束拒绝");
@@ -536,7 +536,7 @@ async fn integration_multi_table_transaction_rollback() {
     session
         .execute_raw(
             "INSERT INTO app_user (id, username, password_hash, status, tenant_id) \
-             VALUES ('tu1', 'txn_user', 'h', 'active', 't1')",
+             VALUES ('tu1', 'txn_user', 'h', 'active', 1)",
         )
         .await
         .expect("事务内 INSERT user 应成功");
@@ -544,7 +544,7 @@ async fn integration_multi_table_transaction_rollback() {
     session
         .execute_raw(
             "INSERT INTO app_role (id, code, name, tenant_id, is_system) \
-             VALUES ('tr1', 'txn_role', 'TR', 't1', 0)",
+             VALUES ('tr1', 'txn_role', 'TR', 1, 0)",
         )
         .await
         .expect("事务内 INSERT role 应成功");
@@ -552,7 +552,7 @@ async fn integration_multi_table_transaction_rollback() {
     session
         .execute_raw(
             "INSERT INTO app_user_role (user_id, role_id, tenant_id) \
-             VALUES ('tu1', 'tr1', 't1')",
+             VALUES ('tu1', 'tr1', 1)",
         )
         .await
         .expect("事务内 INSERT user_role 应成功");
@@ -637,7 +637,7 @@ async fn integration_session_table_crud() {
     session
         .execute_raw(
             "INSERT INTO app_user (id, username, password_hash, status, tenant_id) \
-             VALUES ('su1', 'session_user', 'h', 'active', 't1')",
+             VALUES ('su1', 'session_user', 'h', 'active', 1)",
         )
         .await
         .expect("INSERT user 应成功");
@@ -646,7 +646,7 @@ async fn integration_session_table_crud() {
     session
         .execute_raw(
             "INSERT INTO app_session (session_id, user_id, ip, login_time, last_active, tenant_id) \
-             VALUES ('sess1', 'su1', '127.0.0.1', '2026-01-01 10:00:00', '2026-01-01 10:00:00', 't1')",
+             VALUES ('sess1', 'su1', '127.0.0.1', '2026-01-01 10:00:00', '2026-01-01 10:00:00', 1)",
         )
         .await
         .expect("INSERT session 应成功");

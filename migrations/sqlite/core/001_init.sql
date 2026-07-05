@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS app_user (
     password_hash   TEXT    NOT NULL,                                     -- 密码哈希（argon2/bcrypt）
     status          TEXT    NOT NULL DEFAULT 'pending'
                     CHECK (status IN ('pending', 'active', 'suspended', 'inactive', 'deleted')),
-    tenant_id       TEXT    NOT NULL,                                     -- 租户 ID（多账号体系）
+    tenant_id       INTEGER NOT NULL DEFAULT 0,                           -- 租户 ID（i64，0=默认租户）
     created_at      TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at      TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     last_login_at   TEXT                                                -- 最后登录时间（可空）
@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS app_role (
     code        TEXT    NOT NULL,                                         -- 角色编码（业务用）
     name        TEXT    NOT NULL,                                         -- 角色名（展示用）
     description TEXT,                                                     -- 描述
-    tenant_id   TEXT    NOT NULL,                                         -- 租户 ID
+    tenant_id   INTEGER NOT NULL DEFAULT 0,                               -- 租户 ID（i64）
     is_system   INTEGER NOT NULL DEFAULT 0,                              -- 是否系统内置角色（0=false, 1=true）
     created_at  TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at  TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -63,7 +63,7 @@ CREATE TABLE IF NOT EXISTS app_user_role (
     role_id     TEXT    NOT NULL,
     scope       TEXT,                                                     -- 授权范围（如 data scope）
     grant_time  TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    tenant_id   TEXT    NOT NULL,
+    tenant_id   INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (user_id, role_id),
     FOREIGN KEY (user_id) REFERENCES app_user (id) ON DELETE CASCADE,
     FOREIGN KEY (role_id) REFERENCES app_role (id) ON DELETE CASCADE
@@ -77,7 +77,7 @@ CREATE INDEX IF NOT EXISTS idx_app_user_role_tenant  ON app_user_role (tenant_id
 CREATE TABLE IF NOT EXISTS app_role_permission (
     role_id         TEXT    NOT NULL,
     permission_id   TEXT    NOT NULL,
-    tenant_id       TEXT    NOT NULL,
+    tenant_id       INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (role_id, permission_id),
     FOREIGN KEY (role_id)         REFERENCES app_role       (id) ON DELETE CASCADE,
     FOREIGN KEY (permission_id)   REFERENCES app_permission  (id) ON DELETE CASCADE
@@ -96,7 +96,7 @@ CREATE TABLE IF NOT EXISTS app_auth_method (
     external_id  TEXT,                                                    -- 外部 ID（如 OAuth provider user id）
     metadata     TEXT,                                                    -- JSON 元数据
     create_time  TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    tenant_id    TEXT    NOT NULL,
+    tenant_id    INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY (user_id) REFERENCES app_user (id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_app_auth_method_user_id     ON app_auth_method (user_id);
@@ -115,7 +115,7 @@ CREATE TABLE IF NOT EXISTS app_session (
     login_time   TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     last_active  TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     expire_time  TEXT,                                                    -- 过期时间
-    tenant_id    TEXT    NOT NULL,
+    tenant_id    INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY (user_id) REFERENCES app_user (id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_app_session_user_id     ON app_session (user_id);
@@ -135,7 +135,7 @@ CREATE TABLE IF NOT EXISTS app_login_log (
     success      INTEGER NOT NULL DEFAULT 1,                             -- 0=失败, 1=成功
     fail_reason  TEXT,
     create_time  TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    tenant_id    TEXT    NOT NULL,
+    tenant_id    INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY (user_id) REFERENCES app_user (id) ON DELETE SET NULL
 );
 CREATE INDEX IF NOT EXISTS idx_app_login_log_user_time   ON app_login_log (user_id, create_time);
@@ -153,8 +153,8 @@ CREATE TABLE IF NOT EXISTS app_user_ext (
     field_type   TEXT    NOT NULL DEFAULT 'string'
                   CHECK (field_type IN ('string', 'number', 'boolean', 'json', 'datetime')),
     created_at   TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at   TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    tenant_id    TEXT    NOT NULL,
+    updated_at  TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    tenant_id    INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY (user_id) REFERENCES app_user (id) ON DELETE CASCADE
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uk_app_user_ext_user_key   ON app_user_ext (user_id, field_key);

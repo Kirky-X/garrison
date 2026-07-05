@@ -1047,7 +1047,7 @@ impl BulwarkLogic for BulwarkLogicDefault {
         // 1. 查询用户（login_id 转字符串作为 username 查询）
         let username = login_id.to_string();
         let user = repo
-            .find_by_username("default", &username)
+            .find_by_username(0, &username)
             .await
             .map_err(|e| BulwarkError::Dao(format!("login_with_password 查询用户失败: {}", e)))?;
 
@@ -3018,35 +3018,30 @@ mod tests {
     #[cfg(all(feature = "secure-password", feature = "db-sqlite"))]
     #[async_trait]
     impl UserRepository for MockUserRepository {
-        async fn find_by_id(&self, _tenant_id: &str, id: &str) -> BulwarkResult<Option<UserRow>> {
+        async fn find_by_id(&self, _tenant_id: i64, id: &str) -> BulwarkResult<Option<UserRow>> {
             Ok(self.users.lock().values().find(|u| u.id == id).cloned())
         }
         async fn find_by_username(
             &self,
-            _tenant_id: &str,
+            _tenant_id: i64,
             username: &str,
         ) -> BulwarkResult<Option<UserRow>> {
             Ok(self.users.lock().get(username).cloned())
         }
-        async fn create(&self, _tenant_id: &str, _user: NewUser) -> BulwarkResult<String> {
+        async fn create(&self, _tenant_id: i64, _user: NewUser) -> BulwarkResult<String> {
             Err(BulwarkError::Internal(
                 "MockUserRepository::create not implemented".to_string(),
             ))
         }
-        async fn update(
-            &self,
-            _tenant_id: &str,
-            _id: &str,
-            _user: UpdateUser,
-        ) -> BulwarkResult<()> {
+        async fn update(&self, _tenant_id: i64, _id: &str, _user: UpdateUser) -> BulwarkResult<()> {
             Ok(())
         }
-        async fn delete(&self, _tenant_id: &str, _id: &str) -> BulwarkResult<()> {
+        async fn delete(&self, _tenant_id: i64, _id: &str) -> BulwarkResult<()> {
             Ok(())
         }
         async fn list(
             &self,
-            _tenant_id: &str,
+            _tenant_id: i64,
             _offset: i64,
             _limit: i64,
         ) -> BulwarkResult<Vec<UserRow>> {
@@ -3062,7 +3057,7 @@ mod tests {
             username: login_id.to_string(),
             password_hash: password_hash.to_string(),
             status: "active".to_string(),
-            tenant_id: "default".to_string(),
+            tenant_id: 0,
             created_at: "2026-07-04T00:00:00Z".to_string(),
             updated_at: "2026-07-04T00:00:00Z".to_string(),
             last_login_at: None,

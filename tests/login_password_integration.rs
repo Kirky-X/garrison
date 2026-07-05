@@ -33,7 +33,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-const TENANT: &str = "default";
+const TENANT: i64 = 0;
 
 // ============================================================================
 // MockInterface：BulwarkFirewallStrategyDefault::new() 必需
@@ -63,15 +63,22 @@ fn reset_listener_counters() {
     LOGIN_FAILURE_WRONG_PASSWORD.store(0, Ordering::SeqCst);
 }
 
+/// 测试用 listener：根据 login_id 区分 user_not_found (9999) 与 wrong_password (1001)。
+///
+/// v0.4.2 安全审计 A-014: 实现层 reason 统一为 "invalid_credentials"，
+/// listener 无法仅凭 reason 区分两类失败，需借助 login_id（测试场景固定）。
 struct PasswordLoginListener;
 
 impl BulwarkListener for PasswordLoginListener {
     fn on_event(&self, event: &BulwarkEvent) -> BulwarkResult<()> {
-        if let BulwarkEvent::LoginFailure { reason, .. } = event {
-            if reason == "user_not_found" {
-                LOGIN_FAILURE_NOT_FOUND.fetch_add(1, Ordering::SeqCst);
-            } else if reason == "wrong_password" {
-                LOGIN_FAILURE_WRONG_PASSWORD.fetch_add(1, Ordering::SeqCst);
+        if let BulwarkEvent::LoginFailure { login_id, reason } = event {
+            // reason 现在统一为 "invalid_credentials"，用 login_id 区分场景
+            if reason == "invalid_credentials" {
+                if *login_id == 9999 {
+                    LOGIN_FAILURE_NOT_FOUND.fetch_add(1, Ordering::SeqCst);
+                } else if *login_id == 1001 {
+                    LOGIN_FAILURE_WRONG_PASSWORD.fetch_add(1, Ordering::SeqCst);
+                }
             }
         }
         Ok(())
@@ -288,11 +295,11 @@ async fn login_with_password_user_not_found() {
         other => panic!("期望 InvalidParam，实际: {:?}", other),
     }
 
-    // listener 应广播 LoginFailure { reason: "user_not_found" }
+    // listener 应广播 LoginFailure { reason: "invalid_credentials", login_id: 9999 }
     assert_eq!(
         LOGIN_FAILURE_NOT_FOUND.load(Ordering::SeqCst),
         1,
-        "应广播 1 次 LoginFailure(user_not_found) 事件"
+        "应广播 1 次 LoginFailure(login_id=9999) 事件"
     );
 }
 
@@ -315,11 +322,11 @@ async fn login_with_password_wrong_password() {
         other => panic!("期望 InvalidParam，实际: {:?}", other),
     }
 
-    // listener 应广播 LoginFailure { reason: "wrong_password" }
+    // listener 应广播 LoginFailure { reason: "invalid_credentials", login_id: 1001 }
     assert_eq!(
         LOGIN_FAILURE_WRONG_PASSWORD.load(Ordering::SeqCst),
         1,
-        "应广播 1 次 LoginFailure(wrong_password) 事件"
+        "应广播 1 次 LoginFailure(login_id=1001) 事件"
     );
 }
 

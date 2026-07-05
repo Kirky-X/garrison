@@ -67,7 +67,7 @@ impl SqliteUserRepository {
 
 #[async_trait]
 impl UserRepository for SqliteUserRepository {
-    async fn find_by_id(&self, tenant_id: &str, id: &str) -> BulwarkResult<Option<UserRow>> {
+    async fn find_by_id(&self, tenant_id: i64, id: &str) -> BulwarkResult<Option<UserRow>> {
         let session = self.pool.get_session("admin").await.map_err(|e| {
             BulwarkError::Dao(format!("app_user find_by_id 获取 session 失败: {}", e))
         })?;
@@ -77,7 +77,7 @@ impl UserRepository for SqliteUserRepository {
         let sql = "SELECT id, username, password_hash, status, tenant_id, created_at, updated_at, last_login_at \
                    FROM app_user WHERE tenant_id = ? AND id = ?";
         let stmt =
-            Statement::from_sql_and_values(DbBackend::Sqlite, sql, [v_str(tenant_id), v_str(id)]);
+            Statement::from_sql_and_values(DbBackend::Sqlite, sql, [v_i64(tenant_id), v_str(id)]);
         let row = conn
             .query_one_raw(stmt)
             .await
@@ -87,7 +87,7 @@ impl UserRepository for SqliteUserRepository {
 
     async fn find_by_username(
         &self,
-        tenant_id: &str,
+        tenant_id: i64,
         username: &str,
     ) -> BulwarkResult<Option<UserRow>> {
         let session = self.pool.get_session("admin").await.map_err(|e| {
@@ -107,7 +107,7 @@ impl UserRepository for SqliteUserRepository {
         let stmt = Statement::from_sql_and_values(
             DbBackend::Sqlite,
             sql,
-            [v_str(tenant_id), v_str(username)],
+            [v_i64(tenant_id), v_str(username)],
         );
         let row = conn
             .query_one_raw(stmt)
@@ -116,7 +116,7 @@ impl UserRepository for SqliteUserRepository {
         row.map(|r| parse_user_row(&r)).transpose()
     }
 
-    async fn create(&self, tenant_id: &str, user: NewUser) -> BulwarkResult<String> {
+    async fn create(&self, tenant_id: i64, user: NewUser) -> BulwarkResult<String> {
         let session =
             self.pool.get_session("admin").await.map_err(|e| {
                 BulwarkError::Dao(format!("app_user create 获取 session 失败: {}", e))
@@ -134,7 +134,7 @@ impl UserRepository for SqliteUserRepository {
                 v_str(&user.username),
                 v_str(&user.password_hash),
                 v_str(&user.status),
-                v_str(tenant_id),
+                v_i64(tenant_id),
             ],
         );
         conn.execute_raw(stmt)
@@ -143,7 +143,7 @@ impl UserRepository for SqliteUserRepository {
         Ok(user.id)
     }
 
-    async fn update(&self, tenant_id: &str, id: &str, user: UpdateUser) -> BulwarkResult<()> {
+    async fn update(&self, tenant_id: i64, id: &str, user: UpdateUser) -> BulwarkResult<()> {
         let mut sets = Vec::new();
         let mut params = Vec::new();
         if let Some(username) = user.username {
@@ -165,7 +165,7 @@ impl UserRepository for SqliteUserRepository {
         if sets.is_empty() {
             return Ok(());
         }
-        params.push(v_str(tenant_id));
+        params.push(v_i64(tenant_id));
         params.push(v_str(id));
         let sql = format!(
             "UPDATE app_user SET {} WHERE tenant_id = ? AND id = ?",
@@ -185,7 +185,7 @@ impl UserRepository for SqliteUserRepository {
         Ok(())
     }
 
-    async fn delete(&self, tenant_id: &str, id: &str) -> BulwarkResult<()> {
+    async fn delete(&self, tenant_id: i64, id: &str) -> BulwarkResult<()> {
         let session =
             self.pool.get_session("admin").await.map_err(|e| {
                 BulwarkError::Dao(format!("app_user delete 获取 session 失败: {}", e))
@@ -195,14 +195,14 @@ impl UserRepository for SqliteUserRepository {
         })?;
         let sql = "DELETE FROM app_user WHERE tenant_id = ? AND id = ?";
         let stmt =
-            Statement::from_sql_and_values(DbBackend::Sqlite, sql, [v_str(tenant_id), v_str(id)]);
+            Statement::from_sql_and_values(DbBackend::Sqlite, sql, [v_i64(tenant_id), v_str(id)]);
         conn.execute_raw(stmt)
             .await
             .map_err(|e| BulwarkError::Dao(format!("app_user delete 删除失败: {}", e)))?;
         Ok(())
     }
 
-    async fn list(&self, tenant_id: &str, offset: i64, limit: i64) -> BulwarkResult<Vec<UserRow>> {
+    async fn list(&self, tenant_id: i64, offset: i64, limit: i64) -> BulwarkResult<Vec<UserRow>> {
         let session =
             self.pool.get_session("admin").await.map_err(|e| {
                 BulwarkError::Dao(format!("app_user list 获取 session 失败: {}", e))
@@ -215,7 +215,7 @@ impl UserRepository for SqliteUserRepository {
         let stmt = Statement::from_sql_and_values(
             DbBackend::Sqlite,
             sql,
-            [v_str(tenant_id), v_i64(limit), v_i64(offset)],
+            [v_i64(tenant_id), v_i64(limit), v_i64(offset)],
         );
         let rows = conn
             .query_all_raw(stmt)
@@ -273,7 +273,7 @@ impl SqliteRoleRepository {
 
 #[async_trait]
 impl RoleRepository for SqliteRoleRepository {
-    async fn find_by_id(&self, tenant_id: &str, id: &str) -> BulwarkResult<Option<RoleRow>> {
+    async fn find_by_id(&self, tenant_id: i64, id: &str) -> BulwarkResult<Option<RoleRow>> {
         let session = self.pool.get_session("admin").await.map_err(|e| {
             BulwarkError::Dao(format!("app_role find_by_id 获取 session 失败: {}", e))
         })?;
@@ -284,7 +284,7 @@ impl RoleRepository for SqliteRoleRepository {
             "SELECT id, code, name, description, tenant_id, is_system, created_at, updated_at \
                    FROM app_role WHERE tenant_id = ? AND id = ?";
         let stmt =
-            Statement::from_sql_and_values(DbBackend::Sqlite, sql, [v_str(tenant_id), v_str(id)]);
+            Statement::from_sql_and_values(DbBackend::Sqlite, sql, [v_i64(tenant_id), v_str(id)]);
         let row = conn
             .query_one_raw(stmt)
             .await
@@ -292,7 +292,7 @@ impl RoleRepository for SqliteRoleRepository {
         row.map(|r| parse_role_row(&r)).transpose()
     }
 
-    async fn find_by_code(&self, tenant_id: &str, code: &str) -> BulwarkResult<Option<RoleRow>> {
+    async fn find_by_code(&self, tenant_id: i64, code: &str) -> BulwarkResult<Option<RoleRow>> {
         let session = self.pool.get_session("admin").await.map_err(|e| {
             BulwarkError::Dao(format!("app_role find_by_code 获取 session 失败: {}", e))
         })?;
@@ -303,7 +303,7 @@ impl RoleRepository for SqliteRoleRepository {
             "SELECT id, code, name, description, tenant_id, is_system, created_at, updated_at \
                    FROM app_role WHERE tenant_id = ? AND code = ?";
         let stmt =
-            Statement::from_sql_and_values(DbBackend::Sqlite, sql, [v_str(tenant_id), v_str(code)]);
+            Statement::from_sql_and_values(DbBackend::Sqlite, sql, [v_i64(tenant_id), v_str(code)]);
         let row = conn
             .query_one_raw(stmt)
             .await
@@ -311,7 +311,7 @@ impl RoleRepository for SqliteRoleRepository {
         row.map(|r| parse_role_row(&r)).transpose()
     }
 
-    async fn create(&self, tenant_id: &str, role: NewRole) -> BulwarkResult<String> {
+    async fn create(&self, tenant_id: i64, role: NewRole) -> BulwarkResult<String> {
         let session =
             self.pool.get_session("admin").await.map_err(|e| {
                 BulwarkError::Dao(format!("app_role create 获取 session 失败: {}", e))
@@ -329,7 +329,7 @@ impl RoleRepository for SqliteRoleRepository {
                 v_str(&role.code),
                 v_str(&role.name),
                 v_opt_str(&role.description),
-                v_str(tenant_id),
+                v_i64(tenant_id),
                 v_bool(role.is_system),
             ],
         );
@@ -341,7 +341,7 @@ impl RoleRepository for SqliteRoleRepository {
 
     async fn update(
         &self,
-        tenant_id: &str,
+        tenant_id: i64,
         id: &str,
         code: Option<String>,
         name: Option<String>,
@@ -364,7 +364,7 @@ impl RoleRepository for SqliteRoleRepository {
         if sets.is_empty() {
             return Ok(());
         }
-        params.push(v_str(tenant_id));
+        params.push(v_i64(tenant_id));
         params.push(v_str(id));
         let sql = format!(
             "UPDATE app_role SET {} WHERE tenant_id = ? AND id = ?",
@@ -384,7 +384,7 @@ impl RoleRepository for SqliteRoleRepository {
         Ok(())
     }
 
-    async fn delete(&self, tenant_id: &str, id: &str) -> BulwarkResult<()> {
+    async fn delete(&self, tenant_id: i64, id: &str) -> BulwarkResult<()> {
         let session =
             self.pool.get_session("admin").await.map_err(|e| {
                 BulwarkError::Dao(format!("app_role delete 获取 session 失败: {}", e))
@@ -394,14 +394,14 @@ impl RoleRepository for SqliteRoleRepository {
         })?;
         let sql = "DELETE FROM app_role WHERE tenant_id = ? AND id = ?";
         let stmt =
-            Statement::from_sql_and_values(DbBackend::Sqlite, sql, [v_str(tenant_id), v_str(id)]);
+            Statement::from_sql_and_values(DbBackend::Sqlite, sql, [v_i64(tenant_id), v_str(id)]);
         conn.execute_raw(stmt)
             .await
             .map_err(|e| BulwarkError::Dao(format!("app_role delete 删除失败: {}", e)))?;
         Ok(())
     }
 
-    async fn list(&self, tenant_id: &str, offset: i64, limit: i64) -> BulwarkResult<Vec<RoleRow>> {
+    async fn list(&self, tenant_id: i64, offset: i64, limit: i64) -> BulwarkResult<Vec<RoleRow>> {
         let session =
             self.pool.get_session("admin").await.map_err(|e| {
                 BulwarkError::Dao(format!("app_role list 获取 session 失败: {}", e))
@@ -415,7 +415,7 @@ impl RoleRepository for SqliteRoleRepository {
         let stmt = Statement::from_sql_and_values(
             DbBackend::Sqlite,
             sql,
-            [v_str(tenant_id), v_i64(limit), v_i64(offset)],
+            [v_i64(tenant_id), v_i64(limit), v_i64(offset)],
         );
         let rows = conn
             .query_all_raw(stmt)
@@ -662,7 +662,7 @@ impl SqliteUserRoleRepository {
 impl UserRoleRepository for SqliteUserRoleRepository {
     async fn find_by_user_id(
         &self,
-        tenant_id: &str,
+        tenant_id: i64,
         user_id: &str,
     ) -> BulwarkResult<Vec<UserRoleRow>> {
         let session = self.pool.get_session("admin").await.map_err(|e| {
@@ -682,7 +682,7 @@ impl UserRoleRepository for SqliteUserRoleRepository {
         let stmt = Statement::from_sql_and_values(
             DbBackend::Sqlite,
             sql,
-            [v_str(tenant_id), v_str(user_id)],
+            [v_i64(tenant_id), v_str(user_id)],
         );
         let rows = conn.query_all_raw(stmt).await.map_err(|e| {
             BulwarkError::Dao(format!("app_user_role find_by_user_id 查询失败: {}", e))
@@ -692,7 +692,7 @@ impl UserRoleRepository for SqliteUserRoleRepository {
 
     async fn find_by_role_id(
         &self,
-        tenant_id: &str,
+        tenant_id: i64,
         role_id: &str,
     ) -> BulwarkResult<Vec<UserRoleRow>> {
         let session = self.pool.get_session("admin").await.map_err(|e| {
@@ -712,7 +712,7 @@ impl UserRoleRepository for SqliteUserRoleRepository {
         let stmt = Statement::from_sql_and_values(
             DbBackend::Sqlite,
             sql,
-            [v_str(tenant_id), v_str(role_id)],
+            [v_i64(tenant_id), v_str(role_id)],
         );
         let rows = conn.query_all_raw(stmt).await.map_err(|e| {
             BulwarkError::Dao(format!("app_user_role find_by_role_id 查询失败: {}", e))
@@ -722,7 +722,7 @@ impl UserRoleRepository for SqliteUserRoleRepository {
 
     async fn assign(
         &self,
-        tenant_id: &str,
+        tenant_id: i64,
         user_id: &str,
         role_id: &str,
         scope: Option<String>,
@@ -742,7 +742,7 @@ impl UserRoleRepository for SqliteUserRoleRepository {
                 v_str(user_id),
                 v_str(role_id),
                 v_opt_str(&scope),
-                v_str(tenant_id),
+                v_i64(tenant_id),
             ],
         );
         conn.execute_raw(stmt)
@@ -751,7 +751,7 @@ impl UserRoleRepository for SqliteUserRoleRepository {
         Ok(())
     }
 
-    async fn revoke(&self, tenant_id: &str, user_id: &str, role_id: &str) -> BulwarkResult<()> {
+    async fn revoke(&self, tenant_id: i64, user_id: &str, role_id: &str) -> BulwarkResult<()> {
         let session = self.pool.get_session("admin").await.map_err(|e| {
             BulwarkError::Dao(format!("app_user_role revoke 获取 session 失败: {}", e))
         })?;
@@ -762,7 +762,7 @@ impl UserRoleRepository for SqliteUserRoleRepository {
         let stmt = Statement::from_sql_and_values(
             DbBackend::Sqlite,
             sql,
-            [v_str(tenant_id), v_str(user_id), v_str(role_id)],
+            [v_i64(tenant_id), v_str(user_id), v_str(role_id)],
         );
         conn.execute_raw(stmt)
             .await
@@ -772,7 +772,7 @@ impl UserRoleRepository for SqliteUserRoleRepository {
 
     async fn list(
         &self,
-        tenant_id: &str,
+        tenant_id: i64,
         offset: i64,
         limit: i64,
     ) -> BulwarkResult<Vec<UserRoleRow>> {
@@ -787,7 +787,7 @@ impl UserRoleRepository for SqliteUserRoleRepository {
         let stmt = Statement::from_sql_and_values(
             DbBackend::Sqlite,
             sql,
-            [v_str(tenant_id), v_i64(limit), v_i64(offset)],
+            [v_i64(tenant_id), v_i64(limit), v_i64(offset)],
         );
         let rows = conn
             .query_all_raw(stmt)
@@ -838,7 +838,7 @@ impl SqliteRolePermissionRepository {
 impl RolePermissionRepository for SqliteRolePermissionRepository {
     async fn find_by_role_id(
         &self,
-        tenant_id: &str,
+        tenant_id: i64,
         role_id: &str,
     ) -> BulwarkResult<Vec<RolePermissionRow>> {
         let session = self.pool.get_session("admin").await.map_err(|e| {
@@ -858,7 +858,7 @@ impl RolePermissionRepository for SqliteRolePermissionRepository {
         let stmt = Statement::from_sql_and_values(
             DbBackend::Sqlite,
             sql,
-            [v_str(tenant_id), v_str(role_id)],
+            [v_i64(tenant_id), v_str(role_id)],
         );
         let rows = conn.query_all_raw(stmt).await.map_err(|e| {
             BulwarkError::Dao(format!(
@@ -871,7 +871,7 @@ impl RolePermissionRepository for SqliteRolePermissionRepository {
 
     async fn find_by_permission_id(
         &self,
-        tenant_id: &str,
+        tenant_id: i64,
         permission_id: &str,
     ) -> BulwarkResult<Vec<RolePermissionRow>> {
         let session = self.pool.get_session("admin").await.map_err(|e| {
@@ -891,7 +891,7 @@ impl RolePermissionRepository for SqliteRolePermissionRepository {
         let stmt = Statement::from_sql_and_values(
             DbBackend::Sqlite,
             sql,
-            [v_str(tenant_id), v_str(permission_id)],
+            [v_i64(tenant_id), v_str(permission_id)],
         );
         let rows = conn.query_all_raw(stmt).await.map_err(|e| {
             BulwarkError::Dao(format!(
@@ -904,7 +904,7 @@ impl RolePermissionRepository for SqliteRolePermissionRepository {
 
     async fn assign(
         &self,
-        tenant_id: &str,
+        tenant_id: i64,
         role_id: &str,
         permission_id: &str,
     ) -> BulwarkResult<()> {
@@ -925,7 +925,7 @@ impl RolePermissionRepository for SqliteRolePermissionRepository {
         let stmt = Statement::from_sql_and_values(
             DbBackend::Sqlite,
             sql,
-            [v_str(role_id), v_str(permission_id), v_str(tenant_id)],
+            [v_str(role_id), v_str(permission_id), v_i64(tenant_id)],
         );
         conn.execute_raw(stmt).await.map_err(|e| {
             BulwarkError::Dao(format!("app_role_permission assign 插入失败: {}", e))
@@ -935,7 +935,7 @@ impl RolePermissionRepository for SqliteRolePermissionRepository {
 
     async fn revoke(
         &self,
-        tenant_id: &str,
+        tenant_id: i64,
         role_id: &str,
         permission_id: &str,
     ) -> BulwarkResult<()> {
@@ -956,7 +956,7 @@ impl RolePermissionRepository for SqliteRolePermissionRepository {
         let stmt = Statement::from_sql_and_values(
             DbBackend::Sqlite,
             sql,
-            [v_str(tenant_id), v_str(role_id), v_str(permission_id)],
+            [v_i64(tenant_id), v_str(role_id), v_str(permission_id)],
         );
         conn.execute_raw(stmt).await.map_err(|e| {
             BulwarkError::Dao(format!("app_role_permission revoke 删除失败: {}", e))
@@ -966,7 +966,7 @@ impl RolePermissionRepository for SqliteRolePermissionRepository {
 
     async fn list(
         &self,
-        tenant_id: &str,
+        tenant_id: i64,
         offset: i64,
         limit: i64,
     ) -> BulwarkResult<Vec<RolePermissionRow>> {
@@ -984,7 +984,7 @@ impl RolePermissionRepository for SqliteRolePermissionRepository {
         let stmt = Statement::from_sql_and_values(
             DbBackend::Sqlite,
             sql,
-            [v_str(tenant_id), v_i64(limit), v_i64(offset)],
+            [v_i64(tenant_id), v_i64(limit), v_i64(offset)],
         );
         let rows = conn
             .query_all_raw(stmt)
@@ -1030,7 +1030,7 @@ impl SqliteAuthMethodRepository {
 
 #[async_trait]
 impl AuthMethodRepository for SqliteAuthMethodRepository {
-    async fn find_by_id(&self, tenant_id: &str, id: &str) -> BulwarkResult<Option<AuthMethodRow>> {
+    async fn find_by_id(&self, tenant_id: i64, id: &str) -> BulwarkResult<Option<AuthMethodRow>> {
         let session = self.pool.get_session("admin").await.map_err(|e| {
             BulwarkError::Dao(format!(
                 "app_auth_method find_by_id 获取 session 失败: {}",
@@ -1046,7 +1046,7 @@ impl AuthMethodRepository for SqliteAuthMethodRepository {
         let sql = "SELECT id, user_id, method_type, external_id, metadata, create_time, tenant_id \
                    FROM app_auth_method WHERE tenant_id = ? AND id = ?";
         let stmt =
-            Statement::from_sql_and_values(DbBackend::Sqlite, sql, [v_str(tenant_id), v_str(id)]);
+            Statement::from_sql_and_values(DbBackend::Sqlite, sql, [v_i64(tenant_id), v_str(id)]);
         let row = conn.query_one_raw(stmt).await.map_err(|e| {
             BulwarkError::Dao(format!("app_auth_method find_by_id 查询失败: {}", e))
         })?;
@@ -1055,7 +1055,7 @@ impl AuthMethodRepository for SqliteAuthMethodRepository {
 
     async fn find_by_user_id(
         &self,
-        tenant_id: &str,
+        tenant_id: i64,
         user_id: &str,
     ) -> BulwarkResult<Vec<AuthMethodRow>> {
         let session = self.pool.get_session("admin").await.map_err(|e| {
@@ -1075,7 +1075,7 @@ impl AuthMethodRepository for SqliteAuthMethodRepository {
         let stmt = Statement::from_sql_and_values(
             DbBackend::Sqlite,
             sql,
-            [v_str(tenant_id), v_str(user_id)],
+            [v_i64(tenant_id), v_str(user_id)],
         );
         let rows = conn.query_all_raw(stmt).await.map_err(|e| {
             BulwarkError::Dao(format!("app_auth_method find_by_user_id 查询失败: {}", e))
@@ -1083,7 +1083,7 @@ impl AuthMethodRepository for SqliteAuthMethodRepository {
         rows.iter().map(parse_auth_method_row).collect()
     }
 
-    async fn create(&self, tenant_id: &str, method: NewAuthMethod) -> BulwarkResult<String> {
+    async fn create(&self, tenant_id: i64, method: NewAuthMethod) -> BulwarkResult<String> {
         let session = self.pool.get_session("admin").await.map_err(|e| {
             BulwarkError::Dao(format!("app_auth_method create 获取 session 失败: {}", e))
         })?;
@@ -1104,7 +1104,7 @@ impl AuthMethodRepository for SqliteAuthMethodRepository {
                 v_str(&method.method_type),
                 v_opt_str(&method.external_id),
                 v_opt_str(&method.metadata),
-                v_str(tenant_id),
+                v_i64(tenant_id),
             ],
         );
         conn.execute_raw(stmt)
@@ -1113,7 +1113,7 @@ impl AuthMethodRepository for SqliteAuthMethodRepository {
         Ok(method.id)
     }
 
-    async fn delete(&self, tenant_id: &str, id: &str) -> BulwarkResult<()> {
+    async fn delete(&self, tenant_id: i64, id: &str) -> BulwarkResult<()> {
         let session = self.pool.get_session("admin").await.map_err(|e| {
             BulwarkError::Dao(format!("app_auth_method delete 获取 session 失败: {}", e))
         })?;
@@ -1125,7 +1125,7 @@ impl AuthMethodRepository for SqliteAuthMethodRepository {
         })?;
         let sql = "DELETE FROM app_auth_method WHERE tenant_id = ? AND id = ?";
         let stmt =
-            Statement::from_sql_and_values(DbBackend::Sqlite, sql, [v_str(tenant_id), v_str(id)]);
+            Statement::from_sql_and_values(DbBackend::Sqlite, sql, [v_i64(tenant_id), v_str(id)]);
         conn.execute_raw(stmt)
             .await
             .map_err(|e| BulwarkError::Dao(format!("app_auth_method delete 删除失败: {}", e)))?;
@@ -1134,7 +1134,7 @@ impl AuthMethodRepository for SqliteAuthMethodRepository {
 
     async fn list(
         &self,
-        tenant_id: &str,
+        tenant_id: i64,
         offset: i64,
         limit: i64,
     ) -> BulwarkResult<Vec<AuthMethodRow>> {
@@ -1149,7 +1149,7 @@ impl AuthMethodRepository for SqliteAuthMethodRepository {
         let stmt = Statement::from_sql_and_values(
             DbBackend::Sqlite,
             sql,
-            [v_str(tenant_id), v_i64(limit), v_i64(offset)],
+            [v_i64(tenant_id), v_i64(limit), v_i64(offset)],
         );
         let rows = conn
             .query_all_raw(stmt)
@@ -1206,7 +1206,7 @@ impl SqliteSessionRepository {
 impl SessionRepository for SqliteSessionRepository {
     async fn find_by_session_id(
         &self,
-        tenant_id: &str,
+        tenant_id: i64,
         session_id: &str,
     ) -> BulwarkResult<Option<SessionRow>> {
         let session = self.pool.get_session("admin").await.map_err(|e| {
@@ -1228,7 +1228,7 @@ impl SessionRepository for SqliteSessionRepository {
         let stmt = Statement::from_sql_and_values(
             DbBackend::Sqlite,
             sql,
-            [v_str(tenant_id), v_str(session_id)],
+            [v_i64(tenant_id), v_str(session_id)],
         );
         let row = conn.query_one_raw(stmt).await.map_err(|e| {
             BulwarkError::Dao(format!("app_session find_by_session_id 查询失败: {}", e))
@@ -1238,7 +1238,7 @@ impl SessionRepository for SqliteSessionRepository {
 
     async fn find_by_user_id(
         &self,
-        tenant_id: &str,
+        tenant_id: i64,
         user_id: &str,
     ) -> BulwarkResult<Vec<SessionRow>> {
         let session = self.pool.get_session("admin").await.map_err(|e| {
@@ -1260,7 +1260,7 @@ impl SessionRepository for SqliteSessionRepository {
         let stmt = Statement::from_sql_and_values(
             DbBackend::Sqlite,
             sql,
-            [v_str(tenant_id), v_str(user_id)],
+            [v_i64(tenant_id), v_str(user_id)],
         );
         let rows = conn.query_all_raw(stmt).await.map_err(|e| {
             BulwarkError::Dao(format!("app_session find_by_user_id 查询失败: {}", e))
@@ -1268,7 +1268,7 @@ impl SessionRepository for SqliteSessionRepository {
         rows.iter().map(parse_session_row).collect()
     }
 
-    async fn create(&self, tenant_id: &str, session: NewSession) -> BulwarkResult<String> {
+    async fn create(&self, tenant_id: i64, session: NewSession) -> BulwarkResult<String> {
         let db_session = self.pool.get_session("admin").await.map_err(|e| {
             BulwarkError::Dao(format!("app_session create 获取 session 失败: {}", e))
         })?;
@@ -1288,7 +1288,7 @@ impl SessionRepository for SqliteSessionRepository {
                 v_opt_str(&session.ip),
                 v_opt_str(&session.user_agent),
                 v_opt_str(&session.expire_time),
-                v_str(tenant_id),
+                v_i64(tenant_id),
             ],
         );
         conn.execute_raw(stmt)
@@ -1297,7 +1297,7 @@ impl SessionRepository for SqliteSessionRepository {
         Ok(session.session_id)
     }
 
-    async fn update_last_active(&self, tenant_id: &str, session_id: &str) -> BulwarkResult<()> {
+    async fn update_last_active(&self, tenant_id: i64, session_id: &str) -> BulwarkResult<()> {
         let session = self.pool.get_session("admin").await.map_err(|e| {
             BulwarkError::Dao(format!(
                 "app_session update_last_active 获取 session 失败: {}",
@@ -1315,7 +1315,7 @@ impl SessionRepository for SqliteSessionRepository {
         let stmt = Statement::from_sql_and_values(
             DbBackend::Sqlite,
             sql,
-            [v_str(tenant_id), v_str(session_id)],
+            [v_i64(tenant_id), v_str(session_id)],
         );
         conn.execute_raw(stmt).await.map_err(|e| {
             BulwarkError::Dao(format!("app_session update_last_active 更新失败: {}", e))
@@ -1323,7 +1323,7 @@ impl SessionRepository for SqliteSessionRepository {
         Ok(())
     }
 
-    async fn delete(&self, tenant_id: &str, session_id: &str) -> BulwarkResult<()> {
+    async fn delete(&self, tenant_id: i64, session_id: &str) -> BulwarkResult<()> {
         let session = self.pool.get_session("admin").await.map_err(|e| {
             BulwarkError::Dao(format!("app_session delete 获取 session 失败: {}", e))
         })?;
@@ -1334,7 +1334,7 @@ impl SessionRepository for SqliteSessionRepository {
         let stmt = Statement::from_sql_and_values(
             DbBackend::Sqlite,
             sql,
-            [v_str(tenant_id), v_str(session_id)],
+            [v_i64(tenant_id), v_str(session_id)],
         );
         conn.execute_raw(stmt)
             .await
@@ -1344,7 +1344,7 @@ impl SessionRepository for SqliteSessionRepository {
 
     async fn list(
         &self,
-        tenant_id: &str,
+        tenant_id: i64,
         offset: i64,
         limit: i64,
     ) -> BulwarkResult<Vec<SessionRow>> {
@@ -1362,7 +1362,7 @@ impl SessionRepository for SqliteSessionRepository {
         let stmt = Statement::from_sql_and_values(
             DbBackend::Sqlite,
             sql,
-            [v_str(tenant_id), v_i64(limit), v_i64(offset)],
+            [v_i64(tenant_id), v_i64(limit), v_i64(offset)],
         );
         let rows = conn
             .query_all_raw(stmt)
@@ -1423,7 +1423,7 @@ impl SqliteLoginLogRepository {
 
 #[async_trait]
 impl LoginLogRepository for SqliteLoginLogRepository {
-    async fn find_by_id(&self, tenant_id: &str, id: &str) -> BulwarkResult<Option<LoginLogRow>> {
+    async fn find_by_id(&self, tenant_id: i64, id: &str) -> BulwarkResult<Option<LoginLogRow>> {
         let session = self.pool.get_session("admin").await.map_err(|e| {
             BulwarkError::Dao(format!("app_login_log find_by_id 获取 session 失败: {}", e))
         })?;
@@ -1436,7 +1436,7 @@ impl LoginLogRepository for SqliteLoginLogRepository {
         let sql = "SELECT id, user_id, action, ip, device_id, success, fail_reason, create_time, tenant_id \
                    FROM app_login_log WHERE tenant_id = ? AND id = ?";
         let stmt =
-            Statement::from_sql_and_values(DbBackend::Sqlite, sql, [v_str(tenant_id), v_str(id)]);
+            Statement::from_sql_and_values(DbBackend::Sqlite, sql, [v_i64(tenant_id), v_str(id)]);
         let row = conn
             .query_one_raw(stmt)
             .await
@@ -1446,7 +1446,7 @@ impl LoginLogRepository for SqliteLoginLogRepository {
 
     async fn find_by_user_id(
         &self,
-        tenant_id: &str,
+        tenant_id: i64,
         user_id: &str,
         offset: i64,
         limit: i64,
@@ -1470,7 +1470,7 @@ impl LoginLogRepository for SqliteLoginLogRepository {
             DbBackend::Sqlite,
             sql,
             [
-                v_str(tenant_id),
+                v_i64(tenant_id),
                 v_str(user_id),
                 v_i64(limit),
                 v_i64(offset),
@@ -1482,7 +1482,7 @@ impl LoginLogRepository for SqliteLoginLogRepository {
         rows.iter().map(parse_login_log_row).collect()
     }
 
-    async fn create(&self, tenant_id: &str, log: NewLoginLog) -> BulwarkResult<String> {
+    async fn create(&self, tenant_id: i64, log: NewLoginLog) -> BulwarkResult<String> {
         let session = self.pool.get_session("admin").await.map_err(|e| {
             BulwarkError::Dao(format!("app_login_log create 获取 session 失败: {}", e))
         })?;
@@ -1503,7 +1503,7 @@ impl LoginLogRepository for SqliteLoginLogRepository {
                 v_opt_str(&log.device_id),
                 v_bool(log.success),
                 v_opt_str(&log.fail_reason),
-                v_str(tenant_id),
+                v_i64(tenant_id),
             ],
         );
         conn.execute_raw(stmt)
@@ -1514,7 +1514,7 @@ impl LoginLogRepository for SqliteLoginLogRepository {
 
     async fn list(
         &self,
-        tenant_id: &str,
+        tenant_id: i64,
         offset: i64,
         limit: i64,
     ) -> BulwarkResult<Vec<LoginLogRow>> {
@@ -1529,7 +1529,7 @@ impl LoginLogRepository for SqliteLoginLogRepository {
         let stmt = Statement::from_sql_and_values(
             DbBackend::Sqlite,
             sql,
-            [v_str(tenant_id), v_i64(limit), v_i64(offset)],
+            [v_i64(tenant_id), v_i64(limit), v_i64(offset)],
         );
         let rows = conn
             .query_all_raw(stmt)
@@ -1590,7 +1590,7 @@ impl SqliteUserExtRepository {
 impl UserExtRepository for SqliteUserExtRepository {
     async fn find_by_user_id(
         &self,
-        tenant_id: &str,
+        tenant_id: i64,
         user_id: &str,
     ) -> BulwarkResult<Vec<UserExtRow>> {
         let session = self.pool.get_session("admin").await.map_err(|e| {
@@ -1610,7 +1610,7 @@ impl UserExtRepository for SqliteUserExtRepository {
         let stmt = Statement::from_sql_and_values(
             DbBackend::Sqlite,
             sql,
-            [v_str(tenant_id), v_str(user_id)],
+            [v_i64(tenant_id), v_str(user_id)],
         );
         let rows = conn.query_all_raw(stmt).await.map_err(|e| {
             BulwarkError::Dao(format!("app_user_ext find_by_user_id 查询失败: {}", e))
@@ -1620,7 +1620,7 @@ impl UserExtRepository for SqliteUserExtRepository {
 
     async fn find_by_user_and_key(
         &self,
-        tenant_id: &str,
+        tenant_id: i64,
         user_id: &str,
         field_key: &str,
     ) -> BulwarkResult<Option<UserExtRow>> {
@@ -1641,7 +1641,7 @@ impl UserExtRepository for SqliteUserExtRepository {
         let stmt = Statement::from_sql_and_values(
             DbBackend::Sqlite,
             sql,
-            [v_str(tenant_id), v_str(user_id), v_str(field_key)],
+            [v_i64(tenant_id), v_str(user_id), v_str(field_key)],
         );
         let row = conn.query_one_raw(stmt).await.map_err(|e| {
             BulwarkError::Dao(format!("app_user_ext find_by_user_and_key 查询失败: {}", e))
@@ -1651,7 +1651,7 @@ impl UserExtRepository for SqliteUserExtRepository {
 
     async fn upsert(
         &self,
-        tenant_id: &str,
+        tenant_id: i64,
         user_id: &str,
         field_key: &str,
         field_value: Option<String>,
@@ -1681,7 +1681,7 @@ impl UserExtRepository for SqliteUserExtRepository {
                 v_str(field_key),
                 v_opt_str(&field_value),
                 v_str(field_type),
-                v_str(tenant_id),
+                v_i64(tenant_id),
             ],
         );
         conn.execute_raw(stmt)
@@ -1690,7 +1690,7 @@ impl UserExtRepository for SqliteUserExtRepository {
         Ok(())
     }
 
-    async fn delete(&self, tenant_id: &str, user_id: &str, field_key: &str) -> BulwarkResult<()> {
+    async fn delete(&self, tenant_id: i64, user_id: &str, field_key: &str) -> BulwarkResult<()> {
         let session = self.pool.get_session("admin").await.map_err(|e| {
             BulwarkError::Dao(format!("app_user_ext delete 获取 session 失败: {}", e))
         })?;
@@ -1702,7 +1702,7 @@ impl UserExtRepository for SqliteUserExtRepository {
         let stmt = Statement::from_sql_and_values(
             DbBackend::Sqlite,
             sql,
-            [v_str(tenant_id), v_str(user_id), v_str(field_key)],
+            [v_i64(tenant_id), v_str(user_id), v_str(field_key)],
         );
         conn.execute_raw(stmt)
             .await
@@ -1712,7 +1712,7 @@ impl UserExtRepository for SqliteUserExtRepository {
 
     async fn list(
         &self,
-        tenant_id: &str,
+        tenant_id: i64,
         offset: i64,
         limit: i64,
     ) -> BulwarkResult<Vec<UserExtRow>> {
@@ -1727,7 +1727,7 @@ impl UserExtRepository for SqliteUserExtRepository {
         let stmt = Statement::from_sql_and_values(
             DbBackend::Sqlite,
             sql,
-            [v_str(tenant_id), v_i64(limit), v_i64(offset)],
+            [v_i64(tenant_id), v_i64(limit), v_i64(offset)],
         );
         let rows = conn
             .query_all_raw(stmt)

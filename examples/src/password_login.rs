@@ -24,7 +24,7 @@ use bulwark::BulwarkConfig;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-const TENANT: &str = "default";
+const TENANT: i64 = 0;
 
 /// 空权限回调（示例用，业务方应实现真实权限数据源）。
 struct NoopInterface;
@@ -64,7 +64,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // 3. 预创建用户：login_id=1001，username="1001"
     //    login_with_password(login_id, password) 内部调用
-    //    find_by_username("default", &login_id.to_string())，故 username 必须等于 login_id 的字符串形式
+    //    find_by_username(0, &login_id.to_string())，故 username 必须等于 login_id 的字符串形式
     let password_plain = "my-secret-password";
     let password_hash = hasher.hash(password_plain)?;
     println!("[1] Argon2 哈希生成");

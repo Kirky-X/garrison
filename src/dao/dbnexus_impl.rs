@@ -495,7 +495,7 @@ mod tests {
         session
             .execute_raw(
                 "INSERT INTO app_user (id, username, password_hash, status, tenant_id) \
-                 VALUES ('u-001', 'alice', 'argon2$hash', 'active', 'tenant-1')",
+                 VALUES ('u-001', 'alice', 'argon2$hash', 'active', 0)",
             )
             .await
             .expect("INSERT app_user 应成功");

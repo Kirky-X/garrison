@@ -26,7 +26,7 @@ use bulwark::dao::{
 };
 use bulwark::error::BulwarkError;
 
-const TENANT: &str = "tenant-err";
+const TENANT: i64 = 1;
 
 /// 创建**未迁移**的 DbPool（不执行 migrate_core），所有表不存在，
 /// repository 方法调用因 SQL 表不存在而失败，触发 `map_err` 分支。
