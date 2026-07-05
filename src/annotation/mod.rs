@@ -386,6 +386,76 @@ mod extractors {
             Ok(Mode(PhantomData))
         }
     }
+
+    // ----------------------------------------------------------------
+    // BulwarkPrincipal extractor（携带 login_id，依据 spec web-adapters D12）
+    // ----------------------------------------------------------------
+
+    /// 登录主体 extractor（从 `Authorization: Bearer <token>` 解析 `login_id`）。
+    ///
+    /// 与 actix-web / warp 版本完全对齐：
+    /// - 无 token → `BulwarkError::NotLogin("未提供 token")`
+    /// - token 无效或会话不存在 → `BulwarkError::NotLogin("token 无效或会话不存在")`
+    /// - 有效 token → `Ok(BulwarkPrincipal { login_id })`
+    ///
+    /// 与 `CheckLogin` extractor 的区别：
+    /// - `CheckLogin` 仅校验登录状态，返回 unit-like struct
+    /// - `BulwarkPrincipal` 携带 `login_id` 字段，handler 可直接读取当前用户身份
+    impl<S: Send + Sync> FromRequestParts<S> for crate::context::BulwarkPrincipal {
+        type Rejection = BulwarkError;
+
+        async fn from_request_parts(
+            parts: &mut Parts,
+            _state: &S,
+        ) -> Result<Self, Self::Rejection> {
+            let config = BulwarkUtil::config()?;
+            let token = extract_token_from_parts(parts, &config)
+                .ok_or_else(|| BulwarkError::NotLogin("未提供 token".to_string()))?;
+
+            let login_id = BulwarkUtil::get_login_id_by_token(&token)
+                .await?
+                .ok_or_else(|| BulwarkError::NotLogin("token 无效或会话不存在".to_string()))?;
+
+            Ok(crate::context::BulwarkPrincipal { login_id })
+        }
+    }
+
+    // ----------------------------------------------------------------
+    // TenantContext extractor（cfg tenant-isolation，依据 spec web-adapters D12）
+    // ----------------------------------------------------------------
+
+    /// 租户上下文 extractor（从 `X-Tenant-Id` header 解析 `tenant_id`）。
+    ///
+    /// 与 actix-web / warp 版本完全对齐：
+    /// - 缺失 `X-Tenant-Id` → `BulwarkError::Config("X-Tenant-Id header missing")`
+    /// - 非数字 → `BulwarkError::Config("X-Tenant-Id 不是合法的 i64: <raw>")`
+    /// - 合法 i64 → `Ok(TenantContext { tenant_id, resolved_from: TenantSource::Header })`
+    ///
+    /// 不依赖 `BulwarkManager`：仅做 header 解析，不查会话/权限。
+    #[cfg(feature = "tenant-isolation")]
+    impl<S: Send + Sync> FromRequestParts<S> for crate::context::tenant::TenantContext {
+        type Rejection = BulwarkError;
+
+        async fn from_request_parts(
+            parts: &mut Parts,
+            _state: &S,
+        ) -> Result<Self, Self::Rejection> {
+            let raw = parts
+                .headers
+                .get("x-tenant-id")
+                .and_then(|v| v.to_str().ok())
+                .ok_or_else(|| BulwarkError::Config("X-Tenant-Id header missing".into()))?;
+
+            let tenant_id: i64 = raw.parse().map_err(|_| {
+                BulwarkError::Config(format!("X-Tenant-Id 不是合法的 i64: {}", raw))
+            })?;
+
+            Ok(crate::context::tenant::TenantContext {
+                tenant_id,
+                resolved_from: crate::context::tenant::TenantSource::Header,
+            })
+        }
+    }
 }
 
 #[cfg(feature = "web-axum")]
@@ -1010,5 +1080,172 @@ mod tests {
         assert!(result.is_ok(), "Mode<Loose> 已登录时应返回 Ok");
 
         BulwarkManager::reset_for_test();
+    }
+
+    // ----------------------------------------------------------------
+    // BulwarkPrincipal extractor 测试（携带 login_id，依据 spec web-adapters D12）
+    // ----------------------------------------------------------------
+
+    /// `BulwarkPrincipal::from_request_parts` 从 `Authorization: Bearer <token>`
+    /// header 解析出 `login_id`。
+    ///
+    /// 与 actix/warp extractor 对齐：valid token → Ok(BulwarkPrincipal { login_id })。
+    #[tokio::test]
+    #[serial]
+    async fn bulwark_principal_extracts_login_id_from_bearer_header() {
+        init_manager(false, &[], &[]);
+        let login_id: i64 = 1001;
+        let token = BulwarkUtil::login(login_id).await.unwrap();
+
+        let mut parts = make_parts_with_bearer(&token);
+        let principal = crate::context::BulwarkPrincipal::from_request_parts(&mut parts, &())
+            .await
+            .expect("有效 token 应解析出 BulwarkPrincipal");
+
+        assert_eq!(principal.login_id, login_id);
+
+        BulwarkManager::reset_for_test();
+    }
+
+    /// `BulwarkPrincipal::from_request_parts` 在无 token 时返回 `Err(NotLogin)`。
+    ///
+    /// 与 actix/warp extractor 对齐：missing token → Err(NotLogin("未提供 token"))。
+    #[tokio::test]
+    #[serial]
+    async fn bulwark_principal_returns_err_without_token() {
+        init_manager(false, &[], &[]);
+
+        let mut parts = make_parts();
+        let result = crate::context::BulwarkPrincipal::from_request_parts(&mut parts, &()).await;
+        assert!(
+            matches!(result, Err(BulwarkError::NotLogin(_))),
+            "无 token 时应返回 Err(NotLogin)，实际 = {:?}",
+            result
+        );
+
+        BulwarkManager::reset_for_test();
+    }
+
+    /// `BulwarkPrincipal::from_request_parts` 在无效 token 时返回 `Err(NotLogin)`。
+    ///
+    /// 与 actix/warp extractor 对齐：invalid token → Err(NotLogin("token 无效或会话不存在"))。
+    #[tokio::test]
+    #[serial]
+    async fn bulwark_principal_returns_err_with_invalid_token() {
+        init_manager(false, &[], &[]);
+
+        let mut parts = make_parts_with_bearer("invalid_token_xyz");
+        let result = crate::context::BulwarkPrincipal::from_request_parts(&mut parts, &()).await;
+        assert!(
+            matches!(result, Err(BulwarkError::NotLogin(_))),
+            "无效 token 时应返回 Err(NotLogin)，实际 = {:?}",
+            result
+        );
+
+        BulwarkManager::reset_for_test();
+    }
+
+    /// `BulwarkPrincipal::from_request_parts` 在 token 曾有效但已 logout 时
+    /// 返回 `Err(NotLogin)`。
+    ///
+    /// 覆盖 `get_login_id_by_token` 返回 `Ok(None)` 的路径
+    /// （token 存在过但 session 已销毁）。
+    #[tokio::test]
+    #[serial]
+    async fn bulwark_principal_returns_err_when_token_logout() {
+        init_manager(false, &[], &[]);
+        let login_id: i64 = 1001;
+        let token = BulwarkUtil::login(login_id).await.unwrap();
+
+        // 注销 token，使 get_login_id_by_token 返回 Ok(None)
+        with_current_token(token.clone(), async {
+            BulwarkUtil::logout().await.unwrap();
+        })
+        .await;
+
+        let mut parts = make_parts_with_bearer(&token);
+        let result = crate::context::BulwarkPrincipal::from_request_parts(&mut parts, &()).await;
+        assert!(
+            matches!(result, Err(BulwarkError::NotLogin(_))),
+            "token 已注销时应返回 Err(NotLogin)，实际 = {:?}",
+            result
+        );
+
+        BulwarkManager::reset_for_test();
+    }
+
+    // ----------------------------------------------------------------
+    // TenantContext extractor 测试（cfg tenant-isolation，依据 spec web-adapters D12）
+    // ----------------------------------------------------------------
+
+    /// `TenantContext::from_request_parts` 从 `X-Tenant-Id` header 解析出 `tenant_id`。
+    ///
+    /// 与 actix/warp extractor 对齐：valid X-Tenant-Id → Ok(TenantContext)。
+    #[cfg(feature = "tenant-isolation")]
+    #[tokio::test]
+    #[serial]
+    async fn tenant_context_extracts_tenant_id_from_header() {
+        let req = Request::builder()
+            .method("GET")
+            .uri("/api/test")
+            .header("x-tenant-id", "42")
+            .body(Body::empty())
+            .unwrap();
+        let mut parts = req.into_parts().0;
+
+        let ctx = crate::context::tenant::TenantContext::from_request_parts(&mut parts, &())
+            .await
+            .expect("有效 X-Tenant-Id 应解析出 TenantContext");
+
+        assert_eq!(ctx.tenant_id, 42);
+        assert!(
+            matches!(
+                ctx.resolved_from,
+                crate::context::tenant::TenantSource::Header
+            ),
+            "resolved_from 应为 Header，实际 = {:?}",
+            ctx.resolved_from
+        );
+    }
+
+    /// `TenantContext::from_request_parts` 在缺失 `X-Tenant-Id` header 时返回 `Err`。
+    ///
+    /// 与 actix/warp extractor 对齐：missing X-Tenant-Id → Err(Config)。
+    #[cfg(feature = "tenant-isolation")]
+    #[tokio::test]
+    #[serial]
+    async fn tenant_context_returns_err_without_x_tenant_id_header() {
+        let mut parts = make_parts();
+        let result =
+            crate::context::tenant::TenantContext::from_request_parts(&mut parts, &()).await;
+        assert!(
+            matches!(result, Err(BulwarkError::Config(_))),
+            "缺失 X-Tenant-Id 时应返回 Err(Config)，实际 = {:?}",
+            result
+        );
+    }
+
+    /// `TenantContext::from_request_parts` 在非数字 `X-Tenant-Id` 时返回 `Err`。
+    ///
+    /// 与 actix/warp extractor 对齐：non-numeric X-Tenant-Id → Err(Config)。
+    #[cfg(feature = "tenant-isolation")]
+    #[tokio::test]
+    #[serial]
+    async fn tenant_context_returns_err_with_non_numeric_x_tenant_id() {
+        let req = Request::builder()
+            .method("GET")
+            .uri("/api/test")
+            .header("x-tenant-id", "not-a-number")
+            .body(Body::empty())
+            .unwrap();
+        let mut parts = req.into_parts().0;
+
+        let result =
+            crate::context::tenant::TenantContext::from_request_parts(&mut parts, &()).await;
+        assert!(
+            matches!(result, Err(BulwarkError::Config(_))),
+            "非数字 X-Tenant-Id 时应返回 Err(Config)，实际 = {:?}",
+            result
+        );
     }
 }
