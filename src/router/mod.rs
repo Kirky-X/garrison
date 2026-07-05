@@ -121,12 +121,16 @@ mod web_axum {
     use super::*;
     use crate::config::BulwarkConfig;
     use crate::context::axum_adapter::AxumRequest;
+    #[cfg(feature = "tenant-isolation")]
+    use crate::context::tenant::TenantResolver;
     use crate::context::BulwarkRequest;
     use crate::stp::with_current_token;
     use axum::body::Body;
     use axum::extract::State;
     use axum::handler::Handler;
     use axum::http::Request;
+    #[cfg(feature = "tenant-isolation")]
+    use axum::http::StatusCode;
     use axum::middleware::{from_fn_with_state, Next};
     use axum::response::{IntoResponse, Response};
     use axum::Router;
@@ -275,7 +279,62 @@ mod web_axum {
             Err(e) => e.into_response(),
         }
     }
+
+    // ----------------------------------------------------------------
+    // tenant_resolution_middleware（v0.5.0 新增，依据 spec tenant-isolation R-005）
+    // ----------------------------------------------------------------
+
+    /// 租户解析 middleware：从请求 headers 解析 `TenantContext`，在 `TENANT` task_local
+    /// scope 内执行下游 handler。
+    ///
+    /// 解析失败时返回 `400 Bad Request`（不默认租户 0，Rule 12 失败显性化——
+    /// 静默回退默认租户会让跨租户数据泄露被掩盖）。
+    ///
+    /// # 参数
+    /// - `State(resolver)`: `Arc<dyn TenantResolver>` 状态，由 `from_fn_with_state` 注入
+    /// - `req`: axum 请求
+    /// - `next`: 下一个 middleware / handler
+    ///
+    /// # 返回
+    /// - `Ok(response)`: 租户解析成功，handler 已在 `TENANT` scope 内执行
+    /// - `Err(StatusCode::BAD_REQUEST)`: 租户解析失败（如 `X-Tenant-Id` header 缺失/格式错误）
+    ///
+    /// # 使用
+    ///
+    /// ```ignore
+    /// use bulwark::context::tenant::{HeaderTenantResolver, TenantResolver};
+    /// use std::sync::Arc;
+    /// use axum::Router;
+    ///
+    /// let resolver: Arc<dyn TenantResolver> = Arc::new(HeaderTenantResolver);
+    /// let app = Router::new()
+    ///     .route("/api", axum::routing::get(handler))
+    ///     .layer(axum::middleware::from_fn_with_state(
+    ///         resolver,
+    ///         bulwark::router::tenant_resolution_middleware,
+    ///     ));
+    /// ```
+    #[cfg(feature = "tenant-isolation")]
+    pub async fn tenant_resolution_middleware(
+        State(resolver): State<Arc<dyn TenantResolver>>,
+        req: Request<Body>,
+        next: Next,
+    ) -> Result<Response, StatusCode> {
+        use crate::context::tenant::TENANT;
+
+        let ctx = resolver
+            .resolve(req.headers())
+            .await
+            .map_err(|_| StatusCode::BAD_REQUEST)?;
+        Ok(TENANT.scope(ctx, next.run(req)).await)
+    }
 }
+
+/// 租户解析 middleware 的 re-export（依据 spec tenant-isolation R-005）。
+///
+/// 仅在 `web-axum` + `tenant-isolation` 双 feature 启用时可用。
+#[cfg(all(feature = "web-axum", feature = "tenant-isolation"))]
+pub use web_axum::tenant_resolution_middleware;
 
 // ============================================================================
 // 测试（cfg all(test, feature = "web-axum")）
@@ -1001,5 +1060,99 @@ mod tests {
         );
 
         BulwarkManager::reset_for_test();
+    }
+
+    // ----------------------------------------------------------------
+    // tenant_resolution_middleware 测试（v0.5.0 新增，依据 spec tenant-isolation R-005）
+    // ----------------------------------------------------------------
+
+    /// R-tenant-isolation-005: tenant_resolution_middleware 从 `X-Tenant-Id` header
+    /// 解析租户上下文，在 `TENANT` task_local scope 内执行下游 handler。
+    ///
+    /// 验证：
+    /// 1. 请求带 `X-Tenant-Id: 42` header
+    /// 2. handler 内 `TENANT.try_get()` 返回 `Ok(ctx)` 且 `ctx.tenant_id == 42`
+    /// 3. 响应 body 含 `tenant:42`
+    #[cfg(feature = "tenant-isolation")]
+    #[tokio::test]
+    async fn tenant_resolution_middleware_sets_tenant_context() {
+        use crate::context::tenant::{HeaderTenantResolver, TenantResolver, TENANT};
+        use axum::routing::get;
+        use axum::Router;
+        use tower::ServiceExt;
+
+        async fn handler() -> String {
+            match TENANT.try_get() {
+                Ok(ctx) => format!("tenant:{}", ctx.tenant_id),
+                Err(_) => "no-tenant".to_string(),
+            }
+        }
+
+        let resolver: Arc<dyn TenantResolver> = Arc::new(HeaderTenantResolver);
+        let app =
+            Router::new()
+                .route("/test", get(handler))
+                .layer(axum::middleware::from_fn_with_state(
+                    resolver,
+                    super::tenant_resolution_middleware,
+                ));
+
+        let req = Request::builder()
+            .method("GET")
+            .uri("/test")
+            .header("X-Tenant-Id", "42")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+        assert_eq!(
+            body_str, "tenant:42",
+            "middleware 应设置 TENANT 上下文，handler 应读到 tenant_id=42"
+        );
+    }
+
+    /// R-tenant-isolation-005: 缺失 `X-Tenant-Id` header 时 middleware 返回 400 Bad Request。
+    ///
+    /// 验证：请求不带 `X-Tenant-Id` header，middleware 调用 `resolver.resolve()` 失败，
+    /// 返回 `StatusCode::BAD_REQUEST`，不执行 handler。
+    #[cfg(feature = "tenant-isolation")]
+    #[tokio::test]
+    async fn tenant_resolution_middleware_missing_header_returns_400() {
+        use crate::context::tenant::{HeaderTenantResolver, TenantResolver};
+        use axum::routing::get;
+        use axum::Router;
+        use tower::ServiceExt;
+
+        async fn handler() -> &'static str {
+            "should-not-reach"
+        }
+
+        let resolver: Arc<dyn TenantResolver> = Arc::new(HeaderTenantResolver);
+        let app =
+            Router::new()
+                .route("/test", get(handler))
+                .layer(axum::middleware::from_fn_with_state(
+                    resolver,
+                    super::tenant_resolution_middleware,
+                ));
+
+        let req = Request::builder()
+            .method("GET")
+            .uri("/test")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::BAD_REQUEST,
+            "缺失 X-Tenant-Id header 应返回 400 Bad Request"
+        );
     }
 }
