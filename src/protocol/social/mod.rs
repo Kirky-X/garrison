@@ -67,6 +67,12 @@ pub struct SocialUserInfo {
 #[cfg(feature = "social-wechat")]
 pub mod wechat;
 
+/// 支付宝授权登录 provider（依据 spec social-login R-social-login-003）。
+///
+/// 启用 `social-alipay` feature 时编译。
+#[cfg(feature = "social-alipay")]
+pub mod alipay;
+
 // ============================================================================
 // SocialLoginProvider trait：社交登录抽象
 // ============================================================================
