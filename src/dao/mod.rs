@@ -200,6 +200,30 @@ mod oxcache_impl {
     use oxcache::Cache;
     use std::time::Duration;
 
+    /// 根据租户上下文返回实际存储 key（依据 spec tenant-isolation R-003）。
+    ///
+    /// - `tenant-isolation` feature 启用且 `TENANT.try_get()` 返回 `Ok(ctx)`：
+    ///   返回 `format!("tenant:{}:{}", ctx.tenant_id, key)`
+    /// - feature 关闭或 `TENANT` 上下文不存在（`try_get` 返回 `Err`）：返回 `key.to_string()`（不变）
+    ///
+    /// # 设计
+    ///
+    /// - `TENANT.try_get()` 返回 `Err` 而非 `None`（tokio task_local 语义），用 `Ok` 模式匹配
+    /// - 不 panic：无上下文时 key 保持原样，保证向后兼容
+    /// - 同步函数：`try_get` 是同步的，无需 async
+    fn prefixed_key(key: &str) -> String {
+        #[cfg(feature = "tenant-isolation")]
+        {
+            if let Ok(ctx) = crate::context::tenant::TENANT.try_get() {
+                return format!("tenant:{}:{}", ctx.tenant_id, key);
+            }
+        }
+        // feature 关闭或无 TENANT 上下文时 key 保持原样
+        #[allow(unused_variables)]
+        let _ = key;
+        key.to_string()
+    }
+
     /// oxcache 0.3 默认实现，包装 `oxcache::Cache<String, String>`。
     ///
     /// - L1（moka）+ L2（redis）由 oxcache 0.3 自动管理（0.3 起 moka 后端支持 per-entry TTL）。
@@ -244,19 +268,21 @@ mod oxcache_impl {
     #[async_trait]
     impl BulwarkDao for BulwarkDaoOxcache {
         async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
+            let actual_key = prefixed_key(key);
             self.cache
-                .get_sync(&key.to_string())
+                .get_sync(&actual_key)
                 .map_err(|e| BulwarkError::Dao(format!("oxcache get_sync 失败: {}", e)))
         }
 
         async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> BulwarkResult<()> {
+            let actual_key = prefixed_key(key);
             let ttl = if ttl_seconds == 0 {
                 None
             } else {
                 Some(Duration::from_secs(ttl_seconds))
             };
             self.cache
-                .set_with_ttl_sync(&key.to_string(), &value.to_string(), ttl)
+                .set_with_ttl_sync(&actual_key, &value.to_string(), ttl)
                 .map_err(|e| BulwarkError::Dao(format!("oxcache set_with_ttl_sync 失败: {}", e)))
         }
 
@@ -264,19 +290,20 @@ mod oxcache_impl {
             // 通过 cache.ttl_sync() 读取剩余 TTL，用 set_with_ttl_sync 保留原 TTL（不重置过期时间）。
             // ttl_sync() 返回 None 表示永久驻留（set_with_ttl_sync 接受 None 表示无 TTL）。
             // 但 None 也可能表示键不存在，需要先检查键存在性。
+            let actual_key = prefixed_key(key);
             if !self
                 .cache
-                .exists_sync(&key.to_string())
+                .exists_sync(&actual_key)
                 .map_err(|e| BulwarkError::Dao(format!("oxcache exists_sync 失败: {}", e)))?
             {
                 return Err(BulwarkError::Dao(format!("键不存在: {}", key)));
             }
             let remaining_ttl = self
                 .cache
-                .ttl_sync(&key.to_string())
+                .ttl_sync(&actual_key)
                 .map_err(|e| BulwarkError::Dao(format!("oxcache ttl_sync 失败: {}", e)))?;
             self.cache
-                .set_with_ttl_sync(&key.to_string(), &value.to_string(), remaining_ttl)
+                .set_with_ttl_sync(&actual_key, &value.to_string(), remaining_ttl)
                 .map_err(|e| {
                     BulwarkError::Dao(format!("oxcache update (set_with_ttl_sync) 失败: {}", e))
                 })
@@ -287,21 +314,22 @@ mod oxcache_impl {
             // expire_sync 返回 bool：true=更新成功，false=键不存在。
             // 注意：seconds=0 表示永久驻留，需要用 get_sync + set_with_ttl_sync(None) 实现
             // （cache.expire_sync(key, Duration::from_secs(0)) 会让键立即过期，不符合 spec 的 0=永久语义）。
+            let actual_key = prefixed_key(key);
             if seconds == 0 {
                 let value = self
                     .cache
-                    .get_sync(&key.to_string())
+                    .get_sync(&actual_key)
                     .map_err(|e| BulwarkError::Dao(format!("oxcache get_sync 失败: {}", e)))?
                     .ok_or_else(|| BulwarkError::Dao(format!("键不存在: {}", key)))?;
                 self.cache
-                    .set_with_ttl_sync(&key.to_string(), &value, None)
+                    .set_with_ttl_sync(&actual_key, &value, None)
                     .map_err(|e| {
                         BulwarkError::Dao(format!("oxcache expire (set_with_ttl_sync) 失败: {}", e))
                     })
             } else {
                 let updated = self
                     .cache
-                    .expire_sync(&key.to_string(), Duration::from_secs(seconds))
+                    .expire_sync(&actual_key, Duration::from_secs(seconds))
                     .map_err(|e| BulwarkError::Dao(format!("oxcache expire_sync 失败: {}", e)))?;
                 if !updated {
                     return Err(BulwarkError::Dao(format!("键不存在: {}", key)));
@@ -311,8 +339,9 @@ mod oxcache_impl {
         }
 
         async fn delete(&self, key: &str) -> BulwarkResult<()> {
+            let actual_key = prefixed_key(key);
             self.cache
-                .delete_sync(&key.to_string())
+                .delete_sync(&actual_key)
                 .map_err(|e| BulwarkError::Dao(format!("oxcache delete_sync 失败: {}", e)))
         }
 
@@ -320,8 +349,9 @@ mod oxcache_impl {
         ///
         /// 重写默认实现以使用 oxcache 原生"无 TTL"API（避免 ttl=0 歧义）。
         async fn set_permanent(&self, key: &str, value: &str) -> BulwarkResult<()> {
+            let actual_key = prefixed_key(key);
             self.cache
-                .set_with_ttl_sync(&key.to_string(), &value.to_string(), None)
+                .set_with_ttl_sync(&actual_key, &value.to_string(), None)
                 .map_err(|e| BulwarkError::Dao(format!("oxcache set_with_ttl_sync 失败: {}", e)))
         }
 
@@ -331,8 +361,9 @@ mod oxcache_impl {
         /// - `Some(remaining)`: 键存在且设置了 TTL
         /// - `None`: 键不存在，或键存在但未设置 TTL（永久驻留）
         async fn get_timeout(&self, key: &str) -> BulwarkResult<Option<Duration>> {
+            let actual_key = prefixed_key(key);
             self.cache
-                .ttl_sync(&key.to_string())
+                .ttl_sync(&actual_key)
                 .map_err(|e| BulwarkError::Dao(format!("oxcache ttl_sync 失败: {}", e)))
         }
 
@@ -341,20 +372,22 @@ mod oxcache_impl {
         /// 重写默认实现以保留原键 TTL（用 `ttl_sync` 读取剩余 TTL，用 `set_with_ttl_sync` 写入）。
         /// 仍是**非原子**操作（oxcache 0.3 无原子 rename API，待 v0.5.0+ 升级）。
         async fn rename(&self, old_key: &str, new_key: &str) -> BulwarkResult<()> {
+            let actual_old = prefixed_key(old_key);
+            let actual_new = prefixed_key(new_key);
             let value = self
                 .cache
-                .get_sync(&old_key.to_string())
+                .get_sync(&actual_old)
                 .map_err(|e| BulwarkError::Dao(format!("oxcache get_sync 失败: {}", e)))?
                 .ok_or_else(|| BulwarkError::InvalidParam(format!("键不存在: {}", old_key)))?;
             let remaining_ttl = self
                 .cache
-                .ttl_sync(&old_key.to_string())
+                .ttl_sync(&actual_old)
                 .map_err(|e| BulwarkError::Dao(format!("oxcache ttl_sync 失败: {}", e)))?;
             self.cache
-                .set_with_ttl_sync(&new_key.to_string(), &value, remaining_ttl)
+                .set_with_ttl_sync(&actual_new, &value, remaining_ttl)
                 .map_err(|e| BulwarkError::Dao(format!("oxcache set_with_ttl_sync 失败: {}", e)))?;
             self.cache
-                .delete_sync(&old_key.to_string())
+                .delete_sync(&actual_old)
                 .map_err(|e| BulwarkError::Dao(format!("oxcache delete_sync 失败: {}", e)))
         }
 
@@ -365,13 +398,14 @@ mod oxcache_impl {
         /// （需 Redis Lua 脚本 `redis.call('GET',K[1]);redis.call('DEL',K[1])` 修复，待 v0.5.0+）。
         async fn get_and_delete(&self, key: &str) -> BulwarkResult<Option<String>> {
             let _guard = self.atomic_lock.lock();
+            let actual_key = prefixed_key(key);
             let value = self
                 .cache
-                .get_sync(&key.to_string())
+                .get_sync(&actual_key)
                 .map_err(|e| BulwarkError::Dao(format!("oxcache get_sync 失败: {}", e)))?;
             if value.is_some() {
                 self.cache
-                    .delete_sync(&key.to_string())
+                    .delete_sync(&actual_key)
                     .map_err(|e| BulwarkError::Dao(format!("oxcache delete_sync 失败: {}", e)))?;
             }
             Ok(value)
@@ -1229,6 +1263,148 @@ pub mod tests {
 
             assert_eq!(success, 1, "并发调用仅一个返回 Some");
             assert_eq!(none_count, 9, "其他 9 个返回 None");
+        }
+
+        // --------------------------------------------------------------------
+        // 多租户 key 前缀测试（v0.5.0 新增，依据 spec tenant-isolation R-003）
+        // --------------------------------------------------------------------
+
+        /// R-tenant-isolation-003: tenant-isolation feature 启用且 TENANT 上下文存在时，
+        /// BulwarkDao 的 set/get 实际操作的 key 为 `tenant:{tid}:original_key`。
+        ///
+        /// 通过公共 API 验证（不直接探测内部存储 key，避免 get 自身再次 prepend 前缀）：
+        /// 1. tenant 42 在 TENANT.scope 内 set("shared_key", "tenant_42_value")
+        /// 2. 同一 TENANT.scope 内 get("shared_key") 应返回 Some（证明 set/get 用同一前缀）
+        /// 3. tenant 1 在另一 TENANT.scope 内 get("shared_key") 应返回 None（证明跨租户隔离）
+        /// 4. tenant 1 在另一 TENANT.scope 内 set("shared_key", "tenant_1_value") 应不影响 tenant 42 的值
+        #[cfg(feature = "tenant-isolation")]
+        #[tokio::test(flavor = "multi_thread")]
+        async fn dao_key_prefixed_with_tenant_when_isolation_enabled() {
+            use crate::context::tenant::{TenantContext, TenantSource, TENANT};
+
+            let dao = BulwarkDaoOxcache::new().await.unwrap();
+
+            // tenant 42 写入
+            let ctx_42 = TenantContext {
+                tenant_id: 42,
+                resolved_from: TenantSource::Header,
+            };
+            TENANT
+                .scope(ctx_42.clone(), async {
+                    dao.set("shared_key", "tenant_42_value", 3600)
+                        .await
+                        .unwrap();
+                    // 同租户 get 应命中（证明 set 与 get 用相同前缀 `tenant:42:`）
+                    let got = dao.get("shared_key").await.unwrap();
+                    assert_eq!(
+                        got,
+                        Some("tenant_42_value".to_string()),
+                        "同租户 get 应命中 set 写入的值（前缀一致）"
+                    );
+                })
+                .await;
+
+            // tenant 1 跨租户访问应隔离
+            let ctx_1 = TenantContext {
+                tenant_id: 1,
+                resolved_from: TenantSource::Header,
+            };
+            TENANT
+                .scope(ctx_1, async {
+                    // 跨租户 get 应返回 None（key 前缀不同：`tenant:1:` vs `tenant:42:`）
+                    let got = dao.get("shared_key").await.unwrap();
+                    assert!(
+                        got.is_none(),
+                        "跨租户 get 应返回 None（隔离失败），实际: {:?}",
+                        got
+                    );
+
+                    // tenant 1 写入同名 key 不应影响 tenant 42
+                    dao.set("shared_key", "tenant_1_value", 3600).await.unwrap();
+                    let got_self = dao.get("shared_key").await.unwrap();
+                    assert_eq!(
+                        got_self,
+                        Some("tenant_1_value".to_string()),
+                        "tenant 1 应读到自己的值"
+                    );
+                })
+                .await;
+
+            // 回到 tenant 42 验证值未被 tenant 1 覆盖
+            TENANT
+                .scope(ctx_42.clone(), async {
+                    let got = dao.get("shared_key").await.unwrap();
+                    assert_eq!(
+                        got,
+                        Some("tenant_42_value".to_string()),
+                        "tenant 42 的值不应被 tenant 1 覆盖（隔离失败）"
+                    );
+                })
+                .await;
+        }
+
+        /// R-tenant-isolation-003: TENANT 上下文不存在时 key 不变（不 panic）。
+        ///
+        /// 验证：不在 TENANT.scope 内调用 set/get，key 应保持原样（无前缀）。
+        #[cfg(feature = "tenant-isolation")]
+        #[tokio::test(flavor = "multi_thread")]
+        async fn dao_key_unchanged_when_tenant_context_absent() {
+            let dao = BulwarkDaoOxcache::new().await.unwrap();
+
+            // 不在 TENANT.scope 内，TENANT.try_get() 返回 Err，key 应保持原样
+            dao.set("no_ctx_key", "value", 3600).await.unwrap();
+            let got = dao.get("no_ctx_key").await.unwrap();
+            assert_eq!(
+                got,
+                Some("value".to_string()),
+                "TENANT 上下文不存在时 key 应保持原样（无前缀）"
+            );
+
+            // 带前缀的 key 应返回 None（因 set 时未加前缀）
+            let prefixed = dao.get("tenant:0:no_ctx_key").await.unwrap();
+            assert!(
+                prefixed.is_none(),
+                "TENANT 上下文不存在时不应有带前缀的 key"
+            );
+        }
+
+        /// R-tenant-isolation-003: delete 也应使用带前缀的 key。
+        ///
+        /// 验证：在 TENANT.scope 内 set 后，用 delete 删除原始 key 应能成功删除
+        ///（delete 内部加前缀 `tenant:42:`，与 set 写入的 key 匹配）。
+        /// 通过公共 API 验证：delete 后同租户 get 应返回 None。
+        #[cfg(feature = "tenant-isolation")]
+        #[tokio::test(flavor = "multi_thread")]
+        async fn dao_delete_uses_prefixed_key_in_tenant_context() {
+            use crate::context::tenant::{TenantContext, TenantSource, TENANT};
+
+            let dao = BulwarkDaoOxcache::new().await.unwrap();
+            let ctx = TenantContext {
+                tenant_id: 42,
+                resolved_from: TenantSource::Header,
+            };
+
+            TENANT
+                .scope(ctx, async {
+                    dao.set("del_key", "value", 3600).await.unwrap();
+                    // 先确认值已写入
+                    assert_eq!(
+                        dao.get("del_key").await.unwrap(),
+                        Some("value".to_string()),
+                        "set 后同租户 get 应命中"
+                    );
+
+                    // delete 用原始 key，内部应加前缀匹配到 `tenant:42:del_key`
+                    dao.delete("del_key").await.unwrap();
+
+                    // 同租户 get 应返回 None（证明 delete 命中了带前缀的 key）
+                    let after = dao.get("del_key").await.unwrap();
+                    assert!(
+                        after.is_none(),
+                        "delete 后同租户 get 应返回 None（delete 也加了前缀）"
+                    );
+                })
+                .await;
         }
     }
 
