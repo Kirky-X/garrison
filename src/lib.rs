@@ -282,6 +282,24 @@ pub use dao::repository::role_hierarchy::RoleHierarchyRecord;
 pub use dao::repository::role_hierarchy::RoleHierarchyService;
 
 // ============================================================================
+// JWT RefreshToken Rotation（v0.5.0 新增，依据 proposal H4）
+// ============================================================================
+//
+// `RefreshTokenRecord` 需 `protocol-jwt` feature（hash chain 行结构）。
+// `RefreshTokenRotation` 需 `protocol-jwt` + `db-sqlite` feature（依赖 DbPool 查 SQL）。
+//
+// 业务方可通过 `use bulwark::{RefreshTokenRecord, RefreshTokenRotation}` 直接使用，
+// 无需写完整路径 `bulwark::protocol::jwt::refresh::RefreshTokenRotation`。
+
+/// RefreshToken 表行结构（hash chain：token_hash + parent_token_hash）。
+#[cfg(feature = "protocol-jwt")]
+pub use protocol::jwt::refresh::RefreshTokenRecord;
+
+/// RefreshToken Rotation 服务（rotate + detect_reuse + revoke_chain，需 `protocol-jwt` + `db-sqlite`）。
+#[cfg(all(feature = "protocol-jwt", feature = "db-sqlite"))]
+pub use protocol::jwt::refresh::RefreshTokenRotation;
+
+// ============================================================================
 // 过程宏注解（0.4.2 新增，依据 spec annotation-macros）
 // ============================================================================
 
