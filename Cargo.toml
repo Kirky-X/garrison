@@ -62,12 +62,17 @@ rand = { version = "0.8", optional = true }
 # oxcache 0.3: L1 (moka) + L2 (redis) 两级缓存，默认 full features，0.3 支持 per-entry TTL + ttl() 查询
 # 使用本地 path 依赖（crates.io 0.3.0 未暴露 Cache<K,V>::ttl()，本地仓库已暴露）
 oxcache = { path = "/home/kirky/projects/oxcache", optional = true }
-# dbnexus 0.2: 默认 sqlite + permission + sql-parser + macros + config-env + with-time
+# dbnexus 0.3: 默认 sqlite + permission + sql-parser + macros + config-env + with-time
 # auto-migrate feature 由 db-sqlite feature 显式启用（提供 MigrationExecutor::run_migrations）
-dbnexus = { version = "0.2", optional = true }
+# postgres / mysql features 由 db-postgres / db-mysql feature 启用（sea-orm/sqlx-* 驱动）
+# 使用本地 path 依赖（crates.io 0.2.0 已支持 postgres/mysql features，本地 0.3.1 用于对齐 sea-orm 2.0.0-rc.42）
+# default-features = false：dbnexus 0.3+ 禁止 embedded(sqlite) 与 server-side(postgres) 混用，
+# 由 db-base feature 显式启用基础 features，db-sqlite / db-postgres 分别启用 sqlite / postgres。
+dbnexus = { path = "/home/kirky/projects/dbnexus", version = "0.3", optional = true, default-features = false }
 # sea-orm: Repository 层参数化查询依赖（Statement/Value/ConnectionTrait）。
-# 版本与 dbnexus 0.2 一致，由 db-sqlite feature 启用。
+# 版本与 dbnexus 0.3 一致（2.0.0-rc.37 ⊂ 2.0.0-rc.42，cargo 统一到 rc.42），由 db-sqlite / db-postgres feature 启用。
 # dbnexus 未 re-export Statement/Value/ConnectionTrait，需显式声明为直接依赖。
+# features 仅显式启用 sqlx-sqlite；db-postgres feature 通过 dbnexus/postgres → sea-orm/sqlx-postgres 自动合并（cargo feature unification）。
 sea-orm = { version = "2.0.0-rc.37", default-features = false, features = ["sqlx-sqlite", "runtime-tokio-rustls"], optional = true }
 prometheus = { version = "0.14", optional = true }
 # 可观测性：tracing-subscriber 用于 JSON 日志，opentelemetry 用于分布式追踪
@@ -93,7 +98,7 @@ mockall = "0.15"
 tempfile = "3.27"
 # serial_test 用于串行化依赖 std::env::set_var 的测试，避免多线程并发污染环境变量
 serial_test = "3"
-# sea-orm 用于 dbnexus 集成测试的查询验证（版本与 dbnexus 0.2 一致）
+# sea-orm 用于 dbnexus 集成测试的查询验证（版本与 dbnexus 0.3 一致）
 sea-orm = { version = "2.0.0-rc.37", default-features = false, features = ["sqlx-sqlite", "runtime-tokio-rustls"] }
 # tower 用于 axum 集成测试（oneshot Request）
 tower = { version = "0.5", default-features = false, features = ["util"] }
@@ -137,14 +142,27 @@ cache-memory = ["oxcache"]
 cache-redis = ["oxcache"]
 # 注意：oxcache 无 caffeine feature（L1 用 moka），cache-caffeine 已移除
 
-# === 数据库后端（通过 dbnexus 0.2） ===
-# dbnexus 默认启用 sqlite + permission + sql-parser + macros + config-env
-# db-sqlite 启用 auto-migrate 以支持 BulwarkMigration::run_migrations
-# db-sqlite 同时启用 sea-orm 以支持 Repository 层参数化查询（Statement/Value/ConnectionTrait）
-db-sqlite = ["dbnexus", "dbnexus/auto-migrate", "sea-orm"]
-# 注意：dbnexus 0.2 未暴露 postgres/mysql features，以下标注为 0.2.0+ 待 dbnexus 添加
-# db-postgres = ["dbnexus", "dbnexus/postgres"]  # TODO: 0.2.0+
-# db-mysql = ["dbnexus", "dbnexus/mysql"]  # TODO: 0.2.0+
+# === 数据库后端（通过 dbnexus 0.3） ===
+# db-base：dbnexus 基础 features（runtime + permission + sql-parser + macros + config-env + with-time）+ sea-orm
+# 内部 feature，由 db-sqlite / db-postgres 继承，不直接暴露给用户。
+# dbnexus 0.3+ 禁止 embedded(sqlite) 与 server-side(postgres) 混用，故 db-sqlite / db-postgres 互斥。
+db-base = [
+    "dbnexus",
+    "dbnexus/runtime-tokio-rustls",
+    "dbnexus/permission",
+    "dbnexus/sql-parser",
+    "dbnexus/macros",
+    "dbnexus/config-env",
+    "dbnexus/with-time",
+    "sea-orm",
+]
+# db-sqlite 启用 sqlite embedded 驱动 + auto-migrate（提供 MigrationExecutor::run_migrations）
+db-sqlite = ["db-base", "dbnexus/sqlite", "dbnexus/auto-migrate"]
+# db-postgres 启用 postgres server-side 驱动（sea-orm/sqlx-postgres 由 dbnexus/postgres 传递启用）
+db-postgres = ["db-base", "dbnexus/postgres"]
+# db-mysql 启用 mysql server-side 驱动（sea-orm/sqlx-mysql 由 dbnexus/mysql 传递启用）
+# 保留注释直到有测试覆盖后启用（当前 dbnexus 0.3.1 已支持 mysql feature）。
+# db-mysql = ["db-base", "dbnexus/mysql"]  # TODO: 需测试覆盖后启用
 
 # === 协议层插件 ===
 # 0.4.2 新增：PKCE (RFC 7636) 需要 sha2 (S256) + base64 (URL_SAFE_NO_PAD)
@@ -240,9 +258,9 @@ full = [
     "social-wechat", "social-alipay",
 ]
 
-# 注意：production 原用 db-postgres，但 dbnexus 0.2 不支持，0.1.0 降级为 db-sqlite
+# production 使用 db-postgres（dbnexus 0.3+ 已支持 postgres feature，恢复 spec 原意）
 production = [
-    "cache-redis", "db-sqlite", "web-axum",
+    "cache-redis", "db-postgres", "web-axum",
     "protocol-jwt", "protocol-sign", "secure-sign",
     "listener", "tracing-log", "metrics-prometheus",
     "tenant-isolation",
