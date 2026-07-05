@@ -610,6 +610,48 @@ pub mod sqlite;
 /// `RoleHierarchyService` 在 T045-T050 扩展时依赖 `BulwarkDao` trait（always compiled）。
 pub mod role_hierarchy;
 
+// ============================================================================
+// Backend-agnostic 辅助函数（v0.5.0 新增，依据 P3 重构决策）。
+// 启用 db-sqlite 或 db-postgres feature 时编译。
+// 运行时根据 DbBackend 转换 SQL 占位符（SQLite ? / PostgreSQL $1,$2）。
+// ============================================================================
+
+/// 转换 SQL 占位符为指定后端的方言。
+///
+/// - `DbBackend::Sqlite`：保留 `?` 占位符
+/// - `DbBackend::Postgres`：将第 n 个 `?` 替换为 `$n`
+/// - 其他后端：保留 `?`（由调用方确保兼容性）
+///
+/// # 示例
+///
+/// ```
+/// use sea_orm::DbBackend;
+/// use bulwark::dao::repository::convert_placeholders;
+///
+/// let sql = "WHERE id = ? AND name = ?";
+/// assert_eq!(convert_placeholders(sql, DbBackend::Sqlite), "WHERE id = ? AND name = ?");
+/// assert_eq!(convert_placeholders(sql, DbBackend::Postgres), "WHERE id = $1 AND name = $2");
+/// ```
+#[cfg(any(feature = "db-sqlite", feature = "db-postgres"))]
+pub fn convert_placeholders(sql: &str, backend: sea_orm::DbBackend) -> String {
+    use sea_orm::DbBackend;
+    if backend != DbBackend::Postgres {
+        return sql.to_string();
+    }
+    let mut result = String::with_capacity(sql.len() + 16);
+    let mut n = 0u32;
+    for c in sql.chars() {
+        if c == '?' {
+            n += 1;
+            result.push('$');
+            result.push_str(&n.to_string());
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -915,5 +957,59 @@ mod tests {
         assert_send_sync::<dyn SessionRepository>();
         assert_send_sync::<dyn LoginLogRepository>();
         assert_send_sync::<dyn UserExtRepository>();
+    }
+
+    // ========================================================================
+    // convert_placeholders 测试（T134，依据 P3 重构决策）
+    // ========================================================================
+
+    /// SQLite 后端保留 `?` 占位符不变。
+    #[cfg(any(feature = "db-sqlite", feature = "db-postgres"))]
+    #[test]
+    fn convert_placeholders_sqlite_keeps_question_mark() {
+        use sea_orm::DbBackend;
+        let sql = "WHERE id = ? AND name = ?";
+        let result = convert_placeholders(sql, DbBackend::Sqlite);
+        assert_eq!(result, "WHERE id = ? AND name = ?");
+    }
+
+    /// PostgreSQL 后端将 `?` 替换为 `$1`, `$2`, ...
+    #[cfg(any(feature = "db-sqlite", feature = "db-postgres"))]
+    #[test]
+    fn convert_placeholders_postgres_replaces_with_dollar_n() {
+        use sea_orm::DbBackend;
+        let sql = "WHERE id = ? AND name = ?";
+        let result = convert_placeholders(sql, DbBackend::Postgres);
+        assert_eq!(result, "WHERE id = $1 AND name = $2");
+    }
+
+    /// 单个占位符也能正确转换。
+    #[cfg(any(feature = "db-sqlite", feature = "db-postgres"))]
+    #[test]
+    fn convert_placeholders_postgres_single_placeholder() {
+        use sea_orm::DbBackend;
+        let sql = "WHERE id = ?";
+        let result = convert_placeholders(sql, DbBackend::Postgres);
+        assert_eq!(result, "WHERE id = $1");
+    }
+
+    /// 无占位符的 SQL 不受影响。
+    #[cfg(any(feature = "db-sqlite", feature = "db-postgres"))]
+    #[test]
+    fn convert_placeholders_no_placeholder_unchanged() {
+        use sea_orm::DbBackend;
+        let sql = "SELECT 1";
+        assert_eq!(convert_placeholders(sql, DbBackend::Postgres), "SELECT 1");
+        assert_eq!(convert_placeholders(sql, DbBackend::Sqlite), "SELECT 1");
+    }
+
+    /// 多个占位符（5 个）能正确编号。
+    #[cfg(any(feature = "db-sqlite", feature = "db-postgres"))]
+    #[test]
+    fn convert_placeholders_postgres_five_placeholders() {
+        use sea_orm::DbBackend;
+        let sql = "VALUES (?, ?, ?, ?, ?)";
+        let result = convert_placeholders(sql, DbBackend::Postgres);
+        assert_eq!(result, "VALUES ($1, $2, $3, $4, $5)");
     }
 }
