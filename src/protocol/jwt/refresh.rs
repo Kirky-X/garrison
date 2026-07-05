@@ -272,6 +272,62 @@ mod service {
             };
             Ok(revoked == 1)
         }
+
+        /// T062 Green: 撤销给定 token 及其所有子代（沿 parent_token_hash 反向递归）。
+        ///
+        /// 语义：reuse detection 命中 old_token 后，old_token 之后签发的所有
+        /// 后代 token（即 parent_token_hash 链上以 old_token 为根的子树）
+        /// 都应被吊销，防止攻击者继续使用被盗链。
+        ///
+        /// # 参数
+        /// - `token_hash`: 起点 token hash（已 SHA-256 哈希）
+        ///
+        /// # 算法（迭代 + 栈，避免 async 递归 Box::pin 复杂度）
+        /// 1. 把 `token_hash` 入栈
+        /// 2. 出栈一个 hash，UPDATE 它 revoked=1
+        /// 3. 查所有 `parent_token_hash == hash` 的 record（子代），入栈
+        /// 4. 重复直到栈空
+        ///
+        /// # 错误
+        /// - `BulwarkError::Dao`: SQL 查询/UPDATE 失败
+        pub async fn revoke_chain(&self, token_hash: &str) -> BulwarkResult<()> {
+            let session = self.pool.get_session("admin").await.map_err(|e| {
+                BulwarkError::Dao(format!("refresh_tokens 获取 session 失败: {}", e))
+            })?;
+            let conn = session.connection().map_err(|e| {
+                BulwarkError::Dao(format!("refresh_tokens 获取 connection 失败: {}", e))
+            })?;
+
+            let mut stack = vec![token_hash.to_string()];
+            while let Some(hash) = stack.pop() {
+                // UPDATE current revoked=1
+                let update_stmt = Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "UPDATE refresh_tokens SET revoked = 1 WHERE token_hash = ?",
+                    vec![Value::String(Some(hash.clone()))],
+                );
+                conn.execute_raw(update_stmt)
+                    .await
+                    .map_err(|e| BulwarkError::Dao(format!("refresh_tokens UPDATE 失败: {}", e)))?;
+
+                // 查子代（parent_token_hash == hash）
+                let select_stmt = Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "SELECT token_hash FROM refresh_tokens WHERE parent_token_hash = ?",
+                    vec![Value::String(Some(hash))],
+                );
+                let rows = conn.query_all_raw(select_stmt).await.map_err(|e| {
+                    BulwarkError::Dao(format!("refresh_tokens 查询子代失败: {}", e))
+                })?;
+                for row in rows {
+                    let child_hash: String = row
+                        .try_get("", "token_hash")
+                        .map_err(|e| BulwarkError::Dao(format!("token_hash 读取失败: {}", e)))?;
+                    stack.push(child_hash);
+                }
+            }
+            Ok(())
+        }
     }
 }
 
@@ -543,5 +599,57 @@ mod db_sqlite_tests {
             .await
             .expect("detect_reuse 应成功");
         assert!(!new_reused, "未 revoked 的 token 不应检测为 reuse");
+    }
+
+    // ========================================================================
+    // T061-T062: revoke_chain 测试
+    // ========================================================================
+
+    /// T061 Red: `revoke_chain` 撤销给定 token 及其所有子代（沿 parent_token_hash 反向递归）。
+    ///
+    /// 构造链：t1 (parent=None) ← t2 (parent=t1) ← t3 (parent=t2)
+    /// （t3 是最新，t1 是最老）
+    ///
+    /// 调用 `revoke_chain(SHA-256(t1))` → 应撤销 t1 及其所有子代（t2, t3）
+    ///
+    /// 断言：t1/t2/t3 的 revoked 字段全为 1
+    ///
+    /// **Rule 7 命名说明**：tasks.md 原测试名 `revoke_chain_revokes_all_parent_tokens`
+    /// 与实际语义有歧义——实际撤销的是 t1 及其所有"子代"（descendant），
+    /// 而非"父代"（parent）。此处沿用 tasks.md 命名以保持一致（Rule 11），
+    /// 但语义以 doc comment 为准。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn revoke_chain_revokes_all_parent_tokens() {
+        let pool = setup_db().await;
+
+        // 构造链 t1 ← t2 ← t3（t3 最新）
+        let t1_hash = sha256_hex("t1");
+        let t2_hash = sha256_hex("t2");
+        let t3_hash = sha256_hex("t3");
+        insert_refresh_token(&pool, &t1_hash, None, 1, 0, 1, 9999, 0).await;
+        insert_refresh_token(&pool, &t2_hash, Some(&t1_hash), 1, 0, 1, 9999, 0).await;
+        insert_refresh_token(&pool, &t3_hash, Some(&t2_hash), 1, 0, 1, 9999, 0).await;
+
+        let jwt_handler = Arc::new(JwtHandler::new("test_secret"));
+        let rotation =
+            RefreshTokenRotation::new(pool.clone(), jwt_handler, Arc::new(RwLock::new(1)));
+
+        // revoke_chain(t1_hash) → t1 + 所有子代（t2, t3）全 revoked
+        rotation
+            .revoke_chain(&t1_hash)
+            .await
+            .expect("revoke_chain 应成功");
+
+        assert_eq!(query_revoked(&pool, &t1_hash).await, 1, "t1 应 revoked");
+        assert_eq!(
+            query_revoked(&pool, &t2_hash).await,
+            1,
+            "t2 应 revoked（子代）"
+        );
+        assert_eq!(
+            query_revoked(&pool, &t3_hash).await,
+            1,
+            "t3 应 revoked（孙代）"
+        );
     }
 }
