@@ -49,23 +49,12 @@ pub struct RoleHierarchyRecord {
 /// 角色层级服务（TC 预计算 + 缓存 + 增量失效）。
 ///
 /// 完整实现在 T045-T050 逐步构建：
-/// - T045-T046: `compute_closure` DFS 遍历计算传递闭包
+/// - T045-T046: `compute_closure` DFS 遍历计算传递闭包（届时改为 `pub struct RoleHierarchyService { dao: Arc<dyn BulwarkDao> }`）
 /// - T047-T048: `get_ancestors` 先查 oxcache 未命中则 `compute_closure` 并缓存
 /// - T049-T050: `add_edge` + `invalidate_cache` 增量失效
+///
+/// 当前为占位 unit struct，T045 重构为带字段 struct 后再加 `new(dao)` 构造器。
 pub struct RoleHierarchyService;
-
-impl RoleHierarchyService {
-    /// 占位构造（T045-T046 将改为接收 `dao: Arc<dyn BulwarkDao>`）。
-    pub fn new() -> Self {
-        Self
-    }
-}
-
-impl Default for RoleHierarchyService {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 // ============================================================================
 // 测试模块
@@ -118,10 +107,65 @@ mod tests {
         let _debug = format!("{:?}", r1);
     }
 
-    /// RoleHierarchyService::new() 可构造（占位，T045+ 扩展）。
+    /// RoleHierarchyService 可构造（占位 unit struct，T045+ 重构为带字段 struct）。
     #[test]
-    fn role_hierarchy_service_new_constructs() {
-        let _svc = RoleHierarchyService::new();
-        let _default = RoleHierarchyService::default();
+    fn role_hierarchy_service_constructs() {
+        let _svc = RoleHierarchyService;
+    }
+}
+
+// ============================================================================
+// db-sqlite 集成测试（T043-T044: role_hierarchy 表迁移验证）
+// ============================================================================
+
+#[cfg(all(test, feature = "db-sqlite"))]
+mod db_sqlite_tests {
+    use crate::dao::{init_dbnexus, BulwarkMigration};
+    use dbnexus::DbPool;
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
+    use std::path::PathBuf;
+
+    /// 定位项目根目录的 migrations/sqlite/ 目录。
+    fn project_migrations_dir() -> PathBuf {
+        let manifest_dir = env!("CARGO_MANIFEST_DIR");
+        PathBuf::from(manifest_dir)
+            .join("migrations")
+            .join("sqlite")
+    }
+
+    /// 创建并初始化 SQLite in-memory 数据库（迁移 + 返回 pool）。
+    async fn setup_db() -> DbPool {
+        let pool = init_dbnexus("sqlite::memory:")
+            .await
+            .expect("init_dbnexus 应成功");
+        let migration = BulwarkMigration::with_base_dir(pool.clone(), project_migrations_dir());
+        let applied = migration.migrate_core().await.expect("migrate_core 应成功");
+        assert!(applied >= 1, "migrate_core 应至少执行 1 个文件");
+        pool
+    }
+
+    /// T044 Green: 验证 SQLite 迁移加载 `002_role_hierarchy.sql` 后 `role_hierarchy` 表存在。
+    ///
+    /// Rule 11（惯例优先）：SQL 文件放 `migrations/sqlite/core/002_role_hierarchy.sql`，
+    /// 复用现有 `migrate_core()` 自动加载机制，无需修改 sqlite/mod.rs 的 migration 段。
+    ///
+    /// Rule 7（冲突暴露）：tasks.md T043 原描述路径 `src/dao/repository/sqlite/role_hierarchy.sql`
+    /// 不符合现有 migration 目录结构（`migrations/sqlite/core/`），改为符合惯例的路径。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn role_hierarchy_table_exists_after_migration() {
+        let pool = setup_db().await;
+        let session = pool.get_session("admin").await.unwrap();
+        let conn = session.connection().unwrap();
+        let stmt = Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='role_hierarchy'",
+            vec![],
+        );
+        let rows = conn.query_all_raw(stmt).await.expect("query_all 应成功");
+        assert_eq!(
+            rows.len(),
+            1,
+            "role_hierarchy 表应存在（迁移后 sqlite_master 应有 1 行记录）"
+        );
     }
 }
