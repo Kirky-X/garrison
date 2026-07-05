@@ -32,3 +32,10 @@ pub mod apikey;
 /// 临时凭证协议插件模块。
 #[cfg(feature = "protocol-temp")]
 pub mod temp;
+
+/// 社交登录协议插件模块（0.5.0 新增，依据 proposal H2 / spec social-login）。
+///
+/// 启用 `social-wechat` 或 `social-alipay` feature 时编译。提供 `SocialLoginProvider` trait
+/// 抽象与 `WechatProvider` / `AlipayProvider` 实现。
+#[cfg(any(feature = "social-wechat", feature = "social-alipay"))]
+pub mod social;

@@ -198,6 +198,12 @@ firewall-anomalous = ["firewall"]
 firewall-geoip = ["firewall"]
 firewall-ddos = ["firewall"]
 
+# === 0.5.0 新增：社交登录（依据 proposal H2 / spec social-login） ===
+# social-wechat：微信扫码登录（WechatProvider），依赖 protocol-oauth2（reqwest HTTP client）
+# social-alipay：支付宝授权登录（AlipayProvider），依赖 protocol-oauth2 + rsa 签名
+social-wechat = ["protocol-oauth2"]
+social-alipay = ["protocol-oauth2"]
+
 # === 可观测性 ===
 listener = []
 tracing-log = ["tracing/log"]
@@ -223,6 +229,7 @@ full = [
     "decision-trace", "tenant-isolation",
     "firewall", "firewall-bruteforce", "firewall-ratelimit", "firewall-anomalous",
     "firewall-geoip", "firewall-ddos",
+    "social-wechat", "social-alipay",
 ]
 
 # 注意：production 原用 db-postgres，但 dbnexus 0.2 不支持，0.1.0 降级为 db-sqlite
