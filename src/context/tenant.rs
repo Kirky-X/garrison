@@ -11,6 +11,11 @@
 //! - 类型本身不依赖 `tenant-isolation` feature gate（feature 关闭时仍可构造）
 //! - DAO key 前缀与 Repository SQL 过滤才由 feature 控制（见 T033-T034 / T031-T032）
 
+use async_trait::async_trait;
+use http::HeaderMap;
+
+use crate::error::{BulwarkError, BulwarkResult};
+
 /// 租户上下文来源标识（依据 spec `tenant-isolation` R-tenant-isolation-001）。
 ///
 /// 描述 `TenantContext` 是从哪种渠道解析得到的，便于排障与审计。
@@ -67,6 +72,65 @@ mod tenant_local {
 
 pub use tenant_local::TENANT;
 
+/// 租户解析器 trait（依据 spec `tenant-isolation` R-tenant-isolation-002）。
+///
+/// 从 HTTP 请求头解析 `TenantContext`，三种实现：
+/// - `HeaderTenantResolver`：从 `X-Tenant-Id` header 提取
+/// - `SubdomainTenantResolver`：从 `Host` header 提取 subdomain 并查 mapping
+/// - `ClaimTenantResolver`：从 `Authorization: Bearer <jwt>` 提取 `tenant_id` claim
+///
+/// # 设计
+///
+/// - 接受 `&HeaderMap`（`http::HeaderMap`，框架无关），actix/warp/axum 均基于 http crate
+/// - 失败时返回 `BulwarkError`，不静默默认 0（Rule 12 失败显性化）
+#[async_trait]
+pub trait TenantResolver: Send + Sync {
+    /// 从请求头解析租户上下文。
+    ///
+    /// # 参数
+    /// - `headers`: HTTP 请求头（框架无关的 `http::HeaderMap`）
+    ///
+    /// # 返回
+    /// - `Ok(TenantContext)`: 解析成功
+    /// - `Err(BulwarkError)`: 解析失败（header 缺失/格式错误/JWT 验证失败等）
+    async fn resolve(&self, headers: &HeaderMap) -> BulwarkResult<TenantContext>;
+}
+
+/// Header 租户解析器（依据 spec `tenant-isolation` R-tenant-isolation-002）。
+///
+/// 从 `X-Tenant-Id` 请求头提取 `tenant_id`（i64）。
+///
+/// # 行为
+///
+/// - header 存在且为合法 i64：返回 `TenantContext { tenant_id, resolved_from: Header }`
+/// - header 缺失：返回 `BulwarkError::Config("X-Tenant-Id header missing".into())`
+/// - header 格式非法（非 i64）：返回 `BulwarkError::Config`
+///
+/// # 设计
+///
+/// 不默认 0（Rule 12 失败显性化），缺失即报错——避免租户隔离被静默绕过。
+#[derive(Debug, Clone, Default)]
+pub struct HeaderTenantResolver;
+
+#[async_trait]
+impl TenantResolver for HeaderTenantResolver {
+    async fn resolve(&self, headers: &HeaderMap) -> BulwarkResult<TenantContext> {
+        let value = headers
+            .get("X-Tenant-Id")
+            .ok_or_else(|| BulwarkError::Config("X-Tenant-Id header missing".into()))?;
+        let raw = value
+            .to_str()
+            .map_err(|e| BulwarkError::Config(format!("X-Tenant-Id not visible ASCII: {e}")))?;
+        let tenant_id = raw
+            .parse::<i64>()
+            .map_err(|e| BulwarkError::Config(format!("invalid X-Tenant-Id `{raw}`: {e}")))?;
+        Ok(TenantContext {
+            tenant_id,
+            resolved_from: TenantSource::Header,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -81,6 +145,22 @@ mod tests {
             tenant_id: 42,
             resolved_from: TenantSource::Header,
         };
+        assert_eq!(ctx.tenant_id, 42);
+        assert!(matches!(ctx.resolved_from, TenantSource::Header));
+    }
+
+    /// R-tenant-isolation-002: HeaderTenantResolver 从 `X-Tenant-Id` 提取 tenant_id。
+    ///
+    /// 构造含 `X-Tenant-Id: 42` 的 `HeaderMap`，断言 `HeaderTenantResolver.resolve(&headers)`
+    /// 返回 `TenantContext { tenant_id: 42, resolved_from: TenantSource::Header }`。
+    #[tokio::test]
+    async fn header_tenant_resolver_extracts_x_tenant_id() {
+        let mut headers = http::HeaderMap::new();
+        headers.insert("X-Tenant-Id", "42".parse().expect("valid header value"));
+        let ctx = HeaderTenantResolver
+            .resolve(&headers)
+            .await
+            .expect("X-Tenant-Id 存在时应解析成功");
         assert_eq!(ctx.tenant_id, 42);
         assert!(matches!(ctx.resolved_from, TenantSource::Header));
     }
