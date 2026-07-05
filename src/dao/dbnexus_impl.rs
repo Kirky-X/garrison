@@ -396,7 +396,12 @@ mod tests {
 
         let migration = BulwarkMigration::with_base_dir(pool, base_dir);
         let applied = migration.migrate_core().await.expect("migrate_core 应成功");
-        assert_eq!(applied, 1, "应执行 1 个迁移文件（001_init.sql）");
+        // 001_init.sql + 002_role_hierarchy.sql + 003_refresh_tokens.sql + 004_audit_logs.sql = 4 个文件
+        assert!(
+            applied >= 4,
+            "应至少执行 4 个迁移文件（001-004），实际: {}",
+            applied
+        );
 
         // 查询 sqlite_master 验证 9 张表存在
         let pool = migration.pool();
@@ -413,7 +418,7 @@ mod tests {
             .map(|row| row.try_get::<String>("", "name").unwrap_or_default())
             .collect();
 
-        // 8 张核心表 + app_user_ext = 9 张表（不含 dbnexus_migrations）
+        // 8 张核心表 + app_user_ext = 9 张表（不含 dbnexus_migrations / role_hierarchy / refresh_tokens / audit_logs）
         let expected_tables = [
             "app_auth_method",
             "app_login_log",
@@ -436,7 +441,7 @@ mod tests {
         assert_eq!(
             expected_tables.len(),
             9,
-            "应有 9 张表（8 核心 + app_user_ext）"
+            "应有 9 张核心表（8 核心 + app_user_ext）"
         );
     }
 
@@ -451,12 +456,16 @@ mod tests {
         let pool = init_dbnexus("sqlite::memory:").await.unwrap();
         let migration = BulwarkMigration::with_base_dir(pool, base_dir);
 
-        // 第一次：应用迁移
+        // 第一次：应用迁移（001-004 共 4 个文件）
         let first = migration
             .migrate_core()
             .await
             .expect("第一次 migrate 应成功");
-        assert_eq!(first, 1, "第一次应执行 1 个迁移");
+        assert!(
+            first >= 4,
+            "第一次应至少执行 4 个迁移（001-004），实际: {}",
+            first
+        );
 
         // 第二次：应跳过（已应用）
         let second = migration

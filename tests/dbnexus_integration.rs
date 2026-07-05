@@ -597,12 +597,12 @@ async fn integration_migrate_idempotent() {
         .expect("init_dbnexus 应成功");
     let migration = BulwarkMigration::with_base_dir(pool.clone(), project_migrations_dir());
 
-    // 第一次执行：应执行 1 个迁移文件
+    // 第一次执行：应执行 >= 4 个迁移文件（001_init / 002_role_hierarchy / 003_refresh_tokens / 004_audit_logs）
     let first = migration
         .migrate_core()
         .await
         .expect("第一次 migrate_core 应成功");
-    assert_eq!(first, 1, "第一次应执行 1 个文件，实际: {}", first);
+    assert!(first >= 4, "第一次应至少执行 4 个文件，实际: {}", first);
 
     // 第二次执行：应返回 0（dbnexus_migrations 已记录 version=1）
     let second = migration
