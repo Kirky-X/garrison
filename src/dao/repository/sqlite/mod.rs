@@ -1766,3 +1766,120 @@ fn parse_user_ext_row(row: &QueryResult) -> BulwarkResult<UserExtRow> {
         })?,
     })
 }
+
+// ============================================================================
+// 测试模块（依据 spec tenant-isolation R-004）
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dao::{init_dbnexus, BulwarkMigration};
+    use std::path::PathBuf;
+
+    /// 定位项目根目录的 migrations/sqlite/ 目录。
+    fn project_migrations_dir() -> PathBuf {
+        let manifest_dir = env!("CARGO_MANIFEST_DIR");
+        PathBuf::from(manifest_dir)
+            .join("migrations")
+            .join("sqlite")
+    }
+
+    /// 创建并初始化 SQLite in-memory 数据库（迁移 + 返回 pool）。
+    async fn setup_db() -> DbPool {
+        let pool = init_dbnexus("sqlite::memory:")
+            .await
+            .expect("init_dbnexus 应成功");
+        let migration = BulwarkMigration::with_base_dir(pool.clone(), project_migrations_dir());
+        let applied = migration.migrate_core().await.expect("migrate_core 应成功");
+        assert!(applied >= 1, "migrate_core 应至少执行 1 个文件");
+        pool
+    }
+
+    fn uuid_str() -> String {
+        uuid::Uuid::new_v4().to_string()
+    }
+
+    /// R-tenant-isolation-004: Repository SQL 强制 tenant_id 过滤。
+    ///
+    /// 验证 v0.4.2 已无条件实现的 `WHERE tenant_id = ?` 过滤行为：
+    /// - 构造 tenant_id=42 与 tenant_id=1 的用户
+    /// - 跨租户查询应返回 None（SQL 含 `WHERE tenant_id = ?` 过滤）
+    /// - list 按 tenant 隔离
+    ///
+    /// 注：v0.5.0 决策（Rule 7 暴露冲突后用户选择"保留 v0.4.2 无条件过滤"）：
+    /// SQL 过滤不门控 `tenant-isolation` feature，始终生效——因 tenant_id 已是所有表必需字段，
+    /// 不过滤会导致跨租户数据泄露（安全优先）。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn repository_filters_by_tenant_id_when_tenant_isolation_enabled() {
+        let pool = setup_db().await;
+        let repo = SqliteUserRepository::new(pool);
+
+        // 在 tenant 42 创建用户
+        let user_42 = uuid_str();
+        repo.create(
+            42,
+            NewUser {
+                id: user_42.clone(),
+                username: "tenant-42-user".to_string(),
+                password_hash: "h".to_string(),
+                status: "active".to_string(),
+            },
+        )
+        .await
+        .expect("create tenant 42 用户应成功");
+
+        // 在 tenant 1 创建用户
+        let user_1 = uuid_str();
+        repo.create(
+            1,
+            NewUser {
+                id: user_1.clone(),
+                username: "tenant-1-user".to_string(),
+                password_hash: "h".to_string(),
+                status: "active".to_string(),
+            },
+        )
+        .await
+        .expect("create tenant 1 用户应成功");
+
+        // 跨租户 find_by_id：tenant 42 查不到 tenant 1 的用户（SQL 含 WHERE tenant_id = ?）
+        let cross = repo.find_by_id(42, &user_1).await.unwrap();
+        assert!(
+            cross.is_none(),
+            "tenant 42 不应查到 tenant 1 的用户（SQL 过滤生效）"
+        );
+
+        // 跨租户 find_by_id：tenant 1 查不到 tenant 42 的用户
+        let cross = repo.find_by_id(1, &user_42).await.unwrap();
+        assert!(
+            cross.is_none(),
+            "tenant 1 不应查到 tenant 42 的用户（SQL 过滤生效）"
+        );
+
+        // 跨租户 find_by_username：tenant 42 查不到 tenant 1 的 username
+        let cross = repo.find_by_username(42, "tenant-1-user").await.unwrap();
+        assert!(
+            cross.is_none(),
+            "tenant 42 不应查到 tenant 1 的 username（SQL 过滤生效）"
+        );
+
+        // list 按 tenant 隔离
+        let list_42 = repo.list(42, 0, 100).await.unwrap();
+        let list_1 = repo.list(1, 0, 100).await.unwrap();
+        let ids_42: Vec<_> = list_42.iter().map(|u| u.id.clone()).collect();
+        let ids_1: Vec<_> = list_1.iter().map(|u| u.id.clone()).collect();
+        assert!(
+            ids_42.contains(&user_42) && !ids_42.contains(&user_1),
+            "tenant 42 list 应仅含本租户用户"
+        );
+        assert!(
+            ids_1.contains(&user_1) && !ids_1.contains(&user_42),
+            "tenant 1 list 应仅含本租户用户"
+        );
+
+        // 验证返回行的 tenant_id 字段正确
+        let row_42 = repo.find_by_id(42, &user_42).await.unwrap().unwrap();
+        assert_eq!(row_42.tenant_id, 42, "返回行 tenant_id 应为 42");
+    }
+}
