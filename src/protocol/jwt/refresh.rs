@@ -65,6 +65,179 @@ pub struct RefreshTokenRecord {
 }
 
 // ============================================================================
+// RefreshTokenRotation 服务（T057-T064：db-sqlite gated）
+// ============================================================================
+
+#[cfg(feature = "db-sqlite")]
+mod service {
+    use crate::error::{BulwarkError, BulwarkResult};
+    use crate::protocol::jwt::JwtHandler;
+    use dbnexus::DbPool;
+    use sea_orm::{ConnectionTrait, DbBackend, Statement, Value};
+    use sha2::{Digest, Sha256};
+    use std::sync::{Arc, RwLock};
+    use uuid::Uuid;
+
+    /// RefreshToken Rotation 服务（hash chain + rotate + reuse detection）。
+    ///
+    /// 完整实现在 T057-T066 逐步构建：
+    /// - T057-T058: `rotate` 基础实现（SHA-256 hash + INSERT new + UPDATE old revoked=1）
+    /// - T059-T060: `detect_reuse` 查表 revoked=1
+    /// - T061-T062: `revoke_chain` 递归 UPDATE parent_token_hash 链
+    /// - T063-T064: `rotate` 追加 reuse detection（重用则 revoke_chain 后返回 InvalidToken）
+    ///
+    /// # 字段
+    ///
+    /// - `pool`: SQLite 连接池（查 `refresh_tokens` 表）
+    /// - `jwt_handler`: JWT 处理器（签发新 access token）
+    /// - `key_version`: 密钥轮换版本号（写入新 record 的 key_version 字段）
+    ///
+    /// # Rule 7 冲突暴露
+    ///
+    /// tasks.md T058 原描述 `pub dao: Arc<dyn BulwarkDao>` 不够——
+    /// `rotate` 需查 SQL（DbPool）+ 签发 access token（JwtHandler）+ 读 key_version。
+    /// 决策：struct 持有 `pool: DbPool` + `jwt_handler: Arc<JwtHandler>` + `key_version: Arc<RwLock<u32>>`，
+    /// 不持有 `dao`（BulwarkDao 是缓存层抽象，不支持 SQL 查询）。
+    pub struct RefreshTokenRotation {
+        /// SQLite 连接池（查 `refresh_tokens` 表）。
+        pub pool: DbPool,
+        /// JWT 处理器（签发新 access token）。
+        pub jwt_handler: Arc<JwtHandler>,
+        /// 密钥轮换版本号（写入新 record 的 key_version 字段）。
+        pub key_version: Arc<RwLock<u32>>,
+    }
+
+    impl RefreshTokenRotation {
+        /// 创建 RefreshTokenRotation 实例。
+        ///
+        /// # 参数
+        /// - `pool`: SQLite 连接池（用于查 `refresh_tokens` 表）
+        /// - `jwt_handler`: JWT 处理器（签发新 access token）
+        /// - `key_version`: 密钥轮换版本号（写入新 record 的 key_version 字段）
+        pub fn new(
+            pool: DbPool,
+            jwt_handler: Arc<JwtHandler>,
+            key_version: Arc<RwLock<u32>>,
+        ) -> Self {
+            Self {
+                pool,
+                jwt_handler,
+                key_version,
+            }
+        }
+
+        /// 计算 SHA-256 并返回 hex 字符串。
+        fn sha256_hex(s: &str) -> String {
+            let mut hasher = Sha256::new();
+            hasher.update(s.as_bytes());
+            let result = hasher.finalize();
+            result.iter().map(|b| format!("{:02x}", b)).collect()
+        }
+
+        /// 获取当前 Unix 时间戳（秒）。
+        fn now_unix() -> i64 {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0)
+        }
+
+        /// T058 Green: rotate 旧 refresh token 为新 access + 新 refresh。
+        ///
+        /// 流程：
+        /// 1. 计算 `old_hash = SHA-256(old_token)`
+        /// 2. 查表验证 `old_hash` 存在且 `revoked=0`，读取 login_id / tenant_id
+        /// 3. 生成新 refresh token（UUID v4）+ 签发新 access token（JwtHandler，1 小时有效期）
+        /// 4. 计算 `new_hash = SHA-256(new_refresh)`
+        /// 5. INSERT new record（`parent_token_hash = old_hash`, `revoked=0`，7 天过期）
+        /// 6. UPDATE old record `revoked=1`
+        /// 7. 返回 `(new_access, new_refresh)`
+        ///
+        /// # 错误
+        /// - `BulwarkError::InvalidToken`: old_token 不存在或已 revoked
+        /// - `BulwarkError::Dao`: SQL 查询/INSERT/UPDATE 失败
+        /// - `BulwarkError::Internal`: JwtHandler 签发失败（由 sign 透传）
+        pub async fn rotate(&self, old_token: &str) -> BulwarkResult<(String, String)> {
+            let old_hash = Self::sha256_hex(old_token);
+
+            // 查表验证 old_hash 存在且 revoked=0
+            let session = self.pool.get_session("admin").await.map_err(|e| {
+                BulwarkError::Dao(format!("refresh_tokens 获取 session 失败: {}", e))
+            })?;
+            let conn = session.connection().map_err(|e| {
+                BulwarkError::Dao(format!("refresh_tokens 获取 connection 失败: {}", e))
+            })?;
+
+            let select_stmt = Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT login_id, tenant_id FROM refresh_tokens WHERE token_hash = ? AND revoked = 0",
+                vec![Value::String(Some(old_hash.clone()))],
+            );
+            let row = conn
+                .query_one_raw(select_stmt)
+                .await
+                .map_err(|e| BulwarkError::Dao(format!("refresh_tokens 查询失败: {}", e)))?
+                .ok_or_else(|| {
+                    BulwarkError::InvalidToken(
+                        "refresh token not found or already consumed".to_string(),
+                    )
+                })?;
+
+            let login_id: i64 = row
+                .try_get("", "login_id")
+                .map_err(|e| BulwarkError::Dao(format!("login_id 读取失败: {}", e)))?;
+            let tenant_id: i64 = row
+                .try_get("", "tenant_id")
+                .map_err(|e| BulwarkError::Dao(format!("tenant_id 读取失败: {}", e)))?;
+
+            // 生成新 refresh token + 签发新 access token
+            let new_refresh = Uuid::new_v4().to_string();
+            let new_access = self.jwt_handler.sign(login_id, 3600)?;
+            let new_hash = Self::sha256_hex(&new_refresh);
+            let now = Self::now_unix();
+            let kv = *self
+                .key_version
+                .read()
+                .expect("key_version RwLock 不应 poisoned");
+
+            // INSERT new record（parent_token_hash = old_hash, revoked=0, 7 天过期）
+            let insert_stmt = Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "INSERT INTO refresh_tokens (token_hash, parent_token_hash, login_id, tenant_id, key_version, expires_at, revoked, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                vec![
+                    Value::String(Some(new_hash.clone())),
+                    Value::String(Some(old_hash.clone())),
+                    Value::BigInt(Some(login_id)),
+                    Value::BigInt(Some(tenant_id)),
+                    Value::BigInt(Some(kv as i64)),
+                    Value::BigInt(Some(now + 86400 * 7)),
+                    Value::BigInt(Some(0)),
+                    Value::BigInt(Some(now)),
+                ],
+            );
+            conn.execute_raw(insert_stmt)
+                .await
+                .map_err(|e| BulwarkError::Dao(format!("refresh_tokens INSERT 失败: {}", e)))?;
+
+            // UPDATE old record revoked=1
+            let update_stmt = Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "UPDATE refresh_tokens SET revoked = 1 WHERE token_hash = ?",
+                vec![Value::String(Some(old_hash))],
+            );
+            conn.execute_raw(update_stmt)
+                .await
+                .map_err(|e| BulwarkError::Dao(format!("refresh_tokens UPDATE 失败: {}", e)))?;
+
+            Ok((new_access, new_refresh))
+        }
+    }
+}
+
+#[cfg(feature = "db-sqlite")]
+pub use service::RefreshTokenRotation;
+
+// ============================================================================
 // 测试模块
 // ============================================================================
 
@@ -110,10 +283,13 @@ mod tests {
 
 #[cfg(all(test, feature = "protocol-jwt", feature = "db-sqlite"))]
 mod db_sqlite_tests {
+    use super::RefreshTokenRotation;
     use crate::dao::{init_dbnexus, BulwarkMigration};
+    use crate::protocol::jwt::JwtHandler;
     use dbnexus::DbPool;
-    use sea_orm::{ConnectionTrait, DbBackend, Statement};
+    use sea_orm::{ConnectionTrait, DbBackend, Statement, Value};
     use std::path::PathBuf;
+    use std::sync::{Arc, RwLock};
 
     /// 定位项目根目录的 migrations/sqlite/ 目录。
     fn project_migrations_dir() -> PathBuf {
@@ -160,5 +336,129 @@ mod db_sqlite_tests {
             1,
             "refresh_tokens 表应存在（迁移后 sqlite_master 应有 1 行记录）"
         );
+    }
+
+    // ========================================================================
+    // 辅助函数（T057+ rotate 测试用）
+    // ========================================================================
+
+    /// 计算 SHA-256 并返回 hex 字符串。
+    fn sha256_hex(s: &str) -> String {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(s.as_bytes());
+        let result = hasher.finalize();
+        result.iter().map(|b| format!("{:02x}", b)).collect()
+    }
+
+    /// 向 refresh_tokens 表插入一条记录。
+    async fn insert_refresh_token(
+        pool: &DbPool,
+        token_hash: &str,
+        parent_token_hash: Option<&str>,
+        login_id: i64,
+        tenant_id: i64,
+        key_version: u32,
+        expires_at: i64,
+        revoked: i64,
+    ) {
+        let session = pool.get_session("admin").await.unwrap();
+        let conn = session.connection().unwrap();
+        let stmt = Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO refresh_tokens (token_hash, parent_token_hash, login_id, tenant_id, key_version, expires_at, revoked, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            vec![
+                Value::String(Some(token_hash.to_string())),
+                Value::String(parent_token_hash.map(|s| s.to_string())),
+                Value::BigInt(Some(login_id)),
+                Value::BigInt(Some(tenant_id)),
+                Value::BigInt(Some(key_version as i64)),
+                Value::BigInt(Some(expires_at)),
+                Value::BigInt(Some(revoked)),
+                Value::BigInt(Some(0)),
+            ],
+        );
+        conn.execute_raw(stmt).await.expect("INSERT 应成功");
+    }
+
+    /// 查询 record 的 revoked 字段。
+    async fn query_revoked(pool: &DbPool, token_hash: &str) -> i64 {
+        let session = pool.get_session("admin").await.unwrap();
+        let conn = session.connection().unwrap();
+        let stmt = Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT revoked FROM refresh_tokens WHERE token_hash = ?",
+            vec![Value::String(Some(token_hash.to_string()))],
+        );
+        let row = conn
+            .query_one_raw(stmt)
+            .await
+            .unwrap()
+            .expect("record 应存在");
+        row.try_get::<i64>("", "revoked").unwrap()
+    }
+
+    /// 查询 record 的 (parent_token_hash, revoked)。
+    async fn query_record(pool: &DbPool, token_hash: &str) -> (Option<String>, i64) {
+        let session = pool.get_session("admin").await.unwrap();
+        let conn = session.connection().unwrap();
+        let stmt = Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT parent_token_hash, revoked FROM refresh_tokens WHERE token_hash = ?",
+            vec![Value::String(Some(token_hash.to_string()))],
+        );
+        let row = conn
+            .query_one_raw(stmt)
+            .await
+            .unwrap()
+            .expect("record 应存在");
+        let parent: Option<String> = row.try_get("", "parent_token_hash").ok();
+        let revoked: i64 = row.try_get("", "revoked").unwrap();
+        (parent, revoked)
+    }
+
+    // ========================================================================
+    // T057-T058: rotate 测试
+    // ========================================================================
+
+    /// T057 Red: `rotate` 插入新 token 并标记旧 token 已消费。
+    ///
+    /// 流程：
+    /// 1. 预先 INSERT old_token record（模拟已签发的 refresh token）
+    /// 2. 调用 `rotate(old_token)` 返回 (new_access, new_refresh)
+    /// 3. 断言 old_token 的 record revoked=1
+    /// 4. 断言 new_refresh 的 record 已插入，parent_token_hash == SHA-256(old_token)
+    #[tokio::test(flavor = "multi_thread")]
+    async fn rotate_inserts_new_token_and_marks_old_consumed() {
+        let pool = setup_db().await;
+
+        // 预先 INSERT old_token record
+        let old_token = "old_token_value";
+        let old_hash = sha256_hex(old_token);
+        insert_refresh_token(&pool, &old_hash, None, 1, 0, 1, 9999, 0).await;
+
+        // 构造 RefreshTokenRotation（Rule 7：持有 pool + jwt_handler + key_version）
+        let jwt_handler = Arc::new(JwtHandler::new("test_secret"));
+        let rotation =
+            RefreshTokenRotation::new(pool.clone(), jwt_handler, Arc::new(RwLock::new(1)));
+
+        // rotate
+        let (new_access, new_refresh) = rotation.rotate(old_token).await.expect("rotate 应成功");
+        assert!(!new_access.is_empty(), "new_access 应非空");
+        assert!(!new_refresh.is_empty(), "new_refresh 应非空");
+
+        // 断言 old_token revoked=1
+        let old_revoked = query_revoked(&pool, &old_hash).await;
+        assert_eq!(old_revoked, 1, "old_token 应标记为 revoked");
+
+        // 断言 new_refresh 的 record 已插入，parent_token_hash == old_hash
+        let new_hash = sha256_hex(&new_refresh);
+        let (parent, revoked) = query_record(&pool, &new_hash).await;
+        assert_eq!(
+            parent,
+            Some(old_hash),
+            "new record 的 parent_token_hash 应等于 old_hash"
+        );
+        assert_eq!(revoked, 0, "new record 应未 revoked");
     }
 }

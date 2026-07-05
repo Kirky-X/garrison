@@ -146,7 +146,7 @@ db-sqlite = ["dbnexus", "dbnexus/auto-migrate", "sea-orm"]
 # 0.4.2 新增：PKCE (RFC 7636) 需要 sha2 (S256) + base64 (URL_SAFE_NO_PAD)
 protocol-oauth2 = ["reqwest", "sha2", "base64"]
 protocol-sso = ["reqwest"]
-protocol-jwt = ["jsonwebtoken"]
+protocol-jwt = ["jsonwebtoken", "sha2"]
 protocol-sign = ["sha2", "hmac", "base64"]
 protocol-apikey = []
 protocol-temp = []
