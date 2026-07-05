@@ -604,6 +604,12 @@ pub trait UserExtRepository: Send + Sync {
 #[cfg(feature = "db-sqlite")]
 pub mod sqlite;
 
+/// 角色层级子模块（v0.5.0 新增，依据 proposal H6）。
+///
+/// always compiled（`RoleHierarchyRecord` 不依赖 db-sqlite）。
+/// `RoleHierarchyService` 在 T045-T050 扩展时依赖 `BulwarkDao` trait（always compiled）。
+pub mod role_hierarchy;
+
 #[cfg(test)]
 mod tests {
     use super::*;
