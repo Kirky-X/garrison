@@ -300,6 +300,33 @@ pub use protocol::jwt::refresh::RefreshTokenRecord;
 pub use protocol::jwt::refresh::RefreshTokenRotation;
 
 // ============================================================================
+// 审计日志（v0.5.0 新增，依据 proposal H3）
+// ============================================================================
+//
+// 业务方可通过 `use bulwark::{AuditLogListener, AuditConfig, AuditEntry, AuditQuery}` 直接使用，
+// 无需写完整路径 `bulwark::listener::audit::AuditLogListener`。
+//
+// `AuditConfig` 需 `audit-log` feature（纯配置结构，无 SQL 依赖）。
+// `AuditEntry` / `AuditQuery` / `AuditLogListener` 需 `audit-log` + `db-sqlite` feature
+// （映射 SQL 表行 / 查询条件 / 持久化监听器）。
+
+/// 审计日志配置（掩码字段 + 保留天数 + 异步写入开关）。
+#[cfg(feature = "audit-log")]
+pub use listener::audit::AuditConfig;
+
+/// `audit_logs` 表行结构（tenant_id / event_type / login_id / metadata / success / created_at）。
+#[cfg(all(feature = "audit-log", feature = "db-sqlite"))]
+pub use listener::audit::AuditEntry;
+
+/// 审计日志查询条件（tenant_id / event_type / from / to，全 Option 复合过滤）。
+#[cfg(all(feature = "audit-log", feature = "db-sqlite"))]
+pub use listener::audit::AuditQuery;
+
+/// 审计日志监听器（实现 `BulwarkListener`，持久化 `BulwarkEvent` 到 `audit_logs` 表）。
+#[cfg(all(feature = "audit-log", feature = "db-sqlite"))]
+pub use listener::audit::AuditLogListener;
+
+// ============================================================================
 // 过程宏注解（0.4.2 新增，依据 spec annotation-macros）
 // ============================================================================
 

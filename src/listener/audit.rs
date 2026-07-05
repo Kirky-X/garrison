@@ -131,6 +131,38 @@ pub struct AuditEntry {
     pub created_at: i64,
 }
 
+/// 审计日志查询条件（T079-T080 Green，依据 spec R-audit-log-007）。
+///
+/// 用于 `AuditLogListener::query_audit_logs` 构造复合查询条件，
+/// 所有字段为 `Option`，`None` 表示不过滤该维度。
+///
+/// # 字段
+///
+/// - `tenant_id`: 按租户 ID 过滤（`Some(0)` 查默认租户）
+/// - `event_type`: 按事件类型过滤（如 `Some("login")`）
+/// - `from`: `created_at >= from`（Unix 秒）
+/// - `to`: `created_at <= to`（Unix 秒）
+///
+/// # 设计（Rule 7 override，依据 T072 先例）
+///
+/// spec R-audit-log-007 原文说 `BulwarkDao::query_audit_logs`，
+/// 但 BulwarkDao 是 cache 抽象（get/set/delete），不支持 SQL SELECT；
+/// 强行加 `query_audit_logs` 会破坏单一职责（与 T072 insert 同冲突）。
+/// Rule 11（惯例优先）：遵循 T072 先例，`query_audit_logs` 作为
+/// `AuditLogListener` 的方法，持 `pool: DbPool` 直连 SQL。
+#[cfg(feature = "db-sqlite")]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AuditQuery {
+    /// 按租户 ID 过滤（`Some(0)` 查默认租户）。
+    pub tenant_id: Option<i64>,
+    /// 按事件类型过滤（如 `Some("login")`）。
+    pub event_type: Option<String>,
+    /// `created_at >= from`（Unix 秒）。
+    pub from: Option<i64>,
+    /// `created_at <= to`（Unix 秒）。
+    pub to: Option<i64>,
+}
+
 /// 审计日志监听器（T072 Green）。
 ///
 /// 实现 `BulwarkListener`，将 `BulwarkEvent` 转换为 `AuditEntry` 并 INSERT 到 `audit_logs` 表。
@@ -481,6 +513,101 @@ impl AuditLogListener {
             .map_err(|e| BulwarkError::Dao(format!("INSERT audit_logs 失败: {}", e)))?;
         Ok(())
     }
+
+    /// 按复合条件查询审计日志（T080 Green，依据 spec R-audit-log-007）。
+    ///
+    /// 动态拼 SQL `WHERE` 子句，所有参数使用占位符 `?` 防止 SQL 注入。
+    /// `AuditQuery` 字段为 `None` 时跳过该过滤维度。
+    /// 结果按 `created_at` 升序排列。
+    ///
+    /// # 设计（Rule 7 override，依据 T072 先例）
+    ///
+    /// spec R-audit-log-007 原文说 `BulwarkDao::query_audit_logs`，
+    /// 但 BulwarkDao 是 cache 抽象，不支持 SQL SELECT。
+    /// 遵循 T072 insert 先例，此方法作为 `AuditLogListener` 的方法，持 `pool: DbPool` 直连 SQL。
+    pub async fn query_audit_logs(&self, query: AuditQuery) -> BulwarkResult<Vec<AuditEntry>> {
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
+            .map_err(|e| BulwarkError::Dao(format!("get_session 失败: {}", e)))?;
+        let conn = session
+            .connection()
+            .map_err(|e| BulwarkError::Dao(format!("connection 失败: {}", e)))?;
+
+        // 动态拼 SQL WHERE 子句（参数化防注入）
+        let mut sql = String::from(
+            "SELECT tenant_id, event_type, login_id, token, ip, user_agent, metadata, success, created_at FROM audit_logs WHERE 1=1",
+        );
+        let mut params: Vec<Value> = Vec::new();
+        if let Some(tenant_id) = query.tenant_id {
+            sql.push_str(" AND tenant_id = ?");
+            params.push(Value::BigInt(Some(tenant_id)));
+        }
+        if let Some(event_type) = &query.event_type {
+            sql.push_str(" AND event_type = ?");
+            params.push(Value::String(Some(event_type.clone())));
+        }
+        if let Some(from) = query.from {
+            sql.push_str(" AND created_at >= ?");
+            params.push(Value::BigInt(Some(from)));
+        }
+        if let Some(to) = query.to {
+            sql.push_str(" AND created_at <= ?");
+            params.push(Value::BigInt(Some(to)));
+        }
+        sql.push_str(" ORDER BY created_at ASC");
+
+        let stmt = Statement::from_sql_and_values(DbBackend::Sqlite, sql, params);
+        let rows = conn
+            .query_all_raw(stmt)
+            .await
+            .map_err(|e| BulwarkError::Dao(format!("SELECT audit_logs 失败: {}", e)))?;
+
+        rows.iter()
+            .map(|row| {
+                let tenant_id: i64 = row.try_get("", "tenant_id").map_err(|e| {
+                    BulwarkError::Dao(format!("audit_logs 行解析失败 (tenant_id): {}", e))
+                })?;
+                let event_type: String = row.try_get("", "event_type").map_err(|e| {
+                    BulwarkError::Dao(format!("audit_logs 行解析失败 (event_type): {}", e))
+                })?;
+                let login_id: Option<i64> = row.try_get("", "login_id").map_err(|e| {
+                    BulwarkError::Dao(format!("audit_logs 行解析失败 (login_id): {}", e))
+                })?;
+                let token: Option<String> = row.try_get("", "token").map_err(|e| {
+                    BulwarkError::Dao(format!("audit_logs 行解析失败 (token): {}", e))
+                })?;
+                let ip: Option<String> = row
+                    .try_get("", "ip")
+                    .map_err(|e| BulwarkError::Dao(format!("audit_logs 行解析失败 (ip): {}", e)))?;
+                let user_agent: Option<String> = row.try_get("", "user_agent").map_err(|e| {
+                    BulwarkError::Dao(format!("audit_logs 行解析失败 (user_agent): {}", e))
+                })?;
+                let metadata: Option<String> = row.try_get("", "metadata").map_err(|e| {
+                    BulwarkError::Dao(format!("audit_logs 行解析失败 (metadata): {}", e))
+                })?;
+                // success 存储为 INTEGER（0/1），读为 i64 后转 bool
+                let success_int: i64 = row.try_get("", "success").map_err(|e| {
+                    BulwarkError::Dao(format!("audit_logs 行解析失败 (success): {}", e))
+                })?;
+                let created_at: i64 = row.try_get("", "created_at").map_err(|e| {
+                    BulwarkError::Dao(format!("audit_logs 行解析失败 (created_at): {}", e))
+                })?;
+                Ok(AuditEntry {
+                    tenant_id,
+                    event_type,
+                    login_id,
+                    token,
+                    ip,
+                    user_agent,
+                    metadata,
+                    success: success_int != 0,
+                    created_at,
+                })
+            })
+            .collect()
+    }
 }
 
 #[cfg(feature = "db-sqlite")]
@@ -538,7 +665,7 @@ mod tests {
 
 #[cfg(all(test, feature = "audit-log", feature = "db-sqlite"))]
 mod db_sqlite_tests {
-    use super::{AuditConfig, AuditLogListener};
+    use super::{AuditConfig, AuditEntry, AuditLogListener, AuditQuery};
     use crate::dao::{init_dbnexus, BulwarkMigration};
     use crate::listener::{BulwarkEvent, BulwarkListener};
     use dbnexus::DbPool;
@@ -848,5 +975,166 @@ mod db_sqlite_tests {
                 expected_type, cnt
             );
         }
+    }
+
+    // ========================================================================
+    // T079-T080: query_audit_logs 复合条件查询（spec R-audit-log-007）
+    // ========================================================================
+
+    /// T079 Red: `AuditLogListener::query_audit_logs` 应按 `AuditQuery` 的
+    /// `tenant_id` / `event_type` / `from` / `to` 四个维度复合过滤。
+    ///
+    /// 插入 4 行不同 tenant/event_type/created_at 的日志：
+    /// - Row A: tenant=0, event_type="login",  created_at=1000
+    /// - Row B: tenant=1, event_type="login",  created_at=2000
+    /// - Row C: tenant=0, event_type="logout", created_at=3000
+    /// - Row D: tenant=0, event_type="login",  created_at=5000
+    ///
+    /// 验证 4 种过滤组合：
+    /// 1. `tenant_id=Some(0), event_type=Some("login")` → A + D（2 行）
+    /// 2. 上述 + `to=Some(4000)` → 仅 A（1 行，D 被 created_at > 4000 过滤）
+    /// 3. 上述 + `from=Some(3000)` → 仅 D（1 行，A 被 created_at < 3000 过滤）
+    /// 4. 全 `None` → 全部 4 行
+    ///
+    /// 注意：INSERT 通过 `listener.insert(&entry)` 而非原生 SQL，确保与
+    /// `query_audit_logs` 走同一 pool 路径（避免 SQLite in-memory 跨连接隔离）。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn query_audit_logs_filters_by_tenant_event_type_time_range() {
+        let pool = setup_db().await;
+        let config = AuditConfig {
+            mask_fields: vec![],
+            retain_days: 0,
+            async_write: false,
+        };
+        let listener = AuditLogListener::new(pool.clone(), config);
+
+        // 构造并插入 4 行测试数据（通过 listener.insert 走同一 pool）
+        let entries = vec![
+            AuditEntry {
+                tenant_id: 0,
+                event_type: "login".to_string(),
+                login_id: None,
+                token: None,
+                ip: None,
+                user_agent: None,
+                metadata: None,
+                success: true,
+                created_at: 1000,
+            }, // Row A
+            AuditEntry {
+                tenant_id: 1,
+                event_type: "login".to_string(),
+                login_id: None,
+                token: None,
+                ip: None,
+                user_agent: None,
+                metadata: None,
+                success: true,
+                created_at: 2000,
+            }, // Row B
+            AuditEntry {
+                tenant_id: 0,
+                event_type: "logout".to_string(),
+                login_id: None,
+                token: None,
+                ip: None,
+                user_agent: None,
+                metadata: None,
+                success: true,
+                created_at: 3000,
+            }, // Row C
+            AuditEntry {
+                tenant_id: 0,
+                event_type: "login".to_string(),
+                login_id: None,
+                token: None,
+                ip: None,
+                user_agent: None,
+                metadata: None,
+                success: true,
+                created_at: 5000,
+            }, // Row D
+        ];
+        for entry in &entries {
+            listener
+                .insert(entry)
+                .await
+                .expect("listener.insert 应成功");
+        }
+
+        // 查询 1: tenant_id=Some(0), event_type=Some("login"), from=None, to=None
+        // 期望返回 A + D（2 行）
+        let q1 = AuditQuery {
+            tenant_id: Some(0),
+            event_type: Some("login".to_string()),
+            from: None,
+            to: None,
+        };
+        let rows1 = listener
+            .query_audit_logs(q1)
+            .await
+            .expect("query_audit_logs 应成功");
+        assert_eq!(
+            rows1.len(),
+            2,
+            "查询1 应返回 2 行（tenant=0 + event_type=login），实际: {}",
+            rows1.len()
+        );
+        let mut ts1: Vec<i64> = rows1.iter().map(|r| r.created_at).collect();
+        ts1.sort();
+        assert_eq!(ts1, vec![1000, 5000], "查询1 应含 A(1000) + D(5000)");
+
+        // 查询 2: tenant_id=Some(0), event_type=Some("login"), to=Some(4000)
+        // 期望仅 A（1 行，D 的 created_at=5000 > 4000 被过滤）
+        let q2 = AuditQuery {
+            tenant_id: Some(0),
+            event_type: Some("login".to_string()),
+            from: None,
+            to: Some(4000),
+        };
+        let rows2 = listener
+            .query_audit_logs(q2)
+            .await
+            .expect("query_audit_logs 应成功");
+        assert_eq!(
+            rows2.len(),
+            1,
+            "查询2 应返回 1 行（to=4000 过滤掉 D），实际: {}",
+            rows2.len()
+        );
+        assert_eq!(rows2[0].created_at, 1000, "查询2 应仅含 A(1000)");
+
+        // 查询 3: tenant_id=Some(0), event_type=Some("login"), from=Some(3000)
+        // 期望仅 D（1 行，A 的 created_at=1000 < 3000 被过滤）
+        let q3 = AuditQuery {
+            tenant_id: Some(0),
+            event_type: Some("login".to_string()),
+            from: Some(3000),
+            to: None,
+        };
+        let rows3 = listener
+            .query_audit_logs(q3)
+            .await
+            .expect("query_audit_logs 应成功");
+        assert_eq!(
+            rows3.len(),
+            1,
+            "查询3 应返回 1 行（from=3000 过滤掉 A），实际: {}",
+            rows3.len()
+        );
+        assert_eq!(rows3[0].created_at, 5000, "查询3 应仅含 D(5000)");
+
+        // 查询 4: 全 None（返回全部 4 行）
+        let q4 = AuditQuery::default();
+        let rows4 = listener
+            .query_audit_logs(q4)
+            .await
+            .expect("query_audit_logs 应成功");
+        assert_eq!(
+            rows4.len(),
+            4,
+            "查询4（全 None）应返回全部 4 行，实际: {}",
+            rows4.len()
+        );
     }
 }
