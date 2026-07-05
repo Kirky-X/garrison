@@ -231,6 +231,47 @@ mod service {
 
             Ok((new_access, new_refresh))
         }
+
+        /// T060 Green: 检测 token 是否已被消费（revoked=1 即 reuse）。
+        ///
+        /// # 参数
+        /// - `token_hash`: 已 SHA-256 哈希的 token hash（非原始 token）
+        ///
+        /// # 返回
+        /// - `Ok(true)`: token 已 revoked（reuse 检测命中）
+        /// - `Ok(false)`: token 未 revoked 或不存在
+        /// - `Err(BulwarkError::Dao)`: SQL 查询失败
+        ///
+        /// # 语义
+        /// 不存在与 revoked=0 同等对待（均返回 false）——
+        /// 只有已 revoked 才视为 reuse。不存在视为"未签发"，由调用方决定如何处理。
+        pub async fn detect_reuse(&self, token_hash: &str) -> BulwarkResult<bool> {
+            let session = self.pool.get_session("admin").await.map_err(|e| {
+                BulwarkError::Dao(format!("refresh_tokens 获取 session 失败: {}", e))
+            })?;
+            let conn = session.connection().map_err(|e| {
+                BulwarkError::Dao(format!("refresh_tokens 获取 connection 失败: {}", e))
+            })?;
+
+            let stmt = Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT revoked FROM refresh_tokens WHERE token_hash = ?",
+                vec![Value::String(Some(token_hash.to_string()))],
+            );
+            let row = conn
+                .query_one_raw(stmt)
+                .await
+                .map_err(|e| BulwarkError::Dao(format!("refresh_tokens 查询失败: {}", e)))?;
+
+            // 不存在 → false（未签发，不算 reuse）；存在且 revoked=1 → true
+            let revoked = match row {
+                Some(row) => row
+                    .try_get::<i64>("", "revoked")
+                    .map_err(|e| BulwarkError::Dao(format!("revoked 读取失败: {}", e)))?,
+                None => return Ok(false),
+            };
+            Ok(revoked == 1)
+        }
     }
 }
 
@@ -460,5 +501,47 @@ mod db_sqlite_tests {
             "new record 的 parent_token_hash 应等于 old_hash"
         );
         assert_eq!(revoked, 0, "new record 应未 revoked");
+    }
+
+    // ========================================================================
+    // T059-T060: detect_reuse 测试
+    // ========================================================================
+
+    /// T059 Red: `detect_reuse` 在 token 已被消费（revoked=1）时返回 true。
+    ///
+    /// 流程：
+    /// 1. 预先 INSERT old_token record（revoked=0）
+    /// 2. 调用 `rotate(old_token)` → old_token 标记为 revoked=1
+    /// 3. 调用 `detect_reuse(SHA-256(old_token))` → 断言返回 `true`（已消费）
+    /// 4. 用 new_refresh 的 hash 调用 `detect_reuse` → 断言返回 `false`（未消费）
+    #[tokio::test(flavor = "multi_thread")]
+    async fn detect_reuse_returns_true_when_token_already_consumed() {
+        let pool = setup_db().await;
+
+        let old_token = "old_token_value";
+        let old_hash = sha256_hex(old_token);
+        insert_refresh_token(&pool, &old_hash, None, 1, 0, 1, 9999, 0).await;
+
+        let jwt_handler = Arc::new(JwtHandler::new("test_secret"));
+        let rotation =
+            RefreshTokenRotation::new(pool.clone(), jwt_handler, Arc::new(RwLock::new(1)));
+
+        // rotate 后 old_token 应 revoked=1
+        let (_, new_refresh) = rotation.rotate(old_token).await.expect("rotate 应成功");
+
+        // detect_reuse(old_hash) → true（已被消费）
+        let reused = rotation
+            .detect_reuse(&old_hash)
+            .await
+            .expect("detect_reuse 应成功");
+        assert!(reused, "已 revoked 的 token 应检测为 reuse");
+
+        // detect_reuse(new_hash) → false（未消费）
+        let new_hash = sha256_hex(&new_refresh);
+        let new_reused = rotation
+            .detect_reuse(&new_hash)
+            .await
+            .expect("detect_reuse 应成功");
+        assert!(!new_reused, "未 revoked 的 token 不应检测为 reuse");
     }
 }
