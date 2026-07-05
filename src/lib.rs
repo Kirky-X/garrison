@@ -265,6 +265,23 @@ pub use context::tenant::{
 pub use context::tenant::ClaimTenantResolver;
 
 // ============================================================================
+// 角色层级（v0.5.0 新增，依据 proposal H6）
+// ============================================================================
+//
+// `RoleHierarchyRecord` 为 always compiled（无 feature gate）。
+// `RoleHierarchyService` 需 `db-sqlite` feature（依赖 DbPool 查 SQL）。
+//
+// 业务方可通过 `use bulwark::{RoleHierarchyRecord, RoleHierarchyService}` 直接使用，
+// 无需写完整路径 `bulwark::dao::repository::role_hierarchy::RoleHierarchyService`。
+
+/// 角色层级表行结构（child_role → parent_role + tenant_id）。
+pub use dao::repository::role_hierarchy::RoleHierarchyRecord;
+
+/// 角色层级服务（TC 预计算 + 缓存 + 增量失效，需 `db-sqlite` feature）。
+#[cfg(feature = "db-sqlite")]
+pub use dao::repository::role_hierarchy::RoleHierarchyService;
+
+// ============================================================================
 // 过程宏注解（0.4.2 新增，依据 spec annotation-macros）
 // ============================================================================
 
