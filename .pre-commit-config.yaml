@@ -32,9 +32,22 @@ repos:
       - id: fmt
         args: [--, --check]
         pass_filenames: false
-      - id: clippy
-        args: [--all-features, --, -D, warnings]
+
+  # === Rust clippy（db-sqlite 与 db-postgres 互斥，分两次检查） ===
+  - repo: local
+    hooks:
+      - id: clippy-db-sqlite
+        name: clippy (db-sqlite + full features)
+        entry: cargo clippy --features full -- -D warnings
+        language: system
         pass_filenames: false
+        files: '^src/|^bulwark-macros/src/|^Cargo.toml$'
+      - id: clippy-db-postgres
+        name: clippy (db-postgres + production features)
+        entry: cargo clippy --features production -- -D warnings
+        language: system
+        pass_filenames: false
+        files: '^src/|^bulwark-macros/src/|^Cargo.toml$'
 
   # === cargo-deny（许可证 / 漏洞 / 禁用源 / 重复依赖） ===
   - repo: local

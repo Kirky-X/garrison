@@ -60,15 +60,13 @@ argon2 = { version = "0.5", optional = true }
 bcrypt = { version = "0.15", optional = true }
 rand = { version = "0.8", optional = true }
 # oxcache 0.3: L1 (moka) + L2 (redis) 两级缓存，默认 full features，0.3 支持 per-entry TTL + ttl() 查询
-# 使用本地 path 依赖（crates.io 0.3.0 未暴露 Cache<K,V>::ttl()，本地仓库已暴露）
-oxcache = { path = "/home/kirky/projects/oxcache", optional = true }
+oxcache = { version = "0.3", optional = true }
 # dbnexus 0.3: 默认 sqlite + permission + sql-parser + macros + config-env + with-time
 # auto-migrate feature 由 db-sqlite feature 显式启用（提供 MigrationExecutor::run_migrations）
 # postgres / mysql features 由 db-postgres / db-mysql feature 启用（sea-orm/sqlx-* 驱动）
-# 使用本地 path 依赖（crates.io 0.2.0 已支持 postgres/mysql features，本地 0.3.1 用于对齐 sea-orm 2.0.0-rc.42）
 # default-features = false：dbnexus 0.3+ 禁止 embedded(sqlite) 与 server-side(postgres) 混用，
 # 由 db-base feature 显式启用基础 features，db-sqlite / db-postgres 分别启用 sqlite / postgres。
-dbnexus = { path = "/home/kirky/projects/dbnexus", version = "0.3", optional = true, default-features = false }
+dbnexus = { version = "0.3", optional = true, default-features = false }
 # sea-orm: Repository 层参数化查询依赖（Statement/Value/ConnectionTrait）。
 # 版本与 dbnexus 0.3 一致（2.0.0-rc.37 ⊂ 2.0.0-rc.42，cargo 统一到 rc.42），由 db-sqlite / db-postgres feature 启用。
 # dbnexus 未 re-export Statement/Value/ConnectionTrait，需显式声明为直接依赖。

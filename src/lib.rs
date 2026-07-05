@@ -361,8 +361,11 @@ pub use protocol::social::wechat::WechatProvider;
 #[cfg(feature = "social-alipay")]
 pub use protocol::social::alipay::AlipayProvider;
 
-/// 社交账号绑定服务（find_or_create，需 `db-sqlite` feature）。
-#[cfg(feature = "db-sqlite")]
+/// 社交账号绑定服务（find_or_create，需 `db-sqlite` + `social-wechat`/`social-alipay` feature）。
+#[cfg(all(
+    feature = "db-sqlite",
+    any(feature = "social-wechat", feature = "social-alipay")
+))]
 pub use protocol::social::SocialBindingService;
 
 // ============================================================================
