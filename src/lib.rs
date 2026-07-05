@@ -246,6 +246,25 @@ pub mod error;
 pub use prelude::*;
 
 // ============================================================================
+// 多租户隔离类型 re-export（v0.5.0 新增，依据 spec tenant-isolation R-001）
+// ============================================================================
+//
+// 业务方可通过 `use bulwark::{TenantContext, TenantResolver, ...}` 直接使用，
+// 无需写完整路径 `bulwark::context::tenant::TenantContext`。
+//
+// `ClaimTenantResolver` 需 `protocol-jwt` feature（依赖 jsonwebtoken 解码 JWT claim）。
+
+/// 多租户上下文类型与解析器（依据 spec tenant-isolation）。
+pub use context::tenant::{
+    HeaderTenantResolver, SubdomainTenantResolver, TenantContext, TenantResolver, TenantSource,
+    TENANT,
+};
+
+/// JWT claim 租户解析器（需 `protocol-jwt` feature）。
+#[cfg(feature = "protocol-jwt")]
+pub use context::tenant::ClaimTenantResolver;
+
+// ============================================================================
 // 过程宏注解（0.4.2 新增，依据 spec annotation-macros）
 // ============================================================================
 
