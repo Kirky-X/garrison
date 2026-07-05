@@ -7,7 +7,7 @@
 //! ## 核心抽象
 //!
 //! - [`RoleHierarchyRecord`]：`role_hierarchy` 表行结构（child_role → parent_role + tenant_id）
-//! - [`RoleHierarchyService`]：TC 预计算 + 缓存 + 增量失效（T045-T050 实现）
+//! - [`RoleHierarchyService`]：TC 预计算 + 缓存 + 增量失效（T045-T050 实现，db-sqlite gated）
 //!
 //! ## 表结构
 //!
@@ -43,21 +43,173 @@ pub struct RoleHierarchyRecord {
 }
 
 // ============================================================================
-// RoleHierarchyService（T045-T050 将实现完整能力）
+// RoleHierarchyService（T045-T050：db-sqlite gated，需 DbPool 查 SQL）
 // ============================================================================
 
-/// 角色层级服务（TC 预计算 + 缓存 + 增量失效）。
-///
-/// 完整实现在 T045-T050 逐步构建：
-/// - T045-T046: `compute_closure` DFS 遍历计算传递闭包（届时改为 `pub struct RoleHierarchyService { dao: Arc<dyn BulwarkDao> }`）
-/// - T047-T048: `get_ancestors` 先查 oxcache 未命中则 `compute_closure` 并缓存
-/// - T049-T050: `add_edge` + `invalidate_cache` 增量失效
-///
-/// 当前为占位 unit struct，T045 重构为带字段 struct 后再加 `new(dao)` 构造器。
-pub struct RoleHierarchyService;
+#[cfg(feature = "db-sqlite")]
+mod service {
+    use super::RoleHierarchyRecord;
+    use crate::dao::BulwarkDao;
+    use crate::error::{BulwarkError, BulwarkResult};
+    use dbnexus::DbPool;
+    use sea_orm::{ConnectionTrait, DbBackend, Statement, Value};
+    use std::collections::{HashMap, HashSet};
+    use std::sync::Arc;
+
+    /// 角色层级服务（TC 预计算 + 缓存 + 增量失效）。
+    ///
+    /// 完整实现在 T045-T050 逐步构建：
+    /// - T045-T046: `compute_closure` DFS 遍历计算传递闭包（当前已实现）
+    /// - T047-T048: `get_ancestors` 先查 oxcache 未命中则 `compute_closure` 并缓存
+    /// - T049-T050: `add_edge` + `invalidate_cache` 增量失效
+    ///
+    /// # 字段
+    ///
+    /// - `pool`: SQLite 连接池（查 `role_hierarchy` 表）
+    /// - `dao`: 缓存层抽象（T047+ 用于 oxcache 缓存闭包结果）
+    ///
+    /// # Rule 7 冲突暴露
+    ///
+    /// tasks.md T046 原描述 `pub dao: Arc<dyn BulwarkDao>` 不够——
+    /// `compute_closure` 需查 SQL，BulwarkDao trait 是缓存层抽象不支持 SQL 查询。
+    /// 决策：struct 同时持有 `pool: DbPool`（查 SQL）+ `dao: Arc<dyn BulwarkDao>`（查缓存）。
+    pub struct RoleHierarchyService {
+        /// SQLite 连接池（查 `role_hierarchy` 表）。
+        pub pool: DbPool,
+        /// 缓存层抽象（T047+ 用于 oxcache 缓存闭包结果）。
+        pub dao: Arc<dyn BulwarkDao>,
+    }
+
+    impl RoleHierarchyService {
+        /// 创建 RoleHierarchyService 实例。
+        ///
+        /// # 参数
+        /// - `pool`: SQLite 连接池（用于查 `role_hierarchy` 表）
+        /// - `dao`: 缓存层抽象（T047+ 用于 oxcache 缓存闭包结果）
+        pub fn new(pool: DbPool, dao: Arc<dyn BulwarkDao>) -> Self {
+            Self { pool, dao }
+        }
+
+        /// 查询指定租户的所有 role_hierarchy 记录。
+        ///
+        /// 返回 `Vec<RoleHierarchyRecord>`（child_role → parent_role 边集合）。
+        async fn query_all_edges(&self, tenant_id: i64) -> BulwarkResult<Vec<RoleHierarchyRecord>> {
+            let session = self.pool.get_session("admin").await.map_err(|e| {
+                BulwarkError::Dao(format!("role_hierarchy 获取 session 失败: {}", e))
+            })?;
+            let conn = session.connection().map_err(|e| {
+                BulwarkError::Dao(format!("role_hierarchy 获取 connection 失败: {}", e))
+            })?;
+            let stmt = Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT child_role, parent_role FROM role_hierarchy WHERE tenant_id = ?",
+                vec![Value::BigInt(Some(tenant_id))],
+            );
+            let rows = conn
+                .query_all_raw(stmt)
+                .await
+                .map_err(|e| BulwarkError::Dao(format!("role_hierarchy 查询失败: {}", e)))?;
+            let records = rows
+                .into_iter()
+                .map(|row| {
+                    let child_role = row
+                        .try_get::<String>("", "child_role")
+                        .map_err(|e| BulwarkError::Dao(format!("child_role 读取失败: {}", e)))?;
+                    let parent_role = row
+                        .try_get::<String>("", "parent_role")
+                        .map_err(|e| BulwarkError::Dao(format!("parent_role 读取失败: {}", e)))?;
+                    Ok::<_, BulwarkError>(RoleHierarchyRecord {
+                        child_role,
+                        parent_role,
+                        tenant_id,
+                    })
+                })
+                .collect::<Result<_, _>>()?;
+            Ok(records)
+        }
+
+        /// 计算指定租户的角色层级传递闭包（T045-T046）。
+        ///
+        /// DFS 遍历 `role_hierarchy` 表，对每个 `child_role` 收集所有祖先
+        ///（含直接父角色与间接祖先）。
+        ///
+        /// # 参数
+        /// - `tenant_id`: 租户 ID（0=默认租户）。
+        ///
+        /// # 返回
+        /// `HashMap<String, HashSet<String>>`：key=child_role，value=所有祖先集合。
+        ///
+        /// # 算法
+        /// 1. 查询所有 `role_hierarchy` 记录，构建 `child → parents` 邻接表
+        /// 2. 对每个 child，DFS 遍历收集所有祖先（避免环：用 visited 集合）
+        /// 3. 返回闭包表
+        ///
+        /// # 错误
+        /// - `BulwarkError::Dao`：SQL 查询失败。
+        pub async fn compute_closure(
+            &self,
+            tenant_id: i64,
+        ) -> BulwarkResult<HashMap<String, HashSet<String>>> {
+            let edges = self.query_all_edges(tenant_id).await?;
+
+            // 构建 child → parents 邻接表
+            let mut adj: HashMap<String, Vec<String>> = HashMap::new();
+            for edge in &edges {
+                adj.entry(edge.child_role.clone())
+                    .or_default()
+                    .push(edge.parent_role.clone());
+            }
+
+            // 对每个 child DFS 收集所有祖先
+            let mut closure: HashMap<String, HashSet<String>> = HashMap::new();
+            for child in adj.keys() {
+                let ancestors = Self::dfs_ancestors(child, &adj, &mut HashSet::new());
+                closure.insert(child.clone(), ancestors);
+            }
+
+            Ok(closure)
+        }
+
+        /// DFS 递归收集 `role` 的所有祖先（含间接祖先）。
+        ///
+        /// # 参数
+        /// - `role`: 起始角色
+        /// - `adj`: child → parents 邻接表
+        /// - `visited`: 已访问角色集合（防止环）
+        ///
+        /// # 返回
+        /// `role` 的所有祖先集合（不含 `role` 自身）。
+        fn dfs_ancestors(
+            role: &str,
+            adj: &HashMap<String, Vec<String>>,
+            visited: &mut HashSet<String>,
+        ) -> HashSet<String> {
+            let mut ancestors = HashSet::new();
+            if visited.contains(role) {
+                return ancestors; // 防止环
+            }
+            visited.insert(role.to_string());
+
+            if let Some(parents) = adj.get(role) {
+                for parent in parents {
+                    ancestors.insert(parent.clone());
+                    // 递归收集 parent 的祖先
+                    let indirect = Self::dfs_ancestors(parent, adj, visited);
+                    ancestors.extend(indirect);
+                }
+            }
+
+            visited.remove(role); // 回溯（允许不同路径访问同一节点）
+            ancestors
+        }
+    }
+}
+
+#[cfg(feature = "db-sqlite")]
+pub use service::RoleHierarchyService;
 
 // ============================================================================
-// 测试模块
+// 测试模块（always compiled：RoleHierarchyRecord 构造测试）
 // ============================================================================
 
 #[cfg(test)]
@@ -106,24 +258,20 @@ mod tests {
         // Debug 可格式化
         let _debug = format!("{:?}", r1);
     }
-
-    /// RoleHierarchyService 可构造（占位 unit struct，T045+ 重构为带字段 struct）。
-    #[test]
-    fn role_hierarchy_service_constructs() {
-        let _svc = RoleHierarchyService;
-    }
 }
 
 // ============================================================================
-// db-sqlite 集成测试（T043-T044: role_hierarchy 表迁移验证）
+// db-sqlite 集成测试（T043-T050: role_hierarchy 表迁移 + compute_closure）
 // ============================================================================
 
 #[cfg(all(test, feature = "db-sqlite"))]
 mod db_sqlite_tests {
-    use crate::dao::{init_dbnexus, BulwarkMigration};
+    use super::*;
+    use crate::dao::{init_dbnexus, BulwarkDao, BulwarkMigration};
     use dbnexus::DbPool;
-    use sea_orm::{ConnectionTrait, DbBackend, Statement};
+    use sea_orm::{ConnectionTrait, DbBackend, Statement, Value};
     use std::path::PathBuf;
+    use std::sync::Arc;
 
     /// 定位项目根目录的 migrations/sqlite/ 目录。
     fn project_migrations_dir() -> PathBuf {
@@ -143,6 +291,31 @@ mod db_sqlite_tests {
         assert!(applied >= 1, "migrate_core 应至少执行 1 个文件");
         pool
     }
+
+    /// 构造 MockDao 作为 BulwarkDao 实现（T047+ 用于 oxcache 缓存测试）。
+    fn mock_dao() -> Arc<dyn BulwarkDao> {
+        Arc::new(crate::dao::tests::MockDao::new())
+    }
+
+    /// 向 role_hierarchy 表插入一条边。
+    async fn insert_edge(pool: &DbPool, tenant_id: i64, child_role: &str, parent_role: &str) {
+        let session = pool.get_session("admin").await.unwrap();
+        let conn = session.connection().unwrap();
+        let stmt = Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT OR IGNORE INTO role_hierarchy (tenant_id, child_role, parent_role) VALUES (?, ?, ?)",
+            vec![
+                Value::BigInt(Some(tenant_id)),
+                Value::String(Some(child_role.to_string())),
+                Value::String(Some(parent_role.to_string())),
+            ],
+        );
+        conn.execute_raw(stmt).await.expect("INSERT 应成功");
+    }
+
+    // ========================================================================
+    // T044: role_hierarchy 表迁移验证
+    // ========================================================================
 
     /// T044 Green: 验证 SQLite 迁移加载 `002_role_hierarchy.sql` 后 `role_hierarchy` 表存在。
     ///
@@ -167,5 +340,114 @@ mod db_sqlite_tests {
             1,
             "role_hierarchy 表应存在（迁移后 sqlite_master 应有 1 行记录）"
         );
+    }
+
+    // ========================================================================
+    // T045-T046: compute_closure 传递闭包测试
+    // ========================================================================
+
+    /// T045 Green: `compute_closure` 返回间接祖先。
+    ///
+    /// 构造 role_hierarchy 数据 `user -> admin -> super_admin`，
+    /// 调用 `compute_closure(tenant_id=0)`，
+    /// 断言返回的 HashMap 中 `"user"` 的 ancestors 集合含 `"admin"` 和 `"super_admin"`。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn compute_closure_returns_indirect_ancestors() {
+        let pool = setup_db().await;
+
+        // 插入 role_hierarchy 数据：user -> admin -> super_admin
+        insert_edge(&pool, 0, "user", "admin").await;
+        insert_edge(&pool, 0, "admin", "super_admin").await;
+
+        let svc = RoleHierarchyService::new(pool, mock_dao());
+        let closure = svc
+            .compute_closure(0)
+            .await
+            .expect("compute_closure 应成功");
+
+        let user_ancestors = closure.get("user").expect("closure 应包含 user 的祖先集合");
+        assert!(
+            user_ancestors.contains("admin"),
+            "user 的祖先应含 admin（直接父角色）"
+        );
+        assert!(
+            user_ancestors.contains("super_admin"),
+            "user 的祖先应含 super_admin（间接祖先）"
+        );
+
+        let admin_ancestors = closure
+            .get("admin")
+            .expect("closure 应包含 admin 的祖先集合");
+        assert!(
+            admin_ancestors.contains("super_admin"),
+            "admin 的祖先应含 super_admin（直接父角色）"
+        );
+    }
+
+    /// `compute_closure` 处理空表（无 role_hierarchy 记录）。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn compute_closure_empty_table_returns_empty_map() {
+        let pool = setup_db().await;
+        let svc = RoleHierarchyService::new(pool, mock_dao());
+        let closure = svc
+            .compute_closure(0)
+            .await
+            .expect("compute_closure 应成功");
+        assert!(closure.is_empty(), "空表应返回空 HashMap");
+    }
+
+    /// `compute_closure` 按租户隔离（tenant_id 过滤）。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn compute_closure_filters_by_tenant_id() {
+        let pool = setup_db().await;
+
+        // tenant 0: user -> admin
+        insert_edge(&pool, 0, "user", "admin").await;
+        // tenant 1: user -> super_admin
+        insert_edge(&pool, 1, "user", "super_admin").await;
+
+        let svc = RoleHierarchyService::new(pool, mock_dao());
+
+        // 查 tenant 0：user 的祖先应含 admin，不含 super_admin
+        let closure_0 = svc
+            .compute_closure(0)
+            .await
+            .expect("compute_closure(0) 应成功");
+        let user_ancestors_0 = closure_0.get("user").expect("tenant 0 应有 user");
+        assert!(user_ancestors_0.contains("admin"));
+        assert!(!user_ancestors_0.contains("super_admin"));
+
+        // 查 tenant 1：user 的祖先应含 super_admin，不含 admin
+        let closure_1 = svc
+            .compute_closure(1)
+            .await
+            .expect("compute_closure(1) 应成功");
+        let user_ancestors_1 = closure_1.get("user").expect("tenant 1 应有 user");
+        assert!(user_ancestors_1.contains("super_admin"));
+        assert!(!user_ancestors_1.contains("admin"));
+    }
+
+    /// `compute_closure` 处理环（A -> B -> A 自环不应无限递归）。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn compute_closure_handles_cycle_without_infinite_recursion() {
+        let pool = setup_db().await;
+
+        // 构造环：A -> B -> A
+        insert_edge(&pool, 0, "A", "B").await;
+        insert_edge(&pool, 0, "B", "A").await;
+
+        let svc = RoleHierarchyService::new(pool, mock_dao());
+        // 不应 stack overflow 或 hang
+        let closure = svc
+            .compute_closure(0)
+            .await
+            .expect("compute_closure 应成功");
+
+        // A 的祖先应含 B（但不应含 A 自身，因 visited 防止环）
+        let a_ancestors = closure.get("A").expect("closure 应包含 A");
+        assert!(a_ancestors.contains("B"));
+        // B 的祖先应含 A
+        let b_ancestors = closure.get("B").expect("closure 应包含 B");
+        assert!(b_ancestors.contains("A"));
     }
 }
