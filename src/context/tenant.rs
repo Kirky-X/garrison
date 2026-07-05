@@ -180,6 +180,89 @@ impl TenantResolver for SubdomainTenantResolver {
     }
 }
 
+/// Claim 租户解析器（依据 spec `tenant-isolation` R-tenant-isolation-002）。
+///
+/// 从 `Authorization: Bearer <jwt>` 提取 JWT，验证签名后解码 `tenant_id` claim。
+///
+/// # 行为
+///
+/// - Authorization header 存在且为 `Bearer <jwt>`（大小写不敏感，RFC 7235）：
+///   验证 JWT 签名（HS256）+ exp + 解码 `tenant_id` claim
+/// - Authorization 缺失：返回 `BulwarkError::InvalidToken`
+/// - 非 Bearer scheme：返回 `BulwarkError::InvalidToken`
+/// - JWT 签名验证失败：返回 `BulwarkError::InvalidToken`
+/// - `tenant_id` claim 缺失：返回 `BulwarkError::InvalidToken`
+///
+/// # 设计
+///
+/// - 门控在 `protocol-jwt` feature 下（依赖 `jsonwebtoken` crate）
+/// - Bearer scheme 大小写不敏感（RFC 7235：`Bearer`/`bearer`/`BEARER` 均合法）
+/// - 不默认 0（Rule 12 失败显性化），任何失败均返回 `InvalidToken`
+#[cfg(feature = "protocol-jwt")]
+#[derive(Debug, Clone)]
+pub struct ClaimTenantResolver {
+    /// JWT 验签密钥（HS256）。
+    pub jwt_secret: String,
+}
+
+#[cfg(feature = "protocol-jwt")]
+impl ClaimTenantResolver {
+    /// 构造 ClaimTenantResolver。
+    pub fn new(jwt_secret: String) -> Self {
+        Self { jwt_secret }
+    }
+}
+
+/// JWT claims 中仅提取 `tenant_id` 字段（依据 spec `tenant-isolation` R-tenant-isolation-002）。
+///
+/// 其他 claim（如 `sub`/`iat`/`exp`）由 `jsonwebtoken` 自动验证 exp，
+/// 这里只反序列化 `tenant_id`，缺失时 serde 报错转为 `InvalidToken`。
+#[cfg(feature = "protocol-jwt")]
+#[derive(serde::Deserialize)]
+struct TenantClaims {
+    tenant_id: i64,
+}
+
+#[cfg(feature = "protocol-jwt")]
+#[async_trait]
+impl TenantResolver for ClaimTenantResolver {
+    async fn resolve(&self, headers: &HeaderMap) -> BulwarkResult<TenantContext> {
+        use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
+
+        let auth = headers
+            .get("Authorization")
+            .ok_or_else(|| BulwarkError::InvalidToken("Authorization header missing".into()))?
+            .to_str()
+            .map_err(|e| {
+                BulwarkError::InvalidToken(format!("Authorization not visible ASCII: {e}"))
+            })?;
+        // 解析 `<scheme> <token>`，scheme 大小写不敏感（RFC 7235）
+        let mut parts = auth.splitn(2, ' ');
+        let scheme = parts
+            .next()
+            .ok_or_else(|| BulwarkError::InvalidToken("empty Authorization header".into()))?;
+        let jwt = parts.next().ok_or_else(|| {
+            BulwarkError::InvalidToken("missing token in Authorization header".into())
+        })?;
+        if !scheme.eq_ignore_ascii_case("Bearer") {
+            return Err(BulwarkError::InvalidToken(format!(
+                "unsupported auth scheme `{scheme}` (expected Bearer)"
+            )));
+        }
+        // 验证 JWT 签名 + exp，解码 tenant_id claim
+        let key = DecodingKey::from_secret(self.jwt_secret.as_bytes());
+        let mut validation = Validation::new(Algorithm::HS256);
+        validation.validate_exp = true;
+        validation.leeway = 0;
+        let data = decode::<TenantClaims>(jwt, &key, &validation)
+            .map_err(|e| BulwarkError::InvalidToken(format!("JWT verify failed: {e}")))?;
+        Ok(TenantContext {
+            tenant_id: data.claims.tenant_id,
+            resolved_from: TenantSource::Claim,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -308,6 +391,146 @@ mod tests {
             .resolve(&headers)
             .await
             .expect("带端口的 Host 应正确提取 subdomain");
+        assert_eq!(ctx.tenant_id, 42);
+    }
+
+    /// R-tenant-isolation-002: ClaimTenantResolver 从 Authorization Bearer JWT 提取 tenant_id claim。
+    ///
+    /// 构造含 `Authorization: Bearer <jwt>` 的 headers（JWT payload 含 `tenant_id: 42`），
+    /// 断言 `ClaimTenantResolver::new(secret).resolve(&headers)` 返回 `tenant_id == 42`。
+    #[cfg(feature = "protocol-jwt")]
+    #[tokio::test]
+    async fn claim_tenant_resolver_extracts_from_jwt_claim() {
+        use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
+
+        #[derive(serde::Serialize)]
+        struct Claims {
+            tenant_id: i64,
+            exp: i64,
+        }
+
+        let secret = "test-secret-claim";
+        let claims = Claims {
+            tenant_id: 42,
+            exp: 9999999999,
+        };
+        let header = Header::new(Algorithm::HS256);
+        let key = EncodingKey::from_secret(secret.as_bytes());
+        let jwt = encode(&header, &claims, &key).expect("encode jwt");
+
+        let mut headers = http::HeaderMap::new();
+        headers.insert(
+            "Authorization",
+            format!("Bearer {jwt}").parse().expect("valid header value"),
+        );
+
+        let resolver = ClaimTenantResolver::new(secret.to_string());
+        let ctx = resolver
+            .resolve(&headers)
+            .await
+            .expect("valid JWT 应解析成功");
+        assert_eq!(ctx.tenant_id, 42);
+        assert!(matches!(ctx.resolved_from, TenantSource::Claim));
+    }
+
+    /// R-tenant-isolation-002: ClaimTenantResolver 在 Authorization 缺失时返回 InvalidToken。
+    #[cfg(feature = "protocol-jwt")]
+    #[tokio::test]
+    async fn claim_tenant_resolver_returns_invalid_token_when_auth_missing() {
+        let headers = http::HeaderMap::new();
+        let resolver = ClaimTenantResolver::new("secret".to_string());
+        let result = resolver.resolve(&headers).await;
+        assert!(matches!(result, Err(BulwarkError::InvalidToken(_))));
+    }
+
+    /// R-tenant-isolation-002: ClaimTenantResolver 在 JWT 签名验证失败时返回 InvalidToken。
+    #[cfg(feature = "protocol-jwt")]
+    #[tokio::test]
+    async fn claim_tenant_resolver_returns_invalid_token_when_signature_bad() {
+        use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
+
+        #[derive(serde::Serialize)]
+        struct Claims {
+            tenant_id: i64,
+            exp: i64,
+        }
+
+        let signing_secret = "secret-a";
+        let verifying_secret = "secret-b"; // 不匹配
+        let jwt = encode(
+            &Header::new(Algorithm::HS256),
+            &Claims {
+                tenant_id: 42,
+                exp: 9999999999,
+            },
+            &EncodingKey::from_secret(signing_secret.as_bytes()),
+        )
+        .expect("encode jwt");
+
+        let mut headers = http::HeaderMap::new();
+        headers.insert("Authorization", format!("Bearer {jwt}").parse().unwrap());
+        let resolver = ClaimTenantResolver::new(verifying_secret.to_string());
+        let result = resolver.resolve(&headers).await;
+        assert!(matches!(result, Err(BulwarkError::InvalidToken(_))));
+    }
+
+    /// R-tenant-isolation-002: ClaimTenantResolver 在 tenant_id claim 缺失时返回 InvalidToken。
+    #[cfg(feature = "protocol-jwt")]
+    #[tokio::test]
+    async fn claim_tenant_resolver_returns_invalid_token_when_claim_missing() {
+        use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
+
+        #[derive(serde::Serialize)]
+        struct Claims {
+            exp: i64,
+            // 故意没有 tenant_id
+        }
+
+        let secret = "test-secret-no-claim";
+        let jwt = encode(
+            &Header::new(Algorithm::HS256),
+            &Claims { exp: 9999999999 },
+            &EncodingKey::from_secret(secret.as_bytes()),
+        )
+        .expect("encode jwt");
+
+        let mut headers = http::HeaderMap::new();
+        headers.insert("Authorization", format!("Bearer {jwt}").parse().unwrap());
+        let resolver = ClaimTenantResolver::new(secret.to_string());
+        let result = resolver.resolve(&headers).await;
+        assert!(matches!(result, Err(BulwarkError::InvalidToken(_))));
+    }
+
+    /// R-tenant-isolation-002: ClaimTenantResolver 接受小写 bearer scheme（RFC 7235 大小写不敏感）。
+    #[cfg(feature = "protocol-jwt")]
+    #[tokio::test]
+    async fn claim_tenant_resolver_accepts_lowercase_bearer_scheme() {
+        use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
+
+        #[derive(serde::Serialize)]
+        struct Claims {
+            tenant_id: i64,
+            exp: i64,
+        }
+
+        let secret = "test-secret-lower";
+        let jwt = encode(
+            &Header::new(Algorithm::HS256),
+            &Claims {
+                tenant_id: 42,
+                exp: 9999999999,
+            },
+            &EncodingKey::from_secret(secret.as_bytes()),
+        )
+        .expect("encode jwt");
+
+        let mut headers = http::HeaderMap::new();
+        headers.insert("Authorization", format!("bearer {jwt}").parse().unwrap());
+        let resolver = ClaimTenantResolver::new(secret.to_string());
+        let ctx = resolver
+            .resolve(&headers)
+            .await
+            .expect("小写 bearer scheme 应被接受");
         assert_eq!(ctx.tenant_id, 42);
     }
 }
