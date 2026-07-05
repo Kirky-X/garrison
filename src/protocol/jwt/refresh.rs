@@ -160,6 +160,15 @@ mod service {
         pub async fn rotate(&self, old_token: &str) -> BulwarkResult<(String, String)> {
             let old_hash = Self::sha256_hex(old_token);
 
+            // T064: reuse detection——若 old_hash 已 revoked，说明 token 被重用，
+            // 吊销整个链（old_hash 及其所有子代）后返回 InvalidToken
+            if self.detect_reuse(&old_hash).await? {
+                self.revoke_chain(&old_hash).await?;
+                return Err(BulwarkError::InvalidToken(
+                    "refresh token reuse detected, chain revoked".to_string(),
+                ));
+            }
+
             // 查表验证 old_hash 存在且 revoked=0
             let session = self.pool.get_session("admin").await.map_err(|e| {
                 BulwarkError::Dao(format!("refresh_tokens 获取 session 失败: {}", e))
@@ -382,6 +391,7 @@ mod tests {
 mod db_sqlite_tests {
     use super::RefreshTokenRotation;
     use crate::dao::{init_dbnexus, BulwarkMigration};
+    use crate::error::BulwarkError;
     use crate::protocol::jwt::JwtHandler;
     use dbnexus::DbPool;
     use sea_orm::{ConnectionTrait, DbBackend, Statement, Value};
@@ -650,6 +660,58 @@ mod db_sqlite_tests {
             query_revoked(&pool, &t3_hash).await,
             1,
             "t3 应 revoked（孙代）"
+        );
+    }
+
+    // ========================================================================
+    // T063-T064: rotate with reuse detection 测试
+    // ========================================================================
+
+    /// T063 Red: `rotate` 检测到 old_token 重用时返回 `InvalidToken` 并吊销整个链。
+    ///
+    /// 流程：
+    /// 1. 预先 INSERT t1 record（revoked=0）
+    /// 2. `rotate("t1")` → 得到 t2（new_refresh），t1 revoked=1
+    /// 3. `rotate("t1")` again（重用 t1） → 应返回 `BulwarkError::InvalidToken`
+    /// 4. 断言 t1 的 revoked=1（已 revoked）
+    /// 5. 断言 t2 的 revoked=1（链被吊销）
+    #[tokio::test(flavor = "multi_thread")]
+    async fn rotate_with_reuse_detection_revokes_chain() {
+        let pool = setup_db().await;
+
+        let t1_token = "t1_token_value";
+        let t1_hash = sha256_hex(t1_token);
+        insert_refresh_token(&pool, &t1_hash, None, 1, 0, 1, 9999, 0).await;
+
+        let jwt_handler = Arc::new(JwtHandler::new("test_secret"));
+        let rotation =
+            RefreshTokenRotation::new(pool.clone(), jwt_handler, Arc::new(RwLock::new(1)));
+
+        // 第一次 rotate：t1 → t2（成功）
+        let (_, t2_refresh) = rotation
+            .rotate(t1_token)
+            .await
+            .expect("第一次 rotate 应成功");
+        let t2_hash = sha256_hex(&t2_refresh);
+
+        // 第二次 rotate（重用 t1）：应返回 InvalidToken
+        let result = rotation.rotate(t1_token).await;
+        assert!(
+            matches!(result, Err(BulwarkError::InvalidToken(_))),
+            "重用已消费的 refresh token 应返回 InvalidToken，实际: {:?}",
+            result
+        );
+
+        // 断言 t1 和 t2 的链全被吊销
+        assert_eq!(
+            query_revoked(&pool, &t1_hash).await,
+            1,
+            "t1 应 revoked（重用检测后）"
+        );
+        assert_eq!(
+            query_revoked(&pool, &t2_hash).await,
+            1,
+            "t2 应 revoked（链被吊销）"
         );
     }
 }
