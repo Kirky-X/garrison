@@ -54,7 +54,7 @@ graph TB
         config[config<br/>BulwarkConfig]
         context[context<br/>task_local 上下文]
         dao[dao<br/>BulwarkDao trait]
-        strategy[strategy<br/>BulwarkFirewallStrategy]
+        strategy[strategy<br/>BulwarkPermissionStrategy]
         manager[manager<br/>BulwarkManager 单例]
         annotation[annotation<br/>注解枚举]
         router[router<br/>BulwarkRouter]
@@ -113,7 +113,7 @@ graph TB
 | `config/` | `BulwarkConfig` 全局配置 + `ConfigLoader` trait + 热更新 |
 | `context/` | `BulwarkContext` 请求上下文抽象 + axum 适配器 + task_local |
 | `dao/` | `BulwarkDao` trait + dbnexus 实现 |
-| `strategy/` | `BulwarkFirewallStrategy` 权限策略 |
+| `strategy/` | `BulwarkPermissionStrategy` 权限策略 |
 | `manager/` | `BulwarkManager` 全局单例 + inventory 编译期注册 |
 | `annotation/` | 鉴权注解枚举 |
 | `router/` | `BulwarkRouter` + Interceptor 路由拦截 |
@@ -164,7 +164,7 @@ graph LR
     BD[BulwarkDao<br/>持久化抽象 trait]
     BS[BulwarkSession<br/>会话模型]
     BC[BulwarkContext<br/>请求上下文 trait]
-    BFS[BulwarkFirewallStrategy<br/>权限策略 trait]
+    BFS[BulwarkPermissionStrategy<br/>权限策略 trait]
     BM[BulwarkManager<br/>全局单例]
     BU[BulwarkUtil<br/>静态门面]
 
@@ -187,7 +187,7 @@ graph LR
 | `BulwarkInterface` | 业务数据源接入点：查询用户权限、角色等 | 业务方必须实现 |
 | `BulwarkDao` | 持久化抽象：session CRUD、token 映射 | dbnexus + oxcache 实现 |
 | `BulwarkContext` | 请求上下文：读取当前 token、请求头、Cookie | axum adapter 实现 |
-| `BulwarkFirewallStrategy` | 权限策略：`check_permission` 判定 | 框架提供默认实现 |
+| `BulwarkPermissionStrategy` | 权限策略：`check_permission` 判定 | 框架提供默认实现 |
 
 > 所有 trait 采用 **trait + Default 模式**：框架提供默认实现，业务方可覆盖。任何组件都可被替换为自定义实现，框架默认实现仅在未被覆盖时生效。
 
@@ -274,7 +274,7 @@ sequenceDiagram
 
 **方案**：
 
-- 所有核心抽象（`BulwarkLogic` / `BulwarkDao` / `BulwarkContext` / `BulwarkFirewallStrategy` / `BulwarkListener`）均以 trait 定义。
+- 所有核心抽象（`BulwarkLogic` / `BulwarkDao` / `BulwarkContext` / `BulwarkPermissionStrategy` / `BulwarkListener`）均以 trait 定义。
 - 框架提供默认实现，业务方实现 trait 后通过 `BulwarkManager::init()` 注入即可覆盖。
 - 优点：扩展点清晰，符合 Rust 的零成本抽象哲学。
 
@@ -331,13 +331,13 @@ inventory::submit! {
 }
 ```
 
-### 3. 自定义 BulwarkFirewallStrategy
+### 3. 自定义 BulwarkPermissionStrategy
 
 替换权限策略（如基于 ABAC、基于外部策略引擎）：
 
 ```rust
 #[async_trait]
-impl BulwarkFirewallStrategy for MyStrategy {
+impl BulwarkPermissionStrategy for MyStrategy {
     async fn check_permission(&self, login_id: &str, permission: &str) -> bool {
         // 自定义权限判定
     }

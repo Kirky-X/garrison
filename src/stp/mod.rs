@@ -23,7 +23,7 @@ use crate::error::{BulwarkError, BulwarkResult};
 use crate::listener::{BulwarkEvent, BulwarkListenerManager};
 use crate::plugin::BulwarkPluginManager;
 use crate::session::BulwarkSession;
-use crate::strategy::{BulwarkFirewallStrategy, FirewallLoginContext};
+use crate::strategy::{BulwarkPermissionStrategy, FirewallLoginContext};
 // 0.4.2: LoginId newtype（支持 i64 与 String 双形式登录主体标识）
 use crate::stp::login_id::LoginId;
 use async_trait::async_trait;
@@ -444,7 +444,7 @@ pub enum JwtMode {
 // BulwarkLogicDefault：默认实现
 // ============================================================================
 
-/// `BulwarkLogic` 的默认实现，组合 `BulwarkSession` + `BulwarkConfig` + `BulwarkFirewallStrategy`。
+/// `BulwarkLogic` 的默认实现，组合 `BulwarkSession` + `BulwarkConfig` + `BulwarkPermissionStrategy`。
 ///
 /// [借鉴 Sa-Token] 对应 `StpLogic` 默认实现（design.md Decision 8）。
 pub struct BulwarkLogicDefault {
@@ -452,7 +452,7 @@ pub struct BulwarkLogicDefault {
     pub(crate) session: Arc<BulwarkSession>,
     config: Arc<BulwarkConfig>,
     /// 权限策略（pub(crate) 供测试验证）。
-    pub(crate) firewall: Arc<dyn BulwarkFirewallStrategy>,
+    pub(crate) firewall: Arc<dyn BulwarkPermissionStrategy>,
     /// 插件管理器（可选，注入后 login/logout 触发插件钩子）。
     plugin_manager: Option<Arc<BulwarkPluginManager>>,
     /// 监听器管理器（可选，注入后 login/logout/kickout 广播事件）。
@@ -491,14 +491,14 @@ impl BulwarkLogicDefault {
     /// # 参数
     /// - `session`: 会话管理器。
     /// - `config`: 全局配置。
-    /// - `firewall`: 权限策略（默认 `BulwarkFirewallStrategyDefault`，持有 `BulwarkInterface` 回调）。
+    /// - `firewall`: 权限策略（默认 `BulwarkPermissionStrategyDefault`，持有 `BulwarkInterface` 回调）。
     ///
     /// # 返回
     /// 新建的 `BulwarkLogicDefault` 实例。
     pub fn new(
         session: Arc<BulwarkSession>,
         config: Arc<BulwarkConfig>,
-        firewall: Arc<dyn BulwarkFirewallStrategy>,
+        firewall: Arc<dyn BulwarkPermissionStrategy>,
     ) -> Self {
         Self {
             session,
@@ -919,7 +919,7 @@ impl BulwarkLogic for BulwarkLogicDefault {
                 };
             },
         };
-        // 委托 BulwarkFirewallStrategy 做权限校验
+        // 委托 BulwarkPermissionStrategy 做权限校验
         let has_perm = self.firewall.check_permission(login_id, permission).await?;
         // emit metrics：权限查询结果
         #[cfg(feature = "metrics-prometheus")]
@@ -951,7 +951,7 @@ impl BulwarkLogic for BulwarkLogicDefault {
                 };
             },
         };
-        // 委托 BulwarkFirewallStrategy 做角色校验
+        // 委托 BulwarkPermissionStrategy 做角色校验
         let has_role = self.firewall.check_role(login_id, role).await?;
         // emit metrics：角色查询结果
         #[cfg(feature = "metrics-prometheus")]
@@ -1129,7 +1129,7 @@ impl BulwarkLogic for BulwarkLogicDefault {
 /// # 数据来源
 ///
 /// 业务方可自由选择数据来源（数据库 / YAML / 内存 / 外部服务等），
-/// 框架不假定具体来源。`BulwarkFirewallStrategyDefault` 通过此回调获取数据后做字符串匹配。
+/// 框架不假定具体来源。`BulwarkPermissionStrategyDefault` 通过此回调获取数据后做字符串匹配。
 #[async_trait]
 pub trait BulwarkInterface: Send + Sync {
     /// 获取指定主体的权限列表。
@@ -1648,17 +1648,17 @@ mod tests {
     }
 
     // ------------------------------------------------------------------------
-    // MockFirewall：模拟 BulwarkFirewallStrategy，控制权限/角色校验返回值
+    // MockFirewall：模拟 BulwarkPermissionStrategy，控制权限/角色校验返回值
     // ------------------------------------------------------------------------
 
-    /// 测试用 BulwarkFirewallStrategy mock，可控制 check_permission/check_role 返回值。
+    /// 测试用 BulwarkPermissionStrategy mock，可控制 check_permission/check_role 返回值。
     struct MockFirewall {
         has_permission: bool,
         has_role: bool,
     }
 
     #[async_trait]
-    impl BulwarkFirewallStrategy for MockFirewall {
+    impl BulwarkPermissionStrategy for MockFirewall {
         async fn get_permission_list(&self, _login_id: i64) -> BulwarkResult<Vec<String>> {
             Ok(vec![])
         }
@@ -1693,7 +1693,7 @@ mod tests {
         let mut config = BulwarkConfig::default_config();
         config.throw_on_not_login = throw_on_not_login;
         config.token_style = token_style.to_string();
-        let firewall: Arc<dyn BulwarkFirewallStrategy> = Arc::new(MockFirewall {
+        let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
             has_permission,
             has_role,
         });
@@ -2856,7 +2856,7 @@ mod tests {
         config.token_style = "jwt".to_string();
         config.jwt_secret = "refresh-test-secret".to_string();
         config.timeout = 3600;
-        let firewall: Arc<dyn BulwarkFirewallStrategy> = Arc::new(MockFirewall {
+        let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
             has_permission: true,
             has_role: true,
         });
@@ -3444,7 +3444,7 @@ mod tests {
         config.token_style = "jwt".to_string();
         config.jwt_secret = "stateless-test-secret".to_string();
         config.throw_on_not_login = true;
-        let firewall: Arc<dyn BulwarkFirewallStrategy> = Arc::new(MockFirewall {
+        let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
             has_permission: true,
             has_role: true,
         });
@@ -3482,7 +3482,7 @@ mod tests {
         config.token_style = "jwt".to_string();
         config.jwt_secret = "mixin-test-secret".to_string();
         config.throw_on_not_login = true;
-        let firewall: Arc<dyn BulwarkFirewallStrategy> = Arc::new(MockFirewall {
+        let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
             has_permission: true,
             has_role: true,
         });

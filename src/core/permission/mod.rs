@@ -117,9 +117,9 @@ pub trait PermissionChecker: Send + Sync {
 
 /// `PermissionChecker` 的默认实现，委托 `BulwarkInterface` 获取权限/角色数据后做字符串匹配（依据 spec core-permission）。
 ///
-/// 与 `BulwarkFirewallStrategy` 的职责区分：
+/// 与 `BulwarkPermissionStrategy` 的职责区分：
 /// - `PermissionCheckerDefault`：纯数据查询（返回 bool/Err，无副作用）
-/// - `BulwarkFirewallStrategy`：编排（校验 + 抛异常 + 事件广播）
+/// - `BulwarkPermissionStrategy`：编排（校验 + 抛异常 + 事件广播）
 pub struct PermissionCheckerDefault {
     /// 业务接口（提供 get_permission_list / get_role_list）。
     interface: Arc<dyn BulwarkInterface>,

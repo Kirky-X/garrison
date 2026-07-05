@@ -20,7 +20,7 @@ use bulwark::session::BulwarkSession;
 use bulwark::stp::{BulwarkInterface, BulwarkLogic, BulwarkLogicDefault};
 use bulwark::strategy::FirewallLoginContext;
 use bulwark::strategy::{
-    BulwarkFirewallStrategyDefault, FirewallStrategy, LoginHandler, LogoutHandler, Strategy,
+    BulwarkPermissionStrategyDefault, FirewallStrategy, LoginHandler, LogoutHandler, Strategy,
     TokenGenerator,
 };
 use std::sync::Arc;
@@ -43,7 +43,7 @@ async fn make_logic() -> Arc<dyn BulwarkLogic> {
     let interface: Arc<dyn BulwarkInterface> = Arc::new(NoopInterface);
     let timeout = u64::try_from(config.timeout).unwrap_or(3600);
     let session = Arc::new(BulwarkSession::new(dao, timeout, timeout));
-    let firewall = Arc::new(BulwarkFirewallStrategyDefault::new(interface));
+    let firewall = Arc::new(BulwarkPermissionStrategyDefault::new(interface));
     Arc::new(BulwarkLogicDefault::new(session, config, firewall))
 }
 

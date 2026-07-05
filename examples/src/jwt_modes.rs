@@ -15,7 +15,7 @@ use bulwark::dao::{BulwarkDao, BulwarkDaoOxcache};
 use bulwark::error::{BulwarkError, BulwarkResult};
 use bulwark::session::BulwarkSession;
 use bulwark::stp::{BulwarkInterface, BulwarkLogic, BulwarkLogicDefault, JwtMode};
-use bulwark::strategy::BulwarkFirewallStrategyDefault;
+use bulwark::strategy::BulwarkPermissionStrategyDefault;
 use bulwark::BulwarkConfig;
 use std::sync::Arc;
 
@@ -41,7 +41,9 @@ async fn make_logic_with_mode(mode: JwtMode) -> Arc<BulwarkLogicDefault> {
     config.throw_on_not_login = true;
     let timeout = u64::try_from(config.timeout).unwrap_or(3600);
     let session = Arc::new(BulwarkSession::new(dao, timeout, timeout));
-    let firewall = Arc::new(BulwarkFirewallStrategyDefault::new(Arc::new(NoopInterface)));
+    let firewall = Arc::new(BulwarkPermissionStrategyDefault::new(Arc::new(
+        NoopInterface,
+    )));
     Arc::new(BulwarkLogicDefault::new(session, Arc::new(config), firewall).with_jwt_mode(mode))
 }
 

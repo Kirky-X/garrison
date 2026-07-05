@@ -22,7 +22,7 @@
 //!
 //! - `login_id` 使用 `i64` 而非 `LoginId` newtype，遵循 `BulwarkLogic` trait 现有惯例
 //!   （依据规则 11：惯例优先于新颖）
-//! - [`FirewallStrategy`] 与现有 [`BulwarkFirewallStrategy`](crate::strategy::BulwarkFirewallStrategy)
+//! - [`FirewallStrategy`] 与现有 [`BulwarkPermissionStrategy`](crate::strategy::BulwarkPermissionStrategy)
 //!   trait 共存（依据 spec Constraints），两者名称不同，不冲突
 
 use crate::error::BulwarkResult;
@@ -119,9 +119,9 @@ pub trait SessionCreator: Send + Sync {
 
 /// 防火墙策略 trait，定义登录前安全检查的可插拔契约。
 ///
-/// 与现有 [`BulwarkFirewallStrategy`](crate::strategy::BulwarkFirewallStrategy) trait 共存
+/// 与现有 [`BulwarkPermissionStrategy`](crate::strategy::BulwarkPermissionStrategy) trait 共存
 /// （依据 spec Constraints），两者名称不同，职责不同：
-/// - `BulwarkFirewallStrategy`：权限/角色数据查询与校验
+/// - `BulwarkPermissionStrategy`：权限/角色数据查询与校验
 /// - `FirewallStrategy`（本 trait）：登录前防火墙钩子检查
 ///
 /// # 默认实现
@@ -256,7 +256,7 @@ impl SessionCreator for DefaultSessionCreator {
 /// `FirewallStrategy` 的默认实现，返回 `Ok(())`（no-op）。
 ///
 /// [`BulwarkLogic`] trait 无 `check_login_hooks` 方法，
-/// 默认 no-op 与现有 [`crate::strategy::BulwarkFirewallStrategy`] trait 的
+/// 默认 no-op 与现有 [`crate::strategy::BulwarkPermissionStrategy`] trait 的
 /// `check_login_hooks` 默认行为一致。
 pub struct DefaultFirewallStrategy {
     // 保留 logic 字段以与其他 5 个 Default*Handler 保持构造签名一致，
@@ -508,7 +508,7 @@ mod tests {
     use crate::dao::BulwarkDao;
     use crate::session::BulwarkSession;
     use crate::stp::{BulwarkInterface, BulwarkLogicDefault};
-    use crate::strategy::BulwarkFirewallStrategyDefault;
+    use crate::strategy::BulwarkPermissionStrategyDefault;
     use async_trait::async_trait;
     use serial_test::serial;
     use std::collections::HashMap;
@@ -549,8 +549,8 @@ mod tests {
         let interface: Arc<dyn BulwarkInterface> = Arc::new(MockInterface::new());
         let timeout = u64::try_from(config.timeout).unwrap_or(3600);
         let session = Arc::new(BulwarkSession::new(dao, timeout, timeout));
-        let firewall: Arc<dyn crate::strategy::BulwarkFirewallStrategy> =
-            Arc::new(BulwarkFirewallStrategyDefault::new(interface));
+        let firewall: Arc<dyn crate::strategy::BulwarkPermissionStrategy> =
+            Arc::new(BulwarkPermissionStrategyDefault::new(interface));
         Arc::new(BulwarkLogicDefault::new(session, config, firewall))
     }
 

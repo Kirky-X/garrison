@@ -1,8 +1,8 @@
-//! 防火墙策略示例：演示 BulwarkFirewallStrategy trait 与自定义策略实现。
+//! 防火墙策略示例：演示 BulwarkPermissionStrategy trait 与自定义策略实现。
 //!
 //! 流程：
-//! 1. 实现 BulwarkFirewallStrategy trait（自定义权限/角色来源）
-//! 2. 创建 BulwarkFirewallStrategyDefault（基于 BulwarkInterface）
+//! 1. 实现 BulwarkPermissionStrategy trait（自定义权限/角色来源）
+//! 2. 创建 BulwarkPermissionStrategyDefault（基于 BulwarkInterface）
 //! 3. check_permission 权限校验
 //! 4. check_role 角色校验
 //! 5. check_role_any 任一角色匹配
@@ -20,7 +20,7 @@ use bulwark::error::{BulwarkError, BulwarkResult};
 use bulwark::manager::BulwarkManager;
 use bulwark::prelude::*;
 use bulwark::stp::BulwarkInterface;
-use bulwark::strategy::{BulwarkFirewallStrategy, BulwarkFirewallStrategyDefault};
+use bulwark::strategy::{BulwarkPermissionStrategy, BulwarkPermissionStrategyDefault};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -63,7 +63,7 @@ impl Default for CustomFirewall {
 }
 
 #[async_trait]
-impl BulwarkFirewallStrategy for CustomFirewall {
+impl BulwarkPermissionStrategy for CustomFirewall {
     async fn get_permission_list(&self, login_id: i64) -> BulwarkResult<Vec<String>> {
         Ok(self.permissions.get(&login_id).cloned().unwrap_or_default())
     }
@@ -100,7 +100,7 @@ impl BulwarkFirewallStrategy for CustomFirewall {
 }
 
 // ============================================================================
-// BulwarkInterface 实现（用于 BulwarkFirewallStrategyDefault）
+// BulwarkInterface 实现（用于 BulwarkPermissionStrategyDefault）
 // ============================================================================
 
 /// 示例 BulwarkInterface 实现，仅提供 login_id=1001 的权限/角色。
@@ -144,7 +144,7 @@ impl BulwarkInterface for MyInterface {
 
 /// 运行防火墙策略示例。
 ///
-/// 演示 CustomFirewall 自定义策略与 BulwarkFirewallStrategyDefault 的
+/// 演示 CustomFirewall 自定义策略与 BulwarkPermissionStrategyDefault 的
 /// check_permission / check_role / check_role_any / check_role_all 校验，
 /// 以及空字符串 Fail Loud 行为，最后集成到 BulwarkManager。
 pub async fn run() -> BulwarkResult<()> {
@@ -170,11 +170,11 @@ pub async fn run() -> BulwarkResult<()> {
     println!();
 
     // ----------------------------------------------------------------
-    // 2. BulwarkFirewallStrategyDefault（基于 BulwarkInterface）
+    // 2. BulwarkPermissionStrategyDefault（基于 BulwarkInterface）
     // ----------------------------------------------------------------
     let interface = Arc::new(MyInterface::new());
-    let default_fw = BulwarkFirewallStrategyDefault::new(interface);
-    println!("[2] BulwarkFirewallStrategyDefault:");
+    let default_fw = BulwarkPermissionStrategyDefault::new(interface);
+    println!("[2] BulwarkPermissionStrategyDefault:");
 
     let perms = default_fw.get_permission_list(1001).await?;
     println!("    get_permission_list(1001) = {:?}", perms);
@@ -256,7 +256,7 @@ pub async fn run() -> BulwarkResult<()> {
     let config = Arc::new(BulwarkConfig::default_config());
     let interface: Arc<dyn BulwarkInterface> = Arc::new(MyInterface::new());
     BulwarkManager::init(dao, config, interface)?;
-    println!("    BulwarkManager 初始化完成（使用 BulwarkFirewallStrategyDefault）");
+    println!("    BulwarkManager 初始化完成（使用 BulwarkPermissionStrategyDefault）");
     println!("    可通过 BulwarkUtil::check_permission/check_role 调用");
 
     println!("\n=== 示例执行完成 ===");

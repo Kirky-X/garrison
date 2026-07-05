@@ -52,7 +52,7 @@
 //!   - [`core::auth`]：`AuthLogic` trait + `DefaultAuthLogic`（login_by_token / verify_token / refresh_token）
 //!   - [`core::permission`]：`PermissionChecker` trait + `DefaultPermissionChecker`
 //!   - [`plugin`]：`BulwarkPlugin` trait + `inventory` 编译期注册 + `BulwarkPluginManager`（on_login / on_logout / on_permission_check 钩子）
-//!   - [`strategy`]：`BulwarkFirewallStrategyDefault` 扩展 `with_permission_checker` / `with_role_hierarchy` / `with_plugin_manager` / `with_dao`（权限缓存）
+//!   - [`strategy`]：`BulwarkPermissionStrategyDefault` 扩展 `with_permission_checker` / `with_role_hierarchy` / `with_plugin_manager` / `with_dao`（权限缓存）
 //!   - [`session`]：`BulwarkSession` 扩展 SSO / OAuth2 / 临时凭证关联（`link_sso_ticket` / `link_oauth2_token` / `link_temp_credential`）
 //! - **协议层**（特性门控）
 //!   - `protocol::jwt`：`JwtHandler`（sign / verify / refresh，HS256/HS512）

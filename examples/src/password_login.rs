@@ -19,7 +19,7 @@ use bulwark::error::{BulwarkError, BulwarkResult};
 use bulwark::secure::password::{Argon2Hasher, PasswordHasher};
 use bulwark::session::BulwarkSession;
 use bulwark::stp::{BulwarkInterface, BulwarkLogic, BulwarkLogicDefault};
-use bulwark::strategy::BulwarkFirewallStrategyDefault;
+use bulwark::strategy::BulwarkPermissionStrategyDefault;
 use bulwark::BulwarkConfig;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -88,7 +88,9 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let config = Arc::new(BulwarkConfig::default_config());
     let timeout = u64::try_from(config.timeout).unwrap_or(3600);
     let session = Arc::new(BulwarkSession::new(dao, timeout, timeout));
-    let firewall = Arc::new(BulwarkFirewallStrategyDefault::new(Arc::new(NoopInterface)));
+    let firewall = Arc::new(BulwarkPermissionStrategyDefault::new(Arc::new(
+        NoopInterface,
+    )));
     let logic = BulwarkLogicDefault::new(session, config, firewall)
         .with_password_hasher(hasher)
         .with_user_repository(user_repo);

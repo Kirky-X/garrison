@@ -5,8 +5,8 @@
 //!
 //! ## 权限策略（依据 spec permission-role-check 与 design.md Decision 9）
 //!
-//! - `BulwarkFirewallStrategy` trait：定义权限/角色校验的可插拔契约
-//! - `BulwarkFirewallStrategyDefault`：默认实现，持有 `BulwarkInterface` 回调获取权限/角色数据，
+//! - `BulwarkPermissionStrategy` trait：定义权限/角色校验的可插拔契约
+//! - `BulwarkPermissionStrategyDefault`：默认实现，持有 `BulwarkInterface` 回调获取权限/角色数据，
 //!   做字符串匹配校验
 //!
 //! ## 数据来源（依据用户决策：方案 B）
@@ -38,7 +38,7 @@ pub use hooks::{
     BRUTE_FORCE_WINDOW, LOGIN_FREQUENCY_THRESHOLD, LOGIN_FREQUENCY_WINDOW,
 };
 // Re-export 策略注册表的 6 个 trait + 默认实现 + Strategy 注册表
-// 注意：新 FirewallStrategy 与现有 BulwarkFirewallStrategy 名称不同，可直接 re-export 共存
+// 注意：新 FirewallStrategy 与现有 BulwarkPermissionStrategy 名称不同，可直接 re-export 共存
 pub use registry::{
     DefaultFirewallStrategy, DefaultLoginHandler, DefaultLogoutHandler, DefaultPermissionHandler,
     DefaultSessionCreator, DefaultTokenGenerator, FirewallStrategy, LoginHandler, LogoutHandler,
@@ -46,7 +46,7 @@ pub use registry::{
 };
 
 // ============================================================================
-// BulwarkFirewallStrategy trait：可插拔权限策略
+// BulwarkPermissionStrategy trait：可插拔权限策略
 // ============================================================================
 
 /// 权限策略 trait，定义权限/角色校验的可插拔契约。
@@ -56,10 +56,10 @@ pub use registry::{
 ///
 /// # 默认实现
 ///
-/// `BulwarkFirewallStrategyDefault` 持有 `BulwarkInterface` 回调，
+/// `BulwarkPermissionStrategyDefault` 持有 `BulwarkInterface` 回调，
 /// 调用 `get_permission_list` / `get_role_list` 获取数据后做字符串匹配。
 #[async_trait]
-pub trait BulwarkFirewallStrategy: Send + Sync {
+pub trait BulwarkPermissionStrategy: Send + Sync {
     /// 获取主体的权限列表。
     ///
     /// # 参数
@@ -144,7 +144,7 @@ pub trait BulwarkFirewallStrategy: Send + Sync {
 
     /// 登录前防火墙安全钩子检查（0.3.0 新增，依据 spec firewall-check-hook）。
     ///
-    /// 默认实现为 no-op（向后兼容 0.2.x）。`BulwarkFirewallStrategyDefault` 在注入
+    /// 默认实现为 no-op（向后兼容 0.2.x）。`BulwarkPermissionStrategyDefault` 在注入
     /// `BulwarkFirewallCheckHook` 后按序调用 5 个 hook，任一 Err 阻断登录。
     ///
     /// # 参数
@@ -160,10 +160,10 @@ pub trait BulwarkFirewallStrategy: Send + Sync {
 }
 
 // ============================================================================
-// BulwarkFirewallStrategyDefault：默认实现（委托 BulwarkInterface 回调）
+// BulwarkPermissionStrategyDefault：默认实现（委托 BulwarkInterface 回调）
 // ============================================================================
 
-/// `BulwarkFirewallStrategy` 的默认实现，持有 `BulwarkInterface` 回调获取权限/角色数据。
+/// `BulwarkPermissionStrategy` 的默认实现，持有 `BulwarkInterface` 回调获取权限/角色数据。
 ///
 /// [借鉴 Sa-Token] 对应 Sa-Token 的 `StpInterface` 回调模式：
 /// 框架不假定权限/角色数据来源（数据库 / YAML / 内存等），
@@ -180,7 +180,7 @@ pub trait BulwarkFirewallStrategy: Send + Sync {
 /// - `dao`：注入后启用权限缓存（`cache_permission` / `get_cached_permission`）
 /// - `role_hierarchy`：角色层级映射（如 `"admin" → ["user"]`），空时保持 0.1.0 行为
 /// - `plugin_manager`：注入后 `check_permission` 前后触发插件钩子（Err 仅 warn 不中断）
-pub struct BulwarkFirewallStrategyDefault {
+pub struct BulwarkPermissionStrategyDefault {
     /// 权限/角色数据回调。
     interface: Arc<dyn BulwarkInterface>,
     /// 0.2.0：可选 PermissionChecker，注入后 check_permission 委托到它。
@@ -199,14 +199,14 @@ pub struct BulwarkFirewallStrategyDefault {
     listener_manager: Option<Arc<BulwarkListenerManager>>,
 }
 
-impl BulwarkFirewallStrategyDefault {
+impl BulwarkPermissionStrategyDefault {
     /// 创建默认实现实例。
     ///
     /// # 参数
     /// - `interface`: 权限/角色数据回调（业务方实现）。
     ///
     /// # 返回
-    /// 新建的 `BulwarkFirewallStrategyDefault` 实例（0.2.0 扩展字段均为 None/空，
+    /// 新建的 `BulwarkPermissionStrategyDefault` 实例（0.2.0 扩展字段均为 None/空，
     /// 行为与 0.1.0 完全一致）。
     pub fn new(interface: Arc<dyn BulwarkInterface>) -> Self {
         Self {
@@ -354,7 +354,7 @@ impl BulwarkFirewallStrategyDefault {
 }
 
 #[async_trait]
-impl BulwarkFirewallStrategy for BulwarkFirewallStrategyDefault {
+impl BulwarkPermissionStrategy for BulwarkPermissionStrategyDefault {
     async fn get_permission_list(&self, login_id: i64) -> BulwarkResult<Vec<String>> {
         self.interface.get_permission_list(login_id).await
     }
@@ -479,7 +479,7 @@ impl BulwarkFirewallStrategy for BulwarkFirewallStrategyDefault {
     }
 }
 
-impl BulwarkFirewallStrategyDefault {
+impl BulwarkPermissionStrategyDefault {
     /// 广播 FirewallBlock 事件（v0.4.2 新增，依据 spec listener-events-extend R-001）。
     ///
     /// 仅在注入 `listener_manager` 且启用 `listener` feature 时广播，否则为 no-op。
@@ -549,9 +549,9 @@ mod tests {
         }
     }
 
-    /// 辅助函数：创建 BulwarkFirewallStrategyDefault 实例。
-    fn make_firewall(interface: MockInterface) -> BulwarkFirewallStrategyDefault {
-        BulwarkFirewallStrategyDefault::new(Arc::new(interface))
+    /// 辅助函数：创建 BulwarkPermissionStrategyDefault 实例。
+    fn make_firewall(interface: MockInterface) -> BulwarkPermissionStrategyDefault {
+        BulwarkPermissionStrategyDefault::new(Arc::new(interface))
     }
 
     // ------------------------------------------------------------------------
@@ -802,7 +802,7 @@ mod tests {
     async fn check_permission_delegates_to_permission_checker() {
         let iface = MockInterface::new();
         let pc = Arc::new(MockPermissionChecker { perm_result: true });
-        let fw = BulwarkFirewallStrategyDefault::new(Arc::new(iface)).with_permission_checker(pc);
+        let fw = BulwarkPermissionStrategyDefault::new(Arc::new(iface)).with_permission_checker(pc);
 
         // PermissionChecker 返回 true，即使 interface 中无权限记录
         assert!(
@@ -816,7 +816,7 @@ mod tests {
     async fn check_permission_delegates_returns_false() {
         let iface = MockInterface::new();
         let pc = Arc::new(MockPermissionChecker { perm_result: false });
-        let fw = BulwarkFirewallStrategyDefault::new(Arc::new(iface)).with_permission_checker(pc);
+        let fw = BulwarkPermissionStrategyDefault::new(Arc::new(iface)).with_permission_checker(pc);
 
         assert!(
             !fw.check_permission(1001, "user:read").await.unwrap(),
@@ -831,7 +831,7 @@ mod tests {
     async fn check_permission_without_checker_falls_back_to_interface() {
         let mut iface = MockInterface::new();
         iface.set_permissions(1001, &["user:read"]);
-        let fw = BulwarkFirewallStrategyDefault::new(Arc::new(iface));
+        let fw = BulwarkPermissionStrategyDefault::new(Arc::new(iface));
 
         assert!(
             fw.check_permission(1001, "user:read").await.unwrap(),
@@ -847,8 +847,8 @@ mod tests {
     fn make_firewall_with_hierarchy(
         interface: MockInterface,
         hierarchy: HashMap<String, Vec<String>>,
-    ) -> BulwarkFirewallStrategyDefault {
-        BulwarkFirewallStrategyDefault::new(Arc::new(interface)).with_role_hierarchy(hierarchy)
+    ) -> BulwarkPermissionStrategyDefault {
+        BulwarkPermissionStrategyDefault::new(Arc::new(interface)).with_role_hierarchy(hierarchy)
     }
 
     /// 验证层级角色：admin 隐含持有 user。
@@ -945,7 +945,7 @@ mod tests {
         iface.set_permissions(1001, &["user:read"]);
         // BulwarkPluginManager::new() 收集所有 inventory 注册的插件
         let pm = Arc::new(BulwarkPluginManager::new());
-        let fw = BulwarkFirewallStrategyDefault::new(Arc::new(iface)).with_plugin_manager(pm);
+        let fw = BulwarkPermissionStrategyDefault::new(Arc::new(iface)).with_plugin_manager(pm);
 
         // 插件钩子不应中断主流程，校验结果应正常返回
         assert!(
@@ -965,7 +965,7 @@ mod tests {
         // PluginManager 包含 ErrPlugin（on_permission_check 返回 Err），
         // 但主流程不应被中断
         let pm = Arc::new(BulwarkPluginManager::new());
-        let fw = BulwarkFirewallStrategyDefault::new(Arc::new(iface)).with_plugin_manager(pm);
+        let fw = BulwarkPermissionStrategyDefault::new(Arc::new(iface)).with_plugin_manager(pm);
 
         assert!(
             fw.check_permission(1001, "user:read").await.unwrap(),
@@ -1019,7 +1019,7 @@ mod tests {
     async fn cache_permission_writes_and_reads_back() {
         let dao = Arc::new(MockCacheDao::new());
         let iface = MockInterface::new();
-        let fw = BulwarkFirewallStrategyDefault::new(Arc::new(iface)).with_dao(dao.clone());
+        let fw = BulwarkPermissionStrategyDefault::new(Arc::new(iface)).with_dao(dao.clone());
 
         fw.cache_permission(1001, "user:read", true, 300)
             .await
@@ -1045,7 +1045,7 @@ mod tests {
     async fn get_cached_permission_miss_returns_none() {
         let dao = Arc::new(MockCacheDao::new());
         let iface = MockInterface::new();
-        let fw = BulwarkFirewallStrategyDefault::new(Arc::new(iface)).with_dao(dao);
+        let fw = BulwarkPermissionStrategyDefault::new(Arc::new(iface)).with_dao(dao);
 
         let cached = fw.get_cached_permission(1001, "user:delete").await.unwrap();
         assert!(cached.is_none(), "未缓存的权限应返回 None");
@@ -1058,7 +1058,7 @@ mod tests {
     async fn cache_permission_overwrite() {
         let dao = Arc::new(MockCacheDao::new());
         let iface = MockInterface::new();
-        let fw = BulwarkFirewallStrategyDefault::new(Arc::new(iface)).with_dao(dao);
+        let fw = BulwarkPermissionStrategyDefault::new(Arc::new(iface)).with_dao(dao);
 
         // 第一次缓存 true
         fw.cache_permission(1001, "user:read", true, 300)
@@ -1089,7 +1089,7 @@ mod tests {
         let mut iface = MockInterface::new();
         // interface 中无 user:read 权限
         iface.set_permissions(1001, &[]);
-        let fw = BulwarkFirewallStrategyDefault::new(Arc::new(iface)).with_dao(dao.clone());
+        let fw = BulwarkPermissionStrategyDefault::new(Arc::new(iface)).with_dao(dao.clone());
 
         // 预先写入缓存 true（与 interface 实际权限矛盾）
         fw.cache_permission(1001, "user:read", true, 300)
@@ -1130,7 +1130,7 @@ mod tests {
     async fn check_login_hooks_passes_with_hook() {
         let iface = MockInterface::new();
         let hook = Arc::new(BulwarkFirewallCheckHookDefault::new());
-        let fw = BulwarkFirewallStrategyDefault::new(Arc::new(iface)).with_firewall_hook(hook);
+        let fw = BulwarkPermissionStrategyDefault::new(Arc::new(iface)).with_firewall_hook(hook);
         let ctx = LoginContext::new(1001);
 
         // hook 计数器为空，所有检查应通过
@@ -1148,7 +1148,7 @@ mod tests {
         let iface = MockInterface::new();
         let hook = Arc::new(BulwarkFirewallCheckHookDefault::new());
         let fw =
-            BulwarkFirewallStrategyDefault::new(Arc::new(iface)).with_firewall_hook(hook.clone());
+            BulwarkPermissionStrategyDefault::new(Arc::new(iface)).with_firewall_hook(hook.clone());
         let ctx = LoginContext::new(1001).with_ip("1.2.3.4");
 
         // 记录 10 次失败（达到阈值）
@@ -1173,7 +1173,7 @@ mod tests {
         let iface = MockInterface::new();
         let hook = Arc::new(BulwarkFirewallCheckHookDefault::new());
         let fw =
-            BulwarkFirewallStrategyDefault::new(Arc::new(iface)).with_firewall_hook(hook.clone());
+            BulwarkPermissionStrategyDefault::new(Arc::new(iface)).with_firewall_hook(hook.clone());
         let ctx = LoginContext::new(1001); // 无 IP，仅触发暴力破解检测
 
         // 记录 5 次失败（达到阈值）
@@ -1194,7 +1194,7 @@ mod tests {
         let iface = MockInterface::new();
         let hook = Arc::new(BulwarkFirewallCheckHookDefault::new());
         let fw =
-            BulwarkFirewallStrategyDefault::new(Arc::new(iface)).with_firewall_hook(hook.clone());
+            BulwarkPermissionStrategyDefault::new(Arc::new(iface)).with_firewall_hook(hook.clone());
 
         // 注入后，记录失败并触发检测应能阻断
         let ctx = LoginContext::new(1001).with_ip("9.9.9.9");
@@ -1248,7 +1248,7 @@ mod tests {
             order: order.clone(),
         });
         let iface = MockInterface::new();
-        let fw = BulwarkFirewallStrategyDefault::new(Arc::new(iface)).with_firewall_hook(hook);
+        let fw = BulwarkPermissionStrategyDefault::new(Arc::new(iface)).with_firewall_hook(hook);
         let ctx = LoginContext::new(1001);
 
         fw.check_login_hooks(1001, &ctx).await.unwrap();
@@ -1298,7 +1298,7 @@ mod tests {
             called: called.clone(),
         });
         let iface = MockInterface::new();
-        let fw = BulwarkFirewallStrategyDefault::new(Arc::new(iface)).with_firewall_hook(hook);
+        let fw = BulwarkPermissionStrategyDefault::new(Arc::new(iface)).with_firewall_hook(hook);
         let ctx = LoginContext::new(1001);
 
         let result = fw.check_login_hooks(1001, &ctx).await;
@@ -1324,7 +1324,7 @@ mod tests {
     fn with_listener_manager_sets_field() {
         use crate::listener::BulwarkListenerManager;
         let lm = Arc::new(BulwarkListenerManager::new());
-        let fw = BulwarkFirewallStrategyDefault::new(Arc::new(MockInterface::new()))
+        let fw = BulwarkPermissionStrategyDefault::new(Arc::new(MockInterface::new()))
             .with_listener_manager(lm);
         assert!(
             fw.listener_manager.is_some(),
@@ -1363,7 +1363,7 @@ mod tests {
         let mut iface = MockInterface::new();
         iface.set_permissions(1001, &["user:read"]);
         let fw =
-            BulwarkFirewallStrategyDefault::new(Arc::new(iface)).with_dao(Arc::new(FailingDao));
+            BulwarkPermissionStrategyDefault::new(Arc::new(iface)).with_dao(Arc::new(FailingDao));
         // 缓存写入失败但 check_permission 仍应返回 true（持有权限）
         let result = fw.check_permission(1001, "user:read").await;
         assert!(
@@ -1401,7 +1401,7 @@ mod tests {
             }
         }
 
-        let fw = BulwarkFirewallStrategyDefault::new(Arc::new(iface))
+        let fw = BulwarkPermissionStrategyDefault::new(Arc::new(iface))
             .with_firewall_hook(Arc::new(GeoFailHook))
             .with_listener_manager(lm);
         let ctx = LoginContext::new(1001);
@@ -1440,7 +1440,7 @@ mod tests {
             }
         }
 
-        let fw = BulwarkFirewallStrategyDefault::new(Arc::new(iface))
+        let fw = BulwarkPermissionStrategyDefault::new(Arc::new(iface))
             .with_firewall_hook(Arc::new(TokenReuseFailHook))
             .with_listener_manager(lm);
         let ctx = LoginContext::new(1001);
@@ -1478,7 +1478,7 @@ mod tests {
             }
         }
 
-        let fw = BulwarkFirewallStrategyDefault::new(Arc::new(iface))
+        let fw = BulwarkPermissionStrategyDefault::new(Arc::new(iface))
             .with_firewall_hook(Arc::new(DeviceFailHook))
             .with_listener_manager(lm);
         let ctx = LoginContext::new(1001);

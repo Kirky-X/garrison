@@ -39,7 +39,7 @@
 - ✅ DAO 抽象（`BulwarkDao` trait + oxcache + dbnexus）
 - ✅ 双模会话管理（Account-Session + Token-Session）
 - ✅ 核心 API（`BulwarkLogic` + `BulwarkUtil`）
-- ✅ 权限校验策略（`BulwarkFirewallStrategy`）
+- ✅ 权限校验策略（`BulwarkPermissionStrategy`）
 - ✅ 全局管理器（`BulwarkManager` + inventory 编译期注册）
 - ✅ axum 集成（extractor + `BulwarkRouter` + Interceptor）
 

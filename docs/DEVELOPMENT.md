@@ -127,7 +127,7 @@ bulwark/
 │   ├── config/mod.rs         # 配置系统（BulwarkConfig + ConfigLoader）
 │   ├── annotation/mod.rs     # 注解系统
 │   ├── router/mod.rs         # 路由权限（BulwarkRouter）
-│   ├── strategy/mod.rs       # 策略模式（BulwarkFirewallStrategy）
+│   ├── strategy/mod.rs       # 策略模式（BulwarkPermissionStrategy）
 │   ├── exception/mod.rs      # 异常系统
 │   ├── listener/mod.rs       # 事件监听（feature 门控）
 │   ├── plugin/mod.rs         # 插件系统

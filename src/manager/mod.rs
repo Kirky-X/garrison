@@ -39,7 +39,7 @@ use crate::listener::BulwarkListenerManager;
 use crate::plugin::BulwarkPluginManager;
 use crate::session::BulwarkSession;
 use crate::stp::{BulwarkInterface, BulwarkLogic, BulwarkLogicDefault};
-use crate::strategy::{BulwarkFirewallStrategy, BulwarkFirewallStrategyDefault, Strategy};
+use crate::strategy::{BulwarkPermissionStrategy, BulwarkPermissionStrategyDefault, Strategy};
 use once_cell::sync::Lazy;
 use parking_lot::RwLock;
 use std::sync::Arc;
@@ -82,7 +82,7 @@ impl BulwarkManager {
     /// # 行为
     /// 1. 校验配置合法性
     /// 2. 构造 `BulwarkSession::new(dao, timeout, active_timeout)`
-    /// 3. 构造 `BulwarkFirewallStrategyDefault::new(interface)`
+    /// 3. 构造 `BulwarkPermissionStrategyDefault::new(interface)`
     /// 4. 通过 `inventory::iter::<BulwarkLogicFactoryEntry>()` 找到注册的 factory
     /// 5. 调用 `factory.build(session, config, firewall)` 生成 `Arc<dyn BulwarkLogic>`
     /// 6. 若无 factory 注册，使用默认 `BulwarkLogicFactoryDefault` 构造 `BulwarkLogicDefault`
@@ -151,8 +151,8 @@ impl BulwarkManager {
         ));
 
         // 4. 构造 firewall，注入 permission_checker + plugin_manager
-        let firewall: Arc<dyn BulwarkFirewallStrategy> = Arc::new(
-            BulwarkFirewallStrategyDefault::new(interface)
+        let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(
+            BulwarkPermissionStrategyDefault::new(interface)
                 .with_permission_checker(permission_checker.clone())
                 .with_plugin_manager(plugin_manager.clone()),
         );
@@ -318,7 +318,7 @@ pub struct BulwarkLogicFactoryContext {
 pub type BulwarkLogicFactoryFn = fn(
     session: Arc<BulwarkSession>,
     config: Arc<BulwarkConfig>,
-    firewall: Arc<dyn BulwarkFirewallStrategy>,
+    firewall: Arc<dyn BulwarkPermissionStrategy>,
     ctx: &BulwarkLogicFactoryContext,
 ) -> BulwarkResult<Arc<dyn BulwarkLogic>>;
 
@@ -362,7 +362,7 @@ inventory::collect!(BulwarkLogicFactoryEntry);
 pub fn bulwark_logic_factory_default(
     session: Arc<BulwarkSession>,
     config: Arc<BulwarkConfig>,
-    firewall: Arc<dyn BulwarkFirewallStrategy>,
+    firewall: Arc<dyn BulwarkPermissionStrategy>,
     ctx: &BulwarkLogicFactoryContext,
 ) -> BulwarkResult<Arc<dyn BulwarkLogic>> {
     let mut builder = BulwarkLogicDefault::new(session, config, firewall);
@@ -720,8 +720,8 @@ mod tests {
 
         let timeout = u64::try_from(config.timeout).unwrap();
         let session = Arc::new(BulwarkSession::new(dao, timeout, timeout));
-        let firewall: Arc<dyn BulwarkFirewallStrategy> =
-            Arc::new(BulwarkFirewallStrategyDefault::new(interface));
+        let firewall: Arc<dyn BulwarkPermissionStrategy> =
+            Arc::new(BulwarkPermissionStrategyDefault::new(interface));
 
         // 0.2.1: factory 签名新增 ctx 参数，构造空 context 验证向后兼容
         #[cfg(feature = "listener")]

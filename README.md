@@ -130,7 +130,7 @@ graph TD
     Util --> Manager["BulwarkManager 单例"]
     Manager --> Logic["BulwarkLogic trait"]
     Logic --> Session["BulwarkSession"]
-    Logic --> Strategy["BulwarkFirewallStrategy"]
+    Logic --> Strategy["BulwarkPermissionStrategy"]
     Session --> Dao["BulwarkDao trait"]
     Strategy --> Interface["BulwarkInterface 业务回调"]
     Dao --> Oxcache["oxcache (L1 moka + L2 redis)"]
@@ -146,7 +146,7 @@ graph TD
 
 - `bulwark-stp`：核心 API（`BulwarkLogic` trait + `BulwarkUtil` 静态委托 + task_local 上下文）
 - `bulwark-session`：双模会话管理（Account-Session + Token-Session）
-- `bulwark-strategy`：权限校验策略（`BulwarkFirewallStrategy` trait）
+- `bulwark-strategy`：权限校验策略（`BulwarkPermissionStrategy` trait）
 - `bulwark-manager`：全局单例 + inventory 工厂注册
 - `bulwark-annotation`：axum extractor 注解系统
 - `bulwark-router`：axum Router 包装 + middleware 拦截

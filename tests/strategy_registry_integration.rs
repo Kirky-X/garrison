@@ -20,7 +20,7 @@ use bulwark::error::BulwarkResult;
 use bulwark::session::BulwarkSession;
 use bulwark::stp::{BulwarkInterface, BulwarkLogic, BulwarkLogicDefault};
 use bulwark::strategy::{
-    BulwarkFirewallStrategyDefault, FirewallStrategy, LoginHandler, LogoutHandler,
+    BulwarkPermissionStrategyDefault, FirewallStrategy, LoginHandler, LogoutHandler,
     PermissionHandler, SessionCreator, Strategy, TokenGenerator,
 };
 use parking_lot::RwLock;
@@ -29,7 +29,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 // ============================================================================
-// MockInterface：BulwarkFirewallStrategyDefault::new() 必需
+// MockInterface：BulwarkPermissionStrategyDefault::new() 必需
 // ============================================================================
 
 struct MockInterface;
@@ -54,7 +54,7 @@ async fn make_logic() -> Arc<dyn BulwarkLogic> {
     let interface: Arc<dyn BulwarkInterface> = Arc::new(MockInterface);
     let timeout = u64::try_from(config.timeout).unwrap_or(3600);
     let session = Arc::new(BulwarkSession::new(dao, timeout, timeout));
-    let firewall = Arc::new(BulwarkFirewallStrategyDefault::new(interface));
+    let firewall = Arc::new(BulwarkPermissionStrategyDefault::new(interface));
     Arc::new(BulwarkLogicDefault::new(session, config, firewall))
 }
 

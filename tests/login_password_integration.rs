@@ -36,7 +36,7 @@ use std::sync::Arc;
 const TENANT: i64 = 0;
 
 // ============================================================================
-// MockInterface：BulwarkFirewallStrategyDefault::new() 必需
+// MockInterface：BulwarkPermissionStrategyDefault::new() 必需
 // ============================================================================
 
 struct MockInterface;
@@ -245,8 +245,8 @@ async fn make_logic_with_password() -> Arc<BulwarkLogicDefault> {
     config.token_style = "uuid".to_string();
     config.timeout = 3600;
     config.throw_on_not_login = true;
-    let firewall: Arc<dyn bulwark::strategy::BulwarkFirewallStrategy> = Arc::new(
-        bulwark::strategy::BulwarkFirewallStrategyDefault::new(Arc::new(MockInterface)),
+    let firewall: Arc<dyn bulwark::strategy::BulwarkPermissionStrategy> = Arc::new(
+        bulwark::strategy::BulwarkPermissionStrategyDefault::new(Arc::new(MockInterface)),
     );
 
     // BulwarkListenerManager::new() 自动收集 inventory 注册的 listener
@@ -340,8 +340,8 @@ async fn login_with_password_fails_without_hasher() {
     let mut config = bulwark::config::BulwarkConfig::default_config();
     config.token_style = "uuid".to_string();
     config.timeout = 3600;
-    let firewall: Arc<dyn bulwark::strategy::BulwarkFirewallStrategy> = Arc::new(
-        bulwark::strategy::BulwarkFirewallStrategyDefault::new(Arc::new(MockInterface)),
+    let firewall: Arc<dyn bulwark::strategy::BulwarkPermissionStrategy> = Arc::new(
+        bulwark::strategy::BulwarkPermissionStrategyDefault::new(Arc::new(MockInterface)),
     );
     let logic_no_hasher = Arc::new(BulwarkLogicDefault::new(
         session,
@@ -372,8 +372,8 @@ async fn login_with_password_fails_without_user_repository() {
     let mut config = bulwark::config::BulwarkConfig::default_config();
     config.token_style = "uuid".to_string();
     config.timeout = 3600;
-    let firewall: Arc<dyn bulwark::strategy::BulwarkFirewallStrategy> = Arc::new(
-        bulwark::strategy::BulwarkFirewallStrategyDefault::new(Arc::new(MockInterface)),
+    let firewall: Arc<dyn bulwark::strategy::BulwarkPermissionStrategy> = Arc::new(
+        bulwark::strategy::BulwarkPermissionStrategyDefault::new(Arc::new(MockInterface)),
     );
     let logic_no_repo = Arc::new(
         BulwarkLogicDefault::new(session, Arc::new(config), firewall)

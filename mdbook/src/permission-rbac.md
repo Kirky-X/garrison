@@ -1,6 +1,6 @@
 # 权限与角色（RBAC）
 
-Bulwark 提供 RBAC 权限模型，通过 `BulwarkStrategy` 与 `BulwarkFirewallStrategy` 编排权限/角色校验。
+Bulwark 提供 RBAC 权限模型，通过 `BulwarkStrategy` 与 `BulwarkPermissionStrategy` 编排权限/角色校验。
 
 ## 核心 API
 
@@ -33,18 +33,18 @@ impl BulwarkInterface for MyInterface {
 }
 ```
 
-## BulwarkStrategy 与 BulwarkFirewallStrategy
+## BulwarkStrategy 与 BulwarkPermissionStrategy
 
 | 类型 | 职责 |
 |:---|:---|
 | `BulwarkStrategy` | 权限/角色校验的顶层策略抽象 |
-| `BulwarkFirewallStrategy` | 默认实现，编排 interface 查询、缓存、插件钩子 |
-| `BulwarkFirewallStrategyDefault` | 0.2.0 扩展，支持 `with_permission_checker` / `with_role_hierarchy` / `with_plugin_manager` / `with_dao`（权限缓存） |
+| `BulwarkPermissionStrategy` | 默认实现，编排 interface 查询、缓存、插件钩子 |
+| `BulwarkPermissionStrategyDefault` | 0.2.0 扩展，支持 `with_permission_checker` / `with_role_hierarchy` / `with_plugin_manager` / `with_dao`（权限缓存） |
 
-`BulwarkFirewallStrategyDefault` 通过 builder 注入依赖：
+`BulwarkPermissionStrategyDefault` 通过 builder 注入依赖：
 
 ```rust
-let strategy = BulwarkFirewallStrategyDefault::new(interface.clone())
+let strategy = BulwarkPermissionStrategyDefault::new(interface.clone())
     .with_permission_checker(checker)
     .with_role_hierarchy(hierarchy)
     .with_plugin_manager(plugin_mgr)
@@ -59,7 +59,7 @@ let strategy = BulwarkFirewallStrategyDefault::new(interface.clone())
 
 ## 权限缓存
 
-启用 `with_dao` 后，`BulwarkFirewallStrategyDefault` 会将权限/角色列表缓存到 oxcache，避免每次校验都查询 `BulwarkInterface`。缓存 TTL 与会话一致，登出时自动失效。
+启用 `with_dao` 后，`BulwarkPermissionStrategyDefault` 会将权限/角色列表缓存到 oxcache，避免每次校验都查询 `BulwarkInterface`。缓存 TTL 与会话一致，登出时自动失效。
 
 ## 校验流程
 
