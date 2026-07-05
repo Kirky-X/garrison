@@ -9,12 +9,16 @@
 //!
 //! 启用 `social-wechat` feature 时编译，依赖 `protocol-oauth2`（提供 reqwest HTTP client）。
 
-use crate::error::BulwarkResult;
-use crate::protocol::social::{SocialLoginProvider, SocialUserInfo};
+use crate::error::{BulwarkError, BulwarkResult};
+use crate::protocol::social::{SocialLoginProvider, SocialProvider, SocialUserInfo};
 use async_trait::async_trait;
+use serde_json::Value;
 
 /// 微信扫码登录授权页端点。
 const WECHAT_AUTH_URL: &str = "https://open.weixin.qq.com/connect/qrconnect";
+
+/// 微信 OAuth2 access_token 端点（默认值，可通过 `with_token_url` 覆盖以适配测试）。
+const WECHAT_TOKEN_URL: &str = "https://api.weixin.qq.com/sns/oauth2/access_token";
 
 /// 微信扫码登录 provider（依据 spec social-login R-social-login-002）。
 ///
@@ -36,6 +40,8 @@ pub struct WechatProvider {
     client_secret: String,
     /// HTTP 客户端（复用连接池）。
     http: reqwest::Client,
+    /// access_token 端点 URL（默认为微信官方端点，测试时可覆盖）。
+    token_url: String,
 }
 
 impl WechatProvider {
@@ -49,7 +55,15 @@ impl WechatProvider {
             client_id: client_id.to_string(),
             client_secret: client_secret.to_string(),
             http: reqwest::Client::new(),
+            token_url: WECHAT_TOKEN_URL.to_string(),
         }
+    }
+
+    /// 覆盖 access_token 端点 URL（用于测试时指向 mock server）。
+    #[must_use]
+    pub fn with_token_url(mut self, token_url: impl Into<String>) -> Self {
+        self.token_url = token_url.into();
+        self
     }
 }
 
@@ -73,12 +87,60 @@ impl SocialLoginProvider for WechatProvider {
         ))
     }
 
-    /// 用授权码换取用户信息（T101-T102 实现）。
-    async fn exchange_token(&self, _code: &str, _state: &str) -> BulwarkResult<SocialUserInfo> {
-        // 抑制 dead_code：client_secret 与 http 将在 T101-T102 exchange_token 实现中读取
-        let _ = (&self.client_secret, &self.http);
-        // T101-T102 将实现：POST https://api.weixin.qq.com/sns/oauth2/access_token 解析 access_token/openid/unionid
-        todo!("T101-T102: implement exchange_token with mockito test")
+    /// 用授权码换取用户信息（依据 spec social-login R-social-login-002）。
+    ///
+    /// 调用微信 `sns/oauth2/access_token` 端点，用授权码换取 access_token + openid + unionid，
+    /// 返回 `SocialUserInfo`（nickname/avatar 为 None，需调用 `get_user_info` 获取）。
+    async fn exchange_token(&self, code: &str, _state: &str) -> BulwarkResult<SocialUserInfo> {
+        let url = format!(
+            "{}?appid={}&secret={}&code={}&grant_type=authorization_code",
+            self.token_url,
+            urlencoding::encode(&self.client_id),
+            urlencoding::encode(&self.client_secret),
+            urlencoding::encode(code),
+        );
+        let resp =
+            self.http.get(&url).send().await.map_err(|e| {
+                BulwarkError::Network(format!("wechat token request failed: {}", e))
+            })?;
+
+        let raw: Value = resp.json().await.map_err(|e| {
+            BulwarkError::Network(format!("wechat token response parse failed: {}", e))
+        })?;
+
+        // 微信错误响应含 errcode != 0（成功时 errcode 缺失或为 0）
+        if let Some(errcode) = raw.get("errcode").and_then(|v| v.as_i64()) {
+            if errcode != 0 {
+                let errmsg = raw
+                    .get("errmsg")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown wechat error");
+                return Err(BulwarkError::Network(format!(
+                    "wechat error {}: {}",
+                    errcode, errmsg
+                )));
+            }
+        }
+
+        let provider_user_id = raw
+            .get("openid")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| BulwarkError::Network("wechat response missing openid field".into()))?
+            .to_string();
+
+        let union_id = raw
+            .get("unionid")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
+        Ok(SocialUserInfo {
+            provider: SocialProvider::Wechat,
+            provider_user_id,
+            nickname: None,
+            avatar: None,
+            union_id,
+            raw,
+        })
     }
 
     /// 用 access_token 获取用户信息（后续任务实现）。
@@ -137,5 +199,38 @@ mod tests {
             "URL 应含 state 参数，实际: {}",
             url
         );
+    }
+
+    /// 验证 `WechatProvider::exchange_token` 解析微信 access_token 响应
+    ///（依据 spec social-login R-social-login-002 验收标准）。
+    ///
+    /// Red 阶段：`with_token_url` 方法不存在 → 编译失败。
+    /// Green 阶段（T102）：实现 exchange_token 后测试通过。
+    #[tokio::test]
+    async fn wechat_provider_exchange_token_parses_access_token_from_response() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/sns/oauth2/access_token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "access_token": "tok123",
+                "openid": "openid456",
+                "unionid": "union789",
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = WechatProvider::new("wx_appid", "wx_secret")
+            .with_token_url(format!("{}/sns/oauth2/access_token", server.uri()));
+        let user_info = provider
+            .exchange_token("code", "state")
+            .await
+            .expect("exchange_token 应返回 Ok");
+
+        assert_eq!(user_info.provider_user_id, "openid456");
+        assert_eq!(user_info.union_id.as_deref(), Some("union789"));
     }
 }
