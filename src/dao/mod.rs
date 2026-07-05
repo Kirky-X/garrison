@@ -186,6 +186,67 @@ pub trait BulwarkDao: Send + Sync {
         }
         Ok(value)
     }
+
+    /// 查询社交账号绑定关系（v0.5.0 新增，依据 spec social-login R-social-login-004）。
+    ///
+    /// 按 `(tenant_id, provider, provider_user_id)` 三元组查询 `social_bindings` 表，
+    /// 返回关联的 `login_id`。
+    ///
+    /// # 参数
+    /// - `tenant_id`: 租户 ID（0=默认租户）。
+    /// - `provider`: 社交平台标识（`"wechat"` / `"alipay"` / `"wechat_mini_app"`）。
+    /// - `provider_user_id`: 第三方平台用户唯一 ID（微信 openid / 支付宝 user_id）。
+    ///
+    /// # 返回
+    /// - `Ok(Some(login_id))`: 绑定关系存在，返回关联的 login_id。
+    /// - `Ok(None)`: 绑定关系不存在（首次登录）。
+    ///
+    /// # 默认实现
+    /// 返回 `BulwarkError::NotImplemented`（BulwarkDao 是 KV 缓存抽象，不支持 SQL SELECT）。
+    /// `SocialBindingService` 实际用 `DbPool` 查 SQL，不调用此方法。
+    /// 此方法仅为满足 spec trait 契约，供未来纯 KV 后端实现重写。
+    async fn find_social_binding(
+        &self,
+        _tenant_id: i64,
+        _provider: &str,
+        _provider_user_id: &str,
+    ) -> BulwarkResult<Option<i64>> {
+        Err(BulwarkError::NotImplemented(format!(
+            "find_social_binding 未实现：{} 后端不支持 SQL 查询（SocialBindingService 用 DbPool）",
+            std::any::type_name::<Self>()
+        )))
+    }
+
+    /// 插入社交账号绑定关系（v0.5.0 新增，依据 spec social-login R-social-login-004）。
+    ///
+    /// 将 `(tenant_id, login_id, provider, provider_user_id, union_id)` 写入 `social_bindings` 表。
+    ///
+    /// # 参数
+    /// - `tenant_id`: 租户 ID（0=默认租户）。
+    /// - `login_id`: Bulwark 内部用户 ID（INTEGER，由 `SocialBindingService::find_or_create` 生成）。
+    /// - `provider`: 社交平台标识（`"wechat"` / `"alipay"` / `"wechat_mini_app"`）。
+    /// - `provider_user_id`: 第三方平台用户唯一 ID。
+    /// - `union_id`: 跨应用统一 ID（微信 unionid，可空）。
+    /// - `created_at`: 创建时间戳（Unix 秒）。
+    ///
+    /// # 默认实现
+    /// 返回 `BulwarkError::NotImplemented`（BulwarkDao 是 KV 缓存抽象，不支持 SQL INSERT）。
+    /// `SocialBindingService` 实际用 `DbPool` 执行 INSERT，不调用此方法。
+    /// 此方法仅为满足 spec trait 契约，供未来纯 KV 后端实现重写。
+    async fn insert_social_binding(
+        &self,
+        _tenant_id: i64,
+        _login_id: i64,
+        _provider: &str,
+        _provider_user_id: &str,
+        _union_id: Option<&str>,
+        _created_at: i64,
+    ) -> BulwarkResult<()> {
+        Err(BulwarkError::NotImplemented(format!(
+            "insert_social_binding 未实现：{} 后端不支持 SQL 插入（SocialBindingService 用 DbPool）",
+            std::any::type_name::<Self>()
+        )))
+    }
 }
 
 // ============================================================================

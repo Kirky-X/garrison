@@ -327,6 +327,39 @@ pub use listener::audit::AuditQuery;
 pub use listener::audit::AuditLogListener;
 
 // ============================================================================
+// 社交登录（v0.5.0 新增，依据 proposal H2 / spec social-login）
+// ============================================================================
+//
+// 业务方可通过 `use bulwark::{SocialLoginProvider, SocialUserInfo, ...}` 直接使用，
+// 无需写完整路径 `bulwark::protocol::social::SocialLoginProvider`。
+//
+// - `SocialLoginProvider` / `SocialUserInfo` / `SocialProvider`：公共 trait/结构，无 feature 依赖
+// - `WechatProvider`：需 `social-wechat` feature（微信扫码登录）
+// - `AlipayProvider`：需 `social-alipay` feature（支付宝授权登录）
+// - `SocialBindingService`：需 `db-sqlite` feature（依赖 DbPool 查 social_bindings 表）
+
+/// 社交登录服务提供方 trait（get_authorization_url / exchange_token / get_user_info）。
+pub use protocol::social::SocialLoginProvider;
+
+/// 社交用户信息（provider + provider_user_id + union_id + raw JSON）。
+pub use protocol::social::SocialUserInfo;
+
+/// 社交登录平台标识（Wechat / Alipay / WechatMiniApp）。
+pub use protocol::social::SocialProvider;
+
+/// 微信扫码登录 provider（需 `social-wechat` feature）。
+#[cfg(feature = "social-wechat")]
+pub use protocol::social::wechat::WechatProvider;
+
+/// 支付宝授权登录 provider（需 `social-alipay` feature）。
+#[cfg(feature = "social-alipay")]
+pub use protocol::social::alipay::AlipayProvider;
+
+/// 社交账号绑定服务（find_or_create，需 `db-sqlite` feature）。
+#[cfg(feature = "db-sqlite")]
+pub use protocol::social::SocialBindingService;
+
+// ============================================================================
 // 安全防护套件（v0.5.0 新增，依据 proposal H5 / spec firewall）
 // ============================================================================
 //
