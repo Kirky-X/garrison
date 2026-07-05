@@ -202,6 +202,7 @@ full = [
     "alone-cache", "parameter-query",
     "listener", "metrics-prometheus", "observability-otlp", "grpc", "i18n",
     "annotation-macros",
+    "decision-trace", "tenant-isolation",
 ]
 
 # 注意：production 原用 db-postgres，但 dbnexus 0.2 不支持，0.1.0 降级为 db-sqlite
@@ -209,6 +210,7 @@ production = [
     "cache-redis", "db-sqlite", "web-axum",
     "protocol-jwt", "protocol-sign", "secure-sign",
     "listener", "tracing-log", "metrics-prometheus",
+    "tenant-isolation",
 ]
 
 development = [
