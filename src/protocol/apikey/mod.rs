@@ -88,7 +88,7 @@ fn validate_namespace(namespace: &str) -> BulwarkResult<()> {
 pub struct ApiKeyHandler {
     /// DAO 抽象层，用于 API Key 存储。
     dao: Arc<dyn BulwarkDao>,
-    /// v0.4.2：可选监听器管理器，注入后 rotate 广播 ApiKeyRotate 事件
+    /// v0.4.2：可选监听器管理器，注入后 rotate 广播 TokenRotate 事件
     ///（依据 spec listener-events-extend R-001）。
     #[cfg(feature = "listener")]
     listener_manager: Option<Arc<BulwarkListenerManager>>,
@@ -104,10 +104,10 @@ impl ApiKeyHandler {
         }
     }
 
-    /// 注入 `BulwarkListenerManager`，启用 ApiKeyRotate 事件广播
+    /// 注入 `BulwarkListenerManager`，启用 TokenRotate 事件广播
     ///（v0.4.2 新增，依据 spec listener-events-extend R-001）。
     ///
-    /// 注入后 `rotate` 成功时广播 `BulwarkEvent::ApiKeyRotate`。
+    /// 注入后 `rotate` 成功时广播 `BulwarkEvent::TokenRotate`。
     /// 未注入时为 no-op（向后兼容 0.4.1）。需启用 `listener` feature。
     #[cfg(feature = "listener")]
     pub fn with_listener_manager(mut self, lm: Arc<BulwarkListenerManager>) -> Self {
@@ -328,7 +328,7 @@ impl ApiKeyHandler {
     /// 轮换逻辑：(1) 读取 old_key 的 `ApiKeyInfo`；(2) 校验有效（未吊销、未过期）；
     /// (3) 吊销 old_key；(4) 生成新 key（保留 login_id/scopes/剩余 TTL）；(5) 返回新 key。
     ///
-    /// v0.4.2 扩展：成功时若注入了 `listener_manager`，广播 `BulwarkEvent::ApiKeyRotate`
+    /// v0.4.2 扩展：成功时若注入了 `listener_manager`，广播 `BulwarkEvent::TokenRotate`
     ///（依据 spec listener-events-extend R-001）。
     ///
     /// # 错误
@@ -353,10 +353,10 @@ impl ApiKeyHandler {
         let new_key = self
             .generate(info.login_id, info.scopes, remaining_ttl)
             .await?;
-        // v0.4.2: 广播 ApiKeyRotate 事件（依据 spec listener-events-extend R-001）
+        // v0.4.2: 广播 TokenRotate 事件（依据 spec listener-events-extend R-001）
         #[cfg(feature = "listener")]
         if let Some(lm) = &self.listener_manager {
-            lm.broadcast(&BulwarkEvent::ApiKeyRotate {
+            lm.broadcast(&BulwarkEvent::TokenRotate {
                 old_key: old_key.to_string(),
                 new_key: new_key.clone(),
             })

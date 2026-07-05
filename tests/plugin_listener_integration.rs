@@ -68,7 +68,7 @@ inventory::submit! {
 
 static LISTENER_LOGIN_EVENTS: AtomicUsize = AtomicUsize::new(0);
 static LISTENER_LOGOUT_EVENTS: AtomicUsize = AtomicUsize::new(0);
-static LISTENER_PERM_DENIED_EVENTS: AtomicUsize = AtomicUsize::new(0);
+static LISTENER_PERM_CHECK_EVENTS: AtomicUsize = AtomicUsize::new(0);
 
 struct CountingListener;
 
@@ -82,8 +82,8 @@ impl BulwarkListener for CountingListener {
             BulwarkEvent::Logout { .. } => {
                 LISTENER_LOGOUT_EVENTS.fetch_add(1, Ordering::SeqCst);
             },
-            BulwarkEvent::PermissionDenied { .. } => {
-                LISTENER_PERM_DENIED_EVENTS.fetch_add(1, Ordering::SeqCst);
+            BulwarkEvent::PermissionCheck { .. } => {
+                LISTENER_PERM_CHECK_EVENTS.fetch_add(1, Ordering::SeqCst);
             },
             _ => {},
         }
@@ -109,7 +109,7 @@ fn reset_counters() {
     PLUGIN_PERM_CHECK_CALLS.store(0, Ordering::SeqCst);
     LISTENER_LOGIN_EVENTS.store(0, Ordering::SeqCst);
     LISTENER_LOGOUT_EVENTS.store(0, Ordering::SeqCst);
-    LISTENER_PERM_DENIED_EVENTS.store(0, Ordering::SeqCst);
+    LISTENER_PERM_CHECK_EVENTS.store(0, Ordering::SeqCst);
 }
 
 // ============================================================================
@@ -231,21 +231,21 @@ async fn listener_receives_logout_event() {
     );
 }
 
-/// PermissionDenied 事件广播到 listener（spec Scenario）。
+/// PermissionCheck 事件广播到 listener（spec Scenario）。
 #[tokio::test]
 #[serial_test::serial]
-async fn listener_receives_permission_denied_event() {
+async fn listener_receives_permission_check_event() {
     reset_counters();
     let manager = BulwarkListenerManager::new();
     manager
-        .broadcast(&BulwarkEvent::PermissionDenied {
+        .broadcast(&BulwarkEvent::PermissionCheck {
             login_id: 1001,
             permission: "user:delete".to_string(),
         })
         .await;
     assert!(
-        LISTENER_PERM_DENIED_EVENTS.load(Ordering::SeqCst) >= 1,
-        "CountingListener 应收到 PermissionDenied 事件"
+        LISTENER_PERM_CHECK_EVENTS.load(Ordering::SeqCst) >= 1,
+        "CountingListener 应收到 PermissionCheck 事件"
     );
 }
 
@@ -329,25 +329,25 @@ async fn full_lifecycle_plugin_and_listener_cooperate() {
     );
 }
 
-/// PermissionDenied 事件不被 plugin 触发，仅由 listener 接收（spec Scenario）。
+/// PermissionCheck 事件不被 plugin 触发，仅由 listener 接收（spec Scenario）。
 #[tokio::test]
 #[serial_test::serial]
-async fn permission_denied_event_only_goes_to_listener() {
+async fn permission_check_event_only_goes_to_listener() {
     reset_counters();
     let plugin_manager = BulwarkPluginManager::new();
     let listener_manager = BulwarkListenerManager::new();
 
-    // 权限校验被拒时：plugin 收到 on_permission_check，listener 收到 PermissionDenied
+    // 权限校验被拒时：plugin 收到 on_permission_check，listener 收到 PermissionCheck
     plugin_manager.on_permission_check(1001, "user:delete");
     listener_manager
-        .broadcast(&BulwarkEvent::PermissionDenied {
+        .broadcast(&BulwarkEvent::PermissionCheck {
             login_id: 1001,
             permission: "user:delete".to_string(),
         })
         .await;
 
     assert!(PLUGIN_PERM_CHECK_CALLS.load(Ordering::SeqCst) >= 1);
-    assert!(LISTENER_PERM_DENIED_EVENTS.load(Ordering::SeqCst) >= 1);
+    assert!(LISTENER_PERM_CHECK_EVENTS.load(Ordering::SeqCst) >= 1);
 }
 
 // ============================================================================

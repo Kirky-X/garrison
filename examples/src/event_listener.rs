@@ -49,12 +49,12 @@ impl BulwarkListener for AuditListener {
                     &token[..8.min(token.len())]
                 );
             },
-            BulwarkEvent::PermissionDenied {
+            BulwarkEvent::PermissionCheck {
                 login_id,
                 permission,
             } => {
                 println!(
-                    "    [AuditListener] PermissionDenied: login_id={}, permission={}",
+                    "    [AuditListener] PermissionCheck: login_id={}, permission={}",
                     login_id, permission
                 );
             },
@@ -138,7 +138,7 @@ pub async fn run() -> BulwarkResult<()> {
     );
 
     // ----------------------------------------------------------------
-    // 3. 广播 Logout / PermissionDenied / TokenExpired 事件
+    // 3. 广播 Logout / PermissionCheck / TokenExpired 事件
     // ----------------------------------------------------------------
     println!("[3] 广播多种事件类型:");
 
@@ -148,7 +148,7 @@ pub async fn run() -> BulwarkResult<()> {
     };
     manager.broadcast(&logout_event).await;
 
-    let denied_event = BulwarkEvent::PermissionDenied {
+    let denied_event = BulwarkEvent::PermissionCheck {
         login_id: 1001,
         permission: "user:delete".to_string(),
     };

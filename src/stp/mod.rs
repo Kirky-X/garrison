@@ -153,17 +153,17 @@ pub trait BulwarkLogic: Send + Sync {
     /// - 会话销毁失败：透传 `BulwarkError`。
     async fn kickout_by_token(&self, token: &str) -> BulwarkResult<()>;
 
-    /// 主动吊销 token：销毁指定 token 的会话并广播 TokenRevoke 事件
+    /// 主动吊销 token：销毁指定 token 的会话并广播 RevokeToken 事件
     /// （v0.4.2 新增，依据 spec listener-events-extend R-002）。
     ///
     /// 与 `logout` 的区别：
     /// - `logout` 从 task_local 读取当前 token，语义是"用户主动登出"
     /// - `revoke_token` 接收显式 token 参数，语义是"管理员/系统吊销特定 token"
-    /// - `revoke_token` 广播 `TokenRevoke` 事件（携带 token），`logout` 广播 `Logout` 事件（携带 login_id+token）
+    /// - `revoke_token` 广播 `RevokeToken` 事件（携带 token），`logout` 广播 `Logout` 事件（携带 login_id+token）
     ///
     /// 与 `kickout_by_token` 的区别：
     /// - `kickout_by_token` 语义是"管理员强制下线"，广播 `Kickout` 事件（携带 login_id+token+reason）
-    /// - `revoke_token` 语义是"token 失效"（如 OAuth2 token revocation），广播 `TokenRevoke` 事件（仅携带 token）
+    /// - `revoke_token` 语义是"token 失效"（如 OAuth2 token revocation），广播 `RevokeToken` 事件（仅携带 token）
     ///
     /// # 参数
     /// - `token`: 待吊销的 token 字符串。
@@ -861,10 +861,10 @@ impl BulwarkLogic for BulwarkLogicDefault {
     async fn revoke_token(&self, token: &str) -> BulwarkResult<()> {
         // 销毁 Token-Session（幂等：token 不存在也返回 Ok）
         self.session.logout(token).await?;
-        // v0.4.2: 广播 TokenRevoke 事件（依据 spec listener-events-extend R-002）
+        // v0.4.2: 广播 RevokeToken 事件（依据 spec listener-events-extend R-002）
         #[cfg(feature = "listener")]
         if let Some(lm) = &self.listener_manager {
-            lm.broadcast(&BulwarkEvent::TokenRevoke {
+            lm.broadcast(&BulwarkEvent::RevokeToken {
                 token: token.to_string(),
             })
             .await;
@@ -1330,7 +1330,7 @@ impl BulwarkUtil {
     /// 主动吊销 token：销毁指定 token 的会话（v0.4.2 新增，依据 spec listener-events-extend R-002）。
     ///
     /// 与 [`kickout_by_token`](Self::kickout_by_token) 的区别：
-    /// - `revoke_token` 广播 `TokenRevoke` 事件（仅携带 token，语义为"token 失效"）
+    /// - `revoke_token` 广播 `RevokeToken` 事件（仅携带 token，语义为"token 失效"）
     /// - `kickout_by_token` 不广播事件（语义为"管理员强制下线"，无对应 listener 事件）
     ///
     /// # 参数
@@ -2721,7 +2721,7 @@ mod tests {
             .is_none());
     }
 
-    /// revoke_token 注入 listener_manager 后广播 TokenRevoke 事件
+    /// revoke_token 注入 listener_manager 后广播 RevokeToken 事件
     /// （v0.4.2 新增，依据 spec listener-events-extend R-002）。
     #[tokio::test]
     async fn revoke_token_with_listener_manager_broadcasts_event() {
@@ -2731,7 +2731,7 @@ mod tests {
             let lm = Arc::new(BulwarkListenerManager::new());
             let logic = logic.with_listener_manager(lm);
             let token = logic.login(4005).await.unwrap();
-            // revoke 应成功，TokenRevoke 事件作为副作用被广播
+            // revoke 应成功，RevokeToken 事件作为副作用被广播
             logic.revoke_token(&token).await.unwrap();
             // Token-Session 已删除
             assert!(logic

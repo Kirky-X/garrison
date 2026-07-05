@@ -50,18 +50,18 @@ pub enum BulwarkEvent {
         /// 踢出原因。
         reason: String,
     },
-    /// 权限校验被拒事件。
-    PermissionDenied {
+    /// 权限校验事件（v0.5.0 重命名：原 PermissionDenied → PermissionCheck，对齐 spec R-audit-log-005）。
+    PermissionCheck {
         /// 登录主体标识。
         login_id: i64,
-        /// 被拒的权限字符串。
+        /// 被校验的权限字符串。
         permission: String,
     },
-    /// 角色校验被拒事件。
-    RoleDenied {
+    /// 角色校验事件（v0.5.0 重命名：原 RoleDenied → RoleCheck，对齐 spec R-audit-log-005）。
+    RoleCheck {
         /// 登录主体标识。
         login_id: i64,
-        /// 被拒的角色字符串。
+        /// 被校验的角色字符串。
         role: String,
     },
     /// Token 过期事件。
@@ -94,12 +94,12 @@ pub enum BulwarkEvent {
         /// 刷新后的新 token。
         new_token: String,
     },
-    /// Token 主动吊销事件（v0.4.2 新增，依据 spec listener-events-extend R-001）。
+    /// Token 主动吊销事件（v0.5.0 重命名：原 TokenRevoke → RevokeToken，对齐 spec R-audit-log-005）。
     ///
     /// 在 `BulwarkLogic::revoke_token` 调用时广播（携带被吊销的 token）。
     /// 与 `Logout` 事件的区别：`revoke_token` 语义为"token 失效"（如 OAuth2 token revocation），
     /// `Logout` 语义为"用户主动登出"（携带 login_id+token）。
-    TokenRevoke {
+    RevokeToken {
         /// 被吊销的 token。
         token: String,
     },
@@ -131,10 +131,10 @@ pub enum BulwarkEvent {
         /// 阻断原因（hook 错误信息）。
         reason: String,
     },
-    /// API Key 轮换事件（v0.4.2 新增，依据 spec listener-events-extend R-001）。
+    /// API Key 轮换事件（v0.5.0 重命名：原 ApiKeyRotate → TokenRotate，对齐 spec R-audit-log-005）。
     ///
     /// 在 `ApiKeyHandler::rotate` 成功路径广播。
-    ApiKeyRotate {
+    TokenRotate {
         /// 轮换前的旧 key。
         old_key: String,
         /// 轮换后的新 key。
@@ -148,6 +148,56 @@ pub enum BulwarkEvent {
         key: String,
         /// 凭据载荷值。
         value: String,
+    },
+    // ========================================================================
+    // v0.5.0 新增变体（spec R-audit-log-005 要求，T076 Green）
+    // ========================================================================
+    /// 社交登录事件（v0.5.0 新增，spec R-audit-log-005）。
+    ///
+    /// 在社交登录（微信/支付宝等）成功时广播。
+    SocialLogin {
+        /// 社交登录 provider 名称（如 "wechat" / "alipay"）。
+        provider: String,
+        /// 社交平台返回的用户 ID。
+        user_id: String,
+        /// 关联的本地 login_id（首次登录可能为 None，绑定后才有）。
+        login_id: Option<i64>,
+    },
+    /// 租户切换事件（v0.5.0 新增，spec R-audit-log-005）。
+    ///
+    /// 在用户切换租户上下文时广播。
+    TenantSwitch {
+        /// 登录主体标识。
+        login_id: i64,
+        /// 切换前的租户 ID。
+        from_tenant: i64,
+        /// 切换后的租户 ID。
+        to_tenant: i64,
+    },
+    /// 设备封禁事件（v0.5.0 新增，spec R-audit-log-005）。
+    ///
+    /// 在设备被风控封禁时广播。
+    DeviceBlock {
+        /// 登录主体标识。
+        login_id: i64,
+        /// 被封禁的设备标识。
+        device: String,
+    },
+    /// 设备解封事件（v0.5.0 新增，spec R-audit-log-005）。
+    ///
+    /// 在设备被封禁后解封时广播。
+    DeviceUnblock {
+        /// 登录主体标识。
+        login_id: i64,
+        /// 被解封的设备标识。
+        device: String,
+    },
+    /// 配置热重载事件（v0.5.0 新增，spec R-audit-log-005）。
+    ///
+    /// 在运行时配置被热重载时广播。
+    ConfigReload {
+        /// 新配置版本号。
+        config_version: u32,
     },
 }
 
@@ -362,40 +412,40 @@ mod tests {
         }
     }
 
-    /// PermissionDenied 事件携带被拒权限（spec Scenario）。
+    /// PermissionCheck 事件携带被校验权限（spec Scenario，v0.5.0 重命名）。
     #[test]
     #[serial]
-    fn permission_denied_event_carries_permission() {
-        let event = BulwarkEvent::PermissionDenied {
+    fn permission_check_event_carries_permission() {
+        let event = BulwarkEvent::PermissionCheck {
             login_id: 1001,
             permission: "user:delete".to_string(),
         };
         match event {
-            BulwarkEvent::PermissionDenied {
+            BulwarkEvent::PermissionCheck {
                 login_id,
                 permission,
             } => {
                 assert_eq!(login_id, 1001);
                 assert_eq!(permission, "user:delete");
             },
-            _ => panic!("期望 PermissionDenied 事件"),
+            _ => panic!("期望 PermissionCheck 事件"),
         }
     }
 
-    /// RoleDenied 事件携带被拒角色（spec Scenario）。
+    /// RoleCheck 事件携带被校验角色（spec Scenario，v0.5.0 重命名）。
     #[test]
     #[serial]
-    fn role_denied_event_carries_role() {
-        let event = BulwarkEvent::RoleDenied {
+    fn role_check_event_carries_role() {
+        let event = BulwarkEvent::RoleCheck {
             login_id: 1001,
             role: "admin".to_string(),
         };
         match event {
-            BulwarkEvent::RoleDenied { login_id, role } => {
+            BulwarkEvent::RoleCheck { login_id, role } => {
                 assert_eq!(login_id, 1001);
                 assert_eq!(role, "admin");
             },
-            _ => panic!("期望 RoleDenied 事件"),
+            _ => panic!("期望 RoleCheck 事件"),
         }
     }
 
@@ -432,6 +482,123 @@ mod tests {
         // Debug
         let debug_str = format!("{:?}", event);
         assert!(debug_str.contains("Login"));
+    }
+
+    // ========================================================================
+    // T075-T076: BulwarkEvent 14 变体（spec R-audit-log-005）
+    // ========================================================================
+
+    /// T075 Red: 验证 `BulwarkEvent` 含 spec R-audit-log-005 要求的 14 个变体。
+    ///
+    /// spec 要求变体：`Login`/`Logout`/`Kickout`/`LoginFailure`/`RevokeToken`/
+    /// `PermissionCheck`/`RoleCheck`/`TokenRefresh`/`TokenRotate`/`SocialLogin`/
+    /// `TenantSwitch`/`DeviceBlock`/`DeviceUnblock`/`ConfigReload`。
+    ///
+    /// Rule 7 冲突暴露（kueiku Decision Matrix 分析结论：方案 C，不向后兼容）：
+    /// - 现有 `TokenRevoke`/`PermissionDenied`/`RoleDenied`/`ApiKeyRotate` 语义与 spec 重复但名称不同
+    /// - 用户决策："不向后兼容" → 重命名对齐 spec
+    /// - 现有独有变体（`TokenExpired`/`SessionTimeout`/`AccountLocked`/`FirewallBlock`/`TempCredentialConsumed`）保留
+    ///   （功能完整：暴力破解检测/会话超时/防火墙阻断等关键安全事件不能丢失）
+    /// - 最终变体数 19（spec 14 + 现有独有 5）
+    #[test]
+    #[serial]
+    fn bulwark_event_includes_14_variants() {
+        // 1. Login
+        let e = BulwarkEvent::Login {
+            login_id: 1,
+            token: "t".into(),
+            device: None,
+        };
+        assert!(matches!(e, BulwarkEvent::Login { .. }));
+
+        // 2. Logout
+        let e = BulwarkEvent::Logout {
+            login_id: 1,
+            token: "t".into(),
+        };
+        assert!(matches!(e, BulwarkEvent::Logout { .. }));
+
+        // 3. Kickout
+        let e = BulwarkEvent::Kickout {
+            login_id: 1,
+            token: "t".into(),
+            reason: "r".into(),
+        };
+        assert!(matches!(e, BulwarkEvent::Kickout { .. }));
+
+        // 4. LoginFailure
+        let e = BulwarkEvent::LoginFailure {
+            login_id: 1,
+            reason: "r".into(),
+        };
+        assert!(matches!(e, BulwarkEvent::LoginFailure { .. }));
+
+        // 5. RevokeToken（原 TokenRevoke 重命名）
+        let e = BulwarkEvent::RevokeToken { token: "t".into() };
+        assert!(matches!(e, BulwarkEvent::RevokeToken { .. }));
+
+        // 6. PermissionCheck（原 PermissionDenied 重命名）
+        let e = BulwarkEvent::PermissionCheck {
+            login_id: 1,
+            permission: "p".into(),
+        };
+        assert!(matches!(e, BulwarkEvent::PermissionCheck { .. }));
+
+        // 7. RoleCheck（原 RoleDenied 重命名）
+        let e = BulwarkEvent::RoleCheck {
+            login_id: 1,
+            role: "r".into(),
+        };
+        assert!(matches!(e, BulwarkEvent::RoleCheck { .. }));
+
+        // 8. TokenRefresh（保留现有字段）
+        let e = BulwarkEvent::TokenRefresh {
+            login_id: 1,
+            old_token: "t1".into(),
+            new_token: "t2".into(),
+        };
+        assert!(matches!(e, BulwarkEvent::TokenRefresh { .. }));
+
+        // 9. TokenRotate（原 ApiKeyRotate 重命名）
+        let e = BulwarkEvent::TokenRotate {
+            old_key: "k1".into(),
+            new_key: "k2".into(),
+        };
+        assert!(matches!(e, BulwarkEvent::TokenRotate { .. }));
+
+        // 10. SocialLogin（新增）
+        let e = BulwarkEvent::SocialLogin {
+            provider: "wechat".into(),
+            user_id: "u".into(),
+            login_id: Some(1),
+        };
+        assert!(matches!(e, BulwarkEvent::SocialLogin { .. }));
+
+        // 11. TenantSwitch（新增）
+        let e = BulwarkEvent::TenantSwitch {
+            login_id: 1,
+            from_tenant: 100,
+            to_tenant: 200,
+        };
+        assert!(matches!(e, BulwarkEvent::TenantSwitch { .. }));
+
+        // 12. DeviceBlock（新增）
+        let e = BulwarkEvent::DeviceBlock {
+            login_id: 1,
+            device: "d".into(),
+        };
+        assert!(matches!(e, BulwarkEvent::DeviceBlock { .. }));
+
+        // 13. DeviceUnblock（新增）
+        let e = BulwarkEvent::DeviceUnblock {
+            login_id: 1,
+            device: "d".into(),
+        };
+        assert!(matches!(e, BulwarkEvent::DeviceUnblock { .. }));
+
+        // 14. ConfigReload（新增）
+        let e = BulwarkEvent::ConfigReload { config_version: 1 };
+        assert!(matches!(e, BulwarkEvent::ConfigReload { .. }));
     }
 
     // ========================================================================
@@ -524,13 +691,13 @@ mod tests {
         assert!(manager.count() >= 2);
     }
 
-    /// 验证 broadcast 对 PermissionDenied 事件正确分发。
+    /// 验证 broadcast 对 PermissionCheck 事件正确分发（v0.5.0 重命名）。
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
-    async fn broadcast_permission_denied_event() {
+    async fn broadcast_permission_check_event() {
         reset_counters();
         let manager = BulwarkListenerManager::new();
-        let event = BulwarkEvent::PermissionDenied {
+        let event = BulwarkEvent::PermissionCheck {
             login_id: 1001,
             permission: "user:delete".to_string(),
         };
@@ -538,13 +705,13 @@ mod tests {
         assert!(EVENT_CALLS.load(Ordering::SeqCst) >= 1);
     }
 
-    /// 验证 broadcast 对 RoleDenied 事件正确分发。
+    /// 验证 broadcast 对 RoleCheck 事件正确分发（v0.5.0 重命名）。
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
-    async fn broadcast_role_denied_event() {
+    async fn broadcast_role_check_event() {
         reset_counters();
         let manager = BulwarkListenerManager::new();
-        let event = BulwarkEvent::RoleDenied {
+        let event = BulwarkEvent::RoleCheck {
             login_id: 1001,
             role: "admin".to_string(),
         };
@@ -634,24 +801,24 @@ mod tests {
         assert!(debug_str.contains("TokenRefresh"));
     }
 
-    /// TokenRevoke 事件携带 token，派生 Debug/Clone/PartialEq
-    /// （依据 spec listener-events-extend R-001）。
+    /// RevokeToken 事件携带 token，派生 Debug/Clone/PartialEq
+    /// （v0.5.0 重命名：原 TokenRevoke → RevokeToken，依据 spec R-audit-log-005）。
     #[test]
     #[serial]
-    fn token_revoke_event_carries_token() {
-        let event = BulwarkEvent::TokenRevoke {
+    fn revoke_token_event_carries_token() {
+        let event = BulwarkEvent::RevokeToken {
             token: "revoke-tok".to_string(),
         };
         match event.clone() {
-            BulwarkEvent::TokenRevoke { token } => {
+            BulwarkEvent::RevokeToken { token } => {
                 assert_eq!(token, "revoke-tok");
             },
-            _ => panic!("期望 TokenRevoke 事件"),
+            _ => panic!("期望 RevokeToken 事件"),
         }
         let cloned = event.clone();
         assert_eq!(event, cloned);
         let debug_str = format!("{:?}", event);
-        assert!(debug_str.contains("TokenRevoke"));
+        assert!(debug_str.contains("RevokeToken"));
     }
 
     /// SessionTimeout 事件携带 login_id/token，派生 Debug/Clone/PartialEq
@@ -720,26 +887,26 @@ mod tests {
         assert!(debug_str.contains("FirewallBlock"));
     }
 
-    /// ApiKeyRotate 事件携带 old_key/new_key，派生 Debug/Clone/PartialEq
-    /// （依据 spec listener-events-extend R-001）。
+    /// TokenRotate 事件携带 old_key/new_key，派生 Debug/Clone/PartialEq
+    /// （v0.5.0 重命名：原 ApiKeyRotate → TokenRotate，依据 spec R-audit-log-005）。
     #[test]
     #[serial]
-    fn api_key_rotate_event_carries_keys() {
-        let event = BulwarkEvent::ApiKeyRotate {
+    fn token_rotate_event_carries_keys() {
+        let event = BulwarkEvent::TokenRotate {
             old_key: "old-key".to_string(),
             new_key: "new-key".to_string(),
         };
         match event.clone() {
-            BulwarkEvent::ApiKeyRotate { old_key, new_key } => {
+            BulwarkEvent::TokenRotate { old_key, new_key } => {
                 assert_eq!(old_key, "old-key");
                 assert_eq!(new_key, "new-key");
             },
-            _ => panic!("期望 ApiKeyRotate 事件"),
+            _ => panic!("期望 TokenRotate 事件"),
         }
         let cloned = event.clone();
         assert_eq!(event, cloned);
         let debug_str = format!("{:?}", event);
-        assert!(debug_str.contains("ApiKeyRotate"));
+        assert!(debug_str.contains("TokenRotate"));
     }
 
     /// TempCredentialConsumed 事件携带 key/value，派生 Debug/Clone/PartialEq
