@@ -1,6 +1,6 @@
 //! password_login 示例测试（secure-password + db-sqlite + cache-memory feature）。
 //!
-//! 验证 run() 完整执行：Argon2 密码哈希 + SqliteUserRepository + login_with_password 端到端。
+//! 验证 run() 完整执行：Argon2 密码哈希 + DbnexusUserRepository + login_with_password 端到端。
 
 #![cfg(all(
     feature = "secure-password",

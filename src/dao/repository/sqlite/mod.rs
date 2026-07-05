@@ -1,7 +1,8 @@
-//! SQLite Repository 实现（依据 spec repository-layer R-003）。
+//! Dbnexus Repository 实现（依据 spec repository-layer R-003）。
 //!
 //! 基于 dbnexus DbPool + sea-orm Statement 参数化查询。
-//! 所有 SQL 使用 `?` 占位符，参数用 `Vec<Value>` 传递。
+//! 通过 [`make_statement`] 实现 backend-agnostic：传入 `?` 占位符的 SQL，
+//! PostgreSQL 后端运行时自动转换为 `$1`, `$2`, ...
 //!
 //! ## 设计要点
 //!
@@ -18,7 +19,7 @@ use crate::dao::repository::*;
 use crate::error::{BulwarkError, BulwarkResult};
 use async_trait::async_trait;
 use dbnexus::DbPool;
-use sea_orm::{ConnectionTrait, DbBackend, QueryResult, Statement, Value};
+use sea_orm::{ConnectionTrait, QueryResult, Value};
 
 // ============================================================================
 // 内部辅助函数
@@ -50,15 +51,15 @@ fn read_bool(row: &QueryResult, col: &str) -> bool {
 }
 
 // ============================================================================
-// 1. SqliteUserRepository（app_user 表）
+// 1. DbnexusUserRepository（app_user 表）
 // ============================================================================
 
 /// SQLite 用户表 Repository 实现。
-pub struct SqliteUserRepository {
+pub struct DbnexusUserRepository {
     pool: DbPool,
 }
 
-impl SqliteUserRepository {
+impl DbnexusUserRepository {
     /// 创建实例。
     pub fn new(pool: DbPool) -> Self {
         Self { pool }
@@ -66,7 +67,7 @@ impl SqliteUserRepository {
 }
 
 #[async_trait]
-impl UserRepository for SqliteUserRepository {
+impl UserRepository for DbnexusUserRepository {
     async fn find_by_id(&self, tenant_id: i64, id: &str) -> BulwarkResult<Option<UserRow>> {
         let session = self.pool.get_session("admin").await.map_err(|e| {
             BulwarkError::Dao(format!("app_user find_by_id 获取 session 失败: {}", e))
@@ -76,8 +77,7 @@ impl UserRepository for SqliteUserRepository {
         })?;
         let sql = "SELECT id, username, password_hash, status, tenant_id, created_at, updated_at, last_login_at \
                    FROM app_user WHERE tenant_id = ? AND id = ?";
-        let stmt =
-            Statement::from_sql_and_values(DbBackend::Sqlite, sql, [v_i64(tenant_id), v_str(id)]);
+        let stmt = make_statement(conn, sql, vec![v_i64(tenant_id), v_str(id)]);
         let row = conn
             .query_one_raw(stmt)
             .await
@@ -104,11 +104,7 @@ impl UserRepository for SqliteUserRepository {
         })?;
         let sql = "SELECT id, username, password_hash, status, tenant_id, created_at, updated_at, last_login_at \
                    FROM app_user WHERE tenant_id = ? AND username = ?";
-        let stmt = Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            sql,
-            [v_i64(tenant_id), v_str(username)],
-        );
+        let stmt = make_statement(conn, sql, vec![v_i64(tenant_id), v_str(username)]);
         let row = conn
             .query_one_raw(stmt)
             .await
@@ -126,10 +122,10 @@ impl UserRepository for SqliteUserRepository {
         })?;
         let sql = "INSERT INTO app_user (id, username, password_hash, status, tenant_id) \
                    VALUES (?, ?, ?, ?, ?)";
-        let stmt = Statement::from_sql_and_values(
-            DbBackend::Sqlite,
+        let stmt = make_statement(
+            conn,
             sql,
-            [
+            vec![
                 v_str(&user.id),
                 v_str(&user.username),
                 v_str(&user.password_hash),
@@ -178,7 +174,7 @@ impl UserRepository for SqliteUserRepository {
         let conn = session.connection().map_err(|e| {
             BulwarkError::Dao(format!("app_user update 获取 connection 失败: {}", e))
         })?;
-        let stmt = Statement::from_sql_and_values(DbBackend::Sqlite, sql, params);
+        let stmt = make_statement(conn, &sql, params);
         conn.execute_raw(stmt)
             .await
             .map_err(|e| BulwarkError::Dao(format!("app_user update 更新失败: {}", e)))?;
@@ -194,8 +190,7 @@ impl UserRepository for SqliteUserRepository {
             BulwarkError::Dao(format!("app_user delete 获取 connection 失败: {}", e))
         })?;
         let sql = "DELETE FROM app_user WHERE tenant_id = ? AND id = ?";
-        let stmt =
-            Statement::from_sql_and_values(DbBackend::Sqlite, sql, [v_i64(tenant_id), v_str(id)]);
+        let stmt = make_statement(conn, sql, vec![v_i64(tenant_id), v_str(id)]);
         conn.execute_raw(stmt)
             .await
             .map_err(|e| BulwarkError::Dao(format!("app_user delete 删除失败: {}", e)))?;
@@ -212,10 +207,10 @@ impl UserRepository for SqliteUserRepository {
             .map_err(|e| BulwarkError::Dao(format!("app_user list 获取 connection 失败: {}", e)))?;
         let sql = "SELECT id, username, password_hash, status, tenant_id, created_at, updated_at, last_login_at \
                    FROM app_user WHERE tenant_id = ? LIMIT ? OFFSET ?";
-        let stmt = Statement::from_sql_and_values(
-            DbBackend::Sqlite,
+        let stmt = make_statement(
+            conn,
             sql,
-            [v_i64(tenant_id), v_i64(limit), v_i64(offset)],
+            vec![v_i64(tenant_id), v_i64(limit), v_i64(offset)],
         );
         let rows = conn
             .query_all_raw(stmt)
@@ -256,15 +251,15 @@ fn parse_user_row(row: &QueryResult) -> BulwarkResult<UserRow> {
 }
 
 // ============================================================================
-// 2. SqliteRoleRepository（app_role 表）
+// 2. DbnexusRoleRepository（app_role 表）
 // ============================================================================
 
 /// SQLite 角色表 Repository 实现。
-pub struct SqliteRoleRepository {
+pub struct DbnexusRoleRepository {
     pool: DbPool,
 }
 
-impl SqliteRoleRepository {
+impl DbnexusRoleRepository {
     /// 创建实例。
     pub fn new(pool: DbPool) -> Self {
         Self { pool }
@@ -272,7 +267,7 @@ impl SqliteRoleRepository {
 }
 
 #[async_trait]
-impl RoleRepository for SqliteRoleRepository {
+impl RoleRepository for DbnexusRoleRepository {
     async fn find_by_id(&self, tenant_id: i64, id: &str) -> BulwarkResult<Option<RoleRow>> {
         let session = self.pool.get_session("admin").await.map_err(|e| {
             BulwarkError::Dao(format!("app_role find_by_id 获取 session 失败: {}", e))
@@ -283,8 +278,7 @@ impl RoleRepository for SqliteRoleRepository {
         let sql =
             "SELECT id, code, name, description, tenant_id, is_system, created_at, updated_at \
                    FROM app_role WHERE tenant_id = ? AND id = ?";
-        let stmt =
-            Statement::from_sql_and_values(DbBackend::Sqlite, sql, [v_i64(tenant_id), v_str(id)]);
+        let stmt = make_statement(conn, sql, vec![v_i64(tenant_id), v_str(id)]);
         let row = conn
             .query_one_raw(stmt)
             .await
@@ -302,8 +296,7 @@ impl RoleRepository for SqliteRoleRepository {
         let sql =
             "SELECT id, code, name, description, tenant_id, is_system, created_at, updated_at \
                    FROM app_role WHERE tenant_id = ? AND code = ?";
-        let stmt =
-            Statement::from_sql_and_values(DbBackend::Sqlite, sql, [v_i64(tenant_id), v_str(code)]);
+        let stmt = make_statement(conn, sql, vec![v_i64(tenant_id), v_str(code)]);
         let row = conn
             .query_one_raw(stmt)
             .await
@@ -321,10 +314,10 @@ impl RoleRepository for SqliteRoleRepository {
         })?;
         let sql = "INSERT INTO app_role (id, code, name, description, tenant_id, is_system) \
                    VALUES (?, ?, ?, ?, ?, ?)";
-        let stmt = Statement::from_sql_and_values(
-            DbBackend::Sqlite,
+        let stmt = make_statement(
+            conn,
             sql,
-            [
+            vec![
                 v_str(&role.id),
                 v_str(&role.code),
                 v_str(&role.name),
@@ -377,7 +370,7 @@ impl RoleRepository for SqliteRoleRepository {
         let conn = session.connection().map_err(|e| {
             BulwarkError::Dao(format!("app_role update 获取 connection 失败: {}", e))
         })?;
-        let stmt = Statement::from_sql_and_values(DbBackend::Sqlite, sql, params);
+        let stmt = make_statement(conn, &sql, params);
         conn.execute_raw(stmt)
             .await
             .map_err(|e| BulwarkError::Dao(format!("app_role update 更新失败: {}", e)))?;
@@ -393,8 +386,7 @@ impl RoleRepository for SqliteRoleRepository {
             BulwarkError::Dao(format!("app_role delete 获取 connection 失败: {}", e))
         })?;
         let sql = "DELETE FROM app_role WHERE tenant_id = ? AND id = ?";
-        let stmt =
-            Statement::from_sql_and_values(DbBackend::Sqlite, sql, [v_i64(tenant_id), v_str(id)]);
+        let stmt = make_statement(conn, sql, vec![v_i64(tenant_id), v_str(id)]);
         conn.execute_raw(stmt)
             .await
             .map_err(|e| BulwarkError::Dao(format!("app_role delete 删除失败: {}", e)))?;
@@ -412,10 +404,10 @@ impl RoleRepository for SqliteRoleRepository {
         let sql =
             "SELECT id, code, name, description, tenant_id, is_system, created_at, updated_at \
                    FROM app_role WHERE tenant_id = ? LIMIT ? OFFSET ?";
-        let stmt = Statement::from_sql_and_values(
-            DbBackend::Sqlite,
+        let stmt = make_statement(
+            conn,
             sql,
-            [v_i64(tenant_id), v_i64(limit), v_i64(offset)],
+            vec![v_i64(tenant_id), v_i64(limit), v_i64(offset)],
         );
         let rows = conn
             .query_all_raw(stmt)
@@ -454,15 +446,15 @@ fn parse_role_row(row: &QueryResult) -> BulwarkResult<RoleRow> {
 }
 
 // ============================================================================
-// 3. SqlitePermissionRepository（app_permission 表，全局表无 tenant_id）
+// 3. DbnexusPermissionRepository（app_permission 表，全局表无 tenant_id）
 // ============================================================================
 
 /// SQLite 权限表 Repository 实现（全局表，无 tenant_id）。
-pub struct SqlitePermissionRepository {
+pub struct DbnexusPermissionRepository {
     pool: DbPool,
 }
 
-impl SqlitePermissionRepository {
+impl DbnexusPermissionRepository {
     /// 创建实例。
     pub fn new(pool: DbPool) -> Self {
         Self { pool }
@@ -470,7 +462,7 @@ impl SqlitePermissionRepository {
 }
 
 #[async_trait]
-impl PermissionRepository for SqlitePermissionRepository {
+impl PermissionRepository for DbnexusPermissionRepository {
     async fn find_by_id(&self, id: &str) -> BulwarkResult<Option<PermissionRow>> {
         let session = self.pool.get_session("admin").await.map_err(|e| {
             BulwarkError::Dao(format!(
@@ -486,7 +478,7 @@ impl PermissionRepository for SqlitePermissionRepository {
         })?;
         let sql = "SELECT id, code, name, resource_type, action, created_at, updated_at \
                    FROM app_permission WHERE id = ?";
-        let stmt = Statement::from_sql_and_values(DbBackend::Sqlite, sql, [v_str(id)]);
+        let stmt = make_statement(conn, sql, vec![v_str(id)]);
         let row = conn
             .query_one_raw(stmt)
             .await
@@ -509,7 +501,7 @@ impl PermissionRepository for SqlitePermissionRepository {
         })?;
         let sql = "SELECT id, code, name, resource_type, action, created_at, updated_at \
                    FROM app_permission WHERE code = ?";
-        let stmt = Statement::from_sql_and_values(DbBackend::Sqlite, sql, [v_str(code)]);
+        let stmt = make_statement(conn, sql, vec![v_str(code)]);
         let row = conn.query_one_raw(stmt).await.map_err(|e| {
             BulwarkError::Dao(format!("app_permission find_by_code 查询失败: {}", e))
         })?;
@@ -525,10 +517,10 @@ impl PermissionRepository for SqlitePermissionRepository {
         })?;
         let sql = "INSERT INTO app_permission (id, code, name, resource_type, action) \
                    VALUES (?, ?, ?, ?, ?)";
-        let stmt = Statement::from_sql_and_values(
-            DbBackend::Sqlite,
+        let stmt = make_statement(
+            conn,
             sql,
-            [
+            vec![
                 v_str(&permission.id),
                 v_str(&permission.code),
                 v_str(&permission.name),
@@ -574,7 +566,7 @@ impl PermissionRepository for SqlitePermissionRepository {
         let conn = session.connection().map_err(|e| {
             BulwarkError::Dao(format!("app_permission update 获取 connection 失败: {}", e))
         })?;
-        let stmt = Statement::from_sql_and_values(DbBackend::Sqlite, sql, params);
+        let stmt = make_statement(conn, &sql, params);
         conn.execute_raw(stmt)
             .await
             .map_err(|e| BulwarkError::Dao(format!("app_permission update 更新失败: {}", e)))?;
@@ -589,7 +581,7 @@ impl PermissionRepository for SqlitePermissionRepository {
             BulwarkError::Dao(format!("app_permission delete 获取 connection 失败: {}", e))
         })?;
         let sql = "DELETE FROM app_permission WHERE id = ?";
-        let stmt = Statement::from_sql_and_values(DbBackend::Sqlite, sql, [v_str(id)]);
+        let stmt = make_statement(conn, sql, vec![v_str(id)]);
         conn.execute_raw(stmt)
             .await
             .map_err(|e| BulwarkError::Dao(format!("app_permission delete 删除失败: {}", e)))?;
@@ -605,8 +597,7 @@ impl PermissionRepository for SqlitePermissionRepository {
         })?;
         let sql = "SELECT id, code, name, resource_type, action, created_at, updated_at \
                    FROM app_permission LIMIT ? OFFSET ?";
-        let stmt =
-            Statement::from_sql_and_values(DbBackend::Sqlite, sql, [v_i64(limit), v_i64(offset)]);
+        let stmt = make_statement(conn, sql, vec![v_i64(limit), v_i64(offset)]);
         let rows = conn
             .query_all_raw(stmt)
             .await
@@ -643,15 +634,15 @@ fn parse_permission_row(row: &QueryResult) -> BulwarkResult<PermissionRow> {
 }
 
 // ============================================================================
-// 4. SqliteUserRoleRepository（app_user_role 表）
+// 4. DbnexusUserRoleRepository（app_user_role 表）
 // ============================================================================
 
 /// SQLite 用户-角色关联表 Repository 实现。
-pub struct SqliteUserRoleRepository {
+pub struct DbnexusUserRoleRepository {
     pool: DbPool,
 }
 
-impl SqliteUserRoleRepository {
+impl DbnexusUserRoleRepository {
     /// 创建实例。
     pub fn new(pool: DbPool) -> Self {
         Self { pool }
@@ -659,7 +650,7 @@ impl SqliteUserRoleRepository {
 }
 
 #[async_trait]
-impl UserRoleRepository for SqliteUserRoleRepository {
+impl UserRoleRepository for DbnexusUserRoleRepository {
     async fn find_by_user_id(
         &self,
         tenant_id: i64,
@@ -679,11 +670,7 @@ impl UserRoleRepository for SqliteUserRoleRepository {
         })?;
         let sql = "SELECT user_id, role_id, scope, grant_time, tenant_id \
                    FROM app_user_role WHERE tenant_id = ? AND user_id = ?";
-        let stmt = Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            sql,
-            [v_i64(tenant_id), v_str(user_id)],
-        );
+        let stmt = make_statement(conn, sql, vec![v_i64(tenant_id), v_str(user_id)]);
         let rows = conn.query_all_raw(stmt).await.map_err(|e| {
             BulwarkError::Dao(format!("app_user_role find_by_user_id 查询失败: {}", e))
         })?;
@@ -709,11 +696,7 @@ impl UserRoleRepository for SqliteUserRoleRepository {
         })?;
         let sql = "SELECT user_id, role_id, scope, grant_time, tenant_id \
                    FROM app_user_role WHERE tenant_id = ? AND role_id = ?";
-        let stmt = Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            sql,
-            [v_i64(tenant_id), v_str(role_id)],
-        );
+        let stmt = make_statement(conn, sql, vec![v_i64(tenant_id), v_str(role_id)]);
         let rows = conn.query_all_raw(stmt).await.map_err(|e| {
             BulwarkError::Dao(format!("app_user_role find_by_role_id 查询失败: {}", e))
         })?;
@@ -735,10 +718,10 @@ impl UserRoleRepository for SqliteUserRoleRepository {
         })?;
         let sql = "INSERT INTO app_user_role (user_id, role_id, scope, tenant_id) \
                    VALUES (?, ?, ?, ?)";
-        let stmt = Statement::from_sql_and_values(
-            DbBackend::Sqlite,
+        let stmt = make_statement(
+            conn,
             sql,
-            [
+            vec![
                 v_str(user_id),
                 v_str(role_id),
                 v_opt_str(&scope),
@@ -759,10 +742,10 @@ impl UserRoleRepository for SqliteUserRoleRepository {
             BulwarkError::Dao(format!("app_user_role revoke 获取 connection 失败: {}", e))
         })?;
         let sql = "DELETE FROM app_user_role WHERE tenant_id = ? AND user_id = ? AND role_id = ?";
-        let stmt = Statement::from_sql_and_values(
-            DbBackend::Sqlite,
+        let stmt = make_statement(
+            conn,
             sql,
-            [v_i64(tenant_id), v_str(user_id), v_str(role_id)],
+            vec![v_i64(tenant_id), v_str(user_id), v_str(role_id)],
         );
         conn.execute_raw(stmt)
             .await
@@ -784,10 +767,10 @@ impl UserRoleRepository for SqliteUserRoleRepository {
         })?;
         let sql = "SELECT user_id, role_id, scope, grant_time, tenant_id \
                    FROM app_user_role WHERE tenant_id = ? LIMIT ? OFFSET ?";
-        let stmt = Statement::from_sql_and_values(
-            DbBackend::Sqlite,
+        let stmt = make_statement(
+            conn,
             sql,
-            [v_i64(tenant_id), v_i64(limit), v_i64(offset)],
+            vec![v_i64(tenant_id), v_i64(limit), v_i64(offset)],
         );
         let rows = conn
             .query_all_raw(stmt)
@@ -819,15 +802,15 @@ fn parse_user_role_row(row: &QueryResult) -> BulwarkResult<UserRoleRow> {
 }
 
 // ============================================================================
-// 5. SqliteRolePermissionRepository（app_role_permission 表）
+// 5. DbnexusRolePermissionRepository（app_role_permission 表）
 // ============================================================================
 
 /// SQLite 角色-权限关联表 Repository 实现。
-pub struct SqliteRolePermissionRepository {
+pub struct DbnexusRolePermissionRepository {
     pool: DbPool,
 }
 
-impl SqliteRolePermissionRepository {
+impl DbnexusRolePermissionRepository {
     /// 创建实例。
     pub fn new(pool: DbPool) -> Self {
         Self { pool }
@@ -835,7 +818,7 @@ impl SqliteRolePermissionRepository {
 }
 
 #[async_trait]
-impl RolePermissionRepository for SqliteRolePermissionRepository {
+impl RolePermissionRepository for DbnexusRolePermissionRepository {
     async fn find_by_role_id(
         &self,
         tenant_id: i64,
@@ -855,11 +838,7 @@ impl RolePermissionRepository for SqliteRolePermissionRepository {
         })?;
         let sql = "SELECT role_id, permission_id, tenant_id \
                    FROM app_role_permission WHERE tenant_id = ? AND role_id = ?";
-        let stmt = Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            sql,
-            [v_i64(tenant_id), v_str(role_id)],
-        );
+        let stmt = make_statement(conn, sql, vec![v_i64(tenant_id), v_str(role_id)]);
         let rows = conn.query_all_raw(stmt).await.map_err(|e| {
             BulwarkError::Dao(format!(
                 "app_role_permission find_by_role_id 查询失败: {}",
@@ -888,11 +867,7 @@ impl RolePermissionRepository for SqliteRolePermissionRepository {
         })?;
         let sql = "SELECT role_id, permission_id, tenant_id \
                    FROM app_role_permission WHERE tenant_id = ? AND permission_id = ?";
-        let stmt = Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            sql,
-            [v_i64(tenant_id), v_str(permission_id)],
-        );
+        let stmt = make_statement(conn, sql, vec![v_i64(tenant_id), v_str(permission_id)]);
         let rows = conn.query_all_raw(stmt).await.map_err(|e| {
             BulwarkError::Dao(format!(
                 "app_role_permission find_by_permission_id 查询失败: {}",
@@ -922,10 +897,10 @@ impl RolePermissionRepository for SqliteRolePermissionRepository {
         })?;
         let sql = "INSERT INTO app_role_permission (role_id, permission_id, tenant_id) \
                    VALUES (?, ?, ?)";
-        let stmt = Statement::from_sql_and_values(
-            DbBackend::Sqlite,
+        let stmt = make_statement(
+            conn,
             sql,
-            [v_str(role_id), v_str(permission_id), v_i64(tenant_id)],
+            vec![v_str(role_id), v_str(permission_id), v_i64(tenant_id)],
         );
         conn.execute_raw(stmt).await.map_err(|e| {
             BulwarkError::Dao(format!("app_role_permission assign 插入失败: {}", e))
@@ -953,10 +928,10 @@ impl RolePermissionRepository for SqliteRolePermissionRepository {
         })?;
         let sql = "DELETE FROM app_role_permission \
                    WHERE tenant_id = ? AND role_id = ? AND permission_id = ?";
-        let stmt = Statement::from_sql_and_values(
-            DbBackend::Sqlite,
+        let stmt = make_statement(
+            conn,
             sql,
-            [v_i64(tenant_id), v_str(role_id), v_str(permission_id)],
+            vec![v_i64(tenant_id), v_str(role_id), v_str(permission_id)],
         );
         conn.execute_raw(stmt).await.map_err(|e| {
             BulwarkError::Dao(format!("app_role_permission revoke 删除失败: {}", e))
@@ -981,10 +956,10 @@ impl RolePermissionRepository for SqliteRolePermissionRepository {
         })?;
         let sql = "SELECT role_id, permission_id, tenant_id \
                    FROM app_role_permission WHERE tenant_id = ? LIMIT ? OFFSET ?";
-        let stmt = Statement::from_sql_and_values(
-            DbBackend::Sqlite,
+        let stmt = make_statement(
+            conn,
             sql,
-            [v_i64(tenant_id), v_i64(limit), v_i64(offset)],
+            vec![v_i64(tenant_id), v_i64(limit), v_i64(offset)],
         );
         let rows = conn
             .query_all_raw(stmt)
@@ -1013,15 +988,15 @@ fn parse_role_permission_row(row: &QueryResult) -> BulwarkResult<RolePermissionR
 }
 
 // ============================================================================
-// 6. SqliteAuthMethodRepository（app_auth_method 表）
+// 6. DbnexusAuthMethodRepository（app_auth_method 表）
 // ============================================================================
 
 /// SQLite 认证方式表 Repository 实现。
-pub struct SqliteAuthMethodRepository {
+pub struct DbnexusAuthMethodRepository {
     pool: DbPool,
 }
 
-impl SqliteAuthMethodRepository {
+impl DbnexusAuthMethodRepository {
     /// 创建实例。
     pub fn new(pool: DbPool) -> Self {
         Self { pool }
@@ -1029,7 +1004,7 @@ impl SqliteAuthMethodRepository {
 }
 
 #[async_trait]
-impl AuthMethodRepository for SqliteAuthMethodRepository {
+impl AuthMethodRepository for DbnexusAuthMethodRepository {
     async fn find_by_id(&self, tenant_id: i64, id: &str) -> BulwarkResult<Option<AuthMethodRow>> {
         let session = self.pool.get_session("admin").await.map_err(|e| {
             BulwarkError::Dao(format!(
@@ -1045,8 +1020,7 @@ impl AuthMethodRepository for SqliteAuthMethodRepository {
         })?;
         let sql = "SELECT id, user_id, method_type, external_id, metadata, create_time, tenant_id \
                    FROM app_auth_method WHERE tenant_id = ? AND id = ?";
-        let stmt =
-            Statement::from_sql_and_values(DbBackend::Sqlite, sql, [v_i64(tenant_id), v_str(id)]);
+        let stmt = make_statement(conn, sql, vec![v_i64(tenant_id), v_str(id)]);
         let row = conn.query_one_raw(stmt).await.map_err(|e| {
             BulwarkError::Dao(format!("app_auth_method find_by_id 查询失败: {}", e))
         })?;
@@ -1072,11 +1046,7 @@ impl AuthMethodRepository for SqliteAuthMethodRepository {
         })?;
         let sql = "SELECT id, user_id, method_type, external_id, metadata, create_time, tenant_id \
                    FROM app_auth_method WHERE tenant_id = ? AND user_id = ?";
-        let stmt = Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            sql,
-            [v_i64(tenant_id), v_str(user_id)],
-        );
+        let stmt = make_statement(conn, sql, vec![v_i64(tenant_id), v_str(user_id)]);
         let rows = conn.query_all_raw(stmt).await.map_err(|e| {
             BulwarkError::Dao(format!("app_auth_method find_by_user_id 查询失败: {}", e))
         })?;
@@ -1095,10 +1065,10 @@ impl AuthMethodRepository for SqliteAuthMethodRepository {
         })?;
         let sql = "INSERT INTO app_auth_method (id, user_id, method_type, external_id, metadata, tenant_id) \
                    VALUES (?, ?, ?, ?, ?, ?)";
-        let stmt = Statement::from_sql_and_values(
-            DbBackend::Sqlite,
+        let stmt = make_statement(
+            conn,
             sql,
-            [
+            vec![
                 v_str(&method.id),
                 v_str(&method.user_id),
                 v_str(&method.method_type),
@@ -1124,8 +1094,7 @@ impl AuthMethodRepository for SqliteAuthMethodRepository {
             ))
         })?;
         let sql = "DELETE FROM app_auth_method WHERE tenant_id = ? AND id = ?";
-        let stmt =
-            Statement::from_sql_and_values(DbBackend::Sqlite, sql, [v_i64(tenant_id), v_str(id)]);
+        let stmt = make_statement(conn, sql, vec![v_i64(tenant_id), v_str(id)]);
         conn.execute_raw(stmt)
             .await
             .map_err(|e| BulwarkError::Dao(format!("app_auth_method delete 删除失败: {}", e)))?;
@@ -1146,10 +1115,10 @@ impl AuthMethodRepository for SqliteAuthMethodRepository {
         })?;
         let sql = "SELECT id, user_id, method_type, external_id, metadata, create_time, tenant_id \
                    FROM app_auth_method WHERE tenant_id = ? LIMIT ? OFFSET ?";
-        let stmt = Statement::from_sql_and_values(
-            DbBackend::Sqlite,
+        let stmt = make_statement(
+            conn,
             sql,
-            [v_i64(tenant_id), v_i64(limit), v_i64(offset)],
+            vec![v_i64(tenant_id), v_i64(limit), v_i64(offset)],
         );
         let rows = conn
             .query_all_raw(stmt)
@@ -1187,15 +1156,15 @@ fn parse_auth_method_row(row: &QueryResult) -> BulwarkResult<AuthMethodRow> {
 }
 
 // ============================================================================
-// 7. SqliteSessionRepository（app_session 表）
+// 7. DbnexusSessionRepository（app_session 表）
 // ============================================================================
 
 /// SQLite 会话表 Repository 实现。
-pub struct SqliteSessionRepository {
+pub struct DbnexusSessionRepository {
     pool: DbPool,
 }
 
-impl SqliteSessionRepository {
+impl DbnexusSessionRepository {
     /// 创建实例。
     pub fn new(pool: DbPool) -> Self {
         Self { pool }
@@ -1203,7 +1172,7 @@ impl SqliteSessionRepository {
 }
 
 #[async_trait]
-impl SessionRepository for SqliteSessionRepository {
+impl SessionRepository for DbnexusSessionRepository {
     async fn find_by_session_id(
         &self,
         tenant_id: i64,
@@ -1225,11 +1194,7 @@ impl SessionRepository for SqliteSessionRepository {
             "SELECT session_id, user_id, device_id, ip, user_agent, login_time, last_active, \
                    expire_time, tenant_id \
                    FROM app_session WHERE tenant_id = ? AND session_id = ?";
-        let stmt = Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            sql,
-            [v_i64(tenant_id), v_str(session_id)],
-        );
+        let stmt = make_statement(conn, sql, vec![v_i64(tenant_id), v_str(session_id)]);
         let row = conn.query_one_raw(stmt).await.map_err(|e| {
             BulwarkError::Dao(format!("app_session find_by_session_id 查询失败: {}", e))
         })?;
@@ -1257,11 +1222,7 @@ impl SessionRepository for SqliteSessionRepository {
             "SELECT session_id, user_id, device_id, ip, user_agent, login_time, last_active, \
                    expire_time, tenant_id \
                    FROM app_session WHERE tenant_id = ? AND user_id = ?";
-        let stmt = Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            sql,
-            [v_i64(tenant_id), v_str(user_id)],
-        );
+        let stmt = make_statement(conn, sql, vec![v_i64(tenant_id), v_str(user_id)]);
         let rows = conn.query_all_raw(stmt).await.map_err(|e| {
             BulwarkError::Dao(format!("app_session find_by_user_id 查询失败: {}", e))
         })?;
@@ -1278,10 +1239,10 @@ impl SessionRepository for SqliteSessionRepository {
         let sql = "INSERT INTO app_session \
                    (session_id, user_id, device_id, ip, user_agent, expire_time, tenant_id) \
                    VALUES (?, ?, ?, ?, ?, ?, ?)";
-        let stmt = Statement::from_sql_and_values(
-            DbBackend::Sqlite,
+        let stmt = make_statement(
+            conn,
             sql,
-            [
+            vec![
                 v_str(&session.session_id),
                 v_str(&session.user_id),
                 v_opt_str(&session.device_id),
@@ -1312,11 +1273,7 @@ impl SessionRepository for SqliteSessionRepository {
         })?;
         let sql = "UPDATE app_session SET last_active = CURRENT_TIMESTAMP \
                    WHERE tenant_id = ? AND session_id = ?";
-        let stmt = Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            sql,
-            [v_i64(tenant_id), v_str(session_id)],
-        );
+        let stmt = make_statement(conn, sql, vec![v_i64(tenant_id), v_str(session_id)]);
         conn.execute_raw(stmt).await.map_err(|e| {
             BulwarkError::Dao(format!("app_session update_last_active 更新失败: {}", e))
         })?;
@@ -1331,11 +1288,7 @@ impl SessionRepository for SqliteSessionRepository {
             BulwarkError::Dao(format!("app_session delete 获取 connection 失败: {}", e))
         })?;
         let sql = "DELETE FROM app_session WHERE tenant_id = ? AND session_id = ?";
-        let stmt = Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            sql,
-            [v_i64(tenant_id), v_str(session_id)],
-        );
+        let stmt = make_statement(conn, sql, vec![v_i64(tenant_id), v_str(session_id)]);
         conn.execute_raw(stmt)
             .await
             .map_err(|e| BulwarkError::Dao(format!("app_session delete 删除失败: {}", e)))?;
@@ -1359,10 +1312,10 @@ impl SessionRepository for SqliteSessionRepository {
             "SELECT session_id, user_id, device_id, ip, user_agent, login_time, last_active, \
                    expire_time, tenant_id \
                    FROM app_session WHERE tenant_id = ? LIMIT ? OFFSET ?";
-        let stmt = Statement::from_sql_and_values(
-            DbBackend::Sqlite,
+        let stmt = make_statement(
+            conn,
             sql,
-            [v_i64(tenant_id), v_i64(limit), v_i64(offset)],
+            vec![v_i64(tenant_id), v_i64(limit), v_i64(offset)],
         );
         let rows = conn
             .query_all_raw(stmt)
@@ -1406,15 +1359,15 @@ fn parse_session_row(row: &QueryResult) -> BulwarkResult<SessionRow> {
 }
 
 // ============================================================================
-// 8. SqliteLoginLogRepository（app_login_log 表）
+// 8. DbnexusLoginLogRepository（app_login_log 表）
 // ============================================================================
 
 /// SQLite 登录日志表 Repository 实现。
-pub struct SqliteLoginLogRepository {
+pub struct DbnexusLoginLogRepository {
     pool: DbPool,
 }
 
-impl SqliteLoginLogRepository {
+impl DbnexusLoginLogRepository {
     /// 创建实例。
     pub fn new(pool: DbPool) -> Self {
         Self { pool }
@@ -1422,7 +1375,7 @@ impl SqliteLoginLogRepository {
 }
 
 #[async_trait]
-impl LoginLogRepository for SqliteLoginLogRepository {
+impl LoginLogRepository for DbnexusLoginLogRepository {
     async fn find_by_id(&self, tenant_id: i64, id: &str) -> BulwarkResult<Option<LoginLogRow>> {
         let session = self.pool.get_session("admin").await.map_err(|e| {
             BulwarkError::Dao(format!("app_login_log find_by_id 获取 session 失败: {}", e))
@@ -1435,8 +1388,7 @@ impl LoginLogRepository for SqliteLoginLogRepository {
         })?;
         let sql = "SELECT id, user_id, action, ip, device_id, success, fail_reason, create_time, tenant_id \
                    FROM app_login_log WHERE tenant_id = ? AND id = ?";
-        let stmt =
-            Statement::from_sql_and_values(DbBackend::Sqlite, sql, [v_i64(tenant_id), v_str(id)]);
+        let stmt = make_statement(conn, sql, vec![v_i64(tenant_id), v_str(id)]);
         let row = conn
             .query_one_raw(stmt)
             .await
@@ -1466,10 +1418,10 @@ impl LoginLogRepository for SqliteLoginLogRepository {
         let sql = "SELECT id, user_id, action, ip, device_id, success, fail_reason, create_time, tenant_id \
                    FROM app_login_log WHERE tenant_id = ? AND user_id = ? \
                    ORDER BY create_time DESC LIMIT ? OFFSET ?";
-        let stmt = Statement::from_sql_and_values(
-            DbBackend::Sqlite,
+        let stmt = make_statement(
+            conn,
             sql,
-            [
+            vec![
                 v_i64(tenant_id),
                 v_str(user_id),
                 v_i64(limit),
@@ -1492,10 +1444,10 @@ impl LoginLogRepository for SqliteLoginLogRepository {
         let sql = "INSERT INTO app_login_log \
                    (id, user_id, action, ip, device_id, success, fail_reason, tenant_id) \
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
-        let stmt = Statement::from_sql_and_values(
-            DbBackend::Sqlite,
+        let stmt = make_statement(
+            conn,
             sql,
-            [
+            vec![
                 v_str(&log.id),
                 v_opt_str(&log.user_id),
                 v_str(&log.action),
@@ -1526,10 +1478,10 @@ impl LoginLogRepository for SqliteLoginLogRepository {
         })?;
         let sql = "SELECT id, user_id, action, ip, device_id, success, fail_reason, create_time, tenant_id \
                    FROM app_login_log WHERE tenant_id = ? ORDER BY create_time DESC LIMIT ? OFFSET ?";
-        let stmt = Statement::from_sql_and_values(
-            DbBackend::Sqlite,
+        let stmt = make_statement(
+            conn,
             sql,
-            [v_i64(tenant_id), v_i64(limit), v_i64(offset)],
+            vec![v_i64(tenant_id), v_i64(limit), v_i64(offset)],
         );
         let rows = conn
             .query_all_raw(stmt)
@@ -1571,15 +1523,15 @@ fn parse_login_log_row(row: &QueryResult) -> BulwarkResult<LoginLogRow> {
 }
 
 // ============================================================================
-// 9. SqliteUserExtRepository（app_user_ext 表）
+// 9. DbnexusUserExtRepository（app_user_ext 表）
 // ============================================================================
 
 /// SQLite 用户扩展字段表 Repository 实现。
-pub struct SqliteUserExtRepository {
+pub struct DbnexusUserExtRepository {
     pool: DbPool,
 }
 
-impl SqliteUserExtRepository {
+impl DbnexusUserExtRepository {
     /// 创建实例。
     pub fn new(pool: DbPool) -> Self {
         Self { pool }
@@ -1587,7 +1539,7 @@ impl SqliteUserExtRepository {
 }
 
 #[async_trait]
-impl UserExtRepository for SqliteUserExtRepository {
+impl UserExtRepository for DbnexusUserExtRepository {
     async fn find_by_user_id(
         &self,
         tenant_id: i64,
@@ -1607,11 +1559,7 @@ impl UserExtRepository for SqliteUserExtRepository {
         })?;
         let sql = "SELECT id, user_id, field_key, field_value, field_type, created_at, updated_at, tenant_id \
                    FROM app_user_ext WHERE tenant_id = ? AND user_id = ?";
-        let stmt = Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            sql,
-            [v_i64(tenant_id), v_str(user_id)],
-        );
+        let stmt = make_statement(conn, sql, vec![v_i64(tenant_id), v_str(user_id)]);
         let rows = conn.query_all_raw(stmt).await.map_err(|e| {
             BulwarkError::Dao(format!("app_user_ext find_by_user_id 查询失败: {}", e))
         })?;
@@ -1638,10 +1586,10 @@ impl UserExtRepository for SqliteUserExtRepository {
         })?;
         let sql = "SELECT id, user_id, field_key, field_value, field_type, created_at, updated_at, tenant_id \
                    FROM app_user_ext WHERE tenant_id = ? AND user_id = ? AND field_key = ?";
-        let stmt = Statement::from_sql_and_values(
-            DbBackend::Sqlite,
+        let stmt = make_statement(
+            conn,
             sql,
-            [v_i64(tenant_id), v_str(user_id), v_str(field_key)],
+            vec![v_i64(tenant_id), v_str(user_id), v_str(field_key)],
         );
         let row = conn.query_one_raw(stmt).await.map_err(|e| {
             BulwarkError::Dao(format!("app_user_ext find_by_user_and_key 查询失败: {}", e))
@@ -1672,10 +1620,10 @@ impl UserExtRepository for SqliteUserExtRepository {
                    field_value = excluded.field_value, \
                    field_type = excluded.field_type, \
                    updated_at = CURRENT_TIMESTAMP";
-        let stmt = Statement::from_sql_and_values(
-            DbBackend::Sqlite,
+        let stmt = make_statement(
+            conn,
             sql,
-            [
+            vec![
                 v_str(&new_id),
                 v_str(user_id),
                 v_str(field_key),
@@ -1699,10 +1647,10 @@ impl UserExtRepository for SqliteUserExtRepository {
         })?;
         let sql = "DELETE FROM app_user_ext \
                    WHERE tenant_id = ? AND user_id = ? AND field_key = ?";
-        let stmt = Statement::from_sql_and_values(
-            DbBackend::Sqlite,
+        let stmt = make_statement(
+            conn,
             sql,
-            [v_i64(tenant_id), v_str(user_id), v_str(field_key)],
+            vec![v_i64(tenant_id), v_str(user_id), v_str(field_key)],
         );
         conn.execute_raw(stmt)
             .await
@@ -1724,10 +1672,10 @@ impl UserExtRepository for SqliteUserExtRepository {
         })?;
         let sql = "SELECT id, user_id, field_key, field_value, field_type, created_at, updated_at, tenant_id \
                    FROM app_user_ext WHERE tenant_id = ? LIMIT ? OFFSET ?";
-        let stmt = Statement::from_sql_and_values(
-            DbBackend::Sqlite,
+        let stmt = make_statement(
+            conn,
             sql,
-            [v_i64(tenant_id), v_i64(limit), v_i64(offset)],
+            vec![v_i64(tenant_id), v_i64(limit), v_i64(offset)],
         );
         let rows = conn
             .query_all_raw(stmt)
@@ -1813,7 +1761,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn repository_filters_by_tenant_id_when_tenant_isolation_enabled() {
         let pool = setup_db().await;
-        let repo = SqliteUserRepository::new(pool);
+        let repo = DbnexusUserRepository::new(pool);
 
         // 在 tenant 42 创建用户
         let user_42 = uuid_str();

@@ -12,7 +12,7 @@
 use async_trait::async_trait;
 use bulwark::dao::{
     init_dbnexus,
-    repository::{sqlite::SqliteUserRepository, NewUser, UserRepository},
+    repository::{sqlite::DbnexusUserRepository, NewUser, UserRepository},
     BulwarkDaoOxcache, BulwarkMigration,
 };
 use bulwark::error::{BulwarkError, BulwarkResult};
@@ -60,7 +60,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // 2. 构造 hasher + user_repository
     let hasher: Arc<dyn PasswordHasher> = Arc::new(Argon2Hasher::default());
-    let user_repo: Arc<SqliteUserRepository> = Arc::new(SqliteUserRepository::new(pool.clone()));
+    let user_repo: Arc<DbnexusUserRepository> = Arc::new(DbnexusUserRepository::new(pool.clone()));
 
     // 3. 预创建用户：login_id=1001，username="1001"
     //    login_with_password(login_id, password) 内部调用
