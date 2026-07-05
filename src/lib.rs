@@ -264,6 +264,9 @@ pub use context::tenant::{
 #[cfg(feature = "protocol-jwt")]
 pub use context::tenant::ClaimTenantResolver;
 
+/// 登录主体（携带 login_id，由 web 框架 extractor 填充，依据 spec web-adapters D12）。
+pub use context::BulwarkPrincipal;
+
 // ============================================================================
 // 角色层级（v0.5.0 新增，依据 proposal H6）
 // ============================================================================

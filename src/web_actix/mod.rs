@@ -45,6 +45,11 @@ use std::pin::Pin;
 use std::rc::Rc;
 use std::sync::Arc;
 
+pub mod extractor;
+
+/// 登录主体 extractor（从 Authorization: Bearer <token> 解析 login_id）。
+pub use extractor::BulwarkPrincipal;
+
 // ============================================================================
 // ResponseError impl：BulwarkError → actix-web HttpResponse
 // ============================================================================

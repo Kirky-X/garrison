@@ -39,6 +39,35 @@ use crate::error::BulwarkResult;
 
 pub mod tenant;
 
+// ============================================================================
+// 登录主体（依据 spec web-adapters D12）
+// ============================================================================
+
+/// 当前请求的登录主体（依据 spec web-adapters D12）。
+///
+/// 携带从 token 解析出的 `login_id`，由各 web 框架的 extractor
+/// （`web_actix::extractor::BulwarkPrincipal` / `web_warp::extractor::BulwarkPrincipal`）
+/// 从 `Authorization: Bearer <token>` header 提取并填充。
+///
+/// # 字段
+///
+/// - `login_id`: 当前登录用户 ID，从 token-session 映射解析得到。
+///
+/// # 使用示例
+///
+/// ```ignore
+/// use bulwark::context::BulwarkPrincipal;
+///
+/// fn handler(principal: BulwarkPrincipal) -> String {
+///     format!("login_id = {}", principal.login_id)
+/// }
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BulwarkPrincipal {
+    /// 当前登录用户 ID（从 token-session 映射解析）。
+    pub login_id: i64,
+}
+
 /// 上下文 trait，提供请求访问入口。
 ///
 /// [借鉴 Sa-Token] 对应 `SaTokenContext`，

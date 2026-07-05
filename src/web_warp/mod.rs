@@ -38,6 +38,15 @@ use warp::reject::Reject;
 use warp::reply::{Reply, Response};
 use warp::Filter;
 
+pub mod extractor;
+
+/// 登录主体 extractor Filter（从 Authorization: Bearer <token> 解析 login_id）。
+pub use extractor::bulwark_principal;
+
+/// 租户上下文 extractor Filter（需 `tenant-isolation` feature，从 X-Tenant-Id header 解析）。
+#[cfg(feature = "tenant-isolation")]
+pub use extractor::tenant_context;
+
 // ============================================================================
 // Reject + Reply impl：BulwarkError → warp 响应
 // ============================================================================

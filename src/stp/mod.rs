@@ -1376,6 +1376,29 @@ impl BulwarkUtil {
             .await
     }
 
+    /// 通过指定 token 获取关联的登录 ID（依据 spec web-adapters D12）。
+    ///
+    /// 与 [`get_login_id`] 的区别：本方法显式接收 token 参数，内部通过
+    /// [`with_current_token`] 将 token 设置到 task_local 上下文后再查询，
+    /// 适用于 web extractor 场景（从请求 header 提取 token 后解析 login_id）。
+    ///
+    /// # 参数
+    /// - `token`: 待解析的 token 字符串。
+    ///
+    /// # 返回
+    /// - `Some(login_id)`: token 有效，返回关联的 login_id。
+    /// - `None`: token 无效或会话不存在。
+    ///
+    /// # 错误
+    /// - `BulwarkManager` 未初始化：`BulwarkError::Session`。
+    /// - DAO 读取失败：透传 `BulwarkError`。
+    ///
+    /// [`get_login_id`]: Self::get_login_id
+    /// [`with_current_token`]: crate::stp::with_current_token
+    pub async fn get_login_id_by_token(token: &str) -> BulwarkResult<Option<i64>> {
+        with_current_token(token.to_string(), async { Self::get_login_id().await }).await
+    }
+
     /// 校验权限。
     ///
     /// # 参数
