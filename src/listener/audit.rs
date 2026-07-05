@@ -141,8 +141,10 @@ impl AuditLogListener {
     /// 将 `BulwarkEvent` 转换为 `AuditEntry`（T072: 仅 Login，T077-T078 扩展全 14 变体）。
     ///
     /// Rule 12（失败显性化）：未覆盖的变体返回 `BulwarkError::Config`，不静默跳过。
+    ///
+    /// T074: 转换后对 `metadata` 调用 `mask_metadata` 进行字段掩码。
     fn to_audit_entry(&self, event: &BulwarkEvent) -> BulwarkResult<AuditEntry> {
-        let entry = match event {
+        let mut entry = match event {
             BulwarkEvent::Login {
                 login_id,
                 token,
@@ -166,7 +168,46 @@ impl AuditLogListener {
                 )));
             },
         };
+        // T074: 对 metadata 进行字段掩码（如 password → ***）
+        entry.metadata = entry.metadata.map(|m| self.mask_metadata(&m));
         Ok(entry)
+    }
+
+    /// 对 metadata JSON 字符串进行字段掩码（T074 Green）。
+    ///
+    /// 遍历 `config.mask_fields`，将 metadata JSON 中对应字段值替换为 `"***"`。
+    /// 非 JSON 字符串或字段不存在时原样返回（不报错）。
+    ///
+    /// # 示例
+    ///
+    /// ```ignore
+    /// use bulwark::listener::audit::{AuditConfig, AuditLogListener};
+    /// let config = AuditConfig {
+    ///     mask_fields: vec!["password".to_string()],
+    ///     retain_days: 0,
+    ///     async_write: false,
+    /// };
+    /// // 假设已有 pool
+    /// // let listener = AuditLogListener::new(pool, config);
+    /// // let masked = listener.mask_metadata(r#"{"password":"secret"}"#);
+    /// // assert_eq!(masked, r#"{"password":"***"}"#);
+    /// ```
+    pub fn mask_metadata(&self, metadata: &str) -> String {
+        if self.config.mask_fields.is_empty() || metadata.is_empty() {
+            return metadata.to_string();
+        }
+        let mut value: serde_json::Value = match serde_json::from_str(metadata) {
+            Ok(v) => v,
+            Err(_) => return metadata.to_string(),
+        };
+        if let Some(obj) = value.as_object_mut() {
+            for field in &self.config.mask_fields {
+                if obj.contains_key(field) {
+                    obj.insert(field.clone(), serde_json::Value::String("***".to_string()));
+                }
+            }
+        }
+        serde_json::to_string(&value).unwrap_or_else(|_| metadata.to_string())
     }
 
     /// INSERT `AuditEntry` 到 `audit_logs` 表。
@@ -363,5 +404,48 @@ mod db_sqlite_tests {
         let login_id: i64 = rows[0].try_get("", "login_id").expect("login_id 应可读");
         assert_eq!(event_type, "login", "event_type 应为 'login'");
         assert_eq!(login_id, 1, "login_id 应为 1");
+    }
+
+    // ========================================================================
+    // T073-T074: metadata 字段掩码（如 password → ***）
+    // ========================================================================
+
+    /// T073 Red: `AuditLogListener::mask_metadata` 应将 metadata JSON 中
+    /// `config.mask_fields` 列出的字段值替换为 `"***"`。
+    ///
+    /// 构造 metadata JSON `{"password":"secret123"}`，
+    /// 调用 `listener.mask_metadata(...)`，
+    /// 断言返回的 JSON 中 `password` 字段值为 `"***"`。
+    ///
+    /// Rule 7 冲突暴露：
+    /// - tasks.md T073 说"调用 `on_event`，断言 `audit_logs` 表中该行 metadata 字段 password 值为 ***"
+    /// - 但 `BulwarkEvent::Login { login_id, token, device }` 无 password 字段，
+    ///   `to_audit_entry` 产生的 metadata 仅含 `{"device":"..."}`，无法产生含 password 的 metadata
+    /// - 强行让 Login 事件携带 password 违反安全原则（密码不应记录到审计日志）
+    /// - 解决方案：测试 `pub fn mask_metadata(&self, metadata: &str) -> String` 公开方法
+    ///   （T074 在 `to_audit_entry` 末尾调用该方法对 metadata 掩码）
+    #[tokio::test(flavor = "multi_thread")]
+    async fn audit_log_listener_masks_password_field_in_metadata() {
+        let pool = setup_db().await;
+        let config = AuditConfig {
+            mask_fields: vec!["password".to_string()],
+            retain_days: 0,
+            async_write: false,
+        };
+        let listener = AuditLogListener::new(pool, config);
+
+        // 构造含 password 的 metadata JSON
+        let input_metadata = r#"{"password":"secret123"}"#;
+        let masked = listener.mask_metadata(input_metadata);
+
+        // 断言 password 字段值被替换为 "***"
+        let parsed: serde_json::Value =
+            serde_json::from_str(&masked).expect("masked 应是有效 JSON");
+        assert_eq!(
+            parsed["password"].as_str(),
+            Some("***"),
+            "password 字段应被掩码为 ***，实际: {}",
+            masked
+        );
     }
 }
