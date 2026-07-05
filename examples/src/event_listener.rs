@@ -7,6 +7,7 @@
 //! cargo run -p bulwark-examples --bin event_listener --features listener
 //! ```
 
+use async_trait::async_trait;
 use bulwark::error::BulwarkResult;
 use bulwark::listener::{
     BulwarkEvent, BulwarkListener, BulwarkListenerEntry, BulwarkListenerManager,
@@ -24,8 +25,9 @@ static EVENT_CALLS: AtomicUsize = AtomicUsize::new(0);
 /// 审计日志监听器：记录所有事件到计数器（模拟写日志）。
 struct AuditListener;
 
+#[async_trait]
 impl BulwarkListener for AuditListener {
-    fn on_event(&self, event: &BulwarkEvent) -> BulwarkResult<()> {
+    async fn on_event(&self, event: &BulwarkEvent) -> BulwarkResult<()> {
         EVENT_CALLS.fetch_add(1, Ordering::SeqCst);
         match event {
             BulwarkEvent::Login {
@@ -73,8 +75,9 @@ impl BulwarkListener for AuditListener {
 /// 失败监听器：on_event 始终返回 Err（验证广播不被中断）。
 struct FailingListener;
 
+#[async_trait]
 impl BulwarkListener for FailingListener {
-    fn on_event(&self, _event: &BulwarkEvent) -> BulwarkResult<()> {
+    async fn on_event(&self, _event: &BulwarkEvent) -> BulwarkResult<()> {
         Err(bulwark::error::BulwarkError::Internal(
             "FailingListener 故意失败".to_string(),
         ))
@@ -103,7 +106,7 @@ inventory::submit! {
 ///
 /// 演示 BulwarkListener trait 实现、inventory 编译期注册、
 /// BulwarkListenerManager 收集并广播事件、单个监听器失败不中断广播。
-pub fn run() -> BulwarkResult<()> {
+pub async fn run() -> BulwarkResult<()> {
     println!("=== Bulwark 事件监听器示例 ===\n");
 
     // ----------------------------------------------------------------
@@ -125,7 +128,7 @@ pub fn run() -> BulwarkResult<()> {
         device: Some("web".to_string()),
     };
     let before = EVENT_CALLS.load(Ordering::SeqCst);
-    manager.broadcast(&login_event);
+    manager.broadcast(&login_event).await;
     let after = EVENT_CALLS.load(Ordering::SeqCst);
     // FailingListener 失败，但 AuditListener 仍被调用
     assert!(after > before);
@@ -143,18 +146,18 @@ pub fn run() -> BulwarkResult<()> {
         login_id: 1001,
         token: "T1-uuid-token-abcd".to_string(),
     };
-    manager.broadcast(&logout_event);
+    manager.broadcast(&logout_event).await;
 
     let denied_event = BulwarkEvent::PermissionDenied {
         login_id: 1001,
         permission: "user:delete".to_string(),
     };
-    manager.broadcast(&denied_event);
+    manager.broadcast(&denied_event).await;
 
     let expired_event = BulwarkEvent::TokenExpired {
         token: "T1-uuid-token-abcd".to_string(),
     };
-    manager.broadcast(&expired_event);
+    manager.broadcast(&expired_event).await;
     println!();
 
     // ----------------------------------------------------------------

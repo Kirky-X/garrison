@@ -9,7 +9,7 @@
 
 use bulwark_examples::event_listener;
 
-#[test]
-fn test_run_completes() {
-    event_listener::run().unwrap();
+#[tokio::test]
+async fn test_run_completes() {
+    event_listener::run().await.unwrap();
 }
