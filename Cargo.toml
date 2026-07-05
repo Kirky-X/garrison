@@ -191,6 +191,7 @@ firewall = []
 # firewall-bruteforce / firewall-ratelimit / firewall-ddos 仅依赖 oxcache（通过 BulwarkDao 抽象）
 # firewall-anomalous / firewall-geoip 额外依赖 maxminddb（T087-T092 时添加）
 firewall-bruteforce = ["firewall"]
+firewall-ratelimit = ["firewall"]
 
 # === 可观测性 ===
 listener = []
@@ -215,7 +216,7 @@ full = [
     "listener", "metrics-prometheus", "observability-otlp", "grpc", "i18n",
     "annotation-macros",
     "decision-trace", "tenant-isolation",
-    "firewall", "firewall-bruteforce",
+    "firewall", "firewall-bruteforce", "firewall-ratelimit",
 ]
 
 # 注意：production 原用 db-postgres，但 dbnexus 0.2 不支持，0.1.0 降级为 db-sqlite

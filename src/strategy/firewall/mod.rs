@@ -28,6 +28,9 @@ use async_trait::async_trait;
 /// 暴力破解防护策略（依据 spec firewall R-firewall-001）。
 #[cfg(feature = "firewall-bruteforce")]
 pub mod brute_force;
+/// 速率限制策略（依据 spec firewall R-firewall-002）。
+#[cfg(feature = "firewall-ratelimit")]
+pub mod rate_limit;
 
 // ============================================================================
 // FirewallContext：防火墙策略上下文
