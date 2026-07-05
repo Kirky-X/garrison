@@ -56,6 +56,56 @@ pub const DEFAULT_SSO_TICKET_TTL_SECONDS: u64 = 60;
 /// 环境变量前缀（BULWARK_）。
 pub const ENV_PREFIX: &str = "BULWARK_";
 
+// ============================================================================
+// 多租户隔离配置（v0.5.0 新增，依据 spec tenant-isolation R-006）
+// ============================================================================
+
+/// 租户解析器类型（依据 spec tenant-isolation R-006）。
+///
+/// 配置文件中使用小写形式（`"header"` / `"subdomain"` / `"claim"`）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TenantResolverKind {
+    /// 从 `X-Tenant-Id` 请求头解析（`HeaderTenantResolver`）。
+    Header,
+    /// 从 `Host` header 的 subdomain 解析（`SubdomainTenantResolver`）。
+    Subdomain,
+    /// 从 JWT `tenant_id` claim 解析（`ClaimTenantResolver`）。
+    Claim,
+}
+
+/// 多租户隔离配置段（依据 spec tenant-isolation R-006）。
+///
+/// # 默认值
+///
+/// - `enabled`: `false`（不启用，向后兼容）
+/// - `resolver`: `Header`（最常用，从 `X-Tenant-Id` header 解析）
+///
+/// # 配置示例
+///
+/// ```toml
+/// [tenant_isolation]
+/// enabled = true
+/// resolver = "header"
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TenantIsolationConfig {
+    /// 是否启用多租户隔离。
+    pub enabled: bool,
+    /// 租户解析器类型。
+    pub resolver: TenantResolverKind,
+}
+
+impl Default for TenantIsolationConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            resolver: TenantResolverKind::Header,
+        }
+    }
+}
+
 /// 全局配置结构体，定义框架运行参数。
 ///
 /// [借鉴 Sa-Token] 对应 `SaTokenConfig`。
@@ -135,6 +185,12 @@ pub struct BulwarkConfig {
     /// SSO ticket TTL 秒数（默认 60 秒，依据 spec protocol-sso 短时票据）。
     pub sso_ticket_ttl_seconds: u64,
 
+    /// 多租户隔离配置段（v0.5.0 新增，依据 spec tenant-isolation R-006）。
+    ///
+    /// 默认 `enabled: false`（向后兼容）。启用后需配合 `tenant-isolation` Cargo feature
+    /// + `tenant_resolution_middleware` 才能生效。
+    pub tenant_isolation: TenantIsolationConfig,
+
     /// 配置变更广播通道（serde 跳过，反序列化后通过 `with_watcher` 重建）。
     #[serde(skip)]
     watcher: Option<watch::Sender<BulwarkConfig>>,
@@ -163,6 +219,7 @@ impl BulwarkConfig {
             jwt_secret: String::new(),
             sign_window_seconds: DEFAULT_SIGN_WINDOW_SECONDS,
             sso_ticket_ttl_seconds: DEFAULT_SSO_TICKET_TTL_SECONDS,
+            tenant_isolation: TenantIsolationConfig::default(),
             watcher: None,
         };
         config.with_watcher()
@@ -745,6 +802,7 @@ jwt_secret = "test-secret""#;
             jwt_secret: String::new(),
             sign_window_seconds: 300,
             sso_ticket_ttl_seconds: 60,
+            tenant_isolation: TenantIsolationConfig::default(),
             watcher: None,
         };
         assert!(config.update(|c| c.timeout = 999).is_ok());
@@ -1036,5 +1094,69 @@ jwt_secret = "test-secret""#;
             "非数字 SSO_TICKET_TTL_SECONDS 应导致 apply_env_overrides 失败"
         );
         std::env::remove_var(format!("{}SSO_TICKET_TTL_SECONDS", ENV_PREFIX));
+    }
+
+    // ========================================================================
+    // tenant_isolation 配置段测试（v0.5.0 新增，依据 spec tenant-isolation R-006）
+    // ========================================================================
+
+    /// R-tenant-isolation-006: `BulwarkConfig` 反序列化 JSON 含 `tenant_isolation` 段时，
+    /// 字段正确填充。
+    ///
+    /// 验证：`{"tenant_isolation": {"enabled": true, "resolver": "header"}}` 反序列化后
+    /// `config.tenant_isolation.enabled == true`
+    /// `config.tenant_isolation.resolver == TenantResolverKind::Header`
+    #[cfg(feature = "tenant-isolation")]
+    #[test]
+    fn bulwark_config_includes_tenant_isolation_section() {
+        let json = r#"{
+            "tenant_isolation": {
+                "enabled": true,
+                "resolver": "header"
+            }
+        }"#;
+        let config: BulwarkConfig = serde_json::from_str(json).unwrap();
+        assert!(
+            config.tenant_isolation.enabled,
+            "反序列化后 tenant_isolation.enabled 应为 true"
+        );
+        assert_eq!(
+            config.tenant_isolation.resolver,
+            TenantResolverKind::Header,
+            "反序列化后 resolver 应为 Header"
+        );
+    }
+
+    /// R-tenant-isolation-006: `default_config()` 的 `tenant_isolation` 默认禁用，
+    /// resolver 默认为 `Header`。
+    #[cfg(feature = "tenant-isolation")]
+    #[test]
+    fn tenant_isolation_config_defaults_to_disabled() {
+        let config = BulwarkConfig::default_config();
+        assert!(
+            !config.tenant_isolation.enabled,
+            "默认 tenant_isolation.enabled 应为 false（不启用）"
+        );
+        assert_eq!(
+            config.tenant_isolation.resolver,
+            TenantResolverKind::Header,
+            "默认 resolver 应为 Header"
+        );
+    }
+
+    /// R-tenant-isolation-006: `TenantResolverKind` 支持全部三种变体反序列化。
+    #[cfg(feature = "tenant-isolation")]
+    #[test]
+    fn tenant_resolver_kind_supports_all_variants() {
+        let cases = [
+            (r#""header""#, TenantResolverKind::Header),
+            (r#""subdomain""#, TenantResolverKind::Subdomain),
+            (r#""claim""#, TenantResolverKind::Claim),
+        ];
+        for (json, expected) in &cases {
+            let kind: TenantResolverKind = serde_json::from_str(json)
+                .unwrap_or_else(|e| panic!("反序列化 {} 失败: {}", json, e));
+            assert_eq!(kind, *expected, "反序列化 {} 应匹配 {:?}", json, expected);
+        }
     }
 }
