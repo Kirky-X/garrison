@@ -652,6 +652,32 @@ pub fn convert_placeholders(sql: &str, backend: sea_orm::DbBackend) -> String {
     result
 }
 
+/// 构造 backend-agnostic 的 [`sea_orm::Statement`]，根据 conn 的 backend 自动转换占位符。
+///
+/// 封装 [`convert_placeholders`] + [`sea_orm::Statement::from_sql_and_values`]，
+/// 让 Repository 实现无需关心后端差异——传入 `?` 占位符的 SQL 即可，
+/// Postgres backend 会自动转换为 `$1`, `$2`, ...
+///
+/// # 示例
+///
+/// ```ignore
+/// use bulwark::dao::repository::make_statement;
+/// use sea_orm::Value;
+///
+/// // 实际使用时传入真实的 DatabaseConnection（Sqlite 或 Postgres 后端）
+/// let stmt = make_statement(&conn, "WHERE id = ?", vec![Value::Int(Some(1))]);
+/// ```
+#[cfg(any(feature = "db-sqlite", feature = "db-postgres"))]
+pub fn make_statement(
+    conn: &impl sea_orm::ConnectionTrait,
+    sql: &str,
+    values: Vec<sea_orm::Value>,
+) -> sea_orm::Statement {
+    let backend = conn.get_database_backend();
+    let sql = convert_placeholders(sql, backend);
+    sea_orm::Statement::from_sql_and_values(backend, sql, values)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1011,5 +1037,88 @@ mod tests {
         let sql = "VALUES (?, ?, ?, ?, ?)";
         let result = convert_placeholders(sql, DbBackend::Postgres);
         assert_eq!(result, "VALUES ($1, $2, $3, $4, $5)");
+    }
+
+    // ========================================================================
+    // make_statement 测试（T135，依据 P3 重构决策）
+    // ========================================================================
+
+    /// Mock 连接，仅用于测试 `make_statement` 的 backend 检测逻辑。
+    /// 其他方法未实现（`make_statement` 仅调用 `get_database_backend`）。
+    #[cfg(any(feature = "db-sqlite", feature = "db-postgres"))]
+    struct MockConn {
+        backend: sea_orm::DbBackend,
+    }
+
+    #[cfg(any(feature = "db-sqlite", feature = "db-postgres"))]
+    #[async_trait::async_trait]
+    impl sea_orm::ConnectionTrait for MockConn {
+        fn get_database_backend(&self) -> sea_orm::DbBackend {
+            self.backend
+        }
+
+        async fn execute_raw(
+            &self,
+            _stmt: sea_orm::Statement,
+        ) -> Result<sea_orm::ExecResult, sea_orm::DbErr> {
+            unimplemented!("MockConn only for get_database_backend")
+        }
+
+        async fn execute_unprepared(
+            &self,
+            _sql: &str,
+        ) -> Result<sea_orm::ExecResult, sea_orm::DbErr> {
+            unimplemented!("MockConn only for get_database_backend")
+        }
+
+        async fn query_one_raw(
+            &self,
+            _stmt: sea_orm::Statement,
+        ) -> Result<Option<sea_orm::QueryResult>, sea_orm::DbErr> {
+            unimplemented!("MockConn only for get_database_backend")
+        }
+
+        async fn query_all_raw(
+            &self,
+            _stmt: sea_orm::Statement,
+        ) -> Result<Vec<sea_orm::QueryResult>, sea_orm::DbErr> {
+            unimplemented!("MockConn only for get_database_backend")
+        }
+    }
+
+    /// SQLite backend：`make_statement` 保留 `?` 占位符。
+    #[cfg(any(feature = "db-sqlite", feature = "db-postgres"))]
+    #[test]
+    fn make_statement_sqlite_uses_question_mark() {
+        let conn = MockConn {
+            backend: sea_orm::DbBackend::Sqlite,
+        };
+        let stmt = make_statement(
+            &conn,
+            "WHERE id = ? AND name = ?",
+            vec![
+                sea_orm::Value::Int(Some(1)),
+                sea_orm::Value::String(Some("alice".into())),
+            ],
+        );
+        assert_eq!(stmt.sql, "WHERE id = ? AND name = ?");
+    }
+
+    /// Postgres backend：`make_statement` 将 `?` 替换为 `$1`, `$2`。
+    #[cfg(any(feature = "db-sqlite", feature = "db-postgres"))]
+    #[test]
+    fn make_statement_postgres_uses_dollar_n() {
+        let conn = MockConn {
+            backend: sea_orm::DbBackend::Postgres,
+        };
+        let stmt = make_statement(
+            &conn,
+            "WHERE id = ? AND name = ?",
+            vec![
+                sea_orm::Value::Int(Some(1)),
+                sea_orm::Value::String(Some("alice".into())),
+            ],
+        );
+        assert_eq!(stmt.sql, "WHERE id = $1 AND name = $2");
     }
 }
