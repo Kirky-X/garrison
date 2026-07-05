@@ -13,6 +13,7 @@
 
 use async_trait::async_trait;
 use http::HeaderMap;
+use std::collections::HashMap;
 
 use crate::error::{BulwarkError, BulwarkResult};
 
@@ -131,6 +132,54 @@ impl TenantResolver for HeaderTenantResolver {
     }
 }
 
+/// Subdomain 租户解析器（依据 spec `tenant-isolation` R-tenant-isolation-002）。
+///
+/// 从 `Host` 请求头提取第一段作为 subdomain，查 `mapping` 表得到 `tenant_id`。
+///
+/// # 行为
+///
+/// - Host 存在且 subdomain 在 mapping 中：返回 `TenantContext { resolved_from: Subdomain }`
+/// - Host 缺失：返回 `BulwarkError::Config("Host header missing")`
+/// - subdomain 未在 mapping 中：返回 `BulwarkError::Config("unknown subdomain")`
+///
+/// # 设计
+///
+/// - Host 含端口时（如 `tenant42.example.com:8080`）先 strip port 再提取 subdomain
+/// - 不默认 0（Rule 12 失败显性化），未命中即报错——避免租户隔离被静默绕过
+#[derive(Debug, Clone, Default)]
+pub struct SubdomainTenantResolver {
+    /// subdomain → tenant_id 映射表（如 `{"tenant42": 42}`）。
+    pub mapping: HashMap<String, i64>,
+}
+
+#[async_trait]
+impl TenantResolver for SubdomainTenantResolver {
+    async fn resolve(&self, headers: &HeaderMap) -> BulwarkResult<TenantContext> {
+        let host = headers
+            .get("Host")
+            .ok_or_else(|| BulwarkError::Config("Host header missing".into()))?
+            .to_str()
+            .map_err(|e| BulwarkError::Config(format!("Host not visible ASCII: {e}")))?;
+        // strip port: `tenant42.example.com:8080` → `tenant42.example.com`
+        let hostname = host.split(':').next().unwrap_or(host);
+        // extract first segment as subdomain
+        let subdomain = hostname.split('.').next().unwrap_or(hostname);
+        if subdomain.is_empty() {
+            return Err(BulwarkError::Config(format!(
+                "invalid Host `{host}`: empty subdomain"
+            )));
+        }
+        let tenant_id = *self
+            .mapping
+            .get(subdomain)
+            .ok_or_else(|| BulwarkError::Config(format!("unknown subdomain `{subdomain}`")))?;
+        Ok(TenantContext {
+            tenant_id,
+            resolved_from: TenantSource::Subdomain,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -203,5 +252,62 @@ mod tests {
     async fn tenant_try_get_returns_err_when_no_scope() {
         // 在无 scope 上下文中调用 try_get，应返回 Err 而非 panic
         assert!(TENANT.try_get().is_err());
+    }
+
+    /// R-tenant-isolation-002: SubdomainTenantResolver 从 Host 提取 subdomain 并查 mapping。
+    ///
+    /// 构造 `Host: tenant42.example.com`，预置映射 `{"tenant42": 42}`，
+    /// 断言 `SubdomainTenantResolver.resolve(&headers)` 返回 `tenant_id == 42`。
+    #[tokio::test]
+    async fn subdomain_tenant_resolver_extracts_from_host() {
+        let mut headers = http::HeaderMap::new();
+        headers.insert("Host", "tenant42.example.com".parse().unwrap());
+        let resolver = SubdomainTenantResolver {
+            mapping: std::collections::HashMap::from([("tenant42".to_string(), 42)]),
+        };
+        let ctx = resolver
+            .resolve(&headers)
+            .await
+            .expect("Host 含已知 subdomain 时应解析成功");
+        assert_eq!(ctx.tenant_id, 42);
+        assert!(matches!(ctx.resolved_from, TenantSource::Subdomain));
+    }
+
+    /// R-tenant-isolation-002: SubdomainTenantResolver 在 mapping 未命中时返回 Config 错误。
+    #[tokio::test]
+    async fn subdomain_tenant_resolver_returns_config_error_when_mapping_miss() {
+        let mut headers = http::HeaderMap::new();
+        headers.insert("Host", "unknown.example.com".parse().unwrap());
+        let resolver = SubdomainTenantResolver {
+            mapping: std::collections::HashMap::from([("tenant42".to_string(), 42)]),
+        };
+        let result = resolver.resolve(&headers).await;
+        assert!(matches!(result, Err(BulwarkError::Config(_))));
+    }
+
+    /// R-tenant-isolation-002: SubdomainTenantResolver 在 Host 缺失时返回 Config 错误。
+    #[tokio::test]
+    async fn subdomain_tenant_resolver_returns_config_error_when_host_missing() {
+        let headers = http::HeaderMap::new();
+        let resolver = SubdomainTenantResolver {
+            mapping: std::collections::HashMap::new(),
+        };
+        let result = resolver.resolve(&headers).await;
+        assert!(matches!(result, Err(BulwarkError::Config(_))));
+    }
+
+    /// R-tenant-isolation-002: SubdomainTenantResolver 处理带端口的 Host（如 tenant42.example.com:8080）。
+    #[tokio::test]
+    async fn subdomain_tenant_resolver_strips_port_from_host() {
+        let mut headers = http::HeaderMap::new();
+        headers.insert("Host", "tenant42.example.com:8080".parse().unwrap());
+        let resolver = SubdomainTenantResolver {
+            mapping: std::collections::HashMap::from([("tenant42".to_string(), 42)]),
+        };
+        let ctx = resolver
+            .resolve(&headers)
+            .await
+            .expect("带端口的 Host 应正确提取 subdomain");
+        assert_eq!(ctx.tenant_id, 42);
     }
 }
