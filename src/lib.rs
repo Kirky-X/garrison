@@ -339,12 +339,15 @@ pub use listener::audit::AuditLogListener;
 // - `SocialBindingService`：需 `db-sqlite` feature（依赖 DbPool 查 social_bindings 表）
 
 /// 社交登录服务提供方 trait（get_authorization_url / exchange_token / get_user_info）。
+#[cfg(any(feature = "social-wechat", feature = "social-alipay"))]
 pub use protocol::social::SocialLoginProvider;
 
 /// 社交用户信息（provider + provider_user_id + union_id + raw JSON）。
+#[cfg(any(feature = "social-wechat", feature = "social-alipay"))]
 pub use protocol::social::SocialUserInfo;
 
 /// 社交登录平台标识（Wechat / Alipay / WechatMiniApp）。
+#[cfg(any(feature = "social-wechat", feature = "social-alipay"))]
 pub use protocol::social::SocialProvider;
 
 /// 微信扫码登录 provider（需 `social-wechat` feature）。
@@ -358,6 +361,35 @@ pub use protocol::social::alipay::AlipayProvider;
 /// 社交账号绑定服务（find_or_create，需 `db-sqlite` feature）。
 #[cfg(feature = "db-sqlite")]
 pub use protocol::social::SocialBindingService;
+
+// ============================================================================
+// Keycloak OIDC RP（v0.5.0 新增，依据 proposal K1 / spec keycloak-oidc-rp）
+// ============================================================================
+//
+// 业务方可通过 `use bulwark::{KeycloakConfig, KeycloakProvider, ...}` 直接使用，
+// 无需写完整路径 `bulwark::protocol::oauth2::keycloak::KeycloakConfig`。
+//
+// 全部类型需 `keycloak-oidc` feature（依赖 `protocol-oidc` → `protocol-jwt` + `protocol-oauth2`）。
+
+/// Keycloak OIDC RP 配置（base_url / client_id / client_secret / redirect_uri）。
+#[cfg(feature = "keycloak-oidc")]
+pub use protocol::oauth2::keycloak::KeycloakConfig;
+
+/// Keycloak OIDC 依赖方（discover / verify_id_token / exchange_code）。
+#[cfg(feature = "keycloak-oidc")]
+pub use protocol::oauth2::keycloak::KeycloakProvider;
+
+/// Keycloak id_token 的 claims（sub / exp / realm_access / resource_access / tenant_id）。
+#[cfg(feature = "keycloak-oidc")]
+pub use protocol::oauth2::keycloak::KeycloakClaims;
+
+/// Keycloak token endpoint 响应（access_token / refresh_token / id_token / expires_in）。
+#[cfg(feature = "keycloak-oidc")]
+pub use protocol::oauth2::keycloak::KeycloakTokenSet;
+
+/// Keycloak realm 访问信息（roles 列表）。
+#[cfg(feature = "keycloak-oidc")]
+pub use protocol::oauth2::keycloak::RealmAccess;
 
 // ============================================================================
 // 安全防护套件（v0.5.0 新增，依据 proposal H5 / spec firewall）

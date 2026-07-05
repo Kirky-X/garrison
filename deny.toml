@@ -4,6 +4,12 @@
 [advisories]
 db-urls = ["https://github.com/RustSec/advisory-db"]
 yanked = "deny"
+# rsa 0.9.x 有 RUSTSEC-2023-0071（Marvin Attack 定时侧信道），但目前无 patched 版本。
+# bulwark 仅将 rsa 作为 dev-dependency 用于 keycloak-oidc 测试生成 RSA 密钥对，
+# 生产代码不直接依赖 rsa（JWT 验签用 jsonwebtoken 的 DecodingKey）。
+# 测试环境无定时侧信道攻击风险，显式忽略此 advisory。
+# 参考: https://rustsec.org/advisories/RUSTSEC-2023-0071
+ignore = ["RUSTSEC-2023-0071"]
 
 [licenses]
 # 允许的宽松许可证；新增非宽松许可证需在此放行

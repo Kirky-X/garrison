@@ -32,6 +32,18 @@ pub mod oidc;
 #[cfg(feature = "oauth2-scope-handler")]
 pub mod scope;
 
+/// Keycloak OIDC RP 模块（0.5.0 新增，依据 proposal K1 / spec keycloak-oidc-rp）。
+///
+/// 提供 `KeycloakProvider` 作为 OIDC 依赖方（RP），对接 Keycloak IdP：
+/// - `KeycloakConfig`：配置 base_url / client_id / client_secret / redirect_uri
+/// - `KeycloakProvider`：discover（fetch discovery metadata）/ verify_id_token（JWKS 验签）
+///   / exchange_code（authorization_code → token set）
+/// - `KeycloakClaims`：Keycloak 特有 claim（realm_access.roles / resource_access / tenant_id）
+///
+/// 仅在启用 `keycloak-oidc` feature 时编译。
+#[cfg(feature = "keycloak-oidc")]
+pub mod keycloak;
+
 /// OAuth2 令牌响应（依据 spec protocol-oauth2）。
 ///
 /// 授权服务器返回的 JSON 通过 `Deserialize` 解析。

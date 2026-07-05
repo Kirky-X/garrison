@@ -105,6 +105,10 @@ wiremock = "0.6"
 warp = { version = "0.4", default-features = false, features = ["test"] }
 # base64 用于 OIDC 测试中解析 JWT header 段（与 protocol-sign 使用的 base64 0.22 版本一致）
 base64 = "0.22"
+# rsa + rand 用于 keycloak-oidc 测试中生成 RSA 密钥对签发/验签 id_token（T115-T120）
+# rsa 0.9 已是 jsonwebtoken rust_crypto feature 的间接依赖，不增加构建开销
+rsa = "0.9"
+rand = "0.8"
 
 [features]
 default = []
@@ -203,6 +207,10 @@ firewall-ddos = ["firewall"]
 # social-alipay：支付宝授权登录（AlipayProvider），依赖 protocol-oauth2 + rsa 签名
 social-wechat = ["protocol-oauth2"]
 social-alipay = ["protocol-oauth2"]
+
+# === 0.5.0 新增：Keycloak OIDC RP（依据 proposal K1 / spec keycloak-oidc-rp） ===
+# keycloak-oidc：Keycloak 作为 OIDC 依赖方（KeycloakProvider），依赖 protocol-oidc（JWKS 验签 + discovery）
+keycloak-oidc = ["protocol-oidc"]
 
 # === 可观测性 ===
 listener = []
