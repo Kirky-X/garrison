@@ -158,6 +158,12 @@ impl BulwarkFirewallStrategy for AnomalousLoginStrategy {
     }
 }
 
+inventory::submit! {
+    crate::strategy::firewall::StrategyRegistration {
+        name: "anomalous",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

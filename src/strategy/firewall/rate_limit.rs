@@ -170,6 +170,12 @@ impl BulwarkFirewallStrategy for RateLimitStrategy {
     }
 }
 
+inventory::submit! {
+    crate::strategy::firewall::StrategyRegistration {
+        name: "ratelimit",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

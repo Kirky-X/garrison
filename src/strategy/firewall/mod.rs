@@ -28,6 +28,9 @@ use async_trait::async_trait;
 /// 异地登录检测策略（依据 spec firewall R-firewall-003）。
 #[cfg(feature = "firewall-anomalous")]
 pub mod anomalous;
+/// 暴力破解防护策略（依据 spec firewall R-firewall-001）。
+#[cfg(feature = "firewall-bruteforce")]
+pub mod brute_force;
 /// DDoS 防护策略（依据 spec firewall R-firewall-004）。
 #[cfg(feature = "firewall-ddos")]
 pub mod ddos;
@@ -126,19 +129,72 @@ pub trait BulwarkFirewallStrategy: Send + Sync {
 // StrategyRegistration：inventory 编译期注册
 // ============================================================================
 
-/// 防火墙策略工厂函数指针，返回 `Box<dyn BulwarkFirewallStrategy>`。
-pub type FirewallStrategyFactoryFn = fn() -> Box<dyn BulwarkFirewallStrategy>;
-
 /// 防火墙策略注册条目，用于 `inventory` 收集（依据 spec firewall R-firewall-006）。
 ///
-/// 通过 `inventory::submit! { StrategyRegistration { name, factory } }` 注册策略，
+/// 仅注册策略名称（声明存在），不含 factory —— strategy 需依赖注入 dao/lookup，
+/// 无参 factory 无法创建可用实例。调用方通过 name 知道哪些 strategy 可用后，
+/// 手动用 `new(config, dao)` 构造实际实例。
+///
+/// 通过 `inventory::submit! { StrategyRegistration { name: "bruteforce" } }` 注册策略，
 /// 运行期通过 `inventory::iter::<StrategyRegistration>()` 遍历。
 pub struct StrategyRegistration {
     /// 策略名称（唯一标识，如 `"bruteforce"` / `"ratelimit"`）。
     pub name: &'static str,
-    /// 策略工厂函数。
-    pub factory: FirewallStrategyFactoryFn,
 }
 
 // 编译期策略注册收集点
 inventory::collect!(StrategyRegistration);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 验证启用全部 5 个 firewall feature 时，inventory 注册了至少 5 个 strategy
+    ///（依据 spec firewall R-firewall-006 验收标准）。
+    #[test]
+    #[cfg(all(
+        feature = "firewall-bruteforce",
+        feature = "firewall-ratelimit",
+        feature = "firewall-anomalous",
+        feature = "firewall-ddos",
+        feature = "firewall-geoip"
+    ))]
+    fn all_five_strategies_registered_via_inventory() {
+        use std::iter::Iterator;
+        // 显式引用每个 strategy 类型，强制链接器保留 inventory::submit! 静态变量
+        //（inventory 静态变量未被引用时可能被链接器优化丢弃）
+        use crate::strategy::firewall::anomalous::AnomalousLoginStrategy;
+        use crate::strategy::firewall::brute_force::BruteForceStrategy;
+        use crate::strategy::firewall::ddos::DDoSStrategy;
+        use crate::strategy::firewall::geoip::GeoIPStrategy;
+        use crate::strategy::firewall::rate_limit::RateLimitStrategy;
+        let _ = std::any::TypeId::of::<AnomalousLoginStrategy>();
+        let _ = std::any::TypeId::of::<BruteForceStrategy>();
+        let _ = std::any::TypeId::of::<DDoSStrategy>();
+        let _ = std::any::TypeId::of::<GeoIPStrategy>();
+        let _ = std::any::TypeId::of::<RateLimitStrategy>();
+
+        let names: Vec<&'static str> = inventory::iter::<StrategyRegistration>()
+            .map(|r| r.name)
+            .collect();
+        let count = names.len();
+        assert!(
+            count >= 5,
+            "启用全部 5 个 firewall feature 时应注册至少 5 个 strategy，实际: {}",
+            count
+        );
+
+        // 验证 5 个预期名称都存在
+        let names: Vec<&'static str> = inventory::iter::<StrategyRegistration>()
+            .map(|r| r.name)
+            .collect();
+        for expected in &["bruteforce", "ratelimit", "anomalous", "ddos", "geoip"] {
+            assert!(
+                names.contains(expected),
+                "strategy {:?} 未注册，实际注册: {:?}",
+                expected,
+                names
+            );
+        }
+    }
+}

@@ -116,6 +116,12 @@ impl BulwarkFirewallStrategy for GeoIPStrategy {
     }
 }
 
+inventory::submit! {
+    crate::strategy::firewall::StrategyRegistration {
+        name: "geoip",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

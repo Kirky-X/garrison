@@ -116,6 +116,12 @@ impl BulwarkFirewallStrategy for BruteForceStrategy {
     }
 }
 
+inventory::submit! {
+    crate::strategy::firewall::StrategyRegistration {
+        name: "bruteforce",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

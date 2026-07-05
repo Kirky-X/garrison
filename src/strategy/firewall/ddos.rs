@@ -185,6 +185,12 @@ impl BulwarkFirewallStrategy for DDoSStrategy {
     }
 }
 
+inventory::submit! {
+    crate::strategy::firewall::StrategyRegistration {
+        name: "ddos",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
