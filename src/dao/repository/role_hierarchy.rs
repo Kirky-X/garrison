@@ -244,6 +244,65 @@ mod service {
 
             Ok(closure.get(role).cloned().unwrap_or_default())
         }
+
+        /// T050 Green: 添加角色继承边（`INSERT OR IGNORE`）并失效该租户的闭包缓存。
+        ///
+        /// 幂等：若 `(tenant_id, child, parent)` 已存在，`INSERT OR IGNORE` 不报错。
+        /// 缓存失效：插入成功后立即删除 `tenant:{tenant_id}:role_closure`，
+        /// 下次 `get_ancestors` 会重新计算闭包并写入缓存。
+        ///
+        /// # 参数
+        /// - `child`: 子角色编码（继承方）
+        /// - `parent`: 父角色编码（被继承方）
+        /// - `tenant_id`: 租户 ID
+        ///
+        /// # 错误
+        /// - `BulwarkError::Dao`：SQL 执行或缓存删除失败。
+        pub async fn add_edge(
+            &self,
+            child: &str,
+            parent: &str,
+            tenant_id: i64,
+        ) -> BulwarkResult<()> {
+            let session = self.pool.get_session("admin").await.map_err(|e| {
+                BulwarkError::Dao(format!("role_hierarchy add_edge 获取 session 失败: {}", e))
+            })?;
+            let conn = session.connection().map_err(|e| {
+                BulwarkError::Dao(format!(
+                    "role_hierarchy add_edge 获取 connection 失败: {}",
+                    e
+                ))
+            })?;
+            let stmt = Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "INSERT OR IGNORE INTO role_hierarchy (tenant_id, child_role, parent_role) VALUES (?, ?, ?)",
+                vec![
+                    Value::BigInt(Some(tenant_id)),
+                    Value::String(Some(child.to_string())),
+                    Value::String(Some(parent.to_string())),
+                ],
+            );
+            conn.execute_raw(stmt).await.map_err(|e| {
+                BulwarkError::Dao(format!("role_hierarchy add_edge 插入失败: {}", e))
+            })?;
+
+            self.invalidate_cache(tenant_id).await
+        }
+
+        /// T050 Green: 失效指定租户的闭包缓存。
+        ///
+        /// 删除 oxcache key `tenant:{tenant_id}:role_closure`。
+        /// 幂等：若 key 不存在，`dao.delete` 不报错。
+        ///
+        /// # 参数
+        /// - `tenant_id`: 租户 ID
+        ///
+        /// # 错误
+        /// - `BulwarkError::Dao`：缓存删除失败。
+        pub async fn invalidate_cache(&self, tenant_id: i64) -> BulwarkResult<()> {
+            let cache_key = format!("tenant:{}:role_closure", tenant_id);
+            self.dao.delete(&cache_key).await
+        }
     }
 }
 
@@ -530,5 +589,82 @@ mod db_sqlite_tests {
             .await
             .expect("dao.get 应成功");
         assert!(cached.is_some(), "oxcache 应已缓存 role_closure");
+    }
+
+    // ========================================================================
+    // T049-T050: add_edge + invalidate_cache 测试
+    // ========================================================================
+
+    /// T049 Red: `add_edge` 插入新边后应失效该租户的闭包缓存。
+    ///
+    /// 流程：
+    /// 1. `get_ancestors` 触发 `compute_closure` + 缓存写入
+    /// 2. `add_edge("user", "super_admin", 0)` 插入新边
+    /// 3. 断言 oxcache 中 `tenant:0:role_closure` 已被删除
+    #[tokio::test(flavor = "multi_thread")]
+    async fn add_edge_invalidates_cache() {
+        let pool = setup_db().await;
+        let dao = mock_dao();
+
+        // 先插入初始边并触发缓存写入
+        insert_edge(&pool, 0, "user", "admin").await;
+        let svc = RoleHierarchyService::new(pool, dao.clone());
+        let _ = svc
+            .get_ancestors("user", 0)
+            .await
+            .expect("get_ancestors 应成功");
+
+        let cached_before = dao
+            .get("tenant:0:role_closure")
+            .await
+            .expect("dao.get 应成功");
+        assert!(cached_before.is_some(), "前置条件：缓存应已写入");
+
+        // add_edge 应失效缓存
+        svc.add_edge("user", "super_admin", 0)
+            .await
+            .expect("add_edge 应成功");
+
+        let cached_after = dao
+            .get("tenant:0:role_closure")
+            .await
+            .expect("dao.get 应成功");
+        assert!(cached_after.is_none(), "add_edge 后缓存应已失效");
+    }
+
+    /// T050 额外验证：`add_edge` 后再次 `get_ancestors` 应反映新边。
+    ///
+    /// 流程：
+    /// 1. `user -> admin`，`get_ancestors("user")` 返回 {admin}
+    /// 2. `add_edge("user", "super_admin", 0)`
+    /// 3. `get_ancestors("user")` 重新计算，返回 {admin, super_admin}
+    #[tokio::test(flavor = "multi_thread")]
+    async fn add_edge_reflects_in_subsequent_get_ancestors() {
+        let pool = setup_db().await;
+        let dao = mock_dao();
+
+        insert_edge(&pool, 0, "user", "admin").await;
+        let svc = RoleHierarchyService::new(pool, dao.clone());
+
+        // 首次：ancestors = {admin}
+        let ancestors1 = svc
+            .get_ancestors("user", 0)
+            .await
+            .expect("get_ancestors 应成功");
+        assert!(ancestors1.contains("admin"));
+        assert!(!ancestors1.contains("super_admin"));
+
+        // 添加新边 user -> super_admin
+        svc.add_edge("user", "super_admin", 0)
+            .await
+            .expect("add_edge 应成功");
+
+        // 再次：ancestors = {admin, super_admin}
+        let ancestors2 = svc
+            .get_ancestors("user", 0)
+            .await
+            .expect("get_ancestors 应成功");
+        assert!(ancestors2.contains("admin"));
+        assert!(ancestors2.contains("super_admin"));
     }
 }
