@@ -11,6 +11,7 @@
 //! 监听器失败仅记录 `tracing::warn!`，不中断主流程。
 
 use crate::error::BulwarkResult;
+use async_trait::async_trait;
 use std::sync::Arc;
 
 /// 审计日志子模块（v0.5.0 新增，依据 proposal H3）。
@@ -155,12 +156,16 @@ pub enum BulwarkEvent {
 /// trait 绑定 `Send + Sync`，核心方法为 `on_event`，实现方按事件类型选择性处理。
 /// 与 `BulwarkPlugin` 的区别：plugin 是"主动钩子"（在特定方法前后被调用），
 /// listener 是"被动订阅"（订阅事件类型）。
+#[async_trait]
 pub trait BulwarkListener: Send + Sync {
     /// 事件处理方法（依据 spec listener-system）。
     ///
     /// 实现方按事件类型选择性处理，默认空实现返回 `Ok(())`。
     /// 监听器实现应快速返回或内部 spawn，避免阻塞主流程。
-    fn on_event(&self, _event: &BulwarkEvent) -> BulwarkResult<()> {
+    ///
+    /// v0.5.0 改为 async（依据 proposal H3）：支持 SQL-backed 监听器（如 AuditLogListener）
+    /// 执行异步持久化操作。所有实现与调用方需 `.await`。
+    async fn on_event(&self, _event: &BulwarkEvent) -> BulwarkResult<()> {
         Ok(())
     }
 }
@@ -214,11 +219,13 @@ impl BulwarkListenerManager {
 
     /// 广播事件到所有已注册监听器（依据 spec listener-system）。
     ///
-    /// 同步遍历所有监听器的 `on_event` 方法，单个监听器失败仅记录 `tracing::warn!`，
+    /// 异步遍历所有监听器的 `on_event` 方法，单个监听器失败仅记录 `tracing::warn!`，
     /// 不中断广播，最终返回 `Ok(())`。
-    pub fn broadcast(&self, event: &BulwarkEvent) {
+    ///
+    /// v0.5.0 改为 async（依据 proposal H3）：`on_event` 改为 async 后，broadcast 需 `.await`。
+    pub async fn broadcast(&self, event: &BulwarkEvent) {
         for listener in &self.listeners {
-            if let Err(e) = listener.on_event(event) {
+            if let Err(e) = listener.on_event(event).await {
                 tracing::warn!("监听器 on_event 失败: {}", e);
             }
         }
@@ -247,8 +254,9 @@ mod tests {
     /// 成功监听器，on_event 返回 Ok(())。
     struct OkListener;
 
+    #[async_trait]
     impl BulwarkListener for OkListener {
-        fn on_event(&self, _event: &BulwarkEvent) -> BulwarkResult<()> {
+        async fn on_event(&self, _event: &BulwarkEvent) -> BulwarkResult<()> {
             EVENT_CALLS.fetch_add(1, Ordering::SeqCst);
             Ok(())
         }
@@ -257,8 +265,9 @@ mod tests {
     /// 失败监听器，on_event 返回 Err。
     struct ErrListener;
 
+    #[async_trait]
     impl BulwarkListener for ErrListener {
-        fn on_event(&self, _event: &BulwarkEvent) -> BulwarkResult<()> {
+        async fn on_event(&self, _event: &BulwarkEvent) -> BulwarkResult<()> {
             Err(crate::error::BulwarkError::Internal(
                 "on_event 失败".to_string(),
             ))
@@ -430,10 +439,11 @@ mod tests {
     // ========================================================================
 
     /// 默认 on_event 返回 Ok(())（spec Scenario：监听器需实现 on_event 方法）。
-    #[test]
+    #[tokio::test(flavor = "multi_thread")]
     #[serial]
-    fn default_on_event_returns_ok() {
+    async fn default_on_event_returns_ok() {
         struct EmptyListener;
+        #[async_trait]
         impl BulwarkListener for EmptyListener {}
         let listener = EmptyListener;
         let event = BulwarkEvent::Login {
@@ -441,7 +451,7 @@ mod tests {
             token: "t".to_string(),
             device: None,
         };
-        assert!(listener.on_event(&event).is_ok());
+        assert!(listener.on_event(&event).await.is_ok());
     }
 
     // ========================================================================
@@ -458,9 +468,9 @@ mod tests {
     }
 
     /// broadcast 调用所有监听器（spec Scenario）。
-    #[test]
+    #[tokio::test(flavor = "multi_thread")]
     #[serial]
-    fn broadcast_invokes_all_listeners() {
+    async fn broadcast_invokes_all_listeners() {
         reset_counters();
         let manager = BulwarkListenerManager::new();
         let event = BulwarkEvent::Login {
@@ -468,22 +478,22 @@ mod tests {
             token: "T1".to_string(),
             device: Some("web".to_string()),
         };
-        manager.broadcast(&event);
+        manager.broadcast(&event).await;
         // OkListener 的 on_event 应被调用至少 1 次
         assert!(EVENT_CALLS.load(Ordering::SeqCst) >= 1);
     }
 
     /// 单个监听器失败不中断广播（spec Scenario）。
-    #[test]
+    #[tokio::test(flavor = "multi_thread")]
     #[serial]
-    fn broadcast_listener_failure_does_not_interrupt() {
+    async fn broadcast_listener_failure_does_not_interrupt() {
         reset_counters();
         let manager = BulwarkListenerManager::new();
         let event = BulwarkEvent::Logout {
             login_id: 1001,
             token: "T1".to_string(),
         };
-        manager.broadcast(&event);
+        manager.broadcast(&event).await;
         // ErrListener 失败，但 OkListener 仍应被调用
         assert!(EVENT_CALLS.load(Ordering::SeqCst) >= 1);
     }
@@ -515,50 +525,50 @@ mod tests {
     }
 
     /// 验证 broadcast 对 PermissionDenied 事件正确分发。
-    #[test]
+    #[tokio::test(flavor = "multi_thread")]
     #[serial]
-    fn broadcast_permission_denied_event() {
+    async fn broadcast_permission_denied_event() {
         reset_counters();
         let manager = BulwarkListenerManager::new();
         let event = BulwarkEvent::PermissionDenied {
             login_id: 1001,
             permission: "user:delete".to_string(),
         };
-        manager.broadcast(&event);
+        manager.broadcast(&event).await;
         assert!(EVENT_CALLS.load(Ordering::SeqCst) >= 1);
     }
 
     /// 验证 broadcast 对 RoleDenied 事件正确分发。
-    #[test]
+    #[tokio::test(flavor = "multi_thread")]
     #[serial]
-    fn broadcast_role_denied_event() {
+    async fn broadcast_role_denied_event() {
         reset_counters();
         let manager = BulwarkListenerManager::new();
         let event = BulwarkEvent::RoleDenied {
             login_id: 1001,
             role: "admin".to_string(),
         };
-        manager.broadcast(&event);
+        manager.broadcast(&event).await;
         assert!(EVENT_CALLS.load(Ordering::SeqCst) >= 1);
     }
 
     /// 验证 broadcast 对 TokenExpired 事件正确分发。
-    #[test]
+    #[tokio::test(flavor = "multi_thread")]
     #[serial]
-    fn broadcast_token_expired_event() {
+    async fn broadcast_token_expired_event() {
         reset_counters();
         let manager = BulwarkListenerManager::new();
         let event = BulwarkEvent::TokenExpired {
             token: "expired-token".to_string(),
         };
-        manager.broadcast(&event);
+        manager.broadcast(&event).await;
         assert!(EVENT_CALLS.load(Ordering::SeqCst) >= 1);
     }
 
     /// 验证 broadcast 对 Kickout 事件正确分发。
-    #[test]
+    #[tokio::test(flavor = "multi_thread")]
     #[serial]
-    fn broadcast_kickout_event() {
+    async fn broadcast_kickout_event() {
         reset_counters();
         let manager = BulwarkListenerManager::new();
         let event = BulwarkEvent::Kickout {
@@ -566,7 +576,7 @@ mod tests {
             token: "t1".to_string(),
             reason: "强制下线".to_string(),
         };
-        manager.broadcast(&event);
+        manager.broadcast(&event).await;
         assert!(EVENT_CALLS.load(Ordering::SeqCst) >= 1);
     }
 

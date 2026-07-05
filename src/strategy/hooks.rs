@@ -397,7 +397,8 @@ impl BulwarkFirewallCheckHook for BulwarkFirewallCheckHookDefault {
                     lm.broadcast(&BulwarkEvent::AccountLocked {
                         login_id: ctx.login_id,
                         reason: format!("brute_force: {} failures in 1h", count),
-                    });
+                    })
+                    .await;
                 }
                 return Err(BulwarkError::Session(format!(
                     "账号锁定：login_id={} 在 1h 内失败 {} 次（阈值 {}）",
@@ -407,26 +408,37 @@ impl BulwarkFirewallCheckHook for BulwarkFirewallCheckHookDefault {
             return Ok(());
         }
         // 内存模式
-        let map = self.account_failures.lock();
-        let key = ctx.login_id.to_string();
-        if let Some(entry) = map.get(&key) {
-            let now = Instant::now();
-            if now.duration_since(entry.first_failure_at) < BRUTE_FORCE_WINDOW
-                && entry.count >= BRUTE_FORCE_THRESHOLD
-            {
-                // v0.4.2: 广播 AccountLocked 事件（依据 spec listener-events-extend R-001）
-                #[cfg(feature = "listener")]
-                if let Some(lm) = &self.listener_manager {
-                    lm.broadcast(&BulwarkEvent::AccountLocked {
-                        login_id: ctx.login_id,
-                        reason: format!("brute_force: {} failures in 1h", entry.count),
-                    });
+        // v0.5.0: 先在锁内提取所需数据，drop 锁后再 broadcast（避免 MutexGuard 跨 await 持有）
+        let locked_reason = {
+            let map = self.account_failures.lock();
+            let key = ctx.login_id.to_string();
+            if let Some(entry) = map.get(&key) {
+                let now = Instant::now();
+                if now.duration_since(entry.first_failure_at) < BRUTE_FORCE_WINDOW
+                    && entry.count >= BRUTE_FORCE_THRESHOLD
+                {
+                    Some(format!("brute_force: {} failures in 1h", entry.count))
+                } else {
+                    None
                 }
-                return Err(BulwarkError::Session(format!(
-                    "账号锁定：login_id={} 在 1h 内失败 {} 次（阈值 {}）",
-                    ctx.login_id, entry.count, BRUTE_FORCE_THRESHOLD
-                )));
+            } else {
+                None
             }
+        };
+        if let Some(reason) = locked_reason {
+            // v0.4.2: 广播 AccountLocked 事件（依据 spec listener-events-extend R-001）
+            #[cfg(feature = "listener")]
+            if let Some(lm) = &self.listener_manager {
+                lm.broadcast(&BulwarkEvent::AccountLocked {
+                    login_id: ctx.login_id,
+                    reason: reason.clone(),
+                })
+                .await;
+            }
+            return Err(BulwarkError::Session(format!(
+                "账号锁定：login_id={} 触发 {}",
+                ctx.login_id, reason
+            )));
         }
         Ok(())
     }

@@ -653,7 +653,8 @@ impl BulwarkLogicDefault {
                 login_id,
                 token: token.clone(),
                 device: None,
-            });
+            })
+            .await;
         }
         Ok(token)
     }
@@ -746,7 +747,8 @@ impl BulwarkLogicDefault {
                     lm.broadcast(&BulwarkEvent::SessionTimeout {
                         login_id: ts.login_id,
                         token: token.to_string(),
-                    });
+                    })
+                    .await;
                 }
             }
             if self.config.throw_on_not_login {
@@ -771,7 +773,8 @@ impl BulwarkLogicDefault {
                     lm.broadcast(&BulwarkEvent::SessionTimeout {
                         login_id: ts.login_id,
                         token: token.to_string(),
-                    });
+                    })
+                    .await;
                 }
             }
             if self.config.throw_on_not_login {
@@ -821,7 +824,8 @@ impl BulwarkLogic for BulwarkLogicDefault {
                     lm.broadcast(&BulwarkEvent::Logout {
                         login_id: id,
                         token: token.clone(),
-                    });
+                    })
+                    .await;
                 }
                 Ok(())
             },
@@ -843,7 +847,8 @@ impl BulwarkLogic for BulwarkLogicDefault {
                 login_id,
                 token: String::new(),
                 reason: "管理员强制下线".to_string(),
-            });
+            })
+            .await;
         }
         Ok(())
     }
@@ -861,7 +866,8 @@ impl BulwarkLogic for BulwarkLogicDefault {
         if let Some(lm) = &self.listener_manager {
             lm.broadcast(&BulwarkEvent::TokenRevoke {
                 token: token.to_string(),
-            });
+            })
+            .await;
         }
         Ok(())
     }
@@ -978,7 +984,8 @@ impl BulwarkLogic for BulwarkLogicDefault {
                 login_id,
                 token: token.to_string(),
                 device: None,
-            });
+            })
+            .await;
         }
         Ok(())
     }
@@ -1020,7 +1027,8 @@ impl BulwarkLogic for BulwarkLogicDefault {
                 login_id,
                 old_token: token.to_string(),
                 new_token: new_token.clone(),
-            });
+            })
+            .await;
         }
         Ok(new_token)
     }
@@ -1067,7 +1075,8 @@ impl BulwarkLogic for BulwarkLogicDefault {
                     lm.broadcast(&BulwarkEvent::LoginFailure {
                         login_id,
                         reason: "invalid_credentials".to_string(),
-                    });
+                    })
+                    .await;
                 }
                 return Err(BulwarkError::InvalidParam("invalid password".to_string()));
             },
@@ -1098,7 +1107,8 @@ impl BulwarkLogic for BulwarkLogicDefault {
                 lm.broadcast(&BulwarkEvent::LoginFailure {
                     login_id,
                     reason: "invalid_credentials".to_string(),
-                });
+                })
+                .await;
             }
             return Err(BulwarkError::InvalidParam("invalid password".to_string()));
         }

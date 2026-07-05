@@ -19,6 +19,7 @@
 
 #![cfg(feature = "listener")]
 
+use async_trait::async_trait;
 use bulwark::error::BulwarkResult;
 use bulwark::listener::{BulwarkEvent, BulwarkListener, BulwarkListenerManager};
 use bulwark::plugin::{BulwarkPlugin, BulwarkPluginManager};
@@ -71,8 +72,9 @@ static LISTENER_PERM_DENIED_EVENTS: AtomicUsize = AtomicUsize::new(0);
 
 struct CountingListener;
 
+#[async_trait]
 impl BulwarkListener for CountingListener {
-    fn on_event(&self, event: &BulwarkEvent) -> BulwarkResult<()> {
+    async fn on_event(&self, event: &BulwarkEvent) -> BulwarkResult<()> {
         match event {
             BulwarkEvent::Login { .. } => {
                 LISTENER_LOGIN_EVENTS.fetch_add(1, Ordering::SeqCst);
@@ -193,16 +195,18 @@ fn listener_manager_collects_registered_listeners() {
 }
 
 /// Login 事件广播到 listener（spec Scenario）。
-#[test]
+#[tokio::test]
 #[serial_test::serial]
-fn listener_receives_login_event() {
+async fn listener_receives_login_event() {
     reset_counters();
     let manager = BulwarkListenerManager::new();
-    manager.broadcast(&BulwarkEvent::Login {
-        login_id: 1001,
-        token: "T1".to_string(),
-        device: Some("web".to_string()),
-    });
+    manager
+        .broadcast(&BulwarkEvent::Login {
+            login_id: 1001,
+            token: "T1".to_string(),
+            device: Some("web".to_string()),
+        })
+        .await;
     assert!(
         LISTENER_LOGIN_EVENTS.load(Ordering::SeqCst) >= 1,
         "CountingListener 应收到 Login 事件"
@@ -210,15 +214,17 @@ fn listener_receives_login_event() {
 }
 
 /// Logout 事件广播到 listener（spec Scenario）。
-#[test]
+#[tokio::test]
 #[serial_test::serial]
-fn listener_receives_logout_event() {
+async fn listener_receives_logout_event() {
     reset_counters();
     let manager = BulwarkListenerManager::new();
-    manager.broadcast(&BulwarkEvent::Logout {
-        login_id: 1001,
-        token: "T1".to_string(),
-    });
+    manager
+        .broadcast(&BulwarkEvent::Logout {
+            login_id: 1001,
+            token: "T1".to_string(),
+        })
+        .await;
     assert!(
         LISTENER_LOGOUT_EVENTS.load(Ordering::SeqCst) >= 1,
         "CountingListener 应收到 Logout 事件"
@@ -226,15 +232,17 @@ fn listener_receives_logout_event() {
 }
 
 /// PermissionDenied 事件广播到 listener（spec Scenario）。
-#[test]
+#[tokio::test]
 #[serial_test::serial]
-fn listener_receives_permission_denied_event() {
+async fn listener_receives_permission_denied_event() {
     reset_counters();
     let manager = BulwarkListenerManager::new();
-    manager.broadcast(&BulwarkEvent::PermissionDenied {
-        login_id: 1001,
-        permission: "user:delete".to_string(),
-    });
+    manager
+        .broadcast(&BulwarkEvent::PermissionDenied {
+            login_id: 1001,
+            permission: "user:delete".to_string(),
+        })
+        .await;
     assert!(
         LISTENER_PERM_DENIED_EVENTS.load(Ordering::SeqCst) >= 1,
         "CountingListener 应收到 PermissionDenied 事件"
@@ -242,17 +250,19 @@ fn listener_receives_permission_denied_event() {
 }
 
 /// 多次广播累计计数（spec Scenario）。
-#[test]
+#[tokio::test]
 #[serial_test::serial]
-fn listener_multiple_broadcasts_accumulate() {
+async fn listener_multiple_broadcasts_accumulate() {
     reset_counters();
     let manager = BulwarkListenerManager::new();
     for _ in 0..3 {
-        manager.broadcast(&BulwarkEvent::Login {
-            login_id: 1,
-            token: "t".to_string(),
-            device: None,
-        });
+        manager
+            .broadcast(&BulwarkEvent::Login {
+                login_id: 1,
+                token: "t".to_string(),
+                device: None,
+            })
+            .await;
     }
     assert!(
         LISTENER_LOGIN_EVENTS.load(Ordering::SeqCst) >= 3,
@@ -266,9 +276,9 @@ fn listener_multiple_broadcasts_accumulate() {
 
 /// 完整生命周期：login → permission_check → logout
 /// （扩展点本身行为：直接调用 plugin/listener 方法）。
-#[test]
+#[tokio::test]
 #[serial_test::serial]
-fn full_lifecycle_plugin_and_listener_cooperate() {
+async fn full_lifecycle_plugin_and_listener_cooperate() {
     reset_counters();
 
     let plugin_manager = BulwarkPluginManager::new();
@@ -276,21 +286,25 @@ fn full_lifecycle_plugin_and_listener_cooperate() {
 
     // 1. 模拟登录：先调用 plugin on_login，再广播 Login 事件
     plugin_manager.on_login(1001, "T1");
-    listener_manager.broadcast(&BulwarkEvent::Login {
-        login_id: 1001,
-        token: "T1".to_string(),
-        device: Some("web".to_string()),
-    });
+    listener_manager
+        .broadcast(&BulwarkEvent::Login {
+            login_id: 1001,
+            token: "T1".to_string(),
+            device: Some("web".to_string()),
+        })
+        .await;
 
     // 2. 模拟权限校验：调用 plugin on_permission_check
     plugin_manager.on_permission_check(1001, "user:read");
 
     // 3. 模拟登出：调用 plugin on_logout + 广播 Logout 事件
     plugin_manager.on_logout(1001, "T1");
-    listener_manager.broadcast(&BulwarkEvent::Logout {
-        login_id: 1001,
-        token: "T1".to_string(),
-    });
+    listener_manager
+        .broadcast(&BulwarkEvent::Logout {
+            login_id: 1001,
+            token: "T1".to_string(),
+        })
+        .await;
 
     // 验证全部钩子与事件被触发
     assert!(
@@ -316,19 +330,21 @@ fn full_lifecycle_plugin_and_listener_cooperate() {
 }
 
 /// PermissionDenied 事件不被 plugin 触发，仅由 listener 接收（spec Scenario）。
-#[test]
+#[tokio::test]
 #[serial_test::serial]
-fn permission_denied_event_only_goes_to_listener() {
+async fn permission_denied_event_only_goes_to_listener() {
     reset_counters();
     let plugin_manager = BulwarkPluginManager::new();
     let listener_manager = BulwarkListenerManager::new();
 
     // 权限校验被拒时：plugin 收到 on_permission_check，listener 收到 PermissionDenied
     plugin_manager.on_permission_check(1001, "user:delete");
-    listener_manager.broadcast(&BulwarkEvent::PermissionDenied {
-        login_id: 1001,
-        permission: "user:delete".to_string(),
-    });
+    listener_manager
+        .broadcast(&BulwarkEvent::PermissionDenied {
+            login_id: 1001,
+            permission: "user:delete".to_string(),
+        })
+        .await;
 
     assert!(PLUGIN_PERM_CHECK_CALLS.load(Ordering::SeqCst) >= 1);
     assert!(LISTENER_PERM_DENIED_EVENTS.load(Ordering::SeqCst) >= 1);

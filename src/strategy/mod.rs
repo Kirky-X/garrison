@@ -456,23 +456,23 @@ impl BulwarkFirewallStrategy for BulwarkFirewallStrategyDefault {
         };
         // 按序调用 5 个 hook，任一 Err 立即广播 FirewallBlock 并返回阻断登录
         if let Err(e) = hook.check_login_frequency(ctx).await {
-            self.broadcast_firewall_block(login_id, &e);
+            self.broadcast_firewall_block(login_id, &e).await;
             return Err(e);
         }
         if let Err(e) = hook.check_brute_force(ctx).await {
-            self.broadcast_firewall_block(login_id, &e);
+            self.broadcast_firewall_block(login_id, &e).await;
             return Err(e);
         }
         if let Err(e) = hook.check_geo_anomaly(ctx).await {
-            self.broadcast_firewall_block(login_id, &e);
+            self.broadcast_firewall_block(login_id, &e).await;
             return Err(e);
         }
         if let Err(e) = hook.check_token_reuse(ctx).await {
-            self.broadcast_firewall_block(login_id, &e);
+            self.broadcast_firewall_block(login_id, &e).await;
             return Err(e);
         }
         if let Err(e) = hook.check_device_anomaly(ctx).await {
-            self.broadcast_firewall_block(login_id, &e);
+            self.broadcast_firewall_block(login_id, &e).await;
             return Err(e);
         }
         Ok(())
@@ -483,14 +483,17 @@ impl BulwarkFirewallStrategyDefault {
     /// 广播 FirewallBlock 事件（v0.4.2 新增，依据 spec listener-events-extend R-001）。
     ///
     /// 仅在注入 `listener_manager` 且启用 `listener` feature 时广播，否则为 no-op。
+    ///
+    /// v0.5.0 改为 async（依据 proposal H3）：broadcast 改为 async 后此helper 也需 async。
     #[cfg_attr(not(feature = "listener"), allow(unused_variables))]
-    fn broadcast_firewall_block(&self, login_id: i64, e: &BulwarkError) {
+    async fn broadcast_firewall_block(&self, login_id: i64, e: &BulwarkError) {
         #[cfg(feature = "listener")]
         if let Some(lm) = &self.listener_manager {
             lm.broadcast(&BulwarkEvent::FirewallBlock {
                 login_id,
                 reason: e.to_string(),
-            });
+            })
+            .await;
         }
     }
 }

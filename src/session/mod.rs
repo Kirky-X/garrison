@@ -631,7 +631,8 @@ impl BulwarkSession {
                     login_id,
                     token: token.clone(),
                     reason: reason.clone(),
-                });
+                })
+                .await;
             }
         }
 
@@ -1502,14 +1503,16 @@ mod tests {
     #[tokio::test]
     async fn kickout_by_device_broadcasts_kickout_events() {
         use crate::listener::{BulwarkEvent, BulwarkListener, BulwarkListenerManager};
+        use async_trait::async_trait;
         use std::sync::atomic::{AtomicUsize, Ordering};
 
         #[allow(dead_code)]
         struct KickoutCounter {
             count: AtomicUsize,
         }
+        #[async_trait]
         impl BulwarkListener for KickoutCounter {
-            fn on_event(&self, event: &BulwarkEvent) -> BulwarkResult<()> {
+            async fn on_event(&self, event: &BulwarkEvent) -> BulwarkResult<()> {
                 if matches!(event, BulwarkEvent::Kickout { .. }) {
                     self.count.fetch_add(1, Ordering::SeqCst);
                 }

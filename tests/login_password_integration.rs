@@ -69,8 +69,9 @@ fn reset_listener_counters() {
 /// listener 无法仅凭 reason 区分两类失败，需借助 login_id（测试场景固定）。
 struct PasswordLoginListener;
 
+#[async_trait]
 impl BulwarkListener for PasswordLoginListener {
-    fn on_event(&self, event: &BulwarkEvent) -> BulwarkResult<()> {
+    async fn on_event(&self, event: &BulwarkEvent) -> BulwarkResult<()> {
         if let BulwarkEvent::LoginFailure { login_id, reason } = event {
             // reason 现在统一为 "invalid_credentials"，用 login_id 区分场景
             if reason == "invalid_credentials" {

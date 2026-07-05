@@ -359,7 +359,8 @@ impl ApiKeyHandler {
             lm.broadcast(&BulwarkEvent::ApiKeyRotate {
                 old_key: old_key.to_string(),
                 new_key: new_key.clone(),
-            });
+            })
+            .await;
         }
         Ok(new_key)
     }
