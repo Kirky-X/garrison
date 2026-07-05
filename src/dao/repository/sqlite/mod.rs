@@ -1719,7 +1719,7 @@ fn parse_user_ext_row(row: &QueryResult) -> BulwarkResult<UserExtRow> {
 // 测试模块（依据 spec tenant-isolation R-004）
 // ============================================================================
 
-#[cfg(test)]
+#[cfg(all(test, feature = "db-sqlite"))]
 mod tests {
     use super::*;
     use crate::dao::{init_dbnexus, BulwarkMigration};

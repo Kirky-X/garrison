@@ -478,13 +478,20 @@ mod oxcache_impl {
 pub use oxcache_impl::BulwarkDaoOxcache;
 
 // ============================================================================
-// dbnexus 实现（feature = "db-sqlite")
+// dbnexus 实现（feature = "db-sqlite" 或 "db-postgres"）
 // ============================================================================
+//
+// `init_dbnexus` 和 `BulwarkMigration` 是 backend-agnostic 的——它们仅封装
+// `DbPool::new(url)` 和 `DbPool::run_migrations(dir)`，不关心底层是 SQLite 还是
+// PostgreSQL。后端由 dbnexus 的 feature flag（sqlite/postgres）控制。
+//
+// 注意：`BulwarkMigration::new()` 默认使用 `migrations/sqlite/` 路径，
+// PostgreSQL 用户应使用 `with_base_dir` 指定 `migrations/postgres/` 路径。
 
-#[cfg(feature = "db-sqlite")]
+#[cfg(any(feature = "db-sqlite", feature = "db-postgres"))]
 mod dbnexus_impl;
 
-#[cfg(feature = "db-sqlite")]
+#[cfg(any(feature = "db-sqlite", feature = "db-postgres"))]
 pub use dbnexus_impl::{init_dbnexus, BulwarkMigration};
 
 // ============================================================================

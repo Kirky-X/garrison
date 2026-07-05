@@ -597,11 +597,12 @@ pub trait UserExtRepository: Send + Sync {
 }
 
 // ============================================================================
-// SQLite 实现子模块（依据 spec repository-layer R-003）。
-// 启用 db-sqlite feature 时编译，基于 dbnexus DbPool + sea-orm Statement 参数化查询。
+// Dbnexus Repository 实现子模块（依据 spec repository-layer R-003 + P3 重构）。
+// 启用 db-sqlite 或 db-postgres feature 时编译，基于 dbnexus DbPool + sea-orm
+// Statement 参数化查询，通过 make_statement 运行时占位符转换支持两种后端。
 // ============================================================================
-/// SQLite 实现子模块。
-#[cfg(feature = "db-sqlite")]
+/// Dbnexus Repository 实现子模块（backend-agnostic，支持 SQLite / PostgreSQL）。
+#[cfg(any(feature = "db-sqlite", feature = "db-postgres"))]
 pub mod sqlite;
 
 /// 角色层级子模块（v0.5.0 新增，依据 proposal H6）。
@@ -1120,5 +1121,125 @@ mod tests {
             ],
         );
         assert_eq!(stmt.sql, "WHERE id = $1 AND name = $2");
+    }
+
+    // ========================================================================
+    // PostgreSQL 后端集成测试（v0.5.0 新增，依据 P3 重构 T137）
+    // ========================================================================
+    //
+    // 验证 DbnexusUserRepository 在 PostgreSQL 后端下能正确执行 find_by_id，
+    // 间接验证 make_statement 运行时占位符转换（? → $1, $2）在真实 PG 上工作。
+    //
+    // 此测试需要真实 PostgreSQL 实例，默认 #[ignore]。
+    // 运行方式：
+    //   export DATABASE_URL=postgres://user:pass@localhost:5432/testdb
+    //   cargo test --features db-postgres --lib \
+    //     repository::tests::dbnexus_user_repository_works_with_postgres_backend -- --ignored
+
+    /// 验证 DbnexusUserRepository 在 PostgreSQL 后端下 find_by_id 正确执行。
+    ///
+    /// 测试流程：建表 → 插入用户 → find_by_id → 断言字段 → 清理。
+    /// 如果占位符转换失败（? 未转为 $n），PostgreSQL 会返回语法错误。
+    #[cfg(feature = "db-postgres")]
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore = "需要真实 PostgreSQL，设置 DATABASE_URL 后 cargo test -- --ignored 运行"]
+    async fn dbnexus_user_repository_works_with_postgres_backend() {
+        use crate::dao::init_dbnexus;
+        use crate::dao::repository::sqlite::DbnexusUserRepository;
+        use sea_orm::ConnectionTrait;
+
+        let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
+            panic!("DATABASE_URL 未设置，请指向 PostgreSQL 连接字符串");
+        });
+
+        // 1. 初始化 PostgreSQL 连接池
+        let pool = init_dbnexus(&database_url)
+            .await
+            .expect("初始化 PostgreSQL 连接池失败");
+
+        // 2. 建表（PostgreSQL 兼容 DDL，用 BIGINT 匹配 i64）
+        {
+            let session = pool.get_session("admin").await.expect("获取 session 失败");
+            let conn = session.connection().expect("获取 connection 失败");
+            // 清理残留表（按依赖逆序）
+            let _ = conn
+                .execute_unprepared("DROP TABLE IF EXISTS app_user_ext")
+                .await;
+            let _ = conn
+                .execute_unprepared("DROP TABLE IF EXISTS app_login_log")
+                .await;
+            let _ = conn
+                .execute_unprepared("DROP TABLE IF EXISTS app_session")
+                .await;
+            let _ = conn
+                .execute_unprepared("DROP TABLE IF EXISTS app_auth_method")
+                .await;
+            let _ = conn
+                .execute_unprepared("DROP TABLE IF EXISTS app_role_permission")
+                .await;
+            let _ = conn
+                .execute_unprepared("DROP TABLE IF EXISTS app_user_role")
+                .await;
+            let _ = conn
+                .execute_unprepared("DROP TABLE IF EXISTS app_permission")
+                .await;
+            let _ = conn
+                .execute_unprepared("DROP TABLE IF EXISTS app_role")
+                .await;
+            let _ = conn
+                .execute_unprepared("DROP TABLE IF EXISTS app_user")
+                .await;
+            // 创建 app_user 表
+            conn.execute_unprepared(
+                "CREATE TABLE app_user (
+                    id              TEXT    PRIMARY KEY,
+                    username        TEXT    NOT NULL,
+                    password_hash   TEXT    NOT NULL,
+                    status          TEXT    NOT NULL DEFAULT 'pending',
+                    tenant_id       BIGINT  NOT NULL DEFAULT 0,
+                    created_at      TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at      TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    last_login_at   TEXT
+                )",
+            )
+            .await
+            .expect("创建 app_user 表失败");
+        }
+
+        // 3. 构造 Repository
+        let repo = DbnexusUserRepository::new(pool.clone());
+
+        // 4. 插入测试用户
+        let tenant_id: i64 = 42;
+        repo.create(
+            tenant_id,
+            NewUser {
+                id: "u-pg-test".to_string(),
+                username: "pg-test-user".to_string(),
+                password_hash: "$argon2id$fake-hash".to_string(),
+                status: "active".to_string(),
+            },
+        )
+        .await
+        .expect("插入测试用户失败");
+
+        // 5. find_by_id 验证占位符转换（? → $1, $2 在真实 PG 上执行）
+        let found = repo
+            .find_by_id(tenant_id, "u-pg-test")
+            .await
+            .expect("find_by_id 查询失败")
+            .expect("测试用户未找到");
+
+        // 6. 断言返回数据正确
+        assert_eq!(found.id, "u-pg-test");
+        assert_eq!(found.username, "pg-test-user");
+        assert_eq!(found.password_hash, "$argon2id$fake-hash");
+        assert_eq!(found.status, "active");
+        assert_eq!(found.tenant_id, tenant_id);
+
+        // 7. 清理
+        repo.delete(tenant_id, "u-pg-test")
+            .await
+            .expect("清理测试数据失败");
     }
 }

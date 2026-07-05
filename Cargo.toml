@@ -141,7 +141,8 @@ cache-redis = ["oxcache"]
 # 注意：oxcache 无 caffeine feature（L1 用 moka），cache-caffeine 已移除
 
 # === 数据库后端（通过 dbnexus 0.3） ===
-# db-base：dbnexus 基础 features（runtime + permission + sql-parser + macros + config-env + with-time）+ sea-orm
+# db-base：dbnexus 基础 features（runtime + permission + sql-parser + macros + config-env + with-time
+# + auto-migrate）+ sea-orm。auto-migrate 是 backend-agnostic 的，SQLite/PostgreSQL 均需要。
 # 内部 feature，由 db-sqlite / db-postgres 继承，不直接暴露给用户。
 # dbnexus 0.3+ 禁止 embedded(sqlite) 与 server-side(postgres) 混用，故 db-sqlite / db-postgres 互斥。
 db-base = [
@@ -152,10 +153,11 @@ db-base = [
     "dbnexus/macros",
     "dbnexus/config-env",
     "dbnexus/with-time",
+    "dbnexus/auto-migrate",
     "sea-orm",
 ]
-# db-sqlite 启用 sqlite embedded 驱动 + auto-migrate（提供 MigrationExecutor::run_migrations）
-db-sqlite = ["db-base", "dbnexus/sqlite", "dbnexus/auto-migrate"]
+# db-sqlite 启用 sqlite embedded 驱动
+db-sqlite = ["db-base", "dbnexus/sqlite"]
 # db-postgres 启用 postgres server-side 驱动（sea-orm/sqlx-postgres 由 dbnexus/postgres 传递启用）
 db-postgres = ["db-base", "dbnexus/postgres"]
 # db-mysql 启用 mysql server-side 驱动（sea-orm/sqlx-mysql 由 dbnexus/mysql 传递启用）

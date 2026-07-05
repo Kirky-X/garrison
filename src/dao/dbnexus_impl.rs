@@ -114,7 +114,7 @@ impl BulwarkMigration {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "db-sqlite"))]
 mod tests {
     use super::*;
     use sea_orm::{ConnectionTrait, DbBackend, Statement};
