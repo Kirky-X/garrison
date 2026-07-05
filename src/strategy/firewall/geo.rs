@@ -1,8 +1,10 @@
 //! IP 地理位置查询抽象（firewall-anomalous / firewall-geoip 共享）。
 //!
-//! 定义 [`GeoCoord`] 坐标结构与 [`GeoLookup`] / [`CountryLookup`] 两个 trait：
-//! - [`GeoLookup`]：IP → 坐标（lat/lon），供 `AnomalousLoginStrategy` 算 haversine 距离
-//! - [`CountryLookup`]：IP → 国家码（ISO 3166-1 alpha-2），供 `GeoIPStrategy` 做 allow/block 匹配
+//! 定义 [`GeoCoord`](crate::strategy::firewall::geo::GeoCoord) 坐标结构与
+//! [`GeoLookup`](crate::strategy::firewall::geo::GeoLookup) /
+//! [`CountryLookup`](crate::strategy::firewall::geo::CountryLookup) 两个 trait：
+//! - [`GeoLookup`](crate::strategy::firewall::geo::GeoLookup)：IP → 坐标（lat/lon），供 `AnomalousLoginStrategy` 算 haversine 距离
+//! - [`CountryLookup`](crate::strategy::firewall::geo::CountryLookup)：IP → 国家码（ISO 3166-1 alpha-2），供 `GeoIPStrategy` 做 allow/block 匹配
 //!
 //! 生产实现可用 maxminddb 读取 MaxMind GeoIP2 数据库（City.mmdb 含坐标，Country.mmdb 含国家码），
 //! 测试可用 mock 实现（避免依赖真实数据库文件）。
@@ -60,7 +62,7 @@ pub trait GeoLookup: Send + Sync {
 
 /// IP → 国家码查询 trait（抽象 maxminddb 等后端）。
 ///
-/// 与 [`GeoLookup`] 并列（单一职责）：`GeoLookup` 返回坐标供 haversine 距离计算，
+/// 与 [`GeoLookup`](crate::strategy::firewall::geo::GeoLookup) 并列（单一职责）：`GeoLookup` 返回坐标供 haversine 距离计算，
 /// `CountryLookup` 返回 ISO 3166-1 alpha-2 国家码（如 `"CN"` / `"US"`）供 allow/block 匹配。
 ///
 /// 生产实现：`MaxMindDbCountryLookup`（依赖 maxminddb，读取 GeoIP2-Country 数据库）。

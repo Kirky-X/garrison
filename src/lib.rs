@@ -327,6 +327,54 @@ pub use listener::audit::AuditQuery;
 pub use listener::audit::AuditLogListener;
 
 // ============================================================================
+// 安全防护套件（v0.5.0 新增，依据 proposal H5 / spec firewall）
+// ============================================================================
+//
+// 业务方可通过 `use bulwark::{BulwarkFirewallStrategy, FirewallContext, ...}` 直接使用，
+// 无需写完整路径 `bulwark::strategy::firewall::BulwarkFirewallStrategy`。
+//
+// - `firewall` feature：基础 trait + Context + StrategyRegistration（inventory 注册）
+// - `firewall-bruteforce` / `firewall-ratelimit` / `firewall-anomalous` / `firewall-ddos` / `firewall-geoip`：
+//   5 个独立 strategy 实现，各自 feature 门控
+// - `GeoCoord` / `GeoLookup` / `CountryLookup`：共享地理查询抽象（anomalous / geoip 共用）
+
+/// 防火墙策略 trait（IP 级安全检查契约）。
+#[cfg(feature = "firewall")]
+pub use strategy::firewall::BulwarkFirewallStrategy;
+
+/// 防火墙上下文（IP / login_id / tenant_id）。
+#[cfg(feature = "firewall")]
+pub use strategy::firewall::FirewallContext;
+
+/// 防火墙策略注册条目（inventory 收集，仅含 name）。
+#[cfg(feature = "firewall")]
+pub use strategy::firewall::StrategyRegistration;
+
+/// 暴力破解防护策略 + 配置（依据 spec firewall R-firewall-001）。
+#[cfg(feature = "firewall-bruteforce")]
+pub use strategy::firewall::brute_force::{BruteForceConfig, BruteForceStrategy};
+
+/// 速率限制策略 + 配置 + 作用域枚举（依据 spec firewall R-firewall-002）。
+#[cfg(feature = "firewall-ratelimit")]
+pub use strategy::firewall::rate_limit::{RateLimitConfig, RateLimitScope, RateLimitStrategy};
+
+/// 异地登录检测策略 + 配置（依据 spec firewall R-firewall-003）。
+#[cfg(feature = "firewall-anomalous")]
+pub use strategy::firewall::anomalous::{AnomalousConfig, AnomalousLoginStrategy};
+
+/// DDoS 防护策略 + 配置（依据 spec firewall R-firewall-004）。
+#[cfg(feature = "firewall-ddos")]
+pub use strategy::firewall::ddos::{DDoSConfig, DDoSStrategy};
+
+/// GeoIP 地理位置拦截策略 + 配置（依据 spec firewall R-firewall-005）。
+#[cfg(feature = "firewall-geoip")]
+pub use strategy::firewall::geoip::{GeoIPConfig, GeoIPStrategy};
+
+/// 地理坐标 + GeoLookup / CountryLookup trait（anomalous / geoip 共享）。
+#[cfg(any(feature = "firewall-anomalous", feature = "firewall-geoip"))]
+pub use strategy::firewall::geo::{CountryLookup, GeoCoord, GeoLookup};
+
+// ============================================================================
 // 过程宏注解（0.4.2 新增，依据 spec annotation-macros）
 // ============================================================================
 

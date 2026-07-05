@@ -2,9 +2,9 @@
 //!
 //! ## 设计
 //!
-//! - [`BulwarkFirewallStrategy`] trait：定义 `check(&self, ctx: &FirewallContext) -> BulwarkResult<()>` 契约
-//! - [`FirewallContext`]：携带 IP / login_id / tenant_id 供策略决策
-//! - [`StrategyRegistration`]：inventory 注册项，5 个 strategy 通过 `inventory::submit!` 注册
+//! - [`BulwarkFirewallStrategy`](crate::strategy::firewall::BulwarkFirewallStrategy) trait：定义 `check(&self, ctx: &FirewallContext) -> BulwarkResult<()>` 契约
+//! - [`FirewallContext`](crate::strategy::firewall::FirewallContext)：携带 IP / login_id / tenant_id 供策略决策
+//! - [`StrategyRegistration`](crate::strategy::firewall::StrategyRegistration)：inventory 注册项，5 个 strategy 通过 `inventory::submit!` 注册
 //!
 //! ## 5 个 strategy（各自独立 feature）
 //!
@@ -20,7 +20,7 @@
 //!
 //! - [`BulwarkPermissionStrategy`](crate::strategy::BulwarkPermissionStrategy)（v0.3.0）：权限/角色校验
 //! - [`FirewallStrategy`](crate::strategy::registry::FirewallStrategy)（v0.4.2）：登录前钩子检查
-//! - [`BulwarkFirewallStrategy`]（v0.5.0，本 trait）：IP 级防火墙拦截
+//! - [`BulwarkFirewallStrategy`](crate::strategy::firewall::BulwarkFirewallStrategy)（v0.5.0，本 trait）：IP 级防火墙拦截
 
 use crate::error::BulwarkResult;
 use async_trait::async_trait;

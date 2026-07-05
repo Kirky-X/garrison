@@ -1,7 +1,7 @@
 //! GeoIP 地理位置拦截策略（依据 spec firewall R-firewall-005）。
 //!
-//! `GeoIPStrategy` 实现 [`BulwarkFirewallStrategy`] trait，
-//! 用 [`CountryLookup`] trait 抽象 IP → 国家码查询，
+//! `GeoIPStrategy` 实现 [`BulwarkFirewallStrategy`](crate::strategy::firewall::BulwarkFirewallStrategy) trait，
+//! 用 [`CountryLookup`](crate::strategy::firewall::geo::CountryLookup) trait 抽象 IP → 国家码查询，
 //! 对照 `allowed_countries`（白名单）/ `blocked_countries`（黑名单）做拦截决策。
 //!
 //! # 算法（白名单优先）
@@ -12,11 +12,8 @@
 //!
 //! # 与 AnomalousLoginStrategy 的区分
 //!
-//! - `AnomalousLoginStrategy` 用 [`GeoLookup`]（IP → 坐标）算 haversine 距离
-//! - `GeoIPStrategy` 用 [`CountryLookup`]（IP → 国家码）做 allow/block 匹配
-//!
-//! [`CountryLookup`]: crate::strategy::firewall::geo::CountryLookup
-//! [`GeoLookup`]: crate::strategy::firewall::geo::GeoLookup
+//! - `AnomalousLoginStrategy` 用 [`GeoLookup`](crate::strategy::firewall::geo::GeoLookup)（IP → 坐标）算 haversine 距离
+//! - `GeoIPStrategy` 用 [`CountryLookup`](crate::strategy::firewall::geo::CountryLookup)（IP → 国家码）做 allow/block 匹配
 
 use crate::error::{BulwarkError, BulwarkResult};
 use crate::strategy::firewall::geo::CountryLookup;
