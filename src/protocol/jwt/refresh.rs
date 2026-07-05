@@ -103,3 +103,62 @@ mod tests {
         assert_eq!(record.created_at, 0);
     }
 }
+
+// ============================================================================
+// db-sqlite 集成测试（T055-T066: refresh_tokens 表迁移 + rotate 服务）
+// ============================================================================
+
+#[cfg(all(test, feature = "protocol-jwt", feature = "db-sqlite"))]
+mod db_sqlite_tests {
+    use crate::dao::{init_dbnexus, BulwarkMigration};
+    use dbnexus::DbPool;
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
+    use std::path::PathBuf;
+
+    /// 定位项目根目录的 migrations/sqlite/ 目录。
+    fn project_migrations_dir() -> PathBuf {
+        let manifest_dir = env!("CARGO_MANIFEST_DIR");
+        PathBuf::from(manifest_dir)
+            .join("migrations")
+            .join("sqlite")
+    }
+
+    /// 创建并初始化 SQLite in-memory 数据库（迁移 + 返回 pool）。
+    async fn setup_db() -> DbPool {
+        let pool = init_dbnexus("sqlite::memory:")
+            .await
+            .expect("init_dbnexus 应成功");
+        let migration = BulwarkMigration::with_base_dir(pool.clone(), project_migrations_dir());
+        let applied = migration.migrate_core().await.expect("migrate_core 应成功");
+        assert!(applied >= 1, "migrate_core 应至少执行 1 个文件");
+        pool
+    }
+
+    // ========================================================================
+    // T055-T056: refresh_tokens 表迁移验证
+    // ========================================================================
+
+    /// T055-T056 Green: 验证 SQLite 迁移加载 `003_refresh_tokens.sql` 后
+    /// `refresh_tokens` 表存在。
+    ///
+    /// Rule 11（惯例优先）：SQL 文件放 `migrations/sqlite/core/003_refresh_tokens.sql`，
+    /// 复用现有 `migrate_core()` 自动加载机制（与 002_role_hierarchy.sql 同惯例），
+    /// 而非 tasks.md 原描述的 `src/dao/repository/sqlite/refresh_tokens.sql`。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn refresh_tokens_table_exists_after_migration() {
+        let pool = setup_db().await;
+        let session = pool.get_session("admin").await.unwrap();
+        let conn = session.connection().unwrap();
+        let stmt = Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='refresh_tokens'",
+            vec![],
+        );
+        let rows = conn.query_all_raw(stmt).await.expect("query_all 应成功");
+        assert_eq!(
+            rows.len(),
+            1,
+            "refresh_tokens 表应存在（迁移后 sqlite_master 应有 1 行记录）"
+        );
+    }
+}
