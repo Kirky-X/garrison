@@ -13,6 +13,12 @@
 use crate::error::BulwarkResult;
 use std::sync::Arc;
 
+/// 审计日志子模块（v0.5.0 新增，依据 proposal H3）。
+///
+/// 启用 `audit-log` feature 时编译，提供 `AuditLogListener` 持久化事件到 `audit_logs` 表。
+#[cfg(feature = "audit-log")]
+pub mod audit;
+
 /// 事件枚举，定义框架广播的所有事件变体（依据 spec listener-system）。
 ///
 /// 派生 `Debug`、`Clone`、`PartialEq`，便于在监听器中复制、打印与比较。
