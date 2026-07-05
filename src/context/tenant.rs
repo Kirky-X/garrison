@@ -164,4 +164,44 @@ mod tests {
         assert_eq!(ctx.tenant_id, 42);
         assert!(matches!(ctx.resolved_from, TenantSource::Header));
     }
+
+    /// R-tenant-isolation-002: HeaderTenantResolver 在 header 缺失时返回 Config 错误（不默认 0）。
+    #[tokio::test]
+    async fn header_tenant_resolver_returns_config_error_when_header_missing() {
+        let headers = http::HeaderMap::new();
+        let result = HeaderTenantResolver.resolve(&headers).await;
+        assert!(matches!(result, Err(BulwarkError::Config(_))));
+    }
+
+    /// R-tenant-isolation-002: HeaderTenantResolver 在 header 非法 i64 时返回 Config 错误。
+    #[tokio::test]
+    async fn header_tenant_resolver_returns_config_error_when_header_not_i64() {
+        let mut headers = http::HeaderMap::new();
+        headers.insert("X-Tenant-Id", "not-a-number".parse().unwrap());
+        let result = HeaderTenantResolver.resolve(&headers).await;
+        assert!(matches!(result, Err(BulwarkError::Config(_))));
+    }
+
+    /// R-tenant-isolation-001: TENANT.scope 进入租户上下文后 TENANT.get() 可取到 ctx.tenant_id。
+    ///
+    /// 验证 task_local! 的 scope/get 语义：在 scope 闭包内 `TENANT.get()` 返回
+    /// 进入 scope 时传入的 `TenantContext` 引用。
+    #[tokio::test]
+    async fn tenant_scope_enter_returns_context_value() {
+        let ctx = TenantContext {
+            tenant_id: 42,
+            resolved_from: TenantSource::Header,
+        };
+        let tenant_id = TENANT.scope(ctx, async { TENANT.get().tenant_id }).await;
+        assert_eq!(tenant_id, 42);
+    }
+
+    /// R-tenant-isolation-003: TENANT.try_get() 在无 scope 上下文时返回 Err（不 panic）。
+    ///
+    /// 验证 DAO key 前缀逻辑的兜底条件：`TENANT.try_get().is_err()` 时 key 保持原样。
+    #[tokio::test]
+    async fn tenant_try_get_returns_err_when_no_scope() {
+        // 在无 scope 上下文中调用 try_get，应返回 Err 而非 panic
+        assert!(TENANT.try_get().is_err());
+    }
 }
