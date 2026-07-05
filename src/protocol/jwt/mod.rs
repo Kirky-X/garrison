@@ -5,6 +5,9 @@
 //!
 //! 仅在启用 `protocol-jwt` 特性时编译。
 
+/// RefreshToken Rotation 子模块（v0.5.0 新增，依据 proposal H4）。
+pub mod refresh;
+
 use crate::error::{BulwarkError, BulwarkResult};
 // 0.4.2: LoginId newtype 接入（impl Into<LoginId> 公开 API + i64 内部层）
 use crate::stp::login_id::LoginId;
