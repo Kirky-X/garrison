@@ -25,9 +25,15 @@
 use crate::error::BulwarkResult;
 use async_trait::async_trait;
 
+/// 异地登录检测策略（依据 spec firewall R-firewall-003）。
+#[cfg(feature = "firewall-anomalous")]
+pub mod anomalous;
 /// 暴力破解防护策略（依据 spec firewall R-firewall-001）。
 #[cfg(feature = "firewall-bruteforce")]
 pub mod brute_force;
+/// IP 地理位置查询抽象（firewall-anomalous / firewall-geoip 共享）。
+#[cfg(any(feature = "firewall-anomalous", feature = "firewall-geoip"))]
+pub mod geo;
 /// 速率限制策略（依据 spec firewall R-firewall-002）。
 #[cfg(feature = "firewall-ratelimit")]
 pub mod rate_limit;

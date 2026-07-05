@@ -192,6 +192,10 @@ firewall = []
 # firewall-anomalous / firewall-geoip 额外依赖 maxminddb（T087-T092 时添加）
 firewall-bruteforce = ["firewall"]
 firewall-ratelimit = ["firewall"]
+# firewall-anomalous 当前仅 trait + haversine + mock 测试；maxminddb 实现待 MaxMindDbGeoLookup 引入时添加
+firewall-anomalous = ["firewall"]
+# firewall-geoip 空壳，T091-T092 时添加 maxminddb 依赖与 GeoIPStrategy 实现
+firewall-geoip = ["firewall"]
 
 # === 可观测性 ===
 listener = []
@@ -216,7 +220,8 @@ full = [
     "listener", "metrics-prometheus", "observability-otlp", "grpc", "i18n",
     "annotation-macros",
     "decision-trace", "tenant-isolation",
-    "firewall", "firewall-bruteforce", "firewall-ratelimit",
+    "firewall", "firewall-bruteforce", "firewall-ratelimit", "firewall-anomalous",
+    "firewall-geoip",
 ]
 
 # 注意：production 原用 db-postgres，但 dbnexus 0.2 不支持，0.1.0 降级为 db-sqlite
