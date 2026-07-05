@@ -184,6 +184,14 @@ parameter-query = []
 # audit-log 依赖 listener（AuditLogListener 实现 BulwarkListener trait）
 audit-log = ["listener"]
 
+# === 0.5.0 新增：安全防护套件（依据 proposal H5） ===
+# firewall 为基础 trait + FirewallContext + StrategyRegistration，无额外依赖
+firewall = []
+# 5 个独立 strategy 实现，各自依赖 firewall 基础 trait
+# firewall-bruteforce / firewall-ratelimit / firewall-ddos 仅依赖 oxcache（通过 BulwarkDao 抽象）
+# firewall-anomalous / firewall-geoip 额外依赖 maxminddb（T087-T092 时添加）
+firewall-bruteforce = ["firewall"]
+
 # === 可观测性 ===
 listener = []
 tracing-log = ["tracing/log"]
@@ -207,6 +215,7 @@ full = [
     "listener", "metrics-prometheus", "observability-otlp", "grpc", "i18n",
     "annotation-macros",
     "decision-trace", "tenant-isolation",
+    "firewall", "firewall-bruteforce",
 ]
 
 # 注意：production 原用 db-postgres，但 dbnexus 0.2 不支持，0.1.0 降级为 db-sqlite

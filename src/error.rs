@@ -62,6 +62,11 @@ pub enum BulwarkError {
 
     /// 功能未实现（0.2.0 新增，依据 spec core-auth-api：default 实现返回此错误）。
     NotImplemented(String),
+
+    /// 防火墙拦截（0.5.0 新增，依据 spec firewall R-firewall-001 ~ R-firewall-005）。
+    ///
+    /// 携带 strategy 名与原因，便于 audit-log 订阅。
+    FirewallBlocked(String),
 }
 
 // ============================================================================
@@ -96,6 +101,7 @@ impl std::fmt::Display for BulwarkError {
             BulwarkError::Network(s) => write!(f, "网络错误: {}", s),
             BulwarkError::InvalidParam(s) => write!(f, "参数无效: {}", s),
             BulwarkError::NotImplemented(s) => write!(f, "未实现: {}", s),
+            BulwarkError::FirewallBlocked(s) => write!(f, "防火墙拦截: {}", s),
             BulwarkError::Exception(ex) => write!(f, "业务异常[{}]: {}", ex.code, ex.message),
         }
     }
@@ -140,6 +146,7 @@ impl BulwarkError {
             BulwarkError::Network(_) => (502, "NETWORK_ERROR", "网络错误", None),
             BulwarkError::InvalidParam(_) => (400, "INVALID_PARAM", "参数无效", None),
             BulwarkError::NotImplemented(_) => (501, "NOT_IMPLEMENTED", "未实现", None),
+            BulwarkError::FirewallBlocked(_) => (403, "FIREWALL_BLOCKED", "防火墙拦截", None),
             // Exception 依据 BulwarkException.code 字段映射状态码
             // code = -1 → 未登录 → 401；code = -2 → 无权限 → 403；其他 → 500
             BulwarkError::Exception(ex) => {

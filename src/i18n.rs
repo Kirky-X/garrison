@@ -185,6 +185,7 @@ fn error_to_key_args(err: &BulwarkError) -> (&'static str, Vec<(&'static str, St
         BulwarkError::Network(s) => ("network", vec![("detail", s.clone())]),
         BulwarkError::InvalidParam(s) => ("invalid-param", vec![("detail", s.clone())]),
         BulwarkError::NotImplemented(s) => ("not-implemented", vec![("detail", s.clone())]),
+        BulwarkError::FirewallBlocked(s) => ("firewall-blocked", vec![("detail", s.clone())]),
         BulwarkError::Exception(ex) => (
             "exception",
             vec![
@@ -213,6 +214,7 @@ fn fallback_display(err: &BulwarkError) -> String {
         BulwarkError::Network(s) => format!("网络错误: {}", s),
         BulwarkError::InvalidParam(s) => format!("参数无效: {}", s),
         BulwarkError::NotImplemented(s) => format!("未实现: {}", s),
+        BulwarkError::FirewallBlocked(s) => format!("防火墙拦截: {}", s),
         BulwarkError::Exception(ex) => format!("业务异常[{}]: {}", ex.code, ex.message),
     }
 }

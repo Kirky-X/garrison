@@ -137,7 +137,7 @@ impl From<BulwarkError> for BulwarkException {
     ///
     /// 仅 `Exception` 变体直接返回原始 `BulwarkException`，其他变体根据语义映射 code：
     /// - `NotLogin` / `InvalidToken` / `ExpiredToken` → code=-1（未登录）
-    /// - `NotPermission` / `NotRole` → code=-2（无权限）
+    /// - `NotPermission` / `NotRole` / `FirewallBlocked` → code=-2（无权限/拦截，403 语义）
     /// - 其他 → code=500（业务异常）
     fn from(err: BulwarkError) -> Self {
         match err {
@@ -147,6 +147,7 @@ impl From<BulwarkError> for BulwarkException {
             BulwarkError::ExpiredToken(msg) => BulwarkException::new(-1, msg),
             BulwarkError::NotPermission(msg) => BulwarkException::new(-2, msg),
             BulwarkError::NotRole(msg) => BulwarkException::new(-2, msg),
+            BulwarkError::FirewallBlocked(msg) => BulwarkException::new(-2, msg),
             other => BulwarkException::new(500, other.to_string()),
         }
     }

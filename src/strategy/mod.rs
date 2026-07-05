@@ -27,6 +27,9 @@ use async_trait::async_trait;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+/// IP 级防火墙策略套件模块（v0.5.0 新增，依据 proposal H5 / spec firewall）。
+#[cfg(feature = "firewall")]
+pub mod firewall;
 /// 防火墙安全钩子模块（0.3.0 新增）。
 pub mod hooks;
 /// 策略注册表模块（v0.4.2 新增，依据 spec strategy-registry）。
