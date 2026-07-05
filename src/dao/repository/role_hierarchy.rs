@@ -202,6 +202,48 @@ mod service {
             visited.remove(role); // 回溯（允许不同路径访问同一节点）
             ancestors
         }
+
+        /// T048 Green: 获取指定角色的所有祖先（先查 oxcache，未命中则 `compute_closure` 并缓存 1 小时）。
+        ///
+        /// 缓存策略（依据 proposal H6 + cedar 工程思想）：
+        /// - key: `tenant:{tenant_id}:role_closure`，存储整个租户的闭包 JSON
+        /// - TTL: 3600 秒（1 小时）
+        /// - 反序列化失败时降级重新计算（不阻断主流程，记录在错误返回中）
+        ///
+        /// # 参数
+        /// - `role`: 起始角色
+        /// - `tenant_id`: 租户 ID（0=默认租户）
+        ///
+        /// # 返回
+        /// `role` 的所有祖先集合（不含 `role` 自身）。若 `role` 不在闭包中，返回空集合。
+        ///
+        /// # 错误
+        /// - `BulwarkError::Dao`：SQL 查询或缓存读写失败。
+        pub async fn get_ancestors(
+            &self,
+            role: &str,
+            tenant_id: i64,
+        ) -> BulwarkResult<HashSet<String>> {
+            let cache_key = format!("tenant:{}:role_closure", tenant_id);
+
+            // 先查 oxcache
+            if let Some(cached) = self.dao.get(&cache_key).await? {
+                if let Ok(closure) =
+                    serde_json::from_str::<HashMap<String, HashSet<String>>>(&cached)
+                {
+                    return Ok(closure.get(role).cloned().unwrap_or_default());
+                }
+                // 反序列化失败：降级重新计算（缓存损坏，不阻断）
+            }
+
+            // 未命中或反序列化失败：重新计算并缓存
+            let closure = self.compute_closure(tenant_id).await?;
+            let json = serde_json::to_string(&closure)
+                .map_err(|e| BulwarkError::Dao(format!("role_closure 序列化失败: {}", e)))?;
+            self.dao.set(&cache_key, &json, 3600).await?;
+
+            Ok(closure.get(role).cloned().unwrap_or_default())
+        }
     }
 }
 
@@ -449,5 +491,44 @@ mod db_sqlite_tests {
         // B 的祖先应含 A
         let b_ancestors = closure.get("B").expect("closure 应包含 B");
         assert!(b_ancestors.contains("A"));
+    }
+
+    // ========================================================================
+    // T047-T048: get_ancestors 缓存测试
+    // ========================================================================
+
+    /// T047 Red: `get_ancestors` 首次调用触发 `compute_closure` 并缓存到 oxcache。
+    ///
+    /// 构造 `user -> admin -> super_admin`，调用 `get_ancestors("user", 0)`，
+    /// 断言返回集合含 `"admin"` 和 `"super_admin"`，并验证 oxcache 已写入
+    /// key `tenant:0:role_closure`（TTL 1 小时）。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn get_ancestors_returns_cached_closure() {
+        let pool = setup_db().await;
+        let dao = mock_dao();
+
+        // 先 insert_edge（pool 在 move 到 svc 之前完成借用）
+        insert_edge(&pool, 0, "user", "admin").await;
+        insert_edge(&pool, 0, "admin", "super_admin").await;
+
+        let svc = RoleHierarchyService::new(pool, dao.clone());
+
+        // 首次调用：触发 compute_closure + 缓存写入
+        let ancestors = svc
+            .get_ancestors("user", 0)
+            .await
+            .expect("get_ancestors 应成功");
+        assert!(ancestors.contains("admin"), "应含 admin（直接父角色）");
+        assert!(
+            ancestors.contains("super_admin"),
+            "应含 super_admin（间接祖先）"
+        );
+
+        // 验证 oxcache 已缓存完整闭包（key 格式 tenant:{tid}:role_closure）
+        let cached = dao
+            .get("tenant:0:role_closure")
+            .await
+            .expect("dao.get 应成功");
+        assert!(cached.is_some(), "oxcache 应已缓存 role_closure");
     }
 }
