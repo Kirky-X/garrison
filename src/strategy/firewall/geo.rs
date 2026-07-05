@@ -1,7 +1,10 @@
 //! IP 地理位置查询抽象（firewall-anomalous / firewall-geoip 共享）。
 //!
-//! 定义 [`GeoCoord`] 坐标结构与 [`GeoLookup`] trait，
-//! 用于将 IP 解析为地理坐标。生产实现可用 maxminddb 读取 MaxMind GeoIP2 数据库，
+//! 定义 [`GeoCoord`] 坐标结构与 [`GeoLookup`] / [`CountryLookup`] 两个 trait：
+//! - [`GeoLookup`]：IP → 坐标（lat/lon），供 `AnomalousLoginStrategy` 算 haversine 距离
+//! - [`CountryLookup`]：IP → 国家码（ISO 3166-1 alpha-2），供 `GeoIPStrategy` 做 allow/block 匹配
+//!
+//! 生产实现可用 maxminddb 读取 MaxMind GeoIP2 数据库（City.mmdb 含坐标，Country.mmdb 含国家码），
 //! 测试可用 mock 实现（避免依赖真实数据库文件）。
 
 use crate::error::BulwarkResult;
@@ -42,7 +45,7 @@ impl GeoCoord {
 
 /// IP 地理位置查询 trait（抽象 maxminddb 等后端）。
 ///
-/// 生产实现：`MaxMindDbGeoLookup`（依赖 maxminddb，读取 GeoIP2 数据库）。
+/// 生产实现：`MaxMindDbGeoLookup`（依赖 maxminddb，读取 GeoIP2-City 数据库）。
 /// 测试实现：`MockGeoLookup`（硬编码 IP → 坐标映射）。
 #[async_trait]
 pub trait GeoLookup: Send + Sync {
@@ -53,6 +56,24 @@ pub trait GeoLookup: Send + Sync {
     /// - `Ok(None)`: IP 无法定位（如私有 IP、数据库无记录）。
     /// - `Err(_)`: 查询失败（如数据库读取错误）。
     async fn lookup(&self, ip: &str) -> BulwarkResult<Option<GeoCoord>>;
+}
+
+/// IP → 国家码查询 trait（抽象 maxminddb 等后端）。
+///
+/// 与 [`GeoLookup`] 并列（单一职责）：`GeoLookup` 返回坐标供 haversine 距离计算，
+/// `CountryLookup` 返回 ISO 3166-1 alpha-2 国家码（如 `"CN"` / `"US"`）供 allow/block 匹配。
+///
+/// 生产实现：`MaxMindDbCountryLookup`（依赖 maxminddb，读取 GeoIP2-Country 数据库）。
+/// 测试实现：`MockCountryLookup`（硬编码 IP → 国家码映射）。
+#[async_trait]
+pub trait CountryLookup: Send + Sync {
+    /// 查询 IP 的国家码（ISO 3166-1 alpha-2，大写）。
+    ///
+    /// # 返回
+    /// - `Ok(Some(country))`: 查询成功，返回国家码（如 `"CN"`）。
+    /// - `Ok(None)`: IP 无法定位（如私有 IP、数据库无记录）。
+    /// - `Err(_)`: 查询失败（如数据库读取错误）。
+    async fn lookup_country(&self, ip: &str) -> BulwarkResult<Option<String>>;
 }
 
 #[cfg(test)]

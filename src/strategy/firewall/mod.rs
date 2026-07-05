@@ -34,6 +34,9 @@ pub mod ddos;
 /// IP 地理位置查询抽象（firewall-anomalous / firewall-geoip 共享）。
 #[cfg(any(feature = "firewall-anomalous", feature = "firewall-geoip"))]
 pub mod geo;
+/// GeoIP 地理位置拦截策略（依据 spec firewall R-firewall-005）。
+#[cfg(feature = "firewall-geoip")]
+pub mod geoip;
 /// 速率限制策略（依据 spec firewall R-firewall-002）。
 #[cfg(feature = "firewall-ratelimit")]
 pub mod rate_limit;
