@@ -277,6 +277,174 @@ mod urlencoding {
     }
 }
 
+// ============================================================================
+// WechatMiniAppProvider：微信小程序登录（依据 design.md D11 D1）
+// ============================================================================
+
+/// 微信小程序 `jscode2session` 端点（依据 design.md D11 D1）。
+const WECHAT_MINI_APP_JSCODE2SESSION_URL: &str = "https://api.weixin.qq.com/sns/jscode2session";
+
+/// 微信小程序登录 provider（依据 design.md D11 D1）。
+///
+/// 复用 `SocialLoginProvider` trait，`get_user_info` 调用 `jscode2session` 端点，
+/// 用小程序客户端 `wx.login()` 返回的 `js_code` 换取 `openid` + `session_key` + `unionid`。
+///
+/// # 与 `WechatProvider` 的差异
+///
+/// - `WechatProvider` 用于网站扫码登录（OAuth2 流程：授权页 → code → access_token → userinfo）
+/// - `WechatMiniAppProvider` 用于小程序登录（`wx.login()` → js_code → jscode2session → openid）
+/// - 小程序无 OAuth2 授权页 URL，`get_authorization_url` 返回 `BulwarkError::NotImplemented`
+/// - 小程序无独立 access_token，`exchange_token` 与 `get_user_info` 均调用 jscode2session
+///
+/// # 示例
+///
+/// ```ignore
+/// use bulwark::protocol::social::wechat::WechatMiniAppProvider;
+/// use bulwark::protocol::social::SocialLoginProvider;
+///
+/// let provider = WechatMiniAppProvider::new("wx_appid", "wx_secret");
+/// let user_info = provider.get_user_info("js_code_from_wx_login").await?;
+/// ```
+pub struct WechatMiniAppProvider {
+    /// 小程序 AppID。
+    client_id: String,
+    /// 小程序 AppSecret。
+    client_secret: String,
+    /// HTTP 客户端（复用连接池，与 `WechatProvider` 同构造方式）。
+    http: reqwest::Client,
+    /// `jscode2session` 端点 URL（默认为微信官方端点，测试时可覆盖）。
+    jscode2session_url: String,
+}
+
+impl WechatMiniAppProvider {
+    /// 创建 `WechatMiniAppProvider` 实例。
+    ///
+    /// # 参数
+    /// - `client_id`: 小程序 AppID
+    /// - `client_secret`: 小程序 AppSecret
+    pub fn new(client_id: &str, client_secret: &str) -> Self {
+        Self {
+            client_id: client_id.to_string(),
+            client_secret: client_secret.to_string(),
+            http: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(30))
+                .connect_timeout(std::time::Duration::from_secs(10))
+                .build()
+                .expect("reqwest client build with timeout should succeed"),
+            jscode2session_url: WECHAT_MINI_APP_JSCODE2SESSION_URL.to_string(),
+        }
+    }
+
+    /// 覆盖 `jscode2session` 端点 URL（用于测试时指向 mock server）。
+    #[must_use]
+    pub fn with_jscode2session_url(mut self, url: impl Into<String>) -> Self {
+        self.jscode2session_url = url.into();
+        self
+    }
+}
+
+#[async_trait]
+impl SocialLoginProvider for WechatMiniAppProvider {
+    /// 小程序无 OAuth2 授权页 URL（小程序客户端通过 `wx.login()` 直接获取 js_code）。
+    async fn get_authorization_url(
+        &self,
+        _state: &str,
+        _redirect_uri: &str,
+    ) -> BulwarkResult<String> {
+        Err(BulwarkError::NotImplemented(
+            "WechatMiniAppProvider 不支持 get_authorization_url（小程序用 wx.login() 直接获取 js_code）".into(),
+        ))
+    }
+
+    /// 用 js_code 换取用户信息（与 `get_user_info` 等价，均调用 `jscode2session`）。
+    async fn exchange_token(&self, code: &str, _state: &str) -> BulwarkResult<SocialUserInfo> {
+        self.get_user_info(code).await
+    }
+
+    /// 用 js_code 调用 `jscode2session` 获取用户信息（依据 design.md D11 D1）。
+    ///
+    /// # 参数
+    ///
+    /// - `access_token`: 实际为小程序 `wx.login()` 返回的 `js_code`（trait 签名限制，
+    ///   复用 `access_token` 参数位）
+    ///
+    /// # 错误
+    ///
+    /// - `BulwarkError::Network`: HTTP 请求失败、状态码非 2xx、JSON 解析失败、
+    ///   或微信返回 `errcode != 0`、或响应缺少 `openid` 字段
+    async fn get_user_info(&self, access_token: &str) -> BulwarkResult<SocialUserInfo> {
+        // access_token 参数位实际为小程序 wx.login() 返回的 js_code
+        let js_code = access_token;
+
+        let url = format!(
+            "{}?appid={}&secret={}&js_code={}&grant_type=authorization_code",
+            self.jscode2session_url,
+            urlencoding::encode(&self.client_id),
+            urlencoding::encode(&self.client_secret),
+            urlencoding::encode(js_code),
+        );
+
+        let resp = self.http.get(&url).send().await.map_err(|e| {
+            BulwarkError::Network(format!(
+                "wechat mini-app jscode2session request failed: {}",
+                e
+            ))
+        })?;
+
+        if !resp.status().is_success() {
+            return Err(BulwarkError::Network(format!(
+                "wechat mini-app jscode2session request failed: {}",
+                resp.status()
+            )));
+        }
+
+        let raw: Value = resp.json().await.map_err(|e| {
+            BulwarkError::Network(format!(
+                "wechat mini-app jscode2session response parse failed: {}",
+                e
+            ))
+        })?;
+
+        // 微信错误响应含 errcode != 0（成功时 errcode 缺失或为 0）
+        if let Some(errcode) = raw.get("errcode").and_then(|v| v.as_i64()) {
+            if errcode != 0 {
+                let errmsg = raw
+                    .get("errmsg")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown wechat error");
+                return Err(BulwarkError::Network(format!(
+                    "wechat mini-app error {}: {}",
+                    errcode, errmsg
+                )));
+            }
+        }
+
+        let provider_user_id = raw
+            .get("openid")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                BulwarkError::Network(
+                    "wechat mini-app jscode2session response missing openid field".into(),
+                )
+            })?
+            .to_string();
+
+        let union_id = raw
+            .get("unionid")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
+        Ok(SocialUserInfo {
+            provider: SocialProvider::WechatMiniApp,
+            provider_user_id,
+            nickname: None,
+            avatar: None,
+            union_id,
+            raw,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -429,5 +597,144 @@ mod tests {
             Err(other) => panic!("期望 BulwarkError::Network，实际: {:?}", other),
             Ok(_) => unreachable!("HTTP 500 不应返回 Ok"),
         }
+    }
+
+    // ========================================================================
+    // T088: WechatMiniAppProvider Red 阶段（依据 design.md D11 D1）
+    // ========================================================================
+
+    /// 验证 `WechatMiniAppProvider::get_user_info` 调用 `jscode2session` 成功时
+    /// 返回 `SocialUserInfo`（依据 design.md D11 D1）。
+    ///
+    /// Red 阶段：`get_user_info` 含 `todo!()` → panic。
+    /// Green 阶段（T089）：实现 jscode2session 调用后测试通过。
+    #[tokio::test]
+    async fn wechat_mini_app_get_user_info_success() {
+        use wiremock::matchers::{method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/sns/jscode2session"))
+            .and(query_param("appid", "wx_appid"))
+            .and(query_param("secret", "wx_secret"))
+            .and(query_param("js_code", "js_code_123"))
+            .and(query_param("grant_type", "authorization_code"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "openid": "openid_mini_1",
+                "session_key": "sess_key_abc",
+                "unionid": "union_mini_1",
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = WechatMiniAppProvider::new("wx_appid", "wx_secret")
+            .with_jscode2session_url(format!("{}/sns/jscode2session", server.uri()));
+        let user_info = provider
+            .get_user_info("js_code_123")
+            .await
+            .expect("get_user_info 应返回 Ok");
+
+        assert_eq!(user_info.provider, SocialProvider::WechatMiniApp);
+        assert_eq!(user_info.provider_user_id, "openid_mini_1");
+        assert_eq!(user_info.union_id.as_deref(), Some("union_mini_1"));
+    }
+
+    /// 验证 `WechatMiniAppProvider::get_user_info` 在微信返回 `errcode=40029`
+    ///（无效 code）时返回 `BulwarkError`（依据 design.md D11 D1，Rule 12 失败显性化）。
+    ///
+    /// Red 阶段：`get_user_info` 含 `todo!()` → panic。
+    /// Green 阶段（T089）：实现 errcode 检查后返回 `Err(BulwarkError::Network(_))`。
+    #[tokio::test]
+    async fn wechat_mini_app_get_user_info_invalid_code() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/sns/jscode2session"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "errcode": 40029,
+                "errmsg": "invalid code",
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = WechatMiniAppProvider::new("wx_appid", "wx_secret")
+            .with_jscode2session_url(format!("{}/sns/jscode2session", server.uri()));
+        let result = provider.get_user_info("bad_code").await;
+
+        assert!(
+            result.is_err(),
+            "errcode=40029 应返回 Err 而非 Ok，实际: {:?}",
+            result
+        );
+    }
+
+    /// 验证 `WechatMiniAppProvider::get_user_info` 在 HTTP 500 时返回
+    /// `BulwarkError::Network`（依据 design.md D11 D1，Rule 12 失败显性化）。
+    ///
+    /// Red 阶段：`get_user_info` 含 `todo!()` → panic。
+    /// Green 阶段（T089）：实现 HTTP 状态码检查后返回 `Err(BulwarkError::Network(_))`。
+    #[tokio::test]
+    async fn wechat_mini_app_get_user_info_network_error() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/sns/jscode2session"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+
+        let provider = WechatMiniAppProvider::new("wx_appid", "wx_secret")
+            .with_jscode2session_url(format!("{}/sns/jscode2session", server.uri()));
+        let result = provider.get_user_info("js_code_123").await;
+
+        assert!(
+            result.is_err(),
+            "HTTP 500 应返回 Err 而非 Ok，实际: {:?}",
+            result
+        );
+        match result {
+            Err(BulwarkError::Network(_)) => {},
+            Err(other) => panic!("期望 BulwarkError::Network，实际: {:?}", other),
+            Ok(_) => unreachable!("HTTP 500 不应返回 Ok"),
+        }
+    }
+
+    /// 验证 `WechatMiniAppProvider::get_user_info` 在响应缺少 `openid` 字段时
+    /// 返回 `BulwarkError`（依据 design.md D11 D1，Rule 12 失败显性化）。
+    ///
+    /// Red 阶段：`get_user_info` 含 `todo!()` → panic。
+    /// Green 阶段（T089）：实现 openid 缺失检查后返回 `Err(BulwarkError::Network(_))`。
+    #[tokio::test]
+    async fn wechat_mini_app_get_user_info_missing_openid() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/sns/jscode2session"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "session_key": "sess_key_abc",
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = WechatMiniAppProvider::new("wx_appid", "wx_secret")
+            .with_jscode2session_url(format!("{}/sns/jscode2session", server.uri()));
+        let result = provider.get_user_info("js_code_123").await;
+
+        assert!(
+            result.is_err(),
+            "缺少 openid 应返回 Err 而非 Ok，实际: {:?}",
+            result
+        );
     }
 }

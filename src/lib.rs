@@ -419,6 +419,10 @@ pub use protocol::social::SocialProvider;
 #[cfg(feature = "social-wechat")]
 pub use protocol::social::wechat::WechatProvider;
 
+/// 微信小程序登录 provider（需 `social-wechat` feature，依据 design.md D11 D1）。
+#[cfg(feature = "social-wechat")]
+pub use protocol::social::wechat::WechatMiniAppProvider;
+
 /// 支付宝授权登录 provider（需 `social-alipay` feature）。
 #[cfg(feature = "social-alipay")]
 pub use protocol::social::alipay::AlipayProvider;
