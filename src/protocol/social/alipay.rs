@@ -225,10 +225,92 @@ impl SocialLoginProvider for AlipayProvider {
         })
     }
 
-    /// 用 access_token 获取用户信息（后续任务实现）。
-    async fn get_user_info(&self, _access_token: &str) -> BulwarkResult<SocialUserInfo> {
-        // 后续任务将实现：调用 alipay.user.info.share 接口
-        todo!("implement get_user_info with alipay.user.info.share")
+    /// 用 access_token 获取用户信息（依据 spec social-login R-social-login-003）。
+    ///
+    /// 调用支付宝 `alipay.user.info.share` 接口，用 access_token 获取用户昵称、头像等信息。
+    ///
+    /// # 流程
+    /// 1. 构造公共参数 + `auth_token` 业务参数
+    /// 2. 用 RSA2 签名
+    /// 3. POST 到支付宝网关
+    /// 4. 解析 `alipay_user_info_share_response` 中的 user_id/nick/avatar
+    async fn get_user_info(&self, access_token: &str) -> BulwarkResult<SocialUserInfo> {
+        let timestamp = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+
+        let params: Vec<(String, String)> = vec![
+            ("app_id".into(), self.app_id.clone()),
+            ("method".into(), "alipay.user.info.share".into()),
+            ("charset".into(), "UTF-8".into()),
+            ("sign_type".into(), "RSA2".into()),
+            ("timestamp".into(), timestamp),
+            ("version".into(), "1.0".into()),
+            ("auth_token".into(), access_token.to_string()),
+        ];
+
+        let sign = self.sign_request(&params)?;
+
+        let mut form_body = params;
+        form_body.push(("sign".into(), sign));
+
+        let resp = self
+            .http
+            .post(&self.gateway_url)
+            .form(&form_body)
+            .send()
+            .await
+            .map_err(|e| {
+                BulwarkError::Network(format!("alipay user_info request failed: {}", e))
+            })?;
+
+        let raw: Value = resp.json().await.map_err(|e| {
+            BulwarkError::Network(format!("alipay user_info response parse failed: {}", e))
+        })?;
+
+        // 检查错误响应
+        if let Some(err_resp) = raw.get("error_response") {
+            let code = err_resp
+                .get("code")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+            let msg = err_resp
+                .get("msg")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown error");
+            return Err(BulwarkError::Network(format!(
+                "alipay error {}: {}",
+                code, msg
+            )));
+        }
+
+        let resp_obj = raw.get("alipay_user_info_share_response").ok_or_else(|| {
+            BulwarkError::Network(
+                "alipay response missing alipay_user_info_share_response field".into(),
+            )
+        })?;
+
+        let user_id = resp_obj
+            .get("user_id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| BulwarkError::Network("alipay response missing user_id field".into()))?
+            .to_string();
+
+        let nickname = resp_obj
+            .get("nick")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        let avatar = resp_obj
+            .get("avatar")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
+        Ok(SocialUserInfo {
+            provider: SocialProvider::Alipay,
+            provider_user_id: user_id,
+            nickname,
+            avatar,
+            union_id: None,
+            raw,
+        })
     }
 }
 
@@ -358,5 +440,52 @@ mod tests {
             },
             other => panic!("应为 BulwarkError::Config，实际: {:?}", other),
         }
+    }
+
+    /// T009 Red: 验证 `AlipayProvider::get_user_info` 解析支付宝 user.info.share 响应中的
+    /// nick/avatar/user_id（依据 spec social-login R-social-login-003 验收标准）。
+    ///
+    /// Red 阶段：`get_user_info` 为 `todo!()` → panic。
+    /// Green 阶段（T010）：实现 alipay.user.info.share 调用后测试通过。
+    ///
+    /// # 测试流程
+    /// 1. 生成测试 RSA 私钥（PKCS#1 PEM）
+    /// 2. wiremock 模拟 `POST /gateway.do` 返回 `alipay_user_info_share_response`
+    /// 3. 构造 `AlipayProvider::new("app_id", &pem).with_gateway_url(server.uri() + "/gateway.do")`
+    /// 4. 调用 `get_user_info("valid_access_token")`
+    /// 5. 断言返回 `SocialUserInfo { provider: Alipay, provider_user_id: "user123",
+    ///    nickname: Some("Bob"), avatar: Some("https://img.example.com/b.png") }`
+    #[tokio::test]
+    async fn alipay_provider_get_user_info_parses_nick_and_avatar() {
+        let pem = generate_test_rsa_pem();
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/gateway.do"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "alipay_user_info_share_response": {
+                    "user_id": "user123",
+                    "nick": "Bob",
+                    "avatar": "https://img.example.com/b.png",
+                    "is_certified": "T"
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = AlipayProvider::new("app_id", &pem)
+            .with_gateway_url(format!("{}/gateway.do", server.uri()));
+        let user_info = provider
+            .get_user_info("valid_access_token")
+            .await
+            .expect("get_user_info 应返回 Ok");
+
+        assert_eq!(user_info.provider, SocialProvider::Alipay);
+        assert_eq!(user_info.provider_user_id, "user123");
+        assert_eq!(user_info.nickname.as_deref(), Some("Bob"));
+        assert_eq!(
+            user_info.avatar.as_deref(),
+            Some("https://img.example.com/b.png")
+        );
     }
 }
