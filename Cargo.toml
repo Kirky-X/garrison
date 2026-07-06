@@ -246,7 +246,7 @@ parameter-query = []
 
 # === 0.5.0 新增：审计日志（依据 proposal H3） ===
 # audit-log 依赖 listener（AuditLogListener 实现 BulwarkListener trait）
-audit-log = ["listener"]
+audit-log = ["listener", "sha2", "hmac"]
 
 # === 0.5.0 新增：安全防护套件（依据 proposal H5） ===
 # firewall 为基础 trait + FirewallContext + StrategyRegistration，无额外依赖

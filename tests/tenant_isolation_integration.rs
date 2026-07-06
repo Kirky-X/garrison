@@ -88,6 +88,7 @@ mod tenant_audit_decision_e2e {
             mask_fields: vec![],
             retain_days: 0,
             async_write: false,
+            signing_key: None,
         };
         let audit_listener = Arc::new(AuditLogListener::new(pool.clone(), audit_config));
         lm.register(audit_listener.clone() as Arc<dyn BulwarkListener>);

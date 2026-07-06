@@ -35,13 +35,14 @@ use crate::error::{BulwarkError, BulwarkResult};
 
 /// 审计日志配置（T068 Green）。
 ///
-/// 控制 `AuditLogListener` 的行为：字段掩码、保留天数、异步写入。
+/// 控制 `AuditLogListener` 的行为：字段掩码、保留天数、异步写入、导出签名。
 ///
 /// # 字段
 ///
 /// - `mask_fields`: 需掩码的字段列表（如 `password`），metadata JSON 中对应字段值替换为 `"***"`
 /// - `retain_days`: 日志保留天数（过期自动清理，0 表示永不清理）
 /// - `async_write`: 是否异步写入（true 时不阻塞主流程，失败仅 `tracing::warn`）
+/// - `signing_key`: HMAC-SHA256 签名密钥（D4 新增，用于 `export_csv`/`export_json` 的签名链）
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuditConfig {
     /// 需掩码的字段列表（如 `password`），metadata JSON 中对应字段值替换为 `"***"`。
@@ -50,6 +51,12 @@ pub struct AuditConfig {
     pub retain_days: u32,
     /// 是否异步写入（true 时不阻塞主流程，失败仅 `tracing::warn`）。
     pub async_write: bool,
+    /// HMAC-SHA256 签名密钥（D4 新增）。
+    ///
+    /// `Some(key)` 时 `export_csv`/`export_json` 为每行附加 `signature` 字段，
+    /// 构成链式签名（第 N 行签名依赖第 N-1 行签名 + 当前行内容）。
+    /// `None` 时 `export_csv`/`export_json` 返回 `BulwarkError::Config`。
+    pub signing_key: Option<String>,
 }
 
 // ============================================================================
@@ -74,6 +81,11 @@ use chrono::Utc;
 use dbnexus::DbPool;
 #[cfg(feature = "db-sqlite")]
 use sea_orm::{ConnectionTrait, DbBackend, Statement, Value};
+// D4: HMAC-SHA256 签名链依赖（audit-log feature 启用 sha2 + hmac）
+#[cfg(all(feature = "audit-log", feature = "db-sqlite"))]
+use hmac::{Hmac, KeyInit, Mac};
+#[cfg(all(feature = "audit-log", feature = "db-sqlite"))]
+use sha2::Sha256;
 
 /// 构造 metadata JSON 字符串（T078 辅助函数）。
 ///
@@ -466,6 +478,7 @@ impl AuditLogListener {
     ///     mask_fields: vec!["password".to_string()],
     ///     retain_days: 0,
     ///     async_write: false,
+    ///     signing_key: None,
     /// };
     /// // 假设已有 pool
     /// // let listener = AuditLogListener::new(pool, config);
@@ -630,6 +643,140 @@ impl AuditLogListener {
             })
             .collect()
     }
+
+    /// 导出审计日志为 CSV 字符串（D4 新增，依据 design.md D11 D4）。
+    ///
+    /// 列：`timestamp,login_id,tenant_id,event_type,signature`
+    ///
+    /// 签名链：每行的 `signature` = HMAC-SHA256(key, prev_signature + row_content)，
+    /// 其中 `row_content` = `timestamp,login_id,tenant_id,event_type`，
+    /// `prev_signature` 初始为空字符串，之后为上一行的 signature。
+    ///
+    /// # 参数
+    ///
+    /// - `entries`: 审计日志条目切片（按时间顺序）
+    ///
+    /// # 返回
+    ///
+    /// - 空 `entries`：返回仅含 header 的 CSV 字符串
+    /// - 非空：返回含 header + 数据行的 CSV 字符串
+    /// - `config.signing_key` 为 `None`：返回 `BulwarkError::Config`
+    #[cfg(feature = "audit-log")]
+    pub fn export_csv(&self, entries: &[AuditEntry]) -> BulwarkResult<String> {
+        let signatures = self.compute_signature_chain(entries)?;
+        let mut csv = String::from("timestamp,login_id,tenant_id,event_type,signature");
+        for (entry, sig) in entries.iter().zip(signatures.iter()) {
+            let login_id_str = entry.login_id.map_or(String::new(), |id| id.to_string());
+            csv.push('\n');
+            csv.push_str(&format!(
+                "{},{},{},{},{}",
+                entry.created_at, login_id_str, entry.tenant_id, entry.event_type, sig
+            ));
+        }
+        Ok(csv)
+    }
+
+    /// 导出审计日志为 JSON 数组字符串（D4 新增，依据 design.md D11 D4）。
+    ///
+    /// 每行一个 JSON 对象，包含 `timestamp`/`login_id`/`tenant_id`/`event_type`/`signature` 字段。
+    /// 签名链算法同 `export_csv`。
+    ///
+    /// # 参数
+    ///
+    /// - `entries`: 审计日志条目切片（按时间顺序）
+    ///
+    /// # 返回
+    ///
+    /// - 空 `entries`：返回 `"[]"`
+    /// - 非空：返回 JSON 数组字符串
+    /// - `config.signing_key` 为 `None`：返回 `BulwarkError::Config`
+    #[cfg(feature = "audit-log")]
+    pub fn export_json(&self, entries: &[AuditEntry]) -> BulwarkResult<String> {
+        let signatures = self.compute_signature_chain(entries)?;
+        if entries.is_empty() {
+            return Ok("[]".to_string());
+        }
+        let arr: Vec<serde_json::Value> = entries
+            .iter()
+            .zip(signatures.iter())
+            .map(|(entry, sig)| {
+                serde_json::json!({
+                    "timestamp": entry.created_at,
+                    "login_id": entry.login_id,
+                    "tenant_id": entry.tenant_id,
+                    "event_type": &entry.event_type,
+                    "signature": sig,
+                })
+            })
+            .collect();
+        serde_json::to_string(&arr)
+            .map_err(|e| BulwarkError::Config(format!("JSON 序列化失败: {}", e)))
+    }
+
+    /// 验证 HMAC-SHA256 签名链（D4 新增，依据 design.md D11 D4）。
+    ///
+    /// 重新计算 `entries` 的签名链，与提供的 `signatures` 逐行比对。
+    /// 任一行签名不匹配则返回 `Ok(false)`（检测到篡改）。
+    ///
+    /// # 参数
+    ///
+    /// - `entries`: 审计日志条目切片
+    /// - `signatures`: 待验证的签名列表（从 `export_csv`/`export_json` 输出中提取）
+    ///
+    /// # 返回
+    ///
+    /// - `Ok(true)`: 签名链完整，未检测到篡改
+    /// - `Ok(false)`: 检测到篡改（签名不匹配或长度不一致）
+    /// - `Err`: `config.signing_key` 为 `None`
+    #[cfg(feature = "audit-log")]
+    pub fn verify_signature_chain(
+        &self,
+        entries: &[AuditEntry],
+        signatures: &[String],
+    ) -> BulwarkResult<bool> {
+        if entries.len() != signatures.len() {
+            return Ok(false);
+        }
+        let computed = self.compute_signature_chain(entries)?;
+        Ok(computed == signatures)
+    }
+
+    /// 计算 HMAC-SHA256 签名链（D4 内部辅助方法）。
+    ///
+    /// 链式算法：第 N 行 signature = HMAC-SHA256(key, prev_signature + row_content)
+    /// - `prev_signature` 初始为空字符串，之后为上一行的 signature
+    /// - `row_content` = `timestamp,login_id,tenant_id,event_type`
+    #[cfg(feature = "audit-log")]
+    fn compute_signature_chain(&self, entries: &[AuditEntry]) -> BulwarkResult<Vec<String>> {
+        let key = self.config.signing_key.as_ref().ok_or_else(|| {
+            BulwarkError::Config("signing_key 未配置，无法导出签名链".to_string())
+        })?;
+        let mut prev_sig = String::new();
+        let mut signatures = Vec::with_capacity(entries.len());
+        for entry in entries {
+            let login_id_str = entry.login_id.map_or(String::new(), |id| id.to_string());
+            let row_content = format!(
+                "{},{},{},{}",
+                entry.created_at, login_id_str, entry.tenant_id, entry.event_type
+            );
+            let input = format!("{}{}", prev_sig, row_content);
+            let sig = self.hmac_sha256_hex(key, input.as_bytes())?;
+            signatures.push(sig.clone());
+            prev_sig = sig;
+        }
+        Ok(signatures)
+    }
+
+    /// 计算 HMAC-SHA256 并返回 hex 编码字符串（D4 内部辅助方法）。
+    #[cfg(feature = "audit-log")]
+    fn hmac_sha256_hex(&self, key: &str, input: &[u8]) -> BulwarkResult<String> {
+        type HmacSha256 = Hmac<Sha256>;
+        let mut mac = HmacSha256::new_from_slice(key.as_bytes())
+            .map_err(|e| BulwarkError::Config(format!("HMAC key 无效: {}", e)))?;
+        mac.update(input);
+        let bytes = mac.finalize().into_bytes();
+        Ok(bytes.iter().map(|b| format!("{:02x}", b)).collect())
+    }
 }
 
 #[cfg(feature = "db-sqlite")]
@@ -687,6 +834,7 @@ mod tests {
             mask_fields: vec!["password".to_string()],
             retain_days: 30,
             async_write: true,
+            signing_key: None,
         };
         assert_eq!(config.mask_fields, vec!["password".to_string()]);
         assert_eq!(config.retain_days, 30);
@@ -814,6 +962,7 @@ mod db_sqlite_tests {
             mask_fields: vec![],
             retain_days: 0,
             async_write: false,
+            signing_key: None,
         };
         let listener = AuditLogListener::new(pool.clone(), config);
 
@@ -870,6 +1019,7 @@ mod db_sqlite_tests {
             mask_fields: vec!["password".to_string()],
             retain_days: 0,
             async_write: false,
+            signing_key: None,
         };
         let listener = AuditLogListener::new(pool, config);
 
@@ -911,6 +1061,7 @@ mod db_sqlite_tests {
             mask_fields: vec![],
             retain_days: 0,
             async_write: false,
+            signing_key: None,
         };
         let listener = AuditLogListener::new(pool.clone(), config);
 
@@ -1081,6 +1232,7 @@ mod db_sqlite_tests {
             mask_fields: vec![],
             retain_days: 0,
             async_write: false,
+            signing_key: None,
         };
         let listener = AuditLogListener::new(pool.clone(), config);
 
@@ -1232,6 +1384,7 @@ mod db_sqlite_tests {
             mask_fields: vec![],
             retain_days: 0,
             async_write: false,
+            signing_key: None,
         };
         let listener = AuditLogListener::new(pool, config);
 
@@ -1257,5 +1410,317 @@ mod db_sqlite_tests {
             "tenant_id 应从 TENANT task_local 读取为 42，实际: {}",
             entry.tenant_id
         );
+    }
+
+    // ========================================================================
+    // D4 T100: export_csv / export_json / verify_signature_chain 测试（Red）
+    // ========================================================================
+
+    /// T100 Red: `export_csv` 应返回有效 CSV 格式字符串。
+    ///
+    /// 单条 AuditEntry 导出后：
+    /// - 第 1 行为 header：`timestamp,login_id,tenant_id,event_type,signature`
+    /// - 第 2 行为数据行，含 5 个逗号分隔字段
+    /// - signature 字段为非空 hex 字符串
+    #[tokio::test(flavor = "multi_thread")]
+    async fn export_csv_returns_valid_csv_format() {
+        let pool = setup_db().await;
+        let config = AuditConfig {
+            mask_fields: vec![],
+            retain_days: 0,
+            async_write: false,
+            signing_key: Some("test-secret-key".to_string()),
+        };
+        let listener = AuditLogListener::new(pool, config);
+
+        let entry = AuditEntry {
+            tenant_id: 42,
+            event_type: "login".to_string(),
+            login_id: Some(1001),
+            token: None,
+            ip: None,
+            user_agent: None,
+            metadata: None,
+            success: true,
+            created_at: 1700000000,
+        };
+
+        let csv = listener.export_csv(&[entry]).expect("export_csv 应成功");
+
+        let lines: Vec<&str> = csv.lines().collect();
+        assert_eq!(
+            lines.len(),
+            2,
+            "CSV 应有 2 行（header + 1 数据行），实际: {}",
+            lines.len()
+        );
+
+        // 验证 header
+        let header_fields: Vec<&str> = lines[0].split(',').collect();
+        assert_eq!(
+            header_fields,
+            vec![
+                "timestamp",
+                "login_id",
+                "tenant_id",
+                "event_type",
+                "signature"
+            ],
+            "CSV header 应为 5 列"
+        );
+
+        // 验证数据行
+        let data_fields: Vec<&str> = lines[1].split(',').collect();
+        assert_eq!(data_fields.len(), 5, "数据行应有 5 个字段");
+        assert_eq!(data_fields[0], "1700000000", "timestamp 应为 1700000000");
+        assert_eq!(data_fields[1], "1001", "login_id 应为 1001");
+        assert_eq!(data_fields[2], "42", "tenant_id 应为 42");
+        assert_eq!(data_fields[3], "login", "event_type 应为 login");
+        assert!(!data_fields[4].is_empty(), "signature 不应为空");
+    }
+
+    /// T100 Red: `export_json` 应返回有效 JSON 数组字符串。
+    ///
+    /// 单条 AuditEntry 导出后：
+    /// - 可解析为 JSON 数组
+    /// - 数组含 1 个对象，有 5 个字段：timestamp/login_id/tenant_id/event_type/signature
+    /// - signature 字段为非空字符串
+    #[tokio::test(flavor = "multi_thread")]
+    async fn export_json_returns_valid_json_format() {
+        let pool = setup_db().await;
+        let config = AuditConfig {
+            mask_fields: vec![],
+            retain_days: 0,
+            async_write: false,
+            signing_key: Some("test-secret-key".to_string()),
+        };
+        let listener = AuditLogListener::new(pool, config);
+
+        let entry = AuditEntry {
+            tenant_id: 42,
+            event_type: "login".to_string(),
+            login_id: Some(1001),
+            token: None,
+            ip: None,
+            user_agent: None,
+            metadata: None,
+            success: true,
+            created_at: 1700000000,
+        };
+
+        let json_str = listener.export_json(&[entry]).expect("export_json 应成功");
+
+        let parsed: serde_json::Value = serde_json::from_str(&json_str).expect("应为有效 JSON");
+        let arr = parsed.as_array().expect("应为 JSON 数组");
+        assert_eq!(arr.len(), 1, "数组应有 1 个对象");
+
+        let obj = &arr[0];
+        assert_eq!(
+            obj["timestamp"].as_i64(),
+            Some(1700000000),
+            "timestamp 字段"
+        );
+        assert_eq!(obj["login_id"].as_i64(), Some(1001), "login_id 字段");
+        assert_eq!(obj["tenant_id"].as_i64(), Some(42), "tenant_id 字段");
+        assert_eq!(obj["event_type"].as_str(), Some("login"), "event_type 字段");
+        let sig = obj["signature"].as_str().expect("signature 应为字符串");
+        assert!(!sig.is_empty(), "signature 不应为空");
+    }
+
+    /// T100 Red: 签名链应将每行链接到前一行。
+    ///
+    /// 两个 entries [A, B] 导出后签名 [sigA, sigB]。
+    /// 修改 A 的内容后导出 [A', B]，得到 [sigA', sigB']。
+    /// 断言：
+    /// - sigA != sigA'（A 内容变了 → 第一行签名变）
+    /// - sigB != sigB'（B 内容相同，但因链式依赖 → 第二行签名也变）
+    #[tokio::test(flavor = "multi_thread")]
+    async fn signature_chain_links_each_row_to_previous() {
+        let pool = setup_db().await;
+        let config = AuditConfig {
+            mask_fields: vec![],
+            retain_days: 0,
+            async_write: false,
+            signing_key: Some("chain-test-key".to_string()),
+        };
+        let listener = AuditLogListener::new(pool, config);
+
+        // 原始 entries [A, B]
+        let entry_a = AuditEntry {
+            tenant_id: 0,
+            event_type: "login".to_string(),
+            login_id: Some(1),
+            token: None,
+            ip: None,
+            user_agent: None,
+            metadata: None,
+            success: true,
+            created_at: 1000,
+        };
+        let entry_b = AuditEntry {
+            tenant_id: 0,
+            event_type: "logout".to_string(),
+            login_id: Some(1),
+            token: None,
+            ip: None,
+            user_agent: None,
+            metadata: None,
+            success: true,
+            created_at: 2000,
+        };
+
+        // 导出 [A, B] 并提取签名
+        let json1 = listener
+            .export_json(&[entry_a.clone(), entry_b.clone()])
+            .expect("export_json 应成功");
+        let parsed1: serde_json::Value = serde_json::from_str(&json1).expect("应为有效 JSON");
+        let sig_a1 = parsed1[0]["signature"]
+            .as_str()
+            .expect("sigA 应为字符串")
+            .to_string();
+        let sig_b1 = parsed1[1]["signature"]
+            .as_str()
+            .expect("sigB 应为字符串")
+            .to_string();
+
+        // 修改 A 的 login_id → A'
+        let entry_a_modified = AuditEntry {
+            login_id: Some(999),
+            ..entry_a
+        };
+
+        // 导出 [A', B] 并提取签名
+        let json2 = listener
+            .export_json(&[entry_a_modified, entry_b.clone()])
+            .expect("export_json 应成功");
+        let parsed2: serde_json::Value = serde_json::from_str(&json2).expect("应为有效 JSON");
+        let sig_a2 = parsed2[0]["signature"]
+            .as_str()
+            .expect("sigA' 应为字符串")
+            .to_string();
+        let sig_b2 = parsed2[1]["signature"]
+            .as_str()
+            .expect("sigB' 应为字符串")
+            .to_string();
+
+        // 断言：第一行签名变化（A 内容变了）
+        assert_ne!(sig_a1, sig_a2, "第一行签名应因 A 内容变化而不同");
+
+        // 断言：第二行签名也变化（链式依赖：B 的签名依赖 A 的签名）
+        assert_ne!(
+            sig_b1, sig_b2,
+            "第二行签名应因链式依赖而不同（即使 B 内容相同）"
+        );
+    }
+
+    /// T100 Red: 篡改某行内容后验签应失败。
+    ///
+    /// 1. 导出 [A, B] 得到签名 [sigA, sigB]
+    /// 2. 用 verify_signature_chain 验证原始 entries → Ok(true)
+    /// 3. 篡改 A 的 login_id
+    /// 4. 调用 verify_signature_chain([A_tampered, B], [sigA, sigB]) → Ok(false)
+    #[tokio::test(flavor = "multi_thread")]
+    async fn signature_chain_detects_tampering() {
+        let pool = setup_db().await;
+        let config = AuditConfig {
+            mask_fields: vec![],
+            retain_days: 0,
+            async_write: false,
+            signing_key: Some("tamper-test-key".to_string()),
+        };
+        let listener = AuditLogListener::new(pool, config);
+
+        // 原始 entries [A, B]
+        let entry_a = AuditEntry {
+            tenant_id: 0,
+            event_type: "login".to_string(),
+            login_id: Some(1),
+            token: None,
+            ip: None,
+            user_agent: None,
+            metadata: None,
+            success: true,
+            created_at: 1000,
+        };
+        let entry_b = AuditEntry {
+            tenant_id: 0,
+            event_type: "logout".to_string(),
+            login_id: Some(1),
+            token: None,
+            ip: None,
+            user_agent: None,
+            metadata: None,
+            success: true,
+            created_at: 2000,
+        };
+
+        // 导出获取签名
+        let json_str = listener
+            .export_json(&[entry_a.clone(), entry_b.clone()])
+            .expect("export_json 应成功");
+        let parsed: serde_json::Value = serde_json::from_str(&json_str).expect("应为有效 JSON");
+        let signatures: Vec<String> = parsed
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|obj| obj["signature"].as_str().unwrap().to_string())
+            .collect();
+
+        // 验证原始签名链 → 应通过
+        let valid = listener
+            .verify_signature_chain(&[entry_a.clone(), entry_b.clone()], &signatures)
+            .expect("verify 应成功（不缺 signing_key）");
+        assert!(valid, "原始签名链应验证通过");
+
+        // 篡改 A 的 login_id
+        let tampered_a = AuditEntry {
+            login_id: Some(999),
+            ..entry_a
+        };
+
+        // 验证篡改后的签名链 → 应失败
+        let tampered = listener
+            .verify_signature_chain(&[tampered_a, entry_b], &signatures)
+            .expect("verify 应成功（不缺 signing_key）");
+        assert!(!tampered, "篡改后签名链应验证失败");
+    }
+
+    /// T100 Red: 空列表导出 CSV 应返回仅含 header 的字符串。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn export_csv_handles_empty_audit_logs() {
+        let pool = setup_db().await;
+        let config = AuditConfig {
+            mask_fields: vec![],
+            retain_days: 0,
+            async_write: false,
+            signing_key: Some("empty-test-key".to_string()),
+        };
+        let listener = AuditLogListener::new(pool, config);
+
+        let csv = listener.export_csv(&[]).expect("export_csv 空列表应成功");
+
+        let lines: Vec<&str> = csv.lines().collect();
+        assert_eq!(lines.len(), 1, "空列表 CSV 应仅 1 行 header");
+        assert_eq!(
+            lines[0], "timestamp,login_id,tenant_id,event_type,signature",
+            "header 应为标准 5 列"
+        );
+    }
+
+    /// T100 Red: 空列表导出 JSON 应返回 "[]"。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn export_json_handles_empty_audit_logs() {
+        let pool = setup_db().await;
+        let config = AuditConfig {
+            mask_fields: vec![],
+            retain_days: 0,
+            async_write: false,
+            signing_key: Some("empty-test-key".to_string()),
+        };
+        let listener = AuditLogListener::new(pool, config);
+
+        let json_str = listener.export_json(&[]).expect("export_json 空列表应成功");
+
+        assert_eq!(json_str, "[]", "空列表 JSON 应为 []");
     }
 }

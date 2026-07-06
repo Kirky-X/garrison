@@ -85,6 +85,7 @@ async fn setup_audit_listener(
         mask_fields: vec!["token".to_string()],
         retain_days: 90,
         async_write: false,
+        signing_key: None,
     };
     let audit_listener = Arc::new(AuditLogListener::new(pool, audit_config));
     lm.register(audit_listener.clone() as Arc<dyn BulwarkListener>);
