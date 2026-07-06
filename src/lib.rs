@@ -189,6 +189,22 @@ pub mod grpc;
 #[cfg(feature = "i18n")]
 pub mod i18n;
 
+/// 声明式 JSON 测试套件模块（0.5.1 新增，依据 spec testing-suite D8 / M6）。
+///
+/// 启用 `bulwark-testing` feature 时编译。提供 [`JsonTestSuite`] / [`JsonTestCase`] /
+/// [`TestReport`] 类型，支持从 JSON 文件加载测试用例并运行 [`Authorizer`] trait。
+///
+/// 依赖 `authorize-api` feature（提供 [`Authorizer`] trait 与 [`AuthRequest`] / [`Decision`]）。
+///
+/// [`JsonTestSuite`]: crate::testing::JsonTestSuite
+/// [`JsonTestCase`]: crate::testing::JsonTestCase
+/// [`TestReport`]: crate::testing::TestReport
+/// [`Authorizer`]: crate::core::permission::Authorizer
+/// [`AuthRequest`]: crate::core::permission::AuthRequest
+/// [`Decision`]: crate::core::permission::Decision
+#[cfg(feature = "bulwark-testing")]
+pub mod testing;
+
 /// actix-web 框架适配模块（0.3.0 新增，依据 spec web-adapters）。
 ///
 /// 启用 `web-actix` feature 时编译。提供 BulwarkRouter + FromRequest extractor +

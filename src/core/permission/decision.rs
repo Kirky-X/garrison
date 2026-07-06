@@ -12,12 +12,17 @@
 //! - 决策溯源场景只需可读错误消息（用于 trace 输出），不需要错误类型枚举
 //! - 存储时调用 `err.to_string()` 转为字符串
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// 鉴权决策原因（依据 spec decision-trace Requirement: DecisionReason）。
 ///
 /// 描述决策的"为什么"，用于 trace 输出和审计日志。
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+///
+/// # 序列化
+///
+/// 同时 derive `Serialize` 与 `Deserialize`，使 [`Decision`] 可在
+/// `bulwark-testing` feature 下从 JSON 反序列化（声明式测试套件用）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum DecisionReason {
     /// 显式允许：主体直接持有该权限。
@@ -48,19 +53,29 @@ pub enum DecisionReason {
 ///
 /// `Decision` 实现 `Serialize`，可序列化为 JSON 用于审计日志和 trace 输出。
 /// `errors` 字段为 `Vec<String>`（错误消息），不是 `Vec<BulwarkError>`（错误类型）。
-#[derive(Debug, Clone, Serialize)]
+///
+/// `bulwark-testing` feature 启用时同时实现 `Deserialize`，使声明式测试套件
+/// 可从 JSON 文件反序列化期望决策（[`crate::testing::JsonTestCase::expected`]）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Decision {
     /// 是否允许。
     pub allowed: bool,
     /// 决策原因。
     pub reason: DecisionReason,
     /// 校验过程中收集的错误消息（`err.to_string()`），用于 trace。
+    ///
+    /// 反序列化时缺失默认空 vec（声明式测试套件的 `expected` 通常只填 `allowed` + `reason`）。
+    #[serde(default)]
     pub errors: Vec<String>,
     /// 已校验的权限列表（decision-trace feature 启用时填充）。
+    #[serde(default)]
     pub checked_permissions: Vec<String>,
     /// 已匹配的角色列表（decision-trace feature 启用时填充）。
+    #[serde(default)]
     pub matched_roles: Vec<String>,
     /// trace ID（decision-trace feature 启用时填充）。
+    ///
+    /// `Option<T>` 字段在 JSON 缺失时 serde 自动处理为 `None`。
     pub trace_id: Option<String>,
 }
 
@@ -93,7 +108,12 @@ impl Decision {
 /// 鉴权请求输入（依据 spec decision-trace Requirement: AuthRequest）。
 ///
 /// 封装一次鉴权请求的所有上下文，用于 `PermissionChecker::authorize` 方法。
-#[derive(Debug, Clone)]
+///
+/// # 序列化
+///
+/// `bulwark-testing` feature 启用时同时 derive `Serialize` 与 `Deserialize`，
+/// 使声明式测试套件（[`crate::testing::JsonTestCase`]）可双向转换。
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthRequest {
     /// 主体 login_id。
     pub login_id: i64,

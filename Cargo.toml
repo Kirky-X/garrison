@@ -274,6 +274,11 @@ i18n = ["fluent", "unic-langid"]
 # 0.5.1 新增：miette 富错误渲染（M5，依据 spec error R-error-001）
 # 启用后 BulwarkError 实现 miette::Diagnostic trait（保留 thiserror::Error derive）
 miette = ["dep:miette"]
+# 0.5.1 新增：声明式 JSON 测试套件（M6，依据 spec testing-suite D8）
+# 启用后提供 JsonTestSuite / JsonTestCase / TestReport 类型，支持从 JSON 文件
+# 加载测试用例并运行 Authorizer trait，输出测试报告。
+# 依赖 authorize-api（提供 Authorizer trait + AuthRequest/Decision 公开 API）。
+bulwark-testing = ["authorize-api"]
 
 # === 聚合特性 ===
 full = [
