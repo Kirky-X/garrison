@@ -197,6 +197,8 @@ impl AuditLogListener {
     /// T074: 转换后对 `metadata` 调用 `mask_metadata` 进行字段掩码。
     fn to_audit_entry(&self, event: &BulwarkEvent) -> BulwarkResult<AuditEntry> {
         let now = Utc::now().timestamp();
+        // v0.5.0：从 TENANT task_local 读取当前租户 ID（无上下文时为 0，向后兼容）
+        let tenant_id = crate::context::tenant::current_tenant_id();
         let mut entry = match event {
             BulwarkEvent::Login {
                 login_id,
@@ -440,6 +442,8 @@ impl AuditLogListener {
                 created_at: now,
             },
         };
+        // v0.5.0：用当前 TENANT 上下文覆盖 tenant_id（原 match 中硬编码为 0）
+        entry.tenant_id = tenant_id;
         // T074: 对 metadata 进行字段掩码（如 password → ***）
         entry.metadata = entry.metadata.map(|m| self.mask_metadata(&m));
         Ok(entry)

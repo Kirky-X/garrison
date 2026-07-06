@@ -73,6 +73,15 @@ mod tenant_local {
 
 pub use tenant_local::TENANT;
 
+/// 读取当前 task_local 中的 tenant_id（无上下文时返回 0）。
+///
+/// 供 `BulwarkLogicDefault::check_permission`（构造 `AuthRequest`）和
+/// `AuditLogListener::to_audit_entry`（填充审计日志 tenant_id）使用。
+/// 在未进入 `TENANT.scope` 时返回 0（向后兼容单租户场景）。
+pub fn current_tenant_id() -> i64 {
+    TENANT.try_get().map(|ctx| ctx.tenant_id).unwrap_or(0)
+}
+
 /// 租户解析器 trait（依据 spec `tenant-isolation` R-tenant-isolation-002）。
 ///
 /// 从 HTTP 请求头解析 `TenantContext`，三种实现：

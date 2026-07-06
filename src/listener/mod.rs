@@ -12,6 +12,7 @@
 
 use crate::error::BulwarkResult;
 use async_trait::async_trait;
+use parking_lot::RwLock;
 use std::sync::Arc;
 
 /// 审计日志子模块（v0.5.0 新增，依据 proposal H3）。
@@ -241,8 +242,8 @@ inventory::collect!(BulwarkListenerEntry);
 /// `broadcast` 方法同步遍历所有监听器调用 `on_event`，
 /// 单个监听器失败时仅记录 `tracing::warn!` 日志，不中断广播。
 pub struct BulwarkListenerManager {
-    /// 已注册的监听器列表。
-    listeners: Vec<Arc<dyn BulwarkListener>>,
+    /// 已注册的监听器列表（`RwLock` 保护，支持运行时 `register` 追加）。
+    listeners: Arc<RwLock<Vec<Arc<dyn BulwarkListener>>>>,
 }
 
 impl BulwarkListenerManager {
@@ -259,12 +260,22 @@ impl BulwarkListenerManager {
             );
             let _ = l; // 避免 unused 警告
         }
-        Self { listeners }
+        Self {
+            listeners: Arc::new(RwLock::new(listeners)),
+        }
+    }
+
+    /// 运行时注册监听器（v0.5.0 新增，依据 proposal H3）。
+    ///
+    /// 补充 `inventory` 编译期注册机制的不足：`AuditLogListener` 等需要运行时参数
+    /// （如 `DbPool`）的监听器无法通过无参工厂函数注册，需通过此方法在初始化后追加。
+    pub fn register(&self, listener: Arc<dyn BulwarkListener>) {
+        self.listeners.write().push(listener);
     }
 
     /// 返回已注册监听器数量。
     pub fn count(&self) -> usize {
-        self.listeners.len()
+        self.listeners.read().len()
     }
 
     /// 广播事件到所有已注册监听器（依据 spec listener-system）。
@@ -274,7 +285,8 @@ impl BulwarkListenerManager {
     ///
     /// v0.5.0 改为 async（依据 proposal H3）：`on_event` 改为 async 后，broadcast 需 `.await`。
     pub async fn broadcast(&self, event: &BulwarkEvent) {
-        for listener in &self.listeners {
+        let listeners = self.listeners.read().clone();
+        for listener in &listeners {
             if let Err(e) = listener.on_event(event).await {
                 tracing::warn!("监听器 on_event 失败: {}", e);
             }

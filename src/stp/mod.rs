@@ -15,8 +15,9 @@
 //! stp 核心 API（logout/check_login/get_login_id）从 `current_token()` 读取。
 
 use crate::config::BulwarkConfig;
+use crate::context::tenant::current_tenant_id;
 use crate::core::auth::AuthLogic;
-use crate::core::permission::PermissionChecker;
+use crate::core::permission::{AuthRequest, PermissionChecker};
 use crate::core::token::TokenStyleFactory;
 use crate::error::{BulwarkError, BulwarkResult};
 #[cfg(feature = "listener")]
@@ -547,8 +548,9 @@ impl BulwarkLogicDefault {
 
     /// 注入权限校验器（builder 模式）。
     ///
-    /// 注入后可用于权限校验链路扩展（当前 `check_permission` 仍委托 firewall，
-    /// 此字段为未来扩展预留）。
+    /// 注入后 `check_permission` 优先委托 `PermissionChecker::authorize`（走 Decision 路径），
+    /// 并广播 `PermissionCheck` 事件供 `AuditLogListener` 记录审计日志。
+    /// 未注入时回退到 `firewall.check_permission`（0.4.2 行为）。
     pub fn with_permission_checker(mut self, pc: Arc<dyn PermissionChecker>) -> Self {
         self.permission_checker = Some(pc);
         self
@@ -919,7 +921,41 @@ impl BulwarkLogic for BulwarkLogicDefault {
                 };
             },
         };
-        // 委托 BulwarkPermissionStrategy 做权限校验
+        // v0.5.0：优先委托 PermissionChecker（若注入），走 authorize + Decision 路径
+        // 并广播 PermissionCheck 事件供 AuditLogListener 记录审计日志（依据 proposal H3/H7）
+        if let Some(pc) = &self.permission_checker {
+            let request = AuthRequest {
+                login_id,
+                tenant_id: current_tenant_id(),
+                action: permission.to_string(),
+                resource: None,
+                context: serde_json::Value::Null,
+            };
+            let decision = pc.authorize(&request).await?;
+
+            // 广播 PermissionCheck 事件（audit listener 据此写审计日志）
+            #[cfg(feature = "listener")]
+            if let Some(lm) = &self.listener_manager {
+                lm.broadcast(&BulwarkEvent::PermissionCheck {
+                    login_id,
+                    permission: permission.to_string(),
+                })
+                .await;
+            }
+
+            #[cfg(feature = "metrics-prometheus")]
+            if let Some(m) = &self.metrics {
+                m.record_permission_query(decision.allowed);
+            }
+
+            return if decision.allowed {
+                Ok(())
+            } else {
+                Err(BulwarkError::NotPermission(permission.to_string()))
+            };
+        }
+
+        // 回退到 firewall 路径（permission_checker 未注入时）
         let has_perm = self.firewall.check_permission(login_id, permission).await?;
         // emit metrics：权限查询结果
         #[cfg(feature = "metrics-prometheus")]
