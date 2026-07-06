@@ -82,6 +82,25 @@ pub fn current_tenant_id() -> i64 {
     TENANT.try_get().map(|ctx| ctx.tenant_id).unwrap_or(0)
 }
 
+/// 读取当前 task_local 中的 tenant_id（无上下文时返回 `None`）。
+///
+/// 与 [`current_tenant_id`] 的差异：后者在无上下文时返回 `0`（向后兼容单租户场景），
+/// 本函数返回 `None`，用于多租户严格隔离场景——调用方必须显式处理"无租户上下文"的情况，
+/// 避免租户隔离被静默绕过（Rule 12 失败显性化）。
+///
+/// # 返回
+///
+/// - `Some(tenant_id)`：当前在 `TENANT.scope` 内，返回上下文中的 `tenant_id`
+/// - `None`：未进入 `TENANT.scope`，调用方应决定如何处理（返回错误 / 使用默认值 / panic）
+///
+/// # 适用场景
+///
+/// - `tenant-isolation` feature 启用时的审计日志写入（`to_audit_entry`）：无租户上下文应报错
+/// - 多租户严格隔离的缓存 key 前缀生成：无租户上下文不应静默退化为 `tenant:0:`
+pub fn current_tenant_id_strict() -> Option<i64> {
+    TENANT.try_get().ok().map(|ctx| ctx.tenant_id)
+}
+
 /// 租户解析器 trait（依据 spec `tenant-isolation` R-tenant-isolation-002）。
 ///
 /// 从 HTTP 请求头解析 `TenantContext`，三种实现：
@@ -344,6 +363,31 @@ mod tests {
     async fn tenant_try_get_returns_err_when_no_scope() {
         // 在无 scope 上下文中调用 try_get，应返回 Err 而非 panic
         assert!(TENANT.try_get().is_err());
+    }
+
+    /// H2: `current_tenant_id_strict` 在未进入 `TENANT.scope` 时返回 `None`（不 panic）。
+    ///
+    /// 与 `current_tenant_id` 的 `unwrap_or(0)` 不同，strict 版本要求调用方显式处理无上下文场景，
+    /// 避免租户隔离被静默绕过（Rule 12 失败显性化）。
+    #[tokio::test]
+    async fn strict_returns_none_without_scope() {
+        assert_eq!(current_tenant_id_strict(), None);
+    }
+
+    /// H2: `current_tenant_id_strict` 在 `TENANT.scope` 内返回 `Some(tenant_id)`。
+    ///
+    /// 在 `TENANT.scope(TenantContext { tenant_id: 42, .. }, async { current_tenant_id_strict() })` 内
+    /// 断言返回 `Some(42)`，验证 strict 版本能正确读取 task_local 上下文。
+    #[tokio::test]
+    async fn strict_returns_some_with_scope() {
+        let ctx = TenantContext {
+            tenant_id: 42,
+            resolved_from: TenantSource::Header,
+        };
+        let result = TENANT
+            .scope(ctx, async { current_tenant_id_strict() })
+            .await;
+        assert_eq!(result, Some(42));
     }
 
     /// R-tenant-isolation-002: SubdomainTenantResolver 从 Host 提取 subdomain 并查 mapping。

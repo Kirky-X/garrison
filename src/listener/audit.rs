@@ -197,8 +197,14 @@ impl AuditLogListener {
     /// T074: 转换后对 `metadata` 调用 `mask_metadata` 进行字段掩码。
     fn to_audit_entry(&self, event: &BulwarkEvent) -> BulwarkResult<AuditEntry> {
         let now = Utc::now().timestamp();
-        // v0.5.0：从 TENANT task_local 读取当前租户 ID（无上下文时为 0，向后兼容）
+        // v0.5.0：从 TENANT task_local 读取当前租户 ID
+        // - tenant-isolation feature 关闭：current_tenant_id() 无上下文时返回 0（向后兼容）
+        // - tenant-isolation feature 启用：current_tenant_id_strict() 无上下文时返回 Err（Rule 12 失败显性化）
+        #[cfg(not(feature = "tenant-isolation"))]
         let tenant_id = crate::context::tenant::current_tenant_id();
+        #[cfg(feature = "tenant-isolation")]
+        let tenant_id = crate::context::tenant::current_tenant_id_strict()
+            .ok_or_else(|| BulwarkError::Config("tenant context missing".into()))?;
         let mut entry = match event {
             BulwarkEvent::Login {
                 login_id,
