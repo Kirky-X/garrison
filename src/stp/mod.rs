@@ -2945,7 +2945,8 @@ mod tests {
     // ------------------------------------------------------------------------
 
     /// 最小化 BulwarkLogic mock，仅用于测试 trait default 方法。
-    /// 所有必需方法标记 unreachable!()，仅保留 default 方法（login_by_token/verify_token/refresh_token）。
+    /// 所有必需方法返回 `BulwarkError::NotImplemented`（Rule 12 失败显性化，不 panic），
+    /// 仅保留 default 方法（login_by_token/verify_token/refresh_token）。
     struct MinimalLogic {
         config: Arc<BulwarkConfig>,
     }
@@ -2953,37 +2954,59 @@ mod tests {
     #[async_trait]
     impl BulwarkLogic for MinimalLogic {
         async fn login(&self, _: i64) -> BulwarkResult<String> {
-            unreachable!()
+            Err(BulwarkError::NotImplemented(
+                "mock implementation, not for production".to_string(),
+            ))
         }
         async fn login_with_token(&self, _: i64, _: &str) -> BulwarkResult<()> {
-            unreachable!()
+            Err(BulwarkError::NotImplemented(
+                "mock implementation, not for production".to_string(),
+            ))
         }
         async fn logout(&self) -> BulwarkResult<()> {
-            unreachable!()
+            Err(BulwarkError::NotImplemented(
+                "mock implementation, not for production".to_string(),
+            ))
         }
         async fn logout_by_login_id(&self, _: i64) -> BulwarkResult<()> {
-            unreachable!()
+            Err(BulwarkError::NotImplemented(
+                "mock implementation, not for production".to_string(),
+            ))
         }
         async fn kickout(&self, _: i64) -> BulwarkResult<()> {
-            unreachable!()
+            Err(BulwarkError::NotImplemented(
+                "mock implementation, not for production".to_string(),
+            ))
         }
         async fn kickout_by_token(&self, _: &str) -> BulwarkResult<()> {
-            unreachable!()
+            Err(BulwarkError::NotImplemented(
+                "mock implementation, not for production".to_string(),
+            ))
         }
         async fn revoke_token(&self, _: &str) -> BulwarkResult<()> {
-            unreachable!()
+            Err(BulwarkError::NotImplemented(
+                "mock implementation, not for production".to_string(),
+            ))
         }
         async fn check_login(&self) -> BulwarkResult<bool> {
-            unreachable!()
+            Err(BulwarkError::NotImplemented(
+                "mock implementation, not for production".to_string(),
+            ))
         }
         async fn get_login_id(&self) -> BulwarkResult<Option<i64>> {
-            unreachable!()
+            Err(BulwarkError::NotImplemented(
+                "mock implementation, not for production".to_string(),
+            ))
         }
         async fn check_permission(&self, _: &str) -> BulwarkResult<()> {
-            unreachable!()
+            Err(BulwarkError::NotImplemented(
+                "mock implementation, not for production".to_string(),
+            ))
         }
         async fn check_role(&self, _: &str) -> BulwarkResult<()> {
-            unreachable!()
+            Err(BulwarkError::NotImplemented(
+                "mock implementation, not for production".to_string(),
+            ))
         }
         fn config(&self) -> Arc<BulwarkConfig> {
             Arc::clone(&self.config)
@@ -3029,6 +3052,99 @@ mod tests {
             matches!(result, Err(BulwarkError::NotImplemented(ref msg)) if msg.contains("protocol-jwt")),
             "trait default refresh_token 应返回 NotImplemented，实际: {:?}",
             result
+        );
+    }
+
+    /// MinimalLogic mock 必需方法返回 `NotImplemented`（替换原 `unreachable!()` panic，
+    /// 依据 Rule 12 失败显性化）。
+    ///
+    /// 覆盖 11 个 mock 方法：login / login_with_token / logout / logout_by_login_id /
+    /// kickout / kickout_by_token / revoke_token / check_login / get_login_id /
+    /// check_permission / check_role。
+    #[tokio::test]
+    async fn minimal_logic_returns_not_implemented() {
+        let logic = MinimalLogic {
+            config: Arc::new(BulwarkConfig::default_config()),
+        };
+
+        // 1. login
+        assert!(
+            matches!(logic.login(1).await, Err(BulwarkError::NotImplemented(_))),
+            "MinimalLogic::login 应返回 NotImplemented（mock 不应 panic）"
+        );
+        // 2. login_with_token
+        assert!(
+            matches!(
+                logic.login_with_token(1, "t").await,
+                Err(BulwarkError::NotImplemented(_))
+            ),
+            "MinimalLogic::login_with_token 应返回 NotImplemented"
+        );
+        // 3. logout
+        assert!(
+            matches!(logic.logout().await, Err(BulwarkError::NotImplemented(_))),
+            "MinimalLogic::logout 应返回 NotImplemented"
+        );
+        // 4. logout_by_login_id
+        assert!(
+            matches!(
+                logic.logout_by_login_id(1).await,
+                Err(BulwarkError::NotImplemented(_))
+            ),
+            "MinimalLogic::logout_by_login_id 应返回 NotImplemented"
+        );
+        // 5. kickout
+        assert!(
+            matches!(logic.kickout(1).await, Err(BulwarkError::NotImplemented(_))),
+            "MinimalLogic::kickout 应返回 NotImplemented"
+        );
+        // 6. kickout_by_token
+        assert!(
+            matches!(
+                logic.kickout_by_token("t").await,
+                Err(BulwarkError::NotImplemented(_))
+            ),
+            "MinimalLogic::kickout_by_token 应返回 NotImplemented"
+        );
+        // 7. revoke_token
+        assert!(
+            matches!(
+                logic.revoke_token("t").await,
+                Err(BulwarkError::NotImplemented(_))
+            ),
+            "MinimalLogic::revoke_token 应返回 NotImplemented"
+        );
+        // 8. check_login
+        assert!(
+            matches!(
+                logic.check_login().await,
+                Err(BulwarkError::NotImplemented(_))
+            ),
+            "MinimalLogic::check_login 应返回 NotImplemented"
+        );
+        // 9. get_login_id
+        assert!(
+            matches!(
+                logic.get_login_id().await,
+                Err(BulwarkError::NotImplemented(_))
+            ),
+            "MinimalLogic::get_login_id 应返回 NotImplemented"
+        );
+        // 10. check_permission
+        assert!(
+            matches!(
+                logic.check_permission("p").await,
+                Err(BulwarkError::NotImplemented(_))
+            ),
+            "MinimalLogic::check_permission 应返回 NotImplemented"
+        );
+        // 11. check_role
+        assert!(
+            matches!(
+                logic.check_role("r").await,
+                Err(BulwarkError::NotImplemented(_))
+            ),
+            "MinimalLogic::check_role 应返回 NotImplemented"
         );
     }
 
