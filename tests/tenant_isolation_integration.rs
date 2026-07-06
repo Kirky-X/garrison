@@ -8,6 +8,8 @@
 //! cargo test --features "tenant-isolation audit-log db-sqlite decision-trace cache-memory" --test tenant_isolation_integration
 //! ```
 
+mod common;
+
 #[cfg(all(
     feature = "tenant-isolation",
     feature = "audit-log",
@@ -20,7 +22,7 @@ mod tenant_audit_decision_e2e {
     use bulwark::core::permission::{
         AuthRequest, DecisionReason, PermissionChecker, PermissionCheckerDefault,
     };
-    use bulwark::dao::{init_dbnexus, BulwarkDao, BulwarkDaoOxcache, BulwarkMigration};
+    use bulwark::dao::{BulwarkDao, BulwarkDaoOxcache};
     use bulwark::error::BulwarkResult;
     use bulwark::listener::audit::{AuditConfig, AuditQuery};
     use bulwark::listener::{BulwarkListener, BulwarkListenerManager};
@@ -28,8 +30,9 @@ mod tenant_audit_decision_e2e {
     use bulwark::stp::{with_current_token, BulwarkInterface, BulwarkLogic, BulwarkLogicDefault};
     use bulwark::AuditLogListener;
     use serial_test::serial;
-    use std::path::PathBuf;
     use std::sync::Arc;
+
+    use crate::common::setup_db;
 
     struct MockInterface;
 
@@ -48,23 +51,6 @@ mod tenant_audit_decision_e2e {
         }
     }
 
-    fn project_migrations_dir() -> PathBuf {
-        let manifest_dir = env!("CARGO_MANIFEST_DIR");
-        PathBuf::from(manifest_dir)
-            .join("migrations")
-            .join("sqlite")
-    }
-
-    async fn setup_db() -> dbnexus::DbPool {
-        let pool = init_dbnexus("sqlite::memory:")
-            .await
-            .expect("init_dbnexus 应成功");
-        let migration = BulwarkMigration::with_base_dir(pool.clone(), project_migrations_dir());
-        let applied = migration.migrate_core().await.expect("migrate_core 应成功");
-        assert!(applied >= 1, "migrate_core 应至少执行 1 个文件");
-        pool
-    }
-
     /// 验证租户 42 用户 1001 的权限校验全链路：
     /// `check_permission` → `authorize` → `Decision` → 广播 `PermissionCheck` → `AuditLogListener` 写入。
     ///
@@ -77,7 +63,11 @@ mod tenant_audit_decision_e2e {
     async fn tenant_isolation_with_audit_log_and_decision_trace_e2e() {
         let pool = setup_db().await;
 
-        let dao: Arc<dyn BulwarkDao> = Arc::new(BulwarkDaoOxcache::new().await.unwrap());
+        let dao: Arc<dyn BulwarkDao> = Arc::new(
+            BulwarkDaoOxcache::new()
+                .await
+                .expect("oxcache 初始化应成功"),
+        );
         let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
 
         let mut config = bulwark::config::BulwarkConfig::default_config();

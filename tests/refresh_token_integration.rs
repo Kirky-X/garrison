@@ -9,46 +9,17 @@
 //! cargo test --features "protocol-jwt db-sqlite" --test refresh_token_integration
 //! ```
 
+mod common;
+
 #[cfg(all(feature = "protocol-jwt", feature = "db-sqlite"))]
 mod refresh_token_e2e {
-    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-    use base64::Engine;
-    use bulwark::dao::{init_dbnexus, BulwarkMigration};
     use bulwark::protocol::jwt::JwtHandler;
     use bulwark::RefreshTokenRotation;
     use dbnexus::DbPool;
-    use rand::rngs::OsRng;
-    use rsa::pkcs1::EncodeRsaPrivateKey;
-    use rsa::traits::PublicKeyParts;
-    use rsa::RsaPrivateKey;
     use sea_orm::{ConnectionTrait, DbBackend, Statement, Value};
-    use sha2::{Digest, Sha256};
-    use std::path::PathBuf;
     use std::sync::{Arc, RwLock};
 
-    fn project_migrations_dir() -> PathBuf {
-        let manifest_dir = env!("CARGO_MANIFEST_DIR");
-        PathBuf::from(manifest_dir)
-            .join("migrations")
-            .join("sqlite")
-    }
-
-    async fn setup_db() -> DbPool {
-        let pool = init_dbnexus("sqlite::memory:")
-            .await
-            .expect("init_dbnexus 应成功");
-        let migration = BulwarkMigration::with_base_dir(pool.clone(), project_migrations_dir());
-        let applied = migration.migrate_core().await.expect("migrate_core 应成功");
-        assert!(applied >= 1, "migrate_core 应至少执行 1 个文件");
-        pool
-    }
-
-    fn sha256_hex(s: &str) -> String {
-        let mut hasher = Sha256::new();
-        hasher.update(s.as_bytes());
-        let result = hasher.finalize();
-        result.iter().map(|b| format!("{:02x}", b)).collect()
-    }
+    use crate::common::{setup_db, sha256_hex};
 
     fn now_unix() -> i64 {
         std::time::SystemTime::now()
@@ -67,8 +38,8 @@ mod refresh_token_e2e {
         expires_at: i64,
         revoked: i64,
     ) {
-        let session = pool.get_session("admin").await.unwrap();
-        let conn = session.connection().unwrap();
+        let session = pool.get_session("admin").await.expect("获取 admin session");
+        let conn = session.connection().expect("获取连接");
         let stmt = Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO refresh_tokens (token_hash, parent_token_hash, login_id, tenant_id, key_version, expires_at, revoked, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -87,8 +58,8 @@ mod refresh_token_e2e {
     }
 
     async fn query_revoked(pool: &DbPool, token_hash: &str) -> i64 {
-        let session = pool.get_session("admin").await.unwrap();
-        let conn = session.connection().unwrap();
+        let session = pool.get_session("admin").await.expect("获取 admin session");
+        let conn = session.connection().expect("获取连接");
         let stmt = Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT revoked FROM refresh_tokens WHERE token_hash = ?",
@@ -97,9 +68,9 @@ mod refresh_token_e2e {
         let row = conn
             .query_one_raw(stmt)
             .await
-            .unwrap()
+            .expect("查询应成功")
             .expect("record 应存在");
-        row.try_get::<i64>("", "revoked").unwrap()
+        row.try_get::<i64>("", "revoked").expect("读取 revoked 列")
     }
 
     /// 验证 RefreshToken Rotation + Reuse Detection 完整流程。
@@ -160,24 +131,5 @@ mod refresh_token_e2e {
         // 验证 t2 也被吊销（整条链被撤销）
         let t2_revoked_after = query_revoked(&pool, &t2_hash).await;
         assert_eq!(t2_revoked_after, 1, "重用检测后 t2 也应被吊销（链级撤销）");
-    }
-
-    /// 生成 RSA 密钥对 smoke 测试：验证 rsa 依赖可用且能生成 2048 位密钥。
-    #[test]
-    fn generate_test_rsa_keys_smoke() {
-        let mut rng = OsRng;
-        let private_key = RsaPrivateKey::new(&mut rng, 2048).expect("生成 RSA 密钥失败");
-        let public_key = rsa::RsaPublicKey::from(&private_key);
-
-        let n_bytes = public_key.n().to_bytes_be();
-        let e_bytes = public_key.e().to_bytes_be();
-
-        let n_b64 = URL_SAFE_NO_PAD.encode(n_bytes);
-        let e_b64 = URL_SAFE_NO_PAD.encode(e_bytes);
-        assert!(!n_b64.is_empty(), "n_b64 应非空");
-        assert!(!e_b64.is_empty(), "e_b64 应非空");
-
-        let pem = private_key.to_pkcs1_der().expect("导出 PKCS#1 DER 失败");
-        assert!(!pem.as_bytes().is_empty(), "DER 应非空");
     }
 }

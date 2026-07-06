@@ -12,7 +12,6 @@
 mod keycloak_e2e {
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use base64::Engine;
-    use bulwark::protocol::jwt::JwtHandler;
     use bulwark::{KeycloakConfig, KeycloakProvider};
     use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
     use rand::rngs::OsRng;
@@ -20,16 +19,8 @@ mod keycloak_e2e {
     use rsa::traits::PublicKeyParts;
     use rsa::RsaPrivateKey;
     use serde::Serialize;
-    use sha2::{Digest, Sha256};
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
-
-    fn sha256_hex(s: &str) -> String {
-        let mut hasher = Sha256::new();
-        hasher.update(s.as_bytes());
-        let result = hasher.finalize();
-        result.iter().map(|b| format!("{:02x}", b)).collect()
-    }
 
     #[derive(Serialize)]
     struct TestIdTokenClaims {
@@ -197,14 +188,8 @@ mod keycloak_e2e {
         );
         assert!(
             keycloak_claims.resource_access.contains_key("account"),
-            "resource_access 应包含 account"
+            "resource_access 应包含 account，实际: {:?}",
+            keycloak_claims.resource_access
         );
-
-        // 验证 JwtHandler 可以独立工作（确认 JWT 模块可用）
-        let _ = JwtHandler::new("test-secret");
-
-        // 验证 sha256_hex 辅助函数工作正常
-        let hash = sha256_hex("test");
-        assert_eq!(hash.len(), 64, "SHA-256 hex 长度应为 64");
     }
 }

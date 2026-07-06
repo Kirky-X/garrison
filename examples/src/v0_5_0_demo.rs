@@ -14,6 +14,8 @@
 //!
 //! 本示例使用内存 SQLite + oxcache 内存 DAO，无需外部依赖即可运行。
 
+// 占位值，生产环境必须从环境变量/KMS 加载
+
 use async_trait::async_trait;
 use bulwark::context::tenant::{TenantContext, TenantSource, TENANT};
 use bulwark::core::permission::{
@@ -26,9 +28,13 @@ use bulwark::listener::{BulwarkListener, BulwarkListenerManager};
 use bulwark::session::BulwarkSession;
 use bulwark::stp::{with_current_token, BulwarkInterface, BulwarkLogic, BulwarkLogicDefault};
 use bulwark::strategy::BulwarkPermissionStrategyDefault;
-use bulwark::{KeycloakConfig, WechatProvider};
+use bulwark::{AuditLogListener, BulwarkConfig, KeycloakConfig, KeycloakProvider, WechatProvider};
+use dbnexus::DbPool;
 use std::path::PathBuf;
 use std::sync::Arc;
+
+/// Demo 错误类型（统一 `?` 传播到 `main` 的 `unwrap`）。
+type DemoResult<T> = Result<T, Box<dyn std::error::Error>>;
 
 /// Mock 权限接口：为 login_id 1001 返回 ["user:read", "user:write"] 权限。
 struct DemoInterface;
@@ -48,13 +54,8 @@ impl BulwarkInterface for DemoInterface {
     }
 }
 
-/// 运行 v0.5.0 综合演示。
-pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    println!("=== Bulwark v0.5.0 生产能力综合演示 ===\n");
-
-    // ====================================================================
-    // 1. 初始化基础设施：SQLite + oxcache DAO
-    // ====================================================================
+/// 初始化基础设施：SQLite in-memory + 迁移 + oxcache DAO + BulwarkSession。
+async fn init_infrastructure() -> DemoResult<(DbPool, Arc<dyn BulwarkDao>, Arc<BulwarkSession>)> {
     println!("[1] 初始化基础设施...");
 
     let pool = init_dbnexus("sqlite::memory:").await?;
@@ -66,12 +67,17 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     migration.run_all().await?;
 
     let dao: Arc<dyn BulwarkDao> = Arc::new(BulwarkDaoOxcache::new().await?);
-    let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
+    // BulwarkSession::new 消费 dao，clone 一份返回给调用方
+    let session = Arc::new(BulwarkSession::new(dao.clone(), 3600, 86400));
     println!("    ✓ SQLite in-memory + oxcache DAO 已就绪");
 
-    // ====================================================================
-    // 2. 配置审计日志监听器
-    // ====================================================================
+    Ok((pool, dao, session))
+}
+
+/// 配置审计日志监听器：注册 AuditLogListener 到 ListenerManager。
+async fn setup_audit_listener(
+    pool: DbPool,
+) -> DemoResult<(Arc<BulwarkListenerManager>, Arc<AuditLogListener>)> {
     println!("[2] 配置审计日志监听器...");
 
     let lm = Arc::new(BulwarkListenerManager::new());
@@ -80,34 +86,44 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         retain_days: 90,
         async_write: false,
     };
-    let audit_listener = Arc::new(bulwark::AuditLogListener::new(pool.clone(), audit_config));
+    let audit_listener = Arc::new(AuditLogListener::new(pool, audit_config));
     lm.register(audit_listener.clone() as Arc<dyn BulwarkListener>);
     println!("    ✓ AuditLogListener 已注册（掩码字段: token, 保留天数: 90）");
 
-    // ====================================================================
-    // 3. 构造 BulwarkLogic（注入 PermissionChecker + ListenerManager）
-    // ====================================================================
+    Ok((lm, audit_listener))
+}
+
+/// 构造 BulwarkLogicDefault：注入 PermissionChecker + ListenerManager。
+fn construct_logic(
+    session: Arc<BulwarkSession>,
+    interface: Arc<dyn BulwarkInterface>,
+    pc: Arc<dyn PermissionChecker>,
+    lm: Arc<BulwarkListenerManager>,
+) -> Arc<BulwarkLogicDefault> {
     println!("[3] 构造 BulwarkLogic（含决策溯源 + 审计日志）...");
 
-    let interface: Arc<dyn BulwarkInterface> = Arc::new(DemoInterface);
-    let pc: Arc<dyn PermissionChecker> = Arc::new(PermissionCheckerDefault::new(interface.clone()));
-    let firewall = Arc::new(BulwarkPermissionStrategyDefault::new(interface.clone()));
+    let firewall = Arc::new(BulwarkPermissionStrategyDefault::new(interface));
 
-    let mut config = bulwark::BulwarkConfig::default_config();
+    let mut config = BulwarkConfig::default_config();
     config.token_style = "uuid".to_string();
     config.timeout = 3600;
     config.throw_on_not_login = true;
 
     let logic = Arc::new(
         BulwarkLogicDefault::new(session, Arc::new(config), firewall)
-            .with_permission_checker(pc.clone())
+            .with_permission_checker(pc)
             .with_listener_manager(lm),
     );
     println!("    ✓ BulwarkLogicDefault 已构造（PermissionChecker + ListenerManager 已注入）");
 
-    // ====================================================================
-    // 4. 多租户隔离：在 TENANT(42) scope 内登录 + 权限校验
-    // ====================================================================
+    logic
+}
+
+/// 多租户隔离演示：在 TENANT(42) scope 内登录 + 权限校验 + 决策溯源。
+async fn demo_tenant_isolation(
+    logic: Arc<BulwarkLogicDefault>,
+    pc: Arc<dyn PermissionChecker>,
+) -> DemoResult<()> {
     println!("[4] 多租户隔离演示（tenant_id=42, login_id=1001）...");
 
     let tenant_ctx = TenantContext {
@@ -117,11 +133,9 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // 在 TENANT(42) scope 内登录，确保 session key 带 tenant:42: 前缀
     let token = TENANT
-        .scope(tenant_ctx.clone(), async {
-            logic.login(1001).await.expect("login 应成功")
-        })
-        .await;
-    println!("    ✓ 登录成功，token: {}...", &token[..8.min(token.len())]);
+        .scope(tenant_ctx.clone(), async { logic.login(1001).await })
+        .await?;
+    println!("    ✓ 登录成功，token 长度: {}", token.len());
 
     // 在 TENANT(42) + current_token 上下文中校验权限
     let check_result = TENANT
@@ -132,7 +146,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
             }),
         )
         .await;
-    assert!(check_result.is_ok(), "check_permission 应成功");
+    check_result?;
     println!("    ✓ 权限校验通过：user:read");
 
     // 决策溯源：验证 Decision 详情
@@ -148,7 +162,13 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         "    ✓ 决策溯源：allowed={}, reason={:?}",
         decision.allowed, decision.reason
     );
-    assert_eq!(decision.reason, DecisionReason::ExplicitAllow);
+    if decision.reason != DecisionReason::ExplicitAllow {
+        return Err(format!(
+            "expected DecisionReason::ExplicitAllow, got {:?}",
+            decision.reason
+        )
+        .into());
+    }
 
     // 验证拒绝路径
     let deny_request = AuthRequest {
@@ -164,9 +184,11 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         deny_decision.allowed, deny_decision.reason
     );
 
-    // ====================================================================
-    // 5. 查询审计日志
-    // ====================================================================
+    Ok(())
+}
+
+/// 查询审计日志：验证 AuditLogListener 写入的记录可按条件检索。
+async fn query_audit_logs(audit_listener: Arc<AuditLogListener>) -> DemoResult<()> {
     println!("[5] 查询审计日志...");
 
     let query = AuditQuery {
@@ -186,9 +208,11 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
-    // ====================================================================
-    // 6. Keycloak OIDC RP 配置演示
-    // ====================================================================
+    Ok(())
+}
+
+/// Keycloak OIDC RP 配置演示：构造 KeycloakConfig + KeycloakProvider。
+fn demo_keycloak_config() -> DemoResult<()> {
     println!("[6] Keycloak OIDC RP 配置演示...");
 
     let kc_config = KeycloakConfig {
@@ -202,20 +226,41 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("      → client_id: {}", kc_config.client_id);
 
     // 构造 KeycloakProvider（不实际调用 discover，仅演示配置）
-    let _provider = bulwark::KeycloakProvider::new(kc_config)?;
+    let _provider = KeycloakProvider::new(kc_config)?;
     println!("    ✓ KeycloakProvider 已构造（discover/exchange_code/verify_id_token 可用）");
 
-    // ====================================================================
-    // 7. 微信社交登录配置演示
-    // ====================================================================
+    Ok(())
+}
+
+/// 微信社交登录配置演示：构造 WechatProvider。
+fn demo_wechat_config() -> DemoResult<()> {
     println!("[7] 微信社交登录配置演示...");
 
     let _wechat = WechatProvider::new("wx_app_id", "wx_app_secret");
     println!("    ✓ WechatProvider 已构造（client_id=wx_app_id）");
 
-    // ====================================================================
-    // 总结
-    // ====================================================================
+    Ok(())
+}
+
+/// 运行 v0.5.0 综合演示。
+///
+/// 仅做顺序编排：init → audit listener → logic → tenant demo → audit query →
+/// keycloak config → wechat config → 总结。每步打印步骤标题。
+pub async fn run() -> DemoResult<()> {
+    println!("=== Bulwark v0.5.0 生产能力综合演示 ===\n");
+
+    let (pool, _dao, session) = init_infrastructure().await?;
+    let (lm, audit_listener) = setup_audit_listener(pool).await?;
+
+    let interface: Arc<dyn BulwarkInterface> = Arc::new(DemoInterface);
+    let pc: Arc<dyn PermissionChecker> = Arc::new(PermissionCheckerDefault::new(interface.clone()));
+    let logic = construct_logic(session, interface, pc.clone(), lm);
+
+    demo_tenant_isolation(logic, pc).await?;
+    query_audit_logs(audit_listener).await?;
+    demo_keycloak_config()?;
+    demo_wechat_config()?;
+
     println!("\n=== v0.5.0 生产能力演示完成 ===");
     println!("已展示功能：");
     println!("  • 多租户隔离（TENANT task_local + prefixed_key）");
