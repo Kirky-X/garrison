@@ -26,6 +26,7 @@
 //! | app_session | [`SessionRepository`] | 是 | 会话表 |
 //! | app_login_log | [`LoginLogRepository`] | 是 | 登录日志表 |
 //! | app_user_ext | [`UserExtRepository`] | 是 | 用户扩展字段表 |
+//! | app_user_device | [`UserDeviceRepository`] | 是 | 用户设备表（v0.5.1 新增，M2） |
 
 use crate::error::BulwarkResult;
 
@@ -313,6 +314,32 @@ pub struct UserExtRow {
     pub tenant_id: i64,
 }
 
+/// 用户设备表行（app_user_device，v0.5.1 新增，依据 design.md D4）。
+///
+/// 记录用户登录设备指纹与 UA 信息，支持设备阻断与多设备管理。
+/// 时间字段用 i64（epoch seconds），与 design.md D4 schema 一致。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct UserDeviceRow {
+    /// 设备 ID（UUID v4）。
+    pub id: String,
+    /// 租户 ID。
+    pub tenant_id: i64,
+    /// 登录 ID（关联 app_login_log 或外部 login 概念）。
+    pub login_id: i64,
+    /// 设备标识（UA hash 或设备指纹）。
+    pub device_identifier: String,
+    /// 设备名（从 UA 解析，如 "Chrome on Windows"）。
+    pub device_name: Option<String>,
+    /// 原始 User-Agent 字符串。
+    pub user_agent: Option<String>,
+    /// 是否被阻止。
+    pub is_blocked: bool,
+    /// 最后活跃时间（epoch seconds，可空）。
+    pub last_seen_at: Option<i64>,
+    /// 创建时间（epoch seconds）。
+    pub created_at: i64,
+}
+
 // ============================================================================
 // Repository trait 定义（依据 spec R-001 ~ R-004）
 // ============================================================================
@@ -596,6 +623,46 @@ pub trait UserExtRepository: Send + Sync {
         -> BulwarkResult<Vec<UserExtRow>>;
 }
 
+/// 单用户最大设备数（依据 design.md D4，默认 10）。
+///
+/// `register_device` 在 (tenant_id, login_id) 下设备数达到此值时拒绝新注册。
+pub const MAX_DEVICES: usize = 10;
+
+/// 用户设备 Repository trait（v0.5.1 新增，依据 design.md D4）。
+///
+/// 提供设备注册 / 阻断 / 查询能力，`register_device` 在设备数超过 [`MAX_DEVICES`] 时
+/// 返回 `BulwarkError::InvalidParam`。重复注册同一设备（相同 identifier）幂等返回已有 ID。
+#[async_trait::async_trait]
+pub trait UserDeviceRepository: Send + Sync {
+    /// 注册设备，返回设备 ID（UUID）。
+    ///
+    /// - 若 (tenant_id, login_id, identifier) 已存在，更新 last_seen_at 并返回已有 ID（幂等）。
+    /// - 若当前设备数 >= [`MAX_DEVICES`]，返回 `BulwarkError::InvalidParam`。
+    async fn register_device(
+        &self,
+        tenant_id: i64,
+        login_id: i64,
+        identifier: &str,
+        ua: &str,
+    ) -> BulwarkResult<String>;
+
+    /// 阻止设备（设置 is_blocked = 1）。
+    async fn block_device(&self, device_id: &str) -> BulwarkResult<()>;
+
+    /// 解除阻止（设置 is_blocked = 0）。
+    async fn unblock_device(&self, device_id: &str) -> BulwarkResult<()>;
+
+    /// 列出用户的所有设备（按 tenant_id + login_id 过滤）。
+    async fn list_user_devices(
+        &self,
+        tenant_id: i64,
+        login_id: i64,
+    ) -> BulwarkResult<Vec<UserDeviceRow>>;
+
+    /// 统计用户设备数。
+    async fn count_user_devices(&self, tenant_id: i64, login_id: i64) -> BulwarkResult<usize>;
+}
+
 // ============================================================================
 // Dbnexus Repository 实现子模块（依据 spec repository-layer R-003 + P3 重构）。
 // 启用 db-sqlite 或 db-postgres feature 时编译，基于 dbnexus DbPool + sea-orm
@@ -827,6 +894,33 @@ mod tests {
         assert_eq!(row.field_key, "email");
     }
 
+    /// UserDeviceRow 可构造且字段正确。
+    #[test]
+    fn user_device_row_constructs() {
+        let row = UserDeviceRow {
+            id: "dev-001".to_string(),
+            tenant_id: 42,
+            login_id: 1001,
+            device_identifier: "ua-hash-abc".to_string(),
+            device_name: Some("Chrome on Windows".to_string()),
+            user_agent: Some("Mozilla/5.0 (Windows NT 10.0)".to_string()),
+            is_blocked: false,
+            last_seen_at: Some(1750000000),
+            created_at: 1749000000,
+        };
+        assert_eq!(row.id, "dev-001");
+        assert_eq!(row.tenant_id, 42);
+        assert_eq!(row.login_id, 1001);
+        assert_eq!(row.device_identifier, "ua-hash-abc");
+        assert!(!row.is_blocked);
+    }
+
+    /// MAX_DEVICES 常量值为 10。
+    #[test]
+    fn max_devices_is_ten() {
+        assert_eq!(MAX_DEVICES, 10);
+    }
+
     // ========================================================================
     // New* struct 构造测试
     // ========================================================================
@@ -984,6 +1078,7 @@ mod tests {
         assert_send_sync::<dyn SessionRepository>();
         assert_send_sync::<dyn LoginLogRepository>();
         assert_send_sync::<dyn UserExtRepository>();
+        assert_send_sync::<dyn UserDeviceRepository>();
     }
 
     // ========================================================================

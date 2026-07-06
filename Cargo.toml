@@ -64,6 +64,10 @@ bcrypt = { version = "0.15", optional = true }
 rand = { version = "0.8", optional = true }
 # 0.5.1 新增：zeroize 用于 secure-password-zeroize feature，hash/verify 后清零内部 password 副本
 zeroize = { version = "1", optional = true }
+# 0.5.1 新增：ua-parser 用于 UserDeviceRepository 的 UA 解析（依据 design.md D4/A4）
+# 仅解析引擎，不内置 regexes.yaml（1.5MB 资源延后到 ua-parser-precompiled feature）
+# 由 db-sqlite / db-postgres feature 启用，register_device 用简单字符串解析作为 fallback
+ua-parser = { version = "0.2", optional = true }
 # oxcache 0.3: L1 (moka) + L2 (redis) 两级缓存，默认 full features，0.3 支持 per-entry TTL + ttl() 查询
 oxcache = { version = "0.3", optional = true }
 # dbnexus 0.3: 默认 sqlite + permission + sql-parser + macros + config-env + with-time
@@ -163,6 +167,7 @@ db-base = [
     "dbnexus/with-time",
     "dbnexus/auto-migrate",
     "sea-orm",
+    "dep:ua-parser",
 ]
 # db-sqlite 启用 sqlite embedded 驱动
 db-sqlite = ["db-base", "dbnexus/sqlite"]

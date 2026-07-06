@@ -383,9 +383,9 @@ mod tests {
 
     /// Scenario: migrate_core 创建 8 张核心表 + app_user_ext。
     /// WHEN BulwarkMigration::migrate_core() 执行 001_init.sql
-    /// THEN sqlite_master 中应包含 9 张表：
+    /// THEN sqlite_master 中应包含 10 张表：
     ///   app_user / app_role / app_permission / app_user_role / app_role_permission
-    ///   / app_auth_method / app_session / app_login_log / app_user_ext
+    ///   / app_auth_method / app_session / app_login_log / app_user_ext / app_user_device
     #[tokio::test]
     async fn migrate_core_creates_all_core_tables() {
         let pool = init_dbnexus("sqlite::memory:").await.unwrap();
@@ -403,7 +403,7 @@ mod tests {
             applied
         );
 
-        // 查询 sqlite_master 验证 9 张表存在
+        // 查询 sqlite_master 验证 10 张表存在
         let pool = migration.pool();
         let session = pool.get_session("admin").await.unwrap();
         let conn = session.connection().unwrap();
@@ -418,7 +418,8 @@ mod tests {
             .map(|row| row.try_get::<String>("", "name").unwrap_or_default())
             .collect();
 
-        // 8 张核心表 + app_user_ext = 9 张表（不含 dbnexus_migrations / role_hierarchy / refresh_tokens / audit_logs）
+        // 8 张核心表 + app_user_ext + app_user_device = 10 张表
+        // （不含 dbnexus_migrations / role_hierarchy / refresh_tokens / audit_logs）
         let expected_tables = [
             "app_auth_method",
             "app_login_log",
@@ -427,6 +428,7 @@ mod tests {
             "app_role_permission",
             "app_session",
             "app_user",
+            "app_user_device",
             "app_user_ext",
             "app_user_role",
         ];
@@ -440,14 +442,14 @@ mod tests {
         }
         assert_eq!(
             expected_tables.len(),
-            9,
-            "应有 9 张核心表（8 核心 + app_user_ext）"
+            10,
+            "应有 10 张核心表（8 核心 + app_user_ext + app_user_device）"
         );
     }
 
     /// Scenario: 迁移幂等性——重复执行 migrate_core 不重复建表。
     /// WHEN migrate_core() → migrate_core() 再次执行
-    /// THEN 第二次返回 0（无新增迁移），9 张表仍存在
+    /// THEN 第二次返回 0（无新增迁移），10 张表仍存在
     #[tokio::test]
     async fn migrate_core_idempotent() {
         let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
@@ -456,14 +458,14 @@ mod tests {
         let pool = init_dbnexus("sqlite::memory:").await.unwrap();
         let migration = BulwarkMigration::with_base_dir(pool, base_dir);
 
-        // 第一次：应用迁移（001-004 共 4 个文件）
+        // 第一次：应用迁移（001-006 共 6 个文件）
         let first = migration
             .migrate_core()
             .await
             .expect("第一次 migrate 应成功");
         assert!(
             first >= 4,
-            "第一次应至少执行 4 个迁移（001-004），实际: {}",
+            "第一次应至少执行 4 个迁移（001-006），实际: {}",
             first
         );
 
@@ -482,7 +484,7 @@ mod tests {
             "SELECT count(*) AS cnt FROM sqlite_master WHERE type='table' AND name LIKE 'app_%'",
         )
         .await;
-        assert_eq!(count, 9, "应有 9 张 app_ 前缀的表");
+        assert_eq!(count, 10, "应有 10 张 app_ 前缀的表");
     }
 
     /// Scenario: 迁移后 app_user 表可正常 CRUD（端到端验证）。
