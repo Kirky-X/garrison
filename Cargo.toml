@@ -41,6 +41,9 @@ uuid = { version = "1", features = ["v4", "serde"] }
 # http: 框架无关的 HeaderMap/HeaderName/HeaderValue，供 tenant.rs TenantResolver 使用
 # （actix/warp/axum 均基于 http crate，加为直接 dep 不增加构建开销）
 http = "1"
+# 0.5.1 新增：unicode-normalization 用于 permission 字符串 NFC 规范化（依据 spec P2.4）
+# 防止 Unicode 同形异义字攻击（NFD/NFC 等价但字节不同的字符串归一化）
+unicode-normalization = "0.1"
 
 # === Optional dependencies (feature-gated) ===
 axum = { version = "0.8", optional = true, default-features = false, features = ["json"] }

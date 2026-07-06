@@ -11,6 +11,7 @@ pub mod decision;
 
 use async_trait::async_trait;
 use std::sync::Arc;
+use unicode_normalization::UnicodeNormalization;
 
 use crate::error::{BulwarkError, BulwarkResult};
 use crate::stp::BulwarkInterface;
@@ -135,11 +136,21 @@ impl PermissionCheckerDefault {
 #[async_trait]
 impl PermissionChecker for PermissionCheckerDefault {
     async fn has_permission(&self, login_id: i64, permission: &str) -> BulwarkResult<bool> {
-        if permission.is_empty() {
+        // P2.4: NFC 规范化 permission 字符串，防止 Unicode 同形异义字攻击
+        // （NFD 与 NFC 形式视觉相同但字节不同，规范化后统一比较）
+        let normalized = permission.nfc().collect::<String>();
+        if normalized.is_empty() {
             return Err(BulwarkError::InvalidParam("权限字符串不能为空".to_string()));
         }
+        // P2.4: 长度校验（>256 字节返回 InvalidParam），防止 DoS
+        if normalized.len() > 256 {
+            return Err(BulwarkError::InvalidParam(format!(
+                "permission too long: {} bytes (max 256)",
+                normalized.len()
+            )));
+        }
         let perms = self.interface.get_permission_list(login_id).await?;
-        Ok(perms.iter().any(|p| p == permission))
+        Ok(perms.iter().any(|p| p == &normalized))
     }
 
     async fn has_role(&self, login_id: i64, role: &str) -> BulwarkResult<bool> {
@@ -471,5 +482,50 @@ mod tests {
         let json = serde_json::to_value(&decision).expect("serialize Decision");
         assert_eq!(json["allowed"], serde_json::json!(true));
         assert_eq!(json["reason"], serde_json::json!("explicit_allow"));
+    }
+
+    // ========================================================================
+    // T041: Unicode NFC 规范化 + 长度限制测试（依据 spec P2.4，防止 Unicode 同形异义字攻击与 DoS）
+    // ========================================================================
+
+    /// T041: check_permission 对 permission 字符串做 NFC 规范化。
+    ///
+    /// NFD 形式 `"user:e\u{0301}read"`（e + COMBINING ACUTE ACCENT U+0301）应规范化为
+    /// NFC 形式 `"user:\u{00e9}read"`（LATIN SMALL LETTER E WITH ACUTE U+00E9）。
+    /// mock 存储 NFC 形式，传入 NFD 形式应规范化后匹配。
+    ///
+    /// 注：任务描述原例 `"user\u{0301}:read"` → `"user\u{00e9}:read"` 不正确，
+    /// 因为 U+0301 会与前一个 'r' 组合形成 'ŕ'（U+0157），而非 'é'（U+00E9）。
+    /// 正确的 NFD→NFC 对为 `"user:e\u{0301}read"` → `"user:\u{00e9}read"`。
+    #[tokio::test]
+    async fn check_permission_normalizes_unicode() {
+        let interface = MockInterface::new().with_perms(1001, vec!["user:\u{00e9}read"]);
+        let interface_arc: Arc<dyn BulwarkInterface> = Arc::new(interface);
+        let checker = PermissionCheckerDefault::new(interface_arc);
+
+        let nfd = "user:e\u{0301}read";
+        let nfc = "user:\u{00e9}read";
+
+        assert!(
+            checker.check_permission(1001, nfd).await.is_ok(),
+            "NFD 形式应规范化后匹配 NFC permission"
+        );
+        assert!(
+            checker.check_permission(1001, nfc).await.is_ok(),
+            "NFC 形式应直接匹配"
+        );
+    }
+
+    /// T041: check_permission 拒绝超过 256 字节的 permission 字符串（防止 DoS）。
+    #[tokio::test]
+    async fn check_permission_rejects_over_256_bytes() {
+        let long_perm = "x".repeat(300); // 300 字节，超过 256 字节上限
+        let checker = make_checker();
+        let result = checker.check_permission(1001, &long_perm).await;
+        assert!(
+            matches!(result, Err(BulwarkError::InvalidParam(_))),
+            "超长 permission 应返回 InvalidParam，实际: {:?}",
+            result
+        );
     }
 }
