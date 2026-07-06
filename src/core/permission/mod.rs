@@ -18,6 +18,13 @@ use crate::stp::BulwarkInterface;
 
 pub use decision::{AuthRequest, Decision, DecisionReason};
 
+/// 权限注册表模块（0.5.1 新增，依据 spec permission-registry M3）。
+#[cfg(feature = "permission-registry")]
+pub mod registry;
+
+#[cfg(feature = "permission-registry")]
+pub use registry::{PermissionRegistration, PermissionRegistry, PermissionSpec};
+
 /// 权限校验 trait，定义以 login_id 为入参的权限与角色校验抽象（依据 spec core-permission）。
 ///
 /// 所有方法 MUST 使用 `async_trait` 标注，trait 绑定 `Send + Sync`。
