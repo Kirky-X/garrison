@@ -605,14 +605,13 @@ impl OAuth2Client {
 
         let status = resp.status();
         if !status.is_success() {
-            let body = resp
-                .text()
-                .await
-                .map_err(|e| BulwarkError::Network(format!("读取错误响应失败: {}", e)))?;
+            // H1 安全加固：错误消息只记录 HTTP status + url，不包含响应体或请求参数
+            // （与 post_token_request 同类修复：响应体可能被恶意服务器回显请求参数，
+            //   导致 client_secret 泄露到日志/上层调用方）
             return Err(BulwarkError::OAuth2(format!(
-                "HTTP {}: {}",
+                "introspect endpoint returned {} for {}",
                 status.as_u16(),
-                body
+                url
             )));
         }
 
@@ -1734,6 +1733,51 @@ mod tests {
         assert!(
             !err_msg.contains("leak-me-verifier"),
             "错误消息不应包含 code_verifier 值，实际: {}",
+            err_msg
+        );
+    }
+
+    /// introspect_token 错误处理不泄露响应体（H1 同类漏洞修复）。
+    ///
+    /// 与 post_token_request 同类问题：修复前 `format!("HTTP {}: {}", status, body)`
+    /// 会原样包含响应体。模拟恶意 introspect 端点在 500 响应体中回显请求参数
+    /// （含 client_secret），断言错误消息不包含敏感值。
+    #[tokio::test]
+    async fn introspect_token_error_does_not_leak_response_body() {
+        let server = MockServer::start().await;
+        // 模拟恶意服务器在 500 响应体中回显请求参数（含 client_secret）
+        Mock::given(method("POST"))
+            .and(path("/introspect"))
+            .respond_with(
+                ResponseTemplate::new(500).set_body_string(
+                    "internal error, received client_secret=leak-introspect-secret",
+                ),
+            )
+            .mount(&server)
+            .await;
+
+        let base = server.uri();
+        let client = OAuth2Client::new(
+            "test-client-id",
+            "leak-introspect-secret", // client_secret 值
+            "https://example.com/callback",
+            format!("{}/auth", base),
+            format!("{}/token", base),
+        )
+        .expect("创建 OAuth2Client 失败");
+
+        let result = client.introspect_token("some-token").await;
+
+        assert!(result.is_err(), "应返回错误");
+        let err_msg = result.err().unwrap().to_string();
+        assert!(
+            !err_msg.contains("leak-introspect-secret"),
+            "错误消息不应包含 client_secret 值，实际: {}",
+            err_msg
+        );
+        assert!(
+            !err_msg.contains("internal error, received"),
+            "错误消息不应包含响应体内容，实际: {}",
             err_msg
         );
     }
