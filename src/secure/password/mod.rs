@@ -106,7 +106,8 @@ impl Argon2Hasher {
 impl PasswordHasher for Argon2Hasher {
     fn hash(&self, password: &str) -> BulwarkResult<String> {
         let salt = SaltString::generate(&mut OsRng);
-        let params = Params::new(self.m_cost, self.t_cost, self.p_cost, None)
+        // H4: 显式预分配 32 字节输出缓冲区（与 argon2 默认一致，但显式化意图并锁定行为）
+        let params = Params::new(self.m_cost, self.t_cost, self.p_cost, Some(32))
             .map_err(|e| BulwarkError::InvalidParam(format!("Argon2 参数无效: {}", e)))?;
         let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
         let hash = argon2
@@ -397,5 +398,41 @@ mod tests {
         let hash_2a = hash.replacen("$2b$", "$2a$", 1);
         let result = PasswordVerifier::verify("password", &hash_2a).unwrap();
         assert!(result, "PasswordVerifier 应识别 $2a$ 格式");
+    }
+
+    // ========================================================================
+    // Argon2 输出长度契约测试（依据 spec secure-password H4）
+    // ========================================================================
+
+    /// H4: Argon2Hasher::hash 输出长度为 32 字节（预分配缓冲区）。
+    ///
+    /// PHC 格式：`$argon2id$v=19$m=...,t=...,p=...$<salt>$<hash>`
+    /// 末段为 hash 的 base64 编码（无 padding），解码后应为 32 字节。
+    #[test]
+    fn hash_produces_32_byte_output() {
+        let hasher = Argon2Hasher::default();
+        let hash = hasher.hash("test-password").expect("hash 应成功");
+        // 以 $ 分隔：[0]=""（空前缀）, [1]="argon2id", [2]="v=19",
+        //          [3]="m=...,t=...,p=...", [4]="<salt>", [5]="<hash>"
+        let parts: Vec<&str> = hash.split('$').collect();
+        assert!(
+            parts.len() >= 6,
+            "PHC hash 字符串应至少 6 段，实际: {} (hash={})",
+            parts.len(),
+            hash
+        );
+        let hash_b64 = parts[5];
+        // PHC 标准使用 base64 无 padding
+        use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
+        let hash_bytes = STANDARD_NO_PAD
+            .decode(hash_b64)
+            .expect("hash 末段应是合法 base64 (无 padding)");
+        assert_eq!(
+            hash_bytes.len(),
+            32,
+            "Argon2 输出应为 32 字节，实际: {} (hash={})",
+            hash_bytes.len(),
+            hash
+        );
     }
 }
