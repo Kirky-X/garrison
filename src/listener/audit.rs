@@ -205,7 +205,7 @@ impl AuditLogListener {
                 token,
                 device,
             } => AuditEntry {
-                tenant_id: 0,
+                tenant_id,
                 event_type: "login".to_string(),
                 login_id: Some(*login_id),
                 token: Some(token.clone()),
@@ -216,7 +216,7 @@ impl AuditLogListener {
                 created_at: now,
             },
             BulwarkEvent::Logout { login_id, token } => AuditEntry {
-                tenant_id: 0,
+                tenant_id,
                 event_type: "logout".to_string(),
                 login_id: Some(*login_id),
                 token: Some(token.clone()),
@@ -231,7 +231,7 @@ impl AuditLogListener {
                 token,
                 reason,
             } => AuditEntry {
-                tenant_id: 0,
+                tenant_id,
                 event_type: "kickout".to_string(),
                 login_id: Some(*login_id),
                 token: Some(token.clone()),
@@ -245,7 +245,7 @@ impl AuditLogListener {
                 login_id,
                 permission,
             } => AuditEntry {
-                tenant_id: 0,
+                tenant_id,
                 event_type: "permission_check".to_string(),
                 login_id: Some(*login_id),
                 token: None,
@@ -256,7 +256,7 @@ impl AuditLogListener {
                 created_at: now,
             },
             BulwarkEvent::RoleCheck { login_id, role } => AuditEntry {
-                tenant_id: 0,
+                tenant_id,
                 event_type: "role_check".to_string(),
                 login_id: Some(*login_id),
                 token: None,
@@ -267,7 +267,7 @@ impl AuditLogListener {
                 created_at: now,
             },
             BulwarkEvent::TokenExpired { token } => AuditEntry {
-                tenant_id: 0,
+                tenant_id,
                 event_type: "token_expired".to_string(),
                 login_id: None,
                 token: Some(token.clone()),
@@ -278,7 +278,7 @@ impl AuditLogListener {
                 created_at: now,
             },
             BulwarkEvent::LoginFailure { login_id, reason } => AuditEntry {
-                tenant_id: 0,
+                tenant_id,
                 event_type: "login_failure".to_string(),
                 login_id: Some(*login_id),
                 token: None,
@@ -293,7 +293,7 @@ impl AuditLogListener {
                 old_token,
                 new_token,
             } => AuditEntry {
-                tenant_id: 0,
+                tenant_id,
                 event_type: "token_refresh".to_string(),
                 login_id: Some(*login_id),
                 token: Some(new_token.clone()),
@@ -304,7 +304,7 @@ impl AuditLogListener {
                 created_at: now,
             },
             BulwarkEvent::RevokeToken { token } => AuditEntry {
-                tenant_id: 0,
+                tenant_id,
                 event_type: "revoke_token".to_string(),
                 login_id: None,
                 token: Some(token.clone()),
@@ -315,7 +315,7 @@ impl AuditLogListener {
                 created_at: now,
             },
             BulwarkEvent::SessionTimeout { login_id, token } => AuditEntry {
-                tenant_id: 0,
+                tenant_id,
                 event_type: "session_timeout".to_string(),
                 login_id: Some(*login_id),
                 token: Some(token.clone()),
@@ -326,7 +326,7 @@ impl AuditLogListener {
                 created_at: now,
             },
             BulwarkEvent::AccountLocked { login_id, reason } => AuditEntry {
-                tenant_id: 0,
+                tenant_id,
                 event_type: "account_locked".to_string(),
                 login_id: Some(*login_id),
                 token: None,
@@ -337,7 +337,7 @@ impl AuditLogListener {
                 created_at: now,
             },
             BulwarkEvent::FirewallBlock { login_id, reason } => AuditEntry {
-                tenant_id: 0,
+                tenant_id,
                 event_type: "firewall_block".to_string(),
                 login_id: Some(*login_id),
                 token: None,
@@ -348,7 +348,7 @@ impl AuditLogListener {
                 created_at: now,
             },
             BulwarkEvent::TokenRotate { old_key, new_key } => AuditEntry {
-                tenant_id: 0,
+                tenant_id,
                 event_type: "token_rotate".to_string(),
                 login_id: None,
                 token: None,
@@ -359,7 +359,7 @@ impl AuditLogListener {
                 created_at: now,
             },
             BulwarkEvent::TempCredentialConsumed { key, value } => AuditEntry {
-                tenant_id: 0,
+                tenant_id,
                 event_type: "temp_credential_consumed".to_string(),
                 login_id: None,
                 token: None,
@@ -374,7 +374,7 @@ impl AuditLogListener {
                 user_id,
                 login_id,
             } => AuditEntry {
-                tenant_id: 0,
+                tenant_id,
                 event_type: "social_login".to_string(),
                 login_id: *login_id,
                 token: None,
@@ -392,7 +392,7 @@ impl AuditLogListener {
                 from_tenant,
                 to_tenant,
             } => AuditEntry {
-                tenant_id: 0,
+                tenant_id,
                 event_type: "tenant_switch".to_string(),
                 login_id: Some(*login_id),
                 token: None,
@@ -406,7 +406,7 @@ impl AuditLogListener {
                 created_at: now,
             },
             BulwarkEvent::DeviceBlock { login_id, device } => AuditEntry {
-                tenant_id: 0,
+                tenant_id,
                 event_type: "device_block".to_string(),
                 login_id: Some(*login_id),
                 token: None,
@@ -417,7 +417,7 @@ impl AuditLogListener {
                 created_at: now,
             },
             BulwarkEvent::DeviceUnblock { login_id, device } => AuditEntry {
-                tenant_id: 0,
+                tenant_id,
                 event_type: "device_unblock".to_string(),
                 login_id: Some(*login_id),
                 token: None,
@@ -428,7 +428,7 @@ impl AuditLogListener {
                 created_at: now,
             },
             BulwarkEvent::ConfigReload { config_version } => AuditEntry {
-                tenant_id: 0,
+                tenant_id,
                 event_type: "config_reload".to_string(),
                 login_id: None,
                 token: None,
@@ -442,8 +442,6 @@ impl AuditLogListener {
                 created_at: now,
             },
         };
-        // v0.5.0：用当前 TENANT 上下文覆盖 tenant_id（原 match 中硬编码为 0）
-        entry.tenant_id = tenant_id;
         // T074: 对 metadata 进行字段掩码（如 password → ***）
         entry.metadata = entry.metadata.map(|m| self.mask_metadata(&m));
         Ok(entry)
@@ -1166,6 +1164,51 @@ mod db_sqlite_tests {
             4,
             "查询4（全 None）应返回全部 4 行，实际: {}",
             rows4.len()
+        );
+    }
+
+    /// T001 Red: `to_audit_entry` 应从 `TENANT` task_local 读取 tenant_id
+    /// 并填充到返回的 `AuditEntry.tenant_id`。
+    ///
+    /// 在 `TENANT.scope(TenantContext { tenant_id: 42, .. }, async { ... })` 内
+    /// 调用 `to_audit_entry(&BulwarkEvent::Login { ... })`，断言返回的 `AuditEntry.tenant_id == 42`。
+    ///
+    /// 此测试作为 T002 重构（移除 post-match 覆盖、match arm 直接用 tenant_id）的保护网：
+    /// - 在改代码前应通过（因为现有 L445-446 post-match 覆盖 `entry.tenant_id = tenant_id` 正确）
+    /// - 在 T002 改后也应通过（match arm 直接用 tenant_id，行为等价）
+    #[tokio::test(flavor = "multi_thread")]
+    async fn audit_entry_carries_tenant_id_from_task_local() {
+        use crate::context::tenant::{TenantContext, TenantSource, TENANT};
+
+        let pool = setup_db().await;
+        let config = AuditConfig {
+            mask_fields: vec![],
+            retain_days: 0,
+            async_write: false,
+        };
+        let listener = AuditLogListener::new(pool, config);
+
+        let event = BulwarkEvent::Login {
+            login_id: 1,
+            token: "tok".to_string(),
+            device: None,
+        };
+        let ctx = TenantContext {
+            tenant_id: 42,
+            resolved_from: TenantSource::Header,
+        };
+
+        // to_audit_entry 是同步函数，但 TENANT.scope 需要 future；
+        // 在 async block 内调用 to_audit_entry 时已进入 task_local 上下文
+        let entry = TENANT
+            .scope(ctx, async { listener.to_audit_entry(&event) })
+            .await
+            .expect("to_audit_entry 应成功");
+
+        assert_eq!(
+            entry.tenant_id, 42,
+            "tenant_id 应从 TENANT task_local 读取为 42，实际: {}",
+            entry.tenant_id
         );
     }
 }
