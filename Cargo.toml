@@ -217,9 +217,9 @@ firewall = []
 # firewall-anomalous / firewall-geoip 额外依赖 maxminddb（T087-T092 时添加）
 firewall-bruteforce = ["firewall"]
 firewall-ratelimit = ["firewall"]
-# firewall-anomalous 当前仅 trait + haversine + mock 测试；maxminddb 实现待 MaxMindDbGeoLookup 引入时添加
+# firewall-anomalous：AnomalousLoginStrategy 已实现（haversine + 5 测试），生产 maxminddb 后端待 MaxMindDbGeoLookup 引入时添加
 firewall-anomalous = ["firewall"]
-# firewall-geoip 空壳，T091-T092 时添加 maxminddb 依赖与 GeoIPStrategy 实现
+# firewall-geoip：GeoIPStrategy 已实现（白/黑名单 + 9 测试），生产 maxminddb 后端待 MaxMindDbCountryLookup 引入时添加
 firewall-geoip = ["firewall"]
 firewall-ddos = ["firewall"]
 
