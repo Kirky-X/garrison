@@ -507,14 +507,12 @@ impl OAuth2Client {
 
         let status = resp.status();
         if !status.is_success() {
-            let body = resp
-                .text()
-                .await
-                .map_err(|e| BulwarkError::Network(format!("读取错误响应失败: {}", e)))?;
+            // H1 安全加固：错误消息只记录 HTTP status + url，不包含响应体或请求参数
+            // （响应体可能被恶意服务器回显请求参数，导致 client_secret / code_verifier 泄露）
             return Err(BulwarkError::OAuth2(format!(
-                "HTTP {}: {}",
+                "token endpoint returned {} for {}",
                 status.as_u16(),
-                body
+                self.token_url
             )));
         }
 
@@ -1575,5 +1573,63 @@ mod tests {
             serde_json::from_str(&json).expect("Deserialize 应成功");
         assert_eq!(parsed.active, resp.active);
         assert_eq!(parsed.scope, resp.scope);
+    }
+
+    // ========================================================================
+    // H1 安全加固：错误处理不泄露 client_secret / code_verifier（v0.5.1 specmark H1）
+    // ========================================================================
+
+    /// post_token_request 错误处理不泄露 client_secret / code_verifier（H1）。
+    ///
+    /// 模拟恶意/配置错误的 token 端点在 401 响应体中回显请求参数（含 client_secret / code_verifier）。
+    /// 修复前，错误消息 `format!("HTTP {}: {}", status, body)` 会原样包含响应体，
+    /// 若服务器回显请求参数则 secret 泄露到日志/上层调用方。
+    /// 修复后，错误消息只包含 HTTP status + token_url，不包含响应体或请求参数。
+    #[tokio::test]
+    async fn post_token_request_error_does_not_leak_secret() {
+        let server = MockServer::start().await;
+        // 模拟恶意服务器在 401 响应体中回显请求参数
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(ResponseTemplate::new(401).set_body_string(
+                "invalid client_secret=leak-me-secret or code_verifier=leak-me-verifier",
+            ))
+            .mount(&server)
+            .await;
+
+        let base = server.uri();
+        let client = OAuth2Client::new(
+            "test-client-id",
+            "leak-me-secret", // client_secret 值
+            "https://example.com/callback",
+            format!("{}/auth", base),
+            format!("{}/token", base),
+        )
+        .expect("创建 OAuth2Client 失败");
+
+        // code_verifier 需 43-128 字符（RFC 7636），pad 到 43+
+        let code_verifier = "leak-me-verifier-value-padded-to-43-characters-or-more";
+        assert!(
+            code_verifier.len() >= 43 && code_verifier.len() <= 128,
+            "code_verifier 长度应在 43-128 之间，实际: {}",
+            code_verifier.len()
+        );
+
+        let result = client
+            .exchange_code_with_pkce("auth-code", "state", code_verifier)
+            .await;
+
+        assert!(result.is_err(), "应返回错误");
+        let err_msg = result.err().unwrap().to_string();
+        assert!(
+            !err_msg.contains("leak-me-secret"),
+            "错误消息不应包含 client_secret 值，实际: {}",
+            err_msg
+        );
+        assert!(
+            !err_msg.contains("leak-me-verifier"),
+            "错误消息不应包含 code_verifier 值，实际: {}",
+            err_msg
+        );
     }
 }
