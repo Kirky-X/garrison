@@ -157,12 +157,13 @@ impl OAuth2Client {
     /// # 参数
     /// - `client_id`: 客户端 ID，不可为空。
     /// - `client_secret`: 客户端密钥。
-    /// - `redirect_uri`: 回调地址。
+    /// - `redirect_uri`: 回调地址，必须为 https 或 localhost/127.0.0.1（spec P2.3）。
     /// - `auth_url`: 授权端点 URL。
     /// - `token_url`: 令牌端点 URL。
     ///
     /// # 错误
     /// - `BulwarkError::Config`: client_id 为空。
+    /// - `BulwarkError::InvalidParam`: redirect_uri 非 https 且非 localhost/127.0.0.1（spec P2.3）。
     /// - `BulwarkError::Network`: reqwest::Client 构建失败。
     pub fn new(
         client_id: impl Into<String>,
@@ -175,13 +176,15 @@ impl OAuth2Client {
         if client_id.is_empty() {
             return Err(BulwarkError::Config("client_id 不可为空".to_string()));
         }
+        let redirect_uri = redirect_uri.into();
+        Self::validate_redirect_uri(&redirect_uri)?;
         let http = reqwest::Client::builder()
             .build()
             .map_err(|e| BulwarkError::Network(format!("构建 HTTP 客户端失败: {}", e)))?;
         Ok(Self {
             client_id,
             client_secret: client_secret.into(),
-            redirect_uri: redirect_uri.into(),
+            redirect_uri,
             auth_url: auth_url.into(),
             token_url: token_url.into(),
             user_info_url: None,
@@ -190,6 +193,50 @@ impl OAuth2Client {
             #[cfg(feature = "oauth2-scope-handler")]
             scope_registry: None,
         })
+    }
+
+    /// 校验 redirect_uri scheme（spec P2.3）。
+    ///
+    /// 仅允许以下两种：
+    /// - `https://` 任意 host
+    /// - `http://localhost` 或 `http://127.0.0.1`（开发环境例外，任意端口）
+    ///
+    /// 其他 scheme（如 `http://evil.com`）返回 `InvalidParam`，避免授权码经明文 HTTP
+    /// 回调到公网域名被中间人截获。
+    ///
+    /// # 参数
+    /// - `redirect_uri`: 回调地址字符串。
+    ///
+    /// # 错误
+    /// - `BulwarkError::InvalidParam`: redirect_uri 无 `://`、scheme 非 https/http、
+    ///   或 http 但 host 非 localhost/127.0.0.1。
+    fn validate_redirect_uri(redirect_uri: &str) -> BulwarkResult<()> {
+        let Some(scheme_end) = redirect_uri.find("://") else {
+            return Err(BulwarkError::InvalidParam(format!(
+                "redirect_uri must be https or localhost, got: {}",
+                redirect_uri
+            )));
+        };
+        let scheme = &redirect_uri[..scheme_end];
+        let rest = &redirect_uri[scheme_end + 3..];
+
+        if scheme == "https" {
+            return Ok(());
+        }
+
+        if scheme == "http" {
+            // host: "://" 之后到下一个 '/' / ':' / '?' 之前
+            let host_end = rest.find(['/', ':', '?']).unwrap_or(rest.len());
+            let host = &rest[..host_end];
+            if host == "localhost" || host == "127.0.0.1" {
+                return Ok(());
+            }
+        }
+
+        Err(BulwarkError::InvalidParam(format!(
+            "redirect_uri must be https or localhost, got: {}",
+            redirect_uri
+        )))
     }
 
     /// 设置用户信息端点 URL（依据 spec protocol-oauth2）。
@@ -662,10 +709,67 @@ mod tests {
     /// with_user_info_url 设置用户信息端点（spec Scenario）。
     #[test]
     fn with_user_info_url_sets_url() {
-        let client = OAuth2Client::new("cid", "secret", "redirect", "auth", "token")
+        let client = OAuth2Client::new("cid", "secret", "https://example.com/cb", "auth", "token")
             .unwrap()
             .with_user_info_url("https://example.com/userinfo");
         assert_eq!(client.user_info_url(), Some("https://example.com/userinfo"));
+    }
+
+    /// redirect_uri 非 https 且非 localhost 应返回 InvalidParam 错误（spec P2.3）。
+    ///
+    /// 仅允许 https:// 或 http://localhost / http://127.0.0.1（开发环境例外）。
+    /// http://evil.com 等明文 HTTP 回调应被拒绝，避免授权码被中间人截获。
+    #[test]
+    fn redirect_uri_rejects_http_in_production() {
+        // http://evil.com 应拒绝（明文 HTTP 回调到公网域名）
+        let result = OAuth2Client::new("cid", "sec", "http://evil.com/cb", "auth_url", "token_url");
+        assert!(
+            matches!(result, Err(BulwarkError::InvalidParam(_))),
+            "http://evil.com 回调应被拒绝，实际 err: {:?}",
+            result.err()
+        );
+
+        // https://example.com 应允许
+        let result = OAuth2Client::new(
+            "cid",
+            "sec",
+            "https://example.com/cb",
+            "auth_url",
+            "token_url",
+        );
+        assert!(
+            result.is_ok(),
+            "https 回调应允许，实际 err: {:?}",
+            result.err()
+        );
+
+        // http://localhost 应允许（开发环境例外）
+        let result = OAuth2Client::new(
+            "cid",
+            "sec",
+            "http://localhost:8080/cb",
+            "auth_url",
+            "token_url",
+        );
+        assert!(
+            result.is_ok(),
+            "http://localhost 回调应允许（开发环境例外），实际 err: {:?}",
+            result.err()
+        );
+
+        // http://127.0.0.1 应允许（开发环境例外）
+        let result = OAuth2Client::new(
+            "cid",
+            "sec",
+            "http://127.0.0.1:8080/cb",
+            "auth_url",
+            "token_url",
+        );
+        assert!(
+            result.is_ok(),
+            "http://127.0.0.1 回调应允许（开发环境例外），实际 err: {:?}",
+            result.err()
+        );
     }
 
     // ========================================================================
@@ -696,7 +800,8 @@ mod tests {
     #[test]
     #[allow(deprecated)]
     fn get_auth_url_empty_state_still_includes_state() {
-        let client = OAuth2Client::new("cid", "secret", "redirect", "auth", "token").unwrap();
+        let client =
+            OAuth2Client::new("cid", "secret", "https://example.com/cb", "auth", "token").unwrap();
         let url = client.get_auth_url("");
         assert!(url.contains("state="));
     }
@@ -1439,7 +1544,7 @@ mod tests {
         let client = OAuth2Client::new(
             "cid",
             "secret",
-            "redirect",
+            "https://example.com/cb",
             "http://127.0.0.1:1/auth",
             "http://127.0.0.1:1/token",
         )
