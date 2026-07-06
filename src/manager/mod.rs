@@ -44,6 +44,11 @@ use once_cell::sync::Lazy;
 use parking_lot::RwLock;
 use std::sync::Arc;
 
+// 显式 Manager API（0.5.1 新增，依据 spec manager-explicit M7 / design.md D9）
+// 启用 manager-explicit feature 后提供不依赖全局单例的 Manager struct。
+#[cfg(feature = "manager-explicit")]
+pub mod explicit;
+
 /// 全局管理器，统筹 `BulwarkLogic` 的生命周期。
 ///
 /// [借鉴 Sa-Token] 对应 `SaManager`，
