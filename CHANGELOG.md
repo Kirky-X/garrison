@@ -5,6 +5,87 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.5.0] - 2026-07-06
+
+### 概述
+
+Bulwark 0.5.0 是"生产刚需版"，通过 specmark change
+`v0-5-0-production-essentials` 实施多租户隔离、社交登录、审计日志、
+RefreshToken Rotation、安全防护套件、角色层级、决策溯源、Keycloak OIDC RP、
+SSO TOCTOU 原子化、注解系统、PostgreSQL 后端适配等核心生产能力。
+
+### 新增
+
+#### 多租户隔离
+
+- **`tenant-isolation` feature**：`TENANT` task_local + `TenantContext` +
+  `prefixed_key` 函数自动为缓存 key 添加 `tenant:{id}:` 前缀，
+  确保多租户数据隔离。`TenantResolution` middleware 从 Header/Query/Token
+  解析租户 ID。
+
+#### 社交登录
+
+- **`social-wechat` feature**：`WechatProvider` 实现微信扫码登录，
+  支持 access_token 端点 + 用户信息查询。
+- **`SocialBindingService`**：社交账号绑定/解绑 + find_or_create 语义。
+
+#### 审计日志
+
+- **`audit-log` feature**：`AuditLogListener` 订阅 14 种 `BulwarkEvent`，
+  写入 `audit_logs` 表（含 tenant_id/login_id/event_type/mask_fields 脱敏）。
+  `AuditQuery` 支持复合条件查询。
+
+#### RefreshToken Rotation
+
+- **`protocol-jwt`（扩展）**：`RefreshTokenRotation` 服务提供
+  `rotate()`（轮换）+ `detect_reuse()`（重用检测）+ `revoke_chain()`（链级吊销）。
+  `refresh_tokens` 表使用 SHA-256 hash chain（token_hash + parent_token_hash）。
+
+#### 决策溯源
+
+- **`decision-trace` feature**：`PermissionChecker` trait + `authorize()` API
+  返回 `Decision { allowed, reason, errors }`，`DecisionReason` 枚举包含
+  `ExplicitAllow`/`ExplicitDeny`/`NoMatchingPermission`/`RoleBased` 等原因。
+
+#### Keycloak OIDC RP
+
+- **`keycloak-oidc` feature**：`KeycloakProvider` 实现 OIDC 依赖方，
+  支持 `discover()`（discovery endpoint）+ `exchange_code()`（授权码交换）+
+  `verify_id_token()`（JWKS 验签 + KeycloakClaims 解析）。
+
+#### 安全防护套件
+
+- **5 个 FirewallStrategy 实现**：`BruteForceStrategy`/`RateLimitStrategy`/
+  `AnomalousLoginStrategy`/`DDoSStrategy`/`GeoIPStrategy`，
+  复用 oxcache 作为计数后端。
+
+#### 角色层级
+
+- **`role_hierarchy` 表**：`parents`/`indirect_ancestors` + TC 预计算，
+  登录时缓存权限并集。
+
+#### 数据库后端
+
+- **`db-postgres` feature**：PostgreSQL 后端适配，`make_statement`/
+  `convert_placeholders` 实现 backend-agnostic SQL。
+
+#### 集成测试
+
+- **4 个端到端集成测试**（`tests/integration_v0_5_0.rs`）：
+  多租户隔离+审计日志+决策溯源 / Keycloak OIDC RP 完整流程 /
+  RefreshToken Rotation + Reuse Detection / RSA 密钥对 smoke 测试。
+
+#### 示例
+
+- **`v0_5_0_demo` 示例**：演示 v0.5.0 核心生产能力（多租户+审计日志+
+  决策溯源+Keycloak RP+微信社交登录配置）。
+
+### 验证
+
+- `cargo test --features "full" --workspace` → 全绿
+- `cargo clippy --features "full" --workspace -- -D warnings` → 零警告
+- `cargo doc --no-deps --features full --workspace` → 完成
+
 ## [0.4.2] - 2026-07-05
 
 ### 概述
