@@ -59,7 +59,11 @@ impl WechatProvider {
         Self {
             client_id: client_id.to_string(),
             client_secret: client_secret.to_string(),
-            http: reqwest::Client::new(),
+            http: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(30))
+                .connect_timeout(std::time::Duration::from_secs(10))
+                .build()
+                .expect("reqwest client build with timeout should succeed"),
             token_url: WECHAT_TOKEN_URL.to_string(),
             userinfo_url: WECHAT_USERINFO_URL.to_string(),
         }
@@ -105,17 +109,25 @@ impl SocialLoginProvider for WechatProvider {
     /// 调用微信 `sns/oauth2/access_token` 端点，用授权码换取 access_token + openid + unionid，
     /// 返回 `SocialUserInfo`（nickname/avatar 为 None，需调用 `get_user_info` 获取）。
     async fn exchange_token(&self, code: &str, _state: &str) -> BulwarkResult<SocialUserInfo> {
-        let url = format!(
-            "{}?appid={}&secret={}&code={}&grant_type=authorization_code",
-            self.token_url,
-            urlencoding::encode(&self.client_id),
-            urlencoding::encode(&self.client_secret),
-            urlencoding::encode(code),
-        );
-        let resp =
-            self.http.get(&url).send().await.map_err(|e| {
-                BulwarkError::Network(format!("wechat token request failed: {}", e))
-            })?;
+        let resp = self
+            .http
+            .post(&self.token_url)
+            .form(&[
+                ("appid", self.client_id.as_str()),
+                ("secret", self.client_secret.as_str()),
+                ("code", code),
+                ("grant_type", "authorization_code"),
+            ])
+            .send()
+            .await
+            .map_err(|e| BulwarkError::Network(format!("wechat token request failed: {}", e)))?;
+
+        if !resp.status().is_success() {
+            return Err(BulwarkError::Network(format!(
+                "wechat token request failed: {}",
+                resp.status()
+            )));
+        }
 
         let raw: Value = resp.json().await.map_err(|e| {
             BulwarkError::Network(format!("wechat token response parse failed: {}", e))
@@ -306,13 +318,17 @@ mod tests {
     /// Green 阶段（T102）：实现 exchange_token 后测试通过。
     #[tokio::test]
     async fn wechat_provider_exchange_token_parses_access_token_from_response() {
-        use wiremock::matchers::{method, path};
+        use wiremock::matchers::{body_string_contains, method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
         let server = MockServer::start().await;
 
-        Mock::given(method("GET"))
+        Mock::given(method("POST"))
             .and(path("/sns/oauth2/access_token"))
+            .and(body_string_contains("appid=wx_appid"))
+            .and(body_string_contains("secret=wx_secret"))
+            .and(body_string_contains("code=code"))
+            .and(body_string_contains("grant_type=authorization_code"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "access_token": "tok123",
                 "openid": "openid456",
