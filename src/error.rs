@@ -201,10 +201,28 @@ impl axum::response::IntoResponse for BulwarkError {
         tracing::error!(error = ?self, "bulwark rejection");
 
         // 0.3.0：复用 response_parts() 保证三框架行为一致（依据 spec web-adapters）
-        let (status_code, _, _, _) = self.response_parts();
+        let (status_code, error_code, _, _) = self.response_parts();
         let status = StatusCode::from_u16(status_code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-        let body = axum::Json(self.to_json_body());
-        (status, body).into_response()
+        let json_value = self.to_json_body();
+
+        // 防御性截断：限制响应体大小为 4KB（依据 spec R-error-002）
+        // 当前架构下 message 是固定字符串，body 永远 < 4KB；
+        // 此截断保护未来架构变化（如 message 字段包含可变内容时）不会导致响应体过大。
+        const MAX_BODY_SIZE: usize = 4096;
+        let body_str = serde_json::to_string(&json_value).unwrap_or_else(|_| {
+            r#"{"error_code":"INTERNAL_ERROR","message":"序列化失败"}"#.to_string()
+        });
+
+        if body_str.len() <= MAX_BODY_SIZE {
+            (status, axum::Json(json_value)).into_response()
+        } else {
+            // 截断后构造简化版 JSON，保证合法（依据 spec R-error-002 验收标准 2）
+            let truncated = serde_json::json!({
+                "error_code": error_code,
+                "message": "<truncated>",
+            });
+            (status, axum::Json(truncated)).into_response()
+        }
     }
 }
 
@@ -659,5 +677,48 @@ mod tests {
         let (status, code, _, _) = BulwarkError::NotImplemented("".to_string()).response_parts();
         assert_eq!(status, 501);
         assert_eq!(code, "NOT_IMPLEMENTED");
+    }
+
+    // ========================================================================
+    // 响应体大小限制测试（依据 spec R-error-002）
+    // ========================================================================
+
+    /// 验证响应体大小被限制在 4KB 以内（依据 spec R-error-002）。
+    ///
+    /// 构造超长 error message 的 BulwarkError，断言 response body <= 4096 字节且仍是合法 JSON。
+    /// 防御性测试：当前架构下 message 字段是固定字符串（不泄露变体 String 内容），
+    /// body 永远 < 4KB；此测试保护未来架构变化不会导致响应体过大。
+    #[cfg(feature = "web-axum")]
+    #[tokio::test]
+    async fn error_response_body_limited_to_4kb() {
+        use axum::response::IntoResponse;
+        use http_body_util::BodyExt;
+
+        // 构造超长 error message（10KB）
+        let long_msg = "x".repeat(10 * 1024);
+        let err = BulwarkError::InvalidParam(long_msg);
+        let response = err.into_response();
+        let bytes = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body collect")
+            .to_bytes();
+        assert!(
+            bytes.len() <= 4096,
+            "响应体应 <= 4KB，实际: {} 字节",
+            bytes.len()
+        );
+        // 截断后仍应是合法 JSON
+        let body_json: serde_json::Value =
+            serde_json::from_slice(&bytes).expect("响应体应是合法 JSON");
+        assert!(
+            body_json.get("error_code").is_some(),
+            "响应体应包含 error_code 字段"
+        );
+        assert!(
+            body_json.get("message").is_some(),
+            "响应体应包含 message 字段"
+        );
     }
 }
