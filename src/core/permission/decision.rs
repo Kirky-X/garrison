@@ -18,6 +18,7 @@ use serde::Serialize;
 ///
 /// 描述决策的"为什么"，用于 trace 输出和审计日志。
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum DecisionReason {
     /// 显式允许：主体直接持有该权限。
     ExplicitAllow,
@@ -144,7 +145,7 @@ mod tests {
         };
         let json = serde_json::to_value(&decision).expect("serialize Decision");
         assert_eq!(json["allowed"], serde_json::json!(true));
-        assert_eq!(json["reason"], serde_json::json!("ExplicitAllow"));
+        assert_eq!(json["reason"], serde_json::json!("explicit_allow"));
         assert!(json["errors"].is_array());
         assert_eq!(
             json["checked_permissions"][0],
@@ -160,7 +161,7 @@ mod tests {
         let decision = Decision::deny(DecisionReason::NoMatchingPermission);
         let json = serde_json::to_value(&decision).expect("serialize Decision");
         assert_eq!(json["allowed"], serde_json::json!(false));
-        assert_eq!(json["reason"], serde_json::json!("NoMatchingPermission"));
+        assert_eq!(json["reason"], serde_json::json!("no_matching_permission"));
     }
 
     /// T011 补充：FirewallBlocked 变体序列化为 { FirewallBlocked: "..." }。
@@ -168,7 +169,10 @@ mod tests {
     fn decision_reason_firewall_blocked_serializes_with_message() {
         let reason = DecisionReason::FirewallBlocked("ip blocked".to_string());
         let json = serde_json::to_value(&reason).expect("serialize DecisionReason");
-        assert_eq!(json, serde_json::json!({ "FirewallBlocked": "ip blocked" }));
+        assert_eq!(
+            json,
+            serde_json::json!({ "firewall_blocked": "ip blocked" })
+        );
     }
 
     /// T011 补充：allow() 构造器创建 ExplicitAllow 决策。

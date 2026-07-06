@@ -476,14 +476,28 @@ impl AuditLogListener {
             Ok(v) => v,
             Err(_) => return metadata.to_string(),
         };
+        self.mask_value_recursive(&mut value);
+        serde_json::to_string(&value).unwrap_or_else(|_| metadata.to_string())
+    }
+
+    /// 递归脱敏 JSON 值中的敏感字段（包括嵌套对象）。
+    fn mask_value_recursive(&self, value: &mut serde_json::Value) {
         if let Some(obj) = value.as_object_mut() {
             for field in &self.config.mask_fields {
                 if obj.contains_key(field) {
                     obj.insert(field.clone(), serde_json::Value::String("***".to_string()));
                 }
             }
+            // 递归处理嵌套对象
+            for (_, child) in obj.iter_mut() {
+                self.mask_value_recursive(child);
+            }
         }
-        serde_json::to_string(&value).unwrap_or_else(|_| metadata.to_string())
+        if let Some(arr) = value.as_array_mut() {
+            for item in arr.iter_mut() {
+                self.mask_value_recursive(item);
+            }
+        }
     }
 
     /// INSERT `AuditEntry` 到 `audit_logs` 表。
@@ -624,8 +638,21 @@ impl BulwarkListener for AuditLogListener {
     async fn on_event(&self, event: &BulwarkEvent) -> BulwarkResult<()> {
         match self.to_audit_entry(event) {
             Ok(entry) => {
-                if let Err(e) = self.insert(&entry).await {
-                    tracing::warn!("审计日志写入失败: {}", e);
+                if self.config.async_write {
+                    // 异步写入：tokio::spawn 不阻塞主流程
+                    let pool = self.pool.clone();
+                    let config = self.config.clone();
+                    tokio::spawn(async move {
+                        let listener = AuditLogListener::new(pool, config);
+                        if let Err(e) = listener.insert(&entry).await {
+                            tracing::warn!("审计日志异步写入失败: {}", e);
+                        }
+                    });
+                } else {
+                    // 同步写入：失败时 tracing::warn 不传播错误
+                    if let Err(e) = self.insert(&entry).await {
+                        tracing::warn!("审计日志写入失败: {}", e);
+                    }
                 }
             },
             Err(e) => {

@@ -7,7 +7,6 @@
 
 use bulwark::dao::{init_dbnexus, BulwarkMigration};
 use dbnexus::DbPool;
-use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 
 /// 返回项目 migrations/sqlite 目录的绝对路径。
@@ -30,7 +29,9 @@ pub async fn setup_db() -> DbPool {
 }
 
 /// 计算 SHA-256 十六进制摘要。
+#[cfg(any(feature = "keycloak-oidc", feature = "protocol-jwt"))]
 pub fn sha256_hex(s: &str) -> String {
+    use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(s.as_bytes());
     let result = hasher.finalize();

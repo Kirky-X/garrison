@@ -470,6 +470,6 @@ mod tests {
         let decision = checker.authorize(&request).await.expect("authorize ok");
         let json = serde_json::to_value(&decision).expect("serialize Decision");
         assert_eq!(json["allowed"], serde_json::json!(true));
-        assert_eq!(json["reason"], serde_json::json!("ExplicitAllow"));
+        assert_eq!(json["reason"], serde_json::json!("explicit_allow"));
     }
 }
