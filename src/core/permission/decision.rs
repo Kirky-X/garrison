@@ -277,4 +277,117 @@ mod tests {
         let err: BulwarkResult<Decision> = Err(crate::error::BulwarkError::NotLogin("x".into()));
         assert!(err.is_err());
     }
+
+    // ========================================================================
+    // T103: trace_id 自动生成测试（依据 design.md D11 D5）
+    //
+    // 启用 decision-trace feature 时，PermissionChecker::authorize 默认实现
+    // 应自动生成 UUID v7（时间有序）作为 trace_id。
+    // ========================================================================
+    #[cfg(feature = "decision-trace")]
+    mod trace_id_tests {
+        use super::AuthRequest;
+        use crate::core::permission::{PermissionChecker, PermissionCheckerDefault};
+        use crate::error::BulwarkResult;
+        use crate::stp::BulwarkInterface;
+        use async_trait::async_trait;
+        use std::collections::HashMap;
+        use std::sync::Arc;
+        use std::time::Duration;
+        use uuid::Uuid;
+
+        /// 最小化 mock BulwarkInterface：仅返回固定权限列表。
+        struct MockInterface {
+            permissions: HashMap<i64, Vec<String>>,
+        }
+
+        #[async_trait]
+        impl BulwarkInterface for MockInterface {
+            async fn get_permission_list(&self, login_id: i64) -> BulwarkResult<Vec<String>> {
+                Ok(self.permissions.get(&login_id).cloned().unwrap_or_default())
+            }
+
+            async fn get_role_list(&self, _login_id: i64) -> BulwarkResult<Vec<String>> {
+                Ok(Vec::new())
+            }
+        }
+
+        /// 构造一个 PermissionCheckerDefault（账号 1001 持有 user:read 权限）。
+        fn make_checker() -> PermissionCheckerDefault {
+            let mut perms = HashMap::new();
+            perms.insert(1001, vec!["user:read".to_string()]);
+            let interface = MockInterface { permissions: perms };
+            let interface_arc: Arc<dyn BulwarkInterface> = Arc::new(interface);
+            PermissionCheckerDefault::new(interface_arc)
+        }
+
+        /// T103: 启用 decision-trace 时 authorize 生成的 trace_id 是合法 UUID v7。
+        ///
+        /// 验证 `Decision.trace_id` 为 `Some`，且解析后 version_num == 7（UUID v7，时间有序）。
+        #[tokio::test]
+        async fn authorize_generates_trace_id_when_decision_trace_enabled() {
+            let checker = make_checker();
+            let request = AuthRequest::new(1001, "user:read");
+            let decision = PermissionChecker::authorize(&checker, &request)
+                .await
+                .expect("authorize ok");
+            let trace_id = decision
+                .trace_id
+                .expect("decision-trace 启用时 trace_id 应为 Some");
+            let parsed = Uuid::parse_str(&trace_id)
+                .unwrap_or_else(|err| panic!("trace_id 不是合法 UUID: {trace_id} (err: {err})"));
+            assert_eq!(
+                parsed.get_version_num(),
+                7,
+                "trace_id 应为 UUID v7（时间有序），实际: {trace_id}"
+            );
+        }
+
+        /// T103: 多次调用 authorize 生成不同的 trace_id。
+        ///
+        /// 验证连续 3 次 authorize 调用生成的 trace_id 互不相同（UUID v7 随机部分保证唯一性）。
+        #[tokio::test]
+        async fn authorize_trace_id_is_unique_per_request() {
+            let checker = make_checker();
+            let request = AuthRequest::new(1001, "user:read");
+            let d1 = PermissionChecker::authorize(&checker, &request)
+                .await
+                .expect("authorize 1");
+            let d2 = PermissionChecker::authorize(&checker, &request)
+                .await
+                .expect("authorize 2");
+            let d3 = PermissionChecker::authorize(&checker, &request)
+                .await
+                .expect("authorize 3");
+            let t1 = d1.trace_id.as_deref().expect("trace_id 1");
+            let t2 = d2.trace_id.as_deref().expect("trace_id 2");
+            let t3 = d3.trace_id.as_deref().expect("trace_id 3");
+            assert_ne!(t1, t2, "trace_id 1 与 2 不应相同");
+            assert_ne!(t2, t3, "trace_id 2 与 3 不应相同");
+            assert_ne!(t1, t3, "trace_id 1 与 3 不应相同");
+        }
+
+        /// T103: 连续生成的 trace_id 字典序递增（UUID v7 时间有序特性）。
+        ///
+        /// UUID v7 前 48 bits 为 unix_ts_ms（毫秒时间戳），跨毫秒时字典序严格递增。
+        /// 测试中显式 sleep 2ms 保证跨毫秒，避免同毫秒内随机部分导致字典序不稳定。
+        #[tokio::test]
+        async fn authorize_trace_id_is_time_ordered() {
+            let checker = make_checker();
+            let request = AuthRequest::new(1001, "user:read");
+            let d1 = PermissionChecker::authorize(&checker, &request)
+                .await
+                .expect("authorize 1");
+            tokio::time::sleep(Duration::from_millis(2)).await;
+            let d2 = PermissionChecker::authorize(&checker, &request)
+                .await
+                .expect("authorize 2");
+            let t1 = d1.trace_id.as_deref().expect("trace_id 1");
+            let t2 = d2.trace_id.as_deref().expect("trace_id 2");
+            assert!(
+                t1 < t2,
+                "UUID v7 应时间有序（字典序递增）：t1={t1}, t2={t2}"
+            );
+        }
+    }
 }

@@ -37,7 +37,7 @@ tracing = "0.1.43"
 async-trait = "0.1"
 parking_lot = "0.12"
 chrono = { version = "0.4", features = ["serde"] }
-uuid = { version = "1", features = ["v4", "serde"] }
+uuid = { version = "1", features = ["v4", "v7", "serde"] }
 # http: 框架无关的 HeaderMap/HeaderName/HeaderValue，供 tenant.rs TenantResolver 使用
 # （actix/warp/axum 均基于 http crate，加为直接 dep 不增加构建开销）
 http = "1"

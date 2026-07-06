@@ -58,14 +58,22 @@ pub trait PermissionChecker: Send + Sync {
     /// - 持有权限 → `Decision { allowed: true, reason: ExplicitAllow, .. }`
     /// - 未持有权限 → `Decision { allowed: false, reason: NoMatchingPermission, .. }`
     ///
-    /// `decision-trace` feature 启用时，实现者可覆盖此方法填充 `checked_permissions` /
-    /// `matched_roles` / `trace_id` 字段。
+    /// `decision-trace` feature 启用时，默认实现自动生成 UUID v7（时间有序）作为
+    /// `trace_id`（依据 design.md D11 D5）；不启用时 `trace_id` 为 `None`（性能优先）。
+    /// 实现者可覆盖此方法填充 `checked_permissions` / `matched_roles` 字段。
     ///
     /// # 错误
     ///
     /// 校验过程本身出错（如 DAO 故障、参数无效）返回 `Err(BulwarkError)`；
     /// "未持有权限"不是错误，返回 `Ok(Decision { allowed: false, .. })`。
     async fn authorize(&self, request: &AuthRequest) -> BulwarkResult<Decision> {
+        // D5（v0.5.1）：decision-trace feature 启用时自动生成 UUID v7 作为 trace_id
+        // （时间有序，便于跨服务追踪与日志关联）；不启用时为 None，避免性能开销。
+        #[cfg(feature = "decision-trace")]
+        let trace_id = Some(uuid::Uuid::now_v7().to_string());
+        #[cfg(not(feature = "decision-trace"))]
+        let trace_id: Option<String> = None;
+
         let allowed = self
             .has_permission(request.login_id, &request.action)
             .await?;
@@ -76,7 +84,7 @@ pub trait PermissionChecker: Send + Sync {
                 errors: Vec::new(),
                 checked_permissions: Vec::new(),
                 matched_roles: Vec::new(),
-                trace_id: None,
+                trace_id,
             }
         } else {
             Decision {
@@ -85,7 +93,7 @@ pub trait PermissionChecker: Send + Sync {
                 errors: Vec::new(),
                 checked_permissions: Vec::new(),
                 matched_roles: Vec::new(),
-                trace_id: None,
+                trace_id,
             }
         };
         Ok(decision)
