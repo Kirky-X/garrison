@@ -20,9 +20,9 @@ use bulwark::dao::{
     init_dbnexus,
     repository::{
         sqlite::{
-            SqliteAuthMethodRepository, SqliteLoginLogRepository, SqlitePermissionRepository,
-            SqliteRolePermissionRepository, SqliteRoleRepository, SqliteSessionRepository,
-            SqliteUserExtRepository, SqliteUserRepository, SqliteUserRoleRepository,
+            DbnexusAuthMethodRepository, DbnexusLoginLogRepository, DbnexusPermissionRepository,
+            DbnexusRolePermissionRepository, DbnexusRoleRepository, DbnexusSessionRepository,
+            DbnexusUserExtRepository, DbnexusUserRepository, DbnexusUserRoleRepository,
         },
         AuthMethodRepository, LoginLogRepository, NewAuthMethod, NewLoginLog, NewPermission,
         NewRole, NewSession, NewUser, PermissionRepository, RolePermissionRepository,
@@ -69,7 +69,7 @@ fn uuid_str() -> String {
 #[tokio::test(flavor = "multi_thread")]
 async fn user_repository_full_crud() {
     let pool = setup_db().await;
-    let repo = SqliteUserRepository::new(pool);
+    let repo = DbnexusUserRepository::new(pool);
 
     let user_id = uuid_str();
     repo.create(
@@ -132,7 +132,7 @@ async fn user_repository_full_crud() {
 #[tokio::test(flavor = "multi_thread")]
 async fn role_repository_full_crud() {
     let pool = setup_db().await;
-    let repo = SqliteRoleRepository::new(pool);
+    let repo = DbnexusRoleRepository::new(pool);
 
     let role_id = uuid_str();
     repo.create(
@@ -184,7 +184,7 @@ async fn role_repository_full_crud() {
 #[tokio::test(flavor = "multi_thread")]
 async fn permission_repository_full_crud() {
     let pool = setup_db().await;
-    let repo = SqlitePermissionRepository::new(pool);
+    let repo = DbnexusPermissionRepository::new(pool);
 
     let perm_id = uuid_str();
     repo.create(NewPermission {
@@ -226,9 +226,9 @@ async fn permission_repository_full_crud() {
 #[tokio::test(flavor = "multi_thread")]
 async fn user_role_repository_assign_find_revoke() {
     let pool = setup_db().await;
-    let user_repo = SqliteUserRepository::new(pool.clone());
-    let role_repo = SqliteRoleRepository::new(pool.clone());
-    let user_role_repo = SqliteUserRoleRepository::new(pool);
+    let user_repo = DbnexusUserRepository::new(pool.clone());
+    let role_repo = DbnexusRoleRepository::new(pool.clone());
+    let user_role_repo = DbnexusUserRoleRepository::new(pool);
 
     let user_id = uuid_str();
     let role_id = uuid_str();
@@ -304,9 +304,9 @@ async fn user_role_repository_assign_find_revoke() {
 #[tokio::test(flavor = "multi_thread")]
 async fn role_permission_repository_assign_find_revoke() {
     let pool = setup_db().await;
-    let role_repo = SqliteRoleRepository::new(pool.clone());
-    let perm_repo = SqlitePermissionRepository::new(pool.clone());
-    let rp_repo = SqliteRolePermissionRepository::new(pool);
+    let role_repo = DbnexusRoleRepository::new(pool.clone());
+    let perm_repo = DbnexusPermissionRepository::new(pool.clone());
+    let rp_repo = DbnexusRolePermissionRepository::new(pool);
 
     let role_id = uuid_str();
     let perm_id = uuid_str();
@@ -364,8 +364,8 @@ async fn role_permission_repository_assign_find_revoke() {
 #[tokio::test(flavor = "multi_thread")]
 async fn auth_method_repository_create_find_delete() {
     let pool = setup_db().await;
-    let user_repo = SqliteUserRepository::new(pool.clone());
-    let auth_repo = SqliteAuthMethodRepository::new(pool);
+    let user_repo = DbnexusUserRepository::new(pool.clone());
+    let auth_repo = DbnexusAuthMethodRepository::new(pool);
 
     let user_id = uuid_str();
     user_repo
@@ -419,8 +419,8 @@ async fn auth_method_repository_create_find_delete() {
 #[tokio::test(flavor = "multi_thread")]
 async fn session_repository_create_find_update_delete() {
     let pool = setup_db().await;
-    let user_repo = SqliteUserRepository::new(pool.clone());
-    let session_repo = SqliteSessionRepository::new(pool);
+    let user_repo = DbnexusUserRepository::new(pool.clone());
+    let session_repo = DbnexusSessionRepository::new(pool);
 
     let user_id = uuid_str();
     user_repo
@@ -490,8 +490,8 @@ async fn session_repository_create_find_update_delete() {
 #[tokio::test(flavor = "multi_thread")]
 async fn login_log_repository_create_find() {
     let pool = setup_db().await;
-    let user_repo = SqliteUserRepository::new(pool.clone());
-    let log_repo = SqliteLoginLogRepository::new(pool);
+    let user_repo = DbnexusUserRepository::new(pool.clone());
+    let log_repo = DbnexusLoginLogRepository::new(pool);
 
     let user_id = uuid_str();
     user_repo
@@ -544,8 +544,8 @@ async fn login_log_repository_create_find() {
 #[tokio::test(flavor = "multi_thread")]
 async fn user_ext_repository_upsert_find() {
     let pool = setup_db().await;
-    let user_repo = SqliteUserRepository::new(pool.clone());
-    let ext_repo = SqliteUserExtRepository::new(pool);
+    let user_repo = DbnexusUserRepository::new(pool.clone());
+    let ext_repo = DbnexusUserExtRepository::new(pool);
 
     let user_id = uuid_str();
     user_repo
@@ -625,7 +625,7 @@ async fn user_ext_repository_upsert_find() {
 #[tokio::test(flavor = "multi_thread")]
 async fn user_repository_tenant_isolation() {
     let pool = setup_db().await;
-    let repo = SqliteUserRepository::new(pool);
+    let repo = DbnexusUserRepository::new(pool);
 
     let user_a = uuid_str();
     let user_b = uuid_str();
@@ -673,9 +673,9 @@ async fn user_repository_tenant_isolation() {
 #[tokio::test(flavor = "multi_thread")]
 async fn user_role_repository_tenant_isolation() {
     let pool = setup_db().await;
-    let user_repo = SqliteUserRepository::new(pool.clone());
-    let role_repo = SqliteRoleRepository::new(pool.clone());
-    let ur_repo = SqliteUserRoleRepository::new(pool);
+    let user_repo = DbnexusUserRepository::new(pool.clone());
+    let role_repo = DbnexusRoleRepository::new(pool.clone());
+    let ur_repo = DbnexusUserRoleRepository::new(pool);
 
     let user_a = uuid_str();
     let user_b = uuid_str();
@@ -762,11 +762,11 @@ async fn user_role_repository_tenant_isolation() {
 #[tokio::test(flavor = "multi_thread")]
 async fn rbac_full_chain_user_to_permissions() {
     let pool = setup_db().await;
-    let user_repo = SqliteUserRepository::new(pool.clone());
-    let role_repo = SqliteRoleRepository::new(pool.clone());
-    let perm_repo = SqlitePermissionRepository::new(pool.clone());
-    let ur_repo = SqliteUserRoleRepository::new(pool.clone());
-    let rp_repo = SqliteRolePermissionRepository::new(pool);
+    let user_repo = DbnexusUserRepository::new(pool.clone());
+    let role_repo = DbnexusRoleRepository::new(pool.clone());
+    let perm_repo = DbnexusPermissionRepository::new(pool.clone());
+    let ur_repo = DbnexusUserRoleRepository::new(pool.clone());
+    let rp_repo = DbnexusRolePermissionRepository::new(pool);
 
     let user_id = uuid_str();
     let role_id = uuid_str();

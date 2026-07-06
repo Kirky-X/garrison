@@ -20,7 +20,7 @@
 use async_trait::async_trait;
 use bulwark::dao::{
     init_dbnexus,
-    repository::{sqlite::SqliteUserRepository, NewUser, UserRepository},
+    repository::{sqlite::DbnexusUserRepository, NewUser, UserRepository},
     BulwarkDao, BulwarkDaoOxcache, BulwarkMigration,
 };
 use bulwark::error::{BulwarkError, BulwarkResult};
@@ -219,10 +219,10 @@ async fn password_verifier_auto_detects_algorithm() {
 // 2. login_with_password 端到端集成（真实 SQLite + Argon2 + UserRepository）
 // ============================================================================
 
-/// 构造 BulwarkLogicDefault 实例，注入 Argon2Hasher + SqliteUserRepository + ListenerManager。
+/// 构造 BulwarkLogicDefault 实例，注入 Argon2Hasher + DbnexusUserRepository + ListenerManager。
 async fn make_logic_with_password() -> Arc<BulwarkLogicDefault> {
     let pool = setup_db().await;
-    let user_repo = Arc::new(SqliteUserRepository::new(pool.clone()));
+    let user_repo = Arc::new(DbnexusUserRepository::new(pool.clone()));
 
     // 预置一个用户：username="1001", password_hash=Argon2("secret")
     let hasher = Argon2Hasher::new();

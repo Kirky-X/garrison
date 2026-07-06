@@ -14,9 +14,9 @@ use bulwark::dao::{
     init_dbnexus,
     repository::{
         sqlite::{
-            SqliteAuthMethodRepository, SqliteLoginLogRepository, SqlitePermissionRepository,
-            SqliteRolePermissionRepository, SqliteRoleRepository, SqliteSessionRepository,
-            SqliteUserExtRepository, SqliteUserRepository, SqliteUserRoleRepository,
+            DbnexusAuthMethodRepository, DbnexusLoginLogRepository, DbnexusPermissionRepository,
+            DbnexusRolePermissionRepository, DbnexusRoleRepository, DbnexusSessionRepository,
+            DbnexusUserExtRepository, DbnexusUserRepository, DbnexusUserRoleRepository,
         },
         AuthMethodRepository, LoginLogRepository, NewAuthMethod, NewLoginLog, NewPermission,
         NewRole, NewSession, NewUser, PermissionRepository, RolePermissionRepository,
@@ -58,7 +58,7 @@ fn assert_dao_error<T>(result: bulwark::error::BulwarkResult<T>, method_name: &s
 #[tokio::test(flavor = "multi_thread")]
 async fn user_repo_find_by_id_table_missing() {
     let pool = setup_unmigrated_db().await;
-    let repo = SqliteUserRepository::new(pool);
+    let repo = DbnexusUserRepository::new(pool);
     let result = repo.find_by_id(TENANT, "u-1").await;
     assert_dao_error(result, "app_user find_by_id");
 }
@@ -66,7 +66,7 @@ async fn user_repo_find_by_id_table_missing() {
 #[tokio::test(flavor = "multi_thread")]
 async fn user_repo_find_by_username_table_missing() {
     let pool = setup_unmigrated_db().await;
-    let repo = SqliteUserRepository::new(pool);
+    let repo = DbnexusUserRepository::new(pool);
     let result = repo.find_by_username(TENANT, "alice").await;
     assert_dao_error(result, "app_user find_by_username");
 }
@@ -74,7 +74,7 @@ async fn user_repo_find_by_username_table_missing() {
 #[tokio::test(flavor = "multi_thread")]
 async fn user_repo_create_table_missing() {
     let pool = setup_unmigrated_db().await;
-    let repo = SqliteUserRepository::new(pool);
+    let repo = DbnexusUserRepository::new(pool);
     let result = repo
         .create(
             TENANT,
@@ -92,7 +92,7 @@ async fn user_repo_create_table_missing() {
 #[tokio::test(flavor = "multi_thread")]
 async fn user_repo_update_table_missing() {
     let pool = setup_unmigrated_db().await;
-    let repo = SqliteUserRepository::new(pool);
+    let repo = DbnexusUserRepository::new(pool);
     let result = repo
         .update(
             TENANT,
@@ -110,7 +110,7 @@ async fn user_repo_update_table_missing() {
 async fn user_repo_update_empty_fields_returns_ok() {
     // 覆盖 update 中 sets.is_empty() 分支（返回 Ok(()) 不调 DB）
     let pool = setup_unmigrated_db().await;
-    let repo = SqliteUserRepository::new(pool);
+    let repo = DbnexusUserRepository::new(pool);
     let result = repo.update(TENANT, "u-1", UpdateUser::default()).await;
     assert!(result.is_ok(), "空 update 应返回 Ok 而不调 DB");
 }
@@ -118,7 +118,7 @@ async fn user_repo_update_empty_fields_returns_ok() {
 #[tokio::test(flavor = "multi_thread")]
 async fn user_repo_delete_table_missing() {
     let pool = setup_unmigrated_db().await;
-    let repo = SqliteUserRepository::new(pool);
+    let repo = DbnexusUserRepository::new(pool);
     let result = repo.delete(TENANT, "u-1").await;
     assert_dao_error(result, "app_user delete");
 }
@@ -126,7 +126,7 @@ async fn user_repo_delete_table_missing() {
 #[tokio::test(flavor = "multi_thread")]
 async fn user_repo_list_table_missing() {
     let pool = setup_unmigrated_db().await;
-    let repo = SqliteUserRepository::new(pool);
+    let repo = DbnexusUserRepository::new(pool);
     let result = repo.list(TENANT, 0, 100).await;
     assert_dao_error(result, "app_user list");
 }
@@ -138,7 +138,7 @@ async fn user_repo_list_table_missing() {
 #[tokio::test(flavor = "multi_thread")]
 async fn role_repo_find_by_id_table_missing() {
     let pool = setup_unmigrated_db().await;
-    let repo = SqliteRoleRepository::new(pool);
+    let repo = DbnexusRoleRepository::new(pool);
     let result = repo.find_by_id(TENANT, "r-1").await;
     assert_dao_error(result, "app_role find_by_id");
 }
@@ -146,7 +146,7 @@ async fn role_repo_find_by_id_table_missing() {
 #[tokio::test(flavor = "multi_thread")]
 async fn role_repo_find_by_code_table_missing() {
     let pool = setup_unmigrated_db().await;
-    let repo = SqliteRoleRepository::new(pool);
+    let repo = DbnexusRoleRepository::new(pool);
     let result = repo.find_by_code(TENANT, "admin").await;
     assert_dao_error(result, "app_role find_by_code");
 }
@@ -154,7 +154,7 @@ async fn role_repo_find_by_code_table_missing() {
 #[tokio::test(flavor = "multi_thread")]
 async fn role_repo_create_table_missing() {
     let pool = setup_unmigrated_db().await;
-    let repo = SqliteRoleRepository::new(pool);
+    let repo = DbnexusRoleRepository::new(pool);
     let result = repo
         .create(
             TENANT,
@@ -173,7 +173,7 @@ async fn role_repo_create_table_missing() {
 #[tokio::test(flavor = "multi_thread")]
 async fn role_repo_update_table_missing() {
     let pool = setup_unmigrated_db().await;
-    let repo = SqliteRoleRepository::new(pool);
+    let repo = DbnexusRoleRepository::new(pool);
     let result = repo
         .update(TENANT, "r-1", Some("c".to_string()), None, None)
         .await;
@@ -183,7 +183,7 @@ async fn role_repo_update_table_missing() {
 #[tokio::test(flavor = "multi_thread")]
 async fn role_repo_delete_table_missing() {
     let pool = setup_unmigrated_db().await;
-    let repo = SqliteRoleRepository::new(pool);
+    let repo = DbnexusRoleRepository::new(pool);
     let result = repo.delete(TENANT, "r-1").await;
     assert_dao_error(result, "app_role delete");
 }
@@ -191,7 +191,7 @@ async fn role_repo_delete_table_missing() {
 #[tokio::test(flavor = "multi_thread")]
 async fn role_repo_list_table_missing() {
     let pool = setup_unmigrated_db().await;
-    let repo = SqliteRoleRepository::new(pool);
+    let repo = DbnexusRoleRepository::new(pool);
     let result = repo.list(TENANT, 0, 100).await;
     assert_dao_error(result, "app_role list");
 }
@@ -203,7 +203,7 @@ async fn role_repo_list_table_missing() {
 #[tokio::test(flavor = "multi_thread")]
 async fn perm_repo_find_by_id_table_missing() {
     let pool = setup_unmigrated_db().await;
-    let repo = SqlitePermissionRepository::new(pool);
+    let repo = DbnexusPermissionRepository::new(pool);
     let result = repo.find_by_id("p-1").await;
     assert_dao_error(result, "app_permission find_by_id");
 }
@@ -211,7 +211,7 @@ async fn perm_repo_find_by_id_table_missing() {
 #[tokio::test(flavor = "multi_thread")]
 async fn perm_repo_find_by_code_table_missing() {
     let pool = setup_unmigrated_db().await;
-    let repo = SqlitePermissionRepository::new(pool);
+    let repo = DbnexusPermissionRepository::new(pool);
     let result = repo.find_by_code("user:read").await;
     assert_dao_error(result, "app_permission find_by_code");
 }
@@ -219,7 +219,7 @@ async fn perm_repo_find_by_code_table_missing() {
 #[tokio::test(flavor = "multi_thread")]
 async fn perm_repo_create_table_missing() {
     let pool = setup_unmigrated_db().await;
-    let repo = SqlitePermissionRepository::new(pool);
+    let repo = DbnexusPermissionRepository::new(pool);
     let result = repo
         .create(NewPermission {
             id: "p-1".to_string(),
@@ -235,7 +235,7 @@ async fn perm_repo_create_table_missing() {
 #[tokio::test(flavor = "multi_thread")]
 async fn perm_repo_update_table_missing() {
     let pool = setup_unmigrated_db().await;
-    let repo = SqlitePermissionRepository::new(pool);
+    let repo = DbnexusPermissionRepository::new(pool);
     let result = repo.update("p-1", Some("n".to_string()), None, None).await;
     assert_dao_error(result, "app_permission update");
 }
@@ -243,7 +243,7 @@ async fn perm_repo_update_table_missing() {
 #[tokio::test(flavor = "multi_thread")]
 async fn perm_repo_delete_table_missing() {
     let pool = setup_unmigrated_db().await;
-    let repo = SqlitePermissionRepository::new(pool);
+    let repo = DbnexusPermissionRepository::new(pool);
     let result = repo.delete("p-1").await;
     assert_dao_error(result, "app_permission delete");
 }
@@ -251,7 +251,7 @@ async fn perm_repo_delete_table_missing() {
 #[tokio::test(flavor = "multi_thread")]
 async fn perm_repo_list_table_missing() {
     let pool = setup_unmigrated_db().await;
-    let repo = SqlitePermissionRepository::new(pool);
+    let repo = DbnexusPermissionRepository::new(pool);
     let result = repo.list(0, 100).await;
     assert_dao_error(result, "app_permission list");
 }
@@ -263,7 +263,7 @@ async fn perm_repo_list_table_missing() {
 #[tokio::test(flavor = "multi_thread")]
 async fn user_role_repo_assign_table_missing() {
     let pool = setup_unmigrated_db().await;
-    let repo = SqliteUserRoleRepository::new(pool);
+    let repo = DbnexusUserRoleRepository::new(pool);
     let result = repo.assign(TENANT, "u-1", "r-1", None).await;
     assert_dao_error(result, "app_user_role assign");
 }
@@ -271,7 +271,7 @@ async fn user_role_repo_assign_table_missing() {
 #[tokio::test(flavor = "multi_thread")]
 async fn user_role_repo_find_by_user_id_table_missing() {
     let pool = setup_unmigrated_db().await;
-    let repo = SqliteUserRoleRepository::new(pool);
+    let repo = DbnexusUserRoleRepository::new(pool);
     let result = repo.find_by_user_id(TENANT, "u-1").await;
     assert_dao_error(result, "app_user_role find_by_user_id");
 }
@@ -279,7 +279,7 @@ async fn user_role_repo_find_by_user_id_table_missing() {
 #[tokio::test(flavor = "multi_thread")]
 async fn user_role_repo_find_by_role_id_table_missing() {
     let pool = setup_unmigrated_db().await;
-    let repo = SqliteUserRoleRepository::new(pool);
+    let repo = DbnexusUserRoleRepository::new(pool);
     let result = repo.find_by_role_id(TENANT, "r-1").await;
     assert_dao_error(result, "app_user_role find_by_role_id");
 }
@@ -287,7 +287,7 @@ async fn user_role_repo_find_by_role_id_table_missing() {
 #[tokio::test(flavor = "multi_thread")]
 async fn user_role_repo_revoke_table_missing() {
     let pool = setup_unmigrated_db().await;
-    let repo = SqliteUserRoleRepository::new(pool);
+    let repo = DbnexusUserRoleRepository::new(pool);
     let result = repo.revoke(TENANT, "u-1", "r-1").await;
     assert_dao_error(result, "app_user_role revoke");
 }
@@ -299,7 +299,7 @@ async fn user_role_repo_revoke_table_missing() {
 #[tokio::test(flavor = "multi_thread")]
 async fn role_perm_repo_assign_table_missing() {
     let pool = setup_unmigrated_db().await;
-    let repo = SqliteRolePermissionRepository::new(pool);
+    let repo = DbnexusRolePermissionRepository::new(pool);
     let result = repo.assign(TENANT, "r-1", "p-1").await;
     assert_dao_error(result, "app_role_permission assign");
 }
@@ -307,7 +307,7 @@ async fn role_perm_repo_assign_table_missing() {
 #[tokio::test(flavor = "multi_thread")]
 async fn role_perm_repo_find_by_role_id_table_missing() {
     let pool = setup_unmigrated_db().await;
-    let repo = SqliteRolePermissionRepository::new(pool);
+    let repo = DbnexusRolePermissionRepository::new(pool);
     let result = repo.find_by_role_id(TENANT, "r-1").await;
     assert_dao_error(result, "app_role_permission find_by_role_id");
 }
@@ -315,7 +315,7 @@ async fn role_perm_repo_find_by_role_id_table_missing() {
 #[tokio::test(flavor = "multi_thread")]
 async fn role_perm_repo_find_by_permission_id_table_missing() {
     let pool = setup_unmigrated_db().await;
-    let repo = SqliteRolePermissionRepository::new(pool);
+    let repo = DbnexusRolePermissionRepository::new(pool);
     let result = repo.find_by_permission_id(TENANT, "p-1").await;
     assert_dao_error(result, "app_role_permission find_by_permission_id");
 }
@@ -323,7 +323,7 @@ async fn role_perm_repo_find_by_permission_id_table_missing() {
 #[tokio::test(flavor = "multi_thread")]
 async fn role_perm_repo_revoke_table_missing() {
     let pool = setup_unmigrated_db().await;
-    let repo = SqliteRolePermissionRepository::new(pool);
+    let repo = DbnexusRolePermissionRepository::new(pool);
     let result = repo.revoke(TENANT, "r-1", "p-1").await;
     assert_dao_error(result, "app_role_permission revoke");
 }
@@ -335,7 +335,7 @@ async fn role_perm_repo_revoke_table_missing() {
 #[tokio::test(flavor = "multi_thread")]
 async fn auth_method_repo_create_table_missing() {
     let pool = setup_unmigrated_db().await;
-    let repo = SqliteAuthMethodRepository::new(pool);
+    let repo = DbnexusAuthMethodRepository::new(pool);
     let result = repo
         .create(
             TENANT,
@@ -354,7 +354,7 @@ async fn auth_method_repo_create_table_missing() {
 #[tokio::test(flavor = "multi_thread")]
 async fn auth_method_repo_find_by_user_id_table_missing() {
     let pool = setup_unmigrated_db().await;
-    let repo = SqliteAuthMethodRepository::new(pool);
+    let repo = DbnexusAuthMethodRepository::new(pool);
     let result = repo.find_by_user_id(TENANT, "u-1").await;
     assert_dao_error(result, "app_auth_method find_by_user_id");
 }
@@ -362,7 +362,7 @@ async fn auth_method_repo_find_by_user_id_table_missing() {
 #[tokio::test(flavor = "multi_thread")]
 async fn auth_method_repo_find_by_id_table_missing() {
     let pool = setup_unmigrated_db().await;
-    let repo = SqliteAuthMethodRepository::new(pool);
+    let repo = DbnexusAuthMethodRepository::new(pool);
     let result = repo.find_by_id(TENANT, "m-1").await;
     assert_dao_error(result, "app_auth_method find_by_id");
 }
@@ -370,7 +370,7 @@ async fn auth_method_repo_find_by_id_table_missing() {
 #[tokio::test(flavor = "multi_thread")]
 async fn auth_method_repo_delete_table_missing() {
     let pool = setup_unmigrated_db().await;
-    let repo = SqliteAuthMethodRepository::new(pool);
+    let repo = DbnexusAuthMethodRepository::new(pool);
     let result = repo.delete(TENANT, "m-1").await;
     assert_dao_error(result, "app_auth_method delete");
 }
@@ -382,7 +382,7 @@ async fn auth_method_repo_delete_table_missing() {
 #[tokio::test(flavor = "multi_thread")]
 async fn session_repo_create_table_missing() {
     let pool = setup_unmigrated_db().await;
-    let repo = SqliteSessionRepository::new(pool);
+    let repo = DbnexusSessionRepository::new(pool);
     let result = repo
         .create(
             TENANT,
@@ -402,7 +402,7 @@ async fn session_repo_create_table_missing() {
 #[tokio::test(flavor = "multi_thread")]
 async fn session_repo_find_by_session_id_table_missing() {
     let pool = setup_unmigrated_db().await;
-    let repo = SqliteSessionRepository::new(pool);
+    let repo = DbnexusSessionRepository::new(pool);
     let result = repo.find_by_session_id(TENANT, "s-1").await;
     assert_dao_error(result, "app_session find_by_session_id");
 }
@@ -410,7 +410,7 @@ async fn session_repo_find_by_session_id_table_missing() {
 #[tokio::test(flavor = "multi_thread")]
 async fn session_repo_find_by_user_id_table_missing() {
     let pool = setup_unmigrated_db().await;
-    let repo = SqliteSessionRepository::new(pool);
+    let repo = DbnexusSessionRepository::new(pool);
     let result = repo.find_by_user_id(TENANT, "u-1").await;
     assert_dao_error(result, "app_session find_by_user_id");
 }
@@ -418,7 +418,7 @@ async fn session_repo_find_by_user_id_table_missing() {
 #[tokio::test(flavor = "multi_thread")]
 async fn session_repo_update_last_active_table_missing() {
     let pool = setup_unmigrated_db().await;
-    let repo = SqliteSessionRepository::new(pool);
+    let repo = DbnexusSessionRepository::new(pool);
     let result = repo.update_last_active(TENANT, "s-1").await;
     assert_dao_error(result, "app_session update_last_active");
 }
@@ -426,7 +426,7 @@ async fn session_repo_update_last_active_table_missing() {
 #[tokio::test(flavor = "multi_thread")]
 async fn session_repo_delete_table_missing() {
     let pool = setup_unmigrated_db().await;
-    let repo = SqliteSessionRepository::new(pool);
+    let repo = DbnexusSessionRepository::new(pool);
     let result = repo.delete(TENANT, "s-1").await;
     assert_dao_error(result, "app_session delete");
 }
@@ -438,7 +438,7 @@ async fn session_repo_delete_table_missing() {
 #[tokio::test(flavor = "multi_thread")]
 async fn login_log_repo_create_table_missing() {
     let pool = setup_unmigrated_db().await;
-    let repo = SqliteLoginLogRepository::new(pool);
+    let repo = DbnexusLoginLogRepository::new(pool);
     let result = repo
         .create(
             TENANT,
@@ -459,7 +459,7 @@ async fn login_log_repo_create_table_missing() {
 #[tokio::test(flavor = "multi_thread")]
 async fn login_log_repo_find_by_id_table_missing() {
     let pool = setup_unmigrated_db().await;
-    let repo = SqliteLoginLogRepository::new(pool);
+    let repo = DbnexusLoginLogRepository::new(pool);
     let result = repo.find_by_id(TENANT, "log-1").await;
     assert_dao_error(result, "app_login_log find_by_id");
 }
@@ -467,7 +467,7 @@ async fn login_log_repo_find_by_id_table_missing() {
 #[tokio::test(flavor = "multi_thread")]
 async fn login_log_repo_find_by_user_id_table_missing() {
     let pool = setup_unmigrated_db().await;
-    let repo = SqliteLoginLogRepository::new(pool);
+    let repo = DbnexusLoginLogRepository::new(pool);
     let result = repo.find_by_user_id(TENANT, "u-1", 0, 100).await;
     assert_dao_error(result, "app_login_log find_by_user_id");
 }
@@ -479,7 +479,7 @@ async fn login_log_repo_find_by_user_id_table_missing() {
 #[tokio::test(flavor = "multi_thread")]
 async fn user_ext_repo_upsert_table_missing() {
     let pool = setup_unmigrated_db().await;
-    let repo = SqliteUserExtRepository::new(pool);
+    let repo = DbnexusUserExtRepository::new(pool);
     let result = repo
         .upsert(TENANT, "u-1", "email", Some("v".to_string()), "string")
         .await;
@@ -489,7 +489,7 @@ async fn user_ext_repo_upsert_table_missing() {
 #[tokio::test(flavor = "multi_thread")]
 async fn user_ext_repo_find_by_user_and_key_table_missing() {
     let pool = setup_unmigrated_db().await;
-    let repo = SqliteUserExtRepository::new(pool);
+    let repo = DbnexusUserExtRepository::new(pool);
     let result = repo.find_by_user_and_key(TENANT, "u-1", "email").await;
     assert_dao_error(result, "app_user_ext find_by_user_and_key");
 }
@@ -497,7 +497,7 @@ async fn user_ext_repo_find_by_user_and_key_table_missing() {
 #[tokio::test(flavor = "multi_thread")]
 async fn user_ext_repo_find_by_user_id_table_missing() {
     let pool = setup_unmigrated_db().await;
-    let repo = SqliteUserExtRepository::new(pool);
+    let repo = DbnexusUserExtRepository::new(pool);
     let result = repo.find_by_user_id(TENANT, "u-1").await;
     assert_dao_error(result, "app_user_ext find_by_user_id");
 }
