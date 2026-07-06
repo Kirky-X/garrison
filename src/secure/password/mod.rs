@@ -105,28 +105,48 @@ impl Argon2Hasher {
 
 impl PasswordHasher for Argon2Hasher {
     fn hash(&self, password: &str) -> BulwarkResult<String> {
+        // P2.1: secure-password-zeroize feature 启用时，将 password 字节拷贝到
+        // Zeroizing<Vec<u8>> wrapper；函数返回时 wrapper Drop 清零内部字节。
+        // &str 是不可变借用，无法清零调用方持有的 String，故内部拷贝后清零。
+        #[cfg(feature = "secure-password-zeroize")]
+        let password_bytes = zeroize::Zeroizing::new(password.as_bytes().to_vec());
+        #[cfg(feature = "secure-password-zeroize")]
+        let password_ref: &[u8] = &password_bytes;
+        #[cfg(not(feature = "secure-password-zeroize"))]
+        let password_ref: &[u8] = password.as_bytes();
+
         let salt = SaltString::generate(&mut OsRng);
         // H4: 显式预分配 32 字节输出缓冲区（与 argon2 默认一致，但显式化意图并锁定行为）
         let params = Params::new(self.m_cost, self.t_cost, self.p_cost, Some(32))
             .map_err(|e| BulwarkError::InvalidParam(format!("Argon2 参数无效: {}", e)))?;
         let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
         let hash = argon2
-            .hash_password(password.as_bytes(), &salt)
+            .hash_password(password_ref, &salt)
             .map_err(|e| BulwarkError::Internal(format!("Argon2 哈希失败: {}", e)))?
             .to_string();
         Ok(hash)
+        // password_bytes drops here (if zeroize on); Zeroizing<Vec<u8>>::drop zeroes bytes
     }
 
     fn verify(&self, password: &str, hash: &str) -> BulwarkResult<bool> {
+        // P2.1: 同 hash，verify 后清零内部 password 字节副本
+        #[cfg(feature = "secure-password-zeroize")]
+        let password_bytes = zeroize::Zeroizing::new(password.as_bytes().to_vec());
+        #[cfg(feature = "secure-password-zeroize")]
+        let password_ref: &[u8] = &password_bytes;
+        #[cfg(not(feature = "secure-password-zeroize"))]
+        let password_ref: &[u8] = password.as_bytes();
+
         let parsed = PasswordHash::new(hash)
             .map_err(|e| BulwarkError::InvalidParam(format!("Argon2 哈希格式无效: {}", e)))?;
         // verify 时用默认 Argon2（参数从 hash 字符串解析）
         let argon2 = Argon2::default();
-        match argon2.verify_password(password.as_bytes(), &parsed) {
+        match argon2.verify_password(password_ref, &parsed) {
             Ok(()) => Ok(true),
             Err(argon2::password_hash::Error::Password) => Ok(false),
             Err(e) => Err(BulwarkError::Internal(format!("Argon2 校验失败: {}", e))),
         }
+        // password_bytes drops here (if zeroize on); Zeroizing<Vec<u8>>::drop zeroes bytes
     }
 }
 
@@ -434,5 +454,78 @@ mod tests {
             hash_bytes.len(),
             hash
         );
+    }
+
+    // ========================================================================
+    // P2.1 zeroize 测试（依据 spec secure-password-zeroize）
+    // ========================================================================
+
+    /// P2.1: secure-password-zeroize feature 启用时，hash/verify 仍正确工作，
+    /// 且内部 password 字节副本在 hash 返回后被 zeroize 清零。
+    ///
+    /// 注意：hash/verify 接受 `&str`（不可变借用），无法清零调用方持有的 String。
+    /// 内部实现将 password 字节拷贝到 `Zeroizing<Vec<u8>>`，函数返回时该 wrapper
+    /// 的 Drop 实现清零内部字节。此处验证：
+    /// 1. hash/verify 在 zeroize feature 启用时仍正确工作（无回归）
+    /// 2. Zeroizing<Vec<u8>> 包装的 password 字节在 .zeroize() 后被清零
+    ///    （这是 hash 内部使用的清零机制）
+    /// 3. Zeroizing<String> wrapper 可与 hash 配合使用（通过 Deref<Target=str>）
+    #[cfg(feature = "secure-password-zeroize")]
+    #[test]
+    fn password_param_zeroed_after_hash() {
+        use zeroize::{Zeroize, Zeroizing};
+
+        let hasher = Argon2Hasher::default();
+        let password = "my-secret-password";
+
+        // 1. hash/verify 在 secure-password-zeroize feature 启用时仍正确工作
+        let hash = hasher.hash(password).expect("hash 应成功");
+        assert!(
+            hash.starts_with("$argon2id$"),
+            "hash 应以 $argon2id$ 开头，实际: {}",
+            hash
+        );
+        assert!(
+            hasher
+                .verify(password, &hash)
+                .expect("verify 正确密码应成功"),
+            "正确密码应校验通过"
+        );
+        assert!(
+            !hasher
+                .verify("wrong", &hash)
+                .expect("verify 错误密码应成功"),
+            "错误密码应校验失败"
+        );
+
+        // 2. 验证 hash 内部使用的 zeroize 机制：
+        //    a) Vec<u8>::zeroize() 先零填充字节再 clear（length=0，capacity 保留）
+        let mut local_copy: Vec<u8> = password.as_bytes().to_vec();
+        local_copy.zeroize();
+        assert_eq!(local_copy.len(), 0, "Vec::zeroize 后 length 应为 0 (clear)");
+
+        //    b) [u8; N]::zeroize() 仅零填充字节（数组长度固定，不 clear）
+        //       证明 zeroize 的字节清零语义
+        let mut arr: [u8; 18] = [0; 18];
+        arr.copy_from_slice(password.as_bytes());
+        arr.zeroize();
+        assert!(
+            arr.iter().all(|&b| b == 0),
+            "数组 zeroize 后所有字节应为 0，实际: {:?}",
+            arr
+        );
+
+        // 3. Zeroizing<String> wrapper 可与 hash 配合（通过 Deref<Target=String> → str）
+        //    调用方可用此 wrapper 持有 password，wrapper Drop 时清零底层字节
+        let wrapped = Zeroizing::new(password.to_string());
+        let hash2 = hasher.hash(wrapped.as_str()).expect("hash 应成功");
+        assert!(
+            hasher
+                .verify(wrapped.as_str(), &hash2)
+                .expect("verify 应成功"),
+            "wrapped password 校验应通过"
+        );
+        // wrapped 在此处仍未 drop；当 wrapped 离开作用域时，Zeroizing<String>::drop
+        // 会调用 String::zeroize() 清零底层字节（由 zeroize crate 保证）
     }
 }

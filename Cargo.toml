@@ -59,6 +59,8 @@ base32 = { version = "0.5", optional = true }
 argon2 = { version = "0.5", optional = true }
 bcrypt = { version = "0.15", optional = true }
 rand = { version = "0.8", optional = true }
+# 0.5.1 新增：zeroize 用于 secure-password-zeroize feature，hash/verify 后清零内部 password 副本
+zeroize = { version = "1", optional = true }
 # oxcache 0.3: L1 (moka) + L2 (redis) 两级缓存，默认 full features，0.3 支持 per-entry TTL + ttl() 查询
 oxcache = { version = "0.3", optional = true }
 # dbnexus 0.3: 默认 sqlite + permission + sql-parser + macros + config-env + with-time
@@ -189,6 +191,8 @@ secure-httpbasic = ["base64"]
 secure-httpdigest = ["sha2", "base64", "md5"]
 # 0.4.2 新增：密码哈希（argon2 + bcrypt），依据 spec secure-password
 secure-password = ["dep:argon2", "dep:bcrypt", "dep:rand"]
+# 0.5.1 新增：在 secure-password 基础上启用 zeroize，hash/verify 后清零内部 password 字节
+secure-password-zeroize = ["secure-password", "zeroize"]
 
 # === Web 框架适配 ===
 web-axum = ["axum", "axum/tokio", "axum/http1"]
