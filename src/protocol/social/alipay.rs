@@ -66,7 +66,11 @@ impl AlipayProvider {
         Self {
             app_id: app_id.to_string(),
             private_key_pem: private_key_pem.to_string(),
-            http: reqwest::Client::new(),
+            http: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(30))
+                .connect_timeout(std::time::Duration::from_secs(10))
+                .build()
+                .expect("reqwest client build with timeout should succeed"),
             gateway_url: ALIPAY_GATEWAY_URL.to_string(),
         }
     }
@@ -81,7 +85,7 @@ impl AlipayProvider {
     /// 对支付宝请求参数做 RSA2（SHA256withRSA）签名。
     ///
     /// # 签名流程
-    /// 1. 收集所有请求参数（不含 sign/sign_type）
+    /// 1. 收集所有请求参数（不含 sign；sign_type 参与签名）
     /// 2. 按 key 的 ASCII 升序排序
     /// 3. 拼接为 `key1=value1&key2=value2&...`
     /// 4. 用 RSA 私钥 + SHA256（PKCS1v15 padding）签名
@@ -105,7 +109,7 @@ impl AlipayProvider {
         let mut sorted = params.to_vec();
         sorted.sort_by(|a, b| a.0.cmp(&b.0));
 
-        // 2. 拼接为 key=value&key=value（不含 sign/sign_type）
+        // 2. 拼接为 key=value&key=value（不含 sign；sign_type 参与签名）
         let data_to_sign = sorted
             .iter()
             .map(|(k, v)| format!("{}={}", k, v))
@@ -157,7 +161,10 @@ impl SocialLoginProvider for AlipayProvider {
     /// 4. 解析响应 JSON，检查 error_response
     /// 5. 提取 user_id 返回 SocialUserInfo
     async fn exchange_token(&self, code: &str, _state: &str) -> BulwarkResult<SocialUserInfo> {
-        let timestamp = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        let timestamp = chrono::Utc::now()
+            .with_timezone(&chrono::FixedOffset::east_opt(8 * 3600).expect("8*3600 valid"))
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string();
 
         // 收集请求参数（sign_type 参与签名，sign 不参与——sign 由 sign_request 生成后追加）
         let params: Vec<(String, String)> = vec![
@@ -187,12 +194,19 @@ impl SocialLoginProvider for AlipayProvider {
             .await
             .map_err(|e| BulwarkError::Network(format!("alipay token request failed: {}", e)))?;
 
+        if !resp.status().is_success() {
+            return Err(BulwarkError::Network(format!(
+                "alipay token request failed: {}",
+                resp.status()
+            )));
+        }
+
         let raw: Value = resp.json().await.map_err(|e| {
             BulwarkError::Network(format!("alipay token response parse failed: {}", e))
         })?;
 
         // 检查错误响应
-        if let Some(err_resp) = raw.get("error_response") {
+        if let Some(err_resp) = raw.get("error_response").filter(|v| !v.is_null()) {
             let code = err_resp
                 .get("code")
                 .and_then(|v| v.as_str())
@@ -235,7 +249,10 @@ impl SocialLoginProvider for AlipayProvider {
     /// 3. POST 到支付宝网关
     /// 4. 解析 `alipay_user_info_share_response` 中的 user_id/nick/avatar
     async fn get_user_info(&self, access_token: &str) -> BulwarkResult<SocialUserInfo> {
-        let timestamp = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        let timestamp = chrono::Utc::now()
+            .with_timezone(&chrono::FixedOffset::east_opt(8 * 3600).expect("8*3600 valid"))
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string();
 
         let params: Vec<(String, String)> = vec![
             ("app_id".into(), self.app_id.clone()),
@@ -262,12 +279,19 @@ impl SocialLoginProvider for AlipayProvider {
                 BulwarkError::Network(format!("alipay user_info request failed: {}", e))
             })?;
 
+        if !resp.status().is_success() {
+            return Err(BulwarkError::Network(format!(
+                "alipay user_info request failed: {}",
+                resp.status()
+            )));
+        }
+
         let raw: Value = resp.json().await.map_err(|e| {
             BulwarkError::Network(format!("alipay user_info response parse failed: {}", e))
         })?;
 
         // 检查错误响应
-        if let Some(err_resp) = raw.get("error_response") {
+        if let Some(err_resp) = raw.get("error_response").filter(|v| !v.is_null()) {
             let code = err_resp
                 .get("code")
                 .and_then(|v| v.as_str())
