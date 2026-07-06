@@ -89,6 +89,9 @@ unic-langid = { version = "0.9", optional = true, default-features = false }
 # bulwark-macros 提供 #[check_login]/#[check_permission]/#[check_role] 过程宏
 # （feature = "annotation-macros"，依赖 web-axum 以使用 IntoResponse）
 bulwark-macros = { path = "bulwark-macros", version = "0.5.0", optional = true }
+# rsa 用于 social-alipay 的 RSA2（SHA256withRSA）签名（启用 sha2 + pem features）
+# 注意：rsa 0.9 内部依赖 sha2 0.10，与项目 sha2 0.11 不兼容，故用 PaddingScheme API（rsa 内部自行 hash）
+rsa = { version = "0.9", optional = true, features = ["sha2", "pem"] }
 
 [dev-dependencies]
 tokio-test = "0.4"
@@ -222,9 +225,10 @@ firewall-ddos = ["firewall"]
 
 # === 0.5.0 新增：社交登录（依据 proposal H2 / spec social-login） ===
 # social-wechat：微信扫码登录（WechatProvider），依赖 protocol-oauth2（reqwest HTTP client）
-# social-alipay：支付宝授权登录（AlipayProvider），依赖 protocol-oauth2 + rsa 签名
 social-wechat = ["protocol-oauth2"]
-social-alipay = ["protocol-oauth2"]
+# social-alipay：支付宝授权登录（AlipayProvider），依赖 protocol-oauth2 + rsa 签名
+# 启用 rsa（含 sha2/pem features，用于 RSA2 签名 + PEM 解析）+ base64（签名值编码）
+social-alipay = ["protocol-oauth2", "rsa", "base64"]
 
 # === 0.5.0 新增：Keycloak OIDC RP（依据 proposal K1 / spec keycloak-oidc-rp） ===
 # keycloak-oidc：Keycloak 作为 OIDC 依赖方（KeycloakProvider），依赖 protocol-oidc（JWKS 验签 + discovery）
