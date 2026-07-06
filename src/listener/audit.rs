@@ -726,6 +726,39 @@ mod db_sqlite_tests {
         pool
     }
 
+    /// 在 `TENANT` task_local 上下文中执行测试体（`tenant-isolation` feature 启用时）。
+    ///
+    /// 修复 Phase 2 T017 引入的测试回归：`to_audit_entry` 在 `tenant-isolation` 启用时
+    /// 调用 `current_tenant_id_strict()`，无 `TENANT.scope` 时返回 `None` → `BulwarkError::Config`。
+    /// 实现正确（Rule 12 失败显性化），缺失的是测试上下文，本 helper 补齐 scope。
+    #[cfg(feature = "tenant-isolation")]
+    async fn run_with_tenant_scope<F, Fut, T>(f: F) -> T
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = T>,
+    {
+        use crate::context::tenant::{TenantContext, TenantSource, TENANT};
+        TENANT
+            .scope(
+                TenantContext {
+                    tenant_id: 0,
+                    resolved_from: TenantSource::Header,
+                },
+                f(),
+            )
+            .await
+    }
+
+    /// 直接执行测试体（`tenant-isolation` feature 关闭时使用，向后兼容单租户场景）。
+    #[cfg(not(feature = "tenant-isolation"))]
+    async fn run_with_tenant_scope<F, Fut, T>(f: F) -> T
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = T>,
+    {
+        f().await
+    }
+
     // ========================================================================
     // T069-T070: audit_logs 表迁移验证
     // ========================================================================
@@ -770,6 +803,10 @@ mod db_sqlite_tests {
     /// - Rule 11（惯例优先）：遵循 RefreshTokenRotation 先例，AuditLogListener 持 `pool: DbPool` 直连 SQL
     #[tokio::test(flavor = "multi_thread")]
     async fn audit_log_listener_persists_login_event() {
+        run_with_tenant_scope(audit_log_listener_persists_login_event_inner).await
+    }
+
+    async fn audit_log_listener_persists_login_event_inner() {
         let pool = setup_db().await;
 
         // 构造 AuditLogListener（Rule 7 override：pool: DbPool 直连，非 dao: Arc<dyn BulwarkDao>）
@@ -865,6 +902,10 @@ mod db_sqlite_tests {
     /// `on_event` 捕获 Err 后仅 `tracing::warn` 不持久化，因此 audit_logs 仅 1 行（断言 14 失败）。
     #[tokio::test(flavor = "multi_thread")]
     async fn audit_log_listener_handles_all_14_events() {
+        run_with_tenant_scope(audit_log_listener_handles_all_14_events_inner).await
+    }
+
+    async fn audit_log_listener_handles_all_14_events_inner() {
         let pool = setup_db().await;
         let config = AuditConfig {
             mask_fields: vec![],
