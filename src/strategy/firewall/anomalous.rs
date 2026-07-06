@@ -83,6 +83,13 @@ impl AnomalousLoginStrategy {
             geo_lookup,
         }
     }
+
+    /// 更新历史坐标到当前位置（统一 None/Some 分支的 `set_permanent` 调用）。
+    ///
+    /// 提取此 helper 消除 `check` 中 None 分支与 Some 分支 else 子句的重复 `set_permanent` 调用。
+    async fn update_historic_coord(&self, key: &str, current_coord: GeoCoord) -> BulwarkResult<()> {
+        self.dao.set_permanent(key, &current_coord.to_csv()).await
+    }
 }
 
 /// 用 haversine 公式计算两个地理坐标间的球面距离（公里）。
@@ -123,9 +130,7 @@ impl BulwarkFirewallStrategy for AnomalousLoginStrategy {
         // 2. 读取历史 geo → 无历史则写入当前 geo 并放行
         match self.dao.get(&key).await? {
             None => {
-                self.dao
-                    .set_permanent(&key, &current_coord.to_csv())
-                    .await?;
+                self.update_historic_coord(&key, current_coord).await?;
                 Ok(())
             },
             Some(csv) => {
@@ -148,9 +153,7 @@ impl BulwarkFirewallStrategy for AnomalousLoginStrategy {
                     )))
                 } else {
                     // 距离未超阈值：更新历史 geo 为当前位置
-                    self.dao
-                        .set_permanent(&key, &current_coord.to_csv())
-                        .await?;
+                    self.update_historic_coord(&key, current_coord).await?;
                     Ok(())
                 }
             },
@@ -311,6 +314,38 @@ mod tests {
             matches!(result, Err(BulwarkError::InvalidParam(_))),
             "login_id=None 应返回 InvalidParam，实际: {:?}",
             result
+        );
+    }
+
+    /// 验证首次登录（无历史坐标）时 `check` 调用 `set_permanent` 精确写入当前坐标。
+    ///
+    /// 这是 T020 保护网测试：T021 将提取 `update_historic_coord` helper 统一 None/Some
+    /// 分支的 `set_permanent` 调用，本测试确保重构后 None 分支仍精确写入当前坐标 csv。
+    #[tokio::test]
+    async fn check_updates_historic_coord_on_first_login() {
+        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let current_coord = GeoCoord::new(39.9042, 116.4074); // 北京
+        let expected_csv = current_coord.to_csv();
+        let geo: Arc<dyn GeoLookup> = Arc::new(MockGeoLookup::new().with("1.1.1.1", current_coord));
+        let config = AnomalousConfig {
+            known_geo_threshold: 500,
+        };
+        let strategy = AnomalousLoginStrategy::new(config, dao.clone(), geo);
+
+        let ctx = FirewallContext::new("1.1.1.1").with_login_id(1001);
+
+        // 首次登录：无历史坐标 → 应放行
+        assert!(
+            strategy.check(&ctx).await.is_ok(),
+            "首次登录应放行（无历史记录）"
+        );
+
+        // 断言 set_permanent 被调用：通过 dao.get 验证写入了当前坐标（精确匹配 csv）
+        let stored = dao.get("anom:user:1001").await.unwrap();
+        assert_eq!(
+            stored.as_deref(),
+            Some(expected_csv.as_str()),
+            "首次登录后应调用 set_permanent 写入当前坐标（精确匹配 csv）"
         );
     }
 }
