@@ -303,6 +303,73 @@ mod service {
             let cache_key = format!("tenant:{}:role_closure", tenant_id);
             self.dao.delete(&cache_key).await
         }
+
+        /// 获取指定角色的所有后代（子角色集合）。
+        ///
+        /// 与 `get_ancestors` 反向：遍历 `parent → children` 邻接表，
+        /// DFS 收集 `role` 的所有后代（含间接后代）。
+        ///
+        /// # 参数
+        /// - `role`: 起始角色（父角色）
+        /// - `tenant_id`: 租户 ID（0=默认租户）
+        ///
+        /// # 返回
+        /// `role` 的所有后代集合（不含 `role` 自身）。若 `role` 无后代，返回空集合。
+        ///
+        /// # 错误
+        /// - `BulwarkError::Dao`：SQL 查询失败。
+        pub async fn get_descendants(
+            &self,
+            role: &str,
+            tenant_id: i64,
+        ) -> BulwarkResult<HashSet<String>> {
+            let edges = self.query_all_edges(tenant_id).await?;
+
+            // 构建 parent → children 邻接表（反向）
+            let mut reverse_adj: HashMap<String, Vec<String>> = HashMap::new();
+            for edge in &edges {
+                reverse_adj
+                    .entry(edge.parent_role.clone())
+                    .or_default()
+                    .push(edge.child_role.clone());
+            }
+
+            // DFS 收集所有后代
+            let descendants = Self::dfs_descendants(role, &reverse_adj, &mut HashSet::new());
+            Ok(descendants)
+        }
+
+        /// DFS 递归收集 `role` 的所有后代（含间接后代）。
+        ///
+        /// # 参数
+        /// - `role`: 起始角色
+        /// - `reverse_adj`: parent → children 邻接表
+        /// - `visited`: 已访问角色集合（防止环）
+        ///
+        /// # 返回
+        /// `role` 的所有后代集合（不含 `role` 自身）。
+        fn dfs_descendants(
+            role: &str,
+            reverse_adj: &HashMap<String, Vec<String>>,
+            visited: &mut HashSet<String>,
+        ) -> HashSet<String> {
+            let mut descendants = HashSet::new();
+            if visited.contains(role) {
+                return descendants;
+            }
+            visited.insert(role.to_string());
+
+            if let Some(children) = reverse_adj.get(role) {
+                for child in children {
+                    descendants.insert(child.clone());
+                    let indirect = Self::dfs_descendants(child, reverse_adj, visited);
+                    descendants.extend(indirect);
+                }
+            }
+
+            visited.remove(role);
+            descendants
+        }
     }
 }
 
