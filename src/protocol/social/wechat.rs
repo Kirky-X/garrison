@@ -20,6 +20,9 @@ const WECHAT_AUTH_URL: &str = "https://open.weixin.qq.com/connect/qrconnect";
 /// 微信 OAuth2 access_token 端点（默认值，可通过 `with_token_url` 覆盖以适配测试）。
 const WECHAT_TOKEN_URL: &str = "https://api.weixin.qq.com/sns/oauth2/access_token";
 
+/// 微信 OAuth2 userinfo 端点（默认值，可通过 `with_userinfo_url` 覆盖以适配测试）。
+const WECHAT_USERINFO_URL: &str = "https://api.weixin.qq.com/sns/userinfo";
+
 /// 微信扫码登录 provider（依据 spec social-login R-social-login-002）。
 ///
 /// 实现 `SocialLoginProvider` trait，封装微信开放平台扫码登录的 OAuth2 流程。
@@ -42,6 +45,8 @@ pub struct WechatProvider {
     http: reqwest::Client,
     /// access_token 端点 URL（默认为微信官方端点，测试时可覆盖）。
     token_url: String,
+    /// userinfo 端点 URL（默认为微信官方端点，测试时可覆盖）。
+    userinfo_url: String,
 }
 
 impl WechatProvider {
@@ -56,6 +61,7 @@ impl WechatProvider {
             client_secret: client_secret.to_string(),
             http: reqwest::Client::new(),
             token_url: WECHAT_TOKEN_URL.to_string(),
+            userinfo_url: WECHAT_USERINFO_URL.to_string(),
         }
     }
 
@@ -63,6 +69,13 @@ impl WechatProvider {
     #[must_use]
     pub fn with_token_url(mut self, token_url: impl Into<String>) -> Self {
         self.token_url = token_url.into();
+        self
+    }
+
+    /// 覆盖 userinfo 端点 URL（用于测试时指向 mock server）。
+    #[must_use]
+    pub fn with_userinfo_url(mut self, userinfo_url: impl Into<String>) -> Self {
+        self.userinfo_url = userinfo_url.into();
         self
     }
 }
@@ -143,10 +156,95 @@ impl SocialLoginProvider for WechatProvider {
         })
     }
 
-    /// 用 access_token 获取用户信息（后续任务实现）。
-    async fn get_user_info(&self, _access_token: &str) -> BulwarkResult<SocialUserInfo> {
-        // 后续任务将实现：GET https://api.weixin.qq.com/sns/userinfo 解析 nickname/headimgurl
-        todo!("implement get_user_info with userinfo endpoint")
+    /// 用 access_token 获取用户信息（依据 spec social-login R-social-login-002）。
+    ///
+    /// 调用微信 `sns/userinfo` 端点，获取 nickname/headimgurl/openid/unionid。
+    ///
+    /// # 参数
+    ///
+    /// - `access_token`: 复合格式 `"{access_token}|{openid}"`，用 `|` 分隔 access_token 与 openid。
+    ///   微信 userinfo 端点必须同时传入 access_token 和 openid，而 `SocialLoginProvider::get_user_info`
+    ///   trait 签名只接受单参数，故采用复合格式编码两个字段。调用方应在 `exchange_token` 后保存
+    ///   `SocialUserInfo.provider_user_id`（即 openid），调用时拼接为 `"access_token|openid"`。
+    ///   若不含 `|`，整个字符串作为 access_token、openid 为空字符串（微信会返回 errcode，最终映射为 `BulwarkError::Network`）。
+    ///
+    /// # 错误
+    ///
+    /// - `BulwarkError::Network`: HTTP 请求失败、状态码非 2xx、JSON 解析失败、或微信返回 errcode != 0。
+    async fn get_user_info(&self, access_token: &str) -> BulwarkResult<SocialUserInfo> {
+        // 解析 "{access_token}|{openid}" 复合格式
+        let (access_token_value, openid) = match access_token.split_once('|') {
+            Some((tok, oid)) => (tok, oid),
+            None => (access_token, ""),
+        };
+
+        let url = format!(
+            "{}?access_token={}&openid={}",
+            self.userinfo_url,
+            urlencoding::encode(access_token_value),
+            urlencoding::encode(openid),
+        );
+        let resp =
+            self.http.get(&url).send().await.map_err(|e| {
+                BulwarkError::Network(format!("wechat userinfo request failed: {}", e))
+            })?;
+
+        if !resp.status().is_success() {
+            return Err(BulwarkError::Network(format!(
+                "wechat userinfo request failed: {}",
+                resp.status()
+            )));
+        }
+
+        let raw: Value = resp.json().await.map_err(|e| {
+            BulwarkError::Network(format!("wechat userinfo response parse failed: {}", e))
+        })?;
+
+        // 微信错误响应含 errcode != 0（成功时 errcode 缺失或为 0），与 exchange_token 一致
+        if let Some(errcode) = raw.get("errcode").and_then(|v| v.as_i64()) {
+            if errcode != 0 {
+                let errmsg = raw
+                    .get("errmsg")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown wechat error");
+                return Err(BulwarkError::Network(format!(
+                    "wechat error {}: {}",
+                    errcode, errmsg
+                )));
+            }
+        }
+
+        let provider_user_id = raw
+            .get("openid")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                BulwarkError::Network("wechat userinfo response missing openid field".into())
+            })?
+            .to_string();
+
+        let nickname = raw
+            .get("nickname")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
+        let avatar = raw
+            .get("headimgurl")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
+        let union_id = raw
+            .get("unionid")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
+        Ok(SocialUserInfo {
+            provider: SocialProvider::Wechat,
+            provider_user_id,
+            nickname,
+            avatar,
+            union_id,
+            raw,
+        })
     }
 }
 
@@ -232,5 +330,88 @@ mod tests {
 
         assert_eq!(user_info.provider_user_id, "openid456");
         assert_eq!(user_info.union_id.as_deref(), Some("union789"));
+    }
+
+    /// 验证 `WechatProvider::get_user_info` 解析微信 userinfo 响应的 nickname/headimgurl
+    ///（依据 spec social-login R-social-login-002 验收标准）。
+    ///
+    /// # 测试流程
+    ///
+    /// 1. wiremock 模拟 `GET /sns/userinfo` 返回 `{"openid":"openid1","nickname":"Alice","headimgurl":"...","unionid":"union1"}`
+    /// 2. 构造 `WechatProvider::with_userinfo_url` 指向 mock server
+    /// 3. 调用 `get_user_info("tok123|openid1")`（access_token|openid 复合格式）
+    /// 4. 断言返回 `SocialUserInfo` 含 nickname/avatar/union_id
+    ///
+    /// Red 阶段：`with_userinfo_url` / `get_user_info` 实现 missing → panic。
+    /// Green 阶段（T004）：实现后测试通过。
+    #[tokio::test]
+    async fn wechat_provider_get_user_info_parses_nickname_and_avatar() {
+        use wiremock::matchers::{method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/sns/userinfo"))
+            .and(query_param("access_token", "tok123"))
+            .and(query_param("openid", "openid1"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "openid": "openid1",
+                "nickname": "Alice",
+                "headimgurl": "https://img.example.com/a.png",
+                "unionid": "union1",
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = WechatProvider::new("wx_appid", "wx_secret")
+            .with_userinfo_url(format!("{}/sns/userinfo", server.uri()));
+        let user_info = provider
+            .get_user_info("tok123|openid1")
+            .await
+            .expect("get_user_info 应返回 Ok");
+
+        assert_eq!(user_info.provider, SocialProvider::Wechat);
+        assert_eq!(user_info.provider_user_id, "openid1");
+        assert_eq!(user_info.nickname.as_deref(), Some("Alice"));
+        assert_eq!(
+            user_info.avatar.as_deref(),
+            Some("https://img.example.com/a.png")
+        );
+        assert_eq!(user_info.union_id.as_deref(), Some("union1"));
+    }
+
+    /// 验证 `WechatProvider::get_user_info` 在 HTTP 错误时返回 `BulwarkError`（不 panic）
+    ///（依据 spec social-login R-social-login-002，Rule 12 失败显性化）。
+    ///
+    /// Red 阶段：`get_user_info` 未实现 → panic。
+    /// Green 阶段（T004）：实现后返回 `Err(BulwarkError::Network(_))`。
+    #[tokio::test]
+    async fn wechat_provider_get_user_info_returns_error_on_http_failure() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/sns/userinfo"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+
+        let provider = WechatProvider::new("wx_appid", "wx_secret")
+            .with_userinfo_url(format!("{}/sns/userinfo", server.uri()));
+        let result = provider.get_user_info("tok123|openid1").await;
+
+        assert!(
+            result.is_err(),
+            "HTTP 500 应返回 Err 而非 panic，实际: {:?}",
+            result
+        );
+        match result {
+            Err(BulwarkError::Network(_)) => {},
+            Err(other) => panic!("期望 BulwarkError::Network，实际: {:?}", other),
+            Ok(_) => unreachable!("HTTP 500 不应返回 Ok"),
+        }
     }
 }
