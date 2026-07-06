@@ -104,6 +104,9 @@ bulwark-macros = { path = "bulwark-macros", version = "0.5.0", optional = true }
 # rsa 用于 social-alipay 的 RSA2（SHA256withRSA）签名（启用 sha2 + pem features）
 # 注意：rsa 0.9 内部依赖 sha2 0.10，与项目 sha2 0.11 不兼容，故用 `rsa::pkcs1v15::SigningKey` + `rsa::sha2::Sha256`（sha2 0.10 re-export）
 rsa = { version = "0.9", optional = true, features = ["sha2", "pem"] }
+# 0.5.1 新增：unicode-security 用于检测 Unicode 同形异义字（依据 design.md D10，L6）
+# 由 security-confusable feature 启用，启动时扫描 PermissionRegistry 中所有 permission name
+unicode-security = { version = "0.1", optional = true }
 
 [dev-dependencies]
 tokio-test = "0.4"
@@ -222,6 +225,9 @@ secure-httpdigest = ["sha2", "base64", "md5"]
 secure-password = ["dep:argon2", "dep:bcrypt", "dep:rand"]
 # 0.5.1 新增：在 secure-password 基础上启用 zeroize，hash/verify 后清零内部 password 字节
 secure-password-zeroize = ["secure-password", "zeroize"]
+# 0.5.1 新增：Unicode 同形异义字检测（依据 design.md D10，L6）
+# 启用后提供 check_confusable 函数 + PermissionRegistry::register 集成（tracing::warn）
+secure-confusable = ["dep:unicode-security"]
 
 # === Web 框架适配 ===
 web-axum = ["axum", "axum/tokio", "axum/http1"]

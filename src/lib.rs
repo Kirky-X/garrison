@@ -227,13 +227,14 @@ pub mod web_warp;
 #[cfg(feature = "listener")]
 pub mod listener;
 
-/// 安全模块，提供 TOTP / 签名 / Basic / Digest / 密码哈希 验证。
+/// 安全模块，提供 TOTP / 签名 / Basic / Digest / 密码哈希 / Unicode 同形异义字检测 验证。
 #[cfg(any(
     feature = "secure-totp",
     feature = "secure-sign",
     feature = "secure-httpbasic",
     feature = "secure-httpdigest",
     feature = "secure-password",
+    feature = "secure-confusable",
 ))]
 pub mod secure;
 

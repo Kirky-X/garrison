@@ -95,12 +95,34 @@ impl PermissionRegistry {
     /// # 错误
     /// - `name` 为空 → `BulwarkError::InvalidParam`
     /// - `name` 已注册 → `BulwarkError::InvalidParam`
+    ///
+    /// # 安全检测（`secure-confusable` feature 启用时）
+    ///
+    /// 注册前调用 [`check_confusable`](crate::secure::confusable::check_confusable) 检测
+    /// permission name 中的 Unicode 同形异义字。发现可疑字符时通过 `tracing::warn` 上报
+    /// （依据 design.md D10，L6）。**不阻止注册**——仅警告，符合"失败显性化但非阻塞"原则
+    /// （Rule 12）。
     pub fn register(&self, spec: PermissionSpec) -> BulwarkResult<()> {
         if spec.name.is_empty() {
             return Err(BulwarkError::InvalidParam(
                 "permission name 不能为空".to_string(),
             ));
         }
+
+        // L6: 检测 Unicode 同形异义字（依据 design.md D10）
+        // 启用 secure-confusable feature 时生效；不阻止注册，仅 tracing::warn 上报
+        #[cfg(feature = "secure-confusable")]
+        {
+            let warnings = crate::secure::confusable::check_confusable(&spec.name);
+            if !warnings.is_empty() {
+                tracing::warn!(
+                    permission = %spec.name,
+                    warnings = ?warnings,
+                    "confusable characters detected in permission name"
+                );
+            }
+        }
+
         let mut map = self.permissions.write();
         if map.contains_key(&spec.name) {
             return Err(BulwarkError::InvalidParam(format!(

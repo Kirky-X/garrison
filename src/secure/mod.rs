@@ -89,6 +89,14 @@ pub mod httpdigest;
 #[cfg(feature = "secure-password")]
 pub mod password;
 
+/// Unicode 同形异义字检测子模块（0.5.1 新增，依据 design.md D10，L6）。
+///
+/// 提供 [`check_confusable`](confusable::check_confusable) 函数，检测字符串中的 Unicode
+/// 同形异义字（homoglyphs）。启用 `secure-confusable` feature 后，
+/// `PermissionRegistry::register` 会自动调用检测可疑 permission name。
+#[cfg(feature = "secure-confusable")]
+pub mod confusable;
+
 #[cfg(test)]
 mod tests {
     use super::*;
