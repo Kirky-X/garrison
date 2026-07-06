@@ -113,6 +113,9 @@ impl UserRepository for DbnexusUserRepository {
     }
 
     async fn create(&self, tenant_id: i64, user: NewUser) -> BulwarkResult<String> {
+        uuid::Uuid::parse_str(&user.id).map_err(|_| {
+            BulwarkError::InvalidParam(format!("user.id must be valid UUID, got: {}", user.id))
+        })?;
         let session =
             self.pool.get_session("admin").await.map_err(|e| {
                 BulwarkError::Dao(format!("app_user create 获取 session 失败: {}", e))
@@ -1829,5 +1832,34 @@ mod tests {
         // 验证返回行的 tenant_id 字段正确
         let row_42 = repo.find_by_id(42, &user_42).await.unwrap().unwrap();
         assert_eq!(row_42.tenant_id, 42, "返回行 tenant_id 应为 42");
+    }
+
+    /// C2 校验：create 入口拒绝非 UUID 格式的 user.id。
+    ///
+    /// 验证 v0.5.1 新增的 UUID 格式校验：
+    /// - 传入 `id: "not-a-uuid"` 调用 create
+    /// - 应返回 `BulwarkError::InvalidParam`，不接触数据库
+    #[tokio::test(flavor = "multi_thread")]
+    async fn create_rejects_non_uuid_id() {
+        let pool = setup_db().await;
+        let repo = DbnexusUserRepository::new(pool);
+
+        let result = repo
+            .create(
+                42,
+                NewUser {
+                    id: "not-a-uuid".to_string(),
+                    username: "x".to_string(),
+                    password_hash: "h".to_string(),
+                    status: "active".to_string(),
+                },
+            )
+            .await;
+
+        assert!(
+            matches!(result, Err(BulwarkError::InvalidParam(_))),
+            "create 应拒绝非 UUID 格式的 id，实际: {:?}",
+            result
+        );
     }
 }
