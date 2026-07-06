@@ -296,7 +296,7 @@ fn provider_to_str(provider: &SocialProvider) -> &'static str {
 ///
 /// 定义三个异步方法覆盖 OAuth2 授权码流程：
 /// - `get_authorization_url`：拼接授权页 URL（用户跳转到第三方平台授权）
-/// - `exchange_token`：用授权码换取用户信息（内部完成 code → access_token → user_info 两步）
+/// - `exchange_token`：用授权码换取 access_token + provider_user_id（仅完成 code → access_token 一步，nickname/avatar 为 None，调用方需再调 `get_user_info`）
 /// - `get_user_info`：用 access_token 获取用户信息（用于已缓存 token 的场景）
 ///
 /// # 实现
@@ -315,7 +315,7 @@ pub trait SocialLoginProvider: Send + Sync {
 
     /// 用授权码换取用户信息。
     ///
-    /// 内部完成两步：1) code → access_token（POST token endpoint）2) access_token → user_info（GET userinfo endpoint）。
+    /// 仅完成 code → access_token 步骤；返回的 SocialUserInfo 中 nickname/avatar 为 None，调用方需再调 `get_user_info` 获取用户资料。
     ///
     /// # 参数
     /// - `code`: 授权码（第三方平台回调时附在 query 参数）
