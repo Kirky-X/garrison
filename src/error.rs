@@ -226,6 +226,66 @@ impl axum::response::IntoResponse for BulwarkError {
     }
 }
 
+// ============================================================================
+// miette::Diagnostic 实现（cfg feature = "miette"，依据 spec error R-error-001 M5）
+// ============================================================================
+//
+// 富错误渲染层：保留 `thiserror::Error` derive（错误定义 + source 链），
+// miette 仅作为 `Diagnostic` trait 实现，提供 `code` / `severity` / `labels` 富上下文。
+// 默认关闭，启用方式：`--features miette`。
+//
+// [借鉴 miette] miette 推荐使用 dotted kebab-case 形式作为错误代码（如 `bulwark.not_login`），
+// 与 `response_parts()` 返回的 UPPER_SNAKE_CASE error_code（如 `NOT_LOGIN`）解耦：
+// - `response_parts().error_code` → 面向 HTTP 响应体（与 Sa-Token 既有惯例一致）
+// - `Diagnostic::code()` → 面向开发者诊断终端（miette 渲染惯例）
+#[cfg(feature = "miette")]
+impl miette::Diagnostic for BulwarkError {
+    /// 返回稳定的错误代码标识符（dotted kebab-case，miette 渲染惯例）。
+    ///
+    /// 形如 `bulwark.not_login` / `bulwark.config` / `bulwark.firewall_blocked`。
+    /// 与 `response_parts().1` 返回的 UPPER_SNAKE_CASE error_code 解耦：
+    /// - `response_parts` 的 error_code → 面向 HTTP 响应体（与 Sa-Token 既有惯例一致）
+    /// - `Diagnostic::code()` → 面向开发者诊断终端（miette 渲染惯例）
+    fn code(&self) -> Option<Box<dyn std::fmt::Display + '_>> {
+        let code_str: &'static str = match self {
+            BulwarkError::NotLogin(_) => "bulwark.not_login",
+            BulwarkError::NotPermission(_) => "bulwark.not_permission",
+            BulwarkError::NotRole(_) => "bulwark.not_role",
+            BulwarkError::InvalidToken(_) => "bulwark.invalid_token",
+            BulwarkError::ExpiredToken(_) => "bulwark.expired_token",
+            BulwarkError::Dao(_) => "bulwark.dao",
+            BulwarkError::Config(_) => "bulwark.config",
+            BulwarkError::Internal(_) => "bulwark.internal",
+            BulwarkError::Session(_) => "bulwark.session",
+            BulwarkError::Annotation(_) => "bulwark.annotation",
+            BulwarkError::Context(_) => "bulwark.context",
+            BulwarkError::Exception(_) => "bulwark.exception",
+            BulwarkError::OAuth2(_) => "bulwark.oauth2",
+            BulwarkError::Network(_) => "bulwark.network",
+            BulwarkError::InvalidParam(_) => "bulwark.invalid_param",
+            BulwarkError::NotImplemented(_) => "bulwark.not_implemented",
+            BulwarkError::FirewallBlocked(_) => "bulwark.firewall_blocked",
+        };
+        Some(Box::new(code_str))
+    }
+
+    /// 返回错误严重级别。
+    ///
+    /// 当前所有变体均返回 `Severity::Error`（无 Warning/Advice 级别）。
+    /// 设计依据：BulwarkError 表示框架级错误，需触发调用方错误处理路径。
+    fn severity(&self) -> Option<miette::Severity> {
+        Some(miette::Severity::Error)
+    }
+
+    /// 返回源码 span 标签（用于 IDE/CLI 高亮定位）。
+    ///
+    /// `BulwarkError` 变体仅携带 `String` 消息或 `BulwarkException` 结构体（无源码位置信息），
+    /// 返回 `None`。未来若引入带 span 的错误变体（如注解解析失败），可在此分支返回 label。
+    fn labels(&self) -> Option<Box<dyn Iterator<Item = miette::LabeledSpan> + '_>> {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -719,6 +779,119 @@ mod tests {
         assert!(
             body_json.get("message").is_some(),
             "响应体应包含 message 字段"
+        );
+    }
+
+    // ========================================================================
+    // miette::Diagnostic 测试（cfg feature = "miette"，依据 spec error R-error-001 M5）
+    // ========================================================================
+
+    /// 验证 `Diagnostic::code()` 返回稳定的 dotted kebab-case 错误代码。
+    ///
+    /// 覆盖多个变体：NotLogin / NotPermission / FirewallBlocked / NotImplemented / Exception。
+    /// 选择带复合单词的变体（FirewallBlocked / NotImplemented）以验证 snake_case 转换正确性。
+    #[cfg(feature = "miette")]
+    #[test]
+    fn diagnostic_code_returns_stable_identifier() {
+        use miette::Diagnostic;
+
+        let cases: [(BulwarkError, &str); 5] = [
+            (BulwarkError::NotLogin("x".to_string()), "bulwark.not_login"),
+            (
+                BulwarkError::NotPermission("x".to_string()),
+                "bulwark.not_permission",
+            ),
+            (
+                BulwarkError::FirewallBlocked("x".to_string()),
+                "bulwark.firewall_blocked",
+            ),
+            (
+                BulwarkError::NotImplemented("x".to_string()),
+                "bulwark.not_implemented",
+            ),
+            (
+                BulwarkError::Exception(crate::exception::BulwarkException::new(500, "x")),
+                "bulwark.exception",
+            ),
+        ];
+        for (err, expected) in cases {
+            let code = err.code().expect("code() 应返回 Some(Box<dyn Display>)");
+            assert_eq!(
+                code.to_string(),
+                expected,
+                "code() 应返回 dotted kebab-case 形式"
+            );
+        }
+    }
+
+    /// 验证所有变体的 `severity()` 返回 `Severity::Error`。
+    ///
+    /// 覆盖全部 17 个变体，确保无 Warning/Advice 漏网。
+    #[cfg(feature = "miette")]
+    #[test]
+    fn diagnostic_severity_returns_error_for_all_variants() {
+        use miette::{Diagnostic, Severity};
+
+        let errors = [
+            BulwarkError::NotLogin(String::new()),
+            BulwarkError::NotPermission(String::new()),
+            BulwarkError::NotRole(String::new()),
+            BulwarkError::InvalidToken(String::new()),
+            BulwarkError::ExpiredToken(String::new()),
+            BulwarkError::Dao(String::new()),
+            BulwarkError::Config(String::new()),
+            BulwarkError::Internal(String::new()),
+            BulwarkError::Session(String::new()),
+            BulwarkError::Annotation(String::new()),
+            BulwarkError::Context(String::new()),
+            BulwarkError::Exception(crate::exception::BulwarkException::new(500, "")),
+            BulwarkError::OAuth2(String::new()),
+            BulwarkError::Network(String::new()),
+            BulwarkError::InvalidParam(String::new()),
+            BulwarkError::NotImplemented(String::new()),
+            BulwarkError::FirewallBlocked(String::new()),
+        ];
+        for err in errors {
+            let sev = err.severity().expect("severity() 应返回 Some");
+            assert_eq!(sev, Severity::Error, "{:?} severity 应为 Error", err);
+        }
+    }
+
+    /// 验证 String 携带型变体的 `labels()` 返回 `None`（无源码位置信息）。
+    ///
+    /// `BulwarkError` 的 String 变体仅携带消息字符串，不携带源码 span。
+    #[cfg(feature = "miette")]
+    #[test]
+    fn diagnostic_labels_returns_none_for_string_variants() {
+        use miette::Diagnostic;
+
+        let cases: [BulwarkError; 5] = [
+            BulwarkError::NotLogin("x".to_string()),
+            BulwarkError::Dao("x".to_string()),
+            BulwarkError::Config("x".to_string()),
+            BulwarkError::OAuth2("x".to_string()),
+            BulwarkError::FirewallBlocked("x".to_string()),
+        ];
+        for err in cases {
+            assert!(err.labels().is_none(), "{:?} 的 labels() 应返回 None", err);
+        }
+    }
+
+    /// 验证 `miette::Report::new(error)` 可构造，且 Debug 渲染输出包含错误代码。
+    ///
+    /// 验收 spec R-error-001 的"source chain 渲染"要求：miette::Report 接受任何
+    /// `Diagnostic + Send + Sync + 'static`，BulwarkError 通过 thiserror::Error derive
+    /// 满足 `std::error::Error`，本测试验证集成可达。
+    #[cfg(feature = "miette")]
+    #[test]
+    fn diagnostic_can_be_rendered_with_miette_handler() {
+        let err = BulwarkError::NotLogin("test message".to_string());
+        let report = miette::Report::new(err);
+        let rendered = format!("{:?}", report);
+        assert!(
+            rendered.contains("bulwark.not_login"),
+            "miette::Report 的 Debug 渲染应包含错误代码 bulwark.not_login，实际: {}",
+            rendered
         );
     }
 }

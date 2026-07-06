@@ -95,6 +95,9 @@ tonic = { version = "0.13", optional = true, default-features = false, features 
 fluent = { version = "0.17", optional = true, default-features = false }
 # unic-langid 用于构造 LanguageIdentifier（fluent-rs 内部依赖，显式声明以直接使用）
 unic-langid = { version = "0.9", optional = true, default-features = false }
+# 0.5.1 新增：miette 用于富错误渲染（M5，feature = "miette"）
+# 作为 Diagnostic trait 渲染层，保留 thiserror::Error derive 不替换
+miette = { version = "7", optional = true, default-features = false }
 # bulwark-macros 提供 #[check_login]/#[check_permission]/#[check_role] 过程宏
 # （feature = "annotation-macros"，依赖 web-axum 以使用 IntoResponse）
 bulwark-macros = { path = "bulwark-macros", version = "0.5.0", optional = true }
@@ -268,6 +271,9 @@ observability-otlp = ["opentelemetry", "opentelemetry_sdk", "opentelemetry-otlp"
 grpc = ["tonic"]
 # 异常消息国际化（中英文切换，fluent-rs）
 i18n = ["fluent", "unic-langid"]
+# 0.5.1 新增：miette 富错误渲染（M5，依据 spec error R-error-001）
+# 启用后 BulwarkError 实现 miette::Diagnostic trait（保留 thiserror::Error derive）
+miette = ["dep:miette"]
 
 # === 聚合特性 ===
 full = [
