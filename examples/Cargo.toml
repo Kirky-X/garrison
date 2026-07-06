@@ -55,6 +55,8 @@ full = [
     "web-actix", "web-warp", "grpc", "i18n",
     "metrics-prometheus", "observability-otlp", "cache-redis",
     "annotation-macros", "secure-password",
+    "tenant-isolation", "audit-log", "decision-trace", "keycloak-oidc",
+    "social-wechat",
 ]
 
 # 单特性转发到 bulwark（保持与 bulwark feature 名一致）
@@ -90,6 +92,13 @@ cache-redis = ["bulwark/cache-redis", "dep:oxcache"]
 
 # 0.4.2 新增：过程宏注解（#[check_login]/#[check_permission]/#[check_role]）
 annotation-macros = ["bulwark/annotation-macros"]
+
+# 0.5.0 新增：多租户隔离 / 审计日志 / 决策溯源 / Keycloak OIDC RP / 微信社交登录
+tenant-isolation = ["bulwark/tenant-isolation"]
+audit-log = ["bulwark/audit-log"]
+decision-trace = ["bulwark/decision-trace"]
+keycloak-oidc = ["bulwark/keycloak-oidc"]
+social-wechat = ["bulwark/social-wechat"]
 
 # ====================================================================
 # Feature-gated bins（required-features 防止 feature 关闭时编译失败）
@@ -279,3 +288,16 @@ path = "src/bin/strategy_registry.rs"
 name = "macro_annotations"
 required-features = ["annotation-macros", "cache-memory", "web-axum"]
 path = "src/bin/macro_annotations.rs"
+
+# ====================================================================
+# 0.5.0 新增示例
+# ====================================================================
+
+[[bin]]
+name = "v0_5_0_demo"
+required-features = [
+    "tenant-isolation", "audit-log", "decision-trace",
+    "keycloak-oidc", "social-wechat",
+    "db-sqlite", "cache-memory",
+]
+path = "src/bin/v0_5_0_demo.rs"
