@@ -25,6 +25,13 @@ pub mod registry;
 #[cfg(feature = "permission-registry")]
 pub use registry::{PermissionRegistration, PermissionRegistry, PermissionSpec};
 
+/// 请求对象式授权器模块（0.5.1 新增，依据 spec authorize-api M4）。
+#[cfg(feature = "authorize-api")]
+pub mod authorize;
+
+#[cfg(feature = "authorize-api")]
+pub use authorize::Authorizer;
+
 /// 权限校验 trait，定义以 login_id 为入参的权限与角色校验抽象（依据 spec core-permission）。
 ///
 /// 所有方法 MUST 使用 `async_trait` 标注，trait 绑定 `Send + Sync`。
@@ -404,7 +411,9 @@ mod tests {
     async fn authorize_returns_decision_with_allowed_true_when_permission_matches() {
         let checker = make_checker();
         let request = AuthRequest::new(1001, "user:read");
-        let decision = checker.authorize(&request).await.expect("authorize ok");
+        let decision = PermissionChecker::authorize(&checker, &request)
+            .await
+            .expect("authorize ok");
         assert!(decision.allowed);
         assert_eq!(decision.reason, DecisionReason::ExplicitAllow);
     }
@@ -414,7 +423,9 @@ mod tests {
     async fn authorize_returns_deny_when_permission_not_matched() {
         let checker = make_checker();
         let request = AuthRequest::new(1001, "user:delete");
-        let decision = checker.authorize(&request).await.expect("authorize ok");
+        let decision = PermissionChecker::authorize(&checker, &request)
+            .await
+            .expect("authorize ok");
         assert!(!decision.allowed);
         assert_eq!(decision.reason, DecisionReason::NoMatchingPermission);
     }
@@ -424,7 +435,7 @@ mod tests {
     async fn authorize_returns_error_for_empty_permission() {
         let checker = make_checker();
         let request = AuthRequest::new(1001, "");
-        let result = checker.authorize(&request).await;
+        let result = PermissionChecker::authorize(&checker, &request).await;
         assert!(result.is_err());
         match result.err() {
             Some(BulwarkError::InvalidParam(_)) => {},
@@ -444,13 +455,17 @@ mod tests {
 
         // 持有权限：authorize().allowed == true，check_permission == Ok
         let req_ok = AuthRequest::new(1001, "user:read");
-        let decision_ok = checker.authorize(&req_ok).await.expect("authorize ok");
+        let decision_ok = PermissionChecker::authorize(&checker, &req_ok)
+            .await
+            .expect("authorize ok");
         assert!(decision_ok.allowed);
         assert!(checker.check_permission(1001, "user:read").await.is_ok());
 
         // 未持有权限：authorize().allowed == false，check_permission == Err
         let req_no = AuthRequest::new(1001, "user:delete");
-        let decision_no = checker.authorize(&req_no).await.expect("authorize ok");
+        let decision_no = PermissionChecker::authorize(&checker, &req_no)
+            .await
+            .expect("authorize ok");
         assert!(!decision_no.allowed);
         assert!(checker.check_permission(1001, "user:delete").await.is_err());
     }
@@ -485,7 +500,9 @@ mod tests {
     async fn authorize_decision_serializes_to_json() {
         let checker = make_checker();
         let request = AuthRequest::new(1001, "user:read");
-        let decision = checker.authorize(&request).await.expect("authorize ok");
+        let decision = PermissionChecker::authorize(&checker, &request)
+            .await
+            .expect("authorize ok");
         let json = serde_json::to_value(&decision).expect("serialize Decision");
         assert_eq!(json["allowed"], serde_json::json!(true));
         assert_eq!(json["reason"], serde_json::json!("explicit_allow"));

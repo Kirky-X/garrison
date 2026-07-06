@@ -143,6 +143,12 @@ decision-trace = []
 # PermissionChecker::check_permission 前调用 validate() 校验权限已注册。
 permission-registry = []
 
+# === 核心扩展：请求对象式授权 API（0.5.1 新增，依据 spec authorize-api M4） ===
+# 启用后提供 Authorizer trait（公开 API，不假设具体实现），
+# 通过 blanket impl 任何 PermissionChecker 自动实现 Authorizer。
+# 依赖 decision-trace 以确保 Decision 的 trace 字段可用。
+authorize-api = ["decision-trace"]
+
 # === 核心扩展：多租户逻辑隔离（0.5.0 新增，依据 spec tenant-isolation） ===
 # 启用后 BulwarkDaoOxcache 的 set/get/delete 在 TENANT task_local 上下文存在时
 # 自动为 key prepend `tenant:{tid}:` 前缀，实现缓存层租户隔离。
