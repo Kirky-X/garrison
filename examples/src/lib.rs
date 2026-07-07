@@ -3,7 +3,7 @@
 //! 每个 bin 的核心逻辑提取为 `pub fn run()`（或 `pub async fn run()`），
 //! 由 `src/bin/<name>.rs` 作为 thin wrapper 调用，并由 `tests/<name>.rs` 进行测试。
 //!
-//! # 模块分类（v0.5.2 重构后）
+//! # 模块分类（模块化重构后）
 //!
 //! - **authentication**：登录认证示例（basic/password/jwt/httpbasic/httpdigest/totp）
 //! - **oauth2**：OAuth2/OIDC/SSO 示例
