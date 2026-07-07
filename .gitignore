@@ -13,7 +13,7 @@ docs/origin/
 # OpenSpec 规划工件（change/archive/specs）
 openspec/
 # 第三方参考源码（Sa-Token v1.45.0）
-/temp/
+temp*
 # Trae IDE 技能与命令配置
 .trae/
 
