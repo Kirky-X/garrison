@@ -59,10 +59,6 @@ async fn setup_db() -> dbnexus::DbPool {
     pool
 }
 
-fn uuid_str() -> String {
-    uuid::Uuid::new_v4().to_string()
-}
-
 // ============================================================================
 // 1. UserRepository CRUD
 // ============================================================================
@@ -73,18 +69,17 @@ async fn user_repository_full_crud() {
     let pool = setup_db().await;
     let repo = DbnexusUserRepository::new(pool);
 
-    let user_id = uuid_str();
-    repo.create(
-        TENANT_A,
-        NewUser {
-            id: user_id.clone(),
-            username: "alice".to_string(),
-            password_hash: "hashed".to_string(),
-            status: "active".to_string(),
-        },
-    )
-    .await
-    .expect("create 应成功");
+    let user_id = repo
+        .create(
+            TENANT_A,
+            NewUser {
+                username: "alice".to_string(),
+                password_hash: "hashed".to_string(),
+                status: "active".to_string(),
+            },
+        )
+        .await
+        .expect("create 应成功");
 
     // find_by_id
     let found = repo.find_by_id(TENANT_A, &user_id).await.unwrap();
@@ -136,19 +131,18 @@ async fn role_repository_full_crud() {
     let pool = setup_db().await;
     let repo = DbnexusRoleRepository::new(pool);
 
-    let role_id = uuid_str();
-    repo.create(
-        TENANT_A,
-        NewRole {
-            id: role_id.clone(),
-            code: "admin".to_string(),
-            name: "Administrator".to_string(),
-            description: Some("full access".to_string()),
-            is_system: false,
-        },
-    )
-    .await
-    .unwrap();
+    let role_id = repo
+        .create(
+            TENANT_A,
+            NewRole {
+                code: "admin".to_string(),
+                name: "Administrator".to_string(),
+                description: Some("full access".to_string()),
+                is_system: false,
+            },
+        )
+        .await
+        .unwrap();
 
     // find_by_id
     let by_id = repo.find_by_id(TENANT_A, &role_id).await.unwrap();
@@ -188,16 +182,15 @@ async fn permission_repository_full_crud() {
     let pool = setup_db().await;
     let repo = DbnexusPermissionRepository::new(pool);
 
-    let perm_id = uuid_str();
-    repo.create(NewPermission {
-        id: perm_id.clone(),
-        code: "user:read".to_string(),
-        name: "Read User".to_string(),
-        resource_type: Some("user".to_string()),
-        action: Some("read".to_string()),
-    })
-    .await
-    .unwrap();
+    let perm_id = repo
+        .create(NewPermission {
+            code: "user:read".to_string(),
+            name: "Read User".to_string(),
+            resource_type: Some("user".to_string()),
+            action: Some("read".to_string()),
+        })
+        .await
+        .unwrap();
 
     // find_by_id
     let by_id = repo.find_by_id(&perm_id).await.unwrap();
@@ -232,13 +225,10 @@ async fn user_role_repository_assign_find_revoke() {
     let role_repo = DbnexusRoleRepository::new(pool.clone());
     let user_role_repo = DbnexusUserRoleRepository::new(pool);
 
-    let user_id = uuid_str();
-    let role_id = uuid_str();
-    user_repo
+    let user_id = user_repo
         .create(
             TENANT_A,
             NewUser {
-                id: user_id.clone(),
                 username: "bob".to_string(),
                 password_hash: "h".to_string(),
                 status: "active".to_string(),
@@ -246,11 +236,10 @@ async fn user_role_repository_assign_find_revoke() {
         )
         .await
         .unwrap();
-    role_repo
+    let role_id = role_repo
         .create(
             TENANT_A,
             NewRole {
-                id: role_id.clone(),
                 code: "editor".to_string(),
                 name: "Editor".to_string(),
                 description: None,
@@ -310,13 +299,10 @@ async fn role_permission_repository_assign_find_revoke() {
     let perm_repo = DbnexusPermissionRepository::new(pool.clone());
     let rp_repo = DbnexusRolePermissionRepository::new(pool);
 
-    let role_id = uuid_str();
-    let perm_id = uuid_str();
-    role_repo
+    let role_id = role_repo
         .create(
             TENANT_A,
             NewRole {
-                id: role_id.clone(),
                 code: "viewer".to_string(),
                 name: "Viewer".to_string(),
                 description: None,
@@ -325,9 +311,8 @@ async fn role_permission_repository_assign_find_revoke() {
         )
         .await
         .unwrap();
-    perm_repo
+    let perm_id = perm_repo
         .create(NewPermission {
-            id: perm_id.clone(),
             code: "doc:read".to_string(),
             name: "Read Doc".to_string(),
             resource_type: Some("doc".to_string()),
@@ -369,12 +354,10 @@ async fn auth_method_repository_create_find_delete() {
     let user_repo = DbnexusUserRepository::new(pool.clone());
     let auth_repo = DbnexusAuthMethodRepository::new(pool);
 
-    let user_id = uuid_str();
-    user_repo
+    let user_id = user_repo
         .create(
             TENANT_A,
             NewUser {
-                id: user_id.clone(),
                 username: "charlie".to_string(),
                 password_hash: "h".to_string(),
                 status: "active".to_string(),
@@ -383,12 +366,10 @@ async fn auth_method_repository_create_find_delete() {
         .await
         .unwrap();
 
-    let method_id = uuid_str();
-    auth_repo
+    let method_id = auth_repo
         .create(
             TENANT_A,
             NewAuthMethod {
-                id: method_id.clone(),
                 user_id: user_id.clone(),
                 method_type: "password".to_string(),
                 external_id: None,
@@ -424,12 +405,10 @@ async fn session_repository_create_find_update_delete() {
     let user_repo = DbnexusUserRepository::new(pool.clone());
     let session_repo = DbnexusSessionRepository::new(pool);
 
-    let user_id = uuid_str();
-    user_repo
+    let user_id = user_repo
         .create(
             TENANT_A,
             NewUser {
-                id: user_id.clone(),
                 username: "dave".to_string(),
                 password_hash: "h".to_string(),
                 status: "active".to_string(),
@@ -495,12 +474,10 @@ async fn login_log_repository_create_find() {
     let user_repo = DbnexusUserRepository::new(pool.clone());
     let log_repo = DbnexusLoginLogRepository::new(pool);
 
-    let user_id = uuid_str();
-    user_repo
+    let user_id = user_repo
         .create(
             TENANT_A,
             NewUser {
-                id: user_id.clone(),
                 username: "eve".to_string(),
                 password_hash: "h".to_string(),
                 status: "active".to_string(),
@@ -509,12 +486,10 @@ async fn login_log_repository_create_find() {
         .await
         .unwrap();
 
-    let log_id = uuid_str();
-    log_repo
+    let log_id = log_repo
         .create(
             TENANT_A,
             NewLoginLog {
-                id: log_id.clone(),
                 user_id: Some(user_id.clone()),
                 action: "login".to_string(),
                 ip: Some("192.168.1.1".to_string()),
@@ -549,12 +524,10 @@ async fn user_ext_repository_upsert_find() {
     let user_repo = DbnexusUserRepository::new(pool.clone());
     let ext_repo = DbnexusUserExtRepository::new(pool);
 
-    let user_id = uuid_str();
-    user_repo
+    let user_id = user_repo
         .create(
             TENANT_A,
             NewUser {
-                id: user_id.clone(),
                 username: "frank".to_string(),
                 password_hash: "h".to_string(),
                 status: "active".to_string(),
@@ -629,30 +602,28 @@ async fn user_repository_tenant_isolation() {
     let pool = setup_db().await;
     let repo = DbnexusUserRepository::new(pool);
 
-    let user_a = uuid_str();
-    let user_b = uuid_str();
-    repo.create(
-        TENANT_A,
-        NewUser {
-            id: user_a.clone(),
-            username: "tenant-a-user".to_string(),
-            password_hash: "h".to_string(),
-            status: "active".to_string(),
-        },
-    )
-    .await
-    .unwrap();
-    repo.create(
-        TENANT_B,
-        NewUser {
-            id: user_b.clone(),
-            username: "tenant-b-user".to_string(),
-            password_hash: "h".to_string(),
-            status: "active".to_string(),
-        },
-    )
-    .await
-    .unwrap();
+    let user_a = repo
+        .create(
+            TENANT_A,
+            NewUser {
+                username: "tenant-a-user".to_string(),
+                password_hash: "h".to_string(),
+                status: "active".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+    let user_b = repo
+        .create(
+            TENANT_B,
+            NewUser {
+                username: "tenant-b-user".to_string(),
+                password_hash: "h".to_string(),
+                status: "active".to_string(),
+            },
+        )
+        .await
+        .unwrap();
 
     // tenant A 查不到 tenant B 的用户
     let cross = repo.find_by_id(TENANT_A, &user_b).await.unwrap();
@@ -679,15 +650,10 @@ async fn user_role_repository_tenant_isolation() {
     let role_repo = DbnexusRoleRepository::new(pool.clone());
     let ur_repo = DbnexusUserRoleRepository::new(pool);
 
-    let user_a = uuid_str();
-    let user_b = uuid_str();
-    let role_a = uuid_str();
-    let role_b = uuid_str();
-    user_repo
+    let user_a = user_repo
         .create(
             TENANT_A,
             NewUser {
-                id: user_a.clone(),
                 username: "u-a".to_string(),
                 password_hash: "h".to_string(),
                 status: "active".to_string(),
@@ -695,11 +661,10 @@ async fn user_role_repository_tenant_isolation() {
         )
         .await
         .unwrap();
-    user_repo
+    let user_b = user_repo
         .create(
             TENANT_B,
             NewUser {
-                id: user_b.clone(),
                 username: "u-b".to_string(),
                 password_hash: "h".to_string(),
                 status: "active".to_string(),
@@ -707,11 +672,10 @@ async fn user_role_repository_tenant_isolation() {
         )
         .await
         .unwrap();
-    role_repo
+    let role_a = role_repo
         .create(
             TENANT_A,
             NewRole {
-                id: role_a.clone(),
                 code: "r-a".to_string(),
                 name: "R-A".to_string(),
                 description: None,
@@ -720,11 +684,10 @@ async fn user_role_repository_tenant_isolation() {
         )
         .await
         .unwrap();
-    role_repo
+    let role_b = role_repo
         .create(
             TENANT_B,
             NewRole {
-                id: role_b.clone(),
                 code: "r-b".to_string(),
                 name: "R-B".to_string(),
                 description: None,
@@ -770,17 +733,11 @@ async fn rbac_full_chain_user_to_permissions() {
     let ur_repo = DbnexusUserRoleRepository::new(pool.clone());
     let rp_repo = DbnexusRolePermissionRepository::new(pool);
 
-    let user_id = uuid_str();
-    let role_id = uuid_str();
-    let perm1_id = uuid_str();
-    let perm2_id = uuid_str();
-
     // 1. 创建基础数据
-    user_repo
+    let user_id = user_repo
         .create(
             TENANT_A,
             NewUser {
-                id: user_id.clone(),
                 username: "grace".to_string(),
                 password_hash: "h".to_string(),
                 status: "active".to_string(),
@@ -788,11 +745,10 @@ async fn rbac_full_chain_user_to_permissions() {
         )
         .await
         .unwrap();
-    role_repo
+    let role_id = role_repo
         .create(
             TENANT_A,
             NewRole {
-                id: role_id.clone(),
                 code: "manager".to_string(),
                 name: "Manager".to_string(),
                 description: None,
@@ -801,9 +757,8 @@ async fn rbac_full_chain_user_to_permissions() {
         )
         .await
         .unwrap();
-    perm_repo
+    let perm1_id = perm_repo
         .create(NewPermission {
-            id: perm1_id.clone(),
             code: "report:read".to_string(),
             name: "Read Report".to_string(),
             resource_type: Some("report".to_string()),
@@ -811,9 +766,8 @@ async fn rbac_full_chain_user_to_permissions() {
         })
         .await
         .unwrap();
-    perm_repo
+    let perm2_id = perm_repo
         .create(NewPermission {
-            id: perm2_id.clone(),
             code: "report:export".to_string(),
             name: "Export Report".to_string(),
             resource_type: Some("report".to_string()),

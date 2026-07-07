@@ -36,9 +36,7 @@
 //! # async fn demo() -> bulwark::error::BulwarkResult<()> {
 //! let pool = init_dbnexus("postgres://bulwark:bulwark@localhost:5432/bulwark_test").await?;
 //! let repo = DbnexusPostgresUserRepository::new(pool);
-//! let user_id = uuid::Uuid::new_v4().to_string();
-//! repo.create(1, NewUser {
-//!     id: user_id.clone(),
+//! let user_id = repo.create(1, NewUser {
 //!     username: "alice".to_string(),
 //!     password_hash: "hashed".to_string(),
 //!     status: "active".to_string(),

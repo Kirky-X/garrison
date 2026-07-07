@@ -79,7 +79,6 @@ async fn user_repo_create_table_missing() {
         .create(
             TENANT,
             NewUser {
-                id: "550e8400-e29b-41d4-a716-446655440000".to_string(),
                 username: "alice".to_string(),
                 password_hash: "h".to_string(),
                 status: "active".to_string(),
@@ -159,7 +158,6 @@ async fn role_repo_create_table_missing() {
         .create(
             TENANT,
             NewRole {
-                id: "r-1".to_string(),
                 code: "admin".to_string(),
                 name: "Admin".to_string(),
                 description: None,
@@ -222,7 +220,6 @@ async fn perm_repo_create_table_missing() {
     let repo = DbnexusPermissionRepository::new(pool);
     let result = repo
         .create(NewPermission {
-            id: "p-1".to_string(),
             code: "user:read".to_string(),
             name: "Read".to_string(),
             resource_type: None,
@@ -340,7 +337,6 @@ async fn auth_method_repo_create_table_missing() {
         .create(
             TENANT,
             NewAuthMethod {
-                id: "m-1".to_string(),
                 user_id: "u-1".to_string(),
                 method_type: "password".to_string(),
                 external_id: None,
@@ -443,7 +439,6 @@ async fn login_log_repo_create_table_missing() {
         .create(
             TENANT,
             NewLoginLog {
-                id: "log-1".to_string(),
                 user_id: Some("u-1".to_string()),
                 action: "login".to_string(),
                 ip: None,

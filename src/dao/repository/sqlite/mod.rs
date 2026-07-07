@@ -113,9 +113,7 @@ impl UserRepository for DbnexusUserRepository {
     }
 
     async fn create(&self, tenant_id: i64, user: NewUser) -> BulwarkResult<String> {
-        uuid::Uuid::parse_str(&user.id).map_err(|_| {
-            BulwarkError::InvalidParam(format!("user.id must be valid UUID, got: {}", user.id))
-        })?;
+        let id = uuid::Uuid::new_v4().to_string();
         let session =
             self.pool.get_session("admin").await.map_err(|e| {
                 BulwarkError::Dao(format!("app_user create 获取 session 失败: {}", e))
@@ -129,7 +127,7 @@ impl UserRepository for DbnexusUserRepository {
             conn,
             sql,
             vec![
-                v_str(&user.id),
+                v_str(&id),
                 v_str(&user.username),
                 v_str(&user.password_hash),
                 v_str(&user.status),
@@ -139,7 +137,7 @@ impl UserRepository for DbnexusUserRepository {
         conn.execute_raw(stmt)
             .await
             .map_err(|e| BulwarkError::Dao(format!("app_user create 插入失败: {}", e)))?;
-        Ok(user.id)
+        Ok(id)
     }
 
     async fn update(&self, tenant_id: i64, id: &str, user: UpdateUser) -> BulwarkResult<()> {
@@ -308,6 +306,7 @@ impl RoleRepository for DbnexusRoleRepository {
     }
 
     async fn create(&self, tenant_id: i64, role: NewRole) -> BulwarkResult<String> {
+        let id = uuid::Uuid::new_v4().to_string();
         let session =
             self.pool.get_session("admin").await.map_err(|e| {
                 BulwarkError::Dao(format!("app_role create 获取 session 失败: {}", e))
@@ -321,7 +320,7 @@ impl RoleRepository for DbnexusRoleRepository {
             conn,
             sql,
             vec![
-                v_str(&role.id),
+                v_str(&id),
                 v_str(&role.code),
                 v_str(&role.name),
                 v_opt_str(&role.description),
@@ -332,7 +331,7 @@ impl RoleRepository for DbnexusRoleRepository {
         conn.execute_raw(stmt)
             .await
             .map_err(|e| BulwarkError::Dao(format!("app_role create 插入失败: {}", e)))?;
-        Ok(role.id)
+        Ok(id)
     }
 
     async fn update(
@@ -512,6 +511,7 @@ impl PermissionRepository for DbnexusPermissionRepository {
     }
 
     async fn create(&self, permission: NewPermission) -> BulwarkResult<String> {
+        let id = uuid::Uuid::new_v4().to_string();
         let session = self.pool.get_session("admin").await.map_err(|e| {
             BulwarkError::Dao(format!("app_permission create 获取 session 失败: {}", e))
         })?;
@@ -524,7 +524,7 @@ impl PermissionRepository for DbnexusPermissionRepository {
             conn,
             sql,
             vec![
-                v_str(&permission.id),
+                v_str(&id),
                 v_str(&permission.code),
                 v_str(&permission.name),
                 v_opt_str(&permission.resource_type),
@@ -534,7 +534,7 @@ impl PermissionRepository for DbnexusPermissionRepository {
         conn.execute_raw(stmt)
             .await
             .map_err(|e| BulwarkError::Dao(format!("app_permission create 插入失败: {}", e)))?;
-        Ok(permission.id)
+        Ok(id)
     }
 
     async fn update(
@@ -1057,6 +1057,7 @@ impl AuthMethodRepository for DbnexusAuthMethodRepository {
     }
 
     async fn create(&self, tenant_id: i64, method: NewAuthMethod) -> BulwarkResult<String> {
+        let id = uuid::Uuid::new_v4().to_string();
         let session = self.pool.get_session("admin").await.map_err(|e| {
             BulwarkError::Dao(format!("app_auth_method create 获取 session 失败: {}", e))
         })?;
@@ -1072,7 +1073,7 @@ impl AuthMethodRepository for DbnexusAuthMethodRepository {
             conn,
             sql,
             vec![
-                v_str(&method.id),
+                v_str(&id),
                 v_str(&method.user_id),
                 v_str(&method.method_type),
                 v_opt_str(&method.external_id),
@@ -1083,7 +1084,7 @@ impl AuthMethodRepository for DbnexusAuthMethodRepository {
         conn.execute_raw(stmt)
             .await
             .map_err(|e| BulwarkError::Dao(format!("app_auth_method create 插入失败: {}", e)))?;
-        Ok(method.id)
+        Ok(id)
     }
 
     async fn delete(&self, tenant_id: i64, id: &str) -> BulwarkResult<()> {
@@ -1438,6 +1439,7 @@ impl LoginLogRepository for DbnexusLoginLogRepository {
     }
 
     async fn create(&self, tenant_id: i64, log: NewLoginLog) -> BulwarkResult<String> {
+        let id = uuid::Uuid::new_v4().to_string();
         let session = self.pool.get_session("admin").await.map_err(|e| {
             BulwarkError::Dao(format!("app_login_log create 获取 session 失败: {}", e))
         })?;
@@ -1451,7 +1453,7 @@ impl LoginLogRepository for DbnexusLoginLogRepository {
             conn,
             sql,
             vec![
-                v_str(&log.id),
+                v_str(&id),
                 v_opt_str(&log.user_id),
                 v_str(&log.action),
                 v_opt_str(&log.ip),
@@ -1464,7 +1466,7 @@ impl LoginLogRepository for DbnexusLoginLogRepository {
         conn.execute_raw(stmt)
             .await
             .map_err(|e| BulwarkError::Dao(format!("app_login_log create 插入失败: {}", e)))?;
-        Ok(log.id)
+        Ok(id)
     }
 
     async fn list(
@@ -2034,10 +2036,6 @@ mod tests {
         pool
     }
 
-    fn uuid_str() -> String {
-        uuid::Uuid::new_v4().to_string()
-    }
-
     /// R-tenant-isolation-004: Repository SQL 强制 tenant_id 过滤。
     ///
     /// 验证 v0.4.2 已无条件实现的 `WHERE tenant_id = ?` 过滤行为：
@@ -2054,32 +2052,30 @@ mod tests {
         let repo = DbnexusUserRepository::new(pool);
 
         // 在 tenant 42 创建用户
-        let user_42 = uuid_str();
-        repo.create(
-            42,
-            NewUser {
-                id: user_42.clone(),
-                username: "tenant-42-user".to_string(),
-                password_hash: "h".to_string(),
-                status: "active".to_string(),
-            },
-        )
-        .await
-        .expect("create tenant 42 用户应成功");
+        let user_42 = repo
+            .create(
+                42,
+                NewUser {
+                    username: "tenant-42-user".to_string(),
+                    password_hash: "h".to_string(),
+                    status: "active".to_string(),
+                },
+            )
+            .await
+            .expect("create tenant 42 用户应成功");
 
         // 在 tenant 1 创建用户
-        let user_1 = uuid_str();
-        repo.create(
-            1,
-            NewUser {
-                id: user_1.clone(),
-                username: "tenant-1-user".to_string(),
-                password_hash: "h".to_string(),
-                status: "active".to_string(),
-            },
-        )
-        .await
-        .expect("create tenant 1 用户应成功");
+        let user_1 = repo
+            .create(
+                1,
+                NewUser {
+                    username: "tenant-1-user".to_string(),
+                    password_hash: "h".to_string(),
+                    status: "active".to_string(),
+                },
+            )
+            .await
+            .expect("create tenant 1 用户应成功");
 
         // 跨租户 find_by_id：tenant 42 查不到 tenant 1 的用户（SQL 含 WHERE tenant_id = ?）
         let cross = repo.find_by_id(42, &user_1).await.unwrap();
@@ -2121,32 +2117,34 @@ mod tests {
         assert_eq!(row_42.tenant_id, 42, "返回行 tenant_id 应为 42");
     }
 
-    /// C2 校验：create 入口拒绝非 UUID 格式的 user.id。
+    /// create 内部生成合法 UUID v4。
     ///
-    /// 验证 v0.5.1 新增的 UUID 格式校验：
-    /// - 传入 `id: "not-a-uuid"` 调用 create
-    /// - 应返回 `BulwarkError::InvalidParam`，不接触数据库
+    /// 验证 Repository 内部生成 UUID v4 的行为：
+    /// - 调用 create 不传 id
+    /// - 返回值应为合法 UUID v4（parse_str 成功 + version == Random）
     #[tokio::test(flavor = "multi_thread")]
-    async fn create_rejects_non_uuid_id() {
+    async fn create_generates_valid_uuid_v4() {
         let pool = setup_db().await;
         let repo = DbnexusUserRepository::new(pool);
 
-        let result = repo
+        let id = repo
             .create(
                 42,
                 NewUser {
-                    id: "not-a-uuid".to_string(),
-                    username: "x".to_string(),
+                    username: "uuid-test".to_string(),
                     password_hash: "h".to_string(),
                     status: "active".to_string(),
                 },
             )
-            .await;
+            .await
+            .expect("create 应成功并返回 UUID v4");
 
-        assert!(
-            matches!(result, Err(BulwarkError::InvalidParam(_))),
-            "create 应拒绝非 UUID 格式的 id，实际: {:?}",
-            result
+        let parsed = uuid::Uuid::parse_str(&id).expect("返回的 id 应为合法 UUID");
+        assert_eq!(
+            parsed.get_version(),
+            Some(uuid::Version::Random),
+            "返回的 id 应为 UUID v4，实际: {}",
+            id
         );
     }
 }

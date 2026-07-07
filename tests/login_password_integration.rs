@@ -228,7 +228,6 @@ async fn make_logic_with_password() -> Arc<BulwarkLogicDefault> {
     let hasher = Argon2Hasher::new();
     let hash = hasher.hash("secret").unwrap();
     let new_user = NewUser {
-        id: uuid::Uuid::new_v4().to_string(),
         username: "1001".to_string(),
         password_hash: hash,
         status: "active".to_string(),

@@ -99,10 +99,6 @@ async fn setup_db() -> dbnexus::DbPool {
     pool
 }
 
-fn uuid_str() -> String {
-    uuid::Uuid::new_v4().to_string()
-}
-
 // ============================================================================
 // 1. 连接测试
 // ============================================================================
@@ -188,18 +184,17 @@ async fn postgres_user_repository_crud() {
     let pool = setup_db().await;
     let repo = DbnexusPostgresUserRepository::new(pool);
 
-    let user_id = uuid_str();
-    repo.create(
-        TENANT_A,
-        NewUser {
-            id: user_id.clone(),
-            username: "alice_pg".to_string(),
-            password_hash: "hashed_pg".to_string(),
-            status: "active".to_string(),
-        },
-    )
-    .await
-    .expect("create 应成功");
+    let user_id = repo
+        .create(
+            TENANT_A,
+            NewUser {
+                username: "alice_pg".to_string(),
+                password_hash: "hashed_pg".to_string(),
+                status: "active".to_string(),
+            },
+        )
+        .await
+        .expect("create 应成功");
 
     // find_by_id
     let found = repo
@@ -262,19 +257,18 @@ async fn postgres_role_repository_crud() {
     let pool = setup_db().await;
     let repo = DbnexusPostgresRoleRepository::new(pool);
 
-    let role_id = uuid_str();
-    repo.create(
-        TENANT_A,
-        NewRole {
-            id: role_id.clone(),
-            code: "admin_pg".to_string(),
-            name: "Administrator PG".to_string(),
-            description: Some("full access pg".to_string()),
-            is_system: false,
-        },
-    )
-    .await
-    .expect("create role 应成功");
+    let role_id = repo
+        .create(
+            TENANT_A,
+            NewRole {
+                code: "admin_pg".to_string(),
+                name: "Administrator PG".to_string(),
+                description: Some("full access pg".to_string()),
+                is_system: false,
+            },
+        )
+        .await
+        .expect("create role 应成功");
 
     // find_by_code
     let by_code = repo
@@ -338,16 +332,15 @@ async fn postgres_permission_repository_crud() {
     let pool = setup_db().await;
     let repo = DbnexusPostgresPermissionRepository::new(pool);
 
-    let perm_id = uuid_str();
-    repo.create(NewPermission {
-        id: perm_id.clone(),
-        code: "user:read:pg".to_string(),
-        name: "Read User PG".to_string(),
-        resource_type: Some("user".to_string()),
-        action: Some("read".to_string()),
-    })
-    .await
-    .expect("create permission 应成功");
+    let perm_id = repo
+        .create(NewPermission {
+            code: "user:read:pg".to_string(),
+            name: "Read User PG".to_string(),
+            resource_type: Some("user".to_string()),
+            action: Some("read".to_string()),
+        })
+        .await
+        .expect("create permission 应成功");
 
     // find_by_code
     let by_code = repo

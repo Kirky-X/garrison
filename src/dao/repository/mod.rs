@@ -58,8 +58,6 @@ pub struct UserRow {
 /// 新建用户参数。
 #[derive(Debug, Clone)]
 pub struct NewUser {
-    /// 用户 ID（UUID，由调用方生成）。
-    pub id: String,
     /// 用户名。
     pub username: String,
     /// 密码哈希。
@@ -105,8 +103,6 @@ pub struct RoleRow {
 /// 新建角色参数。
 #[derive(Debug, Clone)]
 pub struct NewRole {
-    /// 角色 ID（UUID）。
-    pub id: String,
     /// 角色编码。
     pub code: String,
     /// 角色名。
@@ -139,8 +135,6 @@ pub struct PermissionRow {
 /// 新建权限参数。
 #[derive(Debug, Clone)]
 pub struct NewPermission {
-    /// 权限 ID（UUID）。
-    pub id: String,
     /// 权限编码。
     pub code: String,
     /// 权限名。
@@ -199,8 +193,6 @@ pub struct AuthMethodRow {
 /// 新建认证方式参数。
 #[derive(Debug, Clone)]
 pub struct NewAuthMethod {
-    /// 认证方式 ID（UUID）。
-    pub id: String,
     /// 用户 ID。
     pub user_id: String,
     /// 认证类型。
@@ -277,8 +269,6 @@ pub struct LoginLogRow {
 /// 新建登录日志参数。
 #[derive(Debug, Clone)]
 pub struct NewLoginLog {
-    /// 日志 ID（UUID）。
-    pub id: String,
     /// 用户 ID。
     pub user_id: Option<String>,
     /// 动作。
@@ -936,19 +926,17 @@ mod tests {
     #[test]
     fn new_user_constructs() {
         let new = NewUser {
-            id: "u-001".to_string(),
             username: "alice".to_string(),
             password_hash: "$argon2id$...".to_string(),
             status: "active".to_string(),
         };
-        assert_eq!(new.id, "u-001");
+        assert_eq!(new.username, "alice");
     }
 
     /// NewRole 可构造。
     #[test]
     fn new_role_constructs() {
         let new = NewRole {
-            id: "r-001".to_string(),
             code: "admin".to_string(),
             name: "Administrator".to_string(),
             description: None,
@@ -961,7 +949,6 @@ mod tests {
     #[test]
     fn new_permission_constructs() {
         let new = NewPermission {
-            id: "p-001".to_string(),
             code: "user:read".to_string(),
             name: "Read User".to_string(),
             resource_type: Some("user".to_string()),
@@ -974,7 +961,6 @@ mod tests {
     #[test]
     fn new_auth_method_constructs() {
         let new = NewAuthMethod {
-            id: "am-001".to_string(),
             user_id: "u-001".to_string(),
             method_type: "password".to_string(),
             external_id: None,
@@ -1001,7 +987,6 @@ mod tests {
     #[test]
     fn new_login_log_constructs() {
         let new = NewLoginLog {
-            id: "log-001".to_string(),
             user_id: Some("u-001".to_string()),
             action: "login".to_string(),
             ip: None,
@@ -1313,34 +1298,34 @@ mod tests {
 
         // 4. 插入测试用户
         let tenant_id: i64 = 42;
-        repo.create(
-            tenant_id,
-            NewUser {
-                id: "u-pg-test".to_string(),
-                username: "pg-test-user".to_string(),
-                password_hash: "$argon2id$fake-hash".to_string(),
-                status: "active".to_string(),
-            },
-        )
-        .await
-        .expect("插入测试用户失败");
+        let user_id = repo
+            .create(
+                tenant_id,
+                NewUser {
+                    username: "pg-test-user".to_string(),
+                    password_hash: "$argon2id$fake-hash".to_string(),
+                    status: "active".to_string(),
+                },
+            )
+            .await
+            .expect("插入测试用户失败");
 
         // 5. find_by_id 验证占位符转换（? → $1, $2 在真实 PG 上执行）
         let found = repo
-            .find_by_id(tenant_id, "u-pg-test")
+            .find_by_id(tenant_id, &user_id)
             .await
             .expect("find_by_id 查询失败")
             .expect("测试用户未找到");
 
         // 6. 断言返回数据正确
-        assert_eq!(found.id, "u-pg-test");
+        assert_eq!(found.id, user_id);
         assert_eq!(found.username, "pg-test-user");
         assert_eq!(found.password_hash, "$argon2id$fake-hash");
         assert_eq!(found.status, "active");
         assert_eq!(found.tenant_id, tenant_id);
 
         // 7. 清理
-        repo.delete(tenant_id, "u-pg-test")
+        repo.delete(tenant_id, &user_id)
             .await
             .expect("清理测试数据失败");
     }
