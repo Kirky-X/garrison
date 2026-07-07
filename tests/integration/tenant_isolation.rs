@@ -8,8 +8,6 @@
 //! cargo test --features "tenant-isolation audit-log db-sqlite decision-trace cache-memory" --test tenant_isolation_integration
 //! ```
 
-mod common;
-
 #[cfg(all(
     feature = "tenant-isolation",
     feature = "audit-log",

@@ -9,8 +9,6 @@
 //! cargo test --features "protocol-jwt db-sqlite" --test refresh_token_integration
 //! ```
 
-mod common;
-
 #[cfg(all(feature = "protocol-jwt", feature = "db-sqlite"))]
 mod refresh_token_e2e {
     use bulwark::protocol::jwt::JwtHandler;
