@@ -248,14 +248,17 @@ impl BulwarkFirewallStrategy for RateLimitStrategy {
         // 滑出窗口的时间戳清理
         timestamps.retain(|&t| t > window_start);
 
-        // 剩余数量 >= max_requests → 拦截
-        if timestamps.len() >= self.config.max_requests as usize {
+        // 剩余数量 >= 当前阈值 → 拦截
+        // 使用 current_threshold 而非 max_requests，与 should_challenge 保持一致
+        // （dynamic_threshold=None 时 current_threshold 恒等于 max_requests，行为不变）
+        let threshold = self.current_threshold(ctx).await?;
+        if timestamps.len() >= threshold {
             return Err(BulwarkError::FirewallBlocked(format!(
                 "ratelimit: {} {} 窗口内请求数 {} 达到上限 {}",
                 scope_id,
                 format!("{:?}", self.config.scope).to_lowercase(),
                 timestamps.len(),
-                self.config.max_requests
+                threshold
             )));
         }
 
@@ -614,6 +617,70 @@ mod tests {
             current, 10,
             "持续低流量应触底到 max_requests，实际: {}",
             current
+        );
+    }
+
+    /// T096-7: 动态阈值上调后 check 使用新阈值而非 max_requests（回归测试）。
+    ///
+    /// max_requests=10, dynamic_threshold=Some(20)。先用 adjust_threshold 把阈值推到 20，
+    /// 再调用 check 11 次——若 check 仍用 max_requests=10，第 11 次会被拦截（bug）；
+    /// 修复后 check 应使用 current_threshold=20，第 11 次仍通过。
+    #[tokio::test]
+    async fn check_uses_dynamic_threshold_not_max_requests() {
+        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let config = RateLimitConfig {
+            max_requests: 10,
+            window_seconds: 60,
+            scope: RateLimitScope::Ip,
+            dynamic_threshold: Some(20),
+        };
+        let strategy = RateLimitStrategy::new(config, dao);
+        let ctx = FirewallContext::new("192.168.1.1");
+
+        // 把阈值推到封顶 20
+        let mut current = strategy
+            .current_threshold(&ctx)
+            .await
+            .expect("current_threshold 不应报错");
+        for _ in 0..20 {
+            current = strategy
+                .adjust_threshold(&ctx, current)
+                .await
+                .expect("adjust_threshold 不应报错");
+            if current >= 20 {
+                break;
+            }
+        }
+        assert_eq!(current, 20, "阈值应已上调到 20");
+
+        // 用新阈值 20 的 80%（=16）触发 should_challenge
+        // 先消耗 16 次（应全部通过，因为 16 < 20）
+        for i in 1..=16 {
+            assert!(
+                strategy.check(&ctx).await.is_ok(),
+                "动态阈值=20 时第 {} 次 check 应通过（旧 bug 会在此拦截）",
+                i
+            );
+        }
+
+        // 第 17~20 次仍应通过（20 是阈值，< 20 才通过，==20 时第 20 次的 timestamps.len()=19<20 通过，
+        // 但第 21 次 timestamps.len()=20 >= 20 拦截）
+        // 注意：check 每次成功后追加时间戳，所以第 N 次成功后列表有 N 个时间戳
+        // 第 17 次 check 时列表有 16 个，16 < 20 通过；第 21 次时列表有 20 个，20 >= 20 拦截
+        for i in 17..=20 {
+            assert!(
+                strategy.check(&ctx).await.is_ok(),
+                "动态阈值=20 时第 {} 次 check 应通过",
+                i
+            );
+        }
+
+        // 第 21 次应被拦截（timestamps.len()=20 >= threshold=20）
+        let result = strategy.check(&ctx).await;
+        assert!(
+            matches!(result, Err(BulwarkError::FirewallBlocked(_))),
+            "动态阈值=20 时第 21 次 check 应被拦截，实际: {:?}",
+            result
         );
     }
 }
