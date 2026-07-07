@@ -249,6 +249,12 @@ pub struct KeycloakProvider {
     http: reqwest::Client,
     /// JWKS 公钥缓存（TTL 控制，避免每次验签都拉取）。
     jwks_cache: Arc<RwLock<JwksCache>>,
+    /// PKCE code_verifier（依据 RFC 7636 / D2 设计）。
+    ///
+    /// 由 [`with_pkce`](Self::with_pkce) 设置；`Some` 时 `exchange_code` 改用 PKCE 鉴权
+    /// （请求体追加 `code_verifier`，跳过 `client_secret`）。`client_secret=None` 的
+    /// public client 必须调用 `with_pkce`，否则 `exchange_code` 返回错误。
+    pkce_verifier: Option<String>,
 }
 
 impl KeycloakProvider {
@@ -269,7 +275,36 @@ impl KeycloakProvider {
             config,
             http,
             jwks_cache: Arc::new(RwLock::new(JwksCache::default())),
+            pkce_verifier: None,
         })
+    }
+
+    /// 设置 PKCE code_verifier（依据 RFC 7636 / D2 Keycloak PKCE 设计）。
+    ///
+    /// 调用后，[`exchange_code`](Self::exchange_code) 改用 PKCE 鉴权：
+    /// - 请求体追加 `code_verifier` 字段
+    /// - 跳过 `client_secret` 字段（即使已配置，PKCE 优先级更高）
+    ///
+    /// `client_secret=None` 的 public client 必须调用此方法，否则 `exchange_code`
+    /// 返回 [`BulwarkError::Config`] 错误。
+    ///
+    /// # 参数
+    ///
+    /// - `verifier`: PKCE code_verifier，RFC 7636 §4.1 要求：
+    ///   - 长度 43-128 字符
+    ///   - 仅允许 `[A-Z]/[a-z]/[0-9]/-./_/~`
+    ///
+    /// # 错误
+    ///
+    /// - [`BulwarkError::InvalidParam`]: verifier 长度或字符集不合法（透传自
+    ///   [`OAuth2Client::generate_pkce_challenge`](crate::protocol::oauth2::OAuth2Client::generate_pkce_challenge)）。
+    pub fn with_pkce(mut self, verifier: &str) -> BulwarkResult<Self> {
+        // 复用 OAuth2Client::generate_pkce_challenge 校验 verifier 长度 43-128 + 字符集
+        //（RFC 7636 §4.1）。challenge 值本身不使用（授权服务器在 token endpoint 重新计算并比对
+        // code_verifier 与授权请求中的 code_challenge）。
+        crate::protocol::oauth2::OAuth2Client::generate_pkce_challenge(verifier)?;
+        self.pkce_verifier = Some(verifier.to_string());
+        Ok(self)
     }
 
     /// 从 `/.well-known/openid-configuration` 拉取 OIDC discovery metadata
@@ -401,7 +436,7 @@ impl KeycloakProvider {
     }
 
     /// 用授权码换取 token set
-    ///（依据 spec keycloak-oidc-rp R-keycloak-oidc-rp-004 / RFC 6749 §4.1.3）。
+    ///（依据 spec keycloak-oidc-rp R-keycloak-oidc-rp-004 / RFC 6749 §4.1.3 / RFC 7636 PKCE）。
     ///
     /// # 流程
     ///
@@ -411,13 +446,17 @@ impl KeycloakProvider {
     /// - `code`: 授权码
     /// - `client_id`: [`KeycloakConfig::client_id`]
     /// - `redirect_uri`: [`KeycloakConfig::redirect_uri`]
-    /// - `client_secret`: [`KeycloakConfig::client_secret`]（confidential client 必填，
-    ///   public client 跳过此字段）
+    /// - 鉴权字段（依据 D2 设计，优先级 PKCE > client_secret）：
+    ///   - 调用过 [`with_pkce`](Self::with_pkce)：追加 `code_verifier`，跳过 `client_secret`
+    ///   - 仅配置 `client_secret`：追加 `client_secret`
+    ///   - 两者均无：返回 [`BulwarkError::Config`]（public client 必须使用 PKCE）
     ///
     /// # 错误
     ///
     /// - `BulwarkError::Network`: HTTP 请求失败、非 2xx 状态码或 JSON 解析失败。
     /// - `BulwarkError::InvalidParam`: `code` 为空。
+    /// - `BulwarkError::Config`: `client_secret=None` 且未调用 [`with_pkce`](Self::with_pkce)
+    ///   （public client 必须使用 PKCE 鉴权）。
     pub async fn exchange_code(&self, code: &str) -> BulwarkResult<KeycloakTokenSet> {
         if code.is_empty() {
             return Err(BulwarkError::InvalidParam("code 不可为空".to_string()));
@@ -429,8 +468,20 @@ impl KeycloakProvider {
             ("client_id", &self.config.client_id),
             ("redirect_uri", &self.config.redirect_uri),
         ];
-        if let Some(secret) = &self.config.client_secret {
-            form.push(("client_secret", secret));
+
+        // 鉴权方式选择（依据 D2 设计，优先级 PKCE > client_secret / Rule 12 失败显性化）：
+        // - 设置了 PKCE verifier：使用 code_verifier，跳过 client_secret
+        // - 仅设置了 client_secret：使用 client_secret
+        // - 两者均无：返回错误（public client 必须调用 with_pkce）
+        match (&self.pkce_verifier, &self.config.client_secret) {
+            (Some(verifier), _) => form.push(("code_verifier", verifier.as_str())),
+            (None, Some(secret)) => form.push(("client_secret", secret.as_str())),
+            (None, None) => {
+                return Err(BulwarkError::Config(
+                    "public client（client_secret=None）必须调用 with_pkce 设置 PKCE verifier"
+                        .to_string(),
+                ));
+            },
         }
 
         let url = self.config.token_url();
@@ -832,5 +883,233 @@ mod tests {
                 other
             ),
         }
+    }
+
+    // ========================================================================
+    // T092-T093: KeycloakProvider PKCE (RFC 7636 / D2) Red-Green
+    // ========================================================================
+
+    /// T092 测试 1：`with_pkce` 设置有效 verifier 后，`exchange_code` 请求体包含 `code_verifier`
+    ///（依据 RFC 7636 §4.4 / D2 设计）。
+    ///
+    /// Red 阶段：`with_pkce` 方法体为 `todo!()` → 调用时 panic。
+    /// Green 阶段（T093）：实现 `with_pkce` 后测试通过。
+    ///
+    /// # 测试流程
+    ///
+    /// 1. 构造 `KeycloakConfig`（`client_secret: None`）
+    /// 2. `KeycloakProvider::new(config)?.with_pkce(VALID_VERIFIER)?`
+    /// 3. mock token endpoint 返回 200 + 标准 token set
+    /// 4. 调用 `exchange_code("code").await?`
+    /// 5. 断言返回 `KeycloakTokenSet`
+    /// 6. 断言收到的请求体包含 `code_verifier=`，不包含 `client_secret=`
+    #[tokio::test]
+    async fn keycloak_pkce_flow_succeeds_with_valid_verifier() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/protocol/openid-connect/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "access_token": "at-pkce",
+                "refresh_token": "rt-pkce",
+                "id_token": "it-pkce",
+                "expires_in": 3600,
+            })))
+            .mount(&server)
+            .await;
+
+        let config = KeycloakConfig {
+            base_url: server.uri(),
+            client_id: "bulwark-rp".into(),
+            client_secret: None,
+            redirect_uri: "https://app.example.com/cb".into(),
+        };
+        let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        let provider = KeycloakProvider::new(config)
+            .expect("KeycloakProvider::new 应成功")
+            .with_pkce(verifier)
+            .expect("with_pkce 应成功");
+
+        let token_set = provider
+            .exchange_code("auth_code_123")
+            .await
+            .expect("exchange_code 应返回 Ok");
+        assert_eq!(token_set.access_token, "at-pkce");
+        assert_eq!(token_set.refresh_token, "rt-pkce");
+        assert_eq!(token_set.id_token, "it-pkce");
+        assert_eq!(token_set.expires_in, 3600);
+
+        // 验证请求体包含 code_verifier，不包含 client_secret
+        let received = server.received_requests().await.expect("应收到请求");
+        assert_eq!(received.len(), 1, "应只收到 1 个请求");
+        let body = std::str::from_utf8(&received[0].body).expect("body 应为 UTF-8");
+        assert!(
+            body.contains("code_verifier=dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"),
+            "请求体应包含 code_verifier 字段，实际: {}",
+            body
+        );
+        assert!(
+            !body.contains("client_secret="),
+            "PKCE 流程不应包含 client_secret 字段，实际: {}",
+            body
+        );
+    }
+
+    /// T092 测试 2：`with_pkce` 传入无效 verifier（长度 < 43）返回 `InvalidParam` 错误
+    ///（依据 RFC 7636 §4.1 / D2 设计）。
+    ///
+    /// Red 阶段：`with_pkce` 方法体为 `todo!()` → 调用时 panic（非预期 InvalidParam）。
+    /// Green 阶段（T093）：实现校验后返回 `InvalidParam` 错误。
+    #[test]
+    fn keycloak_pkce_flow_fails_on_invalid_verifier() {
+        let config = KeycloakConfig {
+            base_url: "https://kc.example.com:8443/realms/myrealm".into(),
+            client_id: "bulwark-rp".into(),
+            client_secret: None,
+            redirect_uri: "https://app.example.com/cb".into(),
+        };
+        let provider = KeycloakProvider::new(config).expect("KeycloakProvider::new 应成功");
+
+        // verifier 长度 5 < 43（RFC 7636 §4.1 下限）
+        let result = provider.with_pkce("short");
+        assert!(result.is_err(), "无效 verifier 应返回错误");
+        match result.err() {
+            Some(crate::error::BulwarkError::InvalidParam(msg)) => {
+                assert!(
+                    msg.contains("43") || msg.contains("长度"),
+                    "错误消息应说明长度约束，实际: {}",
+                    msg
+                );
+            },
+            other => panic!("期望 InvalidParam 错误，实际: {:?}", other),
+        }
+    }
+
+    /// T092 测试 3：`client_secret=None` 且未调用 `with_pkce`，`exchange_code` 返回错误
+    ///（依据 D2 设计：client_secret=None 时强制 PKCE / Rule 12 失败显性化）。
+    ///
+    /// Red 阶段：`exchange_code` 现有实现只检查 `client_secret.is_some()`，
+    /// `client_secret=None` 时直接跳过 secret 字段，不返回错误 → 测试失败。
+    /// Green 阶段（T093）：在 `exchange_code` 中校验鉴权方式后测试通过。
+    ///
+    /// # 测试流程
+    ///
+    /// 1. 构造 `KeycloakConfig`（`client_secret: None`）
+    /// 2. 不调用 `with_pkce`
+    /// 3. 调用 `exchange_code("code")`，断言返回 `Err(Config)`
+    #[tokio::test]
+    async fn keycloak_without_client_secret_and_without_pkce_returns_error() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        // 即使挂载了成功的 mock，exchange_code 也应在发送 HTTP 请求前返回错误
+        Mock::given(method("POST"))
+            .and(path("/protocol/openid-connect/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "access_token": "should-not-reach",
+                "refresh_token": "x",
+                "id_token": "x",
+                "expires_in": 3600,
+            })))
+            .mount(&server)
+            .await;
+
+        let config = KeycloakConfig {
+            base_url: server.uri(),
+            client_id: "bulwark-rp".into(),
+            client_secret: None,
+            redirect_uri: "https://app.example.com/cb".into(),
+        };
+        let provider = KeycloakProvider::new(config).expect("KeycloakProvider::new 应成功");
+
+        let result = provider.exchange_code("auth_code_123").await;
+        assert!(result.is_err(), "无 client_secret 且无 PKCE 应返回错误");
+        match result.err() {
+            Some(crate::error::BulwarkError::Config(msg)) => {
+                assert!(
+                    msg.contains("with_pkce") || msg.contains("PKCE"),
+                    "错误消息应提示调用 with_pkce，实际: {}",
+                    msg
+                );
+            },
+            other => panic!("期望 Config 错误，实际: {:?}", other),
+        }
+
+        // 验证未发送 HTTP 请求（鉴权校验应在 HTTP 调用前失败）
+        let received = server.received_requests().await.expect("应能获取请求记录");
+        assert_eq!(
+            received.len(),
+            0,
+            "无鉴权方式时不应发送 HTTP 请求，实际收到 {} 个请求",
+            received.len()
+        );
+    }
+
+    /// T092 测试 4：同时配置 `client_secret` 和 PKCE 时，`exchange_code` 使用 PKCE 鉴权
+    ///（依据 D2 设计：PKCE 优先级高于 client_secret）。
+    ///
+    /// Red 阶段：`with_pkce` 方法体为 `todo!()` → 调用时 panic。
+    /// Green 阶段（T093）：实现 PKCE 优先级逻辑后测试通过。
+    ///
+    /// # 测试流程
+    ///
+    /// 1. 构造 `KeycloakConfig`（`client_secret: Some("secret123")`）
+    /// 2. `with_pkce(VALID_VERIFIER)?`
+    /// 3. mock token endpoint 返回 200
+    /// 4. 调用 `exchange_code("code").await?`
+    /// 5. 断言返回 `KeycloakTokenSet`
+    /// 6. 断言请求体包含 `code_verifier=`，不包含 `client_secret=`
+    #[tokio::test]
+    async fn keycloak_with_pkce_overrides_client_secret_auth() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/protocol/openid-connect/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "access_token": "at-override",
+                "refresh_token": "rt-override",
+                "id_token": "it-override",
+                "expires_in": 1800,
+            })))
+            .mount(&server)
+            .await;
+
+        let config = KeycloakConfig {
+            base_url: server.uri(),
+            client_id: "bulwark-rp".into(),
+            client_secret: Some("secret123".into()),
+            redirect_uri: "https://app.example.com/cb".into(),
+        };
+        let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        let provider = KeycloakProvider::new(config)
+            .expect("KeycloakProvider::new 应成功")
+            .with_pkce(verifier)
+            .expect("with_pkce 应成功");
+
+        let token_set = provider
+            .exchange_code("auth_code_456")
+            .await
+            .expect("exchange_code 应返回 Ok");
+        assert_eq!(token_set.access_token, "at-override");
+
+        // 验证请求体使用 PKCE（code_verifier），不使用 client_secret
+        let received = server.received_requests().await.expect("应收到请求");
+        assert_eq!(received.len(), 1, "应只收到 1 个请求");
+        let body = std::str::from_utf8(&received[0].body).expect("body 应为 UTF-8");
+        assert!(
+            body.contains("code_verifier=dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"),
+            "PKCE 优先：请求体应包含 code_verifier 字段，实际: {}",
+            body
+        );
+        assert!(
+            !body.contains("client_secret="),
+            "PKCE 优先：请求体不应包含 client_secret 字段，实际: {}",
+            body
+        );
     }
 }
