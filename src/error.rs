@@ -894,4 +894,54 @@ mod tests {
             rendered
         );
     }
+
+    // ========================================================================
+    // 覆盖率补充：FirewallBlocked 变体（依据 spec firewall R-firewall-001）
+    // ========================================================================
+
+    /// 验证 FirewallBlocked 变体的 Display 输出包含原始消息。
+    ///
+    /// 覆盖 Display impl 的 FirewallBlocked 分支（i18n 启用时走 fallback_display）。
+    #[test]
+    fn firewall_blocked_variant_display_includes_message() {
+        let err = BulwarkError::FirewallBlocked("IP 1.2.3.4 被拦截".to_string());
+        assert_eq!(err.to_string(), "防火墙拦截: IP 1.2.3.4 被拦截");
+    }
+
+    /// 验证 FirewallBlocked 变体的 response_parts 返回 403 + FIREWALL_BLOCKED。
+    ///
+    /// 覆盖 response_parts 的 FirewallBlocked 分支（行 149）。
+    #[test]
+    fn firewall_blocked_response_parts_returns_403() {
+        let (status, error_code, message, ex_code) =
+            BulwarkError::FirewallBlocked("bruteforce".to_string()).response_parts();
+        assert_eq!(status, 403, "FirewallBlocked 应映射为 403 Forbidden");
+        assert_eq!(error_code, "FIREWALL_BLOCKED");
+        assert_eq!(message, "防火墙拦截");
+        assert!(ex_code.is_none(), "FirewallBlocked 不携带 exception code");
+    }
+
+    /// 验证 FirewallBlocked 变体的 to_json_body 返回正确 JSON（无 code 字段）。
+    #[test]
+    fn firewall_blocked_to_json_body_returns_correct_json() {
+        let err = BulwarkError::FirewallBlocked("ratelimit".to_string());
+        let body = err.to_json_body();
+        assert_eq!(body["error_code"], "FIREWALL_BLOCKED");
+        assert_eq!(body["message"], "防火墙拦截");
+        assert!(
+            body.get("code").is_none(),
+            "FirewallBlocked 不应包含 code 字段"
+        );
+    }
+
+    /// 验证 FirewallBlocked 错误映射为 403 Forbidden（web-axum feature）。
+    #[cfg(feature = "web-axum")]
+    #[test]
+    fn firewall_blocked_error_returns_403() {
+        use axum::http::StatusCode;
+        use axum::response::IntoResponse;
+        let err = BulwarkError::FirewallBlocked("ddos".to_string());
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
 }

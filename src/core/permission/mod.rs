@@ -560,4 +560,38 @@ mod tests {
             result
         );
     }
+
+    // ========================================================================
+    // 覆盖率补充：has_role 空角色 + check_role 错误消息验证
+    // ========================================================================
+
+    /// has_role 空字符串返回 InvalidParam 错误（覆盖行 180）。
+    #[tokio::test]
+    async fn has_role_empty_string_returns_error() {
+        let checker = make_checker();
+        let result = checker.has_role(1001, "").await;
+        assert!(
+            matches!(result, Err(BulwarkError::InvalidParam(ref msg)) if msg.contains("角色字符串不能为空")),
+            "has_role 空字符串应返回 InvalidParam，实际: {:?}",
+            result
+        );
+    }
+
+    /// check_role 未持有角色的错误消息包含 login_id 和 role（覆盖行 124-125 的 format）。
+    #[tokio::test]
+    async fn check_role_deny_message_includes_login_id_and_role() {
+        let checker = make_checker();
+        let result = checker.check_role(1001, "superadmin").await;
+        match result.err() {
+            Some(BulwarkError::NotRole(msg)) => {
+                assert!(msg.contains("1001"), "错误消息应含 login_id，实际: {}", msg);
+                assert!(
+                    msg.contains("superadmin"),
+                    "错误消息应含 role，实际: {}",
+                    msg
+                );
+            },
+            other => panic!("期望 NotRole，实际: {:?}", other),
+        }
+    }
 }

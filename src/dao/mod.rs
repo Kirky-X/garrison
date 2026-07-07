@@ -1638,4 +1638,58 @@ pub mod tests {
         let result = dao.rename("nonexistent", "new_key").await;
         assert!(matches!(result, Err(BulwarkError::InvalidParam(_))));
     }
+
+    // ========================================================================
+    // 覆盖率补充：社交账号绑定关系默认实现（依据 spec social-login R-social-login-004）
+    // ========================================================================
+
+    /// `find_social_binding` 默认实现返回 `NotImplemented`（BulwarkDao 是 KV 缓存抽象，不支持 SQL）。
+    ///
+    /// 覆盖 trait 默认实现（行 208-218）。
+    #[tokio::test]
+    async fn default_find_social_binding_returns_not_implemented() {
+        let dao = MinimalDao::new();
+        let result = dao.find_social_binding(0, "wechat", "wx_openid").await;
+        assert!(
+            matches!(result, Err(BulwarkError::NotImplemented(ref msg)) if msg.contains("find_social_binding")),
+            "find_social_binding 默认实现应返回 NotImplemented，实际: {:?}",
+            result
+        );
+    }
+
+    /// `insert_social_binding` 默认实现返回 `NotImplemented`。
+    ///
+    /// 覆盖 trait 默认实现（行 236-249）。
+    #[tokio::test]
+    async fn default_insert_social_binding_returns_not_implemented() {
+        let dao = MinimalDao::new();
+        let result = dao
+            .insert_social_binding(0, 1001, "wechat", "wx_openid", None, 1700000000)
+            .await;
+        assert!(
+            matches!(result, Err(BulwarkError::NotImplemented(ref msg)) if msg.contains("insert_social_binding")),
+            "insert_social_binding 默认实现应返回 NotImplemented，实际: {:?}",
+            result
+        );
+    }
+
+    /// `get_and_delete` 默认实现（非原子 get → delete）在键存在时返回值并删除。
+    ///
+    /// 覆盖 trait 默认实现（行 182-188）。
+    #[tokio::test]
+    async fn default_get_and_delete_returns_value_and_removes_key() {
+        let dao = MinimalDao::new();
+        dao.set("k1", "v1", 60).await.unwrap();
+        let val = dao.get_and_delete("k1").await.unwrap();
+        assert_eq!(val, Some("v1".to_string()));
+        assert!(dao.get("k1").await.unwrap().is_none());
+    }
+
+    /// `get_and_delete` 默认实现对不存在的键返回 None 且不报错。
+    #[tokio::test]
+    async fn default_get_and_delete_missing_key_returns_none() {
+        let dao = MinimalDao::new();
+        let val = dao.get_and_delete("nope").await.unwrap();
+        assert!(val.is_none());
+    }
 }

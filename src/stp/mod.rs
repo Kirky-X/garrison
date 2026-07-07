@@ -1759,6 +1759,32 @@ mod tests {
         BulwarkLogicDefault::new(session, Arc::new(config), firewall)
     }
 
+    /// 辅助函数：创建 BulwarkLogicDefault 实例并返回 dao 引用（用于测试中操作 dao 内部状态）。
+    fn make_logic_with_dao(
+        timeout: u64,
+        active_timeout: u64,
+        throw_on_not_login: bool,
+        token_style: &str,
+        has_permission: bool,
+        has_role: bool,
+    ) -> (Arc<MockDao>, BulwarkLogicDefault) {
+        let dao = Arc::new(MockDao::new());
+        let session = Arc::new(BulwarkSession::new(
+            dao.clone() as Arc<dyn BulwarkDao>,
+            timeout,
+            active_timeout,
+        ));
+        let mut config = BulwarkConfig::default_config();
+        config.throw_on_not_login = throw_on_not_login;
+        config.token_style = token_style.to_string();
+        let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
+            has_permission,
+            has_role,
+        });
+        let logic = BulwarkLogicDefault::new(session, Arc::new(config), firewall);
+        (dao, logic)
+    }
+
     /// 辅助函数：在当前 task_local 设置 token 后执行 future。
     async fn with_token<R>(token: &str, f: impl std::future::Future<Output = R>) -> R {
         with_current_token(token.to_string(), f).await
@@ -3717,5 +3743,293 @@ mod tests {
             "trait default login_with_password 应返回 NotImplemented（需 secure-password + db-sqlite），实际: {:?}",
             result
         );
+    }
+
+    // ========================================================================
+    // 覆盖率补充：SessionTimeout 广播 + metrics + 全局函数
+    // ========================================================================
+
+    /// check_login_mixin 在 token 无效且 listener_manager 注入时广播 SessionTimeout 事件。
+    ///
+    /// 覆盖 check_login_mixin 的 listener 分支（行 749-751, 753）。
+    /// 触发条件：account session 不存在 → is_valid 返回 false，但 token session 仍存在。
+    #[tokio::test]
+    async fn check_login_mixin_broadcasts_session_timeout_when_account_missing() {
+        let (dao, logic) = make_logic_with_dao(3600, 86400, false, "uuid", true, true);
+        let token = logic.login(1001).await.unwrap();
+
+        // 删除 account session，使 is_valid 返回 false（token session 仍存在）
+        dao.delete("session:account:1001").await.unwrap();
+
+        // 注入 listener_manager（Mixin 模式为默认）
+        #[cfg(feature = "listener")]
+        let logic = logic.with_listener_manager(Arc::new(BulwarkListenerManager::new()));
+
+        // check_login 应返回 false（不 panic，listener 广播作为副作用执行）
+        with_current_token(token, async {
+            let valid = logic.check_login().await.unwrap();
+            assert!(!valid, "account session 不存在时 check_login 应返回 false");
+        })
+        .await;
+    }
+
+    /// check_login_simple 在 token 无效且 listener_manager 注入时广播 SessionTimeout 事件。
+    ///
+    /// 覆盖 check_login_simple 的 listener 分支（行 774-777, 779）。
+    #[tokio::test]
+    async fn check_login_simple_broadcasts_session_timeout_when_account_missing() {
+        let (dao, logic) = make_logic_with_dao(3600, 86400, false, "uuid", true, true);
+        let logic = logic.with_jwt_mode(JwtMode::Simple);
+        let token = logic.login(1001).await.unwrap();
+
+        // 删除 account session，使 is_valid 返回 false（token session 仍存在）
+        dao.delete("session:account:1001").await.unwrap();
+
+        // 注入 listener_manager
+        #[cfg(feature = "listener")]
+        let logic = logic.with_listener_manager(Arc::new(BulwarkListenerManager::new()));
+
+        with_current_token(token, async {
+            let valid = logic.check_login().await.unwrap();
+            assert!(!valid, "account session 不存在时 check_login 应返回 false");
+        })
+        .await;
+    }
+
+    /// check_permission 未登录时 emit metrics record_permission_query(false)。
+    ///
+    /// 覆盖行 914（metrics-prometheus feature）。
+    #[cfg(feature = "metrics-prometheus")]
+    #[tokio::test]
+    #[serial]
+    async fn check_permission_not_logged_in_emits_deny_metric() {
+        use crate::observability::BulwarkMetrics;
+        let registry = prometheus::Registry::new();
+        let metrics = Arc::new(BulwarkMetrics::register_to(&registry).expect("注册失败"));
+        let logic = make_logic(3600, 86400, false, "uuid", true, true).with_metrics(metrics);
+
+        // 未登录状态下 check_permission（throw_on_not_login=false → 返回 NotPermission）
+        let result = logic.check_permission("user:read").await;
+        assert!(matches!(result, Err(BulwarkError::NotPermission(_))));
+
+        // 验证 metrics 记录了 deny
+        let output = prometheus::TextEncoder::new()
+            .encode_to_string(&registry.gather())
+            .expect("encode 失败");
+        assert!(
+            output.contains("bulwark_permission_query_total{result=\"deny\"}"),
+            "未登录 check_permission 应 emit deny metric，实际: {}",
+            output
+        );
+    }
+
+    /// check_permission 已登录 + permission_checker 注入时 emit metrics record_permission_query(allowed)。
+    ///
+    /// 覆盖行 948（metrics-prometheus feature + permission_checker 路径）。
+    #[cfg(feature = "metrics-prometheus")]
+    #[tokio::test]
+    #[serial]
+    async fn check_permission_with_checker_emits_metric() {
+        use crate::core::permission::PermissionCheckerDefault;
+        use crate::observability::BulwarkMetrics;
+
+        /// 本测试专用 mock，账号 1001 持有 user:read 权限。
+        struct MockInterfaceWithPerms;
+        #[async_trait]
+        impl BulwarkInterface for MockInterfaceWithPerms {
+            async fn get_permission_list(&self, _login_id: i64) -> BulwarkResult<Vec<String>> {
+                Ok(vec!["user:read".to_string()])
+            }
+            async fn get_role_list(&self, _login_id: i64) -> BulwarkResult<Vec<String>> {
+                Ok(vec![])
+            }
+        }
+
+        let registry = prometheus::Registry::new();
+        let metrics = Arc::new(BulwarkMetrics::register_to(&registry).expect("注册失败"));
+
+        // 使用 PermissionCheckerDefault（账号 1001 持有 user:read）
+        let interface: Arc<dyn BulwarkInterface> = Arc::new(MockInterfaceWithPerms);
+        let checker = Arc::new(PermissionCheckerDefault::new(interface));
+
+        let logic = make_logic(3600, 86400, false, "uuid", true, true)
+            .with_metrics(metrics)
+            .with_permission_checker(checker);
+
+        let token = logic.login(1001).await.unwrap();
+        with_current_token(token, async {
+            // check_permission 持有权限 → Ok(()) + emit allow metric
+            let result = logic.check_permission("user:read").await;
+            assert!(result.is_ok());
+        })
+        .await;
+
+        let output = prometheus::TextEncoder::new()
+            .encode_to_string(&registry.gather())
+            .expect("encode 失败");
+        assert!(
+            output.contains("bulwark_permission_query_total{result=\"allow\"}"),
+            "持有权限应 emit allow metric，实际: {}",
+            output
+        );
+    }
+
+    /// check_role 未登录时 emit metrics record_role_query(false)。
+    ///
+    /// 覆盖行 980（metrics-prometheus feature）。
+    #[cfg(feature = "metrics-prometheus")]
+    #[tokio::test]
+    #[serial]
+    async fn check_role_not_logged_in_emits_deny_metric() {
+        use crate::observability::BulwarkMetrics;
+        let registry = prometheus::Registry::new();
+        let metrics = Arc::new(BulwarkMetrics::register_to(&registry).expect("注册失败"));
+        let logic = make_logic(3600, 86400, false, "uuid", true, true).with_metrics(metrics);
+
+        // 未登录状态下 check_role
+        let result = logic.check_role("admin").await;
+        assert!(matches!(result, Err(BulwarkError::NotRole(_))));
+
+        let output = prometheus::TextEncoder::new()
+            .encode_to_string(&registry.gather())
+            .expect("encode 失败");
+        assert!(
+            output.contains("bulwark_role_query_total{result=\"deny\"}"),
+            "未登录 check_role 应 emit deny metric，实际: {}",
+            output
+        );
+    }
+
+    /// check_role 已登录时 emit metrics record_role_query(has_role)。
+    ///
+    /// 覆盖行 995（metrics-prometheus feature）。
+    #[cfg(feature = "metrics-prometheus")]
+    #[tokio::test]
+    #[serial]
+    async fn check_role_logged_in_emits_metric() {
+        use crate::observability::BulwarkMetrics;
+        let registry = prometheus::Registry::new();
+        let metrics = Arc::new(BulwarkMetrics::register_to(&registry).expect("注册失败"));
+        let logic = make_logic(3600, 86400, false, "uuid", true, true).with_metrics(metrics);
+
+        let token = logic.login(1001).await.unwrap();
+        with_current_token(token, async {
+            // check_role（MockFirewall.has_role=true → Ok(())）
+            let result = logic.check_role("admin").await;
+            assert!(result.is_ok());
+        })
+        .await;
+
+        let output = prometheus::TextEncoder::new()
+            .encode_to_string(&registry.gather())
+            .expect("encode 失败");
+        assert!(
+            output.contains("bulwark_role_query_total{result=\"allow\"}"),
+            "持有角色应 emit allow metric，实际: {}",
+            output
+        );
+    }
+
+    /// BulwarkUtil::revoke_token 全局函数成功销毁会话。
+    ///
+    /// 覆盖行 1381-1384（revoke_token 全局函数委托 BulwarkManager::logic()）。
+    #[tokio::test]
+    #[serial]
+    async fn util_revoke_token_destroys_session() {
+        init_global_manager(false);
+        let token = BulwarkUtil::login(1001).await.unwrap();
+
+        // revoke_token 应成功
+        BulwarkUtil::revoke_token(&token).await.unwrap();
+
+        // 验证 token session 已销毁
+        let valid = with_token(&token, async { BulwarkUtil::check_login().await })
+            .await
+            .unwrap();
+        assert!(!valid, "revoke_token 后 check_login 应返回 false");
+    }
+
+    /// BulwarkUtil::login_by_token 全局函数在初始化后不返回 Session 错误。
+    ///
+    /// 覆盖行 1565-1566（login_by_token 全局函数委托 BulwarkManager::logic()）。
+    /// uuid style token 无法 verify → 返回 InvalidToken（而非 Session "未初始化"）。
+    #[tokio::test]
+    #[serial]
+    async fn util_login_by_token_delegates_to_logic_after_init() {
+        init_global_manager(false);
+        // uuid style token → verify_token 返回 InvalidToken
+        let result = BulwarkUtil::login_by_token("any-token").await;
+        assert!(
+            !matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("未初始化")),
+            "初始化后 login_by_token 不应返回 '未初始化' Session 错误，实际: {:?}",
+            result
+        );
+    }
+
+    // ------------------------------------------------------------------------
+    // 覆盖率补充：check_access_token / check_client_token / check_temp_token
+    // ------------------------------------------------------------------------
+
+    /// check_access_token 未登录时返回 NotLogin（覆盖 trait 默认实现 Err 路径）。
+    #[tokio::test]
+    async fn check_access_token_not_logged_in_returns_not_login() {
+        let logic = make_logic(3600, 86400, false, "uuid", true, true);
+        let result = logic.check_access_token().await;
+        assert!(
+            matches!(result, Err(BulwarkError::NotLogin(_))),
+            "未登录时 check_access_token 应返回 NotLogin，实际: {:?}",
+            result
+        );
+    }
+
+    /// check_client_token 未登录时返回 NotLogin。
+    #[tokio::test]
+    async fn check_client_token_not_logged_in_returns_not_login() {
+        let logic = make_logic(3600, 86400, false, "uuid", true, true);
+        let result = logic.check_client_token().await;
+        assert!(
+            matches!(result, Err(BulwarkError::NotLogin(_))),
+            "未登录时 check_client_token 应返回 NotLogin，实际: {:?}",
+            result
+        );
+    }
+
+    /// check_temp_token 未登录时返回 NotLogin。
+    #[tokio::test]
+    async fn check_temp_token_not_logged_in_returns_not_login() {
+        let logic = make_logic(3600, 86400, false, "uuid", true, true);
+        let result = logic.check_temp_token().await;
+        assert!(
+            matches!(result, Err(BulwarkError::NotLogin(_))),
+            "未登录时 check_temp_token 应返回 NotLogin，实际: {:?}",
+            result
+        );
+    }
+
+    /// BulwarkUtil::check_access_token 全局函数委托到 logic（覆盖行 1484-1487）。
+    #[tokio::test]
+    #[serial]
+    async fn util_check_access_token_delegates_to_logic() {
+        init_global_manager(false);
+        let result = BulwarkUtil::check_access_token().await;
+        assert!(result.is_err());
+    }
+
+    /// BulwarkUtil::check_client_token 全局函数委托到 logic（覆盖行 1500-1503）。
+    #[tokio::test]
+    #[serial]
+    async fn util_check_client_token_delegates_to_logic() {
+        init_global_manager(false);
+        let result = BulwarkUtil::check_client_token().await;
+        assert!(result.is_err());
+    }
+
+    /// BulwarkUtil::check_temp_token 全局函数委托到 logic（覆盖行 1516-1519）。
+    #[tokio::test]
+    #[serial]
+    async fn util_check_temp_token_delegates_to_logic() {
+        init_global_manager(false);
+        let result = BulwarkUtil::check_temp_token().await;
+        assert!(result.is_err());
     }
 }

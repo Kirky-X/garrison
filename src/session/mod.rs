@@ -648,6 +648,7 @@ impl BulwarkSession {
 mod tests {
     use super::*;
     use crate::dao::tests::MockDao;
+    use async_trait::async_trait;
     use std::time::Duration;
 
     /// 辅助函数：创建带 MockDao 的 BulwarkSession。
@@ -1546,5 +1547,69 @@ mod tests {
         let mgr = Arc::new(BulwarkListenerManager::new());
         let session = BulwarkSession::new(dao, 3600, 86400).with_listener_manager(mgr);
         assert!(session.listener_manager.is_some());
+    }
+
+    // ------------------------------------------------------------------------
+    // 覆盖率补充：SSO ticket 删除失败 warn 路径
+    // ------------------------------------------------------------------------
+
+    /// 测试用 DAO wrapper，在 delete 特定 key 时返回错误。
+    ///
+    /// 用于测试 logout 联动删除 SSO ticket 失败时的 warn 日志路径（行 528）。
+    struct FailingDeleteDao {
+        inner: Arc<MockDao>,
+        fail_delete_key: String,
+    }
+
+    #[async_trait]
+    impl BulwarkDao for FailingDeleteDao {
+        async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
+            self.inner.get(key).await
+        }
+        async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> BulwarkResult<()> {
+            self.inner.set(key, value, ttl_seconds).await
+        }
+        async fn update(&self, key: &str, value: &str) -> BulwarkResult<()> {
+            self.inner.update(key, value).await
+        }
+        async fn expire(&self, key: &str, seconds: u64) -> BulwarkResult<()> {
+            self.inner.expire(key, seconds).await
+        }
+        async fn delete(&self, key: &str) -> BulwarkResult<()> {
+            if key == self.fail_delete_key {
+                return Err(BulwarkError::Dao("模拟删除失败".to_string()));
+            }
+            self.inner.delete(key).await
+        }
+    }
+
+    /// logout 联动删除 SSO ticket 失败时记录 warn 但不中断主流程。
+    ///
+    /// 覆盖行 528（SSO ticket 删除失败的 warn 日志路径）。
+    /// 依据 design Decision 6: plugin/listener/集成失败不中断主流程。
+    #[tokio::test]
+    async fn logout_sso_ticket_delete_failure_logs_warn_without_failing() {
+        let inner = Arc::new(MockDao::new());
+        let dao: Arc<dyn BulwarkDao> = Arc::new(FailingDeleteDao {
+            inner: inner.clone(),
+            fail_delete_key: "bulwark:sso:ticket:ticket-fail".to_string(),
+        });
+        let session = BulwarkSession::new(dao, 3600, 86400);
+
+        // login 并关联 SSO ticket
+        session.create(1001, "T1").await.unwrap();
+        session.link_sso_ticket("T1", "ticket-fail").await.unwrap();
+
+        // logout 应成功（SSO ticket 删除失败仅 warn 不中断主流程）
+        let result = session.logout("T1").await;
+        assert!(
+            result.is_ok(),
+            "logout 不应因 SSO ticket 删除失败而中断: {:?}",
+            result
+        );
+
+        // Token-Session 应已删除
+        let ts = session.get_token_session("T1").await.unwrap();
+        assert!(ts.is_none(), "logout 后 Token-Session 应已删除");
     }
 }
