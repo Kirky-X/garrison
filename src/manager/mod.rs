@@ -25,7 +25,7 @@
 //! BulwarkManager::init(dao, config, interface).unwrap();
 //!
 //! // 3. 使用静态 API（task_local 上下文由 middleware 设置）
-//! let token = BulwarkUtil::login(1001).await.unwrap();
+//! let token = BulwarkUtil::login("1001").await.unwrap();
 //! ```
 
 use crate::config::BulwarkConfig;
@@ -413,8 +413,8 @@ mod tests {
     // ------------------------------------------------------------------------
 
     struct MockInterface {
-        permissions: HashMap<i64, Vec<String>>,
-        roles: HashMap<i64, Vec<String>>,
+        permissions: HashMap<String, Vec<String>>,
+        roles: HashMap<String, Vec<String>>,
     }
 
     impl MockInterface {
@@ -425,27 +425,31 @@ mod tests {
             }
         }
 
-        fn with_permission(mut self, login_id: i64, perms: &[&str]) -> Self {
-            self.permissions
-                .insert(login_id, perms.iter().map(|s| s.to_string()).collect());
+        fn with_permission(mut self, login_id: &str, perms: &[&str]) -> Self {
+            self.permissions.insert(
+                login_id.to_string(),
+                perms.iter().map(|s| s.to_string()).collect(),
+            );
             self
         }
 
-        fn with_role(mut self, login_id: i64, roles: &[&str]) -> Self {
-            self.roles
-                .insert(login_id, roles.iter().map(|s| s.to_string()).collect());
+        fn with_role(mut self, login_id: &str, roles: &[&str]) -> Self {
+            self.roles.insert(
+                login_id.to_string(),
+                roles.iter().map(|s| s.to_string()).collect(),
+            );
             self
         }
     }
 
     #[async_trait]
     impl BulwarkInterface for MockInterface {
-        async fn get_permission_list(&self, login_id: i64) -> BulwarkResult<Vec<String>> {
-            Ok(self.permissions.get(&login_id).cloned().unwrap_or_default())
+        async fn get_permission_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+            Ok(self.permissions.get(login_id).cloned().unwrap_or_default())
         }
 
-        async fn get_role_list(&self, login_id: i64) -> BulwarkResult<Vec<String>> {
-            Ok(self.roles.get(&login_id).cloned().unwrap_or_default())
+        async fn get_role_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+            Ok(self.roles.get(login_id).cloned().unwrap_or_default())
         }
     }
 
@@ -563,7 +567,7 @@ mod tests {
         assert!(BulwarkManager::is_initialized());
 
         // login
-        let token = BulwarkUtil::login(1001).await.unwrap();
+        let token = BulwarkUtil::login("1001").await.unwrap();
         assert!(!token.is_empty());
 
         // check_login
@@ -598,10 +602,10 @@ mod tests {
         let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
         let config = Arc::new(make_config());
         let interface: Arc<dyn BulwarkInterface> =
-            Arc::new(MockInterface::new().with_permission(1001, &["user:read", "user:write"]));
+            Arc::new(MockInterface::new().with_permission("1001", &["user:read", "user:write"]));
         BulwarkManager::init(dao, config, interface).unwrap();
 
-        let token = BulwarkUtil::login(1001).await.unwrap();
+        let token = BulwarkUtil::login("1001").await.unwrap();
 
         // 持有权限
         let check_result = with_token(token.clone(), async {
@@ -636,10 +640,10 @@ mod tests {
         let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
         let config = Arc::new(make_config());
         let interface: Arc<dyn BulwarkInterface> =
-            Arc::new(MockInterface::new().with_role(1001, &["admin"]));
+            Arc::new(MockInterface::new().with_role("1001", &["admin"]));
         BulwarkManager::init(dao, config, interface).unwrap();
 
-        let token = BulwarkUtil::login(1001).await.unwrap();
+        let token = BulwarkUtil::login("1001").await.unwrap();
 
         // 持有角色
         let check_result = with_token(token.clone(), async {
@@ -671,7 +675,7 @@ mod tests {
     #[serial]
     async fn util_login_fails_when_not_initialized() {
         BulwarkManager::reset_for_test();
-        let result = BulwarkUtil::login(1001).await;
+        let result = BulwarkUtil::login("1001").await;
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
@@ -743,7 +747,7 @@ mod tests {
             permission_checker: None,
         };
         let logic = bulwark_logic_factory_default(session, config, firewall, &ctx).unwrap();
-        let token = logic.login(1001).await.unwrap();
+        let token = logic.login("1001").await.unwrap();
         assert!(!token.is_empty());
     }
 
@@ -775,7 +779,7 @@ mod tests {
         assert!(BulwarkManager::is_initialized());
 
         // 验证 login 仍可正常工作
-        let token = BulwarkUtil::login(1001).await.unwrap();
+        let token = BulwarkUtil::login("1001").await.unwrap();
         assert!(!token.is_empty());
 
         BulwarkManager::reset_for_test();
@@ -854,7 +858,7 @@ mod tests {
         assert!(BulwarkManager::is_initialized());
 
         // 验证 login 仍可正常工作
-        let token = BulwarkUtil::login(1001).await.unwrap();
+        let token = BulwarkUtil::login("1001").await.unwrap();
         assert!(!token.is_empty());
 
         BulwarkManager::reset_for_test();
@@ -942,7 +946,7 @@ mod tests {
         struct CustomLogin;
         #[async_trait]
         impl LoginHandler for CustomLogin {
-            async fn handle_login(&self, id: i64) -> BulwarkResult<String> {
+            async fn handle_login(&self, id: &str) -> BulwarkResult<String> {
                 Ok(format!("custom-{}", id))
             }
         }
@@ -956,7 +960,7 @@ mod tests {
         // 验证替换后使用自定义策略
         let strategy = BulwarkManager::strategy().unwrap();
         let login_handler = strategy.read().login_handler().clone();
-        let token = login_handler.handle_login(1001).await.unwrap();
+        let token = login_handler.handle_login("1001").await.unwrap();
         assert_eq!(token, "custom-1001", "with_strategy 后应使用自定义策略");
 
         BulwarkManager::reset_for_test();
@@ -977,14 +981,14 @@ mod tests {
         // 替换前：默认策略生成 token（先 clone Arc 再 await，避免跨 await 持锁）
         let strategy = BulwarkManager::strategy().unwrap();
         let default_handler = strategy.read().login_handler().clone();
-        let default_token = default_handler.handle_login(1001).await.unwrap();
+        let default_token = default_handler.handle_login("1001").await.unwrap();
         assert!(!default_token.is_empty());
 
         // 运行时替换
         struct CustomLogin;
         #[async_trait]
         impl LoginHandler for CustomLogin {
-            async fn handle_login(&self, id: i64) -> BulwarkResult<String> {
+            async fn handle_login(&self, id: &str) -> BulwarkResult<String> {
                 Ok(format!("runtime-{}", id))
             }
         }
@@ -994,7 +998,7 @@ mod tests {
 
         // 替换后立即生效（先 clone Arc 再 await）
         let custom_handler = strategy.read().login_handler().clone();
-        let token = custom_handler.handle_login(1001).await.unwrap();
+        let token = custom_handler.handle_login("1001").await.unwrap();
         assert_eq!(token, "runtime-1001", "运行时替换策略后应立即生效");
 
         BulwarkManager::reset_for_test();

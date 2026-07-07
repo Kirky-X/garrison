@@ -128,7 +128,7 @@ pub struct AuditEntry {
     /// 事件类型（如 "login" / "logout" / "kickout"）。
     pub event_type: String,
     /// 登录主体标识（部分事件无 login_id）。
-    pub login_id: Option<i64>,
+    pub login_id: Option<String>,
     /// 关联 token（可选）。
     pub token: Option<String>,
     /// 客户端 IP（可选）。
@@ -225,7 +225,7 @@ impl AuditLogListener {
             } => AuditEntry {
                 tenant_id,
                 event_type: "login".to_string(),
-                login_id: Some(*login_id),
+                login_id: Some(login_id.clone()),
                 token: Some(token.clone()),
                 ip: None,
                 user_agent: None,
@@ -236,7 +236,7 @@ impl AuditLogListener {
             BulwarkEvent::Logout { login_id, token } => AuditEntry {
                 tenant_id,
                 event_type: "logout".to_string(),
-                login_id: Some(*login_id),
+                login_id: Some(login_id.clone()),
                 token: Some(token.clone()),
                 ip: None,
                 user_agent: None,
@@ -251,7 +251,7 @@ impl AuditLogListener {
             } => AuditEntry {
                 tenant_id,
                 event_type: "kickout".to_string(),
-                login_id: Some(*login_id),
+                login_id: Some(login_id.clone()),
                 token: Some(token.clone()),
                 ip: None,
                 user_agent: None,
@@ -265,7 +265,7 @@ impl AuditLogListener {
             } => AuditEntry {
                 tenant_id,
                 event_type: "permission_check".to_string(),
-                login_id: Some(*login_id),
+                login_id: Some(login_id.clone()),
                 token: None,
                 ip: None,
                 user_agent: None,
@@ -276,7 +276,7 @@ impl AuditLogListener {
             BulwarkEvent::RoleCheck { login_id, role } => AuditEntry {
                 tenant_id,
                 event_type: "role_check".to_string(),
-                login_id: Some(*login_id),
+                login_id: Some(login_id.clone()),
                 token: None,
                 ip: None,
                 user_agent: None,
@@ -298,7 +298,7 @@ impl AuditLogListener {
             BulwarkEvent::LoginFailure { login_id, reason } => AuditEntry {
                 tenant_id,
                 event_type: "login_failure".to_string(),
-                login_id: Some(*login_id),
+                login_id: Some(login_id.clone()),
                 token: None,
                 ip: None,
                 user_agent: None,
@@ -313,7 +313,7 @@ impl AuditLogListener {
             } => AuditEntry {
                 tenant_id,
                 event_type: "token_refresh".to_string(),
-                login_id: Some(*login_id),
+                login_id: Some(login_id.clone()),
                 token: Some(new_token.clone()),
                 ip: None,
                 user_agent: None,
@@ -335,7 +335,7 @@ impl AuditLogListener {
             BulwarkEvent::SessionTimeout { login_id, token } => AuditEntry {
                 tenant_id,
                 event_type: "session_timeout".to_string(),
-                login_id: Some(*login_id),
+                login_id: Some(login_id.clone()),
                 token: Some(token.clone()),
                 ip: None,
                 user_agent: None,
@@ -346,7 +346,7 @@ impl AuditLogListener {
             BulwarkEvent::AccountLocked { login_id, reason } => AuditEntry {
                 tenant_id,
                 event_type: "account_locked".to_string(),
-                login_id: Some(*login_id),
+                login_id: Some(login_id.clone()),
                 token: None,
                 ip: None,
                 user_agent: None,
@@ -357,7 +357,7 @@ impl AuditLogListener {
             BulwarkEvent::FirewallBlock { login_id, reason } => AuditEntry {
                 tenant_id,
                 event_type: "firewall_block".to_string(),
-                login_id: Some(*login_id),
+                login_id: Some(login_id.clone()),
                 token: None,
                 ip: None,
                 user_agent: None,
@@ -394,7 +394,7 @@ impl AuditLogListener {
             } => AuditEntry {
                 tenant_id,
                 event_type: "social_login".to_string(),
-                login_id: *login_id,
+                login_id: login_id.clone(),
                 token: None,
                 ip: None,
                 user_agent: None,
@@ -412,7 +412,7 @@ impl AuditLogListener {
             } => AuditEntry {
                 tenant_id,
                 event_type: "tenant_switch".to_string(),
-                login_id: Some(*login_id),
+                login_id: Some(login_id.clone()),
                 token: None,
                 ip: None,
                 user_agent: None,
@@ -426,7 +426,7 @@ impl AuditLogListener {
             BulwarkEvent::DeviceBlock { login_id, device } => AuditEntry {
                 tenant_id,
                 event_type: "device_block".to_string(),
-                login_id: Some(*login_id),
+                login_id: Some(login_id.clone()),
                 token: None,
                 ip: None,
                 user_agent: None,
@@ -437,7 +437,7 @@ impl AuditLogListener {
             BulwarkEvent::DeviceUnblock { login_id, device } => AuditEntry {
                 tenant_id,
                 event_type: "device_unblock".to_string(),
-                login_id: Some(*login_id),
+                login_id: Some(login_id.clone()),
                 token: None,
                 ip: None,
                 user_agent: None,
@@ -534,7 +534,7 @@ impl AuditLogListener {
             vec![
                 Value::BigInt(Some(entry.tenant_id)),
                 Value::String(Some(entry.event_type.clone())),
-                Value::BigInt(entry.login_id),
+                Value::String(entry.login_id.clone()),
                 Value::String(entry.token.clone()),
                 Value::String(entry.ip.clone()),
                 Value::String(entry.user_agent.clone()),
@@ -607,7 +607,7 @@ impl AuditLogListener {
                 let event_type: String = row.try_get("", "event_type").map_err(|e| {
                     BulwarkError::Dao(format!("audit_logs 行解析失败 (event_type): {}", e))
                 })?;
-                let login_id: Option<i64> = row.try_get("", "login_id").map_err(|e| {
+                let login_id: Option<String> = row.try_get("", "login_id").map_err(|e| {
                     BulwarkError::Dao(format!("audit_logs 行解析失败 (login_id): {}", e))
                 })?;
                 let token: Option<String> = row.try_get("", "token").map_err(|e| {
@@ -941,7 +941,7 @@ mod db_sqlite_tests {
 
     /// T071 Red: AuditLogListener 接收 `BulwarkEvent::Login` 后持久化到 `audit_logs` 表。
     ///
-    /// 构造 `BulwarkEvent::Login { login_id: 1, token: "tok".into(), device: None }`，
+    /// 构造 `BulwarkEvent::Login { login_id: "1".to_string(), token: "tok".into(), device: None }`，
     /// 调用 `AuditLogListener.on_event(&event).await`，
     /// 断言 `audit_logs` 表新增一行 `event_type="login"` 且 `login_id=1`。
     ///
@@ -968,7 +968,7 @@ mod db_sqlite_tests {
 
         // 构造 Login 事件
         let event = BulwarkEvent::Login {
-            login_id: 1,
+            login_id: "1".to_string(),
             token: "tok".to_string(),
             device: None,
         };
@@ -989,9 +989,9 @@ mod db_sqlite_tests {
         let event_type: String = rows[0]
             .try_get("", "event_type")
             .expect("event_type 应可读");
-        let login_id: i64 = rows[0].try_get("", "login_id").expect("login_id 应可读");
+        let login_id: String = rows[0].try_get("", "login_id").expect("login_id 应可读");
         assert_eq!(event_type, "login", "event_type 应为 'login'");
-        assert_eq!(login_id, 1, "login_id 应为 1");
+        assert_eq!(login_id, "1", "login_id 应为 1");
     }
 
     // ========================================================================
@@ -1069,7 +1069,7 @@ mod db_sqlite_tests {
         let events: Vec<(BulwarkEvent, &str)> = vec![
             (
                 BulwarkEvent::Login {
-                    login_id: 1,
+                    login_id: "1".to_string(),
                     token: "t".into(),
                     device: None,
                 },
@@ -1077,14 +1077,14 @@ mod db_sqlite_tests {
             ),
             (
                 BulwarkEvent::Logout {
-                    login_id: 1,
+                    login_id: "1".to_string(),
                     token: "t".into(),
                 },
                 "logout",
             ),
             (
                 BulwarkEvent::Kickout {
-                    login_id: 1,
+                    login_id: "1".to_string(),
                     token: "t".into(),
                     reason: "r".into(),
                 },
@@ -1092,7 +1092,7 @@ mod db_sqlite_tests {
             ),
             (
                 BulwarkEvent::LoginFailure {
-                    login_id: 1,
+                    login_id: "1".to_string(),
                     reason: "r".into(),
                 },
                 "login_failure",
@@ -1103,21 +1103,21 @@ mod db_sqlite_tests {
             ),
             (
                 BulwarkEvent::PermissionCheck {
-                    login_id: 1,
+                    login_id: "1".to_string(),
                     permission: "p".into(),
                 },
                 "permission_check",
             ),
             (
                 BulwarkEvent::RoleCheck {
-                    login_id: 1,
+                    login_id: "1".to_string(),
                     role: "r".into(),
                 },
                 "role_check",
             ),
             (
                 BulwarkEvent::TokenRefresh {
-                    login_id: 1,
+                    login_id: "1".to_string(),
                     old_token: "t1".into(),
                     new_token: "t2".into(),
                 },
@@ -1134,13 +1134,13 @@ mod db_sqlite_tests {
                 BulwarkEvent::SocialLogin {
                     provider: "wechat".into(),
                     user_id: "u".into(),
-                    login_id: Some(1),
+                    login_id: Some("1".to_string()),
                 },
                 "social_login",
             ),
             (
                 BulwarkEvent::TenantSwitch {
-                    login_id: 1,
+                    login_id: "1".to_string(),
                     from_tenant: 100,
                     to_tenant: 200,
                 },
@@ -1148,14 +1148,14 @@ mod db_sqlite_tests {
             ),
             (
                 BulwarkEvent::DeviceBlock {
-                    login_id: 1,
+                    login_id: "1".to_string(),
                     device: "d".into(),
                 },
                 "device_block",
             ),
             (
                 BulwarkEvent::DeviceUnblock {
-                    login_id: 1,
+                    login_id: "1".to_string(),
                     device: "d".into(),
                 },
                 "device_unblock",
@@ -1389,7 +1389,7 @@ mod db_sqlite_tests {
         let listener = AuditLogListener::new(pool, config);
 
         let event = BulwarkEvent::Login {
-            login_id: 1,
+            login_id: "1".to_string(),
             token: "tok".to_string(),
             device: None,
         };
@@ -1436,7 +1436,7 @@ mod db_sqlite_tests {
         let entry = AuditEntry {
             tenant_id: 42,
             event_type: "login".to_string(),
-            login_id: Some(1001),
+            login_id: Some("1001".to_string()),
             token: None,
             ip: None,
             user_agent: None,
@@ -1499,7 +1499,7 @@ mod db_sqlite_tests {
         let entry = AuditEntry {
             tenant_id: 42,
             event_type: "login".to_string(),
-            login_id: Some(1001),
+            login_id: Some("1001".to_string()),
             token: None,
             ip: None,
             user_agent: None,
@@ -1520,7 +1520,7 @@ mod db_sqlite_tests {
             Some(1700000000),
             "timestamp 字段"
         );
-        assert_eq!(obj["login_id"].as_i64(), Some(1001), "login_id 字段");
+        assert_eq!(obj["login_id"].as_str(), Some("1001"), "login_id 字段");
         assert_eq!(obj["tenant_id"].as_i64(), Some(42), "tenant_id 字段");
         assert_eq!(obj["event_type"].as_str(), Some("login"), "event_type 字段");
         let sig = obj["signature"].as_str().expect("signature 应为字符串");
@@ -1549,7 +1549,7 @@ mod db_sqlite_tests {
         let entry_a = AuditEntry {
             tenant_id: 0,
             event_type: "login".to_string(),
-            login_id: Some(1),
+            login_id: Some("1".to_string()),
             token: None,
             ip: None,
             user_agent: None,
@@ -1560,7 +1560,7 @@ mod db_sqlite_tests {
         let entry_b = AuditEntry {
             tenant_id: 0,
             event_type: "logout".to_string(),
-            login_id: Some(1),
+            login_id: Some("1".to_string()),
             token: None,
             ip: None,
             user_agent: None,
@@ -1585,7 +1585,7 @@ mod db_sqlite_tests {
 
         // 修改 A 的 login_id → A'
         let entry_a_modified = AuditEntry {
-            login_id: Some(999),
+            login_id: Some("999".to_string()),
             ..entry_a
         };
 
@@ -1634,7 +1634,7 @@ mod db_sqlite_tests {
         let entry_a = AuditEntry {
             tenant_id: 0,
             event_type: "login".to_string(),
-            login_id: Some(1),
+            login_id: Some("1".to_string()),
             token: None,
             ip: None,
             user_agent: None,
@@ -1645,7 +1645,7 @@ mod db_sqlite_tests {
         let entry_b = AuditEntry {
             tenant_id: 0,
             event_type: "logout".to_string(),
-            login_id: Some(1),
+            login_id: Some("1".to_string()),
             token: None,
             ip: None,
             user_agent: None,
@@ -1674,7 +1674,7 @@ mod db_sqlite_tests {
 
         // 篡改 A 的 login_id
         let tampered_a = AuditEntry {
-            login_id: Some(999),
+            login_id: Some("999".to_string()),
             ..entry_a
         };
 

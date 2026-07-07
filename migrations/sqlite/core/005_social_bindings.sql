@@ -12,7 +12,7 @@
 CREATE TABLE IF NOT EXISTS social_bindings (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
     tenant_id        INTEGER NOT NULL DEFAULT 0,
-    login_id         INTEGER NOT NULL,
+    login_id         TEXT    NOT NULL,
     provider         TEXT    NOT NULL,
     provider_user_id TEXT    NOT NULL,
     union_id         TEXT,

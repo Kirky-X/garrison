@@ -15,9 +15,6 @@
 //! - 默认 HS256 算法（与 `JwtHandler` 一致）
 
 use crate::error::{BulwarkError, BulwarkResult};
-// 0.4.2: LoginId newtype 接入（impl Into<LoginId> 公开 API + i64 内部层）
-use crate::stp::login_id::LoginId;
-use crate::stp::login_id_to_i64;
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -37,8 +34,8 @@ pub struct OidcClaims {
     pub iat: i64,
     /// 过期时间（Unix 秒）。
     pub exp: i64,
-    /// Bulwark 登录标识（数值形式，便于内部提取）。
-    pub login_id: i64,
+    /// Bulwark 登录标识（字符串形式，与 sub 一致）。
+    pub login_id: String,
     /// nonce（防重放，客户端在授权请求中提供，id_token 中回传）。
     pub nonce: String,
 }
@@ -128,15 +125,14 @@ impl OidcHandler {
     /// - `Ok(String)`: JWT 格式的 id_token。
     /// - `Err(BulwarkError::Config)`: timeout 为负，或当前算法为非对称算法。
     /// - `Err(BulwarkError::Internal)`: 签发失败。
-    /// - `Err(BulwarkError::Config)`: 传入 `LoginId::String` 形式，内部层尚未完成迁移。
     pub fn sign_id_token(
         &self,
-        login_id: impl Into<LoginId>,
+        login_id: impl Into<String>,
         nonce: &str,
         _scope: &str,
         timeout: i64,
     ) -> BulwarkResult<String> {
-        let login_id: i64 = login_id_to_i64(login_id.into())?;
+        let login_id: String = login_id.into();
         if timeout < 0 {
             return Err(BulwarkError::Config(format!(
                 "timeout 不能为负数: {}",
@@ -151,7 +147,7 @@ impl OidcHandler {
             .as_secs() as i64;
         let claims = OidcClaims {
             iss: self.issuer.clone(),
-            sub: login_id.to_string(),
+            sub: login_id.clone(),
             aud: self.audience.clone(),
             iat: now,
             exp: now + timeout,
@@ -304,7 +300,7 @@ mod tests {
     fn sign_id_token_returns_three_segment_jwt() {
         let handler = make_handler();
         let token = handler
-            .sign_id_token(1001, "abc123", "openid profile", 3600)
+            .sign_id_token("1001", "abc123", "openid profile", 3600)
             .unwrap();
         let parts: Vec<&str> = token.split('.').collect();
         assert_eq!(parts.len(), 3, "id_token 应由三段组成");
@@ -315,13 +311,13 @@ mod tests {
     fn sign_and_verify_id_token_roundtrip() {
         let handler = make_handler();
         let token = handler
-            .sign_id_token(1001, "nonce-abc", "openid", 3600)
+            .sign_id_token("1001", "nonce-abc", "openid", 3600)
             .unwrap();
         let claims = handler.verify_id_token(&token, "nonce-abc").unwrap();
         assert_eq!(claims.iss, "https://auth.example.com");
         assert_eq!(claims.sub, "1001");
         assert_eq!(claims.aud, "test-client-id");
-        assert_eq!(claims.login_id, 1001);
+        assert_eq!(claims.login_id, "1001");
         assert_eq!(claims.nonce, "nonce-abc");
         assert!(claims.exp > claims.iat);
     }
@@ -331,7 +327,7 @@ mod tests {
     fn verify_id_token_nonce_mismatch_returns_oauth2_error() {
         let handler = make_handler();
         let token = handler
-            .sign_id_token(1001, "correct-nonce", "openid", 3600)
+            .sign_id_token("1001", "correct-nonce", "openid", 3600)
             .unwrap();
         let result = handler.verify_id_token(&token, "wrong-nonce");
         assert!(result.is_err());
@@ -346,7 +342,7 @@ mod tests {
     fn sign_id_token_uses_hs256_by_default() {
         let handler = make_handler();
         let token = handler
-            .sign_id_token(1001, "nonce", "openid", 3600)
+            .sign_id_token("1001", "nonce", "openid", 3600)
             .unwrap();
         // 解码 header 检查算法
         let parts: Vec<&str> = token.split('.').collect();
@@ -359,7 +355,7 @@ mod tests {
     #[test]
     fn sign_id_token_rejects_negative_timeout() {
         let handler = make_handler();
-        let result = handler.sign_id_token(1001, "nonce", "openid", -1);
+        let result = handler.sign_id_token("1001", "nonce", "openid", -1);
         assert!(result.is_err());
         match result.err() {
             Some(BulwarkError::Config(_)) => {},
@@ -372,7 +368,7 @@ mod tests {
     fn verify_id_token_tampered_fails() {
         let handler = make_handler();
         let token = handler
-            .sign_id_token(1001, "nonce", "openid", 3600)
+            .sign_id_token("1001", "nonce", "openid", 3600)
             .unwrap();
         let parts: Vec<&str> = token.split('.').collect();
         let tampered = format!("{}.{}.{}", parts[0], "ZmFrZS1wYXlsb2Fk", parts[2]);
@@ -388,7 +384,7 @@ mod tests {
     #[test]
     fn sign_id_token_rejects_asymmetric_algorithm() {
         let handler = make_handler().with_algorithm(Algorithm::RS256);
-        let result = handler.sign_id_token(1001, "nonce", "openid", 3600);
+        let result = handler.sign_id_token("1001", "nonce", "openid", 3600);
         assert!(result.is_err());
         match result.err() {
             Some(BulwarkError::Config(msg)) => assert!(
@@ -405,7 +401,9 @@ mod tests {
     fn verify_id_token_rejects_asymmetric_algorithm() {
         // 即使 token 是用 HS256 签发的，verifier 配置为 RS256 也应提前返回 Config 错误
         let signer = make_handler();
-        let token = signer.sign_id_token(1001, "nonce", "openid", 3600).unwrap();
+        let token = signer
+            .sign_id_token("1001", "nonce", "openid", 3600)
+            .unwrap();
         let verifier = make_handler().with_algorithm(Algorithm::RS256);
         let result = verifier.verify_id_token(&token, "nonce");
         assert!(result.is_err());
@@ -420,7 +418,9 @@ mod tests {
     fn verify_id_token_iss_mismatch_fails() {
         let signer = OidcHandler::new("https://correct-issuer", "aud", "secret").unwrap();
         let verifier = OidcHandler::new("https://wrong-issuer", "aud", "secret").unwrap();
-        let token = signer.sign_id_token(1001, "nonce", "openid", 3600).unwrap();
+        let token = signer
+            .sign_id_token("1001", "nonce", "openid", 3600)
+            .unwrap();
         let result = verifier.verify_id_token(&token, "nonce");
         assert!(result.is_err());
         match result.err() {
@@ -497,7 +497,7 @@ mod tests {
     fn verify_id_token_expired_returns_expired_token_error() {
         let handler = make_handler();
         // timeout=0 → exp=now，验证时已过期
-        let token = handler.sign_id_token(1001, "nonce", "openid", 0).unwrap();
+        let token = handler.sign_id_token("1001", "nonce", "openid", 0).unwrap();
         // 等待极短时间确保 exp < 当前时间
         std::thread::sleep(std::time::Duration::from_millis(1100));
         let result = handler.verify_id_token(&token, "nonce");
@@ -515,7 +515,9 @@ mod tests {
     fn verify_id_token_aud_mismatch_fails() {
         let signer = OidcHandler::new("https://auth.example.com", "correct-aud", "secret").unwrap();
         let verifier = OidcHandler::new("https://auth.example.com", "wrong-aud", "secret").unwrap();
-        let token = signer.sign_id_token(1001, "nonce", "openid", 3600).unwrap();
+        let token = signer
+            .sign_id_token("1001", "nonce", "openid", 3600)
+            .unwrap();
         let result = verifier.verify_id_token(&token, "nonce");
         assert!(result.is_err());
         match result.err() {
@@ -558,33 +560,14 @@ mod tests {
     // 0.4.2 新增: LoginId newtype 接入（impl Into<LoginId>）
     // ========================================================================
 
-    use crate::stp::login_id::LoginId;
-
-    /// 验证 `OidcHandler::sign_id_token` 接受 `LoginId::Numeric`（i64 兼容路径）。
+    /// 验证 `OidcHandler::sign_id_token` 接受 String 形式 login_id。
     #[test]
     fn sign_id_token_accepts_login_id_numeric() {
         let handler = OidcHandler::new("https://auth.example.com", "aud-abc", "secret").unwrap();
         let token = handler
-            .sign_id_token(LoginId::Numeric(1001), "nonce", "openid", 3600)
+            .sign_id_token("1001".to_string(), "nonce", "openid", 3600)
             .unwrap();
         let claims = handler.verify_id_token(&token, "nonce").unwrap();
-        assert_eq!(claims.login_id, 1001);
-    }
-
-    /// 验证 `OidcHandler::sign_id_token` 对 `LoginId::String` 返回 `BulwarkError::Config`。
-    #[test]
-    fn sign_id_token_rejects_login_id_string_with_config_error() {
-        let handler = OidcHandler::new("https://auth.example.com", "aud-abc", "secret").unwrap();
-        let result = handler.sign_id_token(
-            LoginId::String("user-uuid".to_string()),
-            "nonce",
-            "openid",
-            3600,
-        );
-        assert!(
-            matches!(result, Err(BulwarkError::Config(_))),
-            "String-form login_id 在 v0.4.2 应返回 Config 错误，实际: {:?}",
-            result
-        );
+        assert_eq!(claims.login_id, "1001");
     }
 }

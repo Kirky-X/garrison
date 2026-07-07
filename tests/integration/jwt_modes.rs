@@ -33,10 +33,10 @@ struct MockInterface;
 
 #[async_trait]
 impl BulwarkInterface for MockInterface {
-    async fn get_permission_list(&self, _login_id: i64) -> BulwarkResult<Vec<String>> {
+    async fn get_permission_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
         Ok(vec![])
     }
-    async fn get_role_list(&self, _login_id: i64) -> BulwarkResult<Vec<String>> {
+    async fn get_role_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
         Ok(vec![])
     }
 }
@@ -69,11 +69,11 @@ async fn hs256_sign_verify_roundtrip() {
     let handler = JwtHandler::new("hs256-secret");
     assert_eq!(handler.algorithm, Algorithm::HS256);
 
-    let token = handler.sign(1001, 3600).expect("HS256 sign 应成功");
+    let token = handler.sign("1001", 3600).expect("HS256 sign 应成功");
     assert!(token.contains('.'), "JWT 应为三段式：{}", token);
 
     let claims = handler.verify(&token).expect("HS256 verify 应成功");
-    assert_eq!(claims.login_id, 1001);
+    assert_eq!(claims.login_id, "1001".to_string());
     assert_eq!(claims.sub, "1001");
     assert!(claims.device.is_none(), "未设置 device 时应为 None");
 }
@@ -84,16 +84,16 @@ async fn hs512_sign_verify_roundtrip() {
     let handler = JwtHandler::new("hs512-secret").with_algorithm(Algorithm::HS512);
     assert_eq!(handler.algorithm, Algorithm::HS512);
 
-    let token = handler.sign(2002, 7200).expect("HS512 sign 应成功");
+    let token = handler.sign("2002", 7200).expect("HS512 sign 应成功");
     let claims = handler.verify(&token).expect("HS512 verify 应成功");
-    assert_eq!(claims.login_id, 2002);
+    assert_eq!(claims.login_id, "2002".to_string());
 }
 
 /// with_device 设置设备标识后 claims.device 为 Some。
 #[tokio::test(flavor = "multi_thread")]
 async fn with_device_sets_claims_device() {
     let handler = JwtHandler::new("device-secret").with_device("web-browser");
-    let token = handler.sign(3003, 3600).unwrap();
+    let token = handler.sign("3003", 3600).unwrap();
     let claims = handler.verify(&token).unwrap();
     assert_eq!(claims.device.as_deref(), Some("web-browser"));
 }
@@ -104,7 +104,7 @@ async fn cross_algorithm_verify_fails() {
     let hs256 = JwtHandler::new("shared-secret");
     let hs512 = JwtHandler::new("shared-secret").with_algorithm(Algorithm::HS512);
 
-    let token = hs256.sign(1001, 3600).unwrap();
+    let token = hs256.sign("1001", 3600).unwrap();
     let result = hs512.verify(&token);
     assert!(result.is_err(), "HS256 token 不应被 HS512 handler 校验通过");
     match result.unwrap_err() {
@@ -117,10 +117,14 @@ async fn cross_algorithm_verify_fails() {
 #[tokio::test(flavor = "multi_thread")]
 async fn refresh_issues_new_valid_token() {
     let handler = JwtHandler::new("refresh-secret");
-    let original = handler.sign(4004, 3600).unwrap();
+    let original = handler.sign("4004", 3600).unwrap();
     let refreshed = handler.refresh(&original, 7200).expect("refresh 应成功");
     let claims = handler.verify(&refreshed).unwrap();
-    assert_eq!(claims.login_id, 4004, "refresh 后 login_id 应一致");
+    assert_eq!(
+        claims.login_id,
+        "4004".to_string(),
+        "refresh 后 login_id 应一致"
+    );
 }
 
 /// refresh 对无效 token 返回错误。
@@ -135,7 +139,7 @@ async fn refresh_invalid_token_fails() {
 #[tokio::test(flavor = "multi_thread")]
 async fn sign_rejects_empty_secret() {
     let handler = JwtHandler::new("");
-    let result = handler.sign(1001, 3600);
+    let result = handler.sign("1001", 3600);
     assert!(result.is_err());
     match result.unwrap_err() {
         BulwarkError::Config(msg) => {
@@ -153,7 +157,7 @@ async fn sign_rejects_empty_secret() {
 #[tokio::test(flavor = "multi_thread")]
 async fn sign_rejects_negative_timeout() {
     let handler = JwtHandler::new("valid-secret");
-    let result = handler.sign(1001, -1);
+    let result = handler.sign("1001", -1);
     assert!(result.is_err());
     match result.unwrap_err() {
         BulwarkError::Config(msg) => {
@@ -179,7 +183,7 @@ async fn stateless_mode_passes_with_jwt_only() {
 
     // 用 JwtHandler 直接签发 token，不通过 login（确保无 session）
     let handler = JwtHandler::new("jwt-modes-test-secret");
-    let token = handler.sign(5005, 3600).unwrap();
+    let token = handler.sign("5005", 3600).unwrap();
 
     // Stateless：仅 JWT verify，不查 session → 应通过
     let result = with_current_token(token, async { logic.check_login().await }).await;
@@ -214,7 +218,7 @@ async fn stateless_mode_rejects_invalid_jwt() {
 async fn mixin_mode_passes_with_jwt_and_session() {
     let logic = make_logic_with_mode(JwtMode::Mixin).await;
 
-    let token = logic.login(6006).await.expect("login 应成功");
+    let token = logic.login("6006").await.expect("login 应成功");
     let result = with_current_token(token, async { logic.check_login().await }).await;
     assert!(
         result.is_ok(),
@@ -232,7 +236,7 @@ async fn mixin_mode_fails_with_jwt_only_no_session() {
 
     // 用 JwtHandler 直接签发 token，不通过 login（无 session）
     let handler = JwtHandler::new("jwt-modes-test-secret");
-    let token = handler.sign(7007, 3600).unwrap();
+    let token = handler.sign("7007", 3600).unwrap();
 
     let result = with_current_token(token, async { logic.check_login().await }).await;
     assert!(
@@ -264,7 +268,7 @@ async fn simple_mode_passes_with_session_only() {
             .with_jwt_mode(JwtMode::Simple),
     );
 
-    let token = logic.login(8008).await.expect("login 应成功");
+    let token = logic.login("8008").await.expect("login 应成功");
     let result = with_current_token(token, async { logic.check_login().await }).await;
     assert!(
         result.is_ok(),

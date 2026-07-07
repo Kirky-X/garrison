@@ -29,9 +29,6 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-// 0.4.2: LoginId newtype 接入（impl Into<LoginId> 公开 API + i64 内部层）
-use crate::stp::login_id::LoginId;
-use crate::stp::login_id_to_i64;
 
 /// Account-Session 的 token 信息条目。
 ///
@@ -53,7 +50,7 @@ pub struct TokenInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AccountSession {
     /// 登录主体标识。
-    pub login_id: i64,
+    pub login_id: String,
     /// 该账号的所有 token 信息列表。
     pub tokens: Vec<TokenInfo>,
     /// Account-Session 创建时间戳（Unix 秒）。
@@ -71,7 +68,7 @@ pub struct TokenSession {
     /// token 字符串。
     pub token: String,
     /// 关联的登录主体标识。
-    pub login_id: i64,
+    pub login_id: String,
     /// 创建时间戳（Unix 秒）。
     pub created_at: i64,
     /// 最后活跃时间戳（Unix 秒）。
@@ -111,7 +108,7 @@ pub struct BulwarkSession {
 }
 
 /// 生成 Account-Session 的存储 key。
-fn account_key(login_id: i64) -> String {
+fn account_key(login_id: &str) -> String {
     format!("session:account:{}", login_id)
 }
 
@@ -160,25 +157,23 @@ impl BulwarkSession {
     /// 对应 spec scenario "创建 Account-Session" 与 "创建 Token-Session"。
     ///
     /// # 参数
-    /// - `login_id`: 登录主体标识（接受 `i64` / `LoginId::Numeric` / `LoginId::String`）。
-    ///   v0.4.2 仅支持 Numeric 形式；String 形式返回 `BulwarkError::Config`（待 v0.5.0+ 内部层迁移）。
+    /// - `login_id`: 登录主体标识（接受 `String` / `&str`）。
     /// - `token`: 新创建的 token 字符串。
     ///
     /// # 返回
     /// 成功返回 `Ok(())`。
     ///
     /// # 错误
-    /// - `BulwarkError::Config`：传入 `LoginId::String` 形式，内部层尚未完成迁移。
     /// - 序列化 `TokenSession` / `AccountSession` 失败：`BulwarkError::Session`。
     /// - DAO 写入失败：透传 `BulwarkError`。
-    pub async fn create(&self, login_id: impl Into<LoginId>, token: &str) -> BulwarkResult<()> {
-        let login_id: i64 = login_id_to_i64(login_id.into())?;
+    pub async fn create(&self, login_id: impl Into<String>, token: &str) -> BulwarkResult<()> {
+        let login_id: String = login_id.into();
         let now = Utc::now().timestamp();
 
         // 创建 Token-Session
         let token_session = TokenSession {
             token: token.to_string(),
-            login_id,
+            login_id: login_id.clone(),
             created_at: now,
             last_active_at: now,
             attrs: HashMap::new(),
@@ -192,10 +187,10 @@ impl BulwarkSession {
 
         // 读取或创建 Account-Session
         let mut account = self
-            .get_account_session(login_id)
+            .get_account_session(&login_id)
             .await?
             .unwrap_or_else(|| AccountSession {
-                login_id,
+                login_id: login_id.clone(),
                 tokens: vec![],
                 created_at: now,
                 last_active_at: now,
@@ -212,7 +207,7 @@ impl BulwarkSession {
         let account_json = serde_json::to_string(&account)
             .map_err(|e| BulwarkError::Session(format!("序列化 AccountSession 失败: {}", e)))?;
         self.dao
-            .set(&account_key(login_id), &account_json, self.active_timeout)
+            .set(&account_key(&login_id), &account_json, self.active_timeout)
             .await?;
 
         Ok(())
@@ -247,23 +242,21 @@ impl BulwarkSession {
     /// 获取 Account-Session。
     ///
     /// # 参数
-    /// - `login_id`: 登录主体标识（接受 `i64` / `LoginId::Numeric` / `LoginId::String`）。
-    ///   v0.4.2 仅支持 Numeric 形式；String 形式返回 `BulwarkError::Config`（待 v0.5.0+ 内部层迁移）。
+    /// - `login_id`: 登录主体标识（接受 `String` / `&str`）。
     ///
     /// # 返回
     /// - `Some(AccountSession)`: 账号会话存在。
     /// - `None`: 账号会话不存在或已过期。
     ///
     /// # 错误
-    /// - `BulwarkError::Config`：传入 `LoginId::String` 形式，内部层尚未完成迁移。
     /// - 反序列化失败：`BulwarkError::Session`。
     /// - DAO 读取失败：透传 `BulwarkError`。
     pub async fn get_account_session(
         &self,
-        login_id: impl Into<LoginId>,
+        login_id: impl Into<String>,
     ) -> BulwarkResult<Option<AccountSession>> {
-        let login_id: i64 = login_id_to_i64(login_id.into())?;
-        match self.dao.get(&account_key(login_id)).await? {
+        let login_id: String = login_id.into();
+        match self.dao.get(&account_key(&login_id)).await? {
             Some(json) => {
                 let as_: AccountSession = serde_json::from_str(&json).map_err(|e| {
                     BulwarkError::Session(format!("反序列化 AccountSession 失败: {}", e))
@@ -412,7 +405,7 @@ impl BulwarkSession {
             None => return Ok(false),
         };
         // 惰性检查 Account-Session 是否存在
-        if self.get_account_session(ts.login_id).await?.is_none() {
+        if self.get_account_session(&ts.login_id).await?.is_none() {
             return Ok(false);
         }
         // 0.2.0 新增：临时凭证过期联动（依据 spec session-management "临时凭证关联会话的自定义过期"）。
@@ -452,7 +445,7 @@ impl BulwarkSession {
         self.dao.set(&token_key(token), &json, self.timeout).await?;
 
         // 同时更新 Account-Session 的 last_active_at + 对应 TokenInfo + 重置 TTL
-        if let Some(mut account) = self.get_account_session(ts.login_id).await? {
+        if let Some(mut account) = self.get_account_session(&ts.login_id).await? {
             account.last_active_at = now;
             for ti in &mut account.tokens {
                 if ti.token == token {
@@ -463,7 +456,7 @@ impl BulwarkSession {
                 .map_err(|e| BulwarkError::Session(format!("序列化 AccountSession 失败: {}", e)))?;
             self.dao
                 .set(
-                    &account_key(ts.login_id),
+                    &account_key(&ts.login_id),
                     &account_json,
                     self.active_timeout,
                 )
@@ -529,7 +522,7 @@ impl BulwarkSession {
                 }
             }
 
-            if let Some(mut account) = self.get_account_session(ts.login_id).await? {
+            if let Some(mut account) = self.get_account_session(&ts.login_id).await? {
                 account.tokens.retain(|ti| ti.token != token);
                 // spec: 若列表为空，Account-Session 标记为空（但不删除，保留历史）
                 let account_json = serde_json::to_string(&account).map_err(|e| {
@@ -537,7 +530,7 @@ impl BulwarkSession {
                 })?;
                 // 用 update 保留原 TTL（不重置 Account-Session 的过期时间）
                 self.dao
-                    .update(&account_key(ts.login_id), &account_json)
+                    .update(&account_key(&ts.login_id), &account_json)
                     .await?;
             }
         }
@@ -549,23 +542,21 @@ impl BulwarkSession {
     /// 对应 Sa-Token 的 `logout(login_id)` 语义。
     ///
     /// # 参数
-    /// - `login_id`: 登录主体标识（接受 `i64` / `LoginId::Numeric` / `LoginId::String`）。
-    ///   v0.4.2 仅支持 Numeric 形式；String 形式返回 `BulwarkError::Config`（待 v0.5.0+ 内部层迁移）。
+    /// - `login_id`: 登录主体标识（接受 `String` / `&str`）。
     ///
     /// # 返回
     /// 成功返回 `Ok(())`。
     ///
     /// # 错误
-    /// - `BulwarkError::Config`：传入 `LoginId::String` 形式，内部层尚未完成迁移。
     /// - DAO 删除失败：透传 `BulwarkError`。
-    pub async fn logout_by_login_id(&self, login_id: impl Into<LoginId>) -> BulwarkResult<()> {
-        let login_id: i64 = login_id_to_i64(login_id.into())?;
-        if let Some(account) = self.get_account_session(login_id).await? {
+    pub async fn logout_by_login_id(&self, login_id: impl Into<String>) -> BulwarkResult<()> {
+        let login_id: String = login_id.into();
+        if let Some(account) = self.get_account_session(&login_id).await? {
             for ti in &account.tokens {
                 self.dao.delete(&token_key(&ti.token)).await?;
             }
         }
-        self.dao.delete(&account_key(login_id)).await?;
+        self.dao.delete(&account_key(&login_id)).await?;
         Ok(())
     }
 
@@ -575,8 +566,7 @@ impl BulwarkSession {
     /// 不影响该 login_id 在其他 device 上的 session。
     ///
     /// # 参数
-    /// - `login_id`: 登录主体标识（接受 `i64` / `LoginId::Numeric` / `LoginId::String`）。
-    ///   v0.4.2 仅支持 Numeric 形式；String 形式返回 `BulwarkError::Config`。
+    /// - `login_id`: 登录主体标识（接受 `String` / `&str`）。
     /// - `device`: 设备标识。
     ///
     /// # 返回
@@ -587,18 +577,17 @@ impl BulwarkSession {
     /// `reason` 字段格式为 `"kicked by device: <device>"`。
     ///
     /// # 错误
-    /// - `BulwarkError::Config`：传入 `LoginId::String` 形式。
     /// - DAO 读取/删除失败：透传 `BulwarkError`。
     ///
     /// # account session 维护（R-003）
     /// 踢出后 account session 的 tokens 列表移除被踢出的 token，保留其他 device 的 token。
     pub async fn kickout_by_device(
         &self,
-        login_id: impl Into<LoginId>,
+        login_id: impl Into<String>,
         device: &str,
     ) -> BulwarkResult<()> {
-        let login_id: i64 = login_id_to_i64(login_id.into())?;
-        let account = match self.get_account_session(login_id).await? {
+        let login_id: String = login_id.into();
+        let account = match self.get_account_session(&login_id).await? {
             Some(a) => a,
             None => return Ok(()), // 幂等：account session 不存在
         };
@@ -628,7 +617,7 @@ impl BulwarkSession {
             let reason = format!("kicked by device: {}", device);
             for token in &kicked_tokens {
                 mgr.broadcast(&crate::listener::BulwarkEvent::Kickout {
-                    login_id,
+                    login_id: login_id.clone(),
                     token: token.clone(),
                     reason: reason.clone(),
                 })
@@ -666,18 +655,18 @@ mod tests {
     #[tokio::test]
     async fn create_writes_both_sessions() {
         let (_dao, session) = make_session(3600, 86400);
-        session.create(1001, "T1").await.unwrap();
+        session.create("1001", "T1").await.unwrap();
 
         // Token-Session 存在
         let ts = session.get_token_session("T1").await.unwrap().unwrap();
-        assert_eq!(ts.login_id, 1001);
+        assert_eq!(ts.login_id, "1001");
         assert_eq!(ts.token, "T1");
         assert!(ts.created_at > 0);
         assert_eq!(ts.created_at, ts.last_active_at);
 
         // Account-Session 存在，包含 T1
-        let as_ = session.get_account_session(1001).await.unwrap().unwrap();
-        assert_eq!(as_.login_id, 1001);
+        let as_ = session.get_account_session("1001").await.unwrap().unwrap();
+        assert_eq!(as_.login_id, "1001");
         assert_eq!(as_.tokens.len(), 1);
         assert_eq!(as_.tokens[0].token, "T1");
     }
@@ -686,19 +675,19 @@ mod tests {
     #[tokio::test]
     async fn dao_key_format_matches_spec() {
         let (dao, session) = make_session(3600, 86400);
-        session.create(1001, "T1").await.unwrap();
+        session.create("1001", "T1").await.unwrap();
 
         // spec: BulwarkDao::get("session:account:1001") 返回 Account-Session 数据
         let account_json = dao.get("session:account:1001").await.unwrap();
         assert!(account_json.is_some());
         let account: AccountSession = serde_json::from_str(&account_json.unwrap()).unwrap();
-        assert_eq!(account.login_id, 1001);
+        assert_eq!(account.login_id, "1001");
 
         // spec: BulwarkDao::get("session:token:T1") 返回 Token-Session 数据
         let token_json = dao.get("session:token:T1").await.unwrap();
         assert!(token_json.is_some());
         let ts: TokenSession = serde_json::from_str(&token_json.unwrap()).unwrap();
-        assert_eq!(ts.login_id, 1001);
+        assert_eq!(ts.login_id, "1001");
     }
 
     // ------------------------------------------------------------------------
@@ -709,10 +698,10 @@ mod tests {
     #[tokio::test]
     async fn account_session_records_multiple_tokens() {
         let (_dao, session) = make_session(3600, 86400);
-        session.create(1001, "T1").await.unwrap();
-        session.create(1001, "T2").await.unwrap();
+        session.create("1001", "T1").await.unwrap();
+        session.create("1001", "T2").await.unwrap();
 
-        let as_ = session.get_account_session(1001).await.unwrap().unwrap();
+        let as_ = session.get_account_session("1001").await.unwrap().unwrap();
         assert_eq!(as_.tokens.len(), 2);
         assert_eq!(as_.tokens[0].token, "T1");
         assert_eq!(as_.tokens[1].token, "T2");
@@ -726,12 +715,12 @@ mod tests {
     #[tokio::test]
     async fn account_session_removes_token_on_logout() {
         let (_dao, session) = make_session(3600, 86400);
-        session.create(1001, "T1").await.unwrap();
-        session.create(1001, "T2").await.unwrap();
+        session.create("1001", "T1").await.unwrap();
+        session.create("1001", "T2").await.unwrap();
 
         session.logout("T1").await.unwrap();
 
-        let as_ = session.get_account_session(1001).await.unwrap().unwrap();
+        let as_ = session.get_account_session("1001").await.unwrap().unwrap();
         assert_eq!(as_.tokens.len(), 1);
         assert_eq!(as_.tokens[0].token, "T2");
     }
@@ -740,11 +729,11 @@ mod tests {
     #[tokio::test]
     async fn account_session_keeps_history_when_empty() {
         let (_dao, session) = make_session(3600, 86400);
-        session.create(1001, "T1").await.unwrap();
+        session.create("1001", "T1").await.unwrap();
         session.logout("T1").await.unwrap();
 
         // spec: 若列表为空，Account-Session 标记为空（但不删除，保留历史）
-        let as_ = session.get_account_session(1001).await.unwrap();
+        let as_ = session.get_account_session("1001").await.unwrap();
         assert!(as_.is_some(), "Account-Session 应保留（保留历史）");
         assert!(as_.unwrap().tokens.is_empty());
     }
@@ -757,7 +746,7 @@ mod tests {
     #[tokio::test]
     async fn token_session_stores_custom_attrs() {
         let (_dao, session) = make_session(3600, 86400);
-        session.create(1001, "T1").await.unwrap();
+        session.create("1001", "T1").await.unwrap();
 
         session.set("T1", "ip", "192.168.1.1").await.unwrap();
         let ip = session.get("T1", "ip").await.unwrap();
@@ -791,7 +780,7 @@ mod tests {
     #[tokio::test]
     async fn is_valid_returns_true_for_active_token() {
         let (_dao, session) = make_session(3600, 86400);
-        session.create(1001, "T1").await.unwrap();
+        session.create("1001", "T1").await.unwrap();
         let valid = session.is_valid("T1").await.unwrap();
         assert!(valid);
     }
@@ -803,10 +792,10 @@ mod tests {
     #[tokio::test]
     async fn is_valid_returns_false_when_account_session_expired() {
         let (dao, session) = make_session(3600, 86400);
-        session.create(1001, "T1").await.unwrap();
+        session.create("1001", "T1").await.unwrap();
 
         // 模拟 Account-Session 过期（oxcache TTL 到期自动删除）
-        dao.delete(&account_key(1001)).await.unwrap();
+        dao.delete(&account_key("1001")).await.unwrap();
 
         // Token-Session 仍存在，但 Account-Session 已过期 → is_valid 返回 false
         let token_exists = session.get_token_session("T1").await.unwrap();
@@ -823,7 +812,7 @@ mod tests {
     #[tokio::test]
     async fn touch_updates_last_active_and_renews_ttl() {
         let (_dao, session) = make_session(3600, 86400);
-        session.create(1001, "T1").await.unwrap();
+        session.create("1001", "T1").await.unwrap();
 
         // 等待一小段时间，确保 touch 后 last_active_at 变化
         tokio::time::sleep(Duration::from_millis(1100)).await;
@@ -837,7 +826,7 @@ mod tests {
         );
 
         // Account-Session 的对应 TokenInfo 也应更新
-        let as_ = session.get_account_session(1001).await.unwrap().unwrap();
+        let as_ = session.get_account_session("1001").await.unwrap().unwrap();
         assert_eq!(as_.last_active_at, ts.last_active_at);
         let ti = as_.tokens.iter().find(|t| t.token == "T1").unwrap();
         assert_eq!(ti.last_active_at, ts.last_active_at);
@@ -850,7 +839,7 @@ mod tests {
     async fn renew_resets_ttl() {
         // token TTL=3 秒，留足 margin 避免 sleep 精度问题
         let (_dao, session) = make_session(3, 86400);
-        session.create(1001, "T1").await.unwrap();
+        session.create("1001", "T1").await.unwrap();
 
         // 在过期前 renew（已过 1 秒，剩余 2 秒）
         tokio::time::sleep(Duration::from_secs(1)).await;
@@ -886,7 +875,7 @@ mod tests {
     #[tokio::test]
     async fn logout_removes_token_session() {
         let (_dao, session) = make_session(3600, 86400);
-        session.create(1001, "T1").await.unwrap();
+        session.create("1001", "T1").await.unwrap();
         session.logout("T1").await.unwrap();
 
         let ts = session.get_token_session("T1").await.unwrap();
@@ -897,16 +886,16 @@ mod tests {
     #[tokio::test]
     async fn logout_by_login_id_removes_all() {
         let (_dao, session) = make_session(3600, 86400);
-        session.create(1001, "T1").await.unwrap();
-        session.create(1001, "T2").await.unwrap();
+        session.create("1001", "T1").await.unwrap();
+        session.create("1001", "T2").await.unwrap();
 
-        session.logout_by_login_id(1001).await.unwrap();
+        session.logout_by_login_id("1001").await.unwrap();
 
         // 两个 token 都删除
         assert!(session.get_token_session("T1").await.unwrap().is_none());
         assert!(session.get_token_session("T2").await.unwrap().is_none());
         // Account-Session 也删除
-        assert!(session.get_account_session(1001).await.unwrap().is_none());
+        assert!(session.get_account_session("1001").await.unwrap().is_none());
     }
 
     /// 验证 logout 不存在的 token 不报错（幂等）。
@@ -947,10 +936,10 @@ mod tests {
     async fn get_account_session_corrupt_json_errors() {
         let (dao, session) = make_session(3600, 86400);
         // 直接写入非法 JSON 到 account key
-        dao.set(&account_key(2001), "{invalid-json", 3600)
+        dao.set(&account_key("2001"), "{invalid-json", 3600)
             .await
             .unwrap();
-        let result = session.get_account_session(2001).await;
+        let result = session.get_account_session("2001").await;
         assert!(
             matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("反序列化 AccountSession 失败")),
             "非法 JSON 应返回 '反序列化 AccountSession 失败' 错误，实际: {:?}",
@@ -989,11 +978,11 @@ mod tests {
     #[tokio::test]
     async fn create_appends_to_existing_account_session() {
         let (_dao, session) = make_session(3600, 86400);
-        session.create(1001, "T1").await.unwrap();
-        session.create(1001, "T2").await.unwrap();
-        session.create(1001, "T3").await.unwrap();
+        session.create("1001", "T1").await.unwrap();
+        session.create("1001", "T2").await.unwrap();
+        session.create("1001", "T3").await.unwrap();
 
-        let as_ = session.get_account_session(1001).await.unwrap().unwrap();
+        let as_ = session.get_account_session("1001").await.unwrap().unwrap();
         assert_eq!(as_.tokens.len(), 3, "三次 login 后应有 3 个 token");
         assert_eq!(as_.tokens[0].token, "T1");
         assert_eq!(as_.tokens[1].token, "T2");
@@ -1010,7 +999,7 @@ mod tests {
     #[tokio::test]
     async fn link_sso_ticket_stores_ticket_in_token_session() {
         let (_dao, session) = make_session(3600, 86400);
-        session.create(1001, "T1").await.unwrap();
+        session.create("1001", "T1").await.unwrap();
 
         session
             .link_sso_ticket("T1", "ticket-abc-123")
@@ -1026,7 +1015,7 @@ mod tests {
     #[tokio::test]
     async fn get_sso_ticket_returns_none_when_not_linked() {
         let (_dao, session) = make_session(3600, 86400);
-        session.create(1001, "T1").await.unwrap();
+        session.create("1001", "T1").await.unwrap();
 
         let ticket = session.get_sso_ticket("T1").await.unwrap();
         assert!(ticket.is_none(), "未关联 ticket 时应返回 None");
@@ -1050,7 +1039,7 @@ mod tests {
     #[tokio::test]
     async fn link_oauth2_token_stores_access_token_in_token_session() {
         let (_dao, session) = make_session(3600, 86400);
-        session.create(1001, "T1").await.unwrap();
+        session.create("1001", "T1").await.unwrap();
 
         session
             .link_oauth2_token("T1", "access-token-xyz")
@@ -1066,7 +1055,7 @@ mod tests {
     #[tokio::test]
     async fn get_oauth2_token_returns_none_when_not_linked() {
         let (_dao, session) = make_session(3600, 86400);
-        session.create(1001, "T1").await.unwrap();
+        session.create("1001", "T1").await.unwrap();
 
         let access_token = session.get_oauth2_token("T1").await.unwrap();
         assert!(access_token.is_none(), "未关联 access_token 时应返回 None");
@@ -1088,7 +1077,7 @@ mod tests {
     #[tokio::test]
     async fn link_temp_credential_stores_key_in_token_session() {
         let (_dao, session) = make_session(3600, 86400);
-        session.create(1001, "T1").await.unwrap();
+        session.create("1001", "T1").await.unwrap();
 
         let temp_key = "bulwark:temp:order:abc123";
         session.link_temp_credential("T1", temp_key).await.unwrap();
@@ -1100,7 +1089,7 @@ mod tests {
     #[tokio::test]
     async fn get_temp_credential_returns_none_when_not_linked() {
         let (_dao, session) = make_session(3600, 86400);
-        session.create(1001, "T1").await.unwrap();
+        session.create("1001", "T1").await.unwrap();
 
         let stored = session.get_temp_credential("T1").await.unwrap();
         assert!(stored.is_none(), "未关联临时凭证时应返回 None");
@@ -1157,7 +1146,7 @@ mod tests {
     #[tokio::test]
     async fn logout_destroys_linked_sso_ticket() {
         let (dao, session) = make_session(3600, 86400);
-        session.create(1001, "T1").await.unwrap();
+        session.create("1001", "T1").await.unwrap();
 
         // 在 dao 中预置 SSO ticket
         let sso_key = "bulwark:sso:ticket:ticket-abc-123";
@@ -1188,7 +1177,7 @@ mod tests {
     #[tokio::test]
     async fn logout_without_sso_ticket_does_not_affect_sso_keys() {
         let (dao, session) = make_session(3600, 86400);
-        session.create(1001, "T1").await.unwrap();
+        session.create("1001", "T1").await.unwrap();
 
         // 在 dao 中预置一个不相关的 SSO ticket
         let unrelated_sso_key = "bulwark:sso:ticket:other-ticket";
@@ -1216,7 +1205,7 @@ mod tests {
     #[tokio::test]
     async fn is_valid_returns_true_when_temp_credential_exists() {
         let (dao, session) = make_session(3600, 86400);
-        session.create(1001, "T1").await.unwrap();
+        session.create("1001", "T1").await.unwrap();
 
         // 在 dao 中预置临时凭证
         let temp_key = "bulwark:temp:order:abc123";
@@ -1236,7 +1225,7 @@ mod tests {
     #[tokio::test]
     async fn is_valid_returns_false_when_temp_credential_expired() {
         let (dao, session) = make_session(3600, 86400);
-        session.create(1001, "T1").await.unwrap();
+        session.create("1001", "T1").await.unwrap();
 
         // 在 dao 中预置临时凭证
         let temp_key = "bulwark:temp:order:abc123";
@@ -1258,7 +1247,7 @@ mod tests {
     #[tokio::test]
     async fn is_valid_returns_true_when_no_temp_credential_linked() {
         let (_dao, session) = make_session(3600, 86400);
-        session.create(1001, "T1").await.unwrap();
+        session.create("1001", "T1").await.unwrap();
 
         // 未关联临时凭证，token 应有效（0.1.0 既有行为不变）
         let valid = session.is_valid("T1").await.unwrap();
@@ -1266,91 +1255,34 @@ mod tests {
     }
 
     // ------------------------------------------------------------------------
-    // 0.4.2 新增 spec scenario: LoginId newtype 接入（impl Into<LoginId>）
+    // String-form login_id 接入测试
     // ------------------------------------------------------------------------
 
-    use crate::stp::login_id::LoginId;
-
-    /// 验证 `BulwarkSession::create` 接受 `LoginId::Numeric`（i64 兼容路径）。
-    ///
-    /// 对应 spec R-login-id-type-003：所有 `login_id: i64` 签名改为 `impl Into<LoginId>`。
+    /// 验证 `BulwarkSession::create` 接受 String 形式 login_id。
     #[tokio::test]
     async fn create_accepts_login_id_numeric() {
         let (_dao, session) = make_session(3600, 86400);
-        session.create(LoginId::Numeric(1001), "T1").await.unwrap();
+        session.create("1001", "T1").await.unwrap();
         let ts = session.get_token_session("T1").await.unwrap().unwrap();
-        assert_eq!(ts.login_id, 1001);
+        assert_eq!(ts.login_id, "1001");
     }
 
-    /// 验证 `BulwarkSession::create` 接受 `LoginId::String` 形式但返回
-    /// `BulwarkError::Config`（v0.4.2 内部层尚未迁移 String 形式）。
-    ///
-    /// 对应 spec R-login-id-type-003 + design D1 偏差：v0.4.2 仅支持 Numeric，
-    /// String 形式待 v0.5.0+ 完成内部层迁移。
-    #[tokio::test]
-    async fn create_rejects_login_id_string_with_config_error() {
-        let (_dao, session) = make_session(3600, 86400);
-        let result = session
-            .create(LoginId::String("user-uuid-abc".to_string()), "T1")
-            .await;
-        assert!(
-            matches!(result, Err(BulwarkError::Config(_))),
-            "String-form login_id 在 v0.4.2 应返回 Config 错误，实际: {:?}",
-            result
-        );
-    }
-
-    /// 验证 `BulwarkSession::get_account_session` 接受 `LoginId::Numeric`。
+    /// 验证 `BulwarkSession::get_account_session` 接受 String 形式 login_id。
     #[tokio::test]
     async fn get_account_session_accepts_login_id_numeric() {
         let (_dao, session) = make_session(3600, 86400);
-        session.create(1001, "T1").await.unwrap();
-        let as_ = session
-            .get_account_session(LoginId::Numeric(1001))
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(as_.login_id, 1001);
+        session.create("1001", "T1").await.unwrap();
+        let as_ = session.get_account_session("1001").await.unwrap().unwrap();
+        assert_eq!(as_.login_id, "1001");
     }
 
-    /// 验证 `BulwarkSession::get_account_session` 对 String 形式返回 Config 错误。
-    #[tokio::test]
-    async fn get_account_session_rejects_login_id_string() {
-        let (_dao, session) = make_session(3600, 86400);
-        let result = session
-            .get_account_session(LoginId::String("user-uuid".to_string()))
-            .await;
-        assert!(
-            matches!(result, Err(BulwarkError::Config(_))),
-            "String-form login_id 在 v0.4.2 应返回 Config 错误，实际: {:?}",
-            result
-        );
-    }
-
-    /// 验证 `BulwarkSession::logout_by_login_id` 接受 `LoginId::Numeric`。
+    /// 验证 `BulwarkSession::logout_by_login_id` 接受 String 形式 login_id。
     #[tokio::test]
     async fn logout_by_login_id_accepts_login_id_numeric() {
         let (_dao, session) = make_session(3600, 86400);
-        session.create(1001, "T1").await.unwrap();
-        session
-            .logout_by_login_id(LoginId::Numeric(1001))
-            .await
-            .unwrap();
+        session.create("1001", "T1").await.unwrap();
+        session.logout_by_login_id("1001").await.unwrap();
         assert!(session.get_token_session("T1").await.unwrap().is_none());
-    }
-
-    /// 验证 `BulwarkSession::logout_by_login_id` 对 String 形式返回 Config 错误。
-    #[tokio::test]
-    async fn logout_by_login_id_rejects_login_id_string() {
-        let (_dao, session) = make_session(3600, 86400);
-        let result = session
-            .logout_by_login_id(LoginId::String("user-uuid".to_string()))
-            .await;
-        assert!(
-            matches!(result, Err(BulwarkError::Config(_))),
-            "String-form login_id 在 v0.4.2 应返回 Config 错误，实际: {:?}",
-            result
-        );
     }
 
     // ------------------------------------------------------------------------
@@ -1363,7 +1295,7 @@ mod tests {
     #[tokio::test]
     async fn set_device_updates_token_session_device() {
         let (_dao, session) = make_session(3600, 86400);
-        session.create(1001, "T1").await.unwrap();
+        session.create("1001", "T1").await.unwrap();
         session.set_device("T1", "web-chrome").await.unwrap();
 
         let ts = session.get_token_session("T1").await.unwrap().unwrap();
@@ -1388,15 +1320,18 @@ mod tests {
     async fn kickout_by_device_removes_matching_tokens() {
         let (_dao, session) = make_session(3600, 86400);
         // 用户 1001 在 3 个设备上登录
-        session.create(1001, "T1").await.unwrap();
+        session.create("1001", "T1").await.unwrap();
         session.set_device("T1", "web-chrome").await.unwrap();
-        session.create(1001, "T2").await.unwrap();
+        session.create("1001", "T2").await.unwrap();
         session.set_device("T2", "mobile-ios").await.unwrap();
-        session.create(1001, "T3").await.unwrap();
+        session.create("1001", "T3").await.unwrap();
         session.set_device("T3", "web-chrome").await.unwrap();
 
         // 踢出 web-chrome 设备
-        session.kickout_by_device(1001, "web-chrome").await.unwrap();
+        session
+            .kickout_by_device("1001", "web-chrome")
+            .await
+            .unwrap();
 
         // T1 和 T3 应被踢出（web-chrome）
         assert!(session.get_token_session("T1").await.unwrap().is_none());
@@ -1411,12 +1346,15 @@ mod tests {
     #[tokio::test]
     async fn kickout_by_device_preserves_other_devices() {
         let (_dao, session) = make_session(3600, 86400);
-        session.create(1001, "T1").await.unwrap();
+        session.create("1001", "T1").await.unwrap();
         session.set_device("T1", "web-chrome").await.unwrap();
-        session.create(1001, "T2").await.unwrap();
+        session.create("1001", "T2").await.unwrap();
         session.set_device("T2", "mobile-ios").await.unwrap();
 
-        session.kickout_by_device(1001, "web-chrome").await.unwrap();
+        session
+            .kickout_by_device("1001", "web-chrome")
+            .await
+            .unwrap();
 
         // T2 应仍有效
         assert!(session.is_valid("T2").await.unwrap());
@@ -1428,11 +1366,13 @@ mod tests {
     #[tokio::test]
     async fn kickout_by_device_nonexistent_device_is_noop() {
         let (_dao, session) = make_session(3600, 86400);
-        session.create(1001, "T1").await.unwrap();
+        session.create("1001", "T1").await.unwrap();
         session.set_device("T1", "web-chrome").await.unwrap();
 
         // 踢出不存在的设备
-        let result = session.kickout_by_device(1001, "nonexistent-device").await;
+        let result = session
+            .kickout_by_device("1001", "nonexistent-device")
+            .await;
         assert!(result.is_ok());
         // T1 应仍存在
         assert!(session.get_token_session("T1").await.unwrap().is_some());
@@ -1444,7 +1384,7 @@ mod tests {
     #[tokio::test]
     async fn kickout_by_device_no_account_session_is_noop() {
         let (_dao, session) = make_session(3600, 86400);
-        let result = session.kickout_by_device(9999, "web-chrome").await;
+        let result = session.kickout_by_device("9999", "web-chrome").await;
         assert!(result.is_ok());
     }
 
@@ -1454,43 +1394,33 @@ mod tests {
     #[tokio::test]
     async fn kickout_by_device_updates_account_session_tokens() {
         let (_dao, session) = make_session(3600, 86400);
-        session.create(1001, "T1").await.unwrap();
+        session.create("1001", "T1").await.unwrap();
         session.set_device("T1", "web-chrome").await.unwrap();
-        session.create(1001, "T2").await.unwrap();
+        session.create("1001", "T2").await.unwrap();
         session.set_device("T2", "mobile-ios").await.unwrap();
 
-        session.kickout_by_device(1001, "web-chrome").await.unwrap();
+        session
+            .kickout_by_device("1001", "web-chrome")
+            .await
+            .unwrap();
 
-        let account = session.get_account_session(1001).await.unwrap().unwrap();
+        let account = session.get_account_session("1001").await.unwrap().unwrap();
         assert_eq!(account.tokens.len(), 1, "account session 应只剩 1 个 token");
         assert_eq!(account.tokens[0].token, "T2", "剩余 token 应为 T2");
     }
 
-    /// 验证 kickout_by_device 接受 LoginId::Numeric。
+    /// 验证 kickout_by_device 接受 String 形式 login_id。
     #[tokio::test]
     async fn kickout_by_device_accepts_login_id_numeric() {
         let (_dao, session) = make_session(3600, 86400);
-        session.create(1001, "T1").await.unwrap();
+        session.create("1001", "T1").await.unwrap();
         session.set_device("T1", "web-chrome").await.unwrap();
 
         session
-            .kickout_by_device(LoginId::Numeric(1001), "web-chrome")
+            .kickout_by_device("1001", "web-chrome")
             .await
             .unwrap();
         assert!(session.get_token_session("T1").await.unwrap().is_none());
-    }
-
-    /// 验证 kickout_by_device 对 LoginId::String 返回 Config 错误。
-    #[tokio::test]
-    async fn kickout_by_device_rejects_login_id_string() {
-        let (_dao, session) = make_session(3600, 86400);
-        let result = session
-            .kickout_by_device(LoginId::String("user-uuid".to_string()), "web")
-            .await;
-        assert!(
-            matches!(result, Err(BulwarkError::Config(_))),
-            "String-form login_id 应返回 Config 错误"
-        );
     }
 
     // ------------------------------------------------------------------------
@@ -1528,11 +1458,11 @@ mod tests {
         let (_dao, session) = make_session(3600, 86400);
         let session = session.with_listener_manager(mgr);
 
-        session.create(1001, "T1").await.unwrap();
+        session.create("1001", "T1").await.unwrap();
         session.set_device("T1", "web-chrome").await.unwrap();
 
         // kickout 应正常执行（不因 listener_manager 注入而失败）
-        let result = session.kickout_by_device(1001, "web-chrome").await;
+        let result = session.kickout_by_device("1001", "web-chrome").await;
         assert!(result.is_ok());
         // T1 应被踢出
         assert!(session.get_token_session("T1").await.unwrap().is_none());
@@ -1597,7 +1527,7 @@ mod tests {
         let session = BulwarkSession::new(dao, 3600, 86400);
 
         // login 并关联 SSO ticket
-        session.create(1001, "T1").await.unwrap();
+        session.create("1001", "T1").await.unwrap();
         session.link_sso_ticket("T1", "ticket-fail").await.unwrap();
 
         // logout 应成功（SSO ticket 删除失败仅 warn 不中断主流程）

@@ -16,7 +16,7 @@
 CREATE TABLE IF NOT EXISTS refresh_tokens (
     token_hash         TEXT    PRIMARY KEY,             -- SHA-256(token)，主键
     parent_token_hash  TEXT,                             -- 旧 token 的 SHA-256（首次签发为 NULL）
-    login_id           INTEGER NOT NULL,                 -- 关联用户 ID（i64）
+    login_id           TEXT    NOT NULL,                 -- 关联用户 ID（String）
     tenant_id          INTEGER NOT NULL DEFAULT 0,       -- 租户 ID（i64，0=默认租户）
     key_version        INTEGER NOT NULL,                 -- 密钥轮换版本号
     expires_at         INTEGER NOT NULL,                 -- 过期时间（Unix 秒）

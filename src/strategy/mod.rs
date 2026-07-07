@@ -73,7 +73,7 @@ pub trait BulwarkPermissionStrategy: Send + Sync {
     ///
     /// # 错误
     /// - 数据回调失败：透传 `BulwarkError`。
-    async fn get_permission_list(&self, login_id: i64) -> BulwarkResult<Vec<String>>;
+    async fn get_permission_list(&self, login_id: &str) -> BulwarkResult<Vec<String>>;
 
     /// 获取主体的角色列表。
     ///
@@ -85,7 +85,7 @@ pub trait BulwarkPermissionStrategy: Send + Sync {
     ///
     /// # 错误
     /// - 数据回调失败：透传 `BulwarkError`。
-    async fn get_role_list(&self, login_id: i64) -> BulwarkResult<Vec<String>>;
+    async fn get_role_list(&self, login_id: &str) -> BulwarkResult<Vec<String>>;
 
     /// 校验权限：检查主体是否持有指定权限。
     ///
@@ -97,7 +97,7 @@ pub trait BulwarkPermissionStrategy: Send + Sync {
     /// - `Ok(true)`: 主体持有该权限。
     /// - `Ok(false)`: 主体未持有该权限。
     /// - `Err`: 查询失败或权限字符串非法（如空字符串）。
-    async fn check_permission(&self, login_id: i64, permission: &str) -> BulwarkResult<bool>;
+    async fn check_permission(&self, login_id: &str, permission: &str) -> BulwarkResult<bool>;
 
     /// 校验角色：检查主体是否持有指定角色。
     ///
@@ -111,7 +111,7 @@ pub trait BulwarkPermissionStrategy: Send + Sync {
     ///
     /// # 错误
     /// - 数据回调失败：透传 `BulwarkError`。
-    async fn check_role(&self, login_id: i64, role: &str) -> BulwarkResult<bool>;
+    async fn check_role(&self, login_id: &str, role: &str) -> BulwarkResult<bool>;
 
     /// 校验角色（任一匹配）：主体持有 `roles` 中任意一个即通过。
     ///
@@ -127,7 +127,7 @@ pub trait BulwarkPermissionStrategy: Send + Sync {
     ///
     /// # 错误
     /// - 数据回调失败：透传 `BulwarkError`。
-    async fn check_role_any(&self, login_id: i64, roles: &[&str]) -> BulwarkResult<bool>;
+    async fn check_role_any(&self, login_id: &str, roles: &[&str]) -> BulwarkResult<bool>;
 
     /// 校验角色（全部匹配）：主体需持有 `roles` 中所有角色。
     ///
@@ -143,7 +143,7 @@ pub trait BulwarkPermissionStrategy: Send + Sync {
     ///
     /// # 错误
     /// - 数据回调失败：透传 `BulwarkError`。
-    async fn check_role_all(&self, login_id: i64, roles: &[&str]) -> BulwarkResult<bool>;
+    async fn check_role_all(&self, login_id: &str, roles: &[&str]) -> BulwarkResult<bool>;
 
     /// 登录前防火墙安全钩子检查（0.3.0 新增，依据 spec firewall-check-hook）。
     ///
@@ -157,7 +157,7 @@ pub trait BulwarkPermissionStrategy: Send + Sync {
     /// # 返回
     /// - `Ok(())`: 所有 hook 通过，允许登录。
     /// - `Err`: 任一 hook 阻断，返回 `BulwarkError::Session`。
-    async fn check_login_hooks(&self, _login_id: i64, _ctx: &LoginContext) -> BulwarkResult<()> {
+    async fn check_login_hooks(&self, _login_id: &str, _ctx: &LoginContext) -> BulwarkResult<()> {
         Ok(())
     }
 }
@@ -314,7 +314,7 @@ impl BulwarkPermissionStrategyDefault {
     /// - DAO 写入失败：透传 `BulwarkError`。
     pub async fn cache_permission(
         &self,
-        login_id: i64,
+        login_id: &str,
         permission: &str,
         result: bool,
         ttl_seconds: u64,
@@ -341,7 +341,7 @@ impl BulwarkPermissionStrategyDefault {
     /// - DAO 读取失败：透传 `BulwarkError`。
     pub async fn get_cached_permission(
         &self,
-        login_id: i64,
+        login_id: &str,
         permission: &str,
     ) -> BulwarkResult<Option<bool>> {
         if let Some(dao) = &self.dao {
@@ -358,15 +358,15 @@ impl BulwarkPermissionStrategyDefault {
 
 #[async_trait]
 impl BulwarkPermissionStrategy for BulwarkPermissionStrategyDefault {
-    async fn get_permission_list(&self, login_id: i64) -> BulwarkResult<Vec<String>> {
+    async fn get_permission_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
         self.interface.get_permission_list(login_id).await
     }
 
-    async fn get_role_list(&self, login_id: i64) -> BulwarkResult<Vec<String>> {
+    async fn get_role_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
         self.interface.get_role_list(login_id).await
     }
 
-    async fn check_permission(&self, login_id: i64, permission: &str) -> BulwarkResult<bool> {
+    async fn check_permission(&self, login_id: &str, permission: &str) -> BulwarkResult<bool> {
         // spec scenario "权限为空字符串"：空字符串抛 InvalidParam
         if permission.is_empty() {
             return Err(BulwarkError::InvalidParam("权限字符串不能为空".to_string()));
@@ -410,7 +410,7 @@ impl BulwarkPermissionStrategy for BulwarkPermissionStrategyDefault {
         Ok(result)
     }
 
-    async fn check_role(&self, login_id: i64, role: &str) -> BulwarkResult<bool> {
+    async fn check_role(&self, login_id: &str, role: &str) -> BulwarkResult<bool> {
         if role.is_empty() {
             return Err(BulwarkError::InvalidParam("角色字符串不能为空".to_string()));
         }
@@ -424,7 +424,7 @@ impl BulwarkPermissionStrategy for BulwarkPermissionStrategyDefault {
         }
     }
 
-    async fn check_role_any(&self, login_id: i64, roles: &[&str]) -> BulwarkResult<bool> {
+    async fn check_role_any(&self, login_id: &str, roles: &[&str]) -> BulwarkResult<bool> {
         let user_roles = self.get_role_list(login_id).await?;
         // 0.2.0：层级角色展开
         if !self.role_hierarchy.is_empty() {
@@ -435,7 +435,7 @@ impl BulwarkPermissionStrategy for BulwarkPermissionStrategyDefault {
         }
     }
 
-    async fn check_role_all(&self, login_id: i64, roles: &[&str]) -> BulwarkResult<bool> {
+    async fn check_role_all(&self, login_id: &str, roles: &[&str]) -> BulwarkResult<bool> {
         let user_roles = self.get_role_list(login_id).await?;
         // 0.2.0：层级角色展开
         if !self.role_hierarchy.is_empty() {
@@ -453,7 +453,7 @@ impl BulwarkPermissionStrategy for BulwarkPermissionStrategyDefault {
     ///
     /// v0.4.2 扩展：任一 hook 返回 Err 时，若注入了 `listener_manager`，
     /// 广播 `BulwarkEvent::FirewallBlock` 事件（依据 spec listener-events-extend R-001）。
-    async fn check_login_hooks(&self, login_id: i64, ctx: &LoginContext) -> BulwarkResult<()> {
+    async fn check_login_hooks(&self, login_id: &str, ctx: &LoginContext) -> BulwarkResult<()> {
         let Some(hook) = &self.firewall_hook else {
             return Ok(());
         };
@@ -489,11 +489,11 @@ impl BulwarkPermissionStrategyDefault {
     ///
     /// v0.5.0 改为 async（依据 proposal H3）：broadcast 改为 async 后此helper 也需 async。
     #[cfg_attr(not(feature = "listener"), allow(unused_variables))]
-    async fn broadcast_firewall_block(&self, login_id: i64, e: &BulwarkError) {
+    async fn broadcast_firewall_block(&self, login_id: &str, e: &BulwarkError) {
         #[cfg(feature = "listener")]
         if let Some(lm) = &self.listener_manager {
             lm.broadcast(&BulwarkEvent::FirewallBlock {
-                login_id,
+                login_id: login_id.to_string(),
                 reason: e.to_string(),
             })
             .await;
@@ -516,8 +516,8 @@ mod tests {
 
     /// 测试用 BulwarkInterface mock，基于 HashMap 存储 login_id → 权限/角色列表。
     struct MockInterface {
-        permissions: HashMap<i64, Vec<String>>,
-        roles: HashMap<i64, Vec<String>>,
+        permissions: HashMap<String, Vec<String>>,
+        roles: HashMap<String, Vec<String>>,
     }
 
     impl MockInterface {
@@ -529,26 +529,30 @@ mod tests {
         }
 
         /// 设置指定 login_id 的权限列表。
-        fn set_permissions(&mut self, login_id: i64, perms: &[&str]) {
-            self.permissions
-                .insert(login_id, perms.iter().map(|s| s.to_string()).collect());
+        fn set_permissions(&mut self, login_id: &str, perms: &[&str]) {
+            self.permissions.insert(
+                login_id.to_string(),
+                perms.iter().map(|s| s.to_string()).collect(),
+            );
         }
 
         /// 设置指定 login_id 的角色列表。
-        fn set_roles(&mut self, login_id: i64, roles: &[&str]) {
-            self.roles
-                .insert(login_id, roles.iter().map(|s| s.to_string()).collect());
+        fn set_roles(&mut self, login_id: &str, roles: &[&str]) {
+            self.roles.insert(
+                login_id.to_string(),
+                roles.iter().map(|s| s.to_string()).collect(),
+            );
         }
     }
 
     #[async_trait]
     impl BulwarkInterface for MockInterface {
-        async fn get_permission_list(&self, login_id: i64) -> BulwarkResult<Vec<String>> {
-            Ok(self.permissions.get(&login_id).cloned().unwrap_or_default())
+        async fn get_permission_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+            Ok(self.permissions.get(login_id).cloned().unwrap_or_default())
         }
 
-        async fn get_role_list(&self, login_id: i64) -> BulwarkResult<Vec<String>> {
-            Ok(self.roles.get(&login_id).cloned().unwrap_or_default())
+        async fn get_role_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+            Ok(self.roles.get(login_id).cloned().unwrap_or_default())
         }
     }
 
@@ -565,11 +569,11 @@ mod tests {
     #[tokio::test]
     async fn check_permission_held_returns_true() {
         let mut iface = MockInterface::new();
-        iface.set_permissions(1001, &["user:read", "user:write"]);
+        iface.set_permissions("1001", &["user:read", "user:write"]);
         let fw = make_firewall(iface);
 
         assert!(
-            fw.check_permission(1001, "user:read").await.unwrap(),
+            fw.check_permission("1001", "user:read").await.unwrap(),
             "持有权限应返回 true"
         );
     }
@@ -578,11 +582,11 @@ mod tests {
     #[tokio::test]
     async fn check_permission_not_held_returns_false() {
         let mut iface = MockInterface::new();
-        iface.set_permissions(1001, &["user:read"]);
+        iface.set_permissions("1001", &["user:read"]);
         let fw = make_firewall(iface);
 
         assert!(
-            !fw.check_permission(1001, "user:delete").await.unwrap(),
+            !fw.check_permission("1001", "user:delete").await.unwrap(),
             "未持有权限应返回 false"
         );
     }
@@ -593,7 +597,7 @@ mod tests {
         let iface = MockInterface::new();
         let fw = make_firewall(iface);
 
-        let result = fw.check_permission(1001, "").await;
+        let result = fw.check_permission("1001", "").await;
         assert!(
             matches!(result, Err(BulwarkError::InvalidParam(_))),
             "空权限字符串应抛 InvalidParam"
@@ -607,7 +611,7 @@ mod tests {
         let fw = make_firewall(iface);
 
         assert!(
-            !fw.check_permission(9999, "user:read").await.unwrap(),
+            !fw.check_permission("9999", "user:read").await.unwrap(),
             "无权限记录的 login_id 应返回 false"
         );
     }
@@ -620,11 +624,11 @@ mod tests {
     #[tokio::test]
     async fn check_role_held_returns_true() {
         let mut iface = MockInterface::new();
-        iface.set_roles(1001, &["admin", "user"]);
+        iface.set_roles("1001", &["admin", "user"]);
         let fw = make_firewall(iface);
 
         assert!(
-            fw.check_role(1001, "admin").await.unwrap(),
+            fw.check_role("1001", "admin").await.unwrap(),
             "持有角色应返回 true"
         );
     }
@@ -633,11 +637,11 @@ mod tests {
     #[tokio::test]
     async fn check_role_not_held_returns_false() {
         let mut iface = MockInterface::new();
-        iface.set_roles(1001, &["user"]);
+        iface.set_roles("1001", &["user"]);
         let fw = make_firewall(iface);
 
         assert!(
-            !fw.check_role(1001, "admin").await.unwrap(),
+            !fw.check_role("1001", "admin").await.unwrap(),
             "未持有角色应返回 false"
         );
     }
@@ -651,7 +655,7 @@ mod tests {
         let iface = MockInterface::new();
         let fw = make_firewall(iface);
 
-        let result = fw.check_role(1001, "").await;
+        let result = fw.check_role("1001", "").await;
         assert!(
             matches!(result, Err(BulwarkError::InvalidParam(_))),
             "空角色字符串应抛 InvalidParam"
@@ -666,11 +670,11 @@ mod tests {
     #[tokio::test]
     async fn check_role_any_match_returns_true() {
         let mut iface = MockInterface::new();
-        iface.set_roles(1001, &["admin"]);
+        iface.set_roles("1001", &["admin"]);
         let fw = make_firewall(iface);
 
         assert!(
-            fw.check_role_any(1001, &["admin", "superadmin"])
+            fw.check_role_any("1001", &["admin", "superadmin"])
                 .await
                 .unwrap(),
             "持有任一角色应返回 true"
@@ -681,11 +685,11 @@ mod tests {
     #[tokio::test]
     async fn check_role_any_no_match_returns_false() {
         let mut iface = MockInterface::new();
-        iface.set_roles(1001, &["user"]);
+        iface.set_roles("1001", &["user"]);
         let fw = make_firewall(iface);
 
         assert!(
-            !fw.check_role_any(1001, &["admin", "superadmin"])
+            !fw.check_role_any("1001", &["admin", "superadmin"])
                 .await
                 .unwrap(),
             "不持有任一角色应返回 false"
@@ -696,11 +700,11 @@ mod tests {
     #[tokio::test]
     async fn check_role_all_all_held_returns_true() {
         let mut iface = MockInterface::new();
-        iface.set_roles(1001, &["admin", "user"]);
+        iface.set_roles("1001", &["admin", "user"]);
         let fw = make_firewall(iface);
 
         assert!(
-            fw.check_role_all(1001, &["admin", "user"]).await.unwrap(),
+            fw.check_role_all("1001", &["admin", "user"]).await.unwrap(),
             "持有所有角色应返回 true"
         );
     }
@@ -709,11 +713,11 @@ mod tests {
     #[tokio::test]
     async fn check_role_all_partial_held_returns_false() {
         let mut iface = MockInterface::new();
-        iface.set_roles(1001, &["admin"]);
+        iface.set_roles("1001", &["admin"]);
         let fw = make_firewall(iface);
 
         assert!(
-            !fw.check_role_all(1001, &["admin", "user"]).await.unwrap(),
+            !fw.check_role_all("1001", &["admin", "user"]).await.unwrap(),
             "仅持有部分角色应返回 false"
         );
     }
@@ -722,11 +726,11 @@ mod tests {
     #[tokio::test]
     async fn check_role_all_empty_roles_returns_true() {
         let mut iface = MockInterface::new();
-        iface.set_roles(1001, &["admin"]);
+        iface.set_roles("1001", &["admin"]);
         let fw = make_firewall(iface);
 
         assert!(
-            fw.check_role_all(1001, &[]).await.unwrap(),
+            fw.check_role_all("1001", &[]).await.unwrap(),
             "空 roles 切片应平凡返回 true"
         );
     }
@@ -739,10 +743,10 @@ mod tests {
     #[tokio::test]
     async fn get_permission_list_delegates_to_interface() {
         let mut iface = MockInterface::new();
-        iface.set_permissions(1001, &["user:read", "user:write"]);
+        iface.set_permissions("1001", &["user:read", "user:write"]);
         let fw = make_firewall(iface);
 
-        let perms = fw.get_permission_list(1001).await.unwrap();
+        let perms = fw.get_permission_list("1001").await.unwrap();
         assert_eq!(perms, vec!["user:read", "user:write"]);
     }
 
@@ -750,10 +754,10 @@ mod tests {
     #[tokio::test]
     async fn get_role_list_delegates_to_interface() {
         let mut iface = MockInterface::new();
-        iface.set_roles(1001, &["admin", "user"]);
+        iface.set_roles("1001", &["admin", "user"]);
         let fw = make_firewall(iface);
 
-        let roles = fw.get_role_list(1001).await.unwrap();
+        let roles = fw.get_role_list("1001").await.unwrap();
         assert_eq!(roles, vec!["admin", "user"]);
     }
 
@@ -763,7 +767,7 @@ mod tests {
         let iface = MockInterface::new();
         let fw = make_firewall(iface);
 
-        let perms = fw.get_permission_list(9999).await.unwrap();
+        let perms = fw.get_permission_list("9999").await.unwrap();
         assert!(perms.is_empty(), "未配置权限的 login_id 应返回空列表");
     }
 
@@ -778,22 +782,22 @@ mod tests {
 
     #[async_trait]
     impl PermissionChecker for MockPermissionChecker {
-        async fn has_permission(&self, _login_id: i64, _permission: &str) -> BulwarkResult<bool> {
+        async fn has_permission(&self, _login_id: &str, _permission: &str) -> BulwarkResult<bool> {
             Ok(self.perm_result)
         }
-        async fn has_role(&self, _login_id: i64, _role: &str) -> BulwarkResult<bool> {
+        async fn has_role(&self, _login_id: &str, _role: &str) -> BulwarkResult<bool> {
             Ok(false)
         }
-        async fn check_permission(&self, _login_id: i64, _permission: &str) -> BulwarkResult<()> {
+        async fn check_permission(&self, _login_id: &str, _permission: &str) -> BulwarkResult<()> {
             Ok(())
         }
-        async fn check_role(&self, _login_id: i64, _role: &str) -> BulwarkResult<()> {
+        async fn check_role(&self, _login_id: &str, _role: &str) -> BulwarkResult<()> {
             Ok(())
         }
-        async fn has_any_permission(&self, _login_id: i64, _perms: &[&str]) -> bool {
+        async fn has_any_permission(&self, _login_id: &str, _perms: &[&str]) -> bool {
             false
         }
-        async fn has_all_permissions(&self, _login_id: i64, _perms: &[&str]) -> bool {
+        async fn has_all_permissions(&self, _login_id: &str, _perms: &[&str]) -> bool {
             false
         }
     }
@@ -809,7 +813,7 @@ mod tests {
 
         // PermissionChecker 返回 true，即使 interface 中无权限记录
         assert!(
-            fw.check_permission(1001, "user:read").await.unwrap(),
+            fw.check_permission("1001", "user:read").await.unwrap(),
             "注入 PermissionChecker 后应委托校验，返回 true"
         );
     }
@@ -822,7 +826,7 @@ mod tests {
         let fw = BulwarkPermissionStrategyDefault::new(Arc::new(iface)).with_permission_checker(pc);
 
         assert!(
-            !fw.check_permission(1001, "user:read").await.unwrap(),
+            !fw.check_permission("1001", "user:read").await.unwrap(),
             "PermissionChecker 返回 false 时应返回 false"
         );
     }
@@ -833,11 +837,11 @@ mod tests {
     #[tokio::test]
     async fn check_permission_without_checker_falls_back_to_interface() {
         let mut iface = MockInterface::new();
-        iface.set_permissions(1001, &["user:read"]);
+        iface.set_permissions("1001", &["user:read"]);
         let fw = BulwarkPermissionStrategyDefault::new(Arc::new(iface));
 
         assert!(
-            fw.check_permission(1001, "user:read").await.unwrap(),
+            fw.check_permission("1001", "user:read").await.unwrap(),
             "未注入 PermissionChecker 时应回退到 interface 查询"
         );
     }
@@ -860,17 +864,17 @@ mod tests {
     #[tokio::test]
     async fn check_role_hierarchy_admin_implies_user() {
         let mut iface = MockInterface::new();
-        iface.set_roles(1001, &["admin"]);
+        iface.set_roles("1001", &["admin"]);
         let mut hierarchy = HashMap::new();
         hierarchy.insert("admin".to_string(), vec!["user".to_string()]);
         let fw = make_firewall_with_hierarchy(iface, hierarchy);
 
         assert!(
-            fw.check_role(1001, "user").await.unwrap(),
+            fw.check_role("1001", "user").await.unwrap(),
             "admin 应隐含持有 user"
         );
         assert!(
-            !fw.check_role(1001, "superadmin").await.unwrap(),
+            !fw.check_role("1001", "superadmin").await.unwrap(),
             "admin 不隐含 superadmin"
         );
     }
@@ -881,18 +885,18 @@ mod tests {
     #[tokio::test]
     async fn check_role_hierarchy_transitive() {
         let mut iface = MockInterface::new();
-        iface.set_roles(1001, &["superadmin"]);
+        iface.set_roles("1001", &["superadmin"]);
         let mut hierarchy = HashMap::new();
         hierarchy.insert("admin".to_string(), vec!["user".to_string()]);
         hierarchy.insert("superadmin".to_string(), vec!["admin".to_string()]);
         let fw = make_firewall_with_hierarchy(iface, hierarchy);
 
         assert!(
-            fw.check_role(1001, "user").await.unwrap(),
+            fw.check_role("1001", "user").await.unwrap(),
             "superadmin 应多层传递隐含 user"
         );
         assert!(
-            fw.check_role(1001, "admin").await.unwrap(),
+            fw.check_role("1001", "admin").await.unwrap(),
             "superadmin 应隐含 admin"
         );
     }
@@ -903,11 +907,11 @@ mod tests {
     #[tokio::test]
     async fn check_role_without_hierarchy_keeps_legacy_behavior() {
         let mut iface = MockInterface::new();
-        iface.set_roles(1001, &["admin"]);
+        iface.set_roles("1001", &["admin"]);
         let fw = make_firewall(iface); // 无 hierarchy
 
         assert!(
-            !fw.check_role(1001, "user").await.unwrap(),
+            !fw.check_role("1001", "user").await.unwrap(),
             "未配置 hierarchy 时 admin 不隐含 user（0.1.0 行为）"
         );
     }
@@ -916,19 +920,19 @@ mod tests {
     #[tokio::test]
     async fn check_role_any_all_with_hierarchy() {
         let mut iface = MockInterface::new();
-        iface.set_roles(1001, &["admin"]);
+        iface.set_roles("1001", &["admin"]);
         let mut hierarchy = HashMap::new();
         hierarchy.insert("admin".to_string(), vec!["user".to_string()]);
         let fw = make_firewall_with_hierarchy(iface, hierarchy);
 
         // admin 隐含 user，所以 check_role_any(["user", "guest"]) 应返回 true
         assert!(
-            fw.check_role_any(1001, &["user", "guest"]).await.unwrap(),
+            fw.check_role_any("1001", &["user", "guest"]).await.unwrap(),
             "层级展开后应持有 user，check_role_any 应返回 true"
         );
         // admin 隐含 user，但不含 superadmin，check_role_all 应返回 false
         assert!(
-            !fw.check_role_all(1001, &["user", "superadmin"])
+            !fw.check_role_all("1001", &["user", "superadmin"])
                 .await
                 .unwrap(),
             "层级展开后不含 superadmin，check_role_all 应返回 false"
@@ -945,14 +949,14 @@ mod tests {
     #[tokio::test]
     async fn check_permission_triggers_plugin_hook() {
         let mut iface = MockInterface::new();
-        iface.set_permissions(1001, &["user:read"]);
+        iface.set_permissions("1001", &["user:read"]);
         // BulwarkPluginManager::new() 收集所有 inventory 注册的插件
         let pm = Arc::new(BulwarkPluginManager::new());
         let fw = BulwarkPermissionStrategyDefault::new(Arc::new(iface)).with_plugin_manager(pm);
 
         // 插件钩子不应中断主流程，校验结果应正常返回
         assert!(
-            fw.check_permission(1001, "user:read").await.unwrap(),
+            fw.check_permission("1001", "user:read").await.unwrap(),
             "插件钩子不应影响校验结果"
         );
     }
@@ -964,14 +968,14 @@ mod tests {
     #[tokio::test]
     async fn check_permission_plugin_failure_does_not_interrupt() {
         let mut iface = MockInterface::new();
-        iface.set_permissions(1001, &["user:read"]);
+        iface.set_permissions("1001", &["user:read"]);
         // PluginManager 包含 ErrPlugin（on_permission_check 返回 Err），
         // 但主流程不应被中断
         let pm = Arc::new(BulwarkPluginManager::new());
         let fw = BulwarkPermissionStrategyDefault::new(Arc::new(iface)).with_plugin_manager(pm);
 
         assert!(
-            fw.check_permission(1001, "user:read").await.unwrap(),
+            fw.check_permission("1001", "user:read").await.unwrap(),
             "插件失败不应中断主流程，校验结果应正常返回 true"
         );
     }
@@ -1024,11 +1028,11 @@ mod tests {
         let iface = MockInterface::new();
         let fw = BulwarkPermissionStrategyDefault::new(Arc::new(iface)).with_dao(dao.clone());
 
-        fw.cache_permission(1001, "user:read", true, 300)
+        fw.cache_permission("1001", "user:read", true, 300)
             .await
             .unwrap();
 
-        let cached = fw.get_cached_permission(1001, "user:read").await.unwrap();
+        let cached = fw.get_cached_permission("1001", "user:read").await.unwrap();
         assert_eq!(cached, Some(true), "缓存应命中并返回 true");
 
         // 验证 key 格式
@@ -1050,7 +1054,10 @@ mod tests {
         let iface = MockInterface::new();
         let fw = BulwarkPermissionStrategyDefault::new(Arc::new(iface)).with_dao(dao);
 
-        let cached = fw.get_cached_permission(1001, "user:delete").await.unwrap();
+        let cached = fw
+            .get_cached_permission("1001", "user:delete")
+            .await
+            .unwrap();
         assert!(cached.is_none(), "未缓存的权限应返回 None");
     }
 
@@ -1064,20 +1071,20 @@ mod tests {
         let fw = BulwarkPermissionStrategyDefault::new(Arc::new(iface)).with_dao(dao);
 
         // 第一次缓存 true
-        fw.cache_permission(1001, "user:read", true, 300)
+        fw.cache_permission("1001", "user:read", true, 300)
             .await
             .unwrap();
         assert_eq!(
-            fw.get_cached_permission(1001, "user:read").await.unwrap(),
+            fw.get_cached_permission("1001", "user:read").await.unwrap(),
             Some(true)
         );
 
         // 覆盖为 false
-        fw.cache_permission(1001, "user:read", false, 300)
+        fw.cache_permission("1001", "user:read", false, 300)
             .await
             .unwrap();
         assert_eq!(
-            fw.get_cached_permission(1001, "user:read").await.unwrap(),
+            fw.get_cached_permission("1001", "user:read").await.unwrap(),
             Some(false),
             "覆盖后应返回 false"
         );
@@ -1091,17 +1098,17 @@ mod tests {
         let dao = Arc::new(MockCacheDao::new());
         let mut iface = MockInterface::new();
         // interface 中无 user:read 权限
-        iface.set_permissions(1001, &[]);
+        iface.set_permissions("1001", &[]);
         let fw = BulwarkPermissionStrategyDefault::new(Arc::new(iface)).with_dao(dao.clone());
 
         // 预先写入缓存 true（与 interface 实际权限矛盾）
-        fw.cache_permission(1001, "user:read", true, 300)
+        fw.cache_permission("1001", "user:read", true, 300)
             .await
             .unwrap();
 
         // check_permission 应短路返回缓存值 true，不查询 interface
         assert!(
-            fw.check_permission(1001, "user:read").await.unwrap(),
+            fw.check_permission("1001", "user:read").await.unwrap(),
             "应优先返回缓存结果 true，而非查询 interface"
         );
     }
@@ -1117,11 +1124,11 @@ mod tests {
     async fn check_login_hooks_noop_without_hook() {
         let iface = MockInterface::new();
         let fw = make_firewall(iface);
-        let ctx = LoginContext::new(1001);
+        let ctx = LoginContext::new("1001");
 
         // 未注入 hook，应直接返回 Ok
         assert!(
-            fw.check_login_hooks(1001, &ctx).await.is_ok(),
+            fw.check_login_hooks("1001", &ctx).await.is_ok(),
             "未注入 firewall_hook 时 check_login_hooks 应为 no-op"
         );
     }
@@ -1134,11 +1141,11 @@ mod tests {
         let iface = MockInterface::new();
         let hook = Arc::new(BulwarkFirewallCheckHookDefault::new());
         let fw = BulwarkPermissionStrategyDefault::new(Arc::new(iface)).with_firewall_hook(hook);
-        let ctx = LoginContext::new(1001);
+        let ctx = LoginContext::new("1001");
 
         // hook 计数器为空，所有检查应通过
         assert!(
-            fw.check_login_hooks(1001, &ctx).await.is_ok(),
+            fw.check_login_hooks("1001", &ctx).await.is_ok(),
             "注入 hook 且无失败记录时 check_login_hooks 应返回 Ok"
         );
     }
@@ -1152,7 +1159,7 @@ mod tests {
         let hook = Arc::new(BulwarkFirewallCheckHookDefault::new());
         let fw =
             BulwarkPermissionStrategyDefault::new(Arc::new(iface)).with_firewall_hook(hook.clone());
-        let ctx = LoginContext::new(1001).with_ip("1.2.3.4");
+        let ctx = LoginContext::new("1001").with_ip("1.2.3.4");
 
         // 记录 10 次失败（达到阈值）
         for _ in 0..10 {
@@ -1160,7 +1167,7 @@ mod tests {
         }
 
         // check_login_hooks 应被 login_frequency hook 阻断
-        let result = fw.check_login_hooks(1001, &ctx).await;
+        let result = fw.check_login_hooks("1001", &ctx).await;
         assert!(result.is_err(), "登录频率超限时应被 check_login_hooks 阻断");
         assert!(
             matches!(result.unwrap_err(), BulwarkError::Session(_)),
@@ -1177,7 +1184,7 @@ mod tests {
         let hook = Arc::new(BulwarkFirewallCheckHookDefault::new());
         let fw =
             BulwarkPermissionStrategyDefault::new(Arc::new(iface)).with_firewall_hook(hook.clone());
-        let ctx = LoginContext::new(1001); // 无 IP，仅触发暴力破解检测
+        let ctx = LoginContext::new("1001"); // 无 IP，仅触发暴力破解检测
 
         // 记录 5 次失败（达到阈值）
         for _ in 0..5 {
@@ -1185,7 +1192,7 @@ mod tests {
         }
 
         // check_login_hooks 应被 brute_force hook 阻断
-        let result = fw.check_login_hooks(1001, &ctx).await;
+        let result = fw.check_login_hooks("1001", &ctx).await;
         assert!(result.is_err(), "暴力破解超限时应被 check_login_hooks 阻断");
     }
 
@@ -1200,11 +1207,11 @@ mod tests {
             BulwarkPermissionStrategyDefault::new(Arc::new(iface)).with_firewall_hook(hook.clone());
 
         // 注入后，记录失败并触发检测应能阻断
-        let ctx = LoginContext::new(1001).with_ip("9.9.9.9");
+        let ctx = LoginContext::new("1001").with_ip("9.9.9.9");
         for _ in 0..10 {
             hook.record_failure(&ctx).await.unwrap();
         }
-        let result = fw.check_login_hooks(1001, &ctx).await;
+        let result = fw.check_login_hooks("1001", &ctx).await;
         assert!(result.is_err(), "注入 hook 后应能检测到频率超限并阻断");
     }
 
@@ -1252,9 +1259,9 @@ mod tests {
         });
         let iface = MockInterface::new();
         let fw = BulwarkPermissionStrategyDefault::new(Arc::new(iface)).with_firewall_hook(hook);
-        let ctx = LoginContext::new(1001);
+        let ctx = LoginContext::new("1001");
 
-        fw.check_login_hooks(1001, &ctx).await.unwrap();
+        fw.check_login_hooks("1001", &ctx).await.unwrap();
 
         // 5 个 hook 按序调用：1 + 2 + 4 + 8 + 16 = 31
         assert_eq!(order.load(Ordering::SeqCst), 31, "5 个 hook 应全部按序调用");
@@ -1302,9 +1309,9 @@ mod tests {
         });
         let iface = MockInterface::new();
         let fw = BulwarkPermissionStrategyDefault::new(Arc::new(iface)).with_firewall_hook(hook);
-        let ctx = LoginContext::new(1001);
+        let ctx = LoginContext::new("1001");
 
-        let result = fw.check_login_hooks(1001, &ctx).await;
+        let result = fw.check_login_hooks("1001", &ctx).await;
         assert!(result.is_err(), "应在第一个 hook Err 时阻断");
 
         // 仅第一个 hook 被调用（值为 1），后续 4 个未调用
@@ -1364,11 +1371,11 @@ mod tests {
         }
 
         let mut iface = MockInterface::new();
-        iface.set_permissions(1001, &["user:read"]);
+        iface.set_permissions("1001", &["user:read"]);
         let fw =
             BulwarkPermissionStrategyDefault::new(Arc::new(iface)).with_dao(Arc::new(FailingDao));
         // 缓存写入失败但 check_permission 仍应返回 true（持有权限）
-        let result = fw.check_permission(1001, "user:read").await;
+        let result = fw.check_permission("1001", "user:read").await;
         assert!(
             result.is_ok(),
             "缓存写入失败不应中断 check_permission，实际: {:?}",
@@ -1407,8 +1414,8 @@ mod tests {
         let fw = BulwarkPermissionStrategyDefault::new(Arc::new(iface))
             .with_firewall_hook(Arc::new(GeoFailHook))
             .with_listener_manager(lm);
-        let ctx = LoginContext::new(1001);
-        let result = fw.check_login_hooks(1001, &ctx).await;
+        let ctx = LoginContext::new("1001");
+        let result = fw.check_login_hooks("1001", &ctx).await;
         assert!(result.is_err(), "geo_anomaly 失败应阻断");
         assert!(
             matches!(result.unwrap_err(), BulwarkError::Session(_)),
@@ -1446,8 +1453,8 @@ mod tests {
         let fw = BulwarkPermissionStrategyDefault::new(Arc::new(iface))
             .with_firewall_hook(Arc::new(TokenReuseFailHook))
             .with_listener_manager(lm);
-        let ctx = LoginContext::new(1001);
-        let result = fw.check_login_hooks(1001, &ctx).await;
+        let ctx = LoginContext::new("1001");
+        let result = fw.check_login_hooks("1001", &ctx).await;
         assert!(result.is_err(), "token_reuse 失败应阻断");
     }
 
@@ -1484,8 +1491,8 @@ mod tests {
         let fw = BulwarkPermissionStrategyDefault::new(Arc::new(iface))
             .with_firewall_hook(Arc::new(DeviceFailHook))
             .with_listener_manager(lm);
-        let ctx = LoginContext::new(1001);
-        let result = fw.check_login_hooks(1001, &ctx).await;
+        let ctx = LoginContext::new("1001");
+        let result = fw.check_login_hooks("1001", &ctx).await;
         assert!(result.is_err(), "device_anomaly 失败应阻断");
     }
 }

@@ -61,7 +61,6 @@ mod tests {
     use crate::config::BulwarkConfig;
     use crate::error::BulwarkResult;
     use crate::stp::core::BulwarkCore;
-    use crate::stp::login_id::LoginId;
     use crate::stp::session::SessionLogic;
     use std::sync::Arc;
 
@@ -79,19 +78,19 @@ mod tests {
 
     #[async_trait]
     impl SessionLogic for MockPermission {
-        async fn login(&self, _login_id: &LoginId) -> BulwarkResult<String> {
+        async fn login(&self, _login_id: &str) -> BulwarkResult<String> {
             Ok("mock-token".to_string())
         }
-        async fn login_with_token(&self, _login_id: &LoginId, _token: &str) -> BulwarkResult<()> {
+        async fn login_with_token(&self, _login_id: &str, _token: &str) -> BulwarkResult<()> {
             Ok(())
         }
         async fn logout(&self) -> BulwarkResult<()> {
             Ok(())
         }
-        async fn logout_by_login_id(&self, _login_id: &LoginId) -> BulwarkResult<()> {
+        async fn logout_by_login_id(&self, _login_id: &str) -> BulwarkResult<()> {
             Ok(())
         }
-        async fn kickout(&self, _login_id: &LoginId) -> BulwarkResult<()> {
+        async fn kickout(&self, _login_id: &str) -> BulwarkResult<()> {
             Ok(())
         }
         async fn kickout_by_token(&self, _token: &str) -> BulwarkResult<()> {
@@ -103,8 +102,8 @@ mod tests {
         async fn check_login(&self) -> BulwarkResult<bool> {
             Ok(true)
         }
-        async fn get_login_id(&self) -> BulwarkResult<Option<LoginId>> {
-            Ok(Some(LoginId::Numeric(42)))
+        async fn get_login_id(&self) -> BulwarkResult<Option<String>> {
+            Ok(Some("42".to_string()))
         }
     }
 

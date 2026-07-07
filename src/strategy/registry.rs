@@ -20,7 +20,7 @@
 //!
 //! ## 偏差说明
 //!
-//! - `login_id` 使用 `i64` 而非 `LoginId` newtype，遵循 `BulwarkLogic` trait 现有惯例
+//! - `login_id` 使用 `&str` 而非 `LoginId` newtype，遵循 `BulwarkLogic` trait 现有惯例
 //!   （依据规则 11：惯例优先于新颖）
 //! - [`FirewallStrategy`] 与现有 [`BulwarkPermissionStrategy`](crate::strategy::BulwarkPermissionStrategy)
 //!   trait 共存（依据 spec Constraints），两者名称不同，不冲突
@@ -52,7 +52,7 @@ pub trait LoginHandler: Send + Sync {
     ///
     /// # 返回
     /// 生成的 token 字符串。
-    async fn handle_login(&self, login_id: i64) -> BulwarkResult<String>;
+    async fn handle_login(&self, login_id: &str) -> BulwarkResult<String>;
 }
 
 /// 登出策略 trait，定义登出行为的可插拔契约。
@@ -67,7 +67,7 @@ pub trait LogoutHandler: Send + Sync {
     async fn handle_logout(&self) -> BulwarkResult<()>;
 
     /// 按账号登出：销毁指定 login_id 的所有会话。
-    async fn handle_logout_by_login_id(&self, login_id: i64) -> BulwarkResult<()>;
+    async fn handle_logout_by_login_id(&self, login_id: &str) -> BulwarkResult<()>;
 }
 
 /// 权限校验策略 trait，定义权限/角色校验的可插拔契约。
@@ -96,7 +96,7 @@ pub trait TokenGenerator: Send + Sync {
     /// 生成 token。
     ///
     /// 默认实现委托 [`BulwarkLogic::login`]，会同时创建会话。
-    async fn generate_token(&self, login_id: i64) -> BulwarkResult<String>;
+    async fn generate_token(&self, login_id: &str) -> BulwarkResult<String>;
 
     /// 刷新 token。
     async fn refresh_token(&self, token: &str) -> BulwarkResult<String>;
@@ -111,7 +111,7 @@ pub trait TokenGenerator: Send + Sync {
 #[async_trait]
 pub trait SessionCreator: Send + Sync {
     /// 创建会话：用指定 token 为 login_id 建立会话。
-    async fn create_session(&self, login_id: i64, token: &str) -> BulwarkResult<()>;
+    async fn create_session(&self, login_id: &str, token: &str) -> BulwarkResult<()>;
 
     /// 检查登录状态。
     async fn check_login(&self) -> BulwarkResult<bool>;
@@ -131,7 +131,7 @@ pub trait SessionCreator: Send + Sync {
 #[async_trait]
 pub trait FirewallStrategy: Send + Sync {
     /// 登录前防火墙安全检查。
-    async fn check_login_hooks(&self, login_id: i64, ctx: &LoginContext) -> BulwarkResult<()>;
+    async fn check_login_hooks(&self, login_id: &str, ctx: &LoginContext) -> BulwarkResult<()>;
 }
 
 // ============================================================================
@@ -152,7 +152,7 @@ impl DefaultLoginHandler {
 
 #[async_trait]
 impl LoginHandler for DefaultLoginHandler {
-    async fn handle_login(&self, login_id: i64) -> BulwarkResult<String> {
+    async fn handle_login(&self, login_id: &str) -> BulwarkResult<String> {
         self.logic.login(login_id).await
     }
 }
@@ -176,7 +176,7 @@ impl LogoutHandler for DefaultLogoutHandler {
         self.logic.logout().await
     }
 
-    async fn handle_logout_by_login_id(&self, login_id: i64) -> BulwarkResult<()> {
+    async fn handle_logout_by_login_id(&self, login_id: &str) -> BulwarkResult<()> {
         self.logic.logout_by_login_id(login_id).await
     }
 }
@@ -220,7 +220,7 @@ impl DefaultTokenGenerator {
 
 #[async_trait]
 impl TokenGenerator for DefaultTokenGenerator {
-    async fn generate_token(&self, login_id: i64) -> BulwarkResult<String> {
+    async fn generate_token(&self, login_id: &str) -> BulwarkResult<String> {
         self.logic.login(login_id).await
     }
 
@@ -244,7 +244,7 @@ impl DefaultSessionCreator {
 
 #[async_trait]
 impl SessionCreator for DefaultSessionCreator {
-    async fn create_session(&self, login_id: i64, token: &str) -> BulwarkResult<()> {
+    async fn create_session(&self, login_id: &str, token: &str) -> BulwarkResult<()> {
         self.logic.login_with_token(login_id, token).await
     }
 
@@ -274,7 +274,7 @@ impl DefaultFirewallStrategy {
 
 #[async_trait]
 impl FirewallStrategy for DefaultFirewallStrategy {
-    async fn check_login_hooks(&self, _login_id: i64, _ctx: &LoginContext) -> BulwarkResult<()> {
+    async fn check_login_hooks(&self, _login_id: &str, _ctx: &LoginContext) -> BulwarkResult<()> {
         Ok(())
     }
 }
@@ -308,7 +308,7 @@ impl FirewallStrategy for DefaultFirewallStrategy {
 /// struct MyLoginHandler;
 /// #[async_trait::async_trait]
 /// impl LoginHandler for MyLoginHandler {
-///     async fn handle_login(&self, login_id: i64) -> bulwark::BulwarkResult<String> {
+///     async fn handle_login(&self, login_id: &str) -> bulwark::BulwarkResult<String> {
 ///         Ok(format!("custom-token-{}", login_id))
 ///     }
 /// }
@@ -518,8 +518,8 @@ mod tests {
     // ------------------------------------------------------------------------
 
     struct MockInterface {
-        permissions: HashMap<i64, Vec<String>>,
-        roles: HashMap<i64, Vec<String>>,
+        permissions: HashMap<String, Vec<String>>,
+        roles: HashMap<String, Vec<String>>,
     }
 
     impl MockInterface {
@@ -533,12 +533,12 @@ mod tests {
 
     #[async_trait]
     impl BulwarkInterface for MockInterface {
-        async fn get_permission_list(&self, login_id: i64) -> BulwarkResult<Vec<String>> {
-            Ok(self.permissions.get(&login_id).cloned().unwrap_or_default())
+        async fn get_permission_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+            Ok(self.permissions.get(login_id).cloned().unwrap_or_default())
         }
 
-        async fn get_role_list(&self, login_id: i64) -> BulwarkResult<Vec<String>> {
-            Ok(self.roles.get(&login_id).cloned().unwrap_or_default())
+        async fn get_role_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+            Ok(self.roles.get(login_id).cloned().unwrap_or_default())
         }
     }
 
@@ -564,12 +564,12 @@ mod tests {
         struct MyLoginHandler;
         #[async_trait]
         impl LoginHandler for MyLoginHandler {
-            async fn handle_login(&self, login_id: i64) -> BulwarkResult<String> {
+            async fn handle_login(&self, login_id: &str) -> BulwarkResult<String> {
                 Ok(format!("token-{}", login_id))
             }
         }
         let handler = MyLoginHandler;
-        assert_eq!(handler.handle_login(1001).await.unwrap(), "token-1001");
+        assert_eq!(handler.handle_login("1001").await.unwrap(), "token-1001");
     }
 
     /// 验证 `LogoutHandler` trait 可被自定义实现。
@@ -581,13 +581,13 @@ mod tests {
             async fn handle_logout(&self) -> BulwarkResult<()> {
                 Ok(())
             }
-            async fn handle_logout_by_login_id(&self, _login_id: i64) -> BulwarkResult<()> {
+            async fn handle_logout_by_login_id(&self, _login_id: &str) -> BulwarkResult<()> {
                 Ok(())
             }
         }
         let handler = MyLogoutHandler;
         assert!(handler.handle_logout().await.is_ok());
-        assert!(handler.handle_logout_by_login_id(1001).await.is_ok());
+        assert!(handler.handle_logout_by_login_id("1001").await.is_ok());
     }
 
     /// 验证 `PermissionHandler` trait 可被自定义实现。
@@ -614,7 +614,7 @@ mod tests {
         struct MyTokenGenerator;
         #[async_trait]
         impl TokenGenerator for MyTokenGenerator {
-            async fn generate_token(&self, login_id: i64) -> BulwarkResult<String> {
+            async fn generate_token(&self, login_id: &str) -> BulwarkResult<String> {
                 Ok(format!("gen-{}", login_id))
             }
             async fn refresh_token(&self, token: &str) -> BulwarkResult<String> {
@@ -622,7 +622,7 @@ mod tests {
             }
         }
         let gen = MyTokenGenerator;
-        assert_eq!(gen.generate_token(1001).await.unwrap(), "gen-1001");
+        assert_eq!(gen.generate_token("1001").await.unwrap(), "gen-1001");
         assert_eq!(gen.refresh_token("old").await.unwrap(), "refreshed-old");
     }
 
@@ -632,7 +632,7 @@ mod tests {
         struct MySessionCreator;
         #[async_trait]
         impl SessionCreator for MySessionCreator {
-            async fn create_session(&self, _login_id: i64, _token: &str) -> BulwarkResult<()> {
+            async fn create_session(&self, _login_id: &str, _token: &str) -> BulwarkResult<()> {
                 Ok(())
             }
             async fn check_login(&self) -> BulwarkResult<bool> {
@@ -640,7 +640,7 @@ mod tests {
             }
         }
         let creator = MySessionCreator;
-        assert!(creator.create_session(1001, "tok").await.is_ok());
+        assert!(creator.create_session("1001", "tok").await.is_ok());
         assert!(creator.check_login().await.unwrap());
     }
 
@@ -652,15 +652,15 @@ mod tests {
         impl FirewallStrategy for MyFirewallStrategy {
             async fn check_login_hooks(
                 &self,
-                _login_id: i64,
+                _login_id: &str,
                 _ctx: &LoginContext,
             ) -> BulwarkResult<()> {
                 Ok(())
             }
         }
         let fw = MyFirewallStrategy;
-        let ctx = LoginContext::new(1001);
-        assert!(fw.check_login_hooks(1001, &ctx).await.is_ok());
+        let ctx = LoginContext::new("1001");
+        assert!(fw.check_login_hooks("1001", &ctx).await.is_ok());
     }
 
     // ========================================================================
@@ -687,7 +687,7 @@ mod tests {
     async fn default_login_handler_delegates_to_logic() {
         let logic = make_logic();
         let strategy = Strategy::new(logic);
-        let token = strategy.login_handler().handle_login(1001).await.unwrap();
+        let token = strategy.login_handler().handle_login("1001").await.unwrap();
         assert!(
             !token.is_empty(),
             "默认登录策略应委托 logic.login 生成 token"
@@ -703,13 +703,13 @@ mod tests {
         struct CustomLoginHandler;
         #[async_trait]
         impl LoginHandler for CustomLoginHandler {
-            async fn handle_login(&self, login_id: i64) -> BulwarkResult<String> {
+            async fn handle_login(&self, login_id: &str) -> BulwarkResult<String> {
                 Ok(format!("custom-{}", login_id))
             }
         }
 
         strategy.register_login_handler(Arc::new(CustomLoginHandler));
-        let token = strategy.login_handler().handle_login(1001).await.unwrap();
+        let token = strategy.login_handler().handle_login("1001").await.unwrap();
         assert_eq!(token, "custom-1001", "register 后应使用自定义策略");
     }
 
@@ -724,13 +724,13 @@ mod tests {
         }
         #[async_trait]
         impl LoginHandler for TrackingLoginHandler {
-            async fn handle_login(&self, login_id: i64) -> BulwarkResult<String> {
+            async fn handle_login(&self, login_id: &str) -> BulwarkResult<String> {
                 Ok(format!("{}-{}", self.id, login_id))
             }
         }
 
         // 默认策略
-        let default_token = strategy.login_handler().handle_login(1).await.unwrap();
+        let default_token = strategy.login_handler().handle_login("1").await.unwrap();
         assert!(
             !default_token.starts_with("42-"),
             "默认策略不应是 TrackingLoginHandler"
@@ -738,7 +738,7 @@ mod tests {
 
         // 注册自定义策略
         strategy.register_login_handler(Arc::new(TrackingLoginHandler { id: 42 }));
-        let custom_token = strategy.login_handler().handle_login(1).await.unwrap();
+        let custom_token = strategy.login_handler().handle_login("1").await.unwrap();
         assert_eq!(custom_token, "42-1", "get 应返回当前注册的策略");
     }
 
@@ -751,19 +751,19 @@ mod tests {
         struct CustomLoginHandler;
         #[async_trait]
         impl LoginHandler for CustomLoginHandler {
-            async fn handle_login(&self, login_id: i64) -> BulwarkResult<String> {
+            async fn handle_login(&self, login_id: &str) -> BulwarkResult<String> {
                 Ok(format!("custom-{}", login_id))
             }
         }
 
         // 注册自定义策略
         strategy.register_login_handler(Arc::new(CustomLoginHandler));
-        let custom_token = strategy.login_handler().handle_login(1001).await.unwrap();
+        let custom_token = strategy.login_handler().handle_login("1001").await.unwrap();
         assert_eq!(custom_token, "custom-1001");
 
         // remove 恢复默认
         strategy.remove_login_handler();
-        let restored_token = strategy.login_handler().handle_login(1001).await.unwrap();
+        let restored_token = strategy.login_handler().handle_login("1001").await.unwrap();
         assert_ne!(restored_token, "custom-1001", "remove 后应恢复默认策略");
     }
 
@@ -793,7 +793,7 @@ mod tests {
         struct CustomLogin;
         #[async_trait]
         impl LoginHandler for CustomLogin {
-            async fn handle_login(&self, id: i64) -> BulwarkResult<String> {
+            async fn handle_login(&self, id: &str) -> BulwarkResult<String> {
                 Ok(format!("c-{}", id))
             }
         }
@@ -814,7 +814,7 @@ mod tests {
         struct CustomLoginHandler;
         #[async_trait]
         impl LoginHandler for CustomLoginHandler {
-            async fn handle_login(&self, login_id: i64) -> BulwarkResult<String> {
+            async fn handle_login(&self, login_id: &str) -> BulwarkResult<String> {
                 Ok(format!("custom-{}", login_id))
             }
         }
@@ -832,7 +832,7 @@ mod tests {
         );
 
         // login_handler 确实已替换
-        let token = strategy.login_handler().handle_login(1001).await.unwrap();
+        let token = strategy.login_handler().handle_login("1001").await.unwrap();
         assert_eq!(token, "custom-1001");
     }
 
@@ -848,7 +848,7 @@ mod tests {
         struct CustomLoginHandler;
         #[async_trait]
         impl LoginHandler for CustomLoginHandler {
-            async fn handle_login(&self, login_id: i64) -> BulwarkResult<String> {
+            async fn handle_login(&self, login_id: &str) -> BulwarkResult<String> {
                 Ok(format!("v1-{}", login_id))
             }
         }
@@ -862,7 +862,7 @@ mod tests {
         struct AnotherLoginHandler;
         #[async_trait]
         impl LoginHandler for AnotherLoginHandler {
-            async fn handle_login(&self, login_id: i64) -> BulwarkResult<String> {
+            async fn handle_login(&self, login_id: &str) -> BulwarkResult<String> {
                 Ok(format!("v2-{}", login_id))
             }
         }
@@ -880,10 +880,10 @@ mod tests {
     async fn default_firewall_strategy_is_noop() {
         let logic = make_logic();
         let strategy = Strategy::new(logic);
-        let ctx = LoginContext::new(1001);
+        let ctx = LoginContext::new("1001");
         let result = strategy
             .firewall_strategy()
-            .check_login_hooks(1001, &ctx)
+            .check_login_hooks("1001", &ctx)
             .await;
         assert!(result.is_ok(), "默认防火墙策略应为 no-op 返回 Ok");
     }
@@ -897,7 +897,7 @@ mod tests {
         // create_session 委托 login_with_token，应成功
         let result = strategy
             .session_creator()
-            .create_session(1001, "test-token")
+            .create_session("1001", "test-token")
             .await;
         assert!(
             result.is_ok(),
@@ -952,7 +952,7 @@ mod tests {
         // 注销不存在的 login_id 应返回 Ok（幂等语义）
         let result = strategy
             .logout_handler()
-            .handle_logout_by_login_id(99999)
+            .handle_logout_by_login_id("99999")
             .await;
         assert!(
             result.is_ok(),
@@ -985,7 +985,7 @@ mod tests {
     async fn default_token_generator_generate_token_delegates() {
         let logic = make_logic();
         let strategy = Strategy::new(logic);
-        let result = strategy.token_generator().generate_token(1001).await;
+        let result = strategy.token_generator().generate_token("1001").await;
         assert!(
             result.is_ok(),
             "generate_token 应委托 logic.login 返回 token，实际: {:?}",

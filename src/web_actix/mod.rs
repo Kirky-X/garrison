@@ -700,8 +700,8 @@ mod tests {
     // ----------------------------------------------------------------
 
     struct MockInterface {
-        permissions: HashMap<i64, Vec<String>>,
-        roles: HashMap<i64, Vec<String>>,
+        permissions: HashMap<String, Vec<String>>,
+        roles: HashMap<String, Vec<String>>,
     }
 
     impl MockInterface {
@@ -712,27 +712,31 @@ mod tests {
             }
         }
 
-        fn with_permission(mut self, login_id: i64, perms: &[&str]) -> Self {
-            self.permissions
-                .insert(login_id, perms.iter().map(|s| s.to_string()).collect());
+        fn with_permission(mut self, login_id: &str, perms: &[&str]) -> Self {
+            self.permissions.insert(
+                login_id.to_string(),
+                perms.iter().map(|s| s.to_string()).collect(),
+            );
             self
         }
 
-        fn with_role(mut self, login_id: i64, roles: &[&str]) -> Self {
-            self.roles
-                .insert(login_id, roles.iter().map(|s| s.to_string()).collect());
+        fn with_role(mut self, login_id: &str, roles: &[&str]) -> Self {
+            self.roles.insert(
+                login_id.to_string(),
+                roles.iter().map(|s| s.to_string()).collect(),
+            );
             self
         }
     }
 
     #[async_trait]
     impl BulwarkInterface for MockInterface {
-        async fn get_permission_list(&self, login_id: i64) -> BulwarkResult<Vec<String>> {
-            Ok(self.permissions.get(&login_id).cloned().unwrap_or_default())
+        async fn get_permission_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+            Ok(self.permissions.get(login_id).cloned().unwrap_or_default())
         }
 
-        async fn get_role_list(&self, login_id: i64) -> BulwarkResult<Vec<String>> {
-            Ok(self.roles.get(&login_id).cloned().unwrap_or_default())
+        async fn get_role_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+            Ok(self.roles.get(login_id).cloned().unwrap_or_default())
         }
     }
 
@@ -750,16 +754,16 @@ mod tests {
     }
 
     /// 初始化 BulwarkManager（带权限/角色数据）。
-    fn init_manager(permissions: &[(i64, &[&str])], roles: &[(i64, &[&str])]) {
+    fn init_manager(permissions: &[(&str, &[&str])], roles: &[(&str, &[&str])]) {
         BulwarkManager::reset_for_test();
         let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
         let config = Arc::new(make_config());
         let mut interface = MockInterface::new();
         for (id, perms) in permissions {
-            interface = interface.with_permission(*id, perms);
+            interface = interface.with_permission(id, perms);
         }
         for (id, roles) in roles {
-            interface = interface.with_role(*id, roles);
+            interface = interface.with_role(id, roles);
         }
         let interface: Arc<dyn BulwarkInterface> = Arc::new(interface);
         BulwarkManager::init(dao, config, interface).unwrap();
@@ -857,7 +861,7 @@ mod tests {
     #[serial]
     async fn middleware_allows_protected_path_with_valid_token() {
         init_manager(&[], &[]);
-        let token = BulwarkUtil::login(1001).await.unwrap();
+        let token = BulwarkUtil::login("1001").await.unwrap();
         let service = make_middleware_service(&[("/protected", Annotation::CheckLogin)]).await;
 
         let req = test::TestRequest::get()
@@ -877,7 +881,7 @@ mod tests {
     #[serial]
     async fn middleware_blocks_permission_denied() {
         init_manager(&[], &[]); // 无权限数据
-        let token = BulwarkUtil::login(1001).await.unwrap();
+        let token = BulwarkUtil::login("1001").await.unwrap();
         let service = make_middleware_service(&[(
             "/admin",
             Annotation::CheckPermission("admin:read".to_string()),
@@ -933,7 +937,7 @@ mod tests {
     #[serial]
     async fn middleware_works_in_real_app_chain() {
         init_manager(&[], &[]);
-        let token = BulwarkUtil::login(1001).await.unwrap();
+        let token = BulwarkUtil::login("1001").await.unwrap();
         let config = Arc::new(make_config());
         let router =
             BulwarkRouter::new(config).route_protected("/api/protected", Annotation::CheckLogin);
@@ -995,7 +999,7 @@ mod tests {
     #[serial]
     async fn extractor_check_login_passes_with_valid_token() {
         init_manager(&[], &[]);
-        let token = BulwarkUtil::login(1001).await.unwrap();
+        let token = BulwarkUtil::login("1001").await.unwrap();
         let config = Arc::new(make_config());
         let app = test::init_service(
             App::new()
@@ -1061,7 +1065,7 @@ mod tests {
     #[serial]
     async fn extractor_check_role_returns_403_without_role() {
         init_manager(&[], &[]); // 无角色数据
-        let token = BulwarkUtil::login(1001).await.unwrap();
+        let token = BulwarkUtil::login("1001").await.unwrap();
         let config = Arc::new(make_config());
         let app = test::init_service(
             App::new()
@@ -1087,8 +1091,8 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn extractor_check_role_reads_role_from_query_param() {
-        init_manager(&[], &[(1001, &["admin"])]); // 注入 admin 角色
-        let token = BulwarkUtil::login(1001).await.unwrap();
+        init_manager(&[], &[("1001", &["admin"])]); // 注入 admin 角色
+        let token = BulwarkUtil::login("1001").await.unwrap();
         let config = Arc::new(make_config());
         let app = test::init_service(
             App::new()
@@ -1136,7 +1140,7 @@ mod tests {
     #[serial]
     async fn extractor_check_permission_returns_403_without_permission() {
         init_manager(&[], &[]); // 无权限数据
-        let token = BulwarkUtil::login(1001).await.unwrap();
+        let token = BulwarkUtil::login("1001").await.unwrap();
         let config = Arc::new(make_config());
         let app = test::init_service(
             App::new()
@@ -1162,8 +1166,8 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn extractor_check_permission_reads_from_query_param() {
-        init_manager(&[(1001, &["user:read"])], &[]); // 注入权限
-        let token = BulwarkUtil::login(1001).await.unwrap();
+        init_manager(&[("1001", &["user:read"])], &[]); // 注入权限
+        let token = BulwarkUtil::login("1001").await.unwrap();
         let config = Arc::new(make_config());
         let app = test::init_service(
             App::new()

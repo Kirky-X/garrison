@@ -57,7 +57,7 @@ use super::PermissionChecker;
 ///
 /// // 任何 PermissionChecker 自动实现 Authorizer
 /// let checker: Arc<dyn PermissionChecker> = ...;
-/// let req = AuthRequest::new(1001, "user:read");
+/// let req = AuthRequest::new("1001", "user:read");
 /// let decision: Decision = Authorizer::authorize(&*checker, &req).await?;
 /// ```
 ///
@@ -162,7 +162,7 @@ mod tests {
     #[tokio::test]
     async fn authorizer_allows_when_permission_held() {
         let authorizer = MockAuthorizer::new(MockOutcome::Allow);
-        let req = AuthRequest::new(1001, "user:read");
+        let req = AuthRequest::new("1001", "user:read");
         let decision = authorizer.authorize(&req).await.expect("authorize ok");
         assert!(decision.allowed);
         assert_eq!(decision.reason, DecisionReason::ExplicitAllow);
@@ -172,7 +172,7 @@ mod tests {
     #[tokio::test]
     async fn authorizer_denies_when_permission_not_held() {
         let authorizer = MockAuthorizer::new(MockOutcome::DenyNoMatch);
-        let req = AuthRequest::new(1001, "user:delete");
+        let req = AuthRequest::new("1001", "user:delete");
         let decision = authorizer.authorize(&req).await.expect("authorize ok");
         assert!(!decision.allowed);
         assert_eq!(decision.reason, DecisionReason::NoMatchingPermission);
@@ -182,7 +182,7 @@ mod tests {
     #[tokio::test]
     async fn authorizer_returns_error_on_invalid_param() {
         let authorizer = MockAuthorizer::new(MockOutcome::InvalidParam);
-        let req = AuthRequest::new(1001, "");
+        let req = AuthRequest::new("1001", "");
         let result = authorizer.authorize(&req).await;
         assert!(result.is_err());
         match result.err() {
@@ -196,7 +196,7 @@ mod tests {
     async fn authorizer_passes_auth_request_intact() {
         let authorizer = MockAuthorizer::new(MockOutcome::Allow);
         let req = AuthRequest {
-            login_id: 2002,
+            login_id: "2002".to_string(),
             tenant_id: 0,
             action: "doc:write".to_string(),
             resource: Some("doc:42".to_string()),
@@ -206,7 +206,7 @@ mod tests {
         let captured = authorizer
             .captured_request()
             .expect("request should be captured");
-        assert_eq!(captured.login_id, 2002);
+        assert_eq!(captured.login_id, "2002");
         assert_eq!(captured.action, "doc:write");
         assert_eq!(captured.resource.as_deref(), Some("doc:42"));
     }
@@ -217,7 +217,7 @@ mod tests {
         let authorizer = MockAuthorizer::new(MockOutcome::Allow);
         let ctx = serde_json::json!({"ip": "10.0.0.1", "device": "mobile"});
         let req = AuthRequest {
-            login_id: 1,
+            login_id: "1".to_string(),
             tenant_id: 0,
             action: "test".to_string(),
             resource: None,
@@ -237,7 +237,7 @@ mod tests {
     async fn authorizer_passes_tenant_id() {
         let authorizer = MockAuthorizer::new(MockOutcome::Allow);
         let req = AuthRequest {
-            login_id: 1,
+            login_id: "1".to_string(),
             tenant_id: 42,
             action: "test".to_string(),
             resource: None,
@@ -257,11 +257,11 @@ mod tests {
     ///（`PermissionCheckerDefault` 未实现 `Authorizer`）。
     #[tokio::test]
     async fn authorizer_blanket_impl_works_with_permission_checker() {
-        let interface = MockInterface::new().with_perms(1001, vec!["user:read"]);
+        let interface = MockInterface::new().with_perms("1001", vec!["user:read"]);
         let interface_arc: Arc<dyn BulwarkInterface> = Arc::new(interface);
         let checker = PermissionCheckerDefault::new(interface_arc);
 
-        let req = AuthRequest::new(1001, "user:read");
+        let req = AuthRequest::new("1001", "user:read");
 
         // Via PermissionChecker（内部 trait）
         let decision_pc = PermissionChecker::authorize(&checker, &req)
@@ -287,7 +287,7 @@ mod tests {
     #[tokio::test]
     async fn authorizer_can_be_used_as_dyn_trait() {
         let authorizer: Box<dyn Authorizer> = Box::new(MockAuthorizer::new(MockOutcome::Allow));
-        let req = AuthRequest::new(1001, "user:read");
+        let req = AuthRequest::new("1001", "user:read");
         let decision = authorizer.authorize(&req).await.expect("authorize ok");
         assert!(decision.allowed);
         assert_eq!(decision.reason, DecisionReason::ExplicitAllow);
@@ -299,9 +299,9 @@ mod tests {
 
     /// 测试用 mock BulwarkInterface（仅提供 permission/role 数据，供 PermissionCheckerDefault 使用）。
     struct MockInterface {
-        permissions: HashMap<i64, Vec<String>>,
+        permissions: HashMap<String, Vec<String>>,
         #[allow(dead_code)]
-        roles: HashMap<i64, Vec<String>>,
+        roles: HashMap<String, Vec<String>>,
     }
 
     impl MockInterface {
@@ -312,21 +312,23 @@ mod tests {
             }
         }
 
-        fn with_perms(mut self, login_id: i64, perms: Vec<&str>) -> Self {
-            self.permissions
-                .insert(login_id, perms.iter().map(|s| s.to_string()).collect());
+        fn with_perms(mut self, login_id: &str, perms: Vec<&str>) -> Self {
+            self.permissions.insert(
+                login_id.to_string(),
+                perms.iter().map(|s| s.to_string()).collect(),
+            );
             self
         }
     }
 
     #[async_trait]
     impl BulwarkInterface for MockInterface {
-        async fn get_permission_list(&self, login_id: i64) -> BulwarkResult<Vec<String>> {
-            Ok(self.permissions.get(&login_id).cloned().unwrap_or_default())
+        async fn get_permission_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+            Ok(self.permissions.get(login_id).cloned().unwrap_or_default())
         }
 
-        async fn get_role_list(&self, login_id: i64) -> BulwarkResult<Vec<String>> {
-            Ok(self.roles.get(&login_id).cloned().unwrap_or_default())
+        async fn get_role_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+            Ok(self.roles.get(login_id).cloned().unwrap_or_default())
         }
     }
 }

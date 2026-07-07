@@ -15,7 +15,7 @@
 CREATE TABLE IF NOT EXISTS app_user_device (
     id                TEXT    PRIMARY KEY,                                  -- UUID v4
     tenant_id         BIGINT  NOT NULL,                                    -- 租户 ID（i64）
-    login_id          BIGINT  NOT NULL,                                    -- 登录 ID（i64）
+    login_id          TEXT    NOT NULL,                                    -- 登录 ID（String）
     device_identifier TEXT    NOT NULL,                                    -- UA hash 或设备指纹
     device_name       TEXT,                                                -- 从 UA 解析的设备名
     user_agent        TEXT,                                                -- 原始 User-Agent

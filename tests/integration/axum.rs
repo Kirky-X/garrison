@@ -107,8 +107,8 @@ impl BulwarkDao for MockDao {
 // ============================================================================
 
 struct MockInterface {
-    permissions: HashMap<i64, Vec<String>>,
-    roles: HashMap<i64, Vec<String>>,
+    permissions: HashMap<String, Vec<String>>,
+    roles: HashMap<String, Vec<String>>,
 }
 
 impl MockInterface {
@@ -119,27 +119,31 @@ impl MockInterface {
         }
     }
 
-    fn with_permission(mut self, login_id: i64, perms: &[&str]) -> Self {
-        self.permissions
-            .insert(login_id, perms.iter().map(|s| s.to_string()).collect());
+    fn with_permission(mut self, login_id: &str, perms: &[&str]) -> Self {
+        self.permissions.insert(
+            login_id.to_string(),
+            perms.iter().map(|s| s.to_string()).collect(),
+        );
         self
     }
 
-    fn with_role(mut self, login_id: i64, roles: &[&str]) -> Self {
-        self.roles
-            .insert(login_id, roles.iter().map(|s| s.to_string()).collect());
+    fn with_role(mut self, login_id: &str, roles: &[&str]) -> Self {
+        self.roles.insert(
+            login_id.to_string(),
+            roles.iter().map(|s| s.to_string()).collect(),
+        );
         self
     }
 }
 
 #[async_trait]
 impl BulwarkInterface for MockInterface {
-    async fn get_permission_list(&self, login_id: i64) -> Result<Vec<String>, BulwarkError> {
-        Ok(self.permissions.get(&login_id).cloned().unwrap_or_default())
+    async fn get_permission_list(&self, login_id: &str) -> Result<Vec<String>, BulwarkError> {
+        Ok(self.permissions.get(login_id).cloned().unwrap_or_default())
     }
 
-    async fn get_role_list(&self, login_id: i64) -> Result<Vec<String>, BulwarkError> {
-        Ok(self.roles.get(&login_id).cloned().unwrap_or_default())
+    async fn get_role_list(&self, login_id: &str) -> Result<Vec<String>, BulwarkError> {
+        Ok(self.roles.get(login_id).cloned().unwrap_or_default())
     }
 }
 
@@ -157,15 +161,15 @@ fn make_config() -> BulwarkConfig {
 }
 
 /// 初始化 BulwarkManager（覆盖式更新，带权限/角色数据）。
-fn init_manager(permissions: &[(i64, &[&str])], roles: &[(i64, &[&str])]) {
+fn init_manager(permissions: &[(&str, &[&str])], roles: &[(&str, &[&str])]) {
     let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
     let config = Arc::new(make_config());
     let mut interface = MockInterface::new();
     for (id, perms) in permissions {
-        interface = interface.with_permission(*id, perms);
+        interface = interface.with_permission(id, perms);
     }
     for (id, roles) in roles {
-        interface = interface.with_role(*id, roles);
+        interface = interface.with_role(id, roles);
     }
     let interface: Arc<dyn BulwarkInterface> = Arc::new(interface);
     BulwarkManager::init(dao, config, interface).unwrap();
@@ -211,7 +215,7 @@ fn make_request(path: &str, token: Option<&str>) -> Request<Body> {
 #[serial]
 async fn check_login_with_valid_token_returns_200() {
     init_manager(&[], &[]);
-    let token = BulwarkUtil::login(1001).await.unwrap();
+    let token = BulwarkUtil::login("1001").await.unwrap();
 
     let app = make_app();
     let response = app
@@ -251,7 +255,7 @@ async fn check_login_with_invalid_token_returns_401() {
 #[serial]
 async fn check_permission_without_permission_returns_403() {
     init_manager(&[], &[]); // 无权限数据
-    let token = BulwarkUtil::login(1001).await.unwrap();
+    let token = BulwarkUtil::login("1001").await.unwrap();
 
     let app = make_app();
     let response = app
@@ -265,8 +269,8 @@ async fn check_permission_without_permission_returns_403() {
 #[tokio::test]
 #[serial]
 async fn check_permission_with_permission_returns_200() {
-    init_manager(&[(1001, &["user:read"])], &[]);
-    let token = BulwarkUtil::login(1001).await.unwrap();
+    init_manager(&[("1001", &["user:read"])], &[]);
+    let token = BulwarkUtil::login("1001").await.unwrap();
 
     let app = make_app();
     let response = app
@@ -281,7 +285,7 @@ async fn check_permission_with_permission_returns_200() {
 #[serial]
 async fn check_role_without_role_returns_403() {
     init_manager(&[], &[]); // 无角色数据
-    let token = BulwarkUtil::login(1001).await.unwrap();
+    let token = BulwarkUtil::login("1001").await.unwrap();
 
     let app = make_app();
     let response = app
@@ -295,8 +299,8 @@ async fn check_role_without_role_returns_403() {
 #[tokio::test]
 #[serial]
 async fn check_role_with_role_returns_200() {
-    init_manager(&[], &[(1001, &["admin"])]);
-    let token = BulwarkUtil::login(1001).await.unwrap();
+    init_manager(&[], &[("1001", &["admin"])]);
+    let token = BulwarkUtil::login("1001").await.unwrap();
 
     let app = make_app();
     let response = app
@@ -325,7 +329,7 @@ async fn ignore_allows_anonymous_access() {
 #[serial]
 async fn middleware_extracts_token_from_cookie() {
     init_manager(&[], &[]);
-    let token = BulwarkUtil::login(1001).await.unwrap();
+    let token = BulwarkUtil::login("1001").await.unwrap();
 
     let req = Request::builder()
         .method("GET")
@@ -377,7 +381,7 @@ async fn unauthorized_response_body_contains_error_json() {
 #[serial]
 async fn forbidden_response_body_contains_error_json() {
     init_manager(&[], &[]); // 无权限
-    let token = BulwarkUtil::login(1001).await.unwrap();
+    let token = BulwarkUtil::login("1001").await.unwrap();
 
     let app = make_app();
     let response = app

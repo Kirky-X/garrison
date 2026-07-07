@@ -150,7 +150,7 @@ impl SocialBindingService {
     /// - `tenant_id`: 租户 ID（0=默认租户）
     ///
     /// # 返回
-    /// - `Ok(login_id)`: 已有或新建的 login_id（i64，> 0）
+    /// - `Ok(login_id)`: 已有或新建的 login_id（String，UUID）
     ///
     /// # 错误
     /// - `BulwarkError::Dao`: SQL 查询/插入失败
@@ -158,7 +158,7 @@ impl SocialBindingService {
         &self,
         user: &SocialUserInfo,
         tenant_id: i64,
-    ) -> crate::error::BulwarkResult<i64> {
+    ) -> crate::error::BulwarkResult<String> {
         use sea_orm::{ConnectionTrait, DbBackend, Statement, Value};
 
         let provider_str = provider_to_str(&user.provider);
@@ -187,28 +187,28 @@ impl SocialBindingService {
 
         // 2. 命中 → 返回已有 login_id
         if let Some(row) = rows.into_iter().next() {
-            let login_id: i64 = row.try_get::<i64>("", "login_id").map_err(|e| {
+            let login_id: String = row.try_get::<String>("", "login_id").map_err(|e| {
                 crate::error::BulwarkError::Dao(format!("login_id 读取失败: {}", e))
             })?;
             return Ok(login_id);
         }
 
-        // 3. 未命中 → 单条 INSERT（login_id 用子查询生成，UNIQUE 约束保证幂等性）
+        // 3. 未命中 → 单条 INSERT（login_id 用 UUID 生成，UNIQUE 约束保证幂等性）
         let created_at = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
 
+        let new_login_id = uuid::Uuid::new_v4().to_string();
+
         let stmt = Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO social_bindings \
              (tenant_id, login_id, provider, provider_user_id, union_id, created_at) \
-             VALUES (?, \
-                     COALESCE((SELECT MAX(login_id) + 1 FROM social_bindings WHERE tenant_id = ?), 1), \
-                     ?, ?, ?, ?)",
+             VALUES (?, ?, ?, ?, ?, ?)",
             vec![
                 Value::BigInt(Some(tenant_id)),
-                Value::BigInt(Some(tenant_id)),
+                Value::String(Some(new_login_id)),
                 Value::String(Some(provider_str.to_string())),
                 Value::String(Some(user.provider_user_id.clone())),
                 match user.union_id.clone() {
@@ -265,8 +265,8 @@ impl SocialBindingService {
                 "INSERT 后 SELECT 返回空（绑定未创建且查询失败）".into(),
             )
         })?;
-        let login_id: i64 = row
-            .try_get::<i64>("", "login_id")
+        let login_id: String = row
+            .try_get::<String>("", "login_id")
             .map_err(|e| crate::error::BulwarkError::Dao(format!("login_id 读取失败: {}", e)))?;
 
         Ok(login_id)
@@ -496,7 +496,7 @@ mod tests {
     /// 2. 构造 `SocialBindingService::new(pool, dao)`（Decision Matrix 方案 A：pool + dao）
     /// 3. 构造 `SocialUserInfo { provider: Wechat, provider_user_id: "openid1", ... }`
     /// 4. 调用 `find_or_create(&user, tenant_id=0).await?`
-    /// 5. 断言返回 `login_id` 为新生成的 i64（> 0）
+    /// 5. 断言返回 `login_id` 为新生成的 String（UUID，非空）
     /// 6. 查询 `social_bindings` 表，断言有 1 行记录且 `provider_user_id == "openid1"`
     ///
     /// # SQLite 单连接内存数据库
@@ -553,10 +553,10 @@ mod tests {
             .await
             .expect("find_or_create 应返回 Ok");
 
-        // 5. 断言返回新生成的 login_id（> 0）
+        // 5. 断言返回新生成的 login_id（非空 UUID）
         assert!(
-            login_id > 0,
-            "find_or_create 应返回新生成的 login_id（> 0），实际: {}",
+            !login_id.is_empty(),
+            "find_or_create 应返回新生成的 login_id（非空 UUID），实际: {}",
             login_id
         );
 
@@ -578,8 +578,8 @@ mod tests {
             let rows = conn.query_all_raw(stmt).await.expect("query_all 应成功");
             assert_eq!(rows.len(), 1, "social_bindings 表应有 1 行记录");
             let row = &rows[0];
-            let db_login_id: i64 = row
-                .try_get::<i64>("", "login_id")
+            let db_login_id: String = row
+                .try_get::<String>("", "login_id")
                 .expect("login_id 字段应可读");
             let db_provider: String = row
                 .try_get::<String>("", "provider")

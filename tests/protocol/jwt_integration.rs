@@ -109,10 +109,10 @@ struct MockInterface;
 
 #[async_trait]
 impl BulwarkInterface for MockInterface {
-    async fn get_permission_list(&self, _login_id: i64) -> BulwarkResult<Vec<String>> {
+    async fn get_permission_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
         Ok(vec![])
     }
-    async fn get_role_list(&self, _login_id: i64) -> BulwarkResult<Vec<String>> {
+    async fn get_role_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
         Ok(vec![])
     }
 }
@@ -145,14 +145,18 @@ async fn jwt_end_to_end_login_verify_refresh_logout() {
     init_jwt_manager();
 
     // 1. 登录：生成 JWT token 并写入会话
-    let token = BulwarkUtil::login(1001).await.unwrap();
+    let token = BulwarkUtil::login("1001").await.unwrap();
     assert!(!token.is_empty(), "login 应返回非空 token");
     assert!(token.contains('.'), "JWT 应为三段式（含 .）：{}", token);
     println!("[登录] token={}", &token[..40.min(token.len())]);
 
     // 2. verify_token：校验 JWT 并返回 login_id
     let login_id = BulwarkUtil::verify_token(&token).await.unwrap();
-    assert_eq!(login_id, 1001, "verify_token 应返回原 login_id");
+    assert_eq!(
+        login_id,
+        "1001".to_string(),
+        "verify_token 应返回原 login_id"
+    );
     println!("[校验] login_id={}", login_id);
 
     // 3. refresh_token：刷新 JWT（生成新 token）
@@ -161,7 +165,11 @@ async fn jwt_end_to_end_login_verify_refresh_logout() {
     //    此处仅验证 refresh 产出的 token 仍可校验通过且 login_id 一致。
     let new_token = BulwarkUtil::refresh_token(&token).await.unwrap();
     let new_login_id = BulwarkUtil::verify_token(&new_token).await.unwrap();
-    assert_eq!(new_login_id, 1001, "新 token 的 login_id 应一致");
+    assert_eq!(
+        new_login_id,
+        "1001".to_string(),
+        "新 token 的 login_id 应一致"
+    );
     println!("[刷新] 新 token 已校验通过");
 
     // 4. check_login：在 task_local 上下文内校验登录状态

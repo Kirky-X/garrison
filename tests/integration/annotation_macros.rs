@@ -165,8 +165,8 @@ impl BulwarkDao for MockDao {
 // ============================================================================
 
 struct MockInterface {
-    permissions: HashMap<i64, Vec<String>>,
-    roles: HashMap<i64, Vec<String>>,
+    permissions: HashMap<String, Vec<String>>,
+    roles: HashMap<String, Vec<String>>,
 }
 
 impl MockInterface {
@@ -177,27 +177,31 @@ impl MockInterface {
         }
     }
 
-    fn with_permission(mut self, login_id: i64, perms: &[&str]) -> Self {
-        self.permissions
-            .insert(login_id, perms.iter().map(|s| s.to_string()).collect());
+    fn with_permission(mut self, login_id: &str, perms: &[&str]) -> Self {
+        self.permissions.insert(
+            login_id.to_string(),
+            perms.iter().map(|s| s.to_string()).collect(),
+        );
         self
     }
 
-    fn with_role(mut self, login_id: i64, roles: &[&str]) -> Self {
-        self.roles
-            .insert(login_id, roles.iter().map(|s| s.to_string()).collect());
+    fn with_role(mut self, login_id: &str, roles: &[&str]) -> Self {
+        self.roles.insert(
+            login_id.to_string(),
+            roles.iter().map(|s| s.to_string()).collect(),
+        );
         self
     }
 }
 
 #[async_trait]
 impl BulwarkInterface for MockInterface {
-    async fn get_permission_list(&self, login_id: i64) -> Result<Vec<String>, BulwarkError> {
-        Ok(self.permissions.get(&login_id).cloned().unwrap_or_default())
+    async fn get_permission_list(&self, login_id: &str) -> Result<Vec<String>, BulwarkError> {
+        Ok(self.permissions.get(login_id).cloned().unwrap_or_default())
     }
 
-    async fn get_role_list(&self, login_id: i64) -> Result<Vec<String>, BulwarkError> {
-        Ok(self.roles.get(&login_id).cloned().unwrap_or_default())
+    async fn get_role_list(&self, login_id: &str) -> Result<Vec<String>, BulwarkError> {
+        Ok(self.roles.get(login_id).cloned().unwrap_or_default())
     }
 }
 
@@ -224,15 +228,15 @@ fn make_config_loose() -> BulwarkConfig {
 }
 
 /// 初始化 BulwarkManager（覆盖式更新，带权限/角色数据）。
-fn init_manager(config: BulwarkConfig, permissions: &[(i64, &[&str])], roles: &[(i64, &[&str])]) {
+fn init_manager(config: BulwarkConfig, permissions: &[(&str, &[&str])], roles: &[(&str, &[&str])]) {
     let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
     let config = Arc::new(config);
     let mut interface = MockInterface::new();
     for (id, perms) in permissions {
-        interface = interface.with_permission(*id, perms);
+        interface = interface.with_permission(id, perms);
     }
     for (id, roles) in roles {
-        interface = interface.with_role(*id, roles);
+        interface = interface.with_role(id, roles);
     }
     let interface: Arc<dyn BulwarkInterface> = Arc::new(interface);
     BulwarkManager::init(dao, config, interface).unwrap();
@@ -258,7 +262,7 @@ async fn read_body(response: axum::response::Response) -> String {
 #[serial]
 async fn check_login_with_valid_token_returns_200_and_body() {
     init_manager(make_config_strict(), &[], &[]);
-    let token = BulwarkUtil::login(1001).await.unwrap();
+    let token = BulwarkUtil::login("1001").await.unwrap();
 
     let response = bulwark::stp::with_current_token(token, async { login_handler().await }).await;
     assert_eq!(response.status(), StatusCode::OK);
@@ -310,8 +314,8 @@ async fn check_login_without_token_loose_returns_401() {
 #[tokio::test]
 #[serial]
 async fn check_permission_with_permission_returns_200() {
-    init_manager(make_config_strict(), &[(1001, &["user:read"])], &[]);
-    let token = BulwarkUtil::login(1001).await.unwrap();
+    init_manager(make_config_strict(), &[("1001", &["user:read"])], &[]);
+    let token = BulwarkUtil::login("1001").await.unwrap();
 
     let response = bulwark::stp::with_current_token(token, async { perm_handler().await }).await;
     assert_eq!(response.status(), StatusCode::OK);
@@ -324,7 +328,7 @@ async fn check_permission_with_permission_returns_200() {
 #[serial]
 async fn check_permission_without_permission_returns_403() {
     init_manager(make_config_strict(), &[], &[]); // 无权限数据
-    let token = BulwarkUtil::login(1001).await.unwrap();
+    let token = BulwarkUtil::login("1001").await.unwrap();
 
     let response = bulwark::stp::with_current_token(token, async { perm_handler().await }).await;
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
@@ -334,8 +338,8 @@ async fn check_permission_without_permission_returns_403() {
 #[tokio::test]
 #[serial]
 async fn check_permission_and_partial_returns_403() {
-    init_manager(make_config_strict(), &[(1001, &["user:read"])], &[]); // 缺 user:write
-    let token = BulwarkUtil::login(1001).await.unwrap();
+    init_manager(make_config_strict(), &[("1001", &["user:read"])], &[]); // 缺 user:write
+    let token = BulwarkUtil::login("1001").await.unwrap();
 
     let response =
         bulwark::stp::with_current_token(token, async { perm_and_handler().await }).await;
@@ -348,10 +352,10 @@ async fn check_permission_and_partial_returns_403() {
 async fn check_permission_and_all_returns_200() {
     init_manager(
         make_config_strict(),
-        &[(1001, &["user:read", "user:write"])],
+        &[("1001", &["user:read", "user:write"])],
         &[],
     );
-    let token = BulwarkUtil::login(1001).await.unwrap();
+    let token = BulwarkUtil::login("1001").await.unwrap();
 
     let response =
         bulwark::stp::with_current_token(token, async { perm_and_handler().await }).await;
@@ -368,8 +372,8 @@ async fn check_permission_and_all_returns_200() {
 #[tokio::test]
 #[serial]
 async fn check_role_with_role_returns_200() {
-    init_manager(make_config_strict(), &[], &[(1001, &["admin"])]);
-    let token = BulwarkUtil::login(1001).await.unwrap();
+    init_manager(make_config_strict(), &[], &[("1001", &["admin"])]);
+    let token = BulwarkUtil::login("1001").await.unwrap();
 
     let response = bulwark::stp::with_current_token(token, async { role_handler().await }).await;
     assert_eq!(response.status(), StatusCode::OK);
@@ -382,7 +386,7 @@ async fn check_role_with_role_returns_200() {
 #[serial]
 async fn check_role_without_role_returns_403() {
     init_manager(make_config_strict(), &[], &[]); // 无角色数据
-    let token = BulwarkUtil::login(1001).await.unwrap();
+    let token = BulwarkUtil::login("1001").await.unwrap();
 
     let response = bulwark::stp::with_current_token(token, async { role_handler().await }).await;
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
@@ -392,8 +396,8 @@ async fn check_role_without_role_returns_403() {
 #[tokio::test]
 #[serial]
 async fn check_role_and_partial_returns_403() {
-    init_manager(make_config_strict(), &[], &[(1001, &["admin"])]); // 缺 superadmin
-    let token = BulwarkUtil::login(1001).await.unwrap();
+    init_manager(make_config_strict(), &[], &[("1001", &["admin"])]); // 缺 superadmin
+    let token = BulwarkUtil::login("1001").await.unwrap();
 
     let response =
         bulwark::stp::with_current_token(token, async { role_and_handler().await }).await;
@@ -407,9 +411,9 @@ async fn check_role_and_all_returns_200() {
     init_manager(
         make_config_strict(),
         &[],
-        &[(1001, &["admin", "superadmin"])],
+        &[("1001", &["admin", "superadmin"])],
     );
-    let token = BulwarkUtil::login(1001).await.unwrap();
+    let token = BulwarkUtil::login("1001").await.unwrap();
 
     let response =
         bulwark::stp::with_current_token(token, async { role_and_handler().await }).await;
@@ -443,7 +447,7 @@ async fn check_access_token_expands_to_wrapper() {
 #[serial]
 async fn check_access_token_with_valid_token_returns_200() {
     init_manager(make_config_strict(), &[], &[]);
-    let token = BulwarkUtil::login(1001).await.unwrap();
+    let token = BulwarkUtil::login("1001").await.unwrap();
 
     let response =
         bulwark::stp::with_current_token(token, async { access_token_handler().await }).await;
@@ -471,7 +475,7 @@ async fn check_client_token_expands_to_wrapper() {
 #[serial]
 async fn check_client_token_with_valid_token_returns_200() {
     init_manager(make_config_strict(), &[], &[]);
-    let token = BulwarkUtil::login(1001).await.unwrap();
+    let token = BulwarkUtil::login("1001").await.unwrap();
 
     let response =
         bulwark::stp::with_current_token(token, async { client_token_handler().await }).await;
@@ -499,7 +503,7 @@ async fn check_temp_token_expands_to_wrapper() {
 #[serial]
 async fn check_temp_token_with_valid_token_returns_200() {
     init_manager(make_config_strict(), &[], &[]);
-    let token = BulwarkUtil::login(1001).await.unwrap();
+    let token = BulwarkUtil::login("1001").await.unwrap();
 
     let response =
         bulwark::stp::with_current_token(token, async { temp_token_handler().await }).await;
@@ -518,7 +522,7 @@ async fn check_temp_token_with_valid_token_returns_200() {
 #[serial]
 async fn macro_expands_to_response_return_type() {
     init_manager(make_config_strict(), &[], &[]);
-    let token = BulwarkUtil::login(1001).await.unwrap();
+    let token = BulwarkUtil::login("1001").await.unwrap();
 
     let response: axum::response::Response =
         bulwark::stp::with_current_token(token, async { login_handler().await }).await;
@@ -537,10 +541,10 @@ async fn handler_works_with_axum_router() {
 
     init_manager(
         make_config_strict(),
-        &[(1001, &["user:read"])],
-        &[(1001, &["admin"])],
+        &[("1001", &["user:read"])],
+        &[("1001", &["admin"])],
     );
-    let token = BulwarkUtil::login(1001).await.unwrap();
+    let token = BulwarkUtil::login("1001").await.unwrap();
 
     // 构建 axum Router，挂载宏标注的 handler
     let app = axum::Router::new()

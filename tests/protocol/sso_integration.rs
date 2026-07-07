@@ -121,7 +121,10 @@ async fn cross_subsystem_ticket_issue_and_validate() {
     let (client_a, client_b, _dao) = make_two_clients();
 
     // 子系统 A 签发 ticket
-    let ticket = client_a.issue_ticket(1001, 2001).await.expect("签发应成功");
+    let ticket = client_a
+        .issue_ticket("1001", 2001)
+        .await
+        .expect("签发应成功");
     assert_eq!(ticket.len(), 64, "ticket 应为 64 字符");
     assert!(
         ticket.chars().all(|c| c.is_ascii_hexdigit()),
@@ -133,7 +136,7 @@ async fn cross_subsystem_ticket_issue_and_validate() {
         .validate_ticket(&ticket, 2001)
         .await
         .expect("校验应成功");
-    assert_eq!(login_id, 1001);
+    assert_eq!(login_id, "1001".to_string());
 }
 
 /// 一次性使用：子系统 A 签发后，子系统 B 校验一次后失效（spec Scenario）。
@@ -141,12 +144,12 @@ async fn cross_subsystem_ticket_issue_and_validate() {
 async fn ticket_is_one_time_use_across_subsystems() {
     let (client_a, client_b, _dao) = make_two_clients();
 
-    let ticket = client_a.issue_ticket(1001, 2001).await.unwrap();
+    let ticket = client_a.issue_ticket("1001", 2001).await.unwrap();
 
     // 第一次校验成功
     let first = client_b.validate_ticket(&ticket, 2001).await;
     assert!(first.is_ok());
-    assert_eq!(first.unwrap(), 1001);
+    assert_eq!(first.unwrap(), "1001".to_string());
 
     // 第二次校验失败（即使同一子系统也失败）
     let second = client_b.validate_ticket(&ticket, 2001).await;
@@ -163,7 +166,7 @@ async fn ticket_client_id_isolation_across_subsystems() {
     let (client_a, client_b, _dao) = make_two_clients();
 
     // 子系统 A 为 client_id=2001 签发
-    let ticket = client_a.issue_ticket(1001, 2001).await.unwrap();
+    let ticket = client_a.issue_ticket("1001", 2001).await.unwrap();
 
     // 子系统 B 用错误的 client_id 校验
     let result = client_b.validate_ticket(&ticket, 9999).await;
@@ -186,7 +189,7 @@ async fn ticket_client_id_isolation_across_subsystems() {
 async fn destroy_ticket_affects_subsystem_b() {
     let (client_a, client_b, _dao) = make_two_clients();
 
-    let ticket = client_a.issue_ticket(1001, 2001).await.unwrap();
+    let ticket = client_a.issue_ticket("1001", 2001).await.unwrap();
 
     // 子系统 A 销毁
     client_a.destroy_ticket(&ticket).await.expect("销毁应成功");
@@ -209,14 +212,14 @@ async fn destroy_nonexistent_ticket_is_idempotent() {
 async fn ticket_has_default_ttl_60_seconds() {
     let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
     let client = SsoClient::new(dao);
-    let ticket = client.issue_ticket(1001, 2001).await.unwrap();
+    let ticket = client.issue_ticket("1001", 2001).await.unwrap();
     // 直接通过 DAO 验证 ticket 存在
     let key = format!("bulwark:sso:ticket:{}", ticket);
     let value = client
         .validate_ticket(&ticket, 2001)
         .await
         .expect("校验应成功");
-    assert_eq!(value, 1001);
+    assert_eq!(value, "1001".to_string());
     // 注：TTL 由 DAO 内部记录，此测试主要验证签发→校验路径正确
     let _ = key;
 }
@@ -228,9 +231,9 @@ async fn with_ticket_ttl_custom_ttl_across_subsystems() {
     let client_a = SsoClient::new(dao.clone()).with_ticket_ttl(120);
     let client_b = SsoClient::new(dao).with_ticket_ttl(120);
 
-    let ticket = client_a.issue_ticket(1001, 2001).await.unwrap();
+    let ticket = client_a.issue_ticket("1001", 2001).await.unwrap();
     let login_id = client_b.validate_ticket(&ticket, 2001).await.unwrap();
-    assert_eq!(login_id, 1001);
+    assert_eq!(login_id, "1001".to_string());
 }
 
 /// 多个 client_id 同时签发独立 ticket（spec Scenario）。
@@ -238,18 +241,27 @@ async fn with_ticket_ttl_custom_ttl_across_subsystems() {
 async fn multiple_clients_issue_independent_tickets() {
     let (client_a, client_b, _dao) = make_two_clients();
 
-    let t1 = client_a.issue_ticket(1001, 2001).await.unwrap();
-    let t2 = client_a.issue_ticket(1001, 2002).await.unwrap();
-    let t3 = client_a.issue_ticket(1002, 2001).await.unwrap();
+    let t1 = client_a.issue_ticket("1001", 2001).await.unwrap();
+    let t2 = client_a.issue_ticket("1001", 2002).await.unwrap();
+    let t3 = client_a.issue_ticket("1002", 2001).await.unwrap();
 
     assert_ne!(t1, t2, "不同 client_id 应生成不同 ticket");
     assert_ne!(t1, t3, "不同 login_id 应生成不同 ticket");
     assert_ne!(t2, t3);
 
     // 各自校验成功
-    assert_eq!(client_b.validate_ticket(&t1, 2001).await.unwrap(), 1001);
-    assert_eq!(client_b.validate_ticket(&t2, 2002).await.unwrap(), 1001);
-    assert_eq!(client_b.validate_ticket(&t3, 2001).await.unwrap(), 1002);
+    assert_eq!(
+        client_b.validate_ticket(&t1, 2001).await.unwrap(),
+        "1001".to_string()
+    );
+    assert_eq!(
+        client_b.validate_ticket(&t2, 2002).await.unwrap(),
+        "1001".to_string()
+    );
+    assert_eq!(
+        client_b.validate_ticket(&t3, 2001).await.unwrap(),
+        "1002".to_string()
+    );
 }
 
 /// 跨子系统 SSO 完整流程：签发 → 校验 → 建立本地会话（spec Scenario）。
@@ -258,7 +270,7 @@ async fn full_sso_flow_issue_validate_establish_session() {
     let (client_a, client_b, _dao) = make_two_clients();
 
     // 1. 子系统 A：用户已登录，签发 SSO ticket 给子系统 B
-    let ticket = client_a.issue_ticket(1001, 2001).await.expect("签发失败");
+    let ticket = client_a.issue_ticket("1001", 2001).await.expect("签发失败");
 
     // 2. 子系统 B：拿到 ticket 后校验，得到 login_id
     let login_id = client_b
@@ -267,7 +279,7 @@ async fn full_sso_flow_issue_validate_establish_session() {
         .expect("校验失败");
 
     // 3. 子系统 B：依据 login_id 建立本地会话（这里仅断言 login_id 正确）
-    assert_eq!(login_id, 1001);
+    assert_eq!(login_id, "1001".to_string());
 
     // 4. ticket 已被销毁，无法重放
     let replay = client_b.validate_ticket(&ticket, 2001).await;

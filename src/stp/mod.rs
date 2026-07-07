@@ -25,8 +25,6 @@ use crate::listener::{BulwarkEvent, BulwarkListenerManager};
 use crate::plugin::BulwarkPluginManager;
 use crate::session::BulwarkSession;
 use crate::strategy::{BulwarkPermissionStrategy, FirewallLoginContext};
-// 0.4.2: LoginId newtype（支持 i64 与 String 双形式登录主体标识）
-use crate::stp::login_id::LoginId;
 use async_trait::async_trait;
 use std::future::Future;
 use std::sync::Arc;
@@ -34,9 +32,6 @@ use std::sync::Arc;
 // 0.4.0 新增：ParameterQuery 参数化查询模块（feature-gated）
 #[cfg(feature = "parameter-query")]
 pub mod parameter;
-
-// 0.4.2 新增：LoginId newtype（支持 i64 与 String 双形式登录主体标识）
-pub mod login_id;
 
 // 0.5.2 新增：BulwarkLogic 上帝 trait 拆分为 6 个细粒度 trait
 // （本声明仅注册模块；re-exports 与 BulwarkLogic 重构在后续任务处理）
@@ -99,7 +94,7 @@ pub trait BulwarkLogic: Send + Sync {
     /// # 错误
     /// - token 生成失败（如 `token_style` 非法）：`BulwarkError::Config`。
     /// - 会话创建失败：透传 `BulwarkError`。
-    async fn login(&self, login_id: i64) -> BulwarkResult<String>;
+    async fn login(&self, login_id: &str) -> BulwarkResult<String>;
 
     /// 执行登录（自定义 token）：用指定 token 创建会话。
     ///
@@ -114,7 +109,7 @@ pub trait BulwarkLogic: Send + Sync {
     ///
     /// # 错误
     /// - 会话创建失败：透传 `BulwarkError`。
-    async fn login_with_token(&self, login_id: i64, token: &str) -> BulwarkResult<()>;
+    async fn login_with_token(&self, login_id: &str, token: &str) -> BulwarkResult<()>;
 
     /// 执行登出：从 task_local 获取当前 token 并销毁。
     ///
@@ -137,7 +132,7 @@ pub trait BulwarkLogic: Send + Sync {
     ///
     /// # 错误
     /// - 会话销毁失败：透传 `BulwarkError`。
-    async fn logout_by_login_id(&self, login_id: i64) -> BulwarkResult<()>;
+    async fn logout_by_login_id(&self, login_id: &str) -> BulwarkResult<()>;
 
     /// 踢出用户：按账号踢出（语义等同 logout_by_login_id）。
     ///
@@ -149,7 +144,7 @@ pub trait BulwarkLogic: Send + Sync {
     ///
     /// # 错误
     /// - 会话销毁失败：透传 `BulwarkError`。
-    async fn kickout(&self, login_id: i64) -> BulwarkResult<()>;
+    async fn kickout(&self, login_id: &str) -> BulwarkResult<()>;
 
     /// 踢出会话：按 token 踢出（语义等同 logout(token)）。
     ///
@@ -204,7 +199,7 @@ pub trait BulwarkLogic: Send + Sync {
     ///
     /// # 错误
     /// - DAO 读取失败：透传 `BulwarkError`。
-    async fn get_login_id(&self) -> BulwarkResult<Option<i64>>;
+    async fn get_login_id(&self) -> BulwarkResult<Option<String>>;
 
     /// 校验权限（任务组 7 实现，复用 dbnexus PermissionProvider）。
     ///
@@ -352,7 +347,7 @@ pub trait BulwarkLogic: Send + Sync {
     /// # 错误
     /// - `BulwarkError::InvalidToken`: token 无效或不包含 login_id。
     /// - `BulwarkError::NotImplemented`: default 实现未委托 Token trait。
-    async fn verify_token(&self, _token: &str) -> BulwarkResult<i64> {
+    async fn verify_token(&self, _token: &str) -> BulwarkResult<String> {
         Err(BulwarkError::NotImplemented(
             "verify_token 需子类 override 委托 core-token::Token::verify".to_string(),
         ))
@@ -383,7 +378,7 @@ pub trait BulwarkLogic: Send + Sync {
     /// 2) PasswordHasher::verify 校验密码 3) 调用 [`login`](Self::login) 签发 token。
     ///
     /// # 参数
-    /// - `login_id`: 登录主体标识（i64，作为 username 字符串查询 UserRepository）。
+    /// - `login_id`: 登录主体标识（作为 username 字符串查询 UserRepository）。
     /// - `password`: 明文密码（仅校验时临时持有，不存储）。
     ///
     /// # 返回
@@ -403,7 +398,7 @@ pub trait BulwarkLogic: Send + Sync {
     /// reason 统一为 "invalid_credentials"（v0.4.2 安全审计 A-014），防止攻击者通过
     /// 返回值或日志差异进行用户枚举。哈希格式错误返回 "unsupported hash format"
     /// （属配置错误，不构成枚举风险）。
-    async fn login_with_password(&self, _login_id: i64, _password: &str) -> BulwarkResult<String> {
+    async fn login_with_password(&self, _login_id: &str, _password: &str) -> BulwarkResult<String> {
         Err(BulwarkError::NotImplemented(
             "login_with_password 未实现：需启用 secure-password + db-sqlite feature".to_string(),
         ))
@@ -646,7 +641,7 @@ impl BulwarkLogicDefault {
     /// login 实际逻辑（供 `login` 方法在 metrics 包装内调用）。
     ///
     /// 0.3.0 抽取此私有方法以保持 `login` trait 方法的 metrics 包装简洁。
-    async fn login_inner(&self, login_id: i64) -> BulwarkResult<String> {
+    async fn login_inner(&self, login_id: &str) -> BulwarkResult<String> {
         // 0.3.0：登录前防火墙安全钩子检查（依据 spec firewall-check-hook）
         // 任一 hook Err 阻断登录；未注入 hook 时为 no-op（向后兼容 0.2.x）
         let ctx = FirewallLoginContext::new(login_id);
@@ -661,7 +656,7 @@ impl BulwarkLogicDefault {
         #[cfg(feature = "listener")]
         if let Some(lm) = &self.listener_manager {
             lm.broadcast(&BulwarkEvent::Login {
-                login_id,
+                login_id: login_id.to_string(),
                 token: token.clone(),
                 device: None,
             })
@@ -676,7 +671,7 @@ impl BulwarkLogicDefault {
     /// - `random_64`: 两个 simple UUID 拼接（64 字符）
     /// - `simple`: simple UUID（32 字符）
     /// - `jwt`: 需启用 `protocol-jwt` feature，委托 `JwtHandler::sign`（0.2.0 修复）
-    fn generate_token(&self, login_id: i64) -> BulwarkResult<String> {
+    fn generate_token(&self, login_id: &str) -> BulwarkResult<String> {
         match self.config.token_style.as_str() {
             "uuid" => Ok(uuid::Uuid::new_v4().to_string()),
             "random_64" => Ok(format!(
@@ -798,7 +793,7 @@ impl BulwarkLogicDefault {
 
 #[async_trait]
 impl BulwarkLogic for BulwarkLogicDefault {
-    async fn login(&self, login_id: i64) -> BulwarkResult<String> {
+    async fn login(&self, login_id: &str) -> BulwarkResult<String> {
         // emit metrics：登录尝试（成功/失败均记录，依据 spec observability-stack）
         #[cfg(feature = "metrics-prometheus")]
         let start = std::time::Instant::now();
@@ -811,7 +806,7 @@ impl BulwarkLogic for BulwarkLogicDefault {
         result
     }
 
-    async fn login_with_token(&self, login_id: i64, token: &str) -> BulwarkResult<()> {
+    async fn login_with_token(&self, login_id: &str, token: &str) -> BulwarkResult<()> {
         self.session.create(login_id, token).await
     }
 
@@ -827,7 +822,7 @@ impl BulwarkLogic for BulwarkLogicDefault {
                     .map(|ts| ts.login_id);
                 self.session.logout(&token).await?;
                 // auto-wire: 触发 plugin on_logout + listener Logout 事件
-                if let (Some(pm), Some(id)) = (&self.plugin_manager, login_id) {
+                if let (Some(pm), Some(id)) = (&self.plugin_manager, login_id.as_ref()) {
                     pm.on_logout(id, &token);
                 }
                 #[cfg(feature = "listener")]
@@ -844,18 +839,18 @@ impl BulwarkLogic for BulwarkLogicDefault {
         }
     }
 
-    async fn logout_by_login_id(&self, login_id: i64) -> BulwarkResult<()> {
+    async fn logout_by_login_id(&self, login_id: &str) -> BulwarkResult<()> {
         self.session.logout_by_login_id(login_id).await
     }
 
-    async fn kickout(&self, login_id: i64) -> BulwarkResult<()> {
+    async fn kickout(&self, login_id: &str) -> BulwarkResult<()> {
         // kickout 语义等同 logout_by_login_id
         self.session.logout_by_login_id(login_id).await?;
         // auto-wire: 触发 listener Kickout 事件（plugin 无 kickout 钩子）
         #[cfg(feature = "listener")]
         if let Some(lm) = &self.listener_manager {
             lm.broadcast(&BulwarkEvent::Kickout {
-                login_id,
+                login_id: login_id.to_string(),
                 token: String::new(),
                 reason: "管理员强制下线".to_string(),
             })
@@ -902,7 +897,7 @@ impl BulwarkLogic for BulwarkLogicDefault {
         }
     }
 
-    async fn get_login_id(&self) -> BulwarkResult<Option<i64>> {
+    async fn get_login_id(&self) -> BulwarkResult<Option<String>> {
         match current_token() {
             Ok(token) => match self.session.get_token_session(&token).await? {
                 Some(ts) => Ok(Some(ts.login_id)),
@@ -934,7 +929,7 @@ impl BulwarkLogic for BulwarkLogicDefault {
         // 并广播 PermissionCheck 事件供 AuditLogListener 记录审计日志（依据 proposal H3/H7）
         if let Some(pc) = &self.permission_checker {
             let request = AuthRequest {
-                login_id,
+                login_id: login_id.clone(),
                 tenant_id: current_tenant_id(),
                 action: permission.to_string(),
                 resource: None,
@@ -965,7 +960,10 @@ impl BulwarkLogic for BulwarkLogicDefault {
         }
 
         // 回退到 firewall 路径（permission_checker 未注入时）
-        let has_perm = self.firewall.check_permission(login_id, permission).await?;
+        let has_perm = self
+            .firewall
+            .check_permission(&login_id, permission)
+            .await?;
         // emit metrics：权限查询结果
         #[cfg(feature = "metrics-prometheus")]
         if let Some(m) = &self.metrics {
@@ -997,7 +995,7 @@ impl BulwarkLogic for BulwarkLogicDefault {
             },
         };
         // 委托 BulwarkPermissionStrategy 做角色校验
-        let has_role = self.firewall.check_role(login_id, role).await?;
+        let has_role = self.firewall.check_role(&login_id, role).await?;
         // emit metrics：角色查询结果
         #[cfg(feature = "metrics-prometheus")]
         if let Some(m) = &self.metrics {
@@ -1018,10 +1016,10 @@ impl BulwarkLogic for BulwarkLogicDefault {
             self.verify_token(token).await?
         };
         // 建立内部会话（使用同一 token）
-        self.session.create(login_id, token).await?;
+        self.session.create(&login_id, token).await?;
         // auto-wire: 触发 plugin on_login + listener Login 事件
         if let Some(pm) = &self.plugin_manager {
-            pm.on_login(login_id, token);
+            pm.on_login(&login_id, token);
         }
         #[cfg(feature = "listener")]
         if let Some(lm) = &self.listener_manager {
@@ -1035,7 +1033,7 @@ impl BulwarkLogic for BulwarkLogicDefault {
         Ok(())
     }
 
-    async fn verify_token(&self, token: &str) -> BulwarkResult<i64> {
+    async fn verify_token(&self, token: &str) -> BulwarkResult<String> {
         // 依据 spec core-auth-api：委托 core-token::Token::verify
         // spec: "不泄露 token 具体失效原因（统一 InvalidToken）"
         let token_handler =
@@ -1063,7 +1061,7 @@ impl BulwarkLogic for BulwarkLogicDefault {
         let new_token = handler.refresh(token, self.config.timeout)?;
         // auto-wire: 触发 plugin on_login（新 token）
         if let Some(pm) = &self.plugin_manager {
-            pm.on_login(login_id, &new_token);
+            pm.on_login(&login_id, &new_token);
         }
         // v0.4.2: 广播 TokenRefresh 事件（替换原 Login 事件，依据 spec listener-events-extend R-001）
         #[cfg(feature = "listener")]
@@ -1087,7 +1085,7 @@ impl BulwarkLogic for BulwarkLogicDefault {
     /// 依据 spec auth-password-login R-002：1) UserRepository 查询 2) PasswordHasher 校验 3) login 签发。
     /// 安全约束：用户不存在与密码错误统一返回 `InvalidParam("invalid password")`，真实原因记录在 tracing 日志。
     #[cfg(all(feature = "secure-password", feature = "db-sqlite"))]
-    async fn login_with_password(&self, login_id: i64, password: &str) -> BulwarkResult<String> {
+    async fn login_with_password(&self, login_id: &str, password: &str) -> BulwarkResult<String> {
         let hasher = self
             .password_hasher
             .as_ref()
@@ -1118,7 +1116,7 @@ impl BulwarkLogic for BulwarkLogicDefault {
                 #[cfg(feature = "listener")]
                 if let Some(lm) = &self.listener_manager {
                     lm.broadcast(&BulwarkEvent::LoginFailure {
-                        login_id,
+                        login_id: login_id.to_string(),
                         reason: "invalid_credentials".to_string(),
                     })
                     .await;
@@ -1150,7 +1148,7 @@ impl BulwarkLogic for BulwarkLogicDefault {
             #[cfg(feature = "listener")]
             if let Some(lm) = &self.listener_manager {
                 lm.broadcast(&BulwarkEvent::LoginFailure {
-                    login_id,
+                    login_id: login_id.to_string(),
                     reason: "invalid_credentials".to_string(),
                 })
                 .await;
@@ -1187,7 +1185,7 @@ pub trait BulwarkInterface: Send + Sync {
     ///
     /// # 错误
     /// - 数据源访问失败：由业务方实现决定具体 `BulwarkError`。
-    async fn get_permission_list(&self, login_id: i64) -> BulwarkResult<Vec<String>>;
+    async fn get_permission_list(&self, login_id: &str) -> BulwarkResult<Vec<String>>;
 
     /// 获取指定主体的角色列表。
     ///
@@ -1199,7 +1197,7 @@ pub trait BulwarkInterface: Send + Sync {
     ///
     /// # 错误
     /// - 数据源访问失败：由业务方实现决定具体 `BulwarkError`。
-    async fn get_role_list(&self, login_id: i64) -> BulwarkResult<Vec<String>>;
+    async fn get_role_list(&self, login_id: &str) -> BulwarkResult<Vec<String>>;
 
     /// 获取指定主体在特定 `login_type` 下的权限列表（0.4.2 新增，依据 spec login-type-multi-account R-001）。
     ///
@@ -1222,7 +1220,7 @@ pub trait BulwarkInterface: Send + Sync {
     /// - 数据源访问失败：由业务方实现决定具体 `BulwarkError`。
     async fn get_permission_list_with_type(
         &self,
-        login_id: i64,
+        login_id: &str,
         _login_type: &str,
     ) -> BulwarkResult<Vec<String>> {
         self.get_permission_list(login_id).await
@@ -1249,7 +1247,7 @@ pub trait BulwarkInterface: Send + Sync {
     /// - 数据源访问失败：由业务方实现决定具体 `BulwarkError`。
     async fn get_role_list_with_type(
         &self,
-        login_id: i64,
+        login_id: &str,
         _login_type: &str,
     ) -> BulwarkResult<Vec<String>> {
         self.get_role_list(login_id).await
@@ -1271,38 +1269,21 @@ pub trait BulwarkInterface: Send + Sync {
 /// 否则返回 `BulwarkError::Session("BulwarkManager 未初始化")`。
 pub struct BulwarkUtil;
 
-/// 将 `LoginId` 转换为 `i64`（v0.4.2 内部层仍使用 `i64`，String 形式待 v0.5.0+ 迁移）。
-///
-/// 公开为 `pub(crate)` 以便 `session` / `protocol` 等模块复用同一转换逻辑，
-/// 保证 String-form login_id 在 v0.4.2 全栈一致返回 `BulwarkError::Config`。
-///
-/// # 错误
-/// - `BulwarkError::Config`：传入 `LoginId::String` 形式，内部层尚未完成迁移。
-pub(crate) fn login_id_to_i64(login_id: LoginId) -> BulwarkResult<i64> {
-    login_id.as_i64().ok_or_else(|| {
-        BulwarkError::Config(
-            "String-form login_id 需内部层完整迁移（计划 v0.5.0+），v0.4.2 仅支持 Numeric 形式"
-                .to_string(),
-        )
-    })
-}
-
 impl BulwarkUtil {
     /// 执行登录：生成 token + 创建会话。
     ///
     /// # 参数
-    /// - `id`: 登录主体标识（支持 `i64`、`String`、`&str` 等 `Into<LoginId>` 类型）。
+    /// - `id`: 登录主体标识（支持 `String`、`&str` 等 `Into<String>` 类型）。
     ///
     /// # 返回
     /// 生成的 token 字符串。
     ///
     /// # 错误
     /// - `BulwarkManager` 未初始化：`BulwarkError::Session`。
-    /// - `LoginId::String` 形式：`BulwarkError::Config`（v0.4.2 限制，v0.5.0+ 支持）。
     /// - token 生成或会话创建失败：透传 `BulwarkError`。
-    pub async fn login(id: impl Into<LoginId>) -> BulwarkResult<String> {
-        let id_i64 = login_id_to_i64(id.into())?;
-        crate::manager::BulwarkManager::logic()?.login(id_i64).await
+    pub async fn login(id: impl Into<String>) -> BulwarkResult<String> {
+        let id: String = id.into();
+        crate::manager::BulwarkManager::logic()?.login(&id).await
     }
 
     /// 执行登出：从 task_local 获取当前 token 并销毁。
@@ -1320,38 +1301,36 @@ impl BulwarkUtil {
     /// 按账号登出：销毁指定 login_id 的所有会话。
     ///
     /// # 参数
-    /// - `login_id`: 登录主体标识（支持 `i64`、`String`、`&str` 等 `Into<LoginId>` 类型）。
+    /// - `login_id`: 登录主体标识（支持 `String`、`&str` 等 `Into<String>` 类型）。
     ///
     /// # 返回
     /// 成功返回 `Ok(())`。
     ///
     /// # 错误
     /// - `BulwarkManager` 未初始化：`BulwarkError::Session`。
-    /// - `LoginId::String` 形式：`BulwarkError::Config`（v0.4.2 限制，v0.5.0+ 支持）。
     /// - 会话销毁失败：透传 `BulwarkError`。
-    pub async fn logout_by_login_id(login_id: impl Into<LoginId>) -> BulwarkResult<()> {
-        let id_i64 = login_id_to_i64(login_id.into())?;
+    pub async fn logout_by_login_id(login_id: impl Into<String>) -> BulwarkResult<()> {
+        let login_id: String = login_id.into();
         crate::manager::BulwarkManager::logic()?
-            .logout_by_login_id(id_i64)
+            .logout_by_login_id(&login_id)
             .await
     }
 
     /// 踢出用户：按账号踢出（语义等同 logout_by_login_id）。
     ///
     /// # 参数
-    /// - `login_id`: 登录主体标识（支持 `i64`、`String`、`&str` 等 `Into<LoginId>` 类型）。
+    /// - `login_id`: 登录主体标识（支持 `String`、`&str` 等 `Into<String>` 类型）。
     ///
     /// # 返回
     /// 成功返回 `Ok(())`。
     ///
     /// # 错误
     /// - `BulwarkManager` 未初始化：`BulwarkError::Session`。
-    /// - `LoginId::String` 形式：`BulwarkError::Config`（v0.4.2 限制，v0.5.0+ 支持）。
     /// - 会话销毁失败：透传 `BulwarkError`。
-    pub async fn kickout(login_id: impl Into<LoginId>) -> BulwarkResult<()> {
-        let id_i64 = login_id_to_i64(login_id.into())?;
+    pub async fn kickout(login_id: impl Into<String>) -> BulwarkResult<()> {
+        let login_id: String = login_id.into();
         crate::manager::BulwarkManager::logic()?
-            .kickout(id_i64)
+            .kickout(&login_id)
             .await
     }
 
@@ -1415,7 +1394,7 @@ impl BulwarkUtil {
     /// # 错误
     /// - `BulwarkManager` 未初始化：`BulwarkError::Session`。
     /// - DAO 读取失败：透传 `BulwarkError`。
-    pub async fn get_login_id() -> BulwarkResult<Option<i64>> {
+    pub async fn get_login_id() -> BulwarkResult<Option<String>> {
         crate::manager::BulwarkManager::logic()?
             .get_login_id()
             .await
@@ -1440,7 +1419,7 @@ impl BulwarkUtil {
     ///
     /// [`get_login_id`]: Self::get_login_id
     /// [`with_current_token`]: crate::stp::with_current_token
-    pub async fn get_login_id_by_token(token: &str) -> BulwarkResult<Option<i64>> {
+    pub async fn get_login_id_by_token(token: &str) -> BulwarkResult<Option<String>> {
         with_current_token(token.to_string(), async { Self::get_login_id().await }).await
     }
 
@@ -1586,7 +1565,7 @@ impl BulwarkUtil {
     /// # 错误
     /// - `BulwarkManager` 未初始化：`BulwarkError::Session`。
     /// - token 无效：`BulwarkError::InvalidToken`。
-    pub async fn verify_token(token: &str) -> BulwarkResult<i64> {
+    pub async fn verify_token(token: &str) -> BulwarkResult<String> {
         crate::manager::BulwarkManager::logic()?
             .verify_token(token)
             .await
@@ -1727,22 +1706,26 @@ mod tests {
 
     #[async_trait]
     impl BulwarkPermissionStrategy for MockFirewall {
-        async fn get_permission_list(&self, _login_id: i64) -> BulwarkResult<Vec<String>> {
+        async fn get_permission_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
             Ok(vec![])
         }
-        async fn get_role_list(&self, _login_id: i64) -> BulwarkResult<Vec<String>> {
+        async fn get_role_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
             Ok(vec![])
         }
-        async fn check_permission(&self, _login_id: i64, _permission: &str) -> BulwarkResult<bool> {
+        async fn check_permission(
+            &self,
+            _login_id: &str,
+            _permission: &str,
+        ) -> BulwarkResult<bool> {
             Ok(self.has_permission)
         }
-        async fn check_role(&self, _login_id: i64, _role: &str) -> BulwarkResult<bool> {
+        async fn check_role(&self, _login_id: &str, _role: &str) -> BulwarkResult<bool> {
             Ok(self.has_role)
         }
-        async fn check_role_any(&self, _login_id: i64, _roles: &[&str]) -> BulwarkResult<bool> {
+        async fn check_role_any(&self, _login_id: &str, _roles: &[&str]) -> BulwarkResult<bool> {
             Ok(self.has_role)
         }
-        async fn check_role_all(&self, _login_id: i64, _roles: &[&str]) -> BulwarkResult<bool> {
+        async fn check_role_all(&self, _login_id: &str, _roles: &[&str]) -> BulwarkResult<bool> {
             Ok(self.has_role)
         }
     }
@@ -1807,10 +1790,10 @@ mod tests {
 
     #[async_trait]
     impl BulwarkInterface for MockInterface {
-        async fn get_permission_list(&self, _login_id: i64) -> BulwarkResult<Vec<String>> {
+        async fn get_permission_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
             Ok(vec![])
         }
-        async fn get_role_list(&self, _login_id: i64) -> BulwarkResult<Vec<String>> {
+        async fn get_role_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
             Ok(vec![])
         }
     }
@@ -1835,7 +1818,7 @@ mod tests {
     #[tokio::test]
     async fn login_creates_session_and_returns_token() {
         let logic = make_logic(3600, 86400, false, "uuid", true, true);
-        let token = logic.login(1001).await.unwrap();
+        let token = logic.login("1001").await.unwrap();
         assert!(!token.is_empty(), "login 应返回非空 token");
 
         // 验证会话创建
@@ -1845,21 +1828,21 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(ts.login_id, 1001);
+        assert_eq!(ts.login_id, "1001".to_string());
     }
 
     /// 验证重复登录生成不同 token 并记录多 token。
     #[tokio::test]
     async fn login_repeated_creates_multiple_tokens() {
         let logic = make_logic(3600, 86400, false, "uuid", true, true);
-        let t1 = logic.login(1001).await.unwrap();
-        let t2 = logic.login(1001).await.unwrap();
+        let t1 = logic.login("1001").await.unwrap();
+        let t2 = logic.login("1001").await.unwrap();
         assert_ne!(t1, t2, "重复登录应生成不同 token");
 
         // Account-Session 应包含两个 token
         let as_ = logic
             .session
-            .get_account_session(1001)
+            .get_account_session("1001")
             .await
             .unwrap()
             .unwrap();
@@ -1870,7 +1853,7 @@ mod tests {
     #[tokio::test]
     async fn login_with_random_64_style() {
         let logic = make_logic(3600, 86400, false, "random_64", true, true);
-        let token = logic.login(1001).await.unwrap();
+        let token = logic.login("1001").await.unwrap();
         assert_eq!(token.len(), 64, "random_64 应生成 64 字符 token");
     }
 
@@ -1878,7 +1861,7 @@ mod tests {
     #[tokio::test]
     async fn login_with_simple_style() {
         let logic = make_logic(3600, 86400, false, "simple", true, true);
-        let token = logic.login(1001).await.unwrap();
+        let token = logic.login("1001").await.unwrap();
         assert_eq!(token.len(), 32, "simple 应生成 32 字符 token");
     }
 
@@ -1888,7 +1871,7 @@ mod tests {
     #[tokio::test]
     async fn create_token_unknown_style_errors() {
         let logic = make_logic(3600, 86400, false, "unknown_style", true, true);
-        let result = logic.login(1001).await;
+        let result = logic.login("1001").await;
         assert!(
             matches!(result, Err(BulwarkError::Config(ref msg)) if msg.contains("unknown token_style")),
             "未知 token_style 应返回含 'unknown token_style' 的 Config 错误，实际: {:?}",
@@ -1901,7 +1884,7 @@ mod tests {
     async fn login_with_custom_token() {
         let logic = make_logic(3600, 86400, false, "uuid", true, true);
         logic
-            .login_with_token(1001, "custom-token-123")
+            .login_with_token("1001", "custom-token-123")
             .await
             .unwrap();
 
@@ -1911,7 +1894,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(ts.login_id, 1001);
+        assert_eq!(ts.login_id, "1001".to_string());
         assert_eq!(ts.token, "custom-token-123");
     }
 
@@ -1923,7 +1906,7 @@ mod tests {
     #[tokio::test]
     async fn logout_destroys_current_token() {
         let logic = Arc::new(make_logic(3600, 86400, false, "uuid", true, true));
-        let token = logic.login(1001).await.unwrap();
+        let token = logic.login("1001").await.unwrap();
 
         // 在 task_local 作用域内调用 logout
         with_current_token(token.clone(), async {
@@ -1949,10 +1932,10 @@ mod tests {
     #[tokio::test]
     async fn logout_by_login_id_destroys_all_tokens() {
         let logic = make_logic(3600, 86400, false, "uuid", true, true);
-        let t1 = logic.login(1001).await.unwrap();
-        let t2 = logic.login(1001).await.unwrap();
+        let t1 = logic.login("1001").await.unwrap();
+        let t2 = logic.login("1001").await.unwrap();
 
-        logic.logout_by_login_id(1001).await.unwrap();
+        logic.logout_by_login_id("1001").await.unwrap();
 
         assert!(logic
             .session
@@ -1968,7 +1951,7 @@ mod tests {
             .is_none());
         assert!(logic
             .session
-            .get_account_session(1001)
+            .get_account_session("1001")
             .await
             .unwrap()
             .is_none());
@@ -1978,9 +1961,9 @@ mod tests {
     #[tokio::test]
     async fn kickout_by_account_destroys_session() {
         let logic = make_logic(3600, 86400, false, "uuid", true, true);
-        let token = logic.login(1001).await.unwrap();
+        let token = logic.login("1001").await.unwrap();
 
-        logic.kickout(1001).await.unwrap();
+        logic.kickout("1001").await.unwrap();
 
         assert!(logic
             .session
@@ -1990,7 +1973,7 @@ mod tests {
             .is_none());
         assert!(logic
             .session
-            .get_account_session(1001)
+            .get_account_session("1001")
             .await
             .unwrap()
             .is_none());
@@ -2000,7 +1983,7 @@ mod tests {
     #[tokio::test]
     async fn kickout_by_token_destroys_token_session() {
         let logic = make_logic(3600, 86400, false, "uuid", true, true);
-        let token = logic.login(1001).await.unwrap();
+        let token = logic.login("1001").await.unwrap();
 
         logic.kickout_by_token(&token).await.unwrap();
 
@@ -2020,7 +2003,7 @@ mod tests {
     #[tokio::test]
     async fn check_login_returns_true_for_valid_token() {
         let logic = Arc::new(make_logic(3600, 86400, false, "uuid", true, true));
-        let token = logic.login(1001).await.unwrap();
+        let token = logic.login("1001").await.unwrap();
 
         with_current_token(token, async {
             let valid = logic.check_login().await.unwrap();
@@ -2067,7 +2050,7 @@ mod tests {
     #[tokio::test]
     async fn check_login_returns_false_for_expired_token() {
         let logic = Arc::new(make_logic(1, 86400, false, "uuid", true, true));
-        let token = logic.login(1001).await.unwrap();
+        let token = logic.login("1001").await.unwrap();
 
         // 等待 token 过期（1 秒 TTL）
         tokio::time::sleep(Duration::from_secs(2)).await;
@@ -2089,7 +2072,7 @@ mod tests {
     #[tokio::test]
     async fn check_access_token_delegates_to_check_login() {
         let logic = Arc::new(make_logic(3600, 86400, false, "uuid", true, true));
-        let token = logic.login(1001).await.unwrap();
+        let token = logic.login("1001").await.unwrap();
 
         with_current_token(token, async {
             let result = logic.check_access_token().await;
@@ -2108,7 +2091,7 @@ mod tests {
     #[tokio::test]
     async fn check_client_token_delegates_to_check_login() {
         let logic = Arc::new(make_logic(3600, 86400, false, "uuid", true, true));
-        let token = logic.login(1001).await.unwrap();
+        let token = logic.login("1001").await.unwrap();
 
         with_current_token(token, async {
             let result = logic.check_client_token().await;
@@ -2127,7 +2110,7 @@ mod tests {
     #[tokio::test]
     async fn check_temp_token_delegates_to_check_login() {
         let logic = Arc::new(make_logic(3600, 86400, false, "uuid", true, true));
-        let token = logic.login(1001).await.unwrap();
+        let token = logic.login("1001").await.unwrap();
 
         with_current_token(token, async {
             let result = logic.check_temp_token().await;
@@ -2148,11 +2131,11 @@ mod tests {
     #[tokio::test]
     async fn get_login_id_returns_current_login_id() {
         let logic = Arc::new(make_logic(3600, 86400, false, "uuid", true, true));
-        let token = logic.login(1001).await.unwrap();
+        let token = logic.login("1001").await.unwrap();
 
         with_current_token(token, async {
             let login_id = logic.get_login_id().await.unwrap();
-            assert_eq!(login_id, Some(1001));
+            assert_eq!(login_id, Some("1001".to_string()));
         })
         .await;
     }
@@ -2209,7 +2192,7 @@ mod tests {
     #[tokio::test]
     async fn check_permission_held_returns_ok() {
         let logic = make_logic(3600, 86400, true, "uuid", true, true);
-        let token = logic.login(1001).await.unwrap();
+        let token = logic.login("1001").await.unwrap();
         let result = with_token(&token, logic.check_permission("user:read")).await;
         assert!(result.is_ok(), "持有权限应返回 Ok");
     }
@@ -2218,7 +2201,7 @@ mod tests {
     #[tokio::test]
     async fn check_permission_not_held_throws_not_permission() {
         let logic = make_logic(3600, 86400, true, "uuid", false, true);
-        let token = logic.login(1001).await.unwrap();
+        let token = logic.login("1001").await.unwrap();
         let result = with_token(&token, logic.check_permission("user:delete")).await;
         assert!(
             matches!(result, Err(BulwarkError::NotPermission(_))),
@@ -2258,7 +2241,7 @@ mod tests {
     #[tokio::test]
     async fn check_role_held_returns_ok() {
         let logic = make_logic(3600, 86400, true, "uuid", true, true);
-        let token = logic.login(1001).await.unwrap();
+        let token = logic.login("1001").await.unwrap();
         let result = with_token(&token, logic.check_role("admin")).await;
         assert!(result.is_ok(), "持有角色应返回 Ok");
     }
@@ -2267,7 +2250,7 @@ mod tests {
     #[tokio::test]
     async fn check_role_not_held_throws_not_role() {
         let logic = make_logic(3600, 86400, true, "uuid", true, false);
-        let token = logic.login(1001).await.unwrap();
+        let token = logic.login("1001").await.unwrap();
         let result = with_token(&token, logic.check_role("admin")).await;
         assert!(
             matches!(result, Err(BulwarkError::NotRole(_))),
@@ -2320,7 +2303,7 @@ mod tests {
     #[serial]
     async fn util_logout_by_login_id_fails_when_not_initialized() {
         BulwarkManager::reset_for_test();
-        let result = BulwarkUtil::logout_by_login_id(1001).await;
+        let result = BulwarkUtil::logout_by_login_id("1001").await;
         assert!(
             matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("未初始化")),
             "未初始化时 logout_by_login_id 应返回 Session 错误"
@@ -2332,7 +2315,7 @@ mod tests {
     #[serial]
     async fn util_kickout_fails_when_not_initialized() {
         BulwarkManager::reset_for_test();
-        let result = BulwarkUtil::kickout(1001).await;
+        let result = BulwarkUtil::kickout("1001").await;
         assert!(
             matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("未初始化")),
             "未初始化时 kickout 应返回 Session 错误"
@@ -2432,10 +2415,10 @@ mod tests {
     #[serial]
     async fn util_logout_by_login_id_succeeds() {
         init_global_manager(false);
-        let token = BulwarkUtil::login(1001).await.unwrap();
+        let token = BulwarkUtil::login("1001").await.unwrap();
         assert!(!token.is_empty());
 
-        BulwarkUtil::logout_by_login_id(1001).await.unwrap();
+        BulwarkUtil::logout_by_login_id("1001").await.unwrap();
 
         // logout 后 check_login 应返回 false
         let valid = with_token(&token, async { BulwarkUtil::check_login().await })
@@ -2451,9 +2434,9 @@ mod tests {
     #[serial]
     async fn util_kickout_succeeds() {
         init_global_manager(false);
-        let token = BulwarkUtil::login(1001).await.unwrap();
+        let token = BulwarkUtil::login("1001").await.unwrap();
 
-        BulwarkUtil::kickout(1001).await.unwrap();
+        BulwarkUtil::kickout("1001").await.unwrap();
 
         let valid = with_token(&token, async { BulwarkUtil::check_login().await })
             .await
@@ -2468,7 +2451,7 @@ mod tests {
     #[serial]
     async fn util_kickout_by_token_succeeds() {
         init_global_manager(false);
-        let token = BulwarkUtil::login(1001).await.unwrap();
+        let token = BulwarkUtil::login("1001").await.unwrap();
 
         BulwarkUtil::kickout_by_token(&token).await.unwrap();
 
@@ -2485,12 +2468,16 @@ mod tests {
     #[serial]
     async fn util_get_login_id_returns_current_id() {
         init_global_manager(false);
-        let token = BulwarkUtil::login(1001).await.unwrap();
+        let token = BulwarkUtil::login("1001").await.unwrap();
 
         let login_id = with_token(&token, async { BulwarkUtil::get_login_id().await })
             .await
             .unwrap();
-        assert_eq!(login_id, Some(1001), "get_login_id 应返回当前 login_id");
+        assert_eq!(
+            login_id,
+            Some("1001".to_string()),
+            "get_login_id 应返回当前 login_id"
+        );
 
         BulwarkManager::reset_for_test();
     }
@@ -2502,7 +2489,7 @@ mod tests {
     #[serial]
     async fn util_check_safe_returns_ok_by_default() {
         init_global_manager(false);
-        let _ = BulwarkUtil::login(1001).await.unwrap();
+        let _ = BulwarkUtil::login("1001").await.unwrap();
 
         // 默认实现（未覆写 check_safe）应返回 Ok
         let result = BulwarkUtil::check_safe().await;
@@ -2522,7 +2509,7 @@ mod tests {
     #[serial]
     async fn util_check_disable_returns_ok_by_default() {
         init_global_manager(false);
-        let _ = BulwarkUtil::login(1001).await.unwrap();
+        let _ = BulwarkUtil::login("1001").await.unwrap();
 
         // 默认实现（未覆写 check_disable）应返回 Ok
         let result = BulwarkUtil::check_disable().await;
@@ -2577,7 +2564,7 @@ mod tests {
         // 手动构造 simple-format token: <login_id>-<uuid>
         let token = format!("1001-{}", uuid::Uuid::new_v4());
         let login_id = logic.verify_token(&token).await.unwrap();
-        assert_eq!(login_id, 1001, "verify_token 应返回 login_id");
+        assert_eq!(login_id, "1001".to_string(), "verify_token 应返回 login_id");
     }
 
     /// verify_token 对 uuid style token 返回 InvalidToken（spec Scenario）。
@@ -2586,7 +2573,7 @@ mod tests {
     #[tokio::test]
     async fn verify_token_uuid_style_returns_invalid_token() {
         let logic = make_logic(3600, 86400, false, "uuid", true, true);
-        let token = logic.login(1001).await.unwrap();
+        let token = logic.login("1001").await.unwrap();
         let result = logic.verify_token(&token).await;
         assert!(
             matches!(result, Err(BulwarkError::InvalidToken(_))),
@@ -2609,18 +2596,19 @@ mod tests {
         );
     }
 
-    /// verify_token 对格式错误 token（含 '-' 但 login_id 非数字）返回 InvalidToken（spec Scenario）。
+    /// verify_token 对任意字符串 login_id 的 simple-format token 返回 login_id（spec Scenario）。
     ///
-    /// spec: "不泄露 token 具体失效原因（统一 InvalidToken）"
+    /// v0.5.2 起 login_id 迁移为 String，"abc-xyz" 中 "abc" 为合法 login_id。
     #[tokio::test]
     async fn verify_token_malformed_returns_invalid_token() {
         let logic = make_logic(3600, 86400, false, "simple", true, true);
         let result = logic.verify_token("abc-xyz").await;
         assert!(
-            matches!(result, Err(BulwarkError::InvalidToken(_))),
-            "格式错误 token 应返回 InvalidToken（统一错误），实际: {:?}",
+            result.is_ok(),
+            "simple-format token with string login_id 应返回 Ok，实际: {:?}",
             result
         );
+        assert_eq!(result.unwrap(), "abc");
     }
 
     /// BulwarkUtil::verify_token 未初始化时返回 Session 错误。
@@ -2678,7 +2666,7 @@ mod tests {
         // 手动构造 simple-format token: <login_id>-<uuid>
         let token = format!("1001-{}", uuid::Uuid::new_v4());
         let login_id = BulwarkUtil::verify_token(&token).await.unwrap();
-        assert_eq!(login_id, 1001);
+        assert_eq!(login_id, "1001".to_string());
 
         BulwarkManager::reset_for_test();
     }
@@ -2722,7 +2710,7 @@ mod tests {
         let _logic = logic.with_plugin_manager(pm);
         // 验证 login 仍可正常工作（builder 未破坏核心功能）
         let logic2 = make_logic(3600, 86400, false, "uuid", true, true);
-        let token = logic2.login(1001).await.unwrap();
+        let token = logic2.login("1001").await.unwrap();
         assert!(!token.is_empty());
     }
 
@@ -2733,7 +2721,7 @@ mod tests {
         let pm = Arc::new(BulwarkPluginManager::new());
         let logic = logic.with_plugin_manager(pm);
         // login 应成功，plugin on_login 作为副作用被调用（失败仅 warn 不中断）
-        let token = logic.login(1001).await.unwrap();
+        let token = logic.login("1001").await.unwrap();
         assert!(!token.is_empty());
     }
 
@@ -2745,7 +2733,7 @@ mod tests {
         {
             let lm = Arc::new(BulwarkListenerManager::new());
             let logic = logic.with_listener_manager(lm);
-            let token = logic.login(1001).await.unwrap();
+            let token = logic.login("1001").await.unwrap();
             assert!(!token.is_empty());
         }
         #[cfg(not(feature = "listener"))]
@@ -2764,7 +2752,7 @@ mod tests {
         let logic = logic.with_listener_manager(Arc::new(BulwarkListenerManager::new()));
 
         // 先 login 获取 token
-        let token = logic.login(2002).await.unwrap();
+        let token = logic.login("2002").await.unwrap();
         // 在 token 上下文中 logout
         with_current_token(token.clone(), async { logic.logout().await })
             .await
@@ -2780,11 +2768,11 @@ mod tests {
             let lm = Arc::new(BulwarkListenerManager::new());
             let logic = logic.with_listener_manager(lm);
             // kickout 应成功，Kickout 事件作为副作用被广播
-            logic.kickout(3003).await.unwrap();
+            logic.kickout("3003").await.unwrap();
         }
         #[cfg(not(feature = "listener"))]
         {
-            logic.kickout(3003).await.unwrap();
+            logic.kickout("3003").await.unwrap();
         }
     }
 
@@ -2794,7 +2782,7 @@ mod tests {
     #[tokio::test]
     async fn revoke_token_destroys_session() {
         let logic = make_logic(3600, 86400, false, "uuid", true, true);
-        let token = logic.login(4004).await.unwrap();
+        let token = logic.login("4004").await.unwrap();
 
         // revoke 前存在
         assert!(logic
@@ -2824,7 +2812,7 @@ mod tests {
         {
             let lm = Arc::new(BulwarkListenerManager::new());
             let logic = logic.with_listener_manager(lm);
-            let token = logic.login(4005).await.unwrap();
+            let token = logic.login("4005").await.unwrap();
             // revoke 应成功，RevokeToken 事件作为副作用被广播
             logic.revoke_token(&token).await.unwrap();
             // Token-Session 已删除
@@ -2837,7 +2825,7 @@ mod tests {
         }
         #[cfg(not(feature = "listener"))]
         {
-            let token = logic.login(4005).await.unwrap();
+            let token = logic.login("4005").await.unwrap();
             logic.revoke_token(&token).await.unwrap();
         }
     }
@@ -2861,7 +2849,7 @@ mod tests {
         let logic = make_logic(3600, 86400, false, "uuid", true, true);
 
         // login 成功
-        let token = logic.login(5005).await.unwrap();
+        let token = logic.login("5005").await.unwrap();
         assert!(!token.is_empty());
 
         // check_login 成功
@@ -2876,7 +2864,7 @@ mod tests {
             .unwrap();
 
         // kickout 成功
-        logic.kickout(5005).await.unwrap();
+        logic.kickout("5005").await.unwrap();
     }
 
     /// login_by_token 注入 auth_logic 后优先委托 auth_logic.verify_token。
@@ -2892,7 +2880,7 @@ mod tests {
             Arc::new(AuthLogicDefault::new(session.clone(), token_handler, 3600));
 
         // 先通过 auth_logic login 生成一个有效 token
-        let valid_token = auth_logic.login(6006, None).await.unwrap();
+        let valid_token = auth_logic.login("6006", None).await.unwrap();
 
         // 构造 logic 注入 auth_logic
         let logic = make_logic(3600, 86400, false, "uuid", true, true);
@@ -2904,7 +2892,7 @@ mod tests {
         // 验证会话已建立
         let ts = logic.session.get_token_session(&valid_token).await.unwrap();
         assert!(ts.is_some(), "login_by_token 后应建立会话");
-        assert_eq!(ts.unwrap().login_id, 6006);
+        assert_eq!(ts.unwrap().login_id, "6006".to_string());
     }
 
     // ------------------------------------------------------------------------
@@ -2964,7 +2952,7 @@ mod tests {
 
         // 先生成一个有效 JWT token
         let handler = crate::protocol::jwt::JwtHandler::new("refresh-test-secret");
-        let original_token = handler.sign(7007, 3600).unwrap();
+        let original_token = handler.sign("7007", 3600).unwrap();
 
         // 刷新 token（同秒内 iat/exp 可能相同，不强制 new_token != original_token）
         let new_token = logic.refresh_token(&original_token).await.unwrap();
@@ -2972,7 +2960,7 @@ mod tests {
 
         // 验证新 token 有效且 login_id 一致
         let new_claims = handler.verify(&new_token).unwrap();
-        assert_eq!(new_claims.login_id, 7007);
+        assert_eq!(new_claims.login_id, "7007".to_string());
     }
 
     // ------------------------------------------------------------------------
@@ -2988,12 +2976,12 @@ mod tests {
 
     #[async_trait]
     impl BulwarkLogic for MinimalLogic {
-        async fn login(&self, _: i64) -> BulwarkResult<String> {
+        async fn login(&self, _: &str) -> BulwarkResult<String> {
             Err(BulwarkError::NotImplemented(
                 "mock implementation, not for production".to_string(),
             ))
         }
-        async fn login_with_token(&self, _: i64, _: &str) -> BulwarkResult<()> {
+        async fn login_with_token(&self, _: &str, _: &str) -> BulwarkResult<()> {
             Err(BulwarkError::NotImplemented(
                 "mock implementation, not for production".to_string(),
             ))
@@ -3003,12 +2991,12 @@ mod tests {
                 "mock implementation, not for production".to_string(),
             ))
         }
-        async fn logout_by_login_id(&self, _: i64) -> BulwarkResult<()> {
+        async fn logout_by_login_id(&self, _: &str) -> BulwarkResult<()> {
             Err(BulwarkError::NotImplemented(
                 "mock implementation, not for production".to_string(),
             ))
         }
-        async fn kickout(&self, _: i64) -> BulwarkResult<()> {
+        async fn kickout(&self, _: &str) -> BulwarkResult<()> {
             Err(BulwarkError::NotImplemented(
                 "mock implementation, not for production".to_string(),
             ))
@@ -3028,7 +3016,7 @@ mod tests {
                 "mock implementation, not for production".to_string(),
             ))
         }
-        async fn get_login_id(&self) -> BulwarkResult<Option<i64>> {
+        async fn get_login_id(&self) -> BulwarkResult<Option<String>> {
             Err(BulwarkError::NotImplemented(
                 "mock implementation, not for production".to_string(),
             ))
@@ -3104,13 +3092,13 @@ mod tests {
 
         // 1. login
         assert!(
-            matches!(logic.login(1).await, Err(BulwarkError::NotImplemented(_))),
+            matches!(logic.login("1").await, Err(BulwarkError::NotImplemented(_))),
             "MinimalLogic::login 应返回 NotImplemented（mock 不应 panic）"
         );
         // 2. login_with_token
         assert!(
             matches!(
-                logic.login_with_token(1, "t").await,
+                logic.login_with_token("1", "t").await,
                 Err(BulwarkError::NotImplemented(_))
             ),
             "MinimalLogic::login_with_token 应返回 NotImplemented"
@@ -3123,14 +3111,17 @@ mod tests {
         // 4. logout_by_login_id
         assert!(
             matches!(
-                logic.logout_by_login_id(1).await,
+                logic.logout_by_login_id("1").await,
                 Err(BulwarkError::NotImplemented(_))
             ),
             "MinimalLogic::logout_by_login_id 应返回 NotImplemented"
         );
         // 5. kickout
         assert!(
-            matches!(logic.kickout(1).await, Err(BulwarkError::NotImplemented(_))),
+            matches!(
+                logic.kickout("1").await,
+                Err(BulwarkError::NotImplemented(_))
+            ),
             "MinimalLogic::kickout 应返回 NotImplemented"
         );
         // 6. kickout_by_token
@@ -3205,7 +3196,7 @@ mod tests {
         // 验证会话已建立
         let ts = logic.session.get_token_session(&token).await.unwrap();
         assert!(ts.is_some(), "login_by_token 后应建立会话");
-        assert_eq!(ts.unwrap().login_id, 8008);
+        assert_eq!(ts.unwrap().login_id, "8008".to_string());
     }
 
     // ------------------------------------------------------------------------
@@ -3271,7 +3262,7 @@ mod tests {
 
     /// 构造测试用 UserRow（username 与 login_id 字符串一致）。
     #[cfg(all(feature = "secure-password", feature = "db-sqlite"))]
-    fn make_user_row(login_id: i64, password_hash: &str) -> UserRow {
+    fn make_user_row(login_id: &str, password_hash: &str) -> UserRow {
         UserRow {
             id: format!("u-{}", login_id),
             username: login_id.to_string(),
@@ -3296,14 +3287,14 @@ mod tests {
         let hash = hasher.hash("correct-password").unwrap();
 
         let mock_repo = MockUserRepository::new();
-        mock_repo.insert(make_user_row(1001, &hash));
+        mock_repo.insert(make_user_row("1001", &hash));
         let repo: Arc<dyn UserRepository> = Arc::new(mock_repo);
 
         let logic = make_logic(3600, 86400, false, "uuid", true, true)
             .with_password_hasher(hasher)
             .with_user_repository(repo);
 
-        let result = logic.login_with_password(1001, "correct-password").await;
+        let result = logic.login_with_password("1001", "correct-password").await;
         assert!(result.is_ok(), "正确密码应返回 Ok，实际: {:?}", result);
         let token = result.unwrap();
         assert!(!token.is_empty(), "token 应非空");
@@ -3320,14 +3311,14 @@ mod tests {
         let hash = hasher.hash("correct-password").unwrap();
 
         let mock_repo = MockUserRepository::new();
-        mock_repo.insert(make_user_row(1001, &hash));
+        mock_repo.insert(make_user_row("1001", &hash));
         let repo: Arc<dyn UserRepository> = Arc::new(mock_repo);
 
         let logic = make_logic(3600, 86400, false, "uuid", true, true)
             .with_password_hasher(hasher)
             .with_user_repository(repo);
 
-        let result = logic.login_with_password(1001, "wrong-password").await;
+        let result = logic.login_with_password("1001", "wrong-password").await;
         assert!(
             matches!(result, Err(BulwarkError::InvalidParam(ref msg)) if msg == "invalid password"),
             "错误密码应返回 InvalidParam(\"invalid password\")，实际: {:?}",
@@ -3354,7 +3345,7 @@ mod tests {
             .with_password_hasher(hasher)
             .with_user_repository(repo);
 
-        let result = logic.login_with_password(9999, "any-password").await;
+        let result = logic.login_with_password("9999", "any-password").await;
         assert!(
             matches!(result, Err(BulwarkError::InvalidParam(ref msg)) if msg == "invalid password"),
             "用户不存在应返回 InvalidParam(\"invalid password\")（不泄露 NotLogin），实际: {:?}",
@@ -3373,14 +3364,14 @@ mod tests {
         let hasher: Arc<dyn PasswordHasher> = Arc::new(Argon2Hasher::default());
 
         let mock_repo = MockUserRepository::new();
-        mock_repo.insert(make_user_row(1001, "unsupported_hash_format"));
+        mock_repo.insert(make_user_row("1001", "unsupported_hash_format"));
         let repo: Arc<dyn UserRepository> = Arc::new(mock_repo);
 
         let logic = make_logic(3600, 86400, false, "uuid", true, true)
             .with_password_hasher(hasher)
             .with_user_repository(repo);
 
-        let result = logic.login_with_password(1001, "any-password").await;
+        let result = logic.login_with_password("1001", "any-password").await;
         assert!(
             matches!(result, Err(BulwarkError::InvalidParam(ref msg)) if msg == "unsupported hash format"),
             "不支持的哈希格式应返回 InvalidParam(\"unsupported hash format\")，实际: {:?}",
@@ -3402,7 +3393,7 @@ mod tests {
             Arc::new(crate::observability::BulwarkMetrics::register_to(&registry).unwrap());
         let logic = logic.with_metrics(metrics.clone());
 
-        let _token = logic.login(1001).await.unwrap();
+        let _token = logic.login("1001").await.unwrap();
 
         // 验证 login_total{result="success"} = 1
         let output = prometheus::TextEncoder::new()
@@ -3425,7 +3416,7 @@ mod tests {
             Arc::new(crate::observability::BulwarkMetrics::register_to(&registry).unwrap());
         let logic = logic.with_metrics(metrics.clone());
 
-        let token = logic.login(1001).await.unwrap();
+        let token = logic.login("1001").await.unwrap();
 
         // check_permission 应记录 deny（MockInterface 返回空权限列表）
         let result = with_token(&token, async { logic.check_permission("user:read").await }).await;
@@ -3447,7 +3438,7 @@ mod tests {
     async fn login_without_metrics_does_not_panic() {
         let logic = make_logic(3600, 86400, false, "uuid", false, false);
         // 不调用 with_metrics
-        let _token = logic.login(1001).await.unwrap();
+        let _token = logic.login("1001").await.unwrap();
         // 不 panic 即通过
     }
 
@@ -3463,23 +3454,23 @@ mod tests {
 
     #[async_trait]
     impl BulwarkInterface for MockInterfaceWithLoginType {
-        async fn get_permission_list(&self, _login_id: i64) -> BulwarkResult<Vec<String>> {
+        async fn get_permission_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
             Ok(self.perms.get("default").cloned().unwrap_or_default())
         }
-        async fn get_role_list(&self, _login_id: i64) -> BulwarkResult<Vec<String>> {
+        async fn get_role_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
             Ok(self.roles.get("default").cloned().unwrap_or_default())
         }
         // override 新方法以支持多账号隔离
         async fn get_permission_list_with_type(
             &self,
-            _login_id: i64,
+            _login_id: &str,
             login_type: &str,
         ) -> BulwarkResult<Vec<String>> {
             Ok(self.perms.get(login_type).cloned().unwrap_or_default())
         }
         async fn get_role_list_with_type(
             &self,
-            _login_id: i64,
+            _login_id: &str,
             login_type: &str,
         ) -> BulwarkResult<Vec<String>> {
             Ok(self.roles.get(login_type).cloned().unwrap_or_default())
@@ -3496,7 +3487,7 @@ mod tests {
     async fn get_permission_list_with_type_delegates_to_default() {
         let interface = MockInterface;
         let result = interface
-            .get_permission_list_with_type(1001, "default")
+            .get_permission_list_with_type("1001", "default")
             .await;
         assert!(result.is_ok(), "新方法应成功，实际: {:?}", result);
         assert!(result.unwrap().is_empty(), "默认委托旧方法应返回空 Vec");
@@ -3507,7 +3498,7 @@ mod tests {
     #[serial]
     async fn get_role_list_with_type_delegates_to_default() {
         let interface = MockInterface;
-        let result = interface.get_role_list_with_type(1001, "default").await;
+        let result = interface.get_role_list_with_type("1001", "default").await;
         assert!(result.is_ok(), "新方法应成功，实际: {:?}", result);
         assert!(result.unwrap().is_empty(), "默认委托旧方法应返回空 Vec");
     }
@@ -3526,7 +3517,7 @@ mod tests {
             roles: HashMap::new(),
         };
         let admin_perms = interface
-            .get_permission_list_with_type(1001, "admin")
+            .get_permission_list_with_type("1001", "admin")
             .await
             .unwrap();
         assert_eq!(admin_perms, vec!["admin:*"]);
@@ -3550,11 +3541,11 @@ mod tests {
             roles: HashMap::new(),
         };
         let admin_perms = interface
-            .get_permission_list_with_type(1001, "admin")
+            .get_permission_list_with_type("1001", "admin")
             .await
             .unwrap();
         let user_perms = interface
-            .get_permission_list_with_type(1001, "user")
+            .get_permission_list_with_type("1001", "user")
             .await
             .unwrap();
         assert_ne!(admin_perms, user_perms, "不同 login_type 应返回不同权限");
@@ -3592,7 +3583,7 @@ mod tests {
             .with_login_type("merchant");
         assert_eq!(logic.login_type, "merchant");
         // 验证 login 仍可工作（其他 builder 未被破坏）
-        let token = logic.login(1001).await.unwrap();
+        let token = logic.login("1001").await.unwrap();
         assert!(!token.is_empty());
     }
 
@@ -3665,7 +3656,7 @@ mod tests {
 
         // 用 JwtHandler 直接签发 token，不通过 login（确保 DAO 无 session）
         let handler = crate::protocol::jwt::JwtHandler::new("stateless-test-secret");
-        let token = handler.sign(1001, 3600).unwrap();
+        let token = handler.sign("1001", 3600).unwrap();
 
         // Stateless 模式：仅 JWT verify，不查 session → 应返回 Ok(true)
         with_current_token(token, async {
@@ -3702,7 +3693,7 @@ mod tests {
         );
 
         // login 创建 session + 签发 JWT token
-        let token = logic.login(1001).await.unwrap();
+        let token = logic.login("1001").await.unwrap();
 
         // Mixin 模式：JWT verify 通过 + session 存在 → Ok(true)
         with_current_token(token, async {
@@ -3724,7 +3715,7 @@ mod tests {
         );
 
         // login 创建 session（uuid token，非 JWT 格式）
-        let token = logic.login(1001).await.unwrap();
+        let token = logic.login("1001").await.unwrap();
 
         // Simple 模式：仅查 session，不验证 JWT → session 存在应返回 Ok(true)
         with_current_token(token, async {
@@ -3746,7 +3737,7 @@ mod tests {
         let logic = MinimalLogic {
             config: Arc::new(BulwarkConfig::default_config()),
         };
-        let result = logic.login_with_password(1001, "any-password").await;
+        let result = logic.login_with_password("1001", "any-password").await;
         assert!(
             matches!(result, Err(BulwarkError::NotImplemented(ref msg)) if msg.contains("secure-password")),
             "trait default login_with_password 应返回 NotImplemented（需 secure-password + db-sqlite），实际: {:?}",
@@ -3765,7 +3756,7 @@ mod tests {
     #[tokio::test]
     async fn check_login_mixin_broadcasts_session_timeout_when_account_missing() {
         let (dao, logic) = make_logic_with_dao(3600, 86400, false, "uuid", true, true);
-        let token = logic.login(1001).await.unwrap();
+        let token = logic.login("1001").await.unwrap();
 
         // 删除 account session，使 is_valid 返回 false（token session 仍存在）
         dao.delete("session:account:1001").await.unwrap();
@@ -3789,7 +3780,7 @@ mod tests {
     async fn check_login_simple_broadcasts_session_timeout_when_account_missing() {
         let (dao, logic) = make_logic_with_dao(3600, 86400, false, "uuid", true, true);
         let logic = logic.with_jwt_mode(JwtMode::Simple);
-        let token = logic.login(1001).await.unwrap();
+        let token = logic.login("1001").await.unwrap();
 
         // 删除 account session，使 is_valid 返回 false（token session 仍存在）
         dao.delete("session:account:1001").await.unwrap();
@@ -3846,10 +3837,10 @@ mod tests {
         struct MockInterfaceWithPerms;
         #[async_trait]
         impl BulwarkInterface for MockInterfaceWithPerms {
-            async fn get_permission_list(&self, _login_id: i64) -> BulwarkResult<Vec<String>> {
+            async fn get_permission_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
                 Ok(vec!["user:read".to_string()])
             }
-            async fn get_role_list(&self, _login_id: i64) -> BulwarkResult<Vec<String>> {
+            async fn get_role_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
                 Ok(vec![])
             }
         }
@@ -3865,7 +3856,7 @@ mod tests {
             .with_metrics(metrics)
             .with_permission_checker(checker);
 
-        let token = logic.login(1001).await.unwrap();
+        let token = logic.login("1001").await.unwrap();
         with_current_token(token, async {
             // check_permission 持有权限 → Ok(()) + emit allow metric
             let result = logic.check_permission("user:read").await;
@@ -3921,7 +3912,7 @@ mod tests {
         let metrics = Arc::new(BulwarkMetrics::register_to(&registry).expect("注册失败"));
         let logic = make_logic(3600, 86400, false, "uuid", true, true).with_metrics(metrics);
 
-        let token = logic.login(1001).await.unwrap();
+        let token = logic.login("1001").await.unwrap();
         with_current_token(token, async {
             // check_role（MockFirewall.has_role=true → Ok(())）
             let result = logic.check_role("admin").await;
@@ -3946,7 +3937,7 @@ mod tests {
     #[serial]
     async fn util_revoke_token_destroys_session() {
         init_global_manager(false);
-        let token = BulwarkUtil::login(1001).await.unwrap();
+        let token = BulwarkUtil::login("1001").await.unwrap();
 
         // revoke_token 应成功
         BulwarkUtil::revoke_token(&token).await.unwrap();

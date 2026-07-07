@@ -16,9 +16,6 @@ use crate::error::{BulwarkError, BulwarkResult};
 // v0.4.2: listener_manager 注入（feature-gated，依据 spec listener-events-extend R-001）
 #[cfg(feature = "listener")]
 use crate::listener::{BulwarkEvent, BulwarkListenerManager};
-// 0.4.2: LoginId newtype 接入（impl Into<LoginId> 公开 API + i64 内部层）
-use crate::stp::login_id::LoginId;
-use crate::stp::login_id_to_i64;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -28,7 +25,7 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ApiKeyInfo {
     /// 登录主体标识。
-    pub login_id: i64,
+    pub login_id: String,
     /// 作用域列表。
     pub scopes: Vec<String>,
     /// 过期时间戳（秒）。
@@ -127,10 +124,9 @@ impl ApiKeyHandler {
     ///
     /// # 错误
     /// - `BulwarkError::InvalidParam`: timeout <= 0。
-    /// - `BulwarkError::Config`: 传入 `LoginId::String` 形式，内部层尚未完成迁移。
     pub async fn generate(
         &self,
-        login_id: impl Into<LoginId>,
+        login_id: impl Into<String>,
         scopes: Vec<String>,
         timeout: i64,
     ) -> BulwarkResult<String> {
@@ -151,15 +147,14 @@ impl ApiKeyHandler {
     ///
     /// # 错误
     /// - `BulwarkError::InvalidParam`: timeout <= 0 或 namespace 非法。
-    /// - `BulwarkError::Config`: 传入 `LoginId::String` 形式，内部层尚未完成迁移。
     pub async fn generate_with_namespace(
         &self,
-        login_id: impl Into<LoginId>,
+        login_id: impl Into<String>,
         namespace: &str,
         scopes: Vec<String>,
         timeout: i64,
     ) -> BulwarkResult<String> {
-        let login_id: i64 = login_id_to_i64(login_id.into())?;
+        let login_id: String = login_id.into();
         if timeout <= 0 {
             return Err(BulwarkError::InvalidParam("timeout 必须大于 0".to_string()));
         }
@@ -457,7 +452,7 @@ mod tests {
     async fn generate_returns_64_chars() {
         let handler = make_handler();
         let key = handler
-            .generate(1001, vec!["read".into()], 3600)
+            .generate("1001", vec!["read".into()], 3600)
             .await
             .unwrap();
         assert_eq!(key.len(), 64);
@@ -468,8 +463,8 @@ mod tests {
     #[tokio::test]
     async fn generate_multiple_times_returns_different_keys() {
         let handler = make_handler();
-        let k1 = handler.generate(1001, vec![], 3600).await.unwrap();
-        let k2 = handler.generate(1001, vec![], 3600).await.unwrap();
+        let k1 = handler.generate("1001", vec![], 3600).await.unwrap();
+        let k2 = handler.generate("1001", vec![], 3600).await.unwrap();
         assert_ne!(k1, k2);
     }
 
@@ -477,7 +472,7 @@ mod tests {
     #[tokio::test]
     async fn generate_zero_timeout_returns_error() {
         let handler = make_handler();
-        let result = handler.generate(1001, vec![], 0).await;
+        let result = handler.generate("1001", vec![], 0).await;
         assert!(result.is_err());
     }
 
@@ -490,14 +485,14 @@ mod tests {
         let dao = Arc::new(MockDao::new());
         let handler = ApiKeyHandler::new(dao.clone());
         let key = handler
-            .generate(1001, vec!["read".into()], 3600)
+            .generate("1001", vec!["read".into()], 3600)
             .await
             .unwrap();
         let dao_key = format!("bulwark:apikey:default:{}", key);
         let value = dao.get(&dao_key).await.unwrap();
         assert!(value.is_some());
         let info: ApiKeyInfo = serde_json::from_str(&value.unwrap()).unwrap();
-        assert_eq!(info.login_id, 1001);
+        assert_eq!(info.login_id, "1001");
         assert_eq!(info.scopes, vec!["read".to_string()]);
         assert!(!info.revoked);
         assert_eq!(info.namespace, "default");
@@ -512,11 +507,11 @@ mod tests {
     async fn verify_success_returns_info() {
         let handler = make_handler();
         let key = handler
-            .generate(1001, vec!["read".into(), "write".into()], 3600)
+            .generate("1001", vec!["read".into(), "write".into()], 3600)
             .await
             .unwrap();
         let info = handler.verify(&key).await.unwrap();
-        assert_eq!(info.login_id, 1001);
+        assert_eq!(info.login_id, "1001");
         assert_eq!(info.scopes, vec!["read".to_string(), "write".to_string()]);
         assert!(!info.revoked);
     }
@@ -537,7 +532,7 @@ mod tests {
     #[tokio::test]
     async fn verify_revoked_returns_error() {
         let handler = make_handler();
-        let key = handler.generate(1001, vec![], 3600).await.unwrap();
+        let key = handler.generate("1001", vec![], 3600).await.unwrap();
         handler.revoke(&key).await.unwrap();
         let result = handler.verify(&key).await;
         assert!(result.is_err());
@@ -552,7 +547,7 @@ mod tests {
     async fn verify_expired_returns_error() {
         let handler = make_handler();
         // 生成一个 1 秒过期的 key
-        let key = handler.generate(1001, vec![], 1).await.unwrap();
+        let key = handler.generate("1001", vec![], 1).await.unwrap();
         // 等待 2 秒
         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
         let result = handler.verify(&key).await;
@@ -571,7 +566,7 @@ mod tests {
     #[tokio::test]
     async fn revoke_success() {
         let handler = make_handler();
-        let key = handler.generate(1001, vec![], 3600).await.unwrap();
+        let key = handler.generate("1001", vec![], 3600).await.unwrap();
         let result = handler.revoke(&key).await;
         assert!(result.is_ok());
         // 再次 verify 应失败
@@ -600,7 +595,7 @@ mod tests {
     async fn rotate_success() {
         let handler = make_handler();
         let old_key = handler
-            .generate(1001, vec!["read".into()], 3600)
+            .generate("1001", vec!["read".into()], 3600)
             .await
             .unwrap();
         let new_key = handler.rotate(&old_key).await.unwrap();
@@ -611,7 +606,7 @@ mod tests {
         assert!(old_result.is_err());
         // new_key 应有效，且保留 login_id 和 scopes
         let info = handler.verify(&new_key).await.unwrap();
-        assert_eq!(info.login_id, 1001);
+        assert_eq!(info.login_id, "1001");
         assert_eq!(info.scopes, vec!["read".to_string()]);
     }
 
@@ -650,7 +645,7 @@ mod tests {
     #[tokio::test]
     async fn generate_negative_timeout_returns_error() {
         let handler = make_handler();
-        let result = handler.generate(1001, vec![], -1).await;
+        let result = handler.generate("1001", vec![], -1).await;
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), BulwarkError::InvalidParam(_)));
     }
@@ -660,7 +655,7 @@ mod tests {
     async fn rotate_revoked_key_returns_error() {
         let handler = make_handler();
         let key = handler
-            .generate(1001, vec!["read".into()], 3600)
+            .generate("1001", vec!["read".into()], 3600)
             .await
             .unwrap();
         // 先吊销
@@ -674,32 +669,16 @@ mod tests {
     // 0.4.2 新增: LoginId newtype 接入（impl Into<LoginId>）
     // ========================================================================
 
-    use crate::stp::login_id::LoginId;
-
-    /// 验证 `ApiKeyHandler::generate` 接受 `LoginId::Numeric`（i64 兼容路径）。
+    /// 验证 `ApiKeyHandler::generate` 接受 String 形式 login_id。
     #[tokio::test]
     async fn generate_accepts_login_id_numeric() {
         let handler = make_handler();
         let key = handler
-            .generate(LoginId::Numeric(1001), vec!["read".into()], 3600)
+            .generate("1001".to_string(), vec!["read".into()], 3600)
             .await
             .unwrap();
         let info = handler.verify(&key).await.unwrap();
-        assert_eq!(info.login_id, 1001);
-    }
-
-    /// 验证 `ApiKeyHandler::generate` 对 `LoginId::String` 返回 `BulwarkError::Config`。
-    #[tokio::test]
-    async fn generate_rejects_login_id_string_with_config_error() {
-        let handler = make_handler();
-        let result = handler
-            .generate(LoginId::String("user-uuid".to_string()), vec![], 3600)
-            .await;
-        assert!(
-            matches!(result, Err(BulwarkError::Config(_))),
-            "String-form login_id 在 v0.4.2 应返回 Config 错误，实际: {:?}",
-            result
-        );
+        assert_eq!(info.login_id, "1001");
     }
 
     // ========================================================================
@@ -710,7 +689,7 @@ mod tests {
     #[test]
     fn apikey_info_serializes_with_namespace() {
         let info = ApiKeyInfo {
-            login_id: 1,
+            login_id: "1".to_string(),
             scopes: vec![],
             expire_at: 0,
             revoked: false,
@@ -726,13 +705,13 @@ mod tests {
     #[test]
     fn apikey_info_old_json_deserializes_with_default_namespace() {
         // 旧格式 JSON：无 namespace 字段（v0.4.1 及之前生成的 key）
-        let old_json = r#"{"login_id":1,"scopes":[],"expire_at":0,"revoked":false}"#;
+        let old_json = r#"{"login_id":"1","scopes":[],"expire_at":0,"revoked":false}"#;
         let info: ApiKeyInfo = serde_json::from_str(old_json).unwrap();
         assert_eq!(
             info.namespace, "default",
             "旧 JSON 应反序列化为 namespace=default"
         );
-        assert_eq!(info.login_id, 1);
+        assert_eq!(info.login_id, "1");
     }
 
     /// R-002: generate_with_namespace 用新格式 `bulwark:apikey:<namespace>:<key>` 存储
@@ -743,7 +722,7 @@ mod tests {
         let dao = Arc::new(MockDao::new());
         let handler = ApiKeyHandler::new(dao.clone());
         let key = handler
-            .generate_with_namespace(1001, "internal", vec!["read".into()], 3600)
+            .generate_with_namespace("1001", "internal", vec!["read".into()], 3600)
             .await
             .unwrap();
         // 新格式：bulwark:apikey:internal:<key>
@@ -752,7 +731,7 @@ mod tests {
         assert!(value.is_some(), "新格式 key 应存在: {}", dao_key);
         let info: ApiKeyInfo = serde_json::from_str(&value.unwrap()).unwrap();
         assert_eq!(info.namespace, "internal");
-        assert_eq!(info.login_id, 1001);
+        assert_eq!(info.login_id, "1001");
         // 旧格式不应存在
         let old_key = format!("bulwark:apikey:{}", key);
         let old_value = dao.get(&old_key).await.unwrap();
@@ -771,7 +750,7 @@ mod tests {
         let old_key = "deadbeef".repeat(8); // 64 hex chars
         let old_dao_key = format!("bulwark:apikey:{}", old_key);
         let info = ApiKeyInfo {
-            login_id: 2002,
+            login_id: "2002".to_string(),
             scopes: vec!["legacy".into()],
             expire_at: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -785,7 +764,7 @@ mod tests {
         dao.set(&old_dao_key, &value, 3600).await.unwrap();
         // verify 应能找到（先查旧格式命中）
         let verified = handler.verify(&old_key).await.unwrap();
-        assert_eq!(verified.login_id, 2002);
+        assert_eq!(verified.login_id, "2002");
         assert_eq!(verified.scopes, vec!["legacy".to_string()]);
     }
 
@@ -798,23 +777,23 @@ mod tests {
         let handler = ApiKeyHandler::new(dao.clone());
         // internal namespace 下生成 1 个 key
         let _k1 = handler
-            .generate_with_namespace(1001, "internal", vec!["read".into()], 3600)
+            .generate_with_namespace("1001", "internal", vec!["read".into()], 3600)
             .await
             .unwrap();
         // partner namespace 下生成 1 个 key
         let _k2 = handler
-            .generate_with_namespace(2002, "partner", vec!["write".into()], 3600)
+            .generate_with_namespace("2002", "partner", vec!["write".into()], 3600)
             .await
             .unwrap();
         // 列出 internal namespace
         let internal_keys = handler.list_by_namespace("internal").await.unwrap();
         assert_eq!(internal_keys.len(), 1, "internal namespace 应有 1 个 key");
-        assert_eq!(internal_keys[0].login_id, 1001);
+        assert_eq!(internal_keys[0].login_id, "1001");
         assert_eq!(internal_keys[0].namespace, "internal");
         // 列出 partner namespace
         let partner_keys = handler.list_by_namespace("partner").await.unwrap();
         assert_eq!(partner_keys.len(), 1, "partner namespace 应有 1 个 key");
-        assert_eq!(partner_keys[0].login_id, 2002);
+        assert_eq!(partner_keys[0].login_id, "2002");
         // 不存在的 namespace 返回空
         let empty = handler.list_by_namespace("nonexistent").await.unwrap();
         assert!(empty.is_empty(), "不存在的 namespace 应返回空 Vec");
@@ -828,18 +807,18 @@ mod tests {
         let dao = Arc::new(MockDao::new());
         let handler = ApiKeyHandler::new(dao.clone());
         let k1 = handler
-            .generate_with_namespace(1001, "internal", vec![], 3600)
+            .generate_with_namespace("1001", "internal", vec![], 3600)
             .await
             .unwrap();
         let _k2 = handler
-            .generate_with_namespace(1002, "internal", vec![], 3600)
+            .generate_with_namespace("1002", "internal", vec![], 3600)
             .await
             .unwrap();
         // 吊销 k1
         handler.revoke(&k1).await.unwrap();
         let keys = handler.list_by_namespace("internal").await.unwrap();
         assert_eq!(keys.len(), 1, "吊销后应只剩 1 个未吊销 key");
-        assert_eq!(keys[0].login_id, 1002);
+        assert_eq!(keys[0].login_id, "1002");
     }
 
     /// R-004: namespace 隔离——verify_with_namespace 严格匹配 namespace
@@ -851,7 +830,7 @@ mod tests {
         let handler = ApiKeyHandler::new(dao.clone());
         // 在 internal namespace 生成 key
         let key = handler
-            .generate_with_namespace(1001, "internal", vec!["read".into()], 3600)
+            .generate_with_namespace("1001", "internal", vec!["read".into()], 3600)
             .await
             .unwrap();
         // 用正确 namespace 校验应成功
@@ -859,7 +838,7 @@ mod tests {
             .verify_with_namespace(&key, "internal")
             .await
             .unwrap();
-        assert_eq!(info.login_id, 1001);
+        assert_eq!(info.login_id, "1001");
         assert_eq!(info.namespace, "internal");
         // 用错误 namespace 校验应失败（key 不存在该 namespace 下）
         let wrong = handler.verify_with_namespace(&key, "partner").await;
@@ -877,12 +856,12 @@ mod tests {
     async fn verify_without_namespace_scans_all_namespaces() {
         let handler = make_handler();
         let key = handler
-            .generate_with_namespace(1001, "internal", vec!["read".into()], 3600)
+            .generate_with_namespace("1001", "internal", vec!["read".into()], 3600)
             .await
             .unwrap();
         // 不带 namespace 的 verify 通过扫描新格式找到
         let info = handler.verify(&key).await.unwrap();
-        assert_eq!(info.login_id, 1001);
+        assert_eq!(info.login_id, "1001");
         assert_eq!(info.namespace, "internal");
     }
 
@@ -892,7 +871,7 @@ mod tests {
     async fn generate_with_namespace_validates_namespace() {
         let handler = make_handler();
         // 空字符串
-        let r = handler.generate_with_namespace(1, "", vec![], 3600).await;
+        let r = handler.generate_with_namespace("1", "", vec![], 3600).await;
         assert!(
             matches!(r, Err(BulwarkError::InvalidParam(_))),
             "空 namespace 应报错"
@@ -900,7 +879,7 @@ mod tests {
         // 过长（65 字符）
         let long_ns = "a".repeat(65);
         let r = handler
-            .generate_with_namespace(1, &long_ns, vec![], 3600)
+            .generate_with_namespace("1", &long_ns, vec![], 3600)
             .await;
         assert!(
             matches!(r, Err(BulwarkError::InvalidParam(_))),
@@ -908,7 +887,7 @@ mod tests {
         );
         // 非法字符（含空格）
         let r = handler
-            .generate_with_namespace(1, "has space", vec![], 3600)
+            .generate_with_namespace("1", "has space", vec![], 3600)
             .await;
         assert!(
             matches!(r, Err(BulwarkError::InvalidParam(_))),
@@ -916,11 +895,11 @@ mod tests {
         );
         // 合法字符边界：64 字符、含 _ -
         let r = handler
-            .generate_with_namespace(1, &"a".repeat(64), vec![], 3600)
+            .generate_with_namespace("1", &"a".repeat(64), vec![], 3600)
             .await;
         assert!(r.is_ok(), "64 字符 namespace 应通过");
         let r = handler
-            .generate_with_namespace(1, "ns_name-1", vec![], 3600)
+            .generate_with_namespace("1", "ns_name-1", vec![], 3600)
             .await;
         assert!(r.is_ok(), "含 _ - 数字 的 namespace 应通过");
     }

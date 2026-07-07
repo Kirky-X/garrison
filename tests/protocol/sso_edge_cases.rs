@@ -158,7 +158,7 @@ async fn center_id_mapping_not_found_returns_error() {
     let client = make_client();
 
     // 为 client_id=2001 签发 ticket
-    let ticket = client.issue_ticket(1001, 2001).await.unwrap();
+    let ticket = client.issue_ticket("1001", 2001).await.unwrap();
 
     // 用未注册的 client_id=9999（映射不存在）校验 → 应返回 InvalidToken 错误（M5 修复）
     let result = client.validate_ticket(&ticket, 9999).await;
@@ -186,7 +186,7 @@ async fn concurrent_ticket_validation_only_one_succeeds() {
     let client = Arc::new(SsoClient::new(dao));
 
     // 签发一个 ticket
-    let ticket = client.issue_ticket(1001, 2001).await.unwrap();
+    let ticket = client.issue_ticket("1001", 2001).await.unwrap();
 
     // 并发校验同一 ticket：3 个任务同时执行
     // 通过 Arc<SsoClient> 共享客户端实例（内部 Arc<dyn BulwarkDao> 共享 DAO）

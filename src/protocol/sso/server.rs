@@ -36,7 +36,7 @@ pub trait SsoServer: Send + Sync {
     ///
     /// # 返回
     /// 64 字符的 ticket 字符串。
-    async fn issue_ticket(&self, login_id: i64, client_id: i64) -> BulwarkResult<String>;
+    async fn issue_ticket(&self, login_id: &str, client_id: i64) -> BulwarkResult<String>;
 
     /// 校验 SSO ticket（一次性使用，校验成功后立即销毁）。
     ///
@@ -52,7 +52,7 @@ pub trait SsoServer: Send + Sync {
     ///
     /// 与 `SsoClient::validate_ticket` 相同，使用 `BulwarkDao::get_and_delete` 原子操作。
     /// 依据 spec protocol-sso-toctou R-002。
-    async fn validate_ticket(&self, ticket: &str, client_id: i64) -> BulwarkResult<i64>;
+    async fn validate_ticket(&self, ticket: &str, client_id: i64) -> BulwarkResult<String>;
 
     /// 销毁 SSO ticket（幂等，即使票据不存在也返回 `Ok(())`）。
     async fn destroy_ticket(&self, ticket: &str) -> BulwarkResult<()>;
@@ -60,7 +60,7 @@ pub trait SsoServer: Send + Sync {
     /// 推送 SSO 消息到指定 login_id。
     ///
     /// 若未注入 `SsoChannel`，则 noop 返回 `Ok(())`。
-    async fn push_message(&self, login_id: i64, message: &str) -> BulwarkResult<()>;
+    async fn push_message(&self, login_id: &str, message: &str) -> BulwarkResult<()>;
 }
 
 /// 中心 ID 转换器 trait（依据 spec protocol-sso-server）。
@@ -68,10 +68,10 @@ pub trait SsoServer: Send + Sync {
 /// 用于多子系统 login_id 映射，支持双向转换。
 pub trait CenterIdConverter: Send + Sync {
     /// 将 login_id 转换为 center_id。
-    fn to_center_id(&self, login_id: i64) -> i64;
+    fn to_center_id(&self, login_id: &str) -> String;
 
     /// 将 center_id 转换回 login_id。
-    fn to_login_id(&self, center_id: i64) -> i64;
+    fn to_login_id(&self, center_id: &str) -> String;
 }
 
 /// SSO 消息推送通道 trait（依据 spec protocol-sso-server）。
@@ -104,12 +104,12 @@ pub trait SsoChannel: Send + Sync {
 pub struct IdentityCenterIdConverter;
 
 impl CenterIdConverter for IdentityCenterIdConverter {
-    fn to_center_id(&self, login_id: i64) -> i64 {
-        login_id
+    fn to_center_id(&self, login_id: &str) -> String {
+        login_id.to_string()
     }
 
-    fn to_login_id(&self, center_id: i64) -> i64 {
-        center_id
+    fn to_login_id(&self, center_id: &str) -> String {
+        center_id.to_string()
     }
 }
 
@@ -186,7 +186,7 @@ impl DefaultSsoServer {
 
 #[async_trait]
 impl SsoServer for DefaultSsoServer {
-    async fn issue_ticket(&self, login_id: i64, client_id: i64) -> BulwarkResult<String> {
+    async fn issue_ticket(&self, login_id: &str, client_id: i64) -> BulwarkResult<String> {
         // 委托 CenterIdConverter 将 login_id 转换为 center_id 后存储
         let center_id = self.converter.to_center_id(login_id);
         // 拼接两个 UUID v4 simple（各 32 hex = 64 字符），与 SsoClient 格式一致
@@ -202,7 +202,7 @@ impl SsoServer for DefaultSsoServer {
         Ok(ticket)
     }
 
-    async fn validate_ticket(&self, ticket: &str, client_id: i64) -> BulwarkResult<i64> {
+    async fn validate_ticket(&self, ticket: &str, client_id: i64) -> BulwarkResult<String> {
         let key = format!("bulwark:sso:ticket:{}", ticket);
         // 步骤 1: 非原子 get，用于校验 client_id（不删除票据）
         // 与 SsoClient::validate_ticket 行为对齐：client_id 不匹配时不消费票据，
@@ -234,7 +234,7 @@ impl SsoServer for DefaultSsoServer {
             ));
         }
         // 委托 converter 将 center_id 转回原始 login_id
-        let login_id = self.converter.to_login_id(data.login_id);
+        let login_id = self.converter.to_login_id(&data.login_id);
         Ok(login_id)
     }
 
@@ -243,7 +243,7 @@ impl SsoServer for DefaultSsoServer {
         self.dao.delete(&key).await
     }
 
-    async fn push_message(&self, login_id: i64, message: &str) -> BulwarkResult<()> {
+    async fn push_message(&self, login_id: &str, message: &str) -> BulwarkResult<()> {
         if let Some(channel) = &self.channel {
             let topic = format!("sso:user:{}", login_id);
             channel.push(&topic, message).await?;
@@ -296,30 +296,33 @@ mod tests {
     #[test]
     fn identity_converter_roundtrip() {
         let converter = IdentityCenterIdConverter;
-        let center_id = converter.to_center_id(1001);
-        let login_id = converter.to_login_id(center_id);
-        assert_eq!(login_id, 1001);
+        let center_id = converter.to_center_id("1001");
+        let login_id = converter.to_login_id(&center_id);
+        assert_eq!(login_id, "1001");
         // identity 转换：center_id == login_id
-        assert_eq!(center_id, 1001);
+        assert_eq!(center_id, "1001");
     }
 
-    /// 自定义 CenterIdConverter 实现（login_id + 10000 = center_id）（spec Scenario）。
+    /// 自定义 CenterIdConverter 实现（login_id 加前缀 c- 作为 center_id）（spec Scenario）。
     #[test]
     fn custom_converter_roundtrip() {
         struct OffsetConverter;
         impl CenterIdConverter for OffsetConverter {
-            fn to_center_id(&self, login_id: i64) -> i64 {
-                login_id + 10000
+            fn to_center_id(&self, login_id: &str) -> String {
+                format!("c-{}", login_id)
             }
-            fn to_login_id(&self, center_id: i64) -> i64 {
-                center_id - 10000
+            fn to_login_id(&self, center_id: &str) -> String {
+                center_id
+                    .strip_prefix("c-")
+                    .unwrap_or(center_id)
+                    .to_string()
             }
         }
         let converter = OffsetConverter;
-        let center_id = converter.to_center_id(1001);
-        assert_eq!(center_id, 11001);
-        let login_id = converter.to_login_id(center_id);
-        assert_eq!(login_id, 1001);
+        let center_id = converter.to_center_id("1001");
+        assert_eq!(center_id, "c-1001");
+        let login_id = converter.to_login_id(&center_id);
+        assert_eq!(login_id, "1001");
     }
 
     // ========================================================================
@@ -352,9 +355,9 @@ mod tests {
     async fn issue_and_validate_ticket_roundtrip() {
         let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
         let server = DefaultSsoServer::new(dao);
-        let ticket = server.issue_ticket(1001, 2001).await.unwrap();
+        let ticket = server.issue_ticket("1001", 2001).await.unwrap();
         let login_id = server.validate_ticket(&ticket, 2001).await.unwrap();
-        assert_eq!(login_id, 1001);
+        assert_eq!(login_id, "1001");
     }
 
     /// issue_ticket 返回 64 字符（与 SsoClient 格式一致）。
@@ -362,7 +365,7 @@ mod tests {
     async fn issue_ticket_returns_64_chars() {
         let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
         let server = DefaultSsoServer::new(dao);
-        let ticket = server.issue_ticket(1001, 2001).await.unwrap();
+        let ticket = server.issue_ticket("1001", 2001).await.unwrap();
         assert_eq!(ticket.len(), 64);
         assert!(ticket.chars().all(|c| c.is_ascii_hexdigit()));
     }
@@ -372,7 +375,7 @@ mod tests {
     async fn validate_ticket_one_time_use_second_fails() {
         let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
         let server = DefaultSsoServer::new(dao);
-        let ticket = server.issue_ticket(1001, 2001).await.unwrap();
+        let ticket = server.issue_ticket("1001", 2001).await.unwrap();
         let first = server.validate_ticket(&ticket, 2001).await;
         let second = server.validate_ticket(&ticket, 2001).await;
         assert!(first.is_ok());
@@ -384,7 +387,7 @@ mod tests {
     async fn validate_ticket_client_id_mismatch_returns_error() {
         let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
         let server = DefaultSsoServer::new(dao);
-        let ticket = server.issue_ticket(1001, 2001).await.unwrap();
+        let ticket = server.issue_ticket("1001", 2001).await.unwrap();
         let result = server.validate_ticket(&ticket, 9999).await;
         assert!(result.is_err());
         match result.err() {
@@ -419,7 +422,7 @@ mod tests {
         let result = server.destroy_ticket("nonexistent-ticket").await;
         assert!(result.is_ok());
         // 销毁存在的票据
-        let ticket = server.issue_ticket(1001, 2001).await.unwrap();
+        let ticket = server.issue_ticket("1001", 2001).await.unwrap();
         let result1 = server.destroy_ticket(&ticket).await;
         let result2 = server.destroy_ticket(&ticket).await;
         assert!(result1.is_ok());
@@ -435,19 +438,22 @@ mod tests {
     async fn custom_converter_issue_validate_roundtrip() {
         struct OffsetConverter;
         impl CenterIdConverter for OffsetConverter {
-            fn to_center_id(&self, login_id: i64) -> i64 {
-                login_id + 10000
+            fn to_center_id(&self, login_id: &str) -> String {
+                format!("c-{}", login_id)
             }
-            fn to_login_id(&self, center_id: i64) -> i64 {
-                center_id - 10000
+            fn to_login_id(&self, center_id: &str) -> String {
+                center_id
+                    .strip_prefix("c-")
+                    .unwrap_or(center_id)
+                    .to_string()
             }
         }
         let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
         let server = DefaultSsoServer::new(dao).with_converter(Arc::new(OffsetConverter));
-        let ticket = server.issue_ticket(1001, 2001).await.unwrap();
+        let ticket = server.issue_ticket("1001", 2001).await.unwrap();
         let login_id = server.validate_ticket(&ticket, 2001).await.unwrap();
         // 往返一致：返回原始 login_id（而非 center_id）
-        assert_eq!(login_id, 1001);
+        assert_eq!(login_id, "1001");
     }
 
     // ========================================================================
@@ -459,7 +465,7 @@ mod tests {
     async fn push_message_noop_when_no_channel() {
         let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
         let server = DefaultSsoServer::new(dao);
-        let result = server.push_message(1001, "hello").await;
+        let result = server.push_message("1001", "hello").await;
         assert!(result.is_ok());
     }
 
@@ -489,8 +495,8 @@ mod tests {
             count: AtomicUsize::new(0),
         });
         let server = DefaultSsoServer::new(dao).with_channel(channel.clone());
-        server.push_message(1001, "hello").await.unwrap();
-        server.push_message(1002, "world").await.unwrap();
+        server.push_message("1001", "hello").await.unwrap();
+        server.push_message("1002", "world").await.unwrap();
         assert_eq!(channel.count.load(Ordering::SeqCst), 2);
     }
 
@@ -504,11 +510,11 @@ mod tests {
         let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
         // SsoServer 签发 ticket
         let server = DefaultSsoServer::new(dao.clone());
-        let ticket = server.issue_ticket(1001, 2001).await.unwrap();
+        let ticket = server.issue_ticket("1001", 2001).await.unwrap();
         // SsoClient 校验同一 ticket（共享 DAO）
         let client = SsoClient::new(dao);
         let login_id = client.validate_ticket(&ticket, 2001).await.unwrap();
-        assert_eq!(login_id, 1001);
+        assert_eq!(login_id, "1001");
     }
 
     /// SsoClient 签发的 ticket 可被 SsoServer 校验（共享 DAO，反向）。
@@ -517,10 +523,10 @@ mod tests {
         let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
         // SsoClient 签发 ticket
         let client = SsoClient::new(dao.clone());
-        let ticket = client.issue_ticket(1001, 2001).await.unwrap();
+        let ticket = client.issue_ticket("1001", 2001).await.unwrap();
         // SsoServer 校验同一 ticket（共享 DAO）
         let server = DefaultSsoServer::new(dao);
         let login_id = server.validate_ticket(&ticket, 2001).await.unwrap();
-        assert_eq!(login_id, 1001);
+        assert_eq!(login_id, "1001");
     }
 }

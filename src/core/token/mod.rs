@@ -14,7 +14,7 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenClaims {
     /// 登录主体标识。
-    pub login_id: i64,
+    pub login_id: String,
     /// 过期时间戳（Unix 秒）。
     pub expire_at: i64,
     /// 设备标识（可选）。
@@ -31,14 +31,14 @@ pub trait Token: Send + Sync {
     /// # 参数
     /// - `login_id`: 登录主体标识。
     /// - `timeout`: 有效期（秒）。
-    fn generate(&self, login_id: i64, timeout: i64) -> BulwarkResult<String>;
+    fn generate(&self, login_id: &str, timeout: i64) -> BulwarkResult<String>;
 
     /// 校验 token，返回关联的 login_id（如果 token 有效且可解析）。
     ///
     /// # 返回
     /// - `Ok(Some(login_id))`: token 有效且包含 login_id。
     /// - `Ok(None)`: token 无效或不包含 login_id（如 UUID 风格）。
-    fn verify(&self, token: &str) -> BulwarkResult<Option<i64>>;
+    fn verify(&self, token: &str) -> BulwarkResult<Option<String>>;
 
     /// 解析 token 为 `TokenClaims`。
     ///
@@ -60,11 +60,11 @@ pub trait Token: Send + Sync {
 pub struct UuidTokenStyle;
 
 impl Token for UuidTokenStyle {
-    fn generate(&self, _login_id: i64, _timeout: i64) -> BulwarkResult<String> {
+    fn generate(&self, _login_id: &str, _timeout: i64) -> BulwarkResult<String> {
         Ok(Uuid::new_v4().to_string())
     }
 
-    fn verify(&self, _token: &str) -> BulwarkResult<Option<i64>> {
+    fn verify(&self, _token: &str) -> BulwarkResult<Option<String>> {
         // UUID 无 payload，无法提取 login_id
         Ok(None)
     }
@@ -88,13 +88,13 @@ impl Token for UuidTokenStyle {
 pub struct Random64TokenStyle;
 
 impl Token for Random64TokenStyle {
-    fn generate(&self, _login_id: i64, _timeout: i64) -> BulwarkResult<String> {
+    fn generate(&self, _login_id: &str, _timeout: i64) -> BulwarkResult<String> {
         // 拼接两个 UUID v4 的 simple 表示（各 32 hex 字符 = 64 字符）
         let token = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
         Ok(token)
     }
 
-    fn verify(&self, _token: &str) -> BulwarkResult<Option<i64>> {
+    fn verify(&self, _token: &str) -> BulwarkResult<Option<String>> {
         // 随机 hex 无 payload，无法提取 login_id
         Ok(None)
     }
@@ -117,18 +117,13 @@ impl Token for Random64TokenStyle {
 pub struct SimpleTokenStyle;
 
 impl Token for SimpleTokenStyle {
-    fn generate(&self, login_id: i64, _timeout: i64) -> BulwarkResult<String> {
+    fn generate(&self, login_id: &str, _timeout: i64) -> BulwarkResult<String> {
         Ok(format!("{}-{}", login_id, Uuid::new_v4()))
     }
 
-    fn verify(&self, token: &str) -> BulwarkResult<Option<i64>> {
+    fn verify(&self, token: &str) -> BulwarkResult<Option<String>> {
         match token.split_once('-') {
-            Some((id_str, _)) => {
-                let login_id = id_str.parse::<i64>().map_err(|e| {
-                    BulwarkError::Internal(format!("Simple token login_id 解析失败: {}", e))
-                })?;
-                Ok(Some(login_id))
-            },
+            Some((id_str, _)) => Ok(Some(id_str.to_string())),
             None => Ok(None),
         }
     }
@@ -136,12 +131,9 @@ impl Token for SimpleTokenStyle {
     fn parse(&self, token: &str) -> BulwarkResult<TokenClaims> {
         match token.split_once('-') {
             Some((id_str, _)) => {
-                let login_id = id_str.parse::<i64>().map_err(|e| {
-                    BulwarkError::Internal(format!("Simple token login_id 解析失败: {}", e))
-                })?;
                 // Simple token 不包含过期时间，expire_at 设为 0
                 Ok(TokenClaims {
-                    login_id,
+                    login_id: id_str.to_string(),
                     expire_at: 0,
                     device: None,
                 })
@@ -182,11 +174,11 @@ impl JwtTokenStyle {
 
 #[cfg(feature = "protocol-jwt")]
 impl Token for JwtTokenStyle {
-    fn generate(&self, login_id: i64, timeout: i64) -> BulwarkResult<String> {
+    fn generate(&self, login_id: &str, timeout: i64) -> BulwarkResult<String> {
         self.handler.sign(login_id, timeout)
     }
 
-    fn verify(&self, token: &str) -> BulwarkResult<Option<i64>> {
+    fn verify(&self, token: &str) -> BulwarkResult<Option<String>> {
         match self.handler.verify(token) {
             Ok(claims) => Ok(Some(claims.login_id)),
             Err(_) => Ok(None),
@@ -255,13 +247,13 @@ mod tests {
     #[test]
     fn token_claims_serializes() {
         let claims = TokenClaims {
-            login_id: 1001,
+            login_id: "1001".to_string(),
             expire_at: 1700003600,
             device: Some("web".to_string()),
         };
         let json = serde_json::to_string(&claims).unwrap();
         let parsed: TokenClaims = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed.login_id, 1001);
+        assert_eq!(parsed.login_id, "1001");
         assert_eq!(parsed.expire_at, 1700003600);
         assert_eq!(parsed.device, Some("web".to_string()));
     }
@@ -270,7 +262,7 @@ mod tests {
     #[test]
     fn token_claims_device_optional() {
         let claims = TokenClaims {
-            login_id: 1,
+            login_id: "1".to_string(),
             expire_at: 0,
             device: None,
         };
@@ -285,7 +277,7 @@ mod tests {
     #[test]
     fn uuid_style_generates_uuid_format() {
         let style = UuidTokenStyle;
-        let token = style.generate(1001, 3600).unwrap();
+        let token = style.generate("1001", 3600).unwrap();
         // UUID v4 格式：8-4-4-4-12 十六进制
         assert_eq!(token.len(), 36);
         let parts: Vec<&str> = token.split('-').collect();
@@ -301,7 +293,7 @@ mod tests {
     #[test]
     fn uuid_style_verify_returns_none() {
         let style = UuidTokenStyle;
-        let token = style.generate(1001, 3600).unwrap();
+        let token = style.generate("1001", 3600).unwrap();
         assert_eq!(style.verify(&token).unwrap(), None);
     }
 
@@ -320,7 +312,7 @@ mod tests {
     #[test]
     fn random64_style_generates_64_hex() {
         let style = Random64TokenStyle;
-        let token = style.generate(1001, 3600).unwrap();
+        let token = style.generate("1001", 3600).unwrap();
         assert_eq!(token.len(), 64);
         assert!(token.chars().all(|c| c.is_ascii_hexdigit()));
     }
@@ -329,8 +321,8 @@ mod tests {
     #[test]
     fn random64_style_generates_unique() {
         let style = Random64TokenStyle;
-        let t1 = style.generate(1001, 3600).unwrap();
-        let t2 = style.generate(1001, 3600).unwrap();
+        let t1 = style.generate("1001", 3600).unwrap();
+        let t2 = style.generate("1001", 3600).unwrap();
         assert_ne!(t1, t2);
     }
 
@@ -349,7 +341,7 @@ mod tests {
     #[test]
     fn simple_style_generates_login_id_prefix() {
         let style = SimpleTokenStyle;
-        let token = style.generate(1001, 3600).unwrap();
+        let token = style.generate("1001", 3600).unwrap();
         assert!(token.starts_with("1001-"));
         // 后缀为 UUID v4 格式（36 字符）
         let uuid_part = &token[5..]; // 跳过 "1001-"
@@ -360,28 +352,30 @@ mod tests {
     #[test]
     fn simple_style_verify_extracts_login_id() {
         let style = SimpleTokenStyle;
-        let token = style.generate(2002, 3600).unwrap();
+        let token = style.generate("2002", 3600).unwrap();
         let login_id = style.verify(&token).unwrap();
-        assert_eq!(login_id, Some(2002));
+        assert_eq!(login_id, Some("2002".to_string()));
     }
 
     /// SimpleTokenStyle parse 返回 TokenClaims。
     #[test]
     fn simple_style_parse_returns_claims() {
         let style = SimpleTokenStyle;
-        let token = style.generate(3003, 3600).unwrap();
+        let token = style.generate("3003", 3600).unwrap();
         let claims = style.parse(&token).unwrap();
-        assert_eq!(claims.login_id, 3003);
+        assert_eq!(claims.login_id, "3003");
     }
 
-    /// SimpleTokenStyle parse 非法 login_id 返回 Err。
+    /// SimpleTokenStyle parse 非数字 login_id 返回 Ok（String 类型不再要求数字）。
     #[test]
-    fn simple_style_parse_invalid_format_errors() {
+    fn simple_style_parse_non_numeric_login_id_returns_ok() {
         let style = SimpleTokenStyle;
         // "no-dash-here" split_once('-') => Some(("no", "dash-here"))
-        // "no".parse::<i64>() 会失败
+        // String 类型 login_id 接受任意字符串
         let result = style.parse("no-dash-here");
-        assert!(result.is_err());
+        assert!(result.is_ok());
+        let claims = result.unwrap();
+        assert_eq!(claims.login_id, "no");
     }
 
     /// SimpleTokenStyle parse 无分隔符返回 Err。
@@ -399,7 +393,7 @@ mod tests {
     #[test]
     fn factory_creates_uuid_style() {
         let token = TokenStyleFactory::new("uuid", "secret").unwrap();
-        let t = token.generate(1, 60).unwrap();
+        let t = token.generate("1", 60).unwrap();
         assert_eq!(t.len(), 36);
     }
 
@@ -407,7 +401,7 @@ mod tests {
     #[test]
     fn factory_creates_random64_style() {
         let token = TokenStyleFactory::new("random_64", "secret").unwrap();
-        let t = token.generate(1, 60).unwrap();
+        let t = token.generate("1", 60).unwrap();
         assert_eq!(t.len(), 64);
     }
 
@@ -415,7 +409,7 @@ mod tests {
     #[test]
     fn factory_creates_simple_style() {
         let token = TokenStyleFactory::new("simple", "secret").unwrap();
-        let t = token.generate(42, 60).unwrap();
+        let t = token.generate("42", 60).unwrap();
         assert!(t.starts_with("42-"));
     }
 
@@ -472,17 +466,14 @@ mod tests {
         assert_eq!(result, None, "无 '-' 分隔符的 token verify 应返回 None");
     }
 
-    /// SimpleTokenStyle::verify login_id 非数字时返回 Err。
+    /// SimpleTokenStyle::verify 非数字 login_id 返回 Ok（String 类型不再要求数字）。
     #[test]
-    fn simple_style_verify_malformed_returns_error() {
+    fn simple_style_verify_non_numeric_returns_ok() {
         let style = SimpleTokenStyle;
-        // "abc-xyz" 中 "abc" 无法解析为 i64
+        // "abc-xyz" 中 "abc" 作为 String login_id 合法
         let result = style.verify("abc-xyz");
-        assert!(
-            result.is_err(),
-            "login_id 非数字应返回 Err，实际: {:?}",
-            result
-        );
+        assert!(result.is_ok(), "verify 应返回 Ok，实际: {:?}", result);
+        assert_eq!(result.unwrap(), Some("abc".to_string()));
     }
 
     // ========================================================================
@@ -494,11 +485,11 @@ mod tests {
     #[test]
     fn jwt_style_generate_and_verify_roundtrip() {
         let style = JwtTokenStyle::new("test-secret-key");
-        let token = style.generate(1001, 3600).unwrap();
+        let token = style.generate("1001", 3600).unwrap();
         let login_id = style.verify(&token).unwrap();
         assert_eq!(
             login_id,
-            Some(1001),
+            Some("1001".to_string()),
             "JWT verify 应返回 generate 时的 login_id"
         );
     }
@@ -518,9 +509,9 @@ mod tests {
     #[test]
     fn jwt_style_parse_valid_returns_claims() {
         let style = JwtTokenStyle::new("test-secret-key");
-        let token = style.generate(2002, 3600).unwrap();
+        let token = style.generate("2002", 3600).unwrap();
         let claims = style.parse(&token).unwrap();
-        assert_eq!(claims.login_id, 2002);
+        assert_eq!(claims.login_id, "2002");
         assert!(claims.expire_at > 0, "JWT parse 应返回非零过期时间");
     }
 

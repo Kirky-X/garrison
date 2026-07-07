@@ -116,7 +116,7 @@ impl Decision {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthRequest {
     /// 主体 login_id。
-    pub login_id: i64,
+    pub login_id: String,
     /// 租户 ID（0 表示单租户/未隔离）。
     pub tenant_id: i64,
     /// 请求的权限/动作字符串（如 `"user:read"`）。
@@ -129,9 +129,9 @@ pub struct AuthRequest {
 
 impl AuthRequest {
     /// 创建一个新的鉴权请求（tenant_id=0，resource=None，context=Null）。
-    pub fn new(login_id: i64, action: impl Into<String>) -> Self {
+    pub fn new(login_id: impl Into<String>, action: impl Into<String>) -> Self {
         Self {
-            login_id,
+            login_id: login_id.into(),
             tenant_id: 0,
             action: action.into(),
             resource: None,
@@ -210,13 +210,13 @@ mod tests {
     #[test]
     fn auth_request_constructs_with_required_fields() {
         let req = AuthRequest {
-            login_id: 1,
+            login_id: "1".to_string(),
             tenant_id: 0,
             action: "user:read".to_string(),
             resource: None,
             context: serde_json::Value::Null,
         };
-        assert_eq!(req.login_id, 1);
+        assert_eq!(req.login_id, "1");
         assert_eq!(req.tenant_id, 0);
         assert_eq!(req.action, "user:read");
         assert!(req.resource.is_none());
@@ -226,8 +226,8 @@ mod tests {
     /// T013 补充：AuthRequest::new 构造器设置默认值。
     #[test]
     fn auth_request_new_sets_defaults() {
-        let req = AuthRequest::new(1001, "user:write");
-        assert_eq!(req.login_id, 1001);
+        let req = AuthRequest::new("1001", "user:write");
+        assert_eq!(req.login_id, "1001");
         assert_eq!(req.tenant_id, 0);
         assert_eq!(req.action, "user:write");
         assert!(req.resource.is_none());
@@ -238,7 +238,7 @@ mod tests {
     #[test]
     fn auth_request_with_tenant_and_resource() {
         let req = AuthRequest {
-            login_id: 1,
+            login_id: "1".to_string(),
             tenant_id: 42,
             action: "doc:read".to_string(),
             resource: Some("doc:99".to_string()),
@@ -298,16 +298,16 @@ mod tests {
 
         /// 最小化 mock BulwarkInterface：仅返回固定权限列表。
         struct MockInterface {
-            permissions: HashMap<i64, Vec<String>>,
+            permissions: HashMap<String, Vec<String>>,
         }
 
         #[async_trait]
         impl BulwarkInterface for MockInterface {
-            async fn get_permission_list(&self, login_id: i64) -> BulwarkResult<Vec<String>> {
-                Ok(self.permissions.get(&login_id).cloned().unwrap_or_default())
+            async fn get_permission_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+                Ok(self.permissions.get(login_id).cloned().unwrap_or_default())
             }
 
-            async fn get_role_list(&self, _login_id: i64) -> BulwarkResult<Vec<String>> {
+            async fn get_role_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
                 Ok(Vec::new())
             }
         }
@@ -315,7 +315,7 @@ mod tests {
         /// 构造一个 PermissionCheckerDefault（账号 1001 持有 user:read 权限）。
         fn make_checker() -> PermissionCheckerDefault {
             let mut perms = HashMap::new();
-            perms.insert(1001, vec!["user:read".to_string()]);
+            perms.insert("1001".to_string(), vec!["user:read".to_string()]);
             let interface = MockInterface { permissions: perms };
             let interface_arc: Arc<dyn BulwarkInterface> = Arc::new(interface);
             PermissionCheckerDefault::new(interface_arc)
@@ -327,7 +327,7 @@ mod tests {
         #[tokio::test]
         async fn authorize_generates_trace_id_when_decision_trace_enabled() {
             let checker = make_checker();
-            let request = AuthRequest::new(1001, "user:read");
+            let request = AuthRequest::new("1001", "user:read");
             let decision = PermissionChecker::authorize(&checker, &request)
                 .await
                 .expect("authorize ok");
@@ -349,7 +349,7 @@ mod tests {
         #[tokio::test]
         async fn authorize_trace_id_is_unique_per_request() {
             let checker = make_checker();
-            let request = AuthRequest::new(1001, "user:read");
+            let request = AuthRequest::new("1001", "user:read");
             let d1 = PermissionChecker::authorize(&checker, &request)
                 .await
                 .expect("authorize 1");
@@ -374,7 +374,7 @@ mod tests {
         #[tokio::test]
         async fn authorize_trace_id_is_time_ordered() {
             let checker = make_checker();
-            let request = AuthRequest::new(1001, "user:read");
+            let request = AuthRequest::new("1001", "user:read");
             let d1 = PermissionChecker::authorize(&checker, &request)
                 .await
                 .expect("authorize 1");

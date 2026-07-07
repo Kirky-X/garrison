@@ -43,10 +43,10 @@ struct MockInterface;
 
 #[async_trait]
 impl BulwarkInterface for MockInterface {
-    async fn get_permission_list(&self, _login_id: i64) -> BulwarkResult<Vec<String>> {
+    async fn get_permission_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
         Ok(vec![])
     }
-    async fn get_role_list(&self, _login_id: i64) -> BulwarkResult<Vec<String>> {
+    async fn get_role_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
         Ok(vec![])
     }
 }
@@ -75,9 +75,9 @@ impl BulwarkListener for PasswordLoginListener {
         if let BulwarkEvent::LoginFailure { login_id, reason } = event {
             // reason 现在统一为 "invalid_credentials"，用 login_id 区分场景
             if reason == "invalid_credentials" {
-                if *login_id == 9999 {
+                if *login_id == "9999" {
                     LOGIN_FAILURE_NOT_FOUND.fetch_add(1, Ordering::SeqCst);
-                } else if *login_id == 1001 {
+                } else if *login_id == "1001" {
                     LOGIN_FAILURE_WRONG_PASSWORD.fetch_add(1, Ordering::SeqCst);
                 }
             }
@@ -266,7 +266,7 @@ async fn login_with_password_succeeds() {
     reset_listener_counters();
     let logic = make_logic_with_password().await;
 
-    let token = logic.login_with_password(1001, "secret").await;
+    let token = logic.login_with_password("1001", "secret").await;
     assert!(
         token.is_ok(),
         "login_with_password 应成功: {:?}",
@@ -283,7 +283,7 @@ async fn login_with_password_user_not_found() {
     reset_listener_counters();
     let logic = make_logic_with_password().await;
 
-    let result = logic.login_with_password(9999, "secret").await;
+    let result = logic.login_with_password("9999", "secret").await;
     assert!(result.is_err(), "用户不存在应返回错误");
     match result.unwrap_err() {
         BulwarkError::InvalidParam(msg) => {
@@ -310,7 +310,7 @@ async fn login_with_password_wrong_password() {
     reset_listener_counters();
     let logic = make_logic_with_password().await;
 
-    let result = logic.login_with_password(1001, "wrong-password").await;
+    let result = logic.login_with_password("1001", "wrong-password").await;
     assert!(result.is_err(), "密码错误应返回错误");
     match result.unwrap_err() {
         BulwarkError::InvalidParam(msg) => {
@@ -348,7 +348,7 @@ async fn login_with_password_fails_without_hasher() {
         firewall,
     ));
 
-    let result = logic_no_hasher.login_with_password(1001, "secret").await;
+    let result = logic_no_hasher.login_with_password("1001", "secret").await;
     assert!(result.is_err(), "未配置 hasher 应返回错误");
     match result.unwrap_err() {
         BulwarkError::Config(msg) => {
@@ -379,7 +379,7 @@ async fn login_with_password_fails_without_user_repository() {
             .with_password_hasher(Arc::new(Argon2Hasher::new())),
     );
 
-    let result = logic_no_repo.login_with_password(1001, "secret").await;
+    let result = logic_no_repo.login_with_password("1001", "secret").await;
     assert!(result.is_err(), "未配置 user_repository 应返回错误");
     match result.unwrap_err() {
         BulwarkError::Config(msg) => {

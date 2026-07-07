@@ -214,8 +214,8 @@ mod tests {
     }
 
     struct MockInterface {
-        permissions: HashMap<i64, Vec<String>>,
-        roles: HashMap<i64, Vec<String>>,
+        permissions: HashMap<String, Vec<String>>,
+        roles: HashMap<String, Vec<String>>,
     }
 
     impl MockInterface {
@@ -229,12 +229,12 @@ mod tests {
 
     #[async_trait]
     impl BulwarkInterface for MockInterface {
-        async fn get_permission_list(&self, login_id: i64) -> Result<Vec<String>, BulwarkError> {
-            Ok(self.permissions.get(&login_id).cloned().unwrap_or_default())
+        async fn get_permission_list(&self, login_id: &str) -> Result<Vec<String>, BulwarkError> {
+            Ok(self.permissions.get(login_id).cloned().unwrap_or_default())
         }
 
-        async fn get_role_list(&self, login_id: i64) -> Result<Vec<String>, BulwarkError> {
-            Ok(self.roles.get(&login_id).cloned().unwrap_or_default())
+        async fn get_role_list(&self, login_id: &str) -> Result<Vec<String>, BulwarkError> {
+            Ok(self.roles.get(login_id).cloned().unwrap_or_default())
         }
     }
 
@@ -266,7 +266,7 @@ mod tests {
     #[serial]
     async fn bulwark_principal_extracted_from_warp_request() {
         init_manager();
-        let login_id: i64 = 2002;
+        let login_id = "2002";
         let token = BulwarkUtil::login(login_id).await.unwrap();
 
         let config = Arc::new(make_config());

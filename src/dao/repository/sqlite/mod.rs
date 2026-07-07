@@ -1744,7 +1744,7 @@ impl UserDeviceRepository for DbnexusUserDeviceRepository {
     async fn register_device(
         &self,
         tenant_id: i64,
-        login_id: i64,
+        login_id: &str,
         identifier: &str,
         ua: &str,
     ) -> BulwarkResult<String> {
@@ -1767,7 +1767,7 @@ impl UserDeviceRepository for DbnexusUserDeviceRepository {
         let stmt = make_statement(
             conn,
             find_sql,
-            vec![v_i64(tenant_id), v_i64(login_id), v_str(identifier)],
+            vec![v_i64(tenant_id), v_str(login_id), v_str(identifier)],
         );
         let existing = conn
             .query_one_raw(stmt)
@@ -1791,7 +1791,7 @@ impl UserDeviceRepository for DbnexusUserDeviceRepository {
         // 2. 检查是否超过 MAX_DEVICES
         let count_sql =
             "SELECT COUNT(*) AS cnt FROM app_user_device WHERE tenant_id = ? AND login_id = ?";
-        let stmt = make_statement(conn, count_sql, vec![v_i64(tenant_id), v_i64(login_id)]);
+        let stmt = make_statement(conn, count_sql, vec![v_i64(tenant_id), v_str(login_id)]);
         let count_row = conn
             .query_one_raw(stmt)
             .await
@@ -1820,7 +1820,7 @@ impl UserDeviceRepository for DbnexusUserDeviceRepository {
             vec![
                 v_str(&device_id),
                 v_i64(tenant_id),
-                v_i64(login_id),
+                v_str(login_id),
                 v_str(identifier),
                 v_opt_str(&device_name),
                 v_opt_str(&Some(ua.to_string())),
@@ -1879,7 +1879,7 @@ impl UserDeviceRepository for DbnexusUserDeviceRepository {
     async fn list_user_devices(
         &self,
         tenant_id: i64,
-        login_id: i64,
+        login_id: &str,
     ) -> BulwarkResult<Vec<UserDeviceRow>> {
         let session = self.pool.get_session("admin").await.map_err(|e| {
             BulwarkError::Dao(format!("app_user_device list 获取 session 失败: {}", e))
@@ -1890,7 +1890,7 @@ impl UserDeviceRepository for DbnexusUserDeviceRepository {
         let sql = "SELECT id, tenant_id, login_id, device_identifier, device_name, user_agent, \
                   is_blocked, last_seen_at, created_at \
                   FROM app_user_device WHERE tenant_id = ? AND login_id = ?";
-        let stmt = make_statement(conn, sql, vec![v_i64(tenant_id), v_i64(login_id)]);
+        let stmt = make_statement(conn, sql, vec![v_i64(tenant_id), v_str(login_id)]);
         let rows = conn
             .query_all_raw(stmt)
             .await
@@ -1898,7 +1898,7 @@ impl UserDeviceRepository for DbnexusUserDeviceRepository {
         rows.iter().map(parse_user_device_row).collect()
     }
 
-    async fn count_user_devices(&self, tenant_id: i64, login_id: i64) -> BulwarkResult<usize> {
+    async fn count_user_devices(&self, tenant_id: i64, login_id: &str) -> BulwarkResult<usize> {
         let session = self.pool.get_session("admin").await.map_err(|e| {
             BulwarkError::Dao(format!("app_user_device count 获取 session 失败: {}", e))
         })?;
@@ -1907,7 +1907,7 @@ impl UserDeviceRepository for DbnexusUserDeviceRepository {
         })?;
         let sql =
             "SELECT COUNT(*) AS cnt FROM app_user_device WHERE tenant_id = ? AND login_id = ?";
-        let stmt = make_statement(conn, sql, vec![v_i64(tenant_id), v_i64(login_id)]);
+        let stmt = make_statement(conn, sql, vec![v_i64(tenant_id), v_str(login_id)]);
         let row = conn
             .query_one_raw(stmt)
             .await

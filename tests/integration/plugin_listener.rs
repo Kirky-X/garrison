@@ -40,15 +40,15 @@ impl BulwarkPlugin for CountingPlugin {
     fn name(&self) -> &str {
         "counting-plugin"
     }
-    fn on_login(&self, _login_id: i64, _token: &str) -> BulwarkResult<()> {
+    fn on_login(&self, _login_id: &str, _token: &str) -> BulwarkResult<()> {
         PLUGIN_LOGIN_CALLS.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
-    fn on_logout(&self, _login_id: i64, _token: &str) -> BulwarkResult<()> {
+    fn on_logout(&self, _login_id: &str, _token: &str) -> BulwarkResult<()> {
         PLUGIN_LOGOUT_CALLS.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
-    fn on_permission_check(&self, _login_id: i64, _permission: &str) -> BulwarkResult<()> {
+    fn on_permission_check(&self, _login_id: &str, _permission: &str) -> BulwarkResult<()> {
         PLUGIN_PERM_CHECK_CALLS.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
@@ -132,7 +132,7 @@ fn plugin_manager_collects_registered_plugins() {
 fn plugin_on_login_invoked() {
     reset_counters();
     let manager = BulwarkPluginManager::new();
-    manager.on_login(1001, "token-xyz");
+    manager.on_login("1001", "token-xyz");
     assert!(
         PLUGIN_LOGIN_CALLS.load(Ordering::SeqCst) >= 1,
         "CountingPlugin.on_login 应被调用至少 1 次"
@@ -145,7 +145,7 @@ fn plugin_on_login_invoked() {
 fn plugin_on_logout_invoked() {
     reset_counters();
     let manager = BulwarkPluginManager::new();
-    manager.on_logout(1001, "token-xyz");
+    manager.on_logout("1001", "token-xyz");
     assert!(
         PLUGIN_LOGOUT_CALLS.load(Ordering::SeqCst) >= 1,
         "CountingPlugin.on_logout 应被调用至少 1 次"
@@ -158,7 +158,7 @@ fn plugin_on_logout_invoked() {
 fn plugin_on_permission_check_invoked() {
     reset_counters();
     let manager = BulwarkPluginManager::new();
-    manager.on_permission_check(1001, "user:read");
+    manager.on_permission_check("1001", "user:read");
     assert!(
         PLUGIN_PERM_CHECK_CALLS.load(Ordering::SeqCst) >= 1,
         "CountingPlugin.on_permission_check 应被调用至少 1 次"
@@ -172,7 +172,7 @@ fn plugin_multiple_calls_accumulate() {
     reset_counters();
     let manager = BulwarkPluginManager::new();
     for _ in 0..5 {
-        manager.on_login(1001, "t");
+        manager.on_login("1001", "t");
     }
     assert!(
         PLUGIN_LOGIN_CALLS.load(Ordering::SeqCst) >= 5,
@@ -202,7 +202,7 @@ async fn listener_receives_login_event() {
     let manager = BulwarkListenerManager::new();
     manager
         .broadcast(&BulwarkEvent::Login {
-            login_id: 1001,
+            login_id: "1001".to_string(),
             token: "T1".to_string(),
             device: Some("web".to_string()),
         })
@@ -221,7 +221,7 @@ async fn listener_receives_logout_event() {
     let manager = BulwarkListenerManager::new();
     manager
         .broadcast(&BulwarkEvent::Logout {
-            login_id: 1001,
+            login_id: "1001".to_string(),
             token: "T1".to_string(),
         })
         .await;
@@ -239,7 +239,7 @@ async fn listener_receives_permission_check_event() {
     let manager = BulwarkListenerManager::new();
     manager
         .broadcast(&BulwarkEvent::PermissionCheck {
-            login_id: 1001,
+            login_id: "1001".to_string(),
             permission: "user:delete".to_string(),
         })
         .await;
@@ -258,7 +258,7 @@ async fn listener_multiple_broadcasts_accumulate() {
     for _ in 0..3 {
         manager
             .broadcast(&BulwarkEvent::Login {
-                login_id: 1,
+                login_id: "1".to_string(),
                 token: "t".to_string(),
                 device: None,
             })
@@ -285,23 +285,23 @@ async fn full_lifecycle_plugin_and_listener_cooperate() {
     let listener_manager = BulwarkListenerManager::new();
 
     // 1. 模拟登录：先调用 plugin on_login，再广播 Login 事件
-    plugin_manager.on_login(1001, "T1");
+    plugin_manager.on_login("1001", "T1");
     listener_manager
         .broadcast(&BulwarkEvent::Login {
-            login_id: 1001,
+            login_id: "1001".to_string(),
             token: "T1".to_string(),
             device: Some("web".to_string()),
         })
         .await;
 
     // 2. 模拟权限校验：调用 plugin on_permission_check
-    plugin_manager.on_permission_check(1001, "user:read");
+    plugin_manager.on_permission_check("1001", "user:read");
 
     // 3. 模拟登出：调用 plugin on_logout + 广播 Logout 事件
-    plugin_manager.on_logout(1001, "T1");
+    plugin_manager.on_logout("1001", "T1");
     listener_manager
         .broadcast(&BulwarkEvent::Logout {
-            login_id: 1001,
+            login_id: "1001".to_string(),
             token: "T1".to_string(),
         })
         .await;
@@ -338,10 +338,10 @@ async fn permission_check_event_only_goes_to_listener() {
     let listener_manager = BulwarkListenerManager::new();
 
     // 权限校验被拒时：plugin 收到 on_permission_check，listener 收到 PermissionCheck
-    plugin_manager.on_permission_check(1001, "user:delete");
+    plugin_manager.on_permission_check("1001", "user:delete");
     listener_manager
         .broadcast(&BulwarkEvent::PermissionCheck {
-            login_id: 1001,
+            login_id: "1001".to_string(),
             permission: "user:delete".to_string(),
         })
         .await;
@@ -457,10 +457,10 @@ async fn auto_wire_login_triggers_plugin_on_login() {
     struct EmptyInterface;
     #[async_trait::async_trait]
     impl BulwarkInterface for EmptyInterface {
-        async fn get_permission_list(&self, _login_id: i64) -> BulwarkResult<Vec<String>> {
+        async fn get_permission_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
             Ok(vec![])
         }
-        async fn get_role_list(&self, _login_id: i64) -> BulwarkResult<Vec<String>> {
+        async fn get_role_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
             Ok(vec![])
         }
     }
@@ -475,7 +475,7 @@ async fn auto_wire_login_triggers_plugin_on_login() {
     BulwarkManager::init(dao, config, interface).unwrap();
 
     // login 应自动触发 CountingPlugin.on_login（编译期通过 inventory 注册）
-    let token = BulwarkUtil::login(1001).await.unwrap();
+    let token = BulwarkUtil::login("1001").await.unwrap();
     assert!(!token.is_empty());
 
     // 验证 plugin on_login 被触发
@@ -499,10 +499,10 @@ async fn auto_wire_login_broadcasts_listener_login_event() {
     struct EmptyInterface;
     #[async_trait::async_trait]
     impl BulwarkInterface for EmptyInterface {
-        async fn get_permission_list(&self, _login_id: i64) -> BulwarkResult<Vec<String>> {
+        async fn get_permission_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
             Ok(vec![])
         }
-        async fn get_role_list(&self, _login_id: i64) -> BulwarkResult<Vec<String>> {
+        async fn get_role_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
             Ok(vec![])
         }
     }
@@ -515,7 +515,7 @@ async fn auto_wire_login_broadcasts_listener_login_event() {
 
     BulwarkManager::init(dao, config, interface).unwrap();
 
-    let token = BulwarkUtil::login(2002).await.unwrap();
+    let token = BulwarkUtil::login("2002").await.unwrap();
     assert!(!token.is_empty());
 
     // 验证 listener Login 事件被广播
@@ -539,10 +539,10 @@ async fn auto_wire_logout_triggers_hooks() {
     struct EmptyInterface;
     #[async_trait::async_trait]
     impl BulwarkInterface for EmptyInterface {
-        async fn get_permission_list(&self, _login_id: i64) -> BulwarkResult<Vec<String>> {
+        async fn get_permission_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
             Ok(vec![])
         }
-        async fn get_role_list(&self, _login_id: i64) -> BulwarkResult<Vec<String>> {
+        async fn get_role_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
             Ok(vec![])
         }
     }
@@ -556,7 +556,7 @@ async fn auto_wire_logout_triggers_hooks() {
     BulwarkManager::init(dao, config, interface).unwrap();
 
     // login（触发 on_login + Login 事件）
-    let token = BulwarkUtil::login(3003).await.unwrap();
+    let token = BulwarkUtil::login("3003").await.unwrap();
 
     // logout（需在 with_current_token 上下文中执行）
     let login_before = PLUGIN_LOGIN_CALLS.load(Ordering::SeqCst);

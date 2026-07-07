@@ -13,6 +13,8 @@ use std::sync::Arc;
 ///
 /// 所有钩子方法 MUST 提供默认空实现（返回 `Ok(())`），使插件方可选择性覆盖。
 /// trait 绑定 `Send + Sync`，插件可在多线程环境共享。
+///
+/// `login_id` 为 `&str`（v0.5.2 迁移：原 i64 → String，与全局 login_id 迁移一致）。
 pub trait BulwarkPlugin: Send + Sync {
     /// 插件名称，用于唯一标识（依据 spec plugin-system）。
     fn name(&self) -> &str;
@@ -20,14 +22,14 @@ pub trait BulwarkPlugin: Send + Sync {
     /// 登录成功后被调用（依据 spec plugin-system）。
     ///
     /// 默认空实现返回 `Ok(())`。
-    fn on_login(&self, _login_id: i64, _token: &str) -> BulwarkResult<()> {
+    fn on_login(&self, _login_id: &str, _token: &str) -> BulwarkResult<()> {
         Ok(())
     }
 
     /// 登出操作完成后被调用（依据 spec plugin-system）。
     ///
     /// 默认空实现返回 `Ok(())`。
-    fn on_logout(&self, _login_id: i64, _token: &str) -> BulwarkResult<()> {
+    fn on_logout(&self, _login_id: &str, _token: &str) -> BulwarkResult<()> {
         Ok(())
     }
 
@@ -35,7 +37,7 @@ pub trait BulwarkPlugin: Send + Sync {
     ///
     /// 用于"观测不干预"场景（如审计日志），不修改校验结果。
     /// 默认空实现返回 `Ok(())`。
-    fn on_permission_check(&self, _login_id: i64, _permission: &str) -> BulwarkResult<()> {
+    fn on_permission_check(&self, _login_id: &str, _permission: &str) -> BulwarkResult<()> {
         Ok(())
     }
 }
@@ -85,7 +87,7 @@ impl BulwarkPluginManager {
     /// 调用所有插件的 `on_login` 钩子（依据 spec plugin-system）。
     ///
     /// 单个插件失败仅记录 `tracing::warn!`，不中断后续插件调用。
-    pub fn on_login(&self, login_id: i64, token: &str) {
+    pub fn on_login(&self, login_id: &str, token: &str) {
         for plugin in &self.plugins {
             if let Err(e) = plugin.on_login(login_id, token) {
                 tracing::warn!("插件 {} on_login 失败: {}", plugin.name(), e);
@@ -96,7 +98,7 @@ impl BulwarkPluginManager {
     /// 调用所有插件的 `on_logout` 钩子（依据 spec plugin-system）。
     ///
     /// 单个插件失败仅记录 `tracing::warn!`，不中断后续插件调用。
-    pub fn on_logout(&self, login_id: i64, token: &str) {
+    pub fn on_logout(&self, login_id: &str, token: &str) {
         for plugin in &self.plugins {
             if let Err(e) = plugin.on_logout(login_id, token) {
                 tracing::warn!("插件 {} on_logout 失败: {}", plugin.name(), e);
@@ -107,7 +109,7 @@ impl BulwarkPluginManager {
     /// 调用所有插件的 `on_permission_check` 钩子（依据 spec plugin-system）。
     ///
     /// 单个插件失败仅记录 `tracing::warn!`，不中断后续插件调用。
-    pub fn on_permission_check(&self, login_id: i64, permission: &str) {
+    pub fn on_permission_check(&self, login_id: &str, permission: &str) {
         for plugin in &self.plugins {
             if let Err(e) = plugin.on_permission_check(login_id, permission) {
                 tracing::warn!("插件 {} on_permission_check 失败: {}", plugin.name(), e);
@@ -144,15 +146,15 @@ mod tests {
         fn name(&self) -> &str {
             "ok-plugin"
         }
-        fn on_login(&self, _login_id: i64, _token: &str) -> BulwarkResult<()> {
+        fn on_login(&self, _login_id: &str, _token: &str) -> BulwarkResult<()> {
             LOGIN_CALLS.fetch_add(1, Ordering::SeqCst);
             Ok(())
         }
-        fn on_logout(&self, _login_id: i64, _token: &str) -> BulwarkResult<()> {
+        fn on_logout(&self, _login_id: &str, _token: &str) -> BulwarkResult<()> {
             LOGOUT_CALLS.fetch_add(1, Ordering::SeqCst);
             Ok(())
         }
-        fn on_permission_check(&self, _login_id: i64, _permission: &str) -> BulwarkResult<()> {
+        fn on_permission_check(&self, _login_id: &str, _permission: &str) -> BulwarkResult<()> {
             PERM_CHECK_CALLS.fetch_add(1, Ordering::SeqCst);
             Ok(())
         }
@@ -165,17 +167,17 @@ mod tests {
         fn name(&self) -> &str {
             "err-plugin"
         }
-        fn on_login(&self, _login_id: i64, _token: &str) -> BulwarkResult<()> {
+        fn on_login(&self, _login_id: &str, _token: &str) -> BulwarkResult<()> {
             Err(crate::error::BulwarkError::Internal(
                 "on_login 失败".to_string(),
             ))
         }
-        fn on_logout(&self, _login_id: i64, _token: &str) -> BulwarkResult<()> {
+        fn on_logout(&self, _login_id: &str, _token: &str) -> BulwarkResult<()> {
             Err(crate::error::BulwarkError::Internal(
                 "on_logout 失败".to_string(),
             ))
         }
-        fn on_permission_check(&self, _login_id: i64, _permission: &str) -> BulwarkResult<()> {
+        fn on_permission_check(&self, _login_id: &str, _permission: &str) -> BulwarkResult<()> {
             Err(crate::error::BulwarkError::Internal(
                 "on_permission_check 失败".to_string(),
             ))
@@ -220,9 +222,9 @@ mod tests {
             }
         }
         let plugin = EmptyPlugin;
-        assert!(plugin.on_login(1, "t").is_ok());
-        assert!(plugin.on_logout(1, "t").is_ok());
-        assert!(plugin.on_permission_check(1, "p").is_ok());
+        assert!(plugin.on_login("1", "t").is_ok());
+        assert!(plugin.on_logout("1", "t").is_ok());
+        assert!(plugin.on_permission_check("1", "p").is_ok());
     }
 
     /// name 方法必须由实现方提供（spec Scenario）。
@@ -252,7 +254,7 @@ mod tests {
     fn on_login_invokes_all_plugins() {
         reset_counters();
         let manager = BulwarkPluginManager::new();
-        manager.on_login(1001, "T1");
+        manager.on_login("1001", "T1");
         // OkPlugin 的 on_login 应被调用至少 1 次
         assert!(LOGIN_CALLS.load(Ordering::SeqCst) >= 1);
     }
@@ -263,7 +265,7 @@ mod tests {
     fn on_logout_invokes_all_plugins() {
         reset_counters();
         let manager = BulwarkPluginManager::new();
-        manager.on_logout(1001, "T1");
+        manager.on_logout("1001", "T1");
         assert!(LOGOUT_CALLS.load(Ordering::SeqCst) >= 1);
     }
 
@@ -273,7 +275,7 @@ mod tests {
     fn on_permission_check_invokes_all_plugins() {
         reset_counters();
         let manager = BulwarkPluginManager::new();
-        manager.on_permission_check(1001, "user:read");
+        manager.on_permission_check("1001", "user:read");
         assert!(PERM_CHECK_CALLS.load(Ordering::SeqCst) >= 1);
     }
 
@@ -284,7 +286,7 @@ mod tests {
         reset_counters();
         let manager = BulwarkPluginManager::new();
         // ErrPlugin 的 on_login 返回 Err，但 OkPlugin 的 on_login 仍应被调用
-        manager.on_login(1001, "T1");
+        manager.on_login("1001", "T1");
         // OkPlugin 的计数器应 >= 1（证明 ErrPlugin 的失败没有中断）
         assert!(LOGIN_CALLS.load(Ordering::SeqCst) >= 1);
     }

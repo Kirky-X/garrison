@@ -308,14 +308,15 @@ pub struct UserExtRow {
 ///
 /// 记录用户登录设备指纹与 UA 信息，支持设备阻断与多设备管理。
 /// 时间字段用 i64（epoch seconds），与 design.md D4 schema 一致。
+/// `login_id` 为字符串类型（v0.5.2 迁移：原 i64 → String，与全局 login_id 迁移一致）。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct UserDeviceRow {
     /// 设备 ID（UUID v4）。
     pub id: String,
     /// 租户 ID。
     pub tenant_id: i64,
-    /// 登录 ID（关联 app_login_log 或外部 login 概念）。
-    pub login_id: i64,
+    /// 登录 ID（字符串形式，关联 app_login_log 或外部 login 概念）。
+    pub login_id: String,
     /// 设备标识（UA hash 或设备指纹）。
     pub device_identifier: String,
     /// 设备名（从 UA 解析，如 "Chrome on Windows"）。
@@ -622,6 +623,8 @@ pub const MAX_DEVICES: usize = 5;
 ///
 /// 提供设备注册 / 阻断 / 查询能力，`register_device` 在设备数超过 [`MAX_DEVICES`] 时
 /// 返回 `BulwarkError::InvalidParam`。重复注册同一设备（相同 identifier）幂等返回已有 ID。
+///
+/// `login_id` 为 `&str`（v0.5.2 迁移：原 i64 → String，与全局 login_id 迁移一致）。
 #[async_trait::async_trait]
 pub trait UserDeviceRepository: Send + Sync {
     /// 注册设备，返回设备 ID（UUID）。
@@ -631,7 +634,7 @@ pub trait UserDeviceRepository: Send + Sync {
     async fn register_device(
         &self,
         tenant_id: i64,
-        login_id: i64,
+        login_id: &str,
         identifier: &str,
         ua: &str,
     ) -> BulwarkResult<String>;
@@ -646,11 +649,11 @@ pub trait UserDeviceRepository: Send + Sync {
     async fn list_user_devices(
         &self,
         tenant_id: i64,
-        login_id: i64,
+        login_id: &str,
     ) -> BulwarkResult<Vec<UserDeviceRow>>;
 
     /// 统计用户设备数。
-    async fn count_user_devices(&self, tenant_id: i64, login_id: i64) -> BulwarkResult<usize>;
+    async fn count_user_devices(&self, tenant_id: i64, login_id: &str) -> BulwarkResult<usize>;
 }
 
 // ============================================================================
@@ -897,7 +900,7 @@ mod tests {
         let row = UserDeviceRow {
             id: "dev-001".to_string(),
             tenant_id: 42,
-            login_id: 1001,
+            login_id: "1001".to_string(),
             device_identifier: "ua-hash-abc".to_string(),
             device_name: Some("Chrome on Windows".to_string()),
             user_agent: Some("Mozilla/5.0 (Windows NT 10.0)".to_string()),
@@ -907,7 +910,7 @@ mod tests {
         };
         assert_eq!(row.id, "dev-001");
         assert_eq!(row.tenant_id, 42);
-        assert_eq!(row.login_id, 1001);
+        assert_eq!(row.login_id, "1001");
         assert_eq!(row.device_identifier, "ua-hash-abc");
         assert!(!row.is_blocked);
     }

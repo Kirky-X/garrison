@@ -26,7 +26,7 @@ pub trait AuthLogic: Send + Sync {
     ///
     /// # 返回
     /// - `Ok(String)`: 非空 token 字符串。
-    async fn login(&self, id: i64, params: Option<&str>) -> BulwarkResult<String>;
+    async fn login(&self, id: &str, params: Option<&str>) -> BulwarkResult<String>;
 
     /// 执行登出操作，销毁指定 token 对应的会话（依据 spec core-auth）。
     ///
@@ -41,7 +41,7 @@ pub trait AuthLogic: Send + Sync {
     /// # 返回
     /// - `Ok(Some(id))`: token 有效且关联登录 ID。
     /// - `Ok(None)`: token 无效或已过期。
-    async fn get_login_id(&self, token: &str) -> BulwarkResult<Option<i64>>;
+    async fn get_login_id(&self, token: &str) -> BulwarkResult<Option<String>>;
 
     /// 校验 token 有效性并返回关联的 login_id（依据 spec core-auth）。
     ///
@@ -50,7 +50,7 @@ pub trait AuthLogic: Send + Sync {
     /// # 返回
     /// - `Ok(id)`: token 有效，返回关联 login_id。
     /// - `Err(BulwarkError::InvalidToken)`: token 无效或已过期。
-    async fn verify_token(&self, token: &str) -> BulwarkResult<i64>;
+    async fn verify_token(&self, token: &str) -> BulwarkResult<String>;
 }
 
 /// `AuthLogic` 的默认实现，委托 `BulwarkSession`（会话管理）与 `core-token::Token`（token 生成与校验）（依据 spec core-auth）。
@@ -83,7 +83,7 @@ impl AuthLogicDefault {
 
 #[async_trait]
 impl AuthLogic for AuthLogicDefault {
-    async fn login(&self, id: i64, _params: Option<&str>) -> BulwarkResult<String> {
+    async fn login(&self, id: &str, _params: Option<&str>) -> BulwarkResult<String> {
         let token = self.token_handler.generate(id, self.timeout)?;
         self.session.create(id, &token).await?;
         Ok(token)
@@ -99,14 +99,14 @@ impl AuthLogic for AuthLogicDefault {
         self.session.is_valid(token).await
     }
 
-    async fn get_login_id(&self, token: &str) -> BulwarkResult<Option<i64>> {
+    async fn get_login_id(&self, token: &str) -> BulwarkResult<Option<String>> {
         match self.session.get_token_session(token).await? {
             Some(ts) => Ok(Some(ts.login_id)),
             None => Ok(None),
         }
     }
 
-    async fn verify_token(&self, token: &str) -> BulwarkResult<i64> {
+    async fn verify_token(&self, token: &str) -> BulwarkResult<String> {
         match self.get_login_id(token).await? {
             Some(id) => Ok(id),
             None => Err(BulwarkError::InvalidToken("token 无效或已过期".to_string())),
@@ -216,7 +216,7 @@ mod tests {
     #[tokio::test]
     async fn login_generates_token_and_session() {
         let auth = make_auth_logic(3600, 86400);
-        let token = auth.login(1001, None).await.unwrap();
+        let token = auth.login("1001", None).await.unwrap();
         assert!(!token.is_empty());
         // is_login 应返回 true
         assert!(auth.is_login(&token).await.unwrap());
@@ -226,17 +226,17 @@ mod tests {
     #[tokio::test]
     async fn login_associates_login_id() {
         let auth = make_auth_logic(3600, 86400);
-        let token = auth.login(2002, None).await.unwrap();
+        let token = auth.login("2002", None).await.unwrap();
         let login_id = auth.get_login_id(&token).await.unwrap();
-        assert_eq!(login_id, Some(2002));
+        assert_eq!(login_id, Some("2002".to_string()));
     }
 
     /// login 多次生成不同 token。
     #[tokio::test]
     async fn login_generates_unique_tokens() {
         let auth = make_auth_logic(3600, 86400);
-        let t1 = auth.login(1001, None).await.unwrap();
-        let t2 = auth.login(1001, None).await.unwrap();
+        let t1 = auth.login("1001", None).await.unwrap();
+        let t2 = auth.login("1001", None).await.unwrap();
         assert_ne!(t1, t2);
     }
 
@@ -248,7 +248,7 @@ mod tests {
     #[tokio::test]
     async fn logout_destroys_session() {
         let auth = make_auth_logic(3600, 86400);
-        let token = auth.login(1001, None).await.unwrap();
+        let token = auth.login("1001", None).await.unwrap();
         assert!(auth.is_login(&token).await.unwrap());
         auth.logout(&token).await.unwrap();
         assert!(!auth.is_login(&token).await.unwrap());
@@ -267,8 +267,8 @@ mod tests {
     #[tokio::test]
     async fn logout_preserves_other_tokens() {
         let auth = make_auth_logic(3600, 86400);
-        let t1 = auth.login(1001, None).await.unwrap();
-        let t2 = auth.login(1001, None).await.unwrap();
+        let t1 = auth.login("1001", None).await.unwrap();
+        let t2 = auth.login("1001", None).await.unwrap();
         auth.logout(&t1).await.unwrap();
         // t2 仍应有效
         assert!(auth.is_login(&t2).await.unwrap());
@@ -283,7 +283,7 @@ mod tests {
     #[tokio::test]
     async fn is_login_valid_token_returns_true() {
         let auth = make_auth_logic(3600, 86400);
-        let token = auth.login(1001, None).await.unwrap();
+        let token = auth.login("1001", None).await.unwrap();
         assert!(auth.is_login(&token).await.unwrap());
     }
 
@@ -302,8 +302,11 @@ mod tests {
     #[tokio::test]
     async fn get_login_id_valid_token_returns_some() {
         let auth = make_auth_logic(3600, 86400);
-        let token = auth.login(3003, None).await.unwrap();
-        assert_eq!(auth.get_login_id(&token).await.unwrap(), Some(3003));
+        let token = auth.login("3003", None).await.unwrap();
+        assert_eq!(
+            auth.get_login_id(&token).await.unwrap(),
+            Some("3003".to_string())
+        );
     }
 
     /// get_login_id 无效 token 返回 None（spec Scenario）。
@@ -321,8 +324,8 @@ mod tests {
     #[tokio::test]
     async fn verify_token_valid_returns_login_id() {
         let auth = make_auth_logic(3600, 86400);
-        let token = auth.login(4004, None).await.unwrap();
-        assert_eq!(auth.verify_token(&token).await.unwrap(), 4004);
+        let token = auth.login("4004", None).await.unwrap();
+        assert_eq!(auth.verify_token(&token).await.unwrap(), "4004".to_string());
     }
 
     /// verify_token 无效 token 返回 InvalidToken 错误（spec Scenario）。
@@ -341,7 +344,7 @@ mod tests {
     #[tokio::test]
     async fn verify_token_expired_returns_error() {
         let auth = make_auth_logic(1, 1);
-        let token = auth.login(5005, None).await.unwrap();
+        let token = auth.login("5005", None).await.unwrap();
         // 等待 token 过期（timeout=1s + active_timeout=1s）
         tokio::time::sleep(Duration::from_secs(2)).await;
         let result = auth.verify_token(&token).await;

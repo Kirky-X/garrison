@@ -29,7 +29,7 @@ pub enum BulwarkEvent {
     /// 登录成功事件。
     Login {
         /// 登录主体标识。
-        login_id: i64,
+        login_id: String,
         /// 登录后生成的 token。
         token: String,
         /// 登录设备信息（可选）。
@@ -38,14 +38,14 @@ pub enum BulwarkEvent {
     /// 登出事件。
     Logout {
         /// 登录主体标识。
-        login_id: i64,
+        login_id: String,
         /// 被登出的 token。
         token: String,
     },
     /// 被踢下线事件。
     Kickout {
         /// 登录主体标识。
-        login_id: i64,
+        login_id: String,
         /// 被踢下线的 token。
         token: String,
         /// 踢出原因。
@@ -54,14 +54,14 @@ pub enum BulwarkEvent {
     /// 权限校验事件（v0.5.0 重命名：原 PermissionDenied → PermissionCheck，对齐 spec R-audit-log-005）。
     PermissionCheck {
         /// 登录主体标识。
-        login_id: i64,
+        login_id: String,
         /// 被校验的权限字符串。
         permission: String,
     },
     /// 角色校验事件（v0.5.0 重命名：原 RoleDenied → RoleCheck，对齐 spec R-audit-log-005）。
     RoleCheck {
         /// 登录主体标识。
-        login_id: i64,
+        login_id: String,
         /// 被校验的角色字符串。
         role: String,
     },
@@ -73,11 +73,11 @@ pub enum BulwarkEvent {
     /// 登录失败事件（v0.4.2 新增，依据 spec listener-events-extend R-001）。
     ///
     /// 在 `login_with_password` 失败路径广播（invalid_credentials / hash_format_error）。
-    /// 注意：login_id 字段使用 `i64` 而非 `LoginId` newtype，以保持与现有 6 个变体一致
+    /// 注意：login_id 字段使用 `String` 类型，以保持与现有变体一致
     ///（偏差 D-Phase11-1，依据规则 11 惯例优先于新颖）。
     LoginFailure {
         /// 登录主体标识。
-        login_id: i64,
+        login_id: String,
         /// 失败原因（"invalid_credentials" / "hash_format_error"）。
         ///
         /// v0.4.2 安全审计 A-014: user_not_found 与 wrong_password 统一为 "invalid_credentials"，
@@ -89,7 +89,7 @@ pub enum BulwarkEvent {
     /// 在 `refresh_token` 成功路径广播，携带旧 token 与新 token。
     TokenRefresh {
         /// 登录主体标识。
-        login_id: i64,
+        login_id: String,
         /// 刷新前的旧 token。
         old_token: String,
         /// 刷新后的新 token。
@@ -110,7 +110,7 @@ pub enum BulwarkEvent {
     /// 若 token session 完全不存在（无法获取 login_id）则跳过广播。
     SessionTimeout {
         /// 登录主体标识。
-        login_id: i64,
+        login_id: String,
         /// 超时的 token。
         token: String,
     },
@@ -119,7 +119,7 @@ pub enum BulwarkEvent {
     /// 在 `check_brute_force` 阻断路径广播（暴力破解检测触发）。
     AccountLocked {
         /// 登录主体标识。
-        login_id: i64,
+        login_id: String,
         /// 锁定原因（如 "brute_force: 5 failures in 1h"）。
         reason: String,
     },
@@ -128,7 +128,7 @@ pub enum BulwarkEvent {
     /// 在 `check_login_hooks` 任一 hook 返回 Err 时广播。
     FirewallBlock {
         /// 登录主体标识。
-        login_id: i64,
+        login_id: String,
         /// 阻断原因（hook 错误信息）。
         reason: String,
     },
@@ -162,14 +162,14 @@ pub enum BulwarkEvent {
         /// 社交平台返回的用户 ID。
         user_id: String,
         /// 关联的本地 login_id（首次登录可能为 None，绑定后才有）。
-        login_id: Option<i64>,
+        login_id: Option<String>,
     },
     /// 租户切换事件（v0.5.0 新增，spec R-audit-log-005）。
     ///
     /// 在用户切换租户上下文时广播。
     TenantSwitch {
         /// 登录主体标识。
-        login_id: i64,
+        login_id: String,
         /// 切换前的租户 ID。
         from_tenant: i64,
         /// 切换后的租户 ID。
@@ -180,7 +180,7 @@ pub enum BulwarkEvent {
     /// 在设备被风控封禁时广播。
     DeviceBlock {
         /// 登录主体标识。
-        login_id: i64,
+        login_id: String,
         /// 被封禁的设备标识。
         device: String,
     },
@@ -189,7 +189,7 @@ pub enum BulwarkEvent {
     /// 在设备被封禁后解封时广播。
     DeviceUnblock {
         /// 登录主体标识。
-        login_id: i64,
+        login_id: String,
         /// 被解封的设备标识。
         device: String,
     },
@@ -366,7 +366,7 @@ mod tests {
     #[serial]
     fn login_event_carries_login_id_token_device() {
         let event = BulwarkEvent::Login {
-            login_id: 1001,
+            login_id: "1001".to_string(),
             token: "T1".to_string(),
             device: Some("web".to_string()),
         };
@@ -376,7 +376,7 @@ mod tests {
                 token,
                 device,
             } => {
-                assert_eq!(login_id, 1001);
+                assert_eq!(login_id, "1001".to_string());
                 assert_eq!(token, "T1");
                 assert_eq!(device, Some("web".to_string()));
             },
@@ -389,12 +389,12 @@ mod tests {
     #[serial]
     fn logout_event_carries_login_id_and_token() {
         let event = BulwarkEvent::Logout {
-            login_id: 1001,
+            login_id: "1001".to_string(),
             token: "T1".to_string(),
         };
         match event {
             BulwarkEvent::Logout { login_id, token } => {
-                assert_eq!(login_id, 1001);
+                assert_eq!(login_id, "1001".to_string());
                 assert_eq!(token, "T1");
             },
             _ => panic!("期望 Logout 事件"),
@@ -406,7 +406,7 @@ mod tests {
     #[serial]
     fn kickout_event_carries_reason() {
         let event = BulwarkEvent::Kickout {
-            login_id: 1001,
+            login_id: "1001".to_string(),
             token: "T1".to_string(),
             reason: "管理员强制下线".to_string(),
         };
@@ -416,7 +416,7 @@ mod tests {
                 token,
                 reason,
             } => {
-                assert_eq!(login_id, 1001);
+                assert_eq!(login_id, "1001".to_string());
                 assert_eq!(token, "T1");
                 assert_eq!(reason, "管理员强制下线");
             },
@@ -429,7 +429,7 @@ mod tests {
     #[serial]
     fn permission_check_event_carries_permission() {
         let event = BulwarkEvent::PermissionCheck {
-            login_id: 1001,
+            login_id: "1001".to_string(),
             permission: "user:delete".to_string(),
         };
         match event {
@@ -437,7 +437,7 @@ mod tests {
                 login_id,
                 permission,
             } => {
-                assert_eq!(login_id, 1001);
+                assert_eq!(login_id, "1001".to_string());
                 assert_eq!(permission, "user:delete");
             },
             _ => panic!("期望 PermissionCheck 事件"),
@@ -449,12 +449,12 @@ mod tests {
     #[serial]
     fn role_check_event_carries_role() {
         let event = BulwarkEvent::RoleCheck {
-            login_id: 1001,
+            login_id: "1001".to_string(),
             role: "admin".to_string(),
         };
         match event {
             BulwarkEvent::RoleCheck { login_id, role } => {
-                assert_eq!(login_id, 1001);
+                assert_eq!(login_id, "1001".to_string());
                 assert_eq!(role, "admin");
             },
             _ => panic!("期望 RoleCheck 事件"),
@@ -481,14 +481,14 @@ mod tests {
     #[serial]
     fn event_derives_debug_and_clone() {
         let event = BulwarkEvent::Login {
-            login_id: 1001,
+            login_id: "1001".to_string(),
             token: "T1".to_string(),
             device: None,
         };
         // Clone
         let cloned = event.clone();
         match cloned {
-            BulwarkEvent::Login { login_id, .. } => assert_eq!(login_id, 1001),
+            BulwarkEvent::Login { login_id, .. } => assert_eq!(login_id, "1001".to_string()),
             _ => panic!("clone 后应为 Login"),
         }
         // Debug
@@ -517,7 +517,7 @@ mod tests {
     fn bulwark_event_includes_14_variants() {
         // 1. Login
         let e = BulwarkEvent::Login {
-            login_id: 1,
+            login_id: "1".to_string(),
             token: "t".into(),
             device: None,
         };
@@ -525,14 +525,14 @@ mod tests {
 
         // 2. Logout
         let e = BulwarkEvent::Logout {
-            login_id: 1,
+            login_id: "1".to_string(),
             token: "t".into(),
         };
         assert!(matches!(e, BulwarkEvent::Logout { .. }));
 
         // 3. Kickout
         let e = BulwarkEvent::Kickout {
-            login_id: 1,
+            login_id: "1".to_string(),
             token: "t".into(),
             reason: "r".into(),
         };
@@ -540,7 +540,7 @@ mod tests {
 
         // 4. LoginFailure
         let e = BulwarkEvent::LoginFailure {
-            login_id: 1,
+            login_id: "1".to_string(),
             reason: "r".into(),
         };
         assert!(matches!(e, BulwarkEvent::LoginFailure { .. }));
@@ -551,21 +551,21 @@ mod tests {
 
         // 6. PermissionCheck（原 PermissionDenied 重命名）
         let e = BulwarkEvent::PermissionCheck {
-            login_id: 1,
+            login_id: "1".to_string(),
             permission: "p".into(),
         };
         assert!(matches!(e, BulwarkEvent::PermissionCheck { .. }));
 
         // 7. RoleCheck（原 RoleDenied 重命名）
         let e = BulwarkEvent::RoleCheck {
-            login_id: 1,
+            login_id: "1".to_string(),
             role: "r".into(),
         };
         assert!(matches!(e, BulwarkEvent::RoleCheck { .. }));
 
         // 8. TokenRefresh（保留现有字段）
         let e = BulwarkEvent::TokenRefresh {
-            login_id: 1,
+            login_id: "1".to_string(),
             old_token: "t1".into(),
             new_token: "t2".into(),
         };
@@ -582,13 +582,13 @@ mod tests {
         let e = BulwarkEvent::SocialLogin {
             provider: "wechat".into(),
             user_id: "u".into(),
-            login_id: Some(1),
+            login_id: Some("1".to_string()),
         };
         assert!(matches!(e, BulwarkEvent::SocialLogin { .. }));
 
         // 11. TenantSwitch（新增）
         let e = BulwarkEvent::TenantSwitch {
-            login_id: 1,
+            login_id: "1".to_string(),
             from_tenant: 100,
             to_tenant: 200,
         };
@@ -596,14 +596,14 @@ mod tests {
 
         // 12. DeviceBlock（新增）
         let e = BulwarkEvent::DeviceBlock {
-            login_id: 1,
+            login_id: "1".to_string(),
             device: "d".into(),
         };
         assert!(matches!(e, BulwarkEvent::DeviceBlock { .. }));
 
         // 13. DeviceUnblock（新增）
         let e = BulwarkEvent::DeviceUnblock {
-            login_id: 1,
+            login_id: "1".to_string(),
             device: "d".into(),
         };
         assert!(matches!(e, BulwarkEvent::DeviceUnblock { .. }));
@@ -626,7 +626,7 @@ mod tests {
         impl BulwarkListener for EmptyListener {}
         let listener = EmptyListener;
         let event = BulwarkEvent::Login {
-            login_id: 1,
+            login_id: "1".to_string(),
             token: "t".to_string(),
             device: None,
         };
@@ -653,7 +653,7 @@ mod tests {
         reset_counters();
         let manager = BulwarkListenerManager::new();
         let event = BulwarkEvent::Login {
-            login_id: 1001,
+            login_id: "1001".to_string(),
             token: "T1".to_string(),
             device: Some("web".to_string()),
         };
@@ -669,7 +669,7 @@ mod tests {
         reset_counters();
         let manager = BulwarkListenerManager::new();
         let event = BulwarkEvent::Logout {
-            login_id: 1001,
+            login_id: "1001".to_string(),
             token: "T1".to_string(),
         };
         manager.broadcast(&event).await;
@@ -710,7 +710,7 @@ mod tests {
         reset_counters();
         let manager = BulwarkListenerManager::new();
         let event = BulwarkEvent::PermissionCheck {
-            login_id: 1001,
+            login_id: "1001".to_string(),
             permission: "user:delete".to_string(),
         };
         manager.broadcast(&event).await;
@@ -724,7 +724,7 @@ mod tests {
         reset_counters();
         let manager = BulwarkListenerManager::new();
         let event = BulwarkEvent::RoleCheck {
-            login_id: 1001,
+            login_id: "1001".to_string(),
             role: "admin".to_string(),
         };
         manager.broadcast(&event).await;
@@ -751,7 +751,7 @@ mod tests {
         reset_counters();
         let manager = BulwarkListenerManager::new();
         let event = BulwarkEvent::Kickout {
-            login_id: 1001,
+            login_id: "1001".to_string(),
             token: "t1".to_string(),
             reason: "强制下线".to_string(),
         };
@@ -769,12 +769,12 @@ mod tests {
     #[serial]
     fn login_failure_event_carries_login_id_and_reason() {
         let event = BulwarkEvent::LoginFailure {
-            login_id: 1001,
+            login_id: "1001".to_string(),
             reason: "wrong_password".to_string(),
         };
         match event.clone() {
             BulwarkEvent::LoginFailure { login_id, reason } => {
-                assert_eq!(login_id, 1001);
+                assert_eq!(login_id, "1001".to_string());
                 assert_eq!(reason, "wrong_password");
             },
             _ => panic!("期望 LoginFailure 事件"),
@@ -791,7 +791,7 @@ mod tests {
     #[serial]
     fn token_refresh_event_carries_tokens() {
         let event = BulwarkEvent::TokenRefresh {
-            login_id: 1001,
+            login_id: "1001".to_string(),
             old_token: "old-tok".to_string(),
             new_token: "new-tok".to_string(),
         };
@@ -801,7 +801,7 @@ mod tests {
                 old_token,
                 new_token,
             } => {
-                assert_eq!(login_id, 1001);
+                assert_eq!(login_id, "1001".to_string());
                 assert_eq!(old_token, "old-tok");
                 assert_eq!(new_token, "new-tok");
             },
@@ -839,12 +839,12 @@ mod tests {
     #[serial]
     fn session_timeout_event_carries_login_id_and_token() {
         let event = BulwarkEvent::SessionTimeout {
-            login_id: 1001,
+            login_id: "1001".to_string(),
             token: "expired-tok".to_string(),
         };
         match event.clone() {
             BulwarkEvent::SessionTimeout { login_id, token } => {
-                assert_eq!(login_id, 1001);
+                assert_eq!(login_id, "1001".to_string());
                 assert_eq!(token, "expired-tok");
             },
             _ => panic!("期望 SessionTimeout 事件"),
@@ -861,12 +861,12 @@ mod tests {
     #[serial]
     fn account_locked_event_carries_login_id_and_reason() {
         let event = BulwarkEvent::AccountLocked {
-            login_id: 1001,
+            login_id: "1001".to_string(),
             reason: "brute_force".to_string(),
         };
         match event.clone() {
             BulwarkEvent::AccountLocked { login_id, reason } => {
-                assert_eq!(login_id, 1001);
+                assert_eq!(login_id, "1001".to_string());
                 assert_eq!(reason, "brute_force");
             },
             _ => panic!("期望 AccountLocked 事件"),
@@ -883,12 +883,12 @@ mod tests {
     #[serial]
     fn firewall_block_event_carries_login_id_and_reason() {
         let event = BulwarkEvent::FirewallBlock {
-            login_id: 1001,
+            login_id: "1001".to_string(),
             reason: "frequency_exceeded".to_string(),
         };
         match event.clone() {
             BulwarkEvent::FirewallBlock { login_id, reason } => {
-                assert_eq!(login_id, 1001);
+                assert_eq!(login_id, "1001".to_string());
                 assert_eq!(reason, "frequency_exceeded");
             },
             _ => panic!("期望 FirewallBlock 事件"),

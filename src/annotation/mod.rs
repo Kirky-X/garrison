@@ -561,8 +561,8 @@ mod tests {
     // ----------------------------------------------------------------
 
     struct MockInterface {
-        permissions: HashMap<i64, Vec<String>>,
-        roles: HashMap<i64, Vec<String>>,
+        permissions: HashMap<String, Vec<String>>,
+        roles: HashMap<String, Vec<String>>,
     }
 
     impl MockInterface {
@@ -573,15 +573,19 @@ mod tests {
             }
         }
 
-        fn with_permission(mut self, login_id: i64, perms: &[&str]) -> Self {
-            self.permissions
-                .insert(login_id, perms.iter().map(|s| s.to_string()).collect());
+        fn with_permission(mut self, login_id: &str, perms: &[&str]) -> Self {
+            self.permissions.insert(
+                login_id.to_string(),
+                perms.iter().map(|s| s.to_string()).collect(),
+            );
             self
         }
 
-        fn with_role(mut self, login_id: i64, roles: &[&str]) -> Self {
-            self.roles
-                .insert(login_id, roles.iter().map(|s| s.to_string()).collect());
+        fn with_role(mut self, login_id: &str, roles: &[&str]) -> Self {
+            self.roles.insert(
+                login_id.to_string(),
+                roles.iter().map(|s| s.to_string()).collect(),
+            );
             self
         }
     }
@@ -590,13 +594,13 @@ mod tests {
     impl BulwarkInterface for MockInterface {
         async fn get_permission_list(
             &self,
-            login_id: i64,
+            login_id: &str,
         ) -> crate::error::BulwarkResult<Vec<String>> {
-            Ok(self.permissions.get(&login_id).cloned().unwrap_or_default())
+            Ok(self.permissions.get(login_id).cloned().unwrap_or_default())
         }
 
-        async fn get_role_list(&self, login_id: i64) -> crate::error::BulwarkResult<Vec<String>> {
-            Ok(self.roles.get(&login_id).cloned().unwrap_or_default())
+        async fn get_role_list(&self, login_id: &str) -> crate::error::BulwarkResult<Vec<String>> {
+            Ok(self.roles.get(login_id).cloned().unwrap_or_default())
         }
     }
 
@@ -630,18 +634,18 @@ mod tests {
     /// 初始化 BulwarkManager（带权限/角色数据）。
     fn init_manager(
         throw_on_not_login: bool,
-        permissions: &[(i64, &[&str])],
-        roles: &[(i64, &[&str])],
+        permissions: &[(&str, &[&str])],
+        roles: &[(&str, &[&str])],
     ) {
         BulwarkManager::reset_for_test();
         let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
         let config = Arc::new(make_config(throw_on_not_login));
         let mut interface = MockInterface::new();
         for (id, perms) in permissions {
-            interface = interface.with_permission(*id, perms);
+            interface = interface.with_permission(id, perms);
         }
         for (id, roles) in roles {
-            interface = interface.with_role(*id, roles);
+            interface = interface.with_role(id, roles);
         }
         let interface: Arc<dyn BulwarkInterface> = Arc::new(interface);
         BulwarkManager::init(dao, config, interface).unwrap();
@@ -702,7 +706,7 @@ mod tests {
     #[serial]
     async fn check_login_logged_in_returns_ok() {
         init_manager(false, &[], &[]);
-        let token = BulwarkUtil::login(1001).await.unwrap();
+        let token = BulwarkUtil::login("1001").await.unwrap();
 
         let mut parts = make_parts();
         let result = with_current_token(token, async {
@@ -753,8 +757,8 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn check_role_held_returns_ok() {
-        init_manager(true, &[], &[(1001, &["admin"])]);
-        let token = BulwarkUtil::login(1001).await.unwrap();
+        init_manager(true, &[], &[("1001", &["admin"])]);
+        let token = BulwarkUtil::login("1001").await.unwrap();
 
         let mut parts = make_parts();
         let result = with_current_token(token, async {
@@ -771,7 +775,7 @@ mod tests {
     #[serial]
     async fn check_role_not_held_returns_not_role() {
         init_manager(true, &[], &[]); // 无角色数据
-        let token = BulwarkUtil::login(1001).await.unwrap();
+        let token = BulwarkUtil::login("1001").await.unwrap();
 
         let mut parts = make_parts();
         let result = with_current_token(token, async {
@@ -794,8 +798,8 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn check_permission_held_returns_ok() {
-        init_manager(true, &[(1001, &["user:read"])], &[]);
-        let token = BulwarkUtil::login(1001).await.unwrap();
+        init_manager(true, &[("1001", &["user:read"])], &[]);
+        let token = BulwarkUtil::login("1001").await.unwrap();
 
         let mut parts = make_parts();
         let result = with_current_token(token, async {
@@ -812,7 +816,7 @@ mod tests {
     #[serial]
     async fn check_permission_not_held_returns_not_permission() {
         init_manager(true, &[], &[]); // 无权限数据
-        let token = BulwarkUtil::login(1001).await.unwrap();
+        let token = BulwarkUtil::login("1001").await.unwrap();
 
         let mut parts = make_parts();
         let result = with_current_token(token, async {
@@ -968,7 +972,7 @@ mod tests {
     #[serial]
     async fn check_login_extracts_token_from_bearer_header() {
         init_manager(false, &[], &[]);
-        let token = BulwarkUtil::login(1001).await.unwrap();
+        let token = BulwarkUtil::login("1001").await.unwrap();
 
         let mut parts = make_parts_with_bearer(&token);
         let result = CheckLogin::from_request_parts(&mut parts, &()).await;
@@ -982,7 +986,7 @@ mod tests {
     #[serial]
     async fn check_login_extracts_token_from_bulwark_header() {
         init_manager(false, &[], &[]);
-        let token = BulwarkUtil::login(1001).await.unwrap();
+        let token = BulwarkUtil::login("1001").await.unwrap();
 
         let mut parts = make_parts_with_bulwark_header(&token);
         let result = CheckLogin::from_request_parts(&mut parts, &()).await;
@@ -999,7 +1003,7 @@ mod tests {
     #[serial]
     async fn check_login_extracts_token_from_cookie() {
         init_manager(false, &[], &[]);
-        let token = BulwarkUtil::login(1001).await.unwrap();
+        let token = BulwarkUtil::login("1001").await.unwrap();
 
         let mut parts = make_parts_with_cookie_token(&token);
         let result = CheckLogin::from_request_parts(&mut parts, &()).await;
@@ -1016,8 +1020,8 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn check_role_extracts_token_from_header() {
-        init_manager(true, &[], &[(1001, &["admin"])]);
-        let token = BulwarkUtil::login(1001).await.unwrap();
+        init_manager(true, &[], &[("1001", &["admin"])]);
+        let token = BulwarkUtil::login("1001").await.unwrap();
 
         let mut parts = make_parts_with_bearer(&token);
         let result = CheckRole::<AdminRole>::from_request_parts(&mut parts, &()).await;
@@ -1030,8 +1034,8 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn check_permission_extracts_token_from_header() {
-        init_manager(true, &[(1001, &["user:read"])], &[]);
-        let token = BulwarkUtil::login(1001).await.unwrap();
+        init_manager(true, &[("1001", &["user:read"])], &[]);
+        let token = BulwarkUtil::login("1001").await.unwrap();
 
         let mut parts = make_parts_with_bearer(&token);
         let result = CheckPermission::<UserRead>::from_request_parts(&mut parts, &()).await;
@@ -1045,7 +1049,7 @@ mod tests {
     #[serial]
     async fn mode_strict_extracts_token_from_header() {
         init_manager(false, &[], &[]);
-        let token = BulwarkUtil::login(1001).await.unwrap();
+        let token = BulwarkUtil::login("1001").await.unwrap();
 
         let mut parts = make_parts_with_bearer(&token);
         let result = Mode::<Strict>::from_request_parts(&mut parts, &()).await;
@@ -1062,7 +1066,7 @@ mod tests {
     #[serial]
     async fn mode_loose_logged_in_with_header() {
         init_manager(false, &[], &[]);
-        let token = BulwarkUtil::login(1001).await.unwrap();
+        let token = BulwarkUtil::login("1001").await.unwrap();
 
         let mut parts = make_parts_with_bearer(&token);
         let result = Mode::<Loose>::from_request_parts(&mut parts, &()).await;
@@ -1083,7 +1087,7 @@ mod tests {
     #[serial]
     async fn bulwark_principal_extracts_login_id_from_bearer_header() {
         init_manager(false, &[], &[]);
-        let login_id: i64 = 1001;
+        let login_id = "1001";
         let token = BulwarkUtil::login(login_id).await.unwrap();
 
         let mut parts = make_parts_with_bearer(&token);
@@ -1143,7 +1147,7 @@ mod tests {
     #[serial]
     async fn bulwark_principal_returns_err_when_token_logout() {
         init_manager(false, &[], &[]);
-        let login_id: i64 = 1001;
+        let login_id = "1001";
         let token = BulwarkUtil::login(login_id).await.unwrap();
 
         // 注销 token，使 get_login_id_by_token 返回 Ok(None)

@@ -7,8 +7,14 @@
 //!
 //! - `ParameterQuery` trait：定义 `with_login_id` / `with_device` / `with_token` /
 //!   `check_permission` / `check_role` 链式 API（check_* 为 async）
-//! - `ParameterQueryBuilder`：默认实现，持有 `Option<i64>` login_id / `Option<String>`
+//! - `ParameterQueryBuilder`：默认实现，持有 `Option<String>` login_id / `Option<String>`
 //!   device / `Option<String>` token 上下文，委托 `BulwarkUtil` 静态方法执行校验
+//!
+//! ## v0.5.2 迁移
+//!
+//! `login_id` 由 `i64` 迁移至 `String`（与全局 login_id 迁移一致）：
+//! - `with_login_id` 接收 `String`（builder 持有所有权，避免每次校验克隆）
+//! - 校验路径透传 `&str` 给 `BulwarkUtil::login`
 
 use crate::error::{BulwarkError, BulwarkResult};
 use crate::stp::{with_current_token, BulwarkUtil};
@@ -30,7 +36,7 @@ use async_trait::async_trait;
 ///
 /// # async fn example() -> bulwark::error::BulwarkResult<()> {
 /// ParameterQueryBuilder::new()
-///     .with_login_id(1001)
+///     .with_login_id("1001".to_string())
 ///     .with_device("dev1")
 ///     .check_permission("user:create")
 ///     .await?;
@@ -39,8 +45,8 @@ use async_trait::async_trait;
 /// ```
 #[async_trait]
 pub trait ParameterQuery: Send + Sync {
-    /// 设置 login_id 上下文。
-    fn with_login_id(self, login_id: i64) -> Self;
+    /// 设置 login_id 上下文（接收 `String`，builder 持有所有权）。
+    fn with_login_id(self, login_id: String) -> Self;
 
     /// 设置 device 上下文。
     fn with_device(self, device: &str) -> Self;
@@ -69,8 +75,8 @@ pub trait ParameterQuery: Send + Sync {
 
 /// `ParameterQuery` 的默认实现，持有 login_id / device / token 上下文。
 pub struct ParameterQueryBuilder {
-    /// 登录主体标识（显式设置时作为校验上下文）。
-    login_id: Option<i64>,
+    /// 登录主体标识（显式设置时作为校验上下文，字符串形式）。
+    login_id: Option<String>,
     /// 设备标识（仅存储，不参与校验逻辑，预留扩展）。
     device: Option<String>,
     /// Token（设置时通过 task_local 委托 BulwarkUtil 校验，优先级高于 login_id）。
@@ -105,8 +111,9 @@ impl ParameterQueryBuilder {
                 }
             })
             .await
-        } else if let Some(login_id) = self.login_id {
+        } else if let Some(login_id) = &self.login_id {
             // Login_id 已设置：创建临时会话获取 token，再委托 BulwarkUtil::check_* 校验
+            // login_id 为 String，BulwarkUtil::login 接收 &str
             let token = BulwarkUtil::login(login_id).await?;
             let value = value.to_string();
             let token_for_cleanup = token.clone();
@@ -142,7 +149,7 @@ enum CheckKind {
 
 #[async_trait]
 impl ParameterQuery for ParameterQueryBuilder {
-    fn with_login_id(mut self, login_id: i64) -> Self {
+    fn with_login_id(mut self, login_id: String) -> Self {
         self.login_id = Some(login_id);
         self
     }
@@ -267,26 +274,26 @@ mod tests {
     // ------------------------------------------------------------------------
 
     struct MockInterfaceWithPerms {
-        permissions: HashMap<i64, Vec<String>>,
-        roles: HashMap<i64, Vec<String>>,
+        permissions: HashMap<String, Vec<String>>,
+        roles: HashMap<String, Vec<String>>,
     }
 
     #[async_trait]
     impl BulwarkInterface for MockInterfaceWithPerms {
-        async fn get_permission_list(&self, login_id: i64) -> BulwarkResult<Vec<String>> {
-            Ok(self.permissions.get(&login_id).cloned().unwrap_or_default())
+        async fn get_permission_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+            Ok(self.permissions.get(login_id).cloned().unwrap_or_default())
         }
 
-        async fn get_role_list(&self, login_id: i64) -> BulwarkResult<Vec<String>> {
-            Ok(self.roles.get(&login_id).cloned().unwrap_or_default())
+        async fn get_role_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+            Ok(self.roles.get(login_id).cloned().unwrap_or_default())
         }
     }
 
     /// 初始化全局 BulwarkManager，注入可配置权限/角色数据的 MockInterface。
     fn init_manager_with_perms(
         throw_on_not_login: bool,
-        permissions: HashMap<i64, Vec<String>>,
-        roles: HashMap<i64, Vec<String>>,
+        permissions: HashMap<String, Vec<String>>,
+        roles: HashMap<String, Vec<String>>,
     ) {
         BulwarkManager::reset_for_test();
         let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
@@ -315,8 +322,8 @@ mod tests {
     /// 验证 with_login_id 设置 login_id 上下文。
     #[test]
     fn with_login_id_sets_context() {
-        let builder = ParameterQueryBuilder::new().with_login_id(1001);
-        assert_eq!(builder.login_id, Some(1001));
+        let builder = ParameterQueryBuilder::new().with_login_id("1001".to_string());
+        assert_eq!(builder.login_id, Some("1001".to_string()));
     }
 
     /// 验证 with_device 设置 device 上下文。
@@ -334,15 +341,15 @@ mod tests {
     }
 
     /// spec Scenario: 链式调用设置上下文。
-    /// 验证 with_login_id(1001).with_device("dev1") 链式调用后 builder 持有完整上下文。
+    /// 验证 with_login_id("1001".to_string()).with_device("dev1") 链式调用后 builder 持有完整上下文。
     #[test]
     fn chain_with_login_id_and_device_sets_context() {
         let builder = ParameterQueryBuilder::new()
-            .with_login_id(1001)
+            .with_login_id("1001".to_string())
             .with_device("dev1");
         assert_eq!(
             builder.login_id,
-            Some(1001),
+            Some("1001".to_string()),
             "链式调用后 login_id 应为 1001"
         );
         assert_eq!(
@@ -377,11 +384,11 @@ mod tests {
     #[serial]
     async fn check_permission_with_login_id_succeeds_when_authorized() {
         let mut perms = HashMap::new();
-        perms.insert(1001, vec!["user:create".to_string()]);
+        perms.insert("1001".to_string(), vec!["user:create".to_string()]);
         init_manager_with_perms(false, perms, HashMap::new());
 
         let result = ParameterQueryBuilder::new()
-            .with_login_id(1001)
+            .with_login_id("1001".to_string())
             .check_permission("user:create")
             .await;
         assert!(result.is_ok(), "持有权限时应返回 Ok，实际: {:?}", result);
@@ -394,11 +401,11 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn check_permission_with_login_id_returns_not_permission_when_denied() {
-        let perms: HashMap<i64, Vec<String>> = HashMap::new();
+        let perms: HashMap<String, Vec<String>> = HashMap::new();
         init_manager_with_perms(false, perms, HashMap::new());
 
         let result = ParameterQueryBuilder::new()
-            .with_login_id(1001)
+            .with_login_id("1001".to_string())
             .check_permission("user:delete")
             .await;
         assert!(
@@ -416,11 +423,11 @@ mod tests {
     #[serial]
     async fn check_permission_with_token_succeeds() {
         let mut perms = HashMap::new();
-        perms.insert(1001, vec!["user:read".to_string()]);
+        perms.insert("1001".to_string(), vec!["user:read".to_string()]);
         init_manager_with_perms(false, perms, HashMap::new());
 
         // 先 login 获取有效 token
-        let token = BulwarkUtil::login(1001).await.unwrap();
+        let token = BulwarkUtil::login("1001").await.unwrap();
 
         let result = ParameterQueryBuilder::new()
             .with_token(&token)
@@ -440,10 +447,10 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn check_permission_with_token_returns_not_permission_when_denied() {
-        let perms: HashMap<i64, Vec<String>> = HashMap::new();
+        let perms: HashMap<String, Vec<String>> = HashMap::new();
         init_manager_with_perms(false, perms, HashMap::new());
 
-        let token = BulwarkUtil::login(1001).await.unwrap();
+        let token = BulwarkUtil::login("1001").await.unwrap();
 
         let result = ParameterQueryBuilder::new()
             .with_token(&token)
@@ -481,11 +488,11 @@ mod tests {
     #[serial]
     async fn check_role_with_login_id_succeeds_when_authorized() {
         let mut roles = HashMap::new();
-        roles.insert(1001, vec!["admin".to_string()]);
+        roles.insert("1001".to_string(), vec!["admin".to_string()]);
         init_manager_with_perms(false, HashMap::new(), roles);
 
         let result = ParameterQueryBuilder::new()
-            .with_login_id(1001)
+            .with_login_id("1001".to_string())
             .check_role("admin")
             .await;
         assert!(result.is_ok(), "持有角色应返回 Ok，实际: {:?}", result);
@@ -497,11 +504,11 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn check_role_with_login_id_returns_not_role_when_denied() {
-        let roles: HashMap<i64, Vec<String>> = HashMap::new();
+        let roles: HashMap<String, Vec<String>> = HashMap::new();
         init_manager_with_perms(false, HashMap::new(), roles);
 
         let result = ParameterQueryBuilder::new()
-            .with_login_id(1001)
+            .with_login_id("1001".to_string())
             .check_role("superadmin")
             .await;
         assert!(
@@ -518,10 +525,10 @@ mod tests {
     #[serial]
     async fn check_role_with_token_succeeds() {
         let mut roles = HashMap::new();
-        roles.insert(1001, vec!["admin".to_string()]);
+        roles.insert("1001".to_string(), vec!["admin".to_string()]);
         init_manager_with_perms(false, HashMap::new(), roles);
 
-        let token = BulwarkUtil::login(1001).await.unwrap();
+        let token = BulwarkUtil::login("1001").await.unwrap();
 
         let result = ParameterQueryBuilder::new()
             .with_token(&token)
@@ -540,10 +547,10 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn check_role_with_token_returns_not_role_when_denied() {
-        let roles: HashMap<i64, Vec<String>> = HashMap::new();
+        let roles: HashMap<String, Vec<String>> = HashMap::new();
         init_manager_with_perms(false, HashMap::new(), roles);
 
-        let token = BulwarkUtil::login(1001).await.unwrap();
+        let token = BulwarkUtil::login("1001").await.unwrap();
 
         let result = ParameterQueryBuilder::new()
             .with_token(&token)
@@ -567,12 +574,12 @@ mod tests {
     #[serial]
     async fn async_check_permission_works() {
         let mut perms = HashMap::new();
-        perms.insert(2002, vec!["user:read".to_string()]);
+        perms.insert("2002".to_string(), vec!["user:read".to_string()]);
         init_manager_with_perms(false, perms, HashMap::new());
 
         // async 调用并 await
         let result = ParameterQueryBuilder::new()
-            .with_login_id(2002)
+            .with_login_id("2002".to_string())
             .check_permission("user:read")
             .await;
         assert!(

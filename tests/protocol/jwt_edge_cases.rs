@@ -105,7 +105,7 @@ async fn iat_future_time_tolerates_clock_skew() {
         sub: "1001".to_string(),
         iat: now + 60, // iat 在未来 60 秒
         exp: now + 3600,
-        login_id: 1001,
+        login_id: "1001".to_string(),
         device: None,
     };
 
@@ -123,7 +123,7 @@ async fn iat_future_time_tolerates_clock_skew() {
     );
 
     let verified_claims = result.unwrap();
-    assert_eq!(verified_claims.login_id, 1001);
+    assert_eq!(verified_claims.login_id, "1001".to_string());
     assert_eq!(verified_claims.iat, now + 60, "iat 应保留未来时间值");
 }
 
@@ -138,7 +138,7 @@ async fn refresh_expired_token_returns_error() {
     let handler = JwtHandler::new("refresh-secret");
 
     // 签发一个 1 秒过期的 token
-    let token = handler.sign(1001, 1).unwrap();
+    let token = handler.sign("1001", 1).unwrap();
 
     // 等待 2 秒让 token 过期
     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;

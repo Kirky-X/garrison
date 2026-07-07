@@ -70,10 +70,10 @@ pub use token_extract::{extract_token_from_headers, strip_bearer_prefix, HeaderL
 ///     format!("login_id = {}", principal.login_id)
 /// }
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BulwarkPrincipal {
     /// 当前登录用户 ID（从 token-session 映射解析）。
-    pub login_id: i64,
+    pub login_id: String,
 }
 
 /// 上下文 trait，提供请求访问入口。

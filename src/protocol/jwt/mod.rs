@@ -9,9 +9,6 @@
 pub mod refresh;
 
 use crate::error::{BulwarkError, BulwarkResult};
-// 0.4.2: LoginId newtype 接入（impl Into<LoginId> 公开 API + i64 内部层）
-use crate::stp::login_id::LoginId;
-use crate::stp::login_id_to_i64;
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -30,8 +27,8 @@ pub struct BulwarkJwtClaims {
     /// 过期时间（Unix 秒）。
     pub exp: i64,
 
-    /// Bulwark 登录标识（数值形式，便于 Token trait 提取）。
-    pub login_id: i64,
+    /// Bulwark 登录标识（字符串形式，与 sub 一致）。
+    pub login_id: String,
 
     /// 可选设备标识。
     pub device: Option<String>,
@@ -96,9 +93,8 @@ impl JwtHandler {
     /// - `Ok(String)`: JWT 字符串（三段 Base64URL 通过 `.` 连接）。
     /// - `Err(BulwarkError::Config)`: 密钥为空或 timeout 为负。
     /// - `Err(BulwarkError::Internal)`: 签发失败。
-    /// - `Err(BulwarkError::Config)`: 传入 `LoginId::String` 形式，内部层尚未完成迁移。
-    pub fn sign(&self, login_id: impl Into<LoginId>, timeout: i64) -> BulwarkResult<String> {
-        let login_id: i64 = login_id_to_i64(login_id.into())?;
+    pub fn sign(&self, login_id: impl Into<String>, timeout: i64) -> BulwarkResult<String> {
+        let login_id: String = login_id.into();
         if self.secret.is_empty() {
             return Err(BulwarkError::Config("JWT secret 不能为空".to_string()));
         }
@@ -113,7 +109,7 @@ impl JwtHandler {
             .map_err(|e| BulwarkError::Internal(format!("系统时间错误: {}", e)))?
             .as_secs() as i64;
         let claims = BulwarkJwtClaims {
-            sub: login_id.to_string(),
+            sub: login_id.clone(),
             iat: now,
             exp: now + timeout,
             login_id,
@@ -186,14 +182,14 @@ mod tests {
             sub: "1001".to_string(),
             iat: 1700000000,
             exp: 1700003600,
-            login_id: 1001,
+            login_id: "1001".to_string(),
             device: Some("web".to_string()),
         };
         let json = serde_json::to_string(&claims).unwrap();
         assert!(json.contains("\"sub\":\"1001\""));
         assert!(json.contains("\"iat\":1700000000"));
         assert!(json.contains("\"exp\":1700003600"));
-        assert!(json.contains("\"login_id\":1001"));
+        assert!(json.contains("\"login_id\":\"1001\""));
         assert!(json.contains("\"device\":\"web\""));
     }
 
@@ -204,7 +200,7 @@ mod tests {
             sub: "1001".to_string(),
             iat: 1700000000,
             exp: 1700003600,
-            login_id: 1001,
+            login_id: "1001".to_string(),
             device: None,
         };
         let json = serde_json::to_string(&claims).unwrap();
@@ -215,12 +211,12 @@ mod tests {
     #[test]
     fn claims_deserializes() {
         let json =
-            r#"{"sub":"1001","iat":1700000000,"exp":1700003600,"login_id":1001,"device":"web"}"#;
+            r#"{"sub":"1001","iat":1700000000,"exp":1700003600,"login_id":"1001","device":"web"}"#;
         let claims: BulwarkJwtClaims = serde_json::from_str(json).unwrap();
         assert_eq!(claims.sub, "1001");
         assert_eq!(claims.iat, 1700000000);
         assert_eq!(claims.exp, 1700003600);
-        assert_eq!(claims.login_id, 1001);
+        assert_eq!(claims.login_id, "1001");
         assert_eq!(claims.device, Some("web".to_string()));
     }
 
@@ -259,7 +255,7 @@ mod tests {
     #[test]
     fn sign_returns_three_segment_jwt() {
         let handler = JwtHandler::new("secret");
-        let token = handler.sign(1001, 3600).unwrap();
+        let token = handler.sign("1001", 3600).unwrap();
         let parts: Vec<&str> = token.split('.').collect();
         assert_eq!(parts.len(), 3, "JWT 应由三段组成");
         assert!(!parts[0].is_empty());
@@ -271,7 +267,7 @@ mod tests {
     #[test]
     fn sign_rejects_empty_secret() {
         let handler = JwtHandler::new("");
-        let result = handler.sign(1001, 3600);
+        let result = handler.sign("1001", 3600);
         assert!(result.is_err());
         match result.err() {
             Some(BulwarkError::Config(msg)) => assert!(msg.contains("secret")),
@@ -283,7 +279,7 @@ mod tests {
     #[test]
     fn sign_rejects_negative_timeout() {
         let handler = JwtHandler::new("secret");
-        let result = handler.sign(1001, -1);
+        let result = handler.sign("1001", -1);
         assert!(result.is_err());
         match result.err() {
             Some(BulwarkError::Config(msg)) => assert!(msg.contains("timeout")),
@@ -295,7 +291,7 @@ mod tests {
     #[test]
     fn sign_with_device_includes_device_in_claims() {
         let handler = JwtHandler::new("secret").with_device("ios-app");
-        let token = handler.sign(1001, 3600).unwrap();
+        let token = handler.sign("1001", 3600).unwrap();
         // verify 后检查 device
         let claims = handler.verify(&token).unwrap();
         assert_eq!(claims.device, Some("ios-app".to_string()));
@@ -309,10 +305,10 @@ mod tests {
     #[test]
     fn verify_valid_token_returns_claims() {
         let handler = JwtHandler::new("secret");
-        let token = handler.sign(1001, 3600).unwrap();
+        let token = handler.sign("1001", 3600).unwrap();
         let claims = handler.verify(&token).unwrap();
         assert_eq!(claims.sub, "1001");
-        assert_eq!(claims.login_id, 1001);
+        assert_eq!(claims.login_id, "1001");
         assert!(claims.exp > claims.iat);
     }
 
@@ -320,7 +316,7 @@ mod tests {
     #[test]
     fn verify_tampered_payload_fails() {
         let handler = JwtHandler::new("secret");
-        let token = handler.sign(1001, 3600).unwrap();
+        let token = handler.sign("1001", 3600).unwrap();
         let parts: Vec<&str> = token.split('.').collect();
         // 篡改 payload 段（替换为另一个 base64url 串）
         let tampered = format!("{}.{}.{}", parts[0], "ZmFrZS1wYXlsb2Fk", parts[2]);
@@ -332,7 +328,7 @@ mod tests {
     #[test]
     fn verify_wrong_secret_fails() {
         let signer = JwtHandler::new("secret-a");
-        let token = signer.sign(1001, 3600).unwrap();
+        let token = signer.sign("1001", 3600).unwrap();
         let verifier = JwtHandler::new("secret-b");
         let result = verifier.verify(&token);
         assert!(result.is_err());
@@ -344,7 +340,7 @@ mod tests {
         let handler = JwtHandler::new("secret");
         // sign timeout=1 秒，sleep 2 秒后 verify 应触发 ExpiredSignature
         // （leeway=0，不容忍时钟偏差）
-        let token = handler.sign(1001, 1).unwrap();
+        let token = handler.sign("1001", 1).unwrap();
         std::thread::sleep(std::time::Duration::from_secs(2));
         let result = handler.verify(&token);
         assert!(result.is_err());
@@ -358,7 +354,7 @@ mod tests {
     #[test]
     fn verify_algorithm_mismatch_fails() {
         let signer = JwtHandler::new("secret").with_algorithm(Algorithm::HS512);
-        let token = signer.sign(1001, 3600).unwrap();
+        let token = signer.sign("1001", 3600).unwrap();
         let verifier = JwtHandler::new("secret"); // 默认 HS256
         let result = verifier.verify(&token);
         assert!(result.is_err());
@@ -372,11 +368,11 @@ mod tests {
     #[test]
     fn refresh_issues_new_valid_token() {
         let handler = JwtHandler::new("secret");
-        let token = handler.sign(1001, 3600).unwrap();
+        let token = handler.sign("1001", 3600).unwrap();
         let new_token = handler.refresh(&token, 7200).unwrap();
         assert_ne!(token, new_token);
         let claims = handler.verify(&new_token).unwrap();
-        assert_eq!(claims.login_id, 1001);
+        assert_eq!(claims.login_id, "1001");
     }
 
     /// refresh 旧 token 无效时返回错误。
@@ -394,38 +390,22 @@ mod tests {
             sub: "1".to_string(),
             iat: 0,
             exp: 0,
-            login_id: 1,
+            login_id: "1".to_string(),
             device: None,
         };
-        assert_eq!(claims.login_id, 1);
+        assert_eq!(claims.login_id, "1");
     }
 
     // ========================================================================
     // 0.4.2 新增: LoginId newtype 接入（impl Into<LoginId>）
     // ========================================================================
 
-    use crate::stp::login_id::LoginId;
-
-    /// 验证 `JwtHandler::sign` 接受 `LoginId::Numeric`（i64 兼容路径）。
+    /// 验证 `JwtHandler::sign` 接受 String 形式 login_id。
     #[test]
     fn sign_accepts_login_id_numeric() {
         let handler = JwtHandler::new("secret");
-        let token = handler.sign(LoginId::Numeric(1001), 3600).unwrap();
+        let token = handler.sign("1001".to_string(), 3600).unwrap();
         let claims = handler.verify(&token).unwrap();
-        assert_eq!(claims.login_id, 1001);
-    }
-
-    /// 验证 `JwtHandler::sign` 对 `LoginId::String` 返回 `BulwarkError::Config`。
-    ///
-    /// v0.4.2 内部层仍使用 i64，String 形式待 v0.5.0+ 迁移。
-    #[test]
-    fn sign_rejects_login_id_string_with_config_error() {
-        let handler = JwtHandler::new("secret");
-        let result = handler.sign(LoginId::String("user-uuid".to_string()), 3600);
-        assert!(
-            matches!(result, Err(BulwarkError::Config(_))),
-            "String-form login_id 在 v0.4.2 应返回 Config 错误，实际: {:?}",
-            result
-        );
+        assert_eq!(claims.login_id, "1001");
     }
 }

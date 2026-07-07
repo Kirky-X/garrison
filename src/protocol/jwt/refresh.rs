@@ -15,7 +15,7 @@
 //! CREATE TABLE refresh_tokens (
 //!     token_hash TEXT PRIMARY KEY,
 //!     parent_token_hash TEXT,
-//!     login_id INTEGER NOT NULL,
+//!     login_id TEXT NOT NULL,
 //!     tenant_id INTEGER NOT NULL DEFAULT 0,
 //!     key_version INTEGER NOT NULL,
 //!     expires_at INTEGER NOT NULL,
@@ -192,7 +192,7 @@ mod service {
                     )
                 })?;
 
-            let login_id: i64 = row
+            let login_id: String = row
                 .try_get("", "login_id")
                 .map_err(|e| BulwarkError::Dao(format!("login_id 读取失败: {}", e)))?;
             let tenant_id: i64 = row
@@ -201,7 +201,7 @@ mod service {
 
             // 生成新 refresh token + 签发新 access token
             let new_refresh = Uuid::new_v4().to_string();
-            let new_access = self.jwt_handler.sign(login_id, 3600)?;
+            let new_access = self.jwt_handler.sign(&login_id, 3600)?;
             let new_hash = Self::sha256_hex(&new_refresh);
             let now = Self::now_unix();
             let kv = *self
@@ -216,7 +216,7 @@ mod service {
                 vec![
                     Value::String(Some(new_hash.clone())),
                     Value::String(Some(old_hash.clone())),
-                    Value::BigInt(Some(login_id)),
+                    Value::String(Some(login_id.clone())),
                     Value::BigInt(Some(tenant_id)),
                     Value::BigInt(Some(kv as i64)),
                     Value::BigInt(Some(now + 86400 * 7)),

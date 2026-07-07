@@ -9,11 +9,10 @@
 //!
 //! # 返回类型迁移
 //!
-//! `verify_token()` 返回类型从 `BulwarkResult<i64>` 迁移为 `BulwarkResult<LoginId>`
-//! （v0.4.2 spec R-login-id-type-003）。
+//! `verify_token()` 返回类型从 `BulwarkResult<i64>` 迁移为 `BulwarkResult<String>`
+//! （v0.5.2 LoginId 迁移：删除 LoginId newtype，全栈使用 String/&str）。
 
 use crate::error::{BulwarkError, BulwarkResult};
-use crate::stp::login_id::LoginId;
 use crate::stp::session::SessionLogic;
 use async_trait::async_trait;
 
@@ -95,7 +94,7 @@ pub trait TokenLogic: SessionLogic {
         }
     }
 
-    /// 验证显式传入的 token 并返回关联的 `LoginId`（0.2.0 新增，依据 spec core-auth-api）。
+    /// 验证显式传入的 token 并返回关联的 `String`（0.2.0 新增，依据 spec core-auth-api）。
     ///
     /// 委托 `core-token::Token::verify` 实现。与
     /// [`check_login`](SessionLogic::check_login) 区别：
@@ -105,12 +104,12 @@ pub trait TokenLogic: SessionLogic {
     /// - `token`: 待验证的 token 字符串。
     ///
     /// # 返回
-    /// - `Ok(login_id)`: token 有效，返回关联的 `LoginId`。
+    /// - `Ok(login_id)`: token 有效，返回关联的 `String`。
     ///
     /// # 错误
     /// - `BulwarkError::InvalidToken`: token 无效或不包含 login_id。
     /// - `BulwarkError::NotImplemented`: 默认实现未委托 Token trait。
-    async fn verify_token(&self, _token: &str) -> BulwarkResult<LoginId> {
+    async fn verify_token(&self, _token: &str) -> BulwarkResult<String> {
         Err(BulwarkError::NotImplemented(
             "verify_token 需子类 override 委托 core-token::Token::verify".to_string(),
         ))
@@ -142,7 +141,6 @@ mod tests {
     use crate::config::BulwarkConfig;
     use crate::error::BulwarkResult;
     use crate::stp::core::BulwarkCore;
-    use crate::stp::login_id::LoginId;
     use crate::stp::session::SessionLogic;
     use std::sync::Arc;
 
@@ -161,19 +159,19 @@ mod tests {
 
     #[async_trait]
     impl SessionLogic for MockToken {
-        async fn login(&self, _login_id: &LoginId) -> BulwarkResult<String> {
+        async fn login(&self, _login_id: &str) -> BulwarkResult<String> {
             Ok("mock-token".to_string())
         }
-        async fn login_with_token(&self, _login_id: &LoginId, _token: &str) -> BulwarkResult<()> {
+        async fn login_with_token(&self, _login_id: &str, _token: &str) -> BulwarkResult<()> {
             Ok(())
         }
         async fn logout(&self) -> BulwarkResult<()> {
             Ok(())
         }
-        async fn logout_by_login_id(&self, _login_id: &LoginId) -> BulwarkResult<()> {
+        async fn logout_by_login_id(&self, _login_id: &str) -> BulwarkResult<()> {
             Ok(())
         }
-        async fn kickout(&self, _login_id: &LoginId) -> BulwarkResult<()> {
+        async fn kickout(&self, _login_id: &str) -> BulwarkResult<()> {
             Ok(())
         }
         async fn kickout_by_token(&self, _token: &str) -> BulwarkResult<()> {
@@ -185,9 +183,9 @@ mod tests {
         async fn check_login(&self) -> BulwarkResult<bool> {
             Ok(self.logged_in)
         }
-        async fn get_login_id(&self) -> BulwarkResult<Option<LoginId>> {
+        async fn get_login_id(&self) -> BulwarkResult<Option<String>> {
             if self.logged_in {
-                Ok(Some(LoginId::Numeric(42)))
+                Ok(Some("42".to_string()))
             } else {
                 Ok(None)
             }

@@ -17,9 +17,6 @@ pub mod server;
 
 use crate::dao::BulwarkDao;
 use crate::error::{BulwarkError, BulwarkResult};
-// 0.4.2: LoginId newtype 接入（impl Into<LoginId> 公开 API + i64 内部层）
-use crate::stp::login_id::LoginId;
-use crate::stp::login_id_to_i64;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
@@ -33,7 +30,7 @@ const DEFAULT_TICKET_TTL: u64 = 60;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct SsoTicketData {
     /// 登录主体标识。
-    pub(crate) login_id: i64,
+    pub(crate) login_id: String,
     /// 客户端标识。
     pub(crate) client_id: i64,
 }
@@ -79,14 +76,12 @@ impl SsoClient {
     /// # 返回
     /// 64 字符的 ticket 字符串。
     ///
-    /// # 错误
-    /// - `BulwarkError::Config`: 传入 `LoginId::String` 形式，内部层尚未完成迁移。
     pub async fn issue_ticket(
         &self,
-        login_id: impl Into<LoginId>,
+        login_id: impl Into<String>,
         client_id: i64,
     ) -> BulwarkResult<String> {
-        let login_id: i64 = login_id_to_i64(login_id.into())?;
+        let login_id: String = login_id.into();
         // 拼接两个 UUID v4 simple（各 32 hex = 64 字符）
         let ticket = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
         let data = SsoTicketData {
@@ -124,7 +119,7 @@ impl SsoClient {
     /// `client_id` 校验通过后使用 `BulwarkDao::get_and_delete` 原子消费票据，
     /// 消除 TOCTOU 竞态。并发调用同一 ticket（同 client_id）仅一个返回 `Ok`，
     /// 其他返回 `InvalidToken`（"已被并发消费"）。依据 spec protocol-sso-toctou R-002。
-    pub async fn validate_ticket(&self, ticket: &str, client_id: i64) -> BulwarkResult<i64> {
+    pub async fn validate_ticket(&self, ticket: &str, client_id: i64) -> BulwarkResult<String> {
         let key = format!("bulwark:sso:ticket:{}", ticket);
         // 步骤 1: 非原子 get，用于校验 client_id（不删除票据）
         let value = self
@@ -251,7 +246,7 @@ mod tests {
     #[tokio::test]
     async fn issue_ticket_returns_64_chars() {
         let client = make_client();
-        let ticket = client.issue_ticket(1001, 2001).await.unwrap();
+        let ticket = client.issue_ticket("1001", 2001).await.unwrap();
         assert_eq!(ticket.len(), 64);
         assert!(ticket.chars().all(|c| c.is_ascii_hexdigit()));
     }
@@ -260,8 +255,8 @@ mod tests {
     #[tokio::test]
     async fn issue_ticket_generates_unique_tickets() {
         let client = make_client();
-        let t1 = client.issue_ticket(1001, 2001).await.unwrap();
-        let t2 = client.issue_ticket(1001, 2001).await.unwrap();
+        let t1 = client.issue_ticket("1001", 2001).await.unwrap();
+        let t2 = client.issue_ticket("1001", 2001).await.unwrap();
         assert_ne!(t1, t2);
     }
 
@@ -269,8 +264,8 @@ mod tests {
     #[tokio::test]
     async fn issue_ticket_same_login_different_clients() {
         let client = make_client();
-        let t1 = client.issue_ticket(1001, 2001).await.unwrap();
-        let t2 = client.issue_ticket(1001, 2002).await.unwrap();
+        let t1 = client.issue_ticket("1001", 2001).await.unwrap();
+        let t2 = client.issue_ticket("1001", 2002).await.unwrap();
         assert_ne!(t1, t2);
     }
 
@@ -279,12 +274,12 @@ mod tests {
     async fn issue_ticket_uses_correct_key_prefix() {
         let dao = Arc::new(MockDao::new());
         let client = SsoClient::new(dao.clone());
-        let ticket = client.issue_ticket(1001, 2001).await.unwrap();
+        let ticket = client.issue_ticket("1001", 2001).await.unwrap();
         let key = format!("bulwark:sso:ticket:{}", ticket);
         let value = dao.get(&key).await.unwrap();
         assert!(value.is_some());
         let data: SsoTicketData = serde_json::from_str(&value.unwrap()).unwrap();
-        assert_eq!(data.login_id, 1001);
+        assert_eq!(data.login_id, "1001");
         assert_eq!(data.client_id, 2001);
     }
 
@@ -296,16 +291,16 @@ mod tests {
     #[tokio::test]
     async fn validate_ticket_success_returns_login_id() {
         let client = make_client();
-        let ticket = client.issue_ticket(1001, 2001).await.unwrap();
+        let ticket = client.issue_ticket("1001", 2001).await.unwrap();
         let login_id = client.validate_ticket(&ticket, 2001).await.unwrap();
-        assert_eq!(login_id, 1001);
+        assert_eq!(login_id, "1001");
     }
 
     /// 校验成功后票据被删除（一次性使用，spec Scenario）。
     #[tokio::test]
     async fn validate_ticket_deletes_after_success() {
         let client = make_client();
-        let ticket = client.issue_ticket(1001, 2001).await.unwrap();
+        let ticket = client.issue_ticket("1001", 2001).await.unwrap();
         let _ = client.validate_ticket(&ticket, 2001).await.unwrap();
         // 第二次校验应失败
         let result = client.validate_ticket(&ticket, 2001).await;
@@ -316,7 +311,7 @@ mod tests {
     #[tokio::test]
     async fn validate_ticket_client_id_mismatch_returns_error() {
         let client = make_client();
-        let ticket = client.issue_ticket(1001, 2001).await.unwrap();
+        let ticket = client.issue_ticket("1001", 2001).await.unwrap();
         let result = client.validate_ticket(&ticket, 9999).await;
         assert!(result.is_err());
         match result.err() {
@@ -341,7 +336,7 @@ mod tests {
     #[tokio::test]
     async fn validate_ticket_one_time_use_second_fails() {
         let client = make_client();
-        let ticket = client.issue_ticket(1001, 2001).await.unwrap();
+        let ticket = client.issue_ticket("1001", 2001).await.unwrap();
         let first = client.validate_ticket(&ticket, 2001).await;
         let second = client.validate_ticket(&ticket, 2001).await;
         assert!(first.is_ok());
@@ -356,7 +351,7 @@ mod tests {
     #[tokio::test]
     async fn destroy_ticket_existing() {
         let client = make_client();
-        let ticket = client.issue_ticket(1001, 2001).await.unwrap();
+        let ticket = client.issue_ticket("1001", 2001).await.unwrap();
         let result = client.destroy_ticket(&ticket).await;
         assert!(result.is_ok());
         // 验证已删除
@@ -388,33 +383,14 @@ mod tests {
     // 0.4.2 新增: LoginId newtype 接入（impl Into<LoginId>）
     // ========================================================================
 
-    use crate::stp::login_id::LoginId;
-
-    /// 验证 `SsoClient::issue_ticket` 接受 `LoginId::Numeric`（i64 兼容路径）。
+    /// 验证 `SsoClient::issue_ticket` 接受 String 形式 login_id。
     #[tokio::test]
     async fn issue_ticket_accepts_login_id_numeric() {
         let client = make_client();
-        let ticket = client
-            .issue_ticket(LoginId::Numeric(1001), 2001)
-            .await
-            .unwrap();
+        let ticket = client.issue_ticket("1001".to_string(), 2001).await.unwrap();
         // 验证 ticket 可校验
         let login_id = client.validate_ticket(&ticket, 2001).await.unwrap();
-        assert_eq!(login_id, 1001);
-    }
-
-    /// 验证 `SsoClient::issue_ticket` 对 `LoginId::String` 返回 `BulwarkError::Config`。
-    #[tokio::test]
-    async fn issue_ticket_rejects_login_id_string_with_config_error() {
-        let client = make_client();
-        let result = client
-            .issue_ticket(LoginId::String("user-uuid".to_string()), 2001)
-            .await;
-        assert!(
-            matches!(result, Err(BulwarkError::Config(_))),
-            "String-form login_id 在 v0.4.2 应返回 Config 错误，实际: {:?}",
-            result
-        );
+        assert_eq!(login_id, "1001");
     }
 
     // ========================================================================
@@ -428,7 +404,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn validate_ticket_concurrent_only_one_succeeds() {
         let client = Arc::new(make_client());
-        let ticket = client.issue_ticket(1001, 2001).await.unwrap();
+        let ticket = client.issue_ticket("1001", 2001).await.unwrap();
 
         let mut handles = Vec::new();
         for _ in 0..10 {
@@ -444,7 +420,7 @@ mod tests {
         for handle in handles {
             match handle.await.unwrap() {
                 Ok(login_id) => {
-                    assert_eq!(login_id, 1001);
+                    assert_eq!(login_id, "1001");
                     success += 1;
                 },
                 Err(BulwarkError::InvalidToken(_)) => invalid_token += 1,

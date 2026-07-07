@@ -34,7 +34,7 @@ use std::time::{Duration, Instant};
 #[derive(Debug, Clone, Default)]
 pub struct LoginContext {
     /// 登录主体标识。
-    pub login_id: i64,
+    pub login_id: String,
     /// 客户端 IP（可选，用于频率/暴力破解检测）。
     pub ip: Option<String>,
     /// 设备指纹（可选，用于设备异常检测）。
@@ -45,9 +45,9 @@ pub struct LoginContext {
 
 impl LoginContext {
     /// 创建仅含 login_id 的最小上下文。
-    pub fn new(login_id: i64) -> Self {
+    pub fn new(login_id: impl Into<String>) -> Self {
         Self {
-            login_id,
+            login_id: login_id.into(),
             ip: None,
             device_fingerprint: None,
             geo: None,
@@ -265,7 +265,7 @@ impl BulwarkFirewallCheckHookDefault {
             }
         }
         let mut map = self.account_failures.lock();
-        let key = ctx.login_id.to_string();
+        let key = ctx.login_id.clone();
         let entry = map.entry(key).or_insert(FailureEntry {
             count: 0,
             first_failure_at: now,
@@ -301,10 +301,10 @@ impl BulwarkFirewallCheckHookDefault {
     /// 获取账号维度当前失败次数（测试辅助方法）。
     ///
     /// 内存模式返回本地计数；DAO 模式返回 0（需通过 DAO 直接查询）。
-    pub fn account_failure_count(&self, login_id: i64) -> u32 {
+    pub fn account_failure_count(&self, login_id: &str) -> u32 {
         self.account_failures
             .lock()
-            .get(&login_id.to_string())
+            .get(login_id)
             .map(|e| e.count)
             .unwrap_or(0)
     }
@@ -395,7 +395,7 @@ impl BulwarkFirewallCheckHook for BulwarkFirewallCheckHookDefault {
                 #[cfg(feature = "listener")]
                 if let Some(lm) = &self.listener_manager {
                     lm.broadcast(&BulwarkEvent::AccountLocked {
-                        login_id: ctx.login_id,
+                        login_id: ctx.login_id.clone(),
                         reason: format!("brute_force: {} failures in 1h", count),
                     })
                     .await;
@@ -411,7 +411,7 @@ impl BulwarkFirewallCheckHook for BulwarkFirewallCheckHookDefault {
         // v0.5.0: 先在锁内提取所需数据，drop 锁后再 broadcast（避免 MutexGuard 跨 await 持有）
         let locked_reason = {
             let map = self.account_failures.lock();
-            let key = ctx.login_id.to_string();
+            let key = ctx.login_id.clone();
             if let Some(entry) = map.get(&key) {
                 let now = Instant::now();
                 if now.duration_since(entry.first_failure_at) < BRUTE_FORCE_WINDOW
@@ -430,7 +430,7 @@ impl BulwarkFirewallCheckHook for BulwarkFirewallCheckHookDefault {
             #[cfg(feature = "listener")]
             if let Some(lm) = &self.listener_manager {
                 lm.broadcast(&BulwarkEvent::AccountLocked {
-                    login_id: ctx.login_id,
+                    login_id: ctx.login_id.clone(),
                     reason: reason.clone(),
                 })
                 .await;
@@ -531,8 +531,8 @@ mod tests {
     /// LoginContext::new 仅含 login_id。
     #[test]
     fn login_context_new_has_only_login_id() {
-        let ctx = LoginContext::new(1001);
-        assert_eq!(ctx.login_id, 1001);
+        let ctx = LoginContext::new("1001");
+        assert_eq!(ctx.login_id, "1001");
         assert!(ctx.ip.is_none());
         assert!(ctx.device_fingerprint.is_none());
         assert!(ctx.geo.is_none());
@@ -541,11 +541,11 @@ mod tests {
     /// builder 链式设置字段。
     #[test]
     fn login_context_builder_sets_fields() {
-        let ctx = LoginContext::new(1001)
+        let ctx = LoginContext::new("1001")
             .with_ip("192.168.1.1")
             .with_device("dev-fp-abc")
             .with_geo("Beijing");
-        assert_eq!(ctx.login_id, 1001);
+        assert_eq!(ctx.login_id, "1001");
         assert_eq!(ctx.ip.as_deref(), Some("192.168.1.1"));
         assert_eq!(ctx.device_fingerprint.as_deref(), Some("dev-fp-abc"));
         assert_eq!(ctx.geo.as_deref(), Some("Beijing"));
@@ -562,7 +562,7 @@ mod tests {
         #[async_trait]
         impl BulwarkFirewallCheckHook for NoOpHook {}
         let hook = NoOpHook;
-        let ctx = LoginContext::new(1001);
+        let ctx = LoginContext::new("1001");
         assert!(hook.check_login_frequency(&ctx).await.is_ok());
         assert!(hook.check_brute_force(&ctx).await.is_ok());
         assert!(hook.check_geo_anomaly(&ctx).await.is_ok());
@@ -578,7 +578,7 @@ mod tests {
     #[tokio::test]
     async fn check_login_frequency_passes_without_ip() {
         let hook = BulwarkFirewallCheckHookDefault::new();
-        let ctx = LoginContext::new(1001); // 无 IP
+        let ctx = LoginContext::new("1001"); // 无 IP
         assert!(hook.check_login_frequency(&ctx).await.is_ok());
     }
 
@@ -586,7 +586,7 @@ mod tests {
     #[tokio::test]
     async fn check_login_frequency_passes_below_threshold() {
         let hook = BulwarkFirewallCheckHookDefault::new();
-        let ctx = LoginContext::new(1001).with_ip("1.2.3.4");
+        let ctx = LoginContext::new("1001").with_ip("1.2.3.4");
         // 记录 9 次失败（阈值 10）
         for _ in 0..9 {
             hook.record_failure(&ctx).await.unwrap();
@@ -599,7 +599,7 @@ mod tests {
     #[tokio::test]
     async fn check_login_frequency_blocks_at_threshold() {
         let hook = BulwarkFirewallCheckHookDefault::new();
-        let ctx = LoginContext::new(1001).with_ip("1.2.3.4");
+        let ctx = LoginContext::new("1001").with_ip("1.2.3.4");
         // 记录 10 次失败
         for _ in 0..10 {
             hook.record_failure(&ctx).await.unwrap();
@@ -615,11 +615,11 @@ mod tests {
     #[tokio::test]
     async fn check_brute_force_passes_below_threshold() {
         let hook = BulwarkFirewallCheckHookDefault::new();
-        let ctx = LoginContext::new(1001);
+        let ctx = LoginContext::new("1001");
         for _ in 0..4 {
             hook.record_failure(&ctx).await.unwrap();
         }
-        assert_eq!(hook.account_failure_count(1001), 4);
+        assert_eq!(hook.account_failure_count("1001"), 4);
         assert!(hook.check_brute_force(&ctx).await.is_ok());
     }
 
@@ -627,11 +627,11 @@ mod tests {
     #[tokio::test]
     async fn check_brute_force_blocks_at_threshold() {
         let hook = BulwarkFirewallCheckHookDefault::new();
-        let ctx = LoginContext::new(1001);
+        let ctx = LoginContext::new("1001");
         for _ in 0..5 {
             hook.record_failure(&ctx).await.unwrap();
         }
-        assert_eq!(hook.account_failure_count(1001), 5);
+        assert_eq!(hook.account_failure_count("1001"), 5);
         let result = hook.check_brute_force(&ctx).await;
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), BulwarkError::Session(_)));
@@ -641,22 +641,22 @@ mod tests {
     #[tokio::test]
     async fn reset_clears_all_counters() {
         let hook = BulwarkFirewallCheckHookDefault::new();
-        let ctx = LoginContext::new(1001).with_ip("1.2.3.4");
+        let ctx = LoginContext::new("1001").with_ip("1.2.3.4");
         hook.record_failure(&ctx).await.unwrap();
         hook.record_failure(&ctx).await.unwrap();
         assert_eq!(hook.ip_failure_count("1.2.3.4"), 2);
-        assert_eq!(hook.account_failure_count(1001), 2);
+        assert_eq!(hook.account_failure_count("1001"), 2);
         hook.reset();
         assert_eq!(hook.ip_failure_count("1.2.3.4"), 0);
-        assert_eq!(hook.account_failure_count(1001), 0);
+        assert_eq!(hook.account_failure_count("1001"), 0);
     }
 
     /// 不同 IP 的计数器相互独立。
     #[tokio::test]
     async fn ip_counters_are_independent() {
         let hook = BulwarkFirewallCheckHookDefault::new();
-        let ctx1 = LoginContext::new(1001).with_ip("1.1.1.1");
-        let ctx2 = LoginContext::new(1002).with_ip("2.2.2.2");
+        let ctx1 = LoginContext::new("1001").with_ip("1.1.1.1");
+        let ctx2 = LoginContext::new("1002").with_ip("2.2.2.2");
         hook.record_failure(&ctx1).await.unwrap();
         hook.record_failure(&ctx1).await.unwrap();
         hook.record_failure(&ctx2).await.unwrap();
@@ -668,21 +668,21 @@ mod tests {
     #[tokio::test]
     async fn account_counters_are_independent() {
         let hook = BulwarkFirewallCheckHookDefault::new();
-        let ctx1 = LoginContext::new(1001);
-        let ctx2 = LoginContext::new(1002);
+        let ctx1 = LoginContext::new("1001");
+        let ctx2 = LoginContext::new("1002");
         hook.record_failure(&ctx1).await.unwrap();
         hook.record_failure(&ctx1).await.unwrap();
         hook.record_failure(&ctx1).await.unwrap();
         hook.record_failure(&ctx2).await.unwrap();
-        assert_eq!(hook.account_failure_count(1001), 3);
-        assert_eq!(hook.account_failure_count(1002), 1);
+        assert_eq!(hook.account_failure_count("1001"), 3);
+        assert_eq!(hook.account_failure_count("1002"), 1);
     }
 
     /// geo_anomaly / token_reuse / device_anomaly 默认 pass（内存模式）。
     #[tokio::test]
     async fn other_hooks_pass_by_default() {
         let hook = BulwarkFirewallCheckHookDefault::new();
-        let ctx = LoginContext::new(1001).with_geo("Shanghai");
+        let ctx = LoginContext::new("1001").with_geo("Shanghai");
         assert!(hook.check_geo_anomaly(&ctx).await.is_ok());
         assert!(hook.check_token_reuse(&ctx).await.is_ok());
         assert!(hook.check_device_anomaly(&ctx).await.is_ok());
@@ -692,10 +692,10 @@ mod tests {
     #[tokio::test]
     async fn record_failure_increments_both_counters() {
         let hook = BulwarkFirewallCheckHookDefault::new();
-        let ctx = LoginContext::new(1001).with_ip("1.2.3.4");
+        let ctx = LoginContext::new("1001").with_ip("1.2.3.4");
         hook.record_failure(&ctx).await.unwrap();
         assert_eq!(hook.ip_failure_count("1.2.3.4"), 1);
-        assert_eq!(hook.account_failure_count(1001), 1);
+        assert_eq!(hook.account_failure_count("1001"), 1);
     }
 
     /// Default::default() 等价于 new()。
@@ -729,11 +729,11 @@ mod tests {
         let dao = Arc::new(MockDao::new());
         let hook = BulwarkFirewallCheckHookDefault::new().with_dao(dao);
         // 验证可创建，且 record_failure 走 DAO 路径（无内存计数器递增）
-        let ctx = LoginContext::new(1001).with_ip("9.9.9.9");
+        let ctx = LoginContext::new("1001").with_ip("9.9.9.9");
         hook.record_failure(&ctx).await.unwrap();
         // 内存计数器在 DAO 模式下保持为 0
         assert_eq!(hook.ip_failure_count("9.9.9.9"), 0);
-        assert_eq!(hook.account_failure_count(1001), 0);
+        assert_eq!(hook.account_failure_count("1001"), 0);
     }
 
     /// DAO 模式下 record_failure 递增 DAO 计数。
@@ -742,7 +742,7 @@ mod tests {
     #[tokio::test]
     async fn record_failure_dao_mode_increments_counter() {
         let (hook, dao) = make_dao_hook();
-        let ctx = LoginContext::new(1001).with_ip("1.2.3.4");
+        let ctx = LoginContext::new("1001").with_ip("1.2.3.4");
         // 记录 3 次失败
         for _ in 0..3 {
             hook.record_failure(&ctx).await.unwrap();
@@ -761,7 +761,7 @@ mod tests {
     #[tokio::test]
     async fn check_login_frequency_dao_mode_blocks_at_threshold() {
         let (hook, _dao) = make_dao_hook();
-        let ctx = LoginContext::new(1001).with_ip("5.6.7.8");
+        let ctx = LoginContext::new("1001").with_ip("5.6.7.8");
         // 记录 10 次失败（达到阈值）
         for _ in 0..10 {
             hook.record_failure(&ctx).await.unwrap();
@@ -777,7 +777,7 @@ mod tests {
     #[tokio::test]
     async fn check_brute_force_dao_mode_blocks_at_threshold() {
         let (hook, _dao) = make_dao_hook();
-        let ctx = LoginContext::new(1001);
+        let ctx = LoginContext::new("1001");
         for _ in 0..5 {
             hook.record_failure(&ctx).await.unwrap();
         }
@@ -796,7 +796,7 @@ mod tests {
         dao.set("token:blacklist:1001", "revoked", 3600)
             .await
             .unwrap();
-        let ctx = LoginContext::new(1001);
+        let ctx = LoginContext::new("1001");
         let result = hook.check_token_reuse(&ctx).await;
         assert!(result.is_err(), "Token 在黑名单中应阻断");
         assert!(matches!(result.unwrap_err(), BulwarkError::Session(_)));
@@ -808,7 +808,7 @@ mod tests {
     #[tokio::test]
     async fn check_token_reuse_passes_without_blacklist() {
         let (hook, _dao) = make_dao_hook();
-        let ctx = LoginContext::new(1001);
+        let ctx = LoginContext::new("1001");
         assert!(
             hook.check_token_reuse(&ctx).await.is_ok(),
             "无黑名单时应通过"
@@ -824,7 +824,7 @@ mod tests {
         // 预置上次登录地理位置为 Beijing
         dao.set("fw:geo:1001", "Beijing", 3600).await.unwrap();
         // 本次登录地理位置为 Shanghai → 异地
-        let ctx = LoginContext::new(1001).with_geo("Shanghai");
+        let ctx = LoginContext::new("1001").with_geo("Shanghai");
         let result = hook.check_geo_anomaly(&ctx).await;
         assert!(result.is_err(), "异地登录应阻断");
         assert!(matches!(result.unwrap_err(), BulwarkError::Session(_)));
@@ -836,7 +836,7 @@ mod tests {
     #[tokio::test]
     async fn check_geo_anomaly_passes_without_geo_data() {
         let (hook, _dao) = make_dao_hook();
-        let ctx = LoginContext::new(1001).with_geo("Shanghai");
+        let ctx = LoginContext::new("1001").with_geo("Shanghai");
         assert!(
             hook.check_geo_anomaly(&ctx).await.is_ok(),
             "无 geo 记录时应通过（首次登录）"
@@ -854,7 +854,7 @@ mod tests {
             .await
             .unwrap();
         // 本次设备指纹不在列表中
-        let ctx = LoginContext::new(1001).with_device("dev-unknown");
+        let ctx = LoginContext::new("1001").with_device("dev-unknown");
         let result = hook.check_device_anomaly(&ctx).await;
         assert!(result.is_err(), "未知设备应阻断");
         assert!(matches!(result.unwrap_err(), BulwarkError::Session(_)));
@@ -866,7 +866,7 @@ mod tests {
     #[tokio::test]
     async fn check_device_anomaly_passes_without_device_data() {
         let (hook, _dao) = make_dao_hook();
-        let ctx = LoginContext::new(1001).with_device("dev-new");
+        let ctx = LoginContext::new("1001").with_device("dev-new");
         assert!(
             hook.check_device_anomaly(&ctx).await.is_ok(),
             "无设备记录时应通过（首次登录）"
@@ -900,7 +900,7 @@ mod tests {
     #[tokio::test]
     async fn record_failure_resets_ip_count_when_window_expired() {
         let hook = BulwarkFirewallCheckHookDefault::new();
-        let ctx = LoginContext::new(1001).with_ip("10.0.0.1");
+        let ctx = LoginContext::new("1001").with_ip("10.0.0.1");
         // 第一次失败
         hook.record_failure(&ctx).await.unwrap();
         assert_eq!(hook.ip_failure_count("10.0.0.1"), 1);
@@ -927,14 +927,14 @@ mod tests {
     #[tokio::test]
     async fn record_failure_resets_account_count_when_window_expired() {
         let hook = BulwarkFirewallCheckHookDefault::new();
-        let ctx = LoginContext::new(1001);
+        let ctx = LoginContext::new("1001");
         // 第一次失败
         hook.record_failure(&ctx).await.unwrap();
-        assert_eq!(hook.account_failure_count(1001), 1);
+        assert_eq!(hook.account_failure_count("1001"), 1);
         // 手动将 first_failure_at 回拨到窗口外
         {
             let mut map = hook.account_failures.lock();
-            if let Some(entry) = map.get_mut(&1001.to_string()) {
+            if let Some(entry) = map.get_mut("1001") {
                 entry.first_failure_at =
                     Instant::now() - BRUTE_FORCE_WINDOW - Duration::from_secs(1);
             }
@@ -942,7 +942,7 @@ mod tests {
         // 第二次失败（窗口已过，应重置为 1）
         hook.record_failure(&ctx).await.unwrap();
         assert_eq!(
-            hook.account_failure_count(1001),
+            hook.account_failure_count("1001"),
             1,
             "窗口过期后账号计数应重置为 1"
         );
@@ -957,7 +957,7 @@ mod tests {
         // 写入非数字字符串到 fw:acct:1001
         dao.set("fw:acct:1001", "not-a-number", 3600).await.unwrap();
         let hook = BulwarkFirewallCheckHookDefault::new().with_dao(dao);
-        let ctx = LoginContext::new(1001);
+        let ctx = LoginContext::new("1001");
         // check_brute_force 读取非数字计数器应返回 Ok（解析为 0，未超阈值）
         let result = hook.check_brute_force(&ctx).await;
         assert!(
@@ -975,7 +975,7 @@ mod tests {
         // 写入 9 次失败（阈值 10）
         dao.set("fw:ip:1.2.3.4", "9", 3600).await.unwrap();
         let hook = BulwarkFirewallCheckHookDefault::new().with_dao(dao);
-        let ctx = LoginContext::new(1001).with_ip("1.2.3.4");
+        let ctx = LoginContext::new("1001").with_ip("1.2.3.4");
         let result = hook.check_login_frequency(&ctx).await;
         assert!(result.is_ok(), "9 次失败 < 阈值 10，应通过");
     }
@@ -989,7 +989,7 @@ mod tests {
         // 写入 4 次失败（阈值 5）
         dao.set("fw:acct:1001", "4", 3600).await.unwrap();
         let hook = BulwarkFirewallCheckHookDefault::new().with_dao(dao);
-        let ctx = LoginContext::new(1001);
+        let ctx = LoginContext::new("1001");
         let result = hook.check_brute_force(&ctx).await;
         assert!(result.is_ok(), "4 次失败 < 阈值 5，应通过");
     }
@@ -1009,7 +1009,7 @@ mod tests {
         let hook = BulwarkFirewallCheckHookDefault::new()
             .with_dao(dao)
             .with_listener_manager(lm);
-        let ctx = LoginContext::new(1001);
+        let ctx = LoginContext::new("1001");
         let result = hook.check_brute_force(&ctx).await;
         assert!(result.is_err(), "5 次失败 ≥ 阈值 5，应阻断");
         // 验证错误信息包含 login_id
@@ -1026,7 +1026,7 @@ mod tests {
         use crate::listener::BulwarkListenerManager;
         let lm = Arc::new(BulwarkListenerManager::new());
         let hook = BulwarkFirewallCheckHookDefault::new().with_listener_manager(lm);
-        let ctx = LoginContext::new(1001);
+        let ctx = LoginContext::new("1001");
         // 记录 5 次失败（阈值 5）
         for _ in 0..5 {
             hook.record_failure(&ctx).await.unwrap();
@@ -1042,7 +1042,7 @@ mod tests {
     async fn check_geo_anomaly_in_memory_mode_passes_without_ctx_geo() {
         let hook = BulwarkFirewallCheckHookDefault::new();
         // 无 DAO + 无 geo
-        let ctx = LoginContext::new(1001);
+        let ctx = LoginContext::new("1001");
         let result = hook.check_geo_anomaly(&ctx).await;
         assert!(result.is_ok(), "内存模式无 ctx_geo 时应返回 Ok");
     }
@@ -1054,7 +1054,7 @@ mod tests {
     async fn check_device_anomaly_in_memory_mode_passes_without_fingerprint() {
         let hook = BulwarkFirewallCheckHookDefault::new();
         // 无 DAO + 无 device_fingerprint
-        let ctx = LoginContext::new(1001);
+        let ctx = LoginContext::new("1001");
         let result = hook.check_device_anomaly(&ctx).await;
         assert!(result.is_ok(), "内存模式无 device_fingerprint 时应返回 Ok");
     }
@@ -1070,7 +1070,7 @@ mod tests {
             .await
             .unwrap();
         // 本次设备指纹在列表中
-        let ctx = LoginContext::new(1001).with_device("dev-known-1");
+        let ctx = LoginContext::new("1001").with_device("dev-known-1");
         let result = hook.check_device_anomaly(&ctx).await;
         assert!(result.is_ok(), "已知设备指纹应通过");
     }

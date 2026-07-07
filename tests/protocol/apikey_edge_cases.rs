@@ -150,13 +150,13 @@ async fn namespace_isolation_blocks_cross_namespace_access() {
 
     // namespace A：login_id=1001，scopes=["read"]
     let key_a = handler
-        .generate(1001, vec!["read".to_string()], 3600)
+        .generate("1001", vec!["read".to_string()], 3600)
         .await
         .unwrap();
 
     // namespace B：login_id=2002，scopes=["write"]
     let key_b = handler
-        .generate(2002, vec!["write".to_string()], 3600)
+        .generate("2002", vec!["write".to_string()], 3600)
         .await
         .unwrap();
 
@@ -166,20 +166,22 @@ async fn namespace_isolation_blocks_cross_namespace_access() {
     // namespace A 的 key → verify 返回 login_id=1001
     let info_a = handler.verify(&key_a).await.unwrap();
     assert_eq!(
-        info_a.login_id, 1001,
+        info_a.login_id,
+        "1001".to_string(),
         "namespace A 的 key 应返回 login_id=1001"
     );
 
     // namespace B 的 key → verify 返回 login_id=2002
     let info_b = handler.verify(&key_b).await.unwrap();
     assert_eq!(
-        info_b.login_id, 2002,
+        info_b.login_id,
+        "2002".to_string(),
         "namespace B 的 key 应返回 login_id=2002"
     );
 
     // 模拟业务方的命名空间检查：namespace A 的 key 不能用于 namespace B
-    let namespace_a_login_id = 1001;
-    let namespace_b_login_id = 2002;
+    let namespace_a_login_id = "1001".to_string();
+    let namespace_b_login_id = "2002".to_string();
 
     // key_a 的 login_id 不匹配 namespace B
     assert_ne!(
@@ -213,7 +215,7 @@ async fn expired_apikey_validation_fails() {
     let handler = make_handler();
 
     // 生成一个 1 秒过期的 key
-    let key = handler.generate(1001, vec![], 1).await.unwrap();
+    let key = handler.generate("1001", vec![], 1).await.unwrap();
 
     // 等待 2 秒让 key 过期
     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;

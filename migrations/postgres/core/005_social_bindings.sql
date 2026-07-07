@@ -12,7 +12,7 @@
 CREATE TABLE IF NOT EXISTS social_bindings (
     id               BIGSERIAL PRIMARY KEY,
     tenant_id        BIGINT  NOT NULL DEFAULT 0,
-    login_id         BIGINT  NOT NULL,
+    login_id         TEXT    NOT NULL,
     provider         TEXT    NOT NULL,
     provider_user_id TEXT    NOT NULL,
     union_id         TEXT,

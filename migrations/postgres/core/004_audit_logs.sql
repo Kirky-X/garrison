@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     id          BIGSERIAL PRIMARY KEY,
     tenant_id   BIGINT  NOT NULL DEFAULT 0,   -- 租户 ID（i64，0=默认租户）
     event_type  TEXT    NOT NULL,              -- 事件类型（如 "login"/"logout"/"kickout"）
-    login_id    BIGINT,                        -- 登录主体 ID（可为 NULL，如 TokenExpired 无 login_id）
+    login_id    TEXT,                          -- 登录主体 ID（可为 NULL，如 TokenExpired 无 login_id）
     token       TEXT,                          -- 关联 token（可为 NULL）
     ip          TEXT,                          -- 客户端 IP（可为 NULL）
     user_agent  TEXT,                          -- 客户端 User-Agent（可为 NULL）

@@ -834,7 +834,7 @@ async fn register_device_creates_new_device() {
     let repo = DbnexusUserDeviceRepository::new(pool);
 
     let device_id = repo
-        .register_device(TENANT_A, 1001, "fingerprint-001", UA_CHROME_WIN)
+        .register_device(TENANT_A, "1001", "fingerprint-001", UA_CHROME_WIN)
         .await
         .expect("register_device 应成功");
 
@@ -843,15 +843,15 @@ async fn register_device_creates_new_device() {
     uuid::Uuid::parse_str(&device_id).expect("设备 ID 应为合法 UUID");
 
     // count 应为 1
-    let count = repo.count_user_devices(TENANT_A, 1001).await.unwrap();
+    let count = repo.count_user_devices(TENANT_A, "1001").await.unwrap();
     assert_eq!(count, 1, "注册一个设备后 count 应为 1");
 
     // list 返回的设备信息正确
-    let devices = repo.list_user_devices(TENANT_A, 1001).await.unwrap();
+    let devices = repo.list_user_devices(TENANT_A, "1001").await.unwrap();
     assert_eq!(devices.len(), 1);
     assert_eq!(devices[0].device_identifier, "fingerprint-001");
     assert_eq!(devices[0].tenant_id, TENANT_A);
-    assert_eq!(devices[0].login_id, 1001);
+    assert_eq!(devices[0].login_id, "1001".to_string());
     assert!(!devices[0].is_blocked, "新设备默认未阻断");
 }
 
@@ -867,18 +867,18 @@ async fn register_device_rejects_when_max_exceeded() {
     // 注册 MAX_DEVICES 个设备
     for i in 0..MAX_DEVICES {
         let identifier = format!("fp-max-{:03}", i);
-        repo.register_device(TENANT_A, 2002, &identifier, UA_CHROME_WIN)
+        repo.register_device(TENANT_A, "2002", &identifier, UA_CHROME_WIN)
             .await
             .unwrap_or_else(|_| panic!("注册第 {} 个设备应成功", i + 1));
     }
 
     // 验证当前数量
-    let count = repo.count_user_devices(TENANT_A, 2002).await.unwrap();
+    let count = repo.count_user_devices(TENANT_A, "2002").await.unwrap();
     assert_eq!(count, MAX_DEVICES, "应已注册 MAX_DEVICES 个设备");
 
     // 第 MAX_DEVICES+1 个应被拒绝
     let result = repo
-        .register_device(TENANT_A, 2002, "fp-overflow", UA_CHROME_WIN)
+        .register_device(TENANT_A, "2002", "fp-overflow", UA_CHROME_WIN)
         .await;
     assert!(
         matches!(result, Err(bulwark::error::BulwarkError::InvalidParam(_))),
@@ -887,7 +887,7 @@ async fn register_device_rejects_when_max_exceeded() {
     );
 
     // count 应保持不变
-    let count_after = repo.count_user_devices(TENANT_A, 2002).await.unwrap();
+    let count_after = repo.count_user_devices(TENANT_A, "2002").await.unwrap();
     assert_eq!(count_after, MAX_DEVICES, "拒绝后 count 应保持 MAX_DEVICES");
 }
 
@@ -902,19 +902,19 @@ async fn register_device_idempotent_on_duplicate() {
     let repo = DbnexusUserDeviceRepository::new(pool);
 
     let id_first = repo
-        .register_device(TENANT_A, 3003, "dup-fingerprint", UA_CHROME_WIN)
+        .register_device(TENANT_A, "3003", "dup-fingerprint", UA_CHROME_WIN)
         .await
         .expect("首次注册应成功");
 
     let id_second = repo
-        .register_device(TENANT_A, 3003, "dup-fingerprint", UA_CHROME_WIN)
+        .register_device(TENANT_A, "3003", "dup-fingerprint", UA_CHROME_WIN)
         .await
         .expect("重复注册应幂等返回已有 ID");
 
     assert_eq!(id_first, id_second, "重复注册同一 identifier 应返回相同 ID");
 
     // count 仍为 1
-    let count = repo.count_user_devices(TENANT_A, 3003).await.unwrap();
+    let count = repo.count_user_devices(TENANT_A, "3003").await.unwrap();
     assert_eq!(count, 1, "重复注册不应新增记录");
 }
 
@@ -925,19 +925,19 @@ async fn block_device_sets_is_blocked() {
     let repo = DbnexusUserDeviceRepository::new(pool);
 
     let device_id = repo
-        .register_device(TENANT_A, 4004, "block-fp", UA_CHROME_WIN)
+        .register_device(TENANT_A, "4004", "block-fp", UA_CHROME_WIN)
         .await
         .expect("注册应成功");
 
     // 阻断前 is_blocked = false
-    let devices = repo.list_user_devices(TENANT_A, 4004).await.unwrap();
+    let devices = repo.list_user_devices(TENANT_A, "4004").await.unwrap();
     assert!(!devices[0].is_blocked, "新设备应未阻断");
 
     // 执行阻断
     repo.block_device(&device_id).await.expect("block 应成功");
 
     // 阻断后 is_blocked = true
-    let devices = repo.list_user_devices(TENANT_A, 4004).await.unwrap();
+    let devices = repo.list_user_devices(TENANT_A, "4004").await.unwrap();
     assert!(
         devices[0].is_blocked,
         "block_device 后 is_blocked 应为 true"
@@ -951,20 +951,20 @@ async fn unblock_device_clears_is_blocked() {
     let repo = DbnexusUserDeviceRepository::new(pool);
 
     let device_id = repo
-        .register_device(TENANT_A, 5005, "unblock-fp", UA_CHROME_WIN)
+        .register_device(TENANT_A, "5005", "unblock-fp", UA_CHROME_WIN)
         .await
         .expect("注册应成功");
 
     // 先阻断
     repo.block_device(&device_id).await.expect("block 应成功");
-    let devices = repo.list_user_devices(TENANT_A, 5005).await.unwrap();
+    let devices = repo.list_user_devices(TENANT_A, "5005").await.unwrap();
     assert!(devices[0].is_blocked, "阻断后应为 true");
 
     // 再解除
     repo.unblock_device(&device_id)
         .await
         .expect("unblock 应成功");
-    let devices = repo.list_user_devices(TENANT_A, 5005).await.unwrap();
+    let devices = repo.list_user_devices(TENANT_A, "5005").await.unwrap();
     assert!(
         !devices[0].is_blocked,
         "unblock_device 后 is_blocked 应为 false"
@@ -985,18 +985,18 @@ async fn list_user_devices_returns_all() {
         } else {
             UA_SAFARI_MAC
         };
-        repo.register_device(TENANT_A, 6006, &identifier, ua)
+        repo.register_device(TENANT_A, "6006", &identifier, ua)
             .await
             .expect("注册应成功");
     }
 
-    let devices = repo.list_user_devices(TENANT_A, 6006).await.unwrap();
+    let devices = repo.list_user_devices(TENANT_A, "6006").await.unwrap();
     assert_eq!(devices.len(), 3, "应返回 3 个设备");
 
     // 验证所有设备的 tenant_id / login_id 正确
     for d in &devices {
         assert_eq!(d.tenant_id, TENANT_A);
-        assert_eq!(d.login_id, 6006);
+        assert_eq!(d.login_id, "6006".to_string());
     }
 }
 
@@ -1007,18 +1007,18 @@ async fn count_user_devices_returns_count() {
     let repo = DbnexusUserDeviceRepository::new(pool);
 
     // 初始 0
-    let count = repo.count_user_devices(TENANT_A, 7007).await.unwrap();
+    let count = repo.count_user_devices(TENANT_A, "7007").await.unwrap();
     assert_eq!(count, 0, "初始 count 应为 0");
 
     // 注册 2 个
-    repo.register_device(TENANT_A, 7007, "cnt-fp-1", UA_CHROME_WIN)
+    repo.register_device(TENANT_A, "7007", "cnt-fp-1", UA_CHROME_WIN)
         .await
         .unwrap();
-    repo.register_device(TENANT_A, 7007, "cnt-fp-2", UA_SAFARI_MAC)
+    repo.register_device(TENANT_A, "7007", "cnt-fp-2", UA_SAFARI_MAC)
         .await
         .unwrap();
 
-    let count = repo.count_user_devices(TENANT_A, 7007).await.unwrap();
+    let count = repo.count_user_devices(TENANT_A, "7007").await.unwrap();
     assert_eq!(count, 2, "注册 2 个后 count 应为 2");
 }
 
@@ -1032,33 +1032,33 @@ async fn list_user_devices_tenant_isolation() {
     let repo = DbnexusUserDeviceRepository::new(pool);
 
     // tenant A 注册 2 个设备
-    repo.register_device(TENANT_A, 8008, "tenant-a-fp-1", UA_CHROME_WIN)
+    repo.register_device(TENANT_A, "8008", "tenant-a-fp-1", UA_CHROME_WIN)
         .await
         .unwrap();
-    repo.register_device(TENANT_A, 8008, "tenant-a-fp-2", UA_SAFARI_MAC)
+    repo.register_device(TENANT_A, "8008", "tenant-a-fp-2", UA_SAFARI_MAC)
         .await
         .unwrap();
 
     // tenant B 同一 login_id 注册 1 个设备
-    repo.register_device(TENANT_B, 8008, "tenant-b-fp-1", UA_CHROME_WIN)
+    repo.register_device(TENANT_B, "8008", "tenant-b-fp-1", UA_CHROME_WIN)
         .await
         .unwrap();
 
     // tenant A 应只见 2 个
-    let list_a = repo.list_user_devices(TENANT_A, 8008).await.unwrap();
+    let list_a = repo.list_user_devices(TENANT_A, "8008").await.unwrap();
     assert_eq!(list_a.len(), 2, "tenant A 应只见 2 个设备");
     for d in &list_a {
         assert_eq!(d.tenant_id, TENANT_A, "tenant A 列表不应包含其他租户设备");
     }
 
     // tenant B 应只见 1 个
-    let list_b = repo.list_user_devices(TENANT_B, 8008).await.unwrap();
+    let list_b = repo.list_user_devices(TENANT_B, "8008").await.unwrap();
     assert_eq!(list_b.len(), 1, "tenant B 应只见 1 个设备");
     assert_eq!(list_b[0].tenant_id, TENANT_B);
 
     // count 隔离
-    let count_a = repo.count_user_devices(TENANT_A, 8008).await.unwrap();
-    let count_b = repo.count_user_devices(TENANT_B, 8008).await.unwrap();
+    let count_a = repo.count_user_devices(TENANT_A, "8008").await.unwrap();
+    let count_b = repo.count_user_devices(TENANT_B, "8008").await.unwrap();
     assert_eq!(count_a, 2);
     assert_eq!(count_b, 1);
 }
