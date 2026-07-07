@@ -672,6 +672,13 @@ pub trait UserDeviceRepository: Send + Sync {
 #[cfg(any(feature = "db-sqlite", feature = "db-postgres"))]
 pub mod sqlite;
 
+/// PostgreSQL Repository 实现子模块（v0.5.1 新增，依据 tasks.md T111-T114 / D8）。
+///
+/// 复用 `sqlite` 模块的 backend-agnostic 实现（通过 `make_statement` 自动转换占位符），
+/// 仅以 Postgres 命名空间 re-export 类型别名，避免代码重复。详见 `postgres/mod.rs` 文档。
+#[cfg(feature = "db-postgres")]
+pub mod postgres;
+
 /// 角色层级子模块（v0.5.0 新增，依据 proposal H6）。
 ///
 /// always compiled（`RoleHierarchyRecord` 不依赖 db-sqlite）。
