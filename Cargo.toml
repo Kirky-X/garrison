@@ -76,10 +76,8 @@ oxcache = { version = "0.3", optional = true }
 # default-features = false：dbnexus 0.3+ 禁止 embedded(sqlite) 与 server-side(postgres) 混用，
 # 由 db-base feature 显式启用基础 features，db-sqlite / db-postgres 分别启用 sqlite / postgres。
 dbnexus = { version = "0.3", optional = true, default-features = false }
-# sea-orm: Repository 层参数化查询依赖（Statement/Value/ConnectionTrait）。
-# 版本与 dbnexus 0.3 一致（2.0.0-rc.37 ⊂ 2.0.0-rc.42，cargo 统一到 rc.42），由 db-sqlite / db-postgres feature 启用。
-# dbnexus 未 re-export Statement/Value/ConnectionTrait，需显式声明为直接依赖。
-# features 仅显式启用 sqlx-sqlite；db-postgres feature 通过 dbnexus/postgres → sea-orm/sqlx-postgres 自动合并（cargo feature unification）。
+# sea-orm: Repository 层参数化查询依赖（Statement/Value/ConnectionTrait），由 db-sqlite / db-postgres feature 启用。
+# dbnexus 未 re-export 这些类型，需显式声明为直接依赖。
 sea-orm = { version = "2.0.0-rc.37", default-features = false, features = ["sqlx-sqlite", "runtime-tokio-rustls"], optional = true }
 prometheus = { version = "0.14", optional = true }
 # 可观测性：tracing-subscriber 用于 JSON 日志，opentelemetry 用于分布式追踪
@@ -114,8 +112,6 @@ mockall = "0.15"
 tempfile = "3.27"
 # serial_test 用于串行化依赖 std::env::set_var 的测试，避免多线程并发污染环境变量
 serial_test = "3"
-# sea-orm 用于 dbnexus 集成测试的查询验证（版本与 dbnexus 0.3 一致）
-sea-orm = { version = "2.0.0-rc.37", default-features = false, features = ["sqlx-sqlite", "runtime-tokio-rustls"] }
 # tower 用于 axum 集成测试（oneshot Request）
 tower = { version = "0.5", default-features = false, features = ["util"] }
 # http-body-util 用于 axum 测试中的 body 读取
@@ -124,8 +120,6 @@ http-body-util = "0.1"
 wiremock = "0.6"
 # warp test feature 仅在测试时启用 warp::test 模块（不影响生产构建）
 warp = { version = "0.4", default-features = false, features = ["test"] }
-# base64 用于 OIDC 测试中解析 JWT header 段（与 protocol-sign 使用的 base64 0.22 版本一致）
-base64 = "0.22"
 # rsa + rand 用于 keycloak-oidc 测试中生成 RSA 密钥对签发/验签 id_token（T115-T120）
 # rsa 0.9 已是 jsonwebtoken rust_crypto feature 的间接依赖，不增加构建开销
 rsa = "0.9"
@@ -246,7 +240,7 @@ parameter-query = []
 
 # === 0.5.0 新增：审计日志（依据 proposal H3） ===
 # audit-log 依赖 listener（AuditLogListener 实现 BulwarkListener trait）
-audit-log = ["listener", "sha2", "hmac"]
+audit-log = ["listener"]
 
 # === 0.5.0 新增：安全防护套件（依据 proposal H5） ===
 # firewall 为基础 trait + FirewallContext + StrategyRegistration，无额外依赖
