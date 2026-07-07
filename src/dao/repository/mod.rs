@@ -623,10 +623,10 @@ pub trait UserExtRepository: Send + Sync {
         -> BulwarkResult<Vec<UserExtRow>>;
 }
 
-/// 单用户最大设备数（依据 design.md D4，默认 10）。
+/// 单用户最大设备数（依据 spec R-repository-layer-003，默认 5）。
 ///
 /// `register_device` 在 (tenant_id, login_id) 下设备数达到此值时拒绝新注册。
-pub const MAX_DEVICES: usize = 10;
+pub const MAX_DEVICES: usize = 5;
 
 /// 用户设备 Repository trait（v0.5.1 新增，依据 design.md D4）。
 ///
@@ -922,10 +922,10 @@ mod tests {
         assert!(!row.is_blocked);
     }
 
-    /// MAX_DEVICES 常量值为 10。
+    /// MAX_DEVICES 常量值为 5（依据 spec R-repository-layer-003）。
     #[test]
-    fn max_devices_is_ten() {
-        assert_eq!(MAX_DEVICES, 10);
+    fn max_devices_is_five() {
+        assert_eq!(MAX_DEVICES, 5);
     }
 
     // ========================================================================
