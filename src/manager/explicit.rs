@@ -76,6 +76,11 @@ impl Manager {
     /// - `Err(NotPermission)` → `Decision::deny(NoMatchingPermission)`
     /// - 其他错误（未登录 / DAO 故障等）透传
     ///
+    /// # trace_id
+    ///
+    /// 依据 spec R-manager-explicit-002，返回的 `Decision.trace_id` 非空（UUID v7，时间有序）。
+    /// 每次调用 `authorize` 都生成新的 UUID v7，便于跨服务追踪与审计关联。
+    ///
     /// # 鉴权上下文
     ///
     /// 实际 `login_id` 由 task_local token 上下文决定（与 `BulwarkUtil` 一致），
@@ -87,11 +92,17 @@ impl Manager {
     /// - DAO 故障等：透传对应 `BulwarkError`。
     /// - "未持有权限"不是错误，返回 `Ok(Decision { allowed: false, .. })`。
     pub async fn authorize(&self, req: &AuthRequest) -> BulwarkResult<Decision> {
+        // 依据 spec R-manager-explicit-002：trace_id 非空 UUID v7（时间有序）
+        let trace_id = Some(uuid::Uuid::now_v7().to_string());
         match self.logic.check_permission(&req.action).await {
-            Ok(()) => Ok(Decision::allow()),
-            Err(BulwarkError::NotPermission(_)) => {
-                Ok(Decision::deny(DecisionReason::NoMatchingPermission))
-            },
+            Ok(()) => Ok(Decision {
+                trace_id,
+                ..Decision::allow()
+            }),
+            Err(BulwarkError::NotPermission(_)) => Ok(Decision {
+                trace_id,
+                ..Decision::deny(DecisionReason::NoMatchingPermission)
+            }),
             Err(e) => Err(e),
         }
     }

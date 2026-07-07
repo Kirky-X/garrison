@@ -137,12 +137,12 @@ impl PermissionRegistry {
     /// 校验权限是否已注册，返回其 `required_roles`。
     ///
     /// # 错误
-    /// - 权限未注册 → `BulwarkError::NotPermission`
+    /// - 权限未注册 → `BulwarkError::InvalidParam`（依据 spec R-permission-registry-001）
     pub fn validate(&self, permission: &str) -> BulwarkResult<Vec<String>> {
         let map = self.permissions.read();
         match map.get(permission) {
             Some(spec) => Ok(spec.required_roles.clone()),
-            None => Err(BulwarkError::NotPermission(format!(
+            None => Err(BulwarkError::InvalidParam(format!(
                 "权限未在注册表中注册: {}",
                 permission
             ))),
@@ -254,15 +254,15 @@ mod tests {
         assert_eq!(roles, vec!["admin".to_string(), "editor".to_string()]);
     }
 
-    /// T057-3: validate 未注册的权限返回 NotPermission 错误（spec Scenario）。
+    /// T057-3: validate 未注册的权限返回 InvalidParam 错误（spec R-permission-registry-001）。
     #[test]
     fn validate_returns_error_for_unregistered_permission() {
         let registry = PermissionRegistry::new();
         let result = registry.validate("nonexistent:perm");
         assert!(result.is_err(), "未注册权限应返回错误");
         match result.err() {
-            Some(BulwarkError::NotPermission(_)) => {},
-            other => panic!("期望 NotPermission，实际: {:?}", other),
+            Some(BulwarkError::InvalidParam(_)) => {},
+            other => panic!("期望 InvalidParam，实际: {:?}", other),
         }
     }
 

@@ -79,7 +79,7 @@ async fn user_repo_create_table_missing() {
         .create(
             TENANT,
             NewUser {
-                id: "u-1".to_string(),
+                id: "550e8400-e29b-41d4-a716-446655440000".to_string(),
                 username: "alice".to_string(),
                 password_hash: "h".to_string(),
                 status: "active".to_string(),

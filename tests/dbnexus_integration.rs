@@ -89,12 +89,12 @@ async fn setup_db() -> dbnexus::DbPool {
 }
 
 // ============================================================================
-// 1. 端到端迁移：验证 9 张表全部创建
+// 1. 端到端迁移：验证 10 张表全部创建
 // ============================================================================
 
 /// Scenario: migrate_core 在项目真实迁移文件上创建全部表。
 /// WHEN BulwarkMigration::migrate_core() 执行 001_init.sql
-/// THEN sqlite_master 中应包含 9 张表 + 全部索引
+/// THEN sqlite_master 中应包含 10 张表 + 全部索引
 #[tokio::test]
 async fn integration_migrate_creates_all_tables() {
     let pool = setup_db().await;
@@ -115,12 +115,13 @@ async fn integration_migrate_creates_all_tables() {
         "app_role_permission",
         "app_session",
         "app_user",
+        "app_user_device",
         "app_user_ext",
         "app_user_role",
     ];
     assert_eq!(
         tables, expected,
-        "应创建 9 张 app_ 前缀表，实际: {:?}",
+        "应创建 10 张 app_ 前缀表，实际: {:?}",
         tables
     );
 
@@ -618,7 +619,7 @@ async fn integration_migrate_idempotent() {
         "SELECT count(*) AS cnt FROM sqlite_master WHERE type='table' AND name LIKE 'app_%'",
     )
     .await;
-    assert_eq!(count, 9, "二次迁移后表数仍应为 9");
+    assert_eq!(count, 10, "二次迁移后表数仍应为 10");
 }
 
 // ============================================================================

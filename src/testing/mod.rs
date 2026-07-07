@@ -192,12 +192,32 @@ impl JsonTestSuite {
 ///
 /// 比较字段：`allowed` / `reason` / `errors` / `checked_permissions` / `matched_roles`。
 /// `trace_id` 通常是运行时动态生成，不应作为测试断言依据，故忽略。
+///
+/// # reason 前缀匹配（依据 spec R-testing-002）
+///
+/// `reason` 字段支持部分匹配（前缀匹配，非精确匹配）：
+/// - 无数据变体（`ExplicitAllow` / `NoMatchingPermission` 等）：精确匹配
+/// - `FirewallBlocked(expected_msg)`：`actual_msg.starts_with(expected_msg)`，
+///   允许 expected 只指定前缀（如 `"ip blocked"` 匹配 actual `"ip blocked: 1.2.3.4"`）
 fn decisions_match(expected: &Decision, actual: &Decision) -> bool {
     expected.allowed == actual.allowed
-        && expected.reason == actual.reason
+        && reason_matches(&expected.reason, &actual.reason)
         && expected.errors == actual.errors
         && expected.checked_permissions == actual.checked_permissions
         && expected.matched_roles == actual.matched_roles
+}
+
+/// 比较 `DecisionReason` 是否匹配（前缀匹配，依据 spec R-testing-002）。
+///
+/// - 无数据变体：精确匹配（`PartialEq`）
+/// - `FirewallBlocked(expected_msg)`：`actual_msg.starts_with(expected_msg)`
+fn reason_matches(expected: &DecisionReason, actual: &DecisionReason) -> bool {
+    match (expected, actual) {
+        (DecisionReason::FirewallBlocked(exp), DecisionReason::FirewallBlocked(act)) => {
+            act.starts_with(exp)
+        },
+        (exp, act) => exp == act,
+    }
 }
 
 // ============================================================================
