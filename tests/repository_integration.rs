@@ -915,7 +915,7 @@ async fn register_device_rejects_when_max_exceeded() {
         let identifier = format!("fp-max-{:03}", i);
         repo.register_device(TENANT_A, 2002, &identifier, UA_CHROME_WIN)
             .await
-            .expect(&format!("注册第 {} 个设备应成功", i + 1));
+            .unwrap_or_else(|_| panic!("注册第 {} 个设备应成功", i + 1));
     }
 
     // 验证当前数量
