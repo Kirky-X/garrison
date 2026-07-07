@@ -9,8 +9,8 @@
 //!
 //! # LoginId 迁移（v0.4.2 spec R-login-id-type-003）
 //!
-//! `login_id` 参数从 `i64` 迁移为 `impl Into<LoginId> + Send`，
-//! 同时支持 `i64`（`LoginId::Numeric`）与 `String`/`&str`（`LoginId::String`）。
+//! `login_id` 参数从 `i64` 迁移为 `&LoginId`（对象安全）。
+//! `BulwarkUtil` 保留 `impl Into<LoginId>` ergonomic 入口。
 
 use crate::error::{BulwarkError, BulwarkResult};
 use crate::stp::login_id::LoginId;
@@ -38,7 +38,7 @@ pub trait PasswordLogic: SessionLogic {
     /// 密码登录：校验密码后签发 token。
     ///
     /// # 参数
-    /// - `login_id`: 登录主体标识（接受 `i64` 或 `String`/`&str`，作为 username 字符串查询 `UserRepository`）。
+    /// - `login_id`: 登录主体标识引用（作为 username 字符串查询 `UserRepository`）。
     /// - `password`: 明文密码（仅校验时临时持有，不存储）。
     ///
     /// # 返回
@@ -54,7 +54,7 @@ pub trait PasswordLogic: SessionLogic {
     /// - DAO 查询失败：透传 `BulwarkError::Dao`。
     async fn login_with_password(
         &self,
-        _login_id: impl Into<LoginId> + Send,
+        _login_id: &LoginId,
         _password: &str,
     ) -> BulwarkResult<String> {
         Err(BulwarkError::NotImplemented(
@@ -87,26 +87,19 @@ mod tests {
 
     #[async_trait]
     impl SessionLogic for MockPassword {
-        async fn login(&self, _login_id: impl Into<LoginId> + Send) -> BulwarkResult<String> {
+        async fn login(&self, _login_id: &LoginId) -> BulwarkResult<String> {
             Ok("mock-token".to_string())
         }
-        async fn login_with_token(
-            &self,
-            _login_id: impl Into<LoginId> + Send,
-            _token: &str,
-        ) -> BulwarkResult<()> {
+        async fn login_with_token(&self, _login_id: &LoginId, _token: &str) -> BulwarkResult<()> {
             Ok(())
         }
         async fn logout(&self) -> BulwarkResult<()> {
             Ok(())
         }
-        async fn logout_by_login_id(
-            &self,
-            _login_id: impl Into<LoginId> + Send,
-        ) -> BulwarkResult<()> {
+        async fn logout_by_login_id(&self, _login_id: &LoginId) -> BulwarkResult<()> {
             Ok(())
         }
-        async fn kickout(&self, _login_id: impl Into<LoginId> + Send) -> BulwarkResult<()> {
+        async fn kickout(&self, _login_id: &LoginId) -> BulwarkResult<()> {
             Ok(())
         }
         async fn kickout_by_token(&self, _token: &str) -> BulwarkResult<()> {
@@ -131,7 +124,8 @@ mod tests {
         let mock = MockPassword {
             config: Arc::new(BulwarkConfig::default()),
         };
-        let result = mock.login_with_password("alice", "secret").await;
+        let id = LoginId::String("alice".to_string());
+        let result = mock.login_with_password(&id, "secret").await;
         assert!(matches!(result, Err(BulwarkError::NotImplemented(_))));
     }
 }

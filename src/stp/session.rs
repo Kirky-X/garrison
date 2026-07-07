@@ -8,8 +8,8 @@
 //!
 //! # LoginId 迁移（v0.4.2 spec R-login-id-type-003）
 //!
-//! 所有 `login_id: i64` 签名迁移为 `login_id: impl Into<LoginId> + Send`，
-//! 同时支持 `i64`（`LoginId::Numeric`）与 `String`/`&str`（`LoginId::String`）。
+//! 所有 `login_id: i64` 签名迁移为 `login_id: &LoginId`（对象安全，可作 `dyn`）。
+//! `BulwarkUtil` 保留 `impl Into<LoginId>` ergonomic 入口，自动 `.into()` 后传引用。
 //! `get_login_id()` 返回类型从 `Option<i64>` 迁移为 `Option<LoginId>`。
 
 use crate::error::{BulwarkError, BulwarkResult};
@@ -32,14 +32,15 @@ use async_trait::async_trait;
 ///
 /// # 对象安全
 ///
-/// 含 `impl Into<LoginId> + Send` 泛型参数的方法（`login`/`login_with_token`/
-/// `logout_by_login_id`/`kickout`）非对象安全，本 trait 暂不可作 `dyn SessionLogic` 使用。
+/// 所有方法参数均为具体类型（`&LoginId`/`&str`），无泛型参数，trait 对象安全，
+/// 可作 `dyn SessionLogic` 使用。`BulwarkManager` 返回 `Arc<dyn BulwarkLogic>`
+/// （super-trait）后，可通过 trait 向上转型调用本 trait 方法。
 #[async_trait]
 pub trait SessionLogic: BulwarkCore {
     /// 执行登录：生成 token + 创建会话。
     ///
     /// # 参数
-    /// - `login_id`: 登录主体标识（接受 `i64` 或 `String`/`&str`）。
+    /// - `login_id`: 登录主体标识引用。
     ///
     /// # 返回
     /// 生成的 token 字符串。
@@ -47,14 +48,14 @@ pub trait SessionLogic: BulwarkCore {
     /// # 错误
     /// - token 生成失败（如 `token_style` 非法）：`BulwarkError::Config`。
     /// - 会话创建失败：透传 `BulwarkError`。
-    async fn login(&self, login_id: impl Into<LoginId> + Send) -> BulwarkResult<String>;
+    async fn login(&self, login_id: &LoginId) -> BulwarkResult<String>;
 
     /// 执行登录（自定义 token）：用指定 token 创建会话。
     ///
     /// 用于 token 转发、自定义 token 生成等场景。
     ///
     /// # 参数
-    /// - `login_id`: 登录主体标识（接受 `i64` 或 `String`/`&str`）。
+    /// - `login_id`: 登录主体标识引用。
     /// - `token`: 自定义 token 字符串。
     ///
     /// # 返回
@@ -62,11 +63,7 @@ pub trait SessionLogic: BulwarkCore {
     ///
     /// # 错误
     /// - 会话创建失败：透传 `BulwarkError`。
-    async fn login_with_token(
-        &self,
-        login_id: impl Into<LoginId> + Send,
-        token: &str,
-    ) -> BulwarkResult<()>;
+    async fn login_with_token(&self, login_id: &LoginId, token: &str) -> BulwarkResult<()>;
 
     /// 执行登出：从 task_local 获取当前 token 并销毁。
     ///
@@ -79,20 +76,20 @@ pub trait SessionLogic: BulwarkCore {
     /// 按账号登出：销毁指定 `login_id` 的所有会话。
     ///
     /// # 参数
-    /// - `login_id`: 登录主体标识（接受 `i64` 或 `String`/`&str`）。
+    /// - `login_id`: 登录主体标识引用。
     ///
     /// # 错误
     /// - 会话销毁失败：透传 `BulwarkError`。
-    async fn logout_by_login_id(&self, login_id: impl Into<LoginId> + Send) -> BulwarkResult<()>;
+    async fn logout_by_login_id(&self, login_id: &LoginId) -> BulwarkResult<()>;
 
     /// 踢出用户：按账号踢出（语义等同 [`logout_by_login_id`](Self::logout_by_login_id)）。
     ///
     /// # 参数
-    /// - `login_id`: 登录主体标识（接受 `i64` 或 `String`/`&str`）。
+    /// - `login_id`: 登录主体标识引用。
     ///
     /// # 错误
     /// - 会话销毁失败：透传 `BulwarkError`。
-    async fn kickout(&self, login_id: impl Into<LoginId> + Send) -> BulwarkResult<()>;
+    async fn kickout(&self, login_id: &LoginId) -> BulwarkResult<()>;
 
     /// 踢出会话：按 token 踢出（语义等同 `logout(token)`）。
     ///
@@ -177,26 +174,19 @@ mod tests {
 
     #[async_trait]
     impl SessionLogic for MockSession {
-        async fn login(&self, _login_id: impl Into<LoginId> + Send) -> BulwarkResult<String> {
+        async fn login(&self, _login_id: &LoginId) -> BulwarkResult<String> {
             Ok("mock-token".to_string())
         }
-        async fn login_with_token(
-            &self,
-            _login_id: impl Into<LoginId> + Send,
-            _token: &str,
-        ) -> BulwarkResult<()> {
+        async fn login_with_token(&self, _login_id: &LoginId, _token: &str) -> BulwarkResult<()> {
             Ok(())
         }
         async fn logout(&self) -> BulwarkResult<()> {
             Ok(())
         }
-        async fn logout_by_login_id(
-            &self,
-            _login_id: impl Into<LoginId> + Send,
-        ) -> BulwarkResult<()> {
+        async fn logout_by_login_id(&self, _login_id: &LoginId) -> BulwarkResult<()> {
             Ok(())
         }
-        async fn kickout(&self, _login_id: impl Into<LoginId> + Send) -> BulwarkResult<()> {
+        async fn kickout(&self, _login_id: &LoginId) -> BulwarkResult<()> {
             Ok(())
         }
         async fn kickout_by_token(&self, _token: &str) -> BulwarkResult<()> {
@@ -213,28 +203,29 @@ mod tests {
         }
     }
 
-    /// 验证 `login` 同时接受 `i64` 与 `&str` 形式的 `login_id`
-    /// （spec R-login-id-type-003：`impl Into<LoginId> + Send` 双形式支持）。
+    /// 验证 `login` 接受 `&LoginId`（Numeric 与 String 形式）。
+    /// 调用方通过 `BulwarkUtil::login(42i64)` 自动 `.into()` 后传引用。
     #[tokio::test]
-    async fn login_accepts_i64_and_str() {
+    async fn login_accepts_login_id_ref() {
         let mock = MockSession {
             config: Arc::new(BulwarkConfig::default()),
         };
-        let t1 = mock.login(42i64).await.unwrap();
-        let t2 = mock.login("alice").await.unwrap();
+        let id_num = LoginId::Numeric(42);
+        let id_str = LoginId::String("alice".to_string());
+        let t1 = mock.login(&id_num).await.unwrap();
+        let t2 = mock.login(&id_str).await.unwrap();
         assert_eq!(t1, "mock-token");
         assert_eq!(t2, "mock-token");
     }
 
-    /// 验证 `login_with_token` 接受 `String` 形式 `login_id`。
+    /// 验证 `login_with_token` 接受 `&LoginId`。
     #[tokio::test]
-    async fn login_with_token_accepts_string_login_id() {
+    async fn login_with_token_accepts_login_id_ref() {
         let mock = MockSession {
             config: Arc::new(BulwarkConfig::default()),
         };
-        mock.login_with_token("user-uuid".to_string(), "tok")
-            .await
-            .unwrap();
+        let id = LoginId::String("user-uuid".to_string());
+        mock.login_with_token(&id, "tok").await.unwrap();
     }
 
     /// 验证 `get_login_id` 返回 `LoginId`（v0.4.2 返回类型迁移）。

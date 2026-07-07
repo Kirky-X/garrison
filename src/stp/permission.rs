@@ -79,26 +79,19 @@ mod tests {
 
     #[async_trait]
     impl SessionLogic for MockPermission {
-        async fn login(&self, _login_id: impl Into<LoginId> + Send) -> BulwarkResult<String> {
+        async fn login(&self, _login_id: &LoginId) -> BulwarkResult<String> {
             Ok("mock-token".to_string())
         }
-        async fn login_with_token(
-            &self,
-            _login_id: impl Into<LoginId> + Send,
-            _token: &str,
-        ) -> BulwarkResult<()> {
+        async fn login_with_token(&self, _login_id: &LoginId, _token: &str) -> BulwarkResult<()> {
             Ok(())
         }
         async fn logout(&self) -> BulwarkResult<()> {
             Ok(())
         }
-        async fn logout_by_login_id(
-            &self,
-            _login_id: impl Into<LoginId> + Send,
-        ) -> BulwarkResult<()> {
+        async fn logout_by_login_id(&self, _login_id: &LoginId) -> BulwarkResult<()> {
             Ok(())
         }
-        async fn kickout(&self, _login_id: impl Into<LoginId> + Send) -> BulwarkResult<()> {
+        async fn kickout(&self, _login_id: &LoginId) -> BulwarkResult<()> {
             Ok(())
         }
         async fn kickout_by_token(&self, _token: &str) -> BulwarkResult<()> {
