@@ -4,9 +4,15 @@
 # 依赖链：bulwark → dbnexus → dbnexus-macros/sea-bae → proc-macro-error2
 # 影响范围：仅编译期（proc-macro），无运行时风险
 # 处置策略：上游 sea-bae/dbnexus-macros 升级前无法消除，记录为已知/接受
+#
+# RUSTSEC-2026-0204: crossbeam-epoch 0.9.18 fmt::Display invalid pointer dereference
+# 依赖链：bulwark → moka → crossbeam-epoch
+# 影响范围：仅在 null pointer 上调用 fmt::Display 时触发 panic（非 memory safety）
+# 处置策略：无 patched 版本（2026-07-06 发布），transitive 依赖无法直接升级，记录为已知/接受
 
 [advisories]
 ignore = [
     "RUSTSEC-2026-0173", # proc-macro-error2 unmaintained（编译期依赖，无运行时风险）
     "RUSTSEC-2023-0071", # rsa 0.9.10 Marvin Attack（仅影响 RS256/RS384/RS512，默认 HS256/HS512 不触发）
+    "RUSTSEC-2026-0204", # crossbeam-epoch 0.9.18 fmt::Display null deref（transitive via moka，无 patched 版本）
 ]
