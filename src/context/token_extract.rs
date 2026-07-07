@@ -61,7 +61,10 @@ impl HeaderLookup for HeaderMap {
 /// - `None`: 前缀不匹配或字符串过短。
 pub fn strip_bearer_prefix(auth_str: &str) -> Option<&str> {
     let prefix = "bearer ";
-    if auth_str.len() >= prefix.len() && auth_str[..prefix.len()].eq_ignore_ascii_case(prefix) {
+    // 用 get(..n) 而非 auth_str[..n]：当 n 落在多字节 UTF-8 字符中间时
+    // get 返回 None（而非 panic），避免恶意非 ASCII header 触发 DoS（T117）。
+    let head = auth_str.get(..prefix.len())?;
+    if head.eq_ignore_ascii_case(prefix) {
         Some(&auth_str[prefix.len()..])
     } else {
         None
@@ -176,6 +179,19 @@ mod tests {
     fn strip_bearer_prefix_shorter_than_prefix() {
         assert_eq!(strip_bearer_prefix("Bear"), None);
         assert_eq!(strip_bearer_prefix("bearer"), None);
+    }
+
+    /// 多字节 UTF-8 header 值不应 panic（边界安全，T117 回归测试）。
+    ///
+    /// 构造 4 个 `é`（每个 2 字节，共 8 字节），`prefix.len()=7` 落在
+    /// 最后一个 `é` 中间（字节 7 是 0xA9，非字符起始边界）。
+    /// 修复前：`auth_str[..prefix.len()]` 触发 panic（byte index 7 is not a char boundary），
+    /// 攻击者可发送非 ASCII Authorization header 远程 DoS。
+    /// 修复后：`get(..prefix.len())` 返回 None，函数返回 None。
+    #[test]
+    fn strip_bearer_prefix_multibyte_no_panic() {
+        let auth_str = "éééé"; // 0xC3 0xA9 × 4 = 8 字节
+        assert_eq!(strip_bearer_prefix(auth_str), None);
     }
 
     /// 仅前缀无 token 返回空切片。

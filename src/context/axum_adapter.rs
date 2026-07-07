@@ -362,7 +362,8 @@ impl BulwarkRequest for AxumRequestWrapper {
     fn get_token(&self, config: &BulwarkConfig) -> BulwarkResult<Option<String>> {
         if config.is_read_header {
             if let Some(auth) = self.header("Authorization")? {
-                if let Some(token) = auth.strip_prefix("Bearer ") {
+                // RFC 7235：Bearer 大小写不敏感，与 AxumRequest::get_token 保持一致（T117 P1-2）。
+                if let Some(token) = strip_bearer_prefix(&auth) {
                     return Ok(Some(token.to_string()));
                 }
             }
@@ -888,6 +889,27 @@ mod tests {
         let config = BulwarkConfig::default_config();
         let token = request.get_token(&config).unwrap();
         assert_eq!(token, None);
+    }
+
+    /// 验证 AxumContext::request() 返回的 wrapper 从 Authorization: Bearer 提取 token
+    /// 时大小写不敏感（RFC 7235）。回归 T117 P1-2：原实现用 `strip_prefix("Bearer ")`
+    /// 大小写敏感，与 AxumRequest::get_token（用 strip_bearer_prefix）不一致。
+    #[test]
+    fn axum_context_wrapper_bearer_case_insensitive() {
+        let config = BulwarkConfig::default_config();
+        for prefix in ["Bearer", "bearer", "BEARER", "BeArEr"] {
+            let header_value = format!("{} my_token_123", prefix);
+            let req = make_request("/", "GET", &[("Authorization", &header_value)]);
+            let ctx = AxumContext::new(&req);
+            let request = ctx.request().unwrap();
+            let token = request.get_token(&config).unwrap();
+            assert_eq!(
+                token,
+                Some("my_token_123".to_string()),
+                "prefix '{}' should extract token (RFC 7235 case-insensitive)",
+                prefix
+            );
+        }
     }
 
     // ========================================================================
