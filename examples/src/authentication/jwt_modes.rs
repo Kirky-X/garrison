@@ -14,19 +14,19 @@ use async_trait::async_trait;
 use bulwark::dao::{BulwarkDao, BulwarkDaoOxcache};
 use bulwark::error::{BulwarkError, BulwarkResult};
 use bulwark::session::BulwarkSession;
-use bulwark::stp::{BulwarkInterface, BulwarkLogic, BulwarkLogicDefault, JwtMode};
+use bulwark::stp::{BulwarkInterface, BulwarkLogicDefault, JwtMode};
 use bulwark::strategy::BulwarkPermissionStrategyDefault;
-use bulwark::BulwarkConfig;
+use bulwark::{BulwarkConfig, SessionLogic};
 use std::sync::Arc;
 
 struct NoopInterface;
 
 #[async_trait]
 impl BulwarkInterface for NoopInterface {
-    async fn get_permission_list(&self, _login_id: i64) -> BulwarkResult<Vec<String>> {
+    async fn get_permission_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
         Ok(vec![])
     }
-    async fn get_role_list(&self, _login_id: i64) -> BulwarkResult<Vec<String>> {
+    async fn get_role_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
         Ok(vec![])
     }
 }
@@ -54,7 +54,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // 1. Mixin 模式（默认推荐）
     println!("[1] Mixin 模式（JWT verify + session 二级校验，默认推荐）");
     let logic_mixin = make_logic_with_mode(JwtMode::Mixin).await;
-    let token = logic_mixin.login(1001).await?;
+    let token = logic_mixin.login("1001").await?;
     println!("    login(1001) → token: {}...", &token[..20]);
     // check_login 在 task_local 上下文中才能工作，此处仅验证 login 成功
     assert!(!token.is_empty());
@@ -63,7 +63,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // 2. Stateless 模式
     println!("[2] Stateless 模式（仅 JWT verify，不查 session，高可用场景）");
     let logic_stateless = make_logic_with_mode(JwtMode::Stateless).await;
-    let token_s = logic_stateless.login(1001).await?;
+    let token_s = logic_stateless.login("1001").await?;
     println!("    login(1001) → token: {}...", &token_s[..20]);
     assert!(!token_s.is_empty());
     println!("    ✓ login 成功，Stateless 模式不依赖 oxcache session\n");
@@ -71,7 +71,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // 3. Simple 模式
     println!("[3] Simple 模式（仅 session，JWT 仅作载体，不验证签名）");
     let logic_simple = make_logic_with_mode(JwtMode::Simple).await;
-    let token_simple = logic_simple.login(1001).await?;
+    let token_simple = logic_simple.login("1001").await?;
     println!("    login(1001) → token: {}...", &token_simple[..20]);
     assert!(!token_simple.is_empty());
     println!("    ✓ login 成功，Simple 模式 token 可能不是 JWT 格式\n");
@@ -85,7 +85,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         "    verify(token) → sub={}, login_id={}",
         claims.sub, claims.login_id
     );
-    assert_eq!(claims.login_id, 1001);
+    assert_eq!(claims.login_id, "1001");
     println!("    ✓ JWT 校验通过，claims 正确\n");
 
     // 5. 错误的 secret 校验失败

@@ -26,7 +26,9 @@ use bulwark::error::BulwarkResult;
 use bulwark::listener::audit::{AuditConfig, AuditQuery};
 use bulwark::listener::{BulwarkListener, BulwarkListenerManager};
 use bulwark::session::BulwarkSession;
-use bulwark::stp::{with_current_token, BulwarkInterface, BulwarkLogic, BulwarkLogicDefault};
+use bulwark::stp::{
+    with_current_token, BulwarkInterface, BulwarkLogicDefault, PermissionLogic, SessionLogic,
+};
 use bulwark::strategy::BulwarkPermissionStrategyDefault;
 use bulwark::{AuditLogListener, BulwarkConfig, KeycloakConfig, KeycloakProvider, WechatProvider};
 use dbnexus::DbPool;
@@ -41,15 +43,15 @@ struct DemoInterface;
 
 #[async_trait]
 impl BulwarkInterface for DemoInterface {
-    async fn get_permission_list(&self, login_id: i64) -> BulwarkResult<Vec<String>> {
-        if login_id == 1001 {
+    async fn get_permission_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+        if login_id == "1001" {
             Ok(vec!["user:read".to_string(), "user:write".to_string()])
         } else {
             Ok(vec![])
         }
     }
 
-    async fn get_role_list(&self, _login_id: i64) -> BulwarkResult<Vec<String>> {
+    async fn get_role_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
         Ok(vec!["admin".to_string()])
     }
 }
@@ -101,7 +103,7 @@ fn construct_logic(
     pc: Arc<dyn PermissionChecker>,
     lm: Arc<BulwarkListenerManager>,
 ) -> Arc<BulwarkLogicDefault> {
-    println!("[3] 构造 BulwarkLogic（含决策溯源 + 审计日志）...");
+    println!("[3] 构造 BulwarkLogicDefault（含决策溯源 + 审计日志）...");
 
     let firewall = Arc::new(BulwarkPermissionStrategyDefault::new(interface));
 
@@ -134,7 +136,7 @@ async fn demo_tenant_isolation(
 
     // 在 TENANT(42) scope 内登录，确保 session key 带 tenant:42: 前缀
     let token = TENANT
-        .scope(tenant_ctx.clone(), async { logic.login(1001).await })
+        .scope(tenant_ctx.clone(), async { logic.login("1001").await })
         .await?;
     println!("    ✓ 登录成功，token 长度: {}", token.len());
 
@@ -152,7 +154,7 @@ async fn demo_tenant_isolation(
 
     // 决策溯源：验证 Decision 详情
     let auth_request = AuthRequest {
-        login_id: 1001,
+        login_id: "1001".to_string(),
         tenant_id: 42,
         action: "user:read".to_string(),
         resource: None,
@@ -173,7 +175,7 @@ async fn demo_tenant_isolation(
 
     // 验证拒绝路径
     let deny_request = AuthRequest {
-        login_id: 1001,
+        login_id: "1001".to_string(),
         tenant_id: 42,
         action: "system:shutdown".to_string(),
         resource: None,

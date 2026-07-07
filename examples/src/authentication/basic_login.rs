@@ -31,8 +31,8 @@ use std::sync::Arc;
 ///
 /// 生产环境通常从数据库或 RBAC 系统读取，此处仅作演示。
 pub struct MyInterface {
-    permissions: HashMap<i64, Vec<String>>,
-    roles: HashMap<i64, Vec<String>>,
+    permissions: HashMap<String, Vec<String>>,
+    roles: HashMap<String, Vec<String>>,
 }
 
 impl MyInterface {
@@ -42,11 +42,11 @@ impl MyInterface {
     pub fn new() -> Self {
         let mut permissions = HashMap::new();
         permissions.insert(
-            1001,
+            "1001".to_string(),
             vec!["user:read".to_string(), "user:write".to_string()],
         );
         let mut roles = HashMap::new();
-        roles.insert(1001, vec!["admin".to_string()]);
+        roles.insert("1001".to_string(), vec!["admin".to_string()]);
         Self { permissions, roles }
     }
 }
@@ -59,12 +59,12 @@ impl Default for MyInterface {
 
 #[async_trait]
 impl BulwarkInterface for MyInterface {
-    async fn get_permission_list(&self, login_id: i64) -> BulwarkResult<Vec<String>> {
-        Ok(self.permissions.get(&login_id).cloned().unwrap_or_default())
+    async fn get_permission_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+        Ok(self.permissions.get(login_id).cloned().unwrap_or_default())
     }
 
-    async fn get_role_list(&self, login_id: i64) -> BulwarkResult<Vec<String>> {
-        Ok(self.roles.get(&login_id).cloned().unwrap_or_default())
+    async fn get_role_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+        Ok(self.roles.get(login_id).cloned().unwrap_or_default())
     }
 }
 
@@ -97,7 +97,7 @@ pub async fn run() -> BulwarkResult<()> {
     // ----------------------------------------------------------------
     // 3. 执行登录：生成 token 并创建会话
     // ----------------------------------------------------------------
-    let token = BulwarkUtil::login(1001).await?;
+    let token = BulwarkUtil::login("1001").await?;
     println!("[2] 登录成功，login_id=1001");
     println!("    token={}\n", token);
     assert!(!token.is_empty(), "login 应返回非空 token");
@@ -116,7 +116,7 @@ pub async fn run() -> BulwarkResult<()> {
 
         let login_id = BulwarkUtil::get_login_id().await?;
         println!("[4] get_login_id 返回: {:?}", login_id);
-        assert_eq!(login_id, Some(1001));
+        assert_eq!(login_id, Some("1001".to_string()));
 
         // 5. 权限/角色校验
         BulwarkUtil::check_permission("user:read").await?;

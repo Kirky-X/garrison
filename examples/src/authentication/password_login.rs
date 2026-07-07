@@ -18,7 +18,7 @@ use bulwark::dao::{
 use bulwark::error::{BulwarkError, BulwarkResult};
 use bulwark::secure::password::{Argon2Hasher, PasswordHasher};
 use bulwark::session::BulwarkSession;
-use bulwark::stp::{BulwarkInterface, BulwarkLogic, BulwarkLogicDefault};
+use bulwark::stp::{BulwarkInterface, BulwarkLogicDefault, PasswordLogic};
 use bulwark::strategy::BulwarkPermissionStrategyDefault;
 use bulwark::BulwarkConfig;
 use std::path::PathBuf;
@@ -31,10 +31,10 @@ struct NoopInterface;
 
 #[async_trait]
 impl BulwarkInterface for NoopInterface {
-    async fn get_permission_list(&self, _login_id: i64) -> BulwarkResult<Vec<String>> {
+    async fn get_permission_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
         Ok(vec![])
     }
-    async fn get_role_list(&self, _login_id: i64) -> BulwarkResult<Vec<String>> {
+    async fn get_role_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
         Ok(vec![])
     }
 }
@@ -96,7 +96,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // 5. 正确密码登录
     let token = logic
-        .login_with_password(1001, "my-secret-password")
+        .login_with_password("1001", "my-secret-password")
         .await?;
     println!("\n[3] 登录成功！");
     println!("    login_id: 1001");
@@ -104,7 +104,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     assert!(!token.is_empty());
 
     // 6. 错误密码登录（统一返回 InvalidParam 防止用户枚举）
-    let wrong = logic.login_with_password(1001, "wrong-password").await;
+    let wrong = logic.login_with_password("1001", "wrong-password").await;
     assert!(wrong.is_err(), "错误密码应登录失败");
     match &wrong {
         Err(BulwarkError::InvalidParam(msg)) if msg.contains("invalid password") => {
@@ -120,7 +120,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // 7. 不存在的用户登录（同样返回 InvalidParam 防止枚举）
-    let not_exist = logic.login_with_password(9999, "any-password").await;
+    let not_exist = logic.login_with_password("9999", "any-password").await;
     assert!(not_exist.is_err());
     println!("\n[5] 不存在的用户登录失败（预期）");
     println!("    error: InvalidParam(\"invalid password\")");

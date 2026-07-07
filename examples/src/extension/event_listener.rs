@@ -123,7 +123,7 @@ pub async fn run() -> BulwarkResult<()> {
     // ----------------------------------------------------------------
     println!("[2] broadcast(Login):");
     let login_event = BulwarkEvent::Login {
-        login_id: 1001,
+        login_id: "1001".to_string(),
         token: "T1-uuid-token-abcd".to_string(),
         device: Some("web".to_string()),
     };
@@ -143,13 +143,13 @@ pub async fn run() -> BulwarkResult<()> {
     println!("[3] 广播多种事件类型:");
 
     let logout_event = BulwarkEvent::Logout {
-        login_id: 1001,
+        login_id: "1001".to_string(),
         token: "T1-uuid-token-abcd".to_string(),
     };
     manager.broadcast(&logout_event).await;
 
     let denied_event = BulwarkEvent::PermissionCheck {
-        login_id: 1001,
+        login_id: "1001".to_string(),
         permission: "user:delete".to_string(),
     };
     manager.broadcast(&denied_event).await;
@@ -173,7 +173,7 @@ pub async fn run() -> BulwarkResult<()> {
     // ----------------------------------------------------------------
     println!("[5] BulwarkEvent 派生 Debug + Clone:");
     let event = BulwarkEvent::Kickout {
-        login_id: 2002,
+        login_id: "2002".to_string(),
         token: "T2-token".to_string(),
         reason: "管理员强制下线".to_string(),
     };

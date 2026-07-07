@@ -32,8 +32,8 @@ use async_trait::async_trait;
 /// # 对象安全
 ///
 /// 所有方法参数均为具体类型（`&str`），无泛型参数，trait 对象安全，
-/// 可作 `dyn SessionLogic` 使用。`BulwarkManager` 返回 `Arc<dyn BulwarkLogic>`
-/// （super-trait）后，可通过 trait 向上转型调用本 trait 方法。
+/// 可作 `dyn SessionLogic` 使用。`BulwarkManager` 返回 `Arc<BulwarkLogicDefault>`
+/// 后，可通过 trait 方法解析调用本 trait 方法（需 `use crate::stp::SessionLogic`）。
 #[async_trait]
 pub trait SessionLogic: BulwarkCore {
     /// 执行登录：生成 token + 创建会话。

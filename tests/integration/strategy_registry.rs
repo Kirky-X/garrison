@@ -18,7 +18,7 @@ use bulwark::config::BulwarkConfig;
 use bulwark::dao::{BulwarkDao, BulwarkDaoOxcache};
 use bulwark::error::BulwarkResult;
 use bulwark::session::BulwarkSession;
-use bulwark::stp::{BulwarkInterface, BulwarkLogic, BulwarkLogicDefault};
+use bulwark::stp::{BulwarkInterface, BulwarkLogicDefault};
 use bulwark::strategy::{
     BulwarkPermissionStrategyDefault, FirewallStrategy, LoginHandler, LogoutHandler,
     PermissionHandler, SessionCreator, Strategy, TokenGenerator,
@@ -45,10 +45,10 @@ impl BulwarkInterface for MockInterface {
 }
 
 // ============================================================================
-// 辅助函数：构造测试用 Arc<dyn BulwarkLogic>
+// 辅助函数：构造测试用 Arc<BulwarkLogicDefault>
 // ============================================================================
 
-async fn make_logic() -> Arc<dyn BulwarkLogic> {
+async fn make_logic() -> Arc<BulwarkLogicDefault> {
     let dao: Arc<dyn BulwarkDao> = Arc::new(BulwarkDaoOxcache::new().await.unwrap());
     let config = Arc::new(BulwarkConfig::default_config());
     let interface: Arc<dyn BulwarkInterface> = Arc::new(MockInterface);
@@ -186,7 +186,7 @@ async fn strategy_new_initializes_all_six_handlers() {
     assert!(Arc::strong_count(strategy.firewall_strategy()) >= 1);
 }
 
-/// 验证默认登录策略委托 `BulwarkLogic::login` 可生成非空 token。
+/// 验证默认登录策略委托 `SessionLogic::login` 可生成非空 token。
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn default_login_handler_generates_token_via_logic() {

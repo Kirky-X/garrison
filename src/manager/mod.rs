@@ -5,7 +5,7 @@
 //!
 //! ## 设计（依据 design.md Decision 8）
 //!
-//! - `BulwarkManager` 持有 `Arc<dyn BulwarkLogic>` 全局单例（基于 `parking_lot::RwLock` 支持重复 init）
+//! - `BulwarkManager` 持有 `Arc<BulwarkLogicDefault>` 全局单例（基于 `parking_lot::RwLock` 支持重复 init）
 //! - `BulwarkLogicFactory` trait 通过 `inventory::submit!` 编译期注册
 //! - 业务方调用 `BulwarkManager::init(dao, config, interface)` 注入依赖
 //! - `BulwarkUtil::login(id)` 等静态方法委托到 `BULWARK_MANAGER` 单例
@@ -38,7 +38,7 @@ use crate::error::{BulwarkError, BulwarkResult};
 use crate::listener::BulwarkListenerManager;
 use crate::plugin::BulwarkPluginManager;
 use crate::session::BulwarkSession;
-use crate::stp::{BulwarkInterface, BulwarkLogic, BulwarkLogicDefault};
+use crate::stp::{BulwarkInterface, BulwarkLogicDefault};
 use crate::strategy::{BulwarkPermissionStrategy, BulwarkPermissionStrategyDefault, Strategy};
 use once_cell::sync::Lazy;
 use parking_lot::RwLock;
@@ -49,18 +49,18 @@ use std::sync::Arc;
 #[cfg(feature = "manager-explicit")]
 pub mod explicit;
 
-/// 全局管理器，统筹 `BulwarkLogic` 的生命周期。
+/// 全局管理器，统筹 `BulwarkLogicDefault` 的生命周期。
 ///
 /// [借鉴 Sa-Token] 对应 `SaManager`，
-/// 持有全局 `Arc<dyn BulwarkLogic>` 引用，提供静态方法入口。
+/// 持有全局 `Arc<BulwarkLogicDefault>` 引用，提供静态方法入口。
 ///
 /// # 初始化
 ///
 /// 业务方启动时调用 `BulwarkManager::init(dao, config, interface)` 注入依赖。
 /// 未初始化时调用 `BulwarkUtil::login(id)` 等返回 `BulwarkError::Session`。
 pub struct BulwarkManager {
-    /// 全局 BulwarkLogic 引用（RwLock 支持测试时重复 init 与 reset）。
-    logic: RwLock<Option<Arc<dyn BulwarkLogic>>>,
+    /// 全局 `BulwarkLogicDefault` 引用（RwLock 支持测试时重复 init 与 reset）。
+    logic: RwLock<Option<Arc<BulwarkLogicDefault>>>,
     /// 全局 Strategy 注册表引用（v0.4.2 新增，依据 spec strategy-registry）。
     ///
     /// 外层 `RwLock` 管理 Option（初始化/重置），内层 `Arc<RwLock<Strategy>>`
@@ -77,7 +77,7 @@ impl BulwarkManager {
         }
     }
 
-    /// 初始化全局管理器：注入 dao/config/interface 依赖，构造默认 `BulwarkLogic` 实例。
+    /// 初始化全局管理器：注入 dao/config/interface 依赖，构造默认 `BulwarkLogicDefault` 实例。
     ///
     /// # 参数
     /// - `dao`: DAO 引用（oxcache / dbnexus）
@@ -89,7 +89,7 @@ impl BulwarkManager {
     /// 2. 构造 `BulwarkSession::new(dao, timeout, active_timeout)`
     /// 3. 构造 `BulwarkPermissionStrategyDefault::new(interface)`
     /// 4. 通过 `inventory::iter::<BulwarkLogicFactoryEntry>()` 找到注册的 factory
-    /// 5. 调用 `factory.build(session, config, firewall)` 生成 `Arc<dyn BulwarkLogic>`
+    /// 5. 调用 `factory.build(session, config, firewall)` 生成 `Arc<BulwarkLogicDefault>`
     /// 6. 若无 factory 注册，使用默认 `BulwarkLogicFactoryDefault` 构造 `BulwarkLogicDefault`
     /// 7. 覆盖式更新全局单例（允许重复 init，便于测试）
     ///
@@ -178,7 +178,7 @@ impl BulwarkManager {
         };
 
         // 6. 通过 factory 构造 logic（传递 context 以便 factory 使用 builder 链）
-        let logic: Arc<dyn BulwarkLogic> = match factory_selector() {
+        let logic: Arc<BulwarkLogicDefault> = match factory_selector() {
             Some(entry) => (entry.factory)(session, config, firewall, &factory_ctx)?,
             None => {
                 // 兜底路径：直接通过 builder 链构造 BulwarkLogicDefault
@@ -205,14 +205,14 @@ impl BulwarkManager {
         Ok(())
     }
 
-    /// 获取全局 `BulwarkLogic` 引用。
+    /// 获取全局 `BulwarkLogicDefault` 引用。
     ///
     /// # 返回
-    /// 已初始化时返回 `Arc<dyn BulwarkLogic>`。
+    /// 已初始化时返回 `Arc<BulwarkLogicDefault>`。
     ///
     /// # 错误
     /// - 若未初始化，返回 `BulwarkError::Session("BulwarkManager 未初始化")`。
-    pub fn logic() -> BulwarkResult<Arc<dyn BulwarkLogic>> {
+    pub fn logic() -> BulwarkResult<Arc<BulwarkLogicDefault>> {
         BULWARK_MANAGER
             .logic
             .read()
@@ -256,7 +256,7 @@ impl BulwarkManager {
     /// 检查管理器是否已初始化。
     ///
     /// # 返回
-    /// - `true`: 已调用 `init` 且全局单例持有 `BulwarkLogic`。
+    /// - `true`: 已调用 `init` 且全局单例持有 `BulwarkLogicDefault`。
     /// - `false`: 未初始化或已 `reset_for_test`。
     pub fn is_initialized() -> bool {
         BULWARK_MANAGER.logic.read().is_some()
@@ -264,7 +264,7 @@ impl BulwarkManager {
 
     /// 重置管理器（仅供测试用，业务代码不应调用）。
     ///
-    /// 清空全局 `BulwarkLogic` 与 `Strategy` 引用，
+    /// 清空全局 `BulwarkLogicDefault` 与 `Strategy` 引用，
     /// 使后续 `BulwarkUtil::login(id)` 等返回未初始化错误。
     #[cfg(test)]
     pub fn reset_for_test() {
@@ -313,7 +313,7 @@ pub struct BulwarkLogicFactoryContext {
     pub permission_checker: Option<Arc<dyn PermissionChecker>>,
 }
 
-/// 工厂函数签名：接收 session/config/firewall + factory context，返回 `Arc<dyn BulwarkLogic>`。
+/// 工厂函数签名：接收 session/config/firewall + factory context，返回 `Arc<BulwarkLogicDefault>`。
 ///
 /// 使用裸函数指针（`Fn` trait object 的简化形式）以便 `inventory::submit!` 静态注册。
 ///
@@ -325,7 +325,7 @@ pub type BulwarkLogicFactoryFn = fn(
     config: Arc<BulwarkConfig>,
     firewall: Arc<dyn BulwarkPermissionStrategy>,
     ctx: &BulwarkLogicFactoryContext,
-) -> BulwarkResult<Arc<dyn BulwarkLogic>>;
+) -> BulwarkResult<Arc<BulwarkLogicDefault>>;
 
 /// 工厂 entry：通过 `inventory::submit!` 注册的具体工厂实例。
 ///
@@ -351,7 +351,7 @@ inventory::collect!(BulwarkLogicFactoryEntry);
 /// 默认工厂函数：构造 `BulwarkLogicDefault`，使用 builder 链注入 context 中的 4 个 manager。
 ///
 /// 此函数通过 `inventory::submit!` 在编译期注册到全局工厂列表，
-/// `BulwarkManager::init()` 会找到它并调用以构造 `Arc<dyn BulwarkLogic>`。
+/// `BulwarkManager::init()` 会找到它并调用以构造 `Arc<BulwarkLogicDefault>`。
 ///
 /// # 参数
 /// - `session`: 会话管理器。
@@ -360,7 +360,7 @@ inventory::collect!(BulwarkLogicFactoryEntry);
 /// - `ctx`: 工厂上下文（持有 4 个可选 manager 引用）。
 ///
 /// # 返回
-/// 新建的 `Arc<dyn BulwarkLogic>`（实际类型为 `BulwarkLogicDefault`，已注入 manager）。
+/// 新建的 `Arc<BulwarkLogicDefault>`（实际类型为 `BulwarkLogicDefault`，已注入 manager）。
 ///
 /// # 错误
 /// 当前实现始终返回 `Ok`，保留 `BulwarkResult` 以匹配工厂签名便于扩展。
@@ -369,7 +369,7 @@ pub fn bulwark_logic_factory_default(
     config: Arc<BulwarkConfig>,
     firewall: Arc<dyn BulwarkPermissionStrategy>,
     ctx: &BulwarkLogicFactoryContext,
-) -> BulwarkResult<Arc<dyn BulwarkLogic>> {
+) -> BulwarkResult<Arc<BulwarkLogicDefault>> {
     let mut builder = BulwarkLogicDefault::new(session, config, firewall);
     if let Some(pm) = ctx.plugin_manager.clone() {
         builder = builder.with_plugin_manager(pm);
@@ -403,7 +403,7 @@ mod tests {
     use super::*;
     use crate::dao::tests::MockDao;
     use crate::dao::BulwarkDao;
-    use crate::stp::BulwarkUtil;
+    use crate::stp::{BulwarkUtil, SessionLogic};
     use async_trait::async_trait;
     use serial_test::serial;
     use std::collections::HashMap;

@@ -112,7 +112,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let sso = SsoClient::new(dao);
 
     // 2. 模拟子系统 A 已登录用户 1001，签发 SSO ticket 供子系统 B 登录
-    let login_id: i64 = 1001;
+    let login_id = "1001";
     let client_id: i64 = 200;
     let ticket = sso.issue_ticket(login_id, client_id).await?;
     println!("[签发] 用户 {} 的 SSO ticket：{}", login_id, ticket);

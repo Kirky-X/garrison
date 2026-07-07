@@ -34,8 +34,8 @@ use std::sync::Arc;
 /// - login_id=1001：权限 `["user:read", "user:write"]`，角色 `["admin"]`
 /// - login_id=1002：权限 `["user:read"]`，角色 `["user"]`
 pub struct MyInterface {
-    permissions: HashMap<i64, Vec<String>>,
-    roles: HashMap<i64, Vec<String>>,
+    permissions: HashMap<String, Vec<String>>,
+    roles: HashMap<String, Vec<String>>,
 }
 
 impl MyInterface {
@@ -43,14 +43,14 @@ impl MyInterface {
     pub fn new() -> Self {
         let mut permissions = HashMap::new();
         permissions.insert(
-            1001,
+            "1001".to_string(),
             vec!["user:read".to_string(), "user:write".to_string()],
         );
-        permissions.insert(1002, vec!["user:read".to_string()]);
+        permissions.insert("1002".to_string(), vec!["user:read".to_string()]);
 
         let mut roles = HashMap::new();
-        roles.insert(1001, vec!["admin".to_string()]);
-        roles.insert(1002, vec!["user".to_string()]);
+        roles.insert("1001".to_string(), vec!["admin".to_string()]);
+        roles.insert("1002".to_string(), vec!["user".to_string()]);
 
         Self { permissions, roles }
     }
@@ -64,12 +64,12 @@ impl Default for MyInterface {
 
 #[async_trait]
 impl BulwarkInterface for MyInterface {
-    async fn get_permission_list(&self, login_id: i64) -> BulwarkResult<Vec<String>> {
-        Ok(self.permissions.get(&login_id).cloned().unwrap_or_default())
+    async fn get_permission_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+        Ok(self.permissions.get(login_id).cloned().unwrap_or_default())
     }
 
-    async fn get_role_list(&self, login_id: i64) -> BulwarkResult<Vec<String>> {
-        Ok(self.roles.get(&login_id).cloned().unwrap_or_default())
+    async fn get_role_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+        Ok(self.roles.get(login_id).cloned().unwrap_or_default())
     }
 }
 
@@ -98,7 +98,7 @@ pub async fn run() -> BulwarkResult<()> {
     // ----------------------------------------------------------------
     // 3. BulwarkUtil 静态方法：login
     // ----------------------------------------------------------------
-    let token = BulwarkUtil::login(1001).await?;
+    let token = BulwarkUtil::login("1001").await?;
     println!("[3] login(1001) → token={}...", &token[..16]);
     assert!(!token.is_empty(), "login 应返回非空 token");
     println!();
@@ -118,7 +118,7 @@ pub async fn run() -> BulwarkResult<()> {
 
         let login_id = BulwarkUtil::get_login_id().await?;
         println!("    get_login_id() = {:?}", login_id);
-        assert_eq!(login_id, Some(1001));
+        assert_eq!(login_id, Some("1001".to_string()));
 
         // 6. 权限/角色校验
         BulwarkUtil::check_permission("user:read").await?;
@@ -137,7 +137,7 @@ pub async fn run() -> BulwarkResult<()> {
     // 7. 多账号登录与 kickout
     // ----------------------------------------------------------------
     println!("[5] 多账号登录与 kickout:");
-    let token2 = BulwarkUtil::login(1002).await?;
+    let token2 = BulwarkUtil::login("1002").await?;
     println!("    login(1002) → token={}...", &token2[..16]);
 
     // 1002 有 user:read 权限但无 user:write
@@ -153,7 +153,7 @@ pub async fn run() -> BulwarkResult<()> {
     assert!(perm_result.is_err(), "1002 无 user:write 权限应失败");
 
     // kickout 1002
-    BulwarkUtil::kickout(1002).await?;
+    BulwarkUtil::kickout("1002").await?;
     println!("    kickout(1002) 完成");
 
     let valid_after_kickout =

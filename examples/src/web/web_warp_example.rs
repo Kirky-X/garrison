@@ -116,8 +116,8 @@ impl BulwarkDao for InMemoryDao {
 
 /// 示例接口实现，仅提供 login_id=1001 的权限与角色。
 pub struct MyInterface {
-    permissions: HashMap<i64, Vec<String>>,
-    roles: HashMap<i64, Vec<String>>,
+    permissions: HashMap<String, Vec<String>>,
+    roles: HashMap<String, Vec<String>>,
 }
 
 impl MyInterface {
@@ -126,9 +126,9 @@ impl MyInterface {
     /// 预置数据：login_id=1001 持有 `["data:read"]` 权限 + `["admin"]` 角色。
     pub fn new() -> Self {
         let mut permissions = HashMap::new();
-        permissions.insert(1001, vec!["data:read".to_string()]);
+        permissions.insert("1001".to_string(), vec!["data:read".to_string()]);
         let mut roles = HashMap::new();
-        roles.insert(1001, vec!["admin".to_string()]);
+        roles.insert("1001".to_string(), vec!["admin".to_string()]);
         Self { permissions, roles }
     }
 }
@@ -141,12 +141,12 @@ impl Default for MyInterface {
 
 #[async_trait]
 impl BulwarkInterface for MyInterface {
-    async fn get_permission_list(&self, login_id: i64) -> BulwarkResult<Vec<String>> {
-        Ok(self.permissions.get(&login_id).cloned().unwrap_or_default())
+    async fn get_permission_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+        Ok(self.permissions.get(login_id).cloned().unwrap_or_default())
     }
 
-    async fn get_role_list(&self, login_id: i64) -> BulwarkResult<Vec<String>> {
-        Ok(self.roles.get(&login_id).cloned().unwrap_or_default())
+    async fn get_role_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+        Ok(self.roles.get(login_id).cloned().unwrap_or_default())
     }
 }
 
@@ -167,7 +167,7 @@ pub async fn setup() -> (Arc<BulwarkConfig>, String) {
     let interface: Arc<dyn BulwarkInterface> = Arc::new(MyInterface::new());
     BulwarkManager::init(dao, config.clone(), interface).expect("BulwarkManager 初始化失败");
 
-    let token = BulwarkUtil::login(1001).await.expect("login 失败");
+    let token = BulwarkUtil::login("1001").await.expect("login 失败");
     (config, token)
 }
 

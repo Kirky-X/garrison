@@ -40,7 +40,7 @@ pub async fn run() -> BulwarkResult<()> {
     // ----------------------------------------------------------------
     // 2. 创建会话（login）
     // ----------------------------------------------------------------
-    let login_id = 1001;
+    let login_id = "1001";
     let token = "session_token_abc123";
     session.create(login_id, token).await?;
     println!("[2] 会话创建: login_id={}, token={}", login_id, token);

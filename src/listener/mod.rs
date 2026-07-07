@@ -97,7 +97,7 @@ pub enum BulwarkEvent {
     },
     /// Token 主动吊销事件（v0.5.0 重命名：原 TokenRevoke → RevokeToken，对齐 spec R-audit-log-005）。
     ///
-    /// 在 `BulwarkLogic::revoke_token` 调用时广播（携带被吊销的 token）。
+    /// 在 `SessionLogic::revoke_token` 调用时广播（携带被吊销的 token）。
     /// 与 `Logout` 事件的区别：`revoke_token` 语义为"token 失效"（如 OAuth2 token revocation），
     /// `Logout` 语义为"用户主动登出"（携带 login_id+token）。
     RevokeToken {

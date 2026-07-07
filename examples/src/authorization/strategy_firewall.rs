@@ -30,8 +30,8 @@ use std::sync::Arc;
 
 /// 示例自定义策略：绕过 BulwarkInterface，直接从 HashMap 读取权限/角色。
 pub struct CustomFirewall {
-    permissions: HashMap<i64, Vec<String>>,
-    roles: HashMap<i64, Vec<String>>,
+    permissions: HashMap<String, Vec<String>>,
+    roles: HashMap<String, Vec<String>>,
 }
 
 impl CustomFirewall {
@@ -43,14 +43,17 @@ impl CustomFirewall {
     pub fn new() -> Self {
         let mut permissions = HashMap::new();
         permissions.insert(
-            1001,
+            "1001".to_string(),
             vec!["user:read".to_string(), "user:write".to_string()],
         );
-        permissions.insert(1002, vec!["user:read".to_string()]);
+        permissions.insert("1002".to_string(), vec!["user:read".to_string()]);
 
         let mut roles = HashMap::new();
-        roles.insert(1001, vec!["admin".to_string(), "user".to_string()]);
-        roles.insert(1002, vec!["user".to_string()]);
+        roles.insert(
+            "1001".to_string(),
+            vec!["admin".to_string(), "user".to_string()],
+        );
+        roles.insert("1002".to_string(), vec!["user".to_string()]);
 
         Self { permissions, roles }
     }
@@ -64,15 +67,15 @@ impl Default for CustomFirewall {
 
 #[async_trait]
 impl BulwarkPermissionStrategy for CustomFirewall {
-    async fn get_permission_list(&self, login_id: i64) -> BulwarkResult<Vec<String>> {
-        Ok(self.permissions.get(&login_id).cloned().unwrap_or_default())
+    async fn get_permission_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+        Ok(self.permissions.get(login_id).cloned().unwrap_or_default())
     }
 
-    async fn get_role_list(&self, login_id: i64) -> BulwarkResult<Vec<String>> {
-        Ok(self.roles.get(&login_id).cloned().unwrap_or_default())
+    async fn get_role_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+        Ok(self.roles.get(login_id).cloned().unwrap_or_default())
     }
 
-    async fn check_permission(&self, login_id: i64, permission: &str) -> BulwarkResult<bool> {
+    async fn check_permission(&self, login_id: &str, permission: &str) -> BulwarkResult<bool> {
         if permission.is_empty() {
             return Err(BulwarkError::InvalidToken("权限不能为空".to_string()));
         }
@@ -80,7 +83,7 @@ impl BulwarkPermissionStrategy for CustomFirewall {
         Ok(perms.iter().any(|p| p == permission))
     }
 
-    async fn check_role(&self, login_id: i64, role: &str) -> BulwarkResult<bool> {
+    async fn check_role(&self, login_id: &str, role: &str) -> BulwarkResult<bool> {
         if role.is_empty() {
             return Err(BulwarkError::InvalidToken("角色不能为空".to_string()));
         }
@@ -88,12 +91,12 @@ impl BulwarkPermissionStrategy for CustomFirewall {
         Ok(roles.iter().any(|r| r == role))
     }
 
-    async fn check_role_any(&self, login_id: i64, roles: &[&str]) -> BulwarkResult<bool> {
+    async fn check_role_any(&self, login_id: &str, roles: &[&str]) -> BulwarkResult<bool> {
         let user_roles = self.get_role_list(login_id).await?;
         Ok(roles.iter().any(|r| user_roles.iter().any(|ur| ur == r)))
     }
 
-    async fn check_role_all(&self, login_id: i64, roles: &[&str]) -> BulwarkResult<bool> {
+    async fn check_role_all(&self, login_id: &str, roles: &[&str]) -> BulwarkResult<bool> {
         let user_roles = self.get_role_list(login_id).await?;
         Ok(roles.iter().all(|r| user_roles.iter().any(|ur| ur == r)))
     }
@@ -105,8 +108,8 @@ impl BulwarkPermissionStrategy for CustomFirewall {
 
 /// 示例 BulwarkInterface 实现，仅提供 login_id=1001 的权限/角色。
 pub struct MyInterface {
-    permissions: HashMap<i64, Vec<String>>,
-    roles: HashMap<i64, Vec<String>>,
+    permissions: HashMap<String, Vec<String>>,
+    roles: HashMap<String, Vec<String>>,
 }
 
 impl MyInterface {
@@ -116,11 +119,11 @@ impl MyInterface {
     pub fn new() -> Self {
         let mut permissions = HashMap::new();
         permissions.insert(
-            1001,
+            "1001".to_string(),
             vec!["user:read".to_string(), "user:write".to_string()],
         );
         let mut roles = HashMap::new();
-        roles.insert(1001, vec!["admin".to_string()]);
+        roles.insert("1001".to_string(), vec!["admin".to_string()]);
         Self { permissions, roles }
     }
 }
@@ -133,12 +136,12 @@ impl Default for MyInterface {
 
 #[async_trait]
 impl BulwarkInterface for MyInterface {
-    async fn get_permission_list(&self, login_id: i64) -> BulwarkResult<Vec<String>> {
-        Ok(self.permissions.get(&login_id).cloned().unwrap_or_default())
+    async fn get_permission_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+        Ok(self.permissions.get(login_id).cloned().unwrap_or_default())
     }
 
-    async fn get_role_list(&self, login_id: i64) -> BulwarkResult<Vec<String>> {
-        Ok(self.roles.get(&login_id).cloned().unwrap_or_default())
+    async fn get_role_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+        Ok(self.roles.get(login_id).cloned().unwrap_or_default())
     }
 }
 
@@ -156,15 +159,15 @@ pub async fn run() -> BulwarkResult<()> {
     let firewall = CustomFirewall::new();
     println!("[1] 自定义策略 CustomFirewall:");
 
-    let has_perm = firewall.check_permission(1001, "user:read").await?;
+    let has_perm = firewall.check_permission("1001", "user:read").await?;
     println!("    check_permission(1001, \"user:read\") = {}", has_perm);
     assert!(has_perm, "1001 应持有 user:read 权限");
 
-    let no_perm = firewall.check_permission(1001, "user:delete").await?;
+    let no_perm = firewall.check_permission("1001", "user:delete").await?;
     println!("    check_permission(1001, \"user:delete\") = {}", no_perm);
     assert!(!no_perm, "1001 不应持有 user:delete 权限");
 
-    let has_role = firewall.check_role(1001, "admin").await?;
+    let has_role = firewall.check_role("1001", "admin").await?;
     println!("    check_role(1001, \"admin\") = {}", has_role);
     assert!(has_role, "1001 应持有 admin 角色");
     println!();
@@ -176,15 +179,15 @@ pub async fn run() -> BulwarkResult<()> {
     let default_fw = BulwarkPermissionStrategyDefault::new(interface);
     println!("[2] BulwarkPermissionStrategyDefault:");
 
-    let perms = default_fw.get_permission_list(1001).await?;
+    let perms = default_fw.get_permission_list("1001").await?;
     println!("    get_permission_list(1001) = {:?}", perms);
     assert!(perms.contains(&"user:read".to_string()));
 
-    let roles = default_fw.get_role_list(1001).await?;
+    let roles = default_fw.get_role_list("1001").await?;
     println!("    get_role_list(1001) = {:?}", roles);
     assert!(roles.contains(&"admin".to_string()));
 
-    let held = default_fw.check_permission(1001, "user:read").await?;
+    let held = default_fw.check_permission("1001", "user:read").await?;
     println!("    check_permission(1001, \"user:read\") = {}", held);
     assert!(held);
     println!();
@@ -194,7 +197,7 @@ pub async fn run() -> BulwarkResult<()> {
     // ----------------------------------------------------------------
     println!("[3] check_role_any:");
     let any_match = firewall
-        .check_role_any(1001, &["admin", "superuser"])
+        .check_role_any("1001", &["admin", "superuser"])
         .await?;
     println!(
         "    check_role_any(1001, [\"admin\", \"superuser\"]) = {}",
@@ -203,7 +206,7 @@ pub async fn run() -> BulwarkResult<()> {
     assert!(any_match, "1001 持有 admin，应任一匹配");
 
     let any_no_match = firewall
-        .check_role_any(1002, &["admin", "superuser"])
+        .check_role_any("1002", &["admin", "superuser"])
         .await?;
     println!(
         "    check_role_any(1002, [\"admin\", \"superuser\"]) = {}",
@@ -216,7 +219,7 @@ pub async fn run() -> BulwarkResult<()> {
     // 4. check_role_all 全部匹配
     // ----------------------------------------------------------------
     println!("[4] check_role_all:");
-    let all_match = firewall.check_role_all(1001, &["admin", "user"]).await?;
+    let all_match = firewall.check_role_all("1001", &["admin", "user"]).await?;
     println!(
         "    check_role_all(1001, [\"admin\", \"user\"]) = {}",
         all_match
@@ -224,7 +227,7 @@ pub async fn run() -> BulwarkResult<()> {
     assert!(all_match, "1001 应同时持有 admin 和 user");
 
     let all_no_match = firewall
-        .check_role_all(1001, &["admin", "superuser"])
+        .check_role_all("1001", &["admin", "superuser"])
         .await?;
     println!(
         "    check_role_all(1001, [\"admin\", \"superuser\"]) = {}",
@@ -237,12 +240,12 @@ pub async fn run() -> BulwarkResult<()> {
     // 5. 空字符串校验（Fail Loud）
     // ----------------------------------------------------------------
     println!("[5] 空字符串校验:");
-    let empty_perm = firewall.check_permission(1001, "").await;
+    let empty_perm = firewall.check_permission("1001", "").await;
     let perm_err = empty_perm.as_ref().err().map(|e| e.to_string());
     println!("    check_permission(1001, \"\") → {:?}", perm_err);
     assert!(empty_perm.is_err(), "空权限应返回错误（Fail Loud）");
 
-    let empty_role = firewall.check_role(1001, "").await;
+    let empty_role = firewall.check_role("1001", "").await;
     let role_err = empty_role.as_ref().err().map(|e| e.to_string());
     println!("    check_role(1001, \"\") → {:?}", role_err);
     assert!(empty_role.is_err(), "空角色应返回错误（Fail Loud）");

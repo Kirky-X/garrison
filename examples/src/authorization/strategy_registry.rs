@@ -17,7 +17,7 @@ use bulwark::config::BulwarkConfig;
 use bulwark::dao::{BulwarkDao, BulwarkDaoOxcache};
 use bulwark::error::BulwarkResult;
 use bulwark::session::BulwarkSession;
-use bulwark::stp::{BulwarkInterface, BulwarkLogic, BulwarkLogicDefault};
+use bulwark::stp::{BulwarkInterface, BulwarkLogicDefault};
 use bulwark::strategy::FirewallLoginContext;
 use bulwark::strategy::{
     BulwarkPermissionStrategyDefault, FirewallStrategy, LoginHandler, LogoutHandler, Strategy,
@@ -29,15 +29,15 @@ struct NoopInterface;
 
 #[async_trait]
 impl BulwarkInterface for NoopInterface {
-    async fn get_permission_list(&self, _login_id: i64) -> BulwarkResult<Vec<String>> {
+    async fn get_permission_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
         Ok(vec![])
     }
-    async fn get_role_list(&self, _login_id: i64) -> BulwarkResult<Vec<String>> {
+    async fn get_role_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
         Ok(vec![])
     }
 }
 
-async fn make_logic() -> Arc<dyn BulwarkLogic> {
+async fn make_logic() -> Arc<BulwarkLogicDefault> {
     let dao: Arc<dyn BulwarkDao> = Arc::new(BulwarkDaoOxcache::new().await.unwrap());
     let config = Arc::new(BulwarkConfig::default_config());
     let interface: Arc<dyn BulwarkInterface> = Arc::new(NoopInterface);
@@ -56,7 +56,7 @@ struct CustomLoginHandler;
 
 #[async_trait]
 impl LoginHandler for CustomLoginHandler {
-    async fn handle_login(&self, login_id: i64) -> BulwarkResult<String> {
+    async fn handle_login(&self, login_id: &str) -> BulwarkResult<String> {
         Ok(format!("custom-login-token-{}", login_id))
     }
 }
@@ -66,7 +66,7 @@ struct UuidTokenGenerator;
 
 #[async_trait]
 impl TokenGenerator for UuidTokenGenerator {
-    async fn generate_token(&self, _login_id: i64) -> BulwarkResult<String> {
+    async fn generate_token(&self, _login_id: &str) -> BulwarkResult<String> {
         Ok(format!("uuid-{}-{}", chrono_timestamp(), _login_id))
     }
     async fn refresh_token(&self, token: &str) -> BulwarkResult<String> {
@@ -91,7 +91,7 @@ impl LogoutHandler for LoggingLogoutHandler {
         println!("    [LoggingLogoutHandler] 用户登出");
         Ok(())
     }
-    async fn handle_logout_by_login_id(&self, login_id: i64) -> BulwarkResult<()> {
+    async fn handle_logout_by_login_id(&self, login_id: &str) -> BulwarkResult<()> {
         println!("    [LoggingLogoutHandler] 用户 {} 登出", login_id);
         Ok(())
     }
@@ -104,7 +104,7 @@ struct AlwaysPassFirewall;
 impl FirewallStrategy for AlwaysPassFirewall {
     async fn check_login_hooks(
         &self,
-        _login_id: i64,
+        _login_id: &str,
         _ctx: &FirewallLoginContext,
     ) -> BulwarkResult<()> {
         // 实际生产应实现真实的防火墙规则
@@ -116,7 +116,7 @@ impl FirewallStrategy for AlwaysPassFirewall {
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Bulwark Strategy 注册表示例 ===\n");
 
-    // 1. 构造 Strategy（6 个默认策略委托 BulwarkLogic）
+    // 1. 构造 Strategy（6 个默认策略委托 BulwarkLogicDefault）
     let logic = make_logic().await;
     let mut strategy = Strategy::new(logic);
     println!("[1] Strategy::new(logic) 构造完成");
@@ -132,7 +132,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // 2. 默认登录策略生成 token
     println!("[2] 默认登录策略生成 token");
-    let default_token = strategy.login_handler().handle_login(1001).await?;
+    let default_token = strategy.login_handler().handle_login("1001").await?;
     println!(
         "    默认 token: {}...",
         &default_token[..std::cmp::min(20, default_token.len())]
@@ -142,7 +142,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // 3. 运行时替换 LoginHandler
     println!("\n[3] 运行时替换 LoginHandler");
     strategy.register_login_handler(Arc::new(CustomLoginHandler));
-    let custom_token = strategy.login_handler().handle_login(1001).await?;
+    let custom_token = strategy.login_handler().handle_login("1001").await?;
     println!("    自定义 token: {}", custom_token);
     assert_eq!(custom_token, "custom-login-token-1001");
 
@@ -150,7 +150,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n[4] 替换 LoginHandler 不影响 LogoutHandler");
     let logout_result = strategy
         .logout_handler()
-        .handle_logout_by_login_id(1001)
+        .handle_logout_by_login_id("1001")
         .await;
     println!(
         "    LogoutHandler.handle_logout_by_login_id(1001) → {:?}",
@@ -164,7 +164,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     strategy.register_logout_handler(Arc::new(LoggingLogoutHandler));
     strategy.register_firewall_strategy(Arc::new(AlwaysPassFirewall));
 
-    let gen_token = strategy.token_generator().generate_token(2002).await?;
+    let gen_token = strategy.token_generator().generate_token("2002").await?;
     println!("    TokenGenerator.generate_token(2002) → {}", gen_token);
     assert!(gen_token.starts_with("uuid-"));
 
@@ -174,10 +174,10 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         logout_result.is_ok()
     );
 
-    let ctx = FirewallLoginContext::new(1001);
+    let ctx = FirewallLoginContext::new("1001");
     let firewall_result = strategy
         .firewall_strategy()
-        .check_login_hooks(1001, &ctx)
+        .check_login_hooks("1001", &ctx)
         .await;
     println!(
         "    FirewallStrategy.check_login_hooks() → {:?}",
@@ -187,7 +187,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // 6. remove 恢复默认
     println!("\n[6] remove_login_handler 恢复默认");
     strategy.remove_login_handler();
-    let restored_token = strategy.login_handler().handle_login(1001).await?;
+    let restored_token = strategy.login_handler().handle_login("1001").await?;
     println!(
         "    恢复后 token: {}...",
         &restored_token[..std::cmp::min(20, restored_token.len())]
@@ -205,7 +205,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("    6 个策略全部恢复默认实现");
 
     // 验证恢复后仍可正常工作
-    let final_token = strategy.login_handler().handle_login(3003).await?;
+    let final_token = strategy.login_handler().handle_login("3003").await?;
     assert!(!final_token.is_empty());
     println!("    验证：login(3003) → token 生成成功");
 

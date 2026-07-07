@@ -1,6 +1,6 @@
 //! 显式 Manager API（0.5.1 新增，依据 spec manager-explicit M7 / design.md D9）。
 //!
-//! 提供不依赖全局单例的 [`Manager`] struct，通过 `new(logic)` 显式注入 [`BulwarkLogic`]，
+//! 提供不依赖全局单例的 [`Manager`] struct，通过 `new(logic)` 显式注入 [`BulwarkLogicDefault`]，
 //! 便于测试隔离与多实例场景。
 //!
 //! # 与 [`BulwarkManager`](crate::manager::BulwarkManager) 的区别
@@ -12,14 +12,14 @@
 //! | API 风格 | 静态方法（`BulwarkUtil::login`） | 实例方法（`manager.authorize`） |
 //! | 适用场景 | 生产单例（向后兼容） | 测试隔离 / 多实例 / 显式 DI |
 //!
-//! # Rule 7 冲突说明（design.md D9 vs 现有 `BulwarkLogic` trait）
+//! # Rule 7 冲突说明（design.md D9 vs `PermissionLogic` trait）
 //!
-//! `BulwarkLogic` trait 的 `check_permission` 签名为
+//! `PermissionLogic` trait 的 `check_permission` 签名为
 //! `(&self, permission: &str) -> BulwarkResult<()>`（基于 task_local token 上下文获取 login_id），
-//! 而 design.md D9 要求 `Manager::check_permission(&self, login_id: i64, permission: &str) -> BulwarkResult<bool>`。
+//! 而 design.md D9 要求 `Manager::check_permission(&self, login_id: &str, permission: &str) -> BulwarkResult<bool>`。
 //!
-//! 两者无法直接匹配，且 `BulwarkLogic` trait 不暴露内部 `BulwarkInterface` / `firewall`。
-//! 本模块采用**委托策略**：`Manager` 内部调用 `BulwarkLogic::check_permission(permission)`，
+//! 两者无法直接匹配，且 `PermissionLogic` trait 不暴露内部 `BulwarkInterface` / `firewall`。
+//! 本模块采用**委托策略**：`Manager` 内部调用 `PermissionLogic::check_permission(permission)`，
 //! 将 `Ok(())` 映射为 `true`、`Err(NotPermission)` 映射为 `false`，其他错误透传。
 //! `login_id` 参数保留以匹配 D9 API 契约（与 `BulwarkUtil` 同样基于 task_local 鉴权上下文）。
 
@@ -27,33 +27,33 @@ use std::sync::Arc;
 
 use crate::core::permission::{AuthRequest, Decision, DecisionReason};
 use crate::error::{BulwarkError, BulwarkResult};
-use crate::stp::BulwarkLogic;
+use crate::stp::{BulwarkLogicDefault, PermissionLogic};
 
 /// 显式依赖注入入口（0.5.1 新增，依据 spec manager-explicit / design.md D9）。
 ///
 /// 与 [`BulwarkManager`](crate::manager::BulwarkManager) 的区别：
 /// - `BulwarkManager`：全局单例，通过 `init()` 初始化，静态 API
-/// - `Manager`：实例化注入，构造时传入 `Arc<dyn BulwarkLogic>`，便于测试与多实例
+/// - `Manager`：实例化注入，构造时传入 `Arc<BulwarkLogicDefault>`，便于测试与多实例
 ///
 /// # 生命周期独立
 ///
-/// `Manager` 持有 `Arc<dyn BulwarkLogic>` 的引用计数副本，Drop 时仅减少引用计数，
-/// 不影响 `BulwarkManager` 全局单例（两者共享同一 `BulwarkLogic` 实例时互不干扰）。
+/// `Manager` 持有 `Arc<BulwarkLogicDefault>` 的引用计数副本，Drop 时仅减少引用计数，
+/// 不影响 `BulwarkManager` 全局单例（两者共享同一 `BulwarkLogicDefault` 实例时互不干扰）。
 ///
 /// # 鉴权上下文
 ///
-/// `authorize` / `check_permission` 委托 [`BulwarkLogic::check_permission`]，
+/// `authorize` / `check_permission` 委托 [`PermissionLogic::check_permission`]，
 /// 该方法基于 task_local token 上下文获取当前 `login_id`（与 `BulwarkUtil` 一致）。
 /// 调用前需通过 web 中间件或 [`with_current_token`](crate::stp::with_current_token) 设置 task_local。
 pub struct Manager {
-    logic: Arc<dyn BulwarkLogic>,
+    logic: Arc<BulwarkLogicDefault>,
 }
 
 impl Manager {
-    /// 创建 Manager 实例，注入 `BulwarkLogic` 实现。
+    /// 创建 Manager 实例，注入 `BulwarkLogicDefault` 实现。
     ///
     /// # 参数
-    /// - `logic`: `BulwarkLogic` 实现的 `Arc` 引用（可与 `BulwarkManager::logic()` 共享同一实例）。
+    /// - `logic`: `BulwarkLogicDefault` 实现的 `Arc` 引用（可与 `BulwarkManager::logic()` 共享同一实例）。
     ///
     /// # 示例
     ///
@@ -65,13 +65,13 @@ impl Manager {
     /// let logic = BulwarkManager::logic().unwrap();
     /// let manager = Manager::new(logic);
     /// ```
-    pub fn new(logic: Arc<dyn BulwarkLogic>) -> Self {
+    pub fn new(logic: Arc<BulwarkLogicDefault>) -> Self {
         Self { logic }
     }
 
     /// 鉴权决策：基于 [`AuthRequest`] 返回完整 [`Decision`]。
     ///
-    /// 内部委托 [`BulwarkLogic::check_permission`]：
+    /// 内部委托 [`PermissionLogic::check_permission`]：
     /// - `Ok(())` → `Decision::allow()`（`ExplicitAllow`）
     /// - `Err(NotPermission)` → `Decision::deny(NoMatchingPermission)`
     /// - 其他错误（未登录 / DAO 故障等）透传
@@ -109,7 +109,7 @@ impl Manager {
 
     /// 校验主体是否持有指定权限，返回 `bool`。
     ///
-    /// 内部委托 [`BulwarkLogic::check_permission`]：
+    /// 内部委托 [`PermissionLogic::check_permission`]：
     /// - `Ok(())` → `Ok(true)`
     /// - `Err(NotPermission)` → `Ok(false)`
     /// - 其他错误透传
@@ -127,7 +127,7 @@ impl Manager {
     /// - `Ok(true)`: 持有权限。
     /// - `Ok(false)`: 未持有权限。
     /// - `Err(_)`: 鉴权过程出错（未登录 / DAO 故障等）。
-    pub async fn check_permission(&self, login_id: i64, permission: &str) -> BulwarkResult<bool> {
+    pub async fn check_permission(&self, login_id: &str, permission: &str) -> BulwarkResult<bool> {
         let _ = login_id;
         match self.logic.check_permission(permission).await {
             Ok(()) => Ok(true),
@@ -149,7 +149,9 @@ mod tests {
     use crate::dao::BulwarkDao;
     use crate::manager::BulwarkManager;
     use crate::session::BulwarkSession;
-    use crate::stp::{with_current_token, BulwarkInterface, BulwarkLogicDefault, BulwarkUtil};
+    use crate::stp::{
+        with_current_token, BulwarkInterface, BulwarkLogicDefault, BulwarkUtil, SessionLogic,
+    };
     use crate::strategy::{BulwarkPermissionStrategy, BulwarkPermissionStrategyDefault};
     use async_trait::async_trait;
     use serial_test::serial;
@@ -161,9 +163,9 @@ mod tests {
     // ------------------------------------------------------------------------
 
     struct MockInterface {
-        permissions: HashMap<i64, Vec<String>>,
+        permissions: HashMap<String, Vec<String>>,
         #[allow(dead_code)]
-        roles: HashMap<i64, Vec<String>>,
+        roles: HashMap<String, Vec<String>>,
     }
 
     impl MockInterface {
@@ -174,21 +176,23 @@ mod tests {
             }
         }
 
-        fn with_permission(mut self, login_id: i64, perms: &[&str]) -> Self {
-            self.permissions
-                .insert(login_id, perms.iter().map(|s| s.to_string()).collect());
+        fn with_permission(mut self, login_id: &str, perms: &[&str]) -> Self {
+            self.permissions.insert(
+                login_id.to_string(),
+                perms.iter().map(|s| s.to_string()).collect(),
+            );
             self
         }
     }
 
     #[async_trait]
     impl BulwarkInterface for MockInterface {
-        async fn get_permission_list(&self, login_id: i64) -> BulwarkResult<Vec<String>> {
-            Ok(self.permissions.get(&login_id).cloned().unwrap_or_default())
+        async fn get_permission_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+            Ok(self.permissions.get(login_id).cloned().unwrap_or_default())
         }
 
-        async fn get_role_list(&self, login_id: i64) -> BulwarkResult<Vec<String>> {
-            Ok(self.roles.get(&login_id).cloned().unwrap_or_default())
+        async fn get_role_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+            Ok(self.roles.get(login_id).cloned().unwrap_or_default())
         }
     }
 
@@ -206,7 +210,7 @@ mod tests {
     }
 
     /// 构造独立的 `BulwarkLogicDefault`（不依赖全局单例），注入 MockDao + MockInterface。
-    fn make_logic(interface: Arc<dyn BulwarkInterface>) -> Arc<dyn BulwarkLogic> {
+    fn make_logic(interface: Arc<dyn BulwarkInterface>) -> Arc<BulwarkLogicDefault> {
         let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
         let config = Arc::new(make_config());
         let timeout = u64::try_from(config.timeout).unwrap();
@@ -261,12 +265,12 @@ mod tests {
     #[tokio::test]
     async fn manager_authorize_returns_decision() {
         let interface: Arc<dyn BulwarkInterface> =
-            Arc::new(MockInterface::new().with_permission(1001, &["user:read"]));
+            Arc::new(MockInterface::new().with_permission("1001", &["user:read"]));
         let logic = make_logic(interface);
         let manager = Manager::new(Arc::clone(&logic));
 
-        let token = logic.login(1001).await.unwrap();
-        let req = AuthRequest::new(1001, "user:read");
+        let token = logic.login("1001").await.unwrap();
+        let req = AuthRequest::new("1001", "user:read");
         let result = with_token(token, manager.authorize(&req)).await;
         assert!(result.is_ok(), "authorize 应返回 Ok: {:?}", result.err());
         let decision = result.unwrap();
@@ -283,12 +287,12 @@ mod tests {
     #[tokio::test]
     async fn manager_authorize_with_allowed_returns_true() {
         let interface: Arc<dyn BulwarkInterface> =
-            Arc::new(MockInterface::new().with_permission(1001, &["user:read"]));
+            Arc::new(MockInterface::new().with_permission("1001", &["user:read"]));
         let logic = make_logic(interface);
         let manager = Manager::new(Arc::clone(&logic));
 
-        let token = logic.login(1001).await.unwrap();
-        let req = AuthRequest::new(1001, "user:read");
+        let token = logic.login("1001").await.unwrap();
+        let req = AuthRequest::new("1001", "user:read");
         let decision = with_token(token, manager.authorize(&req))
             .await
             .expect("authorize ok");
@@ -308,12 +312,12 @@ mod tests {
     #[tokio::test]
     async fn manager_authorize_with_denied_returns_false() {
         let interface: Arc<dyn BulwarkInterface> =
-            Arc::new(MockInterface::new().with_permission(1001, &["user:read"]));
+            Arc::new(MockInterface::new().with_permission("1001", &["user:read"]));
         let logic = make_logic(interface);
         let manager = Manager::new(Arc::clone(&logic));
 
-        let token = logic.login(1001).await.unwrap();
-        let req = AuthRequest::new(1001, "user:delete");
+        let token = logic.login("1001").await.unwrap();
+        let req = AuthRequest::new("1001", "user:delete");
         let decision = with_token(token, manager.authorize(&req))
             .await
             .expect("authorize 应返回 Ok(Decision deny) 而非 Err");
@@ -326,25 +330,26 @@ mod tests {
     }
 
     // ------------------------------------------------------------------------
-    // 测试 5：Manager::check_permission 委托 BulwarkLogic 行为一致
+    // 测试 5：Manager::check_permission 委托 PermissionLogic 行为一致
     // ------------------------------------------------------------------------
 
-    /// T078-5: `manager.check_permission(login_id, perm)` 与 `BulwarkLogic::check_permission(perm)`
+    /// T078-5: `manager.check_permission(login_id, perm)` 与 `PermissionLogic::check_permission(perm)`
     /// 行为一致（同一 task_local 上下文下返回相同允许/拒绝结果）。
     ///
     /// 验证委托语义：Manager 内部调用 logic.check_permission，返回值映射正确。
     #[tokio::test]
     async fn manager_check_permission_delegates_to_logic() {
         let interface: Arc<dyn BulwarkInterface> =
-            Arc::new(MockInterface::new().with_permission(1001, &["user:read"]));
+            Arc::new(MockInterface::new().with_permission("1001", &["user:read"]));
         let logic = make_logic(interface);
         let manager = Manager::new(Arc::clone(&logic));
 
-        let token = logic.login(1001).await.unwrap();
+        let token = logic.login("1001").await.unwrap();
 
         // 持有权限：logic.check_permission → Ok(())，manager.check_permission → Ok(true)
         let logic_held = with_token(token.clone(), logic.check_permission("user:read")).await;
-        let mgr_held = with_token(token.clone(), manager.check_permission(1001, "user:read")).await;
+        let mgr_held =
+            with_token(token.clone(), manager.check_permission("1001", "user:read")).await;
         assert!(logic_held.is_ok(), "logic 持有权限应 Ok(())");
         assert!(
             mgr_held.expect("manager check_permission ok"),
@@ -353,8 +358,11 @@ mod tests {
 
         // 未持有权限：logic.check_permission → Err(NotPermission)，manager.check_permission → Ok(false)
         let logic_denied = with_token(token.clone(), logic.check_permission("user:delete")).await;
-        let mgr_denied =
-            with_token(token.clone(), manager.check_permission(1001, "user:delete")).await;
+        let mgr_denied = with_token(
+            token.clone(),
+            manager.check_permission("1001", "user:delete"),
+        )
+        .await;
         assert!(
             matches!(logic_denied, Err(BulwarkError::NotPermission(_))),
             "logic 未持有应 Err(NotPermission)"
@@ -408,7 +416,7 @@ mod tests {
             "Drop Manager 后全局单例应仍初始化"
         );
         // 全局单例仍可正常 login
-        let token = BulwarkUtil::login(2002).await.unwrap();
+        let token = BulwarkUtil::login("2002").await.unwrap();
         assert!(!token.is_empty(), "全局单例 login 仍应正常工作");
 
         BulwarkManager::reset_for_test();

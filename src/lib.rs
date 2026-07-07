@@ -94,7 +94,7 @@
 //!   - `dbnexus`：数据库抽象层（SQLite / PostgreSQL / MySQL），由 [`BulwarkDao`] trait 屏蔽后端差异
 //!   - `oxcache`：缓存抽象层（L1 moka + L2 redis），承载 Token-Session 与 Account-Session
 //! - **BulwarkManager 单例模式**
-//!   - [`BulwarkManager`] 持有全局 `Arc<dyn BulwarkLogic>`（基于 `parking_lot::RwLock`，支持覆盖式 `init`）
+//!   - [`BulwarkManager`] 持有全局 `Arc<BulwarkLogicDefault>`（基于 `parking_lot::RwLock`，支持覆盖式 `init`）
 //!   - 业务方启动时调用 [`BulwarkManager::init`] 注入 dao / config / interface 依赖
 //!   - `BulwarkLogicFactory` 通过 `inventory::submit!` 在编译期注册，运行时由 `inventory::iter` 选取
 //!   - [`BulwarkUtil::login`] / [`BulwarkUtil::check_login`] 等静态方法委托到全局单例
@@ -128,7 +128,7 @@
 /// 核心模块，包含认证、权限、Token 的核心抽象。
 pub mod core;
 
-/// Stp 模块，提供 BulwarkLogic / BulwarkInterface / BulwarkUtil。
+/// Stp 模块，提供 BulwarkLogicDefault / BulwarkInterface / BulwarkUtil + 5 个子 trait。
 pub mod stp;
 
 /// 注解模块，定义鉴权注解枚举。

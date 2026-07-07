@@ -99,7 +99,7 @@ pub async fn run() -> BulwarkResult<()> {
     // ----------------------------------------------------------------
     // 2. login：生成 token 并建立会话
     // ----------------------------------------------------------------
-    let token = auth.login(1001, None).await?;
+    let token = auth.login("1001", None).await?;
     println!("[2] login(1001):");
     println!("    token = {}", token);
     assert!(!token.is_empty());
@@ -116,7 +116,7 @@ pub async fn run() -> BulwarkResult<()> {
     let login_id = auth.get_login_id(&token).await?;
     println!("\n[4] get_login_id(\"{}\"):", &token[..8]);
     println!("    返回 = {:?}", login_id);
-    assert_eq!(login_id, Some(1001));
+    assert_eq!(login_id, Some("1001".to_string()));
 
     let verified_id = auth.verify_token(&token).await?;
     println!("\n[5] verify_token(\"{}\"):", &token[..8]);
@@ -124,7 +124,7 @@ pub async fn run() -> BulwarkResult<()> {
         "    返回 = {}（校验失败会抛 InvalidToken 错误）",
         verified_id
     );
-    assert_eq!(verified_id, 1001);
+    assert_eq!(verified_id, "1001");
 
     // 校验无效 token
     let invalid_result = auth.verify_token("invalid-token").await;

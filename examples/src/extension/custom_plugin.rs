@@ -29,7 +29,7 @@ impl BulwarkPlugin for AuditPlugin {
         "audit-plugin"
     }
 
-    fn on_login(&self, login_id: i64, token: &str) -> BulwarkResult<()> {
+    fn on_login(&self, login_id: &str, token: &str) -> BulwarkResult<()> {
         LOGIN_CALLS.fetch_add(1, Ordering::SeqCst);
         println!(
             "    [AuditPlugin] on_login: login_id={}, token={}...",
@@ -39,7 +39,7 @@ impl BulwarkPlugin for AuditPlugin {
         Ok(())
     }
 
-    fn on_logout(&self, login_id: i64, token: &str) -> BulwarkResult<()> {
+    fn on_logout(&self, login_id: &str, token: &str) -> BulwarkResult<()> {
         LOGOUT_CALLS.fetch_add(1, Ordering::SeqCst);
         println!(
             "    [AuditPlugin] on_logout: login_id={}, token={}...",
@@ -49,7 +49,7 @@ impl BulwarkPlugin for AuditPlugin {
         Ok(())
     }
 
-    fn on_permission_check(&self, login_id: i64, permission: &str) -> BulwarkResult<()> {
+    fn on_permission_check(&self, login_id: &str, permission: &str) -> BulwarkResult<()> {
         PERM_CHECK_CALLS.fetch_add(1, Ordering::SeqCst);
         println!(
             "    [AuditPlugin] on_permission_check: login_id={}, permission={}",
@@ -67,19 +67,19 @@ impl BulwarkPlugin for FailingPlugin {
         "failing-plugin"
     }
 
-    fn on_login(&self, _login_id: i64, _token: &str) -> BulwarkResult<()> {
+    fn on_login(&self, _login_id: &str, _token: &str) -> BulwarkResult<()> {
         Err(bulwark::error::BulwarkError::Internal(
             "FailingPlugin on_login 故意失败".to_string(),
         ))
     }
 
-    fn on_logout(&self, _login_id: i64, _token: &str) -> BulwarkResult<()> {
+    fn on_logout(&self, _login_id: &str, _token: &str) -> BulwarkResult<()> {
         Err(bulwark::error::BulwarkError::Internal(
             "FailingPlugin on_logout 故意失败".to_string(),
         ))
     }
 
-    fn on_permission_check(&self, _login_id: i64, _permission: &str) -> BulwarkResult<()> {
+    fn on_permission_check(&self, _login_id: &str, _permission: &str) -> BulwarkResult<()> {
         Err(bulwark::error::BulwarkError::Internal(
             "FailingPlugin on_permission_check 故意失败".to_string(),
         ))
@@ -125,7 +125,7 @@ pub fn run() -> BulwarkResult<()> {
     // ----------------------------------------------------------------
     println!("[2] on_login(1001, \"T1-uuid-token\"):");
     let before = LOGIN_CALLS.load(Ordering::SeqCst);
-    manager.on_login(1001, "T1-uuid-token");
+    manager.on_login("1001", "T1-uuid-token");
     let after = LOGIN_CALLS.load(Ordering::SeqCst);
     // FailingPlugin 失败，但 AuditPlugin 仍被调用
     assert!(after > before);
@@ -138,7 +138,7 @@ pub fn run() -> BulwarkResult<()> {
     // 3. on_permission_check 钩子（权限校验时调用，观测不干预）
     // ----------------------------------------------------------------
     println!("[3] on_permission_check(1001, \"user:read\"):");
-    manager.on_permission_check(1001, "user:read");
+    manager.on_permission_check("1001", "user:read");
     assert!(PERM_CHECK_CALLS.load(Ordering::SeqCst) >= 1);
     println!();
 
@@ -146,7 +146,7 @@ pub fn run() -> BulwarkResult<()> {
     // 4. on_logout 钩子（登出后调用）
     // ----------------------------------------------------------------
     println!("[4] on_logout(1001, \"T1-uuid-token\"):");
-    manager.on_logout(1001, "T1-uuid-token");
+    manager.on_logout("1001", "T1-uuid-token");
     assert!(LOGOUT_CALLS.load(Ordering::SeqCst) >= 1);
     println!();
 

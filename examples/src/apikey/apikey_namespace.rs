@@ -118,11 +118,11 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // 1. 在 tenant-A namespace 下生成两个 key
     println!("[1] 在 tenant-A namespace 下生成 key");
     let key_a1 = handler
-        .generate_with_namespace(1001, "tenant-A", vec!["read".into()], 3600)
+        .generate_with_namespace("1001", "tenant-A", vec!["read".into()], 3600)
         .await?;
     println!("    key_a1: {}...", &key_a1[..16]);
     let key_a2 = handler
-        .generate_with_namespace(1002, "tenant-A", vec!["write".into()], 3600)
+        .generate_with_namespace("1002", "tenant-A", vec!["write".into()], 3600)
         .await?;
     println!("    key_a2: {}...", &key_a2[..16]);
     assert_eq!(key_a1.len(), 64);
@@ -131,7 +131,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // 2. 在 tenant-B namespace 下生成一个 key
     println!("\n[2] 在 tenant-B namespace 下生成 key");
     let key_b1 = handler
-        .generate_with_namespace(2001, "tenant-B", vec!["admin".into()], 3600)
+        .generate_with_namespace("2001", "tenant-B", vec!["admin".into()], 3600)
         .await?;
     println!("    key_b1: {}...", &key_b1[..16]);
 
@@ -142,7 +142,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         "    verify(key_a1, tenant-A) → login_id={}, scopes={:?}",
         info_a1.login_id, info_a1.scopes
     );
-    assert_eq!(info_a1.login_id, 1001);
+    assert_eq!(info_a1.login_id, "1001");
     assert_eq!(info_a1.namespace, "tenant-A");
 
     // 4. 跨 namespace 校验失败（安全隔离）
@@ -186,7 +186,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // 7. namespace 校验规则
     println!("\n[7] namespace 校验规则（长度 1-64，仅 [a-zA-Z0-9_-]）");
     let invalid_ns = handler
-        .generate_with_namespace(3001, "invalid namespace!", vec![], 3600)
+        .generate_with_namespace("3001", "invalid namespace!", vec![], 3600)
         .await;
     assert!(invalid_ns.is_err(), "包含空格和感叹号的 namespace 应失败");
     println!("    generate(namespace=\"invalid namespace!\") → Err（预期）");

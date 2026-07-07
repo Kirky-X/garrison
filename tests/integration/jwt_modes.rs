@@ -19,7 +19,7 @@ use bulwark::error::{BulwarkError, BulwarkResult};
 use bulwark::protocol::jwt::JwtHandler;
 use bulwark::session::BulwarkSession;
 use bulwark::stp::{
-    with_current_token, BulwarkInterface, BulwarkLogic, BulwarkLogicDefault, JwtMode,
+    with_current_token, BulwarkInterface, BulwarkLogicDefault, JwtMode, SessionLogic,
 };
 use jsonwebtoken::Algorithm;
 use serial_test::serial;

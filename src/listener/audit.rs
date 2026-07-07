@@ -666,7 +666,7 @@ impl AuditLogListener {
         let signatures = self.compute_signature_chain(entries)?;
         let mut csv = String::from("timestamp,login_id,tenant_id,event_type,signature");
         for (entry, sig) in entries.iter().zip(signatures.iter()) {
-            let login_id_str = entry.login_id.map_or(String::new(), |id| id.to_string());
+            let login_id_str = entry.login_id.as_deref().unwrap_or("");
             csv.push('\n');
             csv.push_str(&format!(
                 "{},{},{},{},{}",
@@ -754,7 +754,7 @@ impl AuditLogListener {
         let mut prev_sig = String::new();
         let mut signatures = Vec::with_capacity(entries.len());
         for entry in entries {
-            let login_id_str = entry.login_id.map_or(String::new(), |id| id.to_string());
+            let login_id_str = entry.login_id.as_deref().unwrap_or("");
             let row_content = format!(
                 "{},{},{},{}",
                 entry.created_at, login_id_str, entry.tenant_id, entry.event_type

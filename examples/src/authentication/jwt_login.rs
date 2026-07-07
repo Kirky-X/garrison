@@ -23,7 +23,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         JwtHandler::new("my-very-secret-key-please-rotate-me").with_device("web-browser-chrome");
 
     // 2. 签发 JWT（模拟用户 1001 登录，有效期 1 小时）
-    let login_id: i64 = 1001;
+    let login_id: &str = "1001";
     let timeout_seconds: i64 = 3600;
     let token = handler.sign(login_id, timeout_seconds)?;
     println!("[签发] login_id={} 的 JWT：{}", login_id, token);

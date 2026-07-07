@@ -27,7 +27,7 @@ use bulwark::error::{BulwarkError, BulwarkResult};
 use bulwark::listener::{BulwarkEvent, BulwarkListener, BulwarkListenerManager};
 use bulwark::secure::password::{Argon2Hasher, BcryptHasher, PasswordHasher, PasswordVerifier};
 use bulwark::session::BulwarkSession;
-use bulwark::stp::{BulwarkInterface, BulwarkLogic, BulwarkLogicDefault};
+use bulwark::stp::{BulwarkInterface, BulwarkLogicDefault, PasswordLogic};
 use serial_test::serial;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};

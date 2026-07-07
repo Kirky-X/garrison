@@ -109,8 +109,8 @@ impl BulwarkDao for InMemoryDao {
 
 /// 示例接口实现：基于内存 HashMap 存储 login_id 的权限与角色。
 pub struct MyInterface {
-    permissions: HashMap<i64, Vec<String>>,
-    roles: HashMap<i64, Vec<String>>,
+    permissions: HashMap<String, Vec<String>>,
+    roles: HashMap<String, Vec<String>>,
 }
 
 impl MyInterface {
@@ -118,11 +118,14 @@ impl MyInterface {
     pub fn new() -> Self {
         let mut permissions = HashMap::new();
         permissions.insert(
-            1001,
+            "1001".to_string(),
             vec!["user:create".to_string(), "user:read".to_string()],
         );
         let mut roles = HashMap::new();
-        roles.insert(1001, vec!["admin".to_string(), "user".to_string()]);
+        roles.insert(
+            "1001".to_string(),
+            vec!["admin".to_string(), "user".to_string()],
+        );
         Self { permissions, roles }
     }
 }
@@ -135,12 +138,12 @@ impl Default for MyInterface {
 
 #[async_trait]
 impl BulwarkInterface for MyInterface {
-    async fn get_permission_list(&self, login_id: i64) -> BulwarkResult<Vec<String>> {
-        Ok(self.permissions.get(&login_id).cloned().unwrap_or_default())
+    async fn get_permission_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+        Ok(self.permissions.get(login_id).cloned().unwrap_or_default())
     }
 
-    async fn get_role_list(&self, login_id: i64) -> BulwarkResult<Vec<String>> {
-        Ok(self.roles.get(&login_id).cloned().unwrap_or_default())
+    async fn get_role_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+        Ok(self.roles.get(login_id).cloned().unwrap_or_default())
     }
 }
 
@@ -177,7 +180,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // ----------------------------------------------------------------
     println!("[login_id 上下文] check_permission:");
     let result = ParameterQueryBuilder::new()
-        .with_login_id(1001)
+        .with_login_id("1001".to_string())
         .check_permission("user:create")
         .await;
     println!("    with_login_id(1001).check_permission(\"user:create\") → Ok(()) ✓");
@@ -185,7 +188,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // 未持有权限 → NotPermission
     let denied = ParameterQueryBuilder::new()
-        .with_login_id(1001)
+        .with_login_id("1001".to_string())
         .check_permission("user:delete")
         .await;
     match denied {
@@ -203,7 +206,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // 3. with_token + check_role（先 login 获取 token）
     // ----------------------------------------------------------------
     println!("[token 上下文] check_role:");
-    let token = BulwarkUtil::login(1001).await?;
+    let token = BulwarkUtil::login("1001").await?;
     println!(
         "    BulwarkUtil::login(1001) → token={}",
         &token[..16.min(token.len())]

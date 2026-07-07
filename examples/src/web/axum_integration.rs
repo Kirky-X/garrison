@@ -99,16 +99,16 @@ impl Default for MyInterface {
 
 #[async_trait]
 impl BulwarkInterface for MyInterface {
-    async fn get_permission_list(&self, login_id: i64) -> BulwarkResult<Vec<String>> {
+    async fn get_permission_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
         match login_id {
-            1001 => Ok(vec!["data:read".to_string()]),
+            "1001" => Ok(vec!["data:read".to_string()]),
             _ => Ok(vec![]),
         }
     }
 
-    async fn get_role_list(&self, login_id: i64) -> BulwarkResult<Vec<String>> {
+    async fn get_role_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
         match login_id {
-            1001 => Ok(vec!["admin".to_string()]),
+            "1001" => Ok(vec!["admin".to_string()]),
             _ => Ok(vec![]),
         }
     }
@@ -174,7 +174,7 @@ pub async fn setup() -> BulwarkResult<(Router, String)> {
     BulwarkManager::init(dao, config.clone(), interface)?;
 
     // --- 模拟登录获取测试 token ---
-    let token = BulwarkUtil::login(1001).await?;
+    let token = BulwarkUtil::login("1001").await?;
     assert!(!token.is_empty(), "login 应返回非空 token");
 
     // --- 创建 axum app，使用 BulwarkRouter + route_protected ---

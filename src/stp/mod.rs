@@ -5,8 +5,9 @@
 //!
 //! ## 核心设计（依据 spec stp-core-api 与 design.md Decision 8）
 //!
-//! - `BulwarkLogic` trait：定义 login/logout/check_login/kickout 完整契约
-//! - `BulwarkLogicDefault`：默认实现，组合 `BulwarkSession` + `BulwarkConfig`
+//! - 5 个子 trait（`SessionLogic`/`PermissionLogic`/`TokenLogic`/`MfaLogic`/`PasswordLogic`）：
+//!   v0.5.2 拆分原 `BulwarkLogic` 上帝 trait，按职责域分离，super-trait 为 `BulwarkCore`
+//! - `BulwarkLogicDefault`：默认实现，组合 `BulwarkSession` + `BulwarkConfig`，实现全部 5 个子 trait
 //! - `tokio::task_local`：存储当前请求的 token（类似 Sa-Token 的 `SaHolder`，但适配 async）
 //!
 //! ## task_local 上下文（依据 spec context-abstraction）
@@ -33,14 +34,26 @@ use std::sync::Arc;
 #[cfg(feature = "parameter-query")]
 pub mod parameter;
 
-// 0.5.2 新增：BulwarkLogic 上帝 trait 拆分为 6 个细粒度 trait
-// （本声明仅注册模块；re-exports 与 BulwarkLogic 重构在后续任务处理）
+// 0.5.2 新增：原 BulwarkLogic 上帝 trait 拆分为 6 个细粒度子 trait
+// （BulwarkCore 基座 + 5 个职责域 trait），按职责域分离。
 pub mod core;
 pub mod mfa;
 pub mod password;
 pub mod permission;
 pub mod session;
 pub mod token;
+
+// v0.5.2：子 trait re-exports（供 crate::stp::SessionLogic 等路径访问）
+pub use self::core::BulwarkCore;
+pub use self::mfa::MfaLogic;
+pub use self::password::PasswordLogic;
+pub use self::permission::PermissionLogic;
+pub use self::session::SessionLogic;
+pub use self::token::TokenLogic;
+
+// v0.5.2：原 `BulwarkLogic` 上帝 trait（21 个方法）已彻底删除。
+// Manager / Strategy / Factory 等持有方改为具体类型 `Arc<BulwarkLogicDefault>`，
+// 方法调用通过子 trait（SessionLogic/PermissionLogic/TokenLogic/MfaLogic/PasswordLogic）解析。
 
 // ============================================================================
 // task_local：存储当前请求的 token（类似 Sa-Token 的 SaHolder）
@@ -70,345 +83,6 @@ pub fn current_token() -> BulwarkResult<String> {
     CURRENT_TOKEN.try_get().map(|t| t.clone()).map_err(|_| {
         BulwarkError::Session("未设置当前请求上下文（未调用 with_current_token）".to_string())
     })
-}
-
-// ============================================================================
-// BulwarkLogic trait：核心认证逻辑契约
-// ============================================================================
-
-/// 核心逻辑 trait，定义登录认证的完整行为契约。
-///
-/// [借鉴 Sa-Token] 对应 `StpLogic`，是框架最核心的抽象。
-/// 实现方需集成认证、会话等能力（0.1.0 仅实现 login/logout/check_login/kickout，
-/// 权限/角色校验在任务组 7 实现）。
-#[async_trait]
-pub trait BulwarkLogic: Send + Sync {
-    /// 执行登录：生成 token + 创建会话。
-    ///
-    /// # 参数
-    /// - `login_id`: 登录主体标识。
-    ///
-    /// # 返回
-    /// 生成的 token 字符串。
-    ///
-    /// # 错误
-    /// - token 生成失败（如 `token_style` 非法）：`BulwarkError::Config`。
-    /// - 会话创建失败：透传 `BulwarkError`。
-    async fn login(&self, login_id: &str) -> BulwarkResult<String>;
-
-    /// 执行登录（自定义 token）：用指定 token 创建会话。
-    ///
-    /// 用于 token 转发、自定义 token 生成等场景。
-    ///
-    /// # 参数
-    /// - `login_id`: 登录主体标识。
-    /// - `token`: 自定义 token 字符串。
-    ///
-    /// # 返回
-    /// 成功返回 `Ok(())`。
-    ///
-    /// # 错误
-    /// - 会话创建失败：透传 `BulwarkError`。
-    async fn login_with_token(&self, login_id: &str, token: &str) -> BulwarkResult<()>;
-
-    /// 执行登出：从 task_local 获取当前 token 并销毁。
-    ///
-    /// 未登录时调用幂等返回 Ok（不抛错）。
-    ///
-    /// # 返回
-    /// 成功返回 `Ok(())`；未设置 token 时幂等返回 `Ok(())`。
-    ///
-    /// # 错误
-    /// - 会话销毁失败：透传 `BulwarkError`。
-    async fn logout(&self) -> BulwarkResult<()>;
-
-    /// 按账号登出：销毁指定 login_id 的所有会话。
-    ///
-    /// # 参数
-    /// - `login_id`: 登录主体标识。
-    ///
-    /// # 返回
-    /// 成功返回 `Ok(())`。
-    ///
-    /// # 错误
-    /// - 会话销毁失败：透传 `BulwarkError`。
-    async fn logout_by_login_id(&self, login_id: &str) -> BulwarkResult<()>;
-
-    /// 踢出用户：按账号踢出（语义等同 logout_by_login_id）。
-    ///
-    /// # 参数
-    /// - `login_id`: 登录主体标识。
-    ///
-    /// # 返回
-    /// 成功返回 `Ok(())`。
-    ///
-    /// # 错误
-    /// - 会话销毁失败：透传 `BulwarkError`。
-    async fn kickout(&self, login_id: &str) -> BulwarkResult<()>;
-
-    /// 踢出会话：按 token 踢出（语义等同 logout(token)）。
-    ///
-    /// # 参数
-    /// - `token`: 待踢出的 token 字符串。
-    ///
-    /// # 返回
-    /// 成功返回 `Ok(())`。
-    ///
-    /// # 错误
-    /// - 会话销毁失败：透传 `BulwarkError`。
-    async fn kickout_by_token(&self, token: &str) -> BulwarkResult<()>;
-
-    /// 主动吊销 token：销毁指定 token 的会话并广播 RevokeToken 事件
-    /// （v0.4.2 新增，依据 spec listener-events-extend R-002）。
-    ///
-    /// 与 `logout` 的区别：
-    /// - `logout` 从 task_local 读取当前 token，语义是"用户主动登出"
-    /// - `revoke_token` 接收显式 token 参数，语义是"管理员/系统吊销特定 token"
-    /// - `revoke_token` 广播 `RevokeToken` 事件（携带 token），`logout` 广播 `Logout` 事件（携带 login_id+token）
-    ///
-    /// 与 `kickout_by_token` 的区别：
-    /// - `kickout_by_token` 语义是"管理员强制下线"，广播 `Kickout` 事件（携带 login_id+token+reason）
-    /// - `revoke_token` 语义是"token 失效"（如 OAuth2 token revocation），广播 `RevokeToken` 事件（仅携带 token）
-    ///
-    /// # 参数
-    /// - `token`: 待吊销的 token 字符串。
-    ///
-    /// # 返回
-    /// 成功返回 `Ok(())`；token 不存在时幂等返回 `Ok(())`。
-    ///
-    /// # 错误
-    /// - 会话销毁失败：透传 `BulwarkError`。
-    async fn revoke_token(&self, token: &str) -> BulwarkResult<()>;
-
-    /// 检查登录状态：从 task_local 获取 token 验证有效性。
-    ///
-    /// # 返回
-    /// - `Ok(true)`: token 有效且 Account-Session 未过期。
-    /// - `Ok(false)`: token 无效或未登录（`throw_on_not_login=false`）。
-    ///
-    /// # 错误
-    /// - 未登录且 `throw_on_not_login=true`：抛 `BulwarkError::Session`。
-    /// - DAO 读取失败：透传 `BulwarkError`。
-    async fn check_login(&self) -> BulwarkResult<bool>;
-
-    /// 获取当前登录 ID。
-    ///
-    /// # 返回
-    /// - `Some(login_id)`: token 有效，返回关联的 login_id。
-    /// - `None`: 未登录或 token 无效。
-    ///
-    /// # 错误
-    /// - DAO 读取失败：透传 `BulwarkError`。
-    async fn get_login_id(&self) -> BulwarkResult<Option<String>>;
-
-    /// 校验权限（任务组 7 实现，复用 dbnexus PermissionProvider）。
-    ///
-    /// # 参数
-    /// - `permission`: 权限标识字符串。
-    ///
-    /// # 返回
-    /// 成功（持有权限）返回 `Ok(())`。
-    ///
-    /// # 错误
-    /// - 未登录且 `throw_on_not_login=true`：`BulwarkError::NotLogin`。
-    /// - 未登录且 `throw_on_not_login=false`：降级为 `BulwarkError::NotPermission`。
-    /// - 未持有权限：`BulwarkError::NotPermission`。
-    async fn check_permission(&self, permission: &str) -> BulwarkResult<()>;
-
-    /// 校验角色（任务组 7 实现）。
-    ///
-    /// # 参数
-    /// - `role`: 角色标识字符串。
-    ///
-    /// # 返回
-    /// 成功（持有角色）返回 `Ok(())`。
-    ///
-    /// # 错误
-    /// - 未登录且 `throw_on_not_login=true`：`BulwarkError::NotLogin`。
-    /// - 未登录且 `throw_on_not_login=false`：降级为 `BulwarkError::NotRole`。
-    /// - 未持有角色：`BulwarkError::NotRole`。
-    async fn check_role(&self, role: &str) -> BulwarkResult<()>;
-
-    /// 校验 access_token 类型会话（0.5.0 新增，依据 spec annotation-macros P2 前置）。
-    ///
-    /// 语义别名：默认实现委托 `check_login`，已登录返回 `Ok(())`，未登录返回 `Err(NotLogin)`。
-    /// 业务方可在子类 override 实现类型区分（如校验 token 是否为 access_token 类型）。
-    ///
-    /// # 返回
-    /// - `Ok(())`: 当前会话 token 有效（已登录）。
-    ///
-    /// # 错误
-    /// - 未登录：`BulwarkError::NotLogin`（`throw_on_not_login=false` 时由本方法显式抛出；
-    ///   `throw_on_not_login=true` 时由 `check_login` 透传 `Session` 错误）。
-    async fn check_access_token(&self) -> BulwarkResult<()> {
-        let valid = self.check_login().await?;
-        if valid {
-            Ok(())
-        } else {
-            Err(BulwarkError::NotLogin(
-                "access_token 无效或未登录".to_string(),
-            ))
-        }
-    }
-
-    /// 校验 client_token 类型会话（0.5.0 新增，依据 spec annotation-macros P2 前置）。
-    ///
-    /// 语义别名：默认实现委托 `check_login`，已登录返回 `Ok(())`，未登录返回 `Err(NotLogin)`。
-    /// 业务方可在子类 override 实现类型区分（如校验 token 是否为 client_token 类型）。
-    ///
-    /// # 返回
-    /// - `Ok(())`: 当前会话 token 有效（已登录）。
-    ///
-    /// # 错误
-    /// - 未登录：`BulwarkError::NotLogin`。
-    async fn check_client_token(&self) -> BulwarkResult<()> {
-        let valid = self.check_login().await?;
-        if valid {
-            Ok(())
-        } else {
-            Err(BulwarkError::NotLogin(
-                "client_token 无效或未登录".to_string(),
-            ))
-        }
-    }
-
-    /// 校验 temp_token 类型会话（0.5.0 新增，依据 spec annotation-macros P2 前置）。
-    ///
-    /// 语义别名：默认实现委托 `check_login`，已登录返回 `Ok(())`，未登录返回 `Err(NotLogin)`。
-    /// 业务方可在子类 override 实现类型区分（如校验 token 是否为 temp_token 类型）。
-    ///
-    /// # 返回
-    /// - `Ok(())`: 当前会话 token 有效（已登录）。
-    ///
-    /// # 错误
-    /// - 未登录：`BulwarkError::NotLogin`。
-    async fn check_temp_token(&self) -> BulwarkResult<()> {
-        let valid = self.check_login().await?;
-        if valid {
-            Ok(())
-        } else {
-            Err(BulwarkError::NotLogin(
-                "temp_token 无效或未登录".to_string(),
-            ))
-        }
-    }
-
-    /// 检查二级认证（MFA）状态（0.3.0 新增，依据 spec annotation-handling）。
-    ///
-    /// 默认实现返回 `Ok(())`（未启用 MFA，向后兼容 0.2.x）。
-    /// 业务方覆写此方法以接入 TOTP MFA 校验：检查当前会话是否已完成二级认证。
-    ///
-    /// # 返回
-    /// - `Ok(())`: 已通过二级认证或未启用 MFA。
-    /// - `Err(BulwarkError::Session)`: 未通过二级认证。
-    async fn check_safe(&self) -> BulwarkResult<()> {
-        Ok(())
-    }
-
-    /// 检查账号是否被禁用（0.3.0 新增，依据 spec annotation-handling）。
-    ///
-    /// 默认实现返回 `Ok(())`（未实现禁用账号库，向后兼容 0.2.x）。
-    /// 业务方覆写此方法以接入禁用账号检查：查询当前 login_id 是否在禁用列表中。
-    ///
-    /// # 返回
-    /// - `Ok(())`: 账号未禁用。
-    /// - `Err(BulwarkError::Session)`: 账号已禁用。
-    async fn check_disable(&self) -> BulwarkResult<()> {
-        Ok(())
-    }
-
-    /// 通过外部 token 反向建立会话（0.2.0 新增，依据 spec core-auth-api）。
-    ///
-    /// 用于 OAuth2/SSO 场景：外部 token 已通过协议层校验后，
-    /// 调用此方法在当前上下文建立内部会话。
-    ///
-    /// # 参数
-    /// - `token`: 外部 token 字符串（如 OAuth2 access_token / SSO ticket）。
-    ///
-    /// # 错误
-    /// - default 实现：`BulwarkError::NotImplemented`（未启用 protocol-oauth2/protocol-sso）。
-    async fn login_by_token(&self, _token: &str) -> BulwarkResult<()> {
-        Err(BulwarkError::NotImplemented(
-            "login_by_token 需启用 protocol-oauth2 或 protocol-sso feature".to_string(),
-        ))
-    }
-
-    /// 验证显式传入的 token 并返回关联的 login_id（0.2.0 新增，依据 spec core-auth-api）。
-    ///
-    /// 委托 `core-token::Token::verify` 实现。与 `check_login` 区别：
-    /// `check_login` 从 task_local 读取 token；`verify_token` 接收显式 token 参数。
-    ///
-    /// # 参数
-    /// - `token`: 待验证的 token 字符串。
-    ///
-    /// # 返回
-    /// - `Ok(login_id)`: token 有效，返回关联的 login_id。
-    ///
-    /// # 错误
-    /// - `BulwarkError::InvalidToken`: token 无效或不包含 login_id。
-    /// - `BulwarkError::NotImplemented`: default 实现未委托 Token trait。
-    async fn verify_token(&self, _token: &str) -> BulwarkResult<String> {
-        Err(BulwarkError::NotImplemented(
-            "verify_token 需子类 override 委托 core-token::Token::verify".to_string(),
-        ))
-    }
-
-    /// 刷新 token（0.2.0 新增，依据 spec core-auth-api）。
-    ///
-    /// 仅在启用 `protocol-jwt` feature 时由 `JwtHandler` 提供有效实现。
-    ///
-    /// # 参数
-    /// - `token`: 待刷新的旧 token 字符串。
-    ///
-    /// # 返回
-    /// - `Ok(new_token)`: 刷新后的新 token 字符串。
-    ///
-    /// # 错误
-    /// - `BulwarkError::NotImplemented`: 未启用 protocol-jwt feature。
-    /// - `BulwarkError::InvalidToken`: token 已过期或无效。
-    async fn refresh_token(&self, _token: &str) -> BulwarkResult<String> {
-        Err(BulwarkError::NotImplemented(
-            "refresh_token 需启用 protocol-jwt feature".to_string(),
-        ))
-    }
-
-    /// 密码登录：校验密码后签发 token（0.4.2 新增，依据 spec auth-password-login）。
-    ///
-    /// 内部流程：1) UserRepository::find_by_username 查询用户
-    /// 2) PasswordHasher::verify 校验密码 3) 调用 [`login`](Self::login) 签发 token。
-    ///
-    /// # 参数
-    /// - `login_id`: 登录主体标识（作为 username 字符串查询 UserRepository）。
-    /// - `password`: 明文密码（仅校验时临时持有，不存储）。
-    ///
-    /// # 返回
-    /// - `Ok(token)`: 密码校验通过，返回新签发的 token 字符串。
-    ///
-    /// # 错误
-    /// - 未启用 `secure-password` + `db-sqlite` feature：`BulwarkError::NotImplemented`。
-    /// - 未注入 `password_hasher`：`BulwarkError::Config("password hasher not configured")`。
-    /// - 未注入 `user_repository`：`BulwarkError::Config("user repository not configured")`。
-    /// - 用户不存在 / 密码错误：`BulwarkError::InvalidParam("invalid password")`（不泄露具体原因，防止用户枚举）。
-    /// - 哈希格式不支持：`BulwarkError::InvalidParam("unsupported hash format")`。
-    /// - DAO 查询失败：透传 `BulwarkError::Dao`。
-    ///
-    /// # 安全约束
-    ///
-    /// 用户不存在与密码错误统一返回 `InvalidParam("invalid password")`，日志和事件
-    /// reason 统一为 "invalid_credentials"（v0.4.2 安全审计 A-014），防止攻击者通过
-    /// 返回值或日志差异进行用户枚举。哈希格式错误返回 "unsupported hash format"
-    /// （属配置错误，不构成枚举风险）。
-    async fn login_with_password(&self, _login_id: &str, _password: &str) -> BulwarkResult<String> {
-        Err(BulwarkError::NotImplemented(
-            "login_with_password 未实现：需启用 secure-password + db-sqlite feature".to_string(),
-        ))
-    }
-
-    /// 获取当前 `BulwarkConfig` 引用（用于 token 提取、Cookie 配置等需要配置的场景）。
-    ///
-    /// # 返回
-    /// 全局配置的 `Arc` 引用。
-    fn config(&self) -> Arc<BulwarkConfig>;
 }
 
 // ============================================================================
@@ -449,7 +123,7 @@ pub enum JwtMode {
 // BulwarkLogicDefault：默认实现
 // ============================================================================
 
-/// `BulwarkLogic` 的默认实现，组合 `BulwarkSession` + `BulwarkConfig` + `BulwarkPermissionStrategy`。
+/// 默认实现，实现全部 5 个子 trait（SessionLogic/PermissionLogic/TokenLogic/MfaLogic/PasswordLogic）。
 ///
 /// [借鉴 Sa-Token] 对应 `StpLogic` 默认实现（design.md Decision 8）。
 pub struct BulwarkLogicDefault {
@@ -791,8 +465,14 @@ impl BulwarkLogicDefault {
     }
 }
 
+impl BulwarkCore for BulwarkLogicDefault {
+    fn config(&self) -> Arc<BulwarkConfig> {
+        Arc::clone(&self.config)
+    }
+}
+
 #[async_trait]
-impl BulwarkLogic for BulwarkLogicDefault {
+impl SessionLogic for BulwarkLogicDefault {
     async fn login(&self, login_id: &str) -> BulwarkResult<String> {
         // emit metrics：登录尝试（成功/失败均记录，依据 spec observability-stack）
         #[cfg(feature = "metrics-prometheus")]
@@ -907,6 +587,34 @@ impl BulwarkLogic for BulwarkLogicDefault {
         }
     }
 
+    async fn login_by_token(&self, token: &str) -> BulwarkResult<()> {
+        // 获取 login_id：优先委托 auth_logic，否则使用 verify_token（TokenStyleFactory）
+        let login_id = if let Some(auth) = &self.auth_logic {
+            auth.verify_token(token).await?
+        } else {
+            self.verify_token(token).await?
+        };
+        // 建立内部会话（使用同一 token）
+        self.session.create(&login_id, token).await?;
+        // auto-wire: 触发 plugin on_login + listener Login 事件
+        if let Some(pm) = &self.plugin_manager {
+            pm.on_login(&login_id, token);
+        }
+        #[cfg(feature = "listener")]
+        if let Some(lm) = &self.listener_manager {
+            lm.broadcast(&BulwarkEvent::Login {
+                login_id,
+                token: token.to_string(),
+                device: None,
+            })
+            .await;
+        }
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl PermissionLogic for BulwarkLogicDefault {
     async fn check_permission(&self, permission: &str) -> BulwarkResult<()> {
         // spec scenario "未登录抛出异常"：未登录时依据 throw_on_not_login 抛错
         let login_id = match self.get_login_id().await? {
@@ -1007,32 +715,10 @@ impl BulwarkLogic for BulwarkLogicDefault {
             Err(BulwarkError::NotRole(role.to_string()))
         }
     }
+}
 
-    async fn login_by_token(&self, token: &str) -> BulwarkResult<()> {
-        // 获取 login_id：优先委托 auth_logic，否则使用 verify_token（TokenStyleFactory）
-        let login_id = if let Some(auth) = &self.auth_logic {
-            auth.verify_token(token).await?
-        } else {
-            self.verify_token(token).await?
-        };
-        // 建立内部会话（使用同一 token）
-        self.session.create(&login_id, token).await?;
-        // auto-wire: 触发 plugin on_login + listener Login 事件
-        if let Some(pm) = &self.plugin_manager {
-            pm.on_login(&login_id, token);
-        }
-        #[cfg(feature = "listener")]
-        if let Some(lm) = &self.listener_manager {
-            lm.broadcast(&BulwarkEvent::Login {
-                login_id,
-                token: token.to_string(),
-                device: None,
-            })
-            .await;
-        }
-        Ok(())
-    }
-
+#[async_trait]
+impl TokenLogic for BulwarkLogicDefault {
     async fn verify_token(&self, token: &str) -> BulwarkResult<String> {
         // 依据 spec core-auth-api：委托 core-token::Token::verify
         // spec: "不泄露 token 具体失效原因（统一 InvalidToken）"
@@ -1075,11 +761,13 @@ impl BulwarkLogic for BulwarkLogicDefault {
         }
         Ok(new_token)
     }
+}
 
-    fn config(&self) -> Arc<BulwarkConfig> {
-        Arc::clone(&self.config)
-    }
+#[async_trait]
+impl MfaLogic for BulwarkLogicDefault {}
 
+#[async_trait]
+impl PasswordLogic for BulwarkLogicDefault {
     /// 密码登录实现：校验密码后调用 [`login`](Self::login) 签发 token。
     ///
     /// 依据 spec auth-password-login R-002：1) UserRepository 查询 2) PasswordHasher 校验 3) login 签发。
@@ -1461,7 +1149,7 @@ impl BulwarkUtil {
 
     /// 校验 access_token 类型会话（0.5.0 新增，依据 spec annotation-macros P2 前置）。
     ///
-    /// 委托 `BulwarkLogic::check_access_token()`，默认实现委托 `check_login`。
+    /// 委托 `TokenLogic::check_access_token()`，默认实现委托 `check_login`。
     ///
     /// # 返回
     /// - `Ok(())`: 当前会话 token 有效（已登录）。
@@ -1477,7 +1165,7 @@ impl BulwarkUtil {
 
     /// 校验 client_token 类型会话（0.5.0 新增，依据 spec annotation-macros P2 前置）。
     ///
-    /// 委托 `BulwarkLogic::check_client_token()`，默认实现委托 `check_login`。
+    /// 委托 `TokenLogic::check_client_token()`，默认实现委托 `check_login`。
     ///
     /// # 返回
     /// - `Ok(())`: 当前会话 token 有效（已登录）。
@@ -1493,7 +1181,7 @@ impl BulwarkUtil {
 
     /// 校验 temp_token 类型会话（0.5.0 新增，依据 spec annotation-macros P2 前置）。
     ///
-    /// 委托 `BulwarkLogic::check_temp_token()`，默认实现委托 `check_login`。
+    /// 委托 `TokenLogic::check_temp_token()`，默认实现委托 `check_login`。
     ///
     /// # 返回
     /// - `Ok(())`: 当前会话 token 有效（已登录）。
@@ -1509,7 +1197,7 @@ impl BulwarkUtil {
 
     /// 检查二级认证（MFA）状态（0.3.0 新增，依据 spec annotation-handling）。
     ///
-    /// 委托 `BulwarkLogic::check_safe()`，默认实现返回 `Ok(())`（未启用 MFA）。
+    /// 委托 `MfaLogic::check_safe()`，默认实现返回 `Ok(())`（未启用 MFA）。
     ///
     /// # 返回
     /// - `Ok(())`: 已通过二级认证或未启用 MFA。
@@ -1523,7 +1211,7 @@ impl BulwarkUtil {
 
     /// 检查账号是否被禁用（0.3.0 新增，依据 spec annotation-handling）。
     ///
-    /// 委托 `BulwarkLogic::check_disable()`，默认实现返回 `Ok(())`（未实现禁用账号库）。
+    /// 委托 `MfaLogic::check_disable()`，默认实现返回 `Ok(())`（未实现禁用账号库）。
     ///
     /// # 返回
     /// - `Ok(())`: 账号未禁用。
@@ -2967,15 +2655,21 @@ mod tests {
     // trait default 方法覆盖率测试（login_by_token/verify_token/refresh_token）
     // ------------------------------------------------------------------------
 
-    /// 最小化 BulwarkLogic mock，仅用于测试 trait default 方法。
+    /// 最小化子 trait mock，仅用于测试 trait default 方法。
     /// 所有必需方法返回 `BulwarkError::NotImplemented`（Rule 12 失败显性化，不 panic），
     /// 仅保留 default 方法（login_by_token/verify_token/refresh_token）。
     struct MinimalLogic {
         config: Arc<BulwarkConfig>,
     }
 
+    impl BulwarkCore for MinimalLogic {
+        fn config(&self) -> Arc<BulwarkConfig> {
+            Arc::clone(&self.config)
+        }
+    }
+
     #[async_trait]
-    impl BulwarkLogic for MinimalLogic {
+    impl SessionLogic for MinimalLogic {
         async fn login(&self, _: &str) -> BulwarkResult<String> {
             Err(BulwarkError::NotImplemented(
                 "mock implementation, not for production".to_string(),
@@ -3021,6 +2715,10 @@ mod tests {
                 "mock implementation, not for production".to_string(),
             ))
         }
+    }
+
+    #[async_trait]
+    impl PermissionLogic for MinimalLogic {
         async fn check_permission(&self, _: &str) -> BulwarkResult<()> {
             Err(BulwarkError::NotImplemented(
                 "mock implementation, not for production".to_string(),
@@ -3031,10 +2729,16 @@ mod tests {
                 "mock implementation, not for production".to_string(),
             ))
         }
-        fn config(&self) -> Arc<BulwarkConfig> {
-            Arc::clone(&self.config)
-        }
     }
+
+    #[async_trait]
+    impl TokenLogic for MinimalLogic {}
+
+    #[async_trait]
+    impl MfaLogic for MinimalLogic {}
+
+    #[async_trait]
+    impl PasswordLogic for MinimalLogic {}
 
     /// trait default login_by_token 返回 NotImplemented（spec: 未启用协议层 feature）。
     #[tokio::test]

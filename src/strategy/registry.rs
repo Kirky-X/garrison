@@ -16,17 +16,17 @@
 //!
 //! [`Strategy`] struct 持有 6 个 `Arc<dyn Trait>`，
 //! 提供 `register_*`/`get_*`/`remove_*` 方法。
-//! 默认实现委托 [`BulwarkLogic`](crate::stp::BulwarkLogic)。
+//! 默认实现委托 [`BulwarkLogicDefault`](crate::stp::BulwarkLogicDefault)。
 //!
 //! ## 偏差说明
 //!
-//! - `login_id` 使用 `&str` 而非 `LoginId` newtype，遵循 `BulwarkLogic` trait 现有惯例
+//! - `login_id` 使用 `&str` 而非 `LoginId` newtype，遵循子 trait（`SessionLogic` / `PermissionLogic`）现有惯例
 //!   （依据规则 11：惯例优先于新颖）
 //! - [`FirewallStrategy`] 与现有 [`BulwarkPermissionStrategy`](crate::strategy::BulwarkPermissionStrategy)
 //!   trait 共存（依据 spec Constraints），两者名称不同，不冲突
 
 use crate::error::BulwarkResult;
-use crate::stp::BulwarkLogic;
+use crate::stp::{BulwarkLogicDefault, PermissionLogic, SessionLogic, TokenLogic};
 use crate::strategy::hooks::LoginContext;
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -42,7 +42,7 @@ use std::sync::Arc;
 ///
 /// # 默认实现
 ///
-/// [`DefaultLoginHandler`] 委托 [`BulwarkLogic::login`]。
+/// [`DefaultLoginHandler`] 委托 [`SessionLogic::login`]。
 #[async_trait]
 pub trait LoginHandler: Send + Sync {
     /// 执行登录：生成 token 并创建会话。
@@ -59,8 +59,8 @@ pub trait LoginHandler: Send + Sync {
 ///
 /// # 默认实现
 ///
-/// [`DefaultLogoutHandler`] 委托 [`BulwarkLogic::logout`] /
-/// [`BulwarkLogic::logout_by_login_id`]。
+/// [`DefaultLogoutHandler`] 委托 [`SessionLogic::logout`] /
+/// [`SessionLogic::logout_by_login_id`]。
 #[async_trait]
 pub trait LogoutHandler: Send + Sync {
     /// 执行登出：从 task_local 获取当前 token 并销毁。
@@ -74,8 +74,8 @@ pub trait LogoutHandler: Send + Sync {
 ///
 /// # 默认实现
 ///
-/// [`DefaultPermissionHandler`] 委托 [`BulwarkLogic::check_permission`] /
-/// [`BulwarkLogic::check_role`]。
+/// [`DefaultPermissionHandler`] 委托 [`PermissionLogic::check_permission`] /
+/// [`PermissionLogic::check_role`]。
 #[async_trait]
 pub trait PermissionHandler: Send + Sync {
     /// 校验权限：检查当前主体是否持有指定权限。
@@ -89,13 +89,13 @@ pub trait PermissionHandler: Send + Sync {
 ///
 /// # 默认实现
 ///
-/// [`DefaultTokenGenerator`] 委托 [`BulwarkLogic::login`]（生成 token）
-/// 与 [`BulwarkLogic::refresh_token`]（刷新 token）。
+/// [`DefaultTokenGenerator`] 委托 [`SessionLogic::login`]（生成 token）
+/// 与 [`TokenLogic::refresh_token`]（刷新 token）。
 #[async_trait]
 pub trait TokenGenerator: Send + Sync {
     /// 生成 token。
     ///
-    /// 默认实现委托 [`BulwarkLogic::login`]，会同时创建会话。
+    /// 默认实现委托 [`SessionLogic::login`]，会同时创建会话。
     async fn generate_token(&self, login_id: &str) -> BulwarkResult<String>;
 
     /// 刷新 token。
@@ -106,8 +106,8 @@ pub trait TokenGenerator: Send + Sync {
 ///
 /// # 默认实现
 ///
-/// [`DefaultSessionCreator`] 委托 [`BulwarkLogic::login_with_token`] /
-/// [`BulwarkLogic::check_login`]。
+/// [`DefaultSessionCreator`] 委托 [`SessionLogic::login_with_token`] /
+/// [`SessionLogic::check_login`]。
 #[async_trait]
 pub trait SessionCreator: Send + Sync {
     /// 创建会话：用指定 token 为 login_id 建立会话。
@@ -127,7 +127,7 @@ pub trait SessionCreator: Send + Sync {
 /// # 默认实现
 ///
 /// [`DefaultFirewallStrategy`] 返回 `Ok(())`（no-op，向后兼容），
-/// 因 [`BulwarkLogic`] trait 无 `check_login_hooks` 方法。
+/// 因 [`BulwarkLogicDefault`] 无 `check_login_hooks` 方法。
 #[async_trait]
 pub trait FirewallStrategy: Send + Sync {
     /// 登录前防火墙安全检查。
@@ -135,17 +135,17 @@ pub trait FirewallStrategy: Send + Sync {
 }
 
 // ============================================================================
-// 默认实现：委托 BulwarkLogic
+// 默认实现：委托 BulwarkLogicDefault
 // ============================================================================
 
-/// `LoginHandler` 的默认实现，委托 [`BulwarkLogic::login`]。
+/// `LoginHandler` 的默认实现，委托 [`SessionLogic::login`]。
 pub struct DefaultLoginHandler {
-    logic: Arc<dyn BulwarkLogic>,
+    logic: Arc<BulwarkLogicDefault>,
 }
 
 impl DefaultLoginHandler {
     /// 创建默认登录策略实例。
-    pub fn new(logic: Arc<dyn BulwarkLogic>) -> Self {
+    pub fn new(logic: Arc<BulwarkLogicDefault>) -> Self {
         Self { logic }
     }
 }
@@ -157,15 +157,15 @@ impl LoginHandler for DefaultLoginHandler {
     }
 }
 
-/// `LogoutHandler` 的默认实现，委托 [`BulwarkLogic::logout`] /
-/// [`BulwarkLogic::logout_by_login_id`]。
+/// `LogoutHandler` 的默认实现，委托 [`SessionLogic::logout`] /
+/// [`SessionLogic::logout_by_login_id`]。
 pub struct DefaultLogoutHandler {
-    logic: Arc<dyn BulwarkLogic>,
+    logic: Arc<BulwarkLogicDefault>,
 }
 
 impl DefaultLogoutHandler {
     /// 创建默认登出策略实例。
-    pub fn new(logic: Arc<dyn BulwarkLogic>) -> Self {
+    pub fn new(logic: Arc<BulwarkLogicDefault>) -> Self {
         Self { logic }
     }
 }
@@ -181,15 +181,15 @@ impl LogoutHandler for DefaultLogoutHandler {
     }
 }
 
-/// `PermissionHandler` 的默认实现，委托 [`BulwarkLogic::check_permission`] /
-/// [`BulwarkLogic::check_role`]。
+/// `PermissionHandler` 的默认实现，委托 [`PermissionLogic::check_permission`] /
+/// [`PermissionLogic::check_role`]。
 pub struct DefaultPermissionHandler {
-    logic: Arc<dyn BulwarkLogic>,
+    logic: Arc<BulwarkLogicDefault>,
 }
 
 impl DefaultPermissionHandler {
     /// 创建默认权限校验策略实例。
-    pub fn new(logic: Arc<dyn BulwarkLogic>) -> Self {
+    pub fn new(logic: Arc<BulwarkLogicDefault>) -> Self {
         Self { logic }
     }
 }
@@ -205,15 +205,15 @@ impl PermissionHandler for DefaultPermissionHandler {
     }
 }
 
-/// `TokenGenerator` 的默认实现，委托 [`BulwarkLogic::login`]（生成）
-/// 与 [`BulwarkLogic::refresh_token`]（刷新）。
+/// `TokenGenerator` 的默认实现，委托 [`SessionLogic::login`]（生成）
+/// 与 [`TokenLogic::refresh_token`]（刷新）。
 pub struct DefaultTokenGenerator {
-    logic: Arc<dyn BulwarkLogic>,
+    logic: Arc<BulwarkLogicDefault>,
 }
 
 impl DefaultTokenGenerator {
     /// 创建默认 token 生成策略实例。
-    pub fn new(logic: Arc<dyn BulwarkLogic>) -> Self {
+    pub fn new(logic: Arc<BulwarkLogicDefault>) -> Self {
         Self { logic }
     }
 }
@@ -229,15 +229,15 @@ impl TokenGenerator for DefaultTokenGenerator {
     }
 }
 
-/// `SessionCreator` 的默认实现，委托 [`BulwarkLogic::login_with_token`] /
-/// [`BulwarkLogic::check_login`]。
+/// `SessionCreator` 的默认实现，委托 [`SessionLogic::login_with_token`] /
+/// [`SessionLogic::check_login`]。
 pub struct DefaultSessionCreator {
-    logic: Arc<dyn BulwarkLogic>,
+    logic: Arc<BulwarkLogicDefault>,
 }
 
 impl DefaultSessionCreator {
     /// 创建默认会话创建策略实例。
-    pub fn new(logic: Arc<dyn BulwarkLogic>) -> Self {
+    pub fn new(logic: Arc<BulwarkLogicDefault>) -> Self {
         Self { logic }
     }
 }
@@ -255,19 +255,19 @@ impl SessionCreator for DefaultSessionCreator {
 
 /// `FirewallStrategy` 的默认实现，返回 `Ok(())`（no-op）。
 ///
-/// [`BulwarkLogic`] trait 无 `check_login_hooks` 方法，
+/// [`BulwarkLogicDefault`] 无 `check_login_hooks` 方法，
 /// 默认 no-op 与现有 [`crate::strategy::BulwarkPermissionStrategy`] trait 的
 /// `check_login_hooks` 默认行为一致。
 pub struct DefaultFirewallStrategy {
     // 保留 logic 字段以与其他 5 个 Default*Handler 保持构造签名一致，
-    // 虽然当前 check_login_hooks 无委托目标（BulwarkLogic 无此方法）。
+    // 虽然当前 check_login_hooks 无委托目标（BulwarkLogicDefault 无此方法）。
     #[allow(dead_code)]
-    logic: Arc<dyn BulwarkLogic>,
+    logic: Arc<BulwarkLogicDefault>,
 }
 
 impl DefaultFirewallStrategy {
     /// 创建默认防火墙策略实例。
-    pub fn new(logic: Arc<dyn BulwarkLogic>) -> Self {
+    pub fn new(logic: Arc<BulwarkLogicDefault>) -> Self {
         Self { logic }
     }
 }
@@ -286,7 +286,7 @@ impl FirewallStrategy for DefaultFirewallStrategy {
 /// 策略注册表，持有 6 个可插拔策略的 `Arc<dyn Trait>`。
 ///
 /// 提供 `register_*`/`get_*`/`remove_*` 方法用于运行时替换、查询、恢复策略。
-/// 默认策略委托 [`BulwarkLogic`]，通过 [`Strategy::new`] 构造。
+/// 默认策略委托 [`BulwarkLogicDefault`]，通过 [`Strategy::new`] 构造。
 ///
 /// # 线程安全
 ///
@@ -345,14 +345,14 @@ pub struct Strategy {
 }
 
 impl Strategy {
-    /// 创建策略注册表，6 个策略均初始化为委托 `BulwarkLogic` 的默认实现。
+    /// 创建策略注册表，6 个策略均初始化为委托 `BulwarkLogicDefault` 的默认实现。
     ///
     /// # 参数
-    /// - `logic`: `BulwarkLogic` 引用，默认策略委托其方法。
+    /// - `logic`: `BulwarkLogicDefault` 引用，默认策略委托其方法。
     ///
     /// # 返回
     /// 新建的 `Strategy` 实例，6 个策略与默认策略均为默认实现。
-    pub fn new(logic: Arc<dyn BulwarkLogic>) -> Self {
+    pub fn new(logic: Arc<BulwarkLogicDefault>) -> Self {
         let login_handler: Arc<dyn LoginHandler> =
             Arc::new(DefaultLoginHandler::new(logic.clone()));
         let logout_handler: Arc<dyn LogoutHandler> =
@@ -542,8 +542,8 @@ mod tests {
         }
     }
 
-    /// 构造测试用 `Arc<dyn BulwarkLogic>`。
-    fn make_logic() -> Arc<dyn BulwarkLogic> {
+    /// 构造测试用 `Arc<BulwarkLogicDefault>`。
+    fn make_logic() -> Arc<BulwarkLogicDefault> {
         let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
         let config = Arc::new(BulwarkConfig::default_config());
         let interface: Arc<dyn BulwarkInterface> = Arc::new(MockInterface::new());
@@ -681,7 +681,7 @@ mod tests {
         let _ = strategy.firewall_strategy();
     }
 
-    /// 验证默认登录策略委托 `BulwarkLogic::login` 可正常生成 token。
+    /// 验证默认登录策略委托 `SessionLogic::login` 可正常生成 token。
     #[tokio::test]
     #[serial]
     async fn default_login_handler_delegates_to_logic() {
@@ -888,7 +888,7 @@ mod tests {
         assert!(result.is_ok(), "默认防火墙策略应为 no-op 返回 Ok");
     }
 
-    /// 验证 `DefaultSessionCreator::create_session` 委托 `BulwarkLogic::login_with_token`。
+    /// 验证 `DefaultSessionCreator::create_session` 委托 `SessionLogic::login_with_token`。
     #[tokio::test]
     #[serial]
     async fn default_session_creator_delegates_to_logic() {
@@ -905,7 +905,7 @@ mod tests {
         );
     }
 
-    /// 验证 `DefaultPermissionHandler` 委托 `BulwarkLogic::check_permission`。
+    /// 验证 `DefaultPermissionHandler` 委托 `PermissionLogic::check_permission`。
     #[tokio::test]
     #[serial]
     async fn default_permission_handler_delegates_to_logic() {

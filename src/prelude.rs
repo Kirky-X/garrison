@@ -20,7 +20,10 @@ pub use crate::plugin::BulwarkPlugin;
 pub use crate::router::{BulwarkInterceptor, BulwarkRouter};
 /// 会话模型（[BulwarkSession]）。
 pub use crate::session::BulwarkSession;
-/// 逻辑层抽象与静态入口（[BulwarkInterface]、[BulwarkLogic]、[BulwarkUtil]）。
-pub use crate::stp::{BulwarkInterface, BulwarkLogic, BulwarkUtil};
+/// 逻辑层抽象与静态入口（[BulwarkInterface]、[BulwarkLogicDefault]、[BulwarkUtil] + 5 个子 trait）。
+pub use crate::stp::{
+    BulwarkCore, BulwarkInterface, BulwarkLogicDefault, BulwarkUtil, MfaLogic, PasswordLogic,
+    PermissionLogic, SessionLogic, TokenLogic,
+};
 /// 防火墙策略（[BulwarkPermissionStrategy]、[BulwarkPermissionStrategyDefault]）。
 pub use crate::strategy::{BulwarkPermissionStrategy, BulwarkPermissionStrategyDefault};

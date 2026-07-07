@@ -130,7 +130,7 @@ pub async fn run() -> BulwarkResult<()> {
     // 2. generate 生成 API Key
     // ----------------------------------------------------------------
     let key = handler
-        .generate(1001, vec!["read".to_string(), "write".to_string()], 3600)
+        .generate("1001", vec!["read".to_string(), "write".to_string()], 3600)
         .await?;
     println!("[2] generate:");
     println!("    login_id = 1001");
@@ -150,7 +150,7 @@ pub async fn run() -> BulwarkResult<()> {
     println!("    scopes    = {:?}", info.scopes);
     println!("    expire_at = {}（Unix 秒）", info.expire_at);
     println!("    revoked   = {}\n", info.revoked);
-    assert_eq!(info.login_id, 1001);
+    assert_eq!(info.login_id, "1001");
     assert!(!info.revoked);
 
     // 校验不存在的 Key
@@ -174,7 +174,7 @@ pub async fn run() -> BulwarkResult<()> {
     // ----------------------------------------------------------------
     // 先生成一个新的有效 key
     let key2 = handler
-        .generate(2002, vec!["admin".to_string()], 7200)
+        .generate("2002", vec!["admin".to_string()], 7200)
         .await?;
     println!("[5] rotate:");
     println!("    原 key = {}...", &key2[..16]);
@@ -192,7 +192,7 @@ pub async fn run() -> BulwarkResult<()> {
 
     // 新 key 有效，保留 login_id 和 scopes
     let new_info = handler.verify(&new_key).await?;
-    assert_eq!(new_info.login_id, 2002);
+    assert_eq!(new_info.login_id, "2002");
     assert_eq!(new_info.scopes, vec!["admin".to_string()]);
     println!(
         "    新 key verify → login_id={}, scopes={:?}",

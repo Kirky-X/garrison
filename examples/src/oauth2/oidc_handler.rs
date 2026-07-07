@@ -33,7 +33,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("[配置] 算法: HS256（默认）\n");
 
     // 2. 签发 id_token
-    let login_id: i64 = 1001;
+    let login_id = "1001";
     let nonce = "random-nonce-abc123";
     let id_token = handler.sign_id_token(login_id, nonce, "openid profile", 3600)?;
     println!("[签发] id_token（前 40 字符）: {}...", &id_token[..40]);

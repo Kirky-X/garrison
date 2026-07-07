@@ -143,8 +143,8 @@ impl BulwarkDao for MockDao {
 }
 
 struct MockInterface {
-    permissions: HashMap<i64, Vec<String>>,
-    roles: HashMap<i64, Vec<String>>,
+    permissions: HashMap<String, Vec<String>>,
+    roles: HashMap<String, Vec<String>>,
 }
 
 impl MockInterface {
@@ -155,27 +155,31 @@ impl MockInterface {
         }
     }
 
-    fn with_permission(mut self, login_id: i64, perms: &[&str]) -> Self {
-        self.permissions
-            .insert(login_id, perms.iter().map(|s| s.to_string()).collect());
+    fn with_permission(mut self, login_id: &str, perms: &[&str]) -> Self {
+        self.permissions.insert(
+            login_id.to_string(),
+            perms.iter().map(|s| s.to_string()).collect(),
+        );
         self
     }
 
-    fn with_role(mut self, login_id: i64, roles: &[&str]) -> Self {
-        self.roles
-            .insert(login_id, roles.iter().map(|s| s.to_string()).collect());
+    fn with_role(mut self, login_id: &str, roles: &[&str]) -> Self {
+        self.roles.insert(
+            login_id.to_string(),
+            roles.iter().map(|s| s.to_string()).collect(),
+        );
         self
     }
 }
 
 #[async_trait]
 impl BulwarkInterface for MockInterface {
-    async fn get_permission_list(&self, login_id: i64) -> Result<Vec<String>, BulwarkError> {
-        Ok(self.permissions.get(&login_id).cloned().unwrap_or_default())
+    async fn get_permission_list(&self, login_id: &str) -> Result<Vec<String>, BulwarkError> {
+        Ok(self.permissions.get(login_id).cloned().unwrap_or_default())
     }
 
-    async fn get_role_list(&self, login_id: i64) -> Result<Vec<String>, BulwarkError> {
-        Ok(self.roles.get(&login_id).cloned().unwrap_or_default())
+    async fn get_role_list(&self, login_id: &str) -> Result<Vec<String>, BulwarkError> {
+        Ok(self.roles.get(login_id).cloned().unwrap_or_default())
     }
 }
 
@@ -191,7 +195,7 @@ async fn read_body(response: axum::response::Response) -> String {
 }
 
 /// 初始化 BulwarkManager（覆盖式更新，带权限/角色数据）。
-fn init_manager(permissions: &[(i64, &[&str])], roles: &[(i64, &[&str])]) {
+fn init_manager(permissions: &[(&str, &[&str])], roles: &[(&str, &[&str])]) {
     let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
     let mut config = BulwarkConfig::default_config();
     config.timeout = 3600;
@@ -221,15 +225,15 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // 1. 初始化：用户 1001 持有 user:read + user:write 权限，admin 角色
     init_manager(
-        &[(1001, &["user:read", "user:write"])],
-        &[(1001, &["admin"])],
+        &[("1001", &["user:read", "user:write"])],
+        &[("1001", &["admin"])],
     );
     println!("[1] BulwarkManager 初始化完成");
     println!("    用户 1001 权限: [user:read, user:write]");
     println!("    用户 1001 角色: [admin]\n");
 
     // 2. 用户 1001 登录获取 token
-    let token = BulwarkUtil::login(1001).await?;
+    let token = BulwarkUtil::login("1001").await?;
     println!(
         "[2] 用户 1001 登录获取 token: {}...",
         &token[..std::cmp::min(20, token.len())]
@@ -286,8 +290,8 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // 9. 无权限 → 403
     println!("\n[9] 无权限 → 403");
     // 初始化一个无权限的用户 2002
-    init_manager(&[], &[(2002, &["admin"])]);
-    let token_2002 = BulwarkUtil::login(2002).await?;
+    init_manager(&[], &[("2002", &["admin"])]);
+    let token_2002 = BulwarkUtil::login("2002").await?;
     let response =
         bulwark::stp::with_current_token(token_2002, async { perm_handler().await }).await;
     println!(

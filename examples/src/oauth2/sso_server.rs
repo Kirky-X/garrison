@@ -109,12 +109,15 @@ impl BulwarkDao for InMemoryDao {
 struct OffsetConverter;
 
 impl CenterIdConverter for OffsetConverter {
-    fn to_center_id(&self, login_id: i64) -> i64 {
-        login_id + 10000
+    fn to_center_id(&self, login_id: &str) -> String {
+        format!("center_{}", login_id)
     }
 
-    fn to_login_id(&self, center_id: i64) -> i64 {
-        center_id - 10000
+    fn to_login_id(&self, center_id: &str) -> String {
+        center_id
+            .strip_prefix("center_")
+            .unwrap_or(center_id)
+            .to_string()
     }
 }
 
@@ -167,7 +170,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // ----------------------------------------------------------------
     // 2. issue_ticket + validate_ticket 往返（验证 center_id 转换）
     // ----------------------------------------------------------------
-    let login_id: i64 = 1001;
+    let login_id = "1001";
     let client_id: i64 = 200;
     let ticket = server.issue_ticket(login_id, client_id).await?;
     println!(

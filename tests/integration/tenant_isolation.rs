@@ -25,7 +25,7 @@ mod tenant_audit_decision_e2e {
     use bulwark::listener::audit::{AuditConfig, AuditQuery};
     use bulwark::listener::{BulwarkListener, BulwarkListenerManager};
     use bulwark::session::BulwarkSession;
-    use bulwark::stp::{with_current_token, BulwarkInterface, BulwarkLogic, BulwarkLogicDefault};
+    use bulwark::stp::{with_current_token, BulwarkInterface, BulwarkLogicDefault};
     use bulwark::AuditLogListener;
     use serial_test::serial;
     use std::sync::Arc;
