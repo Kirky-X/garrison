@@ -4,7 +4,7 @@
 
 #![cfg(feature = "secure-httpbasic")]
 
-use bulwark_examples::httpbasic_login;
+use bulwark_examples::authentication::httpbasic_login;
 
 #[test]
 fn test_run_completes() {

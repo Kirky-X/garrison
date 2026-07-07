@@ -4,7 +4,7 @@
 
 #![cfg(all(feature = "protocol-apikey", feature = "cache-memory"))]
 
-use bulwark_examples::apikey_namespace;
+use bulwark_examples::apikey::apikey_namespace;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_run_completes() {

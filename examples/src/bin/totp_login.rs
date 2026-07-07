@@ -1,3 +1,3 @@
 fn main() {
-    bulwark_examples::totp_login::run().unwrap();
+    bulwark_examples::authentication::totp_login::run().unwrap();
 }

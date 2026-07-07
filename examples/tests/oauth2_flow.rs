@@ -4,7 +4,7 @@
 
 #![cfg(feature = "protocol-oauth2")]
 
-use bulwark_examples::oauth2_flow;
+use bulwark_examples::oauth2::oauth2_flow;
 
 #[tokio::test]
 async fn test_run_completes() {

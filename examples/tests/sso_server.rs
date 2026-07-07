@@ -4,7 +4,7 @@
 
 #![cfg(feature = "protocol-sso-server")]
 
-use bulwark_examples::sso_server;
+use bulwark_examples::oauth2::sso_server;
 
 #[tokio::test]
 async fn test_run_completes() {

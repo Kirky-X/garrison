@@ -4,7 +4,7 @@
 
 #![cfg(feature = "protocol-temp")]
 
-use bulwark_examples::temp_credential;
+use bulwark_examples::sign::temp_credential;
 
 #[tokio::test]
 async fn test_run_completes() {

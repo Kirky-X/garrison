@@ -16,7 +16,7 @@
 
 #![cfg(all(feature = "cache-memory", feature = "web-axum"))]
 
-use bulwark_examples::axum_integration;
+use bulwark_examples::web::axum_integration;
 use serial_test::serial;
 
 #[tokio::test(flavor = "multi_thread")]

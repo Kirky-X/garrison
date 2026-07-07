@@ -7,7 +7,7 @@
 
 #![cfg(feature = "listener")]
 
-use bulwark_examples::event_listener;
+use bulwark_examples::extension::event_listener;
 
 #[tokio::test]
 async fn test_run_completes() {

@@ -7,7 +7,7 @@
 
 #![cfg(all(feature = "cache-memory", feature = "web-axum"))]
 
-use bulwark_examples::manager_lifecycle;
+use bulwark_examples::extension::manager_lifecycle;
 use serial_test::serial;
 
 #[tokio::test(flavor = "multi_thread")]

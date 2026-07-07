@@ -7,7 +7,7 @@
 
 #![cfg(all(feature = "cache-memory", feature = "web-axum"))]
 
-use bulwark_examples::strategy_firewall;
+use bulwark_examples::authorization::strategy_firewall;
 use serial_test::serial;
 
 #[tokio::test(flavor = "multi_thread")]

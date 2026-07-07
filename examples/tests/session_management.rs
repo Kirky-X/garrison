@@ -7,7 +7,7 @@
 
 #![cfg(feature = "cache-memory")]
 
-use bulwark_examples::session_management;
+use bulwark_examples::extension::session_management;
 use serial_test::serial;
 
 #[tokio::test(flavor = "multi_thread")]

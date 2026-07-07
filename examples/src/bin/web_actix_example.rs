@@ -2,5 +2,7 @@
 
 #[tokio::main]
 async fn main() {
-    bulwark_examples::web_actix_example::run().await.unwrap();
+    bulwark_examples::web::web_actix_example::run()
+        .await
+        .unwrap();
 }

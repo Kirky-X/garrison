@@ -6,7 +6,7 @@
 
 #![cfg(feature = "web-axum")]
 
-use bulwark_examples::context_request;
+use bulwark_examples::web::context_request;
 
 #[tokio::test]
 async fn test_run_completes() {

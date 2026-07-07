@@ -4,7 +4,7 @@
 
 #![cfg(feature = "alone-cache")]
 
-use bulwark_examples::alone_cache;
+use bulwark_examples::infrastructure::alone_cache;
 
 #[tokio::test]
 async fn test_run_completes() {

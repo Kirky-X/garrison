@@ -11,7 +11,7 @@
 
 #![cfg(feature = "web-actix")]
 
-use bulwark_examples::web_actix_example;
+use bulwark_examples::web::web_actix_example;
 use serial_test::serial;
 
 #[tokio::test(flavor = "multi_thread")]

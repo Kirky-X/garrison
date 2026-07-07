@@ -1,3 +1,3 @@
 fn main() {
-    bulwark_examples::oidc_handler::run().unwrap();
+    bulwark_examples::oauth2::oidc_handler::run().unwrap();
 }

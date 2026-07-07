@@ -2,7 +2,7 @@
 //!
 //! 验证 run() 完整执行（内部已包含 JSON render/serialize 断言）。
 
-use bulwark_examples::json_template;
+use bulwark_examples::infrastructure::json_template;
 
 #[test]
 fn test_run_completes() {

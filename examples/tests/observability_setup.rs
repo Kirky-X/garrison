@@ -151,7 +151,8 @@ fn test_gather_contains_all_metrics() {
 #[test]
 #[serial]
 fn test_create_metrics_helper() {
-    let (metrics, registry) = bulwark_examples::observability_setup::create_metrics();
+    let (metrics, registry) =
+        bulwark_examples::infrastructure::observability_setup::create_metrics();
     metrics.record_login(true);
     let output = gather(&registry);
     assert!(output.contains("bulwark_login_total"));
@@ -161,8 +162,9 @@ fn test_create_metrics_helper() {
 #[test]
 #[serial]
 fn test_record_sample_metrics() {
-    let (metrics, registry) = bulwark_examples::observability_setup::create_metrics();
-    bulwark_examples::observability_setup::record_sample_metrics(&metrics);
+    let (metrics, registry) =
+        bulwark_examples::infrastructure::observability_setup::create_metrics();
+    bulwark_examples::infrastructure::observability_setup::record_sample_metrics(&metrics);
     let output = gather(&registry);
     assert!(output.contains("bulwark_login_total{result=\"success\"}"));
     assert!(output.contains("bulwark_login_total{result=\"failure\"}"));
@@ -176,9 +178,10 @@ fn test_record_sample_metrics() {
 #[test]
 #[serial]
 fn test_gather_metrics_helper() {
-    let (metrics, registry) = bulwark_examples::observability_setup::create_metrics();
+    let (metrics, registry) =
+        bulwark_examples::infrastructure::observability_setup::create_metrics();
     metrics.record_login(true);
-    let output = bulwark_examples::observability_setup::gather_metrics(&registry);
+    let output = bulwark_examples::infrastructure::observability_setup::gather_metrics(&registry);
     assert!(!output.is_empty());
     assert!(output.contains("bulwark_login_total"));
 }

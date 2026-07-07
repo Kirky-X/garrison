@@ -7,7 +7,7 @@
 
 #![cfg(feature = "parameter-query")]
 
-use bulwark_examples::parameter_query;
+use bulwark_examples::infrastructure::parameter_query;
 
 #[tokio::test]
 #[serial_test::serial]

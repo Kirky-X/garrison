@@ -2,5 +2,7 @@
 
 #[tokio::main]
 async fn main() {
-    bulwark_examples::cache_redis::run().await.unwrap();
+    bulwark_examples::infrastructure::cache_redis::run()
+        .await
+        .unwrap();
 }

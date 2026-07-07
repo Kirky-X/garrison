@@ -4,7 +4,7 @@
 
 #![cfg(feature = "secure-sign")]
 
-use bulwark_examples::sign_utils;
+use bulwark_examples::sign::sign_utils;
 
 #[test]
 fn test_run_completes() {

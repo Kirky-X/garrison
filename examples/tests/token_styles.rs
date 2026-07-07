@@ -2,7 +2,7 @@
 //!
 //! 验证 run() 完整执行（内部已包含 token 风格切换断言）。
 
-use bulwark_examples::token_styles;
+use bulwark_examples::authorization::token_styles;
 
 #[test]
 fn test_run_completes() {

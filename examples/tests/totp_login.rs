@@ -4,7 +4,7 @@
 
 #![cfg(feature = "secure-totp")]
 
-use bulwark_examples::totp_login;
+use bulwark_examples::authentication::totp_login;
 
 #[test]
 fn test_run_completes() {

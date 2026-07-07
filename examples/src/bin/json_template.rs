@@ -1,3 +1,3 @@
 fn main() {
-    bulwark_examples::json_template::run().unwrap();
+    bulwark_examples::infrastructure::json_template::run().unwrap();
 }

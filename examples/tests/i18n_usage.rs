@@ -134,7 +134,7 @@ fn test_display_trait_switches_with_locale() {
 
 #[test]
 fn test_sample_errors_returns_non_empty() {
-    let errors = bulwark_examples::i18n_usage::sample_errors();
+    let errors = bulwark_examples::infrastructure::i18n_usage::sample_errors();
     assert!(!errors.is_empty(), "sample_errors 应返回非空列表");
     // 验证包含关键变体
     let names: Vec<&str> = errors.iter().map(|(n, _)| *n).collect();

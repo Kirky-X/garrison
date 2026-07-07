@@ -2,5 +2,7 @@
 
 #[tokio::main]
 async fn main() {
-    bulwark_examples::grpc_interceptor::run().await.unwrap();
+    bulwark_examples::web::grpc_interceptor::run()
+        .await
+        .unwrap();
 }

@@ -4,7 +4,7 @@
 
 #![cfg(feature = "protocol-sign")]
 
-use bulwark_examples::sign_protocol;
+use bulwark_examples::sign::sign_protocol;
 
 #[tokio::test]
 async fn test_run_completes() {

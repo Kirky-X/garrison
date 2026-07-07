@@ -1,4 +1,6 @@
 #[tokio::main]
 async fn main() {
-    bulwark_examples::macro_annotations::run().await.unwrap();
+    bulwark_examples::extension::macro_annotations::run()
+        .await
+        .unwrap();
 }

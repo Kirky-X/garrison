@@ -6,7 +6,7 @@
 //! 静态计数器为全局状态，多测试并行可能竞争 —— 但本测试只验证 run() 完成，
 //! 不直接读取计数器，因此无需 #[serial]。
 
-use bulwark_examples::custom_plugin;
+use bulwark_examples::extension::custom_plugin;
 
 #[test]
 fn test_run_completes() {

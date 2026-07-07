@@ -1,3 +1,3 @@
 fn main() {
-    bulwark_examples::httpbasic_login::run().unwrap();
+    bulwark_examples::authentication::httpbasic_login::run().unwrap();
 }

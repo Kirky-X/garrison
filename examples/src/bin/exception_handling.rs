@@ -1,3 +1,3 @@
 fn main() {
-    bulwark_examples::exception_handling::run().unwrap();
+    bulwark_examples::infrastructure::exception_handling::run().unwrap();
 }

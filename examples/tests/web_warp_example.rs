@@ -12,7 +12,7 @@
 
 #![cfg(feature = "web-warp")]
 
-use bulwark_examples::web_warp_example;
+use bulwark_examples::web::web_warp_example;
 use serial_test::serial;
 use warp::http::StatusCode;
 use warp::Filter;

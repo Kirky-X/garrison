@@ -7,7 +7,7 @@
 
 #![cfg(all(feature = "cache-memory", feature = "web-axum"))]
 
-use bulwark_examples::basic_login;
+use bulwark_examples::authentication::basic_login;
 use serial_test::serial;
 
 #[tokio::test(flavor = "multi_thread")]

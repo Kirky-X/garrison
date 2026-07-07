@@ -4,7 +4,7 @@
 
 use bulwark::error::BulwarkError;
 use bulwark::exception::{BulwarkException, NotLoginException};
-use bulwark_examples::exception_handling;
+use bulwark_examples::infrastructure::exception_handling;
 
 #[test]
 fn test_run_completes() {

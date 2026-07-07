@@ -4,7 +4,7 @@
 
 #![cfg(feature = "protocol-jwt")]
 
-use bulwark_examples::jwt_login;
+use bulwark_examples::authentication::jwt_login;
 
 #[tokio::test]
 async fn test_run_completes() {

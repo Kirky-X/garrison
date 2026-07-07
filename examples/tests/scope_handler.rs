@@ -4,7 +4,7 @@
 
 #![cfg(feature = "oauth2-scope-handler")]
 
-use bulwark_examples::scope_handler;
+use bulwark_examples::oauth2::scope_handler;
 
 #[tokio::test]
 async fn test_run_completes() {

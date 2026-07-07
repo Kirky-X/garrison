@@ -9,7 +9,7 @@
 
 #![cfg(feature = "grpc")]
 
-use bulwark_examples::grpc_interceptor;
+use bulwark_examples::web::grpc_interceptor;
 use serial_test::serial;
 use tonic::metadata::MetadataMap;
 use tonic::service::Interceptor;
