@@ -75,7 +75,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         .create(
             TENANT,
             NewUser {
-                id: "u-1001".to_string(),
+                id: "550e8400-e29b-41d4-a716-446655440000".to_string(),
                 username: "1001".to_string(),
                 password_hash,
                 status: "active".to_string(),
