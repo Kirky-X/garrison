@@ -113,12 +113,18 @@ pub trait BulwarkDao: Send + Sync {
     ///
     /// # 性能警告
     /// - 大规模 key 场景下性能差（需全量扫描 + 过滤）
-    /// - `BulwarkDaoOxcache` 当前不重写此方法（走默认 `NotImplemented`）：
-    ///   oxcache 0.3 的 `CacheReader`/`CacheBackend` trait 未暴露 iter/keys/scan API，
-    ///   `Cache.backend` 字段为 `pub(crate)`，外部无法访问底层 DashMap。
-    ///   待 v0.5.0+ oxcache 升级暴露 iter API 后实现。
-    /// - 业务影响：`ApiKeyHandler::list_by_namespace` 在使用 `BulwarkDaoOxcache` 时
-    ///   返回 `NotImplemented`（生产可用性受限，业务方需自行维护 key 索引或使用 `MockDao` 测试）。
+    ///
+    /// # 已知限制（A-010 评估结论）
+    ///
+    /// `BulwarkDaoOxcache` 当前不重写此方法（走默认 `NotImplemented`），原因：
+    /// - oxcache 0.3 的 `CacheReader`/`CacheBackend` trait 未暴露 iter/keys/scan API
+    /// - `Cache.backend` 字段为 `pub(crate)`，外部无法访问底层 `DashMap`
+    /// - 维护独立 key 索引（如 `DashMap<String, ()>`）会增加内存开销 + 一致性复杂度（set/delete 需同步索引）
+    /// - oxcache 0.5+ 路线图有 iter API 计划
+    ///
+    /// **决策**：defer 到 oxcache 0.5+。业务方临时方案：自行维护 key 集合（参考 `ApiKeyHandler::list_by_namespace` 的 `MockDao` 测试）。
+    ///
+    /// **业务影响**：`ApiKeyHandler::list_by_namespace` 在使用 `BulwarkDaoOxcache` 时返回 `NotImplemented`（生产可用性受限）。
     ///
     /// # 默认实现
     /// 返回 `BulwarkError::NotImplemented`。
@@ -296,6 +302,17 @@ mod oxcache_impl {
     /// - `update` 通过 `cache.ttl_sync()` 读取剩余 TTL，用 `set_with_ttl_sync` 保留原 TTL（不重置过期时间）
     /// - `expire` 通过 `cache.expire_sync()` 原子更新 TTL（不触碰 value）
     /// - 依赖本地 oxcache 仓库（crates.io 0.3.0 未暴露 `Cache<K,V>::ttl_sync()`，本地仓库已暴露）
+    ///
+    /// # 性能约束（A-009 评估结论）
+    ///
+    /// `_sync` API 仅适用于 in-memory backend（Moka `DashMap` 后端）：
+    /// - 读操作（`get_sync`/`exists_sync`/`ttl_sync`）：无锁读，<100ns
+    /// - 写操作（`set_with_ttl_sync`/`delete_sync`/`expire_sync`）：短临界区，<1μs
+    /// - 对比 `tokio::task::spawn_blocking` 开销：~10-50μs（线程池调度）
+    ///
+    /// 结论：对 in-memory backend，`_sync` 调用比 `spawn_blocking` 更快，保留现有实现。
+    ///
+    /// **后续跟进**：若未来引入 Redis/分布式 backend，需改用 async API（`_sync` 在网络 I/O 场景下会阻塞 tokio worker 线程）。
     pub struct BulwarkDaoOxcache {
         cache: Cache<String, String>,
         /// 原子操作锁，仅用于 `get_and_delete` 的进程内原子性保护。

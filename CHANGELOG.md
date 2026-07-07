@@ -5,6 +5,76 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.5.2] - 2026-07-08
+
+### 概述
+
+Bulwark 0.5.2 是"架构重构版"，通过 specmark change `v0-5-2-architecture-refactor` 实施 5 项架构重构（A-002/A-004/A-009/A-010/A-011）。这是 v1.0 API 冻结前的最后重构窗口，彻底清零架构债务。
+
+> **破坏性变更（无向后兼容）**：原计划用 `#[deprecated]` 周期过渡，apply 阶段用户决策直接删除，彻底清零技术债。
+
+### 变更
+
+#### A-002: BulwarkLogic trait 拆分
+
+- 21 方法上帝 trait `BulwarkLogic` 拆分为 6 个子 trait：
+  - `BulwarkCore`（base，1 方法）
+  - `SessionLogic: BulwarkCore`（10 方法）
+  - `PermissionLogic: SessionLogic`（2 方法）
+  - `TokenLogic: SessionLogic`（5 方法）
+  - `MfaLogic: SessionLogic`（2 方法）
+  - `PasswordLogic: SessionLogic`（1 方法）
+- **直接删除 `BulwarkLogic`**（无 `#[deprecated]` 过渡，无 type alias）
+- Manager 持有具体类型 `Arc<BulwarkLogicDefault>`（非 trait 对象）
+- 调用方需显式 `use crate::stp::SessionLogic` 等子 trait 以解析方法
+
+#### A-004: LoginId 迁移
+
+- **删除 `LoginId` newtype**，全栈使用 `String`/`&str`
+- 所有 `login_id: i64` 签名迁移为 `login_id: &str`（对象安全，可作 `dyn`）
+- `get_login_id()` 返回 `Option<String>`（原 `Option<i64>`）
+- `verify_token()` 返回 `String`（原 `i64`）
+- 移除 `BulwarkUtil::login_id_to_i64`（不再需要）
+- `BulwarkUtil` 保留 `impl Into<String>` ergonomic 入口
+
+#### A-009: oxcache `_sync` API 评估
+
+- 评估结论：保留 `_sync` API（in-memory backend 下 <1μs vs `spawn_blocking` 10-50μs）
+- 文档化 `BulwarkDaoOxcache` 性能约束（见 `docs/decisions/A-009-oxcache-sync-api-evaluation.md`）
+- 后续跟进：引入 Redis/分布式 backend 时改用 async API
+
+#### A-010: `keys()` 性能评估
+
+- 评估结论：defer 到 oxcache 0.5+（`Cache.backend` 为 `pub(crate)`）
+- 文档化 `BulwarkDao::keys()` 已知限制（见 `docs/decisions/A-010-dao-keys-performance-evaluation.md`）
+- 业务方临时方案：自行维护 key 集合
+
+#### A-011: `src/stp/mod.rs` 拆分
+
+- 164KB/4035 行单文件拆分为 10 个职责文件：
+  - `core.rs` / `session.rs` / `permission.rs` / `token.rs` / `mfa.rs` / `password.rs`
+  - `interface.rs` / `util.rs` / `parameter.rs` / `mod.rs`（re-exports）
+- 每个子文件包含 trait 定义 + `BulwarkLogicDefault` impl 块 + 单元测试
+
+### 破坏性变更
+
+1. **`BulwarkLogic` trait 删除**：所有 `Arc<dyn BulwarkLogic>` 使用者必须迁移到 `Arc<BulwarkLogicDefault>` + 显式 `use` 子 trait
+2. **`LoginId` newtype 删除**：所有 `LoginId` 使用者必须迁移到 `String`/`&str`
+3. **Manager 返回类型变更**：`BulwarkManager::logic()` 返回 `Arc<BulwarkLogicDefault>`（非 `Arc<dyn BulwarkLogic>`）
+4. **`get_login_id()` 返回类型变更**：`Option<i64>` → `Option<String>`
+5. **`verify_token()` 返回类型变更**：`i64` → `String`
+6. **`login_id` 参数类型变更**：`i64` → `&str`（所有 trait 方法 + `BulwarkInterface`）
+
+### 验证
+
+- `cargo test --features full --lib`: 1322 passed, 0 failed
+- `cargo test --features full --tests`: 72 passed, 0 failed
+- `cargo test --features "full manager-explicit" --lib -- manager::explicit`: 6 passed
+- `cargo clippy --features full --lib --tests -- -D warnings`: 零警告
+- `cd examples && cargo check --features full`: 通过
+
+---
+
 ## [0.5.0] - 2026-07-06
 
 ### 概述
