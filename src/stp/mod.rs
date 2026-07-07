@@ -38,6 +38,15 @@ pub mod parameter;
 // 0.4.2 新增：LoginId newtype（支持 i64 与 String 双形式登录主体标识）
 pub mod login_id;
 
+// 0.5.2 新增：BulwarkLogic 上帝 trait 拆分为 6 个细粒度 trait
+// （本声明仅注册模块；re-exports 与 BulwarkLogic 重构在后续任务处理）
+pub mod core;
+pub mod mfa;
+pub mod password;
+pub mod permission;
+pub mod session;
+pub mod token;
+
 // ============================================================================
 // task_local：存储当前请求的 token（类似 Sa-Token 的 SaHolder）
 // ============================================================================
