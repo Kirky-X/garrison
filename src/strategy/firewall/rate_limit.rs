@@ -20,7 +20,7 @@
 
 use crate::dao::BulwarkDao;
 use crate::error::{BulwarkError, BulwarkResult};
-use crate::strategy::firewall::{BulwarkFirewallStrategy, FirewallContext};
+use crate::strategy::firewall::{BulwarkFirewallStrategy, CaptchaChallenge, FirewallContext};
 use async_trait::async_trait;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -52,6 +52,14 @@ pub struct RateLimitConfig {
     pub window_seconds: u64,
     /// 计数作用域（Ip / User / Tenant）。
     pub scope: RateLimitScope,
+    /// 动态阈值上限（依据 design D3）。
+    ///
+    /// - `None`：禁用动态调整，固定使用 `max_requests` 作为阈值。
+    /// - `Some(upper)`：允许 [`RateLimitStrategy::current_threshold`] 在
+    ///   `[max_requests, upper]` 区间内根据历史流量动态调整。
+    ///
+    /// 调整规则见 [`RateLimitStrategy::adjust_threshold`]。
+    pub dynamic_threshold: Option<usize>,
 }
 
 impl Default for RateLimitConfig {
@@ -60,6 +68,7 @@ impl Default for RateLimitConfig {
             max_requests: 100,
             window_seconds: 60,
             scope: RateLimitScope::Ip,
+            dynamic_threshold: None,
         }
     }
 }
@@ -78,6 +87,7 @@ impl Default for RateLimitConfig {
 ///     max_requests: 10,
 ///     window_seconds: 1,
 ///     scope: RateLimitScope::Ip,
+///     dynamic_threshold: None,
 /// };
 /// let strategy = RateLimitStrategy::new(config, dao);
 /// ```
@@ -92,10 +102,103 @@ impl RateLimitStrategy {
     /// 创建速率限制策略实例。
     ///
     /// # 参数
-    /// - `config`: 配置（阈值 + 窗口 + 作用域）。
+    /// - `config`: 配置（阈值 + 窗口 + 作用域 + 动态阈值上限）。
     /// - `dao`: DAO（oxcache 抽象，用于时间戳列表存储）。
     pub fn new(config: RateLimitConfig, dao: Arc<dyn BulwarkDao>) -> Self {
         Self { config, dao }
+    }
+
+    /// 设置期望的验证码答案，供后续 [`CaptchaChallenge::verify_challenge`] 比对。
+    ///
+    /// 存储在 DAO 中（key 由 scope+id 派生，与计数 key 同前缀），TTL 与窗口一致，
+    /// 窗口无后续请求时自动过期。
+    ///
+    /// # 参数
+    /// - `ctx`: 防火墙上下文。
+    /// - `answer`: 期望答案（明文，由调用方负责生成 captcha 图像）。
+    pub async fn set_expected_answer(
+        &self,
+        ctx: &FirewallContext,
+        answer: &str,
+    ) -> BulwarkResult<()> {
+        let (key, _) = self.build_key(ctx)?;
+        // key 形如 `rl:ip:{ip}`，答案 key 复用前缀并追加 `:answer`
+        let answer_key = format!("{}:answer", key);
+        self.dao
+            .set(&answer_key, answer, self.config.window_seconds)
+            .await
+    }
+
+    /// 返回当前生效的速率阈值（依据 design D3）。
+    ///
+    /// - `dynamic_threshold=None` 时恒返回 `max_requests`。
+    /// - `dynamic_threshold=Some(_)` 时返回 DAO 中持久化的当前阈值
+    ///   （区间 `[max_requests, dynamic_threshold]`），缺省回退到 `max_requests`。
+    pub async fn current_threshold(&self, ctx: &FirewallContext) -> BulwarkResult<usize> {
+        let max = self.config.max_requests as usize;
+        let Some(upper) = self.config.dynamic_threshold else {
+            return Ok(max);
+        };
+        let (key, _) = self.build_key(ctx)?;
+        let threshold_key = format!("{}:threshold", key);
+        let stored = self.dao.get(&threshold_key).await?;
+        let raw: usize = stored
+            .as_deref()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(max);
+        // 钳制到 [max, upper]，防止历史脏数据越界
+        Ok(raw.clamp(max, upper))
+    }
+
+    /// 根据观测到的历史流量调整阈值（依据 design D3）。
+    ///
+    /// 调整规则（确定性，Rule 5）：
+    /// - `traffic_count >= current * 80%`（高负载）：阈值上调一步，封顶 `dynamic_threshold`。
+    /// - `traffic_count < current * 20%`（低负载）：阈值下调一步，下限 `max_requests`。
+    /// - 其余区间：不变。
+    ///
+    /// 仅在 `dynamic_threshold=Some(_)` 时生效；`None` 时直接返回 `max_requests`。
+    ///
+    /// # 返回
+    /// 调整后的当前阈值。
+    pub async fn adjust_threshold(
+        &self,
+        ctx: &FirewallContext,
+        traffic_count: usize,
+    ) -> BulwarkResult<usize> {
+        let max = self.config.max_requests as usize;
+        let Some(upper) = self.config.dynamic_threshold else {
+            return Ok(max);
+        };
+        let (key, _) = self.build_key(ctx)?;
+        let threshold_key = format!("{}:threshold", key);
+
+        let current = self.current_threshold(ctx).await?;
+
+        // 步长：max_requests 的 10%，至少 1（确定性，Rule 5）
+        let step = (max / 10).max(1);
+
+        // 用整数比较替代浮点（Rule 5），避免精度问题
+        // 高负载：traffic_count * 5 >= current * 4  <=>  traffic_count >= current * 0.8
+        // 低负载：traffic_count * 5 <  current * 1  <=>  traffic_count <  current * 0.2
+        let new_threshold = if traffic_count.saturating_mul(5) >= current.saturating_mul(4) {
+            (current + step).min(upper)
+        } else if traffic_count.saturating_mul(5) < current {
+            current.saturating_sub(step).max(max)
+        } else {
+            current
+        };
+
+        // 持久化（TTL=window_seconds，与计数器同窗口）
+        self.dao
+            .set(
+                &threshold_key,
+                &new_threshold.to_string(),
+                self.config.window_seconds,
+            )
+            .await?;
+
+        Ok(new_threshold)
     }
 
     /// 根据作用域构造计数 key 并返回作用域标识（用于错误消息）。
@@ -170,6 +273,42 @@ impl BulwarkFirewallStrategy for RateLimitStrategy {
     }
 }
 
+#[async_trait]
+impl CaptchaChallenge for RateLimitStrategy {
+    async fn should_challenge(&self, ctx: &FirewallContext) -> BulwarkResult<bool> {
+        let (key, _) = self.build_key(ctx)?;
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|e| BulwarkError::Dao(format!("系统时间错误: {}", e)))?
+            .as_millis() as u64;
+        let window_start = now_ms.saturating_sub(self.config.window_seconds * 1000);
+
+        // 读取窗口内时间戳并过滤过期项（不修改状态，与 check 共享算法）
+        let stored = self.dao.get(&key).await?;
+        let count: usize = stored
+            .as_deref()
+            .unwrap_or("")
+            .split(',')
+            .filter(|s| !s.is_empty())
+            .filter_map(|s| s.parse::<u64>().ok())
+            .filter(|&t| t > window_start)
+            .count();
+
+        let threshold = self.current_threshold(ctx).await?;
+        // 80% 阈值触发挑战（整数运算避免浮点，Rule 5）
+        // count >= threshold * 4/5  <=>  count * 5 >= threshold * 4
+        Ok(count.saturating_mul(5) >= threshold.saturating_mul(4))
+    }
+
+    async fn verify_challenge(&self, ctx: &FirewallContext, answer: &str) -> BulwarkResult<bool> {
+        let (key, _) = self.build_key(ctx)?;
+        let answer_key = format!("{}:answer", key);
+        let stored = self.dao.get(&answer_key).await?;
+        // 未设置期望答案时返回 false（显性失败而非报错，符合 trait 语义）
+        Ok(stored.as_deref() == Some(answer))
+    }
+}
+
 inventory::submit! {
     crate::strategy::firewall::StrategyRegistration {
         name: "ratelimit",
@@ -192,6 +331,7 @@ mod tests {
             max_requests: 10,
             window_seconds: 1,
             scope: RateLimitScope::Ip,
+            dynamic_threshold: None,
         };
         let strategy = RateLimitStrategy::new(config, dao);
         let ctx = FirewallContext::new("192.168.1.1");
@@ -218,6 +358,7 @@ mod tests {
             max_requests: 2,
             window_seconds: 60,
             scope: RateLimitScope::User,
+            dynamic_threshold: None,
         };
         let strategy = RateLimitStrategy::new(config, dao);
 
@@ -244,6 +385,7 @@ mod tests {
             max_requests: 10,
             window_seconds: 60,
             scope: RateLimitScope::User,
+            dynamic_threshold: None,
         };
         let strategy = RateLimitStrategy::new(config, dao);
         let ctx = FirewallContext::new("192.168.1.1"); // 无 login_id
@@ -253,6 +395,225 @@ mod tests {
             matches!(result, Err(BulwarkError::InvalidParam(_))),
             "scope=User 且 login_id=None 应返回 InvalidParam，实际: {:?}",
             result
+        );
+    }
+
+    // ========================================================================
+    // T096: 验证码挑战 + 动态阈值测试（依据 design D3）
+    // ========================================================================
+
+    /// T096-1: 接近阈值时 should_challenge 返回 true（80% 阈值触发挑战）。
+    ///
+    /// max_requests=10，调用 check 8 次后到达 80%，应触发挑战。
+    #[tokio::test]
+    async fn captcha_challenge_should_trigger_when_rate_limit_near() {
+        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let config = RateLimitConfig {
+            max_requests: 10,
+            window_seconds: 60,
+            scope: RateLimitScope::Ip,
+            dynamic_threshold: None,
+        };
+        let strategy = RateLimitStrategy::new(config, dao);
+        let ctx = FirewallContext::new("192.168.1.1");
+
+        // 消耗 8/10 = 80% 配额
+        for _ in 0..8 {
+            assert!(strategy.check(&ctx).await.is_ok());
+        }
+
+        let should = strategy
+            .should_challenge(&ctx)
+            .await
+            .expect("should_challenge 不应报错");
+        assert!(should, "达到 80% 阈值时应触发验证码挑战，实际: {}", should);
+    }
+
+    /// T096-2: 远低于阈值时 should_challenge 返回 false。
+    ///
+    /// max_requests=10，仅 1 次请求（10%），不应触发挑战。
+    #[tokio::test]
+    async fn captcha_challenge_should_not_trigger_when_below_threshold() {
+        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let config = RateLimitConfig {
+            max_requests: 10,
+            window_seconds: 60,
+            scope: RateLimitScope::Ip,
+            dynamic_threshold: None,
+        };
+        let strategy = RateLimitStrategy::new(config, dao);
+        let ctx = FirewallContext::new("192.168.1.1");
+
+        // 仅 1 次请求（10%），远低于 80% 阈值
+        strategy.check(&ctx).await.expect("check 不应报错");
+
+        let should = strategy
+            .should_challenge(&ctx)
+            .await
+            .expect("should_challenge 不应报错");
+        assert!(!should, "远低于阈值时不应触发挑战，实际: {}", should);
+    }
+
+    /// T096-3: 正确答案通过 verify_challenge 验证。
+    #[tokio::test]
+    async fn captcha_challenge_verify_correct_answer() {
+        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let config = RateLimitConfig::default();
+        let strategy = RateLimitStrategy::new(config, dao);
+        let ctx = FirewallContext::new("192.168.1.1");
+
+        // 设置期望答案
+        strategy
+            .set_expected_answer(&ctx, "abc123")
+            .await
+            .expect("set_expected_answer 不应报错");
+
+        // 正确答案应通过
+        let ok = strategy
+            .verify_challenge(&ctx, "abc123")
+            .await
+            .expect("verify_challenge 不应报错");
+        assert!(ok, "正确答案应通过验证");
+    }
+
+    /// T096-4: 错误答案验证失败。
+    #[tokio::test]
+    async fn captcha_challenge_verify_incorrect_answer() {
+        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let config = RateLimitConfig::default();
+        let strategy = RateLimitStrategy::new(config, dao);
+        let ctx = FirewallContext::new("192.168.1.1");
+
+        strategy
+            .set_expected_answer(&ctx, "abc123")
+            .await
+            .expect("set_expected_answer 不应报错");
+
+        // 错误答案应失败
+        let ok = strategy
+            .verify_challenge(&ctx, "wrong-answer")
+            .await
+            .expect("verify_challenge 不应报错");
+        assert!(!ok, "错误答案应验证失败");
+    }
+
+    /// T096-5: 流量持续高时阈值上调（依据 design D3 动态阈值）。
+    ///
+    /// max_requests=10, dynamic_threshold=Some(20)。
+    /// 初始阈值 10，传入 traffic_count >= 80% 应上调，封顶 20。
+    #[tokio::test]
+    async fn dynamic_threshold_increases_when_traffic_high() {
+        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let config = RateLimitConfig {
+            max_requests: 10,
+            window_seconds: 60,
+            scope: RateLimitScope::Ip,
+            dynamic_threshold: Some(20),
+        };
+        let strategy = RateLimitStrategy::new(config, dao);
+        let ctx = FirewallContext::new("192.168.1.1");
+
+        // 初始阈值 = max_requests = 10
+        let initial = strategy
+            .current_threshold(&ctx)
+            .await
+            .expect("current_threshold 不应报错");
+        assert_eq!(initial, 10, "初始阈值应为 max_requests");
+
+        // 高流量（9 >= 80% of 10 = 8）应触发上调
+        let after_high = strategy
+            .adjust_threshold(&ctx, 9)
+            .await
+            .expect("adjust_threshold 不应报错");
+        assert!(after_high > 10, "高流量后阈值应上调，实际: {}", after_high);
+        assert!(
+            after_high <= 20,
+            "阈值不应超过 dynamic_threshold 上限，实际: {}",
+            after_high
+        );
+
+        // 持续高流量直到封顶 20
+        let mut current = after_high;
+        for i in 0..20 {
+            current = strategy
+                .adjust_threshold(&ctx, current)
+                .await
+                .expect("adjust_threshold 不应报错");
+            if current >= 20 {
+                break;
+            }
+            assert!(current <= 20, "第 {} 次调整后阈值越界: {}", i, current);
+        }
+        assert_eq!(
+            current, 20,
+            "持续高流量应封顶到 dynamic_threshold，实际: {}",
+            current
+        );
+    }
+
+    /// T096-6: 流量持续低时阈值下调（依据 design D3 动态阈值）。
+    ///
+    /// 先用高流量把阈值推到高位，再用低流量下调，下限 max_requests。
+    #[tokio::test]
+    async fn dynamic_threshold_decreases_when_traffic_low() {
+        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let config = RateLimitConfig {
+            max_requests: 10,
+            window_seconds: 60,
+            scope: RateLimitScope::Ip,
+            dynamic_threshold: Some(20),
+        };
+        let strategy = RateLimitStrategy::new(config, dao);
+        let ctx = FirewallContext::new("192.168.1.1");
+
+        // 先用高流量把阈值推到封顶 20
+        let mut current = strategy
+            .current_threshold(&ctx)
+            .await
+            .expect("current_threshold 不应报错");
+        for _ in 0..20 {
+            current = strategy
+                .adjust_threshold(&ctx, current)
+                .await
+                .expect("adjust_threshold 不应报错");
+            if current >= 20 {
+                break;
+            }
+        }
+        let peaked = current;
+        assert_eq!(peaked, 20, "高流量应将阈值推到上限");
+
+        // 低流量（0 << 20% of 20 = 4）应触发下调
+        let after_low = strategy
+            .adjust_threshold(&ctx, 0)
+            .await
+            .expect("adjust_threshold 不应报错");
+        assert!(
+            after_low < peaked,
+            "低流量后阈值应下调，实际: {}",
+            after_low
+        );
+        assert!(
+            after_low >= 10,
+            "阈值不应低于 max_requests，实际: {}",
+            after_low
+        );
+
+        // 持续低流量直到下限 max_requests
+        let mut current = after_low;
+        for _ in 0..20 {
+            current = strategy
+                .adjust_threshold(&ctx, 0)
+                .await
+                .expect("adjust_threshold 不应报错");
+            if current <= 10 {
+                break;
+            }
+        }
+        assert_eq!(
+            current, 10,
+            "持续低流量应触底到 max_requests，实际: {}",
+            current
         );
     }
 }

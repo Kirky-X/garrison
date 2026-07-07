@@ -126,6 +126,52 @@ pub trait BulwarkFirewallStrategy: Send + Sync {
 }
 
 // ============================================================================
+// CaptchaChallenge trait：验证码挑战契约（依据 design D3）
+// ============================================================================
+
+/// 验证码挑战 trait，定义"接近阈值时触发挑战 + 验证答案"的可插拔契约（依据 design D3）。
+///
+/// 实现方（如 [`RateLimitStrategy`](crate::strategy::firewall::rate_limit::RateLimitStrategy)）
+/// 根据自身状态决定何时触发挑战，并在 `verify_challenge` 中验证用户提交的答案。
+///
+/// # 与 [`BulwarkFirewallStrategy`] 的区分
+///
+/// - `BulwarkFirewallStrategy::check`：硬拦截，直接返回 `FirewallBlocked`。
+/// - `CaptchaChallenge::should_challenge`：软挑战，返回 true 时调用方应弹出验证码，
+///   用户通过 `verify_challenge` 后才允许后续请求。
+///
+/// # 调用流程
+///
+/// 1. 调用 `should_challenge(ctx)` 判断是否需要挑战。
+/// 2. 需要挑战时，调用方（如 web 中间件）弹出验证码并接收用户答案。
+/// 3. 调用 `verify_challenge(ctx, answer)` 验证答案。
+#[async_trait]
+pub trait CaptchaChallenge: Send + Sync {
+    /// 判断当前上下文是否应触发验证码挑战。
+    ///
+    /// # 参数
+    /// - `ctx`: 防火墙上下文（IP / login_id / tenant_id）。
+    ///
+    /// # 返回
+    /// - `Ok(true)`: 应触发挑战（如请求计数接近阈值）。
+    /// - `Ok(false)`: 无需挑战。
+    /// - `Err(_)`: 内部错误（如 DAO 故障）。
+    async fn should_challenge(&self, ctx: &FirewallContext) -> BulwarkResult<bool>;
+
+    /// 验证用户提交的验证码答案。
+    ///
+    /// # 参数
+    /// - `ctx`: 防火墙上下文（用于定位期望答案）。
+    /// - `answer`: 用户提交的答案。
+    ///
+    /// # 返回
+    /// - `Ok(true)`: 答案正确，挑战通过。
+    /// - `Ok(false)`: 答案错误或未设置期望答案，挑战失败。
+    /// - `Err(_)`: 内部错误（如 DAO 故障）。
+    async fn verify_challenge(&self, ctx: &FirewallContext, answer: &str) -> BulwarkResult<bool>;
+}
+
+// ============================================================================
 // StrategyRegistration：inventory 编译期注册
 // ============================================================================
 
