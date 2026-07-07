@@ -138,6 +138,7 @@ impl Annotation {
 mod extractors {
     use super::{ModeSpec, PermissionName, RoleName};
     use crate::config::BulwarkConfig;
+    use crate::context::token_extract::strip_bearer_prefix;
     use crate::error::BulwarkError;
     use crate::stp::{with_current_token, BulwarkUtil};
     use axum::extract::FromRequestParts;
@@ -191,18 +192,6 @@ mod extractors {
             }
         }
         None
-    }
-
-    /// 大小写不敏感地剥离 `Bearer ` 前缀（依据 RFC 7235）。
-    ///
-    /// 支持 `Bearer xxx`、`bearer xxx`、`BEARER xxx` 等任意大小写组合。
-    fn strip_bearer_prefix(auth_str: &str) -> Option<&str> {
-        let prefix = "bearer ";
-        if auth_str.len() >= prefix.len() && auth_str[..prefix.len()].eq_ignore_ascii_case(prefix) {
-            Some(&auth_str[prefix.len()..])
-        } else {
-            None
-        }
     }
 
     // ----------------------------------------------------------------

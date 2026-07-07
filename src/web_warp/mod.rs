@@ -27,16 +27,20 @@
 
 use crate::annotation::Annotation;
 use crate::config::BulwarkConfig;
+use crate::context::token_extract::extract_token_from_headers;
 use crate::error::{BulwarkError, BulwarkResult};
 use crate::router::{BulwarkInterceptor, DefaultBulwarkInterceptor};
 use crate::stp::with_current_token;
 use std::collections::HashMap;
 use std::sync::Arc;
-use warp::http::header::{self, HeaderMap, HeaderName};
+use warp::http::header::HeaderMap;
 use warp::http::StatusCode;
 use warp::reject::Reject;
 use warp::reply::{Reply, Response};
 use warp::Filter;
+
+#[cfg(test)]
+use warp::http::header;
 
 pub mod extractor;
 
@@ -70,65 +74,6 @@ impl Reply for BulwarkError {
         let body = warp::reply::json(&self.to_json_body());
         warp::reply::with_status(body, status).into_response()
     }
-}
-
-// ============================================================================
-// 辅助函数：从 warp HeaderMap 提取 token
-// ============================================================================
-
-/// 大小写不敏感地剥离 `Bearer ` 前缀（RFC 7235）。
-fn strip_bearer_prefix(auth_str: &str) -> Option<&str> {
-    let prefix = "bearer ";
-    if auth_str.len() >= prefix.len() && auth_str[..prefix.len()].eq_ignore_ascii_case(prefix) {
-        Some(&auth_str[prefix.len()..])
-    } else {
-        None
-    }
-}
-
-/// 从 HeaderMap 提取 token（依据 config 配置）。
-///
-/// 提取顺序：Authorization: Bearer <token> → 自定义 token_name header → cookie。
-fn extract_token_from_headers(
-    headers: &HeaderMap,
-    config: &BulwarkConfig,
-) -> Result<Option<String>, BulwarkError> {
-    if config.is_read_header {
-        // 1. Authorization: Bearer <token>
-        if let Some(auth) = headers
-            .get(header::AUTHORIZATION)
-            .and_then(|v| v.to_str().ok())
-        {
-            if let Some(token) = strip_bearer_prefix(auth) {
-                return Ok(Some(token.to_string()));
-            }
-        }
-        // 2. 自定义 token_name header
-        if let Ok(header_name) = HeaderName::try_from(config.token_name.as_str()) {
-            if let Some(token) = headers.get(header_name).and_then(|v| v.to_str().ok()) {
-                return Ok(Some(token.to_string()));
-            }
-        }
-    }
-    if config.is_read_cookie {
-        // 3. Cookie: token_name=<token>
-        let cookie_header = headers
-            .get(header::COOKIE)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("");
-        if !cookie_header.is_empty() {
-            for cookie in cookie_header.split(';') {
-                let cookie = cookie.trim();
-                if let Some(eq_pos) = cookie.find('=') {
-                    let (k, v) = cookie.split_at(eq_pos);
-                    if k == config.token_name {
-                        return Ok(Some(v[1..].to_string()));
-                    }
-                }
-            }
-        }
-    }
-    Ok(None)
 }
 
 // ============================================================================

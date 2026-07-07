@@ -31,12 +31,12 @@
 
 use crate::annotation::Annotation;
 use crate::config::BulwarkConfig;
+use crate::context::token_extract::{extract_token_from_headers, HeaderLookup};
 use crate::error::{BulwarkError, BulwarkResult};
 use crate::router::{BulwarkInterceptor, DefaultBulwarkInterceptor};
 use crate::stp::with_current_token;
 use actix_web::body::{BoxBody, EitherBody};
 use actix_web::dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform};
-use actix_web::http::header::{self, HeaderMap, HeaderName};
 use actix_web::http::StatusCode;
 use actix_web::{HttpResponse, ResponseError};
 use std::collections::HashMap;
@@ -45,10 +45,29 @@ use std::pin::Pin;
 use std::rc::Rc;
 use std::sync::Arc;
 
+#[cfg(test)]
+use actix_web::http::header::{self, HeaderMap};
+
 pub mod extractor;
 
 /// 登录主体 extractor（从 Authorization: Bearer <token> 解析 login_id）。
 pub use extractor::BulwarkPrincipal;
+
+// ============================================================================
+// HeaderLookup impl：适配 actix_http::header::HeaderMap（独立类型，非 http::HeaderMap）
+// ============================================================================
+
+/// 为 `actix_web::http::header::HeaderMap`（= `actix_http::header::HeaderMap`）实现
+/// [`HeaderLookup`] trait，使其可传入 `extract_token_from_headers`。
+///
+/// **背景**：`actix_web::http::header::HeaderMap` 与 `http::HeaderMap` 是不同的类型
+/// （尽管 `HeaderValue` / `HeaderName` 是 `http` crate 类型的 re-export）。
+/// 此 impl 桥接类型差异，使 `extract_token_from_headers` 可同时接受两种 HeaderMap。
+impl HeaderLookup for actix_web::http::header::HeaderMap {
+    fn get_header(&self, name: &str) -> Option<&str> {
+        self.get(name).and_then(|v| v.to_str().ok())
+    }
+}
 
 // ============================================================================
 // ResponseError impl：BulwarkError → actix-web HttpResponse
@@ -69,65 +88,6 @@ impl ResponseError for BulwarkError {
         let status = StatusCode::from_u16(s).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
         HttpResponse::build(status).json(self.to_json_body())
     }
-}
-
-// ============================================================================
-// 辅助函数：从 actix-web HttpRequest 提取 token
-// ============================================================================
-
-/// 大小写不敏感地剥离 `Bearer ` 前缀（RFC 7235）。
-fn strip_bearer_prefix(auth_str: &str) -> Option<&str> {
-    let prefix = "bearer ";
-    if auth_str.len() >= prefix.len() && auth_str[..prefix.len()].eq_ignore_ascii_case(prefix) {
-        Some(&auth_str[prefix.len()..])
-    } else {
-        None
-    }
-}
-
-/// 从 HeaderMap 提取 token（依据 config 配置）。
-///
-/// 提取顺序：Authorization: Bearer <token> → 自定义 token_name header → cookie。
-fn extract_token_from_headers(
-    headers: &HeaderMap,
-    config: &BulwarkConfig,
-) -> Result<Option<String>, BulwarkError> {
-    if config.is_read_header {
-        // 1. Authorization: Bearer <token>
-        if let Some(auth) = headers
-            .get(header::AUTHORIZATION)
-            .and_then(|v| v.to_str().ok())
-        {
-            if let Some(token) = strip_bearer_prefix(auth) {
-                return Ok(Some(token.to_string()));
-            }
-        }
-        // 2. 自定义 token_name header
-        if let Ok(header_name) = HeaderName::try_from(config.token_name.as_str()) {
-            if let Some(token) = headers.get(header_name).and_then(|v| v.to_str().ok()) {
-                return Ok(Some(token.to_string()));
-            }
-        }
-    }
-    if config.is_read_cookie {
-        // 3. Cookie: token_name=<token>
-        let cookie_header = headers
-            .get(header::COOKIE)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("");
-        if !cookie_header.is_empty() {
-            for cookie in cookie_header.split(';') {
-                let cookie = cookie.trim();
-                if let Some(eq_pos) = cookie.find('=') {
-                    let (k, v) = cookie.split_at(eq_pos);
-                    if k == config.token_name {
-                        return Ok(Some(v[1..].to_string()));
-                    }
-                }
-            }
-        }
-    }
-    Ok(None)
 }
 
 // ============================================================================

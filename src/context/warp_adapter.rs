@@ -11,27 +11,12 @@
 //! - `WarpContext` 组合 `WarpRequest + WarpResponse + WarpStorage`
 
 use crate::config::BulwarkConfig;
+use crate::context::token_extract::strip_bearer_prefix;
 use crate::context::{BulwarkContext, BulwarkRequest, BulwarkResponse, BulwarkStorage};
 use crate::error::{BulwarkError, BulwarkResult};
 use std::collections::HashMap;
 use warp::http::header::{HeaderMap, HeaderName, HeaderValue};
 use warp::http::StatusCode;
-
-// ============================================================================
-// 辅助函数：大小写不敏感地剥离 `Bearer ` 前缀（依据 RFC 7235）
-// ============================================================================
-
-/// 大小写不敏感地剥离 `Bearer ` 前缀。
-///
-/// 支持 `Bearer xxx`、`bearer xxx`、`BEARER xxx` 等任意大小写组合。
-fn strip_bearer_prefix(auth_str: &str) -> Option<&str> {
-    let prefix = "bearer ";
-    if auth_str.len() >= prefix.len() && auth_str[..prefix.len()].eq_ignore_ascii_case(prefix) {
-        Some(&auth_str[prefix.len()..])
-    } else {
-        None
-    }
-}
 
 // ============================================================================
 // WarpRequest：持有 path + method + HeaderMap（owned）
