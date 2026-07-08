@@ -26,6 +26,7 @@
 //! - T018: 内置 AuthenticationFlow
 
 pub mod builder;
+pub mod executor;
 pub mod registry;
 
 use std::collections::HashMap;
