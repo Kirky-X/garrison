@@ -4,19 +4,19 @@
 //!
 //! 运行方式：
 //! ```sh
-//! cargo run -p bulwark-examples --bin password_login --features "secure-password db-sqlite cache-memory"
+//! cargo run -p bulwark-examples --bin password_login --features "account-credential db-sqlite cache-memory"
 //! ```
 //!
 //! 本示例使用内存 SQLite 数据库 + oxcache 内存 DAO，无需外部依赖即可运行。
 
 use async_trait::async_trait;
+use bulwark::account::credential::password::{Argon2Hasher, PasswordHasher};
 use bulwark::dao::{
     init_dbnexus,
     repository::{sqlite::DbnexusUserRepository, NewUser, UserRepository},
     BulwarkDaoOxcache, BulwarkMigration,
 };
 use bulwark::error::{BulwarkError, BulwarkResult};
-use bulwark::secure::password::{Argon2Hasher, PasswordHasher};
 use bulwark::session::BulwarkSession;
 use bulwark::stp::{BulwarkInterface, BulwarkLogicDefault, PasswordLogic};
 use bulwark::strategy::BulwarkPermissionStrategyDefault;

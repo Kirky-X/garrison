@@ -1611,18 +1611,18 @@ async fn login_by_token_with_managers_triggers_hooks() {
 // 0.4.2 Phase 5: login_with_password 测试（依据 spec auth-password-login）
 // ------------------------------------------------------------------------
 
-#[cfg(all(feature = "secure-password", feature = "db-sqlite"))]
+#[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
+use crate::account::credential::password::{Argon2Hasher, PasswordHasher};
+#[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
 use crate::dao::repository::{NewUser, UpdateUser, UserRepository, UserRow};
-#[cfg(all(feature = "secure-password", feature = "db-sqlite"))]
-use crate::secure::password::{Argon2Hasher, PasswordHasher};
 
 /// 测试用 UserRepository mock，用 HashMap 存储 UserRow，按 username 索引。
-#[cfg(all(feature = "secure-password", feature = "db-sqlite"))]
+#[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
 struct MockUserRepository {
     users: Mutex<HashMap<String, UserRow>>,
 }
 
-#[cfg(all(feature = "secure-password", feature = "db-sqlite"))]
+#[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
 impl MockUserRepository {
     fn new() -> Self {
         Self {
@@ -1634,7 +1634,7 @@ impl MockUserRepository {
     }
 }
 
-#[cfg(all(feature = "secure-password", feature = "db-sqlite"))]
+#[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
 #[async_trait]
 impl UserRepository for MockUserRepository {
     async fn find_by_id(&self, _tenant_id: i64, id: &str) -> BulwarkResult<Option<UserRow>> {
@@ -1669,7 +1669,7 @@ impl UserRepository for MockUserRepository {
 }
 
 /// 构造测试用 UserRow（username 与 login_id 字符串一致）。
-#[cfg(all(feature = "secure-password", feature = "db-sqlite"))]
+#[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
 fn make_user_row(login_id: &str, password_hash: &str) -> UserRow {
     UserRow {
         id: format!("u-{}", login_id),
@@ -1687,7 +1687,7 @@ fn make_user_row(login_id: &str, password_hash: &str) -> UserRow {
 ///
 /// 覆盖 spec auth-password-login R-001 验收 case 1：
 /// 注入 Argon2Hasher + MockUserRepository（含正确 hash）→ 调用 login_with_password → Ok(token)。
-#[cfg(all(feature = "secure-password", feature = "db-sqlite"))]
+#[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
 #[tokio::test]
 #[serial]
 async fn login_with_password_correct_returns_token() {
@@ -1711,7 +1711,7 @@ async fn login_with_password_correct_returns_token() {
 /// R-001: 错误密码返回 InvalidParam("invalid password")。
 ///
 /// 覆盖 spec auth-password-login R-001 验收 case 2。
-#[cfg(all(feature = "secure-password", feature = "db-sqlite"))]
+#[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
 #[tokio::test]
 #[serial]
 async fn login_with_password_wrong_password_returns_invalid_param() {
@@ -1741,7 +1741,7 @@ async fn login_with_password_wrong_password_returns_invalid_param() {
 /// 决策：遵循 Constraints 安全要求，统一返回 InvalidParam 防止用户枚举。
 /// v0.4.2 安全审计 A-014: 日志和事件 reason 也统一为 "invalid_credentials"，
 /// 不区分 user_not_found/wrong_password。
-#[cfg(all(feature = "secure-password", feature = "db-sqlite"))]
+#[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
 #[tokio::test]
 #[serial]
 async fn login_with_password_user_not_found_returns_invalid_param() {
@@ -1765,7 +1765,7 @@ async fn login_with_password_user_not_found_returns_invalid_param() {
 ///
 /// 覆盖 spec auth-password-login R-001 验收 case 4。
 /// 注：此错误可泄露（不暴露用户是否存在），返回 "unsupported hash format"。
-#[cfg(all(feature = "secure-password", feature = "db-sqlite"))]
+#[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
 #[tokio::test]
 #[serial]
 async fn login_with_password_unsupported_hash_format_returns_invalid_param() {
@@ -2133,7 +2133,7 @@ async fn check_login_simple_only_session() {
 // 覆盖率补充：login_with_password trait default 实现
 // ========================================================================
 
-/// trait default `login_with_password` 返回 NotImplemented（spec: 需 secure-password + db-sqlite）。
+/// trait default `login_with_password` 返回 NotImplemented（spec: 需 account-credential + db-sqlite）。
 ///
 /// 覆盖行 331-333（login_with_password 默认实现）。
 #[tokio::test]
@@ -2143,8 +2143,8 @@ async fn trait_default_login_with_password_returns_not_implemented() {
     };
     let result = logic.login_with_password("1001", "any-password").await;
     assert!(
-        matches!(result, Err(BulwarkError::NotImplemented(ref msg)) if msg.contains("secure-password")),
-        "trait default login_with_password 应返回 NotImplemented（需 secure-password + db-sqlite），实际: {:?}",
+        matches!(result, Err(BulwarkError::NotImplemented(ref msg)) if msg.contains("account-credential")),
+        "trait default login_with_password 应返回 NotImplemented（需 account-credential + db-sqlite），实际: {:?}",
         result
     );
 }

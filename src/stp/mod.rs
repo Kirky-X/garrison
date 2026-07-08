@@ -112,10 +112,10 @@ pub struct BulwarkLogicDefault {
     #[cfg(feature = "metrics-prometheus")]
     metrics: Option<Arc<crate::observability::BulwarkMetrics>>,
     /// 密码哈希器（可选，注入后 login_with_password 委托此实现校验密码）。
-    #[cfg(all(feature = "secure-password", feature = "db-sqlite"))]
-    password_hasher: Option<Arc<dyn crate::secure::password::PasswordHasher>>,
+    #[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
+    password_hasher: Option<Arc<dyn crate::account::credential::password::PasswordHasher>>,
     /// 用户 Repository（可选，注入后 login_with_password 委托此实现查询用户）。
-    #[cfg(all(feature = "secure-password", feature = "db-sqlite"))]
+    #[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
     user_repository: Option<Arc<dyn crate::dao::repository::UserRepository>>,
     /// 默认 login_type（0.4.2 新增，依据 spec login-type-multi-account R-003）。
     ///
@@ -157,9 +157,9 @@ impl BulwarkLogicDefault {
             permission_checker: None,
             #[cfg(feature = "metrics-prometheus")]
             metrics: None,
-            #[cfg(all(feature = "secure-password", feature = "db-sqlite"))]
+            #[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
             password_hasher: None,
-            #[cfg(all(feature = "secure-password", feature = "db-sqlite"))]
+            #[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
             user_repository: None,
             login_type: "default".to_string(),
             jwt_mode: JwtMode::default(),
@@ -211,24 +211,24 @@ impl BulwarkLogicDefault {
         self
     }
 
-    /// 注入密码哈希器（builder 模式，需启用 `secure-password` + `db-sqlite` feature）。
+    /// 注入密码哈希器（builder 模式，需启用 `account-credential` + `db-sqlite` feature）。
     ///
     /// 注入后 `login_with_password` 委托此 `PasswordHasher::verify` 校验密码哈希。
     /// 未注入时 `login_with_password` 返回 `BulwarkError::Config("password hasher not configured")`。
-    #[cfg(all(feature = "secure-password", feature = "db-sqlite"))]
+    #[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
     pub fn with_password_hasher(
         mut self,
-        hasher: Arc<dyn crate::secure::password::PasswordHasher>,
+        hasher: Arc<dyn crate::account::credential::password::PasswordHasher>,
     ) -> Self {
         self.password_hasher = Some(hasher);
         self
     }
 
-    /// 注入用户 Repository（builder 模式，需启用 `secure-password` + `db-sqlite` feature）。
+    /// 注入用户 Repository（builder 模式，需启用 `account-credential` + `db-sqlite` feature）。
     ///
     /// 注入后 `login_with_password` 委托此 `UserRepository::find_by_username` 查询用户。
     /// 未注入时 `login_with_password` 返回 `BulwarkError::Config("user repository not configured")`。
-    #[cfg(all(feature = "secure-password", feature = "db-sqlite"))]
+    #[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
     pub fn with_user_repository(
         mut self,
         repo: Arc<dyn crate::dao::repository::UserRepository>,

@@ -56,14 +56,14 @@ full = [
     "listener", "web-axum", "cache-memory", "db-sqlite",
     "web-actix", "web-warp", "grpc", "i18n",
     "metrics-prometheus", "observability-otlp", "cache-redis",
-    "annotation-macros", "secure-password",
+    "annotation-macros", "account-credential",
     "tenant-isolation", "audit-log", "decision-trace", "keycloak-oidc",
     "social-wechat",
 ]
 
 # 单特性转发到 bulwark（保持与 bulwark feature 名一致）
 secure-sign = ["bulwark/secure-sign"]
-secure-password = ["bulwark/secure-password"]
+account-credential = ["bulwark/account-credential"]
 secure-httpbasic = ["bulwark/secure-httpbasic"]
 secure-httpdigest = ["bulwark/secure-httpdigest"]
 secure-totp = ["bulwark/secure-totp"]
@@ -258,7 +258,7 @@ path = "src/bin/cache_redis.rs"
 
 [[bin]]
 name = "password_login"
-required-features = ["secure-password", "db-sqlite", "cache-memory"]
+required-features = ["account-credential", "db-sqlite", "cache-memory"]
 path = "src/bin/password_login.rs"
 
 [[bin]]

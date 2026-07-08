@@ -62,7 +62,7 @@ base32 = { version = "0.5", optional = true }
 argon2 = { version = "0.5", optional = true }
 bcrypt = { version = "0.15", optional = true }
 rand = { version = "0.8", optional = true }
-# 0.5.1 新增：zeroize 用于 secure-password-zeroize feature，hash/verify 后清零内部 password 副本
+# 0.5.1 新增：zeroize 用于 account-credential-zeroize feature，hash/verify 后清零内部 password 副本
 zeroize = { version = "1", optional = true }
 # 0.5.1 新增：ua-parser 用于 UserDeviceRepository 的 UA 解析（依据 design.md D4/A4）
 # 仅解析引擎，不内置 regexes.yaml（1.5MB 资源延后到 ua-parser-precompiled feature）
@@ -219,17 +219,13 @@ secure-totp = ["totp-rs", "base32"]
 secure-sign = ["sha2", "hmac", "base64", "md5"]
 secure-httpbasic = ["base64"]
 secure-httpdigest = ["sha2", "base64", "md5"]
-# 0.4.2 新增：密码哈希（argon2 + bcrypt），依据 spec secure-password
-secure-password = ["dep:argon2", "dep:bcrypt", "dep:rand"]
-# 0.5.1 新增：在 secure-password 基础上启用 zeroize，hash/verify 后清零内部 password 字节
-secure-password-zeroize = ["secure-password", "zeroize"]
 # 0.5.1 新增：Unicode 同形异义字检测（依据 design.md D10，L6）
 # 启用后提供 check_confusable 函数 + PermissionRegistry::register 集成（tracing::warn）
 secure-confusable = ["dep:unicode-security"]
 
 # === 账号安全引擎（0.6.0 新增，吸收 keycloak 安全能力） ===
 # account-credential：统一凭证模型 SPI（Credential trait + PasswordCredential + TotpCredential）
-# T002 将删除 secure-password，PasswordHasher 迁移到 account/credential/password.rs
+# v0.6.0：PasswordHasher 从 secure-password 迁移到 account/credential/password.rs（破坏性迁移）
 account-credential = ["dep:argon2", "dep:bcrypt", "dep:rand"]
 # account-credential-zeroize：在 account-credential 基础上启用 zeroize
 account-credential-zeroize = ["account-credential", "zeroize"]
@@ -312,7 +308,7 @@ full = [
     "db-sqlite",
     "protocol-oauth2", "protocol-sso", "protocol-jwt", "protocol-sign", "protocol-apikey", "protocol-temp",
     "protocol-oidc", "oauth2-scope-handler", "protocol-sso-server",
-    "secure-totp", "secure-sign", "secure-httpbasic", "secure-httpdigest", "secure-password",
+    "secure-totp", "secure-sign", "secure-httpbasic", "secure-httpdigest", "account-credential",
     "web-axum", "web-actix", "web-warp",
     "alone-cache", "parameter-query",
     "listener", "metrics-prometheus", "observability-otlp", "grpc", "i18n",

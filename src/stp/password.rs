@@ -15,7 +15,7 @@ use super::BulwarkLogicDefault;
 use crate::error::{BulwarkError, BulwarkResult};
 #[cfg(all(
     feature = "listener",
-    feature = "secure-password",
+    feature = "account-credential",
     feature = "db-sqlite"
 ))]
 use crate::listener::BulwarkEvent;
@@ -27,7 +27,7 @@ use async_trait::async_trait;
 /// # 默认实现
 ///
 /// [`login_with_password`](Self::login_with_password) 默认返回 `NotImplemented`
-/// （未启用 `secure-password` + `db-sqlite` feature）。
+/// （未启用 `account-credential` + `db-sqlite` feature）。
 /// 由 `BulwarkLogicDefault` 的 impl 覆写为：
 /// 1) `UserRepository::find_by_username` 查询用户
 /// 2) `PasswordHasher::verify` 校验密码
@@ -50,7 +50,7 @@ pub trait PasswordLogic: SessionLogic {
     /// - `Ok(token)`: 密码校验通过，返回新签发的 token 字符串。
     ///
     /// # 错误
-    /// - 未启用 `secure-password` + `db-sqlite` feature：`BulwarkError::NotImplemented`。
+    /// - 未启用 `account-credential` + `db-sqlite` feature：`BulwarkError::NotImplemented`。
     /// - 未注入 `password_hasher`：`BulwarkError::Config("password hasher not configured")`。
     /// - 未注入 `user_repository`：`BulwarkError::Config("user repository not configured")`。
     /// - 用户不存在 / 密码错误：`BulwarkError::InvalidParam("invalid password")`
@@ -59,7 +59,7 @@ pub trait PasswordLogic: SessionLogic {
     /// - DAO 查询失败：透传 `BulwarkError::Dao`。
     async fn login_with_password(&self, _login_id: &str, _password: &str) -> BulwarkResult<String> {
         Err(BulwarkError::NotImplemented(
-            "login_with_password 未实现：需启用 secure-password + db-sqlite feature".to_string(),
+            "login_with_password 未实现：需启用 account-credential + db-sqlite feature".to_string(),
         ))
     }
 }
@@ -74,7 +74,7 @@ impl PasswordLogic for BulwarkLogicDefault {
     ///
     /// 依据 spec auth-password-login R-002：1) UserRepository 查询 2) PasswordHasher 校验 3) login 签发。
     /// 安全约束：用户不存在与密码错误统一返回 `InvalidParam("invalid password")`，真实原因记录在 tracing 日志。
-    #[cfg(all(feature = "secure-password", feature = "db-sqlite"))]
+    #[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
     async fn login_with_password(&self, login_id: &str, password: &str) -> BulwarkResult<String> {
         let hasher = self
             .password_hasher

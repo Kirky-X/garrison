@@ -1,4 +1,7 @@
-//! 密码哈希子模块（0.4.2 新增，依据 spec secure-password）。
+//! 密码哈希子模块（v0.6.0 从 secure/password/ 迁移，依据 spec credential-model）。
+//!
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
 //!
 //! 提供 `PasswordHasher` trait + `Argon2Hasher` / `BcryptHasher` 实现 + `PasswordVerifier` 自动识别。
 //!
@@ -8,6 +11,13 @@
 //! - `Argon2Hasher` 使用 argon2 0.5 crate（Argon2id, m=19456, t=2, p=1）
 //! - `BcryptHasher` 使用 bcrypt 0.15 crate（默认 cost=12）
 //! - `PasswordVerifier` 根据 hash 前缀自动选择算法校验
+//!
+//! ## 迁移说明（v0.6.0）
+//!
+//! 本模块从 `secure/password/mod.rs` 迁移到 `account/credential/password.rs`。
+//! - `secure-password` feature → `account-credential` feature
+//! - `secure-password-zeroize` feature → `account-credential-zeroize` feature
+//! - `use crate::secure::password::*` → `use crate::account::credential::password::*`
 //!
 //! ## 不引入的算法
 //!
@@ -105,14 +115,14 @@ impl Argon2Hasher {
 
 impl PasswordHasher for Argon2Hasher {
     fn hash(&self, password: &str) -> BulwarkResult<String> {
-        // P2.1: secure-password-zeroize feature 启用时，将 password 字节拷贝到
+        // P2.1: account-credential-zeroize feature 启用时，将 password 字节拷贝到
         // Zeroizing<Vec<u8>> wrapper；函数返回时 wrapper Drop 清零内部字节。
         // &str 是不可变借用，无法清零调用方持有的 String，故内部拷贝后清零。
-        #[cfg(feature = "secure-password-zeroize")]
+        #[cfg(feature = "account-credential-zeroize")]
         let password_bytes = zeroize::Zeroizing::new(password.as_bytes().to_vec());
-        #[cfg(feature = "secure-password-zeroize")]
+        #[cfg(feature = "account-credential-zeroize")]
         let password_ref: &[u8] = &password_bytes;
-        #[cfg(not(feature = "secure-password-zeroize"))]
+        #[cfg(not(feature = "account-credential-zeroize"))]
         let password_ref: &[u8] = password.as_bytes();
 
         let salt = SaltString::generate(&mut OsRng);
@@ -130,11 +140,11 @@ impl PasswordHasher for Argon2Hasher {
 
     fn verify(&self, password: &str, hash: &str) -> BulwarkResult<bool> {
         // P2.1: 同 hash，verify 后清零内部 password 字节副本
-        #[cfg(feature = "secure-password-zeroize")]
+        #[cfg(feature = "account-credential-zeroize")]
         let password_bytes = zeroize::Zeroizing::new(password.as_bytes().to_vec());
-        #[cfg(feature = "secure-password-zeroize")]
+        #[cfg(feature = "account-credential-zeroize")]
         let password_ref: &[u8] = &password_bytes;
-        #[cfg(not(feature = "secure-password-zeroize"))]
+        #[cfg(not(feature = "account-credential-zeroize"))]
         let password_ref: &[u8] = password.as_bytes();
 
         let parsed = PasswordHash::new(hash)
@@ -428,6 +438,11 @@ mod tests {
     ///
     /// PHC 格式：`$argon2id$v=19$m=...,t=...,p=...$<salt>$<hash>`
     /// 末段为 hash 的 base64 编码（无 padding），解码后应为 32 字节。
+    ///
+    /// 注意：此测试依赖 `base64` crate 解码 PHC 末段，需启用含 `base64` 的 feature
+    /// （如 `protocol-oauth2` / `secure-httpbasic` / `full`）。仅启用 `account-credential`
+    /// 时此测试不编译（生产代码不依赖 base64）。
+    #[cfg(feature = "base64")]
     #[test]
     fn hash_produces_32_byte_output() {
         let hasher = Argon2Hasher::default();
@@ -457,10 +472,10 @@ mod tests {
     }
 
     // ========================================================================
-    // P2.1 zeroize 测试（依据 spec secure-password-zeroize）
+    // P2.1 zeroize 测试（依据 spec account-credential-zeroize）
     // ========================================================================
 
-    /// P2.1: secure-password-zeroize feature 启用时，hash/verify 仍正确工作，
+    /// P2.1: account-credential-zeroize feature 启用时，hash/verify 仍正确工作，
     /// 且内部 password 字节副本在 hash 返回后被 zeroize 清零。
     ///
     /// 注意：hash/verify 接受 `&str`（不可变借用），无法清零调用方持有的 String。
@@ -470,7 +485,7 @@ mod tests {
     /// 2. Zeroizing<Vec<u8>> 包装的 password 字节在 .zeroize() 后被清零
     ///    （这是 hash 内部使用的清零机制）
     /// 3. Zeroizing<String> wrapper 可与 hash 配合使用（通过 Deref<Target=str>）
-    #[cfg(feature = "secure-password-zeroize")]
+    #[cfg(feature = "account-credential-zeroize")]
     #[test]
     fn password_param_zeroed_after_hash() {
         use zeroize::{Zeroize, Zeroizing};
@@ -478,7 +493,7 @@ mod tests {
         let hasher = Argon2Hasher::default();
         let password = "my-secret-password";
 
-        // 1. hash/verify 在 secure-password-zeroize feature 启用时仍正确工作
+        // 1. hash/verify 在 account-credential-zeroize feature 启用时仍正确工作
         let hash = hasher.hash(password).expect("hash 应成功");
         assert!(
             hash.starts_with("$argon2id$"),
