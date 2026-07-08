@@ -24,6 +24,7 @@
 //! - MD5/SHA1 密码哈希（已废弃，仅 Digest 认证保留）
 //! - PBKDF2/SCrypt（v0.5.0+ 按需）
 
+use super::{Credential, CredentialModel, CredentialType};
 use crate::error::{BulwarkError, BulwarkResult};
 
 // argon2::password_hash::PasswordHasher / PasswordVerifier 与本模块自定义 PasswordHasher 同名，
@@ -238,6 +239,70 @@ impl PasswordVerifier {
                 &hash[..hash.len().min(10)]
             )))
         }
+    }
+}
+
+// ============================================================================
+// PasswordCredential（Credential trait 实现，依据 spec R-credential-model-004）
+// ============================================================================
+
+/// 密码凭证（实现 [`Credential`] trait，委托 [`PasswordHasher`] 校验）。
+///
+/// 持有 `CredentialModel`（存储模型）+ `Box<dyn PasswordHasher>`（哈希器），
+/// `verify()` 委托 `PasswordHasher::verify(input, &model.secret_data)`。
+///
+/// # 示例
+///
+/// ```ignore
+/// use bulwark::account::credential::password::{Argon2Hasher, PasswordCredential, PasswordHasher};
+/// use bulwark::account::credential::CredentialModel;
+/// use std::boxed::Box;
+///
+/// let hasher = Argon2Hasher::default();
+/// let hash = hasher.hash("secret")?;
+/// let model = CredentialModel {
+///     id: "cred-001".into(),
+///     user_id: "alice".into(),
+///     credential_type: "password".into(),
+///     secret_data: hash,
+///     label: None,
+///     created_at: 0,
+///     enabled: true,
+///     priority: 0,
+/// };
+/// let cred = PasswordCredential::new(model, Box::new(hasher));
+/// assert!(cred.verify("secret").await?);
+/// ```
+pub struct PasswordCredential {
+    /// 凭证存储模型。
+    model: CredentialModel,
+    /// 密码哈希器（Argon2 / Bcrypt / 自定义）。
+    hasher: Box<dyn PasswordHasher>,
+}
+
+impl PasswordCredential {
+    /// 创建密码凭证。
+    ///
+    /// # 参数
+    /// - `model`: 凭证存储模型（`secret_data` 字段应包含已哈希的密码）
+    /// - `hasher`: 密码哈希器（用于 `verify` 时校验）
+    pub fn new(model: CredentialModel, hasher: Box<dyn PasswordHasher>) -> Self {
+        Self { model, hasher }
+    }
+}
+
+#[async_trait::async_trait]
+impl Credential for PasswordCredential {
+    fn credential_type(&self) -> CredentialType {
+        "password"
+    }
+
+    fn to_model(&self) -> CredentialModel {
+        self.model.clone()
+    }
+
+    async fn verify(&self, input: &str) -> BulwarkResult<bool> {
+        self.hasher.verify(input, &self.model.secret_data)
     }
 }
 
@@ -542,5 +607,119 @@ mod tests {
         );
         // wrapped 在此处仍未 drop；当 wrapped 离开作用域时，Zeroizing<String>::drop
         // 会调用 String::zeroize() 清零底层字节（由 zeroize crate 保证）
+    }
+
+    // ========================================================================
+    // PasswordCredential 测试（依据 spec R-credential-model-004）
+    // ========================================================================
+
+    /// 辅助函数：构造测试用 PasswordCredential + 原始密码。
+    fn make_password_cred(id: &str, user: &str, password: &str) -> (PasswordCredential, String) {
+        let hasher = Argon2Hasher::default();
+        let hash = hasher.hash(password).expect("hash 应成功");
+        let model = CredentialModel {
+            id: id.to_string(),
+            user_id: user.to_string(),
+            credential_type: "password".to_string(),
+            secret_data: hash,
+            label: None,
+            created_at: 0,
+            enabled: true,
+            priority: 0,
+        };
+        let cred = PasswordCredential::new(model, Box::new(hasher));
+        (cred, password.to_string())
+    }
+
+    /// R-004: `credential_type()` 返回常量 `"password"`。
+    #[test]
+    fn password_credential_type_returns_password() {
+        let (cred, _) = make_password_cred("c1", "alice", "secret");
+        assert_eq!(cred.credential_type(), "password");
+    }
+
+    /// R-004: `to_model()` 返回原始 CredentialModel（字段一致）。
+    #[test]
+    fn password_credential_to_model_returns_original() {
+        let (cred, _) = make_password_cred("c1", "alice", "secret");
+        let model = cred.to_model();
+        assert_eq!(model.id, "c1");
+        assert_eq!(model.user_id, "alice");
+        assert_eq!(model.credential_type, "password");
+        assert!(
+            model.secret_data.starts_with("$argon2id$"),
+            "secret_data 应为 argon2 hash"
+        );
+    }
+
+    /// R-004: `verify()` 正确密码返回 `Ok(true)`。
+    #[tokio::test]
+    async fn password_credential_verify_correct_password() {
+        let (cred, password) = make_password_cred("c1", "alice", "my-secret");
+        let result = cred.verify(&password).await.expect("verify 应成功");
+        assert!(result, "正确密码应校验通过");
+    }
+
+    /// R-004: `verify()` 错误密码返回 `Ok(false)`。
+    #[tokio::test]
+    async fn password_credential_verify_wrong_password() {
+        let (cred, _) = make_password_cred("c1", "alice", "my-secret");
+        let result = cred
+            .verify("wrong-password")
+            .await
+            .expect("verify 应成功（返回 false 而非报错）");
+        assert!(!result, "错误密码应校验失败");
+    }
+
+    /// R-004: `PasswordCredential` 支持 BcryptHasher（多 hasher 兼容）。
+    #[tokio::test]
+    async fn password_credential_works_with_bcrypt_hasher() {
+        let hasher = BcryptHasher::default();
+        let hash = hasher.hash("bcrypt-secret").expect("hash 应成功");
+        let model = CredentialModel {
+            id: "c2".to_string(),
+            user_id: "bob".to_string(),
+            credential_type: "password".to_string(),
+            secret_data: hash,
+            label: None,
+            created_at: 0,
+            enabled: true,
+            priority: 0,
+        };
+        let cred = PasswordCredential::new(model, Box::new(hasher));
+
+        // 正确密码
+        assert!(
+            cred.verify("bcrypt-secret").await.expect("verify 应成功"),
+            "Bcrypt 正确密码应校验通过"
+        );
+        // 错误密码
+        assert!(
+            !cred.verify("wrong").await.expect("verify 应成功"),
+            "Bcrypt 错误密码应校验失败"
+        );
+    }
+
+    /// R-004: `PasswordCredential` 可作 `Box<dyn Credential>` 使用（对象安全验证）。
+    #[tokio::test]
+    async fn password_credential_usable_as_dyn_credential() {
+        let (cred, password) = make_password_cred("c1", "alice", "secret");
+        let dyn_cred: Box<dyn Credential> = Box::new(cred);
+        assert_eq!(dyn_cred.credential_type(), "password");
+        let result = dyn_cred.verify(&password).await.expect("verify 应成功");
+        assert!(result, "dyn Credential 正确密码应校验通过");
+    }
+
+    /// R-004: `PasswordCredential` 在 `account-credential-zeroize` feature 启用时仍正确工作。
+    #[cfg(feature = "account-credential-zeroize")]
+    #[tokio::test]
+    async fn password_credential_zeroize_integration() {
+        let (cred, password) = make_password_cred("c1", "alice", "zeroize-secret");
+        // verify 在 zeroize feature 启用时仍正确工作
+        let result = cred.verify(&password).await.expect("verify 应成功");
+        assert!(result, "zeroize feature 启用时正确密码应校验通过");
+        // 错误密码
+        let wrong = cred.verify("wrong").await.expect("verify 应成功");
+        assert!(!wrong, "zeroize feature 启用时错误密码应校验失败");
     }
 }
