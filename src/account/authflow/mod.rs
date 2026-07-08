@@ -14,13 +14,18 @@
 //! - [`AuthContext`]：执行上下文（input + user_id + tenant_id + ip + completed_steps + extras）
 //! - [`AuthResult`]：执行结果 enum（4 变体：Success/Failed/Pending/ChallengeRequired）
 //!
+//! # 子模块
+//!
+//! - [`builder`]: FlowBuilder 流式构建 DSL（T014）
+//!
 //! # 后续实现
 //!
-//! - T014: FlowBuilder 流式构建 DSL
 //! - T015: FlowRegistry inventory 注册
 //! - T016: AuthExecutor 核心
 //! - T017: SocialProvider + SsoServer 步骤
 //! - T018: 内置 AuthenticationFlow
+
+pub mod builder;
 
 use std::collections::HashMap;
 
