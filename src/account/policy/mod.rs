@@ -20,6 +20,7 @@
 //! - 规则参数由构造器注入（v0.6.5 支持 `BulwarkConfig` 加载）
 
 mod error;
+pub mod rules;
 
 pub use error::PolicyError;
 
