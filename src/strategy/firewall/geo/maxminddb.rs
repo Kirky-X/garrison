@@ -30,7 +30,7 @@ use std::net::IpAddr;
 /// MaxMindDb GeoIP2-City 查询后端（生产实现）。
 ///
 /// 读取 GeoIP2-City / GeoLite2-City mmdb 文件，提供 IP → 坐标查询。
-/// 实现 [`GeoLookup`](crate::strategy::firewall::geo::GeoLookup) trait。
+/// 实现 [`GeoLookup`] trait。
 ///
 /// # 构造
 ///
@@ -45,7 +45,7 @@ use std::net::IpAddr;
 /// let lookup = MaxMindDbGeoLookup::from_bytes(bytes)?;
 /// ```
 pub struct MaxMindDbGeoLookup {
-    /// maxminddb Reader（持有 mmdb 文件数据，Reader<Vec<u8>> 是 Send + Sync）。
+    /// maxminddb Reader（持有 mmdb 文件数据，`Reader<Vec<u8>>` 是 Send + Sync）。
     reader: maxminddb::Reader<Vec<u8>>,
 }
 
@@ -120,7 +120,7 @@ impl GeoLookup for MaxMindDbGeoLookup {
 /// MaxMindDb GeoIP2-Country 查询后端（生产实现）。
 ///
 /// 读取 GeoIP2-Country / GeoLite2-Country mmdb 文件，提供 IP → 国家码查询。
-/// 实现 [`CountryLookup`](crate::strategy::firewall::geo::CountryLookup) trait。
+/// 实现 [`CountryLookup`] trait。
 ///
 /// # 构造
 ///

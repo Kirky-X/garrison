@@ -5,6 +5,57 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.5.3] - 2026-07-09
+
+### 概述
+
+Bulwark 0.5.3 是"功能补全版"，通过 specmark change `v0-5-3-feature-completion` 实施 4 项功能补全（A-015/A-014/A-012/A-013）。补齐 stp 模块拆分遗留、MySQL 后端、Firewall MaxMindDb 生产后端，并升级 oxcache。
+
+### 变更
+
+#### A-015: oxcache 升级 + 决策文档同步
+
+- 升级 `oxcache` 依赖到 0.3.3（per-entry TTL + `ttl_sync()` 查询）
+- 更新 `docs/decisions/A-010-dao-keys-performance-evaluation.md`：`CacheReader` trait 仍无 iter/keys 方法
+- 更新 `src/dao/mod.rs` 注释：defer 到 oxcache 提供原生 iter API
+
+#### A-014: stp/mod.rs 完整拆分
+
+- 164KB `src/stp/mod.rs` 拆分为 11 个职责文件（新增 `tests.rs` + `interface.rs` + `util.rs`）
+- 6 个 `impl trait for BulwarkLogicDefault` 块移至对应子文件
+- 5 个 session helper 方法从 mod.rs 移至 session.rs（满足 mod.rs < 15KB 目标）
+- mod.rs 最终：12.4KB / 284 行（原 164KB / 4035 行）
+
+#### A-012: MySQL 后端启用 + testcontainers 集成测试
+
+- 启用 `db-mysql` feature（`dbnexus/mysql`）
+- 添加 `testcontainers = "0.27"` dev-dependency
+- 新建 `tests/db_mysql_testcontainers.rs`：11 个 `#[serial]` 集成测试
+- 新建 `migrations/mysql/core/` 6 个 MySQL 兼容迁移文件
+- 新建 `src/dao/repository/mysql/mod.rs`：re-export sqlite 实现的 MySQL 命名别名
+- 修复 `UserExtRepository::upsert` MySQL 兼容性（`ON DUPLICATE KEY UPDATE` 替代 `ON CONFLICT`）
+- **偏离**：db-mysql 未加入 `full` 聚合 feature（dbnexus 禁止 db-sqlite 与 db-mysql 同时启用）
+
+#### A-013: Firewall MaxMindDb 生产后端
+
+- 添加 `maxminddb = "0.29"` 依赖 + `firewall-maxminddb` feature
+- 实现 `MaxMindDbGeoLookup`（GeoIP2-City: IP → GeoCoord，供 AnomalousLoginStrategy）
+- 实现 `MaxMindDbCountryLookup`（GeoIP2-Country: IP → ISO 国家码，供 GeoIPStrategy）
+- 14 个测试：open/lookup/invalid_ip/private_ip + strategy 集成测试
+- 下载 GeoLite2-City/Country-Test.mmdb 测试数据
+
+### 验证结果
+
+- `cargo test --features full --lib`：1336 passed; 0 failed
+- `cargo clippy --features full --lib --tests -- -D warnings`：零警告
+- `cargo test --features "db-mysql" --test db_mysql_testcontainers`：11 passed（需 Docker）
+- `cargo test --features "firewall-maxminddb" --lib maxminddb`：14 passed
+
+### 已知限制
+
+- `cargo test --features full --workspace` 中 `tests/integration/tenant_isolation.rs` 有预存失败（v0.5.2 LoginId 迁移遗留，非 v0.5.3 引入）
+- `cargo doc --no-deps --features full` 有 10 个预存 warning（`src/core/permission/decision.rs` broken intra-doc links 8 个 + `src/web_actix/mod.rs` / `src/web_warp/mod.rs` unclosed HTML tag 2 个，非 v0.5.3 引入）
+
 ## [0.5.2] - 2026-07-08
 
 ### 概述
