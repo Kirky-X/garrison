@@ -28,8 +28,10 @@ pub mod password;
 #[cfg(all(feature = "account-credential", feature = "secure-totp"))]
 pub mod totp;
 
-use crate::error::BulwarkResult;
+use crate::dao::BulwarkDao;
+use crate::error::{BulwarkError, BulwarkResult};
 use async_trait::async_trait;
+use std::sync::Arc;
 
 // ============================================================================
 // 类型别名
@@ -184,12 +186,129 @@ pub trait CredentialRepository: Send + Sync {
 }
 
 // ============================================================================
+// DaoCredentialRepository（基于 BulwarkDao 的默认实现，依据 spec R-006）
+// ============================================================================
+
+/// 基于 `BulwarkDao` 的 `CredentialRepository` 默认实现。
+///
+/// 凭证以 JSON 序列化存入 DAO，key 格式严格为 `cred:{user_id}:{cred_id}`，
+/// 永久存储（无 TTL，使用 `set_permanent`）。
+///
+/// # DAO key 格式
+///
+/// `cred:{user_id}:{cred_id}`（如 `cred:alice:550e8400-e29b-...`）
+///
+/// # 已知限制
+///
+/// - `find_by_user` / `find_by_user_and_type` / `delete` 依赖 `BulwarkDao::keys()`。
+///   `BulwarkDaoOxcache` 当前未实现 `keys()`（返回 `NotImplemented`，详见 A-010），
+///   生产环境需使用支持 `keys()` 的 DAO 后端，或由业务方维护 key 索引。
+/// - `delete(credential_id)` 因 trait 签名仅含 `credential_id`，需扫描
+///   `cred:*:{credential_id}` 定位完整 key（`credential_id` 为 UUID v4 全局唯一，
+///   理论上仅匹配一个 key）。
+pub struct DaoCredentialRepository {
+    dao: Arc<dyn BulwarkDao>,
+}
+
+impl DaoCredentialRepository {
+    /// 创建 `DaoCredentialRepository`。
+    ///
+    /// # 参数
+    /// - `dao`: 已初始化的 `BulwarkDao` 实现（`Arc<dyn BulwarkDao>`）。
+    pub fn new(dao: Arc<dyn BulwarkDao>) -> Self {
+        Self { dao }
+    }
+
+    /// 生成 DAO key：`cred:{user_id}:{cred_id}`。
+    fn make_key(user_id: &str, cred_id: &str) -> String {
+        format!("cred:{}:{}", user_id, cred_id)
+    }
+}
+
+#[async_trait]
+impl CredentialRepository for DaoCredentialRepository {
+    async fn create(&self, credential: CredentialModel) -> BulwarkResult<()> {
+        let key = Self::make_key(&credential.user_id, &credential.id);
+        // 检查重复（trait 契约：已存在返回 InvalidParam）
+        if self.dao.get(&key).await?.is_some() {
+            return Err(BulwarkError::InvalidParam(format!(
+                "credential already exists: {}",
+                credential.id
+            )));
+        }
+        let json = serde_json::to_string(&credential)
+            .map_err(|e| BulwarkError::Internal(format!("CredentialModel 序列化失败: {}", e)))?;
+        self.dao.set_permanent(&key, &json).await
+    }
+
+    async fn find_by_user(&self, user_id: &str) -> BulwarkResult<Vec<CredentialModel>> {
+        let pattern = format!("cred:{}:*", user_id);
+        let keys = self.dao.keys(&pattern).await?;
+        let mut result = Vec::with_capacity(keys.len());
+        for key in keys {
+            if let Some(json) = self.dao.get(&key).await? {
+                let model: CredentialModel = serde_json::from_str(&json).map_err(|e| {
+                    BulwarkError::Internal(format!("CredentialModel 反序列化失败: {}", e))
+                })?;
+                result.push(model);
+            }
+        }
+        // 按 priority 升序（trait 契约）
+        result.sort_by_key(|c| c.priority);
+        Ok(result)
+    }
+
+    async fn find_by_user_and_type(
+        &self,
+        user_id: &str,
+        cred_type: &str,
+    ) -> BulwarkResult<Vec<CredentialModel>> {
+        let all = self.find_by_user(user_id).await?;
+        Ok(all
+            .into_iter()
+            .filter(|c| c.credential_type == cred_type)
+            .collect())
+    }
+
+    async fn update(&self, credential: CredentialModel) -> BulwarkResult<()> {
+        let key = Self::make_key(&credential.user_id, &credential.id);
+        // 检查存在性（trait 契约：不存在返回 InvalidParam）
+        if self.dao.get(&key).await?.is_none() {
+            return Err(BulwarkError::InvalidParam(format!(
+                "credential not found: {}",
+                credential.id
+            )));
+        }
+        let json = serde_json::to_string(&credential)
+            .map_err(|e| BulwarkError::Internal(format!("CredentialModel 序列化失败: {}", e)))?;
+        self.dao.set_permanent(&key, &json).await
+    }
+
+    async fn delete(&self, credential_id: &str) -> BulwarkResult<()> {
+        // credential_id 全局唯一（UUID v4），扫描 cred:*:{credential_id} 定位完整 key
+        let pattern = format!("cred:*:{}", credential_id);
+        let keys = self.dao.keys(&pattern).await?;
+        if keys.is_empty() {
+            return Err(BulwarkError::InvalidParam(format!(
+                "credential not found: {}",
+                credential_id
+            )));
+        }
+        for key in keys {
+            self.dao.delete(&key).await?;
+        }
+        Ok(())
+    }
+}
+
+// ============================================================================
 // 测试
 // ============================================================================
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dao::tests::MockDao;
 
     // ========================================================================
     // R-001: Credential trait 对象安全测试
@@ -562,6 +681,241 @@ mod tests {
     async fn repository_usable_as_trait_object() {
         let repo: std::sync::Arc<dyn CredentialRepository> =
             std::sync::Arc::new(MockCredentialRepository::default());
+        repo.create(make_model("c1", "alice", "password", 0))
+            .await
+            .unwrap();
+        let found = repo.find_by_user("alice").await.unwrap();
+        assert_eq!(found.len(), 1);
+    }
+
+    // ========================================================================
+    // R-006: DaoCredentialRepository 测试（基于 MockDao）
+    // ========================================================================
+
+    /// 辅助函数：构造 DaoCredentialRepository（基于 MockDao）。
+    fn make_dao_repo() -> DaoCredentialRepository {
+        DaoCredentialRepository::new(Arc::new(MockDao::new()))
+    }
+
+    /// R-006: `create` + `find_by_user` 正常路径（DAO key = `cred:{user_id}:{cred_id}`）。
+    #[tokio::test]
+    async fn dao_repo_create_and_find_by_user() {
+        let repo = make_dao_repo();
+        let m = make_model("c1", "alice", "password", 0);
+        repo.create(m.clone()).await.unwrap();
+
+        let found = repo.find_by_user("alice").await.unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].id, "c1");
+        assert_eq!(found[0].user_id, "alice");
+        assert_eq!(found[0].credential_type, "password");
+    }
+
+    /// R-006: `find_by_user` 未知用户返回空 Vec。
+    #[tokio::test]
+    async fn dao_repo_find_by_user_returns_empty_for_unknown() {
+        let repo = make_dao_repo();
+        repo.create(make_model("c1", "alice", "password", 0))
+            .await
+            .unwrap();
+
+        let found = repo.find_by_user("bob").await.unwrap();
+        assert!(found.is_empty(), "未知用户应返回空 Vec");
+    }
+
+    /// R-006: `find_by_user_and_type` 按 `credential_type` 过滤。
+    #[tokio::test]
+    async fn dao_repo_find_by_user_and_type_filters() {
+        let repo = make_dao_repo();
+        repo.create(make_model("c1", "alice", "password", 0))
+            .await
+            .unwrap();
+        repo.create(make_model("c2", "alice", "totp", 1))
+            .await
+            .unwrap();
+        repo.create(make_model("c3", "alice", "password", 2))
+            .await
+            .unwrap();
+
+        let passwords = repo
+            .find_by_user_and_type("alice", "password")
+            .await
+            .unwrap();
+        assert_eq!(passwords.len(), 2);
+        assert!(passwords.iter().all(|c| c.credential_type == "password"));
+
+        let totps = repo.find_by_user_and_type("alice", "totp").await.unwrap();
+        assert_eq!(totps.len(), 1);
+        assert_eq!(totps[0].id, "c2");
+    }
+
+    /// R-006: `update` 覆盖写 + 不存在返回错误。
+    #[tokio::test]
+    async fn dao_repo_update_overwrites_and_errors_on_missing() {
+        let repo = make_dao_repo();
+        repo.create(make_model("c1", "alice", "password", 0))
+            .await
+            .unwrap();
+
+        // 覆盖写已存在凭证
+        let updated = CredentialModel {
+            id: "c1".to_string(),
+            user_id: "alice".to_string(),
+            credential_type: "password".to_string(),
+            secret_data: "new-hash".to_string(),
+            label: Some("updated".to_string()),
+            created_at: 100,
+            enabled: false,
+            priority: 5,
+        };
+        repo.update(updated.clone()).await.unwrap();
+        let found = repo.find_by_user("alice").await.unwrap();
+        assert_eq!(found[0].secret_data, "new-hash");
+        assert_eq!(found[0].label, Some("updated".to_string()));
+        assert!(!found[0].enabled);
+        assert_eq!(found[0].priority, 5);
+
+        // 更新不存在凭证
+        let missing = make_model("nonexistent", "alice", "password", 0);
+        let result = repo.update(missing).await;
+        assert!(result.is_err(), "更新不存在的凭证应返回错误");
+    }
+
+    /// R-006: `delete` 删除 + 不存在返回错误。
+    #[tokio::test]
+    async fn dao_repo_delete_removes_and_errors_on_missing() {
+        let repo = make_dao_repo();
+        repo.create(make_model("c1", "alice", "password", 0))
+            .await
+            .unwrap();
+
+        repo.delete("c1").await.unwrap();
+        let found = repo.find_by_user("alice").await.unwrap();
+        assert!(found.is_empty(), "删除后应查不到凭证");
+
+        // 删除不存在凭证
+        let result = repo.delete("c1").await;
+        assert!(result.is_err(), "删除不存在的凭证应返回错误");
+    }
+
+    /// R-006: 多用户隔离 — 不同用户的凭证互不影响（DAO key 含 user_id 前缀）。
+    #[tokio::test]
+    async fn dao_repo_multi_user_isolation() {
+        let repo = make_dao_repo();
+        repo.create(make_model("c1", "alice", "password", 0))
+            .await
+            .unwrap();
+        repo.create(make_model("c2", "bob", "password", 0))
+            .await
+            .unwrap();
+
+        let alice = repo.find_by_user("alice").await.unwrap();
+        assert_eq!(alice.len(), 1);
+        assert_eq!(alice[0].id, "c1");
+
+        let bob = repo.find_by_user("bob").await.unwrap();
+        assert_eq!(bob.len(), 1);
+        assert_eq!(bob[0].id, "c2");
+
+        // carol 无凭证
+        let carol = repo.find_by_user("carol").await.unwrap();
+        assert!(carol.is_empty());
+    }
+
+    /// R-006: 单用户多凭证类型（password + totp + webauthn 共存）。
+    #[tokio::test]
+    async fn dao_repo_multi_credential_types_per_user() {
+        let repo = make_dao_repo();
+        repo.create(make_model("c1", "alice", "password", 0))
+            .await
+            .unwrap();
+        repo.create(make_model("c2", "alice", "totp", 1))
+            .await
+            .unwrap();
+        repo.create(make_model("c3", "alice", "webauthn", 2))
+            .await
+            .unwrap();
+
+        let all = repo.find_by_user("alice").await.unwrap();
+        assert_eq!(all.len(), 3);
+        let types: Vec<&str> = all.iter().map(|c| c.credential_type.as_str()).collect();
+        assert!(types.contains(&"password"));
+        assert!(types.contains(&"totp"));
+        assert!(types.contains(&"webauthn"));
+    }
+
+    /// R-006: `find_by_user` 返回含 `enabled=false` 的凭证（trait 层不过滤 enabled，业务层负责）。
+    #[tokio::test]
+    async fn dao_repo_find_returns_disabled_credentials() {
+        let repo = make_dao_repo();
+        repo.create(make_model("c1", "alice", "password", 0))
+            .await
+            .unwrap();
+        // 创建一个 enabled=false 的凭证
+        let disabled = CredentialModel {
+            id: "c2".to_string(),
+            user_id: "alice".to_string(),
+            credential_type: "totp".to_string(),
+            secret_data: "secret".to_string(),
+            label: None,
+            created_at: 0,
+            enabled: false,
+            priority: 1,
+        };
+        repo.create(disabled).await.unwrap();
+
+        let found = repo.find_by_user("alice").await.unwrap();
+        assert_eq!(
+            found.len(),
+            2,
+            "find_by_user 应返回 enabled + disabled 凭证"
+        );
+        let disabled_cred = found.iter().find(|c| c.id == "c2").unwrap();
+        assert!(!disabled_cred.enabled, "disabled 凭证 enabled 应为 false");
+    }
+
+    /// R-006: `find_by_user` 按 `priority` 升序返回（trait 契约）。
+    #[tokio::test]
+    async fn dao_repo_priority_order_ascending() {
+        let repo = make_dao_repo();
+        // 故意乱序插入：priority 5, 1, 3
+        repo.create(make_model("c1", "alice", "password", 5))
+            .await
+            .unwrap();
+        repo.create(make_model("c2", "alice", "totp", 1))
+            .await
+            .unwrap();
+        repo.create(make_model("c3", "alice", "webauthn", 3))
+            .await
+            .unwrap();
+
+        let found = repo.find_by_user("alice").await.unwrap();
+        assert_eq!(found.len(), 3);
+        // 按 priority 升序：1, 3, 5
+        assert_eq!(found[0].id, "c2");
+        assert_eq!(found[0].priority, 1);
+        assert_eq!(found[1].id, "c3");
+        assert_eq!(found[1].priority, 3);
+        assert_eq!(found[2].id, "c1");
+        assert_eq!(found[2].priority, 5);
+    }
+
+    /// R-006: `create` 重复 ID 返回错误。
+    #[tokio::test]
+    async fn dao_repo_create_duplicate_returns_error() {
+        let repo = make_dao_repo();
+        repo.create(make_model("c1", "alice", "password", 0))
+            .await
+            .unwrap();
+        let dup = make_model("c1", "alice", "password", 0);
+        let result = repo.create(dup).await;
+        assert!(result.is_err(), "重复 create 应返回错误");
+    }
+
+    /// R-006: `DaoCredentialRepository` 可作 `Arc<dyn CredentialRepository>` 使用。
+    #[tokio::test]
+    async fn dao_repo_usable_as_trait_object() {
+        let repo: Arc<dyn CredentialRepository> = Arc::new(make_dao_repo());
         repo.create(make_model("c1", "alice", "password", 0))
             .await
             .unwrap();
