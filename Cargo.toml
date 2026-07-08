@@ -63,7 +63,8 @@ argon2 = { version = "0.5", optional = true }
 bcrypt = { version = "0.15", optional = true }
 rand = { version = "0.8", optional = true }
 # 0.5.1 新增：zeroize 用于 account-credential-zeroize feature，hash/verify 后清零内部 password 副本
-zeroize = { version = "1", optional = true }
+# 0.6.0：启用 `derive` feature 以支持 `derive(Zeroize, ZeroizeOnDrop)` 派生宏（依据 spec credential-model R-credential-model-008）
+zeroize = { version = "1", optional = true, features = ["derive"] }
 # 0.6.0 新增：regex 用于 account-policy 的 RegexRule（自定义正则密码策略）
 regex = { version = "1", optional = true }
 # 0.5.1 新增：ua-parser 用于 UserDeviceRepository 的 UA 解析（依据 design.md D4/A4）
@@ -310,7 +311,8 @@ full = [
     "db-sqlite",
     "protocol-oauth2", "protocol-sso", "protocol-jwt", "protocol-sign", "protocol-apikey", "protocol-temp",
     "protocol-oidc", "oauth2-scope-handler", "protocol-sso-server",
-    "secure-totp", "secure-sign", "secure-httpbasic", "secure-httpdigest", "account-credential", "account-policy",
+    "secure-totp", "secure-sign", "secure-httpbasic", "secure-httpdigest",
+    "account-credential", "account-credential-zeroize", "account-policy", "account-lockout", "account-authflow",
     "web-axum", "web-actix", "web-warp",
     "alone-cache", "parameter-query",
     "listener", "metrics-prometheus", "observability-otlp", "grpc", "i18n",

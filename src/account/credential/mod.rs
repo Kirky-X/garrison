@@ -106,6 +106,10 @@ pub trait Credential: Send + Sync {
 /// | `enabled` | `bool` | 是否启用 |
 /// | `priority` | `i32` | 优先级（多凭证时排序，小值优先） |
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(
+    feature = "account-credential-zeroize",
+    derive(zeroize::Zeroize, zeroize::ZeroizeOnDrop)
+)]
 pub struct CredentialModel {
     /// 凭证 ID（UUID v4）。
     pub id: String,

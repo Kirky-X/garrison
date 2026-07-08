@@ -79,6 +79,10 @@ impl TotpSecretData {
 /// let cred = TotpCredential::new(model);
 /// // let ok = cred.verify("123456").await?;
 /// ```
+#[cfg_attr(
+    feature = "account-credential-zeroize",
+    derive(zeroize::Zeroize, zeroize::ZeroizeOnDrop)
+)]
 pub struct TotpCredential {
     /// 凭证存储模型。
     model: CredentialModel,

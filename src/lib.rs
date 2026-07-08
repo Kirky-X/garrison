@@ -249,12 +249,6 @@ pub mod secure;
 ///
 /// 与 `secure/`（密码学原语）互补：`secure/` 提供底层原语，
 /// `account/` 提供账号生命周期安全能力。
-#[cfg(any(
-    feature = "account-credential",
-    feature = "account-policy",
-    feature = "account-lockout",
-    feature = "account-authflow",
-))]
 pub mod account;
 
 /// 协议层模块，包含各协议插件子模块。

@@ -280,6 +280,20 @@ pub struct PasswordCredential {
     hasher: Box<dyn PasswordHasher>,
 }
 
+/// 启用 `account-credential-zeroize` feature 时，drop 时清零 `model` 的敏感字段
+/// （`secret_data` 含密码哈希），依据 spec credential-model R-credential-model-008。
+///
+/// `hasher` 不含敏感数据（仅算法标识与参数），无需 zeroize。
+/// 因 `Box<dyn PasswordHasher>` 未实现 `Zeroize`，无法派生 `ZeroizeOnDrop`，
+/// 改为手动实现 `Drop` 调用 `model.zeroize()`。
+#[cfg(feature = "account-credential-zeroize")]
+impl Drop for PasswordCredential {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        self.model.zeroize();
+    }
+}
+
 impl PasswordCredential {
     /// 创建密码凭证。
     ///

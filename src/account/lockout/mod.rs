@@ -24,6 +24,12 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// 锁定状态存储抽象子模块（v0.6.0 占位，依据 spec user-lockout Out of Scope）。
+///
+/// v0.6.0 的 `UserLockoutStrategy` 直接通过 `BulwarkDao` 持久化 `LockoutState`，
+/// 本子模块预留给未来版本的专用存储后端实现（Redis TTL / SQL 持久化 / 分布式锁定）。
+pub mod storage;
+
 /// 等待策略，计算临时锁定时长（依据 spec user-lockout R-user-lockout-002）。
 ///
 /// - `Multiple`：倍数等待，第 N 次锁定时长 = `base_seconds × multiplier^(N-1)`
@@ -78,7 +84,7 @@ impl Default for UserLockoutConfig {
 
 /// 锁定状态，在 DAO 中以 `lockout:{user_id}` 为 key 持久化
 /// （依据 spec user-lockout R-user-lockout-003）。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct LockoutState {
     /// 当前失败次数（达 max_failure_factor 触发锁定）。
     pub failure_count: u32,
@@ -88,17 +94,6 @@ pub struct LockoutState {
     pub permanent_locked: bool,
     /// 锁定到期 Unix 时间戳（0 表示未锁定）。
     pub locked_until: i64,
-}
-
-impl Default for LockoutState {
-    fn default() -> Self {
-        Self {
-            failure_count: 0,
-            temporary_lockout_count: 0,
-            permanent_locked: false,
-            locked_until: 0,
-        }
-    }
 }
 
 // ============================================================================
@@ -421,7 +416,7 @@ mod tests {
     fn wait_strategy_linear_formula() {
         let base = 30u64;
         // 第 1 次：30 × 1 = 30
-        assert_eq!(base * 1, 30);
+        assert_eq!(base, 30);
         // 第 2 次：30 × 2 = 60
         assert_eq!(base * 2, 60);
         // 第 3 次：30 × 3 = 90
