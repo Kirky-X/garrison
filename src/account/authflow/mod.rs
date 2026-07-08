@@ -18,14 +18,11 @@
 //!
 //! - [`builder`]: FlowBuilder 流式构建 DSL（T014）
 //! - [`registry`]: FlowRegistry inventory 注册（T015）
-//!
-//! # 后续实现
-//!
-//! - T016: AuthExecutor 核心
-//! - T017: SocialProvider + SsoServer 步骤
-//! - T018: 内置 AuthenticationFlow
+//! - [`executor`]: AuthExecutor 执行器（T016/T017）
+//! - [`builtin`]: 内置 AuthenticationFlow（T018）
 
 pub mod builder;
+pub mod builtin;
 pub mod executor;
 pub mod registry;
 
