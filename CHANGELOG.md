@@ -5,6 +5,100 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.6.0] - 2026-07-09
+
+### 概述
+
+Bulwark 0.6.0 是"账号安全引擎版"，通过 specmark change `v0-6-0-account-security-engine` 实施 4 项核心能力（E-001/E-002/E-003/E-004）+ 4 项技术债清理（B-001/B-002/C-001/D-001）。引入 `account/` 模块作为账号安全能力中枢，提供 Credential SPI、密码策略引擎、用户锁定策略、AuthenticationFlow DSL，并补齐 i18n 社交登录异常消息与 Prometheus 指标。
+
+### 新增
+
+#### E-001: account/ 模块骨架 + Credential SPI
+
+- 新建 `account/` 顶层模块（`account/credential/` + `account/policy/` + `account/lockout/` + `account/authflow/` + `account/metrics.rs`）
+- `Credential` trait 统一凭证模型 SPI：`verify` / `store` / `load` / `update` / `metadata`
+- `PasswordCredential` 实现：基于 `PasswordHasher` 的密码凭证
+- `TotpCredential` 实现：RFC 6238 TOTP 动态码凭证
+- `DaoCredentialRepository` 基于 `BulwarkDao` 的凭证存储
+- 迁移 `PasswordHasher` 从 `src/secure/` 到 `account/credential/password.rs`（删除 `secure-password` feature）
+
+#### E-002: PasswordPolicyEngine
+
+- `PasswordPolicyRule` trait + `PasswordPolicyEngine` + `PasswordPolicyContext`
+- 6 个核心密码策略规则：长度 / 复杂度 / 历史 / 字典 / 用户名相似 / 序列检测
+- 6 个扩展密码策略规则：重复字符 / 键盘模式 / 日期 / 常见密码 / 上下文敏感 / 唯一字符数
+
+#### E-003: UserLockoutStrategy + BulwarkFirewallStrategy
+
+- `UserLockoutConfig` + `WaitStrategy` + `LockoutState`
+- `UserLockoutStrategy`：基于用户的登录锁定策略
+- `BulwarkFirewallStrategy`：整合 UserLockoutStrategy 到 BulwarkFirewall 框架
+
+#### E-004: AuthenticationFlow DSL
+
+- `AuthStep` enum + `AuthenticationFlow` + `AuthContext` + `AuthResult`
+- `FlowBuilder` 流式构建 DSL
+- `FlowRegistry` 基于 inventory 编译期注册
+- `AuthExecutor` 核心执行器（5 字段约束：builder/registry/dao/credential_repo/metrics）
+- `SocialProvider` + `SsoServer` 步骤扩展
+- 内置 `AuthenticationFlow`：username_password / username_password_totp / social_wechat / social_alipay / sso
+
+#### C-001: 社交登录异常消息 fluent i18n
+
+- 新增 `loc!` 宏：`#[cfg(feature = "i18n")]` 分支调用 `translate_detail`，未启用时返回 fallback
+- 新增 `translate_detail` 函数（`src/i18n.rs`）：按 key 查询 fluent bundle
+- 38 个 ftl key（wechat 12 + alipay 8 + keycloak 18）中英文双语
+- 46 个错误构造点接入 `loc!` 宏（wechat 16 + alipay 12 + keycloak 18）
+
+#### D-001: AccountMetrics Prometheus 指标
+
+- `AccountMetrics` struct（`#[cfg(feature = "metrics-prometheus")]`）：4 个指标
+  - `credential_verify_duration`（HistogramVec，label: credential_type）
+  - `policy_validate_duration`（HistogramVec，label: rule_name）
+  - `lockout_triggered_total`（CounterVec，label: lockout_type）
+  - `authflow_execute_duration`（HistogramVec，label: flow_name）
+- `register_to` / `observe_*` / `record_*` / `gather` 方法
+- feature 未启用时 `type AccountMetrics = ()`
+
+### 变更
+
+- `Cargo.toml` version 0.5.0 → 0.6.0
+- `AuthExecutor` 保持 5 字段约束：metrics 通过 `execute_with_metrics` 方法参数传入，非 struct 字段
+- `UserLockoutStrategy` 加 `metrics: Option<Arc<AccountMetrics>>` 字段 + `with_metrics` builder
+- `PasswordPolicyEngine` 加 `metrics` 字段 + `with_metrics` builder，`validate` 中 per-rule 计时
+- `src/i18n.rs` 新增 `translate_detail` 函数
+- `src/protocol/mod.rs` 新增 `loc!` 宏定义
+- `locales/zh.ftl` + `locales/en.ftl` 新增 38 个 message key
+
+### 破坏性变更
+
+1. **`PasswordHasher` 迁移（T002）**：从 `src/secure/password.rs` 迁移到 `account/credential/password.rs`，`secure-password` feature 删除（功能合并到 `account` feature）
+2. **`FirewallContext.login_id` 类型变更（T010）**：`i64` → `String`（所有 FirewallStrategy 实现需更新签名）
+
+### 修复
+
+#### B-001: cargo doc 10 个 warning 修复
+
+- 8 个 broken intra-doc links（`decision` / `JsonTestCase` / `MaxMindDbGeoLookup` / `MaxMindDbCountryLookup` / `RefreshTokenRecord` 等）
+- 2 个 unclosed HTML tags（`web_actix/mod.rs` / `web_warp/mod.rs` 中 `Bearer <token>` 改为 `` Bearer `<token>` ``）
+
+#### B-002: tenant_isolation 集成测试修复
+
+- `tests/integration/tenant_isolation.rs` 7 处修改：`login_id: i64` → `&str` 对齐 `BulwarkInterface` 签名
+- 新增 `use bulwark::{PermissionLogic, SessionLogic};`（trait 方法需导入 trait）
+
+### 验证
+
+- `cargo test --features full --lib`：1463 passed; 0 failed
+- `cargo clippy --features full --lib --tests -- -D warnings`：零警告
+- `cargo doc --no-deps --features full`：零警告
+- `cargo test --features "full audit-log" --test integration tenant_isolation`：1 passed
+
+### 已知限制
+
+- `AuthExecutor` metrics 仅通过 `execute_with_metrics` 显式传入，未集成到 `BulwarkManager` 自动注入链路（待 v0.7.0+ Manager 重构）
+- `FlowRegistry` inventory 注册的 flow 在编译期固定，运行时动态注册需调用 `register` 方法（非自动发现）
+
 ## [0.5.3] - 2026-07-09
 
 ### 概述
