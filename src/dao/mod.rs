@@ -17,7 +17,7 @@ use std::time::Duration;
 /// - `expire` 重置键的过期时间
 /// - `set_permanent` 存储永久键（无 TTL，默认实现委托 `set(key, value, 0)`）
 /// - `get_timeout` 查询剩余 TTL（默认返回 `NotImplemented`，需后端重写）
-/// - `keys` 按 glob pattern 扫描 key（默认返回 `NotImplemented`；`MockDao` 已实现；`BulwarkDaoOxcache` 因 oxcache 0.3 限制待 v0.5.0+ 实现）
+/// - `keys` 按 glob pattern 扫描 key（默认返回 `NotImplemented`；`MockDao` 已实现；`BulwarkDaoOxcache` 因 oxcache 0.3.3 限制待 oxcache 提供原生 iter API）
 /// - `rename` 重命名 key（默认 get→set→delete 三步，非原子）
 #[async_trait]
 pub trait BulwarkDao: Send + Sync {
@@ -117,12 +117,13 @@ pub trait BulwarkDao: Send + Sync {
     /// # 已知限制（A-010 评估结论）
     ///
     /// `BulwarkDaoOxcache` 当前不重写此方法（走默认 `NotImplemented`），原因：
-    /// - oxcache 0.3 的 `CacheReader`/`CacheBackend` trait 未暴露 iter/keys/scan API
+    /// - oxcache 0.3.3 的 `CacheReader`/`CacheBackend` trait 未暴露 iter/keys/scan API（2026-07-08 验证）
     /// - `Cache.backend` 字段为 `pub(crate)`，外部无法访问底层 `DashMap`
+    /// - `CacheReader` trait 仅有 `get`/`exists`/`ttl`/`len`/`is_empty`/`capacity`/`stats`/`get_many`，无 iter/keys 方法
     /// - 维护独立 key 索引（如 `DashMap<String, ()>`）会增加内存开销 + 一致性复杂度（set/delete 需同步索引）
-    /// - oxcache 0.5+ 路线图有 iter API 计划
+    /// - oxcache 上游路线图有 iter API 计划（0.3.3 仍未实现，crates.io 最新无更高版本）
     ///
-    /// **决策**：defer 到 oxcache 0.5+。业务方临时方案：自行维护 key 集合（参考 `ApiKeyHandler::list_by_namespace` 的 `MockDao` 测试）。
+    /// **决策**：defer 到 oxcache 提供原生 iter API。业务方临时方案：自行维护 key 集合（参考 `ApiKeyHandler::list_by_namespace` 的 `MockDao` 测试）。
     ///
     /// **业务影响**：`ApiKeyHandler::list_by_namespace` 在使用 `BulwarkDaoOxcache` 时返回 `NotImplemented`（生产可用性受限）。
     ///
@@ -130,7 +131,7 @@ pub trait BulwarkDao: Send + Sync {
     /// 返回 `BulwarkError::NotImplemented`。
     async fn keys(&self, _pattern: &str) -> BulwarkResult<Vec<String>> {
         Err(BulwarkError::NotImplemented(format!(
-            "keys 未实现：{} 后端不支持 key scan（v0.5.0+ oxcache 升级后实现）",
+            "keys 未实现：{} 后端不支持 key scan（待 oxcache 提供原生 iter API）",
             std::any::type_name::<Self>()
         )))
     }
@@ -448,7 +449,7 @@ mod oxcache_impl {
         /// v0.4.2: rename 用 get → ttl_sync → set_with_ttl_sync → delete 四步（依据 spec dao-bulwark-dao R-004）。
         ///
         /// 重写默认实现以保留原键 TTL（用 `ttl_sync` 读取剩余 TTL，用 `set_with_ttl_sync` 写入）。
-        /// 仍是**非原子**操作（oxcache 0.3 无原子 rename API，待 v0.5.0+ 升级）。
+        /// 仍是**非原子**操作（oxcache 0.3.3 无原子 rename API，待 oxcache 提供原子 rename API）。
         async fn rename(&self, old_key: &str, new_key: &str) -> BulwarkResult<()> {
             let actual_old = prefixed_key(old_key);
             let actual_new = prefixed_key(new_key);
@@ -473,7 +474,7 @@ mod oxcache_impl {
         ///
         /// 进程内原子：同一进程内并发调用同一 key 仅一个返回 `Some`。
         /// 跨进程限制：多进程共享 Redis L2 时，仍存在 TOCTOU 竞态
-        /// （需 Redis Lua 脚本 `redis.call('GET',K[1]);redis.call('DEL',K[1])` 修复，待 v0.5.0+）。
+        /// （需 Redis Lua 脚本 `redis.call('GET',K[1]);redis.call('DEL',K[1])` 修复，待引入 Redis L2 后端）。
         async fn get_and_delete(&self, key: &str) -> BulwarkResult<Option<String>> {
             let _guard = self.atomic_lock.lock();
             let actual_key = prefixed_key(key);
@@ -1236,10 +1237,10 @@ pub mod tests {
             assert!(timeout.is_none(), "不存在的键应返回 None");
         }
 
-        /// R-003: keys 在 oxcache 0.3 返回 NotImplemented（oxcache 不支持 key scan）。
+        /// R-003: keys 在 oxcache 0.3.3 返回 NotImplemented（oxcache 不支持 key scan）。
         ///
         /// 验证 design D2 偏差：BulwarkDaoOxcache::keys 使用默认实现返回 NotImplemented，
-        /// 因为 oxcache 0.3 不支持 key scan API（待 v0.5.0+ oxcache 升级）。
+        /// 因为 oxcache 0.3.3 不支持 key scan API（待 oxcache 提供原生 iter API）。
         #[tokio::test(flavor = "multi_thread")]
         async fn oxcache_keys_returns_not_implemented() {
             let dao = BulwarkDaoOxcache::new().await.unwrap();

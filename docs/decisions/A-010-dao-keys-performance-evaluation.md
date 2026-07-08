@@ -1,6 +1,6 @@
 # A-010: `BulwarkDao::keys()` 性能评估结论
 
-- **状态**：已采纳（v0.5.2，defer 到 oxcache 0.5+）
+- **状态**：已采纳（v0.5.2，defer 到 oxcache 提供原生 iter API；v0.5.3 同步：当前 0.3.3 仍未提供）
 - **决策日期**：2026-07-08
 - **相关变更**：v0-5-2-architecture-refactor
 - **相关代码**：`src/dao/mod.rs` `BulwarkDao::keys()`
@@ -11,11 +11,13 @@
 
 ## 评估依据
 
-### oxcache 0.3 API 限制
+### oxcache 0.3.3 API 限制（2026-07-08 验证）
 
-- `Cache<K,V>` 未暴露 iter/scan API
-- `Cache.backend` 字段为 `pub(crate)`，外部无法访问底层 `DashMap`
-- `CacheReader`/`CacheBackend` trait 均无 iter 方法
+- `Cache<K,V>` 仍未暴露 iter/scan/keys API
+- `Cache.backend` 字段仍为 `pub(crate)`，外部无法访问底层 `DashMap`
+- `CacheReader` trait 仅有 `get`/`exists`/`ttl`/`len`/`is_empty`/`capacity`/`stats`/`get_many`，无 iter/keys 方法
+- `CacheBackend: CacheReader + CacheWriter + CacheConnector` 组合 trait，同样无 iter
+- `len()` 仅返回条目数，不返回 key 列表
 
 ### 维护独立 key 索引的权衡
 
@@ -29,16 +31,17 @@
 
 ### oxcache 上游路线图
 
-- oxcache 0.5+ 路线图有 iter API 计划
+- oxcache 上游路线图有 iter API 计划，但截至 0.3.3（crates.io 最新稳定版，2026-07-08 验证）仍未实现
 - 原生支持后，`keys()` 可直接委托给 oxcache iter，无额外开销
+- 注：oxcache 上游无更高版本（crates.io 最新 0.3.3），原版本号表述有误，v0.5.3 已修正为"提供原生 iter API"
 
 ## 决策
 
-**defer 到 oxcache 0.5+**。
+**defer 到 oxcache 提供原生 iter API**。
 
 理由：
 
-1. 投入产出比低：维护独立索引的复杂度高，而 oxcache 0.5+ 会原生支持
+1. 投入产出比低：维护独立索引的复杂度高，而 oxcache 原生 iter API 支持后可直接委托
 2. 业务影响可控：`ApiKeyHandler::list_by_namespace` 是管理 API，非高频路径
 3. 业务方临时方案已验证：`MockDao` 测试中已采用自行维护 key 集合的模式
 
@@ -52,7 +55,7 @@
 
 ## 后续跟进条件
 
-**oxcache 0.5+ 发布后**：
+**oxcache 提供原生 iter API 后**：
 
 - 升级 oxcache 依赖
 - 在 `BulwarkDaoOxcache` 中重写 `keys()` 方法，委托给 oxcache iter API
