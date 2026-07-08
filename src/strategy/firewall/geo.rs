@@ -12,6 +12,10 @@
 use crate::error::BulwarkResult;
 use async_trait::async_trait;
 
+/// MaxMindDb 生产后端（由 `firewall-maxminddb` feature 启用）。
+#[cfg(feature = "firewall-maxminddb")]
+pub mod maxminddb;
+
 /// 地理坐标（纬度 / 经度，十进制度）。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GeoCoord {

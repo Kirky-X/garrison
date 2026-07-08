@@ -193,8 +193,6 @@ inventory::collect!(StrategyRegistration);
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     /// 验证启用全部 5 个 firewall feature 时，inventory 注册了至少 5 个 strategy
     ///（依据 spec firewall R-firewall-006 验收标准）。
     #[test]
@@ -206,6 +204,7 @@ mod tests {
         feature = "firewall-geoip"
     ))]
     fn all_five_strategies_registered_via_inventory() {
+        use super::*;
         use std::iter::Iterator;
         // 显式引用每个 strategy 类型，强制链接器保留 inventory::submit! 静态变量
         //（inventory 静态变量未被引用时可能被链接器优化丢弃）

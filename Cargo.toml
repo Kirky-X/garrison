@@ -105,6 +105,9 @@ rsa = { version = "0.9", optional = true, features = ["sha2", "pem"] }
 # 0.5.1 新增：unicode-security 用于检测 Unicode 同形异义字（依据 design.md D10，L6）
 # 由 security-confusable feature 启用，启动时扫描 PermissionRegistry 中所有 permission name
 unicode-security = { version = "0.1", optional = true }
+# 0.5.3 新增：maxminddb 用于 Firewall MaxMindDb 生产后端（GeoIP2-City/Country 数据库查询）
+# 由 firewall-maxminddb feature 启用（依赖 firewall-geoip + firewall-anomalous）
+maxminddb = { version = "0.29", optional = true }
 
 [dev-dependencies]
 tokio-test = "0.4"
@@ -256,6 +259,9 @@ firewall-anomalous = ["firewall"]
 # firewall-geoip：GeoIPStrategy 已实现（白/黑名单 + 9 测试），生产 maxminddb 后端待 MaxMindDbCountryLookup 引入时添加
 firewall-geoip = ["firewall"]
 firewall-ddos = ["firewall"]
+# firewall-maxminddb：生产 MaxMindDb 后端（MaxMindDbGeoLookup + MaxMindDbCountryLookup）
+# 依赖 firewall-geoip（CountryLookup）+ firewall-anomalous（GeoLookup）+ maxminddb crate
+firewall-maxminddb = ["dep:maxminddb", "firewall-geoip", "firewall-anomalous"]
 
 # === 0.5.0 新增：社交登录（依据 proposal H2 / spec social-login） ===
 # social-wechat：微信扫码登录（WechatProvider），依赖 protocol-oauth2（reqwest HTTP client）
@@ -300,7 +306,7 @@ full = [
     "annotation-macros",
     "decision-trace", "tenant-isolation",
     "firewall", "firewall-bruteforce", "firewall-ratelimit", "firewall-anomalous",
-    "firewall-geoip", "firewall-ddos",
+    "firewall-geoip", "firewall-ddos", "firewall-maxminddb",
     "social-wechat", "social-alipay",
 ]
 
