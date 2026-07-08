@@ -227,6 +227,19 @@ secure-password-zeroize = ["secure-password", "zeroize"]
 # 启用后提供 check_confusable 函数 + PermissionRegistry::register 集成（tracing::warn）
 secure-confusable = ["dep:unicode-security"]
 
+# === 账号安全引擎（0.6.0 新增，吸收 keycloak 安全能力） ===
+# account-credential：统一凭证模型 SPI（Credential trait + PasswordCredential + TotpCredential）
+# T002 将删除 secure-password，PasswordHasher 迁移到 account/credential/password.rs
+account-credential = ["dep:argon2", "dep:bcrypt", "dep:rand"]
+# account-credential-zeroize：在 account-credential 基础上启用 zeroize
+account-credential-zeroize = ["account-credential", "zeroize"]
+# account-policy：密码策略套件（12+ PasswordPolicyRule），T007 时添加 dep:regex
+account-policy = ["account-credential"]
+# account-lockout：用户级双态锁定（与 BruteForceStrategy 组合）
+account-lockout = ["firewall"]
+# account-authflow：AuthenticationFlow DSL（全认证流程编排）
+account-authflow = ["account-credential", "account-policy", "account-lockout"]
+
 # === Web 框架适配 ===
 web-axum = ["axum", "axum/tokio", "axum/http1"]
 web-actix = ["actix-web"]

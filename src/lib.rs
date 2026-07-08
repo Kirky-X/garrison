@@ -238,6 +238,24 @@ pub mod listener;
 ))]
 pub mod secure;
 
+/// 账号安全引擎模块（v0.6.0 新增，吸收 keycloak 安全能力）。
+///
+/// 提供：
+/// - 凭证模型 SPI（`account-credential` feature）
+/// - 密码策略套件（`account-policy` feature）
+/// - 用户级双态锁定（`account-lockout` feature）
+/// - AuthenticationFlow DSL（`account-authflow` feature）
+///
+/// 与 `secure/`（密码学原语）互补：`secure/` 提供底层原语，
+/// `account/` 提供账号生命周期安全能力。
+#[cfg(any(
+    feature = "account-credential",
+    feature = "account-policy",
+    feature = "account-lockout",
+    feature = "account-authflow",
+))]
+pub mod account;
+
 /// 协议层模块，包含各协议插件子模块。
 #[cfg(any(
     feature = "protocol-oauth2",
