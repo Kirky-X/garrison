@@ -418,7 +418,7 @@ mod tests {
         let strategy = AnomalousLoginStrategy::new(config, dao, geo_lookup);
 
         // 首次登录：81.2.69.142（伦敦），无历史，应放行
-        let ctx_first = FirewallContext::new("81.2.69.142").with_login_id(1001);
+        let ctx_first = FirewallContext::new("81.2.69.142").with_login_id("1001");
         let result_first = strategy.check(&ctx_first).await;
         assert!(
             result_first.is_ok(),
@@ -429,7 +429,7 @@ mod tests {
         // 第二次登录：用另一个已知 IP（如有），检查是否触发异地检测
         // 81.2.69.142 伦敦 → 历史记录为伦敦
         // 再次登录 81.2.69.142 → 同一位置，应放行
-        let ctx_second = FirewallContext::new("81.2.69.142").with_login_id(1001);
+        let ctx_second = FirewallContext::new("81.2.69.142").with_login_id("1001");
         let result_second = strategy.check(&ctx_second).await;
         assert!(
             result_second.is_ok(),

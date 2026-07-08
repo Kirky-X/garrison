@@ -113,7 +113,7 @@ fn haversine_km(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
 #[async_trait]
 impl BulwarkFirewallStrategy for AnomalousLoginStrategy {
     async fn check(&self, ctx: &FirewallContext) -> BulwarkResult<()> {
-        let login_id = ctx.login_id.ok_or_else(|| {
+        let login_id = ctx.login_id.as_ref().ok_or_else(|| {
             BulwarkError::InvalidParam(
                 "AnomalousLogin 需要 login_id 但 ctx.login_id 为 None".to_string(),
             )
@@ -230,8 +230,8 @@ mod tests {
         };
         let strategy = AnomalousLoginStrategy::new(config, dao, geo);
 
-        let ctx_first = FirewallContext::new("1.1.1.1").with_login_id(1001);
-        let ctx_second = FirewallContext::new("2.2.2.2").with_login_id(1001);
+        let ctx_first = FirewallContext::new("1.1.1.1").with_login_id("1001");
+        let ctx_second = FirewallContext::new("2.2.2.2").with_login_id("1001");
 
         // 首次登录：无历史，放行
         assert!(
@@ -259,7 +259,7 @@ mod tests {
         };
         let strategy = AnomalousLoginStrategy::new(config, dao.clone(), geo);
 
-        let ctx = FirewallContext::new("1.1.1.1").with_login_id(1001);
+        let ctx = FirewallContext::new("1.1.1.1").with_login_id("1001");
 
         // 首次登录应放行
         assert!(strategy.check(&ctx).await.is_ok());
@@ -286,8 +286,8 @@ mod tests {
         };
         let strategy = AnomalousLoginStrategy::new(config, dao, geo);
 
-        let ctx_first = FirewallContext::new("1.1.1.1").with_login_id(1001);
-        let ctx_second = FirewallContext::new("1.1.1.2").with_login_id(1001);
+        let ctx_first = FirewallContext::new("1.1.1.1").with_login_id("1001");
+        let ctx_second = FirewallContext::new("1.1.1.2").with_login_id("1001");
 
         // 首次登录
         assert!(strategy.check(&ctx_first).await.is_ok());
@@ -332,7 +332,7 @@ mod tests {
         };
         let strategy = AnomalousLoginStrategy::new(config, dao.clone(), geo);
 
-        let ctx = FirewallContext::new("1.1.1.1").with_login_id(1001);
+        let ctx = FirewallContext::new("1.1.1.1").with_login_id("1001");
 
         // 首次登录：无历史坐标 → 应放行
         assert!(
