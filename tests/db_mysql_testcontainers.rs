@@ -1,7 +1,7 @@
 // Copyright (c) 2024-2026 Kirky.X. All rights reserved.
 // See LICENSE for full license text.
 
-//! MySQL Repository 集成测试（v0.5.3 新增，依据 tasks.md T028-T043）。
+//! MySQL Repository 集成测试（v0.5.3 新增，依据 tasks.md T028-T043 + T076）。
 //!
 //! 使用 testcontainers 自动启动 MySQL 8.0 Docker 容器，验证 10 个
 //! `DbnexusMysqlXxxRepository` 在真实 MySQL 上的 CRUD 行为：
@@ -17,6 +17,7 @@
 //! 9. `mysql_session_repository`：SessionRepository create/find_by_session_id/delete
 //! 10. `mysql_login_log_repository`：LoginLogRepository create/find_by_user_id
 //! 11. `mysql_user_ext_repository`：UserExtRepository upsert/find_by_user_id/delete
+//! 12. `mysql_sql_dialect_placeholders`：MySQL `?` 占位符参数化查询（spec R-mysql-backend-003）
 //!
 //! 运行：`cargo test --features "db-mysql" --test db_mysql_testcontainers`
 //!
@@ -841,4 +842,60 @@ async fn mysql_user_ext_repository() {
         .await
         .expect("find_by_user_id 应成功");
     assert_eq!(after_delete.len(), 1, "删除后应剩 1 个扩展字段");
+}
+
+// ============================================================================
+// 12. SQL 方言占位符测试（spec R-mysql-backend-003，converge T076）
+// ============================================================================
+
+/// 验证 MySQL `?` 占位符参数化查询正确工作（spec R-mysql-backend-003）。
+///
+/// MySQL 使用 `?` 作为参数占位符（PostgreSQL 用 `$1, $2`）。本测试显式验证
+/// sea-orm `Statement::from_sql_and_values` 在 MySQL 后端正确绑定 `?` 参数，
+/// 与 9 个 Repository CRUD 测试互补——后者隐式使用占位符但未显式验证方言层。
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn mysql_sql_dialect_placeholders() {
+    let (pool, _container) = setup_mysql_pool().await;
+
+    let session = pool.get_session("admin").await.expect("get_session 应成功");
+    let conn = session.connection().expect("connection 应可用");
+
+    // 单参数：SELECT ? AS val → 验证 ? 占位符被正确替换为参数值
+    let stmt =
+        Statement::from_sql_and_values(DbBackend::MySql, "SELECT ? AS val", vec![42i64.into()]);
+    let row = conn
+        .query_one_raw(stmt)
+        .await
+        .expect("参数化查询应成功")
+        .expect("应返回一行");
+    let val: i64 = row.try_get_by_index(0).expect("应能读取整数值");
+    assert_eq!(val, 42, "? 占位符单参数绑定应正确");
+
+    // 多参数：SELECT ? AS a, ? AS b → 验证多个 ? 占位符按序绑定
+    let stmt_multi = Statement::from_sql_and_values(
+        DbBackend::MySql,
+        "SELECT ? AS a, ? AS b",
+        vec![1i64.into(), 2i64.into()],
+    );
+    let row_multi = conn
+        .query_one_raw(stmt_multi)
+        .await
+        .expect("多参数查询应成功")
+        .expect("应返回一行");
+    let a: i64 = row_multi.try_get_by_index(0).expect("应能读取 a");
+    let b: i64 = row_multi.try_get_by_index(1).expect("应能读取 b");
+    assert_eq!(a, 1, "第一个 ? 占位符应绑定 1");
+    assert_eq!(b, 2, "第二个 ? 占位符应绑定 2");
+
+    // 字符串参数：SELECT ? AS s → 验证字符串类型参数绑定
+    let stmt_str =
+        Statement::from_sql_and_values(DbBackend::MySql, "SELECT ? AS s", vec!["hello".into()]);
+    let row_str = conn
+        .query_one_raw(stmt_str)
+        .await
+        .expect("字符串参数查询应成功")
+        .expect("应返回一行");
+    let s: String = row_str.try_get_by_index(0).expect("应能读取字符串");
+    assert_eq!(s, "hello", "? 占位符字符串参数绑定应正确");
 }
