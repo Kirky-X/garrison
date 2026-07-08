@@ -64,6 +64,8 @@ bcrypt = { version = "0.15", optional = true }
 rand = { version = "0.8", optional = true }
 # 0.5.1 新增：zeroize 用于 account-credential-zeroize feature，hash/verify 后清零内部 password 副本
 zeroize = { version = "1", optional = true }
+# 0.6.0 新增：regex 用于 account-policy 的 RegexRule（自定义正则密码策略）
+regex = { version = "1", optional = true }
 # 0.5.1 新增：ua-parser 用于 UserDeviceRepository 的 UA 解析（依据 design.md D4/A4）
 # 仅解析引擎，不内置 regexes.yaml（1.5MB 资源延后到 ua-parser-precompiled feature）
 # 由 db-sqlite / db-postgres feature 启用，register_device 用简单字符串解析作为 fallback
@@ -229,8 +231,8 @@ secure-confusable = ["dep:unicode-security"]
 account-credential = ["dep:argon2", "dep:bcrypt", "dep:rand"]
 # account-credential-zeroize：在 account-credential 基础上启用 zeroize
 account-credential-zeroize = ["account-credential", "zeroize"]
-# account-policy：密码策略套件（12+ PasswordPolicyRule），T007 时添加 dep:regex
-account-policy = ["account-credential"]
+# account-policy：密码策略套件（12+ PasswordPolicyRule），依赖 account-credential + regex（RegexRule）
+account-policy = ["account-credential", "dep:regex"]
 # account-lockout：用户级双态锁定（与 BruteForceStrategy 组合）
 account-lockout = ["firewall"]
 # account-authflow：AuthenticationFlow DSL（全认证流程编排）
@@ -308,7 +310,7 @@ full = [
     "db-sqlite",
     "protocol-oauth2", "protocol-sso", "protocol-jwt", "protocol-sign", "protocol-apikey", "protocol-temp",
     "protocol-oidc", "oauth2-scope-handler", "protocol-sso-server",
-    "secure-totp", "secure-sign", "secure-httpbasic", "secure-httpdigest", "account-credential",
+    "secure-totp", "secure-sign", "secure-httpbasic", "secure-httpdigest", "account-credential", "account-policy",
     "web-axum", "web-actix", "web-warp",
     "alone-cache", "parameter-query",
     "listener", "metrics-prometheus", "observability-otlp", "grpc", "i18n",
