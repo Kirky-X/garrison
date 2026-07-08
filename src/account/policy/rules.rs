@@ -16,6 +16,17 @@
 //! | `BlacklistRule` | `"blacklist"` | 黑名单规则（精确匹配） |
 //! | `NotUsernameRule` | `"not_username"` | 用户名相似规则（大小写不敏感子串） |
 //! | `NotCommonPasswordRule` | `"not_common_password"` | 常见密码规则（精确匹配） |
+//!
+//! # 扩展规则（R-006）
+//!
+//! | 规则 | `name()` | 说明 |
+//! |:---|:---|:---|
+//! | `MaxAgeRule` | `"max_age"` | 密码过期规则（v0.6.0 stub，v0.6.5 启用） |
+//! | `DictionaryRule` | `"dictionary"` | 字典规则（精确匹配） |
+//! | `NotRepeatCharRule` | `"not_repeat_char"` | 重复字符规则（连续 N+1 个相同字符） |
+//! | `NotSequenceRule` | `"not_sequence"` | 序列规则（正向/反向连续序列） |
+//! | `NotEmailRule` | `"not_email"` | 邮箱规则（大小写不敏感子串检测邮箱前缀） |
+//! | `RegexRule` | `"regex"` | 自定义正则规则（匹配即报错） |
 
 use super::{PasswordPolicyRule, PolicyContext, PolicyError};
 use crate::account::credential::password::PasswordVerifier;
@@ -353,6 +364,340 @@ impl PasswordPolicyRule for NotCommonPasswordRule {
     fn validate(&self, _ctx: &PolicyContext, password: &str) -> Result<(), PolicyError> {
         if self.common_list.iter().any(|p| p == password) {
             return Err(PolicyError::new("not_common_password", "密码为常见密码"));
+        }
+        Ok(())
+    }
+}
+
+// ============================================================================
+// MaxAgeRule（依据 spec R-006.7）
+// ============================================================================
+
+/// 密码过期规则（依据 spec password-policy R-006.7）。
+///
+/// 校验密码是否超过 `days` 天未修改。
+///
+/// # v0.6.0 stub 实现
+///
+/// `PolicyContext` 当前不含密码创建时间字段（`password_created_at`），
+/// 无法校验密码过期。v0.6.0 提供 **安全 no-op stub**（始终返回 `Ok(())`），
+/// 不阻塞密码修改。v0.6.5 将扩展 `PolicyContext` 后实现完整逻辑。
+///
+/// # 安全性
+///
+/// stub 不触发 `todo!()`/`unimplemented!()` panic，可安全调用。
+pub struct MaxAgeRule {
+    /// 密码最大有效天数（v0.6.5 `PolicyContext` 扩展后启用）。
+    #[allow(dead_code)]
+    days: u32,
+}
+
+impl MaxAgeRule {
+    /// 创建密码过期规则。
+    ///
+    /// # 参数
+    /// - `days`: 密码最大有效天数（v0.6.5 启用校验）
+    pub fn new(days: u32) -> Self {
+        Self { days }
+    }
+}
+
+impl PasswordPolicyRule for MaxAgeRule {
+    fn name(&self) -> &'static str {
+        "max_age"
+    }
+
+    fn validate(&self, _ctx: &PolicyContext, _password: &str) -> Result<(), PolicyError> {
+        // v0.6.0 stub: PolicyContext 不含 password_created_at 字段，
+        // 无法校验密码是否超过 self.days 天未修改。
+        // v0.6.5 将扩展 PolicyContext 后实现完整逻辑。
+        // 当前为安全 no-op（始终通过），不阻塞密码修改。
+        Ok(())
+    }
+}
+
+// ============================================================================
+// DictionaryRule（依据 spec R-006.8）
+// ============================================================================
+
+/// 字典规则（依据 spec password-policy R-006.8）。
+///
+/// 校验密码不在字典单词列表中（精确匹配，非子串匹配）。
+/// 与 `BlacklistRule` 语义不同：`DictionaryRule` 面向字典攻击防护
+/// （加载系统词典/常见单词列表），`BlacklistRule` 面向已知泄露密码。
+pub struct DictionaryRule {
+    /// 字典单词列表。
+    dictionary: Vec<String>,
+}
+
+impl DictionaryRule {
+    /// 创建字典规则。
+    ///
+    /// # 参数
+    /// - `dictionary`: 字典单词列表（精确匹配）
+    pub fn new(dictionary: Vec<String>) -> Self {
+        Self { dictionary }
+    }
+}
+
+impl PasswordPolicyRule for DictionaryRule {
+    fn name(&self) -> &'static str {
+        "dictionary"
+    }
+
+    fn validate(&self, _ctx: &PolicyContext, password: &str) -> Result<(), PolicyError> {
+        if self.dictionary.iter().any(|w| w == password) {
+            return Err(PolicyError::new("dictionary", "密码为字典单词"));
+        }
+        Ok(())
+    }
+}
+
+// ============================================================================
+// NotRepeatCharRule（依据 spec R-006.9）
+// ============================================================================
+
+/// 重复字符规则（依据 spec password-policy R-006.9）。
+///
+/// 校验密码不含连续 `max_consecutive + 1` 个相同字符。
+///
+/// # 示例
+///
+/// - `max_consecutive = 2`：`"aa"` 通过（2 个，≤ 2），`"aaa"` 失败（3 = 2+1）
+/// - `max_consecutive = 1`：`"a"` 通过，`"aa"` 失败（2 = 1+1）
+pub struct NotRepeatCharRule {
+    /// 允许的最大连续相同字符数（超过此数即触发错误）。
+    max_consecutive: u32,
+}
+
+impl NotRepeatCharRule {
+    /// 创建重复字符规则。
+    ///
+    /// # 参数
+    /// - `max_consecutive`: 允许的最大连续相同字符数（`max_consecutive + 1` 个触发错误）
+    pub fn new(max_consecutive: u32) -> Self {
+        Self { max_consecutive }
+    }
+}
+
+impl PasswordPolicyRule for NotRepeatCharRule {
+    fn name(&self) -> &'static str {
+        "not_repeat_char"
+    }
+
+    fn validate(&self, _ctx: &PolicyContext, password: &str) -> Result<(), PolicyError> {
+        let chars: Vec<char> = password.chars().collect();
+        if chars.len() <= 1 {
+            return Ok(());
+        }
+        let max_allowed = self.max_consecutive as usize;
+        let mut current_run = 1usize;
+        for i in 1..chars.len() {
+            if chars[i] == chars[i - 1] {
+                current_run += 1;
+                if current_run > max_allowed {
+                    return Err(PolicyError::new(
+                        "not_repeat_char",
+                        format!(
+                            "密码包含 {} 个连续相同字符 '{}'，超过最大允许 {}",
+                            current_run, chars[i], max_allowed
+                        ),
+                    ));
+                }
+            } else {
+                current_run = 1;
+            }
+        }
+        Ok(())
+    }
+}
+
+// ============================================================================
+// NotSequenceRule（依据 spec R-006.10）
+// ============================================================================
+
+/// 序列规则（依据 spec password-policy R-006.10）。
+///
+/// 校验密码不含长度 `> max_sequence` 的连续序列（正向/反向）。
+///
+/// # 序列定义
+///
+/// 连续序列指 ASCII 码值依次 +1（正向，如 `abc`/`123`）或 -1（反向，
+/// 如 `cba`/`321`/`zyx`）的字符序列。序列长度为字符数（非步数）。
+///
+/// # 示例
+///
+/// - `max_sequence = 3`：`"abc"` 通过（长度 3，不 > 3），`"abcd"` 失败（长度 4 > 3）
+/// - `max_sequence = 2`：`"ab"` 通过，`"abc"` 失败，`"321"` 失败（反向长度 3 > 2）
+pub struct NotSequenceRule {
+    /// 允许的最大连续序列长度（超过此长度即触发错误）。
+    max_sequence: u32,
+}
+
+impl NotSequenceRule {
+    /// 创建序列规则。
+    ///
+    /// # 参数
+    /// - `max_sequence`: 允许的最大连续序列长度（长度 `> max_sequence` 触发错误）
+    pub fn new(max_sequence: u32) -> Self {
+        Self { max_sequence }
+    }
+}
+
+impl PasswordPolicyRule for NotSequenceRule {
+    fn name(&self) -> &'static str {
+        "not_sequence"
+    }
+
+    fn validate(&self, _ctx: &PolicyContext, password: &str) -> Result<(), PolicyError> {
+        let chars: Vec<char> = password.chars().collect();
+        if chars.len() <= 1 {
+            return Ok(());
+        }
+        let max_seq = self.max_sequence as usize;
+        let mut max_found = 1usize;
+        let mut current_len = 1usize;
+        // direction: 1 = 正向（+1），-1 = 反向（-1），0 = 无序列
+        let mut direction = 0i32;
+
+        for i in 1..chars.len() {
+            let diff = chars[i] as i32 - chars[i - 1] as i32;
+            let new_direction = if diff == 1 {
+                1
+            } else if diff == -1 {
+                -1
+            } else {
+                0
+            };
+
+            if new_direction != 0 && new_direction == direction {
+                // 继续当前序列
+                current_len += 1;
+            } else if new_direction != 0 {
+                // 方向改变或新序列开始（含前一个字符作为序列起点）
+                current_len = 2;
+                direction = new_direction;
+            } else {
+                // 序列中断
+                current_len = 1;
+                direction = 0;
+            }
+
+            if current_len > max_found {
+                max_found = current_len;
+            }
+        }
+
+        if max_found > max_seq {
+            return Err(PolicyError::new(
+                "not_sequence",
+                format!(
+                    "密码包含长度 {} 的连续序列，超过最大允许 {}",
+                    max_found, max_seq
+                ),
+            ));
+        }
+        Ok(())
+    }
+}
+
+// ============================================================================
+// NotEmailRule（依据 spec R-006.11）
+// ============================================================================
+
+/// 邮箱规则（依据 spec password-policy R-006.11）。
+///
+/// 校验密码不包含 `ctx.email` 的 `@` 前部分（大小写不敏感子串检测）。
+/// `ctx.email` 为 `None`、无 `@` 或 `@` 前部分为空时规则通过。
+pub struct NotEmailRule;
+
+impl NotEmailRule {
+    /// 创建邮箱规则。
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for NotEmailRule {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl PasswordPolicyRule for NotEmailRule {
+    fn name(&self) -> &'static str {
+        "not_email"
+    }
+
+    fn validate(&self, ctx: &PolicyContext, password: &str) -> Result<(), PolicyError> {
+        let Some(email) = &ctx.email else {
+            return Ok(());
+        };
+        // 提取 @ 前部分
+        let local_part = match email.split_once('@') {
+            Some((local, _)) => local,
+            None => return Ok(()), // 无 @ → 无法提取，通过
+        };
+        if local_part.is_empty() {
+            return Ok(());
+        }
+        // 大小写不敏感子串检测
+        let password_lower = password.to_lowercase();
+        let local_lower = local_part.to_lowercase();
+        if password_lower.contains(&local_lower) {
+            return Err(PolicyError::new("not_email", "密码包含邮箱前缀"));
+        }
+        Ok(())
+    }
+}
+
+// ============================================================================
+// RegexRule（依据 spec R-006.12）
+// ============================================================================
+
+/// 自定义正则规则（依据 spec password-policy R-006.12）。
+///
+/// 校验密码是否匹配 `pattern`（语义：`pattern.is_match(password)` 为 `true` 时报错，
+/// 错误信息使用 `error_msg`）。
+///
+/// # 示例
+///
+/// ```ignore
+/// use bulwark::account::policy::rules::RegexRule;
+/// use bulwark::account::policy::{PasswordPolicyRule, PolicyContext};
+///
+/// // 禁止包含空格的密码
+/// let rule = RegexRule::new(regex::Regex::new(r"\s").unwrap(), "密码不能包含空格".into());
+/// let ctx = PolicyContext { /* ... */ };
+/// assert!(rule.validate(&ctx, "no spaces").is_err());
+/// assert!(rule.validate(&ctx, "no_spaces").is_ok());
+/// ```
+pub struct RegexRule {
+    /// 正则表达式（匹配即报错）。
+    pattern: regex::Regex,
+    /// 错误信息（匹配时返回）。
+    error_msg: String,
+}
+
+impl RegexRule {
+    /// 创建自定义正则规则。
+    ///
+    /// # 参数
+    /// - `pattern`: 正则表达式（`is_match` 为 `true` 时报错）
+    /// - `error_msg`: 匹配时返回的错误信息
+    pub fn new(pattern: regex::Regex, error_msg: String) -> Self {
+        Self { pattern, error_msg }
+    }
+}
+
+impl PasswordPolicyRule for RegexRule {
+    fn name(&self) -> &'static str {
+        "regex"
+    }
+
+    fn validate(&self, _ctx: &PolicyContext, password: &str) -> Result<(), PolicyError> {
+        if self.pattern.is_match(password) {
+            return Err(PolicyError::new("regex", self.error_msg.clone()));
         }
         Ok(())
     }
@@ -698,10 +1043,313 @@ mod tests {
     }
 
     // ========================================================================
-    // 规则可作 Box<dyn PasswordPolicyRule> 使用（对象安全验证）
+    // MaxAgeRule 测试（R-006.7 stub）
     // ========================================================================
 
-    /// R-005: 6 个核心规则均可作 `Box<dyn PasswordPolicyRule>` 使用。
+    /// R-006.7: stub 实现 — 任意密码 → 通过（不 panic）。
+    #[test]
+    fn max_age_rule_stub_always_passes() {
+        let rule = MaxAgeRule::new(90);
+        let ctx = make_ctx(None, vec![]);
+        assert!(rule.validate(&ctx, "any-password").is_ok());
+    }
+
+    /// R-006.7: stub 实现 — 空密码也通过。
+    #[test]
+    fn max_age_rule_stub_passes_empty_password() {
+        let rule = MaxAgeRule::new(30);
+        let ctx = make_ctx(None, vec![]);
+        assert!(rule.validate(&ctx, "").is_ok());
+    }
+
+    /// R-006.7: `name()` 返回 `"max_age"`。
+    #[test]
+    fn max_age_rule_name_returns_max_age() {
+        let rule = MaxAgeRule::new(90);
+        assert_eq!(rule.name(), "max_age");
+    }
+
+    // ========================================================================
+    // DictionaryRule 测试
+    // ========================================================================
+
+    /// R-006.8: 密码不在字典 → 通过。
+    #[test]
+    fn dictionary_rule_passes_not_in_dictionary() {
+        let rule = DictionaryRule::new(vec!["hello".into(), "world".into()]);
+        let ctx = make_ctx(None, vec![]);
+        assert!(rule.validate(&ctx, "secure-pw").is_ok());
+    }
+
+    /// R-006.8: 密码在字典 → 失败。
+    #[test]
+    fn dictionary_rule_fails_in_dictionary() {
+        let rule = DictionaryRule::new(vec!["hello".into(), "world".into()]);
+        let ctx = make_ctx(None, vec![]);
+        let result = rule.validate(&ctx, "hello");
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().rule_name, "dictionary");
+    }
+
+    /// R-006.8: 空字典 → 永远通过。
+    #[test]
+    fn dictionary_rule_passes_empty_dictionary() {
+        let rule = DictionaryRule::new(vec![]);
+        let ctx = make_ctx(None, vec![]);
+        assert!(rule.validate(&ctx, "anything").is_ok());
+    }
+
+    /// R-006.8: 精确匹配（非子串匹配）。
+    #[test]
+    fn dictionary_rule_exact_match_not_substring() {
+        let rule = DictionaryRule::new(vec!["hello".into()]);
+        let ctx = make_ctx(None, vec![]);
+        // "hello" 在字典中，但 "helloworld" 含 "hello" 子串 → 精确匹配不命中，应通过
+        assert!(rule.validate(&ctx, "helloworld").is_ok());
+    }
+
+    /// R-006.8: `name()` 返回 `"dictionary"`。
+    #[test]
+    fn dictionary_rule_name_returns_dictionary() {
+        let rule = DictionaryRule::new(vec![]);
+        assert_eq!(rule.name(), "dictionary");
+    }
+
+    // ========================================================================
+    // NotRepeatCharRule 测试
+    // ========================================================================
+
+    /// R-006.9: 无连续重复字符 → 通过。
+    #[test]
+    fn not_repeat_char_rule_passes_no_repeats() {
+        let rule = NotRepeatCharRule::new(2);
+        let ctx = make_ctx(None, vec![]);
+        assert!(rule.validate(&ctx, "abac").is_ok());
+    }
+
+    /// R-006.9: 连续重复超过限制 → 失败。
+    #[test]
+    fn not_repeat_char_rule_fails_consecutive_repeats() {
+        let rule = NotRepeatCharRule::new(2);
+        let ctx = make_ctx(None, vec![]);
+        let result = rule.validate(&ctx, "aaa");
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().rule_name, "not_repeat_char");
+    }
+
+    /// R-006.9: 边界 — 恰好 max_consecutive 个连续 → 通过。
+    #[test]
+    fn not_repeat_char_rule_boundary_exact_max() {
+        let rule = NotRepeatCharRule::new(2);
+        let ctx = make_ctx(None, vec![]);
+        assert!(
+            rule.validate(&ctx, "aa").is_ok(),
+            "2 个连续（== max）应通过"
+        );
+    }
+
+    /// R-006.9: max_consecutive=1 时 "aa" 失败。
+    #[test]
+    fn not_repeat_char_rule_max_one_fails_pair() {
+        let rule = NotRepeatCharRule::new(1);
+        let ctx = make_ctx(None, vec![]);
+        assert!(rule.validate(&ctx, "aa").is_err());
+        assert!(rule.validate(&ctx, "ab").is_ok());
+    }
+
+    /// R-006.9: `name()` 返回 `"not_repeat_char"`。
+    #[test]
+    fn not_repeat_char_rule_name_returns_not_repeat_char() {
+        let rule = NotRepeatCharRule::new(2);
+        assert_eq!(rule.name(), "not_repeat_char");
+    }
+
+    // ========================================================================
+    // NotSequenceRule 测试
+    // ========================================================================
+
+    /// R-006.10: 无序列 → 通过。
+    #[test]
+    fn not_sequence_rule_passes_no_sequence() {
+        let rule = NotSequenceRule::new(3);
+        let ctx = make_ctx(None, vec![]);
+        assert!(rule.validate(&ctx, "a1b2").is_ok());
+    }
+
+    /// R-006.10: 正向序列超长 → 失败。
+    #[test]
+    fn not_sequence_rule_fails_forward_sequence() {
+        let rule = NotSequenceRule::new(3);
+        let ctx = make_ctx(None, vec![]);
+        let result = rule.validate(&ctx, "abcd");
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().rule_name, "not_sequence");
+    }
+
+    /// R-006.10: 反向序列超长 → 失败。
+    #[test]
+    fn not_sequence_rule_fails_reverse_sequence() {
+        let rule = NotSequenceRule::new(2);
+        let ctx = make_ctx(None, vec![]);
+        // 321 → 反向序列长度 3 > 2
+        assert!(rule.validate(&ctx, "321").is_err());
+    }
+
+    /// R-006.10: 边界 — 序列长度恰好 == max_sequence → 通过。
+    #[test]
+    fn not_sequence_rule_boundary_exact_max() {
+        let rule = NotSequenceRule::new(3);
+        let ctx = make_ctx(None, vec![]);
+        assert!(rule.validate(&ctx, "abc").is_ok(), "长度 3 == max，应通过");
+    }
+
+    /// R-006.10: 字母反向序列 zyx → 失败。
+    #[test]
+    fn not_sequence_rule_fails_alpha_reverse() {
+        let rule = NotSequenceRule::new(2);
+        let ctx = make_ctx(None, vec![]);
+        assert!(rule.validate(&ctx, "zyx").is_err());
+    }
+
+    /// R-006.10: `name()` 返回 `"not_sequence"`。
+    #[test]
+    fn not_sequence_rule_name_returns_not_sequence() {
+        let rule = NotSequenceRule::new(3);
+        assert_eq!(rule.name(), "not_sequence");
+    }
+
+    // ========================================================================
+    // NotEmailRule 测试
+    // ========================================================================
+
+    /// R-006.11: ctx.email 为 None → 通过。
+    #[test]
+    fn not_email_rule_passes_no_email() {
+        let rule = NotEmailRule::new();
+        let ctx = make_ctx(None, vec![]);
+        assert!(rule.validate(&ctx, "anything").is_ok());
+    }
+
+    /// R-006.11: 密码不包含邮箱前缀 → 通过。
+    #[test]
+    fn not_email_rule_passes_does_not_contain() {
+        let rule = NotEmailRule::new();
+        let ctx = PolicyContext {
+            user_id: "test-user".to_string(),
+            tenant_id: None,
+            username: None,
+            email: Some("alice@example.com".to_string()),
+            password_history: vec![],
+        };
+        assert!(rule.validate(&ctx, "secure-pw").is_ok());
+    }
+
+    /// R-006.11: 密码包含邮箱前缀 → 失败。
+    #[test]
+    fn not_email_rule_fails_contains_email_prefix() {
+        let rule = NotEmailRule::new();
+        let ctx = PolicyContext {
+            user_id: "test-user".to_string(),
+            tenant_id: None,
+            username: None,
+            email: Some("alice@example.com".to_string()),
+            password_history: vec![],
+        };
+        let result = rule.validate(&ctx, "alice123");
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().rule_name, "not_email");
+    }
+
+    /// R-006.11: 大小写不敏感检测。
+    #[test]
+    fn not_email_rule_case_insensitive() {
+        let rule = NotEmailRule::new();
+        let ctx = PolicyContext {
+            user_id: "test-user".to_string(),
+            tenant_id: None,
+            username: None,
+            email: Some("Alice@example.com".to_string()),
+            password_history: vec![],
+        };
+        assert!(
+            rule.validate(&ctx, "ALICE123").is_err(),
+            "大写密码包含小写邮箱前缀应失败"
+        );
+    }
+
+    /// R-006.11: 无 @ 的 email → 通过。
+    #[test]
+    fn not_email_rule_no_at_sign_passes() {
+        let rule = NotEmailRule::new();
+        let ctx = PolicyContext {
+            user_id: "test-user".to_string(),
+            tenant_id: None,
+            username: None,
+            email: Some("alice".to_string()),
+            password_history: vec![],
+        };
+        assert!(rule.validate(&ctx, "alice123").is_ok());
+    }
+
+    /// R-006.11: `name()` 返回 `"not_email"`。
+    #[test]
+    fn not_email_rule_name_returns_not_email() {
+        let rule = NotEmailRule::new();
+        assert_eq!(rule.name(), "not_email");
+    }
+
+    // ========================================================================
+    // RegexRule 测试
+    // ========================================================================
+
+    /// R-006.12: 正则不匹配 → 通过。
+    #[test]
+    fn regex_rule_passes_no_match() {
+        let rule = RegexRule::new(
+            regex::Regex::new(r"\s").unwrap(),
+            "密码不能包含空格".to_string(),
+        );
+        let ctx = make_ctx(None, vec![]);
+        assert!(rule.validate(&ctx, "no_spaces").is_ok());
+    }
+
+    /// R-006.12: 正则匹配 → 失败。
+    #[test]
+    fn regex_rule_fails_match() {
+        let rule = RegexRule::new(
+            regex::Regex::new(r"\s").unwrap(),
+            "密码不能包含空格".to_string(),
+        );
+        let ctx = make_ctx(None, vec![]);
+        let result = rule.validate(&ctx, "has space");
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().rule_name, "regex");
+    }
+
+    /// R-006.12: 错误信息使用构造器传入的 error_msg。
+    #[test]
+    fn regex_rule_error_msg_in_error() {
+        let rule = RegexRule::new(
+            regex::Regex::new(r"[0-9]").unwrap(),
+            "密码不能包含数字".to_string(),
+        );
+        let ctx = make_ctx(None, vec![]);
+        let err = rule.validate(&ctx, "abc1").unwrap_err();
+        assert_eq!(err.message, "密码不能包含数字");
+    }
+
+    /// R-006.12: `name()` 返回 `"regex"`。
+    #[test]
+    fn regex_rule_name_returns_regex() {
+        let rule = RegexRule::new(regex::Regex::new(r".").unwrap(), "test".to_string());
+        assert_eq!(rule.name(), "regex");
+    }
+
+    // ========================================================================
+    // 全部 12 个规则可作 Box<dyn PasswordPolicyRule> 使用（对象安全验证）
+    // ========================================================================
+
+    /// R-005/R-006: 12 个规则均可作 `Box<dyn PasswordPolicyRule>` 使用。
     #[test]
     fn all_rules_usable_as_dyn_trait_object() {
         let rules: Vec<Box<dyn PasswordPolicyRule>> = vec![
@@ -711,13 +1359,28 @@ mod tests {
             Box::new(BlacklistRule::new(vec![])),
             Box::new(NotUsernameRule::new()),
             Box::new(NotCommonPasswordRule::new(vec![])),
+            Box::new(MaxAgeRule::new(90)),
+            Box::new(DictionaryRule::new(vec![])),
+            Box::new(NotRepeatCharRule::new(2)),
+            Box::new(NotSequenceRule::new(3)),
+            Box::new(NotEmailRule::new()),
+            Box::new(RegexRule::new(
+                regex::Regex::new(r".").unwrap(),
+                "test".to_string(),
+            )),
         ];
-        assert_eq!(rules.len(), 6);
+        assert_eq!(rules.len(), 12);
         assert_eq!(rules[0].name(), "length");
         assert_eq!(rules[1].name(), "complexity");
         assert_eq!(rules[2].name(), "history");
         assert_eq!(rules[3].name(), "blacklist");
         assert_eq!(rules[4].name(), "not_username");
         assert_eq!(rules[5].name(), "not_common_password");
+        assert_eq!(rules[6].name(), "max_age");
+        assert_eq!(rules[7].name(), "dictionary");
+        assert_eq!(rules[8].name(), "not_repeat_char");
+        assert_eq!(rules[9].name(), "not_sequence");
+        assert_eq!(rules[10].name(), "not_email");
+        assert_eq!(rules[11].name(), "regex");
     }
 }
