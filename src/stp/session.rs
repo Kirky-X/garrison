@@ -20,6 +20,7 @@ use crate::error::{BulwarkError, BulwarkResult};
 use crate::listener::BulwarkEvent;
 use crate::stp::core::BulwarkCore;
 use crate::stp::token::TokenLogic;
+use crate::strategy::FirewallLoginContext;
 use async_trait::async_trait;
 
 /// 会话逻辑 trait，定义登录/登出/踢出/校验完整契约。
@@ -302,6 +303,164 @@ impl SessionLogic for BulwarkLogicDefault {
             .await;
         }
         Ok(())
+    }
+}
+
+// ============================================================================
+// 私有 helper 方法（从 mod.rs 搬移，供 SessionLogic impl 调用）
+// ============================================================================
+
+impl BulwarkLogicDefault {
+    /// login 实际逻辑（供 `login` 方法在 metrics 包装内调用）。
+    ///
+    /// 0.3.0 抽取此私有方法以保持 `login` trait 方法的 metrics 包装简洁。
+    async fn login_inner(&self, login_id: &str) -> BulwarkResult<String> {
+        // 0.3.0：登录前防火墙安全钩子检查（依据 spec firewall-check-hook）
+        // 任一 hook Err 阻断登录；未注入 hook 时为 no-op（向后兼容 0.2.x）
+        let ctx = FirewallLoginContext::new(login_id);
+        self.firewall.check_login_hooks(login_id, &ctx).await?;
+
+        let token = self.generate_token(login_id)?;
+        self.login_with_token(login_id, &token).await?;
+        // auto-wire: 触发 plugin on_login + listener Login 事件
+        if let Some(pm) = &self.plugin_manager {
+            pm.on_login(login_id, &token);
+        }
+        #[cfg(feature = "listener")]
+        if let Some(lm) = &self.listener_manager {
+            lm.broadcast(&BulwarkEvent::Login {
+                login_id: login_id.to_string(),
+                token: token.clone(),
+                device: None,
+            })
+            .await;
+        }
+        Ok(token)
+    }
+
+    /// 根据 `config.token_style` 生成 token。
+    ///
+    /// - `uuid`: UUID v4（36 字符，含连字符）
+    /// - `random_64`: 两个 simple UUID 拼接（64 字符）
+    /// - `simple`: simple UUID（32 字符）
+    /// - `jwt`: 需启用 `protocol-jwt` feature，委托 `JwtHandler::sign`（0.2.0 修复）
+    fn generate_token(&self, login_id: &str) -> BulwarkResult<String> {
+        match self.config.token_style.as_str() {
+            "uuid" => Ok(uuid::Uuid::new_v4().to_string()),
+            "random_64" => Ok(format!(
+                "{}{}",
+                uuid::Uuid::new_v4().simple(),
+                uuid::Uuid::new_v4().simple()
+            )),
+            "simple" => Ok(uuid::Uuid::new_v4().simple().to_string()),
+            "jwt" => {
+                // 0.2.0：委托 JwtHandler::sign（依据 spec protocol-jwt + core-auth-api）
+                #[cfg(feature = "protocol-jwt")]
+                {
+                    let handler = crate::protocol::jwt::JwtHandler::new(&self.config.jwt_secret);
+                    handler.sign(login_id, self.config.timeout)
+                }
+                #[cfg(not(feature = "protocol-jwt"))]
+                {
+                    let _ = login_id;
+                    Err(BulwarkError::Config(
+                        "jwt token_style 需启用 protocol-jwt feature".to_string(),
+                    ))
+                }
+            },
+            other => Err(BulwarkError::Config(format!(
+                "unknown token_style: {}",
+                other
+            ))),
+        }
+    }
+
+    /// Stateless 模式：仅 JWT verify，不查询 session（依据 spec protocol-jwt-modes R-002）。
+    ///
+    /// 要求启用 `protocol-jwt` feature 且 `token_style=jwt`，否则返回 `Config` 错误。
+    /// JWT verify 失败时透传 `InvalidToken`/`ExpiredToken`（不查询 session）。
+    fn check_login_stateless(&self, token: &str) -> BulwarkResult<bool> {
+        #[cfg(feature = "protocol-jwt")]
+        {
+            if self.config.token_style != "jwt" {
+                return Err(BulwarkError::Config(
+                    "Stateless 模式要求 token_style=jwt".to_string(),
+                ));
+            }
+            let handler = crate::protocol::jwt::JwtHandler::new(&self.config.jwt_secret);
+            // spec R-002: 无效签名返回 InvalidToken，过期返回 ExpiredToken（透传 verify 错误）
+            handler.verify(token)?;
+            Ok(true)
+        }
+        #[cfg(not(feature = "protocol-jwt"))]
+        {
+            let _ = token;
+            Err(BulwarkError::Config(
+                "Stateless 模式要求启用 protocol-jwt feature".to_string(),
+            ))
+        }
+    }
+
+    /// Mixin 模式：JWT verify + session 二级校验（依据 spec protocol-jwt-modes R-003）。
+    ///
+    /// 启用 `protocol-jwt` feature 且 `token_style=jwt` 时先 JWT verify 再查 session
+    /// （JWT verify 失败直接返回错误，不查询 session）。否则仅查 session
+    /// （向后兼容 0.4.1 行为：无 protocol-jwt 或 token_style != jwt）。
+    async fn check_login_mixin(&self, token: &str) -> BulwarkResult<bool> {
+        #[cfg(feature = "protocol-jwt")]
+        {
+            if self.config.token_style == "jwt" {
+                let handler = crate::protocol::jwt::JwtHandler::new(&self.config.jwt_secret);
+                // spec R-003: JWT 签名无效直接返回错误（不查询 session）
+                handler.verify(token)?;
+            }
+        }
+        let valid = self.session.is_valid(token).await?;
+        if !valid {
+            // v0.4.2: token 无效时广播 SessionTimeout 事件（依据 spec listener-events-extend R-001）
+            // 若 token session 仍存在（account session 过期），可获取 login_id 并广播；
+            // token session 完全不存在时跳过广播（无法获取 login_id）。
+            #[cfg(feature = "listener")]
+            if let Some(lm) = &self.listener_manager {
+                if let Ok(Some(ts)) = self.session.get_token_session(token).await {
+                    lm.broadcast(&BulwarkEvent::SessionTimeout {
+                        login_id: ts.login_id,
+                        token: token.to_string(),
+                    })
+                    .await;
+                }
+            }
+            if self.config.throw_on_not_login {
+                return Err(BulwarkError::Session("未登录".to_string()));
+            }
+        }
+        Ok(valid)
+    }
+
+    /// Simple 模式：仅 session 校验，不验证 JWT 签名（依据 spec protocol-jwt-modes R-004）。
+    ///
+    /// session 不存在时按 `throw_on_not_login` 决定返回 `Ok(false)` 或 `Session` 错误。
+    async fn check_login_simple(&self, token: &str) -> BulwarkResult<bool> {
+        let valid = self.session.is_valid(token).await?;
+        if !valid {
+            // v0.4.2: token 无效时广播 SessionTimeout 事件（依据 spec listener-events-extend R-001）
+            // 若 token session 仍存在（account session 过期），可获取 login_id 并广播；
+            // token session 完全不存在时跳过广播（无法获取 login_id）。
+            #[cfg(feature = "listener")]
+            if let Some(lm) = &self.listener_manager {
+                if let Ok(Some(ts)) = self.session.get_token_session(token).await {
+                    lm.broadcast(&BulwarkEvent::SessionTimeout {
+                        login_id: ts.login_id,
+                        token: token.to_string(),
+                    })
+                    .await;
+                }
+            }
+            if self.config.throw_on_not_login {
+                return Err(BulwarkError::Session("未登录".to_string()));
+            }
+        }
+        Ok(valid)
     }
 }
 
