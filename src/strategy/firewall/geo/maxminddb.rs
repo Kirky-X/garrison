@@ -1,6 +1,7 @@
 //! MaxMindDb 生产后端实现（v0.5.3 新增，依据 spec firewall）。
 //!
-//! 提供 [`MaxMindDbGeoLookup`] 和 [`MaxMindDbCountryLookup`] 两个生产实现，
+//! 提供 [`MaxMindDbGeoLookup`](crate::strategy::firewall::geo::maxminddb::MaxMindDbGeoLookup) 和
+//! [`MaxMindDbCountryLookup`](crate::strategy::firewall::geo::maxminddb::MaxMindDbCountryLookup) 两个生产实现，
 //! 分别读取 GeoIP2-City / GeoIP2-Country mmdb 数据库文件。
 //!
 //! # 依赖

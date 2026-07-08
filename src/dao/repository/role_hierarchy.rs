@@ -6,8 +6,8 @@
 //!
 //! ## 核心抽象
 //!
-//! - [`RoleHierarchyRecord`]：`role_hierarchy` 表行结构（child_role → parent_role + tenant_id）
-//! - [`RoleHierarchyService`]：TC 预计算 + 缓存 + 增量失效（T045-T050 实现，db-sqlite gated）
+//! - [`RoleHierarchyRecord`](crate::dao::repository::role_hierarchy::RoleHierarchyRecord)：`role_hierarchy` 表行结构（child_role → parent_role + tenant_id）
+//! - [`RoleHierarchyService`](crate::dao::repository::role_hierarchy::RoleHierarchyService)：TC 预计算 + 缓存 + 增量失效（T045-T050 实现，db-sqlite gated）
 //!
 //! ## 表结构
 //!

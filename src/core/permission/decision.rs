@@ -55,7 +55,7 @@ pub enum DecisionReason {
 /// `errors` 字段为 `Vec<String>`（错误消息），不是 `Vec<BulwarkError>`（错误类型）。
 ///
 /// `bulwark-testing` feature 启用时同时实现 `Deserialize`，使声明式测试套件
-/// 可从 JSON 文件反序列化期望决策（[`crate::testing::JsonTestCase::expected`]）。
+/// 可从 JSON 文件反序列化期望决策（`JsonTestCase::expected`）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Decision {
     /// 是否允许。
@@ -112,7 +112,7 @@ impl Decision {
 /// # 序列化
 ///
 /// `bulwark-testing` feature 启用时同时 derive `Serialize` 与 `Deserialize`，
-/// 使声明式测试套件（[`crate::testing::JsonTestCase`]）可双向转换。
+/// 使声明式测试套件（`JsonTestCase`）可双向转换。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthRequest {
     /// 主体 login_id。

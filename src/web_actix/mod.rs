@@ -50,7 +50,7 @@ use actix_web::http::header::{self, HeaderMap};
 
 pub mod extractor;
 
-/// 登录主体 extractor（从 Authorization: Bearer <token> 解析 login_id）。
+/// 登录主体 extractor（从 Authorization: Bearer `<token>` 解析 login_id）。
 pub use extractor::BulwarkPrincipal;
 
 // ============================================================================
