@@ -11,10 +11,10 @@
 //!
 //! | 子模块 | Feature | 说明 |
 //! |--------|---------|------|
-//! | [`credential`] | `account-credential` | 统一凭证模型 SPI（Credential trait + PasswordCredential + TotpCredential） |
-//! | [`policy`] | `account-policy` | 密码策略套件（12+ PasswordPolicyRule） |
-//! | [`lockout`] | `account-lockout` | 用户级双态账号锁定（temporary + permanent） |
-//! | [`authflow`] | `account-authflow` | AuthenticationFlow DSL（全认证流程编排） |
+//! | `credential` | `account-credential` | 统一凭证模型 SPI（Credential trait + PasswordCredential + TotpCredential） |
+//! | `policy` | `account-policy` | 密码策略套件（12+ PasswordPolicyRule） |
+//! | `lockout` | `account-lockout` | 用户级双态账号锁定（temporary + permanent） |
+//! | `authflow` | `account-authflow` | AuthenticationFlow DSL（全认证流程编排） |
 //!
 //! # 与现有模块的关系
 //!

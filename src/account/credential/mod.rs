@@ -8,19 +8,25 @@
 //!
 //! # 核心类型
 //!
-//! - [`Credential`] trait：统一凭证校验接口（对象安全，可作 `dyn Credential`）
-//! - [`CredentialModel`]：凭证存储模型（DAO 持久化结构，8 字段 schema）
-//! - [`CredentialRepository`] trait：凭证存储抽象（CRUD 5 方法）
+//! - `Credential` trait：统一凭证校验接口（对象安全，可作 `dyn Credential`）
+//! - `CredentialModel`：凭证存储模型（DAO 持久化结构，8 字段 schema）
+//! - `CredentialRepository` trait：凭证存储抽象（CRUD 5 方法）
 //!
 //! # 设计决策
 //!
 //! - D1: `Credential::verify(&self, input: &str)` 接收 `&str` 而非泛型（对象安全）
-//! - D5: `PasswordHasher` 从 `secure/password/` 破坏性迁移到本模块的 [`password`] 子模块
+//! - D5: `PasswordHasher` 从 `secure/password/` 破坏性迁移到本模块的 `password` 子模块
 
 /// 密码哈希子模块（v0.6.0 从 secure/password/ 迁移）。
 ///
 /// 提供 `PasswordHasher` trait + `Argon2Hasher` / `BcryptHasher` + `PasswordVerifier`。
 pub mod password;
+
+/// TOTP 凭证子模块（v0.6.0 新增，复用 `secure::totp::TotpHandler`）。
+///
+/// 需同时启用 `account-credential` + `secure-totp` feature。
+#[cfg(all(feature = "account-credential", feature = "secure-totp"))]
+pub mod totp;
 
 use crate::error::BulwarkResult;
 use async_trait::async_trait;
