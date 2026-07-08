@@ -311,39 +311,39 @@ pub use dao::repository::role_hierarchy::RoleHierarchyService;
 // 需 `db-sqlite` 或 `db-postgres` feature（运行时占位符转换支持两种后端）。
 
 /// 用户表 Repository（app_user）。
-#[cfg(any(feature = "db-sqlite", feature = "db-postgres"))]
+#[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
 pub use dao::repository::sqlite::DbnexusUserRepository;
 
 /// 角色表 Repository（app_role）。
-#[cfg(any(feature = "db-sqlite", feature = "db-postgres"))]
+#[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
 pub use dao::repository::sqlite::DbnexusRoleRepository;
 
 /// 权限表 Repository（app_permission，全局表无 tenant_id）。
-#[cfg(any(feature = "db-sqlite", feature = "db-postgres"))]
+#[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
 pub use dao::repository::sqlite::DbnexusPermissionRepository;
 
 /// 用户-角色关联表 Repository（app_user_role）。
-#[cfg(any(feature = "db-sqlite", feature = "db-postgres"))]
+#[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
 pub use dao::repository::sqlite::DbnexusUserRoleRepository;
 
 /// 角色-权限关联表 Repository（app_role_permission）。
-#[cfg(any(feature = "db-sqlite", feature = "db-postgres"))]
+#[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
 pub use dao::repository::sqlite::DbnexusRolePermissionRepository;
 
 /// 认证方式表 Repository（app_auth_method）。
-#[cfg(any(feature = "db-sqlite", feature = "db-postgres"))]
+#[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
 pub use dao::repository::sqlite::DbnexusAuthMethodRepository;
 
 /// 会话表 Repository（app_session）。
-#[cfg(any(feature = "db-sqlite", feature = "db-postgres"))]
+#[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
 pub use dao::repository::sqlite::DbnexusSessionRepository;
 
 /// 登录日志表 Repository（app_login_log）。
-#[cfg(any(feature = "db-sqlite", feature = "db-postgres"))]
+#[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
 pub use dao::repository::sqlite::DbnexusLoginLogRepository;
 
 /// 用户扩展信息表 Repository（app_user_ext）。
-#[cfg(any(feature = "db-sqlite", feature = "db-postgres"))]
+#[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
 pub use dao::repository::sqlite::DbnexusUserExtRepository;
 
 // ============================================================================

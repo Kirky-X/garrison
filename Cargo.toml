@@ -124,6 +124,8 @@ warp = { version = "0.4", default-features = false, features = ["test"] }
 # rsa 0.9 已是 jsonwebtoken rust_crypto feature 的间接依赖，不增加构建开销
 rsa = "0.9"
 rand = "0.8"
+# testcontainers 用于 MySQL 集成测试（自动启动 Docker 容器，依据 tasks.md T027-T040）
+testcontainers = "0.27"
 
 [features]
 default = []
@@ -192,8 +194,7 @@ db-sqlite = ["db-base", "dbnexus/sqlite"]
 # db-postgres 启用 postgres server-side 驱动（sea-orm/sqlx-postgres 由 dbnexus/postgres 传递启用）
 db-postgres = ["db-base", "dbnexus/postgres"]
 # db-mysql 启用 mysql server-side 驱动（sea-orm/sqlx-mysql 由 dbnexus/mysql 传递启用）
-# 保留注释直到有测试覆盖后启用（当前 dbnexus 0.3.1 已支持 mysql feature）。
-# db-mysql = ["db-base", "dbnexus/mysql"]  # TODO: 需测试覆盖后启用
+db-mysql = ["db-base", "dbnexus/mysql"]
 
 # === 协议层插件 ===
 # 0.4.2 新增：PKCE (RFC 7636) 需要 sha2 (S256) + base64 (URL_SAFE_NO_PAD)
@@ -327,3 +328,10 @@ opt-level = 3
 lto = true
 codegen-units = 1
 strip = true
+
+# === 测试目标 ===
+# db_mysql_testcontainers：MySQL 8.0 testcontainers 集成测试（依据 A-012 T028-T043）
+[[test]]
+name = "db_mysql_testcontainers"
+path = "tests/db_mysql_testcontainers.rs"
+required-features = ["db-mysql"]

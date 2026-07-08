@@ -1616,15 +1616,26 @@ impl UserExtRepository for DbnexusUserExtRepository {
         let conn = session.connection().map_err(|e| {
             BulwarkError::Dao(format!("app_user_ext upsert 获取 connection 失败: {}", e))
         })?;
-        // SQLite UPSERT（ON CONFLICT ... DO UPDATE），依赖 UK(user_id, field_key)。
+        // UPSERT，依赖 UK(user_id, field_key)。
         // 插入时生成新 UUID；冲突时更新 field_value/field_type/updated_at（保留原 id/created_at）。
+        // SQLite/Postgres 使用 ON CONFLICT ... DO UPDATE SET ... = excluded.field；
+        // MySQL 使用 ON DUPLICATE KEY UPDATE ... = VALUES(field)（MySQL 不支持 ON CONFLICT 语法）。
         let new_id = uuid::Uuid::new_v4().to_string();
-        let sql = "INSERT INTO app_user_ext (id, user_id, field_key, field_value, field_type, tenant_id) \
-                   VALUES (?, ?, ?, ?, ?, ?) \
-                   ON CONFLICT(user_id, field_key) DO UPDATE SET \
-                   field_value = excluded.field_value, \
-                   field_type = excluded.field_type, \
-                   updated_at = CURRENT_TIMESTAMP";
+        let sql = if conn.get_database_backend() == sea_orm::DbBackend::MySql {
+            "INSERT INTO app_user_ext (id, user_id, field_key, field_value, field_type, tenant_id) \
+             VALUES (?, ?, ?, ?, ?, ?) \
+             ON DUPLICATE KEY UPDATE \
+             field_value = VALUES(field_value), \
+             field_type = VALUES(field_type), \
+             updated_at = CURRENT_TIMESTAMP"
+        } else {
+            "INSERT INTO app_user_ext (id, user_id, field_key, field_value, field_type, tenant_id) \
+             VALUES (?, ?, ?, ?, ?, ?) \
+             ON CONFLICT(user_id, field_key) DO UPDATE SET \
+             field_value = excluded.field_value, \
+             field_type = excluded.field_type, \
+             updated_at = CURRENT_TIMESTAMP"
+        };
         let stmt = make_statement(
             conn,
             sql,

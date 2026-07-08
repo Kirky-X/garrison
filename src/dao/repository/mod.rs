@@ -662,7 +662,7 @@ pub trait UserDeviceRepository: Send + Sync {
 // Statement 参数化查询，通过 make_statement 运行时占位符转换支持两种后端。
 // ============================================================================
 /// Dbnexus Repository 实现子模块（backend-agnostic，支持 SQLite / PostgreSQL）。
-#[cfg(any(feature = "db-sqlite", feature = "db-postgres"))]
+#[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
 pub mod sqlite;
 
 /// PostgreSQL Repository 实现子模块（v0.5.1 新增，依据 tasks.md T111-T114 / D8）。
@@ -671,6 +671,13 @@ pub mod sqlite;
 /// 仅以 Postgres 命名空间 re-export 类型别名，避免代码重复。详见 `postgres/mod.rs` 文档。
 #[cfg(feature = "db-postgres")]
 pub mod postgres;
+
+/// MySQL Repository 实现子模块（v0.5.3 新增，依据 tasks.md T025-T043）。
+///
+/// 复用 `sqlite` 模块的 backend-agnostic 实现（通过 `make_statement` 自动转换占位符），
+/// 仅以 MySQL 命名空间 re-export 类型别名，避免代码重复。详见 `postgres/mod.rs` 文档。
+#[cfg(feature = "db-mysql")]
+pub mod mysql;
 
 /// 角色层级子模块（v0.5.0 新增，依据 proposal H6）。
 ///
@@ -700,7 +707,7 @@ pub mod role_hierarchy;
 /// assert_eq!(convert_placeholders(sql, DbBackend::Sqlite), "WHERE id = ? AND name = ?");
 /// assert_eq!(convert_placeholders(sql, DbBackend::Postgres), "WHERE id = $1 AND name = $2");
 /// ```
-#[cfg(any(feature = "db-sqlite", feature = "db-postgres"))]
+#[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
 pub fn convert_placeholders(sql: &str, backend: sea_orm::DbBackend) -> String {
     use sea_orm::DbBackend;
     if backend != DbBackend::Postgres {
@@ -735,7 +742,7 @@ pub fn convert_placeholders(sql: &str, backend: sea_orm::DbBackend) -> String {
 /// // 实际使用时传入真实的 DatabaseConnection（Sqlite 或 Postgres 后端）
 /// let stmt = make_statement(&conn, "WHERE id = ?", vec![Value::Int(Some(1))]);
 /// ```
-#[cfg(any(feature = "db-sqlite", feature = "db-postgres"))]
+#[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
 pub fn make_statement(
     conn: &impl sea_orm::ConnectionTrait,
     sql: &str,
@@ -1081,7 +1088,7 @@ mod tests {
     // ========================================================================
 
     /// SQLite 后端保留 `?` 占位符不变。
-    #[cfg(any(feature = "db-sqlite", feature = "db-postgres"))]
+    #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
     #[test]
     fn convert_placeholders_sqlite_keeps_question_mark() {
         use sea_orm::DbBackend;
@@ -1091,7 +1098,7 @@ mod tests {
     }
 
     /// PostgreSQL 后端将 `?` 替换为 `$1`, `$2`, ...
-    #[cfg(any(feature = "db-sqlite", feature = "db-postgres"))]
+    #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
     #[test]
     fn convert_placeholders_postgres_replaces_with_dollar_n() {
         use sea_orm::DbBackend;
@@ -1101,7 +1108,7 @@ mod tests {
     }
 
     /// 单个占位符也能正确转换。
-    #[cfg(any(feature = "db-sqlite", feature = "db-postgres"))]
+    #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
     #[test]
     fn convert_placeholders_postgres_single_placeholder() {
         use sea_orm::DbBackend;
@@ -1111,7 +1118,7 @@ mod tests {
     }
 
     /// 无占位符的 SQL 不受影响。
-    #[cfg(any(feature = "db-sqlite", feature = "db-postgres"))]
+    #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
     #[test]
     fn convert_placeholders_no_placeholder_unchanged() {
         use sea_orm::DbBackend;
@@ -1121,7 +1128,7 @@ mod tests {
     }
 
     /// 多个占位符（5 个）能正确编号。
-    #[cfg(any(feature = "db-sqlite", feature = "db-postgres"))]
+    #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
     #[test]
     fn convert_placeholders_postgres_five_placeholders() {
         use sea_orm::DbBackend;
@@ -1136,12 +1143,12 @@ mod tests {
 
     /// Mock 连接，仅用于测试 `make_statement` 的 backend 检测逻辑。
     /// 其他方法未实现（`make_statement` 仅调用 `get_database_backend`）。
-    #[cfg(any(feature = "db-sqlite", feature = "db-postgres"))]
+    #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
     struct MockConn {
         backend: sea_orm::DbBackend,
     }
 
-    #[cfg(any(feature = "db-sqlite", feature = "db-postgres"))]
+    #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
     #[async_trait::async_trait]
     impl sea_orm::ConnectionTrait for MockConn {
         fn get_database_backend(&self) -> sea_orm::DbBackend {
@@ -1178,7 +1185,7 @@ mod tests {
     }
 
     /// SQLite backend：`make_statement` 保留 `?` 占位符。
-    #[cfg(any(feature = "db-sqlite", feature = "db-postgres"))]
+    #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
     #[test]
     fn make_statement_sqlite_uses_question_mark() {
         let conn = MockConn {
@@ -1196,7 +1203,7 @@ mod tests {
     }
 
     /// Postgres backend：`make_statement` 将 `?` 替换为 `$1`, `$2`。
-    #[cfg(any(feature = "db-sqlite", feature = "db-postgres"))]
+    #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
     #[test]
     fn make_statement_postgres_uses_dollar_n() {
         let conn = MockConn {

@@ -506,10 +506,10 @@ pub use oxcache_impl::BulwarkDaoOxcache;
 // 注意：`BulwarkMigration::new()` 默认使用 `migrations/sqlite/` 路径，
 // PostgreSQL 用户应使用 `with_base_dir` 指定 `migrations/postgres/` 路径。
 
-#[cfg(any(feature = "db-sqlite", feature = "db-postgres"))]
+#[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
 mod dbnexus_impl;
 
-#[cfg(any(feature = "db-sqlite", feature = "db-postgres"))]
+#[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
 pub use dbnexus_impl::{init_dbnexus, BulwarkMigration};
 
 // ============================================================================
