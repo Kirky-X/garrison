@@ -17,15 +17,16 @@
 //! # 子模块
 //!
 //! - [`builder`]: FlowBuilder 流式构建 DSL（T014）
+//! - [`registry`]: FlowRegistry inventory 注册（T015）
 //!
 //! # 后续实现
 //!
-//! - T015: FlowRegistry inventory 注册
 //! - T016: AuthExecutor 核心
 //! - T017: SocialProvider + SsoServer 步骤
 //! - T018: 内置 AuthenticationFlow
 
 pub mod builder;
+pub mod registry;
 
 use std::collections::HashMap;
 
