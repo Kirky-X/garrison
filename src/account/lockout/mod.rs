@@ -149,12 +149,30 @@ pub struct UserLockoutStrategy {
     config: UserLockoutConfig,
     /// DAO（oxcache 抽象，用于持久化 LockoutState）。
     dao: Arc<dyn BulwarkDao>,
+    /// 账号安全指标（可选，注入后触发锁定时调用 `record_lockout`）。
+    #[cfg(feature = "metrics-prometheus")]
+    metrics: Option<Arc<crate::account::metrics::AccountMetrics>>,
 }
 
 impl UserLockoutStrategy {
     /// 创建用户级锁定策略实例。
     pub fn new(config: UserLockoutConfig, dao: Arc<dyn BulwarkDao>) -> Self {
-        Self { config, dao }
+        Self {
+            config,
+            dao,
+            #[cfg(feature = "metrics-prometheus")]
+            metrics: None,
+        }
+    }
+
+    /// 注入账号安全指标（builder 模式，需启用 `metrics-prometheus` feature）。
+    ///
+    /// 注入后 `record_failure` 触发临时/永久锁定时调用 `record_lockout(permanent)`。
+    /// 未注入时锁定逻辑不变，仅不记录指标。
+    #[cfg(feature = "metrics-prometheus")]
+    pub fn with_metrics(mut self, metrics: Arc<crate::account::metrics::AccountMetrics>) -> Self {
+        self.metrics = Some(metrics);
+        self
     }
 
     /// 读取用户锁定状态（不存在则返回默认空状态）。
@@ -188,6 +206,10 @@ impl UserLockoutStrategy {
             {
                 // 永久锁定
                 state.permanent_locked = true;
+                #[cfg(feature = "metrics-prometheus")]
+                if let Some(metrics) = &self.metrics {
+                    metrics.record_lockout(true);
+                }
             } else {
                 // 临时锁定
                 state.temporary_lockout_count += 1;
@@ -196,6 +218,10 @@ impl UserLockoutStrategy {
                     state.temporary_lockout_count,
                 );
                 state.locked_until = now_timestamp() + lock_seconds as i64;
+                #[cfg(feature = "metrics-prometheus")]
+                if let Some(metrics) = &self.metrics {
+                    metrics.record_lockout(false);
+                }
             }
         }
 

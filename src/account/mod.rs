@@ -51,6 +51,12 @@ pub mod lockout;
 #[cfg(feature = "account-authflow")]
 pub mod authflow;
 
+/// 账号安全能力 Prometheus 指标子模块（`metrics-prometheus` feature）。
+///
+/// 提供 `AccountMetrics`：4 个指标覆盖凭证验证 / 策略校验 / 锁定触发 / 认证流程执行。
+/// 未启用 `metrics-prometheus` 时 `AccountMetrics` 为 `()` unit type 别名。
+pub mod metrics;
+
 #[cfg(test)]
 mod tests {
     /// 验证 account 模块在启用 account-credential feature 时可编译。

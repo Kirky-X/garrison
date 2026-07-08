@@ -323,7 +323,7 @@ impl AuthExecutor {
         flow: &AuthenticationFlow,
         ctx: &mut AuthContext,
     ) -> BulwarkResult<AuthResult> {
-        self.execute_inner(flow, ctx, None, None, None).await
+        self.execute_inner(flow, ctx, None, None, None, None).await
     }
 
     /// 执行认证流程（带 CredentialBuilder，支持 Login 步骤）。
@@ -344,7 +344,7 @@ impl AuthExecutor {
         ctx: &mut AuthContext,
         builder: &dyn CredentialBuilder,
     ) -> BulwarkResult<AuthResult> {
-        self.execute_inner(flow, ctx, Some(builder), None, None)
+        self.execute_inner(flow, ctx, Some(builder), None, None, None)
             .await
     }
 
@@ -382,8 +382,38 @@ impl AuthExecutor {
             Some(builder),
             Some(social_resolver),
             Some(sso_resolver),
+            None,
         )
         .await
+    }
+
+    /// 执行认证流程（带 CredentialBuilder + AccountMetrics，支持指标采集，
+    /// 依据 spec account-metrics D-001）。
+    ///
+    /// 与 [`execute_with_builder`](Self::execute_with_builder) 一致，额外注入
+    /// `metrics` 用于采集 `authflow_execute_duration`（label = `flow.name`）与
+    /// `credential_verify_duration`（label = `credential_type`，Login/Mfa 步骤 verify 前后）。
+    ///
+    /// 保持 R-008 五字段约束：`metrics` 作为方法参数传入，非 struct 字段。
+    ///
+    /// # 参数
+    /// - `flow`: 认证流程定义。
+    /// - `ctx`: 执行上下文（可变引用）。
+    /// - `builder`: 凭证构造器（将 `CredentialModel → Box<dyn Credential>`）。
+    /// - `metrics`: 账号安全指标（记录流程执行与凭证验证耗时）。
+    ///
+    /// # 返回
+    /// 同 [`execute`](Self::execute)。
+    #[cfg(feature = "metrics-prometheus")]
+    pub async fn execute_with_metrics(
+        &self,
+        flow: &AuthenticationFlow,
+        ctx: &mut AuthContext,
+        builder: &dyn CredentialBuilder,
+        metrics: &crate::account::metrics::AccountMetrics,
+    ) -> BulwarkResult<AuthResult> {
+        self.execute_inner(flow, ctx, Some(builder), None, None, Some(metrics))
+            .await
     }
 
     /// 执行认证流程核心逻辑（内部方法）。
@@ -391,6 +421,7 @@ impl AuthExecutor {
     /// `builder` 为 `None` 时 Login / Mfa(Some) 步骤返回 `Failed`。
     /// `social_resolver` 为 `None` 时 SocialProvider 步骤返回 `Failed`。
     /// `sso_resolver` 为 `None` 时 SsoServer 步骤返回 `Failed`。
+    /// `metrics` 为 `Some` 时记录 `authflow_execute_duration`（label = `flow.name`）。
     async fn execute_inner(
         &self,
         flow: &AuthenticationFlow,
@@ -398,20 +429,32 @@ impl AuthExecutor {
         builder: Option<&dyn CredentialBuilder>,
         social_resolver: Option<&dyn SocialProviderResolver>,
         sso_resolver: Option<&dyn SsoServerResolver>,
+        metrics: Option<&crate::account::metrics::AccountMetrics>,
     ) -> BulwarkResult<AuthResult> {
+        #[cfg(feature = "metrics-prometheus")]
+        let flow_start = std::time::Instant::now();
+        #[cfg(feature = "metrics-prometheus")]
+        let flow_name = flow.name.clone();
+
         // 空流程：直接返回 Success（无步骤可失败）
         if flow.steps.is_empty() {
-            return Ok(AuthResult::Success {
+            let result = Ok(AuthResult::Success {
                 login_id: ctx.user_id.clone().unwrap_or_default(),
                 token: String::new(),
             });
+            #[cfg(feature = "metrics-prometheus")]
+            if let Some(m) = metrics {
+                m.observe_authflow_execute(&flow_name, flow_start.elapsed());
+            }
+            return result;
         }
 
         let mut token: Option<String> = None;
+        let mut early_result: Option<BulwarkResult<AuthResult>> = None;
 
         for (index, step) in flow.steps.iter().enumerate() {
             let outcome = self
-                .execute_step(step, ctx, builder, social_resolver, sso_resolver)
+                .execute_step(step, ctx, builder, social_resolver, sso_resolver, metrics)
                 .await?;
 
             match outcome {
@@ -426,11 +469,12 @@ impl AuthExecutor {
                             && index + 1 < flow.steps.len()
                         {
                             let challenge = self.step_challenge(&flow.steps[index + 1]);
-                            return Ok(AuthResult::Pending {
+                            early_result = Some(Ok(AuthResult::Pending {
                                 completed_step: index,
                                 next_step: index + 1,
                                 challenge,
-                            });
+                            }));
+                            break;
                         }
                     }
                 },
@@ -438,24 +482,35 @@ impl AuthExecutor {
                     if flow.allow_skip {
                         continue;
                     }
-                    return Ok(AuthResult::Failed {
+                    early_result = Some(Ok(AuthResult::Failed {
                         reason,
                         step: index,
-                    });
+                    }));
+                    break;
                 },
                 StepOutcome::ChallengeRequired {
                     challenge_type,
                     message,
                 } => {
-                    return Ok(AuthResult::ChallengeRequired {
+                    early_result = Some(Ok(AuthResult::ChallengeRequired {
                         challenge_type,
                         message,
-                    });
+                    }));
+                    break;
                 },
             }
         }
 
-        // 全部步骤通过
+        #[cfg(feature = "metrics-prometheus")]
+        if let Some(m) = metrics {
+            m.observe_authflow_execute(&flow_name, flow_start.elapsed());
+        }
+
+        // 全部步骤通过 或 early_result 中断
+        if let Some(result) = early_result {
+            return result;
+        }
+
         Ok(AuthResult::Success {
             login_id: ctx.user_id.clone().unwrap_or_default(),
             token: token.unwrap_or_default(),
@@ -473,14 +528,16 @@ impl AuthExecutor {
         builder: Option<&'a dyn CredentialBuilder>,
         social_resolver: Option<&'a dyn SocialProviderResolver>,
         sso_resolver: Option<&'a dyn SsoServerResolver>,
+        metrics: Option<&'a crate::account::metrics::AccountMetrics>,
     ) -> Pin<Box<dyn Future<Output = BulwarkResult<StepOutcome>> + Send + 'a>> {
         Box::pin(async move {
             match step {
                 AuthStep::Login { credential_type } => {
-                    self.execute_login(credential_type, ctx, builder).await
+                    self.execute_login(credential_type, ctx, builder, metrics)
+                        .await
                 },
                 AuthStep::Mfa { credential_type } => {
-                    self.execute_mfa(credential_type.as_ref(), ctx, builder)
+                    self.execute_mfa(credential_type.as_ref(), ctx, builder, metrics)
                         .await
                 },
                 AuthStep::Conditional {
@@ -490,19 +547,40 @@ impl AuthExecutor {
                 } => {
                     let condition_result = self.evaluate_condition(condition, ctx).await?;
                     if condition_result {
-                        self.execute_step(if_step, ctx, builder, social_resolver, sso_resolver)
-                            .await
+                        self.execute_step(
+                            if_step,
+                            ctx,
+                            builder,
+                            social_resolver,
+                            sso_resolver,
+                            metrics,
+                        )
+                        .await
                     } else if let Some(else_step) = else_step {
-                        self.execute_step(else_step, ctx, builder, social_resolver, sso_resolver)
-                            .await
+                        self.execute_step(
+                            else_step,
+                            ctx,
+                            builder,
+                            social_resolver,
+                            sso_resolver,
+                            metrics,
+                        )
+                        .await
                     } else {
                         // else_step 为 None 时跳过（视为成功）
                         Ok(StepOutcome::Success { token: None })
                     }
                 },
                 AuthStep::SubFlow { flow_name } => {
-                    self.execute_subflow(flow_name, ctx, builder, social_resolver, sso_resolver)
-                        .await
+                    self.execute_subflow(
+                        flow_name,
+                        ctx,
+                        builder,
+                        social_resolver,
+                        sso_resolver,
+                        metrics,
+                    )
+                    .await
                 },
                 AuthStep::SocialProvider { provider } => {
                     self.execute_social(provider, ctx, social_resolver).await
@@ -523,7 +601,12 @@ impl AuthExecutor {
         credential_type: &str,
         ctx: &mut AuthContext,
         builder: Option<&dyn CredentialBuilder>,
+        metrics: Option<&crate::account::metrics::AccountMetrics>,
     ) -> BulwarkResult<StepOutcome> {
+        // 未启用 metrics-prometheus 时显式忽略 metrics 参数（避免 unused_variables warning）
+        #[cfg(not(feature = "metrics-prometheus"))]
+        let _ = metrics;
+
         // 锁定检查（Login 前检查用户是否被锁定）
         if let Some(lockout) = &self.lockout {
             if let Some(user_id) = &ctx.user_id {
@@ -566,7 +649,13 @@ impl AuthExecutor {
 
         // 构造 Credential 并校验
         let cred = builder.build(creds[0].clone())?;
+        #[cfg(feature = "metrics-prometheus")]
+        let verify_start = std::time::Instant::now();
         let verified = cred.verify(&ctx.input).await?;
+        #[cfg(feature = "metrics-prometheus")]
+        if let Some(m) = metrics {
+            m.observe_credential_verify(credential_type, verify_start.elapsed());
+        }
 
         if verified {
             // 创建会话
@@ -593,7 +682,12 @@ impl AuthExecutor {
         credential_type: Option<&String>,
         ctx: &mut AuthContext,
         builder: Option<&dyn CredentialBuilder>,
+        metrics: Option<&crate::account::metrics::AccountMetrics>,
     ) -> BulwarkResult<StepOutcome> {
+        // 未启用 metrics-prometheus 时显式忽略 metrics 参数（避免 unused_variables warning）
+        #[cfg(not(feature = "metrics-prometheus"))]
+        let _ = metrics;
+
         match credential_type {
             None => {
                 // Mfa(None): 调用 check_safe（默认返回 Ok）
@@ -643,7 +737,13 @@ impl AuthExecutor {
 
                 // 构造 Credential 并校验
                 let cred = builder.build(creds[0].clone())?;
+                #[cfg(feature = "metrics-prometheus")]
+                let verify_start = std::time::Instant::now();
                 let verified = cred.verify(&ctx.input).await?;
+                #[cfg(feature = "metrics-prometheus")]
+                if let Some(m) = metrics {
+                    m.observe_credential_verify(cred_type, verify_start.elapsed());
+                }
 
                 if verified {
                     Ok(StepOutcome::Success { token: None })
@@ -664,6 +764,7 @@ impl AuthExecutor {
         builder: Option<&dyn CredentialBuilder>,
         social_resolver: Option<&dyn SocialProviderResolver>,
         sso_resolver: Option<&dyn SsoServerResolver>,
+        metrics: Option<&crate::account::metrics::AccountMetrics>,
     ) -> BulwarkResult<StepOutcome> {
         let sub_flow = match self.registry.get(flow_name) {
             Some(f) => f,
@@ -674,7 +775,14 @@ impl AuthExecutor {
 
         // TODO: v0.6.5 添加循环引用检测（当前递归无深度限制）
         let result = self
-            .execute_inner(sub_flow, ctx, builder, social_resolver, sso_resolver)
+            .execute_inner(
+                sub_flow,
+                ctx,
+                builder,
+                social_resolver,
+                sso_resolver,
+                metrics,
+            )
             .await?;
 
         match result {
