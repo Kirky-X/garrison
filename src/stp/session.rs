@@ -12,8 +12,14 @@
 //! `BulwarkUtil` 保留 `impl Into<String>` ergonomic 入口，自动 `.into()` 后传引用。
 //! `get_login_id()` 返回类型从 `Option<i64>` 迁移为 `Option<String>`。
 
+use super::current_token;
+use super::BulwarkLogicDefault;
+use super::JwtMode;
 use crate::error::{BulwarkError, BulwarkResult};
+#[cfg(feature = "listener")]
+use crate::listener::BulwarkEvent;
 use crate::stp::core::BulwarkCore;
+use crate::stp::token::TokenLogic;
 use async_trait::async_trait;
 
 /// 会话逻辑 trait，定义登录/登出/踢出/校验完整契约。
@@ -150,6 +156,152 @@ pub trait SessionLogic: BulwarkCore {
         Err(BulwarkError::NotImplemented(
             "login_by_token 需启用 protocol-oauth2 或 protocol-sso feature".to_string(),
         ))
+    }
+}
+
+// ============================================================================
+// BulwarkLogicDefault impl
+// ============================================================================
+
+#[async_trait]
+impl SessionLogic for BulwarkLogicDefault {
+    async fn login(&self, login_id: &str) -> BulwarkResult<String> {
+        // emit metrics：登录尝试（成功/失败均记录，依据 spec observability-stack）
+        #[cfg(feature = "metrics-prometheus")]
+        let start = std::time::Instant::now();
+        let result = self.login_inner(login_id).await;
+        #[cfg(feature = "metrics-prometheus")]
+        if let Some(m) = &self.metrics {
+            m.record_login(result.is_ok());
+            m.observe_token_validation(start.elapsed());
+        }
+        result
+    }
+
+    async fn login_with_token(&self, login_id: &str, token: &str) -> BulwarkResult<()> {
+        self.session.create(login_id, token).await
+    }
+
+    async fn logout(&self) -> BulwarkResult<()> {
+        // 未登录时幂等返回 Ok（不抛错）
+        match current_token() {
+            Ok(token) => {
+                // 获取 login_id（用于 plugin/listener 回调），注销前查询
+                let login_id = self
+                    .session
+                    .get_token_session(&token)
+                    .await?
+                    .map(|ts| ts.login_id);
+                self.session.logout(&token).await?;
+                // auto-wire: 触发 plugin on_logout + listener Logout 事件
+                if let (Some(pm), Some(id)) = (&self.plugin_manager, login_id.as_ref()) {
+                    pm.on_logout(id, &token);
+                }
+                #[cfg(feature = "listener")]
+                if let (Some(lm), Some(id)) = (&self.listener_manager, login_id) {
+                    lm.broadcast(&BulwarkEvent::Logout {
+                        login_id: id,
+                        token: token.clone(),
+                    })
+                    .await;
+                }
+                Ok(())
+            },
+            Err(_) => Ok(()),
+        }
+    }
+
+    async fn logout_by_login_id(&self, login_id: &str) -> BulwarkResult<()> {
+        self.session.logout_by_login_id(login_id).await
+    }
+
+    async fn kickout(&self, login_id: &str) -> BulwarkResult<()> {
+        // kickout 语义等同 logout_by_login_id
+        self.session.logout_by_login_id(login_id).await?;
+        // auto-wire: 触发 listener Kickout 事件（plugin 无 kickout 钩子）
+        #[cfg(feature = "listener")]
+        if let Some(lm) = &self.listener_manager {
+            lm.broadcast(&BulwarkEvent::Kickout {
+                login_id: login_id.to_string(),
+                token: String::new(),
+                reason: "管理员强制下线".to_string(),
+            })
+            .await;
+        }
+        Ok(())
+    }
+
+    async fn kickout_by_token(&self, token: &str) -> BulwarkResult<()> {
+        // kickout_by_token 语义等同 logout(token)
+        self.session.logout(token).await
+    }
+
+    async fn revoke_token(&self, token: &str) -> BulwarkResult<()> {
+        // 销毁 Token-Session（幂等：token 不存在也返回 Ok）
+        self.session.logout(token).await?;
+        // v0.4.2: 广播 RevokeToken 事件（依据 spec listener-events-extend R-002）
+        #[cfg(feature = "listener")]
+        if let Some(lm) = &self.listener_manager {
+            lm.broadcast(&BulwarkEvent::RevokeToken {
+                token: token.to_string(),
+            })
+            .await;
+        }
+        Ok(())
+    }
+
+    async fn check_login(&self) -> BulwarkResult<bool> {
+        let token = match current_token() {
+            Ok(t) => t,
+            Err(_) => {
+                // 未设置 token = 未登录（保持现有 throw_on_not_login 语义）
+                if self.config.throw_on_not_login {
+                    return Err(BulwarkError::Session("未登录".to_string()));
+                }
+                return Ok(false);
+            },
+        };
+
+        match self.jwt_mode {
+            JwtMode::Stateless => self.check_login_stateless(&token),
+            JwtMode::Mixin => self.check_login_mixin(&token).await,
+            JwtMode::Simple => self.check_login_simple(&token).await,
+        }
+    }
+
+    async fn get_login_id(&self) -> BulwarkResult<Option<String>> {
+        match current_token() {
+            Ok(token) => match self.session.get_token_session(&token).await? {
+                Some(ts) => Ok(Some(ts.login_id)),
+                None => Ok(None),
+            },
+            Err(_) => Ok(None),
+        }
+    }
+
+    async fn login_by_token(&self, token: &str) -> BulwarkResult<()> {
+        // 获取 login_id：优先委托 auth_logic，否则使用 verify_token（TokenStyleFactory）
+        let login_id = if let Some(auth) = &self.auth_logic {
+            auth.verify_token(token).await?
+        } else {
+            self.verify_token(token).await?
+        };
+        // 建立内部会话（使用同一 token）
+        self.session.create(&login_id, token).await?;
+        // auto-wire: 触发 plugin on_login + listener Login 事件
+        if let Some(pm) = &self.plugin_manager {
+            pm.on_login(&login_id, token);
+        }
+        #[cfg(feature = "listener")]
+        if let Some(lm) = &self.listener_manager {
+            lm.broadcast(&BulwarkEvent::Login {
+                login_id,
+                token: token.to_string(),
+                device: None,
+            })
+            .await;
+        }
+        Ok(())
     }
 }
 

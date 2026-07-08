@@ -11,7 +11,14 @@
 //!
 //! `login_id` 参数从 `i64` 迁移为 `&str`（字符串形式，对象安全）。
 
+use super::BulwarkLogicDefault;
 use crate::error::{BulwarkError, BulwarkResult};
+#[cfg(all(
+    feature = "listener",
+    feature = "secure-password",
+    feature = "db-sqlite"
+))]
+use crate::listener::BulwarkEvent;
 use crate::stp::session::SessionLogic;
 use async_trait::async_trait;
 
@@ -54,6 +61,93 @@ pub trait PasswordLogic: SessionLogic {
         Err(BulwarkError::NotImplemented(
             "login_with_password 未实现：需启用 secure-password + db-sqlite feature".to_string(),
         ))
+    }
+}
+
+// ============================================================================
+// BulwarkLogicDefault impl
+// ============================================================================
+
+#[async_trait]
+impl PasswordLogic for BulwarkLogicDefault {
+    /// 密码登录实现：校验密码后调用 [`login`](Self::login) 签发 token。
+    ///
+    /// 依据 spec auth-password-login R-002：1) UserRepository 查询 2) PasswordHasher 校验 3) login 签发。
+    /// 安全约束：用户不存在与密码错误统一返回 `InvalidParam("invalid password")`，真实原因记录在 tracing 日志。
+    #[cfg(all(feature = "secure-password", feature = "db-sqlite"))]
+    async fn login_with_password(&self, login_id: &str, password: &str) -> BulwarkResult<String> {
+        let hasher = self
+            .password_hasher
+            .as_ref()
+            .ok_or_else(|| BulwarkError::Config("password hasher not configured".to_string()))?;
+        let repo = self
+            .user_repository
+            .as_ref()
+            .ok_or_else(|| BulwarkError::Config("user repository not configured".to_string()))?;
+
+        // 1. 查询用户（login_id 转字符串作为 username 查询）
+        let username = login_id.to_string();
+        let user = repo
+            .find_by_username(0, &username)
+            .await
+            .map_err(|e| BulwarkError::Dao(format!("login_with_password 查询用户失败: {}", e)))?;
+
+        let user = match user {
+            Some(u) => u,
+            None => {
+                // v0.4.2 安全审计 A-014: 日志和事件统一为 "invalid_credentials"，
+                // 不区分 user_not_found/wrong_password，防止日志泄露用户存在性
+                tracing::warn!(
+                    login_id = login_id,
+                    reason = "invalid_credentials",
+                    "login_with_password 失败"
+                );
+                // v0.4.2: 广播 LoginFailure 事件（依据 spec listener-events-extend R-001）
+                #[cfg(feature = "listener")]
+                if let Some(lm) = &self.listener_manager {
+                    lm.broadcast(&BulwarkEvent::LoginFailure {
+                        login_id: login_id.to_string(),
+                        reason: "invalid_credentials".to_string(),
+                    })
+                    .await;
+                }
+                return Err(BulwarkError::InvalidParam("invalid password".to_string()));
+            },
+        };
+
+        // 2. 校验密码（哈希格式不支持返回 "unsupported hash format"，可泄露）
+        let verified = hasher.verify(password, &user.password_hash).map_err(|e| {
+            tracing::warn!(
+                login_id = login_id,
+                reason = "hash_format_error",
+                error = %e,
+                "login_with_password 密码哈希格式不支持"
+            );
+            BulwarkError::InvalidParam("unsupported hash format".to_string())
+        })?;
+
+        if !verified {
+            // v0.4.2 安全审计 A-014: 日志和事件统一为 "invalid_credentials"，
+            // 不区分 user_not_found/wrong_password，防止日志泄露用户存在性
+            tracing::warn!(
+                login_id = login_id,
+                reason = "invalid_credentials",
+                "login_with_password 失败"
+            );
+            // v0.4.2: 广播 LoginFailure 事件（依据 spec listener-events-extend R-001）
+            #[cfg(feature = "listener")]
+            if let Some(lm) = &self.listener_manager {
+                lm.broadcast(&BulwarkEvent::LoginFailure {
+                    login_id: login_id.to_string(),
+                    reason: "invalid_credentials".to_string(),
+                })
+                .await;
+            }
+            return Err(BulwarkError::InvalidParam("invalid password".to_string()));
+        }
+
+        // 3. 调用 login 签发 token（触发 plugin/listener auto-wire）
+        self.login(login_id).await
     }
 }
 

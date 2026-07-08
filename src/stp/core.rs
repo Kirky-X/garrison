@@ -3,6 +3,7 @@
 //! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
+use super::BulwarkLogicDefault;
 use crate::config::BulwarkConfig;
 use std::sync::Arc;
 
@@ -20,6 +21,16 @@ pub trait BulwarkCore: Send + Sync {
     /// # 返回
     /// 全局配置的 `Arc` 引用。
     fn config(&self) -> Arc<BulwarkConfig>;
+}
+
+// ============================================================================
+// BulwarkLogicDefault impl
+// ============================================================================
+
+impl BulwarkCore for BulwarkLogicDefault {
+    fn config(&self) -> Arc<BulwarkConfig> {
+        Arc::clone(&self.config)
+    }
 }
 
 #[cfg(test)]
