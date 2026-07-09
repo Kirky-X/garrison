@@ -224,6 +224,18 @@ fn error_to_key_args(err: &BulwarkError) -> (&'static str, Vec<(&'static str, St
         BulwarkError::InvalidParam(s) => ("invalid-param", vec![("detail", s.clone())]),
         BulwarkError::NotImplemented(s) => ("not-implemented", vec![("detail", s.clone())]),
         BulwarkError::FirewallBlocked(s) => ("firewall-blocked", vec![("detail", s.clone())]),
+        BulwarkError::DisableService { service, until } => (
+            "disable-service",
+            vec![
+                ("service", service.clone()),
+                ("until", format!("{:?}", until)),
+            ],
+        ),
+        BulwarkError::NotSafe { reason } => ("not-safe", vec![("reason", reason.clone())]),
+        BulwarkError::InvalidStateTransition { from, to } => (
+            "invalid-state-transition",
+            vec![("from", from.clone()), ("to", to.clone())],
+        ),
         BulwarkError::Exception(ex) => (
             "exception",
             vec![
@@ -253,6 +265,13 @@ fn fallback_display(err: &BulwarkError) -> String {
         BulwarkError::InvalidParam(s) => format!("参数无效: {}", s),
         BulwarkError::NotImplemented(s) => format!("未实现: {}", s),
         BulwarkError::FirewallBlocked(s) => format!("防火墙拦截: {}", s),
+        BulwarkError::DisableService { service, until } => {
+            format!("账号已被封禁：service={}, until={:?}", service, until)
+        },
+        BulwarkError::NotSafe { reason } => format!("未完成二次认证：{}", reason),
+        BulwarkError::InvalidStateTransition { from, to } => {
+            format!("非法状态转换：{} -> {}", from, to)
+        },
         BulwarkError::Exception(ex) => format!("业务异常[{}]: {}", ex.code, ex.message),
     }
 }

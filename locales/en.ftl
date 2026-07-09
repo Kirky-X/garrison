@@ -18,6 +18,11 @@ invalid-param = Invalid parameter: {$detail}
 not-implemented = Not implemented: {$detail}
 exception = Business exception[{$code}]: {$detail}
 
+# 0.6.1 new error variants (per spec error-exceptions R-error-001~003)
+disable-service = Account disabled: service={$service}, until={$until}
+not-safe = Second factor authentication required: {$reason}
+invalid-state-transition = Invalid state transition: {$from} -> {$to}
+
 # ============================================================================
 # Social login exception messages (0.6.0, per T021)
 # ============================================================================

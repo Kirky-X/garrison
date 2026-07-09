@@ -18,6 +18,11 @@ invalid-param = 参数无效: {$detail}
 not-implemented = 未实现: {$detail}
 exception = 业务异常[{$code}]: {$detail}
 
+# 0.6.1 新增异常变体（依据 spec error-exceptions R-error-001~003）
+disable-service = 账号已被封禁：service={$service}, until={$until}
+not-safe = 未完成二次认证：{$reason}
+invalid-state-transition = 非法状态转换：{$from} -> {$to}
+
 # ============================================================================
 # 社交登录异常消息（0.6.0 新增，依据 T021）
 # ============================================================================

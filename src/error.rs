@@ -67,6 +67,39 @@ pub enum BulwarkError {
     ///
     /// 携带 strategy 名与原因，便于 audit-log 订阅。
     FirewallBlocked(String),
+
+    /// 账号被封禁异常（0.6.1 新增，依据 spec error-exceptions R-error-001）。
+    ///
+    /// 对应 PRD §3.1.6 DisableServiceException / FRD §3.4 BW-ERR-010。
+    /// `service` 记录被封禁的服务名（如 "default" / "oidc"），
+    /// `until` 为 `Some(time)` 表示定时解封，`None` 表示永久封禁。
+    /// 不泄露 user_id / tenant_id 等敏感信息。
+    DisableService {
+        /// 被封禁的服务名（如 "default" / "oidc"）。
+        service: String,
+        /// 定时解封时间；`None` 表示永久封禁。
+        until: Option<chrono::DateTime<chrono::Utc>>,
+    },
+
+    /// 未完成二次认证异常（0.6.1 新增，依据 spec error-exceptions R-error-002）。
+    ///
+    /// 对应 PRD §3.1.6 NotSafeException / FRD §5.4.1。
+    /// `reason` 说明未完成的具体认证（如 "MFA_TOTP_REQUIRED" / "WEBAUTHN_REQUIRED"）。
+    NotSafe {
+        /// 未完成认证的原因标识。
+        reason: String,
+    },
+
+    /// 非法状态转换（0.6.1 新增，依据 spec error-exceptions R-error-003）。
+    ///
+    /// 供 E-005 状态机使用，`from` / `to` 为状态枚举的 Debug 输出。
+    /// HTTP status = 500（内部状态错误，非用户错误）。
+    InvalidStateTransition {
+        /// 源状态（`format!("{:?}", state)` Debug 输出）。
+        from: String,
+        /// 目标状态。
+        to: String,
+    },
 }
 
 // ============================================================================
@@ -102,6 +135,13 @@ impl std::fmt::Display for BulwarkError {
             BulwarkError::InvalidParam(s) => write!(f, "参数无效: {}", s),
             BulwarkError::NotImplemented(s) => write!(f, "未实现: {}", s),
             BulwarkError::FirewallBlocked(s) => write!(f, "防火墙拦截: {}", s),
+            BulwarkError::DisableService { service, until } => {
+                write!(f, "账号已被封禁：service={}, until={:?}", service, until)
+            },
+            BulwarkError::NotSafe { reason } => write!(f, "未完成二次认证：{}", reason),
+            BulwarkError::InvalidStateTransition { from, to } => {
+                write!(f, "非法状态转换：{} -> {}", from, to)
+            },
             BulwarkError::Exception(ex) => write!(f, "业务异常[{}]: {}", ex.code, ex.message),
         }
     }
@@ -147,6 +187,12 @@ impl BulwarkError {
             BulwarkError::InvalidParam(_) => (400, "INVALID_PARAM", "参数无效", None),
             BulwarkError::NotImplemented(_) => (501, "NOT_IMPLEMENTED", "未实现", None),
             BulwarkError::FirewallBlocked(_) => (403, "FIREWALL_BLOCKED", "防火墙拦截", None),
+            // 0.6.1 新增变体（依据 spec error-exceptions R-error-001~003）
+            BulwarkError::DisableService { .. } => (403, "DISABLE_SERVICE", "账号已被封禁", None),
+            BulwarkError::NotSafe { .. } => (400, "NOT_SAFE", "未完成二次认证", None),
+            BulwarkError::InvalidStateTransition { .. } => {
+                (500, "INVALID_STATE_TRANSITION", "非法状态转换", None)
+            },
             // Exception 依据 BulwarkException.code 字段映射状态码
             // code = -1 → 未登录 → 401；code = -2 → 无权限 → 403；其他 → 500
             BulwarkError::Exception(ex) => {
@@ -265,6 +311,9 @@ impl miette::Diagnostic for BulwarkError {
             BulwarkError::InvalidParam(_) => "bulwark.invalid_param",
             BulwarkError::NotImplemented(_) => "bulwark.not_implemented",
             BulwarkError::FirewallBlocked(_) => "bulwark.firewall_blocked",
+            BulwarkError::DisableService { .. } => "bulwark.disable_service",
+            BulwarkError::NotSafe { .. } => "bulwark.not_safe",
+            BulwarkError::InvalidStateTransition { .. } => "bulwark.invalid_state_transition",
         };
         Some(Box::new(code_str))
     }
@@ -850,6 +899,17 @@ mod tests {
             BulwarkError::InvalidParam(String::new()),
             BulwarkError::NotImplemented(String::new()),
             BulwarkError::FirewallBlocked(String::new()),
+            BulwarkError::DisableService {
+                service: String::new(),
+                until: None,
+            },
+            BulwarkError::NotSafe {
+                reason: String::new(),
+            },
+            BulwarkError::InvalidStateTransition {
+                from: String::new(),
+                to: String::new(),
+            },
         ];
         for err in errors {
             let sev = err.severity().expect("severity() 应返回 Some");
@@ -943,5 +1003,172 @@ mod tests {
         let err = BulwarkError::FirewallBlocked("ddos".to_string());
         let response = err.into_response();
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    // ========================================================================
+    // DisableService / NotSafe / InvalidStateTransition 变体测试
+    // （0.6.1 新增，依据 spec error-exceptions R-error-001~003）
+    // ========================================================================
+
+    /// 验证 DisableService 变体的 Display 输出包含 service 与 until。
+    ///
+    /// 覆盖 spec R-error-001：Display 输出 `"账号已被封禁：service={service}, until={until:?}"`。
+    #[test]
+    fn disable_service_display_includes_service_and_until() {
+        let err = BulwarkError::DisableService {
+            service: "default".to_string(),
+            until: None,
+        };
+        assert_eq!(err.to_string(), "账号已被封禁：service=default, until=None");
+
+        // 带 until 的 Display
+        let until = chrono::DateTime::parse_from_rfc3339("2026-12-31T23:59:59Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let err_with_until = BulwarkError::DisableService {
+            service: "oidc".to_string(),
+            until: Some(until),
+        };
+        let display = err_with_until.to_string();
+        assert!(
+            display.contains("service=oidc"),
+            "Display 应包含 service=oidc，实际: {}",
+            display
+        );
+        assert!(
+            display.contains("2026-12-31T23:59:59Z"),
+            "Display 应包含 until 时间，实际: {}",
+            display
+        );
+    }
+
+    /// 验证 DisableService 变体的 response_parts 返回 403 + DISABLE_SERVICE。
+    ///
+    /// 覆盖 spec R-error-001：HTTP status = 403，error_code 字符串 = "DISABLE_SERVICE"。
+    #[test]
+    fn disable_service_response_parts_returns_403() {
+        let err = BulwarkError::DisableService {
+            service: "default".to_string(),
+            until: None,
+        };
+        let (status, error_code, message, ex_code) = err.response_parts();
+        assert_eq!(status, 403, "DisableService 应映射为 403 Forbidden");
+        assert_eq!(error_code, "DISABLE_SERVICE");
+        assert_eq!(message, "账号已被封禁");
+        assert!(ex_code.is_none(), "DisableService 不携带 exception code");
+    }
+
+    /// 验证 DisableService 变体不泄露敏感信息（service 字段不暴露到响应体）。
+    ///
+    /// 覆盖 spec R-error-001 约束：to_json_body 的 message 字段为通用描述，不含 service 值。
+    #[test]
+    fn disable_service_to_json_body_does_not_leak_service() {
+        let err = BulwarkError::DisableService {
+            service: "sensitive-service-name".to_string(),
+            until: None,
+        };
+        let body = err.to_json_body();
+        assert_eq!(body["error_code"], "DISABLE_SERVICE");
+        assert_eq!(body["message"], "账号已被封禁");
+        // message 不应包含 service 字段值
+        let message_str = body["message"].as_str().unwrap();
+        assert!(
+            !message_str.contains("sensitive-service-name"),
+            "响应体 message 不应泄露 service 字段值"
+        );
+    }
+
+    /// 验证 NotSafe 变体的 Display 输出包含 reason。
+    ///
+    /// 覆盖 spec R-error-002：Display 输出 `"未完成二次认证：{reason}"`。
+    #[test]
+    fn not_safe_display_includes_reason() {
+        let err = BulwarkError::NotSafe {
+            reason: "MFA_TOTP_REQUIRED".to_string(),
+        };
+        assert_eq!(err.to_string(), "未完成二次认证：MFA_TOTP_REQUIRED");
+    }
+
+    /// 验证 NotSafe 变体的 response_parts 返回 400 + NOT_SAFE。
+    ///
+    /// 覆盖 spec R-error-002：HTTP status = 400，error_code = "NOT_SAFE"。
+    #[test]
+    fn not_safe_response_parts_returns_400() {
+        let err = BulwarkError::NotSafe {
+            reason: "WEBAUTHN_REQUIRED".to_string(),
+        };
+        let (status, error_code, message, ex_code) = err.response_parts();
+        assert_eq!(status, 400, "NotSafe 应映射为 400 Bad Request");
+        assert_eq!(error_code, "NOT_SAFE");
+        assert_eq!(message, "未完成二次认证");
+        assert!(ex_code.is_none(), "NotSafe 不携带 exception code");
+    }
+
+    /// 验证 NotSafe 变体不泄露敏感信息（reason 字段不暴露到响应体）。
+    #[test]
+    fn not_safe_to_json_body_does_not_leak_reason() {
+        let err = BulwarkError::NotSafe {
+            reason: "internal-mfa-secret-leak".to_string(),
+        };
+        let body = err.to_json_body();
+        assert_eq!(body["error_code"], "NOT_SAFE");
+        assert_eq!(body["message"], "未完成二次认证");
+        let message_str = body["message"].as_str().unwrap();
+        assert!(
+            !message_str.contains("internal-mfa-secret-leak"),
+            "响应体 message 不应泄露 reason 字段值"
+        );
+    }
+
+    /// 验证 InvalidStateTransition 变体的 Display 输出包含 from 与 to。
+    ///
+    /// 覆盖 spec R-error-003：Display 输出 `"非法状态转换：{from} -> {to}"`。
+    #[test]
+    fn invalid_state_transition_display_includes_from_and_to() {
+        let err = BulwarkError::InvalidStateTransition {
+            from: "Expired".to_string(),
+            to: "Active".to_string(),
+        };
+        assert_eq!(err.to_string(), "非法状态转换：Expired -> Active");
+    }
+
+    /// 验证 InvalidStateTransition 变体的 response_parts 返回 500。
+    ///
+    /// 覆盖 spec R-error-003：HTTP status = 500（内部状态错误）。
+    #[test]
+    fn invalid_state_transition_response_parts_returns_500() {
+        let err = BulwarkError::InvalidStateTransition {
+            from: "Deleted".to_string(),
+            to: "Active".to_string(),
+        };
+        let (status, error_code, message, ex_code) = err.response_parts();
+        assert_eq!(
+            status, 500,
+            "InvalidStateTransition 应映射为 500 Internal Server Error"
+        );
+        assert_eq!(error_code, "INVALID_STATE_TRANSITION");
+        assert_eq!(message, "非法状态转换");
+        assert!(ex_code.is_none());
+    }
+
+    /// 验证 InvalidStateTransition 变体不泄露内部状态名到响应体。
+    #[test]
+    fn invalid_state_transition_to_json_body_does_not_leak_states() {
+        let err = BulwarkError::InvalidStateTransition {
+            from: "InternalStateA".to_string(),
+            to: "InternalStateB".to_string(),
+        };
+        let body = err.to_json_body();
+        assert_eq!(body["error_code"], "INVALID_STATE_TRANSITION");
+        assert_eq!(body["message"], "非法状态转换");
+        let message_str = body["message"].as_str().unwrap();
+        assert!(
+            !message_str.contains("InternalStateA"),
+            "响应体不应泄露 from 状态名"
+        );
+        assert!(
+            !message_str.contains("InternalStateB"),
+            "响应体不应泄露 to 状态名"
+        );
     }
 }
