@@ -24,6 +24,7 @@
 //! | UserInfo | `{base_url}/protocol/openid-connect/userinfo` |
 
 use crate::error::{BulwarkError, BulwarkResult};
+use crate::loc;
 use parking_lot::RwLock;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -268,9 +269,13 @@ impl KeycloakProvider {
     ///
     /// - `BulwarkError::Network`: `reqwest::Client` 构建失败。
     pub fn new(config: KeycloakConfig) -> BulwarkResult<Self> {
-        let http = reqwest::Client::builder()
-            .build()
-            .map_err(|e| BulwarkError::Network(format!("构建 HTTP 客户端失败: {}", e)))?;
+        let http = reqwest::Client::builder().build().map_err(|e| {
+            BulwarkError::Network(loc!(
+                "keycloak-http-client-build-failed",
+                format!("构建 HTTP 客户端失败: {}", e),
+                ("detail", &e.to_string())
+            ))
+        })?;
         Ok(Self {
             config,
             http,
@@ -319,21 +324,27 @@ impl KeycloakProvider {
     /// - `BulwarkError::Deserialize`: 响应体 JSON 无法解析为 `OidcDiscoveryMetadata`。
     pub async fn discover(&self) -> BulwarkResult<OidcDiscoveryMetadata> {
         let url = self.config.discovery_url();
-        let resp = self
-            .http
-            .get(&url)
-            .send()
-            .await
-            .map_err(|e| BulwarkError::Network(format!("discovery 请求失败: {}", e)))?;
+        let resp = self.http.get(&url).send().await.map_err(|e| {
+            BulwarkError::Network(loc!(
+                "keycloak-discovery-request-failed",
+                format!("discovery 请求失败: {}", e),
+                ("detail", &e.to_string())
+            ))
+        })?;
         if !resp.status().is_success() {
-            return Err(BulwarkError::Network(format!(
-                "discovery 响应状态码非 2xx: {}",
-                resp.status()
+            return Err(BulwarkError::Network(loc!(
+                "keycloak-discovery-status-not-2xx",
+                format!("discovery 响应状态码非 2xx: {}", resp.status()),
+                ("detail", &resp.status().to_string())
             )));
         }
-        resp.json::<OidcDiscoveryMetadata>()
-            .await
-            .map_err(|e| BulwarkError::Network(format!("discovery 响应解析失败: {}", e)))
+        resp.json::<OidcDiscoveryMetadata>().await.map_err(|e| {
+            BulwarkError::Network(loc!(
+                "keycloak-discovery-response-parse-failed",
+                format!("discovery 响应解析失败: {}", e),
+                ("detail", &e.to_string())
+            ))
+        })
     }
 
     /// 拉取 JWKS 公钥集合并更新缓存（依据 spec keycloak-oidc-rp R-keycloak-oidc-rp-003）。
@@ -346,22 +357,27 @@ impl KeycloakProvider {
     /// - `BulwarkError::Network`: HTTP 请求失败、非 2xx 状态码或 JSON 解析失败。
     async fn fetch_jwks(&self) -> BulwarkResult<()> {
         let url = self.config.jwks_url();
-        let resp = self
-            .http
-            .get(&url)
-            .send()
-            .await
-            .map_err(|e| BulwarkError::Network(format!("JWKS 请求失败: {}", e)))?;
+        let resp = self.http.get(&url).send().await.map_err(|e| {
+            BulwarkError::Network(loc!(
+                "keycloak-jwks-request-failed",
+                format!("JWKS 请求失败: {}", e),
+                ("detail", &e.to_string())
+            ))
+        })?;
         if !resp.status().is_success() {
-            return Err(BulwarkError::Network(format!(
-                "JWKS 响应状态码非 2xx: {}",
-                resp.status()
+            return Err(BulwarkError::Network(loc!(
+                "keycloak-jwks-status-not-2xx",
+                format!("JWKS 响应状态码非 2xx: {}", resp.status()),
+                ("detail", &resp.status().to_string())
             )));
         }
-        let jwks = resp
-            .json::<JwksResponse>()
-            .await
-            .map_err(|e| BulwarkError::Network(format!("JWKS 响应解析失败: {}", e)))?;
+        let jwks = resp.json::<JwksResponse>().await.map_err(|e| {
+            BulwarkError::Network(loc!(
+                "keycloak-jwks-response-parse-failed",
+                format!("JWKS 响应解析失败: {}", e),
+                ("detail", &e.to_string())
+            ))
+        })?;
         let mut cache = self.jwks_cache.write();
         cache.keys = jwks.keys;
         cache.fetched_at = Some(Instant::now());
@@ -388,10 +404,18 @@ impl KeycloakProvider {
         use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
 
         // 1. 解析 JWT header，提取 kid
-        let header = jsonwebtoken::decode_header(id_token)
-            .map_err(|e| BulwarkError::InvalidToken(format!("id_token header 解析失败: {}", e)))?;
+        let header = jsonwebtoken::decode_header(id_token).map_err(|e| {
+            BulwarkError::InvalidToken(loc!(
+                "keycloak-id-token-header-parse-failed",
+                format!("id_token header 解析失败: {}", e),
+                ("detail", &e.to_string())
+            ))
+        })?;
         let kid = header.kid.as_deref().ok_or_else(|| {
-            BulwarkError::InvalidToken("id_token header 缺少 kid 字段".to_string())
+            BulwarkError::InvalidToken(loc!(
+                "keycloak-id-token-header-missing-kid",
+                "id_token header 缺少 kid 字段".to_string()
+            ))
         })?;
 
         // 2. 检查 jwks_cache，缓存为空或过期时拉取
@@ -410,12 +434,21 @@ impl KeycloakProvider {
             cache.find_by_kid(kid).cloned()
         };
         let jwk = jwk.ok_or_else(|| {
-            BulwarkError::InvalidToken(format!("JWKS 中未找到 kid={} 的公钥", kid))
+            BulwarkError::InvalidToken(loc!(
+                "keycloak-jwks-key-not-found",
+                format!("JWKS 中未找到 kid={} 的公钥", kid),
+                ("kid", kid)
+            ))
         })?;
 
         // 4. 构造 DecodingKey 并验签
-        let decoding_key = DecodingKey::from_rsa_components(&jwk.n, &jwk.e)
-            .map_err(|e| BulwarkError::InvalidToken(format!("构造 RSA 公钥失败: {}", e)))?;
+        let decoding_key = DecodingKey::from_rsa_components(&jwk.n, &jwk.e).map_err(|e| {
+            BulwarkError::InvalidToken(loc!(
+                "keycloak-rsa-public-key-build-failed",
+                format!("构造 RSA 公钥失败: {}", e),
+                ("detail", &e.to_string())
+            ))
+        })?;
         let mut validation = Validation::new(Algorithm::RS256);
         validation.validate_exp = true;
         validation.leeway = 0;
@@ -427,9 +460,16 @@ impl KeycloakProvider {
             decode::<KeycloakClaims>(id_token, &decoding_key, &validation).map_err(|e| {
                 let msg = e.to_string();
                 if msg.contains("ExpiredSignature") {
-                    BulwarkError::InvalidToken("token expired".to_string())
+                    BulwarkError::InvalidToken(loc!(
+                        "keycloak-token-expired",
+                        "token expired".to_string()
+                    ))
                 } else {
-                    BulwarkError::InvalidToken(format!("id_token 验签失败: {}", e))
+                    BulwarkError::InvalidToken(loc!(
+                        "keycloak-id-token-verify-failed",
+                        format!("id_token 验签失败: {}", e),
+                        ("detail", &e.to_string())
+                    ))
                 }
             })?;
         Ok(token_data.claims)
@@ -459,7 +499,10 @@ impl KeycloakProvider {
     ///   （public client 必须使用 PKCE 鉴权）。
     pub async fn exchange_code(&self, code: &str) -> BulwarkResult<KeycloakTokenSet> {
         if code.is_empty() {
-            return Err(BulwarkError::InvalidParam("code 不可为空".to_string()));
+            return Err(BulwarkError::InvalidParam(loc!(
+                "keycloak-code-empty",
+                "code 不可为空".to_string()
+            )));
         }
 
         let mut form: Vec<(&str, &str)> = vec![
@@ -477,30 +520,36 @@ impl KeycloakProvider {
             (Some(verifier), _) => form.push(("code_verifier", verifier.as_str())),
             (None, Some(secret)) => form.push(("client_secret", secret.as_str())),
             (None, None) => {
-                return Err(BulwarkError::Config(
+                return Err(BulwarkError::Config(loc!(
+                    "keycloak-public-client-requires-pkce",
                     "public client（client_secret=None）必须调用 with_pkce 设置 PKCE verifier"
-                        .to_string(),
-                ));
+                        .to_string()
+                )));
             },
         }
 
         let url = self.config.token_url();
-        let resp = self
-            .http
-            .post(&url)
-            .form(&form)
-            .send()
-            .await
-            .map_err(|e| BulwarkError::Network(format!("exchange_code 请求失败: {}", e)))?;
+        let resp = self.http.post(&url).form(&form).send().await.map_err(|e| {
+            BulwarkError::Network(loc!(
+                "keycloak-exchange-code-request-failed",
+                format!("exchange_code 请求失败: {}", e),
+                ("detail", &e.to_string())
+            ))
+        })?;
         if !resp.status().is_success() {
-            return Err(BulwarkError::Network(format!(
-                "exchange_code 响应状态码非 2xx: {}",
-                resp.status()
+            return Err(BulwarkError::Network(loc!(
+                "keycloak-exchange-code-status-not-2xx",
+                format!("exchange_code 响应状态码非 2xx: {}", resp.status()),
+                ("detail", &resp.status().to_string())
             )));
         }
-        resp.json::<KeycloakTokenSet>()
-            .await
-            .map_err(|e| BulwarkError::Network(format!("exchange_code 响应解析失败: {}", e)))
+        resp.json::<KeycloakTokenSet>().await.map_err(|e| {
+            BulwarkError::Network(loc!(
+                "keycloak-exchange-code-response-parse-failed",
+                format!("exchange_code 响应解析失败: {}", e),
+                ("detail", &e.to_string())
+            ))
+        })
     }
 }
 
@@ -860,7 +909,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        // 3. 调用 verify_id_token，断言返回 InvalidToken("token expired")
+        // 3. 调用 verify_id_token，断言返回 InvalidToken（启用 i18n 时消息本地化，
+        //    关闭 i18n 时回退到 fallback 字面量，故用 contains 兼容两种构建）
         let config = KeycloakConfig {
             base_url: server.uri(),
             client_id: "bulwark-rp".into(),
@@ -872,16 +922,13 @@ mod tests {
 
         match result {
             Err(crate::error::BulwarkError::InvalidToken(msg)) => {
-                assert_eq!(
-                    msg, "token expired",
-                    "过期 token 应返回 InvalidToken(\"token expired\")，实际: {}",
+                assert!(
+                    msg.contains("expired") || msg.contains("过期"),
+                    "过期 token 应返回过期相关消息，实际: {}",
                     msg
                 );
             },
-            other => panic!(
-                "过期 token 应返回 InvalidToken(\"token expired\")，实际: {:?}",
-                other
-            ),
+            other => panic!("过期 token 应返回 InvalidToken 过期消息，实际: {:?}", other),
         }
     }
 
@@ -1111,5 +1158,46 @@ mod tests {
             "PKCE 优先：请求体不应包含 client_secret 字段，实际: {}",
             body
         );
+    }
+
+    // ========================================================================
+    // T021: Keycloak 异常消息 i18n（feature = "i18n"）
+    //
+    // 验证 keycloak 的 loc! 宏在中英文 locale 下返回正确翻译。
+    // 直接调用 loc! 宏避免依赖 HTTP mock，聚焦 i18n 翻译正确性。
+    // ========================================================================
+
+    /// T021 i18n 测试 6：zh locale 下 keycloak-token-expired 返回中文消息（无参数）。
+    #[cfg(feature = "i18n")]
+    #[test]
+    fn loc_i18n_keycloak_token_expired_zh() {
+        use crate::i18n::{set_locale, BulwarkLocale};
+        let _guard = set_locale(BulwarkLocale::Zh);
+        let msg = crate::loc!("keycloak-token-expired", "token expired".to_string());
+        assert_eq!(msg, "token 已过期");
+    }
+
+    /// T021 i18n 测试 7：en locale 下 keycloak-token-expired 返回英文消息（无参数）。
+    #[cfg(feature = "i18n")]
+    #[test]
+    fn loc_i18n_keycloak_token_expired_en() {
+        use crate::i18n::{set_locale, BulwarkLocale};
+        let _guard = set_locale(BulwarkLocale::En);
+        let msg = crate::loc!("keycloak-token-expired", "token expired".to_string());
+        assert_eq!(msg, "Token expired");
+    }
+
+    /// T021 i18n 测试 8：zh locale 下 keycloak-jwks-key-not-found 带 kid 参数返回中文。
+    #[cfg(feature = "i18n")]
+    #[test]
+    fn loc_i18n_keycloak_jwks_key_not_found_with_kid_zh() {
+        use crate::i18n::{set_locale, BulwarkLocale};
+        let _guard = set_locale(BulwarkLocale::Zh);
+        let msg = crate::loc!(
+            "keycloak-jwks-key-not-found",
+            "JWKS 中未找到 kid=abc123 的公钥".to_string(),
+            ("kid", "abc123")
+        );
+        assert_eq!(msg, "JWKS 中未找到 kid=abc123 的公钥");
     }
 }

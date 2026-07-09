@@ -9,15 +9,18 @@
 //! 5. `login_with_password` 失败路径（用户不存在 / 密码错误 / 未配置 hasher/repository）
 //! 6. listener 广播 LoginFailure 事件（user_not_found / wrong_password）
 //!
-//! 运行：`cargo test --features "secure-password db-sqlite listener cache-memory" --test login_password_integration`
+//! 运行：`cargo test --features "account-credential db-sqlite listener cache-memory" --test login_password_integration`
 
 #![cfg(all(
-    feature = "secure-password",
+    feature = "account-credential",
     feature = "db-sqlite",
     feature = "cache-memory"
 ))]
 
 use async_trait::async_trait;
+use bulwark::account::credential::password::{
+    Argon2Hasher, BcryptHasher, PasswordHasher, PasswordVerifier,
+};
 use bulwark::dao::{
     init_dbnexus,
     repository::{sqlite::DbnexusUserRepository, NewUser, UserRepository},
@@ -25,7 +28,6 @@ use bulwark::dao::{
 };
 use bulwark::error::{BulwarkError, BulwarkResult};
 use bulwark::listener::{BulwarkEvent, BulwarkListener, BulwarkListenerManager};
-use bulwark::secure::password::{Argon2Hasher, BcryptHasher, PasswordHasher, PasswordVerifier};
 use bulwark::session::BulwarkSession;
 use bulwark::stp::{BulwarkInterface, BulwarkLogicDefault, PasswordLogic};
 use serial_test::serial;

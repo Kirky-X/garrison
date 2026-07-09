@@ -4,7 +4,7 @@
 //!
 //! 0.2.0 将 API 改为 login_id-as-input，与 token 格式无关，便于在任意 token 风格下复用。
 //!
-//! 0.5.0 新增 [`decision`] 子模块：`Decision` / `DecisionReason` / `AuthRequest`，
+//! 0.5.0 新增 [`decision`](crate::core::permission::decision) 子模块：`Decision` / `DecisionReason` / `AuthRequest`，
 //! 支持决策溯源（依据 spec decision-trace）。
 
 pub mod decision;

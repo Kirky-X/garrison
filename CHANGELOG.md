@@ -5,6 +5,151 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.6.0] - 2026-07-09
+
+### 概述
+
+Bulwark 0.6.0 是"账号安全引擎版"，通过 specmark change `v0-6-0-account-security-engine` 实施 4 项核心能力（E-001/E-002/E-003/E-004）+ 4 项技术债清理（B-001/B-002/C-001/D-001）。引入 `account/` 模块作为账号安全能力中枢，提供 Credential SPI、密码策略引擎、用户锁定策略、AuthenticationFlow DSL，并补齐 i18n 社交登录异常消息与 Prometheus 指标。
+
+### 新增
+
+#### E-001: account/ 模块骨架 + Credential SPI
+
+- 新建 `account/` 顶层模块（`account/credential/` + `account/policy/` + `account/lockout/` + `account/authflow/` + `account/metrics.rs`）
+- `Credential` trait 统一凭证模型 SPI：`verify` / `store` / `load` / `update` / `metadata`
+- `PasswordCredential` 实现：基于 `PasswordHasher` 的密码凭证
+- `TotpCredential` 实现：RFC 6238 TOTP 动态码凭证
+- `DaoCredentialRepository` 基于 `BulwarkDao` 的凭证存储
+- 迁移 `PasswordHasher` 从 `src/secure/` 到 `account/credential/password.rs`（删除 `secure-password` feature）
+
+#### E-002: PasswordPolicyEngine
+
+- `PasswordPolicyRule` trait + `PasswordPolicyEngine` + `PasswordPolicyContext`
+- 6 个核心密码策略规则：长度 / 复杂度 / 历史 / 字典 / 用户名相似 / 序列检测
+- 6 个扩展密码策略规则：重复字符 / 键盘模式 / 日期 / 常见密码 / 上下文敏感 / 唯一字符数
+
+#### E-003: UserLockoutStrategy + BulwarkFirewallStrategy
+
+- `UserLockoutConfig` + `WaitStrategy` + `LockoutState`
+- `UserLockoutStrategy`：基于用户的登录锁定策略
+- `BulwarkFirewallStrategy`：整合 UserLockoutStrategy 到 BulwarkFirewall 框架
+
+#### E-004: AuthenticationFlow DSL
+
+- `AuthStep` enum + `AuthenticationFlow` + `AuthContext` + `AuthResult`
+- `FlowBuilder` 流式构建 DSL
+- `FlowRegistry` 基于 inventory 编译期注册
+- `AuthExecutor` 核心执行器（5 字段约束：builder/registry/dao/credential_repo/metrics）
+- `SocialProvider` + `SsoServer` 步骤扩展
+- 内置 `AuthenticationFlow`：username_password / username_password_totp / social_wechat / social_alipay / sso
+
+#### C-001: 社交登录异常消息 fluent i18n
+
+- 新增 `loc!` 宏：`#[cfg(feature = "i18n")]` 分支调用 `translate_detail`，未启用时返回 fallback
+- 新增 `translate_detail` 函数（`src/i18n.rs`）：按 key 查询 fluent bundle
+- 38 个 ftl key（wechat 12 + alipay 8 + keycloak 18）中英文双语
+- 46 个错误构造点接入 `loc!` 宏（wechat 16 + alipay 12 + keycloak 18）
+
+#### D-001: AccountMetrics Prometheus 指标
+
+- `AccountMetrics` struct（`#[cfg(feature = "metrics-prometheus")]`）：4 个指标
+  - `credential_verify_duration`（HistogramVec，label: credential_type）
+  - `policy_validate_duration`（HistogramVec，label: rule_name）
+  - `lockout_triggered_total`（CounterVec，label: lockout_type）
+  - `authflow_execute_duration`（HistogramVec，label: flow_name）
+- `register_to` / `observe_*` / `record_*` / `gather` 方法
+- feature 未启用时 `type AccountMetrics = ()`
+
+### 变更
+
+- `Cargo.toml` version 0.5.0 → 0.6.0
+- `AuthExecutor` 保持 5 字段约束：metrics 通过 `execute_with_metrics` 方法参数传入，非 struct 字段
+- `UserLockoutStrategy` 加 `metrics: Option<Arc<AccountMetrics>>` 字段 + `with_metrics` builder
+- `PasswordPolicyEngine` 加 `metrics` 字段 + `with_metrics` builder，`validate` 中 per-rule 计时
+- `src/i18n.rs` 新增 `translate_detail` 函数
+- `src/protocol/mod.rs` 新增 `loc!` 宏定义
+- `locales/zh.ftl` + `locales/en.ftl` 新增 38 个 message key
+
+### 破坏性变更
+
+1. **`PasswordHasher` 迁移（T002）**：从 `src/secure/password.rs` 迁移到 `account/credential/password.rs`，`secure-password` feature 删除（功能合并到 `account` feature）
+2. **`FirewallContext.login_id` 类型变更（T010）**：`i64` → `String`（所有 FirewallStrategy 实现需更新签名）
+
+### 修复
+
+#### B-001: cargo doc 10 个 warning 修复
+
+- 8 个 broken intra-doc links（`decision` / `JsonTestCase` / `MaxMindDbGeoLookup` / `MaxMindDbCountryLookup` / `RefreshTokenRecord` 等）
+- 2 个 unclosed HTML tags（`web_actix/mod.rs` / `web_warp/mod.rs` 中 `Bearer <token>` 改为 `` Bearer `<token>` ``）
+
+#### B-002: tenant_isolation 集成测试修复
+
+- `tests/integration/tenant_isolation.rs` 7 处修改：`login_id: i64` → `&str` 对齐 `BulwarkInterface` 签名
+- 新增 `use bulwark::{PermissionLogic, SessionLogic};`（trait 方法需导入 trait）
+
+### 验证
+
+- `cargo test --features full --lib`：1463 passed; 0 failed
+- `cargo clippy --features full --lib --tests -- -D warnings`：零警告
+- `cargo doc --no-deps --features full`：零警告
+- `cargo test --features "full audit-log" --test integration tenant_isolation`：1 passed
+
+### 已知限制
+
+- `AuthExecutor` metrics 仅通过 `execute_with_metrics` 显式传入，未集成到 `BulwarkManager` 自动注入链路（待 v0.7.0+ Manager 重构）
+- `FlowRegistry` inventory 注册的 flow 在编译期固定，运行时动态注册需调用 `register` 方法（非自动发现）
+
+## [0.5.3] - 2026-07-09
+
+### 概述
+
+Bulwark 0.5.3 是"功能补全版"，通过 specmark change `v0-5-3-feature-completion` 实施 4 项功能补全（A-015/A-014/A-012/A-013）。补齐 stp 模块拆分遗留、MySQL 后端、Firewall MaxMindDb 生产后端，并升级 oxcache。
+
+### 变更
+
+#### A-015: oxcache 升级 + 决策文档同步
+
+- 升级 `oxcache` 依赖到 0.3.3（per-entry TTL + `ttl_sync()` 查询）
+- 更新 `docs/decisions/A-010-dao-keys-performance-evaluation.md`：`CacheReader` trait 仍无 iter/keys 方法
+- 更新 `src/dao/mod.rs` 注释：defer 到 oxcache 提供原生 iter API
+
+#### A-014: stp/mod.rs 完整拆分
+
+- 164KB `src/stp/mod.rs` 拆分为 11 个职责文件（新增 `tests.rs` + `interface.rs` + `util.rs`）
+- 6 个 `impl trait for BulwarkLogicDefault` 块移至对应子文件
+- 5 个 session helper 方法从 mod.rs 移至 session.rs（满足 mod.rs < 15KB 目标）
+- mod.rs 最终：12.4KB / 284 行（原 164KB / 4035 行）
+
+#### A-012: MySQL 后端启用 + testcontainers 集成测试
+
+- 启用 `db-mysql` feature（`dbnexus/mysql`）
+- 添加 `testcontainers = "0.27"` dev-dependency
+- 新建 `tests/db_mysql_testcontainers.rs`：11 个 `#[serial]` 集成测试
+- 新建 `migrations/mysql/core/` 6 个 MySQL 兼容迁移文件
+- 新建 `src/dao/repository/mysql/mod.rs`：re-export sqlite 实现的 MySQL 命名别名
+- 修复 `UserExtRepository::upsert` MySQL 兼容性（`ON DUPLICATE KEY UPDATE` 替代 `ON CONFLICT`）
+- **偏离**：db-mysql 未加入 `full` 聚合 feature（dbnexus 禁止 db-sqlite 与 db-mysql 同时启用）
+
+#### A-013: Firewall MaxMindDb 生产后端
+
+- 添加 `maxminddb = "0.29"` 依赖 + `firewall-maxminddb` feature
+- 实现 `MaxMindDbGeoLookup`（GeoIP2-City: IP → GeoCoord，供 AnomalousLoginStrategy）
+- 实现 `MaxMindDbCountryLookup`（GeoIP2-Country: IP → ISO 国家码，供 GeoIPStrategy）
+- 14 个测试：open/lookup/invalid_ip/private_ip + strategy 集成测试
+- 下载 GeoLite2-City/Country-Test.mmdb 测试数据
+
+### 验证结果
+
+- `cargo test --features full --lib`：1336 passed; 0 failed
+- `cargo clippy --features full --lib --tests -- -D warnings`：零警告
+- `cargo test --features "db-mysql" --test db_mysql_testcontainers`：11 passed（需 Docker）
+- `cargo test --features "firewall-maxminddb" --lib maxminddb`：14 passed
+
+### 已知限制
+
+- `cargo test --features full --workspace` 中 `tests/integration/tenant_isolation.rs` 有预存失败（v0.5.2 LoginId 迁移遗留，非 v0.5.3 引入）
+- `cargo doc --no-deps --features full` 有 10 个预存 warning（`src/core/permission/decision.rs` broken intra-doc links 8 个 + `src/web_actix/mod.rs` / `src/web_warp/mod.rs` unclosed HTML tag 2 个，非 v0.5.3 引入）
+
 ## [0.5.2] - 2026-07-08
 
 ### 概述

@@ -605,4 +605,82 @@ mod tests {
             "已存在的绑定应返回相同 login_id（幂等性）"
         );
     }
+
+    // ========================================================================
+    // T021: 社交登录异常消息 i18n（feature = "i18n"）
+    //
+    // 验证 wechat / alipay 的 loc! 宏在中英文 locale 下返回正确翻译。
+    // 直接调用 loc! 宏避免依赖 HTTP mock，聚焦 i18n 翻译正确性。
+    // ========================================================================
+
+    /// T021 i18n 测试 1：zh locale 下 wechat-token-request-failed 返回中文消息。
+    #[cfg(feature = "i18n")]
+    #[test]
+    fn loc_i18n_wechat_token_request_failed_zh() {
+        use crate::i18n::{set_locale, BulwarkLocale};
+        let _guard = set_locale(BulwarkLocale::Zh);
+        let msg = crate::loc!(
+            "wechat-token-request-failed",
+            "wechat token request failed: conn refused".to_string(),
+            ("detail", "conn refused")
+        );
+        assert_eq!(msg, "微信 token 请求失败: conn refused");
+    }
+
+    /// T021 i18n 测试 2：en locale 下 wechat-token-request-failed 返回英文消息。
+    #[cfg(feature = "i18n")]
+    #[test]
+    fn loc_i18n_wechat_token_request_failed_en() {
+        use crate::i18n::{set_locale, BulwarkLocale};
+        let _guard = set_locale(BulwarkLocale::En);
+        let msg = crate::loc!(
+            "wechat-token-request-failed",
+            "wechat token request failed: conn refused".to_string(),
+            ("detail", "conn refused")
+        );
+        assert_eq!(msg, "WeChat token request failed: conn refused");
+    }
+
+    /// T021 i18n 测试 3：zh locale 下 wechat-error-response 带 code+message 参数返回中文。
+    #[cfg(feature = "i18n")]
+    #[test]
+    fn loc_i18n_wechat_error_response_with_code_message_zh() {
+        use crate::i18n::{set_locale, BulwarkLocale};
+        let _guard = set_locale(BulwarkLocale::Zh);
+        let msg = crate::loc!(
+            "wechat-error-response",
+            "wechat error 40029: invalid code".to_string(),
+            ("code", "40029"),
+            ("message", "invalid code")
+        );
+        assert_eq!(msg, "微信错误 40029: invalid code");
+    }
+
+    /// T021 i18n 测试 4：zh locale 下 alipay-rsa-key-parse-failed 返回中文消息。
+    #[cfg(feature = "i18n")]
+    #[test]
+    fn loc_i18n_alipay_rsa_key_parse_failed_zh() {
+        use crate::i18n::{set_locale, BulwarkLocale};
+        let _guard = set_locale(BulwarkLocale::Zh);
+        let msg = crate::loc!(
+            "alipay-rsa-key-parse-failed",
+            "alipay rsa key parse failed: bad pem".to_string(),
+            ("detail", "bad pem")
+        );
+        assert_eq!(msg, "支付宝 RSA 私钥解析失败: bad pem");
+    }
+
+    /// T021 i18n 测试 5：en locale 下 alipay-rsa-key-parse-failed 返回英文消息。
+    #[cfg(feature = "i18n")]
+    #[test]
+    fn loc_i18n_alipay_rsa_key_parse_failed_en() {
+        use crate::i18n::{set_locale, BulwarkLocale};
+        let _guard = set_locale(BulwarkLocale::En);
+        let msg = crate::loc!(
+            "alipay-rsa-key-parse-failed",
+            "alipay rsa key parse failed: bad pem".to_string(),
+            ("detail", "bad pem")
+        );
+        assert_eq!(msg, "Alipay RSA private key parse failed: bad pem");
+    }
 }

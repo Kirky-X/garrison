@@ -209,8 +209,8 @@ impl RateLimitStrategy {
     fn build_key(&self, ctx: &FirewallContext) -> BulwarkResult<(String, String)> {
         match self.config.scope {
             RateLimitScope::Ip => Ok((format!("rl:ip:{}", ctx.ip), ctx.ip.clone())),
-            RateLimitScope::User => match ctx.login_id {
-                Some(id) => Ok((format!("rl:user:{}", id), id.to_string())),
+            RateLimitScope::User => match &ctx.login_id {
+                Some(id) => Ok((format!("rl:user:{}", id), id.clone())),
                 None => Err(BulwarkError::InvalidParam(
                     "RateLimit scope=User 但 ctx.login_id 为 None".to_string(),
                 )),
@@ -365,8 +365,8 @@ mod tests {
         };
         let strategy = RateLimitStrategy::new(config, dao);
 
-        let ctx_a = FirewallContext::new("192.168.1.1").with_login_id(1001);
-        let ctx_b = FirewallContext::new("192.168.1.2").with_login_id(1002);
+        let ctx_a = FirewallContext::new("192.168.1.1").with_login_id("1001");
+        let ctx_b = FirewallContext::new("192.168.1.2").with_login_id("1002");
 
         // 用户 A 用完 2 次额度
         assert!(strategy.check(&ctx_a).await.is_ok());

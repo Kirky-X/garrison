@@ -10,6 +10,7 @@
 //! 启用 `social-alipay` feature 时编译，依赖 `protocol-oauth2`（提供 reqwest HTTP client）。
 
 use crate::error::{BulwarkError, BulwarkResult};
+use crate::loc;
 use crate::protocol::social::{SocialLoginProvider, SocialProvider, SocialUserInfo};
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD, Engine};
@@ -117,8 +118,13 @@ impl AlipayProvider {
             .join("&");
 
         // 3. 解析 RSA 私钥 PEM（PKCS#1 格式）
-        let private_key = RsaPrivateKey::from_pkcs1_pem(&self.private_key_pem)
-            .map_err(|e| BulwarkError::Config(format!("alipay rsa key parse failed: {}", e)))?;
+        let private_key = RsaPrivateKey::from_pkcs1_pem(&self.private_key_pem).map_err(|e| {
+            BulwarkError::Config(loc!(
+                "alipay-rsa-key-parse-failed",
+                format!("alipay rsa key parse failed: {}", e),
+                ("detail", &e.to_string())
+            ))
+        })?;
 
         // 4. RSA2 签名（SHA256withRSA, PKCS1v15 padding）—— 用 rsa re-export 的 sha2 0.10
         let signing_key = SigningKey::<Sha256>::new(private_key);
@@ -192,17 +198,28 @@ impl SocialLoginProvider for AlipayProvider {
             .form(&form_body)
             .send()
             .await
-            .map_err(|e| BulwarkError::Network(format!("alipay token request failed: {}", e)))?;
+            .map_err(|e| {
+                BulwarkError::Network(loc!(
+                    "alipay-token-request-failed",
+                    format!("alipay token request failed: {}", e),
+                    ("detail", &e.to_string())
+                ))
+            })?;
 
         if !resp.status().is_success() {
-            return Err(BulwarkError::Network(format!(
-                "alipay token request failed: {}",
-                resp.status()
+            return Err(BulwarkError::Network(loc!(
+                "alipay-token-request-failed",
+                format!("alipay token request failed: {}", resp.status()),
+                ("detail", &resp.status().to_string())
             )));
         }
 
         let raw: Value = resp.json().await.map_err(|e| {
-            BulwarkError::Network(format!("alipay token response parse failed: {}", e))
+            BulwarkError::Network(loc!(
+                "alipay-token-response-parse-failed",
+                format!("alipay token response parse failed: {}", e),
+                ("detail", &e.to_string())
+            ))
         })?;
 
         // 检查错误响应
@@ -215,9 +232,11 @@ impl SocialLoginProvider for AlipayProvider {
                 .get("msg")
                 .and_then(|v| v.as_str())
                 .unwrap_or("unknown error");
-            return Err(BulwarkError::Network(format!(
-                "alipay error {}: {}",
-                code, msg
+            return Err(BulwarkError::Network(loc!(
+                "alipay-error-response",
+                format!("alipay error {}: {}", code, msg),
+                ("code", code),
+                ("message", msg)
             )));
         }
 
@@ -226,7 +245,12 @@ impl SocialLoginProvider for AlipayProvider {
             .get("alipay_system_oauth_token_response")
             .and_then(|v| v.get("user_id"))
             .and_then(|v| v.as_str())
-            .ok_or_else(|| BulwarkError::Network("alipay response missing user_id field".into()))?
+            .ok_or_else(|| {
+                BulwarkError::Network(loc!(
+                    "alipay-response-missing-user-id",
+                    "alipay response missing user_id field".to_string()
+                ))
+            })?
             .to_string();
 
         Ok(SocialUserInfo {
@@ -276,18 +300,27 @@ impl SocialLoginProvider for AlipayProvider {
             .send()
             .await
             .map_err(|e| {
-                BulwarkError::Network(format!("alipay user_info request failed: {}", e))
+                BulwarkError::Network(loc!(
+                    "alipay-user-info-request-failed",
+                    format!("alipay user_info request failed: {}", e),
+                    ("detail", &e.to_string())
+                ))
             })?;
 
         if !resp.status().is_success() {
-            return Err(BulwarkError::Network(format!(
-                "alipay user_info request failed: {}",
-                resp.status()
+            return Err(BulwarkError::Network(loc!(
+                "alipay-user-info-request-failed",
+                format!("alipay user_info request failed: {}", resp.status()),
+                ("detail", &resp.status().to_string())
             )));
         }
 
         let raw: Value = resp.json().await.map_err(|e| {
-            BulwarkError::Network(format!("alipay user_info response parse failed: {}", e))
+            BulwarkError::Network(loc!(
+                "alipay-user-info-response-parse-failed",
+                format!("alipay user_info response parse failed: {}", e),
+                ("detail", &e.to_string())
+            ))
         })?;
 
         // 检查错误响应
@@ -300,22 +333,30 @@ impl SocialLoginProvider for AlipayProvider {
                 .get("msg")
                 .and_then(|v| v.as_str())
                 .unwrap_or("unknown error");
-            return Err(BulwarkError::Network(format!(
-                "alipay error {}: {}",
-                code, msg
+            return Err(BulwarkError::Network(loc!(
+                "alipay-error-response",
+                format!("alipay error {}: {}", code, msg),
+                ("code", code),
+                ("message", msg)
             )));
         }
 
         let resp_obj = raw.get("alipay_user_info_share_response").ok_or_else(|| {
-            BulwarkError::Network(
-                "alipay response missing alipay_user_info_share_response field".into(),
-            )
+            BulwarkError::Network(loc!(
+                "alipay-response-missing-user-info-share-response",
+                "alipay response missing alipay_user_info_share_response field".to_string()
+            ))
         })?;
 
         let user_id = resp_obj
             .get("user_id")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| BulwarkError::Network("alipay response missing user_id field".into()))?
+            .ok_or_else(|| {
+                BulwarkError::Network(loc!(
+                    "alipay-response-missing-user-id",
+                    "alipay response missing user_id field".to_string()
+                ))
+            })?
             .to_string();
 
         let nickname = resp_obj
@@ -457,8 +498,10 @@ mod tests {
         match err {
             BulwarkError::Config(msg) => {
                 assert!(
-                    msg.contains("rsa key parse failed"),
-                    "错误消息应包含 rsa key parse failed，实际: {}",
+                    msg.contains("rsa key parse failed")
+                        || msg.contains("RSA 私钥解析失败")
+                        || msg.contains("RSA private key parse failed"),
+                    "错误消息应包含 RSA 密钥解析失败相关描述，实际: {}",
                     msg
                 );
             },

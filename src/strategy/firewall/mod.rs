@@ -62,7 +62,7 @@ pub mod rate_limit;
 /// use bulwark::strategy::firewall::FirewallContext;
 ///
 /// let ctx = FirewallContext::new("192.168.1.1")
-///     .with_login_id(1001)
+///     .with_login_id("1001")
 ///     .with_tenant_id(0);
 /// ```
 #[derive(Debug, Clone)]
@@ -70,7 +70,7 @@ pub struct FirewallContext {
     /// 请求来源 IP（必须，所有策略依赖）。
     pub ip: String,
     /// 登录主体标识（可选，登录后策略如 AnomalousLogin / RateLimit scope=User 依赖）。
-    pub login_id: Option<i64>,
+    pub login_id: Option<String>,
     /// 租户标识（可选，RateLimit scope=Tenant 依赖）。
     pub tenant_id: Option<i64>,
 }
@@ -86,8 +86,8 @@ impl FirewallContext {
     }
 
     /// 链式设置 login_id。
-    pub fn with_login_id(mut self, login_id: i64) -> Self {
-        self.login_id = Some(login_id);
+    pub fn with_login_id(mut self, login_id: impl Into<String>) -> Self {
+        self.login_id = Some(login_id.into());
         self
     }
 
@@ -193,8 +193,6 @@ inventory::collect!(StrategyRegistration);
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     /// 验证启用全部 5 个 firewall feature 时，inventory 注册了至少 5 个 strategy
     ///（依据 spec firewall R-firewall-006 验收标准）。
     #[test]
@@ -206,6 +204,7 @@ mod tests {
         feature = "firewall-geoip"
     ))]
     fn all_five_strategies_registered_via_inventory() {
+        use super::*;
         use std::iter::Iterator;
         // 显式引用每个 strategy 类型，强制链接器保留 inventory::submit! 静态变量
         //（inventory 静态变量未被引用时可能被链接器优化丢弃）

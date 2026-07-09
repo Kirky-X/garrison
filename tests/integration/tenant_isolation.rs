@@ -27,6 +27,7 @@ mod tenant_audit_decision_e2e {
     use bulwark::session::BulwarkSession;
     use bulwark::stp::{with_current_token, BulwarkInterface, BulwarkLogicDefault};
     use bulwark::AuditLogListener;
+    use bulwark::{PermissionLogic, SessionLogic};
     use serial_test::serial;
     use std::sync::Arc;
 
@@ -36,15 +37,15 @@ mod tenant_audit_decision_e2e {
 
     #[async_trait]
     impl BulwarkInterface for MockInterface {
-        async fn get_permission_list(&self, login_id: i64) -> BulwarkResult<Vec<String>> {
-            if login_id == 1001 {
+        async fn get_permission_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+            if login_id == "1001" {
                 Ok(vec!["user:read".to_string()])
             } else {
                 Ok(vec![])
             }
         }
 
-        async fn get_role_list(&self, _login_id: i64) -> BulwarkResult<Vec<String>> {
+        async fn get_role_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
             Ok(vec![])
         }
     }
@@ -104,7 +105,7 @@ mod tenant_audit_decision_e2e {
 
         let token = TENANT
             .scope(tenant_ctx.clone(), async {
-                logic.login(1001).await.expect("login 应成功")
+                logic.login("1001").await.expect("login 应成功")
             })
             .await;
         assert!(!token.is_empty(), "token 不应为空");
@@ -125,7 +126,7 @@ mod tenant_audit_decision_e2e {
         );
 
         let auth_request = AuthRequest {
-            login_id: 1001,
+            login_id: "1001".to_string(),
             tenant_id: 42,
             action: "user:read".to_string(),
             resource: None,
@@ -159,6 +160,10 @@ mod tenant_audit_decision_e2e {
             entry.event_type, "permission_check",
             "audit_logs event_type 应为 permission_check"
         );
-        assert_eq!(entry.login_id, Some(1001), "audit_logs login_id 应为 1001");
+        assert_eq!(
+            entry.login_id,
+            Some("1001".to_string()),
+            "audit_logs login_id 应为 1001"
+        );
     }
 }

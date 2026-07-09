@@ -11,7 +11,7 @@ pub mod jwt_login;
 #[cfg(all(feature = "protocol-jwt", feature = "cache-memory"))]
 pub mod jwt_modes;
 #[cfg(all(
-    feature = "secure-password",
+    feature = "account-credential",
     feature = "db-sqlite",
     feature = "cache-memory"
 ))]

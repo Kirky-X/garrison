@@ -6,7 +6,7 @@
 //!
 //! ## 核心抽象
 //!
-//! - [`RefreshTokenRecord`]：`refresh_tokens` 表行结构（hash chain 字段）
+//! - [`RefreshTokenRecord`](crate::protocol::jwt::refresh::RefreshTokenRecord)：`refresh_tokens` 表行结构（hash chain 字段）
 //! - `RefreshTokenRotation`：rotate 服务（T057-T066 实现）
 //!
 //! ## 表结构

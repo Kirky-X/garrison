@@ -12,7 +12,11 @@
 //! `verify_token()` 返回类型从 `BulwarkResult<i64>` 迁移为 `BulwarkResult<String>`
 //! （v0.5.2 LoginId 迁移：删除 LoginId newtype，全栈使用 String/&str）。
 
+use super::BulwarkLogicDefault;
+use crate::core::token::TokenStyleFactory;
 use crate::error::{BulwarkError, BulwarkResult};
+#[cfg(feature = "listener")]
+use crate::listener::BulwarkEvent;
 use crate::stp::session::SessionLogic;
 use async_trait::async_trait;
 
@@ -132,6 +136,56 @@ pub trait TokenLogic: SessionLogic {
         Err(BulwarkError::NotImplemented(
             "refresh_token 需启用 protocol-jwt feature".to_string(),
         ))
+    }
+}
+
+// ============================================================================
+// BulwarkLogicDefault impl
+// ============================================================================
+
+#[async_trait]
+impl TokenLogic for BulwarkLogicDefault {
+    async fn verify_token(&self, token: &str) -> BulwarkResult<String> {
+        // 依据 spec core-auth-api：委托 core-token::Token::verify
+        // spec: "不泄露 token 具体失效原因（统一 InvalidToken）"
+        let token_handler =
+            TokenStyleFactory::new(&self.config.token_style, &self.config.jwt_secret)?;
+        match token_handler.verify(token) {
+            Ok(Some(login_id)) => Ok(login_id),
+            Ok(None) => Err(BulwarkError::InvalidToken(
+                "token 无效或不包含 login_id".to_string(),
+            )),
+            Err(_) => Err(BulwarkError::InvalidToken("token 无效".to_string())),
+        }
+    }
+
+    #[cfg(feature = "protocol-jwt")]
+    async fn refresh_token(&self, token: &str) -> BulwarkResult<String> {
+        // 依据 spec core-auth-api：启用 protocol-jwt 时委托 JwtHandler::refresh
+        if self.config.token_style != "jwt" {
+            return Err(BulwarkError::NotImplemented(
+                "refresh_token 仅在 token_style=jwt 时可用".to_string(),
+            ));
+        }
+        // 获取 login_id（用于 plugin/listener 回调）
+        let login_id = self.verify_token(token).await?;
+        let handler = crate::protocol::jwt::JwtHandler::new(&self.config.jwt_secret);
+        let new_token = handler.refresh(token, self.config.timeout)?;
+        // auto-wire: 触发 plugin on_login（新 token）
+        if let Some(pm) = &self.plugin_manager {
+            pm.on_login(&login_id, &new_token);
+        }
+        // v0.4.2: 广播 TokenRefresh 事件（替换原 Login 事件，依据 spec listener-events-extend R-001）
+        #[cfg(feature = "listener")]
+        if let Some(lm) = &self.listener_manager {
+            lm.broadcast(&BulwarkEvent::TokenRefresh {
+                login_id,
+                old_token: token.to_string(),
+                new_token: new_token.clone(),
+            })
+            .await;
+        }
+        Ok(new_token)
     }
 }
 

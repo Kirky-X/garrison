@@ -167,6 +167,44 @@ pub fn translate_error(err: &BulwarkError) -> String {
     }
 }
 
+/// 按 key + args 翻译为当前 locale 的本地化字符串（0.6.0 新增，依据 T021）。
+///
+/// 与 [`translate_error`] 不同，本函数不依赖 `BulwarkError`，直接接收 message key 与
+/// 参数列表，供 `loc!` 宏在社交登录 / Keycloak 等模块中按需翻译异常 detail。
+///
+/// # 参数
+///
+/// - `key`: FTL message key（如 `"wechat-token-request-failed"`）
+/// - `args`: 参数列表（如 `[("detail", "connection reset")]`），可为空 slice
+///
+/// # 返回
+///
+/// - 找到 key 且格式化成功：返回格式化后的本地化字符串
+/// - 未找到 key 或格式化出错：返回 `key` 本身（由调用方在 `loc!` 宏中提供 fallback）
+pub fn translate_detail(key: &str, args: &[(&str, &str)]) -> String {
+    let locale = current_locale();
+    let bundle = get_bundle(locale);
+    match bundle.get_message(key) {
+        Some(msg) => match msg.value() {
+            Some(pattern) => {
+                let mut fluent_args = FluentArgs::new();
+                for (k, v) in args {
+                    fluent_args.set(*k, (*v).to_string());
+                }
+                let mut errors = vec![];
+                let value = bundle.format_pattern(pattern, Some(&fluent_args), &mut errors);
+                if errors.is_empty() {
+                    value.into_owned()
+                } else {
+                    key.to_string()
+                }
+            },
+            None => key.to_string(),
+        },
+        None => key.to_string(),
+    }
+}
+
 /// 错误到 FTL message key + args 的映射。
 fn error_to_key_args(err: &BulwarkError) -> (&'static str, Vec<(&'static str, String)>) {
     match err {

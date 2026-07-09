@@ -10,6 +10,7 @@
 //! 启用 `social-wechat` feature 时编译，依赖 `protocol-oauth2`（提供 reqwest HTTP client）。
 
 use crate::error::{BulwarkError, BulwarkResult};
+use crate::loc;
 use crate::protocol::social::{SocialLoginProvider, SocialProvider, SocialUserInfo};
 use async_trait::async_trait;
 use serde_json::Value;
@@ -120,17 +121,28 @@ impl SocialLoginProvider for WechatProvider {
             ])
             .send()
             .await
-            .map_err(|e| BulwarkError::Network(format!("wechat token request failed: {}", e)))?;
+            .map_err(|e| {
+                BulwarkError::Network(loc!(
+                    "wechat-token-request-failed",
+                    format!("wechat token request failed: {}", e),
+                    ("detail", &e.to_string())
+                ))
+            })?;
 
         if !resp.status().is_success() {
-            return Err(BulwarkError::Network(format!(
-                "wechat token request failed: {}",
-                resp.status()
+            return Err(BulwarkError::Network(loc!(
+                "wechat-token-request-failed",
+                format!("wechat token request failed: {}", resp.status()),
+                ("detail", &resp.status().to_string())
             )));
         }
 
         let raw: Value = resp.json().await.map_err(|e| {
-            BulwarkError::Network(format!("wechat token response parse failed: {}", e))
+            BulwarkError::Network(loc!(
+                "wechat-token-response-parse-failed",
+                format!("wechat token response parse failed: {}", e),
+                ("detail", &e.to_string())
+            ))
         })?;
 
         // 微信错误响应含 errcode != 0（成功时 errcode 缺失或为 0）
@@ -140,9 +152,11 @@ impl SocialLoginProvider for WechatProvider {
                     .get("errmsg")
                     .and_then(|v| v.as_str())
                     .unwrap_or("unknown wechat error");
-                return Err(BulwarkError::Network(format!(
-                    "wechat error {}: {}",
-                    errcode, errmsg
+                return Err(BulwarkError::Network(loc!(
+                    "wechat-error-response",
+                    format!("wechat error {}: {}", errcode, errmsg),
+                    ("code", &errcode.to_string()),
+                    ("message", errmsg)
                 )));
             }
         }
@@ -150,7 +164,12 @@ impl SocialLoginProvider for WechatProvider {
         let provider_user_id = raw
             .get("openid")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| BulwarkError::Network("wechat response missing openid field".into()))?
+            .ok_or_else(|| {
+                BulwarkError::Network(loc!(
+                    "wechat-response-missing-openid",
+                    "wechat response missing openid field".to_string()
+                ))
+            })?
             .to_string();
 
         let union_id = raw
@@ -196,20 +215,28 @@ impl SocialLoginProvider for WechatProvider {
             urlencoding::encode(access_token_value),
             urlencoding::encode(openid),
         );
-        let resp =
-            self.http.get(&url).send().await.map_err(|e| {
-                BulwarkError::Network(format!("wechat userinfo request failed: {}", e))
-            })?;
+        let resp = self.http.get(&url).send().await.map_err(|e| {
+            BulwarkError::Network(loc!(
+                "wechat-userinfo-request-failed",
+                format!("wechat userinfo request failed: {}", e),
+                ("detail", &e.to_string())
+            ))
+        })?;
 
         if !resp.status().is_success() {
-            return Err(BulwarkError::Network(format!(
-                "wechat userinfo request failed: {}",
-                resp.status()
+            return Err(BulwarkError::Network(loc!(
+                "wechat-userinfo-request-failed",
+                format!("wechat userinfo request failed: {}", resp.status()),
+                ("detail", &resp.status().to_string())
             )));
         }
 
         let raw: Value = resp.json().await.map_err(|e| {
-            BulwarkError::Network(format!("wechat userinfo response parse failed: {}", e))
+            BulwarkError::Network(loc!(
+                "wechat-userinfo-response-parse-failed",
+                format!("wechat userinfo response parse failed: {}", e),
+                ("detail", &e.to_string())
+            ))
         })?;
 
         // 微信错误响应含 errcode != 0（成功时 errcode 缺失或为 0），与 exchange_token 一致
@@ -219,9 +246,11 @@ impl SocialLoginProvider for WechatProvider {
                     .get("errmsg")
                     .and_then(|v| v.as_str())
                     .unwrap_or("unknown wechat error");
-                return Err(BulwarkError::Network(format!(
-                    "wechat error {}: {}",
-                    errcode, errmsg
+                return Err(BulwarkError::Network(loc!(
+                    "wechat-error-response",
+                    format!("wechat error {}: {}", errcode, errmsg),
+                    ("code", &errcode.to_string()),
+                    ("message", errmsg)
                 )));
             }
         }
@@ -230,7 +259,10 @@ impl SocialLoginProvider for WechatProvider {
             .get("openid")
             .and_then(|v| v.as_str())
             .ok_or_else(|| {
-                BulwarkError::Network("wechat userinfo response missing openid field".into())
+                BulwarkError::Network(loc!(
+                    "wechat-userinfo-response-missing-openid",
+                    "wechat userinfo response missing openid field".to_string()
+                ))
             })?
             .to_string();
 
@@ -352,7 +384,10 @@ impl SocialLoginProvider for WechatMiniAppProvider {
         _redirect_uri: &str,
     ) -> BulwarkResult<String> {
         Err(BulwarkError::NotImplemented(
-            "WechatMiniAppProvider 不支持 get_authorization_url（小程序用 wx.login() 直接获取 js_code）".into(),
+            loc!(
+                "wechat-mini-app-get-authorization-url-not-supported",
+                "WechatMiniAppProvider 不支持 get_authorization_url（小程序用 wx.login() 直接获取 js_code）".to_string()
+            )
         ))
     }
 
@@ -385,23 +420,32 @@ impl SocialLoginProvider for WechatMiniAppProvider {
         );
 
         let resp = self.http.get(&url).send().await.map_err(|e| {
-            BulwarkError::Network(format!(
-                "wechat mini-app jscode2session request failed: {}",
-                e
+            BulwarkError::Network(loc!(
+                "wechat-mini-app-jscode2session-request-failed",
+                format!("wechat mini-app jscode2session request failed: {}", e),
+                ("detail", &e.to_string())
             ))
         })?;
 
         if !resp.status().is_success() {
-            return Err(BulwarkError::Network(format!(
-                "wechat mini-app jscode2session request failed: {}",
-                resp.status()
+            return Err(BulwarkError::Network(loc!(
+                "wechat-mini-app-jscode2session-request-failed",
+                format!(
+                    "wechat mini-app jscode2session request failed: {}",
+                    resp.status()
+                ),
+                ("detail", &resp.status().to_string())
             )));
         }
 
         let raw: Value = resp.json().await.map_err(|e| {
-            BulwarkError::Network(format!(
-                "wechat mini-app jscode2session response parse failed: {}",
-                e
+            BulwarkError::Network(loc!(
+                "wechat-mini-app-jscode2session-response-parse-failed",
+                format!(
+                    "wechat mini-app jscode2session response parse failed: {}",
+                    e
+                ),
+                ("detail", &e.to_string())
             ))
         })?;
 
@@ -412,9 +456,11 @@ impl SocialLoginProvider for WechatMiniAppProvider {
                     .get("errmsg")
                     .and_then(|v| v.as_str())
                     .unwrap_or("unknown wechat error");
-                return Err(BulwarkError::Network(format!(
-                    "wechat mini-app error {}: {}",
-                    errcode, errmsg
+                return Err(BulwarkError::Network(loc!(
+                    "wechat-mini-app-error-response",
+                    format!("wechat mini-app error {}: {}", errcode, errmsg),
+                    ("code", &errcode.to_string()),
+                    ("message", errmsg)
                 )));
             }
         }
@@ -423,9 +469,10 @@ impl SocialLoginProvider for WechatMiniAppProvider {
             .get("openid")
             .and_then(|v| v.as_str())
             .ok_or_else(|| {
-                BulwarkError::Network(
-                    "wechat mini-app jscode2session response missing openid field".into(),
-                )
+                BulwarkError::Network(loc!(
+                    "wechat-mini-app-jscode2session-response-missing-openid",
+                    "wechat mini-app jscode2session response missing openid field".to_string()
+                ))
             })?
             .to_string();
 

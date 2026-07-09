@@ -7,6 +7,7 @@
 //! 账号禁用检查 2 个方法。super-trait 为 [`SessionLogic`]
 //! （MFA 检查依赖当前登录状态）。
 
+use super::BulwarkLogicDefault;
 use crate::error::BulwarkResult;
 use crate::stp::session::SessionLogic;
 use async_trait::async_trait;
@@ -47,6 +48,13 @@ pub trait MfaLogic: SessionLogic {
         Ok(())
     }
 }
+
+// ============================================================================
+// BulwarkLogicDefault impl
+// ============================================================================
+
+#[async_trait]
+impl MfaLogic for BulwarkLogicDefault {}
 
 #[cfg(test)]
 mod tests {
