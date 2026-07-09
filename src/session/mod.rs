@@ -523,6 +523,21 @@ impl BulwarkSession {
         Ok(())
     }
 
+    /// 设置 Token-Session 的 TTL（供 remember_me 扩展超时使用，依据 spec session-lifecycle R-session-lifecycle-005）。
+    ///
+    /// 内部调用 `dao.expire` 重置 TTL。仅在 `create` 之后调用，用于将 Token-Session
+    /// 的 TTL 从默认 `timeout` 扩展为 `remember_me_timeout`。
+    ///
+    /// # 参数
+    /// - `token`: token 字符串。
+    /// - `ttl_seconds`: TTL 秒数（0 表示永久驻留）。
+    ///
+    /// # 返回
+    /// 成功返回 `Ok(())`；token 不存在时 DAO 返回错误。
+    pub async fn set_token_session_ttl(&self, token: &str, ttl_seconds: u64) -> BulwarkResult<()> {
+        self.dao.expire(&token_key(token), ttl_seconds).await
+    }
+
     /// 关联 SSO ticket 到 token 会话（0.2.0 新增，依据 spec session-management）。
     ///
     /// 将 SSO ticket 存入 Token-Session 的 `sso_ticket` 属性，
