@@ -18,6 +18,9 @@ pub mod server;
 // SAML 2.0 协议支持（依据 spec protocol-sso-federation R-001/002）。
 pub mod saml;
 
+// OIDC RP 协议支持（依据 spec protocol-sso-federation R-003/004）。
+pub mod oidc;
+
 use crate::dao::BulwarkDao;
 use crate::error::{BulwarkError, BulwarkResult};
 use serde::{Deserialize, Serialize};
