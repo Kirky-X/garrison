@@ -103,7 +103,7 @@ impl BulwarkDao for MockDao {
 /// 创建 SsoClient（使用 MockDao）。
 fn make_client() -> SsoClient {
     let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
-    SsoClient::new(dao)
+    SsoClient::new(dao, "test-sso-secret-key")
 }
 
 // ============================================================================
@@ -183,7 +183,7 @@ async fn center_id_mapping_not_found_returns_error() {
 async fn concurrent_ticket_validation_only_one_succeeds() {
     let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
     // 使用 Arc<SsoClient> 以便在多个并发任务间共享
-    let client = Arc::new(SsoClient::new(dao));
+    let client = Arc::new(SsoClient::new(dao, "test-sso-secret-key"));
 
     // 签发一个 ticket
     let ticket = client.issue_ticket("1001", 2001).await.unwrap();

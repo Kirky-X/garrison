@@ -167,6 +167,14 @@ impl JwtHandler {
     }
 }
 
+#[cfg(feature = "protocol-zeroize")]
+impl Drop for JwtHandler {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        self.secret.zeroize();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -45,6 +45,9 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
+/// AuthenticationFlow 嵌套递归最大深度（防止循环引用导致栈溢出）。
+const MAX_FLOW_DEPTH: usize = 10;
+
 // ============================================================================
 // CredentialBuilder trait（解决 R-008 五字段约束）
 // ============================================================================
@@ -323,7 +326,8 @@ impl AuthExecutor {
         flow: &AuthenticationFlow,
         ctx: &mut AuthContext,
     ) -> BulwarkResult<AuthResult> {
-        self.execute_inner(flow, ctx, None, None, None, None).await
+        self.execute_inner(flow, ctx, None, None, None, None, 0)
+            .await
     }
 
     /// 执行认证流程（带 CredentialBuilder，支持 Login 步骤）。
@@ -344,7 +348,7 @@ impl AuthExecutor {
         ctx: &mut AuthContext,
         builder: &dyn CredentialBuilder,
     ) -> BulwarkResult<AuthResult> {
-        self.execute_inner(flow, ctx, Some(builder), None, None, None)
+        self.execute_inner(flow, ctx, Some(builder), None, None, None, 0)
             .await
     }
 
@@ -383,6 +387,7 @@ impl AuthExecutor {
             Some(social_resolver),
             Some(sso_resolver),
             None,
+            0,
         )
         .await
     }
@@ -412,7 +417,7 @@ impl AuthExecutor {
         builder: &dyn CredentialBuilder,
         metrics: &crate::account::metrics::AccountMetrics,
     ) -> BulwarkResult<AuthResult> {
-        self.execute_inner(flow, ctx, Some(builder), None, None, Some(metrics))
+        self.execute_inner(flow, ctx, Some(builder), None, None, Some(metrics), 0)
             .await
     }
 
@@ -430,6 +435,7 @@ impl AuthExecutor {
         social_resolver: Option<&dyn SocialProviderResolver>,
         sso_resolver: Option<&dyn SsoServerResolver>,
         metrics: Option<&crate::account::metrics::AccountMetrics>,
+        depth: usize,
     ) -> BulwarkResult<AuthResult> {
         #[cfg(feature = "metrics-prometheus")]
         let flow_start = std::time::Instant::now();
@@ -454,7 +460,15 @@ impl AuthExecutor {
 
         for (index, step) in flow.steps.iter().enumerate() {
             let outcome = self
-                .execute_step(step, ctx, builder, social_resolver, sso_resolver, metrics)
+                .execute_step(
+                    step,
+                    ctx,
+                    builder,
+                    social_resolver,
+                    sso_resolver,
+                    metrics,
+                    depth,
+                )
                 .await?;
 
             match outcome {
@@ -529,6 +543,7 @@ impl AuthExecutor {
         social_resolver: Option<&'a dyn SocialProviderResolver>,
         sso_resolver: Option<&'a dyn SsoServerResolver>,
         metrics: Option<&'a crate::account::metrics::AccountMetrics>,
+        depth: usize,
     ) -> Pin<Box<dyn Future<Output = BulwarkResult<StepOutcome>> + Send + 'a>> {
         Box::pin(async move {
             match step {
@@ -554,6 +569,7 @@ impl AuthExecutor {
                             social_resolver,
                             sso_resolver,
                             metrics,
+                            depth,
                         )
                         .await
                     } else if let Some(else_step) = else_step {
@@ -564,6 +580,7 @@ impl AuthExecutor {
                             social_resolver,
                             sso_resolver,
                             metrics,
+                            depth,
                         )
                         .await
                     } else {
@@ -579,6 +596,7 @@ impl AuthExecutor {
                         social_resolver,
                         sso_resolver,
                         metrics,
+                        depth,
                     )
                     .await
                 },
@@ -765,7 +783,16 @@ impl AuthExecutor {
         social_resolver: Option<&dyn SocialProviderResolver>,
         sso_resolver: Option<&dyn SsoServerResolver>,
         metrics: Option<&crate::account::metrics::AccountMetrics>,
+        depth: usize,
     ) -> BulwarkResult<StepOutcome> {
+        // 递归深度检查：防止循环引用导致栈溢出
+        if depth >= MAX_FLOW_DEPTH {
+            return Ok(StepOutcome::Failed(format!(
+                "AuthenticationFlow 嵌套深度超过 {} 层上限，疑似循环引用",
+                MAX_FLOW_DEPTH
+            )));
+        }
+
         let sub_flow = match self.registry.get(flow_name) {
             Some(f) => f,
             None => {
@@ -773,7 +800,7 @@ impl AuthExecutor {
             },
         };
 
-        // TODO: v0.6.5 添加循环引用检测（当前递归无深度限制）
+        // 递归深度检查（v0.6.5 实现：depth >= MAX_FLOW_DEPTH 时返回 Failed）
         let result = self
             .execute_inner(
                 sub_flow,
@@ -782,6 +809,7 @@ impl AuthExecutor {
                 social_resolver,
                 sso_resolver,
                 metrics,
+                depth + 1,
             )
             .await?;
 

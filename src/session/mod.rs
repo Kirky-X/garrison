@@ -326,7 +326,12 @@ impl BulwarkSession {
                     self.trigger_expiry_listeners(&ts.login_id, token).await;
                     // 从 DAO 删除过期 session（清理）
                     if let Err(e) = self.dao.delete(&token_key(token)).await {
-                        tracing::warn!("删除过期 Token-Session 失败 (token={}): {}", token, e);
+                        let token_preview = if token.len() > 8 { &token[..8] } else { token };
+                        tracing::warn!(
+                            "删除过期 Token-Session 失败 (token={}...): {}",
+                            token_preview,
+                            e
+                        );
                     }
                     return Ok(None);
                 }

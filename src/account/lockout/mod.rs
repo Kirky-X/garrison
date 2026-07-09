@@ -94,6 +94,9 @@ pub struct LockoutState {
     pub permanent_locked: bool,
     /// 锁定到期 Unix 时间戳（0 表示未锁定）。
     pub locked_until: i64,
+    /// 首次失败时间戳（用于 failure_window_seconds 窗口判断，None 表示无失败记录）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub first_failure_at: Option<i64>,
 }
 
 // ============================================================================
@@ -190,9 +193,30 @@ impl UserLockoutStrategy {
 
     /// 记录登录失败，更新锁定状态（依据 spec R-user-lockout-006）。
     ///
-    /// 逻辑：failure_count += 1 → 达阈值触发锁定 → 临时/永久锁定 → 持久化。
+    /// 逻辑：
+    /// 1. 检查 failure_window_seconds 窗口是否过期 → 过期则重置 failure_count
+    /// 2. failure_count += 1 → 达阈值触发锁定 → 临时/永久锁定 → 持久化
     pub async fn record_failure(&self, user_id: &str) -> BulwarkResult<()> {
         let mut state = self.get_state(user_id).await?;
+        let now = now_timestamp();
+
+        // 检查 failure_window_seconds 窗口：若首次失败距今超过窗口，重置计数
+        match state.first_failure_at {
+            Some(first_at) => {
+                let window = self.config.failure_window_seconds as i64;
+                if now - first_at > window {
+                    // 窗口过期，重置失败计数
+                    state.failure_count = 0;
+                    state.first_failure_at = Some(now);
+                }
+                // 窗口内：继续累积计数，不更新 first_failure_at
+            },
+            None => {
+                // 首次失败：记录时间戳
+                state.first_failure_at = Some(now);
+            },
+        }
+
         state.failure_count += 1;
 
         if state.failure_count >= self.config.max_failure_factor {
@@ -225,10 +249,11 @@ impl UserLockoutStrategy {
 
     /// 记录登录成功，重置失败计数（依据 spec R-user-lockout-007）。
     ///
-    /// 仅重置 failure_count，不修改 temporary_lockout_count/permanent_locked/locked_until。
+    /// 仅重置 failure_count 和 first_failure_at，不修改 temporary_lockout_count/permanent_locked/locked_until。
     pub async fn record_success(&self, user_id: &str) -> BulwarkResult<()> {
         let mut state = self.get_state(user_id).await?;
         state.failure_count = 0;
+        state.first_failure_at = None;
         self.set_state(user_id, &state).await
     }
 
@@ -351,6 +376,7 @@ mod tests {
             temporary_lockout_count: 1,
             permanent_locked: false,
             locked_until: 1700000000,
+            first_failure_at: Some(1699999900),
         };
         let json = serde_json::to_string(&state).expect("序列化 LockoutState 失败");
         let deserialized: LockoutState =
@@ -630,6 +656,65 @@ mod tests {
         );
         assert!(!state.permanent_locked, "permanent_locked 不应变");
         assert_eq!(state.locked_until, 0, "locked_until 不应变");
+    }
+
+    /// 验证 failure_window_seconds 窗口过期后 failure_count 重置。
+    /// 场景：失败 3 次后窗口过期，再失败应从 1 开始计数而非 4。
+    #[tokio::test]
+    async fn failure_window_resets_count_after_expiry() {
+        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let config = UserLockoutConfig {
+            max_failure_factor: 5,
+            permanent_lockout: false,
+            max_temporary_lockouts: 99,
+            wait_strategy: WaitStrategy::Linear { base_seconds: 60 },
+            failure_window_seconds: 300,
+        };
+        let strategy = UserLockoutStrategy::new(config, dao.clone());
+
+        // 失败 3 次（窗口内）
+        for _ in 0..3 {
+            strategy.record_failure("user1").await.unwrap();
+        }
+        let state = strategy.get_state("user1").await.unwrap();
+        assert_eq!(state.failure_count, 3);
+        assert!(state.first_failure_at.is_some());
+
+        // 模拟窗口过期：将 first_failure_at 设为 301 秒前
+        let mut state = strategy.get_state("user1").await.unwrap();
+        state.first_failure_at = Some(now_timestamp() - 301);
+        strategy.set_state("user1", &state).await.unwrap();
+
+        // 再次失败：窗口已过期，failure_count 应重置为 1
+        strategy.record_failure("user1").await.unwrap();
+        let state = strategy.get_state("user1").await.unwrap();
+        assert_eq!(
+            state.failure_count, 1,
+            "窗口过期后 failure_count 应重置为 1，实际: {}",
+            state.failure_count
+        );
+    }
+
+    /// 验证 failure_window_seconds 窗口内失败计数持续累积。
+    #[tokio::test]
+    async fn failure_window_accumulates_within_window() {
+        let (strategy, _) = make_strategy();
+        // 默认 failure_window_seconds=300，连续失败应累积
+        for i in 1..=4 {
+            strategy.record_failure("user1").await.unwrap();
+            let state = strategy.get_state("user1").await.unwrap();
+            assert_eq!(
+                state.failure_count, i,
+                "第 {} 次失败后 failure_count 应为 {}",
+                i, i
+            );
+        }
+        // 确认 first_failure_at 在首次失败时被设置，后续不变
+        let state = strategy.get_state("user1").await.unwrap();
+        assert!(
+            state.first_failure_at.is_some(),
+            "first_failure_at 应已设置"
+        );
     }
 
     /// 验证 locked_until 到期后 check 通过。

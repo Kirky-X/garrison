@@ -292,6 +292,14 @@ impl SocialLoginProvider for WechatProvider {
     }
 }
 
+#[cfg(feature = "protocol-zeroize")]
+impl Drop for WechatProvider {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        self.client_secret.zeroize();
+    }
+}
+
 /// 简单的 URL 编码工具（与 `protocol::oauth2::urlencoding` 同实现，避免跨模块耦合）。
 ///
 /// 对查询参数值进行百分号编码，保留字母、数字、`-`、`_`、`.`、`~`。
@@ -489,6 +497,14 @@ impl SocialLoginProvider for WechatMiniAppProvider {
             union_id,
             raw,
         })
+    }
+}
+
+#[cfg(feature = "protocol-zeroize")]
+impl Drop for WechatMiniAppProvider {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        self.client_secret.zeroize();
     }
 }
 

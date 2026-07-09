@@ -157,7 +157,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let channel = Arc::new(CountingChannel {
         count: AtomicUsize::new(0),
     });
-    let server = DefaultSsoServer::new(dao.clone())
+    let server = DefaultSsoServer::new(dao.clone(), "test-sso-secret-key")
         .with_ticket_ttl(120)
         .with_converter(Arc::new(OffsetConverter))
         .with_channel(channel.clone());
@@ -203,9 +203,9 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     //    （参考 src/protocol/sso/server.rs 的 server_and_client_communicate_via_shared_dao 测试）
     // ----------------------------------------------------------------
     println!("\n[共享 DAO] SsoServer 签发的 ticket 由 SsoClient 校验:");
-    let identity_server = DefaultSsoServer::new(dao.clone());
+    let identity_server = DefaultSsoServer::new(dao.clone(), "test-sso-secret-key");
     let server_ticket = identity_server.issue_ticket(login_id, client_id).await?;
-    let sso_client = SsoClient::new(dao.clone());
+    let sso_client = SsoClient::new(dao.clone(), "test-sso-secret-key");
     let client_validated = sso_client
         .validate_ticket(&server_ticket, client_id)
         .await?;

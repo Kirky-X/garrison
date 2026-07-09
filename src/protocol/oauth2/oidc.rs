@@ -246,6 +246,14 @@ impl OidcHandler {
     }
 }
 
+#[cfg(feature = "protocol-zeroize")]
+impl Drop for OidcHandler {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        self.secret.zeroize();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

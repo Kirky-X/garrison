@@ -30,7 +30,7 @@ warp = { version = "0.4", default-features = false, features = ["test"], optiona
 # 直接被 grpc_interceptor 使用（tonic Interceptor + MetadataMap）
 tonic = { version = "0.13", default-features = false, features = ["transport"], optional = true }
 # 直接被 cache_redis 使用（RedisBackend L2 后端配置）
-oxcache = { path = "/home/kirky/projects/oxcache", optional = true }
+oxcache = { version = "0.3.3", optional = true }
 # 直接被 v0_5_0_demo 使用（DbPool 类型签名，与 bulwark 同版本 0.3）
 dbnexus = { version = "0.3", default-features = false, optional = true }
 # 直接被 oauth2_flow / scope_handler 使用（mock OAuth2 token / refresh 端点）

@@ -106,8 +106,8 @@ impl BulwarkDao for MockDao {
 fn make_two_clients() -> (SsoClient, SsoClient, Arc<MockDao>) {
     let dao = Arc::new(MockDao::new());
     let dao_dyn: Arc<dyn BulwarkDao> = dao.clone();
-    let client_a = SsoClient::new(dao_dyn.clone());
-    let client_b = SsoClient::new(dao_dyn);
+    let client_a = SsoClient::new(dao_dyn.clone(), "test-sso-secret-key");
+    let client_b = SsoClient::new(dao_dyn, "test-sso-secret-key");
     (client_a, client_b, dao)
 }
 
@@ -125,11 +125,16 @@ async fn cross_subsystem_ticket_issue_and_validate() {
         .issue_ticket("1001", 2001)
         .await
         .expect("签发应成功");
-    assert_eq!(ticket.len(), 64, "ticket 应为 64 字符");
+    // M5 修复：ticket 格式为 {64_hex_random}.{hmac_b64}
+    let (random_part, sig) = ticket
+        .split_once('.')
+        .expect("ticket 应包含 '.' 分隔符（M5 签名格式）");
+    assert_eq!(random_part.len(), 64, "ticket 随机部分应为 64 字符");
     assert!(
-        ticket.chars().all(|c| c.is_ascii_hexdigit()),
-        "ticket 应为 hex 字符"
+        random_part.chars().all(|c| c.is_ascii_hexdigit()),
+        "ticket 随机部分应为 hex 字符"
     );
+    assert!(!sig.is_empty(), "ticket 签名部分不应为空");
 
     // 子系统 B 校验拿到 login_id
     let login_id = client_b
@@ -211,7 +216,7 @@ async fn destroy_nonexistent_ticket_is_idempotent() {
 #[tokio::test]
 async fn ticket_has_default_ttl_60_seconds() {
     let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
-    let client = SsoClient::new(dao);
+    let client = SsoClient::new(dao, "test-sso-secret-key");
     let ticket = client.issue_ticket("1001", 2001).await.unwrap();
     // 直接通过 DAO 验证 ticket 存在
     let key = format!("bulwark:sso:ticket:{}", ticket);
@@ -228,8 +233,8 @@ async fn ticket_has_default_ttl_60_seconds() {
 #[tokio::test]
 async fn with_ticket_ttl_custom_ttl_across_subsystems() {
     let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
-    let client_a = SsoClient::new(dao.clone()).with_ticket_ttl(120);
-    let client_b = SsoClient::new(dao).with_ticket_ttl(120);
+    let client_a = SsoClient::new(dao.clone(), "test-sso-secret-key").with_ticket_ttl(120);
+    let client_b = SsoClient::new(dao, "test-sso-secret-key").with_ticket_ttl(120);
 
     let ticket = client_a.issue_ticket("1001", 2001).await.unwrap();
     let login_id = client_b.validate_ticket(&ticket, 2001).await.unwrap();

@@ -243,6 +243,14 @@ impl OidcProvider for DefaultOidcProvider {
     }
 }
 
+#[cfg(feature = "protocol-zeroize")]
+impl Drop for DefaultOidcProvider {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        self.client_secret.zeroize();
+    }
+}
+
 // ============================================================================
 // 辅助类型和函数（Refactor: extract helper）
 // ============================================================================

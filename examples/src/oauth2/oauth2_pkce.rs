@@ -76,7 +76,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("    // 业务方校验 state 一致后，用 code + code_verifier 换取 token：");
     println!("    let token_response = client");
     println!(
-        "        .exchange_code_with_pkce(\"AUTH_CODE\", \"{}\", \"{}\")",
+        "        .exchange_code_with_pkce(\"AUTH_CODE\", \"{}\", \"ACTUAL_STATE\", \"{}\")",
         state, code_verifier
     );
     println!("        .await?;");

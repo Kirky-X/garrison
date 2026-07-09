@@ -426,21 +426,36 @@ impl OAuth2Client {
     /// 在 [`exchange_code`](Self::exchange_code) 基础上，POST 请求体追加 `code_verifier` 字段。
     /// 授权服务器重新计算 `SHA256(code_verifier)` 并与授权请求中的 `code_challenge` 比对，验证客户端身份。
     ///
+    /// # CSRF 防护（state 校验）
+    ///
+    /// 调用方传入 `expected_state`（构造授权 URL 时生成的 state）和 `actual_state`（回调 URL 中
+    /// 授权服务器返回的 state），方法内部自动比对。若不匹配则返回 `BulwarkError::OAuth2`，
+    /// 阻断 CSRF 攻击。
+    ///
     /// # 参数
     /// - `code`: 授权码。
-    /// - `_state`: CSRF state（保留参数，与旧方法签名对齐）。
+    /// - `expected_state`: 预期 state（构造授权 URL 时生成的 state）。
+    /// - `actual_state`: 实际 state（回调 URL 中授权服务器返回的 state）。
     /// - `code_verifier`: PKCE code_verifier（需与构造授权 URL 时传入的 verifier 一致）。
     ///
     /// # 错误
+    /// - `BulwarkError::OAuth2`: `expected_state` 与 `actual_state` 不匹配（CSRF 攻击防护）。
     /// - `BulwarkError::InvalidParam`: `code_verifier` 不合法（客户端预校验，透传自 `generate_pkce_challenge`）。
     /// - `BulwarkError::OAuth2`: token 端点返回非 2xx 或 JSON 解析失败。
     /// - `BulwarkError::Network`: reqwest 请求失败。
     pub async fn exchange_code_with_pkce(
         &self,
         code: &str,
-        _state: &str,
+        expected_state: &str,
+        actual_state: &str,
         code_verifier: &str,
     ) -> BulwarkResult<TokenResponse> {
+        // CSRF 防护：校验 state 参数
+        if expected_state != actual_state {
+            return Err(BulwarkError::OAuth2(
+                "state 参数不匹配，可能遭受 CSRF 攻击".to_string(),
+            ));
+        }
         // 客户端预校验 code_verifier 合法性（即使服务器不校验，客户端也不应发送非法值）
         Self::generate_pkce_challenge(code_verifier)?;
         let params = [
@@ -635,6 +650,14 @@ impl OAuth2Client {
         } else {
             format!("{}/introspect", self.token_url)
         }
+    }
+}
+
+#[cfg(feature = "protocol-zeroize")]
+impl Drop for OAuth2Client {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        self.client_secret.zeroize();
     }
 }
 
@@ -1259,7 +1282,7 @@ mod tests {
         let client = make_client(&server).await;
         let code_verifier = "a".repeat(43);
         let token = client
-            .exchange_code_with_pkce("auth-code", "state", &code_verifier)
+            .exchange_code_with_pkce("auth-code", "state", "state", &code_verifier)
             .await
             .expect("exchange_code_with_pkce 应成功");
         assert_eq!(token.access_token, "pkce-token");
@@ -1273,6 +1296,41 @@ mod tests {
             "请求体应包含 code_verifier 字段，实际: {}",
             body
         );
+    }
+
+    /// exchange_code_with_pkce 在 state 不匹配时返回 OAuth2 错误（CSRF 防护）。
+    #[tokio::test]
+    async fn exchange_code_with_pkce_state_mismatch_returns_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "access_token": "should-not-reach",
+                "token_type": "Bearer"
+            })))
+            .mount(&server)
+            .await;
+
+        let client = make_client(&server).await;
+        let code_verifier = "a".repeat(43);
+        let result = client
+            .exchange_code_with_pkce(
+                "auth-code",
+                "expected-state",
+                "actual-state",
+                &code_verifier,
+            )
+            .await;
+        assert!(result.is_err(), "state 不匹配应返回错误");
+        let err = result.err().unwrap();
+        assert!(
+            matches!(err, BulwarkError::OAuth2(_)),
+            "应返回 OAuth2 错误，实际: {:?}",
+            err
+        );
+        // 确保未发送 HTTP 请求（CSRF 校验在 HTTP 调用前拦截）
+        let received = server.received_requests().await.expect("应可获取请求");
+        assert_eq!(received.len(), 0, "state 不匹配时不应发送 HTTP 请求");
     }
 
     /// 旧 get_auth_url 标记 deprecated 后仍可工作（向后兼容，spec R-oauth-2-1-003）。
@@ -1720,7 +1778,7 @@ mod tests {
         );
 
         let result = client
-            .exchange_code_with_pkce("auth-code", "state", code_verifier)
+            .exchange_code_with_pkce("auth-code", "state", "state", code_verifier)
             .await;
 
         assert!(result.is_err(), "应返回错误");

@@ -13,6 +13,82 @@ use crate::core::token::Token;
 use crate::error::{BulwarkError, BulwarkResult};
 use crate::session::{BulwarkSession, TokenSession};
 
+/// 身份切换权限校验 trait（L4 修复，依据安全审计 L4）。
+///
+/// `switch_to` 执行前调用 [`SwitchToGuard::check`] 校验是否允许切换。
+/// 默认实现 [`DenyAllSwitchToGuard`] 拒绝所有切换（fail-closed 安全默认），
+/// 调用方通过 [`AuthLogicDefault::with_switch_to_guard`] 注入自定义规则。
+///
+/// # 设计理由
+///
+/// 审计 L4 指出 `switch_to` 无权限校验，普通用户可切换到管理员身份。
+/// 采用 guard trait 模式（而非硬编码权限规则）让调用方灵活定义授权策略，
+/// 如基于角色、基于 PermissionChecker、或基于配置白名单。
+///
+/// # 示例
+///
+/// ```ignore
+/// use std::sync::Arc;
+/// use bulwark::core::auth::{AuthLogicDefault, SwitchToGuard, AllowAllSwitchToGuard};
+/// use bulwark::error::BulwarkResult;
+///
+/// // 仅允许 admin 切换
+/// struct AdminOnlyGuard;
+/// #[async_trait::async_trait]
+/// impl SwitchToGuard for AdminOnlyGuard {
+///     async fn check(&self, original: &str, target: &str) -> BulwarkResult<()> {
+///         if original.starts_with("admin:") {
+///             Ok(())
+///         } else {
+///             Err(bulwark::error::BulwarkError::NotPermission(
+///                 format!("{} 无权切换到 {}", original, target)
+///             ))
+///         }
+///     }
+/// }
+///
+/// let auth = AuthLogicDefault::new(session, token_handler, 3600)
+///     .with_switch_to_guard(Arc::new(AdminOnlyGuard));
+/// ```
+#[async_trait]
+pub trait SwitchToGuard: Send + Sync {
+    /// 校验是否允许从 `original_login_id` 切换到 `target_login_id`。
+    ///
+    /// # 返回
+    /// - `Ok(())`: 允许切换。
+    /// - `Err(BulwarkError::NotPermission)`: 权限不足，拒绝切换。
+    async fn check(&self, original_login_id: &str, target_login_id: &str) -> BulwarkResult<()>;
+}
+
+/// 拒绝所有切换的默认 guard（L4 修复，fail-closed 安全默认）。
+///
+/// 未通过 [`AuthLogicDefault::with_switch_to_guard`] 注入自定义 guard 时，
+/// 所有 `switch_to` 调用都被拒绝。强制调用方显式配置权限规则。
+pub struct DenyAllSwitchToGuard;
+
+#[async_trait]
+impl SwitchToGuard for DenyAllSwitchToGuard {
+    async fn check(&self, _original: &str, _target: &str) -> BulwarkResult<()> {
+        Err(BulwarkError::NotPermission(
+            "switch_to 被拒绝：未配置 SwitchToGuard，默认 deny-all".to_string(),
+        ))
+    }
+}
+
+/// 允许所有切换的 guard（仅用于测试，生产环境禁止使用）。
+///
+/// L4 修复后现有测试通过此 guard 保持向后兼容行为。
+#[cfg(test)]
+pub struct AllowAllSwitchToGuard;
+
+#[cfg(test)]
+#[async_trait]
+impl SwitchToGuard for AllowAllSwitchToGuard {
+    async fn check(&self, _original: &str, _target: &str) -> BulwarkResult<()> {
+        Ok(())
+    }
+}
+
 /// 认证逻辑 trait，定义以 token 为入参的认证抽象（依据 spec core-auth）。
 ///
 /// 所有方法 MUST 使用 `async_trait` 标注，trait 绑定 `Send + Sync`。
@@ -113,12 +189,20 @@ pub struct AuthLogicDefault {
     remember_me_enabled: bool,
     /// remember_me 扩展超时秒数（默认 7776000 = 90 天）。
     remember_me_timeout: i64,
+    /// 身份切换权限校验 guard（L4 修复，默认 DenyAllSwitchToGuard fail-closed）。
+    switch_to_guard: Arc<dyn SwitchToGuard>,
 }
 
 impl AuthLogicDefault {
     /// 创建新的 `AuthLogicDefault` 实例。
     ///
     /// remember_me 默认禁用。使用 `with_remember_me` 启用扩展超时。
+    ///
+    /// # 安全默认（L4 修复）
+    ///
+    /// `switch_to_guard` 默认为 `DenyAllSwitchToGuard`（拒绝所有切换）。
+    /// 调用方必须通过 [`with_switch_to_guard`](Self::with_switch_to_guard)
+    /// 注入自定义 guard 才能启用 `switch_to` 功能。
     ///
     /// # 参数
     /// - `session`: 会话管理器。
@@ -131,6 +215,7 @@ impl AuthLogicDefault {
             timeout,
             remember_me_enabled: false,
             remember_me_timeout: 7_776_000,
+            switch_to_guard: Arc::new(DenyAllSwitchToGuard),
         }
     }
 
@@ -145,6 +230,41 @@ impl AuthLogicDefault {
     pub fn with_remember_me(mut self, enabled: bool, timeout: i64) -> Self {
         self.remember_me_enabled = enabled;
         self.remember_me_timeout = timeout;
+        self
+    }
+
+    /// 注入身份切换权限校验 guard（L4 修复，依据安全审计 L4）。
+    ///
+    /// 默认为 `DenyAllSwitchToGuard`（拒绝所有切换）。调用方必须注入自定义 guard
+    /// 才能启用 `switch_to` 功能。
+    ///
+    /// # 参数
+    /// - `guard`: 实现 [`SwitchToGuard`] trait 的权限校验实例。
+    ///
+    /// # 示例
+    ///
+    /// ```ignore
+    /// use std::sync::Arc;
+    /// use bulwark::core::auth::{AuthLogicDefault, SwitchToGuard};
+    /// use bulwark::error::{BulwarkError, BulwarkResult};
+    ///
+    /// struct AdminOnlyGuard;
+    /// #[async_trait::async_trait]
+    /// impl SwitchToGuard for AdminOnlyGuard {
+    ///     async fn check(&self, original: &str, target: &str) -> BulwarkResult<()> {
+    ///         if original.starts_with("admin:") {
+    ///             Ok(())
+    ///         } else {
+    ///             Err(BulwarkError::NotPermission(format!("{} 无权切换", original)))
+    ///         }
+    ///     }
+    /// }
+    ///
+    /// let auth = AuthLogicDefault::new(session, token_handler, 3600)
+    ///     .with_switch_to_guard(Arc::new(AdminOnlyGuard));
+    /// ```
+    pub fn with_switch_to_guard(mut self, guard: Arc<dyn SwitchToGuard>) -> Self {
+        self.switch_to_guard = guard;
         self
     }
 }
@@ -230,8 +350,14 @@ impl AuthLogic for AuthLogicDefault {
             .await?
             .ok_or_else(|| BulwarkError::NotLogin("token 无效或已过期".to_string()))?;
 
-        // 存储原始 login_id 到 attrs["switched_from"]（依据 spec R-001）
+        // L4 修复：执行权限校验（guard 默认 DenyAllSwitchToGuard，fail-closed）
+        // 在修改 session 前校验，确保无权限时不产生任何副作用
         let original_login_id = ts.login_id.clone();
+        self.switch_to_guard
+            .check(&original_login_id, target_login_id)
+            .await?;
+
+        // 存储原始 login_id 到 attrs["switched_from"]（依据 spec R-001）
         ts.attrs
             .insert("switched_from".to_string(), original_login_id.clone());
 
@@ -305,7 +431,7 @@ impl AuthLogic for AuthLogicDefault {
             .await?;
 
         // 7. 删除旧 token（依据 spec R-004：新 session 创建成功后旧 session 必须删除）
-        //    若删除失败，记录 tracing::error! 但不回滚新 session
+        //    若删除失败，回滚新 token（防止双 token 共存），返回错误
         if let Err(e) = self.session.logout(token).await {
             let old_prefix = if token.len() >= 8 { &token[..8] } else { token };
             let new_prefix = if new_token.len() >= 8 {
@@ -313,12 +439,20 @@ impl AuthLogic for AuthLogicDefault {
             } else {
                 &new_token
             };
-            tracing::error!(
-                error = %e,
-                old_token_prefix = %old_prefix,
-                new_token_prefix = %new_prefix,
-                "renew_to_equivalent 删除旧 token session 失败，新 token 已创建（旧 token 可能仍有效直到自然过期）"
-            );
+            // 回滚：删除新创建的 token session，防止新旧 token 同时有效
+            if let Err(rb_err) = self.session.logout(&new_token).await {
+                tracing::error!(
+                    error = %e,
+                    rollback_error = %rb_err,
+                    old_token_prefix = %old_prefix,
+                    new_token_prefix = %new_prefix,
+                    "renew_to_equivalent 删除旧 token 失败且回滚新 token 也失败，可能存在双 token 共存"
+                );
+            }
+            return Err(BulwarkError::Internal(format!(
+                "token 置换失败：删除旧 token session 出错，已回滚新 token（old_prefix={}...）",
+                old_prefix
+            )));
         }
 
         Ok(new_token)
@@ -431,11 +565,19 @@ mod tests {
     }
 
     /// 辅助函数：创建 AuthLogicDefault 实例（使用 UuidTokenStyle + MockDao）。
+    /// 默认使用 DenyAllSwitchToGuard（L4 安全默认）。
     fn make_auth_logic(timeout: u64, active_timeout: u64) -> AuthLogicDefault {
         let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
         let session = Arc::new(BulwarkSession::new(dao, timeout, active_timeout));
         let token_handler: Arc<dyn Token> = Arc::new(UuidTokenStyle);
         AuthLogicDefault::new(session, token_handler, timeout as i64)
+    }
+
+    /// 辅助函数：创建 AuthLogicDefault 实例，注入 AllowAllSwitchToGuard（L4 测试用）。
+    /// 生产环境禁止使用此函数，应注入自定义权限 guard。
+    fn make_auth_logic_allow_switch(timeout: u64, active_timeout: u64) -> AuthLogicDefault {
+        make_auth_logic(timeout, active_timeout)
+            .with_switch_to_guard(Arc::new(AllowAllSwitchToGuard))
     }
 
     // ========================================================================
@@ -585,10 +727,10 @@ mod tests {
     // switch_to 测试（依据 spec core-auth-extensions R-001/R-002）
     // ========================================================================
 
-    /// R-001: switch_to 更新 login_id 并存储 switched_from。
+    /// R-001: switch_to 更新 login_id 并存储 switched_from（使用 AllowAll guard）。
     #[tokio::test]
     async fn switch_to_updates_login_id_and_stores_switched_from() {
-        let auth = make_auth_logic(3600, 86400);
+        let auth = make_auth_logic_allow_switch(3600, 86400);
         let token = auth.login("1001", None).await.unwrap();
         auth.switch_to(&token, "2002").await.unwrap();
         // get_login_id 应返回新的 login_id
@@ -604,7 +746,7 @@ mod tests {
     /// R-001: switch_to 后 token 仍然有效（is_login 返回 true）。
     #[tokio::test]
     async fn switch_to_preserves_token_validity() {
-        let auth = make_auth_logic(3600, 86400);
+        let auth = make_auth_logic_allow_switch(3600, 86400);
         let token = auth.login("1001", None).await.unwrap();
         auth.switch_to(&token, "2002").await.unwrap();
         assert!(auth.is_login(&token).await.unwrap());
@@ -613,7 +755,7 @@ mod tests {
     /// R-001: switch_to 无效 token 返回 NotLogin 错误。
     #[tokio::test]
     async fn switch_to_invalid_token_returns_not_login() {
-        let auth = make_auth_logic(3600, 86400);
+        let auth = make_auth_logic_allow_switch(3600, 86400);
         let result = auth.switch_to("invalid-token", "2002").await;
         assert!(
             matches!(result, Err(BulwarkError::NotLogin(_))),
@@ -625,7 +767,7 @@ mod tests {
     /// R-001: switch_to 空 target_login_id 返回 InvalidParam 错误。
     #[tokio::test]
     async fn switch_to_empty_target_returns_invalid_param() {
-        let auth = make_auth_logic(3600, 86400);
+        let auth = make_auth_logic_allow_switch(3600, 86400);
         let token = auth.login("1001", None).await.unwrap();
         let result = auth.switch_to(&token, "").await;
         assert!(
@@ -638,7 +780,7 @@ mod tests {
     /// R-001: switch_to 后 verify_token 返回新的 login_id。
     #[tokio::test]
     async fn switch_to_verify_token_returns_new_login_id() {
-        let auth = make_auth_logic(3600, 86400);
+        let auth = make_auth_logic_allow_switch(3600, 86400);
         let token = auth.login("1001", None).await.unwrap();
         auth.switch_to(&token, "9999").await.unwrap();
         assert_eq!(auth.verify_token(&token).await.unwrap(), "9999");
@@ -647,7 +789,7 @@ mod tests {
     /// R-001: switch_to 多次切换，switched_from 记录最近一次的原始 login_id。
     #[tokio::test]
     async fn switch_to_multiple_times_updates_switched_from() {
-        let auth = make_auth_logic(3600, 86400);
+        let auth = make_auth_logic_allow_switch(3600, 86400);
         let token = auth.login("1001", None).await.unwrap();
         // 第一次切换：1001 -> 2002
         auth.switch_to(&token, "2002").await.unwrap();
@@ -671,7 +813,7 @@ mod tests {
     /// R-001: switch_to 保留 TokenSession 的其他 attrs（不丢失已有属性）。
     #[tokio::test]
     async fn switch_to_preserves_existing_attrs() {
-        let auth = make_auth_logic(3600, 86400);
+        let auth = make_auth_logic_allow_switch(3600, 86400);
         let token = auth.login("1001", None).await.unwrap();
         // 设置一个自定义 attr
         auth.session.set(&token, "device", "web").await.unwrap();
@@ -713,6 +855,68 @@ mod tests {
             matches!(result, Err(BulwarkError::NotImplemented(_))),
             "默认实现应返回 NotImplemented，实际: {:?}",
             result
+        );
+    }
+
+    // ========================================================================
+    // L4 新增：switch_to 权限校验测试（依据安全审计 L4）
+    // ========================================================================
+
+    /// L4: 默认 DenyAllSwitchToGuard 应拒绝所有 switch_to 调用（fail-closed）。
+    #[tokio::test]
+    async fn switch_to_default_guard_denies_all_switches() {
+        let auth = make_auth_logic(3600, 86400); // 默认 DenyAllSwitchToGuard
+        let token = auth.login("1001", None).await.unwrap();
+        let result = auth.switch_to(&token, "2002").await;
+        assert!(
+            matches!(result, Err(BulwarkError::NotPermission(ref msg)) if msg.contains("deny-all")),
+            "默认 guard 应拒绝切换并返回 NotPermission，实际: {:?}",
+            result
+        );
+        // 验证 session 未被修改（login_id 仍为原值）
+        assert_eq!(
+            auth.get_login_id(&token).await.unwrap(),
+            Some("1001".to_string())
+        );
+    }
+
+    /// L4: 自定义 guard 拒绝时返回 NotPermission 且不修改 session。
+    #[tokio::test]
+    async fn switch_to_custom_guard_denies_preserves_session() {
+        struct DenyTargetGuard;
+        #[async_trait]
+        impl SwitchToGuard for DenyTargetGuard {
+            async fn check(&self, _original: &str, target: &str) -> BulwarkResult<()> {
+                if target == "admin" {
+                    return Err(BulwarkError::NotPermission(format!(
+                        "禁止切换到管理员身份: {}",
+                        target
+                    )));
+                }
+                Ok(())
+            }
+        }
+        let auth = make_auth_logic(3600, 86400).with_switch_to_guard(Arc::new(DenyTargetGuard));
+        let token = auth.login("1001", None).await.unwrap();
+
+        // 切换到 admin 应被拒绝
+        let result = auth.switch_to(&token, "admin").await;
+        assert!(
+            matches!(result, Err(BulwarkError::NotPermission(ref msg)) if msg.contains("禁止切换")),
+            "切换到 admin 应被拒绝，实际: {:?}",
+            result
+        );
+        // session 未被修改
+        assert_eq!(
+            auth.get_login_id(&token).await.unwrap(),
+            Some("1001".to_string())
+        );
+
+        // 切换到 普通用户 应成功
+        auth.switch_to(&token, "user-2002").await.unwrap();
+        assert_eq!(
+            auth.get_login_id(&token).await.unwrap(),
+            Some("user-2002".to_string())
         );
     }
 

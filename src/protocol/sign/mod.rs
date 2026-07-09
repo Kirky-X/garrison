@@ -175,6 +175,14 @@ impl SignHandler {
     }
 }
 
+#[cfg(feature = "protocol-zeroize")]
+impl Drop for SignHandler {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        self.app_secret.zeroize();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

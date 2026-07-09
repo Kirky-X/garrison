@@ -28,12 +28,45 @@ pub mod channel;
 
 use crate::dao::BulwarkDao;
 use crate::error::{BulwarkError, BulwarkResult};
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use base64::Engine;
+use hmac::{Hmac, KeyInit, Mac};
 use serde::{Deserialize, Serialize};
+use sha2::Sha256;
 use std::sync::Arc;
 use uuid::Uuid;
 
+/// HMAC-SHA256 类型别名（SSO ticket 签名）。
+type HmacSha256 = Hmac<Sha256>;
+
 /// SSO ticket 默认 TTL（秒）。
 const DEFAULT_TICKET_TTL: u64 = 60;
+
+/// 计算 ticket 随机部分的 HMAC-SHA256 签名（M5 修复，供 SsoClient / DefaultSsoServer 共用）。
+///
+/// 签名输入为 `random_part`，输出为 base64 编码的 HMAC-SHA256。
+fn sign_ticket(secret: &str, random_part: &str) -> BulwarkResult<String> {
+    let mut mac = HmacSha256::new_from_slice(secret.as_bytes())
+        .map_err(|e| BulwarkError::Internal(format!("HMAC 密钥初始化失败: {}", e)))?;
+    mac.update(random_part.as_bytes());
+    Ok(BASE64_STANDARD.encode(mac.finalize().into_bytes()))
+}
+
+/// 验证 ticket 的 HMAC 签名（M5 修复，供 SsoClient / DefaultSsoServer 共用）。
+///
+/// 返回 `Ok(random_part)` 验证通过，`Err` 表示签名无效或格式错误。
+fn verify_ticket_signature(secret: &str, ticket: &str) -> BulwarkResult<String> {
+    let (random_part, sig_b64) = ticket.split_once('.').ok_or_else(|| {
+        BulwarkError::InvalidToken("SSO ticket 格式错误：缺少签名部分".to_string())
+    })?;
+    let expected_sig = sign_ticket(secret, random_part)?;
+    if expected_sig != sig_b64 {
+        return Err(BulwarkError::InvalidToken(
+            "SSO ticket 签名验证失败：可能被篡改或伪造".to_string(),
+        ));
+    }
+    Ok(random_part.to_string())
+}
 
 /// SSO ticket 存储的 JSON 数据（依据 spec protocol-sso）。
 ///
@@ -50,22 +83,40 @@ pub(crate) struct SsoTicketData {
 ///
 /// 持有 `Arc<dyn BulwarkDao>` 用于票据存储，TTL 默认 60 秒。
 /// 实现 `Send + Sync`，可在多线程环境共享。
+///
+/// # Ticket 签名（v0.6.1 新增，依据安全审计 M5）
+///
+/// 所有 ticket 使用 HMAC-SHA256 签名，格式为 `{64_hex_random}.{hmac_b64}`。
+/// 即使 DAO 层被攻破或存在 key 碰撞，攻击者也无法伪造有效签名。
+/// secret 由 `new(dao, secret)` 必传，禁止空 secret。
 pub struct SsoClient {
     /// DAO 抽象层，用于票据存储。
     dao: Arc<dyn BulwarkDao>,
     /// 票据 TTL（秒）。
     ticket_ttl_seconds: u64,
+    /// HMAC 签名密钥（M5 修复：所有 ticket 必须签名）。
+    secret: String,
 }
 
 impl SsoClient {
-    /// 创建新的 SSO 客户端（依据 spec protocol-sso）。
+    /// 创建新的 SSO 客户端（依据 spec protocol-sso + 安全审计 M5）。
     ///
     /// # 参数
     /// - `dao`: DAO 抽象层实例。
-    pub fn new(dao: Arc<dyn BulwarkDao>) -> Self {
+    /// - `secret`: HMAC 签名密钥（用于 ticket 防伪造，禁止空字符串）。
+    ///
+    /// # 错误
+    /// - `secret` 为空时返回 `BulwarkError::InvalidParam`。
+    pub fn new(dao: Arc<dyn BulwarkDao>, secret: impl Into<String>) -> Self {
+        let secret: String = secret.into();
+        assert!(
+            !secret.is_empty(),
+            "SSO secret 不能为空（依据安全审计 M5：ticket 必须签名）"
+        );
         Self {
             dao,
             ticket_ttl_seconds: DEFAULT_TICKET_TTL,
+            secret,
         }
     }
 
@@ -75,18 +126,28 @@ impl SsoClient {
         self
     }
 
-    /// 签发 SSO ticket（依据 spec protocol-sso）。
+    /// 计算 ticket 随机部分的 HMAC 签名（委托到模块级 `sign_ticket`）。
+    fn sign_ticket(&self, random_part: &str) -> BulwarkResult<String> {
+        sign_ticket(&self.secret, random_part)
+    }
+
+    /// 验证 ticket 的 HMAC 签名（委托到模块级 `verify_ticket_signature`）。
+    fn verify_ticket_signature(&self, ticket: &str) -> BulwarkResult<String> {
+        verify_ticket_signature(&self.secret, ticket)
+    }
+
+    /// 签发 SSO ticket（依据 spec protocol-sso + 安全审计 M5）。
     ///
-    /// 生成 64 字符随机 hex 字符串作为 ticket，存储到 `bulwark:sso:ticket:<ticket>`，
-    /// value 为 JSON `{login_id, client_id}`，TTL 为 60 秒。
+    /// 生成 `{64_hex_random}.{hmac_b64}` 格式的签名 ticket，
+    /// 存储到 `bulwark:sso:ticket:<ticket>`，value 为 JSON `{login_id, client_id}`，
+    /// TTL 为 60 秒（可配置）。
     ///
     /// # 参数
     /// - `login_id`: 登录主体标识。
     /// - `client_id`: 客户端标识。
     ///
     /// # 返回
-    /// 64 字符的 ticket 字符串。
-    ///
+    /// `{64_hex_random}.{hmac_b64}` 格式的 ticket 字符串。
     pub async fn issue_ticket(
         &self,
         login_id: impl Into<String>,
@@ -94,7 +155,9 @@ impl SsoClient {
     ) -> BulwarkResult<String> {
         let login_id: String = login_id.into();
         // 拼接两个 UUID v4 simple（各 32 hex = 64 字符）
-        let ticket = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
+        let random_part = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
+        let sig = self.sign_ticket(&random_part)?;
+        let ticket = format!("{}.{}", random_part, sig);
         let data = SsoTicketData {
             login_id,
             client_id,
@@ -106,19 +169,20 @@ impl SsoClient {
         Ok(ticket)
     }
 
-    /// 校验 SSO ticket（依据 spec protocol-sso + protocol-sso-toctou）。
+    /// 校验 SSO ticket（依据 spec protocol-sso + protocol-sso-toctou + 安全审计 M5）。
     ///
     /// 校验逻辑：
-    /// 1. `get` 读取票据（不删除），校验 `client_id` 是否匹配；
-    /// 2. `client_id` 匹配后，`get_and_delete` 原子消费票据（消除 TOCTOU）。
+    /// 1. 验证 ticket 的 HMAC 签名（M5 新增，防止 DAO 攻破后伪造）；
+    /// 2. `get` 读取票据（不删除），校验 `client_id` 是否匹配；
+    /// 3. `client_id` 匹配后，`get_and_delete` 原子消费票据（消除 TOCTOU）。
     ///
     /// # 参数
-    /// - `ticket`: 票据字符串。
+    /// - `ticket`: 票据字符串（格式 `{random}.{hmac}`）。
     /// - `client_id`: 客户端标识。
     ///
     /// # 返回
     /// - `Ok(login_id)`: 校验成功。
-    /// - `Err(BulwarkError::InvalidToken)`: 票据不存在、已过期、client_id 不匹配、或被并发消费。
+    /// - `Err(BulwarkError::InvalidToken)`: 签名无效、票据不存在、已过期、client_id 不匹配、或被并发消费。
     ///
     /// # client_id 不匹配时不消费票据
     ///
@@ -131,6 +195,9 @@ impl SsoClient {
     /// 消除 TOCTOU 竞态。并发调用同一 ticket（同 client_id）仅一个返回 `Ok`，
     /// 其他返回 `InvalidToken`（"已被并发消费"）。依据 spec protocol-sso-toctou R-002。
     pub async fn validate_ticket(&self, ticket: &str, client_id: i64) -> BulwarkResult<String> {
+        // M5 修复：先验签，防止 DAO 攻破后伪造 ticket
+        let _random_part = self.verify_ticket_signature(ticket)?;
+
         let key = format!("bulwark:sso:ticket:{}", ticket);
         // 步骤 1: 非原子 get，用于校验 client_id（不删除票据）
         let value = self
@@ -232,10 +299,10 @@ mod tests {
         }
     }
 
-    /// 创建 SsoClient 实例（使用 MockDao）。
+    /// 创建 SsoClient 实例（使用 MockDao + 测试用 secret）。
     fn make_client() -> SsoClient {
         let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
-        SsoClient::new(dao)
+        SsoClient::new(dao, "test-sso-secret-key")
     }
 
     // ========================================================================
@@ -253,13 +320,19 @@ mod tests {
     // issue_ticket 测试（依据 spec protocol-sso）
     // ========================================================================
 
-    /// 成功签发票据，返回 64 字符（spec Scenario）。
+    /// 成功签发票据，格式为 `{64_hex_random}.{hmac_b64}`（依据 spec + M5 签名修复）。
     #[tokio::test]
-    async fn issue_ticket_returns_64_chars() {
+    async fn issue_ticket_returns_signed_format() {
         let client = make_client();
         let ticket = client.issue_ticket("1001", 2001).await.unwrap();
-        assert_eq!(ticket.len(), 64);
-        assert!(ticket.chars().all(|c| c.is_ascii_hexdigit()));
+        // 格式：{64_hex_random}.{hmac_b64}
+        let (random_part, sig) = ticket.split_once('.').expect("ticket 应包含 '.' 分隔符");
+        assert_eq!(random_part.len(), 64, "随机部分应为 64 字符 hex");
+        assert!(
+            random_part.chars().all(|c| c.is_ascii_hexdigit()),
+            "随机部分应全为 hex 字符"
+        );
+        assert!(!sig.is_empty(), "签名部分不应为空");
     }
 
     /// 票据随机性：连续签发返回不同票据（spec Scenario）。
@@ -284,7 +357,7 @@ mod tests {
     #[tokio::test]
     async fn issue_ticket_uses_correct_key_prefix() {
         let dao = Arc::new(MockDao::new());
-        let client = SsoClient::new(dao.clone());
+        let client = SsoClient::new(dao.clone(), "test-sso-secret-key");
         let ticket = client.issue_ticket("1001", 2001).await.unwrap();
         let key = format!("bulwark:sso:ticket:{}", ticket);
         let value = dao.get(&key).await.unwrap();
@@ -386,7 +459,7 @@ mod tests {
     #[test]
     fn with_ticket_ttl_sets_ttl() {
         let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
-        let client = SsoClient::new(dao).with_ticket_ttl(120);
+        let client = SsoClient::new(dao, "test-sso-secret-key").with_ticket_ttl(120);
         assert_eq!(client.ticket_ttl_seconds, 120);
     }
 
@@ -441,5 +514,62 @@ mod tests {
 
         assert_eq!(success, 1, "并发消费同一 ticket 仅一个成功");
         assert_eq!(invalid_token, 9, "其他 9 个应返回 InvalidToken");
+    }
+
+    // ========================================================================
+    // M5 新增：ticket HMAC 签名测试（依据安全审计 M5）
+    // ========================================================================
+
+    /// M5: 伪造的 ticket（无签名部分）应被拒绝。
+    #[tokio::test]
+    async fn validate_ticket_rejects_unsigned_ticket() {
+        let client = make_client();
+        // 伪造的 ticket：纯 64 hex，无 `.{hmac}` 部分
+        let fake_ticket = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+        let result = client.validate_ticket(fake_ticket, 2001).await;
+        assert!(
+            matches!(result, Err(BulwarkError::InvalidToken(ref msg)) if msg.contains("格式错误")),
+            "无签名的 ticket 应被拒绝，实际: {:?}",
+            result
+        );
+    }
+
+    /// M5: 签名被篡改的 ticket 应被拒绝。
+    #[tokio::test]
+    async fn validate_ticket_rejects_tampered_signature() {
+        let client = make_client();
+        let ticket = client.issue_ticket("1001", 2001).await.unwrap();
+        // 篡改签名部分（在末尾追加字符）
+        let tampered_ticket = format!("{}X", ticket);
+        let result = client.validate_ticket(&tampered_ticket, 2001).await;
+        assert!(
+            matches!(result, Err(BulwarkError::InvalidToken(ref msg)) if msg.contains("签名验证失败")),
+            "篡改签名的 ticket 应被拒绝，实际: {:?}",
+            result
+        );
+    }
+
+    /// M5: 使用不同 secret 签发的 ticket 应被另一个 client 拒绝。
+    #[tokio::test]
+    async fn validate_ticket_rejects_different_secret() {
+        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let issuer = SsoClient::new(dao.clone(), "secret-a");
+        let validator = SsoClient::new(dao, "secret-b");
+
+        let ticket = issuer.issue_ticket("1001", 2001).await.unwrap();
+        let result = validator.validate_ticket(&ticket, 2001).await;
+        assert!(
+            matches!(result, Err(BulwarkError::InvalidToken(ref msg)) if msg.contains("签名验证失败")),
+            "不同 secret 签发的 ticket 应被拒绝，实际: {:?}",
+            result
+        );
+    }
+
+    /// M5: 空 secret 应 panic（禁止空 secret）。
+    #[test]
+    #[should_panic(expected = "SSO secret 不能为空")]
+    fn new_rejects_empty_secret() {
+        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let _client = SsoClient::new(dao, "");
     }
 }

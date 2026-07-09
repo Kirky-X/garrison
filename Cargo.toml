@@ -217,11 +217,13 @@ db-mysql = ["db-base", "dbnexus/mysql"]
 # === 协议层插件 ===
 # 0.4.2 新增：PKCE (RFC 7636) 需要 sha2 (S256) + base64 (URL_SAFE_NO_PAD)
 protocol-oauth2 = ["reqwest", "sha2", "base64"]
-protocol-sso = ["reqwest", "dep:quick-xml"]
+protocol-sso = ["reqwest", "dep:quick-xml", "sha2", "hmac", "base64"]
 protocol-jwt = ["jsonwebtoken", "sha2"]
 protocol-sign = ["sha2", "hmac", "base64"]
 protocol-apikey = []
 protocol-temp = []
+# protocol-zeroize：协议层密钥零化（Drop 时清零 secret 字段，防止内存残留）
+protocol-zeroize = ["zeroize"]
 # 0.4.0 新增：OIDC 扩展（id_token 签发/验证 + discovery endpoint），依赖 protocol-jwt + protocol-oauth2
 protocol-oidc = ["protocol-jwt", "protocol-oauth2"]
 # 0.4.0 新增：OAuth2 Scope Handler 注册表（ScopeHandler trait + ScopeRegistry），依赖 protocol-oauth2
@@ -321,7 +323,7 @@ bulwark-testing = ["authorize-api"]
 full = [
     "cache-memory", "cache-redis",
     "db-sqlite",
-    "protocol-oauth2", "protocol-sso", "protocol-jwt", "protocol-sign", "protocol-apikey", "protocol-temp",
+    "protocol-oauth2", "protocol-sso", "protocol-jwt", "protocol-sign", "protocol-apikey", "protocol-temp", "protocol-zeroize",
     "protocol-oidc", "oauth2-scope-handler", "protocol-sso-server",
     "secure-totp", "secure-sign", "secure-httpbasic", "secure-httpdigest",
     "account-credential", "account-credential-zeroize", "account-policy", "account-lockout", "account-authflow",
