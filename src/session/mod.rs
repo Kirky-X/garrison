@@ -25,10 +25,12 @@
 
 use crate::dao::BulwarkDao;
 use crate::error::{BulwarkError, BulwarkResult};
+use async_trait::async_trait;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 /// Account-Session 的 token 信息条目。
 ///
@@ -83,6 +85,46 @@ pub struct TokenSession {
     pub device: Option<String>,
 }
 
+/// 会话过期监听器 trait（依据 spec session-lifecycle R-session-lifecycle-001）。
+///
+/// 在 session 过期时触发回调。listener 失败时记录 `tracing::warn!` 但不中断调用方
+///（依据 design Decision 6: plugin/listener/集成失败不中断主流程）。
+///
+/// # 使用
+///
+/// ```ignore
+/// use bulwark::session::SessionExpiryListener;
+/// use bulwark::error::BulwarkResult;
+/// use async_trait::async_trait;
+/// use std::sync::Arc;
+///
+/// struct AuditListener;
+///
+/// #[async_trait]
+/// impl SessionExpiryListener for AuditListener {
+///     async fn on_session_expired(&self, login_id: &str, token: &str) -> BulwarkResult<()> {
+///         tracing::info!(login_id, token, "session expired");
+///         Ok(())
+///     }
+/// }
+///
+/// let mut session = bulwark::session::BulwarkSession::new(dao, 3600, 86400);
+/// session.add_expiry_listener(Arc::new(AuditListener));
+/// ```
+#[async_trait]
+pub trait SessionExpiryListener: Send + Sync {
+    /// 会话过期回调。
+    ///
+    /// # 参数
+    /// - `login_id`: 过期会话关联的登录主体标识。
+    /// - `token`: 过期的 token 字符串（Account-Session 级过期时为空字符串 `""`）。
+    ///
+    /// # 返回
+    /// - `Ok(())`: 回调成功。
+    /// - `Err`: 回调失败，调用方记录 `tracing::warn!` 但不中断主流程或后续 listener。
+    async fn on_session_expired(&self, login_id: &str, token: &str) -> BulwarkResult<()>;
+}
+
 /// 会话管理器，封装 `BulwarkDao` 提供双模会话操作。
 ///
 /// [借鉴 Sa-Token] 对应 Sa-Token 的 `SaSession` 管理逻辑，
@@ -105,6 +147,10 @@ pub struct BulwarkSession {
     /// 未注入时 `kickout_by_device` 仍正常执行踢出，仅跳过事件广播。
     #[cfg(feature = "listener")]
     listener_manager: Option<Arc<crate::listener::BulwarkListenerManager>>,
+    /// 会话过期监听器列表（依据 spec session-lifecycle R-session-lifecycle-002）。
+    ///
+    /// 按 FIFO 顺序调用。listener 失败时记录 `tracing::warn!` 但不中断后续 listener。
+    expiry_listeners: Vec<Arc<dyn SessionExpiryListener>>,
 }
 
 /// 生成 Account-Session 的存储 key。
@@ -134,6 +180,7 @@ impl BulwarkSession {
             active_timeout,
             #[cfg(feature = "listener")]
             listener_manager: None,
+            expiry_listeners: Vec::new(),
         }
     }
 
@@ -161,6 +208,34 @@ impl BulwarkSession {
     ) -> Self {
         self.listener_manager = Some(manager);
         self
+    }
+
+    /// 注册会话过期监听器（依据 spec session-lifecycle R-session-lifecycle-002）。
+    ///
+    /// listener 按注册顺序（FIFO）依次调用。`get_token_session` / `get_account_session`
+    /// 发现 session 过期时触发所有已注册的 listener。
+    ///
+    /// # 参数
+    /// - `listener`: 过期监听器实例。
+    pub fn add_expiry_listener(&mut self, listener: Arc<dyn SessionExpiryListener>) {
+        self.expiry_listeners.push(listener);
+    }
+
+    /// 触发所有过期监听器（依据 spec session-lifecycle R-session-lifecycle-003）。
+    ///
+    /// listener 按注册顺序（FIFO）依次调用。单个 listener 失败时记录 `tracing::warn!`
+    /// 但继续执行后续 listener（依据 design Decision 6: listener 失败不中断主流程）。
+    async fn trigger_expiry_listeners(&self, login_id: &str, token: &str) {
+        for listener in &self.expiry_listeners {
+            if let Err(e) = listener.on_session_expired(login_id, token).await {
+                tracing::warn!(
+                    "SessionExpiryListener 回调失败 (login_id={}, token={}): {}",
+                    login_id,
+                    token,
+                    e
+                );
+            }
+        }
     }
 
     /// 创建会话（login 时调用）：双写 Account-Session + Token-Session。
@@ -244,6 +319,17 @@ impl BulwarkSession {
                 let ts: TokenSession = serde_json::from_str(&json).map_err(|e| {
                     BulwarkError::Session(format!("反序列化 TokenSession 失败: {}", e))
                 })?;
+                // R-session-lifecycle-003: 检查 session 级过期（last_active_at + timeout < now）
+                let now = Utc::now().timestamp();
+                if ts.last_active_at + (self.timeout as i64) < now {
+                    // 触发过期回调
+                    self.trigger_expiry_listeners(&ts.login_id, token).await;
+                    // 从 DAO 删除过期 session（清理）
+                    if let Err(e) = self.dao.delete(&token_key(token)).await {
+                        tracing::warn!("删除过期 Token-Session 失败 (token={}): {}", token, e);
+                    }
+                    return Ok(None);
+                }
                 Ok(Some(ts))
             },
             None => Ok(None),
@@ -272,6 +358,21 @@ impl BulwarkSession {
                 let as_: AccountSession = serde_json::from_str(&json).map_err(|e| {
                     BulwarkError::Session(format!("反序列化 AccountSession 失败: {}", e))
                 })?;
+                // R-session-lifecycle-003: 检查 session 级过期（last_active_at + active_timeout < now）
+                let now = Utc::now().timestamp();
+                if as_.last_active_at + (self.active_timeout as i64) < now {
+                    // 触发过期回调（Account-Session 级过期，token 为空字符串）
+                    self.trigger_expiry_listeners(&login_id, "").await;
+                    // 从 DAO 删除过期 session（清理）
+                    if let Err(e) = self.dao.delete(&account_key(&login_id)).await {
+                        tracing::warn!(
+                            "删除过期 Account-Session 失败 (login_id={}): {}",
+                            login_id,
+                            e
+                        );
+                    }
+                    return Ok(None);
+                }
                 Ok(Some(as_))
             },
             None => Ok(None),
@@ -325,6 +426,101 @@ impl BulwarkSession {
             Some(ts) => Ok(ts.attrs.get(key).cloned()),
             None => Ok(None),
         }
+    }
+
+    /// 保存（更新）Token-Session 到 DAO（保留原 TTL）。
+    ///
+    /// 供 `AuthLogicDefault::switch_to` / `renew_to_equivalent` 等需要修改
+    /// TokenSession 结构（非 attrs）的方法使用。用 `dao.update` 保留原 TTL。
+    ///
+    /// # 参数
+    /// - `token`: token 字符串（用于构造存储 key）。
+    /// - `ts`: 修改后的 TokenSession。
+    ///
+    /// # 错误
+    /// - 序列化失败：`BulwarkError::Session`。
+    /// - DAO 更新失败：透传 `BulwarkError`。
+    pub async fn save_token_session(&self, token: &str, ts: &TokenSession) -> BulwarkResult<()> {
+        let json = serde_json::to_string(ts)
+            .map_err(|e| BulwarkError::Session(format!("序列化 TokenSession 失败: {}", e)))?;
+        self.dao.update(&token_key(token), &json).await?;
+        Ok(())
+    }
+
+    /// 确保 token 存在于指定 login_id 的 Account-Session 中。
+    ///
+    /// 供 `AuthLogicDefault::switch_to` 使用：切换身份后需将 token 添加到
+    /// 目标 login_id 的 Account-Session，否则 `is_valid` 检查会失败
+    ///（`is_valid` 惰性检查 Account-Session 是否存在）。
+    ///
+    /// 若 token 已在 Account-Session 中，则仅更新 `last_active_at`，不重复添加。
+    pub async fn ensure_token_in_account_session(
+        &self,
+        login_id: &str,
+        token: &str,
+    ) -> BulwarkResult<()> {
+        let now = Utc::now().timestamp();
+        let mut account = self
+            .get_account_session(login_id)
+            .await?
+            .unwrap_or_else(|| AccountSession {
+                login_id: login_id.to_string(),
+                tokens: vec![],
+                created_at: now,
+                last_active_at: now,
+            });
+
+        // 若 token 已存在，仅更新 last_active_at；否则添加
+        if let Some(ti) = account.tokens.iter_mut().find(|t| t.token == token) {
+            ti.last_active_at = now;
+        } else {
+            account.tokens.push(TokenInfo {
+                token: token.to_string(),
+                created_at: now,
+                last_active_at: now,
+            });
+        }
+        account.last_active_at = now;
+
+        let json = serde_json::to_string(&account)
+            .map_err(|e| BulwarkError::Session(format!("序列化 AccountSession 失败: {}", e)))?;
+        self.dao
+            .set(&account_key(login_id), &json, self.active_timeout)
+            .await?;
+        Ok(())
+    }
+
+    /// 查询 token 的剩余 TTL。
+    ///
+    /// 供 `AuthLogicDefault::renew_to_equivalent` 使用：需要查询旧 token 的
+    /// 剩余 TTL 以便新 token 继承相同的过期时间。
+    ///
+    /// # 返回
+    /// - `Ok(Some(remaining))`: 键存在且设置了 TTL。
+    /// - `Ok(None)`: 键不存在，或永久键（无 TTL）。
+    pub async fn get_token_timeout(&self, token: &str) -> BulwarkResult<Option<Duration>> {
+        self.dao.get_timeout(&token_key(token)).await
+    }
+
+    /// 创建新的 Token-Session 并指定 TTL。
+    ///
+    /// 供 `AuthLogicDefault::renew_to_equivalent` 使用：需要用旧 token 的
+    /// 剩余 TTL 创建新 token 的 session（而非用默认 timeout）。
+    ///
+    /// # 参数
+    /// - `token`: 新 token 字符串。
+    /// - `ts`: 要存储的 TokenSession。
+    /// - `ttl_seconds`: TTL 秒数（0 表示永久驻留）。
+    pub async fn create_token_session_with_ttl(
+        &self,
+        token: &str,
+        ts: &TokenSession,
+        ttl_seconds: u64,
+    ) -> BulwarkResult<()> {
+        let json = serde_json::to_string(ts)
+            .map_err(|e| BulwarkError::Session(format!("序列化 TokenSession 失败: {}", e)))?;
+        self.dao.set(&token_key(token), &json, ttl_seconds).await?;
+        Ok(())
     }
 
     /// 关联 SSO ticket 到 token 会话（0.2.0 新增，依据 spec session-management）。
@@ -1552,5 +1748,237 @@ mod tests {
         // Token-Session 应已删除
         let ts = session.get_token_session("T1").await.unwrap();
         assert!(ts.is_none(), "logout 后 Token-Session 应已删除");
+    }
+
+    // ----------------------------------------------------------------
+    // SessionExpiryListener 测试（依据 spec session-lifecycle R-001~003）
+    // ----------------------------------------------------------------
+
+    /// Mock 过期监听器：记录所有回调调用，可选返回错误。
+    struct MockExpiryListener {
+        calls: Arc<std::sync::Mutex<Vec<(String, String)>>>,
+        fail: bool,
+    }
+
+    impl MockExpiryListener {
+        fn new() -> (Self, Arc<std::sync::Mutex<Vec<(String, String)>>>) {
+            let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+            (
+                Self {
+                    calls: calls.clone(),
+                    fail: false,
+                },
+                calls,
+            )
+        }
+
+        fn new_failing() -> Self {
+            Self {
+                calls: Arc::new(std::sync::Mutex::new(Vec::new())),
+                fail: true,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl SessionExpiryListener for MockExpiryListener {
+        async fn on_session_expired(&self, login_id: &str, token: &str) -> BulwarkResult<()> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push((login_id.to_string(), token.to_string()));
+            if self.fail {
+                return Err(BulwarkError::Session("模拟回调失败".to_string()));
+            }
+            Ok(())
+        }
+    }
+
+    /// 修改 TokenSession 的 last_active_at 为过去时间（模拟 session 级过期）。
+    async fn expire_token_session_in_dao(dao: &Arc<MockDao>, token: &str, timeout: u64) {
+        let key = token_key(token);
+        let json = dao.get(&key).await.unwrap().unwrap();
+        let mut ts: TokenSession = serde_json::from_str(&json).unwrap();
+        ts.last_active_at = Utc::now().timestamp() - timeout as i64 - 1;
+        let new_json = serde_json::to_string(&ts).unwrap();
+        dao.set(&key, &new_json, 3600).await.unwrap();
+    }
+
+    /// 修改 AccountSession 的 last_active_at 为过去时间（模拟 session 级过期）。
+    async fn expire_account_session_in_dao(
+        dao: &Arc<MockDao>,
+        login_id: &str,
+        active_timeout: u64,
+    ) {
+        let key = account_key(login_id);
+        let json = dao.get(&key).await.unwrap().unwrap();
+        let mut as_: AccountSession = serde_json::from_str(&json).unwrap();
+        as_.last_active_at = Utc::now().timestamp() - active_timeout as i64 - 1;
+        let new_json = serde_json::to_string(&as_).unwrap();
+        dao.set(&key, &new_json, 3600).await.unwrap();
+    }
+
+    /// R-002: add_expiry_listener 注册监听器，listener 列表长度增加。
+    #[tokio::test]
+    async fn add_expiry_listener_registers_listener() {
+        let (_dao, mut session) = make_session(3600, 86400);
+        assert!(session.expiry_listeners.is_empty());
+        let (listener, _) = MockExpiryListener::new();
+        session.add_expiry_listener(Arc::new(listener));
+        assert_eq!(session.expiry_listeners.len(), 1);
+    }
+
+    /// R-003: get_token_session 发现 token session 过期时触发回调。
+    #[tokio::test]
+    async fn get_token_session_triggers_callback_on_expiry() {
+        let (dao, mut session) = make_session(3600, 86400);
+        let (listener, calls) = MockExpiryListener::new();
+        session.add_expiry_listener(Arc::new(listener));
+
+        session.create("1001", "T1").await.unwrap();
+        expire_token_session_in_dao(&dao, "T1", 3600).await;
+
+        let result = session.get_token_session("T1").await.unwrap();
+        assert!(result.is_none(), "过期 session 应返回 None");
+
+        let recorded = calls.lock().unwrap();
+        assert_eq!(recorded.len(), 1, "应触发 1 次回调");
+        assert_eq!(recorded[0].0, "1001");
+        assert_eq!(recorded[0].1, "T1");
+    }
+
+    /// R-003: get_token_session 对未过期 session 不触发回调。
+    #[tokio::test]
+    async fn get_token_session_no_callback_for_active_session() {
+        let (_dao, mut session) = make_session(3600, 86400);
+        let (listener, calls) = MockExpiryListener::new();
+        session.add_expiry_listener(Arc::new(listener));
+
+        session.create("1001", "T1").await.unwrap();
+
+        let result = session.get_token_session("T1").await.unwrap();
+        assert!(result.is_some());
+
+        assert!(
+            calls.lock().unwrap().is_empty(),
+            "未过期 session 不应触发回调"
+        );
+    }
+
+    /// R-003: get_token_session 触发回调后从 DAO 删除过期 session。
+    #[tokio::test]
+    async fn get_token_session_deletes_expired_session_after_callback() {
+        let (dao, mut session) = make_session(3600, 86400);
+        let (listener, _calls) = MockExpiryListener::new();
+        session.add_expiry_listener(Arc::new(listener));
+
+        session.create("1001", "T1").await.unwrap();
+        expire_token_session_in_dao(&dao, "T1", 3600).await;
+
+        assert!(dao.get(&token_key("T1")).await.unwrap().is_some());
+
+        session.get_token_session("T1").await.unwrap();
+
+        assert!(
+            dao.get(&token_key("T1")).await.unwrap().is_none(),
+            "过期 session 应从 DAO 删除"
+        );
+    }
+
+    /// R-003: get_account_session 发现 account session 过期时触发回调。
+    #[tokio::test]
+    async fn get_account_session_triggers_callback_on_expiry() {
+        let (dao, mut session) = make_session(3600, 3600);
+        let (listener, calls) = MockExpiryListener::new();
+        session.add_expiry_listener(Arc::new(listener));
+
+        session.create("1001", "T1").await.unwrap();
+        expire_account_session_in_dao(&dao, "1001", 3600).await;
+
+        let result = session.get_account_session("1001").await.unwrap();
+        assert!(result.is_none(), "过期 account session 应返回 None");
+
+        let recorded = calls.lock().unwrap();
+        assert_eq!(recorded.len(), 1, "应触发 1 次回调");
+        assert_eq!(recorded[0].0, "1001");
+        assert_eq!(
+            recorded[0].1, "",
+            "Account-Session 级过期 token 应为空字符串"
+        );
+    }
+
+    /// R-003: get_account_session 对未过期 session 不触发回调。
+    #[tokio::test]
+    async fn get_account_session_no_callback_for_active_session() {
+        let (_dao, mut session) = make_session(3600, 86400);
+        let (listener, calls) = MockExpiryListener::new();
+        session.add_expiry_listener(Arc::new(listener));
+
+        session.create("1001", "T1").await.unwrap();
+
+        let result = session.get_account_session("1001").await.unwrap();
+        assert!(result.is_some());
+
+        assert!(
+            calls.lock().unwrap().is_empty(),
+            "未过期 session 不应触发回调"
+        );
+    }
+
+    /// R-003: 多个 listener 按注册顺序（FIFO）依次调用。
+    #[tokio::test]
+    async fn multiple_listeners_called_in_fifo_order() {
+        let (dao, mut session) = make_session(3600, 86400);
+        let (listener1, calls1) = MockExpiryListener::new();
+        let (listener2, calls2) = MockExpiryListener::new();
+        session.add_expiry_listener(Arc::new(listener1));
+        session.add_expiry_listener(Arc::new(listener2));
+
+        session.create("1001", "T1").await.unwrap();
+        expire_token_session_in_dao(&dao, "T1", 3600).await;
+
+        session.get_token_session("T1").await.unwrap();
+
+        assert_eq!(calls1.lock().unwrap().len(), 1);
+        assert_eq!(calls2.lock().unwrap().len(), 1);
+    }
+
+    /// R-003: listener 失败时记录 warn 但继续执行后续 listener。
+    #[tokio::test]
+    async fn failing_listener_does_not_interrupt_subsequent_listeners() {
+        let (dao, mut session) = make_session(3600, 86400);
+        let failing = MockExpiryListener::new_failing();
+        let (success, calls) = MockExpiryListener::new();
+        session.add_expiry_listener(Arc::new(failing));
+        session.add_expiry_listener(Arc::new(success));
+
+        session.create("1001", "T1").await.unwrap();
+        expire_token_session_in_dao(&dao, "T1", 3600).await;
+
+        let result = session.get_token_session("T1").await.unwrap();
+        assert!(result.is_none(), "过期 session 应返回 None");
+
+        assert_eq!(
+            calls.lock().unwrap().len(),
+            1,
+            "失败的 listener 不应阻止后续 listener 执行"
+        );
+    }
+
+    /// R-003: 无 listener 注册时 get_token_session 仍正常处理过期 session。
+    #[tokio::test]
+    async fn expired_session_with_no_listeners_still_deleted() {
+        let (dao, session) = make_session(3600, 86400);
+
+        session.create("1001", "T1").await.unwrap();
+        expire_token_session_in_dao(&dao, "T1", 3600).await;
+
+        let result = session.get_token_session("T1").await.unwrap();
+        assert!(result.is_none());
+
+        assert!(
+            dao.get(&token_key("T1")).await.unwrap().is_none(),
+            "无 listener 时过期 session 仍应从 DAO 删除"
+        );
     }
 }
