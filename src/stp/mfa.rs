@@ -8,7 +8,7 @@
 //! （MFA 检查依赖当前登录状态）。
 
 use super::BulwarkLogicDefault;
-use crate::error::BulwarkResult;
+use crate::error::{BulwarkError, BulwarkResult};
 use crate::stp::session::SessionLogic;
 use async_trait::async_trait;
 
@@ -43,9 +43,56 @@ pub trait MfaLogic: SessionLogic {
     ///
     /// # 返回
     /// - `Ok(())`: 账号未禁用。
-    /// - `Err(BulwarkError::Session)`: 账号已禁用。
+    /// - `Err(BulwarkError::DisableService)`: 账号已封禁（0.6.1 起推荐使用专用异常）。
     async fn check_disable(&self) -> BulwarkResult<()> {
         Ok(())
+    }
+
+    /// 构造账号被封禁异常（0.6.1 新增，依据 spec error-exceptions R-error-005）。
+    ///
+    /// 业务方在自定义 `check_disable` 实现中调用此关联函数抛出专用异常：
+    ///
+    /// ```ignore
+    /// async fn check_disable(&self) -> BulwarkResult<()> {
+    ///     if account_is_banned().await {
+    ///         return Err(Self::disable_service("default", None));
+    ///     }
+    ///     Ok(())
+    /// }
+    /// ```
+    ///
+    /// # 参数
+    /// - `service`: 被封禁的服务名（如 "default" / "oidc"）。
+    /// - `until`: 定时解封时间；`None` 表示永久封禁。
+    fn disable_service(
+        service: &str,
+        until: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> BulwarkError {
+        BulwarkError::DisableService {
+            service: service.to_string(),
+            until,
+        }
+    }
+
+    /// 构造未完成二次认证异常（0.6.1 新增，依据 spec error-exceptions R-error-005）。
+    ///
+    /// 业务方在自定义 `check_safe` 实现中调用此关联函数抛出专用异常：
+    ///
+    /// ```ignore
+    /// async fn check_safe(&self) -> BulwarkResult<()> {
+    ///     if !mfa_completed().await {
+    ///         return Err(Self::not_safe("MFA_TOTP_REQUIRED"));
+    ///     }
+    ///     Ok(())
+    /// }
+    /// ```
+    ///
+    /// # 参数
+    /// - `reason`: 未完成认证的原因标识（如 "MFA_TOTP_REQUIRED" / "WEBAUTHN_REQUIRED"）。
+    fn not_safe(reason: &str) -> BulwarkError {
+        BulwarkError::NotSafe {
+            reason: reason.to_string(),
+        }
     }
 }
 
@@ -125,5 +172,72 @@ mod tests {
             config: Arc::new(BulwarkConfig::default()),
         };
         mock.check_disable().await.unwrap();
+    }
+
+    // ========================================================================
+    // disable_service / not_safe 构造方法测试（0.6.1 新增，依据 R-error-005）
+    // ========================================================================
+
+    /// 验证 `disable_service` 构造正确的 `BulwarkError::DisableService` 变体。
+    ///
+    /// 覆盖 spec R-error-005：service 字段正确传递，until=None 表示永久封禁。
+    #[test]
+    fn disable_service_constructs_correct_error() {
+        let err = MockMfa::disable_service("default", None);
+        match err {
+            BulwarkError::DisableService { service, until } => {
+                assert_eq!(service, "default");
+                assert!(until.is_none(), "until=None 表示永久封禁");
+            },
+            other => panic!("期望 DisableService 变体，实际: {:?}", other),
+        }
+    }
+
+    /// 验证 `disable_service` 带 until 时间戳时正确传递。
+    #[test]
+    fn disable_service_with_until_timestamp() {
+        let until = chrono::DateTime::parse_from_rfc3339("2026-12-31T23:59:59Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let err = MockMfa::disable_service("oidc", Some(until));
+        match err {
+            BulwarkError::DisableService { service, until: u } => {
+                assert_eq!(service, "oidc");
+                assert!(u.is_some(), "until 应为 Some");
+                assert_eq!(u.unwrap().to_rfc3339(), "2026-12-31T23:59:59+00:00");
+            },
+            other => panic!("期望 DisableService 变体，实际: {:?}", other),
+        }
+    }
+
+    /// 验证 `not_safe` 构造正确的 `BulwarkError::NotSafe` 变体。
+    ///
+    /// 覆盖 spec R-error-005：reason 字段正确传递。
+    #[test]
+    fn not_safe_constructs_correct_error() {
+        let err = MockMfa::not_safe("MFA_TOTP_REQUIRED");
+        match err {
+            BulwarkError::NotSafe { reason } => {
+                assert_eq!(reason, "MFA_TOTP_REQUIRED");
+            },
+            other => panic!("期望 NotSafe 变体，实际: {:?}", other),
+        }
+    }
+
+    /// 验证 `not_safe` 可构造 Display 输出包含 reason。
+    #[test]
+    fn not_safe_display_includes_reason() {
+        let err = MockMfa::not_safe("WEBAUTHN_REQUIRED");
+        let display = err.to_string();
+        assert!(
+            display.contains("WEBAUTHN_REQUIRED"),
+            "Display 应包含 reason，实际: {}",
+            display
+        );
+        assert!(
+            display.contains("未完成二次认证"),
+            "Display 应包含中文描述，实际: {}",
+            display
+        );
     }
 }
