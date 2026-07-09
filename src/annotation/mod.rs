@@ -66,7 +66,7 @@ impl ModeSpec for Loose {
 // Annotation 枚举（保留用于 router 中间件配置，always compiled）
 // ============================================================================
 
-/// 鉴权注解枚举，列出 12 个核心注解。
+/// 鉴权注解枚举，列出 14 个核心注解。
 ///
 /// [借鉴 Sa-Token] 对应 Sa-Token 的注解集合。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -106,6 +106,48 @@ pub enum Annotation {
 
     /// 签名检查（对应 `@SaCheckSign`）。
     CheckSign,
+
+    /// API Key 校验（0.6.1 新增，对应 `@CheckApiKey`，依据 spec annotation-check-api-key R-anno-001）。
+    ///
+    /// `namespace` 为 `Some(s)` 表示命名空间隔离（FRD §5.4.1），
+    /// `None` 表示使用默认命名空间 `"default"`。
+    CheckApiKey {
+        /// 命名空间标识；`None` 表示默认命名空间 `"default"`。
+        namespace: Option<String>,
+    },
+
+    /// 逻辑组合模式（0.6.1 新增，对应 `@Mode`，依据 spec annotation-check-api-key R-anno-002）。
+    ///
+    /// 控制 `@CheckPermission` / `@CheckRole` 的多权限组合逻辑：
+    /// - [`AnnotationMode::And`]：全部满足
+    /// - [`AnnotationMode::Or`]：任一满足
+    Mode(AnnotationMode),
+}
+
+/// 注解逻辑组合模式（0.6.1 新增，依据 spec annotation-check-api-key R-anno-002）。
+///
+/// 控制 `@CheckPermission` / `@CheckRole` 的多权限组合逻辑。
+///
+/// # 规则7 命名冲突记录
+///
+/// spec 要求命名为 `Mode`，但现有 `Mode<M: ModeSpec>` extractor struct（web-axum feature）
+/// 已 re-export 为 `Mode`，会导致命名冲突。按规则11（惯例优先），保留现有 extractor 不变，
+/// 新值级枚举命名为 `AnnotationMode`（语义更清晰：注解逻辑组合模式）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AnnotationMode {
+    /// AND 模式：全部权限/角色均需满足。
+    And,
+    /// OR 模式：任一权限/角色满足即可。
+    Or,
+}
+
+impl std::fmt::Display for AnnotationMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AnnotationMode::And => write!(f, "AND"),
+            AnnotationMode::Or => write!(f, "OR"),
+        }
+    }
 }
 
 impl Annotation {
@@ -126,6 +168,8 @@ impl Annotation {
             Annotation::CheckBasicAuth => "CheckBasicAuth",
             Annotation::CheckDigestAuth => "CheckDigestAuth",
             Annotation::CheckSign => "CheckSign",
+            Annotation::CheckApiKey { .. } => "CheckApiKey",
+            Annotation::Mode(_) => "Mode",
         }
     }
 }
@@ -943,7 +987,9 @@ mod tests {
     // Annotation::name 测试
     // ----------------------------------------------------------------
 
-    /// Annotation::name 返回注解变体名称。
+    /// Annotation::name 返回注解变体名称（14 个变体）。
+    ///
+    /// 覆盖 R-anno-001 / R-anno-002 验收标准：CheckApiKey 与 Mode 变体的 name() 返回正确字符串。
     #[test]
     fn annotation_name_returns_variant_string() {
         assert_eq!(Annotation::CheckLogin.name(), "CheckLogin");
@@ -961,6 +1007,77 @@ mod tests {
         assert_eq!(Annotation::CheckBasicAuth.name(), "CheckBasicAuth");
         assert_eq!(Annotation::CheckDigestAuth.name(), "CheckDigestAuth");
         assert_eq!(Annotation::CheckSign.name(), "CheckSign");
+        // 0.6.1 新增：CheckApiKey（R-anno-001）— namespace None 与 Some 均返回同一字符串
+        assert_eq!(
+            Annotation::CheckApiKey { namespace: None }.name(),
+            "CheckApiKey"
+        );
+        assert_eq!(
+            Annotation::CheckApiKey {
+                namespace: Some("ns1".to_string())
+            }
+            .name(),
+            "CheckApiKey"
+        );
+        // 0.6.1 新增：Mode（R-anno-002）— And / Or 均返回 "Mode"
+        assert_eq!(Annotation::Mode(AnnotationMode::And).name(), "Mode");
+        assert_eq!(Annotation::Mode(AnnotationMode::Or).name(), "Mode");
+    }
+
+    // ----------------------------------------------------------------
+    // AnnotationMode Display / Debug / Clone / PartialEq 测试（0.6.1 新增，R-anno-002）
+    // ----------------------------------------------------------------
+
+    /// AnnotationMode::And 的 Display 输出 "AND"，AnnotationMode::Or 输出 "OR"。
+    #[test]
+    fn annotation_mode_display_outputs_uppercase() {
+        assert_eq!(format!("{}", AnnotationMode::And), "AND");
+        assert_eq!(format!("{}", AnnotationMode::Or), "OR");
+    }
+
+    /// AnnotationMode 实现 Copy，可在 match 表达式中按值使用而无需 clone。
+    #[test]
+    fn annotation_mode_copy_semantics() {
+        let mode = AnnotationMode::And;
+        let copied = mode; // Copy，原值仍可用
+        assert_eq!(mode, AnnotationMode::And);
+        assert_eq!(copied, AnnotationMode::And);
+    }
+
+    /// AnnotationMode::Mode(AnnotationMode::And) 与 .Or 在 Annotation 枚举层级可比较相等性。
+    #[test]
+    fn annotation_mode_equality_within_annotation() {
+        assert_eq!(
+            Annotation::Mode(AnnotationMode::And),
+            Annotation::Mode(AnnotationMode::And)
+        );
+        assert_ne!(
+            Annotation::Mode(AnnotationMode::And),
+            Annotation::Mode(AnnotationMode::Or)
+        );
+    }
+
+    /// CheckApiKey 变体 namespace 字段 None 与 Some 不影响 name()，但影响 PartialEq。
+    #[test]
+    fn check_api_key_namespace_equality() {
+        assert_eq!(
+            Annotation::CheckApiKey { namespace: None },
+            Annotation::CheckApiKey { namespace: None }
+        );
+        assert_ne!(
+            Annotation::CheckApiKey { namespace: None },
+            Annotation::CheckApiKey {
+                namespace: Some("ns1".to_string())
+            }
+        );
+        assert_ne!(
+            Annotation::CheckApiKey {
+                namespace: Some("ns1".to_string())
+            },
+            Annotation::CheckApiKey {
+                namespace: Some("ns2".to_string())
+            }
+        );
     }
 
     // ----------------------------------------------------------------
