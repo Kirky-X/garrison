@@ -530,10 +530,11 @@ pub use strategy::firewall::geo::{CountryLookup, GeoCoord, GeoLookup};
 
 /// 过程宏注解模块（feature = "annotation-macros"）。
 ///
-/// 启用 `annotation-macros` feature 时，re-export `bulwark-macros` crate 的 6 个
+/// 启用 `annotation-macros` feature 时，re-export `bulwark-macros` crate 的 7 个
 /// `#[proc_macro_attribute]`：
 /// - `#[check_login]` / `#[check_permission]` / `#[check_role]`（0.4.2）
 /// - `#[check_access_token]` / `#[check_client_token]` / `#[check_temp_token]`（0.5.0 P2）
+/// - `#[check_api_key]`（0.6.1 新增，依据 spec annotation-check-api-key R-anno-003）
 ///
 /// 宏将 async fn 包装为 wrapper，在 body 前插入 `BulwarkUtil::check_*()` 调用，
 /// 失败时返回 `axum::response::Response`（401/403）。
@@ -551,6 +552,6 @@ pub use strategy::firewall::geo::{CountryLookup, GeoCoord, GeoLookup};
 /// ```
 #[cfg(feature = "annotation-macros")]
 pub use bulwark_macros::{
-    check_access_token, check_client_token, check_login, check_permission, check_role,
-    check_temp_token,
+    check_access_token, check_api_key, check_client_token, check_login, check_permission,
+    check_role, check_temp_token,
 };

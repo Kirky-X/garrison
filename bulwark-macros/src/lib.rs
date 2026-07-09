@@ -1,10 +1,12 @@
 //! Bulwark 过程宏 crate，提供鉴权注解属性宏。
 //!
-//! 依据 spec `annotation-macros`，提供 3 个 `#[proc_macro_attribute]`：
+//! 依据 spec `annotation-macros`，提供 7 个 `#[proc_macro_attribute]`：
 //!
 //! - [`macro@check_login`]：登录校验，未登录返回 401
 //! - [`macro@check_permission`]：权限校验（AND 语义），无权限返回 403
 //! - [`macro@check_role`]：角色校验（AND 语义），无角色返回 403
+//! - [`macro@check_access_token`] / [`macro@check_client_token`] / [`macro@check_temp_token`]：token 类型校验（0.5.0 P2）
+//! - [`macro@check_api_key`]：API Key 校验（0.6.1 新增，依据 spec annotation-check-api-key R-anno-003）
 //!
 //! # 限制
 //!
@@ -39,7 +41,12 @@
 use proc_macro::TokenStream;
 use proc_macro2::Span;
 use quote::{format_ident, quote};
-use syn::{parse_macro_input, punctuated::Punctuated, FnArg, ItemFn, LitStr, Token};
+use syn::{
+    parse::{Parse, ParseStream},
+    parse_macro_input,
+    punctuated::Punctuated,
+    FnArg, Ident, ItemFn, LitStr, Token,
+};
 
 // ============================================================================
 // 公开 proc_macro_attribute
@@ -194,9 +201,100 @@ pub fn check_temp_token(_attr: TokenStream, item: TokenStream) -> TokenStream {
     expand_check_no_args("check_temp_token", item_fn)
 }
 
+/// API Key 校验属性宏（0.6.1 新增，依据 spec annotation-check-api-key R-anno-003）。
+///
+/// 标注在 async fn 上，编译期生成 wrapper 在 fn body 前插入
+/// `BulwarkUtil::check_api_key(namespace)` 调用。校验失败返回 401/403。
+///
+/// # 参数
+///
+/// - 无参数：`#[check_api_key]` → 使用默认命名空间 `"default"`
+/// - `namespace = "xxx"`：`#[check_api_key(namespace = "ns1")]` → 使用指定命名空间
+///
+/// # 错误参数
+///
+/// - `#[check_api_key(foo = "bar")]`：编译时报错（仅支持 `namespace` 参数）
+/// - `#[check_api_key("ns1")]`：编译时报错（必须使用 `namespace = "ns1"` 形式）
+///
+/// # 限制
+///
+/// - 仅支持 `async fn`
+/// - 仅支持 axum handler
+///
+/// # 示例
+///
+/// ```ignore
+/// use bulwark::check_api_key;
+/// use axum::response::IntoResponse;
+///
+/// #[check_api_key]
+/// async fn handler() -> impl IntoResponse { "ok" }
+///
+/// #[check_api_key(namespace = "internal")]
+/// async fn internal_handler() -> impl IntoResponse { "internal" }
+/// ```
+#[proc_macro_attribute]
+pub fn check_api_key(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let attr_parsed = parse_macro_input!(attr as CheckApiKeyAttr);
+    let item_fn = parse_macro_input!(item as ItemFn);
+    let ns = attr_parsed
+        .namespace
+        .unwrap_or_else(|| "default".to_string());
+    expand_check_api_key(&ns, item_fn)
+}
+
 // ============================================================================
 // 内部展开逻辑
 // ============================================================================
+
+/// 解析 `#[check_api_key]` 属性参数。
+///
+/// 支持两种形式：
+/// - 空：`#[check_api_key]` → `namespace: None`（调用时使用 `"default"`）
+/// - `namespace = "xxx"`：`#[check_api_key(namespace = "ns1")]` → `namespace: Some("ns1")`
+///
+/// 不支持其他形式（如 `#[check_api_key("ns1")]` 或 `#[check_api_key(foo = "bar")]`），
+/// 解析时返回编译错误。
+struct CheckApiKeyAttr {
+    namespace: Option<String>,
+}
+
+impl Parse for CheckApiKeyAttr {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        if input.is_empty() {
+            return Ok(Self { namespace: None });
+        }
+        let ident: Ident = input.parse()?;
+        if ident != "namespace" {
+            return Err(syn::Error::new(
+                ident.span(),
+                "不支持的属性参数，仅支持 `namespace = \"xxx\"`",
+            ));
+        }
+        let _: Token![=] = input.parse()?;
+        let lit: LitStr = input.parse()?;
+        Ok(Self {
+            namespace: Some(lit.value()),
+        })
+    }
+}
+
+/// 展开 `#[check_api_key]`：在 fn body 前插入 `BulwarkUtil::check_api_key(namespace)` 调用。
+///
+/// `check_api_key(namespace)` 返回 `BulwarkResult<()>`：
+/// - `Ok(())`：API Key 有效，继续执行 fn body
+/// - `Err(e)`：校验失败（InvalidToken / ExpiredToken / NotLogin），返回错误对应的 Response
+fn expand_check_api_key(namespace: &str, item_fn: ItemFn) -> TokenStream {
+    if let Err(err) = require_async(&item_fn) {
+        return err.into();
+    }
+    let checks = quote! {
+        if let ::std::result::Result::Err(__bulwark_err) = ::bulwark::BulwarkUtil::check_api_key(#namespace).await {
+            return ::axum::response::IntoResponse::into_response(__bulwark_err);
+        }
+    };
+    expand_wrapper(&item_fn, checks)
+}
 
 /// 校验 `item_fn` 必须是 `async fn`，否则返回编译错误。
 fn require_async(item_fn: &ItemFn) -> Result<(), proc_macro2::TokenStream> {
