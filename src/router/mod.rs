@@ -104,6 +104,15 @@ impl BulwarkInterceptor for DefaultBulwarkInterceptor {
                 let ns = namespace.as_deref().unwrap_or("default");
                 BulwarkUtil::check_api_key(ns).await
             }
+            // OAuth2 access_token / client_token 校验（依据 spec annotation-oauth2 R-annotation-oauth2-001/002/003）
+            // DefaultBulwarkInterceptor 不持有 OAuth2Handler 实例，返回 NotImplemented。
+            // 业务方应在 handler 中使用 protocol::oauth2::OAuth2Client 或自定义拦截器。
+            Annotation::CheckAccessToken => Err(BulwarkError::NotImplemented(
+                "CheckAccessToken 需 OAuth2Handler，请在 handler 中使用 protocol::oauth2::OAuth2Client 或自定义拦截器".to_string(),
+            )),
+            Annotation::CheckClientToken => Err(BulwarkError::NotImplemented(
+                "CheckClientToken 需 OAuth2Handler，请在 handler 中使用 protocol::oauth2::OAuth2Client 或自定义拦截器".to_string(),
+            )),
             Annotation::Ignore => Ok(()),
             // 逻辑组合注解（CheckOr/CheckAnd/CheckNot/Mode）在 pre_handle 中为 no-op，
             // 实际组合逻辑由注解处理器在编译期或路由配置层处理。
@@ -228,6 +237,70 @@ mod web_axum {
                 annotation,
             });
             self
+        }
+
+        /// 路由分组：通过闭包注册一组带公共前缀和公共注解的路由（依据 spec web-router-group）。
+        ///
+        /// # 参数
+        /// - `prefix`: 路由前缀（如 `/api/v1`），必须非空，以 `/` 开头。
+        ///   尾部 `/` 自动 trim（`/api/v1/` → `/api/v1`）。
+        /// - `annotation`: 组级公共注解。`Annotation::Ignore` 时组内所有路由跳过注解校验。
+        /// - `f`: 闭包，接收子 `BulwarkRouter`，返回注册完路由后的 `BulwarkRouter`。
+        ///
+        /// # Panics
+        /// `prefix` 为空字符串时 panic。
+        ///
+        /// # 示例
+        /// ```ignore
+        /// router.group("/api/v1", Annotation::CheckLogin, |r| {
+        ///     r.route_protected("/users", || async { "users" }, Annotation::CheckLogin)
+        /// })
+        /// ```
+        pub fn group<F>(self, prefix: &str, annotation: Annotation, f: F) -> Self
+        where
+            F: FnOnce(BulwarkRouter) -> BulwarkRouter,
+        {
+            assert!(!prefix.is_empty(), "prefix must not be empty");
+
+            // R-router-group-002: 尾部 / 自动 trim
+            let trimmed = prefix.trim_end_matches('/');
+
+            // 创建子 router，继承父 router 的 interceptor 和 config（依据 spec Constraints）
+            let child = BulwarkRouter {
+                inner: Router::new(),
+                rules: Vec::new(),
+                interceptor: self.interceptor.clone(),
+                config: self.config.clone(),
+            };
+
+            // 执行闭包，在子 router 上注册路由
+            let child = f(child);
+
+            // R-router-group-004: 合并子 router 的 rules 到父 router（附加前缀 + 注解处理）
+            let mut parent = self;
+            for rule in child.rules {
+                let merged_path = format!("{}{}", trimmed, rule.path);
+                // R-router-group-003: group 注解为 Ignore 时覆盖路由注解；否则保留路由自身注解
+                let merged_annotation = if annotation == Annotation::Ignore {
+                    Annotation::Ignore
+                } else {
+                    rule.annotation
+                };
+                parent.rules.push(RouteRule {
+                    path: merged_path,
+                    annotation: merged_annotation,
+                });
+            }
+
+            // 合并子 router 的 axum Router 到父 router
+            if trimmed.is_empty() {
+                // 根前缀 "/"，直接 merge 不嵌套
+                parent.inner = parent.inner.merge(child.inner);
+            } else {
+                parent.inner = parent.inner.nest(trimmed, child.inner);
+            }
+
+            parent
         }
 
         /// 构建最终的 axum Router，应用 BulwarkLayer middleware。
@@ -1002,6 +1075,61 @@ mod tests {
         BulwarkManager::reset_for_test();
     }
 
+    /// DefaultBulwarkInterceptor.pre_handle(CheckAccessToken) 返回 NotImplemented
+    ///（无 OAuth2Handler 注册，依据 spec R-annotation-oauth2-003）。
+    #[tokio::test]
+    #[serial]
+    async fn default_interceptor_check_access_token_returns_not_implemented() {
+        init_manager(&[], &[]);
+        let interceptor = DefaultBulwarkInterceptor;
+        let result = interceptor
+            .pre_handle("/x", &Annotation::CheckAccessToken)
+            .await;
+        assert!(
+            matches!(result, Err(BulwarkError::NotImplemented(_))),
+            "CheckAccessToken 无 OAuth2Handler 时应返回 NotImplemented，实际: {:?}",
+            result
+        );
+        BulwarkManager::reset_for_test();
+    }
+
+    /// DefaultBulwarkInterceptor.pre_handle(CheckClientToken) 返回 NotImplemented
+    ///（无 OAuth2Handler 注册，依据 spec R-annotation-oauth2-003）。
+    #[tokio::test]
+    #[serial]
+    async fn default_interceptor_check_client_token_returns_not_implemented() {
+        init_manager(&[], &[]);
+        let interceptor = DefaultBulwarkInterceptor;
+        let result = interceptor
+            .pre_handle("/x", &Annotation::CheckClientToken)
+            .await;
+        assert!(
+            matches!(result, Err(BulwarkError::NotImplemented(_))),
+            "CheckClientToken 无 OAuth2Handler 时应返回 NotImplemented，实际: {:?}",
+            result
+        );
+        BulwarkManager::reset_for_test();
+    }
+
+    /// CheckAccessToken NotImplemented 错误消息包含使用建议。
+    #[tokio::test]
+    #[serial]
+    async fn default_interceptor_check_access_token_error_contains_guidance() {
+        init_manager(&[], &[]);
+        let interceptor = DefaultBulwarkInterceptor;
+        let result = interceptor
+            .pre_handle("/x", &Annotation::CheckAccessToken)
+            .await;
+        if let Err(BulwarkError::NotImplemented(msg)) = result {
+            assert!(
+                msg.contains("OAuth2Handler") || msg.contains("oauth2"),
+                "错误消息应包含 OAuth2 使用建议，实际: {}",
+                msg
+            );
+        }
+        BulwarkManager::reset_for_test();
+    }
+
     // ----------------------------------------------------------------
     // BulwarkRouter::with_interceptor / Default 测试
     // ----------------------------------------------------------------
@@ -1333,6 +1461,198 @@ mod tests {
             StatusCode::OK,
             "Mode 注解 pre_handle 为 no-op，应直接放行"
         );
+
+        BulwarkManager::reset_for_test();
+    }
+
+    // ----------------------------------------------------------------
+    // group 方法测试（依据 spec web-router-group R-router-group-001~004）
+    // ----------------------------------------------------------------
+
+    /// R-router-group-001/002/004: group 为子路由附加前缀，
+    /// RouteRule 同步包含完整前缀路径，middleware 据此执行鉴权。
+    #[tokio::test]
+    #[serial]
+    async fn group_applies_prefix_to_sub_routes() {
+        init_manager(&[], &[]);
+        let token = BulwarkUtil::login("1001").await.unwrap();
+
+        let app = BulwarkRouter::new(Arc::new(make_config()))
+            .group("/api/v1", Annotation::CheckLogin, |r| {
+                r.route_protected("/users", || async { "users ok" }, Annotation::CheckLogin)
+            })
+            .build();
+
+        // 已登录 → 200（RouteRule.path="/api/v1/users" 匹配，pre_handle(CheckLogin) 通过）
+        let response = app
+            .clone()
+            .oneshot(make_request("/api/v1/users", Some(&token)))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // 未登录 → 401（RouteRule.path="/api/v1/users" 匹配，pre_handle(CheckLogin) 失败）
+        let response = app
+            .oneshot(make_request("/api/v1/users", None))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        BulwarkManager::reset_for_test();
+    }
+
+    /// R-router-group-003: group 注解为 Ignore 时覆盖路由自身注解（跳过鉴权）。
+    #[tokio::test]
+    #[serial]
+    async fn group_with_ignore_annotation_overrides_route_annotation() {
+        init_manager(&[], &[]);
+
+        let app = BulwarkRouter::new(Arc::new(make_config()))
+            .group("/public", Annotation::Ignore, |r| {
+                r.route_protected("/data", || async { "data ok" }, Annotation::CheckLogin)
+            })
+            .build();
+
+        // 未登录 → 200（Ignore 覆盖 CheckLogin，跳过鉴权）
+        let response = app
+            .oneshot(make_request("/public/data", None))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        BulwarkManager::reset_for_test();
+    }
+
+    /// R-router-group-003: group 注解非 Ignore 时保留路由自身注解。
+    /// group 注解 CheckLogin + 路由注解 CheckRole("admin") → 路由保留 CheckRole("admin")。
+    /// 验证：已登录但无 admin 角色的用户访问 → 403（若被覆盖为 CheckLogin 则应 200）。
+    #[tokio::test]
+    #[serial]
+    async fn group_non_ignore_annotation_preserves_route_annotation() {
+        init_manager(&[], &[]); // 无角色数据
+        let token = BulwarkUtil::login("1001").await.unwrap();
+
+        let app = BulwarkRouter::new(Arc::new(make_config()))
+            .group("/api", Annotation::CheckLogin, |r| {
+                r.route_protected(
+                    "/admin",
+                    || async { "admin ok" },
+                    Annotation::CheckRole("admin".to_string()),
+                )
+            })
+            .build();
+
+        // 已登录但无 admin 角色 → 403（CheckRole 保留，未被 CheckLogin 覆盖）
+        let response = app
+            .oneshot(make_request("/api/admin", Some(&token)))
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::FORBIDDEN,
+            "group 非 Ignore 注解应保留路由自身注解（CheckRole），已登录但无角色应 403"
+        );
+
+        BulwarkManager::reset_for_test();
+    }
+
+    /// R-router-group-002: 嵌套 group 正确合并前缀
+    /// /api + /v1 + /users = /api/v1/users
+    ///
+    /// 注：group 注解非 Ignore 时保留路由自身注解（依据 spec R-router-group-003）。
+    /// 此处两层 group 均使用 CheckLogin（非 Ignore），路由注解 CheckLogin 被保留。
+    #[tokio::test]
+    #[serial]
+    async fn group_nested_merges_prefixes() {
+        init_manager(&[], &[]);
+        let token = BulwarkUtil::login("1001").await.unwrap();
+
+        let app = BulwarkRouter::new(Arc::new(make_config()))
+            .group("/api", Annotation::CheckLogin, |r| {
+                r.group("/v1", Annotation::CheckLogin, |r| {
+                    r.route_protected("/users", || async { "users ok" }, Annotation::CheckLogin)
+                })
+            })
+            .build();
+
+        // 已登录 → 200
+        let response = app
+            .clone()
+            .oneshot(make_request("/api/v1/users", Some(&token)))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // 未登录 → 401（路由注解 CheckLogin 保留）
+        let response = app
+            .oneshot(make_request("/api/v1/users", None))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        BulwarkManager::reset_for_test();
+    }
+
+    /// R-router-group-001: 空前缀 panic。
+    #[test]
+    #[should_panic(expected = "prefix must not be empty")]
+    fn group_empty_prefix_panics() {
+        let _ = BulwarkRouter::new(Arc::new(make_config())).group("", Annotation::Ignore, |r| r);
+    }
+
+    /// R-router-group-002: 尾部 / 自动 trim（/api/v1/ 等价于 /api/v1）。
+    #[tokio::test]
+    #[serial]
+    async fn group_trailing_slash_trimmed() {
+        init_manager(&[], &[]);
+        let token = BulwarkUtil::login("1001").await.unwrap();
+
+        // prefix = "/api/v1/" → trimmed = "/api/v1" → 完整路径 = "/api/v1/users"
+        let app = BulwarkRouter::new(Arc::new(make_config()))
+            .group("/api/v1/", Annotation::CheckLogin, |r| {
+                r.route_protected("/users", || async { "users ok" }, Annotation::CheckLogin)
+            })
+            .build();
+
+        // 请求 /api/v1/users → 200（trimmed 后前缀正确拼接）
+        let response = app
+            .oneshot(make_request("/api/v1/users", Some(&token)))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        BulwarkManager::reset_for_test();
+    }
+
+    /// R-router-group-002: 多个 group 可链式调用，各自注册独立前缀。
+    #[tokio::test]
+    #[serial]
+    async fn group_chained_calls_register_separate_prefixes() {
+        init_manager(&[], &[]);
+
+        let app = BulwarkRouter::new(Arc::new(make_config()))
+            .group("/api/v1", Annotation::Ignore, |r| {
+                r.route_protected("/users", || async { "v1 users" }, Annotation::Ignore)
+            })
+            .group("/api/v2", Annotation::Ignore, |r| {
+                r.route_protected("/users", || async { "v2 users" }, Annotation::Ignore)
+            })
+            .build();
+
+        // /api/v1/users → 200
+        let response = app
+            .clone()
+            .oneshot(make_request("/api/v1/users", None))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // /api/v2/users → 200
+        let response = app
+            .oneshot(make_request("/api/v2/users", None))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
 
         BulwarkManager::reset_for_test();
     }

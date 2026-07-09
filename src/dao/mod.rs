@@ -5,6 +5,7 @@
 
 use crate::error::{BulwarkError, BulwarkResult};
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 /// DAO 抽象层 trait，定义 Token 与会话的持久化操作。
@@ -257,12 +258,130 @@ pub trait BulwarkDao: Send + Sync {
 }
 
 // ============================================================================
+// Redis 部署模式配置（依据 spec dao-redis-modes，gap-closure-remaining T002）
+// ============================================================================
+
+/// Redis 部署模式枚举，覆盖生产环境常见拓扑（依据 spec dao-redis-modes R-001）。
+///
+/// 参阅 Redis 集群部署文档：单节点 / Sentinel / Cluster / Master-Slave。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "mode", rename_all = "lowercase")]
+pub enum RedisDeploymentMode {
+    /// 单节点模式：单个 Redis 实例。
+    Single {
+        /// Redis 连接 URL（如 `redis://127.0.0.1:6379`）。
+        url: String,
+    },
+    /// 哨兵模式：通过 Sentinel 集群自动故障转移。
+    Sentinel {
+        /// Sentinel 集群主节点名称（如 `mymaster`）。
+        master_name: String,
+        /// Sentinel 节点 URL 列表。
+        urls: Vec<String>,
+    },
+    /// 集群模式：Redis Cluster 分片存储。
+    Cluster {
+        /// Cluster 节点 URL 列表（至少 3 个 master 节点）。
+        urls: Vec<String>,
+    },
+    /// 主从模式：1 个 master + N 个 slave，读分离需客户端支持。
+    MasterSlave {
+        /// Master 节点 URL。
+        master_url: String,
+        /// Slave 节点 URL 列表。
+        slave_urls: Vec<String>,
+    },
+}
+
+/// Default 实现，返回 Single 模式（`redis://127.0.0.1:6379`）。
+///
+/// 供 `RedisConfig` 的 `#[serde(default)]` 在反序列化时填充缺失的 `mode` 字段。
+impl Default for RedisDeploymentMode {
+    fn default() -> Self {
+        RedisDeploymentMode::Single {
+            url: "redis://127.0.0.1:6379".to_string(),
+        }
+    }
+}
+
+/// Redis 配置聚合结构，包含部署模式、连接池参数与认证信息（依据 spec dao-redis-modes R-002）。
+///
+/// # 默认值
+///
+/// - `mode`: `Single { url: "redis://127.0.0.1:6379" }`
+/// - `password`: `None`
+/// - `db`: `0`
+/// - `connection_timeout_secs`: `5`
+/// - `pool_size`: `10`
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RedisConfig {
+    /// Redis 部署模式。
+    pub mode: RedisDeploymentMode,
+    /// 认证密码（`None` 表示无密码）。
+    pub password: Option<String>,
+    /// Redis 数据库编号（0-15）。
+    pub db: u8,
+    /// 连接超时秒数。
+    pub connection_timeout_secs: u64,
+    /// 连接池大小。
+    pub pool_size: u32,
+}
+
+impl Default for RedisConfig {
+    fn default() -> Self {
+        Self {
+            mode: RedisDeploymentMode::Single {
+                url: "redis://127.0.0.1:6379".to_string(),
+            },
+            password: None,
+            db: 0,
+            connection_timeout_secs: 5,
+            pool_size: 10,
+        }
+    }
+}
+
+/// Display 实现，输出人类可读的部署模式描述（依据 spec dao-redis-modes）。
+impl std::fmt::Display for RedisDeploymentMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RedisDeploymentMode::Single { url } => write!(f, "single({})", url),
+            RedisDeploymentMode::Sentinel { master_name, urls } => {
+                write!(
+                    f,
+                    "sentinel(master={}, {} sentinels)",
+                    master_name,
+                    urls.len()
+                )
+            },
+            RedisDeploymentMode::Cluster { urls } => {
+                write!(f, "cluster({} nodes)", urls.len())
+            },
+            RedisDeploymentMode::MasterSlave {
+                master_url,
+                slave_urls,
+            } => {
+                write!(
+                    f,
+                    "master-slave(master={}, {} slaves)",
+                    master_url,
+                    slave_urls.len()
+                )
+            },
+        }
+    }
+}
+
+// ============================================================================
 // oxcache 实现（feature = "cache-memory" 或 "cache-redis"）
 // ============================================================================
 
 #[cfg(any(feature = "cache-memory", feature = "cache-redis"))]
 mod oxcache_impl {
     use super::BulwarkDao;
+    #[cfg(feature = "cache-redis")]
+    use super::RedisConfig;
     use crate::error::{BulwarkError, BulwarkResult};
     use async_trait::async_trait;
     use oxcache::Cache;
@@ -319,6 +438,12 @@ mod oxcache_impl {
         /// 原子操作锁，仅用于 `get_and_delete` 的进程内原子性保护。
         /// 其他操作（get/set/delete 等）不持有此锁，不影响并发性能。
         atomic_lock: parking_lot::Mutex<()>,
+        /// Redis 部署模式配置（仅在 `cache-redis` feature 启用时存在）。
+        ///
+        /// 通过 [`with_redis_config`] builder 方法设置。未设置时为 `None`，
+        /// oxcache 使用默认 Redis 配置。
+        #[cfg(feature = "cache-redis")]
+        redis_config: Option<RedisConfig>,
     }
 
     impl BulwarkDaoOxcache {
@@ -340,7 +465,40 @@ mod oxcache_impl {
             Ok(Self {
                 cache,
                 atomic_lock: parking_lot::Mutex::new(()),
+                #[cfg(feature = "cache-redis")]
+                redis_config: None,
             })
+        }
+
+        /// 设置 Redis 部署模式配置（依据 spec dao-redis-modes R-003）。
+        ///
+        /// 仅在 `cache-redis` feature 启用时可用。消费 self 并返回新实例（builder 模式）。
+        /// 调用后 oxcache 的 Redis L2 后端使用指定部署模式。
+        /// 未调用时保持现有行为（oxcache 默认 Redis 配置）。
+        ///
+        /// # 参数
+        /// - `config`: Redis 配置（包含部署模式、连接池参数、认证信息）。
+        ///
+        /// # 返回
+        /// 消费 self 并返回新实例。
+        #[cfg(feature = "cache-redis")]
+        pub fn with_redis_config(mut self, config: RedisConfig) -> Self {
+            tracing::info!(
+                mode = %config.mode,
+                db = config.db,
+                pool_size = config.pool_size,
+                "设置 Redis 部署模式配置"
+            );
+            self.redis_config = Some(config);
+            self
+        }
+
+        /// 返回当前 Redis 配置（仅在 `cache-redis` feature 启用时可用）。
+        ///
+        /// 用于测试与诊断：确认 `with_redis_config` 是否已调用。
+        #[cfg(feature = "cache-redis")]
+        pub fn redis_config(&self) -> Option<&RedisConfig> {
+            self.redis_config.as_ref()
         }
     }
 
@@ -1709,5 +1867,169 @@ pub mod tests {
         let dao = MinimalDao::new();
         let val = dao.get_and_delete("nope").await.unwrap();
         assert!(val.is_none());
+    }
+
+    // ========================================================================
+    // Redis 部署模式配置测试（依据 spec dao-redis-modes，gap-closure-remaining T002）
+    // ========================================================================
+
+    /// R-002: RedisConfig::default() 返回 Single 模式，url 为 "redis://127.0.0.1:6379"。
+    #[test]
+    fn redis_config_default_returns_single_mode() {
+        let config = RedisConfig::default();
+        assert_eq!(
+            config.mode,
+            RedisDeploymentMode::Single {
+                url: "redis://127.0.0.1:6379".to_string()
+            }
+        );
+        assert_eq!(config.password, None);
+        assert_eq!(config.db, 0);
+        assert_eq!(config.connection_timeout_secs, 5);
+        assert_eq!(config.pool_size, 10);
+    }
+
+    /// R-002: RedisConfig serde 序列化/反序列化 round-trip。
+    #[test]
+    fn redis_config_serde_roundtrip() {
+        let config = RedisConfig {
+            mode: RedisDeploymentMode::Cluster {
+                urls: vec![
+                    "redis://10.0.0.1:6379".to_string(),
+                    "redis://10.0.0.2:6379".to_string(),
+                    "redis://10.0.0.3:6379".to_string(),
+                ],
+            },
+            password: Some("secret".to_string()),
+            db: 1,
+            connection_timeout_secs: 10,
+            pool_size: 20,
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: RedisConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(config.mode, deserialized.mode);
+        assert_eq!(config.password, deserialized.password);
+        assert_eq!(config.db, deserialized.db);
+        assert_eq!(
+            config.connection_timeout_secs,
+            deserialized.connection_timeout_secs
+        );
+        assert_eq!(config.pool_size, deserialized.pool_size);
+    }
+
+    /// R-002: RedisConfig serde 用 `#[serde(default)]` 支持部分覆盖。
+    #[test]
+    fn redis_config_serde_partial_override() {
+        // 仅提供 mode，其余字段应使用 default
+        let json = r#"{"mode":{"mode":"cluster","urls":["redis://10.0.0.1:6379"]}}"#;
+        let config: RedisConfig = serde_json::from_str(json).unwrap();
+        match config.mode {
+            RedisDeploymentMode::Cluster { urls } => {
+                assert_eq!(urls, vec!["redis://10.0.0.1:6379".to_string()]);
+            },
+            _ => panic!("期望 Cluster 模式"),
+        }
+        // 其余字段应为 default 值
+        assert_eq!(config.password, None);
+        assert_eq!(config.db, 0);
+        assert_eq!(config.connection_timeout_secs, 5);
+        assert_eq!(config.pool_size, 10);
+    }
+
+    /// R-001: RedisDeploymentMode 各变体 Display 输出可读。
+    #[test]
+    fn redis_deployment_mode_display() {
+        let single = RedisDeploymentMode::Single {
+            url: "redis://127.0.0.1:6379".to_string(),
+        };
+        assert!(format!("{}", single).contains("single"));
+        assert!(format!("{}", single).contains("redis://127.0.0.1:6379"));
+
+        let sentinel = RedisDeploymentMode::Sentinel {
+            master_name: "mymaster".to_string(),
+            urls: vec!["redis://s1:26379".to_string()],
+        };
+        let s = format!("{}", sentinel);
+        assert!(s.contains("sentinel"));
+        assert!(s.contains("mymaster"));
+
+        let cluster = RedisDeploymentMode::Cluster {
+            urls: vec!["redis://c1:6379".to_string(), "redis://c2:6379".to_string()],
+        };
+        let c = format!("{}", cluster);
+        assert!(c.contains("cluster"));
+        assert!(c.contains("2 nodes"));
+
+        let ms = RedisDeploymentMode::MasterSlave {
+            master_url: "redis://master:6379".to_string(),
+            slave_urls: vec!["redis://slave1:6379".to_string()],
+        };
+        let m = format!("{}", ms);
+        assert!(m.contains("master-slave"));
+        assert!(m.contains("master:6379"));
+        assert!(m.contains("1 slaves"));
+    }
+
+    /// R-001: RedisDeploymentMode PartialEq 比较。
+    #[test]
+    fn redis_deployment_mode_eq() {
+        let a = RedisDeploymentMode::Single {
+            url: "redis://127.0.0.1:6379".to_string(),
+        };
+        let b = RedisDeploymentMode::Single {
+            url: "redis://127.0.0.1:6379".to_string(),
+        };
+        let c = RedisDeploymentMode::Single {
+            url: "redis://10.0.0.1:6379".to_string(),
+        };
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+    }
+
+    /// R-003: with_redis_config builder 方法在 cache-redis feature 下存在并存储配置。
+    #[cfg(feature = "cache-redis")]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn with_redis_config_stores_config() {
+        let dao = BulwarkDaoOxcache::new().await.unwrap();
+        assert!(
+            dao.redis_config().is_none(),
+            "新建实例的 redis_config 应为 None"
+        );
+        let config = RedisConfig {
+            mode: RedisDeploymentMode::Sentinel {
+                master_name: "mymaster".to_string(),
+                urls: vec![
+                    "redis://s1:26379".to_string(),
+                    "redis://s2:26379".to_string(),
+                    "redis://s3:26379".to_string(),
+                ],
+            },
+            password: Some("pass123".to_string()),
+            db: 2,
+            connection_timeout_secs: 15,
+            pool_size: 50,
+        };
+        let dao = dao.with_redis_config(config);
+        let stored = dao.redis_config().expect("with_redis_config 后应有配置");
+        assert!(matches!(
+            &stored.mode,
+            RedisDeploymentMode::Sentinel { master_name, urls }
+            if master_name == "mymaster" && urls.len() == 3
+        ));
+        assert_eq!(stored.password, Some("pass123".to_string()));
+        assert_eq!(stored.db, 2);
+        assert_eq!(stored.connection_timeout_secs, 15);
+        assert_eq!(stored.pool_size, 50);
+    }
+
+    /// R-003: 未调用 with_redis_config 时 redis_config 为 None。
+    #[cfg(feature = "cache-redis")]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn without_redis_config_returns_none() {
+        let dao = BulwarkDaoOxcache::new().await.unwrap();
+        assert!(
+            dao.redis_config().is_none(),
+            "未调用 with_redis_config 时 redis_config 应为 None"
+        );
     }
 }

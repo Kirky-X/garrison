@@ -10,6 +10,8 @@
 //! - marker trait（`RoleName` / `PermissionName` / `ModeSpec`）：通过关联常量表达类型级参数
 //! - extractor struct（`CheckLogin` 等）：实现 `FromRequestParts`，仅在 `web-axum` feature 下编译
 
+use crate::error::BulwarkError;
+
 // ============================================================================
 // Marker traits（用于泛型 extractor 的类型级参数，always compiled）
 // ============================================================================
@@ -66,7 +68,7 @@ impl ModeSpec for Loose {
 // Annotation 枚举（保留用于 router 中间件配置，always compiled）
 // ============================================================================
 
-/// 鉴权注解枚举，列出 14 个核心注解。
+/// 鉴权注解枚举，列出 16 个核心注解。
 ///
 /// [借鉴 Sa-Token] 对应 Sa-Token 的注解集合。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -122,6 +124,20 @@ pub enum Annotation {
     /// - [`AnnotationMode::And`]：全部满足
     /// - [`AnnotationMode::Or`]：任一满足
     Mode(AnnotationMode),
+
+    /// OAuth2 access_token 校验（依据 spec annotation-oauth2 R-annotation-oauth2-001）。
+    ///
+    /// 声明受保护路由需要校验 OAuth2 access_token。
+    /// 拦截器委托 `OAuth2Handler::verify_access_token` 校验；
+    /// 无 OAuth2Handler 注册时返回 `NotImplemented`（依据 spec R-annotation-oauth2-003）。
+    CheckAccessToken,
+
+    /// OAuth2 client_token 校验（依据 spec annotation-oauth2 R-annotation-oauth2-002）。
+    ///
+    /// 声明受保护路由需要校验 OAuth2 client_token（机器对机器访问）。
+    /// 拦截器委托 `OAuth2Handler::verify_client_token` 校验；
+    /// 无 OAuth2Handler 注册时返回 `NotImplemented`（依据 spec R-annotation-oauth2-003）。
+    CheckClientToken,
 }
 
 /// 注解逻辑组合模式（0.6.1 新增，依据 spec annotation-check-api-key R-anno-002）。
@@ -170,6 +186,39 @@ impl Annotation {
             Annotation::CheckSign => "CheckSign",
             Annotation::CheckApiKey { .. } => "CheckApiKey",
             Annotation::Mode(_) => "Mode",
+            Annotation::CheckAccessToken => "CheckAccessToken",
+            Annotation::CheckClientToken => "CheckClientToken",
+        }
+    }
+}
+
+impl std::fmt::Display for Annotation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.name())
+    }
+}
+
+impl std::str::FromStr for Annotation {
+    type Err = BulwarkError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "CheckLogin" => Ok(Annotation::CheckLogin),
+            "CheckSafe" => Ok(Annotation::CheckSafe),
+            "CheckDisable" => Ok(Annotation::CheckDisable),
+            "CheckOr" => Ok(Annotation::CheckOr),
+            "CheckAnd" => Ok(Annotation::CheckAnd),
+            "CheckNot" => Ok(Annotation::CheckNot),
+            "Ignore" => Ok(Annotation::Ignore),
+            "CheckBasicAuth" => Ok(Annotation::CheckBasicAuth),
+            "CheckDigestAuth" => Ok(Annotation::CheckDigestAuth),
+            "CheckSign" => Ok(Annotation::CheckSign),
+            "CheckAccessToken" => Ok(Annotation::CheckAccessToken),
+            "CheckClientToken" => Ok(Annotation::CheckClientToken),
+            _ => Err(BulwarkError::InvalidParam(format!(
+                "无法从字符串解析注解（含数据变体需显式构造）: {}",
+                s
+            ))),
         }
     }
 }
@@ -987,9 +1036,10 @@ mod tests {
     // Annotation::name 测试
     // ----------------------------------------------------------------
 
-    /// Annotation::name 返回注解变体名称（14 个变体）。
+    /// Annotation::name 返回注解变体名称（16 个变体）。
     ///
     /// 覆盖 R-anno-001 / R-anno-002 验收标准：CheckApiKey 与 Mode 变体的 name() 返回正确字符串。
+    /// 覆盖 R-annotation-oauth2-001/002：CheckAccessToken / CheckClientToken name() 返回正确字符串。
     #[test]
     fn annotation_name_returns_variant_string() {
         assert_eq!(Annotation::CheckLogin.name(), "CheckLogin");
@@ -1022,6 +1072,9 @@ mod tests {
         // 0.6.1 新增：Mode（R-anno-002）— And / Or 均返回 "Mode"
         assert_eq!(Annotation::Mode(AnnotationMode::And).name(), "Mode");
         assert_eq!(Annotation::Mode(AnnotationMode::Or).name(), "Mode");
+        // 新增：CheckAccessToken / CheckClientToken（R-annotation-oauth2-001/002）
+        assert_eq!(Annotation::CheckAccessToken.name(), "CheckAccessToken");
+        assert_eq!(Annotation::CheckClientToken.name(), "CheckClientToken");
     }
 
     // ----------------------------------------------------------------
@@ -1078,6 +1131,92 @@ mod tests {
                 namespace: Some("ns2".to_string())
             }
         );
+    }
+
+    // ----------------------------------------------------------------
+    // Display / FromStr 测试（R-annotation-oauth2-001/002）
+    // ----------------------------------------------------------------
+
+    /// R-annotation-oauth2-001: CheckAccessToken Display 格式化为 "CheckAccessToken"。
+    #[test]
+    fn check_access_token_display_formats_correctly() {
+        assert_eq!(
+            format!("{}", Annotation::CheckAccessToken),
+            "CheckAccessToken"
+        );
+    }
+
+    /// R-annotation-oauth2-002: CheckClientToken Display 格式化为 "CheckClientToken"。
+    #[test]
+    fn check_client_token_display_formats_correctly() {
+        assert_eq!(
+            format!("{}", Annotation::CheckClientToken),
+            "CheckClientToken"
+        );
+    }
+
+    /// R-annotation-oauth2-001: from_str("CheckAccessToken") 返回 Ok(CheckAccessToken)。
+    #[test]
+    fn check_access_token_from_str_returns_ok() {
+        let result: Result<Annotation, _> = "CheckAccessToken".parse();
+        assert!(result.is_ok(), "from_str 应返回 Ok");
+        assert_eq!(result.unwrap(), Annotation::CheckAccessToken);
+    }
+
+    /// R-annotation-oauth2-002: from_str("CheckClientToken") 返回 Ok(CheckClientToken)。
+    #[test]
+    fn check_client_token_from_str_returns_ok() {
+        let result: Result<Annotation, _> = "CheckClientToken".parse();
+        assert!(result.is_ok(), "from_str 应返回 Ok");
+        assert_eq!(result.unwrap(), Annotation::CheckClientToken);
+    }
+
+    /// from_str 对未知字符串返回 Err(InvalidParam)。
+    #[test]
+    fn annotation_from_str_unknown_returns_err() {
+        let result: Result<Annotation, _> = "UnknownAnnotation".parse();
+        assert!(
+            matches!(result, Err(BulwarkError::InvalidParam(_))),
+            "未知注解应返回 Err(InvalidParam)，实际: {:?}",
+            result
+        );
+    }
+
+    /// from_str 对含数据变体（如 "CheckPermission"）返回 Err。
+    #[test]
+    fn annotation_from_str_data_variant_returns_err() {
+        let result: Result<Annotation, _> = "CheckPermission".parse();
+        assert!(
+            result.is_err(),
+            "含数据变体应返回 Err（无法仅从名称解析），实际: {:?}",
+            result
+        );
+    }
+
+    /// Display 对所有 unit 变体输出与 name() 一致的字符串。
+    #[test]
+    fn display_matches_name_for_all_unit_variants() {
+        let unit_variants = [
+            Annotation::CheckLogin,
+            Annotation::CheckSafe,
+            Annotation::CheckDisable,
+            Annotation::CheckOr,
+            Annotation::CheckAnd,
+            Annotation::CheckNot,
+            Annotation::Ignore,
+            Annotation::CheckBasicAuth,
+            Annotation::CheckDigestAuth,
+            Annotation::CheckSign,
+            Annotation::CheckAccessToken,
+            Annotation::CheckClientToken,
+        ];
+        for ann in &unit_variants {
+            assert_eq!(
+                format!("{}", ann),
+                ann.name(),
+                "Display 输出应与 name() 一致"
+            );
+        }
     }
 
     // ----------------------------------------------------------------

@@ -53,6 +53,9 @@ pub const DEFAULT_SIGN_WINDOW_SECONDS: i64 = 300;
 /// 默认 SSO ticket TTL 秒数（60 秒，依据 spec protocol-sso 短时票据）。
 pub const DEFAULT_SSO_TICKET_TTL_SECONDS: u64 = 60;
 
+/// 默认 remember-me 超时秒数（90 天，必须 > DEFAULT_TIMEOUT 30 天）。
+pub const REMEMBER_ME_DEFAULT_TIMEOUT: i64 = 7_776_000;
+
 /// 环境变量前缀（BULWARK_）。
 pub const ENV_PREFIX: &str = "BULWARK_";
 
@@ -185,6 +188,16 @@ pub struct BulwarkConfig {
     /// SSO ticket TTL 秒数（默认 60 秒，依据 spec protocol-sso 短时票据）。
     pub sso_ticket_ttl_seconds: u64,
 
+    /// 是否启用 remember-me 扩展会话超时（默认 false）。
+    ///
+    /// 启用后，`login` 时 params 含 `remember_me=true` 将使用 `remember_me_timeout` 作为 TTL。
+    pub remember_me_enabled: bool,
+
+    /// remember-me 会话超时秒数（默认 90 天 = 7776000，必须 > `timeout`）。
+    ///
+    /// 仅当 `remember_me_enabled = true` 且 `login` params 含 `remember_me=true` 时生效。
+    pub remember_me_timeout: i64,
+
     /// 多租户隔离配置段（v0.5.0 新增，依据 spec tenant-isolation R-006）。
     ///
     /// 默认 `enabled: false`（向后兼容）。启用后需配合 `tenant-isolation` Cargo feature
@@ -219,6 +232,8 @@ impl BulwarkConfig {
             jwt_secret: String::new(),
             sign_window_seconds: DEFAULT_SIGN_WINDOW_SECONDS,
             sso_ticket_ttl_seconds: DEFAULT_SSO_TICKET_TTL_SECONDS,
+            remember_me_enabled: false,
+            remember_me_timeout: REMEMBER_ME_DEFAULT_TIMEOUT,
             tenant_isolation: TenantIsolationConfig::default(),
             watcher: None,
         };
@@ -276,6 +291,18 @@ impl BulwarkConfig {
             return Err(BulwarkError::Config(
                 "jwt_secret 不能为空（当 token_style=jwt 时）".to_string(),
             ));
+        }
+        if self.remember_me_enabled && self.remember_me_timeout <= self.timeout {
+            return Err(BulwarkError::Config(format!(
+                "remember_me_timeout ({}) must be greater than timeout ({}) when remember_me_enabled is true",
+                self.remember_me_timeout, self.timeout
+            )));
+        }
+        if !self.remember_me_enabled && self.remember_me_timeout <= 0 {
+            return Err(BulwarkError::Config(format!(
+                "remember_me_timeout must be positive, got: {}",
+                self.remember_me_timeout
+            )));
         }
         Ok(())
     }
@@ -452,6 +479,14 @@ impl ConfigLoader for DefaultConfigLoader {
                 ))
             })?;
         }
+        if let Ok(v) = std::env::var(format!("{}REMEMBER_ME_ENABLED", ENV_PREFIX)) {
+            config.remember_me_enabled = parse_bool(&v)?;
+        }
+        if let Ok(v) = std::env::var(format!("{}REMEMBER_ME_TIMEOUT", ENV_PREFIX)) {
+            config.remember_me_timeout = v.parse().map_err(|_| {
+                BulwarkError::Config(format!("{}REMEMBER_ME_TIMEOUT invalid: {}", ENV_PREFIX, v))
+            })?;
+        }
         config.validate()?;
         Ok(config)
     }
@@ -592,6 +627,96 @@ mod tests {
             Err(other) => panic!("期望 BulwarkError::Config，实际: {:?}", other),
             Ok(_) => panic!("token_style=jwt 且 jwt_secret 为空时应返回 Err"),
         }
+    }
+
+    // ========================================================================
+    // remember_me 配置测试（spec R-session-lifecycle-004）
+    // ========================================================================
+
+    /// 验证 remember_me 默认值：enabled=false, timeout=7776000（90 天）。
+    #[test]
+    fn remember_me_defaults() {
+        let config = BulwarkConfig::default_config();
+        assert!(!config.remember_me_enabled);
+        assert_eq!(config.remember_me_timeout, REMEMBER_ME_DEFAULT_TIMEOUT);
+        assert_eq!(config.remember_me_timeout, 7_776_000);
+    }
+
+    /// 验证 remember_me_enabled=true 且 remember_me_timeout > timeout 时校验通过。
+    #[test]
+    fn validate_remember_me_ok_when_timeout_greater() {
+        let mut config = BulwarkConfig::default_config();
+        config.remember_me_enabled = true;
+        // remember_me_timeout 默认 7776000 > timeout 默认 2592000，应通过
+        assert!(config.validate().is_ok());
+    }
+
+    /// 验证 remember_me_enabled=true 且 remember_me_timeout <= timeout 时校验失败。
+    #[test]
+    fn validate_remember_me_fails_when_timeout_not_greater() {
+        let mut config = BulwarkConfig::default_config();
+        config.remember_me_enabled = true;
+        config.remember_me_timeout = config.timeout; // 等于 timeout
+        let result = config.validate();
+        assert!(result.is_err());
+        match result {
+            Err(BulwarkError::Config(msg)) => {
+                assert!(
+                    msg.contains("remember_me_timeout"),
+                    "错误消息应包含 remember_me_timeout，实际: {}",
+                    msg
+                );
+            },
+            Err(other) => panic!("期望 BulwarkError::Config，实际: {:?}", other),
+            Ok(_) => panic!("remember_me_timeout <= timeout 时应返回 Err"),
+        }
+    }
+
+    /// 验证 remember_me_enabled=false 时 remember_me_timeout 仅需 > 0。
+    #[test]
+    fn validate_remember_me_disabled_only_checks_positive() {
+        let mut config = BulwarkConfig::default_config();
+        config.remember_me_enabled = false;
+        config.remember_me_timeout = 1; // > 0 即可（不需要 > timeout）
+        assert!(config.validate().is_ok());
+    }
+
+    /// 验证 remember_me_enabled=false 且 remember_me_timeout <= 0 时校验失败。
+    #[test]
+    fn validate_remember_me_fails_when_timeout_non_positive() {
+        let mut config = BulwarkConfig::default_config();
+        config.remember_me_enabled = false;
+        config.remember_me_timeout = 0;
+        assert!(config.validate().is_err());
+    }
+
+    /// 验证 toml 可覆盖 remember_me 字段。
+    #[test]
+    fn toml_overrides_remember_me() {
+        let toml_str = r#"
+remember_me_enabled = true
+remember_me_timeout = 9999999
+"#;
+        let config = DefaultConfigLoader::load_from_toml_str(toml_str).unwrap();
+        assert!(config.remember_me_enabled);
+        assert_eq!(config.remember_me_timeout, 9999999);
+    }
+
+    /// 验证环境变量可覆盖 remember_me 字段。
+    #[test]
+    #[serial]
+    fn env_overrides_remember_me() {
+        std::env::set_var("BULWARK_REMEMBER_ME_ENABLED", "true");
+        std::env::set_var("BULWARK_REMEMBER_ME_TIMEOUT", "9999999");
+
+        let config = BulwarkConfig::default_config();
+        let config = DefaultConfigLoader::apply_env_overrides(config).unwrap();
+
+        assert!(config.remember_me_enabled);
+        assert_eq!(config.remember_me_timeout, 9999999);
+
+        std::env::remove_var("BULWARK_REMEMBER_ME_ENABLED");
+        std::env::remove_var("BULWARK_REMEMBER_ME_TIMEOUT");
     }
 
     // ========================================================================
@@ -802,6 +927,8 @@ jwt_secret = "test-secret""#;
             jwt_secret: String::new(),
             sign_window_seconds: 300,
             sso_ticket_ttl_seconds: 60,
+            remember_me_enabled: false,
+            remember_me_timeout: REMEMBER_ME_DEFAULT_TIMEOUT,
             tenant_isolation: TenantIsolationConfig::default(),
             watcher: None,
         };
