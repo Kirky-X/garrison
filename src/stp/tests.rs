@@ -222,6 +222,7 @@ fn init_global_manager(throw_on_not_login: bool) {
 ///
 /// 返回的 `Arc<MockDao>` 与 BulwarkManager 内部 session 持有同一 DAO 实例，
 /// 测试可用它构造 `ApiKeyHandler` 生成/校验 API Key。
+#[cfg(feature = "protocol-apikey")]
 fn init_global_manager_with_dao(throw_on_not_login: bool) -> Arc<MockDao> {
     BulwarkManager::reset_for_test();
     let dao = Arc::new(MockDao::new());

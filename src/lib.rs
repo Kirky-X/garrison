@@ -146,6 +146,12 @@ pub mod strategy;
 /// 会话模块，提供 BulwarkSession 会话模型。
 pub mod session;
 
+/// 状态机模块，定义 Token / User 显式状态机（0.6.1 新增，依据 spec state-machine E-005）。
+///
+/// 提供 [`state::TokenState`]（5 状态 + 6 条合法转换）与 [`state::UserStatus`]（5 状态 + 9 条合法转换），
+/// 严格遵循 FRD §4.2 / §4.3，不集成到现有 Session / User 模块（推迟到 v0.7.0）。
+pub mod state;
+
 /// 配置模块，提供 BulwarkConfig 全局配置。
 pub mod config;
 
@@ -296,6 +302,22 @@ pub use context::tenant::ClaimTenantResolver;
 
 /// 登录主体（携带 login_id，由 web 框架 extractor 填充，依据 spec web-adapters D12）。
 pub use context::BulwarkPrincipal;
+
+// ============================================================================
+// 状态机类型 re-export（v0.6.1 新增，依据 spec state-machine E-005）
+// ============================================================================
+//
+// 业务方可通过 `use bulwark::{TokenState, UserStatus}` 直接使用，
+// 无需写完整路径 `bulwark::state::TokenState`。
+//
+// 注：spec R-state-007 提及 `Mode` re-export，但 state-machine.md 未在 state 模块定义 Mode
+// （AnnotationMode 位于 annotation 模块），故仅 re-export TokenState / UserStatus（规则7）。
+
+/// Token 生命周期状态（Issued / Active / Expired / Revoked / Refreshed）。
+pub use state::TokenState;
+
+/// 用户账号状态（Pending / Active / Suspended / Inactive / Deleted）。
+pub use state::UserStatus;
 
 // ============================================================================
 // 角色层级（v0.5.0 新增，依据 proposal H6）
