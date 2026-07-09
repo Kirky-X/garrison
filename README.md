@@ -15,11 +15,11 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.4.2-blue" alt="version" />
+  <img src="https://img.shields.io/badge/version-0.6.0-blue" alt="version" />
   <img src="https://img.shields.io/badge/license-Apache--2.0-green" alt="license" />
   <img src="https://img.shields.io/badge/MSRV-1.85+-orange" alt="msrv" />
   <img src="https://img.shields.io/badge/coverage-95%25%2B-brightgreen" alt="coverage" />
-  <img src="https://img.shields.io/badge/tests-1101%2B%20passed-success" alt="tests" />
+  <img src="https://img.shields.io/badge/tests-1463%2B%20passed-success" alt="tests" />
   <img src="https://img.shields.io/badge/clippy-zero%20warnings-success" alt="clippy" />
 </p>
 
@@ -75,12 +75,12 @@
 | 🔒 **完整鉴权链** | 登录认证 → 权限校验 → 会话管理 → 路由拦截，开箱即用 |
 | 📦 **多后端抽象** | `BulwarkDao` + `oxcache` + `dbnexus`，切换存储后端零业务代码改动 |
 | 🔧 **可插拔扩展** | trait + Default 实现模式，替换任意组件（DAO / 策略 / 逻辑）无需改业务 |
-| 🎯 **Feature 门控** | 29 个特性域独立 feature flag，按需编译减小体积 |
+| 🎯 **Feature 门控** | 40+ 个特性域独立 feature flag，按需编译减小体积 |
 | 📊 **高可观测** | `tracing` 日志 + `listener` 事件订阅 + `prometheus` 指标（可选） |
-| 🧪 **高覆盖** | 1101+ 个测试通过，95%+ 行覆盖率，clippy 零警告 |
+| 🧪 **高覆盖** | 1463+ 个测试通过，95%+ 行覆盖率，clippy 零警告 |
 | 🌐 **Web 框架适配** | axum/actix/warp 三框架注解式 extractor（`CheckLogin` / `CheckRole` / `CheckPermission` + 过程宏） |
 
-### 特性域覆盖（27 个，对标 Sa-Token + 0.4.0/0.4.2 协议层补齐）
+### 特性域覆盖（对标 Sa-Token + 0.4.0~0.6.0 协议层与生产能力补齐）
 
 | 特性域 | 状态 | 说明 |
 |--------|------|------|
@@ -119,6 +119,27 @@
 | 过程宏注解 | ✅ 0.4.2 完成 | `#[check_login]`/`#[check_permission]`/`#[check_role]` 属性宏 |
 | OAuth 2.1 PKCE | ✅ 0.4.2 完成 | RFC 7636 S256 方法，旧方法标记 deprecated |
 | Token Introspection | ✅ 0.4.2 完成 | RFC 7662 远程 token 状态查询 |
+| 多租户隔离 | ✅ 0.5.0 完成 | `tenant_id` 字段 + `task_local!` TenantContext + Repository 强制过滤 |
+| 社交登录 | ✅ 0.5.0 完成 | 微信扫码 / 支付宝 Provider + SocialBinding 表 |
+| 审计日志 | ✅ 0.5.0 完成 | `audit_logs` 表 + 14 个 listener 事件订阅 + 自动脱敏 |
+| RefreshToken Rotation | ✅ 0.5.0 完成 | SHA-256 hash chain + parentTokenHash + 重用检测 |
+| 安全防护套件 | ✅ 0.5.0 完成 | 5 个 FirewallStrategy + MaxMindDb 生产后端 |
+| 角色层级 | ✅ 0.5.0 完成 | `role_hierarchy` 表 + TC 预计算 + 登录时缓存权限并集 |
+| 决策溯源 | ✅ 0.5.0 完成 | `Decision{allowed, reason, errors}` + `authorize()` API |
+| Keycloak OIDC RP | ✅ 0.5.0 完成 | `KeycloakProvider` discovery + JWKS 验签 |
+| PostgreSQL 后端 | ✅ 0.5.0 完成 | `db-postgres` feature + backend-agnostic SQL |
+| MySQL 后端 | ✅ 0.5.3 完成 | `db-mysql` feature + testcontainers 集成测试 |
+| 账号安全引擎 | ✅ 0.6.0 完成 | `account/` 模块 + Credential SPI + PasswordPolicyEngine + UserLockoutStrategy + AuthenticationFlow DSL |
+| remember-me 扩展超时 | ✅ 0.6.0 完成 | `remember_me_enabled` / `remember_me_timeout` 配置 + login 参数 |
+| Redis 部署模式 | ✅ 0.6.0 完成 | `RedisDeploymentMode` 枚举（Single/Sentinel/Cluster/MasterSlave） |
+| 身份切换 switch_to | ✅ 0.6.0 完成 | `switch_to(login_id)` 会话身份切换 |
+| Token 置换 renew_to_equivalent | ✅ 0.6.0 完成 | 等效 Token 置换（保留会话状态） |
+| OAuth2 注解 | ✅ 0.6.0 完成 | `Annotation::CheckAccessToken` / `CheckClientToken` |
+| 路由分组 group() | ✅ 0.6.0 完成 | `BulwarkRouter::group(prefix, annotation, f)` |
+| 会话过期回调 | ✅ 0.6.0 完成 | `SessionExpiryListener` trait + `add_expiry_listener` |
+| SAML 2.0 骨架 | ✅ 0.6.0 完成 | `SamlProvider` trait + `DefaultSamlProvider`（quick-xml 解析） |
+| OIDC RP 骨架 | ✅ 0.6.0 完成 | `OidcProvider` trait + `DefaultOidcProvider`（discovery + token exchange） |
+| Redis pub/sub SsoChannel | ✅ 0.6.0 完成 | `RedisPubSubSsoChannel`（PUBLISH/SUBSCRIBE 跨实例通信） |
 
 ---
 
@@ -175,7 +196,7 @@ graph TD
 
 ```toml
 [dependencies]
-bulwark = { version = "0.4", features = ["web-axum"] }
+bulwark = { version = "0.6", features = ["web-axum"] }
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -183,7 +204,7 @@ tokio = { version = "1", features = ["full"] }
 
 ```toml
 [dependencies]
-bulwark = { version = "0.4", features = ["full"] }
+bulwark = { version = "0.6", features = ["full"] }
 ```
 
 ### 最小示例
@@ -326,6 +347,26 @@ async fn main() -> BulwarkResult<()> {
 | `grpc` | ❌ | gRPC 鉴权拦截器（tonic::Interceptor，0.3.0 新增） |
 | `i18n` | ❌ | 异常消息国际化（fluent-rs，0.3.0 新增） |
 | `annotation-macros` | ❌ | `#[check_login]`/`#[check_permission]`/`#[check_role]` 过程宏（0.4.2 新增） |
+| `tenant-isolation` | ❌ | 多租户逻辑隔离（0.5.0 新增） |
+| `social-wechat` | ❌ | 微信扫码社交登录（0.5.0 新增） |
+| `social-alipay` | ❌ | 支付宝授权社交登录（0.5.0 新增） |
+| `audit-log` | ❌ | 审计日志持久化（0.5.0 新增） |
+| `firewall` | ❌ | 安全防护基础 trait（0.5.0 新增） |
+| `firewall-bruteforce` | ❌ | 暴力破解防护策略（0.5.0 新增） |
+| `firewall-ratelimit` | ❌ | 限流策略（0.5.0 新增） |
+| `firewall-anomalous` | ❌ | 异常登录检测（0.5.0 新增） |
+| `firewall-geoip` | ❌ | GeoIP 策略（0.5.0 新增） |
+| `firewall-ddos` | ❌ | DDoS 防护策略（0.5.0 新增） |
+| `firewall-maxminddb` | ❌ | MaxMindDb 生产后端（0.5.3 新增） |
+| `keycloak-oidc` | ❌ | Keycloak OIDC RP 集成（0.5.0 新增） |
+| `decision-trace` | ❌ | 决策溯源（0.5.0 新增） |
+| `db-postgres` | ❌ | PostgreSQL 后端（0.5.0 新增） |
+| `db-mysql` | ❌ | MySQL 后端（0.5.3 新增） |
+| `account-credential` | ❌ | 凭证模型 SPI（0.6.0 新增） |
+| `account-policy` | ❌ | 密码策略引擎（0.6.0 新增） |
+| `account-lockout` | ❌ | 用户锁定策略（0.6.0 新增） |
+| `account-authflow` | ❌ | AuthenticationFlow DSL（0.6.0 新增） |
+| `secure-confusable` | ❌ | Unicode 同形异义字检测（0.5.1 新增） |
 | `full` | ❌ | 聚合所有特性 |
 | `production` | ❌ | 生产环境推荐组合 |
 | `development` | ❌ | 开发环境组合 |
@@ -381,6 +422,11 @@ async fn main() -> BulwarkResult<()> {
 - [x] **v0.2.1**（2026-07-01）auto-wire 修复 + 协议层边界测试 + examples 工程化重组
 - [x] **v0.3.0** 生态完善与可观测：OpenTelemetry OTLP + gRPC 拦截器 + i18n + metrics-prometheus
 - [x] **v0.4.0**（2026-07-02）0.2.0 协议层遗留 gap 补齐：OIDC / ScopeHandler / SsoServer / AloneCache / ParameterQuery（gap #4 注解系统延后至 0.5.0+）
+- [x] **v0.4.2**（2026-07-05）gap closure：dao 扩展 / strategy-registry / jwt-modes / oauth-2-1 / token-introspection / apikey-namespace / sso-toctou / password-login / 注解宏
+- [x] **v0.5.0**（2026-07-06）生产刚需版：多租户 / 社交登录 / 审计日志 / Token Rotation / 安全防护 / 角色层级 / 决策溯源 / Keycloak OIDC RP / PostgreSQL
+- [x] **v0.5.2**（2026-07-08）架构重构：BulwarkLogic trait 拆分为 6 个子 trait + LoginId 迁移到 String
+- [x] **v0.5.3**（2026-07-09）功能补全：oxcache 升级 / stp 完整拆分 / MySQL 后端 / Firewall MaxMindDb
+- [x] **v0.6.0**（2026-07-09）账号安全引擎：account/ 模块 + Credential SPI + PasswordPolicyEngine + AuthenticationFlow DSL + remember-me / Redis 部署模式 / switch_to / SAML 2.0 / OIDC RP / Redis pub/sub SsoChannel
 - [ ] **v1.0.0** 稳定版：API 冻结 + 性能基准 + 生产案例
 
 完整规划见 [docs/ROADMAP.md](./docs/ROADMAP.md)。

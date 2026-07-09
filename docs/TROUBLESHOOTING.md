@@ -23,18 +23,18 @@ Caused by:
   No such file or directory (os error 2)
 ```
 
-**原因**：`Cargo.toml` 中 `oxcache` 使用本地 `path` 依赖（`path = "/home/kirky/projects/oxcache"`），但该路径下不存在项目。crates.io 0.3.0 未暴露 `Cache<K,V>::ttl()`，本地仓库已暴露，故使用 path 依赖。
+**原因**：早期版本（≤ 0.5.3）的 `Cargo.toml` 中 `oxcache` 使用本地 `path` 依赖，但该路径下不存在项目。0.6.0 起已切换为 crates.io 发布的 `oxcache = "0.3.3"`，不再需要本地 path 依赖。
 
-**解决**：将 oxcache 仓库克隆到指定路径：
+**解决**：升级到 0.6.0+，`Cargo.toml` 中 oxcache 已改为 crates.io 依赖：
+
+```toml
+oxcache = { version = "0.3.3", optional = true }
+```
+
+若仍使用旧版本，将 oxcache 仓库克隆到指定路径：
 
 ```bash
 git clone https://github.com/Kirky-X/oxcache.git /home/kirky/projects/oxcache
-```
-
-若希望放到其他路径，修改 `Cargo.toml`：
-
-```toml
-oxcache = { path = "/your/path/oxcache", optional = true }
 ```
 
 ---

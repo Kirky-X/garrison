@@ -5,6 +5,73 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### 概述
+
+通过 specmark change `gap-closure-remaining`（T001-T011）补齐 origin 文档与代码实现之间的 11 项 gap，覆盖 remember-me 配置、Redis 部署模式、身份切换、Token 置换、OAuth2 注解、路由分组、会话过期回调、SAML 2.0 骨架、OIDC RP 骨架、Redis pub/sub SsoChannel。
+
+### 新增
+
+#### T001/T008: remember-me 扩展会话超时
+
+- `BulwarkConfig` 新增 `remember_me_enabled`（默认 false）与 `remember_me_timeout`（默认 7776000 秒 = 90 天）字段
+- `login` 方法支持 `remember_me=true` 参数，启用后使用 `remember_me_timeout` 作为会话 TTL
+- 环境变量 `BULWARK_REMEMBER_ME_ENABLED` / `BULWARK_REMEMBER_ME_TIMEOUT` 覆盖支持
+- `validate()` 校验：`remember_me_enabled=true` 时 `remember_me_timeout` 必须 > `timeout`
+
+#### T002: Redis 部署模式枚举
+
+- 新增 `RedisDeploymentMode` 枚举（Single / Sentinel / Cluster / MasterSlave），覆盖生产环境常见 Redis 拓扑
+- 新增 `RedisConfig` 聚合结构（mode + password + db + connection_timeout_secs + pool_size）
+- `Display` 实现输出人类可读的部署模式描述
+
+#### T003: 身份切换 switch_to
+
+- `switch_to(login_id)` 方法：在当前会话中切换登录身份，保留原会话 token 与设备信息
+
+#### T004: Token 置换 renew_to_equivalent
+
+- `renew_to_equivalent()` 方法：生成等效新 Token 并迁移会话状态，旧 Token 失效
+
+#### T005: OAuth2 注解 CheckAccessToken/CheckClientToken
+
+- `Annotation` 枚举新增 `CheckAccessToken` 与 `CheckClientToken` 变体
+- `pre_handle` 中返回 `NotImplemented`，提示用户使用 `protocol::oauth2::OAuth2Client` 或自定义拦截器
+
+#### T006: 路由分组 group() 方法
+
+- `BulwarkRouter::group(prefix, annotation, f)` 方法：支持路由分组与前缀挂载
+- 子 router 继承父 router 的 interceptor 和 config
+- `Annotation::Ignore` 时覆盖路由注解；否则保留路由自身注解
+
+#### T007: 会话过期回调 SessionExpiryListener
+
+- `SessionExpiryListener` trait：会话过期时触发异步回调
+- `add_expiry_listener` / `trigger_expiry_listeners` 方法
+
+#### T009: SAML 2.0 骨架
+
+- `SamlProvider` trait：`build_authn_request` / `parse_response` / `validate_assertion`
+- `DefaultSamlProvider` 实现：quick-xml pull reader 解析 SAML Response
+- 数据结构：`SamlAssertion` / `SamlResponse` / `SamlRequest`
+- Feature gate：`protocol-sso`
+
+#### T010: OIDC RP 骨架
+
+- `OidcProvider` trait：`get_authorization_url` / `exchange_code` / `get_user_info` / `validate_id_token`
+- `DefaultOidcProvider` 实现：reqwest HTTP client + discovery config
+- 数据结构：`OidcDiscoveryConfig` / `OidcUserInfo`
+- 与 `OidcHandler` 区别：OidcHandler 是 Bulwark 作为 IdP，OidcProvider 是 Bulwark 作为 RP
+
+#### T011: Redis pub/sub SsoChannel
+
+- `RedisPubSubSsoChannel` 实现 `SsoChannel` trait
+- `push(topic, message)`：通过 `redis::cmd("PUBLISH")` 发布消息
+- `subscribe(topic, handler)`：spawn tokio task + `catch_unwind` 保护 handler panic
+- Feature gate：`cache-redis` + `protocol-sso-server`
+- Cargo.toml 新增 `futures` / `redis` / `quick-xml` 依赖
+
 ## [0.6.0] - 2026-07-09
 
 ### 概述
@@ -502,7 +569,7 @@ Bulwark 0.4.0 聚焦于 0.2.0 协议层遗留 gap 的补齐。通过 openspec ch
 - `OAuth2Client` 新增 `scope_registry: Option<Arc<ScopeRegistry>>` 字段（feature-gated）
 - `OAuth2Client` 3 个 token 方法新增 `validate_scope` 调用（feature-gated，未注入跳过）
 - `src/protocol/oauth2/mod.rs` 模块文档注释更新（"三种"→"四种"，新增 RefreshToken）
-- `openspec/specs/dao-oxcache-basic/spec.md` 新增 Known Limitations 章节：oxcache 0.3
+- `specmark/specs/dao-oxcache-basic/spec.md` 新增 Known Limitations 章节：oxcache 0.3
   支持 standalone/sentinel/cluster，master-slave 由 sentinel 模式覆盖
 
 ### 修复（代码审查后，全维度 review pass）

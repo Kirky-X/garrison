@@ -61,21 +61,16 @@ pkg-config --exists openssl && echo "openssl OK"
 
 ### 1.3 克隆仓库与本地依赖
 
-Bulwark 通过 `path` 依赖引用本地的 `oxcache`（crates.io 0.3.0 未暴露 `Cache<K,V>::ttl()`，本地仓库已暴露），需先将其克隆到固定路径：
+Bulwark 使用 crates.io 发布的 `oxcache 0.3.3`（支持 per-entry TTL + `ttl_sync()` 查询）与 `dbnexus 0.3`（SQLite / PostgreSQL / MySQL 多后端），无需额外克隆本地依赖：
 
 ```bash
-# 1. 克隆 oxcache 到本地（Cargo.toml 中配置为 path = /home/kirky/projects/oxcache）
-git clone https://github.com/Kirky-X/oxcache.git /home/kirky/projects/oxcache
-
-# 2. 克隆 Bulwark
+# 1. 克隆 Bulwark
 git clone https://github.com/Kirky-X/bulwark.git
 cd bulwark
 
-# 3. 验证编译（启用全部 feature）
+# 2. 验证编译（启用全部 feature）
 cargo build --features full
 ```
-
-若 `oxcache` 路径不一致，请修改 `Cargo.toml` 中 `oxcache` 的 `path` 字段或建立软链。
 
 ### 1.4 验证
 
@@ -83,7 +78,7 @@ cargo build --features full
 # 全量编译
 cargo build --features full
 
-# 全量测试（292 个单元测试 + 30 个集成测试应全部通过）
+# 全量测试（1463+ 个单元测试应全部通过）
 cargo test --features full
 
 # Lint（零警告）
@@ -104,12 +99,34 @@ bulwark/
 │   │   ├── token/mod.rs
 │   │   ├── permission/mod.rs
 │   │   └── auth/mod.rs
-│   ├── stp/mod.rs            # StpUtil 风格门面（BulwarkLogic / BulwarkInterface / BulwarkUtil）
-│   ├── session/mod.rs        # 会话管理（BulwarkSession）
+│   ├── stp/                  # StpUtil 风格门面（v0.5.3 拆分为多文件）
+│   │   ├── mod.rs            # re-exports
+│   │   ├── core.rs           # BulwarkCore trait
+│   │   ├── session.rs        # SessionLogic trait
+│   │   ├── permission.rs     # PermissionLogic trait
+│   │   ├── token.rs          # TokenLogic trait
+│   │   ├── mfa.rs            # MfaLogic trait
+│   │   ├── password.rs       # PasswordLogic trait
+│   │   ├── interface.rs      # BulwarkInterface trait
+│   │   ├── util.rs           # BulwarkUtil 静态门面
+│   │   ├── parameter.rs      # ParameterQuery
+│   │   └── tests.rs          # 集成测试
+│   ├── session/mod.rs        # 会话管理（BulwarkSession + SessionExpiryListener）
+│   ├── account/              # 账号安全引擎（v0.6.0 新增）
+│   │   ├── credential/       # Credential SPI + PasswordCredential + TotpCredential
+│   │   ├── policy/           # PasswordPolicyEngine + 12+ 规则
+│   │   ├── lockout/          # UserLockoutStrategy
+│   │   ├── authflow/         # AuthenticationFlow DSL
+│   │   └── metrics.rs        # AccountMetrics Prometheus 指标
 │   ├── protocol/             # 协议层（feature 门控）
 │   │   ├── jwt/mod.rs
 │   │   ├── oauth2/mod.rs
-│   │   ├── sso/mod.rs
+│   │   ├── sso/              # SSO 单点登录 + SAML 2.0 + OIDC RP
+│   │   │   ├── mod.rs
+│   │   │   ├── server.rs     # SsoServer trait + CenterIdConverter + SsoChannel
+│   │   │   ├── saml.rs       # SAML 2.0 骨架（v0.6.0 新增）
+│   │   │   ├── oidc.rs       # OIDC RP 骨架（v0.6.0 新增）
+│   │   │   └── channel.rs    # RedisPubSubSsoChannel（v0.6.0 新增）
 │   │   ├── sign/mod.rs
 │   │   ├── apikey/mod.rs
 │   │   └── temp/mod.rs
@@ -119,35 +136,38 @@ bulwark/
 │   │   ├── httpbasic/mod.rs
 │   │   └── httpdigest/mod.rs
 │   ├── dao/                  # 数据访问层
-│   │   ├── mod.rs            # BulwarkDao trait
-│   │   └── dbnexus_impl.rs   # dbnexus 实现
+│   │   ├── mod.rs            # BulwarkDao trait + RedisDeploymentMode + RedisConfig
+│   │   ├── oxcache_impl.rs   # oxcache 实现
+│   │   └── repository/       # Repository 层（9 trait + SqliteRepository）
 │   ├── context/              # 请求上下文抽象
 │   │   ├── mod.rs
-│   │   └── axum_adapter.rs   # axum 适配器
-│   ├── config/mod.rs         # 配置系统（BulwarkConfig + ConfigLoader）
-│   ├── annotation/mod.rs     # 注解系统
-│   ├── router/mod.rs         # 路由权限（BulwarkRouter）
-│   ├── strategy/mod.rs       # 策略模式（BulwarkPermissionStrategy）
+│   │   ├── axum_adapter.rs   # axum 适配器
+│   │   ├── actix_adapter.rs  # actix-web 适配器（v0.4.2 新增）
+│   │   ├── warp_adapter.rs   # warp 适配器（v0.4.2 新增）
+│   │   └── tenant.rs         # 租户解析器（v0.5.0 新增）
+│   ├── config/mod.rs         # 配置系统（BulwarkConfig + ConfigLoader + remember_me）
+│   ├── annotation/mod.rs     # 注解系统（含 CheckAccessToken/CheckClientToken）
+│   ├── router/mod.rs         # 路由权限（BulwarkRouter + group()）
+│   ├── strategy/             # 策略模式 + 注册表
+│   │   ├── mod.rs
+│   │   └── registry.rs       # Strategy 注册表（6 个策略 trait）
 │   ├── exception/mod.rs      # 异常系统
-│   ├── listener/mod.rs       # 事件监听（feature 门控）
+│   ├── listener/mod.rs       # 事件监听（feature 门控，15 个事件变体）
 │   ├── plugin/mod.rs         # 插件系统
 │   ├── manager/mod.rs        # BulwarkManager 全局管理器
 │   ├── json/mod.rs           # JSON 模板
+│   ├── i18n.rs               # 国际化（fluent-rs）
 │   ├── error.rs              # 错误类型定义
 │   ├── prelude.rs            # 预导出
 │   └── lib.rs                # crate 入口
-├── tests/                    # 集成测试（30 个）
-├── examples/                 # 示例代码
-│   ├── basic_login.rs        # init + login + check + logout
-│   ├── axum_integration.rs   # BulwarkRouter + 4 路由 + 服务器
-│   ├── config_loader.rs
-│   ├── context_request.rs
-│   ├── manager_lifecycle.rs
-│   ├── session_management.rs
-│   ├── strategy_firewall.rs
-│   └── dao_operations.rs
-├── migrations/sqlite/        # SQLite 迁移脚本
-├── openspec/                 # 规格驱动变更管理
+├── tests/                    # 集成测试
+├── examples/                 # 示例代码（独立 workspace member）
+├── migrations/               # 数据库迁移脚本
+│   ├── sqlite/core/          # SQLite 迁移
+│   └── mysql/core/           # MySQL 兼容迁移（v0.5.3 新增）
+├── benches/                  # 基准测试（criterion）
+├── bulwark-macros/           # 过程宏 crate（#[check_login] 等）
+├── locales/                  # i18n 资源文件（zh.ftl / en.ftl）
 ├── docs/                     # 文档
 ├── Cargo.toml
 ├── rust-toolchain.toml       # 锁定工具链
@@ -182,7 +202,7 @@ Bulwark 强制采用测试驱动开发（TDD）。每个任务必须严格按以
 4. **运行测试通过** — `cargo test --features full` 必须全部通过
 5. **格式化与 Lint** — `cargo fmt` + `cargo clippy --features full -- -D warnings`，然后 `git commit`
 
-> 不得先写实现再补测试。覆盖率门槛 97.81%，新增代码需保持同等水准。
+> 不得先写实现再补测试。覆盖率门槛 95%+，新增代码需保持同等水准。
 
 ### 3.2 测试驱动示例
 
@@ -268,7 +288,7 @@ fn env_overrides_toml() { ... }
 
 ### 4.3 覆盖率要求
 
-Bulwark 要求测试覆盖率 **≥ 90%**（当前 97.81%）：
+Bulwark 要求测试覆盖率 **≥ 95%**（当前 95%+）：
 
 | 模块类型 | 覆盖率要求 |
 |---------|----------|
@@ -276,7 +296,7 @@ Bulwark 要求测试覆盖率 **≥ 90%**（当前 97.81%）：
 | 协议/安全插件 | ≥ 90% |
 | Web 适配层 | 集成测试覆盖主要中间件路径即可 |
 
-- 292 个单元测试 + 30 个集成测试 + doc-tests
+- 1463+ 个单元测试 + 集成测试 + doc-tests
 - 不追求 100% 覆盖率，但每个分支必须有对应测试用例
 - 禁止通过「不写测试」来提高覆盖率的行为
 
@@ -469,7 +489,7 @@ cargo doc --no-deps --features full --open
 | `default` | 空（无默认特性，需显式启用） |
 | `all-defaults` | 等价于 `cache-memory + db-sqlite + web-axum` |
 | `full` | 启用全部特性（开发首选） |
-| `production` | 生产推荐组合（cache-redis + db-sqlite + web-axum + 协议/安全子集 + 可观测性） |
+| `production` | 生产推荐组合（cache-redis + db-postgres + web-axum + 协议/安全子集 + 可观测性 + 多租户隔离） |
 | `development` | 开发推荐组合（cache-memory + db-sqlite + web-axum） |
 
 > 常见问题排查详见 [troubleshooting.md](./TROUBLESHOOTING.md)。

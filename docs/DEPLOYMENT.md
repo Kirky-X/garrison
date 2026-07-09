@@ -83,7 +83,7 @@ Bulwark 提供三种聚合 feature 与自定义 feature 组合：
 
 | Feature | 适用场景 | 包含的特性 |
 |---------|---------|-----------|
-| `production` | 生产环境 | `cache-redis` + `db-sqlite` + `web-axum` + `protocol-jwt` + `protocol-sign` + `secure-sign` + `listener` + `tracing-log` + `metrics-prometheus` |
+| `production` | 生产环境 | `cache-redis` + `db-postgres` + `web-axum` + `protocol-jwt` + `protocol-sign` + `secure-sign` + `listener` + `tracing-log` + `metrics-prometheus` + `tenant-isolation` |
 | `development` | 开发环境 | `cache-memory` + `db-sqlite` + `web-axum` |
 | `all-defaults` | 快速启用默认后端 | `cache-memory` + `db-sqlite` + `web-axum` |
 | `full` | 全部特性（开发首选） | 全部特性 |
@@ -93,16 +93,16 @@ Bulwark 提供三种聚合 feature 与自定义 feature 组合：
 ```toml
 # 生产环境（推荐）
 [dependencies]
-bulwark = { version = "0.1", features = ["production"] }
+bulwark = { version = "0.6", features = ["production"] }
 
 # 开发环境
 [dependencies]
-bulwark = { version = "0.1", features = ["development"] }
+bulwark = { version = "0.6", features = ["development"] }
 
 # 自定义组合（按需启用）
 [dependencies]
 bulwark = {
-    version = "0.1",
+    version = "0.6",
     default-features = false,
     features = [
         "cache-redis",      # 生产环境使用 Redis
@@ -150,17 +150,20 @@ dbnexus 自动创建以下 **8 张核心表**：
 
 ### 3.3 数据库连接配置
 
-通过 `BULWARK_DB_URL` 环境变量配置 SQLite 连接：
+通过 `BULWARK_DB_URL` 环境变量配置数据库连接：
 
 ```env
 # SQLite 文件路径（默认）
 BULWARK_DB_URL=sqlite://bulwark.db?mode=rwc
 
-# 或指定路径
-BULWARK_DB_URL=sqlite:///data/bulwark.db?mode=rwc
+# PostgreSQL 连接（需启用 db-postgres feature）
+BULWARK_DB_URL=postgres://user:password@localhost:5432/bulwark
+
+# MySQL 连接（需启用 db-mysql feature）
+BULWARK_DB_URL=mysql://user:password@localhost:3306/bulwark
 ```
 
-> PostgreSQL / MySQL 待 0.2.0+ 版本的 dbnexus 提供支持。
+> dbnexus 0.3+ 支持 SQLite / PostgreSQL / MySQL 三种后端。注意 db-sqlite 与 db-mysql 不能同时启用（dbnexus 限制）。PostgreSQL 与 MySQL 需分别通过 `db-postgres` / `db-mysql` feature 启用。
 
 ---
 
@@ -183,7 +186,7 @@ Bulwark 通过 `oxcache` 0.3 提供两级缓存：
 
 ```toml
 [dependencies]
-bulwark = { version = "0.1", features = ["cache-memory"] }
+bulwark = { version = "0.6", features = ["cache-memory"] }
 ```
 
 - 使用 moka 进程内缓存
@@ -194,7 +197,7 @@ bulwark = { version = "0.1", features = ["cache-memory"] }
 
 ```toml
 [dependencies]
-bulwark = { version = "0.1", features = ["cache-redis"] }
+bulwark = { version = "0.6", features = ["cache-redis"] }
 ```
 
 通过 `BULWARK_REDIS_URL` 配置 Redis 连接：
@@ -207,6 +210,8 @@ BULWARK_REDIS_URL=redis://127.0.0.1:6379/0
 BULWARK_REDIS_URL=rediss://:password@redis-host:6379/0
 ```
 
+> 0.6.0 起，Bulwark 支持 `RedisDeploymentMode` 枚举配置四种 Redis 部署模式：Single（单节点）/ Sentinel（哨兵）/ Cluster（集群）/ MasterSlave（主从）。详见 [configuration.md](./CONFIGURATION.md) 的 Redis 部署模式配置章节。
+>
 > 生产环境**必须使用 `cache-redis`**，确保多实例部署时会话状态共享。详见 [SECURITY.md](./SECURITY.md)。
 
 ### 4.4 per-entry TTL
