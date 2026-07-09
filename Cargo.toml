@@ -118,6 +118,9 @@ quick-xml = { version = "0.41", optional = true, default-features = false, featu
 # 版本 ~1.2 与 oxcache 0.3.3 间接依赖的 redis 保持一致
 # 由 cache-redis feature 启用
 redis = { version = "~1.2", optional = true, default-features = false, features = ["aio", "tokio-comp", "connection-manager"] }
+# futures 用于 Redis pub/sub stream 消费（StreamExt::next）
+# 由 cache-redis feature 启用
+futures = { version = "0.3", optional = true, default-features = false, features = ["std"] }
 
 [dev-dependencies]
 tokio-test = "0.4"
@@ -184,7 +187,7 @@ all-defaults = ["cache-memory", "db-sqlite", "web-axum"]
 # === 缓存后端（通过 oxcache 0.2，默认 full 包含 L1 moka + L2 redis） ===
 # cache-memory 与 cache-redis 均启用 oxcache（语义别名，区分用途）
 cache-memory = ["oxcache"]
-cache-redis = ["oxcache", "dep:redis"]
+cache-redis = ["oxcache", "dep:redis", "dep:futures"]
 # 注意：oxcache 无 caffeine feature（L1 用 moka），cache-caffeine 已移除
 
 # === 数据库后端（通过 dbnexus 0.3） ===

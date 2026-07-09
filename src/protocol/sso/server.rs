@@ -86,11 +86,11 @@ pub trait SsoChannel: Send + Sync {
     ///
     /// # 参数
     /// - `topic`: 订阅主题。
-    /// - `handler`: 消息处理回调（收到消息时调用）。
+    /// - `handler`: 消息处理回调（收到消息时调用，参数为 owned `String` 以支持 `'static` 要求）。
     async fn subscribe(
         &self,
         topic: &str,
-        handler: Box<dyn Fn(&str) + Send + Sync>,
+        handler: Box<dyn Fn(String) + Send + Sync>,
     ) -> BulwarkResult<()>;
 }
 
@@ -127,7 +127,7 @@ impl SsoChannel for NoopSsoChannel {
     async fn subscribe(
         &self,
         _topic: &str,
-        _handler: Box<dyn Fn(&str) + Send + Sync>,
+        _handler: Box<dyn Fn(String) + Send + Sync>,
     ) -> BulwarkResult<()> {
         Ok(())
     }
@@ -341,7 +341,7 @@ mod tests {
     #[tokio::test]
     async fn noop_channel_subscribe_returns_ok() {
         let channel = NoopSsoChannel;
-        let handler: Box<dyn Fn(&str) + Send + Sync> = Box::new(|_msg| {});
+        let handler: Box<dyn Fn(String) + Send + Sync> = Box::new(|_msg: String| {});
         let result = channel.subscribe("topic", handler).await;
         assert!(result.is_ok());
     }
@@ -485,7 +485,7 @@ mod tests {
             async fn subscribe(
                 &self,
                 _topic: &str,
-                _handler: Box<dyn Fn(&str) + Send + Sync>,
+                _handler: Box<dyn Fn(String) + Send + Sync>,
             ) -> BulwarkResult<()> {
                 Ok(())
             }

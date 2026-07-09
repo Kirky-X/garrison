@@ -21,6 +21,11 @@ pub mod saml;
 // OIDC RP 协议支持（依据 spec protocol-sso-federation R-003/004）。
 pub mod oidc;
 
+// Redis pub/sub SsoChannel 实现（依据 spec protocol-sso-federation R-005）。
+// 仅在 cache-redis + protocol-sso-server feature 同时启用时编译。
+#[cfg(all(feature = "cache-redis", feature = "protocol-sso-server"))]
+pub mod channel;
+
 use crate::dao::BulwarkDao;
 use crate::error::{BulwarkError, BulwarkResult};
 use serde::{Deserialize, Serialize};
