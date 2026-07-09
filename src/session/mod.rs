@@ -137,6 +137,17 @@ impl BulwarkSession {
         }
     }
 
+    /// 获取 DAO 引用（pub(crate) 供 BulwarkLogicDefault 构造 ApiKeyHandler 等需要 DAO 的协议处理器复用）。
+    ///
+    /// 0.6.1 新增：`BulwarkLogicDefault::check_api_key` 通过此访问器获取 DAO，
+    /// 构造 `ApiKeyHandler` 实例进行 API Key 校验（依据 spec annotation-check-api-key R-anno-004）。
+    ///
+    /// 仅在 `protocol-apikey` feature 启用时编译（避免 feature 关闭时的 dead_code 警告）。
+    #[cfg(feature = "protocol-apikey")]
+    pub(crate) fn dao(&self) -> &Arc<dyn BulwarkDao> {
+        &self.dao
+    }
+
     /// 注入监听器管理器（v0.4.2 新增，依据 spec session-kickout-device R-002）。
     ///
     /// 注入后 `kickout_by_device` 会为每个被踢出的 token 广播 `BulwarkEvent::Kickout` 事件。

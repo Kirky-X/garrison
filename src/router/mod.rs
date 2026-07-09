@@ -49,12 +49,13 @@ pub trait BulwarkInterceptor: Send + Sync {
 ///
 /// # 注解处理方式
 ///
-/// **直接鉴权（5 个）**：
+/// **直接鉴权（6 个）**：
 /// - `CheckLogin` → `BulwarkUtil::check_login()`（未登录返回 `NotLogin`）
 /// - `CheckRole(r)` → `BulwarkUtil::check_role(r)`
 /// - `CheckPermission(p)` → `BulwarkUtil::check_permission(p)`
 /// - `CheckSafe` → `BulwarkUtil::check_safe()`（0.3.0 二级认证）
 /// - `CheckDisable` → `BulwarkUtil::check_disable()`（0.3.0 账号禁用）
+/// - `CheckApiKey { namespace }` → `BulwarkUtil::check_api_key(namespace)`（0.6.1 API Key 校验）
 ///
 /// **NotImplemented（3 个）**：依赖 HTTP 请求上下文（Authorization header / method / body），
 /// 而 `pre_handle` 签名仅有 `path + annotation`，无法获取。Fail Loud（Rule 12）返回
@@ -64,8 +65,8 @@ pub trait BulwarkInterceptor: Send + Sync {
 /// - `CheckSign` → 使用 `protocol::sign::SignHandler` 或 axum extractor
 ///
 /// **直接放行（no-op）**：
-/// - `Ignore` / 逻辑组合注解（`CheckOr` / `CheckAnd` / `CheckNot`）→ no-op
-///   （组合逻辑由注解处理器在编译期或路由配置层处理）
+/// - `Ignore` / 逻辑组合注解（`CheckOr` / `CheckAnd` / `CheckNot` / `Mode`）→ no-op
+///   （组合逻辑由注解处理器在编译期或路由配置层处理；`Mode` 是配置注解非直接检查）
 pub struct DefaultBulwarkInterceptor;
 
 #[async_trait]
@@ -97,10 +98,18 @@ impl BulwarkInterceptor for DefaultBulwarkInterceptor {
             Annotation::CheckSign => Err(BulwarkError::NotImplemented(
                 "CheckSign 需 HTTP 请求上下文，请在 handler 中使用 protocol::sign::SignHandler 或 axum extractor".to_string(),
             )),
+            // 0.6.1：API Key 校验（依据 spec annotation-check-api-key R-anno-004）
+            // namespace 为 None 时使用默认命名空间 "default"
+            Annotation::CheckApiKey { namespace } => {
+                let ns = namespace.as_deref().unwrap_or("default");
+                BulwarkUtil::check_api_key(ns).await
+            }
             Annotation::Ignore => Ok(()),
-            // 逻辑组合注解（CheckOr/CheckAnd/CheckNot）在 pre_handle 中为 no-op，
+            // 逻辑组合注解（CheckOr/CheckAnd/CheckNot/Mode）在 pre_handle 中为 no-op，
             // 实际组合逻辑由注解处理器在编译期或路由配置层处理。
-            _ => Ok(()),
+            // Mode（0.6.1 新增）：控制 @CheckPermission/@CheckRole 的多权限组合逻辑，
+            // 是配置注解而非直接检查，pre_handle 中 no-op。
+            Annotation::CheckOr | Annotation::CheckAnd | Annotation::CheckNot | Annotation::Mode(_) => Ok(()),
         }
     }
 }
@@ -509,6 +518,16 @@ mod tests {
         }
         let interface: Arc<dyn BulwarkInterface> = Arc::new(interface);
         BulwarkManager::init(dao, config, interface).unwrap();
+    }
+
+    /// 初始化 BulwarkManager 并返回 MockDao 引用（用于 API Key 测试等需共享 DAO 的场景）。
+    fn init_manager_with_dao() -> Arc<MockDao> {
+        BulwarkManager::reset_for_test();
+        let dao = Arc::new(MockDao::new());
+        let config = Arc::new(make_config());
+        let interface: Arc<dyn BulwarkInterface> = Arc::new(MockInterface::new());
+        BulwarkManager::init(dao.clone() as Arc<dyn BulwarkDao>, config, interface).unwrap();
+        dao
     }
 
     /// 构建 GET 请求（带可选 Authorization header）。
@@ -1158,5 +1177,163 @@ mod tests {
             StatusCode::BAD_REQUEST,
             "缺失 X-Tenant-Id header 应返回 400 Bad Request"
         );
+    }
+
+    // ----------------------------------------------------------------
+    // CheckApiKey 注解分发测试（0.6.1 新增，依据 spec annotation-check-api-key R-anno-004）
+    // ----------------------------------------------------------------
+
+    #[cfg(feature = "protocol-apikey")]
+    /// CheckApiKey 注解：有效 API Key → 200。
+    #[tokio::test]
+    #[serial]
+    async fn check_api_key_with_valid_key_returns_200() {
+        use crate::protocol::apikey::ApiKeyHandler;
+
+        let dao = init_manager_with_dao();
+        let handler = ApiKeyHandler::new(dao.clone() as Arc<dyn BulwarkDao>);
+        let key = handler
+            .generate_with_namespace("user1", "ns1", vec![], 3600)
+            .await
+            .unwrap();
+
+        let app = BulwarkRouter::new(Arc::new(make_config()))
+            .route_protected(
+                "/api",
+                || async { "api ok" },
+                Annotation::CheckApiKey {
+                    namespace: Some("ns1".to_string()),
+                },
+            )
+            .build();
+
+        let response = app.oneshot(make_request("/api", Some(&key))).await.unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "有效 API Key + 正确 namespace 应返回 200"
+        );
+
+        BulwarkManager::reset_for_test();
+    }
+
+    #[cfg(feature = "protocol-apikey")]
+    /// CheckApiKey 注解：无 API Key → 401。
+    #[tokio::test]
+    #[serial]
+    async fn check_api_key_without_key_returns_401() {
+        init_manager_with_dao();
+
+        let app = BulwarkRouter::new(Arc::new(make_config()))
+            .route_protected(
+                "/api",
+                || async { "api ok" },
+                Annotation::CheckApiKey {
+                    namespace: Some("ns1".to_string()),
+                },
+            )
+            .build();
+
+        let response = app.oneshot(make_request("/api", None)).await.unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::UNAUTHORIZED,
+            "无 API Key 应返回 401"
+        );
+
+        BulwarkManager::reset_for_test();
+    }
+
+    #[cfg(feature = "protocol-apikey")]
+    /// CheckApiKey 注解：namespace 不匹配 → 401。
+    #[tokio::test]
+    #[serial]
+    async fn check_api_key_namespace_mismatch_returns_401() {
+        use crate::protocol::apikey::ApiKeyHandler;
+
+        let dao = init_manager_with_dao();
+        let handler = ApiKeyHandler::new(dao.clone() as Arc<dyn BulwarkDao>);
+        // 为 ns1 生成 key
+        let key = handler
+            .generate_with_namespace("user1", "ns1", vec![], 3600)
+            .await
+            .unwrap();
+
+        // 用 ns1 的 key 访问要求 ns2 的路由 → 应失败
+        let app = BulwarkRouter::new(Arc::new(make_config()))
+            .route_protected(
+                "/api",
+                || async { "api ok" },
+                Annotation::CheckApiKey {
+                    namespace: Some("ns2".to_string()),
+                },
+            )
+            .build();
+
+        let response = app.oneshot(make_request("/api", Some(&key))).await.unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::UNAUTHORIZED,
+            "ns1 key 访问 ns2 路由应返回 401（namespace 隔离）"
+        );
+
+        BulwarkManager::reset_for_test();
+    }
+
+    #[cfg(feature = "protocol-apikey")]
+    /// CheckApiKey 注解：namespace 为 None 时使用默认命名空间 "default"。
+    #[tokio::test]
+    #[serial]
+    async fn check_api_key_none_namespace_uses_default() {
+        use crate::protocol::apikey::ApiKeyHandler;
+
+        let dao = init_manager_with_dao();
+        let handler = ApiKeyHandler::new(dao.clone() as Arc<dyn BulwarkDao>);
+        // generate（不带 namespace）使用默认命名空间 "default"
+        let key = handler.generate("user1", vec![], 3600).await.unwrap();
+
+        let app = BulwarkRouter::new(Arc::new(make_config()))
+            .route_protected(
+                "/api",
+                || async { "api ok" },
+                Annotation::CheckApiKey { namespace: None },
+            )
+            .build();
+
+        let response = app.oneshot(make_request("/api", Some(&key))).await.unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "namespace=None 应使用默认命名空间 default，有效 key 应返回 200"
+        );
+
+        BulwarkManager::reset_for_test();
+    }
+
+    /// Mode 注解在 pre_handle 中为 no-op（不执行任何检查，直接放行）。
+    #[tokio::test]
+    #[serial]
+    async fn mode_annotation_is_noop_in_pre_handle() {
+        use crate::annotation::AnnotationMode;
+
+        init_manager(&[], &[]);
+
+        let app = BulwarkRouter::new(Arc::new(make_config()))
+            .route_protected(
+                "/mode",
+                || async { "mode ok" },
+                Annotation::Mode(AnnotationMode::And),
+            )
+            .build();
+
+        // Mode 是配置注解，pre_handle 中 no-op，不需要登录即可访问
+        let response = app.oneshot(make_request("/mode", None)).await.unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "Mode 注解 pre_handle 为 no-op，应直接放行"
+        );
+
+        BulwarkManager::reset_for_test();
     }
 }

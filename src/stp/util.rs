@@ -417,6 +417,44 @@ impl BulwarkUtil {
             .await
     }
 
+    /// 校验 API Key（0.6.1 新增，依据 spec annotation-check-api-key R-anno-004）。
+    ///
+    /// 从当前请求上下文（task_local `CURRENT_TOKEN`）获取 API Key，
+    /// 委托 `BulwarkLogicDefault::check_api_key(namespace)` 校验。
+    ///
+    /// # 参数
+    /// - `namespace`: 命名空间标识，用于隔离不同业务的 API Key。
+    ///
+    /// # 返回
+    /// - `Ok(())`: API Key 有效。
+    /// - `Err(BulwarkError::Session)`: `BulwarkManager` 未初始化 或 未设置当前请求上下文。
+    /// - `Err(BulwarkError::InvalidToken)`: API Key 不存在或已吊销。
+    /// - `Err(BulwarkError::ExpiredToken)`: API Key 已过期。
+    ///
+    /// # 兼容性
+    ///
+    /// `protocol-apikey` feature 关闭时，本方法返回 `Ok(())`（兼容 0.6.0 未启用 API Key 场景）。
+    ///
+    /// # 示例
+    ///
+    /// ```ignore
+    /// use bulwark::stp::BulwarkUtil;
+    /// use bulwark::stp::with_current_token;
+    ///
+    /// // 在 axum handler 中（middleware 已设置 CURRENT_TOKEN）
+    /// BulwarkUtil::check_api_key("default").await?;
+    ///
+    /// // 或手动设置 token 作用域
+    /// with_current_token("my-api-key".to_string(), async {
+    ///     BulwarkUtil::check_api_key("internal").await
+    /// }).await?;
+    /// ```
+    pub async fn check_api_key(namespace: &str) -> BulwarkResult<()> {
+        crate::manager::BulwarkManager::logic()?
+            .check_api_key(namespace)
+            .await
+    }
+
     /// 通过外部 token 反向建立会话（0.2.0 新增，依据 spec core-auth-api）。
     ///
     /// 用于 OAuth2/SSO 场景：外部 token 已通过协议层校验后，

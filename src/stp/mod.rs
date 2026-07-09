@@ -278,6 +278,48 @@ impl BulwarkLogicDefault {
         self.jwt_mode = mode;
         self
     }
+
+    /// 校验 API Key（0.6.1 新增，依据 spec annotation-check-api-key R-anno-004）。
+    ///
+    /// 从当前请求上下文（task_local `CURRENT_TOKEN`）获取 API Key 字符串，
+    /// 委托 `protocol::apikey::ApiKeyHandler::verify_with_namespace` 校验。
+    ///
+    /// # 参数
+    /// - `namespace`: 命名空间标识，用于隔离不同业务的 API Key。
+    ///
+    /// # 返回
+    /// - `Ok(())`: API Key 有效（存在、未吊销、未过期、namespace 匹配）。
+    /// - `Err(BulwarkError::NotLogin)`: 未设置当前请求上下文（无 API Key 提供）。
+    /// - `Err(BulwarkError::InvalidToken)`: API Key 不存在或已吊销。
+    /// - `Err(BulwarkError::ExpiredToken)`: API Key 已过期。
+    /// - `Err(BulwarkError::InvalidParam)`: namespace 非法。
+    ///
+    /// # 兼容性
+    ///
+    /// `protocol-apikey` feature 关闭时，本方法返回 `Ok(())`（兼容 0.6.0 未启用 API Key 场景）。
+    #[cfg(feature = "protocol-apikey")]
+    pub async fn check_api_key(&self, namespace: &str) -> BulwarkResult<()> {
+        // 无 token 上下文 = 请求未携带 API Key，返回 NotLogin（映射 401）
+        // 与 check_login 不同：check_api_key 返回 Result<()> 而非 Result<bool>，
+        // 无法用 Ok(false) 表达"未通过"，必须返回错误。
+        let key = match current_token() {
+            Ok(t) => t,
+            Err(_) => {
+                return Err(BulwarkError::NotLogin("未提供 API Key".to_string()));
+            },
+        };
+        let handler = crate::protocol::apikey::ApiKeyHandler::new(self.session.dao().clone());
+        handler.verify_with_namespace(&key, namespace).await?;
+        Ok(())
+    }
+
+    /// 校验 API Key（`protocol-apikey` feature 关闭时的兼容实现）。
+    ///
+    /// 返回 `Ok(())`（兼容 0.6.0 未启用 API Key 场景）。
+    #[cfg(not(feature = "protocol-apikey"))]
+    pub async fn check_api_key(&self, _namespace: &str) -> BulwarkResult<()> {
+        Ok(())
+    }
 }
 
 #[cfg(test)]

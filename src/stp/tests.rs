@@ -218,6 +218,27 @@ fn init_global_manager(throw_on_not_login: bool) {
     BulwarkManager::init(dao, Arc::new(config), interface).unwrap();
 }
 
+/// 初始化全局 BulwarkManager 并返回 MockDao 引用（用于 API Key 测试等需共享 DAO 的场景）。
+///
+/// 返回的 `Arc<MockDao>` 与 BulwarkManager 内部 session 持有同一 DAO 实例，
+/// 测试可用它构造 `ApiKeyHandler` 生成/校验 API Key。
+fn init_global_manager_with_dao(throw_on_not_login: bool) -> Arc<MockDao> {
+    BulwarkManager::reset_for_test();
+    let dao = Arc::new(MockDao::new());
+    let mut config = BulwarkConfig::default_config();
+    config.timeout = 3600;
+    config.active_timeout = -1;
+    config.throw_on_not_login = throw_on_not_login;
+    let interface: Arc<dyn BulwarkInterface> = Arc::new(MockInterface);
+    BulwarkManager::init(
+        dao.clone() as Arc<dyn BulwarkDao>,
+        Arc::new(config),
+        interface,
+    )
+    .unwrap();
+    dao
+}
+
 /// 初始化全局 BulwarkManager 并注入预设权限/角色列表（用于 has_permission/has_role 返回 true 的测试）。
 fn init_global_manager_with_perms(
     throw_on_not_login: bool,
@@ -2688,4 +2709,133 @@ async fn util_check_temp_token_delegates_to_logic() {
     init_global_manager(false);
     let result = BulwarkUtil::check_temp_token().await;
     assert!(result.is_err());
+}
+
+// ============================================================================
+// BulwarkUtil::check_api_key 测试（0.6.1 新增，依据 spec annotation-check-api-key R-anno-004）
+// ============================================================================
+
+#[cfg(feature = "protocol-apikey")]
+mod check_api_key_tests {
+    use super::*;
+    use crate::protocol::apikey::ApiKeyHandler;
+
+    /// 有效 API Key + 正确 namespace → Ok(())。
+    #[tokio::test]
+    #[serial]
+    async fn check_api_key_valid_key_correct_namespace_succeeds() {
+        let dao = init_global_manager_with_dao(false);
+        let handler = ApiKeyHandler::new(dao.clone() as Arc<dyn BulwarkDao>);
+        let key = handler
+            .generate_with_namespace("user1", "ns1", vec![], 3600)
+            .await
+            .unwrap();
+
+        let result = with_token(&key, BulwarkUtil::check_api_key("ns1")).await;
+        assert!(result.is_ok(), "有效 key + 正确 namespace 应通过校验");
+
+        BulwarkManager::reset_for_test();
+    }
+
+    /// 无效 API Key（不存在）→ Err(InvalidToken)。
+    #[tokio::test]
+    #[serial]
+    async fn check_api_key_nonexistent_key_fails() {
+        init_global_manager_with_dao(false);
+
+        let result = with_token(
+            "nonexistent-key-12345",
+            BulwarkUtil::check_api_key("default"),
+        )
+        .await;
+        assert!(
+            matches!(result, Err(BulwarkError::InvalidToken(_))),
+            "不存在的 key 应返回 InvalidToken，实际: {:?}",
+            result
+        );
+
+        BulwarkManager::reset_for_test();
+    }
+
+    /// 未设置 current_token 上下文 → Err(NotLogin)。
+    #[tokio::test]
+    #[serial]
+    async fn check_api_key_without_token_context_fails() {
+        init_global_manager_with_dao(false);
+
+        // 不调用 with_token，直接调用 check_api_key
+        let result = BulwarkUtil::check_api_key("default").await;
+        assert!(
+            result.is_err(),
+            "未设置 token 上下文应返回错误，实际: {:?}",
+            result
+        );
+        assert!(
+            matches!(result, Err(BulwarkError::NotLogin(_))),
+            "未设置 token 上下文应返回 NotLogin（映射 401），实际: {:?}",
+            result
+        );
+
+        BulwarkManager::reset_for_test();
+    }
+
+    /// namespace 隔离：ns1 的 key 不能在 ns2 校验通过。
+    #[tokio::test]
+    #[serial]
+    async fn check_api_key_namespace_isolation() {
+        let dao = init_global_manager_with_dao(false);
+        let handler = ApiKeyHandler::new(dao.clone() as Arc<dyn BulwarkDao>);
+        let key_ns1 = handler
+            .generate_with_namespace("user1", "ns1", vec![], 3600)
+            .await
+            .unwrap();
+
+        // ns1 的 key 在 ns1 校验通过
+        let result_ns1 = with_token(&key_ns1, BulwarkUtil::check_api_key("ns1")).await;
+        assert!(result_ns1.is_ok(), "ns1 key + ns1 namespace 应通过");
+
+        // ns1 的 key 在 ns2 校验失败（namespace 不匹配）
+        let result_ns2 = with_token(&key_ns1, BulwarkUtil::check_api_key("ns2")).await;
+        assert!(
+            result_ns2.is_err(),
+            "ns1 key + ns2 namespace 应失败（namespace 隔离）"
+        );
+        assert!(
+            matches!(result_ns2, Err(BulwarkError::InvalidToken(_))),
+            "namespace 不匹配应返回 InvalidToken，实际: {:?}",
+            result_ns2
+        );
+
+        BulwarkManager::reset_for_test();
+    }
+
+    /// 默认命名空间：generate（不带 namespace）生成的 key 可在 "default" 校验通过。
+    #[tokio::test]
+    #[serial]
+    async fn check_api_key_default_namespace() {
+        let dao = init_global_manager_with_dao(false);
+        let handler = ApiKeyHandler::new(dao.clone() as Arc<dyn BulwarkDao>);
+        let key = handler.generate("user1", vec![], 3600).await.unwrap();
+
+        let result = with_token(&key, BulwarkUtil::check_api_key("default")).await;
+        assert!(result.is_ok(), "默认命名空间生成的 key 应在 default 通过");
+
+        BulwarkManager::reset_for_test();
+    }
+
+    /// BulwarkManager 未初始化 → Err(Session)。
+    #[tokio::test]
+    #[serial]
+    async fn check_api_key_manager_not_initialized_fails() {
+        BulwarkManager::reset_for_test();
+
+        let result = with_token("some-key", BulwarkUtil::check_api_key("default")).await;
+        assert!(
+            result.is_err(),
+            "Manager 未初始化应返回错误，实际: {:?}",
+            result
+        );
+
+        BulwarkManager::reset_for_test();
+    }
 }
