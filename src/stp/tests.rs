@@ -914,7 +914,7 @@ async fn util_has_permission_returns_true_when_granted() {
     );
     let token = BulwarkUtil::login("1001").await.unwrap();
     let result = with_token(&token, BulwarkUtil::has_permission("user:read")).await;
-    assert_eq!(result.unwrap(), true, "持有权限应返回 true");
+    assert!(result.unwrap(), "持有权限应返回 true");
 }
 
 /// 已登录 + 未持有权限 → has_permission 返回 Ok(false)。
@@ -924,7 +924,7 @@ async fn util_has_permission_returns_false_when_not_granted() {
     init_global_manager_with_perms(false, vec![], vec![]);
     let token = BulwarkUtil::login("1001").await.unwrap();
     let result = with_token(&token, BulwarkUtil::has_permission("user:read")).await;
-    assert_eq!(result.unwrap(), false, "未持有权限应返回 false");
+    assert!(!result.unwrap(), "未持有权限应返回 false");
 }
 
 /// 未登录 → has_permission 返回 Ok(false)（不抛 NotLogin）。
@@ -934,7 +934,7 @@ async fn util_has_permission_returns_false_when_not_logged_in() {
     init_global_manager(false);
     // 不调用 login，直接 has_permission（无 task_local token）
     let result = BulwarkUtil::has_permission("user:read").await;
-    assert_eq!(result.unwrap(), false, "未登录应返回 false");
+    assert!(!result.unwrap(), "未登录应返回 false");
 }
 
 /// 已登录 + 持有角色 → has_role 返回 Ok(true)。
@@ -948,7 +948,7 @@ async fn util_has_role_returns_true_when_granted() {
     );
     let token = BulwarkUtil::login("1001").await.unwrap();
     let result = with_token(&token, BulwarkUtil::has_role("admin")).await;
-    assert_eq!(result.unwrap(), true, "持有角色应返回 true");
+    assert!(result.unwrap(), "持有角色应返回 true");
 }
 
 /// 已登录 + 未持有角色 → has_role 返回 Ok(false)。
@@ -958,7 +958,7 @@ async fn util_has_role_returns_false_when_not_granted() {
     init_global_manager_with_perms(false, vec![], vec![]);
     let token = BulwarkUtil::login("1001").await.unwrap();
     let result = with_token(&token, BulwarkUtil::has_role("admin")).await;
-    assert_eq!(result.unwrap(), false, "未持有角色应返回 false");
+    assert!(!result.unwrap(), "未持有角色应返回 false");
 }
 
 /// 未登录 → has_role 返回 Ok(false)。
@@ -967,7 +967,7 @@ async fn util_has_role_returns_false_when_not_granted() {
 async fn util_has_role_returns_false_when_not_logged_in() {
     init_global_manager(false);
     let result = BulwarkUtil::has_role("admin").await;
-    assert_eq!(result.unwrap(), false, "未登录应返回 false");
+    assert!(!result.unwrap(), "未登录应返回 false");
 }
 
 // ------------------------------------------------------------------------

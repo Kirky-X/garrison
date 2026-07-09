@@ -4,8 +4,8 @@
 //! See LICENSE for full license text.
 //!
 //! 本文件为 DAO 存储抽象的具体实现占位（如 Redis/SQL 适配）。
-//! v0.6.0 的 [`UserLockoutStrategy`](super::UserLockoutStrategy) 直接通过
-//! [`BulwarkDao`](crate::dao::BulwarkDao) 持久化 [`LockoutState`](super::LockoutState)，
+//! v0.6.0 的 [`UserLockoutStrategy`](crate::account::lockout::UserLockoutStrategy) 直接通过
+//! [`BulwarkDao`](crate::dao::BulwarkDao) 持久化 [`LockoutState`](crate::account::lockout::LockoutState)，
 //! 未来版本可在此文件实现专用的锁定状态存储后端（如 Redis TTL 自动过期、
 //! SQL 持久化、跨数据中心同步）。
 //!

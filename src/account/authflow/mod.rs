@@ -8,18 +8,18 @@
 //!
 //! # 核心类型（T013）
 //!
-//! - [`AuthStep`]：认证步骤 enum（7 变体：Login/Mfa/SocialProvider/SsoServer/RequiredAction/Conditional/SubFlow）
-//! - [`AuthCondition`]：条件分支 enum（4 变体：HasCredential/IsLocked/IpWhitelisted/Custom）
-//! - [`AuthenticationFlow`]：认证流程定义（name + steps + allow_skip）
-//! - [`AuthContext`]：执行上下文（input + user_id + tenant_id + ip + completed_steps + extras）
-//! - [`AuthResult`]：执行结果 enum（4 变体：Success/Failed/Pending/ChallengeRequired）
+//! - [`AuthStep`](crate::account::authflow::AuthStep)：认证步骤 enum（7 变体：Login/Mfa/SocialProvider/SsoServer/RequiredAction/Conditional/SubFlow）
+//! - [`AuthCondition`](crate::account::authflow::AuthCondition)：条件分支 enum（4 变体：HasCredential/IsLocked/IpWhitelisted/Custom）
+//! - [`AuthenticationFlow`](crate::account::authflow::AuthenticationFlow)：认证流程定义（name + steps + allow_skip）
+//! - [`AuthContext`](crate::account::authflow::AuthContext)：执行上下文（input + user_id + tenant_id + ip + completed_steps + extras）
+//! - [`AuthResult`](crate::account::authflow::AuthResult)：执行结果 enum（4 变体：Success/Failed/Pending/ChallengeRequired)
 //!
 //! # 子模块
 //!
-//! - [`builder`]: FlowBuilder 流式构建 DSL（T014）
-//! - [`registry`]: FlowRegistry inventory 注册（T015）
-//! - [`executor`]: AuthExecutor 执行器（T016/T017）
-//! - [`builtin`]: 内置 AuthenticationFlow（T018）
+//! - [`builder`](crate::account::authflow::builder): FlowBuilder 流式构建 DSL（T014）
+//! - [`registry`](crate::account::authflow::registry): FlowRegistry inventory 注册（T015）
+//! - [`executor`](crate::account::authflow::executor): AuthExecutor 执行器（T016/T017）
+//! - [`builtin`](crate::account::authflow::builtin): 内置 AuthenticationFlow（T018）
 
 pub mod builder;
 pub mod builtin;

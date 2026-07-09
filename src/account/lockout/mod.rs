@@ -8,9 +8,9 @@
 //!
 //! # 核心类型（T011）
 //!
-//! - [`WaitStrategy`]：等待策略 enum（Multiple 倍数 / Linear 线性）
-//! - [`UserLockoutConfig`]：用户级锁定配置（5 字段）
-//! - [`LockoutState`]：锁定状态（4 字段，DAO 持久化）
+//! - [`WaitStrategy`](crate::account::lockout::WaitStrategy)：等待策略 enum（Multiple 倍数 / Linear 线性）
+//! - [`UserLockoutConfig`](crate::account::lockout::UserLockoutConfig)：用户级锁定配置（5 字段）
+//! - [`LockoutState`](crate::account::lockout::LockoutState)：锁定状态（4 字段，DAO 持久化）
 //!
 //! # 策略实现（T012）
 //!
