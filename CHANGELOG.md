@@ -5,11 +5,13 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
-## [Unreleased]
+## [0.6.1] - 2026-07-10
 
 ### 概述
 
 通过 specmark change `gap-closure-remaining`（T001-T011）补齐 origin 文档与代码实现之间的 11 项 gap，覆盖 remember-me 配置、Redis 部署模式、身份切换、Token 置换、OAuth2 注解、路由分组、会话过期回调、SAML 2.0 骨架、OIDC RP 骨架、Redis pub/sub SsoChannel。
+
+**至此，所有 origin 文档与代码实现之间的 gap 已全部关闭，零残留。**
 
 ### 新增
 
