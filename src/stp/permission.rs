@@ -116,6 +116,48 @@ pub trait PermissionLogic: SessionLogic {
             Err(e) => Err(e),
         }
     }
+
+    /// 获取当前登录主体的权限列表（0.6.1 新增，依据 spec bulwark-util-api R-util-api-003，对应 FRD §5.3.2 getPermissionList）。
+    ///
+    /// 从当前会话上下文获取 login_id 后委托 `BulwarkPermissionStrategy` 查询权限数据。
+    /// 未登录时返回 `Ok(vec![])`（非抛出异常），适用于 UI 渲染等无需强制登录的场景。
+    ///
+    /// # 返回
+    /// - `Ok(permissions)`: 权限标识字符串列表（如 `["user:read", "user:write"]`），可为空。
+    ///
+    /// # 错误
+    /// - 数据源访问失败：透传 `BulwarkError`。
+    ///
+    /// # 默认实现
+    ///
+    /// 返回 `Err(NotImplemented)`；`BulwarkLogicDefault` 覆写为委托 `firewall.get_permission_list(login_id)`。
+    async fn get_permission_list(&self) -> BulwarkResult<Vec<String>> {
+        Err(BulwarkError::NotImplemented(
+            "get_permission_list 未实现（默认实现，需在 BulwarkLogicDefault 或业务实现中覆写）"
+                .to_string(),
+        ))
+    }
+
+    /// 获取当前登录主体的角色列表（0.6.1 新增，依据 spec bulwark-util-api R-util-api-004，对应 FRD §5.3.2 getRoleList）。
+    ///
+    /// 从当前会话上下文获取 login_id 后委托 `BulwarkPermissionStrategy` 查询角色数据。
+    /// 未登录时返回 `Ok(vec![])`。
+    ///
+    /// # 返回
+    /// - `Ok(roles)`: 角色标识字符串列表（如 `["admin", "user"]`），可为空。
+    ///
+    /// # 错误
+    /// - 数据源访问失败：透传 `BulwarkError`。
+    ///
+    /// # 默认实现
+    ///
+    /// 返回 `Err(NotImplemented)`；`BulwarkLogicDefault` 覆写为委托 `firewall.get_role_list(login_id)`。
+    async fn get_role_list(&self) -> BulwarkResult<Vec<String>> {
+        Err(BulwarkError::NotImplemented(
+            "get_role_list 未实现（默认实现，需在 BulwarkLogicDefault 或业务实现中覆写）"
+                .to_string(),
+        ))
+    }
 }
 
 // ============================================================================
@@ -223,6 +265,23 @@ impl PermissionLogic for BulwarkLogicDefault {
         } else {
             Err(BulwarkError::NotRole(role.to_string()))
         }
+    }
+
+    async fn get_permission_list(&self) -> BulwarkResult<Vec<String>> {
+        // 未登录返回空列表（非抛出异常，适用于 UI 渲染等无需强制登录的场景）
+        let login_id = match self.get_login_id().await? {
+            Some(id) => id,
+            None => return Ok(vec![]),
+        };
+        self.firewall.get_permission_list(&login_id).await
+    }
+
+    async fn get_role_list(&self) -> BulwarkResult<Vec<String>> {
+        let login_id = match self.get_login_id().await? {
+            Some(id) => id,
+            None => return Ok(vec![]),
+        };
+        self.firewall.get_role_list(&login_id).await
     }
 }
 
@@ -499,5 +558,33 @@ mod tests {
             has_permission: false,
         };
         assert!(!mock.has_permission("user:read").await.unwrap());
+    }
+
+    // ========================================================================
+    // get_permission_list / get_role_list 默认实现测试（0.6.1 新增，依据 R-util-api-003/004）
+    // ========================================================================
+
+    /// get_permission_list 默认实现返回 NotImplemented（未覆写时）。
+    #[tokio::test]
+    async fn get_permission_list_default_returns_not_implemented() {
+        let mock = ok_perm_mock();
+        let result = mock.get_permission_list().await;
+        assert!(
+            matches!(result, Err(BulwarkError::NotImplemented(ref s)) if s.contains("get_permission_list")),
+            "默认实现应返回 NotImplemented，实际: {:?}",
+            result
+        );
+    }
+
+    /// get_role_list 默认实现返回 NotImplemented（未覆写时）。
+    #[tokio::test]
+    async fn get_role_list_default_returns_not_implemented() {
+        let mock = ok_perm_mock();
+        let result = mock.get_role_list().await;
+        assert!(
+            matches!(result, Err(BulwarkError::NotImplemented(ref s)) if s.contains("get_role_list")),
+            "默认实现应返回 NotImplemented，实际: {:?}",
+            result
+        );
     }
 }

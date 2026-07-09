@@ -949,6 +949,109 @@ async fn util_has_role_returns_false_when_not_logged_in() {
 }
 
 // ------------------------------------------------------------------------
+// BulwarkUtil::get_permission_list / get_role_list 测试（0.6.1 新增，依据 R-util-api-003/004）
+// ------------------------------------------------------------------------
+
+/// 未初始化时 BulwarkUtil::get_permission_list 返回 Session 错误。
+#[tokio::test]
+#[serial]
+async fn util_get_permission_list_fails_when_not_initialized() {
+    BulwarkManager::reset_for_test();
+    let result = BulwarkUtil::get_permission_list().await;
+    assert!(
+        matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("未初始化")),
+        "未初始化时 get_permission_list 应返回 Session 错误"
+    );
+}
+
+/// 未初始化时 BulwarkUtil::get_role_list 返回 Session 错误。
+#[tokio::test]
+#[serial]
+async fn util_get_role_list_fails_when_not_initialized() {
+    BulwarkManager::reset_for_test();
+    let result = BulwarkUtil::get_role_list().await;
+    assert!(
+        matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("未初始化")),
+        "未初始化时 get_role_list 应返回 Session 错误"
+    );
+}
+
+/// 已登录 + 持有权限列表 → get_permission_list 返回非空列表。
+#[tokio::test]
+#[serial]
+async fn util_get_permission_list_returns_permissions_when_granted() {
+    init_global_manager_with_perms(
+        false,
+        vec!["user:read".to_string(), "user:write".to_string()],
+        vec!["admin".to_string()],
+    );
+    let token = BulwarkUtil::login("1001").await.unwrap();
+    let result = with_token(&token, BulwarkUtil::get_permission_list()).await;
+    let perms = result.unwrap();
+    assert_eq!(perms.len(), 2, "应返回 2 个权限");
+    assert!(perms.contains(&"user:read".to_string()), "应包含 user:read");
+    assert!(
+        perms.contains(&"user:write".to_string()),
+        "应包含 user:write"
+    );
+}
+
+/// 已登录 + 空权限列表 → get_permission_list 返回空 vec。
+#[tokio::test]
+#[serial]
+async fn util_get_permission_list_returns_empty_when_no_permissions() {
+    init_global_manager_with_perms(false, vec![], vec![]);
+    let token = BulwarkUtil::login("1001").await.unwrap();
+    let result = with_token(&token, BulwarkUtil::get_permission_list()).await;
+    assert!(result.unwrap().is_empty(), "无权限时应返回空 vec");
+}
+
+/// 未登录 → get_permission_list 返回空 vec（不抛 NotLogin）。
+#[tokio::test]
+#[serial]
+async fn util_get_permission_list_returns_empty_when_not_logged_in() {
+    init_global_manager(false);
+    let result = BulwarkUtil::get_permission_list().await;
+    assert!(result.unwrap().is_empty(), "未登录应返回空 vec");
+}
+
+/// 已登录 + 持有角色列表 → get_role_list 返回非空列表。
+#[tokio::test]
+#[serial]
+async fn util_get_role_list_returns_roles_when_granted() {
+    init_global_manager_with_perms(
+        false,
+        vec!["user:read".to_string()],
+        vec!["admin".to_string(), "user".to_string()],
+    );
+    let token = BulwarkUtil::login("1001").await.unwrap();
+    let result = with_token(&token, BulwarkUtil::get_role_list()).await;
+    let roles = result.unwrap();
+    assert_eq!(roles.len(), 2, "应返回 2 个角色");
+    assert!(roles.contains(&"admin".to_string()), "应包含 admin");
+    assert!(roles.contains(&"user".to_string()), "应包含 user");
+}
+
+/// 已登录 + 空角色列表 → get_role_list 返回空 vec。
+#[tokio::test]
+#[serial]
+async fn util_get_role_list_returns_empty_when_no_roles() {
+    init_global_manager_with_perms(false, vec![], vec![]);
+    let token = BulwarkUtil::login("1001").await.unwrap();
+    let result = with_token(&token, BulwarkUtil::get_role_list()).await;
+    assert!(result.unwrap().is_empty(), "无角色时应返回空 vec");
+}
+
+/// 未登录 → get_role_list 返回空 vec。
+#[tokio::test]
+#[serial]
+async fn util_get_role_list_returns_empty_when_not_logged_in() {
+    init_global_manager(false);
+    let result = BulwarkUtil::get_role_list().await;
+    assert!(result.unwrap().is_empty(), "未登录应返回空 vec");
+}
+
+// ------------------------------------------------------------------------
 // BulwarkUtil 成功路径测试（覆盖未测试的静态方法）
 // ------------------------------------------------------------------------
 

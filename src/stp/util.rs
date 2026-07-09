@@ -305,6 +305,40 @@ impl BulwarkUtil {
             .await
     }
 
+    /// 获取当前登录主体的权限列表（0.6.1 新增，依据 spec bulwark-util-api R-util-api-003，对应 FRD §5.3.2 getPermissionList）。
+    ///
+    /// 从当前会话上下文获取 login_id 后委托 `BulwarkPermissionStrategy` 查询权限数据。
+    /// 未登录时返回 `Ok(vec![])`（非抛出异常）。
+    ///
+    /// # 返回
+    /// - `Ok(permissions)`: 权限标识字符串列表（如 `["user:read", "user:write"]`），可为空。
+    ///
+    /// # 错误
+    /// - `BulwarkManager` 未初始化：`BulwarkError::Session`。
+    /// - 数据源访问失败：透传 `BulwarkError`。
+    pub async fn get_permission_list() -> BulwarkResult<Vec<String>> {
+        crate::manager::BulwarkManager::logic()?
+            .get_permission_list()
+            .await
+    }
+
+    /// 获取当前登录主体的角色列表（0.6.1 新增，依据 spec bulwark-util-api R-util-api-004，对应 FRD §5.3.2 getRoleList）。
+    ///
+    /// 从当前会话上下文获取 login_id 后委托 `BulwarkPermissionStrategy` 查询角色数据。
+    /// 未登录时返回 `Ok(vec![])`。
+    ///
+    /// # 返回
+    /// - `Ok(roles)`: 角色标识字符串列表（如 `["admin", "user"]`），可为空。
+    ///
+    /// # 错误
+    /// - `BulwarkManager` 未初始化：`BulwarkError::Session`。
+    /// - 数据源访问失败：透传 `BulwarkError`。
+    pub async fn get_role_list() -> BulwarkResult<Vec<String>> {
+        crate::manager::BulwarkManager::logic()?
+            .get_role_list()
+            .await
+    }
+
     /// 校验 access_token 类型会话（0.5.0 新增，依据 spec annotation-macros P2 前置）。
     ///
     /// 委托 `TokenLogic::check_access_token()`，默认实现委托 `check_login`。
