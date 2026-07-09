@@ -207,9 +207,9 @@ if [[ "${DO_SYNC}" == "true" ]]; then
     echo "[archive] === delta spec 同步 (--sync) ==="
 
     while IFS= read -r -d '' delta_file; do
-        # delta 文件名（不含 .md）→ main spec 目录名
-        delta_basename="$(basename "${delta_file}")"
-        cap_name="${delta_basename%.md}"
+        # delta 父目录名 → main spec 目录名
+        # delta 路径结构：specs/<capability>/spec.md，capability = spec.md 的父目录名
+        cap_name="$(basename "$(dirname "${delta_file}")")"
         main_spec="${SPECS_DIR}/${cap_name}/spec.md"
 
         echo "[archive] 同步: ${cap_name}"
