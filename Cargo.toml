@@ -111,6 +111,13 @@ unicode-security = { version = "0.1", optional = true }
 # 0.5.3 新增：maxminddb 用于 Firewall MaxMindDb 生产后端（GeoIP2-City/Country 数据库查询）
 # 由 firewall-maxminddb feature 启用（依赖 firewall-geoip + firewall-anomalous）
 maxminddb = { version = "0.29", optional = true }
+# quick-xml 用于 SAML 2.0 XML 解析（依据 spec protocol-sso-federation R-001/002）
+# 由 protocol-sso feature 启用
+quick-xml = { version = "0.41", optional = true, default-features = false, features = ["serialize"] }
+# redis 用于 RedisPubSubSsoChannel 的 pub/sub 通信（依据 spec protocol-sso-federation R-005）
+# 版本 ~1.2 与 oxcache 0.3.3 间接依赖的 redis 保持一致
+# 由 cache-redis feature 启用
+redis = { version = "~1.2", optional = true, default-features = false, features = ["aio", "tokio-comp", "connection-manager"] }
 
 [dev-dependencies]
 tokio-test = "0.4"
@@ -177,7 +184,7 @@ all-defaults = ["cache-memory", "db-sqlite", "web-axum"]
 # === 缓存后端（通过 oxcache 0.2，默认 full 包含 L1 moka + L2 redis） ===
 # cache-memory 与 cache-redis 均启用 oxcache（语义别名，区分用途）
 cache-memory = ["oxcache"]
-cache-redis = ["oxcache"]
+cache-redis = ["oxcache", "dep:redis"]
 # 注意：oxcache 无 caffeine feature（L1 用 moka），cache-caffeine 已移除
 
 # === 数据库后端（通过 dbnexus 0.3） ===
@@ -207,7 +214,7 @@ db-mysql = ["db-base", "dbnexus/mysql"]
 # === 协议层插件 ===
 # 0.4.2 新增：PKCE (RFC 7636) 需要 sha2 (S256) + base64 (URL_SAFE_NO_PAD)
 protocol-oauth2 = ["reqwest", "sha2", "base64"]
-protocol-sso = ["reqwest"]
+protocol-sso = ["reqwest", "dep:quick-xml"]
 protocol-jwt = ["jsonwebtoken", "sha2"]
 protocol-sign = ["sha2", "hmac", "base64"]
 protocol-apikey = []
