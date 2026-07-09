@@ -155,6 +155,33 @@ pub type BulwarkResult<T> = Result<T, BulwarkError>;
 // ============================================================================
 
 impl BulwarkError {
+    // ========================================================================
+    // BW-ERR 错误码常量（0.6.1 新增，依据 spec error-exceptions R-error-004 / FRD §3.4）
+    // ========================================================================
+    // 与 response_parts() 返回的字符串 error_code（如 "DISABLE_SERVICE"）解耦：
+    // - response_parts().1 → 面向 HTTP 响应体（Sa-Token 既有惯例）
+    // - BW_ERR_XXX 常量 → 面向 audit-log / 监控埋点 / FRD §3.4 数值追溯
+
+    /// BW-ERR-009：并发登录冲突（FRD §3.4）。
+    ///
+    /// 超出设备并发上限时抛出，HTTP 409 Conflict。
+    pub const BW_ERR_009: u32 = 409001;
+
+    /// BW-ERR-010：账号被封禁（FRD §3.4）。
+    ///
+    /// 对应 `BulwarkError::DisableService`，HTTP 403 Forbidden。
+    pub const BW_ERR_010: u32 = 403003;
+
+    /// BW-ERR-011：多账号体系冲突（FRD §3.4）。
+    ///
+    /// 同一 login_id 在不同 account_type 下冲突，HTTP 401 Unauthorized。
+    pub const BW_ERR_011: u32 = 401004;
+
+    /// BW-ERR-012：第三方登录失败（FRD §3.4）。
+    ///
+    /// 对应 `BulwarkError::NotSafe`（第三方登录回退），HTTP 400 Bad Request。
+    pub const BW_ERR_012: u32 = 400001;
+
     /// 返回 HTTP 响应分片 `(status_code, error_code, message, exception_code)`。
     ///
     /// 框架无关方法，axum / actix-web / warp 适配器均复用此方法以保证三框架行为一致性
@@ -1170,5 +1197,33 @@ mod tests {
             !message_str.contains("InternalStateB"),
             "响应体不应泄露 to 状态名"
         );
+    }
+
+    // ========================================================================
+    // BW-ERR 错误码常量测试（0.6.1 新增，依据 spec error-exceptions R-error-004）
+    // ========================================================================
+
+    /// 验证 BW_ERR_009 常量值为 409001（并发登录冲突，FRD §3.4）。
+    #[test]
+    fn bw_err_009_constant_value() {
+        assert_eq!(BulwarkError::BW_ERR_009, 409001);
+    }
+
+    /// 验证 BW_ERR_010 常量值为 403003（账号被封禁，FRD §3.4）。
+    #[test]
+    fn bw_err_010_constant_value() {
+        assert_eq!(BulwarkError::BW_ERR_010, 403003);
+    }
+
+    /// 验证 BW_ERR_011 常量值为 401004（多账号体系冲突，FRD §3.4）。
+    #[test]
+    fn bw_err_011_constant_value() {
+        assert_eq!(BulwarkError::BW_ERR_011, 401004);
+    }
+
+    /// 验证 BW_ERR_012 常量值为 400001（第三方登录失败，FRD §3.4）。
+    #[test]
+    fn bw_err_012_constant_value() {
+        assert_eq!(BulwarkError::BW_ERR_012, 400001);
     }
 }
