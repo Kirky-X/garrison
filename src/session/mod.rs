@@ -6,10 +6,10 @@
 //! ## 双模会话（依据 spec session-management）
 //!
 //! 1. **Account-Session**：以 login_id 为 key，存储该账号所有 token 列表与最后活跃时间
-//!    - key: `session:account:{login_id}`
+//!    - key: `account:session:{login_id}`
 //!    - TTL: `active_timeout`（账号级 activity 超时）
 //! 2. **Token-Session**：以 token 为 key，存储 login_id/创建时间/自定义属性
-//!    - key: `session:token:{token}`
+//!    - key: `token:session:{token}`
 //!    - TTL: `timeout`（token 级超时）
 //!
 //! ## 过期机制
@@ -90,8 +90,8 @@ pub struct TokenSession {
 ///
 /// # 存储格式
 ///
-/// - `session:account:{login_id}` → `AccountSession`（JSON）
-/// - `session:token:{token}` → `TokenSession`（JSON）
+/// - `account:session:{login_id}` → `AccountSession`（JSON）
+/// - `token:session:{token}` → `TokenSession`（JSON）
 pub struct BulwarkSession {
     /// DAO 引用（oxcache / dbnexus 实现）。
     dao: Arc<dyn BulwarkDao>,
@@ -109,12 +109,12 @@ pub struct BulwarkSession {
 
 /// 生成 Account-Session 的存储 key。
 fn account_key(login_id: &str) -> String {
-    format!("session:account:{}", login_id)
+    format!("account:session:{}", login_id)
 }
 
 /// 生成 Token-Session 的存储 key。
 fn token_key(token: &str) -> String {
-    format!("session:token:{}", token)
+    format!("token:session:{}", token)
 }
 
 impl BulwarkSession {
@@ -677,14 +677,14 @@ mod tests {
         let (dao, session) = make_session(3600, 86400);
         session.create("1001", "T1").await.unwrap();
 
-        // spec: BulwarkDao::get("session:account:1001") 返回 Account-Session 数据
-        let account_json = dao.get("session:account:1001").await.unwrap();
+        // spec: BulwarkDao::get("account:session:1001") 返回 Account-Session 数据
+        let account_json = dao.get("account:session:1001").await.unwrap();
         assert!(account_json.is_some());
         let account: AccountSession = serde_json::from_str(&account_json.unwrap()).unwrap();
         assert_eq!(account.login_id, "1001");
 
-        // spec: BulwarkDao::get("session:token:T1") 返回 Token-Session 数据
-        let token_json = dao.get("session:token:T1").await.unwrap();
+        // spec: BulwarkDao::get("token:session:T1") 返回 Token-Session 数据
+        let token_json = dao.get("token:session:T1").await.unwrap();
         assert!(token_json.is_some());
         let ts: TokenSession = serde_json::from_str(&token_json.unwrap()).unwrap();
         assert_eq!(ts.login_id, "1001");

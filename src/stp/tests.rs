@@ -2163,7 +2163,7 @@ async fn check_login_mixin_broadcasts_session_timeout_when_account_missing() {
     let token = logic.login("1001").await.unwrap();
 
     // 删除 account session，使 is_valid 返回 false（token session 仍存在）
-    dao.delete("session:account:1001").await.unwrap();
+    dao.delete("account:session:1001").await.unwrap();
 
     // 注入 listener_manager（Mixin 模式为默认）
     #[cfg(feature = "listener")]
@@ -2187,7 +2187,7 @@ async fn check_login_simple_broadcasts_session_timeout_when_account_missing() {
     let token = logic.login("1001").await.unwrap();
 
     // 删除 account session，使 is_valid 返回 false（token session 仍存在）
-    dao.delete("session:account:1001").await.unwrap();
+    dao.delete("account:session:1001").await.unwrap();
 
     // 注入 listener_manager
     #[cfg(feature = "listener")]
