@@ -190,6 +190,22 @@ impl BulwarkInterface for MockInterface {
     }
 }
 
+/// 带预设权限/角色列表的 MockInterface（用于 has_permission/has_role 返回 true 的测试）。
+struct MockInterfaceWithPerms {
+    permissions: Vec<String>,
+    roles: Vec<String>,
+}
+
+#[async_trait]
+impl BulwarkInterface for MockInterfaceWithPerms {
+    async fn get_permission_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
+        Ok(self.permissions.clone())
+    }
+    async fn get_role_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
+        Ok(self.roles.clone())
+    }
+}
+
 /// 初始化全局 BulwarkManager（用于 BulwarkUtil 静态方法测试）。
 fn init_global_manager(throw_on_not_login: bool) {
     BulwarkManager::reset_for_test();
@@ -199,6 +215,23 @@ fn init_global_manager(throw_on_not_login: bool) {
     config.active_timeout = -1;
     config.throw_on_not_login = throw_on_not_login;
     let interface: Arc<dyn BulwarkInterface> = Arc::new(MockInterface);
+    BulwarkManager::init(dao, Arc::new(config), interface).unwrap();
+}
+
+/// 初始化全局 BulwarkManager 并注入预设权限/角色列表（用于 has_permission/has_role 返回 true 的测试）。
+fn init_global_manager_with_perms(
+    throw_on_not_login: bool,
+    permissions: Vec<String>,
+    roles: Vec<String>,
+) {
+    BulwarkManager::reset_for_test();
+    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+    let mut config = BulwarkConfig::default_config();
+    config.timeout = 3600;
+    config.active_timeout = -1;
+    config.throw_on_not_login = throw_on_not_login;
+    let interface: Arc<dyn BulwarkInterface> =
+        Arc::new(MockInterfaceWithPerms { permissions, roles });
     BulwarkManager::init(dao, Arc::new(config), interface).unwrap();
 }
 
@@ -796,6 +829,123 @@ async fn util_check_disable_fails_when_not_initialized() {
         matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("未初始化")),
         "未初始化时 check_disable 应返回 Session 错误"
     );
+}
+
+// ------------------------------------------------------------------------
+// BulwarkUtil::has_permission / has_role 测试（0.6.1 新增，依据 R-util-api-001/002）
+// ------------------------------------------------------------------------
+
+/// has_permission 空字符串返回 InvalidParam（校验在 logic() 之前，不依赖全局状态）。
+#[tokio::test]
+async fn util_has_permission_empty_string_returns_invalid_param() {
+    let result = BulwarkUtil::has_permission("").await;
+    assert!(
+        matches!(result, Err(BulwarkError::InvalidParam(ref s)) if s.contains("permission")),
+        "空 permission 应返回 InvalidParam，实际: {:?}",
+        result
+    );
+}
+
+/// has_role 空字符串返回 InvalidParam。
+#[tokio::test]
+async fn util_has_role_empty_string_returns_invalid_param() {
+    let result = BulwarkUtil::has_role("").await;
+    assert!(
+        matches!(result, Err(BulwarkError::InvalidParam(ref s)) if s.contains("role")),
+        "空 role 应返回 InvalidParam，实际: {:?}",
+        result
+    );
+}
+
+/// 未初始化时 BulwarkUtil::has_permission 返回 Session 错误。
+#[tokio::test]
+#[serial]
+async fn util_has_permission_fails_when_not_initialized() {
+    BulwarkManager::reset_for_test();
+    let result = BulwarkUtil::has_permission("user:read").await;
+    assert!(
+        matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("未初始化")),
+        "未初始化时 has_permission 应返回 Session 错误"
+    );
+}
+
+/// 未初始化时 BulwarkUtil::has_role 返回 Session 错误。
+#[tokio::test]
+#[serial]
+async fn util_has_role_fails_when_not_initialized() {
+    BulwarkManager::reset_for_test();
+    let result = BulwarkUtil::has_role("admin").await;
+    assert!(
+        matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("未初始化")),
+        "未初始化时 has_role 应返回 Session 错误"
+    );
+}
+
+/// 已登录 + 持有权限 → has_permission 返回 Ok(true)。
+#[tokio::test]
+#[serial]
+async fn util_has_permission_returns_true_when_granted() {
+    init_global_manager_with_perms(
+        false,
+        vec!["user:read".to_string()],
+        vec!["admin".to_string()],
+    );
+    let token = BulwarkUtil::login("1001").await.unwrap();
+    let result = with_token(&token, BulwarkUtil::has_permission("user:read")).await;
+    assert_eq!(result.unwrap(), true, "持有权限应返回 true");
+}
+
+/// 已登录 + 未持有权限 → has_permission 返回 Ok(false)。
+#[tokio::test]
+#[serial]
+async fn util_has_permission_returns_false_when_not_granted() {
+    init_global_manager_with_perms(false, vec![], vec![]);
+    let token = BulwarkUtil::login("1001").await.unwrap();
+    let result = with_token(&token, BulwarkUtil::has_permission("user:read")).await;
+    assert_eq!(result.unwrap(), false, "未持有权限应返回 false");
+}
+
+/// 未登录 → has_permission 返回 Ok(false)（不抛 NotLogin）。
+#[tokio::test]
+#[serial]
+async fn util_has_permission_returns_false_when_not_logged_in() {
+    init_global_manager(false);
+    // 不调用 login，直接 has_permission（无 task_local token）
+    let result = BulwarkUtil::has_permission("user:read").await;
+    assert_eq!(result.unwrap(), false, "未登录应返回 false");
+}
+
+/// 已登录 + 持有角色 → has_role 返回 Ok(true)。
+#[tokio::test]
+#[serial]
+async fn util_has_role_returns_true_when_granted() {
+    init_global_manager_with_perms(
+        false,
+        vec!["user:read".to_string()],
+        vec!["admin".to_string()],
+    );
+    let token = BulwarkUtil::login("1001").await.unwrap();
+    let result = with_token(&token, BulwarkUtil::has_role("admin")).await;
+    assert_eq!(result.unwrap(), true, "持有角色应返回 true");
+}
+
+/// 已登录 + 未持有角色 → has_role 返回 Ok(false)。
+#[tokio::test]
+#[serial]
+async fn util_has_role_returns_false_when_not_granted() {
+    init_global_manager_with_perms(false, vec![], vec![]);
+    let token = BulwarkUtil::login("1001").await.unwrap();
+    let result = with_token(&token, BulwarkUtil::has_role("admin")).await;
+    assert_eq!(result.unwrap(), false, "未持有角色应返回 false");
+}
+
+/// 未登录 → has_role 返回 Ok(false)。
+#[tokio::test]
+#[serial]
+async fn util_has_role_returns_false_when_not_logged_in() {
+    init_global_manager(false);
+    let result = BulwarkUtil::has_role("admin").await;
+    assert_eq!(result.unwrap(), false, "未登录应返回 false");
 }
 
 // ------------------------------------------------------------------------

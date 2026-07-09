@@ -251,6 +251,60 @@ impl BulwarkUtil {
             .await
     }
 
+    /// 检查当前会话是否持有指定权限（0.6.1 新增，依据 spec bulwark-util-api R-util-api-001，对应 FRD §5.3.2 hasPermission）。
+    ///
+    /// 与 [`check_permission`](Self::check_permission) 的区别：本方法返回布尔值而非抛出异常。
+    /// 未登录或未持有权限均返回 `Ok(false)`，适用于条件分支场景（如 UI 元素显隐控制）。
+    ///
+    /// # 参数
+    /// - `permission`: 权限标识字符串。
+    ///
+    /// # 返回
+    /// - `Ok(true)`: 当前会话持有该权限。
+    /// - `Ok(false)`: 当前会话未持有该权限或未登录。
+    ///
+    /// # 错误
+    /// - `permission` 为空字符串：`BulwarkError::InvalidParam`。
+    /// - `BulwarkManager` 未初始化：`BulwarkError::Session`。
+    /// - DAO 层错误等非权限性错误：透传 `BulwarkError`。
+    pub async fn has_permission(permission: &str) -> BulwarkResult<bool> {
+        if permission.is_empty() {
+            return Err(crate::error::BulwarkError::InvalidParam(
+                "permission 不能为空".to_string(),
+            ));
+        }
+        crate::manager::BulwarkManager::logic()?
+            .has_permission(permission)
+            .await
+    }
+
+    /// 检查当前会话是否持有指定角色（0.6.1 新增，依据 spec bulwark-util-api R-util-api-002，对应 FRD §5.3.2 hasRole）。
+    ///
+    /// 与 [`check_role`](Self::check_role) 的区别：本方法返回布尔值而非抛出异常。
+    /// 未登录或未持有角色均返回 `Ok(false)`，适用于条件分支场景。
+    ///
+    /// # 参数
+    /// - `role`: 角色标识字符串。
+    ///
+    /// # 返回
+    /// - `Ok(true)`: 当前会话持有该角色。
+    /// - `Ok(false)`: 当前会话未持有该角色或未登录。
+    ///
+    /// # 错误
+    /// - `role` 为空字符串：`BulwarkError::InvalidParam`。
+    /// - `BulwarkManager` 未初始化：`BulwarkError::Session`。
+    /// - DAO 层错误等非角色性错误：透传 `BulwarkError`。
+    pub async fn has_role(role: &str) -> BulwarkResult<bool> {
+        if role.is_empty() {
+            return Err(crate::error::BulwarkError::InvalidParam(
+                "role 不能为空".to_string(),
+            ));
+        }
+        crate::manager::BulwarkManager::logic()?
+            .has_role(role)
+            .await
+    }
+
     /// 校验 access_token 类型会话（0.5.0 新增，依据 spec annotation-macros P2 前置）。
     ///
     /// 委托 `TokenLogic::check_access_token()`，默认实现委托 `check_login`。
