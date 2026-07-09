@@ -301,13 +301,15 @@ fn bench_permission_check(c: &mut Criterion) {
 /// 无修改即可运行，证明 DAO 抽象层的后端切换开销 = 0。
 ///
 /// - `memory`：HashMap 后端（模拟 oxcache moka L1）
-/// - `redis_mock`：另一个 HashMap 实例（模拟 redis L2，真实 redis 需
-///   `BULWARK_SKIP_REDIS_BENCH=0` + Redis 环境）
+/// - `redis_mock`：另一个 HashMap 实例（模拟 redis L2）
+///
+/// 运行时 skip：设置环境变量 `BULWARK_SKIP_REDIS_BENCH=1` 可跳过 redis 相关子 bench
+/// （依据 spec R-bench-005 Constraints），便于在无 Redis 环境下快速运行 benchmark。
 fn bench_oxcache_backend_switch(c: &mut Criterion) {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let mut group = c.benchmark_group("oxcache_backend_switch");
 
-    // memory 后端
+    // memory 后端（始终运行）
     let logic_memory = make_logic();
     group.bench_with_input(
         BenchmarkId::new("backend", "memory"),
@@ -318,15 +320,26 @@ fn bench_oxcache_backend_switch(c: &mut Criterion) {
     );
 
     // redis_mock 后端（使用另一个 MockDao 实例，模拟不同后端）
-    // 真实 redis 需 BULWARK_SKIP_REDIS_BENCH=0 + Redis 环境
-    let logic_redis = make_logic();
-    group.bench_with_input(
-        BenchmarkId::new("backend", "redis_mock"),
-        &logic_redis,
-        |b, logic| {
-            b.iter(|| rt.block_on(async { logic.login("bench-user").await.unwrap() }));
-        },
-    );
+    //
+    // 运行时 skip：当 `BULWARK_SKIP_REDIS_BENCH=1` 时跳过 redis 相关子 bench，
+    // 便于在无 Redis 环境下快速运行 benchmark（依据 spec R-bench-005 Constraints）。
+    // 未来引入真实 redis bench 时，此检查将跳过所有 redis 依赖场景。
+    let skip_redis = std::env::var("BULWARK_SKIP_REDIS_BENCH")
+        .map(|v| v == "1")
+        .unwrap_or(false);
+
+    if !skip_redis {
+        let logic_redis = make_logic();
+        group.bench_with_input(
+            BenchmarkId::new("backend", "redis_mock"),
+            &logic_redis,
+            |b, logic| {
+                b.iter(|| rt.block_on(async { logic.login("bench-user").await.unwrap() }));
+            },
+        );
+    } else {
+        println!("[skip] BULWARK_SKIP_REDIS_BENCH=1，跳过 redis_mock 子 bench");
+    }
 
     group.finish();
 }
