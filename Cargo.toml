@@ -132,6 +132,8 @@ rsa = "0.9"
 rand = "0.8"
 # testcontainers 用于 MySQL 集成测试（自动启动 Docker 容器，依据 tasks.md T027-T040）
 testcontainers = "0.27"
+# criterion 用于基准测试（0.6.1 新增，依据 spec benchmark-framework E-006）
+criterion = { version = "0.5", features = ["html_reports"] }
 
 [features]
 default = []
@@ -354,3 +356,12 @@ strip = true
 name = "db_mysql_testcontainers"
 path = "tests/db_mysql_testcontainers.rs"
 required-features = ["db-mysql"]
+
+# === 基准测试目标 ===
+# bulwark_benchmark：criterion 基准测试套件（0.6.1 新增，依据 spec benchmark-framework E-006）
+# 包含 4 个基准场景：login_flow / token_verify_stateless / permission_check / oxcache_backend_switch
+# harness = false：使用 criterion 自己的 main 函数（非标准 libtest harness）
+[[bench]]
+name = "bulwark_benchmark"
+path = "benches/bulwark_benchmark.rs"
+harness = false
