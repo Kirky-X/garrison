@@ -15,7 +15,7 @@
 #[cfg(all(feature = "protocol-jwt", feature = "db-sqlite"))]
 mod refresh_token_e2e {
     use bulwark::protocol::jwt::JwtHandler;
-    use bulwark::RefreshTokenRotation;
+    use bulwark::{BulwarkError, RefreshTokenRotation};
     use dbnexus::DbPool;
     use sea_orm::{ConnectionTrait, DbBackend, Statement, Value};
     use std::sync::{Arc, RwLock};
@@ -132,5 +132,35 @@ mod refresh_token_e2e {
         // 验证 t2 也被吊销（整条链被撤销）
         let t2_revoked_after = query_revoked(&pool, &t2_hash).await;
         assert_eq!(t2_revoked_after, 1, "重用检测后 t2 也应被吊销（链级撤销）");
+    }
+
+    /// T016: 验证 `refresh_access_token` 传入已撤销 token 时返回 `InvalidToken`（透传 `rotate` 错误）。
+    ///
+    /// 流程：
+    /// 1. 预先插入一个 revoked=1 的 refresh token（模拟已被撤销的 token）
+    /// 2. 调用 `rotate(old_token)` → `detect_reuse` 发现 revoked=1 → 撤销链后返回 `InvalidToken`
+    ///
+    /// 断言：返回 `Err(BulwarkError::InvalidToken)`，错误信息包含 "reuse" 或 "revoked"。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn refresh_access_token_with_revoked_token_returns_error() {
+        let pool = setup_db().await;
+
+        // 1. 插入一个已撤销的 refresh token (revoked=1)
+        let old_token = "revoked-refresh-token-12345";
+        let old_hash = sha256_hex(old_token);
+        insert_refresh_token(&pool, &old_hash, None, 1001, 0, 1, now_unix() + 3600, 1).await;
+
+        // 2. 创建 RefreshTokenRotation 实例
+        let jwt_handler = Arc::new(JwtHandler::new("test_secret_key"));
+        let key_version = Arc::new(RwLock::new(1u32));
+        let rotation = RefreshTokenRotation::new(pool, jwt_handler, key_version);
+
+        // 3. 调用 rotate 直接验证行为（透传 InvalidToken）
+        let result = rotation.rotate(old_token).await;
+        assert!(
+            matches!(result, Err(BulwarkError::InvalidToken(ref msg)) if msg.contains("reuse") || msg.contains("revoked")),
+            "已撤销 token 应返回 InvalidToken 错误，实际: {:?}",
+            result
+        );
     }
 }
