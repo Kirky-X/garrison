@@ -3452,3 +3452,59 @@ async fn login_with_is_share_creates_new_when_no_existing() {
         .unwrap();
     assert_eq!(ts.login_id, "share-user-002");
 }
+
+// ============================================================================
+// v0.6.3 D2 T011: is_concurrent=false 踢出现有会话测试
+// ========================================================================
+
+/// is_concurrent=false + is_share=false 时，重复登录同一 login_id 应踢出旧 token。
+#[tokio::test]
+async fn login_with_is_concurrent_false_kickouts_existing() {
+    let mut logic = make_logic(3600, 86400, false, "uuid", true, true);
+    // is_concurrent=false, is_share=false
+    Arc::make_mut(&mut logic.config).is_concurrent = false;
+
+    // 首次登录
+    let t1 = logic
+        .login("concurrent-user-001", &LoginParams::default())
+        .await
+        .unwrap();
+
+    // 第二次登录（is_concurrent=false 应踢出 t1）
+    let t2 = logic
+        .login("concurrent-user-001", &LoginParams::default())
+        .await
+        .unwrap();
+
+    assert_ne!(t1, t2, "is_concurrent=false 应创建新 token");
+
+    // t1 应已被踢出（Token-Session 不存在）
+    let ts1 = logic.session.get_token_session(&t1).await.unwrap();
+    assert!(ts1.is_none(), "is_concurrent=false 登录后旧 token 应被踢出");
+}
+
+/// is_concurrent=true + is_share=false 时，重复登录应保留旧 token（允许并发）。
+#[tokio::test]
+async fn login_with_is_concurrent_true_preserves_existing() {
+    let mut logic = make_logic(3600, 86400, false, "uuid", true, true);
+    // is_concurrent=true（默认）, is_share=false
+    Arc::make_mut(&mut logic.config).is_concurrent = true;
+
+    let t1 = logic
+        .login("concurrent-user-002", &LoginParams::default())
+        .await
+        .unwrap();
+    let t2 = logic
+        .login("concurrent-user-002", &LoginParams::default())
+        .await
+        .unwrap();
+
+    assert_ne!(
+        t1, t2,
+        "is_concurrent=true + is_share=false 应创建不同 token"
+    );
+
+    // t1 应仍然有效
+    let ts1 = logic.session.get_token_session(&t1).await.unwrap();
+    assert!(ts1.is_some(), "is_concurrent=true 应保留旧 token");
+}

@@ -337,6 +337,12 @@ impl BulwarkLogicDefault {
             }
         }
 
+        // is_concurrent=false: 登录前踢出所有现有会话（fail-closed，kickout 失败则不创建新会话）
+        // 注：is_share=true 时 is_concurrent 必为 true（T006 validate 保证），两分支互斥
+        if !self.config.is_concurrent {
+            self.kickout(login_id).await?;
+        }
+
         let token = self.generate_token(login_id)?;
         self.session
             .create_token_session(login_id, &token, params)
