@@ -13,30 +13,44 @@
 //!
 //! # 限制
 //!
-//! - 仅支持 `async fn`（同步 fn 编译报错）
+//! - 支持 `async fn` 和 `sync fn`（sync fn 调用 `check_*_sync()` 阻塞版本）
 //! - 仅支持 axum handler（原返回类型需实现 `axum::response::IntoResponse`）
 //! - 宏展开依赖 `BulwarkUtil` 全局单例（需先 `BulwarkManager::init`）
+//! - sync fn wrapper 需在 tokio multi_thread runtime 上下文内调用（`block_in_place` 要求）
 //!
 //! # 展开结构
 //!
-//! 宏将原 async fn 重命名为内部函数 `__bulwark_inner_<name>`，
+//! 宏将原 fn（async 或 sync）重命名为内部函数 `__bulwark_inner_<name>`，
 //! 并生成同名的 wrapper 函数（返回 `axum::response::Response`），
-//! 在 wrapper body 前插入 `BulwarkUtil::check_*()` 调用：
+//! 在 wrapper body 前插入 `BulwarkUtil::check_*()` 调用。
+//! async fn 生成 async wrapper + `.await` 调用；sync fn 生成非 async wrapper + `_sync()` 调用：
 //!
 //! ```ignore
-//! // 输入
+//! // 输入（async fn）
 //! #[check_login]
 //! async fn handler() -> &'static str { "ok" }
 //!
-//! // 展开
+//! // 展开（async）
 //! async fn __bulwark_inner_handler() -> &'static str { "ok" }
 //!
 //! async fn handler() -> axum::response::Response {
-//!     if let Err(e) = ::bulwark::BulwarkUtil::check_login().await {
-//!         return ::axum::response::IntoResponse::into_response(e);
-//!     }
+//!     // check_login().await ...
 //!     ::axum::response::IntoResponse::into_response(
 //!         __bulwark_inner_handler().await
+//!     )
+//! }
+//!
+//! // 输入（sync fn）
+//! #[check_login]
+//! fn sync_handler() -> &'static str { "ok" }
+//!
+//! // 展开（sync）
+//! fn __bulwark_inner_sync_handler() -> &'static str { "ok" }
+//!
+//! fn sync_handler() -> axum::response::Response {
+//!     // check_login_sync() ...
+//!     ::axum::response::IntoResponse::into_response(
+//!         __bulwark_inner_sync_handler()
 //!     )
 //! }
 //! ```
@@ -57,12 +71,12 @@ use syn::{
 
 /// 登录校验属性宏。
 ///
-/// 标注在 async fn 上，编译期生成 wrapper 在 fn body 前插入
-/// `BulwarkUtil::check_login()` 调用。未登录请求返回 401。
+/// 标注在 async fn 或 sync fn 上，编译期生成 wrapper 在 fn body 前插入
+/// `BulwarkUtil::check_login()`（async）或 `check_login_sync()`（sync）调用。未登录请求返回 401。
 ///
 /// # 限制
 ///
-/// - 仅支持 `async fn`（同步 fn 编译报错）
+/// - 支持 `async fn` 和 `sync fn`（sync fn 需在 tokio multi_thread runtime 内调用）
 /// - 仅支持 axum handler（原返回类型需实现 `axum::response::IntoResponse`）
 ///
 /// # 示例
@@ -75,6 +89,11 @@ use syn::{
 /// async fn handler() -> impl IntoResponse {
 ///     "hello"
 /// }
+///
+/// #[check_login]
+/// fn sync_handler() -> impl IntoResponse {
+///     "hello"
+/// }
 /// ```
 #[proc_macro_attribute]
 pub fn check_login(_attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -84,14 +103,14 @@ pub fn check_login(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
 /// 权限校验属性宏。
 ///
-/// 标注在 async fn 上，编译期生成 wrapper 在 fn body 前插入
-/// `BulwarkUtil::check_permission("perm")` 调用。无权限请求返回 403。
+/// 标注在 async fn 或 sync fn 上，编译期生成 wrapper 在 fn body 前插入
+/// `BulwarkUtil::check_permission("perm")`（async）或 `check_permission_sync("perm")`（sync）调用。无权限请求返回 403。
 ///
 /// 支持多个权限参数 `#[check_permission("a", "b")]`（AND 语义：必须持有全部权限）。
 ///
 /// # 限制
 ///
-/// - 仅支持 `async fn`
+/// - 支持 `async fn` 和 `sync fn`（sync fn 需在 tokio multi_thread runtime 内调用）
 /// - 至少一个权限参数
 ///
 /// # 示例
@@ -105,6 +124,9 @@ pub fn check_login(_attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// #[check_permission("user:read", "user:write")]
 /// async fn admin_handler() -> impl IntoResponse { "admin" }
+///
+/// #[check_permission("user:read")]
+/// fn sync_handler() -> impl IntoResponse { "ok" }
 /// ```
 #[proc_macro_attribute]
 pub fn check_permission(attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -124,14 +146,14 @@ pub fn check_permission(attr: TokenStream, item: TokenStream) -> TokenStream {
 
 /// 角色校验属性宏。
 ///
-/// 标注在 async fn 上，编译期生成 wrapper 在 fn body 前插入
-/// `BulwarkUtil::check_role("role")` 调用。无角色请求返回 403。
+/// 标注在 async fn 或 sync fn 上，编译期生成 wrapper 在 fn body 前插入
+/// `BulwarkUtil::check_role("role")`（async）或 `check_role_sync("role")`（sync）调用。无角色请求返回 403。
 ///
 /// 支持多个角色参数（AND 语义：必须持有全部角色）。
 ///
 /// # 限制
 ///
-/// - 仅支持 `async fn`
+/// - 支持 `async fn` 和 `sync fn`（sync fn 需在 tokio multi_thread runtime 内调用）
 /// - 至少一个角色参数
 ///
 /// # 示例
@@ -142,6 +164,9 @@ pub fn check_permission(attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// #[check_role("admin")]
 /// async fn handler() -> impl IntoResponse { "ok" }
+///
+/// #[check_role("admin")]
+/// fn sync_handler() -> impl IntoResponse { "ok" }
 /// ```
 #[proc_macro_attribute]
 pub fn check_role(attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -161,12 +186,12 @@ pub fn check_role(attr: TokenStream, item: TokenStream) -> TokenStream {
 
 /// access_token 类型校验属性宏（0.5.0 新增，依据 spec annotation-macros P2）。
 ///
-/// 标注在 async fn 上，编译期生成 wrapper 在 fn body 前插入
-/// `BulwarkUtil::check_access_token()` 调用。未登录请求返回 401。
+/// 标注在 async fn 或 sync fn 上，编译期生成 wrapper 在 fn body 前插入
+/// `BulwarkUtil::check_access_token()`（async）或 `check_access_token_sync()`（sync）调用。未登录请求返回 401。
 ///
 /// # 限制
 ///
-/// - 仅支持 `async fn`
+/// - 支持 `async fn` 和 `sync fn`（sync fn 需在 tokio multi_thread runtime 内调用）
 /// - 仅支持 axum handler
 ///
 /// # 示例
@@ -186,8 +211,8 @@ pub fn check_access_token(_attr: TokenStream, item: TokenStream) -> TokenStream 
 
 /// client_token 类型校验属性宏（0.5.0 新增，依据 spec annotation-macros P2）。
 ///
-/// 标注在 async fn 上，编译期生成 wrapper 在 fn body 前插入
-/// `BulwarkUtil::check_client_token()` 调用。未登录请求返回 401。
+/// 标注在 async fn 或 sync fn 上，编译期生成 wrapper 在 fn body 前插入
+/// `BulwarkUtil::check_client_token()`（async）或 `check_client_token_sync()`（sync）调用。未登录请求返回 401。
 #[proc_macro_attribute]
 pub fn check_client_token(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let item_fn = parse_macro_input!(item as ItemFn);
@@ -196,8 +221,8 @@ pub fn check_client_token(_attr: TokenStream, item: TokenStream) -> TokenStream 
 
 /// temp_token 类型校验属性宏（0.5.0 新增，依据 spec annotation-macros P2）。
 ///
-/// 标注在 async fn 上，编译期生成 wrapper 在 fn body 前插入
-/// `BulwarkUtil::check_temp_token()` 调用。未登录请求返回 401。
+/// 标注在 async fn 或 sync fn 上，编译期生成 wrapper 在 fn body 前插入
+/// `BulwarkUtil::check_temp_token()`（async）或 `check_temp_token_sync()`（sync）调用。未登录请求返回 401。
 #[proc_macro_attribute]
 pub fn check_temp_token(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let item_fn = parse_macro_input!(item as ItemFn);
@@ -206,8 +231,8 @@ pub fn check_temp_token(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
 /// API Key 校验属性宏（0.6.1 新增，依据 spec annotation-check-api-key R-anno-003）。
 ///
-/// 标注在 async fn 上，编译期生成 wrapper 在 fn body 前插入
-/// `BulwarkUtil::check_api_key(namespace)` 调用。校验失败返回 401/403。
+/// 标注在 async fn 或 sync fn 上，编译期生成 wrapper 在 fn body 前插入
+/// `BulwarkUtil::check_api_key(namespace)`（async）或 `check_api_key_sync(namespace)`（sync）调用。校验失败返回 401/403。
 ///
 /// # 参数
 ///
@@ -221,7 +246,7 @@ pub fn check_temp_token(_attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// # 限制
 ///
-/// - 仅支持 `async fn`
+/// - 支持 `async fn` 和 `sync fn`（sync fn 需在 tokio multi_thread runtime 内调用）
 /// - 仅支持 axum handler
 ///
 /// # 示例
@@ -288,13 +313,20 @@ impl Parse for CheckApiKeyAttr {
 /// - `Ok(())`：API Key 有效，继续执行 fn body
 /// - `Err(e)`：校验失败（InvalidToken / ExpiredToken / NotLogin），返回错误对应的 Response
 fn expand_check_api_key(namespace: &str, item_fn: ItemFn) -> TokenStream {
-    let _asyncness = detect_asyncness(&item_fn);
-    let checks = quote! {
-        if let ::std::result::Result::Err(__bulwark_err) = ::bulwark::BulwarkUtil::check_api_key(#namespace).await {
-            return ::axum::response::IntoResponse::into_response(__bulwark_err);
-        }
+    let asyncness = detect_asyncness(&item_fn);
+    let checks = match asyncness {
+        Asyncness::Async => quote! {
+            if let ::std::result::Result::Err(__bulwark_err) = ::bulwark::BulwarkUtil::check_api_key(#namespace).await {
+                return ::axum::response::IntoResponse::into_response(__bulwark_err);
+            }
+        },
+        Asyncness::Sync => quote! {
+            if let ::std::result::Result::Err(__bulwark_err) = ::bulwark::BulwarkUtil::check_api_key_sync(#namespace) {
+                return ::axum::response::IntoResponse::into_response(__bulwark_err);
+            }
+        },
     };
-    expand_wrapper(&item_fn, checks)
+    expand_wrapper(&item_fn, checks, asyncness)
 }
 
 /// 检测 fn 是 async 还是 sync。
@@ -320,21 +352,36 @@ fn detect_asyncness(item_fn: &ItemFn) -> Asyncness {
 /// - `Err(e)`：错误（如 Manager 未初始化，或 `throw_on_not_login=true` 时未登录），
 ///   返回错误对应的 Response（NotLogin → 401，其他 → 500/etc.）
 fn expand_check_login(item_fn: ItemFn) -> TokenStream {
-    let _asyncness = detect_asyncness(&item_fn);
-    let checks = quote! {
-        match ::bulwark::BulwarkUtil::check_login().await {
-            ::std::result::Result::Ok(true) => {},
-            ::std::result::Result::Ok(false) => {
-                return ::axum::response::IntoResponse::into_response(
-                    ::bulwark::BulwarkError::NotLogin("未登录（check_login 返回 false）".to_string())
-                );
+    let asyncness = detect_asyncness(&item_fn);
+    let checks = match asyncness {
+        Asyncness::Async => quote! {
+            match ::bulwark::BulwarkUtil::check_login().await {
+                ::std::result::Result::Ok(true) => {},
+                ::std::result::Result::Ok(false) => {
+                    return ::axum::response::IntoResponse::into_response(
+                        ::bulwark::BulwarkError::NotLogin("未登录（check_login 返回 false）".to_string())
+                    );
+                }
+                ::std::result::Result::Err(__bulwark_err) => {
+                    return ::axum::response::IntoResponse::into_response(__bulwark_err);
+                }
             }
-            ::std::result::Result::Err(__bulwark_err) => {
-                return ::axum::response::IntoResponse::into_response(__bulwark_err);
+        },
+        Asyncness::Sync => quote! {
+            match ::bulwark::BulwarkUtil::check_login_sync() {
+                ::std::result::Result::Ok(true) => {},
+                ::std::result::Result::Ok(false) => {
+                    return ::axum::response::IntoResponse::into_response(
+                        ::bulwark::BulwarkError::NotLogin("未登录（check_login 返回 false）".to_string())
+                    );
+                }
+                ::std::result::Result::Err(__bulwark_err) => {
+                    return ::axum::response::IntoResponse::into_response(__bulwark_err);
+                }
             }
-        }
+        },
     };
-    expand_wrapper(&item_fn, checks)
+    expand_wrapper(&item_fn, checks, asyncness)
 }
 
 /// 展开 `#[check_access_token]` / `#[check_client_token]` / `#[check_temp_token]`：
@@ -343,33 +390,47 @@ fn expand_check_login(item_fn: ItemFn) -> TokenStream {
 /// 与 `expand_check_login` 区别：后者返回 `BulwarkResult<bool>`，需要处理 `Ok(false)` 路径；
 /// 本函数处理 `BulwarkResult<()>`，仅 `Err` 路径需转发。
 fn expand_check_no_args(method: &str, item_fn: ItemFn) -> TokenStream {
-    let _asyncness = detect_asyncness(&item_fn);
+    let asyncness = detect_asyncness(&item_fn);
     let method_ident = format_ident!("{}", method);
-    let checks = quote! {
-        if let ::std::result::Result::Err(__bulwark_err) = ::bulwark::BulwarkUtil::#method_ident().await {
-            return ::axum::response::IntoResponse::into_response(__bulwark_err);
-        }
+    let sync_method_ident = format_ident!("{}_sync", method);
+    let checks = match asyncness {
+        Asyncness::Async => quote! {
+            if let ::std::result::Result::Err(__bulwark_err) = ::bulwark::BulwarkUtil::#method_ident().await {
+                return ::axum::response::IntoResponse::into_response(__bulwark_err);
+            }
+        },
+        Asyncness::Sync => quote! {
+            if let ::std::result::Result::Err(__bulwark_err) = ::bulwark::BulwarkUtil::#sync_method_ident() {
+                return ::axum::response::IntoResponse::into_response(__bulwark_err);
+            }
+        },
     };
-    expand_wrapper(&item_fn, checks)
+    expand_wrapper(&item_fn, checks, asyncness)
 }
 
 /// 展开 `#[check_permission]` / `#[check_role]`：插入多次调用（AND 语义）。
 fn expand_check_with_args(method: &str, args: &[String], item_fn: ItemFn) -> TokenStream {
-    let _asyncness = detect_asyncness(&item_fn);
+    let asyncness = detect_asyncness(&item_fn);
     let method_ident = format_ident!("{}", method);
+    let sync_method_ident = format_ident!("{}_sync", method);
     // 每个参数生成一次调用，AND 语义：任一失败立即 return
     let calls: Vec<proc_macro2::TokenStream> = args
         .iter()
-        .map(|arg| {
-            quote! {
+        .map(|arg| match asyncness {
+            Asyncness::Async => quote! {
                 if let Err(__bulwark_err) = ::bulwark::BulwarkUtil::#method_ident(#arg).await {
                     return ::axum::response::IntoResponse::into_response(__bulwark_err);
                 }
-            }
+            },
+            Asyncness::Sync => quote! {
+                if let Err(__bulwark_err) = ::bulwark::BulwarkUtil::#sync_method_ident(#arg) {
+                    return ::axum::response::IntoResponse::into_response(__bulwark_err);
+                }
+            },
         })
         .collect();
     let checks = quote! { #(#calls)* };
-    expand_wrapper(&item_fn, checks)
+    expand_wrapper(&item_fn, checks, asyncness)
 }
 
 /// 生成 wrapper 函数 + 重命名的 inner 函数。
@@ -377,8 +438,16 @@ fn expand_check_with_args(method: &str, args: &[String], item_fn: ItemFn) -> Tok
 /// - inner：原 sig（重命名 ident）+ 原 body
 /// - wrapper：原 ident，返回 `axum::response::Response`，body 前插入 `checks`
 ///
+/// 根据 `asyncness` 决定 wrapper 和 inner 是否为 `async fn`，以及 inner 调用是否 `.await`。
+/// async fn：wrapper/inner 均为 async，inner 调用带 `.await`
+/// sync fn：wrapper/inner 均非 async，inner 调用无 `.await`（checks 也由 expand_* 生成 sync 版本）
+///
 /// 参数转发使用 fresh idents（`__bulwark_arg_N`），避免 pattern-vs-expression 问题。
-fn expand_wrapper(item_fn: &ItemFn, checks: proc_macro2::TokenStream) -> TokenStream {
+fn expand_wrapper(
+    item_fn: &ItemFn,
+    checks: proc_macro2::TokenStream,
+    asyncness: Asyncness,
+) -> TokenStream {
     let vis = &item_fn.vis;
     let sig = &item_fn.sig;
     let original_name = &sig.ident;
@@ -424,6 +493,12 @@ fn expand_wrapper(item_fn: &ItemFn, checks: proc_macro2::TokenStream) -> TokenSt
     wrapper_sig.inputs = wrapper_inputs;
     wrapper_sig.output = syn::parse_quote! { -> ::axum::response::Response };
 
+    // sync fn 时 inner 调用无 .await（sig 已从原 fn 继承 asyncness，无需额外修改）
+    let inner_call = match asyncness {
+        Asyncness::Async => quote! { #inner_name(#(#forward_args),*).await },
+        Asyncness::Sync => quote! { #inner_name(#(#forward_args),*) },
+    };
+
     let expanded = quote! {
         // inner：保留原 sig（仅重命名）+ 原 body + 原 attrs（如 #[cfg]/#[doc]）
         #(#attrs)*
@@ -432,9 +507,7 @@ fn expand_wrapper(item_fn: &ItemFn, checks: proc_macro2::TokenStream) -> TokenSt
         // wrapper：原名称 + Response 返回类型，body 前插入检查代码
         #vis #wrapper_sig {
             #checks
-            ::axum::response::IntoResponse::into_response(
-                #inner_name(#(#forward_args),*).await
-            )
+            ::axum::response::IntoResponse::into_response(#inner_call)
         }
     };
     expanded.into()
