@@ -37,6 +37,7 @@ use async_trait::async_trait;
 /// - 踢出：[`kickout`](Self::kickout) / [`kickout_by_token`](Self::kickout_by_token)
 /// - 吊销：[`revoke_token`](Self::revoke_token)
 /// - 校验：[`check_login`](Self::check_login) / [`get_login_id`](Self::get_login_id)
+/// - 刷新：[`refresh_access_token`](Self::refresh_access_token)（默认返回 `NotImplemented`）
 ///
 /// # 对象安全
 ///
@@ -159,6 +160,27 @@ pub trait SessionLogic: BulwarkCore {
     async fn login_by_token(&self, _token: &str) -> BulwarkResult<()> {
         Err(BulwarkError::NotImplemented(
             "login_by_token 需启用 protocol-oauth2 或 protocol-sso feature".to_string(),
+        ))
+    }
+
+    /// 刷新 access token：用 refresh_token 换取新的 (access_token, refresh_token) 对。
+    ///
+    /// 默认返回 `NotImplemented`。启用 `db-sqlite` feature 且注入 `RefreshTokenRotation` 后
+    /// 委托 `RefreshTokenRotation::rotate` 实现轮换。
+    ///
+    /// # 参数
+    /// - `refresh_token`: 旧的 refresh token 字符串。
+    ///
+    /// # 返回
+    /// - `Ok((access_token, refresh_token))`: 轮换成功，返回新的 token 对。
+    ///
+    /// # 错误
+    /// - 未启用 `db-sqlite` 或未注入 `RefreshTokenRotation`：`BulwarkError::NotImplemented`。
+    /// - refresh token 已撤销/重用：`BulwarkError::InvalidToken` 或 `BulwarkError::TokenRevoked`。
+    async fn refresh_access_token(&self, _refresh_token: &str) -> BulwarkResult<(String, String)> {
+        Err(BulwarkError::NotImplemented(
+            "refresh_access_token 未实现：需启用 db-sqlite feature 并注入 RefreshTokenRotation"
+                .to_string(),
         ))
     }
 }

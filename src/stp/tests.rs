@@ -3622,3 +3622,19 @@ async fn login_with_max_login_count_evicts_oldest_session() {
     assert!(ts2.is_some(), "第二个 token 应保留");
     assert!(ts3.is_some(), "最新 token 应保留");
 }
+
+// v0.6.3 D3 T014: refresh_access_token 默认实现返回 NotImplemented
+
+/// `refresh_access_token` 默认实现应返回 `BulwarkError::NotImplemented`。
+///
+/// T014 仅添加 trait 方法签名 + 默认实现；T015 会注入 `RefreshTokenRotation` 实现实际轮换。
+#[tokio::test]
+async fn session_logic_refresh_default_returns_not_implemented() {
+    let logic = make_logic(3600, 86400, false, "uuid", true, true);
+    let result = logic.refresh_access_token("some-refresh-token").await;
+    assert!(
+        matches!(result, Err(BulwarkError::NotImplemented(_))),
+        "默认 refresh_access_token 应返回 NotImplemented，实际: {:?}",
+        result
+    );
+}
