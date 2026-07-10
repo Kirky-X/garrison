@@ -5,6 +5,7 @@
 //!
 //! 提供设备会话管理与设备指纹生成。
 
+use crate::error::BulwarkResult;
 use crate::session::BulwarkSession;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -34,7 +35,6 @@ pub struct DeviceSession {
 /// 持有 [`BulwarkSession`] 引用，通过 `login_token_map` 和 `TokenSession` 实现设备管理。
 pub struct DeviceManager {
     /// 会话管理器引用。
-    #[allow(dead_code)]
     session: Arc<BulwarkSession>,
 }
 
@@ -42,6 +42,34 @@ impl DeviceManager {
     /// 创建设备管理器实例。
     pub fn new(session: Arc<BulwarkSession>) -> Self {
         Self { session }
+    }
+
+    /// 列出指定 login_id 的所有设备会话。
+    ///
+    /// 遍历 `login_token_map` 中的 token，查询每个 `TokenSession`，
+    /// 映射为 [`DeviceSession`] 返回。已过期或不存在的 token 被跳过（不返回错误）。
+    ///
+    /// # 参数
+    /// - `login_id`: 登录主体标识。
+    ///
+    /// # 返回
+    /// `Vec<DeviceSession>`，无会话时返回空 Vec。
+    pub async fn list_devices(&self, login_id: &str) -> BulwarkResult<Vec<DeviceSession>> {
+        let tokens = self.session.get_tokens_by_login_id(login_id);
+        let mut devices = Vec::with_capacity(tokens.len());
+        for token in tokens {
+            if let Some(ts) = self.session.get_token_session(&token).await? {
+                devices.push(DeviceSession {
+                    device: ts.device.unwrap_or_default(),
+                    login_id: ts.login_id,
+                    token: ts.token,
+                    ip: ts.ip,
+                    user_agent: ts.user_agent,
+                    last_active_at: ts.last_active_at,
+                });
+            }
+        }
+        Ok(devices)
     }
 }
 
@@ -91,5 +119,44 @@ mod tests {
     fn device_fingerprint_length_is_32() {
         let fp = device_fingerprint("TestAgent", "127.0.0.1");
         assert_eq!(fp.len(), 32, "指纹应为 32 字符（16 字节 hex）");
+    }
+
+    // ------------------------------------------------------------------------
+    // list_devices
+    // ------------------------------------------------------------------------
+
+    /// 辅助函数：创建带 MockDao 的 Arc<BulwarkSession>（供 DeviceManager 使用）。
+    fn make_device_session(timeout: u64, active_timeout: u64) -> Arc<BulwarkSession> {
+        use crate::dao::tests::MockDao;
+        let dao: Arc<dyn crate::dao::BulwarkDao> = Arc::new(MockDao::new());
+        Arc::new(BulwarkSession::new(dao, timeout, active_timeout))
+    }
+
+    /// 验证 list_devices 返回指定 login_id 的所有活跃设备会话。
+    #[tokio::test]
+    async fn list_devices_returns_all_active_sessions() {
+        let session = make_device_session(3600, 86400);
+
+        session.create("user-001", "token-1").await.unwrap();
+        session.create("user-001", "token-2").await.unwrap();
+
+        let mgr = DeviceManager::new(session);
+        let devices = mgr.list_devices("user-001").await.unwrap();
+        assert_eq!(devices.len(), 2, "应有 2 个设备会话");
+
+        for d in &devices {
+            assert_eq!(d.login_id, "user-001");
+            assert!(!d.token.is_empty());
+        }
+    }
+
+    /// 验证 list_devices 在无会话时返回空列表。
+    #[tokio::test]
+    async fn list_devices_empty_when_no_sessions() {
+        let session = make_device_session(3600, 86400);
+
+        let mgr = DeviceManager::new(session);
+        let devices = mgr.list_devices("nonexistent-user").await.unwrap();
+        assert!(devices.is_empty(), "无会话时应返回空列表");
     }
 }
