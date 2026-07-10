@@ -11,6 +11,26 @@
 //! - [`macro@check_access_token`] / [`macro@check_client_token`] / [`macro@check_temp_token`]：token 类型校验（0.5.0 P2）
 //! - [`macro@check_api_key`]：API Key 校验（0.6.1 新增，依据 spec annotation-check-api-key R-anno-003）
 //!
+//! # 覆盖矩阵
+//!
+//! 7 个宏对 13 个特性域（见 `src/lib.rs` 特性域段落）的覆盖情况：
+//!
+//! | 特性域 | 已有宏 | 缺失宏 | 备注 |
+//! |--------|--------|--------|------|
+//! | 登录认证 | `#[check_login]` / `#[check_access_token]` / `#[check_client_token]` / `#[check_temp_token]` | — | check_login 校验登录状态；token 类型宏校验 token 类型粒度 |
+//! | 权限认证 | `#[check_permission]` / `#[check_role]` | — | RBAC，AND 语义 |
+//! | Session 会话 | — | `#[check_session]`? | 手动调用 BulwarkUtil 会话 API |
+//! | OAuth2 | — | `#[check_oauth2]`? | 通过 OAuth2Client + `login_by_token` 建立 |
+//! | 单点登录 (SSO) | — | `#[check_sso]`? | SsoClient ticket 协议层处理 |
+//! | JWT | — | — | 协议层 JwtHandler sign/verify，非注解校验型 |
+//! | 微服务网关鉴权 | — | `#[check_sign]`? | SignHandler HMAC-SHA256 签名校验 |
+//! | API 接口鉴权 | `#[check_api_key]` | — | 支持 namespace 参数 |
+//! | TOTP 动态验证码 | — | — | MFA 流程内联，TotpHandler 非注解校验型 |
+//! | Basic 认证 | — | — | 协议层 Extractor（secure::httpbasic） |
+//! | Digest 认证 | — | — | 协议层 Extractor（secure::httpdigest） |
+//! | 路由拦截鉴权 | — | — | Web 框架适配（BulwarkRouter + middleware），非校验型 |
+//! | 插件化扩展 | — | — | 编译期插件注册（inventory），非校验型 |
+//!
 //! # 限制
 //!
 //! - 支持 `async fn` 和 `sync fn`（sync fn 调用 `check_*_sync()` 阻塞版本）
