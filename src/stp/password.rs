@@ -12,6 +12,12 @@
 //! `login_id` 参数从 `i64` 迁移为 `&str`（字符串形式，对象安全）。
 
 use super::BulwarkLogicDefault;
+#[cfg(all(
+    feature = "listener",
+    feature = "account-credential",
+    feature = "db-sqlite"
+))]
+use crate::constants::EventReason;
 use crate::error::{BulwarkError, BulwarkResult};
 #[cfg(all(
     feature = "listener",
@@ -107,7 +113,7 @@ impl PasswordLogic for BulwarkLogicDefault {
                 if let Some(lm) = &self.listener_manager {
                     lm.broadcast(&BulwarkEvent::LoginFailure {
                         login_id: login_id.to_string(),
-                        reason: "invalid_credentials".to_string(),
+                        reason: EventReason::InvalidCredentials.to_string(),
                     })
                     .await;
                 }
@@ -139,7 +145,7 @@ impl PasswordLogic for BulwarkLogicDefault {
             if let Some(lm) = &self.listener_manager {
                 lm.broadcast(&BulwarkEvent::LoginFailure {
                     login_id: login_id.to_string(),
-                    reason: "invalid_credentials".to_string(),
+                    reason: EventReason::InvalidCredentials.to_string(),
                 })
                 .await;
             }

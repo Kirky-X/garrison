@@ -15,6 +15,8 @@
 use super::current_token;
 use super::BulwarkLogicDefault;
 use super::JwtMode;
+#[cfg(feature = "listener")]
+use crate::constants::EventReason;
 use crate::error::{BulwarkError, BulwarkResult};
 #[cfg(feature = "listener")]
 use crate::listener::BulwarkEvent;
@@ -225,7 +227,7 @@ impl SessionLogic for BulwarkLogicDefault {
             lm.broadcast(&BulwarkEvent::Kickout {
                 login_id: login_id.to_string(),
                 token: String::new(),
-                reason: "管理员强制下线".to_string(),
+                reason: EventReason::Kickout.to_string(),
             })
             .await;
         }
