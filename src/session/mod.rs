@@ -41,6 +41,21 @@ pub mod security_listener;
 ))]
 pub mod device;
 
+/// Re-export 设备管理类型（与 `device` 模块 feature gate 一致）。
+///
+/// 启用任一启用 `device` 模块的 feature 后，可通过 `bulwark::session::DeviceManager`
+/// / `bulwark::session::DeviceSession` 直接访问，无需 `device::` 前缀。
+#[cfg(any(
+    feature = "protocol-jwt",
+    feature = "account-credential",
+    feature = "protocol-oauth2",
+    feature = "protocol-sso",
+    feature = "protocol-sign",
+    feature = "secure-sign",
+    feature = "secure-httpdigest"
+))]
+pub use device::{DeviceManager, DeviceSession};
+
 use crate::constants::DaoKeyPrefix;
 use crate::dao::BulwarkDao;
 use crate::error::{BulwarkError, BulwarkResult};

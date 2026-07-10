@@ -384,9 +384,43 @@ impl BulwarkLogicDefault {
             self.kickout(login_id).await?;
         }
 
+        // T020: 自动生成设备指纹。
+        // `LoginParams.device` 为 None 但 `user_agent` + `ip` 有值时，
+        // 调用 `device_fingerprint` 生成 SHA-256(UA+IP) 前 16 字节 hex 指纹写入 device。
+        // 仅在 device 模块可用时执行（feature gate 与 device 模块一致）；
+        // 未启用时 device 保持 None，不影响登录主流程。
+        // `cfg_attr` 抑制未启用 device feature 时的 `unused_mut` 警告。
+        #[cfg_attr(
+            not(any(
+                feature = "protocol-jwt",
+                feature = "account-credential",
+                feature = "protocol-oauth2",
+                feature = "protocol-sso",
+                feature = "protocol-sign",
+                feature = "secure-sign",
+                feature = "secure-httpdigest"
+            )),
+            allow(unused_mut)
+        )]
+        let mut params = params.clone();
+        #[cfg(any(
+            feature = "protocol-jwt",
+            feature = "account-credential",
+            feature = "protocol-oauth2",
+            feature = "protocol-sso",
+            feature = "protocol-sign",
+            feature = "secure-sign",
+            feature = "secure-httpdigest"
+        ))]
+        if params.device.is_none() {
+            if let (Some(ua), Some(ip)) = (&params.user_agent, &params.ip) {
+                params.device = Some(crate::session::device::device_fingerprint(ua, ip));
+            }
+        }
+
         let token = self.generate_token(login_id)?;
         self.session
-            .create_token_session(login_id, &token, params)
+            .create_token_session(login_id, &token, &params)
             .await?;
         // auto-wire: 触发 plugin on_login + listener Login 事件
         if let Some(pm) = &self.plugin_manager {

@@ -3673,3 +3673,56 @@ async fn refresh_access_token_returns_not_implemented_without_db_sqlite() {
         result
     );
 }
+
+// ========================================================================
+// v0.6.3 D4 T020: login 自动生成设备指纹
+// ========================================================================
+
+/// login 时 `LoginParams.device` 为 None 但 `user_agent` + `ip` 有值，
+/// 应自动调用 `device_fingerprint` 生成指纹写入 `TokenSession.device`。
+///
+/// 指纹为 SHA-256(UA+IP) 前 16 字节 hex = 32 字符。
+/// 仅在 device 模块可用时编译（与 `device_fingerprint` feature gate 一致）。
+#[cfg(any(
+    feature = "protocol-jwt",
+    feature = "account-credential",
+    feature = "protocol-oauth2",
+    feature = "protocol-sso",
+    feature = "protocol-sign",
+    feature = "secure-sign",
+    feature = "secure-httpdigest"
+))]
+#[tokio::test]
+async fn login_auto_generates_device_fingerprint() {
+    let logic = make_logic(3600, 86400, false, "uuid", true, true);
+
+    let params = LoginParams {
+        device: None,
+        ip: Some("192.168.1.100".to_string()),
+        user_agent: Some("Mozilla/5.0 Chrome".to_string()),
+        remember_me: false,
+    };
+
+    let token = logic
+        .login("fingerprint-user-001", &params)
+        .await
+        .expect("login 应成功");
+
+    // 验证 TokenSession 的 device 字段已自动生成（32 字符指纹）
+    let ts = logic
+        .session
+        .get_token_session(&token)
+        .await
+        .unwrap()
+        .expect("Token-Session 应存在");
+    assert!(ts.device.is_some(), "device 应自动生成");
+    assert_eq!(
+        ts.device.as_ref().unwrap().len(),
+        32,
+        "指纹应为 32 字符（16 字节 hex）"
+    );
+
+    // 验证 ip 和 user_agent 也正确存储
+    assert_eq!(ts.ip.as_deref(), Some("192.168.1.100"));
+    assert_eq!(ts.user_agent.as_deref(), Some("Mozilla/5.0 Chrome"));
+}
