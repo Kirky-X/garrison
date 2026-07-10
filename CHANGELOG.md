@@ -5,6 +5,80 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.6.2] - 2026-07-11
+
+### 概述
+
+v0.6.x 系列第一批安全增强 Quick Wins，借鉴 cedar/QIdentity/Sa-Token 三项目分析结果，实施 6 项安全增强功能。通过 specmark `v0.6.2-security-quick-wins` change 管理，21 个任务分 7 个 Phase 完成。
+
+### 新增
+
+#### D1: 敏感数据脱敏（`secure-masking` feature）
+
+- `MaskType` 枚举（Phone/IdCard/Email/BankCard/Custom）
+- `SensitiveDataMasker` struct，支持 `mask_value` 单值脱敏与 `mask_json` 递归 JSON 字段脱敏
+- 19 个单元测试，含多字节字符安全处理
+
+#### D2: 通用令牌桶限流器
+
+- `TokenBucket` + `TokenBucketRateLimiter`，基于 `DashMap` + `AtomicU64` CAS 无锁实现
+- `try_acquire` / `try_acquire_n` / `cleanup` 方法
+- 7 个单元测试
+
+#### D3: XSS 防护（`secure-xss` feature）
+
+- `XssMode` 枚举（EscapeAll / Whitelist(Vec<&'static str>)）
+- `XssProtector::sanitize` 方法，EscapeAll 转义 5 个 HTML 特殊字符
+- Whitelist 模式保留白名单标签，移除 `on*` 事件处理器属性
+- 零外部依赖，12 个单元测试
+
+#### D4: 会话悬停超时踢出
+
+- `BulwarkConfig` 新增 `session_hover_timeout`（默认 -1 不启用）
+- `BulwarkSession` 新增 `last_active_time` + `check_hover_timeout` + `update_last_active`
+- `check_login_mixin` / `check_login_simple` 集成懒检查，超时踢出并广播 `SessionTimeout`
+- 10 个单元测试
+
+#### D5: 缓存预热服务
+
+- `CacheWarmupService::warmup()` 扫描 `role:*` 和 `tenant:*` 键触发缓存填充
+- `DaoKeyPrefix` 新增 `Role` 变体
+- 对不支持 `keys()` 的 DAO 后端（如 oxcache）降级返回零统计
+- 5 个单元测试
+
+#### D6: 前后端分离模式配置项
+
+- `BulwarkConfig` 新增 `frontend_separation`（默认 false）
+- `validate()` 在启用时打印 info 日志提示 Token Header 模式
+- 环境变量 `BULWARK_FRONTEND_SEPARATION` 覆盖支持
+- 3 个单元测试
+
+### 审查与修复
+
+#### diting Full Review + tiangang SAST
+
+- **H-1 修复**：masking 字节切片改用 `chars()` 避免非 ASCII 字符 panic（DoS 风险）
+- **H-2 修复**：warmup 捕获 `NotImplemented` 降级返回零统计，不再在生产环境报错
+- **H-3 修复**：XSS 白名单模式移除 `on*` 事件处理器属性，防止无引号属性绕过
+- **M-3 修复**：悬停检查提取 `check_and_update_hover` 辅助方法，消除 24 行重复代码
+- **M-4 修复**：logout 错误改用 `tracing::warn!` 不再静默吞掉
+
+### 验证
+
+- 全量测试：1873 passed, 0 failed, 4 ignored
+- clippy：full + production features 零警告
+- pre-commit hooks：全部通过
+- diting：0 Critical / 0 High（修复后）
+- tiangang SAST：0 CRITICAL
+
+### 已知限制
+
+- `TokenBucketRateLimiter` 无 Redis 支持（defer 到 v0.6.3）
+- `XssProtector` 白名单模式不支持属性白名单过滤
+- `last_active_time` 为内存态，多实例部署需持久化到 DAO（defer 到 v0.6.3）
+- `frontend_separation` 仅提供配置项与日志提示，Web 框架行为变更留待后续版本
+- `MaskType::Custom` 变体存储模式但不实现脱敏逻辑
+
 ## [0.6.1] - 2026-07-11
 
 ### 概述
