@@ -163,6 +163,12 @@ pub struct BulwarkSession {
     active_timeout: u64,
     /// per-login_id 操作锁，保护 Account-Session 的 read-modify-write 序列（R-001~R-004）。
     login_locks: DashMap<String, Arc<TokioMutex<()>>>,
+    /// login_id → token 列表的内存索引，用于并发登录控制快速查询。
+    ///
+    /// 与 DAO 持久化的 `AccountSession.tokens` 保持同步：
+    /// - `create`/`create_token_session` 时 `add_login_token`
+    /// - `logout`/`kickout_by_device`（经 `logout_inner`）/`logout_by_login_id` 时 `remove_login_token`
+    login_token_map: DashMap<String, Vec<String>>,
     /// 监听器管理器。
     ///
     /// 注入后 `kickout_by_device` 会广播 `BulwarkEvent::Kickout` 事件。
@@ -205,6 +211,7 @@ impl BulwarkSession {
             timeout,
             active_timeout,
             login_locks: DashMap::new(),
+            login_token_map: DashMap::new(),
             #[cfg(feature = "listener")]
             listener_manager: None,
             expiry_listeners: Vec::new(),
@@ -429,6 +436,9 @@ impl BulwarkSession {
                 .set(&account_key(&login_id), &account_json, self.active_timeout)
                 .await?;
 
+            // 同步内存索引（login_id → token 列表），用于并发登录控制快速查询
+            self.add_login_token(&login_id, token);
+
             Ok(())
         })
         .await
@@ -516,6 +526,53 @@ impl BulwarkSession {
             },
             None => Ok(None),
         }
+    }
+
+    /// 添加 login_id → token 映射到内存索引。
+    ///
+    /// 同一 token 不重复添加（去重）。在 `create`/`create_token_session` 成功后调用，
+    /// 与 DAO 持久化的 `AccountSession.tokens` 保持同步。
+    pub fn add_login_token(&self, login_id: &str, token: &str) {
+        let mut entry = self
+            .login_token_map
+            .entry(login_id.to_string())
+            .or_default();
+        if !entry.contains(&token.to_string()) {
+            entry.push(token.to_string());
+        }
+    }
+
+    /// 从内存索引中移除指定 login_id 的某个 token。
+    ///
+    /// 当列表为空时移除整个 entry（避免内存泄漏）。在 `logout`/`kickout_by_device`
+    /// （经 `logout_inner`）销毁 Token-Session 后调用。
+    pub fn remove_login_token(&self, login_id: &str, token: &str) {
+        if let Some(mut entry) = self.login_token_map.get_mut(login_id) {
+            entry.retain(|t| t != token);
+            if entry.is_empty() {
+                drop(entry); // 释放 DashMap 写锁后再 remove，避免死锁
+                self.login_token_map.remove(login_id);
+            }
+        }
+    }
+
+    /// 获取指定 login_id 的第一个 token（最旧）。
+    ///
+    /// 用于并发登录控制等只需取一个代表性 token 的场景。
+    pub fn get_token_by_login_id(&self, login_id: &str) -> Option<String> {
+        self.login_token_map
+            .get(login_id)
+            .and_then(|tokens| tokens.first().cloned())
+    }
+
+    /// 获取指定 login_id 的所有 token 列表（克隆）。
+    ///
+    /// 不存在时返回空 `Vec`。
+    pub fn get_tokens_by_login_id(&self, login_id: &str) -> Vec<String> {
+        self.login_token_map
+            .get(login_id)
+            .map(|tokens| tokens.clone())
+            .unwrap_or_default()
     }
 
     /// 设置 Token-Session 自定义属性。
@@ -909,6 +966,10 @@ impl BulwarkSession {
                 .update(&account_key(&ts.login_id), &account_json)
                 .await?;
         }
+
+        // 同步移除内存索引中的该 token（login_token_map）
+        self.remove_login_token(&ts.login_id, token);
+
         Ok(())
     }
 
@@ -934,6 +995,8 @@ impl BulwarkSession {
                 }
             }
             self.dao.delete(&account_key(&login_id)).await?;
+            // 移除整个 login_id 的内存索引（所有 token 已销毁）
+            self.login_token_map.remove(&login_id);
             Ok(())
         })
         .await
@@ -2349,5 +2412,54 @@ mod tests {
         assert!(ts.device.is_none(), "device 应为 None");
         assert!(ts.ip.is_none(), "ip 应为 None");
         assert!(ts.user_agent.is_none(), "user_agent 应为 None");
+    }
+
+    // ------------------------------------------------------------------------
+    // login_token_map：login_id → token 列表内存索引
+    // ------------------------------------------------------------------------
+
+    /// 验证 `add_login_token` 为同一 login_id 累积多个 token，且 `get_tokens_by_login_id` 返回完整列表。
+    #[test]
+    fn login_token_map_tracks_multiple_tokens() {
+        let (_dao, session) = make_session(3600, 86400);
+        session.add_login_token("user1", "token1");
+        session.add_login_token("user1", "token2");
+
+        let tokens = session.get_tokens_by_login_id("user1");
+        assert_eq!(
+            tokens,
+            vec!["token1".to_string(), "token2".to_string()],
+            "应按添加顺序返回两个 token"
+        );
+    }
+
+    /// 验证 `get_token_by_login_id` 返回第一个（最旧）token。
+    #[test]
+    fn get_token_by_login_id_returns_first() {
+        let (_dao, session) = make_session(3600, 86400);
+        session.add_login_token("user2", "tokenA");
+        session.add_login_token("user2", "tokenB");
+
+        let first = session.get_token_by_login_id("user2");
+        assert_eq!(
+            first,
+            Some("tokenA".to_string()),
+            "应返回第一个添加的 token"
+        );
+    }
+
+    /// 验证 `remove_login_token` 移除指定 token，列表为空时移除整个 entry。
+    #[test]
+    fn kickout_cleans_login_token_map() {
+        let (_dao, session) = make_session(3600, 86400);
+        session.add_login_token("user3", "tokenX");
+        session.remove_login_token("user3", "tokenX");
+
+        let tokens = session.get_tokens_by_login_id("user3");
+        assert!(tokens.is_empty(), "移除后应返回空列表");
+        assert!(
+            session.get_token_by_login_id("user3").is_none(),
+            "entry 已移除，应返回 None"
+        );
     }
 }
