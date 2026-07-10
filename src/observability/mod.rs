@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! 可观测性模块，提供 Prometheus 指标、结构化 JSON 日志与 OpenTelemetry 分布式追踪。
 //!
 //! ## 三层架构（依据 spec observability-stack）
@@ -239,7 +242,7 @@ pub fn init_json_logging() {
 /// 初始化 OpenTelemetry OTLP gRPC 追踪导出。
 ///
 /// 启用 `observability-otlp` feature 时可用。trace context 经 OpenTelemetry 自身的
-/// `Context` 传播（task_local），与 `tracing::Span` 通过 `tracing-opentelemetry` 桥接。
+/// `Context` 传播（task_local），通过全局 tracer provider 导出 OTLP span。
 ///
 /// # 参数
 /// - `endpoint`: OTLP gRPC endpoint（如 `http://localhost:4317`）

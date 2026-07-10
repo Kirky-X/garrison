@@ -9,12 +9,11 @@
 bulwark = { version = "0.3", features = ["observability-otlp"] }
 ```
 
-`observability-otlp` 独立门控以隔离重依赖（opentelemetry / opentelemetry_sdk / opentelemetry-otlp / tracing-opentelemetry / tracing-subscriber）：
+`observability-otlp` 独立门控以隔离重依赖（opentelemetry / opentelemetry_sdk / opentelemetry-otlp / tracing-subscriber）：
 
 - `opentelemetry` 0.30（`trace` feature）
 - `opentelemetry_sdk` 0.30（`trace` + `rt-tokio`）
 - `opentelemetry-otlp` 0.30（`trace` + `grpc-tonic`，OTLP gRPC 导出）
-- `tracing-opentelemetry` 0.31（桥接 `tracing::Span` 与 OpenTelemetry trace）
 
 ## init_otlp_tracing
 
@@ -37,7 +36,7 @@ init_otlp_tracing("http://localhost:4317")?;
 
 ## Trace Context 传播
 
-trace context 经 OpenTelemetry 自身的 `Context` 传播（task_local），与 `tracing::Span` 通过 `tracing-opentelemetry` 桥接：
+trace context 经 OpenTelemetry 自身的 `Context` 传播（task_local），通过全局 tracer provider 导出 OTLP span：
 
 - 请求进入时，web 中间件从 HTTP header 提取 `traceparent`（W3C Trace Context）
 - 通过 `BulwarkContext` 在异步任务间传播上下文

@@ -55,7 +55,6 @@ bcrypt = { version = "0.15", optional = true }
 rand = { version = "0.8", optional = true }
 zeroize = { version = "1", optional = true, features = ["derive"] }
 regex = { version = "1", optional = true }
-ua-parser = { version = "0.2", optional = true }
 oxcache = { version = "0.3.3", optional = true }
 # default-features = false：dbnexus 0.3+ 禁止 embedded(sqlite) 与 server-side(postgres) 混用，
 # 由 db-base feature 显式启用基础 features，db-sqlite / db-postgres 分别启用 sqlite / postgres。
@@ -67,7 +66,6 @@ tracing-subscriber = { version = "0.3", optional = true, features = ["fmt", "jso
 opentelemetry = { version = "0.30", optional = true, default-features = false, features = ["trace"] }
 opentelemetry_sdk = { version = "0.30", optional = true, default-features = false, features = ["trace", "rt-tokio"] }
 opentelemetry-otlp = { version = "0.30", optional = true, default-features = false, features = ["trace", "grpc-tonic"] }
-tracing-opentelemetry = { version = "0.31", optional = true, default-features = false }
 # 需 transport feature 以启用 Interceptor trait
 tonic = { version = "0.13", optional = true, default-features = false, features = ["transport"] }
 fluent = { version = "0.17", optional = true, default-features = false }
@@ -162,7 +160,6 @@ db-base = [
     "dbnexus/with-time",
     "dbnexus/auto-migrate",
     "sea-orm",
-    "dep:ua-parser",
 ]
 # db-sqlite 启用 sqlite embedded 驱动
 db-sqlite = ["db-base", "dbnexus/sqlite"]
@@ -257,7 +254,7 @@ listener = []
 tracing-log = ["tracing/log"]
 metrics-prometheus = ["prometheus", "tracing-subscriber"]
 # OpenTelemetry 分布式追踪（OTLP gRPC 导出），独立门控以隔离重依赖
-observability-otlp = ["opentelemetry", "opentelemetry_sdk", "opentelemetry-otlp", "tracing-opentelemetry", "tracing-subscriber"]
+observability-otlp = ["opentelemetry", "opentelemetry_sdk", "opentelemetry-otlp", "tracing-subscriber"]
 # gRPC 鉴权拦截器（tonic::Interceptor 实现）
 grpc = ["tonic"]
 # 异常消息国际化（中英文切换，fluent-rs）

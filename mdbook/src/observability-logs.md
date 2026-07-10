@@ -95,4 +95,4 @@ RUST_LOG=bulwark::core=trace,info  # 细粒度
 
 ## 与 OpenTelemetry 协同
 
-启用 `observability-otlp` 时，`tracing-opentelemetry` 桥接 span 到 OTLP，JSON 日志与分布式追踪共用同一 span 上下文，便于关联查询。
+启用 `observability-otlp` 时，OTLP span 通过全局 tracer provider 导出，JSON 日志与分布式追踪共用同一 span 上下文，便于关联查询。
