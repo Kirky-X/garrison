@@ -35,6 +35,8 @@ use std::sync::Arc;
 pub mod firewall;
 /// 防火墙安全钩子模块（）。
 pub mod hooks;
+/// 通用令牌桶限流器模块。
+pub mod rate_limiter;
 /// 策略注册表模块。
 pub mod registry;
 
