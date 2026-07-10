@@ -65,6 +65,9 @@ pub const REMEMBER_ME_DEFAULT_TIMEOUT: i64 = 7_776_000;
 /// 默认会话悬停超时秒数（-1 = 不启用，保留 Sa-Token 语义）。
 pub const DEFAULT_SESSION_HOVER_TIMEOUT: i64 = -1;
 
+/// 默认前后端分离模式（false = Cookie 模式，true = Token Header 模式）。
+pub const DEFAULT_FRONTEND_SEPARATION: bool = false;
+
 /// 环境变量前缀（BULWARK_）。
 pub const ENV_PREFIX: &str = "BULWARK_";
 
@@ -213,6 +216,12 @@ pub struct BulwarkConfig {
     /// 若 `now - last_active_time > session_hover_timeout` 则踢出会话。
     pub session_hover_timeout: i64,
 
+    /// 是否启用前后端分离模式（默认 false = Cookie 模式）。
+    ///
+    /// 启用后 Token 从 Authorization Header 读取，不设置 Cookie。
+    /// 本批次仅提供配置项与日志提示，Web 框架行为变更留待后续版本。
+    pub frontend_separation: bool,
+
     /// 多租户隔离配置段。
     ///
     /// 默认 `enabled: false`（向后兼容）。启用后需配合 `tenant-isolation` Cargo feature
@@ -250,6 +259,7 @@ impl BulwarkConfig {
             remember_me_enabled: false,
             remember_me_timeout: REMEMBER_ME_DEFAULT_TIMEOUT,
             session_hover_timeout: DEFAULT_SESSION_HOVER_TIMEOUT,
+            frontend_separation: DEFAULT_FRONTEND_SEPARATION,
             tenant_isolation: TenantIsolationConfig::default(),
             watcher: None,
         };
@@ -304,6 +314,10 @@ impl BulwarkConfig {
             .default(
                 "session_hover_timeout",
                 ConfigValue::integer(DEFAULT_SESSION_HOVER_TIMEOUT),
+            )
+            .default(
+                "frontend_separation",
+                ConfigValue::bool(DEFAULT_FRONTEND_SEPARATION),
             );
 
         if let Some(path) = toml_path {
@@ -390,6 +404,11 @@ impl BulwarkConfig {
                 "remember_me_timeout must be positive, got: {}",
                 self.remember_me_timeout
             )));
+        }
+        if self.frontend_separation {
+            tracing::info!(
+                "前后端分离模式已启用：Token 从 Authorization Header 读取，不设置 Cookie"
+            );
         }
         Ok(())
     }
@@ -690,6 +709,7 @@ mod tests {
 
     /// 验证 toml 可覆盖 remember_me 字段。
     #[test]
+    #[serial]
     fn toml_overrides_remember_me() {
         let temp = write_temp_toml(
             r#"
@@ -730,11 +750,41 @@ remember_me_timeout = 9999999
     }
 
     // ========================================================================
+    // frontend_separation 配置测试（spec R-frontend-001 ~ R-frontend-003）
+    // ========================================================================
+
+    /// R-frontend-001: `BulwarkConfig::default()` 的 `frontend_separation` 为 false。
+    #[test]
+    fn config_default_frontend_separation_is_false() {
+        let config = BulwarkConfig::default_config();
+        assert!(!config.frontend_separation);
+    }
+
+    /// R-frontend-002: `BULWARK_FRONTEND_SEPARATION=true` 环境变量覆盖配置为 true。
+    #[test]
+    #[serial]
+    fn env_overrides_frontend_separation() {
+        std::env::set_var("BULWARK_FRONTEND_SEPARATION", "true");
+        let config = BulwarkConfig::load(None).expect("load with env");
+        assert!(config.frontend_separation);
+        std::env::remove_var("BULWARK_FRONTEND_SEPARATION");
+    }
+
+    /// R-frontend-003: `frontend_separation=true` 时 `validate()` 不报错。
+    #[test]
+    fn validate_accepts_frontend_separation_true() {
+        let mut config = BulwarkConfig::default_config();
+        config.frontend_separation = true;
+        assert!(config.validate().is_ok());
+    }
+
+    // ========================================================================
     // toml 文件覆盖测试
     // ========================================================================
 
     /// 验证 toml 覆盖默认值，其他字段保持默认。
     #[test]
+    #[serial]
     fn toml_overrides_token_style() {
         let temp = write_temp_toml(r#"token_style = "random_64""#);
         let config = BulwarkConfig::load(Some(temp.path().to_str().unwrap())).unwrap();
@@ -745,6 +795,7 @@ remember_me_timeout = 9999999
 
     /// 验证 toml 多字段覆盖。
     #[test]
+    #[serial]
     fn toml_overrides_multiple_fields() {
         let temp = write_temp_toml(
             r#"
@@ -938,6 +989,7 @@ jwt_secret = "test-secret""#,
             remember_me_enabled: false,
             remember_me_timeout: REMEMBER_ME_DEFAULT_TIMEOUT,
             session_hover_timeout: DEFAULT_SESSION_HOVER_TIMEOUT,
+            frontend_separation: DEFAULT_FRONTEND_SEPARATION,
             tenant_isolation: TenantIsolationConfig::default(),
             watcher: None,
         };
