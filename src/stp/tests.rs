@@ -3508,3 +3508,80 @@ async fn login_with_is_concurrent_true_preserves_existing() {
     let ts1 = logic.session.get_token_session(&t1).await.unwrap();
     assert!(ts1.is_some(), "is_concurrent=true 应保留旧 token");
 }
+
+// v0.6.3 D2 T012: enforce_max_login_count 测试
+
+/// enforce_max_login_count 应踢出最旧的 token，保留较新的。
+///
+/// 创建 3 个会话（sleep 1 秒确保 last_active_at 不同），
+/// max=2 时应踢出最早的 t1，保留 t2 和 t3。
+#[tokio::test]
+async fn enforce_max_login_count_evicts_oldest() {
+    let logic = make_logic(3600, 86400, false, "uuid", true, true);
+
+    // 创建 3 个会话，sleep 确保 last_active_at 递增（Unix 秒级时间戳）
+    let t1 = logic
+        .login("max-user-001", &LoginParams::default())
+        .await
+        .unwrap();
+    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+    let t2 = logic
+        .login("max-user-001", &LoginParams::default())
+        .await
+        .unwrap();
+    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+    let t3 = logic
+        .login("max-user-001", &LoginParams::default())
+        .await
+        .unwrap();
+
+    // max=2，应踢出最旧的 t1
+    logic
+        .enforce_max_login_count("max-user-001", 2)
+        .await
+        .unwrap();
+
+    // t1 应被踢出
+    let ts1 = logic.session.get_token_session(&t1).await.unwrap();
+    assert!(ts1.is_none(), "最旧的 token 应被踢出");
+
+    // t2 和 t3 应保留
+    let ts2 = logic.session.get_token_session(&t2).await.unwrap();
+    let ts3 = logic.session.get_token_session(&t3).await.unwrap();
+    assert!(ts2.is_some(), "较新的 token 应保留");
+    assert!(ts3.is_some(), "最新的 token 应保留");
+}
+
+/// enforce_max_login_count 在数量 <= max 时不应踢出任何 token。
+#[tokio::test]
+async fn enforce_max_login_count_no_op_when_under_limit() {
+    let logic = make_logic(3600, 86400, false, "uuid", true, true);
+
+    let t1 = logic
+        .login("max-user-002", &LoginParams::default())
+        .await
+        .unwrap();
+    let t2 = logic
+        .login("max-user-002", &LoginParams::default())
+        .await
+        .unwrap();
+
+    // max=5，当前只有 2 个，不应踢出任何 token
+    logic
+        .enforce_max_login_count("max-user-002", 5)
+        .await
+        .unwrap();
+
+    assert!(logic
+        .session
+        .get_token_session(&t1)
+        .await
+        .unwrap()
+        .is_some());
+    assert!(logic
+        .session
+        .get_token_session(&t2)
+        .await
+        .unwrap()
+        .is_some());
+}

@@ -363,6 +363,50 @@ impl BulwarkLogicDefault {
         Ok(token)
     }
 
+    /// 强制最大登录数量：踢出最旧的会话直到数量 <= max。
+    ///
+    /// 按 `last_active_at` 升序排序（最旧排前面），踢出最早的 (count - max) 个 token。
+    /// `max=0` 时不做任何操作（0 表示不限制，由调用方判断）。
+    ///
+    /// # 参数
+    /// - `login_id`: 登录主体标识。
+    /// - `max`: 最大允许同时登录数。
+    ///
+    /// # 错误
+    /// - DAO 查询失败：透传 `BulwarkError`。
+    pub async fn enforce_max_login_count(&self, login_id: &str, max: u32) -> BulwarkResult<()> {
+        if max == 0 {
+            return Ok(());
+        }
+
+        let tokens = self.session.get_tokens_by_login_id(login_id);
+        if tokens.len() <= max as usize {
+            return Ok(());
+        }
+
+        // 从 AccountSession 获取每个 token 的 last_active_at（单次 DAO 查询）
+        let account = match self.session.get_account_session(login_id).await? {
+            Some(a) => a,
+            None => return Ok(()),
+        };
+
+        // 按 last_active_at 升序排序（最旧排前面）
+        let mut token_times: Vec<(String, i64)> = account
+            .tokens
+            .iter()
+            .map(|ti| (ti.token.clone(), ti.last_active_at))
+            .collect();
+        token_times.sort_by_key(|(_, t)| *t);
+
+        // 踢出最旧的 (count - max) 个
+        let to_evict = token_times.len().saturating_sub(max as usize);
+        for (token, _) in token_times.iter().take(to_evict) {
+            self.session.logout(token).await?;
+        }
+
+        Ok(())
+    }
+
     /// 根据 `config.token_style` 生成 token。
     ///
     /// - `uuid`: UUID v4（36 字符，含连字符）
