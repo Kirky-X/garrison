@@ -21,6 +21,7 @@
 //! `verify(input)` 解析此 JSON，构造 `TotpHandler`，用当前时间戳校验 `input`。
 
 use super::{Credential, CredentialModel, CredentialType};
+use crate::dao::BulwarkDao;
 use crate::error::{BulwarkError, BulwarkResult};
 use crate::secure::totp::TotpHandler;
 use async_trait::async_trait;
@@ -107,6 +108,34 @@ impl TotpCredential {
         let handler = data.to_handler()?;
         let now = chrono::Utc::now().timestamp();
         Ok(handler.generate(now))
+    }
+
+    /// 校验 TOTP 验证码并防止重放攻击（委托 [`TotpHandler::validate_and_consume`]）。
+    ///
+    /// 生产环境认证流程应使用此方法而非 [`verify`](Credential::verify)，
+    /// 以防止同一 TOTP 验证码在时间窗口内被重复使用。
+    ///
+    /// # 参数
+    /// - `input`: 用户输入的验证码。
+    /// - `login_id`: 登录主体标识（用户 ID），用于重放隔离。
+    /// - `dao`: DAO 抽象（用于记录已用验证码）。
+    ///
+    /// # 返回
+    /// - `Ok(true)`: 校验通过且首次使用。
+    /// - `Ok(false)`: 校验失败或验证码已使用。
+    /// - `Err(_)`: `secret_data` 解析失败或 DAO 读写失败。
+    pub async fn verify_with_replay_check(
+        &self,
+        input: &str,
+        login_id: &str,
+        dao: &dyn BulwarkDao,
+    ) -> BulwarkResult<bool> {
+        let data = TotpSecretData::from_json(&self.model.secret_data)?;
+        let handler = data.to_handler()?;
+        let now = chrono::Utc::now().timestamp();
+        handler
+            .validate_and_consume(login_id, input, now, dao)
+            .await
     }
 }
 
@@ -256,5 +285,24 @@ mod tests {
         assert_eq!(dyn_cred.credential_type(), "totp");
         let result = dyn_cred.verify(&code).await.expect("verify 应成功");
         assert!(result, "dyn Credential 正确 code 应校验通过");
+    }
+
+    /// C-5: `verify_with_replay_check` 首次校验通过，二次同一码拒绝。
+    #[tokio::test]
+    async fn totp_credential_verify_with_replay_check_rejects_replay() {
+        let (cred, code) = make_totp_cred();
+        let dao = crate::dao::tests::MockDao::new();
+
+        let first = cred
+            .verify_with_replay_check(&code, "user-001", &dao)
+            .await
+            .expect("首次校验不应报错");
+        assert!(first, "首次应通过");
+
+        let second = cred
+            .verify_with_replay_check(&code, "user-001", &dao)
+            .await
+            .expect("二次校验不应报错");
+        assert!(!second, "同一验证码二次使用应被拒绝（C-5 重放防护）");
     }
 }

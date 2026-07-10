@@ -310,8 +310,11 @@ impl CaptchaChallenge for RateLimitStrategy {
         let (key, _) = self.build_key(ctx)?;
         let answer_key = format!("{}:answer", key);
         let stored = self.dao.get(&answer_key).await?;
-        // 未设置期望答案时返回 false（显性失败而非报错，符合 trait 语义）
-        Ok(stored.as_deref() == Some(answer))
+        let matched = stored.as_deref() == Some(answer);
+        if matched {
+            self.dao.delete(&answer_key).await?;
+        }
+        Ok(matched)
     }
 }
 
@@ -500,6 +503,37 @@ mod tests {
             .await
             .expect("verify_challenge 不应报错");
         assert!(!ok, "错误答案应验证失败");
+    }
+
+    /// C-6: 验证码验证通过后立即删除，防止复用。
+    #[tokio::test]
+    async fn captcha_challenge_verify_deletes_answer_after_success() {
+        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let config = RateLimitConfig::default();
+        let strategy = RateLimitStrategy::new(config, dao);
+        let ctx = FirewallContext::new("192.168.1.1");
+
+        strategy
+            .set_expected_answer(&ctx, "abc123")
+            .await
+            .expect("set_expected_answer 不应报错");
+
+        // 第一次正确答案应通过
+        let first = strategy
+            .verify_challenge(&ctx, "abc123")
+            .await
+            .expect("首次 verify_challenge 不应报错");
+        assert!(first, "首次正确答案应通过");
+
+        // 第二次同一答案应失败（验证码已被删除，C-6 修复）
+        let second = strategy
+            .verify_challenge(&ctx, "abc123")
+            .await
+            .expect("二次 verify_challenge 不应报错");
+        assert!(
+            !second,
+            "验证码验证通过后应被删除，二次使用同一答案应失败（C-6）"
+        );
     }
 
     /// T096-5: 流量持续高时阈值上调。

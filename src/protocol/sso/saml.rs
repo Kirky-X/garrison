@@ -28,6 +28,9 @@ use uuid::Uuid;
 /// 对应 SAML 2.0 `<saml:Assertion>` 元素。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SamlAssertion {
+    /// Assertion ID（`<saml:Assertion ID="...">` 属性，用于重放防护）。
+    #[serde(default)]
+    pub id: String,
     /// 签发者标识（`<saml:Issuer>`）。
     pub issuer: String,
     /// 主体标识（`<saml:Subject>`，通常为 name_id）。
@@ -160,7 +163,22 @@ impl SamlProvider for DefaultSamlProvider {
     }
 
     async fn parse_response(&self, response_xml: &str) -> BulwarkResult<SamlResponse> {
-        parse_saml_response_xml(response_xml)
+        let mut response = parse_saml_response_xml(response_xml)?;
+        if let Some(ref assertion) = response.assertion {
+            match self.validate_assertion(assertion).await {
+                Ok(true) => {},
+                Ok(false) => {
+                    tracing::warn!("SAML Assertion 签名验证失败，已剥离");
+                    response.assertion = None;
+                },
+                Err(BulwarkError::NotImplemented(_)) => {
+                    tracing::warn!("SAML 签名验证未实现，已剥离 Assertion（fail-closed）");
+                    response.assertion = None;
+                },
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(response)
     }
 
     async fn validate_assertion(&self, _assertion: &SamlAssertion) -> BulwarkResult<bool> {
@@ -203,6 +221,7 @@ fn parse_saml_response_xml(xml: &str) -> BulwarkResult<SamlResponse> {
     let mut assertion_subject = String::new();
     let mut assertion_audience = String::new();
     let mut assertion_not_on_or_after = String::new();
+    let mut assertion_id = String::new();
     let mut assertion_attributes: Vec<(String, String)> = Vec::new();
     let mut current_text = String::new();
 
@@ -228,7 +247,13 @@ fn parse_saml_response_xml(xml: &str) -> BulwarkResult<SamlResponse> {
                         assertion_subject.clear();
                         assertion_audience.clear();
                         assertion_not_on_or_after.clear();
+                        assertion_id.clear();
                         assertion_attributes.clear();
+                        for attr in e.attributes().flatten() {
+                            if attr.key.as_ref() == b"ID" {
+                                assertion_id = attr_value_to_string(&attr.value);
+                            }
+                        }
                     },
                     "Issuer" => {
                         in_issuer = true;
@@ -291,6 +316,7 @@ fn parse_saml_response_xml(xml: &str) -> BulwarkResult<SamlResponse> {
                     "Assertion" => {
                         if in_assertion {
                             assertion = Some(SamlAssertion {
+                                id: assertion_id.clone(),
                                 issuer: assertion_issuer.clone(),
                                 subject: assertion_subject.clone(),
                                 audience: assertion_audience.clone(),
@@ -350,12 +376,74 @@ fn parse_saml_response_xml(xml: &str) -> BulwarkResult<SamlResponse> {
         buf.clear();
     }
 
+    if let Some(ref assertion) = assertion {
+        if !assertion.not_on_or_after.is_empty() {
+            let expiry =
+                chrono::DateTime::parse_from_rfc3339(&assertion.not_on_or_after).map_err(|e| {
+                    BulwarkError::InvalidToken(format!("SAML NotOnOrAfter 解析失败: {}", e))
+                })?;
+            if Utc::now().timestamp() >= expiry.timestamp() {
+                return Err(BulwarkError::InvalidToken(format!(
+                    "SAML Assertion 已过期 (NotOnOrAfter: {})",
+                    assertion.not_on_or_after
+                )));
+            }
+        }
+    }
+
     Ok(SamlResponse {
         destination,
         issuer,
         assertion,
         status_code,
     })
+}
+
+/// 检查 SAML Assertion 是否被重放（C-3 重放防护）。
+///
+/// 生产环境应在 [`SamlProvider::parse_response`] 后调用此函数，
+/// 确保同一 Assertion ID 不被重复消费。
+///
+/// # 参数
+/// - `assertion_id`: SAML Assertion ID（`<saml:Assertion ID="...">` 属性）。
+/// - `not_on_or_after`: Assertion 过期时间（RFC 3339），用于计算缓存 TTL。
+/// - `dao`: DAO 抽象（用于记录已消费的 Assertion ID）。
+///
+/// # 返回
+/// - `Ok(true)`: 首次消费，已记录到 DAO。
+/// - `Ok(false)`: 已被消费（重放拒绝）。
+/// - `Err(_)`: DAO 读写失败或时间解析失败。
+///
+/// # TTL 计算
+/// TTL = `NotOnOrAfter - now`（剩余有效期）。若 `not_on_or_after` 为空或已过期，
+/// 使用 300 秒（5 分钟）兜底，确保缓存不会过早失效。
+pub async fn check_assertion_replay(
+    assertion_id: &str,
+    not_on_or_after: &str,
+    dao: &dyn crate::dao::BulwarkDao,
+) -> BulwarkResult<bool> {
+    if assertion_id.is_empty() {
+        return Ok(true);
+    }
+    let key = format!("saml:consumed:{}", assertion_id);
+    if dao.get(&key).await?.is_some() {
+        return Ok(false);
+    }
+    let ttl = if not_on_or_after.is_empty() {
+        300
+    } else {
+        let expiry = chrono::DateTime::parse_from_rfc3339(not_on_or_after).map_err(|e| {
+            BulwarkError::InvalidToken(format!("SAML NotOnOrAfter 解析失败: {}", e))
+        })?;
+        let remaining = expiry.timestamp().saturating_sub(Utc::now().timestamp());
+        if remaining > 0 {
+            remaining as u64
+        } else {
+            300
+        }
+    };
+    dao.set(&key, "1", ttl).await?;
+    Ok(true)
 }
 
 /// 提取 XML 元素的 local name（去除命名空间前缀）。
@@ -390,6 +478,7 @@ mod tests {
     #[test]
     fn saml_assertion_serde_roundtrip() {
         let assertion = SamlAssertion {
+            id: "assertion-001".to_string(),
             issuer: "https://idp.example.com".to_string(),
             subject: "user@example.com".to_string(),
             audience: "https://sp.example.com".to_string(),
@@ -398,6 +487,7 @@ mod tests {
         };
         let json = serde_json::to_string(&assertion).unwrap();
         let deserialized: SamlAssertion = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.id, assertion.id);
         assert_eq!(deserialized.issuer, assertion.issuer);
         assert_eq!(deserialized.subject, assertion.subject);
         assert_eq!(deserialized.audience, assertion.audience);
@@ -450,6 +540,7 @@ mod tests {
     #[test]
     fn saml_assertion_implements_clone_debug() {
         let assertion = SamlAssertion {
+            id: "assertion-002".to_string(),
             issuer: "idp".to_string(),
             subject: "user".to_string(),
             audience: "sp".to_string(),
@@ -514,6 +605,10 @@ mod tests {
     }
 
     /// parse_response 解析成功响应（spec R-002）。
+    ///
+    /// C-1: DefaultSamlProvider::validate_assertion 返回 NotImplemented，
+    /// parse_response fail-closed 剥离 Assertion（不返回未验证的 Assertion）。
+    /// XML 字段（destination / issuer / status_code）仍正常解析。
     #[tokio::test]
     async fn parse_response_success() {
         let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -524,7 +619,7 @@ mod tests {
   <samlp:Status>
     <samlp:StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success"/>
   </samlp:Status>
-  <saml:Assertion>
+  <saml:Assertion ID="assertion-123">
     <saml:Issuer>https://idp.example.com</saml:Issuer>
     <saml:Subject>
       <saml:NameID>user@example.com</saml:NameID>
@@ -549,10 +644,10 @@ mod tests {
             response.status_code,
             "urn:oasis:names:tc:SAML:2.0:status:Success"
         );
-        let assertion = response.assertion.expect("应有 Assertion");
-        assert_eq!(assertion.issuer, "https://idp.example.com");
-        assert_eq!(assertion.subject, "user@example.com");
-        assert_eq!(assertion.audience, "https://sp.example.com");
+        assert!(
+            response.assertion.is_none(),
+            "C-1: validate_assertion 未实现时应剥离 Assertion（fail-closed）"
+        );
     }
 
     /// parse_response 解析无 Assertion 的响应（状态码非成功）（spec R-002）。
@@ -594,11 +689,81 @@ mod tests {
         assert!(response.assertion.is_none());
     }
 
+    /// C-2: 过期的 SAML Assertion（NotOnOrAfter < now）应返回 InvalidToken 错误。
+    #[tokio::test]
+    async fn parse_response_rejects_expired_assertion() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"
+                xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"
+                Destination="https://sp.example.com/acs">
+  <saml:Issuer>https://idp.example.com</saml:Issuer>
+  <samlp:Status>
+    <samlp:StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success"/>
+  </samlp:Status>
+  <saml:Assertion>
+    <saml:Issuer>https://idp.example.com</saml:Issuer>
+    <saml:Subject>
+      <saml:NameID>user@example.com</saml:NameID>
+      <saml:SubjectConfirmation>
+        <saml:SubjectConfirmationData NotOnOrAfter="2020-01-01T00:00:00Z"/>
+      </saml:SubjectConfirmation>
+    </saml:Subject>
+  </saml:Assertion>
+</samlp:Response>"#;
+        let provider = DefaultSamlProvider::new().unwrap();
+        let result = provider.parse_response(xml).await;
+        assert!(
+            matches!(result, Err(BulwarkError::InvalidToken(_))),
+            "过期 Assertion 应返回 InvalidToken，实际: {:?}",
+            result
+        );
+    }
+
+    /// C-2: 未过期的 SAML Assertion（NotOnOrAfter > now）正常解析（不报 InvalidToken 错误）。
+    ///
+    /// 注意：C-1 修复后，DefaultSamlProvider 会剥离未验证的 Assertion（fail-closed），
+    /// 但 parse_response 本身不应返回错误——NotOnOrAfter 校验通过。
+    #[tokio::test]
+    async fn parse_response_accepts_valid_assertion() {
+        let future = Utc::now().timestamp() + 3600;
+        let future_str = chrono::DateTime::from_timestamp(future, 0)
+            .unwrap()
+            .to_rfc3339();
+        let xml = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"
+                xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"
+                Destination="https://sp.example.com/acs">
+  <saml:Issuer>https://idp.example.com</saml:Issuer>
+  <samlp:Status>
+    <samlp:StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success"/>
+  </samlp:Status>
+  <saml:Assertion>
+    <saml:Issuer>https://idp.example.com</saml:Issuer>
+    <saml:Subject>
+      <saml:NameID>user@example.com</saml:NameID>
+      <saml:SubjectConfirmation>
+        <saml:SubjectConfirmationData NotOnOrAfter="{}"/>
+      </saml:SubjectConfirmation>
+    </saml:Subject>
+  </saml:Assertion>
+</samlp:Response>"#,
+            future_str
+        );
+        let provider = DefaultSamlProvider::new().unwrap();
+        let response = provider.parse_response(&xml).await.unwrap();
+        assert_eq!(
+            response.status_code,
+            "urn:oasis:names:tc:SAML:2.0:status:Success"
+        );
+    }
+
     /// validate_assertion 返回 NotImplemented（spec R-002: 签名验证 defer）。
     #[tokio::test]
     async fn validate_assertion_returns_not_implemented() {
         let provider = DefaultSamlProvider::new().unwrap();
         let assertion = SamlAssertion {
+            id: "assertion-003".to_string(),
             issuer: "https://idp.example.com".to_string(),
             subject: "user@example.com".to_string(),
             audience: "https://sp.example.com".to_string(),
@@ -611,6 +776,63 @@ mod tests {
             Some(BulwarkError::NotImplemented(_)) => {},
             other => panic!("期望 NotImplemented 错误，实际: {:?}", other),
         }
+    }
+
+    // ========================================================================
+    // C-3 断言重放防护测试
+    // ========================================================================
+
+    /// C-3: 同一 Assertion ID 首次消费通过，二次拒绝。
+    #[tokio::test]
+    async fn check_assertion_replay_rejects_replay() {
+        let dao = crate::dao::tests::MockDao::new();
+        let future = Utc::now().timestamp() + 3600;
+        let future_str = chrono::DateTime::from_timestamp(future, 0)
+            .unwrap()
+            .to_rfc3339();
+
+        let first = check_assertion_replay("assertion-replay-001", &future_str, &dao)
+            .await
+            .expect("首次 check 不应报错");
+        assert!(first, "首次消费应通过");
+
+        let second = check_assertion_replay("assertion-replay-001", &future_str, &dao)
+            .await
+            .expect("二次 check 不应报错");
+        assert!(
+            !second,
+            "同一 Assertion ID 二次消费应被拒绝（C-3 重放防护）"
+        );
+    }
+
+    /// C-3: 不同 Assertion ID 互不影响（隔离性）。
+    #[tokio::test]
+    async fn check_assertion_replay_isolates_by_id() {
+        let dao = crate::dao::tests::MockDao::new();
+        let future = Utc::now().timestamp() + 3600;
+        let future_str = chrono::DateTime::from_timestamp(future, 0)
+            .unwrap()
+            .to_rfc3339();
+
+        let a = check_assertion_replay("assertion-A", &future_str, &dao)
+            .await
+            .unwrap();
+        assert!(a, "assertion-A 首次应通过");
+
+        let b = check_assertion_replay("assertion-B", &future_str, &dao)
+            .await
+            .unwrap();
+        assert!(b, "assertion-B 首次应通过（不同 ID 隔离）");
+    }
+
+    /// C-3: 空 Assertion ID 放行（无法做重放检查）。
+    #[tokio::test]
+    async fn check_assertion_replay_empty_id_passes() {
+        let dao = crate::dao::tests::MockDao::new();
+        let result = check_assertion_replay("", "", &dao)
+            .await
+            .expect("空 ID 不应报错");
+        assert!(result, "空 Assertion ID 应放行（无法做重放检查）");
     }
 
     // ========================================================================
