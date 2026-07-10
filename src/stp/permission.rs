@@ -308,7 +308,11 @@ mod tests {
 
     #[async_trait]
     impl SessionLogic for MockPermission {
-        async fn login(&self, _login_id: &str) -> BulwarkResult<String> {
+        async fn login(
+            &self,
+            _login_id: &str,
+            _params: &crate::stp::LoginParams,
+        ) -> BulwarkResult<String> {
             Ok("mock-token".to_string())
         }
         async fn login_with_token(&self, _login_id: &str, _token: &str) -> BulwarkResult<()> {
@@ -396,7 +400,11 @@ mod tests {
 
     #[async_trait]
     impl SessionLogic for MockPermissionHas {
-        async fn login(&self, _login_id: &str) -> BulwarkResult<String> {
+        async fn login(
+            &self,
+            _login_id: &str,
+            _params: &crate::stp::LoginParams,
+        ) -> BulwarkResult<String> {
             Ok("mock-token".to_string())
         }
         async fn login_with_token(&self, _login_id: &str, _token: &str) -> BulwarkResult<()> {

@@ -16,6 +16,7 @@ use super::context::set_renewed_token;
 use super::current_token;
 use super::BulwarkLogicDefault;
 use super::JwtMode;
+use super::LoginParams;
 use crate::error::{BulwarkError, BulwarkResult};
 #[cfg(feature = "listener")]
 use crate::listener::BulwarkEvent;
@@ -48,6 +49,7 @@ pub trait SessionLogic: BulwarkCore {
     ///
     /// # 参数
     /// - `login_id`: 登录主体标识引用（字符串形式，如 "42" / "alice" / UUID）。
+    /// - `params`: 登录参数（设备/IP/UserAgent/remember_me），传 `&LoginParams::default()` 表示无附加元数据。
     ///
     /// # 返回
     /// 生成的 token 字符串。
@@ -55,7 +57,7 @@ pub trait SessionLogic: BulwarkCore {
     /// # 错误
     /// - token 生成失败（如 `token_style` 非法）：`BulwarkError::Config`。
     /// - 会话创建失败：透传 `BulwarkError`。
-    async fn login(&self, login_id: &str) -> BulwarkResult<String>;
+    async fn login(&self, login_id: &str, params: &LoginParams) -> BulwarkResult<String>;
 
     /// 执行登录（自定义 token）：用指定 token 创建会话。
     ///
@@ -167,11 +169,11 @@ pub trait SessionLogic: BulwarkCore {
 
 #[async_trait]
 impl SessionLogic for BulwarkLogicDefault {
-    async fn login(&self, login_id: &str) -> BulwarkResult<String> {
+    async fn login(&self, login_id: &str, params: &LoginParams) -> BulwarkResult<String> {
         // emit metrics：登录尝试（成功/失败均记录）
         #[cfg(feature = "metrics-prometheus")]
         let start = std::time::Instant::now();
-        let result = self.login_inner(login_id).await;
+        let result = self.login_inner(login_id, params).await;
         #[cfg(feature = "metrics-prometheus")]
         if let Some(m) = &self.metrics {
             m.record_login(result.is_ok());
@@ -315,7 +317,7 @@ impl BulwarkLogicDefault {
     /// login 实际逻辑（供 `login` 方法在 metrics 包装内调用）。
     ///
     /// 0.3.0 抽取此私有方法以保持 `login` trait 方法的 metrics 包装简洁。
-    async fn login_inner(&self, login_id: &str) -> BulwarkResult<String> {
+    async fn login_inner(&self, login_id: &str, _params: &LoginParams) -> BulwarkResult<String> {
         // 登录前防火墙安全钩子检查
         // 任一 hook Err 阻断登录；未注入 hook 时为 no-op（向后兼容 0.2.x）
         let ctx = FirewallLoginContext::new(login_id);
@@ -332,7 +334,7 @@ impl BulwarkLogicDefault {
             lm.broadcast(&BulwarkEvent::Login {
                 login_id: login_id.to_string(),
                 token: token.clone(),
-                device: None,
+                device: _params.device.clone(),
             })
             .await;
         }
@@ -619,7 +621,7 @@ mod tests {
 
     #[async_trait]
     impl SessionLogic for MockSession {
-        async fn login(&self, _login_id: &str) -> BulwarkResult<String> {
+        async fn login(&self, _login_id: &str, _params: &LoginParams) -> BulwarkResult<String> {
             Ok("mock-token".to_string())
         }
         async fn login_with_token(&self, _login_id: &str, _token: &str) -> BulwarkResult<()> {
@@ -655,8 +657,8 @@ mod tests {
         let mock = MockSession {
             config: Arc::new(BulwarkConfig::default()),
         };
-        let t1 = mock.login("42").await.unwrap();
-        let t2 = mock.login("alice").await.unwrap();
+        let t1 = mock.login("42", &LoginParams::default()).await.unwrap();
+        let t2 = mock.login("alice", &LoginParams::default()).await.unwrap();
         assert_eq!(t1, "mock-token");
         assert_eq!(t2, "mock-token");
     }

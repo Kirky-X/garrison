@@ -864,7 +864,7 @@ mod tests {
     #[serial]
     async fn middleware_allows_protected_path_with_valid_token() {
         init_manager(&[], &[]);
-        let token = BulwarkUtil::login("1001").await.unwrap();
+        let token = BulwarkUtil::login_simple("1001").await.unwrap();
         let service = make_middleware_service(&[("/protected", Annotation::CheckLogin)]).await;
 
         let req = test::TestRequest::get()
@@ -884,7 +884,7 @@ mod tests {
     #[serial]
     async fn middleware_blocks_permission_denied() {
         init_manager(&[], &[]); // 无权限数据
-        let token = BulwarkUtil::login("1001").await.unwrap();
+        let token = BulwarkUtil::login_simple("1001").await.unwrap();
         let service = make_middleware_service(&[(
             "/admin",
             Annotation::CheckPermission("admin:read".to_string()),
@@ -940,7 +940,7 @@ mod tests {
     #[serial]
     async fn middleware_works_in_real_app_chain() {
         init_manager(&[], &[]);
-        let token = BulwarkUtil::login("1001").await.unwrap();
+        let token = BulwarkUtil::login_simple("1001").await.unwrap();
         let config = Arc::new(make_config());
         let router =
             BulwarkRouter::new(config).route_protected("/api/protected", Annotation::CheckLogin);
@@ -1002,7 +1002,7 @@ mod tests {
     #[serial]
     async fn extractor_check_login_passes_with_valid_token() {
         init_manager(&[], &[]);
-        let token = BulwarkUtil::login("1001").await.unwrap();
+        let token = BulwarkUtil::login_simple("1001").await.unwrap();
         let config = Arc::new(make_config());
         let app = test::init_service(
             App::new()
@@ -1068,7 +1068,7 @@ mod tests {
     #[serial]
     async fn extractor_check_role_returns_403_without_role() {
         init_manager(&[], &[]); // 无角色数据
-        let token = BulwarkUtil::login("1001").await.unwrap();
+        let token = BulwarkUtil::login_simple("1001").await.unwrap();
         let config = Arc::new(make_config());
         let app = test::init_service(
             App::new()
@@ -1095,7 +1095,7 @@ mod tests {
     #[serial]
     async fn extractor_check_role_reads_role_from_query_param() {
         init_manager(&[], &[("1001", &["admin"])]); // 注入 admin 角色
-        let token = BulwarkUtil::login("1001").await.unwrap();
+        let token = BulwarkUtil::login_simple("1001").await.unwrap();
         let config = Arc::new(make_config());
         let app = test::init_service(
             App::new()
@@ -1143,7 +1143,7 @@ mod tests {
     #[serial]
     async fn extractor_check_permission_returns_403_without_permission() {
         init_manager(&[], &[]); // 无权限数据
-        let token = BulwarkUtil::login("1001").await.unwrap();
+        let token = BulwarkUtil::login_simple("1001").await.unwrap();
         let config = Arc::new(make_config());
         let app = test::init_service(
             App::new()
@@ -1170,7 +1170,7 @@ mod tests {
     #[serial]
     async fn extractor_check_permission_reads_from_query_param() {
         init_manager(&[("1001", &["user:read"])], &[]); // 注入权限
-        let token = BulwarkUtil::login("1001").await.unwrap();
+        let token = BulwarkUtil::login_simple("1001").await.unwrap();
         let config = Arc::new(make_config());
         let app = test::init_service(
             App::new()

@@ -22,7 +22,7 @@ use bulwark::error::{BulwarkError, BulwarkResult};
 use bulwark::protocol::jwt::JwtHandler;
 use bulwark::session::BulwarkSession;
 use bulwark::stp::{
-    with_current_token, BulwarkInterface, BulwarkLogicDefault, JwtMode, SessionLogic,
+    with_current_token, BulwarkInterface, BulwarkLogicDefault, JwtMode, LoginParams, SessionLogic,
 };
 use jsonwebtoken::Algorithm;
 use serial_test::serial;
@@ -221,7 +221,10 @@ async fn stateless_mode_rejects_invalid_jwt() {
 async fn mixin_mode_passes_with_jwt_and_session() {
     let logic = make_logic_with_mode(JwtMode::Mixin).await;
 
-    let token = logic.login("6006").await.expect("login 应成功");
+    let token = logic
+        .login("6006", &LoginParams::default())
+        .await
+        .expect("login 应成功");
     let result = with_current_token(token, async { logic.check_login().await }).await;
     assert!(
         result.is_ok(),
@@ -271,7 +274,10 @@ async fn simple_mode_passes_with_session_only() {
             .with_jwt_mode(JwtMode::Simple),
     );
 
-    let token = logic.login("8008").await.expect("login 应成功");
+    let token = logic
+        .login("8008", &LoginParams::default())
+        .await
+        .expect("login 应成功");
     let result = with_current_token(token, async { logic.check_login().await }).await;
     assert!(
         result.is_ok(),

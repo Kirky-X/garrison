@@ -478,7 +478,7 @@ async fn auto_wire_login_triggers_plugin_on_login() {
     BulwarkManager::init(dao, config, interface).unwrap();
 
     // login 应自动触发 CountingPlugin.on_login（编译期通过 inventory 注册）
-    let token = BulwarkUtil::login("1001").await.unwrap();
+    let token = BulwarkUtil::login_simple("1001").await.unwrap();
     assert!(!token.is_empty());
 
     // 验证 plugin on_login 被触发
@@ -518,7 +518,7 @@ async fn auto_wire_login_broadcasts_listener_login_event() {
 
     BulwarkManager::init(dao, config, interface).unwrap();
 
-    let token = BulwarkUtil::login("2002").await.unwrap();
+    let token = BulwarkUtil::login_simple("2002").await.unwrap();
     assert!(!token.is_empty());
 
     // 验证 listener Login 事件被广播
@@ -559,7 +559,7 @@ async fn auto_wire_logout_triggers_hooks() {
     BulwarkManager::init(dao, config, interface).unwrap();
 
     // login（触发 on_login + Login 事件）
-    let token = BulwarkUtil::login("3003").await.unwrap();
+    let token = BulwarkUtil::login_simple("3003").await.unwrap();
 
     // logout（需在 with_current_token 上下文中执行）
     let login_before = PLUGIN_LOGIN_CALLS.load(Ordering::SeqCst);

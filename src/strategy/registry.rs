@@ -29,7 +29,7 @@
 //!   trait 共存，两者名称不同，不冲突
 
 use crate::error::BulwarkResult;
-use crate::stp::{BulwarkLogicDefault, PermissionLogic, SessionLogic, TokenLogic};
+use crate::stp::{BulwarkLogicDefault, LoginParams, PermissionLogic, SessionLogic, TokenLogic};
 use crate::strategy::hooks::LoginContext;
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -156,7 +156,7 @@ impl DefaultLoginHandler {
 #[async_trait]
 impl LoginHandler for DefaultLoginHandler {
     async fn handle_login(&self, login_id: &str) -> BulwarkResult<String> {
-        self.logic.login(login_id).await
+        self.logic.login(login_id, &LoginParams::default()).await
     }
 }
 
@@ -224,7 +224,7 @@ impl DefaultTokenGenerator {
 #[async_trait]
 impl TokenGenerator for DefaultTokenGenerator {
     async fn generate_token(&self, login_id: &str) -> BulwarkResult<String> {
-        self.logic.login(login_id).await
+        self.logic.login(login_id, &LoginParams::default()).await
     }
 
     async fn refresh_token(&self, token: &str) -> BulwarkResult<String> {

@@ -261,7 +261,7 @@ mod tests {
     async fn bulwark_principal_extracted_from_actix_request() {
         init_manager();
         let login_id = "1001";
-        let token = BulwarkUtil::login(login_id).await.unwrap();
+        let token = BulwarkUtil::login_simple(login_id).await.unwrap();
 
         let req = test::TestRequest::get()
             .uri("/api/test")

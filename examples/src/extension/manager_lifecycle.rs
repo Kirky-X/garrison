@@ -101,7 +101,7 @@ pub async fn run() -> BulwarkResult<()> {
     // ----------------------------------------------------------------
     // 3. BulwarkUtil 静态方法：login
     // ----------------------------------------------------------------
-    let token = BulwarkUtil::login("1001").await?;
+    let token = BulwarkUtil::login_simple("1001").await?;
     println!("[3] login(1001) → token={}...", &token[..16]);
     assert!(!token.is_empty(), "login 应返回非空 token");
     println!();
@@ -140,7 +140,7 @@ pub async fn run() -> BulwarkResult<()> {
     // 7. 多账号登录与 kickout
     // ----------------------------------------------------------------
     println!("[5] 多账号登录与 kickout:");
-    let token2 = BulwarkUtil::login("1002").await?;
+    let token2 = BulwarkUtil::login_simple("1002").await?;
     println!("    login(1002) → token={}...", &token2[..16]);
 
     // 1002 有 user:read 权限但无 user:write

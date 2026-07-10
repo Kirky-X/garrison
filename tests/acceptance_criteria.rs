@@ -260,7 +260,7 @@ async fn bw_ac_001_oidc_login_creates_account_and_token() {
     let dao = init_manager(vec![], vec![]);
 
     // When: 用户完成 OIDC 登录
-    let token = BulwarkUtil::login("oidc-user-001")
+    let token = BulwarkUtil::login_simple("oidc-user-001")
         .await
         .expect("login 应成功");
     assert!(!token.is_empty(), "登录应返回非空 token");
@@ -456,7 +456,9 @@ async fn bw_ac_003_concurrent_login_kicks_earliest_session() {
 #[serial]
 async fn bw_ac_004_role_check_returns_403() {
     let _dao = init_manager(vec![], vec!["user".to_string()]);
-    let token = BulwarkUtil::login("user-004").await.expect("login 应成功");
+    let token = BulwarkUtil::login_simple("user-004")
+        .await
+        .expect("login 应成功");
 
     let result = with_current_token(token, async { BulwarkUtil::check_role("admin").await }).await;
 
@@ -491,7 +493,9 @@ async fn bw_ac_004_role_check_returns_403() {
 #[serial]
 async fn bw_ac_005_permission_check_returns_403() {
     let _dao = init_manager(vec!["order:read".to_string()], vec![]);
-    let token = BulwarkUtil::login("user-005").await.expect("login 应成功");
+    let token = BulwarkUtil::login_simple("user-005")
+        .await
+        .expect("login 应成功");
 
     let result = with_current_token(token, async {
         BulwarkUtil::check_permission("order:write").await
@@ -536,7 +540,9 @@ async fn bw_ac_006_oxcache_memory_backend_works() {
     );
 
     // When: 执行登录 → 鉴权 → 登出完整流程
-    let token = BulwarkUtil::login("user-006").await.expect("login 应成功");
+    let token = BulwarkUtil::login_simple("user-006")
+        .await
+        .expect("login 应成功");
 
     // 验证已登录
     let check_result =
@@ -717,7 +723,7 @@ async fn bw_ac_008_oxcache_failure_degrades_to_jwt_stateless() {
     init_manager_failing();
 
     // When: 用户尝试登录（FailingDao 的 set 返回 Err）
-    let result = BulwarkUtil::login("user-008").await;
+    let result = BulwarkUtil::login_simple("user-008").await;
 
     // Then: DAO 错误显性传播（规则12）
     assert!(result.is_err(), "DAO 故障时 login 应返回错误（不吞掉）");
@@ -764,7 +770,9 @@ async fn bw_ac_009_logout_invalidates_token() {
     let dao = init_manager(vec![], vec![]);
 
     // Given: 用户登录
-    let token = BulwarkUtil::login("user-009").await.expect("login 应成功");
+    let token = BulwarkUtil::login_simple("user-009")
+        .await
+        .expect("login 应成功");
 
     // 验证已登录
     let logged_in =

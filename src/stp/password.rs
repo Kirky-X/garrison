@@ -12,6 +12,8 @@
 //! `login_id` 参数从 `i64` 迁移为 `&str`（字符串形式，对象安全）。
 
 use super::BulwarkLogicDefault;
+#[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
+use super::LoginParams;
 #[cfg(all(
     feature = "listener",
     feature = "account-credential",
@@ -153,7 +155,7 @@ impl PasswordLogic for BulwarkLogicDefault {
         }
 
         // 3. 调用 login 签发 token（触发 plugin/listener auto-wire）
-        self.login(login_id).await
+        self.login(login_id, &LoginParams::default()).await
     }
 }
 
@@ -180,7 +182,11 @@ mod tests {
 
     #[async_trait]
     impl SessionLogic for MockPassword {
-        async fn login(&self, _login_id: &str) -> BulwarkResult<String> {
+        async fn login(
+            &self,
+            _login_id: &str,
+            _params: &crate::stp::LoginParams,
+        ) -> BulwarkResult<String> {
             Ok("mock-token".to_string())
         }
         async fn login_with_token(&self, _login_id: &str, _token: &str) -> BulwarkResult<()> {

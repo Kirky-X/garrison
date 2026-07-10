@@ -148,7 +148,7 @@ async fn jwt_end_to_end_login_verify_refresh_logout() {
     init_jwt_manager();
 
     // 1. 登录：生成 JWT token 并写入会话
-    let token = BulwarkUtil::login("1001").await.unwrap();
+    let token = BulwarkUtil::login_simple("1001").await.unwrap();
     assert!(!token.is_empty(), "login 应返回非空 token");
     assert!(token.contains('.'), "JWT 应为三段式（含 .）：{}", token);
     println!("[登录] token={}", &token[..40.min(token.len())]);

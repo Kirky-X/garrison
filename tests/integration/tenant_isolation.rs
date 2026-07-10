@@ -28,7 +28,7 @@ mod tenant_audit_decision_e2e {
     use bulwark::listener::audit::{AuditConfig, AuditQuery};
     use bulwark::listener::{BulwarkListener, BulwarkListenerManager};
     use bulwark::session::BulwarkSession;
-    use bulwark::stp::{with_current_token, BulwarkInterface, BulwarkLogicDefault};
+    use bulwark::stp::{with_current_token, BulwarkInterface, BulwarkLogicDefault, LoginParams};
     use bulwark::AuditLogListener;
     use bulwark::{PermissionLogic, SessionLogic};
     use serial_test::serial;
@@ -108,7 +108,10 @@ mod tenant_audit_decision_e2e {
 
         let token = TENANT
             .scope(tenant_ctx.clone(), async {
-                logic.login("1001").await.expect("login 应成功")
+                logic
+                    .login("1001", &LoginParams::default())
+                    .await
+                    .expect("login 应成功")
             })
             .await;
         assert!(!token.is_empty(), "token 不应为空");

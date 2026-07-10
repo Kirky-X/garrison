@@ -419,7 +419,7 @@ mod tests {
             "Drop Manager 后全局单例应仍初始化"
         );
         // 全局单例仍可正常 login
-        let token = BulwarkUtil::login("2002").await.unwrap();
+        let token = BulwarkUtil::login_simple("2002").await.unwrap();
         assert!(!token.is_empty(), "全局单例 login 仍应正常工作");
 
         BulwarkManager::reset_for_test();

@@ -205,7 +205,7 @@ pub async fn setup() -> (Arc<BulwarkConfig>, String) {
     let interface: Arc<dyn BulwarkInterface> = Arc::new(MyInterface::new());
     BulwarkManager::init(dao, config.clone(), interface).expect("BulwarkManager 初始化失败");
 
-    let token = BulwarkUtil::login("1001").await.expect("login 失败");
+    let token = BulwarkUtil::login_simple("1001").await.expect("login 失败");
     (config, token)
 }
 

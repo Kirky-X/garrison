@@ -30,7 +30,8 @@ use bulwark::listener::audit::{AuditConfig, AuditQuery};
 use bulwark::listener::{BulwarkListener, BulwarkListenerManager};
 use bulwark::session::BulwarkSession;
 use bulwark::stp::{
-    with_current_token, BulwarkInterface, BulwarkLogicDefault, PermissionLogic, SessionLogic,
+    with_current_token, BulwarkInterface, BulwarkLogicDefault, LoginParams, PermissionLogic,
+    SessionLogic,
 };
 use bulwark::strategy::BulwarkPermissionStrategyDefault;
 use bulwark::{AuditLogListener, BulwarkConfig, KeycloakConfig, KeycloakProvider, WechatProvider};
@@ -139,7 +140,9 @@ async fn demo_tenant_isolation(
 
     // 在 TENANT(42) scope 内登录，确保 session key 带 tenant:42: 前缀
     let token = TENANT
-        .scope(tenant_ctx.clone(), async { logic.login("1001").await })
+        .scope(tenant_ctx.clone(), async {
+            logic.login("1001", &LoginParams::default()).await
+        })
         .await?;
     println!("    ✓ 登录成功，token 长度: {}", token.len());
 

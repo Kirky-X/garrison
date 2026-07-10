@@ -716,7 +716,7 @@ mod tests {
     #[serial]
     async fn into_filter_allows_protected_path_with_valid_token() {
         init_manager(&[], &[]);
-        let token = BulwarkUtil::login("1001").await.unwrap();
+        let token = BulwarkUtil::login_simple("1001").await.unwrap();
         let router = BulwarkRouter::new(Arc::new(make_config()))
             .route_protected("/protected", Annotation::CheckLogin);
         let filter = router.into_filter();
@@ -736,7 +736,7 @@ mod tests {
     #[serial]
     async fn into_filter_blocks_permission_denied() {
         init_manager(&[], &[]); // 无权限数据
-        let token = BulwarkUtil::login("1001").await.unwrap();
+        let token = BulwarkUtil::login_simple("1001").await.unwrap();
         let router = BulwarkRouter::new(Arc::new(make_config())).route_protected(
             "/admin",
             Annotation::CheckPermission("admin:read".to_string()),
@@ -797,7 +797,7 @@ mod tests {
     #[serial]
     async fn check_login_filter_passes_with_valid_token() {
         init_manager(&[], &[]);
-        let token = BulwarkUtil::login("1001").await.unwrap();
+        let token = BulwarkUtil::login_simple("1001").await.unwrap();
         let filter = check_login(Arc::new(make_config()));
 
         let result = warp::test::request()
@@ -832,7 +832,7 @@ mod tests {
     #[serial]
     async fn check_role_filter_rejects_without_role() {
         init_manager(&[], &[]); // 无角色数据
-        let token = BulwarkUtil::login("1001").await.unwrap();
+        let token = BulwarkUtil::login_simple("1001").await.unwrap();
         let filter = check_role(Arc::new(make_config()), "admin".to_string());
 
         let result = warp::test::request()
@@ -850,7 +850,7 @@ mod tests {
     #[serial]
     async fn check_role_filter_passes_with_valid_role() {
         init_manager(&[], &[("1001", &["admin"])]); // 注入 admin 角色
-        let token = BulwarkUtil::login("1001").await.unwrap();
+        let token = BulwarkUtil::login_simple("1001").await.unwrap();
         let filter = check_role(Arc::new(make_config()), "admin".to_string());
 
         let result = warp::test::request()
@@ -885,7 +885,7 @@ mod tests {
     #[serial]
     async fn check_permission_filter_rejects_without_permission() {
         init_manager(&[], &[]); // 无权限数据
-        let token = BulwarkUtil::login("1001").await.unwrap();
+        let token = BulwarkUtil::login_simple("1001").await.unwrap();
         let filter = check_permission(Arc::new(make_config()), "user:read".to_string());
 
         let result = warp::test::request()
@@ -903,7 +903,7 @@ mod tests {
     #[serial]
     async fn check_permission_filter_passes_with_valid_permission() {
         init_manager(&[("1001", &["user:read"])], &[]); // 注入权限
-        let token = BulwarkUtil::login("1001").await.unwrap();
+        let token = BulwarkUtil::login_simple("1001").await.unwrap();
         let filter = check_permission(Arc::new(make_config()), "user:read".to_string());
 
         let result = warp::test::request()

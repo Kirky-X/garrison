@@ -227,7 +227,7 @@ fn make_request(path: &str, token: Option<&str>) -> Request<Body> {
 #[serial]
 async fn protected_with_valid_token_returns_200() {
     init_manager(&[], &[]);
-    let token = BulwarkUtil::login("1001").await.unwrap();
+    let token = BulwarkUtil::login_simple("1001").await.unwrap();
 
     let app = make_app();
     let response = app
@@ -276,7 +276,7 @@ async fn protected_with_invalid_token_returns_401() {
 #[serial]
 async fn admin_with_admin_role_returns_200() {
     init_manager(&[], &[("1001", &["admin"])]);
-    let token = BulwarkUtil::login("1001").await.unwrap();
+    let token = BulwarkUtil::login_simple("1001").await.unwrap();
 
     let app = make_app();
     let response = app
@@ -291,7 +291,7 @@ async fn admin_with_admin_role_returns_200() {
 #[serial]
 async fn admin_without_admin_role_returns_403() {
     init_manager(&[], &[]); // 无角色数据
-    let token = BulwarkUtil::login("1001").await.unwrap();
+    let token = BulwarkUtil::login_simple("1001").await.unwrap();
 
     let app = make_app();
     let response = app
@@ -306,7 +306,7 @@ async fn admin_without_admin_role_returns_403() {
 #[serial]
 async fn users_with_user_read_permission_returns_200() {
     init_manager(&[("1001", &["user:read"])], &[]);
-    let token = BulwarkUtil::login("1001").await.unwrap();
+    let token = BulwarkUtil::login_simple("1001").await.unwrap();
 
     let app = make_app();
     let response = app
@@ -321,7 +321,7 @@ async fn users_with_user_read_permission_returns_200() {
 #[serial]
 async fn users_without_user_read_permission_returns_403() {
     init_manager(&[], &[]); // 无权限数据
-    let token = BulwarkUtil::login("1001").await.unwrap();
+    let token = BulwarkUtil::login_simple("1001").await.unwrap();
 
     let app = make_app();
     let response = app

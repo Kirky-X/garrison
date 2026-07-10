@@ -56,6 +56,47 @@ pub use self::session::SessionLogic;
 pub use self::token::TokenLogic;
 pub use self::util::{BulwarkUtil, JwtMode};
 
+/// 登录参数（v0.6.3 新增）。
+///
+/// 封装登录时的可选元数据，传递给 `SessionLogic::login`。
+/// [借鉴 Sa-Token] 对应 Sa-Token 的 `SaLoginParameter`，但简化为 4 个字段。
+///
+/// # 字段
+///
+/// - `device`: 设备标识（如 "web"/"ios"/"android"），写入 `TokenSession.device`
+/// - `ip`: 客户端 IP 地址，写入 `TokenSession.ip`
+/// - `user_agent`: 客户端 User-Agent，写入 `TokenSession.user_agent`
+/// - `remember_me`: 是否启用记住我（延长 Token 有效期至 `remember_me_timeout`）
+///
+/// # 用法
+///
+/// ```ignore
+/// use bulwark::stp::LoginParams;
+///
+/// // 默认参数（所有字段为 None/false）
+/// let token = logic.login("user-1", &LoginParams::default()).await?;
+///
+/// // 带设备信息
+/// let params = LoginParams {
+///     device: Some("ios".to_string()),
+///     ip: Some("192.168.1.1".to_string()),
+///     user_agent: Some("Mozilla/5.0".to_string()),
+///     remember_me: false,
+/// };
+/// let token = logic.login("user-1", &params).await?;
+/// ```
+#[derive(Debug, Clone, Default)]
+pub struct LoginParams {
+    /// 设备标识（如 "web"/"ios"/"android"）。
+    pub device: Option<String>,
+    /// 客户端 IP 地址。
+    pub ip: Option<String>,
+    /// 客户端 User-Agent。
+    pub user_agent: Option<String>,
+    /// 是否启用记住我（延长 Token 有效期）。
+    pub remember_me: bool,
+}
+
 // 原 `BulwarkLogic` 上帝 trait（21 个方法）已彻底删除。
 // Manager / Strategy / Factory 等持有方改为具体类型 `Arc<BulwarkLogicDefault>`，
 // 方法调用通过子 trait（SessionLogic/PermissionLogic/TokenLogic/MfaLogic/PasswordLogic）解析。

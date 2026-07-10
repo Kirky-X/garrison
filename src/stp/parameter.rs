@@ -117,7 +117,7 @@ impl ParameterQueryBuilder {
         } else if let Some(login_id) = &self.login_id {
             // Login_id 已设置：创建临时会话获取 token，再委托 BulwarkUtil::check_* 校验
             // login_id 为 String，BulwarkUtil::login 接收 &str
-            let token = BulwarkUtil::login(login_id).await?;
+            let token = BulwarkUtil::login_simple(login_id).await?;
             let value = value.to_string();
             let token_for_cleanup = token.clone();
             let result = with_current_token(token, async move {
@@ -430,7 +430,7 @@ mod tests {
         init_manager_with_perms(false, perms, HashMap::new());
 
         // 先 login 获取有效 token
-        let token = BulwarkUtil::login("1001").await.unwrap();
+        let token = BulwarkUtil::login_simple("1001").await.unwrap();
 
         let result = ParameterQueryBuilder::new()
             .with_token(&token)
@@ -453,7 +453,7 @@ mod tests {
         let perms: HashMap<String, Vec<String>> = HashMap::new();
         init_manager_with_perms(false, perms, HashMap::new());
 
-        let token = BulwarkUtil::login("1001").await.unwrap();
+        let token = BulwarkUtil::login_simple("1001").await.unwrap();
 
         let result = ParameterQueryBuilder::new()
             .with_token(&token)
@@ -531,7 +531,7 @@ mod tests {
         roles.insert("1001".to_string(), vec!["admin".to_string()]);
         init_manager_with_perms(false, HashMap::new(), roles);
 
-        let token = BulwarkUtil::login("1001").await.unwrap();
+        let token = BulwarkUtil::login_simple("1001").await.unwrap();
 
         let result = ParameterQueryBuilder::new()
             .with_token(&token)
@@ -553,7 +553,7 @@ mod tests {
         let roles: HashMap<String, Vec<String>> = HashMap::new();
         init_manager_with_perms(false, HashMap::new(), roles);
 
-        let token = BulwarkUtil::login("1001").await.unwrap();
+        let token = BulwarkUtil::login_simple("1001").await.unwrap();
 
         let result = ParameterQueryBuilder::new()
             .with_token(&token)

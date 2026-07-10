@@ -10,6 +10,7 @@ use crate::stp::mfa::MfaLogic;
 use crate::stp::permission::PermissionLogic;
 use crate::stp::session::SessionLogic;
 use crate::stp::token::TokenLogic;
+use crate::stp::LoginParams;
 use std::sync::Arc;
 use tokio::runtime::Handle;
 use tokio::task;
@@ -75,9 +76,18 @@ impl BulwarkUtil {
     /// # 错误
     /// - `BulwarkManager` 未初始化：`BulwarkError::Session`。
     /// - token 生成或会话创建失败：透传 `BulwarkError`。
-    pub async fn login(id: impl Into<String>) -> BulwarkResult<String> {
+    pub async fn login(id: impl Into<String>, params: &LoginParams) -> BulwarkResult<String> {
         let id: String = id.into();
-        crate::manager::BulwarkManager::logic()?.login(&id).await
+        crate::manager::BulwarkManager::logic()?
+            .login(&id, params)
+            .await
+    }
+
+    /// 便捷登录：使用默认 `LoginParams`（无设备/IP/UA/remember_me）。
+    ///
+    /// 等价于 `login(id, &LoginParams::default())`，向后兼容 0.6.2 前的 `login(id)` 调用。
+    pub async fn login_simple(id: impl Into<String>) -> BulwarkResult<String> {
+        Self::login(id, &LoginParams::default()).await
     }
 
     /// 执行登出：从 task_local 获取当前 token 并销毁。

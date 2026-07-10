@@ -38,7 +38,7 @@ use crate::account::credential::{Credential, CredentialModel, CredentialReposito
 use crate::account::lockout::UserLockoutStrategy;
 use crate::account::policy::PasswordPolicyEngine;
 use crate::error::BulwarkResult;
-use crate::stp::{BulwarkLogicDefault, MfaLogic, SessionLogic};
+use crate::stp::{BulwarkLogicDefault, LoginParams, MfaLogic, SessionLogic};
 use crate::strategy::firewall::{BulwarkFirewallStrategy, FirewallContext};
 use async_trait::async_trait;
 use std::future::Future;
@@ -677,7 +677,7 @@ impl AuthExecutor {
 
         if verified {
             // 创建会话
-            let session_token = self.logic.login(&user_id).await?;
+            let session_token = self.logic.login(&user_id, &LoginParams::default()).await?;
             // 记录登录成功（重置失败计数）
             if let Some(lockout) = &self.lockout {
                 let _ = lockout.record_success(&user_id).await;
@@ -884,7 +884,7 @@ impl AuthExecutor {
         };
 
         // 用 login_id 建立本地会话
-        let token = self.logic.login(&login_id).await?;
+        let token = self.logic.login(&login_id, &LoginParams::default()).await?;
 
         // 写回 ctx.user_id（供后续步骤如 Mfa 使用）
         ctx.user_id = Some(login_id.clone());
@@ -944,7 +944,7 @@ impl AuthExecutor {
         };
 
         // 用 login_id 建立本地会话
-        let token = self.logic.login(&login_id).await?;
+        let token = self.logic.login(&login_id, &LoginParams::default()).await?;
 
         // 写回 ctx.user_id（供后续步骤使用）
         ctx.user_id = Some(login_id.clone());

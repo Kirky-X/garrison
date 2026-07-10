@@ -236,7 +236,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("    用户 1001 角色: [admin]\n");
 
     // 2. 用户 1001 登录获取 token
-    let token = BulwarkUtil::login("1001").await?;
+    let token = BulwarkUtil::login_simple("1001").await?;
     println!(
         "[2] 用户 1001 登录获取 token: {}...",
         &token[..std::cmp::min(20, token.len())]
@@ -294,7 +294,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n[9] 无权限 → 403");
     // 初始化一个无权限的用户 2002
     init_manager(&[], &[("2002", &["admin"])]);
-    let token_2002 = BulwarkUtil::login("2002").await?;
+    let token_2002 = BulwarkUtil::login_simple("2002").await?;
     let response =
         bulwark::stp::with_current_token(token_2002, async { perm_handler().await }).await;
     println!(

@@ -28,7 +28,7 @@
 //! BulwarkManager::init(dao, config, interface).unwrap();
 //!
 //! // 3. 使用静态 API（task_local 上下文由 middleware 设置）
-//! let token = BulwarkUtil::login("1001").await.unwrap();
+//! let token = BulwarkUtil::login_simple("1001").await.unwrap();
 //! ```
 
 use crate::config::BulwarkConfig;
@@ -406,7 +406,7 @@ mod tests {
     use super::*;
     use crate::dao::tests::MockDao;
     use crate::dao::BulwarkDao;
-    use crate::stp::{BulwarkUtil, SessionLogic};
+    use crate::stp::{BulwarkUtil, LoginParams, SessionLogic};
     use async_trait::async_trait;
     use serial_test::serial;
     use std::collections::HashMap;
@@ -570,7 +570,7 @@ mod tests {
         assert!(BulwarkManager::is_initialized());
 
         // login
-        let token = BulwarkUtil::login("1001").await.unwrap();
+        let token = BulwarkUtil::login_simple("1001").await.unwrap();
         assert!(!token.is_empty());
 
         // check_login
@@ -608,7 +608,7 @@ mod tests {
             Arc::new(MockInterface::new().with_permission("1001", &["user:read", "user:write"]));
         BulwarkManager::init(dao, config, interface).unwrap();
 
-        let token = BulwarkUtil::login("1001").await.unwrap();
+        let token = BulwarkUtil::login_simple("1001").await.unwrap();
 
         // 持有权限
         let check_result = with_token(token.clone(), async {
@@ -646,7 +646,7 @@ mod tests {
             Arc::new(MockInterface::new().with_role("1001", &["admin"]));
         BulwarkManager::init(dao, config, interface).unwrap();
 
-        let token = BulwarkUtil::login("1001").await.unwrap();
+        let token = BulwarkUtil::login_simple("1001").await.unwrap();
 
         // 持有角色
         let check_result = with_token(token.clone(), async {
@@ -678,7 +678,7 @@ mod tests {
     #[serial]
     async fn util_login_fails_when_not_initialized() {
         BulwarkManager::reset_for_test();
-        let result = BulwarkUtil::login("1001").await;
+        let result = BulwarkUtil::login_simple("1001").await;
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
@@ -750,7 +750,7 @@ mod tests {
             permission_checker: None,
         };
         let logic = bulwark_logic_factory_default(session, config, firewall, &ctx).unwrap();
-        let token = logic.login("1001").await.unwrap();
+        let token = logic.login("1001", &LoginParams::default()).await.unwrap();
         assert!(!token.is_empty());
     }
 
@@ -782,7 +782,7 @@ mod tests {
         assert!(BulwarkManager::is_initialized());
 
         // 验证 login 仍可正常工作
-        let token = BulwarkUtil::login("1001").await.unwrap();
+        let token = BulwarkUtil::login_simple("1001").await.unwrap();
         assert!(!token.is_empty());
 
         BulwarkManager::reset_for_test();
@@ -861,7 +861,7 @@ mod tests {
         assert!(BulwarkManager::is_initialized());
 
         // 验证 login 仍可正常工作
-        let token = BulwarkUtil::login("1001").await.unwrap();
+        let token = BulwarkUtil::login_simple("1001").await.unwrap();
         assert!(!token.is_empty());
 
         BulwarkManager::reset_for_test();

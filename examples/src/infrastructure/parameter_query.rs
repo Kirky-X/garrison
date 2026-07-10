@@ -209,7 +209,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // 3. with_token + check_role（先 login 获取 token）
     // ----------------------------------------------------------------
     println!("[token 上下文] check_role:");
-    let token = BulwarkUtil::login("1001").await?;
+    let token = BulwarkUtil::login_simple("1001").await?;
     println!(
         "    BulwarkUtil::login(1001) → token={}",
         &token[..16.min(token.len())]

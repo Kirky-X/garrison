@@ -100,7 +100,7 @@ pub async fn run() -> BulwarkResult<()> {
     // ----------------------------------------------------------------
     // 3. 执行登录：生成 token 并创建会话
     // ----------------------------------------------------------------
-    let token = BulwarkUtil::login("1001").await?;
+    let token = BulwarkUtil::login_simple("1001").await?;
     println!("[2] 登录成功，login_id=1001");
     println!("    token={}\n", token);
     assert!(!token.is_empty(), "login 应返回非空 token");

@@ -218,7 +218,7 @@ fn make_request(path: &str, token: Option<&str>) -> Request<Body> {
 #[serial]
 async fn check_login_with_valid_token_returns_200() {
     init_manager(&[], &[]);
-    let token = BulwarkUtil::login("1001").await.unwrap();
+    let token = BulwarkUtil::login_simple("1001").await.unwrap();
 
     let app = make_app();
     let response = app
@@ -258,7 +258,7 @@ async fn check_login_with_invalid_token_returns_401() {
 #[serial]
 async fn check_permission_without_permission_returns_403() {
     init_manager(&[], &[]); // 无权限数据
-    let token = BulwarkUtil::login("1001").await.unwrap();
+    let token = BulwarkUtil::login_simple("1001").await.unwrap();
 
     let app = make_app();
     let response = app
@@ -273,7 +273,7 @@ async fn check_permission_without_permission_returns_403() {
 #[serial]
 async fn check_permission_with_permission_returns_200() {
     init_manager(&[("1001", &["user:read"])], &[]);
-    let token = BulwarkUtil::login("1001").await.unwrap();
+    let token = BulwarkUtil::login_simple("1001").await.unwrap();
 
     let app = make_app();
     let response = app
@@ -288,7 +288,7 @@ async fn check_permission_with_permission_returns_200() {
 #[serial]
 async fn check_role_without_role_returns_403() {
     init_manager(&[], &[]); // 无角色数据
-    let token = BulwarkUtil::login("1001").await.unwrap();
+    let token = BulwarkUtil::login_simple("1001").await.unwrap();
 
     let app = make_app();
     let response = app
@@ -303,7 +303,7 @@ async fn check_role_without_role_returns_403() {
 #[serial]
 async fn check_role_with_role_returns_200() {
     init_manager(&[], &[("1001", &["admin"])]);
-    let token = BulwarkUtil::login("1001").await.unwrap();
+    let token = BulwarkUtil::login_simple("1001").await.unwrap();
 
     let app = make_app();
     let response = app
@@ -332,7 +332,7 @@ async fn ignore_allows_anonymous_access() {
 #[serial]
 async fn middleware_extracts_token_from_cookie() {
     init_manager(&[], &[]);
-    let token = BulwarkUtil::login("1001").await.unwrap();
+    let token = BulwarkUtil::login_simple("1001").await.unwrap();
 
     let req = Request::builder()
         .method("GET")
@@ -384,7 +384,7 @@ async fn unauthorized_response_body_contains_error_json() {
 #[serial]
 async fn forbidden_response_body_contains_error_json() {
     init_manager(&[], &[]); // 无权限
-    let token = BulwarkUtil::login("1001").await.unwrap();
+    let token = BulwarkUtil::login_simple("1001").await.unwrap();
 
     let app = make_app();
     let response = app

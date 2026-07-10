@@ -641,7 +641,7 @@ mod tests {
     #[serial]
     async fn route_protected_build_handles_request() {
         init_manager(&[], &[]);
-        let token = BulwarkUtil::login("1001").await.unwrap();
+        let token = BulwarkUtil::login_simple("1001").await.unwrap();
 
         let app = make_router().build();
         let response = app
@@ -675,7 +675,7 @@ mod tests {
     #[serial]
     async fn protected_with_valid_token_returns_200() {
         init_manager(&[], &[]);
-        let token = BulwarkUtil::login("1001").await.unwrap();
+        let token = BulwarkUtil::login_simple("1001").await.unwrap();
 
         let app = make_router().build();
         let response = app
@@ -712,7 +712,7 @@ mod tests {
     #[serial]
     async fn permission_denied_returns_403() {
         init_manager(&[], &[]); // 无权限数据
-        let token = BulwarkUtil::login("1001").await.unwrap();
+        let token = BulwarkUtil::login_simple("1001").await.unwrap();
 
         let app = make_router().build();
         let response = app
@@ -729,7 +729,7 @@ mod tests {
     #[serial]
     async fn permission_granted_returns_200() {
         init_manager(&[("1001", &["user:read"])], &[]);
-        let token = BulwarkUtil::login("1001").await.unwrap();
+        let token = BulwarkUtil::login_simple("1001").await.unwrap();
 
         let app = make_router().build();
         let response = app
@@ -746,7 +746,7 @@ mod tests {
     #[serial]
     async fn role_denied_returns_403() {
         init_manager(&[], &[]); // 无角色数据
-        let token = BulwarkUtil::login("1001").await.unwrap();
+        let token = BulwarkUtil::login_simple("1001").await.unwrap();
 
         let app = make_router().build();
         let response = app
@@ -763,7 +763,7 @@ mod tests {
     #[serial]
     async fn role_granted_returns_200() {
         init_manager(&[], &[("1001", &["admin"])]);
-        let token = BulwarkUtil::login("1001").await.unwrap();
+        let token = BulwarkUtil::login_simple("1001").await.unwrap();
 
         let app = make_router().build();
         let response = app
@@ -801,7 +801,7 @@ mod tests {
     #[serial]
     async fn middleware_extracts_token_from_bearer_header() {
         init_manager(&[], &[]);
-        let token = BulwarkUtil::login("1001").await.unwrap();
+        let token = BulwarkUtil::login_simple("1001").await.unwrap();
 
         let app = make_router().build();
         let response = app
@@ -822,7 +822,7 @@ mod tests {
     #[serial]
     async fn middleware_extracts_token_from_custom_header() {
         init_manager(&[], &[]);
-        let token = BulwarkUtil::login("1001").await.unwrap();
+        let token = BulwarkUtil::login_simple("1001").await.unwrap();
 
         let req = Request::builder()
             .method("GET")
@@ -847,7 +847,7 @@ mod tests {
     #[serial]
     async fn middleware_extracts_token_from_cookie() {
         init_manager(&[], &[]);
-        let token = BulwarkUtil::login("1001").await.unwrap();
+        let token = BulwarkUtil::login_simple("1001").await.unwrap();
 
         let req = Request::builder()
             .method("GET")
@@ -876,7 +876,7 @@ mod tests {
     #[serial]
     async fn default_interceptor_check_login_logged_in_ok() {
         init_manager(&[], &[]);
-        let token = BulwarkUtil::login("1001").await.unwrap();
+        let token = BulwarkUtil::login_simple("1001").await.unwrap();
 
         let interceptor = DefaultBulwarkInterceptor;
         let result = crate::stp::with_current_token(
@@ -909,7 +909,7 @@ mod tests {
     #[serial]
     async fn default_interceptor_check_role_held_ok() {
         init_manager(&[], &[("1001", &["admin"])]);
-        let token = BulwarkUtil::login("1001").await.unwrap();
+        let token = BulwarkUtil::login_simple("1001").await.unwrap();
 
         let interceptor = DefaultBulwarkInterceptor;
         let result = crate::stp::with_current_token(
@@ -927,7 +927,7 @@ mod tests {
     #[serial]
     async fn default_interceptor_check_permission_not_held_err() {
         init_manager(&[], &[]); // 无权限
-        let token = BulwarkUtil::login("1001").await.unwrap();
+        let token = BulwarkUtil::login_simple("1001").await.unwrap();
 
         let interceptor = DefaultBulwarkInterceptor;
         let result = crate::stp::with_current_token(
@@ -1170,7 +1170,7 @@ mod tests {
     #[serial]
     async fn with_interceptor_uses_custom_interceptor() {
         init_manager(&[], &[]);
-        let token = BulwarkUtil::login("1001").await.unwrap();
+        let token = BulwarkUtil::login_simple("1001").await.unwrap();
 
         let interceptor = CountingInterceptor::new();
         let count_ptr = interceptor.get();
@@ -1198,7 +1198,7 @@ mod tests {
     #[serial]
     async fn default_router_handles_request() {
         init_manager(&[], &[]);
-        let token = BulwarkUtil::login("1001").await.unwrap();
+        let token = BulwarkUtil::login_simple("1001").await.unwrap();
 
         let app = BulwarkRouter::default()
             .route_protected("/protected", || async { "ok" }, Annotation::CheckLogin)
@@ -1478,7 +1478,7 @@ mod tests {
     #[serial]
     async fn group_applies_prefix_to_sub_routes() {
         init_manager(&[], &[]);
-        let token = BulwarkUtil::login("1001").await.unwrap();
+        let token = BulwarkUtil::login_simple("1001").await.unwrap();
 
         let app = BulwarkRouter::new(Arc::new(make_config()))
             .group("/api/v1", Annotation::CheckLogin, |r| {
@@ -1533,7 +1533,7 @@ mod tests {
     #[serial]
     async fn group_non_ignore_annotation_preserves_route_annotation() {
         init_manager(&[], &[]); // 无角色数据
-        let token = BulwarkUtil::login("1001").await.unwrap();
+        let token = BulwarkUtil::login_simple("1001").await.unwrap();
 
         let app = BulwarkRouter::new(Arc::new(make_config()))
             .group("/api", Annotation::CheckLogin, |r| {
@@ -1568,7 +1568,7 @@ mod tests {
     #[serial]
     async fn group_nested_merges_prefixes() {
         init_manager(&[], &[]);
-        let token = BulwarkUtil::login("1001").await.unwrap();
+        let token = BulwarkUtil::login_simple("1001").await.unwrap();
 
         let app = BulwarkRouter::new(Arc::new(make_config()))
             .group("/api", Annotation::CheckLogin, |r| {
@@ -1608,7 +1608,7 @@ mod tests {
     #[serial]
     async fn group_trailing_slash_trimmed() {
         init_manager(&[], &[]);
-        let token = BulwarkUtil::login("1001").await.unwrap();
+        let token = BulwarkUtil::login_simple("1001").await.unwrap();
 
         // prefix = "/api/v1/" → trimmed = "/api/v1" → 完整路径 = "/api/v1/users"
         let app = BulwarkRouter::new(Arc::new(make_config()))

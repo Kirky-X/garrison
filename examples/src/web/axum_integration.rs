@@ -177,7 +177,7 @@ pub async fn setup() -> BulwarkResult<(Router, String)> {
     BulwarkManager::init(dao, config.clone(), interface)?;
 
     // --- 模拟登录获取测试 token ---
-    let token = BulwarkUtil::login("1001").await?;
+    let token = BulwarkUtil::login_simple("1001").await?;
     assert!(!token.is_empty(), "login 应返回非空 token");
 
     // --- 创建 axum app，使用 BulwarkRouter + route_protected ---

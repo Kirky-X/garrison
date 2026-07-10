@@ -270,7 +270,7 @@ mod tests {
     async fn bulwark_principal_extracted_from_warp_request() {
         init_manager();
         let login_id = "2002";
-        let token = BulwarkUtil::login(login_id).await.unwrap();
+        let token = BulwarkUtil::login_simple(login_id).await.unwrap();
 
         let config = Arc::new(make_config());
         let filter = bulwark_principal(config);
