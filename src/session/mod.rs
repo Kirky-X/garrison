@@ -29,6 +29,18 @@
 /// Session 安全监听器（IP 变更检测）。
 pub mod security_listener;
 
+/// 设备管理模块（需要 sha2，由多个协议/安全 feature 启用）。
+#[cfg(any(
+    feature = "protocol-jwt",
+    feature = "account-credential",
+    feature = "protocol-oauth2",
+    feature = "protocol-sso",
+    feature = "protocol-sign",
+    feature = "secure-sign",
+    feature = "secure-httpdigest"
+))]
+pub mod device;
+
 use crate::constants::DaoKeyPrefix;
 use crate::dao::BulwarkDao;
 use crate::error::{BulwarkError, BulwarkResult};
