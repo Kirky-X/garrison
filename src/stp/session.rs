@@ -329,6 +329,25 @@ impl SessionLogic for BulwarkLogicDefault {
         }
         Ok(())
     }
+
+    async fn refresh_access_token(&self, refresh_token: &str) -> BulwarkResult<(String, String)> {
+        #[cfg(all(feature = "protocol-jwt", feature = "db-sqlite"))]
+        {
+            if let Some(rtr) = &self.refresh_token_rotation {
+                return rtr.rotate(refresh_token).await;
+            }
+            return Err(BulwarkError::NotImplemented(
+                "refresh_access_token 未注入 RefreshTokenRotation".to_string(),
+            ));
+        }
+        #[cfg(not(all(feature = "protocol-jwt", feature = "db-sqlite")))]
+        {
+            let _ = refresh_token;
+            Err(BulwarkError::NotImplemented(
+                "refresh_access_token 需启用 protocol-jwt + db-sqlite feature".to_string(),
+            ))
+        }
+    }
 }
 
 // ============================================================================

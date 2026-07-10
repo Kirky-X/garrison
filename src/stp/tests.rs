@@ -3638,3 +3638,38 @@ async fn session_logic_refresh_default_returns_not_implemented() {
         result
     );
 }
+
+// v0.6.3 D3 T015: refresh_access_token 覆盖实现——未注入/未启用 feature 时返回 NotImplemented
+
+/// 未注入 RefreshTokenRotation 时返回 NotImplemented（db-sqlite + protocol-jwt 启用）。
+///
+/// T015 覆盖 `refresh_access_token`：注入了 `refresh_token_rotation` 字段后，
+/// 未注入（None）时应返回 `NotImplemented`，而非调用 trait 默认实现。
+#[cfg(all(feature = "protocol-jwt", feature = "db-sqlite"))]
+#[tokio::test]
+async fn refresh_access_token_returns_not_implemented_when_not_injected() {
+    let logic = make_logic(3600, 86400, false, "uuid", true, true);
+    // 未注入 refresh_token_rotation
+    let result = logic.refresh_access_token("some-refresh-token").await;
+    assert!(
+        matches!(result, Err(BulwarkError::NotImplemented(_))),
+        "未注入 RefreshTokenRotation 时应返回 NotImplemented，实际: {:?}",
+        result
+    );
+}
+
+/// 未启用 db-sqlite feature 时返回 NotImplemented。
+///
+/// `RefreshTokenRotation` 需 `protocol-jwt` + `db-sqlite` 双 feature，
+/// 未启用时覆盖实现直接返回 `NotImplemented`。
+#[cfg(not(all(feature = "protocol-jwt", feature = "db-sqlite")))]
+#[tokio::test]
+async fn refresh_access_token_returns_not_implemented_without_db_sqlite() {
+    let logic = make_logic(3600, 86400, false, "uuid", true, true);
+    let result = logic.refresh_access_token("some-refresh-token").await;
+    assert!(
+        matches!(result, Err(BulwarkError::NotImplemented(_))),
+        "未启用 db-sqlite feature 时应返回 NotImplemented，实际: {:?}",
+        result
+    );
+}

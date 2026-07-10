@@ -241,6 +241,9 @@ pub struct BulwarkLogicDefault {
     /// 实际 JWT verify 调用在 `check_login` 中由 `#[cfg(feature = "protocol-jwt")]` 门控。
     /// `pub(crate)` 供测试验证字段值。
     pub(crate) jwt_mode: JwtMode,
+    /// Refresh Token 轮换器（可选，注入后 refresh_access_token 委托此实现）。
+    #[cfg(all(feature = "protocol-jwt", feature = "db-sqlite"))]
+    refresh_token_rotation: Option<crate::protocol::jwt::refresh::RefreshTokenRotation>,
 }
 
 impl BulwarkLogicDefault {
@@ -275,6 +278,8 @@ impl BulwarkLogicDefault {
             user_repository: None,
             login_type: "default".to_string(),
             jwt_mode: JwtMode::default(),
+            #[cfg(all(feature = "protocol-jwt", feature = "db-sqlite"))]
+            refresh_token_rotation: None,
         }
     }
 
@@ -388,6 +393,19 @@ impl BulwarkLogicDefault {
     /// ```
     pub fn with_jwt_mode(mut self, mode: JwtMode) -> Self {
         self.jwt_mode = mode;
+        self
+    }
+
+    /// 注入 Refresh Token 轮换器（builder 模式，需启用 `protocol-jwt` + `db-sqlite` feature）。
+    ///
+    /// 注入后 `refresh_access_token` 委托 `RefreshTokenRotation::rotate` 实现轮换。
+    /// 未注入时 `refresh_access_token` 返回 `BulwarkError::NotImplemented`。
+    #[cfg(all(feature = "protocol-jwt", feature = "db-sqlite"))]
+    pub fn with_refresh_token_rotation(
+        mut self,
+        rtr: crate::protocol::jwt::refresh::RefreshTokenRotation,
+    ) -> Self {
+        self.refresh_token_rotation = Some(rtr);
         self
     }
 
