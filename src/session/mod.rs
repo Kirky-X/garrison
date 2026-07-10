@@ -33,10 +33,12 @@ use crate::dao::BulwarkDao;
 use crate::error::{BulwarkError, BulwarkResult};
 use async_trait::async_trait;
 use chrono::Utc;
+use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::Mutex as TokioMutex;
 
 /// Account-Session 的 token 信息条目。
 ///
@@ -146,6 +148,8 @@ pub struct BulwarkSession {
     timeout: u64,
     /// Account-Session 级 activity 超时（秒）。
     active_timeout: u64,
+    /// per-login_id 操作锁，保护 Account-Session 的 read-modify-write 序列（R-001~R-004）。
+    login_locks: DashMap<String, Arc<TokioMutex<()>>>,
     /// 监听器管理器。
     ///
     /// 注入后 `kickout_by_device` 会广播 `BulwarkEvent::Kickout` 事件。
@@ -183,6 +187,7 @@ impl BulwarkSession {
             dao,
             timeout,
             active_timeout,
+            login_locks: DashMap::new(),
             #[cfg(feature = "listener")]
             listener_manager: None,
             expiry_listeners: Vec::new(),
@@ -243,6 +248,23 @@ impl BulwarkSession {
         }
     }
 
+    /// 获取 per-login_id 锁并执行 future（保护 Account-Session read-modify-write 序列）。
+    ///
+    /// 锁粒度为 login_id，不影响不同用户的并发。使用 `tokio::sync::Mutex`（持有锁跨 await 点）。
+    /// `kickout_by_device` 持有锁后调用 `logout_inner`（不获取锁），避免死锁。
+    async fn with_login_lock<F, R>(&self, login_id: &str, f: F) -> R
+    where
+        F: std::future::Future<Output = R>,
+    {
+        let lock = self
+            .login_locks
+            .entry(login_id.to_string())
+            .or_insert_with(|| Arc::new(TokioMutex::new(())))
+            .clone();
+        let _guard = lock.lock().await;
+        f.await
+    }
+
     /// 创建会话（login 时调用）：双写 Account-Session + Token-Session。
     ///
     ///
@@ -258,49 +280,52 @@ impl BulwarkSession {
     /// - DAO 写入失败：透传 `BulwarkError`。
     pub async fn create(&self, login_id: impl Into<String>, token: &str) -> BulwarkResult<()> {
         let login_id: String = login_id.into();
-        let now = Utc::now().timestamp();
+        self.with_login_lock(&login_id, async {
+            let now = Utc::now().timestamp();
 
-        // 创建 Token-Session
-        let token_session = TokenSession {
-            token: token.to_string(),
-            login_id: login_id.clone(),
-            created_at: now,
-            last_active_at: now,
-            attrs: HashMap::new(),
-            device: None,
-        };
-        let token_json = serde_json::to_string(&token_session)
-            .map_err(|e| BulwarkError::Session(format!("序列化 TokenSession 失败: {}", e)))?;
-        self.dao
-            .set(&token_key(token), &token_json, self.timeout)
-            .await?;
-
-        // 读取或创建 Account-Session
-        let mut account = self
-            .get_account_session(&login_id)
-            .await?
-            .unwrap_or_else(|| AccountSession {
+            // 创建 Token-Session
+            let token_session = TokenSession {
+                token: token.to_string(),
                 login_id: login_id.clone(),
-                tokens: vec![],
+                created_at: now,
+                last_active_at: now,
+                attrs: HashMap::new(),
+                device: None,
+            };
+            let token_json = serde_json::to_string(&token_session)
+                .map_err(|e| BulwarkError::Session(format!("序列化 TokenSession 失败: {}", e)))?;
+            self.dao
+                .set(&token_key(token), &token_json, self.timeout)
+                .await?;
+
+            // 读取或创建 Account-Session
+            let mut account = self
+                .get_account_session(&login_id)
+                .await?
+                .unwrap_or_else(|| AccountSession {
+                    login_id: login_id.clone(),
+                    tokens: vec![],
+                    created_at: now,
+                    last_active_at: now,
+                });
+
+            // 添加 token 信息（spec scenario "Account-Session 记录多 token"）
+            account.tokens.push(TokenInfo {
+                token: token.to_string(),
                 created_at: now,
                 last_active_at: now,
             });
+            account.last_active_at = now;
 
-        // 添加 token 信息（spec scenario "Account-Session 记录多 token"）
-        account.tokens.push(TokenInfo {
-            token: token.to_string(),
-            created_at: now,
-            last_active_at: now,
-        });
-        account.last_active_at = now;
+            let account_json = serde_json::to_string(&account)
+                .map_err(|e| BulwarkError::Session(format!("序列化 AccountSession 失败: {}", e)))?;
+            self.dao
+                .set(&account_key(&login_id), &account_json, self.active_timeout)
+                .await?;
 
-        let account_json = serde_json::to_string(&account)
-            .map_err(|e| BulwarkError::Session(format!("序列化 AccountSession 失败: {}", e)))?;
-        self.dao
-            .set(&account_key(&login_id), &account_json, self.active_timeout)
-            .await?;
-
-        Ok(())
+            Ok(())
+        })
+        .await
     }
 
     /// 获取 Token-Session。
@@ -731,33 +756,52 @@ impl BulwarkSession {
     /// - 序列化 `AccountSession` 失败：`BulwarkError::Session`。
     /// - DAO 删除/更新失败：透传 `BulwarkError`。
     pub async fn logout(&self, token: &str) -> BulwarkResult<()> {
+        // 先读取 token session 获取 login_id（不在锁内，避免锁持有时间过长）
         let ts = self.get_token_session(token).await?;
+        match ts {
+            Some(ts) => {
+                // 获取 per-login_id 锁，保护 Account-Session read-modify-write（R-002, R-004）
+                let login_id = ts.login_id.clone();
+                self.with_login_lock(
+                    &login_id,
+                    async move { self.logout_inner(token, &ts).await },
+                )
+                .await
+            },
+            None => {
+                // token 不存在，幂等删除
+                self.dao.delete(&token_key(token)).await
+            },
+        }
+    }
+
+    /// logout 内部实现（不获取 per-login_id 锁）。
+    ///
+    /// 供 `logout`（获取锁后调用）和 `kickout_by_device`（已持有锁）复用，避免死锁。
+    async fn logout_inner(&self, token: &str, ts: &TokenSession) -> BulwarkResult<()> {
         // 删除 Token-Session
         self.dao.delete(&token_key(token)).await?;
 
-        // 从 Account-Session 移除该 token
-        if let Some(ts) = ts {
-            // SSO ticket 销毁联动。
-            // 若 Token-Session 含 sso_ticket 属性，删除 dao 中的 `bulwark:sso:ticket:<ticket>` key。
-            // 失败仅记录不中断主流程。
-            if let Some(ticket) = ts.attrs.get("sso_ticket") {
-                let sso_key = format!("bulwark:sso:ticket:{}", ticket);
-                if let Err(e) = self.dao.delete(&sso_key).await {
-                    tracing::warn!("logout 联动删除 SSO ticket 失败 (key={}): {}", sso_key, e);
-                }
+        // SSO ticket 销毁联动。
+        // 若 Token-Session 含 sso_ticket 属性，删除 dao 中的 `bulwark:sso:ticket:<ticket>` key。
+        // 失败仅记录不中断主流程。
+        if let Some(ticket) = ts.attrs.get("sso_ticket") {
+            let sso_key = format!("bulwark:sso:ticket:{}", ticket);
+            if let Err(e) = self.dao.delete(&sso_key).await {
+                tracing::warn!("logout 联动删除 SSO ticket 失败 (key={}): {}", sso_key, e);
             }
+        }
 
-            if let Some(mut account) = self.get_account_session(&ts.login_id).await? {
-                account.tokens.retain(|ti| ti.token != token);
-                // spec: 若列表为空，Account-Session 标记为空（但不删除，保留历史）
-                let account_json = serde_json::to_string(&account).map_err(|e| {
-                    BulwarkError::Session(format!("序列化 AccountSession 失败: {}", e))
-                })?;
-                // 用 update 保留原 TTL（不重置 Account-Session 的过期时间）
-                self.dao
-                    .update(&account_key(&ts.login_id), &account_json)
-                    .await?;
-            }
+        // 从 Account-Session 移除该 token
+        if let Some(mut account) = self.get_account_session(&ts.login_id).await? {
+            account.tokens.retain(|ti| ti.token != token);
+            // spec: 若列表为空，Account-Session 标记为空（但不删除，保留历史）
+            let account_json = serde_json::to_string(&account)
+                .map_err(|e| BulwarkError::Session(format!("序列化 AccountSession 失败: {}", e)))?;
+            // 用 update 保留原 TTL（不重置 Account-Session 的过期时间）
+            self.dao
+                .update(&account_key(&ts.login_id), &account_json)
+                .await?;
         }
         Ok(())
     }
@@ -776,13 +820,17 @@ impl BulwarkSession {
     /// - DAO 删除失败：透传 `BulwarkError`。
     pub async fn logout_by_login_id(&self, login_id: impl Into<String>) -> BulwarkResult<()> {
         let login_id: String = login_id.into();
-        if let Some(account) = self.get_account_session(&login_id).await? {
-            for ti in &account.tokens {
-                self.dao.delete(&token_key(&ti.token)).await?;
+        // 获取 per-login_id 锁，保护 Account-Session 读-删序列（R-003, R-004）
+        self.with_login_lock(&login_id, async {
+            if let Some(account) = self.get_account_session(&login_id).await? {
+                for ti in &account.tokens {
+                    self.dao.delete(&token_key(&ti.token)).await?;
+                }
             }
-        }
-        self.dao.delete(&account_key(&login_id)).await?;
-        Ok(())
+            self.dao.delete(&account_key(&login_id)).await?;
+            Ok(())
+        })
+        .await
     }
 
     /// 按设备踢出。
@@ -812,45 +860,50 @@ impl BulwarkSession {
         device: &str,
     ) -> BulwarkResult<()> {
         let login_id: String = login_id.into();
-        let account = match self.get_account_session(&login_id).await? {
-            Some(a) => a,
-            None => return Ok(()), // 幂等：account session 不存在
-        };
+        // 获取 per-login_id 锁，保护 Account-Session 读-踢序列（R-009）
+        // 内部调用 logout_inner（不获取锁），避免死锁
+        self.with_login_lock(&login_id, async {
+            let account = match self.get_account_session(&login_id).await? {
+                Some(a) => a,
+                None => return Ok(()), // 幂等：account session 不存在
+            };
 
-        // 收集需要踢出的 token
-        let mut kicked_tokens: Vec<String> = Vec::new();
-        for ti in &account.tokens {
-            if let Some(ts) = self.get_token_session(&ti.token).await? {
-                if ts.device.as_deref() == Some(device) {
-                    kicked_tokens.push(ti.token.clone());
+            // 收集需要踢出的 token（同时获取 TokenSession 供 logout_inner 使用）
+            let mut kicked: Vec<(String, TokenSession)> = Vec::new();
+            for ti in &account.tokens {
+                if let Some(ts) = self.get_token_session(&ti.token).await? {
+                    if ts.device.as_deref() == Some(device) {
+                        kicked.push((ti.token.clone(), ts));
+                    }
                 }
             }
-        }
 
-        if kicked_tokens.is_empty() {
-            return Ok(()); // 幂等：无匹配 device
-        }
-
-        // 逐个 logout（复用 logout 逻辑：删除 Token-Session + 从 account session 移除）
-        for token in &kicked_tokens {
-            self.logout(token).await?;
-        }
-
-        // 广播 Kickout 事件（R-002）
-        #[cfg(feature = "listener")]
-        if let Some(mgr) = &self.listener_manager {
-            let reason = format!("kicked by device: {}", device);
-            for token in &kicked_tokens {
-                mgr.broadcast(&crate::listener::BulwarkEvent::Kickout {
-                    login_id: login_id.clone(),
-                    token: token.clone(),
-                    reason: reason.clone(),
-                })
-                .await;
+            if kicked.is_empty() {
+                return Ok(()); // 幂等：无匹配 device
             }
-        }
 
-        Ok(())
+            // 逐个 logout_inner（不获取锁，因为已持有 login_id 锁）
+            for (token, ts) in &kicked {
+                self.logout_inner(token, ts).await?;
+            }
+
+            // 广播 Kickout 事件（R-002）
+            #[cfg(feature = "listener")]
+            if let Some(mgr) = &self.listener_manager {
+                let reason = format!("kicked by device: {}", device);
+                for (token, _) in &kicked {
+                    mgr.broadcast(&crate::listener::BulwarkEvent::Kickout {
+                        login_id: login_id.clone(),
+                        token: token.clone(),
+                        reason: reason.clone(),
+                    })
+                    .await;
+                }
+            }
+
+            Ok(())
+        })
+        .await
     }
 }
 
@@ -1984,6 +2037,87 @@ mod tests {
         assert!(
             dao.get(&token_key("T1")).await.unwrap().is_none(),
             "无 listener 时过期 session 仍应从 DAO 删除"
+        );
+    }
+
+    // ------------------------------------------------------------------------
+    // 并发竞态测试（R-001~R-004 修复验证）
+    // ------------------------------------------------------------------------
+
+    /// SlowDao wrapper：在 `get` account session key 后插入延迟，
+    /// 放大 Account-Session read-modify-write 窗口，使 R-001 竞态可靠复现。
+    ///
+    /// 无锁时：两个并发 `create` 都会在对方的 `set(account)` 之前读到空的 account session，
+    /// 导致 lost update（最终 tokens 列表只有 1 个 token 而非 2 个）。
+    struct SlowDao {
+        inner: Arc<MockDao>,
+        delay: Duration,
+    }
+
+    #[async_trait]
+    impl BulwarkDao for SlowDao {
+        async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
+            let result = self.inner.get(key).await;
+            // 仅对 account:session:* key 插入延迟，放大 read-modify-write 窗口
+            if key.starts_with("account:session:") {
+                tokio::time::sleep(self.delay).await;
+            }
+            result
+        }
+        async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> BulwarkResult<()> {
+            self.inner.set(key, value, ttl_seconds).await
+        }
+        async fn update(&self, key: &str, value: &str) -> BulwarkResult<()> {
+            self.inner.update(key, value).await
+        }
+        async fn expire(&self, key: &str, seconds: u64) -> BulwarkResult<()> {
+            self.inner.expire(key, seconds).await
+        }
+        async fn delete(&self, key: &str) -> BulwarkResult<()> {
+            self.inner.delete(key).await
+        }
+    }
+
+    /// R-001 修复验证：两个并发 `create` 同一 login_id，Account-Session 的 token 列表应包含两个 token。
+    ///
+    /// 修复前（无 per-login_id 锁）：两个并发 create 的 read-modify-write 交错，
+    /// 后写入的 account session 覆盖先写入的，导致丢失一个 token（lost update）。
+    /// 修复后（per-login_id 锁）：两个 create 串行化，tokens 列表完整保留两个 token。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    #[serial_test::serial]
+    async fn concurrent_login_same_user_creates_consistent_session() {
+        let inner = Arc::new(MockDao::new());
+        let dao: Arc<dyn BulwarkDao> = Arc::new(SlowDao {
+            inner: inner.clone(),
+            delay: Duration::from_millis(50),
+        });
+        let session = BulwarkSession::new(dao, 3600, 86400);
+
+        // 并发执行两次 create 同一 login_id（用 tokio::join! 确保并发）
+        let (r1, r2) = tokio::join!(session.create("1001", "T1"), session.create("1001", "T2"),);
+        r1.expect("create T1 应成功");
+        r2.expect("create T2 应成功");
+
+        // 验证 Account-Session 的 token 列表长度为 2（修复前会丢失一个）
+        let account = session
+            .get_account_session("1001")
+            .await
+            .expect("get_account_session 应成功")
+            .expect("Account-Session 应存在");
+        assert_eq!(
+            account.tokens.len(),
+            2,
+            "并发 create 后 Account-Session 应包含 2 个 token（修复前 lost update 导致只剩 1 个）"
+        );
+
+        // 验证两个 token 都能通过 is_valid 检查
+        assert!(
+            session.is_valid("T1").await.expect("is_valid T1 应成功"),
+            "T1 应有效"
+        );
+        assert!(
+            session.is_valid("T2").await.expect("is_valid T2 应成功"),
+            "T2 应有效"
         );
     }
 }
