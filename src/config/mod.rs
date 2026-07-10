@@ -71,6 +71,15 @@ pub const DEFAULT_FRONTEND_SEPARATION: bool = false;
 /// 默认自动续签阈值（-1 = 不启用，0-100 = 剩余 TTL 百分比低于此值时触发续签）。
 pub const DEFAULT_AUTO_RENEWAL_THRESHOLD: i64 = -1;
 
+/// 默认是否允许并发登录（true = 同一账号可同时在多设备登录）。
+pub const DEFAULT_IS_CONCURRENT: bool = true;
+
+/// 默认是否共享 Token（true = 同一账号多登录复用同一 Token，要求 is_concurrent=true）。
+pub const DEFAULT_IS_SHARE: bool = false;
+
+/// 默认最大登录数量（0 = 不限制，>0 = 超出时踢出最早登录的会话）。
+pub const DEFAULT_MAX_LOGIN_COUNT: u32 = 0;
+
 /// 环境变量前缀（BULWARK_）。
 pub const ENV_PREFIX: &str = "BULWARK_";
 
@@ -231,6 +240,25 @@ pub struct BulwarkConfig {
     /// 若 `remaining_pct < auto_renewal_threshold` 则自动续签。
     pub auto_renewal_threshold: i64,
 
+    /// 是否允许并发登录（true = 同一账号可同时在多设备登录）。
+    ///
+    /// [借鉴 Sa-Token] 对应 `isConcurrent` 配置。默认 true。
+    /// 设为 false 时，新登录会先踢出该账号的所有现有会话。
+    pub is_concurrent: bool,
+
+    /// 是否共享 Token（true = 同一账号多登录复用同一 Token）。
+    ///
+    /// [借鉴 Sa-Token] 对应 `isShare` 配置。默认 false。
+    /// 设为 true 时，同一账号再次登录返回已有 Token，不创建新会话。
+    /// 要求 `is_concurrent=true`，否则 `validate()` 报错。
+    pub is_share: bool,
+
+    /// 最大登录数量（0 = 不限制，>0 = 超出时踢出最早登录的会话）。
+    ///
+    /// [借鉴 Sa-Token] 对应 `maxLoginCount` 配置。默认 0。
+    /// 登录后若该账号的活跃 Token 数超过此值，按 `last_active_time` 升序踢出最早的。
+    pub max_login_count: u32,
+
     /// 多租户隔离配置段。
     ///
     /// 默认 `enabled: false`（向后兼容）。启用后需配合 `tenant-isolation` Cargo feature
@@ -270,6 +298,9 @@ impl BulwarkConfig {
             session_hover_timeout: DEFAULT_SESSION_HOVER_TIMEOUT,
             frontend_separation: DEFAULT_FRONTEND_SEPARATION,
             auto_renewal_threshold: DEFAULT_AUTO_RENEWAL_THRESHOLD,
+            is_concurrent: DEFAULT_IS_CONCURRENT,
+            is_share: DEFAULT_IS_SHARE,
+            max_login_count: DEFAULT_MAX_LOGIN_COUNT,
             tenant_isolation: TenantIsolationConfig::default(),
             watcher: None,
         };
@@ -332,6 +363,12 @@ impl BulwarkConfig {
             .default(
                 "auto_renewal_threshold",
                 ConfigValue::integer(DEFAULT_AUTO_RENEWAL_THRESHOLD),
+            )
+            .default("is_concurrent", ConfigValue::bool(DEFAULT_IS_CONCURRENT))
+            .default("is_share", ConfigValue::bool(DEFAULT_IS_SHARE))
+            .default(
+                "max_login_count",
+                ConfigValue::uint(DEFAULT_MAX_LOGIN_COUNT as u64),
             );
 
         if let Some(path) = toml_path {
@@ -429,6 +466,11 @@ impl BulwarkConfig {
                 "auto_renewal_threshold must be -1 or 0-100, got: {}",
                 self.auto_renewal_threshold
             )));
+        }
+        if self.is_share && !self.is_concurrent {
+            return Err(BulwarkError::Config(
+                "is_share=true requires is_concurrent=true".to_string(),
+            ));
         }
         Ok(())
     }
@@ -1011,6 +1053,9 @@ jwt_secret = "test-secret""#,
             session_hover_timeout: DEFAULT_SESSION_HOVER_TIMEOUT,
             frontend_separation: DEFAULT_FRONTEND_SEPARATION,
             auto_renewal_threshold: DEFAULT_AUTO_RENEWAL_THRESHOLD,
+            is_concurrent: DEFAULT_IS_CONCURRENT,
+            is_share: DEFAULT_IS_SHARE,
+            max_login_count: DEFAULT_MAX_LOGIN_COUNT,
             tenant_isolation: TenantIsolationConfig::default(),
             watcher: None,
         };
@@ -1336,5 +1381,80 @@ jwt_secret = "test-secret""#,
         let config = BulwarkConfig::load(None).expect("load with env");
         assert_eq!(config.auto_renewal_threshold, 20);
         std::env::remove_var("BULWARK_AUTO_RENEWAL_THRESHOLD");
+    }
+
+    // ========================================================================
+    // 并发登录控制配置测试（spec R-concurrent-001 ~ R-concurrent-004）
+    // ========================================================================
+
+    /// R-concurrent-001: `BulwarkConfig::default()` 的 `is_concurrent` 为 true。
+    #[test]
+    fn config_default_is_concurrent_true() {
+        let config = BulwarkConfig::default_config();
+        assert!(config.is_concurrent, "默认允许并发登录");
+    }
+
+    /// R-concurrent-001: `BulwarkConfig::default()` 的 `is_share` 为 false。
+    #[test]
+    fn config_default_is_share_false() {
+        let config = BulwarkConfig::default_config();
+        assert!(!config.is_share, "默认不共享 token");
+    }
+
+    /// R-concurrent-001: `BulwarkConfig::default()` 的 `max_login_count` 为 0（不限制）。
+    #[test]
+    fn config_default_max_login_count_zero() {
+        let config = BulwarkConfig::default_config();
+        assert_eq!(config.max_login_count, 0, "默认不限制登录数量");
+    }
+
+    /// R-concurrent-002: `is_share=true` 但 `is_concurrent=false` 时 `validate()` 返回 Err。
+    #[test]
+    fn validate_rejects_share_without_concurrent() {
+        let mut config = BulwarkConfig::default_config();
+        config.is_concurrent = false;
+        config.is_share = true;
+        let result = config.validate();
+        assert!(result.is_err());
+        match result {
+            Err(BulwarkError::Config(msg)) => {
+                assert!(
+                    msg.contains("is_share=true requires is_concurrent=true"),
+                    "错误消息应包含约束提示，实际: {}",
+                    msg
+                );
+            },
+            Err(other) => panic!("期望 BulwarkError::Config，实际: {:?}", other),
+            Ok(_) => panic!("is_share=true + is_concurrent=false 时应返回 Err"),
+        }
+    }
+
+    /// R-concurrent-002: `is_share=true` 且 `is_concurrent=true` 时校验通过。
+    #[test]
+    fn validate_accepts_share_with_concurrent() {
+        let mut config = BulwarkConfig::default_config();
+        config.is_concurrent = true;
+        config.is_share = true;
+        assert!(config.validate().is_ok());
+    }
+
+    /// R-concurrent-003: `BULWARK_IS_CONCURRENT=false` 环境变量覆盖配置。
+    #[test]
+    #[serial]
+    fn env_overrides_is_concurrent() {
+        std::env::set_var("BULWARK_IS_CONCURRENT", "false");
+        let config = BulwarkConfig::load(None).expect("load with env");
+        assert!(!config.is_concurrent);
+        std::env::remove_var("BULWARK_IS_CONCURRENT");
+    }
+
+    /// R-concurrent-004: `BULWARK_MAX_LOGIN_COUNT=3` 环境变量覆盖配置。
+    #[test]
+    #[serial]
+    fn env_overrides_max_login_count() {
+        std::env::set_var("BULWARK_MAX_LOGIN_COUNT", "3");
+        let config = BulwarkConfig::load(None).expect("load with env");
+        assert_eq!(config.max_login_count, 3);
+        std::env::remove_var("BULWARK_MAX_LOGIN_COUNT");
     }
 }
