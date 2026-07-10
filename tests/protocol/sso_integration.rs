@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! SSO 协议集成测试：跨子系统 ticket 签发 → 校验 → 销毁完整流程。
 //!
 //! 验证 `SsoClient` 在多个子系统间通过共享 `BulwarkDao` 实现 SSO 的能力：

@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! GeoIP 地理位置拦截策略（依据 spec firewall R-firewall-005）。
 //!
 //! `GeoIPStrategy` 实现 [`BulwarkFirewallStrategy`](crate::strategy::firewall::BulwarkFirewallStrategy) trait，

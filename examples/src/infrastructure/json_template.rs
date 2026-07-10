@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! JSON 模板与序列化示例：演示 BulwarkJsonTemplate 占位符渲染 + BulwarkSerializer 类型化序列化。
 //!
 //! 对应模块：`src/json/mod.rs`（always on，无需 feature）。

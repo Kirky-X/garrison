@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! 仓储层集成测试入口——SQLite / PostgreSQL / dbnexus CRUD 与错误路径验证。
 
 #[path = "repository/dbnexus_integration.rs"]

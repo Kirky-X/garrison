@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! Token 提取公共模块。
 //!
 //! 提供 `strip_bearer_prefix` 和 `extract_token_from_headers` 两个函数，

@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! grpc_interceptor 示例（grpc feature）。
 //!
 //! 演示 tonic gRPC 框架集成：

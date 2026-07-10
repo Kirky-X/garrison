@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! JWT 协议插件模块。
 //!
 //! [借鉴 Sa-Token] 对应 Sa-Token 的 JWT 协议支持，

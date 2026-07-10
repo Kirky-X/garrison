@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! sign_utils 示例测试（secure-sign feature）。
 //!
 //! 验证 run() 完整执行（内部已包含 HMAC-SHA256/SHA512 + Base64 断言）。

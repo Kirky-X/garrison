@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! Unicode 同形异义字检测子模块（0.5.1 新增，依据 design.md D10，L6）。
 //!
 //! 提供 `check_confusable` 函数，检测字符串中的 Unicode 同形异义字

@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! observability_setup 示例（metrics-prometheus + observability-otlp feature）。
 //!
 //! 演示可观测性三层栈配置：

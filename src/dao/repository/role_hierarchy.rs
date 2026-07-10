@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! 角色层级 Repository 模块（v0.5.0 新增，依据 proposal H6）。
 //!
 //! 提供 `role_hierarchy` 表的 CRUD 与 TC（传递闭包）预计算能力。

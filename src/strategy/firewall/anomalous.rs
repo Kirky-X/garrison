@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! 异地登录检测策略（依据 spec firewall R-firewall-003）。
 //!
 //! `AnomalousLoginStrategy` 实现 [`BulwarkFirewallStrategy`] trait，

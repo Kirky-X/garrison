@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! 暴力破解防护策略（依据 spec firewall R-firewall-001）。
 //!
 //! `BruteForceStrategy` 实现 [`BulwarkFirewallStrategy`] trait，

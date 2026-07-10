@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! alone_cache 示例测试（alone-cache feature）。
 //!
 //! 验证 run() 完整执行（内部已包含 prefix 拼接 + tenant 隔离断言）。

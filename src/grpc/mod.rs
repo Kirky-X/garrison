@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! gRPC 鉴权拦截器模块，提供 `tonic::Interceptor` 实现。
 //!
 //! ## 设计（依据 spec grpc-integration + design.md Decision 2）

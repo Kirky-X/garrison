@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! session_management 示例测试（cache-memory feature）。
 //!
 //! 验证 run() 完整执行（内部已包含 session 注入与校验断言）。

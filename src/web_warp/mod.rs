@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! warp 框架适配模块。
 //!
 //! [借鉴 Sa-Token] 对应 Sa-Token 的 warp 适配器，

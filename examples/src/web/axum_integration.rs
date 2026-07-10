@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! axum 集成示例：完整 Web 应用演示。
 //!
 //! 演示 Bulwark + axum 的注解系统集成的完整流程：

@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! API Key 示例模块。
 
 #[cfg(feature = "protocol-apikey")]

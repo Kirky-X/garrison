@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! 密码登录端到端集成测试（v0.4.2 新增，依据 spec secure-password + auth-password-login）。
 //!
 //! 验证 `Argon2Hasher` / `BcryptHasher` / `PasswordVerifier` + `BulwarkLogicDefault::login_with_password`

@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! 请求对象式授权器（0.5.1 新增，依据 spec authorize-api M4）。
 //!
 //! 提供以 [`AuthRequest`] 为入参、返回 [`Decision`] 的公开授权 trait [`Authorizer`]。

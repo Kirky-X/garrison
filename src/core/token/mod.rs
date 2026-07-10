@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! Token 抽象模块，定义 Token 生成/验证/解析的 trait 与多种风格实现。
 //!
 //! [借鉴 Sa-Token] 对应 Sa-Token 的 Token 风格切换能力，

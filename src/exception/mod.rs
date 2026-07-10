@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! 异常模块，定义框架异常类型。
 //!
 //! [借鉴 Sa-Token] 对应 Sa-Token 的异常体系，

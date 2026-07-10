@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! 支付宝授权登录 provider（0.5.0 新增，依据 spec social-login R-social-login-003）。
 //!
 //! 实现 `SocialLoginProvider` trait，覆盖支付宝开放平台授权登录的 OAuth2 流程：

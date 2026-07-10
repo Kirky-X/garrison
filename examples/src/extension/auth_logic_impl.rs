@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! 认证逻辑示例：演示 AuthLogic trait 与 AuthLogicDefault 默认实现。
 //!
 //! 对应模块：`src/core/auth/mod.rs`（always on，无需 feature）。

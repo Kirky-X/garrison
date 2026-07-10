@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! 声明式 JSON 测试套件（0.5.1 新增，依据 spec testing-suite D8 / M6）。
 //!
 //! 提供从 JSON 文件加载测试用例并运行 [`Authorizer`] trait 的能力，

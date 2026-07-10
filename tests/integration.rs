@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! 跨模块集成测试入口——axum / login_password / tenant_isolation / strategy / refresh_token / plugin / keycloak / jwt_modes / annotation。
 
 #[path = "common/mod.rs"]

@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! 权限注册表模块（0.5.1 新增，依据 spec permission-registry M3）。
 //!
 //! 提供声明式 `permission -> required_roles` 映射，启动时通过 `inventory::submit!`

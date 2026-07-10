@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! HTTP Digest 认证示例：演示 RFC 7616 质询生成、HA1 预计算与响应校验。
 //!
 //! 对应模块：`src/secure/httpdigest/mod.rs`（feature: secure-httpdigest）。

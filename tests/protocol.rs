@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! 协议层集成测试入口——JWT / OAuth2 / SSO / Sign / APIKey / Temp 协议端到端验证。
 
 #[path = "protocol/apikey_edge_cases.rs"]

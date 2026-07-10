@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! 临时凭证示例：演示 TempCredentialHandler 的签发/读取/撤销/消费。
 //!
 //! 对应模块：`src/protocol/temp/mod.rs`（feature: protocol-temp）。

@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! cache_redis 示例（cache-redis feature）。
 //!
 //! 演示 Redis L2 后端配置：

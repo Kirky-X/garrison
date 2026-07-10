@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! API 签名协议边界场景测试（TG9，0.2.1 patch release）。
 //!
 //! 验证 `SignHandler` 在边界条件下的行为：

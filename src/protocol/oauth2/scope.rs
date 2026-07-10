@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! OAuth2 Scope Handler 注册表（0.4.0 新增，依据 spec oauth2-scope-handler）。
 //!
 //! 提供 `ScopeHandler` trait + `ScopeRegistry` 动态注册表，用于在 OAuth2 token

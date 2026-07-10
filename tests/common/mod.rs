@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! 集成测试共享辅助函数。
 //!
 //! 各测试文件通过 `mod common;` 引入，避免跨文件重复。

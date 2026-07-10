@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! Dbnexus Repository 实现（依据 spec repository-layer R-003）。
 //!
 //! 基于 dbnexus DbPool + sea-orm Statement 参数化查询。

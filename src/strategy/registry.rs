@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! 策略注册表模块，提供 6 个可插拔策略 trait + Strategy 注册表。
 //!
 //! [借鉴 Sa-Token] 对应 Sa-Token 的策略模式设计，

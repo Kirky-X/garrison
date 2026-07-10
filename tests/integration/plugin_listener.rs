@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! Plugin / Listener 集成测试：编译期注册 → 钩子调用 → 事件广播。
 //!
 //! 验证 `BulwarkPluginManager` 与 `BulwarkListenerManager` 的端到端行为：

@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! ParameterQuery 模块：参数化查询机制（feature-gated by `parameter-query`）。
 //!
 //! [借鉴 Sa-Token] 提供 builder 模式的链式参数化校验 API，允许调用方在运行时

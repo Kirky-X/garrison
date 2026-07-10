@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! apikey_namespace 示例测试（protocol-apikey + cache-memory feature）。
 //!
 //! 验证 run() 完整执行：多租户 namespace + 跨 namespace 隔离。

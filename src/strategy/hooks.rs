@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! 防火墙安全钩子模块，提供登录流程的可插拔安全检查。
 //!
 //! 依据 spec firewall-check-hook 与 ADD 0.3.0 防火墙策略设计。

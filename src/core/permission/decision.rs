@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! 鉴权决策与请求模型（0.5.0 新增，依据 spec decision-trace）。
 //!
 //! 提供决策溯源（Decision Provenance）所需的数据结构：

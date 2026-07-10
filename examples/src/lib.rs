@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! Bulwark 官方示例集库模块。
 //!
 //! 每个 bin 的核心逻辑提取为 `pub fn run()`（或 `pub async fn run()`），

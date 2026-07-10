@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! 会话管理示例：演示 Account-Session 与 Token-Session 双模会话。
 //!
 //! 流程：

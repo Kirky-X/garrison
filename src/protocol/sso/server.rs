@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! SSO Server 独立抽象模块（依据 spec protocol-sso-server）。
 //!
 //! 与 `SsoClient`（客户端）解耦，通过共享 `BulwarkDao` 间接通信。

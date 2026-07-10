@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! MaxMindDb 生产后端实现（v0.5.3 新增，依据 spec firewall）。
 //!
 //! 提供 [`MaxMindDbGeoLookup`](crate::strategy::firewall::geo::maxminddb::MaxMindDbGeoLookup) 和

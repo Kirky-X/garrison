@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! RefreshToken Rotation + Reuse Detection 端到端集成测试。
 //!
 //! 验证 RefreshToken 轮换、重用检测和链级撤销完整流程：

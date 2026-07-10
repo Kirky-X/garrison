@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! web_warp_example 示例（web-warp feature）。
 //!
 //! 演示 warp 框架集成：

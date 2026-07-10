@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! 密码登录示例（v0.4.2 新增，依据 spec secure-password + auth-password-login）。
 //!
 //! 演示 `Argon2Hasher` 哈希/校验 + `BulwarkLogicDefault::login_with_password` 端到端流程。

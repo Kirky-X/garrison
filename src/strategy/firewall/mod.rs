@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! IP 级防火墙策略套件模块（v0.5.0 新增，依据 proposal H5 / spec firewall）。
 //!
 //! ## 设计

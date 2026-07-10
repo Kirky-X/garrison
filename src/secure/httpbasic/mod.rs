@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! HTTP Basic 认证子模块（RFC 7617）。
 //!
 //! [借鉴 Sa-Token] 对应 Sa-Token 的 Basic 认证能力，

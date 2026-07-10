@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! 协议层模块，包含各协议插件子模块。
 //!
 //! [借鉴 Sa-Token] 对应 Sa-Token 的协议层插件集合，

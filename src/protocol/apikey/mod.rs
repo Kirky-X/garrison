@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! API Key 协议模块，提供 API Key 生成/校验/吊销/轮换。
 //!
 //! [借鉴 Sa-Token] 对应 Sa-Token 的 API 接口鉴权能力，

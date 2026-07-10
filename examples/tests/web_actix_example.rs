@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! web_actix_example 示例测试（web-actix feature）。
 //!
 //! 验证 BulwarkMiddleware + LoggingInterceptor 的鉴权行为：

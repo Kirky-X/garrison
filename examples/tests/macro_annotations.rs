@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! macro_annotations 示例测试（annotation-macros + cache-memory + web-axum feature）。
 //!
 //! 验证 run() 完整执行：#[check_login]/#[check_permission]/#[check_role] 宏标注的 handler

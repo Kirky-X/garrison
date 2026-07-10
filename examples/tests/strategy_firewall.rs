@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! strategy_firewall 示例测试（cache-memory + web-axum feature）。
 //!
 //! 验证 run() 完整执行（内部已包含权限/角色校验与 Fail Loud 断言）。

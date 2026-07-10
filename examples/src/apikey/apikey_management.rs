@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! API Key 管理示例：演示 ApiKeyHandler 的生成/校验/吊销/轮换全生命周期。
 //!
 //! 对应模块：`src/protocol/apikey/mod.rs`（feature: protocol-apikey）。

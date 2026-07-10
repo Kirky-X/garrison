@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! dao_operations 示例测试（cache-memory feature）。
 //!
 //! 验证 run() 完整执行（内部已包含 set/get/update/expire/delete/TTL 断言）。

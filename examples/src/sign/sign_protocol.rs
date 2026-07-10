@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! API 签名协议示例：演示 SignHandler 的签名生成与校验（含防重放）。
 //!
 //! 对应模块：`src/protocol/sign/mod.rs`（feature: protocol-sign）。

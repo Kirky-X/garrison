@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! sign_protocol 示例测试（protocol-sign feature）。
 //!
 //! 验证 run() 完整执行（内部已包含签名校验与 nonce replay 拒绝断言）。

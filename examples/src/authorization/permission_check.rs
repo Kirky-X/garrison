@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! 权限校验示例：演示 PermissionChecker trait 与 PermissionCheckerDefault 默认实现。
 //!
 //! 对应模块：`src/core/permission/mod.rs`（always on，无需 feature）。

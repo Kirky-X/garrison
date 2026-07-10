@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! v0.5.0 综合演示：多租户隔离 + 审计日志 + 决策溯源 + Keycloak OIDC RP + 微信社交登录。
 //!
 //! 演示 Bulwark v0.5.0 的核心生产能力：

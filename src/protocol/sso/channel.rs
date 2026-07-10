@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! Redis pub/sub SsoChannel 实现（依据 spec protocol-sso-federation R-005）。
 //!
 //! 基于 Redis pub/sub 实现跨实例 SSO 消息推送，替代 `NoopSsoChannel`。

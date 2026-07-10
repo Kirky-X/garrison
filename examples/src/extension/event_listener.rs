@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! 事件监听器示例：演示 BulwarkListener trait 与 BulwarkListenerManager。
 //!
 //! 对应模块：`src/listener/mod.rs`（feature: listener）。

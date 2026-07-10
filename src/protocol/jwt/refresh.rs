@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! JWT RefreshToken Rotation 模块（v0.5.0 新增，依据 proposal H4）。
 //!
 //! 基于 hash chain 的 RefreshToken 轮换：每次 `rotate` 时，新 token 的

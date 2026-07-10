@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! web_warp_example 示例测试（web-warp feature）。
 //!
 //! 验证 BulwarkRouter + into_filter 守卫行为 + check_login 函数式 Filter：

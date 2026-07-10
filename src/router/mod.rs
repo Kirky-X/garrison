@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! 路由模块，提供路由器与拦截器抽象。
 //!
 //! [借鉴 Sa-Token] 对应 Sa-Token 的路由拦截器（`SaInterceptor`），

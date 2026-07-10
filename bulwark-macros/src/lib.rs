@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! Bulwark 过程宏 crate，提供鉴权注解属性宏。
 //!
 //! 依据 spec `annotation-macros`，提供 7 个 `#[proc_macro_attribute]`：

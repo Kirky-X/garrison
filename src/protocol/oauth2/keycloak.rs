@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! Keycloak OIDC RP 模块（0.5.0 新增，依据 proposal K1 / spec keycloak-oidc-rp）。
 //!
 //! 提供 `KeycloakProvider` 作为 OIDC 依赖方（RP），对接 Keycloak IdP：

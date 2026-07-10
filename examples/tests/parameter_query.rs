@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! parameter_query 示例测试（parameter-query feature）。
 //!
 //! 验证 run() 完整执行（内部已包含 with_login_id / with_token / 无上下文断言）。

@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! 签名工具示例：演示 Signer 的 HMAC-SHA256/SHA512、Base64 编解码能力。
 //!
 //! 对应模块：`src/secure/sign/mod.rs`（feature: secure-sign）。

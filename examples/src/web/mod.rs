@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! Web 框架集成示例模块（axum / actix / warp / grpc）。
 
 #[cfg(all(feature = "cache-memory", feature = "web-axum"))]

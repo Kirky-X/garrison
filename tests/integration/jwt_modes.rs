@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! JWT 三模式集成测试（v0.4.2 新增，依据 spec protocol-jwt-modes）。
 //!
 //! 验证 `JwtHandler`（HS256/HS512 + refresh）+ `BulwarkLogicDefault` 三模式

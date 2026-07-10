@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! 注解模块，定义鉴权注解枚举与 axum extractor。
 //!
 //! [借鉴 Sa-Token] 对应 Sa-Token 的注解体系（`@SaCheckLogin` 等），

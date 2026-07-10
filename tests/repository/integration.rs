@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! Repository 层 9 trait 端到端集成测试（v0.4.2 新增，依据 spec repository-layer）。
 //!
 //! 验证 9 个 `SqliteXxxRepository` 在真实 SQLite in-memory + 迁移后的 CRUD 行为：

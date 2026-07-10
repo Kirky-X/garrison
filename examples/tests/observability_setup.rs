@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! observability_setup 示例测试（metrics-prometheus + observability-otlp feature）。
 //!
 //! 验证 BulwarkMetrics 指标记录与收集：

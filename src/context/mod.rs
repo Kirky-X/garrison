@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! 上下文模块，提供请求 / 响应 / 存储上下文抽象。
 //!
 //! [借鉴 Sa-Token] 对应 Sa-Token 的上下文抽象层，

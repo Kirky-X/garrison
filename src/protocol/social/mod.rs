@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! 社交登录协议插件模块（0.5.0 新增，依据 proposal H2 / spec social-login）。
 //!
 //! 提供 `SocialLoginProvider` trait 抽象社交登录第三方平台（微信/支付宝），

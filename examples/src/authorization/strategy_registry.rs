@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! Strategy 注册表示例（v0.4.2 新增，依据 spec strategy-registry）。
 //!
 //! 演示 `Strategy` 注册表的运行时可插拔策略替换：

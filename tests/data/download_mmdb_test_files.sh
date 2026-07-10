@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+
+# Copyright (c) 2024-2026 Kirky.X. See LICENSE for full license text.
+
 # 下载 MaxMind DB 测试数据文件（GeoLite2-City-Test / GeoLite2-Country-Test）
 # 用于 firewall-maxminddb feature 的集成测试
 #

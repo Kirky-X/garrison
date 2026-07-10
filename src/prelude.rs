@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! 预导出模块，包含最常用的类型与 trait。
 //!
 //! 通过 `use bulwark::prelude::*;` 快速引入框架核心类型。

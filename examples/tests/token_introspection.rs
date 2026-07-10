@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! token_introspection 示例测试（protocol-oauth2 feature）。
 //!
 //! 验证 run() 完整执行：RFC 7662 introspection + URL 推导 + 反序列化示例。

@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! 单点登录 (SSO) 协议模块，提供 ticket 签发/校验/销毁能力。
 //!
 //! [借鉴 Sa-Token] 对应 Sa-Token 的 SSO 单点登录支持，

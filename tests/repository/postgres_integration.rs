@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! PostgreSQL Repository 集成测试（v0.5.1 新增，依据 tasks.md T112 / D8）。
 //!
 //! 验证 6 个 `DbnexusPostgresXxxRepository` 在真实 PostgreSQL 16 + 迁移后的 CRUD 行为：

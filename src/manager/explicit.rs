@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! 显式 Manager API（0.5.1 新增，依据 spec manager-explicit M7 / design.md D9）。
 //!
 //! 提供不依赖全局单例的 [`Manager`] struct，通过 `new(logic)` 显式注入 [`BulwarkLogicDefault`]，

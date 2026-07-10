@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! warp 框架 Extractor 适配器（依据 spec web-adapters D12）。
 //!
 //! 提供 `bulwark_principal` Filter：从 `Authorization: Bearer <token>` header

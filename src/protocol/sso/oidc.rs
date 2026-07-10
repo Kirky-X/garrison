@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! OIDC（OpenID Connect）RP 协议支持骨架（依据 spec protocol-sso-federation R-003/004）。
 //!
 //! 提供 OIDC RP（Relying Party）核心数据结构（`OidcDiscoveryConfig`/`OidcUserInfo`）

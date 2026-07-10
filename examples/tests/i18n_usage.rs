@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! i18n_usage 示例测试（i18n feature）。
 //!
 //! 验证 BulwarkLocale + set_locale + translate_error 行为：

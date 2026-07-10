@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! Repository 层模块（0.4.2 新增，依据 spec repository-layer）。
 //!
 //! 为 9 张核心表定义 Repository trait，提供 CRUD 抽象。

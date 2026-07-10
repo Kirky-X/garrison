@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! basic_login 示例测试（cache-memory + web-axum feature）。
 //!
 //! 验证 run() 完整执行（内部已包含 login/check_login/logout/登出后失败断言）。

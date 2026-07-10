@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! sso_flow 示例测试（protocol-sso feature）。
 //!
 //! 验证 run() 完整执行（内部已包含 ticket issue/exchange/consume 断言）。

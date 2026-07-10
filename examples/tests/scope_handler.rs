@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! scope_handler 示例测试（oauth2-scope-handler feature）。
 //!
 //! 验证 run() 完整执行（内部已包含 registry 校验 + OAuth2Client 集成断言）。

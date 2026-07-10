@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! dbnexus 集成测试。
 //!
 //! 端到端验证 Bulwark + dbnexus 0.2 + sea-orm 2.0 的协作：

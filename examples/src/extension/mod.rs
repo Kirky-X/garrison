@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! 扩展能力示例模块（plugin / listener / macro / manager / session）。
 
 pub mod auth_logic_impl;

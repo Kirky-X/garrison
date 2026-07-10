@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! 异常处理示例测试。
 //!
 //! 验证 run() 完整执行，以及 NotLoginException / BulwarkException 的构造与互转。

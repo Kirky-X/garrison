@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! 自定义插件示例：演示 BulwarkPlugin trait 与 BulwarkPluginManager 生命周期钩子。
 //!
 //! 对应模块：`src/plugin/mod.rs`（always on，无需 feature）。

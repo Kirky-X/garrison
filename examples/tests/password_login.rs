@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! password_login 示例测试（account-credential + db-sqlite + cache-memory feature）。
 //!
 //! 验证 run() 完整执行：Argon2 密码哈希 + DbnexusUserRepository + login_with_password 端到端。

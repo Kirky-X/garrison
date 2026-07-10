@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! API Key 多租户命名空间示例（v0.4.2 新增，依据 spec protocol-apikey-namespace）。
 //!
 //! 演示 `ApiKeyHandler` 的多租户命名空间 API：

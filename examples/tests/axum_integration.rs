@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! axum_integration 示例测试（cache-memory + web-axum feature）。
 //!
 //! 验证 setup() 完整执行（不启动 HTTP 服务器，避免测试阻塞）。

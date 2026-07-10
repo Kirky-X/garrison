@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! AloneCache 模块：多 Redis 实例隔离装饰器。
 //!
 //! 通过 `AloneCache` 装饰 `BulwarkDao`，为所有 key 自动添加 prefix，
