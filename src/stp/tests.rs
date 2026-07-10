@@ -632,6 +632,66 @@ async fn current_token_returns_value_in_scope() {
 }
 
 // ------------------------------------------------------------------------
+// BulwarkContext：task_local 跨 spawn 传播测试
+// ------------------------------------------------------------------------
+
+/// 验证 BulwarkContext 跨 `tokio::spawn` 传播 task_local（`current_token`）。
+///
+/// tokio `task_local!` 不会自动传播到 `tokio::spawn` 子任务。
+/// `BulwarkContext::capture()` + `within()` 提供手动传播机制。
+///
+/// 测试逻辑：
+/// 1. 父 task 设置 `current_token` = "parent-task-token"
+/// 2. `BulwarkContext::capture()` 捕获上下文
+/// 3. `tokio::spawn` 子任务，在子任务内 `ctx.within()` 恢复上下文
+/// 4. 子任务内 `current_token()` 应返回父 task 设置的 token
+#[tokio::test(flavor = "multi_thread")]
+async fn task_local_propagates_across_spawn() {
+    // 1. 在父 task 设置 current_token 并捕获上下文
+    let ctx = with_current_token("parent-task-token".to_string(), async {
+        BulwarkContext::capture()
+    })
+    .await;
+
+    // 2. spawn 子任务，在子任务内恢复上下文
+    let handle = tokio::spawn(async move {
+        ctx.within(async {
+            // 子任务内应能读到 token（若无 within 则 current_token() 失败）
+            match current_token() {
+                Ok(t) => t == "parent-task-token",
+                Err(_) => false,
+            }
+        })
+        .await
+    });
+
+    // 3. 子任务应返回 true（token 可读且值匹配）
+    let result = handle.await.expect("子任务 panic");
+    assert!(
+        result,
+        "子任务内 current_token() 应返回父 task 设置的 token（通过 BulwarkContext 传播）"
+    );
+}
+
+/// 验证 BulwarkContext::capture() 在未设置 token 时返回 None 上下文。
+///
+/// 在未设置 `current_token` 的 task 中 capture，`within()` 内
+/// `current_token()` 应失败（返回 Err）。
+#[tokio::test(flavor = "multi_thread")]
+async fn bulwark_context_capture_without_token_propagates_none() {
+    // 在未设置 current_token 的 task 中 capture
+    let ctx = BulwarkContext::capture();
+
+    let handle = tokio::spawn(async move { ctx.within(async { current_token().is_ok() }).await });
+
+    let result = handle.await.expect("子任务 panic");
+    assert!(
+        !result,
+        "未设置 token 时 capture 的上下文在子任务内 current_token() 应失败"
+    );
+}
+
+// ------------------------------------------------------------------------
 // check_permission 持有/未持有/未登录抛异常
 // ------------------------------------------------------------------------
 

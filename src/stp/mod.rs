@@ -90,6 +90,73 @@ pub fn current_token() -> BulwarkResult<String> {
 }
 
 // ============================================================================
+// BulwarkContext：task_local 上下文传播工具（跨 spawn 传播 CURRENT_TOKEN）
+// ============================================================================
+
+/// task_local 上下文快照，用于跨 `tokio::spawn` 传播 `CURRENT_TOKEN`。
+///
+/// tokio `task_local!` 不会自动传播到 `tokio::spawn` 子任务中，
+/// 导致子任务内 `current_token()` / `check_login()` 失败。
+/// `BulwarkContext` 通过 capture/within 模式手动传播上下文。
+///
+/// # 设计说明（RAII vs scope-based）
+///
+/// tokio `task_local!` 的 `scope(value, future)` 是设置值的唯一方式，
+/// 它接受一个 Future 并在 Future 执行期间设置值，Future 结束后自动清除。
+/// 不支持 RAII guard 模式（无法"临时设置再恢复"，因为 `scope` 需要
+/// 持有 Future 的所有权）。因此采用 `within()` scope-based 方案而非
+/// `restore()` RAII guard——这是 tokio task_local API 的固有限制。
+///
+/// # 示例
+///
+/// ```ignore
+/// use bulwark::stp::{BulwarkContext, current_token, with_current_token};
+///
+/// // 在当前 task 设置 token 并捕获上下文
+/// let ctx = with_current_token("my-token".to_string(), async {
+///     BulwarkContext::capture()
+/// }).await;
+///
+/// // spawn 子任务，在子任务内恢复上下文
+/// let handle = tokio::spawn(async move {
+///     ctx.within(async {
+///         // 此处 current_token() 可正常读取
+///         assert!(current_token().is_ok());
+///     }).await
+/// });
+/// handle.await.unwrap();
+/// ```
+pub struct BulwarkContext {
+    token: Option<String>,
+}
+
+impl BulwarkContext {
+    /// 捕获当前 task_local 上下文（`CURRENT_TOKEN`）。
+    ///
+    /// 在父任务中调用，返回的 `BulwarkContext` 可移动到子任务中。
+    /// 未设置 `CURRENT_TOKEN` 时返回 `token: None` 的上下文。
+    pub fn capture() -> Self {
+        Self {
+            token: current_token().ok(),
+        }
+    }
+
+    /// 在当前 task 恢复上下文，执行 `f` 期间设置 `CURRENT_TOKEN`。
+    ///
+    /// 使用 tokio `task_local::scope` 设置值，`f` 结束后自动清除。
+    /// 若 `capture()` 时未设置 token，直接执行 `f`（不设置 task_local）。
+    pub async fn within<F, R>(self, f: F) -> R
+    where
+        F: Future<Output = R>,
+    {
+        match self.token {
+            Some(token) => CURRENT_TOKEN.scope(token, f).await,
+            None => f.await,
+        }
+    }
+}
+
+// ============================================================================
 // BulwarkLogicDefault：默认实现
 // ============================================================================
 
