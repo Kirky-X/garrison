@@ -28,6 +28,10 @@ pub mod password;
 #[cfg(all(feature = "account-credential", feature = "secure-totp"))]
 pub mod totp;
 
+/// 备份码凭证子模块。
+#[cfg(feature = "account-credential")]
+pub mod backup_code;
+
 use crate::dao::BulwarkDao;
 use crate::error::{BulwarkError, BulwarkResult};
 use async_trait::async_trait;

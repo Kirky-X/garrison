@@ -169,10 +169,10 @@ db-postgres = ["db-base", "dbnexus/postgres"]
 db-mysql = ["db-base", "dbnexus/mysql"]
 
 # === 协议层插件 ===
-protocol-oauth2 = ["reqwest", "sha2", "base64"]
-protocol-sso = ["reqwest", "dep:quick-xml", "sha2", "hmac", "base64"]
-protocol-jwt = ["jsonwebtoken", "sha2"]
-protocol-sign = ["sha2", "hmac", "base64"]
+protocol-oauth2 = ["reqwest", "dep:sha2", "base64"]
+protocol-sso = ["reqwest", "dep:quick-xml", "dep:sha2", "hmac", "base64"]
+protocol-jwt = ["jsonwebtoken", "dep:sha2"]
+protocol-sign = ["dep:sha2", "hmac", "base64"]
 protocol-apikey = []
 protocol-temp = []
 # protocol-zeroize：协议层密钥零化（Drop 时清零 secret 字段，防止内存残留）
@@ -185,17 +185,17 @@ oauth2-scope-handler = ["protocol-oauth2"]
 protocol-sso-server = ["protocol-sso"]
 
 # === 安全模块 ===
-secure-totp = ["totp-rs", "base32"]
-secure-sign = ["sha2", "hmac", "base64", "md5"]
+secure-totp = ["totp-rs", "dep:base32"]
+secure-sign = ["dep:sha2", "hmac", "base64", "md5"]
 secure-httpbasic = ["base64"]
-secure-httpdigest = ["sha2", "base64", "md5"]
+secure-httpdigest = ["dep:sha2", "base64", "md5"]
 # Unicode 同形异义字检测
 # 启用后提供 check_confusable 函数 + PermissionRegistry::register 集成（tracing::warn）
 secure-confusable = ["dep:unicode-security"]
 
 # === 账号安全引擎 ===
 # account-credential：统一凭证模型 SPI（Credential trait + PasswordCredential + TotpCredential）
-account-credential = ["dep:argon2", "dep:bcrypt", "dep:rand"]
+account-credential = ["dep:argon2", "dep:bcrypt", "dep:rand", "dep:sha2", "dep:base32"]
 # account-credential-zeroize：在 account-credential 基础上启用 zeroize
 account-credential-zeroize = ["account-credential", "zeroize"]
 # account-policy：密码策略套件（12+ PasswordPolicyRule），依赖 account-credential + regex（RegexRule）
@@ -230,7 +230,7 @@ firewall = []
 # 各 strategy 实现独立依赖 firewall 基础 trait
 # firewall-bruteforce / firewall-ratelimit / firewall-ddos 仅依赖 oxcache（通过 BulwarkDao 抽象）
 firewall-bruteforce = ["firewall"]
-firewall-ratelimit = ["firewall"]
+firewall-ratelimit = ["firewall", "dep:rand"]
 firewall-anomalous = ["firewall"]
 firewall-geoip = ["firewall"]
 firewall-ddos = ["firewall"]

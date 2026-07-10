@@ -34,6 +34,9 @@ pub mod anomalous;
 /// 暴力破解防护策略。
 #[cfg(feature = "firewall-bruteforce")]
 pub mod brute_force;
+/// 数学验证码提供商（基础 CAPTCHA 实现）。
+#[cfg(feature = "firewall-ratelimit")]
+pub mod captcha_provider;
 /// DDoS 防护策略。
 #[cfg(feature = "firewall-ddos")]
 pub mod ddos;

@@ -26,6 +26,9 @@
 //!
 //! 会话数据通过 `BulwarkDao` 持久化（oxcache / dbnexus），不自行实现缓存逻辑。
 
+/// Session 安全监听器（IP 变更检测）。
+pub mod security_listener;
+
 use crate::dao::BulwarkDao;
 use crate::error::{BulwarkError, BulwarkResult};
 use async_trait::async_trait;

@@ -12,6 +12,39 @@
 //! - `validate_assertion`：返回 `NotImplemented`（签名验证 defer 到后续变更）
 //!
 //! 仅在启用 `protocol-sso` 特性时编译。
+//!
+//! # Known Limitations
+//!
+//! ## SAML 签名验证未实现（fail-closed）
+//!
+//! 当前 `DefaultSamlProvider::validate_assertion` 返回 `BulwarkError::NotImplemented`，
+//! **不执行任何 XML 签名验证**。出于安全考虑（fail-closed 原则），`parse_response`
+//! 在检测到未验证的 Assertion 时会将其剥离（`response.assertion = None`），
+//! 并通过 `tracing::warn!` 记录告警。这意味着：
+//!
+//! - 使用 `DefaultSamlProvider` 解析的 Response **不会包含 Assertion 数据**，
+//!   无法完成 SSO 单点登录流程。
+//! - 调用方拿到的 `SamlResponse` 中 `assertion` 字段为 `None`。
+//!
+//! ## 生产环境使用建议
+//!
+//! 生产环境必须自行实现 `SamlProvider` trait 并覆盖 `validate_assertion`，
+//! 使用成熟的 XML 签名库（如 `openssl` / `ring` / `xmlsec`）验证：
+//!
+//! 1. Response 签名（`<ds:Signature>` 覆盖 `<samlp:Response>`）
+//! 2. Assertion 签名（`<ds:Signature>` 覆盖 `<saml:Assertion>`）
+//! 3. 签名证书信任链（对接 IdP 元数据中的 X.509 证书）
+//! 4. 算法白名单（禁止 `rsa-1_5` 等弱算法，仅允许 `rsa-sha256` / `ecdsa-sha256`）
+//!
+//! ## 已实现的安全检查
+//!
+//! 以下安全检查已内置，无需自行实现：
+//!
+//! - **NotOnOrAfter 过期校验**：`parse_saml_response_xml` 解析后立即校验
+//!   Assertion 的 `NotOnOrAfter` 时间戳，过期则返回 `InvalidToken` 错误。
+//! - **Assertion 重放防护**：[`check_assertion_replay`] 函数通过 DAO 记录已消费的
+//!   Assertion ID（key = `saml:replay:{assertion_id}`），TTL 由 `not_on_or_after` 决定。
+//! - **fail-closed 剥离**：未验证的 Assertion 一律剥离，不会泄漏给调用方。
 
 use crate::error::{BulwarkError, BulwarkResult};
 use async_trait::async_trait;
