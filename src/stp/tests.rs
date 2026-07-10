@@ -3585,3 +3585,40 @@ async fn enforce_max_login_count_no_op_when_under_limit() {
         .unwrap()
         .is_some());
 }
+
+// v0.6.3 D2 T013: login 调用 enforce_max_login_count 测试
+
+/// login 在 max_login_count > 0 时应自动踢出最旧的会话。
+///
+/// max_login_count=2 时创建 3 个会话（sleep 1 秒确保 last_active_at 不同），
+/// 第 3 次登录应触发 enforce_max_login_count 踢出最早的 t1，保留 t2 和 t3。
+#[tokio::test]
+async fn login_with_max_login_count_evicts_oldest_session() {
+    let mut logic = make_logic(3600, 86400, false, "uuid", true, true);
+    // max_login_count=2：最多 2 个并发会话
+    Arc::make_mut(&mut logic.config).max_login_count = 2;
+
+    // 创建 3 个会话，sleep 确保 last_active_at 递增（Unix 秒级时间戳）
+    let t1 = logic
+        .login("max-login-user-001", &LoginParams::default())
+        .await
+        .unwrap();
+    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+    let t2 = logic
+        .login("max-login-user-001", &LoginParams::default())
+        .await
+        .unwrap();
+    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+    let t3 = logic
+        .login("max-login-user-001", &LoginParams::default())
+        .await
+        .unwrap();
+
+    // t1 应被踢出（最旧），t2 和 t3 保留
+    let ts1 = logic.session.get_token_session(&t1).await.unwrap();
+    let ts2 = logic.session.get_token_session(&t2).await.unwrap();
+    let ts3 = logic.session.get_token_session(&t3).await.unwrap();
+    assert!(ts1.is_none(), "max_login_count=2 时最旧 token 应被踢出");
+    assert!(ts2.is_some(), "第二个 token 应保留");
+    assert!(ts3.is_some(), "最新 token 应保留");
+}

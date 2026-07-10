@@ -360,6 +360,11 @@ impl BulwarkLogicDefault {
             })
             .await;
         }
+        // max_login_count > 0 时，强制最大登录数量（踢出最旧会话）
+        if self.config.max_login_count > 0 {
+            self.enforce_max_login_count(login_id, self.config.max_login_count)
+                .await?;
+        }
         Ok(token)
     }
 
