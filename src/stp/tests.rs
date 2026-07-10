@@ -2964,6 +2964,118 @@ async fn sync_check_api_key_executes_without_panic() {
 }
 
 // ============================================================================
+// 会话悬停超时集成测试（spec R-hover-001 ~ R-hover-004）
+// ========================================================================
+
+/// R-hover-003: `session_hover_timeout=1`（1秒），login 后 check_login 返回 true，
+/// 等待 2 秒后 check_login 返回 false（踢出）。
+#[tokio::test]
+async fn hover_timeout_evicts_inactive_session() {
+    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+    let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
+    let mut config = BulwarkConfig::default_config();
+    config.token_style = "uuid".to_string();
+    config.session_hover_timeout = 1;
+    config.throw_on_not_login = false;
+    let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
+        has_permission: true,
+        has_role: true,
+    });
+    let logic = Arc::new(BulwarkLogicDefault::new(
+        session,
+        Arc::new(config),
+        firewall,
+    ));
+
+    let token = logic.login("1001").await.unwrap();
+
+    // 第一次 check_login：last_active_time 无记录 → 返回 true，并更新 last_active_time
+    let first_check = with_current_token(token.clone(), async { logic.check_login().await })
+        .await
+        .unwrap();
+    assert!(first_check, "首次 check_login 应返回 true");
+
+    // 等待 2 秒，超过 hover_timeout=1 秒
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    // 第二次 check_login：last_active_time 已过期 → 返回 false（踢出）
+    let second_check = with_current_token(token.clone(), async { logic.check_login().await })
+        .await
+        .unwrap();
+    assert!(!second_check, "悬停超时后 check_login 应返回 false");
+}
+
+/// R-hover-004: `session_hover_timeout=10`（10秒），login 后立即 check_login 返回 true。
+#[tokio::test]
+async fn hover_timeout_active_session_not_evicted() {
+    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+    let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
+    let mut config = BulwarkConfig::default_config();
+    config.token_style = "uuid".to_string();
+    config.session_hover_timeout = 10;
+    let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
+        has_permission: true,
+        has_role: true,
+    });
+    let logic = Arc::new(BulwarkLogicDefault::new(
+        session,
+        Arc::new(config),
+        firewall,
+    ));
+
+    let token = logic.login("1001").await.unwrap();
+
+    with_current_token(token.clone(), async {
+        let valid = logic.check_login().await.unwrap();
+        assert!(valid, "活跃会话不应被踢出");
+    })
+    .await;
+
+    // 再次 check_login 也应返回 true（每次 check_login 都更新 last_active_time）
+    with_current_token(token, async {
+        let valid = logic.check_login().await.unwrap();
+        assert!(valid, "连续 check_login 应始终返回 true");
+    })
+    .await;
+}
+
+/// R-hover-001: 默认配置 `session_hover_timeout=-1`，login 后 check_login 返回 true（不受悬停影响）。
+#[tokio::test]
+async fn hover_timeout_disabled_by_default() {
+    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+    let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
+    let mut config = BulwarkConfig::default_config();
+    config.token_style = "uuid".to_string();
+    // session_hover_timeout 保持默认 -1
+    assert_eq!(config.session_hover_timeout, -1);
+    let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
+        has_permission: true,
+        has_role: true,
+    });
+    let logic = Arc::new(BulwarkLogicDefault::new(
+        session,
+        Arc::new(config),
+        firewall,
+    ));
+
+    let token = logic.login("1001").await.unwrap();
+
+    with_current_token(token.clone(), async {
+        let valid = logic.check_login().await.unwrap();
+        assert!(valid, "默认配置（hover=-1）应始终返回 true");
+    })
+    .await;
+
+    // 即使等待一段时间，check_login 仍应返回 true
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    with_current_token(token, async {
+        let valid = logic.check_login().await.unwrap();
+        assert!(valid, "hover=-1 时不应因时间推移踢出");
+    })
+    .await;
+}
+
+// ============================================================================
 // BulwarkUtil::check_api_key 测试
 // ============================================================================
 

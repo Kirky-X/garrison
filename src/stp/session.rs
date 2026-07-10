@@ -434,6 +434,30 @@ impl BulwarkLogicDefault {
                 return Err(BulwarkError::Session("未登录".to_string()));
             }
         }
+        // 悬停检查（仅 valid 时）
+        if valid {
+            if let Ok(Some(ts)) = self.session.get_token_session(token).await {
+                if !self
+                    .session
+                    .check_hover_timeout(&ts.login_id, self.config.session_hover_timeout)
+                {
+                    let _ = self.session.logout(token).await;
+                    #[cfg(feature = "listener")]
+                    if let Some(lm) = &self.listener_manager {
+                        lm.broadcast(&BulwarkEvent::SessionTimeout {
+                            login_id: ts.login_id.clone(),
+                            token: token.to_string(),
+                        })
+                        .await;
+                    }
+                    if self.config.throw_on_not_login {
+                        return Err(BulwarkError::Session("会话悬停超时".to_string()));
+                    }
+                    return Ok(false);
+                }
+                self.session.update_last_active(&ts.login_id);
+            }
+        }
         Ok(valid)
     }
 
@@ -458,6 +482,30 @@ impl BulwarkLogicDefault {
             }
             if self.config.throw_on_not_login {
                 return Err(BulwarkError::Session("未登录".to_string()));
+            }
+        }
+        // 悬停检查（仅 valid 时）
+        if valid {
+            if let Ok(Some(ts)) = self.session.get_token_session(token).await {
+                if !self
+                    .session
+                    .check_hover_timeout(&ts.login_id, self.config.session_hover_timeout)
+                {
+                    let _ = self.session.logout(token).await;
+                    #[cfg(feature = "listener")]
+                    if let Some(lm) = &self.listener_manager {
+                        lm.broadcast(&BulwarkEvent::SessionTimeout {
+                            login_id: ts.login_id.clone(),
+                            token: token.to_string(),
+                        })
+                        .await;
+                    }
+                    if self.config.throw_on_not_login {
+                        return Err(BulwarkError::Session("会话悬停超时".to_string()));
+                    }
+                    return Ok(false);
+                }
+                self.session.update_last_active(&ts.login_id);
             }
         }
         Ok(valid)

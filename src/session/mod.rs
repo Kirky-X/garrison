@@ -161,6 +161,10 @@ pub struct BulwarkSession {
     ///
     /// 按 FIFO 顺序调用。listener 失败时记录 `tracing::warn!` 但不中断后续 listener。
     expiry_listeners: Vec<Arc<dyn SessionExpiryListener>>,
+    /// 每个登录主体的最后活跃时间（login_id → unix 毫秒时间戳）。
+    ///
+    /// 仅当 `session_hover_timeout > 0` 时由 `check_login` 路径更新与检查。
+    last_active_time: DashMap<String, i64>,
 }
 
 /// 生成 Account-Session 的存储 key。
@@ -192,6 +196,7 @@ impl BulwarkSession {
             #[cfg(feature = "listener")]
             listener_manager: None,
             expiry_listeners: Vec::new(),
+            last_active_time: DashMap::new(),
         }
     }
 
@@ -246,6 +251,44 @@ impl BulwarkSession {
                     e
                 );
             }
+        }
+    }
+
+    /// 更新 login_id 的最后活跃时间为当前 unix 毫秒时间戳。
+    pub fn update_last_active(&self, login_id: &str) {
+        let now = chrono::Utc::now().timestamp_millis();
+        self.last_active_time.insert(login_id.to_string(), now);
+    }
+
+    /// 获取 login_id 的最后活跃时间（unix 毫秒），不存在返回 None。
+    pub fn get_last_active(&self, login_id: &str) -> Option<i64> {
+        self.last_active_time.get(login_id).map(|v| *v)
+    }
+
+    /// 检查会话是否因悬停超时应被踢出。
+    ///
+    /// # 参数
+    /// - `login_id`: 登录主体标识。
+    /// - `hover_timeout_secs`: 悬停超时秒数（-1 = 不启用，>0 = 启用）。
+    ///
+    /// # 返回
+    /// - `true`: 会话活跃或悬停检查未启用，不应踢出。
+    /// - `false`: 会话已悬停超时，应踢出。
+    pub fn check_hover_timeout(&self, login_id: &str, hover_timeout_secs: i64) -> bool {
+        if hover_timeout_secs <= 0 {
+            return true; // 不启用悬停检查
+        }
+        let now = chrono::Utc::now().timestamp_millis();
+        let timeout_millis = hover_timeout_secs * 1000;
+        match self.last_active_time.get(login_id) {
+            Some(last) => {
+                let elapsed = now - *last;
+                if elapsed > timeout_millis {
+                    return false; // 悬停超时，踢出
+                }
+                true
+            },
+            None => true, // 无记录（首次 check_login），不踢出
         }
     }
 
@@ -2120,6 +2163,88 @@ mod tests {
         assert!(
             session.is_valid("T2").await.expect("is_valid T2 应成功"),
             "T2 应有效"
+        );
+    }
+
+    // ------------------------------------------------------------------------
+    // 会话悬停超时测试（spec R-hover-001 ~ R-hover-004）
+    // ------------------------------------------------------------------------
+
+    /// R-hover-001: `session_hover_timeout == -1` 时 `check_hover_timeout` 始终返回 true。
+    #[test]
+    fn check_hover_timeout_disabled_when_negative() {
+        let (_dao, session) = make_session(3600, 86400);
+        session.update_last_active("user1");
+        assert!(
+            session.check_hover_timeout("user1", -1),
+            "hover_timeout=-1 时应始终返回 true（不启用）"
+        );
+    }
+
+    /// R-hover-001: `session_hover_timeout == 0` 时也视为不启用，返回 true。
+    #[test]
+    fn check_hover_timeout_disabled_when_zero() {
+        let (_dao, session) = make_session(3600, 86400);
+        session.update_last_active("user1");
+        assert!(
+            session.check_hover_timeout("user1", 0),
+            "hover_timeout=0 时应始终返回 true（不启用）"
+        );
+    }
+
+    /// 无 last_active_time 记录时（首次 check_login），不踢出。
+    #[test]
+    fn check_hover_timeout_returns_true_when_no_record() {
+        let (_dao, session) = make_session(3600, 86400);
+        assert!(
+            session.check_hover_timeout("nonexistent", 10),
+            "无记录时应返回 true（首次 check_login 不踢出）"
+        );
+    }
+
+    /// 活跃会话（刚更新 last_active_time）不应被踢出。
+    #[test]
+    fn check_hover_timeout_returns_true_when_active() {
+        let (_dao, session) = make_session(3600, 86400);
+        session.update_last_active("user1");
+        assert!(
+            session.check_hover_timeout("user1", 10),
+            "活跃会话应返回 true"
+        );
+    }
+
+    /// R-hover-003: 悬停超时后返回 false（踢出）。
+    ///
+    /// 设置 last_active_time 为 5 秒前，hover_timeout=1 秒，应返回 false。
+    #[test]
+    fn check_hover_timeout_evicts_after_timeout() {
+        let (_dao, session) = make_session(3600, 86400);
+        // 手动设置 5 秒前的 last_active_time
+        let old_time = chrono::Utc::now().timestamp_millis() - 5000;
+        session
+            .last_active_time
+            .insert("user1".to_string(), old_time);
+        assert!(
+            !session.check_hover_timeout("user1", 1),
+            "悬停超时后应返回 false（踢出）"
+        );
+    }
+
+    /// update_last_active / get_last_active 往返测试。
+    #[test]
+    fn update_and_get_last_active_roundtrip() {
+        let (_dao, session) = make_session(3600, 86400);
+        assert!(
+            session.get_last_active("user1").is_none(),
+            "未更新前应返回 None"
+        );
+        session.update_last_active("user1");
+        let ts = session.get_last_active("user1");
+        assert!(ts.is_some(), "更新后应返回 Some");
+        let now = chrono::Utc::now().timestamp_millis();
+        assert!(
+            (now - ts.unwrap()).abs() < 1000,
+            "last_active_time 应接近当前时间"
         );
     }
 }

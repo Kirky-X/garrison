@@ -62,6 +62,9 @@ pub const DEFAULT_SSO_TICKET_TTL_SECONDS: u64 = 60;
 /// 默认 remember-me 超时秒数（90 天，必须 > DEFAULT_TIMEOUT 30 天）。
 pub const REMEMBER_ME_DEFAULT_TIMEOUT: i64 = 7_776_000;
 
+/// 默认会话悬停超时秒数（-1 = 不启用，保留 Sa-Token 语义）。
+pub const DEFAULT_SESSION_HOVER_TIMEOUT: i64 = -1;
+
 /// 环境变量前缀（BULWARK_）。
 pub const ENV_PREFIX: &str = "BULWARK_";
 
@@ -204,6 +207,12 @@ pub struct BulwarkConfig {
     /// 仅当 `remember_me_enabled = true` 且 `login` params 含 `remember_me=true` 时生效。
     pub remember_me_timeout: i64,
 
+    /// 会话悬停超时秒数（-1 = 不启用，>0 = 不活跃秒数后踢出）。
+    ///
+    /// 启用后，`check_login` 时检查 `last_active_time`，
+    /// 若 `now - last_active_time > session_hover_timeout` 则踢出会话。
+    pub session_hover_timeout: i64,
+
     /// 多租户隔离配置段。
     ///
     /// 默认 `enabled: false`（向后兼容）。启用后需配合 `tenant-isolation` Cargo feature
@@ -240,6 +249,7 @@ impl BulwarkConfig {
             sso_ticket_ttl_seconds: DEFAULT_SSO_TICKET_TTL_SECONDS,
             remember_me_enabled: false,
             remember_me_timeout: REMEMBER_ME_DEFAULT_TIMEOUT,
+            session_hover_timeout: DEFAULT_SESSION_HOVER_TIMEOUT,
             tenant_isolation: TenantIsolationConfig::default(),
             watcher: None,
         };
@@ -290,6 +300,10 @@ impl BulwarkConfig {
             .default(
                 "remember_me_timeout",
                 ConfigValue::integer(REMEMBER_ME_DEFAULT_TIMEOUT),
+            )
+            .default(
+                "session_hover_timeout",
+                ConfigValue::integer(DEFAULT_SESSION_HOVER_TIMEOUT),
             );
 
         if let Some(path) = toml_path {
@@ -705,6 +719,17 @@ remember_me_timeout = 9999999
     }
 
     // ========================================================================
+    // session_hover_timeout 配置测试（spec R-hover-001）
+    // ========================================================================
+
+    /// R-hover-001: `BulwarkConfig::default()` 的 `session_hover_timeout` 为 -1（不启用）。
+    #[test]
+    fn config_default_session_hover_is_negative_one() {
+        let config = BulwarkConfig::default_config();
+        assert_eq!(config.session_hover_timeout, -1);
+    }
+
+    // ========================================================================
     // toml 文件覆盖测试
     // ========================================================================
 
@@ -912,6 +937,7 @@ jwt_secret = "test-secret""#,
             sso_ticket_ttl_seconds: 60,
             remember_me_enabled: false,
             remember_me_timeout: REMEMBER_ME_DEFAULT_TIMEOUT,
+            session_hover_timeout: DEFAULT_SESSION_HOVER_TIMEOUT,
             tenant_isolation: TenantIsolationConfig::default(),
             watcher: None,
         };
