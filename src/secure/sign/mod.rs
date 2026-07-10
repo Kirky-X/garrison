@@ -13,7 +13,7 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::{Sha256, Sha512};
 
-/// 签名工具 struct，纯静态方法封装，不持有任何状态（依据 spec secure-sign）。
+/// 签名工具 struct，纯静态方法封装，不持有任何状态。
 ///
 /// 所有方法为关联函数，无需实例化即可调用：
 ///
@@ -34,7 +34,7 @@ fn hex_encode(bytes: &[u8]) -> String {
 }
 
 impl Signer {
-    /// 计算 HMAC-SHA256 签名，输出小写十六进制字符串（依据 spec secure-sign）。
+    /// 计算 HMAC-SHA256 签名，输出小写十六进制字符串。
     ///
     /// # 参数
     /// - `secret`: 签名密钥（任意长度）。
@@ -49,7 +49,7 @@ impl Signer {
         hex_encode(&mac.finalize().into_bytes())
     }
 
-    /// 计算 HMAC-SHA512 签名，输出小写十六进制字符串（依据 spec secure-sign）。
+    /// 计算 HMAC-SHA512 签名，输出小写十六进制字符串。
     ///
     /// # 参数
     /// - `secret`: 签名密钥（任意长度）。
@@ -64,7 +64,7 @@ impl Signer {
         hex_encode(&mac.finalize().into_bytes())
     }
 
-    /// Base64 标准编码（依据 spec secure-sign）。
+    /// Base64 标准编码。
     ///
     /// # 参数
     /// - `data`: 待编码字节。
@@ -75,7 +75,7 @@ impl Signer {
         STANDARD.encode(data)
     }
 
-    /// Base64 标准解码（依据 spec secure-sign）。
+    /// Base64 标准解码。
     ///
     /// # 参数
     /// - `s`: Base64 编码字符串。
@@ -89,7 +89,7 @@ impl Signer {
             .map_err(|e| BulwarkError::Internal(format!("Base64 解码失败: {}", e)))
     }
 
-    /// 计算 MD5 摘要，输出小写十六进制字符串（依据 spec secure-sign）。
+    /// 计算 MD5 摘要，输出小写十六进制字符串。
     ///
     /// # 废弃说明
     /// MD5 已被证明不安全（存在碰撞攻击），仅用于兼容 Sa-Token 旧版签名协议。
@@ -107,7 +107,7 @@ mod tests {
     use super::*;
 
     // ========================================================================
-    // HMAC-SHA256 测试（依据 spec secure-sign + RFC 4231 测试向量）
+    // HMAC-SHA256 测试
     // ========================================================================
 
     /// RFC 4231 Test Case 1: key=[0x0b;20], data="Hi There"。
@@ -150,7 +150,7 @@ mod tests {
     }
 
     // ========================================================================
-    // HMAC-SHA512 测试（依据 spec secure-sign + RFC 4231 测试向量）
+    // HMAC-SHA512 测试
     // ========================================================================
 
     /// RFC 4231 Test Case 1: key=[0x0b;20], data="Hi There"。
@@ -167,7 +167,7 @@ mod tests {
     }
 
     // ========================================================================
-    // Base64 测试（依据 spec secure-sign）
+    // Base64 测试
     // ========================================================================
 
     /// Base64 编码与解码互逆。
@@ -194,7 +194,7 @@ mod tests {
     }
 
     // ========================================================================
-    // MD5 测试（依据 spec secure-sign，标记废弃）
+    // MD5 测试
     // ========================================================================
 
     /// MD5 输出 32 字符小写十六进制，与标准值一致。

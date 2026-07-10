@@ -6,7 +6,7 @@
 //! [借鉴 Sa-Token] 对应 Sa-Token 的策略模式设计，
 //! 允许通过策略对象定制鉴权行为。
 //!
-//! ## 权限策略（依据 spec permission-role-check 与 design.md Decision 9）
+//! ## 权限策略
 //!
 //! - `BulwarkPermissionStrategy` trait：定义权限/角色校验的可插拔契约
 //! - `BulwarkPermissionStrategyDefault`：默认实现，持有 `BulwarkInterface` 回调获取权限/角色数据，
@@ -20,7 +20,7 @@
 use crate::core::permission::PermissionChecker;
 use crate::dao::BulwarkDao;
 use crate::error::{BulwarkError, BulwarkResult};
-// v0.4.2: listener_manager 注入（feature-gated，依据 spec listener-events-extend R-001）
+// listener_manager 注入（feature-gated）
 #[cfg(feature = "listener")]
 use crate::listener::{BulwarkEvent, BulwarkListenerManager};
 use crate::plugin::BulwarkPluginManager;
@@ -30,12 +30,12 @@ use async_trait::async_trait;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-/// IP 级防火墙策略套件模块（v0.5.0 新增，依据 proposal H5 / spec firewall）。
+/// IP 级防火墙策略套件模块。
 #[cfg(feature = "firewall")]
 pub mod firewall;
-/// 防火墙安全钩子模块（0.3.0 新增）。
+/// 防火墙安全钩子模块（）。
 pub mod hooks;
-/// 策略注册表模块（v0.4.2 新增，依据 spec strategy-registry）。
+/// 策略注册表模块。
 pub mod registry;
 
 // Re-export 核心 trait 与类型以便外部使用
@@ -118,7 +118,6 @@ pub trait BulwarkPermissionStrategy: Send + Sync {
 
     /// 校验角色（任一匹配）：主体持有 `roles` 中任意一个即通过。
     ///
-    /// 对应 spec scenario "多角色任一匹配"。
     ///
     /// # 参数
     /// - `login_id`: 登录主体标识。
@@ -134,7 +133,6 @@ pub trait BulwarkPermissionStrategy: Send + Sync {
 
     /// 校验角色（全部匹配）：主体需持有 `roles` 中所有角色。
     ///
-    /// 对应 spec scenario "多角色全部匹配"。
     ///
     /// # 参数
     /// - `login_id`: 登录主体标识。
@@ -148,7 +146,7 @@ pub trait BulwarkPermissionStrategy: Send + Sync {
     /// - 数据回调失败：透传 `BulwarkError`。
     async fn check_role_all(&self, login_id: &str, roles: &[&str]) -> BulwarkResult<bool>;
 
-    /// 登录前防火墙安全钩子检查（0.3.0 新增，依据 spec firewall-check-hook）。
+    /// 登录前防火墙安全钩子检查。
     ///
     /// 默认实现为 no-op（向后兼容 0.2.x）。`BulwarkPermissionStrategyDefault` 在注入
     /// `BulwarkFirewallCheckHook` 后按序调用 5 个 hook，任一 Err 阻断登录。
@@ -180,27 +178,26 @@ pub trait BulwarkPermissionStrategy: Send + Sync {
 /// 权限/角色数据由 `BulwarkInterface` 回调提供（依据用户决策方案 B），
 /// 不委托 dbnexus `PermissionProvider` trait（因其 API 模型与 Bulwark 不匹配）。
 ///
-/// # 0.2.0 扩展（依据 spec permission-role-check）
+/// # 0.2.0 扩展
 ///
 /// - `permission_checker`：注入后 `check_permission` 委托到 `PermissionChecker`
 /// - `dao`：注入后启用权限缓存（`cache_permission` / `get_cached_permission`）
-/// - `role_hierarchy`：角色层级映射（如 `"admin" → ["user"]`），空时保持 0.1.0 行为
+/// - `role_hierarchy`：角色层级映射（如 `"admin" → ["user"]`），空时保持 默认行为
 /// - `plugin_manager`：注入后 `check_permission` 前后触发插件钩子（Err 仅 warn 不中断）
 pub struct BulwarkPermissionStrategyDefault {
     /// 权限/角色数据回调。
     interface: Arc<dyn BulwarkInterface>,
-    /// 0.2.0：可选 PermissionChecker，注入后 check_permission 委托到它。
+    /// 可选 PermissionChecker，注入后 check_permission 委托到它。
     permission_checker: Option<Arc<dyn PermissionChecker>>,
-    /// 0.2.0：可选 DAO，用于权限缓存。
+    /// 可选 DAO，用于权限缓存。
     dao: Option<Arc<dyn BulwarkDao>>,
-    /// 0.2.0：角色层级映射（如 "admin" → ["user"]），空时保持 0.1.0 行为。
+    /// 角色层级映射（如 "admin" → ["user"]），空时保持 默认行为。
     role_hierarchy: HashMap<String, Vec<String>>,
-    /// 0.2.0：可选插件管理器，注入后 check_permission 前后触发钩子。
+    /// 可选插件管理器，注入后 check_permission 前后触发钩子。
     plugin_manager: Option<Arc<BulwarkPluginManager>>,
-    /// 0.3.0：可选防火墙安全钩子，注入后 login 前按序调用 5 个 hook（依据 spec firewall-check-hook）。
+    /// 可选防火墙安全钩子，注入后 login 前按序调用 5 个 hook。
     firewall_hook: Option<Arc<dyn BulwarkFirewallCheckHook>>,
-    /// v0.4.2：可选监听器管理器，注入后 check_login_hooks 阻断时广播 FirewallBlock 事件
-    ///（依据 spec listener-events-extend R-001）。
+    /// 可选监听器管理器，注入后 check_login_hooks 阻断时广播 FirewallBlock 事件
     #[cfg(feature = "listener")]
     listener_manager: Option<Arc<BulwarkListenerManager>>,
 }
@@ -227,7 +224,7 @@ impl BulwarkPermissionStrategyDefault {
         }
     }
 
-    /// 注入 `PermissionChecker`，启用委托校验（0.2.0 新增）。
+    /// 注入 `PermissionChecker`，启用委托校验（）。
     ///
     /// 注入后 `check_permission` 将委托 `PermissionChecker::has_permission`，
     /// 而非直接调用 `BulwarkInterface::get_permission_list`。
@@ -236,7 +233,7 @@ impl BulwarkPermissionStrategyDefault {
         self
     }
 
-    /// 注入 `BulwarkDao`，启用权限缓存（0.2.0 新增）。
+    /// 注入 `BulwarkDao`，启用权限缓存（）。
     ///
     /// 注入后 `check_permission` 会优先读取缓存，未命中时查询并回填。
     pub fn with_dao(mut self, dao: Arc<dyn BulwarkDao>) -> Self {
@@ -244,7 +241,7 @@ impl BulwarkPermissionStrategyDefault {
         self
     }
 
-    /// 配置角色层级映射（0.2.0 新增）。
+    /// 配置角色层级映射（）。
     ///
     /// # 参数
     /// - `hierarchy`: 角色层级映射，如 `{"admin": ["user"], "superadmin": ["admin"]}`，
@@ -254,7 +251,7 @@ impl BulwarkPermissionStrategyDefault {
         self
     }
 
-    /// 注入 `BulwarkPluginManager`，启用插件钩子（0.2.0 新增）。
+    /// 注入 `BulwarkPluginManager`，启用插件钩子（）。
     ///
     /// 注入后 `check_permission` 前后调用 `BulwarkPluginManager::on_permission_check`，
     /// 插件返回 Err 仅 `tracing::warn!` 不中断主流程。
@@ -263,7 +260,7 @@ impl BulwarkPermissionStrategyDefault {
         self
     }
 
-    /// 注入 `BulwarkFirewallCheckHook`，启用登录前防火墙安全检查（0.3.0 新增，依据 spec firewall-check-hook）。
+    /// 注入 `BulwarkFirewallCheckHook`，启用登录前防火墙安全检查。
     ///
     /// 注入后 `check_login_hooks` 将按序调用 5 个 hook（登录频率 / 暴力破解 /
     /// 异地登录 / Token 复用 / 设备异常），任一返回 `Err` 阻断登录。
@@ -273,7 +270,7 @@ impl BulwarkPermissionStrategyDefault {
     }
 
     /// 注入 `BulwarkListenerManager`，启用 FirewallBlock 事件广播
-    ///（v0.4.2 新增，依据 spec listener-events-extend R-001）。
+    ///
     ///
     /// 注入后 `check_login_hooks` 任一 hook 返回 `Err` 时广播 `BulwarkEvent::FirewallBlock`。
     /// 未注入时为 no-op（向后兼容 0.4.1）。需启用 `listener` feature。
@@ -300,7 +297,7 @@ impl BulwarkPermissionStrategyDefault {
         result
     }
 
-    /// 缓存权限校验结果（0.2.0 新增，依据 spec permission-role-check）。
+    /// 缓存权限校验结果。
     ///
     /// 将校验结果写入 `BulwarkDao`，key 格式 `bulwark:perm:cache:<login_id>:<permission>`。
     ///
@@ -330,7 +327,7 @@ impl BulwarkPermissionStrategyDefault {
         Ok(())
     }
 
-    /// 读取缓存的权限校验结果（0.2.0 新增，依据 spec permission-role-check）。
+    /// 读取缓存的权限校验结果。
     ///
     /// # 参数
     /// - `login_id`: 登录主体标识。
@@ -375,19 +372,19 @@ impl BulwarkPermissionStrategy for BulwarkPermissionStrategyDefault {
             return Err(BulwarkError::InvalidParam("权限字符串不能为空".to_string()));
         }
 
-        // 0.2.0：插件钩子（before）— 内部已处理 Err 仅 warn 不中断（依据 task 21.3）
+        // 插件钩子（before）— 内部已处理 Err 仅 warn 不中断
         if let Some(pm) = &self.plugin_manager {
             pm.on_permission_check(login_id, permission);
         }
 
-        // 0.2.0：优先读取权限缓存（依据 task 21.4 / spec "check_permission 优先读取缓存"）
+        // 优先读取权限缓存
         if self.dao.is_some() {
             if let Ok(Some(cached)) = self.get_cached_permission(login_id, permission).await {
                 return Ok(cached);
             }
         }
 
-        // 0.2.0：委托 PermissionChecker（若注入），否则回退到 0.1.0 行为
+        // 委托 PermissionChecker（若注入），否则回退到 默认行为
         let result = if let Some(pc) = &self.permission_checker {
             pc.has_permission(login_id, permission).await?
         } else {
@@ -395,7 +392,7 @@ impl BulwarkPermissionStrategy for BulwarkPermissionStrategyDefault {
             permissions.iter().any(|p| p == permission)
         };
 
-        // 0.2.0：写入缓存（失败仅 warn 不中断）
+        // 写入缓存（失败仅 warn 不中断）
         if let Some(_dao) = &self.dao {
             if let Err(e) = self
                 .cache_permission(login_id, permission, result, 300)
@@ -418,7 +415,7 @@ impl BulwarkPermissionStrategy for BulwarkPermissionStrategyDefault {
             return Err(BulwarkError::InvalidParam("角色字符串不能为空".to_string()));
         }
         let roles = self.get_role_list(login_id).await?;
-        // 0.2.0：层级角色展开（依据 task 21.2 / spec "层级角色隐含匹配"）
+        // 层级角色展开
         if !self.role_hierarchy.is_empty() {
             let expanded = self.expand_roles(&roles);
             Ok(expanded.contains(role))
@@ -429,7 +426,7 @@ impl BulwarkPermissionStrategy for BulwarkPermissionStrategyDefault {
 
     async fn check_role_any(&self, login_id: &str, roles: &[&str]) -> BulwarkResult<bool> {
         let user_roles = self.get_role_list(login_id).await?;
-        // 0.2.0：层级角色展开
+        // 层级角色展开
         if !self.role_hierarchy.is_empty() {
             let expanded = self.expand_roles(&user_roles);
             Ok(roles.iter().any(|r| expanded.contains(*r)))
@@ -440,7 +437,7 @@ impl BulwarkPermissionStrategy for BulwarkPermissionStrategyDefault {
 
     async fn check_role_all(&self, login_id: &str, roles: &[&str]) -> BulwarkResult<bool> {
         let user_roles = self.get_role_list(login_id).await?;
-        // 0.2.0：层级角色展开
+        // 层级角色展开
         if !self.role_hierarchy.is_empty() {
             let expanded = self.expand_roles(&user_roles);
             Ok(roles.iter().all(|r| expanded.contains(*r)))
@@ -449,13 +446,13 @@ impl BulwarkPermissionStrategy for BulwarkPermissionStrategyDefault {
         }
     }
 
-    /// 0.3.0：登录前防火墙安全钩子检查（依据 spec firewall-check-hook）。
+    /// 登录前防火墙安全钩子检查。
     ///
     /// 注入 `firewall_hook` 后按序调用 5 个 hook，任一 Err 阻断登录。
     /// 未注入时为 no-op（向后兼容 0.2.x）。
     ///
     /// v0.4.2 扩展：任一 hook 返回 Err 时，若注入了 `listener_manager`，
-    /// 广播 `BulwarkEvent::FirewallBlock` 事件（依据 spec listener-events-extend R-001）。
+    /// 广播 `BulwarkEvent::FirewallBlock` 事件。
     async fn check_login_hooks(&self, login_id: &str, ctx: &LoginContext) -> BulwarkResult<()> {
         let Some(hook) = &self.firewall_hook else {
             return Ok(());
@@ -486,11 +483,11 @@ impl BulwarkPermissionStrategy for BulwarkPermissionStrategyDefault {
 }
 
 impl BulwarkPermissionStrategyDefault {
-    /// 广播 FirewallBlock 事件（v0.4.2 新增，依据 spec listener-events-extend R-001）。
+    /// 广播 FirewallBlock 事件。
     ///
     /// 仅在注入 `listener_manager` 且启用 `listener` feature 时广播，否则为 no-op。
     ///
-    /// v0.5.0 改为 async（依据 proposal H3）：broadcast 改为 async 后此helper 也需 async。
+    /// v0.5.0 改为 async：broadcast 改为 async 后此helper 也需 async。
     #[cfg_attr(not(feature = "listener"), allow(unused_variables))]
     async fn broadcast_firewall_block(&self, login_id: &str, e: &BulwarkError) {
         #[cfg(feature = "listener")]
@@ -505,7 +502,7 @@ impl BulwarkPermissionStrategyDefault {
 }
 
 // ============================================================================
-// 测试（依据 spec permission-role-check 所有 scenario）
+// 测试
 // ============================================================================
 
 #[cfg(test)]
@@ -565,7 +562,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------------
-    // spec scenario: 持有权限返回 true / 未持有返回 false
+    // 持有权限返回 true / 未持有返回 false
     // ------------------------------------------------------------------------
 
     /// 验证主体持有指定权限时 check_permission 返回 true。
@@ -594,7 +591,7 @@ mod tests {
         );
     }
 
-    /// spec scenario "权限为空字符串"：空字符串抛 InvalidParam。
+    /// 空字符串抛 InvalidParam。
     #[tokio::test]
     async fn check_permission_empty_string_errors() {
         let iface = MockInterface::new();
@@ -620,7 +617,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------------
-    // spec scenario: 持有角色返回 true / 未持有返回 false
+    // 持有角色返回 true / 未持有返回 false
     // ------------------------------------------------------------------------
 
     /// 验证主体持有指定角色时 check_role 返回 true。
@@ -649,7 +646,7 @@ mod tests {
         );
     }
 
-    /// 验证空角色字符串返回 Err（依据 codebase-hardening Task 3.10）。
+    /// 验证空角色字符串返回 Err。
     ///
     /// 与 `check_permission_empty_string_errors` 对称：
     /// 空角色字符串应抛 `InvalidParam` 错误。
@@ -666,7 +663,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------------
-    // spec scenario: 多角色任一匹配 / 全部匹配
+    // 多角色任一匹配 / 全部匹配
     // ------------------------------------------------------------------------
 
     /// 验证 check_role_any：主体持有 roles 中任意一个即返回 true。
@@ -712,7 +709,7 @@ mod tests {
         );
     }
 
-    /// spec scenario "多角色全部匹配"：主体仅持有部分角色时返回 false。
+    /// 主体仅持有部分角色时返回 false。
     #[tokio::test]
     async fn check_role_all_partial_held_returns_false() {
         let mut iface = MockInterface::new();
@@ -775,7 +772,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------------
-    // 0.2.0 新增：PermissionChecker 集成测试（依据 task 21.1）
+    // PermissionChecker 集成测试
     // ------------------------------------------------------------------------
 
     /// 可配置的 MockPermissionChecker，返回预设的权限/角色校验结果。
@@ -806,8 +803,6 @@ mod tests {
     }
 
     /// 验证注入 PermissionChecker 后 check_permission 委托到它。
-    ///
-    /// 对应 spec scenario "PermissionChecker 集成委托校验 (NEW - 0.2.0)"。
     #[tokio::test]
     async fn check_permission_delegates_to_permission_checker() {
         let iface = MockInterface::new();
@@ -834,9 +829,7 @@ mod tests {
         );
     }
 
-    /// 验证未注入 PermissionChecker 时回退到 0.1.0 行为（直接查 interface）。
-    ///
-    /// 对应 spec scenario "未启用 core-permission 回退到 0.1.0 行为 (NEW - 0.2.0)"。
+    /// 验证未注入 PermissionChecker 时回退到 默认行为（直接查 interface）。
     #[tokio::test]
     async fn check_permission_without_checker_falls_back_to_interface() {
         let mut iface = MockInterface::new();
@@ -850,7 +843,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------------
-    // 0.2.0 新增：层级角色测试（依据 task 21.2）
+    // 层级角色测试
     // ------------------------------------------------------------------------
 
     /// 辅助函数：创建带角色层级的 firewall。
@@ -862,8 +855,6 @@ mod tests {
     }
 
     /// 验证层级角色：admin 隐含持有 user。
-    ///
-    /// 对应 spec scenario "层级角色隐含匹配 (NEW - 0.2.0)"。
     #[tokio::test]
     async fn check_role_hierarchy_admin_implies_user() {
         let mut iface = MockInterface::new();
@@ -883,8 +874,6 @@ mod tests {
     }
 
     /// 验证层级角色多层传递：superadmin → admin → user。
-    ///
-    /// 对应 spec scenario "层级角色多层传递 (NEW - 0.2.0)"。
     #[tokio::test]
     async fn check_role_hierarchy_transitive() {
         let mut iface = MockInterface::new();
@@ -904,9 +893,7 @@ mod tests {
         );
     }
 
-    /// 验证未配置 role_hierarchy 时保持 0.1.0 行为。
-    ///
-    /// 对应 spec scenario "未配置 role_hierarchy 保持 0.1.0 行为 (NEW - 0.2.0)"。
+    /// 验证未配置 role_hierarchy 时保持 默认行为。
     #[tokio::test]
     async fn check_role_without_hierarchy_keeps_legacy_behavior() {
         let mut iface = MockInterface::new();
@@ -943,12 +930,10 @@ mod tests {
     }
 
     // ------------------------------------------------------------------------
-    // 0.2.0 新增：插件钩子测试（依据 task 21.3）
+    // 插件钩子测试
     // ------------------------------------------------------------------------
 
     /// 验证注入 PluginManager 后 check_permission 触发插件钩子。
-    ///
-    /// 对应 spec scenario "插件感知策略触发 on_permission_check (NEW - 0.2.0)"。
     #[tokio::test]
     async fn check_permission_triggers_plugin_hook() {
         let mut iface = MockInterface::new();
@@ -966,7 +951,6 @@ mod tests {
 
     /// 验证插件失败不中断 check_permission 主流程。
     ///
-    /// 对应 spec scenario "插件短路拒绝权限校验 (NEW - 0.2.0)"。
     /// 注意：当前实现遵循 task 21.3（Err → warn 不中断），不实现 spec 的 Override 机制。
     #[tokio::test]
     async fn check_permission_plugin_failure_does_not_interrupt() {
@@ -984,7 +968,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------------
-    // 0.2.0 新增：权限缓存测试（依据 task 21.4）
+    // 权限缓存测试
     // ------------------------------------------------------------------------
 
     /// 简单的 MockDao，用于权限缓存测试。
@@ -1023,8 +1007,6 @@ mod tests {
     }
 
     /// 验证 cache_permission 写入 DAO，后续 get_cached_permission 返回缓存值。
-    ///
-    /// 对应 spec scenario "缓存权限校验结果 (NEW - 0.2.0)"。
     #[tokio::test]
     async fn cache_permission_writes_and_reads_back() {
         let dao = Arc::new(MockCacheDao::new());
@@ -1049,8 +1031,6 @@ mod tests {
     }
 
     /// 验证 get_cached_permission 未命中时返回 None。
-    ///
-    /// 对应 spec scenario "读取未命中缓存返回 None (NEW - 0.2.0)"。
     #[tokio::test]
     async fn get_cached_permission_miss_returns_none() {
         let dao = Arc::new(MockCacheDao::new());
@@ -1065,8 +1045,6 @@ mod tests {
     }
 
     /// 验证缓存覆盖：相同 key 的第二次写入覆盖第一次。
-    ///
-    /// 对应 spec scenario "权限变更时刷新缓存 (NEW - 0.2.0)"。
     #[tokio::test]
     async fn cache_permission_overwrite() {
         let dao = Arc::new(MockCacheDao::new());
@@ -1094,8 +1072,6 @@ mod tests {
     }
 
     /// 验证 check_permission 优先读取缓存（短路优化）。
-    ///
-    /// 对应 spec scenario "check_permission 优先读取缓存 (NEW - 0.2.0)"。
     #[tokio::test]
     async fn check_permission_uses_cache_short_circuit() {
         let dao = Arc::new(MockCacheDao::new());
@@ -1117,12 +1093,10 @@ mod tests {
     }
 
     // ------------------------------------------------------------------------
-    // 0.3.0 新增：防火墙安全钩子集成测试（依据 spec firewall-check-hook）
+    // 防火墙安全钩子集成测试
     // ------------------------------------------------------------------------
 
     /// 验证未注入 firewall_hook 时 check_login_hooks 为 no-op（向后兼容 0.2.x）。
-    ///
-    /// 对应 spec scenario "未注入 hook 时 check_login_hooks 为 no-op (NEW - 0.3.0)"。
     #[tokio::test]
     async fn check_login_hooks_noop_without_hook() {
         let iface = MockInterface::new();
@@ -1137,8 +1111,6 @@ mod tests {
     }
 
     /// 验证注入 hook 且所有检查通过时 check_login_hooks 返回 Ok。
-    ///
-    /// 对应 spec scenario "注入 hook 且全部通过 (NEW - 0.3.0)"。
     #[tokio::test]
     async fn check_login_hooks_passes_with_hook() {
         let iface = MockInterface::new();
@@ -1154,8 +1126,6 @@ mod tests {
     }
 
     /// 验证 hook 在登录频率超限时阻断 check_login_hooks。
-    ///
-    /// 对应 spec scenario "登录频率超限阻断 (NEW - 0.3.0)"。
     #[tokio::test]
     async fn check_login_hooks_blocks_on_frequency_exceeded() {
         let iface = MockInterface::new();
@@ -1179,8 +1149,6 @@ mod tests {
     }
 
     /// 验证 hook 在暴力破解超限时阻断 check_login_hooks。
-    ///
-    /// 对应 spec scenario "暴力破解超限阻断 (NEW - 0.3.0)"。
     #[tokio::test]
     async fn check_login_hooks_blocks_on_brute_force_exceeded() {
         let iface = MockInterface::new();
@@ -1200,8 +1168,6 @@ mod tests {
     }
 
     /// 验证 with_firewall_hook builder 方法正确注入 hook。
-    ///
-    /// 对应 spec scenario "with_firewall_hook 注入 hook (NEW - 0.3.0)"。
     #[tokio::test]
     async fn with_firewall_hook_injects_hook() {
         let iface = MockInterface::new();
@@ -1220,7 +1186,6 @@ mod tests {
 
     /// 验证 check_login_hooks 按 5 个 hook 顺序调用（login_frequency 先于 brute_force）。
     ///
-    /// 对应 spec scenario "hook 按序调用 (NEW - 0.3.0)"。
     /// 当 IP 维度先达阈值时，应优先返回 login_frequency 错误。
     #[tokio::test]
     async fn check_login_hooks_calls_in_order() {
@@ -1271,8 +1236,6 @@ mod tests {
     }
 
     /// 验证 check_login_hooks 任一 hook Err 立即阻断后续 hook。
-    ///
-    /// 对应 spec scenario "任一 hook Err 阻断后续 (NEW - 0.3.0)"。
     #[tokio::test]
     async fn check_login_hooks_short_circuits_on_err() {
         use crate::strategy::hooks::BulwarkFirewallCheckHook;

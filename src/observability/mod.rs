@@ -3,7 +3,7 @@
 
 //! 可观测性模块，提供 Prometheus 指标、结构化 JSON 日志与 OpenTelemetry 分布式追踪。
 //!
-//! ## 三层架构（依据 spec observability-stack）
+//! ## 三层架构
 //!
 //! - **Metrics**（`BulwarkMetrics`）：Prometheus 格式指标，覆盖登录成功率 / Token 验证延迟 /
 //!   权限查询 QPS / 角色查询 QPS。启用 `metrics-prometheus` feature。
@@ -38,7 +38,7 @@ pub use prometheus;
 /// 通过 `BulwarkLogicDefault::with_metrics` builder 注入，未注入时所有 `*_metrics` 调用为
 /// no-op（`Option::None` 短路）。
 ///
-/// # 指标清单（依据 spec observability-stack）
+/// # 指标清单
 ///
 /// | 指标名 | 类型 | 标签 | 说明 |
 /// |--------|------|------|------|
@@ -313,7 +313,7 @@ impl From<opentelemetry_otlp::ExporterBuildError> for BulwarkOtelError {
 pub type BulwarkMetrics = ();
 
 // ============================================================================
-// 单元测试（依据 spec observability-stack，8-12 个测试覆盖指标/日志/追踪）
+// 单元测试
 // ============================================================================
 
 #[cfg(all(test, feature = "metrics-prometheus"))]

@@ -11,7 +11,7 @@
 use crate::error::{BulwarkError, BulwarkResult};
 use base64::{engine::general_purpose::STANDARD, Engine};
 
-/// Basic 认证凭证，承载解码后的用户名与密码（依据 spec secure-httpbasic）。
+/// Basic 认证凭证，承载解码后的用户名与密码。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Credential {
     /// 用户名。
@@ -20,7 +20,7 @@ pub struct Credential {
     pub pass: String,
 }
 
-/// HTTP Basic 认证工具，封装 RFC 7617 编解码逻辑（依据 spec secure-httpbasic）。
+/// HTTP Basic 认证工具，封装 RFC 7617 编解码逻辑。
 ///
 /// 所有方法为关联函数，无需实例化即可调用：
 ///
@@ -38,7 +38,7 @@ pub struct Credential {
 pub struct HttpBasicAuth;
 
 impl HttpBasicAuth {
-    /// 编码用户名密码为 Base64 凭证字符串（依据 spec secure-httpbasic）。
+    /// 编码用户名密码为 Base64 凭证字符串。
     ///
     /// 将 `"user:pass"` 进行 Base64 编码，返回值可直接作为 `Authorization: Basic <encoded>` 中的凭证部分。
     ///
@@ -53,7 +53,7 @@ impl HttpBasicAuth {
         STANDARD.encode(credentials.as_bytes())
     }
 
-    /// 解码 Base64 凭证为 `Credential`（依据 spec secure-httpbasic）。
+    /// 解码 Base64 凭证为 `Credential`。
     ///
     /// # 参数
     /// - `header_value`: Base64 编码的凭证字符串（不含 `Basic ` 前缀）。
@@ -76,7 +76,7 @@ impl HttpBasicAuth {
         })
     }
 
-    /// 从完整 `Authorization` header 解析 Basic 凭证（依据 spec secure-httpbasic）。
+    /// 从完整 `Authorization` header 解析 Basic 凭证。
     ///
     /// 依据 RFC 7235，认证方案 `Basic` 大小写不敏感。
     ///
@@ -115,7 +115,7 @@ mod tests {
     use super::*;
 
     // ========================================================================
-    // encode 测试（依据 spec secure-httpbasic）
+    // encode 测试
     // ========================================================================
 
     /// 编码用户名密码为 Base64，解码后等于 "user:pass"。
@@ -155,7 +155,7 @@ mod tests {
     }
 
     // ========================================================================
-    // decode 测试（依据 spec secure-httpbasic）
+    // decode 测试
     // ========================================================================
 
     /// 解码合法 Base64 凭证（spec Scenario）。
@@ -184,7 +184,7 @@ mod tests {
     }
 
     // ========================================================================
-    // parse_authorization_header 测试（依据 spec secure-httpbasic）
+    // parse_authorization_header 测试
     // ========================================================================
 
     /// 解析完整 Authorization Header（spec Scenario）。

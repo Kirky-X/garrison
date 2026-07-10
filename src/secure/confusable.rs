@@ -1,7 +1,7 @@
 //! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! Unicode 同形异义字检测子模块（0.5.1 新增，依据 design.md D10，L6）。
+//! Unicode 同形异义字检测子模块。
 //!
 //! 提供 `check_confusable` 函数，检测字符串中的 Unicode 同形异义字
 //! （homoglyphs，如 Cyrillic `а` U+0430 与 Latin `a` U+0061 视觉相同）。
@@ -20,7 +20,7 @@
 
 use unicode_security::confusable_detection::skeleton;
 
-/// 单个 Unicode 同形异义字警告（依据 design.md D10）。
+/// 单个 Unicode 同形异义字警告。
 ///
 /// 由 [`check_confusable`] 返回，描述字符串中某个字符的可疑替身信息。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,7 +35,7 @@ pub struct ConfusableWarning {
     pub suggestion: String,
 }
 
-/// 检测字符串中的 Unicode 同形异义字（依据 design.md D10，L6）。
+/// 检测字符串中的 Unicode 同形异义字。
 ///
 /// 对输入字符串逐字符扫描，使用 `unicode-security` crate 的 TR39 Confusables database
 /// 检测视觉相似但实际不同的字符。常见场景：Cyrillic `а` (U+0430) 与 Latin `a` (U+0061)
@@ -94,7 +94,7 @@ mod tests {
     use super::*;
 
     // ========================================================================
-    // T083: check_confusable 测试（Red 阶段，依据 design.md D10）
+    // check_confusable 测试（Red 阶段）
     // ========================================================================
 
     /// T083-1: 纯 ASCII 字符串（如 "user:read"）返回空 Vec（无可疑字符）。

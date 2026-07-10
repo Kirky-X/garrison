@@ -1,7 +1,7 @@
 //! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! 速率限制策略（依据 spec firewall R-firewall-002）。
+//! 速率限制策略。
 //!
 //! `RateLimitStrategy` 实现 [`BulwarkFirewallStrategy`] trait，
 //! 用 oxcache key `rl:{scope}:{id}` 存储请求时间戳列表（逗号分隔），
@@ -28,7 +28,7 @@ use async_trait::async_trait;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// 速率限制作用域（依据 spec firewall R-firewall-002）。
+/// 速率限制作用域。
 ///
 /// 决定计数 key 的构造维度：
 /// - `Ip`：按请求 IP 计数（`rl:ip:{ip}`）
@@ -44,7 +44,7 @@ pub enum RateLimitScope {
     Tenant,
 }
 
-/// 速率限制配置（依据 spec firewall R-firewall-002）。
+/// 速率限制配置。
 ///
 /// 所有阈值显式配置（Rule 5 确定性逻辑），不交给模型判断。
 #[derive(Debug, Clone)]
@@ -55,7 +55,7 @@ pub struct RateLimitConfig {
     pub window_seconds: u64,
     /// 计数作用域（Ip / User / Tenant）。
     pub scope: RateLimitScope,
-    /// 动态阈值上限（依据 design D3）。
+    /// 动态阈值上限。
     ///
     /// - `None`：禁用动态调整，固定使用 `max_requests` 作为阈值。
     /// - `Some(upper)`：允许 [`RateLimitStrategy::current_threshold`] 在
@@ -76,7 +76,7 @@ impl Default for RateLimitConfig {
     }
 }
 
-/// 速率限制策略，用 oxcache 滑动窗口实现（依据 spec firewall R-firewall-002）。
+/// 速率限制策略，用 oxcache 滑动窗口实现。
 ///
 /// # 构造
 ///
@@ -132,7 +132,7 @@ impl RateLimitStrategy {
             .await
     }
 
-    /// 返回当前生效的速率阈值（依据 design D3）。
+    /// 返回当前生效的速率阈值。
     ///
     /// - `dynamic_threshold=None` 时恒返回 `max_requests`。
     /// - `dynamic_threshold=Some(_)` 时返回 DAO 中持久化的当前阈值
@@ -153,7 +153,7 @@ impl RateLimitStrategy {
         Ok(raw.clamp(max, upper))
     }
 
-    /// 根据观测到的历史流量调整阈值（依据 design D3）。
+    /// 根据观测到的历史流量调整阈值。
     ///
     /// 调整规则（确定性，Rule 5）：
     /// - `traffic_count >= current * 80%`（高负载）：阈值上调一步，封顶 `dynamic_threshold`。
@@ -329,7 +329,6 @@ mod tests {
 
     /// 验证速率限制：max_requests=10, window_seconds=1 时，
     /// 1 秒内前 10 次返回 Ok，第 11 次返回 FirewallBlocked
-    ///（依据 spec firewall R-firewall-002 验收标准 1）。
     #[tokio::test]
     async fn ratelimit_blocks_after_max_requests() {
         let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
@@ -405,7 +404,7 @@ mod tests {
     }
 
     // ========================================================================
-    // T096: 验证码挑战 + 动态阈值测试（依据 design D3）
+    // 验证码挑战 + 动态阈值测试
     // ========================================================================
 
     /// T096-1: 接近阈值时 should_challenge 返回 true（80% 阈值触发挑战）。
@@ -503,7 +502,7 @@ mod tests {
         assert!(!ok, "错误答案应验证失败");
     }
 
-    /// T096-5: 流量持续高时阈值上调（依据 design D3 动态阈值）。
+    /// T096-5: 流量持续高时阈值上调。
     ///
     /// max_requests=10, dynamic_threshold=Some(20)。
     /// 初始阈值 10，传入 traffic_count >= 80% 应上调，封顶 20。
@@ -557,7 +556,7 @@ mod tests {
         );
     }
 
-    /// T096-6: 流量持续低时阈值下调（依据 design D3 动态阈值）。
+    /// T096-6: 流量持续低时阈值下调。
     ///
     /// 先用高流量把阈值推到高位，再用低流量下调，下限 max_requests。
     #[tokio::test]

@@ -1,7 +1,7 @@
 //! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! GeoIP 地理位置拦截策略（依据 spec firewall R-firewall-005）。
+//! GeoIP 地理位置拦截策略。
 //!
 //! `GeoIPStrategy` 实现 [`BulwarkFirewallStrategy`](crate::strategy::firewall::BulwarkFirewallStrategy) trait，
 //! 用 [`CountryLookup`](crate::strategy::firewall::geo::CountryLookup) trait 抽象 IP → 国家码查询，
@@ -24,7 +24,7 @@ use crate::strategy::firewall::{BulwarkFirewallStrategy, FirewallContext};
 use async_trait::async_trait;
 use std::sync::Arc;
 
-/// GeoIP 拦截配置（依据 spec firewall R-firewall-005）。
+/// GeoIP 拦截配置。
 ///
 /// 不含 `db_path`（db_path 属于 `MaxMindDbCountryLookup` 构造参数，
 /// 通过 [`CountryLookup`] trait 注入到 [`GeoIPStrategy`]）。
@@ -38,7 +38,7 @@ pub struct GeoIPConfig {
     pub blocked_countries: Vec<String>,
 }
 
-/// GeoIP 地理位置拦截策略（依据 spec firewall R-firewall-005）。
+/// GeoIP 地理位置拦截策略。
 ///
 /// 持有 [`CountryLookup`] trait 抽象（依赖注入），生产用 `MaxMindDbCountryLookup`，
 /// 测试用 `MockCountryLookup`。
@@ -155,7 +155,6 @@ mod tests {
     }
 
     /// 验证白名单模式：allowed=["CN"] 时，IP 解析为 US 返回 FirewallBlocked
-    ///（依据 spec firewall R-firewall-005 验收标准 1）。
     #[tokio::test]
     async fn geoip_blocks_when_not_in_allowed_countries() {
         let lookup: Arc<dyn CountryLookup> =
@@ -176,7 +175,6 @@ mod tests {
     }
 
     /// 验证黑名单模式：blocked=["XX"] 时，IP 解析为 XX 返回 FirewallBlocked
-    ///（依据 spec firewall R-firewall-005 验收标准 2）。
     #[tokio::test]
     async fn geoip_blocks_when_in_blocked_countries() {
         let lookup: Arc<dyn CountryLookup> =
@@ -197,7 +195,6 @@ mod tests {
     }
 
     /// 验证白名单放行：allowed=["CN"] 时，IP 解析为 CN 放行
-    ///（依据 spec firewall R-firewall-005 验收标准 3）。
     #[tokio::test]
     async fn geoip_allows_when_in_allowed_countries() {
         let lookup: Arc<dyn CountryLookup> =
@@ -216,7 +213,6 @@ mod tests {
     }
 
     /// 验证黑名单放行：blocked=["XX"] 时，IP 解析为 CN 放行
-    ///（依据 spec firewall R-firewall-005 验收标准 2 反向）。
     #[tokio::test]
     async fn geoip_allows_when_not_in_blocked_countries() {
         let lookup: Arc<dyn CountryLookup> =
@@ -235,7 +231,6 @@ mod tests {
     }
 
     /// 验证默认开放：allowed=[] 且 blocked=[] 时全部放行
-    ///（依据 spec firewall R-firewall-005 验收标准 4）。
     #[tokio::test]
     async fn geoip_allows_when_both_lists_empty() {
         let lookup: Arc<dyn CountryLookup> =
@@ -254,7 +249,6 @@ mod tests {
     }
 
     /// 验证白名单优先：allowed 非空时仅检查白名单，忽略黑名单
-    ///（依据 spec firewall R-firewall-005 验收标准 3 白名单优先）。
     #[tokio::test]
     async fn geoip_whitelist_takes_priority_over_blacklist() {
         let lookup: Arc<dyn CountryLookup> =

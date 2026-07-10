@@ -1,7 +1,7 @@
 //! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! 鉴权决策与请求模型（0.5.0 新增，依据 spec decision-trace）。
+//! 鉴权决策与请求模型。
 //!
 //! 提供决策溯源（Decision Provenance）所需的数据结构：
 //! - [`Decision`]：鉴权决策结果，含 allowed/reason/errors/trace 字段
@@ -17,7 +17,7 @@
 
 use serde::{Deserialize, Serialize};
 
-/// 鉴权决策原因（依据 spec decision-trace Requirement: DecisionReason）。
+/// 鉴权决策原因。
 ///
 /// 描述决策的"为什么"，用于 trace 输出和审计日志。
 ///
@@ -48,7 +48,7 @@ pub enum DecisionReason {
     TenantMismatch,
 }
 
-/// 鉴权决策结果（依据 spec decision-trace Requirement: Decision）。
+/// 鉴权决策结果。
 ///
 /// 包含决策本身（allowed/reason）和溯源信息（errors/checked_permissions/matched_roles/trace_id）。
 ///
@@ -108,7 +108,7 @@ impl Decision {
     }
 }
 
-/// 鉴权请求输入（依据 spec decision-trace Requirement: AuthRequest）。
+/// 鉴权请求输入。
 ///
 /// 封装一次鉴权请求的所有上下文，用于 `PermissionChecker::authorize` 方法。
 ///
@@ -152,7 +152,7 @@ mod tests {
     use super::*;
     use crate::error::BulwarkResult;
 
-    /// T011: Decision 序列化为 JSON 含所有必需字段。
+    /// Decision 序列化为 JSON 含所有必需字段。
     ///
     /// 验证 `Decision { allowed, reason, errors, checked_permissions, matched_roles, trace_id }`
     /// 序列化后包含全部 6 个字段。
@@ -207,7 +207,7 @@ mod tests {
         assert!(decision.errors.is_empty());
     }
 
-    /// T013: AuthRequest 构造并字段可读。
+    /// AuthRequest 构造并字段可读。
     ///
     /// 验证 `AuthRequest { login_id, tenant_id, action, resource, context }` 编译通过且字段可读。
     #[test]
@@ -282,7 +282,7 @@ mod tests {
     }
 
     // ========================================================================
-    // T103: trace_id 自动生成测试（依据 design.md D11 D5）
+    // trace_id 自动生成测试
     //
     // 启用 decision-trace feature 时，PermissionChecker::authorize 默认实现
     // 应自动生成 UUID v7（时间有序）作为 trace_id。
@@ -324,7 +324,7 @@ mod tests {
             PermissionCheckerDefault::new(interface_arc)
         }
 
-        /// T103: 启用 decision-trace 时 authorize 生成的 trace_id 是合法 UUID v7。
+        /// 启用 decision-trace 时 authorize 生成的 trace_id 是合法 UUID v7。
         ///
         /// 验证 `Decision.trace_id` 为 `Some`，且解析后 version_num == 7（UUID v7，时间有序）。
         #[tokio::test]
@@ -346,7 +346,7 @@ mod tests {
             );
         }
 
-        /// T103: 多次调用 authorize 生成不同的 trace_id。
+        /// 多次调用 authorize 生成不同的 trace_id。
         ///
         /// 验证连续 3 次 authorize 调用生成的 trace_id 互不相同（UUID v7 随机部分保证唯一性）。
         #[tokio::test]
@@ -370,7 +370,7 @@ mod tests {
             assert_ne!(t1, t3, "trace_id 1 与 3 不应相同");
         }
 
-        /// T103: 连续生成的 trace_id 字典序递增（UUID v7 时间有序特性）。
+        /// 连续生成的 trace_id 字典序递增（UUID v7 时间有序特性）。
         ///
         /// UUID v7 前 48 bits 为 unix_ts_ms（毫秒时间戳），跨毫秒时字典序严格递增。
         /// 测试中显式 sleep 2ms 保证跨毫秒，避免同毫秒内随机部分导致字典序不稳定。

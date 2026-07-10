@@ -3,7 +3,7 @@
 
 //! 国际化模块，提供异常消息多语言切换（中英文）。
 //!
-//! 依据 spec exception-i18n 与 PRD 0.3.0 异常消息国际化改进。
+//! 异常消息国际化改进。
 //!
 //! ## 设计
 //!
@@ -170,7 +170,7 @@ pub fn translate_error(err: &BulwarkError) -> String {
     }
 }
 
-/// 按 key + args 翻译为当前 locale 的本地化字符串（0.6.0 新增，依据 T021）。
+/// 按 key + args 翻译为当前 locale 的本地化字符串。
 ///
 /// 与 [`translate_error`] 不同，本函数不依赖 `BulwarkError`，直接接收 message key 与
 /// 参数列表，供 `loc!` 宏在社交登录 / Keycloak 等模块中按需翻译异常 detail。

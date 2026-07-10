@@ -1,7 +1,7 @@
 //! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! 审计日志模块（v0.5.0 新增，依据 proposal H3）。
+//! 审计日志模块。
 //!
 //! 提供 `AuditLogListener` 实现，将 `BulwarkEvent` 持久化到 `audit_logs` 表，
 //! 支持字段掩码（如 password）与异步写入。
@@ -45,7 +45,7 @@ use crate::error::{BulwarkError, BulwarkResult};
 /// - `mask_fields`: 需掩码的字段列表（如 `password`），metadata JSON 中对应字段值替换为 `"***"`
 /// - `retain_days`: 日志保留天数（过期自动清理，0 表示永不清理）
 /// - `async_write`: 是否异步写入（true 时不阻塞主流程，失败仅 `tracing::warn`）
-/// - `signing_key`: HMAC-SHA256 签名密钥（D4 新增，用于 `export_csv`/`export_json` 的签名链）
+/// - `signing_key`: HMAC-SHA256 签名密钥（用于 `export_csv`/`export_json` 的签名链）
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuditConfig {
     /// 需掩码的字段列表（如 `password`），metadata JSON 中对应字段值替换为 `"***"`。
@@ -63,10 +63,10 @@ pub struct AuditConfig {
 }
 
 // ============================================================================
-// AuditEntry + AuditLogListener（T072 Green，需 db-sqlite feature）
+// AuditEntry + AuditLogListener（需 db-sqlite feature）
 // ============================================================================
 //
-// Rule 7 冲突暴露（依据 proposal H3 + tasks.md T072）：
+// Rule 7 冲突暴露：
 // - tasks.md T072 说 `pub struct AuditLogListener { pub dao: Arc<dyn BulwarkDao>, .. }`
 //   并在 BulwarkDao trait 新增 `async fn insert_audit_log`
 // - 但 BulwarkDao 是 cache 抽象（4 实现：Oxcache/MockDao/MinimalDao/AloneCache，
@@ -146,7 +146,7 @@ pub struct AuditEntry {
     pub created_at: i64,
 }
 
-/// 审计日志查询条件（T079-T080 Green，依据 spec R-audit-log-007）。
+/// 审计日志查询条件（T079-T080 Green）。
 ///
 /// 用于 `AuditLogListener::query_audit_logs` 构造复合查询条件，
 /// 所有字段为 `Option`，`None` 表示不过滤该维度。
@@ -202,17 +202,17 @@ impl AuditLogListener {
         Self { pool, config }
     }
 
-    /// 将 `BulwarkEvent` 转换为 `AuditEntry`（T078: 全 19 变体穷尽 match）。
+    /// 将 `BulwarkEvent` 转换为 `AuditEntry`（全 19 变体穷尽 match）。
     ///
     /// spec R-audit-log-006 要求：`match` 无 `_ =>` 兜底，新增变体时编译错误提醒补实现。
     ///
     /// 14 个 spec 必需变体（R-audit-log-005）+ 5 个既有安全变体，全部转换为 AuditEntry。
     /// `event_type` 使用变体名 snake_case（如 `LoginFailure` → `"login_failure"`）。
     ///
-    /// T074: 转换后对 `metadata` 调用 `mask_metadata` 进行字段掩码。
+    /// 转换后对 `metadata` 调用 `mask_metadata` 进行字段掩码。
     fn to_audit_entry(&self, event: &BulwarkEvent) -> BulwarkResult<AuditEntry> {
         let now = Utc::now().timestamp();
-        // v0.5.0：从 TENANT task_local 读取当前租户 ID
+        // 从 TENANT task_local 读取当前租户 ID
         // - tenant-isolation feature 关闭：current_tenant_id() 无上下文时返回 0（向后兼容）
         // - tenant-isolation feature 启用：current_tenant_id_strict() 无上下文时返回 Err（Rule 12 失败显性化）
         #[cfg(not(feature = "tenant-isolation"))]
@@ -463,7 +463,7 @@ impl AuditLogListener {
                 created_at: now,
             },
         };
-        // T074: 对 metadata 进行字段掩码（如 password → ***）
+        // 对 metadata 进行字段掩码（如 password → ***）
         entry.metadata = entry.metadata.map(|m| self.mask_metadata(&m));
         Ok(entry)
     }
@@ -552,7 +552,7 @@ impl AuditLogListener {
         Ok(())
     }
 
-    /// 按复合条件查询审计日志（T080 Green，依据 spec R-audit-log-007）。
+    /// 按复合条件查询审计日志（T080 Green）。
     ///
     /// 动态拼 SQL `WHERE` 子句，所有参数使用占位符 `?` 防止 SQL 注入。
     /// `AuditQuery` 字段为 `None` 时跳过该过滤维度。
@@ -647,7 +647,7 @@ impl AuditLogListener {
             .collect()
     }
 
-    /// 导出审计日志为 CSV 字符串（D4 新增，依据 design.md D11 D4）。
+    /// 导出审计日志为 CSV 字符串（D4 新增）。
     ///
     /// 列：`timestamp,login_id,tenant_id,event_type,signature`
     ///
@@ -679,7 +679,7 @@ impl AuditLogListener {
         Ok(csv)
     }
 
-    /// 导出审计日志为 JSON 数组字符串（D4 新增，依据 design.md D11 D4）。
+    /// 导出审计日志为 JSON 数组字符串（D4 新增）。
     ///
     /// 每行一个 JSON 对象，包含 `timestamp`/`login_id`/`tenant_id`/`event_type`/`signature` 字段。
     /// 签名链算法同 `export_csv`。
@@ -716,7 +716,7 @@ impl AuditLogListener {
             .map_err(|e| BulwarkError::Config(format!("JSON 序列化失败: {}", e)))
     }
 
-    /// 验证 HMAC-SHA256 签名链（D4 新增，依据 design.md D11 D4）。
+    /// 验证 HMAC-SHA256 签名链（D4 新增）。
     ///
     /// 重新计算 `entries` 的签名链，与提供的 `signatures` 逐行比对。
     /// 任一行签名不匹配则返回 `Ok(false)`（检测到篡改）。
@@ -787,8 +787,8 @@ impl AuditLogListener {
 impl BulwarkListener for AuditLogListener {
     /// 事件处理：转换 + INSERT，失败时 `tracing::warn` 不传播错误。
     ///
-    /// 依据 tasks.md T072："失败时 `tracing::warn` 不传播错误"——
-    /// 监听器失败不中断主流程（依据 spec listener-system）。
+    /// "失败时 `tracing::warn` 不传播错误"——
+    /// 监听器失败不中断主流程。
     async fn on_event(&self, event: &BulwarkEvent) -> BulwarkResult<()> {
         match self.to_audit_entry(event) {
             Ok(entry) => {
@@ -846,7 +846,7 @@ mod tests {
 }
 
 // ============================================================================
-// db-sqlite 集成测试（T069-T082: audit_logs 表迁移 + AuditLogListener）
+// db-sqlite 集成测试（T069-audit_logs 表迁移 + AuditLogListener）
 // ============================================================================
 
 #[cfg(all(test, feature = "audit-log", feature = "db-sqlite"))]
@@ -911,7 +911,7 @@ mod db_sqlite_tests {
     }
 
     // ========================================================================
-    // T069-T070: audit_logs 表迁移验证
+    // T069-audit_logs 表迁移验证
     // ========================================================================
 
     /// T069-T070 Green: 验证 SQLite 迁移加载 `004_audit_logs.sql` 后
@@ -939,7 +939,7 @@ mod db_sqlite_tests {
     }
 
     // ========================================================================
-    // T071-T072: AuditLogListener 持久化事件
+    // T071-AuditLogListener 持久化事件
     // ========================================================================
 
     /// T071 Red: AuditLogListener 接收 `BulwarkEvent::Login` 后持久化到 `audit_logs` 表。
@@ -998,7 +998,7 @@ mod db_sqlite_tests {
     }
 
     // ========================================================================
-    // T073-T074: metadata 字段掩码（如 password → ***）
+    // T073-metadata 字段掩码（如 password → ***）
     // ========================================================================
 
     /// T073 Red: `AuditLogListener::mask_metadata` 应将 metadata JSON 中
@@ -1042,7 +1042,7 @@ mod db_sqlite_tests {
     }
 
     // ========================================================================
-    // T077-T078: AuditLogListener 覆盖全部 14 事件（spec R-audit-log-006）
+    // T077-AuditLogListener 覆盖全部 14 事件（spec R-audit-log-006）
     // ========================================================================
 
     /// T077 Red: AuditLogListener 应为 spec R-audit-log-005 的 14 个变体
@@ -1208,7 +1208,7 @@ mod db_sqlite_tests {
     }
 
     // ========================================================================
-    // T079-T080: query_audit_logs 复合条件查询（spec R-audit-log-007）
+    // T079-query_audit_logs 复合条件查询（spec R-audit-log-007）
     // ========================================================================
 
     /// T079 Red: `AuditLogListener::query_audit_logs` 应按 `AuditQuery` 的
@@ -1416,7 +1416,7 @@ mod db_sqlite_tests {
     }
 
     // ========================================================================
-    // D4 T100: export_csv / export_json / verify_signature_chain 测试（Red）
+    // D4 export_csv / export_json / verify_signature_chain 测试（Red）
     // ========================================================================
 
     /// T100 Red: `export_csv` 应返回有效 CSV 格式字符串。

@@ -1,4 +1,4 @@
-//! 锁定状态存储抽象（v0.6.0 占位，依据 spec user-lockout Out of Scope）。
+//! 锁定状态存储抽象。
 //!
 //! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.

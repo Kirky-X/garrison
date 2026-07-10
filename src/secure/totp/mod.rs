@@ -12,7 +12,7 @@
 use crate::error::{BulwarkError, BulwarkResult};
 use totp_rs::{Algorithm, TOTP};
 
-/// TOTP 处理器，封装 RFC 6238 动态验证码生成与校验（依据 spec secure-totp）。
+/// TOTP 处理器，封装 RFC 6238 动态验证码生成与校验。
 ///
 /// # 示例
 ///
@@ -40,7 +40,7 @@ pub struct TotpHandler {
 }
 
 impl TotpHandler {
-    /// 创建新的 TOTP 处理器（依据 spec secure-totp）。
+    /// 创建新的 TOTP 处理器。
     ///
     /// 使用 SHA1 算法（RFC 6238 默认），skew=1 允许 ±1 时间窗口偏差。
     ///
@@ -64,7 +64,7 @@ impl TotpHandler {
         Ok(Self { totp, step, digits })
     }
 
-    /// 生成 TOTP 验证码（依据 RFC 6238）。
+    /// 生成 TOTP 验证码。
     ///
     /// # 参数
     /// - `now`: 当前 Unix 时间戳（秒）。
@@ -75,7 +75,7 @@ impl TotpHandler {
         self.totp.generate(now as u64)
     }
 
-    /// 校验 TOTP 验证码（依据 RFC 6238 §5.2）。
+    /// 校验 TOTP 验证码。
     ///
     /// 允许 ±1 个时间窗口的偏差以容忍客户端与时钟漂移。
     ///
@@ -90,7 +90,7 @@ impl TotpHandler {
         self.totp.check(code, now as u64)
     }
 
-    /// 将 Google Authenticator 风格的 Base32 密钥解码为原始字节（依据 spec secure-totp）。
+    /// 将 Google Authenticator 风格的 Base32 密钥解码为原始字节。
     ///
     /// 使用 RFC 4648 Base32 编码（无 padding），兼容主流 Authenticator App。
     ///
@@ -114,7 +114,7 @@ mod tests {
     const TEST_SECRET: &[u8] = b"12345678901234567890";
 
     // ========================================================================
-    // 构造测试（依据 spec secure-totp）
+    // 构造测试
     // ========================================================================
 
     /// 使用默认参数构造 TotpHandler（spec Scenario）。
@@ -141,7 +141,7 @@ mod tests {
     }
 
     // ========================================================================
-    // generate 测试（依据 spec secure-totp）
+    // generate 测试
     // ========================================================================
 
     /// 生成 6 位验证码（spec Scenario）。
@@ -180,7 +180,7 @@ mod tests {
     }
 
     // ========================================================================
-    // validate 测试（依据 spec secure-totp）
+    // validate 测试
     // ========================================================================
 
     /// 当前窗口验证码校验通过（spec Scenario）。
@@ -223,7 +223,7 @@ mod tests {
     }
 
     // ========================================================================
-    // secret_from_base32 测试（依据 spec secure-totp）
+    // secret_from_base32 测试
     // ========================================================================
 
     /// 解码合法 Base32 密钥（spec Scenario）。

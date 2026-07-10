@@ -51,27 +51,27 @@ pub enum BulwarkError {
     /// 上下文错误（对应 BulwarkContext / Request / Response / Storage 异常）。
     Context(String),
 
-    /// 业务异常（携带上下文的可恢复异常，0.2.0 新增，依据 spec exception-system）。
+    /// 业务异常（携带上下文的可恢复异常）。
     Exception(BulwarkException),
 
-    /// OAuth2 协议错误（0.2.0 新增，依据 spec protocol-oauth2）。
+    /// OAuth2 协议错误。
     OAuth2(String),
 
-    /// 网络错误（0.2.0 新增，依据 spec protocol-oauth2）。
+    /// 网络错误。
     Network(String),
 
-    /// 参数无效错误（0.2.0 新增，依据 spec protocol-oauth2）。
+    /// 参数无效错误。
     InvalidParam(String),
 
-    /// 功能未实现（0.2.0 新增，依据 spec core-auth-api：default 实现返回此错误）。
+    /// 功能未实现（default 实现返回此错误）。
     NotImplemented(String),
 
-    /// 防火墙拦截（0.5.0 新增，依据 spec firewall R-firewall-001 ~ R-firewall-005）。
+    /// 防火墙拦截。
     ///
     /// 携带 strategy 名与原因，便于 audit-log 订阅。
     FirewallBlocked(String),
 
-    /// 账号被封禁异常（0.6.1 新增，依据 spec error-exceptions R-error-001）。
+    /// 账号被封禁异常。
     ///
     /// 对应 PRD §3.1.6 DisableServiceException / FRD §3.4 BW-ERR-010。
     /// `service` 记录被封禁的服务名（如 "default" / "oidc"），
@@ -84,7 +84,7 @@ pub enum BulwarkError {
         until: Option<chrono::DateTime<chrono::Utc>>,
     },
 
-    /// 未完成二次认证异常（0.6.1 新增，依据 spec error-exceptions R-error-002）。
+    /// 未完成二次认证异常。
     ///
     /// 对应 PRD §3.1.6 NotSafeException / FRD §5.4.1。
     /// `reason` 说明未完成的具体认证（如 "MFA_TOTP_REQUIRED" / "WEBAUTHN_REQUIRED"）。
@@ -93,7 +93,7 @@ pub enum BulwarkError {
         reason: String,
     },
 
-    /// 非法状态转换（0.6.1 新增，依据 spec error-exceptions R-error-003）。
+    /// 非法状态转换。
     ///
     /// 供 E-005 状态机使用，`from` / `to` 为状态枚举的 Debug 输出。
     /// HTTP status = 500（内部状态错误，非用户错误）。
@@ -154,12 +154,12 @@ impl std::fmt::Display for BulwarkError {
 pub type BulwarkResult<T> = Result<T, BulwarkError>;
 
 // ============================================================================
-// response_parts：框架无关的响应分片（0.3.0 新增，依据 spec web-adapters）
+// response_parts：框架无关的响应分片
 // ============================================================================
 
 impl BulwarkError {
     // ========================================================================
-    // BW-ERR 错误码常量（0.6.1 新增，依据 spec error-exceptions R-error-004 / FRD §3.4）
+    // BW-ERR 错误码常量
     // ========================================================================
     // 与 response_parts() 返回的字符串 error_code（如 "DISABLE_SERVICE"）解耦：
     // - response_parts().1 → 面向 HTTP 响应体（Sa-Token 既有惯例）
@@ -188,7 +188,7 @@ impl BulwarkError {
     /// 返回 HTTP 响应分片 `(status_code, error_code, message, exception_code)`。
     ///
     /// 框架无关方法，axum / actix-web / warp 适配器均复用此方法以保证三框架行为一致性
-    /// （依据 spec web-adapters Requirement: 适配器行为一致性）。
+    /// 。
     ///
     /// # 返回
     /// - `status_code`: HTTP 状态码（401/403/500/502/400/501）。
@@ -217,7 +217,7 @@ impl BulwarkError {
             BulwarkError::InvalidParam(_) => (400, "INVALID_PARAM", "参数无效", None),
             BulwarkError::NotImplemented(_) => (501, "NOT_IMPLEMENTED", "未实现", None),
             BulwarkError::FirewallBlocked(_) => (403, "FIREWALL_BLOCKED", "防火墙拦截", None),
-            // 0.6.1 新增变体（依据 spec error-exceptions R-error-001~003）
+            // 变体
             BulwarkError::DisableService { .. } => (403, "DISABLE_SERVICE", "账号已被封禁", None),
             BulwarkError::NotSafe { .. } => (400, "NOT_SAFE", "未完成二次认证", None),
             BulwarkError::InvalidStateTransition { .. } => {
@@ -267,7 +267,7 @@ impl BulwarkError {
 /// # 安全性
 ///
 /// 响应体仅暴露结构化错误码 + 通用消息（不泄漏内部错误细节）；
-/// 完整错误通过 `tracing::error!` 记录到日志（依据 codebase-hardening Task 0.4）。
+/// 完整错误通过 `tracing::error!` 记录到日志。
 #[cfg(feature = "web-axum")]
 impl axum::response::IntoResponse for BulwarkError {
     fn into_response(self) -> axum::response::Response {
@@ -276,12 +276,12 @@ impl axum::response::IntoResponse for BulwarkError {
         // 完整错误记录到日志（不返回给客户端）
         tracing::error!(error = ?self, "bulwark rejection");
 
-        // 0.3.0：复用 response_parts() 保证三框架行为一致（依据 spec web-adapters）
+        // 复用 response_parts() 保证三框架行为一致
         let (status_code, error_code, _, _) = self.response_parts();
         let status = StatusCode::from_u16(status_code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
         let json_value = self.to_json_body();
 
-        // 防御性截断：限制响应体大小为 4KB（依据 spec R-error-002）
+        // 防御性截断：限制响应体大小为 4KB
         // 当前架构下 message 是固定字符串，body 永远 < 4KB；
         // 此截断保护未来架构变化（如 message 字段包含可变内容时）不会导致响应体过大。
         const MAX_BODY_SIZE: usize = 4096;
@@ -292,7 +292,7 @@ impl axum::response::IntoResponse for BulwarkError {
         if body_str.len() <= MAX_BODY_SIZE {
             (status, axum::Json(json_value)).into_response()
         } else {
-            // 截断后构造简化版 JSON，保证合法（依据 spec R-error-002 验收标准 2）
+            // 截断后构造简化版 JSON，保证合法
             let truncated = serde_json::json!({
                 "error_code": error_code,
                 "message": "<truncated>",
@@ -303,7 +303,7 @@ impl axum::response::IntoResponse for BulwarkError {
 }
 
 // ============================================================================
-// miette::Diagnostic 实现（cfg feature = "miette"，依据 spec error R-error-001 M5）
+// miette::Diagnostic 实现（cfg feature = "miette"）
 // ============================================================================
 //
 // 富错误渲染层：保留 `thiserror::Error` derive（错误定义 + source 链），
@@ -555,10 +555,10 @@ mod tests {
     }
 
     // ========================================================================
-    // 鉴权错误状态码映射测试（依据 codebase-hardening Task 3.1-3.5）
+    // 鉴权错误状态码映射测试
     // ========================================================================
 
-    /// 验证 NotLogin 错误映射为 401 Unauthorized（依据 codebase-hardening Task 3.1）。
+    /// 验证 NotLogin 错误映射为 401 Unauthorized。
     #[cfg(feature = "web-axum")]
     #[test]
     fn not_login_error_returns_401() {
@@ -569,7 +569,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 
-    /// 验证 NotPermission 错误映射为 403 Forbidden（依据 codebase-hardening Task 3.2）。
+    /// 验证 NotPermission 错误映射为 403 Forbidden。
     #[cfg(feature = "web-axum")]
     #[test]
     fn not_permission_error_returns_403() {
@@ -580,7 +580,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
 
-    /// 验证 InvalidToken 错误映射为 401 Unauthorized（依据 codebase-hardening Task 3.3）。
+    /// 验证 InvalidToken 错误映射为 401 Unauthorized。
     #[cfg(feature = "web-axum")]
     #[test]
     fn invalid_token_returns_401() {
@@ -591,7 +591,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 
-    /// 验证 ExpiredToken 错误映射为 401 Unauthorized（依据 codebase-hardening Task 3.4）。
+    /// 验证 ExpiredToken 错误映射为 401 Unauthorized。
     #[cfg(feature = "web-axum")]
     #[test]
     fn expired_token_returns_401() {
@@ -602,7 +602,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 
-    /// 验证 NotRole 错误映射为 403 Forbidden（依据 codebase-hardening Task 3.5）。
+    /// 验证 NotRole 错误映射为 403 Forbidden。
     #[cfg(feature = "web-axum")]
     #[test]
     fn not_role_returns_403() {
@@ -614,7 +614,7 @@ mod tests {
     }
 
     // ========================================================================
-    // Exception 变体测试（依据 spec exception-system Requirement: IntoResponse 实现）
+    // Exception 变体测试
     // ========================================================================
 
     /// 验证 Exception 变体的 Display 输出（委托给 BulwarkException::Display）。
@@ -625,7 +625,7 @@ mod tests {
         assert_eq!(err.to_string(), "业务异常[-1]: 请先登录");
     }
 
-    /// 验证 code=-1 的 Exception 映射为 401 Unauthorized（依据 spec Scenario: 未登录异常返回 401 JSON）。
+    /// 验证 code=-1 的 Exception 映射为 401 Unauthorized。
     #[cfg(feature = "web-axum")]
     #[test]
     fn exception_not_login_returns_401() {
@@ -637,7 +637,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 
-    /// 验证 code=-2 的 Exception 映射为 403 Forbidden（依据 spec Scenario: 无权限异常返回 403 JSON）。
+    /// 验证 code=-2 的 Exception 映射为 403 Forbidden。
     #[cfg(feature = "web-axum")]
     #[test]
     fn exception_not_permission_returns_403() {
@@ -649,7 +649,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
 
-    /// 验证其他 code 的 Exception 映射为 500 Internal Server Error（依据 spec Scenario: 其他异常返回 500 JSON）。
+    /// 验证其他 code 的 Exception 映射为 500 Internal Server Error。
     #[cfg(feature = "web-axum")]
     #[test]
     fn exception_other_code_returns_500() {
@@ -819,10 +819,10 @@ mod tests {
     }
 
     // ========================================================================
-    // 响应体大小限制测试（依据 spec R-error-002）
+    // 响应体大小限制测试
     // ========================================================================
 
-    /// 验证响应体大小被限制在 4KB 以内（依据 spec R-error-002）。
+    /// 验证响应体大小被限制在 4KB 以内。
     ///
     /// 构造超长 error message 的 BulwarkError，断言 response body <= 4096 字节且仍是合法 JSON。
     /// 防御性测试：当前架构下 message 字段是固定字符串（不泄露变体 String 内容），
@@ -862,7 +862,7 @@ mod tests {
     }
 
     // ========================================================================
-    // miette::Diagnostic 测试（cfg feature = "miette"，依据 spec error R-error-001 M5）
+    // miette::Diagnostic 测试（cfg feature = "miette"）
     // ========================================================================
 
     /// 验证 `Diagnostic::code()` 返回稳定的 dotted kebab-case 错误代码。
@@ -986,7 +986,7 @@ mod tests {
     }
 
     // ========================================================================
-    // 覆盖率补充：FirewallBlocked 变体（依据 spec firewall R-firewall-001）
+    // 覆盖率补充：FirewallBlocked 变体
     // ========================================================================
 
     /// 验证 FirewallBlocked 变体的 Display 输出包含原始消息。
@@ -1037,7 +1037,7 @@ mod tests {
 
     // ========================================================================
     // DisableService / NotSafe / InvalidStateTransition 变体测试
-    // （0.6.1 新增，依据 spec error-exceptions R-error-001~003）
+    //
     // ========================================================================
 
     /// 验证 DisableService 变体的 Display 输出包含 service 与 until。
@@ -1203,7 +1203,7 @@ mod tests {
     }
 
     // ========================================================================
-    // BW-ERR 错误码常量测试（0.6.1 新增，依据 spec error-exceptions R-error-004）
+    // BW-ERR 错误码常量测试
     // ========================================================================
 
     /// 验证 BW_ERR_009 常量值为 409001（并发登录冲突，FRD §3.4）。

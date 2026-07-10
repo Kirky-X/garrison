@@ -1,7 +1,7 @@
 //! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! 显式 Manager API（0.5.1 新增，依据 spec manager-explicit M7 / design.md D9）。
+//! 显式 Manager API。
 //!
 //! 提供不依赖全局单例的 [`Manager`] struct，通过 `new(logic)` 显式注入 [`BulwarkLogicDefault`]，
 //! 便于测试隔离与多实例场景。
@@ -32,7 +32,7 @@ use crate::core::permission::{AuthRequest, Decision, DecisionReason};
 use crate::error::{BulwarkError, BulwarkResult};
 use crate::stp::{BulwarkLogicDefault, PermissionLogic};
 
-/// 显式依赖注入入口（0.5.1 新增，依据 spec manager-explicit / design.md D9）。
+/// 显式依赖注入入口。
 ///
 /// 与 [`BulwarkManager`](crate::manager::BulwarkManager) 的区别：
 /// - `BulwarkManager`：全局单例，通过 `init()` 初始化，静态 API
@@ -81,7 +81,7 @@ impl Manager {
     ///
     /// # trace_id
     ///
-    /// 依据 spec R-manager-explicit-002，返回的 `Decision.trace_id` 非空（UUID v7，时间有序）。
+    /// `Decision.trace_id` 非空（UUID v7，时间有序）。
     /// 每次调用 `authorize` 都生成新的 UUID v7，便于跨服务追踪与审计关联。
     ///
     /// # 鉴权上下文
@@ -95,7 +95,7 @@ impl Manager {
     /// - DAO 故障等：透传对应 `BulwarkError`。
     /// - "未持有权限"不是错误，返回 `Ok(Decision { allowed: false, .. })`。
     pub async fn authorize(&self, req: &AuthRequest) -> BulwarkResult<Decision> {
-        // 依据 spec R-manager-explicit-002：trace_id 非空 UUID v7（时间有序）
+        // trace_id 非空 UUID v7（时间有序）
         let trace_id = Some(uuid::Uuid::now_v7().to_string());
         match self.logic.check_permission(&req.action).await {
             Ok(()) => Ok(Decision {
@@ -141,7 +141,7 @@ impl Manager {
 }
 
 // ============================================================================
-// 测试（依据 spec manager-explicit M7 / design.md D9）
+// 测试
 // ============================================================================
 
 #[cfg(test)]

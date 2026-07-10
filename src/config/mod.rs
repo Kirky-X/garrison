@@ -29,10 +29,10 @@ use tokio::sync::watch;
 
 /// Token 风格枚举（对应 Sa-Token 的 token 风格）。
 ///
-/// 依据 spec config-system Requirement: 配置校验——token_style 必须是以下 4 个合法值之一。
+/// 配置校验——token_style 必须是以下 4 个合法值之一。
 pub const TOKEN_STYLES: &[&str] = &["uuid", "random_64", "simple", "jwt"];
 
-/// Cookie SameSite 合法值（依据 RFC 6265bis）。
+/// Cookie SameSite 合法值。
 pub const COOKIE_SAME_SITE_VALUES: &[&str] = &["Lax", "Strict", "None"];
 
 /// 默认 Token 名称（对应 HTTP Header / Cookie 字段名）。
@@ -50,13 +50,13 @@ pub const DEFAULT_COOKIE_SECURE: bool = true;
 /// 默认 Cookie SameSite 策略（"Lax" 平衡安全与可用性）。
 pub const DEFAULT_COOKIE_SAME_SITE: &str = "Lax";
 
-/// 默认 JWT 签名算法（HS256，兼容 HS512 可选，依据 spec protocol-jwt）。
+/// 默认 JWT 签名算法（HS256，兼容 HS512 可选）。
 pub const DEFAULT_JWT_ALGORITHM: &str = "HS256";
 
-/// 默认签名校验时间窗口秒数（5 分钟，依据 spec protocol-sign 防重放）。
+/// 默认签名校验时间窗口秒数（5 分钟）。
 pub const DEFAULT_SIGN_WINDOW_SECONDS: i64 = 300;
 
-/// 默认 SSO ticket TTL 秒数（60 秒，依据 spec protocol-sso 短时票据）。
+/// 默认 SSO ticket TTL 秒数（60 秒）。
 pub const DEFAULT_SSO_TICKET_TTL_SECONDS: u64 = 60;
 
 /// 默认 remember-me 超时秒数（90 天，必须 > DEFAULT_TIMEOUT 30 天）。
@@ -66,10 +66,10 @@ pub const REMEMBER_ME_DEFAULT_TIMEOUT: i64 = 7_776_000;
 pub const ENV_PREFIX: &str = "BULWARK_";
 
 // ============================================================================
-// 多租户隔离配置（v0.5.0 新增，依据 spec tenant-isolation R-006）
+// 多租户隔离配置
 // ============================================================================
 
-/// 租户解析器类型（依据 spec tenant-isolation R-006）。
+/// 租户解析器类型。
 ///
 /// 配置文件中使用小写形式（`"header"` / `"subdomain"` / `"claim"`）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -83,7 +83,7 @@ pub enum TenantResolverKind {
     Claim,
 }
 
-/// 多租户隔离配置段（依据 spec tenant-isolation R-006）。
+/// 多租户隔离配置段。
 ///
 /// # 默认值
 ///
@@ -135,7 +135,7 @@ impl Default for TenantIsolationConfig {
 /// # 配置校验
 ///
 /// - `token_style` 必须是 `TOKEN_STYLES` 中的合法值
-/// - `timeout` 必须 > 0（依据 spec config-system Requirement: 配置校验）
+/// - `timeout` 必须 > 0
 ///
 /// # 热更新
 ///
@@ -154,7 +154,7 @@ pub struct BulwarkConfig {
     /// Token 名称（对应 HTTP Header / Cookie 字段名）。
     pub token_name: String,
 
-    /// Token 超时秒数（必须 > 0，依据 spec config-system Requirement: 配置校验）。
+    /// Token 超时秒数（必须 > 0）。
     pub timeout: i64,
 
     /// 活动超时检测（-1 表示不启用，保留 Sa-Token 语义）。
@@ -172,7 +172,7 @@ pub struct BulwarkConfig {
     /// Token 风格（uuid / random_64 / simple / jwt）。
     pub token_style: String,
 
-    /// 未登录时是否抛出异常（false 则返回 false，依据 spec config-system）。
+    /// 未登录时是否抛出异常（false 则返回 false）。
     pub throw_on_not_login: bool,
 
     /// Cookie 是否标记 `Secure`（仅 HTTPS 传输，dev 环境 HTTP 调试时可设为 false）。
@@ -181,17 +181,17 @@ pub struct BulwarkConfig {
     /// Cookie 的 `SameSite` 策略（"Lax" / "Strict" / "None"）。
     pub cookie_same_site: String,
 
-    /// JWT 签名算法（"HS256" 默认 / "HS512" 可选，依据 spec protocol-jwt）。
+    /// JWT 签名算法（"HS256" 默认 / "HS512" 可选）。
     pub jwt_algorithm: String,
 
-    /// JWT 签名密钥（0.2.0 新增，依据 spec core-auth-api：verify_token/refresh_token 委托 JwtHandler 需要 secret）。
+    /// JWT 签名密钥（verify_token/refresh_token 委托 JwtHandler 需要 secret）。
     /// 默认空字符串，业务方使用 JWT 时必须配置非空 secret。
     pub jwt_secret: String,
 
-    /// 签名校验时间窗口秒数（默认 300 秒，依据 spec protocol-sign 防重放）。
+    /// 签名校验时间窗口秒数（默认 300 秒）。
     pub sign_window_seconds: i64,
 
-    /// SSO ticket TTL 秒数（默认 60 秒，依据 spec protocol-sso 短时票据）。
+    /// SSO ticket TTL 秒数（默认 60 秒）。
     pub sso_ticket_ttl_seconds: u64,
 
     /// 是否启用 remember-me 扩展会话超时（默认 false）。
@@ -204,7 +204,7 @@ pub struct BulwarkConfig {
     /// 仅当 `remember_me_enabled = true` 且 `login` params 含 `remember_me=true` 时生效。
     pub remember_me_timeout: i64,
 
-    /// 多租户隔离配置段（v0.5.0 新增，依据 spec tenant-isolation R-006）。
+    /// 多租户隔离配置段。
     ///
     /// 默认 `enabled: false`（向后兼容）。启用后需配合 `tenant-isolation` Cargo feature
     /// + `tenant_resolution_middleware` 才能生效。
@@ -218,7 +218,7 @@ pub struct BulwarkConfig {
 impl BulwarkConfig {
     /// 创建符合 spec 的默认配置实例。
     ///
-    /// 依据 spec config-system Scenario: 代码默认值生效：
+    /// Scenario: 代码默认值生效：
     /// - token_style = "uuid"
     /// - timeout = 2592000（30 天）
     /// - throw_on_not_login = true
@@ -333,7 +333,7 @@ impl BulwarkConfig {
 
     /// 校验配置字段合法性。
     ///
-    /// 依据 spec config-system Requirement: 配置校验：
+    /// 配置校验：
     /// - `token_style` 必须是 `TOKEN_STYLES` 中的合法值
     /// - `timeout` 必须 > 0（-1 抛错 "timeout must be positive"）
     ///
@@ -380,7 +380,7 @@ impl BulwarkConfig {
         Ok(())
     }
 
-    /// 订阅配置变更（依据 spec config-system Requirement: 配置热更新）。
+    /// 订阅配置变更。
     ///
     /// 返回 `watch::Receiver<BulwarkConfig>`，调用 `rx.borrow_and_update()` 获取最新配置。
     /// 若实例未调用 `with_watcher()`，返回 `None`。
@@ -392,9 +392,8 @@ impl BulwarkConfig {
         self.watcher.as_ref().map(|tx| tx.subscribe())
     }
 
-    /// 闭包式更新配置并广播变更（依据 spec config-system Requirement: 配置热更新）。
+    /// 闭包式更新配置并广播变更。
     ///
-    /// 对应 spec scenario `BulwarkConfig::update("timeout", 3600)`：
     /// ```ignore
     /// config.update(|c| c.timeout = 3600)?;
     /// ```
@@ -509,7 +508,7 @@ mod tests {
         assert!(config.is_read_cookie);
         assert!(config.is_read_header);
         assert!(config.is_write_header);
-        // 0.2.0 新增字段默认值（依据 spec protocol-jwt / protocol-sign / protocol-sso）
+        // 字段默认值
         assert_eq!(config.jwt_algorithm, "HS256");
         assert_eq!(config.sign_window_seconds, 300);
         assert_eq!(config.sso_ticket_ttl_seconds, 60);
@@ -593,7 +592,7 @@ mod tests {
 
     /// 验证 token_style=jwt 但 jwt_secret 为空时校验失败（A-001 安全审计修复）。
     ///
-    /// 依据 spec config-system Requirement: 配置校验——jwt_secret 不能为空当 token_style=jwt，
+    /// 配置校验——jwt_secret 不能为空当 token_style=jwt，
     /// 防止攻击者用公开的空字符串密钥伪造 JWT。
     #[test]
     fn validate_rejects_empty_jwt_secret_when_token_style_is_jwt() {
@@ -1054,7 +1053,7 @@ jwt_secret = "test-secret""#,
     }
 
     // ========================================================================
-    // 0.2.0 新增字段环境变量覆盖测试
+    // 字段环境变量覆盖测试
     // ========================================================================
 
     /// 验证 `BULWARK_JWT_ALGORITHM` 环境变量覆盖 jwt_algorithm 字段。
@@ -1114,7 +1113,7 @@ jwt_secret = "test-secret""#,
     }
 
     // ========================================================================
-    // tenant_isolation 配置段测试（v0.5.0 新增，依据 spec tenant-isolation R-006）
+    // tenant_isolation 配置段测试
     // ========================================================================
 
     /// R-tenant-isolation-006: `BulwarkConfig` 反序列化 JSON 含 `tenant_isolation` 段时，

@@ -1,7 +1,7 @@
 //! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! SSO Server 独立抽象模块（依据 spec protocol-sso-server）。
+//! SSO Server 独立抽象模块。
 //!
 //! 与 `SsoClient`（客户端）解耦，通过共享 `BulwarkDao` 间接通信。
 //! 提供 `SsoServer` trait / `CenterIdConverter` trait / `SsoChannel` trait，
@@ -26,7 +26,7 @@ const DEFAULT_TICKET_TTL: u64 = 60;
 // Trait 定义
 // ============================================================================
 
-/// SSO 服务端抽象 trait（依据 spec protocol-sso-server）。
+/// SSO 服务端抽象 trait。
 ///
 /// 与 `SsoClient`（客户端）解耦，通过共享 `BulwarkDao` 间接通信。
 /// ticket 一次性使用，校验成功后立即销毁。
@@ -52,10 +52,10 @@ pub trait SsoServer: Send + Sync {
     /// - `Ok(login_id)`: 校验成功（经 `CenterIdConverter::to_login_id` 转换回原始 login_id）。
     /// - `Err(BulwarkError::InvalidToken)`: 票据不存在、已过期或 client_id 不匹配。
     ///
-    /// # 原子性保证（v0.4.2 修复）
+    /// # 原子性保证（）
     ///
     /// 与 `SsoClient::validate_ticket` 相同，使用 `BulwarkDao::get_and_delete` 原子操作。
-    /// 依据 spec protocol-sso-toctou R-002。
+    /// R-002。
     async fn validate_ticket(&self, ticket: &str, client_id: i64) -> BulwarkResult<String>;
 
     /// 销毁 SSO ticket（幂等，即使票据不存在也返回 `Ok(())`）。
@@ -67,7 +67,7 @@ pub trait SsoServer: Send + Sync {
     async fn push_message(&self, login_id: &str, message: &str) -> BulwarkResult<()>;
 }
 
-/// 中心 ID 转换器 trait（依据 spec protocol-sso-server）。
+/// 中心 ID 转换器 trait。
 ///
 /// 用于多子系统 login_id 映射，支持双向转换。
 pub trait CenterIdConverter: Send + Sync {
@@ -78,7 +78,7 @@ pub trait CenterIdConverter: Send + Sync {
     fn to_login_id(&self, center_id: &str) -> String;
 }
 
-/// SSO 消息推送通道 trait（依据 spec protocol-sso-server）。
+/// SSO 消息推送通道 trait。
 ///
 /// 作为 SSO 前后端消息推送抽象，支持自定义实现（如 Redis pub-sub）。
 #[async_trait]
@@ -102,7 +102,7 @@ pub trait SsoChannel: Send + Sync {
 // 默认实现
 // ============================================================================
 
-/// 默认的 identity `CenterIdConverter` 实现（依据 spec protocol-sso-server）。
+/// 默认的 identity `CenterIdConverter` 实现。
 ///
 /// `to_center_id` 和 `to_login_id` 都返回原始值（identity 转换）。
 pub struct IdentityCenterIdConverter;
@@ -117,7 +117,7 @@ impl CenterIdConverter for IdentityCenterIdConverter {
     }
 }
 
-/// 空操作 `SsoChannel` 默认实现（依据 spec protocol-sso-server）。
+/// 空操作 `SsoChannel` 默认实现。
 ///
 /// 所有方法返回 `Ok(())`，不实际推送消息。
 pub struct NoopSsoChannel;
@@ -137,7 +137,7 @@ impl SsoChannel for NoopSsoChannel {
     }
 }
 
-/// 默认 `SsoServer` 实现（依据 spec protocol-sso-server）。
+/// 默认 `SsoServer` 实现。
 ///
 /// 持有 `Arc<dyn BulwarkDao>` 用于票据存储，
 /// `Option<Arc<dyn SsoChannel>>` 用于消息推送（未注入时 noop），
@@ -244,7 +244,7 @@ impl SsoServer for DefaultSsoServer {
                 data.client_id, client_id
             )));
         }
-        // 步骤 2: 原子 get_and_delete 消费票据（消除 TOCTOU 竞态，依据 spec protocol-sso-toctou R-002）
+        // 步骤 2: 原子 get_and_delete 消费票据（消除 TOCTOU 竞态）
         let consumed = self
             .dao
             .get_and_delete(&key)

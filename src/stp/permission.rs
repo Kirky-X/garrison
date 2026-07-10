@@ -23,8 +23,8 @@ use async_trait::async_trait;
 ///
 /// - [`check_permission`](Self::check_permission)：校验权限，未持有抛 `NotPermission`。
 /// - [`check_role`](Self::check_role)：校验角色，未持有抛 `NotRole`。
-/// - [`has_permission`](Self::has_permission)：检查是否持有权限，返回布尔值（0.6.1 新增）。
-/// - [`has_role`](Self::has_role)：检查是否持有角色，返回布尔值（0.6.1 新增）。
+/// - [`has_permission`](Self::has_permission)：检查是否持有权限，返回布尔值（）。
+/// - [`has_role`](Self::has_role)：检查是否持有角色，返回布尔值（）。
 ///
 /// # 错误
 ///
@@ -61,7 +61,7 @@ pub trait PermissionLogic: SessionLogic {
     /// - 未持有角色：`BulwarkError::NotRole`。
     async fn check_role(&self, role: &str) -> BulwarkResult<()>;
 
-    /// 检查当前登录主体是否持有指定权限（0.6.1 新增，依据 spec bulwark-util-api R-util-api-001，对应 FRD §5.3.2 hasPermission）。
+    /// 检查当前登录主体是否持有指定权限。
     ///
     /// 与 [`check_permission`](Self::check_permission) 的区别：本方法返回布尔值而非抛出异常。
     /// 未登录或未持有权限均返回 `Ok(false)`，不抛出 `NotLogin` / `NotPermission`。
@@ -89,7 +89,7 @@ pub trait PermissionLogic: SessionLogic {
         }
     }
 
-    /// 检查当前登录主体是否持有指定角色（0.6.1 新增，依据 spec bulwark-util-api R-util-api-002，对应 FRD §5.3.2 hasRole）。
+    /// 检查当前登录主体是否持有指定角色。
     ///
     /// 与 [`check_role`](Self::check_role) 的区别：本方法返回布尔值而非抛出异常。
     /// 未登录或未持有角色均返回 `Ok(false)`，不抛出 `NotLogin` / `NotRole`。
@@ -117,7 +117,7 @@ pub trait PermissionLogic: SessionLogic {
         }
     }
 
-    /// 获取当前登录主体的权限列表（0.6.1 新增，依据 spec bulwark-util-api R-util-api-003，对应 FRD §5.3.2 getPermissionList）。
+    /// 获取当前登录主体的权限列表。
     ///
     /// 从当前会话上下文获取 login_id 后委托 `BulwarkPermissionStrategy` 查询权限数据。
     /// 未登录时返回 `Ok(vec![])`（非抛出异常），适用于 UI 渲染等无需强制登录的场景。
@@ -138,7 +138,7 @@ pub trait PermissionLogic: SessionLogic {
         ))
     }
 
-    /// 获取当前登录主体的角色列表（0.6.1 新增，依据 spec bulwark-util-api R-util-api-004，对应 FRD §5.3.2 getRoleList）。
+    /// 获取当前登录主体的角色列表。
     ///
     /// 从当前会话上下文获取 login_id 后委托 `BulwarkPermissionStrategy` 查询角色数据。
     /// 未登录时返回 `Ok(vec![])`。
@@ -184,8 +184,8 @@ impl PermissionLogic for BulwarkLogicDefault {
                 };
             },
         };
-        // v0.5.0：优先委托 PermissionChecker（若注入），走 authorize + Decision 路径
-        // 并广播 PermissionCheck 事件供 AuditLogListener 记录审计日志（依据 proposal H3/H7）
+        // 优先委托 PermissionChecker（若注入），走 authorize + Decision 路径
+        // 并广播 PermissionCheck 事件供 AuditLogListener 记录审计日志
         if let Some(pc) = &self.permission_checker {
             let request = AuthRequest {
                 login_id: login_id.clone(),
@@ -376,7 +376,7 @@ mod tests {
     }
 
     // ========================================================================
-    // has_permission / has_role 默认实现测试（0.6.1 新增，依据 R-util-api-001/002）
+    // has_permission / has_role 默认实现测试
     // ========================================================================
 
     /// 可配置 check_permission/check_role 返回值的 mock，用于测试 has_permission/has_role 默认实现。
@@ -561,7 +561,7 @@ mod tests {
     }
 
     // ========================================================================
-    // get_permission_list / get_role_list 默认实现测试（0.6.1 新增，依据 R-util-api-003/004）
+    // get_permission_list / get_role_list 默认实现测试
     // ========================================================================
 
     /// get_permission_list 默认实现返回 NotImplemented（未覆写时）。

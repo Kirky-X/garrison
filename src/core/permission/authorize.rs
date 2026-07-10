@@ -1,7 +1,7 @@
 //! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! 请求对象式授权器（0.5.1 新增，依据 spec authorize-api M4）。
+//! 请求对象式授权器。
 //!
 //! 提供以 [`AuthRequest`] 为入参、返回 [`Decision`] 的公开授权 trait [`Authorizer`]。
 //!
@@ -34,7 +34,7 @@ use crate::error::BulwarkResult;
 use super::decision::{AuthRequest, Decision};
 use super::PermissionChecker;
 
-/// 请求对象式授权器 trait（依据 spec authorize-api M4）。
+/// 请求对象式授权器 trait。
 ///
 /// 以 [`AuthRequest`] 为入参、返回 [`Decision`] 的公开授权 API，不假设具体实现，
 /// 可由任何授权引擎实现（不限于 [`PermissionChecker`]）。
@@ -158,7 +158,7 @@ mod tests {
     }
 
     // ========================================================================
-    // Authorizer trait 测试（依据 spec authorize-api M4）
+    // Authorizer trait 测试
     // ========================================================================
 
     /// T062-1: Authorizer::authorize 在允许场景返回 allowed=true 的 Decision。

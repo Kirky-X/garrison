@@ -1,4 +1,4 @@
-//! TOTP 凭证子模块（v0.6.0 新增，依据 spec credential-model R-005）。
+//! TOTP 凭证子模块。
 //!
 //! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.

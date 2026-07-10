@@ -3,7 +3,7 @@
 
 //! 防火墙安全钩子模块，提供登录流程的可插拔安全检查。
 //!
-//! 依据 spec firewall-check-hook 与 ADD 0.3.0 防火墙策略设计。
+//! 防火墙策略设计。
 //!
 //! ## 设计
 //!
@@ -11,7 +11,7 @@
 //! - `LoginContext`：登录上下文（login_id + 可选 IP / 设备指纹 / 地理位置）
 //! - `BulwarkFirewallCheckHookDefault`：基于内存计数器 + 时间窗口的默认实现
 //!
-//! ## 5 个检查项（依据 ADD 表格）
+//! ## 5 个检查项
 //!
 //! | 检查项 | 触发条件 | 处置 |
 //! |:---|:---|:---|
@@ -22,7 +22,7 @@
 //! | 设备异常 | 未知设备指纹登录 | 阻断登录（0.3.0 简化：需设备库，无数据则 pass） |
 
 use crate::error::{BulwarkError, BulwarkResult};
-// v0.4.2: listener_manager 注入（feature-gated，依据 spec listener-events-extend R-001）
+// listener_manager 注入（feature-gated）
 #[cfg(feature = "listener")]
 use crate::listener::{BulwarkEvent, BulwarkListenerManager};
 use async_trait::async_trait;
@@ -83,9 +83,9 @@ impl LoginContext {
 /// 防火墙安全钩子 trait，定义登录流程的 5 个可插拔安全检查。
 ///
 /// 所有方法提供默认 `Ok(())` 实现，业务方按需 override 特定检查项。
-/// 任一 hook 返回 `Err` 将阻断登录流程（依据 spec firewall-check-hook）。
+/// 任一 hook 返回 `Err` 将阻断登录流程。
 ///
-/// # 调用顺序（依据 ADD 表格）
+/// # 调用顺序
 ///
 /// 1. `check_login_frequency` — 登录频率检测
 /// 2. `check_brute_force` — 暴力破解检测
@@ -187,8 +187,7 @@ pub struct BulwarkFirewallCheckHookDefault {
     /// None 时使用内存计数器（开发/CI 场景，向后兼容）。
     /// Some 时使用 DAO（oxcache/redis）实现分布式计数（生产场景）。
     dao: Option<Arc<dyn crate::dao::BulwarkDao>>,
-    /// v0.4.2：可选监听器管理器，注入后 check_brute_force 阻断时广播 AccountLocked 事件
-    ///（依据 spec listener-events-extend R-001）。
+    /// 可选监听器管理器，注入后 check_brute_force 阻断时广播 AccountLocked 事件
     #[cfg(feature = "listener")]
     listener_manager: Option<Arc<BulwarkListenerManager>>,
 }
@@ -217,7 +216,7 @@ impl BulwarkFirewallCheckHookDefault {
     }
 
     /// 注入 `BulwarkListenerManager`，启用 AccountLocked 事件广播
-    ///（v0.4.2 新增，依据 spec listener-events-extend R-001）。
+    ///
     ///
     /// 注入后 `check_brute_force` 阻断时广播 `BulwarkEvent::AccountLocked`。
     /// 未注入时为 no-op（向后兼容 0.4.1）。需启用 `listener` feature。
@@ -388,13 +387,12 @@ impl BulwarkFirewallCheckHook for BulwarkFirewallCheckHookDefault {
     /// - 内存模式：读取本地计数器，结合时间窗口判断。
     ///
     /// v0.4.2 扩展：阻断时若注入了 `listener_manager`，广播 `BulwarkEvent::AccountLocked`
-    ///（依据 spec listener-events-extend R-001）。
     async fn check_brute_force(&self, ctx: &LoginContext) -> BulwarkResult<()> {
         if let Some(dao) = &self.dao {
             let key = format!("fw:acct:{}", ctx.login_id);
             let count = read_dao_count(dao, &key).await?;
             if count >= BRUTE_FORCE_THRESHOLD {
-                // v0.4.2: 广播 AccountLocked 事件（依据 spec listener-events-extend R-001）
+                // 广播 AccountLocked 事件
                 #[cfg(feature = "listener")]
                 if let Some(lm) = &self.listener_manager {
                     lm.broadcast(&BulwarkEvent::AccountLocked {
@@ -411,7 +409,7 @@ impl BulwarkFirewallCheckHook for BulwarkFirewallCheckHookDefault {
             return Ok(());
         }
         // 内存模式
-        // v0.5.0: 先在锁内提取所需数据，drop 锁后再 broadcast（避免 MutexGuard 跨 await 持有）
+        // 先在锁内提取所需数据，drop 锁后再 broadcast（避免 MutexGuard 跨 await 持有）
         let locked_reason = {
             let map = self.account_failures.lock();
             let key = ctx.login_id.clone();
@@ -429,7 +427,7 @@ impl BulwarkFirewallCheckHook for BulwarkFirewallCheckHookDefault {
             }
         };
         if let Some(reason) = locked_reason {
-            // v0.4.2: 广播 AccountLocked 事件（依据 spec listener-events-extend R-001）
+            // 广播 AccountLocked 事件
             #[cfg(feature = "listener")]
             if let Some(lm) = &self.listener_manager {
                 lm.broadcast(&BulwarkEvent::AccountLocked {

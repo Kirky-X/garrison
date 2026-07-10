@@ -1,7 +1,7 @@
 //! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! 社交登录协议插件模块（0.5.0 新增，依据 proposal H2 / spec social-login）。
+//! 社交登录协议插件模块。
 //!
 //! 提供 `SocialLoginProvider` trait 抽象社交登录第三方平台（微信/支付宝），
 //! 统一 `get_authorization_url` / `exchange_token` / `get_user_info` 三个 OAuth2 流程方法。
@@ -24,7 +24,7 @@ use serde_json::Value;
 // SocialProvider enum：社交平台标识
 // ============================================================================
 
-/// 社交登录平台标识（依据 spec social-login R-social-login-001）。
+/// 社交登录平台标识。
 ///
 /// 用于 `SocialUserInfo.provider` 字段标识用户来源平台。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,7 +41,7 @@ pub enum SocialProvider {
 // SocialUserInfo：社交用户信息
 // ============================================================================
 
-/// 社交用户信息（依据 spec social-login R-social-login-001）。
+/// 社交用户信息。
 ///
 /// `exchange_token` / `get_user_info` 方法的返回类型，承载第三方平台返回的用户字段。
 #[derive(Debug, Clone)]
@@ -64,23 +64,23 @@ pub struct SocialUserInfo {
 // 子模块声明
 // ============================================================================
 
-/// 微信扫码登录 provider（依据 spec social-login R-social-login-002）。
+/// 微信扫码登录 provider。
 ///
 /// 启用 `social-wechat` feature 时编译。
 #[cfg(feature = "social-wechat")]
 pub mod wechat;
 
-/// 支付宝授权登录 provider（依据 spec social-login R-social-login-003）。
+/// 支付宝授权登录 provider。
 ///
 /// 启用 `social-alipay` feature 时编译。
 #[cfg(feature = "social-alipay")]
 pub mod alipay;
 
 // ============================================================================
-// SocialBindingService（feature = "db-sqlite"，依据 spec social-login R-social-login-004）
+// SocialBindingService（feature = "db-sqlite"）
 // ============================================================================
 
-/// 社交账号绑定服务（v0.5.0 新增，依据 spec social-login R-social-login-004）。
+/// 社交账号绑定服务。
 ///
 /// 提供 `find_or_create` 语义：首次社交登录时自动创建绑定关系并生成新 `login_id`，
 /// 后续登录返回已有 `login_id`（幂等）。
@@ -131,7 +131,7 @@ impl SocialBindingService {
         Self { pool, dao }
     }
 
-    /// 查找或创建社交账号绑定关系（依据 spec social-login R-social-login-004）。
+    /// 查找或创建社交账号绑定关系。
     ///
     /// # 流程
     ///
@@ -295,7 +295,7 @@ fn provider_to_str(provider: &SocialProvider) -> &'static str {
 // SocialLoginProvider trait：社交登录抽象
 // ============================================================================
 
-/// 社交登录服务提供方 trait（依据 spec social-login R-social-login-001）。
+/// 社交登录服务提供方 trait。
 ///
 /// 定义三个异步方法覆盖 OAuth2 授权码流程：
 /// - `get_authorization_url`：拼接授权页 URL（用户跳转到第三方平台授权）
@@ -339,7 +339,6 @@ mod tests {
     use async_trait::async_trait;
 
     /// 验证 `SocialLoginProvider` trait 可被 mock 实现并调用三个方法
-    ///（依据 spec social-login R-social-login-001 验收标准 1）。
     ///
     /// Red 阶段：`SocialLoginProvider` / `SocialUserInfo` / `SocialProvider` 类型不存在 → 编译失败。
     /// Green 阶段（T098）：定义完整类型后测试通过。
@@ -417,7 +416,6 @@ mod tests {
     }
 
     /// 验证 `SocialProvider` enum 含三个变体
-    ///（依据 spec social-login R-social-login-001 验收标准 3）。
     #[test]
     fn social_provider_enum_has_three_variants() {
         use super::*;
@@ -433,12 +431,11 @@ mod tests {
     }
 
     // ========================================================================
-    // T106: SQLite 迁移加载验证（feature = "db-sqlite"）
+    // SQLite 迁移加载验证（feature = "db-sqlite"）
     // ========================================================================
 
     /// T106 Green: 验证 `migrations/sqlite/core/005_social_bindings.sql`
     /// 被 `BulwarkMigration::migrate_core()` 加载后 `social_bindings` 表存在
-    ///（依据 spec social-login R-social-login-004 验收标准 1）。
     ///
     /// 测试模式与 `role_hierarchy_table_exists_after_migration` 一致：
     /// 1. `init_dbnexus("sqlite::memory:")` 创建内存 SQLite
@@ -484,11 +481,10 @@ mod tests {
     }
 
     // ========================================================================
-    // T107-T108: SocialBindingService Red-Green（feature = "db-sqlite"）
+    // T107-SocialBindingService Red-Green（feature = "db-sqlite"）
     // ========================================================================
 
     /// T107 Red: `SocialBindingService::find_or_create` 创建新绑定
-    ///（依据 spec social-login R-social-login-004 验收标准 2）。
     ///
     /// Red 阶段：`SocialBindingService` 类型不存在 → 编译失败。
     /// Green 阶段（T108）：定义 `SocialBindingService { pool, dao }` + `find_or_create` 后测试通过。
@@ -610,7 +606,7 @@ mod tests {
     }
 
     // ========================================================================
-    // T021: 社交登录异常消息 i18n（feature = "i18n"）
+    // 社交登录异常消息 i18n（feature = "i18n"）
     //
     // 验证 wechat / alipay 的 loc! 宏在中英文 locale 下返回正确翻译。
     // 直接调用 loc! 宏避免依赖 HTTP mock，聚焦 i18n 翻译正确性。

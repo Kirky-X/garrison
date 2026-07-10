@@ -1,4 +1,4 @@
-//! 用户级双态账号锁定子模块（v0.6.0 新增，吸收 keycloak UserLockoutStrategy）。
+//! 用户级双态账号锁定子模块（吸收 keycloak UserLockoutStrategy）。
 //!
 //! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
@@ -24,13 +24,13 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// 锁定状态存储抽象子模块（v0.6.0 占位，依据 spec user-lockout Out of Scope）。
+/// 锁定状态存储抽象子模块。
 ///
 /// v0.6.0 的 `UserLockoutStrategy` 直接通过 `BulwarkDao` 持久化 `LockoutState`，
 /// 本子模块预留给未来版本的专用存储后端实现（Redis TTL / SQL 持久化 / 分布式锁定）。
 pub mod storage;
 
-/// 等待策略，计算临时锁定时长（依据 spec user-lockout R-user-lockout-002）。
+/// 等待策略，计算临时锁定时长。
 ///
 /// - `Multiple`：倍数等待，第 N 次锁定时长 = `base_seconds × multiplier^(N-1)`
 /// - `Linear`：线性等待，第 N 次锁定时长 = `base_seconds × N`
@@ -50,7 +50,7 @@ pub enum WaitStrategy {
     },
 }
 
-/// 用户级锁定配置（依据 spec user-lockout R-user-lockout-001）。
+/// 用户级锁定配置。
 ///
 /// 含 5 个公开字段，控制锁定行为阈值与策略。
 #[derive(Debug, Clone)]
@@ -83,7 +83,7 @@ impl Default for UserLockoutConfig {
 }
 
 /// 锁定状态，在 DAO 中以 `lockout:{user_id}` 为 key 持久化
-/// （依据 spec user-lockout R-user-lockout-003）。
+/// 。
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct LockoutState {
     /// 当前失败次数（达 max_failure_factor 触发锁定）。
@@ -127,7 +127,7 @@ fn calculate_lock_seconds(strategy: &WaitStrategy, n: u32) -> u64 {
     }
 }
 
-/// 用户级双态锁定策略（依据 spec user-lockout R-user-lockout-004~009）。
+/// 用户级双态锁定策略。
 ///
 /// 实现 [`BulwarkFirewallStrategy`] trait，与 `BruteForceStrategy`（IP 级）组合使用。
 /// 通过 `lockout:{user_id}` key 在 DAO 中持久化 [`LockoutState`]。
@@ -191,7 +191,7 @@ impl UserLockoutStrategy {
         self.dao.set(&key, &json, 0).await
     }
 
-    /// 记录登录失败，更新锁定状态（依据 spec R-user-lockout-006）。
+    /// 记录登录失败，更新锁定状态。
     ///
     /// 逻辑：
     /// 1. 检查 failure_window_seconds 窗口是否过期 → 过期则重置 failure_count
@@ -247,7 +247,7 @@ impl UserLockoutStrategy {
         self.set_state(user_id, &state).await
     }
 
-    /// 记录登录成功，重置失败计数（依据 spec R-user-lockout-007）。
+    /// 记录登录成功，重置失败计数。
     ///
     /// 仅重置 failure_count 和 first_failure_at，不修改 temporary_lockout_count/permanent_locked/locked_until。
     pub async fn record_success(&self, user_id: &str) -> BulwarkResult<()> {
@@ -257,7 +257,7 @@ impl UserLockoutStrategy {
         self.set_state(user_id, &state).await
     }
 
-    /// 手动解锁，彻底清空锁定状态（依据 spec R-user-lockout-008）。
+    /// 手动解锁，彻底清空锁定状态。
     pub async fn unlock(&self, user_id: &str) -> BulwarkResult<()> {
         let state = LockoutState::default();
         self.set_state(user_id, &state).await
@@ -449,7 +449,7 @@ mod tests {
         assert_eq!(base * 3, 90);
     }
 
-    // ===== T012: UserLockoutStrategy 测试 =====
+    // ===== UserLockoutStrategy 测试 =====
 
     use crate::dao::tests::MockDao;
     use crate::strategy::firewall::FirewallContext;

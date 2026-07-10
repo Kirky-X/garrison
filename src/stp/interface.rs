@@ -40,7 +40,7 @@ pub trait BulwarkInterface: Send + Sync {
     /// - 数据源访问失败：由业务方实现决定具体 `BulwarkError`。
     async fn get_role_list(&self, login_id: &str) -> BulwarkResult<Vec<String>>;
 
-    /// 获取指定主体在特定 `login_type` 下的权限列表（0.4.2 新增，依据 spec login-type-multi-account R-001）。
+    /// 获取指定主体在特定 `login_type` 下的权限列表。
     ///
     /// 多账号体系下，不同 `login_type`（如 "admin"/"user"/"merchant"）的权限相互隔离。
     /// 业务方可 override 此方法以接入按 `login_type` 隔离的权限数据源。
@@ -67,7 +67,7 @@ pub trait BulwarkInterface: Send + Sync {
         self.get_permission_list(login_id).await
     }
 
-    /// 获取指定主体在特定 `login_type` 下的角色列表（0.4.2 新增，依据 spec login-type-multi-account R-001）。
+    /// 获取指定主体在特定 `login_type` 下的角色列表。
     ///
     /// 多账号体系下，不同 `login_type`（如 "admin"/"user"/"merchant"）的角色相互隔离。
     /// 业务方可 override 此方法以接入按 `login_type` 隔离的角色数据源。

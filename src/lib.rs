@@ -46,9 +46,9 @@
 //! | 可观测性 | `listener` / `tracing-log` / `metrics-prometheus` | 事件监听 / 日志 / 指标 |
 //! | 聚合 | `full` / `production` / `development` | 一键启用一组特性 |
 //!
-//! ## 0.2.0 新增模块概览
+//! ## 模块概览
 //!
-//! 0.2.0 在 0.1.0 基础上扩展了协议层、安全模块与可插拔扩展点（依据 spec protocol-secure-v0-2-0）：
+//! 0.2.0 在 0.1.0 基础上扩展了协议层、安全模块与可插拔扩展点：
 //!
 //! - **核心扩展**（always on）
 //!   - [`core::token`]：`Token` trait + `TokenStyleFactory`（uuid / random_64 / simple / jwt 四种风格）
@@ -149,7 +149,7 @@ pub mod strategy;
 /// 会话模块，提供 BulwarkSession 会话模型。
 pub mod session;
 
-/// 状态机模块，定义 Token / User 显式状态机（0.6.1 新增，依据 spec state-machine E-005）。
+/// 状态机模块，定义 Token / User 显式状态机。
 ///
 /// 提供 [`state::TokenState`]（5 状态 + 6 条合法转换）与 [`state::UserStatus`]（5 状态 + 9 条合法转换），
 /// 严格遵循 FRD §4.2 / §4.3，不集成到现有 Session / User 模块（推迟到 v0.7.0）。
@@ -201,7 +201,7 @@ pub mod grpc;
 #[cfg(feature = "i18n")]
 pub mod i18n;
 
-/// 声明式 JSON 测试套件模块（0.5.1 新增，依据 spec testing-suite D8 / M6）。
+/// 声明式 JSON 测试套件模块。
 ///
 /// 启用 `bulwark-testing` feature 时编译。提供 [`JsonTestSuite`] / [`JsonTestCase`] /
 /// [`TestReport`] 类型，支持从 JSON 文件加载测试用例并运行 [`Authorizer`] trait。
@@ -217,14 +217,14 @@ pub mod i18n;
 #[cfg(feature = "bulwark-testing")]
 pub mod testing;
 
-/// actix-web 框架适配模块（0.3.0 新增，依据 spec web-adapters）。
+/// actix-web 框架适配模块。
 ///
 /// 启用 `web-actix` feature 时编译。提供 BulwarkRouter + FromRequest extractor +
 /// BulwarkMiddleware 完整集成，与 axum 适配对齐。
 #[cfg(feature = "web-actix")]
 pub mod web_actix;
 
-/// warp 框架适配模块（0.3.0 新增，依据 spec web-adapters）。
+/// warp 框架适配模块。
 ///
 /// 启用 `web-warp` feature 时编译。提供 BulwarkRouter + Filter extractor +
 /// BulwarkRejection 完整集成，与 axum/actix-web 适配对齐。
@@ -251,7 +251,7 @@ pub mod listener;
 ))]
 pub mod secure;
 
-/// 账号安全引擎模块（v0.6.0 新增，吸收 keycloak 安全能力）。
+/// 账号安全引擎模块（吸收 keycloak 安全能力）。
 ///
 /// 提供：
 /// - 凭证模型 SPI（`account-credential` feature）
@@ -288,7 +288,7 @@ pub mod error;
 pub use prelude::*;
 
 // ============================================================================
-// 多租户隔离类型 re-export（v0.5.0 新增，依据 spec tenant-isolation R-001）
+// 多租户隔离类型 re-export
 // ============================================================================
 //
 // 业务方可通过 `use bulwark::{TenantContext, TenantResolver, ...}` 直接使用，
@@ -296,7 +296,7 @@ pub use prelude::*;
 //
 // `ClaimTenantResolver` 需 `protocol-jwt` feature（依赖 jsonwebtoken 解码 JWT claim）。
 
-/// 多租户上下文类型与解析器（依据 spec tenant-isolation）。
+/// 多租户上下文类型与解析器。
 pub use context::tenant::{
     HeaderTenantResolver, SubdomainTenantResolver, TenantContext, TenantResolver, TenantSource,
     TENANT,
@@ -306,11 +306,11 @@ pub use context::tenant::{
 #[cfg(feature = "protocol-jwt")]
 pub use context::tenant::ClaimTenantResolver;
 
-/// 登录主体（携带 login_id，由 web 框架 extractor 填充，依据 spec web-adapters D12）。
+/// 登录主体（携带 login_id，由 web 框架 extractor 填充）。
 pub use context::BulwarkPrincipal;
 
 // ============================================================================
-// 状态机类型 re-export（v0.6.1 新增，依据 spec state-machine E-005）
+// 状态机类型 re-export
 // ============================================================================
 //
 // 业务方可通过 `use bulwark::{TokenState, UserStatus}` 直接使用，
@@ -326,7 +326,7 @@ pub use state::TokenState;
 pub use state::UserStatus;
 
 // ============================================================================
-// 角色层级（v0.5.0 新增，依据 proposal H6）
+// 角色层级
 // ============================================================================
 //
 // `RoleHierarchyRecord` 为 always compiled（无 feature gate）。
@@ -343,7 +343,7 @@ pub use dao::repository::role_hierarchy::RoleHierarchyRecord;
 pub use dao::repository::role_hierarchy::RoleHierarchyService;
 
 // ============================================================================
-// Dbnexus Repository re-export（v0.5.0 新增，依据 P3 backend-agnostic 重构）
+// Dbnexus Repository re-export
 // ============================================================================
 //
 // 业务方可通过 `use bulwark::{DbnexusUserRepository, ...}` 直接使用，
@@ -388,7 +388,7 @@ pub use dao::repository::sqlite::DbnexusLoginLogRepository;
 pub use dao::repository::sqlite::DbnexusUserExtRepository;
 
 // ============================================================================
-// JWT RefreshToken Rotation（v0.5.0 新增，依据 proposal H4）
+// JWT RefreshToken Rotation
 // ============================================================================
 //
 // `RefreshTokenRecord` 需 `protocol-jwt` feature（hash chain 行结构）。
@@ -406,7 +406,7 @@ pub use protocol::jwt::refresh::RefreshTokenRecord;
 pub use protocol::jwt::refresh::RefreshTokenRotation;
 
 // ============================================================================
-// 审计日志（v0.5.0 新增，依据 proposal H3）
+// 审计日志
 // ============================================================================
 //
 // 业务方可通过 `use bulwark::{AuditLogListener, AuditConfig, AuditEntry, AuditQuery}` 直接使用，
@@ -433,7 +433,7 @@ pub use listener::audit::AuditQuery;
 pub use listener::audit::AuditLogListener;
 
 // ============================================================================
-// 社交登录（v0.5.0 新增，依据 proposal H2 / spec social-login）
+// 社交登录
 // ============================================================================
 //
 // 业务方可通过 `use bulwark::{SocialLoginProvider, SocialUserInfo, ...}` 直接使用，
@@ -460,7 +460,7 @@ pub use protocol::social::SocialProvider;
 #[cfg(feature = "social-wechat")]
 pub use protocol::social::wechat::WechatProvider;
 
-/// 微信小程序登录 provider（需 `social-wechat` feature，依据 design.md D11 D1）。
+/// 微信小程序登录 provider（需 `social-wechat` feature）。
 #[cfg(feature = "social-wechat")]
 pub use protocol::social::wechat::WechatMiniAppProvider;
 
@@ -476,7 +476,7 @@ pub use protocol::social::alipay::AlipayProvider;
 pub use protocol::social::SocialBindingService;
 
 // ============================================================================
-// Keycloak OIDC RP（v0.5.0 新增，依据 proposal K1 / spec keycloak-oidc-rp）
+// Keycloak OIDC RP
 // ============================================================================
 //
 // 业务方可通过 `use bulwark::{KeycloakConfig, KeycloakProvider, ...}` 直接使用，
@@ -505,7 +505,7 @@ pub use protocol::oauth2::keycloak::KeycloakTokenSet;
 pub use protocol::oauth2::keycloak::RealmAccess;
 
 // ============================================================================
-// 安全防护套件（v0.5.0 新增，依据 proposal H5 / spec firewall）
+// 安全防护套件
 // ============================================================================
 //
 // 业务方可通过 `use bulwark::{BulwarkFirewallStrategy, FirewallContext, ...}` 直接使用，
@@ -528,23 +528,23 @@ pub use strategy::firewall::FirewallContext;
 #[cfg(feature = "firewall")]
 pub use strategy::firewall::StrategyRegistration;
 
-/// 暴力破解防护策略 + 配置（依据 spec firewall R-firewall-001）。
+/// 暴力破解防护策略 + 配置。
 #[cfg(feature = "firewall-bruteforce")]
 pub use strategy::firewall::brute_force::{BruteForceConfig, BruteForceStrategy};
 
-/// 速率限制策略 + 配置 + 作用域枚举（依据 spec firewall R-firewall-002）。
+/// 速率限制策略 + 配置 + 作用域枚举。
 #[cfg(feature = "firewall-ratelimit")]
 pub use strategy::firewall::rate_limit::{RateLimitConfig, RateLimitScope, RateLimitStrategy};
 
-/// 异地登录检测策略 + 配置（依据 spec firewall R-firewall-003）。
+/// 异地登录检测策略 + 配置。
 #[cfg(feature = "firewall-anomalous")]
 pub use strategy::firewall::anomalous::{AnomalousConfig, AnomalousLoginStrategy};
 
-/// DDoS 防护策略 + 配置（依据 spec firewall R-firewall-004）。
+/// DDoS 防护策略 + 配置。
 #[cfg(feature = "firewall-ddos")]
 pub use strategy::firewall::ddos::{DDoSConfig, DDoSStrategy};
 
-/// GeoIP 地理位置拦截策略 + 配置（依据 spec firewall R-firewall-005）。
+/// GeoIP 地理位置拦截策略 + 配置。
 #[cfg(feature = "firewall-geoip")]
 pub use strategy::firewall::geoip::{GeoIPConfig, GeoIPStrategy};
 
@@ -553,7 +553,7 @@ pub use strategy::firewall::geoip::{GeoIPConfig, GeoIPStrategy};
 pub use strategy::firewall::geo::{CountryLookup, GeoCoord, GeoLookup};
 
 // ============================================================================
-// 过程宏注解（0.4.2 新增，依据 spec annotation-macros）
+// 过程宏注解
 // ============================================================================
 
 /// 过程宏注解模块（feature = "annotation-macros"）。
@@ -562,7 +562,7 @@ pub use strategy::firewall::geo::{CountryLookup, GeoCoord, GeoLookup};
 /// `#[proc_macro_attribute]`：
 /// - `#[check_login]` / `#[check_permission]` / `#[check_role]`（0.4.2）
 /// - `#[check_access_token]` / `#[check_client_token]` / `#[check_temp_token]`（0.5.0 P2）
-/// - `#[check_api_key]`（0.6.1 新增，依据 spec annotation-check-api-key R-anno-003）
+/// - `#[check_api_key]`
 ///
 /// 宏将 async fn 包装为 wrapper，在 body 前插入 `BulwarkUtil::check_*()` 调用，
 /// 失败时返回 `axum::response::Response`（401/403）。

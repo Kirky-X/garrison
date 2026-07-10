@@ -1,4 +1,4 @@
-//! FlowBuilder 流式构建 DSL（v0.6.0 新增，依据 spec auth-flow-dsl R-auth-flow-dsl-006）。
+//! FlowBuilder 流式构建 DSL。
 //!
 //! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
@@ -24,7 +24,7 @@
 
 use super::{AuthCondition, AuthStep, AuthenticationFlow};
 
-/// 认证流程流式构建器（依据 spec auth-flow-dsl R-auth-flow-dsl-006）。
+/// 认证流程流式构建器。
 ///
 /// 通过链式调用追加 [`AuthStep`]，最终 [`build`](Self::build) 生成 [`AuthenticationFlow`]。
 ///

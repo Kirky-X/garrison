@@ -8,12 +8,12 @@
 //!
 //! 仅在启用 `protocol-oauth2` 特性时编译。
 //!
-//! ## 设计决策（依据 spec protocol-oauth2 + design.md Decision 5）
+//! ## 设计决策
 //!
 //! - `OAuth2Client` 不持久化 token，由业务方决定存储方式。
 //! - HTTP 客户端使用 `reqwest` 0.13（rustls-tls，禁用 native-tls）。
-//! - 实现四种授权流程：Authorization Code / Client Credentials / Password / Refresh Token（0.4.0 新增）。
-//! - 支持 Token Introspection (RFC 7662)：通过 `OAuth2Client::introspect_token` 查询 token 状态（0.4.2 新增）。
+//! - 实现四种授权流程：Authorization Code / Client Credentials / Password / Refresh Token（）。
+//! - 支持 Token Introspection (RFC 7662)：通过 `OAuth2Client::introspect_token` 查询 token 状态（）。
 
 use crate::error::{BulwarkError, BulwarkResult};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -21,21 +21,21 @@ use base64::Engine;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-/// OIDC 扩展模块（0.4.0 新增，依据 spec oauth2-oidc）。
+/// OIDC 扩展模块。
 ///
 /// 提供 `OidcHandler` 用于签发/验证 OIDC id_token + discovery endpoint 元数据生成。
 /// 仅在启用 `protocol-oidc` feature 时编译。
 #[cfg(feature = "protocol-oidc")]
 pub mod oidc;
 
-/// Scope Handler 注册表模块（0.4.0 新增，依据 spec oauth2-scope-handler）。
+/// Scope Handler 注册表模块。
 ///
 /// 提供 `ScopeHandler` trait + `ScopeRegistry` 动态注册表，用于在 OAuth2 token
 /// 请求前对 scope 进行客户端策略校验。仅在启用 `oauth2-scope-handler` feature 时编译。
 #[cfg(feature = "oauth2-scope-handler")]
 pub mod scope;
 
-/// Keycloak OIDC RP 模块（0.5.0 新增，依据 proposal K1 / spec keycloak-oidc-rp）。
+/// Keycloak OIDC RP 模块。
 ///
 /// 提供 `KeycloakProvider` 作为 OIDC 依赖方（RP），对接 Keycloak IdP：
 /// - `KeycloakConfig`：配置 base_url / client_id / client_secret / redirect_uri
@@ -47,7 +47,7 @@ pub mod scope;
 #[cfg(feature = "keycloak-oidc")]
 pub mod keycloak;
 
-/// OAuth2 令牌响应（依据 spec protocol-oauth2）。
+/// OAuth2 令牌响应。
 ///
 /// 授权服务器返回的 JSON 通过 `Deserialize` 解析。
 /// 可选字段使用 `#[serde(default)]` 以容忍授权服务器省略部分字段。
@@ -68,7 +68,7 @@ pub struct TokenResponse {
     pub scope: Option<String>,
 }
 
-/// Token Introspection 响应（依据 RFC 7662 / spec token-introspection R-token-introspection-002）。
+/// Token Introspection 响应。
 ///
 /// 表示授权服务器对 token 的 introspection 结果。`active` 字段为必填，
 /// 其他字段在 `active=true` 时由授权服务器按需返回；`active=false` 时通常省略。
@@ -125,7 +125,7 @@ pub struct TokenIntrospectionResponse {
     pub jti: Option<String>,
 }
 
-/// OAuth2 客户端（依据 spec protocol-oauth2）。
+/// OAuth2 客户端。
 ///
 /// 持有 OAuth2 协议所需的配置信息与可复用的 `reqwest::Client`。
 /// 实现 `Send + Sync`，可在多线程环境共享。
@@ -142,7 +142,7 @@ pub struct OAuth2Client {
     token_url: String,
     /// 用户信息端点 URL（可选）。
     user_info_url: Option<String>,
-    /// Token Introspection 端点 URL（可选，0.4.2 新增，依据 spec token-introspection）。
+    /// Token Introspection 端点 URL（可选）。
     /// 为 `None` 时由 `introspect_url()` 从 `token_url` 推导（`/token` → `/introspect`）。
     introspect_url: Option<String>,
     /// 可复用的 HTTP 客户端。
@@ -155,7 +155,7 @@ pub struct OAuth2Client {
 }
 
 impl OAuth2Client {
-    /// 创建新的 OAuth2 客户端（依据 spec protocol-oauth2）。
+    /// 创建新的 OAuth2 客户端。
     ///
     /// # 参数
     /// - `client_id`: 客户端 ID，不可为空。
@@ -242,13 +242,13 @@ impl OAuth2Client {
         )))
     }
 
-    /// 设置用户信息端点 URL（依据 spec protocol-oauth2）。
+    /// 设置用户信息端点 URL。
     pub fn with_user_info_url(mut self, url: impl Into<String>) -> Self {
         self.user_info_url = Some(url.into());
         self
     }
 
-    /// 设置 Token Introspection 端点 URL（0.4.2 新增，依据 spec token-introspection 设计决策 1）。
+    /// 设置 Token Introspection 端点 URL。
     ///
     /// 不设置时，[`introspect_token`](Self::introspect_token) 从 `token_url` 推导：
     /// `token_url` 末尾为 `/token` → 替换为 `/introspect`；否则在 `token_url` 末尾追加 `/introspect`。
@@ -260,7 +260,7 @@ impl OAuth2Client {
         self
     }
 
-    /// 注入 ScopeRegistry，启用 token 请求前的 scope 校验（0.4.0 新增，依据 spec oauth2-scope-handler）。
+    /// 注入 ScopeRegistry，启用 token 请求前的 scope 校验。
     ///
     /// 仅在启用 `oauth2-scope-handler` feature 时可用。
     /// 注入后，`get_password_token` / `get_client_credentials_token` / `refresh_access_token`
@@ -271,7 +271,7 @@ impl OAuth2Client {
         self
     }
 
-    /// 校验 scope（0.4.0 新增，依据 spec oauth2-scope-handler）。
+    /// 校验 scope。
     ///
     /// - 若 `scope_registry` 未注入 → 跳过校验（Ok(())）。
     /// - 若 `scope` 为 None → 跳过校验（Ok(())）。
@@ -315,7 +315,7 @@ impl OAuth2Client {
         self.user_info_url.as_deref()
     }
 
-    /// 生成 PKCE code_challenge（依据 RFC 7636 S256 方法 / spec oauth-2-1-upgrade R-oauth-2-1-002）。
+    /// 生成 PKCE code_challenge。
     ///
     /// 计算方式：`code_challenge = base64url_no_pad(sha256(code_verifier))`
     ///
@@ -358,7 +358,7 @@ impl OAuth2Client {
         Ok(URL_SAFE_NO_PAD.encode(digest))
     }
 
-    /// 构造 Authorization Code 流程的授权 URL（依据 spec protocol-oauth2）。
+    /// 构造 Authorization Code 流程的授权 URL。
     ///
     /// URL 拼接 `response_type=code`、`client_id`、`redirect_uri`（URL 编码）、`state` 参数。
     ///
@@ -375,7 +375,7 @@ impl OAuth2Client {
         )
     }
 
-    /// 构造带 PKCE 的授权 URL（依据 spec oauth-2-1-upgrade R-oauth-2-1-001）。
+    /// 构造带 PKCE 的授权 URL。
     ///
     /// 在 [`get_auth_url`](Self::get_auth_url) 基础上追加 `code_challenge` 与 `code_challenge_method=S256` 参数。
     ///
@@ -405,7 +405,7 @@ impl OAuth2Client {
         Ok((url, code_challenge))
     }
 
-    /// 使用授权码换取令牌（依据 spec protocol-oauth2）。
+    /// 使用授权码换取令牌。
     ///
     /// POST 请求 `token_url`，以 `application/x-www-form-urlencoded` 格式提交
     /// `grant_type=authorization_code`、`code`、`redirect_uri`、`client_id`、`client_secret`。
@@ -424,7 +424,7 @@ impl OAuth2Client {
         self.post_token_request(&params).await
     }
 
-    /// 使用授权码 + PKCE 换取令牌（依据 spec oauth-2-1-upgrade R-oauth-2-1-001）。
+    /// 使用授权码 + PKCE 换取令牌。
     ///
     /// 在 [`exchange_code`](Self::exchange_code) 基础上，POST 请求体追加 `code_verifier` 字段。
     /// 授权服务器重新计算 `SHA256(code_verifier)` 并与授权请求中的 `code_challenge` 比对，验证客户端身份。
@@ -472,7 +472,7 @@ impl OAuth2Client {
         self.post_token_request(&params).await
     }
 
-    /// 获取 Client Credentials 模式令牌（依据 spec protocol-oauth2）。
+    /// 获取 Client Credentials 模式令牌。
     ///
     /// POST 请求 `token_url` 提交 `grant_type=client_credentials`、`client_id`、`client_secret`，可选 `scope`。
     pub async fn get_client_credentials_token(
@@ -492,7 +492,7 @@ impl OAuth2Client {
         self.post_token_request(&params).await
     }
 
-    /// 获取 Password 模式令牌（依据 spec protocol-oauth2）。
+    /// 获取 Password 模式令牌。
     ///
     /// POST 请求 `token_url` 提交 `grant_type=password`、`username`、`password`、
     /// `client_id`、`client_secret`，可选 `scope`。
@@ -523,7 +523,7 @@ impl OAuth2Client {
         self.post_token_request(&params).await
     }
 
-    /// 使用 refresh_token 换取新的 access_token（0.4.0 新增，依据 spec protocol-oauth2 RefreshToken GrantType）。
+    /// 使用 refresh_token 换取新的 access_token。
     ///
     /// POST 请求 `token_url` 提交 `grant_type=refresh_token`、`refresh_token`、
     /// `client_id`、`client_secret`，可选 `scope`（用于缩小/扩大授权范围）。
@@ -588,13 +588,13 @@ impl OAuth2Client {
         Ok(token)
     }
 
-    /// 查询 token 状态（0.4.2 新增，依据 RFC 7662 / spec token-introspection R-token-introspection-001）。
+    /// 查询 token 状态。
     ///
     /// 向授权服务器的 introspection 端点 POST 请求，请求体以
     /// `application/x-www-form-urlencoded` 格式提交 `token` + `client_id` + `client_secret`，
     /// 响应解析为 [`TokenIntrospectionResponse`]。
     ///
-    /// # 不缓存（依据 spec Constraints）
+    /// # 不缓存
     /// 每次调用都请求授权服务器，业务方如需缓存可自行封装。
     ///
     /// # 参数
@@ -640,7 +640,7 @@ impl OAuth2Client {
         Ok(response)
     }
 
-    /// 推导 introspection 端点 URL（依据 spec token-introspection 设计决策 1）。
+    /// 推导 introspection 端点 URL。
     ///
     /// - 若 [`with_introspect_url`](Self::with_introspect_url) 已设置 → 使用该 URL。
     /// - 否则若 `token_url` 末尾为 `/token` → 替换为 `/introspect`。
@@ -701,7 +701,7 @@ mod tests {
     }
 
     // ========================================================================
-    // OAuth2Client 构造测试（依据 spec protocol-oauth2）
+    // OAuth2Client 构造测试
     // ========================================================================
 
     /// 构造 OAuth2Client，字段正确填充（spec Scenario）。
@@ -798,7 +798,7 @@ mod tests {
     }
 
     // ========================================================================
-    // get_auth_url 测试（依据 spec protocol-oauth2）
+    // get_auth_url 测试
     // ========================================================================
 
     /// 构造标准授权 URL（spec Scenario）。
@@ -832,7 +832,7 @@ mod tests {
     }
 
     // ========================================================================
-    // TokenResponse 解析测试（依据 spec protocol-oauth2）
+    // TokenResponse 解析测试
     // ========================================================================
 
     /// 完整 JSON 解析（spec Scenario）。
@@ -867,7 +867,7 @@ mod tests {
     }
 
     // ========================================================================
-    // exchange_code 集成测试（依据 spec protocol-oauth2）
+    // exchange_code 集成测试
     // ========================================================================
 
     /// 成功换取令牌（spec Scenario）。
@@ -920,7 +920,7 @@ mod tests {
     }
 
     // ========================================================================
-    // get_client_credentials_token 集成测试（依据 spec protocol-oauth2）
+    // get_client_credentials_token 集成测试
     // ========================================================================
 
     /// 成功获取 client credentials token（spec Scenario）。
@@ -988,7 +988,7 @@ mod tests {
     }
 
     // ========================================================================
-    // get_password_token 集成测试（依据 spec protocol-oauth2）
+    // get_password_token 集成测试
     // ========================================================================
 
     /// 成功获取 password token（spec Scenario）。
@@ -1049,7 +1049,7 @@ mod tests {
     }
 
     // ========================================================================
-    // refresh_access_token 集成测试（0.4.0 新增，依据 spec protocol-oauth2 RefreshToken GrantType）
+    // refresh_access_token 集成测试
     // ========================================================================
 
     /// 成功使用 refresh_token 换取新 access_token（spec Scenario: refresh_access_token 成功）。
@@ -1160,7 +1160,7 @@ mod tests {
     }
 
     // ========================================================================
-    // PKCE (RFC 7636 / OAuth 2.1) 测试（0.4.2 新增，依据 spec oauth-2-1-upgrade）
+    // PKCE (RFC 7636 / OAuth 2.1) 测试
     // ========================================================================
 
     /// RFC 7636 Appendix B 测试向量：验证 S256 code_challenge 计算正确（spec R-oauth-2-1-002 硬性要求）。
@@ -1355,7 +1355,7 @@ mod tests {
     }
 
     // ========================================================================
-    // OAuth2Client + ScopeRegistry 集成测试（0.4.0 新增，依据 spec oauth2-scope-handler）
+    // OAuth2Client + ScopeRegistry 集成测试
     // ========================================================================
 
     /// 测试用 ScopeHandler：根据 allowed 字段返回结果。
@@ -1499,7 +1499,7 @@ mod tests {
     }
 
     // ========================================================================
-    // Token Introspection (RFC 7662) 测试（0.4.2 新增，依据 spec token-introspection）
+    // Token Introspection (RFC 7662) 测试
     // ========================================================================
 
     /// 完整 introspection 响应解析：active=true 时所有字段正确解析（spec R-token-introspection-002/003）。

@@ -6,7 +6,7 @@
 //! [借鉴 Sa-Token] 对应 Sa-Token 的 `SaManager`，
 //! 统筹 DAO、配置、策略等组件的全局生命周期。
 //!
-//! ## 设计（依据 design.md Decision 8）
+//! ## 设计
 //!
 //! - `BulwarkManager` 持有 `Arc<BulwarkLogicDefault>` 全局单例（基于 `parking_lot::RwLock` 支持重复 init）
 //! - `BulwarkLogicFactory` trait 通过 `inventory::submit!` 编译期注册
@@ -47,7 +47,7 @@ use once_cell::sync::Lazy;
 use parking_lot::RwLock;
 use std::sync::Arc;
 
-// 显式 Manager API（0.5.1 新增，依据 spec manager-explicit M7 / design.md D9）
+// 显式 Manager API
 // 启用 manager-explicit feature 后提供不依赖全局单例的 Manager struct。
 #[cfg(feature = "manager-explicit")]
 pub mod explicit;
@@ -64,7 +64,7 @@ pub mod explicit;
 pub struct BulwarkManager {
     /// 全局 `BulwarkLogicDefault` 引用（RwLock 支持测试时重复 init 与 reset）。
     logic: RwLock<Option<Arc<BulwarkLogicDefault>>>,
-    /// 全局 Strategy 注册表引用（v0.4.2 新增，依据 spec strategy-registry）。
+    /// 全局 Strategy 注册表引用。
     ///
     /// 外层 `RwLock` 管理 Option（初始化/重置），内层 `Arc<RwLock<Strategy>>`
     /// 允许运行时通过 `strategy.write().register_*()` 替换策略。
@@ -137,7 +137,7 @@ impl BulwarkManager {
         };
         let session = Arc::new(BulwarkSession::new(dao, timeout, active_timeout));
 
-        // 3. auto-wire: 构造 4 个 manager（0.2.1 修复 gap）
+        // 3. auto-wire: 构造 4 个 manager（gap）
         // 3.1 PermissionChecker（委托 interface 查询权限/角色数据）
         let permission_checker: Arc<dyn PermissionChecker> =
             Arc::new(PermissionCheckerDefault::new(interface.clone()));
@@ -200,7 +200,7 @@ impl BulwarkManager {
         };
 
         // 7. 覆盖式更新全局单例（允许重复 init，便于测试）
-        // v0.4.2：同时构造 Strategy 注册表（依据 spec strategy-registry R-003）
+        // 同时构造 Strategy 注册表
         let strategy = Arc::new(RwLock::new(Strategy::new(logic.clone())));
         *BULWARK_MANAGER.logic.write() = Some(logic);
         *BULWARK_MANAGER.strategy.write() = Some(strategy);
@@ -223,7 +223,7 @@ impl BulwarkManager {
             .ok_or_else(|| BulwarkError::Session("BulwarkManager 未初始化".to_string()))
     }
 
-    /// 获取全局 `Strategy` 注册表引用（v0.4.2 新增，依据 spec strategy-registry R-003）。
+    /// 获取全局 `Strategy` 注册表引用。
     ///
     /// 返回 `Arc<RwLock<Strategy>>`，业务方可通过 `strategy.write().register_*()`
     /// 运行时替换策略，替换后立即生效（下次调用使用新策略）。
@@ -241,7 +241,7 @@ impl BulwarkManager {
             .ok_or_else(|| BulwarkError::Session("BulwarkManager 未初始化".to_string()))
     }
 
-    /// 替换全局 `Strategy` 注册表（v0.4.2 新增，依据 spec strategy-registry R-003）。
+    /// 替换全局 `Strategy` 注册表。
     ///
     /// 用于运行时或测试时整体替换 Strategy 实例（如注入预配置的自定义策略集合）。
     /// 替换后立即生效，旧 Strategy 被 drop。
@@ -291,10 +291,10 @@ fn default_factory_selector() -> Option<&'static BulwarkLogicFactoryEntry> {
 pub static BULWARK_MANAGER: Lazy<BulwarkManager> = Lazy::new(BulwarkManager::new);
 
 // ============================================================================
-// BulwarkLogicFactory：编译期注册的工厂 trait（依据 design.md Decision 8）
+// BulwarkLogicFactory：编译期注册的工厂 trait
 // ============================================================================
 
-/// 工厂上下文，持有 init 阶段构造的 4 个 manager（0.2.1 新增，用于 auto-wire）。
+/// 工厂上下文，持有 init 阶段构造的 4 个 manager（用于 auto-wire）。
 ///
 /// factory 函数通过此 context 获取 manager 引用，使用 builder 链式调用注入到
 /// `BulwarkLogicDefault`。所有字段为 `Option`，便于自定义 factory 选择性注入。
@@ -398,7 +398,7 @@ inventory::submit! {
 }
 
 // ============================================================================
-// 测试（依据 spec core-auth-api 所有 scenario + manager 行为契约）
+// 测试
 // ============================================================================
 
 #[cfg(test)]
@@ -735,7 +735,7 @@ mod tests {
         let firewall: Arc<dyn BulwarkPermissionStrategy> =
             Arc::new(BulwarkPermissionStrategyDefault::new(interface));
 
-        // 0.2.1: factory 签名新增 ctx 参数，构造空 context 验证向后兼容
+        // factory 签名新增 ctx 参数，构造空 context 验证向后兼容
         #[cfg(feature = "listener")]
         let ctx = BulwarkLogicFactoryContext {
             plugin_manager: None,
@@ -895,7 +895,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------------
-    // v0.4.2 新增：Strategy 注册表集成测试（依据 spec strategy-registry R-003）
+    // Strategy 注册表集成测试
     // ------------------------------------------------------------------------
 
     /// 验证未初始化时 `BulwarkManager::strategy()` 返回 Session 错误。

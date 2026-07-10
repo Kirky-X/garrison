@@ -26,7 +26,7 @@
 //! - `login_id` 使用 `&str` 而非 `LoginId` newtype，遵循子 trait（`SessionLogic` / `PermissionLogic`）现有惯例
 //!   （依据规则 11：惯例优先于新颖）
 //! - [`FirewallStrategy`] 与现有 [`BulwarkPermissionStrategy`](crate::strategy::BulwarkPermissionStrategy)
-//!   trait 共存（依据 spec Constraints），两者名称不同，不冲突
+//!   trait 共存，两者名称不同，不冲突
 
 use crate::error::BulwarkResult;
 use crate::stp::{BulwarkLogicDefault, PermissionLogic, SessionLogic, TokenLogic};
@@ -123,7 +123,7 @@ pub trait SessionCreator: Send + Sync {
 /// 防火墙策略 trait，定义登录前安全检查的可插拔契约。
 ///
 /// 与现有 [`BulwarkPermissionStrategy`](crate::strategy::BulwarkPermissionStrategy) trait 共存
-/// （依据 spec Constraints），两者名称不同，职责不同：
+/// ，两者名称不同，职责不同：
 /// - `BulwarkPermissionStrategy`：权限/角色数据查询与校验
 /// - `FirewallStrategy`（本 trait）：登录前防火墙钩子检查
 ///
@@ -500,7 +500,7 @@ impl Strategy {
 }
 
 // ============================================================================
-// 测试（依据 spec strategy-registry R-001 ~ R-004）
+// 测试
 // ============================================================================
 
 #[cfg(test)]

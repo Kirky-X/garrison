@@ -36,7 +36,7 @@ pub mod apikey;
 #[cfg(feature = "protocol-temp")]
 pub mod temp;
 
-/// 社交登录协议插件模块（0.5.0 新增，依据 proposal H2 / spec social-login）。
+/// 社交登录协议插件模块。
 ///
 /// 启用 `social-wechat` 或 `social-alipay` feature 时编译。提供 `SocialLoginProvider` trait
 /// 抽象与 `WechatProvider` / `AlipayProvider` 实现。
@@ -44,7 +44,7 @@ pub mod temp;
 pub mod social;
 
 // ============================================================================
-// loc! 宏：异常 detail 的 i18n 翻译（0.6.0 新增，依据 T021）
+// loc! 宏：异常 detail 的 i18n 翻译
 // ============================================================================
 
 /// 按 locale 翻译异常 detail，未启用 `i18n` 特性时返回 fallback。

@@ -8,7 +8,7 @@
 //!
 //! 仅在启用 `protocol-sign` 特性时编译。
 //!
-//! ## 签名算法（依据 spec protocol-sign）
+//! ## 签名算法
 //!
 //! `sign = base64(hmac_sha256(app_secret, "{method}\n{path}\n{timestamp}\n{nonce}\n{body_md5}"))`
 //!
@@ -30,7 +30,7 @@ const DEFAULT_TIMESTAMP_WINDOW: i64 = 300;
 /// HMAC-SHA256 类型别名。
 type HmacSha256 = Hmac<Sha256>;
 
-/// API 签名处理器（依据 spec protocol-sign）。
+/// API 签名处理器。
 ///
 /// 持有 `app_key`、`app_secret` 与 `Arc<dyn BulwarkDao>`（用于 nonce 存储）。
 /// 实现 `Send + Sync`，可在多线程环境共享。
@@ -46,7 +46,7 @@ pub struct SignHandler {
 }
 
 impl SignHandler {
-    /// 创建新的签名处理器（依据 spec protocol-sign）。
+    /// 创建新的签名处理器。
     ///
     /// # 参数
     /// - `app_key`: 应用标识，不可为空。
@@ -72,7 +72,7 @@ impl SignHandler {
         })
     }
 
-    /// 设置时间戳窗口（秒），默认 300 秒（依据 spec protocol-sign）。
+    /// 设置时间戳窗口（秒），默认 300 秒。
     pub fn with_timestamp_window(mut self, seconds: i64) -> Self {
         self.timestamp_window = seconds;
         self
@@ -88,7 +88,7 @@ impl SignHandler {
         self.timestamp_window
     }
 
-    /// 生成签名（依据 spec protocol-sign）。
+    /// 生成签名。
     ///
     /// 签名算法：`base64(hmac_sha256(app_secret, "{method}\n{path}\n{timestamp}\n{nonce}\n{body_md5}"))`。
     pub fn sign(
@@ -109,7 +109,7 @@ impl SignHandler {
         STANDARD.encode(mac.finalize().into_bytes())
     }
 
-    /// 校验签名（依据 spec protocol-sign）。
+    /// 校验签名。
     ///
     /// 校验逻辑：(1) 检查时间戳窗口；(2) 检查 nonce 未被使用过；
     /// (3) 重新计算签名并常量时间比较；(4) 校验成功后存储 nonce。
@@ -255,7 +255,7 @@ mod tests {
     }
 
     // ========================================================================
-    // SignHandler 构造测试（依据 spec protocol-sign）
+    // SignHandler 构造测试
     // ========================================================================
 
     /// 构造 SignHandler，字段正确填充（spec Scenario）。
@@ -286,7 +286,7 @@ mod tests {
     }
 
     // ========================================================================
-    // sign 测试（依据 spec protocol-sign）
+    // sign 测试
     // ========================================================================
 
     /// 标准签名生成，返回 Base64 字符串（spec Scenario）。
@@ -326,7 +326,7 @@ mod tests {
     }
 
     // ========================================================================
-    // validate 测试（依据 spec protocol-sign）
+    // validate 测试
     // ========================================================================
 
     /// 成功校验（spec Scenario）。

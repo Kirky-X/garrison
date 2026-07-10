@@ -8,7 +8,7 @@
 //!
 //! 仅在启用 `protocol-jwt` 特性时编译。
 
-/// RefreshToken Rotation 子模块（v0.5.0 新增，依据 proposal H4）。
+/// RefreshToken Rotation 子模块。
 pub mod refresh;
 
 use crate::error::{BulwarkError, BulwarkResult};
@@ -16,7 +16,7 @@ use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, 
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Bulwark JWT Claims 载荷（依据 spec protocol-jwt）。
+/// Bulwark JWT Claims 载荷。
 ///
 /// 字段兼容 0.1.0 `JwtClaims`，0.2.0 扩展 `login_id` 与 `device` 字段。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,7 +40,7 @@ pub struct BulwarkJwtClaims {
 /// 0.1.0 兼容别名。
 pub type JwtClaims = BulwarkJwtClaims;
 
-/// JWT 处理器，封装密钥与签名算法以供复用（依据 spec protocol-jwt）。
+/// JWT 处理器，封装密钥与签名算法以供复用。
 ///
 /// 默认采用 HS256 算法，可通过 `with_algorithm` 切换为 HS512 等。
 /// 通过 `with_device` 设置设备标识，签发时写入 claims。
@@ -54,7 +54,7 @@ pub struct JwtHandler {
 }
 
 impl JwtHandler {
-    /// 创建新的 JWT 处理器，默认采用 HS256 算法（依据 spec protocol-jwt）。
+    /// 创建新的 JWT 处理器，默认采用 HS256 算法。
     ///
     /// # 参数
     /// - `secret`: 签名密钥（空字符串将在 `sign` 时拒绝）。
@@ -66,7 +66,7 @@ impl JwtHandler {
         }
     }
 
-    /// 切换签名算法（依据 spec protocol-jwt）。
+    /// 切换签名算法。
     ///
     /// # 参数
     /// - `algorithm`: 算法（如 `Algorithm::HS512`）。
@@ -75,7 +75,7 @@ impl JwtHandler {
         self
     }
 
-    /// 设置设备标识（依据 spec protocol-jwt）。
+    /// 设置设备标识。
     ///
     /// 签发时写入 claims 的 `device` 字段。
     ///
@@ -86,7 +86,7 @@ impl JwtHandler {
         self
     }
 
-    /// 签发 JWT（依据 spec protocol-jwt）。
+    /// 签发 JWT。
     ///
     /// # 参数
     /// - `login_id`: 登录主体标识。
@@ -124,7 +124,7 @@ impl JwtHandler {
             .map_err(|e| BulwarkError::Internal(format!("JWT 签发失败: {}", e)))
     }
 
-    /// 校验 JWT 并返回 Claims（依据 spec protocol-jwt）。
+    /// 校验 JWT 并返回 Claims。
     ///
     /// # 参数
     /// - `token`: JWT 字符串。
@@ -155,7 +155,7 @@ impl JwtHandler {
             })
     }
 
-    /// 刷新 JWT：解析旧 token 的 claims → 签发新 token（依据 spec protocol-jwt）。
+    /// 刷新 JWT：解析旧 token 的 claims → 签发新 token。
     ///
     /// # 参数
     /// - `token`: 旧 JWT 字符串（需可成功 verify）。
@@ -183,7 +183,7 @@ mod tests {
     use super::*;
 
     // ========================================================================
-    // BulwarkJwtClaims 测试（依据 spec protocol-jwt）
+    // BulwarkJwtClaims 测试
     // ========================================================================
 
     /// BulwarkJwtClaims 完整字段序列化（spec Scenario）。
@@ -232,7 +232,7 @@ mod tests {
     }
 
     // ========================================================================
-    // JwtHandler 构造测试（依据 spec protocol-jwt）
+    // JwtHandler 构造测试
     // ========================================================================
 
     /// new 默认采用 HS256 算法（spec Scenario）。
@@ -259,7 +259,7 @@ mod tests {
     }
 
     // ========================================================================
-    // sign 测试（依据 spec protocol-jwt）
+    // sign 测试
     // ========================================================================
 
     /// sign 返回三段 Base64URL（spec Scenario）。
@@ -309,7 +309,7 @@ mod tests {
     }
 
     // ========================================================================
-    // verify 测试（依据 spec protocol-jwt）
+    // verify 测试
     // ========================================================================
 
     /// verify 有效 token 返回 claims（spec Scenario）。
@@ -372,7 +372,7 @@ mod tests {
     }
 
     // ========================================================================
-    // refresh 测试（依据 spec protocol-jwt）
+    // refresh 测试
     // ========================================================================
 
     /// refresh 返回新 token 且可 verify。
@@ -408,7 +408,7 @@ mod tests {
     }
 
     // ========================================================================
-    // 0.4.2 新增: LoginId newtype 接入（impl Into<LoginId>）
+    // LoginId newtype 接入（impl Into<LoginId>）
     // ========================================================================
 
     /// 验证 `JwtHandler::sign` 接受 String 形式 login_id。

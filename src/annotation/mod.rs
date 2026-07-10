@@ -112,7 +112,7 @@ pub enum Annotation {
     /// 签名检查（对应 `@SaCheckSign`）。
     CheckSign,
 
-    /// API Key 校验（0.6.1 新增，对应 `@CheckApiKey`，依据 spec annotation-check-api-key R-anno-001）。
+    /// API Key 校验（对应 `@CheckApiKey`）。
     ///
     /// `namespace` 为 `Some(s)` 表示命名空间隔离（FRD §5.4.1），
     /// `None` 表示使用默认命名空间 `"default"`。
@@ -121,29 +121,29 @@ pub enum Annotation {
         namespace: Option<String>,
     },
 
-    /// 逻辑组合模式（0.6.1 新增，对应 `@Mode`，依据 spec annotation-check-api-key R-anno-002）。
+    /// 逻辑组合模式（对应 `@Mode`）。
     ///
     /// 控制 `@CheckPermission` / `@CheckRole` 的多权限组合逻辑：
     /// - [`AnnotationMode::And`]：全部满足
     /// - [`AnnotationMode::Or`]：任一满足
     Mode(AnnotationMode),
 
-    /// OAuth2 access_token 校验（依据 spec annotation-oauth2 R-annotation-oauth2-001）。
+    /// OAuth2 access_token 校验。
     ///
     /// 声明受保护路由需要校验 OAuth2 access_token。
     /// 拦截器委托 `OAuth2Handler::verify_access_token` 校验；
-    /// 无 OAuth2Handler 注册时返回 `NotImplemented`（依据 spec R-annotation-oauth2-003）。
+    /// 无 OAuth2Handler 注册时返回 `NotImplemented`。
     CheckAccessToken,
 
-    /// OAuth2 client_token 校验（依据 spec annotation-oauth2 R-annotation-oauth2-002）。
+    /// OAuth2 client_token 校验。
     ///
     /// 声明受保护路由需要校验 OAuth2 client_token（机器对机器访问）。
     /// 拦截器委托 `OAuth2Handler::verify_client_token` 校验；
-    /// 无 OAuth2Handler 注册时返回 `NotImplemented`（依据 spec R-annotation-oauth2-003）。
+    /// 无 OAuth2Handler 注册时返回 `NotImplemented`。
     CheckClientToken,
 }
 
-/// 注解逻辑组合模式（0.6.1 新增，依据 spec annotation-check-api-key R-anno-002）。
+/// 注解逻辑组合模式。
 ///
 /// 控制 `@CheckPermission` / `@CheckRole` 的多权限组合逻辑。
 ///
@@ -246,7 +246,7 @@ mod extractors {
     // 辅助函数：从请求 parts 提取 token（按 config 决定提取顺序与字段名）
     // ----------------------------------------------------------------
 
-    /// 从请求 parts 提取 token（依据 RFC 7235 大小写不敏感匹配 `Bearer` 前缀）。
+    /// 从请求 parts 提取 token。
     ///
     /// 提取顺序（受 config 开关控制）：
     /// 1. 若 `is_read_header=true`：
@@ -473,7 +473,7 @@ mod extractors {
     }
 
     // ----------------------------------------------------------------
-    // BulwarkPrincipal extractor（携带 login_id，依据 spec web-adapters D12）
+    // BulwarkPrincipal extractor（携带 login_id）
     // ----------------------------------------------------------------
 
     /// 登录主体 extractor（从 `Authorization: Bearer <token>` 解析 `login_id`）。
@@ -506,7 +506,7 @@ mod extractors {
     }
 
     // ----------------------------------------------------------------
-    // TenantContext extractor（cfg tenant-isolation，依据 spec web-adapters D12）
+    // TenantContext extractor（cfg tenant-isolation）
     // ----------------------------------------------------------------
 
     /// 租户上下文 extractor（从 `X-Tenant-Id` header 解析 `tenant_id`）。
@@ -1060,7 +1060,7 @@ mod tests {
         assert_eq!(Annotation::CheckBasicAuth.name(), "CheckBasicAuth");
         assert_eq!(Annotation::CheckDigestAuth.name(), "CheckDigestAuth");
         assert_eq!(Annotation::CheckSign.name(), "CheckSign");
-        // 0.6.1 新增：CheckApiKey（R-anno-001）— namespace None 与 Some 均返回同一字符串
+        // CheckApiKey（R-anno-001）— namespace None 与 Some 均返回同一字符串
         assert_eq!(
             Annotation::CheckApiKey { namespace: None }.name(),
             "CheckApiKey"
@@ -1072,7 +1072,7 @@ mod tests {
             .name(),
             "CheckApiKey"
         );
-        // 0.6.1 新增：Mode（R-anno-002）— And / Or 均返回 "Mode"
+        // Mode（R-anno-002）— And / Or 均返回 "Mode"
         assert_eq!(Annotation::Mode(AnnotationMode::And).name(), "Mode");
         assert_eq!(Annotation::Mode(AnnotationMode::Or).name(), "Mode");
         // 新增：CheckAccessToken / CheckClientToken（R-annotation-oauth2-001/002）
@@ -1081,7 +1081,7 @@ mod tests {
     }
 
     // ----------------------------------------------------------------
-    // AnnotationMode Display / Debug / Clone / PartialEq 测试（0.6.1 新增，R-anno-002）
+    // AnnotationMode Display / Debug / Clone / PartialEq 测试（R-anno-002）
     // ----------------------------------------------------------------
 
     /// AnnotationMode::And 的 Display 输出 "AND"，AnnotationMode::Or 输出 "OR"。
@@ -1335,7 +1335,7 @@ mod tests {
     }
 
     // ----------------------------------------------------------------
-    // BulwarkPrincipal extractor 测试（携带 login_id，依据 spec web-adapters D12）
+    // BulwarkPrincipal extractor 测试（携带 login_id）
     // ----------------------------------------------------------------
 
     /// `BulwarkPrincipal::from_request_parts` 从 `Authorization: Bearer <token>`
@@ -1427,7 +1427,7 @@ mod tests {
     }
 
     // ----------------------------------------------------------------
-    // TenantContext extractor 测试（cfg tenant-isolation，依据 spec web-adapters D12）
+    // TenantContext extractor 测试（cfg tenant-isolation）
     // ----------------------------------------------------------------
 
     /// `TenantContext::from_request_parts` 从 `X-Tenant-Id` header 解析出 `tenant_id`。

@@ -13,10 +13,10 @@ use crate::stp::token::TokenLogic;
 use std::sync::Arc;
 
 // ============================================================================
-// JwtMode：JWT 校验模式（依据 spec protocol-jwt-modes R-001）
+// JwtMode：JWT 校验模式
 // ============================================================================
 
-/// JWT 校验模式（依据 spec protocol-jwt-modes R-001）。
+/// JWT 校验模式。
 ///
 /// 控制 `check_login` 在 JWT verify 与 oxcache session 查询之间的组合策略。
 /// 不依赖 `jsonwebtoken` crate，作为配置选项总是编译（即使未启用 `protocol-jwt`）。
@@ -143,7 +143,7 @@ impl BulwarkUtil {
             .await
     }
 
-    /// 主动吊销 token：销毁指定 token 的会话（v0.4.2 新增，依据 spec listener-events-extend R-002）。
+    /// 主动吊销 token：销毁指定 token 的会话。
     ///
     /// 与 [`kickout_by_token`](Self::kickout_by_token) 的区别：
     /// - `revoke_token` 广播 `RevokeToken` 事件（仅携带 token，语义为"token 失效"）
@@ -192,7 +192,7 @@ impl BulwarkUtil {
             .await
     }
 
-    /// 通过指定 token 获取关联的登录 ID（依据 spec web-adapters D12）。
+    /// 通过指定 token 获取关联的登录 ID。
     ///
     /// 与 [`get_login_id`] 的区别：本方法显式接收 token 参数，内部通过
     /// [`with_current_token`] 将 token 设置到 task_local 上下文后再查询，
@@ -251,7 +251,7 @@ impl BulwarkUtil {
             .await
     }
 
-    /// 检查当前会话是否持有指定权限（0.6.1 新增，依据 spec bulwark-util-api R-util-api-001，对应 FRD §5.3.2 hasPermission）。
+    /// 检查当前会话是否持有指定权限。
     ///
     /// 与 [`check_permission`](Self::check_permission) 的区别：本方法返回布尔值而非抛出异常。
     /// 未登录或未持有权限均返回 `Ok(false)`，适用于条件分支场景（如 UI 元素显隐控制）。
@@ -278,7 +278,7 @@ impl BulwarkUtil {
             .await
     }
 
-    /// 检查当前会话是否持有指定角色（0.6.1 新增，依据 spec bulwark-util-api R-util-api-002，对应 FRD §5.3.2 hasRole）。
+    /// 检查当前会话是否持有指定角色。
     ///
     /// 与 [`check_role`](Self::check_role) 的区别：本方法返回布尔值而非抛出异常。
     /// 未登录或未持有角色均返回 `Ok(false)`，适用于条件分支场景。
@@ -305,7 +305,7 @@ impl BulwarkUtil {
             .await
     }
 
-    /// 获取当前登录主体的权限列表（0.6.1 新增，依据 spec bulwark-util-api R-util-api-003，对应 FRD §5.3.2 getPermissionList）。
+    /// 获取当前登录主体的权限列表。
     ///
     /// 从当前会话上下文获取 login_id 后委托 `BulwarkPermissionStrategy` 查询权限数据。
     /// 未登录时返回 `Ok(vec![])`（非抛出异常）。
@@ -322,7 +322,7 @@ impl BulwarkUtil {
             .await
     }
 
-    /// 获取当前登录主体的角色列表（0.6.1 新增，依据 spec bulwark-util-api R-util-api-004，对应 FRD §5.3.2 getRoleList）。
+    /// 获取当前登录主体的角色列表。
     ///
     /// 从当前会话上下文获取 login_id 后委托 `BulwarkPermissionStrategy` 查询角色数据。
     /// 未登录时返回 `Ok(vec![])`。
@@ -339,7 +339,7 @@ impl BulwarkUtil {
             .await
     }
 
-    /// 校验 access_token 类型会话（0.5.0 新增，依据 spec annotation-macros P2 前置）。
+    /// 校验 access_token 类型会话。
     ///
     /// 委托 `TokenLogic::check_access_token()`，默认实现委托 `check_login`。
     ///
@@ -355,7 +355,7 @@ impl BulwarkUtil {
             .await
     }
 
-    /// 校验 client_token 类型会话（0.5.0 新增，依据 spec annotation-macros P2 前置）。
+    /// 校验 client_token 类型会话。
     ///
     /// 委托 `TokenLogic::check_client_token()`，默认实现委托 `check_login`。
     ///
@@ -371,7 +371,7 @@ impl BulwarkUtil {
             .await
     }
 
-    /// 校验 temp_token 类型会话（0.5.0 新增，依据 spec annotation-macros P2 前置）。
+    /// 校验 temp_token 类型会话。
     ///
     /// 委托 `TokenLogic::check_temp_token()`，默认实现委托 `check_login`。
     ///
@@ -387,7 +387,7 @@ impl BulwarkUtil {
             .await
     }
 
-    /// 检查二级认证（MFA）状态（0.3.0 新增，依据 spec annotation-handling）。
+    /// 检查二级认证（MFA）状态。
     ///
     /// 委托 `MfaLogic::check_safe()`，默认实现返回 `Ok(())`（未启用 MFA）。
     ///
@@ -401,7 +401,7 @@ impl BulwarkUtil {
         crate::manager::BulwarkManager::logic()?.check_safe().await
     }
 
-    /// 检查账号是否被禁用（0.3.0 新增，依据 spec annotation-handling）。
+    /// 检查账号是否被禁用。
     ///
     /// 委托 `MfaLogic::check_disable()`，默认实现返回 `Ok(())`（未实现禁用账号库）。
     ///
@@ -417,7 +417,7 @@ impl BulwarkUtil {
             .await
     }
 
-    /// 校验 API Key（0.6.1 新增，依据 spec annotation-check-api-key R-anno-004）。
+    /// 校验 API Key。
     ///
     /// 从当前请求上下文（task_local `CURRENT_TOKEN`）获取 API Key，
     /// 委托 `BulwarkLogicDefault::check_api_key(namespace)` 校验。
@@ -455,7 +455,7 @@ impl BulwarkUtil {
             .await
     }
 
-    /// 通过外部 token 反向建立会话（0.2.0 新增，依据 spec core-auth-api）。
+    /// 通过外部 token 反向建立会话。
     ///
     /// 用于 OAuth2/SSO 场景：外部 token 已通过协议层校验后，
     /// 调用此方法在当前上下文建立内部会话。
@@ -472,7 +472,7 @@ impl BulwarkUtil {
             .await
     }
 
-    /// 验证显式传入的 token 并返回关联的 login_id（0.2.0 新增，依据 spec core-auth-api）。
+    /// 验证显式传入的 token 并返回关联的 login_id。
     ///
     /// # 参数
     /// - `token`: 待验证的 token 字符串。
@@ -489,7 +489,7 @@ impl BulwarkUtil {
             .await
     }
 
-    /// 刷新 token（0.2.0 新增，依据 spec core-auth-api）。
+    /// 刷新 token。
     ///
     /// # 参数
     /// - `token`: 待刷新的旧 token 字符串。

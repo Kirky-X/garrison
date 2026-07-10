@@ -22,7 +22,7 @@ use crate::listener::BulwarkEvent;
 use crate::stp::session::SessionLogic;
 use async_trait::async_trait;
 
-/// 密码逻辑 trait，定义密码登录契约（0.4.2 新增，依据 spec auth-password-login）。
+/// 密码逻辑 trait，定义密码登录契约。
 ///
 /// # 默认实现
 ///
@@ -72,7 +72,7 @@ pub trait PasswordLogic: SessionLogic {
 impl PasswordLogic for BulwarkLogicDefault {
     /// 密码登录实现：校验密码后调用 [`login`](Self::login) 签发 token。
     ///
-    /// 依据 spec auth-password-login R-002：1) UserRepository 查询 2) PasswordHasher 校验 3) login 签发。
+    /// R-002：1) UserRepository 查询 2) PasswordHasher 校验 3) login 签发。
     /// 安全约束：用户不存在与密码错误统一返回 `InvalidParam("invalid password")`，真实原因记录在 tracing 日志。
     #[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
     async fn login_with_password(&self, login_id: &str, password: &str) -> BulwarkResult<String> {
@@ -102,7 +102,7 @@ impl PasswordLogic for BulwarkLogicDefault {
                     reason = "invalid_credentials",
                     "login_with_password 失败"
                 );
-                // v0.4.2: 广播 LoginFailure 事件（依据 spec listener-events-extend R-001）
+                // 广播 LoginFailure 事件
                 #[cfg(feature = "listener")]
                 if let Some(lm) = &self.listener_manager {
                     lm.broadcast(&BulwarkEvent::LoginFailure {
@@ -134,7 +134,7 @@ impl PasswordLogic for BulwarkLogicDefault {
                 reason = "invalid_credentials",
                 "login_with_password 失败"
             );
-            // v0.4.2: 广播 LoginFailure 事件（依据 spec listener-events-extend R-001）
+            // 广播 LoginFailure 事件
             #[cfg(feature = "listener")]
             if let Some(lm) = &self.listener_manager {
                 lm.broadcast(&BulwarkEvent::LoginFailure {

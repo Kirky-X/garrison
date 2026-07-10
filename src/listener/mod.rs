@@ -18,13 +18,13 @@ use async_trait::async_trait;
 use parking_lot::RwLock;
 use std::sync::Arc;
 
-/// 审计日志子模块（v0.5.0 新增，依据 proposal H3）。
+/// 审计日志子模块。
 ///
 /// 启用 `audit-log` feature 时编译，提供 `AuditLogListener` 持久化事件到 `audit_logs` 表。
 #[cfg(feature = "audit-log")]
 pub mod audit;
 
-/// 事件枚举，定义框架广播的所有事件变体（依据 spec listener-system）。
+/// 事件枚举，定义框架广播的所有事件变体。
 ///
 /// 派生 `Debug`、`Clone`、`PartialEq`，便于在监听器中复制、打印与比较。
 #[derive(Debug, Clone, PartialEq)]
@@ -54,14 +54,14 @@ pub enum BulwarkEvent {
         /// 踢出原因。
         reason: String,
     },
-    /// 权限校验事件（v0.5.0 重命名：原 PermissionDenied → PermissionCheck，对齐 spec R-audit-log-005）。
+    /// 权限校验事件。
     PermissionCheck {
         /// 登录主体标识。
         login_id: String,
         /// 被校验的权限字符串。
         permission: String,
     },
-    /// 角色校验事件（v0.5.0 重命名：原 RoleDenied → RoleCheck，对齐 spec R-audit-log-005）。
+    /// 角色校验事件。
     RoleCheck {
         /// 登录主体标识。
         login_id: String,
@@ -73,7 +73,7 @@ pub enum BulwarkEvent {
         /// 过期的 token。
         token: String,
     },
-    /// 登录失败事件（v0.4.2 新增，依据 spec listener-events-extend R-001）。
+    /// 登录失败事件。
     ///
     /// 在 `login_with_password` 失败路径广播（invalid_credentials / hash_format_error）。
     /// 注意：login_id 字段使用 `String` 类型，以保持与现有变体一致
@@ -87,7 +87,7 @@ pub enum BulwarkEvent {
         /// 防止日志/事件泄露用户存在性（防用户枚举）。
         reason: String,
     },
-    /// Token 刷新事件（v0.4.2 新增，依据 spec listener-events-extend R-001）。
+    /// Token 刷新事件。
     ///
     /// 在 `refresh_token` 成功路径广播，携带旧 token 与新 token。
     TokenRefresh {
@@ -98,7 +98,7 @@ pub enum BulwarkEvent {
         /// 刷新后的新 token。
         new_token: String,
     },
-    /// Token 主动吊销事件（v0.5.0 重命名：原 TokenRevoke → RevokeToken，对齐 spec R-audit-log-005）。
+    /// Token 主动吊销事件。
     ///
     /// 在 `SessionLogic::revoke_token` 调用时广播（携带被吊销的 token）。
     /// 与 `Logout` 事件的区别：`revoke_token` 语义为"token 失效"（如 OAuth2 token revocation），
@@ -107,7 +107,7 @@ pub enum BulwarkEvent {
         /// 被吊销的 token。
         token: String,
     },
-    /// 会话超时事件（v0.4.2 新增，依据 spec listener-events-extend R-001）。
+    /// 会话超时事件。
     ///
     /// 在 `check_login_simple` / `check_login_mixin` 判定 token 无效时广播。
     /// 若 token session 完全不存在（无法获取 login_id）则跳过广播。
@@ -117,7 +117,7 @@ pub enum BulwarkEvent {
         /// 超时的 token。
         token: String,
     },
-    /// 账号锁定事件（v0.4.2 新增，依据 spec listener-events-extend R-001）。
+    /// 账号锁定事件。
     ///
     /// 在 `check_brute_force` 阻断路径广播（暴力破解检测触发）。
     AccountLocked {
@@ -126,7 +126,7 @@ pub enum BulwarkEvent {
         /// 锁定原因（如 "brute_force: 5 failures in 1h"）。
         reason: String,
     },
-    /// 防火墙阻断事件（v0.4.2 新增，依据 spec listener-events-extend R-001）。
+    /// 防火墙阻断事件。
     ///
     /// 在 `check_login_hooks` 任一 hook 返回 Err 时广播。
     FirewallBlock {
@@ -135,7 +135,7 @@ pub enum BulwarkEvent {
         /// 阻断原因（hook 错误信息）。
         reason: String,
     },
-    /// API Key 轮换事件（v0.5.0 重命名：原 ApiKeyRotate → TokenRotate，对齐 spec R-audit-log-005）。
+    /// API Key 轮换事件。
     ///
     /// 在 `ApiKeyHandler::rotate` 成功路径广播。
     TokenRotate {
@@ -144,7 +144,7 @@ pub enum BulwarkEvent {
         /// 轮换后的新 key。
         new_key: String,
     },
-    /// 临时凭据消费事件（v0.4.2 新增，依据 spec listener-events-extend R-001）。
+    /// 临时凭据消费事件。
     ///
     /// 在 `TempCredentialHandler::consume` 成功消费时广播（value 为 Some 时）。
     TempCredentialConsumed {
@@ -154,9 +154,9 @@ pub enum BulwarkEvent {
         value: String,
     },
     // ========================================================================
-    // v0.5.0 新增变体（spec R-audit-log-005 要求，T076 Green）
+    // 变体（spec R-audit-log-005 要求，T076 Green）
     // ========================================================================
-    /// 社交登录事件（v0.5.0 新增，spec R-audit-log-005）。
+    /// 社交登录事件（spec R-audit-log-005）。
     ///
     /// 在社交登录（微信/支付宝等）成功时广播。
     SocialLogin {
@@ -167,7 +167,7 @@ pub enum BulwarkEvent {
         /// 关联的本地 login_id（首次登录可能为 None，绑定后才有）。
         login_id: Option<String>,
     },
-    /// 租户切换事件（v0.5.0 新增，spec R-audit-log-005）。
+    /// 租户切换事件（spec R-audit-log-005）。
     ///
     /// 在用户切换租户上下文时广播。
     TenantSwitch {
@@ -178,7 +178,7 @@ pub enum BulwarkEvent {
         /// 切换后的租户 ID。
         to_tenant: i64,
     },
-    /// 设备封禁事件（v0.5.0 新增，spec R-audit-log-005）。
+    /// 设备封禁事件（spec R-audit-log-005）。
     ///
     /// 在设备被风控封禁时广播。
     DeviceBlock {
@@ -187,7 +187,7 @@ pub enum BulwarkEvent {
         /// 被封禁的设备标识。
         device: String,
     },
-    /// 设备解封事件（v0.5.0 新增，spec R-audit-log-005）。
+    /// 设备解封事件（spec R-audit-log-005）。
     ///
     /// 在设备被封禁后解封时广播。
     DeviceUnblock {
@@ -196,7 +196,7 @@ pub enum BulwarkEvent {
         /// 被解封的设备标识。
         device: String,
     },
-    /// 配置热重载事件（v0.5.0 新增，spec R-audit-log-005）。
+    /// 配置热重载事件（spec R-audit-log-005）。
     ///
     /// 在运行时配置被热重载时广播。
     ConfigReload {
@@ -205,29 +205,29 @@ pub enum BulwarkEvent {
     },
 }
 
-/// 监听器 trait，提供事件订阅抽象（依据 spec listener-system）。
+/// 监听器 trait，提供事件订阅抽象。
 ///
 /// trait 绑定 `Send + Sync`，核心方法为 `on_event`，实现方按事件类型选择性处理。
 /// 与 `BulwarkPlugin` 的区别：plugin 是"主动钩子"（在特定方法前后被调用），
 /// listener 是"被动订阅"（订阅事件类型）。
 #[async_trait]
 pub trait BulwarkListener: Send + Sync {
-    /// 事件处理方法（依据 spec listener-system）。
+    /// 事件处理方法。
     ///
     /// 实现方按事件类型选择性处理，默认空实现返回 `Ok(())`。
     /// 监听器实现应快速返回或内部 spawn，避免阻塞主流程。
     ///
-    /// v0.5.0 改为 async（依据 proposal H3）：支持 SQL-backed 监听器（如 AuditLogListener）
+    /// v0.5.0 改为 async：支持 SQL-backed 监听器（如 AuditLogListener）
     /// 执行异步持久化操作。所有实现与调用方需 `.await`。
     async fn on_event(&self, _event: &BulwarkEvent) -> BulwarkResult<()> {
         Ok(())
     }
 }
 
-/// 监听器工厂函数指针，返回 `Arc<dyn BulwarkListener>`（依据 spec listener-system）。
+/// 监听器工厂函数指针，返回 `Arc<dyn BulwarkListener>`。
 pub type BulwarkListenerFactoryFn = fn() -> Arc<dyn BulwarkListener>;
 
-/// 监听器注册条目，用于 `inventory` 收集（依据 spec listener-system）。
+/// 监听器注册条目，用于 `inventory` 收集。
 ///
 /// 通过 `inventory::submit! { BulwarkListenerEntry { factory: my_listener_factory } }` 注册监听器，
 /// 运行期通过 `inventory::iter::<BulwarkListenerEntry>()` 遍历。
@@ -239,7 +239,7 @@ pub struct BulwarkListenerEntry {
 // 编译期监听器注册收集点
 inventory::collect!(BulwarkListenerEntry);
 
-/// 监听器管理器，收集并管理所有已注册监听器（依据 spec listener-system）。
+/// 监听器管理器，收集并管理所有已注册监听器。
 ///
 /// 在 `BulwarkManager::init` 时通过 `inventory::iter` 收集所有已注册监听器。
 /// `broadcast` 方法同步遍历所有监听器调用 `on_event`，
@@ -250,7 +250,7 @@ pub struct BulwarkListenerManager {
 }
 
 impl BulwarkListenerManager {
-    /// 创建监听器管理器并收集所有已注册监听器（依据 spec listener-system）。
+    /// 创建监听器管理器并收集所有已注册监听器。
     pub fn new() -> Self {
         use std::iter::Iterator;
         let listeners: Vec<Arc<dyn BulwarkListener>> = inventory::iter::<BulwarkListenerEntry>()
@@ -268,7 +268,7 @@ impl BulwarkListenerManager {
         }
     }
 
-    /// 运行时注册监听器（v0.5.0 新增，依据 proposal H3）。
+    /// 运行时注册监听器。
     ///
     /// 补充 `inventory` 编译期注册机制的不足：`AuditLogListener` 等需要运行时参数
     /// （如 `DbPool`）的监听器无法通过无参工厂函数注册，需通过此方法在初始化后追加。
@@ -281,12 +281,12 @@ impl BulwarkListenerManager {
         self.listeners.read().len()
     }
 
-    /// 广播事件到所有已注册监听器（依据 spec listener-system）。
+    /// 广播事件到所有已注册监听器。
     ///
     /// 异步遍历所有监听器的 `on_event` 方法，单个监听器失败仅记录 `tracing::warn!`，
     /// 不中断广播，最终返回 `Ok(())`。
     ///
-    /// v0.5.0 改为 async（依据 proposal H3）：`on_event` 改为 async 后，broadcast 需 `.await`。
+    /// v0.5.0 改为 async：`on_event` 改为 async 后，broadcast 需 `.await`。
     pub async fn broadcast(&self, event: &BulwarkEvent) {
         let listeners = self.listeners.read().clone();
         for listener in &listeners {
@@ -361,7 +361,7 @@ mod tests {
     }
 
     // ========================================================================
-    // BulwarkEvent 枚举测试（依据 spec listener-system）
+    // BulwarkEvent 枚举测试
     // ========================================================================
 
     /// Login 事件携带 login_id、token 与 device（spec Scenario）。
@@ -500,7 +500,7 @@ mod tests {
     }
 
     // ========================================================================
-    // T075-T076: BulwarkEvent 14 变体（spec R-audit-log-005）
+    // T075-BulwarkEvent 14 变体（spec R-audit-log-005）
     // ========================================================================
 
     /// T075 Red: 验证 `BulwarkEvent` 含 spec R-audit-log-005 要求的 14 个变体。
@@ -617,7 +617,7 @@ mod tests {
     }
 
     // ========================================================================
-    // BulwarkListener trait 测试（依据 spec listener-system）
+    // BulwarkListener trait 测试
     // ========================================================================
 
     /// 默认 on_event 返回 Ok(())（spec Scenario：监听器需实现 on_event 方法）。
@@ -637,7 +637,7 @@ mod tests {
     }
 
     // ========================================================================
-    // BulwarkListenerManager 测试（依据 spec listener-system）
+    // BulwarkListenerManager 测试
     // ========================================================================
 
     /// manager 收集所有已注册监听器（spec Scenario）。
@@ -706,7 +706,7 @@ mod tests {
         assert!(manager.count() >= 2);
     }
 
-    /// 验证 broadcast 对 PermissionCheck 事件正确分发（v0.5.0 重命名）。
+    /// 验证 broadcast 对 PermissionCheck 事件正确分发。
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
     async fn broadcast_permission_check_event() {
@@ -720,7 +720,7 @@ mod tests {
         assert!(EVENT_CALLS.load(Ordering::SeqCst) >= 1);
     }
 
-    /// 验证 broadcast 对 RoleCheck 事件正确分发（v0.5.0 重命名）。
+    /// 验证 broadcast 对 RoleCheck 事件正确分发。
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
     async fn broadcast_role_check_event() {
@@ -763,11 +763,11 @@ mod tests {
     }
 
     // ========================================================================
-    // 0.4.2 新增：9 个新事件变体测试（依据 spec listener-events-extend R-001）
+    // 9 个新事件变体测试
     // ========================================================================
 
     /// LoginFailure 事件携带 login_id 与 reason，派生 Debug/Clone/PartialEq
-    /// （依据 spec listener-events-extend R-001）。
+    /// 。
     #[test]
     #[serial]
     fn login_failure_event_carries_login_id_and_reason() {
@@ -789,7 +789,7 @@ mod tests {
     }
 
     /// TokenRefresh 事件携带 login_id/old_token/new_token，派生 Debug/Clone/PartialEq
-    /// （依据 spec listener-events-extend R-001）。
+    /// 。
     #[test]
     #[serial]
     fn token_refresh_event_carries_tokens() {
@@ -817,7 +817,7 @@ mod tests {
     }
 
     /// RevokeToken 事件携带 token，派生 Debug/Clone/PartialEq
-    /// （v0.5.0 重命名：原 TokenRevoke → RevokeToken，依据 spec R-audit-log-005）。
+    /// 。
     #[test]
     #[serial]
     fn revoke_token_event_carries_token() {
@@ -837,7 +837,7 @@ mod tests {
     }
 
     /// SessionTimeout 事件携带 login_id/token，派生 Debug/Clone/PartialEq
-    /// （依据 spec listener-events-extend R-001）。
+    /// 。
     #[test]
     #[serial]
     fn session_timeout_event_carries_login_id_and_token() {
@@ -859,7 +859,7 @@ mod tests {
     }
 
     /// AccountLocked 事件携带 login_id/reason，派生 Debug/Clone/PartialEq
-    /// （依据 spec listener-events-extend R-001）。
+    /// 。
     #[test]
     #[serial]
     fn account_locked_event_carries_login_id_and_reason() {
@@ -881,7 +881,7 @@ mod tests {
     }
 
     /// FirewallBlock 事件携带 login_id/reason，派生 Debug/Clone/PartialEq
-    /// （依据 spec listener-events-extend R-001）。
+    /// 。
     #[test]
     #[serial]
     fn firewall_block_event_carries_login_id_and_reason() {
@@ -903,7 +903,7 @@ mod tests {
     }
 
     /// TokenRotate 事件携带 old_key/new_key，派生 Debug/Clone/PartialEq
-    /// （v0.5.0 重命名：原 ApiKeyRotate → TokenRotate，依据 spec R-audit-log-005）。
+    /// 。
     #[test]
     #[serial]
     fn token_rotate_event_carries_keys() {
@@ -925,7 +925,7 @@ mod tests {
     }
 
     /// TempCredentialConsumed 事件携带 key/value，派生 Debug/Clone/PartialEq
-    /// （依据 spec listener-events-extend R-001）。
+    /// 。
     #[test]
     #[serial]
     fn temp_credential_consumed_event_carries_key_and_value() {

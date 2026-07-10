@@ -8,7 +8,7 @@
 //!
 //! 仅在启用 `protocol-temp` 特性时编译。
 //!
-//! ## Key 命名空间（依据 spec protocol-temp）
+//! ## Key 命名空间
 //!
 //! 所有临时凭据存储在 `bulwark:temp:<prefix>:<random>` 命名空间下，
 //! 与 session/sign/sso/apikey 模块隔离。`prefix` 用于区分业务场景
@@ -16,27 +16,26 @@
 
 use crate::dao::BulwarkDao;
 use crate::error::{BulwarkError, BulwarkResult};
-// v0.4.2: listener_manager 注入（feature-gated，依据 spec listener-events-extend R-001）
+// listener_manager 注入（feature-gated）
 #[cfg(feature = "listener")]
 use crate::listener::{BulwarkEvent, BulwarkListenerManager};
 use std::sync::Arc;
 use uuid::Uuid;
 
-/// 临时凭证处理器（依据 spec protocol-temp）。
+/// 临时凭证处理器。
 ///
 /// 持有 `Arc<dyn BulwarkDao>` 用于临时凭据存储。
 /// 实现 `Send + Sync`，可在多线程环境共享。
 pub struct TempCredentialHandler {
     /// DAO 抽象层，用于临时凭据存储。
     dao: Arc<dyn BulwarkDao>,
-    /// v0.4.2：可选监听器管理器，注入后 consume 广播 TempCredentialConsumed 事件
-    ///（依据 spec listener-events-extend R-001）。
+    /// 可选监听器管理器，注入后 consume 广播 TempCredentialConsumed 事件
     #[cfg(feature = "listener")]
     listener_manager: Option<Arc<BulwarkListenerManager>>,
 }
 
 impl TempCredentialHandler {
-    /// 创建新的临时凭证处理器（依据 spec protocol-temp）。
+    /// 创建新的临时凭证处理器。
     pub fn new(dao: Arc<dyn BulwarkDao>) -> Self {
         Self {
             dao,
@@ -46,7 +45,7 @@ impl TempCredentialHandler {
     }
 
     /// 注入 `BulwarkListenerManager`，启用 TempCredentialConsumed 事件广播
-    ///（v0.4.2 新增，依据 spec listener-events-extend R-001）。
+    ///
     ///
     /// 注入后 `consume` 成功消费（value 为 Some）时广播 `BulwarkEvent::TempCredentialConsumed`。
     /// 未注入时为 no-op（向后兼容 0.4.1）。需启用 `listener` feature。
@@ -56,7 +55,7 @@ impl TempCredentialHandler {
         self
     }
 
-    /// 签发临时凭据（依据 spec protocol-temp）。
+    /// 签发临时凭据。
     ///
     /// 生成 key 格式为 `bulwark:temp:<prefix>:<random>`，其中 `<random>` 为
     /// 64 字符随机 hex 字符串。value 原样存储传入的 `value`，TTL 为 `ttl_seconds` 秒。
@@ -91,7 +90,7 @@ impl TempCredentialHandler {
         Ok(key)
     }
 
-    /// 读取临时凭据（依据 spec protocol-temp）。
+    /// 读取临时凭据。
     ///
     /// 读取后不删除凭据（与 [`consume`](Self::consume) 区分）。
     ///
@@ -102,7 +101,7 @@ impl TempCredentialHandler {
         self.dao.get(key).await
     }
 
-    /// 撤销临时凭据（依据 spec protocol-temp）。
+    /// 撤销临时凭据。
     ///
     /// 从 dao 中删除指定凭据。即使凭据不存在也返回 `Ok(())`（幂等语义）。
     pub async fn revoke(&self, key: &str) -> BulwarkResult<()> {
@@ -110,12 +109,12 @@ impl TempCredentialHandler {
         self.dao.delete(key).await
     }
 
-    /// 消费临时凭据（依据 spec protocol-temp）。
+    /// 消费临时凭据。
     ///
     /// 原子地读取并删除凭据（get + delete 组合），保证一次性使用语义。
     ///
     /// v0.4.2 扩展：成功消费（value 为 Some）时若注入了 `listener_manager`，
-    /// 广播 `BulwarkEvent::TempCredentialConsumed`（依据 spec listener-events-extend R-001）。
+    /// 广播 `BulwarkEvent::TempCredentialConsumed`。
     ///
     /// # 返回
     /// - `Ok(Some(value))`: 凭据存在且已被消费（删除）。
@@ -126,7 +125,7 @@ impl TempCredentialHandler {
             // 存在则删除（一次性使用语义）
             self.dao.delete(key).await?;
         }
-        // v0.4.2: 广播 TempCredentialConsumed 事件（仅 value 为 Some 时，依据 spec listener-events-extend R-001）
+        // 广播 TempCredentialConsumed 事件（仅 value 为 Some 时）
         #[cfg(feature = "listener")]
         if let Some(lm) = &self.listener_manager {
             if let Some(ref v) = value {
@@ -202,7 +201,7 @@ mod tests {
     }
 
     // ========================================================================
-    // TempCredentialHandler 构造测试（依据 spec protocol-temp）
+    // TempCredentialHandler 构造测试
     // ========================================================================
 
     /// 构造 handler（spec Scenario）。
@@ -212,7 +211,7 @@ mod tests {
     }
 
     // ========================================================================
-    // issue 测试（依据 spec protocol-temp）
+    // issue 测试
     // ========================================================================
 
     /// 成功签发，key 前缀正确（spec Scenario）。
@@ -277,7 +276,7 @@ mod tests {
     }
 
     // ========================================================================
-    // get 测试（依据 spec protocol-temp）
+    // get 测试
     // ========================================================================
 
     /// 读取存在的凭据，多次读取不删除（spec Scenario）。
@@ -303,7 +302,7 @@ mod tests {
     }
 
     // ========================================================================
-    // revoke 测试（依据 spec protocol-temp）
+    // revoke 测试
     // ========================================================================
 
     /// 撤销存在的凭据（spec Scenario）。
@@ -327,7 +326,7 @@ mod tests {
     }
 
     // ========================================================================
-    // consume 测试（依据 spec protocol-temp）
+    // consume 测试
     // ========================================================================
 
     /// 成功消费存在的凭据（spec Scenario）。
@@ -375,7 +374,7 @@ mod tests {
     }
 
     // ========================================================================
-    // Key 命名空间隔离测试（依据 spec protocol-temp）
+    // Key 命名空间隔离测试
     // ========================================================================
 
     /// temp key 与 apikey 命名空间隔离（spec Scenario）。

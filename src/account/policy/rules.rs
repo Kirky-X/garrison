@@ -1,4 +1,4 @@
-//! 密码策略规则实现（v0.6.0 新增，依据 spec password-policy R-005/R-006）。
+//! 密码策略规则实现。
 //!
 //! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
@@ -32,10 +32,10 @@ use super::{PasswordPolicyRule, PolicyContext, PolicyError};
 use crate::account::credential::password::PasswordVerifier;
 
 // ============================================================================
-// LengthRule（依据 spec R-005.1）
+// LengthRule
 // ============================================================================
 
-/// 长度规则（依据 spec password-policy R-005.1）。
+/// 长度规则。
 ///
 /// 校验密码长度在 `[min, max]` 范围内（含边界）。
 ///
@@ -92,10 +92,10 @@ impl PasswordPolicyRule for LengthRule {
 }
 
 // ============================================================================
-// ComplexityRule（依据 spec R-005.2）
+// ComplexityRule
 // ============================================================================
 
-/// 复杂度规则（依据 spec password-policy R-005.2）。
+/// 复杂度规则。
 ///
 /// 校验密码中大写字母、小写字母、数字、特殊字符各需至少 N 个。
 ///
@@ -187,10 +187,10 @@ impl PasswordPolicyRule for ComplexityRule {
 }
 
 // ============================================================================
-// HistoryRule（依据 spec R-005.3）
+// HistoryRule
 // ============================================================================
 
-/// 密码历史规则（依据 spec password-policy R-005.3）。
+/// 密码历史规则。
 ///
 /// 校验密码不允许与 `ctx.password_history` 最近 `count` 条 hash 相同。
 /// 使用 `PasswordVerifier` 自动识别 hash 格式（Argon2/Bcrypt）进行校验。
@@ -254,10 +254,10 @@ impl PasswordPolicyRule for HistoryRule {
 }
 
 // ============================================================================
-// BlacklistRule（依据 spec R-005.4）
+// BlacklistRule
 // ============================================================================
 
-/// 黑名单规则（依据 spec password-policy R-005.4）。
+/// 黑名单规则。
 ///
 /// 校验密码不在黑名单列表中（精确匹配，非子串匹配）。
 pub struct BlacklistRule {
@@ -289,10 +289,10 @@ impl PasswordPolicyRule for BlacklistRule {
 }
 
 // ============================================================================
-// NotUsernameRule（依据 spec R-005.5）
+// NotUsernameRule
 // ============================================================================
 
-/// 用户名相似规则（依据 spec password-policy R-005.5）。
+/// 用户名相似规则。
 ///
 /// 校验密码不包含 `ctx.username`（大小写不敏感子串检测）。
 /// `ctx.username` 为 `None` 或空字符串时规则通过。
@@ -334,10 +334,10 @@ impl PasswordPolicyRule for NotUsernameRule {
 }
 
 // ============================================================================
-// NotCommonPasswordRule（依据 spec R-005.6）
+// NotCommonPasswordRule
 // ============================================================================
 
-/// 常见密码规则（依据 spec password-policy R-005.6）。
+/// 常见密码规则。
 ///
 /// 校验密码不在常见密码列表中（精确匹配，非子串匹配）。
 /// `common_list` 通常为 top 10000 常见密码列表。
@@ -370,10 +370,10 @@ impl PasswordPolicyRule for NotCommonPasswordRule {
 }
 
 // ============================================================================
-// MaxAgeRule（依据 spec R-006.7）
+// MaxAgeRule
 // ============================================================================
 
-/// 密码过期规则（依据 spec password-policy R-006.7）。
+/// 密码过期规则。
 ///
 /// 校验密码是否超过 `days` 天未修改。
 ///
@@ -417,10 +417,10 @@ impl PasswordPolicyRule for MaxAgeRule {
 }
 
 // ============================================================================
-// DictionaryRule（依据 spec R-006.8）
+// DictionaryRule
 // ============================================================================
 
-/// 字典规则（依据 spec password-policy R-006.8）。
+/// 字典规则。
 ///
 /// 校验密码不在字典单词列表中（精确匹配，非子串匹配）。
 /// 与 `BlacklistRule` 语义不同：`DictionaryRule` 面向字典攻击防护
@@ -454,10 +454,10 @@ impl PasswordPolicyRule for DictionaryRule {
 }
 
 // ============================================================================
-// NotRepeatCharRule（依据 spec R-006.9）
+// NotRepeatCharRule
 // ============================================================================
 
-/// 重复字符规则（依据 spec password-policy R-006.9）。
+/// 重复字符规则。
 ///
 /// 校验密码不含连续 `max_consecutive + 1` 个相同字符。
 ///
@@ -513,10 +513,10 @@ impl PasswordPolicyRule for NotRepeatCharRule {
 }
 
 // ============================================================================
-// NotSequenceRule（依据 spec R-006.10）
+// NotSequenceRule
 // ============================================================================
 
-/// 序列规则（依据 spec password-policy R-006.10）。
+/// 序列规则。
 ///
 /// 校验密码不含长度 `> max_sequence` 的连续序列（正向/反向）。
 ///
@@ -602,10 +602,10 @@ impl PasswordPolicyRule for NotSequenceRule {
 }
 
 // ============================================================================
-// NotEmailRule（依据 spec R-006.11）
+// NotEmailRule
 // ============================================================================
 
-/// 邮箱规则（依据 spec password-policy R-006.11）。
+/// 邮箱规则。
 ///
 /// 校验密码不包含 `ctx.email` 的 `@` 前部分（大小写不敏感子串检测）。
 /// `ctx.email` 为 `None`、无 `@` 或 `@` 前部分为空时规则通过。
@@ -652,10 +652,10 @@ impl PasswordPolicyRule for NotEmailRule {
 }
 
 // ============================================================================
-// RegexRule（依据 spec R-006.12）
+// RegexRule
 // ============================================================================
 
-/// 自定义正则规则（依据 spec password-policy R-006.12）。
+/// 自定义正则规则。
 ///
 /// 校验密码是否匹配 `pattern`（语义：`pattern.is_match(password)` 为 `true` 时报错，
 /// 错误信息使用 `error_msg`）。

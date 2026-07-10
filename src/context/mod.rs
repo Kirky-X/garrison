@@ -6,7 +6,7 @@
 //! [借鉴 Sa-Token] 对应 Sa-Token 的上下文抽象层，
 //! 通过 trait 隔离 Web 框架差异，实现框架无关的鉴权逻辑。
 //!
-//! ## 架构（依据 spec context-abstraction）
+//! ## 架构
 //!
 //! - `BulwarkContext`：上下文入口，提供 request/response/storage 访问
 //! - `BulwarkRequest`：HTTP 请求抽象（path/method/header/cookie/get_token）
@@ -37,7 +37,7 @@
 use crate::error::BulwarkResult;
 
 // ============================================================================
-// 多租户隔离上下文（依据 spec tenant-isolation）
+// 多租户隔离上下文
 // ============================================================================
 
 pub mod tenant;
@@ -51,10 +51,10 @@ pub mod token_extract;
 pub use token_extract::{extract_token_from_headers, strip_bearer_prefix, HeaderLookup};
 
 // ============================================================================
-// 登录主体（依据 spec web-adapters D12）
+// 登录主体
 // ============================================================================
 
-/// 当前请求的登录主体（依据 spec web-adapters D12）。
+/// 当前请求的登录主体。
 ///
 /// 携带从 token 解析出的 `login_id`，由各 web 框架的 extractor
 /// （`web_actix::extractor::BulwarkPrincipal` / `web_warp::extractor::BulwarkPrincipal`）
@@ -124,7 +124,7 @@ pub trait BulwarkRequest {
     /// - `None`: Cookie 不存在。
     fn cookie(&self, name: &str) -> BulwarkResult<Option<String>>;
 
-    /// 从请求中提取 Token（依据 spec context-abstraction Requirement: BulwarkRequest）。
+    /// 从请求中提取 Token。
     ///
     /// 提取顺序依据 `BulwarkConfig`：
     /// - 若 `is_read_header` 为 true，从 `Authorization: Bearer <token>` 或自定义 header 提取
@@ -144,7 +144,7 @@ pub trait BulwarkRequest {
 ///
 /// [借鉴 Sa-Token] 对应 `SaTokenResponse`。
 pub trait BulwarkResponse {
-    /// 设置响应状态码（依据 spec context-abstraction Requirement: BulwarkResponse）。
+    /// 设置响应状态码。
     ///
     /// # 参数
     /// - `code`: HTTP 状态码（如 401 未登录、403 无权限）。
@@ -169,7 +169,7 @@ pub trait BulwarkResponse {
         self.set_cookie_with_config(name, value, &crate::config::BulwarkConfig::default_config())
     }
 
-    /// 设置响应 Cookie（依据 config 自定义 Secure/SameSite）。
+    /// 设置响应 Cookie。
     ///
     /// # 参数
     /// - `name`: Cookie 名称。

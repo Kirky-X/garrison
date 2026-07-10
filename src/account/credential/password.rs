@@ -1,4 +1,4 @@
-//! 密码哈希子模块（v0.6.0 从 secure/password/ 迁移，依据 spec credential-model）。
+//! 密码哈希子模块。
 //!
 //! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
@@ -39,7 +39,7 @@ use rand::rngs::OsRng;
 // Trait 定义
 // ============================================================================
 
-/// 密码哈希器 trait（依据 spec secure-password R-001）。
+/// 密码哈希器 trait。
 ///
 /// 提供 `hash`（密码 → 哈希字符串）与 `verify`（密码 + 哈希 → 是否匹配）方法。
 /// 实现必须为 `Send + Sync`（可在多线程环境共享）。
@@ -67,10 +67,10 @@ pub trait PasswordHasher: Send + Sync {
 }
 
 // ============================================================================
-// Argon2Hasher 实现（依据 spec secure-password R-002）
+// Argon2Hasher 实现
 // ============================================================================
 
-/// Argon2id 密码哈希器（依据 spec secure-password R-002）。
+/// Argon2id 密码哈希器。
 ///
 /// 使用 argon2 0.5 crate，默认参数：Argon2id, m=19456 KiB, t=2, p=1。
 /// 可通过 `with_params` 自定义参数。
@@ -162,10 +162,10 @@ impl PasswordHasher for Argon2Hasher {
 }
 
 // ============================================================================
-// BcryptHasher 实现（依据 spec secure-password R-003）
+// BcryptHasher 实现
 // ============================================================================
 
-/// Bcrypt 密码哈希器（依据 spec secure-password R-003）。
+/// Bcrypt 密码哈希器。
 ///
 /// 使用 bcrypt 0.15 crate，默认 cost=12。
 pub struct BcryptHasher {
@@ -207,10 +207,10 @@ impl PasswordHasher for BcryptHasher {
 }
 
 // ============================================================================
-// PasswordVerifier 自动识别（依据 spec secure-password R-004）
+// PasswordVerifier 自动识别
 // ============================================================================
 
-/// 密码校验器，根据 hash 前缀自动选择算法校验（依据 spec secure-password R-004）。
+/// 密码校验器，根据 hash 前缀自动选择算法校验。
 ///
 /// - `$argon2id$` 前缀 → 委托 `Argon2Hasher`
 /// - `$2b$` / `$2a$` / `$2y$` 前缀 → 委托 `BcryptHasher`
@@ -243,7 +243,7 @@ impl PasswordVerifier {
 }
 
 // ============================================================================
-// PasswordCredential（Credential trait 实现，依据 spec R-credential-model-004）
+// PasswordCredential（Credential trait 实现）
 // ============================================================================
 
 /// 密码凭证（实现 [`Credential`] trait，委托 [`PasswordHasher`] 校验）。
@@ -281,7 +281,7 @@ pub struct PasswordCredential {
 }
 
 /// 启用 `account-credential-zeroize` feature 时，drop 时清零 `model` 的敏感字段
-/// （`secret_data` 含密码哈希），依据 spec credential-model R-credential-model-008。
+/// （`secret_data` 含密码哈希）。
 ///
 /// `hasher` 不含敏感数据（仅算法标识与参数），无需 zeroize。
 /// 因 `Box<dyn PasswordHasher>` 未实现 `Zeroize`，无法派生 `ZeroizeOnDrop`，
@@ -329,7 +329,7 @@ mod tests {
     use super::*;
 
     // ========================================================================
-    // PasswordHasher trait 契约测试（依据 spec R-001）
+    // PasswordHasher trait 契约测试
     // ========================================================================
 
     /// R-001: PasswordHasher trait 为 Send + Sync（编译期检查）。
@@ -342,7 +342,7 @@ mod tests {
     }
 
     // ========================================================================
-    // Argon2Hasher 测试（依据 spec R-002）
+    // Argon2Hasher 测试
     // ========================================================================
 
     /// R-002: Argon2Hasher::default().hash("password") 返回 $argon2id$ 前缀字符串。
@@ -398,7 +398,7 @@ mod tests {
     }
 
     // ========================================================================
-    // BcryptHasher 测试（依据 spec R-003）
+    // BcryptHasher 测试
     // ========================================================================
 
     /// R-003: BcryptHasher::default().hash("password") 返回 $2b$ 前缀字符串。
@@ -463,7 +463,7 @@ mod tests {
     }
 
     // ========================================================================
-    // PasswordVerifier 自动识别测试（依据 spec R-004）
+    // PasswordVerifier 自动识别测试
     // ========================================================================
 
     /// R-004: PasswordVerifier::verify 委托 Argon2Hasher（$argon2id$ 前缀）。
@@ -510,7 +510,7 @@ mod tests {
     }
 
     // ========================================================================
-    // Argon2 输出长度契约测试（依据 spec secure-password H4）
+    // Argon2 输出长度契约测试
     // ========================================================================
 
     /// H4: Argon2Hasher::hash 输出长度为 32 字节（预分配缓冲区）。
@@ -551,7 +551,7 @@ mod tests {
     }
 
     // ========================================================================
-    // P2.1 zeroize 测试（依据 spec account-credential-zeroize）
+    // P2.1 zeroize 测试
     // ========================================================================
 
     /// P2.1: account-credential-zeroize feature 启用时，hash/verify 仍正确工作，
@@ -624,7 +624,7 @@ mod tests {
     }
 
     // ========================================================================
-    // PasswordCredential 测试（依据 spec R-credential-model-004）
+    // PasswordCredential 测试
     // ========================================================================
 
     /// 辅助函数：构造测试用 PasswordCredential + 原始密码。

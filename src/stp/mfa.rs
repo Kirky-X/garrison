@@ -24,7 +24,7 @@ use async_trait::async_trait;
 ///   业务方覆写以查询当前 login_id 是否在禁用列表中。
 #[async_trait]
 pub trait MfaLogic: SessionLogic {
-    /// 检查二级认证（MFA）状态（0.3.0 新增，依据 spec annotation-handling）。
+    /// 检查二级认证（MFA）状态。
     ///
     /// 默认实现返回 `Ok(())`（未启用 MFA，向后兼容 0.2.x）。
     /// 业务方覆写此方法以接入 TOTP MFA 校验：检查当前会话是否已完成二级认证。
@@ -36,7 +36,7 @@ pub trait MfaLogic: SessionLogic {
         Ok(())
     }
 
-    /// 检查账号是否被禁用（0.3.0 新增，依据 spec annotation-handling）。
+    /// 检查账号是否被禁用。
     ///
     /// 默认实现返回 `Ok(())`（未实现禁用账号库，向后兼容 0.2.x）。
     /// 业务方覆写此方法以接入禁用账号检查：查询当前 login_id 是否在禁用列表中。
@@ -48,7 +48,7 @@ pub trait MfaLogic: SessionLogic {
         Ok(())
     }
 
-    /// 构造账号被封禁异常（0.6.1 新增，依据 spec error-exceptions R-error-005）。
+    /// 构造账号被封禁异常。
     ///
     /// 业务方在自定义 `check_disable` 实现中调用此关联函数抛出专用异常：
     ///
@@ -74,7 +74,7 @@ pub trait MfaLogic: SessionLogic {
         }
     }
 
-    /// 构造未完成二次认证异常（0.6.1 新增，依据 spec error-exceptions R-error-005）。
+    /// 构造未完成二次认证异常。
     ///
     /// 业务方在自定义 `check_safe` 实现中调用此关联函数抛出专用异常：
     ///
@@ -175,7 +175,7 @@ mod tests {
     }
 
     // ========================================================================
-    // disable_service / not_safe 构造方法测试（0.6.1 新增，依据 R-error-005）
+    // disable_service / not_safe 构造方法测试
     // ========================================================================
 
     /// 验证 `disable_service` 构造正确的 `BulwarkError::DisableService` 变体。

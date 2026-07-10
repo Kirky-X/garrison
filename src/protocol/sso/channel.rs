@@ -1,7 +1,7 @@
 //! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! Redis pub/sub SsoChannel 实现（依据 spec protocol-sso-federation R-005）。
+//! Redis pub/sub SsoChannel 实现。
 //!
 //! 基于 Redis pub/sub 实现跨实例 SSO 消息推送，替代 `NoopSsoChannel`。
 //!
@@ -14,7 +14,7 @@ use futures::StreamExt;
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 
-/// 基于 Redis pub/sub 的 SsoChannel 实现（依据 spec protocol-sso-federation R-005）。
+/// 基于 Redis pub/sub 的 SsoChannel 实现。
 ///
 /// 使用 `redis::aio::ConnectionManager` 执行 PUBLISH 命令（支持自动重连），
 /// 使用 `redis::Client` 创建独立的 PubSub 连接进行 SUBSCRIBE（订阅模式需要独占连接）。
@@ -30,7 +30,7 @@ pub struct RedisPubSubSsoChannel {
 }
 
 impl RedisPubSubSsoChannel {
-    /// 创建新的 `RedisPubSubSsoChannel` 实例（依据 spec protocol-sso-federation R-005）。
+    /// 创建新的 `RedisPubSubSsoChannel` 实例。
     ///
     /// # 参数
     /// - `connection_manager`: Redis 连接管理器（用于 PUBLISH 命令，支持自动重连）。
@@ -111,7 +111,7 @@ impl SsoChannel for RedisPubSubSsoChannel {
 }
 
 // ============================================================================
-// 测试（依据 spec protocol-sso-federation R-005）
+// 测试
 // ============================================================================
 
 #[cfg(test)]

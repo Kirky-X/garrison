@@ -6,7 +6,7 @@
 //! [借鉴 Sa-Token] 对应 Sa-Token 的 `SaSession`，
 //! 提供会话级数据存储与 Token 列表管理。
 //!
-//! ## 双模会话（依据 spec session-management）
+//! ## 双模会话
 //!
 //! 1. **Account-Session**：以 login_id 为 key，存储该账号所有 token 列表与最后活跃时间
 //!    - key: `account:session:{login_id}`
@@ -80,7 +80,7 @@ pub struct TokenSession {
     pub last_active_at: i64,
     /// 自定义属性（键值对）。
     pub attrs: HashMap<String, String>,
-    /// 登录设备标识（v0.4.2 新增，依据 spec session-kickout-device）。
+    /// 登录设备标识。
     ///
     /// 由业务方在 login 后通过 `set_device` 设置（如 "web-chrome"/"mobile-ios"/"api-client"）。
     /// `kickout_by_device` 按此字段过滤踢出。未设置时为 `None`，不参与设备级踢出。
@@ -88,10 +88,9 @@ pub struct TokenSession {
     pub device: Option<String>,
 }
 
-/// 会话过期监听器 trait（依据 spec session-lifecycle R-session-lifecycle-001）。
+/// 会话过期监听器 trait。
 ///
 /// 在 session 过期时触发回调。listener 失败时记录 `tracing::warn!` 但不中断调用方
-///（依据 design Decision 6: plugin/listener/集成失败不中断主流程）。
 ///
 /// # 使用
 ///
@@ -144,13 +143,13 @@ pub struct BulwarkSession {
     timeout: u64,
     /// Account-Session 级 activity 超时（秒）。
     active_timeout: u64,
-    /// 监听器管理器（v0.4.2 新增，依据 spec session-kickout-device R-002）。
+    /// 监听器管理器。
     ///
     /// 注入后 `kickout_by_device` 会广播 `BulwarkEvent::Kickout` 事件。
     /// 未注入时 `kickout_by_device` 仍正常执行踢出，仅跳过事件广播。
     #[cfg(feature = "listener")]
     listener_manager: Option<Arc<crate::listener::BulwarkListenerManager>>,
-    /// 会话过期监听器列表（依据 spec session-lifecycle R-session-lifecycle-002）。
+    /// 会话过期监听器列表。
     ///
     /// 按 FIFO 顺序调用。listener 失败时记录 `tracing::warn!` 但不中断后续 listener。
     expiry_listeners: Vec<Arc<dyn SessionExpiryListener>>,
@@ -189,8 +188,8 @@ impl BulwarkSession {
 
     /// 获取 DAO 引用（pub(crate) 供 BulwarkLogicDefault 构造 ApiKeyHandler 等需要 DAO 的协议处理器复用）。
     ///
-    /// 0.6.1 新增：`BulwarkLogicDefault::check_api_key` 通过此访问器获取 DAO，
-    /// 构造 `ApiKeyHandler` 实例进行 API Key 校验（依据 spec annotation-check-api-key R-anno-004）。
+    /// `BulwarkLogicDefault::check_api_key` 通过此访问器获取 DAO，
+    /// 构造 `ApiKeyHandler` 实例进行 API Key 校验。
     ///
     /// 仅在 `protocol-apikey` feature 启用时编译（避免 feature 关闭时的 dead_code 警告）。
     #[cfg(feature = "protocol-apikey")]
@@ -198,7 +197,7 @@ impl BulwarkSession {
         &self.dao
     }
 
-    /// 注入监听器管理器（v0.4.2 新增，依据 spec session-kickout-device R-002）。
+    /// 注入监听器管理器。
     ///
     /// 注入后 `kickout_by_device` 会为每个被踢出的 token 广播 `BulwarkEvent::Kickout` 事件。
     ///
@@ -213,7 +212,7 @@ impl BulwarkSession {
         self
     }
 
-    /// 注册会话过期监听器（依据 spec session-lifecycle R-session-lifecycle-002）。
+    /// 注册会话过期监听器。
     ///
     /// listener 按注册顺序（FIFO）依次调用。`get_token_session` / `get_account_session`
     /// 发现 session 过期时触发所有已注册的 listener。
@@ -224,10 +223,10 @@ impl BulwarkSession {
         self.expiry_listeners.push(listener);
     }
 
-    /// 触发所有过期监听器（依据 spec session-lifecycle R-session-lifecycle-003）。
+    /// 触发所有过期监听器。
     ///
     /// listener 按注册顺序（FIFO）依次调用。单个 listener 失败时记录 `tracing::warn!`
-    /// 但继续执行后续 listener（依据 design Decision 6: listener 失败不中断主流程）。
+    /// 但继续执行后续 listener。
     async fn trigger_expiry_listeners(&self, login_id: &str, token: &str) {
         for listener in &self.expiry_listeners {
             if let Err(e) = listener.on_session_expired(login_id, token).await {
@@ -243,7 +242,6 @@ impl BulwarkSession {
 
     /// 创建会话（login 时调用）：双写 Account-Session + Token-Session。
     ///
-    /// 对应 spec scenario "创建 Account-Session" 与 "创建 Token-Session"。
     ///
     /// # 参数
     /// - `login_id`: 登录主体标识（接受 `String` / `&str`）。
@@ -304,7 +302,6 @@ impl BulwarkSession {
 
     /// 获取 Token-Session。
     ///
-    /// 对应 spec scenario "创建 Token-Session"（读取验证）。
     ///
     /// # 参数
     /// - `token`: token 字符串。
@@ -389,7 +386,6 @@ impl BulwarkSession {
 
     /// 设置 Token-Session 自定义属性。
     ///
-    /// 对应 spec scenario "Token-Session 存储自定义属性"。
     ///
     /// # 参数
     /// - `token`: token 字符串。
@@ -417,7 +413,6 @@ impl BulwarkSession {
 
     /// 获取 Token-Session 自定义属性。
     ///
-    /// 对应 spec scenario "Token-Session 存储自定义属性"（读取验证）。
     ///
     /// # 参数
     /// - `token`: token 字符串。
@@ -531,7 +526,7 @@ impl BulwarkSession {
         Ok(())
     }
 
-    /// 设置 Token-Session 的 TTL（供 remember_me 扩展超时使用，依据 spec session-lifecycle R-session-lifecycle-005）。
+    /// 设置 Token-Session 的 TTL（供 remember_me 扩展超时使用）。
     ///
     /// 内部调用 `dao.expire` 重置 TTL。仅在 `create` 之后调用，用于将 Token-Session
     /// 的 TTL 从默认 `timeout` 扩展为 `remember_me_timeout`。
@@ -546,7 +541,7 @@ impl BulwarkSession {
         self.dao.expire(&token_key(token), ttl_seconds).await
     }
 
-    /// 关联 SSO ticket 到 token 会话（0.2.0 新增，依据 spec session-management）。
+    /// 关联 SSO ticket 到 token 会话。
     ///
     /// 将 SSO ticket 存入 Token-Session 的 `sso_ticket` 属性，
     /// 便于 logout 时联动销毁 SSO ticket。
@@ -554,12 +549,12 @@ impl BulwarkSession {
         self.set(token, "sso_ticket", ticket).await
     }
 
-    /// 查询 token 关联的 SSO ticket（0.2.0 新增，依据 spec session-management）。
+    /// 查询 token 关联的 SSO ticket。
     pub async fn get_sso_ticket(&self, token: &str) -> BulwarkResult<Option<String>> {
         self.get(token, "sso_ticket").await
     }
 
-    /// 关联 OAuth2 access_token 到 token 会话（0.2.0 新增，依据 spec session-management）。
+    /// 关联 OAuth2 access_token 到 token 会话。
     ///
     /// 将 OAuth2 access_token 存入 Token-Session 的 `oauth2_access_token` 属性，
     /// 便于业务方在持有内部 token 时访问 OAuth2 资源服务器。
@@ -567,12 +562,12 @@ impl BulwarkSession {
         self.set(token, "oauth2_access_token", access_token).await
     }
 
-    /// 查询 token 关联的 OAuth2 access_token（0.2.0 新增，依据 spec session-management）。
+    /// 查询 token 关联的 OAuth2 access_token。
     pub async fn get_oauth2_token(&self, token: &str) -> BulwarkResult<Option<String>> {
         self.get(token, "oauth2_access_token").await
     }
 
-    /// 关联临时凭证 key 到 token 会话（0.2.0 新增，依据 spec session-management）。
+    /// 关联临时凭证 key 到 token 会话。
     ///
     /// 将临时凭证的完整 dao key 存入 Token-Session 的 `temp_credential_key` 属性。
     /// `is_valid` 会检查该 key 是否仍存在于 dao，若已被删除则会话失效。
@@ -580,12 +575,12 @@ impl BulwarkSession {
         self.set(token, "temp_credential_key", temp_key).await
     }
 
-    /// 查询 token 关联的临时凭证 key（0.2.0 新增）。
+    /// 查询 token 关联的临时凭证 key（）。
     pub async fn get_temp_credential(&self, token: &str) -> BulwarkResult<Option<String>> {
         self.get(token, "temp_credential_key").await
     }
 
-    /// 设置 Token-Session 的设备标识（v0.4.2 新增，依据 spec session-kickout-device）。
+    /// 设置 Token-Session 的设备标识。
     ///
     /// 业务方在 `login` 后调用此方法关联 token 与设备，便于后续 `kickout_by_device` 按设备踢出。
     ///
@@ -638,7 +633,7 @@ impl BulwarkSession {
         if self.get_account_session(&ts.login_id).await?.is_none() {
             return Ok(false);
         }
-        // 0.2.0 新增：临时凭证过期联动（依据 spec session-management "临时凭证关联会话的自定义过期"）。
+        // 临时凭证过期联动。
         // 若 Token-Session 含 temp_credential_key 属性，检查该 key 是否仍存在于 dao；
         // 临时凭证过期后 token 立即失效，不论 token 自身 timeout 是否到期。
         if let Some(temp_key) = ts.attrs.get("temp_credential_key") {
@@ -651,7 +646,6 @@ impl BulwarkSession {
 
     /// 活跃续期：更新 last_active_at 并重置 TTL。
     ///
-    /// 对应 spec scenario "活跃续期"。
     /// 同时更新 Token-Session 与 Account-Session 的 last_active_at 和 TTL。
     ///
     /// # 参数
@@ -697,7 +691,6 @@ impl BulwarkSession {
 
     /// 主动续期：重置过期时间为完整 timeout。
     ///
-    /// 对应 spec scenario "主动续期重置过期时间"。
     ///
     /// # 参数
     /// - `token`: 待续期的 token 字符串。
@@ -721,7 +714,6 @@ impl BulwarkSession {
 
     /// 登出指定 token。
     ///
-    /// 对应 spec scenario "Account-Session 随登出更新"。
     ///
     /// 删除 Token-Session，并从 Account-Session 的 token 列表移除该 token。
     /// 若列表为空，Account-Session 保留（不删除，保留历史）。
@@ -742,9 +734,9 @@ impl BulwarkSession {
 
         // 从 Account-Session 移除该 token
         if let Some(ts) = ts {
-            // 0.2.0 新增：SSO ticket 销毁联动（依据 spec session-management "SSO 会话集成"）。
+            // SSO ticket 销毁联动。
             // 若 Token-Session 含 sso_ticket 属性，删除 dao 中的 `bulwark:sso:ticket:<ticket>` key。
-            // 失败仅记录不中断主流程（依据 design Decision 6: plugin/listener/集成失败不中断主流程）。
+            // 失败仅记录不中断主流程。
             if let Some(ticket) = ts.attrs.get("sso_ticket") {
                 let sso_key = format!("bulwark:sso:ticket:{}", ticket);
                 if let Err(e) = self.dao.delete(&sso_key).await {
@@ -790,7 +782,7 @@ impl BulwarkSession {
         Ok(())
     }
 
-    /// 按设备踢出（v0.4.2 新增，依据 spec session-kickout-device R-001）。
+    /// 按设备踢出。
     ///
     /// 踢出指定 login_id 在指定 device 上的所有 token session。
     /// 不影响该 login_id 在其他 device 上的 session。
@@ -860,7 +852,7 @@ impl BulwarkSession {
 }
 
 // ============================================================================
-// 测试（依据 spec session-management 所有 scenario）
+// 测试
 // ============================================================================
 
 #[cfg(test)]
@@ -878,7 +870,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------------
-    // spec scenario: 创建 Account-Session / 创建 Token-Session
+    // 创建 Account-Session / 创建 Token-Session
     // ------------------------------------------------------------------------
 
     /// 验证 create 双写 Account-Session 与 Token-Session。
@@ -921,7 +913,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------------
-    // spec scenario: Account-Session 记录多 token
+    // Account-Session 记录多 token
     // ------------------------------------------------------------------------
 
     /// 验证同一账号登录两次后 token 列表包含两个 token。
@@ -938,7 +930,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------------
-    // spec scenario: Account-Session 随登出更新
+    // Account-Session 随登出更新
     // ------------------------------------------------------------------------
 
     /// 验证登出 T1 后 Account-Session 移除 T1 但保留 T2。
@@ -969,7 +961,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------------
-    // spec scenario: Token-Session 存储自定义属性
+    // Token-Session 存储自定义属性
     // ------------------------------------------------------------------------
 
     /// 验证 set/get Token-Session 自定义属性。
@@ -995,7 +987,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------------
-    // spec scenario: token 过期自动失效 / Activity 超时
+    // token 过期自动失效 / Activity 超时
     // ------------------------------------------------------------------------
 
     /// 验证 token 不存在时 is_valid 返回 false。
@@ -1017,7 +1009,7 @@ mod tests {
 
     /// 验证 Account-Session 过期后 token 视为无效（惰性检查）。
     ///
-    /// spec scenario "Activity 超时（Account-Session 级别）"：
+    ///
     /// Account-Session 过期后，所有关联 token 失效。
     #[tokio::test]
     async fn is_valid_returns_false_when_account_session_expired() {
@@ -1035,7 +1027,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------------
-    // spec scenario: 活跃续期 / 主动续期
+    // 活跃续期 / 主动续期
     // ------------------------------------------------------------------------
 
     /// 验证 touch 更新 last_active_at 并重置 TTL。
@@ -1098,7 +1090,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------------
-    // spec scenario: 登出
+    // 登出
     // ------------------------------------------------------------------------
 
     /// 验证 logout 删除 Token-Session。
@@ -1220,12 +1212,10 @@ mod tests {
     }
 
     // ------------------------------------------------------------------------
-    // 0.2.0 新增 spec scenario: Token-Session 存储 SSO ticket 引用
+    // Token-Session 存储 SSO ticket 引用
     // ------------------------------------------------------------------------
 
     /// 验证 link_sso_ticket / get_sso_ticket 往返。
-    ///
-    /// 对应 spec scenario "Token-Session 存储 SSO ticket 引用 (NEW - 0.2.0)"。
     #[tokio::test]
     async fn link_sso_ticket_stores_ticket_in_token_session() {
         let (_dao, session) = make_session(3600, 86400);
@@ -1240,8 +1230,6 @@ mod tests {
     }
 
     /// 验证 get_sso_ticket 对未关联 ticket 的 token 返回 None。
-    ///
-    /// 对应 spec scenario "查询未关联 ticket 的 token"。
     #[tokio::test]
     async fn get_sso_ticket_returns_none_when_not_linked() {
         let (_dao, session) = make_session(3600, 86400);
@@ -1260,12 +1248,10 @@ mod tests {
     }
 
     // ------------------------------------------------------------------------
-    // 0.2.0 新增 spec scenario: Token-Session 存储 OAuth2 access_token
+    // Token-Session 存储 OAuth2 access_token
     // ------------------------------------------------------------------------
 
     /// 验证 link_oauth2_token / get_oauth2_token 往返。
-    ///
-    /// 对应 spec scenario "Token-Session 存储 OAuth2 access_token (NEW - 0.2.0)"。
     #[tokio::test]
     async fn link_oauth2_token_stores_access_token_in_token_session() {
         let (_dao, session) = make_session(3600, 86400);
@@ -1280,8 +1266,6 @@ mod tests {
     }
 
     /// 验证 get_oauth2_token 对未关联 access_token 的 token 返回 None。
-    ///
-    /// 对应 spec scenario "查询未关联 access_token 的 token"。
     #[tokio::test]
     async fn get_oauth2_token_returns_none_when_not_linked() {
         let (_dao, session) = make_session(3600, 86400);
@@ -1300,7 +1284,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------------
-    // 0.2.0 新增 spec scenario: 临时凭证关联会话
+    // 临时凭证关联会话
     // ------------------------------------------------------------------------
 
     /// 验证 link_temp_credential / get_temp_credential 往返。
@@ -1334,7 +1318,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------------
-    // 0.2.0 新增 spec scenario: link 方法对不存在的 token 报错
+    // link 方法对不存在的 token 报错
     // ------------------------------------------------------------------------
 
     /// 验证 link_sso_ticket / link_oauth2_token / link_temp_credential
@@ -1367,12 +1351,10 @@ mod tests {
     }
 
     // ------------------------------------------------------------------------
-    // 0.2.0 新增 spec scenario: SSO ticket 销毁联动（logout 联动）
+    // SSO ticket 销毁联动（logout 联动）
     // ------------------------------------------------------------------------
 
     /// 验证 logout 时联动删除 Token-Session 关联的 SSO ticket。
-    ///
-    /// 对应 spec scenario "SSO 会话集成"：logout 应销毁关联的 SSO ticket。
     #[tokio::test]
     async fn logout_destroys_linked_sso_ticket() {
         let (dao, session) = make_session(3600, 86400);
@@ -1426,12 +1408,10 @@ mod tests {
     }
 
     // ------------------------------------------------------------------------
-    // 0.2.0 新增 spec scenario: 临时凭证过期联动（is_valid 联动）
+    // 临时凭证过期联动（is_valid 联动）
     // ------------------------------------------------------------------------
 
     /// 验证 is_valid 在 token 关联的临时凭证仍存在时返回 true。
-    ///
-    /// 对应 spec scenario "临时凭证关联会话的自定义过期 (NEW - 0.2.0)"。
     #[tokio::test]
     async fn is_valid_returns_true_when_temp_credential_exists() {
         let (dao, session) = make_session(3600, 86400);
@@ -1450,7 +1430,6 @@ mod tests {
 
     /// 验证 is_valid 在 token 关联的临时凭证已被删除时返回 false。
     ///
-    /// 对应 spec scenario "临时凭证关联会话的自定义过期 (NEW - 0.2.0)"：
     /// "临时凭证过期后 T1 立即失效，不论 token 自身 timeout 是否到期"。
     #[tokio::test]
     async fn is_valid_returns_false_when_temp_credential_expired() {
@@ -1516,7 +1495,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------------
-    // 0.4.2 新增 spec scenario: set_device + kickout_by_device
+    // set_device + kickout_by_device
     // ------------------------------------------------------------------------
 
     /// 验证 set_device 设置 TokenSession.device 字段。
@@ -1654,7 +1633,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------------
-    // 0.4.2 新增 spec scenario: kickout_by_device listener 广播（feature = "listener"）
+    // kickout_by_device listener 广播（feature = "listener"）
     // ------------------------------------------------------------------------
 
     /// 验证 kickout_by_device 注入 listener_manager 后广播 Kickout 事件。
@@ -1746,7 +1725,7 @@ mod tests {
     /// logout 联动删除 SSO ticket 失败时记录 warn 但不中断主流程。
     ///
     /// 覆盖行 528（SSO ticket 删除失败的 warn 日志路径）。
-    /// 依据 design Decision 6: plugin/listener/集成失败不中断主流程。
+    /// 6: plugin/listener/集成失败不中断主流程。
     #[tokio::test]
     async fn logout_sso_ticket_delete_failure_logs_warn_without_failing() {
         let inner = Arc::new(MockDao::new());
@@ -1774,7 +1753,7 @@ mod tests {
     }
 
     // ----------------------------------------------------------------
-    // SessionExpiryListener 测试（依据 spec session-lifecycle R-001~003）
+    // SessionExpiryListener 测试
     // ----------------------------------------------------------------
 
     /// Mock 过期监听器：记录所有回调调用，可选返回错误。

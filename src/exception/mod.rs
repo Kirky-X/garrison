@@ -53,7 +53,7 @@ impl std::fmt::Display for NotLoginException {
 
 impl std::error::Error for NotLoginException {}
 
-/// 携带上下文的业务可恢复异常（0.2.0 新增）。
+/// 携带上下文的业务可恢复异常（）。
 ///
 /// 与 `BulwarkError` enum 解耦，提供更丰富的异常上下文（token / login_id / extras）。
 /// 业务方可通过 `BulwarkException::new(code, msg).with_token(t).build()` 链式构造，
@@ -62,13 +62,13 @@ impl std::error::Error for NotLoginException {}
 /// [借鉴 Sa-Token] 对应 Sa-TokenException 的"携带上下文"语义。
 #[derive(Debug, Clone)]
 pub struct BulwarkException {
-    /// 业务错误码（如 -1 表示未登录，依据 spec exception-system）。
+    /// 业务错误码（如 -1 表示未登录）。
     pub code: i32,
 
     /// 异常消息。
     pub message: String,
 
-    /// 登录类型（如 1 表示账号登录，依据 spec exception-system）。
+    /// 登录类型（如 1 表示账号登录）。
     pub login_type: i32,
 
     /// 关联的 token（可能为 `None`）。
@@ -82,7 +82,7 @@ pub struct BulwarkException {
 }
 
 impl BulwarkException {
-    /// 创建基础异常实例（Builder 入口，依据 spec exception-system Requirement: Builder 模式构造）。
+    /// 创建基础异常实例（Builder 入口）。
     ///
     /// # 参数
     /// - `code`: 业务错误码。
@@ -98,45 +98,45 @@ impl BulwarkException {
         }
     }
 
-    /// 链式设置 token_value（依据 spec Builder 模式）。
+    /// 链式设置 token_value。
     pub fn with_token(mut self, token: impl Into<String>) -> Self {
         self.token_value = Some(token.into());
         self
     }
 
-    /// 链式设置 login_id（依据 spec Builder 模式）。
+    /// 链式设置 login_id。
     pub fn with_login_id(mut self, login_id: i64) -> Self {
         self.login_id = Some(login_id);
         self
     }
 
-    /// 链式设置 login_type（依据 spec Builder 模式）。
+    /// 链式设置 login_type。
     pub fn with_login_type(mut self, login_type: i32) -> Self {
         self.login_type = login_type;
         self
     }
 
-    /// 链式添加额外上下文键值对（依据 spec Builder 模式）。
+    /// 链式添加额外上下文键值对。
     pub fn with_extra(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.extras.insert(key.into(), value.into());
         self
     }
 
-    /// 构建最终实例（依据 spec Builder 模式，返回 self）。
+    /// 构建最终实例。
     pub fn build(self) -> Self {
         self
     }
 }
 
 impl From<BulwarkException> for BulwarkError {
-    /// 将 `BulwarkException` 转换为 `BulwarkError::Exception` 变体（依据 spec exception-system Requirement: BulwarkError 集成）。
+    /// 将 `BulwarkException` 转换为 `BulwarkError::Exception` 变体。
     fn from(ex: BulwarkException) -> Self {
         BulwarkError::Exception(ex)
     }
 }
 
 impl From<BulwarkError> for BulwarkException {
-    /// 将 `BulwarkError` 转换为 `BulwarkException`（依据 spec exception-system Requirement: BulwarkError 集成）。
+    /// 将 `BulwarkError` 转换为 `BulwarkException`。
     ///
     /// 仅 `Exception` 变体直接返回原始 `BulwarkException`，其他变体根据语义映射 code：
     /// - `NotLogin` / `InvalidToken` / `ExpiredToken` → code=-1（未登录）
@@ -163,7 +163,7 @@ impl std::fmt::Display for BulwarkException {
 }
 
 // ============================================================================
-// IntoResponse 实现（cfg feature = "web-axum"，依据 spec exception-system Requirement: IntoResponse 实现）
+// IntoResponse 实现（cfg feature = "web-axum"）
 // ============================================================================
 
 /// 实现 `IntoResponse` 以便 `BulwarkException` 可直接作为 axum 响应返回。
@@ -256,10 +256,10 @@ mod tests {
     }
 
     // ========================================================================
-    // BulwarkException 测试（依据 spec exception-system）
+    // BulwarkException 测试
     // ========================================================================
 
-    /// 验证 `BulwarkException::new` 创建实例并设置可选字段为默认值（依据 spec Scenario: 未设置的可选字段默认为 None）。
+    /// 验证 `BulwarkException::new` 创建实例并设置可选字段为默认值。
     #[test]
     fn bulwark_exception_new_creates_with_defaults() {
         let ex = BulwarkException::new(-1, "请先登录");
@@ -279,7 +279,7 @@ mod tests {
         assert_eq!(ex.message, "会话已过期");
     }
 
-    /// 验证 `BulwarkException` 派生 `Clone`（依据 spec Scenario: BulwarkException 派生 Debug 与 Clone）。
+    /// 验证 `BulwarkException` 派生 `Clone`。
     #[test]
     fn bulwark_exception_clone_preserves_fields() {
         let mut ex = BulwarkException::new(-1, "请先登录");
@@ -292,7 +292,7 @@ mod tests {
         assert_eq!(cloned.login_id, Some(1001));
     }
 
-    /// 验证 `BulwarkException` 派生 `Debug`（依据 spec Scenario: BulwarkException 派生 Debug 与 Clone）。
+    /// 验证 `BulwarkException` 派生 `Debug`。
     #[test]
     fn bulwark_exception_debug_format_works() {
         let ex = BulwarkException::new(-1, "请先登录");
@@ -309,7 +309,7 @@ mod tests {
         assert_eq!(format!("{}", ex), "业务异常[-1]: 请先登录");
     }
 
-    /// 验证 `BulwarkException` 通过 `From` 转换为 `BulwarkError::Exception`（依据 spec Scenario: BulwarkException 转换为 BulwarkError）。
+    /// 验证 `BulwarkException` 通过 `From` 转换为 `BulwarkError::Exception`。
     #[test]
     fn bulwark_exception_into_bulwark_error() {
         let ex = BulwarkException::new(-1, "请先登录");
@@ -321,7 +321,7 @@ mod tests {
         }
     }
 
-    /// 验证既有 `BulwarkError` 变体不受 `Exception` 新增影响（依据 spec Scenario: 既有 BulwarkError 变体不受影响）。
+    /// 验证既有 `BulwarkError` 变体不受 `Exception` 新增影响。
     #[test]
     fn existing_bulwark_error_variants_unaffected() {
         let err = BulwarkError::NotLogin("请先登录".to_string());
@@ -335,10 +335,10 @@ mod tests {
     }
 
     // ========================================================================
-    // Builder 链式调用测试（依据 spec exception-system Requirement: Builder 模式构造）
+    // Builder 链式调用测试
     // ========================================================================
 
-    /// 验证 Builder 链式构造带上下文的异常（依据 spec Scenario: 链式构造带上下文的异常）。
+    /// 验证 Builder 链式构造带上下文的异常。
     #[test]
     fn builder_chain_with_all_setters() {
         let ex = BulwarkException::new(-1, "请先登录")
@@ -370,7 +370,7 @@ mod tests {
     }
 
     // ========================================================================
-    // From<BulwarkError> for BulwarkException 测试（依据 spec Requirement: BulwarkError 集成）
+    // From<BulwarkError> for BulwarkException 测试
     // ========================================================================
 
     /// 验证 `From<BulwarkError>` 对 Exception 变体直接返回原始 BulwarkException。
@@ -413,7 +413,7 @@ mod tests {
     }
 
     // ========================================================================
-    // IntoResponse for BulwarkException 测试（依据 spec Requirement: IntoResponse 实现）
+    // IntoResponse for BulwarkException 测试
     // ========================================================================
 
     /// 验证 code=-1 的 BulwarkException 映射为 401 Unauthorized（独立 IntoResponse 实现）。

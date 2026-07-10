@@ -1,4 +1,4 @@
-//! FlowRegistry inventory 注册（v0.6.0 新增，依据 spec auth-flow-dsl R-auth-flow-dsl-007）。
+//! FlowRegistry inventory 注册。
 //!
 //! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
@@ -17,7 +17,7 @@
 use super::AuthenticationFlow;
 use std::collections::HashMap;
 
-/// 认证流程编译期注册项（依据 spec auth-flow-dsl R-auth-flow-dsl-007）。
+/// 认证流程编译期注册项。
 ///
 /// 通过 `inventory::submit! { FlowRegistration { name, flow } }` 在编译期注册。
 pub struct FlowRegistration {
@@ -29,7 +29,7 @@ pub struct FlowRegistration {
 
 inventory::collect!(FlowRegistration);
 
-/// 认证流程注册表（依据 spec auth-flow-dsl R-auth-flow-dsl-007）。
+/// 认证流程注册表。
 ///
 /// 持有 `name → AuthenticationFlow` 映射，支持编译期 inventory 收集与运行期追加。
 pub struct FlowRegistry {

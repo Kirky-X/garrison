@@ -85,11 +85,11 @@ impl BulwarkInterceptor for DefaultBulwarkInterceptor {
             },
             Annotation::CheckRole(role) => BulwarkUtil::check_role(role).await,
             Annotation::CheckPermission(perm) => BulwarkUtil::check_permission(perm).await,
-            // 0.3.0：二级认证检查（依据 spec annotation-handling）
+            // 二级认证检查
             Annotation::CheckSafe => BulwarkUtil::check_safe().await,
-            // 0.3.0：账号禁用检查（依据 spec annotation-handling）
+            // 账号禁用检查
             Annotation::CheckDisable => BulwarkUtil::check_disable().await,
-            // 0.3.0：HTTP Basic/Digest/Sign 需 HTTP 请求上下文（Authorization header / method / body），
+            // HTTP Basic/Digest/Sign 需 HTTP 请求上下文（Authorization header / method / body），
             // pre_handle 签名仅有 path + annotation，无法获取请求头。
             // Fail Loud（Rule 12）：明确返回 NotImplemented，指示用户使用 axum extractor 或 secure 模块直接调用。
             Annotation::CheckBasicAuth => Err(BulwarkError::NotImplemented(
@@ -101,13 +101,13 @@ impl BulwarkInterceptor for DefaultBulwarkInterceptor {
             Annotation::CheckSign => Err(BulwarkError::NotImplemented(
                 "CheckSign 需 HTTP 请求上下文，请在 handler 中使用 protocol::sign::SignHandler 或 axum extractor".to_string(),
             )),
-            // 0.6.1：API Key 校验（依据 spec annotation-check-api-key R-anno-004）
+            // API Key 校验
             // namespace 为 None 时使用默认命名空间 "default"
             Annotation::CheckApiKey { namespace } => {
                 let ns = namespace.as_deref().unwrap_or("default");
                 BulwarkUtil::check_api_key(ns).await
             }
-            // OAuth2 access_token / client_token 校验（依据 spec annotation-oauth2 R-annotation-oauth2-001/002/003）
+            // OAuth2 access_token / client_token 校验
             // DefaultBulwarkInterceptor 不持有 OAuth2Handler 实例，返回 NotImplemented。
             // 业务方应在 handler 中使用 protocol::oauth2::OAuth2Client 或自定义拦截器。
             Annotation::CheckAccessToken => Err(BulwarkError::NotImplemented(
@@ -119,7 +119,7 @@ impl BulwarkInterceptor for DefaultBulwarkInterceptor {
             Annotation::Ignore => Ok(()),
             // 逻辑组合注解（CheckOr/CheckAnd/CheckNot/Mode）在 pre_handle 中为 no-op，
             // 实际组合逻辑由注解处理器在编译期或路由配置层处理。
-            // Mode（0.6.1 新增）：控制 @CheckPermission/@CheckRole 的多权限组合逻辑，
+            // Mode（）：控制 @CheckPermission/@CheckRole 的多权限组合逻辑，
             // 是配置注解而非直接检查，pre_handle 中 no-op。
             Annotation::CheckOr | Annotation::CheckAnd | Annotation::CheckNot | Annotation::Mode(_) => Ok(()),
         }
@@ -242,7 +242,7 @@ mod web_axum {
             self
         }
 
-        /// 路由分组：通过闭包注册一组带公共前缀和公共注解的路由（依据 spec web-router-group）。
+        /// 路由分组：通过闭包注册一组带公共前缀和公共注解的路由。
         ///
         /// # 参数
         /// - `prefix`: 路由前缀（如 `/api/v1`），必须非空，以 `/` 开头。
@@ -268,7 +268,7 @@ mod web_axum {
             // R-router-group-002: 尾部 / 自动 trim
             let trimmed = prefix.trim_end_matches('/');
 
-            // 创建子 router，继承父 router 的 interceptor 和 config（依据 spec Constraints）
+            // 创建子 router，继承父 router 的 interceptor 和 config
             let child = BulwarkRouter {
                 inner: Router::new(),
                 rules: Vec::new(),
@@ -366,7 +366,7 @@ mod web_axum {
     }
 
     // ----------------------------------------------------------------
-    // tenant_resolution_middleware（v0.5.0 新增，依据 spec tenant-isolation R-005）
+    // tenant_resolution_middleware
     // ----------------------------------------------------------------
 
     /// 租户解析 middleware：从请求 headers 解析 `TenantContext`，在 `TENANT` task_local
@@ -415,7 +415,7 @@ mod web_axum {
     }
 }
 
-/// 租户解析 middleware 的 re-export（依据 spec tenant-isolation R-005）。
+/// 租户解析 middleware 的 re-export。
 ///
 /// 仅在 `web-axum` + `tenant-isolation` 双 feature 启用时可用。
 #[cfg(all(feature = "web-axum", feature = "tenant-isolation"))]
@@ -986,7 +986,7 @@ mod tests {
     }
 
     // ----------------------------------------------------------------
-    // 0.3.0 新增：CheckSafe / CheckDisable / CheckBasicAuth / CheckDigestAuth / CheckSign 测试
+    // CheckSafe / CheckDisable / CheckBasicAuth / CheckDigestAuth / CheckSign 测试
     // ----------------------------------------------------------------
 
     /// DefaultBulwarkInterceptor.pre_handle(CheckSafe) 默认实现返回 Ok（未启用 MFA）。
@@ -1079,7 +1079,7 @@ mod tests {
     }
 
     /// DefaultBulwarkInterceptor.pre_handle(CheckAccessToken) 返回 NotImplemented
-    ///（无 OAuth2Handler 注册，依据 spec R-annotation-oauth2-003）。
+    ///（无 OAuth2Handler 注册）。
     #[tokio::test]
     #[serial]
     async fn default_interceptor_check_access_token_returns_not_implemented() {
@@ -1097,7 +1097,7 @@ mod tests {
     }
 
     /// DefaultBulwarkInterceptor.pre_handle(CheckClientToken) 返回 NotImplemented
-    ///（无 OAuth2Handler 注册，依据 spec R-annotation-oauth2-003）。
+    ///（无 OAuth2Handler 注册）。
     #[tokio::test]
     #[serial]
     async fn default_interceptor_check_client_token_returns_not_implemented() {
@@ -1217,7 +1217,7 @@ mod tests {
     }
 
     // ----------------------------------------------------------------
-    // tenant_resolution_middleware 测试（v0.5.0 新增，依据 spec tenant-isolation R-005）
+    // tenant_resolution_middleware 测试
     // ----------------------------------------------------------------
 
     /// R-tenant-isolation-005: tenant_resolution_middleware 从 `X-Tenant-Id` header
@@ -1311,7 +1311,7 @@ mod tests {
     }
 
     // ----------------------------------------------------------------
-    // CheckApiKey 注解分发测试（0.6.1 新增，依据 spec annotation-check-api-key R-anno-004）
+    // CheckApiKey 注解分发测试
     // ----------------------------------------------------------------
 
     #[cfg(feature = "protocol-apikey")]
@@ -1469,7 +1469,7 @@ mod tests {
     }
 
     // ----------------------------------------------------------------
-    // group 方法测试（依据 spec web-router-group R-router-group-001~004）
+    // group 方法测试
     // ----------------------------------------------------------------
 
     /// R-router-group-001/002/004: group 为子路由附加前缀，
@@ -1562,7 +1562,7 @@ mod tests {
     /// R-router-group-002: 嵌套 group 正确合并前缀
     /// /api + /v1 + /users = /api/v1/users
     ///
-    /// 注：group 注解非 Ignore 时保留路由自身注解（依据 spec R-router-group-003）。
+    /// 注：group 注解非 Ignore 时保留路由自身注解。
     /// 此处两层 group 均使用 CheckLogin（非 Ignore），路由注解 CheckLogin 被保留。
     #[tokio::test]
     #[serial]

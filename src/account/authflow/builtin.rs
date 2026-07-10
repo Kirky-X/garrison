@@ -1,4 +1,4 @@
-//! 内置 AuthenticationFlow（v0.6.0 新增，依据 spec auth-flow-dsl R-auth-flow-dsl-012）。
+//! 内置 AuthenticationFlow。
 //!
 //! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.

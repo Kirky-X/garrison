@@ -14,7 +14,7 @@ use std::time::Duration;
 /// DAO 抽象层 trait，定义 Token 与会话的持久化操作。
 ///
 /// [借鉴 Sa-Token] 对应 `SaTokenDao`，提供 get / set / update / delete / expire 五元操作
-/// + v0.4.2 新增 set_permanent / get_timeout / keys / rename 四个扩展方法（依据 spec dao-bulwark-dao）。
+/// + set_permanent / get_timeout / keys / rename 四个扩展方法。
 ///
 /// - `set` 必须指定 TTL（Token/Session 不应永久驻留，与 Sa-Token 语义一致）
 /// - `update` 更新值时保留原有 TTL（不重置过期时间）
@@ -71,14 +71,14 @@ pub trait BulwarkDao: Send + Sync {
 
     /// 存储永久键（无 TTL）。
     ///
-    /// v0.4.2 新增（依据 spec dao-bulwark-dao R-001）。
+    /// 。
     ///
     /// # 参数
     /// - `key`: 存储键。
     /// - `value`: 存储值。
     ///
     /// # 默认实现
-    /// 委托 `self.set(key, value, 0)`（依据 spec 语义：ttl=0 表示永久驻留）。
+    /// 委托 `self.set(key, value, 0)`。
     /// 后端可重写以使用原生"无 TTL"API（如 oxcache `set_with_ttl_sync(None)`）。
     async fn set_permanent(&self, key: &str, value: &str) -> BulwarkResult<()> {
         self.set(key, value, 0).await
@@ -86,7 +86,7 @@ pub trait BulwarkDao: Send + Sync {
 
     /// 查询键的剩余 TTL。
     ///
-    /// v0.4.2 新增（依据 spec dao-bulwark-dao R-002）。
+    /// 。
     ///
     /// # 参数
     /// - `key`: 存储键。
@@ -107,7 +107,7 @@ pub trait BulwarkDao: Send + Sync {
 
     /// 按 glob pattern 扫描 key。
     ///
-    /// v0.4.2 新增（依据 spec dao-bulwark-dao R-003）。
+    /// 。
     ///
     /// # 参数
     /// - `pattern`: glob 模式，支持 `*`（任意字符序列）与 `?`（单字符）。
@@ -142,7 +142,7 @@ pub trait BulwarkDao: Send + Sync {
 
     /// 重命名 key。
     ///
-    /// v0.4.2 新增（依据 spec dao-bulwark-dao R-004）。
+    /// 。
     ///
     /// # 参数
     /// - `old_key`: 原 key（必须已存在）。
@@ -169,7 +169,7 @@ pub trait BulwarkDao: Send + Sync {
         self.delete(old_key).await
     }
 
-    /// 原子地获取并删除键（v0.4.2 新增，依据 spec protocol-sso-toctou R-001）。
+    /// 原子地获取并删除键。
     ///
     /// 保证 get 与 delete 在同一临界区内执行，消除 TOCTOU 竞态。
     /// 用于 SSO ticket 一次性消费等场景。
@@ -198,7 +198,7 @@ pub trait BulwarkDao: Send + Sync {
         Ok(value)
     }
 
-    /// 查询社交账号绑定关系（v0.5.0 新增，依据 spec social-login R-social-login-004）。
+    /// 查询社交账号绑定关系。
     ///
     /// 按 `(tenant_id, provider, provider_user_id)` 三元组查询 `social_bindings` 表，
     /// 返回关联的 `login_id`。
@@ -228,7 +228,7 @@ pub trait BulwarkDao: Send + Sync {
         )))
     }
 
-    /// 插入社交账号绑定关系（v0.5.0 新增，依据 spec social-login R-social-login-004）。
+    /// 插入社交账号绑定关系。
     ///
     /// 将 `(tenant_id, login_id, provider, provider_user_id, union_id)` 写入 `social_bindings` 表。
     ///
@@ -261,10 +261,10 @@ pub trait BulwarkDao: Send + Sync {
 }
 
 // ============================================================================
-// Redis 部署模式配置（依据 spec dao-redis-modes，gap-closure-remaining T002）
+// Redis 部署模式配置
 // ============================================================================
 
-/// Redis 部署模式枚举，覆盖生产环境常见拓扑（依据 spec dao-redis-modes R-001）。
+/// Redis 部署模式枚举，覆盖生产环境常见拓扑。
 ///
 /// 参阅 Redis 集群部署文档：单节点 / Sentinel / Cluster / Master-Slave。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -272,7 +272,7 @@ pub trait BulwarkDao: Send + Sync {
 pub enum RedisDeploymentMode {
     /// 单节点模式：单个 Redis 实例。
     Single {
-        /// Redis 连接 URL（如 `redis://127.0.0.1:6379`）。
+        /// Redis 连接 URL（如 `redis://127.6379`）。
         url: String,
     },
     /// 哨兵模式：通过 Sentinel 集群自动故障转移。
@@ -296,7 +296,7 @@ pub enum RedisDeploymentMode {
     },
 }
 
-/// Default 实现，返回 Single 模式（`redis://127.0.0.1:6379`）。
+/// Default 实现，返回 Single 模式（`redis://127.6379`）。
 ///
 /// 供 `RedisConfig` 的 `#[serde(default)]` 在反序列化时填充缺失的 `mode` 字段。
 impl Default for RedisDeploymentMode {
@@ -307,11 +307,11 @@ impl Default for RedisDeploymentMode {
     }
 }
 
-/// Redis 配置聚合结构，包含部署模式、连接池参数与认证信息（依据 spec dao-redis-modes R-002）。
+/// Redis 配置聚合结构，包含部署模式、连接池参数与认证信息。
 ///
 /// # 默认值
 ///
-/// - `mode`: `Single { url: "redis://127.0.0.1:6379" }`
+/// - `mode`: `Single { url: "redis://127.6379" }`
 /// - `password`: `None`
 /// - `db`: `0`
 /// - `connection_timeout_secs`: `5`
@@ -345,7 +345,7 @@ impl Default for RedisConfig {
     }
 }
 
-/// Display 实现，输出人类可读的部署模式描述（依据 spec dao-redis-modes）。
+/// Display 实现，输出人类可读的部署模式描述。
 impl std::fmt::Display for RedisDeploymentMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -390,7 +390,7 @@ mod oxcache_impl {
     use oxcache::Cache;
     use std::time::Duration;
 
-    /// 根据租户上下文返回实际存储 key（依据 spec tenant-isolation R-003）。
+    /// 根据租户上下文返回实际存储 key。
     ///
     /// - `tenant-isolation` feature 启用且 `TENANT.try_get()` 返回 `Ok(ctx)`：
     ///   返回 `format!("tenant:{}:{}", ctx.tenant_id, key)`
@@ -418,7 +418,7 @@ mod oxcache_impl {
     ///
     /// - L1（moka）+ L2（redis）由 oxcache 0.3 自动管理（0.3 起 moka 后端支持 per-entry TTL）。
     /// - Bulwark 自身不实现任何缓存逻辑，全部委托给 oxcache。
-    /// - 启用 `sync_mode(true)` 后使用 `_sync` API（依据 codebase-hardening Task 2），
+    /// - 启用 `sync_mode(true)` 后使用 `_sync` API，
     ///   要求调用方在 multi_thread tokio runtime 中执行。
     ///
     /// # TTL 保留
@@ -452,7 +452,7 @@ mod oxcache_impl {
     impl BulwarkDaoOxcache {
         /// 创建默认的 oxcache DAO 实例。
         ///
-        /// 启用 `sync_mode(true)` 以支持 `_sync` API（依据 codebase-hardening Task 2.1）。
+        /// 启用 `sync_mode(true)` 以支持 `_sync` API。
         ///
         /// # 返回
         /// 已初始化的 `BulwarkDaoOxcache` 实例（内部 `oxcache::Cache` 已就绪，sync_mode 启用）。
@@ -473,7 +473,7 @@ mod oxcache_impl {
             })
         }
 
-        /// 设置 Redis 部署模式配置（依据 spec dao-redis-modes R-003）。
+        /// 设置 Redis 部署模式配置。
         ///
         /// 仅在 `cache-redis` feature 启用时可用。消费 self 并返回新实例（builder 模式）。
         /// 调用后 oxcache 的 Redis L2 后端使用指定部署模式。
@@ -585,7 +585,7 @@ mod oxcache_impl {
                 .map_err(|e| BulwarkError::Dao(format!("oxcache delete_sync 失败: {}", e)))
         }
 
-        /// v0.4.2: set_permanent 用 set_with_ttl_sync(None) 写入永久键（依据 spec dao-bulwark-dao R-001）。
+        /// set_permanent 用 set_with_ttl_sync(None) 写入永久键。
         ///
         /// 重写默认实现以使用 oxcache 原生"无 TTL"API（避免 ttl=0 歧义）。
         async fn set_permanent(&self, key: &str, value: &str) -> BulwarkResult<()> {
@@ -595,7 +595,7 @@ mod oxcache_impl {
                 .map_err(|e| BulwarkError::Dao(format!("oxcache set_with_ttl_sync 失败: {}", e)))
         }
 
-        /// v0.4.2: get_timeout 用 ttl_sync 查询剩余 TTL（依据 spec dao-bulwark-dao R-002）。
+        /// get_timeout 用 ttl_sync 查询剩余 TTL。
         ///
         /// oxcache 0.3 的 `ttl_sync(key)` 返回 `Option<Duration>`：
         /// - `Some(remaining)`: 键存在且设置了 TTL
@@ -607,7 +607,7 @@ mod oxcache_impl {
                 .map_err(|e| BulwarkError::Dao(format!("oxcache ttl_sync 失败: {}", e)))
         }
 
-        /// v0.4.2: rename 用 get → ttl_sync → set_with_ttl_sync → delete 四步（依据 spec dao-bulwark-dao R-004）。
+        /// rename 用 get → ttl_sync → set_with_ttl_sync → delete 四步。
         ///
         /// 重写默认实现以保留原键 TTL（用 `ttl_sync` 读取剩余 TTL，用 `set_with_ttl_sync` 写入）。
         /// 仍是**非原子**操作（oxcache 0.3.3 无原子 rename API，待 oxcache 提供原子 rename API）。
@@ -631,7 +631,7 @@ mod oxcache_impl {
                 .map_err(|e| BulwarkError::Dao(format!("oxcache delete_sync 失败: {}", e)))
         }
 
-        /// v0.4.2: get_and_delete 用 `parking_lot::Mutex` 保护 get+delete（依据 spec protocol-sso-toctou R-003）。
+        /// get_and_delete 用 `parking_lot::Mutex` 保护 get+delete。
         ///
         /// 进程内原子：同一进程内并发调用同一 key 仅一个返回 `Some`。
         /// 跨进程限制：多进程共享 Redis L2 时，仍存在 TOCTOU 竞态
@@ -674,7 +674,7 @@ mod dbnexus_impl;
 pub use dbnexus_impl::{init_dbnexus, BulwarkMigration};
 
 // ============================================================================
-// Repository 层（v0.4.2 新增，依据 spec repository-layer）
+// Repository 层
 // ============================================================================
 // 9 个核心表的 Repository trait + Row struct，与 dbnexus 解耦。
 // SQLite 实现见 `repository::sqlite` 子模块（启用 `db-sqlite` feature，
@@ -795,7 +795,7 @@ pub mod tests {
             Ok(())
         }
 
-        /// v0.4.2: set_permanent 设置 expire_at = None（永久驻留）。
+        /// set_permanent 设置 expire_at = None（永久驻留）。
         async fn set_permanent(&self, key: &str, value: &str) -> BulwarkResult<()> {
             self.store
                 .lock()
@@ -803,7 +803,7 @@ pub mod tests {
             Ok(())
         }
 
-        /// v0.4.2: get_timeout 返回剩余 TTL。
+        /// get_timeout 返回剩余 TTL。
         ///
         /// - `Some(remaining)`: 键存在且设置了 TTL（expire_at - now）
         /// - `None`: 键不存在，或永久键（expire_at = None）
@@ -823,7 +823,7 @@ pub mod tests {
             }
         }
 
-        /// v0.4.2: keys 按 glob pattern 扫描 key（支持 `*` 与 `?`）。
+        /// keys 按 glob pattern 扫描 key（支持 `*` 与 `?`）。
         ///
         /// 遍历所有 key，过滤已过期的，然后用 glob_match 匹配 pattern。
         async fn keys(&self, pattern: &str) -> BulwarkResult<Vec<String>> {
@@ -844,7 +844,7 @@ pub mod tests {
             Ok(result)
         }
 
-        /// v0.4.2: rename 重命名 key，保留原 TTL（非原子）。
+        /// rename 重命名 key，保留原 TTL（非原子）。
         async fn rename(&self, old_key: &str, new_key: &str) -> BulwarkResult<()> {
             let mut store = self.store.lock();
             match store.get(old_key).cloned() {
@@ -857,7 +857,7 @@ pub mod tests {
             }
         }
 
-        /// v0.4.2: get_and_delete 用 `parking_lot::Mutex` 保护原子性（依据 spec protocol-sso-toctou R-001）。
+        /// get_and_delete 用 `parking_lot::Mutex` 保护原子性。
         ///
         /// 在单个 `lock()` 作用域内完成 get + remove，保证进程内原子。
         async fn get_and_delete(&self, key: &str) -> BulwarkResult<Option<String>> {
@@ -874,8 +874,8 @@ pub mod tests {
     ///
     /// 使用经典双指针算法（O(n+m) 时间复杂度）。
     ///
-    /// v0.4.2: 改为 `pub(crate)` 以供 `protocol::apikey` 模块的 `list_by_namespace` 复用
-    /// （依据 spec protocol-apikey-namespace R-003，避免重复实现 glob 逻辑）。
+    /// 改为 `pub(crate)` 以供 `protocol::apikey` 模块的 `list_by_namespace` 复用
+    /// 。
     pub(crate) fn glob_match(pattern: &str, text: &str) -> bool {
         let pattern: Vec<char> = pattern.chars().collect();
         let text: Vec<char> = text.chars().collect();
@@ -1057,7 +1057,7 @@ pub mod tests {
     // 4 方法扩展测试（v0.4.2 spec dao-bulwark-dao）
     // ------------------------------------------------------------------------
 
-    /// R-001: set_permanent 设置后 get 返回值（依据 spec dao-bulwark-dao R-001）。
+    /// R-001: set_permanent 设置后 get 返回值。
     #[tokio::test]
     async fn mock_set_permanent_persists_value() {
         let dao = MockDao::new();
@@ -1076,7 +1076,7 @@ pub mod tests {
         assert_eq!(got, Some("perm_value".to_string()), "永久键不应过期");
     }
 
-    /// R-002: get_timeout 永久键返回 None（依据 spec dao-bulwark-dao R-002）。
+    /// R-002: get_timeout 永久键返回 None。
     #[tokio::test]
     async fn mock_get_timeout_returns_none_for_permanent_key() {
         let dao = MockDao::new();
@@ -1107,7 +1107,7 @@ pub mod tests {
         assert!(timeout.is_none(), "不存在的键应返回 None");
     }
 
-    /// R-003: keys("bulwark:apikey:*") 返回命名空间下所有 key（依据 spec dao-bulwark-dao R-003）。
+    /// R-003: keys("bulwark:apikey:*") 返回命名空间下所有 key。
     #[tokio::test]
     async fn mock_keys_returns_namespace_matches() {
         let dao = MockDao::new();
@@ -1154,7 +1154,7 @@ pub mod tests {
         );
     }
 
-    /// R-004: rename 重命名后 old 不存在，new 存在（依据 spec dao-bulwark-dao R-004）。
+    /// R-004: rename 重命名后 old 不存在，new 存在。
     #[tokio::test]
     async fn mock_rename_moves_key() {
         let dao = MockDao::new();
@@ -1326,7 +1326,7 @@ pub mod tests {
             );
         }
 
-        /// 验证 set(ttl=0) 写入永久驻留的键（依据 codebase-hardening Task 3.7）。
+        /// 验证 set(ttl=0) 写入永久驻留的键。
         ///
         /// 覆盖 BulwarkDaoOxcache::set 的 `ttl_seconds == 0` 分支（ttl=None）：
         /// 键应永久驻留，不会因短时间等待而过期。
@@ -1346,7 +1346,7 @@ pub mod tests {
         }
 
         // --------------------------------------------------------------------
-        // v0.4.2 4 方法扩展测试（依据 spec dao-bulwark-dao）
+        // v0.4.2 4 方法扩展测试
         // --------------------------------------------------------------------
 
         /// R-001: set_permanent 写入永久键，短时间等待不过期。
@@ -1513,7 +1513,7 @@ pub mod tests {
         }
 
         // --------------------------------------------------------------------
-        // 多租户 key 前缀测试（v0.5.0 新增，依据 spec tenant-isolation R-003）
+        // 多租户 key 前缀测试
         // --------------------------------------------------------------------
 
         /// R-tenant-isolation-003: tenant-isolation feature 启用且 TENANT 上下文存在时，
@@ -1659,7 +1659,7 @@ pub mod tests {
     // get_and_delete 原子方法测试（v0.4.2 spec protocol-sso-toctou R-001）
     // ------------------------------------------------------------------------
 
-    /// R-001: get_and_delete 返回值并删除 key（依据 spec protocol-sso-toctou R-001）。
+    /// R-001: get_and_delete 返回值并删除 key。
     #[tokio::test]
     async fn mock_get_and_delete_returns_value_and_removes_key() {
         let dao = MockDao::new();
@@ -1819,7 +1819,7 @@ pub mod tests {
     }
 
     // ========================================================================
-    // 覆盖率补充：社交账号绑定关系默认实现（依据 spec social-login R-social-login-004）
+    // 覆盖率补充：社交账号绑定关系默认实现
     // ========================================================================
 
     /// `find_social_binding` 默认实现返回 `NotImplemented`（BulwarkDao 是 KV 缓存抽象，不支持 SQL）。
@@ -1873,10 +1873,10 @@ pub mod tests {
     }
 
     // ========================================================================
-    // Redis 部署模式配置测试（依据 spec dao-redis-modes，gap-closure-remaining T002）
+    // Redis 部署模式配置测试
     // ========================================================================
 
-    /// R-002: RedisConfig::default() 返回 Single 模式，url 为 "redis://127.0.0.1:6379"。
+    /// R-002: RedisConfig::default() 返回 Single 模式，url 为 "redis://127.6379"。
     #[test]
     fn redis_config_default_returns_single_mode() {
         let config = RedisConfig::default();

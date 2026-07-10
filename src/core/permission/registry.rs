@@ -1,7 +1,7 @@
 //! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! 权限注册表模块（0.5.1 新增，依据 spec permission-registry M3）。
+//! 权限注册表模块。
 //!
 //! 提供声明式 `permission -> required_roles` 映射，启动时通过 `inventory::submit!`
 //! 收集编译期注册的权限声明，运行期通过 [`PermissionRegistry::validate`] 校验权限已注册。
@@ -53,7 +53,7 @@ pub struct PermissionSpec {
     pub description: String,
 }
 
-/// 权限注册条目，用于 `inventory` 编译期注册（依据 spec permission-registry M3）。
+/// 权限注册条目，用于 `inventory` 编译期注册。
 ///
 /// 所有字段为 `&'static str` 以支持编译期常量构造。`required_roles` 为逗号分隔字符串，
 /// [`PermissionRegistry::from_inventory`] 时按 `,` split 转换为 `Vec<String>`。
@@ -75,7 +75,7 @@ pub struct PermissionRegistration {
 // 编译期权限注册收集点
 inventory::collect!(PermissionRegistration);
 
-/// 权限注册表，封装 `permission -> required_roles` 映射（依据 spec permission-registry M3）。
+/// 权限注册表，封装 `permission -> required_roles` 映射。
 ///
 /// 启动时通过 [`from_inventory`](Self::from_inventory) 收集所有 `inventory::submit!` 注册的
 /// [`PermissionRegistration`]，运行期通过 [`validate`](Self::validate) 校验权限已注册。
@@ -103,7 +103,7 @@ impl PermissionRegistry {
     ///
     /// 注册前调用 [`check_confusable`](crate::secure::confusable::check_confusable) 检测
     /// permission name 中的 Unicode 同形异义字。发现可疑字符时通过 `tracing::warn` 上报
-    /// （依据 design.md D10，L6）。**不阻止注册**——仅警告，符合"失败显性化但非阻塞"原则
+    /// 。**不阻止注册**——仅警告，符合"失败显性化但非阻塞"原则
     /// （Rule 12）。
     pub fn register(&self, spec: PermissionSpec) -> BulwarkResult<()> {
         if spec.name.is_empty() {
@@ -112,7 +112,7 @@ impl PermissionRegistry {
             ));
         }
 
-        // L6: 检测 Unicode 同形异义字（依据 design.md D10）
+        // L6: 检测 Unicode 同形异义字
         // 启用 secure-confusable feature 时生效；不阻止注册，仅 tracing::warn 上报
         #[cfg(feature = "secure-confusable")]
         {
@@ -140,7 +140,7 @@ impl PermissionRegistry {
     /// 校验权限是否已注册，返回其 `required_roles`。
     ///
     /// # 错误
-    /// - 权限未注册 → `BulwarkError::InvalidParam`（依据 spec R-permission-registry-001）
+    /// - 权限未注册 → `BulwarkError::InvalidParam`
     pub fn validate(&self, permission: &str) -> BulwarkResult<Vec<String>> {
         let map = self.permissions.read();
         match map.get(permission) {
@@ -232,7 +232,7 @@ mod tests {
     }
 
     // ========================================================================
-    // register / validate 测试（依据 spec permission-registry M3）
+    // register / validate 测试
     // ========================================================================
 
     /// T057-1: register 单个权限后 validate 命中（spec Scenario）。
@@ -316,7 +316,7 @@ mod tests {
         assert!(names.contains(&"c:delete"));
     }
 
-    /// T057-7: from_inventory 收集 inventory::submit! 静态注册项（依据 spec permission-registry M3）。
+    /// T057-7: from_inventory 收集 inventory::submit! 静态注册项。
     ///
     /// 验证测试模块顶部 `inventory::submit!` 注册的两个测试项被 `from_inventory` 收集。
     #[test]

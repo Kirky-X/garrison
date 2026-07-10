@@ -1,4 +1,4 @@
-//! 密码策略错误类型（v0.6.0 新增，依据 spec password-policy R-004）。
+//! 密码策略错误类型。
 //!
 //! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
@@ -8,7 +8,7 @@
 
 use std::fmt;
 
-/// 密码策略校验错误（依据 spec password-policy R-004）。
+/// 密码策略校验错误。
 ///
 /// 由规则 `validate` 返回，含触发规则的名称与可展示给用户的错误描述。
 ///

@@ -1,7 +1,7 @@
 //! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! SAML 2.0 协议支持骨架（依据 spec protocol-sso-federation R-001/002）。
+//! SAML 2.0 协议支持骨架。
 //!
 //! 提供 SAML 2.0 核心数据结构（`SamlAssertion`/`SamlResponse`/`SamlRequest`）
 //! 和 `SamlProvider` trait（`build_authn_request`/`parse_response`/`validate_assertion`）。
@@ -20,10 +20,10 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 // ============================================================================
-// SAML 2.0 数据结构（依据 spec protocol-sso-federation R-001）
+// SAML 2.0 数据结构
 // ============================================================================
 
-/// SAML Assertion 结构，包含 IdP 签发的身份声明（依据 spec protocol-sso-federation R-001）。
+/// SAML Assertion 结构，包含 IdP 签发的身份声明。
 ///
 /// 对应 SAML 2.0 `<saml:Assertion>` 元素。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,7 +40,7 @@ pub struct SamlAssertion {
     pub attributes: Vec<(String, String)>,
 }
 
-/// SAML Response 结构，IdP 返回给 SP 的响应（依据 spec protocol-sso-federation R-001）。
+/// SAML Response 结构，IdP 返回给 SP 的响应。
 ///
 /// 对应 SAML 2.0 `<samlp:Response>` 元素。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -55,7 +55,7 @@ pub struct SamlResponse {
     pub status_code: String,
 }
 
-/// SAML AuthnRequest 结构，SP 发送给 IdP 的认证请求（依据 spec protocol-sso-federation R-001）。
+/// SAML AuthnRequest 结构，SP 发送给 IdP 的认证请求。
 ///
 /// 对应 SAML 2.0 `<samlp:AuthnRequest>` 元素。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -73,15 +73,15 @@ pub struct SamlRequest {
 }
 
 // ============================================================================
-// SamlProvider trait（依据 spec protocol-sso-federation R-002）
+// SamlProvider trait
 // ============================================================================
 
-/// SAML 2.0 协议交互 trait（依据 spec protocol-sso-federation R-002）。
+/// SAML 2.0 协议交互 trait。
 ///
 /// 支持构建 AuthnRequest、解析 Response、验证 Assertion。
 #[async_trait]
 pub trait SamlProvider: Send + Sync {
-    /// 构建 SAML AuthnRequest（依据 spec protocol-sso-federation R-002）。
+    /// 构建 SAML AuthnRequest。
     ///
     /// # 参数
     /// - `sp_entity_id`: SP 的 entity_id。
@@ -95,7 +95,7 @@ pub trait SamlProvider: Send + Sync {
         acs_url: &str,
     ) -> BulwarkResult<SamlRequest>;
 
-    /// 解析 SAML Response XML（依据 spec protocol-sso-federation R-002）。
+    /// 解析 SAML Response XML。
     ///
     /// 输入为 base64 解码后的原始 XML 字符串，调用方负责 base64 解码。
     ///
@@ -106,7 +106,7 @@ pub trait SamlProvider: Send + Sync {
     /// 解析后的 `SamlResponse` 结构。
     async fn parse_response(&self, response_xml: &str) -> BulwarkResult<SamlResponse>;
 
-    /// 验证 SAML Assertion 签名（依据 spec protocol-sso-federation R-002）。
+    /// 验证 SAML Assertion 签名。
     ///
     /// # 参数
     /// - `assertion`: 待验证的 Assertion。
@@ -118,17 +118,17 @@ pub trait SamlProvider: Send + Sync {
 }
 
 // ============================================================================
-// DefaultSamlProvider（依据 spec protocol-sso-federation R-002）
+// DefaultSamlProvider
 // ============================================================================
 
-/// 默认 SAML Provider 实现（依据 spec protocol-sso-federation R-002）。
+/// 默认 SAML Provider 实现。
 ///
 /// 提供基础的 AuthnRequest 构建和 Response 解析功能。
 /// 签名验证返回 `NotImplemented`，defer 到后续变更。
 pub struct DefaultSamlProvider;
 
 impl DefaultSamlProvider {
-    /// 创建新的 `DefaultSamlProvider` 实例（依据 spec protocol-sso-federation R-002）。
+    /// 创建新的 `DefaultSamlProvider` 实例。
     ///
     /// # 返回
     /// 可用的 `DefaultSamlProvider` 实例。
@@ -171,10 +171,10 @@ impl SamlProvider for DefaultSamlProvider {
 }
 
 // ============================================================================
-// XML 解析辅助（依据 spec protocol-sso-federation R-002，Refactor: extract helper）
+// XML 解析辅助
 // ============================================================================
 
-/// 从 SAML Response XML 中提取关键字段（依据 spec protocol-sso-federation R-002）。
+/// 从 SAML Response XML 中提取关键字段。
 ///
 /// 使用 quick-xml 的 pull reader 解析 XML，提取 Destination / Issuer / StatusCode / Assertion。
 fn parse_saml_response_xml(xml: &str) -> BulwarkResult<SamlResponse> {
@@ -375,7 +375,7 @@ fn attr_value_to_string(value: &[u8]) -> String {
 }
 
 // ============================================================================
-// 测试（依据 spec protocol-sso-federation R-001/002）
+// 测试
 // ============================================================================
 
 #[cfg(test)]
@@ -383,7 +383,7 @@ mod tests {
     use super::*;
 
     // ========================================================================
-    // 数据结构测试（依据 spec protocol-sso-federation R-001）
+    // 数据结构测试
     // ========================================================================
 
     /// SamlAssertion 序列化/反序列化往返（spec R-001: 所有结构实现 Serialize/Deserialize）。
@@ -463,7 +463,7 @@ mod tests {
     }
 
     // ========================================================================
-    // DefaultSamlProvider 测试（依据 spec protocol-sso-federation R-002）
+    // DefaultSamlProvider 测试
     // ========================================================================
 
     /// DefaultSamlProvider::new() 返回可用实例（spec R-002 验收标准）。

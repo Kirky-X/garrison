@@ -38,7 +38,7 @@ pub struct BulwarkJsonTemplate {
 }
 
 impl BulwarkJsonTemplate {
-    /// 解析 JSON 字符串为模板（依据 spec json-template Requirement: 模板构造与渲染）。
+    /// 解析 JSON 字符串为模板。
     ///
     /// # 参数
     /// - `template`: JSON 字符串，可包含 `${key}` 占位符。
@@ -52,7 +52,7 @@ impl BulwarkJsonTemplate {
         Ok(Self { value })
     }
 
-    /// 递归替换 `${key}` 占位符并序列化为 JSON 字符串（依据 spec json-template Requirement: 模板构造与渲染）。
+    /// 递归替换 `${key}` 占位符并序列化为 JSON 字符串。
     ///
     /// # 参数
     /// - `params`: 占位符键值对。未在 `params` 中提供的 `${key}` 保留原样。
@@ -108,7 +108,7 @@ fn render_value(
     }
 }
 
-/// 序列化抽象 trait，提供类型化的序列化/反序列化（依据 spec json-template Requirement: BulwarkSerializer trait 定义）。
+/// 序列化抽象 trait，提供类型化的序列化/反序列化。
 ///
 /// [借鉴 Sa-Token] 对应 `SaSerializerTemplate`，0.1.0 的 `BulwarkSerializerTemplate` 重命名为此。
 pub trait BulwarkSerializer {
@@ -125,7 +125,7 @@ pub trait BulwarkSerializer {
     fn deserialize<T: serde::de::DeserializeOwned>(&self, json: &str) -> BulwarkResult<T>;
 }
 
-/// `BulwarkSerializer` 的默认实现，委托 `serde_json`（依据 spec json-template Requirement: 默认实现委托 serde_json）。
+/// `BulwarkSerializer` 的默认实现，委托 `serde_json`。
 ///
 /// 业务方可透明切换底层 JSON 库（如 simd-json）通过实现 `BulwarkSerializer` trait。
 #[derive(Debug, Clone, Default)]
@@ -149,10 +149,10 @@ mod tests {
     use serde::{Deserialize, Serialize};
 
     // ========================================================================
-    // BulwarkJsonTemplate 测试（依据 spec json-template）
+    // BulwarkJsonTemplate 测试
     // ========================================================================
 
-    /// 验证 `new` 成功解析合法 JSON（依据 spec Scenario: new 成功解析合法 JSON）。
+    /// 验证 `new` 成功解析合法 JSON。
     #[test]
     fn new_parses_valid_json() {
         let template = BulwarkJsonTemplate::new(r#"{"code":0,"msg":"${msg}"}"#);
@@ -161,7 +161,7 @@ mod tests {
         assert!(t.value().is_object());
     }
 
-    /// 验证 `new` 解析非法 JSON 抛错（依据 spec Scenario: new 解析非法 JSON 抛错）。
+    /// 验证 `new` 解析非法 JSON 抛错。
     #[test]
     fn new_rejects_invalid_json() {
         let result = BulwarkJsonTemplate::new("not a json");
@@ -174,7 +174,7 @@ mod tests {
         );
     }
 
-    /// 验证 `render` 递归替换嵌套对象占位符（依据 spec Scenario: render 递归替换嵌套对象占位符）。
+    /// 验证 `render` 递归替换嵌套对象占位符。
     #[test]
     fn render_replaces_nested_placeholders() {
         let template =
@@ -198,7 +198,7 @@ mod tests {
         assert!(rendered.contains("${missing}"));
     }
 
-    /// 验证 `render` 输出合法 JSON 字符串（依据 spec Scenario: render 输出合法 JSON 字符串）。
+    /// 验证 `render` 输出合法 JSON 字符串。
     #[test]
     fn render_outputs_valid_json() {
         let template = BulwarkJsonTemplate::new(r#"{"code":0,"msg":"${msg}"}"#).unwrap();
@@ -243,7 +243,7 @@ mod tests {
     }
 
     // ========================================================================
-    // BulwarkSerializer / BulwarkSerializerDefault 测试（依据 spec json-template）
+    // BulwarkSerializer / BulwarkSerializerDefault 测试
     // ========================================================================
 
     /// 测试用的序列化类型。
@@ -253,7 +253,7 @@ mod tests {
         age: u32,
     }
 
-    /// 验证 `BulwarkSerializerDefault::serialize` 将对象转为 JSON 字符串（依据 spec Scenario: 默认实现委托 serde_json 序列化）。
+    /// 验证 `BulwarkSerializerDefault::serialize` 将对象转为 JSON 字符串。
     #[test]
     fn serializer_default_serialize_to_json() {
         let serializer = BulwarkSerializerDefault;
@@ -266,7 +266,7 @@ mod tests {
         assert!(json.contains("30"));
     }
 
-    /// 验证 `BulwarkSerializerDefault::deserialize` 将 JSON 字符串转为对象（依据 spec Scenario: 默认实现委托 serde_json 反序列化）。
+    /// 验证 `BulwarkSerializerDefault::deserialize` 将 JSON 字符串转为对象。
     #[test]
     fn serializer_default_deserialize_from_json() {
         let serializer = BulwarkSerializerDefault;
@@ -276,7 +276,7 @@ mod tests {
         assert_eq!(data.age, 25);
     }
 
-    /// 验证 `deserialize` 非法 JSON 抛错（依据 spec Scenario: deserialize 非法 JSON 抛错）。
+    /// 验证 `deserialize` 非法 JSON 抛错。
     #[test]
     fn serializer_default_deserialize_invalid_json_errors() {
         let serializer = BulwarkSerializerDefault;

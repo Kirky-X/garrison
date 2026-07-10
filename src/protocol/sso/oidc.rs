@@ -1,7 +1,7 @@
 //! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! OIDC（OpenID Connect）RP 协议支持骨架（依据 spec protocol-sso-federation R-003/004）。
+//! OIDC（OpenID Connect）RP 协议支持骨架。
 //!
 //! 提供 OIDC RP（Relying Party）核心数据结构（`OidcDiscoveryConfig`/`OidcUserInfo`）
 //! 和 `OidcProvider` trait（`get_authorization_url`/`exchange_code`/`get_user_info`/`validate_id_token`）。
@@ -23,12 +23,12 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 // ============================================================================
-// OIDC 数据结构（依据 spec protocol-sso-federation R-003）
+// OIDC 数据结构
 // ============================================================================
 
-/// OIDC Discovery 配置（依据 spec protocol-sso-federation R-003）。
+/// OIDC Discovery 配置。
 ///
-/// 调用方负责提供 endpoints（不自动 discovery），依据 spec Out of Scope:
+/// 调用方负责提供 endpoints（不自动 discovery）
 /// "OIDC discovery 文档的自动获取和缓存"。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OidcDiscoveryConfig {
@@ -44,7 +44,7 @@ pub struct OidcDiscoveryConfig {
     pub jwks_uri: String,
 }
 
-/// OIDC UserInfo 响应（依据 spec protocol-sso-federation R-003）。
+/// OIDC UserInfo 响应。
 ///
 /// 对应 OIDC UserInfo endpoint 返回的标准 claims。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -62,15 +62,15 @@ pub struct OidcUserInfo {
 }
 
 // ============================================================================
-// OidcProvider trait（依据 spec protocol-sso-federation R-004）
+// OidcProvider trait
 // ============================================================================
 
-/// OIDC 协议交互 trait（依据 spec protocol-sso-federation R-004）。
+/// OIDC 协议交互 trait。
 ///
 /// 支持授权码流程（Authorization Code Flow）。
 #[async_trait]
 pub trait OidcProvider: Send + Sync {
-    /// 构造授权 URL（依据 spec protocol-sso-federation R-004）。
+    /// 构造授权 URL。
     ///
     /// # 参数
     /// - `redirect_uri`: 回调 URL。
@@ -86,7 +86,7 @@ pub trait OidcProvider: Send + Sync {
         scopes: &[&str],
     ) -> BulwarkResult<String>;
 
-    /// 交换授权码获取 id_token（依据 spec protocol-sso-federation R-004）。
+    /// 交换授权码获取 id_token。
     ///
     /// # 参数
     /// - `code`: 授权码。
@@ -96,7 +96,7 @@ pub trait OidcProvider: Send + Sync {
     /// id_token 字符串（JWT 格式）。
     async fn exchange_code(&self, code: &str, redirect_uri: &str) -> BulwarkResult<String>;
 
-    /// 获取用户信息（依据 spec protocol-sso-federation R-004）。
+    /// 获取用户信息。
     ///
     /// # 参数
     /// - `access_token`: 访问令牌。
@@ -105,7 +105,7 @@ pub trait OidcProvider: Send + Sync {
     /// `OidcUserInfo` 结构。
     async fn get_user_info(&self, access_token: &str) -> BulwarkResult<OidcUserInfo>;
 
-    /// 验证 id_token（依据 spec protocol-sso-federation R-004）。
+    /// 验证 id_token。
     ///
     /// # 参数
     /// - `id_token`: JWT 格式的 id_token。
@@ -117,10 +117,10 @@ pub trait OidcProvider: Send + Sync {
 }
 
 // ============================================================================
-// DefaultOidcProvider（依据 spec protocol-sso-federation R-004）
+// DefaultOidcProvider
 // ============================================================================
 
-/// 默认 OIDC Provider 实现（依据 spec protocol-sso-federation R-004）。
+/// 默认 OIDC Provider 实现。
 ///
 /// 使用 reqwest 发送 HTTP 请求，与外部 IdP 交互。
 /// `validate_id_token` 返回 `NotImplemented`（JWT 验证需 `protocol-jwt` feature）。
@@ -136,7 +136,7 @@ pub struct DefaultOidcProvider {
 }
 
 impl DefaultOidcProvider {
-    /// 创建新的 `DefaultOidcProvider` 实例（依据 spec protocol-sso-federation R-004）。
+    /// 创建新的 `DefaultOidcProvider` 实例。
     ///
     /// 调用方负责提供 `OidcDiscoveryConfig`（含 endpoints），provider 不自动获取 discovery 文档。
     ///
@@ -301,7 +301,7 @@ fn url_encode(s: &str) -> String {
 }
 
 // ============================================================================
-// 测试（依据 spec protocol-sso-federation R-003/004）
+// 测试
 // ============================================================================
 
 #[cfg(test)]
@@ -309,7 +309,7 @@ mod tests {
     use super::*;
 
     // ========================================================================
-    // 数据结构测试（依据 spec protocol-sso-federation R-003）
+    // 数据结构测试
     // ========================================================================
 
     /// OidcDiscoveryConfig 序列化/反序列化往返（spec R-003）。
@@ -383,7 +383,7 @@ mod tests {
     }
 
     // ========================================================================
-    // DefaultOidcProvider 构造测试（依据 spec protocol-sso-federation R-004）
+    // DefaultOidcProvider 构造测试
     // ========================================================================
 
     /// 创建测试用 OidcDiscoveryConfig。
@@ -416,7 +416,7 @@ mod tests {
     }
 
     // ========================================================================
-    // get_authorization_url 测试（依据 spec protocol-sso-federation R-004）
+    // get_authorization_url 测试
     // ========================================================================
 
     /// get_authorization_url 构造正确 URL（spec R-004）。
@@ -466,7 +466,7 @@ mod tests {
     }
 
     // ========================================================================
-    // validate_id_token 测试（依据 spec protocol-sso-federation R-004）
+    // validate_id_token 测试
     // ========================================================================
 
     /// validate_id_token 返回 NotImplemented（spec R-004: JWT 验证需 protocol-jwt feature）。

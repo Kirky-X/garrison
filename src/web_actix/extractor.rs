@@ -1,7 +1,7 @@
 //! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! actix-web Extractor 适配器（依据 spec web-adapters D12）。
+//! actix-web Extractor 适配器。
 //!
 //! 提供 `BulwarkPrincipal` extractor：从 `Authorization: Bearer <token>` header
 //! 解析当前登录用户 ID，供 handler 参数注入使用。

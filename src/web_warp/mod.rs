@@ -6,7 +6,7 @@
 //! [借鉴 Sa-Token] 对应 Sa-Token 的 warp 适配器，
 //! 提供 BulwarkRouter + Filter extractor + BulwarkInterceptor 完整集成。
 //!
-//! ## 设计（依据 spec web-adapters）
+//! ## 设计
 //!
 //! - `BulwarkRouter`：路由规则构建器，`route_protected` 注册路径 + 注解映射，`into_filter` 生成守卫 Filter
 //! - `check_login()` / `check_role(role)` / `check_permission(perm)`：Filter extractor，per-handler 鉴权
@@ -67,7 +67,7 @@ impl Reject for BulwarkRejection {}
 /// 实现 `warp::reply::Reply`，复用 `response_parts()` 保证三框架一致。
 ///
 /// 状态码与错误码映射与 axum `IntoResponse` / actix-web `ResponseError` 完全一致
-/// （依据 spec web-adapters Requirement: 适配器行为一致性）。
+/// 。
 impl Reply for BulwarkError {
     fn into_response(self) -> Response {
         tracing::error!(error = ?self, "bulwark rejection");
@@ -281,7 +281,7 @@ mod tests {
     use warp::http::header::HeaderValue;
 
     // ========================================================================
-    // Reply impl 测试（依据 spec web-adapters Requirement: 适配器行为一致性）
+    // Reply impl 测试
     // ========================================================================
 
     /// NotLogin → 401 响应。
@@ -757,7 +757,7 @@ mod tests {
 
     /// 验证 `into_filter` 对 `Ignore` 路径无 token 也能通过。
     ///
-    /// 0.3.0 修复：`into_filter` 现在与 actix-web middleware 对齐，
+    /// `into_filter` 现在与 actix-web middleware 对齐，
     /// `Ignore` 注解的 `pre_handle` 直接返回 `Ok(())`，token 为可选。
     #[tokio::test]
     #[serial]

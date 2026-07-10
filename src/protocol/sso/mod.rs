@@ -8,23 +8,23 @@
 //!
 //! 仅在启用 `protocol-sso` 特性时编译。
 //!
-//! ## Key 命名空间（依据 spec protocol-sso）
+//! ## Key 命名空间
 //!
 //! 所有 SSO 票据存储在 `bulwark:sso:ticket:<ticket>` 命名空间下，
 //! 与 session/sign/apikey/temp 模块隔离。
 
-// SSO Server 独立抽象模块（依据 spec protocol-sso-server）。
+// SSO Server 独立抽象模块。
 // 仅在启用 `protocol-sso-server` 特性时编译，依赖 `protocol-sso`。
 #[cfg(feature = "protocol-sso-server")]
 pub mod server;
 
-// SAML 2.0 协议支持（依据 spec protocol-sso-federation R-001/002）。
+// SAML 2.0 协议支持。
 pub mod saml;
 
-// OIDC RP 协议支持（依据 spec protocol-sso-federation R-003/004）。
+// OIDC RP 协议支持。
 pub mod oidc;
 
-// Redis pub/sub SsoChannel 实现（依据 spec protocol-sso-federation R-005）。
+// Redis pub/sub SsoChannel 实现。
 // 仅在 cache-redis + protocol-sso-server feature 同时启用时编译。
 #[cfg(all(feature = "cache-redis", feature = "protocol-sso-server"))]
 pub mod channel;
@@ -71,7 +71,7 @@ fn verify_ticket_signature(secret: &str, ticket: &str) -> BulwarkResult<String> 
     Ok(random_part.to_string())
 }
 
-/// SSO ticket 存储的 JSON 数据（依据 spec protocol-sso）。
+/// SSO ticket 存储的 JSON 数据。
 ///
 /// `pub(crate)` 暴露以供 `server` 模块复用，避免跨模块重复定义导致格式漂移（M6 修复）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -82,12 +82,12 @@ pub(crate) struct SsoTicketData {
     pub(crate) client_id: i64,
 }
 
-/// SSO 客户端，提供 ticket 签发/校验/销毁（依据 spec protocol-sso）。
+/// SSO 客户端，提供 ticket 签发/校验/销毁。
 ///
 /// 持有 `Arc<dyn BulwarkDao>` 用于票据存储，TTL 默认 60 秒。
 /// 实现 `Send + Sync`，可在多线程环境共享。
 ///
-/// # Ticket 签名（v0.6.1 新增，依据安全审计 M5）
+/// # Ticket 签名（依据安全审计 M5）
 ///
 /// 所有 ticket 使用 HMAC-SHA256 签名，格式为 `{64_hex_random}.{hmac_b64}`。
 /// 即使 DAO 层被攻破或存在 key 碰撞，攻击者也无法伪造有效签名。
@@ -102,7 +102,7 @@ pub struct SsoClient {
 }
 
 impl SsoClient {
-    /// 创建新的 SSO 客户端（依据 spec protocol-sso + 安全审计 M5）。
+    /// 创建新的 SSO 客户端。
     ///
     /// # 参数
     /// - `dao`: DAO 抽象层实例。
@@ -139,7 +139,7 @@ impl SsoClient {
         verify_ticket_signature(&self.secret, ticket)
     }
 
-    /// 签发 SSO ticket（依据 spec protocol-sso + 安全审计 M5）。
+    /// 签发 SSO ticket。
     ///
     /// 生成 `{64_hex_random}.{hmac_b64}` 格式的签名 ticket，
     /// 存储到 `bulwark:sso:ticket:<ticket>`，value 为 JSON `{login_id, client_id}`，
@@ -172,7 +172,7 @@ impl SsoClient {
         Ok(ticket)
     }
 
-    /// 校验 SSO ticket（依据 spec protocol-sso + protocol-sso-toctou + 安全审计 M5）。
+    /// 校验 SSO ticket。
     ///
     /// 校验逻辑：
     /// 1. 验证 ticket 的 HMAC 签名（M5 新增，防止 DAO 攻破后伪造）；
@@ -192,11 +192,11 @@ impl SsoClient {
     /// 与"防爆破"设计相反，本实现优先用户友好：错误 `client_id` 不删除票据，
     /// 允许正确 `client_id` 后续重试。适用于客户端配置错误、用户输错等场景。
     ///
-    /// # 原子性保证（v0.4.2 修复）
+    /// # 原子性保证（）
     ///
     /// `client_id` 校验通过后使用 `BulwarkDao::get_and_delete` 原子消费票据，
     /// 消除 TOCTOU 竞态。并发调用同一 ticket（同 client_id）仅一个返回 `Ok`，
-    /// 其他返回 `InvalidToken`（"已被并发消费"）。依据 spec protocol-sso-toctou R-002。
+    /// 其他返回 `InvalidToken`（"已被并发消费"）。
     pub async fn validate_ticket(&self, ticket: &str, client_id: i64) -> BulwarkResult<String> {
         // M5 修复：先验签，防止 DAO 攻破后伪造 ticket
         let _random_part = self.verify_ticket_signature(ticket)?;
@@ -234,7 +234,7 @@ impl SsoClient {
         Ok(data.login_id)
     }
 
-    /// 销毁 SSO ticket（依据 spec protocol-sso）。
+    /// 销毁 SSO ticket。
     ///
     /// 从 dao 中删除指定票据。即使票据不存在也返回 `Ok(())`（幂等）。
     pub async fn destroy_ticket(&self, ticket: &str) -> BulwarkResult<()> {
@@ -309,7 +309,7 @@ mod tests {
     }
 
     // ========================================================================
-    // SsoClient 构造测试（依据 spec protocol-sso）
+    // SsoClient 构造测试
     // ========================================================================
 
     /// 构造 SsoClient，持有 dao（spec Scenario）。
@@ -320,10 +320,10 @@ mod tests {
     }
 
     // ========================================================================
-    // issue_ticket 测试（依据 spec protocol-sso）
+    // issue_ticket 测试
     // ========================================================================
 
-    /// 成功签发票据，格式为 `{64_hex_random}.{hmac_b64}`（依据 spec + M5 签名修复）。
+    /// 成功签发票据，格式为 `{64_hex_random}.{hmac_b64}`。
     #[tokio::test]
     async fn issue_ticket_returns_signed_format() {
         let client = make_client();
@@ -371,7 +371,7 @@ mod tests {
     }
 
     // ========================================================================
-    // validate_ticket 测试（依据 spec protocol-sso）
+    // validate_ticket 测试
     // ========================================================================
 
     /// 成功校验返回 login_id（spec Scenario）。
@@ -394,7 +394,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    /// client_id 不匹配返回 InvalidToken 错误（spec Scenario，0.4.1 修复 M5）。
+    /// client_id 不匹配返回 InvalidToken 错误（spec Scenario，M5）。
     #[tokio::test]
     async fn validate_ticket_client_id_mismatch_returns_error() {
         let client = make_client();
@@ -431,7 +431,7 @@ mod tests {
     }
 
     // ========================================================================
-    // destroy_ticket 测试（依据 spec protocol-sso）
+    // destroy_ticket 测试
     // ========================================================================
 
     /// 销毁存在的票据（spec Scenario）。
@@ -467,7 +467,7 @@ mod tests {
     }
 
     // ========================================================================
-    // 0.4.2 新增: LoginId newtype 接入（impl Into<LoginId>）
+    // LoginId newtype 接入（impl Into<LoginId>）
     // ========================================================================
 
     /// 验证 `SsoClient::issue_ticket` 接受 String 形式 login_id。
@@ -481,13 +481,13 @@ mod tests {
     }
 
     // ========================================================================
-    // 0.4.2 新增: TOCTOU 修复测试（依据 spec protocol-sso-toctou）
+    // TOCTOU 修复测试
     // ========================================================================
 
     /// R-002: 并发消费同一 ticket 仅一个成功（TOCTOU 修复核心验证）。
     ///
     /// 10 个并发任务同时 validate_ticket，仅一个返回 Ok，其他返回 InvalidToken。
-    /// 依据 spec protocol-sso-toctou R-002 验收标准。
+    /// R-002 验收标准。
     #[tokio::test(flavor = "multi_thread")]
     async fn validate_ticket_concurrent_only_one_succeeds() {
         let client = Arc::new(make_client());

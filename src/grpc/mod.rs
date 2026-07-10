@@ -3,7 +3,7 @@
 
 //! gRPC 鉴权拦截器模块，提供 `tonic::Interceptor` 实现。
 //!
-//! ## 设计（依据 spec grpc-integration + design.md Decision 2）
+//! ## 设计
 //!
 //! - `BulwarkGrpcInterceptor`：实现 `tonic::Interceptor` trait
 //! - 从 gRPC 请求 metadata 提取 `authorization: Bearer <token>` header
@@ -140,7 +140,7 @@ impl Interceptor for BulwarkGrpcInterceptor {
 }
 
 // ============================================================================
-// 单元测试（依据 spec grpc-integration，6-8 个测试）
+// 单元测试
 // ============================================================================
 
 #[cfg(test)]

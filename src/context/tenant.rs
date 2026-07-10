@@ -1,7 +1,7 @@
 //! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! 多租户隔离上下文（依据 spec `tenant-isolation`）。
+//! 多租户隔离上下文。
 //!
 //! 提供：
 //! - `TenantContext`：租户上下文，携带 `tenant_id` 与来源标识
@@ -9,7 +9,7 @@
 //! - `TENANT` task_local：跨 async 调用传播租户上下文
 //! - `TenantResolver` trait + 三种实现（Header / Subdomain / Claim）
 //!
-//! ## 设计（依据 spec `tenant-isolation` Constraints）
+//! ## 设计
 //!
 //! - 类型本身不依赖 `tenant-isolation` feature gate（feature 关闭时仍可构造）
 //! - DAO key 前缀与 Repository SQL 过滤才由 feature 控制（见 T033-T034 / T031-T032）
@@ -20,7 +20,7 @@ use std::collections::HashMap;
 
 use crate::error::{BulwarkError, BulwarkResult};
 
-/// 租户上下文来源标识（依据 spec `tenant-isolation` R-tenant-isolation-001）。
+/// 租户上下文来源标识。
 ///
 /// 描述 `TenantContext` 是从哪种渠道解析得到的，便于排障与审计。
 ///
@@ -39,7 +39,7 @@ pub enum TenantSource {
     Claim,
 }
 
-/// 租户上下文（依据 spec `tenant-isolation` R-tenant-isolation-001）。
+/// 租户上下文。
 ///
 /// 携带 `tenant_id` 与解析来源，通过 `TENANT` task_local 在 async 调用链中传播。
 ///
@@ -55,7 +55,7 @@ pub struct TenantContext {
     pub resolved_from: TenantSource,
 }
 
-/// 租户上下文 task_local（依据 spec `tenant-isolation` R-tenant-isolation-001）。
+/// 租户上下文 task_local。
 ///
 /// 通过 `TENANT.scope(ctx, future).await` 进入租户上下文，
 /// 在 future 内用 `TENANT.get()` 取当前 `TenantContext`，
@@ -104,7 +104,7 @@ pub fn current_tenant_id_strict() -> Option<i64> {
     TENANT.try_get().ok().map(|ctx| ctx.tenant_id)
 }
 
-/// 租户解析器 trait（依据 spec `tenant-isolation` R-tenant-isolation-002）。
+/// 租户解析器 trait。
 ///
 /// 从 HTTP 请求头解析 `TenantContext`，三种实现：
 /// - `HeaderTenantResolver`：从 `X-Tenant-Id` header 提取
@@ -128,7 +128,7 @@ pub trait TenantResolver: Send + Sync {
     async fn resolve(&self, headers: &HeaderMap) -> BulwarkResult<TenantContext>;
 }
 
-/// Header 租户解析器（依据 spec `tenant-isolation` R-tenant-isolation-002）。
+/// Header 租户解析器。
 ///
 /// 从 `X-Tenant-Id` 请求头提取 `tenant_id`（i64）。
 ///
@@ -163,7 +163,7 @@ impl TenantResolver for HeaderTenantResolver {
     }
 }
 
-/// Subdomain 租户解析器（依据 spec `tenant-isolation` R-tenant-isolation-002）。
+/// Subdomain 租户解析器。
 ///
 /// 从 `Host` 请求头提取第一段作为 subdomain，查 `mapping` 表得到 `tenant_id`。
 ///
@@ -211,7 +211,7 @@ impl TenantResolver for SubdomainTenantResolver {
     }
 }
 
-/// Claim 租户解析器（依据 spec `tenant-isolation` R-tenant-isolation-002）。
+/// Claim 租户解析器。
 ///
 /// 从 `Authorization: Bearer <jwt>` 提取 JWT，验证签名后解码 `tenant_id` claim。
 ///
@@ -244,7 +244,7 @@ impl ClaimTenantResolver {
     }
 }
 
-/// JWT claims 中仅提取 `tenant_id` 字段（依据 spec `tenant-isolation` R-tenant-isolation-002）。
+/// JWT claims 中仅提取 `tenant_id` 字段。
 ///
 /// 其他 claim（如 `sub`/`iat`/`exp`）由 `jsonwebtoken` 自动验证 exp，
 /// 这里只反序列化 `tenant_id`，缺失时 serde 报错转为 `InvalidToken`。

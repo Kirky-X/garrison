@@ -1,7 +1,7 @@
 //! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! 异地登录检测策略（依据 spec firewall R-firewall-003）。
+//! 异地登录检测策略。
 //!
 //! `AnomalousLoginStrategy` 实现 [`BulwarkFirewallStrategy`] trait，
 //! 用 oxcache key `anom:user:{login_id}` 存储用户历史登录 IP 的地理坐标，
@@ -28,7 +28,7 @@ use crate::strategy::firewall::{BulwarkFirewallStrategy, FirewallContext};
 use async_trait::async_trait;
 use std::sync::Arc;
 
-/// 异地登录检测配置（依据 spec firewall R-firewall-003）。
+/// 异地登录检测配置。
 ///
 /// `known_geo_threshold` 显式配置（Rule 5 确定性逻辑），不交给模型判断"是否异常"。
 #[derive(Debug, Clone)]
@@ -45,7 +45,7 @@ impl Default for AnomalousConfig {
     }
 }
 
-/// 异地登录检测策略（依据 spec firewall R-firewall-003）。
+/// 异地登录检测策略。
 ///
 /// # 构造
 ///
@@ -219,7 +219,6 @@ mod tests {
     }
 
     /// 验证异地登录检测：历史北京，新登录纽约，距离>500km，拦截
-    ///（依据 spec firewall R-firewall-003 验收标准 1）。
     #[tokio::test]
     async fn anomalous_blocks_cross_continent_login() {
         let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
@@ -251,7 +250,7 @@ mod tests {
         );
     }
 
-    /// 验证首次登录放行并写入历史 geo（依据 spec firewall R-firewall-003 验收标准 2）。
+    /// 验证首次登录放行并写入历史 geo。
     #[tokio::test]
     async fn anomalous_first_login_passes_and_writes_geo() {
         let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());

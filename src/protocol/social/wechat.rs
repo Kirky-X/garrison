@@ -1,7 +1,7 @@
 //! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! 微信扫码登录 provider（0.5.0 新增，依据 spec social-login R-social-login-002）。
+//! 微信扫码登录 provider。
 //!
 //! 实现 `SocialLoginProvider` trait，覆盖微信开放平台扫码登录的 OAuth2 流程：
 //! - `get_authorization_url`：拼接 `https://open.weixin.qq.com/connect/qrconnect?` 授权页 URL
@@ -27,7 +27,7 @@ const WECHAT_TOKEN_URL: &str = "https://api.weixin.qq.com/sns/oauth2/access_toke
 /// 微信 OAuth2 userinfo 端点（默认值，可通过 `with_userinfo_url` 覆盖以适配测试）。
 const WECHAT_USERINFO_URL: &str = "https://api.weixin.qq.com/sns/userinfo";
 
-/// 微信扫码登录 provider（依据 spec social-login R-social-login-002）。
+/// 微信扫码登录 provider。
 ///
 /// 实现 `SocialLoginProvider` trait，封装微信开放平台扫码登录的 OAuth2 流程。
 ///
@@ -93,7 +93,6 @@ impl SocialLoginProvider for WechatProvider {
     /// 拼接微信扫码登录授权页 URL。
     ///
     /// URL 格式：`https://open.weixin.qq.com/connect/qrconnect?appid={client_id}&redirect_uri={redirect_uri}&state={state}`
-    ///（依据 spec social-login R-social-login-002 验收标准）。
     async fn get_authorization_url(
         &self,
         state: &str,
@@ -108,7 +107,7 @@ impl SocialLoginProvider for WechatProvider {
         ))
     }
 
-    /// 用授权码换取用户信息（依据 spec social-login R-social-login-002）。
+    /// 用授权码换取用户信息。
     ///
     /// 调用微信 `sns/oauth2/access_token` 端点，用授权码换取 access_token + openid + unionid，
     /// 返回 `SocialUserInfo`（nickname/avatar 为 None，需调用 `get_user_info` 获取）。
@@ -190,7 +189,7 @@ impl SocialLoginProvider for WechatProvider {
         })
     }
 
-    /// 用 access_token 获取用户信息（依据 spec social-login R-social-login-002）。
+    /// 用 access_token 获取用户信息。
     ///
     /// 调用微信 `sns/userinfo` 端点，获取 nickname/headimgurl/openid/unionid。
     ///
@@ -321,13 +320,13 @@ mod urlencoding {
 }
 
 // ============================================================================
-// WechatMiniAppProvider：微信小程序登录（依据 design.md D11 D1）
+// WechatMiniAppProvider：微信小程序登录
 // ============================================================================
 
-/// 微信小程序 `jscode2session` 端点（依据 design.md D11 D1）。
+/// 微信小程序 `jscode2session` 端点。
 const WECHAT_MINI_APP_JSCODE2SESSION_URL: &str = "https://api.weixin.qq.com/sns/jscode2session";
 
-/// 微信小程序登录 provider（依据 design.md D11 D1）。
+/// 微信小程序登录 provider。
 ///
 /// 复用 `SocialLoginProvider` trait，`get_user_info` 调用 `jscode2session` 端点，
 /// 用小程序客户端 `wx.login()` 返回的 `js_code` 换取 `openid` + `session_key` + `unionid`。
@@ -407,7 +406,7 @@ impl SocialLoginProvider for WechatMiniAppProvider {
         self.get_user_info(code).await
     }
 
-    /// 用 js_code 调用 `jscode2session` 获取用户信息（依据 design.md D11 D1）。
+    /// 用 js_code 调用 `jscode2session` 获取用户信息。
     ///
     /// # 参数
     ///
@@ -516,7 +515,6 @@ mod tests {
     use super::*;
 
     /// 验证 `WechatProvider::get_authorization_url` 返回符合微信扫码登录规范的 URL
-    ///（依据 spec social-login R-social-login-002 验收标准）。
     ///
     /// Red 阶段：`WechatProvider` 类型不存在 → 编译失败。
     /// Green 阶段（T100）：定义 struct + impl 后测试通过。
@@ -546,7 +544,6 @@ mod tests {
     }
 
     /// 验证 `WechatProvider::exchange_token` 解析微信 access_token 响应
-    ///（依据 spec social-login R-social-login-002 验收标准）。
     ///
     /// Red 阶段：`with_token_url` 方法不存在 → 编译失败。
     /// Green 阶段（T102）：实现 exchange_token 后测试通过。
@@ -583,7 +580,6 @@ mod tests {
     }
 
     /// 验证 `WechatProvider::get_user_info` 解析微信 userinfo 响应的 nickname/headimgurl
-    ///（依据 spec social-login R-social-login-002 验收标准）。
     ///
     /// # 测试流程
     ///
@@ -632,7 +628,6 @@ mod tests {
     }
 
     /// 验证 `WechatProvider::get_user_info` 在 HTTP 错误时返回 `BulwarkError`（不 panic）
-    ///（依据 spec social-login R-social-login-002，Rule 12 失败显性化）。
     ///
     /// Red 阶段：`get_user_info` 未实现 → panic。
     /// Green 阶段（T004）：实现后返回 `Err(BulwarkError::Network(_))`。
@@ -666,11 +661,11 @@ mod tests {
     }
 
     // ========================================================================
-    // T088: WechatMiniAppProvider Red 阶段（依据 design.md D11 D1）
+    // WechatMiniAppProvider Red 阶段
     // ========================================================================
 
     /// 验证 `WechatMiniAppProvider::get_user_info` 调用 `jscode2session` 成功时
-    /// 返回 `SocialUserInfo`（依据 design.md D11 D1）。
+    /// 返回 `SocialUserInfo`。
     ///
     /// Red 阶段：`get_user_info` 含 `todo!()` → panic。
     /// Green 阶段（T089）：实现 jscode2session 调用后测试通过。
@@ -708,7 +703,7 @@ mod tests {
     }
 
     /// 验证 `WechatMiniAppProvider::get_user_info` 在微信返回 `errcode=40029`
-    ///（无效 code）时返回 `BulwarkError`（依据 design.md D11 D1，Rule 12 失败显性化）。
+    ///（无效 code）时返回 `BulwarkError`。
     ///
     /// Red 阶段：`get_user_info` 含 `todo!()` → panic。
     /// Green 阶段（T089）：实现 errcode 检查后返回 `Err(BulwarkError::Network(_))`。
@@ -740,7 +735,7 @@ mod tests {
     }
 
     /// 验证 `WechatMiniAppProvider::get_user_info` 在 HTTP 500 时返回
-    /// `BulwarkError::Network`（依据 design.md D11 D1，Rule 12 失败显性化）。
+    /// `BulwarkError::Network`。
     ///
     /// Red 阶段：`get_user_info` 含 `todo!()` → panic。
     /// Green 阶段（T089）：实现 HTTP 状态码检查后返回 `Err(BulwarkError::Network(_))`。
@@ -774,7 +769,7 @@ mod tests {
     }
 
     /// 验证 `WechatMiniAppProvider::get_user_info` 在响应缺少 `openid` 字段时
-    /// 返回 `BulwarkError`（依据 design.md D11 D1，Rule 12 失败显性化）。
+    /// 返回 `BulwarkError`。
     ///
     /// Red 阶段：`get_user_info` 含 `todo!()` → panic。
     /// Green 阶段（T089）：实现 openid 缺失检查后返回 `Err(BulwarkError::Network(_))`。

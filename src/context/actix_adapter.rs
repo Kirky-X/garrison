@@ -473,7 +473,7 @@ mod tests {
         assert_eq!(token, Some("my_token_123".to_string()));
     }
 
-    /// 验证 Bearer 前缀大小写不敏感（依据 RFC 7235）。
+    /// 验证 Bearer 前缀大小写不敏感。
     #[test]
     fn actix_request_bearer_prefix_case_insensitive() {
         let config = BulwarkConfig::default_config();

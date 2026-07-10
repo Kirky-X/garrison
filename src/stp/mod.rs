@@ -6,14 +6,14 @@
 //! [借鉴 Sa-Token] 对应 Sa-Token 的 `StpLogic` / `StpInterface` / `StpUtil` 三件套，
 //! Bulwark 中统一使用 `Bulwark*` 前缀。
 //!
-//! ## 核心设计（依据 spec stp-core-api 与 design.md Decision 8）
+//! ## 核心设计
 //!
 //! - 5 个子 trait（`SessionLogic`/`PermissionLogic`/`TokenLogic`/`MfaLogic`/`PasswordLogic`）：
 //!   v0.5.2 拆分原 `BulwarkLogic` 上帝 trait，按职责域分离，super-trait 为 `BulwarkCore`
 //! - `BulwarkLogicDefault`：默认实现，组合 `BulwarkSession` + `BulwarkConfig`，实现全部 5 个子 trait
 //! - `tokio::task_local`：存储当前请求的 token（类似 Sa-Token 的 `SaHolder`，但适配 async）
 //!
-//! ## task_local 上下文（依据 spec context-abstraction）
+//! ## task_local 上下文
 //!
 //! 在 axum middleware 中调用 `with_current_token(token, async { handler }).await` 设置作用域，
 //! stp 核心 API（logout/check_login/get_login_id）从 `current_token()` 读取。
@@ -30,11 +30,11 @@ use crate::strategy::BulwarkPermissionStrategy;
 use std::future::Future;
 use std::sync::Arc;
 
-// 0.4.0 新增：ParameterQuery 参数化查询模块（feature-gated）
+// ParameterQuery 参数化查询模块（feature-gated）
 #[cfg(feature = "parameter-query")]
 pub mod parameter;
 
-// 0.5.2 新增：原 BulwarkLogic 上帝 trait 拆分为 6 个细粒度子 trait
+// 原 BulwarkLogic 上帝 trait 拆分为 6 个细粒度子 trait
 // （BulwarkCore 基座 + 5 个职责域 trait），按职责域分离。
 pub mod core;
 pub mod interface;
@@ -45,7 +45,7 @@ pub mod session;
 pub mod token;
 pub mod util;
 
-// v0.5.2：子 trait re-exports（供 crate::stp::SessionLogic 等路径访问）
+// 子 trait re-exports（供 crate::stp::SessionLogic 等路径访问）
 pub use self::core::BulwarkCore;
 pub use self::interface::BulwarkInterface;
 pub use self::mfa::MfaLogic;
@@ -55,7 +55,7 @@ pub use self::session::SessionLogic;
 pub use self::token::TokenLogic;
 pub use self::util::{BulwarkUtil, JwtMode};
 
-// v0.5.2：原 `BulwarkLogic` 上帝 trait（21 个方法）已彻底删除。
+// 原 `BulwarkLogic` 上帝 trait（21 个方法）已彻底删除。
 // Manager / Strategy / Factory 等持有方改为具体类型 `Arc<BulwarkLogicDefault>`，
 // 方法调用通过子 trait（SessionLogic/PermissionLogic/TokenLogic/MfaLogic/PasswordLogic）解析。
 
@@ -120,12 +120,12 @@ pub struct BulwarkLogicDefault {
     /// 用户 Repository（可选，注入后 login_with_password 委托此实现查询用户）。
     #[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
     user_repository: Option<Arc<dyn crate::dao::repository::UserRepository>>,
-    /// 默认 login_type（0.4.2 新增，依据 spec login-type-multi-account R-003）。
+    /// 默认 login_type。
     ///
     /// 未设置时默认 "default"，通过 `with_login_type` builder 设置。
     /// `pub(crate)` 供测试验证字段值。
     pub(crate) login_type: String,
-    /// JWT 校验模式（0.4.2 新增，依据 spec protocol-jwt-modes R-001）。
+    /// JWT 校验模式。
     ///
     /// 默认 `JwtMode::Mixin`，通过 `with_jwt_mode` builder 设置。
     /// 字段不 feature gate（JwtMode 是配置 enum，无外部依赖）；
@@ -207,7 +207,7 @@ impl BulwarkLogicDefault {
     /// 注入 Prometheus 指标采集器（builder 模式，需启用 `metrics-prometheus` feature）。
     ///
     /// 注入后 `login` / `check_login` / `check_permission` / `check_role` 将自动 emit
-    /// Prometheus 指标（依据 spec observability-stack）。未注入时所有指标调用为 no-op。
+    /// Prometheus 指标。未注入时所有指标调用为 no-op。
     #[cfg(feature = "metrics-prometheus")]
     pub fn with_metrics(mut self, metrics: Arc<crate::observability::BulwarkMetrics>) -> Self {
         self.metrics = Some(metrics);
@@ -240,7 +240,7 @@ impl BulwarkLogicDefault {
         self
     }
 
-    /// 设置默认 login_type（builder 模式，0.4.2 新增，依据 spec login-type-multi-account R-003）。
+    /// 设置默认 login_type（builder 模式）。
     ///
     /// 注入后作为权限/角色查询的默认 `login_type` 上下文。未设置时默认 "default"。
     ///
@@ -257,7 +257,7 @@ impl BulwarkLogicDefault {
         self
     }
 
-    /// 设置 JWT 校验模式（builder 模式，0.4.2 新增，依据 spec protocol-jwt-modes R-005）。
+    /// 设置 JWT 校验模式（builder 模式）。
     ///
     /// 控制 `check_login` 在 JWT verify 与 session 查询之间的组合策略：
     ///
@@ -282,7 +282,7 @@ impl BulwarkLogicDefault {
         self
     }
 
-    /// 校验 API Key（0.6.1 新增，依据 spec annotation-check-api-key R-anno-004）。
+    /// 校验 API Key。
     ///
     /// 从当前请求上下文（task_local `CURRENT_TOKEN`）获取 API Key 字符串，
     /// 委托 `protocol::apikey::ApiKeyHandler::verify_with_namespace` 校验。

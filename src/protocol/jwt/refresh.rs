@@ -1,7 +1,7 @@
 //! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! JWT RefreshToken Rotation 模块（v0.5.0 新增，依据 proposal H4）。
+//! JWT RefreshToken Rotation 模块。
 //!
 //! 基于 hash chain 的 RefreshToken 轮换：每次 `rotate` 时，新 token 的
 //! `parent_token_hash` 指向旧 token 的 `token_hash`，形成链式结构。
@@ -68,7 +68,7 @@ pub struct RefreshTokenRecord {
 }
 
 // ============================================================================
-// RefreshTokenRotation 服务（T057-T064：db-sqlite gated）
+// RefreshTokenRotation 服务（T057-db-sqlite gated）
 // ============================================================================
 
 #[cfg(feature = "db-sqlite")]
@@ -84,10 +84,10 @@ mod service {
     /// RefreshToken Rotation 服务（hash chain + rotate + reuse detection）。
     ///
     /// 完整实现在 T057-T066 逐步构建：
-    /// - T057-T058: `rotate` 基础实现（SHA-256 hash + INSERT new + UPDATE old revoked=1）
-    /// - T059-T060: `detect_reuse` 查表 revoked=1
-    /// - T061-T062: `revoke_chain` 递归 UPDATE parent_token_hash 链
-    /// - T063-T064: `rotate` 追加 reuse detection（重用则 revoke_chain 后返回 InvalidToken）
+    /// - T057-`rotate` 基础实现（SHA-256 hash + INSERT new + UPDATE old revoked=1）
+    /// - T059-`detect_reuse` 查表 revoked=1
+    /// - T061-`revoke_chain` 递归 UPDATE parent_token_hash 链
+    /// - T063-`rotate` 追加 reuse detection（重用则 revoke_chain 后返回 InvalidToken）
     ///
     /// # 字段
     ///
@@ -163,7 +163,7 @@ mod service {
         pub async fn rotate(&self, old_token: &str) -> BulwarkResult<(String, String)> {
             let old_hash = Self::sha256_hex(old_token);
 
-            // T064: reuse detection——若 old_hash 已 revoked，说明 token 被重用，
+            // reuse detection——若 old_hash 已 revoked，说明 token 被重用，
             // 吊销整个链（old_hash 及其所有子代）后返回 InvalidToken
             if self.detect_reuse(&old_hash).await? {
                 self.revoke_chain(&old_hash).await?;
@@ -387,7 +387,7 @@ mod tests {
 }
 
 // ============================================================================
-// db-sqlite 集成测试（T055-T066: refresh_tokens 表迁移 + rotate 服务）
+// db-sqlite 集成测试（T055-refresh_tokens 表迁移 + rotate 服务）
 // ============================================================================
 
 #[cfg(all(test, feature = "protocol-jwt", feature = "db-sqlite"))]
@@ -421,7 +421,7 @@ mod db_sqlite_tests {
     }
 
     // ========================================================================
-    // T055-T056: refresh_tokens 表迁移验证
+    // T055-refresh_tokens 表迁移验证
     // ========================================================================
 
     /// T055-T056 Green: 验证 SQLite 迁移加载 `003_refresh_tokens.sql` 后
@@ -528,7 +528,7 @@ mod db_sqlite_tests {
     }
 
     // ========================================================================
-    // T057-T058: rotate 测试
+    // T057-rotate 测试
     // ========================================================================
 
     /// T057 Red: `rotate` 插入新 token 并标记旧 token 已消费。
@@ -573,7 +573,7 @@ mod db_sqlite_tests {
     }
 
     // ========================================================================
-    // T059-T060: detect_reuse 测试
+    // T059-detect_reuse 测试
     // ========================================================================
 
     /// T059 Red: `detect_reuse` 在 token 已被消费（revoked=1）时返回 true。
@@ -615,7 +615,7 @@ mod db_sqlite_tests {
     }
 
     // ========================================================================
-    // T061-T062: revoke_chain 测试
+    // T061-revoke_chain 测试
     // ========================================================================
 
     /// T061 Red: `revoke_chain` 撤销给定 token 及其所有子代（沿 parent_token_hash 反向递归）。
@@ -667,7 +667,7 @@ mod db_sqlite_tests {
     }
 
     // ========================================================================
-    // T063-T064: rotate with reuse detection 测试
+    // T063-rotate with reuse detection 测试
     // ========================================================================
 
     /// T063 Red: `rotate` 检测到 old_token 重用时返回 `InvalidToken` 并吊销整个链。

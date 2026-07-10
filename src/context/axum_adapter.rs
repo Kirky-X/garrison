@@ -456,7 +456,7 @@ mod tests {
         assert_eq!(token, Some("my_token_123".to_string()));
     }
 
-    /// 验证 Bearer 前缀大小写不敏感（依据 codebase-hardening Task 3.9，RFC 7235）。
+    /// 验证 Bearer 前缀大小写不敏感。
     ///
     /// 覆盖 `strip_bearer_prefix` 的 `eq_ignore_ascii_case` 分支：
     /// `bearer xxx` / `BEARER xxx` / `BeArEr xxx` 均应能提取 token。

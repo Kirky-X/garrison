@@ -7,8 +7,8 @@
 //!
 //! 0.2.0 将 API 改为 login_id-as-input，与 token 格式无关，便于在任意 token 风格下复用。
 //!
-//! 0.5.0 新增 [`decision`](crate::core::permission::decision) 子模块：`Decision` / `DecisionReason` / `AuthRequest`，
-//! 支持决策溯源（依据 spec decision-trace）。
+//! [`decision`](crate::core::permission::decision) 子模块：`Decision` / `DecisionReason` / `AuthRequest`，
+//! 支持决策溯源。
 
 pub mod decision;
 
@@ -21,30 +21,30 @@ use crate::stp::BulwarkInterface;
 
 pub use decision::{AuthRequest, Decision, DecisionReason};
 
-/// 权限注册表模块（0.5.1 新增，依据 spec permission-registry M3）。
+/// 权限注册表模块。
 #[cfg(feature = "permission-registry")]
 pub mod registry;
 
 #[cfg(feature = "permission-registry")]
 pub use registry::{PermissionRegistration, PermissionRegistry, PermissionSpec};
 
-/// 请求对象式授权器模块（0.5.1 新增，依据 spec authorize-api M4）。
+/// 请求对象式授权器模块。
 #[cfg(feature = "authorize-api")]
 pub mod authorize;
 
 #[cfg(feature = "authorize-api")]
 pub use authorize::Authorizer;
 
-/// 权限校验 trait，定义以 login_id 为入参的权限与角色校验抽象（依据 spec core-permission）。
+/// 权限校验 trait，定义以 login_id 为入参的权限与角色校验抽象。
 ///
 /// 所有方法 MUST 使用 `async_trait` 标注，trait 绑定 `Send + Sync`。
 /// 入参为 `login_id: &str` 而非 token，使权限校验可在任意 token 风格下复用。
 ///
-/// 0.5.0 新增 [`authorize`](Self::authorize) 方法支持决策溯源（依据 spec decision-trace）。
+/// [`authorize`](Self::authorize) 方法支持决策溯源。
 /// `check_permission` / `check_role` 改为默认实现，委托 `authorize` 并返回断言结果。
 #[async_trait]
 pub trait PermissionChecker: Send + Sync {
-    /// 校验主体是否持有指定权限（依据 spec core-permission）。
+    /// 校验主体是否持有指定权限。
     ///
     /// # 返回
     /// - `Ok(true)`: 持有权限。
@@ -52,17 +52,17 @@ pub trait PermissionChecker: Send + Sync {
     /// - `Err(BulwarkError::InvalidParam)`: 权限字符串为空。
     async fn has_permission(&self, login_id: &str, permission: &str) -> BulwarkResult<bool>;
 
-    /// 校验主体是否持有指定角色（依据 spec core-permission）。
+    /// 校验主体是否持有指定角色。
     async fn has_role(&self, login_id: &str, role: &str) -> BulwarkResult<bool>;
 
-    /// 鉴权决策：基于 [`AuthRequest`] 返回完整 [`Decision`]（依据 spec decision-trace）。
+    /// 鉴权决策：基于 [`AuthRequest`] 返回完整 [`Decision`]。
     ///
     /// 默认实现调用 [`has_permission`](Self::has_permission) 并构造 [`Decision`]：
     /// - 持有权限 → `Decision { allowed: true, reason: ExplicitAllow, .. }`
     /// - 未持有权限 → `Decision { allowed: false, reason: NoMatchingPermission, .. }`
     ///
     /// `decision-trace` feature 启用时，默认实现自动生成 UUID v7（时间有序）作为
-    /// `trace_id`（依据 design.md D11 D5）；不启用时 `trace_id` 为 `None`（性能优先）。
+    /// `trace_id`；不启用时 `trace_id` 为 `None`（性能优先）。
     /// 实现者可覆盖此方法填充 `checked_permissions` / `matched_roles` 字段。
     ///
     /// # 错误
@@ -102,7 +102,7 @@ pub trait PermissionChecker: Send + Sync {
         Ok(decision)
     }
 
-    /// 断言权限：被拒绝时返回 `Err(BulwarkError::NotPermission)`（依据 spec core-permission）。
+    /// 断言权限：被拒绝时返回 `Err(BulwarkError::NotPermission)`。
     ///
     /// 0.5.0 默认实现委托 [`authorize`](Self::authorize)，保持向后兼容。
     async fn check_permission(&self, login_id: &str, permission: &str) -> BulwarkResult<()> {
@@ -118,7 +118,7 @@ pub trait PermissionChecker: Send + Sync {
         }
     }
 
-    /// 断言角色：被拒绝时返回 `Err(BulwarkError::NotRole)`（依据 spec core-permission）。
+    /// 断言角色：被拒绝时返回 `Err(BulwarkError::NotRole)`。
     async fn check_role(&self, login_id: &str, role: &str) -> BulwarkResult<()> {
         if self.has_role(login_id, role).await? {
             Ok(())
@@ -130,18 +130,18 @@ pub trait PermissionChecker: Send + Sync {
         }
     }
 
-    /// 批量校验权限：任一满足即返回 true（依据 spec core-permission）。
+    /// 批量校验权限：任一满足即返回 true。
     ///
     /// 内部调用 `has_permission`，遇到错误时该权限视为不满足。
     async fn has_any_permission(&self, login_id: &str, perms: &[&str]) -> bool;
 
-    /// 批量校验权限：全部满足才返回 true（依据 spec core-permission）。
+    /// 批量校验权限：全部满足才返回 true。
     ///
     /// 内部调用 `has_permission`，遇到错误时该权限视为不满足。
     async fn has_all_permissions(&self, login_id: &str, perms: &[&str]) -> bool;
 }
 
-/// `PermissionChecker` 的默认实现，委托 `BulwarkInterface` 获取权限/角色数据后做字符串匹配（依据 spec core-permission）。
+/// `PermissionChecker` 的默认实现，委托 `BulwarkInterface` 获取权限/角色数据后做字符串匹配。
 ///
 /// 与 `BulwarkPermissionStrategy` 的职责区分：
 /// - `PermissionCheckerDefault`：纯数据查询（返回 bool/Err，无副作用）
@@ -187,7 +187,7 @@ impl PermissionChecker for PermissionCheckerDefault {
     }
 
     // check_permission / check_role 使用 trait 默认实现（委托 authorize / has_role），
-    // 保持与 0.5.0 决策溯源路径一致（依据 spec decision-trace）。
+    // 保持与 0.5.0 决策溯源路径一致。
 
     async fn has_any_permission(&self, login_id: &str, perms: &[&str]) -> bool {
         for perm in perms {
@@ -266,7 +266,7 @@ mod tests {
     }
 
     // ========================================================================
-    // has_permission 测试（依据 spec core-permission）
+    // has_permission 测试
     // ========================================================================
 
     /// has_permission 持有权限返回 true（spec Scenario）。
@@ -292,7 +292,7 @@ mod tests {
     }
 
     // ========================================================================
-    // has_role 测试（依据 spec core-permission）
+    // has_role 测试
     // ========================================================================
 
     /// has_role 持有角色返回 true（spec Scenario）。
@@ -310,7 +310,7 @@ mod tests {
     }
 
     // ========================================================================
-    // check_permission 测试（依据 spec core-permission）
+    // check_permission 测试
     // ========================================================================
 
     /// check_permission 持有权限返回 Ok(())（spec Scenario）。
@@ -333,7 +333,7 @@ mod tests {
     }
 
     // ========================================================================
-    // check_role 测试（依据 spec core-permission）
+    // check_role 测试
     // ========================================================================
 
     /// check_role 持有角色返回 Ok(())。
@@ -356,7 +356,7 @@ mod tests {
     }
 
     // ========================================================================
-    // has_any_permission 测试（依据 spec core-permission）
+    // has_any_permission 测试
     // ========================================================================
 
     /// has_any_permission 任一匹配返回 true（spec Scenario）。
@@ -382,7 +382,7 @@ mod tests {
     }
 
     // ========================================================================
-    // has_all_permissions 测试（依据 spec core-permission）
+    // has_all_permissions 测试
     // ========================================================================
 
     /// has_all_permissions 全部匹配返回 true（spec Scenario）。
@@ -415,10 +415,10 @@ mod tests {
     }
 
     // ========================================================================
-    // authorize 测试（依据 spec decision-trace，0.5.0 新增）
+    // authorize 测试
     // ========================================================================
 
-    /// T015: authorize 在权限匹配时返回 allowed=true 的 Decision。
+    /// authorize 在权限匹配时返回 allowed=true 的 Decision。
     ///
     /// 验证 `authorize(&AuthRequest{ login_id: 1001, action: "user:read", .. })`
     /// 返回 `Decision { allowed: true, reason: ExplicitAllow, .. }`。
@@ -458,7 +458,7 @@ mod tests {
         }
     }
 
-    /// T017: check_permission 与 authorize 行为一致（向后兼容）。
+    /// check_permission 与 authorize 行为一致（向后兼容）。
     ///
     /// 验证 `check_permission(login_id, perm)` 的返回值（Ok/Err）与
     /// `authorize(&AuthRequest{..}).await?.allowed` 一致：
@@ -527,10 +527,10 @@ mod tests {
     }
 
     // ========================================================================
-    // T041: Unicode NFC 规范化 + 长度限制测试（依据 spec P2.4，防止 Unicode 同形异义字攻击与 DoS）
+    // Unicode NFC 规范化 + 长度限制测试
     // ========================================================================
 
-    /// T041: check_permission 对 permission 字符串做 NFC 规范化。
+    /// check_permission 对 permission 字符串做 NFC 规范化。
     ///
     /// NFD 形式 `"user:e\u{0301}read"`（e + COMBINING ACUTE ACCENT U+0301）应规范化为
     /// NFC 形式 `"user:\u{00e9}read"`（LATIN SMALL LETTER E WITH ACUTE U+00E9）。
@@ -558,7 +558,7 @@ mod tests {
         );
     }
 
-    /// T041: check_permission 拒绝超过 256 字节的 permission 字符串（防止 DoS）。
+    /// check_permission 拒绝超过 256 字节的 permission 字符串（防止 DoS）。
     #[tokio::test]
     async fn check_permission_rejects_over_256_bytes() {
         let long_perm = "x".repeat(300); // 300 字节，超过 256 字节上限

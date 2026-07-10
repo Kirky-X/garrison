@@ -3,7 +3,7 @@
 //! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 //!
-//! 0.6.1 新增，依据 spec state-machine（E-005），以 FRD §4.2 / §4.3 为权威来源。
+//! 以 FRD §4.2 / §4.3 为权威来源。
 //!
 //! ## 设计
 //!
@@ -53,7 +53,7 @@ pub enum TokenState {
 }
 
 impl TokenState {
-    /// 判断从当前状态到 `target` 的转换是否合法（依据 FRD §4.3）。
+    /// 判断从当前状态到 `target` 的转换是否合法。
     ///
     /// # 合法转换路径（6 条）
     ///
@@ -161,7 +161,7 @@ pub enum UserStatus {
 }
 
 impl UserStatus {
-    /// 判断从当前状态到 `target` 的转换是否合法（依据 FRD §4.2 规则表）。
+    /// 判断从当前状态到 `target` 的转换是否合法。
     ///
     /// # 合法转换路径（9 条）
     ///

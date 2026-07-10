@@ -1,7 +1,7 @@
 //! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! OIDC（OpenID Connect）扩展模块（0.4.0 新增，依据 spec oauth2-oidc）。
+//! OIDC（OpenID Connect）扩展模块。
 //!
 //! 提供 `OidcHandler` 用于：
 //! - 签发 OIDC id_token（JWT 格式，含 iss/sub/aud/exp/iat/nonce claims）
@@ -11,7 +11,7 @@
 //! 仅在启用 `protocol-oidc` feature 时编译。
 //! `protocol-oidc` 自动启用 `protocol-jwt`（依赖 jsonwebtoken crate）。
 //!
-//! ## 设计决策（依据 design.md D2）
+//! ## 设计决策
 //!
 //! - `OidcHandler` 独立 struct，不合并到 `OAuth2Client`（关注点分离）
 //! - id_token 使用 `jsonwebtoken` crate 直接签发（复用 `JwtHandler` 的密钥/算法模式，但 claims 不同）
@@ -22,7 +22,7 @@ use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, 
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// OIDC id_token 的 claims 载荷（依据 spec oauth2-oidc）。
+/// OIDC id_token 的 claims 载荷。
 ///
 /// 包含标准 OIDC claims（iss/sub/aud/exp/iat/nonce）+ Bulwark 内部字段（login_id）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,7 +43,7 @@ pub struct OidcClaims {
     pub nonce: String,
 }
 
-/// OIDC 处理器，封装 issuer/audience/密钥以供复用（依据 spec oauth2-oidc）。
+/// OIDC 处理器，封装 issuer/audience/密钥以供复用。
 ///
 /// 默认采用 HS256 算法，可通过 `with_algorithm` 切换。
 pub struct OidcHandler {
@@ -58,7 +58,7 @@ pub struct OidcHandler {
 }
 
 impl OidcHandler {
-    /// 创建新的 OIDC 处理器（依据 spec oauth2-oidc）。
+    /// 创建新的 OIDC 处理器。
     ///
     /// # 参数
     /// - `issuer`: 签发者标识（如 `https://auth.example.com`）。
@@ -84,7 +84,7 @@ impl OidcHandler {
         })
     }
 
-    /// 切换签名算法（依据 spec oauth2-oidc）。
+    /// 切换签名算法。
     ///
     /// **注意**：当前实现仅支持 HMAC 系列算法（HS256/HS384/HS512），
     /// 因为 `EncodingKey::from_secret` / `DecodingKey::from_secret` 只接受对称密钥。
@@ -112,7 +112,7 @@ impl OidcHandler {
         }
     }
 
-    /// 签发 OIDC id_token（依据 spec oauth2-oidc）。
+    /// 签发 OIDC id_token。
     ///
     /// **算法限制**：当前仅支持 HMAC 系列算法（HS256/HS384/HS512）。
     /// 非对称算法（RS*/ES*/PS*）会返回 `BulwarkError::Config`，因为
@@ -163,7 +163,7 @@ impl OidcHandler {
             .map_err(|e| BulwarkError::Internal(format!("OIDC id_token 签发失败: {}", e)))
     }
 
-    /// 验证 OIDC id_token（依据 spec oauth2-oidc）。
+    /// 验证 OIDC id_token。
     ///
     /// **算法限制**：当前仅支持 HMAC 系列算法（HS256/HS384/HS512）。
     /// 非对称算法（RS*/ES*/PS*）会返回 `BulwarkError::Config`，因为
@@ -222,7 +222,7 @@ impl OidcHandler {
         Ok(claims)
     }
 
-    /// 生成 OIDC discovery endpoint 元数据（依据 spec oauth2-oidc）。
+    /// 生成 OIDC discovery endpoint 元数据。
     ///
     /// 返回 OIDC Discovery 1.0 规范定义的 provider metadata JSON。
     pub fn discovery_metadata(&self) -> serde_json::Value {
@@ -272,7 +272,7 @@ mod tests {
     }
 
     // ========================================================================
-    // OidcHandler 构造测试（依据 spec oauth2-oidc）
+    // OidcHandler 构造测试
     // ========================================================================
 
     /// 构造 OidcHandler，字段正确填充。
@@ -303,7 +303,7 @@ mod tests {
     }
 
     // ========================================================================
-    // sign_id_token / verify_id_token 测试（依据 spec oauth2-oidc）
+    // sign_id_token / verify_id_token 测试
     // ========================================================================
 
     /// sign_id_token 返回三段 JWT（spec Scenario: 签发 id_token 成功）。
@@ -441,7 +441,7 @@ mod tests {
     }
 
     // ========================================================================
-    // discovery_metadata 测试（依据 spec oauth2-oidc）
+    // discovery_metadata 测试
     // ========================================================================
 
     /// discovery_metadata 字段完整（spec Scenario: discovery 元数据完整）。
@@ -568,7 +568,7 @@ mod tests {
     }
 
     // ========================================================================
-    // 0.4.2 新增: LoginId newtype 接入（impl Into<LoginId>）
+    // LoginId newtype 接入（impl Into<LoginId>）
     // ========================================================================
 
     /// 验证 `OidcHandler::sign_id_token` 接受 String 形式 login_id。

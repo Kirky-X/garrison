@@ -37,7 +37,7 @@ use async_trait::async_trait;
 ///   `JwtHandler::refresh`。
 #[async_trait]
 pub trait TokenLogic: SessionLogic {
-    /// 校验 access_token 类型会话（0.5.0 新增，依据 spec annotation-macros P2 前置）。
+    /// 校验 access_token 类型会话。
     ///
     /// 语义别名：默认实现委托 [`check_login`](SessionLogic::check_login)，
     /// 已登录返回 `Ok(())`，未登录返回 `Err(NotLogin)`。
@@ -58,7 +58,7 @@ pub trait TokenLogic: SessionLogic {
         }
     }
 
-    /// 校验 client_token 类型会话（0.5.0 新增，依据 spec annotation-macros P2 前置）。
+    /// 校验 client_token 类型会话。
     ///
     /// 语义别名：默认实现委托 [`check_login`](SessionLogic::check_login)。
     ///
@@ -78,7 +78,7 @@ pub trait TokenLogic: SessionLogic {
         }
     }
 
-    /// 校验 temp_token 类型会话（0.5.0 新增，依据 spec annotation-macros P2 前置）。
+    /// 校验 temp_token 类型会话。
     ///
     /// 语义别名：默认实现委托 [`check_login`](SessionLogic::check_login)。
     ///
@@ -98,7 +98,7 @@ pub trait TokenLogic: SessionLogic {
         }
     }
 
-    /// 验证显式传入的 token 并返回关联的 `String`（0.2.0 新增，依据 spec core-auth-api）。
+    /// 验证显式传入的 token 并返回关联的 `String`。
     ///
     /// 委托 `core-token::Token::verify` 实现。与
     /// [`check_login`](SessionLogic::check_login) 区别：
@@ -119,7 +119,7 @@ pub trait TokenLogic: SessionLogic {
         ))
     }
 
-    /// 刷新 token（0.2.0 新增，依据 spec core-auth-api）。
+    /// 刷新 token。
     ///
     /// 仅在启用 `protocol-jwt` feature 时由 `JwtHandler` 提供有效实现。
     ///
@@ -146,7 +146,7 @@ pub trait TokenLogic: SessionLogic {
 #[async_trait]
 impl TokenLogic for BulwarkLogicDefault {
     async fn verify_token(&self, token: &str) -> BulwarkResult<String> {
-        // 依据 spec core-auth-api：委托 core-token::Token::verify
+        // 委托 core-token::Token::verify
         // spec: "不泄露 token 具体失效原因（统一 InvalidToken）"
         let token_handler =
             TokenStyleFactory::new(&self.config.token_style, &self.config.jwt_secret)?;
@@ -161,7 +161,7 @@ impl TokenLogic for BulwarkLogicDefault {
 
     #[cfg(feature = "protocol-jwt")]
     async fn refresh_token(&self, token: &str) -> BulwarkResult<String> {
-        // 依据 spec core-auth-api：启用 protocol-jwt 时委托 JwtHandler::refresh
+        // 启用 protocol-jwt 时委托 JwtHandler::refresh
         if self.config.token_style != "jwt" {
             return Err(BulwarkError::NotImplemented(
                 "refresh_token 仅在 token_style=jwt 时可用".to_string(),
@@ -175,7 +175,7 @@ impl TokenLogic for BulwarkLogicDefault {
         if let Some(pm) = &self.plugin_manager {
             pm.on_login(&login_id, &new_token);
         }
-        // v0.4.2: 广播 TokenRefresh 事件（替换原 Login 事件，依据 spec listener-events-extend R-001）
+        // 广播 TokenRefresh 事件（替换原 Login 事件）
         #[cfg(feature = "listener")]
         if let Some(lm) = &self.listener_manager {
             lm.broadcast(&BulwarkEvent::TokenRefresh {

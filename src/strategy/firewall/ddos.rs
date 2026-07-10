@@ -1,7 +1,7 @@
 //! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! DDoS 防护策略（依据 spec firewall R-firewall-004）。
+//! DDoS 防护策略。
 //!
 //! `DDoSStrategy` 实现 [`BulwarkFirewallStrategy`] trait，
 //! 用 oxcache key `ddos:global` 与 `ddos:ip:{ip}` 存储 token bucket 状态，
@@ -26,7 +26,7 @@ use async_trait::async_trait;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// DDoS 防护配置（依据 spec firewall R-firewall-004）。
+/// DDoS 防护配置。
 ///
 /// 所有阈值显式配置（Rule 5 确定性逻辑），不交给模型判断。
 #[derive(Debug, Clone)]
@@ -49,7 +49,7 @@ impl Default for DDoSConfig {
     }
 }
 
-/// DDoS 防护策略，用 oxcache token bucket 实现（依据 spec firewall R-firewall-004）。
+/// DDoS 防护策略，用 oxcache token bucket 实现。
 ///
 /// # 构造
 ///
@@ -202,7 +202,6 @@ mod tests {
 
     /// 验证全局 burst 限制：global_rps=1, burst=3 时，
     /// 连续请求前 3 次放行（消耗 burst token），第 4 次被拦截
-    ///（依据 spec firewall R-firewall-004 验收标准 burst）。
     #[tokio::test]
     async fn ddos_global_burst_limit() {
         let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
@@ -229,7 +228,7 @@ mod tests {
     }
 
     /// 验证单 IP 限流隔离：per_ip_rps=1, burst=3 时，
-    /// 不同 IP 互不影响（依据 spec firewall R-firewall-004 验收标准 per_ip_rps）。
+    /// 不同 IP 互不影响。
     ///
     /// 全局桶与 per_ip 桶共享 burst，IP A 耗尽 per_ip 后需 sleep 让全局桶补充 token，
     /// 才能隔离出 per_ip_a 的拦截行为（避免全局桶成为瓶颈）。
@@ -272,7 +271,6 @@ mod tests {
     }
 
     /// 验证 token 补充：消耗全部 token 后，等待足够时间，token 按rps补充
-    ///（依据 spec firewall R-firewall-004 验收标准 token bucket 算法正确）。
     #[tokio::test]
     async fn ddos_token_refill_after_sleep() {
         let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());

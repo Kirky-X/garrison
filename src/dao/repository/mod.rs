@@ -1,7 +1,7 @@
 //! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! Repository 层模块（0.4.2 新增，依据 spec repository-layer）。
+//! Repository 层模块。
 //!
 //! 为 9 张核心表定义 Repository trait，提供 CRUD 抽象。
 //! SQLite 实现见 `sqlite` 子模块（启用 `db-sqlite` feature）。
@@ -29,12 +29,12 @@
 //! | app_session | [`SessionRepository`] | 是 | 会话表 |
 //! | app_login_log | [`LoginLogRepository`] | 是 | 登录日志表 |
 //! | app_user_ext | [`UserExtRepository`] | 是 | 用户扩展字段表 |
-//! | app_user_device | [`UserDeviceRepository`] | 是 | 用户设备表（v0.5.1 新增，M2） |
+//! | app_user_device | [`UserDeviceRepository`] | 是 | 用户设备表（M2） |
 
 use crate::error::BulwarkResult;
 
 // ============================================================================
-// Row struct 定义（依据 001_init.sql schema）
+// Row struct 定义
 // ============================================================================
 
 /// 用户表行（app_user）。
@@ -307,7 +307,7 @@ pub struct UserExtRow {
     pub tenant_id: i64,
 }
 
-/// 用户设备表行（app_user_device，v0.5.1 新增，依据 design.md D4）。
+/// 用户设备表行（app_user_device）。
 ///
 /// 记录用户登录设备指纹与 UA 信息，支持设备阻断与多设备管理。
 /// 时间字段用 i64（epoch seconds），与 design.md D4 schema 一致。
@@ -335,12 +335,12 @@ pub struct UserDeviceRow {
 }
 
 // ============================================================================
-// Repository trait 定义（依据 spec R-001 ~ R-004）
+// Repository trait 定义
 // ============================================================================
 
-/// 用户表 Repository trait（依据 spec R-001）。
+/// 用户表 Repository trait。
 ///
-/// 所有方法首参 `tenant_id` 用于多租户过滤（依据 spec R-004）。
+/// 所有方法首参 `tenant_id` 用于多租户过滤。
 #[async_trait::async_trait]
 pub trait UserRepository: Send + Sync {
     /// 按 ID 查询用户。
@@ -599,7 +599,7 @@ pub trait UserExtRepository: Send + Sync {
         field_key: &str,
     ) -> BulwarkResult<Option<UserExtRow>>;
 
-    /// 插入或更新扩展字段（依据 UK(user_id, field_key)）。
+    /// 插入或更新扩展字段。
     async fn upsert(
         &self,
         tenant_id: i64,
@@ -617,12 +617,12 @@ pub trait UserExtRepository: Send + Sync {
         -> BulwarkResult<Vec<UserExtRow>>;
 }
 
-/// 单用户最大设备数（依据 spec R-repository-layer-003，默认 5）。
+/// 单用户最大设备数。
 ///
 /// `register_device` 在 (tenant_id, login_id) 下设备数达到此值时拒绝新注册。
 pub const MAX_DEVICES: usize = 5;
 
-/// 用户设备 Repository trait（v0.5.1 新增，依据 design.md D4）。
+/// 用户设备 Repository trait。
 ///
 /// 提供设备注册 / 阻断 / 查询能力，`register_device` 在设备数超过 [`MAX_DEVICES`] 时
 /// 返回 `BulwarkError::InvalidParam`。重复注册同一设备（相同 identifier）幂等返回已有 ID。
@@ -660,7 +660,7 @@ pub trait UserDeviceRepository: Send + Sync {
 }
 
 // ============================================================================
-// Dbnexus Repository 实现子模块（依据 spec repository-layer R-003 + P3 重构）。
+// Dbnexus Repository 实现子模块。
 // 启用 db-sqlite 或 db-postgres feature 时编译，基于 dbnexus DbPool + sea-orm
 // Statement 参数化查询，通过 make_statement 运行时占位符转换支持两种后端。
 // ============================================================================
@@ -668,28 +668,28 @@ pub trait UserDeviceRepository: Send + Sync {
 #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
 pub mod sqlite;
 
-/// PostgreSQL Repository 实现子模块（v0.5.1 新增，依据 tasks.md T111-T114 / D8）。
+/// PostgreSQL Repository 实现子模块。
 ///
 /// 复用 `sqlite` 模块的 backend-agnostic 实现（通过 `make_statement` 自动转换占位符），
 /// 仅以 Postgres 命名空间 re-export 类型别名，避免代码重复。详见 `postgres/mod.rs` 文档。
 #[cfg(feature = "db-postgres")]
 pub mod postgres;
 
-/// MySQL Repository 实现子模块（v0.5.3 新增，依据 tasks.md T025-T043）。
+/// MySQL Repository 实现子模块。
 ///
 /// 复用 `sqlite` 模块的 backend-agnostic 实现（通过 `make_statement` 自动转换占位符），
 /// 仅以 MySQL 命名空间 re-export 类型别名，避免代码重复。详见 `postgres/mod.rs` 文档。
 #[cfg(feature = "db-mysql")]
 pub mod mysql;
 
-/// 角色层级子模块（v0.5.0 新增，依据 proposal H6）。
+/// 角色层级子模块。
 ///
 /// always compiled（`RoleHierarchyRecord` 不依赖 db-sqlite）。
 /// `RoleHierarchyService` 在 T045-T050 扩展时依赖 `BulwarkDao` trait（always compiled）。
 pub mod role_hierarchy;
 
 // ============================================================================
-// Backend-agnostic 辅助函数（v0.5.0 新增，依据 P3 重构决策）。
+// Backend-agnostic 辅助函数。
 // 启用 db-sqlite 或 db-postgres feature 时编译。
 // 运行时根据 DbBackend 转换 SQL 占位符（SQLite ? / PostgreSQL $1,$2）。
 // ============================================================================
@@ -925,7 +925,7 @@ mod tests {
         assert!(!row.is_blocked);
     }
 
-    /// MAX_DEVICES 常量值为 5（依据 spec R-repository-layer-003）。
+    /// MAX_DEVICES 常量值为 5。
     #[test]
     fn max_devices_is_five() {
         assert_eq!(MAX_DEVICES, 5);
@@ -1063,7 +1063,7 @@ mod tests {
     }
 
     // ========================================================================
-    // trait Send + Sync 编译期检查（依据 spec R-002）
+    // trait Send + Sync 编译期检查
     // ========================================================================
 
     /// 所有 Repository trait 为 Send + Sync（编译期检查）。
@@ -1224,7 +1224,7 @@ mod tests {
     }
 
     // ========================================================================
-    // PostgreSQL 后端集成测试（v0.5.0 新增，依据 P3 重构 T137）
+    // PostgreSQL 后端集成测试
     // ========================================================================
     //
     // 验证 DbnexusUserRepository 在 PostgreSQL 后端下能正确执行 find_by_id，

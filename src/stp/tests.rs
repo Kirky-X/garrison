@@ -1,4 +1,4 @@
-//! Stp 集成测试 — 依据 spec stp-core-api 所有 scenario。
+//! Stp 集成测试。
 //!
 //! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
@@ -258,7 +258,7 @@ fn init_global_manager_with_perms(
 }
 
 // ------------------------------------------------------------------------
-// spec scenario: login 首次登录 / 重复登录 / 自定义 token 风格
+// login 首次登录 / 重复登录 / 自定义 token 风格
 // ------------------------------------------------------------------------
 
 /// 验证 login 返回非空 token 并创建会话。
@@ -312,7 +312,7 @@ async fn login_with_simple_style() {
     assert_eq!(token.len(), 32, "simple 应生成 32 字符 token");
 }
 
-/// 验证未知 token_style 时 login 返回 Err（依据 codebase-hardening Task 3.6）。
+/// 验证未知 token_style 时 login 返回 Err。
 ///
 /// 覆盖 `generate_token` 的 `other =>` 分支，断言返回 `BulwarkError::Config`。
 #[tokio::test]
@@ -346,7 +346,7 @@ async fn login_with_custom_token() {
 }
 
 // ------------------------------------------------------------------------
-// spec scenario: logout 销毁当前 / 销毁指定账号 / kickout
+// logout 销毁当前 / 销毁指定账号 / kickout
 // ------------------------------------------------------------------------
 
 /// 验证 logout 销毁当前 token 的会话。
@@ -443,7 +443,7 @@ async fn kickout_by_token_destroys_token_session() {
 }
 
 // ------------------------------------------------------------------------
-// spec scenario: check_login 有效 / 无效 / 过期 / 未登录抛异常
+// check_login 有效 / 无效 / 过期 / 未登录抛异常
 // ------------------------------------------------------------------------
 
 /// 验证 check_login 有效 token 返回 true。
@@ -510,12 +510,12 @@ async fn check_login_returns_false_for_expired_token() {
 }
 
 // ------------------------------------------------------------------------
-// v0.5.0 新增: token 类型专用校验方法（依据 spec annotation-macros P2 前置）
+// token 类型专用校验方法
 // ------------------------------------------------------------------------
 
 /// 验证 `check_access_token` 委托 `check_login`，已登录时返回 `Ok(())`。
 ///
-/// 依据 tasks.md T151。语义：access_token 类型校验入口，默认实现委托 check_login。
+/// T151。语义：access_token 类型校验入口，默认实现委托 check_login。
 #[tokio::test]
 async fn check_access_token_delegates_to_check_login() {
     let logic = Arc::new(make_logic(3600, 86400, false, "uuid", true, true));
@@ -534,7 +534,7 @@ async fn check_access_token_delegates_to_check_login() {
 
 /// 验证 `check_client_token` 委托 `check_login`，已登录时返回 `Ok(())`。
 ///
-/// 依据 tasks.md T151。语义：client_token 类型校验入口，默认实现委托 check_login。
+/// T151。语义：client_token 类型校验入口，默认实现委托 check_login。
 #[tokio::test]
 async fn check_client_token_delegates_to_check_login() {
     let logic = Arc::new(make_logic(3600, 86400, false, "uuid", true, true));
@@ -553,7 +553,7 @@ async fn check_client_token_delegates_to_check_login() {
 
 /// 验证 `check_temp_token` 委托 `check_login`，已登录时返回 `Ok(())`。
 ///
-/// 依据 tasks.md T151。语义：temp_token 类型校验入口，默认实现委托 check_login。
+/// T151。语义：temp_token 类型校验入口，默认实现委托 check_login。
 #[tokio::test]
 async fn check_temp_token_delegates_to_check_login() {
     let logic = Arc::new(make_logic(3600, 86400, false, "uuid", true, true));
@@ -571,7 +571,7 @@ async fn check_temp_token_delegates_to_check_login() {
 }
 
 // ------------------------------------------------------------------------
-// spec scenario: get_login_id
+// get_login_id
 // ------------------------------------------------------------------------
 
 /// 验证 get_login_id 返回当前 login_id。
@@ -632,10 +632,10 @@ async fn current_token_returns_value_in_scope() {
 }
 
 // ------------------------------------------------------------------------
-// spec scenario: check_permission 持有/未持有/未登录抛异常
+// check_permission 持有/未持有/未登录抛异常
 // ------------------------------------------------------------------------
 
-/// spec scenario "持有权限返回 true"：已登录且 firewall 返回 true 时 check_permission 通过。
+/// 已登录且 firewall 返回 true 时 check_permission 通过。
 #[tokio::test]
 async fn check_permission_held_returns_ok() {
     let logic = make_logic(3600, 86400, true, "uuid", true, true);
@@ -644,7 +644,7 @@ async fn check_permission_held_returns_ok() {
     assert!(result.is_ok(), "持有权限应返回 Ok");
 }
 
-/// spec scenario "未持有权限返回 false"：已登录但 firewall 返回 false 时抛 NotPermission。
+/// 已登录但 firewall 返回 false 时抛 NotPermission。
 #[tokio::test]
 async fn check_permission_not_held_throws_not_permission() {
     let logic = make_logic(3600, 86400, true, "uuid", false, true);
@@ -656,7 +656,7 @@ async fn check_permission_not_held_throws_not_permission() {
     );
 }
 
-/// spec scenario "未登录抛出异常"：未登录且 throw_on_not_login=true 时抛 NotLogin。
+/// 未登录且 throw_on_not_login=true 时抛 NotLogin。
 #[tokio::test]
 async fn check_permission_not_login_throws_when_throw_on_not_login() {
     let logic = make_logic(3600, 86400, true, "uuid", true, true);
@@ -681,10 +681,10 @@ async fn check_permission_not_login_throws_not_permission_when_silent() {
 }
 
 // ------------------------------------------------------------------------
-// spec scenario: check_role 持有/未持有/未登录抛异常
+// check_role 持有/未持有/未登录抛异常
 // ------------------------------------------------------------------------
 
-/// spec scenario "持有角色返回 true"：已登录且 firewall 返回 true 时 check_role 通过。
+/// 已登录且 firewall 返回 true 时 check_role 通过。
 #[tokio::test]
 async fn check_role_held_returns_ok() {
     let logic = make_logic(3600, 86400, true, "uuid", true, true);
@@ -693,7 +693,7 @@ async fn check_role_held_returns_ok() {
     assert!(result.is_ok(), "持有角色应返回 Ok");
 }
 
-/// spec scenario "未持有角色返回 false"：已登录但 firewall 返回 false 时抛 NotRole。
+/// 已登录但 firewall 返回 false 时抛 NotRole。
 #[tokio::test]
 async fn check_role_not_held_throws_not_role() {
     let logic = make_logic(3600, 86400, true, "uuid", true, false);
@@ -705,7 +705,7 @@ async fn check_role_not_held_throws_not_role() {
     );
 }
 
-/// spec scenario "未登录抛出异常"：未登录且 throw_on_not_login=true 时 check_role 抛 NotLogin。
+/// 未登录且 throw_on_not_login=true 时 check_role 抛 NotLogin。
 #[tokio::test]
 async fn check_role_not_login_throws_when_throw_on_not_login() {
     let logic = make_logic(3600, 86400, true, "uuid", true, true);
@@ -829,7 +829,7 @@ async fn util_check_role_fails_when_not_initialized() {
     );
 }
 
-/// 未初始化时 BulwarkUtil::check_safe 返回 Session 错误（0.3.0 新增）。
+/// 未初始化时 BulwarkUtil::check_safe 返回 Session 错误（）。
 #[tokio::test]
 #[serial]
 async fn util_check_safe_fails_when_not_initialized() {
@@ -841,7 +841,7 @@ async fn util_check_safe_fails_when_not_initialized() {
     );
 }
 
-/// 未初始化时 BulwarkUtil::check_disable 返回 Session 错误（0.3.0 新增）。
+/// 未初始化时 BulwarkUtil::check_disable 返回 Session 错误（）。
 #[tokio::test]
 #[serial]
 async fn util_check_disable_fails_when_not_initialized() {
@@ -854,7 +854,7 @@ async fn util_check_disable_fails_when_not_initialized() {
 }
 
 // ------------------------------------------------------------------------
-// BulwarkUtil::has_permission / has_role 测试（0.6.1 新增，依据 R-util-api-001/002）
+// BulwarkUtil::has_permission / has_role 测试
 // ------------------------------------------------------------------------
 
 /// has_permission 空字符串返回 InvalidParam（校验在 logic() 之前，不依赖全局状态）。
@@ -971,7 +971,7 @@ async fn util_has_role_returns_false_when_not_logged_in() {
 }
 
 // ------------------------------------------------------------------------
-// BulwarkUtil::get_permission_list / get_role_list 测试（0.6.1 新增，依据 R-util-api-003/004）
+// BulwarkUtil::get_permission_list / get_role_list 测试
 // ------------------------------------------------------------------------
 
 /// 未初始化时 BulwarkUtil::get_permission_list 返回 Session 错误。
@@ -1149,7 +1149,7 @@ async fn util_get_login_id_returns_current_id() {
     BulwarkManager::reset_for_test();
 }
 
-/// BulwarkUtil::check_safe 默认实现返回 Ok（0.3.0 新增，依据 spec annotation-handling）。
+/// BulwarkUtil::check_safe 默认实现返回 Ok。
 ///
 /// 默认 `BulwarkLogicDefault` 未启用 MFA，`check_safe` 返回 `Ok(())`。
 #[tokio::test]
@@ -1169,7 +1169,7 @@ async fn util_check_safe_returns_ok_by_default() {
     BulwarkManager::reset_for_test();
 }
 
-/// BulwarkUtil::check_disable 默认实现返回 Ok（0.3.0 新增，依据 spec annotation-handling）。
+/// BulwarkUtil::check_disable 默认实现返回 Ok。
 ///
 /// 默认 `BulwarkLogicDefault` 未实现禁用账号库，`check_disable` 返回 `Ok(())`。
 #[tokio::test]
@@ -1190,7 +1190,7 @@ async fn util_check_disable_returns_ok_by_default() {
 }
 
 // ------------------------------------------------------------------------
-// 0.2.0 新增 API 测试：login_by_token / verify_token / refresh_token
+// API 测试：login_by_token / verify_token / refresh_token
 // ------------------------------------------------------------------------
 
 /// BulwarkLogicDefault::login_by_token 对 uuid style token 返回 InvalidToken（0.2.1 auto-wire 修复）。
@@ -1443,7 +1443,7 @@ async fn kickout_with_listener_manager_broadcasts_event() {
     }
 }
 
-/// revoke_token 销毁指定 token 的会话（v0.4.2 新增，依据 spec listener-events-extend R-002）。
+/// revoke_token 销毁指定 token 的会话。
 ///
 /// 验证：revoke_token 后 Token-Session 已删除。
 #[tokio::test]
@@ -1471,7 +1471,7 @@ async fn revoke_token_destroys_session() {
 }
 
 /// revoke_token 注入 listener_manager 后广播 RevokeToken 事件
-/// （v0.4.2 新增，依据 spec listener-events-extend R-002）。
+/// 。
 #[tokio::test]
 async fn revoke_token_with_listener_manager_broadcasts_event() {
     let logic = make_logic(3600, 86400, false, "uuid", true, true);
@@ -1563,7 +1563,7 @@ async fn login_by_token_with_auth_logic_delegates_to_auth() {
 }
 
 // ------------------------------------------------------------------------
-// refresh_token 覆盖率补充测试（0.2.1 新增 impl，依据 spec core-auth-api）
+// refresh_token 覆盖率补充测试（impl）
 // ------------------------------------------------------------------------
 
 /// refresh_token 在 token_style 非 jwt 时返回 NotImplemented。
@@ -1883,7 +1883,7 @@ async fn login_by_token_with_managers_triggers_hooks() {
 }
 
 // ------------------------------------------------------------------------
-// 0.4.2 Phase 5: login_with_password 测试（依据 spec auth-password-login）
+// 0.4.2 Phase 5: login_with_password 测试
 // ------------------------------------------------------------------------
 
 #[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
@@ -2063,7 +2063,7 @@ async fn login_with_password_unsupported_hash_format_returns_invalid_param() {
 }
 
 // ------------------------------------------------------------------------
-// 0.3.0 TG1: metrics 集成测试（依据 spec observability-stack）
+// 0.3.0 TG1: metrics 集成测试
 // ------------------------------------------------------------------------
 
 /// with_metrics builder 注入 BulwarkMetrics 后 login 触发 record_login(success)。
@@ -2124,7 +2124,7 @@ async fn login_without_metrics_does_not_panic() {
 }
 
 // ------------------------------------------------------------------------
-// 0.4.2 Phase 6: login_type Multi-Account 测试（依据 spec login-type-multi-account）
+// 0.4.2 Phase 6: login_type Multi-Account 测试
 // ------------------------------------------------------------------------
 
 /// 测试用 BulwarkInterface mock，支持 login_type 隔离（override 新方法）。
@@ -2713,7 +2713,7 @@ async fn util_check_temp_token_delegates_to_logic() {
 }
 
 // ============================================================================
-// BulwarkUtil::check_api_key 测试（0.6.1 新增，依据 spec annotation-check-api-key R-anno-004）
+// BulwarkUtil::check_api_key 测试
 // ============================================================================
 
 #[cfg(feature = "protocol-apikey")]

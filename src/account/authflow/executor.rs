@@ -1,4 +1,4 @@
-//! AuthExecutor 核心（v0.6.0 新增，依据 spec auth-flow-dsl R-auth-flow-dsl-008 / R-auth-flow-dsl-009）。
+//! AuthExecutor 核心。
 //!
 //! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
@@ -14,7 +14,7 @@
 //! （非 struct 字段），保持 5 字段不变。`execute`（spec R-009 签名）在遇到 Login
 //! 步骤时返回 `Failed`（无 builder），完整 Login 支持使用 `execute_with_builder`。
 //!
-//! # T017：SocialProvider + SsoServer 步骤扩展
+//! # SocialProvider + SsoServer 步骤扩展
 //!
 //! 同样的设计模式应用于社交登录与 SSO 登录步骤：定义 [`SocialProviderResolver`] /
 //! [`SsoServerResolver`] trait 作为 [`AuthExecutor::execute_with_full`] 的参数
@@ -90,10 +90,10 @@ pub trait CredentialBuilder: Send + Sync {
 }
 
 // ============================================================================
-// SocialProviderResolver / SsoServerResolver（T017，解决 R-008 五字段约束）
+// SocialProviderResolver / SsoServerResolver（解决 R-008 五字段约束）
 // ============================================================================
 
-/// 社交登录 provider 解析 trait（T017，依据 spec auth-flow-dsl R-auth-flow-dsl-010）。
+/// 社交登录 provider 解析 trait（T017）。
 ///
 /// 在 [`AuthExecutor::execute_with_full`] 中作为参数传入（非 struct 字段，保持 R-008
 /// 5 字段不变）。实现方在内部委托
@@ -153,7 +153,7 @@ pub trait SocialProviderResolver: Send + Sync {
     ) -> BulwarkResult<String>;
 }
 
-/// SSO Server 解析 trait（T017，依据 spec auth-flow-dsl R-auth-flow-dsl-011）。
+/// SSO Server 解析 trait（T017）。
 ///
 /// 在 [`AuthExecutor::execute_with_full`] 中作为参数传入（非 struct 字段，保持 R-008
 /// 5 字段不变）。实现方在内部委托
@@ -189,10 +189,10 @@ pub trait SsoServerResolver: Send + Sync {
 }
 
 // ============================================================================
-// AuthExecutor（依据 spec R-auth-flow-dsl-008）
+// AuthExecutor
 // ============================================================================
 
-/// 认证流程执行器（依据 spec auth-flow-dsl R-auth-flow-dsl-008）。
+/// 认证流程执行器。
 ///
 /// 按 [`AuthenticationFlow`] 步骤顺序执行认证逻辑，支持 Login / Mfa / Conditional /
 /// SubFlow / SocialProvider / SsoServer 六种步骤类型（RequiredAction 待 v0.6.5 实现）。
@@ -393,7 +393,7 @@ impl AuthExecutor {
     }
 
     /// 执行认证流程（带 CredentialBuilder + AccountMetrics，支持指标采集，
-    /// 依据 spec account-metrics D-001）。
+    /// D-001）。
     ///
     /// 与 [`execute_with_builder`](Self::execute_with_builder) 一致，额外注入
     /// `metrics` 用于采集 `authflow_execute_duration`（label = `flow.name`）与
@@ -835,7 +835,7 @@ impl AuthExecutor {
 
     /// 执行 SocialProvider 步骤（内部方法，T017 新增）。
     ///
-    /// 流程（依据 spec auth-flow-dsl R-auth-flow-dsl-010）：
+    /// 流程：
     /// 1. `social_resolver` 为 `None` → `Failed`（需通过 `execute_with_full` 调用）。
     /// 2. `ctx.input` 为空 → `ChallengeRequired`（提示用户完成社交授权）。
     /// 3. 从 `ctx.extras["state"]` 取 OAuth2 state（缺失则空串）。
@@ -894,7 +894,7 @@ impl AuthExecutor {
 
     /// 执行 SsoServer 步骤（内部方法，T017 新增）。
     ///
-    /// 流程（依据 spec auth-flow-dsl R-auth-flow-dsl-011）：
+    /// 流程：
     /// 1. `sso_resolver` 为 `None` → `Failed`（需通过 `execute_with_full` 调用）。
     /// 2. `ctx.input` 为空 → `ChallengeRequired`（提示用户提交 SSO ticket）。
     /// 3. 从 `ctx.extras["client_id"]` 取客户端标识（解析为 `i64`，缺失则 0）。
@@ -979,11 +979,11 @@ impl AuthExecutor {
                 }
             },
             AuthCondition::IpWhitelisted => {
-                // v0.6.0: 无 IP 白名单配置，返回 false
+                // 无 IP 白名单配置，返回 false
                 Ok(false)
             },
             AuthCondition::Custom(_) => {
-                // v0.6.5: Custom 条件返回 false（未实现）
+                // Custom 条件返回 false（未实现）
                 Ok(false)
             },
         }
@@ -1670,7 +1670,7 @@ mod tests {
     }
 
     // ========================================================================
-    // T017: SocialProvider + SsoServer 步骤测试
+    // SocialProvider + SsoServer 步骤测试
     // ========================================================================
     //
     // T017 子模块仅在 `social-wechat` + `protocol-sso-server` 同时启用时编译

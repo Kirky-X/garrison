@@ -1,7 +1,7 @@
 //! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! Dbnexus Repository 实现（依据 spec repository-layer R-003）。
+//! Dbnexus Repository 实现。
 //!
 //! 基于 dbnexus DbPool + sea-orm Statement 参数化查询。
 //! 通过 [`make_statement`] 实现 backend-agnostic：传入 `?` 占位符的 SQL，
@@ -1735,7 +1735,7 @@ fn parse_user_ext_row(row: &QueryResult) -> BulwarkResult<UserExtRow> {
 }
 
 // ============================================================================
-// 10. DbnexusUserDeviceRepository（app_user_device 表，v0.5.1 新增，依据 design.md D4 / M2）
+// 10. DbnexusUserDeviceRepository（app_user_device 表）
 // ============================================================================
 
 /// SQLite 用户设备表 Repository 实现。
@@ -2022,7 +2022,7 @@ fn detect_os(ua: &str) -> Option<String> {
 }
 
 // ============================================================================
-// 测试模块（依据 spec tenant-isolation R-004）
+// 测试模块
 // ============================================================================
 
 #[cfg(all(test, feature = "db-sqlite"))]

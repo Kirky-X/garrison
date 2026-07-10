@@ -17,7 +17,7 @@
 use crate::error::{BulwarkError, BulwarkResult};
 use uuid::Uuid;
 
-/// Digest 算法枚举（依据 spec secure-httpdigest）。
+/// Digest 算法枚举。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DigestAlgorithm {
     /// MD5 算法（默认，兼容旧客户端，安全性较弱）。
@@ -73,7 +73,7 @@ fn hex_encode(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
-/// HTTP Digest 认证工具，封装 RFC 7616 质询生成与响应校验（依据 spec secure-httpdigest）。
+/// HTTP Digest 认证工具，封装 RFC 7616 质询生成与响应校验。
 ///
 /// # 示例
 ///
@@ -95,7 +95,7 @@ pub struct HttpDigestAuth {
 }
 
 impl HttpDigestAuth {
-    /// 创建新的 Digest 认证工具（依据 spec secure-httpdigest）。
+    /// 创建新的 Digest 认证工具。
     ///
     /// # 参数
     /// - `realm`: 认证域。
@@ -111,7 +111,7 @@ impl HttpDigestAuth {
         })
     }
 
-    /// 生成 WWW-Authenticate 质询头（依据 RFC 7616）。
+    /// 生成 WWW-Authenticate 质询头。
     ///
     /// # 返回
     /// 形如 `Digest realm="...", nonce="...", qop="auth", algorithm=MD5` 的字符串。
@@ -126,7 +126,7 @@ impl HttpDigestAuth {
         )
     }
 
-    /// 计算 HA1 = H(username:realm:password)（依据 RFC 7616）。
+    /// 计算 HA1 = H(username:realm:password)。
     ///
     /// HA1 为预先计算的摘要，避免框架持有明文密码。
     /// 算法依据实例配置（MD5 或 SHA256）。
@@ -139,7 +139,7 @@ impl HttpDigestAuth {
         self.algorithm.hash(data.as_bytes())
     }
 
-    /// 校验客户端 Authorization header（依据 RFC 7616 qop=auth 流程）。
+    /// 校验客户端 Authorization header。
     ///
     /// # 参数
     /// - `authorization_header`: 客户端发送的 Authorization header 值。
@@ -173,7 +173,7 @@ impl HttpDigestAuth {
         }
     }
 
-    /// 解析 Authorization header 为 DigestResponse（依据 RFC 7616）。
+    /// 解析 Authorization header 为 DigestResponse。
     fn parse_authorization(&self, header: &str) -> BulwarkResult<DigestResponse> {
         let header = header.trim();
         let (scheme, params) = header.split_once(char::is_whitespace).ok_or_else(|| {
@@ -350,7 +350,7 @@ mod tests {
     }
 
     // ========================================================================
-    // 构造与质询测试（依据 spec secure-httpdigest）
+    // 构造与质询测试
     // ========================================================================
 
     /// new 构造合法实例。
@@ -426,7 +426,7 @@ mod tests {
     }
 
     // ========================================================================
-    // validate 测试（依据 spec secure-httpdigest）
+    // validate 测试
     // ========================================================================
 
     /// 合法 Digest 响应校验通过（spec Scenario）。

@@ -1,4 +1,4 @@
-//! 凭证模型 SPI 子模块（v0.6.0 新增，吸收 keycloak CredentialModel SPI）。
+//! 凭证模型 SPI 子模块（吸收 keycloak CredentialModel SPI）。
 //!
 //! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
@@ -22,7 +22,7 @@
 /// 提供 `PasswordHasher` trait + `Argon2Hasher` / `BcryptHasher` + `PasswordVerifier`。
 pub mod password;
 
-/// TOTP 凭证子模块（v0.6.0 新增，复用 `secure::totp::TotpHandler`）。
+/// TOTP 凭证子模块（复用 `secure::totp::TotpHandler`）。
 ///
 /// 需同时启用 `account-credential` + `secure-totp` feature。
 #[cfg(all(feature = "account-credential", feature = "secure-totp"))]
@@ -190,7 +190,7 @@ pub trait CredentialRepository: Send + Sync {
 }
 
 // ============================================================================
-// DaoCredentialRepository（基于 BulwarkDao 的默认实现，依据 spec R-006）
+// DaoCredentialRepository（基于 BulwarkDao 的默认实现）
 // ============================================================================
 
 /// 基于 `BulwarkDao` 的 `CredentialRepository` 默认实现。

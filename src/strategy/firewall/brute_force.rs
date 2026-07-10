@@ -1,7 +1,7 @@
 //! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! 暴力破解防护策略（依据 spec firewall R-firewall-001）。
+//! 暴力破解防护策略。
 //!
 //! `BruteForceStrategy` 实现 [`BulwarkFirewallStrategy`] trait，
 //! 用 oxcache key `bf:{ip}:count` 计数，TTL=window_seconds，
@@ -34,7 +34,7 @@ use crate::strategy::firewall::{BulwarkFirewallStrategy, FirewallContext};
 use async_trait::async_trait;
 use std::sync::Arc;
 
-/// 暴力破解防护配置（依据 spec firewall R-firewall-001）。
+/// 暴力破解防护配置。
 ///
 /// 所有阈值显式配置（Rule 5 确定性逻辑），不交给模型判断。
 #[derive(Debug, Clone)]
@@ -57,7 +57,7 @@ impl Default for BruteForceConfig {
     }
 }
 
-/// 暴力破解防护策略，用 oxcache 计数 + 锁定实现（依据 spec firewall R-firewall-001）。
+/// 暴力破解防护策略，用 oxcache 计数 + 锁定实现。
 ///
 /// # 构造
 ///
@@ -145,7 +145,6 @@ mod tests {
     use crate::error::BulwarkError;
 
     /// 验证暴力破解防护：max_attempts=5 时，连续 5 次通过，第 6 次被拦截
-    ///（依据 spec firewall R-firewall-001 验收标准 1）。
     #[tokio::test]
     async fn bruteforce_blocks_after_max_attempts() {
         let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());

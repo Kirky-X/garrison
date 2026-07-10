@@ -7,13 +7,13 @@
 //! 0.2.0 将 token 逻辑独立为 `core-token` 模块，
 //! 框架内部通过 `Token` trait 实现多种 token 风格切换。
 //!
-//! 支持 4 种风格：uuid / random_64 / simple / jwt（依据 spec core-token）。
+//! 支持 4 种风格：uuid / random_64 / simple / jwt。
 
 use crate::error::{BulwarkError, BulwarkResult};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// Token 声明信息，承载 token 解析后的声明（依据 spec core-token）。
+/// Token 声明信息，承载 token 解析后的声明。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenClaims {
     /// 登录主体标识。
@@ -24,7 +24,7 @@ pub struct TokenClaims {
     pub device: Option<String>,
 }
 
-/// Token 抽象 trait，定义 token 生成、验证与解析的契约（依据 spec core-token）。
+/// Token 抽象 trait，定义 token 生成、验证与解析的契约。
 ///
 /// 实现方需提供 `generate`、`verify`、`parse` 三个方法。
 /// `verify` 在 token 有效时返回 `Ok(Some(login_id))`，无效时返回 `Ok(None)`。
@@ -52,10 +52,10 @@ pub trait Token: Send + Sync {
 }
 
 // ====================================================================
-// UuidTokenStyle（依据 spec core-token）
+// UuidTokenStyle
 // ====================================================================
 
-/// UUID v4 风格 Token（依据 spec core-token）。
+/// UUID v4 风格 Token。
 ///
 /// 生成标准 UUID v4 格式 token（如 `6e56d6f8-2b31-4d8e-92c3-7a9c8f0d1234`）。
 /// UUID 不包含 login_id 或过期信息，`verify` 始终返回 `Ok(None)`。
@@ -80,10 +80,10 @@ impl Token for UuidTokenStyle {
 }
 
 // ====================================================================
-// Random64TokenStyle（依据 spec core-token）
+// Random64TokenStyle
 // ====================================================================
 
-/// 64 字符随机 hex 风格 Token（依据 spec core-token）。
+/// 64 字符随机 hex 风格 Token。
 ///
 /// 生成 64 字符随机十六进制串，多次调用返回不同 token。
 /// 不包含 login_id 或过期信息，`verify` 始终返回 `Ok(None)`。
@@ -110,10 +110,10 @@ impl Token for Random64TokenStyle {
 }
 
 // ====================================================================
-// SimpleTokenStyle（依据 spec core-token）
+// SimpleTokenStyle
 // ====================================================================
 
-/// Simple 风格 Token（依据 spec core-token）。
+/// Simple 风格 Token。
 ///
 /// 格式为 `<login_id>-<uuid>`，可通过前缀解析 login_id。
 #[derive(Debug, Clone, Copy, Default)]
@@ -149,10 +149,10 @@ impl Token for SimpleTokenStyle {
 }
 
 // ====================================================================
-// JwtTokenStyle（依据 spec core-token，feature-gated）
+// JwtTokenStyle
 // ====================================================================
 
-/// JWT 风格 Token（依据 spec core-token）。
+/// JWT 风格 Token。
 ///
 /// 委托 `protocol-jwt::JwtHandler` 实现签发与校验。
 /// 仅在启用 `protocol-jwt` feature 时编译。
@@ -199,14 +199,14 @@ impl Token for JwtTokenStyle {
 }
 
 // ====================================================================
-// TokenStyleFactory（依据 spec core-token）
+// TokenStyleFactory
 // ====================================================================
 
 /// Token 风格工厂，依据 `BulwarkConfig.token_style` 创建对应的 `Token` 实现。
 pub struct TokenStyleFactory;
 
 impl TokenStyleFactory {
-    /// 依据风格字符串创建 Token 实现（依据 spec core-token）。
+    /// 依据风格字符串创建 Token 实现。
     ///
     /// # 参数
     /// - `style`: 风格字符串（`"uuid"` / `"random_64"` / `"simple"` / `"jwt"`）。
@@ -273,7 +273,7 @@ mod tests {
     }
 
     // ========================================================================
-    // UuidTokenStyle 测试（依据 spec core-token）
+    // UuidTokenStyle 测试
     // ========================================================================
 
     /// UuidTokenStyle 生成 UUID v4 格式 token。
@@ -308,7 +308,7 @@ mod tests {
     }
 
     // ========================================================================
-    // Random64TokenStyle 测试（依据 spec core-token）
+    // Random64TokenStyle 测试
     // ========================================================================
 
     /// Random64TokenStyle 生成 64 字符随机 hex。
@@ -337,7 +337,7 @@ mod tests {
     }
 
     // ========================================================================
-    // SimpleTokenStyle 测试（依据 spec core-token）
+    // SimpleTokenStyle 测试
     // ========================================================================
 
     /// SimpleTokenStyle 生成 `<login_id>-<uuid>` 格式。
@@ -389,7 +389,7 @@ mod tests {
     }
 
     // ========================================================================
-    // TokenStyleFactory 测试（依据 spec core-token）
+    // TokenStyleFactory 测试
     // ========================================================================
 
     /// Factory 返回 UuidTokenStyle。

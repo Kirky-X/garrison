@@ -92,13 +92,13 @@ impl SwitchToGuard for AllowAllSwitchToGuard {
     }
 }
 
-/// 认证逻辑 trait，定义以 token 为入参的认证抽象（依据 spec core-auth）。
+/// 认证逻辑 trait，定义以 token 为入参的认证抽象。
 ///
 /// 所有方法 MUST 使用 `async_trait` 标注，trait 绑定 `Send + Sync`。
 /// 与 0.1.0 的 `BulwarkLogic` 解耦：不读取 `tokio::task_local`，所有方法显式接收 `token: &str`。
 #[async_trait]
 pub trait AuthLogic: Send + Sync {
-    /// 执行登录操作，生成 token 并建立会话（依据 spec core-auth）。
+    /// 执行登录操作，生成 token 并建立会话。
     ///
     /// # 参数
     /// - `id`: 登录主体标识（如用户 ID）。
@@ -108,22 +108,22 @@ pub trait AuthLogic: Send + Sync {
     /// - `Ok(String)`: 非空 token 字符串。
     async fn login(&self, id: &str, params: Option<&str>) -> BulwarkResult<String>;
 
-    /// 执行登出操作，销毁指定 token 对应的会话（依据 spec core-auth）。
+    /// 执行登出操作，销毁指定 token 对应的会话。
     ///
     /// 幂等处理：不存在的 token 返回 `Ok(())`。
     async fn logout(&self, token: &str) -> BulwarkResult<()>;
 
-    /// 检查 token 是否存在且未过期（依据 spec core-auth）。
+    /// 检查 token 是否存在且未过期。
     async fn is_login(&self, token: &str) -> BulwarkResult<bool>;
 
-    /// 获取 token 关联的登录主体标识（依据 spec core-auth）。
+    /// 获取 token 关联的登录主体标识。
     ///
     /// # 返回
     /// - `Ok(Some(id))`: token 有效且关联登录 ID。
     /// - `Ok(None)`: token 无效或已过期。
     async fn get_login_id(&self, token: &str) -> BulwarkResult<Option<String>>;
 
-    /// 校验 token 有效性并返回关联的 login_id（依据 spec core-auth）。
+    /// 校验 token 有效性并返回关联的 login_id。
     ///
     /// 与 `get_login_id` 的区别：校验失败时抛错而非返回 `None`，适用于必须登录的场景。
     ///
@@ -132,7 +132,7 @@ pub trait AuthLogic: Send + Sync {
     /// - `Err(BulwarkError::InvalidToken)`: token 无效或已过期。
     async fn verify_token(&self, token: &str) -> BulwarkResult<String>;
 
-    /// 身份切换：在当前会话中切换到另一个 login_id（依据 spec core-auth-extensions R-001）。
+    /// 身份切换：在当前会话中切换到另一个 login_id。
     ///
     /// 验证当前 token 有效后，将 TokenSession 的 `login_id` 更新为 `target_login_id`，
     /// 同时将原始 `login_id` 存储到 `attrs["switched_from"]` 供审计追溯。
@@ -154,7 +154,7 @@ pub trait AuthLogic: Send + Sync {
         )))
     }
 
-    /// Token 置换：生成等价的新 token 替换旧 token（依据 spec core-auth-extensions R-003）。
+    /// Token 置换：生成等价的新 token 替换旧 token。
     ///
     /// 新 token 与旧 token 具有相同的 `login_id`、`session attrs`、`剩余 TTL`，
     /// 但 token 字符串不同。旧 token 的 session 在新 session 创建成功后被删除。
@@ -178,7 +178,7 @@ pub trait AuthLogic: Send + Sync {
     }
 }
 
-/// `AuthLogic` 的默认实现，委托 `BulwarkSession`（会话管理）与 `core-token::Token`（token 生成与校验）（依据 spec core-auth）。
+/// `AuthLogic` 的默认实现，委托 `BulwarkSession`（会话管理）与 `core-token::Token`（token 生成与校验）。
 ///
 /// 协议层模块无需自行实现会话存储逻辑，直接复用此默认实现。
 pub struct AuthLogicDefault {
@@ -188,7 +188,7 @@ pub struct AuthLogicDefault {
     token_handler: Arc<dyn Token>,
     /// 默认 token 有效期（秒）。
     timeout: i64,
-    /// 是否启用 remember_me 扩展超时（依据 spec session-lifecycle R-session-lifecycle-005）。
+    /// 是否启用 remember_me 扩展超时。
     remember_me_enabled: bool,
     /// remember_me 扩展超时秒数（默认 7776000 = 90 天）。
     remember_me_timeout: i64,
@@ -222,7 +222,7 @@ impl AuthLogicDefault {
         }
     }
 
-    /// 配置 remember_me 扩展超时（依据 spec session-lifecycle R-session-lifecycle-005）。
+    /// 配置 remember_me 扩展超时。
     ///
     /// 启用后，`login` 时 params 含 `remember_me=true` 将使用 `remember_me_timeout` 作为
     /// Token-Session 的 TTL，否则使用默认 `timeout`。
@@ -272,7 +272,7 @@ impl AuthLogicDefault {
     }
 }
 
-/// 解析 params 中的 remember_me 参数（依据 spec session-lifecycle R-session-lifecycle-005）。
+/// 解析 params 中的 remember_me 参数。
 ///
 /// params 格式为 URL query string（`key=value&key2=value2`）。
 /// 仅当存在 `remember_me=true` 时返回 `true`，其他值或格式错误时静默返回 `false`（容错）。
@@ -339,14 +339,14 @@ impl AuthLogic for AuthLogicDefault {
     }
 
     async fn switch_to(&self, token: &str, target_login_id: &str) -> BulwarkResult<()> {
-        // 验证 target_login_id 非空（依据 spec R-001）
+        // 验证 target_login_id 非空
         if target_login_id.is_empty() {
             return Err(BulwarkError::InvalidParam(
                 "target_login_id 不能为空".to_string(),
             ));
         }
 
-        // 获取当前 TokenSession（依据 spec R-001）
+        // 获取当前 TokenSession
         let mut ts = self
             .session
             .get_token_session(token)
@@ -360,7 +360,7 @@ impl AuthLogic for AuthLogicDefault {
             .check(&original_login_id, target_login_id)
             .await?;
 
-        // 存储原始 login_id 到 attrs["switched_from"]（依据 spec R-001）
+        // 存储原始 login_id 到 attrs["switched_from"]
         ts.attrs
             .insert("switched_from".to_string(), original_login_id.clone());
 
@@ -368,7 +368,7 @@ impl AuthLogic for AuthLogicDefault {
         ts.login_id = target_login_id.to_string();
         ts.last_active_at = Utc::now().timestamp();
 
-        // 保存更新后的 session 到 DAO（保留原 TTL，依据 spec R-001）
+        // 保存更新后的 session 到 DAO（保留原 TTL）
         self.session.save_token_session(token, &ts).await?;
 
         // 确保 token 存在于目标 login_id 的 Account-Session 中
@@ -377,7 +377,7 @@ impl AuthLogic for AuthLogicDefault {
             .ensure_token_in_account_session(target_login_id, token)
             .await?;
 
-        // 审计日志（依据 spec R-002）
+        // 审计日志
         // token 脱敏：仅记录前 8 字符
         let token_prefix = if token.len() >= 8 { &token[..8] } else { token };
         tracing::info!(
@@ -393,24 +393,24 @@ impl AuthLogic for AuthLogicDefault {
     }
 
     async fn renew_to_equivalent(&self, token: &str) -> BulwarkResult<String> {
-        // 1. 获取旧 TokenSession（依据 spec R-003）
+        // 1. 获取旧 TokenSession
         let old_ts = self
             .session
             .get_token_session(token)
             .await?
             .ok_or_else(|| BulwarkError::NotLogin("token 无效或已过期".to_string()))?;
 
-        // 2. 查询剩余 TTL（依据 spec R-003：不重置为原始 timeout，继承剩余 TTL）
+        // 2. 查询剩余 TTL
         //    None 表示永久键（无 TTL），用 0 表示永久驻留
         let remaining_ttl = self.session.get_token_timeout(token).await?;
         let ttl_secs = remaining_ttl.map(|d| d.as_secs()).unwrap_or(0);
 
-        // 3. 生成新 token（同 token_style + 同 login_id，依据 spec R-003）
+        // 3. 生成新 token（同 token_style + 同 login_id）
         let new_token = self
             .token_handler
             .generate(&old_ts.login_id, self.timeout)?;
 
-        // 4. 构建新 TokenSession（复制 attrs + device，依据 spec R-003）
+        // 4. 构建新 TokenSession（复制 attrs + device）
         let now = Utc::now().timestamp();
         let new_ts = TokenSession {
             token: new_token.clone(),
@@ -421,19 +421,19 @@ impl AuthLogic for AuthLogicDefault {
             device: old_ts.device.clone(),
         };
 
-        // 5. 保存新 Token-Session with remaining TTL（依据 spec R-003）
-        //    若此步失败，旧 session 保持不变（依据 spec R-004）
+        // 5. 保存新 Token-Session with remaining TTL
+        //    若此步失败，旧 session 保持不变
         self.session
             .create_token_session_with_ttl(&new_token, &new_ts, ttl_secs)
             .await?;
 
-        // 6. 添加新 token 到 Account-Session（依据 spec R-003，确保 is_valid 通过）
-        //    若此步失败，旧 session 保持不变（依据 spec R-004）
+        // 6. 添加新 token 到 Account-Session
+        //    若此步失败，旧 session 保持不变
         self.session
             .ensure_token_in_account_session(&old_ts.login_id, &new_token)
             .await?;
 
-        // 7. 删除旧 token（依据 spec R-004：新 session 创建成功后旧 session 必须删除）
+        // 7. 删除旧 token
         //    若删除失败，回滚新 token（防止双 token 共存），返回错误
         if let Err(e) = self.session.logout(token).await {
             let old_prefix = if token.len() >= 8 { &token[..8] } else { token };
@@ -584,7 +584,7 @@ mod tests {
     }
 
     // ========================================================================
-    // login 测试（依据 spec core-auth）
+    // login 测试
     // ========================================================================
 
     /// login 生成非空 token 并建立会话（spec Scenario）。
@@ -616,7 +616,7 @@ mod tests {
     }
 
     // ========================================================================
-    // logout 测试（依据 spec core-auth）
+    // logout 测试
     // ========================================================================
 
     /// logout 销毁指定 token 会话（spec Scenario）。
@@ -651,7 +651,7 @@ mod tests {
     }
 
     // ========================================================================
-    // is_login 测试（依据 spec core-auth）
+    // is_login 测试
     // ========================================================================
 
     /// is_login 有效 token 返回 true（spec Scenario）。
@@ -670,7 +670,7 @@ mod tests {
     }
 
     // ========================================================================
-    // get_login_id 测试（依据 spec core-auth）
+    // get_login_id 测试
     // ========================================================================
 
     /// get_login_id 有效 token 返回 Some(id)（spec Scenario）。
@@ -692,7 +692,7 @@ mod tests {
     }
 
     // ========================================================================
-    // verify_token 测试（依据 spec core-auth）
+    // verify_token 测试
     // ========================================================================
 
     /// verify_token 有效 token 返回 login_id（spec Scenario）。
@@ -727,7 +727,7 @@ mod tests {
     }
 
     // ========================================================================
-    // switch_to 测试（依据 spec core-auth-extensions R-001/R-002）
+    // switch_to 测试
     // ========================================================================
 
     /// R-001: switch_to 更新 login_id 并存储 switched_from（使用 AllowAll guard）。
@@ -924,7 +924,7 @@ mod tests {
     }
 
     // ========================================================================
-    // renew_to_equivalent 测试（依据 spec core-auth-extensions R-003/R-004）
+    // renew_to_equivalent 测试
     // ========================================================================
 
     /// R-003: renew_to_equivalent 返回新 token，新 token 有效且 login_id 相同。
@@ -1081,7 +1081,7 @@ mod tests {
     }
 
     // ========================================================================
-    // remember_me 测试（依据 spec session-lifecycle R-session-lifecycle-005）
+    // remember_me 测试
     // ========================================================================
 
     /// 辅助函数：创建带 remember_me 配置的 AuthLogicDefault 实例。

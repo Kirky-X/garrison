@@ -1,7 +1,7 @@
 //! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! 角色层级 Repository 模块（v0.5.0 新增，依据 proposal H6）。
+//! 角色层级 Repository 模块。
 //!
 //! 提供 `role_hierarchy` 表的 CRUD 与 TC（传递闭包）预计算能力。
 //! 依据 cedar 工程思想：登录时预计算角色层级的间接祖先并缓存到 oxcache，
@@ -24,7 +24,7 @@
 //! ```
 
 // ============================================================================
-// Row struct 定义（依据 proposal H6 + tasks T042）
+// Row struct 定义
 // ============================================================================
 
 /// `role_hierarchy` 表行结构（T042 Green）。
@@ -46,7 +46,7 @@ pub struct RoleHierarchyRecord {
 }
 
 // ============================================================================
-// RoleHierarchyService（T045-T050：db-sqlite gated，需 DbPool 查 SQL）
+// RoleHierarchyService（T045-db-sqlite gated，需 DbPool 查 SQL）
 // ============================================================================
 
 #[cfg(feature = "db-sqlite")]
@@ -62,9 +62,9 @@ mod service {
     /// 角色层级服务（TC 预计算 + 缓存 + 增量失效）。
     ///
     /// 完整实现在 T045-T050 逐步构建：
-    /// - T045-T046: `compute_closure` DFS 遍历计算传递闭包（当前已实现）
-    /// - T047-T048: `get_ancestors` 先查 oxcache 未命中则 `compute_closure` 并缓存
-    /// - T049-T050: `add_edge` + `invalidate_cache` 增量失效
+    /// - T045-`compute_closure` DFS 遍历计算传递闭包（当前已实现）
+    /// - T047-`get_ancestors` 先查 oxcache 未命中则 `compute_closure` 并缓存
+    /// - T049-`add_edge` + `invalidate_cache` 增量失效
     ///
     /// # 字段
     ///
@@ -208,7 +208,7 @@ mod service {
 
         /// T048 Green: 获取指定角色的所有祖先（先查 oxcache，未命中则 `compute_closure` 并缓存 1 小时）。
         ///
-        /// 缓存策略（依据 proposal H6 + cedar 工程思想）：
+        /// 缓存策略：
         /// - key: `tenant:{tenant_id}:role_closure`，存储整个租户的闭包 JSON
         /// - TTL: 3600 秒（1 小时）
         /// - 反序列化失败时降级重新计算（不阻断主流程，记录在错误返回中）
@@ -388,7 +388,7 @@ mod tests {
     use super::*;
 
     // ========================================================================
-    // T041: RoleHierarchyRecord 构造测试
+    // RoleHierarchyRecord 构造测试
     // ========================================================================
 
     /// T041 Red→Green：`RoleHierarchyRecord` 可构造且字段可读。
@@ -432,7 +432,7 @@ mod tests {
 }
 
 // ============================================================================
-// db-sqlite 集成测试（T043-T050: role_hierarchy 表迁移 + compute_closure）
+// db-sqlite 集成测试（T043-role_hierarchy 表迁移 + compute_closure）
 // ============================================================================
 
 #[cfg(all(test, feature = "db-sqlite"))]
@@ -485,7 +485,7 @@ mod db_sqlite_tests {
     }
 
     // ========================================================================
-    // T044: role_hierarchy 表迁移验证
+    // role_hierarchy 表迁移验证
     // ========================================================================
 
     /// T044 Green: 验证 SQLite 迁移加载 `002_role_hierarchy.sql` 后 `role_hierarchy` 表存在。
@@ -514,7 +514,7 @@ mod db_sqlite_tests {
     }
 
     // ========================================================================
-    // T045-T046: compute_closure 传递闭包测试
+    // T045-compute_closure 传递闭包测试
     // ========================================================================
 
     /// T045 Green: `compute_closure` 返回间接祖先。
@@ -623,7 +623,7 @@ mod db_sqlite_tests {
     }
 
     // ========================================================================
-    // T047-T048: get_ancestors 缓存测试
+    // T047-get_ancestors 缓存测试
     // ========================================================================
 
     /// T047 Red: `get_ancestors` 首次调用触发 `compute_closure` 并缓存到 oxcache。
@@ -662,7 +662,7 @@ mod db_sqlite_tests {
     }
 
     // ========================================================================
-    // T049-T050: add_edge + invalidate_cache 测试
+    // T049-add_edge + invalidate_cache 测试
     // ========================================================================
 
     /// T049 Red: `add_edge` 插入新边后应失效该租户的闭包缓存。

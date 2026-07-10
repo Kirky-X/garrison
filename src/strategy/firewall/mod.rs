@@ -1,7 +1,7 @@
 //! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! IP 级防火墙策略套件模块（v0.5.0 新增，依据 proposal H5 / spec firewall）。
+//! IP 级防火墙策略套件模块。
 //!
 //! ## 设计
 //!
@@ -28,22 +28,22 @@
 use crate::error::BulwarkResult;
 use async_trait::async_trait;
 
-/// 异地登录检测策略（依据 spec firewall R-firewall-003）。
+/// 异地登录检测策略。
 #[cfg(feature = "firewall-anomalous")]
 pub mod anomalous;
-/// 暴力破解防护策略（依据 spec firewall R-firewall-001）。
+/// 暴力破解防护策略。
 #[cfg(feature = "firewall-bruteforce")]
 pub mod brute_force;
-/// DDoS 防护策略（依据 spec firewall R-firewall-004）。
+/// DDoS 防护策略。
 #[cfg(feature = "firewall-ddos")]
 pub mod ddos;
 /// IP 地理位置查询抽象（firewall-anomalous / firewall-geoip 共享）。
 #[cfg(any(feature = "firewall-anomalous", feature = "firewall-geoip"))]
 pub mod geo;
-/// GeoIP 地理位置拦截策略（依据 spec firewall R-firewall-005）。
+/// GeoIP 地理位置拦截策略。
 #[cfg(feature = "firewall-geoip")]
 pub mod geoip;
-/// 速率限制策略（依据 spec firewall R-firewall-002）。
+/// 速率限制策略。
 #[cfg(feature = "firewall-ratelimit")]
 pub mod rate_limit;
 
@@ -51,7 +51,7 @@ pub mod rate_limit;
 // FirewallContext：防火墙策略上下文
 // ============================================================================
 
-/// 防火墙策略上下文，携带请求级信息供策略决策使用（依据 spec firewall）。
+/// 防火墙策略上下文，携带请求级信息供策略决策使用。
 ///
 /// # 字段
 ///
@@ -105,7 +105,7 @@ impl FirewallContext {
 // BulwarkFirewallStrategy trait：IP 级防火墙策略契约
 // ============================================================================
 
-/// IP 级防火墙策略 trait，定义请求级安全检查的可插拔契约（依据 spec firewall）。
+/// IP 级防火墙策略 trait，定义请求级安全检查的可插拔契约。
 ///
 /// 5 个实现（各自独立 feature）：
 /// - `BruteForceStrategy`：暴力破解防护（oxcache 计数 + 锁定）
@@ -129,10 +129,10 @@ pub trait BulwarkFirewallStrategy: Send + Sync {
 }
 
 // ============================================================================
-// CaptchaChallenge trait：验证码挑战契约（依据 design D3）
+// CaptchaChallenge trait：验证码挑战契约
 // ============================================================================
 
-/// 验证码挑战 trait，定义"接近阈值时触发挑战 + 验证答案"的可插拔契约（依据 design D3）。
+/// 验证码挑战 trait，定义"接近阈值时触发挑战 + 验证答案"的可插拔契约。
 ///
 /// 实现方（如 [`RateLimitStrategy`](crate::strategy::firewall::rate_limit::RateLimitStrategy)）
 /// 根据自身状态决定何时触发挑战，并在 `verify_challenge` 中验证用户提交的答案。
@@ -178,7 +178,7 @@ pub trait CaptchaChallenge: Send + Sync {
 // StrategyRegistration：inventory 编译期注册
 // ============================================================================
 
-/// 防火墙策略注册条目，用于 `inventory` 收集（依据 spec firewall R-firewall-006）。
+/// 防火墙策略注册条目，用于 `inventory` 收集。
 ///
 /// 仅注册策略名称（声明存在），不含 factory —— strategy 需依赖注入 dao/lookup，
 /// 无参 factory 无法创建可用实例。调用方通过 name 知道哪些 strategy 可用后，
@@ -197,7 +197,6 @@ inventory::collect!(StrategyRegistration);
 #[cfg(test)]
 mod tests {
     /// 验证启用全部 5 个 firewall feature 时，inventory 注册了至少 5 个 strategy
-    ///（依据 spec firewall R-firewall-006 验收标准）。
     #[test]
     #[cfg(all(
         feature = "firewall-bruteforce",

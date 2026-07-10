@@ -1,7 +1,7 @@
 //! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! 声明式 JSON 测试套件（0.5.1 新增，依据 spec testing-suite D8 / M6）。
+//! 声明式 JSON 测试套件。
 //!
 //! 提供从 JSON 文件加载测试用例并运行 [`Authorizer`] trait 的能力，
 //! 输出 [`TestReport`] 报告。
@@ -50,7 +50,7 @@ use serde::{Deserialize, Serialize};
 use crate::core::permission::{AuthRequest, Authorizer, Decision, DecisionReason};
 use crate::error::{BulwarkError, BulwarkResult};
 
-/// 声明式 JSON 测试套件（依据 design.md D8 / spec testing-suite M6）。
+/// 声明式 JSON 测试套件。
 ///
 /// 从 JSON 文件加载一组 [`JsonTestCase`]，运行 [`Authorizer::authorize`]，
 /// 比较实际决策与期望决策，输出 [`TestReport`]。
@@ -77,7 +77,7 @@ pub struct JsonTestSuite {
     pub cases: Vec<JsonTestCase>,
 }
 
-/// 单个声明式测试用例（依据 design.md D8）。
+/// 单个声明式测试用例。
 ///
 /// 包含一个 [`AuthRequest`] 输入和期望的 [`Decision`] 输出。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -90,7 +90,7 @@ pub struct JsonTestCase {
     pub expected: Decision,
 }
 
-/// 测试套件运行报告（依据 design.md D8）。
+/// 测试套件运行报告。
 ///
 /// 由 [`JsonTestSuite::run`] 返回，包含通过/失败计数与失败详情。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -107,7 +107,7 @@ pub struct TestReport {
     pub failures: Vec<TestFailure>,
 }
 
-/// 单个失败用例详情（依据 design.md D8）。
+/// 单个失败用例详情。
 ///
 /// 记录期望决策、实际决策与可选错误消息（当 [`Authorizer::authorize`] 返回 `Err` 时）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -196,7 +196,7 @@ impl JsonTestSuite {
 /// 比较字段：`allowed` / `reason` / `errors` / `checked_permissions` / `matched_roles`。
 /// `trace_id` 通常是运行时动态生成，不应作为测试断言依据，故忽略。
 ///
-/// # reason 前缀匹配（依据 spec R-testing-002）
+/// # reason 前缀匹配
 ///
 /// `reason` 字段支持部分匹配（前缀匹配，非精确匹配）：
 /// - 无数据变体（`ExplicitAllow` / `NoMatchingPermission` 等）：精确匹配
@@ -210,7 +210,7 @@ fn decisions_match(expected: &Decision, actual: &Decision) -> bool {
         && expected.matched_roles == actual.matched_roles
 }
 
-/// 比较 `DecisionReason` 是否匹配（前缀匹配，依据 spec R-testing-002）。
+/// 比较 `DecisionReason` 是否匹配（前缀匹配）。
 ///
 /// - 无数据变体：精确匹配（`PartialEq`）
 /// - `FirewallBlocked(expected_msg)`：`actual_msg.starts_with(expected_msg)`

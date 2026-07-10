@@ -6,7 +6,7 @@
 //! [借鉴 Sa-Token] 对应 Sa-Token 的 actix-web 适配器，
 //! 提供 BulwarkRouter + FromRequest extractor + BulwarkInterceptor 完整集成。
 //!
-//! ## 设计（依据 spec web-adapters）
+//! ## 设计
 //!
 //! - `BulwarkRouter`：路由规则构建器，`route_protected` 注册路径 + 注解映射
 //! - `BulwarkMiddleware`：actix-web middleware（Transform + Service），请求前调用 interceptor
@@ -78,7 +78,7 @@ impl HeaderLookup for actix_web::http::header::HeaderMap {
 
 /// 实现 actix-web `ResponseError` trait，复用 `response_parts()` 保证三框架一致。
 ///
-/// 状态码与错误码映射与 axum `IntoResponse` 完全一致（依据 spec web-adapters Requirement: 适配器行为一致性）。
+/// 状态码与错误码映射与 axum `IntoResponse` 完全一致。
 impl ResponseError for BulwarkError {
     fn status_code(&self) -> StatusCode {
         let (s, _, _, _) = self.response_parts();
@@ -403,7 +403,7 @@ mod tests {
     use actix_web::http::StatusCode;
 
     // ========================================================================
-    // ResponseError 测试（依据 spec web-adapters Requirement: 适配器行为一致性）
+    // ResponseError 测试
     // ========================================================================
 
     /// NotLogin → 401 + error_code=NOT_LOGIN。
@@ -607,7 +607,7 @@ mod tests {
     }
 
     // ========================================================================
-    // Middleware + Extractor 测试（0.3.0 新增，覆盖 Transform / Service / FromRequest）
+    // Middleware + Extractor 测试（覆盖 Transform / Service / FromRequest）
     // ========================================================================
 
     use crate::dao::BulwarkDao;

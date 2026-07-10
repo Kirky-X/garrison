@@ -1,4 +1,4 @@
-//! 账号安全能力 Prometheus 指标（v0.6.0 新增，依据 spec account-metrics D-001）。
+//! 账号安全能力 Prometheus 指标。
 //!
 //! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
@@ -6,7 +6,7 @@
 //! 启用 `metrics-prometheus` feature 时编译，提供 4 个指标覆盖凭证验证 / 策略校验 /
 //! 锁定触发 / 认证流程执行。未启用时 `AccountMetrics` 为 unit type 别名。
 //!
-//! # 指标清单（依据 spec account-metrics D-001）
+//! # 指标清单
 //!
 //! | 指标名 | 类型 | 标签 | 说明 |
 //! |--------|------|------|------|
@@ -34,7 +34,7 @@ use std::time::Duration;
 // AccountMetrics：账号安全指标集合（feature = "metrics-prometheus"）
 // ============================================================================
 
-/// 账号安全能力 Prometheus 指标集合（依据 spec account-metrics D-001）。
+/// 账号安全能力 Prometheus 指标集合。
 ///
 /// 模式与 [`crate::observability::BulwarkMetrics`] 一致：4 个指标注册到指定 registry，
 /// 通过 `with_metrics` builder 注入到 `UserLockoutStrategy` / `PasswordPolicyEngine`，
@@ -220,7 +220,7 @@ impl std::fmt::Debug for AccountMetrics {
 pub type AccountMetrics = ();
 
 // ============================================================================
-// 单元测试（依据 spec account-metrics D-001，每个 metric 至少 1 个测试）
+// 单元测试
 // ============================================================================
 
 #[cfg(all(test, feature = "metrics-prometheus"))]

@@ -9,7 +9,7 @@
 //! `AloneCacheManager` 管理多个 `AloneCache` 实例，每个实例可注入不同的
 //! `BulwarkDao`（支持多 Redis 实例路由）。
 //!
-//! 依据 spec alone-cache（0.4.0 gap #6）。
+//! alone-cache 模块。
 
 use crate::dao::BulwarkDao;
 use crate::error::BulwarkResult;

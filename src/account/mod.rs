@@ -1,4 +1,4 @@
-//! 账号安全引擎模块（v0.6.0 新增，吸收 keycloak 安全能力）。
+//! 账号安全引擎模块（吸收 keycloak 安全能力）。
 //!
 //! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.

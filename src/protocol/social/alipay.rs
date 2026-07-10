@@ -1,7 +1,7 @@
 //! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! 支付宝授权登录 provider（0.5.0 新增，依据 spec social-login R-social-login-003）。
+//! 支付宝授权登录 provider。
 //!
 //! 实现 `SocialLoginProvider` trait，覆盖支付宝开放平台授权登录的 OAuth2 流程：
 //! - `get_authorization_url`：拼接 `https://openauth.alipay.com/oauth2/publicAppAuthorize.htm?` 授权页 URL
@@ -30,7 +30,7 @@ const ALIPAY_AUTH_URL: &str = "https://openauth.alipay.com/oauth2/publicAppAutho
 /// 支付宝开放平台网关端点（默认值，可通过 `with_gateway_url` 覆盖以适配测试）。
 const ALIPAY_GATEWAY_URL: &str = "https://openapi.alipay.com/gateway.do";
 
-/// 支付宝授权登录 provider（依据 spec social-login R-social-login-003）。
+/// 支付宝授权登录 provider。
 ///
 /// 实现 `SocialLoginProvider` trait，封装支付宝开放平台授权登录的 OAuth2 流程。
 ///
@@ -143,7 +143,6 @@ impl SocialLoginProvider for AlipayProvider {
     /// 拼接支付宝授权登录授权页 URL。
     ///
     /// URL 格式：`https://openauth.alipay.com/oauth2/publicAppAuthorize.htm?app_id={app_id}&redirect_uri={redirect_uri}&state={state}`
-    ///（依据 spec social-login R-social-login-003 验收标准）。
     async fn get_authorization_url(
         &self,
         state: &str,
@@ -158,7 +157,7 @@ impl SocialLoginProvider for AlipayProvider {
         ))
     }
 
-    /// 用授权码换取用户信息（依据 spec social-login R-social-login-003）。
+    /// 用授权码换取用户信息。
     ///
     /// 调用支付宝 `alipay.system.oauth.token` 接口，用授权码换取 access_token + user_id，
     /// 返回 `SocialUserInfo`（nickname/avatar 为 None，需调用 `get_user_info` 获取）。
@@ -266,7 +265,7 @@ impl SocialLoginProvider for AlipayProvider {
         })
     }
 
-    /// 用 access_token 获取用户信息（依据 spec social-login R-social-login-003）。
+    /// 用 access_token 获取用户信息。
     ///
     /// 调用支付宝 `alipay.user.info.share` 接口，用 access_token 获取用户昵称、头像等信息。
     ///
@@ -421,7 +420,6 @@ mod tests {
     }
 
     /// 验证 `AlipayProvider::get_authorization_url` 返回符合支付宝授权登录规范的 URL
-    ///（依据 spec social-login R-social-login-003 验收标准）。
     ///
     /// Red 阶段：`AlipayProvider` 类型不存在 → 编译失败。
     /// Green 阶段（T104）：定义 struct + impl 后测试通过。
@@ -446,7 +444,6 @@ mod tests {
     }
 
     /// T006 Red: 验证 `AlipayProvider::exchange_token` 解析支付宝 oauth.token 响应中的 user_id
-    ///（依据 spec social-login R-social-login-003 验收标准）。
     ///
     /// Red 阶段：`exchange_token` 为 `todo!()` → panic。
     /// Green 阶段（T007）：实现 RSA2 签名 + HTTP 调用后测试通过。
@@ -513,7 +510,7 @@ mod tests {
     }
 
     /// T009 Red: 验证 `AlipayProvider::get_user_info` 解析支付宝 user.info.share 响应中的
-    /// nick/avatar/user_id（依据 spec social-login R-social-login-003 验收标准）。
+    /// nick/avatar/user_id。
     ///
     /// Red 阶段：`get_user_info` 为 `todo!()` → panic。
     /// Green 阶段（T010）：实现 alipay.user.info.share 调用后测试通过。

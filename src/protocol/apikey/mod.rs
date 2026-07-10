@@ -8,7 +8,7 @@
 //!
 //! 仅在启用 `protocol-apikey` 特性时编译。
 //!
-//! ## Key 命名空间（依据 spec protocol-apikey-namespace）
+//! ## Key 命名空间
 //!
 //! v0.4.2 起，所有 API Key 存储格式由 `bulwark:apikey:<key>` 升级为
 //! `bulwark:apikey:<namespace>:<key>`，支持多租户/多场景隔离。
@@ -16,7 +16,7 @@
 
 use crate::dao::BulwarkDao;
 use crate::error::{BulwarkError, BulwarkResult};
-// v0.4.2: listener_manager 注入（feature-gated，依据 spec listener-events-extend R-001）
+// listener_manager 注入（feature-gated）
 #[cfg(feature = "listener")]
 use crate::listener::{BulwarkEvent, BulwarkListenerManager};
 use serde::{Deserialize, Serialize};
@@ -24,7 +24,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
-/// API Key 元数据（依据 spec protocol-apikey / protocol-apikey-namespace）。
+/// API Key 元数据。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ApiKeyInfo {
     /// 登录主体标识。
@@ -35,7 +35,7 @@ pub struct ApiKeyInfo {
     pub expire_at: i64,
     /// 是否已吊销。
     pub revoked: bool,
-    /// 命名空间（v0.4.2 新增，依据 spec protocol-apikey-namespace R-001）。
+    /// 命名空间。
     ///
     /// - 新生成 key 必带 namespace（默认 `"default"`）
     /// - 旧 JSON 数据（无 `namespace` 字段）反序列化时通过 `#[serde(default)]` 填充为 `"default"`
@@ -44,14 +44,14 @@ pub struct ApiKeyInfo {
     pub namespace: String,
 }
 
-/// `ApiKeyInfo::namespace` 的默认值：`"default"`（依据 spec protocol-apikey-namespace R-001）。
+/// `ApiKeyInfo::namespace` 的默认值：`"default"`。
 ///
 /// 旧 JSON 数据不含 `namespace` 字段时，serde 用此函数填充默认值，保证向后兼容。
 fn default_namespace() -> String {
     "default".to_string()
 }
 
-/// 校验 namespace 合法性（依据 spec protocol-apikey-namespace Constraints）。
+/// 校验 namespace 合法性。
 ///
 /// 规则：
 /// - 长度 1-64 字符
@@ -81,21 +81,20 @@ fn validate_namespace(namespace: &str) -> BulwarkResult<()> {
     Ok(())
 }
 
-/// API Key 处理器（依据 spec protocol-apikey）。
+/// API Key 处理器。
 ///
 /// 持有 `Arc<dyn BulwarkDao>` 用于 API Key 存储。
 /// 实现 `Send + Sync`，可在多线程环境共享。
 pub struct ApiKeyHandler {
     /// DAO 抽象层，用于 API Key 存储。
     dao: Arc<dyn BulwarkDao>,
-    /// v0.4.2：可选监听器管理器，注入后 rotate 广播 TokenRotate 事件
-    ///（依据 spec listener-events-extend R-001）。
+    /// 可选监听器管理器，注入后 rotate 广播 TokenRotate 事件
     #[cfg(feature = "listener")]
     listener_manager: Option<Arc<BulwarkListenerManager>>,
 }
 
 impl ApiKeyHandler {
-    /// 创建新的 API Key 处理器（依据 spec protocol-apikey）。
+    /// 创建新的 API Key 处理器。
     pub fn new(dao: Arc<dyn BulwarkDao>) -> Self {
         Self {
             dao,
@@ -105,7 +104,7 @@ impl ApiKeyHandler {
     }
 
     /// 注入 `BulwarkListenerManager`，启用 TokenRotate 事件广播
-    ///（v0.4.2 新增，依据 spec listener-events-extend R-001）。
+    ///
     ///
     /// 注入后 `rotate` 成功时广播 `BulwarkEvent::TokenRotate`。
     /// 未注入时为 no-op（向后兼容 0.4.1）。需启用 `listener` feature。
@@ -115,7 +114,7 @@ impl ApiKeyHandler {
         self
     }
 
-    /// 生成 API Key（依据 spec protocol-apikey）。
+    /// 生成 API Key。
     ///
     /// 生成 64 字符随机 hex 字符串，存储到 `bulwark:apikey:<key>`，
     /// value 为 JSON `ApiKeyInfo`，TTL 为 `timeout` 秒。
@@ -137,7 +136,7 @@ impl ApiKeyHandler {
             .await
     }
 
-    /// 生成带 namespace 的 API Key（依据 spec protocol-apikey-namespace R-002）。
+    /// 生成带 namespace 的 API Key。
     ///
     /// 生成 64 字符随机 hex 字符串，存储到 `bulwark:apikey:<namespace>:<key>`，
     /// value 为 JSON `ApiKeyInfo`（含 `namespace` 字段），TTL 为 `timeout` 秒。
@@ -182,7 +181,7 @@ impl ApiKeyHandler {
         Ok(key)
     }
 
-    /// 校验 API Key（依据 spec protocol-apikey / protocol-apikey-namespace R-002）。
+    /// 校验 API Key。
     ///
     /// 校验逻辑（向后兼容）：
     /// 1. 先查旧格式 `bulwark:apikey:<key>`（无 namespace，历史 key）
@@ -209,7 +208,7 @@ impl ApiKeyHandler {
         Err(BulwarkError::InvalidToken("API Key 不存在".to_string()))
     }
 
-    /// 校验指定 namespace 下的 API Key（依据 spec protocol-apikey-namespace R-004）。
+    /// 校验指定 namespace 下的 API Key。
     ///
     /// 严格匹配 `bulwark:apikey:<namespace>:<key>`，不兼容旧格式，不跨 namespace。
     ///
@@ -255,7 +254,7 @@ impl ApiKeyHandler {
         Ok(info)
     }
 
-    /// 吊销 API Key（依据 spec protocol-apikey / protocol-apikey-namespace R-002）。
+    /// 吊销 API Key。
     ///
     /// 向后兼容：先查旧格式 `bulwark:apikey:<key>`，未命中再扫描新格式。
     /// 找到后将 `revoked` 设为 `true` 并写回 dao（保留 TTL）。
@@ -291,7 +290,7 @@ impl ApiKeyHandler {
         self.dao.update(dao_key, &new_value).await
     }
 
-    /// 列出指定 namespace 下所有未吊销的 ApiKeyInfo（依据 spec protocol-apikey-namespace R-003）。
+    /// 列出指定 namespace 下所有未吊销的 ApiKeyInfo。
     ///
     /// 通过 `BulwarkDao::keys("bulwark:apikey:<namespace>:*")` 扫描所有 key，
     /// 反序列化 value 为 `ApiKeyInfo`，过滤已吊销的。
@@ -321,13 +320,12 @@ impl ApiKeyHandler {
         Ok(result)
     }
 
-    /// 轮换 API Key（依据 spec protocol-apikey）。
+    /// 轮换 API Key。
     ///
     /// 轮换逻辑：(1) 读取 old_key 的 `ApiKeyInfo`；(2) 校验有效（未吊销、未过期）；
     /// (3) 吊销 old_key；(4) 生成新 key（保留 login_id/scopes/剩余 TTL）；(5) 返回新 key。
     ///
     /// v0.4.2 扩展：成功时若注入了 `listener_manager`，广播 `BulwarkEvent::TokenRotate`
-    ///（依据 spec listener-events-extend R-001）。
     ///
     /// # 错误
     /// - `BulwarkError::InvalidToken`: old_key 不存在或已吊销。
@@ -351,7 +349,7 @@ impl ApiKeyHandler {
         let new_key = self
             .generate(info.login_id, info.scopes, remaining_ttl)
             .await?;
-        // v0.4.2: 广播 TokenRotate 事件（依据 spec listener-events-extend R-001）
+        // 广播 TokenRotate 事件
         #[cfg(feature = "listener")]
         if let Some(lm) = &self.listener_manager {
             lm.broadcast(&BulwarkEvent::TokenRotate {
@@ -417,7 +415,7 @@ mod tests {
             Ok(())
         }
 
-        /// v0.4.2: keys 复用 dao::tests::glob_match（避免重复实现 glob 逻辑）。
+        /// keys 复用 dao::tests::glob_match（避免重复实现 glob 逻辑）。
         async fn keys(&self, pattern: &str) -> BulwarkResult<Vec<String>> {
             let data = self.data.lock().await;
             let mut result = Vec::new();
@@ -437,7 +435,7 @@ mod tests {
     }
 
     // ========================================================================
-    // ApiKeyHandler 构造测试（依据 spec protocol-apikey）
+    // ApiKeyHandler 构造测试
     // ========================================================================
 
     /// 构造 ApiKeyHandler（spec Scenario）。
@@ -447,7 +445,7 @@ mod tests {
     }
 
     // ========================================================================
-    // generate 测试（依据 spec protocol-apikey）
+    // generate 测试
     // ========================================================================
 
     /// 成功生成 API Key，返回 64 字符（spec Scenario）。
@@ -481,8 +479,8 @@ mod tests {
 
     /// key 前缀正确（spec Scenario）。
     ///
-    /// v0.4.2: generate 默认 namespace="default"，存储格式变为
-    /// `bulwark:apikey:default:<key>`（依据 spec protocol-apikey-namespace R-002）。
+    /// generate 默认 namespace="default"，存储格式变为
+    /// `bulwark:apikey:default:<key>`。
     #[tokio::test]
     async fn generate_uses_correct_key_prefix() {
         let dao = Arc::new(MockDao::new());
@@ -502,7 +500,7 @@ mod tests {
     }
 
     // ========================================================================
-    // verify 测试（依据 spec protocol-apikey）
+    // verify 测试
     // ========================================================================
 
     /// 成功校验返回 ApiKeyInfo（spec Scenario）。
@@ -562,7 +560,7 @@ mod tests {
     }
 
     // ========================================================================
-    // revoke 测试（依据 spec protocol-apikey）
+    // revoke 测试
     // ========================================================================
 
     /// 成功吊销（spec Scenario）。
@@ -590,7 +588,7 @@ mod tests {
     }
 
     // ========================================================================
-    // rotate 测试（依据 spec protocol-apikey）
+    // rotate 测试
     // ========================================================================
 
     /// 成功轮换（spec Scenario）。
@@ -669,7 +667,7 @@ mod tests {
     }
 
     // ========================================================================
-    // 0.4.2 新增: LoginId newtype 接入（impl Into<LoginId>）
+    // LoginId newtype 接入（impl Into<LoginId>）
     // ========================================================================
 
     /// 验证 `ApiKeyHandler::generate` 接受 String 形式 login_id。
@@ -685,10 +683,10 @@ mod tests {
     }
 
     // ========================================================================
-    // 0.4.2 Phase 8: API Key Namespace（依据 spec protocol-apikey-namespace）
+    // 0.4.2 Phase 8: API Key Namespace
     // ========================================================================
 
-    /// R-001: ApiKeyInfo 序列化包含 namespace 字段（依据 spec protocol-apikey-namespace R-001）。
+    /// R-001: ApiKeyInfo 序列化包含 namespace 字段。
     #[test]
     fn apikey_info_serializes_with_namespace() {
         let info = ApiKeyInfo {
@@ -704,7 +702,7 @@ mod tests {
     }
 
     /// R-001: 旧 JSON（无 namespace 字段）反序列化时 namespace = "default"
-    /// （依据 spec protocol-apikey-namespace R-001 向后兼容）。
+    /// 。
     #[test]
     fn apikey_info_old_json_deserializes_with_default_namespace() {
         // 旧格式 JSON：无 namespace 字段（v0.4.1 及之前生成的 key）
@@ -718,7 +716,7 @@ mod tests {
     }
 
     /// R-002: generate_with_namespace 用新格式 `bulwark:apikey:<namespace>:<key>` 存储
-    /// （依据 spec protocol-apikey-namespace R-002）。
+    /// 。
     #[tokio::test]
     #[serial_test::serial]
     async fn generate_with_namespace_stores_new_format_key() {
@@ -741,7 +739,7 @@ mod tests {
         assert!(old_value.is_none(), "旧格式 key 不应存在");
     }
 
-    /// R-002: verify 兼容旧格式 key（无 namespace，依据 spec protocol-apikey-namespace R-002）。
+    /// R-002: verify 兼容旧格式 key（无 namespace）。
     ///
     /// 手动写入旧格式 `bulwark:apikey:<key>`，verify 应能查到。
     #[tokio::test]
@@ -772,7 +770,7 @@ mod tests {
     }
 
     /// R-003: list_by_namespace 返回指定 namespace 下未吊销的 ApiKeyInfo
-    /// （依据 spec protocol-apikey-namespace R-003）。
+    /// 。
     #[tokio::test]
     #[serial_test::serial]
     async fn list_by_namespace_returns_only_matching_namespace() {
@@ -803,7 +801,7 @@ mod tests {
     }
 
     /// R-003: list_by_namespace 过滤已吊销的 key
-    /// （依据 spec protocol-apikey-namespace R-003 验收标准"未吊销的"）。
+    /// 。
     #[tokio::test]
     #[serial_test::serial]
     async fn list_by_namespace_filters_revoked_keys() {
@@ -825,7 +823,7 @@ mod tests {
     }
 
     /// R-004: namespace 隔离——verify_with_namespace 严格匹配 namespace
-    /// （依据 spec protocol-apikey-namespace R-004）。
+    /// 。
     #[tokio::test]
     #[serial_test::serial]
     async fn verify_with_namespace_enforces_isolation() {
@@ -853,7 +851,7 @@ mod tests {
     }
 
     /// R-004: 普通 verify（不带 namespace）能找到任意 namespace 下的 key
-    /// （依据 spec protocol-apikey-namespace R-004 "或扫描所有 namespace"）。
+    /// 。
     #[tokio::test]
     #[serial_test::serial]
     async fn verify_without_namespace_scans_all_namespaces() {
@@ -869,7 +867,7 @@ mod tests {
     }
 
     /// Constraints: namespace 验证——空字符串、过长、非法字符都应返回 InvalidParam
-    /// （依据 spec protocol-apikey-namespace Constraints）。
+    /// 。
     #[tokio::test]
     async fn generate_with_namespace_validates_namespace() {
         let handler = make_handler();

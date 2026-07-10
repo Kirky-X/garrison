@@ -1,4 +1,4 @@
-//! 密码策略套件子模块（v0.6.0 新增，吸收 keycloak PasswordPolicyRule）。
+//! 密码策略套件子模块（吸收 keycloak PasswordPolicyRule）。
 //!
 //! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
@@ -27,10 +27,10 @@ pub use error::PolicyError;
 use std::sync::Arc;
 
 // ============================================================================
-// PasswordPolicyRule trait（依据 spec R-001）
+// PasswordPolicyRule trait
 // ============================================================================
 
-/// 密码策略规则 trait（依据 spec password-policy R-001）。
+/// 密码策略规则 trait。
 ///
 /// 每条规则为同步纯函数（非 async），校验密码是否符合规则。
 /// 无 `#[async_trait]`（规则校验不执行 IO/await）。
@@ -70,10 +70,10 @@ pub trait PasswordPolicyRule: Send + Sync {
 }
 
 // ============================================================================
-// PolicyContext（依据 spec R-002）
+// PolicyContext
 // ============================================================================
 
-/// 策略校验上下文（依据 spec password-policy R-002）。
+/// 策略校验上下文。
 ///
 /// 5 字段 schema（pre-1.0 锁定，与 design.md §3.2 严格一致）。
 /// 提供规则校验所需的用户上下文信息。
@@ -102,10 +102,10 @@ pub struct PolicyContext {
 }
 
 // ============================================================================
-// ErrorMode + PasswordPolicyEngine（依据 spec R-003）
+// ErrorMode + PasswordPolicyEngine
 // ============================================================================
 
-/// 引擎错误返回模式（依据 spec password-policy R-003）。
+/// 引擎错误返回模式。
 ///
 /// - `FirstError`: 首条规则失败即返回 `Err(vec![error])` 并短路
 /// - `AllErrors`: 执行所有规则，收集全部错误返回 `Err(errors)`
@@ -117,7 +117,7 @@ pub enum ErrorMode {
     AllErrors,
 }
 
-/// 密码策略引擎（依据 spec password-policy R-003）。
+/// 密码策略引擎。
 ///
 /// 持有规则列表 + 错误模式，按 `mode` 执行规则校验。
 ///

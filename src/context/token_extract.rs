@@ -74,7 +74,7 @@ pub fn strip_bearer_prefix(auth_str: &str) -> Option<&str> {
     }
 }
 
-/// 从 `HeaderMap` 提取 token（依据 `BulwarkConfig` 配置）。
+/// 从 `HeaderMap` 提取 token。
 ///
 /// 提取顺序：
 /// 1. `Authorization: Bearer <token>`（仅当 `is_read_header` 为 true）

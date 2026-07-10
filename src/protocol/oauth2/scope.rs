@@ -1,14 +1,14 @@
 //! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! OAuth2 Scope Handler 注册表（0.4.0 新增，依据 spec oauth2-scope-handler）。
+//! OAuth2 Scope Handler 注册表。
 //!
 //! 提供 `ScopeHandler` trait + `ScopeRegistry` 动态注册表，用于在 OAuth2 token
 //! 请求前对 scope 进行客户端策略校验（如拒绝过宽 scope、按用户身份限定 scope 集合等）。
 //!
 //! 仅在启用 `oauth2-scope-handler` feature 时编译。
 //!
-//! ## 设计决策（依据 spec oauth2-scope-handler）
+//! ## 设计决策
 //!
 //! - `ScopeHandler` trait 的 `validate(scope, login_id)` 方法接受 login_id 参数。
 //!   但 OAuth2 客户端流程在 token 请求时通常尚未解析出 login_id（password 流需先认证、
@@ -25,7 +25,7 @@ use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// OAuth2 scope 校验处理器 trait（依据 spec oauth2-scope-handler）。
+/// OAuth2 scope 校验处理器 trait。
 ///
 /// 实现方根据 scope 字符串与 login_id 决定是否允许该 scope。
 pub trait ScopeHandler: Send + Sync {
@@ -38,7 +38,7 @@ pub trait ScopeHandler: Send + Sync {
     fn validate(&self, scope: &str, login_id: i64) -> BulwarkResult<bool>;
 }
 
-/// Scope 注册表，支持运行时动态注册/查询/移除 scope handler（依据 spec oauth2-scope-handler）。
+/// Scope 注册表，支持运行时动态注册/查询/移除 scope handler。
 ///
 /// 使用 `parking_lot::RwLock` 保证多线程并发安全。
 pub struct ScopeRegistry {
@@ -54,7 +54,7 @@ impl ScopeRegistry {
         }
     }
 
-    /// 注册 scope handler（依据 spec oauth2-scope-handler）。
+    /// 注册 scope handler。
     ///
     /// 若 name 已存在，覆盖旧 handler。
     pub fn register(&self, name: &str, handler: Arc<dyn ScopeHandler>) {
@@ -62,7 +62,7 @@ impl ScopeRegistry {
         map.insert(name.to_string(), handler);
     }
 
-    /// 移除 scope handler（依据 spec oauth2-scope-handler）。
+    /// 移除 scope handler。
     ///
     /// 若 name 不存在，无操作（幂等）。
     pub fn unregister(&self, name: &str) {
@@ -70,7 +70,7 @@ impl ScopeRegistry {
         map.remove(name);
     }
 
-    /// 校验指定 scope 是否允许（依据 spec oauth2-scope-handler）。
+    /// 校验指定 scope 是否允许。
     ///
     /// # 返回
     /// - `Ok(true/false)`: 委托 handler 返回结果。
@@ -146,7 +146,7 @@ mod tests {
     }
 
     // ========================================================================
-    // ScopeRegistry 基础测试（依据 spec oauth2-scope-handler）
+    // ScopeRegistry 基础测试
     // ========================================================================
 
     /// 注册并查询 scope handler 返回 Ok(true)（spec Scenario: 注册并查询）。

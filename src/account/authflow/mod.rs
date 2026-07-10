@@ -1,4 +1,4 @@
-//! AuthenticationFlow DSL 子模块（v0.6.0 新增，吸收 keycloak AuthenticationFlow）。
+//! AuthenticationFlow DSL 子模块（吸收 keycloak AuthenticationFlow）。
 //!
 //! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
@@ -28,7 +28,7 @@ pub mod registry;
 
 use std::collections::HashMap;
 
-/// 认证步骤 enum，定义流程中的 7 种步骤类型（依据 spec auth-flow-dsl R-auth-flow-dsl-001）。
+/// 认证步骤 enum，定义流程中的 7 种步骤类型。
 ///
 /// 使用 enum 而非 trait object（决策 D3），保证可序列化与编译期穷尽匹配。
 #[derive(Debug, Clone)]
@@ -75,7 +75,7 @@ pub enum AuthStep {
 }
 
 /// 认证条件 enum，用于 `AuthStep::Conditional` 的条件判断
-/// （依据 spec auth-flow-dsl R-auth-flow-dsl-002）。
+/// 。
 #[derive(Debug, Clone)]
 pub enum AuthCondition {
     /// 用户已注册特定凭证类型（参数为 credential_type）。
@@ -88,7 +88,7 @@ pub enum AuthCondition {
     Custom(String),
 }
 
-/// 认证流程定义（依据 spec auth-flow-dsl R-auth-flow-dsl-003）。
+/// 认证流程定义。
 ///
 /// 含有序步骤列表，由 `FlowBuilder` 构造，`AuthExecutor` 执行。
 #[derive(Debug, Clone)]
@@ -101,7 +101,7 @@ pub struct AuthenticationFlow {
     pub allow_skip: bool,
 }
 
-/// 执行上下文，携带认证过程的状态与输入（依据 spec auth-flow-dsl R-auth-flow-dsl-004）。
+/// 执行上下文，携带认证过程的状态与输入。
 ///
 /// 作为 `AuthExecutor::execute` 的可变引用参数，执行过程中更新 `completed_steps`。
 #[derive(Debug, Clone)]
@@ -120,7 +120,7 @@ pub struct AuthContext {
     pub extras: HashMap<String, String>,
 }
 
-/// 认证执行结果（依据 spec auth-flow-dsl R-auth-flow-dsl-005）。
+/// 认证执行结果。
 #[derive(Debug, Clone)]
 pub enum AuthResult {
     /// 认证成功。

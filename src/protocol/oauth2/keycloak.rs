@@ -1,7 +1,7 @@
 //! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! Keycloak OIDC RP 模块（0.5.0 新增，依据 proposal K1 / spec keycloak-oidc-rp）。
+//! Keycloak OIDC RP 模块。
 //!
 //! 提供 `KeycloakProvider` 作为 OIDC 依赖方（RP），对接 Keycloak IdP：
 //! - `KeycloakConfig`：配置 base_url / client_id / client_secret / redirect_uri
@@ -34,12 +34,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-/// JWKS 公钥缓存 TTL（依据 spec keycloak-oidc-rp R-keycloak-oidc-rp-003 设计决策 2）。
+/// JWKS 公钥缓存 TTL。
 ///
 /// 10 分钟内复用缓存的 JWKS 公钥，避免每次 `verify_id_token` 都拉取 JWKS endpoint。
 const JWKS_CACHE_TTL: Duration = Duration::from_secs(600);
 
-/// Keycloak OIDC RP 配置（依据 spec keycloak-oidc-rp R-keycloak-oidc-rp-001）。
+/// Keycloak OIDC RP 配置。
 ///
 /// 持有对接 Keycloak IdP 所需的最小配置：realm base_url、client_id、
 /// client_secret（confidential client 必填，public client 可为 None）、redirect_uri。
@@ -71,7 +71,7 @@ pub struct KeycloakConfig {
 }
 
 impl KeycloakConfig {
-    /// 构造 OIDC Discovery 端点 URL（依据 spec keycloak-oidc-rp R-keycloak-oidc-rp-001）。
+    /// 构造 OIDC Discovery 端点 URL。
     ///
     /// 返回 `{base_url}/.well-known/openid-configuration`，用于 `KeycloakProvider::discover`
     /// 拉取 Keycloak 的 OIDC discovery metadata。
@@ -79,7 +79,7 @@ impl KeycloakConfig {
         format!("{}/.well-known/openid-configuration", self.base_url)
     }
 
-    /// 构造 JWKS 端点 URL（依据 Keycloak OIDC 约定）。
+    /// 构造 JWKS 端点 URL。
     ///
     /// 返回 `{base_url}/protocol/openid-connect/certs`，用于 `KeycloakProvider::verify_id_token`
     /// 拉取公钥集合以验签 id_token。
@@ -87,14 +87,14 @@ impl KeycloakConfig {
         format!("{}/protocol/openid-connect/certs", self.base_url)
     }
 
-    /// 构造 Authorization 端点 URL（依据 Keycloak OIDC 约定）。
+    /// 构造 Authorization 端点 URL。
     ///
     /// 返回 `{base_url}/protocol/openid-connect/auth`，用于浏览器跳转引导用户完成登录。
     pub fn authorize_url(&self) -> String {
         format!("{}/protocol/openid-connect/auth", self.base_url)
     }
 
-    /// 构造 Token 端点 URL（依据 Keycloak OIDC 约定）。
+    /// 构造 Token 端点 URL。
     ///
     /// 返回 `{base_url}/protocol/openid-connect/token`，用于 `KeycloakProvider::exchange_code`
     /// 以授权码换取 access_token / refresh_token / id_token。
@@ -102,7 +102,7 @@ impl KeycloakConfig {
         format!("{}/protocol/openid-connect/token", self.base_url)
     }
 
-    /// 构造 UserInfo 端点 URL（依据 Keycloak OIDC 约定）。
+    /// 构造 UserInfo 端点 URL。
     ///
     /// 返回 `{base_url}/protocol/openid-connect/userinfo`，用于查询用户信息 claim。
     pub fn userinfo_url(&self) -> String {
@@ -110,7 +110,7 @@ impl KeycloakConfig {
     }
 }
 
-/// OIDC Discovery Metadata（依据 RFC 8414 / spec keycloak-oidc-rp R-keycloak-oidc-rp-002）。
+/// OIDC Discovery Metadata。
 ///
 /// 表示从 `/.well-known/openid-configuration` 拉取的 IdP 元数据。
 /// 仅声明 Keycloak RP 流程所需的最小子集；其他字段（如 `response_types_supported`）
@@ -127,7 +127,7 @@ pub struct OidcDiscoveryMetadata {
     pub jwks_uri: String,
 }
 
-/// JWKS 中的单个 RSA 公钥（依据 RFC 7517 / spec keycloak-oidc-rp R-keycloak-oidc-rp-003）。
+/// JWKS 中的单个 RSA 公钥。
 ///
 /// 表示从 `/.well-known/openid-configuration` 的 `jwks_uri` 拉取的公钥集合中的一个条目。
 /// 仅声明 RS256 验签所需字段；其他字段（如 `use` / `alg`）在反序列化时被忽略。
@@ -141,14 +141,14 @@ pub struct Jwk {
     pub e: String,
 }
 
-/// JWKS 公钥集合响应（依据 RFC 7517）。
+/// JWKS 公钥集合响应。
 #[derive(Debug, Clone, Deserialize)]
 pub struct JwksResponse {
     /// 公钥列表。
     pub keys: Vec<Jwk>,
 }
 
-/// JWKS 公钥缓存（依据 spec keycloak-oidc-rp R-keycloak-oidc-rp-003 设计决策 2）。
+/// JWKS 公钥缓存。
 ///
 /// 缓存 JWKS 公钥集合 + 拉取时间戳，避免每次 `verify_id_token` 都拉取 JWKS endpoint。
 /// TTL 由 [`JWKS_CACHE_TTL`] 控制，过期后下次调用重新拉取。
@@ -161,7 +161,7 @@ pub struct JwksCache {
 }
 
 impl JwksCache {
-    /// 判断缓存是否为空或已过期（依据 spec keycloak-oidc-rp R-keycloak-oidc-rp-003）。
+    /// 判断缓存是否为空或已过期。
     ///
     /// 缓存为空或距上次拉取超过 [`JWKS_CACHE_TTL`] 时返回 `true`。
     fn is_empty_or_expired(&self) -> bool {
@@ -171,13 +171,13 @@ impl JwksCache {
         }
     }
 
-    /// 按 `kid` 查找公钥（依据 spec keycloak-oidc-rp R-keycloak-oidc-rp-003）。
+    /// 按 `kid` 查找公钥。
     fn find_by_kid(&self, kid: &str) -> Option<&Jwk> {
         self.keys.iter().find(|k| k.kid == kid)
     }
 }
 
-/// Keycloak realm 访问信息（依据 spec keycloak-oidc-rp R-keycloak-oidc-rp-003）。
+/// Keycloak realm 访问信息。
 ///
 /// 对应 Keycloak id_token 中 `realm_access` claim，含 realm 级别的角色列表。
 #[derive(Debug, Clone, Deserialize, PartialEq)]
@@ -186,7 +186,7 @@ pub struct RealmAccess {
     pub roles: Vec<String>,
 }
 
-/// Keycloak id_token 的 claims（依据 spec keycloak-oidc-rp R-keycloak-oidc-rp-003）。
+/// Keycloak id_token 的 claims。
 ///
 /// 包含标准 OIDC claims（`sub` / `preferred_username` / `email`）+ Keycloak 特有 claim
 /// （`realm_access` / `resource_access`）+ 多租户扩展（`tenant_id`）。
@@ -218,7 +218,7 @@ pub struct KeycloakClaims {
     pub tenant_id: Option<i64>,
 }
 
-/// Keycloak token endpoint 响应（依据 spec keycloak-oidc-rp R-keycloak-oidc-rp-004）。
+/// Keycloak token endpoint 响应。
 ///
 /// 表示 `exchange_code` 成功后 Keycloak 返回的 token 集合。
 /// 仅声明 RP 流程所需的最小字段；其他字段（如 `token_type` / `scope`）在反序列化时被忽略。
@@ -234,7 +234,7 @@ pub struct KeycloakTokenSet {
     pub expires_in: u64,
 }
 
-/// Keycloak OIDC 依赖方（依据 spec keycloak-oidc-rp R-keycloak-oidc-rp-002）。
+/// Keycloak OIDC 依赖方。
 ///
 /// 持有 `KeycloakConfig` 与可复用的 `reqwest::Client`，提供 OIDC RP 流程：
 /// - [`discover`](Self::discover)：从 `/.well-known/openid-configuration` 拉取 IdP 元数据
@@ -253,7 +253,7 @@ pub struct KeycloakProvider {
     http: reqwest::Client,
     /// JWKS 公钥缓存（TTL 控制，避免每次验签都拉取）。
     jwks_cache: Arc<RwLock<JwksCache>>,
-    /// PKCE code_verifier（依据 RFC 7636 / D2 设计）。
+    /// PKCE code_verifier。
     ///
     /// 由 [`with_pkce`](Self::with_pkce) 设置；`Some` 时 `exchange_code` 改用 PKCE 鉴权
     /// （请求体追加 `code_verifier`，跳过 `client_secret`）。`client_secret=None` 的
@@ -262,7 +262,7 @@ pub struct KeycloakProvider {
 }
 
 impl KeycloakProvider {
-    /// 构造 `KeycloakProvider`（依据 spec keycloak-oidc-rp R-keycloak-oidc-rp-002）。
+    /// 构造 `KeycloakProvider`。
     ///
     /// # 参数
     ///
@@ -287,7 +287,7 @@ impl KeycloakProvider {
         })
     }
 
-    /// 设置 PKCE code_verifier（依据 RFC 7636 / D2 Keycloak PKCE 设计）。
+    /// 设置 PKCE code_verifier。
     ///
     /// 调用后，[`exchange_code`](Self::exchange_code) 改用 PKCE 鉴权：
     /// - 请求体追加 `code_verifier` 字段
@@ -316,7 +316,6 @@ impl KeycloakProvider {
     }
 
     /// 从 `/.well-known/openid-configuration` 拉取 OIDC discovery metadata
-    ///（依据 spec keycloak-oidc-rp R-keycloak-oidc-rp-002）。
     ///
     /// HTTP GET [`KeycloakConfig::discovery_url`]，响应体按 JSON 解析为
     /// [`OidcDiscoveryMetadata`]。
@@ -350,7 +349,7 @@ impl KeycloakProvider {
         })
     }
 
-    /// 拉取 JWKS 公钥集合并更新缓存（依据 spec keycloak-oidc-rp R-keycloak-oidc-rp-003）。
+    /// 拉取 JWKS 公钥集合并更新缓存。
     ///
     /// HTTP GET [`KeycloakConfig::jwks_url`]，响应体按 JSON 解析为 [`JwksResponse`]，
     /// 将 `keys` 写入 `jwks_cache` 并更新 `fetched_at` 时间戳。
@@ -388,7 +387,6 @@ impl KeycloakProvider {
     }
 
     /// 验证 id_token 签名并解析 Keycloak claims
-    ///（依据 spec keycloak-oidc-rp R-keycloak-oidc-rp-003）。
     ///
     /// # 流程
     ///
@@ -479,7 +477,6 @@ impl KeycloakProvider {
     }
 
     /// 用授权码换取 token set
-    ///（依据 spec keycloak-oidc-rp R-keycloak-oidc-rp-004 / RFC 6749 §4.1.3 / RFC 7636 PKCE）。
     ///
     /// # 流程
     ///
@@ -489,7 +486,7 @@ impl KeycloakProvider {
     /// - `code`: 授权码
     /// - `client_id`: [`KeycloakConfig::client_id`]
     /// - `redirect_uri`: [`KeycloakConfig::redirect_uri`]
-    /// - 鉴权字段（依据 D2 设计，优先级 PKCE > client_secret）：
+    /// - 鉴权字段：
     ///   - 调用过 [`with_pkce`](Self::with_pkce)：追加 `code_verifier`，跳过 `client_secret`
     ///   - 仅配置 `client_secret`：追加 `client_secret`
     ///   - 两者均无：返回 [`BulwarkError::Config`]（public client 必须使用 PKCE）
@@ -515,7 +512,7 @@ impl KeycloakProvider {
             ("redirect_uri", &self.config.redirect_uri),
         ];
 
-        // 鉴权方式选择（依据 D2 设计，优先级 PKCE > client_secret / Rule 12 失败显性化）：
+        // 鉴权方式选择：
         // - 设置了 PKCE verifier：使用 code_verifier，跳过 client_secret
         // - 仅设置了 client_secret：使用 client_secret
         // - 两者均无：返回错误（public client 必须调用 with_pkce）
@@ -561,11 +558,10 @@ mod tests {
     use super::*;
 
     // ========================================================================
-    // T111-T112: KeycloakConfig Red-Green
+    // T111-KeycloakConfig Red-Green
     // ========================================================================
 
     /// T111 Red: `KeycloakConfig` 构造 + `discovery_url()` 返回正确 URL
-    ///（依据 spec keycloak-oidc-rp R-keycloak-oidc-rp-001 验收标准 1）。
     ///
     /// Red 阶段：`KeycloakConfig` 类型不存在 → 编译失败。
     /// Green 阶段（T112）：定义 `KeycloakConfig` + `discovery_url()` 后测试通过。
@@ -599,11 +595,11 @@ mod tests {
     }
 
     // ========================================================================
-    // T113-T114: KeycloakProvider::discover Red-Green
+    // T113-KeycloakProvider::discover Red-Green
     // ========================================================================
 
     /// T113 Red: `KeycloakProvider::discover` 从 `/.well-known/openid-configuration`
-    /// 拉取 OIDC discovery metadata（依据 spec keycloak-oidc-rp R-keycloak-oidc-rp-002）。
+    /// 拉取 OIDC discovery metadata。
     ///
     /// Red 阶段：`KeycloakProvider` / `OidcDiscoveryMetadata` 类型不存在 → 编译失败。
     /// Green 阶段（T114）：定义 struct + discover 方法后测试通过。
@@ -657,11 +653,11 @@ mod tests {
     }
 
     // ========================================================================
-    // T115-T116: KeycloakProvider::verify_id_token Red-Green
+    // T115-KeycloakProvider::verify_id_token Red-Green
     // ========================================================================
 
     /// T115 Red: `KeycloakProvider::verify_id_token` 用 JWKS 公钥验签 id_token
-    /// 并解析 Keycloak 特有 claim（依据 spec keycloak-oidc-rp R-keycloak-oidc-rp-003）。
+    /// 并解析 Keycloak 特有 claim。
     ///
     /// Red 阶段：`KeycloakClaims` 类型不存在 → 编译失败。
     /// Green 阶段（T116）：定义 struct + verify_id_token 方法后测试通过。
@@ -773,11 +769,10 @@ mod tests {
     }
 
     // ========================================================================
-    // T117-T118: KeycloakProvider::exchange_code Red-Green
+    // T117-KeycloakProvider::exchange_code Red-Green
     // ========================================================================
 
     /// T117 Red: `KeycloakProvider::exchange_code` 用授权码换取 token set
-    ///（依据 spec keycloak-oidc-rp R-keycloak-oidc-rp-004）。
     ///
     /// Red 阶段：`KeycloakTokenSet` 类型 / `exchange_code` 方法不存在 → 编译失败。
     /// Green 阶段（T118）：定义 struct + exchange_code 方法后测试通过。
@@ -829,11 +824,10 @@ mod tests {
     }
 
     // ========================================================================
-    // T119-T120: 过期 id_token 被拒绝（已实现于 T116，此为回归测试）
+    // T119-过期 id_token 被拒绝（已实现于 T116，此为回归测试）
     // ========================================================================
 
     /// T119 回归测试: `verify_id_token` 拒绝已过期的 id_token
-    ///（依据 spec keycloak-oidc-rp R-keycloak-oidc-rp-003 + Rule 12 失败显性化）。
     ///
     /// T116 的 `verify_id_token` 实现已含 `validate_exp = true` +
     /// `ExpiredSignature` → `InvalidToken("token expired")` 映射。
@@ -936,11 +930,11 @@ mod tests {
     }
 
     // ========================================================================
-    // T092-T093: KeycloakProvider PKCE (RFC 7636 / D2) Red-Green
+    // T092-KeycloakProvider PKCE (RFC 7636 / D2) Red-Green
     // ========================================================================
 
     /// T092 测试 1：`with_pkce` 设置有效 verifier 后，`exchange_code` 请求体包含 `code_verifier`
-    ///（依据 RFC 7636 §4.4 / D2 设计）。
+    ///
     ///
     /// Red 阶段：`with_pkce` 方法体为 `todo!()` → 调用时 panic。
     /// Green 阶段（T093）：实现 `with_pkce` 后测试通过。
@@ -1008,7 +1002,7 @@ mod tests {
     }
 
     /// T092 测试 2：`with_pkce` 传入无效 verifier（长度 < 43）返回 `InvalidParam` 错误
-    ///（依据 RFC 7636 §4.1 / D2 设计）。
+    ///
     ///
     /// Red 阶段：`with_pkce` 方法体为 `todo!()` → 调用时 panic（非预期 InvalidParam）。
     /// Green 阶段（T093）：实现校验后返回 `InvalidParam` 错误。
@@ -1038,7 +1032,7 @@ mod tests {
     }
 
     /// T092 测试 3：`client_secret=None` 且未调用 `with_pkce`，`exchange_code` 返回错误
-    ///（依据 D2 设计：client_secret=None 时强制 PKCE / Rule 12 失败显性化）。
+    ///
     ///
     /// Red 阶段：`exchange_code` 现有实现只检查 `client_secret.is_some()`，
     /// `client_secret=None` 时直接跳过 secret 字段，不返回错误 → 测试失败。
@@ -1099,7 +1093,7 @@ mod tests {
     }
 
     /// T092 测试 4：同时配置 `client_secret` 和 PKCE 时，`exchange_code` 使用 PKCE 鉴权
-    ///（依据 D2 设计：PKCE 优先级高于 client_secret）。
+    ///
     ///
     /// Red 阶段：`with_pkce` 方法体为 `todo!()` → 调用时 panic。
     /// Green 阶段（T093）：实现 PKCE 优先级逻辑后测试通过。
@@ -1164,7 +1158,7 @@ mod tests {
     }
 
     // ========================================================================
-    // T021: Keycloak 异常消息 i18n（feature = "i18n"）
+    // Keycloak 异常消息 i18n（feature = "i18n"）
     //
     // 验证 keycloak 的 loc! 宏在中英文 locale 下返回正确翻译。
     // 直接调用 loc! 宏避免依赖 HTTP mock，聚焦 i18n 翻译正确性。
