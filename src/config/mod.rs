@@ -1,24 +1,30 @@
-//! 配置模块，提供 BulwarkConfig 全局配置与 ConfigLoader trait。
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
+//! 配置模块，提供 BulwarkConfig 全局配置。
 //!
 //! [借鉴 Sa-Token] 对应 Sa-Token 的 `SaTokenConfig`，
 //! 定义 Token 名称、超时、持久化等配置项。
 //!
-//! ## 配置源（依据 spec config-system）
+//! ## 配置源
 //!
-//! 1. **代码默认值**：`BulwarkConfig::default_config()` 返回符合 spec 的默认配置
-//! 2. **toml 文件**：通过 `ConfigLoader::load_from_toml_str()` 解析 toml 字符串
-//! 3. **环境变量**：通过 `ConfigLoader::apply_env_overrides()` 用 `BULWARK_` 前缀覆盖
+//! 由 [confers](https://docs.rs/confers) 库接管，优先级：环境变量 > toml 文件 > 代码默认值。
 //!
-//! 优先级：环境变量 > toml 文件 > 代码默认值
+//! 1. **代码默认值**：通过 `ConfigBuilder::default()` 设置
+//! 2. **toml 文件**：通过 `BulwarkConfig::load(Some(path))` 加载
+//! 3. **环境变量**：`BULWARK_` 前缀自动覆盖
 //!
-//! ## 热更新（依据 spec config-system Requirement: 配置热更新）
+//! ## 热更新
 //!
 //! 通过 `tokio::sync::watch` 通道广播配置变更：
 //! - `BulwarkConfig::watch()` 返回 `watch::Receiver<BulwarkConfig>`
 //! - `BulwarkConfig::update(f)` 闭包式修改配置并广播
 
 use crate::error::{BulwarkError, BulwarkResult};
+use confers::config::{ConfigBuilder, FileSource};
+use confers::types::ConfigValue;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use tokio::sync::watch;
 
 /// Token 风格枚举（对应 Sa-Token 的 token 风格）。
@@ -240,6 +246,73 @@ impl BulwarkConfig {
         config.with_watcher()
     }
 
+    /// 使用 confers 加载配置，优先级：环境变量 > toml 文件 > 代码默认值。
+    ///
+    /// # 参数
+    /// - `toml_path`: toml 配置文件路径。`None` 时仅使用默认值 + 环境变量。
+    ///
+    /// # 返回
+    /// 合并后的 `BulwarkConfig`（已附加 watcher 并通过 `validate()`）。
+    ///
+    /// # 错误
+    /// - `BulwarkError::Config`：文件解析失败、环境变量非法或配置校验未通过。
+    pub fn load(toml_path: Option<&str>) -> BulwarkResult<Self> {
+        let env_values = collect_env_vars(ENV_PREFIX);
+
+        let mut builder = ConfigBuilder::<Self>::new()
+            .default("token_name", ConfigValue::string(DEFAULT_TOKEN_NAME))
+            .default("timeout", ConfigValue::integer(DEFAULT_TIMEOUT))
+            .default(
+                "active_timeout",
+                ConfigValue::integer(DEFAULT_ACTIVE_TIMEOUT),
+            )
+            .default("is_read_cookie", ConfigValue::bool(true))
+            .default("is_read_header", ConfigValue::bool(true))
+            .default("is_write_header", ConfigValue::bool(true))
+            .default("token_style", ConfigValue::string("uuid"))
+            .default("throw_on_not_login", ConfigValue::bool(true))
+            .default("cookie_secure", ConfigValue::bool(DEFAULT_COOKIE_SECURE))
+            .default(
+                "cookie_same_site",
+                ConfigValue::string(DEFAULT_COOKIE_SAME_SITE),
+            )
+            .default("jwt_algorithm", ConfigValue::string(DEFAULT_JWT_ALGORITHM))
+            .default("jwt_secret", ConfigValue::string(""))
+            .default(
+                "sign_window_seconds",
+                ConfigValue::integer(DEFAULT_SIGN_WINDOW_SECONDS),
+            )
+            .default(
+                "sso_ticket_ttl_seconds",
+                ConfigValue::uint(DEFAULT_SSO_TICKET_TTL_SECONDS),
+            )
+            .default("remember_me_enabled", ConfigValue::bool(false))
+            .default(
+                "remember_me_timeout",
+                ConfigValue::integer(REMEMBER_ME_DEFAULT_TIMEOUT),
+            );
+
+        if let Some(path) = toml_path {
+            builder = builder.source(Box::new(
+                FileSource::new(path)
+                    .allow_absolute_paths()
+                    .with_priority(10),
+            ));
+        }
+
+        if !env_values.is_empty() {
+            builder = builder.memory_priority(50).memory(env_values);
+        }
+
+        let config = builder
+            .build()
+            .map_err(|e| BulwarkError::Config(format!("confers build error: {}", e)))?;
+
+        let config = config.with_watcher();
+        config.validate()?;
+        Ok(config)
+    }
+
     /// 为配置实例附加 watcher（创建 watch channel）。
     ///
     /// 反序列化后的 `BulwarkConfig` 没有 watcher，调用此方法启用 `watch()` 与 `update()`。
@@ -363,151 +436,63 @@ impl Default for BulwarkConfig {
     }
 }
 
-/// 配置加载器 trait（依据 spec config-system Requirement: 配置加载）。
+/// 收集 `BULWARK_` 前缀的环境变量，转换为 confers MemorySource 所需的 `HashMap`。
 ///
-/// 支持三源合并：代码默认值 → toml 文件 → 环境变量覆盖。
-pub trait ConfigLoader {
-    /// 完整加载流程：toml 文件 → 环境变量覆盖。
-    ///
-    /// `toml_str` 为空时使用代码默认值。
-    ///
-    /// # 参数
-    /// - `toml_str`: toml 配置字符串，空字符串使用代码默认值。
-    ///
-    /// # 返回
-    /// 合并后的 `BulwarkConfig`（已附加 watcher 并通过 `validate()`）。
-    ///
-    /// # 错误
-    /// - `BulwarkError::Config`：toml 解析失败、环境变量非法或配置校验未通过。
-    fn load(toml_str: &str) -> BulwarkResult<BulwarkConfig> {
-        let config = Self::load_from_toml_str(toml_str)?;
-        Self::apply_env_overrides(config)
+/// Key 映射规则（与 confers `EnvSource::with_prefix(prefix).separator("__")` 一致）：
+/// 1. 剥离前缀（如 `BULWARK_`）
+/// 2. 转小写
+/// 3. `__` → `.`（支持嵌套路径，如 `tenant_isolation.enabled`）
+///
+/// 使用 `MemorySource` 代替 `EnvSource` 的原因：confers 0.4.1 的 `EnvSource::collect()`
+/// 未在顶层 `AnnotatedValue` 上调用 `.with_priority()`，导致优先级默认为 0，被
+/// `DefaultSource`（同为 priority 0）覆盖。`MemorySource::collect()` 正确设置了 priority。
+fn collect_env_vars(prefix: &str) -> HashMap<String, ConfigValue> {
+    let mut values = HashMap::new();
+    for (key, value) in std::env::vars() {
+        if let Some(stripped) = key.strip_prefix(prefix) {
+            let config_key = stripped.to_lowercase().replace("__", ".");
+            values.insert(config_key, infer_config_value(&value));
+        }
     }
-
-    /// 从 toml 字符串加载配置（空字符串返回默认值）。
-    ///
-    /// # 参数
-    /// - `toml_str`: toml 配置字符串，空字符串使用代码默认值。
-    ///
-    /// # 返回
-    /// 解析得到的 `BulwarkConfig`（已附加 watcher 并通过 `validate()`）。
-    ///
-    /// # 错误
-    /// - `BulwarkError::Config`：toml 解析失败（消息含 "toml parse error"）。
-    /// - `BulwarkError::Config`：配置校验未通过（如非法 `token_style`）。
-    fn load_from_toml_str(toml_str: &str) -> BulwarkResult<BulwarkConfig>;
-
-    /// 应用环境变量覆盖（`BULWARK_` 前缀）。
-    ///
-    /// # 参数
-    /// - `config`: 待覆盖的配置实例。
-    ///
-    /// # 返回
-    /// 应用环境变量覆盖后的 `BulwarkConfig`（已通过 `validate()`）。
-    ///
-    /// # 错误
-    /// - `BulwarkError::Config`：环境变量值非法（如非数字、非布尔）。
-    /// - `BulwarkError::Config`：覆盖后配置校验未通过。
-    fn apply_env_overrides(config: BulwarkConfig) -> BulwarkResult<BulwarkConfig>;
+    values
 }
 
-/// 默认配置加载器实现。
-pub struct DefaultConfigLoader;
-
-impl ConfigLoader for DefaultConfigLoader {
-    fn load_from_toml_str(toml_str: &str) -> BulwarkResult<BulwarkConfig> {
-        if toml_str.trim().is_empty() {
-            let config = BulwarkConfig::default_config();
-            config.validate()?;
-            Ok(config)
-        } else {
-            let config: BulwarkConfig = toml::from_str(toml_str)
-                .map_err(|e| BulwarkError::Config(format!("toml parse error: {}", e)))?;
-            config.validate()?;
-            Ok(config.with_watcher())
+/// 从字符串推断 `ConfigValue` 类型（与 confers `EnvSource::infer_config_value` 逻辑一致）。
+fn infer_config_value(s: &str) -> ConfigValue {
+    if s.eq_ignore_ascii_case("true") {
+        return ConfigValue::Bool(true);
+    }
+    if s.eq_ignore_ascii_case("false") {
+        return ConfigValue::Bool(false);
+    }
+    if let Ok(v) = s.parse::<i64>() {
+        return ConfigValue::I64(v);
+    }
+    if let Ok(v) = s.parse::<u64>() {
+        return ConfigValue::U64(v);
+    }
+    if s.contains('.') || s.contains('e') || s.contains('E') {
+        if let Ok(v) = s.parse::<f64>() {
+            return ConfigValue::F64(v);
         }
     }
-
-    fn apply_env_overrides(mut config: BulwarkConfig) -> BulwarkResult<BulwarkConfig> {
-        if let Ok(v) = std::env::var(format!("{}TOKEN_NAME", ENV_PREFIX)) {
-            config.token_name = v;
-        }
-        if let Ok(v) = std::env::var(format!("{}TIMEOUT", ENV_PREFIX)) {
-            config.timeout = v.parse().map_err(|_| {
-                BulwarkError::Config(format!("{}TIMEOUT invalid: {}", ENV_PREFIX, v))
-            })?;
-        }
-        if let Ok(v) = std::env::var(format!("{}ACTIVE_TIMEOUT", ENV_PREFIX)) {
-            config.active_timeout = v.parse().map_err(|_| {
-                BulwarkError::Config(format!("{}ACTIVE_TIMEOUT invalid: {}", ENV_PREFIX, v))
-            })?;
-        }
-        if let Ok(v) = std::env::var(format!("{}IS_READ_COOKIE", ENV_PREFIX)) {
-            config.is_read_cookie = parse_bool(&v)?;
-        }
-        if let Ok(v) = std::env::var(format!("{}IS_READ_HEADER", ENV_PREFIX)) {
-            config.is_read_header = parse_bool(&v)?;
-        }
-        if let Ok(v) = std::env::var(format!("{}IS_WRITE_HEADER", ENV_PREFIX)) {
-            config.is_write_header = parse_bool(&v)?;
-        }
-        if let Ok(v) = std::env::var(format!("{}TOKEN_STYLE", ENV_PREFIX)) {
-            config.token_style = v;
-        }
-        if let Ok(v) = std::env::var(format!("{}THROW_ON_NOT_LOGIN", ENV_PREFIX)) {
-            config.throw_on_not_login = parse_bool(&v)?;
-        }
-        if let Ok(v) = std::env::var(format!("{}COOKIE_SECURE", ENV_PREFIX)) {
-            config.cookie_secure = parse_bool(&v)?;
-        }
-        if let Ok(v) = std::env::var(format!("{}COOKIE_SAME_SITE", ENV_PREFIX)) {
-            config.cookie_same_site = v;
-        }
-        if let Ok(v) = std::env::var(format!("{}JWT_ALGORITHM", ENV_PREFIX)) {
-            config.jwt_algorithm = v;
-        }
-        if let Ok(v) = std::env::var(format!("{}SIGN_WINDOW_SECONDS", ENV_PREFIX)) {
-            config.sign_window_seconds = v.parse().map_err(|_| {
-                BulwarkError::Config(format!("{}SIGN_WINDOW_SECONDS invalid: {}", ENV_PREFIX, v))
-            })?;
-        }
-        if let Ok(v) = std::env::var(format!("{}SSO_TICKET_TTL_SECONDS", ENV_PREFIX)) {
-            config.sso_ticket_ttl_seconds = v.parse().map_err(|_| {
-                BulwarkError::Config(format!(
-                    "{}SSO_TICKET_TTL_SECONDS invalid: {}",
-                    ENV_PREFIX, v
-                ))
-            })?;
-        }
-        if let Ok(v) = std::env::var(format!("{}REMEMBER_ME_ENABLED", ENV_PREFIX)) {
-            config.remember_me_enabled = parse_bool(&v)?;
-        }
-        if let Ok(v) = std::env::var(format!("{}REMEMBER_ME_TIMEOUT", ENV_PREFIX)) {
-            config.remember_me_timeout = v.parse().map_err(|_| {
-                BulwarkError::Config(format!("{}REMEMBER_ME_TIMEOUT invalid: {}", ENV_PREFIX, v))
-            })?;
-        }
-        config.validate()?;
-        Ok(config)
-    }
-}
-
-/// 解析布尔字符串（支持 true/false/1/0/yes/no）。
-fn parse_bool(s: &str) -> BulwarkResult<bool> {
-    match s.to_lowercase().as_str() {
-        "true" | "1" | "yes" | "on" => Ok(true),
-        "false" | "0" | "no" | "off" => Ok(false),
-        _ => Err(BulwarkError::Config(format!(
-            "invalid boolean value: {} (expected true/false/1/0/yes/no)",
-            s
-        ))),
-    }
+    ConfigValue::String(s.to_string())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use serial_test::serial;
+
+    /// 创建临时 toml 文件并写入内容，返回 NamedTempFile（离开作用域自动删除）。
+    fn write_temp_toml(content: &str) -> tempfile::NamedTempFile {
+        let file = tempfile::Builder::new()
+            .suffix(".toml")
+            .tempfile()
+            .expect("创建临时文件失败");
+        std::fs::write(file.path(), content).expect("写入临时文件失败");
+        file
+    }
 
     // ========================================================================
     // 代码默认值测试（spec Scenario: 代码默认值生效）
@@ -693,11 +678,13 @@ mod tests {
     /// 验证 toml 可覆盖 remember_me 字段。
     #[test]
     fn toml_overrides_remember_me() {
-        let toml_str = r#"
+        let temp = write_temp_toml(
+            r#"
 remember_me_enabled = true
 remember_me_timeout = 9999999
-"#;
-        let config = DefaultConfigLoader::load_from_toml_str(toml_str).unwrap();
+"#,
+        );
+        let config = BulwarkConfig::load(Some(temp.path().to_str().unwrap())).unwrap();
         assert!(config.remember_me_enabled);
         assert_eq!(config.remember_me_timeout, 9999999);
     }
@@ -709,8 +696,7 @@ remember_me_timeout = 9999999
         std::env::set_var("BULWARK_REMEMBER_ME_ENABLED", "true");
         std::env::set_var("BULWARK_REMEMBER_ME_TIMEOUT", "9999999");
 
-        let config = BulwarkConfig::default_config();
-        let config = DefaultConfigLoader::apply_env_overrides(config).unwrap();
+        let config = BulwarkConfig::load(None).unwrap();
 
         assert!(config.remember_me_enabled);
         assert_eq!(config.remember_me_timeout, 9999999);
@@ -720,43 +706,45 @@ remember_me_timeout = 9999999
     }
 
     // ========================================================================
-    // toml 文件覆盖测试（spec Scenario: toml 文件覆盖默认值）
+    // toml 文件覆盖测试
     // ========================================================================
 
     /// 验证 toml 覆盖默认值，其他字段保持默认。
     #[test]
     fn toml_overrides_token_style() {
-        let toml_str = r#"token_style = "random_64""#;
-        let config = DefaultConfigLoader::load_from_toml_str(toml_str).unwrap();
+        let temp = write_temp_toml(r#"token_style = "random_64""#);
+        let config = BulwarkConfig::load(Some(temp.path().to_str().unwrap())).unwrap();
         assert_eq!(config.token_style, "random_64");
-        assert_eq!(config.timeout, DEFAULT_TIMEOUT); // 保持默认
-        assert!(config.throw_on_not_login); // 保持默认
+        assert_eq!(config.timeout, DEFAULT_TIMEOUT);
+        assert!(config.throw_on_not_login);
     }
 
     /// 验证 toml 多字段覆盖。
     #[test]
     fn toml_overrides_multiple_fields() {
-        let toml_str = r#"
+        let temp = write_temp_toml(
+            r#"
 token_style = "jwt"
 timeout = 1800
 is_read_cookie = false
 throw_on_not_login = false
 jwt_secret = "test-secret"
-"#;
-        let config = DefaultConfigLoader::load_from_toml_str(toml_str).unwrap();
+"#,
+        );
+        let config = BulwarkConfig::load(Some(temp.path().to_str().unwrap())).unwrap();
         assert_eq!(config.token_style, "jwt");
         assert_eq!(config.timeout, 1800);
         assert!(!config.is_read_cookie);
         assert!(!config.throw_on_not_login);
-        // 未覆盖的字段保持默认
         assert_eq!(config.token_name, DEFAULT_TOKEN_NAME);
         assert!(config.is_read_header);
     }
 
-    /// 验证空 toml 字符串返回默认配置。
+    /// 验证无 toml 文件时返回默认配置。
     #[test]
-    fn empty_toml_returns_default() {
-        let config = DefaultConfigLoader::load_from_toml_str("").unwrap();
+    #[serial]
+    fn no_file_returns_default() {
+        let config = BulwarkConfig::load(None).unwrap();
         assert_eq!(config.token_style, "uuid");
         assert_eq!(config.timeout, DEFAULT_TIMEOUT);
     }
@@ -764,8 +752,8 @@ jwt_secret = "test-secret"
     /// 验证 toml 解析错误返回 Config 错误。
     #[test]
     fn invalid_toml_returns_config_error() {
-        let invalid_toml = "this is not = valid = toml =";
-        let result = DefaultConfigLoader::load_from_toml_str(invalid_toml);
+        let temp = write_temp_toml("this is not = valid = toml =");
+        let result = BulwarkConfig::load(Some(temp.path().to_str().unwrap()));
         assert!(result.is_err());
         assert!(matches!(result, Err(BulwarkError::Config(_))));
     }
@@ -773,33 +761,32 @@ jwt_secret = "test-secret"
     /// 验证 toml 中的非法值在 validate 阶段被拒绝。
     #[test]
     fn toml_invalid_token_style_rejected() {
-        let toml_str = r#"token_style = "unknown""#;
-        let result = DefaultConfigLoader::load_from_toml_str(toml_str);
+        let temp = write_temp_toml(r#"token_style = "unknown""#);
+        let result = BulwarkConfig::load(Some(temp.path().to_str().unwrap()));
         assert!(result.is_err());
         assert!(matches!(result, Err(BulwarkError::Config(_))));
     }
 
     // ========================================================================
-    // 环境变量覆盖测试（spec Scenario: 环境变量覆盖文件）
+    // 环境变量覆盖测试
     // ========================================================================
 
     /// 验证环境变量优先级高于 toml 配置。
     #[test]
     #[serial]
     fn env_overrides_toml() {
-        // 设置环境变量
         std::env::set_var("BULWARK_TIMEOUT", "3600");
         std::env::set_var("BULWARK_TOKEN_STYLE", "jwt");
 
-        let toml_str = r#"timeout = 1800
-jwt_secret = "test-secret""#;
-        let config = DefaultConfigLoader::load_from_toml_str(toml_str).unwrap();
-        let config = DefaultConfigLoader::apply_env_overrides(config).unwrap();
+        let temp = write_temp_toml(
+            r#"timeout = 1800
+jwt_secret = "test-secret""#,
+        );
+        let config = BulwarkConfig::load(Some(temp.path().to_str().unwrap())).unwrap();
 
-        assert_eq!(config.timeout, 3600); // 环境变量覆盖
-        assert_eq!(config.token_style, "jwt"); // 环境变量覆盖
+        assert_eq!(config.timeout, 3600);
+        assert_eq!(config.token_style, "jwt");
 
-        // 清理
         std::env::remove_var("BULWARK_TIMEOUT");
         std::env::remove_var("BULWARK_TOKEN_STYLE");
     }
@@ -809,10 +796,9 @@ jwt_secret = "test-secret""#;
     #[serial]
     fn env_boolean_parsing() {
         std::env::set_var("BULWARK_IS_READ_COOKIE", "false");
-        std::env::set_var("BULWARK_THROW_ON_NOT_LOGIN", "0");
+        std::env::set_var("BULWARK_THROW_ON_NOT_LOGIN", "false");
 
-        let config = BulwarkConfig::default_config();
-        let config = DefaultConfigLoader::apply_env_overrides(config).unwrap();
+        let config = BulwarkConfig::load(None).unwrap();
 
         assert!(!config.is_read_cookie);
         assert!(!config.throw_on_not_login);
@@ -826,27 +812,26 @@ jwt_secret = "test-secret""#;
     #[serial]
     fn env_invalid_value_errors() {
         std::env::set_var("BULWARK_TIMEOUT", "not-a-number");
-        let config = BulwarkConfig::default_config();
-        let result = DefaultConfigLoader::apply_env_overrides(config);
+        let result = BulwarkConfig::load(None);
         assert!(result.is_err());
         std::env::remove_var("BULWARK_TIMEOUT");
     }
 
-    /// 验证完整加载流程 load()。
+    /// 验证完整加载流程 load()：默认值 + toml + 环境变量。
     #[test]
     #[serial]
     fn load_full_pipeline() {
         std::env::set_var("BULWARK_TOKEN_NAME", "custom_token");
-        let toml_str = r#"timeout = 3600"#;
-        let config = DefaultConfigLoader::load(toml_str).unwrap();
-        assert_eq!(config.token_name, "custom_token"); // 环境变量
-        assert_eq!(config.timeout, 3600); // toml
-        assert_eq!(config.token_style, "uuid"); // 默认
+        let temp = write_temp_toml(r#"timeout = 3600"#);
+        let config = BulwarkConfig::load(Some(temp.path().to_str().unwrap())).unwrap();
+        assert_eq!(config.token_name, "custom_token");
+        assert_eq!(config.timeout, 3600);
+        assert_eq!(config.token_style, "uuid");
         std::env::remove_var("BULWARK_TOKEN_NAME");
     }
 
     // ========================================================================
-    // 热更新测试（spec Requirement: 配置热更新）
+    // 热更新测试
     // ========================================================================
 
     /// 验证 watch() 返回 receiver，update() 广播新值。
@@ -891,7 +876,6 @@ jwt_secret = "test-secret""#;
         let result = config.update(|c| c.token_style = "invalid".to_string());
         assert!(result.is_err());
 
-        // 验证配置未被修改
         let current = rx.borrow_and_update();
         assert_eq!(current.token_style, "uuid");
     }
@@ -937,7 +921,7 @@ jwt_secret = "test-secret""#;
     }
 
     // ========================================================================
-    // 序列化测试（spec Requirement: 配置序列化）
+    // 序列化测试
     // ========================================================================
 
     /// 验证序列化为 toml 往返一致。
@@ -982,120 +966,69 @@ jwt_secret = "test-secret""#;
     }
 
     // ========================================================================
-    // parse_bool 辅助函数测试
+    // 环境变量覆盖错误路径测试（confers 处理，错误类型为 Config）
     // ========================================================================
 
-    #[test]
-    fn parse_bool_accepts_various_formats() {
-        assert!(parse_bool("true").unwrap());
-        assert!(parse_bool("TRUE").unwrap());
-        assert!(parse_bool("1").unwrap());
-        assert!(parse_bool("yes").unwrap());
-        assert!(parse_bool("on").unwrap());
-        assert!(!parse_bool("false").unwrap());
-        assert!(!parse_bool("0").unwrap());
-        assert!(!parse_bool("no").unwrap());
-        assert!(!parse_bool("off").unwrap());
-    }
-
-    #[test]
-    fn parse_bool_rejects_invalid() {
-        assert!(parse_bool("maybe").is_err());
-        assert!(parse_bool("").is_err());
-    }
-
-    // ========================================================================
-    // 环境变量覆盖错误路径补充测试
-    // ========================================================================
-
-    /// 验证 BULWARK_IS_READ_COOKIE 非法布尔值时 apply_env_overrides 抛错。
-    ///
-    /// 覆盖 `apply_env_overrides` 中 `parse_bool(&v)?` 错误路径（IS_READ_COOKIE 分支）。
+    /// 验证 BULWARK_IS_READ_COOKIE 非法布尔值时 load 抛错。
     #[test]
     #[serial]
     fn env_invalid_is_read_cookie_errors() {
         std::env::set_var("BULWARK_IS_READ_COOKIE", "maybe");
-        let config = BulwarkConfig::default_config();
-        let result = DefaultConfigLoader::apply_env_overrides(config);
-        assert!(result.is_err(), "非法布尔值应导致 apply_env_overrides 失败");
-        assert!(
-            matches!(result, Err(BulwarkError::Config(ref msg)) if msg.contains("invalid boolean")),
-            "应返回 'invalid boolean' 错误，实际: {:?}",
-            result
-        );
+        let result = BulwarkConfig::load(None);
+        assert!(result.is_err(), "非法布尔值应导致 load 失败");
+        assert!(matches!(result, Err(BulwarkError::Config(_))));
         std::env::remove_var("BULWARK_IS_READ_COOKIE");
     }
 
-    /// 验证 BULWARK_IS_READ_HEADER 非法布尔值时 apply_env_overrides 抛错。
-    ///
-    /// 覆盖 `apply_env_overrides` 中 `parse_bool(&v)?` 错误路径（IS_READ_HEADER 分支）。
+    /// 验证 BULWARK_IS_READ_HEADER 非法布尔值时 load 抛错。
     #[test]
     #[serial]
     fn env_invalid_is_read_header_errors() {
         std::env::set_var("BULWARK_IS_READ_HEADER", "yesno");
-        let config = BulwarkConfig::default_config();
-        let result = DefaultConfigLoader::apply_env_overrides(config);
+        let result = BulwarkConfig::load(None);
         assert!(result.is_err());
         assert!(matches!(result, Err(BulwarkError::Config(_))));
         std::env::remove_var("BULWARK_IS_READ_HEADER");
     }
 
-    /// 验证 BULWARK_IS_WRITE_HEADER 非法布尔值时 apply_env_overrides 抛错。
-    ///
-    /// 覆盖 `apply_env_overrides` 中 `parse_bool(&v)?` 错误路径（IS_WRITE_HEADER 分支）。
+    /// 验证 BULWARK_IS_WRITE_HEADER 非法布尔值时 load 抛错。
     #[test]
     #[serial]
     fn env_invalid_is_write_header_errors() {
         std::env::set_var("BULWARK_IS_WRITE_HEADER", "unknown");
-        let config = BulwarkConfig::default_config();
-        let result = DefaultConfigLoader::apply_env_overrides(config);
+        let result = BulwarkConfig::load(None);
         assert!(result.is_err());
         assert!(matches!(result, Err(BulwarkError::Config(_))));
         std::env::remove_var("BULWARK_IS_WRITE_HEADER");
     }
 
-    /// 验证 BULWARK_THROW_ON_NOT_LOGIN 非法布尔值时 apply_env_overrides 抛错。
-    ///
-    /// 覆盖 `apply_env_overrides` 中 `parse_bool(&v)?` 错误路径（THROW_ON_NOT_LOGIN 分支）。
+    /// 验证 BULWARK_THROW_ON_NOT_LOGIN 非法布尔值时 load 抛错。
     #[test]
     #[serial]
     fn env_invalid_throw_on_not_login_errors() {
         std::env::set_var("BULWARK_THROW_ON_NOT_LOGIN", "yes_no");
-        let config = BulwarkConfig::default_config();
-        let result = DefaultConfigLoader::apply_env_overrides(config);
+        let result = BulwarkConfig::load(None);
         assert!(result.is_err());
         assert!(matches!(result, Err(BulwarkError::Config(_))));
         std::env::remove_var("BULWARK_THROW_ON_NOT_LOGIN");
     }
 
-    /// 验证 BULWARK_ACTIVE_TIMEOUT 非数字时 apply_env_overrides 抛错。
-    ///
-    /// 覆盖 `apply_env_overrides` 中 ACTIVE_TIMEOUT 分支的 parse 错误路径。
+    /// 验证 BULWARK_ACTIVE_TIMEOUT 非数字时 load 抛错。
     #[test]
     #[serial]
     fn env_invalid_active_timeout_errors() {
         std::env::set_var("BULWARK_ACTIVE_TIMEOUT", "not-a-number");
-        let config = BulwarkConfig::default_config();
-        let result = DefaultConfigLoader::apply_env_overrides(config);
+        let result = BulwarkConfig::load(None);
         assert!(result.is_err());
-        assert!(
-            matches!(result, Err(BulwarkError::Config(ref msg)) if msg.contains("ACTIVE_TIMEOUT invalid")),
-            "应包含 'ACTIVE_TIMEOUT invalid'，实际: {:?}",
-            result
-        );
         std::env::remove_var("BULWARK_ACTIVE_TIMEOUT");
     }
 
-    /// 验证 BULWARK_TOKEN_STYLE 非法值导致 apply_env_overrides 校验失败。
-    ///
-    /// 覆盖 `apply_env_overrides` 末尾 `config.validate()?` 错误路径
-    /// （环境变量覆盖后配置校验未通过）。
+    /// 验证 BULWARK_TOKEN_STYLE 非法值导致 load 校验失败。
     #[test]
     #[serial]
     fn env_invalid_token_style_fails_validation() {
         std::env::set_var("BULWARK_TOKEN_STYLE", "unknown_style");
-        let config = BulwarkConfig::default_config();
-        let result = DefaultConfigLoader::apply_env_overrides(config);
+        let result = BulwarkConfig::load(None);
         assert!(result.is_err());
         assert!(
             matches!(result, Err(BulwarkError::Config(ref msg)) if msg.contains("unknown token_style")),
@@ -1105,16 +1038,12 @@ jwt_secret = "test-secret""#;
         std::env::remove_var("BULWARK_TOKEN_STYLE");
     }
 
-    /// 验证 BULWARK_TIMEOUT 负值导致 apply_env_overrides 校验失败。
-    ///
-    /// 覆盖 `apply_env_overrides` 末尾 `config.validate()?` 错误路径
-    /// （环境变量覆盖后 timeout 非法）。
+    /// 验证 BULWARK_TIMEOUT 负值导致 load 校验失败。
     #[test]
     #[serial]
     fn env_negative_timeout_fails_validation() {
         std::env::set_var("BULWARK_TIMEOUT", "-100");
-        let config = BulwarkConfig::default_config();
-        let result = DefaultConfigLoader::apply_env_overrides(config);
+        let result = BulwarkConfig::load(None);
         assert!(result.is_err());
         assert!(
             matches!(result, Err(BulwarkError::Config(ref msg)) if msg.contains("timeout must be positive")),
@@ -1124,42 +1053,8 @@ jwt_secret = "test-secret""#;
         std::env::remove_var("BULWARK_TIMEOUT");
     }
 
-    /// 验证通过 `ConfigLoader` trait 调用 `load_from_toml_str` 与具体类型一致。
-    ///
-    /// 覆盖 trait 方法签名行（确保通过 trait dispatch 也能调用）。
-    #[test]
-    fn trait_dispatch_load_from_toml_str() {
-        let config: BulwarkConfig = <DefaultConfigLoader as ConfigLoader>::load_from_toml_str("")
-            .expect("通过 trait 调用应与具体类型行为一致");
-        assert_eq!(config.token_style, "uuid");
-        assert_eq!(config.timeout, DEFAULT_TIMEOUT);
-    }
-
-    /// 验证通过 `ConfigLoader` trait 调用 `apply_env_overrides` 与具体类型一致。
-    ///
-    /// 覆盖 trait 方法签名行（确保通过 trait dispatch 也能调用）。
-    #[test]
-    #[serial]
-    fn trait_dispatch_apply_env_overrides() {
-        let config = BulwarkConfig::default_config();
-        let result: BulwarkResult<BulwarkConfig> =
-            <DefaultConfigLoader as ConfigLoader>::apply_env_overrides(config);
-        assert!(result.is_ok());
-    }
-
-    /// 验证通过 `ConfigLoader` trait 调用 `load` 完整流程。
-    ///
-    /// 覆盖 trait 默认方法 `load` 的实现（调用 load_from_toml_str + apply_env_overrides）。
-    #[test]
-    #[serial_test::serial]
-    fn trait_dispatch_load_full_pipeline() {
-        let config: BulwarkConfig =
-            <DefaultConfigLoader as ConfigLoader>::load("").expect("通过 trait 调用 load 应成功");
-        assert_eq!(config.token_style, "uuid");
-    }
-
     // ========================================================================
-    // 0.2.0 新增字段环境变量覆盖测试（依据 spec protocol-jwt / protocol-sign / protocol-sso）
+    // 0.2.0 新增字段环境变量覆盖测试
     // ========================================================================
 
     /// 验证 `BULWARK_JWT_ALGORITHM` 环境变量覆盖 jwt_algorithm 字段。
@@ -1167,8 +1062,7 @@ jwt_secret = "test-secret""#;
     #[serial]
     fn env_overrides_jwt_algorithm() {
         std::env::set_var(format!("{}JWT_ALGORITHM", ENV_PREFIX), "HS512");
-        let config = BulwarkConfig::default_config();
-        let config = DefaultConfigLoader::apply_env_overrides(config).unwrap();
+        let config = BulwarkConfig::load(None).unwrap();
         assert_eq!(config.jwt_algorithm, "HS512");
         std::env::remove_var(format!("{}JWT_ALGORITHM", ENV_PREFIX));
     }
@@ -1178,8 +1072,7 @@ jwt_secret = "test-secret""#;
     #[serial]
     fn env_overrides_sign_window_seconds() {
         std::env::set_var(format!("{}SIGN_WINDOW_SECONDS", ENV_PREFIX), "600");
-        let config = BulwarkConfig::default_config();
-        let config = DefaultConfigLoader::apply_env_overrides(config).unwrap();
+        let config = BulwarkConfig::load(None).unwrap();
         assert_eq!(config.sign_window_seconds, 600);
         std::env::remove_var(format!("{}SIGN_WINDOW_SECONDS", ENV_PREFIX));
     }
@@ -1189,36 +1082,33 @@ jwt_secret = "test-secret""#;
     #[serial]
     fn env_overrides_sso_ticket_ttl_seconds() {
         std::env::set_var(format!("{}SSO_TICKET_TTL_SECONDS", ENV_PREFIX), "120");
-        let config = BulwarkConfig::default_config();
-        let config = DefaultConfigLoader::apply_env_overrides(config).unwrap();
+        let config = BulwarkConfig::load(None).unwrap();
         assert_eq!(config.sso_ticket_ttl_seconds, 120);
         std::env::remove_var(format!("{}SSO_TICKET_TTL_SECONDS", ENV_PREFIX));
     }
 
-    /// 验证 `BULWARK_SIGN_WINDOW_SECONDS` 非数字时 apply_env_overrides 抛错。
+    /// 验证 `BULWARK_SIGN_WINDOW_SECONDS` 非数字时 load 抛错。
     #[test]
     #[serial]
     fn env_overrides_sign_window_seconds_invalid() {
         std::env::set_var(format!("{}SIGN_WINDOW_SECONDS", ENV_PREFIX), "not-a-number");
-        let config = BulwarkConfig::default_config();
-        let result = DefaultConfigLoader::apply_env_overrides(config);
+        let result = BulwarkConfig::load(None);
         assert!(
             result.is_err(),
-            "非数字 SIGN_WINDOW_SECONDS 应导致 apply_env_overrides 失败"
+            "非数字 SIGN_WINDOW_SECONDS 应导致 load 失败"
         );
         std::env::remove_var(format!("{}SIGN_WINDOW_SECONDS", ENV_PREFIX));
     }
 
-    /// 验证 `BULWARK_SSO_TICKET_TTL_SECONDS` 非数字时 apply_env_overrides 抛错。
+    /// 验证 `BULWARK_SSO_TICKET_TTL_SECONDS` 非数字时 load 抛错。
     #[test]
     #[serial]
     fn env_overrides_sso_ticket_ttl_seconds_invalid() {
         std::env::set_var(format!("{}SSO_TICKET_TTL_SECONDS", ENV_PREFIX), "abc");
-        let config = BulwarkConfig::default_config();
-        let result = DefaultConfigLoader::apply_env_overrides(config);
+        let result = BulwarkConfig::load(None);
         assert!(
             result.is_err(),
-            "非数字 SSO_TICKET_TTL_SECONDS 应导致 apply_env_overrides 失败"
+            "非数字 SSO_TICKET_TTL_SECONDS 应导致 load 失败"
         );
         std::env::remove_var(format!("{}SSO_TICKET_TTL_SECONDS", ENV_PREFIX));
     }

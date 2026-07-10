@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! # Bulwark
 //!
 //! Bulwark 是一个面向 Rust 生态的身份认证鉴权框架，借鉴 Sa-Token v1.45.0 的设计理念。
@@ -154,6 +157,9 @@ pub mod state;
 
 /// 配置模块，提供 BulwarkConfig 全局配置。
 pub mod config;
+
+/// 健康检查模块，提供 liveness/readiness 探针与依赖项健康检测。
+pub mod health;
 
 /// 上下文模块，提供请求/响应/存储上下文抽象。
 pub mod context;
