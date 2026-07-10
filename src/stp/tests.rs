@@ -2773,6 +2773,197 @@ async fn util_check_temp_token_delegates_to_logic() {
 }
 
 // ============================================================================
+// BulwarkUtil 同步方法（check_*_sync）测试
+// ============================================================================
+//
+// 测试约束：
+// - `#[tokio::test(flavor = "multi_thread")]`：`block_in_place` 要求 multi_thread runtime
+// - `#[serial]`：修改全局 BulwarkManager 单例
+// - `check_*_sync` 内部 `block_in_place + Handle::current().block_on` 在同 task 内安全
+// ============================================================================
+
+/// 验证 `check_login_sync` 在 multi_thread runtime 内正确委托 async `check_login`。
+///
+/// 测试逻辑：
+/// 1. 初始化 BulwarkManager（mock DAO）
+/// 2. login 一个用户获取 token
+/// 3. 在 `current_token` task_local 作用域内调用 `check_login_sync()`
+/// 4. 验证返回 `Ok(true)`（已登录）
+///
+/// 设计说明：
+/// - `block_in_place` 将当前 worker 线程转为阻塞模式，`Handle::current().block_on`
+///   在当前 runtime 上执行 future，组合使用在 multi_thread runtime 内安全
+/// - task_local `CURRENT_TOKEN` 在同 task 内自动继承（block_in_place 不 spawn 新 task）
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn sync_check_login_works_in_runtime() {
+    init_global_manager(false);
+    let token = BulwarkUtil::login("1001").await.unwrap();
+
+    with_current_token(token, async {
+        let result = BulwarkUtil::check_login_sync();
+        assert!(
+            result.is_ok(),
+            "check_login_sync 应返回 Ok，实际: {:?}",
+            result
+        );
+        assert!(result.unwrap(), "已登录时 check_login_sync 应返回 Ok(true)");
+    })
+    .await;
+
+    BulwarkManager::reset_for_test();
+}
+
+/// 验证 `check_login_sync` 未登录时返回 Ok(false)（throw_on_not_login=false）。
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn sync_check_login_returns_false_when_not_logged_in() {
+    init_global_manager(false);
+    // 未设置 task_local，check_login_sync 应返回 Ok(false)
+    let result = BulwarkUtil::check_login_sync();
+    assert!(
+        result.is_ok(),
+        "check_login_sync 应返回 Ok，实际: {:?}",
+        result
+    );
+    assert!(
+        !result.unwrap(),
+        "未登录时 check_login_sync 应返回 Ok(false)"
+    );
+
+    BulwarkManager::reset_for_test();
+}
+
+/// 验证 `check_permission_sync` 已登录 + 持有权限时返回 Ok(())。
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn sync_check_permission_held_returns_ok() {
+    init_global_manager_with_perms(
+        false,
+        vec!["user:read".to_string()],
+        vec!["admin".to_string()],
+    );
+    let token = BulwarkUtil::login("1001").await.unwrap();
+
+    with_current_token(token, async {
+        let result = BulwarkUtil::check_permission_sync("user:read");
+        assert!(
+            result.is_ok(),
+            "持有权限时 check_permission_sync 应返回 Ok，实际: {:?}",
+            result
+        );
+    })
+    .await;
+
+    BulwarkManager::reset_for_test();
+}
+
+/// 验证 `check_role_sync` 已登录 + 持有角色时返回 Ok(())。
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn sync_check_role_held_returns_ok() {
+    init_global_manager_with_perms(
+        false,
+        vec!["user:read".to_string()],
+        vec!["admin".to_string()],
+    );
+    let token = BulwarkUtil::login("1001").await.unwrap();
+
+    with_current_token(token, async {
+        let result = BulwarkUtil::check_role_sync("admin");
+        assert!(
+            result.is_ok(),
+            "持有角色时 check_role_sync 应返回 Ok，实际: {:?}",
+            result
+        );
+    })
+    .await;
+
+    BulwarkManager::reset_for_test();
+}
+
+/// 验证 `check_access_token_sync` 已登录时返回 Ok(())。
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn sync_check_access_token_returns_ok_when_logged_in() {
+    init_global_manager(false);
+    let token = BulwarkUtil::login("1001").await.unwrap();
+
+    with_current_token(token, async {
+        let result = BulwarkUtil::check_access_token_sync();
+        assert!(
+            result.is_ok(),
+            "已登录时 check_access_token_sync 应返回 Ok，实际: {:?}",
+            result
+        );
+    })
+    .await;
+
+    BulwarkManager::reset_for_test();
+}
+
+/// 验证 `check_client_token_sync` 已登录时返回 Ok(())。
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn sync_check_client_token_returns_ok_when_logged_in() {
+    init_global_manager(false);
+    let token = BulwarkUtil::login("1001").await.unwrap();
+
+    with_current_token(token, async {
+        let result = BulwarkUtil::check_client_token_sync();
+        assert!(
+            result.is_ok(),
+            "已登录时 check_client_token_sync 应返回 Ok，实际: {:?}",
+            result
+        );
+    })
+    .await;
+
+    BulwarkManager::reset_for_test();
+}
+
+/// 验证 `check_temp_token_sync` 已登录时返回 Ok(())。
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn sync_check_temp_token_returns_ok_when_logged_in() {
+    init_global_manager(false);
+    let token = BulwarkUtil::login("1001").await.unwrap();
+
+    with_current_token(token, async {
+        let result = BulwarkUtil::check_temp_token_sync();
+        assert!(
+            result.is_ok(),
+            "已登录时 check_temp_token_sync 应返回 Ok，实际: {:?}",
+            result
+        );
+    })
+    .await;
+
+    BulwarkManager::reset_for_test();
+}
+
+/// 验证 `check_api_key_sync` 未设置 token 上下文时返回 Err。
+///
+/// 注意：`protocol-apikey` feature 关闭时 `check_api_key` 返回 Ok(())，
+/// 但未设置 token 上下文时 `BulwarkLogicDefault::check_api_key` 在
+/// `protocol-apikey` 启用时返回 NotLogin。本测试只验证方法不 panic
+/// 且返回 Result（具体错误类型依赖 feature 配置）。
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn sync_check_api_key_executes_without_panic() {
+    init_global_manager(false);
+    let token = BulwarkUtil::login("1001").await.unwrap();
+
+    with_current_token(token, async {
+        // 调用 check_api_key_sync 不应 panic（具体返回值依赖 protocol-apikey feature）
+        let _ = BulwarkUtil::check_api_key_sync("default");
+    })
+    .await;
+
+    BulwarkManager::reset_for_test();
+}
+
+// ============================================================================
 // BulwarkUtil::check_api_key 测试
 // ============================================================================
 

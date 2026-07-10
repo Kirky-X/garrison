@@ -11,6 +11,8 @@ use crate::stp::permission::PermissionLogic;
 use crate::stp::session::SessionLogic;
 use crate::stp::token::TokenLogic;
 use std::sync::Arc;
+use tokio::runtime::Handle;
+use tokio::task;
 
 // ============================================================================
 // JwtMode：JWT 校验模式
@@ -505,6 +507,129 @@ impl BulwarkUtil {
         crate::manager::BulwarkManager::logic()?
             .refresh_token(token)
             .await
+    }
+
+    // ========================================================================
+    // 同步版本（check_*_sync）：通过 block_in_place + Handle::current().block_on
+    // 包装 async 版本，供 sync fn 宏 wrapper 调用（v0.6.1 sync fn 支持）。
+    //
+    // 设计约束：
+    // - 必须在 tokio multi_thread runtime 上下文内调用（block_in_place 要求）
+    // - task_local `CURRENT_TOKEN` 自动继承（同 task 内）
+    // - 参数 `&str` 需 `.to_string()` 后 move 进 block_on future（'static 约束）
+    // ========================================================================
+
+    /// 同步版 [`check_login`](Self::check_login)。
+    ///
+    /// 在当前 tokio runtime 上阻塞执行 async `check_login`。
+    ///
+    /// # 返回
+    /// - `Ok(true)`: 当前已登录且 token 有效。
+    /// - `Ok(false)`: 未登录或 token 无效（`throw_on_not_login=false`）。
+    ///
+    /// # 错误
+    /// - `BulwarkManager` 未初始化：`BulwarkError::Session`。
+    /// - 未登录且 `throw_on_not_login=true`：`BulwarkError::Session`。
+    /// - 不在 tokio multi_thread runtime 上下文：panic（`block_in_place` 要求）。
+    pub fn check_login_sync() -> BulwarkResult<bool> {
+        task::block_in_place(|| Handle::current().block_on(Self::check_login()))
+    }
+
+    /// 同步版 [`check_permission`](Self::check_permission)。
+    ///
+    /// # 参数
+    /// - `perm`: 权限标识字符串。
+    ///
+    /// # 返回
+    /// 成功（持有权限）返回 `Ok(())`。
+    ///
+    /// # 错误
+    /// - `BulwarkManager` 未初始化：`BulwarkError::Session`。
+    /// - 未登录：`BulwarkError::NotLogin` 或降级为 `BulwarkError::NotPermission`。
+    /// - 未持有权限：`BulwarkError::NotPermission`。
+    /// - 不在 tokio multi_thread runtime 上下文：panic。
+    pub fn check_permission_sync(perm: &str) -> BulwarkResult<()> {
+        let perm = perm.to_string();
+        task::block_in_place(|| Handle::current().block_on(Self::check_permission(&perm)))
+    }
+
+    /// 同步版 [`check_role`](Self::check_role)。
+    ///
+    /// # 参数
+    /// - `role`: 角色标识字符串。
+    ///
+    /// # 返回
+    /// 成功（持有角色）返回 `Ok(())`。
+    ///
+    /// # 错误
+    /// - `BulwarkManager` 未初始化：`BulwarkError::Session`。
+    /// - 未登录：`BulwarkError::NotLogin` 或降级为 `BulwarkError::NotRole`。
+    /// - 未持有角色：`BulwarkError::NotRole`。
+    /// - 不在 tokio multi_thread runtime 上下文：panic。
+    pub fn check_role_sync(role: &str) -> BulwarkResult<()> {
+        let role = role.to_string();
+        task::block_in_place(|| Handle::current().block_on(Self::check_role(&role)))
+    }
+
+    /// 同步版 [`check_access_token`](Self::check_access_token)。
+    ///
+    /// # 返回
+    /// - `Ok(())`: 当前会话 token 有效（已登录）。
+    ///
+    /// # 错误
+    /// - `BulwarkManager` 未初始化：`BulwarkError::Session`。
+    /// - 未登录：`BulwarkError::NotLogin`。
+    /// - 不在 tokio multi_thread runtime 上下文：panic。
+    pub fn check_access_token_sync() -> BulwarkResult<()> {
+        task::block_in_place(|| Handle::current().block_on(Self::check_access_token()))
+    }
+
+    /// 同步版 [`check_client_token`](Self::check_client_token)。
+    ///
+    /// # 返回
+    /// - `Ok(())`: 当前会话 token 有效（已登录）。
+    ///
+    /// # 错误
+    /// - `BulwarkManager` 未初始化：`BulwarkError::Session`。
+    /// - 未登录：`BulwarkError::NotLogin`。
+    /// - 不在 tokio multi_thread runtime 上下文：panic。
+    pub fn check_client_token_sync() -> BulwarkResult<()> {
+        task::block_in_place(|| Handle::current().block_on(Self::check_client_token()))
+    }
+
+    /// 同步版 [`check_temp_token`](Self::check_temp_token)。
+    ///
+    /// # 返回
+    /// - `Ok(())`: 当前会话 token 有效（已登录）。
+    ///
+    /// # 错误
+    /// - `BulwarkManager` 未初始化：`BulwarkError::Session`。
+    /// - 未登录：`BulwarkError::NotLogin`。
+    /// - 不在 tokio multi_thread runtime 上下文：panic。
+    pub fn check_temp_token_sync() -> BulwarkResult<()> {
+        task::block_in_place(|| Handle::current().block_on(Self::check_temp_token()))
+    }
+
+    /// 同步版 [`check_api_key`](Self::check_api_key)。
+    ///
+    /// # 参数
+    /// - `namespace`: 命名空间标识，用于隔离不同业务的 API Key。
+    ///
+    /// # 返回
+    /// - `Ok(())`: API Key 有效。
+    /// - `Err(BulwarkError::Session)`: `BulwarkManager` 未初始化 或 未设置当前请求上下文。
+    /// - `Err(BulwarkError::InvalidToken)`: API Key 不存在或已吊销。
+    /// - `Err(BulwarkError::ExpiredToken)`: API Key 已过期。
+    ///
+    /// # 兼容性
+    ///
+    /// `protocol-apikey` feature 关闭时，本方法返回 `Ok(())`。
+    ///
+    /// # 错误（runtime）
+    /// - 不在 tokio multi_thread runtime 上下文：panic。
+    pub fn check_api_key_sync(namespace: &str) -> BulwarkResult<()> {
+        let namespace = namespace.to_string();
+        task::block_in_place(|| Handle::current().block_on(Self::check_api_key(&namespace)))
     }
 
     /// 获取当前 `BulwarkConfig` 引用（用于 extractor / middleware 等需要配置的场景）。
