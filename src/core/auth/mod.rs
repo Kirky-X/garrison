@@ -410,7 +410,7 @@ impl AuthLogic for AuthLogicDefault {
             .token_handler
             .generate(&old_ts.login_id, self.timeout)?;
 
-        // 4. 构建新 TokenSession（复制 attrs + device）
+        // 4. 构建新 TokenSession（复制 attrs + device + ip + user_agent）
         let now = Utc::now().timestamp();
         let new_ts = TokenSession {
             token: new_token.clone(),
@@ -419,6 +419,8 @@ impl AuthLogic for AuthLogicDefault {
             last_active_at: now,
             attrs: old_ts.attrs.clone(),
             device: old_ts.device.clone(),
+            ip: old_ts.ip.clone(),
+            user_agent: old_ts.user_agent.clone(),
         };
 
         // 5. 保存新 Token-Session with remaining TTL

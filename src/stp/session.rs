@@ -317,14 +317,16 @@ impl BulwarkLogicDefault {
     /// login 实际逻辑（供 `login` 方法在 metrics 包装内调用）。
     ///
     /// 0.3.0 抽取此私有方法以保持 `login` trait 方法的 metrics 包装简洁。
-    async fn login_inner(&self, login_id: &str, _params: &LoginParams) -> BulwarkResult<String> {
+    async fn login_inner(&self, login_id: &str, params: &LoginParams) -> BulwarkResult<String> {
         // 登录前防火墙安全钩子检查
         // 任一 hook Err 阻断登录；未注入 hook 时为 no-op（向后兼容 0.2.x）
         let ctx = FirewallLoginContext::new(login_id);
         self.firewall.check_login_hooks(login_id, &ctx).await?;
 
         let token = self.generate_token(login_id)?;
-        self.login_with_token(login_id, &token).await?;
+        self.session
+            .create_token_session(login_id, &token, params)
+            .await?;
         // auto-wire: 触发 plugin on_login + listener Login 事件
         if let Some(pm) = &self.plugin_manager {
             pm.on_login(login_id, &token);
@@ -334,7 +336,7 @@ impl BulwarkLogicDefault {
             lm.broadcast(&BulwarkEvent::Login {
                 login_id: login_id.to_string(),
                 token: token.clone(),
-                device: _params.device.clone(),
+                device: params.device.clone(),
             })
             .await;
         }

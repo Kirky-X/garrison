@@ -92,6 +92,18 @@ pub struct TokenSession {
     /// `kickout_by_device` 按此字段过滤踢出。未设置时为 `None`，不参与设备级踢出。
     #[serde(default)]
     pub device: Option<String>,
+    /// 客户端 IP 地址。
+    ///
+    /// 由 `create_token_session` 在 login 时从 `LoginParams.ip` 写入。
+    /// 未设置时为 `None`。
+    #[serde(default)]
+    pub ip: Option<String>,
+    /// 客户端 User-Agent。
+    ///
+    /// 由 `create_token_session` 在 login 时从 `LoginParams.user_agent` 写入。
+    /// 未设置时为 `None`。
+    #[serde(default)]
+    pub user_agent: Option<String>,
 }
 
 /// 会话过期监听器 trait。
@@ -324,6 +336,54 @@ impl BulwarkSession {
     /// - DAO 写入失败：透传 `BulwarkError`。
     pub async fn create(&self, login_id: impl Into<String>, token: &str) -> BulwarkResult<()> {
         let login_id: String = login_id.into();
+        self.create_inner(&login_id, token, None, None, None).await
+    }
+
+    /// 创建 Token-Session 并写入 LoginParams 中的 device/ip/user_agent。
+    ///
+    /// 与 [`create`](Self::create) 的区别：将 `LoginParams` 的 device/ip/user_agent
+    /// 直接写入 `TokenSession` 对应字段，无需 login 后再调用 `set_device`。
+    ///
+    /// # 参数
+    /// - `login_id`: 登录主体标识。
+    /// - `token`: 新创建的 token 字符串。
+    /// - `params`: 登录参数（device/ip/user_agent/remember_me）。
+    ///
+    /// # 返回
+    /// 成功返回 `Ok(())`。
+    ///
+    /// # 错误
+    /// - 序列化 `TokenSession` / `AccountSession` 失败：`BulwarkError::Session`。
+    /// - DAO 写入失败：透传 `BulwarkError`。
+    pub async fn create_token_session(
+        &self,
+        login_id: &str,
+        token: &str,
+        params: &crate::stp::LoginParams,
+    ) -> BulwarkResult<()> {
+        self.create_inner(
+            login_id,
+            token,
+            params.device.as_deref(),
+            params.ip.as_deref(),
+            params.user_agent.as_deref(),
+        )
+        .await
+    }
+
+    /// create / create_token_session 共用内部实现。
+    ///
+    /// 在 per-login_id 锁内双写 Token-Session + Account-Session。
+    /// device/ip/user_agent 为 None 时对应字段留空（向后兼容 `create`）。
+    async fn create_inner(
+        &self,
+        login_id: &str,
+        token: &str,
+        device: Option<&str>,
+        ip: Option<&str>,
+        user_agent: Option<&str>,
+    ) -> BulwarkResult<()> {
+        let login_id: String = login_id.to_string();
         self.with_login_lock(&login_id, async {
             let now = Utc::now().timestamp();
 
@@ -334,7 +394,9 @@ impl BulwarkSession {
                 created_at: now,
                 last_active_at: now,
                 attrs: HashMap::new(),
-                device: None,
+                device: device.map(|s| s.to_string()),
+                ip: ip.map(|s| s.to_string()),
+                user_agent: user_agent.map(|s| s.to_string()),
             };
             let token_json = serde_json::to_string(&token_session)
                 .map_err(|e| BulwarkError::Session(format!("序列化 TokenSession 失败: {}", e)))?;
@@ -959,6 +1021,7 @@ impl BulwarkSession {
 mod tests {
     use super::*;
     use crate::dao::tests::MockDao;
+    use crate::stp::LoginParams;
     use async_trait::async_trait;
     use std::time::Duration;
 
@@ -2246,5 +2309,45 @@ mod tests {
             (now - ts.unwrap()).abs() < 1000,
             "last_active_time 应接近当前时间"
         );
+    }
+
+    // ------------------------------------------------------------------------
+    // create_token_session：LoginParams 写入 device/ip/user_agent
+    // ------------------------------------------------------------------------
+
+    /// 验证 `create_token_session` 将 LoginParams 中的 device/ip/user_agent 写入 TokenSession。
+    #[tokio::test]
+    async fn token_session_stores_ip_and_user_agent() {
+        let (_dao, session) = make_session(3600, 86400);
+        let params = LoginParams {
+            device: Some("web-chrome".to_string()),
+            ip: Some("192.168.1.100".to_string()),
+            user_agent: Some("Mozilla/5.0".to_string()),
+            remember_me: false,
+        };
+        session
+            .create_token_session("1001", "T1", &params)
+            .await
+            .unwrap();
+
+        let ts = session.get_token_session("T1").await.unwrap().unwrap();
+        assert_eq!(ts.device.as_deref(), Some("web-chrome"));
+        assert_eq!(ts.ip.as_deref(), Some("192.168.1.100"));
+        assert_eq!(ts.user_agent.as_deref(), Some("Mozilla/5.0"));
+    }
+
+    /// 验证 `create_token_session` 在 `LoginParams::default()` 时 device/ip/user_agent 全为 None。
+    #[tokio::test]
+    async fn token_session_defaults_to_none_when_no_params() {
+        let (_dao, session) = make_session(3600, 86400);
+        session
+            .create_token_session("1001", "T1", &LoginParams::default())
+            .await
+            .unwrap();
+
+        let ts = session.get_token_session("T1").await.unwrap().unwrap();
+        assert!(ts.device.is_none(), "device 应为 None");
+        assert!(ts.ip.is_none(), "ip 应为 None");
+        assert!(ts.user_agent.is_none(), "user_agent 应为 None");
     }
 }
