@@ -1,6 +1,3 @@
-# Bulwark - 身份认证鉴权框架
-# oxcache 与 dbnexus 均使用 crates.io 发布版本（owner: Kirky-X）。
-
 [package]
 name = "bulwark"
 version = "0.6.0"
@@ -38,11 +35,7 @@ async-trait = "0.1"
 parking_lot = "0.12"
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "v7", "serde"] }
-# http: 框架无关的 HeaderMap/HeaderName/HeaderValue，供 tenant.rs TenantResolver 使用
-# （actix/warp/axum 均基于 http crate，加为直接 dep 不增加构建开销）
 http = "1"
-# 0.5.1 新增：unicode-normalization 用于 permission 字符串 NFC 规范化（依据 spec P2.4）
-# 防止 Unicode 同形异义字攻击（NFD/NFC 等价但字节不同的字符串归一化）
 unicode-normalization = "0.1"
 
 # === Optional dependencies (feature-gated) ===
@@ -57,69 +50,38 @@ hmac = { version = "0.13", optional = true }
 base64 = { version = "0.22", optional = true }
 md5 = { version = "0.7", optional = true }
 base32 = { version = "0.5", optional = true }
-# 0.4.2 新增：密码哈希（argon2 0.5 + bcrypt 0.15），依据 spec secure-password
-# rand 用于生成 argon2 盐（OsRng），argon2 0.5 的 rand feature 依赖 rand 0.8
 argon2 = { version = "0.5", optional = true }
 bcrypt = { version = "0.15", optional = true }
 rand = { version = "0.8", optional = true }
-# 0.5.1 新增：zeroize 用于 account-credential-zeroize feature，hash/verify 后清零内部 password 副本
-# 0.6.0：启用 `derive` feature 以支持 `derive(Zeroize, ZeroizeOnDrop)` 派生宏（依据 spec credential-model R-credential-model-008）
 zeroize = { version = "1", optional = true, features = ["derive"] }
-# 0.6.0 新增：regex 用于 account-policy 的 RegexRule（自定义正则密码策略）
 regex = { version = "1", optional = true }
-# 0.5.1 新增：ua-parser 用于 UserDeviceRepository 的 UA 解析（依据 design.md D4/A4）
-# 仅解析引擎，不内置 regexes.yaml（1.5MB 资源延后到 ua-parser-precompiled feature）
-# 由 db-sqlite / db-postgres feature 启用，register_device 用简单字符串解析作为 fallback
 ua-parser = { version = "0.2", optional = true }
-# oxcache 0.3.3: L1 (moka) + L2 (redis) 两级缓存，默认 full features，0.3.3 支持 per-entry TTL + ttl_sync() 查询
 oxcache = { version = "0.3.3", optional = true }
-# dbnexus 0.3: 默认 sqlite + permission + sql-parser + macros + config-env + with-time
-# auto-migrate feature 由 db-sqlite feature 显式启用（提供 MigrationExecutor::run_migrations）
-# postgres / mysql features 由 db-postgres / db-mysql feature 启用（sea-orm/sqlx-* 驱动）
 # default-features = false：dbnexus 0.3+ 禁止 embedded(sqlite) 与 server-side(postgres) 混用，
 # 由 db-base feature 显式启用基础 features，db-sqlite / db-postgres 分别启用 sqlite / postgres。
 dbnexus = { version = "0.3", optional = true, default-features = false }
-# sea-orm: Repository 层参数化查询依赖（Statement/Value/ConnectionTrait），由 db-sqlite / db-postgres feature 启用。
 # dbnexus 未 re-export 这些类型，需显式声明为直接依赖。
 sea-orm = { version = "2.0.0-rc.37", default-features = false, features = ["sqlx-sqlite", "runtime-tokio-rustls"], optional = true }
 prometheus = { version = "0.14", optional = true }
-# 可观测性：tracing-subscriber 用于 JSON 日志，opentelemetry 用于分布式追踪
 tracing-subscriber = { version = "0.3", optional = true, features = ["fmt", "json", "env-filter"] }
 opentelemetry = { version = "0.30", optional = true, default-features = false, features = ["trace"] }
 opentelemetry_sdk = { version = "0.30", optional = true, default-features = false, features = ["trace", "rt-tokio"] }
 opentelemetry-otlp = { version = "0.30", optional = true, default-features = false, features = ["trace", "grpc-tonic"] }
-# tracing-opentelemetry 桥接 tracing span 与 OpenTelemetry trace
 tracing-opentelemetry = { version = "0.31", optional = true, default-features = false }
-# tonic 用于 gRPC interceptor（feature = "grpc"），需 transport feature 以启用 Interceptor trait
+# 需 transport feature 以启用 Interceptor trait
 tonic = { version = "0.13", optional = true, default-features = false, features = ["transport"] }
-# fluent-rs 用于异常消息 i18n（feature = "i18n"），支持中英文切换
 fluent = { version = "0.17", optional = true, default-features = false }
-# unic-langid 用于构造 LanguageIdentifier（fluent-rs 内部依赖，显式声明以直接使用）
+# fluent-rs 内部依赖，显式声明以直接使用
 unic-langid = { version = "0.9", optional = true, default-features = false }
-# 0.5.1 新增：miette 用于富错误渲染（M5，feature = "miette"）
-# 作为 Diagnostic trait 渲染层，保留 thiserror::Error derive 不替换
 miette = { version = "7", optional = true, default-features = false }
-# bulwark-macros 提供 #[check_login]/#[check_permission]/#[check_role] 过程宏
-# （feature = "annotation-macros"，依赖 web-axum 以使用 IntoResponse）
 bulwark-macros = { path = "bulwark-macros", version = "0.5.0", optional = true }
-# rsa 用于 social-alipay 的 RSA2（SHA256withRSA）签名（启用 sha2 + pem features）
 # 注意：rsa 0.9 内部依赖 sha2 0.10，与项目 sha2 0.11 不兼容，故用 `rsa::pkcs1v15::SigningKey` + `rsa::sha2::Sha256`（sha2 0.10 re-export）
 rsa = { version = "0.9", optional = true, features = ["sha2", "pem"] }
-# 0.5.1 新增：unicode-security 用于检测 Unicode 同形异义字（依据 design.md D10，L6）
-# 由 security-confusable feature 启用，启动时扫描 PermissionRegistry 中所有 permission name
 unicode-security = { version = "0.1", optional = true }
-# 0.5.3 新增：maxminddb 用于 Firewall MaxMindDb 生产后端（GeoIP2-City/Country 数据库查询）
-# 由 firewall-maxminddb feature 启用（依赖 firewall-geoip + firewall-anomalous）
 maxminddb = { version = "0.29", optional = true }
-# quick-xml 用于 SAML 2.0 XML 解析（依据 spec protocol-sso-federation R-001/002）
-# 由 protocol-sso feature 启用
 quick-xml = { version = "0.41", optional = true, default-features = false, features = ["serialize"] }
-# redis 用于 RedisPubSubSsoChannel 的 pub/sub 通信（依据 spec protocol-sso-federation R-005）
 # 版本 ~1.2 与 oxcache 0.3.3 间接依赖的 redis 保持一致
-# 由 cache-redis feature 启用
 redis = { version = "~1.2", optional = true, default-features = false, features = ["aio", "tokio-comp", "connection-manager"] }
-# futures 用于 Redis pub/sub stream 消费（StreamExt::next）
-# 由 cache-redis feature 启用
 futures = { version = "0.3", optional = true, default-features = false, features = ["std"] }
 
 [dev-dependencies]
@@ -129,21 +91,15 @@ mockall = "0.15"
 tempfile = "3.27"
 # serial_test 用于串行化依赖 std::env::set_var 的测试，避免多线程并发污染环境变量
 serial_test = "3"
-# tower 用于 axum 集成测试（oneshot Request）
 tower = { version = "0.5", default-features = false, features = ["util"] }
-# http-body-util 用于 axum 测试中的 body 读取
 http-body-util = "0.1"
-# wiremock 用于 OAuth2/SSO 集成测试的 HTTP mock（0.2.0 新增）
 wiremock = "0.6"
 # warp test feature 仅在测试时启用 warp::test 模块（不影响生产构建）
 warp = { version = "0.4", default-features = false, features = ["test"] }
-# rsa + rand 用于 keycloak-oidc 测试中生成 RSA 密钥对签发/验签 id_token（T115-T120）
 # rsa 0.9 已是 jsonwebtoken rust_crypto feature 的间接依赖，不增加构建开销
 rsa = "0.9"
 rand = "0.8"
-# testcontainers 用于 MySQL 集成测试（自动启动 Docker 容器，依据 tasks.md T027-T040）
 testcontainers = "0.27"
-# criterion 用于基准测试（0.6.1 新增，依据 spec benchmark-framework E-006）
 criterion = { version = "0.5", features = ["html_reports"] }
 
 [features]
@@ -153,30 +109,30 @@ default = []
 # core / stp / annotation / router / dao / strategy / session / config / context / json / exception / manager / plugin
 # 这些模块无 feature flag，总是编译
 
-# === 核心扩展：决策溯源（0.5.0 新增，依据 spec decision-trace） ===
+# === 核心扩展：决策溯源 ===
 # 启用后 PermissionChecker::authorize 的实现者可填充 checked_permissions / matched_roles / trace_id 字段。
 # 不启用时这三字段为空 vec/None，仅保留 allowed 与 reason（性能优先）。
 decision-trace = []
 
-# === 核心扩展：权限注册表（0.5.1 新增，依据 spec permission-registry M3） ===
+# === 核心扩展：权限注册表 ===
 # 启用后通过 inventory::submit! 在编译期声明权限 -> required_roles 映射，
 # 启动时 PermissionRegistry::from_inventory() 收集所有静态注册项，
 # PermissionChecker::check_permission 前调用 validate() 校验权限已注册。
 permission-registry = []
 
-# === 核心扩展：请求对象式授权 API（0.5.1 新增，依据 spec authorize-api M4） ===
+# === 核心扩展：请求对象式授权 API ===
 # 启用后提供 Authorizer trait（公开 API，不假设具体实现），
 # 通过 blanket impl 任何 PermissionChecker 自动实现 Authorizer。
 # 依赖 decision-trace 以确保 Decision 的 trace 字段可用。
 authorize-api = ["decision-trace"]
 
-# === 核心扩展：显式 Manager API（0.5.1 新增，依据 spec manager-explicit M7） ===
+# === 核心扩展：显式 Manager API ===
 # 启用后提供显式 Manager struct（不依赖全局单例），通过 new(logic) 注入 BulwarkLogic，
 # 支持 authorize(req) / check_permission(login_id, perm) 实例方法。
 # 依赖 authorize-api 以复用 AuthRequest / Decision / Authorizer 类型。
 manager-explicit = ["authorize-api"]
 
-# === 核心扩展：多租户逻辑隔离（0.5.0 新增，依据 spec tenant-isolation） ===
+# === 核心扩展：多租户逻辑隔离 ===
 # 启用后 BulwarkDaoOxcache 的 set/get/delete 在 TENANT task_local 上下文存在时
 # 自动为 key prepend `tenant:{tid}:` 前缀，实现缓存层租户隔离。
 # 注意：Repository SQL 过滤不门控此 feature（始终生效，安全优先）。
@@ -185,7 +141,7 @@ tenant-isolation = []
 # === 聚合特性：等价于原 default，方便快速启用全部默认后端 ===
 all-defaults = ["cache-memory", "db-sqlite", "web-axum"]
 
-# === 缓存后端（通过 oxcache 0.2，默认 full 包含 L1 moka + L2 redis） ===
+# === 缓存后端（通过 oxcache，默认 full 包含 L1 moka + L2 redis） ===
 # cache-memory 与 cache-redis 均启用 oxcache（语义别名，区分用途）
 cache-memory = ["oxcache"]
 cache-redis = ["oxcache", "dep:redis", "dep:futures"]
@@ -216,7 +172,6 @@ db-postgres = ["db-base", "dbnexus/postgres"]
 db-mysql = ["db-base", "dbnexus/mysql"]
 
 # === 协议层插件 ===
-# 0.4.2 新增：PKCE (RFC 7636) 需要 sha2 (S256) + base64 (URL_SAFE_NO_PAD)
 protocol-oauth2 = ["reqwest", "sha2", "base64"]
 protocol-sso = ["reqwest", "dep:quick-xml", "sha2", "hmac", "base64"]
 protocol-jwt = ["jsonwebtoken", "sha2"]
@@ -225,11 +180,11 @@ protocol-apikey = []
 protocol-temp = []
 # protocol-zeroize：协议层密钥零化（Drop 时清零 secret 字段，防止内存残留）
 protocol-zeroize = ["zeroize"]
-# 0.4.0 新增：OIDC 扩展（id_token 签发/验证 + discovery endpoint），依赖 protocol-jwt + protocol-oauth2
+# OIDC 扩展（id_token 签发/验证 + discovery endpoint），依赖 protocol-jwt + protocol-oauth2
 protocol-oidc = ["protocol-jwt", "protocol-oauth2"]
-# 0.4.0 新增：OAuth2 Scope Handler 注册表（ScopeHandler trait + ScopeRegistry），依赖 protocol-oauth2
+# OAuth2 Scope Handler 注册表（ScopeHandler trait + ScopeRegistry），依赖 protocol-oauth2
 oauth2-scope-handler = ["protocol-oauth2"]
-# 0.4.0 新增：SSO Server 独立抽象（SsoServer trait + CenterIdConverter + SsoChannel），依赖 protocol-sso
+# SSO Server 独立抽象（SsoServer trait + CenterIdConverter + SsoChannel），依赖 protocol-sso
 protocol-sso-server = ["protocol-sso"]
 
 # === 安全模块 ===
@@ -237,13 +192,12 @@ secure-totp = ["totp-rs", "base32"]
 secure-sign = ["sha2", "hmac", "base64", "md5"]
 secure-httpbasic = ["base64"]
 secure-httpdigest = ["sha2", "base64", "md5"]
-# 0.5.1 新增：Unicode 同形异义字检测（依据 design.md D10，L6）
+# Unicode 同形异义字检测
 # 启用后提供 check_confusable 函数 + PermissionRegistry::register 集成（tracing::warn）
 secure-confusable = ["dep:unicode-security"]
 
-# === 账号安全引擎（0.6.0 新增，吸收 keycloak 安全能力） ===
+# === 账号安全引擎 ===
 # account-credential：统一凭证模型 SPI（Credential trait + PasswordCredential + TotpCredential）
-# v0.6.0：PasswordHasher 从 secure-password 迁移到 account/credential/password.rs（破坏性迁移）
 account-credential = ["dep:argon2", "dep:bcrypt", "dep:rand"]
 # account-credential-zeroize：在 account-credential 基础上启用 zeroize
 account-credential-zeroize = ["account-credential", "zeroize"]
@@ -259,45 +213,42 @@ web-axum = ["axum", "axum/tokio", "axum/http1"]
 web-actix = ["actix-web"]
 web-warp = ["warp"]
 
-# === 0.4.2 新增：过程宏注解（#[check_login]/#[check_permission]/#[check_role]） ===
+# === 过程宏注解（#[check_login]/#[check_permission]/#[check_role]） ===
 # 依赖 web-axum（宏生成的 wrapper 返回 axum::response::Response）
 annotation-macros = ["dep:bulwark-macros", "web-axum"]
 
-# === 0.4.0 新增扩展 ===
+# === 扩展 ===
 # alone-cache：多 Redis 实例隔离（AloneCache 装饰器 + AloneCacheManager），无额外依赖
 alone-cache = []
 # parameter-query：参数化查询机制（ParameterQuery trait + Builder + async），无额外依赖
 parameter-query = []
 
-# === 0.5.0 新增：审计日志（依据 proposal H3） ===
+# === 审计日志 ===
 # audit-log 依赖 listener（AuditLogListener 实现 BulwarkListener trait）
 audit-log = ["listener"]
 
-# === 0.5.0 新增：安全防护套件（依据 proposal H5） ===
+# === 安全防护套件 ===
 # firewall 为基础 trait + FirewallContext + StrategyRegistration，无额外依赖
 firewall = []
-# 5 个独立 strategy 实现，各自依赖 firewall 基础 trait
+# 各 strategy 实现独立依赖 firewall 基础 trait
 # firewall-bruteforce / firewall-ratelimit / firewall-ddos 仅依赖 oxcache（通过 BulwarkDao 抽象）
-# firewall-anomalous / firewall-geoip 额外依赖 maxminddb（T087-T092 时添加）
 firewall-bruteforce = ["firewall"]
 firewall-ratelimit = ["firewall"]
-# firewall-anomalous：AnomalousLoginStrategy 已实现（haversine + 5 测试），生产 maxminddb 后端待 MaxMindDbGeoLookup 引入时添加
 firewall-anomalous = ["firewall"]
-# firewall-geoip：GeoIPStrategy 已实现（白/黑名单 + 9 测试），生产 maxminddb 后端待 MaxMindDbCountryLookup 引入时添加
 firewall-geoip = ["firewall"]
 firewall-ddos = ["firewall"]
 # firewall-maxminddb：生产 MaxMindDb 后端（MaxMindDbGeoLookup + MaxMindDbCountryLookup）
 # 依赖 firewall-geoip（CountryLookup）+ firewall-anomalous（GeoLookup）+ maxminddb crate
 firewall-maxminddb = ["dep:maxminddb", "firewall-geoip", "firewall-anomalous"]
 
-# === 0.5.0 新增：社交登录（依据 proposal H2 / spec social-login） ===
+# === 社交登录 ===
 # social-wechat：微信扫码登录（WechatProvider），依赖 protocol-oauth2（reqwest HTTP client）
 social-wechat = ["protocol-oauth2"]
 # social-alipay：支付宝授权登录（AlipayProvider），依赖 protocol-oauth2 + rsa 签名
 # 启用 rsa（含 sha2/pem features，用于 RSA2 签名 + PEM 解析）+ base64（签名值编码）
 social-alipay = ["protocol-oauth2", "rsa", "base64"]
 
-# === 0.5.0 新增：Keycloak OIDC RP（依据 proposal K1 / spec keycloak-oidc-rp） ===
+# === Keycloak OIDC RP ===
 # keycloak-oidc：Keycloak 作为 OIDC 依赖方（KeycloakProvider），依赖 protocol-oidc（JWKS 验签 + discovery）
 keycloak-oidc = ["protocol-oidc"]
 
@@ -311,10 +262,10 @@ observability-otlp = ["opentelemetry", "opentelemetry_sdk", "opentelemetry-otlp"
 grpc = ["tonic"]
 # 异常消息国际化（中英文切换，fluent-rs）
 i18n = ["fluent", "unic-langid"]
-# 0.5.1 新增：miette 富错误渲染（M5，依据 spec error R-error-001）
+# miette 富错误渲染
 # 启用后 BulwarkError 实现 miette::Diagnostic trait（保留 thiserror::Error derive）
 miette = ["dep:miette"]
-# 0.5.1 新增：声明式 JSON 测试套件（M6，依据 spec testing-suite D8）
+# 声明式 JSON 测试套件
 # 启用后提供 JsonTestSuite / JsonTestCase / TestReport 类型，支持从 JSON 文件
 # 加载测试用例并运行 Authorizer trait，输出测试报告。
 # 依赖 authorize-api（提供 Authorizer trait + AuthRequest/Decision 公开 API）。
@@ -338,7 +289,7 @@ full = [
     "social-wechat", "social-alipay",
 ]
 
-# production 使用 db-postgres（dbnexus 0.3+ 已支持 postgres feature，恢复 spec 原意）
+# production 使用 db-postgres（dbnexus 0.3+ 已支持 postgres feature）
 production = [
     "cache-redis", "db-postgres", "web-axum",
     "protocol-jwt", "protocol-sign", "secure-sign",
@@ -350,8 +301,7 @@ development = [
     "cache-memory", "db-sqlite", "web-axum",
 ]
 
-# === 示例文件已迁移为独立 workspace member（examples/） ===
-# 详见 examples/Cargo.toml，可通过 `cargo run -p bulwark-examples --bin <name> --features full` 运行
+# === 示例文件位于独立 workspace member（examples/），详见 examples/Cargo.toml ===
 
 [profile.dev]
 opt-level = 0
@@ -364,14 +314,14 @@ codegen-units = 1
 strip = true
 
 # === 测试目标 ===
-# db_mysql_testcontainers：MySQL 8.0 testcontainers 集成测试（依据 A-012 T028-T043）
+# db_mysql_testcontainers：MySQL 8.0 testcontainers 集成测试
 [[test]]
 name = "db_mysql_testcontainers"
 path = "tests/db_mysql_testcontainers.rs"
 required-features = ["db-mysql"]
 
 # === 基准测试目标 ===
-# bulwark_benchmark：criterion 基准测试套件（0.6.1 新增，依据 spec benchmark-framework E-006）
+# bulwark_benchmark：criterion 基准测试套件
 # 包含 4 个基准场景：login_flow / token_verify_stateless / permission_check / oxcache_backend_switch
 # harness = false：使用 criterion 自己的 main 函数（非标准 libtest harness）
 [[bench]]
