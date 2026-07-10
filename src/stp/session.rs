@@ -323,6 +323,20 @@ impl BulwarkLogicDefault {
         let ctx = FirewallLoginContext::new(login_id);
         self.firewall.check_login_hooks(login_id, &ctx).await?;
 
+        // is_share=true: 复用现有有效 token，不创建新会话
+        if self.config.is_share {
+            if let Some(existing_token) = self.session.get_token_by_login_id(login_id) {
+                // 验证 token 仍然有效（DAO 中存在且未过期）
+                if let Ok(Some(_ts)) = self.session.get_token_session(&existing_token).await {
+                    // touch 刷新活跃时间 + TTL
+                    self.session.touch(&existing_token).await?;
+                    return Ok(existing_token);
+                }
+                // token 已失效（DAO 中已过期/删除），清理 login_token_map 陈旧条目
+                self.session.remove_login_token(login_id, &existing_token);
+            }
+        }
+
         let token = self.generate_token(login_id)?;
         self.session
             .create_token_session(login_id, &token, params)

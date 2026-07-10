@@ -3404,3 +3404,51 @@ async fn login_with_default_params_creates_session() {
         .unwrap();
     assert_eq!(ts.login_id, "user-params-001");
 }
+
+// ============================================================================
+// v0.6.3 D2 T010: is_share 复用现有 token 测试
+// ========================================================================
+
+/// is_share=true 时，重复登录同一 login_id 应复用现有有效 token，不创建新会话。
+#[tokio::test]
+async fn login_with_is_share_reuses_existing_token() {
+    let mut logic = make_logic(3600, 86400, false, "uuid", true, true);
+    Arc::make_mut(&mut logic.config).is_share = true;
+
+    // 首次登录
+    let t1 = logic
+        .login("share-user-001", &LoginParams::default())
+        .await
+        .unwrap();
+
+    // 第二次登录（is_share=true 应复用 t1）
+    let t2 = logic
+        .login("share-user-001", &LoginParams::default())
+        .await
+        .unwrap();
+
+    assert_eq!(t1, t2, "is_share=true 应复用现有 token");
+}
+
+/// is_share=true 但无现有会话时，应创建新 token。
+#[tokio::test]
+async fn login_with_is_share_creates_new_when_no_existing() {
+    let mut logic = make_logic(3600, 86400, false, "uuid", true, true);
+    Arc::make_mut(&mut logic.config).is_share = true;
+
+    // 无现有会话时创建新 token
+    let token = logic
+        .login("share-user-002", &LoginParams::default())
+        .await
+        .unwrap();
+    assert!(!token.is_empty());
+
+    // 验证会话创建
+    let ts = logic
+        .session
+        .get_token_session(&token)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(ts.login_id, "share-user-002");
+}
