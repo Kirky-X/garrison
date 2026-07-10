@@ -5,13 +5,15 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
-## [0.6.1] - 2026-07-10
+## [0.6.1] - 2026-07-11
 
 ### 概述
 
-通过 specmark change `gap-closure-remaining`（T001-T011）补齐 origin 文档与代码实现之间的 11 项 gap，覆盖 remember-me 配置、Redis 部署模式、身份切换、Token 置换、OAuth2 注解、路由分组、会话过期回调、SAML 2.0 骨架、OIDC RP 骨架、Redis pub/sub SsoChannel。
+本版本包含两批变更：
 
-**至此，所有 origin 文档与代码实现之间的 gap 已全部关闭，零残留。**
+1. **gap-closure-remaining**（T001-T011）：补齐 origin 文档与代码实现之间的 11 项 gap，覆盖 remember-me 配置、Redis 部署模式、身份切换、Token 置换、OAuth2 注解、路由分组、会话过期回调、SAML 2.0 骨架、OIDC RP 骨架、Redis pub/sub SsoChannel。**至此，所有 origin 文档与代码实现之间的 gap 已全部关闭，零残留。**
+
+2. **v0.6.1-concurrency-syncfn-macro-enum**（T001-T016）：通过 specmark change 修复 4 项核心问题——并发安全、sync fn 宏支持、宏覆盖审计、字符串枚举化。
 
 ### 新增
 
@@ -73,6 +75,109 @@
 - `subscribe(topic, handler)`：spawn tokio task + `catch_unwind` 保护 handler panic
 - Feature gate：`cache-redis` + `protocol-sso-server`
 - Cargo.toml 新增 `futures` / `redis` / `quick-xml` 依赖
+
+### S1: 并发安全修复（v0.6.1-concurrency-syncfn-macro-enum）
+
+#### T001: 并发审计报告
+
+- 输出 13 个竞态条件报告到 `specmark/changes/v0.6.1-concurrency-syncfn-macro-enum/concurrency-audit.md`
+- 其中 R-001~R-004 为 HIGH（Account-Session read-modify-write 非原子序列）
+- 根因：`BulwarkDao` 仅提供 per-key 原子操作，无跨 key 事务
+
+#### T002: per-login_id 操作锁
+
+- `BulwarkSession` 新增 `login_locks: DashMap<String, Arc<tokio::sync::Mutex<()>>>` 字段
+- `with_login_lock` 异步闭包方法：按 login_id 串行化 create/logout/logout_by_login_id 操作
+- `logout` 拆分为 `logout`（获取锁）+ `logout_inner`（无锁，供 `kickout_by_device` 调用避免死锁）
+- 新增测试 `concurrent_login_same_user_creates_consistent_session`（SlowDao wrapper 放大竞态窗口）
+
+#### T003: task_local 上下文传播
+
+- 新增 `BulwarkContext` struct + `capture()` + `within(self, f)` 方法
+- 使用 `CURRENT_TOKEN.scope(token, f).await` 实现 task_local 跨 spawn 传播
+- 2 个测试：`task_local_propagates_across_spawn` / `bulwark_context_capture_without_token_propagates_none`
+
+#### T004: Plugin/Listener 线程安全审计
+
+- 输出审计报告到 `specmark/changes/v0.6.1-concurrency-syncfn-macro-enum/plugin-listener-thread-safety.md`
+- 结论：0 竞态、0 死锁风险
+- Plugin：init 后不可变（无 mutation 方法）
+- Listener：RwLock + 快照模式（clone Vec 后释放锁再 iterate）
+
+### S2: sync fn 宏支持
+
+#### T005: detect_asyncness 枚举
+
+- `require_async()` 替换为 `detect_asyncness(item_fn) -> Asyncness`（`Async`/`Sync` 两变体）
+- 不再拒绝 sync fn，为后续 sync 路径生成铺路
+
+#### T006: BulwarkUtil 同步方法
+
+- 新增 7 个 `check_*_sync()` 方法：`check_login_sync` / `check_permission_sync(perm)` / `check_role_sync(role)` / `check_access_token_sync` / `check_client_token_sync` / `check_temp_token_sync` / `check_api_key_sync(ns)`
+- 模式：`task::block_in_place(|| Handle::current().block_on(Self::check_login()))`
+- 8 个测试覆盖成功路径 + 未认证路径
+
+#### T007: expand_wrapper sync fn 分支
+
+- `expand_wrapper` 新增 `asyncness: Asyncness` 参数
+- Async 路径：生成 `async fn wrapper` + `.await` 调用
+- Sync 路径：生成 `fn wrapper` + `check_*_sync()` 调用
+- 新增 trybuild 编译测试：`sync_fn_pass.rs` + `async_fn_pass.rs`（各 8 个用例覆盖所有 7 个宏 + api_key namespace）
+
+### S3: 宏覆盖审计
+
+#### T008: 覆盖矩阵文档化
+
+- 在 `bulwark-macros/src/lib.rs` 模块文档添加 `# 覆盖矩阵` 段落
+- 7 个宏 × 13 个特性域的覆盖情况表格
+- 不新增宏代码，仅文档化现状
+
+### S4: 硬编码字符串枚举化
+
+#### T009: DaoKeyPrefix 枚举
+
+- 新建 `src/constants/mod.rs` + `src/constants/dao_keys.rs`
+- `DaoKeyPrefix` 枚举 8 变体：Session / Token / Captcha / Saml / Cred / Lockout / BruteForce / Tenant
+- `as_str()`（const fn）/ `build_key(id)` / `Display` 实现
+- 3 个单元测试
+
+#### T010: EventReason 枚举
+
+- 新建 `src/constants/events.rs`
+- `EventReason` 枚举 6 变体：InvalidCredentials / Expired / Revoked / Locked / Logout / Kickout
+- `as_str()`（const fn）/ `Display` 实现
+- 2 个单元测试
+
+#### T011: DAO key 前缀替换
+
+- 11 个文件共 20 处 `format!("prefix:{}", ...)` 替换为 `DaoKeyPrefix::Variant.build_key(...)`
+- 涉及文件：session/security_listener、strategy/hooks、session/mod、firewall/captcha_provider、protocol/sso/saml、account/credential/{mod,backup_code}、account/lockout、firewall/brute_force、dao/repository/role_hierarchy、dao/mod
+
+#### T012: 事件 reason 替换
+
+- `src/stp/password.rs` 2 处 `"invalid_credentials"` 替换为 `EventReason::InvalidCredentials.to_string()`
+- `src/stp/session.rs` 1 处 `"管理员强制下线"` **保留原样**（用户面向显示消息，非 reason code）
+- diting HIGH Issue-001 捕获并修复了 silent behavior change（Chinese → English）
+
+### 验证（v0.6.1-concurrency-syncfn-macro-enum）
+
+- `cargo test --features full --lib`：1817 passed; 0 failed
+- `cargo clippy --features full --lib --tests -- -D warnings`：零警告
+- `cargo clippy --features production -- -D warnings`：零警告
+- diting Full Review：0 Critical / 0 High（修复后）/ 3 Medium / 3 Low → Approved
+- tiangang SAST：cargo-audit 0 CRITICAL（1 MEDIUM rsa 无修复）/ semgrep 0 CRITICAL（2 ERROR 误报：测试 JWT token）
+- pre-commit hooks 全部通过
+
+### 变更
+
+- `Cargo.toml` version 0.6.0 → 0.6.1
+- `bulwark-macros/Cargo.toml` version 0.5.0 → 0.5.1（sync fn 宏支持为功能新增）
+
+### 已知限制
+
+- `DashMap login_locks` 无清理机制，长期运行可能内存增长（diting MEDIUM Issue-002，defer 到后续版本）
+- `block_in_place` 在单线程 runtime 不可用，4 个并发 sync fn 可能耗尽 worker（diting LOW Issue-006，文档化）
+- SAML namespace 检查基于前缀而非 URI，defense-in-depth 非完整方案（diting LOW Issue-005）
 
 ## [0.6.0] - 2026-07-09
 
