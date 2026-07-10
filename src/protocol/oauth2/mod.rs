@@ -207,6 +207,17 @@ impl OAuth2Client {
     /// 其他 scheme（如 `http://evil.com`）返回 `InvalidParam`，避免授权码经明文 HTTP
     /// 回调到公网域名被中间人截获。
     ///
+    /// # 安全说明
+    ///
+    /// 此函数仅校验 **传输层安全**（HTTPS or localhost），不做精确域名匹配。
+    /// 精确 redirect_uri 匹配（与客户端注册的回调地址比对）是**授权服务器的职责**，
+    /// 非客户端库的职责。使用本库构建授权服务器时，必须在此校验之上自行实现：
+    ///
+    /// 1. 精确字符串匹配（非前缀/子域名匹配）
+    /// 2. 防止路径遍历（如 `https://app.com/../evil`）
+    /// 3. 防止参数注入（如 `https://app.com/callback?redirect=evil`）
+    /// 4. 防止 fragment 泄漏（如 `https://app.com/callback#code=xxx`）
+    ///
     /// # 参数
     /// - `redirect_uri`: 回调地址字符串。
     ///

@@ -265,6 +265,9 @@ fn parse_saml_response_xml(xml: &str) -> BulwarkResult<SamlResponse> {
 
             // Start 元素：设置状态标志 + 提取属性
             Ok(Event::Start(e)) => {
+                if !check_saml_namespace(e.name().as_ref()) {
+                    continue;
+                }
                 let local_name = extract_local_name(e.name().as_ref());
                 match local_name.as_str() {
                     "Response" => {
@@ -320,6 +323,9 @@ fn parse_saml_response_xml(xml: &str) -> BulwarkResult<SamlResponse> {
 
             // Empty 元素（自闭合如 <StatusCode Value="..."/>）：仅提取属性
             Ok(Event::Empty(e)) => {
+                if !check_saml_namespace(e.name().as_ref()) {
+                    continue;
+                }
                 let local_name = extract_local_name(e.name().as_ref());
                 match local_name.as_str() {
                     "StatusCode" => {
@@ -337,6 +343,15 @@ fn parse_saml_response_xml(xml: &str) -> BulwarkResult<SamlResponse> {
                         }
                     },
                     "AttributeValue" if in_attribute => {
+                        if assertion_attributes
+                            .iter()
+                            .any(|(n, _)| n == &current_attr_name)
+                        {
+                            tracing::warn!(
+                                attr_name = %current_attr_name,
+                                "SAML Assertion 包含重复属性名，可能为属性污染攻击"
+                            );
+                        }
                         assertion_attributes.push((current_attr_name.clone(), String::new()));
                     },
                     _ => {},
@@ -380,6 +395,15 @@ fn parse_saml_response_xml(xml: &str) -> BulwarkResult<SamlResponse> {
                     },
                     "Attribute" => {
                         if in_attribute {
+                            if assertion_attributes
+                                .iter()
+                                .any(|(n, _)| n == &current_attr_name)
+                            {
+                                tracing::warn!(
+                                    attr_name = %current_attr_name,
+                                    "SAML Assertion 包含重复属性名，可能为属性污染攻击"
+                                );
+                            }
                             assertion_attributes
                                 .push((current_attr_name.clone(), current_text.clone()));
                             in_attribute = false;
@@ -487,6 +511,29 @@ fn extract_local_name(qualified: &[u8]) -> String {
     match full.rsplit_once(':') {
         Some((_, local)) => local.to_string(),
         None => full.to_string(),
+    }
+}
+
+/// 检查 XML 限定名的命名空间前缀是否为 SAML 允许的前缀。
+///
+/// 允许：`saml`、`samlp`、`ds`（XML 签名）、或无前缀（兼容无命名空间的 XML）。
+/// 不允许的前缀（如 `evil:Assertion`）记录告警，防止命名空间混淆攻击。
+///
+/// 返回 true 表示前缀合法，false 表示不合法（调用方可选择跳过该元素）。
+fn check_saml_namespace(qualified: &[u8]) -> bool {
+    let full = String::from_utf8_lossy(qualified);
+    match full.rsplit_once(':') {
+        Some((prefix, _)) => {
+            let valid = matches!(prefix, "saml" | "samlp" | "ds");
+            if !valid {
+                tracing::warn!(
+                    qualified = %full,
+                    "SAML XML 元素使用非标准命名空间前缀，可能为命名空间混淆攻击"
+                );
+            }
+            valid
+        },
+        None => true,
     }
 }
 
@@ -878,5 +925,95 @@ mod tests {
         assert_eq!(extract_local_name(b"samlp:Response"), "Response");
         assert_eq!(extract_local_name(b"saml:Issuer"), "Issuer");
         assert_eq!(extract_local_name(b"Assertion"), "Assertion");
+    }
+
+    // ========================================================================
+    // H-2: SAML 命名空间强制测试
+    // ========================================================================
+
+    /// check_saml_namespace 接受合法前缀（saml/samlp/ds/无前缀）。
+    #[test]
+    fn check_saml_namespace_accepts_valid_prefixes() {
+        assert!(check_saml_namespace(b"samlp:Response"));
+        assert!(check_saml_namespace(b"saml:Assertion"));
+        assert!(check_saml_namespace(b"saml:Issuer"));
+        assert!(check_saml_namespace(b"ds:Signature"));
+        assert!(check_saml_namespace(b"Response")); // 无前缀
+        assert!(check_saml_namespace(b"Assertion")); // 无前缀
+    }
+
+    /// check_saml_namespace 拒绝非标准前缀（evil/foo/xs 等）。
+    #[test]
+    fn check_saml_namespace_rejects_invalid_prefixes() {
+        assert!(!check_saml_namespace(b"evil:Assertion"));
+        assert!(!check_saml_namespace(b"foo:Response"));
+        assert!(!check_saml_namespace(b"xs:Issuer"));
+        assert!(!check_saml_namespace(b"attack:Attribute"));
+    }
+
+    /// H-2: 非标准命名空间的 Assertion 被跳过（不解析为 Assertion）。
+    #[tokio::test]
+    async fn parse_saml_response_skips_invalid_namespace_assertion() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <evil:Assertion xmlns:evil="http://evil.example.com">
+    <Issuer>https://idp.example.com</Issuer>
+    <Subject>user@example.com</Subject>
+    <Audience>https://sp.example.com</Audience>
+    <SubjectConfirmationData NotOnOrAfter="2099-12-31T23:59:59Z"/>
+  </evil:Assertion>
+</Response>"#;
+        let result = parse_saml_response_xml(xml).expect("解析不应报错");
+        // evil:Assertion 应被跳过，response.assertion 应为 None
+        assert!(
+            result.assertion.is_none(),
+            "非标准命名空间的 Assertion 应被跳过"
+        );
+    }
+
+    // ========================================================================
+    // H-3: SAML 属性污染告警测试
+    // ========================================================================
+
+    /// H-3: 重复属性名的 Assertion 仍被解析（两个值都保留），但应触发告警。
+    #[tokio::test]
+    async fn parse_saml_response_with_duplicate_attributes_preserves_both() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Assertion ID="attr-dup-001">
+    <Issuer>https://idp.example.com</Issuer>
+    <Subject>user@example.com</Subject>
+    <Audience>https://sp.example.com</Audience>
+    <SubjectConfirmationData NotOnOrAfter="2099-12-31T23:59:59Z"/>
+    <AttributeStatement>
+      <Attribute Name="role">
+        <AttributeValue>user</AttributeValue>
+      </Attribute>
+      <Attribute Name="role">
+        <AttributeValue>admin</AttributeValue>
+      </Attribute>
+    </AttributeStatement>
+  </Assertion>
+</Response>"#;
+        let result = parse_saml_response_xml(xml).expect("解析不应报错");
+        // Assertion 会被 fail-closed 剥离（DefaultSamlProvider），但 parse_saml_response_xml
+        // 本身不做剥离——它返回原始解析结果。两个 role 属性都应保留。
+        let assertion = result
+            .assertion
+            .expect("parse_saml_response_xml 应返回 Assertion（剥离由 parse_response 负责）");
+        let roles: Vec<&str> = assertion
+            .attributes
+            .iter()
+            .filter(|(name, _)| name == "role")
+            .map(|(_, value)| value.as_str())
+            .collect();
+        assert_eq!(
+            roles.len(),
+            2,
+            "重复属性名应保留两个值（供消费方决策），实际: {:?}",
+            roles
+        );
+        assert!(roles.contains(&"user"));
+        assert!(roles.contains(&"admin"));
     }
 }

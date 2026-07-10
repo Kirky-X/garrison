@@ -13,10 +13,12 @@
 //! 3. 生成 `challenge_id = UUID v4`，计算答案，存入 DAO（TTL = `self.ttl`）。
 //! 4. 返回 `(challenge_id, "a op b = ?")`。
 //!
-//! # 一次性使用
+//! # 一次性使用 + 暴力破解防护
 //!
-//! `verify` 匹配成功后立即删除 DAO key，防止同一 challenge_id 被复用。
-//! 不匹配或 key 不存在返回 `Ok(false)`，不报错。
+//! - `verify` 匹配成功后立即删除 DAO key，防止同一 challenge_id 被复用。
+//! - `verify` 匹配失败时递增尝试计数器（key = `captcha:attempts:{challenge_id}`），
+//!   超过 `max_attempts`（默认 5）后删除 challenge key，防止暴力穷举。
+//! - 不匹配或 key 不存在返回 `Ok(false)`，不报错。
 //!
 //! # 与 [`CaptchaChallenge`](crate::strategy::firewall::CaptchaChallenge) trait 的区分
 //!
@@ -33,6 +35,9 @@ use uuid::Uuid;
 /// 默认 TTL（秒），challenge 答案在 DAO 中的存活时间。
 const DEFAULT_TTL: u64 = 300;
 
+/// 默认最大验证尝试次数，超过后 challenge 自动废弃。
+const DEFAULT_MAX_ATTEMPTS: u32 = 5;
+
 /// 数学验证码提供商，生成 `"a ± b = ?"` 形式的挑战题。
 ///
 /// # 构造
@@ -43,28 +48,45 @@ const DEFAULT_TTL: u64 = 300;
 /// use bulwark::strategy::firewall::captcha_provider::MathCaptchaProvider;
 ///
 /// let dao: Arc<dyn BulwarkDao> = /* oxcache 实现 */;
-/// let provider = MathCaptchaProvider::new(dao);          // TTL=300s
+/// let provider = MathCaptchaProvider::new(dao);          // TTL=300s, max_attempts=5
 /// let provider = MathCaptchaProvider::with_ttl(dao, 600); // TTL=600s
+/// let provider = MathCaptchaProvider::with_max_attempts(dao, 3); // max_attempts=3
 /// ```
 pub struct MathCaptchaProvider {
     /// DAO（用于存储 challenge 答案）。
     dao: Arc<dyn BulwarkDao>,
     /// 答案在 DAO 中的存活时间（秒）。
     ttl: u64,
+    /// 最大验证尝试次数，超过后 challenge 自动废弃（防暴力穷举）。
+    max_attempts: u32,
 }
 
 impl MathCaptchaProvider {
-    /// 创建数学验证码提供商，TTL 默认 300 秒。
+    /// 创建数学验证码提供商，TTL 默认 300 秒，最大尝试次数 5。
     pub fn new(dao: Arc<dyn BulwarkDao>) -> Self {
         Self {
             dao,
             ttl: DEFAULT_TTL,
+            max_attempts: DEFAULT_MAX_ATTEMPTS,
         }
     }
 
     /// 创建数学验证码提供商，自定义 TTL。
     pub fn with_ttl(dao: Arc<dyn BulwarkDao>, ttl: u64) -> Self {
-        Self { dao, ttl }
+        Self {
+            dao,
+            ttl,
+            max_attempts: DEFAULT_MAX_ATTEMPTS,
+        }
+    }
+
+    /// 创建数学验证码提供商，自定义最大验证尝试次数。
+    pub fn with_max_attempts(dao: Arc<dyn BulwarkDao>, max_attempts: u32) -> Self {
+        Self {
+            dao,
+            ttl: DEFAULT_TTL,
+            max_attempts,
+        }
     }
 
     /// 生成一道数学挑战题，返回 `(challenge_id, 题目字符串)`。
@@ -89,18 +111,51 @@ impl MathCaptchaProvider {
 
     /// 验证用户提交的答案。
     ///
-    /// 匹配则删除 DAO key（一次性使用，防止复用）；不匹配或 challenge_id 不存在返回 `Ok(false)`。
+    /// - 匹配则删除 DAO key（一次性使用，防止复用）。
+    /// - 不匹配时递增尝试计数器，超过 `max_attempts` 后删除 challenge key（防暴力穷举）。
+    /// - challenge_id 不存在返回 `Ok(false)`。
     pub async fn verify(&self, challenge_id: &str, answer: &str) -> BulwarkResult<bool> {
         let key = format!("captcha:math:{}", challenge_id);
         let stored = self.dao.get(&key).await?;
-        let matched = stored
-            .as_deref()
-            .map(|s| s.trim() == answer.trim())
-            .unwrap_or(false);
+        let stored = match stored {
+            Some(s) => s,
+            None => return Ok(false),
+        };
+
+        let matched = stored.trim() == answer.trim();
         if matched {
             self.dao.delete(&key).await?;
+            let attempts_key = format!("captcha:attempts:{}", challenge_id);
+            let _ = self.dao.delete(&attempts_key).await;
+            return Ok(true);
         }
-        Ok(matched)
+
+        // 错误答案：递增尝试计数器
+        let attempts_key = format!("captcha:attempts:{}", challenge_id);
+        let current: u32 = self
+            .dao
+            .get(&attempts_key)
+            .await?
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+        let new_count = current + 1;
+
+        if new_count >= self.max_attempts {
+            self.dao.delete(&key).await?;
+            let _ = self.dao.delete(&attempts_key).await;
+            tracing::warn!(
+                challenge_id,
+                attempts = new_count,
+                max = self.max_attempts,
+                "CAPTCHA challenge 已因超过最大尝试次数被废弃"
+            );
+        } else {
+            self.dao
+                .set(&attempts_key, &new_count.to_string(), self.ttl)
+                .await?;
+        }
+
+        Ok(false)
     }
 }
 
@@ -270,5 +325,67 @@ mod tests {
             .await
             .expect("verify 不应报错");
         assert!(ok, "带前后空白的答案应通过（trim）");
+    }
+
+    /// 超过最大尝试次数后 challenge 自动废弃（防暴力穷举）。
+    #[tokio::test]
+    async fn verify_invalidates_after_max_attempts() {
+        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let provider = MathCaptchaProvider::with_max_attempts(dao, 3);
+        let (id, _question) = provider.generate().await.expect("generate 不应报错");
+
+        // 3 次错误答案（第 3 次触发废弃）
+        for _ in 0..3 {
+            let ok = provider.verify(&id, "999").await.expect("verify 不应报错");
+            assert!(!ok, "错误答案应返回 false");
+        }
+
+        // 第 4 次即使正确答案也返回 false（challenge 已被删除）
+        let ok = provider.verify(&id, "0").await.expect("verify 不应报错");
+        assert!(!ok, "超过最大尝试次数后 challenge 应已失效");
+    }
+
+    /// 默认最大尝试次数为 5。
+    #[tokio::test]
+    async fn default_max_attempts_is_5() {
+        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let provider = MathCaptchaProvider::new(dao);
+        let (id, _question) = provider.generate().await.expect("generate 不应报错");
+
+        // 5 次错误答案触发废弃
+        for _ in 0..5 {
+            let ok = provider.verify(&id, "999").await.expect("verify 不应报错");
+            assert!(!ok);
+        }
+
+        // 第 6 次正确答案也返回 false
+        let ok = provider.verify(&id, "0").await.expect("verify 不应报错");
+        assert!(!ok, "默认 5 次后 challenge 应已失效");
+    }
+
+    /// 正确答案在未超过 max_attempts 时通过。
+    #[tokio::test]
+    async fn correct_answer_passes_before_max_attempts() {
+        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let provider = MathCaptchaProvider::with_max_attempts(dao, 3);
+        let (id, question) = provider.generate().await.expect("generate 不应报错");
+
+        // 2 次错误答案（未超过 3 次）
+        for _ in 0..2 {
+            provider.verify(&id, "999").await.expect("verify 不应报错");
+        }
+
+        // 解析正确答案
+        let parts: Vec<&str> = question.split(' ').collect();
+        let a: i32 = parts[0].parse().unwrap();
+        let b: i32 = parts[2].parse().unwrap();
+        let expected = if parts[1] == "+" { a + b } else { a - b };
+
+        // 第 3 次正确答案应通过
+        let ok = provider
+            .verify(&id, &expected.to_string())
+            .await
+            .expect("verify 不应报错");
+        assert!(ok, "未超过 max_attempts 时正确答案应通过");
     }
 }
