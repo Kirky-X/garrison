@@ -94,6 +94,13 @@ pub mod httpdigest;
 #[cfg(feature = "secure-confusable")]
 pub mod confusable;
 
+/// 敏感数据脱敏子模块。
+///
+/// 提供 [`SensitiveDataMasker`](masking::SensitiveDataMasker) 对手机号 / 身份证 / 邮箱 /
+/// 银行卡等敏感字段进行脱敏，支持对 `serde_json::Value` 递归脱敏。
+#[cfg(feature = "secure-masking")]
+pub mod masking;
+
 #[cfg(test)]
 mod tests {
     use super::*;

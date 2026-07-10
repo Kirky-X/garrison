@@ -242,7 +242,7 @@ pub mod web_warp;
 #[cfg(feature = "listener")]
 pub mod listener;
 
-/// 安全模块，提供 TOTP / 签名 / Basic / Digest / Unicode 同形异义字检测 验证。
+/// 安全模块，提供 TOTP / 签名 / Basic / Digest / Unicode 同形异义字检测 / 敏感数据脱敏 验证。
 ///
 /// 密码哈希能力已迁移到 `account::credential::password`（v0.6.0）。
 #[cfg(any(
@@ -251,6 +251,7 @@ pub mod listener;
     feature = "secure-httpbasic",
     feature = "secure-httpdigest",
     feature = "secure-confusable",
+    feature = "secure-masking",
 ))]
 pub mod secure;
 

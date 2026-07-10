@@ -1820,6 +1820,7 @@ mod tests {
     }
 
     impl MockExpiryListener {
+        #[allow(clippy::type_complexity)]
         fn new() -> (Self, Arc<std::sync::Mutex<Vec<(String, String)>>>) {
             let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
             (

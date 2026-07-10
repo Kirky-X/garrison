@@ -1212,19 +1212,13 @@ mod tests {
     /// R-005: parse_remember_me_param 各种输入解析正确。
     #[test]
     fn parse_remember_me_param_various_inputs() {
-        assert_eq!(parse_remember_me_param(Some("remember_me=true")), true);
-        assert_eq!(parse_remember_me_param(Some("remember_me=false")), false);
-        assert_eq!(
-            parse_remember_me_param(Some("remember_me=true&device=web")),
-            true
-        );
-        assert_eq!(
-            parse_remember_me_param(Some("device=web&remember_me=true")),
-            true
-        );
-        assert_eq!(parse_remember_me_param(Some("")), false);
-        assert_eq!(parse_remember_me_param(None), false);
-        assert_eq!(parse_remember_me_param(Some("remember_me=1")), false);
-        assert_eq!(parse_remember_me_param(Some("malformed")), false);
+        assert!(parse_remember_me_param(Some("remember_me=true")));
+        assert!(!parse_remember_me_param(Some("remember_me=false")));
+        assert!(parse_remember_me_param(Some("remember_me=true&device=web")));
+        assert!(parse_remember_me_param(Some("device=web&remember_me=true")));
+        assert!(!parse_remember_me_param(Some("")));
+        assert!(!parse_remember_me_param(None));
+        assert!(!parse_remember_me_param(Some("remember_me=1")));
+        assert!(!parse_remember_me_param(Some("malformed")));
     }
 }

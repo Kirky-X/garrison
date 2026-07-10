@@ -193,6 +193,8 @@ secure-httpdigest = ["dep:sha2", "base64", "md5"]
 # Unicode 同形异义字检测
 # 启用后提供 check_confusable 函数 + PermissionRegistry::register 集成（tracing::warn）
 secure-confusable = ["dep:unicode-security"]
+# 敏感数据脱敏（手机号 / 身份证 / 邮箱 / 银行卡 + JSON 递归脱敏），无额外依赖
+secure-masking = []
 
 # === 账号安全引擎 ===
 # account-credential：统一凭证模型 SPI（Credential trait + PasswordCredential + TotpCredential）
@@ -275,7 +277,7 @@ full = [
     "db-sqlite",
     "protocol-oauth2", "protocol-sso", "protocol-jwt", "protocol-sign", "protocol-apikey", "protocol-temp", "protocol-zeroize",
     "protocol-oidc", "oauth2-scope-handler", "protocol-sso-server",
-    "secure-totp", "secure-sign", "secure-httpbasic", "secure-httpdigest",
+    "secure-totp", "secure-sign", "secure-httpbasic", "secure-httpdigest", "secure-masking",
     "account-credential", "account-credential-zeroize", "account-policy", "account-lockout", "account-authflow",
     "web-axum", "web-actix", "web-warp",
     "alone-cache", "parameter-query",
