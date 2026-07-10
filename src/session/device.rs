@@ -71,6 +71,21 @@ impl DeviceManager {
         }
         Ok(devices)
     }
+
+    /// 踢出指定设备的会话。
+    ///
+    /// 委托 [`BulwarkSession::kickout_by_device`]，踢出指定 login_id 中
+    /// `device` 字段匹配的所有 TokenSession。
+    ///
+    /// # 参数
+    /// - `login_id`: 登录主体标识。
+    /// - `device`: 设备标识。
+    ///
+    /// # 错误
+    /// 透传 `BulwarkSession::kickout_by_device` 的错误。
+    pub async fn kickout_device(&self, login_id: &str, device: &str) -> BulwarkResult<()> {
+        self.session.kickout_by_device(login_id, device).await
+    }
 }
 
 /// 生成设备指纹：SHA-256(UA + IP)，截断 16 字节 hex = 32 字符。
@@ -158,5 +173,46 @@ mod tests {
         let mgr = DeviceManager::new(session);
         let devices = mgr.list_devices("nonexistent-user").await.unwrap();
         assert!(devices.is_empty(), "无会话时应返回空列表");
+    }
+
+    // ------------------------------------------------------------------------
+    // kickout_device
+    // ------------------------------------------------------------------------
+
+    /// 验证 kickout_device 踢出 device 匹配的会话，保留不匹配的会话。
+    #[tokio::test]
+    async fn kickout_device_removes_matching_session() {
+        let session = make_device_session(3600, 86400);
+
+        // 创建带 device="web" 的会话
+        let params = crate::stp::LoginParams {
+            device: Some("web".to_string()),
+            ..Default::default()
+        };
+        session
+            .create_token_session("user-kickout-001", "token-with-device", &params)
+            .await
+            .unwrap();
+
+        // 创建不带 device 的会话
+        session
+            .create("user-kickout-001", "token-no-device")
+            .await
+            .unwrap();
+
+        let mgr = DeviceManager::new(session.clone());
+        let result = mgr.kickout_device("user-kickout-001", "web").await;
+        assert!(result.is_ok(), "kickout_device 应成功");
+
+        // 带 device="web" 的会话应被踢出
+        let removed = session
+            .get_token_session("token-with-device")
+            .await
+            .unwrap();
+        assert!(removed.is_none(), "device 匹配的会话应被踢出");
+
+        // 不带 device 的会话应保留
+        let kept = session.get_token_session("token-no-device").await.unwrap();
+        assert!(kept.is_some(), "device 不匹配的会话应保留");
     }
 }
