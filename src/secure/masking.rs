@@ -128,24 +128,31 @@ impl SensitiveDataMasker {
 }
 
 /// 手机号脱敏：保留前 3 后 4，中间 `*` 填充。少于 7 位返回原值。
+///
+/// 使用 `chars()` 按字符索引切片，避免非 ASCII 字符（如中文、emoji）在字符中间
+/// 切割导致 panic。
 fn mask_phone(value: &str) -> String {
-    if value.len() < 7 {
+    let chars: Vec<char> = value.chars().collect();
+    if chars.len() < 7 {
         return value.to_string();
     }
-    let prefix = &value[..3];
-    let suffix = &value[value.len() - 4..];
-    let stars = "*".repeat(value.len() - 7);
+    let prefix: String = chars[..3].iter().collect();
+    let suffix: String = chars[chars.len() - 4..].iter().collect();
+    let stars = "*".repeat(chars.len() - 7);
     format!("{prefix}{stars}{suffix}")
 }
 
 /// 身份证号脱敏：保留前 3 后 4，中间 `*` 填充。少于 7 位返回原值。
+///
+/// 使用 `chars()` 按字符索引切片，避免非 ASCII 字符在字符中间切割导致 panic。
 fn mask_id_card(value: &str) -> String {
-    if value.len() < 7 {
+    let chars: Vec<char> = value.chars().collect();
+    if chars.len() < 7 {
         return value.to_string();
     }
-    let prefix = &value[..3];
-    let suffix = &value[value.len() - 4..];
-    let stars = "*".repeat(value.len() - 7);
+    let prefix: String = chars[..3].iter().collect();
+    let suffix: String = chars[chars.len() - 4..].iter().collect();
+    let stars = "*".repeat(chars.len() - 7);
     format!("{prefix}{stars}{suffix}")
 }
 
@@ -165,13 +172,16 @@ fn mask_email(value: &str) -> String {
 }
 
 /// 银行卡号脱敏：保留前 4 后 4，中间 `*` 填充。少于 8 位返回原值。
+///
+/// 使用 `chars()` 按字符索引切片，避免非 ASCII 字符在字符中间切割导致 panic。
 fn mask_bank_card(value: &str) -> String {
-    if value.len() < 8 {
+    let chars: Vec<char> = value.chars().collect();
+    if chars.len() < 8 {
         return value.to_string();
     }
-    let prefix = &value[..4];
-    let suffix = &value[value.len() - 4..];
-    let stars = "*".repeat(value.len() - 8);
+    let prefix: String = chars[..4].iter().collect();
+    let suffix: String = chars[chars.len() - 4..].iter().collect();
+    let stars = "*".repeat(chars.len() - 8);
     format!("{prefix}{stars}{suffix}")
 }
 
@@ -253,6 +263,29 @@ mod tests {
     fn mask_bank_card_short_returns_original() {
         let result = SensitiveDataMasker::mask_value(&MaskType::BankCard, "1234567");
         assert_eq!(result, "1234567");
+    }
+
+    /// T001-11: 手机号含多字节字符（中文）不应 panic。
+    /// "ab中cdefg" 字节 2..5 为 "中"（3 字节），旧实现 `&value[..3]` 切到字符中间会 panic。
+    #[test]
+    fn mask_phone_handles_multibyte_input() {
+        let result = SensitiveDataMasker::mask_value(&MaskType::Phone, "ab中cdefg");
+        assert!(!result.is_empty(), "多字节输入不应 panic 且应返回非空结果");
+    }
+
+    /// T001-12: 身份证含多字节字符不应 panic。
+    #[test]
+    fn mask_id_card_handles_multibyte_input() {
+        let result = SensitiveDataMasker::mask_value(&MaskType::IdCard, "ab中cdefg");
+        assert!(!result.is_empty(), "多字节输入不应 panic 且应返回非空结果");
+    }
+
+    /// T001-13: 银行卡含多字节字符不应 panic。
+    /// "ab中cdefg" 字节 2..5 为 "中"，旧实现 `&value[..4]` 切到字符中间会 panic。
+    #[test]
+    fn mask_bank_card_handles_multibyte_input() {
+        let result = SensitiveDataMasker::mask_value(&MaskType::BankCard, "ab中cdefg");
+        assert!(!result.is_empty(), "多字节输入不应 panic 且应返回非空结果");
     }
 
     // ========================================================================

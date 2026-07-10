@@ -39,12 +39,35 @@ impl CacheWarmupService {
     ///
     /// 扫描 DAO 中所有 `role:*` 和 `tenant:*` 键，逐个 `get()` 触发缓存填充，
     /// 返回加载统计。空数据库返回零统计，不报错。
+    ///
+    /// 当 DAO 后端不支持 `keys()`（返回 `NotImplemented`，如生产环境
+    /// `BulwarkDaoOxcache`）时，记录 `warn` 日志并返回零统计，不传播错误。
     pub async fn warmup(&self) -> BulwarkResult<WarmupStats> {
         let role_pattern = format!("{}*", DaoKeyPrefix::Role.as_str());
         let tenant_pattern = format!("{}*", DaoKeyPrefix::Tenant.as_str());
 
-        let role_keys = self.dao.keys(&role_pattern).await?;
-        let tenant_keys = self.dao.keys(&tenant_pattern).await?;
+        let role_keys = match self.dao.keys(&role_pattern).await {
+            Ok(keys) => keys,
+            Err(crate::error::BulwarkError::NotImplemented(_)) => {
+                tracing::warn!("DAO 后端不支持 keys()，缓存预热跳过");
+                return Ok(WarmupStats {
+                    roles_loaded: 0,
+                    tenants_loaded: 0,
+                });
+            },
+            Err(e) => return Err(e),
+        };
+        let tenant_keys = match self.dao.keys(&tenant_pattern).await {
+            Ok(keys) => keys,
+            Err(crate::error::BulwarkError::NotImplemented(_)) => {
+                tracing::warn!("DAO 后端不支持 keys()，缓存预热跳过");
+                return Ok(WarmupStats {
+                    roles_loaded: 0,
+                    tenants_loaded: 0,
+                });
+            },
+            Err(e) => return Err(e),
+        };
 
         let mut roles_loaded: u32 = 0;
         for key in &role_keys {
@@ -183,5 +206,69 @@ mod tests {
                 .cloned()
                 .collect())
         }
+    }
+
+    /// 模拟不支持 keys() 的 DAO（如生产环境 BulwarkDaoOxcache）。
+    ///
+    /// `keys()` 返回 `NotImplemented`，模拟 oxcache 后端无法扫描 key 的场景。
+    /// warmup 应捕获此错误并返回零统计，而非传播错误。
+    struct NoKeysDao;
+
+    impl NoKeysDao {
+        fn new() -> Self {
+            Self
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl BulwarkDao for NoKeysDao {
+        async fn get(&self, _key: &str) -> BulwarkResult<Option<String>> {
+            Ok(None)
+        }
+
+        async fn set(&self, _key: &str, _value: &str, _ttl_seconds: u64) -> BulwarkResult<()> {
+            Ok(())
+        }
+
+        async fn update(&self, _key: &str, _value: &str) -> BulwarkResult<()> {
+            Ok(())
+        }
+
+        async fn expire(&self, _key: &str, _seconds: u64) -> BulwarkResult<()> {
+            Ok(())
+        }
+
+        async fn delete(&self, _key: &str) -> BulwarkResult<()> {
+            Ok(())
+        }
+
+        async fn keys(&self, _pattern: &str) -> BulwarkResult<Vec<String>> {
+            Err(crate::error::BulwarkError::NotImplemented(
+                "keys 未实现：NoKeysDao 后端不支持 key scan".to_string(),
+            ))
+        }
+    }
+
+    /// warmup 在 DAO 不支持 keys() 时应返回零统计而非报错。
+    ///
+    /// 模拟生产环境 BulwarkDaoOxcache（keys 返回 NotImplemented），
+    /// warmup 应 warn 并返回 Ok(WarmupStats { 0, 0 })。
+    #[tokio::test]
+    async fn warmup_returns_zero_stats_when_keys_not_implemented() {
+        let dao = Arc::new(NoKeysDao::new());
+        let service = CacheWarmupService::new(dao);
+        let stats = service
+            .warmup()
+            .await
+            .expect("NotImplemented 应被捕获，不应传播");
+
+        assert_eq!(
+            stats,
+            WarmupStats {
+                roles_loaded: 0,
+                tenants_loaded: 0,
+            },
+            "keys() NotImplemented 时应返回零统计"
+        );
     }
 }

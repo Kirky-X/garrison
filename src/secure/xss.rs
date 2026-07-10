@@ -129,6 +129,67 @@ fn parse_tag(rest: &str) -> Option<(&str, bool, &str, &str)> {
     Some((name, is_closing, attrs, after))
 }
 
+/// 从属性段中移除 `on*` 事件处理器属性。
+///
+/// 扫描属性字符串，识别 `on` 开头后跟字母数字再跟 `=` 的属性名，移除整个
+/// `name=value` 片段。支持三种值形式：双引号、单引号、无引号（到空白为止）。
+///
+/// 不引入 regex crate，使用字节扫描实现。
+fn strip_event_handlers(attrs: &str) -> String {
+    let bytes = attrs.as_bytes();
+    let mut out = String::with_capacity(attrs.len());
+    let mut i = 0;
+    let mut last_copy = 0;
+
+    while i < bytes.len() {
+        let is_attr_start = i == 0 || bytes[i - 1].is_ascii_whitespace();
+        if is_attr_start && i + 2 <= bytes.len() && bytes[i] == b'o' && bytes[i + 1] == b'n' {
+            let mut j = i + 2;
+            while j < bytes.len() && bytes[j].is_ascii_alphanumeric() {
+                j += 1;
+            }
+            if j < bytes.len() && bytes[j] == b'=' {
+                out.push_str(&attrs[last_copy..i]);
+                j += 1;
+                if j < bytes.len() {
+                    match bytes[j] {
+                        b'"' => {
+                            j += 1;
+                            while j < bytes.len() && bytes[j] != b'"' {
+                                j += 1;
+                            }
+                            if j < bytes.len() {
+                                j += 1;
+                            }
+                        },
+                        b'\'' => {
+                            j += 1;
+                            while j < bytes.len() && bytes[j] != b'\'' {
+                                j += 1;
+                            }
+                            if j < bytes.len() {
+                                j += 1;
+                            }
+                        },
+                        _ => {
+                            while j < bytes.len() && !bytes[j].is_ascii_whitespace() {
+                                j += 1;
+                            }
+                        },
+                    }
+                }
+                last_copy = j;
+                i = j;
+                continue;
+            }
+        }
+        i += 1;
+    }
+
+    out.push_str(&attrs[last_copy..]);
+    out
+}
+
 /// 白名单模式：保留白名单内的标签（属性值仍转义），其余标签和纯文本中的特殊字符全部转义。
 fn sanitize_whitelist(input: &str, allowed: &[&'static str]) -> String {
     let mut out = String::with_capacity(input.len());
@@ -143,7 +204,8 @@ fn sanitize_whitelist(input: &str, allowed: &[&'static str]) -> String {
                         out.push('/');
                     }
                     out.push_str(name);
-                    escape_into(&mut out, attrs);
+                    let cleaned = strip_event_handlers(attrs);
+                    escape_into(&mut out, &cleaned);
                     out.push('>');
                     rest = after;
                 } else {
@@ -227,14 +289,14 @@ mod tests {
     }
 
     /// T008-2: 白名单标签的属性值中的特殊字符也要转义。
-    /// 白名单 `["b"]`，输入 `<b onclick="x">text</b>`
-    /// → `<b onclick=&quot;x&quot;>text</b>`。
+    /// 白名单 `["b"]`，输入 `<b class="x">text</b>`
+    /// → `<b class=&quot;x&quot;>text</b>`。
     #[test]
     fn whitelist_escapes_attributes() {
         let p = XssProtector::new(XssMode::Whitelist(vec!["b"]));
         assert_eq!(
-            p.sanitize("<b onclick=\"x\">text</b>"),
-            "<b onclick=&quot;x&quot;>text</b>"
+            p.sanitize("<b class=\"x\">text</b>"),
+            "<b class=&quot;x&quot;>text</b>"
         );
     }
 
@@ -251,5 +313,42 @@ mod tests {
     fn whitelist_empty_returns_empty() {
         let p = XssProtector::new(XssMode::Whitelist(vec!["b"]));
         assert_eq!(p.sanitize(""), "");
+    }
+
+    /// T008-5: 白名单标签的事件处理器属性（on*）应被移除。
+    /// 输入 `<b onclick=alert(1)>text</b>`，onclick 不应出现在输出中。
+    #[test]
+    fn whitelist_strips_event_handler_attributes() {
+        let protector = XssProtector::new(XssMode::Whitelist(vec!["b"]));
+        let result = protector.sanitize(r#"<b onclick=alert(1)>text</b>"#);
+        assert!(
+            !result.contains("onclick"),
+            "event handler attribute should be stripped, got: {}",
+            result
+        );
+    }
+
+    /// T008-6: 白名单标签的双引号包裹事件处理器属性也应被移除。
+    #[test]
+    fn whitelist_strips_quoted_event_handler_attributes() {
+        let protector = XssProtector::new(XssMode::Whitelist(vec!["b"]));
+        let result = protector.sanitize(r#"<b onclick="alert(1)">text</b>"#);
+        assert!(
+            !result.contains("onclick"),
+            "quoted event handler attribute should be stripped, got: {}",
+            result
+        );
+    }
+
+    /// T008-7: 白名单标签的单引号包裹事件处理器属性也应被移除。
+    #[test]
+    fn whitelist_strips_single_quoted_event_handler_attributes() {
+        let protector = XssProtector::new(XssMode::Whitelist(vec!["b"]));
+        let result = protector.sanitize(r#"<b onclick='alert(1)'>text</b>"#);
+        assert!(
+            !result.contains("onclick"),
+            "single-quoted event handler attribute should be stripped, got: {}",
+            result
+        );
     }
 }

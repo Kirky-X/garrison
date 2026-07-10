@@ -436,29 +436,47 @@ impl BulwarkLogicDefault {
         }
         // 悬停检查（仅 valid 时）
         if valid {
-            if let Ok(Some(ts)) = self.session.get_token_session(token).await {
-                if !self
-                    .session
-                    .check_hover_timeout(&ts.login_id, self.config.session_hover_timeout)
-                {
-                    let _ = self.session.logout(token).await;
-                    #[cfg(feature = "listener")]
-                    if let Some(lm) = &self.listener_manager {
-                        lm.broadcast(&BulwarkEvent::SessionTimeout {
-                            login_id: ts.login_id.clone(),
-                            token: token.to_string(),
-                        })
-                        .await;
-                    }
-                    if self.config.throw_on_not_login {
-                        return Err(BulwarkError::Session("会话悬停超时".to_string()));
-                    }
-                    return Ok(false);
-                }
-                self.session.update_last_active(&ts.login_id);
-            }
+            return self.check_and_update_hover(token).await;
         }
         Ok(valid)
+    }
+
+    /// 检查悬停超时并更新最后活跃时间。
+    ///
+    /// 仅在会话有效时调用。获取 token session 后检查悬停超时：
+    /// - 悬停未超时：更新 `last_active`，返回 `Ok(true)`。
+    /// - 悬停超时：执行 `logout` 并广播 `SessionTimeout` 事件。
+    ///   - `throw_on_not_login=true`：返回 `Err(Session)`。
+    ///   - `throw_on_not_login=false`：返回 `Ok(false)`。
+    /// - 无 token session（`get_token_session` 返回 `None` 或 `Err`）：返回 `Ok(true)`
+    ///   （无法检查悬停，视为有效，与原逻辑一致）。
+    ///
+    /// logout 失败时记录 `warn` 日志而非静默吞掉（Fix M-4）。
+    async fn check_and_update_hover(&self, token: &str) -> BulwarkResult<bool> {
+        if let Ok(Some(ts)) = self.session.get_token_session(token).await {
+            if !self
+                .session
+                .check_hover_timeout(&ts.login_id, self.config.session_hover_timeout)
+            {
+                if let Err(e) = self.session.logout(token).await {
+                    tracing::warn!(error = %e, "悬停超时 logout 失败");
+                }
+                #[cfg(feature = "listener")]
+                if let Some(lm) = &self.listener_manager {
+                    lm.broadcast(&BulwarkEvent::SessionTimeout {
+                        login_id: ts.login_id.clone(),
+                        token: token.to_string(),
+                    })
+                    .await;
+                }
+                if self.config.throw_on_not_login {
+                    return Err(BulwarkError::Session("会话悬停超时".to_string()));
+                }
+                return Ok(false);
+            }
+            self.session.update_last_active(&ts.login_id);
+        }
+        Ok(true)
     }
 
     /// Simple 模式：仅 session 校验，不验证 JWT 签名。
@@ -486,27 +504,7 @@ impl BulwarkLogicDefault {
         }
         // 悬停检查（仅 valid 时）
         if valid {
-            if let Ok(Some(ts)) = self.session.get_token_session(token).await {
-                if !self
-                    .session
-                    .check_hover_timeout(&ts.login_id, self.config.session_hover_timeout)
-                {
-                    let _ = self.session.logout(token).await;
-                    #[cfg(feature = "listener")]
-                    if let Some(lm) = &self.listener_manager {
-                        lm.broadcast(&BulwarkEvent::SessionTimeout {
-                            login_id: ts.login_id.clone(),
-                            token: token.to_string(),
-                        })
-                        .await;
-                    }
-                    if self.config.throw_on_not_login {
-                        return Err(BulwarkError::Session("会话悬停超时".to_string()));
-                    }
-                    return Ok(false);
-                }
-                self.session.update_last_active(&ts.login_id);
-            }
+            return self.check_and_update_hover(token).await;
         }
         Ok(valid)
     }
