@@ -25,6 +25,7 @@
 //! `CaptchaChallenge` 绑定 `FirewallContext`（按 IP/login_id 定位期望答案），
 //! `MathCaptchaProvider` 用 challenge_id 定位，不依赖上下文，是独立的验证码生成/验证组件。
 
+use crate::constants::DaoKeyPrefix;
 use crate::dao::BulwarkDao;
 use crate::error::BulwarkResult;
 use rand::rngs::OsRng;
@@ -103,7 +104,7 @@ impl MathCaptchaProvider {
             ('-', a - b)
         };
         let challenge_id = Uuid::new_v4().to_string();
-        let key = format!("captcha:math:{}", challenge_id);
+        let key = format!("{}math:{}", DaoKeyPrefix::Captcha, challenge_id);
         self.dao.set(&key, &answer.to_string(), self.ttl).await?;
         let question = format!("{} {} {} = ?", a, op, b);
         Ok((challenge_id, question))
@@ -115,7 +116,7 @@ impl MathCaptchaProvider {
     /// - 不匹配时递增尝试计数器，超过 `max_attempts` 后删除 challenge key（防暴力穷举）。
     /// - challenge_id 不存在返回 `Ok(false)`。
     pub async fn verify(&self, challenge_id: &str, answer: &str) -> BulwarkResult<bool> {
-        let key = format!("captcha:math:{}", challenge_id);
+        let key = format!("{}math:{}", DaoKeyPrefix::Captcha, challenge_id);
         let stored = self.dao.get(&key).await?;
         let stored = match stored {
             Some(s) => s,
@@ -125,13 +126,13 @@ impl MathCaptchaProvider {
         let matched = stored.trim() == answer.trim();
         if matched {
             self.dao.delete(&key).await?;
-            let attempts_key = format!("captcha:attempts:{}", challenge_id);
+            let attempts_key = format!("{}attempts:{}", DaoKeyPrefix::Captcha, challenge_id);
             let _ = self.dao.delete(&attempts_key).await;
             return Ok(true);
         }
 
         // 错误答案：递增尝试计数器
-        let attempts_key = format!("captcha:attempts:{}", challenge_id);
+        let attempts_key = format!("{}attempts:{}", DaoKeyPrefix::Captcha, challenge_id);
         let current: u32 = self
             .dao
             .get(&attempts_key)

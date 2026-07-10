@@ -20,6 +20,7 @@
 //! `verify_and_consume()` 校验通过后从列表中移除该哈希（一次性使用）。
 
 use super::{Credential, CredentialModel, CredentialType};
+use crate::constants::DaoKeyPrefix;
 use crate::dao::BulwarkDao;
 use crate::error::{BulwarkError, BulwarkResult};
 use async_trait::async_trait;
@@ -167,7 +168,12 @@ impl BackupCodeCredential {
         input: &str,
         dao: &dyn BulwarkDao,
     ) -> BulwarkResult<bool> {
-        let key = format!("cred:{}:{}", self.model.user_id, self.model.id);
+        let key = format!(
+            "{}{}:{}",
+            DaoKeyPrefix::Cred,
+            self.model.user_id,
+            self.model.id
+        );
         let json = match dao.get(&key).await? {
             Some(j) => j,
             None => {

@@ -16,6 +16,7 @@
 //!
 //! T012 将实现 `UserLockoutStrategy` + `BulwarkFirewallStrategy` trait。
 
+use crate::constants::DaoKeyPrefix;
 use crate::dao::BulwarkDao;
 use crate::error::{BulwarkError, BulwarkResult};
 use crate::strategy::firewall::{BulwarkFirewallStrategy, FirewallContext, StrategyRegistration};
@@ -175,7 +176,7 @@ impl UserLockoutStrategy {
 
     /// 读取用户锁定状态（不存在则返回默认空状态）。
     async fn get_state(&self, user_id: &str) -> BulwarkResult<LockoutState> {
-        let key = format!("lockout:{}", user_id);
+        let key = DaoKeyPrefix::Lockout.build_key(user_id);
         match self.dao.get(&key).await? {
             Some(json) => serde_json::from_str(&json)
                 .map_err(|e| BulwarkError::Dao(format!("反序列化 LockoutState 失败: {}", e))),
@@ -185,7 +186,7 @@ impl UserLockoutStrategy {
 
     /// 持久化用户锁定状态（TTL=0 永久存储，锁定状态不应自动过期）。
     async fn set_state(&self, user_id: &str, state: &LockoutState) -> BulwarkResult<()> {
-        let key = format!("lockout:{}", user_id);
+        let key = DaoKeyPrefix::Lockout.build_key(user_id);
         let json = serde_json::to_string(state)
             .map_err(|e| BulwarkError::Dao(format!("序列化 LockoutState 失败: {}", e)))?;
         self.dao.set(&key, &json, 0).await

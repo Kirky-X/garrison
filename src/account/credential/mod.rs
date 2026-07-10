@@ -32,6 +32,7 @@ pub mod totp;
 #[cfg(feature = "account-credential")]
 pub mod backup_code;
 
+use crate::constants::DaoKeyPrefix;
 use crate::dao::BulwarkDao;
 use crate::error::{BulwarkError, BulwarkResult};
 use async_trait::async_trait;
@@ -229,7 +230,7 @@ impl DaoCredentialRepository {
 
     /// 生成 DAO key：`cred:{user_id}:{cred_id}`。
     fn make_key(user_id: &str, cred_id: &str) -> String {
-        format!("cred:{}:{}", user_id, cred_id)
+        format!("{}{}:{}", DaoKeyPrefix::Cred, user_id, cred_id)
     }
 }
 
@@ -250,7 +251,7 @@ impl CredentialRepository for DaoCredentialRepository {
     }
 
     async fn find_by_user(&self, user_id: &str) -> BulwarkResult<Vec<CredentialModel>> {
-        let pattern = format!("cred:{}:*", user_id);
+        let pattern = format!("{}{}:*", DaoKeyPrefix::Cred, user_id);
         let keys = self.dao.keys(&pattern).await?;
         let mut result = Vec::with_capacity(keys.len());
         for key in keys {
@@ -294,7 +295,7 @@ impl CredentialRepository for DaoCredentialRepository {
 
     async fn delete(&self, credential_id: &str) -> BulwarkResult<()> {
         // credential_id 全局唯一（UUID v4），扫描 cred:*:{credential_id} 定位完整 key
-        let pattern = format!("cred:*:{}", credential_id);
+        let pattern = format!("{}*:{}", DaoKeyPrefix::Cred, credential_id);
         let keys = self.dao.keys(&pattern).await?;
         if keys.is_empty() {
             return Err(BulwarkError::InvalidParam(format!(

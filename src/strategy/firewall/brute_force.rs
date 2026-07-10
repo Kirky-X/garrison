@@ -28,6 +28,7 @@
 //! 审计文档 `temp/security-architecture-audit-round2.md` M4 已确认此方案为方案 C
 //! （接受统计近似性）。
 
+use crate::constants::DaoKeyPrefix;
 use crate::dao::BulwarkDao;
 use crate::error::{BulwarkError, BulwarkResult};
 use crate::strategy::firewall::{BulwarkFirewallStrategy, FirewallContext};
@@ -90,8 +91,8 @@ impl BruteForceStrategy {
 #[async_trait]
 impl BulwarkFirewallStrategy for BruteForceStrategy {
     async fn check(&self, ctx: &FirewallContext) -> BulwarkResult<()> {
-        let lock_key = format!("bf:{}:locked", ctx.ip);
-        let count_key = format!("bf:{}:count", ctx.ip);
+        let lock_key = format!("{}{}:locked", DaoKeyPrefix::BruteForce, ctx.ip);
+        let count_key = format!("{}{}:count", DaoKeyPrefix::BruteForce, ctx.ip);
 
         // 1. 锁定期内直接拦截（无论 count 是否过期）
         if self.dao.get(&lock_key).await?.is_some() {

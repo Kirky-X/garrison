@@ -21,6 +21,7 @@
 //! | Token 复用 | 已登出 Token 再次使用 | 阻断登录 |
 //! | 设备异常 | 未知设备指纹登录 | 阻断登录（0.3.0 简化：需设备库，无数据则 pass） |
 
+use crate::constants::DaoKeyPrefix;
 use crate::error::{BulwarkError, BulwarkResult};
 // listener_manager 注入（feature-gated）
 #[cfg(feature = "listener")]
@@ -477,7 +478,7 @@ impl BulwarkFirewallCheckHook for BulwarkFirewallCheckHookDefault {
         let Some(dao) = &self.dao else {
             return Ok(()); // 内存模式：无黑名单数据源
         };
-        let key = format!("token:blacklist:{}", ctx.login_id);
+        let key = format!("{}blacklist:{}", DaoKeyPrefix::Token, ctx.login_id);
         if dao.get(&key).await?.is_some() {
             return Err(BulwarkError::Session(format!(
                 "Token 复用检测：login_id={} 的 Token 已被列入黑名单",

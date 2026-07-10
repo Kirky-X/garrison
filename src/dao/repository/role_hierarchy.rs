@@ -52,6 +52,7 @@ pub struct RoleHierarchyRecord {
 #[cfg(feature = "db-sqlite")]
 mod service {
     use super::RoleHierarchyRecord;
+    use crate::constants::DaoKeyPrefix;
     use crate::dao::BulwarkDao;
     use crate::error::{BulwarkError, BulwarkResult};
     use dbnexus::DbPool;
@@ -227,7 +228,7 @@ mod service {
             role: &str,
             tenant_id: i64,
         ) -> BulwarkResult<HashSet<String>> {
-            let cache_key = format!("tenant:{}:role_closure", tenant_id);
+            let cache_key = format!("{}{}:role_closure", DaoKeyPrefix::Tenant, tenant_id);
 
             // 先查 oxcache
             if let Some(cached) = self.dao.get(&cache_key).await? {
@@ -303,7 +304,7 @@ mod service {
         /// # 错误
         /// - `BulwarkError::Dao`：缓存删除失败。
         pub async fn invalidate_cache(&self, tenant_id: i64) -> BulwarkResult<()> {
-            let cache_key = format!("tenant:{}:role_closure", tenant_id);
+            let cache_key = format!("{}{}:role_closure", DaoKeyPrefix::Tenant, tenant_id);
             self.dao.delete(&cache_key).await
         }
 

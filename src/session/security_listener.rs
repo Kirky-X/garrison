@@ -15,6 +15,7 @@
 //! 仅支持 IPv4 /24 网段比较（取前 3 段 `A.B.C` 作为网段标识）。
 //! IPv6 与无效 IP 格式不参与比较（返回 `None`，不阻断主流程）。
 
+use crate::constants::DaoKeyPrefix;
 use crate::dao::BulwarkDao;
 use crate::error::BulwarkResult;
 use std::sync::Arc;
@@ -79,7 +80,7 @@ impl SessionSecurityListener {
         login_id: &str,
         ip: &str,
     ) -> BulwarkResult<()> {
-        let key = format!("session:ip:{}", token);
+        let key = format!("{}ip:{}", DaoKeyPrefix::Session, token);
         self.dao.set(&key, ip, IP_RECORD_TTL).await?;
         tracing::info!(
             "记录登录 IP (token={}, login_id={}, ip={})",
@@ -113,7 +114,7 @@ impl SessionSecurityListener {
         token: &str,
         current_ip: &str,
     ) -> BulwarkResult<Option<String>> {
-        let key = format!("session:ip:{}", token);
+        let key = format!("{}ip:{}", DaoKeyPrefix::Session, token);
         let recorded_ip = match self.dao.get(&key).await? {
             Some(ip) => ip,
             None => return Ok(None), // 首次访问无记录，不告警

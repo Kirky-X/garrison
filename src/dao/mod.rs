@@ -385,6 +385,7 @@ mod oxcache_impl {
     use super::BulwarkDao;
     #[cfg(feature = "cache-redis")]
     use super::RedisConfig;
+    use crate::constants::DaoKeyPrefix;
     use crate::error::{BulwarkError, BulwarkResult};
     use async_trait::async_trait;
     use oxcache::Cache;
@@ -393,7 +394,7 @@ mod oxcache_impl {
     /// 根据租户上下文返回实际存储 key。
     ///
     /// - `tenant-isolation` feature 启用且 `TENANT.try_get()` 返回 `Ok(ctx)`：
-    ///   返回 `format!("tenant:{}:{}", ctx.tenant_id, key)`
+    ///   返回 `format!("{}{}:{}", DaoKeyPrefix::Tenant, ctx.tenant_id, key)`
     /// - feature 关闭或 `TENANT` 上下文不存在（`try_get` 返回 `Err`）：返回 `key.to_string()`（不变）
     ///
     /// # 设计
@@ -405,7 +406,7 @@ mod oxcache_impl {
         #[cfg(feature = "tenant-isolation")]
         {
             if let Ok(ctx) = crate::context::tenant::TENANT.try_get() {
-                return format!("tenant:{}:{}", ctx.tenant_id, key);
+                return format!("{}{}:{}", DaoKeyPrefix::Tenant, ctx.tenant_id, key);
             }
         }
         // feature 关闭或无 TENANT 上下文时 key 保持原样

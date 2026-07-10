@@ -46,6 +46,7 @@
 //!   Assertion ID（key = `saml:replay:{assertion_id}`），TTL 由 `not_on_or_after` 决定。
 //! - **fail-closed 剥离**：未验证的 Assertion 一律剥离，不会泄漏给调用方。
 
+use crate::constants::DaoKeyPrefix;
 use crate::error::{BulwarkError, BulwarkResult};
 use async_trait::async_trait;
 use chrono::Utc;
@@ -482,7 +483,7 @@ pub async fn check_assertion_replay(
     if assertion_id.is_empty() {
         return Ok(true);
     }
-    let key = format!("saml:consumed:{}", assertion_id);
+    let key = format!("{}consumed:{}", DaoKeyPrefix::Saml, assertion_id);
     if dao.get(&key).await?.is_some() {
         return Ok(false);
     }

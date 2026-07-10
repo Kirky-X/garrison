@@ -29,6 +29,7 @@
 /// Session 安全监听器（IP 变更检测）。
 pub mod security_listener;
 
+use crate::constants::DaoKeyPrefix;
 use crate::dao::BulwarkDao;
 use crate::error::{BulwarkError, BulwarkResult};
 use async_trait::async_trait;
@@ -169,7 +170,7 @@ fn account_key(login_id: &str) -> String {
 
 /// 生成 Token-Session 的存储 key。
 fn token_key(token: &str) -> String {
-    format!("token:session:{}", token)
+    format!("{}session:{}", DaoKeyPrefix::Token, token)
 }
 
 impl BulwarkSession {
