@@ -1,3 +1,6 @@
+//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! 配置加载示例：演示 BulwarkConfig 的多种创建方式与热更新。
 //!
 //! 对应模块：`src/config/mod.rs`（always on，无需 feature）。
@@ -7,12 +10,12 @@
 //! cargo run -p bulwark-examples --bin config_loader --features full
 //! ```
 
-use bulwark::config::{BulwarkConfig, ConfigLoader, DefaultConfigLoader};
-use bulwark::error::BulwarkResult;
+use bulwark::config::BulwarkConfig;
+use bulwark::error::{BulwarkError, BulwarkResult};
 
 /// 运行配置加载示例。
 ///
-/// 演示默认配置、TOML 加载、环境变量覆盖、热更新订阅与配置校验。
+/// 演示默认配置、TOML 文件加载、环境变量覆盖、热更新订阅与配置校验。
 ///
 /// 注意：本示例使用 `std::env::set_var` 设置环境变量，在多线程环境下需串行执行。
 pub async fn run() -> BulwarkResult<()> {
@@ -33,36 +36,39 @@ pub async fn run() -> BulwarkResult<()> {
     println!();
 
     // ----------------------------------------------------------------
-    // 2. 从 TOML 字符串加载配置
+    // 2. 从 TOML 文件加载配置（通过 confers）
     // ----------------------------------------------------------------
-    let toml_str = r#"
-        token_name = "auth_token"
-        timeout = 7200
-        active_timeout = 86400
-        is_read_cookie = true
-        is_read_header = true
-        is_write_header = true
-        token_style = "uuid"
-        throw_on_not_login = false
-        cookie_secure = false
-        cookie_same_site = "Lax"
-    "#;
-    let config = DefaultConfigLoader::load_from_toml_str(toml_str)?;
-    println!("[2] TOML 加载的配置:");
+    let toml_content = r#"token_name = "auth_token"
+timeout = 7200
+active_timeout = 86400
+is_read_cookie = true
+is_read_header = true
+is_write_header = true
+token_style = "uuid"
+throw_on_not_login = false
+cookie_secure = false
+cookie_same_site = "Lax"
+"#;
+    let temp_path = std::env::temp_dir().join("bulwark_config_example.toml");
+    std::fs::write(&temp_path, toml_content)
+        .map_err(|e| BulwarkError::Internal(format!("写入临时文件失败: {}", e)))?;
+    let config = BulwarkConfig::load(Some(temp_path.to_str().unwrap()))?;
+    let _ = std::fs::remove_file(&temp_path);
+    println!("[2] TOML 文件加载的配置:");
     println!("    token_name = {}", config.token_name);
     println!("    timeout = {} 秒", config.timeout);
     println!("    throw_on_not_login = {}", config.throw_on_not_login);
     println!();
 
     // ----------------------------------------------------------------
-    // 3. 环境变量覆盖（设置 BULWARK_ 前缀的环境变量）
+    // 3. 环境变量覆盖（BULWARK_ 前缀自动覆盖）
     // ----------------------------------------------------------------
-    // 注意：环境变量覆盖在多线程环境下需谨慎使用
     println!("[3] 环境变量覆盖演示:");
     println!("    设置 BULWARK_TOKEN_NAME=custom_token");
     std::env::set_var("BULWARK_TOKEN_NAME", "custom_token");
-    let config = DefaultConfigLoader::apply_env_overrides(config)?;
+    let config = BulwarkConfig::load(None)?;
     println!("    覆盖后 token_name = {}", config.token_name);
+    std::env::remove_var("BULWARK_TOKEN_NAME");
     println!();
 
     // ----------------------------------------------------------------
