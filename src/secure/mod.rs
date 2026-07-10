@@ -101,6 +101,13 @@ pub mod confusable;
 #[cfg(feature = "secure-masking")]
 pub mod masking;
 
+/// XSS 防护子模块。
+///
+/// 提供 [`XssProtector`](xss::XssProtector) 对 HTML 输入进行转义/白名单过滤，
+/// 防止 XSS 攻击。零外部依赖。
+#[cfg(feature = "secure-xss")]
+pub mod xss;
+
 #[cfg(test)]
 mod tests {
     use super::*;

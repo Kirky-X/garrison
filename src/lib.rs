@@ -252,6 +252,7 @@ pub mod listener;
     feature = "secure-httpdigest",
     feature = "secure-confusable",
     feature = "secure-masking",
+    feature = "secure-xss",
 ))]
 pub mod secure;
 
