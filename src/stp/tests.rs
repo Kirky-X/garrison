@@ -88,6 +88,21 @@ impl BulwarkDao for MockDao {
         self.store.lock().remove(key);
         Ok(())
     }
+
+    async fn get_timeout(&self, key: &str) -> BulwarkResult<Option<Duration>> {
+        let store = self.store.lock();
+        match store.get(key) {
+            Some((_, Some(deadline))) => {
+                let now = Instant::now();
+                if *deadline <= now {
+                    Ok(None)
+                } else {
+                    Ok(Some(*deadline - now))
+                }
+            },
+            _ => Ok(None),
+        }
+    }
 }
 
 // ------------------------------------------------------------------------
@@ -3202,4 +3217,140 @@ mod check_api_key_tests {
 
         BulwarkManager::reset_for_test();
     }
+}
+
+// ============================================================================
+// v0.6.3 D1: Token 自动续签（check_and_renew）测试
+// ============================================================================
+
+use super::context::{current_renewed_token, with_renewed_token_scope};
+use crate::core::auth::AuthLogicDefault;
+use crate::core::token::{Token, UuidTokenStyle};
+
+/// 辅助函数：创建 BulwarkLogicDefault 实例并注入 auth_logic（用于 check_and_renew 测试）。
+/// 返回 MockDao 引用以便测试中操作 TTL。
+fn make_logic_with_auth(
+    timeout: u64,
+    active_timeout: u64,
+    token_style: &str,
+    auto_renewal_threshold: i64,
+) -> (Arc<MockDao>, BulwarkLogicDefault) {
+    let dao = Arc::new(MockDao::new());
+    let session = Arc::new(BulwarkSession::new(
+        dao.clone() as Arc<dyn BulwarkDao>,
+        timeout,
+        active_timeout,
+    ));
+    let token_handler: Arc<dyn Token> = Arc::new(UuidTokenStyle);
+    let auth_logic: Arc<dyn AuthLogic> = Arc::new(AuthLogicDefault::new(
+        session.clone(),
+        token_handler,
+        timeout as i64,
+    ));
+    let mut config = BulwarkConfig::default_config();
+    config.timeout = timeout as i64;
+    config.token_style = token_style.to_string();
+    config.auto_renewal_threshold = auto_renewal_threshold;
+    let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
+        has_permission: true,
+        has_role: true,
+    });
+    let logic =
+        BulwarkLogicDefault::new(session, Arc::new(config), firewall).with_auth_logic(auth_logic);
+    (dao, logic)
+}
+
+/// T002: threshold=-1（未启用）时 check_and_renew 返回 None。
+#[tokio::test]
+async fn check_and_renew_returns_none_when_threshold_disabled() {
+    let (_dao, logic) = make_logic_with_auth(3600, 86400, "uuid", -1);
+    let token = logic.login("user-001").await.unwrap();
+    let result = logic.check_and_renew(&token).await.unwrap();
+    assert!(result.is_none(), "threshold=-1 时应返回 None");
+}
+
+/// T002: TTL 充足时 check_and_renew 返回 None。
+#[tokio::test]
+async fn check_and_renew_returns_none_when_ttl_sufficient() {
+    let (_dao, logic) = make_logic_with_auth(3600, 86400, "uuid", 20);
+    let token = logic.login("user-002").await.unwrap();
+    // 刚登录，remaining_pct = 100 >= 20，不应触发续签
+    let result = logic.check_and_renew(&token).await.unwrap();
+    assert!(result.is_none(), "TTL 充足时应返回 None");
+}
+
+/// T003: 非 JWT 模式 + remaining_pct < threshold 时调用 renew_to_equivalent 续签。
+#[tokio::test]
+async fn check_and_renew_renews_non_jwt_when_threshold_reached() {
+    let (dao, logic) = make_logic_with_auth(10, 86400, "uuid", 90);
+    let token = logic.login("user-003").await.unwrap();
+    // 手动将 TTL 缩短到 1 秒（remaining_pct = 10% < 90%）
+    let key = format!("token:session:{}", token);
+    dao.expire(&key, 1).await.unwrap();
+    let result = logic.check_and_renew(&token).await.unwrap();
+    assert!(result.is_some(), "remaining_pct < threshold 时应触发续签");
+    let new_token = result.unwrap();
+    assert_ne!(new_token, token, "续签后应生成新 token");
+    // 旧 token 应已失效
+    let old_valid = logic.session.is_valid(&token).await.unwrap();
+    assert!(!old_valid, "旧 token 续签后应失效");
+    // 新 token 应有效
+    let new_valid = logic.session.is_valid(&new_token).await.unwrap();
+    assert!(new_valid, "新 token 应有效");
+}
+
+/// T004: JWT 模式 + remaining_pct < threshold 时调用 refresh_token 续签。
+#[cfg(feature = "protocol-jwt")]
+#[tokio::test]
+async fn check_and_renew_renews_jwt_when_threshold_reached() {
+    let dao: Arc<MockDao> = Arc::new(MockDao::new());
+    let session = Arc::new(BulwarkSession::new(
+        dao.clone() as Arc<dyn BulwarkDao>,
+        10,
+        86400,
+    ));
+    let mut config = BulwarkConfig::default_config();
+    config.timeout = 10;
+    config.token_style = "jwt".to_string();
+    config.jwt_secret = "test-secret".to_string();
+    config.auto_renewal_threshold = 90;
+    let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
+        has_permission: true,
+        has_role: true,
+    });
+    let logic = BulwarkLogicDefault::new(session, Arc::new(config), firewall);
+
+    let token = logic.login("user-004").await.unwrap();
+    // 手动将 TTL 缩短到 1 秒（remaining_pct = 10% < 90%）
+    let key = format!("token:session:{}", token);
+    dao.expire(&key, 1).await.unwrap();
+    let result = logic.check_and_renew(&token).await.unwrap();
+    assert!(
+        result.is_some(),
+        "JWT 模式 remaining_pct < threshold 时应触发续签"
+    );
+    let new_token = result.unwrap();
+    assert_ne!(new_token, token, "续签后应生成新 token");
+}
+
+/// T005: check_login 在 TTL 低于阈值时自动续签，并通过 CURRENT_RENEWED_TOKEN 传递新 token。
+#[tokio::test]
+async fn check_login_renews_token_when_threshold_reached() {
+    let (dao, logic) = make_logic_with_auth(10, 86400, "uuid", 90);
+    let token = logic.login("user-005").await.unwrap();
+    // 手动将 TTL 缩短到 1 秒（remaining_pct = 10% < 90%）
+    let key = format!("token:session:{}", token);
+    dao.expire(&key, 1).await.unwrap();
+    // check_login 应触发续签
+    let renewed = with_current_token(token.clone(), async {
+        with_renewed_token_scope(async {
+            let valid = logic.check_login().await.unwrap();
+            assert!(valid, "check_login 应返回 true（token 续签前有效）");
+            current_renewed_token()
+        })
+        .await
+    })
+    .await;
+    assert!(renewed.is_some(), "续签后应设置 CURRENT_RENEWED_TOKEN");
+    assert_ne!(renewed.unwrap(), token, "续签后的 token 应不同于原 token");
 }

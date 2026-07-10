@@ -18,7 +18,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Bulwark JWT Claims 载荷。
 ///
-/// 字段兼容 0.1.0 `JwtClaims`，0.2.0 扩展 `login_id` 与 `device` 字段。
+/// 字段兼容 0.1.0 `JwtClaims`，0.2.0 扩展 `login_id` 与 `device` 字段，
+/// v0.6.3 扩展 `jti`（RFC 7519 §4.1.7）保证同一秒内签发的 token 唯一。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BulwarkJwtClaims {
     /// 主体标识（与 login_id 字符串一致）。
@@ -35,6 +36,13 @@ pub struct BulwarkJwtClaims {
 
     /// 可选设备标识。
     pub device: Option<String>,
+
+    /// JWT 唯一标识（RFC 7519 §4.1.7）。
+    ///
+    /// `sign` 时自动生成 UUID；旧 token 反序列化时缺失该字段则为 `None`（向后兼容）。
+    /// 用于保证同一秒内为同一用户签发的 token 仍唯一，支持 token rotation 语义。
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub jti: Option<String>,
 }
 
 /// 0.1.0 兼容别名。
@@ -117,6 +125,7 @@ impl JwtHandler {
             exp: now + timeout,
             login_id,
             device: self.device.clone(),
+            jti: Some(uuid::Uuid::new_v4().to_string()),
         };
         let header = Header::new(self.algorithm);
         let key = EncodingKey::from_secret(self.secret.as_bytes());
@@ -195,6 +204,7 @@ mod tests {
             exp: 1700003600,
             login_id: "1001".to_string(),
             device: Some("web".to_string()),
+            jti: Some("test-jti".to_string()),
         };
         let json = serde_json::to_string(&claims).unwrap();
         assert!(json.contains("\"sub\":\"1001\""));
@@ -202,6 +212,7 @@ mod tests {
         assert!(json.contains("\"exp\":1700003600"));
         assert!(json.contains("\"login_id\":\"1001\""));
         assert!(json.contains("\"device\":\"web\""));
+        assert!(json.contains("\"jti\":\"test-jti\""));
     }
 
     /// BulwarkJwtClaims device 字段为 None 时序列化为 null（spec Scenario）。
@@ -213,9 +224,52 @@ mod tests {
             exp: 1700003600,
             login_id: "1001".to_string(),
             device: None,
+            jti: None,
         };
         let json = serde_json::to_string(&claims).unwrap();
         assert!(json.contains("\"device\":null"));
+        // jti=None 时应跳过序列化（skip_serializing_if）
+        assert!(!json.contains("jti"), "jti=None 时不应序列化 jti 字段");
+    }
+
+    /// jti=None 时序列化结果不含 jti 字段（向后兼容旧 token）。
+    #[test]
+    fn claims_jti_none_skipped_in_json() {
+        let claims = BulwarkJwtClaims {
+            sub: "1001".to_string(),
+            iat: 1700000000,
+            exp: 1700003600,
+            login_id: "1001".to_string(),
+            device: None,
+            jti: None,
+        };
+        let json = serde_json::to_string(&claims).unwrap();
+        assert!(!json.contains("jti"));
+    }
+
+    /// sign 生成的新 token 包含唯一的 jti（UUID v4）。
+    #[test]
+    fn sign_generates_unique_jti() {
+        let handler = JwtHandler::new("secret");
+        let t1 = handler.sign("1001", 3600).unwrap();
+        let t2 = handler.sign("1001", 3600).unwrap();
+        // 同一秒内同一用户的 token 应不同（jti 保证唯一性）
+        assert_ne!(t1, t2, "jti 应保证同一秒内签发的 token 唯一");
+        let c1 = handler.verify(&t1).unwrap();
+        let c2 = handler.verify(&t2).unwrap();
+        assert!(c1.jti.is_some(), "sign 生成的 token 应包含 jti");
+        assert!(c2.jti.is_some());
+        assert_ne!(c1.jti, c2.jti, "两个 token 的 jti 应不同");
+    }
+
+    /// 旧 token（无 jti 字段）仍可反序列化（向后兼容）。
+    #[test]
+    fn claims_without_jti_deserializes() {
+        let json =
+            r#"{"sub":"1001","iat":1700000000,"exp":1700003600,"login_id":"1001","device":"web"}"#;
+        let claims: BulwarkJwtClaims = serde_json::from_str(json).unwrap();
+        assert_eq!(claims.sub, "1001");
+        assert_eq!(claims.jti, None, "旧 token 无 jti 字段时应反序列化为 None");
     }
 
     /// BulwarkJwtClaims 可反序列化。
@@ -403,6 +457,7 @@ mod tests {
             exp: 0,
             login_id: "1".to_string(),
             device: None,
+            jti: None,
         };
         assert_eq!(claims.login_id, "1");
     }

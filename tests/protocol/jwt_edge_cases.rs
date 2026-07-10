@@ -110,6 +110,7 @@ async fn iat_future_time_tolerates_clock_skew() {
         exp: now + 3600,
         login_id: "1001".to_string(),
         device: None,
+        jti: None,
     };
 
     // 使用 jsonwebtoken::encode 直接编码（绕过 JwtHandler::sign 的 iat=now 逻辑）

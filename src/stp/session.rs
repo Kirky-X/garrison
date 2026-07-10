@@ -12,6 +12,7 @@
 //! `BulwarkUtil` 保留 `impl Into<String>` ergonomic 入口，自动 `.into()` 后传引用。
 //! `get_login_id()` 返回类型从 `Option<i64>` 迁移为 `Option<String>`。
 
+use super::context::set_renewed_token;
 use super::current_token;
 use super::BulwarkLogicDefault;
 use super::JwtMode;
@@ -436,7 +437,15 @@ impl BulwarkLogicDefault {
         }
         // 悬停检查（仅 valid 时）
         if valid {
-            return self.check_and_update_hover(token).await;
+            let hover_ok = self.check_and_update_hover(token).await?;
+            if !hover_ok {
+                return Ok(false);
+            }
+            // Token 自动续签（若启用且剩余 TTL 低于阈值）
+            if let Err(e) = self.check_and_renew(token).await {
+                tracing::warn!(error = %e, "Token 自动续签失败，旧 Token 继续使用");
+            }
+            return Ok(true);
         }
         Ok(valid)
     }
@@ -504,9 +513,89 @@ impl BulwarkLogicDefault {
         }
         // 悬停检查（仅 valid 时）
         if valid {
-            return self.check_and_update_hover(token).await;
+            let hover_ok = self.check_and_update_hover(token).await?;
+            if !hover_ok {
+                return Ok(false);
+            }
+            // Token 自动续签（若启用且剩余 TTL 低于阈值）
+            if let Err(e) = self.check_and_renew(token).await {
+                tracing::warn!(error = %e, "Token 自动续签失败，旧 Token 继续使用");
+            }
+            return Ok(true);
         }
         Ok(valid)
+    }
+}
+
+// ============================================================================
+// BulwarkLogicDefault 私有方法：Token 自动续签
+// ============================================================================
+
+impl BulwarkLogicDefault {
+    /// 检查并续签 Token（若剩余 TTL 低于阈值）。
+    ///
+    /// 在 `check_login` 路径中调用：当 `auto_renewal_threshold > 0` 时，
+    /// 检查 Token 剩余 TTL 百分比，低于阈值则触发续签。
+    /// 续签成功后通过 `CURRENT_RENEWED_TOKEN` task_local 传递新 Token。
+    ///
+    /// # 参数
+    /// - `token`: 待检查的 Token 字符串。
+    ///
+    /// # 返回
+    /// - `Ok(None)`: 未启用续签 / TTL 充足 / 永久键。
+    /// - `Ok(Some(new_token))`: 续签成功，返回新 Token。
+    /// - `Err(...)`: 续签失败（如 auth_logic 未配置 / renew 调用失败）。
+    pub(crate) async fn check_and_renew(&self, token: &str) -> BulwarkResult<Option<String>> {
+        let threshold = self.config.auto_renewal_threshold;
+        if threshold <= 0 {
+            return Ok(None);
+        }
+        let remaining = match self.session.get_token_timeout(token).await? {
+            Some(d) => d,
+            None => return Ok(None),
+        };
+        let total = self.config.timeout;
+        if total <= 0 || remaining.is_zero() {
+            return Ok(None);
+        }
+        // 毫秒精度避免 as_secs() 截断（如 999ms → 0s）导致误判
+        let remaining_pct = (remaining.as_millis() as i64 * 100) / (total * 1000);
+        if remaining_pct >= threshold {
+            return Ok(None);
+        }
+        // 续签：非 JWT 用 renew_to_equivalent，JWT 用 refresh_token
+        #[cfg(feature = "protocol-jwt")]
+        {
+            let new_token = if self.config.token_style == "jwt" {
+                self.refresh_token(token).await?
+            } else {
+                let auth = self.auth_logic.as_ref().ok_or_else(|| {
+                    BulwarkError::Config(
+                        "auto_renewal_threshold 启用但 auth_logic 未注入，无法续签".to_string(),
+                    )
+                })?;
+                auth.renew_to_equivalent(token).await?
+            };
+            set_renewed_token(new_token.clone());
+            Ok(Some(new_token))
+        }
+        #[cfg(not(feature = "protocol-jwt"))]
+        {
+            if self.config.token_style == "jwt" {
+                return Err(BulwarkError::Config(
+                    "auto_renewal_threshold 启用且 token_style=jwt，但未启用 protocol-jwt feature"
+                        .to_string(),
+                ));
+            }
+            let auth = self.auth_logic.as_ref().ok_or_else(|| {
+                BulwarkError::Config(
+                    "auto_renewal_threshold 启用但 auth_logic 未注入，无法续签".to_string(),
+                )
+            })?;
+            let new_token = auth.renew_to_equivalent(token).await?;
+            set_renewed_token(new_token.clone());
+            Ok(Some(new_token))
+        }
     }
 }
 

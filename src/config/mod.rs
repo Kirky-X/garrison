@@ -68,6 +68,9 @@ pub const DEFAULT_SESSION_HOVER_TIMEOUT: i64 = -1;
 /// 默认前后端分离模式（false = Cookie 模式，true = Token Header 模式）。
 pub const DEFAULT_FRONTEND_SEPARATION: bool = false;
 
+/// 默认自动续签阈值（-1 = 不启用，0-100 = 剩余 TTL 百分比低于此值时触发续签）。
+pub const DEFAULT_AUTO_RENEWAL_THRESHOLD: i64 = -1;
+
 /// 环境变量前缀（BULWARK_）。
 pub const ENV_PREFIX: &str = "BULWARK_";
 
@@ -222,6 +225,12 @@ pub struct BulwarkConfig {
     /// 本批次仅提供配置项与日志提示，Web 框架行为变更留待后续版本。
     pub frontend_separation: bool,
 
+    /// 自动续签阈值（-1 = 不启用，0-100 = 剩余 TTL 百分比低于此值时触发续签）。
+    ///
+    /// 启用后，`check_login` 时检查 Token 剩余 TTL，
+    /// 若 `remaining_pct < auto_renewal_threshold` 则自动续签。
+    pub auto_renewal_threshold: i64,
+
     /// 多租户隔离配置段。
     ///
     /// 默认 `enabled: false`（向后兼容）。启用后需配合 `tenant-isolation` Cargo feature
@@ -260,6 +269,7 @@ impl BulwarkConfig {
             remember_me_timeout: REMEMBER_ME_DEFAULT_TIMEOUT,
             session_hover_timeout: DEFAULT_SESSION_HOVER_TIMEOUT,
             frontend_separation: DEFAULT_FRONTEND_SEPARATION,
+            auto_renewal_threshold: DEFAULT_AUTO_RENEWAL_THRESHOLD,
             tenant_isolation: TenantIsolationConfig::default(),
             watcher: None,
         };
@@ -318,6 +328,10 @@ impl BulwarkConfig {
             .default(
                 "frontend_separation",
                 ConfigValue::bool(DEFAULT_FRONTEND_SEPARATION),
+            )
+            .default(
+                "auto_renewal_threshold",
+                ConfigValue::integer(DEFAULT_AUTO_RENEWAL_THRESHOLD),
             );
 
         if let Some(path) = toml_path {
@@ -409,6 +423,12 @@ impl BulwarkConfig {
             tracing::info!(
                 "前后端分离模式已启用：Token 从 Authorization Header 读取，不设置 Cookie"
             );
+        }
+        if self.auto_renewal_threshold != -1 && !(0..=100).contains(&self.auto_renewal_threshold) {
+            return Err(BulwarkError::Config(format!(
+                "auto_renewal_threshold must be -1 or 0-100, got: {}",
+                self.auto_renewal_threshold
+            )));
         }
         Ok(())
     }
@@ -990,6 +1010,7 @@ jwt_secret = "test-secret""#,
             remember_me_timeout: REMEMBER_ME_DEFAULT_TIMEOUT,
             session_hover_timeout: DEFAULT_SESSION_HOVER_TIMEOUT,
             frontend_separation: DEFAULT_FRONTEND_SEPARATION,
+            auto_renewal_threshold: DEFAULT_AUTO_RENEWAL_THRESHOLD,
             tenant_isolation: TenantIsolationConfig::default(),
             watcher: None,
         };
@@ -1252,5 +1273,68 @@ jwt_secret = "test-secret""#,
                 .unwrap_or_else(|e| panic!("反序列化 {} 失败: {}", json, e));
             assert_eq!(kind, *expected, "反序列化 {} 应匹配 {:?}", json, expected);
         }
+    }
+
+    // ========================================================================
+    // auto_renewal_threshold 配置测试（spec R-token-001 ~ R-token-003）
+    // ========================================================================
+
+    /// R-token-001: `BulwarkConfig::default()` 的 `auto_renewal_threshold` 为 -1（不启用）。
+    #[test]
+    fn config_default_auto_renewal_is_negative_one() {
+        let config = BulwarkConfig::default_config();
+        assert_eq!(config.auto_renewal_threshold, -1);
+    }
+
+    /// R-token-002: `auto_renewal_threshold = 101` 时 `validate()` 返回 Err。
+    #[test]
+    fn validate_rejects_threshold_above_100() {
+        let mut config = BulwarkConfig::default_config();
+        config.auto_renewal_threshold = 101;
+        let result = config.validate();
+        assert!(result.is_err());
+        match result {
+            Err(BulwarkError::Config(msg)) => {
+                assert!(
+                    msg.contains("auto_renewal_threshold must be -1 or 0-100"),
+                    "错误消息应包含范围提示，实际: {}",
+                    msg
+                );
+            },
+            Err(other) => panic!("期望 BulwarkError::Config，实际: {:?}", other),
+            Ok(_) => panic!("threshold=101 时应返回 Err"),
+        }
+    }
+
+    /// R-token-002: `auto_renewal_threshold = -2` 时 `validate()` 返回 Err。
+    #[test]
+    fn validate_rejects_threshold_below_negative_one() {
+        let mut config = BulwarkConfig::default_config();
+        config.auto_renewal_threshold = -2;
+        assert!(config.validate().is_err());
+    }
+
+    /// R-token-002: 边界值 -1、0、100 均通过校验。
+    #[test]
+    fn validate_accepts_threshold_boundaries() {
+        for &threshold in &[-1i64, 0, 100] {
+            let mut config = BulwarkConfig::default_config();
+            config.auto_renewal_threshold = threshold;
+            assert!(
+                config.validate().is_ok(),
+                "threshold={} 应通过校验",
+                threshold
+            );
+        }
+    }
+
+    /// R-token-003: `BULWARK_AUTO_RENEWAL_THRESHOLD=20` 环境变量覆盖配置为 20。
+    #[test]
+    #[serial]
+    fn env_overrides_auto_renewal_threshold() {
+        std::env::set_var("BULWARK_AUTO_RENEWAL_THRESHOLD", "20");
+        let config = BulwarkConfig::load(None).expect("load with env");
+        assert_eq!(config.auto_renewal_threshold, 20);
+        std::env::remove_var("BULWARK_AUTO_RENEWAL_THRESHOLD");
     }
 }

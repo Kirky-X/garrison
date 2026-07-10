@@ -36,6 +36,7 @@ pub mod parameter;
 
 // 原 BulwarkLogic 上帝 trait 拆分为 6 个细粒度子 trait
 // （BulwarkCore 基座 + 5 个职责域 trait），按职责域分离。
+pub mod context;
 pub mod core;
 pub mod interface;
 pub mod mfa;
