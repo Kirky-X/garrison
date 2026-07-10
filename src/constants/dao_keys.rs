@@ -27,6 +27,8 @@ pub enum DaoKeyPrefix {
     BruteForce,
     /// 租户相关 key 前缀：`tenant:`
     Tenant,
+    /// 角色相关 key 前缀：`role:`
+    Role,
 }
 
 impl DaoKeyPrefix {
@@ -41,6 +43,7 @@ impl DaoKeyPrefix {
             Self::Lockout => "lockout:",
             Self::BruteForce => "bf:",
             Self::Tenant => "tenant:",
+            Self::Role => "role:",
         }
     }
 
@@ -76,6 +79,7 @@ mod tests {
         assert_eq!(DaoKeyPrefix::Lockout.as_str(), "lockout:");
         assert_eq!(DaoKeyPrefix::BruteForce.as_str(), "bf:");
         assert_eq!(DaoKeyPrefix::Tenant.as_str(), "tenant:");
+        assert_eq!(DaoKeyPrefix::Role.as_str(), "role:");
     }
 
     #[test]
