@@ -385,6 +385,7 @@ mod oxcache_impl {
     use super::BulwarkDao;
     #[cfg(feature = "cache-redis")]
     use super::RedisConfig;
+    #[cfg(feature = "tenant-isolation")]
     use crate::constants::DaoKeyPrefix;
     use crate::error::{BulwarkError, BulwarkResult};
     use async_trait::async_trait;

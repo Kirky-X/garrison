@@ -37,6 +37,11 @@ pub mod firewall;
 pub mod hooks;
 /// 通用令牌桶限流器模块。
 pub mod rate_limiter;
+/// 限流器后端抽象模块（trait 始终可用，无 feature gate）。
+pub mod rate_limiter_backend;
+/// Redis 限流器模块（feature-gated: `rate-limit-redis`）。
+#[cfg(feature = "rate-limit-redis")]
+pub mod redis_rate_limiter;
 /// 策略注册表模块。
 pub mod registry;
 

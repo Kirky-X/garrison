@@ -21,6 +21,8 @@
 //! - `BulwarkConfig::update(f)` 闭包式修改配置并广播
 
 use crate::error::{BulwarkError, BulwarkResult};
+#[cfg(feature = "rate-limit-redis")]
+use crate::strategy::rate_limiter_backend::RateLimitBackend;
 #[cfg(feature = "web-cors")]
 use crate::web::cors::CorsConfig;
 #[cfg(feature = "web-csrf")]
@@ -298,6 +300,12 @@ pub struct BulwarkConfig {
     #[cfg(feature = "web-csrf")]
     pub csrf_config: CsrfConfig,
 
+    /// 限流后端配置段。
+    ///
+    /// 默认 `Memory`（向后兼容）。启用 `rate-limit-redis` Cargo feature 后可选 `Redis`。
+    #[cfg(feature = "rate-limit-redis")]
+    pub rate_limit_backend: RateLimitBackend,
+
     /// 配置变更广播通道（serde 跳过，反序列化后通过 `with_watcher` 重建）。
     #[serde(skip)]
     watcher: Option<watch::Sender<BulwarkConfig>>,
@@ -342,6 +350,8 @@ impl BulwarkConfig {
             cors_config: CorsConfig::default(),
             #[cfg(feature = "web-csrf")]
             csrf_config: CsrfConfig::default(),
+            #[cfg(feature = "rate-limit-redis")]
+            rate_limit_backend: RateLimitBackend::default(),
             watcher: None,
         };
         config.with_watcher()
@@ -1143,6 +1153,8 @@ jwt_secret = "test-secret""#,
             cors_config: crate::web::cors::CorsConfig::default(),
             #[cfg(feature = "web-csrf")]
             csrf_config: crate::web::csrf::CsrfConfig::default(),
+            #[cfg(feature = "rate-limit-redis")]
+            rate_limit_backend: crate::strategy::rate_limiter_backend::RateLimitBackend::default(),
             watcher: None,
         };
         assert!(config.update(|c| c.timeout = 999).is_ok());

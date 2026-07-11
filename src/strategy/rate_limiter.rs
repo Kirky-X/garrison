@@ -22,6 +22,9 @@
 //! 5. CAS 更新 last_refill
 //! 6. 如果 tokens >= 1，CAS 减 1 返回 true；否则返回 false
 
+use crate::error::BulwarkResult;
+use crate::strategy::rate_limiter_backend::RateLimiterBackend;
+use async_trait::async_trait;
 use dashmap::DashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -291,6 +294,36 @@ impl TokenBucketRateLimiter {
 }
 
 // ============================================================================
+// RateLimiterBackend trait 实现
+// ============================================================================
+
+/// 内存限流器实现 [`RateLimiterBackend`] trait。
+///
+/// `capacity` / `refill_rate` 参数被忽略——`TokenBucketRateLimiter` 在构造时
+/// 已指定全局容量与补充速率，trait 参数仅为 Redis 后端所需。
+#[async_trait]
+impl RateLimiterBackend for TokenBucketRateLimiter {
+    async fn try_acquire(
+        &self,
+        key: &str,
+        _capacity: u32,
+        _refill_rate: u32,
+    ) -> BulwarkResult<bool> {
+        Ok(self.try_acquire(key))
+    }
+
+    async fn try_acquire_n(
+        &self,
+        key: &str,
+        n: u32,
+        _capacity: u32,
+        _refill_rate: u32,
+    ) -> BulwarkResult<bool> {
+        Ok(self.try_acquire_n(key, n))
+    }
+}
+
+// ============================================================================
 // 辅助函数
 // ============================================================================
 
@@ -472,5 +505,67 @@ mod tests {
         limiter.cleanup(60);
 
         assert_eq!(limiter.buckets.len(), 1, "未超时的 bucket 不应被清理");
+    }
+
+    // ------------------------------------------------------------------------
+    // T019: RateLimiterBackend trait 方法测试
+    // ------------------------------------------------------------------------
+
+    /// 验证 trait 方法 try_acquire 成功获取令牌。
+    #[tokio::test]
+    async fn trait_try_acquire_success() {
+        let limiter = TokenBucketRateLimiter::new(5, 1);
+        // capacity/refill_rate 参数被忽略，传任意值
+        // 使用 UFCS 调用 trait 方法（inherent try_acquire 签名不同）
+        let result = RateLimiterBackend::try_acquire(&limiter, "key1", 999, 999).await;
+        assert!(result.is_ok(), "trait try_acquire 应返回 Ok");
+        assert!(result.unwrap(), "首次获取应成功");
+    }
+
+    /// 验证 trait 方法 try_acquire 令牌耗尽后返回 false。
+    #[tokio::test]
+    async fn trait_try_acquire_failure_when_exhausted() {
+        let limiter = TokenBucketRateLimiter::new(1, 1);
+        // 消耗唯一的 token
+        assert!(RateLimiterBackend::try_acquire(&limiter, "key1", 0, 0)
+            .await
+            .unwrap());
+        // 令牌耗尽，应返回 Ok(false)
+        let result = RateLimiterBackend::try_acquire(&limiter, "key1", 0, 0).await;
+        assert!(result.is_ok(), "trait try_acquire 应返回 Ok");
+        assert!(!result.unwrap(), "令牌耗尽后应返回 false");
+    }
+
+    /// 验证 trait 方法 try_acquire_n 获取多个令牌。
+    #[tokio::test]
+    async fn trait_try_acquire_n() {
+        let limiter = TokenBucketRateLimiter::new(10, 1);
+        // 请求 5 个 token，应成功
+        let result = RateLimiterBackend::try_acquire_n(&limiter, "key1", 5, 0, 0).await;
+        assert!(result.is_ok(), "trait try_acquire_n 应返回 Ok");
+        assert!(result.unwrap(), "请求 5 个 token（容量 10）应成功");
+
+        // 请求超过剩余数量，应返回 Ok(false)
+        let result = RateLimiterBackend::try_acquire_n(&limiter, "key1", 10, 0, 0).await;
+        assert!(!result.unwrap(), "剩余 5 个时请求 10 个应返回 false");
+    }
+
+    /// 验证 trait 方法始终返回 Ok（不抛错）。
+    #[tokio::test]
+    async fn trait_method_returns_ok() {
+        let limiter = TokenBucketRateLimiter::new(2, 1);
+        // 多次调用，均应返回 Ok
+        assert!(RateLimiterBackend::try_acquire(&limiter, "k", 0, 0)
+            .await
+            .is_ok());
+        assert!(RateLimiterBackend::try_acquire(&limiter, "k", 0, 0)
+            .await
+            .is_ok());
+        assert!(RateLimiterBackend::try_acquire(&limiter, "k", 0, 0)
+            .await
+            .is_ok());
+        assert!(RateLimiterBackend::try_acquire_n(&limiter, "k", 1, 0, 0)
+            .await
+            .is_ok());
     }
 }
