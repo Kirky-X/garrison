@@ -277,6 +277,10 @@ pub struct BulwarkLogicDefault {
     #[cfg(feature = "device-binding")]
     pub(crate) device_binding_policy:
         Option<Arc<dyn crate::strategy::device_binding::DeviceBindingPolicy>>,
+    /// 封禁库（可选，注入后 check_disable 查询当前 login_id 是否被封禁）。
+    ///
+    /// 非 feature-gated（核心能力）。未注入时 check_disable 返回 `Ok(())`（向后兼容）。
+    pub(crate) disable_repository: Option<Arc<dyn crate::account::disable::DisableRepository>>,
 }
 
 impl BulwarkLogicDefault {
@@ -320,6 +324,7 @@ impl BulwarkLogicDefault {
             alert_listener_manager: None,
             #[cfg(feature = "device-binding")]
             device_binding_policy: None,
+            disable_repository: None,
         }
     }
 
@@ -489,6 +494,21 @@ impl BulwarkLogicDefault {
         policy: Arc<dyn crate::strategy::device_binding::DeviceBindingPolicy>,
     ) -> Self {
         self.device_binding_policy = Some(policy);
+        self
+    }
+
+    /// 注入封禁库（builder 模式，非 feature-gated）。
+    ///
+    /// 注入后 `check_disable` 从 task_local 获取当前 token → 查询 TokenSession 取 login_id →
+    /// 调用 `DisableRepository::is_disable(login_id, "default")`，被封禁则返回
+    /// `BulwarkError::DisableService`（携带 `until` 解封时间）。
+    ///
+    /// 未注入时 `check_disable` 返回 `Ok(())`（向后兼容 0.6.4 之前行为）。
+    pub fn with_disable_repository(
+        mut self,
+        repo: Arc<dyn crate::account::disable::DisableRepository>,
+    ) -> Self {
+        self.disable_repository = Some(repo);
         self
     }
 

@@ -7,6 +7,7 @@
 //! 账号禁用检查 2 个方法。super-trait 为 [`SessionLogic`]
 //! （MFA 检查依赖当前登录状态）。
 
+use super::current_token;
 use super::BulwarkLogicDefault;
 use crate::error::{BulwarkError, BulwarkResult};
 use crate::stp::session::SessionLogic;
@@ -38,11 +39,12 @@ pub trait MfaLogic: SessionLogic {
 
     /// 检查账号是否被禁用。
     ///
-    /// 默认实现返回 `Ok(())`（未实现禁用账号库，向后兼容 0.2.x）。
-    /// 业务方覆写此方法以接入禁用账号检查：查询当前 login_id 是否在禁用列表中。
+    /// trait 默认实现返回 `Ok(())`（向后兼容 0.2.x）；`BulwarkLogicDefault` 自 v0.6.5 起覆写：
+    /// 注入 `DisableRepository` 后，从当前 token 取 login_id 并查询封禁状态，被封禁则返回
+    /// `DisableService` 错误。未注入 repository 或未登录时返回 `Ok(())`。
     ///
     /// # 返回
-    /// - `Ok(())`: 账号未禁用。
+    /// - `Ok(())`: 账号未禁用 / 未注入 DisableRepository / 未登录。
     /// - `Err(BulwarkError::DisableService)`: 账号已封禁（0.6.1 起推荐使用专用异常）。
     async fn check_disable(&self) -> BulwarkResult<()> {
         Ok(())
@@ -101,7 +103,44 @@ pub trait MfaLogic: SessionLogic {
 // ============================================================================
 
 #[async_trait]
-impl MfaLogic for BulwarkLogicDefault {}
+impl MfaLogic for BulwarkLogicDefault {
+    /// 检查当前登录账号是否被封禁。
+    ///
+    /// `BulwarkLogicDefault` 覆写实现（v0.6.5 T019）：
+    /// 1. 无 `disable_repository` 注入 → 返回 `Ok(())`（向后兼容 0.6.4 之前）
+    /// 2. 无当前 token（未登录）→ 返回 `Ok(())`
+    /// 3. token 对应的 TokenSession 不存在 → 返回 `Ok(())`
+    /// 4. 调用 `DisableRepository::is_disable(login_id, "default")`，未封禁 → `Ok(())`
+    /// 5. 已封禁 → 返回 `Err(Self::disable_service("default", until))`，
+    ///    `until` 来自 `get_disable_time`（None=永久封禁，Some=定时解封）
+    ///
+    /// # 错误
+    /// - `BulwarkError::DisableService`: 账号已封禁。
+    /// - DAO/反序列化失败：透传 `BulwarkError`。
+    async fn check_disable(&self) -> BulwarkResult<()> {
+        // 无 disable_repository 时返回 Ok（向后兼容 0.6.4 之前）
+        let repo = match &self.disable_repository {
+            Some(r) => r,
+            None => return Ok(()),
+        };
+        // 获取当前 token（未登录时返回 Ok）
+        let token = match current_token() {
+            Ok(t) => t,
+            Err(_) => return Ok(()),
+        };
+        // 获取 login_id（TokenSession 不存在时返回 Ok）
+        let ts = match self.session.get_token_session(&token).await? {
+            Some(ts) => ts,
+            None => return Ok(()),
+        };
+        // 检查封禁状态
+        if repo.is_disable(&ts.login_id, "default").await? {
+            let until = repo.get_disable_time(&ts.login_id, "default").await?;
+            return Err(Self::disable_service("default", until));
+        }
+        Ok(())
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -243,5 +282,239 @@ mod tests {
             "Display 应包含中文描述，实际: {}",
             display
         );
+    }
+
+    // ========================================================================
+    // T019: DisableRepository 集成测试（BulwarkLogicDefault.check_disable）
+    // ========================================================================
+
+    mod t019_disable_integration {
+        use super::*;
+        use crate::account::disable::{DefaultDisableRepository, DisableRepository};
+        use crate::config::BulwarkConfig;
+        use crate::dao::tests::MockDao;
+        use crate::dao::BulwarkDao;
+        use crate::session::BulwarkSession;
+        use crate::stp::with_current_token;
+        use crate::stp::LoginParams;
+        use crate::strategy::BulwarkPermissionStrategy;
+        use async_trait::async_trait;
+        use chrono::Utc;
+        use std::sync::Arc;
+
+        // --------------------------------------------------------------------
+        // MockFirewall：no-op 权限策略，允许所有登录
+        // --------------------------------------------------------------------
+
+        struct MockFirewall;
+
+        #[async_trait]
+        impl BulwarkPermissionStrategy for MockFirewall {
+            async fn get_permission_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
+                Ok(vec![])
+            }
+            async fn get_role_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
+                Ok(vec![])
+            }
+            async fn check_permission(
+                &self,
+                _login_id: &str,
+                _permission: &str,
+            ) -> BulwarkResult<bool> {
+                Ok(true)
+            }
+            async fn check_role(&self, _login_id: &str, _role: &str) -> BulwarkResult<bool> {
+                Ok(true)
+            }
+            async fn check_role_any(
+                &self,
+                _login_id: &str,
+                _roles: &[&str],
+            ) -> BulwarkResult<bool> {
+                Ok(true)
+            }
+            async fn check_role_all(
+                &self,
+                _login_id: &str,
+                _roles: &[&str],
+            ) -> BulwarkResult<bool> {
+                Ok(true)
+            }
+        }
+
+        // --------------------------------------------------------------------
+        // 辅助函数
+        // --------------------------------------------------------------------
+
+        /// 创建不带 disable_repository 的 BulwarkLogicDefault（向后兼容场景）。
+        fn make_logic_without_repo() -> BulwarkLogicDefault {
+            let dao: Arc<MockDao> = Arc::new(MockDao::new());
+            let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
+            let mut config = BulwarkConfig::default_config();
+            config.throw_on_not_login = false;
+            config.token_style = "uuid".to_string();
+            let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall);
+            BulwarkLogicDefault::new(session, Arc::new(config), firewall)
+        }
+
+        /// 创建带 disable_repository 的 BulwarkLogicDefault，返回 (logic, repo) 便于测试。
+        fn make_logic_with_repo() -> (
+            BulwarkLogicDefault,
+            Arc<DefaultDisableRepository>,
+            Arc<MockDao>,
+        ) {
+            let dao = Arc::new(MockDao::new());
+            let session = Arc::new(BulwarkSession::new(
+                dao.clone() as Arc<dyn BulwarkDao>,
+                3600,
+                86400,
+            ));
+            let mut config = BulwarkConfig::default_config();
+            config.throw_on_not_login = false;
+            config.token_style = "uuid".to_string();
+            let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall);
+            let repo = Arc::new(DefaultDisableRepository::new(
+                dao.clone() as Arc<dyn BulwarkDao>
+            ));
+            let logic = BulwarkLogicDefault::new(session, Arc::new(config), firewall)
+                .with_disable_repository(repo.clone() as Arc<dyn DisableRepository>);
+            (logic, repo, dao)
+        }
+
+        // --------------------------------------------------------------------
+        // 6 个集成测试
+        // --------------------------------------------------------------------
+
+        /// 未注入 disable_repository，check_disable 返回 Ok（向后兼容 0.6.4 之前）。
+        #[tokio::test]
+        async fn test_check_disable_no_repository_returns_ok() {
+            let logic = make_logic_without_repo();
+            let token = logic.login("1001", &LoginParams::default()).await.unwrap();
+
+            let result = with_current_token(token, async { logic.check_disable().await }).await;
+
+            assert!(
+                result.is_ok(),
+                "未注入 disable_repository 时 check_disable 应返回 Ok，实际: {:?}",
+                result
+            );
+        }
+
+        /// 注入 repository 但未封禁，check_disable 返回 Ok。
+        #[tokio::test]
+        async fn test_check_disable_not_disabled_returns_ok() {
+            let (logic, _repo, _dao) = make_logic_with_repo();
+            let token = logic.login("1001", &LoginParams::default()).await.unwrap();
+
+            let result = with_current_token(token, async { logic.check_disable().await }).await;
+
+            assert!(
+                result.is_ok(),
+                "未封禁时 check_disable 应返回 Ok，实际: {:?}",
+                result
+            );
+        }
+
+        /// 注入 repository 且已封禁，check_disable 返回 DisableService 错误。
+        #[tokio::test]
+        async fn test_check_disable_disabled_returns_error() {
+            let (logic, repo, _dao) = make_logic_with_repo();
+            let token = logic.login("1001", &LoginParams::default()).await.unwrap();
+
+            // 封禁该用户（定时封禁）
+            let until = Utc::now() + chrono::Duration::seconds(3600);
+            repo.disable("1001", "default", Some(until), 0, 3600)
+                .await
+                .unwrap();
+
+            let result = with_current_token(token, async { logic.check_disable().await }).await;
+
+            match result {
+                Err(BulwarkError::DisableService { service, .. }) => {
+                    assert_eq!(
+                        service, "default",
+                        "DisableService 错误的 service 字段应为 'default'"
+                    );
+                },
+                other => panic!(
+                    "已封禁时 check_disable 应返回 Err(DisableService)，实际: {:?}",
+                    other
+                ),
+            }
+        }
+
+        /// 永久封禁（until=None），错误中 until 字段为 None。
+        #[tokio::test]
+        async fn test_check_disable_permanent_ban_until_none() {
+            let (logic, repo, _dao) = make_logic_with_repo();
+            let token = logic.login("1002", &LoginParams::default()).await.unwrap();
+
+            // 永久封禁（until=None, duration_secs=0）
+            repo.disable("1002", "default", None, 0, 0).await.unwrap();
+
+            let result = with_current_token(token, async { logic.check_disable().await }).await;
+
+            match result {
+                Err(BulwarkError::DisableService { service, until }) => {
+                    assert_eq!(service, "default");
+                    assert!(
+                        until.is_none(),
+                        "永久封禁 until 应为 None，实际: {:?}",
+                        until
+                    );
+                },
+                other => panic!(
+                    "永久封禁应返回 Err(DisableService {{ until: None }})，实际: {:?}",
+                    other
+                ),
+            }
+        }
+
+        /// 定时封禁（until=Some），错误中 until 字段为 Some 且精确匹配。
+        #[tokio::test]
+        async fn test_check_disable_timed_ban_until_some() {
+            let (logic, repo, _dao) = make_logic_with_repo();
+            let token = logic.login("1003", &LoginParams::default()).await.unwrap();
+
+            // 定时封禁（until=Some(future), duration_secs=7200）
+            let until = Utc::now() + chrono::Duration::seconds(7200);
+            repo.disable("1003", "default", Some(until), 0, 7200)
+                .await
+                .unwrap();
+
+            let result = with_current_token(token, async { logic.check_disable().await }).await;
+
+            match result {
+                Err(BulwarkError::DisableService { service, until: u }) => {
+                    assert_eq!(service, "default");
+                    assert!(u.is_some(), "定时封禁 until 应为 Some");
+                    assert_eq!(
+                        u.unwrap(),
+                        until,
+                        "定时封禁 until 应精确匹配 disable 时设置的值"
+                    );
+                },
+                other => panic!(
+                    "定时封禁应返回 Err(DisableService {{ until: Some(_) }})，实际: {:?}",
+                    other
+                ),
+            }
+        }
+
+        /// 未设置 current_token（未登录），check_disable 返回 Ok（不抛错）。
+        #[tokio::test]
+        async fn test_check_disable_no_token_returns_ok() {
+            let (logic, _repo, _dao) = make_logic_with_repo();
+            // 不调用 login，也不设置 task_local current_token
+
+            // 直接调用 check_disable（无 task_local 上下文）
+            let result = logic.check_disable().await;
+
+            assert!(
+                result.is_ok(),
+                "未登录（无 current_token）时 check_disable 应返回 Ok，实际: {:?}",
+                result
+            );
+        }
     }
 }
