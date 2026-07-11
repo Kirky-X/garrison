@@ -7,12 +7,17 @@
 //! - [`is_new_device`](DeviceBindingPolicy::is_new_device)：检测设备是否为该登录主体的新设备
 //! - [`require_secondary_auth`](DeviceBindingPolicy::require_secondary_auth)：判断新设备是否需要二级认证
 //!
-//! 三种内置实现（由后续任务提供）：
-//! - `StrictBinding`：新设备强制二级认证（T010）
+//! 三种内置实现：
+//! - [`StrictBinding`]：新设备强制二级认证（T010）
 //! - `LooseBinding`：新设备仅告警不阻断（T011）
 //! - `Disabled`：完全禁用设备绑定（T012）
 //!
 //! 此模块仅在启用 `device-binding` 特性时编译（依赖 `security-alert`）。
+
+/// 严格绑定策略实现模块（T010）。
+pub mod strict;
+
+pub use strict::StrictBinding;
 
 use crate::error::BulwarkResult;
 use async_trait::async_trait;
