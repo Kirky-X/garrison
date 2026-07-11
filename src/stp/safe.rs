@@ -39,12 +39,22 @@ impl BulwarkLogicDefault {
     /// - `BulwarkError::InvalidToken`: token 对应的 TokenSession 不存在。
     /// - DAO 读写失败：透传 BulwarkError。
     pub async fn open_safe(&self, service: &str, duration_secs: u64) -> BulwarkResult<()> {
+        if service.is_empty() {
+            return Err(BulwarkError::InvalidParam(
+                "service 参数不能为空".to_string(),
+            ));
+        }
         let token = current_token()?;
+        let token_prefix = if token.len() >= 8 {
+            &token[..8]
+        } else {
+            &token
+        };
         let mut ts = self
             .session
             .get_token_session(&token)
             .await?
-            .ok_or_else(|| BulwarkError::InvalidToken(format!("token 不存在: {}", token)))?;
+            .ok_or_else(|| BulwarkError::InvalidToken(format!("token 不存在: {}", token_prefix)))?;
         let now = chrono::Utc::now().timestamp();
         let expire_at = now + duration_secs as i64;
         ts.safe_services.insert(service.to_string(), expire_at);
@@ -62,6 +72,11 @@ impl BulwarkLogicDefault {
     /// 未登录或无 session 时返回 `Ok(false)` 而非 `Err`，因为 is_safe 是查询方法，
     /// "未认证" = "不安全" = `Ok(false)` 是合理的语义。只有 DAO 读写失败才返回 `Err`。
     pub async fn is_safe(&self, service: &str) -> BulwarkResult<bool> {
+        if service.is_empty() {
+            return Err(BulwarkError::InvalidParam(
+                "service 参数不能为空".to_string(),
+            ));
+        }
         let token = match current_token() {
             Ok(t) => t,
             Err(_) => return Ok(false),
@@ -94,12 +109,22 @@ impl BulwarkLogicDefault {
     /// - `BulwarkError::InvalidToken`: token 对应的 TokenSession 不存在。
     /// - DAO 读写失败：透传 BulwarkError。
     pub async fn close_safe(&self, service: &str) -> BulwarkResult<()> {
+        if service.is_empty() {
+            return Err(BulwarkError::InvalidParam(
+                "service 参数不能为空".to_string(),
+            ));
+        }
         let token = current_token()?;
+        let token_prefix = if token.len() >= 8 {
+            &token[..8]
+        } else {
+            &token
+        };
         let mut ts = self
             .session
             .get_token_session(&token)
             .await?
-            .ok_or_else(|| BulwarkError::InvalidToken(format!("token 不存在: {}", token)))?;
+            .ok_or_else(|| BulwarkError::InvalidToken(format!("token 不存在: {}", token_prefix)))?;
         ts.safe_services.remove(service);
         self.session.save_token_session(&token, &ts).await
     }
@@ -404,9 +429,20 @@ mod tests {
 
         match result {
             Err(BulwarkError::InvalidToken(msg)) => {
+                // token 脱敏：错误消息只包含前 8 字符
+                let expected_prefix = if token.len() >= 8 {
+                    &token[..8]
+                } else {
+                    &token
+                };
                 assert!(
-                    msg.contains(&token),
-                    "InvalidToken 错误消息应包含 token，实际: {}",
+                    msg.contains(expected_prefix),
+                    "InvalidToken 错误消息应包含 token 前缀，实际: {}",
+                    msg
+                );
+                assert!(
+                    !msg.contains(&token) || token.len() <= 8,
+                    "InvalidToken 错误消息不应包含完整 token（脱敏），实际: {}",
                     msg
                 );
             },
@@ -588,6 +624,29 @@ mod tests {
         assert_eq!(result.unwrap(), false, "未登录时 is_safe 应返回 Ok(false)");
     }
 
+    /// is_safe("") 返回 Err(InvalidParam) — service 参数不能为空。
+    #[tokio::test]
+    async fn t023_is_safe_empty_service_returns_err() {
+        let (logic, _dao) = make_logic();
+        let token = logic
+            .login("user-2007", &LoginParams::default())
+            .await
+            .unwrap();
+
+        let result = with_current_token(token, async { logic.is_safe("").await }).await;
+
+        match result {
+            Err(BulwarkError::InvalidParam(msg)) => {
+                assert!(
+                    msg.contains("service"),
+                    "InvalidParam 错误消息应说明 service 参数问题，实际: {}",
+                    msg
+                );
+            },
+            other => panic!("期望 Err(InvalidParam)，实际: {:?}", other),
+        }
+    }
+
     // --------------------------------------------------------------------
     // T024: close_safe 单元测试
     // --------------------------------------------------------------------
@@ -732,6 +791,29 @@ mod tests {
             safe_payment,
             "close_safe(default) 不应影响 payment，is_safe(payment) 应仍返回 true"
         );
+    }
+
+    /// close_safe("") 返回 Err(InvalidParam) — service 参数不能为空。
+    #[tokio::test]
+    async fn t024_close_safe_empty_service_returns_err() {
+        let (logic, _dao) = make_logic();
+        let token = logic
+            .login("user-3005", &LoginParams::default())
+            .await
+            .unwrap();
+
+        let result = with_current_token(token, async { logic.close_safe("").await }).await;
+
+        match result {
+            Err(BulwarkError::InvalidParam(msg)) => {
+                assert!(
+                    msg.contains("service"),
+                    "InvalidParam 错误消息应说明 service 参数问题，实际: {}",
+                    msg
+                );
+            },
+            other => panic!("期望 Err(InvalidParam)，实际: {:?}", other),
+        }
     }
 
     // --------------------------------------------------------------------
