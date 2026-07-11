@@ -94,6 +94,76 @@ impl AnomalyDetector for IpChangeDetector {
     }
 }
 
+/// 快速连续登录检测器，检查同一 login_id 的同时在线 token 数量。
+///
+/// 实现 `AnomalyDetector` trait，在 `check_on_login` 时：
+/// 1. 通过 `BulwarkSession::get_tokens_by_login_id` 获取该 login_id 的所有 token
+/// 2. 若 token 数量 >= 阈值，发出 `AnomalyLogin { anomaly_type: RapidSuccessiveLogin }`
+///
+/// 默认阈值为 5，可通过 `with_threshold` 自定义。
+/// `check_on_check_login` 不触发检测，返回空 Vec。
+pub struct RapidSuccessiveDetector {
+    /// 会话管理器引用，用于查询 token 列表。
+    session: Arc<BulwarkSession>,
+    /// 触发告警的 token 数量阈值。
+    threshold: usize,
+}
+
+impl RapidSuccessiveDetector {
+    /// 创建 `RapidSuccessiveDetector` 实例，默认阈值 5。
+    ///
+    /// # 参数
+    /// - `session`: 会话管理器引用（`Arc<BulwarkSession>`）。
+    pub fn new(session: Arc<BulwarkSession>) -> Self {
+        Self {
+            session,
+            threshold: 5,
+        }
+    }
+
+    /// 创建 `RapidSuccessiveDetector` 实例，自定义阈值。
+    ///
+    /// # 参数
+    /// - `session`: 会话管理器引用（`Arc<BulwarkSession>`）。
+    /// - `threshold`: 触发告警的 token 数量阈值。
+    pub fn with_threshold(session: Arc<BulwarkSession>, threshold: usize) -> Self {
+        Self { session, threshold }
+    }
+}
+
+#[async_trait]
+impl AnomalyDetector for RapidSuccessiveDetector {
+    async fn check_on_login(
+        &self,
+        login_id: &str,
+        _device_id: &str,
+        _ip: Option<&str>,
+    ) -> BulwarkResult<Vec<SecurityAlertEvent>> {
+        let tokens = self.session.get_tokens_by_login_id(login_id);
+        let count = tokens.len();
+
+        if count >= self.threshold {
+            return Ok(vec![SecurityAlertEvent::AnomalyLogin {
+                login_id: login_id.to_string(),
+                anomaly_type: AnomalyType::RapidSuccessiveLogin,
+                detail: format!("{} 个 token 同时在线（阈值 {}）", count, self.threshold),
+                trace_id: Uuid::new_v4().to_string(),
+            }]);
+        }
+
+        Ok(Vec::new())
+    }
+
+    async fn check_on_check_login(
+        &self,
+        _login_id: &str,
+        _token: &str,
+    ) -> BulwarkResult<Vec<SecurityAlertEvent>> {
+        // 快速连续登录检测只在 login 时触发
+        Ok(Vec::new())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -278,6 +348,113 @@ mod tests {
                     *anomaly_type,
                     AnomalyType::IpChanged,
                     "anomaly_type 应为 IpChanged"
+                );
+            },
+            _ => panic!("期望 AnomalyLogin 事件"),
+        }
+    }
+
+    // ========================================================================
+    // RapidSuccessiveDetector 测试
+    // ========================================================================
+
+    /// 辅助函数：为指定 login_id 创建 N 个 token session。
+    async fn create_n_tokens(session: &BulwarkSession, login_id: &str, count: usize) {
+        for i in 0..count {
+            let token = format!("T{}", i);
+            session
+                .create_token_session(login_id, &token, &LoginParams::default())
+                .await
+                .unwrap();
+        }
+    }
+
+    /// token 数量 < 阈值时返回空 Vec。
+    #[tokio::test]
+    async fn below_threshold_no_alert() {
+        let (_dao, session) = make_session();
+        // 阈值 5，只创建 3 个 token
+        create_n_tokens(&session, "1001", 3).await;
+
+        let detector = RapidSuccessiveDetector::new(session);
+        let alerts = detector
+            .check_on_login("1001", "dev-1", None)
+            .await
+            .unwrap();
+        assert!(alerts.is_empty(), "token 数量 < 阈值时不应告警");
+    }
+
+    /// token 数量 >= 阈值时返回 AnomalyLogin。
+    #[tokio::test]
+    async fn above_threshold_emits_alert() {
+        let (_dao, session) = make_session();
+        // 阈值 5，创建 6 个 token
+        create_n_tokens(&session, "1001", 6).await;
+
+        let detector = RapidSuccessiveDetector::new(session);
+        let alerts = detector
+            .check_on_login("1001", "dev-1", None)
+            .await
+            .unwrap();
+        assert_eq!(alerts.len(), 1, "token 数量 >= 阈值时应返回 1 个告警");
+    }
+
+    /// token 数量 == 阈值时返回告警（边界条件：>= 触发）。
+    #[tokio::test]
+    async fn threshold_boundary() {
+        let (_dao, session) = make_session();
+        // 阈值 3，创建恰好 3 个 token
+        create_n_tokens(&session, "1001", 3).await;
+
+        let detector = RapidSuccessiveDetector::with_threshold(session, 3);
+        let alerts = detector
+            .check_on_login("1001", "dev-1", None)
+            .await
+            .unwrap();
+        assert_eq!(alerts.len(), 1, "token 数量 == 阈值时应返回告警（>= 触发）");
+    }
+
+    /// 无历史 token 时返回空 Vec。
+    #[tokio::test]
+    async fn no_existing_tokens_no_alert() {
+        let (_dao, session) = make_session();
+        let detector = RapidSuccessiveDetector::new(session);
+        let alerts = detector
+            .check_on_login("1001", "dev-1", None)
+            .await
+            .unwrap();
+        assert!(alerts.is_empty(), "无历史 token 时不应告警");
+    }
+
+    /// check_on_check_login 返回空 Vec。
+    #[tokio::test]
+    async fn rapid_check_on_check_login_returns_empty() {
+        let (_dao, session) = make_session();
+        create_n_tokens(&session, "1001", 6).await;
+
+        let detector = RapidSuccessiveDetector::new(session);
+        let alerts = detector.check_on_check_login("1001", "T0").await.unwrap();
+        assert!(alerts.is_empty(), "check_on_check_login 应返回空 Vec");
+    }
+
+    /// 告警事件的 anomaly_type 为 RapidSuccessiveLogin。
+    #[tokio::test]
+    async fn rapid_alert_contains_correct_anomaly_type() {
+        let (_dao, session) = make_session();
+        create_n_tokens(&session, "1001", 5).await;
+
+        let detector = RapidSuccessiveDetector::new(session);
+        let alerts = detector
+            .check_on_login("1001", "dev-1", None)
+            .await
+            .unwrap();
+        assert_eq!(alerts.len(), 1);
+        match &alerts[0] {
+            SecurityAlertEvent::AnomalyLogin { anomaly_type, .. } => {
+                assert_eq!(
+                    *anomaly_type,
+                    AnomalyType::RapidSuccessiveLogin,
+                    "anomaly_type 应为 RapidSuccessiveLogin"
                 );
             },
             _ => panic!("期望 AnomalyLogin 事件"),

@@ -20,7 +20,7 @@ pub mod detector;
 /// 告警监听器实现模块。
 pub mod listener;
 
-pub use detector::IpChangeDetector;
+pub use detector::{IpChangeDetector, RapidSuccessiveDetector};
 pub use listener::TracingAlertListener;
 
 use crate::error::BulwarkResult;
