@@ -21,6 +21,8 @@
 //! - `BulwarkConfig::update(f)` 闭包式修改配置并广播
 
 use crate::error::{BulwarkError, BulwarkResult};
+#[cfg(feature = "web-waf")]
+use crate::web::waf::WafConfig;
 use confers::config::{ConfigBuilder, FileSource};
 use confers::types::ConfigValue;
 use serde::{Deserialize, Serialize};
@@ -265,6 +267,13 @@ pub struct BulwarkConfig {
     /// + `tenant_resolution_middleware` 才能生效。
     pub tenant_isolation: TenantIsolationConfig,
 
+    /// WAF 请求内容校验配置段。
+    ///
+    /// 默认 `enabled: false`（向后兼容）。启用后需配合 `web-waf` Cargo feature
+    /// + `bulwark_waf_middleware` 才能生效。
+    #[cfg(feature = "web-waf")]
+    pub waf_config: WafConfig,
+
     /// 配置变更广播通道（serde 跳过，反序列化后通过 `with_watcher` 重建）。
     #[serde(skip)]
     watcher: Option<watch::Sender<BulwarkConfig>>,
@@ -302,6 +311,8 @@ impl BulwarkConfig {
             is_share: DEFAULT_IS_SHARE,
             max_login_count: DEFAULT_MAX_LOGIN_COUNT,
             tenant_isolation: TenantIsolationConfig::default(),
+            #[cfg(feature = "web-waf")]
+            waf_config: WafConfig::default(),
             watcher: None,
         };
         config.with_watcher()
@@ -1057,6 +1068,8 @@ jwt_secret = "test-secret""#,
             is_share: DEFAULT_IS_SHARE,
             max_login_count: DEFAULT_MAX_LOGIN_COUNT,
             tenant_isolation: TenantIsolationConfig::default(),
+            #[cfg(feature = "web-waf")]
+            waf_config: crate::web::waf::WafConfig::default(),
             watcher: None,
         };
         assert!(config.update(|c| c.timeout = 999).is_ok());
