@@ -42,11 +42,13 @@ use crate::error::{BulwarkError, BulwarkResult};
 use crate::listener::BulwarkListenerManager;
 use crate::plugin::BulwarkPluginManager;
 use crate::session::BulwarkSession;
+use crate::stp::util::spawn_cleanup_task;
 use crate::stp::{BulwarkInterface, BulwarkLogicDefault};
 use crate::strategy::{BulwarkPermissionStrategy, BulwarkPermissionStrategyDefault, Strategy};
 use once_cell::sync::Lazy;
 use parking_lot::RwLock;
 use std::sync::Arc;
+use tokio::task::JoinHandle;
 
 // 显式 Manager API
 // 启用 manager-explicit feature 后提供不依赖全局单例的 Manager struct。
@@ -70,6 +72,11 @@ pub struct BulwarkManager {
     /// 外层 `RwLock` 管理 Option（初始化/重置），内层 `Arc<RwLock<Strategy>>`
     /// 允许运行时通过 `strategy.write().register_*()` 替换策略。
     strategy: RwLock<Option<Arc<RwLock<Strategy>>>>,
+    /// 后台 cleanup task 的 JoinHandle（T030）。
+    ///
+    /// `init` 时若 `config.token_map_cleanup_interval_secs > 0` 则启动 task 并保存 handle。
+    /// `reset_for_test` / `Drop` 时 abort task，避免后台线程在测试间或程序退出后残留。
+    cleanup_task_handle: RwLock<Option<JoinHandle<()>>>,
 }
 
 impl BulwarkManager {
@@ -78,6 +85,7 @@ impl BulwarkManager {
         Self {
             logic: RwLock::new(None),
             strategy: RwLock::new(None),
+            cleanup_task_handle: RwLock::new(None),
         }
     }
 
@@ -137,6 +145,10 @@ impl BulwarkManager {
             })?
         };
         let session = Arc::new(BulwarkSession::new(dao.clone(), timeout, active_timeout));
+
+        // T030: 启动后台 cleanup task（interval_secs <= 0 时返回 None，不启动）
+        let cleanup_handle =
+            spawn_cleanup_task(session.clone(), config.token_map_cleanup_interval_secs);
 
         // 3. auto-wire: 构造 4 个 manager（gap）
         // 3.1 PermissionChecker（委托 interface 查询权限/角色数据）
@@ -211,6 +223,12 @@ impl BulwarkManager {
         let strategy = Arc::new(RwLock::new(Strategy::new(logic.clone())));
         *BULWARK_MANAGER.logic.write() = Some(logic);
         *BULWARK_MANAGER.strategy.write() = Some(strategy);
+
+        // T030: 保存 cleanup task handle（先 abort 旧 task，支持重复 init）
+        if let Some(old) = BULWARK_MANAGER.cleanup_task_handle.write().take() {
+            old.abort();
+        }
+        *BULWARK_MANAGER.cleanup_task_handle.write() = cleanup_handle;
 
         Ok(())
     }
@@ -302,8 +320,21 @@ impl BulwarkManager {
     /// 使后续 `BulwarkUtil::login(id)` 等返回未初始化错误。
     #[cfg(test)]
     pub fn reset_for_test() {
+        // T030: abort cleanup task 避免测试间残留后台线程
+        if let Some(handle) = BULWARK_MANAGER.cleanup_task_handle.write().take() {
+            handle.abort();
+        }
         *BULWARK_MANAGER.logic.write() = None;
         *BULWARK_MANAGER.strategy.write() = None;
+    }
+}
+
+impl Drop for BulwarkManager {
+    fn drop(&mut self) {
+        // T030: manager drop 时 abort cleanup task，避免后台线程残留
+        if let Some(handle) = self.cleanup_task_handle.write().take() {
+            handle.abort();
+        }
     }
 }
 
@@ -1163,5 +1194,169 @@ mod tests {
         );
 
         BulwarkManager::reset_for_test();
+    }
+
+    // ------------------------------------------------------------------------
+    // T030: spawn_cleanup_task 集成到 BulwarkManager::init
+    // ------------------------------------------------------------------------
+
+    /// 验证 interval > 0 时 init 后 cleanup task 启动。
+    ///
+    /// 覆盖场景：`config.token_map_cleanup_interval_secs = 1`（> 0），
+    /// init 后 `BULWARK_MANAGER.cleanup_task_handle` 应为 `Some`。
+    #[tokio::test]
+    #[serial]
+    async fn manager_init_positive_interval_starts_cleanup_task() {
+        BulwarkManager::reset_for_test();
+        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let mut config = make_config();
+        config.token_map_cleanup_interval_secs = 1;
+        let config = Arc::new(config);
+        let interface: Arc<dyn BulwarkInterface> = Arc::new(MockInterface::new());
+
+        BulwarkManager::init(dao, config, interface).unwrap();
+
+        assert!(
+            BULWARK_MANAGER.cleanup_task_handle.read().is_some(),
+            "interval > 0 时 init 后应启动 cleanup task"
+        );
+
+        BulwarkManager::reset_for_test();
+    }
+
+    /// 验证 interval = -1 时 init 不启动 cleanup task。
+    ///
+    /// 覆盖场景：`config.token_map_cleanup_interval_secs = -1`（< 0，禁用），
+    /// init 后 `BULWARK_MANAGER.cleanup_task_handle` 应为 `None`。
+    #[tokio::test]
+    #[serial]
+    async fn manager_init_negative_interval_no_cleanup_task() {
+        BulwarkManager::reset_for_test();
+        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let mut config = make_config();
+        config.token_map_cleanup_interval_secs = -1;
+        let config = Arc::new(config);
+        let interface: Arc<dyn BulwarkInterface> = Arc::new(MockInterface::new());
+
+        BulwarkManager::init(dao, config, interface).unwrap();
+
+        assert!(
+            BULWARK_MANAGER.cleanup_task_handle.read().is_none(),
+            "interval = -1 时 init 不应启动 cleanup task"
+        );
+
+        BulwarkManager::reset_for_test();
+    }
+
+    /// 验证 init 后 cleanup task 实际运行（token 被清理）。
+    ///
+    /// 策略：init with timeout=1（TTL=1 秒）+ interval=1（每秒清理），
+    /// login 创建 token 后等待 3 秒，验证 token 已从 `login_token_map` 移除。
+    #[tokio::test]
+    #[serial]
+    async fn manager_init_cleanup_task_runs_after_init() {
+        BulwarkManager::reset_for_test();
+        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let mut config = make_config();
+        config.timeout = 1; // TTL = 1 秒
+        config.active_timeout = -1;
+        config.token_map_cleanup_interval_secs = 1; // 每秒清理
+        let config = Arc::new(config);
+        let interface: Arc<dyn BulwarkInterface> = Arc::new(MockInterface::new());
+
+        BulwarkManager::init(dao, config, interface).unwrap();
+
+        // login 创建 token
+        let token = BulwarkUtil::login_simple("1001").await.unwrap();
+        assert!(!token.is_empty());
+
+        // 验证 token 存在于 login_token_map
+        let logic = BulwarkManager::logic().unwrap();
+        assert!(
+            logic.session.get_token_by_login_id("1001").is_some(),
+            "清理前 token 应存在于 login_token_map"
+        );
+
+        // 等待 token TTL 过期 + 至少 2 次清理周期
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+
+        // 验证 token 已被 cleanup task 清理
+        assert!(
+            logic.session.get_token_by_login_id("1001").is_none(),
+            "清理后 token 应从 login_token_map 移除"
+        );
+
+        BulwarkManager::reset_for_test();
+    }
+
+    /// 验证 manager drop 时 cleanup task 被取消。
+    ///
+    /// 策略：创建局部 `BulwarkManager` 实例，存入 cleanup task handle，
+    /// drop 后验证 task 停止运行（计数器不再显著增长）。
+    #[tokio::test]
+    async fn manager_drop_cancels_cleanup_task() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::time::Duration;
+
+        // 计数 DAO：get 始终返回 Err，cleanup 每次循环都会调用 get 并计数
+        struct CountingDao {
+            counter: Arc<AtomicUsize>,
+        }
+        #[async_trait]
+        impl BulwarkDao for CountingDao {
+            async fn get(&self, _key: &str) -> BulwarkResult<Option<String>> {
+                self.counter.fetch_add(1, Ordering::SeqCst);
+                Err(BulwarkError::Dao("test counting".to_string()))
+            }
+            async fn set(&self, _key: &str, _value: &str, _ttl_seconds: u64) -> BulwarkResult<()> {
+                Ok(())
+            }
+            async fn update(&self, _key: &str, _value: &str) -> BulwarkResult<()> {
+                Ok(())
+            }
+            async fn expire(&self, _key: &str, _seconds: u64) -> BulwarkResult<()> {
+                Ok(())
+            }
+            async fn delete(&self, _key: &str) -> BulwarkResult<()> {
+                Ok(())
+            }
+        }
+
+        let counter = Arc::new(AtomicUsize::new(0));
+        let dao: Arc<dyn BulwarkDao> = Arc::new(CountingDao {
+            counter: counter.clone(),
+        });
+        let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
+        // 添加 token 到 login_token_map，确保 cleanup 有内容可遍历
+        session.add_login_token("user1", "token1");
+
+        // 启动 cleanup task
+        let handle = spawn_cleanup_task(session, 1).unwrap();
+
+        // 创建局部 manager 并存入 handle
+        let manager = BulwarkManager::new();
+        *manager.cleanup_task_handle.write() = Some(handle);
+
+        // 等待 2 个 cleanup 周期（tokio::time::interval 首次 tick 立即返回，第二次在 1 秒后）
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        let count_before = counter.load(Ordering::SeqCst);
+        assert!(
+            count_before >= 2,
+            "drop 前 cleanup task 应已运行至少 2 次，实际: {}",
+            count_before
+        );
+
+        // drop manager — 应 abort cleanup task
+        drop(manager);
+
+        // 等待 2 个周期，验证 task 已停止（计数不应显著增长）
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        let count_after = counter.load(Ordering::SeqCst);
+        assert!(
+            count_after <= count_before + 1,
+            "drop 后 cleanup task 应已取消，计数不应显著增长。before={}, after={}",
+            count_before,
+            count_after
+        );
     }
 }
