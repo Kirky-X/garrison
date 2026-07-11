@@ -131,6 +131,15 @@ pub struct TokenSession {
     /// 未设置时为 `None`。
     #[serde(default)]
     pub user_agent: Option<String>,
+    /// 二级认证（Safe Auth）瞬态标记。
+    ///
+    /// key: service 名称（如 "default" / "payment"）
+    /// value: 过期时间戳（Unix 秒），`now > value` 表示已过期。
+    ///
+    /// `open_safe` 写入，`is_safe` 查询，`close_safe` 移除。
+    /// `#[serde(default)]` 确保反序列化旧数据（无此字段）时默认为空 HashMap（向后兼容）。
+    #[serde(default)]
+    pub safe_services: HashMap<String, i64>,
 }
 
 /// 会话过期监听器 trait。
@@ -431,6 +440,7 @@ impl BulwarkSession {
                 device: device.map(|s| s.to_string()),
                 ip: ip.map(|s| s.to_string()),
                 user_agent: user_agent.map(|s| s.to_string()),
+                safe_services: HashMap::new(),
             };
             let token_json = serde_json::to_string(&token_session)
                 .map_err(|e| BulwarkError::Session(format!("序列化 TokenSession 失败: {}", e)))?;

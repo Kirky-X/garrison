@@ -261,6 +261,11 @@ security-alert = []
 # 启用后提供 DeviceBindingPolicy trait 抽象，StrictBinding/LooseBinding/Disabled 由后续任务实现。
 device-binding = ["security-alert"]
 
+# === 二级认证瞬态标记 ===
+# 启用后 BulwarkLogicDefault 覆写 open_safe/is_safe/close_safe 方法，
+# 在 TokenSession.safe_services 中记录/查询/移除 service 级二级认证标记。
+safe-auth = []
+
 # === 社交登录 ===
 # social-wechat：微信扫码登录（WechatProvider），依赖 protocol-oauth2（reqwest HTTP client）
 social-wechat = ["protocol-oauth2"]

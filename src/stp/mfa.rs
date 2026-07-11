@@ -50,6 +50,58 @@ pub trait MfaLogic: SessionLogic {
         Ok(())
     }
 
+    /// 开启指定 service 的二级认证（瞬态标记）。
+    ///
+    /// 在当前 TokenSession 的 `safe_services` 中记录 service → 过期时间戳。
+    /// 调用后 `is_safe(service)` 在过期前返回 `true`。
+    ///
+    /// # 参数
+    /// - `service`: 服务名称（如 "default" / "payment"）。
+    /// - `duration_secs`: 有效时长（秒）；过期后 `is_safe` 返回 `false`。
+    ///
+    /// # 返回
+    /// - `Ok(())`: 成功开启。
+    /// - `Err`: 未登录或 session 不存在。
+    ///
+    /// # 默认实现
+    /// 返回 `Ok(())`（no-op，向后兼容 0.6.4 之前）。
+    /// `safe-auth` feature 启用时由 `BulwarkLogicDefault` 覆写。
+    async fn open_safe(&self, _service: &str, _duration_secs: u64) -> BulwarkResult<()> {
+        Ok(())
+    }
+
+    /// 检查指定 service 是否处于二级认证有效期内。
+    ///
+    /// # 参数
+    /// - `service`: 服务名称。
+    ///
+    /// # 返回
+    /// - `Ok(true)`: service 已开启且未过期。
+    /// - `Ok(false)`: service 未开启或已过期。
+    ///
+    /// # 默认实现
+    /// 返回 `Ok(true)`（始终安全，向后兼容 0.6.4 之前）。
+    /// `safe-auth` feature 启用时由 `BulwarkLogicDefault` 覆写。
+    async fn is_safe(&self, _service: &str) -> BulwarkResult<bool> {
+        Ok(true)
+    }
+
+    /// 关闭指定 service 的二级认证（移除瞬态标记）。
+    ///
+    /// # 参数
+    /// - `service`: 服务名称。
+    ///
+    /// # 返回
+    /// - `Ok(())`: 成功关闭（或 service 本就未开启，幂等）。
+    /// - `Err`: 未登录或 session 不存在。
+    ///
+    /// # 默认实现
+    /// 返回 `Ok(())`（no-op，向后兼容 0.6.4 之前）。
+    /// `safe-auth` feature 启用时由 `BulwarkLogicDefault` 覆写。
+    async fn close_safe(&self, _service: &str) -> BulwarkResult<()> {
+        Ok(())
+    }
+
     /// 构造账号被封禁异常。
     ///
     /// 业务方在自定义 `check_disable` 实现中调用此关联函数抛出专用异常：
