@@ -1,10 +1,12 @@
 //! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! 告警监听器实现模块，提供基于 `tracing` 的默认告警监听器。
+//! 告警监听器实现模块，提供基于 `tracing` 的默认告警监听器与基于 DAO 的审计日志监听器。
 
-use crate::error::BulwarkResult;
+use crate::dao::BulwarkDao;
+use crate::error::{BulwarkError, BulwarkResult};
 use async_trait::async_trait;
+use std::sync::Arc;
 
 use super::{AlertListener, SecurityAlertEvent};
 
@@ -93,6 +95,60 @@ impl AlertListener for TracingAlertListener {
             },
         }
         Ok(())
+    }
+}
+
+/// 审计日志告警监听器，将告警事件持久化到 DAO。
+///
+/// 将 `SecurityAlertEvent` 序列化为 JSON 写入 `BulwarkDao`，
+/// key 格式 `audit:alert:{trace_id_or_uuid}`。
+/// 用于安全告警的持久化审计追踪。
+///
+/// 与 `TracingAlertListener` 不同，`on_alert` 写入 DAO 失败时返回 `Err`，
+/// 因为审计日志的持久化是安全合规的关键需求，不应被静默吞掉。
+pub struct AuditAlertListener {
+    /// DAO 实例，用于持久化审计日志条目。
+    dao: Arc<dyn BulwarkDao>,
+    /// 审计日志 TTL（秒），默认 86400（24 小时）。
+    ttl_seconds: u64,
+}
+
+impl AuditAlertListener {
+    /// 创建新的 `AuditAlertListener`，TTL 默认 86400 秒（24 小时）。
+    ///
+    /// # 参数
+    /// - `dao`: DAO 实例（`Arc<dyn BulwarkDao>`），用于写入审计日志。
+    pub fn new(dao: Arc<dyn BulwarkDao>) -> Self {
+        Self {
+            dao,
+            ttl_seconds: 86_400,
+        }
+    }
+
+    /// 创建新的 `AuditAlertListener`，指定自定义 TTL。
+    ///
+    /// # 参数
+    /// - `dao`: DAO 实例（`Arc<dyn BulwarkDao>`）。
+    /// - `ttl_seconds`: 审计日志存活秒数（0 表示永久驻留）。
+    pub fn with_ttl(dao: Arc<dyn BulwarkDao>, ttl_seconds: u64) -> Self {
+        Self { dao, ttl_seconds }
+    }
+}
+
+#[async_trait]
+impl AlertListener for AuditAlertListener {
+    async fn on_alert(&self, event: &SecurityAlertEvent) -> BulwarkResult<()> {
+        // AnomalyLogin 变体使用事件自带的 trace_id 作为 identifier，
+        // 其他变体生成新的 UUID 作为 identifier。
+        let identifier = match event {
+            SecurityAlertEvent::AnomalyLogin { trace_id, .. } => trace_id.clone(),
+            _ => uuid::Uuid::new_v4().to_string(),
+        };
+        let key = format!("audit:alert:{}", identifier);
+        let json = serde_json::to_string(event).map_err(|e| {
+            BulwarkError::Internal(format!("序列化 SecurityAlertEvent 为 JSON 失败: {}", e))
+        })?;
+        self.dao.set(&key, &json, self.ttl_seconds).await
     }
 }
 
@@ -224,5 +280,129 @@ mod tests {
             // 每个变体调用 on_alert 不应 panic
             let _ = listener.on_alert(event).await;
         }
+    }
+
+    // ========================================================================
+    // AuditAlertListener 测试
+    // ========================================================================
+
+    /// `new()` 返回 `AuditAlertListener` 实例。
+    #[test]
+    fn audit_alert_listener_new_returns_instance() {
+        let dao: Arc<dyn BulwarkDao> = Arc::new(crate::dao::tests::MockDao::new());
+        let _listener = AuditAlertListener::new(dao);
+        // 构造成功即通过（无公共字段可直接断言）
+    }
+
+    /// `on_alert` 处理 `AnomalyLogin` 事件写入 DAO，key 包含 trace_id。
+    #[tokio::test]
+    async fn on_alert_anomaly_login_writes_to_dao() {
+        let dao = Arc::new(crate::dao::tests::MockDao::new());
+        let listener = AuditAlertListener::new(dao.clone());
+        let event = SecurityAlertEvent::AnomalyLogin {
+            login_id: "1001".to_string(),
+            anomaly_type: AnomalyType::IpChanged,
+            detail: "IP 从 1.2.3.4 变为 5.6.7.8".to_string(),
+            trace_id: "trace-007".to_string(),
+        };
+        listener.on_alert(&event).await.unwrap();
+        // AnomalyLogin 使用 trace_id 作为 key identifier
+        let json = dao.get("audit:alert:trace-007").await.unwrap();
+        assert!(
+            json.is_some(),
+            "AnomalyLogin 事件应写入 DAO（key 含 trace_id）"
+        );
+        let json = json.unwrap();
+        assert!(json.contains("AnomalyLogin"), "JSON 应包含事件类型");
+        assert!(json.contains("1001"), "JSON 应包含 login_id");
+        assert!(json.contains("trace-007"), "JSON 应包含 trace_id");
+        assert!(json.contains("IpChanged"), "JSON 应包含 anomaly_type");
+    }
+
+    /// `on_alert` 处理 `NewDeviceLogin` 事件写入 DAO。
+    #[tokio::test]
+    async fn on_alert_new_device_login_writes_to_dao() {
+        let dao = Arc::new(crate::dao::tests::MockDao::new());
+        let listener = AuditAlertListener::new(dao.clone());
+        let event = SecurityAlertEvent::NewDeviceLogin {
+            login_id: "1001".to_string(),
+            device_id: "dev-001".to_string(),
+            ip: Some("1.2.3.4".to_string()),
+        };
+        listener.on_alert(&event).await.unwrap();
+        // NewDeviceLogin 使用 UUID 作为 key，通过 keys 扫描定位
+        let keys = dao.keys("audit:alert:*").await.unwrap();
+        assert_eq!(keys.len(), 1, "应写入 1 条审计日志");
+        let json = dao.get(&keys[0]).await.unwrap();
+        assert!(json.is_some(), "审计日志应存在");
+        let json = json.unwrap();
+        assert!(json.contains("NewDeviceLogin"), "JSON 应包含事件类型");
+        assert!(json.contains("1001"), "JSON 应包含 login_id");
+        assert!(json.contains("dev-001"), "JSON 应包含 device_id");
+    }
+
+    /// `on_alert` 处理 `DisableTriggered` 事件写入 DAO。
+    #[tokio::test]
+    async fn on_alert_disable_triggered_writes_to_dao() {
+        let dao = Arc::new(crate::dao::tests::MockDao::new());
+        let listener = AuditAlertListener::new(dao.clone());
+        let event = SecurityAlertEvent::DisableTriggered {
+            login_id: "1001".to_string(),
+            service: "default".to_string(),
+            level: 2,
+        };
+        listener.on_alert(&event).await.unwrap();
+        let keys = dao.keys("audit:alert:*").await.unwrap();
+        assert_eq!(keys.len(), 1, "应写入 1 条审计日志");
+        let json = dao.get(&keys[0]).await.unwrap();
+        assert!(json.is_some(), "审计日志应存在");
+        let json = json.unwrap();
+        assert!(json.contains("DisableTriggered"), "JSON 应包含事件类型");
+        assert!(json.contains("1001"), "JSON 应包含 login_id");
+        assert!(json.contains("default"), "JSON 应包含 service");
+        assert!(json.contains("2"), "JSON 应包含 level");
+    }
+
+    /// `on_alert` 处理 `PrivilegeEscalation` 事件写入 DAO。
+    #[tokio::test]
+    async fn on_alert_privilege_escalation_writes_to_dao() {
+        let dao = Arc::new(crate::dao::tests::MockDao::new());
+        let listener = AuditAlertListener::new(dao.clone());
+        let event = SecurityAlertEvent::PrivilegeEscalation {
+            login_id: "1001".to_string(),
+            old_roles: vec!["user".to_string()],
+            new_roles: vec!["admin".to_string(), "user".to_string()],
+        };
+        listener.on_alert(&event).await.unwrap();
+        let keys = dao.keys("audit:alert:*").await.unwrap();
+        assert_eq!(keys.len(), 1, "应写入 1 条审计日志");
+        let json = dao.get(&keys[0]).await.unwrap();
+        assert!(json.is_some(), "审计日志应存在");
+        let json = json.unwrap();
+        assert!(json.contains("PrivilegeEscalation"), "JSON 应包含事件类型");
+        assert!(json.contains("1001"), "JSON 应包含 login_id");
+        assert!(json.contains("admin"), "JSON 应包含 new_roles 中的角色");
+    }
+
+    /// `on_alert` 处理 `SensitiveOperation` 事件写入 DAO。
+    #[tokio::test]
+    async fn on_alert_sensitive_operation_writes_to_dao() {
+        let dao = Arc::new(crate::dao::tests::MockDao::new());
+        let listener = AuditAlertListener::new(dao.clone());
+        let event = SecurityAlertEvent::SensitiveOperation {
+            login_id: "1001".to_string(),
+            operation: "delete".to_string(),
+            resource: "user:1002".to_string(),
+        };
+        listener.on_alert(&event).await.unwrap();
+        let keys = dao.keys("audit:alert:*").await.unwrap();
+        assert_eq!(keys.len(), 1, "应写入 1 条审计日志");
+        let json = dao.get(&keys[0]).await.unwrap();
+        assert!(json.is_some(), "审计日志应存在");
+        let json = json.unwrap();
+        assert!(json.contains("SensitiveOperation"), "JSON 应包含事件类型");
+        assert!(json.contains("1001"), "JSON 应包含 login_id");
+        assert!(json.contains("delete"), "JSON 应包含 operation");
+        assert!(json.contains("user:1002"), "JSON 应包含 resource");
     }
 }
