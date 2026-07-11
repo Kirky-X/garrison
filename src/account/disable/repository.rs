@@ -503,4 +503,95 @@ mod tests {
             "未封禁时 get_disable_time 应返回 Ok(None)"
         );
     }
+
+    // ========================================================================
+    // T018: 阶梯封禁 level 支持测试
+    // ========================================================================
+
+    /// level=0 普通封禁：disable(level=0) 后 get_disable_level 返回 Ok(0)。
+    ///
+    /// 验证默认封禁级别 0（普通封禁）可正确存储与读取。
+    #[tokio::test]
+    async fn t018_level_zero_normal_ban() {
+        let dao = Arc::new(MockDao::new());
+        let repo = DefaultDisableRepository::new(dao.clone());
+        repo.disable("user:3001", "default", None, 0, 0)
+            .await
+            .unwrap();
+        assert_eq!(
+            repo.get_disable_level("user:3001", "default")
+                .await
+                .unwrap(),
+            0,
+            "level=0 普通封禁，get_disable_level 应返回 Ok(0)"
+        );
+    }
+
+    /// level=1 一级封禁：disable(level=1) 后 get_disable_level 返回 Ok(1)。
+    ///
+    /// 验证一级阶梯封禁（如限制部分功能）可正确存储与读取。
+    #[tokio::test]
+    async fn t018_level_one_first_escalation() {
+        let dao = Arc::new(MockDao::new());
+        let repo = DefaultDisableRepository::new(dao.clone());
+        repo.disable("user:3002", "default", None, 1, 0)
+            .await
+            .unwrap();
+        assert_eq!(
+            repo.get_disable_level("user:3002", "default")
+                .await
+                .unwrap(),
+            1,
+            "level=1 一级封禁，get_disable_level 应返回 Ok(1)"
+        );
+    }
+
+    /// level=3 三级封禁：disable(level=3) 后 get_disable_level 返回 Ok(3)。
+    ///
+    /// 验证三级阶梯封禁（如完全封禁）可正确存储与读取。
+    #[tokio::test]
+    async fn t018_level_three_full_ban() {
+        let dao = Arc::new(MockDao::new());
+        let repo = DefaultDisableRepository::new(dao.clone());
+        repo.disable("user:3003", "default", None, 3, 0)
+            .await
+            .unwrap();
+        assert_eq!(
+            repo.get_disable_level("user:3003", "default")
+                .await
+                .unwrap(),
+            3,
+            "level=3 三级封禁，get_disable_level 应返回 Ok(3)"
+        );
+    }
+
+    /// get_disable_level 返回正确值（高 level + JSON 持久化验证）：
+    /// disable(level=10) 后 get_disable_level 返回 Ok(10)，
+    /// 且 DAO 中的 JSON 反序列化后 level 字段也为 10。
+    ///
+    /// 验证高 level 值无截断/溢出，且 level 字段在 JSON 持久化层正确传递。
+    #[tokio::test]
+    async fn t018_get_disable_level_returns_correct_high_value() {
+        let dao = Arc::new(MockDao::new());
+        let repo = DefaultDisableRepository::new(dao.clone());
+        repo.disable("user:3004", "default", None, 10, 0)
+            .await
+            .unwrap();
+        // 通过 API 验证
+        assert_eq!(
+            repo.get_disable_level("user:3004", "default")
+                .await
+                .unwrap(),
+            10,
+            "level=10 高级封禁，get_disable_level 应返回 Ok(10) 无截断"
+        );
+        // 通过直接反序列化 DAO 中的 JSON 验证持久化层正确传递 level 字段
+        let key = "disable:default:user:3004";
+        let stored = dao.get(key).await.unwrap().unwrap();
+        let entry: DisableEntry = serde_json::from_str(&stored).unwrap();
+        assert_eq!(
+            entry.level, 10,
+            "DAO 中的 JSON 反序列化后 level 字段应为 10"
+        );
+    }
 }
