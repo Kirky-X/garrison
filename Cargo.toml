@@ -320,6 +320,7 @@ production = [
     "protocol-jwt", "protocol-sign", "secure-sign",
     "listener", "tracing-log", "metrics-prometheus",
     "tenant-isolation",
+    "security-alert", "device-binding",
 ]
 
 development = [
