@@ -118,7 +118,7 @@ mod tests {
     #[test]
     fn get_renewed_token_returns_none_outside_scope() {
         // 在 task_local 作用域外调用，不应 panic
-        let result = std::panic::catch_unwind(|| get_renewed_token());
+        let result = std::panic::catch_unwind(get_renewed_token);
         assert!(result.is_ok(), "作用域外调用不应 panic");
         assert_eq!(result.unwrap(), None, "作用域外应返回 None");
     }

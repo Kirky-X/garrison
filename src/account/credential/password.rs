@@ -518,10 +518,19 @@ mod tests {
     /// PHC 格式：`$argon2id$v=19$m=...,t=...,p=...$<salt>$<hash>`
     /// 末段为 hash 的 base64 编码（无 padding），解码后应为 32 字节。
     ///
-    /// 注意：此测试依赖 `base64` crate 解码 PHC 末段，需启用含 `base64` 的 feature
-    /// （如 `protocol-oauth2` / `secure-httpbasic` / `full`）。仅启用 `account-credential`
+    /// 注意：此测试依赖 `base64` crate 解码 PHC 末段，需启用含 `dep:base64` 的 feature
+    /// （如 `protocol-oauth2` / `secure-httpbasic` / `web-csrf` / `full`）。仅启用 `account-credential`
     /// 时此测试不编译（生产代码不依赖 base64）。
-    #[cfg(feature = "base64")]
+    #[cfg(any(
+        feature = "protocol-oauth2",
+        feature = "protocol-sso",
+        feature = "protocol-sign",
+        feature = "secure-sign",
+        feature = "secure-httpbasic",
+        feature = "secure-httpdigest",
+        feature = "social-alipay",
+        feature = "web-csrf"
+    ))]
     #[test]
     fn hash_produces_32_byte_output() {
         let hasher = Argon2Hasher::default();
