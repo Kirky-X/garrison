@@ -57,6 +57,12 @@ pub mod authflow;
 /// 未启用 `metrics-prometheus` 时 `AccountMetrics` 为 `()` unit type 别名。
 pub mod metrics;
 
+/// 封禁库子模块，提供账号封禁/解封/查询能力。
+///
+/// 提供 `DisableEntry` struct + `DisableRepository` trait（独立于 `BulwarkDao`，
+/// 通过持有 `Arc<dyn BulwarkDao>` 委托实现）。非 feature-gated，依赖核心 `BulwarkDao` trait。
+pub mod disable;
+
 #[cfg(test)]
 mod tests {
     /// 验证 account 模块在启用 account-credential feature 时可编译。
