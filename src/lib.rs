@@ -234,6 +234,15 @@ pub mod web_actix;
 #[cfg(feature = "web-warp")]
 pub mod web_warp;
 
+/// Web 安全中间件模块，提供 WAF / CORS / CSRF 等请求内容校验能力。
+///
+/// 各子模块独立 feature-gated：
+/// - `web-waf`：WAF 请求内容校验
+/// - `web-cors`：CORS 跨域资源共享
+/// - `web-csrf`：CSRF 跨站请求伪造防护
+#[cfg(feature = "web-waf")]
+pub mod web;
+
 // ====================================================================
 // 可选模块（特性门控）
 // ====================================================================
