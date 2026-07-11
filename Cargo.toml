@@ -170,10 +170,10 @@ db-postgres = ["db-base", "dbnexus/postgres"]
 db-mysql = ["db-base", "dbnexus/mysql"]
 
 # === 协议层插件 ===
-protocol-oauth2 = ["reqwest", "dep:sha2", "base64"]
-protocol-sso = ["reqwest", "dep:quick-xml", "dep:sha2", "hmac", "base64"]
+protocol-oauth2 = ["reqwest", "dep:sha2", "dep:base64"]
+protocol-sso = ["reqwest", "dep:quick-xml", "dep:sha2", "hmac", "dep:base64"]
 protocol-jwt = ["jsonwebtoken", "dep:sha2"]
-protocol-sign = ["dep:sha2", "hmac", "base64"]
+protocol-sign = ["dep:sha2", "hmac", "dep:base64"]
 protocol-apikey = []
 protocol-temp = []
 # protocol-zeroize：协议层密钥零化（Drop 时清零 secret 字段，防止内存残留）
@@ -187,9 +187,9 @@ protocol-sso-server = ["protocol-sso"]
 
 # === 安全模块 ===
 secure-totp = ["totp-rs", "dep:base32"]
-secure-sign = ["dep:sha2", "hmac", "base64", "md5"]
-secure-httpbasic = ["base64"]
-secure-httpdigest = ["dep:sha2", "base64", "md5"]
+secure-sign = ["dep:sha2", "hmac", "dep:base64", "md5"]
+secure-httpbasic = ["dep:base64"]
+secure-httpdigest = ["dep:sha2", "dep:base64", "md5"]
 # Unicode 同形异义字检测
 # 启用后提供 check_confusable 函数 + PermissionRegistry::register 集成（tracing::warn）
 secure-confusable = ["dep:unicode-security"]
@@ -220,6 +220,8 @@ web-warp = ["warp"]
 web-waf = ["web-axum"]
 # web-cors：CORS 跨域资源共享中间件，依赖 web-axum
 web-cors = ["web-axum"]
+# web-csrf：CSRF 跨站请求伪造防护中间件（Double-Submit Cookie 模式），依赖 web-axum + rand + base64
+web-csrf = ["web-axum", "dep:rand", "dep:base64"]
 
 # === 过程宏注解（#[check_login]/#[check_permission]/#[check_role]） ===
 # 依赖 web-axum（宏生成的 wrapper 返回 axum::response::Response）
@@ -254,7 +256,7 @@ firewall-maxminddb = ["dep:maxminddb", "firewall-geoip", "firewall-anomalous"]
 social-wechat = ["protocol-oauth2"]
 # social-alipay：支付宝授权登录（AlipayProvider），依赖 protocol-oauth2 + rsa 签名
 # 启用 rsa（含 sha2/pem features，用于 RSA2 签名 + PEM 解析）+ base64（签名值编码）
-social-alipay = ["protocol-oauth2", "rsa", "base64"]
+social-alipay = ["protocol-oauth2", "rsa", "dep:base64"]
 
 # === Keycloak OIDC RP ===
 # keycloak-oidc：Keycloak 作为 OIDC 依赖方（KeycloakProvider），依赖 protocol-oidc（JWKS 验签 + discovery）
@@ -289,6 +291,7 @@ full = [
     "secure-xss",
     "account-credential", "account-credential-zeroize", "account-policy", "account-lockout", "account-authflow",
     "web-axum", "web-actix", "web-warp",
+    "web-waf", "web-cors", "web-csrf",
     "alone-cache", "parameter-query",
     "listener", "metrics-prometheus", "observability-otlp", "grpc", "i18n",
     "annotation-macros",

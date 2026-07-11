@@ -15,3 +15,7 @@ pub mod waf;
 /// CORS 跨域资源共享中间件模块。
 #[cfg(feature = "web-cors")]
 pub mod cors;
+
+/// CSRF 跨站请求伪造防护中间件模块。
+#[cfg(feature = "web-csrf")]
+pub mod csrf;

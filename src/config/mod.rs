@@ -23,6 +23,8 @@
 use crate::error::{BulwarkError, BulwarkResult};
 #[cfg(feature = "web-cors")]
 use crate::web::cors::CorsConfig;
+#[cfg(feature = "web-csrf")]
+use crate::web::csrf::CsrfConfig;
 #[cfg(feature = "web-waf")]
 use crate::web::waf::WafConfig;
 use confers::config::{ConfigBuilder, FileSource};
@@ -283,6 +285,13 @@ pub struct BulwarkConfig {
     #[cfg(feature = "web-cors")]
     pub cors_config: CorsConfig,
 
+    /// CSRF 跨站请求伪造防护配置段。
+    ///
+    /// 默认 `enabled: false`（向后兼容）。启用后需配合 `web-csrf` Cargo feature
+    /// + `bulwark_csrf_middleware` 才能生效。
+    #[cfg(feature = "web-csrf")]
+    pub csrf_config: CsrfConfig,
+
     /// 配置变更广播通道（serde 跳过，反序列化后通过 `with_watcher` 重建）。
     #[serde(skip)]
     watcher: Option<watch::Sender<BulwarkConfig>>,
@@ -324,6 +333,8 @@ impl BulwarkConfig {
             waf_config: WafConfig::default(),
             #[cfg(feature = "web-cors")]
             cors_config: CorsConfig::default(),
+            #[cfg(feature = "web-csrf")]
+            csrf_config: CsrfConfig::default(),
             watcher: None,
         };
         config.with_watcher()
@@ -1083,6 +1094,8 @@ jwt_secret = "test-secret""#,
             waf_config: crate::web::waf::WafConfig::default(),
             #[cfg(feature = "web-cors")]
             cors_config: crate::web::cors::CorsConfig::default(),
+            #[cfg(feature = "web-csrf")]
+            csrf_config: crate::web::csrf::CsrfConfig::default(),
             watcher: None,
         };
         assert!(config.update(|c| c.timeout = 999).is_ok());

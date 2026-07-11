@@ -240,7 +240,7 @@ pub mod web_warp;
 /// - `web-waf`：WAF 请求内容校验
 /// - `web-cors`：CORS 跨域资源共享
 /// - `web-csrf`：CSRF 跨站请求伪造防护
-#[cfg(any(feature = "web-waf", feature = "web-cors"))]
+#[cfg(any(feature = "web-waf", feature = "web-cors", feature = "web-csrf"))]
 pub mod web;
 
 // ====================================================================
