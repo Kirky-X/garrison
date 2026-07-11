@@ -44,6 +44,9 @@ pub mod interface;
 pub mod mfa;
 pub mod password;
 pub mod permission;
+// safe-auth feature-gated
+#[cfg(feature = "safe-auth")]
+pub mod safe;
 pub mod session;
 pub mod token;
 pub mod util;
