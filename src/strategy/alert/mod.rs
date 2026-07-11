@@ -14,6 +14,11 @@
 //!
 //! 此模块仅在启用 `security-alert` 特性时编译。
 
+/// 告警监听器实现模块。
+pub mod listener;
+
+pub use listener::TracingAlertListener;
+
 use crate::error::BulwarkResult;
 use async_trait::async_trait;
 use parking_lot::RwLock;
