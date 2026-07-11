@@ -88,6 +88,12 @@ pub const DEFAULT_IS_SHARE: bool = false;
 /// 默认最大登录数量（0 = 不限制，>0 = 超出时踢出最早登录的会话）。
 pub const DEFAULT_MAX_LOGIN_COUNT: u32 = 0;
 
+/// 默认设备绑定模式（"disabled" = 不启用设备绑定）。
+pub const DEFAULT_DEVICE_BINDING_MODE: &str = "disabled";
+
+/// 设备绑定模式合法值（"strict" / "loose" / "disabled"）。
+pub const DEVICE_BINDING_MODES: &[&str] = &["strict", "loose", "disabled"];
+
 /// 环境变量前缀（BULWARK_）。
 pub const ENV_PREFIX: &str = "BULWARK_";
 
@@ -273,6 +279,16 @@ pub struct BulwarkConfig {
     /// 登录后若该账号的活跃 Token 数超过此值，按 `last_active_time` 升序踢出最早的。
     pub max_login_count: u32,
 
+    /// 设备绑定模式（"strict" / "loose" / "disabled"），默认 "disabled"。
+    ///
+    /// - `strict`：新设备登录触发二次认证（由 `DeviceBindingPolicy::StrictBinding` 处理）
+    /// - `loose`：新设备登录仅告警不阻断（由 `LooseBinding` 处理）
+    /// - `disabled`：不启用设备绑定（默认，向后兼容）
+    ///
+    /// 配置字段始终存在（非 feature-gated），策略注入由 `BulwarkManager::init` 根据
+    /// 此字段值决定（属于 T020 集成范畴）。
+    pub device_binding_mode: String,
+
     /// 多租户隔离配置段。
     ///
     /// 默认 `enabled: false`（向后兼容）。启用后需配合 `tenant-isolation` Cargo feature
@@ -343,6 +359,7 @@ impl BulwarkConfig {
             is_concurrent: DEFAULT_IS_CONCURRENT,
             is_share: DEFAULT_IS_SHARE,
             max_login_count: DEFAULT_MAX_LOGIN_COUNT,
+            device_binding_mode: DEFAULT_DEVICE_BINDING_MODE.to_string(),
             tenant_isolation: TenantIsolationConfig::default(),
             #[cfg(feature = "web-waf")]
             waf_config: WafConfig::default(),
@@ -429,6 +446,10 @@ impl BulwarkConfig {
             .default(
                 "max_login_count",
                 ConfigValue::uint(DEFAULT_MAX_LOGIN_COUNT as u64),
+            )
+            .default(
+                "device_binding_mode",
+                ConfigValue::string(DEFAULT_DEVICE_BINDING_MODE),
             );
 
         if let Some(path) = toml_path {
@@ -583,6 +604,12 @@ impl BulwarkConfig {
             return Err(BulwarkError::Config(
                 "is_share=true requires is_concurrent=true".to_string(),
             ));
+        }
+        if !DEVICE_BINDING_MODES.contains(&self.device_binding_mode.as_str()) {
+            return Err(BulwarkError::Config(format!(
+                "unknown device_binding_mode: {} (expected strict/loose/disabled)",
+                self.device_binding_mode
+            )));
         }
         #[cfg(feature = "rate-limit-redis")]
         {
@@ -1217,6 +1244,7 @@ jwt_secret = "test-secret""#,
             is_concurrent: DEFAULT_IS_CONCURRENT,
             is_share: DEFAULT_IS_SHARE,
             max_login_count: DEFAULT_MAX_LOGIN_COUNT,
+            device_binding_mode: DEFAULT_DEVICE_BINDING_MODE.to_string(),
             tenant_isolation: TenantIsolationConfig::default(),
             #[cfg(feature = "web-waf")]
             waf_config: crate::web::waf::WafConfig::default(),
@@ -1625,6 +1653,64 @@ jwt_secret = "test-secret""#,
         let config = BulwarkConfig::load(None).expect("load with env");
         assert_eq!(config.max_login_count, 3);
         std::env::remove_var("BULWARK_MAX_LOGIN_COUNT");
+    }
+
+    // ========================================================================
+    // T014: device_binding_mode 配置测试（4 个，spec R-device-binding-001）
+    // ========================================================================
+
+    /// T014: `default_config()` 的 `device_binding_mode` 为 "disabled"。
+    #[test]
+    fn test_device_binding_mode_default() {
+        let config = BulwarkConfig::default_config();
+        assert_eq!(
+            config.device_binding_mode, "disabled",
+            "默认 device_binding_mode 应为 'disabled'"
+        );
+    }
+
+    /// T014: 自定义值 "strict" 通过 `validate()` 校验。
+    #[test]
+    fn test_device_binding_mode_custom() {
+        let mut config = BulwarkConfig::default_config();
+        config.device_binding_mode = "strict".to_string();
+        assert!(
+            config.validate().is_ok(),
+            "device_binding_mode='strict' 应通过校验"
+        );
+    }
+
+    /// T014: 无效值 "invalid" 校验失败返回 `Err`。
+    #[test]
+    fn test_device_binding_mode_invalid() {
+        let mut config = BulwarkConfig::default_config();
+        config.device_binding_mode = "invalid".to_string();
+        let result = config.validate();
+        assert!(result.is_err(), "device_binding_mode='invalid' 应校验失败");
+        match result {
+            Err(BulwarkError::Config(msg)) => {
+                assert!(
+                    msg.contains("device_binding_mode"),
+                    "错误消息应包含字段名，实际: {}",
+                    msg
+                );
+            },
+            Err(other) => panic!("期望 BulwarkError::Config，实际: {:?}", other),
+            Ok(_) => panic!("device_binding_mode='invalid' 时应返回 Err"),
+        }
+    }
+
+    /// T014: 环境变量 `BULWARK_DEVICE_BINDING_MODE=loose` 覆盖配置值。
+    #[test]
+    #[serial]
+    fn test_device_binding_mode_env_override() {
+        std::env::set_var("BULWARK_DEVICE_BINDING_MODE", "loose");
+        let config = BulwarkConfig::load(None).expect("load with env");
+        assert_eq!(
+            config.device_binding_mode, "loose",
+            "环境变量应覆盖 device_binding_mode 为 'loose'"
+        );
+        std::env::remove_var("BULWARK_DEVICE_BINDING_MODE");
     }
 
     // ========================================================================
