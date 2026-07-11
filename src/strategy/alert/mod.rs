@@ -14,9 +14,13 @@
 //!
 //! 此模块仅在启用 `security-alert` 特性时编译。
 
+/// 异常检测器实现模块。
+pub mod detector;
+
 /// 告警监听器实现模块。
 pub mod listener;
 
+pub use detector::IpChangeDetector;
 pub use listener::TracingAlertListener;
 
 use crate::error::BulwarkResult;
