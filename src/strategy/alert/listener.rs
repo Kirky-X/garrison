@@ -157,25 +157,7 @@ mod tests {
     use super::*;
 
     // ========================================================================
-    // TracingAlertListener 构造测试
-    // ========================================================================
-
-    /// `new()` 返回 `TracingAlertListener` 实例。
-    #[test]
-    fn tracing_alert_listener_new_returns_instance() {
-        let _listener = TracingAlertListener::new();
-        // 构造成功即通过（无字段可断言）
-    }
-
-    /// `Default::default()` 返回 `TracingAlertListener` 实例。
-    #[test]
-    fn tracing_alert_listener_default_returns_instance() {
-        let _listener = TracingAlertListener::default();
-        // 构造成功即通过（无字段可断言）
-    }
-
-    // ========================================================================
-    // on_alert 各变体返回 Ok 测试
+    // on_alert 各变体返回 Ok 测试（验证 match 分支穷尽性 + 不 panic）
     // ========================================================================
 
     /// `on_alert` 处理 `AnomalyLogin` 事件返回 `Ok(())`。
@@ -242,44 +224,6 @@ mod tests {
         };
         let result = listener.on_alert(&event).await;
         assert!(result.is_ok(), "SensitiveOperation 事件应返回 Ok");
-    }
-
-    /// 遍历所有事件变体调用 `on_alert`，确保不 panic。
-    #[tokio::test]
-    async fn on_alert_all_variants_no_panic() {
-        let listener = TracingAlertListener::new();
-        let events = vec![
-            SecurityAlertEvent::AnomalyLogin {
-                login_id: "1001".to_string(),
-                anomaly_type: AnomalyType::IpChanged,
-                detail: "IP 变化".to_string(),
-                trace_id: "t1".to_string(),
-            },
-            SecurityAlertEvent::NewDeviceLogin {
-                login_id: "1001".to_string(),
-                device_id: "dev-1".to_string(),
-                ip: None,
-            },
-            SecurityAlertEvent::DisableTriggered {
-                login_id: "1001".to_string(),
-                service: "default".to_string(),
-                level: 1,
-            },
-            SecurityAlertEvent::PrivilegeEscalation {
-                login_id: "1001".to_string(),
-                old_roles: vec![],
-                new_roles: vec!["admin".to_string()],
-            },
-            SecurityAlertEvent::SensitiveOperation {
-                login_id: "1001".to_string(),
-                operation: "delete".to_string(),
-                resource: "user:1002".to_string(),
-            },
-        ];
-        for event in &events {
-            // 每个变体调用 on_alert 不应 panic
-            let _ = listener.on_alert(event).await;
-        }
     }
 
     // ========================================================================
