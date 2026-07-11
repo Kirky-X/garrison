@@ -10,7 +10,7 @@
 //! 三种内置实现：
 //! - [`StrictBinding`]：新设备强制二级认证（T010）
 //! - [`LooseBinding`]：新设备仅告警不阻断（T011）
-//! - `Disabled`：完全禁用设备绑定（T012）
+//! - [`Disabled`]：完全禁用设备绑定（T012）
 //!
 //! 此模块仅在启用 `device-binding` 特性时编译（依赖 `security-alert`）。
 
@@ -66,4 +66,96 @@ pub trait DeviceBindingPolicy: Send + Sync {
     /// - `Ok(false)`: 不需要二级认证（loose 模式或已知设备）。
     /// - `Err`: 查询失败，透传 `BulwarkError`。
     async fn require_secondary_auth(&self, login_id: &str, device_id: &str) -> BulwarkResult<bool>;
+}
+
+/// 禁用设备绑定策略：完全关闭新设备检测与二级认证。
+///
+/// `is_new_device` 与 `require_secondary_auth` 均返回 `Ok(false)`，
+/// 适用于不启用设备绑定检查的部署。无需持有任何引用，可作为零成本占位策略。
+#[derive(Debug, Default)]
+pub struct Disabled;
+
+#[async_trait]
+impl DeviceBindingPolicy for Disabled {
+    async fn is_new_device(&self, _login_id: &str, _device_id: &str) -> BulwarkResult<bool> {
+        Ok(false)
+    }
+
+    async fn require_secondary_auth(
+        &self,
+        _login_id: &str,
+        _device_id: &str,
+    ) -> BulwarkResult<bool> {
+        Ok(false)
+    }
+}
+
+#[cfg(test)]
+mod disabled_tests {
+    use super::*;
+
+    /// `is_new_device` 对任意输入返回 `Ok(false)`。
+    #[tokio::test]
+    async fn is_new_device_always_returns_false() {
+        let policy = Disabled;
+        let result = policy.is_new_device("1001", "web-chrome").await.unwrap();
+        assert!(!result, "Disabled is_new_device 应始终返回 false");
+    }
+
+    /// `require_secondary_auth` 对任意输入返回 `Ok(false)`。
+    #[tokio::test]
+    async fn require_secondary_auth_always_returns_false() {
+        let policy = Disabled;
+        let result = policy
+            .require_secondary_auth("1001", "mobile-ios")
+            .await
+            .unwrap();
+        assert!(!result, "Disabled require_secondary_auth 应始终返回 false");
+    }
+
+    /// 不同 `login_id` 下 `is_new_device` 与 `require_secondary_auth` 均返回 false。
+    #[tokio::test]
+    async fn different_login_ids_all_return_false() {
+        let policy = Disabled;
+        for login_id in &["1001", "2002", "anonymous", ""] {
+            let is_new = policy.is_new_device(login_id, "web").await.unwrap();
+            assert!(
+                !is_new,
+                "login_id={} 时 is_new_device 应返回 false",
+                login_id
+            );
+            let require = policy
+                .require_secondary_auth(login_id, "web")
+                .await
+                .unwrap();
+            assert!(
+                !require,
+                "login_id={} 时 require_secondary_auth 应返回 false",
+                login_id
+            );
+        }
+    }
+
+    /// 不同 `device_id` 下 `is_new_device` 与 `require_secondary_auth` 均返回 false。
+    #[tokio::test]
+    async fn different_device_ids_all_return_false() {
+        let policy = Disabled;
+        for device_id in &["web-chrome", "mobile-ios", "", "unknown-device"] {
+            let is_new = policy.is_new_device("1001", device_id).await.unwrap();
+            assert!(
+                !is_new,
+                "device_id={} 时 is_new_device 应返回 false",
+                device_id
+            );
+            let require = policy
+                .require_secondary_auth("1001", device_id)
+                .await
+                .unwrap();
+            assert!(
+                !require,
+                "device_id={} 时 require_secondary_auth 应返回 false",
+                device_id
+            );
+        }
+    }
 }
