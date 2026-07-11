@@ -5,6 +5,79 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.6.3] - 2026-07-11
+
+### 概述
+
+v0.6.3 会话生命周期管理增强，实施 4 个能力域：Token 自动续签、并发登录控制、Refresh Token 轮换公共 API、设备管理。通过 specmark `v0.6.3-token-renewal-concurrency-refresh-device` change 管理，27 个任务完成。diting 审查发现 2 个 HIGH 问题（并发续签竞态 + enforce 失败会话泄漏），已修复。
+
+### 新增
+
+#### D1: Token 自动续签（`auto_renewal_threshold`）
+
+- `BulwarkConfig` 新增 `auto_renewal_threshold: i64`（默认 -1 不启用，范围 -1 或 0-100）
+- `BulwarkLogicDefault::check_and_renew` 在 `check_login` 路径中检查剩余 TTL 百分比，低于阈值时自动续签
+- 非 JWT 模式调用 `renew_to_equivalent`，JWT 模式调用 `refresh_token`
+- 续签结果通过 `CURRENT_RENEWED_TOKEN` task_local 传递给 Web 框架 middleware
+- `BulwarkJwtClaims` 新增 `jti` (RFC 7519 §4.1.7) UUID 声明，保证同一秒内签发的 token 唯一
+- 环境变量 `BULWARK_AUTO_RENEWAL_THRESHOLD` 覆盖支持
+
+#### D2: 并发登录控制（`is_concurrent` / `is_share` / `max_login_count`）
+
+- `BulwarkConfig` 新增 `is_concurrent: bool`（默认 true）/ `is_share: bool`（默认 false）/ `max_login_count: u32`（默认 0 不限制）
+- `validate()` 校验 `is_share=true` 时 `is_concurrent` 必须为 true
+- `is_share=true`：复用现有有效 token（touch + return），不创建新会话
+- `is_concurrent=false`：登录前踢出所有现有会话
+- `max_login_count > 0`：登录后强制最大数量，按 `last_active_at` 升序踢出最旧会话
+- `BulwarkSession` 新增 `login_token_map: DashMap<String, Vec<String>>` 内存索引，支持快速查询
+
+#### D3: Refresh Token 轮换公共 API
+
+- `SessionLogic` trait 新增 `refresh_access_token(&self, refresh_token: &str) -> BulwarkResult<(String, String)>` 方法
+- `BulwarkLogicDefault` 实现委托 `RefreshTokenRotation::rotate`（需 `protocol-jwt` + `db-sqlite` feature）
+- `with_refresh_token_rotation` builder 方法注入 `RefreshTokenRotation` 实例
+- 未注入时返回 `BulwarkError::NotImplemented`
+
+#### D4: 设备管理
+
+- 新建 `src/session/device.rs` 模块（feature-gated：需 sha2-enabling features）
+- `DeviceSession` struct：device/login_id/token/ip/user_agent/last_active_at
+- `DeviceManager`：`list_devices`（列出账号所有活跃设备）、`kickout_device`（按设备踢出）
+- `device_fingerprint(user_agent, ip)`：SHA-256(UA+IP) 前 16 字节 hex = 32 字符指纹
+- `login` 方法在 `LoginParams.device` 为 None 但 `user_agent` + `ip` 有值时自动生成指纹
+
+### 破坏性变更
+
+- `SessionLogic::login` 签名从 `login(&self, login_id: &str)` 改为 `login(&self, login_id: &str, params: &LoginParams)`
+- 新增 `LoginParams` struct（device/ip/user_agent/remember_me，derive Default）
+- `BulwarkUtil::login_simple(id)` 便捷方法用 `LoginParams::default()` 保持向后兼容
+- 所有 mock impls 已同步更新
+
+### 审查与修复
+
+#### diting Full Review
+
+- **HIGH-001 修复**：`check_and_renew` 并发竞态致"会话假活"——新增 per-login_id `renewal_locks`（独立于 `BulwarkSession::login_locks`），续签前获取锁 + 二次检查 TTL；独立锁避免 `renew_to_equivalent` → `logout` → `login_locks` 死锁
+- **HIGH-002 修复**：`enforce_max_login_count` 失败致孤儿会话泄漏——`login_inner` 在 enforce 失败时回滚（logout 新创建的 token），回滚失败记 `tracing::error!`
+
+#### tiangang SAST
+
+- 0 CRITICAL, 0 HIGH — 发布门禁通过
+- 2 MEDIUM（DeviceSession.token 暴露敏感信息 / 续签失败静默吞掉）+ 3 LOW 记录为已知限制
+
+### 验证
+
+- 全量测试：1918 passed, 0 failed, 4 ignored（+45 新增 vs v0.6.2 的 1873）
+- clippy：full + production features 零警告
+- pre-commit hooks：全部通过
+
+### 已知限制
+
+- `renewal_locks` 为内存态，多实例部署时并发续签保护仅限单实例内
+- `device_fingerprint` 无 salt，相同 UA+IP 生成相同指纹（可被指纹伪造）
+- `DeviceSession.token` 字段暴露 token 明文（CWE-200），应用层应避免序列化到客户端
+- `max_login_count` 的 `enforce` 依赖 `AccountSession.tokens` 与 `login_token_map` 一致性，极端并发下可能短暂不一致
+
 ## [0.6.2] - 2026-07-11
 
 ### 概述
