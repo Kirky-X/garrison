@@ -50,6 +50,32 @@ impl BulwarkLogicDefault {
         ts.safe_services.insert(service.to_string(), expire_at);
         self.session.save_token_session(&token, &ts).await
     }
+
+    /// 检查指定 service 是否处于二级认证有效期内。
+    ///
+    /// # 返回
+    /// - `Ok(true)`: service 已开启且未过期。
+    /// - `Ok(false)`: service 未开启、已过期、或未登录/无 session。
+    /// - `Err`: DAO 读取失败。
+    ///
+    /// # 设计
+    /// 未登录或无 session 时返回 `Ok(false)` 而非 `Err`，因为 is_safe 是查询方法，
+    /// "未认证" = "不安全" = `Ok(false)` 是合理的语义。只有 DAO 读写失败才返回 `Err`。
+    pub async fn is_safe(&self, service: &str) -> BulwarkResult<bool> {
+        let token = match current_token() {
+            Ok(t) => t,
+            Err(_) => return Ok(false),
+        };
+        let ts = match self.session.get_token_session(&token).await? {
+            Some(ts) => ts,
+            None => return Ok(false),
+        };
+        let now = chrono::Utc::now().timestamp();
+        match ts.safe_services.get(service) {
+            Some(expire_at) => Ok(*expire_at > now),
+            None => Ok(false),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -359,5 +385,179 @@ mod tests {
             },
             other => panic!("期望 Err(BulwarkError::InvalidToken)，实际: {:?}", other),
         }
+    }
+
+    // --------------------------------------------------------------------
+    // T023: is_safe 单元测试
+    // --------------------------------------------------------------------
+
+    /// open_safe("default", 3600) 后 is_safe("default") 返回 Ok(true)。
+    #[tokio::test]
+    async fn t023_is_safe_returns_true_within_validity() {
+        let (logic, _dao) = make_logic();
+        let token = logic
+            .login("user-2001", &LoginParams::default())
+            .await
+            .unwrap();
+
+        let result = with_current_token(token.clone(), async {
+            logic.open_safe("default", 3600).await.unwrap();
+            logic.is_safe("default").await
+        })
+        .await;
+
+        assert_eq!(
+            result.unwrap(),
+            true,
+            "open_safe 后 3600 秒内 is_safe 应返回 true"
+        );
+    }
+
+    /// open_safe("default", 0) 后 is_safe("default") 返回 Ok(false)（duration=0 立即过期）。
+    #[tokio::test]
+    async fn t023_is_safe_returns_false_after_expiry() {
+        let (logic, _dao) = make_logic();
+        let token = logic
+            .login("user-2002", &LoginParams::default())
+            .await
+            .unwrap();
+
+        let result = with_current_token(token.clone(), async {
+            logic.open_safe("default", 0).await.unwrap();
+            logic.is_safe("default").await
+        })
+        .await;
+
+        assert_eq!(
+            result.unwrap(),
+            false,
+            "duration=0 立即过期，is_safe 应返回 false"
+        );
+    }
+
+    /// open_safe("default") 后 is_safe("payment") 返回 Ok(false)（payment 未开启）。
+    #[tokio::test]
+    async fn t023_is_safe_returns_false_without_marker() {
+        let (logic, _dao) = make_logic();
+        let token = logic
+            .login("user-2003", &LoginParams::default())
+            .await
+            .unwrap();
+
+        let result = with_current_token(token.clone(), async {
+            logic.open_safe("default", 3600).await.unwrap();
+            logic.is_safe("payment").await
+        })
+        .await;
+
+        assert_eq!(
+            result.unwrap(),
+            false,
+            "payment 未 open_safe，is_safe 应返回 false"
+        );
+    }
+
+    /// 多 service 独立：default + payment 都 open_safe 后两者都 true；
+    /// 手动让 payment 过期后，default 仍 true，payment 变 false。
+    #[tokio::test]
+    async fn t023_is_safe_multi_service_independent() {
+        let (logic, _dao) = make_logic();
+        let token = logic
+            .login("user-2004", &LoginParams::default())
+            .await
+            .unwrap();
+
+        // 两个 service 都开启
+        with_current_token(token.clone(), async {
+            logic.open_safe("default", 3600).await.unwrap();
+            logic.open_safe("payment", 7200).await.unwrap();
+        })
+        .await;
+
+        // 两者都应处于有效期内
+        let (safe_default, safe_payment) = with_current_token(token.clone(), async {
+            (
+                logic.is_safe("default").await.unwrap(),
+                logic.is_safe("payment").await.unwrap(),
+            )
+        })
+        .await;
+        assert!(safe_default, "default 应处于有效期内");
+        assert!(safe_payment, "payment 应处于有效期内");
+
+        // 修改 safe_services 模拟 payment 过期
+        let now = chrono::Utc::now().timestamp();
+        let mut ts = logic
+            .session
+            .get_token_session(&token)
+            .await
+            .unwrap()
+            .unwrap();
+        ts.safe_services.insert("payment".to_string(), now - 100);
+        logic.session.save_token_session(&token, &ts).await.unwrap();
+
+        // default 仍 true，payment 变 false（独立性验证）
+        let (safe_default_after, safe_payment_after) = with_current_token(token.clone(), async {
+            (
+                logic.is_safe("default").await.unwrap(),
+                logic.is_safe("payment").await.unwrap(),
+            )
+        })
+        .await;
+        assert!(
+            safe_default_after,
+            "payment 过期不应影响 default，default 应仍为 true"
+        );
+        assert!(!safe_payment_after, "payment 过期后 is_safe 应返回 false");
+    }
+
+    /// open_safe("default") 后手动删除 safe_services 中的 default 条目（模拟 close_safe），
+    /// is_safe("default") 返回 Ok(false)。
+    #[tokio::test]
+    async fn t023_is_safe_returns_false_after_marker_removed() {
+        let (logic, _dao) = make_logic();
+        let token = logic
+            .login("user-2005", &LoginParams::default())
+            .await
+            .unwrap();
+
+        with_current_token(token.clone(), async {
+            logic.open_safe("default", 3600).await.unwrap();
+        })
+        .await;
+
+        // 删除 default 条目模拟 close_safe 效果
+        let mut ts = logic
+            .session
+            .get_token_session(&token)
+            .await
+            .unwrap()
+            .unwrap();
+        ts.safe_services.remove("default");
+        logic.session.save_token_session(&token, &ts).await.unwrap();
+
+        let result =
+            with_current_token(token.clone(), async { logic.is_safe("default").await }).await;
+
+        assert_eq!(
+            result.unwrap(),
+            false,
+            "删除 safe_services 标记后 is_safe 应返回 false"
+        );
+    }
+
+    /// 不 login 直接调用 is_safe，返回 Ok(false)（不报错）。
+    #[tokio::test]
+    async fn t023_is_safe_returns_false_when_not_logged_in() {
+        let (logic, _dao) = make_logic();
+        // 不 login，不设置 current_token，直接调用 is_safe
+        let result = logic.is_safe("default").await;
+
+        assert!(
+            result.is_ok(),
+            "未登录时 is_safe 应返回 Ok(false) 而非 Err，实际: {:?}",
+            result
+        );
+        assert_eq!(result.unwrap(), false, "未登录时 is_safe 应返回 Ok(false)");
     }
 }
