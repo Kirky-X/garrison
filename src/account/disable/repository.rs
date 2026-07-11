@@ -129,8 +129,23 @@ impl DefaultDisableRepository {
     /// 构造封禁 key：`disable:{service}:{login_id}`。
     ///
     /// service 在前以便按 service 前缀扫描（如 `keys("disable:default:*")`）。
-    fn disable_key(service: &str, login_id: &str) -> String {
-        format!("disable:{}:{}", service, login_id)
+    ///
+    /// # 错误
+    /// - `service` 或 `login_id` 含 `:` 时返回 `BulwarkError::Config`，避免 key 解析歧义。
+    fn disable_key(service: &str, login_id: &str) -> BulwarkResult<String> {
+        if service.contains(':') {
+            return Err(BulwarkError::Config(format!(
+                "service 不能包含冒号（避免 key 注入）: {}",
+                service
+            )));
+        }
+        if login_id.contains(':') {
+            return Err(BulwarkError::Config(format!(
+                "login_id 不能包含冒号（避免 key 注入）: {}",
+                login_id
+            )));
+        }
+        Ok(format!("disable:{}:{}", service, login_id))
     }
 }
 
@@ -154,17 +169,17 @@ impl DisableRepository for DefaultDisableRepository {
         let json = serde_json::to_string(&entry).map_err(|e| {
             BulwarkError::Internal(format!("序列化 DisableEntry 为 JSON 失败: {}", e))
         })?;
-        let key = Self::disable_key(service, login_id);
+        let key = Self::disable_key(service, login_id)?;
         self.dao.set(&key, &json, duration_secs).await
     }
 
     async fn untie_disable(&self, login_id: &str, service: &str) -> BulwarkResult<()> {
-        let key = Self::disable_key(service, login_id);
+        let key = Self::disable_key(service, login_id)?;
         self.dao.delete(&key).await
     }
 
     async fn is_disable(&self, login_id: &str, service: &str) -> BulwarkResult<bool> {
-        let key = Self::disable_key(service, login_id);
+        let key = Self::disable_key(service, login_id)?;
         match self.dao.get(&key).await? {
             Some(_) => Ok(true),
             None => Ok(false),
@@ -176,7 +191,7 @@ impl DisableRepository for DefaultDisableRepository {
         login_id: &str,
         service: &str,
     ) -> BulwarkResult<Option<DateTime<Utc>>> {
-        let key = Self::disable_key(service, login_id);
+        let key = Self::disable_key(service, login_id)?;
         match self.dao.get(&key).await? {
             Some(json) => {
                 let entry: DisableEntry = serde_json::from_str(&json).map_err(|e| {
@@ -189,7 +204,7 @@ impl DisableRepository for DefaultDisableRepository {
     }
 
     async fn get_disable_level(&self, login_id: &str, service: &str) -> BulwarkResult<u32> {
-        let key = Self::disable_key(service, login_id);
+        let key = Self::disable_key(service, login_id)?;
         match self.dao.get(&key).await? {
             Some(json) => {
                 let entry: DisableEntry = serde_json::from_str(&json).map_err(|e| {
@@ -217,14 +232,14 @@ mod tests {
         let dao = Arc::new(MockDao::new());
         let repo = DefaultDisableRepository::new(dao.clone());
         let until = Utc::now() + chrono::Duration::seconds(3600);
-        repo.disable("user:1001", "default", Some(until), 0, 3600)
+        repo.disable("user-1001", "default", Some(until), 0, 3600)
             .await
             .unwrap();
-        let key = "disable:default:user:1001";
+        let key = "disable:default:user-1001";
         let stored = dao.get(key).await.unwrap();
         assert!(stored.is_some(), "disable 后 DAO 中应存在对应 key");
         let entry: DisableEntry = serde_json::from_str(&stored.unwrap()).unwrap();
-        assert_eq!(entry.login_id, "user:1001");
+        assert_eq!(entry.login_id, "user-1001");
         assert_eq!(entry.service, "default");
         assert_eq!(entry.until, Some(until));
         assert_eq!(entry.level, 0);
@@ -235,12 +250,12 @@ mod tests {
     async fn t016_untie_disable_removes_entry_from_dao() {
         let dao = Arc::new(MockDao::new());
         let repo = DefaultDisableRepository::new(dao.clone());
-        repo.disable("user:1002", "default", None, 0, 0)
+        repo.disable("user-1002", "default", None, 0, 0)
             .await
             .unwrap();
-        let key = "disable:default:user:1002";
+        let key = "disable:default:user-1002";
         assert!(dao.get(key).await.unwrap().is_some());
-        repo.untie_disable("user:1002", "default").await.unwrap();
+        repo.untie_disable("user-1002", "default").await.unwrap();
         assert!(
             dao.get(key).await.unwrap().is_none(),
             "untie_disable 后 DAO 中 key 应不存在"
@@ -253,17 +268,17 @@ mod tests {
     async fn t016_disable_key_format_is_service_then_login_id() {
         let dao = Arc::new(MockDao::new());
         let repo = DefaultDisableRepository::new(dao.clone());
-        repo.disable("user:1003", "payment", None, 0, 0)
+        repo.disable("user-1003", "payment", None, 0, 0)
             .await
             .unwrap();
         // 验证 key 顺序：service 在前，login_id 在后
-        let expected_key = "disable:payment:user:1003";
+        let expected_key = "disable:payment:user-1003";
         assert!(
             dao.get(expected_key).await.unwrap().is_some(),
-            "key 应为 disable:payment:user:1003（service 在前）"
+            "key 应为 disable:payment:user-1003（service 在前）"
         );
         // 验证反序 key 不存在
-        let wrong_key = "disable:user:1003:payment";
+        let wrong_key = "disable:user-1003:payment";
         assert!(
             dao.get(wrong_key).await.unwrap().is_none(),
             "反序 key 不应存在"
@@ -275,10 +290,10 @@ mod tests {
     async fn t016_disable_with_zero_duration_is_permanent() {
         let dao = Arc::new(MockDao::new());
         let repo = DefaultDisableRepository::new(dao.clone());
-        repo.disable("user:1004", "default", None, 0, 0)
+        repo.disable("user-1004", "default", None, 0, 0)
             .await
             .unwrap();
-        let key = "disable:default:user:1004";
+        let key = "disable:default:user-1004";
         // get_timeout 返回 None 表示永久驻留（无 TTL）
         let timeout = dao.get_timeout(key).await.unwrap();
         assert!(
@@ -292,10 +307,10 @@ mod tests {
     async fn t016_disable_passes_level_to_entry() {
         let dao = Arc::new(MockDao::new());
         let repo = DefaultDisableRepository::new(dao.clone());
-        repo.disable("user:1005", "default", None, 2, 3600)
+        repo.disable("user-1005", "default", None, 2, 3600)
             .await
             .unwrap();
-        let key = "disable:default:user:1005";
+        let key = "disable:default:user-1005";
         let stored = dao.get(key).await.unwrap().unwrap();
         let entry: DisableEntry = serde_json::from_str(&stored).unwrap();
         assert_eq!(entry.level, 2, "disable 传入 level=2 应写入 entry.level=2");
@@ -307,15 +322,15 @@ mod tests {
         let dao = Arc::new(MockDao::new());
         let repo = DefaultDisableRepository::new(dao.clone());
         // 第一次 disable(level=1)
-        repo.disable("user:1006", "default", None, 1, 0)
+        repo.disable("user-1006", "default", None, 1, 0)
             .await
             .unwrap();
-        let key = "disable:default:user:1006";
+        let key = "disable:default:user-1006";
         let entry1: DisableEntry =
             serde_json::from_str(&dao.get(key).await.unwrap().unwrap()).unwrap();
         assert_eq!(entry1.level, 1);
         // 第二次 disable(level=3)
-        repo.disable("user:1006", "default", None, 3, 0)
+        repo.disable("user-1006", "default", None, 3, 0)
             .await
             .unwrap();
         let entry2: DisableEntry =
@@ -330,16 +345,16 @@ mod tests {
         let repo = DefaultDisableRepository::new(dao.clone());
         // 未封禁时 is_disable 返回 false
         assert_eq!(
-            repo.is_disable("user:1007", "default").await.unwrap(),
+            repo.is_disable("user-1007", "default").await.unwrap(),
             false,
             "未封禁时 is_disable 应返回 false"
         );
         // disable 后 is_disable 返回 true
-        repo.disable("user:1007", "default", None, 0, 0)
+        repo.disable("user-1007", "default", None, 0, 0)
             .await
             .unwrap();
         assert_eq!(
-            repo.is_disable("user:1007", "default").await.unwrap(),
+            repo.is_disable("user-1007", "default").await.unwrap(),
             true,
             "disable 后 is_disable 应返回 true"
         );
@@ -370,12 +385,12 @@ mod tests {
         let dao = Arc::new(MockDao::new());
         let repo = DefaultDisableRepository::new(dao.clone());
         // 在 "default" service 上封禁
-        repo.disable("user:2001", "default", None, 0, 0)
+        repo.disable("user-2001", "default", None, 0, 0)
             .await
             .unwrap();
         // 同一 login_id 在 "payment" service 上应未封禁
         assert_eq!(
-            repo.is_disable("user:2001", "payment").await.unwrap(),
+            repo.is_disable("user-2001", "payment").await.unwrap(),
             false,
             "同一 login_id 在未封禁的 service 上 is_disable 应返回 false"
         );
@@ -388,11 +403,11 @@ mod tests {
         let dao = Arc::new(MockDao::new());
         let repo = DefaultDisableRepository::new(dao.clone());
         let until = Utc::now() + chrono::Duration::seconds(3600);
-        repo.disable("user:2002", "default", Some(until), 0, 3600)
+        repo.disable("user-2002", "default", Some(until), 0, 3600)
             .await
             .unwrap();
         assert_eq!(
-            repo.is_disable("user:2002", "default").await.unwrap(),
+            repo.is_disable("user-2002", "default").await.unwrap(),
             true,
             "定时封禁后 is_disable 应返回 true"
         );
@@ -404,11 +419,11 @@ mod tests {
     async fn t017_get_disable_time_returns_none_for_permanent_ban() {
         let dao = Arc::new(MockDao::new());
         let repo = DefaultDisableRepository::new(dao.clone());
-        repo.disable("user:2003", "default", None, 0, 0)
+        repo.disable("user-2003", "default", None, 0, 0)
             .await
             .unwrap();
         assert_eq!(
-            repo.get_disable_time("user:2003", "default").await.unwrap(),
+            repo.get_disable_time("user-2003", "default").await.unwrap(),
             None,
             "永久封禁 get_disable_time 应返回 Ok(None)"
         );
@@ -421,10 +436,10 @@ mod tests {
         let dao = Arc::new(MockDao::new());
         let repo = DefaultDisableRepository::new(dao.clone());
         let until = Utc::now() + chrono::Duration::seconds(7200);
-        repo.disable("user:2004", "default", Some(until), 0, 7200)
+        repo.disable("user-2004", "default", Some(until), 0, 7200)
             .await
             .unwrap();
-        let result = repo.get_disable_time("user:2004", "default").await.unwrap();
+        let result = repo.get_disable_time("user-2004", "default").await.unwrap();
         assert_eq!(
             result,
             Some(until),
@@ -437,11 +452,11 @@ mod tests {
     async fn t017_get_disable_level_returns_correct_value() {
         let dao = Arc::new(MockDao::new());
         let repo = DefaultDisableRepository::new(dao.clone());
-        repo.disable("user:2005", "default", None, 2, 0)
+        repo.disable("user-2005", "default", None, 2, 0)
             .await
             .unwrap();
         assert_eq!(
-            repo.get_disable_level("user:2005", "default")
+            repo.get_disable_level("user-2005", "default")
                 .await
                 .unwrap(),
             2,
@@ -457,9 +472,9 @@ mod tests {
         let dao = Arc::new(MockDao::new());
         let repo = DefaultDisableRepository::new(dao.clone());
         // 手动写入损坏 JSON 到 disable key
-        let key = "disable:default:user:2006";
+        let key = "disable:default:user-2006";
         dao.set(key, "{invalid json}", 0).await.unwrap();
-        let result = repo.get_disable_time("user:2006", "default").await;
+        let result = repo.get_disable_time("user-2006", "default").await;
         assert!(
             matches!(result, Err(BulwarkError::Internal(ref msg)) if msg.contains("反序列化 DisableEntry 失败")),
             "损坏 JSON 应返回 Err(BulwarkError::Internal) 含 '反序列化 DisableEntry 失败'，实际: {:?}",
@@ -472,19 +487,19 @@ mod tests {
     async fn t017_is_disable_returns_false_after_untie_disable() {
         let dao = Arc::new(MockDao::new());
         let repo = DefaultDisableRepository::new(dao.clone());
-        repo.disable("user:2007", "default", None, 0, 0)
+        repo.disable("user-2007", "default", None, 0, 0)
             .await
             .unwrap();
         // 封禁后 is_disable 应为 true
         assert_eq!(
-            repo.is_disable("user:2007", "default").await.unwrap(),
+            repo.is_disable("user-2007", "default").await.unwrap(),
             true,
             "disable 后 is_disable 应为 true"
         );
         // untie_disable 后 is_disable 应为 false
-        repo.untie_disable("user:2007", "default").await.unwrap();
+        repo.untie_disable("user-2007", "default").await.unwrap();
         assert_eq!(
-            repo.is_disable("user:2007", "default").await.unwrap(),
+            repo.is_disable("user-2007", "default").await.unwrap(),
             false,
             "untie_disable 后 is_disable 应返回 false"
         );
@@ -515,11 +530,11 @@ mod tests {
     async fn t018_level_zero_normal_ban() {
         let dao = Arc::new(MockDao::new());
         let repo = DefaultDisableRepository::new(dao.clone());
-        repo.disable("user:3001", "default", None, 0, 0)
+        repo.disable("user-3001", "default", None, 0, 0)
             .await
             .unwrap();
         assert_eq!(
-            repo.get_disable_level("user:3001", "default")
+            repo.get_disable_level("user-3001", "default")
                 .await
                 .unwrap(),
             0,
@@ -534,11 +549,11 @@ mod tests {
     async fn t018_level_one_first_escalation() {
         let dao = Arc::new(MockDao::new());
         let repo = DefaultDisableRepository::new(dao.clone());
-        repo.disable("user:3002", "default", None, 1, 0)
+        repo.disable("user-3002", "default", None, 1, 0)
             .await
             .unwrap();
         assert_eq!(
-            repo.get_disable_level("user:3002", "default")
+            repo.get_disable_level("user-3002", "default")
                 .await
                 .unwrap(),
             1,
@@ -553,11 +568,11 @@ mod tests {
     async fn t018_level_three_full_ban() {
         let dao = Arc::new(MockDao::new());
         let repo = DefaultDisableRepository::new(dao.clone());
-        repo.disable("user:3003", "default", None, 3, 0)
+        repo.disable("user-3003", "default", None, 3, 0)
             .await
             .unwrap();
         assert_eq!(
-            repo.get_disable_level("user:3003", "default")
+            repo.get_disable_level("user-3003", "default")
                 .await
                 .unwrap(),
             3,
@@ -574,24 +589,46 @@ mod tests {
     async fn t018_get_disable_level_returns_correct_high_value() {
         let dao = Arc::new(MockDao::new());
         let repo = DefaultDisableRepository::new(dao.clone());
-        repo.disable("user:3004", "default", None, 10, 0)
+        repo.disable("user-3004", "default", None, 10, 0)
             .await
             .unwrap();
         // 通过 API 验证
         assert_eq!(
-            repo.get_disable_level("user:3004", "default")
+            repo.get_disable_level("user-3004", "default")
                 .await
                 .unwrap(),
             10,
             "level=10 高级封禁，get_disable_level 应返回 Ok(10) 无截断"
         );
         // 通过直接反序列化 DAO 中的 JSON 验证持久化层正确传递 level 字段
-        let key = "disable:default:user:3004";
+        let key = "disable:default:user-3004";
         let stored = dao.get(key).await.unwrap().unwrap();
         let entry: DisableEntry = serde_json::from_str(&stored).unwrap();
         assert_eq!(
             entry.level, 10,
             "DAO 中的 JSON 反序列化后 level 字段应为 10"
         );
+    }
+
+    // ========================================================================
+    // H-1 修复：key 注入防护测试
+    // ========================================================================
+
+    /// service 含 `:` 时 disable 返回 Err，阻止 key 注入。
+    #[tokio::test]
+    async fn h001_disable_rejects_colon_in_service() {
+        let dao = Arc::new(MockDao::new());
+        let repo = DefaultDisableRepository::new(dao);
+        let result = repo.disable("1001", "evil:service", None, 0, 0).await;
+        assert!(result.is_err(), "service 含冒号应被拒绝（避免 key 注入）");
+    }
+
+    /// login_id 含 `:` 时 disable 返回 Err，阻止 key 注入。
+    #[tokio::test]
+    async fn h001_disable_rejects_colon_in_login_id() {
+        let dao = Arc::new(MockDao::new());
+        let repo = DefaultDisableRepository::new(dao);
+        let result = repo.disable("evil:login", "default", None, 0, 0).await;
+        assert!(result.is_err(), "login_id 含冒号应被拒绝（避免 key 注入）");
     }
 }
