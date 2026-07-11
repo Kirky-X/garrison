@@ -1,4 +1,4 @@
-//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
 //! 告警监听器实现模块，提供基于 `tracing` 的默认告警监听器与基于 DAO 的审计日志监听器。
@@ -104,8 +104,12 @@ impl AlertListener for TracingAlertListener {
 /// key 格式 `audit:alert:{trace_id_or_uuid}`。
 /// 用于安全告警的持久化审计追踪。
 ///
+/// # 错误处理
+///
 /// 与 `TracingAlertListener` 不同，`on_alert` 写入 DAO 失败时返回 `Err`，
-/// 因为审计日志的持久化是安全合规的关键需求，不应被静默吞掉。
+/// 由 [`AlertListenerManager::broadcast_alert`](crate::strategy::alert::AlertListenerManager::broadcast_alert)
+/// 捕获并记录 `tracing::warn!` 日志。审计失败不会中断告警广播，但会在日志中显性记录。
+/// 这确保了审计日志的持久化失败不会被完全静默吞掉，同时不阻断其他监听器的执行。
 pub struct AuditAlertListener {
     /// DAO 实例，用于持久化审计日志条目。
     dao: Arc<dyn BulwarkDao>,

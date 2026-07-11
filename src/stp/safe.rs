@@ -1,6 +1,6 @@
 //! 二级认证（Safe Auth）瞬态标记实现。
 //!
-//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 //!
 //! 本模块在 `safe-auth` feature 启用时，为 `BulwarkLogicDefault` 提供
@@ -34,6 +34,10 @@ impl BulwarkLogicDefault {
     ///
     /// 在当前 TokenSession 的 safe_services 中记录 service → 过期时间戳。
     ///
+    /// # 并发安全
+    /// 使用 per-token 锁保护 read-modify-write 序列，避免并发 `open_safe` 调用
+    /// 导致 lost update（CRIT-001）。
+    ///
     /// # 错误
     /// - `BulwarkError::Session`: 未设置 current_token（未登录）。
     /// - `BulwarkError::InvalidToken`: token 对应的 TokenSession 不存在。
@@ -50,15 +54,22 @@ impl BulwarkLogicDefault {
         } else {
             &token
         };
-        let mut ts = self
-            .session
-            .get_token_session(&token)
-            .await?
-            .ok_or_else(|| BulwarkError::InvalidToken(format!("token 不存在: {}", token_prefix)))?;
-        let now = chrono::Utc::now().timestamp();
-        let expire_at = now + duration_secs as i64;
-        ts.safe_services.insert(service.to_string(), expire_at);
-        self.session.save_token_session(&token, &ts).await
+        let service = service.to_string();
+        self.session
+            .with_token_session_lock(&token, async {
+                let mut ts = self
+                    .session
+                    .get_token_session(&token)
+                    .await?
+                    .ok_or_else(|| {
+                        BulwarkError::InvalidToken(format!("token 不存在: {}", token_prefix))
+                    })?;
+                let now = chrono::Utc::now().timestamp();
+                let expire_at = now + duration_secs as i64;
+                ts.safe_services.insert(service.clone(), expire_at);
+                self.session.save_token_session(&token, &ts).await
+            })
+            .await
     }
 
     /// 检查指定 service 是否处于二级认证有效期内。
@@ -97,6 +108,10 @@ impl BulwarkLogicDefault {
     /// 从当前 TokenSession 的 safe_services 中移除 service 条目。
     /// 移除后 `is_safe(service)` 返回 `false`。
     ///
+    /// # 并发安全
+    /// 使用 per-token 锁保护 read-modify-write 序列，避免并发 `close_safe` 调用
+    /// 导致 lost update（CRIT-001）。
+    ///
     /// # 参数
     /// - `service`: 服务名称。
     ///
@@ -120,13 +135,20 @@ impl BulwarkLogicDefault {
         } else {
             &token
         };
-        let mut ts = self
-            .session
-            .get_token_session(&token)
-            .await?
-            .ok_or_else(|| BulwarkError::InvalidToken(format!("token 不存在: {}", token_prefix)))?;
-        ts.safe_services.remove(service);
-        self.session.save_token_session(&token, &ts).await
+        let service = service.to_string();
+        self.session
+            .with_token_session_lock(&token, async {
+                let mut ts = self
+                    .session
+                    .get_token_session(&token)
+                    .await?
+                    .ok_or_else(|| {
+                        BulwarkError::InvalidToken(format!("token 不存在: {}", token_prefix))
+                    })?;
+                ts.safe_services.remove(&service);
+                self.session.save_token_session(&token, &ts).await
+            })
+            .await
     }
 }
 
@@ -915,5 +937,176 @@ mod tests {
             logic.close_safe("default").await.unwrap();
         })
         .await;
+    }
+
+    // --------------------------------------------------------------------
+    // CRIT-001: open_safe/close_safe 并发竞态测试
+    // --------------------------------------------------------------------
+
+    /// SlowDao wrapper：在 `get` token session key 后插入延迟，
+    /// 放大 TokenSession read-modify-write 窗口，使 CRIT-001 竞态可靠复现。
+    ///
+    /// 无锁时：两个并发 `open_safe` 都会在对方的 `save_token_session` 之前读到
+    /// 旧的 TokenSession，导致 lost update（最终 safe_services 只剩 1 个 service 而非 2 个）。
+    struct SlowDao {
+        inner: Arc<MockDao>,
+        delay: std::time::Duration,
+    }
+
+    #[async_trait]
+    impl BulwarkDao for SlowDao {
+        async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
+            let result = self.inner.get(key).await;
+            // 仅对 token:session:* key 插入延迟，放大 read-modify-write 窗口
+            if key.starts_with("token:session:") {
+                tokio::time::sleep(self.delay).await;
+            }
+            result
+        }
+        async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> BulwarkResult<()> {
+            self.inner.set(key, value, ttl_seconds).await
+        }
+        async fn update(&self, key: &str, value: &str) -> BulwarkResult<()> {
+            self.inner.update(key, value).await
+        }
+        async fn expire(&self, key: &str, seconds: u64) -> BulwarkResult<()> {
+            self.inner.expire(key, seconds).await
+        }
+        async fn delete(&self, key: &str) -> BulwarkResult<()> {
+            self.inner.delete(key).await
+        }
+    }
+
+    /// 创建使用 SlowDao 的 BulwarkSession，放大 token session 读写延迟。
+    fn make_slow_session(delay: std::time::Duration) -> (Arc<MockDao>, Arc<BulwarkSession>) {
+        let inner = Arc::new(MockDao::new());
+        let dao: Arc<dyn BulwarkDao> = Arc::new(SlowDao {
+            inner: inner.clone(),
+            delay,
+        });
+        let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
+        (inner, session)
+    }
+
+    /// 模拟 open_safe 的 read-modify-write 操作（不依赖 task_local current_token）。
+    ///
+    /// 直接调用 `with_token_session_lock` 包裹的 read-modify-write 序列，
+    /// 等价于 `open_safe` 的核心逻辑，用于测试并发安全性。
+    async fn simulate_open_safe(
+        session: &BulwarkSession,
+        token: &str,
+        service: &str,
+        duration_secs: u64,
+    ) -> BulwarkResult<()> {
+        let service = service.to_string();
+        session
+            .with_token_session_lock(token, async {
+                let mut ts = session
+                    .get_token_session(token)
+                    .await?
+                    .ok_or_else(|| BulwarkError::InvalidToken("token 不存在".to_string()))?;
+                let now = chrono::Utc::now().timestamp();
+                let expire_at = now + duration_secs as i64;
+                ts.safe_services.insert(service.clone(), expire_at);
+                session.save_token_session(token, &ts).await
+            })
+            .await
+    }
+
+    /// 模拟 close_safe 的 read-modify-write 操作（不依赖 task_local current_token）。
+    async fn simulate_close_safe(
+        session: &BulwarkSession,
+        token: &str,
+        service: &str,
+    ) -> BulwarkResult<()> {
+        let service = service.to_string();
+        session
+            .with_token_session_lock(token, async {
+                let mut ts = session
+                    .get_token_session(token)
+                    .await?
+                    .ok_or_else(|| BulwarkError::InvalidToken("token 不存在".to_string()))?;
+                ts.safe_services.remove(&service);
+                session.save_token_session(token, &ts).await
+            })
+            .await
+    }
+
+    /// CRIT-001 修复验证：两个并发 `open_safe` 不同 service，safe_services 应包含两个 service。
+    ///
+    /// 修复前（无 per-token 锁）：两个并发 open_safe 的 read-modify-write 交错，
+    /// 后写入的 TokenSession 覆盖先写入的，导致丢失一个 service（lost update）。
+    /// 修复后（per-token 锁）：两个 open_safe 串行化，safe_services 完整保留两个 service。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn crit001_concurrent_open_safe_different_services_no_lost_update() {
+        let (_dao, session) = make_slow_session(std::time::Duration::from_millis(50));
+        session.create("user-crit001-001", "T1").await.unwrap();
+
+        // 并发执行两次 open_safe 不同 service（用 tokio::join! 确保并发）
+        let (r1, r2) = tokio::join!(
+            simulate_open_safe(&session, "T1", "default", 3600),
+            simulate_open_safe(&session, "T1", "payment", 7200),
+        );
+        r1.expect("open_safe default 应成功");
+        r2.expect("open_safe payment 应成功");
+
+        // 验证 safe_services 包含两个 service（修复前会丢失一个）
+        let ts = session.get_token_session("T1").await.unwrap().unwrap();
+        assert_eq!(
+            ts.safe_services.len(),
+            2,
+            "并发 open_safe 后 safe_services 应包含 2 个 service（修复前 lost update 导致只剩 1 个），实际: {:?}",
+            ts.safe_services
+        );
+        assert!(
+            ts.safe_services.contains_key("default"),
+            "default 应在 safe_services 中，实际: {:?}",
+            ts.safe_services
+        );
+        assert!(
+            ts.safe_services.contains_key("payment"),
+            "payment 应在 safe_services 中，实际: {:?}",
+            ts.safe_services
+        );
+    }
+
+    /// CRIT-001 修复验证：两个并发 `close_safe` 不同 service，safe_services 应清空。
+    ///
+    /// 修复前（无 per-token 锁）：两个并发 close_safe 的 read-modify-write 交错，
+    /// 后写入的 TokenSession 覆盖先写入的，导致已关闭的 service 被恢复（lost update）。
+    /// 修复后（per-token 锁）：两个 close_safe 串行化，两个 service 都被正确移除。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn crit001_concurrent_close_safe_different_services_no_lost_update() {
+        let (_dao, session) = make_slow_session(std::time::Duration::from_millis(50));
+        session.create("user-crit001-002", "T1").await.unwrap();
+
+        // 先顺序添加两个 service
+        simulate_open_safe(&session, "T1", "default", 3600)
+            .await
+            .unwrap();
+        simulate_open_safe(&session, "T1", "payment", 7200)
+            .await
+            .unwrap();
+
+        // 验证两个 service 都已添加
+        let ts = session.get_token_session("T1").await.unwrap().unwrap();
+        assert_eq!(ts.safe_services.len(), 2, "前置条件：应有 2 个 service");
+
+        // 并发执行两次 close_safe 不同 service
+        let (r1, r2) = tokio::join!(
+            simulate_close_safe(&session, "T1", "default"),
+            simulate_close_safe(&session, "T1", "payment"),
+        );
+        r1.expect("close_safe default 应成功");
+        r2.expect("close_safe payment 应成功");
+
+        // 验证 safe_services 已清空（修复前会因 lost update 残留 1 个 service）
+        let ts = session.get_token_session("T1").await.unwrap().unwrap();
+        assert_eq!(
+            ts.safe_services.len(),
+            0,
+            "并发 close_safe 后 safe_services 应为空（修复前 lost update 导致残留 1 个），实际: {:?}",
+            ts.safe_services
+        );
     }
 }

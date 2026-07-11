@@ -1,4 +1,4 @@
-//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
 //! 异常检测器实现模块，提供 IP 变化检测与快速连续登录检测。
@@ -94,7 +94,7 @@ impl AnomalyDetector for IpChangeDetector {
     }
 }
 
-/// 快速连续登录检测器，检查同一 login_id 的同时在线 token 数量。
+/// 快速连续登录检测器，检查同一 login_id 的同时在线 token 数量是否超过阈值。
 ///
 /// 实现 `AnomalyDetector` trait，在 `check_on_login` 时：
 /// 1. 通过 `BulwarkSession::get_tokens_by_login_id` 获取该 login_id 的所有 token
@@ -102,6 +102,12 @@ impl AnomalyDetector for IpChangeDetector {
 ///
 /// 默认阈值为 5，可通过 `with_threshold` 自定义。
 /// `check_on_check_login` 不触发检测，返回空 Vec。
+///
+/// # 注意：语义与实现
+///
+/// 此检测器检测同一 `login_id` 的同时在线 token 数量是否超过阈值。
+/// **不区分 token 创建时间**，长期多设备登录的用户也可能触发告警。
+/// 若需基于时间窗口的快速连续登录检测，应扩展此检测器或实现新的 `AnomalyDetector`。
 pub struct RapidSuccessiveDetector {
     /// 会话管理器引用，用于查询 token 列表。
     session: Arc<BulwarkSession>,

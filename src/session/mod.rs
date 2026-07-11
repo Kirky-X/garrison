@@ -1,4 +1,4 @@
-//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
 //! 会话模块，提供双模会话管理（Account-Session + Token-Session）。
@@ -199,6 +199,12 @@ pub struct BulwarkSession {
     active_timeout: u64,
     /// per-login_id 操作锁，保护 Account-Session 的 read-modify-write 序列（R-001~R-004）。
     login_locks: DashMap<String, Arc<TokioMutex<()>>>,
+    /// per-token 操作锁，保护 Token-Session 的 read-modify-write 序列（CRIT-001）。
+    ///
+    /// 用于 `open_safe`/`close_safe` 等 modifying TokenSession 操作的串行化，
+    /// 避免并发 read-modify-write 导致 lost update。只读操作（如 `is_safe`）不需要锁。
+    #[cfg(feature = "safe-auth")]
+    token_session_locks: DashMap<String, Arc<TokioMutex<()>>>,
     /// login_id → token 列表的内存索引，用于并发登录控制快速查询。
     ///
     /// 与 DAO 持久化的 `AccountSession.tokens` 保持同步：
@@ -247,6 +253,8 @@ impl BulwarkSession {
             timeout,
             active_timeout,
             login_locks: DashMap::new(),
+            #[cfg(feature = "safe-auth")]
+            token_session_locks: DashMap::new(),
             login_token_map: DashMap::new(),
             #[cfg(feature = "listener")]
             listener_manager: None,
@@ -358,6 +366,28 @@ impl BulwarkSession {
         let lock = self
             .login_locks
             .entry(login_id.to_string())
+            .or_insert_with(|| Arc::new(TokioMutex::new(())))
+            .clone();
+        let _guard = lock.lock().await;
+        f.await
+    }
+
+    /// 获取 per-token 锁并执行 future（保护 Token-Session read-modify-write 序列）。
+    ///
+    /// 锁粒度为 token，不影响不同 token 的并发。使用 `tokio::sync::Mutex`（持有锁跨 await 点）。
+    /// 用于 `open_safe`/`close_safe` 等修改 TokenSession 的操作，避免并发 read-modify-write
+    /// 导致 lost update（CRIT-001）。
+    ///
+    /// 注意：`get_token_session`/`save_token_session` 本身不加锁，调用方需通过此方法
+    /// 包裹 read-modify-write 序列。只读操作（如 `is_safe`）不需要锁。
+    #[cfg(feature = "safe-auth")]
+    pub(crate) async fn with_token_session_lock<F, R>(&self, token: &str, f: F) -> R
+    where
+        F: std::future::Future<Output = R>,
+    {
+        let lock = self
+            .token_session_locks
+            .entry(token.to_string())
             .or_insert_with(|| Arc::new(TokioMutex::new(())))
             .clone();
         let _guard = lock.lock().await;
@@ -618,16 +648,18 @@ impl BulwarkSession {
     /// [`get_token_session`](Self::get_token_session) 检查存在性与过期状态：
     /// - `Ok(None)`：token session 不存在（已注销）或已过期 → 从列表中移除
     /// - `Ok(Some(_))`：token 仍有效 → 保留
-    /// - `Err(e)`：DAO 读取错误 → 透传错误
+    /// - `Err(e)`：DAO 读取错误 → 记录 `tracing::warn!` 并跳过该 token，继续遍历（HIGH-004）
     ///
     /// 若某个 login_id 的 token 列表清理后变空，移除该 login_id 的整个 entry
     ///（与 [`remove_login_token`](Self::remove_login_token) 行为一致）。
     ///
     /// # 返回
-    /// 清理的 token 总数。
+    /// 清理的 token 总数（仅统计成功清理的 token，DAO 失败的 token 不计入）。
     ///
-    /// # 错误
-    /// DAO 读取失败时透传 `BulwarkError`。
+    /// # 错误处理（HIGH-004）
+    /// 单个 token 的 DAO 读取失败不再透传 `BulwarkError` 中断整个清理周期，
+    /// 而是记录 `tracing::warn!` 日志并跳过该 token，继续处理后续 token。
+    /// 这样可避免单个 DAO 故障导致整个清理周期中断，最大化清理覆盖率。
     pub async fn cleanup_expired_tokens(&self) -> BulwarkResult<usize> {
         let mut removed = 0usize;
         // 先收集所有 login_id，避免在 await 期间持有 DashMap 读锁
@@ -645,10 +677,17 @@ impl BulwarkSession {
             };
 
             // 逐个检查 token 的存活性（get_token_session 会处理过期清理与回调）
+            // HIGH-004: 单个 token 的 DAO 失败不再中断整个清理周期，改为 warn 日志并跳过
             let mut expired: Vec<String> = Vec::new();
             for token in &tokens {
-                if self.get_token_session(token).await?.is_none() {
-                    expired.push(token.clone());
+                match self.get_token_session(token).await {
+                    Ok(None) => expired.push(token.clone()),
+                    Ok(Some(_)) => {}, // token 仍有效，保留
+                    Err(e) => tracing::warn!(
+                        "cleanup_expired_tokens: token={} DAO 读取失败，跳过该 token: {}",
+                        token,
+                        e
+                    ),
                 }
             }
 
@@ -2697,5 +2736,80 @@ mod tests {
         // 2002 应只剩 T4
         let tokens_2002 = session.get_tokens_by_login_id("2002");
         assert_eq!(tokens_2002, vec!["T4".to_string()]);
+    }
+
+    // ----------------------------------------------------------------
+    // HIGH-004: 单 token DAO 失败不中断清理周期
+    // ----------------------------------------------------------------
+
+    /// 测试用 DAO wrapper，在 get 特定 key 时返回错误。
+    ///
+    /// 用于测试 `cleanup_expired_tokens` 单 token DAO 读取失败时
+    /// 不中断整个清理周期（HIGH-004）。
+    struct FailingGetDao {
+        inner: Arc<MockDao>,
+        fail_get_key: String,
+    }
+
+    #[async_trait]
+    impl BulwarkDao for FailingGetDao {
+        async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
+            if key == self.fail_get_key {
+                return Err(BulwarkError::Dao("模拟读取失败".to_string()));
+            }
+            self.inner.get(key).await
+        }
+        async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> BulwarkResult<()> {
+            self.inner.set(key, value, ttl_seconds).await
+        }
+        async fn update(&self, key: &str, value: &str) -> BulwarkResult<()> {
+            self.inner.update(key, value).await
+        }
+        async fn expire(&self, key: &str, seconds: u64) -> BulwarkResult<()> {
+            self.inner.expire(key, seconds).await
+        }
+        async fn delete(&self, key: &str) -> BulwarkResult<()> {
+            self.inner.delete(key).await
+        }
+    }
+
+    /// HIGH-004: 单 token DAO 读取失败不中断整个清理周期，改为 warn 日志并跳过该 token。
+    ///
+    /// 场景：3 个 token（T1 有效 / T2 DAO get 失败 / T3 已注销），
+    /// 验证 T2 的 DAO 失败不中断遍历，T3 仍被清理，T1/T2 保留在 map 中。
+    #[tokio::test]
+    async fn cleanup_expired_tokens_dao_failure_skips_token_without_aborting() {
+        let inner = Arc::new(MockDao::new());
+        let dao: Arc<dyn BulwarkDao> = Arc::new(FailingGetDao {
+            inner: inner.clone(),
+            fail_get_key: token_key("T2"),
+        });
+        let session = BulwarkSession::new(dao, 3600, 86400);
+
+        // 创建 3 个 token：T1（有效）、T2（DAO get 会失败）、T3（将注销）
+        session.create("1001", "T1").await.unwrap();
+        session.create("1001", "T2").await.unwrap();
+        session.create("1001", "T3").await.unwrap();
+
+        // 从 inner MockDao 删除 T3 的 token session（模拟已注销/TTL 过期）
+        inner.delete(&token_key("T3")).await.unwrap();
+
+        // 调用 cleanup_expired_tokens（不应返回 Err）
+        let removed = session.cleanup_expired_tokens().await.unwrap();
+
+        // 验证：只清理 T3（T2 因 DAO 失败被跳过，不计入清理数）
+        assert_eq!(
+            removed, 1,
+            "应只清理 1 个已注销 token（T3），T2 因 DAO 失败被跳过"
+        );
+
+        // T1 和 T2 仍在 login_token_map 中，T3 被清理
+        let tokens = session.get_tokens_by_login_id("1001");
+        assert!(tokens.contains(&"T1".to_string()), "T1（有效）应保留");
+        assert!(
+            tokens.contains(&"T2".to_string()),
+            "T2（DAO 失败被跳过）应保留在 map 中"
+        );
+        assert!(!tokens.contains(&"T3".to_string()), "T3（已注销）应被清理");
     }
 }

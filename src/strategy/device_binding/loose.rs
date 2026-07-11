@@ -5,13 +5,19 @@
 //!
 //! [`LooseBinding`] 实现 [`DeviceBindingPolicy`]（super::DeviceBindingPolicy）：
 //! - `is_new_device`：同 [`StrictBinding`] 逻辑，遍历 `TokenSession.device` 字段
-//! - `require_secondary_auth`：总是返回 `Ok(false)`（仅告警不阻断）
+//! - `require_secondary_auth`：总是返回 `Ok(false)`（仅告警不阻断），并广播 `NewDeviceLogin` 事件
 //!
 //! 新设备时通过 [`AlertListenerManager::broadcast_alert`](crate::strategy::alert::AlertListenerManager::broadcast_alert) 广播
 //! [`SecurityAlertEvent::NewDeviceLogin`](crate::strategy::alert::SecurityAlertEvent::NewDeviceLogin) 事件，业务方监听器可记录审计日志或
 //! 触发风控流程，但登录主流程不被阻断。
 //!
 //! `AlertListenerManager` 为 `Option`，`None` 时跳过广播（向后兼容无告警系统场景）。
+//!
+//! # HIGH-001 修复
+//!
+//! `require_secondary_auth` 不再重复调用 `is_new_device`（调用方已先调用过，避免重复 DAO 查询）。
+//! 调用方（`session.rs` login 流程）仅在 `is_new_device == true` 时才调用此方法，
+//! 因此直接执行告警广播并返回 `Ok(false)`。
 
 use crate::error::BulwarkResult;
 use crate::session::BulwarkSession;
@@ -73,18 +79,15 @@ impl DeviceBindingPolicy for LooseBinding {
     }
 
     async fn require_secondary_auth(&self, login_id: &str, device_id: &str) -> BulwarkResult<bool> {
-        // LooseBinding 仅告警不阻断：总是返回 false
-        // 但仍需检测新设备以触发告警广播
-        if self.is_new_device(login_id, device_id).await? {
-            // 新设备：广播 NewDeviceLogin 事件（若注入了 alert_manager）
-            if let Some(mgr) = &self.alert_manager {
-                let event = SecurityAlertEvent::NewDeviceLogin {
-                    login_id: login_id.to_string(),
-                    device_id: device_id.to_string(),
-                    ip: None,
-                };
-                mgr.broadcast_alert(&event).await;
-            }
+        // HIGH-001 修复：调用方已通过 is_new_device 确认是新设备，不再重复 DAO 查询。
+        // 直接广播 NewDeviceLogin 事件（若注入了 alert_manager），然后返回 false（不阻断）。
+        if let Some(mgr) = &self.alert_manager {
+            let event = SecurityAlertEvent::NewDeviceLogin {
+                login_id: login_id.to_string(),
+                device_id: device_id.to_string(),
+                ip: None,
+            };
+            mgr.broadcast_alert(&event).await;
         }
         Ok(false)
     }
@@ -200,21 +203,27 @@ mod tests {
         }
     }
 
-    /// 旧设备时不广播告警，listener 调用次数为 0。
+    /// HIGH-001 修复后 require_secondary_auth 总是广播告警（调用方已通过 is_new_device 确认是新设备）。
     #[tokio::test]
-    async fn known_device_does_not_broadcast() {
+    async fn require_secondary_auth_always_broadcasts_after_high001_fix() {
         let (_dao, session) = make_session();
         create_session_with_device(&session, "1001", "T1", "web-chrome").await;
         let (mgr, counter) = make_alert_manager_with_counter();
 
         let policy = LooseBinding::with_alert_manager(session, mgr);
+        // 即使传入已知设备，require_secondary_auth 也广播告警
+        // 因为调用方（session.rs login 流程）仅在 is_new_device == true 时才调用此方法
         let require = policy
             .require_secondary_auth("1001", "web-chrome")
             .await
             .unwrap();
 
         assert!(!require, "LooseBinding require_secondary_auth 应返回 false");
-        assert_eq!(counter.call_count(), 0, "旧设备不应广播告警事件");
+        assert_eq!(
+            counter.call_count(),
+            1,
+            "HIGH-001 修复后总是广播告警（调用方已确认是新设备）"
+        );
     }
 
     /// require_secondary_auth 对新设备/旧设备均返回 false（仅告警不阻断）。
@@ -279,9 +288,9 @@ mod tests {
         );
     }
 
-    /// 多 session 部分匹配时不广播（已知设备），完全不匹配时广播。
+    /// HIGH-001 修复后多 session 场景下 require_secondary_auth 总是广播（调用方已确认是新设备）。
     #[tokio::test]
-    async fn multiple_sessions_partial_match_no_broadcast() {
+    async fn multiple_sessions_always_broadcasts_after_high001_fix() {
         let (_dao, session) = make_session();
         create_session_with_device(&session, "1001", "T1", "web-chrome").await;
         create_session_with_device(&session, "1001", "T2", "mobile-ios").await;
@@ -290,26 +299,26 @@ mod tests {
 
         let policy = LooseBinding::with_alert_manager(session, mgr);
 
-        // mobile-ios 在 T2 中存在 → 已知设备，不广播
+        // HIGH-001 修复后，require_secondary_auth 不再自己调用 is_new_device
+        // 调用方已确认是新设备，因此无论传入什么 device_id 都会广播
         let _ = policy
             .require_secondary_auth("1001", "mobile-ios")
             .await
             .unwrap();
         assert_eq!(
             counter.call_count(),
-            0,
-            "多 session 部分匹配（已知设备）不应广播"
+            1,
+            "HIGH-001 修复后第一次调用应广播 1 次"
         );
 
-        // tablet-android 均不匹配 → 新设备，广播
         let _ = policy
             .require_secondary_auth("1001", "tablet-android")
             .await
             .unwrap();
         assert_eq!(
             counter.call_count(),
-            1,
-            "多 session 均不匹配（新设备）应广播 1 次"
+            2,
+            "HIGH-001 修复后第二次调用应再广播 1 次（总计 2 次）"
         );
     }
 }
