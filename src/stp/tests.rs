@@ -1,8 +1,7 @@
-//! Stp 集成测试。
-//!
 //! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
+//! Stp 集成测试。
 use super::*;
 use crate::dao::BulwarkDao;
 use crate::manager::BulwarkManager;
@@ -1224,22 +1223,35 @@ async fn util_get_login_id_returns_current_id() {
     BulwarkManager::reset_for_test();
 }
 
-/// BulwarkUtil::check_safe 默认实现返回 Ok。
+/// BulwarkUtil::check_safe 默认行为随 `safe-auth` feature 变化。
 ///
-/// 默认 `BulwarkLogicDefault` 未启用 MFA，`check_safe` 返回 `Ok(())`。
+/// - 未启用 `safe-auth`：`is_safe` trait default 返回 `Ok(true)`，`check_safe` 返回 `Ok(())`。
+/// - 启用 `safe-auth`：`is_safe` inherent method 查询 `safe_services`，
+///   未调用 `open_safe` 时返回 `Ok(false)`，`check_safe` 返回 `Err(NotSafe)`。
 #[tokio::test]
 #[serial]
 async fn util_check_safe_returns_ok_by_default() {
     init_global_manager(false);
     let _ = BulwarkUtil::login_simple("1001").await.unwrap();
 
-    // 默认实现（未覆写 check_safe）应返回 Ok
     let result = BulwarkUtil::check_safe().await;
-    assert!(
-        result.is_ok(),
-        "默认 check_safe 应返回 Ok，实际: {:?}",
-        result
-    );
+
+    #[cfg(feature = "safe-auth")]
+    {
+        assert!(
+            matches!(result, Err(BulwarkError::NotSafe { .. })),
+            "启用 safe-auth 时未 open_safe，check_safe 应返回 Err(NotSafe)，实际: {:?}",
+            result
+        );
+    }
+    #[cfg(not(feature = "safe-auth"))]
+    {
+        assert!(
+            result.is_ok(),
+            "未启用 safe-auth 时 check_safe 应返回 Ok，实际: {:?}",
+            result
+        );
+    }
 
     BulwarkManager::reset_for_test();
 }

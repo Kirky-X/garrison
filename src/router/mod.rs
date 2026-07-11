@@ -1024,14 +1024,34 @@ mod tests {
     // CheckSafe / CheckDisable / CheckBasicAuth / CheckDigestAuth / CheckSign 测试
     // ----------------------------------------------------------------
 
-    /// DefaultBulwarkInterceptor.pre_handle(CheckSafe) 默认实现返回 Ok（未启用 MFA）。
+    /// DefaultBulwarkInterceptor.pre_handle(CheckSafe) 默认行为随 `safe-auth` feature 变化。
+    ///
+    /// - 未启用 `safe-auth`：`is_safe` trait default 返回 `Ok(true)`，pre_handle 返回 `Ok`。
+    /// - 启用 `safe-auth`：未登录时 `is_safe` 返回 `Ok(false)`，pre_handle 返回 `Err(NotSafe)`。
     #[tokio::test]
     #[serial]
     async fn default_interceptor_check_safe_returns_ok_by_default() {
         init_manager(&[], &[]);
         let interceptor = DefaultBulwarkInterceptor;
         let result = interceptor.pre_handle("/x", &Annotation::CheckSafe).await;
-        assert!(result.is_ok(), "默认 check_safe（未启用 MFA）应返回 Ok");
+
+        #[cfg(feature = "safe-auth")]
+        {
+            assert!(
+                matches!(result, Err(BulwarkError::NotSafe { .. })),
+                "启用 safe-auth 时未登录，pre_handle(CheckSafe) 应返回 Err(NotSafe)，实际: {:?}",
+                result
+            );
+        }
+        #[cfg(not(feature = "safe-auth"))]
+        {
+            assert!(
+                result.is_ok(),
+                "未启用 safe-auth 时 pre_handle(CheckSafe) 应返回 Ok，实际: {:?}",
+                result
+            );
+        }
+
         BulwarkManager::reset_for_test();
     }
 
