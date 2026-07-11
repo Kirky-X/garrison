@@ -1,8 +1,7 @@
-//! MfaLogic trait — 二级认证（MFA）与账号禁用校验契约。
-//!
 //! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
-//!
+
+//! MfaLogic trait — 二级认证（MFA）与账号禁用校验契约。
 //! 从 v0.5.2 起，从 `BulwarkLogic` 上帝 trait 拆分；本 trait 承接 MFA 校验与
 //! 账号禁用检查 2 个方法。super-trait 为 [`SessionLogic`]
 //! （MFA 检查依赖当前登录状态）。
@@ -19,21 +18,31 @@ use async_trait::async_trait;
 ///
 /// # 默认实现（向后兼容）
 ///
-/// - [`check_safe`](Self::check_safe)：默认返回 `Ok(())`（未启用 MFA，兼容 0.2.x）。
-///   业务方覆写以接入 TOTP MFA 校验。
+/// - [`check_safe`](Self::check_safe)：默认调用 `is_safe("default")`，未通过时返回
+///   `Err(NotSafe("SAFE_EXPIRED"))`；未覆写 `is_safe` 时仍返回 `Ok(())`（兼容 0.2.x）。
 /// - [`check_disable`](Self::check_disable)：默认返回 `Ok(())`（未实现禁用账号库，兼容 0.2.x）。
 ///   业务方覆写以查询当前 login_id 是否在禁用列表中。
 #[async_trait]
 pub trait MfaLogic: SessionLogic {
     /// 检查二级认证（MFA）状态。
     ///
-    /// 默认实现返回 `Ok(())`（未启用 MFA，向后兼容 0.2.x）。
-    /// 业务方覆写此方法以接入 TOTP MFA 校验：检查当前会话是否已完成二级认证。
+    /// 默认实现调用 `is_safe("default")` 检查 "default" service 的二级认证状态：
+    /// - `Ok(true)` → 返回 `Ok(())`
+    /// - `Ok(false)` → 返回 `Err(Self::not_safe("SAFE_EXPIRED"))`
+    /// - `Err(e)` → 透传错误
+    ///
+    /// # 向后兼容
+    ///
+    /// 未覆写 `is_safe` 的实现者（如未启用 `safe-auth` feature 时），
+    /// `is_safe` 默认返回 `Ok(true)`，因此 `check_safe` 仍返回 `Ok(())`。
     ///
     /// # 返回
     /// - `Ok(())`: 已通过二级认证或未启用 MFA。
-    /// - `Err(BulwarkError::Session)`: 未通过二级认证。
+    /// - `Err(BulwarkError::NotSafe)`: 未通过二级认证（service 未开启或已过期）。
     async fn check_safe(&self) -> BulwarkResult<()> {
+        if !self.is_safe("default").await? {
+            return Err(Self::not_safe("SAFE_EXPIRED"));
+        }
         Ok(())
     }
 
@@ -156,6 +165,32 @@ pub trait MfaLogic: SessionLogic {
 
 #[async_trait]
 impl MfaLogic for BulwarkLogicDefault {
+    /// 检查二级认证（MFA）状态。
+    ///
+    /// `BulwarkLogicDefault` 覆写实现（v0.6.5 T025）：
+    /// 调用 `is_safe("default")` 检查 "default" service 的二级认证状态。
+    ///
+    /// # 为什么覆写 trait default？
+    ///
+    /// `async_trait` 宏将 trait default 方法编译为泛型代码，`self` 类型为 `&Self`（泛型）。
+    /// 在泛型上下文中，编译器无法解析到 inherent method（safe.rs 中的 `is_safe`），
+    /// 只能解析到 trait default `is_safe`（返回 `Ok(true)`）。
+    /// 在 impl 块中，`self` 是 `&BulwarkLogicDefault`（具体类型），编译器能解析到
+    /// inherent method（当 `safe-auth` feature 启用时）。
+    ///
+    /// # 行为
+    /// - 无 `safe-auth` feature：`is_safe` 使用 trait default（`Ok(true)`）→ 返回 `Ok(())`
+    /// - 有 `safe-auth` feature：`is_safe` 使用 inherent method（检查 `safe_services`）
+    ///   - `Ok(true)` → 返回 `Ok(())`
+    ///   - `Ok(false)` → 返回 `Err(Self::not_safe("SAFE_EXPIRED"))`
+    ///   - `Err(e)` → 透传错误
+    async fn check_safe(&self) -> BulwarkResult<()> {
+        if !self.is_safe("default").await? {
+            return Err(Self::not_safe("SAFE_EXPIRED"));
+        }
+        Ok(())
+    }
+
     /// 检查当前登录账号是否被封禁。
     ///
     /// `BulwarkLogicDefault` 覆写实现（v0.6.5 T019）：
@@ -334,6 +369,38 @@ mod tests {
             "Display 应包含中文描述，实际: {}",
             display
         );
+    }
+
+    // ========================================================================
+    // T025: check_safe 默认实现向后兼容测试
+    // ========================================================================
+
+    /// T025: 不启用 safe-auth 时，MockMfa（只实现 trait defaults）的 check_safe 返回 Ok。
+    ///
+    /// is_safe 默认返回 Ok(true) → check_safe 返回 Ok(())（向后兼容 0.6.4 之前）。
+    #[tokio::test]
+    async fn t025_check_safe_backward_compat_without_safe_auth() {
+        let mock = MockMfa {
+            config: Arc::new(BulwarkConfig::default()),
+        };
+        mock.check_safe().await.unwrap();
+    }
+
+    /// T025: MockMfa 不覆写 is_safe，使用 trait default Ok(true)。
+    ///
+    /// 验证 check_safe 默认调用 is_safe("default")，因 is_safe=true，返回 Ok(())。
+    #[tokio::test]
+    async fn t025_check_safe_default_uses_is_safe_default() {
+        let mock = MockMfa {
+            config: Arc::new(BulwarkConfig::default()),
+        };
+        // is_safe 默认返回 Ok(true)
+        assert!(
+            mock.is_safe("default").await.unwrap(),
+            "is_safe 默认应返回 Ok(true)"
+        );
+        // check_safe 调用 is_safe，因 is_safe=true，返回 Ok(())
+        assert!(mock.check_safe().await.is_ok(), "check_safe 应返回 Ok(())");
     }
 
     // ========================================================================
@@ -567,6 +634,211 @@ mod tests {
                 "未登录（无 current_token）时 check_disable 应返回 Ok，实际: {:?}",
                 result
             );
+        }
+    }
+
+    // ========================================================================
+    // T025: check_safe 默认实现集成测试（需要 safe-auth feature）
+    // ========================================================================
+
+    /// T025 集成测试：验证 check_safe 默认实现与 BulwarkLogicDefault inherent method
+    /// （open_safe / is_safe / close_safe）的交互。
+    ///
+    /// 仅在 `safe-auth` feature 启用时编译，因为测试需要 inherent method 支持。
+    #[cfg(feature = "safe-auth")]
+    mod t025_check_safe_integration {
+        use super::*;
+        use crate::config::BulwarkConfig;
+        use crate::dao::tests::MockDao;
+        use crate::dao::BulwarkDao;
+        use crate::error::BulwarkError;
+        use crate::session::BulwarkSession;
+        use crate::stp::session::SessionLogic;
+        use crate::stp::with_current_token;
+        use crate::stp::LoginParams;
+        use crate::strategy::BulwarkPermissionStrategy;
+        use async_trait::async_trait;
+        use std::sync::Arc;
+
+        // ----------------------------------------------------------------
+        // MockFirewall：no-op 权限策略，允许所有登录
+        // ----------------------------------------------------------------
+
+        struct MockFirewall;
+
+        #[async_trait]
+        impl BulwarkPermissionStrategy for MockFirewall {
+            async fn get_permission_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
+                Ok(vec![])
+            }
+            async fn get_role_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
+                Ok(vec![])
+            }
+            async fn check_permission(
+                &self,
+                _login_id: &str,
+                _permission: &str,
+            ) -> BulwarkResult<bool> {
+                Ok(true)
+            }
+            async fn check_role(&self, _login_id: &str, _role: &str) -> BulwarkResult<bool> {
+                Ok(true)
+            }
+            async fn check_role_any(
+                &self,
+                _login_id: &str,
+                _roles: &[&str],
+            ) -> BulwarkResult<bool> {
+                Ok(true)
+            }
+            async fn check_role_all(
+                &self,
+                _login_id: &str,
+                _roles: &[&str],
+            ) -> BulwarkResult<bool> {
+                Ok(true)
+            }
+        }
+
+        // ----------------------------------------------------------------
+        // 辅助函数
+        // ----------------------------------------------------------------
+
+        /// 创建 BulwarkLogicDefault 并返回 (logic, dao) 便于测试。
+        fn make_logic() -> (BulwarkLogicDefault, Arc<MockDao>) {
+            let dao = Arc::new(MockDao::new());
+            let session = Arc::new(BulwarkSession::new(
+                dao.clone() as Arc<dyn BulwarkDao>,
+                3600,
+                86400,
+            ));
+            let mut config = BulwarkConfig::default_config();
+            config.throw_on_not_login = false;
+            config.token_style = "uuid".to_string();
+            let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall);
+            let logic = BulwarkLogicDefault::new(session, Arc::new(config), firewall);
+            (logic, dao)
+        }
+
+        // ----------------------------------------------------------------
+        // 4 个集成测试
+        // ----------------------------------------------------------------
+
+        /// login → open_safe("default", 3600) → check_safe 返回 Ok(())。
+        ///
+        /// 验证 open_safe 开启二级认证后，check_safe 默认实现（调用 is_safe）
+        /// 能正确识别已认证状态并返回 Ok。
+        #[tokio::test]
+        async fn t025_check_safe_passes_after_open_safe() {
+            let (logic, _dao) = make_logic();
+            let token = logic
+                .login("user-4001", &LoginParams::default())
+                .await
+                .unwrap();
+
+            let result = with_current_token(token.clone(), async {
+                logic.open_safe("default", 3600).await.unwrap();
+                logic.check_safe().await
+            })
+            .await;
+
+            assert!(
+                result.is_ok(),
+                "open_safe 后 check_safe 应返回 Ok(())，实际: {:?}",
+                result
+            );
+        }
+
+        /// login → check_safe（未 open_safe）→ 返回 Err(NotSafe { reason: "SAFE_EXPIRED" })。
+        ///
+        /// 验证未开启二级认证时，check_safe 默认实现（调用 is_safe）能正确识别
+        /// 未认证状态并返回 NotSafe 错误。
+        #[tokio::test]
+        async fn t025_check_safe_fails_without_open_safe() {
+            let (logic, _dao) = make_logic();
+            let token = logic
+                .login("user-4002", &LoginParams::default())
+                .await
+                .unwrap();
+
+            let result =
+                with_current_token(token.clone(), async { logic.check_safe().await }).await;
+
+            match result {
+                Err(BulwarkError::NotSafe { reason }) => {
+                    assert_eq!(
+                        reason, "SAFE_EXPIRED",
+                        "未 open_safe 时 check_safe 应返回 NotSafe(reason=\"SAFE_EXPIRED\")"
+                    );
+                },
+                other => panic!(
+                    "未 open_safe 时 check_safe 应返回 Err(NotSafe {{ reason: \"SAFE_EXPIRED\" }})，实际: {:?}",
+                    other
+                ),
+            }
+        }
+
+        /// login → open_safe("default", 0)（立即过期）→ check_safe → 返回 Err(NotSafe)。
+        ///
+        /// 验证 duration_secs=0 导致立即过期后，check_safe 能正确识别过期状态。
+        #[tokio::test]
+        async fn t025_check_safe_fails_after_expiry() {
+            let (logic, _dao) = make_logic();
+            let token = logic
+                .login("user-4003", &LoginParams::default())
+                .await
+                .unwrap();
+
+            let result = with_current_token(token.clone(), async {
+                logic.open_safe("default", 0).await.unwrap();
+                logic.check_safe().await
+            })
+            .await;
+
+            match result {
+                Err(BulwarkError::NotSafe { reason }) => {
+                    assert_eq!(
+                        reason, "SAFE_EXPIRED",
+                        "过期后 check_safe 应返回 NotSafe(reason=\"SAFE_EXPIRED\")"
+                    );
+                },
+                other => panic!(
+                    "过期后 check_safe 应返回 Err(NotSafe {{ reason: \"SAFE_EXPIRED\" }})，实际: {:?}",
+                    other
+                ),
+            }
+        }
+
+        /// login → open_safe("default") → close_safe("default") → check_safe → 返回 Err(NotSafe)。
+        ///
+        /// 验证 close_safe 关闭二级认证后，check_safe 能正确识别未认证状态。
+        #[tokio::test]
+        async fn t025_check_safe_fails_after_close_safe() {
+            let (logic, _dao) = make_logic();
+            let token = logic
+                .login("user-4004", &LoginParams::default())
+                .await
+                .unwrap();
+
+            let result = with_current_token(token.clone(), async {
+                logic.open_safe("default", 3600).await.unwrap();
+                logic.close_safe("default").await.unwrap();
+                logic.check_safe().await
+            })
+            .await;
+
+            match result {
+                Err(BulwarkError::NotSafe { reason }) => {
+                    assert_eq!(
+                        reason, "SAFE_EXPIRED",
+                        "close_safe 后 check_safe 应返回 NotSafe(reason=\"SAFE_EXPIRED\")"
+                    );
+                },
+                other => panic!(
+                    "close_safe 后 check_safe 应返回 Err(NotSafe {{ reason: \"SAFE_EXPIRED\" }})，实际: {:?}",
+                    other
+                ),
+            }
         }
     }
 }
