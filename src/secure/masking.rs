@@ -3,14 +3,14 @@
 
 //! 敏感数据脱敏子模块。
 //!
-//! 提供 [`SensitiveDataMasker`] 对手机号 / 身份证 / 邮箱 / 银行卡等敏感字段进行脱敏，
+//! 提供 [`SensitiveDataMasker`](crate::secure::masking::SensitiveDataMasker) 对手机号 / 身份证 / 邮箱 / 银行卡等敏感字段进行脱敏，
 //! 支持对 `serde_json::Value` 递归脱敏。
 //!
 //! ## 设计
 //!
-//! - [`MaskType`] 枚举定义脱敏类型，[`SensitiveDataMasker`] 持有 `(MaskType, field_name)` 规则列表
-//! - [`SensitiveDataMasker::mask_value`] 对单个字符串值按指定类型脱敏
-//! - [`SensitiveDataMasker::mask_json`] 递归遍历 JSON Object，匹配 field 名后调用 `mask_value`
+//! - [`MaskType`](crate::secure::masking::MaskType) 枚举定义脱敏类型，[`SensitiveDataMasker`](crate::secure::masking::SensitiveDataMasker) 持有 `(MaskType, field_name)` 规则列表
+//! - [`SensitiveDataMasker::mask_value`](crate::secure::masking::SensitiveDataMasker::mask_value) 对单个字符串值按指定类型脱敏
+//! - [`SensitiveDataMasker::mask_json`](crate::secure::masking::SensitiveDataMasker::mask_json) 递归遍历 JSON Object，匹配 field 名后调用 `mask_value`
 //! - `Custom(String)` 变体仅存储正则模式字符串，本批次不实现实际脱敏（返回原值 + warn 日志）
 
 use serde_json::Value;

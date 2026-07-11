@@ -3,7 +3,7 @@
 
 //! 数学验证码提供商（基础 CAPTCHA 实现）。
 //!
-//! [`MathCaptchaProvider`] 生成 `"a ± b = ?"` 形式的数学挑战题，
+//! [`MathCaptchaProvider`](crate::strategy::firewall::captcha_provider::MathCaptchaProvider) 生成 `"a ± b = ?"` 形式的数学挑战题，
 //! 将答案存入 DAO（key = `captcha:math:{challenge_id}`），验证后一次性删除防止复用。
 //!
 //! # 算法

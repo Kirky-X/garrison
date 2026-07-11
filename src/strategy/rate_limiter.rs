@@ -7,15 +7,15 @@
 //!
 //! ## 数据结构
 //!
-//! - [`TokenBucket`]：单个令牌桶，持有容量、补充速率、当前令牌数（`AtomicU64`）、
+//! - [`TokenBucket`](crate::strategy::rate_limiter::TokenBucket)：单个令牌桶，持有容量、补充速率、当前令牌数（`AtomicU64`）、
 //!   上次补充时间戳（`AtomicU64`，unix 毫秒）
-//! - [`TokenBucketRateLimiter`]：限流器，管理多个 key 对应的 [`TokenBucket`]
+//! - [`TokenBucketRateLimiter`](crate::strategy::rate_limiter::TokenBucketRateLimiter)：限流器，管理多个 key 对应的 [`TokenBucket`](crate::strategy::rate_limiter::TokenBucket)
 //!
 //! ## 算法
 //!
-//! [`TokenBucketRateLimiter::try_acquire`] 执行以下步骤：
+//! [`TokenBucketRateLimiter::try_acquire`](crate::strategy::rate_limiter::TokenBucketRateLimiter::try_acquire) 执行以下步骤：
 //!
-//! 1. 获取或创建 key 对应的 [`TokenBucket`]
+//! 1. 获取或创建 key 对应的 [`TokenBucket`](crate::strategy::rate_limiter::TokenBucket)
 //! 2. 计算自上次补充以来的时间差（毫秒）
 //! 3. 补充 token：`new_tokens = elapsed_millis * refill_rate / 1000`
 //! 4. CAS 更新 tokens（不超过 capacity）

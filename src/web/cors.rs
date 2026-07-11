@@ -3,7 +3,7 @@
 
 //! CORS 跨域资源共享中间件模块。
 //!
-//! 提供 [`CorsConfig`] 配置与 [`bulwark_cors_middleware`] axum 中间件，
+//! 提供 [`CorsConfig`](crate::web::cors::CorsConfig) 配置与 [`bulwark_cors_middleware`](crate::web::cors::bulwark_cors_middleware) axum 中间件，
 //! 支持 CORS 预检（OPTIONS）与实际请求的响应头注入。
 //!
 //! # 行为
@@ -16,7 +16,7 @@
 //!
 //! # 配置
 //!
-//! 通过 [`CorsConfig`] 控制允许的源、方法、headers 等，集成到 [`crate::config::BulwarkConfig`]。
+//! 通过 [`CorsConfig`](crate::web::cors::CorsConfig) 控制允许的源、方法、headers 等，集成到 [`crate::config::BulwarkConfig`]。
 
 use crate::error::{BulwarkError, BulwarkResult};
 use axum::extract::State;

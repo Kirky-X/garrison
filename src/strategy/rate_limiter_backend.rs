@@ -3,7 +3,7 @@
 
 //! 限流器后端抽象模块。
 //!
-//! 定义 [`RateLimiterBackend`] trait，统一内存限流器与 Redis 限流器的接口，
+//! 定义 [`RateLimiterBackend`](crate::strategy::rate_limiter_backend::RateLimiterBackend) trait，统一内存限流器与 Redis 限流器的接口，
 //! 业务方可通过 trait 对象在运行时切换后端实现。
 //!
 //! ## 设计

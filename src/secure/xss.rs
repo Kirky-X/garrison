@@ -3,12 +3,12 @@
 
 //! XSS 防护子模块。
 //!
-//! 提供 [`XssProtector`] 对 HTML 输入进行转义/白名单过滤，防止 XSS 攻击。零外部依赖。
+//! 提供 [`XssProtector`](crate::secure::xss::XssProtector) 对 HTML 输入进行转义/白名单过滤，防止 XSS 攻击。零外部依赖。
 //!
 //! ## 设计
 //!
-//! - [`XssMode::EscapeAll`]：转义所有 HTML 特殊字符（`<` / `>` / `&` / `"` / `'`）
-//! - [`XssMode::Whitelist`]：白名单内的标签保留原样（属性值中的特殊字符仍转义），
+//! - [`XssMode::EscapeAll`](crate::secure::xss::XssMode::EscapeAll)：转义所有 HTML 特殊字符（`<` / `>` / `&` / `"` / `'`）
+//! - [`XssMode::Whitelist`](crate::secure::xss::XssMode::Whitelist)：白名单内的标签保留原样（属性值中的特殊字符仍转义），
 //!   非白名单标签全部转义，纯文本内容中的特殊字符也转义
 //! - 转义顺序：`&` 必须最先转义，避免二次转义
 

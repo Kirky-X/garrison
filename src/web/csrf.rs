@@ -21,7 +21,7 @@
 //!
 //! # 配置
 //!
-//! 通过 [`CsrfConfig`] 控制，集成到 [`crate::config::BulwarkConfig`]。
+//! 通过 [`CsrfConfig`](crate::web::csrf::CsrfConfig) 控制，集成到 [`crate::config::BulwarkConfig`]。
 
 use crate::error::BulwarkResult;
 use axum::extract::State;

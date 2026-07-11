@@ -3,19 +3,19 @@
 
 //! WAF 请求内容校验模块。
 //!
-//! 提供 [`WafRule`] trait 与 5 个内置规则，通过 `bulwark_waf_middleware` 集成到 axum 路由。
+//! 提供 [`WafRule`](crate::web::waf::WafRule) trait 与 5 个内置规则，通过 `bulwark_waf_middleware` 集成到 axum 路由。
 //!
 //! # 内置规则
 //!
-//! - [`DangerousCharacter`]：检测路径中的危险字符（`//`、`\`、`%2e`、`%2f`、`;`、`\0`、`\n`、`\r`）
-//! - [`DirectoryTraversal`]：检测目录遍历攻击（`./`、`../`、`..%2f`、`..%5c`）
-//! - [`PathWhitelist`]：路径白名单前缀匹配
-//! - [`PathBlacklist`]：路径黑名单前缀匹配
-//! - [`HttpMethodWhitelist`]：HTTP 方法白名单
+//! - [`DangerousCharacter`](crate::web::waf::DangerousCharacter)：检测路径中的危险字符（`//`、`\`、`%2e`、`%2f`、`;`、`\0`、`\n`、`\r`）
+//! - [`DirectoryTraversal`](crate::web::waf::DirectoryTraversal)：检测目录遍历攻击（`./`、`../`、`..%2f`、`..%5c`）
+//! - [`PathWhitelist`](crate::web::waf::PathWhitelist)：路径白名单前缀匹配
+//! - [`PathBlacklist`](crate::web::waf::PathBlacklist)：路径黑名单前缀匹配
+//! - [`HttpMethodWhitelist`](crate::web::waf::HttpMethodWhitelist)：HTTP 方法白名单
 //!
 //! # 配置
 //!
-//! 通过 [`WafConfig`] 控制是否启用 WAF 校验及各规则参数，集成到 [`crate::config::BulwarkConfig`]。
+//! 通过 [`WafConfig`](crate::web::waf::WafConfig) 控制是否启用 WAF 校验及各规则参数，集成到 [`crate::config::BulwarkConfig`]。
 
 use crate::error::{BulwarkError, BulwarkResult};
 use axum::extract::State;
