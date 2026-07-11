@@ -117,8 +117,13 @@ pub fn generate_csrf_token() -> BulwarkResult<String> {
 ///
 /// # 返回
 ///
-/// 长度一致且所有字节匹配时返回 `true`，否则返回 `false`。
+/// 任一 token 为空时返回 `false`（空 token 视为非法输入）；
+/// 否则长度一致且所有字节匹配时返回 `true`，否则返回 `false`。
 pub fn validate_csrf_token(header_token: &str, cookie_token: &str) -> bool {
+    // 空 token 视为非法输入，直接拒绝（非空路径仍保持常量时间比较）
+    if header_token.is_empty() || cookie_token.is_empty() {
+        return false;
+    }
     let h = header_token.as_bytes();
     let c = cookie_token.as_bytes();
     let min_len = h.len().min(c.len());
@@ -358,8 +363,8 @@ mod tests {
     }
 
     #[test]
-    fn validate_empty_tokens_returns_true() {
-        assert!(validate_csrf_token("", ""));
+    fn validate_empty_tokens_returns_false() {
+        assert!(!validate_csrf_token("", ""));
     }
 
     #[test]

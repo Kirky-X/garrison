@@ -8,8 +8,8 @@
 //!
 //! # 行为
 //!
-//! - **OPTIONS 预检请求**：Origin 匹配时返回 204 No Content 并注入 CORS 预检响应头；
-//!   Origin 不匹配时透传（不注入 CORS 头）。
+//! - **OPTIONS 预检请求**：无论 Origin 是否匹配均短路返回 204 No Content；
+//!   Origin 匹配时注入 CORS 预检响应头，Origin 不匹配/缺失/空时返回 204 无 CORS 头。
 //! - **实际请求**（非 OPTIONS）：Origin 匹配时注入 CORS 响应头后继续到下一 handler；
 //!   Origin 不匹配时透传。
 //! - **无 Origin header**：视为非 CORS 请求，直接透传。
@@ -147,14 +147,14 @@ fn join_headers(items: &[String]) -> HeaderValue {
 ///
 /// ## OPTIONS 预检请求
 ///
-/// 1. 提取 `Origin` header，若无则透传（非 CORS 请求）
-/// 2. Origin 不匹配 `config.allowed_origins` 时透传（不注入 CORS 头）
-/// 3. Origin 匹配时注入预检响应头并返回 204 No Content：
+/// 1. 无论 Origin 是否匹配均短路返回 204 No Content。
+/// 2. Origin 匹配时注入预检响应头：
 ///    - `Access-Control-Allow-Origin`
 ///    - `Access-Control-Allow-Methods`
 ///    - `Access-Control-Allow-Headers`
 ///    - `Access-Control-Allow-Credentials`（仅当 `allow_credentials == true`）
 ///    - `Access-Control-Max-Age`
+/// 3. Origin 缺失/空/不匹配时返回 204 无 CORS 头。
 ///
 /// ## 实际请求（非 OPTIONS）
 ///
@@ -191,6 +191,46 @@ pub async fn bulwark_cors_middleware(
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
 
+    // OPTIONS 预检请求：无论 Origin 是否匹配均短路返回 204
+    if req.method() == axum::http::Method::OPTIONS {
+        let origin = req
+            .headers()
+            .get(axum::http::header::ORIGIN)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        // 仅 Origin 非空且匹配时注入 CORS 头；无 Origin / 空 / 不匹配 → 204 无 CORS 头
+        if !origin.is_empty() && origin_matches(origin, &config.allowed_origins) {
+            let allow_origin = allow_origin_value(origin, &config.allowed_origins);
+            let mut headers = axum::http::HeaderMap::new();
+            headers.insert(
+                axum::http::header::ACCESS_CONTROL_ALLOW_ORIGIN,
+                HeaderValue::from_str(allow_origin).unwrap_or(HeaderValue::from_static("*")),
+            );
+            headers.insert(
+                HeaderName::from_static("access-control-allow-methods"),
+                join_headers(&config.allowed_methods),
+            );
+            headers.insert(
+                HeaderName::from_static("access-control-allow-headers"),
+                join_headers(&config.allowed_headers),
+            );
+            if config.allow_credentials {
+                headers.insert(
+                    HeaderName::from_static("access-control-allow-credentials"),
+                    HeaderValue::from_static("true"),
+                );
+            }
+            headers.insert(
+                HeaderName::from_static("access-control-max-age"),
+                HeaderValue::from_str(&config.max_age_secs.to_string())
+                    .unwrap_or(HeaderValue::from_static("86400")),
+            );
+            return (StatusCode::NO_CONTENT, headers).into_response();
+        }
+        return StatusCode::NO_CONTENT.into_response();
+    }
+
+    // 非 OPTIONS 实际请求
     let origin = match req.headers().get(axum::http::header::ORIGIN) {
         Some(v) => v.to_str().unwrap_or("").to_string(),
         None => return next.run(req).await,
@@ -205,35 +245,6 @@ pub async fn bulwark_cors_middleware(
     }
 
     let allow_origin = allow_origin_value(&origin, &config.allowed_origins);
-
-    // OPTIONS 预检请求：短路返回 204
-    if req.method() == axum::http::Method::OPTIONS {
-        let mut headers = axum::http::HeaderMap::new();
-        headers.insert(
-            axum::http::header::ACCESS_CONTROL_ALLOW_ORIGIN,
-            HeaderValue::from_str(allow_origin).unwrap_or(HeaderValue::from_static("*")),
-        );
-        headers.insert(
-            HeaderName::from_static("access-control-allow-methods"),
-            join_headers(&config.allowed_methods),
-        );
-        headers.insert(
-            HeaderName::from_static("access-control-allow-headers"),
-            join_headers(&config.allowed_headers),
-        );
-        if config.allow_credentials {
-            headers.insert(
-                HeaderName::from_static("access-control-allow-credentials"),
-                HeaderValue::from_static("true"),
-            );
-        }
-        headers.insert(
-            HeaderName::from_static("access-control-max-age"),
-            HeaderValue::from_str(&config.max_age_secs.to_string())
-                .unwrap_or(HeaderValue::from_static("86400")),
-        );
-        return (StatusCode::NO_CONTENT, headers).into_response();
-    }
 
     // 实际请求：注入响应头后继续
     let mut resp = next.run(req).await;
@@ -406,13 +417,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn preflight_non_matching_origin_no_cors_headers() {
+    async fn preflight_non_matching_origin_returns_204_no_cors_headers() {
         let config = CorsConfig {
             allowed_origins: vec!["https://example.com".to_string()],
             ..Default::default()
         };
         let app = make_app(config);
-        // 非匹配 origin 透传，OPTIONS 请求未匹配路由 → 404，但不应有 CORS 头
+        // 非匹配 origin → 204 无 CORS 头（短路，不透传到 handler）
         let resp = app
             .oneshot(make_request_with_origin(
                 "OPTIONS",
@@ -421,6 +432,7 @@ mod tests {
             ))
             .await
             .unwrap();
+        assert_eq!(resp.status(), StatusCode::NO_CONTENT);
         assert!(resp.headers().get("access-control-allow-origin").is_none());
     }
 
@@ -450,17 +462,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn preflight_no_origin_header_passes_through() {
+    async fn preflight_no_origin_header_returns_204() {
         let config = CorsConfig {
             allowed_origins: vec!["https://example.com".to_string()],
             ..Default::default()
         };
         let app = make_app(config);
-        // 无 Origin header 透传，OPTIONS 未匹配路由 → 404
+        // 无 Origin header → 204 无 CORS 头（短路，不透传到 handler）
         let resp = app
             .oneshot(make_request("OPTIONS", "/api/test"))
             .await
             .unwrap();
+        assert_eq!(resp.status(), StatusCode::NO_CONTENT);
         assert!(resp.headers().get("access-control-allow-origin").is_none());
     }
 

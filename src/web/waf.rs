@@ -82,7 +82,10 @@ pub trait WafRule: Send + Sync {
 /// check_dangerous_chars = true
 /// allowed_methods = ["GET", "POST"]
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+// NOTE: `custom_rules: Vec<Arc<dyn WafRule>>` 不可 derive `Debug`/`PartialEq`/`Eq`
+// （`dyn WafRule` 无 `Debug`/`PartialEq` bound），故手写 `Debug` 并移除 `PartialEq`/`Eq`。
+// `Arc<dyn WafRule>` 是 `Clone`，`#[derive(Clone)]` 仍可用。
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WafConfig {
     /// 是否启用 WAF 校验。
@@ -97,6 +100,29 @@ pub struct WafConfig {
     pub check_directory_traversal: bool,
     /// 允许的 HTTP 方法列表（空时不限制方法）。
     pub allowed_methods: Vec<String>,
+    /// 自定义规则链（spec R-waf-001 验收标准：自定义规则可通过 `WafConfig` 注入）。
+    ///
+    /// `#[serde(skip)]`：`Arc<dyn WafRule>` 不可 Serialize/Deserialize。
+    /// middleware 在内置规则链之后追加执行这些规则。
+    #[serde(skip)]
+    pub custom_rules: Vec<std::sync::Arc<dyn WafRule>>,
+}
+
+impl std::fmt::Debug for WafConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WafConfig")
+            .field("enabled", &self.enabled)
+            .field("path_whitelist", &self.path_whitelist)
+            .field("path_blacklist", &self.path_blacklist)
+            .field("check_dangerous_chars", &self.check_dangerous_chars)
+            .field("check_directory_traversal", &self.check_directory_traversal)
+            .field("allowed_methods", &self.allowed_methods)
+            .field(
+                "custom_rules",
+                &format!("{} rules", self.custom_rules.len()),
+            )
+            .finish()
+    }
 }
 
 impl Default for WafConfig {
@@ -108,6 +134,7 @@ impl Default for WafConfig {
             check_dangerous_chars: true,
             check_directory_traversal: true,
             allowed_methods: Vec::new(),
+            custom_rules: Vec::new(),
         }
     }
 }
@@ -254,7 +281,7 @@ impl WafRule for PathBlacklist {
 
 /// HTTP 方法白名单规则（T005）。
 ///
-/// `methods` 为空时始终放行；非空时 `ctx.method` 必须匹配（大小写不敏感）任一方法。
+/// `methods` 为空时始终放行；非空时 `ctx.method` 必须匹配（大小写敏感，RFC 7230）任一方法。
 #[derive(Debug, Clone, Default)]
 pub struct HttpMethodWhitelist {
     /// 允许的 HTTP 方法列表。
@@ -267,12 +294,7 @@ impl WafRule for HttpMethodWhitelist {
         if self.methods.is_empty() {
             return Ok(());
         }
-        let method_upper = ctx.method.to_uppercase();
-        if self
-            .methods
-            .iter()
-            .any(|m| m.to_uppercase() == method_upper)
-        {
+        if self.methods.iter().any(|m| m == &ctx.method) {
             Ok(())
         } else {
             Err(BulwarkError::Config(format!(
@@ -364,6 +386,13 @@ pub async fn bulwark_waf_middleware(
     }
 
     for rule in &rules {
+        if let Err(e) = rule.check(&ctx).await {
+            return (StatusCode::BAD_REQUEST, e.to_string()).into_response();
+        }
+    }
+
+    // T035: 自定义规则链（通过 WafConfig.custom_rules 注入，在内置规则之后追加执行）
+    for rule in &config.custom_rules {
         if let Err(e) = rule.check(&ctx).await {
             return (StatusCode::BAD_REQUEST, e.to_string()).into_response();
         }
@@ -634,12 +663,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn http_method_whitelist_case_insensitive() {
+    async fn http_method_whitelist_case_sensitive() {
         let rule = HttpMethodWhitelist {
-            methods: vec!["get".to_string()],
+            methods: vec!["GET".to_string()],
         };
+        // 相同大小写放行
         let ctx = make_ctx("/api/test", "GET");
         assert!(rule.check(&ctx).await.is_ok());
+        // 不同大小写拒绝（HTTP 方法大小写敏感，RFC 7230）
+        let ctx_lower = make_ctx("/api/test", "get");
+        assert!(rule.check(&ctx_lower).await.is_err());
     }
 
     #[tokio::test]
@@ -758,6 +791,114 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
         // 合法请求放行
         let resp = app.oneshot(make_request("GET", "/api/test")).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    // ========================================================================
+    // T035: custom_rules 自定义规则注入测试（4 个）
+    // ========================================================================
+
+    /// 测试用自定义规则：拒绝路径包含指定子串的请求。
+    struct BlockSubstrRule {
+        blocked: String,
+    }
+
+    #[async_trait::async_trait]
+    impl WafRule for BlockSubstrRule {
+        async fn check(&self, ctx: &WafContext) -> BulwarkResult<()> {
+            if ctx.path.contains(&self.blocked) {
+                Err(BulwarkError::Config(format!(
+                    "WAF violation: 自定义规则拦截 {}",
+                    self.blocked
+                )))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    /// T035: custom_rules 为空时不影响请求放行。
+    #[tokio::test]
+    async fn custom_rules_empty_list_passes() {
+        let config = WafConfig {
+            enabled: true,
+            custom_rules: Vec::new(),
+            ..Default::default()
+        };
+        let app = make_app(config);
+        let resp = app.oneshot(make_request("GET", "/api/test")).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    /// T035: 单个 custom_rule 放行不匹配的路径。
+    #[tokio::test]
+    async fn custom_rules_single_rule_passes() {
+        let rule: Arc<dyn WafRule> = Arc::new(BlockSubstrRule {
+            blocked: "forbidden".to_string(),
+        });
+        let config = WafConfig {
+            enabled: true,
+            custom_rules: vec![rule],
+            ..Default::default()
+        };
+        let app = make_app(config);
+        // /api/test 不含 "forbidden"，应放行
+        let resp = app.oneshot(make_request("GET", "/api/test")).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    /// T035: 多个 custom_rule 全部放行时请求通过。
+    #[tokio::test]
+    async fn custom_rules_multiple_rules_pass() {
+        let rules: Vec<Arc<dyn WafRule>> = vec![
+            Arc::new(BlockSubstrRule {
+                blocked: "evil".to_string(),
+            }),
+            Arc::new(BlockSubstrRule {
+                blocked: "hack".to_string(),
+            }),
+        ];
+        let config = WafConfig {
+            enabled: true,
+            custom_rules: rules,
+            ..Default::default()
+        };
+        let app = make_app(config);
+        // /api/test 不含 "evil" 也不含 "hack"，两条规则均放行
+        let resp = app.oneshot(make_request("GET", "/api/test")).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    /// T035: custom_rule 拒绝匹配路径时返回 400。
+    #[tokio::test]
+    async fn custom_rules_rejection_returns_400() {
+        let rule: Arc<dyn WafRule> = Arc::new(BlockSubstrRule {
+            blocked: "/admin".to_string(),
+        });
+        let config = WafConfig {
+            enabled: true,
+            custom_rules: vec![rule],
+            ..Default::default()
+        };
+        let app = make_app(config);
+        // /admin/test 命中自定义规则，应返回 400
+        let resp = app
+            .oneshot(make_request("GET", "/admin/test"))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        // /api/test 不命中，应放行
+        let app2 = make_app(WafConfig {
+            enabled: true,
+            custom_rules: vec![Arc::new(BlockSubstrRule {
+                blocked: "/admin".to_string(),
+            })],
+            ..Default::default()
+        });
+        let resp = app2
+            .oneshot(make_request("GET", "/api/test"))
+            .await
+            .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
     }
 }

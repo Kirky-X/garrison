@@ -368,7 +368,16 @@ impl BulwarkConfig {
     /// # 错误
     /// - `BulwarkError::Config`：文件解析失败、环境变量非法或配置校验未通过。
     pub fn load(toml_path: Option<&str>) -> BulwarkResult<Self> {
-        let env_values = collect_env_vars(ENV_PREFIX);
+        #[cfg_attr(not(feature = "rate-limit-redis"), allow(unused_mut))]
+        let mut env_values = collect_env_vars(ENV_PREFIX);
+
+        // `BULWARK_RATE_LIMIT_BACKEND=redis` 会被 confers 通用收集（key "rate_limit_backend"
+        // 匹配顶层字段），但 "redis" 无法反序列化为 `Redis { redis_url }`（缺子字段），
+        // 会导致 build 失败。故从 confers memory source 中移除，由下方显式逻辑处理。
+        #[cfg(feature = "rate-limit-redis")]
+        {
+            env_values.remove("rate_limit_backend");
+        }
 
         let mut builder = ConfigBuilder::<Self>::new()
             .default("token_name", ConfigValue::string(DEFAULT_TOKEN_NAME))
@@ -438,7 +447,54 @@ impl BulwarkConfig {
             .build()
             .map_err(|e| BulwarkError::Config(format!("confers build error: {}", e)))?;
 
-        let config = config.with_watcher();
+        #[cfg_attr(
+            not(any(
+                feature = "web-cors",
+                feature = "web-csrf",
+                feature = "rate-limit-redis"
+            )),
+            allow(unused_mut)
+        )]
+        let mut config = config.with_watcher();
+
+        // T039: 环境变量覆盖（spec R-cors-001 / R-csrf-003 / R-redis-ratelimit-004）。
+        // confers 通用收集无法处理枚举结构变体，故 CORS/CSRF/RateLimit 的环境变量
+        // 由显式逻辑覆盖，优先级最高。
+        #[cfg(feature = "web-cors")]
+        {
+            if let Ok(val) = std::env::var("BULWARK_CORS_ALLOWED_ORIGINS") {
+                config.cors_config.allowed_origins = val
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
+            }
+        }
+        #[cfg(feature = "web-csrf")]
+        {
+            if let Ok(val) = std::env::var("BULWARK_CSRF_ENABLED") {
+                config.csrf_config.enabled = val.eq_ignore_ascii_case("true");
+            }
+        }
+        #[cfg(feature = "rate-limit-redis")]
+        {
+            if let Ok(val) = std::env::var("BULWARK_RATE_LIMIT_BACKEND") {
+                match val.to_lowercase().as_str() {
+                    "memory" => config.rate_limit_backend = RateLimitBackend::Memory,
+                    "redis" => {
+                        let redis_url = std::env::var("BULWARK_REDIS_URL").unwrap_or_default();
+                        config.rate_limit_backend = RateLimitBackend::Redis { redis_url };
+                    },
+                    _ => {},
+                }
+            }
+            if let Ok(val) = std::env::var("BULWARK_REDIS_URL") {
+                if let RateLimitBackend::Redis { redis_url } = &mut config.rate_limit_backend {
+                    *redis_url = val;
+                }
+            }
+        }
+
         config.validate()?;
         Ok(config)
     }
@@ -522,6 +578,16 @@ impl BulwarkConfig {
             return Err(BulwarkError::Config(
                 "is_share=true requires is_concurrent=true".to_string(),
             ));
+        }
+        #[cfg(feature = "rate-limit-redis")]
+        {
+            if let RateLimitBackend::Redis { redis_url } = &self.rate_limit_backend {
+                if redis_url.is_empty() {
+                    return Err(BulwarkError::Config(
+                        "rate_limit_backend=Redis 时 redis_url 不能为空".to_string(),
+                    ));
+                }
+            }
         }
         Ok(())
     }
@@ -1554,5 +1620,146 @@ jwt_secret = "test-secret""#,
         let config = BulwarkConfig::load(None).expect("load with env");
         assert_eq!(config.max_login_count, 3);
         std::env::remove_var("BULWARK_MAX_LOGIN_COUNT");
+    }
+
+    // ========================================================================
+    // T036: validate() redis_url 非空校验测试（3 个，spec R-redis-ratelimit-004）
+    // ========================================================================
+
+    /// 验证 `rate_limit_backend=Redis` 且 `redis_url` 为空时 `validate()` 返回 Err。
+    #[cfg(feature = "rate-limit-redis")]
+    #[test]
+    fn validate_rejects_empty_redis_url() {
+        let mut config = BulwarkConfig::default_config();
+        config.rate_limit_backend = RateLimitBackend::Redis {
+            redis_url: String::new(),
+        };
+        let err = config.validate().unwrap_err();
+        assert!(
+            matches!(err, BulwarkError::Config(ref m) if m.contains("redis_url")),
+            "空 redis_url 应被 validate 拒绝，实际错误: {:?}",
+            err
+        );
+    }
+
+    /// 验证 `rate_limit_backend=Redis` 且 `redis_url` 非空时 `validate()` 通过。
+    #[cfg(feature = "rate-limit-redis")]
+    #[test]
+    fn validate_accepts_non_empty_redis_url() {
+        let mut config = BulwarkConfig::default_config();
+        config.rate_limit_backend = RateLimitBackend::Redis {
+            redis_url: "redis://127.0.0.1:6379/0".to_string(),
+        };
+        assert!(config.validate().is_ok(), "非空 redis_url 应通过 validate");
+    }
+
+    /// 验证 `rate_limit_backend=Memory` 时 `validate()` 不检查 redis_url。
+    #[cfg(feature = "rate-limit-redis")]
+    #[test]
+    fn validate_memory_backend_skips_redis_url_check() {
+        let config = BulwarkConfig::default_config();
+        assert_eq!(config.rate_limit_backend, RateLimitBackend::Memory);
+        assert!(config.validate().is_ok(), "Memory 后端应通过 validate");
+    }
+
+    // ========================================================================
+    // T039: 环境变量覆盖测试（6 个 serial，spec R-cors-001 / R-csrf-003 / R-redis-ratelimit-004）
+    // ========================================================================
+
+    /// R-cors-001: `BULWARK_CORS_ALLOWED_ORIGINS` 覆盖 CORS 允许的源列表。
+    #[cfg(feature = "web-cors")]
+    #[test]
+    #[serial]
+    fn env_overrides_cors_allowed_origins() {
+        std::env::set_var(
+            "BULWARK_CORS_ALLOWED_ORIGINS",
+            "https://a.com,https://b.com",
+        );
+        let config = BulwarkConfig::load(None).expect("load with env");
+        assert_eq!(
+            config.cors_config.allowed_origins,
+            vec!["https://a.com", "https://b.com"]
+        );
+        std::env::remove_var("BULWARK_CORS_ALLOWED_ORIGINS");
+    }
+
+    /// R-cors-001: `BULWARK_CORS_ALLOWED_ORIGINS` 过滤空值（连续逗号）。
+    #[cfg(feature = "web-cors")]
+    #[test]
+    #[serial]
+    fn env_cors_origins_filters_empty_values() {
+        std::env::set_var(
+            "BULWARK_CORS_ALLOWED_ORIGINS",
+            "https://a.com,,https://b.com,",
+        );
+        let config = BulwarkConfig::load(None).expect("load with env");
+        assert_eq!(
+            config.cors_config.allowed_origins,
+            vec!["https://a.com", "https://b.com"],
+            "空值应被过滤"
+        );
+        std::env::remove_var("BULWARK_CORS_ALLOWED_ORIGINS");
+    }
+
+    /// R-csrf-003: `BULWARK_CSRF_ENABLED=true` 覆盖 CSRF 启用状态。
+    #[cfg(feature = "web-csrf")]
+    #[test]
+    #[serial]
+    fn env_overrides_csrf_enabled() {
+        std::env::set_var("BULWARK_CSRF_ENABLED", "true");
+        let config = BulwarkConfig::load(None).expect("load with env");
+        assert!(
+            config.csrf_config.enabled,
+            "BULWARK_CSRF_ENABLED=true 应启用 CSRF"
+        );
+        std::env::remove_var("BULWARK_CSRF_ENABLED");
+    }
+
+    /// R-redis-ratelimit-004: `BULWARK_RATE_LIMIT_BACKEND=redis` 覆盖限流后端为 Redis。
+    #[cfg(feature = "rate-limit-redis")]
+    #[test]
+    #[serial]
+    fn env_overrides_rate_limit_backend_to_redis() {
+        std::env::set_var("BULWARK_RATE_LIMIT_BACKEND", "redis");
+        std::env::set_var("BULWARK_REDIS_URL", "redis://localhost:6379/0");
+        let config = BulwarkConfig::load(None).expect("load with env");
+        match config.rate_limit_backend {
+            RateLimitBackend::Redis { redis_url } => {
+                assert_eq!(redis_url, "redis://localhost:6379/0");
+            },
+            _ => panic!("应为 Redis 后端"),
+        }
+        std::env::remove_var("BULWARK_RATE_LIMIT_BACKEND");
+        std::env::remove_var("BULWARK_REDIS_URL");
+    }
+
+    /// R-redis-ratelimit-004: `BULWARK_RATE_LIMIT_BACKEND=memory` 覆盖限流后端为 Memory。
+    #[cfg(feature = "rate-limit-redis")]
+    #[test]
+    #[serial]
+    fn env_overrides_rate_limit_backend_to_memory() {
+        std::env::set_var("BULWARK_RATE_LIMIT_BACKEND", "memory");
+        let config = BulwarkConfig::load(None).expect("load with env");
+        assert_eq!(
+            config.rate_limit_backend,
+            RateLimitBackend::Memory,
+            "应为 Memory 后端"
+        );
+        std::env::remove_var("BULWARK_RATE_LIMIT_BACKEND");
+    }
+
+    /// R-redis-ratelimit-004: 仅设置 `BULWARK_REDIS_URL`（不设 backend）不改变 Memory 后端。
+    #[cfg(feature = "rate-limit-redis")]
+    #[test]
+    #[serial]
+    fn env_redis_url_alone_does_not_change_memory_backend() {
+        std::env::set_var("BULWARK_REDIS_URL", "redis://localhost:6379/0");
+        let config = BulwarkConfig::load(None).expect("load with env");
+        assert_eq!(
+            config.rate_limit_backend,
+            RateLimitBackend::Memory,
+            "仅设 REDIS_URL 不应改变 Memory 后端"
+        );
+        std::env::remove_var("BULWARK_REDIS_URL");
     }
 }

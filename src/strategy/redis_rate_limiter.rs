@@ -50,6 +50,7 @@ if refilled >= tonumber(ARGV[4]) then
     return 1
 else
     redis.call('HMSET', KEYS[1], 'tokens', refilled, 'last_refill', tonumber(ARGV[3]))
+    redis.call('EXPIRE', KEYS[1], 3600)
     return 0
 end
 "#;
@@ -118,6 +119,14 @@ fn convert_lua_result(value: i64) -> BulwarkResult<bool> {
     }
 }
 
+/// 将 Redis 连接/执行错误映射为 `BulwarkError::Dao`（spec R-redis-ratelimit-003）。
+///
+/// Redis 连接失败属于 DAO 层错误，不应使用 `Internal`。
+/// 此函数从 `try_acquire_n` 中抽出，便于单元测试错误映射逻辑。
+fn map_redis_error(e: redis::RedisError) -> BulwarkError {
+    BulwarkError::Dao(format!("Redis 限流器错误: {}", e))
+}
+
 // ============================================================================
 // RateLimiterBackend trait 实现
 // ============================================================================
@@ -149,7 +158,7 @@ impl RateLimiterBackend for RedisRateLimiter {
             .arg(n)
             .invoke_async(&mut conn)
             .await
-            .map_err(|e| BulwarkError::Internal(format!("Redis 限流器错误: {}", e)))?;
+            .map_err(map_redis_error)?;
         convert_lua_result(result)
     }
 }
@@ -266,5 +275,50 @@ mod tests {
     #[test]
     fn convert_result_zero_to_false() {
         assert!(!convert_lua_result(0).unwrap(), "Lua 返回 0 应转换为 false");
+    }
+
+    // ------------------------------------------------------------------------
+    // T037: map_redis_error 错误类型测试（2 个）
+    // ------------------------------------------------------------------------
+
+    /// 验证 `map_redis_error` 返回 `BulwarkError::Dao` 变体（spec R-redis-ratelimit-003）。
+    #[test]
+    fn map_redis_error_returns_dao_variant() {
+        use std::io;
+        let io_err = io::Error::new(io::ErrorKind::ConnectionRefused, "connection refused");
+        let redis_err: redis::RedisError = io_err.into();
+        let bulwark_err = map_redis_error(redis_err);
+        assert!(
+            matches!(bulwark_err, BulwarkError::Dao(_)),
+            "Redis 连接错误应映射为 BulwarkError::Dao，而非 Internal"
+        );
+    }
+
+    /// 验证 `map_redis_error` 的错误消息包含前缀和原始错误信息。
+    #[test]
+    fn map_redis_error_includes_original_message() {
+        use std::io;
+        let io_err = io::Error::new(io::ErrorKind::ConnectionRefused, "connection refused");
+        let redis_err: redis::RedisError = io_err.into();
+        let bulwark_err = map_redis_error(redis_err);
+        let msg = match &bulwark_err {
+            BulwarkError::Dao(m) => m,
+            _ => panic!("应为 Dao 变体"),
+        };
+        assert!(
+            msg.contains("Redis 限流器错误"),
+            "错误消息应包含前缀 'Redis 限流器错误'"
+        );
+    }
+
+    // ------------------------------------------------------------------------
+    // T038: Lua 脚本 EXPIRE 调用测试（1 个）
+    // ------------------------------------------------------------------------
+
+    /// 验证 Lua 脚本含 2 个 EXPIRE 调用（成功 + 失败分支均设置 TTL，spec R-redis-ratelimit-002）。
+    #[test]
+    fn lua_script_has_two_expire_calls() {
+        let count = LUA_SCRIPT.matches("EXPIRE").count();
+        assert_eq!(count, 2, "Lua 脚本应含 2 个 EXPIRE 调用（成功+失败分支）");
     }
 }
