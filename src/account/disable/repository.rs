@@ -1,8 +1,7 @@
-//! 封禁库 trait 与持久化数据模型定义。
-//!
-//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
-//!
+
+//! 封禁库 trait 与持久化数据模型定义。
 //! 本模块定义接口契约（`DisableEntry` struct + `DisableRepository` trait）
 //! 与默认实现 `DefaultDisableRepository`（持有 `Arc<dyn BulwarkDao>` 委托持久化）。
 
@@ -32,7 +31,7 @@ pub struct DisableEntry {
 
 /// 封禁库 trait，提供账号封禁/解封/查询能力。
 ///
-/// 独立于 [`BulwarkDao`](crate::dao::BulwarkDao) trait，通过持有 `Arc<dyn BulwarkDao>` 委托实现。
+/// 独立于 [`BulwarkDao`] trait，通过持有 `Arc<dyn BulwarkDao>` 委托实现。
 /// key 格式：`disable:{service}:{login_id}`，value 为 [`DisableEntry`] 的 JSON 序列化。
 #[async_trait]
 pub trait DisableRepository: Send + Sync {

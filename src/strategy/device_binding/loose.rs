@@ -1,4 +1,4 @@
-//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
 //! 宽松设备绑定策略实现。
@@ -7,8 +7,8 @@
 //! - `is_new_device`：同 [`StrictBinding`] 逻辑，遍历 `TokenSession.device` 字段
 //! - `require_secondary_auth`：总是返回 `Ok(false)`（仅告警不阻断）
 //!
-//! 新设备时通过 [`AlertListenerManager::broadcast_alert`] 广播
-//! [`SecurityAlertEvent::NewDeviceLogin`] 事件，业务方监听器可记录审计日志或
+//! 新设备时通过 [`AlertListenerManager::broadcast_alert`](crate::strategy::alert::AlertListenerManager::broadcast_alert) 广播
+//! [`SecurityAlertEvent::NewDeviceLogin`](crate::strategy::alert::SecurityAlertEvent::NewDeviceLogin) 事件，业务方监听器可记录审计日志或
 //! 触发风控流程，但登录主流程不被阻断。
 //!
 //! `AlertListenerManager` 为 `Option`，`None` 时跳过广播（向后兼容无告警系统场景）。

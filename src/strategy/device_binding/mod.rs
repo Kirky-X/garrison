@@ -1,16 +1,16 @@
-//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
 //! 设备绑定策略模块，定义新设备检测与二级认证要求的可插拔契约。
 //!
-//! [`DeviceBindingPolicy`] trait 抽象了登录场景下的设备绑定决策：
-//! - [`is_new_device`](DeviceBindingPolicy::is_new_device)：检测设备是否为该登录主体的新设备
-//! - [`require_secondary_auth`](DeviceBindingPolicy::require_secondary_auth)：判断新设备是否需要二级认证
+//! [`DeviceBindingPolicy`](crate::strategy::device_binding::DeviceBindingPolicy) trait 抽象了登录场景下的设备绑定决策：
+//! - [`is_new_device`](crate::strategy::device_binding::DeviceBindingPolicy::is_new_device)：检测设备是否为该登录主体的新设备
+//! - [`require_secondary_auth`](crate::strategy::device_binding::DeviceBindingPolicy::require_secondary_auth)：判断新设备是否需要二级认证
 //!
 //! 三种内置实现：
-//! - [`StrictBinding`]：新设备强制二级认证（T010）
-//! - [`LooseBinding`]：新设备仅告警不阻断（T011）
-//! - [`Disabled`]：完全禁用设备绑定（T012）
+//! - [`StrictBinding`](crate::strategy::device_binding::StrictBinding)：新设备强制二级认证（T010）
+//! - [`LooseBinding`](crate::strategy::device_binding::LooseBinding)：新设备仅告警不阻断（T011）
+//! - [`Disabled`](crate::strategy::device_binding::Disabled)：完全禁用设备绑定（T012）
 //!
 //! 此模块仅在启用 `device-binding` 特性时编译（依赖 `security-alert`）。
 
