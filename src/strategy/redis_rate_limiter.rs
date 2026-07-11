@@ -94,6 +94,7 @@ impl RedisRateLimiter {
 ///
 /// 返回 `(redis_key, args)`，其中 `args = [capacity, refill_rate, now_millis, n]`。
 /// 此函数从 `try_acquire_n` 中抽出，便于单元测试参数组装逻辑。
+#[cfg(test)]
 fn prepare_script_args(key: &str, n: u32, capacity: u32, refill_rate: u32) -> (String, Vec<i64>) {
     let redis_key = RedisRateLimiter::key_format(key);
     let now = chrono::Utc::now().timestamp_millis();
@@ -135,7 +136,8 @@ impl RateLimiterBackend for RedisRateLimiter {
         capacity: u32,
         refill_rate: u32,
     ) -> BulwarkResult<bool> {
-        let (redis_key, _args) = prepare_script_args(key, n, capacity, refill_rate);
+        let redis_key = RedisRateLimiter::key_format(key);
+        let now = chrono::Utc::now().timestamp_millis();
         // ConnectionManager 基于 Arc，clone 开销低，invoke_async 需要 &mut
         let mut conn = self.conn.clone();
         let result: i64 = self
@@ -143,7 +145,7 @@ impl RateLimiterBackend for RedisRateLimiter {
             .key(redis_key)
             .arg(capacity)
             .arg(refill_rate)
-            .arg(chrono::Utc::now().timestamp_millis())
+            .arg(now)
             .arg(n)
             .invoke_async(&mut conn)
             .await

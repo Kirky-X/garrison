@@ -382,9 +382,10 @@ mod web_axum {
                     }
                 }
                 if config.is_write_cookie {
+                    let secure_flag = if config.cookie_secure { "; Secure" } else { "" };
                     let cookie = format!(
-                        "{}={}; HttpOnly; Path=/; SameSite=Lax",
-                        config.token_name, renewed_token
+                        "{}={}; HttpOnly; Path=/; SameSite={}{}",
+                        config.token_name, renewed_token, config.cookie_same_site, secure_flag
                     );
                     if let Ok(value) = HeaderValue::from_str(&cookie) {
                         resp.headers_mut().append(SET_COOKIE, value);

@@ -61,6 +61,8 @@ pub struct CsrfConfig {
     pub excluded_paths: Vec<String>,
     /// 受保护方法列表（大小写不敏感）。
     pub protected_methods: Vec<String>,
+    /// 是否在 Cookie 中设置 Secure 标志（默认 `true`，与 BulwarkConfig 一致）。
+    pub cookie_secure: bool,
 }
 
 impl Default for CsrfConfig {
@@ -76,6 +78,7 @@ impl Default for CsrfConfig {
                 "PATCH".to_string(),
                 "DELETE".to_string(),
             ],
+            cookie_secure: true,
         }
     }
 }
@@ -147,8 +150,14 @@ fn extract_cookie_value(headers: &HeaderMap, cookie_name: &str) -> Option<String
 }
 
 /// 构建 Set-Cookie 值字符串。
-fn build_set_cookie(cookie_name: &str, token: &str) -> String {
-    format!("{}={}; HttpOnly; SameSite=Lax; Path=/", cookie_name, token)
+///
+/// 当 `cookie_secure` 为 `true` 时追加 `; Secure` 标志。
+fn build_set_cookie(cookie_name: &str, token: &str, cookie_secure: bool) -> String {
+    let secure_flag = if cookie_secure { "; Secure" } else { "" };
+    format!(
+        "{}={}; HttpOnly; SameSite=Lax; Path=/{}",
+        cookie_name, token, secure_flag
+    )
 }
 
 /// CSRF 防护中间件。
@@ -215,7 +224,8 @@ pub async fn bulwark_csrf_middleware(
         let mut resp = next.run(req).await;
         if !has_cookie {
             if let Ok(token) = generate_csrf_token() {
-                let set_cookie = build_set_cookie(&config.cookie_name, &token);
+                let set_cookie =
+                    build_set_cookie(&config.cookie_name, &token, config.cookie_secure);
                 if let Ok(value) = HeaderValue::from_str(&set_cookie) {
                     resp.headers_mut()
                         .append(axum::http::header::SET_COOKIE, value);
@@ -373,6 +383,7 @@ mod tests {
             config.protected_methods,
             vec!["POST", "PUT", "PATCH", "DELETE"]
         );
+        assert!(config.cookie_secure, "cookie_secure 默认应为 true");
     }
 
     #[test]
@@ -383,12 +394,14 @@ mod tests {
             header_name: "X-MY-CSRF".to_string(),
             excluded_paths: vec!["/webhook".to_string()],
             protected_methods: vec!["POST".to_string()],
+            cookie_secure: false,
         };
         assert!(config.enabled);
         assert_eq!(config.cookie_name, "my_csrf");
         assert_eq!(config.header_name, "X-MY-CSRF");
         assert_eq!(config.excluded_paths, vec!["/webhook"]);
         assert_eq!(config.protected_methods, vec!["POST"]);
+        assert!(!config.cookie_secure);
     }
 
     #[test]
@@ -439,6 +452,10 @@ mod tests {
         assert!(cookie_str.contains("HttpOnly"));
         assert!(cookie_str.contains("SameSite=Lax"));
         assert!(cookie_str.contains("Path=/"));
+        assert!(
+            cookie_str.contains("Secure"),
+            "默认 cookie_secure=true 应包含 Secure 标志"
+        );
     }
 
     #[tokio::test]
