@@ -79,6 +79,11 @@ pub const DEFAULT_FRONTEND_SEPARATION: bool = false;
 /// 默认自动续签阈值（-1 = 不启用，0-100 = 剩余 TTL 百分比低于此值时触发续签）。
 pub const DEFAULT_AUTO_RENEWAL_THRESHOLD: i64 = -1;
 
+/// 默认 token map 清理间隔秒数（5 分钟）。
+///
+/// `<= 0` 表示禁用后台清理 task（与 T028 `spawn_cleanup_task` 的 `interval_secs <= 0` 行为一致）。
+pub const DEFAULT_TOKEN_MAP_CLEANUP_INTERVAL: i64 = 300;
+
 /// 默认是否允许并发登录（true = 同一账号可同时在多设备登录）。
 pub const DEFAULT_IS_CONCURRENT: bool = true;
 
@@ -260,6 +265,12 @@ pub struct BulwarkConfig {
     /// 若 `remaining_pct < auto_renewal_threshold` 则自动续签。
     pub auto_renewal_threshold: i64,
 
+    /// token map 清理间隔秒数（默认 300 = 5 分钟）。
+    ///
+    /// `<= 0` 表示禁用后台清理 task（与 T028 `spawn_cleanup_task` 的 `interval_secs <= 0` 行为一致）。
+    /// 由 `BulwarkManager::init` 读取后传给 `spawn_cleanup_task`。
+    pub token_map_cleanup_interval_secs: i64,
+
     /// 是否允许并发登录（true = 同一账号可同时在多设备登录）。
     ///
     /// [借鉴 Sa-Token] 对应 `isConcurrent` 配置。默认 true。
@@ -356,6 +367,7 @@ impl BulwarkConfig {
             session_hover_timeout: DEFAULT_SESSION_HOVER_TIMEOUT,
             frontend_separation: DEFAULT_FRONTEND_SEPARATION,
             auto_renewal_threshold: DEFAULT_AUTO_RENEWAL_THRESHOLD,
+            token_map_cleanup_interval_secs: DEFAULT_TOKEN_MAP_CLEANUP_INTERVAL,
             is_concurrent: DEFAULT_IS_CONCURRENT,
             is_share: DEFAULT_IS_SHARE,
             max_login_count: DEFAULT_MAX_LOGIN_COUNT,
@@ -440,6 +452,10 @@ impl BulwarkConfig {
             .default(
                 "auto_renewal_threshold",
                 ConfigValue::integer(DEFAULT_AUTO_RENEWAL_THRESHOLD),
+            )
+            .default(
+                "token_map_cleanup_interval_secs",
+                ConfigValue::integer(DEFAULT_TOKEN_MAP_CLEANUP_INTERVAL),
             )
             .default("is_concurrent", ConfigValue::bool(DEFAULT_IS_CONCURRENT))
             .default("is_share", ConfigValue::bool(DEFAULT_IS_SHARE))
@@ -1241,6 +1257,7 @@ jwt_secret = "test-secret""#,
             session_hover_timeout: DEFAULT_SESSION_HOVER_TIMEOUT,
             frontend_separation: DEFAULT_FRONTEND_SEPARATION,
             auto_renewal_threshold: DEFAULT_AUTO_RENEWAL_THRESHOLD,
+            token_map_cleanup_interval_secs: DEFAULT_TOKEN_MAP_CLEANUP_INTERVAL,
             is_concurrent: DEFAULT_IS_CONCURRENT,
             is_share: DEFAULT_IS_SHARE,
             max_login_count: DEFAULT_MAX_LOGIN_COUNT,
@@ -1578,6 +1595,71 @@ jwt_secret = "test-secret""#,
         let config = BulwarkConfig::load(None).expect("load with env");
         assert_eq!(config.auto_renewal_threshold, 20);
         std::env::remove_var("BULWARK_AUTO_RENEWAL_THRESHOLD");
+    }
+
+    // ========================================================================
+    // T029: token_map_cleanup_interval_secs 配置测试（4 个）
+    // ========================================================================
+
+    /// T029: `default_config()` 的 `token_map_cleanup_interval_secs` 为 300（5 分钟）。
+    #[test]
+    fn token_map_cleanup_interval_default_is_300() {
+        let config = BulwarkConfig::default_config();
+        assert_eq!(
+            config.token_map_cleanup_interval_secs, 300,
+            "默认 token_map_cleanup_interval_secs 应为 300（5 分钟）"
+        );
+        assert_eq!(
+            config.token_map_cleanup_interval_secs, DEFAULT_TOKEN_MAP_CLEANUP_INTERVAL,
+            "应等于 DEFAULT_TOKEN_MAP_CLEANUP_INTERVAL 常量"
+        );
+    }
+
+    /// T029: 手动设置自定义值（如 600）后字段值生效且通过 `validate()` 校验。
+    #[test]
+    fn token_map_cleanup_interval_custom_value() {
+        let mut config = BulwarkConfig::default_config();
+        config.token_map_cleanup_interval_secs = 600;
+        assert_eq!(config.token_map_cleanup_interval_secs, 600);
+        assert!(
+            config.validate().is_ok(),
+            "token_map_cleanup_interval_secs=600 应通过校验"
+        );
+    }
+
+    /// T029: 设置 -1 表示禁用后台清理 task（与 T028 `interval_secs <= 0` 行为一致）。
+    #[test]
+    fn token_map_cleanup_interval_negative_disables() {
+        let mut config = BulwarkConfig::default_config();
+        config.token_map_cleanup_interval_secs = -1;
+        assert_eq!(config.token_map_cleanup_interval_secs, -1);
+        assert!(
+            config.validate().is_ok(),
+            "token_map_cleanup_interval_secs=-1（禁用）应通过校验"
+        );
+        // 边界：0 也表示禁用
+        config.token_map_cleanup_interval_secs = 0;
+        assert_eq!(config.token_map_cleanup_interval_secs, 0);
+        assert!(
+            config.validate().is_ok(),
+            "token_map_cleanup_interval_secs=0（禁用）应通过校验"
+        );
+    }
+
+    /// T029: 环境变量 `BULWARK_TOKEN_MAP_CLEANUP_INTERVAL_SECS` 覆盖默认值。
+    ///
+    /// 注：env var 名按代码库惯例与字段名严格对应（如 `sign_window_seconds` ↔ `BULWARK_SIGN_WINDOW_SECONDS`），
+    /// 故 `token_map_cleanup_interval_secs` ↔ `BULWARK_TOKEN_MAP_CLEANUP_INTERVAL_SECS`。
+    #[test]
+    #[serial]
+    fn token_map_cleanup_interval_env_var_overrides() {
+        std::env::set_var("BULWARK_TOKEN_MAP_CLEANUP_INTERVAL_SECS", "600");
+        let config = BulwarkConfig::load(None).expect("load with env");
+        assert_eq!(
+            config.token_map_cleanup_interval_secs, 600,
+            "BULWARK_TOKEN_MAP_CLEANUP_INTERVAL_SECS=600 应覆盖默认值"
+        );
+        std::env::remove_var("BULWARK_TOKEN_MAP_CLEANUP_INTERVAL_SECS");
     }
 
     // ========================================================================
