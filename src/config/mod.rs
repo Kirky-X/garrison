@@ -485,7 +485,12 @@ impl BulwarkConfig {
                         let redis_url = std::env::var("BULWARK_REDIS_URL").unwrap_or_default();
                         config.rate_limit_backend = RateLimitBackend::Redis { redis_url };
                     },
-                    _ => {},
+                    _ => {
+                        return Err(BulwarkError::Config(format!(
+                            "BULWARK_RATE_LIMIT_BACKEND 不支持的值 '{}'，仅支持 'memory' 或 'redis'",
+                            val
+                        )));
+                    },
                 }
             }
             if let Ok(val) = std::env::var("BULWARK_REDIS_URL") {
@@ -1761,5 +1766,27 @@ jwt_secret = "test-secret""#,
             "仅设 REDIS_URL 不应改变 Memory 后端"
         );
         std::env::remove_var("BULWARK_REDIS_URL");
+    }
+
+    /// R-redis-ratelimit-004: `BULWARK_RATE_LIMIT_BACKEND` 无效值返回 Config 错误（规则12：失败必须显性化）。
+    #[cfg(feature = "rate-limit-redis")]
+    #[test]
+    #[serial]
+    fn env_rate_limit_backend_invalid_value_returns_error() {
+        std::env::set_var("BULWARK_RATE_LIMIT_BACKEND", "mysql");
+        let result = BulwarkConfig::load(None);
+        assert!(result.is_err(), "无效 backend 值应返回错误");
+        let err = result.unwrap_err();
+        match err {
+            BulwarkError::Config(msg) => {
+                assert!(
+                    msg.contains("BULWARK_RATE_LIMIT_BACKEND"),
+                    "错误消息应包含变量名"
+                );
+                assert!(msg.contains("mysql"), "错误消息应包含无效值");
+            },
+            _ => panic!("应为 BulwarkError::Config，实际: {:?}", err),
+        }
+        std::env::remove_var("BULWARK_RATE_LIMIT_BACKEND");
     }
 }
