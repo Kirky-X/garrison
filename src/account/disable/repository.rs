@@ -358,4 +358,149 @@ mod tests {
             result
         );
     }
+
+    // ========================================================================
+    // T017: 查询方法 is_disable / get_disable_time / get_disable_level 测试
+    // ========================================================================
+
+    /// 未封禁 is_disable=false（service 隔离）：同一 login_id 在 "default" service 被封禁，
+    /// 但在 "payment" service 上 is_disable 应返回 false（多 service 独立封禁）。
+    #[tokio::test]
+    async fn t017_is_disable_returns_false_for_unbanned_service() {
+        let dao = Arc::new(MockDao::new());
+        let repo = DefaultDisableRepository::new(dao.clone());
+        // 在 "default" service 上封禁
+        repo.disable("user:2001", "default", None, 0, 0)
+            .await
+            .unwrap();
+        // 同一 login_id 在 "payment" service 上应未封禁
+        assert_eq!(
+            repo.is_disable("user:2001", "payment").await.unwrap(),
+            false,
+            "同一 login_id 在未封禁的 service 上 is_disable 应返回 false"
+        );
+    }
+
+    /// 已封禁 is_disable=true（定时封禁）：disable 传入 until=Some(future) 后
+    /// is_disable 返回 Ok(true)。
+    #[tokio::test]
+    async fn t017_is_disable_returns_true_for_timed_ban() {
+        let dao = Arc::new(MockDao::new());
+        let repo = DefaultDisableRepository::new(dao.clone());
+        let until = Utc::now() + chrono::Duration::seconds(3600);
+        repo.disable("user:2002", "default", Some(until), 0, 3600)
+            .await
+            .unwrap();
+        assert_eq!(
+            repo.is_disable("user:2002", "default").await.unwrap(),
+            true,
+            "定时封禁后 is_disable 应返回 true"
+        );
+    }
+
+    /// get_disable_time 永久封禁返回 None：disable(until=None) 后
+    /// get_disable_time 返回 Ok(None)（永久封禁无到期时间）。
+    #[tokio::test]
+    async fn t017_get_disable_time_returns_none_for_permanent_ban() {
+        let dao = Arc::new(MockDao::new());
+        let repo = DefaultDisableRepository::new(dao.clone());
+        repo.disable("user:2003", "default", None, 0, 0)
+            .await
+            .unwrap();
+        assert_eq!(
+            repo.get_disable_time("user:2003", "default").await.unwrap(),
+            None,
+            "永久封禁 get_disable_time 应返回 Ok(None)"
+        );
+    }
+
+    /// get_disable_time 定时封禁返回 Some：disable(until=Some(time)) 后
+    /// get_disable_time 返回 Ok(Some(time))，且时间值精确匹配。
+    #[tokio::test]
+    async fn t017_get_disable_time_returns_some_for_timed_ban() {
+        let dao = Arc::new(MockDao::new());
+        let repo = DefaultDisableRepository::new(dao.clone());
+        let until = Utc::now() + chrono::Duration::seconds(7200);
+        repo.disable("user:2004", "default", Some(until), 0, 7200)
+            .await
+            .unwrap();
+        let result = repo.get_disable_time("user:2004", "default").await.unwrap();
+        assert_eq!(
+            result,
+            Some(until),
+            "定时封禁 get_disable_time 应返回 Ok(Some(until))，时间值精确匹配"
+        );
+    }
+
+    /// get_disable_level 正确值：disable(level=2) 后 get_disable_level 返回 Ok(2)。
+    #[tokio::test]
+    async fn t017_get_disable_level_returns_correct_value() {
+        let dao = Arc::new(MockDao::new());
+        let repo = DefaultDisableRepository::new(dao.clone());
+        repo.disable("user:2005", "default", None, 2, 0)
+            .await
+            .unwrap();
+        assert_eq!(
+            repo.get_disable_level("user:2005", "default")
+                .await
+                .unwrap(),
+            2,
+            "disable(level=2) 后 get_disable_level 应返回 Ok(2)"
+        );
+    }
+
+    /// 反序列化失败返回 Err：手动向 DAO 写入损坏 JSON，get_disable_time 返回 Err(Internal)。
+    ///
+    /// 覆盖 `serde_json::from_str` 失败路径，验证错误被包装为 `BulwarkError::Internal`。
+    #[tokio::test]
+    async fn t017_get_disable_time_returns_err_on_deserialize_failure() {
+        let dao = Arc::new(MockDao::new());
+        let repo = DefaultDisableRepository::new(dao.clone());
+        // 手动写入损坏 JSON 到 disable key
+        let key = "disable:default:user:2006";
+        dao.set(key, "{invalid json}", 0).await.unwrap();
+        let result = repo.get_disable_time("user:2006", "default").await;
+        assert!(
+            matches!(result, Err(BulwarkError::Internal(ref msg)) if msg.contains("反序列化 DisableEntry 失败")),
+            "损坏 JSON 应返回 Err(BulwarkError::Internal) 含 '反序列化 DisableEntry 失败'，实际: {:?}",
+            result
+        );
+    }
+
+    /// untie_disable 后 is_disable=false：disable 后 untie_disable，is_disable 返回 Ok(false)。
+    #[tokio::test]
+    async fn t017_is_disable_returns_false_after_untie_disable() {
+        let dao = Arc::new(MockDao::new());
+        let repo = DefaultDisableRepository::new(dao.clone());
+        repo.disable("user:2007", "default", None, 0, 0)
+            .await
+            .unwrap();
+        // 封禁后 is_disable 应为 true
+        assert_eq!(
+            repo.is_disable("user:2007", "default").await.unwrap(),
+            true,
+            "disable 后 is_disable 应为 true"
+        );
+        // untie_disable 后 is_disable 应为 false
+        repo.untie_disable("user:2007", "default").await.unwrap();
+        assert_eq!(
+            repo.is_disable("user:2007", "default").await.unwrap(),
+            false,
+            "untie_disable 后 is_disable 应返回 false"
+        );
+    }
+
+    /// get_disable_time 未封禁返回 None：未 disable 时 get_disable_time 返回 Ok(None)。
+    #[tokio::test]
+    async fn t017_get_disable_time_returns_none_when_not_banned() {
+        let dao = Arc::new(MockDao::new());
+        let repo = DefaultDisableRepository::new(dao.clone());
+        assert_eq!(
+            repo.get_disable_time("never_banned", "default")
+                .await
+                .unwrap(),
+            None,
+            "未封禁时 get_disable_time 应返回 Ok(None)"
+        );
+    }
 }
