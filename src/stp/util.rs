@@ -1,10 +1,10 @@
-//! BulwarkUtil 静态方法入口 + JwtMode 校验模式枚举。
-//!
-//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
+//! BulwarkUtil 静态方法入口 + JwtMode 校验模式枚举。
 use crate::config::BulwarkConfig;
 use crate::error::BulwarkResult;
+use crate::session::BulwarkSession;
 use crate::stp::core::BulwarkCore;
 use crate::stp::mfa::MfaLogic;
 use crate::stp::permission::PermissionLogic;
@@ -12,8 +12,10 @@ use crate::stp::session::SessionLogic;
 use crate::stp::token::TokenLogic;
 use crate::stp::LoginParams;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::runtime::Handle;
 use tokio::task;
+use tokio::task::JoinHandle;
 
 // ============================================================================
 // JwtMode：JWT 校验模式
@@ -651,5 +653,212 @@ impl BulwarkUtil {
     /// - `BulwarkManager` 未初始化：`BulwarkError::Session`。
     pub fn config() -> BulwarkResult<Arc<BulwarkConfig>> {
         Ok(crate::manager::BulwarkManager::logic()?.config())
+    }
+}
+
+// ============================================================================
+// spawn_cleanup_task：后台定期清理过期 token
+// ============================================================================
+
+/// 启动后台 task 定期清理 `login_token_map` 中的过期/已注销 token。
+///
+/// 每 `interval_secs` 秒调用一次 [`BulwarkSession::cleanup_expired_tokens`]。
+/// 清理失败时仅记录 `tracing::warn!`，不中断 task（规则12：错误显性化但不阻断后台清理）。
+///
+/// # 参数
+/// - `session`: `BulwarkSession` 的 `Arc` 引用。
+/// - `interval_secs`: 清理间隔秒数。`<= 0` 时返回 `None`（不启动 task）。
+///
+/// # 返回
+/// - `Some(JoinHandle)`: task 已启动，调用方可通过 `abort()` 取消或 `await` 等待结束。
+/// - `None`: `interval_secs <= 0`，未启动 task。
+pub fn spawn_cleanup_task(
+    session: Arc<BulwarkSession>,
+    interval_secs: i64,
+) -> Option<JoinHandle<()>> {
+    if interval_secs <= 0 {
+        return None;
+    }
+    let interval_duration = Duration::from_secs(interval_secs as u64);
+    let handle = tokio::spawn(async move {
+        let mut interval = tokio::time::interval(interval_duration);
+        loop {
+            interval.tick().await;
+            if let Err(e) = session.cleanup_expired_tokens().await {
+                tracing::warn!("cleanup_expired_tokens 失败: {}", e);
+            }
+        }
+    });
+    Some(handle)
+}
+
+// ============================================================================
+// 测试
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dao::tests::MockDao;
+    use crate::dao::BulwarkDao;
+    use crate::error::{BulwarkError, BulwarkResult};
+    use async_trait::async_trait;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// 辅助函数：创建带 MockDao 的 Arc<BulwarkSession>。
+    fn make_session(timeout: u64, active_timeout: u64) -> (Arc<MockDao>, Arc<BulwarkSession>) {
+        let dao = Arc::new(MockDao::new());
+        let session = Arc::new(BulwarkSession::new(dao.clone(), timeout, active_timeout));
+        (dao, session)
+    }
+
+    // ----------------------------------------------------------------
+    // 测试 1：interval <= 0 返回 None 不启动 task
+    // ----------------------------------------------------------------
+
+    /// 验证 interval < 0 时返回 None 不启动 task。
+    /// 同时验证 interval == 0 也返回 None（0 秒间隔无实际意义，与 < 0 一致）。
+    #[tokio::test]
+    async fn spawn_cleanup_task_negative_interval_returns_none() {
+        let (_dao, session) = make_session(3600, 86400);
+        let handle = spawn_cleanup_task(session, -1);
+        assert!(handle.is_none(), "interval=-1 应返回 None");
+
+        let (_dao, session) = make_session(3600, 86400);
+        let handle = spawn_cleanup_task(session, 0);
+        assert!(handle.is_none(), "interval=0 应返回 None");
+    }
+
+    // ----------------------------------------------------------------
+    // 测试 2：interval > 0 启动 task 并执行清理
+    // ----------------------------------------------------------------
+
+    /// 验证 interval > 0 时启动 task，且 task 定期执行 cleanup_expired_tokens。
+    ///
+    /// 策略：创建 TTL=1 秒的 token，启动间隔=1 秒的清理 task，
+    /// 等待 3 秒后验证 token 已从 login_token_map 中清理。
+    #[tokio::test]
+    async fn spawn_cleanup_task_positive_interval_starts_and_cleans() {
+        let (_dao, session) = make_session(1, 86400);
+        // 创建 token（TTL=1 秒，1 秒后 MockDao 自动过期）
+        session.create("1001", "T1").await.unwrap();
+        assert!(
+            session.get_token_by_login_id("1001").is_some(),
+            "清理前 token 应存在于 login_token_map"
+        );
+
+        // 启动清理 task，间隔 1 秒
+        let handle = spawn_cleanup_task(session.clone(), 1);
+        assert!(handle.is_some(), "interval=1 应返回 Some");
+
+        // 等待 token TTL 过期 + 至少 2 次清理周期
+        tokio::time::sleep(Duration::from_secs(3)).await;
+
+        // 验证 token 已被清理（cleanup_expired_tokens 检测到 DAO 返回 None 后移除）
+        assert!(
+            session.get_token_by_login_id("1001").is_none(),
+            "清理后 token 应从 login_token_map 移除"
+        );
+
+        // 清理 task
+        if let Some(h) = handle {
+            h.abort();
+        }
+    }
+
+    // ----------------------------------------------------------------
+    // 测试 3：task 可通过 abort 取消
+    // ----------------------------------------------------------------
+
+    /// 验证 task 可通过 JoinHandle::abort() 取消。
+    ///
+    /// abort 后 await 应返回 Err(JoinError)，且 JoinError::is_cancelled() 为 true。
+    #[tokio::test]
+    async fn spawn_cleanup_task_can_be_cancelled() {
+        let (_dao, session) = make_session(3600, 86400);
+        let handle = spawn_cleanup_task(session, 1).unwrap();
+
+        // 等待一小段时间确保 task 已启动并被 runtime 调度
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // abort 后 await 应返回 Err（JoinError::is_cancelled）
+        handle.abort();
+        let result = handle.await;
+        assert!(
+            result.is_err(),
+            "abort 后 await 应返回 Err，实际: {:?}",
+            result
+        );
+        assert!(
+            result.unwrap_err().is_cancelled(),
+            "JoinError 应为 cancelled"
+        );
+    }
+
+    // ----------------------------------------------------------------
+    // 测试 4：清理失败只 warn 不中断 task
+    // ----------------------------------------------------------------
+
+    /// DAO wrapper：get 始终返回错误，用于测试清理失败不中断 task。
+    ///
+    /// 通过 AtomicUsize 计数 get 调用次数，验证 task 在首次清理失败后仍继续运行。
+    struct FailingGetDao {
+        get_call_count: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl BulwarkDao for FailingGetDao {
+        async fn get(&self, _key: &str) -> BulwarkResult<Option<String>> {
+            self.get_call_count.fetch_add(1, Ordering::SeqCst);
+            Err(BulwarkError::Dao("模拟清理失败".to_string()))
+        }
+        async fn set(&self, _key: &str, _value: &str, _ttl_seconds: u64) -> BulwarkResult<()> {
+            Ok(())
+        }
+        async fn update(&self, _key: &str, _value: &str) -> BulwarkResult<()> {
+            Ok(())
+        }
+        async fn expire(&self, _key: &str, _seconds: u64) -> BulwarkResult<()> {
+            Ok(())
+        }
+        async fn delete(&self, _key: &str) -> BulwarkResult<()> {
+            Ok(())
+        }
+    }
+
+    /// 验证清理失败时 task 只记录 warn 不中断，继续运行下一个周期。
+    ///
+    /// 策略：使用 get 始终失败的 DAO，启动间隔=1 秒的清理 task。
+    /// 等待 1.5 秒后验证 get 被调用 >= 2 次（首次立即执行 + 1 秒后第二次），
+    /// 且 task 仍存活（is_finished() == false）。
+    #[tokio::test]
+    async fn spawn_cleanup_task_cleanup_failure_does_not_crash() {
+        let get_call_count = Arc::new(AtomicUsize::new(0));
+        let dao: Arc<dyn BulwarkDao> = Arc::new(FailingGetDao {
+            get_call_count: get_call_count.clone(),
+        });
+        let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
+        // 添加 token 到内存索引（不经过 DAO，确保 cleanup 有内容可遍历）
+        session.add_login_token("user1", "token1");
+
+        // 启动清理 task，间隔 1 秒
+        let handle = spawn_cleanup_task(session.clone(), 1).unwrap();
+
+        // 等待 2 个周期（tokio::time::interval 首次 tick 立即返回，第二次在 1 秒后）
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+
+        // 验证 cleanup 被调用多次（task 在首次失败后仍继续运行）
+        let calls = get_call_count.load(Ordering::SeqCst);
+        assert!(
+            calls >= 2,
+            "清理失败后 task 应继续运行，至少调用 2 次 get，实际: {}",
+            calls
+        );
+
+        // 验证 task 仍存活（未因 panic 或错误退出）
+        assert!(!handle.is_finished(), "清理失败不应导致 task 终止");
+
+        // 清理 task
+        handle.abort();
     }
 }
