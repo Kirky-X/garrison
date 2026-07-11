@@ -14,4 +14,4 @@
 
 pub mod repository;
 
-pub use repository::{DisableEntry, DisableRepository};
+pub use repository::{DefaultDisableRepository, DisableEntry, DisableRepository};
