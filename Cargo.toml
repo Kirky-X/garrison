@@ -316,6 +316,7 @@ full = [
     "rate-limit-redis",
     "security-alert",
     "device-binding",
+    "safe-auth",
     "social-wechat", "social-alipay",
 ]
 
