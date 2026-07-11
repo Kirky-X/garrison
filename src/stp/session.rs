@@ -24,6 +24,8 @@ use crate::stp::core::BulwarkCore;
 use crate::stp::token::TokenLogic;
 use crate::strategy::FirewallLoginContext;
 use async_trait::async_trait;
+use std::sync::Arc;
+use tokio::sync::Mutex as TokioMutex;
 
 /// 会话逻辑 trait，定义登录/登出/踢出/校验完整契约。
 ///
@@ -436,9 +438,24 @@ impl BulwarkLogicDefault {
             .await;
         }
         // max_login_count > 0 时，强制最大登录数量（踢出最旧会话）
+        // HIGH-002 修复：enforce 失败时回滚（登出新创建的 token），避免孤儿会话泄漏
         if self.config.max_login_count > 0 {
-            self.enforce_max_login_count(login_id, self.config.max_login_count)
-                .await?;
+            if let Err(e) = self
+                .enforce_max_login_count(login_id, self.config.max_login_count)
+                .await
+            {
+                tracing::error!(
+                    error = %e,
+                    "enforce_max_login_count 失败，回滚新创建的会话"
+                );
+                if let Err(logout_err) = self.session.logout(&token).await {
+                    tracing::error!(
+                        error = %logout_err,
+                        "回滚 logout 失败，可能产生孤儿会话（token 仍在 DAO 但 login 返回 Err）"
+                    );
+                }
+                return Err(e);
+            }
         }
         Ok(token)
     }
@@ -686,11 +703,20 @@ impl BulwarkLogicDefault {
     /// 检查 Token 剩余 TTL 百分比，低于阈值则触发续签。
     /// 续签成功后通过 `CURRENT_RENEWED_TOKEN` task_local 传递新 Token。
     ///
+    /// # HIGH-001 修复：并发续签竞态防护
+    ///
+    /// 两个并发 `check_login` 可能同时通过 TTL 检查并各自触发续签。
+    /// Call A 续签成功（旧 token 删除），Call B 的续签失败（token 已不存在），
+    /// 错误被 `tracing::warn!` 吞掉，Call B 返回 `Ok(true)` 但旧 token 已失效 → "会话假活"。
+    ///
+    /// 修复：在续签前获取 per-login_id 锁，进入锁后**二次检查** TTL。
+    /// 若另一并发调用已完成续签，当前调用的 TTL 已被重置 → 返回 `None`（无需续签）。
+    ///
     /// # 参数
     /// - `token`: 待检查的 Token 字符串。
     ///
     /// # 返回
-    /// - `Ok(None)`: 未启用续签 / TTL 充足 / 永久键。
+    /// - `Ok(None)`: 未启用续签 / TTL 充足 / 永久键 / 已被并发调用续签。
     /// - `Ok(Some(new_token))`: 续签成功，返回新 Token。
     /// - `Err(...)`: 续签失败（如 auth_logic 未配置 / renew 调用失败）。
     pub(crate) async fn check_and_renew(&self, token: &str) -> BulwarkResult<Option<String>> {
@@ -698,6 +724,7 @@ impl BulwarkLogicDefault {
         if threshold <= 0 {
             return Ok(None);
         }
+        // 快速路径：无锁检查 TTL，充足则直接返回
         let remaining = match self.session.get_token_timeout(token).await? {
             Some(d) => d,
             None => return Ok(None),
@@ -711,6 +738,35 @@ impl BulwarkLogicDefault {
         if remaining_pct >= threshold {
             return Ok(None);
         }
+
+        // HIGH-001 修复：获取 login_id 用于 per-login_id 续签锁
+        let login_id = match self.session.get_token_session(token).await? {
+            Some(ts) => ts.login_id,
+            None => return Ok(None),
+        };
+
+        // 持有 per-login_id **续签锁**（独立于 BulwarkSession::login_locks）执行续签。
+        // 不能用 login_locks：renew_to_equivalent 内部调用 logout 会再次获取 login_locks → 死锁。
+        let lock = self
+            .renewal_locks
+            .entry(login_id.clone())
+            .or_insert_with(|| Arc::new(TokioMutex::new(())))
+            .clone();
+        let _guard = lock.lock().await;
+
+        // 二次检查 TTL：可能已被另一并发调用续签
+        let remaining = match self.session.get_token_timeout(token).await? {
+            Some(d) => d,
+            None => return Ok(None),
+        };
+        if remaining.is_zero() {
+            return Ok(None);
+        }
+        let remaining_pct = (remaining.as_millis() as i64 * 100) / (total * 1000);
+        if remaining_pct >= threshold {
+            return Ok(None);
+        }
+
         // 续签：非 JWT 用 renew_to_equivalent，JWT 用 refresh_token
         #[cfg(feature = "protocol-jwt")]
         {

@@ -27,8 +27,10 @@ use crate::listener::BulwarkListenerManager;
 use crate::plugin::BulwarkPluginManager;
 use crate::session::BulwarkSession;
 use crate::strategy::BulwarkPermissionStrategy;
+use dashmap::DashMap;
 use std::future::Future;
 use std::sync::Arc;
+use tokio::sync::Mutex as TokioMutex;
 
 // ParameterQuery 参数化查询模块（feature-gated）
 #[cfg(feature = "parameter-query")]
@@ -244,6 +246,12 @@ pub struct BulwarkLogicDefault {
     /// Refresh Token 轮换器（可选，注入后 refresh_access_token 委托此实现）。
     #[cfg(all(feature = "protocol-jwt", feature = "db-sqlite"))]
     refresh_token_rotation: Option<crate::protocol::jwt::refresh::RefreshTokenRotation>,
+    /// per-login_id 续签锁（HIGH-001 修复）。
+    ///
+    /// 独立于 `BulwarkSession::login_locks`，避免 `check_and_renew` 持有
+    /// `login_locks` 后调用 `renew_to_equivalent`（内部 `logout` 再次获取
+    /// `login_locks`）导致死锁。续签锁仅序列化并发 `check_and_renew` 调用。
+    renewal_locks: DashMap<String, Arc<TokioMutex<()>>>,
 }
 
 impl BulwarkLogicDefault {
@@ -280,6 +288,7 @@ impl BulwarkLogicDefault {
             jwt_mode: JwtMode::default(),
             #[cfg(all(feature = "protocol-jwt", feature = "db-sqlite"))]
             refresh_token_rotation: None,
+            renewal_locks: DashMap::new(),
         }
     }
 

@@ -3726,3 +3726,165 @@ async fn login_auto_generates_device_fingerprint() {
     assert_eq!(ts.ip.as_deref(), Some("192.168.1.100"));
     assert_eq!(ts.user_agent.as_deref(), Some("Mozilla/5.0 Chrome"));
 }
+
+// ============================================================================
+// v0.6.3 审查修复：HIGH-001 + HIGH-002 测试
+// ============================================================================
+
+/// HIGH-001: 续签后对旧 token 再次调用 check_and_renew 应返回 None（非错误）。
+///
+/// 验证 per-login_id 锁 + 二次 TTL 检查的行为：
+/// 1. 首次 check_and_renew 续签成功（旧 token 删除，新 token 创建）
+/// 2. 对旧 token 再次调用 check_and_renew：
+///    - 快速路径 get_token_timeout 返回 None（旧 token 已删除）→ Ok(None)
+///    - 即使进入锁路径，二次检查也会发现 token 不存在 → Ok(None)
+/// 3. 不应返回 Err（避免 "会话假活" 场景下旧 token 被误判为有效）
+#[tokio::test]
+async fn check_and_renew_returns_none_for_old_token_after_renewal() {
+    let (dao, logic) = make_logic_with_auth(10, 86400, "uuid", 90);
+    let token = logic
+        .login("high001-user-001", &LoginParams::default())
+        .await
+        .unwrap();
+
+    // 缩短 TTL 触发续签
+    let key = format!("token:session:{}", token);
+    dao.expire(&key, 1).await.unwrap();
+
+    // 首次续签应成功
+    let result1 = logic.check_and_renew(&token).await.unwrap();
+    assert!(result1.is_some(), "首次续签应返回新 token");
+    let new_token = result1.unwrap();
+    assert_ne!(new_token, token, "新 token 应不同于旧 token");
+
+    // 对旧 token 再次调用 — 应返回 None（不是 Err）
+    let result2 = logic.check_and_renew(&token).await;
+    assert!(
+        result2.is_ok(),
+        "对已续签的旧 token 调用 check_and_renew 不应返回 Err"
+    );
+    assert!(
+        result2.unwrap().is_none(),
+        "旧 token 已被续签删除，应返回 None"
+    );
+
+    // 新 token 应仍然有效
+    assert!(
+        logic.session.is_valid(&new_token).await.unwrap(),
+        "新 token 应有效"
+    );
+}
+
+/// HIGH-002: enforce_max_login_count 失败时，新创建的会话应被回滚（logout）。
+///
+/// 使用 FailInjectionDao 在第 N 次 account:session: 查询时注入失败，
+/// 模拟 enforce_max_login_count 内部 get_account_session 失败的场景。
+///
+/// DAO 调用序列（account:session: get）：
+/// 1. 首次 login → create_inner → get_account_session（#1，返回 None → 创建）
+/// 2. 第二次 login → create_inner → get_account_session（#2，返回 1 token → 添加）
+/// 3. 第二次 login → enforce_max_login_count → get_account_session（#3 → 注入失败！）
+/// 4. 回滚 logout → logout_inner → get_account_session（#4，恢复正常 → 清理）
+///
+/// 验证 login 返回 Err 且新 token 已从 login_token_map 回滚（剩 1 个 token）。
+#[tokio::test]
+async fn login_rolls_back_session_when_enforce_fails() {
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    /// 测试用 DAO 包装器：在第 N 次 account:session: get 调用时注入失败。
+    struct FailInjectionDao {
+        inner: Arc<MockDao>,
+        fail_on_nth: AtomicU32,
+        call_count: AtomicU32,
+    }
+
+    #[async_trait]
+    impl BulwarkDao for FailInjectionDao {
+        async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
+            if key.starts_with("account:session:") {
+                let n = self.call_count.fetch_add(1, Ordering::SeqCst) + 1;
+                if n == self.fail_on_nth.load(Ordering::SeqCst) {
+                    return Err(BulwarkError::Dao(
+                        "injected failure for HIGH-002 test".to_string(),
+                    ));
+                }
+            }
+            self.inner.get(key).await
+        }
+        async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> BulwarkResult<()> {
+            self.inner.set(key, value, ttl_seconds).await
+        }
+        async fn update(&self, key: &str, value: &str) -> BulwarkResult<()> {
+            self.inner.update(key, value).await
+        }
+        async fn expire(&self, key: &str, seconds: u64) -> BulwarkResult<()> {
+            self.inner.expire(key, seconds).await
+        }
+        async fn delete(&self, key: &str) -> BulwarkResult<()> {
+            self.inner.delete(key).await
+        }
+        async fn get_timeout(&self, key: &str) -> BulwarkResult<Option<Duration>> {
+            self.inner.get_timeout(key).await
+        }
+    }
+
+    let mock_dao = Arc::new(MockDao::new());
+    let fail_dao = Arc::new(FailInjectionDao {
+        inner: mock_dao.clone(),
+        fail_on_nth: AtomicU32::new(3), // 第 3 次 account:session: get = enforce 调用
+        call_count: AtomicU32::new(0),
+    });
+    let session = Arc::new(BulwarkSession::new(
+        fail_dao.clone() as Arc<dyn BulwarkDao>,
+        3600,
+        86400,
+    ));
+    let mut config = BulwarkConfig::default_config();
+    config.token_style = "uuid".to_string();
+    config.is_concurrent = true;
+    config.max_login_count = 1; // 限制最多 1 个会话
+    let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
+        has_permission: true,
+        has_role: true,
+    });
+    let logic = BulwarkLogicDefault::new(session, Arc::new(config), firewall);
+
+    // 首次登录 — 成功（count=1 <= max=1，enforce 不触发）
+    let t1 = logic
+        .login("high002-user-001", &LoginParams::default())
+        .await
+        .expect("首次登录应成功");
+    assert!(
+        logic.session.is_valid(&t1).await.unwrap(),
+        "首次登录的 token 应有效"
+    );
+
+    // 第二次登录 — create_inner 成功（#2 get），
+    // enforce_max_login_count 触发（count=2 > max=1），get_account_session 失败（#3 get），
+    // login 应回滚新 token（logout 调用 #4 get 恢复正常）
+    let login_result = logic
+        .login("high002-user-001", &LoginParams::default())
+        .await;
+
+    assert!(
+        login_result.is_err(),
+        "enforce 失败时 login 应返回 Err，实际: {:?}",
+        login_result
+    );
+
+    // 验证回滚：login_token_map 应只剩 1 个 token（首次登录的）
+    let tokens = logic.session.get_tokens_by_login_id("high002-user-001");
+    assert_eq!(
+        tokens.len(),
+        1,
+        "回滚后应只剩 1 个 token（首次登录的），实际: {} 个: {:?}",
+        tokens.len(),
+        tokens
+    );
+
+    // 首次登录的 token 应仍然有效
+    assert!(
+        logic.session.is_valid(&t1).await.unwrap(),
+        "回滚不应影响首次登录的 token"
+    );
+}
