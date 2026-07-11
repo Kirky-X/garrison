@@ -76,6 +76,33 @@ impl BulwarkLogicDefault {
             None => Ok(false),
         }
     }
+
+    /// 关闭指定 service 的二级认证（移除瞬态标记）。
+    ///
+    /// 从当前 TokenSession 的 safe_services 中移除 service 条目。
+    /// 移除后 `is_safe(service)` 返回 `false`。
+    ///
+    /// # 参数
+    /// - `service`: 服务名称。
+    ///
+    /// # 返回
+    /// - `Ok(())`: 成功关闭（或 service 本就未开启，幂等）。
+    /// - `Err`: 未登录或 session 不存在。
+    ///
+    /// # 错误
+    /// - `BulwarkError::Session`: 未设置 current_token（未登录）。
+    /// - `BulwarkError::InvalidToken`: token 对应的 TokenSession 不存在。
+    /// - DAO 读写失败：透传 BulwarkError。
+    pub async fn close_safe(&self, service: &str) -> BulwarkResult<()> {
+        let token = current_token()?;
+        let mut ts = self
+            .session
+            .get_token_session(&token)
+            .await?
+            .ok_or_else(|| BulwarkError::InvalidToken(format!("token 不存在: {}", token)))?;
+        ts.safe_services.remove(service);
+        self.session.save_token_session(&token, &ts).await
+    }
 }
 
 #[cfg(test)]
@@ -559,5 +586,151 @@ mod tests {
             result
         );
         assert_eq!(result.unwrap(), false, "未登录时 is_safe 应返回 Ok(false)");
+    }
+
+    // --------------------------------------------------------------------
+    // T024: close_safe 单元测试
+    // --------------------------------------------------------------------
+
+    /// open_safe("default") 后 close_safe("default")，safe_services 中 default 条目被移除（len=0）。
+    #[tokio::test]
+    async fn t024_close_safe_removes_existing_marker() {
+        let (logic, _dao) = make_logic();
+        let token = logic
+            .login("user-3001", &LoginParams::default())
+            .await
+            .unwrap();
+
+        with_current_token(token.clone(), async {
+            logic.open_safe("default", 3600).await.unwrap();
+            logic.close_safe("default").await.unwrap();
+        })
+        .await;
+
+        let ts = logic
+            .session
+            .get_token_session(&token)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            ts.safe_services.len(),
+            0,
+            "close_safe 后 default 条目应被移除，safe_services 应为空，实际: {:?}",
+            ts.safe_services
+        );
+        assert!(
+            !ts.safe_services.contains_key("default"),
+            "default 不应仍在 safe_services 中"
+        );
+    }
+
+    /// 直接 close_safe("default")（未 open_safe），返回 Ok(())，safe_services 仍为空（幂等）。
+    #[tokio::test]
+    async fn t024_close_safe_nonexistent_marker_is_noop() {
+        let (logic, _dao) = make_logic();
+        let token = logic
+            .login("user-3002", &LoginParams::default())
+            .await
+            .unwrap();
+
+        let result =
+            with_current_token(token.clone(), async { logic.close_safe("default").await }).await;
+
+        assert!(
+            result.is_ok(),
+            "close_safe 不存在的标记应幂等返回 Ok(())，实际: {:?}",
+            result
+        );
+        let ts = logic
+            .session
+            .get_token_session(&token)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            ts.safe_services.len(),
+            0,
+            "未 open_safe 直接 close_safe 后 safe_services 应仍为空，实际: {:?}",
+            ts.safe_services
+        );
+    }
+
+    /// open_safe("default") 后 is_safe=true，close_safe("default") 后 is_safe=false。
+    #[tokio::test]
+    async fn t024_close_safe_then_is_safe_returns_false() {
+        let (logic, _dao) = make_logic();
+        let token = logic
+            .login("user-3003", &LoginParams::default())
+            .await
+            .unwrap();
+
+        let (before, after) = with_current_token(token.clone(), async {
+            logic.open_safe("default", 3600).await.unwrap();
+            let before = logic.is_safe("default").await.unwrap();
+            logic.close_safe("default").await.unwrap();
+            let after = logic.is_safe("default").await.unwrap();
+            (before, after)
+        })
+        .await;
+
+        assert!(before, "open_safe 后 is_safe 应返回 true");
+        assert!(!after, "close_safe 后 is_safe 应返回 false");
+    }
+
+    /// open_safe("default") + open_safe("payment") 后 close_safe("default")，
+    /// safe_services 中只剩 payment（default 被移除），is_safe("default")=false, is_safe("payment")=true。
+    #[tokio::test]
+    async fn t024_close_safe_only_removes_specified_service() {
+        let (logic, _dao) = make_logic();
+        let token = logic
+            .login("user-3004", &LoginParams::default())
+            .await
+            .unwrap();
+
+        with_current_token(token.clone(), async {
+            logic.open_safe("default", 3600).await.unwrap();
+            logic.open_safe("payment", 7200).await.unwrap();
+            logic.close_safe("default").await.unwrap();
+        })
+        .await;
+
+        let ts = logic
+            .session
+            .get_token_session(&token)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            ts.safe_services.len(),
+            1,
+            "close_safe(default) 后应只剩 1 个 service 标记，实际: {:?}",
+            ts.safe_services
+        );
+        assert!(
+            !ts.safe_services.contains_key("default"),
+            "default 应已被 close_safe 移除"
+        );
+        assert!(
+            ts.safe_services.contains_key("payment"),
+            "payment 应仍存在，未被 close_safe(default) 影响"
+        );
+
+        // 验证 is_safe 的语义一致性
+        let (safe_default, safe_payment) = with_current_token(token.clone(), async {
+            (
+                logic.is_safe("default").await.unwrap(),
+                logic.is_safe("payment").await.unwrap(),
+            )
+        })
+        .await;
+        assert!(
+            !safe_default,
+            "close_safe(default) 后 is_safe(default) 应返回 false"
+        );
+        assert!(
+            safe_payment,
+            "close_safe(default) 不应影响 payment，is_safe(payment) 应仍返回 true"
+        );
     }
 }
