@@ -5,6 +5,85 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.6.5] - 2026-07-12
+
+### 概述
+
+v0.6.5 安全告警 + 设备绑定 + 封禁库 + 二级认证 + Token 清理，实施 5 个能力域：安全告警系统、设备绑定策略、封禁库实现、二级认证瞬态标记、login_token_map 自动清理。通过 specmark `v0.6.5-security-alert-device-binding-disable-safe-auth-cleanup` change 管理，30 个原始任务 + M-002 收敛修复完成。Phase 4 审计发现 2 个 HIGH（service 参数校验 + token 泄露）+ Phase 5 审计 3 个 MEDIUM，均已修复。
+
+### 新增
+
+#### D1: 安全告警系统（`security-alert` feature）
+
+- 新建 `src/strategy/alert/mod.rs`，定义 `SecurityAlertEvent` 枚举（AnomalyLogin/NewDeviceLogin/DisableTriggered/PrivilegeEscalation/SensitiveOperation）+ `AnomalyType` 枚举（IpChanged/DeviceChanged/GeoJump/RapidSuccessiveLogin）
+- `AlertListener` trait + `AlertListenerManager`：广播告警事件，单个 listener 失败只 warn 不中断
+- `AnomalyDetector` trait + `IpChangeDetector`（IP 变更检测）+ `RapidSuccessiveDetector`（快速连续登录检测）
+- `TracingAlertListener`：tracing::warn! 记录告警；`AuditAlertListener`：写入审计日志到 DAO
+- 集成到 `session.rs` login/check_login，检测失败不中断主流程
+- 34 个单元测试
+
+#### D2: 设备绑定策略（`device-binding` feature，依赖 `security-alert`）
+
+- 新建 `src/strategy/device_binding/mod.rs`，定义 `DeviceBindingPolicy` trait
+- 3 种策略：`StrictBinding`（新设备触发 MFA）、`LooseBinding`（新设备告警不阻断）、`Disabled`（关闭）
+- `LoginParams` 新增 `require_mfa: bool` 字段
+- 集成到 login 流程：新设备 + require_secondary_auth=true 时设置 require_mfa
+- `BulwarkConfig` 新增 `device_binding_mode`（默认 "disabled"）
+- 24 个单元测试
+
+#### D3: 封禁库实现
+
+- 新建 `src/account/disable/mod.rs` + `repository.rs`，定义 `DisableEntry` struct + `DisableRepository` trait
+- `DefaultDisableRepository`：`disable`/`untie_disable`/`is_disable`/`get_disable_time`/`get_disable_level`
+- 阶梯封禁：`level` 字段支持分级阻断（level=0 普通，level=1/2/3 分级）
+- key 格式 `disable:{service}:{login_id}`，永久封禁 duration_secs=0
+- `MfaLogic::check_disable()` 默认实现：从 `DisableRepository` 查询封禁状态
+- `BulwarkManager` 注册 `DisableRepository`，`disable_repository()` 方法获取实例
+- 30 个单元测试
+
+#### D4: 二级认证瞬态标记（`safe-auth` feature）
+
+- `TokenSession` 新增 `safe_services: HashMap<String, i64>` 字段（service → 过期时间戳）
+- `BulwarkLogicDefault` inherent method：`open_safe`/`is_safe`/`close_safe`
+- service 级瞬态标记：多 service 独立、覆盖更新、duration_secs=0 立即过期
+- `check_safe()` 默认实现改为调用 `is_safe("default")`
+- Phase 4 审计修复：service 空值校验 + token 前缀脱敏（`&token[..8]`）
+- 19 个单元测试
+
+#### D5: login_token_map 自动清理
+
+- `BulwarkSession::cleanup_expired_tokens()`：扫描 login_token_map，移除过期/已注销 token
+- DashMap 策略：先 collect keys 快照，再逐个检查，retain 保留并发新增的 token
+- `spawn_cleanup_task()`：tokio::spawn 后台定时清理，interval_secs<=0 不启动
+- `BulwarkConfig` 新增 `token_map_cleanup_interval_secs`（默认 300，-1 禁用）
+- `BulwarkManager::init` 集成：启动后台 task，Drop/reset_for_test 时 abort
+- Phase 5 审计修复 M-002：abort 旧 task 移到 spawn 之前，消除重叠窗口
+- 20 个单元测试
+
+### 审查与修复
+
+#### Phase 4 审计（diting + tiangang）
+
+- **HIGH-001 修复**：`open_safe`/`is_safe`/`close_safe` 未校验 service 空值 → 新增 `InvalidParam` 校验
+- **HIGH-002 修复**：错误消息暴露完整 token → 改为 `&token[..8]` 前缀脱敏（与 `core/auth/mod.rs` 一致）
+- tiangang SAST：0 CRITICAL，0 findings
+
+#### Phase 5 审计（diting + tiangang）
+
+- **M-002 修复**：`init_with_factory_selector` 新旧 cleanup task 短暂重叠 → abort 移到 spawn 之前
+- M-001/M-003 延后：cleanup 频率自适应 / 清理统计 metrics（非阻断优化）
+- tiangang SAST：0 CRITICAL，0 HIGH
+
+### Breaking Changes
+
+无。所有新功能通过 feature gate 控制，默认不启用：
+
+- `security-alert = []`
+- `device-binding = ["security-alert"]`
+- `safe-auth = []`
+
+均已注册到 `full` feature 列表。
+
 ## [0.6.4] - 2026-07-11
 
 ### 概述
