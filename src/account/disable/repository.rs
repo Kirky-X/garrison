@@ -92,9 +92,9 @@ pub trait DisableRepository: Send + Sync {
     /// - `service`: 封禁服务名称。
     ///
     /// # 返回
-    /// - `Ok(level)`: 封禁级别（0=普通，1+=阶梯）。
-    /// - `Ok(0)`: 未封禁。
-    async fn get_disable_level(&self, login_id: &str, service: &str) -> BulwarkResult<u32>;
+    /// - `Ok(Some(level))`: 已封禁，level 为封禁级别（0=普通，1+=阶梯）。
+    /// - `Ok(None)`: 未封禁。
+    async fn get_disable_level(&self, login_id: &str, service: &str) -> BulwarkResult<Option<u32>>;
 }
 
 // ============================================================================
@@ -109,7 +109,7 @@ pub trait DisableRepository: Send + Sync {
 /// # 错误处理
 ///
 /// - 序列化 `DisableEntry` 失败 → `BulwarkError::Internal`
-/// - 反序列化 `DisableEntry` 失败 → `BulwarkError::Internal`
+/// - 反序列化 `DisableEntry` 失败 → `BulwarkError::Dao`
 /// - DAO 读写失败 → 透传底层 `BulwarkError::Dao`
 pub struct DefaultDisableRepository {
     /// DAO 实例，委托持久化封禁条目。
@@ -169,7 +169,11 @@ impl DisableRepository for DefaultDisableRepository {
             BulwarkError::Internal(format!("序列化 DisableEntry 为 JSON 失败: {}", e))
         })?;
         let key = Self::disable_key(service, login_id)?;
-        self.dao.set(&key, &json, duration_secs).await
+        if duration_secs == 0 {
+            self.dao.set_permanent(&key, &json).await
+        } else {
+            self.dao.set(&key, &json, duration_secs).await
+        }
     }
 
     async fn untie_disable(&self, login_id: &str, service: &str) -> BulwarkResult<()> {
@@ -193,25 +197,23 @@ impl DisableRepository for DefaultDisableRepository {
         let key = Self::disable_key(service, login_id)?;
         match self.dao.get(&key).await? {
             Some(json) => {
-                let entry: DisableEntry = serde_json::from_str(&json).map_err(|e| {
-                    BulwarkError::Internal(format!("反序列化 DisableEntry 失败: {}", e))
-                })?;
+                let entry: DisableEntry = serde_json::from_str(&json)
+                    .map_err(|e| BulwarkError::Dao(format!("反序列化 DisableEntry 失败: {}", e)))?;
                 Ok(entry.until)
             },
             None => Ok(None),
         }
     }
 
-    async fn get_disable_level(&self, login_id: &str, service: &str) -> BulwarkResult<u32> {
+    async fn get_disable_level(&self, login_id: &str, service: &str) -> BulwarkResult<Option<u32>> {
         let key = Self::disable_key(service, login_id)?;
         match self.dao.get(&key).await? {
             Some(json) => {
-                let entry: DisableEntry = serde_json::from_str(&json).map_err(|e| {
-                    BulwarkError::Internal(format!("反序列化 DisableEntry 失败: {}", e))
-                })?;
-                Ok(entry.level)
+                let entry: DisableEntry = serde_json::from_str(&json)
+                    .map_err(|e| BulwarkError::Dao(format!("反序列化 DisableEntry 失败: {}", e)))?;
+                Ok(Some(entry.level))
             },
-            None => Ok(0),
+            None => Ok(None),
         }
     }
 }
@@ -446,7 +448,7 @@ mod tests {
         );
     }
 
-    /// get_disable_level 正确值：disable(level=2) 后 get_disable_level 返回 Ok(2)。
+    /// get_disable_level 正确值：disable(level=2) 后 get_disable_level 返回 Ok(Some(2))。
     #[tokio::test]
     async fn t017_get_disable_level_returns_correct_value() {
         let dao = Arc::new(MockDao::new());
@@ -458,14 +460,28 @@ mod tests {
             repo.get_disable_level("user-2005", "default")
                 .await
                 .unwrap(),
-            2,
-            "disable(level=2) 后 get_disable_level 应返回 Ok(2)"
+            Some(2),
+            "disable(level=2) 后 get_disable_level 应返回 Ok(Some(2))"
         );
     }
 
-    /// 反序列化失败返回 Err：手动向 DAO 写入损坏 JSON，get_disable_time 返回 Err(Internal)。
+    /// get_disable_level 未封禁返回 None：未 disable 时 get_disable_level 返回 Ok(None)。
+    #[tokio::test]
+    async fn t017_get_disable_level_returns_none_when_not_banned() {
+        let dao = Arc::new(MockDao::new());
+        let repo = DefaultDisableRepository::new(dao.clone());
+        assert_eq!(
+            repo.get_disable_level("never_banned", "default")
+                .await
+                .unwrap(),
+            None,
+            "未封禁时 get_disable_level 应返回 Ok(None)"
+        );
+    }
+
+    /// 反序列化失败返回 Err：手动向 DAO 写入损坏 JSON，get_disable_time 返回 Err(Dao)。
     ///
-    /// 覆盖 `serde_json::from_str` 失败路径，验证错误被包装为 `BulwarkError::Internal`。
+    /// 覆盖 `serde_json::from_str` 失败路径，验证错误被包装为 `BulwarkError::Dao`。
     #[tokio::test]
     async fn t017_get_disable_time_returns_err_on_deserialize_failure() {
         let dao = Arc::new(MockDao::new());
@@ -475,8 +491,8 @@ mod tests {
         dao.set(key, "{invalid json}", 0).await.unwrap();
         let result = repo.get_disable_time("user-2006", "default").await;
         assert!(
-            matches!(result, Err(BulwarkError::Internal(ref msg)) if msg.contains("反序列化 DisableEntry 失败")),
-            "损坏 JSON 应返回 Err(BulwarkError::Internal) 含 '反序列化 DisableEntry 失败'，实际: {:?}",
+            matches!(result, Err(BulwarkError::Dao(ref msg)) if msg.contains("反序列化 DisableEntry 失败")),
+            "损坏 JSON 应返回 Err(BulwarkError::Dao) 含 '反序列化 DisableEntry 失败'，实际: {:?}",
             result
         );
     }
@@ -522,7 +538,7 @@ mod tests {
     // T018: 阶梯封禁 level 支持测试
     // ========================================================================
 
-    /// level=0 普通封禁：disable(level=0) 后 get_disable_level 返回 Ok(0)。
+    /// level=0 普通封禁：disable(level=0) 后 get_disable_level 返回 Ok(Some(0))。
     ///
     /// 验证默认封禁级别 0（普通封禁）可正确存储与读取。
     #[tokio::test]
@@ -536,12 +552,12 @@ mod tests {
             repo.get_disable_level("user-3001", "default")
                 .await
                 .unwrap(),
-            0,
-            "level=0 普通封禁，get_disable_level 应返回 Ok(0)"
+            Some(0),
+            "level=0 普通封禁，get_disable_level 应返回 Ok(Some(0))"
         );
     }
 
-    /// level=1 一级封禁：disable(level=1) 后 get_disable_level 返回 Ok(1)。
+    /// level=1 一级封禁：disable(level=1) 后 get_disable_level 返回 Ok(Some(1))。
     ///
     /// 验证一级阶梯封禁（如限制部分功能）可正确存储与读取。
     #[tokio::test]
@@ -555,12 +571,12 @@ mod tests {
             repo.get_disable_level("user-3002", "default")
                 .await
                 .unwrap(),
-            1,
-            "level=1 一级封禁，get_disable_level 应返回 Ok(1)"
+            Some(1),
+            "level=1 一级封禁，get_disable_level 应返回 Ok(Some(1))"
         );
     }
 
-    /// level=3 三级封禁：disable(level=3) 后 get_disable_level 返回 Ok(3)。
+    /// level=3 三级封禁：disable(level=3) 后 get_disable_level 返回 Ok(Some(3))。
     ///
     /// 验证三级阶梯封禁（如完全封禁）可正确存储与读取。
     #[tokio::test]
@@ -574,13 +590,13 @@ mod tests {
             repo.get_disable_level("user-3003", "default")
                 .await
                 .unwrap(),
-            3,
-            "level=3 三级封禁，get_disable_level 应返回 Ok(3)"
+            Some(3),
+            "level=3 三级封禁，get_disable_level 应返回 Ok(Some(3))"
         );
     }
 
     /// get_disable_level 返回正确值（高 level + JSON 持久化验证）：
-    /// disable(level=10) 后 get_disable_level 返回 Ok(10)，
+    /// disable(level=10) 后 get_disable_level 返回 Ok(Some(10))，
     /// 且 DAO 中的 JSON 反序列化后 level 字段也为 10。
     ///
     /// 验证高 level 值无截断/溢出，且 level 字段在 JSON 持久化层正确传递。
@@ -596,8 +612,8 @@ mod tests {
             repo.get_disable_level("user-3004", "default")
                 .await
                 .unwrap(),
-            10,
-            "level=10 高级封禁，get_disable_level 应返回 Ok(10) 无截断"
+            Some(10),
+            "level=10 高级封禁，get_disable_level 应返回 Ok(Some(10)) 无截断"
         );
         // 通过直接反序列化 DAO 中的 JSON 验证持久化层正确传递 level 字段
         let key = "disable:default:user-3004";
