@@ -5,6 +5,85 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.6.4] - 2026-07-11
+
+### 概述
+
+v0.6.4 Web 安全中间件 + 分布式限流，实施 5 个能力域：WAF 请求内容校验、CORS 跨域中间件、CSRF 防护、响应 Token 自动写入、Redis 限流后端。通过 specmark `v0.6.4-waf-cors-csrf-response-token-redis-ratelimit` change 管理，31 个任务完成。diting 审查发现 2 个 HIGH 问题（Cookie 安全配置缺失），已修复。
+
+### 新增
+
+#### D1: WAF 请求内容校验（`web-waf` feature）
+
+- 新建 `src/web/waf.rs` 模块，定义 `WafRule` trait（`async fn check(&self, ctx: &WafContext) -> BulwarkResult<()>`）+ `WafContext` struct
+- 5 个内置规则：`DangerousCharacter`（检测 `//`/`\`/`%2e`/`%2f`/`;`/`\0`/`\n`/`\r`）、`DirectoryTraversal`（`./`/`../`/`..%2f`/`..%5c`）、`PathWhitelist`、`PathBlacklist`、`HttpMethodWhitelist`
+- `bulwark_waf_middleware` axum 中间件，遍历规则链，任一拒绝返回 400
+- `BulwarkConfig` 新增 `waf_config: WafConfig`（enabled/path_whitelist/path_blacklist/check_dangerous_chars/check_directory_traversal/allowed_methods）
+- 33 个单元测试
+
+#### D2: CORS 跨域中间件（`web-cors` feature）
+
+- 新建 `src/web/cors.rs` 模块，定义 `CorsConfig`（allowed_origins/allowed_methods/allowed_headers/exposed_headers/allow_credentials/max_age_secs）
+- `bulwark_cors_middleware`：preflight（OPTIONS）请求注入 `Access-Control-Allow-*` 头返回 204；实际请求注入 `Access-Control-Allow-Origin/Expose-Headers`
+- `CorsConfig::validate()`：`allow_credentials=true` 且 `allowed_origins` 含 `*` 时返回 Err
+- `BulwarkConfig` 新增 `cors_config: CorsConfig`
+- 29 个单元测试
+
+#### D3: CSRF 防护（`web-csrf` feature）
+
+- 新建 `src/web/csrf.rs` 模块，实现 Double-Submit Cookie 模式
+- `generate_csrf_token()`：32 字节 OsRng → URL-safe Base64（~43 字符）
+- `validate_csrf_token(header_token, cookie_token)`：常量时间比较（不提前返回，长度差异单独追踪）
+- `bulwark_csrf_middleware`：安全方法（GET/HEAD/OPTIONS）懒生成 token 设置 Cookie；保护方法（POST/PUT/PATCH/DELETE）校验 header==cookie，不一致返回 403
+- `CsrfConfig`：enabled/cookie_name/header_name/excluded_paths/protected_methods/cookie_secure
+- `BulwarkConfig` 新增 `csrf_config: CsrfConfig`
+- 25 个单元测试
+
+#### D4: 响应 Token 自动写入
+
+- `src/stp/context.rs` 新增 `get_renewed_token() -> Option<String>` + `clear_renewed_token()`
+- `BulwarkConfig` 新增 `is_write_cookie: bool`（默认 false，`is_write_header` 已存在）
+- `bulwark_middleware` 修复：handler 执行包裹 `with_renewed_token_scope`（v0.6.3 遗漏，导致续签 task_local 无效）
+- 续签 Token 按 `is_write_header`/`is_write_cookie` 写入响应头（`config.token_name`）或 Set-Cookie（`HttpOnly; Path=/; SameSite=<config>; Secure=<config>`）
+- 17 个单元测试
+
+#### D5: Redis 限流后端（`rate-limit-redis` feature）
+
+- 新建 `src/strategy/rate_limiter_backend.rs`，定义 `RateLimiterBackend` trait（`try_acquire` / `try_acquire_n`）
+- `RateLimitBackend` 枚举（Memory / Redis { redis_url }）
+- `TokenBucketRateLimiter` 实现 `RateLimiterBackend`（委托现有方法）
+- 新建 `src/strategy/redis_rate_limiter.rs`，`RedisRateLimiter` 使用 Lua 脚本原子令牌桶（HMGET→refill→compare→HMSET→EXPIRE）
+- `BulwarkConfig` 新增 `rate_limit_backend: RateLimitBackend`（默认 Memory）
+- 30 个单元测试
+
+### 审查与修复
+
+#### diting Full Review
+
+- **A1 [High] 修复**：`router/mod.rs` Cookie 写入硬编码 `SameSite=Lax`，忽略 `config.cookie_secure` / `config.cookie_same_site` → 改为读取 config
+- **A2 [High] 修复**：`csrf.rs` `build_set_cookie` 硬编码无 `Secure` 标志 → `CsrfConfig` 新增 `cookie_secure` 字段，`build_set_cookie` 支持 Secure
+- **A4 [Medium] 修复**：`redis_rate_limiter.rs` `prepare_script_args` 返回值被丢弃 + 时间戳不一致 → `try_acquire_n` 内联构建参数，`prepare_script_args` 标注 `#[cfg(test)]`
+- **A3 [Medium] 延后**：WAF 每请求重建规则链的堆分配优化（非阻断）
+
+#### tiangang SAST
+
+- 0 CRITICAL — 发布门禁通过
+- 2 High 均为误报（oidc.rs 测试 mock JWT token）
+- 18 Medium：17 个 GitHub Actions 供应链（预存）+ 1 个 RUSTSEC-2023-0071 rsa Marvin Attack（预存依赖漏洞）
+
+### 验证
+
+- 全量测试：2044 passed, 0 failed, 4 ignored（+126 新增 vs v0.6.3 的 1918）
+- clippy：full + production features 零警告
+- cargo doc：零警告（修复 26 个 unresolved link：17 v0.6.4 新增 + 9 pre-existing）
+- pre-commit hooks：全部通过
+
+### 已知限制
+
+- WAF 中间件每请求重建规则链（Vec + Box 堆分配），高流量场景可优化为预构建 `Arc<Vec<Box<dyn WafRule>>>`
+- Redis 限流器单元测试不依赖真实 Redis 连接，仅验证 Lua 脚本逻辑和参数组装
+- RUSTSEC-2023-0071（rsa 0.9.10 Marvin Attack）为预存依赖漏洞，非 v0.6.4 引入，后续版本处理
+
 ## [0.6.3] - 2026-07-11
 
 ### 概述
