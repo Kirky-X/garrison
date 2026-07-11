@@ -31,6 +31,7 @@
 //! let token = BulwarkUtil::login_simple("1001").await.unwrap();
 //! ```
 
+use crate::account::disable::{DefaultDisableRepository, DisableRepository};
 use crate::config::BulwarkConfig;
 use crate::core::auth::{AuthLogic, AuthLogicDefault};
 use crate::core::permission::{PermissionChecker, PermissionCheckerDefault};
@@ -135,7 +136,7 @@ impl BulwarkManager {
                 ))
             })?
         };
-        let session = Arc::new(BulwarkSession::new(dao, timeout, active_timeout));
+        let session = Arc::new(BulwarkSession::new(dao.clone(), timeout, active_timeout));
 
         // 3. auto-wire: 构造 4 个 manager（gap）
         // 3.1 PermissionChecker（委托 interface 查询权限/角色数据）
@@ -165,19 +166,24 @@ impl BulwarkManager {
                 .with_plugin_manager(plugin_manager.clone()),
         );
 
-        // 5. 构造 factory context（持有 4 个 manager 引用）
+        // 4.5 构造 disable_repository（T020）：委托同一 DAO 实例持久化封禁条目
+        let disable_repo: Arc<dyn DisableRepository> = Arc::new(DefaultDisableRepository::new(dao));
+
+        // 5. 构造 factory context（持有 5 个 manager 引用）
         #[cfg(feature = "listener")]
         let factory_ctx = BulwarkLogicFactoryContext {
             plugin_manager: Some(plugin_manager.clone()),
             listener_manager: Some(listener_manager.clone()),
             auth_logic: Some(auth_logic.clone()),
             permission_checker: Some(permission_checker.clone()),
+            disable_repository: Some(disable_repo.clone()),
         };
         #[cfg(not(feature = "listener"))]
         let factory_ctx = BulwarkLogicFactoryContext {
             plugin_manager: Some(plugin_manager.clone()),
             auth_logic: Some(auth_logic.clone()),
             permission_checker: Some(permission_checker.clone()),
+            disable_repository: Some(disable_repo.clone()),
         };
 
         // 6. 通过 factory 构造 logic（传递 context 以便 factory 使用 builder 链）
@@ -190,7 +196,8 @@ impl BulwarkManager {
                 let mut builder = BulwarkLogicDefault::new(session, config, firewall)
                     .with_plugin_manager(plugin_manager)
                     .with_auth_logic(auth_logic)
-                    .with_permission_checker(permission_checker);
+                    .with_permission_checker(permission_checker)
+                    .with_disable_repository(disable_repo);
                 #[cfg(feature = "listener")]
                 {
                     builder = builder.with_listener_manager(listener_manager);
@@ -239,6 +246,30 @@ impl BulwarkManager {
             .read()
             .clone()
             .ok_or_else(|| BulwarkError::Session("BulwarkManager 未初始化".to_string()))
+    }
+
+    /// 获取全局 `DisableRepository` 引用（v0.6.5 T020）。
+    ///
+    /// `init` 时自动创建 `DefaultDisableRepository` 并注入到 `BulwarkLogicDefault`，
+    /// 此方法从 logic 中读取封禁库实例，供业务方调用 `disable` / `untie_disable` /
+    /// `is_disable` / `get_disable_time` / `get_disable_level`。
+    ///
+    /// # 返回
+    /// - `Some(Arc<dyn DisableRepository>)`: 已 init 且 disable_repository 已注册。
+    /// - `None`: 未 init 或未注册（向后兼容场景）。
+    ///
+    /// # 示例
+    /// ```ignore
+    /// use bulwark::prelude::*;
+    ///
+    /// if let Some(repo) = BulwarkManager::disable_repository() {
+    ///     repo.disable("user-1", "default", None, 0, 0).await.unwrap();
+    /// }
+    /// ```
+    pub fn disable_repository() -> Option<Arc<dyn DisableRepository>> {
+        Self::logic()
+            .ok()
+            .and_then(|logic| logic.disable_repository.clone())
     }
 
     /// 替换全局 `Strategy` 注册表。
@@ -294,7 +325,7 @@ pub static BULWARK_MANAGER: Lazy<BulwarkManager> = Lazy::new(BulwarkManager::new
 // BulwarkLogicFactory：编译期注册的工厂 trait
 // ============================================================================
 
-/// 工厂上下文，持有 init 阶段构造的 4 个 manager（用于 auto-wire）。
+/// 工厂上下文，持有 init 阶段构造的 5 个 manager（用于 auto-wire）。
 ///
 /// factory 函数通过此 context 获取 manager 引用，使用 builder 链式调用注入到
 /// `BulwarkLogicDefault`。所有字段为 `Option`，便于自定义 factory 选择性注入。
@@ -304,6 +335,7 @@ pub static BULWARK_MANAGER: Lazy<BulwarkManager> = Lazy::new(BulwarkManager::new
 /// - `listener_manager`: 监听器管理器（需 `listener` feature，广播 Login/Logout/Kickout 事件）
 /// - `auth_logic`: 认证逻辑（login_by_token 优先委托此实现）
 /// - `permission_checker`: 权限校验器（check_permission/check_role 可委托此实现）
+/// - `disable_repository`: 封禁库（check_disable 委托此实现查询封禁状态）
 pub struct BulwarkLogicFactoryContext {
     /// 插件管理器（None 表示不注入，login/logout 不触发插件钩子）。
     pub plugin_manager: Option<Arc<BulwarkPluginManager>>,
@@ -314,6 +346,8 @@ pub struct BulwarkLogicFactoryContext {
     pub auth_logic: Option<Arc<dyn AuthLogic>>,
     /// 权限校验器（None 表示不注入，check_permission 委托 firewall）。
     pub permission_checker: Option<Arc<dyn PermissionChecker>>,
+    /// 封禁库（None 表示不注入，check_disable 返回 Ok 向后兼容 0.6.4 之前）。
+    pub disable_repository: Option<Arc<dyn DisableRepository>>,
 }
 
 /// 工厂函数签名：接收 session/config/firewall + factory context，返回 `Arc<BulwarkLogicDefault>`。
@@ -386,6 +420,9 @@ pub fn bulwark_logic_factory_default(
     }
     if let Some(pc) = ctx.permission_checker.clone() {
         builder = builder.with_permission_checker(pc);
+    }
+    if let Some(dr) = ctx.disable_repository.clone() {
+        builder = builder.with_disable_repository(dr);
     }
     Ok(Arc::new(builder))
 }
@@ -742,12 +779,14 @@ mod tests {
             listener_manager: None,
             auth_logic: None,
             permission_checker: None,
+            disable_repository: None,
         };
         #[cfg(not(feature = "listener"))]
         let ctx = BulwarkLogicFactoryContext {
             plugin_manager: None,
             auth_logic: None,
             permission_checker: None,
+            disable_repository: None,
         };
         let logic = bulwark_logic_factory_default(session, config, firewall, &ctx).unwrap();
         let token = logic.login("1001", &LoginParams::default()).await.unwrap();
@@ -1003,6 +1042,125 @@ mod tests {
         let custom_handler = strategy.read().login_handler().clone();
         let token = custom_handler.handle_login("1001").await.unwrap();
         assert_eq!(token, "runtime-1001", "运行时替换策略后应立即生效");
+
+        BulwarkManager::reset_for_test();
+    }
+
+    // ------------------------------------------------------------------------
+    // T020: BulwarkManager 注册 DisableRepository 集成测试
+    // ------------------------------------------------------------------------
+
+    /// 验证 init 后 `BulwarkManager::disable_repository()` 返回 Some，
+    /// 未注册时返回 None。
+    ///
+    /// 覆盖场景：
+    /// - reset_for_test 后（未注册）返回 None
+    /// - init 后（已注册）返回 Some
+    #[tokio::test]
+    #[serial]
+    async fn test_manager_registers_disable_repository() {
+        BulwarkManager::reset_for_test();
+
+        // 未注册时返回 None
+        assert!(
+            BulwarkManager::disable_repository().is_none(),
+            "未 init 时 disable_repository() 应返回 None"
+        );
+
+        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let config = Arc::new(make_config());
+        let interface: Arc<dyn BulwarkInterface> = Arc::new(MockInterface::new());
+        BulwarkManager::init(dao, config, interface).unwrap();
+
+        // init 后返回 Some
+        let repo = BulwarkManager::disable_repository();
+        assert!(repo.is_some(), "init 后 disable_repository() 应返回 Some");
+
+        BulwarkManager::reset_for_test();
+    }
+
+    /// 验证通过 disable_repository 封禁用户后，check_disable 返回 DisableService 错误。
+    #[tokio::test]
+    #[serial]
+    async fn test_disable_then_check_disable_errors() {
+        BulwarkManager::reset_for_test();
+        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let config = Arc::new(make_config());
+        let interface: Arc<dyn BulwarkInterface> = Arc::new(MockInterface::new());
+        BulwarkManager::init(dao, config, interface).unwrap();
+
+        // login 获取 token
+        let token = BulwarkUtil::login_simple("1001").await.unwrap();
+
+        // 通过 disable_repository 封禁用户
+        let repo = BulwarkManager::disable_repository().expect("init 后应返回 Some");
+        let until = chrono::Utc::now() + chrono::Duration::seconds(3600);
+        repo.disable("1001", "default", Some(until), 0, 3600)
+            .await
+            .unwrap();
+
+        // 在 token 上下文中调用 check_disable 应返回错误
+        let result = with_token(token, async { BulwarkUtil::check_disable().await }).await;
+        match result {
+            Err(BulwarkError::DisableService { service, .. }) => {
+                assert_eq!(service, "default");
+            },
+            other => panic!(
+                "封禁后 check_disable 应返回 Err(DisableService)，实际: {:?}",
+                other
+            ),
+        }
+
+        BulwarkManager::reset_for_test();
+    }
+
+    /// 验证封禁后解封，check_disable 返回 Ok。
+    #[tokio::test]
+    #[serial]
+    async fn test_untie_disable_then_check_disable_ok() {
+        BulwarkManager::reset_for_test();
+        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let config = Arc::new(make_config());
+        let interface: Arc<dyn BulwarkInterface> = Arc::new(MockInterface::new());
+        BulwarkManager::init(dao, config, interface).unwrap();
+
+        let token = BulwarkUtil::login_simple("1002").await.unwrap();
+
+        // 封禁
+        let repo = BulwarkManager::disable_repository().expect("init 后应返回 Some");
+        repo.disable("1002", "default", None, 0, 0).await.unwrap();
+
+        // 解封
+        repo.untie_disable("1002", "default").await.unwrap();
+
+        // check_disable 应返回 Ok
+        let result = with_token(token, async { BulwarkUtil::check_disable().await }).await;
+        assert!(
+            result.is_ok(),
+            "解封后 check_disable 应返回 Ok，实际: {:?}",
+            result
+        );
+
+        BulwarkManager::reset_for_test();
+    }
+
+    /// 验证 disable_repository() 多次调用返回同一实例（Arc 指针相等）。
+    #[tokio::test]
+    #[serial]
+    async fn test_manager_disable_repository_persists() {
+        BulwarkManager::reset_for_test();
+        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let config = Arc::new(make_config());
+        let interface: Arc<dyn BulwarkInterface> = Arc::new(MockInterface::new());
+        BulwarkManager::init(dao, config, interface).unwrap();
+
+        let repo1 = BulwarkManager::disable_repository().expect("init 后应返回 Some");
+        let repo2 = BulwarkManager::disable_repository().expect("init 后应返回 Some");
+
+        assert!(
+            Arc::ptr_eq(&repo1, &repo2),
+            "disable_repository() 多次调用应返回同一实例（Arc 指针相等）"
+        );
 
         BulwarkManager::reset_for_test();
     }
