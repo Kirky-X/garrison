@@ -252,6 +252,17 @@ pub struct BulwarkLogicDefault {
     /// `login_locks` 后调用 `renew_to_equivalent`（内部 `logout` 再次获取
     /// `login_locks`）导致死锁。续签锁仅序列化并发 `check_and_renew` 调用。
     renewal_locks: DashMap<String, Arc<TokioMutex<()>>>,
+    /// 异常检测器列表（可选，注入后 login/check_login 触发异常检测）。
+    ///
+    /// 需启用 `security-alert` feature。未注入时为 no-op（向后兼容）。
+    /// 检测失败只 `tracing::warn!` 不中断主流程。
+    #[cfg(feature = "security-alert")]
+    pub(crate) anomaly_detectors: Option<Vec<Arc<dyn crate::strategy::alert::AnomalyDetector>>>,
+    /// 告警监听器管理器（可选，注入后广播异常检测产生的事件）。
+    ///
+    /// 需启用 `security-alert` feature。未注入时异常事件不广播（向后兼容）。
+    #[cfg(feature = "security-alert")]
+    pub(crate) alert_listener_manager: Option<Arc<crate::strategy::alert::AlertListenerManager>>,
 }
 
 impl BulwarkLogicDefault {
@@ -289,6 +300,10 @@ impl BulwarkLogicDefault {
             #[cfg(all(feature = "protocol-jwt", feature = "db-sqlite"))]
             refresh_token_rotation: None,
             renewal_locks: DashMap::new(),
+            #[cfg(feature = "security-alert")]
+            anomaly_detectors: None,
+            #[cfg(feature = "security-alert")]
+            alert_listener_manager: None,
         }
     }
 
@@ -415,6 +430,34 @@ impl BulwarkLogicDefault {
         rtr: crate::protocol::jwt::refresh::RefreshTokenRotation,
     ) -> Self {
         self.refresh_token_rotation = Some(rtr);
+        self
+    }
+
+    /// 注入异常检测器（builder 模式，需启用 `security-alert` feature）。
+    ///
+    /// 可链式调用注入多个检测器，`login` / `check_login` 时按注入顺序依次调用。
+    /// 未注入时跳过异常检测（向后兼容）。检测失败只 `tracing::warn!` 不中断主流程。
+    #[cfg(feature = "security-alert")]
+    pub fn with_anomaly_detector(
+        mut self,
+        detector: Arc<dyn crate::strategy::alert::AnomalyDetector>,
+    ) -> Self {
+        self.anomaly_detectors
+            .get_or_insert_with(Vec::new)
+            .push(detector);
+        self
+    }
+
+    /// 注入告警监听器管理器（builder 模式，需启用 `security-alert` feature）。
+    ///
+    /// 注入后异常检测产生的事件通过 `AlertListenerManager::broadcast_alert` 广播。
+    /// 未注入时异常事件不广播（向后兼容）。
+    #[cfg(feature = "security-alert")]
+    pub fn with_alert_listener_manager(
+        mut self,
+        manager: Arc<crate::strategy::alert::AlertListenerManager>,
+    ) -> Self {
+        self.alert_listener_manager = Some(manager);
         self
     }
 

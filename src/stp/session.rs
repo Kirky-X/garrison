@@ -290,11 +290,20 @@ impl SessionLogic for BulwarkLogicDefault {
             },
         };
 
-        match self.jwt_mode {
+        let result = match self.jwt_mode {
             JwtMode::Stateless => self.check_login_stateless(&token),
             JwtMode::Mixin => self.check_login_mixin(&token).await,
             JwtMode::Simple => self.check_login_simple(&token).await,
+        };
+        // T006: 异常检测（仅 valid 时，检测失败不中断主流程）
+        #[cfg(feature = "security-alert")]
+        if let Ok(true) = &result {
+            if let Ok(Some(ts)) = self.session.get_token_session(&token).await {
+                self.run_anomaly_check_on_check_login(&ts.login_id, &token)
+                    .await;
+            }
         }
+        result
     }
 
     async fn get_login_id(&self) -> BulwarkResult<Option<String>> {
@@ -457,6 +466,9 @@ impl BulwarkLogicDefault {
                 return Err(e);
             }
         }
+        // T006: 异常检测（security-alert feature，检测失败只 warn 不中断 login）
+        #[cfg(feature = "security-alert")]
+        self.run_anomaly_check_on_login(login_id, &params).await;
         Ok(token)
     }
 
@@ -693,6 +705,55 @@ impl BulwarkLogicDefault {
 }
 
 // ============================================================================
+// BulwarkLogicDefault 私有方法：异常检测集成（security-alert feature）
+// ============================================================================
+
+#[cfg(feature = "security-alert")]
+impl BulwarkLogicDefault {
+    /// login 路径异常检测：遍历所有检测器，广播事件，失败只 warn。
+    async fn run_anomaly_check_on_login(&self, login_id: &str, params: &LoginParams) {
+        let Some(detectors) = &self.anomaly_detectors else {
+            return;
+        };
+        let device_id = params.device.as_deref().unwrap_or("");
+        let ip = params.ip.as_deref();
+        for detector in detectors {
+            match detector.check_on_login(login_id, device_id, ip).await {
+                Ok(events) => self.broadcast_anomaly_events(events).await,
+                Err(e) => tracing::warn!(error = %e, "AnomalyDetector::check_on_login 失败"),
+            }
+        }
+    }
+
+    /// check_login 路径异常检测：遍历所有检测器，广播事件，失败只 warn。
+    async fn run_anomaly_check_on_check_login(&self, login_id: &str, token: &str) {
+        let Some(detectors) = &self.anomaly_detectors else {
+            return;
+        };
+        for detector in detectors {
+            match detector.check_on_check_login(login_id, token).await {
+                Ok(events) => self.broadcast_anomaly_events(events).await,
+                Err(e) => tracing::warn!(error = %e, "AnomalyDetector::check_on_check_login 失败"),
+            }
+        }
+    }
+
+    /// 广播告警事件列表到 `AlertListenerManager`。
+    /// 未注入 manager 时为 no-op（事件被丢弃）。
+    async fn broadcast_anomaly_events(
+        &self,
+        events: Vec<crate::strategy::alert::SecurityAlertEvent>,
+    ) {
+        let Some(manager) = &self.alert_listener_manager else {
+            return;
+        };
+        for event in events {
+            manager.broadcast_alert(&event).await;
+        }
+    }
+}
+
+// ============================================================================
 // BulwarkLogicDefault 私有方法：Token 自动续签
 // ============================================================================
 
@@ -896,5 +957,431 @@ mod tests {
             "默认实现应返回 NotImplemented，实际: {:?}",
             result
         );
+    }
+
+    // ========================================================================
+    // T006: AnomalyDetector 集成测试（security-alert feature）
+    // ========================================================================
+
+    #[cfg(feature = "security-alert")]
+    mod anomaly_integration {
+        use super::*;
+        use crate::dao::BulwarkDao;
+        use crate::session::BulwarkSession;
+        use crate::stp::with_current_token;
+        use crate::strategy::alert::{
+            AlertListener, AlertListenerManager, AnomalyDetector, AnomalyType, SecurityAlertEvent,
+        };
+        use crate::strategy::BulwarkPermissionStrategy;
+        use async_trait::async_trait;
+        use parking_lot::Mutex;
+        use std::collections::HashMap;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+        use std::time::{Duration, Instant};
+
+        // --------------------------------------------------------------------
+        // MockDao：HashMap + Instant 模拟 TTL（与 stp/tests.rs 同模式）
+        // --------------------------------------------------------------------
+
+        struct MockDao {
+            store: Mutex<HashMap<String, (String, Option<Instant>)>>,
+        }
+
+        impl MockDao {
+            fn new() -> Self {
+                Self {
+                    store: Mutex::new(HashMap::new()),
+                }
+            }
+        }
+
+        #[async_trait]
+        impl BulwarkDao for MockDao {
+            async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
+                let mut store = self.store.lock();
+                match store.get(key) {
+                    Some((value, expire_at)) => {
+                        if let Some(deadline) = expire_at {
+                            if Instant::now() >= *deadline {
+                                store.remove(key);
+                                return Ok(None);
+                            }
+                        }
+                        Ok(Some(value.clone()))
+                    },
+                    None => Ok(None),
+                }
+            }
+            async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> BulwarkResult<()> {
+                let expire_at = if ttl_seconds == 0 {
+                    None
+                } else {
+                    Some(Instant::now() + Duration::from_secs(ttl_seconds))
+                };
+                self.store
+                    .lock()
+                    .insert(key.to_string(), (value.to_string(), expire_at));
+                Ok(())
+            }
+            async fn update(&self, key: &str, value: &str) -> BulwarkResult<()> {
+                let mut store = self.store.lock();
+                match store.get_mut(key) {
+                    Some((existing, _)) => {
+                        *existing = value.to_string();
+                        Ok(())
+                    },
+                    None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
+                }
+            }
+            async fn expire(&self, key: &str, seconds: u64) -> BulwarkResult<()> {
+                let mut store = self.store.lock();
+                match store.get_mut(key) {
+                    Some((_, expire_at)) => {
+                        *expire_at = if seconds == 0 {
+                            None
+                        } else {
+                            Some(Instant::now() + Duration::from_secs(seconds))
+                        };
+                        Ok(())
+                    },
+                    None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
+                }
+            }
+            async fn delete(&self, key: &str) -> BulwarkResult<()> {
+                self.store.lock().remove(key);
+                Ok(())
+            }
+        }
+
+        // --------------------------------------------------------------------
+        // MockFirewall：no-op 权限策略，允许所有登录
+        // --------------------------------------------------------------------
+
+        struct MockFirewall;
+
+        #[async_trait]
+        impl BulwarkPermissionStrategy for MockFirewall {
+            async fn get_permission_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
+                Ok(vec![])
+            }
+            async fn get_role_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
+                Ok(vec![])
+            }
+            async fn check_permission(
+                &self,
+                _login_id: &str,
+                _permission: &str,
+            ) -> BulwarkResult<bool> {
+                Ok(true)
+            }
+            async fn check_role(&self, _login_id: &str, _role: &str) -> BulwarkResult<bool> {
+                Ok(true)
+            }
+            async fn check_role_any(
+                &self,
+                _login_id: &str,
+                _roles: &[&str],
+            ) -> BulwarkResult<bool> {
+                Ok(true)
+            }
+            async fn check_role_all(
+                &self,
+                _login_id: &str,
+                _roles: &[&str],
+            ) -> BulwarkResult<bool> {
+                Ok(true)
+            }
+        }
+
+        // --------------------------------------------------------------------
+        // MockAnomalyDetector：记录调用，可配置返回事件或错误
+        // --------------------------------------------------------------------
+
+        struct MockAnomalyDetector {
+            login_call_count: AtomicUsize,
+            check_login_call_count: AtomicUsize,
+            login_events: Mutex<Vec<SecurityAlertEvent>>,
+            check_login_events: Mutex<Vec<SecurityAlertEvent>>,
+            fail_on_login: bool,
+            fail_on_check_login: bool,
+        }
+
+        impl MockAnomalyDetector {
+            fn new() -> Self {
+                Self {
+                    login_call_count: AtomicUsize::new(0),
+                    check_login_call_count: AtomicUsize::new(0),
+                    login_events: Mutex::new(Vec::new()),
+                    check_login_events: Mutex::new(Vec::new()),
+                    fail_on_login: false,
+                    fail_on_check_login: false,
+                }
+            }
+
+            fn with_login_event(event: SecurityAlertEvent) -> Self {
+                let det = Self::new();
+                det.login_events.lock().push(event);
+                det
+            }
+
+            fn with_check_login_event(event: SecurityAlertEvent) -> Self {
+                let det = Self::new();
+                det.check_login_events.lock().push(event);
+                det
+            }
+
+            fn failing_on_login() -> Self {
+                let mut det = Self::new();
+                det.fail_on_login = true;
+                det
+            }
+
+            fn failing_on_check_login() -> Self {
+                let mut det = Self::new();
+                det.fail_on_check_login = true;
+                det
+            }
+
+            fn login_calls(&self) -> usize {
+                self.login_call_count.load(Ordering::SeqCst)
+            }
+
+            fn check_login_calls(&self) -> usize {
+                self.check_login_call_count.load(Ordering::SeqCst)
+            }
+        }
+
+        #[async_trait]
+        impl AnomalyDetector for MockAnomalyDetector {
+            async fn check_on_login(
+                &self,
+                _login_id: &str,
+                _device_id: &str,
+                _ip: Option<&str>,
+            ) -> BulwarkResult<Vec<SecurityAlertEvent>> {
+                self.login_call_count.fetch_add(1, Ordering::SeqCst);
+                if self.fail_on_login {
+                    return Err(BulwarkError::Internal(
+                        "mock login detection 失败".to_string(),
+                    ));
+                }
+                Ok(self.login_events.lock().clone())
+            }
+
+            async fn check_on_check_login(
+                &self,
+                _login_id: &str,
+                _token: &str,
+            ) -> BulwarkResult<Vec<SecurityAlertEvent>> {
+                self.check_login_call_count.fetch_add(1, Ordering::SeqCst);
+                if self.fail_on_check_login {
+                    return Err(BulwarkError::Internal(
+                        "mock check_login detection 失败".to_string(),
+                    ));
+                }
+                Ok(self.check_login_events.lock().clone())
+            }
+        }
+
+        // --------------------------------------------------------------------
+        // CountingAlertListener：记录接收到的告警事件
+        // --------------------------------------------------------------------
+
+        struct CountingAlertListener {
+            received: Mutex<Vec<SecurityAlertEvent>>,
+        }
+
+        impl CountingAlertListener {
+            fn new() -> Self {
+                Self {
+                    received: Mutex::new(Vec::new()),
+                }
+            }
+
+            fn count(&self) -> usize {
+                self.received.lock().len()
+            }
+
+            fn events(&self) -> Vec<SecurityAlertEvent> {
+                self.received.lock().clone()
+            }
+        }
+
+        #[async_trait]
+        impl AlertListener for CountingAlertListener {
+            async fn on_alert(&self, event: &SecurityAlertEvent) -> BulwarkResult<()> {
+                self.received.lock().push(event.clone());
+                Ok(())
+            }
+        }
+
+        // --------------------------------------------------------------------
+        // 辅助函数
+        // --------------------------------------------------------------------
+
+        /// 创建带异常检测器的 BulwarkLogicDefault。
+        fn make_logic_with_anomaly(
+            detector: Arc<dyn AnomalyDetector>,
+            listener_manager: Arc<AlertListenerManager>,
+        ) -> BulwarkLogicDefault {
+            let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+            let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
+            let mut config = BulwarkConfig::default_config();
+            config.throw_on_not_login = false;
+            config.token_style = "uuid".to_string();
+            let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall);
+            BulwarkLogicDefault::new(session, Arc::new(config), firewall)
+                .with_anomaly_detector(detector)
+                .with_alert_listener_manager(listener_manager)
+        }
+
+        /// 创建不带检测器的 BulwarkLogicDefault（向后兼容测试用）。
+        fn make_logic_without_anomaly() -> BulwarkLogicDefault {
+            let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+            let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
+            let mut config = BulwarkConfig::default_config();
+            config.throw_on_not_login = false;
+            config.token_style = "uuid".to_string();
+            let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall);
+            BulwarkLogicDefault::new(session, Arc::new(config), firewall)
+        }
+
+        fn sample_anomaly_event(login_id: &str) -> SecurityAlertEvent {
+            SecurityAlertEvent::AnomalyLogin {
+                login_id: login_id.to_string(),
+                anomaly_type: AnomalyType::IpChanged,
+                detail: "IP 变化检测".to_string(),
+                trace_id: "trace-t006".to_string(),
+            }
+        }
+
+        // --------------------------------------------------------------------
+        // 6 个集成测试
+        // --------------------------------------------------------------------
+
+        /// login 时 detector 返回告警事件，验证 broadcast 被调用。
+        #[tokio::test]
+        async fn test_login_triggers_anomaly_alert() {
+            let listener = Arc::new(CountingAlertListener::new());
+            let manager = Arc::new(AlertListenerManager::new());
+            manager.add_listener(listener.clone() as Arc<dyn AlertListener>);
+            let detector = Arc::new(MockAnomalyDetector::with_login_event(sample_anomaly_event(
+                "1001",
+            )));
+            let logic = make_logic_with_anomaly(detector.clone(), manager);
+
+            let token = logic
+                .login("1001", &LoginParams::default())
+                .await
+                .expect("login 应成功");
+
+            assert!(!token.is_empty(), "login 应返回非空 token");
+            assert_eq!(detector.login_calls(), 1, "check_on_login 应被调用 1 次");
+            assert_eq!(listener.count(), 1, "应广播 1 个告警事件");
+            let events = listener.events();
+            assert!(
+                matches!(&events[0], SecurityAlertEvent::AnomalyLogin { login_id, .. } if login_id == "1001"),
+                "广播的事件应为 AnomalyLogin(login_id=1001)"
+            );
+        }
+
+        /// check_login 时 detector 返回告警事件，验证 broadcast 被调用。
+        #[tokio::test]
+        async fn test_check_login_triggers_anomaly_alert() {
+            let listener = Arc::new(CountingAlertListener::new());
+            let manager = Arc::new(AlertListenerManager::new());
+            manager.add_listener(listener.clone() as Arc<dyn AlertListener>);
+            let detector = Arc::new(MockAnomalyDetector::with_check_login_event(
+                sample_anomaly_event("1001"),
+            ));
+            let logic = Arc::new(make_logic_with_anomaly(detector.clone(), manager));
+
+            let token = logic.login("1001", &LoginParams::default()).await.unwrap();
+
+            let valid =
+                with_current_token(token, async { logic.check_login().await.unwrap() }).await;
+
+            assert!(valid, "check_login 应返回 true（有效 token）");
+            assert_eq!(
+                detector.check_login_calls(),
+                1,
+                "check_on_check_login 应被调用 1 次"
+            );
+            assert_eq!(listener.count(), 1, "应广播 1 个告警事件");
+        }
+
+        /// detector 返回 Err，login 仍成功返回 token。
+        #[tokio::test]
+        async fn test_login_detection_failure_does_not_interrupt() {
+            let listener = Arc::new(CountingAlertListener::new());
+            let manager = Arc::new(AlertListenerManager::new());
+            manager.add_listener(listener.clone() as Arc<dyn AlertListener>);
+            let detector = Arc::new(MockAnomalyDetector::failing_on_login());
+            let logic = make_logic_with_anomaly(detector.clone(), manager);
+
+            let token = logic
+                .login("1001", &LoginParams::default())
+                .await
+                .expect("检测失败时 login 仍应成功");
+
+            assert!(!token.is_empty(), "login 应返回非空 token");
+            assert_eq!(detector.login_calls(), 1, "check_on_login 应被调用 1 次");
+            assert_eq!(listener.count(), 0, "检测失败时不应广播事件");
+        }
+
+        /// detector 返回 Err，check_login 仍返回原结果。
+        #[tokio::test]
+        async fn test_check_login_detection_failure_does_not_interrupt() {
+            let listener = Arc::new(CountingAlertListener::new());
+            let manager = Arc::new(AlertListenerManager::new());
+            manager.add_listener(listener.clone() as Arc<dyn AlertListener>);
+            let detector = Arc::new(MockAnomalyDetector::failing_on_check_login());
+            let logic = Arc::new(make_logic_with_anomaly(detector.clone(), manager));
+
+            let token = logic.login("1001", &LoginParams::default()).await.unwrap();
+
+            let valid =
+                with_current_token(token, async { logic.check_login().await.unwrap() }).await;
+
+            assert!(valid, "检测失败时 check_login 仍应返回 true");
+            assert_eq!(
+                detector.check_login_calls(),
+                1,
+                "check_on_check_login 应被调用 1 次"
+            );
+            assert_eq!(listener.count(), 0, "检测失败时不应广播事件");
+        }
+
+        /// 未注入 detector 时 login 正常工作（向后兼容）。
+        #[tokio::test]
+        async fn test_login_without_detector_backward_compatible() {
+            let logic = make_logic_without_anomaly();
+            let token = logic
+                .login("1001", &LoginParams::default())
+                .await
+                .expect("未注入 detector 时 login 应正常工作");
+            assert!(!token.is_empty(), "login 应返回非空 token");
+
+            let ts = logic
+                .session
+                .get_token_session(&token)
+                .await
+                .unwrap()
+                .expect("会话应已创建");
+            assert_eq!(ts.login_id, "1001");
+        }
+
+        /// 未注入 detector 时 check_login 正常工作（向后兼容）。
+        #[tokio::test]
+        async fn test_check_login_without_detector_backward_compatible() {
+            let logic = Arc::new(make_logic_without_anomaly());
+            let token = logic.login("1001", &LoginParams::default()).await.unwrap();
+
+            let valid =
+                with_current_token(token, async { logic.check_login().await.unwrap() }).await;
+
+            assert!(valid, "未注入 detector 时 check_login 应返回 true");
+        }
     }
 }
