@@ -9,14 +9,17 @@
 //!
 //! 三种内置实现：
 //! - [`StrictBinding`]：新设备强制二级认证（T010）
-//! - `LooseBinding`：新设备仅告警不阻断（T011）
+//! - [`LooseBinding`]：新设备仅告警不阻断（T011）
 //! - `Disabled`：完全禁用设备绑定（T012）
 //!
 //! 此模块仅在启用 `device-binding` 特性时编译（依赖 `security-alert`）。
 
+/// 宽松绑定策略实现模块（T011）。
+pub mod loose;
 /// 严格绑定策略实现模块（T010）。
 pub mod strict;
 
+pub use loose::LooseBinding;
 pub use strict::StrictBinding;
 
 use crate::error::BulwarkResult;
