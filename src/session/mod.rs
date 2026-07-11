@@ -612,6 +612,65 @@ impl BulwarkSession {
             .unwrap_or_default()
     }
 
+    /// 清理 `login_token_map` 中已过期或已注销的 token。
+    ///
+    /// 遍历内存索引中所有 login_id 的 token 列表，对每个 token 调用
+    /// [`get_token_session`](Self::get_token_session) 检查存在性与过期状态：
+    /// - `Ok(None)`：token session 不存在（已注销）或已过期 → 从列表中移除
+    /// - `Ok(Some(_))`：token 仍有效 → 保留
+    /// - `Err(e)`：DAO 读取错误 → 透传错误
+    ///
+    /// 若某个 login_id 的 token 列表清理后变空，移除该 login_id 的整个 entry
+    ///（与 [`remove_login_token`](Self::remove_login_token) 行为一致）。
+    ///
+    /// # 返回
+    /// 清理的 token 总数。
+    ///
+    /// # 错误
+    /// DAO 读取失败时透传 `BulwarkError`。
+    pub async fn cleanup_expired_tokens(&self) -> BulwarkResult<usize> {
+        let mut removed = 0usize;
+        // 先收集所有 login_id，避免在 await 期间持有 DashMap 读锁
+        let login_ids: Vec<String> = self
+            .login_token_map
+            .iter()
+            .map(|r| r.key().clone())
+            .collect();
+
+        for login_id in login_ids {
+            // 快照当前 login_id 的 token 列表
+            let tokens: Vec<String> = match self.login_token_map.get(&login_id) {
+                Some(t) => t.clone(),
+                None => continue, // entry 已被并发移除
+            };
+
+            // 逐个检查 token 的存活性（get_token_session 会处理过期清理与回调）
+            let mut expired: Vec<String> = Vec::new();
+            for token in &tokens {
+                if self.get_token_session(token).await?.is_none() {
+                    expired.push(token.clone());
+                }
+            }
+
+            if expired.is_empty() {
+                continue; // 无需更新
+            }
+
+            removed += expired.len();
+            // 同步移除过期 token（持有 DashMap 写锁的时间极短）
+            // 使用 retain 保留并发期间新增的 token
+            if let Some(mut entry) = self.login_token_map.get_mut(&login_id) {
+                entry.retain(|x| !expired.contains(x));
+                if entry.is_empty() {
+                    drop(entry); // 释放写锁后再 remove，避免死锁
+                    self.login_token_map.remove(&login_id);
+                }
+            }
+        }
+
+        Ok(removed)
+    }
+
     /// 设置 Token-Session 自定义属性。
     ///
     ///
@@ -2499,5 +2558,144 @@ mod tests {
             session.get_token_by_login_id("user3").is_none(),
             "entry 已移除，应返回 None"
         );
+    }
+
+    // ------------------------------------------------------------------------
+    // cleanup_expired_tokens：清理 login_token_map 中的过期/已注销 token
+    // ------------------------------------------------------------------------
+
+    /// 验证 `login_token_map` 为空时 `cleanup_expired_tokens` 返回 0。
+    #[tokio::test]
+    async fn cleanup_expired_tokens_no_tokens_returns_zero() {
+        let (_dao, session) = make_session(3600, 86400);
+        let removed = session.cleanup_expired_tokens().await.unwrap();
+        assert_eq!(removed, 0, "无 token 时应返回 0");
+    }
+
+    /// 验证 `cleanup_expired_tokens` 清理已过期的 token（session 级过期）。
+    #[tokio::test]
+    async fn cleanup_expired_tokens_removes_expired() {
+        let (dao, session) = make_session(3600, 86400);
+        session.create("1001", "T1").await.unwrap();
+        // 模拟 token session 过期（last_active_at 早于 timeout 之前）
+        expire_token_session_in_dao(&dao, "T1", 3600).await;
+
+        let removed = session.cleanup_expired_tokens().await.unwrap();
+        assert_eq!(removed, 1, "应清理 1 个过期 token");
+        // login_token_map 中该 login_id 的 entry 应被移除（列表变空）
+        assert!(
+            session.get_token_by_login_id("1001").is_none(),
+            "清理后 login_id entry 应被移除"
+        );
+    }
+
+    /// 验证 `cleanup_expired_tokens` 清理已注销的 token（token session 不存在）。
+    #[tokio::test]
+    async fn cleanup_expired_tokens_removes_logged_out() {
+        let (dao, session) = make_session(3600, 86400);
+        session.create("1001", "T1").await.unwrap();
+        // 直接从 DAO 删除 token session（模拟 oxcache TTL 过期或外部删除，不经过 logout）
+        dao.delete(&token_key("T1")).await.unwrap();
+
+        let removed = session.cleanup_expired_tokens().await.unwrap();
+        assert_eq!(removed, 1, "应清理 1 个已注销 token");
+        assert!(
+            session.get_token_by_login_id("1001").is_none(),
+            "清理后 login_id entry 应被移除"
+        );
+    }
+
+    /// 验证 `cleanup_expired_tokens` 保留有效的 token。
+    #[tokio::test]
+    async fn cleanup_expired_tokens_keeps_valid() {
+        let (_dao, session) = make_session(3600, 86400);
+        session.create("1001", "T1").await.unwrap();
+
+        let removed = session.cleanup_expired_tokens().await.unwrap();
+        assert_eq!(removed, 0, "有效 token 不应被清理");
+        // token 仍在 login_token_map 中
+        let tokens = session.get_tokens_by_login_id("1001");
+        assert_eq!(tokens, vec!["T1".to_string()], "有效 token 应保留");
+        // token session 仍可访问
+        assert!(session.get_token_session("T1").await.unwrap().is_some());
+    }
+
+    /// 验证 `cleanup_expired_tokens` 处理多 login_id 混合场景（一个过期，一个有效）。
+    #[tokio::test]
+    async fn cleanup_expired_tokens_multi_login_id_mixed() {
+        let (dao, session) = make_session(3600, 86400);
+        session.create("1001", "T1").await.unwrap();
+        session.create("2002", "T2").await.unwrap();
+        // 让 T1 过期，T2 保持有效
+        expire_token_session_in_dao(&dao, "T1", 3600).await;
+
+        let removed = session.cleanup_expired_tokens().await.unwrap();
+        assert_eq!(removed, 1, "应清理 1 个过期 token");
+        // 1001 的 entry 应被移除（列表变空）
+        assert!(
+            session.get_token_by_login_id("1001").is_none(),
+            "1001 的 entry 应被移除"
+        );
+        // 2002 的 token 应保留
+        let tokens = session.get_tokens_by_login_id("2002");
+        assert_eq!(tokens, vec!["T2".to_string()], "2002 的有效 token 应保留");
+    }
+
+    /// 验证 `cleanup_expired_tokens` 在所有 token 都过期时清理全部。
+    #[tokio::test]
+    async fn cleanup_expired_tokens_all_expired_cleans_all() {
+        let (dao, session) = make_session(3600, 86400);
+        session.create("1001", "T1").await.unwrap();
+        session.create("1001", "T2").await.unwrap();
+        // 让两个 token 都过期
+        expire_token_session_in_dao(&dao, "T1", 3600).await;
+        expire_token_session_in_dao(&dao, "T2", 3600).await;
+
+        let removed = session.cleanup_expired_tokens().await.unwrap();
+        assert_eq!(removed, 2, "应清理 2 个过期 token");
+        assert!(
+            session.get_token_by_login_id("1001").is_none(),
+            "全部清理后 entry 应被移除"
+        );
+    }
+
+    /// 验证 `cleanup_expired_tokens` 在部分过期时只清理过期的，保留有效的。
+    #[tokio::test]
+    async fn cleanup_expired_tokens_partial_expired() {
+        let (dao, session) = make_session(3600, 86400);
+        session.create("1001", "T1").await.unwrap();
+        session.create("1001", "T2").await.unwrap();
+        // 让 T1 过期，T2 保持有效
+        expire_token_session_in_dao(&dao, "T1", 3600).await;
+
+        let removed = session.cleanup_expired_tokens().await.unwrap();
+        assert_eq!(removed, 1, "应清理 1 个过期 token");
+        // entry 应保留，但只剩 T2
+        let tokens = session.get_tokens_by_login_id("1001");
+        assert_eq!(tokens, vec!["T2".to_string()], "应只剩有效的 T2");
+    }
+
+    /// 验证 `cleanup_expired_tokens` 返回正确的清理总数（多 login_id 多 token）。
+    #[tokio::test]
+    async fn cleanup_expired_tokens_returns_correct_count() {
+        let (dao, session) = make_session(3600, 86400);
+        // 1001: T1 过期, T2 有效
+        session.create("1001", "T1").await.unwrap();
+        session.create("1001", "T2").await.unwrap();
+        // 2002: T3 过期, T4 有效
+        session.create("2002", "T3").await.unwrap();
+        session.create("2002", "T4").await.unwrap();
+        // 让 T1 和 T3 过期
+        expire_token_session_in_dao(&dao, "T1", 3600).await;
+        expire_token_session_in_dao(&dao, "T3", 3600).await;
+
+        let removed = session.cleanup_expired_tokens().await.unwrap();
+        assert_eq!(removed, 2, "应清理 2 个过期 token（T1 + T3）");
+        // 1001 应只剩 T2
+        let tokens_1001 = session.get_tokens_by_login_id("1001");
+        assert_eq!(tokens_1001, vec!["T2".to_string()]);
+        // 2002 应只剩 T4
+        let tokens_2002 = session.get_tokens_by_login_id("2002");
+        assert_eq!(tokens_2002, vec!["T4".to_string()]);
     }
 }
