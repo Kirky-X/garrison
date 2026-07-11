@@ -3701,6 +3701,7 @@ async fn login_auto_generates_device_fingerprint() {
         ip: Some("192.168.1.100".to_string()),
         user_agent: Some("Mozilla/5.0 Chrome".to_string()),
         remember_me: false,
+        require_mfa: false,
     };
 
     let token = logic

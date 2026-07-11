@@ -409,7 +409,8 @@ impl BulwarkLogicDefault {
                 feature = "protocol-sso",
                 feature = "protocol-sign",
                 feature = "secure-sign",
-                feature = "secure-httpdigest"
+                feature = "secure-httpdigest",
+                feature = "device-binding"
             )),
             allow(unused_mut)
         )]
@@ -426,6 +427,35 @@ impl BulwarkLogicDefault {
         if params.device.is_none() {
             if let (Some(ua), Some(ip)) = (&params.user_agent, &params.ip) {
                 params.device = Some(crate::session::device::device_fingerprint(ua, ip));
+            }
+        }
+
+        // T013: 设备绑定策略检测（device-binding feature）。
+        // 创建 session 前调用 `DeviceBindingPolicy::is_new_device`，若为新设备
+        // 且 `require_secondary_auth` 返回 true，设置 `params.require_mfa = true`。
+        // 未注入 policy 时跳过（向后兼容）；检测失败只 warn 不中断 login。
+        #[cfg(feature = "device-binding")]
+        if let Some(policy) = &self.device_binding_policy {
+            let device_id = params.device.as_deref().unwrap_or("");
+            if !device_id.is_empty() {
+                match policy.is_new_device(login_id, device_id).await {
+                    Ok(true) => match policy.require_secondary_auth(login_id, device_id).await {
+                        Ok(true) => {
+                            tracing::info!(login_id, device_id, "设备绑定策略触发二级认证要求");
+                            params.require_mfa = true;
+                        },
+                        Ok(false) => {},
+                        Err(e) => tracing::warn!(
+                            error = %e,
+                            "DeviceBindingPolicy::require_secondary_auth 失败"
+                        ),
+                    },
+                    Ok(false) => {},
+                    Err(e) => tracing::warn!(
+                        error = %e,
+                        "DeviceBindingPolicy::is_new_device 失败"
+                    ),
+                }
             }
         }
 
@@ -1382,6 +1412,297 @@ mod tests {
                 with_current_token(token, async { logic.check_login().await.unwrap() }).await;
 
             assert!(valid, "未注入 detector 时 check_login 应返回 true");
+        }
+    }
+
+    // ========================================================================
+    // T013: DeviceBindingPolicy 集成测试（device-binding feature）
+    // ========================================================================
+
+    #[cfg(feature = "device-binding")]
+    mod device_binding_integration {
+        use super::*;
+        use crate::config::BulwarkConfig;
+        use crate::dao::tests::MockDao;
+        use crate::session::BulwarkSession;
+        use crate::strategy::alert::{AlertListener, AlertListenerManager, SecurityAlertEvent};
+        use crate::strategy::device_binding::{Disabled, LooseBinding, StrictBinding};
+        use crate::strategy::BulwarkPermissionStrategy;
+        use async_trait::async_trait;
+        use parking_lot::Mutex;
+        use std::sync::Arc;
+
+        // --------------------------------------------------------------------
+        // MockFirewall：no-op 权限策略，允许所有登录
+        // --------------------------------------------------------------------
+
+        struct MockFirewall;
+
+        #[async_trait]
+        impl BulwarkPermissionStrategy for MockFirewall {
+            async fn get_permission_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
+                Ok(vec![])
+            }
+            async fn get_role_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
+                Ok(vec![])
+            }
+            async fn check_permission(
+                &self,
+                _login_id: &str,
+                _permission: &str,
+            ) -> BulwarkResult<bool> {
+                Ok(true)
+            }
+            async fn check_role(&self, _login_id: &str, _role: &str) -> BulwarkResult<bool> {
+                Ok(true)
+            }
+            async fn check_role_any(
+                &self,
+                _login_id: &str,
+                _roles: &[&str],
+            ) -> BulwarkResult<bool> {
+                Ok(true)
+            }
+            async fn check_role_all(
+                &self,
+                _login_id: &str,
+                _roles: &[&str],
+            ) -> BulwarkResult<bool> {
+                Ok(true)
+            }
+        }
+
+        // --------------------------------------------------------------------
+        // CountingAlertListener：记录接收到的告警事件
+        // --------------------------------------------------------------------
+
+        struct CountingAlertListener {
+            received: Mutex<Vec<SecurityAlertEvent>>,
+        }
+
+        impl CountingAlertListener {
+            fn new() -> Self {
+                Self {
+                    received: Mutex::new(Vec::new()),
+                }
+            }
+
+            fn count(&self) -> usize {
+                self.received.lock().len()
+            }
+
+            fn events(&self) -> Vec<SecurityAlertEvent> {
+                self.received.lock().clone()
+            }
+        }
+
+        #[async_trait]
+        impl AlertListener for CountingAlertListener {
+            async fn on_alert(&self, event: &SecurityAlertEvent) -> BulwarkResult<()> {
+                self.received.lock().push(event.clone());
+                Ok(())
+            }
+        }
+
+        // --------------------------------------------------------------------
+        // 辅助函数
+        // --------------------------------------------------------------------
+
+        /// 创建带 MockDao 的 BulwarkLogicDefault（无设备绑定策略，供测试自定义注入）。
+        fn make_logic_base() -> BulwarkLogicDefault {
+            let dao: Arc<MockDao> = Arc::new(MockDao::new());
+            let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
+            let mut config = BulwarkConfig::default_config();
+            config.throw_on_not_login = false;
+            config.token_style = "uuid".to_string();
+            let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall);
+            BulwarkLogicDefault::new(session, Arc::new(config), firewall)
+        }
+
+        // --------------------------------------------------------------------
+        // 6 个集成测试
+        // --------------------------------------------------------------------
+
+        /// strict 模式下新设备 login 触发 MFA 标记（policy.is_new_device=true +
+        /// require_secondary_auth=true → params.require_mfa=true），login 仍成功。
+        #[tokio::test]
+        async fn test_strict_mode_new_device_triggers_mfa() {
+            let logic = make_logic_base();
+            // 注入 StrictBinding（共享 logic.session，检测历史 session）
+            let policy = Arc::new(StrictBinding::new(logic.session.clone()));
+            let logic = logic.with_device_binding_policy(policy);
+
+            // 无历史 session → is_new_device=true → require_secondary_auth=true
+            let params = LoginParams {
+                device: Some("web-chrome".to_string()),
+                ..Default::default()
+            };
+            let token = logic
+                .login("1001", &params)
+                .await
+                .expect("strict 模式新设备 login 应成功（设置 require_mfa 标记但不阻断）");
+
+            assert!(!token.is_empty(), "login 应返回非空 token");
+            // 验证 session 已创建
+            let ts = logic
+                .session
+                .get_token_session(&token)
+                .await
+                .unwrap()
+                .expect("会话应已创建");
+            assert_eq!(ts.login_id, "1001");
+            assert_eq!(ts.device.as_deref(), Some("web-chrome"));
+        }
+
+        /// strict 模式下旧设备 login 不触发 MFA（policy.is_new_device=false →
+        /// require_secondary_auth 不调用 → params.require_mfa=false）。
+        #[tokio::test]
+        async fn test_strict_mode_old_device_no_mfa() {
+            let logic = make_logic_base();
+            // 预创建带 device="web-chrome" 的历史 session
+            let pre_params = LoginParams {
+                device: Some("web-chrome".to_string()),
+                ..Default::default()
+            };
+            logic
+                .session
+                .create_token_session("1001", "pre-token-T2", &pre_params)
+                .await
+                .unwrap();
+
+            // 注入 StrictBinding
+            let policy = Arc::new(StrictBinding::new(logic.session.clone()));
+            let logic = logic.with_device_binding_policy(policy);
+
+            // 用同一 device 登录 → is_new_device=false → require_mfa 不触发
+            let params = LoginParams {
+                device: Some("web-chrome".to_string()),
+                ..Default::default()
+            };
+            let token = logic
+                .login("1001", &params)
+                .await
+                .expect("strict 模式旧设备 login 应成功");
+
+            assert!(!token.is_empty(), "login 应返回非空 token");
+            assert_ne!(token, "pre-token-T2", "应创建新 token（is_share=false）");
+            // 验证新 session 已创建
+            let ts = logic
+                .session
+                .get_token_session(&token)
+                .await
+                .unwrap()
+                .expect("新会话应已创建");
+            assert_eq!(ts.device.as_deref(), Some("web-chrome"));
+        }
+
+        /// loose 模式下新设备 login 广播告警但不阻断（require_secondary_auth=false →
+        /// params.require_mfa=false），AlertListener 收到 NewDeviceLogin 事件。
+        #[tokio::test]
+        async fn test_loose_mode_new_device_alerts_no_block() {
+            let listener = Arc::new(CountingAlertListener::new());
+            let manager = Arc::new(AlertListenerManager::new());
+            manager.add_listener(listener.clone() as Arc<dyn AlertListener>);
+
+            let logic = make_logic_base();
+            // 注入 LooseBinding（带告警管理器）
+            let policy = Arc::new(LooseBinding::with_alert_manager(
+                logic.session.clone(),
+                manager,
+            ));
+            let logic = logic.with_device_binding_policy(policy);
+
+            // 无历史 session → is_new_device=true → require_secondary_auth 广播告警 + 返回 false
+            let params = LoginParams {
+                device: Some("mobile-ios".to_string()),
+                ..Default::default()
+            };
+            let token = logic
+                .login("1001", &params)
+                .await
+                .expect("loose 模式新设备 login 应成功（不阻断）");
+
+            assert!(!token.is_empty(), "login 应返回非空 token");
+            // 验证告警已广播
+            assert_eq!(
+                listener.count(),
+                1,
+                "loose 模式新设备应广播 1 次 NewDeviceLogin 告警"
+            );
+            let events = listener.events();
+            match &events[0] {
+                SecurityAlertEvent::NewDeviceLogin {
+                    login_id,
+                    device_id,
+                    ..
+                } => {
+                    assert_eq!(login_id, "1001");
+                    assert_eq!(device_id, "mobile-ios");
+                },
+                other => panic!("期望 NewDeviceLogin 事件，实际: {:?}", other),
+            }
+        }
+
+        /// disabled 模式下任何设备 login 不受影响（is_new_device=false →
+        /// require_secondary_auth 不调用 → params.require_mfa=false）。
+        #[tokio::test]
+        async fn test_disabled_mode_no_impact() {
+            let logic = make_logic_base();
+            let policy = Arc::new(Disabled);
+            let logic = logic.with_device_binding_policy(policy);
+
+            let params = LoginParams {
+                device: Some("any-device".to_string()),
+                ..Default::default()
+            };
+            let token = logic
+                .login("1001", &params)
+                .await
+                .expect("disabled 模式 login 应成功");
+
+            assert!(!token.is_empty(), "login 应返回非空 token");
+            let ts = logic
+                .session
+                .get_token_session(&token)
+                .await
+                .unwrap()
+                .expect("会话应已创建");
+            assert_eq!(ts.login_id, "1001");
+        }
+
+        /// 未注入 policy 时 login 正常工作（向后兼容），params.require_mfa=false。
+        #[tokio::test]
+        async fn test_no_policy_backward_compatible() {
+            let logic = make_logic_base();
+            // 不注入 device_binding_policy
+
+            let params = LoginParams {
+                device: Some("web-chrome".to_string()),
+                ..Default::default()
+            };
+            let token = logic
+                .login("1001", &params)
+                .await
+                .expect("未注入 policy 时 login 应正常工作");
+
+            assert!(!token.is_empty(), "login 应返回非空 token");
+            let ts = logic
+                .session
+                .get_token_session(&token)
+                .await
+                .unwrap()
+                .expect("会话应已创建");
+            assert_eq!(ts.login_id, "1001");
+        }
+
+        /// LoginParams::default().require_mfa 默认为 false。
+        #[test]
+        fn test_require_mfa_default_false() {
+            let params = LoginParams::default();
+            assert!(
+                !params.require_mfa,
+                "LoginParams::default().require_mfa 应为 false"
+            );
         }
     }
 }

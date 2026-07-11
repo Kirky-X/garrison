@@ -2414,6 +2414,7 @@ mod tests {
             ip: Some("192.168.1.100".to_string()),
             user_agent: Some("Mozilla/5.0".to_string()),
             remember_me: false,
+            require_mfa: false,
         };
         session
             .create_token_session("1001", "T1", &params)

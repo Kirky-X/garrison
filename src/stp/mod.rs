@@ -61,7 +61,7 @@ pub use self::util::{BulwarkUtil, JwtMode};
 /// 登录参数（v0.6.3 新增）。
 ///
 /// 封装登录时的可选元数据，传递给 `SessionLogic::login`。
-/// [借鉴 Sa-Token] 对应 Sa-Token 的 `SaLoginParameter`，但简化为 4 个字段。
+/// [借鉴 Sa-Token] 对应 Sa-Token 的 `SaLoginParameter`，但简化为 5 个字段。
 ///
 /// # 字段
 ///
@@ -69,6 +69,7 @@ pub use self::util::{BulwarkUtil, JwtMode};
 /// - `ip`: 客户端 IP 地址，写入 `TokenSession.ip`
 /// - `user_agent`: 客户端 User-Agent，写入 `TokenSession.user_agent`
 /// - `remember_me`: 是否启用记住我（延长 Token 有效期至 `remember_me_timeout`）
+/// - `require_mfa`: 是否要求二级认证（由 `DeviceBindingPolicy` 在 login 流程中设置，v0.6.5 新增）
 ///
 /// # 用法
 ///
@@ -84,6 +85,7 @@ pub use self::util::{BulwarkUtil, JwtMode};
 ///     ip: Some("192.168.1.1".to_string()),
 ///     user_agent: Some("Mozilla/5.0".to_string()),
 ///     remember_me: false,
+///     require_mfa: false,
 /// };
 /// let token = logic.login("user-1", &params).await?;
 /// ```
@@ -97,6 +99,11 @@ pub struct LoginParams {
     pub user_agent: Option<String>,
     /// 是否启用记住我（延长 Token 有效期）。
     pub remember_me: bool,
+    /// 是否要求二级认证（v0.6.5 新增）。
+    ///
+    /// 由 `DeviceBindingPolicy` 在 login 流程中设置：strict 模式下新设备登录时置为 `true`，
+    /// 业务方可在登录后检查此标记触发 MFA 流程。默认 `false`（向后兼容）。
+    pub require_mfa: bool,
 }
 
 // 原 `BulwarkLogic` 上帝 trait（21 个方法）已彻底删除。
@@ -263,6 +270,13 @@ pub struct BulwarkLogicDefault {
     /// 需启用 `security-alert` feature。未注入时异常事件不广播（向后兼容）。
     #[cfg(feature = "security-alert")]
     pub(crate) alert_listener_manager: Option<Arc<crate::strategy::alert::AlertListenerManager>>,
+    /// 设备绑定策略（可选，注入后 login 流程检测新设备并设置 `require_mfa` 标记）。
+    ///
+    /// 需启用 `device-binding` feature。未注入时跳过检测（向后兼容）。
+    /// 检测失败只 `tracing::warn!` 不中断 login。
+    #[cfg(feature = "device-binding")]
+    pub(crate) device_binding_policy:
+        Option<Arc<dyn crate::strategy::device_binding::DeviceBindingPolicy>>,
 }
 
 impl BulwarkLogicDefault {
@@ -304,6 +318,8 @@ impl BulwarkLogicDefault {
             anomaly_detectors: None,
             #[cfg(feature = "security-alert")]
             alert_listener_manager: None,
+            #[cfg(feature = "device-binding")]
+            device_binding_policy: None,
         }
     }
 
@@ -458,6 +474,21 @@ impl BulwarkLogicDefault {
         manager: Arc<crate::strategy::alert::AlertListenerManager>,
     ) -> Self {
         self.alert_listener_manager = Some(manager);
+        self
+    }
+
+    /// 注入设备绑定策略（builder 模式，需启用 `device-binding` feature）。
+    ///
+    /// 注入后 `login` 流程在创建 session 前调用 `DeviceBindingPolicy::is_new_device`
+    /// + `require_secondary_auth`，新设备且要求二级认证时设置 `LoginParams.require_mfa = true`。
+    ///
+    /// 未注入时跳过检测（向后兼容）。检测失败只 `tracing::warn!` 不中断 login。
+    #[cfg(feature = "device-binding")]
+    pub fn with_device_binding_policy(
+        mut self,
+        policy: Arc<dyn crate::strategy::device_binding::DeviceBindingPolicy>,
+    ) -> Self {
+        self.device_binding_policy = Some(policy);
         self
     }
 
