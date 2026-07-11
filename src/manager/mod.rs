@@ -146,6 +146,11 @@ impl BulwarkManager {
         };
         let session = Arc::new(BulwarkSession::new(dao.clone(), timeout, active_timeout));
 
+        // T030: 先 abort 旧 cleanup task 再 spawn 新 task，避免短暂重叠窗口
+        if let Some(old) = BULWARK_MANAGER.cleanup_task_handle.write().take() {
+            old.abort();
+        }
+
         // T030: 启动后台 cleanup task（interval_secs <= 0 时返回 None，不启动）
         let cleanup_handle =
             spawn_cleanup_task(session.clone(), config.token_map_cleanup_interval_secs);
@@ -224,10 +229,7 @@ impl BulwarkManager {
         *BULWARK_MANAGER.logic.write() = Some(logic);
         *BULWARK_MANAGER.strategy.write() = Some(strategy);
 
-        // T030: 保存 cleanup task handle（先 abort 旧 task，支持重复 init）
-        if let Some(old) = BULWARK_MANAGER.cleanup_task_handle.write().take() {
-            old.abort();
-        }
+        // T030: 保存新 cleanup task handle（旧 task 已在上方 abort）
         *BULWARK_MANAGER.cleanup_task_handle.write() = cleanup_handle;
 
         Ok(())
