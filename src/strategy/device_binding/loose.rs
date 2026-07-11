@@ -69,24 +69,7 @@ impl LooseBinding {
 #[async_trait]
 impl DeviceBindingPolicy for LooseBinding {
     async fn is_new_device(&self, login_id: &str, device_id: &str) -> BulwarkResult<bool> {
-        // 空设备标识不视为新设备（与 StrictBinding 一致）
-        if device_id.is_empty() {
-            return Ok(false);
-        }
-
-        let tokens = self.session.get_tokens_by_login_id(login_id);
-        if tokens.is_empty() {
-            return Ok(true);
-        }
-
-        for token in &tokens {
-            if let Some(ts) = self.session.get_token_session(token).await? {
-                if ts.device.as_deref() == Some(device_id) {
-                    return Ok(false);
-                }
-            }
-        }
-        Ok(true)
+        super::check_is_new_device(&self.session, login_id, device_id).await
     }
 
     async fn require_secondary_auth(&self, login_id: &str, device_id: &str) -> BulwarkResult<bool> {

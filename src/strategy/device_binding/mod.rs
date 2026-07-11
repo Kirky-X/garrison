@@ -68,6 +68,47 @@ pub trait DeviceBindingPolicy: Send + Sync {
     async fn require_secondary_auth(&self, login_id: &str, device_id: &str) -> BulwarkResult<bool>;
 }
 
+/// 检查指定 `device_id` 是否为 `login_id` 的新设备。
+///
+/// 通过遍历 `login_id` 的所有 token session，检查是否有 session 的 `device` 字段
+/// 匹配 `device_id`。任一 session 匹配则视为已知设备，全部不匹配则视为新设备。
+///
+/// # 空设备标识
+///
+/// 空 `device_id` 返回 `Ok(false)`（无设备标识不视为新设备），
+/// 避免无设备信息的登录被错误阻断。
+///
+/// # 无历史 session
+///
+/// 无历史 session 时返回 `Ok(true)`（视为新设备）。
+async fn check_is_new_device(
+    session: &crate::session::BulwarkSession,
+    login_id: &str,
+    device_id: &str,
+) -> BulwarkResult<bool> {
+    // 空设备标识不视为新设备（避免无设备信息的登录被错误阻断）
+    if device_id.is_empty() {
+        return Ok(false);
+    }
+
+    let tokens = session.get_tokens_by_login_id(login_id);
+    // 无历史 session 视为新设备
+    if tokens.is_empty() {
+        return Ok(true);
+    }
+
+    // 遍历所有 TokenSession，任一 device 匹配则视为已知设备
+    for token in &tokens {
+        if let Some(ts) = session.get_token_session(token).await? {
+            if ts.device.as_deref() == Some(device_id) {
+                return Ok(false);
+            }
+        }
+    }
+    // 所有 session 的 device 都不匹配 → 新设备
+    Ok(true)
+}
+
 /// 禁用设备绑定策略：完全关闭新设备检测与二级认证。
 ///
 /// `is_new_device` 与 `require_secondary_auth` 均返回 `Ok(false)`，

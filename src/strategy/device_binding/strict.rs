@@ -47,27 +47,7 @@ impl StrictBinding {
 #[async_trait]
 impl DeviceBindingPolicy for StrictBinding {
     async fn is_new_device(&self, login_id: &str, device_id: &str) -> BulwarkResult<bool> {
-        // 空设备标识不视为新设备（避免无设备信息的登录被错误阻断）
-        if device_id.is_empty() {
-            return Ok(false);
-        }
-
-        let tokens = self.session.get_tokens_by_login_id(login_id);
-        // 无历史 session 视为新设备
-        if tokens.is_empty() {
-            return Ok(true);
-        }
-
-        // 遍历所有 TokenSession，任一 device 匹配则视为已知设备
-        for token in &tokens {
-            if let Some(ts) = self.session.get_token_session(token).await? {
-                if ts.device.as_deref() == Some(device_id) {
-                    return Ok(false);
-                }
-            }
-        }
-        // 所有 session 的 device 都不匹配 → 新设备
-        Ok(true)
+        super::check_is_new_device(&self.session, login_id, device_id).await
     }
 
     async fn require_secondary_auth(&self, login_id: &str, device_id: &str) -> BulwarkResult<bool> {
