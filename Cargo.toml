@@ -253,6 +253,11 @@ rate-limit-redis = ["cache-redis"]
 # 依赖 firewall-geoip（CountryLookup）+ firewall-anomalous（GeoLookup）+ maxminddb crate
 firewall-maxminddb = ["dep:maxminddb", "firewall-geoip", "firewall-anomalous"]
 
+# === 安全告警系统 ===
+# 启用后提供 SecurityAlertEvent / AlertListener / AnomalyDetector 抽象，
+# 支持异常登录检测、新设备告警、封禁触发等安全事件广播。
+security-alert = []
+
 # === 社交登录 ===
 # social-wechat：微信扫码登录（WechatProvider），依赖 protocol-oauth2（reqwest HTTP client）
 social-wechat = ["protocol-oauth2"]
@@ -301,6 +306,7 @@ full = [
     "firewall", "firewall-bruteforce", "firewall-ratelimit", "firewall-anomalous",
     "firewall-geoip", "firewall-ddos", "firewall-maxminddb",
     "rate-limit-redis",
+    "security-alert",
     "social-wechat", "social-alipay",
 ]
 

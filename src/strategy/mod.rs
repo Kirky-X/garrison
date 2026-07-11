@@ -30,6 +30,9 @@ use async_trait::async_trait;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+/// 安全告警系统模块（feature-gated: `security-alert`）。
+#[cfg(feature = "security-alert")]
+pub mod alert;
 /// IP 级防火墙策略套件模块。
 #[cfg(feature = "firewall")]
 pub mod firewall;
