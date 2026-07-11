@@ -257,6 +257,9 @@ firewall-maxminddb = ["dep:maxminddb", "firewall-geoip", "firewall-anomalous"]
 # 启用后提供 SecurityAlertEvent / AlertListener / AnomalyDetector 抽象，
 # 支持异常登录检测、新设备告警、封禁触发等安全事件广播。
 security-alert = []
+# 设备绑定策略：依赖 security-alert（LooseBinding 需要广播 NewDeviceLogin 告警事件）。
+# 启用后提供 DeviceBindingPolicy trait 抽象，StrictBinding/LooseBinding/Disabled 由后续任务实现。
+device-binding = ["security-alert"]
 
 # === 社交登录 ===
 # social-wechat：微信扫码登录（WechatProvider），依赖 protocol-oauth2（reqwest HTTP client）
@@ -307,6 +310,7 @@ full = [
     "firewall-geoip", "firewall-ddos", "firewall-maxminddb",
     "rate-limit-redis",
     "security-alert",
+    "device-binding",
     "social-wechat", "social-alipay",
 ]
 
