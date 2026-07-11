@@ -193,6 +193,12 @@ pub struct BulwarkConfig {
     /// 是否在登录后自动写入 Header。
     pub is_write_header: bool,
 
+    /// 是否在续签后将新 Token 写入 Cookie（默认 false）。
+    ///
+    /// 启用后，middleware 检测到 `CURRENT_RENEWED_TOKEN` 时，
+    /// 将续签 Token 作为 Set-Cookie 写入响应（`HttpOnly; Path=/; SameSite=Lax`）。
+    pub is_write_cookie: bool,
+
     /// Token 风格（uuid / random_64 / simple / jwt）。
     pub token_style: String,
 
@@ -312,6 +318,7 @@ impl BulwarkConfig {
             is_read_cookie: true,
             is_read_header: true,
             is_write_header: true,
+            is_write_cookie: false,
             token_style: "uuid".to_string(),
             throw_on_not_login: true,
             cookie_secure: DEFAULT_COOKIE_SECURE,
@@ -363,6 +370,7 @@ impl BulwarkConfig {
             .default("is_read_cookie", ConfigValue::bool(true))
             .default("is_read_header", ConfigValue::bool(true))
             .default("is_write_header", ConfigValue::bool(true))
+            .default("is_write_cookie", ConfigValue::bool(false))
             .default("token_style", ConfigValue::string("uuid"))
             .default("throw_on_not_login", ConfigValue::bool(true))
             .default("cookie_secure", ConfigValue::bool(DEFAULT_COOKIE_SECURE))
@@ -640,6 +648,44 @@ mod tests {
         assert_eq!(config.jwt_algorithm, "HS256");
         assert_eq!(config.sign_window_seconds, 300);
         assert_eq!(config.sso_ticket_ttl_seconds, 60);
+    }
+
+    // ========================================================================
+    // is_write_cookie 配置测试（T016）
+    // ========================================================================
+
+    /// T016: `default_config()` 的 `is_write_cookie` 为 false。
+    #[test]
+    fn default_is_write_cookie_is_false() {
+        let config = BulwarkConfig::default_config();
+        assert!(!config.is_write_cookie, "默认 is_write_cookie 应为 false");
+    }
+
+    /// T016: `default_config()` 的 `is_write_header` 为 true（验证已有字段）。
+    #[test]
+    fn default_is_write_header_is_true() {
+        let config = BulwarkConfig::default_config();
+        assert!(config.is_write_header, "默认 is_write_header 应为 true");
+    }
+
+    /// T016: 可自定义 `is_write_cookie` 为 true。
+    #[test]
+    fn custom_is_write_cookie_can_be_set() {
+        let mut config = BulwarkConfig::default_config();
+        config.is_write_cookie = true;
+        assert!(config.is_write_cookie, "自定义 is_write_cookie=true 应生效");
+        assert!(config.validate().is_ok(), "is_write_cookie=true 应通过校验");
+    }
+
+    /// T016: `is_write_header` 和 `is_write_cookie` 可同时为 true。
+    #[test]
+    fn both_is_write_header_and_is_write_cookie_can_be_true() {
+        let mut config = BulwarkConfig::default_config();
+        config.is_write_header = true;
+        config.is_write_cookie = true;
+        assert!(config.is_write_header, "is_write_header 应为 true");
+        assert!(config.is_write_cookie, "is_write_cookie 应为 true");
+        assert!(config.validate().is_ok(), "两者同时为 true 应通过校验");
     }
 
     /// 验证 Default::default() 等价于 default_config()。
@@ -1073,6 +1119,7 @@ jwt_secret = "test-secret""#,
             is_read_cookie: true,
             is_read_header: true,
             is_write_header: true,
+            is_write_cookie: false,
             token_style: "uuid".to_string(),
             throw_on_not_login: true,
             cookie_secure: true,

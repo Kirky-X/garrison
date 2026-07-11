@@ -145,13 +145,15 @@ mod web_axum {
     #[cfg(feature = "tenant-isolation")]
     use crate::context::tenant::TenantResolver;
     use crate::context::BulwarkRequest;
+    use crate::stp::context::{clear_renewed_token, get_renewed_token, with_renewed_token_scope};
     use crate::stp::with_current_token;
     use axum::body::Body;
     use axum::extract::State;
     use axum::handler::Handler;
-    use axum::http::Request;
+    use axum::http::header::SET_COOKIE;
     #[cfg(feature = "tenant-isolation")]
     use axum::http::StatusCode;
+    use axum::http::{HeaderName, HeaderValue, Request};
     use axum::middleware::{from_fn_with_state, Next};
     use axum::response::{IntoResponse, Response};
     use axum::Router;
@@ -331,6 +333,9 @@ mod web_axum {
     /// Bulwark middleware：提取 token → 设置 task_local → 调用 interceptor.pre_handle → 执行 handler。
     ///
     /// 对未匹配任何规则的路径，跳过 `pre_handle` 直接放行（仍设置 task_local 以便 handler 调用 BulwarkUtil）。
+    ///
+    /// 请求结束后，若 `CURRENT_RENEWED_TOKEN` 有值（check_login 自动续签触发），
+    /// 根据 `is_write_header` / `is_write_cookie` 配置将续签 Token 写入响应。
     async fn bulwark_middleware(
         State(state): State<MiddlewareState>,
         req: Request<Body>,
@@ -354,15 +359,43 @@ mod web_axum {
             Ok::<_, BulwarkError>(next.run(req).await)
         };
 
-        let result = match token {
-            Some(t) => with_current_token(t, handle).await,
-            None => handle.await,
-        };
+        let config = state.config.clone();
 
-        match result {
-            Ok(resp) => resp,
-            Err(e) => e.into_response(),
-        }
+        with_renewed_token_scope(async {
+            let result = match token {
+                Some(t) => with_current_token(t, handle).await,
+                None => handle.await,
+            };
+
+            let mut resp = match result {
+                Ok(resp) => resp,
+                Err(e) => e.into_response(),
+            };
+
+            // 检查是否有续签 Token，写入响应
+            if let Some(renewed_token) = get_renewed_token() {
+                if config.is_write_header {
+                    if let Ok(name) = HeaderName::from_bytes(config.token_name.as_bytes()) {
+                        if let Ok(value) = HeaderValue::from_str(&renewed_token) {
+                            resp.headers_mut().insert(name, value);
+                        }
+                    }
+                }
+                if config.is_write_cookie {
+                    let cookie = format!(
+                        "{}={}; HttpOnly; Path=/; SameSite=Lax",
+                        config.token_name, renewed_token
+                    );
+                    if let Ok(value) = HeaderValue::from_str(&cookie) {
+                        resp.headers_mut().append(SET_COOKIE, value);
+                    }
+                }
+                clear_renewed_token();
+            }
+
+            resp
+        })
+        .await
     }
 
     // ----------------------------------------------------------------
@@ -433,6 +466,7 @@ mod tests {
     use crate::dao::BulwarkDao;
     use crate::error::BulwarkError;
     use crate::manager::BulwarkManager;
+    use crate::stp::context::set_renewed_token;
     use crate::stp::{BulwarkInterface, BulwarkUtil};
     use async_trait::async_trait;
     use axum::body::Body;
@@ -1656,6 +1690,306 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
+
+        BulwarkManager::reset_for_test();
+    }
+
+    // ----------------------------------------------------------------
+    // T017: 续签 Token 写入响应测试
+    // ----------------------------------------------------------------
+
+    /// 模拟续签的拦截器：pre_handle 时设置 renewed token。
+    struct RenewingInterceptor {
+        new_token: String,
+    }
+
+    #[async_trait]
+    impl BulwarkInterceptor for RenewingInterceptor {
+        async fn pre_handle(&self, _path: &str, _annotation: &Annotation) -> BulwarkResult<()> {
+            set_renewed_token(self.new_token.clone());
+            Ok(())
+        }
+    }
+
+    /// T017-1: 续签 Token → 写入 header（is_write_header=true）。
+    #[tokio::test]
+    #[serial]
+    async fn renewed_token_written_to_header() {
+        init_manager(&[], &[]);
+        let mut config = make_config();
+        config.is_write_header = true;
+        config.is_write_cookie = false;
+
+        let app = BulwarkRouter::new(Arc::new(config))
+            .with_interceptor(RenewingInterceptor {
+                new_token: "renewed-header-token".to_string(),
+            })
+            .route_protected("/test", || async { "ok" }, Annotation::Ignore)
+            .build();
+
+        let response = app.oneshot(make_request("/test", None)).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let header = response
+            .headers()
+            .get("bulwark_token")
+            .expect("is_write_header=true 时响应应包含续签 header");
+        assert_eq!(
+            header.to_str().unwrap(),
+            "renewed-header-token",
+            "header 值应为续签 token"
+        );
+
+        BulwarkManager::reset_for_test();
+    }
+
+    /// T017-2: 续签 Token → 写入 cookie（is_write_cookie=true）。
+    #[tokio::test]
+    #[serial]
+    async fn renewed_token_written_to_cookie() {
+        init_manager(&[], &[]);
+        let mut config = make_config();
+        config.is_write_header = false;
+        config.is_write_cookie = true;
+
+        let app = BulwarkRouter::new(Arc::new(config))
+            .with_interceptor(RenewingInterceptor {
+                new_token: "renewed-cookie-token".to_string(),
+            })
+            .route_protected("/test", || async { "ok" }, Annotation::Ignore)
+            .build();
+
+        let response = app.oneshot(make_request("/test", None)).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let cookie = response
+            .headers()
+            .get("set-cookie")
+            .expect("is_write_cookie=true 时响应应包含 Set-Cookie");
+        let cookie_str = cookie.to_str().unwrap();
+        assert!(
+            cookie_str.contains("bulwark_token=renewed-cookie-token"),
+            "Set-Cookie 应包含续签 token，实际: {}",
+            cookie_str
+        );
+
+        BulwarkManager::reset_for_test();
+    }
+
+    /// T017-3: 续签 Token → 两者均 false 时不写入。
+    #[tokio::test]
+    #[serial]
+    async fn renewed_token_not_written_when_both_disabled() {
+        init_manager(&[], &[]);
+        let mut config = make_config();
+        config.is_write_header = false;
+        config.is_write_cookie = false;
+
+        let app = BulwarkRouter::new(Arc::new(config))
+            .with_interceptor(RenewingInterceptor {
+                new_token: "should-not-appear".to_string(),
+            })
+            .route_protected("/test", || async { "ok" }, Annotation::Ignore)
+            .build();
+
+        let response = app.oneshot(make_request("/test", None)).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(
+            response.headers().get("bulwark_token").is_none(),
+            "is_write_header=false 时不应有续签 header"
+        );
+        assert!(
+            response.headers().get("set-cookie").is_none(),
+            "is_write_cookie=false 时不应有 Set-Cookie"
+        );
+
+        BulwarkManager::reset_for_test();
+    }
+
+    /// T017-4: 续签 Token → 同时写入 header 和 cookie（两者均 true）。
+    #[tokio::test]
+    #[serial]
+    async fn renewed_token_written_to_both_header_and_cookie() {
+        init_manager(&[], &[]);
+        let mut config = make_config();
+        config.is_write_header = true;
+        config.is_write_cookie = true;
+
+        let app = BulwarkRouter::new(Arc::new(config))
+            .with_interceptor(RenewingInterceptor {
+                new_token: "dual-token".to_string(),
+            })
+            .route_protected("/test", || async { "ok" }, Annotation::Ignore)
+            .build();
+
+        let response = app.oneshot(make_request("/test", None)).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let header = response
+            .headers()
+            .get("bulwark_token")
+            .expect("is_write_header=true 时应有续签 header");
+        assert_eq!(header.to_str().unwrap(), "dual-token");
+
+        let cookie = response
+            .headers()
+            .get("set-cookie")
+            .expect("is_write_cookie=true 时应有 Set-Cookie");
+        assert!(
+            cookie
+                .to_str()
+                .unwrap()
+                .contains("bulwark_token=dual-token"),
+            "Set-Cookie 应包含续签 token"
+        );
+
+        BulwarkManager::reset_for_test();
+    }
+
+    /// T017-5: 无续签 Token → 响应无额外 header/cookie。
+    #[tokio::test]
+    #[serial]
+    async fn no_renewed_token_nothing_written() {
+        init_manager(&[], &[]);
+        let mut config = make_config();
+        config.is_write_header = true;
+        config.is_write_cookie = true;
+
+        // 使用 DefaultBulwarkInterceptor（Annotation::Ignore 为 no-op，不触发续签）
+        let app = BulwarkRouter::new(Arc::new(config))
+            .route_protected("/test", || async { "ok" }, Annotation::Ignore)
+            .build();
+
+        let response = app.oneshot(make_request("/test", None)).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(
+            response.headers().get("bulwark_token").is_none(),
+            "无续签时不应有续签 header"
+        );
+        assert!(
+            response.headers().get("set-cookie").is_none(),
+            "无续签时不应有 Set-Cookie"
+        );
+
+        BulwarkManager::reset_for_test();
+    }
+
+    /// T017-6: clear_renewed_token 后后续请求无续签 Token。
+    #[tokio::test]
+    #[serial]
+    async fn clear_renewed_token_prevents_leak() {
+        init_manager(&[], &[]);
+        let mut config = make_config();
+        config.is_write_header = true;
+        config.is_write_cookie = false;
+
+        // 第一次请求：触发续签
+        let app1 = BulwarkRouter::new(Arc::new(config.clone()))
+            .with_interceptor(RenewingInterceptor {
+                new_token: "first-renewal".to_string(),
+            })
+            .route_protected("/test", || async { "ok" }, Annotation::Ignore)
+            .build();
+
+        let resp1 = app1.oneshot(make_request("/test", None)).await.unwrap();
+        assert_eq!(resp1.status(), StatusCode::OK);
+        assert!(
+            resp1.headers().get("bulwark_token").is_some(),
+            "第一次请求应有续签 header"
+        );
+
+        // 第二次请求：不触发续签（DefaultBulwarkInterceptor + Ignore = no-op）
+        let app2 = BulwarkRouter::new(Arc::new(config))
+            .route_protected("/test", || async { "ok" }, Annotation::Ignore)
+            .build();
+
+        let resp2 = app2.oneshot(make_request("/test", None)).await.unwrap();
+        assert_eq!(resp2.status(), StatusCode::OK);
+        assert!(
+            resp2.headers().get("bulwark_token").is_none(),
+            "第二次请求不应有续签 header（clear_renewed_token 已清除）"
+        );
+
+        BulwarkManager::reset_for_test();
+    }
+
+    /// T017-7: 配置中的 token_name 用作 header 名。
+    #[tokio::test]
+    #[serial]
+    async fn token_name_used_as_header_name() {
+        init_manager(&[], &[]);
+        let mut config = make_config();
+        config.token_name = "custom_auth_token".to_string();
+        config.is_write_header = true;
+        config.is_write_cookie = false;
+
+        let app = BulwarkRouter::new(Arc::new(config))
+            .with_interceptor(RenewingInterceptor {
+                new_token: "custom-name-token".to_string(),
+            })
+            .route_protected("/test", || async { "ok" }, Annotation::Ignore)
+            .build();
+
+        let response = app.oneshot(make_request("/test", None)).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let header = response
+            .headers()
+            .get("custom_auth_token")
+            .expect("应使用 config.token_name 作为 header 名");
+        assert_eq!(header.to_str().unwrap(), "custom-name-token");
+        assert!(
+            response.headers().get("bulwark_token").is_none(),
+            "不应使用默认 token_name"
+        );
+
+        BulwarkManager::reset_for_test();
+    }
+
+    /// T017-8: Cookie 包含正确属性（HttpOnly, Path=/, SameSite=Lax）。
+    #[tokio::test]
+    #[serial]
+    async fn cookie_has_correct_attributes() {
+        init_manager(&[], &[]);
+        let mut config = make_config();
+        config.is_write_header = false;
+        config.is_write_cookie = true;
+
+        let app = BulwarkRouter::new(Arc::new(config))
+            .with_interceptor(RenewingInterceptor {
+                new_token: "attr-check-token".to_string(),
+            })
+            .route_protected("/test", || async { "ok" }, Annotation::Ignore)
+            .build();
+
+        let response = app.oneshot(make_request("/test", None)).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let cookie = response
+            .headers()
+            .get("set-cookie")
+            .expect("应有 Set-Cookie header");
+        let cookie_str = cookie.to_str().unwrap();
+        assert!(
+            cookie_str.contains("HttpOnly"),
+            "Cookie 应包含 HttpOnly，实际: {}",
+            cookie_str
+        );
+        assert!(
+            cookie_str.contains("Path=/"),
+            "Cookie 应包含 Path=/，实际: {}",
+            cookie_str
+        );
+        assert!(
+            cookie_str.contains("SameSite=Lax"),
+            "Cookie 应包含 SameSite=Lax，实际: {}",
+            cookie_str
+        );
+        assert!(
+            cookie_str.contains("bulwark_token=attr-check-token"),
+            "Cookie 应包含续签 token，实际: {}",
+            cookie_str
+        );
 
         BulwarkManager::reset_for_test();
     }

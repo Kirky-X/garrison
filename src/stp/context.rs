@@ -57,3 +57,85 @@ pub(crate) fn set_renewed_token(token: String) {
         *arc.lock().unwrap() = Some(token);
     }
 }
+
+/// 获取续签后的新 Token（若有）。
+///
+/// 与 [`current_renewed_token`] 等价，供 middleware 在请求结束后读取续签结果。
+/// 未在 [`with_renewed_token_scope`] 作用域内调用时返回 `None`（不 panic）。
+pub fn get_renewed_token() -> Option<String> {
+    current_renewed_token()
+}
+
+/// 清除续签后的新 Token。
+///
+/// 供 middleware 在将续签 Token 写入响应后调用，避免泄漏到后续请求。
+/// 未在 [`with_renewed_token_scope`] 作用域内调用时为 no-op。
+pub fn clear_renewed_token() {
+    if let Ok(arc) = CURRENT_RENEWED_TOKEN.try_get() {
+        *arc.lock().unwrap() = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 设置 renewed token 后 get_renewed_token 返回 Some(token)。
+    #[tokio::test]
+    async fn get_renewed_token_returns_some_when_set() {
+        with_renewed_token_scope(async {
+            set_renewed_token("new-token-123".to_string());
+            assert_eq!(
+                get_renewed_token(),
+                Some("new-token-123".to_string()),
+                "设置续签 token 后应返回 Some"
+            );
+        })
+        .await;
+    }
+
+    /// 未设置 renewed token（但在 task_local 作用域内）→ 返回 None。
+    #[tokio::test]
+    async fn get_renewed_token_returns_none_when_not_set() {
+        with_renewed_token_scope(async {
+            assert_eq!(get_renewed_token(), None, "未设置续签 token 时应返回 None");
+        })
+        .await;
+    }
+
+    /// 调用 clear_renewed_token 后 → 返回 None。
+    #[tokio::test]
+    async fn get_renewed_token_returns_none_after_clear() {
+        with_renewed_token_scope(async {
+            set_renewed_token("new-token-456".to_string());
+            clear_renewed_token();
+            assert_eq!(get_renewed_token(), None, "clear 后应返回 None");
+        })
+        .await;
+    }
+
+    /// 在 task_local 作用域外调用 → 返回 None（不 panic）。
+    #[test]
+    fn get_renewed_token_returns_none_outside_scope() {
+        // 在 task_local 作用域外调用，不应 panic
+        let result = std::panic::catch_unwind(|| get_renewed_token());
+        assert!(result.is_ok(), "作用域外调用不应 panic");
+        assert_eq!(result.unwrap(), None, "作用域外应返回 None");
+    }
+
+    /// 设置 token → 获取 → 清除 → 再获取 → None（完整生命周期）。
+    #[tokio::test]
+    async fn set_get_clear_get_returns_none() {
+        with_renewed_token_scope(async {
+            set_renewed_token("token-abc".to_string());
+            assert_eq!(
+                get_renewed_token(),
+                Some("token-abc".to_string()),
+                "设置后应返回 Some"
+            );
+            clear_renewed_token();
+            assert_eq!(get_renewed_token(), None, "清除后应返回 None");
+        })
+        .await;
+    }
+}
