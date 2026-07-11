@@ -11,3 +11,7 @@
 /// WAF 请求内容校验模块。
 #[cfg(feature = "web-waf")]
 pub mod waf;
+
+/// CORS 跨域资源共享中间件模块。
+#[cfg(feature = "web-cors")]
+pub mod cors;

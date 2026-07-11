@@ -218,6 +218,8 @@ web-warp = ["warp"]
 # === Web 安全中间件 ===
 # web-waf：WAF 请求内容校验（路径/方法/危险字符检测），依赖 web-axum
 web-waf = ["web-axum"]
+# web-cors：CORS 跨域资源共享中间件，依赖 web-axum
+web-cors = ["web-axum"]
 
 # === 过程宏注解（#[check_login]/#[check_permission]/#[check_role]） ===
 # 依赖 web-axum（宏生成的 wrapper 返回 axum::response::Response）

@@ -21,6 +21,8 @@
 //! - `BulwarkConfig::update(f)` 闭包式修改配置并广播
 
 use crate::error::{BulwarkError, BulwarkResult};
+#[cfg(feature = "web-cors")]
+use crate::web::cors::CorsConfig;
 #[cfg(feature = "web-waf")]
 use crate::web::waf::WafConfig;
 use confers::config::{ConfigBuilder, FileSource};
@@ -274,6 +276,13 @@ pub struct BulwarkConfig {
     #[cfg(feature = "web-waf")]
     pub waf_config: WafConfig,
 
+    /// CORS 跨域资源共享配置段。
+    ///
+    /// 默认 `allowed_origins` 为空（向后兼容，不注入 CORS 头）。
+    /// 启用后需配合 `web-cors` Cargo feature + `bulwark_cors_middleware` 才能生效。
+    #[cfg(feature = "web-cors")]
+    pub cors_config: CorsConfig,
+
     /// 配置变更广播通道（serde 跳过，反序列化后通过 `with_watcher` 重建）。
     #[serde(skip)]
     watcher: Option<watch::Sender<BulwarkConfig>>,
@@ -313,6 +322,8 @@ impl BulwarkConfig {
             tenant_isolation: TenantIsolationConfig::default(),
             #[cfg(feature = "web-waf")]
             waf_config: WafConfig::default(),
+            #[cfg(feature = "web-cors")]
+            cors_config: CorsConfig::default(),
             watcher: None,
         };
         config.with_watcher()
@@ -1070,6 +1081,8 @@ jwt_secret = "test-secret""#,
             tenant_isolation: TenantIsolationConfig::default(),
             #[cfg(feature = "web-waf")]
             waf_config: crate::web::waf::WafConfig::default(),
+            #[cfg(feature = "web-cors")]
+            cors_config: crate::web::cors::CorsConfig::default(),
             watcher: None,
         };
         assert!(config.update(|c| c.timeout = 999).is_ok());
