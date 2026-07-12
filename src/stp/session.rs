@@ -16,7 +16,7 @@ use super::current_token;
 use super::BulwarkLogicDefault;
 use super::JwtMode;
 use super::LoginParams;
-use crate::config::ReplacedLoginExitMode;
+use crate::config::{OverflowLogoutMode, ReplacedLoginExitMode};
 use crate::error::{BulwarkError, BulwarkResult};
 #[cfg(feature = "listener")]
 use crate::listener::BulwarkEvent;
@@ -530,6 +530,13 @@ impl BulwarkLogicDefault {
     /// 按 `last_active_at` 升序排序（最旧排前面），踢出最早的 (count - max) 个 token。
     /// `max=0` 时不做任何操作（0 表示不限制，由调用方判断）。
     ///
+    /// 踢出后根据 [`OverflowLogoutMode`] 广播对应事件：
+    /// - `Logout`：广播 `BulwarkEvent::Logout`（默认，向后兼容）
+    /// - `Kickout`：广播 `BulwarkEvent::Kickout`（reason: "超过最大登录数限制"）
+    /// - `Replaced`：广播 `BulwarkEvent::RevokeToken`
+    ///
+    /// 事件广播需启用 `listener` feature 且注入 `listener_manager`，否则跳过。
+    ///
     /// # 参数
     /// - `login_id`: 登录主体标识。
     /// - `max`: 最大允许同时登录数。
@@ -560,10 +567,37 @@ impl BulwarkLogicDefault {
             .collect();
         token_times.sort_by_key(|(_, t)| *t);
 
-        // 踢出最旧的 (count - max) 个
+        // 踢出最旧的 (count - max) 个，按 overflow_logout_mode 广播事件
         let to_evict = token_times.len().saturating_sub(max as usize);
         for (token, _) in token_times.iter().take(to_evict) {
             self.session.logout(token).await?;
+            // 根据 overflow_logout_mode 广播对应事件
+            #[cfg(feature = "listener")]
+            if let Some(lm) = &self.listener_manager {
+                match self.config.overflow_logout_mode {
+                    OverflowLogoutMode::Logout => {
+                        lm.broadcast(&BulwarkEvent::Logout {
+                            login_id: login_id.to_string(),
+                            token: token.clone(),
+                        })
+                        .await;
+                    },
+                    OverflowLogoutMode::Kickout => {
+                        lm.broadcast(&BulwarkEvent::Kickout {
+                            login_id: login_id.to_string(),
+                            token: token.clone(),
+                            reason: "超过最大登录数限制".to_string(),
+                        })
+                        .await;
+                    },
+                    OverflowLogoutMode::Replaced => {
+                        lm.broadcast(&BulwarkEvent::RevokeToken {
+                            token: token.clone(),
+                        })
+                        .await;
+                    },
+                }
+            }
         }
 
         Ok(())

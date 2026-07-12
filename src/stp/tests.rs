@@ -3,7 +3,7 @@
 
 //! Stp 集成测试。
 use super::*;
-use crate::config::ReplacedLoginExitMode;
+use crate::config::{OverflowLogoutMode, ReplacedLoginExitMode};
 use crate::dao::BulwarkDao;
 use crate::manager::BulwarkManager;
 use async_trait::async_trait;
@@ -3697,6 +3697,264 @@ async fn login_with_max_login_count_evicts_oldest_session() {
     assert!(ts1.is_none(), "max_login_count=2 时最旧 token 应被踢出");
     assert!(ts2.is_some(), "第二个 token 应保留");
     assert!(ts3.is_some(), "最新 token 应保留");
+}
+
+// ============================================================================
+// v0.6.6 T003: enforce_max_login_count 集成 overflow_logout_mode 测试
+// ============================================================================
+
+/// 测试用录音监听器：捕获广播事件供测试断言。
+///
+/// 仅在 `listener` feature 启用时编译。通过 `Arc<Mutex<Vec<BulwarkEvent>>>` 存储
+/// 收到的事件，测试结束后读取断言事件类型与字段。
+#[cfg(feature = "listener")]
+struct RecordingListener {
+    events: Arc<Mutex<Vec<crate::listener::BulwarkEvent>>>,
+}
+
+#[cfg(feature = "listener")]
+#[async_trait]
+impl crate::listener::BulwarkListener for RecordingListener {
+    async fn on_event(
+        &self,
+        event: &crate::listener::BulwarkEvent,
+    ) -> crate::error::BulwarkResult<()> {
+        self.events.lock().push(event.clone());
+        Ok(())
+    }
+}
+
+/// `overflow_logout_mode = Logout` 时，超过 max_login_count 应踢出最早 token
+/// 并广播 `Logout` 事件（验证现有行为不回归）。
+#[tokio::test]
+async fn enforce_max_login_count_overflow_logout_mode_logout() {
+    let mut logic = make_logic(3600, 86400, false, "uuid", true, true);
+    Arc::make_mut(&mut logic.config).max_login_count = 2;
+    Arc::make_mut(&mut logic.config).overflow_logout_mode = OverflowLogoutMode::Logout;
+
+    #[cfg(feature = "listener")]
+    let captured_events: Arc<Mutex<Vec<crate::listener::BulwarkEvent>>> =
+        Arc::new(Mutex::new(Vec::new()));
+    #[cfg(feature = "listener")]
+    {
+        let lm = Arc::new(BulwarkListenerManager::new());
+        lm.register(Arc::new(RecordingListener {
+            events: captured_events.clone(),
+        }));
+        let logic = logic.with_listener_manager(lm);
+
+        // 创建 3 个会话，sleep 确保 last_active_at 递增
+        let t1 = logic
+            .login("overflow-logout-user-001", &LoginParams::default())
+            .await
+            .unwrap();
+        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        let _t2 = logic
+            .login("overflow-logout-user-001", &LoginParams::default())
+            .await
+            .unwrap();
+        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        let _t3 = logic
+            .login("overflow-logout-user-001", &LoginParams::default())
+            .await
+            .unwrap();
+
+        // t1 应被踢出（最旧）
+        let ts1 = logic.session.get_token_session(&t1).await.unwrap();
+        assert!(ts1.is_none(), "Logout 模式：最旧 token 应被踢出");
+
+        // 验证广播了 Logout 事件（至少 1 个，含被踢出 token）
+        let events = captured_events.lock();
+        let has_logout = events.iter().any(|e| match e {
+            crate::listener::BulwarkEvent::Logout { token, .. } => token == &t1,
+            _ => false,
+        });
+        assert!(
+            has_logout,
+            "Logout 模式应广播 Logout 事件（含被踢出的 token），实际事件: {:?}",
+            events
+                .iter()
+                .map(|e| format!("{:?}", e))
+                .collect::<Vec<_>>()
+        );
+    }
+    #[cfg(not(feature = "listener"))]
+    {
+        // 无 listener feature 时仅验证踢出行为
+        let t1 = logic
+            .login("overflow-logout-user-001", &LoginParams::default())
+            .await
+            .unwrap();
+        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        let _t2 = logic
+            .login("overflow-logout-user-001", &LoginParams::default())
+            .await
+            .unwrap();
+        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        let _t3 = logic
+            .login("overflow-logout-user-001", &LoginParams::default())
+            .await
+            .unwrap();
+
+        let ts1 = logic.session.get_token_session(&t1).await.unwrap();
+        assert!(ts1.is_none(), "Logout 模式：最旧 token 应被踢出");
+    }
+}
+
+/// `overflow_logout_mode = Kickout` 时，超过 max_login_count 应踢出最早 token
+/// 并广播 `Kickout` 事件（reason 为 "超过最大登录数限制"）。
+#[tokio::test]
+async fn enforce_max_login_count_overflow_logout_mode_kickout() {
+    let mut logic = make_logic(3600, 86400, false, "uuid", true, true);
+    Arc::make_mut(&mut logic.config).max_login_count = 2;
+    Arc::make_mut(&mut logic.config).overflow_logout_mode = OverflowLogoutMode::Kickout;
+
+    #[cfg(feature = "listener")]
+    let captured_events: Arc<Mutex<Vec<crate::listener::BulwarkEvent>>> =
+        Arc::new(Mutex::new(Vec::new()));
+    #[cfg(feature = "listener")]
+    {
+        let lm = Arc::new(BulwarkListenerManager::new());
+        lm.register(Arc::new(RecordingListener {
+            events: captured_events.clone(),
+        }));
+        let logic = logic.with_listener_manager(lm);
+
+        // 创建 3 个会话，sleep 确保 last_active_at 递增
+        let t1 = logic
+            .login("overflow-kickout-user-001", &LoginParams::default())
+            .await
+            .unwrap();
+        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        let _t2 = logic
+            .login("overflow-kickout-user-001", &LoginParams::default())
+            .await
+            .unwrap();
+        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        let _t3 = logic
+            .login("overflow-kickout-user-001", &LoginParams::default())
+            .await
+            .unwrap();
+
+        // t1 应被踢出（最旧）
+        let ts1 = logic.session.get_token_session(&t1).await.unwrap();
+        assert!(ts1.is_none(), "Kickout 模式：最旧 token 应被踢出");
+
+        // 验证广播了 Kickout 事件（含被踢出 token 和正确 reason）
+        let events = captured_events.lock();
+        let has_kickout = events.iter().any(|e| match e {
+            crate::listener::BulwarkEvent::Kickout { token, reason, .. } => {
+                token == &t1 && reason == "超过最大登录数限制"
+            },
+            _ => false,
+        });
+        assert!(
+            has_kickout,
+            "Kickout 模式应广播 Kickout 事件（reason='超过最大登录数限制'），实际事件: {:?}",
+            events
+                .iter()
+                .map(|e| format!("{:?}", e))
+                .collect::<Vec<_>>()
+        );
+    }
+    #[cfg(not(feature = "listener"))]
+    {
+        // 无 listener feature 时仅验证踢出行为
+        let t1 = logic
+            .login("overflow-kickout-user-001", &LoginParams::default())
+            .await
+            .unwrap();
+        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        let _t2 = logic
+            .login("overflow-kickout-user-001", &LoginParams::default())
+            .await
+            .unwrap();
+        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        let _t3 = logic
+            .login("overflow-kickout-user-001", &LoginParams::default())
+            .await
+            .unwrap();
+
+        let ts1 = logic.session.get_token_session(&t1).await.unwrap();
+        assert!(ts1.is_none(), "Kickout 模式：最旧 token 应被踢出");
+    }
+}
+
+/// `overflow_logout_mode = Replaced` 时，超过 max_login_count 应踢出最早 token
+/// 并广播 `RevokeToken` 事件。
+#[tokio::test]
+async fn enforce_max_login_count_overflow_logout_mode_replaced() {
+    let mut logic = make_logic(3600, 86400, false, "uuid", true, true);
+    Arc::make_mut(&mut logic.config).max_login_count = 2;
+    Arc::make_mut(&mut logic.config).overflow_logout_mode = OverflowLogoutMode::Replaced;
+
+    #[cfg(feature = "listener")]
+    let captured_events: Arc<Mutex<Vec<crate::listener::BulwarkEvent>>> =
+        Arc::new(Mutex::new(Vec::new()));
+    #[cfg(feature = "listener")]
+    {
+        let lm = Arc::new(BulwarkListenerManager::new());
+        lm.register(Arc::new(RecordingListener {
+            events: captured_events.clone(),
+        }));
+        let logic = logic.with_listener_manager(lm);
+
+        // 创建 3 个会话，sleep 确保 last_active_at 递增
+        let t1 = logic
+            .login("overflow-replaced-user-001", &LoginParams::default())
+            .await
+            .unwrap();
+        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        let _t2 = logic
+            .login("overflow-replaced-user-001", &LoginParams::default())
+            .await
+            .unwrap();
+        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        let _t3 = logic
+            .login("overflow-replaced-user-001", &LoginParams::default())
+            .await
+            .unwrap();
+
+        // t1 应被踢出（最旧）
+        let ts1 = logic.session.get_token_session(&t1).await.unwrap();
+        assert!(ts1.is_none(), "Replaced 模式：最旧 token 应被踢出");
+
+        // 验证广播了 RevokeToken 事件（含被踢出 token）
+        let events = captured_events.lock();
+        let has_revoke = events.iter().any(|e| match e {
+            crate::listener::BulwarkEvent::RevokeToken { token } => token == &t1,
+            _ => false,
+        });
+        assert!(
+            has_revoke,
+            "Replaced 模式应广播 RevokeToken 事件（含被踢出的 token），实际事件: {:?}",
+            events
+                .iter()
+                .map(|e| format!("{:?}", e))
+                .collect::<Vec<_>>()
+        );
+    }
+    #[cfg(not(feature = "listener"))]
+    {
+        // 无 listener feature 时仅验证踢出行为
+        let t1 = logic
+            .login("overflow-replaced-user-001", &LoginParams::default())
+            .await
+            .unwrap();
+        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        let _t2 = logic
+            .login("overflow-replaced-user-001", &LoginParams::default())
+            .await
+            .unwrap();
+        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        let _t3 = logic
+            .login("overflow-replaced-user-001", &LoginParams::default())
+            .await
+            .unwrap();
+
+        let ts1 = logic.session.get_token_session(&t1).await.unwrap();
+        assert!(ts1.is_none(), "Replaced 模式：最旧 token 应被踢出");
+    }
 }
 
 // v0.6.3 D3 T014: refresh_access_token 默认实现返回 NotImplemented
