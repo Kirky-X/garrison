@@ -363,70 +363,12 @@ impl ApiKeyHandler {
 }
 
 #[cfg(test)]
+mod mock;
+
+#[cfg(test)]
 mod tests {
+    use super::mock::MockDao;
     use super::*;
-    use async_trait::async_trait;
-    use std::collections::HashMap;
-    use tokio::sync::Mutex;
-
-    /// 测试用 Mock DAO。
-    struct MockDao {
-        data: Mutex<HashMap<String, String>>,
-    }
-
-    impl MockDao {
-        fn new() -> Self {
-            Self {
-                data: Mutex::new(HashMap::new()),
-            }
-        }
-    }
-
-    #[async_trait]
-    impl BulwarkDao for MockDao {
-        async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
-            let data = self.data.lock().await;
-            Ok(data.get(key).cloned())
-        }
-
-        async fn set(&self, key: &str, value: &str, _ttl_seconds: u64) -> BulwarkResult<()> {
-            let mut data = self.data.lock().await;
-            data.insert(key.to_string(), value.to_string());
-            Ok(())
-        }
-
-        async fn update(&self, key: &str, value: &str) -> BulwarkResult<()> {
-            let mut data = self.data.lock().await;
-            if data.contains_key(key) {
-                data.insert(key.to_string(), value.to_string());
-                Ok(())
-            } else {
-                Err(BulwarkError::Dao("key 不存在".to_string()))
-            }
-        }
-
-        async fn expire(&self, _key: &str, _seconds: u64) -> BulwarkResult<()> {
-            Ok(())
-        }
-
-        async fn delete(&self, key: &str) -> BulwarkResult<()> {
-            let mut data = self.data.lock().await;
-            data.remove(key);
-            Ok(())
-        }
-
-        /// keys 复用 dao::tests::glob_match（避免重复实现 glob 逻辑）。
-        async fn keys(&self, pattern: &str) -> BulwarkResult<Vec<String>> {
-            let data = self.data.lock().await;
-            let mut result = Vec::new();
-            for key in data.keys() {
-                if crate::dao::tests::glob_match(pattern, key) {
-                    result.push(key.clone());
-                }
-            }
-            Ok(result)
-        }
-    }
 
     /// 创建 ApiKeyHandler（使用 MockDao）。
     fn make_handler() -> ApiKeyHandler {
