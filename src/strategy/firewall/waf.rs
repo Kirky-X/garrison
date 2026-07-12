@@ -45,6 +45,8 @@ pub struct WafContext<'a> {
 pub enum WafVerdict {
     /// 放行，继续执行后续 Hook。
     Allow,
+    /// 放行并短路，跳过后续所有 Hook（用于白名单匹配）。
+    AllowAndSkip,
     /// 拒绝，短路返回 `FirewallBlocked` 错误。
     Deny {
         /// 拒绝原因（写入错误消息）。
@@ -56,7 +58,9 @@ pub enum WafVerdict {
 
 /// WAF Hook trait，每种校验规则实现一个 Hook。
 ///
-/// 实现方返回 [`WafVerdict::Allow`] 放行，[`WafVerdict::Deny`] 拒绝。
+/// 实现方返回 [`WafVerdict::Allow`] 放行（继续后续 Hook），
+/// [`WafVerdict::AllowAndSkip`] 放行并短路（跳过后续 Hook），
+/// [`WafVerdict::Deny`] 拒绝。
 #[async_trait]
 pub trait WafHook: Send + Sync {
     /// 返回 Hook 名称（用于日志和错误追踪）。
@@ -82,7 +86,8 @@ impl WafHookChain {
         self.hooks.push(hook);
     }
 
-    /// 按注册顺序执行所有 Hook，任一 Deny 则短路返回 `FirewallBlocked` 错误。
+    /// 按注册顺序执行所有 Hook，任一 Deny 则短路返回 `FirewallBlocked` 错误，
+    /// `AllowAndSkip` 则短路返回 `Ok(())` 跳过后续 Hook。
     ///
     /// Deny 时将 hook 名与 reason 编码为 `format!("[{}] {}", hook, reason)`，
     /// 复用现有 `BulwarkError::FirewallBlocked(String)` 变体。
@@ -90,6 +95,10 @@ impl WafHookChain {
         for hook in &self.hooks {
             match hook.check(ctx).await {
                 WafVerdict::Allow => continue,
+                WafVerdict::AllowAndSkip => {
+                    tracing::debug!(hook = hook.name(), "WAF 白名单放行");
+                    return Ok(());
+                },
                 WafVerdict::Deny { reason, hook: name } => {
                     tracing::warn!(hook = name, reason = %reason, "WAF 拦截请求");
                     return Err(BulwarkError::FirewallBlocked(format!(
@@ -304,6 +313,7 @@ mod tests {
                 assert_eq!(hook, "test_hook");
             },
             WafVerdict::Allow => panic!("应为 Deny"),
+            WafVerdict::AllowAndSkip => panic!("应为 Deny"),
         }
     }
 
