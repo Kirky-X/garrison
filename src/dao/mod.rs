@@ -198,6 +198,38 @@ pub trait BulwarkDao: Send + Sync {
         Ok(value)
     }
 
+    /// 原子递增计数器（带 TTL）。
+    ///
+    /// 将 key 的值递增 1。若 key 不存在则初始化为 1 并设置 TTL；
+    /// 若 key 已存在则仅递增值，**不重置 TTL**（保留原窗口过期时间）。
+    /// 用于 SMS 限速计数器等场景。
+    ///
+    /// # 参数
+    /// - `key`: 计数器键。
+    /// - `ttl_seconds`: TTL 秒数（仅 key 首次创建时设置）。
+    ///
+    /// # 返回
+    /// - `Ok(new_value)`: 递增后的新值。
+    ///
+    /// # 默认实现（非原子）
+    /// 默认实现为 get → parse → update/set 三步操作，存在竞态风险。
+    /// 后端若支持原子 incr（如 Redis INCR + EXPIRE），应重写此方法。
+    /// `MockDao` 已重写为进程内原子（Mutex 保护）。
+    async fn incr(&self, key: &str, ttl_seconds: u64) -> BulwarkResult<u64> {
+        let current = self.get(key).await?;
+        match current {
+            Some(v) => {
+                let new_val = v.parse::<u64>().unwrap_or(0) + 1;
+                self.update(key, &new_val.to_string()).await?;
+                Ok(new_val)
+            },
+            None => {
+                self.set(key, "1", ttl_seconds).await?;
+                Ok(1)
+            },
+        }
+    }
+
     /// 查询社交账号绑定关系。
     ///
     /// 按 `(tenant_id, provider, provider_user_id)` 三元组查询 `social_bindings` 表，
@@ -871,6 +903,36 @@ pub mod tests {
         async fn get_and_delete(&self, key: &str) -> BulwarkResult<Option<String>> {
             let mut store = self.store.lock();
             Ok(store.remove(key).map(|(value, _)| value))
+        }
+
+        /// incr 用 Mutex 保护原子性（进程内原子）。
+        ///
+        /// 在单个 lock() 作用域内完成 get → parse → update/set，保证进程内原子。
+        async fn incr(&self, key: &str, ttl_seconds: u64) -> BulwarkResult<u64> {
+            let mut store = self.store.lock();
+            let now = Instant::now();
+            // 清理已过期的 key
+            let should_init = match store.get(key) {
+                Some((_, Some(deadline))) => *deadline <= now, // 已过期
+                Some((_, None)) => false,                      // 永久键
+                None => true,                                  // 不存在
+            };
+            if should_init {
+                let expire_at = if ttl_seconds == 0 {
+                    None
+                } else {
+                    Some(now + Duration::from_secs(ttl_seconds))
+                };
+                store.insert(key.to_string(), ("1".to_string(), expire_at));
+                Ok(1)
+            } else {
+                let (val_str, _) = store.get(key).cloned().unwrap();
+                let new_val = val_str.parse::<u64>().unwrap_or(0) + 1;
+                // 保留原 expire_at（不重置 TTL）
+                let expire_at = store.get(key).map(|(_, e)| *e).flatten();
+                store.insert(key.to_string(), (new_val.to_string(), expire_at));
+                Ok(new_val)
+            }
         }
     }
 

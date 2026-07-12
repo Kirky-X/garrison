@@ -23,6 +23,12 @@ disable-service = Account disabled: service={$service}, until={$until}
 not-safe = Second factor authentication required: {$reason}
 invalid-state-transition = Invalid state transition: {$from} -> {$to}
 
+# SMS verification code progressive rate limiting exceptions (Phase 4 D4)
+sms-rate-limit-exceeded = SMS rate limit exceeded: {$window} window
+sms-verify-max-attempts = SMS verification max attempts exceeded
+sms-code-not-found = SMS verification code not found
+sms-channel-recycled = SMS channel recycled
+
 # ============================================================================
 # Social login exception messages (0.6.0, per T021)
 # ============================================================================

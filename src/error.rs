@@ -103,6 +103,23 @@ pub enum BulwarkError {
         /// 目标状态。
         to: String,
     },
+
+    /// SMS 限速超出。
+    ///
+    /// `window` 标识触发的窗口（"hourly" / "daily"）。
+    SmsRateLimitExceeded {
+        /// 触发限速的窗口标识。
+        window: String,
+    },
+
+    /// SMS 验证码尝试次数超限。
+    SmsVerifyMaxAttempts,
+
+    /// SMS 验证码不存在（已过期或未发送）。
+    SmsCodeNotFound,
+
+    /// SMS 通道已回收（异常发送检测触发）。
+    SmsChannelRecycled,
 }
 
 // ============================================================================
@@ -145,6 +162,12 @@ impl std::fmt::Display for BulwarkError {
             BulwarkError::InvalidStateTransition { from, to } => {
                 write!(f, "非法状态转换：{} -> {}", from, to)
             },
+            BulwarkError::SmsRateLimitExceeded { window } => {
+                write!(f, "SMS 限速超出: {} 窗口", window)
+            },
+            BulwarkError::SmsVerifyMaxAttempts => write!(f, "SMS 验证码尝试次数超限"),
+            BulwarkError::SmsCodeNotFound => write!(f, "SMS 验证码不存在"),
+            BulwarkError::SmsChannelRecycled => write!(f, "SMS 通道已回收"),
             BulwarkError::Exception(ex) => write!(f, "业务异常[{}]: {}", ex.code, ex.message),
         }
     }
@@ -222,6 +245,18 @@ impl BulwarkError {
             BulwarkError::NotSafe { .. } => (400, "NOT_SAFE", "未完成二次认证", None),
             BulwarkError::InvalidStateTransition { .. } => {
                 (500, "INVALID_STATE_TRANSITION", "非法状态转换", None)
+            },
+            BulwarkError::SmsRateLimitExceeded { .. } => {
+                (429, "SMS_RATE_LIMIT_EXCEEDED", "短信发送频繁", None)
+            },
+            BulwarkError::SmsVerifyMaxAttempts => {
+                (400, "SMS_VERIFY_MAX_ATTEMPTS", "验证码尝试次数超限", None)
+            },
+            BulwarkError::SmsCodeNotFound => {
+                (400, "SMS_CODE_NOT_FOUND", "验证码不存在或已过期", None)
+            },
+            BulwarkError::SmsChannelRecycled => {
+                (403, "SMS_CHANNEL_RECYCLED", "短信通道已回收", None)
             },
             // Exception 依据 BulwarkException.code 字段映射状态码
             // code = -1 → 未登录 → 401；code = -2 → 无权限 → 403；其他 → 500
@@ -344,6 +379,10 @@ impl miette::Diagnostic for BulwarkError {
             BulwarkError::DisableService { .. } => "bulwark.disable_service",
             BulwarkError::NotSafe { .. } => "bulwark.not_safe",
             BulwarkError::InvalidStateTransition { .. } => "bulwark.invalid_state_transition",
+            BulwarkError::SmsRateLimitExceeded { .. } => "bulwark.sms_rate_limit_exceeded",
+            BulwarkError::SmsVerifyMaxAttempts => "bulwark.sms_verify_max_attempts",
+            BulwarkError::SmsCodeNotFound => "bulwark.sms_code_not_found",
+            BulwarkError::SmsChannelRecycled => "bulwark.sms_channel_recycled",
         };
         Some(Box::new(code_str))
     }
@@ -905,7 +944,7 @@ mod tests {
 
     /// 验证所有变体的 `severity()` 返回 `Severity::Error`。
     ///
-    /// 覆盖全部 17 个变体，确保无 Warning/Advice 漏网。
+    /// 覆盖全部变体，确保无 Warning/Advice 漏网。
     #[cfg(feature = "miette")]
     #[test]
     fn diagnostic_severity_returns_error_for_all_variants() {
@@ -940,6 +979,12 @@ mod tests {
                 from: String::new(),
                 to: String::new(),
             },
+            BulwarkError::SmsRateLimitExceeded {
+                window: String::new(),
+            },
+            BulwarkError::SmsVerifyMaxAttempts,
+            BulwarkError::SmsCodeNotFound,
+            BulwarkError::SmsChannelRecycled,
         ];
         for err in errors {
             let sev = err.severity().expect("severity() 应返回 Some");

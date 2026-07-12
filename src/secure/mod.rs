@@ -108,6 +108,15 @@ pub mod masking;
 #[cfg(feature = "secure-xss")]
 pub mod xss;
 
+/// SMS 验证码渐进式限速子模块。
+///
+/// 提供 [`SmsVerificationService`](sms::SmsVerificationService) 三层抽象：
+/// - `SmsSender` trait（业务方实现短信发送）
+/// - `SmsRateLimiter`（双窗口限速：小时 + 天）
+/// - `SmsVerificationService`（发送/验证/异常发送检测）
+#[cfg(feature = "sms-rate-limit")]
+pub mod sms;
+
 #[cfg(test)]
 mod tests {
     use super::*;

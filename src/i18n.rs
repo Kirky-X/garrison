@@ -239,6 +239,12 @@ fn error_to_key_args(err: &BulwarkError) -> (&'static str, Vec<(&'static str, St
             "invalid-state-transition",
             vec![("from", from.clone()), ("to", to.clone())],
         ),
+        BulwarkError::SmsRateLimitExceeded { window } => {
+            ("sms-rate-limit-exceeded", vec![("window", window.clone())])
+        },
+        BulwarkError::SmsVerifyMaxAttempts => ("sms-verify-max-attempts", vec![]),
+        BulwarkError::SmsCodeNotFound => ("sms-code-not-found", vec![]),
+        BulwarkError::SmsChannelRecycled => ("sms-channel-recycled", vec![]),
         BulwarkError::Exception(ex) => (
             "exception",
             vec![
@@ -275,6 +281,12 @@ fn fallback_display(err: &BulwarkError) -> String {
         BulwarkError::InvalidStateTransition { from, to } => {
             format!("非法状态转换：{} -> {}", from, to)
         },
+        BulwarkError::SmsRateLimitExceeded { window } => {
+            format!("SMS 限速超出: {} 窗口", window)
+        },
+        BulwarkError::SmsVerifyMaxAttempts => "SMS 验证码尝试次数超限".to_string(),
+        BulwarkError::SmsCodeNotFound => "SMS 验证码不存在".to_string(),
+        BulwarkError::SmsChannelRecycled => "SMS 通道已回收".to_string(),
         BulwarkError::Exception(ex) => format!("业务异常[{}]: {}", ex.code, ex.message),
     }
 }

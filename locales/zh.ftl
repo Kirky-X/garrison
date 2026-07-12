@@ -23,6 +23,12 @@ disable-service = 账号已被封禁：service={$service}, until={$until}
 not-safe = 未完成二次认证：{$reason}
 invalid-state-transition = 非法状态转换：{$from} -> {$to}
 
+# SMS 验证码渐进式限速异常（Phase 4 D4）
+sms-rate-limit-exceeded = SMS 限速超出: {$window} 窗口
+sms-verify-max-attempts = SMS 验证码尝试次数超限
+sms-code-not-found = SMS 验证码不存在
+sms-channel-recycled = SMS 通道已回收
+
 # ============================================================================
 # 社交登录异常消息（0.6.0 新增，依据 T021）
 # ============================================================================

@@ -205,6 +205,9 @@ secure-confusable = ["dep:unicode-security"]
 secure-masking = []
 # XSS 防护（HTML 转义 / 白名单过滤），无额外依赖
 secure-xss = []
+# SMS 验证码渐进式限速（双窗口限速 + 验证码服务 + 异常发送检测）
+# 依赖 rand 生成密码学安全验证码（rand 已是 optional dep，行 56）
+sms-rate-limit = ["dep:rand"]
 
 # === 账号安全引擎 ===
 # account-credential：统一凭证模型 SPI（Credential trait + PasswordCredential + TotpCredential）
@@ -341,7 +344,7 @@ full = [
     "protocol-oauth2", "protocol-sso", "protocol-jwt", "protocol-sign", "protocol-apikey", "protocol-temp", "protocol-zeroize",
     "protocol-oidc", "oauth2-scope-handler", "protocol-sso-server",
     "secure-totp", "secure-sign", "secure-httpbasic", "secure-httpdigest", "secure-masking",
-    "secure-xss",
+    "secure-xss", "sms-rate-limit",
     "account-credential", "account-credential-zeroize", "account-policy", "account-lockout", "account-authflow",
     "web-axum", "web-actix", "web-warp",
     "web-waf", "web-cors", "web-csrf",
@@ -373,6 +376,7 @@ production = [
     "safe-defaults",
     "firewall-waf",
     "three-tier-cache",
+    "sms-rate-limit",
 ]
 
 development = [

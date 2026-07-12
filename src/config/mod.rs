@@ -511,6 +511,22 @@ pub struct BulwarkConfig {
     #[cfg(feature = "firewall-waf")]
     pub waf_banned_params: Vec<String>,
 
+    /// SMS 小时限速阈值（默认 5 次/小时）。
+    #[cfg(feature = "sms-rate-limit")]
+    pub sms_hourly_limit: u32,
+
+    /// SMS 天限速阈值（默认 10 次/天）。
+    #[cfg(feature = "sms-rate-limit")]
+    pub sms_daily_limit: u32,
+
+    /// SMS 验证码最大验证尝试次数（默认 3）。
+    #[cfg(feature = "sms-rate-limit")]
+    pub sms_verify_max_attempts: u32,
+
+    /// SMS 异常发送检测阈值（连续未验证次数，默认 3）。
+    #[cfg(feature = "sms-rate-limit")]
+    pub sms_unverified_threshold: u32,
+
     /// 配置变更广播通道（serde 跳过，反序列化后通过 `with_watcher` 重建）。
     #[serde(skip)]
     watcher: Option<watch::Sender<BulwarkConfig>>,
@@ -586,6 +602,14 @@ impl BulwarkConfig {
             waf_banned_headers: Vec::new(),
             #[cfg(feature = "firewall-waf")]
             waf_banned_params: Vec::new(),
+            #[cfg(feature = "sms-rate-limit")]
+            sms_hourly_limit: 5,
+            #[cfg(feature = "sms-rate-limit")]
+            sms_daily_limit: 10,
+            #[cfg(feature = "sms-rate-limit")]
+            sms_verify_max_attempts: 3,
+            #[cfg(feature = "sms-rate-limit")]
+            sms_unverified_threshold: 3,
             watcher: None,
         };
         config.with_watcher()
@@ -713,6 +737,15 @@ impl BulwarkConfig {
                 "anon_session_timeout",
                 ConfigValue::uint(DEFAULT_ANON_SESSION_TIMEOUT_SECS),
             );
+        }
+
+        #[cfg(feature = "sms-rate-limit")]
+        {
+            builder = builder
+                .default("sms_hourly_limit", ConfigValue::uint(5))
+                .default("sms_daily_limit", ConfigValue::uint(10))
+                .default("sms_verify_max_attempts", ConfigValue::uint(3))
+                .default("sms_unverified_threshold", ConfigValue::uint(3));
         }
 
         if let Some(path) = toml_path {
@@ -917,6 +950,29 @@ impl BulwarkConfig {
                         method
                     )));
                 }
+            }
+        }
+        #[cfg(feature = "sms-rate-limit")]
+        {
+            if self.sms_hourly_limit == 0 {
+                return Err(BulwarkError::Config(
+                    "sms_hourly_limit 必须大于 0".to_string(),
+                ));
+            }
+            if self.sms_daily_limit < self.sms_hourly_limit {
+                return Err(BulwarkError::Config(
+                    "sms_daily_limit 必须 >= sms_hourly_limit".to_string(),
+                ));
+            }
+            if self.sms_verify_max_attempts == 0 {
+                return Err(BulwarkError::Config(
+                    "sms_verify_max_attempts 必须大于 0".to_string(),
+                ));
+            }
+            if self.sms_unverified_threshold == 0 {
+                return Err(BulwarkError::Config(
+                    "sms_unverified_threshold 必须大于 0".to_string(),
+                ));
             }
         }
         Ok(())
@@ -1580,6 +1636,14 @@ jwt_secret = "test-secret""#,
             waf_banned_headers: Vec::new(),
             #[cfg(feature = "firewall-waf")]
             waf_banned_params: Vec::new(),
+            #[cfg(feature = "sms-rate-limit")]
+            sms_hourly_limit: 5,
+            #[cfg(feature = "sms-rate-limit")]
+            sms_daily_limit: 10,
+            #[cfg(feature = "sms-rate-limit")]
+            sms_verify_max_attempts: 3,
+            #[cfg(feature = "sms-rate-limit")]
+            sms_unverified_threshold: 3,
             watcher: None,
         };
         assert!(config.update(|c| c.timeout = 999).is_ok());
