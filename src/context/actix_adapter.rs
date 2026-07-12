@@ -270,21 +270,46 @@ pub struct ActixContext<'a> {
     request: &'a HttpRequest,
     response: ActixResponse,
     storage: ActixStorage,
+    /// 预读的 body 字节（用于 `is_read_body=true` 时从 JSON 提取 token）。
+    ///
+    /// body 读取是 async 操作，但 `get_token` 是 sync 方法，故由调用方在
+    /// async 上下文中预读 body 字节后通过 `with_body` 注入。
+    /// 默认空 `Vec`（`new` 构造时），此时 body 读取分支静默跳过。
+    body_bytes: Vec<u8>,
 }
 
 impl<'a> ActixContext<'a> {
-    /// 创建新的 ActixContext，绑定到指定请求。
+    /// 创建新的 ActixContext，绑定到指定请求（body 为空，不读取 body）。
     ///
     /// # 参数
     /// - `request`: actix-web `HttpRequest` 引用，生命周期绑定到返回的 `ActixContext`。
     ///
     /// # 返回
-    /// 绑定该请求的 `ActixContext` 实例（内部已初始化空的 `ActixResponse` 与 `ActixStorage`）。
+    /// 绑定该请求的 `ActixContext` 实例（内部已初始化空的 `ActixResponse` 与 `ActixStorage`，
+    /// `body_bytes` 为空）。
     pub fn new(request: &'a HttpRequest) -> Self {
         Self {
             request,
             response: ActixResponse::new(),
             storage: ActixStorage::new(),
+            body_bytes: Vec::new(),
+        }
+    }
+
+    /// 创建带预读 body 的 ActixContext（用于 `is_read_body=true` 场景）。
+    ///
+    /// # 参数
+    /// - `request`: actix-web `HttpRequest` 引用。
+    /// - `body_bytes`: 预读的 body 字节（调用方在 async 上下文中读取后传入）。
+    ///
+    /// # 返回
+    /// 绑定该请求与 body 字节的 `ActixContext` 实例。
+    pub fn with_body(request: &'a HttpRequest, body_bytes: Vec<u8>) -> Self {
+        Self {
+            request,
+            response: ActixResponse::new(),
+            storage: ActixStorage::new(),
+            body_bytes,
         }
     }
 
@@ -320,8 +345,11 @@ impl<'a> ActixContext<'a> {
 impl<'a> BulwarkContext for ActixContext<'a> {
     fn request(&self) -> BulwarkResult<Box<dyn BulwarkRequest>> {
         // 由于 Box<dyn BulwarkRequest> 不能带生命周期参数，
-        // 使用 ActixRequestWrapper 克隆必要数据（path / method / headers）
-        Ok(Box::new(ActixRequestWrapper::new(self.request)))
+        // 使用 ActixRequestWrapper 克隆必要数据（path / method / headers / body_bytes）
+        Ok(Box::new(ActixRequestWrapper::with_body(
+            self.request,
+            self.body_bytes.clone(),
+        )))
     }
 }
 
@@ -333,14 +361,17 @@ struct ActixRequestWrapper {
     path: String,
     method: String,
     headers: HeaderMap,
+    /// 预读的 body 字节（用于 `is_read_body=true` 时从 JSON 提取 token）。
+    body_bytes: Vec<u8>,
 }
 
 impl ActixRequestWrapper {
-    fn new(req: &HttpRequest) -> Self {
+    fn with_body(req: &HttpRequest, body_bytes: Vec<u8>) -> Self {
         Self {
             path: req.path().to_string(),
             method: req.method().as_str().to_string(),
             headers: req.headers().clone(),
+            body_bytes,
         }
     }
 }
@@ -400,6 +431,19 @@ impl BulwarkRequest for ActixRequestWrapper {
         if config.is_read_cookie {
             if let Some(token) = self.cookie(&config.token_name)? {
                 return Ok(Some(token));
+            }
+        }
+        // 3. 从 body 提取（优先级最低，仅当 is_read_body=true 且有预读 body 字节时）
+        if config.is_read_body && !self.body_bytes.is_empty() {
+            // 检查 Content-Type: application/json
+            let content_type = self.header("Content-Type")?.unwrap_or_default();
+            if content_type.contains("application/json") {
+                // 静默解析 JSON 并提取 token_name 字段（失败回退 None，不报错）
+                if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&self.body_bytes) {
+                    if let Some(token) = value.get(&config.token_name).and_then(|v| v.as_str()) {
+                        return Ok(Some(token.to_string()));
+                    }
+                }
             }
         }
         Ok(None)
@@ -838,5 +882,31 @@ mod tests {
         config.is_read_body = true;
         let token = actix_req.get_token(&config).unwrap();
         assert_eq!(token, Some("body_token_123".to_string()));
+    }
+
+    // ========================================================================
+    // Context 层 body 读取测试（HIGH-001 回归）
+    // ========================================================================
+
+    /// 验证 `ActixContext::with_body()` 通过 `request()` 传递 `body_bytes`，
+    /// 使 `BulwarkRequest::get_token()` 能从 JSON body 提取 token。
+    ///
+    /// 回归 HIGH-001：原 `ActixContext` 缺失 `body_bytes` 字段与 `with_body` 方法，
+    /// `request()` 也不传递 body_bytes，导致 Context 层 body 读取功能不可用。
+    #[test]
+    fn actix_context_with_body_extracts_token_from_body() {
+        let req = make_request("/", "POST", &[("Content-Type", "application/json")]);
+        let ctx = ActixContext::with_body(&req, br#"{"bulwark_token":"ctx_body_token"}"#.to_vec());
+        let request = ctx.request().unwrap();
+        let mut config = BulwarkConfig::default_config();
+        config.is_read_header = false;
+        config.is_read_cookie = false;
+        config.is_read_body = true;
+        let token = request.get_token(&config).unwrap();
+        assert_eq!(
+            token,
+            Some("ctx_body_token".to_string()),
+            "ActixContext::with_body 应通过 request() 传递 body_bytes，使 get_token 能从 body 提取 token"
+        );
     }
 }

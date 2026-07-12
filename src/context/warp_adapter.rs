@@ -287,10 +287,16 @@ pub struct WarpContext {
     request_data: WarpRequest,
     response: WarpResponse,
     storage: WarpStorage,
+    /// 预读的 body 字节（用于 `is_read_body=true` 时从 JSON 提取 token）。
+    ///
+    /// body 读取是 async 操作，但 `get_token` 是 sync 方法，故由调用方在
+    /// async 上下文中预读 body 字节后通过 `with_body` 注入。
+    /// 默认空 `Vec`（`new` 构造时），此时 body 读取分支静默跳过。
+    body_bytes: Vec<u8>,
 }
 
 impl WarpContext {
-    /// 创建新的 WarpContext。
+    /// 创建新的 WarpContext（body 为空，不读取 body）。
     ///
     /// # 参数
     /// - `path`: 请求路径。
@@ -298,12 +304,38 @@ impl WarpContext {
     /// - `headers`: 请求头 `HeaderMap`。
     ///
     /// # 返回
-    /// 包含请求数据的 `WarpContext` 实例（内部已初始化空的 `WarpResponse` 与 `WarpStorage`）。
+    /// 包含请求数据的 `WarpContext` 实例（内部已初始化空的 `WarpResponse` 与 `WarpStorage`，
+    /// `body_bytes` 为空）。
     pub fn new(path: String, method: String, headers: HeaderMap) -> Self {
         Self {
             request_data: WarpRequest::new(path, method, headers),
             response: WarpResponse::new(),
             storage: WarpStorage::new(),
+            body_bytes: Vec::new(),
+        }
+    }
+
+    /// 创建带预读 body 的 WarpContext（用于 `is_read_body=true` 场景）。
+    ///
+    /// # 参数
+    /// - `path`: 请求路径。
+    /// - `method`: 请求方法。
+    /// - `headers`: 请求头 `HeaderMap`。
+    /// - `body_bytes`: 预读的 body 字节（调用方在 async 上下文中读取后传入）。
+    ///
+    /// # 返回
+    /// 包含请求数据与 body 字节的 `WarpContext` 实例。
+    pub fn with_body(
+        path: String,
+        method: String,
+        headers: HeaderMap,
+        body_bytes: Vec<u8>,
+    ) -> Self {
+        Self {
+            request_data: WarpRequest::new(path, method, headers),
+            response: WarpResponse::new(),
+            storage: WarpStorage::new(),
+            body_bytes,
         }
     }
 
@@ -330,11 +362,12 @@ impl WarpContext {
 
 impl BulwarkContext for WarpContext {
     fn request(&self) -> BulwarkResult<Box<dyn BulwarkRequest>> {
-        // WarpRequest 已 owned，直接克隆数据构造新实例
-        Ok(Box::new(WarpRequest::new(
+        // WarpRequest 已 owned，直接克隆数据构造新实例（含 body_bytes）
+        Ok(Box::new(WarpRequest::with_body(
             self.request_data.path.clone(),
             self.request_data.method.clone(),
             self.request_data.headers.clone(),
+            self.body_bytes.clone(),
         )))
     }
 }
@@ -763,5 +796,35 @@ mod tests {
         config.is_read_body = true;
         let token = req.get_token(&config).unwrap();
         assert_eq!(token, Some("body_token_456".to_string()));
+    }
+
+    // ========================================================================
+    // Context 层 body 读取测试（HIGH-002 回归）
+    // ========================================================================
+
+    /// 验证 `WarpContext::with_body()` 通过 `request()` 传递 `body_bytes`，
+    /// 使 `BulwarkRequest::get_token()` 能从 JSON body 提取 token。
+    ///
+    /// 回归 HIGH-002：原 `WarpContext` 缺失 `body_bytes` 字段与 `with_body` 方法，
+    /// `request()` 用 `WarpRequest::new()` 丢弃 body_bytes，导致 Context 层 body 读取功能不可用。
+    #[test]
+    fn warp_context_with_body_extracts_token_from_body() {
+        let ctx = WarpContext::with_body(
+            "/".to_string(),
+            "POST".to_string(),
+            make_headers(&[("Content-Type", "application/json")]),
+            br#"{"bulwark_token":"ctx_body_token"}"#.to_vec(),
+        );
+        let request = ctx.request().unwrap();
+        let mut config = BulwarkConfig::default_config();
+        config.is_read_header = false;
+        config.is_read_cookie = false;
+        config.is_read_body = true;
+        let token = request.get_token(&config).unwrap();
+        assert_eq!(
+            token,
+            Some("ctx_body_token".to_string()),
+            "WarpContext::with_body 应通过 request() 传递 body_bytes，使 get_token 能从 body 提取 token"
+        );
     }
 }
