@@ -770,6 +770,91 @@ impl BulwarkSession {
         Ok(())
     }
 
+    /// 持久化添加 login_id → token 映射（双层写入：DAO + 内存）。
+    ///
+    /// 先写 DAO `AccountSession.tokens`（读取现有 AccountSession → 添加 token → 写回 DAO），
+    /// 再写内存 `login_token_map`。DAO 失败时内存不写（返回 Err），保证双层一致性。
+    ///
+    /// # 参数
+    /// - `login_id`: 登录主体标识。
+    /// - `token`: token 字符串。
+    ///
+    /// # 错误
+    /// - AccountSession 不存在：`BulwarkError::Session`
+    /// - 序列化失败：`BulwarkError::Session`
+    /// - DAO update 失败：透传 `BulwarkError`
+    #[cfg(feature = "login-token-map-persistence")]
+    pub async fn add_login_token_persistent(
+        &self,
+        login_id: &str,
+        token: &str,
+    ) -> BulwarkResult<()> {
+        // 1. 读取现有 AccountSession（必须已存在）
+        let mut account = self
+            .get_account_session(login_id)
+            .await?
+            .ok_or_else(|| BulwarkError::Session(format!("AccountSession 不存在: {}", login_id)))?;
+
+        // 2. 添加 token（去重）
+        let now = Utc::now().timestamp();
+        if !account.tokens.iter().any(|ti| ti.token == token) {
+            account.tokens.push(TokenInfo {
+                token: token.to_string(),
+                created_at: now,
+                last_active_at: now,
+            });
+        }
+
+        // 3. 写回 DAO（用 update 保留原 TTL）
+        let json = serde_json::to_string(&account)
+            .map_err(|e| BulwarkError::Session(format!("序列化 AccountSession 失败: {}", e)))?;
+        self.dao.update(&account_key(login_id), &json).await?;
+
+        // 4. DAO 成功后写内存 login_token_map
+        self.add_login_token(login_id, token);
+
+        Ok(())
+    }
+
+    /// 持久化移除 login_id → token 映射（双层写入：DAO + 内存）。
+    ///
+    /// 先写 DAO `AccountSession.tokens`（读取现有 AccountSession → 移除 token → 写回 DAO），
+    /// 再写内存 `login_token_map`。DAO 失败时内存不写（返回 Err），保证双层一致性。
+    ///
+    /// # 参数
+    /// - `login_id`: 登录主体标识。
+    /// - `token`: token 字符串。
+    ///
+    /// # 错误
+    /// - AccountSession 不存在：`BulwarkError::Session`
+    /// - 序列化失败：`BulwarkError::Session`
+    /// - DAO update 失败：透传 `BulwarkError`
+    #[cfg(feature = "login-token-map-persistence")]
+    pub async fn remove_login_token_persistent(
+        &self,
+        login_id: &str,
+        token: &str,
+    ) -> BulwarkResult<()> {
+        // 1. 读取现有 AccountSession（必须已存在）
+        let mut account = self
+            .get_account_session(login_id)
+            .await?
+            .ok_or_else(|| BulwarkError::Session(format!("AccountSession 不存在: {}", login_id)))?;
+
+        // 2. 移除 token
+        account.tokens.retain(|ti| ti.token != token);
+
+        // 3. 写回 DAO（用 update 保留原 TTL）
+        let json = serde_json::to_string(&account)
+            .map_err(|e| BulwarkError::Session(format!("序列化 AccountSession 失败: {}", e)))?;
+        self.dao.update(&account_key(login_id), &json).await?;
+
+        // 4. DAO 成功后写内存 login_token_map
+        self.remove_login_token(login_id, token);
+
+        Ok(())
+    }
+
     /// 设置 Token-Session 自定义属性。
     ///
     ///
@@ -2873,6 +2958,37 @@ mod tests {
         }
     }
 
+    /// 测试用 DAO wrapper，在 update 特定 key 时返回错误。
+    ///
+    /// 用于测试 `add_login_token_persistent` / `remove_login_token_persistent`
+    /// 在 DAO update 失败时不写入内存层（保证双层一致性）。
+    struct FailingUpdateDao {
+        inner: Arc<MockDao>,
+        fail_update_key: String,
+    }
+
+    #[async_trait]
+    impl BulwarkDao for FailingUpdateDao {
+        async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
+            self.inner.get(key).await
+        }
+        async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> BulwarkResult<()> {
+            self.inner.set(key, value, ttl_seconds).await
+        }
+        async fn update(&self, key: &str, value: &str) -> BulwarkResult<()> {
+            if key == self.fail_update_key {
+                return Err(BulwarkError::Dao("模拟更新失败".to_string()));
+            }
+            self.inner.update(key, value).await
+        }
+        async fn expire(&self, key: &str, seconds: u64) -> BulwarkResult<()> {
+            self.inner.expire(key, seconds).await
+        }
+        async fn delete(&self, key: &str) -> BulwarkResult<()> {
+            self.inner.delete(key).await
+        }
+    }
+
     /// HIGH-004: 单 token DAO 读取失败不中断整个清理周期，改为 warn 日志并跳过该 token。
     ///
     /// 场景：3 个 token（T1 有效 / T2 DAO get 失败 / T3 已注销），
@@ -3040,5 +3156,116 @@ mod tests {
         assert_eq!(tokens3.len(), 2, "user3 应有 2 个 token");
         assert!(tokens3.contains(&"T5".to_string()));
         assert!(tokens3.contains(&"T6".to_string()));
+    }
+
+    // ------------------------------------------------------------------------
+    // add_login_token_persistent / remove_login_token_persistent（feature = "login-token-map-persistence"）
+    // ------------------------------------------------------------------------
+
+    /// 验证 `add_login_token_persistent` 同时写入 DAO AccountSession.tokens 和内存 login_token_map。
+    ///
+    /// 场景：已存在 AccountSession（含 T1，内存已有 T1），调用 persistent 添加 T2，
+    /// 验证 DAO 与内存两层都包含 T1 和 T2。
+    #[cfg(feature = "login-token-map-persistence")]
+    #[tokio::test]
+    async fn add_login_token_persistent_adds_to_both_layers() {
+        let (_dao, session) = make_session(3600, 86400);
+        // 先创建 AccountSession（通过 create，DAO 和内存都含 T1）
+        session.create("user1", "T1").await.unwrap();
+
+        // 调用 add_login_token_persistent 添加 T2
+        session
+            .add_login_token_persistent("user1", "T2")
+            .await
+            .unwrap();
+
+        // 验证 DAO AccountSession.tokens 包含 T1 和 T2
+        let account = session.get_account_session("user1").await.unwrap().unwrap();
+        let dao_tokens: Vec<String> = account.tokens.into_iter().map(|ti| ti.token).collect();
+        assert_eq!(
+            dao_tokens.len(),
+            2,
+            "DAO AccountSession.tokens 应有 2 个 token"
+        );
+        assert!(dao_tokens.contains(&"T1".to_string()));
+        assert!(dao_tokens.contains(&"T2".to_string()));
+
+        // 验证内存 login_token_map 包含 T1 和 T2
+        let mem_tokens = session.get_tokens_by_login_id("user1");
+        assert_eq!(mem_tokens.len(), 2, "内存 login_token_map 应有 2 个 token");
+        assert!(mem_tokens.contains(&"T1".to_string()));
+        assert!(mem_tokens.contains(&"T2".to_string()));
+    }
+
+    /// 验证 `remove_login_token_persistent` 同时从 DAO AccountSession.tokens 和内存 login_token_map 移除。
+    ///
+    /// 场景：AccountSession 含 T1 和 T2，调用 persistent 移除 T1，
+    /// 验证 DAO 与内存两层都只剩 T2。
+    #[cfg(feature = "login-token-map-persistence")]
+    #[tokio::test]
+    async fn remove_login_token_persistent_removes_from_both_layers() {
+        let (_dao, session) = make_session(3600, 86400);
+        // 创建 2 个 token
+        session.create("user1", "T1").await.unwrap();
+        session.create("user1", "T2").await.unwrap();
+
+        // 调用 remove_login_token_persistent 移除 T1
+        session
+            .remove_login_token_persistent("user1", "T1")
+            .await
+            .unwrap();
+
+        // 验证 DAO AccountSession.tokens 只剩 T2
+        let account = session.get_account_session("user1").await.unwrap().unwrap();
+        let dao_tokens: Vec<String> = account.tokens.into_iter().map(|ti| ti.token).collect();
+        assert_eq!(
+            dao_tokens.len(),
+            1,
+            "DAO AccountSession.tokens 应剩 1 个 token"
+        );
+        assert!(!dao_tokens.contains(&"T1".to_string()));
+        assert!(dao_tokens.contains(&"T2".to_string()));
+
+        // 验证内存 login_token_map 只剩 T2
+        let mem_tokens = session.get_tokens_by_login_id("user1");
+        assert_eq!(mem_tokens.len(), 1, "内存 login_token_map 应剩 1 个 token");
+        assert!(!mem_tokens.contains(&"T1".to_string()));
+        assert!(mem_tokens.contains(&"T2".to_string()));
+    }
+
+    /// 验证 DAO update 失败时内存不写（返回 Err），保证双层一致性。
+    ///
+    /// 场景：使用 FailingUpdateDao 让 account:session:user1 的 update 失败，
+    /// 调用 add_login_token_persistent 应返回 Err，且内存 login_token_map 未被写入。
+    #[cfg(feature = "login-token-map-persistence")]
+    #[tokio::test]
+    async fn add_login_token_persistent_dao_failure_skips_memory_write() {
+        let inner = Arc::new(MockDao::new());
+        let dao: Arc<dyn BulwarkDao> = Arc::new(FailingUpdateDao {
+            inner: inner.clone(),
+            fail_update_key: account_key("user1"),
+        });
+        let session = BulwarkSession::new(dao, 3600, 86400);
+
+        // 先创建 AccountSession（create 用 set，不受 FailingUpdateDao 影响）
+        session.create("user1", "T1").await.unwrap();
+        // 清空内存 map
+        session.login_token_map.clear();
+
+        // 调用 add_login_token_persistent → DAO update 失败 → 返回 Err
+        let result = session.add_login_token_persistent("user1", "T2").await;
+        assert!(
+            result.is_err(),
+            "DAO update 失败时应返回 Err，实际: {:?}",
+            result
+        );
+
+        // 验证内存 login_token_map 未被写入（仍为空）
+        let mem_tokens = session.get_tokens_by_login_id("user1");
+        assert!(
+            mem_tokens.is_empty(),
+            "DAO 失败时内存不应写入，实际: {:?}",
+            mem_tokens
+        );
     }
 }
