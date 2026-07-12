@@ -1,4 +1,4 @@
-//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
 //! OAuth2 Scope Handler 示例（依据 spec oauth2-scope-handler，0.4.0 新增）。

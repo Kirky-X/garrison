@@ -1,4 +1,4 @@
-//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
 //! JWT 登录示例：演示 `JwtHandler` 签发 / 校验 / 刷新完整流程（依据 spec protocol-jwt）。

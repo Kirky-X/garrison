@@ -1,4 +1,4 @@
-//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
 //! SSO 单点登录示例：演示 `SsoClient` ticket 签发 / 校验 / 销毁完整流程（依据 spec protocol-sso）。

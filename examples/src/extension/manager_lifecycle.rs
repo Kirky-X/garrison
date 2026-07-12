@@ -1,4 +1,4 @@
-//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
 //! Manager 生命周期示例：演示 BulwarkManager 初始化、inventory 工厂与 task_local 上下文。

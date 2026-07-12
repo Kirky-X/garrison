@@ -1,4 +1,4 @@
-//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
 //! AloneCache 多 Redis 实例隔离示例（依据 spec alone-cache，0.4.0 新增）。

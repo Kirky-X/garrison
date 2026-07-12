@@ -1,4 +1,4 @@
-//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
 //! 自定义插件示例：演示 BulwarkPlugin trait 与 BulwarkPluginManager 生命周期钩子。

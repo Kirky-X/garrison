@@ -1,4 +1,4 @@
-//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
 //! OAuth2 协议集成测试：wiremock mock 授权服务器 → exchange_code → 校验 TokenResponse。

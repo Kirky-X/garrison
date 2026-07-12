@@ -1,4 +1,4 @@
-//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
 //! OAuth 2.1 PKCE 示例（v0.4.2 新增，依据 spec oauth-2-1-upgrade R-oauth-2-1-001）。

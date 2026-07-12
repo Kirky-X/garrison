@@ -1,4 +1,4 @@
-//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
 //! HTTP Digest 认证示例：演示 RFC 7616 质询生成、HA1 预计算与响应校验。
