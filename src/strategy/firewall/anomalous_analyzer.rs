@@ -169,7 +169,12 @@ impl AnomalousLoginAnalyzer {
     /// 记录一次登录事件（spec R-001）。
     ///
     /// 将登录记录序列化为 JSON 存入 DAO，
-    /// key 格式 `anomalous:login:{login_id}:{timestamp}`，TTL 24h。
+    /// key 格式 `anomalous:login:{login_id}:{nanos}`，TTL 24h。
+    ///
+    /// # 纳秒精度（HIGH-002 修复）
+    /// key 使用纳秒精度时间戳（而非 record.timestamp 的秒级），
+    /// 避免同一秒内同一 login_id 的多次登录互相覆盖。
+    /// `record.timestamp` 仍为秒级（用于时间窗口过滤），key 的纳秒仅用于唯一性。
     ///
     /// # 错误
     /// - `login_id` 为空 → `InvalidParam`
@@ -184,10 +189,23 @@ impl AnomalousLoginAnalyzer {
                 "login_id 不能包含 ':'".to_string(),
             ));
         }
-        let key = format!("anomalous:login:{}:{}", record.login_id, record.timestamp);
+        let key = Self::make_storage_key(&record.login_id, record.timestamp);
         let value = serde_json::to_string(record)
             .map_err(|e| BulwarkError::Internal(format!("序列化登录记录失败: {}", e)))?;
         self.dao.set(&key, &value, RECORD_TTL_SECS).await
+    }
+
+    /// 生成存储 key（纳秒精度避免同秒覆盖，HIGH-002 修复）。
+    ///
+    /// key 格式：`anomalous:login:{login_id}:{nanos}`
+    /// `nanos` 取自 `SystemTime::now()` 的纳秒时间戳，保证同秒内多次调用产生不同 key。
+    fn make_storage_key(login_id: &str, timestamp_secs: i64) -> String {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(timestamp_secs as u128);
+        format!("anomalous:login:{}:{}", login_id, nanos)
     }
 
     /// 执行一次分析扫描（使用当前时间戳）。
@@ -208,11 +226,17 @@ impl AnomalousLoginAnalyzer {
     /// 3. 过滤时间窗口内记录（`timestamp >= now - 3600 && timestamp <= now`）
     /// 4. 按 login_id 分组
     /// 5. 检测 3 种异常：burst / geo_jump / device_mutation
+    ///
+    /// # 性能监控（HIGH-001）
+    /// 记录扫描总耗时，超过 1s 时 `tracing::warn!`（Redis 后端 N+1 查询需优化为批量 mget）。
+    /// oxcache 内存后端 get_sync <100ns，10000 次 get ~1ms，无需优化。
     async fn analyze_once(
         dao: &Arc<dyn BulwarkDao>,
         config: &AnomalousAnalyzerConfig,
         now: i64,
     ) -> BulwarkResult<Vec<AnomalousLoginDetected>> {
+        let scan_start = std::time::Instant::now();
+
         let keys = dao.keys("anomalous:login:*").await?;
         let keys: Vec<String> = keys.into_iter().take(config.max_scan).collect();
 
@@ -285,6 +309,22 @@ impl AnomalousLoginAnalyzer {
                     timestamp: now,
                 });
             }
+        }
+
+        // HIGH-001: 扫描时间监控（Redis 后端 N+1 查询需优化为批量 mget）
+        let scan_elapsed = scan_start.elapsed();
+        if scan_elapsed > Duration::from_secs(1) {
+            tracing::warn!(
+                elapsed_ms = scan_elapsed.as_millis(),
+                key_count = keys.len(),
+                "异常登录分析扫描耗时超过 1s，Redis 后端需优化为批量 mget"
+            );
+        } else {
+            tracing::debug!(
+                elapsed_ms = scan_elapsed.as_millis(),
+                key_count = keys.len(),
+                "异常登录分析扫描完成"
+            );
         }
 
         Ok(events)
@@ -470,7 +510,10 @@ mod tests {
         };
         analyzer.record_login(&record).await.unwrap();
 
-        let stored = dao.get("anomalous:login:1001:1700000000").await.unwrap();
+        // record_login 用纳秒精度 key（HIGH-002），用 keys() 查找
+        let keys = dao.keys("anomalous:login:1001:*").await.unwrap();
+        assert_eq!(keys.len(), 1, "record_login 后应有 1 个 key");
+        let stored = dao.get(&keys[0]).await.unwrap();
         assert!(stored.is_some());
         let de: AnomalousLoginRecord = serde_json::from_str(&stored.unwrap()).unwrap();
         assert_eq!(de.login_id, "1001");
@@ -518,6 +561,40 @@ mod tests {
             matches!(result, Err(BulwarkError::InvalidParam(_))),
             "包含 ':' 的 login_id 应返回 InvalidParam"
         );
+    }
+
+    /// HIGH-002: 同秒内多次 record_login 不覆盖。
+    /// 同一 login_id 同一秒内调用 record_login 3 次，
+    /// keys() 应返回 3 个不同的 key（纳秒精度避免覆盖）。
+    #[tokio::test]
+    async fn record_login_same_second_no_overwrite() {
+        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let (_tx, rx) = watch::channel(false);
+        let analyzer =
+            AnomalousLoginAnalyzer::new(dao.clone(), AnomalousAnalyzerConfig::default(), rx, None);
+        let now = 1700000000i64;
+        // 同一 login_id 同一秒内 3 次登录
+        for i in 0..3 {
+            let record = AnomalousLoginRecord {
+                login_id: "1001".to_string(),
+                ip: format!("1.2.3.{}", i),
+                geo: None,
+                device: None,
+                timestamp: now,
+                result: LoginResult::Success,
+            };
+            analyzer.record_login(&record).await.unwrap();
+        }
+        // keys() 应返回 3 个不同的 key（纳秒精度避免覆盖）
+        let keys = dao.keys("anomalous:login:1001:*").await.unwrap();
+        assert_eq!(
+            keys.len(),
+            3,
+            "同秒内 3 次 record_login 应产生 3 个不同的 key（HIGH-002 修复）"
+        );
+        // 验证 3 个 key 互不相同
+        let unique: HashSet<&str> = keys.iter().map(|s| s.as_str()).collect();
+        assert_eq!(unique.len(), 3, "3 个 key 应互不相同");
     }
 
     // ========================================================================

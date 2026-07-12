@@ -448,6 +448,41 @@ mod oxcache_impl {
         key.to_string()
     }
 
+    /// 通配符匹配（支持 `*` 匹配任意字符序列）。
+    ///
+    /// 用于 `keys()` 方法过滤匹配 pattern 的 key。
+    /// pattern 如 `"anomalous:login:*"` 匹配 `"anomalous:login:1001:1234567890"`。
+    #[cfg(feature = "anomalous-detector-dual")]
+    fn matches_pattern(key: &str, pattern: &str) -> bool {
+        if pattern == "*" {
+            return true;
+        }
+        if let Some(prefix) = pattern.strip_suffix('*') {
+            return key.starts_with(prefix);
+        }
+        key == pattern
+    }
+
+    /// 去除 DAO 前缀，返回原始 key（`prefixed_key` 的逆操作）。
+    ///
+    /// `prefixed_key` 在 `tenant-isolation` 启用且有 TENANT 上下文时
+    /// 返回 `format!("tenant:{id}:{key}")`，否则原样返回。
+    /// 本函数逆向该操作：去除 `"tenant:{id}:"` 前缀，或原样返回。
+    #[cfg(feature = "anomalous-detector-dual")]
+    fn strip_prefix(prefixed: &str) -> String {
+        #[cfg(feature = "tenant-isolation")]
+        {
+            // 格式 "tenant:{id}:{key}"，找到第二个 ':' 之后的内容
+            if let Some(rest) = prefixed.strip_prefix("tenant:") {
+                if let Some(pos) = rest.find(':') {
+                    return rest[pos + 1..].to_string();
+                }
+            }
+        }
+        // 无前缀（tenant-isolation 关闭或无 TENANT 上下文）时原样返回
+        prefixed.to_string()
+    }
+
     /// oxcache 0.3 默认实现，包装 `oxcache::Cache<String, String>`。
     ///
     /// - L1（moka）+ L2（redis）由 oxcache 0.3 自动管理（0.3 起 moka 后端支持 per-entry TTL）。
@@ -481,6 +516,11 @@ mod oxcache_impl {
         /// oxcache 使用默认 Redis 配置。
         #[cfg(feature = "cache-redis")]
         redis_config: Option<RedisConfig>,
+        /// key 索引，用于实现 `keys()` 方法（oxcache 0.3.3 无原生 keys/iter API）。
+        /// 仅在 `anomalous-detector-dual` feature 启用时维护，避免影响其他场景的内存开销。
+        /// TTL 过期的 key 会在 `keys()` 调用时惰性清理。
+        #[cfg(feature = "anomalous-detector-dual")]
+        key_index: parking_lot::RwLock<std::collections::HashSet<String>>,
     }
 
     impl BulwarkDaoOxcache {
@@ -504,6 +544,8 @@ mod oxcache_impl {
                 atomic_lock: parking_lot::Mutex::new(()),
                 #[cfg(feature = "cache-redis")]
                 redis_config: None,
+                #[cfg(feature = "anomalous-detector-dual")]
+                key_index: parking_lot::RwLock::new(std::collections::HashSet::new()),
             })
         }
 
@@ -557,7 +599,10 @@ mod oxcache_impl {
             };
             self.cache
                 .set_with_ttl_sync(&actual_key, &value.to_string(), ttl)
-                .map_err(|e| BulwarkError::Dao(format!("oxcache set_with_ttl_sync 失败: {}", e)))
+                .map_err(|e| BulwarkError::Dao(format!("oxcache set_with_ttl_sync 失败: {}", e)))?;
+            #[cfg(feature = "anomalous-detector-dual")]
+            self.key_index.write().insert(actual_key);
+            Ok(())
         }
 
         async fn update(&self, key: &str, value: &str) -> BulwarkResult<()> {
@@ -616,7 +661,10 @@ mod oxcache_impl {
             let actual_key = prefixed_key(key);
             self.cache
                 .delete_sync(&actual_key)
-                .map_err(|e| BulwarkError::Dao(format!("oxcache delete_sync 失败: {}", e)))
+                .map_err(|e| BulwarkError::Dao(format!("oxcache delete_sync 失败: {}", e)))?;
+            #[cfg(feature = "anomalous-detector-dual")]
+            self.key_index.write().remove(&actual_key);
+            Ok(())
         }
 
         /// set_permanent 用 set_with_ttl_sync(None) 写入永久键。
@@ -626,7 +674,10 @@ mod oxcache_impl {
             let actual_key = prefixed_key(key);
             self.cache
                 .set_with_ttl_sync(&actual_key, &value.to_string(), None)
-                .map_err(|e| BulwarkError::Dao(format!("oxcache set_with_ttl_sync 失败: {}", e)))
+                .map_err(|e| BulwarkError::Dao(format!("oxcache set_with_ttl_sync 失败: {}", e)))?;
+            #[cfg(feature = "anomalous-detector-dual")]
+            self.key_index.write().insert(actual_key);
+            Ok(())
         }
 
         /// get_timeout 用 ttl_sync 查询剩余 TTL。
@@ -725,6 +776,44 @@ mod oxcache_impl {
                 },
             }
         }
+
+        /// keys 用 key_index 实现（oxcache 0.3.3 无原生 keys/iter API）。
+        ///
+        /// 遍历 key_index，过滤匹配 pattern 的 key，同时惰性清理已过期的 key。
+        /// pattern 支持 `*` 通配符（与 MockDao::keys 一致）。
+        #[cfg(feature = "anomalous-detector-dual")]
+        async fn keys(&self, pattern: &str) -> BulwarkResult<Vec<String>> {
+            let actual_pattern = prefixed_key(pattern);
+            let mut result = Vec::new();
+            let mut expired_keys = Vec::new();
+
+            {
+                let index = self.key_index.read();
+                for key in index.iter() {
+                    if matches_pattern(key, &actual_pattern) {
+                        // 检查 key 是否仍然存在（TTL 可能已过期）
+                        if self.cache.exists_sync(key).unwrap_or(false) {
+                            // 去除 prefix 返回原始 key
+                            let raw_key = strip_prefix(key);
+                            result.push(raw_key);
+                        } else {
+                            expired_keys.push(key.clone());
+                        }
+                    }
+                }
+            }
+
+            // 惰性清理过期 key
+            if !expired_keys.is_empty() {
+                let mut index = self.key_index.write();
+                for key in &expired_keys {
+                    index.remove(key);
+                }
+                tracing::debug!("keys() 清理了 {} 个过期 key", expired_keys.len());
+            }
+
+            Ok(result)
+        }
     }
 }
 
@@ -782,6 +871,75 @@ pub mod tests {
     use std::collections::HashMap;
     use std::sync::Arc;
     use std::time::{Duration, Instant};
+
+    // ------------------------------------------------------------------------
+    // BulwarkDaoOxcache keys() 测试（CRIT-001 修复验证）
+    // 仅在 anomalous-detector-dual + cache-memory/cache-redis 启用时编译
+    // ------------------------------------------------------------------------
+    #[cfg(all(
+        feature = "anomalous-detector-dual",
+        any(feature = "cache-memory", feature = "cache-redis")
+    ))]
+    mod oxcache_keys_tests {
+        use super::*;
+
+        /// 无 key 时 keys() 返回空 Vec。
+        #[tokio::test(flavor = "multi_thread")]
+        async fn test_oxcache_keys_empty() {
+            let dao = BulwarkDaoOxcache::new().await.unwrap();
+            let keys = dao.keys("anomalous:login:*").await.unwrap();
+            assert!(keys.is_empty(), "无 key 时 keys() 应返回空 Vec");
+        }
+
+        /// set 3 个 key，keys("anomalous:login:*") 返回 2 个匹配的 key。
+        #[tokio::test(flavor = "multi_thread")]
+        async fn test_oxcache_keys_pattern_match() {
+            let dao = BulwarkDaoOxcache::new().await.unwrap();
+            dao.set("anomalous:login:1:1", "v1", 3600).await.unwrap();
+            dao.set("anomalous:login:2:2", "v2", 3600).await.unwrap();
+            dao.set("other:key", "v3", 3600).await.unwrap();
+
+            let mut keys = dao.keys("anomalous:login:*").await.unwrap();
+            keys.sort();
+            assert_eq!(
+                keys,
+                vec![
+                    "anomalous:login:1:1".to_string(),
+                    "anomalous:login:2:2".to_string()
+                ],
+                "keys() 应返回 2 个匹配 anomalous:login:* 的 key"
+            );
+        }
+
+        /// TTL 过期后 keys() 返回空且 key_index 已惰性清理。
+        #[tokio::test(flavor = "multi_thread")]
+        async fn test_oxcache_keys_clears_expired() {
+            let dao = BulwarkDaoOxcache::new().await.unwrap();
+            dao.set("anomalous:login:1:1", "v1", 1).await.unwrap();
+            // 等待 TTL 过期（1s + 1s 余量）
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            let keys = dao.keys("anomalous:login:*").await.unwrap();
+            assert!(
+                keys.is_empty(),
+                "TTL 过期后 keys() 应返回空 Vec（惰性清理）"
+            );
+            // 再次调用 keys() 验证 key_index 已清理（不会 panic 或残留）
+            let keys2 = dao.keys("anomalous:login:*").await.unwrap();
+            assert!(keys2.is_empty(), "清理后再次 keys() 仍应返回空");
+        }
+
+        /// delete 后 keys() 返回空。
+        #[tokio::test(flavor = "multi_thread")]
+        async fn test_oxcache_keys_after_delete() {
+            let dao = BulwarkDaoOxcache::new().await.unwrap();
+            dao.set("anomalous:login:1:1", "v1", 3600).await.unwrap();
+            let keys = dao.keys("anomalous:login:*").await.unwrap();
+            assert_eq!(keys.len(), 1, "set 后应有 1 个 key");
+            dao.delete("anomalous:login:1:1").await.unwrap();
+            let keys = dao.keys("anomalous:login:*").await.unwrap();
+            assert!(keys.is_empty(), "delete 后 keys() 应返回空 Vec");
+        }
+    }
 
     // ------------------------------------------------------------------------
     // Mock 实现：基于 HashMap + Instant 模拟 TTL，严格按 spec 语义
