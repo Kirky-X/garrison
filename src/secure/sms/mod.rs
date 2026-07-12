@@ -36,14 +36,42 @@ pub trait SmsSender: Send + Sync {
 }
 
 /// NoopSmsSender：仅日志不实际发送（用于测试）。
+#[cfg(test)]
 pub struct NoopSmsSender;
 
+#[cfg(test)]
 #[async_trait]
 impl SmsSender for NoopSmsSender {
-    async fn send(&self, phone: &str, code: &str) -> BulwarkResult<()> {
-        tracing::info!(phone = phone, code = code, "NoopSmsSender 发送验证码");
+    async fn send(&self, phone: &str, _code: &str) -> BulwarkResult<()> {
+        tracing::debug!(phone = phone, "NoopSmsSender 发送验证码（code 已省略）");
         Ok(())
     }
+}
+
+/// 校验手机号格式（key 注入防护 + DoS 防护）。
+///
+/// spec 约束：phone 不能含 ':'（防止 key 结构破坏）。
+/// 额外校验：非空、无控制字符、长度 <= 20（防止超大 key 消耗内存）。
+fn validate_phone(phone: &str) -> BulwarkResult<()> {
+    if phone.is_empty() {
+        return Err(BulwarkError::InvalidParam("phone 不能为空".to_string()));
+    }
+    if phone.contains(':') {
+        return Err(BulwarkError::InvalidParam(
+            "phone 不能包含 ':' 字符".to_string(),
+        ));
+    }
+    if phone.chars().any(|c| c.is_control()) {
+        return Err(BulwarkError::InvalidParam(
+            "phone 不能包含控制字符".to_string(),
+        ));
+    }
+    if phone.len() > 20 {
+        return Err(BulwarkError::InvalidParam(
+            "phone 长度不能超过 20 字符".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 /// SMS 限速器。
@@ -63,14 +91,32 @@ impl SmsRateLimiter {
         }
     }
 
-    /// 检查并递增限速计数器。
-    pub async fn check_and_increment(&self, phone: &str) -> BulwarkResult<()> {
-        // key 注入防护：phone 不能含 ':'
-        if phone.contains(':') {
-            return Err(BulwarkError::InvalidParam(
-                "phone 不能包含 ':' 字符".to_string(),
-            ));
+    /// 递减计数器（get → parse → update/delete）。
+    ///
+    /// 计数器值降为 0 时删除 key，否则更新为新值。
+    /// 解析失败返回错误（不静默吞掉）。
+    async fn decrement_counter(dao: &dyn BulwarkDao, key: &str) -> BulwarkResult<()> {
+        if let Some(v) = dao.get(key).await? {
+            let count: u64 = v.parse::<u64>().map_err(|e| {
+                BulwarkError::Internal(format!("计数器值解析失败 key={}: {}", key, e))
+            })?;
+            if count > 0 {
+                let new_val = count - 1;
+                if new_val == 0 {
+                    dao.delete(key).await?;
+                } else {
+                    dao.update(key, &new_val.to_string()).await?;
+                }
+            }
         }
+        Ok(())
+    }
+
+    /// 检查并递增限速计数器。
+    ///
+    /// 超限时回滚已递增的计数器，避免拒绝的请求消耗配额。
+    pub async fn check_and_increment(&self, phone: &str) -> BulwarkResult<()> {
+        validate_phone(phone)?;
 
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -82,6 +128,10 @@ impl SmsRateLimiter {
         let hour_key = format!("sms:rate:{}:hour:{}", phone, hour_bucket);
         let hour_count = self.dao.incr(&hour_key, 3600).await?;
         if hour_count > self.hourly_limit as u64 {
+            // 超限，回滚 incr
+            if let Err(e) = Self::decrement_counter(&*self.dao, &hour_key).await {
+                tracing::warn!(error = %e, key = %hour_key, "回滚小时窗口计数器失败");
+            }
             return Err(BulwarkError::SmsRateLimitExceeded {
                 window: "hourly".to_string(),
             });
@@ -91,6 +141,13 @@ impl SmsRateLimiter {
         let day_key = format!("sms:rate:{}:day:{}", phone, date);
         let day_count = self.dao.incr(&day_key, 86400).await?;
         if day_count > self.daily_limit as u64 {
+            // 超限，回滚 day 和 hour
+            if let Err(e) = Self::decrement_counter(&*self.dao, &day_key).await {
+                tracing::warn!(error = %e, key = %day_key, "回滚天窗口计数器失败");
+            }
+            if let Err(e) = Self::decrement_counter(&*self.dao, &hour_key).await {
+                tracing::warn!(error = %e, key = %hour_key, "回滚小时窗口计数器失败");
+            }
             return Err(BulwarkError::SmsRateLimitExceeded {
                 window: "daily".to_string(),
             });
@@ -101,11 +158,7 @@ impl SmsRateLimiter {
 
     /// 回滚限速计数器（发送失败时调用）。
     pub async fn rollback(&self, phone: &str) -> BulwarkResult<()> {
-        if phone.contains(':') {
-            return Err(BulwarkError::InvalidParam(
-                "phone 不能包含 ':' 字符".to_string(),
-            ));
-        }
+        validate_phone(phone)?;
 
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -115,31 +168,11 @@ impl SmsRateLimiter {
 
         // 递减小时窗口计数
         let hour_key = format!("sms:rate:{}:hour:{}", phone, hour_bucket);
-        if let Some(v) = self.dao.get(&hour_key).await? {
-            let count: u64 = v.parse().unwrap_or(0);
-            if count > 0 {
-                let new_val = count - 1;
-                if new_val == 0 {
-                    self.dao.delete(&hour_key).await?;
-                } else {
-                    self.dao.update(&hour_key, &new_val.to_string()).await?;
-                }
-            }
-        }
+        Self::decrement_counter(&*self.dao, &hour_key).await?;
 
         // 递减天窗口计数
         let day_key = format!("sms:rate:{}:day:{}", phone, date);
-        if let Some(v) = self.dao.get(&day_key).await? {
-            let count: u64 = v.parse().unwrap_or(0);
-            if count > 0 {
-                let new_val = count - 1;
-                if new_val == 0 {
-                    self.dao.delete(&day_key).await?;
-                } else {
-                    self.dao.update(&day_key, &new_val.to_string()).await?;
-                }
-            }
-        }
+        Self::decrement_counter(&*self.dao, &day_key).await?;
 
         Ok(())
     }
@@ -174,11 +207,7 @@ impl SmsVerificationService {
 
     /// 发送验证码。
     pub async fn send_code(&self, phone: &str) -> BulwarkResult<()> {
-        if phone.contains(':') {
-            return Err(BulwarkError::InvalidParam(
-                "phone 不能包含 ':' 字符".to_string(),
-            ));
-        }
+        validate_phone(phone)?;
 
         // 检查通道是否已回收
         let recycled_key = format!("sms:recycled:{}", phone);
@@ -206,6 +235,14 @@ impl SmsVerificationService {
 
         // 检查异常发送
         if unverified_count > self.unverified_threshold as u64 {
+            // 回滚限速计数器
+            if let Err(e) = self.rate_limiter.rollback(phone).await {
+                tracing::warn!(error = %e, phone = phone, "通道回收时回滚限速计数器失败");
+            }
+            // 回滚未验证计数
+            if let Err(e) = SmsRateLimiter::decrement_counter(&*self.dao, &unverified_key).await {
+                tracing::warn!(error = %e, key = %unverified_key, "回滚未验证计数器失败");
+            }
             // 回收通道（TTL 24 小时）
             self.dao.set(&recycled_key, "1", 86400).await?;
             return Err(BulwarkError::SmsChannelRecycled);
@@ -217,18 +254,8 @@ impl SmsVerificationService {
             self.rate_limiter.rollback(phone).await?;
             self.dao.delete(&code_key).await?;
             // 递减未验证计数
-            if let Some(v) = self.dao.get(&unverified_key).await? {
-                let count: u64 = v.parse().unwrap_or(0);
-                if count > 0 {
-                    let new_val = count - 1;
-                    if new_val == 0 {
-                        self.dao.delete(&unverified_key).await?;
-                    } else {
-                        self.dao
-                            .update(&unverified_key, &new_val.to_string())
-                            .await?;
-                    }
-                }
+            if let Err(e) = SmsRateLimiter::decrement_counter(&*self.dao, &unverified_key).await {
+                tracing::warn!(error = %e, key = %unverified_key, "发送失败回滚未验证计数器失败");
             }
             return Err(e);
         }
@@ -238,21 +265,19 @@ impl SmsVerificationService {
 
     /// 验证验证码。
     pub async fn verify_code(&self, phone: &str, code: &str) -> BulwarkResult<()> {
-        if phone.contains(':') {
-            return Err(BulwarkError::InvalidParam(
-                "phone 不能包含 ':' 字符".to_string(),
-            ));
-        }
+        validate_phone(phone)?;
 
         let code_key = format!("sms:code:{}", phone);
         let stored = self.dao.get(&code_key).await?;
         let stored = stored.ok_or(BulwarkError::SmsCodeNotFound)?;
 
         if stored == code {
-            // 验证成功：删除验证码 + 清零未验证计数
+            // 验证成功：删除验证码 + 清零未验证计数 + 清零尝试次数
             self.dao.delete(&code_key).await?;
             let unverified_key = format!("sms:unverified:{}", phone);
             self.dao.delete(&unverified_key).await?;
+            let attempts_key = format!("sms:attempts:{}", phone);
+            self.dao.delete(&attempts_key).await?;
             Ok(())
         } else {
             // 验证失败：递增尝试次数

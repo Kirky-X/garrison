@@ -684,6 +684,47 @@ mod oxcache_impl {
             }
             Ok(value)
         }
+
+        /// incr 用 `parking_lot::Mutex` 保护原子性（进程内原子）。
+        ///
+        /// 在单个 lock() 作用域内完成 get → set_with_ttl_sync，保证进程内原子。
+        /// key 已存在时通过 `ttl_sync` 读取剩余 TTL 并保留（不重置过期时间）。
+        async fn incr(&self, key: &str, ttl_seconds: u64) -> BulwarkResult<u64> {
+            let _guard = self.atomic_lock.lock();
+            let actual_key = prefixed_key(key);
+            match self
+                .cache
+                .get_sync(&actual_key)
+                .map_err(|e| BulwarkError::Dao(format!("oxcache get_sync 失败: {}", e)))?
+            {
+                Some(v) => {
+                    let new_val = v.parse::<u64>().unwrap_or(0) + 1;
+                    let remaining_ttl = self
+                        .cache
+                        .ttl_sync(&actual_key)
+                        .map_err(|e| BulwarkError::Dao(format!("oxcache ttl_sync 失败: {}", e)))?;
+                    self.cache
+                        .set_with_ttl_sync(&actual_key, &new_val.to_string(), remaining_ttl)
+                        .map_err(|e| {
+                            BulwarkError::Dao(format!("oxcache set_with_ttl_sync 失败: {}", e))
+                        })?;
+                    Ok(new_val)
+                },
+                None => {
+                    let ttl = if ttl_seconds == 0 {
+                        None
+                    } else {
+                        Some(Duration::from_secs(ttl_seconds))
+                    };
+                    self.cache
+                        .set_with_ttl_sync(&actual_key, &"1".to_string(), ttl)
+                        .map_err(|e| {
+                            BulwarkError::Dao(format!("oxcache set_with_ttl_sync 失败: {}", e))
+                        })?;
+                    Ok(1)
+                },
+            }
+        }
     }
 }
 
