@@ -87,6 +87,13 @@ pub const DEFAULT_AUTO_RENEWAL_THRESHOLD: i64 = -1;
 /// `<= 0` 表示禁用后台清理 task（与 T028 `spawn_cleanup_task` 的 `interval_secs <= 0` 行为一致）。
 pub const DEFAULT_TOKEN_MAP_CLEANUP_INTERVAL: i64 = 300;
 
+/// 默认 login_token_map 持久化写入间隔秒数（0 = 同步写入）。
+///
+/// 仅当 `login-token-map-persistence` feature 启用时生效。
+/// - `0`：每次变更同步写入 DAO（强一致，性能较低）
+/// - `>0`：后台 task 按此间隔批量写入 DAO（最终一致，性能更高）
+pub const DEFAULT_LOGIN_TOKEN_MAP_PERSIST_INTERVAL_SECS: u64 = 0;
+
 /// 默认是否允许并发登录（true = 同一账号可同时在多设备登录）。
 pub const DEFAULT_IS_CONCURRENT: bool = true;
 
@@ -324,6 +331,14 @@ pub struct BulwarkConfig {
     /// 由 `BulwarkManager::init` 读取后传给 `spawn_cleanup_task`。
     pub token_map_cleanup_interval_secs: i64,
 
+    /// login_token_map 持久化写入间隔秒数（默认 0 = 同步写入）。
+    ///
+    /// 仅当 `login-token-map-persistence` feature 启用时生效。
+    /// - `0`：每次变更同步写入 DAO（强一致，性能较低）
+    /// - `>0`：后台 task 按此间隔批量写入 DAO（最终一致，性能更高）
+    #[cfg(feature = "login-token-map-persistence")]
+    pub login_token_map_persist_interval_secs: u64,
+
     /// 是否允许并发登录（true = 同一账号可同时在多设备登录）。
     ///
     /// [借鉴 Sa-Token] 对应 `isConcurrent` 配置。默认 true。
@@ -437,6 +452,8 @@ impl BulwarkConfig {
             frontend_separation: DEFAULT_FRONTEND_SEPARATION,
             auto_renewal_threshold: DEFAULT_AUTO_RENEWAL_THRESHOLD,
             token_map_cleanup_interval_secs: DEFAULT_TOKEN_MAP_CLEANUP_INTERVAL,
+            #[cfg(feature = "login-token-map-persistence")]
+            login_token_map_persist_interval_secs: DEFAULT_LOGIN_TOKEN_MAP_PERSIST_INTERVAL_SECS,
             is_concurrent: DEFAULT_IS_CONCURRENT,
             is_share: DEFAULT_IS_SHARE,
             max_login_count: DEFAULT_MAX_LOGIN_COUNT,
@@ -547,6 +564,14 @@ impl BulwarkConfig {
                 "overflow_logout_mode",
                 ConfigValue::string(DEFAULT_OVERFLOW_LOGOUT_MODE),
             );
+
+        #[cfg(feature = "login-token-map-persistence")]
+        {
+            builder = builder.default(
+                "login_token_map_persist_interval_secs",
+                ConfigValue::uint(DEFAULT_LOGIN_TOKEN_MAP_PERSIST_INTERVAL_SECS),
+            );
+        }
 
         if let Some(path) = toml_path {
             builder = builder.source(Box::new(
@@ -1339,6 +1364,8 @@ jwt_secret = "test-secret""#,
             frontend_separation: DEFAULT_FRONTEND_SEPARATION,
             auto_renewal_threshold: DEFAULT_AUTO_RENEWAL_THRESHOLD,
             token_map_cleanup_interval_secs: DEFAULT_TOKEN_MAP_CLEANUP_INTERVAL,
+            #[cfg(feature = "login-token-map-persistence")]
+            login_token_map_persist_interval_secs: DEFAULT_LOGIN_TOKEN_MAP_PERSIST_INTERVAL_SECS,
             is_concurrent: DEFAULT_IS_CONCURRENT,
             is_share: DEFAULT_IS_SHARE,
             max_login_count: DEFAULT_MAX_LOGIN_COUNT,
@@ -1743,6 +1770,40 @@ jwt_secret = "test-secret""#,
             "BULWARK_TOKEN_MAP_CLEANUP_INTERVAL_SECS=600 应覆盖默认值"
         );
         std::env::remove_var("BULWARK_TOKEN_MAP_CLEANUP_INTERVAL_SECS");
+    }
+
+    // ========================================================================
+    // T013: login_token_map_persist_interval_secs 配置测试
+    // ========================================================================
+
+    /// T013: `default_config()` 的 `login_token_map_persist_interval_secs` 为 0（同步写入）。
+    #[cfg(feature = "login-token-map-persistence")]
+    #[test]
+    fn login_token_map_persist_interval_default_is_zero() {
+        let config = BulwarkConfig::default_config();
+        assert_eq!(
+            config.login_token_map_persist_interval_secs, 0,
+            "默认 login_token_map_persist_interval_secs 应为 0（同步写入）"
+        );
+        assert_eq!(
+            config.login_token_map_persist_interval_secs,
+            DEFAULT_LOGIN_TOKEN_MAP_PERSIST_INTERVAL_SECS,
+            "应等于 DEFAULT_LOGIN_TOKEN_MAP_PERSIST_INTERVAL_SECS 常量"
+        );
+    }
+
+    /// T013: `BULWARK_LOGIN_TOKEN_MAP_PERSIST_INTERVAL_SECS=10` 环境变量覆盖默认值。
+    #[cfg(feature = "login-token-map-persistence")]
+    #[test]
+    #[serial]
+    fn login_token_map_persist_interval_env_var_overrides() {
+        std::env::set_var("BULWARK_LOGIN_TOKEN_MAP_PERSIST_INTERVAL_SECS", "10");
+        let config = BulwarkConfig::load(None).expect("load with env");
+        assert_eq!(
+            config.login_token_map_persist_interval_secs, 10,
+            "BULWARK_LOGIN_TOKEN_MAP_PERSIST_INTERVAL_SECS=10 应覆盖默认值"
+        );
+        std::env::remove_var("BULWARK_LOGIN_TOKEN_MAP_PERSIST_INTERVAL_SECS");
     }
 
     // ========================================================================
