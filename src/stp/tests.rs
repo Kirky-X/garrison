@@ -4272,3 +4272,80 @@ async fn login_rolls_back_session_when_enforce_fails() {
         "回滚不应影响首次登录的 token"
     );
 }
+
+// ------------------------------------------------------------------------
+// T011: per-token dynamic active timeout（dynamic-active-timeout feature）
+// ------------------------------------------------------------------------
+
+/// 验证 per-token active_timeout 生效：设置 per-token active_timeout=1 秒（很短），
+/// 等待 2 秒后验证 token 已过期（全局 active_timeout=3600 不影响）。
+///
+/// 不设置 per-token 时全局 active_timeout=3600 不会导致过期；
+/// 设置 per-token=1 后，token 级检查使用 1 秒超时，2 秒后 token 过期。
+#[cfg(feature = "dynamic-active-timeout")]
+#[tokio::test]
+async fn per_token_active_timeout_takes_effect() {
+    // 全局 active_timeout=3600（长），per-token 会设置为 1（短）
+    let logic = make_logic(3600, 3600, false, "uuid", true, true);
+    let token = logic
+        .login("1001", &LoginParams::default())
+        .await
+        .expect("login 应成功");
+
+    // 设置 per-token active_timeout=1 秒
+    logic
+        .session
+        .set_active_timeout(&token, 1)
+        .await
+        .expect("set_active_timeout 应成功");
+
+    // 等待 2 秒（超过 per-token timeout=1，但未超过全局 active_timeout=3600）
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    // 验证 token 已过期
+    let valid = with_token(&token, async { logic.check_login().await.unwrap() }).await;
+    assert!(
+        !valid,
+        "per-token active_timeout=1 秒后 token 应已过期（全局 active_timeout=3600 不影响）"
+    );
+}
+
+/// 验证 per-token active_timeout 为 None 时回退到全局 active_timeout。
+///
+/// 全局 active_timeout=2 秒，不设置 per-token（None）。
+/// 将 TokenSession 的 last_active_at 手动设为 5 秒前（超过全局 active_timeout=2），
+/// 但 Account-Session 的 last_active_at 仍为登录时的时间（未超过 active_timeout=2）。
+/// 验证 token 已过期——证明 token 级检查使用了全局 active_timeout 作为回退值。
+///
+/// 若未实现 per-token 检查，token 不会过期（Account-Session 仍有效），测试失败。
+#[cfg(feature = "dynamic-active-timeout")]
+#[tokio::test]
+async fn per_token_active_timeout_none_falls_back_to_global() {
+    use crate::session::TokenSession;
+    use chrono::Utc;
+
+    // 全局 active_timeout=2 秒（短），timeout=3600（长，确保 TTL 检查不干扰）
+    let (dao, logic) = make_logic_with_dao(3600, 2, false, "uuid", true, true);
+    let token = logic
+        .login("1001", &LoginParams::default())
+        .await
+        .expect("login 应成功");
+
+    // 不设置 per-token active_timeout（保持 None）
+
+    // 手动将 TokenSession 的 last_active_at 设为 5 秒前（超过全局 active_timeout=2）
+    let token_dao_key = format!("token:session:{}", token);
+    let json = dao.get(&token_dao_key).await.unwrap().unwrap();
+    let mut ts: TokenSession = serde_json::from_str(&json).unwrap();
+    ts.last_active_at = Utc::now().timestamp() - 5;
+    let new_json = serde_json::to_string(&ts).unwrap();
+    dao.update(&token_dao_key, &new_json).await.unwrap();
+
+    // 验证 token 已过期（token 级检查使用全局 active_timeout=2，5 > 2 → 过期）
+    // Account-Session 的 last_active_at 仍为登录时间（未超过 active_timeout=2），account 检查不触发过期
+    let valid = with_token(&token, async { logic.check_login().await.unwrap() }).await;
+    assert!(
+        !valid,
+        "per-token=None 时应回退到全局 active_timeout=2，token（last_active_at 5 秒前）应已过期"
+    );
+}

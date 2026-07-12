@@ -983,7 +983,8 @@ impl BulwarkSession {
     ///
     /// # 返回
     /// - `true`: Token-Session 存在且 Account-Session 未过期。
-    /// - `false`: token 不存在或 Account-Session 已过期。
+    /// - `false`: token 不存在、Account-Session 已过期、或（启用 `dynamic-active-timeout` 时）
+    ///   per-token 动态活跃超时已到期。
     ///
     /// # 错误
     /// - DAO 读取失败：透传 `BulwarkError`。
@@ -992,6 +993,18 @@ impl BulwarkSession {
             Some(ts) => ts,
             None => return Ok(false),
         };
+        // T011: per-token 动态活跃超时检查
+        // 优先使用 token_session.dynamic_active_timeout，None 时回退到全局 active_timeout
+        #[cfg(feature = "dynamic-active-timeout")]
+        {
+            let effective_active_timeout = ts
+                .dynamic_active_timeout
+                .unwrap_or(self.active_timeout as i64);
+            let now = Utc::now().timestamp();
+            if ts.last_active_at + effective_active_timeout < now {
+                return Ok(false);
+            }
+        }
         // 惰性检查 Account-Session 是否存在
         if self.get_account_session(&ts.login_id).await?.is_none() {
             return Ok(false);
