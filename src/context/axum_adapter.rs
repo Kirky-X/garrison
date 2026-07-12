@@ -1,4 +1,4 @@
-//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
 //! axum 适配器模块。
@@ -27,18 +27,40 @@ use std::collections::HashMap;
 /// axum 请求适配器，包装 `&http::Request<Body>`。
 pub struct AxumRequest<'a> {
     request: &'a Request<Body>,
+    /// 预读的 body 字节（用于 `is_read_body=true` 时从 JSON 提取 token）。
+    ///
+    /// body 读取是 async 操作，但 `get_token` 是 sync 方法，故由调用方在
+    /// async 上下文中预读 body 字节后通过 `with_body` 注入。
+    /// 默认空 `Vec`（`new` 构造时），此时 body 读取分支静默跳过。
+    body_bytes: Vec<u8>,
 }
 
 impl<'a> AxumRequest<'a> {
-    /// 创建新的 AxumRequest。
+    /// 创建新的 AxumRequest（body 为空，不读取 body）。
     ///
     /// # 参数
     /// - `request`: axum `Request<Body>` 引用，生命周期绑定到返回的 `AxumRequest`。
     ///
     /// # 返回
-    /// 包装该请求引用的 `AxumRequest` 实例。
+    /// 包装该请求引用的 `AxumRequest` 实例（`body_bytes` 为空）。
     pub fn new(request: &'a Request<Body>) -> Self {
-        Self { request }
+        Self::with_body(request, Vec::new())
+    }
+
+    /// 创建带预读 body 的 AxumRequest（用于 `is_read_body=true` 场景）。
+    ///
+    /// # 参数
+    /// - `request`: axum `Request<Body>` 引用。
+    /// - `body_bytes`: 预读的 body 字节（调用方在 async 上下文中通过
+    ///   `http_body_util::BodyExt::collect` 等方式读取后传入）。
+    ///
+    /// # 返回
+    /// 包装该请求引用与 body 字节的 `AxumRequest` 实例。
+    pub fn with_body(request: &'a Request<Body>, body_bytes: Vec<u8>) -> Self {
+        Self {
+            request,
+            body_bytes,
+        }
     }
 }
 
@@ -103,6 +125,16 @@ impl<'a> BulwarkRequest for AxumRequest<'a> {
         // 2. 从 cookie 提取
         if config.is_read_cookie {
             if let Some(token) = self.cookie(&config.token_name)? {
+                return Ok(Some(token));
+            }
+        }
+        // 3. 从 body 提取（优先级最低，仅当 is_read_body=true 且有预读 body 字节时）
+        if config.is_read_body {
+            if let Some(token) = extract_token_from_json_body(
+                &self.body_bytes,
+                self.request.headers(),
+                &config.token_name,
+            )? {
                 return Ok(Some(token));
             }
         }
@@ -243,20 +275,39 @@ impl BulwarkStorage for AxumStorage {
 pub struct AxumContext<'a> {
     request: &'a Request<Body>,
     response: AxumResponse,
+    /// 预读的 body 字节（用于 `is_read_body=true` 时从 JSON 提取 token）。
+    body_bytes: Vec<u8>,
 }
 
 impl<'a> AxumContext<'a> {
-    /// 创建新的 AxumContext，绑定到指定请求。
+    /// 创建新的 AxumContext，绑定到指定请求（body 为空，不读取 body）。
     ///
     /// # 参数
     /// - `request`: axum `Request<Body>` 引用，生命周期绑定到返回的 `AxumContext`。
     ///
     /// # 返回
-    /// 绑定该请求的 `AxumContext` 实例（内部已初始化空的 `AxumResponse`）。
+    /// 绑定该请求的 `AxumContext` 实例（内部已初始化空的 `AxumResponse`，`body_bytes` 为空）。
     pub fn new(request: &'a Request<Body>) -> Self {
         Self {
             request,
             response: AxumResponse::new(),
+            body_bytes: Vec::new(),
+        }
+    }
+
+    /// 创建带预读 body 的 AxumContext（用于 `is_read_body=true` 场景）。
+    ///
+    /// # 参数
+    /// - `request`: axum `Request<Body>` 引用。
+    /// - `body_bytes`: 预读的 body 字节（调用方在 async 上下文中读取后传入）。
+    ///
+    /// # 返回
+    /// 绑定该请求与 body 字节的 `AxumContext` 实例。
+    pub fn with_body(request: &'a Request<Body>, body_bytes: Vec<u8>) -> Self {
+        Self {
+            request,
+            response: AxumResponse::new(),
+            body_bytes,
         }
     }
 
@@ -292,7 +343,10 @@ impl<'a> BulwarkContext for AxumContext<'a> {
         // 注意：这里创建 AxumRequest 需要借用 self.request
         // 但 AxumRequest<'a> 的生命周期与 self 不同
         // 简化方案：直接克隆必要数据，避免生命周期问题
-        Ok(Box::new(AxumRequestWrapper::new(self.request)))
+        Ok(Box::new(AxumRequestWrapper::with_body(
+            self.request,
+            self.body_bytes.clone(),
+        )))
     }
 }
 
@@ -308,14 +362,17 @@ struct AxumRequestWrapper {
     headers: HeaderMap,
     method: String,
     uri: String,
+    /// 预读的 body 字节（用于 `is_read_body=true` 时从 JSON 提取 token）。
+    body_bytes: Vec<u8>,
 }
 
 impl AxumRequestWrapper {
-    fn new(req: &Request<Body>) -> Self {
+    fn with_body(req: &Request<Body>, body_bytes: Vec<u8>) -> Self {
         Self {
             headers: req.headers().clone(),
             method: req.method().as_str().to_string(),
             uri: req.uri().to_string(),
+            body_bytes,
         }
     }
 }
@@ -379,8 +436,61 @@ impl BulwarkRequest for AxumRequestWrapper {
                 return Ok(Some(token));
             }
         }
+        // 3. 从 body 提取（优先级最低，仅当 is_read_body=true 且有预读 body 字节时）
+        if config.is_read_body {
+            if let Some(token) =
+                extract_token_from_json_body(&self.body_bytes, &self.headers, &config.token_name)?
+            {
+                return Ok(Some(token));
+            }
+        }
         Ok(None)
     }
+}
+
+// ============================================================================
+// body 读取辅助函数（T006）
+// ============================================================================
+
+/// 从预读的 JSON body 字节中提取 token。
+///
+/// # 行为
+/// 1. 若 `body_bytes` 为空，返回 `Ok(None)`（未预读 body，静默跳过）。
+/// 2. 若 `Content-Type` header 不包含 `application/json`，返回 `Ok(None)`（静默跳过）。
+/// 3. 若 body 不是合法 JSON，返回 `Ok(None)`（静默回退，不影响主流程）。
+/// 4. 若 JSON 中无 `token_name` 字段或字段值非 string，返回 `Ok(None)`。
+/// 5. 若 JSON 中有 `token_name` 字段且为 string，返回 `Ok(Some(token))`。
+///
+/// # 参数
+/// - `body_bytes`: 预读的 body 字节。
+/// - `headers`: 请求头（用于检查 `Content-Type`）。
+/// - `token_name`: token 字段名（来自 `BulwarkConfig::token_name`）。
+fn extract_token_from_json_body(
+    body_bytes: &[u8],
+    headers: &HeaderMap,
+    token_name: &str,
+) -> BulwarkResult<Option<String>> {
+    if body_bytes.is_empty() {
+        return Ok(None);
+    }
+    // 检查 Content-Type 是否为 application/json
+    let content_type = headers
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    if !content_type.contains("application/json") {
+        return Ok(None);
+    }
+    // 解析 JSON，失败时静默回退（不报错）
+    let json: serde_json::Value = match serde_json::from_slice(body_bytes) {
+        Ok(v) => v,
+        Err(_) => return Ok(None),
+    };
+    // 从 JSON 中提取 token_name 字段
+    if let Some(token) = json.get(token_name).and_then(|v| v.as_str()) {
+        return Ok(Some(token.to_string()));
+    }
+    Ok(None)
 }
 
 #[cfg(test)]
@@ -388,13 +498,27 @@ mod tests {
     use super::*;
     use axum::http::Request;
 
-    /// 构建测试用 Request<Body>。
+    /// 构建测试用 Request<Body>（空 body）。
     fn make_request(uri: &str, method: &str, headers: &[(&str, &str)]) -> Request<Body> {
         let mut builder = Request::builder().method(method).uri(uri);
         for (name, value) in headers {
             builder = builder.header(*name, *value);
         }
         builder.body(Body::empty()).unwrap()
+    }
+
+    /// 构建带 body 的 Request<Body>（用于 T006 body 读取测试）。
+    fn make_request_with_body(
+        uri: &str,
+        method: &str,
+        headers: &[(&str, &str)],
+        body: &str,
+    ) -> Request<Body> {
+        let mut builder = Request::builder().method(method).uri(uri);
+        for (name, value) in headers {
+            builder = builder.header(*name, *value);
+        }
+        builder.body(Body::from(body.to_string())).unwrap()
     }
 
     // ========================================================================
@@ -947,5 +1071,64 @@ mod tests {
         let ctx = AxumContext::new(&req);
         let response = ctx.into_response();
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    // ========================================================================
+    // T006: body 读取分支测试（is_read_body=true）
+    // ========================================================================
+
+    /// T006: `is_read_body=true` 且 header/cookie 无 token 时，从 body JSON 提取 token。
+    ///
+    /// 优先级：header > cookie > body。本测试 header/cookie 均无 token，
+    /// body 为 `{"token": "abc123"}`，应提取到 "abc123"。
+    #[test]
+    fn extract_token_from_body_when_is_read_body_true() {
+        let body_str = r#"{"token": "abc123"}"#;
+        let req = make_request_with_body(
+            "/",
+            "POST",
+            &[("Content-Type", "application/json")],
+            body_str,
+        );
+        let ctx = AxumContext::with_body(&req, body_str.as_bytes().to_vec());
+        let request = ctx.request().unwrap();
+        let mut config = BulwarkConfig::default_config();
+        config.is_read_body = true;
+        config.token_name = "token".to_string();
+        let token = request.get_token(&config).unwrap();
+        assert_eq!(
+            token,
+            Some("abc123".to_string()),
+            "is_read_body=true 且 body 含 token 字段时应提取到 token"
+        );
+    }
+
+    /// T006: `is_read_body=true` 但 body 无 token 字段时，回退到 header 读取。
+    ///
+    /// 优先级：header > cookie > body。本测试 header 有 `Authorization: Bearer`，
+    /// body 为 `{"other": "value"}`（无 token 字段），应返回 header 的 token。
+    #[test]
+    fn extract_token_fallback_to_header_when_body_empty() {
+        let body_str = r#"{"other": "value"}"#;
+        let req = make_request_with_body(
+            "/",
+            "POST",
+            &[
+                ("Content-Type", "application/json"),
+                ("Authorization", "Bearer header_tok_456"),
+            ],
+            body_str,
+        );
+        let ctx = AxumContext::with_body(&req, body_str.as_bytes().to_vec());
+        let request = ctx.request().unwrap();
+        let mut config = BulwarkConfig::default_config();
+        config.is_read_body = true;
+        config.token_name = "token".to_string();
+        let token = request.get_token(&config).unwrap();
+        assert_eq!(
+            token,
+            Some("header_tok_456".to_string()),
+            "body 无 token 字段时应回退到 header 读取"
+        );
     }
 }
