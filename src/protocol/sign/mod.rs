@@ -187,58 +187,12 @@ impl Drop for SignHandler {
 }
 
 #[cfg(test)]
+mod mock;
+
+#[cfg(test)]
 mod tests {
+    use super::mock::MockDao;
     use super::*;
-    use async_trait::async_trait;
-    use std::collections::HashMap;
-    use tokio::sync::Mutex;
-
-    /// 测试用 Mock DAO。
-    struct MockDao {
-        data: Mutex<HashMap<String, String>>,
-    }
-
-    impl MockDao {
-        fn new() -> Self {
-            Self {
-                data: Mutex::new(HashMap::new()),
-            }
-        }
-    }
-
-    #[async_trait]
-    impl BulwarkDao for MockDao {
-        async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
-            let data = self.data.lock().await;
-            Ok(data.get(key).cloned())
-        }
-
-        async fn set(&self, key: &str, value: &str, _ttl_seconds: u64) -> BulwarkResult<()> {
-            let mut data = self.data.lock().await;
-            data.insert(key.to_string(), value.to_string());
-            Ok(())
-        }
-
-        async fn update(&self, key: &str, value: &str) -> BulwarkResult<()> {
-            let mut data = self.data.lock().await;
-            if data.contains_key(key) {
-                data.insert(key.to_string(), value.to_string());
-                Ok(())
-            } else {
-                Err(BulwarkError::Dao("key 不存在".to_string()))
-            }
-        }
-
-        async fn expire(&self, _key: &str, _seconds: u64) -> BulwarkResult<()> {
-            Ok(())
-        }
-
-        async fn delete(&self, key: &str) -> BulwarkResult<()> {
-            let mut data = self.data.lock().await;
-            data.remove(key);
-            Ok(())
-        }
-    }
 
     /// 创建 SignHandler（使用 MockDao）。
     fn make_handler() -> SignHandler {
