@@ -720,6 +720,56 @@ impl BulwarkSession {
         Ok(removed)
     }
 
+    /// 从 DAO 重建内存 `login_token_map`。
+    ///
+    /// 遍历所有 Account-Session，收集 `tokens` 字段重建内存层。
+    /// 用于应用启动时恢复内存索引（重启后内存丢失，DAO 数据仍保留）。
+    ///
+    /// # 重建流程
+    /// 1. 清空现有内存 `login_token_map`（避免与重建数据重叠）
+    /// 2. `dao.keys("account:session:*")` 扫描所有 Account-Session key
+    /// 3. 逐个 `dao.get` 读取并反序列化为 `AccountSession`
+    /// 4. 从 key 解析 `login_id`（key 格式：`account:session:{login_id}`）
+    /// 5. 提取 `tokens` 字段中的 token 字符串列表写入内存 map
+    ///
+    /// # 错误
+    /// - DAO `keys()` 失败：透传 `BulwarkError`
+    /// - DAO `get()` 失败：透传 `BulwarkError`
+    /// - `AccountSession` 反序列化失败：`BulwarkError::Session`
+    ///
+    /// # key 格式异常处理
+    /// 若 key 不符合 `account:session:{login_id}` 模式（`strip_prefix` 返回 `None`），
+    /// 记录 `tracing::warn!` 并跳过该 key（不中断重建流程）。
+    #[cfg(feature = "login-token-map-persistence")]
+    pub async fn rebuild_login_token_map(&self) -> BulwarkResult<()> {
+        // 1. 清空现有内存 map（避免与重建数据重叠）
+        self.login_token_map.clear();
+
+        // 2. 扫描所有 Account-Session key
+        let keys = self.dao.keys("account:session:*").await?;
+        for key in keys {
+            // 3. 从 key 解析 login_id（key 格式：account:session:{login_id}）
+            let Some(login_id) = key.strip_prefix("account:session:") else {
+                tracing::warn!(
+                    "rebuild_login_token_map: 跳过不符合 account:session:{{login_id}} 模式的 key: {}",
+                    key
+                );
+                continue;
+            };
+
+            // 4. 读取并反序列化 AccountSession
+            if let Some(json) = self.dao.get(&key).await? {
+                let session: AccountSession = serde_json::from_str(&json).map_err(|e| {
+                    BulwarkError::Session(format!("反序列化 AccountSession 失败: {}", e))
+                })?;
+                // 5. 提取 tokens 字段中的 token 字符串列表，写入内存 map
+                let tokens: Vec<String> = session.tokens.into_iter().map(|ti| ti.token).collect();
+                self.login_token_map.insert(login_id.to_string(), tokens);
+            }
+        }
+        Ok(())
+    }
+
     /// 设置 Token-Session 自定义属性。
     ///
     ///
@@ -2931,5 +2981,64 @@ mod tests {
             "set_active_timeout 对不存在的 token 应返回 InvalidToken 错误，实际: {:?}",
             result
         );
+    }
+
+    // ------------------------------------------------------------------------
+    // rebuild_login_token_map：从 DAO 重建内存索引（feature = "login-token-map-persistence"）
+    // ------------------------------------------------------------------------
+
+    /// 验证空 DAO（无 Account-Session）重建后 `login_token_map` 为空。
+    #[cfg(feature = "login-token-map-persistence")]
+    #[tokio::test]
+    async fn rebuild_login_token_map_empty_dao_produces_empty_map() {
+        let (_dao, session) = make_session(3600, 86400);
+        session.rebuild_login_token_map().await.unwrap();
+        assert!(
+            session.login_token_map.is_empty(),
+            "空 DAO 重建后 login_token_map 应为空"
+        );
+    }
+
+    /// 验证 3 个 AccountSession（各有 2 个 token）重建后 `login_token_map` 包含全部 6 个 token。
+    #[cfg(feature = "login-token-map-persistence")]
+    #[tokio::test]
+    async fn rebuild_login_token_map_with_3_sessions_populates_all_tokens() {
+        let (_dao, session) = make_session(3600, 86400);
+        // 创建 3 个 AccountSession，各有 2 个 token
+        session.create("user1", "T1").await.unwrap();
+        session.create("user1", "T2").await.unwrap();
+        session.create("user2", "T3").await.unwrap();
+        session.create("user2", "T4").await.unwrap();
+        session.create("user3", "T5").await.unwrap();
+        session.create("user3", "T6").await.unwrap();
+
+        // 模拟重启：清空内存 map（DAO 数据仍保留）
+        session.login_token_map.clear();
+        assert!(session.login_token_map.is_empty());
+
+        // 从 DAO 重建内存索引
+        session.rebuild_login_token_map().await.unwrap();
+
+        // 验证：3 个 login_id，各 2 个 token，共 6 个
+        assert_eq!(
+            session.login_token_map.len(),
+            3,
+            "应重建 3 个 login_id entry"
+        );
+
+        let tokens1 = session.get_tokens_by_login_id("user1");
+        assert_eq!(tokens1.len(), 2, "user1 应有 2 个 token");
+        assert!(tokens1.contains(&"T1".to_string()));
+        assert!(tokens1.contains(&"T2".to_string()));
+
+        let tokens2 = session.get_tokens_by_login_id("user2");
+        assert_eq!(tokens2.len(), 2, "user2 应有 2 个 token");
+        assert!(tokens2.contains(&"T3".to_string()));
+        assert!(tokens2.contains(&"T4".to_string()));
+
+        let tokens3 = session.get_tokens_by_login_id("user3");
+        assert_eq!(tokens3.len(), 2, "user3 应有 2 个 token");
+        assert!(tokens3.contains(&"T5".to_string()));
+        assert!(tokens3.contains(&"T6".to_string()));
     }
 }
