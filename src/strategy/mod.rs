@@ -543,7 +543,11 @@ impl BulwarkPermissionStrategyDefault {
 // ============================================================================
 
 #[cfg(test)]
+mod mock;
+
+#[cfg(test)]
 mod tests {
+    use super::mock::MockCacheDao;
     use super::*;
     use std::collections::HashMap;
 
@@ -1007,41 +1011,6 @@ mod tests {
     // ------------------------------------------------------------------------
     // 权限缓存测试
     // ------------------------------------------------------------------------
-
-    /// 简单的 MockDao，用于权限缓存测试。
-    struct MockCacheDao {
-        store: parking_lot::Mutex<HashMap<String, String>>,
-    }
-
-    impl MockCacheDao {
-        fn new() -> Self {
-            Self {
-                store: parking_lot::Mutex::new(HashMap::new()),
-            }
-        }
-    }
-
-    #[async_trait]
-    impl BulwarkDao for MockCacheDao {
-        async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
-            Ok(self.store.lock().get(key).cloned())
-        }
-        async fn set(&self, key: &str, value: &str, _ttl_seconds: u64) -> BulwarkResult<()> {
-            self.store.lock().insert(key.to_string(), value.to_string());
-            Ok(())
-        }
-        async fn update(&self, key: &str, value: &str) -> BulwarkResult<()> {
-            self.store.lock().insert(key.to_string(), value.to_string());
-            Ok(())
-        }
-        async fn expire(&self, _key: &str, _seconds: u64) -> BulwarkResult<()> {
-            Ok(())
-        }
-        async fn delete(&self, key: &str) -> BulwarkResult<()> {
-            self.store.lock().remove(key);
-            Ok(())
-        }
-    }
 
     /// 验证 cache_permission 写入 DAO，后续 get_cached_permission 返回缓存值。
     #[tokio::test]
