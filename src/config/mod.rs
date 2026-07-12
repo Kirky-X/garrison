@@ -754,6 +754,12 @@ impl BulwarkConfig {
                 self.device_binding_mode
             )));
         }
+        #[cfg(feature = "anonymous-session")]
+        if self.anon_session_timeout == 0 {
+            return Err(BulwarkError::Config(
+                "anon_session_timeout 必须 > 0".to_string(),
+            ));
+        }
         #[cfg(feature = "rate-limit-redis")]
         {
             if let RateLimitBackend::Redis { redis_url } = &self.rate_limit_backend {

@@ -3519,8 +3519,8 @@ async fn login_new_device_mode_rejects_new_login() {
         .login("new-device-user-001", &LoginParams::default())
         .await;
     assert!(
-        matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("NewDevice")),
-        "NewDevice 模式下已有旧会话时应返回 Session 错误，实际: {:?}",
+        matches!(result, Err(BulwarkError::NotLogin(ref msg)) if msg.contains("NewDevice")),
+        "NewDevice 模式下已有旧会话时应返回 NotLogin 错误，实际: {:?}",
         result
     );
 

@@ -778,7 +778,10 @@ impl BulwarkSession {
     /// # 错误
     /// - DAO `keys()` 失败：透传 `BulwarkError`
     /// - DAO `get()` 失败：透传 `BulwarkError`
-    /// - `AccountSession` 反序列化失败：`BulwarkError::Session`
+    ///
+    /// # 反序列化失败处理
+    /// 若某个 `AccountSession` 反序列化失败，记录 `tracing::warn!` 并跳过该条目
+    /// （不中断重建流程），与 key 格式异常处理一致。
     ///
     /// # key 格式异常处理
     /// 若 key 不符合 `account:session:{login_id}` 模式（`strip_prefix` 返回 `None`），
@@ -802,9 +805,17 @@ impl BulwarkSession {
 
             // 4. 读取并反序列化 AccountSession
             if let Some(json) = self.dao.get(&key).await? {
-                let session: AccountSession = serde_json::from_str(&json).map_err(|e| {
-                    BulwarkError::Session(format!("反序列化 AccountSession 失败: {}", e))
-                })?;
+                let session: AccountSession = match serde_json::from_str(&json) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        tracing::warn!(
+                            key = %key,
+                            error = %e,
+                            "rebuild_login_token_map: 跳过反序列化失败的 AccountSession"
+                        );
+                        continue;
+                    },
+                };
                 // 5. 提取 tokens 字段中的 token 字符串列表，写入内存 map
                 let tokens: Vec<String> = session.tokens.into_iter().map(|ti| ti.token).collect();
                 self.login_token_map.insert(login_id.to_string(), tokens);
@@ -1136,14 +1147,20 @@ impl BulwarkSession {
     ///
     /// # 参数
     /// - `token`: 待设置的 token 字符串。
-    /// - `timeout_secs`: 超时秒数。
+    /// - `timeout_secs`: 超时秒数。`-1` 表示永不过期，`0` 非法。
     ///
     /// # 错误
+    /// - `timeout_secs=0`：`BulwarkError::InvalidParam`。
     /// - token 不存在：`BulwarkError::InvalidToken`。
     /// - 序列化失败：`BulwarkError::Session`。
     /// - DAO 更新失败：透传 `BulwarkError`。
     #[cfg(feature = "dynamic-active-timeout")]
     pub async fn set_active_timeout(&self, token: &str, timeout_secs: i64) -> BulwarkResult<()> {
+        if timeout_secs == 0 {
+            return Err(BulwarkError::InvalidParam(
+                "timeout_secs 必须为 -1 或 >0".to_string(),
+            ));
+        }
         let mut ts = self
             .get_token_session(token)
             .await?
@@ -1185,8 +1202,9 @@ impl BulwarkSession {
             let effective_active_timeout = ts
                 .dynamic_active_timeout
                 .unwrap_or(self.active_timeout as i64);
+            // -1 表示永不过期（与全局 active_timeout 语义一致），负值跳过活跃超时检查
             let now = Utc::now().timestamp();
-            if ts.last_active_at + effective_active_timeout < now {
+            if effective_active_timeout >= 0 && ts.last_active_at + effective_active_timeout < now {
                 return Ok(false);
             }
         }
@@ -3276,6 +3294,44 @@ mod tests {
             matches!(result, Err(BulwarkError::InvalidToken(_))),
             "set_active_timeout 对不存在的 token 应返回 InvalidToken 错误，实际: {:?}",
             result
+        );
+    }
+
+    /// 验证 `set_active_timeout` 拒绝 `timeout_secs=0`（Spec 定义 0 非法）。
+    ///
+    /// 0 既不是有效超时也不是 -1（永不过期），应返回 `InvalidParam`。
+    #[cfg(feature = "dynamic-active-timeout")]
+    #[tokio::test]
+    async fn set_active_timeout_zero_returns_invalid_param() {
+        let (_dao, session) = make_session(3600, 86400);
+        session.create("1001", "T1").await.unwrap();
+        let result = session.set_active_timeout("T1", 0).await;
+        assert!(
+            matches!(result, Err(BulwarkError::InvalidParam(_))),
+            "timeout_secs=0 应返回 InvalidParam，实际: {:?}",
+            result
+        );
+    }
+
+    /// 验证 `dynamic_active_timeout=Some(-1)` 表示永不过期（Spec 定义 -1 = never）。
+    ///
+    /// 即使 `last_active_at` 为当前时间，-1 也不应触发过期。
+    /// 修复前：`last_active_at + (-1) < now` 几乎总成立，token 被立即判过期。
+    /// 修复后：`effective_active_timeout < 0` 时跳过活跃超时检查。
+    #[cfg(feature = "dynamic-active-timeout")]
+    #[tokio::test]
+    async fn set_active_timeout_negative_one_means_never_expire() {
+        let (_dao, session) = make_session(3600, 86400);
+        session.create("1001", "T1").await.unwrap();
+
+        // 设置 -1（永不过期），set_active_timeout 会将 last_active_at 刷为 now
+        session.set_active_timeout("T1", -1).await.unwrap();
+
+        // is_valid 应返回 true：-1 跳过活跃超时检查
+        let valid = session.is_valid("T1").await.unwrap();
+        assert!(
+            valid,
+            "dynamic_active_timeout=-1 表示永不过期，is_valid 应返回 true"
         );
     }
 

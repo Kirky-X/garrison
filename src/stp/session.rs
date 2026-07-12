@@ -407,7 +407,7 @@ impl BulwarkLogicDefault {
                                 mode = "new_device",
                                 "新设备登录被拒绝：当前为 NewDevice 模式，已有有效旧会话"
                             );
-                            return Err(BulwarkError::Session(
+                            return Err(BulwarkError::NotLogin(
                                 "新设备登录被拒绝：当前为 NewDevice 模式，不允许新设备登录"
                                     .to_string(),
                             ));
