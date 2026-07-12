@@ -3529,6 +3529,55 @@ async fn login_new_device_mode_rejects_new_login() {
     assert!(ts1.is_some(), "NewDevice 模式拒绝新登录后，旧会话应保留");
 }
 
+/// NewDevice 模式下，旧会话已过期时应允许新登录。
+///
+/// 覆盖 session.rs 行 403-415 的 fall-through 分支：
+/// `get_token_by_login_id` 返回 Some(token)（login_token_map 仍有条目），
+/// 但 `get_token_session` 返回 Ok(None)（Token-Session 在 DAO 中已过期/删除）。
+/// 此时应跳过拒绝逻辑，允许新登录。
+///
+/// 注意：不能用 `logout()` 模拟过期——logout 会同时清理 login_token_map，
+/// 导致 `get_token_by_login_id` 返回 None，无法命中目标分支。
+/// 此处通过直接删除 DAO 中的 Token-Session key，保留 login_token_map 条目，
+/// 精确构造目标分支所需状态。
+#[tokio::test]
+async fn login_new_device_mode_allows_when_old_session_expired() {
+    let (dao, mut logic) = make_logic_with_dao(3600, 86400, false, "uuid", true, true);
+    Arc::make_mut(&mut logic.config).is_concurrent = false;
+    Arc::make_mut(&mut logic.config).replaced_login_exit_mode = ReplacedLoginExitMode::NewDevice;
+
+    // 首次登录
+    let token1 = logic
+        .login("expired-user-001", &LoginParams::default())
+        .await
+        .unwrap();
+
+    // 仅删除 DAO 中的 Token-Session，模拟会话过期（保留 login_token_map 条目）
+    dao.delete(&format!("token:session:{}", token1))
+        .await
+        .unwrap();
+
+    // 验证前置条件：get_token_by_login_id 仍返回 Some，但 get_token_session 返回 None
+    assert_eq!(
+        logic.session.get_token_by_login_id("expired-user-001"),
+        Some(token1.clone()),
+        "login_token_map 条目应仍存在"
+    );
+    let ts1 = logic.session.get_token_session(&token1).await.unwrap();
+    assert!(ts1.is_none(), "Token-Session 应已从 DAO 删除");
+
+    // 第二次登录应成功（旧 session 已失效，fall through 到允许新登录）
+    let token2 = logic
+        .login("expired-user-001", &LoginParams::default())
+        .await
+        .unwrap();
+    assert!(
+        !token2.is_empty(),
+        "旧会话过期后 NewDevice 模式应允许新登录"
+    );
+    assert_ne!(token1, token2, "新登录应生成新 token");
+}
+
 /// T002: OldDevice 模式下，已有旧会话时踢出旧会话允许新登录（验证现有行为不回归）。
 #[tokio::test]
 async fn login_old_device_mode_kickout_old_session() {
