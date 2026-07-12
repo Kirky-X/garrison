@@ -128,87 +128,14 @@ impl Default for BulwarkPluginManager {
 }
 
 #[cfg(test)]
+mod mock;
+
+#[cfg(test)]
 mod tests {
+    use super::mock::{reset_counters, OkPlugin, LOGIN_CALLS, LOGOUT_CALLS, PERM_CHECK_CALLS};
     use super::*;
     use serial_test::serial;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    // ========================================================================
-    // 测试用 Mock 插件
-    // ========================================================================
-
-    /// 计数器，记录钩子被调用次数。
-    static LOGIN_CALLS: AtomicUsize = AtomicUsize::new(0);
-    static LOGOUT_CALLS: AtomicUsize = AtomicUsize::new(0);
-    static PERM_CHECK_CALLS: AtomicUsize = AtomicUsize::new(0);
-
-    /// 成功插件，所有钩子返回 Ok(())。
-    struct OkPlugin;
-
-    impl BulwarkPlugin for OkPlugin {
-        fn name(&self) -> &str {
-            "ok-plugin"
-        }
-        fn on_login(&self, _login_id: &str, _token: &str) -> BulwarkResult<()> {
-            LOGIN_CALLS.fetch_add(1, Ordering::SeqCst);
-            Ok(())
-        }
-        fn on_logout(&self, _login_id: &str, _token: &str) -> BulwarkResult<()> {
-            LOGOUT_CALLS.fetch_add(1, Ordering::SeqCst);
-            Ok(())
-        }
-        fn on_permission_check(&self, _login_id: &str, _permission: &str) -> BulwarkResult<()> {
-            PERM_CHECK_CALLS.fetch_add(1, Ordering::SeqCst);
-            Ok(())
-        }
-    }
-
-    /// 失败插件，所有钩子返回 Err。
-    struct ErrPlugin;
-
-    impl BulwarkPlugin for ErrPlugin {
-        fn name(&self) -> &str {
-            "err-plugin"
-        }
-        fn on_login(&self, _login_id: &str, _token: &str) -> BulwarkResult<()> {
-            Err(crate::error::BulwarkError::Internal(
-                "on_login 失败".to_string(),
-            ))
-        }
-        fn on_logout(&self, _login_id: &str, _token: &str) -> BulwarkResult<()> {
-            Err(crate::error::BulwarkError::Internal(
-                "on_logout 失败".to_string(),
-            ))
-        }
-        fn on_permission_check(&self, _login_id: &str, _permission: &str) -> BulwarkResult<()> {
-            Err(crate::error::BulwarkError::Internal(
-                "on_permission_check 失败".to_string(),
-            ))
-        }
-    }
-
-    fn ok_plugin_factory() -> Arc<dyn BulwarkPlugin> {
-        Arc::new(OkPlugin)
-    }
-
-    fn err_plugin_factory() -> Arc<dyn BulwarkPlugin> {
-        Arc::new(ErrPlugin)
-    }
-
-    // 注册测试插件到 inventory
-    inventory::submit! {
-        BulwarkPluginEntry { factory: ok_plugin_factory }
-    }
-    inventory::submit! {
-        BulwarkPluginEntry { factory: err_plugin_factory }
-    }
-
-    /// 重置所有计数器。
-    fn reset_counters() {
-        LOGIN_CALLS.store(0, Ordering::SeqCst);
-        LOGOUT_CALLS.store(0, Ordering::SeqCst);
-        PERM_CHECK_CALLS.store(0, Ordering::SeqCst);
-    }
+    use std::sync::atomic::Ordering;
 
     // ========================================================================
     // BulwarkPlugin trait 测试

@@ -408,10 +408,13 @@ pub mod warp_routes {
 }
 
 #[cfg(test)]
+mod mock;
+
+#[cfg(test)]
 mod tests {
+    use super::mock::{AlwaysDegraded, AlwaysHealthy, AlwaysUnhealthy};
     use super::*;
     use crate::config::BulwarkConfig;
-    use crate::error::BulwarkError;
 
     // ========================================================================
     // HealthStatus 测试
@@ -459,51 +462,6 @@ mod tests {
         let report = registry.check_all().await;
         assert_eq!(report.overall, HealthStatus::Healthy);
         assert!(report.checks.is_empty());
-    }
-
-    struct AlwaysHealthy;
-
-    impl HealthCheck for AlwaysHealthy {
-        fn name(&self) -> &str {
-            "always-healthy"
-        }
-
-        fn check(
-            &self,
-        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = HealthResult<HealthStatus>> + Send>>
-        {
-            Box::pin(async { Ok(HealthStatus::Healthy) })
-        }
-    }
-
-    struct AlwaysUnhealthy;
-
-    impl HealthCheck for AlwaysUnhealthy {
-        fn name(&self) -> &str {
-            "always-unhealthy"
-        }
-
-        fn check(
-            &self,
-        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = HealthResult<HealthStatus>> + Send>>
-        {
-            Box::pin(async { Err(BulwarkError::Internal("dependency unavailable".to_string())) })
-        }
-    }
-
-    struct AlwaysDegraded;
-
-    impl HealthCheck for AlwaysDegraded {
-        fn name(&self) -> &str {
-            "always-degraded"
-        }
-
-        fn check(
-            &self,
-        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = HealthResult<HealthStatus>> + Send>>
-        {
-            Box::pin(async { Ok(HealthStatus::Degraded) })
-        }
     }
 
     #[tokio::test]

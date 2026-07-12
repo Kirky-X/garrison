@@ -318,61 +318,14 @@ impl Default for BulwarkListenerManager {
 }
 
 #[cfg(test)]
+mod mock;
+
+#[cfg(test)]
 mod tests {
+    use super::mock::{reset_counters, EVENT_CALLS};
     use super::*;
     use serial_test::serial;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    // ========================================================================
-    // 测试用 Mock 监听器
-    // ========================================================================
-
-    /// 计数器，记录 on_event 被调用次数。
-    static EVENT_CALLS: AtomicUsize = AtomicUsize::new(0);
-
-    /// 成功监听器，on_event 返回 Ok(())。
-    struct OkListener;
-
-    #[async_trait]
-    impl BulwarkListener for OkListener {
-        async fn on_event(&self, _event: &BulwarkEvent) -> BulwarkResult<()> {
-            EVENT_CALLS.fetch_add(1, Ordering::SeqCst);
-            Ok(())
-        }
-    }
-
-    /// 失败监听器，on_event 返回 Err。
-    struct ErrListener;
-
-    #[async_trait]
-    impl BulwarkListener for ErrListener {
-        async fn on_event(&self, _event: &BulwarkEvent) -> BulwarkResult<()> {
-            Err(crate::error::BulwarkError::Internal(
-                "on_event 失败".to_string(),
-            ))
-        }
-    }
-
-    fn ok_listener_factory() -> Arc<dyn BulwarkListener> {
-        Arc::new(OkListener)
-    }
-
-    fn err_listener_factory() -> Arc<dyn BulwarkListener> {
-        Arc::new(ErrListener)
-    }
-
-    // 注册测试监听器到 inventory
-    inventory::submit! {
-        BulwarkListenerEntry { factory: ok_listener_factory }
-    }
-    inventory::submit! {
-        BulwarkListenerEntry { factory: err_listener_factory }
-    }
-
-    /// 重置计数器。
-    fn reset_counters() {
-        EVENT_CALLS.store(0, Ordering::SeqCst);
-    }
+    use std::sync::atomic::Ordering;
 
     // ========================================================================
     // BulwarkEvent 枚举测试
