@@ -229,7 +229,7 @@ pub struct BulwarkSession {
     ///
     /// 用于 `open_safe`/`close_safe` 等 modifying TokenSession 操作的串行化，
     /// 避免并发 read-modify-write 导致 lost update。只读操作（如 `is_safe`）不需要锁。
-    #[cfg(feature = "safe-auth")]
+    #[cfg(any(feature = "safe-auth", feature = "anonymous-session"))]
     token_session_locks: DashMap<String, Arc<TokioMutex<()>>>,
     /// login_id → token 列表的内存索引，用于并发登录控制快速查询。
     ///
@@ -281,7 +281,7 @@ impl BulwarkSession {
             #[cfg(feature = "anonymous-session")]
             anon_session_timeout: crate::config::DEFAULT_ANON_SESSION_TIMEOUT_SECS,
             login_locks: DashMap::new(),
-            #[cfg(feature = "safe-auth")]
+            #[cfg(any(feature = "safe-auth", feature = "anonymous-session"))]
             token_session_locks: DashMap::new(),
             login_token_map: DashMap::new(),
             #[cfg(feature = "listener")]
@@ -421,7 +421,7 @@ impl BulwarkSession {
     ///
     /// 注意：`get_token_session`/`save_token_session` 本身不加锁，调用方需通过此方法
     /// 包裹 read-modify-write 序列。只读操作（如 `is_safe`）不需要锁。
-    #[cfg(feature = "safe-auth")]
+    #[cfg(any(feature = "safe-auth", feature = "anonymous-session"))]
     pub(crate) async fn with_token_session_lock<F, R>(&self, token: &str, f: F) -> R
     where
         F: std::future::Future<Output = R>,
@@ -1281,6 +1281,12 @@ impl BulwarkSession {
     /// - 序列化 `AccountSession` 失败：`BulwarkError::Session`。
     /// - DAO 删除/更新失败：透传 `BulwarkError`。
     pub async fn logout(&self, token: &str) -> BulwarkResult<()> {
+        // 匿名 token 路由到 logout_anon（key 空间隔离）
+        #[cfg(feature = "anonymous-session")]
+        if self.is_anon(token).await? {
+            return self.logout_anon(token).await;
+        }
+
         // 先读取 token session 获取 login_id（不在锁内，避免锁持有时间过长）
         let ts = self.get_token_session(token).await?;
         match ts {

@@ -25,6 +25,19 @@ fn anon_token_key(token: &str) -> String {
     format!("{}session:anon:{}", DaoKeyPrefix::Token, token)
 }
 
+/// 校验匿名 token 输入。
+///
+/// 拒绝空字符串和超长 token（>128 字节），防止 DoS 和语义混淆。
+fn validate_anon_token(token: &str) -> BulwarkResult<()> {
+    if token.is_empty() {
+        return Err(BulwarkError::InvalidParam("token 不能为空".to_string()));
+    }
+    if token.len() > 128 {
+        return Err(BulwarkError::InvalidParam("token 长度超限".to_string()));
+    }
+    Ok(())
+}
+
 /// 获取匿名 Token-Session，不存在则创建。
 ///
 /// 首次调用时创建新的匿名 Session（`login_id = ""`, `is_anon = true`）并存储到 DAO，
@@ -44,40 +57,48 @@ pub async fn get_anon_token_session(
     session: &BulwarkSession,
     token: &str,
 ) -> BulwarkResult<TokenSession> {
+    validate_anon_token(token)?;
     let key = anon_token_key(token);
 
-    // 已存在则返回
-    if let Some(json) = session.dao.get(&key).await? {
-        let ts: TokenSession = serde_json::from_str(&json)
-            .map_err(|e| BulwarkError::Session(format!("反序列化匿名 TokenSession 失败: {}", e)))?;
-        return Ok(ts);
-    }
-
-    // 不存在则创建
-    let now = Utc::now().timestamp();
-    let ts = TokenSession {
-        token: token.to_string(),
-        login_id: String::new(),
-        created_at: now,
-        last_active_at: now,
-        attrs: HashMap::new(),
-        device: None,
-        ip: None,
-        user_agent: None,
-        safe_services: HashMap::new(),
-        #[cfg(feature = "dynamic-active-timeout")]
-        dynamic_active_timeout: None,
-        is_anon: true,
-    };
-
-    let json = serde_json::to_string(&ts)
-        .map_err(|e| BulwarkError::Session(format!("序列化匿名 TokenSession 失败: {}", e)))?;
+    // 使用 per-token 锁保护 check-then-set 序列，避免并发 lost update
     session
-        .dao
-        .set(&key, &json, session.anon_session_timeout)
-        .await?;
+        .with_token_session_lock(token, async {
+            // 已存在则返回
+            if let Some(json) = session.dao.get(&key).await? {
+                let ts: TokenSession = serde_json::from_str(&json).map_err(|e| {
+                    BulwarkError::Session(format!("反序列化匿名 TokenSession 失败: {}", e))
+                })?;
+                return Ok(ts);
+            }
 
-    Ok(ts)
+            // 不存在则创建
+            let now = Utc::now().timestamp();
+            let ts = TokenSession {
+                token: token.to_string(),
+                login_id: String::new(),
+                created_at: now,
+                last_active_at: now,
+                attrs: HashMap::new(),
+                device: None,
+                ip: None,
+                user_agent: None,
+                safe_services: HashMap::new(),
+                #[cfg(feature = "dynamic-active-timeout")]
+                dynamic_active_timeout: None,
+                is_anon: true,
+            };
+
+            let json = serde_json::to_string(&ts).map_err(|e| {
+                BulwarkError::Session(format!("序列化匿名 TokenSession 失败: {}", e))
+            })?;
+            session
+                .dao
+                .set(&key, &json, session.anon_session_timeout)
+                .await?;
+
+            Ok(ts)
+        })
+        .await
 }
 
 /// 判断 token 是否为匿名 Session。
@@ -96,6 +117,7 @@ pub async fn get_anon_token_session(
 /// # 错误
 /// DAO 读取失败时透传 `BulwarkError`。
 pub async fn is_anon(session: &BulwarkSession, token: &str) -> BulwarkResult<bool> {
+    validate_anon_token(token)?;
     let key = anon_token_key(token);
     Ok(session.dao.get(&key).await?.is_some())
 }
@@ -114,6 +136,7 @@ pub async fn is_anon(session: &BulwarkSession, token: &str) -> BulwarkResult<boo
 /// # 错误
 /// DAO 删除失败时透传 `BulwarkError`。
 pub async fn logout_anon(session: &BulwarkSession, token: &str) -> BulwarkResult<()> {
+    validate_anon_token(token)?;
     let key = anon_token_key(token);
     session.dao.delete(&key).await
 }
