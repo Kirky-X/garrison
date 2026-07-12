@@ -1,8 +1,7 @@
-//! 用户级双态账号锁定子模块（吸收 keycloak UserLockoutStrategy）。
-//!
-//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
-//!
+
+//! 用户级双态账号锁定子模块（吸收 keycloak UserLockoutStrategy）。
 //! 提供用户级 temporary + permanent 双态锁定，与 BruteForceStrategy（IP 级）组合使用。
 //! 详见 spec `user-lockout`。
 //!

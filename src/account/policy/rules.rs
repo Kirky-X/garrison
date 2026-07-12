@@ -1,8 +1,7 @@
-//! 密码策略规则实现。
-//!
-//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
-//!
+
+//! 密码策略规则实现。
 //! 提供 12 条可插拔密码策略规则（v0.6.0 一次性交付）。
 //! T008 实现 6 条核心规则（R-005），T009 实现 6 条扩展规则（R-006）。
 //!

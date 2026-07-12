@@ -1,8 +1,7 @@
-//! Bulwark Benchmark Suite
-//!
-//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
-//!
+
+//! Bulwark Benchmark Suite
 //! 依据 spec benchmark-framework（E-006），覆盖 4 个基准场景：
 //!
 //! | Bench | FRD 来源 | 目标 P99 |

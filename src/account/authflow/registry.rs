@@ -1,8 +1,7 @@
-//! FlowRegistry inventory 注册。
-//!
-//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
-//!
+
+//! FlowRegistry inventory 注册。
 //! 提供认证流程的编译期注册（`inventory::submit!`）与运行期查询/追加。
 //!
 //! # 编译期注册

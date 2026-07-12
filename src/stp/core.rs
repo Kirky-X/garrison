@@ -1,8 +1,7 @@
-//! BulwarkCore base trait — 所有子 trait 的基础。
-//!
-//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
+//! BulwarkCore base trait — 所有子 trait 的基础。
 use super::BulwarkLogicDefault;
 use crate::config::BulwarkConfig;
 use std::sync::Arc;

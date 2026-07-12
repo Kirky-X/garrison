@@ -1,8 +1,7 @@
-//! 内置 AuthenticationFlow。
-//!
-//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
-//!
+
+//! 内置 AuthenticationFlow。
 //! 通过 `inventory::submit!` 编译期注册 4 个内置认证流程，
 //! [`FlowRegistry::from_inventory`](super::registry::FlowRegistry::from_inventory) 自动收集。
 //!

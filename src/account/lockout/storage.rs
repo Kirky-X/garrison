@@ -1,8 +1,7 @@
-//! 锁定状态存储抽象。
-//!
-//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
-//!
+
+//! 锁定状态存储抽象。
 //! 本文件为 DAO 存储抽象的具体实现占位（如 Redis/SQL 适配）。
 //! v0.6.0 的 [`UserLockoutStrategy`](crate::account::lockout::UserLockoutStrategy) 直接通过
 //! [`BulwarkDao`](crate::dao::BulwarkDao) 持久化 [`LockoutState`](crate::account::lockout::LockoutState)，

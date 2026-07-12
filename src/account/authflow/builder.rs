@@ -1,8 +1,7 @@
-//! FlowBuilder 流式构建 DSL。
-//!
-//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
-//!
+
+//! FlowBuilder 流式构建 DSL。
 //! 提供链式 API 构建 [`AuthenticationFlow`]，每个方法返回 `Self`（除 [`FlowBuilder::build`]）。
 //!
 //! # 示例

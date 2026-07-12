@@ -1,8 +1,7 @@
-//! Acceptance Criteria 集成测试 — BW-AC-001~010 验收标准显式追溯。
-//!
-//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
-//!
+
+//! Acceptance Criteria 集成测试 — BW-AC-001~010 验收标准显式追溯。
 //! 依据 spec acceptance-criteria（E-007），覆盖 FRD §8.1 BW-AC-001~010。
 //! 每个测试函数对应一个 BW-AC，包含 Gherkin 注释（Given / When / Then）。
 //!

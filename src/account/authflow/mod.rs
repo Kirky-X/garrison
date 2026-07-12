@@ -1,8 +1,7 @@
-//! AuthenticationFlow DSL 子模块（吸收 keycloak AuthenticationFlow）。
-//!
-//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
-//!
+
+//! AuthenticationFlow DSL 子模块（吸收 keycloak AuthenticationFlow）。
 //! 提供声明式认证流程编排，覆盖登录 + MFA + 社交登录 + SSO 全认证流程。
 //! 详见 spec `auth-flow-dsl`。
 //!

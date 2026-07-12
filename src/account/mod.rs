@@ -1,8 +1,7 @@
-//! 账号安全引擎模块（吸收 keycloak 安全能力）。
-//!
-//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
-//!
+
+//! 账号安全引擎模块（吸收 keycloak 安全能力）。
 //! 本模块吸收 Keycloak 安全能力，提升 Bulwark 原生账号安全能力。
 //! 与 `secure/` 模块（密码学原语）互补：`secure/` 提供 TOTP/签名/Basic/Digest
 //! 等底层原语，`account/` 提供账号生命周期安全能力。

@@ -1,8 +1,7 @@
-//! TOTP 凭证子模块。
-//!
-//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
-//!
+
+//! TOTP 凭证子模块。
 //! 提供 `TotpCredential`，实现 `Credential` trait，复用
 //! `secure::totp::TotpHandler`（RFC 6238）的校验逻辑。
 //!

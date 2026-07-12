@@ -1,8 +1,7 @@
-//! 凭证模型 SPI 子模块（吸收 keycloak CredentialModel SPI）。
-//!
-//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
-//!
+
+//! 凭证模型 SPI 子模块（吸收 keycloak CredentialModel SPI）。
 //! 提供统一凭证抽象，支持 password / TOTP / WebAuthn（v0.7+）等多种凭证类型。
 //! 详见 spec `credential-model`。
 //!

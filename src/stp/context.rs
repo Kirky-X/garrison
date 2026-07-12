@@ -1,8 +1,7 @@
-//! task_local 上下文 — Token 续签结果传递。
-//!
-//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
+//! task_local 上下文 — Token 续签结果传递。
 use std::sync::{Arc, Mutex};
 
 tokio::task_local! {

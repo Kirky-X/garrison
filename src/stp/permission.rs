@@ -1,8 +1,7 @@
-//! PermissionLogic trait — 权限与角色校验契约。
-//!
-//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
-//!
+
+//! PermissionLogic trait — 权限与角色校验契约。
 //! 从 v0.5.2 起，从 `BulwarkLogic` 上帝 trait 拆分；本 trait 承接权限/角色校验 2 个方法。
 //! super-trait 为 [`SessionLogic`]（权限校验需先通过 `get_login_id` 获取当前登录主体）。
 

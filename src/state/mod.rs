@@ -1,8 +1,7 @@
-//! 状态机模块，定义 Token 与 User 的显式状态机。
-//!
-//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
-//!
+
+//! 状态机模块，定义 Token 与 User 的显式状态机。
 //! 以 FRD §4.2 / §4.3 为权威来源。
 //!
 //! ## 设计

@@ -1,8 +1,7 @@
-//! 密码策略错误类型。
-//!
-//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
-//!
+
+//! 密码策略错误类型。
 //! 定义 [`PolicyError`]，由 `PasswordPolicyRule::validate` 返回，
 //! `PasswordPolicyEngine::validate` 收集为 `Vec<PolicyError>`。
 

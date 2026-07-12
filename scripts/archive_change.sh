@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright (c) 2026 Kirky.X. All rights reserved.
+# See LICENSE for full license text.
 # -*- coding: utf-8 -*-
 #
 # archive_change.sh — specmark 归档执行器（确定性逻辑代码化，规则5）
@@ -19,7 +21,6 @@
 #   1 — 一般错误（参数错误 / 产物缺失 / mv 失败 / 目标已存在）
 #   2 — flock 竞争超时
 #
-# Copyright (c) 2024-2026 Kirky.X. See LICENSE for full license text.
 
 set -euo pipefail
 

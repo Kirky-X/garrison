@@ -1,8 +1,7 @@
-//! 备份码凭证子模块。
-//!
-//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
-//!
+
+//! 备份码凭证子模块。
 //! 提供 `BackupCodeCredential`，实现 `Credential` trait，支持生成 10 个一次性
 //! MFA 备份码（8 字节随机数 → Base32 → `XXXX-XXXX-XXXX` 格式）。
 //!

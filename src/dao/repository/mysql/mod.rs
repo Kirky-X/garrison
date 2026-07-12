@@ -1,3 +1,6 @@
+//! Copyright (c) 2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
 //! MySQL Repository 实现。
 //!
 //! 复用 `sqlite` 模块的 backend-agnostic Repository 实现（通过 [`make_statement`](crate::dao::repository::make_statement)
@@ -37,10 +40,6 @@
 //! # Ok(())
 //! # }
 //! ```
-//!
-//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
-//! See LICENSE for full license text.
-
 // 复用 sqlite 模块的 backend-agnostic Repository 实现。
 // sqlite 模块通过 make_statement(conn, sql, values) 在运行时根据 conn.get_database_backend()
 // 自动转换占位符（SQLite ? / MySQL ? / PostgreSQL $1,$2），因此同一份代码三种后端通用。

@@ -1,8 +1,7 @@
-//! TokenLogic trait — Token 类型校验与刷新契约。
-//!
-//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
-//!
+
+//! TokenLogic trait — Token 类型校验与刷新契约。
 //! 从 v0.5.2 起，从 `BulwarkLogic` 上帝 trait 拆分；本 trait 承接 token 类型校验、
 //! 显式 token 验证、token 刷新 5 个方法。super-trait 为 [`SessionLogic`]
 //! （token 校验依赖会话状态，默认实现委托 [`check_login`](SessionLogic::check_login)）。

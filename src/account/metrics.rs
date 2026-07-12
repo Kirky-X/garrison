@@ -1,8 +1,7 @@
-//! 账号安全能力 Prometheus 指标。
-//!
-//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
-//!
+
+//! 账号安全能力 Prometheus 指标。
 //! 启用 `metrics-prometheus` feature 时编译，提供 4 个指标覆盖凭证验证 / 策略校验 /
 //! 锁定触发 / 认证流程执行。未启用时 `AccountMetrics` 为 unit type 别名。
 //!

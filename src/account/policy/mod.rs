@@ -1,8 +1,7 @@
-//! 密码策略套件子模块（吸收 keycloak PasswordPolicyRule）。
-//!
-//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
-//!
+
+//! 密码策略套件子模块（吸收 keycloak PasswordPolicyRule）。
 //! 提供可插拔密码策略规则 + 统一引擎执行，支持企业合规场景。
 //! 详见 spec `password-policy`。
 //!

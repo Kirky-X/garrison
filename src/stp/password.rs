@@ -1,8 +1,7 @@
-//! PasswordLogic trait — 密码登录契约。
-//!
-//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
-//!
+
+//! PasswordLogic trait — 密码登录契约。
 //! 从 v0.5.2 起，从 `BulwarkLogic` 上帝 trait 拆分；本 trait 承接密码登录 1 个方法。
 //! super-trait 为 [`SessionLogic`]（密码校验通过后调用
 //! [`login`](SessionLogic::login) 签发 token）。
