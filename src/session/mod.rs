@@ -3268,4 +3268,57 @@ mod tests {
             mem_tokens
         );
     }
+
+    // ------------------------------------------------------------------------
+    // create / logout 端到端双层一致性（feature = "login-token-map-persistence"）
+    // ------------------------------------------------------------------------
+
+    /// 验证 login → logout 后 DAO AccountSession.tokens 与内存 login_token_map 一致。
+    ///
+    /// 场景：create(user1, T1) 后 DAO 与内存两层都包含 T1；
+    /// logout(T1) 后 DAO AccountSession.tokens 为空、内存 login_token_map 不包含 T1。
+    /// 这验证了 create_inner/logout_inner 现有双写逻辑在 persistent 特性下的一致性。
+    #[cfg(feature = "login-token-map-persistence")]
+    #[tokio::test]
+    async fn login_logout_persistent_consistency() {
+        let (_dao, session) = make_session(3600, 86400);
+
+        // 1. create(user1, T1)
+        session.create("user1", "T1").await.unwrap();
+
+        // 验证 DAO AccountSession.tokens 包含 T1
+        let account = session.get_account_session("user1").await.unwrap().unwrap();
+        let dao_tokens: Vec<String> = account.tokens.into_iter().map(|ti| ti.token).collect();
+        assert_eq!(
+            dao_tokens.len(),
+            1,
+            "DAO AccountSession.tokens 应有 1 个 token"
+        );
+        assert!(dao_tokens.contains(&"T1".to_string()));
+
+        // 验证内存 login_token_map 包含 T1
+        let mem_tokens = session.get_tokens_by_login_id("user1");
+        assert_eq!(mem_tokens.len(), 1, "内存 login_token_map 应有 1 个 token");
+        assert!(mem_tokens.contains(&"T1".to_string()));
+
+        // 2. logout(T1)
+        session.logout("T1").await.unwrap();
+
+        // 验证 DAO AccountSession.tokens 为空（AccountSession 保留历史，不删除）
+        let account = session.get_account_session("user1").await.unwrap().unwrap();
+        let dao_tokens: Vec<String> = account.tokens.into_iter().map(|ti| ti.token).collect();
+        assert!(
+            dao_tokens.is_empty(),
+            "logout 后 DAO AccountSession.tokens 应为空，实际: {:?}",
+            dao_tokens
+        );
+
+        // 验证内存 login_token_map 不包含 T1（entry 为空时被移除）
+        let mem_tokens = session.get_tokens_by_login_id("user1");
+        assert!(
+            mem_tokens.is_empty(),
+            "logout 后内存 login_token_map 不应包含 T1，实际: {:?}",
+            mem_tokens
+        );
+    }
 }
