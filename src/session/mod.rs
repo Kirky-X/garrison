@@ -944,6 +944,33 @@ impl BulwarkSession {
         Ok(())
     }
 
+    /// 设置 per-token 动态 active timeout（秒）。
+    ///
+    /// 读取现有 TokenSession，设置 `dynamic_active_timeout` 字段后写回 DAO。
+    /// 用 `dao.update` 保留原 TTL（不重置过期时间）。
+    ///
+    /// # 参数
+    /// - `token`: 待设置的 token 字符串。
+    /// - `timeout_secs`: 超时秒数。
+    ///
+    /// # 错误
+    /// - token 不存在：`BulwarkError::InvalidToken`。
+    /// - 序列化失败：`BulwarkError::Session`。
+    /// - DAO 更新失败：透传 `BulwarkError`。
+    #[cfg(feature = "dynamic-active-timeout")]
+    pub async fn set_active_timeout(&self, token: &str, timeout_secs: i64) -> BulwarkResult<()> {
+        let mut ts = self
+            .get_token_session(token)
+            .await?
+            .ok_or_else(|| BulwarkError::InvalidToken(format!("token 不存在: {}", token)))?;
+        ts.dynamic_active_timeout = Some(timeout_secs);
+        ts.last_active_at = Utc::now().timestamp();
+        let json = serde_json::to_string(&ts)
+            .map_err(|e| BulwarkError::Session(format!("序列化 TokenSession 失败: {}", e)))?;
+        self.dao.update(&token_key(token), &json).await?;
+        Ok(())
+    }
+
     /// 检查 token 是否有效（Token-Session 存在且 Account-Session 未过期）。
     ///
     /// 惰性检查 Account-Session 是否存在——若 Account-Session 已被 oxcache TTL 清理，
@@ -2841,6 +2868,55 @@ mod tests {
         assert!(
             ts.dynamic_active_timeout.is_none(),
             "新创建的 TokenSession 的 dynamic_active_timeout 应默认为 None"
+        );
+    }
+
+    // ------------------------------------------------------------------------
+    // set_active_timeout：设置 per-token 动态活跃超时
+    // ------------------------------------------------------------------------
+
+    /// 验证 `set_active_timeout` 设置 `dynamic_active_timeout` 为指定值。
+    ///
+    /// 创建 token session 后调用 `set_active_timeout(token, 600)`，
+    /// 验证 `get_token_session` 返回的 `dynamic_active_timeout` 为 `Some(600)`。
+    #[cfg(feature = "dynamic-active-timeout")]
+    #[tokio::test]
+    async fn set_active_timeout_sets_dynamic_timeout() {
+        let (_dao, session) = make_session(3600, 86400);
+        session.create("1001", "T1").await.unwrap();
+
+        // 初始应为 None
+        let ts = session.get_token_session("T1").await.unwrap().unwrap();
+        assert!(ts.dynamic_active_timeout.is_none());
+
+        // 设置动态活跃超时为 600 秒
+        session.set_active_timeout("T1", 600).await.unwrap();
+
+        // 验证已写入
+        let ts = session.get_token_session("T1").await.unwrap().unwrap();
+        assert_eq!(
+            ts.dynamic_active_timeout,
+            Some(600),
+            "set_active_timeout 后 dynamic_active_timeout 应为 Some(600)"
+        );
+    }
+
+    /// 验证 `set_active_timeout` 对不存在的 token 返回错误。
+    ///
+    /// 对不存在的 token 调用 `set_active_timeout`，验证返回 `Err`。
+    #[cfg(feature = "dynamic-active-timeout")]
+    #[tokio::test]
+    async fn set_active_timeout_returns_error_for_nonexistent_token() {
+        let (_dao, session) = make_session(3600, 86400);
+        let result = session.set_active_timeout("nonexistent", 600).await;
+        assert!(
+            result.is_err(),
+            "set_active_timeout 对不存在的 token 应返回 Err"
+        );
+        assert!(
+            matches!(result, Err(BulwarkError::InvalidToken(_))),
+            "set_active_timeout 对不存在的 token 应返回 InvalidToken 错误，实际: {:?}",
+            result
         );
     }
 }
