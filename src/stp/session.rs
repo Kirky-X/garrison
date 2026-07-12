@@ -1,8 +1,7 @@
-//! SessionLogic trait — 会话生命周期管理契约（登录/登出/踢出/校验）。
-//!
-//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
-//!
+
+//! SessionLogic trait — 会话生命周期管理契约（登录/登出/踢出/校验）。
 //! 从 v0.5.2 起，原 `BulwarkLogic` 上帝 trait 拆分为 6 个细粒度 trait；
 //! 本 trait 承接会话生命周期相关 10 个方法，super-trait 为 [`BulwarkCore`]。
 //!
@@ -17,6 +16,7 @@ use super::current_token;
 use super::BulwarkLogicDefault;
 use super::JwtMode;
 use super::LoginParams;
+use crate::config::ReplacedLoginExitMode;
 use crate::error::{BulwarkError, BulwarkResult};
 #[cfg(feature = "listener")]
 use crate::listener::BulwarkEvent;
@@ -389,10 +389,33 @@ impl BulwarkLogicDefault {
             }
         }
 
-        // is_concurrent=false: 登录前踢出所有现有会话（fail-closed，kickout 失败则不创建新会话）
+        // is_concurrent=false: 根据 replaced_login_exit_mode 决定行为
+        // - OldDevice：踢出旧设备的所有会话（默认，对应 Sa-Token 语义）
+        // - NewDevice：若存在有效旧会话则拒绝新登录，保留旧设备
         // 注：is_share=true 时 is_concurrent 必为 true（T006 validate 保证），两分支互斥
         if !self.config.is_concurrent {
-            self.kickout(login_id).await?;
+            match self.config.replaced_login_exit_mode {
+                ReplacedLoginExitMode::OldDevice => {
+                    self.kickout(login_id).await?;
+                },
+                ReplacedLoginExitMode::NewDevice => {
+                    // 检查是否存在有效旧会话（与 is_share 块一致的校验模式）
+                    if let Some(existing_token) = self.session.get_token_by_login_id(login_id) {
+                        if let Ok(Some(_)) = self.session.get_token_session(&existing_token).await {
+                            tracing::warn!(
+                                login_id,
+                                mode = "new_device",
+                                "新设备登录被拒绝：当前为 NewDevice 模式，已有有效旧会话"
+                            );
+                            return Err(BulwarkError::Session(
+                                "新设备登录被拒绝：当前为 NewDevice 模式，不允许新设备登录"
+                                    .to_string(),
+                            ));
+                        }
+                    }
+                    // 无有效旧会话，允许新登录
+                },
+            }
         }
 
         // T020: 自动生成设备指纹。

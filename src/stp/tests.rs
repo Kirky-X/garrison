@@ -1,8 +1,9 @@
-//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
 //! Stp 集成测试。
 use super::*;
+use crate::config::ReplacedLoginExitMode;
 use crate::dao::BulwarkDao;
 use crate::manager::BulwarkManager;
 use async_trait::async_trait;
@@ -3493,6 +3494,69 @@ async fn login_with_is_concurrent_false_kickouts_existing() {
     // t1 应已被踢出（Token-Session 不存在）
     let ts1 = logic.session.get_token_session(&t1).await.unwrap();
     assert!(ts1.is_none(), "is_concurrent=false 登录后旧 token 应被踢出");
+}
+
+// ============================================================================
+// T002: replaced_login_exit_mode 集成测试（is_concurrent=false 时生效）
+// ============================================================================
+
+/// T002: NewDevice 模式下，已有旧会话时拒绝新登录。
+#[tokio::test]
+async fn login_new_device_mode_rejects_new_login() {
+    let mut logic = make_logic(3600, 86400, false, "uuid", true, true);
+    Arc::make_mut(&mut logic.config).is_concurrent = false;
+    Arc::make_mut(&mut logic.config).replaced_login_exit_mode = ReplacedLoginExitMode::NewDevice;
+
+    // 首次登录应成功（无旧会话）
+    let token1 = logic
+        .login("new-device-user-001", &LoginParams::default())
+        .await
+        .unwrap();
+    assert!(!token1.is_empty(), "首次登录应成功");
+
+    // 第二次登录应被拒绝（已有旧会话 + NewDevice 模式）
+    let result = logic
+        .login("new-device-user-001", &LoginParams::default())
+        .await;
+    assert!(
+        matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("NewDevice")),
+        "NewDevice 模式下已有旧会话时应返回 Session 错误，实际: {:?}",
+        result
+    );
+
+    // 旧会话应仍然有效（NewDevice 模式保留旧设备）
+    let ts1 = logic.session.get_token_session(&token1).await.unwrap();
+    assert!(ts1.is_some(), "NewDevice 模式拒绝新登录后，旧会话应保留");
+}
+
+/// T002: OldDevice 模式下，已有旧会话时踢出旧会话允许新登录（验证现有行为不回归）。
+#[tokio::test]
+async fn login_old_device_mode_kickout_old_session() {
+    let mut logic = make_logic(3600, 86400, false, "uuid", true, true);
+    Arc::make_mut(&mut logic.config).is_concurrent = false;
+    Arc::make_mut(&mut logic.config).replaced_login_exit_mode = ReplacedLoginExitMode::OldDevice;
+
+    // 首次登录
+    let token1 = logic
+        .login("old-device-user-001", &LoginParams::default())
+        .await
+        .unwrap();
+    assert!(!token1.is_empty(), "首次登录应成功");
+
+    // 第二次登录应成功且踢出旧会话
+    let token2 = logic
+        .login("old-device-user-001", &LoginParams::default())
+        .await
+        .unwrap();
+    assert_ne!(token1, token2, "第二次登录应生成新 token");
+
+    // 旧 token 应已被踢出
+    let ts1 = logic.session.get_token_session(&token1).await.unwrap();
+    assert!(ts1.is_none(), "OldDevice 模式下旧会话应被踢出");
+
+    // 新 token 应有效
+    let ts2 = logic.session.get_token_session(&token2).await.unwrap();
+    assert!(ts2.is_some(), "OldDevice 模式下新会话应有效");
 }
 
 /// is_concurrent=true + is_share=false 时，重复登录应保留旧 token（允许并发）。
