@@ -1290,9 +1290,17 @@ impl BulwarkSession {
     /// - DAO 删除/更新失败：透传 `BulwarkError`。
     pub async fn logout(&self, token: &str) -> BulwarkResult<()> {
         // 匿名 token 路由到 logout_anon（key 空间隔离）
+        // InvalidParam（空 token / 超长 token）降级为非匿名，保持 logout 幂等契约
         #[cfg(feature = "anonymous-session")]
-        if self.is_anon(token).await? {
-            return self.logout_anon(token).await;
+        {
+            let is_anon = match self.is_anon(token).await {
+                Ok(v) => v,
+                Err(BulwarkError::InvalidParam(_)) => false,
+                Err(e) => return Err(e),
+            };
+            if is_anon {
+                return self.logout_anon(token).await;
+            }
         }
 
         // 先读取 token session 获取 login_id（不在锁内，避免锁持有时间过长）

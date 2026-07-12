@@ -290,4 +290,29 @@ mod tests {
             "注销不存在的 anon token 应返回 Ok(())（幂等）"
         );
     }
+
+    /// logout 对空 token 保持幂等契约（anonymous-session feature 下不因 InvalidParam 报错）。
+    #[tokio::test]
+    async fn logout_empty_token_remains_idempotent_with_anon_feature() {
+        let (_dao, session) = make_anon_session(3600, 86400, 1800);
+
+        let result = session.logout("").await;
+        assert!(
+            result.is_ok(),
+            "logout(\"\") 应保持幂等契约返回 Ok(())，而非因 is_anon 校验返回 Err"
+        );
+    }
+
+    /// logout 对超长 token 保持幂等契约。
+    #[tokio::test]
+    async fn logout_oversized_token_remains_idempotent_with_anon_feature() {
+        let (_dao, session) = make_anon_session(3600, 86400, 1800);
+
+        let oversized = "a".repeat(200);
+        let result = session.logout(&oversized).await;
+        assert!(
+            result.is_ok(),
+            "logout 对超长 token 应保持幂等契约返回 Ok(())"
+        );
+    }
 }
