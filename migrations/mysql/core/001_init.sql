@@ -1,3 +1,6 @@
+-- Copyright (c) 2026 Kirky.X. All rights reserved.
+-- See LICENSE for full license text.
+
 -- Migration: 初始化 8 张核心表 + app_user_ext 扩展表（MySQL 版本）
 -- 对应 spec: extensible-schema
 -- 数据库: MySQL 8.0+（VARCHAR(36) 存储 UUID，BIGINT 0/1 存储 boolean，VARCHAR(30) 存时间戳）

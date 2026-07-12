@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Kirky.X. All rights reserved.
+# See LICENSE for full license text.
+
 [book]
 title = "Bulwark 身份认证鉴权框架"
 authors = ["Bulwark Contributors"]

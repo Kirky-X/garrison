@@ -1,3 +1,6 @@
+-- Copyright (c) 2026 Kirky.X. All rights reserved.
+-- See LICENSE for full license text.
+
 -- Migration: 社交账号绑定表（MySQL 版本，v0.5.0 新增，依据 proposal H2 / spec social-login R-social-login-004）
 -- 对应 spec: social-login（社交登录账号绑定）
 -- 数据库: MySQL 8.0+

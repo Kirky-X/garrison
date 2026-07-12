@@ -1,3 +1,6 @@
+-- Copyright (c) 2026 Kirky.X. All rights reserved.
+-- See LICENSE for full license text.
+
 -- Migration: 初始化 8 张核心表 + app_user_ext 扩展表
 -- 对应 spec: extensible-schema
 -- 数据库: SQLite（TEXT 存储 UUID/JSON/enum，INTEGER 0/1 存储 boolean）

@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Kirky.X. All rights reserved.
+# See LICENSE for full license text.
+
 # Bulwark 官方示例集（workspace member，不发布到 crates.io）
 # 每个 bin 演示 Bulwark 的一个特性模块，配套 tests/<name>.rs 独立测试。
 

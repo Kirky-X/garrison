@@ -1,3 +1,6 @@
+-- Copyright (c) 2026 Kirky.X. All rights reserved.
+-- See LICENSE for full license text.
+
 -- Migration: 审计日志表（v0.5.0 新增，依据 proposal H3）
 -- 对应 spec: audit-log（AuditLogListener 持久化事件）
 -- 数据库: SQLite

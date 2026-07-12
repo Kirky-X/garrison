@@ -1,3 +1,6 @@
+-- Copyright (c) 2026 Kirky.X. All rights reserved.
+-- See LICENSE for full license text.
+
 -- Migration: 角色层级表（v0.5.0 新增，依据 proposal H6）
 -- 对应 spec: role-hierarchy（TC 预计算）
 -- 数据库: SQLite

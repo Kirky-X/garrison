@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Kirky.X. All rights reserved.
+# See LICENSE for full license text.
+
 [package]
 name = "bulwark-macros"
 version = "0.5.1"

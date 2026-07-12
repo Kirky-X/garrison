@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Kirky.X. All rights reserved.
+# See LICENSE for full license text.
+
 # cargo-deny 配置 — `cargo deny check` 按此校验 漏洞/许可证/禁用源/重复依赖。
 # 完整字段见: https://embarkstudios.github.io/cargo-deny/
 

@@ -1,3 +1,6 @@
+-- Copyright (c) 2026 Kirky.X. All rights reserved.
+-- See LICENSE for full license text.
+
 -- Migration: 用户设备表（PostgreSQL 版本，v0.5.1 新增，依据 design.md D4 / M2 UserDevice）
 -- 对应 spec: repository-layer（UserDeviceRepository trait）
 -- 数据库: PostgreSQL

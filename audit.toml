@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Kirky.X. All rights reserved.
+# See LICENSE for full license text.
+
 # cargo-audit 配置（依据 spec protocol-jwt Known Risks 章节）
 #
 # RUSTSEC-2026-0173: proc-macro-error2 v2.0.1 unmaintained
