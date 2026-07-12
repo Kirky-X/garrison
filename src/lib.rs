@@ -311,6 +311,15 @@ pub mod protocol;
 #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
 pub mod backend;
 
+/// Auth Server 模块，提供 BulwarkAuthServer（双端口 axum 服务器）。
+///
+/// 启用 `auth-server` feature 时编译。
+/// 将 AuthBackend 方法暴露为 HTTP 端点：
+/// - 外网端口：login / logout / refresh（面向用户）
+/// - 内网端口：check-* / get-* / kickout 等（服务间调用，需 X-API-Key）
+#[cfg(feature = "auth-server")]
+pub mod server;
+
 // ====================================================================
 // 公共入口
 // ====================================================================

@@ -108,6 +108,10 @@ testcontainers = "0.27"
 criterion = { version = "0.5", features = ["html_reports"] }
 # rcgen 用于 BackendRemote mTLS 测试中生成自签名证书
 rcgen = "0.14"
+# reqwest 用于 auth_server_integration 集成测试的 HTTP 客户端
+# 主依赖中 reqwest 是 optional（仅 backend-remote 启用），
+# 集成测试需要直接发送 HTTP 请求到服务器，因此在这里无条件引入
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "rustls-native-certs"] }
 
 [features]
 default = ["backend-embedded"]
@@ -435,6 +439,19 @@ strip = true
 name = "db_mysql_testcontainers"
 path = "tests/db_mysql_testcontainers.rs"
 required-features = ["db-mysql"]
+
+# auth_server_integration：BulwarkAuthServer 端到端集成测试
+[[test]]
+name = "auth_server_integration"
+path = "tests/auth_server_integration.rs"
+required-features = ["auth-server"]
+
+# === 二进制目标 ===
+# auth_server：BulwarkAuthServer 独立运行入口（双端口 axum 服务器）
+[[bin]]
+name = "auth_server"
+path = "src/bin/auth_server.rs"
+required-features = ["auth-server"]
 
 # === 基准测试目标 ===
 # bulwark_benchmark：criterion 基准测试套件
