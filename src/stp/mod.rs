@@ -284,6 +284,12 @@ pub struct BulwarkLogicDefault {
     ///
     /// 非 feature-gated（核心能力）。未注入时 check_disable 返回 `Ok(())`（向后兼容）。
     pub(crate) disable_repository: Option<Arc<dyn crate::account::disable::DisableRepository>>,
+    /// 用户缓存服务（可选，注入后 logout/logout_by_login_id 失效用户三层缓存）。
+    ///
+    /// 需启用 `three-tier-cache` feature。未注入时 logout 不失效缓存（向后兼容）。
+    /// 缓存失效失败只 `tracing::warn!` 不中断 logout 主流程。
+    #[cfg(feature = "three-tier-cache")]
+    pub(crate) user_cache_service: Option<Arc<crate::cache::UserCacheService>>,
 }
 
 impl BulwarkLogicDefault {
@@ -328,6 +334,8 @@ impl BulwarkLogicDefault {
             #[cfg(feature = "device-binding")]
             device_binding_policy: None,
             disable_repository: None,
+            #[cfg(feature = "three-tier-cache")]
+            user_cache_service: None,
         }
     }
 
@@ -512,6 +520,17 @@ impl BulwarkLogicDefault {
         repo: Arc<dyn crate::account::disable::DisableRepository>,
     ) -> Self {
         self.disable_repository = Some(repo);
+        self
+    }
+
+    /// 注入用户缓存服务（builder 模式，需启用 `three-tier-cache` feature）。
+    ///
+    /// 注入后 `logout` / `logout_by_login_id` 在销毁会话后调用
+    /// `UserCacheService::invalidate(login_id)` 失效用户的三层缓存（权限/角色/用户）。
+    /// 未注入时 logout 不失效缓存（向后兼容）。失效失败只 `tracing::warn!` 不中断 logout。
+    #[cfg(feature = "three-tier-cache")]
+    pub fn with_user_cache_service(mut self, service: Arc<crate::cache::UserCacheService>) -> Self {
+        self.user_cache_service = Some(service);
         self
     }
 

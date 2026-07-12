@@ -1016,9 +1016,9 @@ impl BulwarkConfig {
         }
         #[cfg(feature = "anomalous-detector-dual")]
         {
-            if self.anomalous_analyzer_interval_secs == 0 {
+            if self.anomalous_analyzer_interval_secs < 60 {
                 return Err(BulwarkError::Config(
-                    "anomalous_analyzer_interval_secs 必须大于 0".to_string(),
+                    "anomalous_analyzer_interval_secs 必须 >= 60".to_string(),
                 ));
             }
             if self.anomalous_analyzer_burst_threshold == 0 {
@@ -2589,5 +2589,46 @@ jwt_secret = "test-secret""#,
             "BULWARK_OVERFLOW_LOGOUT_MODE=kickout 应覆盖为 Kickout"
         );
         std::env::remove_var("BULWARK_OVERFLOW_LOGOUT_MODE");
+    }
+
+    // ========================================================================
+    // T023-d: anomalous-detector-dual validate() 校验测试（spec R-007）
+    // ========================================================================
+
+    /// R-007: `anomalous_analyzer_interval_secs < 60` 时 validate() 返回 Err。
+    #[cfg(feature = "anomalous-detector-dual")]
+    #[test]
+    fn validate_rejects_anomalous_interval_below_60() {
+        let mut config = BulwarkConfig::default_config();
+        config.anomalous_analyzer_interval_secs = 30;
+        let err = config.validate().unwrap_err();
+        assert!(
+            matches!(err, BulwarkError::Config(ref m) if m.contains("anomalous_analyzer_interval_secs")),
+            "interval=30 应被拒绝，实际: {:?}",
+            err
+        );
+    }
+
+    /// R-007: `anomalous_analyzer_interval_secs = 60` 时 validate() 通过（边界值）。
+    #[cfg(feature = "anomalous-detector-dual")]
+    #[test]
+    fn validate_accepts_anomalous_interval_at_60() {
+        let mut config = BulwarkConfig::default_config();
+        config.anomalous_analyzer_interval_secs = 60;
+        assert!(config.validate().is_ok(), "interval=60 应通过 validate");
+    }
+
+    /// R-007: `anomalous_analyzer_burst_threshold = 0` 时 validate() 返回 Err。
+    #[cfg(feature = "anomalous-detector-dual")]
+    #[test]
+    fn validate_rejects_zero_burst_threshold() {
+        let mut config = BulwarkConfig::default_config();
+        config.anomalous_analyzer_burst_threshold = 0;
+        let err = config.validate().unwrap_err();
+        assert!(
+            matches!(err, BulwarkError::Config(ref m) if m.contains("anomalous_analyzer_burst_threshold")),
+            "burst_threshold=0 应被拒绝，实际: {:?}",
+            err
+        );
     }
 }

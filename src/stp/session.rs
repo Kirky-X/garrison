@@ -228,12 +228,19 @@ impl SessionLogic for BulwarkLogicDefault {
                     pm.on_logout(id, &token);
                 }
                 #[cfg(feature = "listener")]
-                if let (Some(lm), Some(id)) = (&self.listener_manager, login_id) {
+                if let (Some(lm), Some(id)) = (&self.listener_manager, login_id.as_ref()) {
                     lm.broadcast(&BulwarkEvent::Logout {
-                        login_id: id,
+                        login_id: id.clone(),
                         token: token.clone(),
                     })
                     .await;
+                }
+                // three-tier-cache: 失效用户三层缓存（权限/角色/用户）
+                #[cfg(feature = "three-tier-cache")]
+                if let (Some(ucs), Some(id)) = (&self.user_cache_service, login_id.as_ref()) {
+                    if let Err(e) = ucs.invalidate(id).await {
+                        tracing::warn!(error = %e, login_id = id, "logout 失效用户缓存失败");
+                    }
                 }
                 Ok(())
             },
@@ -242,7 +249,15 @@ impl SessionLogic for BulwarkLogicDefault {
     }
 
     async fn logout_by_login_id(&self, login_id: &str) -> BulwarkResult<()> {
-        self.session.logout_by_login_id(login_id).await
+        self.session.logout_by_login_id(login_id).await?;
+        // three-tier-cache: 失效用户三层缓存（权限/角色/用户）
+        #[cfg(feature = "three-tier-cache")]
+        if let Some(ucs) = &self.user_cache_service {
+            if let Err(e) = ucs.invalidate(login_id).await {
+                tracing::warn!(error = %e, login_id, "logout_by_login_id 失效用户缓存失败");
+            }
+        }
+        Ok(())
     }
 
     async fn kickout(&self, login_id: &str) -> BulwarkResult<()> {
@@ -1762,6 +1777,286 @@ mod tests {
                 !params.require_mfa,
                 "LoginParams::default().require_mfa 应为 false"
             );
+        }
+    }
+
+    // ========================================================================
+    // T014: three-tier-cache 集成测试（three-tier-cache feature）
+    // 验证 R-three-tier-cache-005: logout/logout_by_login_id 调用 invalidate
+    // ========================================================================
+
+    #[cfg(feature = "three-tier-cache")]
+    mod three_tier_cache_integration {
+        use super::*;
+        use crate::cache::UserCacheService;
+        use crate::dao::BulwarkDao;
+        use crate::session::BulwarkSession;
+        use crate::stp::with_current_token;
+        use crate::strategy::BulwarkPermissionStrategy;
+        use async_trait::async_trait;
+        use parking_lot::Mutex;
+        use std::collections::HashMap;
+        use std::sync::atomic::{AtomicU32, Ordering};
+        use std::sync::Arc;
+        use std::time::{Duration, Instant};
+
+        /// 计数 DAO：记录 delete 调用次数与 key 列表。
+        struct CountingDao {
+            store: Mutex<HashMap<String, (String, Option<Instant>)>>,
+            delete_count: AtomicU32,
+            delete_keys: Mutex<Vec<String>>,
+        }
+
+        impl CountingDao {
+            fn new() -> Self {
+                Self {
+                    store: Mutex::new(HashMap::new()),
+                    delete_count: AtomicU32::new(0),
+                    delete_keys: Mutex::new(Vec::new()),
+                }
+            }
+
+            fn delete_count(&self) -> u32 {
+                self.delete_count.load(Ordering::SeqCst)
+            }
+
+            fn delete_keys(&self) -> Vec<String> {
+                self.delete_keys.lock().clone()
+            }
+
+            /// 直接插入（绕过 TTL 逻辑，测试预备数据用）。
+            fn insert_direct(&self, key: &str, value: &str) {
+                self.store
+                    .lock()
+                    .insert(key.to_string(), (value.to_string(), None));
+            }
+        }
+
+        #[async_trait]
+        impl BulwarkDao for CountingDao {
+            async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
+                let mut store = self.store.lock();
+                match store.get(key) {
+                    Some((value, expire_at)) => {
+                        if let Some(deadline) = expire_at {
+                            if Instant::now() >= *deadline {
+                                store.remove(key);
+                                return Ok(None);
+                            }
+                        }
+                        Ok(Some(value.clone()))
+                    },
+                    None => Ok(None),
+                }
+            }
+
+            async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> BulwarkResult<()> {
+                let expire_at = if ttl_seconds == 0 {
+                    None
+                } else {
+                    Some(Instant::now() + Duration::from_secs(ttl_seconds))
+                };
+                self.store
+                    .lock()
+                    .insert(key.to_string(), (value.to_string(), expire_at));
+                Ok(())
+            }
+
+            async fn update(&self, key: &str, value: &str) -> BulwarkResult<()> {
+                let mut store = self.store.lock();
+                match store.get_mut(key) {
+                    Some((existing, _)) => {
+                        *existing = value.to_string();
+                        Ok(())
+                    },
+                    None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
+                }
+            }
+
+            async fn expire(&self, key: &str, seconds: u64) -> BulwarkResult<()> {
+                let mut store = self.store.lock();
+                match store.get_mut(key) {
+                    Some((_, expire_at)) => {
+                        *expire_at = if seconds == 0 {
+                            None
+                        } else {
+                            Some(Instant::now() + Duration::from_secs(seconds))
+                        };
+                        Ok(())
+                    },
+                    None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
+                }
+            }
+
+            async fn delete(&self, key: &str) -> BulwarkResult<()> {
+                self.delete_count.fetch_add(1, Ordering::SeqCst);
+                self.delete_keys.lock().push(key.to_string());
+                self.store.lock().remove(key);
+                Ok(())
+            }
+        }
+
+        /// 最小 firewall mock（提供 L3 回调数据源）。
+        struct MockFirewall;
+
+        #[async_trait]
+        impl BulwarkPermissionStrategy for MockFirewall {
+            async fn check_permission(
+                &self,
+                _login_id: &str,
+                _permission: &str,
+            ) -> BulwarkResult<bool> {
+                Ok(true)
+            }
+
+            async fn check_role(&self, _login_id: &str, _role: &str) -> BulwarkResult<bool> {
+                Ok(true)
+            }
+
+            async fn check_role_any(
+                &self,
+                _login_id: &str,
+                _roles: &[&str],
+            ) -> BulwarkResult<bool> {
+                Ok(true)
+            }
+
+            async fn check_role_all(
+                &self,
+                _login_id: &str,
+                _roles: &[&str],
+            ) -> BulwarkResult<bool> {
+                Ok(true)
+            }
+
+            async fn get_permission_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
+                Ok(vec!["user:read".to_string()])
+            }
+
+            async fn get_role_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
+                Ok(vec!["admin".to_string()])
+            }
+
+            async fn get_user_info(&self, _login_id: &str) -> BulwarkResult<Option<String>> {
+                Ok(Some("user-info".to_string()))
+            }
+        }
+
+        /// 构造带 UserCacheService 的 BulwarkLogicDefault。
+        fn make_logic_with_cache(dao: Arc<CountingDao>) -> BulwarkLogicDefault {
+            let session = Arc::new(BulwarkSession::new(dao.clone(), 3600, 86400));
+            let mut config = BulwarkConfig::default_config();
+            config.throw_on_not_login = false;
+            config.token_style = "uuid".to_string();
+            let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall);
+            let cache_service = Arc::new(UserCacheService::new(
+                dao.clone() as Arc<dyn BulwarkDao>,
+                firewall.clone(),
+                30,
+                300,
+                10_000,
+            ));
+            BulwarkLogicDefault::new(session, Arc::new(config), firewall)
+                .with_user_cache_service(cache_service)
+        }
+
+        /// logout() 注入 cache service 时应调用 invalidate（删除 perm/role/user 3 个缓存 key）。
+        #[tokio::test]
+        async fn logout_invalidates_user_cache() {
+            let dao = Arc::new(CountingDao::new());
+            let logic = Arc::new(make_logic_with_cache(dao.clone()));
+
+            // 登录用户
+            let token = logic
+                .login("1001", &LoginParams::default())
+                .await
+                .expect("login 应成功");
+
+            // 预填充缓存（模拟 get_permissions 已调用过）
+            dao.insert_direct("perm:cache:1001", r#"["user:read"]"#);
+            dao.insert_direct("role:cache:1001", r#"["admin"]"#);
+            dao.insert_direct("user:cache:1001", r#""user-info""#);
+            assert_eq!(dao.delete_count(), 0, "预填充后 delete 次数应为 0");
+
+            // 调用 logout（需设置 current_token task-local）
+            with_current_token(token, async {
+                logic.logout().await.expect("logout 应成功");
+            })
+            .await;
+
+            // 验证 invalidate 被调用：perm/role/user 3 个缓存 key 在删除列表中
+            // （总 delete 次数可能包含 session.logout 销毁 token-session 的 delete）
+            let deleted = dao.delete_keys();
+            assert!(
+                deleted.contains(&"perm:cache:1001".to_string()),
+                "logout 应删除 perm:cache:1001，实际删除: {:?}",
+                deleted
+            );
+            assert!(
+                deleted.contains(&"role:cache:1001".to_string()),
+                "logout 应删除 role:cache:1001"
+            );
+            assert!(
+                deleted.contains(&"user:cache:1001".to_string()),
+                "logout 应删除 user:cache:1001"
+            );
+        }
+
+        /// logout_by_login_id() 注入 cache service 时应调用 invalidate。
+        #[tokio::test]
+        async fn logout_by_login_id_invalidates_user_cache() {
+            let dao = Arc::new(CountingDao::new());
+            let logic = Arc::new(make_logic_with_cache(dao.clone()));
+
+            // 登录用户
+            let _token = logic
+                .login("2002", &LoginParams::default())
+                .await
+                .expect("login 应成功");
+
+            // 预填充缓存
+            dao.insert_direct("perm:cache:2002", r#"["user:read"]"#);
+            dao.insert_direct("role:cache:2002", r#"["admin"]"#);
+            dao.insert_direct("user:cache:2002", r#""user-info""#);
+
+            // 调用 logout_by_login_id
+            logic
+                .logout_by_login_id("2002")
+                .await
+                .expect("logout_by_login_id 应成功");
+
+            // 验证 perm/role/user 3 个缓存 key 被删除
+            let deleted = dao.delete_keys();
+            assert!(deleted.contains(&"perm:cache:2002".to_string()));
+            assert!(deleted.contains(&"role:cache:2002".to_string()));
+            assert!(deleted.contains(&"user:cache:2002".to_string()));
+        }
+
+        /// 未注入 cache service 时 logout 不 panic（向后兼容）。
+        #[tokio::test]
+        async fn logout_without_cache_service_backward_compatible() {
+            let dao: Arc<dyn BulwarkDao> = Arc::new(CountingDao::new());
+            let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
+            let mut config = BulwarkConfig::default_config();
+            config.throw_on_not_login = false;
+            config.token_style = "uuid".to_string();
+            let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall);
+            // 不注入 user_cache_service
+            let logic = Arc::new(BulwarkLogicDefault::new(
+                session,
+                Arc::new(config),
+                firewall,
+            ));
+
+            let token = logic
+                .login("3003", &LoginParams::default())
+                .await
+                .expect("login 应成功");
+
+            with_current_token(token, async {
+                logic.logout().await.expect("logout 应成功（无缓存服务）");
+            })
+            .await;
         }
     }
 }

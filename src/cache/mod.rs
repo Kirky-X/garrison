@@ -17,3 +17,5 @@
 
 /// 三层缓存服务（L1 moka + L2 DAO + L3 interface）。
 pub mod three_tier;
+
+pub use three_tier::UserCacheService;

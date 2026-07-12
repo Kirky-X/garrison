@@ -242,12 +242,24 @@ impl BulwarkManager {
         );
 
         // 6. 通过 factory 构造 logic（传递 context 以便 factory 使用 builder 链）
+        // T014: three-tier-cache feature 启用时构造 UserCacheService（复用 dao + firewall）
+        #[cfg(feature = "three-tier-cache")]
+        let user_cache_service = Arc::new(crate::cache::UserCacheService::new(
+            dao.clone(),
+            firewall.clone(),
+            config.l1_cache_ttl_secs,
+            config.l2_cache_ttl_secs,
+            config.l1_cache_capacity,
+        ));
         let logic: Arc<BulwarkLogicDefault> = match factory_selector() {
             Some(entry) => (entry.factory)(session, config, firewall, &factory_ctx)?,
             None => {
                 // 兜底路径：直接通过 builder 链构造 BulwarkLogicDefault
-                // `mut` 仅在 `listener` feature 启用时需要（下方 cfg 块会 reassign）
-                #[cfg_attr(not(feature = "listener"), allow(unused_mut))]
+                // `mut` 仅在 `listener`/`three-tier-cache` feature 启用时需要（下方 cfg 块会 reassign）
+                #[cfg_attr(
+                    not(any(feature = "listener", feature = "three-tier-cache")),
+                    allow(unused_mut)
+                )]
                 let mut builder = BulwarkLogicDefault::new(session, config, firewall)
                     .with_plugin_manager(plugin_manager)
                     .with_auth_logic(auth_logic)
@@ -256,6 +268,10 @@ impl BulwarkManager {
                 #[cfg(feature = "listener")]
                 {
                     builder = builder.with_listener_manager(listener_manager);
+                }
+                #[cfg(feature = "three-tier-cache")]
+                {
+                    builder = builder.with_user_cache_service(user_cache_service);
                 }
                 Arc::new(builder)
             },

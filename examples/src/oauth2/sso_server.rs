@@ -139,7 +139,7 @@ impl SsoChannel for CountingChannel {
     async fn subscribe(
         &self,
         _topic: &str,
-        _handler: Box<dyn Fn(&str) + Send + Sync>,
+        _handler: Box<dyn Fn(String) + Send + Sync>,
     ) -> BulwarkResult<()> {
         Ok(())
     }
