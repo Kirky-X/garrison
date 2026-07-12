@@ -789,31 +789,35 @@ impl BulwarkSession {
         login_id: &str,
         token: &str,
     ) -> BulwarkResult<()> {
-        // 1. 读取现有 AccountSession（必须已存在）
-        let mut account = self
-            .get_account_session(login_id)
-            .await?
-            .ok_or_else(|| BulwarkError::Session(format!("AccountSession 不存在: {}", login_id)))?;
+        let login_id: String = login_id.to_string();
+        self.with_login_lock(&login_id, async {
+            // 1. 读取现有 AccountSession（必须已存在）
+            let mut account = self.get_account_session(&login_id).await?.ok_or_else(|| {
+                BulwarkError::Session(format!("AccountSession 不存在: {}", login_id))
+            })?;
 
-        // 2. 添加 token（去重）
-        let now = Utc::now().timestamp();
-        if !account.tokens.iter().any(|ti| ti.token == token) {
-            account.tokens.push(TokenInfo {
-                token: token.to_string(),
-                created_at: now,
-                last_active_at: now,
-            });
-        }
+            // 2. 添加 token（去重）
+            let now = Utc::now().timestamp();
+            if !account.tokens.iter().any(|ti| ti.token == token) {
+                account.tokens.push(TokenInfo {
+                    token: token.to_string(),
+                    created_at: now,
+                    last_active_at: now,
+                });
+            }
+            account.last_active_at = now;
 
-        // 3. 写回 DAO（用 update 保留原 TTL）
-        let json = serde_json::to_string(&account)
-            .map_err(|e| BulwarkError::Session(format!("序列化 AccountSession 失败: {}", e)))?;
-        self.dao.update(&account_key(login_id), &json).await?;
+            // 3. 写回 DAO（用 update 保留原 TTL）
+            let json = serde_json::to_string(&account)
+                .map_err(|e| BulwarkError::Session(format!("序列化 AccountSession 失败: {}", e)))?;
+            self.dao.update(&account_key(&login_id), &json).await?;
 
-        // 4. DAO 成功后写内存 login_token_map
-        self.add_login_token(login_id, token);
+            // 4. DAO 成功后写内存 login_token_map
+            self.add_login_token(&login_id, token);
 
-        Ok(())
+            Ok(())
+        })
+        .await
     }
 
     /// 持久化移除 login_id → token 映射（双层写入：DAO + 内存）。
@@ -835,24 +839,27 @@ impl BulwarkSession {
         login_id: &str,
         token: &str,
     ) -> BulwarkResult<()> {
-        // 1. 读取现有 AccountSession（必须已存在）
-        let mut account = self
-            .get_account_session(login_id)
-            .await?
-            .ok_or_else(|| BulwarkError::Session(format!("AccountSession 不存在: {}", login_id)))?;
+        let login_id: String = login_id.to_string();
+        self.with_login_lock(&login_id, async {
+            // 1. 读取现有 AccountSession（必须已存在）
+            let mut account = self.get_account_session(&login_id).await?.ok_or_else(|| {
+                BulwarkError::Session(format!("AccountSession 不存在: {}", login_id))
+            })?;
 
-        // 2. 移除 token
-        account.tokens.retain(|ti| ti.token != token);
+            // 2. 移除 token
+            account.tokens.retain(|ti| ti.token != token);
 
-        // 3. 写回 DAO（用 update 保留原 TTL）
-        let json = serde_json::to_string(&account)
-            .map_err(|e| BulwarkError::Session(format!("序列化 AccountSession 失败: {}", e)))?;
-        self.dao.update(&account_key(login_id), &json).await?;
+            // 3. 写回 DAO（用 update 保留原 TTL）
+            let json = serde_json::to_string(&account)
+                .map_err(|e| BulwarkError::Session(format!("序列化 AccountSession 失败: {}", e)))?;
+            self.dao.update(&account_key(&login_id), &json).await?;
 
-        // 4. DAO 成功后写内存 login_token_map
-        self.remove_login_token(login_id, token);
+            // 4. DAO 成功后写内存 login_token_map
+            self.remove_login_token(&login_id, token);
 
-        Ok(())
+            Ok(())
+        })
+        .await
     }
 
     /// 设置 Token-Session 自定义属性。
