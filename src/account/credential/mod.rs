@@ -314,7 +314,11 @@ impl CredentialRepository for DaoCredentialRepository {
 // ============================================================================
 
 #[cfg(test)]
+mod mock;
+
+#[cfg(test)]
 mod tests {
+    use super::mock::MockCredentialRepository;
     use super::*;
     use crate::dao::tests::MockDao;
 
@@ -472,78 +476,6 @@ mod tests {
     // ========================================================================
     // R-003: CredentialRepository mock CRUD 测试
     // ========================================================================
-
-    /// Mock `CredentialRepository` 实现（内存 HashMap），用于测试 trait 契约。
-    #[derive(Default)]
-    struct MockCredentialRepository {
-        store: std::sync::Mutex<std::collections::HashMap<String, CredentialModel>>,
-    }
-
-    #[async_trait]
-    impl CredentialRepository for MockCredentialRepository {
-        async fn create(&self, credential: CredentialModel) -> BulwarkResult<()> {
-            let mut store = self.store.lock().unwrap();
-            if store.contains_key(&credential.id) {
-                return Err(crate::error::BulwarkError::InvalidParam(format!(
-                    "credential already exists: {}",
-                    credential.id
-                )));
-            }
-            store.insert(credential.id.clone(), credential);
-            Ok(())
-        }
-
-        async fn find_by_user(&self, user_id: &str) -> BulwarkResult<Vec<CredentialModel>> {
-            let store = self.store.lock().unwrap();
-            let mut creds: Vec<CredentialModel> = store
-                .values()
-                .filter(|c| c.user_id == user_id)
-                .cloned()
-                .collect();
-            // 按 priority 升序排序
-            creds.sort_by_key(|c| c.priority);
-            Ok(creds)
-        }
-
-        async fn find_by_user_and_type(
-            &self,
-            user_id: &str,
-            cred_type: &str,
-        ) -> BulwarkResult<Vec<CredentialModel>> {
-            let store = self.store.lock().unwrap();
-            let mut creds: Vec<CredentialModel> = store
-                .values()
-                .filter(|c| c.user_id == user_id && c.credential_type == cred_type)
-                .cloned()
-                .collect();
-            creds.sort_by_key(|c| c.priority);
-            Ok(creds)
-        }
-
-        async fn update(&self, credential: CredentialModel) -> BulwarkResult<()> {
-            let mut store = self.store.lock().unwrap();
-            if !store.contains_key(&credential.id) {
-                return Err(crate::error::BulwarkError::InvalidParam(format!(
-                    "credential not found: {}",
-                    credential.id
-                )));
-            }
-            store.insert(credential.id.clone(), credential);
-            Ok(())
-        }
-
-        async fn delete(&self, credential_id: &str) -> BulwarkResult<()> {
-            let mut store = self.store.lock().unwrap();
-            if !store.contains_key(credential_id) {
-                return Err(crate::error::BulwarkError::InvalidParam(format!(
-                    "credential not found: {}",
-                    credential_id
-                )));
-            }
-            store.remove(credential_id);
-            Ok(())
-        }
-    }
 
     /// 辅助函数：构造测试用 CredentialModel。
     fn make_model(id: &str, user: &str, cred_type: &str, priority: i32) -> CredentialModel {
