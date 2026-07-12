@@ -1667,20 +1667,32 @@ pub mod tests {
             assert!(timeout.is_none(), "不存在的键应返回 None");
         }
 
-        /// R-003: keys 在 oxcache 0.3.3 返回 NotImplemented（oxcache 不支持 key scan）。
+        /// R-003: keys 行为取决于 feature gate。
         ///
-        /// 验证 design D2 偏差：BulwarkDaoOxcache::keys 使用默认实现返回 NotImplemented，
-        /// 因为 oxcache 0.3.3 不支持 key scan API（待 oxcache 提供原生 iter API）。
+        /// - 启用 `anomalous-detector-dual`：keys() 通过 key_index 返回匹配的 key 列表
+        /// - 未启用 `anomalous-detector-dual`：keys() 返回 NotImplemented（oxcache 不支持原生 key scan）
         #[tokio::test(flavor = "multi_thread")]
-        async fn oxcache_keys_returns_not_implemented() {
+        async fn oxcache_keys_behavior() {
             let dao = BulwarkDaoOxcache::new().await.unwrap();
             dao.set("oc_key1", "v1", 3600).await.unwrap();
             let result = dao.keys("oc_*").await;
-            assert!(
-                matches!(result, Err(BulwarkError::NotImplemented(_))),
-                "oxcache 0.3 不支持 keys scan，应返回 NotImplemented，实际: {:?}",
-                result
-            );
+            #[cfg(feature = "anomalous-detector-dual")]
+            {
+                let keys = result.expect("anomalous-detector-dual 启用时 keys() 应返回 key 列表");
+                assert!(
+                    keys.iter().any(|k| k.contains("oc_key1")),
+                    "keys 应包含 oc_key1, 实际: {:?}",
+                    keys
+                );
+            }
+            #[cfg(not(feature = "anomalous-detector-dual"))]
+            {
+                assert!(
+                    matches!(result, Err(BulwarkError::NotImplemented(_))),
+                    "未启用 anomalous-detector-dual 时 keys() 应返回 NotImplemented, 实际: {:?}",
+                    result
+                );
+            }
         }
 
         /// R-004: rename 重命名后 old 不存在，new 存在。

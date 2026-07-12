@@ -462,7 +462,46 @@ impl AuditLogListener {
                 success: true,
                 created_at: now,
             },
+            // feature-gated 变体由 match 后的 if let 覆盖，此处走默认条目
+            _ => AuditEntry {
+                tenant_id,
+                event_type: "other".to_string(),
+                login_id: None,
+                token: None,
+                ip: None,
+                user_agent: None,
+                metadata: None,
+                success: true,
+                created_at: now,
+            },
         };
+        // 覆盖 anomalous-detector-dual feature 的 AnomalousLoginDetected 变体
+        #[cfg(feature = "anomalous-detector-dual")]
+        if let BulwarkEvent::AnomalousLoginDetected {
+            login_id,
+            reason,
+            detail,
+            timestamp: _,
+        } = event
+        {
+            entry = AuditEntry {
+                tenant_id,
+                event_type: "anomalous_login_detected".to_string(),
+                login_id: Some(login_id.clone()),
+                token: None,
+                ip: None,
+                user_agent: None,
+                metadata: Some(
+                    serde_json::to_string(&serde_json::json!({
+                        "reason": reason,
+                        "detail": detail,
+                    }))
+                    .unwrap_or_default(),
+                ),
+                success: false,
+                created_at: now,
+            };
+        }
         // 对 metadata 进行字段掩码（如 password → ***）
         entry.metadata = entry.metadata.map(|m| self.mask_metadata(&m));
         Ok(entry)
