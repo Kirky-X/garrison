@@ -271,6 +271,11 @@ safe-auth = []
 # 区别于固定 timeout，可根据最后活跃时间动态延长/缩短会话有效期。
 dynamic-active-timeout = []
 
+# === login_token_map 持久化 ===
+# 启用后 login_token_map 内存层与 DAO AccountSession.tokens 双层同步，
+# 重启后可通过 rebuild_login_token_map() 重建内存层。
+login-token-map-persistence = []
+
 # === 社交登录 ===
 # social-wechat：微信扫码登录（WechatProvider），依赖 protocol-oauth2（reqwest HTTP client）
 social-wechat = ["protocol-oauth2"]
@@ -323,6 +328,7 @@ full = [
     "device-binding",
     "safe-auth",
     "dynamic-active-timeout",
+    "login-token-map-persistence",
     "social-wechat", "social-alipay",
 ]
 
