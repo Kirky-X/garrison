@@ -26,6 +26,7 @@
 | 0.5.3 | ✅ 已完成 | 2026-07-09 | 功能补全版（oxcache 升级 / stp 完整拆分 / MySQL 后端 / Firewall MaxMindDb 生产后端） |
 | 0.6.0 | ✅ 已完成 | 2026-07-09 | 账号安全引擎版（account/ 模块 + Credential SPI + PasswordPolicyEngine + UserLockoutStrategy + AuthenticationFlow DSL + i18n 社交登录异常 + AccountMetrics） |
 | 0.6.1 | ✅ 已完成 | 2026-07-10 | gap-closure-remaining 关闭（remember_me / Redis 部署模式 / switch_to / renew_to_equivalent / OAuth2 注解 / group() / SessionExpiryListener / SAML 2.0 / OIDC RP / Redis pub/sub SsoChannel — 11 项全部补齐） |
+| 0.6.7 | ✅ 已完成 | 2026-07-13 | 安全与性能增强（forbid 优先语义 / WAF 级防火墙 / 三层缓存架构 / SMS 验证码渐进式限速 / AnomalousLoginDetector 双引擎） |
 | 1.0.0 | 📋 待规划 | 2027 Q2 | 稳定版 |
 
 ---

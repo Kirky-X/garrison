@@ -5,6 +5,92 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.6.7] - 2026-07-13
+
+### 概述
+
+v0.6.7 安全与性能增强，实施 5 个能力域：forbid 优先语义、WAF 级防火墙、三层缓存架构、SMS 验证码渐进式限速、AnomalousLoginDetector 双引擎。通过 specmark `v0.6.7-waf-safe-defaults-cache-sms-anomalous` change 管理，31 个 TDD 任务 + Phase 2.1/4.1/5.1 审计修复 + Phase 6 一致性修复完成。Phase 6 一致性检查 91%（29/31 需求正确实现），修复 3 个不一致项（D3-1 logout 缓存失效集成 + D5-1 interval 校验 + D5-3 spec 同步）。diting 最终审计 88 分（0 CRITICAL + 0 HIGH），tiangang SAST 0 CRITICAL，满足发布门禁。
+
+### 新增
+
+#### D1: forbid 优先语义（`safe-defaults` feature）
+
+- `DecisionCombinator::combine` 在空决策列表时返回 `Deny(NoMatchingPermission)`（fail-closed）
+- `BulwarkPermissionStrategyDefault` 在 `check_permission` / `check_role` 无记录时返回 `Deny` 而非 `Allow`
+- 安全默认语义：未明确授权的资源默认拒绝访问
+
+#### D2: WAF 级防火墙（`firewall-waf` feature）
+
+- 新建 `src/strategy/firewall/waf.rs` 模块：`WafEngine` + `WafContext` + `WafVerdict`
+- 新建 `src/strategy/firewall/waf_hooks.rs` 模块：9 个 WAF Hook
+  - `WhitePathHook` / `BlackPathHook`：路径白名单/黑名单
+  - `HostHook`：Host 头白名单
+  - `HttpMethodHook`：HTTP 方法白名单
+  - `ParameterHook`：参数名黑名单
+  - `BannedCharacterHook` / `DangerCharacterHook`：危险字符检测
+  - `DirectoryTraversalHook`：路径遍历检测（`../`、`./`、`//`、`%2e`、`%2f`、`%00`）
+  - `SqlInjectionHook`：SQL 注入特征检测
+- `WafEngine::evaluate` 按 Hook 注册顺序执行，`AllowAndSkip` 短路
+- Phase 2.1 审计修复：WhitePathHook 百分号编码兜底 + BlackPathHook 前缀混淆防护
+
+#### D3: 三层缓存架构（`three-tier-cache` feature）
+
+- 新建 `src/cache/three_tier.rs` 模块：`UserCacheService`
+- L1（moka 内存缓存）→ L2（DAO 持久化缓存）→ L3（interface 回调）三层递进查询
+- `get_permissions` / `get_roles` / `get_user` 三层缓存方法
+- `invalidate(login_id)` 失效用户所有缓存（L1 + L2）
+- `BulwarkConfig` 新增 `l1_cache_ttl_secs`（默认 30）/ `l2_cache_ttl_secs`（默认 300）/ `l1_cache_capacity`（默认 10000）
+- `BulwarkLogicDefault` 新增 `user_cache_service` 字段 + `with_user_cache_service` builder
+- `logout` / `logout_by_login_id` 在 `three-tier-cache` feature 启用时调用 `invalidate` 失效用户缓存
+- `BulwarkManager::init` 自动构造 `UserCacheService` 并注入
+
+#### D4: SMS 验证码渐进式限速（`sms-rate-limit` feature）
+
+- 新建 `src/secure/sms/mod.rs` 模块：`SmsCodeService` + `SmsRateLimiter`
+- 双窗口限速：分钟窗口（默认 1 次）+ 小时窗口（默认 5 次）
+- 渐进式退避：超限后锁定时长递增（30s → 60s → 300s → 1800s）
+- 通道回收：未验证验证码超阈值（默认 3）时回收通道
+- `BulwarkDao::incr` 原子递增计数器（`BulwarkDaoOxcache` 用 `atomic_lock` 重写）
+- 验证码使用 `OsRng` 密码学安全随机数生成
+- Phase 4.1 审计修复：decrement_counter 容错 + phone 校验强化
+
+#### D5: AnomalousLoginDetector 双引擎（`anomalous-detector-dual` feature）
+
+- 新建 `src/strategy/firewall/anomalous_analyzer.rs` 模块：`AnomalousLoginAnalyzer`
+- 定时分析引擎：`tokio::spawn` + `tokio::time::interval` + shutdown watch channel
+- 三种异常检测：
+  - burst 登录检测（1 小时窗口内登录次数 > `burst_threshold`）
+  - 异地跳变检测（不同 geo > 2）
+  - 设备指纹突变检测（不同 device > 3）
+- `AnomalousLoginRecord` 登录记录持久化（TTL 24h，纳秒精度 key 避免同秒覆盖）
+- `BulwarkEvent::AnomalousLoginDetected` 事件变体 + audit.rs 记录
+- `BulwarkDaoOxcache` 新增 `key_index: RwLock<HashSet<String>>` 实现 `keys()` 方法（oxcache 0.3.3 无原生 iter API）
+- `BulwarkConfig` 新增 `anomalous_analyzer_interval_secs`（默认 3600）/ `anomalous_analyzer_burst_threshold`（默认 5）
+- `MAX_SCAN = 10000` DoS 防护 + 扫描耗时 > 1s 告警
+- Phase 5.1 审计修复：CRIT-001 keys() 实现 + HIGH-001 扫描监控 + HIGH-002 纳秒 key
+
+### 修复
+
+- Phase 6 一致性检查修复：
+  - D3-1 (P0): `logout` / `logout_by_login_id` 集成 `UserCacheService::invalidate()`（R-three-tier-cache-005）
+  - D5-1 (P1): `anomalous_analyzer_interval_secs` 校验从 `== 0` 改为 `< 60`（对齐 spec R-007）
+  - D5-3 (P2): spec R-001 存储键描述更新为纳秒精度
+- `audit.rs` 处理 `AnomalousLoginDetected` 事件变体（`_` wildcard + `#[cfg] if let` 覆盖）
+- `listener` 块 `login_id` 从 move 改为 `as_ref()` 避免 full feature 编译错误
+- examples `sso_server.rs` subscribe 签名 `Fn(&str)` → `Fn(String)` 对齐 trait 定义
+
+### 测试
+
+- `cargo test --features full --lib` → 2404 passed, 0 failed
+- 新增 6 个测试：3 个 three-tier-cache 集成测试 + 3 个 config validate 测试
+- Phase 5 新增 27 个 anomalous_analyzer 测试
+
+### 审计
+
+- diting 最终审计：88/100（0 CRITICAL + 0 HIGH），满足发布门禁
+- tiangang SAST：0 CRITICAL，满足 Rule 19 发布门禁
+- kueiku FMEA 跨 phase 分析：12 个失效模式识别，WAF 大小写敏感问题记录为 v0.6.8 tech debt
+
 ## [0.6.6] - 2026-07-12
 
 ### 概述

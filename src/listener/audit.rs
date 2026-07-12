@@ -8,7 +8,7 @@
 //!
 //! ## 核心抽象
 //!
-//! - [`AuditConfig`]：审计日志配置（掩码字段 + 保留天数 + 异步写入开关）
+//! - [`AuditConfig`](crate::listener::audit::AuditConfig)：审计日志配置（掩码字段 + 保留天数 + 异步写入开关）
 //! - `AuditLogListener`：实现 `BulwarkListener`，将事件转换为 `AuditEntry` 持久化（T071-T078 实现）
 //! - `AuditEntry`：`audit_logs` 表行结构（T071-T072 实现）
 //! - `AuditQuery`：审计日志查询条件（T079-T080 实现）

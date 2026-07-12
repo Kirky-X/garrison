@@ -151,7 +151,7 @@ pub struct JwksResponse {
 /// JWKS 公钥缓存。
 ///
 /// 缓存 JWKS 公钥集合 + 拉取时间戳，避免每次 `verify_id_token` 都拉取 JWKS endpoint。
-/// TTL 由 [`JWKS_CACHE_TTL`] 控制，过期后下次调用重新拉取。
+/// TTL 由 `JWKS_CACHE_TTL` 控制，过期后下次调用重新拉取。
 #[derive(Debug, Clone, Default)]
 pub struct JwksCache {
     /// 缓存的公钥列表。
@@ -244,7 +244,7 @@ pub struct KeycloakTokenSet {
 /// # 设计决策
 ///
 /// - `http: reqwest::Client` 复用连接池，`Send + Sync` 可在多线程共享。
-/// - `jwks_cache: Arc<RwLock<JwksCache>>` 缓存 JWKS 公钥，TTL 由 [`JWKS_CACHE_TTL`] 控制，
+/// - `jwks_cache: Arc<RwLock<JwksCache>>` 缓存 JWKS 公钥，TTL 由 `JWKS_CACHE_TTL` 控制，
 ///   避免每次 `verify_id_token` 都拉取 JWKS endpoint。
 pub struct KeycloakProvider {
     /// RP 配置（base_url / client_id / client_secret / redirect_uri）。
@@ -391,7 +391,7 @@ impl KeycloakProvider {
     /// # 流程
     ///
     /// 1. 解析 JWT header，提取 `kid`。
-    /// 2. 检查 `jwks_cache`，缓存为空或过期时调用 [`fetch_jwks`](Self::fetch_jwks) 拉取。
+    /// 2. 检查 `jwks_cache`，缓存为空或过期时调用 `fetch_jwks` 拉取。
     /// 3. 按 `kid` 匹配 JWKS 公钥，用 `n`/`e` 模数构造 `DecodingKey`。
     /// 4. 用 RS256 算法验签，解析为 [`KeycloakClaims`]。
     /// 5. 校验 `exp`（过期时间），过期返回 `InvalidToken`（T119-T120 强化）。

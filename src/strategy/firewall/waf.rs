@@ -3,14 +3,17 @@
 
 //! WAF 级防火墙（策略层 Hook 链）。
 //!
-//! 提供 [`WafContext`] / [`WafVerdict`] / [`WafHook`] trait + [`WafHookChain`] 短路链。
+//! 提供 [`WafContext`](crate::strategy::firewall::waf::WafContext) /
+//! [`WafVerdict`](crate::strategy::firewall::waf::WafVerdict) /
+//! [`WafHook`](crate::strategy::firewall::waf::WafHook) trait +
+//! [`WafHookChain`](crate::strategy::firewall::waf::WafHookChain) 短路链。
 //!
 //! # 设计
 //!
-//! - [`WafContext`]：请求内容快照（path / method / host / headers / params），借用引用零拷贝。
-//! - [`WafVerdict`]：校验结果（Allow / Deny { reason, hook }）。
-//! - [`WafHook`] trait：每种校验规则实现一个 Hook，返回 `WafVerdict`。
-//! - [`WafHookChain`]：按注册顺序执行 Hook，任一 Deny 则短路返回 `BulwarkError::FirewallBlocked`。
+//! - [`WafContext`](crate::strategy::firewall::waf::WafContext)：请求内容快照（path / method / host / headers / params），借用引用零拷贝。
+//! - [`WafVerdict`](crate::strategy::firewall::waf::WafVerdict)：校验结果（Allow / Deny { reason, hook }）。
+//! - [`WafHook`](crate::strategy::firewall::waf::WafHook) trait：每种校验规则实现一个 Hook，返回 `WafVerdict`。
+//! - [`WafHookChain`](crate::strategy::firewall::waf::WafHookChain)：按注册顺序执行 Hook，任一 Deny 则短路返回 `BulwarkError::FirewallBlocked`。
 //!
 //! # 与 web-waf 的区分
 //!
