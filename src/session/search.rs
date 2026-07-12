@@ -39,6 +39,18 @@ const ANON_SESSION_PREFIX: &str = "token:session:anon:";
 /// Account-Session key 前缀。
 const ACCOUNT_SESSION_PREFIX: &str = "account:session:";
 
+/// 单次搜索最大扫描 key 数量（防止 DoS）。
+///
+/// 超出时截断并记录 warn 日志。这是性能与可用性的权衡：
+/// 生产环境应通过维护反向索引（如 login_token_map）替代全量扫描。
+const MAX_SCAN: usize = 10000;
+
+/// 搜索关键字最大长度（防止超长 keyword 放大 CPU 消耗）。
+const MAX_KEYWORD_LEN: usize = 256;
+
+/// 单次搜索最大返回数量。
+const MAX_SIZE: usize = 1000;
+
 /// 按 sort_type 排序 `(id, created_at, last_active_at)` 元组列表。
 ///
 /// 升序使用 `sort_by_key`，降序使用 `sort_by_key` + `Reverse`。
@@ -66,8 +78,15 @@ fn sort_entries(entries: &mut [(String, i64, i64)], sort_type: SearchSortType) {
 /// # 返回
 /// 匹配的 token 值列表。
 ///
+/// # 性能警告
+///
+/// 此方法通过 `dao.keys()` 全量扫描 key，性能与 key 总数线性相关。
+/// 单次搜索最多扫描 `MAX_SCAN`（10000）条 key，超出时截断并记录 warn 日志。
+/// 生产环境大规模部署时应通过反向索引替代全量扫描。
+///
 /// # 错误
-/// - 反序列化 TokenSession 失败：`BulwarkError::Session`。
+/// - `keyword` 长度超过 `MAX_KEYWORD_LEN`：`BulwarkError::InvalidParam`。
+/// - `size` 超过 `MAX_SIZE`：`BulwarkError::InvalidParam`。
 /// - DAO 操作失败：透传 `BulwarkError`。
 pub async fn search_token_value(
     session: &BulwarkSession,
@@ -76,12 +95,35 @@ pub async fn search_token_value(
     size: usize,
     sort_type: SearchSortType,
 ) -> BulwarkResult<Vec<String>> {
-    let keys = session
+    if keyword.len() > MAX_KEYWORD_LEN {
+        return Err(BulwarkError::InvalidParam(format!(
+            "keyword 长度超限：{} > {}",
+            keyword.len(),
+            MAX_KEYWORD_LEN
+        )));
+    }
+    if size > MAX_SIZE {
+        return Err(BulwarkError::InvalidParam(format!(
+            "size 超限：{} > {}",
+            size, MAX_SIZE
+        )));
+    }
+
+    let mut keys = session
         .dao
         .keys(&format!("{}*", TOKEN_SESSION_PREFIX))
         .await?;
+    if keys.len() > MAX_SCAN {
+        tracing::warn!(
+            actual = keys.len(),
+            max = MAX_SCAN,
+            "搜索扫描的 key 数量超过上限，已截断"
+        );
+        keys.truncate(MAX_SCAN);
+    }
 
     let mut entries: Vec<(String, i64, i64)> = Vec::new();
+    let mut skipped = 0usize;
     for key in keys {
         // 排除匿名 Session
         if key.starts_with(ANON_SESSION_PREFIX) {
@@ -100,9 +142,27 @@ pub async fn search_token_value(
             Some(j) => j,
             None => continue,
         };
-        let ts: TokenSession = serde_json::from_str(&json)
-            .map_err(|e| BulwarkError::Session(format!("反序列化 TokenSession 失败: {}", e)))?;
+        let ts: TokenSession = match serde_json::from_str(&json) {
+            Ok(ts) => ts,
+            Err(e) => {
+                tracing::warn!(
+                    key = %key,
+                    error = %e,
+                    "跳过损坏的 TokenSession 记录"
+                );
+                skipped += 1;
+                continue;
+            },
+        };
         entries.push((token.to_string(), ts.created_at, ts.last_active_at));
+    }
+
+    if skipped > 0 {
+        tracing::warn!(
+            skipped,
+            total = entries.len() + skipped,
+            "搜索完成但有记录被跳过"
+        );
     }
 
     sort_entries(&mut entries, sort_type);
@@ -129,8 +189,15 @@ pub async fn search_token_value(
 /// # 返回
 /// 匹配的 login_id 列表。
 ///
+/// # 性能警告
+///
+/// 此方法通过 `dao.keys()` 全量扫描 key，性能与 key 总数线性相关。
+/// 单次搜索最多扫描 `MAX_SCAN`（10000）条 key，超出时截断并记录 warn 日志。
+/// 生产环境大规模部署时应通过反向索引替代全量扫描。
+///
 /// # 错误
-/// - 反序列化 AccountSession 失败：`BulwarkError::Session`。
+/// - `keyword` 长度超过 `MAX_KEYWORD_LEN`：`BulwarkError::InvalidParam`。
+/// - `size` 超过 `MAX_SIZE`：`BulwarkError::InvalidParam`。
 /// - DAO 操作失败：透传 `BulwarkError`。
 pub async fn search_session_id(
     session: &BulwarkSession,
@@ -139,12 +206,35 @@ pub async fn search_session_id(
     size: usize,
     sort_type: SearchSortType,
 ) -> BulwarkResult<Vec<String>> {
-    let keys = session
+    if keyword.len() > MAX_KEYWORD_LEN {
+        return Err(BulwarkError::InvalidParam(format!(
+            "keyword 长度超限：{} > {}",
+            keyword.len(),
+            MAX_KEYWORD_LEN
+        )));
+    }
+    if size > MAX_SIZE {
+        return Err(BulwarkError::InvalidParam(format!(
+            "size 超限：{} > {}",
+            size, MAX_SIZE
+        )));
+    }
+
+    let mut keys = session
         .dao
         .keys(&format!("{}*", ACCOUNT_SESSION_PREFIX))
         .await?;
+    if keys.len() > MAX_SCAN {
+        tracing::warn!(
+            actual = keys.len(),
+            max = MAX_SCAN,
+            "搜索扫描的 key 数量超过上限，已截断"
+        );
+        keys.truncate(MAX_SCAN);
+    }
 
     let mut entries: Vec<(String, i64, i64)> = Vec::new();
+    let mut skipped = 0usize;
     for key in keys {
         let login_id = match key.strip_prefix(ACCOUNT_SESSION_PREFIX) {
             Some(t) => t,
@@ -159,9 +249,31 @@ pub async fn search_session_id(
             Some(j) => j,
             None => continue,
         };
-        let as_: AccountSession = serde_json::from_str(&json)
-            .map_err(|e| BulwarkError::Session(format!("反序列化 AccountSession 失败: {}", e)))?;
-        entries.push((login_id.to_string(), as_.created_at, as_.last_active_at));
+        let account_session: AccountSession = match serde_json::from_str(&json) {
+            Ok(as_v) => as_v,
+            Err(e) => {
+                tracing::warn!(
+                    key = %key,
+                    error = %e,
+                    "跳过损坏的 AccountSession 记录"
+                );
+                skipped += 1;
+                continue;
+            },
+        };
+        entries.push((
+            login_id.to_string(),
+            account_session.created_at,
+            account_session.last_active_at,
+        ));
+    }
+
+    if skipped > 0 {
+        tracing::warn!(
+            skipped,
+            total = entries.len() + skipped,
+            "搜索完成但有记录被跳过"
+        );
     }
 
     sort_entries(&mut entries, sort_type);
@@ -189,8 +301,15 @@ pub async fn search_session_id(
 /// # 返回
 /// 匹配的 token 值列表。
 ///
+/// # 性能警告
+///
+/// 此方法通过 `dao.keys()` 全量扫描 key，性能与 key 总数线性相关。
+/// 单次搜索最多扫描 `MAX_SCAN`（10000）条 key，超出时截断并记录 warn 日志。
+/// 生产环境大规模部署时应通过反向索引替代全量扫描。
+///
 /// # 错误
-/// - 反序列化 TokenSession 失败：`BulwarkError::Session`。
+/// - `keyword` 长度超过 `MAX_KEYWORD_LEN`：`BulwarkError::InvalidParam`。
+/// - `size` 超过 `MAX_SIZE`：`BulwarkError::InvalidParam`。
 /// - DAO 操作失败：透传 `BulwarkError`。
 pub async fn search_token_session_id(
     session: &BulwarkSession,
@@ -199,12 +318,35 @@ pub async fn search_token_session_id(
     size: usize,
     sort_type: SearchSortType,
 ) -> BulwarkResult<Vec<String>> {
-    let keys = session
+    if keyword.len() > MAX_KEYWORD_LEN {
+        return Err(BulwarkError::InvalidParam(format!(
+            "keyword 长度超限：{} > {}",
+            keyword.len(),
+            MAX_KEYWORD_LEN
+        )));
+    }
+    if size > MAX_SIZE {
+        return Err(BulwarkError::InvalidParam(format!(
+            "size 超限：{} > {}",
+            size, MAX_SIZE
+        )));
+    }
+
+    let mut keys = session
         .dao
         .keys(&format!("{}*", TOKEN_SESSION_PREFIX))
         .await?;
+    if keys.len() > MAX_SCAN {
+        tracing::warn!(
+            actual = keys.len(),
+            max = MAX_SCAN,
+            "搜索扫描的 key 数量超过上限，已截断"
+        );
+        keys.truncate(MAX_SCAN);
+    }
 
     let mut entries: Vec<(String, i64, i64)> = Vec::new();
+    let mut skipped = 0usize;
     for key in keys {
         // 排除匿名 Session
         if key.starts_with(ANON_SESSION_PREFIX) {
@@ -219,13 +361,31 @@ pub async fn search_token_session_id(
             Some(j) => j,
             None => continue,
         };
-        let ts: TokenSession = serde_json::from_str(&json)
-            .map_err(|e| BulwarkError::Session(format!("反序列化 TokenSession 失败: {}", e)))?;
+        let ts: TokenSession = match serde_json::from_str(&json) {
+            Ok(ts) => ts,
+            Err(e) => {
+                tracing::warn!(
+                    key = %key,
+                    error = %e,
+                    "跳过损坏的 TokenSession 记录"
+                );
+                skipped += 1;
+                continue;
+            },
+        };
         // keyword 过滤（空 keyword 匹配所有）
         if !keyword.is_empty() && !ts.login_id.contains(keyword) {
             continue;
         }
         entries.push((token.to_string(), ts.created_at, ts.last_active_at));
+    }
+
+    if skipped > 0 {
+        tracing::warn!(
+            skipped,
+            total = entries.len() + skipped,
+            "搜索完成但有记录被跳过"
+        );
     }
 
     sort_entries(&mut entries, sort_type);
@@ -285,11 +445,35 @@ mod tests {
     // T024: SearchSortType 枚举
     // ========================================================================
 
-    /// T024: CreatedAsc 序列化为 "created_asc"。
+    /// T024: SearchSortType 4 个变体的序列化 + 反序列化 round-trip。
     #[test]
-    fn search_sort_type_serialization() {
-        let json = serde_json::to_string(&SearchSortType::CreatedAsc).unwrap();
-        assert_eq!(json, "\"created_asc\"");
+    fn search_sort_type_round_trip() {
+        for variant in [
+            SearchSortType::CreatedAsc,
+            SearchSortType::CreatedDesc,
+            SearchSortType::LastActiveAsc,
+            SearchSortType::LastActiveDesc,
+        ] {
+            let json = serde_json::to_string(&variant).unwrap();
+            let back: SearchSortType = serde_json::from_str(&json).unwrap();
+            assert_eq!(variant, back, "round-trip 失败: {}", json);
+        }
+        assert_eq!(
+            serde_json::to_string(&SearchSortType::CreatedAsc).unwrap(),
+            "\"created_asc\""
+        );
+        assert_eq!(
+            serde_json::to_string(&SearchSortType::CreatedDesc).unwrap(),
+            "\"created_desc\""
+        );
+        assert_eq!(
+            serde_json::to_string(&SearchSortType::LastActiveAsc).unwrap(),
+            "\"last_active_asc\""
+        );
+        assert_eq!(
+            serde_json::to_string(&SearchSortType::LastActiveDesc).unwrap(),
+            "\"last_active_desc\""
+        );
     }
 
     // ========================================================================
@@ -354,6 +538,19 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(desc, vec!["tok-c", "tok-b", "tok-a"]);
+
+        // last_active_at: tok-b=100, tok-a=150, tok-c=250
+        let last_asc = session
+            .search_token_value("", 0, 100, SearchSortType::LastActiveAsc)
+            .await
+            .unwrap();
+        assert_eq!(last_asc, vec!["tok-b", "tok-a", "tok-c"]);
+
+        let last_desc = session
+            .search_token_value("", 0, 100, SearchSortType::LastActiveDesc)
+            .await
+            .unwrap();
+        assert_eq!(last_desc, vec!["tok-c", "tok-a", "tok-b"]);
     }
 
     // ========================================================================
@@ -441,6 +638,57 @@ mod tests {
         assert_eq!(
             by_token, by_login,
             "当 keyword 同时出现在 token 和 login_id 中时，两个方法应返回相同结果"
+        );
+    }
+
+    // ========================================================================
+    // T025/T027: 匿名 Session 排除
+    // ========================================================================
+
+    /// T025/T027: 匿名 Session 不出现在搜索结果中。
+    #[tokio::test]
+    async fn search_excludes_anon_sessions() {
+        let (dao, session) = make_session(3600, 86400);
+        // 写入正常 Token-Session
+        put_token_session(&dao, "normal-1", "u1", 100, 100).await;
+
+        // 写入匿名 Session（直接操作 DAO，模拟 anon 模块的行为）
+        let anon_key = format!("{}anon:anon-tok", TOKEN_SESSION_PREFIX);
+        let anon_ts = TokenSession {
+            token: "anon-tok".to_string(),
+            login_id: String::new(),
+            created_at: 50,
+            last_active_at: 50,
+            attrs: HashMap::new(),
+            device: None,
+            ip: None,
+            user_agent: None,
+            safe_services: HashMap::new(),
+            #[cfg(feature = "dynamic-active-timeout")]
+            dynamic_active_timeout: None,
+            #[cfg(feature = "anonymous-session")]
+            is_anon: true,
+        };
+        let json = serde_json::to_string(&anon_ts).unwrap();
+        dao.set(&anon_key, &json, 3600).await.unwrap();
+
+        // search_token_value 不应返回匿名 token
+        let result = session
+            .search_token_value("", 0, 100, SearchSortType::CreatedAsc)
+            .await
+            .unwrap();
+        assert_eq!(result, vec!["normal-1"], "anon Session 不应出现在搜索结果");
+        assert!(!result.contains(&"anon-tok".to_string()));
+
+        // search_token_session_id 不应返回匿名 token
+        let result2 = session
+            .search_token_session_id("", 0, 100, SearchSortType::CreatedAsc)
+            .await
+            .unwrap();
+        assert_eq!(
+            result2,
+            vec!["normal-1"],
+            "anon Session 不应出现在 login_id 搜索结果"
         );
     }
 }
