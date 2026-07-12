@@ -23,6 +23,9 @@ pub mod types;
 #[cfg(feature = "backend-embedded")]
 pub mod embedded;
 
+#[cfg(feature = "backend-remote")]
+pub mod remote;
+
 pub use types::*;
 
 /// 认证后端统一抽象。
