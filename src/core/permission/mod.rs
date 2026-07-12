@@ -216,52 +216,12 @@ impl PermissionChecker for PermissionCheckerDefault {
 }
 
 #[cfg(test)]
+mod mock;
+
+#[cfg(test)]
 mod tests {
+    use super::mock::MockInterface;
     use super::*;
-    use async_trait::async_trait;
-    use std::collections::HashMap;
-
-    /// 测试用 mock BulwarkInterface。
-    struct MockInterface {
-        permissions: HashMap<String, Vec<String>>,
-        roles: HashMap<String, Vec<String>>,
-    }
-
-    impl MockInterface {
-        fn new() -> Self {
-            Self {
-                permissions: HashMap::new(),
-                roles: HashMap::new(),
-            }
-        }
-
-        fn with_perms(mut self, login_id: &str, perms: Vec<&str>) -> Self {
-            self.permissions.insert(
-                login_id.to_string(),
-                perms.iter().map(|s| s.to_string()).collect(),
-            );
-            self
-        }
-
-        fn with_roles(mut self, login_id: &str, roles: Vec<&str>) -> Self {
-            self.roles.insert(
-                login_id.to_string(),
-                roles.iter().map(|s| s.to_string()).collect(),
-            );
-            self
-        }
-    }
-
-    #[async_trait]
-    impl BulwarkInterface for MockInterface {
-        async fn get_permission_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
-            Ok(self.permissions.get(login_id).cloned().unwrap_or_default())
-        }
-
-        async fn get_role_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
-            Ok(self.roles.get(login_id).cloned().unwrap_or_default())
-        }
-    }
 
     /// 创建 PermissionCheckerDefault 实例（账号 1001 持有 user:read/user:write 权限 + admin/user 角色）。
     fn make_checker() -> PermissionCheckerDefault {
