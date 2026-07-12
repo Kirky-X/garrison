@@ -582,59 +582,17 @@ inventory::submit! {
 // ============================================================================
 
 #[cfg(test)]
+mod mock;
+
+#[cfg(test)]
 mod tests {
+    use super::mock::MockInterface;
     use super::*;
     use crate::dao::tests::MockDao;
     use crate::dao::BulwarkDao;
     use crate::stp::{BulwarkUtil, LoginParams, SessionLogic};
     use async_trait::async_trait;
     use serial_test::serial;
-    use std::collections::HashMap;
-
-    // ------------------------------------------------------------------------
-    // MockInterface：权限/角色数据回调
-    // ------------------------------------------------------------------------
-
-    struct MockInterface {
-        permissions: HashMap<String, Vec<String>>,
-        roles: HashMap<String, Vec<String>>,
-    }
-
-    impl MockInterface {
-        fn new() -> Self {
-            Self {
-                permissions: HashMap::new(),
-                roles: HashMap::new(),
-            }
-        }
-
-        fn with_permission(mut self, login_id: &str, perms: &[&str]) -> Self {
-            self.permissions.insert(
-                login_id.to_string(),
-                perms.iter().map(|s| s.to_string()).collect(),
-            );
-            self
-        }
-
-        fn with_role(mut self, login_id: &str, roles: &[&str]) -> Self {
-            self.roles.insert(
-                login_id.to_string(),
-                roles.iter().map(|s| s.to_string()).collect(),
-            );
-            self
-        }
-    }
-
-    #[async_trait]
-    impl BulwarkInterface for MockInterface {
-        async fn get_permission_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
-            Ok(self.permissions.get(login_id).cloned().unwrap_or_default())
-        }
-
-        async fn get_role_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
-            Ok(self.roles.get(login_id).cloned().unwrap_or_default())
-        }
-    }
 
     // ------------------------------------------------------------------------
     // 辅助函数
