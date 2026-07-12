@@ -693,23 +693,14 @@ mod urlencoding {
 }
 
 #[cfg(test)]
+mod mock;
+
+#[cfg(test)]
 mod tests {
+    use super::mock::make_client;
     use super::*;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
-
-    /// 创建测试用 OAuth2Client，指向 mock server。
-    async fn make_client(server: &MockServer) -> OAuth2Client {
-        let base = server.uri();
-        OAuth2Client::new(
-            "test-client-id",
-            "test-client-secret",
-            "https://example.com/callback",
-            format!("{}/auth", base),
-            format!("{}/token", base),
-        )
-        .expect("创建 OAuth2Client 失败")
-    }
 
     // ========================================================================
     // OAuth2Client 构造测试
