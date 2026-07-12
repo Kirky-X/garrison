@@ -276,6 +276,11 @@ dynamic-active-timeout = []
 # 重启后可通过 rebuild_login_token_map() 重建内存层。
 login-token-map-persistence = []
 
+# === 匿名 Session ===
+# 启用后支持未登录用户的匿名会话（购物车、访客浏览场景），
+# 通过 token:session:anon:{token} key 空间隔离匿名会话。
+anonymous-session = []
+
 # === 社交登录 ===
 # social-wechat：微信扫码登录（WechatProvider），依赖 protocol-oauth2（reqwest HTTP client）
 social-wechat = ["protocol-oauth2"]
@@ -329,6 +334,7 @@ full = [
     "safe-auth",
     "dynamic-active-timeout",
     "login-token-map-persistence",
+    "anonymous-session",
     "social-wechat", "social-alipay",
 ]
 
