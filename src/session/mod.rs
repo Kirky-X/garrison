@@ -140,6 +140,14 @@ pub struct TokenSession {
     /// `#[serde(default)]` 确保反序列化旧数据（无此字段）时默认为空 HashMap（向后兼容）。
     #[serde(default)]
     pub safe_services: HashMap<String, i64>,
+    /// 动态活跃超时（秒）。
+    ///
+    /// 启用 `dynamic-active-timeout` feature 后存在。为 `None` 时使用全局 `active_timeout`，
+    /// 为 `Some(secs)` 时该 token 使用自定义的活跃超时。
+    /// `#[serde(default)]` 确保反序列化旧数据（无此字段）时默认为 `None`（向后兼容）。
+    #[cfg(feature = "dynamic-active-timeout")]
+    #[serde(default)]
+    pub dynamic_active_timeout: Option<i64>,
 }
 
 /// 会话过期监听器 trait。
@@ -471,6 +479,8 @@ impl BulwarkSession {
                 ip: ip.map(|s| s.to_string()),
                 user_agent: user_agent.map(|s| s.to_string()),
                 safe_services: HashMap::new(),
+                #[cfg(feature = "dynamic-active-timeout")]
+                dynamic_active_timeout: None,
             };
             let token_json = serde_json::to_string(&token_session)
                 .map_err(|e| BulwarkError::Session(format!("序列化 TokenSession 失败: {}", e)))?;
@@ -2811,5 +2821,26 @@ mod tests {
             "T2（DAO 失败被跳过）应保留在 map 中"
         );
         assert!(!tokens.contains(&"T3".to_string()), "T3（已注销）应被清理");
+    }
+
+    // ------------------------------------------------------------------------
+    // dynamic_active_timeout 字段默认值（feature = "dynamic-active-timeout"）
+    // ------------------------------------------------------------------------
+
+    /// 验证 `TokenSession` 创建后 `dynamic_active_timeout` 默认为 `None`。
+    ///
+    /// 启用 `dynamic-active-timeout` feature 后，新创建的 TokenSession
+    /// 的 `dynamic_active_timeout` 字段应为 `None`（未设置自定义活跃超时）。
+    #[cfg(feature = "dynamic-active-timeout")]
+    #[tokio::test]
+    async fn token_session_dynamic_active_timeout_defaults_to_none() {
+        let (_dao, session) = make_session(3600, 86400);
+        session.create("1001", "T1").await.unwrap();
+
+        let ts = session.get_token_session("T1").await.unwrap().unwrap();
+        assert!(
+            ts.dynamic_active_timeout.is_none(),
+            "新创建的 TokenSession 的 dynamic_active_timeout 应默认为 None"
+        );
     }
 }
