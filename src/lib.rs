@@ -303,6 +303,14 @@ pub mod account;
 ))]
 pub mod protocol;
 
+/// 认证后端抽象模块，提供 AuthBackend trait + BackendEmbedded + BackendRemote。
+///
+/// 启用 `backend-embedded` 或 `backend-remote` feature 时编译。
+/// - `backend-embedded`：进程内认证，委托 BulwarkManager（zero-break 兼容）
+/// - `backend-remote`：HTTP 客户端，连接远程 Auth Server
+#[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
+pub mod backend;
+
 // ====================================================================
 // 公共入口
 // ====================================================================
