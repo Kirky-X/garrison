@@ -56,6 +56,10 @@ pub mod device;
 ))]
 pub use device::{DeviceManager, DeviceSession};
 
+/// 匿名 Session 模块（需要 `anonymous-session` feature）。
+#[cfg(feature = "anonymous-session")]
+pub mod anon;
+
 use crate::constants::DaoKeyPrefix;
 use crate::dao::BulwarkDao;
 use crate::error::{BulwarkError, BulwarkResult};
@@ -148,6 +152,14 @@ pub struct TokenSession {
     #[cfg(feature = "dynamic-active-timeout")]
     #[serde(default)]
     pub dynamic_active_timeout: Option<i64>,
+    /// 是否为匿名 Session。
+    ///
+    /// 启用 `anonymous-session` feature 后存在。匿名 Session 的 `login_id` 为空字符串 `""`，
+    /// 通过 `token:session:anon:{token}` key 空间与登录 Session 隔离。
+    /// `#[serde(default)]` 确保反序列化旧数据（无此字段）时默认为 `false`（向后兼容）。
+    #[cfg(feature = "anonymous-session")]
+    #[serde(default)]
+    pub is_anon: bool,
 }
 
 /// 会话过期监听器 trait。
@@ -205,6 +217,12 @@ pub struct BulwarkSession {
     timeout: u64,
     /// Account-Session 级 activity 超时（秒）。
     active_timeout: u64,
+    /// 匿名 Session 超时（秒）。
+    ///
+    /// 启用 `anonymous-session` feature 后存在。由 `anon` 模块的 `get_anon_token_session`
+    /// 用作匿名 Token-Session 的 TTL。
+    #[cfg(feature = "anonymous-session")]
+    anon_session_timeout: u64,
     /// per-login_id 操作锁，保护 Account-Session 的 read-modify-write 序列（R-001~R-004）。
     login_locks: DashMap<String, Arc<TokioMutex<()>>>,
     /// per-token 操作锁，保护 Token-Session 的 read-modify-write 序列（CRIT-001）。
@@ -260,6 +278,8 @@ impl BulwarkSession {
             dao,
             timeout,
             active_timeout,
+            #[cfg(feature = "anonymous-session")]
+            anon_session_timeout: crate::config::DEFAULT_ANON_SESSION_TIMEOUT_SECS,
             login_locks: DashMap::new(),
             #[cfg(feature = "safe-auth")]
             token_session_locks: DashMap::new(),
@@ -294,6 +314,19 @@ impl BulwarkSession {
         manager: Arc<crate::listener::BulwarkListenerManager>,
     ) -> Self {
         self.listener_manager = Some(manager);
+        self
+    }
+
+    /// 设置匿名 Session 超时时间。
+    ///
+    /// 启用 `anonymous-session` feature 后可用。覆盖默认的 `anon_session_timeout`
+    /// （默认值为 `DEFAULT_ANON_SESSION_TIMEOUT_SECS` = 1800 秒 = 30 分钟）。
+    ///
+    /// # 参数
+    /// - `timeout`: 匿名 Session 超时秒数。
+    #[cfg(feature = "anonymous-session")]
+    pub fn with_anon_session_timeout(mut self, timeout: u64) -> Self {
+        self.anon_session_timeout = timeout;
         self
     }
 
@@ -481,6 +514,8 @@ impl BulwarkSession {
                 safe_services: HashMap::new(),
                 #[cfg(feature = "dynamic-active-timeout")]
                 dynamic_active_timeout: None,
+                #[cfg(feature = "anonymous-session")]
+                is_anon: false,
             };
             let token_json = serde_json::to_string(&token_session)
                 .map_err(|e| BulwarkError::Session(format!("序列化 TokenSession 失败: {}", e)))?;
@@ -1400,6 +1435,49 @@ impl BulwarkSession {
             Ok(())
         })
         .await
+    }
+}
+
+// ============================================================================
+// 匿名 Session 委托方法（anonymous-session feature）
+// ============================================================================
+
+#[cfg(feature = "anonymous-session")]
+impl BulwarkSession {
+    /// 获取匿名 Token-Session，不存在则创建。
+    ///
+    /// 委托到 [`anon::get_anon_token_session`]。
+    ///
+    /// # 参数
+    /// - `token`: token 字符串。
+    ///
+    /// # 返回
+    /// 匿名 TokenSession（`login_id = ""`, `is_anon = true`）。
+    pub async fn get_anon_token_session(&self, token: &str) -> BulwarkResult<TokenSession> {
+        anon::get_anon_token_session(self, token).await
+    }
+
+    /// 判断 token 是否为匿名 Session。
+    ///
+    /// 委托到 [`anon::is_anon`]。
+    ///
+    /// # 参数
+    /// - `token`: token 字符串。
+    ///
+    /// # 返回
+    /// `true` 表示匿名 Session，`false` 表示非匿名。
+    pub async fn is_anon(&self, token: &str) -> BulwarkResult<bool> {
+        anon::is_anon(self, token).await
+    }
+
+    /// 注销匿名 Session。
+    ///
+    /// 委托到 [`anon::logout_anon`]。不存在的 anon token 返回 `Ok(())`（幂等）。
+    ///
+    /// # 参数
+    /// - `token`: token 字符串。
+    pub async fn logout_anon(&self, token: &str) -> BulwarkResult<()> {
+        anon::logout_anon(self, token).await
     }
 }
 

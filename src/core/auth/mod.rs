@@ -424,6 +424,8 @@ impl AuthLogic for AuthLogicDefault {
             safe_services: old_ts.safe_services.clone(),
             #[cfg(feature = "dynamic-active-timeout")]
             dynamic_active_timeout: old_ts.dynamic_active_timeout,
+            #[cfg(feature = "anonymous-session")]
+            is_anon: old_ts.is_anon,
         };
 
         // 5. 保存新 Token-Session with remaining TTL
