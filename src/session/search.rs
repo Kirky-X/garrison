@@ -8,9 +8,9 @@
 //!
 //! ## 搜索方法
 //!
-//! - [`search_token_value`]: 按 token 值搜索 Token-Session（排除匿名 Session）。
-//! - [`search_session_id`]: 按 login_id 搜索 Account-Session。
-//! - [`search_token_session_id`]: 按 TokenSession.login_id 搜索 token（排除匿名 Session）。
+//! - `search_token_value`: 按 token 值搜索 Token-Session（排除匿名 Session）。
+//! - `search_session_id`: 按 login_id 搜索 Account-Session。
+//! - `search_token_session_id`: 按 TokenSession.login_id 搜索 token（排除匿名 Session）。
 
 use super::{AccountSession, BulwarkSession, TokenSession};
 use crate::error::{BulwarkError, BulwarkResult};
