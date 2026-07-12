@@ -266,6 +266,11 @@ device-binding = ["security-alert"]
 # 在 TokenSession.safe_services 中记录/查询/移除 service 级二级认证标记。
 safe-auth = []
 
+# === 动态活跃超时 ===
+# 启用后支持基于用户活跃行为的动态会话超时（active timeout），
+# 区别于固定 timeout，可根据最后活跃时间动态延长/缩短会话有效期。
+dynamic-active-timeout = []
+
 # === 社交登录 ===
 # social-wechat：微信扫码登录（WechatProvider），依赖 protocol-oauth2（reqwest HTTP client）
 social-wechat = ["protocol-oauth2"]
@@ -317,6 +322,7 @@ full = [
     "security-alert",
     "device-binding",
     "safe-auth",
+    "dynamic-active-timeout",
     "social-wechat", "social-alipay",
 ]
 
