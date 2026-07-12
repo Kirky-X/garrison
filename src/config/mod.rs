@@ -94,6 +94,11 @@ pub const DEFAULT_TOKEN_MAP_CLEANUP_INTERVAL: i64 = 300;
 /// - `>0`：后台 task 按此间隔批量写入 DAO（最终一致，性能更高）
 pub const DEFAULT_LOGIN_TOKEN_MAP_PERSIST_INTERVAL_SECS: u64 = 0;
 
+/// 默认匿名 Session 超时秒数（1800 = 30 分钟）。
+///
+/// 仅当 `anonymous-session` feature 启用时生效。
+pub const DEFAULT_ANON_SESSION_TIMEOUT_SECS: u64 = 1800;
+
 /// 默认是否允许并发登录（true = 同一账号可同时在多设备登录）。
 pub const DEFAULT_IS_CONCURRENT: bool = true;
 
@@ -339,6 +344,13 @@ pub struct BulwarkConfig {
     #[cfg(feature = "login-token-map-persistence")]
     pub login_token_map_persist_interval_secs: u64,
 
+    /// 匿名 Session 超时秒数（默认 1800 = 30 分钟）。
+    ///
+    /// 仅当 `anonymous-session` feature 启用时生效。
+    /// 匿名 Session 不关联 login_id，超时后自动销毁。
+    #[cfg(feature = "anonymous-session")]
+    pub anon_session_timeout: u64,
+
     /// 是否允许并发登录（true = 同一账号可同时在多设备登录）。
     ///
     /// [借鉴 Sa-Token] 对应 `isConcurrent` 配置。默认 true。
@@ -454,6 +466,8 @@ impl BulwarkConfig {
             token_map_cleanup_interval_secs: DEFAULT_TOKEN_MAP_CLEANUP_INTERVAL,
             #[cfg(feature = "login-token-map-persistence")]
             login_token_map_persist_interval_secs: DEFAULT_LOGIN_TOKEN_MAP_PERSIST_INTERVAL_SECS,
+            #[cfg(feature = "anonymous-session")]
+            anon_session_timeout: DEFAULT_ANON_SESSION_TIMEOUT_SECS,
             is_concurrent: DEFAULT_IS_CONCURRENT,
             is_share: DEFAULT_IS_SHARE,
             max_login_count: DEFAULT_MAX_LOGIN_COUNT,
@@ -570,6 +584,14 @@ impl BulwarkConfig {
             builder = builder.default(
                 "login_token_map_persist_interval_secs",
                 ConfigValue::uint(DEFAULT_LOGIN_TOKEN_MAP_PERSIST_INTERVAL_SECS),
+            );
+        }
+
+        #[cfg(feature = "anonymous-session")]
+        {
+            builder = builder.default(
+                "anon_session_timeout",
+                ConfigValue::uint(DEFAULT_ANON_SESSION_TIMEOUT_SECS),
             );
         }
 
@@ -1366,6 +1388,8 @@ jwt_secret = "test-secret""#,
             token_map_cleanup_interval_secs: DEFAULT_TOKEN_MAP_CLEANUP_INTERVAL,
             #[cfg(feature = "login-token-map-persistence")]
             login_token_map_persist_interval_secs: DEFAULT_LOGIN_TOKEN_MAP_PERSIST_INTERVAL_SECS,
+            #[cfg(feature = "anonymous-session")]
+            anon_session_timeout: DEFAULT_ANON_SESSION_TIMEOUT_SECS,
             is_concurrent: DEFAULT_IS_CONCURRENT,
             is_share: DEFAULT_IS_SHARE,
             max_login_count: DEFAULT_MAX_LOGIN_COUNT,
@@ -1804,6 +1828,39 @@ jwt_secret = "test-secret""#,
             "BULWARK_LOGIN_TOKEN_MAP_PERSIST_INTERVAL_SECS=10 应覆盖默认值"
         );
         std::env::remove_var("BULWARK_LOGIN_TOKEN_MAP_PERSIST_INTERVAL_SECS");
+    }
+
+    // ========================================================================
+    // T018: anon_session_timeout 配置测试
+    // ========================================================================
+
+    /// T018: `default_config()` 的 `anon_session_timeout` 为 1800（30 分钟）。
+    #[cfg(feature = "anonymous-session")]
+    #[test]
+    fn anon_session_timeout_default_is_1800() {
+        let config = BulwarkConfig::default_config();
+        assert_eq!(
+            config.anon_session_timeout, 1800,
+            "默认 anon_session_timeout 应为 1800（30 分钟）"
+        );
+        assert_eq!(
+            config.anon_session_timeout, DEFAULT_ANON_SESSION_TIMEOUT_SECS,
+            "应等于 DEFAULT_ANON_SESSION_TIMEOUT_SECS 常量"
+        );
+    }
+
+    /// T018: `BULWARK_ANON_SESSION_TIMEOUT=3600` 环境变量覆盖默认值。
+    #[cfg(feature = "anonymous-session")]
+    #[test]
+    #[serial]
+    fn anon_session_timeout_env_var_overrides() {
+        std::env::set_var("BULWARK_ANON_SESSION_TIMEOUT", "3600");
+        let config = BulwarkConfig::load(None).expect("load with env");
+        assert_eq!(
+            config.anon_session_timeout, 3600,
+            "BULWARK_ANON_SESSION_TIMEOUT=3600 应覆盖默认值"
+        );
+        std::env::remove_var("BULWARK_ANON_SESSION_TIMEOUT");
     }
 
     // ========================================================================
