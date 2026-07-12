@@ -46,6 +46,12 @@ pub enum DecisionReason {
     TokenExpired,
     /// 租户不匹配：跨租户访问被拒。
     TenantMismatch,
+    /// 强制拒绝（forbid 优先语义，不可被 Allow 覆盖）。
+    ///
+    /// 仅在 `safe-defaults` feature 启用时可用。组合多个决策时优先级最高：
+    /// 任一 Forbid 决策存在则最终结果为 Forbid。
+    #[cfg(feature = "safe-defaults")]
+    Forbid(String),
 }
 
 /// 鉴权决策结果。
@@ -105,6 +111,30 @@ impl Decision {
             matched_roles: Vec::new(),
             trace_id: None,
         }
+    }
+
+    /// 创建一个强制拒绝决策（Forbid 优先于 Allow）。
+    ///
+    /// 仅在 `safe-defaults` feature 启用时可用。Forbid 决策 `allowed: false`，
+    /// `reason: DecisionReason::Forbid(reason)`，组合时优先级最高。
+    #[cfg(feature = "safe-defaults")]
+    pub fn forbid(reason: impl Into<String>) -> Self {
+        Self {
+            allowed: false,
+            reason: DecisionReason::Forbid(reason.into()),
+            errors: Vec::new(),
+            checked_permissions: Vec::new(),
+            matched_roles: Vec::new(),
+            trace_id: None,
+        }
+    }
+
+    /// 判断是否为 Forbid 决策。
+    ///
+    /// 仅在 `safe-defaults` feature 启用时可用。
+    #[cfg(feature = "safe-defaults")]
+    pub fn is_forbid(&self) -> bool {
+        matches!(self.reason, DecisionReason::Forbid(_))
     }
 }
 
@@ -390,6 +420,131 @@ mod tests {
             assert!(
                 t1 < t2,
                 "UUID v7 应时间有序（字典序递增）：t1={t1}, t2={t2}"
+            );
+        }
+    }
+
+    // ========================================================================
+    // safe-defaults feature 测试（Forbid 优先语义）
+    //
+    // 启用 safe-defaults feature 时，DecisionReason 新增 Forbid(String) 变体，
+    // Decision 新增 forbid() / is_forbid() 方法。
+    // ========================================================================
+    #[cfg(feature = "safe-defaults")]
+    mod safe_defaults_tests {
+        use super::*;
+
+        /// forbid() 构造器创建 allowed=false + Forbid reason 的决策。
+        ///
+        /// 验证 `Decision::forbid("test")` 的 `allowed == false`，
+        /// `reason == DecisionReason::Forbid("test".to_string())`。
+        #[test]
+        fn forbid_constructor_creates_forbid_decision() {
+            let decision = Decision::forbid("test");
+            assert!(!decision.allowed, "forbid 决策 allowed 应为 false");
+            assert_eq!(
+                decision.reason,
+                DecisionReason::Forbid("test".to_string()),
+                "forbid 决策 reason 应为 Forbid(\"test\")"
+            );
+        }
+
+        /// is_forbid() 对 Forbid 决策返回 true。
+        ///
+        /// 验证 `Decision::forbid("test").is_forbid() == true`。
+        #[test]
+        fn is_forbid_returns_true_for_forbid() {
+            let decision = Decision::forbid("test");
+            assert!(
+                decision.is_forbid(),
+                "Forbid 决策的 is_forbid() 应返回 true"
+            );
+        }
+
+        /// is_forbid() 对 Allow 决策返回 false。
+        ///
+        /// 验证 `Decision::allow().is_forbid() == false`。
+        #[test]
+        fn is_forbid_returns_false_for_allow() {
+            let decision = Decision::allow();
+            assert!(
+                !decision.is_forbid(),
+                "Allow 决策的 is_forbid() 应返回 false"
+            );
+        }
+
+        /// is_forbid() 对 Deny 决策返回 false。
+        ///
+        /// 验证 `Decision::deny(DecisionReason::NoMatchingPermission).is_forbid() == false`。
+        #[test]
+        fn is_forbid_returns_false_for_deny() {
+            let decision = Decision::deny(DecisionReason::NoMatchingPermission);
+            assert!(
+                !decision.is_forbid(),
+                "Deny 决策的 is_forbid() 应返回 false"
+            );
+        }
+
+        /// Forbid 变体序列化为 { "forbid": "test" }。
+        ///
+        /// 验证 `DecisionReason::Forbid("test".to_string())` 序列化为
+        /// `{ "forbid": "test" }`（serde rename_all = "snake_case"）。
+        #[test]
+        fn forbid_serializes_to_json() {
+            let reason = DecisionReason::Forbid("test".to_string());
+            let json = serde_json::to_value(&reason).expect("serialize Forbid");
+            assert_eq!(
+                json,
+                serde_json::json!({ "forbid": "test" }),
+                "Forbid(\"test\") 应序列化为 {{ \"forbid\": \"test\" }}"
+            );
+        }
+
+        /// Forbid 变体可从 { "forbid": "test" } 反序列化。
+        ///
+        /// 验证 `{ "forbid": "test" }` 反序列化为
+        /// `DecisionReason::Forbid("test".to_string())`。
+        #[test]
+        fn forbid_deserializes_from_json() {
+            let json = serde_json::json!({ "forbid": "test" });
+            let reason: DecisionReason = serde_json::from_value(json).expect("deserialize Forbid");
+            assert_eq!(
+                reason,
+                DecisionReason::Forbid("test".to_string()),
+                "{{ \"forbid\": \"test\" }} 应反序列化为 Forbid(\"test\")"
+            );
+        }
+
+        /// Forbid 变体支持 PartialEq 比较。
+        ///
+        /// 验证 `DecisionReason::Forbid("a".to_string()) == DecisionReason::Forbid("a".to_string())`。
+        #[test]
+        fn forbid_partial_eq() {
+            let a = DecisionReason::Forbid("a".to_string());
+            let b = DecisionReason::Forbid("a".to_string());
+            assert_eq!(a, b, "Forbid(\"a\") == Forbid(\"a\") 应为 true");
+        }
+
+        /// 现有 allow()/deny() 行为不因 safe-defaults feature 改变。
+        ///
+        /// 验证 `Decision::allow()` 和 `Decision::deny()` 在 safe-defaults feature
+        /// 启用时行为不变（向后兼容）。
+        #[test]
+        fn existing_allow_deny_unchanged() {
+            let allow = Decision::allow();
+            assert!(allow.allowed, "allow() 的 allowed 应为 true");
+            assert_eq!(
+                allow.reason,
+                DecisionReason::ExplicitAllow,
+                "allow() 的 reason 应为 ExplicitAllow"
+            );
+
+            let deny = Decision::deny(DecisionReason::NoMatchingPermission);
+            assert!(!deny.allowed, "deny() 的 allowed 应为 false");
+            assert_eq!(
+                deny.reason,
+                DecisionReason::NoMatchingPermission,
+                "deny() 的 reason 应为传入的 reason"
             );
         }
     }

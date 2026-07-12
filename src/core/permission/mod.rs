@@ -35,6 +35,13 @@ pub mod authorize;
 #[cfg(feature = "authorize-api")]
 pub use authorize::Authorizer;
 
+/// 决策组合器模块（forbid 优先语义）。
+#[cfg(feature = "safe-defaults")]
+pub mod decision_combinator;
+
+#[cfg(feature = "safe-defaults")]
+pub use decision_combinator::DecisionCombinator;
+
 /// 权限校验 trait，定义以 login_id 为入参的权限与角色校验抽象。
 ///
 /// 所有方法 MUST 使用 `async_trait` 标注，trait 绑定 `Send + Sync`。

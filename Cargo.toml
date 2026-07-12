@@ -137,6 +137,12 @@ manager-explicit = ["authorize-api"]
 # 注意：Repository SQL 过滤不门控此 feature（始终生效，安全优先）。
 tenant-isolation = []
 
+# === 核心扩展：forbid 优先语义（safe-defaults） ===
+# 启用后 DecisionReason 新增 Forbid(String) 变体，Decision 新增 forbid()/is_forbid() 方法，
+# 提供"强制拒绝"语义：Forbid 决策不可被 Allow 覆盖，组合时优先级最高。
+# 同时提供 DecisionCombinator::combine() 聚合多个决策（Forbid > Deny > Allow）。
+safe-defaults = []
+
 # === 聚合特性：等价于原 default，方便快速启用全部默认后端 ===
 all-defaults = ["cache-memory", "db-sqlite", "web-axum"]
 
@@ -330,7 +336,7 @@ full = [
     "alone-cache", "parameter-query",
     "listener", "metrics-prometheus", "observability-otlp", "grpc", "i18n",
     "annotation-macros",
-    "decision-trace", "tenant-isolation",
+    "decision-trace", "tenant-isolation", "safe-defaults",
     "firewall", "firewall-bruteforce", "firewall-ratelimit", "firewall-anomalous",
     "firewall-geoip", "firewall-ddos", "firewall-maxminddb",
     "rate-limit-redis",
