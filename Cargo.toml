@@ -84,8 +84,7 @@ redis = { version = "~1.2", optional = true, default-features = false, features 
 futures = { version = "0.3", optional = true, default-features = false, features = ["std"] }
 # inklog：企业级结构化日志基础设施（feature-gated: audit-inklog）
 inklog = { version = "0.1", optional = true }
-# limiteron：统一流量控制框架（限流/配额/熔断/封禁，feature-gated: sms-rate-limit / firewall-ratelimit）
-limiteron = { version = "0.2", optional = true }
+# limiteron：已移除（0.2.5 内存态限流器与 BulwarkDao 分布式 DAO 不兼容，详见 specmark 冲突报告）
 # sdforge：声明式 SDK 框架（多协议服务接口生成，feature-gated: backend-remote）
 sdforge = { version = "0.3", optional = true }
 # trait-kit：模块标准接口 + 能力管理中心（typestate 模式，feature-gated: backend-embedded / backend-remote）
@@ -214,8 +213,8 @@ secure-masking = []
 # XSS 防护（HTML 转义 / 白名单过滤），无额外依赖
 secure-xss = []
 # SMS 验证码渐进式限速（双窗口限速 + 验证码服务 + 异常发送检测）
-# 依赖 rand 生成密码学安全验证码 + limiteron 统一流控框架
-sms-rate-limit = ["dep:rand", "limiteron"]
+# 依赖 rand 生成密码学安全验证码
+sms-rate-limit = ["dep:rand"]
 
 # === 账号安全引擎 ===
 # account-credential：统一凭证模型 SPI（Credential trait + PasswordCredential + TotpCredential）
@@ -262,7 +261,7 @@ firewall = []
 # 各 strategy 实现独立依赖 firewall 基础 trait
 # firewall-bruteforce / firewall-ratelimit / firewall-ddos 仅依赖 oxcache（通过 BulwarkDao 抽象）
 firewall-bruteforce = ["firewall"]
-firewall-ratelimit = ["firewall", "dep:rand", "limiteron"]
+firewall-ratelimit = ["firewall", "dep:rand"]
 firewall-anomalous = ["firewall"]
 firewall-geoip = ["firewall"]
 firewall-ddos = ["firewall"]
