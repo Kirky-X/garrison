@@ -281,6 +281,11 @@ login-token-map-persistence = []
 # 通过 token:session:anon:{token} key 空间隔离匿名会话。
 anonymous-session = []
 
+# === 会话搜索 ===
+# 启用后支持按关键字搜索 Token-Session / Account-Session，
+# 提供分页与排序（创建时间 / 最后活跃时间）。
+session-search = []
+
 # === 社交登录 ===
 # social-wechat：微信扫码登录（WechatProvider），依赖 protocol-oauth2（reqwest HTTP client）
 social-wechat = ["protocol-oauth2"]
@@ -335,6 +340,7 @@ full = [
     "dynamic-active-timeout",
     "login-token-map-persistence",
     "anonymous-session",
+    "session-search",
     "social-wechat", "social-alipay",
 ]
 
