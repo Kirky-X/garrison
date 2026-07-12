@@ -82,8 +82,7 @@ quick-xml = { version = "0.41", optional = true, default-features = false, featu
 # 版本 ~1.2 与 oxcache 0.3 间接依赖的 redis 保持一致
 redis = { version = "~1.2", optional = true, default-features = false, features = ["aio", "tokio-comp", "connection-manager", "script"] }
 futures = { version = "0.3", optional = true, default-features = false, features = ["std"] }
-# inklog：企业级结构化日志基础设施（feature-gated: audit-inklog）
-inklog = { version = "0.1", optional = true }
+# inklog：已移除（0.1.6 是 tracing 的上层 subscriber 非 tracing 替代品，无法替换 tracing::warn/error，详见 specmark 冲突报告）
 # limiteron：已移除（0.2.5 内存态限流器与 BulwarkDao 分布式 DAO 不兼容，详见 specmark 冲突报告）
 # sdforge：声明式 SDK 框架（多协议服务接口生成，feature-gated: backend-remote）
 sdforge = { version = "0.3", optional = true }
@@ -346,10 +345,10 @@ abac = ["dep:cedar-policy"]
 # 依赖 protocol-oauth2（OAuth2 原语）+ reqwest（HTTP client）
 oauth2-server = ["protocol-oauth2", "dep:reqwest"]
 
-# === v0.7.0 inklog 结构化审计日志 ===
-# audit-inklog：使用 inklog 替换 tracing::warn 审计日志（自动注入 tenant_id/trace_id）
-# 依赖 audit-log（AuditLogListener）+ inklog（结构化日志）
-audit-inklog = ["audit-log", "inklog"]
+# === v0.7.0 inklog 结构化审计日志（已跳过 — inklog 冲突）===
+# audit-inklog 已移除：inklog 0.1.6 是 tracing 的上层 subscriber（实现 Layer trait），
+# 不是 tracing 的替代品，无自有 warn!/error! 宏，无法替换 tracing::warn/error。
+# 详见 specmark 冲突报告 T067-T072。
 
 # === 可观测性 ===
 listener = []
@@ -399,7 +398,6 @@ full = [
     "session-search",
     "social-wechat", "social-alipay",
     "backend-embedded", "backend-remote", "auth-server", "abac", "oauth2-server",
-    "audit-inklog",
 ]
 
 # production 使用 db-postgres（dbnexus 0.3+ 已支持 postgres feature）
@@ -414,7 +412,6 @@ production = [
     "three-tier-cache",
     "sms-rate-limit",
     "backend-embedded", "auth-server", "abac",
-    "audit-inklog",
 ]
 
 development = [
