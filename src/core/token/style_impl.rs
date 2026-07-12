@@ -3,6 +3,7 @@
 
 //! JwtTokenStyle 实现块（从 mod.rs 迁移）。
 
+#[cfg(feature = "protocol-jwt")]
 use super::*;
 
 #[cfg(feature = "protocol-jwt")]

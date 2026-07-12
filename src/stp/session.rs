@@ -1949,13 +1949,16 @@ mod tests {
             config.throw_on_not_login = false;
             config.token_style = "uuid".to_string();
             let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall);
-            let cache_service = Arc::new(UserCacheService::new(
-                dao.clone() as Arc<dyn BulwarkDao>,
-                firewall.clone(),
-                30,
-                300,
-                10_000,
-            ));
+            let cache_service = Arc::new(
+                UserCacheService::new(
+                    dao.clone() as Arc<dyn BulwarkDao>,
+                    firewall.clone(),
+                    30,
+                    300,
+                    10_000,
+                )
+                .expect("UserCacheService::new 应成功"),
+            );
             BulwarkLogicDefault::new(session, Arc::new(config), firewall)
                 .with_user_cache_service(cache_service)
         }

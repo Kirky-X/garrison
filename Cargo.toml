@@ -1,6 +1,6 @@
 [package]
 name = "bulwark"
-version = "0.6.7"
+version = "0.7.0"
 edition = "2021"
 rust-version = "1.85"  # MSRV: 部分 deps（如 inventory 0.3）要求 edition2024 → Rust 1.85+
 authors = ["Kirky.X"]
@@ -56,7 +56,7 @@ bcrypt = { version = "0.15", optional = true }
 rand = { version = "0.8", optional = true }
 zeroize = { version = "1", optional = true, features = ["derive"] }
 regex = { version = "1", optional = true }
-oxcache = { version = "0.3.3", optional = true }
+oxcache = { version = "0.3", optional = true }
 # default-features = false：dbnexus 0.3+ 禁止 embedded(sqlite) 与 server-side(postgres) 混用，
 # 由 db-base feature 显式启用基础 features，db-sqlite / db-postgres 分别启用 sqlite / postgres。
 dbnexus = { version = "0.3", optional = true, default-features = false }
@@ -79,11 +79,19 @@ rsa = { version = "0.9", optional = true, features = ["sha2", "pem"] }
 unicode-security = { version = "0.1", optional = true }
 maxminddb = { version = "0.29", optional = true }
 quick-xml = { version = "0.41", optional = true, default-features = false, features = ["serialize"] }
-# 版本 ~1.2 与 oxcache 0.3.3 间接依赖的 redis 保持一致
+# 版本 ~1.2 与 oxcache 0.3 间接依赖的 redis 保持一致
 redis = { version = "~1.2", optional = true, default-features = false, features = ["aio", "tokio-comp", "connection-manager", "script"] }
 futures = { version = "0.3", optional = true, default-features = false, features = ["std"] }
-# moka：三层缓存 L1 内存缓存（feature-gated: three-tier-cache）
-moka = { version = "0.12", optional = true, default-features = false, features = ["future"] }
+# inklog：企业级结构化日志基础设施（feature-gated: audit-inklog）
+inklog = { version = "0.1", optional = true }
+# limiteron：统一流量控制框架（限流/配额/熔断/封禁，feature-gated: sms-rate-limit / firewall-ratelimit）
+limiteron = { version = "0.2", optional = true }
+# sdforge：声明式 SDK 框架（多协议服务接口生成，feature-gated: backend-remote）
+sdforge = { version = "0.3", optional = true }
+# trait-kit：模块标准接口 + 能力管理中心（typestate 模式，feature-gated: backend-embedded / backend-remote）
+trait-kit = { version = "0.3", optional = true }
+# cedar-policy：Cedar 策略语言（ABAC 权限模型，feature-gated: abac）
+cedar-policy = { version = "4.11", optional = true }
 
 [dev-dependencies]
 toml = "1.0"
@@ -104,7 +112,7 @@ testcontainers = "0.27"
 criterion = { version = "0.5", features = ["html_reports"] }
 
 [features]
-default = []
+default = ["backend-embedded"]
 
 # === 核心模块（always on，无开关） ===
 # core / stp / annotation / router / dao / strategy / session / config / context / json / exception / manager / plugin
@@ -178,8 +186,8 @@ db-postgres = ["db-base", "dbnexus/postgres"]
 db-mysql = ["db-base", "dbnexus/mysql"]
 
 # === 协议层插件 ===
-protocol-oauth2 = ["reqwest", "dep:sha2", "dep:base64"]
-protocol-sso = ["reqwest", "dep:quick-xml", "dep:sha2", "hmac", "dep:base64"]
+protocol-oauth2 = ["dep:reqwest", "dep:sha2", "dep:base64"]
+protocol-sso = ["dep:reqwest", "dep:quick-xml", "dep:sha2", "hmac", "dep:base64"]
 protocol-jwt = ["jsonwebtoken", "dep:sha2"]
 protocol-sign = ["dep:sha2", "hmac", "dep:base64"]
 protocol-apikey = []
@@ -206,8 +214,8 @@ secure-masking = []
 # XSS 防护（HTML 转义 / 白名单过滤），无额外依赖
 secure-xss = []
 # SMS 验证码渐进式限速（双窗口限速 + 验证码服务 + 异常发送检测）
-# 依赖 rand 生成密码学安全验证码（rand 已是 optional dep，行 56）
-sms-rate-limit = ["dep:rand"]
+# 依赖 rand 生成密码学安全验证码 + limiteron 统一流控框架
+sms-rate-limit = ["dep:rand", "limiteron"]
 
 # === 账号安全引擎 ===
 # account-credential：统一凭证模型 SPI（Credential trait + PasswordCredential + TotpCredential）
@@ -254,7 +262,7 @@ firewall = []
 # 各 strategy 实现独立依赖 firewall 基础 trait
 # firewall-bruteforce / firewall-ratelimit / firewall-ddos 仅依赖 oxcache（通过 BulwarkDao 抽象）
 firewall-bruteforce = ["firewall"]
-firewall-ratelimit = ["firewall", "dep:rand"]
+firewall-ratelimit = ["firewall", "dep:rand", "limiteron"]
 firewall-anomalous = ["firewall"]
 firewall-geoip = ["firewall"]
 firewall-ddos = ["firewall"]
@@ -292,9 +300,9 @@ safe-auth = []
 dynamic-active-timeout = []
 
 # === 三层缓存架构 ===
-# 启用后提供 UserCacheService，实现 L1(moka 内存) + L2(DAO 持久化) + L3(interface 回调) 三层缓存，
-# 用于权限/角色/用户信息的加速查询。依赖 moka future backend。
-three-tier-cache = ["dep:moka"]
+# 启用后提供 UserCacheService，实现 L1(oxcache 内存) + L2(DAO 持久化) + L3(interface 回调) 三层缓存，
+# 用于权限/角色/用户信息的加速查询。L1+L2 完全委托 oxcache（内部使用 moka 内存后端）。
+three-tier-cache = ["oxcache"]
 
 # === login_token_map 持久化 ===
 # 启用后 login_token_map 内存层与 DAO AccountSession.tokens 双层同步，
@@ -321,6 +329,28 @@ social-alipay = ["protocol-oauth2", "rsa", "dep:base64"]
 # === Keycloak OIDC RP ===
 # keycloak-oidc：Keycloak 作为 OIDC 依赖方（KeycloakProvider），依赖 protocol-oidc（JWKS 验签 + discovery）
 keycloak-oidc = ["protocol-oidc"]
+
+# === v0.7.0 微服务架构 ===
+# backend-embedded（默认）：启用 BackendEmbedded（进程内认证，委托 BulwarkManager，zero-break 兼容）
+# 依赖 trait-kit（typestate 构建校验）
+backend-embedded = ["dep:trait-kit"]
+# backend-remote：启用 BackendRemote（HTTP 客户端，连接远程 Auth Server）
+# 依赖 reqwest（HTTP client）+ sdforge（SDK 生成）+ trait-kit（typestate）
+backend-remote = ["dep:reqwest", "dep:sdforge", "dep:trait-kit"]
+# auth-server：启用 Auth Server 模式（HTTP Server 暴露 AuthBackend 端点）
+# 依赖 web-axum（HTTP server）+ backend-embedded（核心逻辑）
+auth-server = ["web-axum", "backend-embedded"]
+# abac：启用 ABAC/Cedar DSL 策略引擎（属性级权限模型）
+# 依赖 cedar-policy（Cedar 策略语言解析 + 评估）
+abac = ["dep:cedar-policy"]
+# oauth2-server：启用 OAuth2 Server（4 端点 + 4 种 grant type + PKCE）
+# 依赖 protocol-oauth2（OAuth2 原语）+ reqwest（HTTP client）
+oauth2-server = ["protocol-oauth2", "dep:reqwest"]
+
+# === v0.7.0 inklog 结构化审计日志 ===
+# audit-inklog：使用 inklog 替换 tracing::warn 审计日志（自动注入 tenant_id/trace_id）
+# 依赖 audit-log（AuditLogListener）+ inklog（结构化日志）
+audit-inklog = ["audit-log", "inklog"]
 
 # === 可观测性 ===
 listener = []
@@ -369,6 +399,8 @@ full = [
     "anonymous-session",
     "session-search",
     "social-wechat", "social-alipay",
+    "backend-embedded", "backend-remote", "auth-server", "abac", "oauth2-server",
+    "audit-inklog",
 ]
 
 # production 使用 db-postgres（dbnexus 0.3+ 已支持 postgres feature）
@@ -382,6 +414,8 @@ production = [
     "firewall-waf",
     "three-tier-cache",
     "sms-rate-limit",
+    "backend-embedded", "auth-server", "abac",
+    "audit-inklog",
 ]
 
 development = [

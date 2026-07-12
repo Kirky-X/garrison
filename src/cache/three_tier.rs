@@ -1,11 +1,11 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! 三层缓存服务（L1 moka + L2 DAO + L3 interface）。
+//! 三层缓存服务（L1 oxcache + L2 DAO + L3 interface）。
 //!
 //! # 架构
 //!
-//! - **L1（moka 内存缓存）**：进程内 LRU + TTL 缓存，TTL 较短（默认 30s），命中时不查询 L2/L3
+//! - **L1（oxcache 内存缓存）**：进程内缓存（oxcache 0.3，sync_mode），per-entry TTL（默认 30s），命中时不查询 L2/L3
 //! - **L2（DAO 持久化缓存）**：通过 [`BulwarkDao`] set/get，TTL 较长（默认 300s），命中时回填 L1
 //! - **L3（interface 回调）**：通过 [`BulwarkPermissionStrategy`] 的 `get_permission_list` /
 //!   `get_role_list` / `get_user_info` 获取原始数据，命中时回填 L1 + L2
@@ -28,21 +28,22 @@ use crate::constants::DaoKeyPrefix;
 use crate::dao::BulwarkDao;
 use crate::error::{BulwarkError, BulwarkResult};
 use crate::strategy::BulwarkPermissionStrategy;
+use oxcache::Cache;
 use std::sync::Arc;
 use std::time::Duration;
 
 /// 三层缓存服务，提供权限/角色/用户信息的加速查询。
 ///
-/// L1（moka 内存缓存）→ L2（DAO 持久化缓存）→ L3（interface 回调）三层递进查询，
+/// L1（oxcache 内存缓存）→ L2（DAO 持久化缓存）→ L3（interface 回调）三层递进查询，
 /// 命中上层时不查询下层，未命中下层时回填上层。
 pub struct UserCacheService {
-    /// L1 内存缓存（moka future::Cache，支持 per-entry TTL + LRU 淘汰）
-    l1: moka::future::Cache<String, String>,
+    /// L1 内存缓存（oxcache::Cache，sync_mode，per-entry TTL 由 set_with_ttl_sync 设置）
+    l1: Cache<String, String>,
     /// L2 持久化缓存（通过 BulwarkDao 抽象，支持 oxcache / dbnexus 等后端）
     dao: Arc<dyn BulwarkDao>,
     /// L3 数据源（通过 BulwarkPermissionStrategy 回调获取原始数据）
     interface: Arc<dyn BulwarkPermissionStrategy>,
-    /// L1 缓存 TTL（秒），用于诊断与日志
+    /// L1 缓存 TTL（秒），用于诊断与日志 + set_with_ttl_sync 的 per-entry TTL
     l1_ttl_secs: u64,
     /// L2 缓存 TTL（秒），写入 DAO 时使用
     l2_ttl_secs: u64,
@@ -54,30 +55,31 @@ impl UserCacheService {
     /// # 参数
     /// - `dao`: L2 持久化缓存后端（`Arc<dyn BulwarkDao>`）。
     /// - `interface`: L3 数据源（`Arc<dyn BulwarkPermissionStrategy>`）。
-    /// - `l1_ttl_secs`: L1 内存缓存 TTL（秒，必须 > 0）。
+    /// - `l1_ttl_secs`: L1 内存缓存 TTL（秒，必须 > 0），用于 `set_with_ttl_sync` 的 per-entry TTL。
     /// - `l2_ttl_secs`: L2 DAO 缓存 TTL（秒，必须 > 0）。
-    /// - `l1_capacity`: L1 缓存最大容量（条目数，必须 > 0）。
+    /// - `l1_capacity`: L1 缓存最大容量（oxcache 0.3 使用默认 capacity，此参数保留向后兼容）。
     ///
     /// # 返回
     /// 已初始化的 `UserCacheService` 实例。
+    ///
+    /// # 错误
+    /// - `BulwarkError::Internal`：oxcache L1 初始化失败。
     pub fn new(
         dao: Arc<dyn BulwarkDao>,
         interface: Arc<dyn BulwarkPermissionStrategy>,
         l1_ttl_secs: u64,
         l2_ttl_secs: u64,
         l1_capacity: u64,
-    ) -> Self {
-        let l1 = moka::future::Cache::builder()
-            .time_to_live(Duration::from_secs(l1_ttl_secs))
-            .max_capacity(l1_capacity)
-            .build();
-        Self {
+    ) -> BulwarkResult<Self> {
+        let _ = l1_capacity; // oxcache 0.3 Cache::new() 使用默认 capacity（10000）
+        let l1 = Cache::new();
+        Ok(Self {
             l1,
             dao,
             interface,
             l1_ttl_secs,
             l2_ttl_secs,
-        }
+        })
     }
 
     /// 返回 L1 缓存 TTL（秒）。
@@ -110,7 +112,12 @@ impl UserCacheService {
         let key = DaoKeyPrefix::PermissionCache.build_key(login_id);
 
         // L1 check
-        if let Some(cached) = self.l1.get(&key).await {
+        if let Some(cached) = self
+            .l1
+            .get(&key)
+            .await
+            .map_err(|e| BulwarkError::Internal(format!("oxcache L1 get 失败: {}", e)))?
+        {
             let perms: Vec<String> = serde_json::from_str(&cached)
                 .map_err(|e| BulwarkError::Internal(format!("L1 权限缓存反序列化失败: {}", e)))?;
             return Ok(perms);
@@ -119,7 +126,12 @@ impl UserCacheService {
         // L2 check
         if let Some(cached) = self.dao.get(&key).await? {
             // Backfill L1
-            self.l1.insert(key.clone(), cached.clone()).await;
+            self.l1
+                .set_with_ttl(&key, &cached, Some(Duration::from_secs(self.l1_ttl_secs)))
+                .await
+                .map_err(|e| {
+                    BulwarkError::Internal(format!("oxcache L1 set_with_ttl 失败: {}", e))
+                })?;
             let perms: Vec<String> = serde_json::from_str(&cached)
                 .map_err(|e| BulwarkError::Internal(format!("L2 权限缓存反序列化失败: {}", e)))?;
             return Ok(perms);
@@ -130,7 +142,14 @@ impl UserCacheService {
         let serialized = serde_json::to_string(&perms)
             .map_err(|e| BulwarkError::Internal(format!("权限列表序列化失败: {}", e)))?;
         // Backfill L1 + L2
-        self.l1.insert(key.clone(), serialized.clone()).await;
+        self.l1
+            .set_with_ttl(
+                &key,
+                &serialized,
+                Some(Duration::from_secs(self.l1_ttl_secs)),
+            )
+            .await
+            .map_err(|e| BulwarkError::Internal(format!("oxcache L1 set_with_ttl 失败: {}", e)))?;
         self.dao.set(&key, &serialized, self.l2_ttl_secs).await?;
 
         Ok(perms)
@@ -156,7 +175,12 @@ impl UserCacheService {
         let key = DaoKeyPrefix::RoleCache.build_key(login_id);
 
         // L1 check
-        if let Some(cached) = self.l1.get(&key).await {
+        if let Some(cached) = self
+            .l1
+            .get(&key)
+            .await
+            .map_err(|e| BulwarkError::Internal(format!("oxcache L1 get 失败: {}", e)))?
+        {
             let roles: Vec<String> = serde_json::from_str(&cached)
                 .map_err(|e| BulwarkError::Internal(format!("L1 角色缓存反序列化失败: {}", e)))?;
             return Ok(roles);
@@ -165,7 +189,12 @@ impl UserCacheService {
         // L2 check
         if let Some(cached) = self.dao.get(&key).await? {
             // Backfill L1
-            self.l1.insert(key.clone(), cached.clone()).await;
+            self.l1
+                .set_with_ttl(&key, &cached, Some(Duration::from_secs(self.l1_ttl_secs)))
+                .await
+                .map_err(|e| {
+                    BulwarkError::Internal(format!("oxcache L1 set_with_ttl 失败: {}", e))
+                })?;
             let roles: Vec<String> = serde_json::from_str(&cached)
                 .map_err(|e| BulwarkError::Internal(format!("L2 角色缓存反序列化失败: {}", e)))?;
             return Ok(roles);
@@ -176,7 +205,14 @@ impl UserCacheService {
         let serialized = serde_json::to_string(&roles)
             .map_err(|e| BulwarkError::Internal(format!("角色列表序列化失败: {}", e)))?;
         // Backfill L1 + L2
-        self.l1.insert(key.clone(), serialized.clone()).await;
+        self.l1
+            .set_with_ttl(
+                &key,
+                &serialized,
+                Some(Duration::from_secs(self.l1_ttl_secs)),
+            )
+            .await
+            .map_err(|e| BulwarkError::Internal(format!("oxcache L1 set_with_ttl 失败: {}", e)))?;
         self.dao.set(&key, &serialized, self.l2_ttl_secs).await?;
 
         Ok(roles)
@@ -205,14 +241,24 @@ impl UserCacheService {
         let key = DaoKeyPrefix::UserCache.build_key(login_id);
 
         // L1 check
-        if let Some(cached) = self.l1.get(&key).await {
+        if let Some(cached) = self
+            .l1
+            .get(&key)
+            .await
+            .map_err(|e| BulwarkError::Internal(format!("oxcache L1 get 失败: {}", e)))?
+        {
             return Ok(Some(cached));
         }
 
         // L2 check
         if let Some(cached) = self.dao.get(&key).await? {
             // Backfill L1
-            self.l1.insert(key.clone(), cached.clone()).await;
+            self.l1
+                .set_with_ttl(&key, &cached, Some(Duration::from_secs(self.l1_ttl_secs)))
+                .await
+                .map_err(|e| {
+                    BulwarkError::Internal(format!("oxcache L1 set_with_ttl 失败: {}", e))
+                })?;
             return Ok(Some(cached));
         }
 
@@ -220,7 +266,12 @@ impl UserCacheService {
         let user_info = self.interface.get_user_info(login_id).await?;
         if let Some(ref info) = user_info {
             // Backfill L1 + L2 (only when Some, None is not cached)
-            self.l1.insert(key.clone(), info.clone()).await;
+            self.l1
+                .set_with_ttl(&key, info, Some(Duration::from_secs(self.l1_ttl_secs)))
+                .await
+                .map_err(|e| {
+                    BulwarkError::Internal(format!("oxcache L1 set_with_ttl 失败: {}", e))
+                })?;
             self.dao.set(&key, info, self.l2_ttl_secs).await?;
         }
         Ok(user_info)
@@ -228,7 +279,7 @@ impl UserCacheService {
 
     /// 失效指定主体的所有缓存（权限/角色/用户）。
     ///
-    /// 同时清除 L1（moka）和 L2（DAO）中 `login_id` 对应的三类缓存键。
+    /// 同时清除 L1（oxcache）和 L2（DAO）中 `login_id` 对应的三类缓存键。
     /// 用于登出、权限变更等场景。
     ///
     /// # 参数
@@ -246,9 +297,18 @@ impl UserCacheService {
         self.dao.delete(&role_key).await?;
         self.dao.delete(&user_key).await?;
 
-        self.l1.invalidate(&perm_key).await;
-        self.l1.invalidate(&role_key).await;
-        self.l1.invalidate(&user_key).await;
+        self.l1
+            .delete(&perm_key)
+            .await
+            .map_err(|e| BulwarkError::Internal(format!("oxcache L1 delete 失败: {}", e)))?;
+        self.l1
+            .delete(&role_key)
+            .await
+            .map_err(|e| BulwarkError::Internal(format!("oxcache L1 delete 失败: {}", e)))?;
+        self.l1
+            .delete(&user_key)
+            .await
+            .map_err(|e| BulwarkError::Internal(format!("oxcache L1 delete 失败: {}", e)))?;
 
         Ok(())
     }
@@ -481,7 +541,8 @@ mod tests {
             l1_ttl_secs,
             l2_ttl_secs,
             10_000,
-        );
+        )
+        .expect("UserCacheService::new 应成功");
         (dao, interface, service)
     }
 
@@ -744,13 +805,16 @@ mod tests {
         let interface = Arc::new(CountingMockInterface::new());
         interface.set_permissions("11001", vec!["perm:e".to_string()]);
 
-        let service = Arc::new(UserCacheService::new(
-            dao.clone() as Arc<dyn BulwarkDao>,
-            interface.clone() as Arc<dyn BulwarkPermissionStrategy>,
-            30,
-            300,
-            10_000,
-        ));
+        let service = Arc::new(
+            UserCacheService::new(
+                dao.clone() as Arc<dyn BulwarkDao>,
+                interface.clone() as Arc<dyn BulwarkPermissionStrategy>,
+                30,
+                300,
+                10_000,
+            )
+            .expect("UserCacheService::new 应成功"),
+        );
 
         // 并发 10 个任务同时调用 get_permissions
         let mut handles = Vec::new();

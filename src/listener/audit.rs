@@ -30,6 +30,7 @@
 //! );
 //! ```
 
+#[cfg(feature = "db-sqlite")]
 use crate::error::{BulwarkError, BulwarkResult};
 
 // ============================================================================
@@ -94,6 +95,7 @@ use sha2::Sha256;
 ///
 /// 接受 `&[(&str, &str)]` 键值对，序列化为 JSON 对象字符串。
 /// 字符串值自动转义（由 `serde_json` 处理）。
+#[cfg(feature = "db-sqlite")]
 fn json_metadata(pairs: &[(&str, &str)]) -> String {
     let map: serde_json::Map<String, serde_json::Value> = pairs
         .iter()

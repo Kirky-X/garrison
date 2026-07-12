@@ -248,7 +248,7 @@ impl BulwarkManager {
             config.l1_cache_ttl_secs,
             config.l2_cache_ttl_secs,
             config.l1_cache_capacity,
-        ));
+        )?);
         let logic: Arc<BulwarkLogicDefault> = match factory_selector() {
             Some(entry) => (entry.factory)(session, config, firewall, &factory_ctx)?,
             None => {
