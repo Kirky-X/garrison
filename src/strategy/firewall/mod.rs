@@ -90,28 +90,7 @@ pub struct FirewallContext {
     pub tenant_id: Option<i64>,
 }
 
-impl FirewallContext {
-    /// 创建防火墙上下文，仅指定 IP。
-    pub fn new(ip: impl Into<String>) -> Self {
-        Self {
-            ip: ip.into(),
-            login_id: None,
-            tenant_id: None,
-        }
-    }
-
-    /// 链式设置 login_id。
-    pub fn with_login_id(mut self, login_id: impl Into<String>) -> Self {
-        self.login_id = Some(login_id.into());
-        self
-    }
-
-    /// 链式设置 tenant_id。
-    pub fn with_tenant_id(mut self, tenant_id: i64) -> Self {
-        self.tenant_id = Some(tenant_id);
-        self
-    }
-}
+mod context_impl;
 
 // ============================================================================
 // BulwarkFirewallStrategy trait：IP 级防火墙策略契约
