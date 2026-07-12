@@ -1599,7 +1599,11 @@ impl BulwarkSession {
 // ============================================================================
 
 #[cfg(test)]
+mod mock;
+
+#[cfg(test)]
 mod tests {
+    use super::mock::MockExpiryListener;
     use super::*;
     use crate::dao::tests::MockDao;
     use crate::stp::LoginParams;
@@ -2499,47 +2503,6 @@ mod tests {
     // ----------------------------------------------------------------
     // SessionExpiryListener 测试
     // ----------------------------------------------------------------
-
-    /// Mock 过期监听器：记录所有回调调用，可选返回错误。
-    struct MockExpiryListener {
-        calls: Arc<std::sync::Mutex<Vec<(String, String)>>>,
-        fail: bool,
-    }
-
-    impl MockExpiryListener {
-        #[allow(clippy::type_complexity)]
-        fn new() -> (Self, Arc<std::sync::Mutex<Vec<(String, String)>>>) {
-            let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
-            (
-                Self {
-                    calls: calls.clone(),
-                    fail: false,
-                },
-                calls,
-            )
-        }
-
-        fn new_failing() -> Self {
-            Self {
-                calls: Arc::new(std::sync::Mutex::new(Vec::new())),
-                fail: true,
-            }
-        }
-    }
-
-    #[async_trait]
-    impl SessionExpiryListener for MockExpiryListener {
-        async fn on_session_expired(&self, login_id: &str, token: &str) -> BulwarkResult<()> {
-            self.calls
-                .lock()
-                .unwrap()
-                .push((login_id.to_string(), token.to_string()));
-            if self.fail {
-                return Err(BulwarkError::Session("模拟回调失败".to_string()));
-            }
-            Ok(())
-        }
-    }
 
     /// 修改 TokenSession 的 last_active_at 为过去时间（模拟 session 级过期）。
     async fn expire_token_session_in_dao(dao: &Arc<MockDao>, token: &str, timeout: u64) {
