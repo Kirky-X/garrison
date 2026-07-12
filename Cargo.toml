@@ -84,10 +84,8 @@ redis = { version = "~1.2", optional = true, default-features = false, features 
 futures = { version = "0.3", optional = true, default-features = false, features = ["std"] }
 # inklog：已移除（0.1.6 是 tracing 的上层 subscriber 非 tracing 替代品，无法替换 tracing::warn/error，详见 specmark 冲突报告）
 # limiteron：已移除（0.2.5 内存态限流器与 BulwarkDao 分布式 DAO 不兼容，详见 specmark 冲突报告）
-# sdforge：声明式 SDK 框架（多协议服务接口生成，feature-gated: backend-remote）
-sdforge = { version = "0.3", optional = true }
-# trait-kit：模块标准接口 + 能力管理中心（typestate 模式，feature-gated: backend-embedded / backend-remote）
-trait-kit = { version = "0.3", optional = true }
+# sdforge：已移除（0.3.5 forge! 宏不存在，实际是 #[service_api] 属性宏只能生成服务端路由，不能生成客户端 SDK；且默认依赖 axum 与现有 web 框架冲突，详见 specmark 冲突报告）
+# trait-kit：已移除（0.3.0 kit! 宏不存在，实际 AsyncKit typestate 与 BulwarkManager 抽象重叠，AuthBackend 只需 trait + dyn object 切换，详见 specmark 冲突报告）
 # cedar-policy：Cedar 策略语言（ABAC 权限模型，feature-gated: abac）
 cedar-policy = { version = "4.11", optional = true }
 
@@ -330,11 +328,10 @@ keycloak-oidc = ["protocol-oidc"]
 
 # === v0.7.0 微服务架构 ===
 # backend-embedded（默认）：启用 BackendEmbedded（进程内认证，委托 BulwarkManager，zero-break 兼容）
-# 依赖 trait-kit（typestate 构建校验）
-backend-embedded = ["dep:trait-kit"]
+backend-embedded = []
 # backend-remote：启用 BackendRemote（HTTP 客户端，连接远程 Auth Server）
-# 依赖 reqwest（HTTP client）+ sdforge（SDK 生成）+ trait-kit（typestate）
-backend-remote = ["dep:reqwest", "dep:sdforge", "dep:trait-kit"]
+# 依赖 reqwest（HTTP client），客户端 SDK 用 reqwest 手写
+backend-remote = ["dep:reqwest"]
 # auth-server：启用 Auth Server 模式（HTTP Server 暴露 AuthBackend 端点）
 # 依赖 web-axum（HTTP server）+ backend-embedded（核心逻辑）
 auth-server = ["web-axum", "backend-embedded"]
