@@ -164,6 +164,12 @@ pub trait BulwarkPermissionStrategy: Send + Sync {
     /// 默认返回 `Ok(None)`，业务方可覆盖此方法提供用户信息。
     /// 启用 `three-tier-cache` feature 后，`UserCacheService` 通过此方法获取用户信息并缓存。
     ///
+    /// # 安全警告
+    ///
+    /// 返回的字符串将被缓存到 L1（内存）和 L2（DAO 持久化）。
+    /// **不要**在返回值中包含敏感信息（密码哈希、salt、session token 等）。
+    /// 建议仅返回展示用信息（用户名、昵称、头像 URL 等）。
+    ///
     /// # 参数
     /// - `login_id`: 登录主体标识。
     ///

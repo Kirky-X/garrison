@@ -241,15 +241,14 @@ impl UserCacheService {
         let role_key = DaoKeyPrefix::RoleCache.build_key(login_id);
         let user_key = DaoKeyPrefix::UserCache.build_key(login_id);
 
-        // Invalidate L1
-        self.l1.invalidate(&perm_key).await;
-        self.l1.invalidate(&role_key).await;
-        self.l1.invalidate(&user_key).await;
-
-        // Invalidate L2
+        // 先失效 L2 再失效 L1，避免窗口期内 L1 miss → L2 hit（旧数据）→ 回填 L1（旧数据）。
         self.dao.delete(&perm_key).await?;
         self.dao.delete(&role_key).await?;
         self.dao.delete(&user_key).await?;
+
+        self.l1.invalidate(&perm_key).await;
+        self.l1.invalidate(&role_key).await;
+        self.l1.invalidate(&user_key).await;
 
         Ok(())
     }
