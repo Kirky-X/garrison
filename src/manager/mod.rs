@@ -44,10 +44,16 @@ use crate::plugin::BulwarkPluginManager;
 use crate::session::BulwarkSession;
 use crate::stp::util::spawn_cleanup_task;
 use crate::stp::{BulwarkInterface, BulwarkLogicDefault};
+#[cfg(feature = "anomalous-detector-dual")]
+use crate::strategy::firewall::anomalous_analyzer::{
+    AnomalousAnalyzerConfig, AnomalousLoginAnalyzer,
+};
 use crate::strategy::{BulwarkPermissionStrategy, BulwarkPermissionStrategyDefault, Strategy};
 use once_cell::sync::Lazy;
 use parking_lot::RwLock;
 use std::sync::Arc;
+#[cfg(feature = "anomalous-detector-dual")]
+use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
 // 显式 Manager API
@@ -77,6 +83,19 @@ pub struct BulwarkManager {
     /// `init` 时若 `config.token_map_cleanup_interval_secs > 0` 则启动 task 并保存 handle。
     /// `reset_for_test` / `Drop` 时 abort task，避免后台线程在测试间或程序退出后残留。
     cleanup_task_handle: RwLock<Option<JoinHandle<()>>>,
+    /// 异常登录分析器 task 的 JoinHandle（anomalous-detector-dual feature）。
+    ///
+    /// `init` 时若 `anomalous-detector-dual` feature 启用则启动 analyzer task 并保存 handle。
+    /// `reset_for_test` / `Drop` 时 abort task，避免后台线程在测试间或程序退出后残留。
+    #[cfg(feature = "anomalous-detector-dual")]
+    anomalous_analyzer_handle: RwLock<Option<JoinHandle<()>>>,
+    /// 异常登录分析器 shutdown 信号发送端（anomalous-detector-dual feature）。
+    ///
+    /// 保存 `shutdown_tx` 使其生命周期与 `BulwarkManager` 一致，
+    /// 避免 `shutdown_rx` 因 sender drop 而误触发停止。
+    /// `reset_for_test` / `Drop` 时 take 清空，触发 `shutdown_rx.changed()` 返回 Err 通知 task 退出。
+    #[cfg(feature = "anomalous-detector-dual")]
+    anomalous_analyzer_shutdown_tx: RwLock<Option<watch::Sender<bool>>>,
 }
 
 impl BulwarkManager {
@@ -86,6 +105,10 @@ impl BulwarkManager {
             logic: RwLock::new(None),
             strategy: RwLock::new(None),
             cleanup_task_handle: RwLock::new(None),
+            #[cfg(feature = "anomalous-detector-dual")]
+            anomalous_analyzer_handle: RwLock::new(None),
+            #[cfg(feature = "anomalous-detector-dual")]
+            anomalous_analyzer_shutdown_tx: RwLock::new(None),
         }
     }
 
@@ -184,7 +207,8 @@ impl BulwarkManager {
         );
 
         // 4.5 构造 disable_repository（T020）：委托同一 DAO 实例持久化封禁条目
-        let disable_repo: Arc<dyn DisableRepository> = Arc::new(DefaultDisableRepository::new(dao));
+        let disable_repo: Arc<dyn DisableRepository> =
+            Arc::new(DefaultDisableRepository::new(dao.clone()));
 
         // 5. 构造 factory context（持有 5 个 manager 引用）
         #[cfg(feature = "listener")]
@@ -202,6 +226,20 @@ impl BulwarkManager {
             permission_checker: Some(permission_checker.clone()),
             disable_repository: Some(disable_repo.clone()),
         };
+
+        // T023: clone listener_manager 和 dao 给 analyzer，读取 config 值（均在 move 之前）
+        #[cfg(feature = "anomalous-detector-dual")]
+        let (
+            analyzer_listener_manager,
+            analyzer_dao,
+            analyzer_interval_secs,
+            analyzer_burst_threshold,
+        ) = (
+            listener_manager.clone(),
+            dao.clone(),
+            config.anomalous_analyzer_interval_secs,
+            config.anomalous_analyzer_burst_threshold,
+        );
 
         // 6. 通过 factory 构造 logic（传递 context 以便 factory 使用 builder 链）
         let logic: Arc<BulwarkLogicDefault> = match factory_selector() {
@@ -231,6 +269,43 @@ impl BulwarkManager {
 
         // T030: 保存新 cleanup task handle（旧 task 已在上方 abort）
         *BULWARK_MANAGER.cleanup_task_handle.write() = cleanup_handle;
+
+        // T023: 启动异常登录分析器 task（anomalous-detector-dual feature）
+        #[cfg(feature = "anomalous-detector-dual")]
+        {
+            // 先 abort 旧 analyzer task
+            if let Some(old) = BULWARK_MANAGER.anomalous_analyzer_handle.write().take() {
+                old.abort();
+            }
+            // 清空旧 shutdown_tx（drop 后 shutdown_rx.changed() 返回 Err，task 退出）
+            BULWARK_MANAGER
+                .anomalous_analyzer_shutdown_tx
+                .write()
+                .take();
+
+            // 创建 shutdown channel
+            let (shutdown_tx, shutdown_rx) = watch::channel(false);
+
+            // 从 BulwarkConfig 构造 analyzer config
+            let analyzer_config = AnomalousAnalyzerConfig {
+                interval_secs: analyzer_interval_secs,
+                burst_threshold: analyzer_burst_threshold,
+                ..AnomalousAnalyzerConfig::default()
+            };
+
+            // 构造 analyzer 并 spawn task
+            let analyzer = AnomalousLoginAnalyzer::new(
+                analyzer_dao,
+                analyzer_config,
+                shutdown_rx,
+                Some(analyzer_listener_manager),
+            );
+            let analyzer_handle = analyzer.start();
+
+            // 保存 handle 和 shutdown_tx
+            *BULWARK_MANAGER.anomalous_analyzer_handle.write() = Some(analyzer_handle);
+            *BULWARK_MANAGER.anomalous_analyzer_shutdown_tx.write() = Some(shutdown_tx);
+        }
 
         Ok(())
     }
@@ -326,6 +401,17 @@ impl BulwarkManager {
         if let Some(handle) = BULWARK_MANAGER.cleanup_task_handle.write().take() {
             handle.abort();
         }
+        // T023: abort anomalous analyzer task + 清空 shutdown_tx
+        #[cfg(feature = "anomalous-detector-dual")]
+        {
+            if let Some(handle) = BULWARK_MANAGER.anomalous_analyzer_handle.write().take() {
+                handle.abort();
+            }
+            BULWARK_MANAGER
+                .anomalous_analyzer_shutdown_tx
+                .write()
+                .take();
+        }
         *BULWARK_MANAGER.logic.write() = None;
         *BULWARK_MANAGER.strategy.write() = None;
     }
@@ -336,6 +422,14 @@ impl Drop for BulwarkManager {
         // T030: manager drop 时 abort cleanup task，避免后台线程残留
         if let Some(handle) = self.cleanup_task_handle.write().take() {
             handle.abort();
+        }
+        // T023: abort anomalous analyzer task + 清空 shutdown_tx
+        #[cfg(feature = "anomalous-detector-dual")]
+        {
+            if let Some(handle) = self.anomalous_analyzer_handle.write().take() {
+                handle.abort();
+            }
+            self.anomalous_analyzer_shutdown_tx.write().take();
         }
     }
 }

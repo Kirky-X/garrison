@@ -138,6 +138,16 @@ pub const DEFAULT_REPLACED_LOGIN_EXIT_MODE: &str = "old_device";
 /// 默认溢出处理策略的 serde 表示（"logout" = 登出最旧会话）。
 pub const DEFAULT_OVERFLOW_LOGOUT_MODE: &str = "logout";
 
+/// 默认异常登录分析器扫描间隔秒数（3600 = 1 小时）。
+///
+/// 仅当 `anomalous-detector-dual` feature 启用时生效。
+pub const DEFAULT_ANOMALOUS_ANALYZER_INTERVAL_SECS: u64 = 3600;
+
+/// 默认异常登录 burst 检测阈值（5 次/小时）。
+///
+/// 仅当 `anomalous-detector-dual` feature 启用时生效。
+pub const DEFAULT_ANOMALOUS_BURST_THRESHOLD: u32 = 5;
+
 /// 环境变量前缀（BULWARK_）。
 pub const ENV_PREFIX: &str = "BULWARK_";
 
@@ -527,6 +537,18 @@ pub struct BulwarkConfig {
     #[cfg(feature = "sms-rate-limit")]
     pub sms_unverified_threshold: u32,
 
+    /// 异常登录分析器扫描间隔秒数（默认 3600 = 1 小时）。
+    ///
+    /// 仅当 `anomalous-detector-dual` feature 启用时生效。
+    #[cfg(feature = "anomalous-detector-dual")]
+    pub anomalous_analyzer_interval_secs: u64,
+
+    /// 异常登录 burst 检测阈值（默认 5，1 小时窗口内登录次数 > 此值则告警）。
+    ///
+    /// 仅当 `anomalous-detector-dual` feature 启用时生效。
+    #[cfg(feature = "anomalous-detector-dual")]
+    pub anomalous_analyzer_burst_threshold: u32,
+
     /// 配置变更广播通道（serde 跳过，反序列化后通过 `with_watcher` 重建）。
     #[serde(skip)]
     watcher: Option<watch::Sender<BulwarkConfig>>,
@@ -610,6 +632,10 @@ impl BulwarkConfig {
             sms_verify_max_attempts: 3,
             #[cfg(feature = "sms-rate-limit")]
             sms_unverified_threshold: 3,
+            #[cfg(feature = "anomalous-detector-dual")]
+            anomalous_analyzer_interval_secs: DEFAULT_ANOMALOUS_ANALYZER_INTERVAL_SECS,
+            #[cfg(feature = "anomalous-detector-dual")]
+            anomalous_analyzer_burst_threshold: DEFAULT_ANOMALOUS_BURST_THRESHOLD,
             watcher: None,
         };
         config.with_watcher()
@@ -746,6 +772,19 @@ impl BulwarkConfig {
                 .default("sms_daily_limit", ConfigValue::uint(10))
                 .default("sms_verify_max_attempts", ConfigValue::uint(3))
                 .default("sms_unverified_threshold", ConfigValue::uint(3));
+        }
+
+        #[cfg(feature = "anomalous-detector-dual")]
+        {
+            builder = builder
+                .default(
+                    "anomalous_analyzer_interval_secs",
+                    ConfigValue::uint(DEFAULT_ANOMALOUS_ANALYZER_INTERVAL_SECS),
+                )
+                .default(
+                    "anomalous_analyzer_burst_threshold",
+                    ConfigValue::uint(DEFAULT_ANOMALOUS_BURST_THRESHOLD.into()),
+                );
         }
 
         if let Some(path) = toml_path {
@@ -972,6 +1011,19 @@ impl BulwarkConfig {
             if self.sms_unverified_threshold == 0 {
                 return Err(BulwarkError::Config(
                     "sms_unverified_threshold 必须大于 0".to_string(),
+                ));
+            }
+        }
+        #[cfg(feature = "anomalous-detector-dual")]
+        {
+            if self.anomalous_analyzer_interval_secs == 0 {
+                return Err(BulwarkError::Config(
+                    "anomalous_analyzer_interval_secs 必须大于 0".to_string(),
+                ));
+            }
+            if self.anomalous_analyzer_burst_threshold == 0 {
+                return Err(BulwarkError::Config(
+                    "anomalous_analyzer_burst_threshold 必须大于 0".to_string(),
                 ));
             }
         }
@@ -1644,6 +1696,10 @@ jwt_secret = "test-secret""#,
             sms_verify_max_attempts: 3,
             #[cfg(feature = "sms-rate-limit")]
             sms_unverified_threshold: 3,
+            #[cfg(feature = "anomalous-detector-dual")]
+            anomalous_analyzer_interval_secs: DEFAULT_ANOMALOUS_ANALYZER_INTERVAL_SECS,
+            #[cfg(feature = "anomalous-detector-dual")]
+            anomalous_analyzer_burst_threshold: DEFAULT_ANOMALOUS_BURST_THRESHOLD,
             watcher: None,
         };
         assert!(config.update(|c| c.timeout = 999).is_ok());

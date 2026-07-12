@@ -268,6 +268,10 @@ rate-limit-redis = ["cache-redis"]
 # firewall-maxminddb：生产 MaxMindDb 后端（MaxMindDbGeoLookup + MaxMindDbCountryLookup）
 # 依赖 firewall-geoip（CountryLookup）+ firewall-anomalous（GeoLookup）+ maxminddb crate
 firewall-maxminddb = ["dep:maxminddb", "firewall-geoip", "firewall-anomalous"]
+# anomalous-detector-dual：异常登录定时分析引擎（双引擎的定时部分）
+# 与实时引擎 firewall-anomalous 互补，定时扫描历史登录记录识别异常模式（burst/geo_jump/device_mutation）。
+# 依赖 listener（spec R-006 要求广播 AnomalousLoginDetected 事件）。
+anomalous-detector-dual = ["firewall", "listener"]
 
 # === 安全告警系统 ===
 # 启用后提供 SecurityAlertEvent / AlertListener / AnomalyDetector 抽象，
@@ -354,6 +358,7 @@ full = [
     "decision-trace", "tenant-isolation", "safe-defaults",
     "firewall", "firewall-bruteforce", "firewall-ratelimit", "firewall-anomalous",
     "firewall-geoip", "firewall-ddos", "firewall-maxminddb", "firewall-waf",
+    "anomalous-detector-dual",
     "rate-limit-redis",
     "security-alert",
     "device-binding",

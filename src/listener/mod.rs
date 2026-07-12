@@ -203,6 +203,20 @@ pub enum BulwarkEvent {
         /// 新配置版本号。
         config_version: u32,
     },
+    /// 异常登录检测事件（spec R-anomalous-detector-dual-006）。
+    ///
+    /// 在定时分析引擎检测到异常登录模式时广播。
+    #[cfg(feature = "anomalous-detector-dual")]
+    AnomalousLoginDetected {
+        /// 登录主体标识。
+        login_id: String,
+        /// 异常原因（`"burst_login"` / `"geo_jump"` / `"device_mutation"`）。
+        reason: String,
+        /// 检测详情（JSON 值）。
+        detail: serde_json::Value,
+        /// 检测时间戳（Unix 秒）。
+        timestamp: i64,
+    },
 }
 
 /// 监听器 trait，提供事件订阅抽象。

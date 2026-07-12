@@ -31,6 +31,9 @@ use async_trait::async_trait;
 /// 异地登录检测策略。
 #[cfg(feature = "firewall-anomalous")]
 pub mod anomalous;
+/// 异常登录定时分析引擎（双引擎的定时部分，与实时引擎 anomalous.rs 互补）。
+#[cfg(feature = "anomalous-detector-dual")]
+pub mod anomalous_analyzer;
 /// 暴力破解防护策略。
 #[cfg(feature = "firewall-bruteforce")]
 pub mod brute_force;
