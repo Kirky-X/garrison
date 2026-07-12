@@ -551,154 +551,23 @@ pub use extractors::{CheckLogin, CheckPermission, CheckRole, Ignore, Mode};
 // ============================================================================
 
 #[cfg(all(test, feature = "web-axum"))]
+mod mock;
+
+#[cfg(all(test, feature = "web-axum"))]
 mod tests {
+    use super::mock::{MockDao, MockInterface};
     use super::*;
     use crate::dao::BulwarkDao;
     use crate::error::BulwarkError;
     use crate::manager::BulwarkManager;
     use crate::stp::{with_current_token, BulwarkInterface, BulwarkUtil};
-    use async_trait::async_trait;
     use axum::body::Body;
     use axum::extract::FromRequestParts;
     use axum::http::Request;
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
-    use parking_lot::Mutex;
     use serial_test::serial;
-    use std::collections::HashMap;
     use std::sync::Arc;
-    use std::time::{Duration, Instant};
-
-    // ----------------------------------------------------------------
-    // MockDao（复用 manager 测试的 HashMap + Instant 模拟 TTL）
-    // ----------------------------------------------------------------
-
-    struct MockDao {
-        store: Mutex<HashMap<String, (String, Option<Instant>)>>,
-    }
-
-    impl MockDao {
-        fn new() -> Self {
-            Self {
-                store: Mutex::new(HashMap::new()),
-            }
-        }
-    }
-
-    #[async_trait]
-    impl BulwarkDao for MockDao {
-        async fn get(&self, key: &str) -> crate::error::BulwarkResult<Option<String>> {
-            let mut store = self.store.lock();
-            match store.get(key) {
-                Some((value, expire_at)) => {
-                    if let Some(deadline) = expire_at {
-                        if Instant::now() >= *deadline {
-                            store.remove(key);
-                            return Ok(None);
-                        }
-                    }
-                    Ok(Some(value.clone()))
-                },
-                None => Ok(None),
-            }
-        }
-
-        async fn set(
-            &self,
-            key: &str,
-            value: &str,
-            ttl_seconds: u64,
-        ) -> crate::error::BulwarkResult<()> {
-            let expire_at = if ttl_seconds == 0 {
-                None
-            } else {
-                Some(Instant::now() + Duration::from_secs(ttl_seconds))
-            };
-            self.store
-                .lock()
-                .insert(key.to_string(), (value.to_string(), expire_at));
-            Ok(())
-        }
-
-        async fn update(&self, key: &str, value: &str) -> crate::error::BulwarkResult<()> {
-            let mut store = self.store.lock();
-            match store.get_mut(key) {
-                Some((existing, _)) => {
-                    *existing = value.to_string();
-                    Ok(())
-                },
-                None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
-            }
-        }
-
-        async fn expire(&self, key: &str, seconds: u64) -> crate::error::BulwarkResult<()> {
-            let mut store = self.store.lock();
-            match store.get_mut(key) {
-                Some((_, expire_at)) => {
-                    *expire_at = if seconds == 0 {
-                        None
-                    } else {
-                        Some(Instant::now() + Duration::from_secs(seconds))
-                    };
-                    Ok(())
-                },
-                None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
-            }
-        }
-
-        async fn delete(&self, key: &str) -> crate::error::BulwarkResult<()> {
-            self.store.lock().remove(key);
-            Ok(())
-        }
-    }
-
-    // ----------------------------------------------------------------
-    // MockInterface（权限/角色数据回调）
-    // ----------------------------------------------------------------
-
-    struct MockInterface {
-        permissions: HashMap<String, Vec<String>>,
-        roles: HashMap<String, Vec<String>>,
-    }
-
-    impl MockInterface {
-        fn new() -> Self {
-            Self {
-                permissions: HashMap::new(),
-                roles: HashMap::new(),
-            }
-        }
-
-        fn with_permission(mut self, login_id: &str, perms: &[&str]) -> Self {
-            self.permissions.insert(
-                login_id.to_string(),
-                perms.iter().map(|s| s.to_string()).collect(),
-            );
-            self
-        }
-
-        fn with_role(mut self, login_id: &str, roles: &[&str]) -> Self {
-            self.roles.insert(
-                login_id.to_string(),
-                roles.iter().map(|s| s.to_string()).collect(),
-            );
-            self
-        }
-    }
-
-    #[async_trait]
-    impl BulwarkInterface for MockInterface {
-        async fn get_permission_list(
-            &self,
-            login_id: &str,
-        ) -> crate::error::BulwarkResult<Vec<String>> {
-            Ok(self.permissions.get(login_id).cloned().unwrap_or_default())
-        }
-
-        async fn get_role_list(&self, login_id: &str) -> crate::error::BulwarkResult<Vec<String>> {
-            Ok(self.roles.get(login_id).cloned().unwrap_or_default())
-        }
-    }
 
     // ----------------------------------------------------------------
     // 测试用 marker 类型

@@ -247,48 +247,12 @@ pub use warp_adapter::{WarpContext, WarpRequest, WarpResponse, WarpStorage};
 // ============================================================================
 
 #[cfg(test)]
+mod mock;
+
+#[cfg(test)]
 mod tests {
+    use super::mock::MockResponse;
     use super::*;
-    use std::collections::HashMap;
-
-    /// Mock 响应实现，用于测试 BulwarkResponse trait 的默认方法。
-    struct MockResponse {
-        cookies: HashMap<String, String>,
-        headers: HashMap<String, String>,
-        status: Option<u16>,
-    }
-
-    impl MockResponse {
-        fn new() -> Self {
-            Self {
-                cookies: HashMap::new(),
-                headers: HashMap::new(),
-                status: None,
-            }
-        }
-    }
-
-    impl BulwarkResponse for MockResponse {
-        fn set_status(&mut self, code: u16) -> BulwarkResult<()> {
-            self.status = Some(code);
-            Ok(())
-        }
-
-        fn set_header(&mut self, name: &str, value: &str) -> BulwarkResult<()> {
-            self.headers.insert(name.to_string(), value.to_string());
-            Ok(())
-        }
-
-        fn set_cookie_with_config(
-            &mut self,
-            name: &str,
-            value: &str,
-            _config: &crate::config::BulwarkConfig,
-        ) -> BulwarkResult<()> {
-            self.cookies.insert(name.to_string(), value.to_string());
-            Ok(())
-        }
-    }
 
     /// 验证 set_cookie 默认方法委托到 set_cookie_with_config。
     #[test]
