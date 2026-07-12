@@ -5,6 +5,73 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.6.6] - 2026-07-12
+
+### 概述
+
+v0.6.6 会话管理增强，实施 6 个能力域：并发登录策略细化、从请求体读取 Token、动态 Active-Timeout、login_token_map 持久化双层、匿名 Session、会话搜索。通过 specmark `v0.6.6-concurrent-login-session-search-anon-rotation` change 管理，33 个 TDD 任务 + Phase 审计修复完成。Phase 4 审计 2 个 HIGH（persistent 方法缺锁 + last_active_at 未更新）+ Phase 5 审计 2 个 HIGH（匿名 token 路由 + TOCTOU 竞态）+ Phase 6 审计 2 个 HIGH（DoS 防护 + 反序列化容错），均已修复。
+
+### 新增
+
+#### D1: 并发登录策略细化
+
+- `ReplacedLoginExitMode` 枚举（`OldDevice`/`NewDevice`）：`is_concurrent=false` 时新设备登录的行为控制
+- `OverflowLogoutMode` 枚举（`Logout`/`Kickout`/`Replaced`）：`max_login_count` 超限时的处理策略
+- `BulwarkConfig` 新增 `replaced_login_exit_mode`（默认 `OldDevice`）+ `overflow_logout_mode`（默认 `Logout`）
+- 环境变量覆盖 `BULWARK_REPLACED_LOGIN_EXIT_MODE` / `BULWARK_OVERFLOW_LOGOUT_MODE`
+
+#### D2: 从请求体读取 Token
+
+- `BulwarkConfig` 新增 `is_read_body: bool` 字段（默认 false，向后兼容）
+- 环境变量覆盖 `BULWARK_IS_READ_BODY`
+- axum/actix/warp 三个 adapter 的 `extract_token` 方法增加 body 读取分支
+- `Content-Type: application/json` 时从 body JSON `{token_name}` 字段提取 token
+
+#### D3: 动态 Active-Timeout（`dynamic-active-timeout` feature）
+
+- `TokenSession` 新增 `dynamic_active_timeout: Option<i64>` 字段（feature-gated + `#[serde(default)]`）
+- `set_active_timeout(token, timeout_secs)` 方法：per-token 自定义活跃超时
+- `check_active_timeout` 优先使用 `dynamic_active_timeout`，`None` 时回退全局 `active_timeout`
+
+#### D4: login_token_map 持久化双层（`login-token-map-persistence` feature）
+
+- `BulwarkConfig` 新增 `login_token_map_persist_interval_secs: u64`（默认 0=同步写入）
+- `rebuild_login_token_map()` 方法：从 DAO 重建内存 DashMap（重启恢复）
+- `add_login_token_persistent` / `remove_login_token_persistent`：DAO + 内存双层写入
+- `create` / `logout` 已实现双层写入（DAO AccountSession.tokens + 内存 DashMap）
+- Phase 4 审计修复：persistent 方法用 `with_login_lock` 包裹 + 更新 `last_active_at`
+
+#### D5: 匿名 Session（`anonymous-session` feature）
+
+- 新建 `src/session/anon.rs` 模块
+- `get_anon_token_session(token)`：获取或创建匿名 Session（`login_id=""`, `is_anon=true`）
+- `is_anon(token)`：判断是否为匿名 Session
+- `logout_anon(token)`：注销匿名 Session（幂等）
+- Key 空间隔离：`token:session:anon:{token}` vs 登录 Session `token:session:{token}`
+- `TokenSession` 新增 `is_anon: bool` 字段（feature-gated + `#[serde(default)]`）
+- `BulwarkConfig` 新增 `anon_session_timeout: u64`（默认 1800=30 分钟）
+- `logout` 方法入口检测匿名 token 并路由到 `logout_anon`
+- Phase 5 审计修复：`get_anon_token_session` 用 `with_token_session_lock` 包裹 + 输入校验
+
+#### D6: 会话搜索（`session-search` feature）
+
+- 新建 `src/session/search.rs` 模块
+- `SearchSortType` 枚举（`CreatedAsc`/`CreatedDesc`/`LastActiveAsc`/`LastActiveDesc`）
+- `search_token_value(keyword, start, size, sort_type)`：按 token 值搜索 Token-Session
+- `search_session_id(keyword, start, size, sort_type)`：按 login_id 搜索 Account-Session
+- `search_token_session_id(keyword, start, size, sort_type)`：按 TokenSession.login_id 搜索 token
+- 支持分页（start/size）和排序，排除匿名 Session
+- Phase 6 审计修复：MAX_SCAN 上限防 DoS + 反序列化容错跳过 + 输入校验
+
+### 审计记录
+
+- **Phase 1 审计**（diting 92/100 Approved）
+- **Phase 2 审计**（HIGH 已修复：body 读取安全）
+- **Phase 3 审计**（diting 71/100 Approved with Changes）
+- **Phase 4 审计**（diting 85/100，HIGH-001 persistent 方法缺锁 + MED-001 last_active_at 未更新，已修复）
+- **Phase 5 审计**（diting 85/100，HIGH-001 匿名 token 路由 + tiangang HIGH-001 TOCTOU 竞态，已修复）
+- **Phase 6 审计**（diting 66→修复后通过，HIGH-001 DoS 防护 + HIGH-002 反序列化容错，已修复）
+
 ## [0.6.5] - 2026-07-12
 
 ### 概述
