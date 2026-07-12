@@ -335,55 +335,18 @@ pub trait SocialLoginProvider: Send + Sync {
 }
 
 #[cfg(test)]
-mod tests {
-    use async_trait::async_trait;
+mod mock;
 
+#[cfg(test)]
+mod tests {
     /// 验证 `SocialLoginProvider` trait 可被 mock 实现并调用三个方法
     ///
     /// Red 阶段：`SocialLoginProvider` / `SocialUserInfo` / `SocialProvider` 类型不存在 → 编译失败。
     /// Green 阶段（T098）：定义完整类型后测试通过。
     #[tokio::test]
     async fn social_login_provider_trait_defines_three_methods() {
+        use super::mock::MockSocialProvider;
         use super::*;
-
-        struct MockSocialProvider;
-
-        #[async_trait]
-        impl SocialLoginProvider for MockSocialProvider {
-            async fn get_authorization_url(
-                &self,
-                _state: &str,
-                _redirect_uri: &str,
-            ) -> BulwarkResult<String> {
-                Ok("https://example.com/auth".into())
-            }
-
-            async fn exchange_token(
-                &self,
-                _code: &str,
-                _state: &str,
-            ) -> BulwarkResult<SocialUserInfo> {
-                Ok(SocialUserInfo {
-                    provider: SocialProvider::Wechat,
-                    provider_user_id: "mock_openid".into(),
-                    nickname: None,
-                    avatar: None,
-                    union_id: Some("mock_unionid".into()),
-                    raw: serde_json::json!({"mock": true}),
-                })
-            }
-
-            async fn get_user_info(&self, _access_token: &str) -> BulwarkResult<SocialUserInfo> {
-                Ok(SocialUserInfo {
-                    provider: SocialProvider::Wechat,
-                    provider_user_id: "mock_openid".into(),
-                    nickname: Some("MockUser".into()),
-                    avatar: Some("https://example.com/avatar.png".into()),
-                    union_id: Some("mock_unionid".into()),
-                    raw: serde_json::json!({"mock": true}),
-                })
-            }
-        }
 
         let provider = MockSocialProvider;
 
