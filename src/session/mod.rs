@@ -60,6 +60,14 @@ pub use device::{DeviceManager, DeviceSession};
 #[cfg(feature = "anonymous-session")]
 pub mod anon;
 
+/// 会话搜索模块（需要 `session-search` feature）。
+#[cfg(feature = "session-search")]
+pub mod search;
+
+/// Re-export 搜索排序类型（与 `search` 模块 feature gate 一致）。
+#[cfg(feature = "session-search")]
+pub use search::SearchSortType;
+
 use crate::constants::DaoKeyPrefix;
 use crate::dao::BulwarkDao;
 use crate::error::{BulwarkError, BulwarkResult};
@@ -1484,6 +1492,79 @@ impl BulwarkSession {
     /// - `token`: token 字符串。
     pub async fn logout_anon(&self, token: &str) -> BulwarkResult<()> {
         anon::logout_anon(self, token).await
+    }
+}
+
+// ============================================================================
+// 会话搜索委托方法（session-search feature）
+// ============================================================================
+
+#[cfg(feature = "session-search")]
+impl BulwarkSession {
+    /// 按 token 值搜索 Token-Session。
+    ///
+    /// 委托到 [`search::search_token_value`]。排除匿名 Session，空 `keyword` 匹配所有。
+    ///
+    /// # 参数
+    /// - `keyword`: 搜索关键字（空字符串匹配所有）。
+    /// - `start`: 分页偏移量（0-based）。
+    /// - `size`: 返回数量上限。
+    /// - `sort_type`: 排序方式。
+    ///
+    /// # 返回
+    /// 匹配的 token 值列表。
+    pub async fn search_token_value(
+        &self,
+        keyword: &str,
+        start: usize,
+        size: usize,
+        sort_type: SearchSortType,
+    ) -> BulwarkResult<Vec<String>> {
+        search::search_token_value(self, keyword, start, size, sort_type).await
+    }
+
+    /// 按 login_id 搜索 Account-Session。
+    ///
+    /// 委托到 [`search::search_session_id`]。空 `keyword` 匹配所有。
+    ///
+    /// # 参数
+    /// - `keyword`: 搜索关键字（空字符串匹配所有）。
+    /// - `start`: 分页偏移量（0-based）。
+    /// - `size`: 返回数量上限。
+    /// - `sort_type`: 排序方式。
+    ///
+    /// # 返回
+    /// 匹配的 login_id 列表。
+    pub async fn search_session_id(
+        &self,
+        keyword: &str,
+        start: usize,
+        size: usize,
+        sort_type: SearchSortType,
+    ) -> BulwarkResult<Vec<String>> {
+        search::search_session_id(self, keyword, start, size, sort_type).await
+    }
+
+    /// 按 login_id 搜索 Token-Session 的 token。
+    ///
+    /// 委托到 [`search::search_token_session_id`]。排除匿名 Session，空 `keyword` 匹配所有。
+    ///
+    /// # 参数
+    /// - `keyword`: 搜索关键字（空字符串匹配所有）。
+    /// - `start`: 分页偏移量（0-based）。
+    /// - `size`: 返回数量上限。
+    /// - `sort_type`: 排序方式。
+    ///
+    /// # 返回
+    /// 匹配的 token 值列表。
+    pub async fn search_token_session_id(
+        &self,
+        keyword: &str,
+        start: usize,
+        size: usize,
+        sort_type: SearchSortType,
+    ) -> BulwarkResult<Vec<String>> {
+        search::search_token_session_id(self, keyword, start, size, sort_type).await
     }
 }
 
