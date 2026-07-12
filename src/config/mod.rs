@@ -76,6 +76,9 @@ pub const DEFAULT_SESSION_HOVER_TIMEOUT: i64 = -1;
 /// 默认前后端分离模式（false = Cookie 模式，true = Token Header 模式）。
 pub const DEFAULT_FRONTEND_SEPARATION: bool = false;
 
+/// 默认是否从请求体读取 Token（false = 不读取，向后兼容）。
+pub const DEFAULT_IS_READ_BODY: bool = false;
+
 /// 默认自动续签阈值（-1 = 不启用，0-100 = 剩余 TTL 百分比低于此值时触发续签）。
 pub const DEFAULT_AUTO_RENEWAL_THRESHOLD: i64 = -1;
 
@@ -208,6 +211,7 @@ impl Default for TenantIsolationConfig {
 /// | `active_timeout` | i64 | -1 | 活动超时检测（-1 表示不启用） |
 /// | `is_read_cookie` | bool | true | 是否从 Cookie 读取 Token |
 /// | `is_read_header` | bool | true | 是否从 Header 读取 Token |
+/// | `is_read_body` | bool | false | 是否从请求体读取 Token |
 /// | `is_write_header` | bool | true | 是否在登录后写入 Header |
 /// | `token_style` | String | "uuid" | Token 风格（uuid/random_64/simple/jwt） |
 /// | `throw_on_not_login` | bool | true | 未登录时是否抛出异常（false 则返回 false） |
@@ -245,6 +249,12 @@ pub struct BulwarkConfig {
 
     /// 是否从 Header 中读取 Token。
     pub is_read_header: bool,
+
+    /// 是否从请求体中读取 Token（默认 false，向后兼容）。
+    ///
+    /// 启用后，middleware 会从请求体（如 JSON 字段）中提取 Token。
+    /// 通常与 `is_read_cookie` / `is_read_header` 组合使用。
+    pub is_read_body: bool,
 
     /// 是否在登录后自动写入 Header。
     pub is_write_header: bool,
@@ -410,6 +420,7 @@ impl BulwarkConfig {
             active_timeout: DEFAULT_ACTIVE_TIMEOUT,
             is_read_cookie: true,
             is_read_header: true,
+            is_read_body: DEFAULT_IS_READ_BODY,
             is_write_header: true,
             is_write_cookie: false,
             token_style: "uuid".to_string(),
@@ -477,6 +488,7 @@ impl BulwarkConfig {
             )
             .default("is_read_cookie", ConfigValue::bool(true))
             .default("is_read_header", ConfigValue::bool(true))
+            .default("is_read_body", ConfigValue::bool(DEFAULT_IS_READ_BODY))
             .default("is_write_header", ConfigValue::bool(true))
             .default("is_write_cookie", ConfigValue::bool(false))
             .default("token_style", ConfigValue::string("uuid"))
@@ -1310,6 +1322,7 @@ jwt_secret = "test-secret""#,
             active_timeout: -1,
             is_read_cookie: true,
             is_read_header: true,
+            is_read_body: DEFAULT_IS_READ_BODY,
             is_write_header: true,
             is_write_cookie: false,
             token_style: "uuid".to_string(),
@@ -1805,6 +1818,37 @@ jwt_secret = "test-secret""#,
         let config = BulwarkConfig::load(None).expect("load with env");
         assert_eq!(config.max_login_count, 3);
         std::env::remove_var("BULWARK_MAX_LOGIN_COUNT");
+    }
+
+    // ========================================================================
+    // T005: is_read_body 配置测试
+    // ========================================================================
+
+    /// T005: `default_config()` 的 `is_read_body` 为 false（向后兼容）。
+    #[test]
+    fn config_default_is_read_body_is_false() {
+        let config = BulwarkConfig::default_config();
+        assert!(
+            !config.is_read_body,
+            "默认 is_read_body 应为 false（向后兼容）"
+        );
+        assert_eq!(
+            config.is_read_body, DEFAULT_IS_READ_BODY,
+            "应等于 DEFAULT_IS_READ_BODY 常量"
+        );
+    }
+
+    /// T005: `BULWARK_IS_READ_BODY=true` 环境变量覆盖配置为 true。
+    #[test]
+    #[serial]
+    fn env_overrides_is_read_body() {
+        std::env::set_var("BULWARK_IS_READ_BODY", "true");
+        let config = BulwarkConfig::load(None).expect("load with env");
+        assert!(
+            config.is_read_body,
+            "BULWARK_IS_READ_BODY=true 应覆盖为 true"
+        );
+        std::env::remove_var("BULWARK_IS_READ_BODY");
     }
 
     // ========================================================================
