@@ -230,7 +230,7 @@ pub struct BulwarkLogicDefault {
     #[cfg(feature = "listener")]
     listener_manager: Option<Arc<BulwarkListenerManager>>,
     /// 认证逻辑（可选，注入后 login_by_token 优先委托此实现）。
-    auth_logic: Option<Arc<dyn AuthLogic>>,
+    pub(crate) auth_logic: Option<Arc<dyn AuthLogic>>,
     /// 权限校验器（可选，注入后 check_permission/check_role 可委托此实现）。
     permission_checker: Option<Arc<dyn PermissionChecker>>,
     /// Prometheus 指标采集器（可选，注入后 login/check_login/check_permission/check_role emit 指标）。
@@ -296,7 +296,7 @@ pub struct BulwarkLogicDefault {
 mod default_impl;
 
 #[cfg(test)]
-mod mock;
+pub(crate) mod mock;
 
 #[cfg(test)]
 mod tests;

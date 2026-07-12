@@ -20,6 +20,9 @@ use async_trait::async_trait;
 
 pub mod types;
 
+#[cfg(feature = "backend-embedded")]
+pub mod embedded;
+
 pub use types::*;
 
 /// 认证后端统一抽象。
@@ -93,10 +96,12 @@ pub trait AuthBackend: Send + Sync {
     /// 踢出指定登录主体的所有会话。
     async fn kickout(&self, login_id: &str) -> BulwarkResult<()>;
 
-    /// 切换登录主体（保持当前 session 上下文）。
+    /// 切换登录主体（保持当前 token，切换 login_id）。
     ///
-    /// 返回新登录主体对应的 token。
-    async fn switch_to(&self, login_id: &str) -> BulwarkResult<String>;
+    /// 将当前 token 关联的会话切换到 `target_login_id`，
+    /// 保留原 token 字符串与 session attrs（device/ip/ua 等），
+    /// 在 attrs["switched_from"] 记录原始 login_id。
+    async fn switch_to(&self, token: &str, target_login_id: &str) -> BulwarkResult<()>;
 
     /// 续期 token 到等价的新 token。
     ///
@@ -172,8 +177,9 @@ mod tests {
             Ok(())
         }
 
-        async fn switch_to(&self, login_id: &str) -> BulwarkResult<String> {
-            Ok(format!("mock-switched-{}", login_id))
+        async fn switch_to(&self, _token: &str, target_login_id: &str) -> BulwarkResult<()> {
+            let _ = target_login_id;
+            Ok(())
         }
 
         async fn renew_to_equivalent(&self, token: &str) -> BulwarkResult<String> {
@@ -231,10 +237,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_switch_to_returns_new_token() {
+    async fn test_switch_to_succeeds() {
         let backend = MockAuthBackend;
-        let new_token = backend.switch_to("new-user").await.unwrap();
-        assert_eq!(new_token, "mock-switched-new-user");
+        backend
+            .switch_to("current-token", "new-user")
+            .await
+            .unwrap();
     }
 
     #[tokio::test]

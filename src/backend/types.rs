@@ -114,8 +114,10 @@ pub struct LogoutRequest {
 /// BackendRemote 调用 `POST /api/v1/auth/switch-to` 时发送的 JSON 结构。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SwitchToRequest {
+    /// 当前 token 字符串。
+    pub token: String,
     /// 待切换到的登录主体标识。
-    pub login_id: String,
+    pub target_login_id: String,
 }
 
 /// renew_to_equivalent 请求体。
