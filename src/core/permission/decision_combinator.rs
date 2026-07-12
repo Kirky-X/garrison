@@ -14,7 +14,7 @@
 //! 多策略鉴权场景下，需聚合多个策略的决策为一个最终决策。
 //! Forbid 优先语义确保"强制拒绝"不可被其他策略的 Allow 覆盖。
 
-use super::decision::Decision;
+use super::Decision;
 
 /// 决策组合器，聚合多个 [`Decision`] 为单个最终决策。
 ///
@@ -28,6 +28,12 @@ impl DecisionCombinator {
     /// 1. 遇到第一个 Forbid 决策立即返回（短路）
     /// 2. 无 Forbid 时返回第一个 Deny 决策
     /// 3. 无 Forbid 且无 Deny 时返回 Allow（含空列表场景）
+    ///
+    /// # 空列表行为
+    ///
+    /// 空列表返回 `Decision::allow()`（fail-open）。调用方需自行保证
+    /// 传入非空决策列表——空列表通常表示策略未填充的 bug，静默放行
+    /// 可能导致权限绕过。
     ///
     /// # 参数
     ///

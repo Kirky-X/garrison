@@ -357,6 +357,7 @@ production = [
     "listener", "tracing-log", "metrics-prometheus",
     "tenant-isolation",
     "security-alert", "device-binding",
+    "safe-defaults",
 ]
 
 development = [
