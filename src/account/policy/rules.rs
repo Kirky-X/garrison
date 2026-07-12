@@ -28,7 +28,7 @@
 //! | `RegexRule` | `"regex"` | 自定义正则规则（匹配即报错） |
 
 use super::{PasswordPolicyRule, PolicyContext, PolicyError};
-use crate::account::credential::password::PasswordVerifier;
+use crate::account::credential::PasswordVerifier;
 
 // ============================================================================
 // LengthRule
@@ -709,8 +709,8 @@ impl PasswordPolicyRule for RegexRule {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::account::credential::password::Argon2Hasher;
-    use crate::account::credential::password::PasswordHasher;
+    use crate::account::credential::Argon2Hasher;
+    use crate::account::credential::PasswordHasher;
 
     /// 辅助函数：构造测试用 PolicyContext。
     fn make_ctx(username: Option<&str>, history: Vec<&str>) -> PolicyContext {

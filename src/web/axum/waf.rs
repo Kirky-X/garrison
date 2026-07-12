@@ -30,7 +30,7 @@
 //! ```
 
 use crate::error::BulwarkError;
-use crate::strategy::firewall::waf::{WafContext, WafHookChain};
+use crate::strategy::firewall::{WafContext, WafHookChain};
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
@@ -140,7 +140,7 @@ pub async fn waf_middleware(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::strategy::firewall::waf_hooks::*;
+    use crate::strategy::firewall::{BlackPathHook, DangerCharacterHook};
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
     use axum::routing::get;

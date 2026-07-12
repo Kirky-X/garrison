@@ -25,6 +25,10 @@ pub mod builtin;
 pub mod executor;
 pub mod registry;
 
+// 模块重导出：通过 mod 路径访问子模块类型（避免外部代码引用具体文件路径）
+pub use builder::FlowBuilder;
+pub use registry::{FlowRegistration, FlowRegistry};
+
 use std::collections::HashMap;
 
 /// 认证步骤 enum，定义流程中的 7 种步骤类型。

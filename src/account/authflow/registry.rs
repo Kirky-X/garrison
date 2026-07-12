@@ -65,7 +65,7 @@ impl FlowRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::account::authflow::builder::FlowBuilder;
+    use crate::account::authflow::FlowBuilder;
 
     /// 测试用编译期注册 flow（用于验证 from_inventory 收集）。
     fn test_registry_flow() -> AuthenticationFlow {

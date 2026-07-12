@@ -18,6 +18,10 @@
 #[cfg(feature = "protocol-sso-server")]
 pub mod server;
 
+// 模块重导出：通过 mod 路径访问子模块类型（避免外部代码引用具体文件路径）
+#[cfg(feature = "protocol-sso-server")]
+pub use server::SsoServer;
+
 // SAML 2.0 协议支持。
 pub mod saml;
 

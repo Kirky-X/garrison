@@ -1826,7 +1826,7 @@ async fn login_by_token_with_managers_triggers_hooks() {
 // ------------------------------------------------------------------------
 
 #[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
-use crate::account::credential::password::{Argon2Hasher, PasswordHasher};
+use crate::account::credential::{Argon2Hasher, PasswordHasher};
 #[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
 use crate::dao::repository::{UserRepository, UserRow};
 

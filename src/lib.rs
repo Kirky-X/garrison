@@ -559,27 +559,27 @@ pub use strategy::firewall::StrategyRegistration;
 
 /// 暴力破解防护策略 + 配置。
 #[cfg(feature = "firewall-bruteforce")]
-pub use strategy::firewall::brute_force::{BruteForceConfig, BruteForceStrategy};
+pub use strategy::firewall::{BruteForceConfig, BruteForceStrategy};
 
 /// 速率限制策略 + 配置 + 作用域枚举。
 #[cfg(feature = "firewall-ratelimit")]
-pub use strategy::firewall::rate_limit::{RateLimitConfig, RateLimitScope, RateLimitStrategy};
+pub use strategy::firewall::{RateLimitConfig, RateLimitScope, RateLimitStrategy};
 
 /// 异地登录检测策略 + 配置。
 #[cfg(feature = "firewall-anomalous")]
-pub use strategy::firewall::anomalous::{AnomalousConfig, AnomalousLoginStrategy};
+pub use strategy::firewall::{AnomalousConfig, AnomalousLoginStrategy};
 
 /// DDoS 防护策略 + 配置。
 #[cfg(feature = "firewall-ddos")]
-pub use strategy::firewall::ddos::{DDoSConfig, DDoSStrategy};
+pub use strategy::firewall::{DDoSConfig, DDoSStrategy};
 
 /// GeoIP 地理位置拦截策略 + 配置。
 #[cfg(feature = "firewall-geoip")]
-pub use strategy::firewall::geoip::{GeoIPConfig, GeoIPStrategy};
+pub use strategy::firewall::{GeoIPConfig, GeoIPStrategy};
 
 /// 地理坐标 + GeoLookup / CountryLookup trait（anomalous / geoip 共享）。
 #[cfg(any(feature = "firewall-anomalous", feature = "firewall-geoip"))]
-pub use strategy::firewall::geo::{CountryLookup, GeoCoord, GeoLookup};
+pub use strategy::firewall::{CountryLookup, GeoCoord, GeoLookup};
 
 // ============================================================================
 // 过程宏注解

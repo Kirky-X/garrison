@@ -21,6 +21,9 @@
 /// 提供 `PasswordHasher` trait + `Argon2Hasher` / `BcryptHasher` + `PasswordVerifier`。
 pub mod password;
 
+// 模块重导出：通过 mod 路径访问子模块类型（避免外部代码引用具体文件路径）
+pub use password::{Argon2Hasher, PasswordHasher, PasswordVerifier};
+
 /// TOTP 凭证子模块（复用 `secure::totp::TotpHandler`）。
 ///
 /// 需同时启用 `account-credential` + `secure-totp` feature。

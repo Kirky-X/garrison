@@ -21,9 +21,9 @@
 //! - 生产实现可用 maxminddb（待 `MaxMindDbGeoLookup` 引入时添加依赖）
 //! - 测试用 `MockGeoLookup`（硬编码 IP → 坐标映射）
 
+use super::geo::{GeoCoord, GeoLookup};
 use crate::dao::BulwarkDao;
 use crate::error::{BulwarkError, BulwarkResult};
-use crate::strategy::firewall::geo::{GeoCoord, GeoLookup};
 use crate::strategy::firewall::{BulwarkFirewallStrategy, FirewallContext};
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -175,7 +175,7 @@ mod tests {
     use super::*;
     use crate::dao::tests::MockDao;
     use crate::error::BulwarkError;
-    use crate::strategy::firewall::geo::GeoCoord;
+    use crate::strategy::firewall::GeoCoord;
     use std::collections::HashMap;
 
     /// Mock GeoLookup 实现，硬编码 IP → 坐标映射（避免依赖真实 GeoIP 数据库）。

@@ -60,6 +60,37 @@ pub mod waf;
 pub mod waf_hooks;
 
 // ============================================================================
+// 模块重导出：通过 mod 路径访问子模块类型（避免外部代码引用具体文件路径）
+// ============================================================================
+
+#[cfg(feature = "firewall-bruteforce")]
+pub use brute_force::{BruteForceConfig, BruteForceStrategy};
+
+#[cfg(feature = "firewall-ratelimit")]
+pub use rate_limit::{RateLimitConfig, RateLimitScope, RateLimitStrategy};
+
+#[cfg(feature = "firewall-anomalous")]
+pub use anomalous::{AnomalousConfig, AnomalousLoginStrategy};
+
+#[cfg(feature = "firewall-ddos")]
+pub use ddos::{DDoSConfig, DDoSStrategy};
+
+#[cfg(feature = "firewall-geoip")]
+pub use geoip::{GeoIPConfig, GeoIPStrategy};
+
+#[cfg(any(feature = "firewall-anomalous", feature = "firewall-geoip"))]
+pub use geo::{CountryLookup, GeoCoord, GeoLookup};
+
+#[cfg(feature = "anomalous-detector-dual")]
+pub use anomalous_analyzer::{AnomalousAnalyzerConfig, AnomalousLoginAnalyzer};
+
+#[cfg(feature = "firewall-waf")]
+pub use waf::{WafContext, WafHookChain};
+
+#[cfg(feature = "firewall-waf")]
+pub use waf_hooks::{BlackPathHook, DangerCharacterHook};
+
+// ============================================================================
 // FirewallContext：防火墙策略上下文
 // ============================================================================
 
@@ -201,11 +232,11 @@ mod tests {
         use std::iter::Iterator;
         // 显式引用每个 strategy 类型，强制链接器保留 inventory::submit! 静态变量
         //（inventory 静态变量未被引用时可能被链接器优化丢弃）
-        use crate::strategy::firewall::anomalous::AnomalousLoginStrategy;
-        use crate::strategy::firewall::brute_force::BruteForceStrategy;
-        use crate::strategy::firewall::ddos::DDoSStrategy;
-        use crate::strategy::firewall::geoip::GeoIPStrategy;
-        use crate::strategy::firewall::rate_limit::RateLimitStrategy;
+        use super::AnomalousLoginStrategy;
+        use super::BruteForceStrategy;
+        use super::DDoSStrategy;
+        use super::GeoIPStrategy;
+        use super::RateLimitStrategy;
         let _ = std::any::TypeId::of::<AnomalousLoginStrategy>();
         let _ = std::any::TypeId::of::<BruteForceStrategy>();
         let _ = std::any::TypeId::of::<DDoSStrategy>();

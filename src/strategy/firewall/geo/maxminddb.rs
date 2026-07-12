@@ -21,8 +21,8 @@
 //!
 //! `maxminddb::Reader<Vec<u8>>` 实现 `Send + Sync`，可安全跨线程共享。
 
+use super::{CountryLookup, GeoCoord, GeoLookup};
 use crate::error::{BulwarkError, BulwarkResult};
-use crate::strategy::firewall::geo::{CountryLookup, GeoCoord, GeoLookup};
 use async_trait::async_trait;
 use maxminddb::geoip2;
 use std::net::IpAddr;
@@ -383,8 +383,8 @@ mod tests {
     /// 81.2.69.142 → GB，白名单 ["CN"]，应拦截。
     #[tokio::test]
     async fn geoip_strategy_with_maxminddb() {
-        use crate::strategy::firewall::geoip::{GeoIPConfig, GeoIPStrategy};
         use crate::strategy::firewall::{BulwarkFirewallStrategy, FirewallContext};
+        use crate::strategy::firewall::{GeoIPConfig, GeoIPStrategy};
 
         let country_lookup: Arc<dyn CountryLookup> =
             Arc::new(MaxMindDbCountryLookup::open(COUNTRY_TEST_DB).expect("打开数据库失败"));
@@ -410,7 +410,7 @@ mod tests {
     #[tokio::test]
     async fn anomalous_strategy_with_maxminddb() {
         use crate::dao::tests::MockDao;
-        use crate::strategy::firewall::anomalous::{AnomalousConfig, AnomalousLoginStrategy};
+        use crate::strategy::firewall::{AnomalousConfig, AnomalousLoginStrategy};
         use crate::strategy::firewall::{BulwarkFirewallStrategy, FirewallContext};
 
         let dao: Arc<dyn crate::dao::BulwarkDao> = Arc::new(MockDao::new());

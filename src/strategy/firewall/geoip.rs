@@ -18,8 +18,8 @@
 //! - `AnomalousLoginStrategy` 用 [`GeoLookup`](crate::strategy::firewall::geo::GeoLookup)（IP → 坐标）算 haversine 距离
 //! - `GeoIPStrategy` 用 [`CountryLookup`](crate::strategy::firewall::geo::CountryLookup)（IP → 国家码）做 allow/block 匹配
 
+use super::geo::CountryLookup;
 use crate::error::{BulwarkError, BulwarkResult};
-use crate::strategy::firewall::geo::CountryLookup;
 use crate::strategy::firewall::{BulwarkFirewallStrategy, FirewallContext};
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -125,7 +125,7 @@ inventory::submit! {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::strategy::firewall::geo::CountryLookup;
+    use crate::strategy::firewall::CountryLookup;
     use async_trait::async_trait;
     use std::collections::HashMap;
 

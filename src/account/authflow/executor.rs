@@ -1013,7 +1013,7 @@ impl AuthExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::account::authflow::builder::FlowBuilder;
+    use crate::account::authflow::FlowBuilder;
     use crate::account::credential::CredentialType;
     use crate::config::BulwarkConfig;
     use crate::dao::tests::MockDao;
@@ -1694,7 +1694,7 @@ mod tests {
         use crate::protocol::social::{
             SocialLoginProvider, SocialProvider as SocialProviderEnum, SocialUserInfo,
         };
-        use crate::protocol::sso::server::SsoServer;
+        use crate::protocol::sso::SsoServer;
         use std::collections::HashMap;
         use std::sync::atomic::{AtomicUsize, Ordering};
 

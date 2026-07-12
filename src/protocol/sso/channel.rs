@@ -7,8 +7,8 @@
 //!
 //! 仅在 `cache-redis` + `protocol-sso-server` feature 同时启用时编译。
 
+use super::server::SsoChannel;
 use crate::error::{BulwarkError, BulwarkResult};
-use crate::protocol::sso::server::SsoChannel;
 use async_trait::async_trait;
 use futures::StreamExt;
 use std::panic::AssertUnwindSafe;

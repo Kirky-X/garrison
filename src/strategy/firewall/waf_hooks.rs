@@ -20,7 +20,7 @@
 //! | `HeaderHook` | `header` | 禁止请求头黑名单 |
 //! | `ParameterHook` | `parameter` | 禁止参数黑名单 |
 
-use crate::strategy::firewall::waf::{WafContext, WafHook, WafVerdict};
+use super::waf::{WafContext, WafHook, WafVerdict};
 use async_trait::async_trait;
 
 // ============================================================================
@@ -493,7 +493,7 @@ impl WafHook for ParameterHook {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::strategy::firewall::waf::WafHookChain;
+    use crate::strategy::firewall::WafHookChain;
     use std::sync::{Arc, Mutex};
 
     /// 记录执行顺序的 Mock Hook（用于验证链短路行为）。

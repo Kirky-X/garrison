@@ -117,7 +117,7 @@ inventory::submit! {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::account::authflow::registry::FlowRegistry;
+    use crate::account::authflow::FlowRegistry;
 
     /// `default-password-flow` 可从 Registry 查询且结构正确
     /// （Login + Conditional，R-auth-flow-dsl-012）。

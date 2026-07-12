@@ -45,9 +45,7 @@ use crate::session::BulwarkSession;
 use crate::stp::util::spawn_cleanup_task;
 use crate::stp::{BulwarkInterface, BulwarkLogicDefault};
 #[cfg(feature = "anomalous-detector-dual")]
-use crate::strategy::firewall::anomalous_analyzer::{
-    AnomalousAnalyzerConfig, AnomalousLoginAnalyzer,
-};
+use crate::strategy::firewall::{AnomalousAnalyzerConfig, AnomalousLoginAnalyzer};
 use crate::strategy::{BulwarkPermissionStrategy, BulwarkPermissionStrategyDefault, Strategy};
 use once_cell::sync::Lazy;
 use parking_lot::RwLock;
