@@ -1,4 +1,4 @@
-//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
 //! actix-web 适配器模块。
@@ -29,18 +29,42 @@ use std::collections::HashMap;
 /// actix-web 请求适配器，包装 `&HttpRequest`。
 pub struct ActixRequest<'a> {
     request: &'a HttpRequest,
+    /// 预读的 body 字节（用于 `is_read_body=true` 时从 JSON 提取 token）。
+    ///
+    /// body 读取是 async 操作，但 `get_token` 是 sync 方法，故由调用方在
+    /// async 上下文中预读 body 字节后通过 `with_body` 注入。
+    /// 默认空 `Vec`（`new` 构造时），此时 body 读取分支静默跳过。
+    body_bytes: Vec<u8>,
 }
 
 impl<'a> ActixRequest<'a> {
-    /// 创建新的 ActixRequest。
+    /// 创建新的 ActixRequest（body 为空，不读取 body）。
     ///
     /// # 参数
     /// - `request`: actix-web `HttpRequest` 引用，生命周期绑定到返回的 `ActixRequest`。
     ///
     /// # 返回
-    /// 包装该请求引用的 `ActixRequest` 实例。
+    /// 包装该请求引用的 `ActixRequest` 实例（`body_bytes` 为空）。
     pub fn new(request: &'a HttpRequest) -> Self {
-        Self { request }
+        Self {
+            request,
+            body_bytes: Vec::new(),
+        }
+    }
+
+    /// 创建带预读 body 的 ActixRequest（用于 `is_read_body=true` 场景）。
+    ///
+    /// # 参数
+    /// - `request`: actix-web `HttpRequest` 引用。
+    /// - `body_bytes`: 预读的 body 字节（调用方在 async 上下文中读取后传入）。
+    ///
+    /// # 返回
+    /// 包装该请求引用与 body 字节的 `ActixRequest` 实例。
+    pub fn with_body(request: &'a HttpRequest, body_bytes: Vec<u8>) -> Self {
+        Self {
+            request,
+            body_bytes,
+        }
     }
 }
 
@@ -106,6 +130,19 @@ impl<'a> BulwarkRequest for ActixRequest<'a> {
         if config.is_read_cookie {
             if let Some(token) = self.cookie(&config.token_name)? {
                 return Ok(Some(token));
+            }
+        }
+        // 3. 从 body 提取（优先级最低，仅当 is_read_body=true 且有预读 body 字节时）
+        if config.is_read_body && !self.body_bytes.is_empty() {
+            // 检查 Content-Type: application/json
+            let content_type = self.header("Content-Type")?.unwrap_or_default();
+            if content_type.contains("application/json") {
+                // 静默解析 JSON 并提取 token_name 字段（失败回退 None，不报错）
+                if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&self.body_bytes) {
+                    if let Some(token) = value.get(&config.token_name).and_then(|v| v.as_str()) {
+                        return Ok(Some(token.to_string()));
+                    }
+                }
             }
         }
         Ok(None)
@@ -783,5 +820,23 @@ mod tests {
         let req = make_request("/api/test", "GET", &[]);
         let ctx = ActixContext::new(&req);
         assert_eq!(ctx.raw_request().path(), "/api/test");
+    }
+
+    // ========================================================================
+    // get_token body 读取测试（T007）
+    // ========================================================================
+
+    /// 验证 is_read_body=true 时从 JSON body 的 token_name 字段提取 token。
+    #[test]
+    fn extract_token_from_body_when_is_read_body_true() {
+        let req = make_request("/", "POST", &[("Content-Type", "application/json")]);
+        let actix_req =
+            ActixRequest::with_body(&req, br#"{"bulwark_token":"body_token_123"}"#.to_vec());
+        let mut config = BulwarkConfig::default_config();
+        config.is_read_header = false;
+        config.is_read_cookie = false;
+        config.is_read_body = true;
+        let token = actix_req.get_token(&config).unwrap();
+        assert_eq!(token, Some("body_token_123".to_string()));
     }
 }

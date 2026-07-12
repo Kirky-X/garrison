@@ -1,4 +1,4 @@
-//! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
 //! warp 适配器模块。
@@ -35,10 +35,16 @@ pub struct WarpRequest {
     path: String,
     method: String,
     headers: HeaderMap,
+    /// 预读的 body 字节（用于 `is_read_body=true` 时从 JSON 提取 token）。
+    ///
+    /// body 读取是 async 操作，但 `get_token` 是 sync 方法，故由调用方在
+    /// async 上下文中预读 body 字节后通过 `with_body` 注入。
+    /// 默认空 `Vec`（`new` 构造时），此时 body 读取分支静默跳过。
+    body_bytes: Vec<u8>,
 }
 
 impl WarpRequest {
-    /// 创建新的 WarpRequest。
+    /// 创建新的 WarpRequest（body 为空，不读取 body）。
     ///
     /// # 参数
     /// - `path`: 请求路径（如 `/api/users`）。
@@ -46,12 +52,37 @@ impl WarpRequest {
     /// - `headers`: 请求头 `HeaderMap`。
     ///
     /// # 返回
-    /// 持有 owned 数据的 `WarpRequest` 实例。
+    /// 持有 owned 数据的 `WarpRequest` 实例（`body_bytes` 为空）。
     pub fn new(path: String, method: String, headers: HeaderMap) -> Self {
         Self {
             path,
             method,
             headers,
+            body_bytes: Vec::new(),
+        }
+    }
+
+    /// 创建带预读 body 的 WarpRequest（用于 `is_read_body=true` 场景）。
+    ///
+    /// # 参数
+    /// - `path`: 请求路径。
+    /// - `method`: 请求方法。
+    /// - `headers`: 请求头 `HeaderMap`。
+    /// - `body_bytes`: 预读的 body 字节（调用方在 async 上下文中读取后传入）。
+    ///
+    /// # 返回
+    /// 持有 owned 数据与 body 字节的 `WarpRequest` 实例。
+    pub fn with_body(
+        path: String,
+        method: String,
+        headers: HeaderMap,
+        body_bytes: Vec<u8>,
+    ) -> Self {
+        Self {
+            path,
+            method,
+            headers,
+            body_bytes,
         }
     }
 }
@@ -116,6 +147,19 @@ impl BulwarkRequest for WarpRequest {
         if config.is_read_cookie {
             if let Some(token) = self.cookie(&config.token_name)? {
                 return Ok(Some(token));
+            }
+        }
+        // 3. 从 body 提取（优先级最低，仅当 is_read_body=true 且有预读 body 字节时）
+        if config.is_read_body && !self.body_bytes.is_empty() {
+            // 检查 Content-Type: application/json
+            let content_type = self.header("Content-Type")?.unwrap_or_default();
+            if content_type.contains("application/json") {
+                // 静默解析 JSON 并提取 token_name 字段（失败回退 None，不报错）
+                if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&self.body_bytes) {
+                    if let Some(token) = value.get(&config.token_name).and_then(|v| v.as_str()) {
+                        return Ok(Some(token.to_string()));
+                    }
+                }
             }
         }
         Ok(None)
@@ -698,5 +742,26 @@ mod tests {
             ctx.raw_storage().get("key").unwrap(),
             Some("value".to_string())
         );
+    }
+
+    // ========================================================================
+    // get_token body 读取测试（T007）
+    // ========================================================================
+
+    /// 验证 is_read_body=true 时从 JSON body 的 token_name 字段提取 token。
+    #[test]
+    fn extract_token_from_body_when_is_read_body_true() {
+        let req = WarpRequest::with_body(
+            "/".to_string(),
+            "POST".to_string(),
+            make_headers(&[("Content-Type", "application/json")]),
+            br#"{"bulwark_token":"body_token_456"}"#.to_vec(),
+        );
+        let mut config = BulwarkConfig::default_config();
+        config.is_read_header = false;
+        config.is_read_cookie = false;
+        config.is_read_body = true;
+        let token = req.get_token(&config).unwrap();
+        assert_eq!(token, Some("body_token_456".to_string()));
     }
 }
