@@ -99,8 +99,51 @@ pub const DEFAULT_DEVICE_BINDING_MODE: &str = "disabled";
 /// 设备绑定模式合法值（"strict" / "loose" / "disabled"）。
 pub const DEVICE_BINDING_MODES: &[&str] = &["strict", "loose", "disabled"];
 
+/// 默认顶人下线策略的 serde 表示（"old_device" = 踢出旧设备）。
+pub const DEFAULT_REPLACED_LOGIN_EXIT_MODE: &str = "old_device";
+
+/// 默认溢出处理策略的 serde 表示（"logout" = 登出最旧会话）。
+pub const DEFAULT_OVERFLOW_LOGOUT_MODE: &str = "logout";
+
 /// 环境变量前缀（BULWARK_）。
 pub const ENV_PREFIX: &str = "BULWARK_";
+
+// ============================================================================
+// 并发登录控制枚举
+// ============================================================================
+
+/// 顶人下线策略（is_concurrent=false 时生效）。
+///
+/// 控制 `is_concurrent=false` 场景下新设备登录时的行为：
+/// - `OldDevice`：踢出旧设备，允许新设备登录（默认，对应 Sa-Token 语义）
+/// - `NewDevice`：拒绝新设备登录，保留旧设备
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReplacedLoginExitMode {
+    /// 踢出旧设备，允许新设备登录（默认）。
+    #[default]
+    OldDevice,
+    /// 拒绝新设备登录，保留旧设备。
+    NewDevice,
+}
+
+/// 溢出处理策略（max_login_count 超限时生效）。
+///
+/// 控制 `max_login_count > 0` 场景下登录数量超限时的处理方式：
+/// - `Logout`：登出最旧会话（默认，触发 Logout 事件）
+/// - `Kickout`：踢出最旧会话（触发 Kickout 事件）
+/// - `Replaced`：顶替最旧会话（触发 Replaced 事件）
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OverflowLogoutMode {
+    /// 登出最旧会话（默认，触发 Logout 事件）。
+    #[default]
+    Logout,
+    /// 踢出最旧会话（触发 Kickout 事件）。
+    Kickout,
+    /// 顶替最旧会话（触发 Replaced 事件）。
+    Replaced,
+}
 
 // ============================================================================
 // 多租户隔离配置
@@ -300,6 +343,21 @@ pub struct BulwarkConfig {
     /// 此字段值决定（属于 T020 集成范畴）。
     pub device_binding_mode: String,
 
+    /// 顶人下线策略（is_concurrent=false 时生效）。默认 `OldDevice`。
+    ///
+    /// [借鉴 Sa-Token] `is_concurrent=false` 时新设备登录的行为：
+    /// - `OldDevice`：踢出旧设备，允许新设备登录（默认）
+    /// - `NewDevice`：拒绝新设备登录，保留旧设备
+    pub replaced_login_exit_mode: ReplacedLoginExitMode,
+
+    /// 溢出处理策略（max_login_count 超限时生效）。默认 `Logout`。
+    ///
+    /// [借鉴 Sa-Token] `max_login_count > 0` 且登录数量超限时的处理方式：
+    /// - `Logout`：登出最旧会话（默认，触发 Logout 事件）
+    /// - `Kickout`：踢出最旧会话（触发 Kickout 事件）
+    /// - `Replaced`：顶替最旧会话（触发 Replaced 事件）
+    pub overflow_logout_mode: OverflowLogoutMode,
+
     /// 多租户隔离配置段。
     ///
     /// 默认 `enabled: false`（向后兼容）。启用后需配合 `tenant-isolation` Cargo feature
@@ -372,6 +430,8 @@ impl BulwarkConfig {
             is_share: DEFAULT_IS_SHARE,
             max_login_count: DEFAULT_MAX_LOGIN_COUNT,
             device_binding_mode: DEFAULT_DEVICE_BINDING_MODE.to_string(),
+            replaced_login_exit_mode: ReplacedLoginExitMode::default(),
+            overflow_logout_mode: OverflowLogoutMode::default(),
             tenant_isolation: TenantIsolationConfig::default(),
             #[cfg(feature = "web-waf")]
             waf_config: WafConfig::default(),
@@ -466,6 +526,14 @@ impl BulwarkConfig {
             .default(
                 "device_binding_mode",
                 ConfigValue::string(DEFAULT_DEVICE_BINDING_MODE),
+            )
+            .default(
+                "replaced_login_exit_mode",
+                ConfigValue::string(DEFAULT_REPLACED_LOGIN_EXIT_MODE),
+            )
+            .default(
+                "overflow_logout_mode",
+                ConfigValue::string(DEFAULT_OVERFLOW_LOGOUT_MODE),
             );
 
         if let Some(path) = toml_path {
@@ -1262,6 +1330,8 @@ jwt_secret = "test-secret""#,
             is_share: DEFAULT_IS_SHARE,
             max_login_count: DEFAULT_MAX_LOGIN_COUNT,
             device_binding_mode: DEFAULT_DEVICE_BINDING_MODE.to_string(),
+            replaced_login_exit_mode: ReplacedLoginExitMode::default(),
+            overflow_logout_mode: OverflowLogoutMode::default(),
             tenant_isolation: TenantIsolationConfig::default(),
             #[cfg(feature = "web-waf")]
             waf_config: crate::web::waf::WafConfig::default(),
@@ -1956,5 +2026,111 @@ jwt_secret = "test-secret""#,
             _ => panic!("应为 BulwarkError::Config，实际: {:?}", err),
         }
         std::env::remove_var("BULWARK_RATE_LIMIT_BACKEND");
+    }
+
+    // ========================================================================
+    // T001: 并发登录策略枚举配置测试（spec R-001 / R-004）
+    // ========================================================================
+
+    /// R-001: `BulwarkConfig::default()` 的 `replaced_login_exit_mode` 为 `OldDevice`。
+    #[test]
+    fn config_default_replaced_login_exit_mode_is_old_device() {
+        let config = BulwarkConfig::default_config();
+        assert_eq!(
+            config.replaced_login_exit_mode,
+            ReplacedLoginExitMode::OldDevice,
+            "默认 replaced_login_exit_mode 应为 OldDevice"
+        );
+    }
+
+    /// R-004: `BulwarkConfig::default()` 的 `overflow_logout_mode` 为 `Logout`。
+    #[test]
+    fn config_default_overflow_logout_mode_is_logout() {
+        let config = BulwarkConfig::default_config();
+        assert_eq!(
+            config.overflow_logout_mode,
+            OverflowLogoutMode::Logout,
+            "默认 overflow_logout_mode 应为 Logout"
+        );
+    }
+
+    /// R-001: `ReplacedLoginExitMode` 序列化为 snake_case 字符串 "old_device"/"new_device"。
+    #[test]
+    fn replaced_login_exit_mode_serde_snake_case() {
+        // 序列化
+        let old_json = serde_json::to_string(&ReplacedLoginExitMode::OldDevice)
+            .expect("序列化 OldDevice 应成功");
+        assert_eq!(old_json, r#""old_device""#);
+        let new_json = serde_json::to_string(&ReplacedLoginExitMode::NewDevice)
+            .expect("序列化 NewDevice 应成功");
+        assert_eq!(new_json, r#""new_device""#);
+
+        // 反序列化（往返一致）
+        let old: ReplacedLoginExitMode =
+            serde_json::from_str(r#""old_device""#).expect("反序列化 old_device 应成功");
+        assert_eq!(old, ReplacedLoginExitMode::OldDevice);
+        let new: ReplacedLoginExitMode =
+            serde_json::from_str(r#""new_device""#).expect("反序列化 new_device 应成功");
+        assert_eq!(new, ReplacedLoginExitMode::NewDevice);
+    }
+
+    /// R-004: `OverflowLogoutMode` 序列化为 snake_case 字符串 "logout"/"kickout"/"replaced"。
+    #[test]
+    fn overflow_logout_mode_serde_snake_case() {
+        // 序列化
+        assert_eq!(
+            serde_json::to_string(&OverflowLogoutMode::Logout).unwrap(),
+            r#""logout""#
+        );
+        assert_eq!(
+            serde_json::to_string(&OverflowLogoutMode::Kickout).unwrap(),
+            r#""kickout""#
+        );
+        assert_eq!(
+            serde_json::to_string(&OverflowLogoutMode::Replaced).unwrap(),
+            r#""replaced""#
+        );
+
+        // 反序列化（往返一致）
+        assert_eq!(
+            serde_json::from_str::<OverflowLogoutMode>(r#""logout""#).unwrap(),
+            OverflowLogoutMode::Logout
+        );
+        assert_eq!(
+            serde_json::from_str::<OverflowLogoutMode>(r#""kickout""#).unwrap(),
+            OverflowLogoutMode::Kickout
+        );
+        assert_eq!(
+            serde_json::from_str::<OverflowLogoutMode>(r#""replaced""#).unwrap(),
+            OverflowLogoutMode::Replaced
+        );
+    }
+
+    /// R-001: `BULWARK_REPLACED_LOGIN_EXIT_MODE=new_device` 环境变量覆盖配置。
+    #[test]
+    #[serial]
+    fn env_overrides_replaced_login_exit_mode() {
+        std::env::set_var("BULWARK_REPLACED_LOGIN_EXIT_MODE", "new_device");
+        let config = BulwarkConfig::load(None).expect("load with env");
+        assert_eq!(
+            config.replaced_login_exit_mode,
+            ReplacedLoginExitMode::NewDevice,
+            "BULWARK_REPLACED_LOGIN_EXIT_MODE=new_device 应覆盖为 NewDevice"
+        );
+        std::env::remove_var("BULWARK_REPLACED_LOGIN_EXIT_MODE");
+    }
+
+    /// R-004: `BULWARK_OVERFLOW_LOGOUT_MODE=kickout` 环境变量覆盖配置。
+    #[test]
+    #[serial]
+    fn env_overrides_overflow_logout_mode() {
+        std::env::set_var("BULWARK_OVERFLOW_LOGOUT_MODE", "kickout");
+        let config = BulwarkConfig::load(None).expect("load with env");
+        assert_eq!(
+            config.overflow_logout_mode,
+            OverflowLogoutMode::Kickout,
+            "BULWARK_OVERFLOW_LOGOUT_MODE=kickout 应覆盖为 Kickout"
+        );
+        std::env::remove_var("BULWARK_OVERFLOW_LOGOUT_MODE");
     }
 }

@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Kirky.X. All rights reserved.
+# See LICENSE for full license text.
+
 # Pre-commit hooks for Bulwark
 # Usage: pip install pre-commit && pre-commit install
 repos:
