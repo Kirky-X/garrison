@@ -82,6 +82,8 @@ quick-xml = { version = "0.41", optional = true, default-features = false, featu
 # 版本 ~1.2 与 oxcache 0.3.3 间接依赖的 redis 保持一致
 redis = { version = "~1.2", optional = true, default-features = false, features = ["aio", "tokio-comp", "connection-manager", "script"] }
 futures = { version = "0.3", optional = true, default-features = false, features = ["std"] }
+# moka：三层缓存 L1 内存缓存（feature-gated: three-tier-cache）
+moka = { version = "0.12", optional = true, default-features = false, features = ["future"] }
 
 [dev-dependencies]
 toml = "1.0"
@@ -282,6 +284,11 @@ safe-auth = []
 # 区别于固定 timeout，可根据最后活跃时间动态延长/缩短会话有效期。
 dynamic-active-timeout = []
 
+# === 三层缓存架构 ===
+# 启用后提供 UserCacheService，实现 L1(moka 内存) + L2(DAO 持久化) + L3(interface 回调) 三层缓存，
+# 用于权限/角色/用户信息的加速查询。依赖 moka future backend。
+three-tier-cache = ["dep:moka"]
+
 # === login_token_map 持久化 ===
 # 启用后 login_token_map 内存层与 DAO AccountSession.tokens 双层同步，
 # 重启后可通过 rebuild_login_token_map() 重建内存层。
@@ -349,6 +356,7 @@ full = [
     "device-binding",
     "safe-auth",
     "dynamic-active-timeout",
+    "three-tier-cache",
     "login-token-map-persistence",
     "anonymous-session",
     "session-search",
@@ -364,6 +372,7 @@ production = [
     "security-alert", "device-binding",
     "safe-defaults",
     "firewall-waf",
+    "three-tier-cache",
 ]
 
 development = [

@@ -94,6 +94,24 @@ pub const DEFAULT_TOKEN_MAP_CLEANUP_INTERVAL: i64 = 300;
 /// - `>0`：后台 task 按此间隔批量写入 DAO（最终一致，性能更高）
 pub const DEFAULT_LOGIN_TOKEN_MAP_PERSIST_INTERVAL_SECS: u64 = 0;
 
+/// 默认 L1 缓存 TTL 秒数（30 秒）。
+///
+/// 仅当 `three-tier-cache` feature 启用时生效。
+/// L1 为 moka 内存缓存，TTL 较短以保证数据新鲜度。
+pub const DEFAULT_L1_CACHE_TTL_SECS: u64 = 30;
+
+/// 默认 L2 缓存 TTL 秒数（300 秒 = 5 分钟）。
+///
+/// 仅当 `three-tier-cache` feature 启用时生效。
+/// L2 为 DAO 持久化缓存，TTL 较长以减少 L3（interface 回调）压力。
+pub const DEFAULT_L2_CACHE_TTL_SECS: u64 = 300;
+
+/// 默认 L1 缓存容量（10000 条）。
+///
+/// 仅当 `three-tier-cache` feature 启用时生效。
+/// moka L1 缓存的最大条目数，超出后按 LRU 淘汰。
+pub const DEFAULT_L1_CACHE_CAPACITY: u64 = 10_000;
+
 /// 默认匿名 Session 超时秒数（1800 = 30 分钟）。
 ///
 /// 仅当 `anonymous-session` feature 启用时生效。
@@ -336,6 +354,27 @@ pub struct BulwarkConfig {
     /// 由 `BulwarkManager::init` 读取后传给 `spawn_cleanup_task`。
     pub token_map_cleanup_interval_secs: i64,
 
+    /// L1 缓存（moka 内存层）TTL 秒数（默认 30）。
+    ///
+    /// 仅当 `three-tier-cache` feature 启用时生效。
+    /// L1 命中时不查询 L2/L3，TTL 较短以保证数据新鲜度。
+    #[cfg(feature = "three-tier-cache")]
+    pub l1_cache_ttl_secs: u64,
+
+    /// L2 缓存（DAO 持久化层）TTL 秒数（默认 300 = 5 分钟）。
+    ///
+    /// 仅当 `three-tier-cache` feature 启用时生效。
+    /// L1 未命中时查询 L2，L2 命中时回填 L1；L2 未命中时走 L3（interface 回调）。
+    #[cfg(feature = "three-tier-cache")]
+    pub l2_cache_ttl_secs: u64,
+
+    /// L1 缓存（moka 内存层）最大容量（默认 10000 条）。
+    ///
+    /// 仅当 `three-tier-cache` feature 启用时生效。
+    /// 超出容量后按 LRU 淘汰最久未访问的条目。
+    #[cfg(feature = "three-tier-cache")]
+    pub l1_cache_capacity: u64,
+
     /// login_token_map 持久化写入间隔秒数（默认 0 = 同步写入）。
     ///
     /// 仅当 `login-token-map-persistence` feature 启用时生效。
@@ -508,6 +547,12 @@ impl BulwarkConfig {
             frontend_separation: DEFAULT_FRONTEND_SEPARATION,
             auto_renewal_threshold: DEFAULT_AUTO_RENEWAL_THRESHOLD,
             token_map_cleanup_interval_secs: DEFAULT_TOKEN_MAP_CLEANUP_INTERVAL,
+            #[cfg(feature = "three-tier-cache")]
+            l1_cache_ttl_secs: DEFAULT_L1_CACHE_TTL_SECS,
+            #[cfg(feature = "three-tier-cache")]
+            l2_cache_ttl_secs: DEFAULT_L2_CACHE_TTL_SECS,
+            #[cfg(feature = "three-tier-cache")]
+            l1_cache_capacity: DEFAULT_L1_CACHE_CAPACITY,
             #[cfg(feature = "login-token-map-persistence")]
             login_token_map_persist_interval_secs: DEFAULT_LOGIN_TOKEN_MAP_PERSIST_INTERVAL_SECS,
             #[cfg(feature = "anonymous-session")]
@@ -643,6 +688,23 @@ impl BulwarkConfig {
                 "login_token_map_persist_interval_secs",
                 ConfigValue::uint(DEFAULT_LOGIN_TOKEN_MAP_PERSIST_INTERVAL_SECS),
             );
+        }
+
+        #[cfg(feature = "three-tier-cache")]
+        {
+            builder = builder
+                .default(
+                    "l1_cache_ttl_secs",
+                    ConfigValue::uint(DEFAULT_L1_CACHE_TTL_SECS),
+                )
+                .default(
+                    "l2_cache_ttl_secs",
+                    ConfigValue::uint(DEFAULT_L2_CACHE_TTL_SECS),
+                )
+                .default(
+                    "l1_cache_capacity",
+                    ConfigValue::uint(DEFAULT_L1_CACHE_CAPACITY),
+                );
         }
 
         #[cfg(feature = "anonymous-session")]
@@ -817,6 +879,24 @@ impl BulwarkConfig {
             return Err(BulwarkError::Config(
                 "anon_session_timeout 必须 > 0".to_string(),
             ));
+        }
+        #[cfg(feature = "three-tier-cache")]
+        {
+            if self.l1_cache_ttl_secs == 0 {
+                return Err(BulwarkError::Config(
+                    "l1_cache_ttl_secs 必须 > 0".to_string(),
+                ));
+            }
+            if self.l2_cache_ttl_secs == 0 {
+                return Err(BulwarkError::Config(
+                    "l2_cache_ttl_secs 必须 > 0".to_string(),
+                ));
+            }
+            if self.l1_cache_capacity == 0 {
+                return Err(BulwarkError::Config(
+                    "l1_cache_capacity 必须 > 0".to_string(),
+                ));
+            }
         }
         #[cfg(feature = "rate-limit-redis")]
         {
@@ -1461,6 +1541,12 @@ jwt_secret = "test-secret""#,
             frontend_separation: DEFAULT_FRONTEND_SEPARATION,
             auto_renewal_threshold: DEFAULT_AUTO_RENEWAL_THRESHOLD,
             token_map_cleanup_interval_secs: DEFAULT_TOKEN_MAP_CLEANUP_INTERVAL,
+            #[cfg(feature = "three-tier-cache")]
+            l1_cache_ttl_secs: DEFAULT_L1_CACHE_TTL_SECS,
+            #[cfg(feature = "three-tier-cache")]
+            l2_cache_ttl_secs: DEFAULT_L2_CACHE_TTL_SECS,
+            #[cfg(feature = "three-tier-cache")]
+            l1_cache_capacity: DEFAULT_L1_CACHE_CAPACITY,
             #[cfg(feature = "login-token-map-persistence")]
             login_token_map_persist_interval_secs: DEFAULT_LOGIN_TOKEN_MAP_PERSIST_INTERVAL_SECS,
             #[cfg(feature = "anonymous-session")]

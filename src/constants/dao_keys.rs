@@ -29,6 +29,12 @@ pub enum DaoKeyPrefix {
     Tenant,
     /// 角色相关 key 前缀：`role:`
     Role,
+    /// 权限缓存 key 前缀：`perm:cache:`
+    PermissionCache,
+    /// 角色缓存 key 前缀：`role:cache:`
+    RoleCache,
+    /// 用户缓存 key 前缀：`user:cache:`
+    UserCache,
 }
 
 impl DaoKeyPrefix {
@@ -44,6 +50,9 @@ impl DaoKeyPrefix {
             Self::BruteForce => "bf:",
             Self::Tenant => "tenant:",
             Self::Role => "role:",
+            Self::PermissionCache => "perm:cache:",
+            Self::RoleCache => "role:cache:",
+            Self::UserCache => "user:cache:",
         }
     }
 
@@ -80,6 +89,9 @@ mod tests {
         assert_eq!(DaoKeyPrefix::BruteForce.as_str(), "bf:");
         assert_eq!(DaoKeyPrefix::Tenant.as_str(), "tenant:");
         assert_eq!(DaoKeyPrefix::Role.as_str(), "role:");
+        assert_eq!(DaoKeyPrefix::PermissionCache.as_str(), "perm:cache:");
+        assert_eq!(DaoKeyPrefix::RoleCache.as_str(), "role:cache:");
+        assert_eq!(DaoKeyPrefix::UserCache.as_str(), "user:cache:");
     }
 
     #[test]
@@ -95,6 +107,12 @@ mod tests {
             DaoKeyPrefix::BruteForce.build_key("192.168.1.1"),
             "bf:192.168.1.1"
         );
+        assert_eq!(
+            DaoKeyPrefix::PermissionCache.build_key("1001"),
+            "perm:cache:1001"
+        );
+        assert_eq!(DaoKeyPrefix::RoleCache.build_key("1001"), "role:cache:1001");
+        assert_eq!(DaoKeyPrefix::UserCache.build_key("1001"), "user:cache:1001");
     }
 
     #[test]

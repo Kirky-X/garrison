@@ -152,6 +152,15 @@ pub mod strategy;
 /// 会话模块，提供 BulwarkSession 会话模型。
 pub mod session;
 
+/// 缓存模块，提供三层缓存架构（L1 moka + L2 DAO + L3 interface）。
+///
+/// 启用 `three-tier-cache` feature 时编译。提供 [`UserCacheService`]，
+/// 用于权限/角色/用户信息的加速查询。
+///
+/// [`UserCacheService`]: crate::cache::three_tier::UserCacheService
+#[cfg(feature = "three-tier-cache")]
+pub mod cache;
+
 /// 状态机模块，定义 Token / User 显式状态机。
 ///
 /// 提供 [`state::TokenState`]（5 状态 + 6 条合法转换）与 [`state::UserStatus`]（5 状态 + 9 条合法转换），

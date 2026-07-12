@@ -159,6 +159,24 @@ pub trait BulwarkPermissionStrategy: Send + Sync {
     /// - 数据回调失败：透传 `BulwarkError`。
     async fn check_role_all(&self, login_id: &str, roles: &[&str]) -> BulwarkResult<bool>;
 
+    /// 获取用户基本信息（用于缓存）。
+    ///
+    /// 默认返回 `Ok(None)`，业务方可覆盖此方法提供用户信息。
+    /// 启用 `three-tier-cache` feature 后，`UserCacheService` 通过此方法获取用户信息并缓存。
+    ///
+    /// # 参数
+    /// - `login_id`: 登录主体标识。
+    ///
+    /// # 返回
+    /// - `Ok(Some(user_info))`: 用户信息字符串（如 JSON 序列化的用户对象）。
+    /// - `Ok(None)`: 用户不存在或未实现此方法。
+    ///
+    /// # 错误
+    /// - 数据回调失败：透传 `BulwarkError`。
+    async fn get_user_info(&self, _login_id: &str) -> BulwarkResult<Option<String>> {
+        Ok(None)
+    }
+
     /// 登录前防火墙安全钩子检查。
     ///
     /// 默认实现为 no-op（向后兼容 0.2.x）。`BulwarkPermissionStrategyDefault` 在注入
