@@ -49,6 +49,12 @@ pub mod geoip;
 /// 速率限制策略。
 #[cfg(feature = "firewall-ratelimit")]
 pub mod rate_limit;
+/// WAF 级防火墙（策略层 Hook 链 + 9 个内置 Hook）。
+#[cfg(feature = "firewall-waf")]
+pub mod waf;
+/// WAF Hook 实现（9 个内置 Hook）。
+#[cfg(feature = "firewall-waf")]
+pub mod waf_hooks;
 
 // ============================================================================
 // FirewallContext：防火墙策略上下文

@@ -253,6 +253,11 @@ firewall-ratelimit = ["firewall", "dep:rand"]
 firewall-anomalous = ["firewall"]
 firewall-geoip = ["firewall"]
 firewall-ddos = ["firewall"]
+# firewall-waf：WAF 级防火墙（策略层 Hook 链 + 9 个内置 Hook + axum middleware 适配器）
+# 与 web-waf（web 层 WafRule）的区别：firewall-waf 位于 strategy/firewall 层，
+# 使用 WafHook trait + WafVerdict 短路链模式，返回 FirewallBlocked（403），
+# 新增 Host/Header/Parameter/BannedChar 校验。依赖 firewall（基础 trait）+ web-axum（middleware 适配器）。
+firewall-waf = ["firewall", "web-axum"]
 # rate-limit-redis：Redis 限流后端（RedisRateLimiter + Lua 脚本），继承 cache-redis（redis + futures）
 rate-limit-redis = ["cache-redis"]
 # firewall-maxminddb：生产 MaxMindDb 后端（MaxMindDbGeoLookup + MaxMindDbCountryLookup）
@@ -338,7 +343,7 @@ full = [
     "annotation-macros",
     "decision-trace", "tenant-isolation", "safe-defaults",
     "firewall", "firewall-bruteforce", "firewall-ratelimit", "firewall-anomalous",
-    "firewall-geoip", "firewall-ddos", "firewall-maxminddb",
+    "firewall-geoip", "firewall-ddos", "firewall-maxminddb", "firewall-waf",
     "rate-limit-redis",
     "security-alert",
     "device-binding",
@@ -358,6 +363,7 @@ production = [
     "tenant-isolation",
     "security-alert", "device-binding",
     "safe-defaults",
+    "firewall-waf",
 ]
 
 development = [

@@ -16,6 +16,10 @@ pub mod waf;
 #[cfg(feature = "web-cors")]
 pub mod cors;
 
-/// CSRF 跨站请求伪造防护中间件模块。
+/// CSRF 跨站请求伪造防护模块。
 #[cfg(feature = "web-csrf")]
 pub mod csrf;
+
+/// axum 框架适配子模块（firewall-waf middleware 等）。
+#[cfg(feature = "firewall-waf")]
+pub mod axum;

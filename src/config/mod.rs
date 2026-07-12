@@ -428,6 +428,50 @@ pub struct BulwarkConfig {
     #[cfg(feature = "rate-limit-redis")]
     pub rate_limit_backend: RateLimitBackend,
 
+    /// WAF 启用的 Hook 名称列表（firewall-waf feature）。
+    ///
+    /// 空列表表示不启用任何 Hook（WAF 链为空，全部放行）。
+    /// 合法值：white_path / black_path / danger_char / banned_char / dir_traversal /
+    /// host / http_method / header / parameter。
+    #[cfg(feature = "firewall-waf")]
+    pub waf_enabled_hooks: Vec<String>,
+
+    /// WAF 白名单路径前缀列表（firewall-waf feature）。
+    ///
+    /// 匹配白名单的路径不被 WAF 拦截（但仍继续执行后续 Hook）。
+    #[cfg(feature = "firewall-waf")]
+    pub waf_white_paths: Vec<String>,
+
+    /// WAF 黑名单路径前缀列表（firewall-waf feature）。
+    ///
+    /// 匹配黑名单的路径被 WAF 拦截（返回 403）。
+    #[cfg(feature = "firewall-waf")]
+    pub waf_black_paths: Vec<String>,
+
+    /// WAF 允许的 Host 列表（firewall-waf feature）。
+    ///
+    /// 空列表表示不校验 Host。非空时请求的 Host 头必须在列表中。
+    #[cfg(feature = "firewall-waf")]
+    pub waf_allowed_hosts: Vec<String>,
+
+    /// WAF 允许的 HTTP 方法列表（firewall-waf feature）。
+    ///
+    /// 空列表表示不校验方法。非空时方法必须为大写且在列表中。
+    #[cfg(feature = "firewall-waf")]
+    pub waf_allowed_methods: Vec<String>,
+
+    /// WAF 禁止的 Header 名称列表（firewall-waf feature）。
+    ///
+    /// 请求头中含此列表中的 header 时被拦截。
+    #[cfg(feature = "firewall-waf")]
+    pub waf_banned_headers: Vec<String>,
+
+    /// WAF 禁止的参数名称列表（firewall-waf feature）。
+    ///
+    /// 请求参数中含此列表中的参数时被拦截。
+    #[cfg(feature = "firewall-waf")]
+    pub waf_banned_params: Vec<String>,
+
     /// 配置变更广播通道（serde 跳过，反序列化后通过 `with_watcher` 重建）。
     #[serde(skip)]
     watcher: Option<watch::Sender<BulwarkConfig>>,
@@ -483,6 +527,20 @@ impl BulwarkConfig {
             csrf_config: CsrfConfig::default(),
             #[cfg(feature = "rate-limit-redis")]
             rate_limit_backend: RateLimitBackend::default(),
+            #[cfg(feature = "firewall-waf")]
+            waf_enabled_hooks: Vec::new(),
+            #[cfg(feature = "firewall-waf")]
+            waf_white_paths: Vec::new(),
+            #[cfg(feature = "firewall-waf")]
+            waf_black_paths: Vec::new(),
+            #[cfg(feature = "firewall-waf")]
+            waf_allowed_hosts: Vec::new(),
+            #[cfg(feature = "firewall-waf")]
+            waf_allowed_methods: Vec::new(),
+            #[cfg(feature = "firewall-waf")]
+            waf_banned_headers: Vec::new(),
+            #[cfg(feature = "firewall-waf")]
+            waf_banned_params: Vec::new(),
             watcher: None,
         };
         config.with_watcher()
@@ -767,6 +825,17 @@ impl BulwarkConfig {
                     return Err(BulwarkError::Config(
                         "rate_limit_backend=Redis 时 redis_url 不能为空".to_string(),
                     ));
+                }
+            }
+        }
+        #[cfg(feature = "firewall-waf")]
+        {
+            for method in &self.waf_allowed_methods {
+                if method != &method.to_uppercase() {
+                    return Err(BulwarkError::Config(format!(
+                        "waf_allowed_methods 中的方法必须为大写，实际: {}",
+                        method
+                    )));
                 }
             }
         }
@@ -1411,6 +1480,20 @@ jwt_secret = "test-secret""#,
             csrf_config: crate::web::csrf::CsrfConfig::default(),
             #[cfg(feature = "rate-limit-redis")]
             rate_limit_backend: crate::strategy::rate_limiter_backend::RateLimitBackend::default(),
+            #[cfg(feature = "firewall-waf")]
+            waf_enabled_hooks: Vec::new(),
+            #[cfg(feature = "firewall-waf")]
+            waf_white_paths: Vec::new(),
+            #[cfg(feature = "firewall-waf")]
+            waf_black_paths: Vec::new(),
+            #[cfg(feature = "firewall-waf")]
+            waf_allowed_hosts: Vec::new(),
+            #[cfg(feature = "firewall-waf")]
+            waf_allowed_methods: Vec::new(),
+            #[cfg(feature = "firewall-waf")]
+            waf_banned_headers: Vec::new(),
+            #[cfg(feature = "firewall-waf")]
+            waf_banned_params: Vec::new(),
             watcher: None,
         };
         assert!(config.update(|c| c.timeout = 999).is_ok());

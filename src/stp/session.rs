@@ -16,7 +16,9 @@ use super::current_token;
 use super::BulwarkLogicDefault;
 use super::JwtMode;
 use super::LoginParams;
-use crate::config::{OverflowLogoutMode, ReplacedLoginExitMode};
+#[cfg(feature = "listener")]
+use crate::config::OverflowLogoutMode;
+use crate::config::ReplacedLoginExitMode;
 use crate::error::{BulwarkError, BulwarkResult};
 #[cfg(feature = "listener")]
 use crate::listener::BulwarkEvent;
