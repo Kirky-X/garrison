@@ -345,8 +345,8 @@ auth-server = ["web-axum", "backend-embedded"]
 # 依赖 cedar-policy（Cedar 策略语言解析 + 评估）
 abac = ["dep:cedar-policy"]
 # oauth2-server：启用 OAuth2 Server（4 端点 + 4 种 grant type + PKCE）
-# 依赖 protocol-oauth2（OAuth2 原语）+ reqwest（HTTP client）
-oauth2-server = ["protocol-oauth2", "dep:reqwest"]
+# 依赖 protocol-oauth2（OAuth2 原语）+ reqwest（HTTP client）+ argon2（client_secret 哈希）+ rand（client_id 生成）
+oauth2-server = ["protocol-oauth2", "dep:reqwest", "dep:argon2", "dep:rand"]
 
 # === v0.7.0 inklog 结构化审计日志（已跳过 — inklog 冲突）===
 # audit-inklog 已移除：inklog 0.1.6 是 tracing 的上层 subscriber（实现 Layer trait），

@@ -35,6 +35,8 @@ pub enum DaoKeyPrefix {
     RoleCache,
     /// 用户缓存 key 前缀：`user:cache:`
     UserCache,
+    /// OAuth2 客户端 key 前缀：`oauth2:client:`
+    OAuth2Client,
 }
 
 impl DaoKeyPrefix {
@@ -53,6 +55,7 @@ impl DaoKeyPrefix {
             Self::PermissionCache => "perm:cache:",
             Self::RoleCache => "role:cache:",
             Self::UserCache => "user:cache:",
+            Self::OAuth2Client => "oauth2:client:",
         }
     }
 

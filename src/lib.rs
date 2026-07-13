@@ -332,6 +332,16 @@ pub mod abac;
 #[cfg(feature = "auth-server")]
 pub mod server;
 
+/// OAuth2 Server 模块，提供完整 OAuth2 授权服务器实现（4 端点 + 4 种 grant type + PKCE）。
+///
+/// 启用 `oauth2-server` feature 时编译。作为授权服务器（AS）角色，处理客户端的
+/// authorize / token / revoke / introspect 请求。
+///
+/// 与 `protocol::oauth2`（OAuth2 客户端 / RP 角色）互补：`protocol::oauth2` 向外部 AS 请求 token，
+/// `oauth2_server` 本身就是 AS。
+#[cfg(feature = "oauth2-server")]
+pub mod oauth2_server;
+
 // ====================================================================
 // 公共入口
 // ====================================================================
