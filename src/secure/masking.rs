@@ -25,7 +25,7 @@ pub enum MaskType {
     IdCard,
     /// 邮箱：保留首字符 + `***` + `@` + 域名，如 `a***@example.com`。
     Email,
-    /// 银行卡号：保留前 4 后 4，中间 `*` 填充，如 `6222**********1234`。
+    /// 银行卡号：保留前 6 后 4（PCI-DSS 3.4），中间 `*` 填充，如 `622588******7890`。
     BankCard,
     /// 自定义正则模式（本批次不实现，返回原值 + warn 日志）。
     Custom(String),
@@ -188,17 +188,24 @@ fn mask_email(value: &str) -> String {
     }
 }
 
-/// 银行卡号脱敏：保留前 4 后 4，中间 `*` 填充。少于 8 位返回原值。
+/// 银行卡号脱敏（PCI-DSS 3.4）：保留前 6 后 4，中间 `*` 填充。少于 10 位返回全 `*`。
+///
+/// PCI-DSS 3.4 要求银行卡号展示时最多显示 first 6 + last 4（共 10 位），
+/// 中间部分必须用 `*` 屏蔽。当输入长度 < 10 时无法安全拆分 first 6 + last 4，
+/// 全部字符以 `*` 屏蔽（长度与输入一致，避免长度泄漏）。
 ///
 /// 使用 `chars()` 按字符索引切片，避免非 ASCII 字符在字符中间切割导致 panic。
 fn mask_bank_card(value: &str) -> String {
+    const BANK_CARD_PREFIX_LEN: usize = 6;
+    const BANK_CARD_SUFFIX_LEN: usize = 4;
+    const BANK_CARD_MIN_LEN: usize = BANK_CARD_PREFIX_LEN + BANK_CARD_SUFFIX_LEN;
     let chars: Vec<char> = value.chars().collect();
-    if chars.len() < 8 {
-        return value.to_string();
+    if chars.len() < BANK_CARD_MIN_LEN {
+        return "*".repeat(chars.len());
     }
-    let prefix: String = chars[..4].iter().collect();
-    let suffix: String = chars[chars.len() - 4..].iter().collect();
-    let stars = "*".repeat(chars.len() - 8);
+    let prefix: String = chars[..BANK_CARD_PREFIX_LEN].iter().collect();
+    let suffix: String = chars[chars.len() - BANK_CARD_SUFFIX_LEN..].iter().collect();
+    let stars = "*".repeat(chars.len() - BANK_CARD_MIN_LEN);
     format!("{prefix}{stars}{suffix}")
 }
 
@@ -235,12 +242,12 @@ mod tests {
         assert_eq!(result, "a***@example.com");
     }
 
-    /// T001-4: 银行卡 "6222021234567890" → "6222********7890"。
+    /// T001-4: 银行卡 "6222021234567890" → "622202******7890"（PCI-DSS first 6 + last 4）。
     #[test]
     fn mask_bank_card_returns_masked() {
         let masker = SensitiveDataMasker::new();
         let result = masker.mask_value("6222021234567890", &MaskType::BankCard);
-        assert_eq!(result, "6222********7890");
+        assert_eq!(result, "622202******7890");
     }
 
     /// T001-5: Custom 类型返回原值（本批次不实现实际脱敏）。
@@ -283,12 +290,45 @@ mod tests {
         assert_eq!(result, "@example.com");
     }
 
-    /// T001-10: 银行卡少于 8 位返回原值。
+    /// T001-10: 银行卡少于 10 位返回全 `*`（PCI-DSS 3.4：不足 first 6 + last 4 时全屏蔽）。
     #[test]
-    fn mask_bank_card_short_returns_original() {
+    fn mask_bank_card_short_returns_all_stars() {
         let masker = SensitiveDataMasker::new();
         let result = masker.mask_value("1234567", &MaskType::BankCard);
-        assert_eq!(result, "1234567");
+        assert_eq!(result, "*******");
+    }
+
+    /// T002-1: PCI-DSS 3.4 银行卡脱敏 first 6 + last 4：
+    /// "6225881234567890"（16 位）→ "622588******7890"（前 6 + 中 6 星 + 后 4）。
+    #[test]
+    fn mask_bank_card_pci_dss_first6_last4() {
+        let masker = SensitiveDataMasker::new();
+        let result = masker.mask_value("6225881234567890", &MaskType::BankCard);
+        assert_eq!(result, "622588******7890");
+    }
+
+    /// T002-2: PCI-DSS 边界 — 恰好 10 位时 first 6 + last 4 中间 0 星。
+    #[test]
+    fn mask_bank_card_pci_dss_boundary_10_chars() {
+        let masker = SensitiveDataMasker::new();
+        let result = masker.mask_value("6225887890", &MaskType::BankCard);
+        assert_eq!(result, "6225887890");
+    }
+
+    /// T002-3: PCI-DSS 边界 — 9 位（< 10）返回全 `*`，长度与输入一致。
+    #[test]
+    fn mask_bank_card_pci_dss_short_9_chars_all_stars() {
+        let masker = SensitiveDataMasker::new();
+        let result = masker.mask_value("622588789", &MaskType::BankCard);
+        assert_eq!(result, "*********");
+    }
+
+    /// T002-4: PCI-DSS 边界 — 空字符串返回空（长度 0 < 10，全 `*` 即空串）。
+    #[test]
+    fn mask_bank_card_pci_dss_empty_string() {
+        let masker = SensitiveDataMasker::new();
+        let result = masker.mask_value("", &MaskType::BankCard);
+        assert_eq!(result, "");
     }
 
     /// T001-11: 手机号含多字节字符（中文）不应 panic。
