@@ -92,6 +92,7 @@ async fn setup_audit_listener(
         retain_days: 90,
         async_write: false,
         signing_key: None,
+        audit_mask_mode: bulwark::config::AuditMaskMode::default(),
     };
     let audit_listener = Arc::new(AuditLogListener::new(pool, audit_config));
     lm.register(audit_listener.clone() as Arc<dyn BulwarkListener>);

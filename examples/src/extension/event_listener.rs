@@ -37,6 +37,7 @@ impl BulwarkListener for AuditListener {
                 login_id,
                 token,
                 device,
+                ..
             } => {
                 println!(
                     "    [AuditListener] Login: login_id={}, token={}..., device={:?}",
@@ -45,7 +46,9 @@ impl BulwarkListener for AuditListener {
                     device
                 );
             },
-            BulwarkEvent::Logout { login_id, token } => {
+            BulwarkEvent::Logout {
+                login_id, token, ..
+            } => {
                 println!(
                     "    [AuditListener] Logout: login_id={}, token={}...",
                     login_id,
@@ -55,13 +58,14 @@ impl BulwarkListener for AuditListener {
             BulwarkEvent::PermissionCheck {
                 login_id,
                 permission,
+                ..
             } => {
                 println!(
                     "    [AuditListener] PermissionCheck: login_id={}, permission={}",
                     login_id, permission
                 );
             },
-            BulwarkEvent::TokenExpired { token } => {
+            BulwarkEvent::TokenExpired { token, .. } => {
                 println!(
                     "    [AuditListener] TokenExpired: token={}...",
                     &token[..8.min(token.len())]
@@ -129,6 +133,7 @@ pub async fn run() -> BulwarkResult<()> {
         login_id: "1001".to_string(),
         token: "T1-uuid-token-abcd".to_string(),
         device: Some("web".to_string()),
+        request_context: None,
     };
     let before = EVENT_CALLS.load(Ordering::SeqCst);
     manager.broadcast(&login_event).await;
@@ -148,17 +153,20 @@ pub async fn run() -> BulwarkResult<()> {
     let logout_event = BulwarkEvent::Logout {
         login_id: "1001".to_string(),
         token: "T1-uuid-token-abcd".to_string(),
+        request_context: None,
     };
     manager.broadcast(&logout_event).await;
 
     let denied_event = BulwarkEvent::PermissionCheck {
         login_id: "1001".to_string(),
         permission: "user:delete".to_string(),
+        request_context: None,
     };
     manager.broadcast(&denied_event).await;
 
     let expired_event = BulwarkEvent::TokenExpired {
         token: "T1-uuid-token-abcd".to_string(),
+        request_context: None,
     };
     manager.broadcast(&expired_event).await;
     println!();
@@ -179,6 +187,7 @@ pub async fn run() -> BulwarkResult<()> {
         login_id: "2002".to_string(),
         token: "T2-token".to_string(),
         reason: "管理员强制下线".to_string(),
+        request_context: None,
     };
     let cloned = event.clone();
     let debug_str = format!("{:?}", event);
