@@ -8,12 +8,12 @@
 //!
 //! # 核心类型
 //!
-//! - [`AbacEngine`]：Cedar 策略求值器（`abac` feature 开启时可用）
+//! - `AbacEngine`：Cedar 策略求值器（`abac` feature 开启时可用）
 //!
 //! # 全局引擎管理
 //!
-//! - [`init_abac_engine`]：初始化全局 AbacEngine（`abac` feature 开启时可用）
-//! - [`check_abac_with_policy`]：宏入口，RBAC 通过后调用 ABAC 求值
+//! - `init_abac_engine`：初始化全局 AbacEngine（`abac` feature 开启时可用）
+//! - `check_abac_with_policy`：宏入口，RBAC 通过后调用 ABAC 求值
 //!
 //! # Feature 依赖
 //!

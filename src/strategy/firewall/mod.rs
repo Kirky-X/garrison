@@ -156,7 +156,7 @@ pub trait BulwarkFirewallStrategy: Send + Sync {
 
 /// 验证码挑战 trait，定义"接近阈值时触发挑战 + 验证答案"的可插拔契约。
 ///
-/// 实现方（如 [`RateLimitStrategy`](crate::strategy::firewall::rate_limit::RateLimitStrategy)）
+/// 实现方（如 [`RateLimitStrategy`])
 /// 根据自身状态决定何时触发挑战，并在 `verify_challenge` 中验证用户提交的答案。
 ///
 /// # 与 [`BulwarkFirewallStrategy`] 的区分
