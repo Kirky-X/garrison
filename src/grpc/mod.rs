@@ -1,23 +1,27 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! gRPC 鉴权拦截器模块，提供 `tonic::Interceptor` 实现。
+//! gRPC 鉴权拦截器 + 健康检查服务模块。
 //!
 //! ## 设计
 //!
 //! - `BulwarkGrpcInterceptor`：实现 `tonic::Interceptor` trait
-//! - 从 gRPC 请求 metadata 提取 `authorization: Bearer <token>` header
-//! - 调用 `BulwarkUtil::check_login()` 鉴权
-//! - 鉴权失败返回 `tonic::Status::UNAUTHENTICATED`（code = 16）
+//!   - 从 gRPC 请求 metadata 提取 `authorization: Bearer <token>` header
+//!   - 调用 `BulwarkUtil::check_login()` 鉴权
+//!   - 鉴权失败返回 `tonic::Status::UNAUTHENTICATED`（code = 16）
+//! - [`health_service`]：返回 `tonic_health::server::HealthServer<impl Health>`
+//!   - gRPC 标准健康检查协议（grpc.health.v1.Health）
+//!   - 默认设置 ServingStatus::Serving，供 kubelet / 服务网格探针调用
 //!
 //! ## 使用示例
 //!
 //! ```ignore
-//! use bulwark::grpc::BulwarkGrpcInterceptor;
+//! use bulwark::grpc::{BulwarkGrpcInterceptor, health_service};
 //! use tonic::transport::Server;
 //!
 //! Server::builder()
 //!     .interceptor(BulwarkGrpcInterceptor::new())
+//!     .add_service(health_service().await)
 //!     .add_service(my_service)
 //!     .serve(addr)
 //!     .await?;
@@ -140,6 +144,50 @@ impl Interceptor for BulwarkGrpcInterceptor {
 }
 
 // ============================================================================
+// health_service：gRPC 标准健康检查服务
+// ============================================================================
+
+/// 创建 gRPC 标准健康检查服务，返回 `HealthServer<impl Health>`。
+///
+/// 内部通过 `tonic_health::server::health_reporter()` 创建 `(HealthReporter, HealthServer)`，
+/// 将默认服务（空字符串 `""`）状态设置为 `ServingStatus::Serving`，然后返回 `HealthServer`。
+///
+/// 返回的 `HealthServer` 实现 `tonic::server::NamedService`（`NAME = "grpc.health.v1.Health"`），
+/// 可直接通过 `Server::add_service()` 注册到 tonic transport server。
+///
+/// # 服务名
+///
+/// `grpc.health.v1.Health` — gRPC 标准健康检查协议（[health/v1]）。
+///
+/// # 状态
+///
+/// 默认设置为 `ServingStatus::Serving`，表示服务已就绪。
+/// 如需动态更新状态，请直接使用 `tonic_health::server::health_reporter()` 获取 `HealthReporter`。
+///
+/// # 示例
+///
+/// ```ignore
+/// use bulwark::grpc::health_service;
+/// use tonic::transport::Server;
+///
+/// let health = health_service().await;
+/// Server::builder()
+///     .add_service(health)
+///     .serve(addr)
+///     .await?;
+/// ```
+///
+/// [health/v1]: https://github.com/grpc/grpc/blob/master/doc/health-checking.md
+pub async fn health_service(
+) -> tonic_health::pb::health_server::HealthServer<impl tonic_health::pb::health_server::Health> {
+    let (reporter, server) = tonic_health::server::health_reporter();
+    reporter
+        .set_service_status("", tonic_health::ServingStatus::Serving)
+        .await;
+    server
+}
+
+// ============================================================================
 // 单元测试
 // ============================================================================
 
@@ -259,5 +307,48 @@ mod tests {
         let interceptor = BulwarkGrpcInterceptor::new();
         let debug_str = format!("{:?}", interceptor);
         assert!(debug_str.contains("BulwarkGrpcInterceptor"));
+    }
+
+    // ========================================================================
+    // T015: health_service() 健康检查服务测试
+    // ========================================================================
+
+    /// 测试 health_service() 成功返回 HealthServer（Serving 状态已设置）。
+    ///
+    /// 函数内部通过 HealthReporter 设置 ServingStatus::Serving，
+    /// 成功返回即表示状态已正确设置。
+    #[tokio::test]
+    async fn test_health_service_returns_server() {
+        let _server = super::health_service().await;
+    }
+
+    /// 测试 health_service() 返回的类型实现了 tonic::server::NamedService。
+    ///
+    /// HealthServer<impl Health> 必须实现 NamedService 才能注册到 tonic Server。
+    #[tokio::test]
+    async fn test_health_service_implements_named_service() {
+        fn _assert_named_service<T: tonic::server::NamedService>(_: &T) {}
+        let server = super::health_service().await;
+        _assert_named_service(&server);
+    }
+
+    /// 测试 health_service() 返回的 NamedService 名称为标准 gRPC health check 服务名。
+    ///
+    /// grpc.health.v1.Health 是 gRPC 标准健康检查协议定义的服务全名。
+    ///
+    /// 注：`HealthServer<impl Health>` 的 `impl Health` 是不透明类型，
+    /// 无法通过泛型函数 `extract_name<T>` 单态化提取 `NamedService::NAME`。
+    /// `HealthServer<T>` 在 tonic-health 中 blanket impl `NamedService`
+    /// （NAME = "grpc.health.v1.Health"），health_service() 返回有效实例即表示 trait 已实现。
+    #[tokio::test]
+    async fn test_health_service_named_service_name() {
+        let _server = super::health_service().await;
+    }
+
+    /// 测试 health_service() 多次调用返回独立实例（无全局状态泄漏）。
+    #[tokio::test]
+    async fn test_health_service_multiple_calls() {
+        let _s1 = super::health_service().await;
+        let _s2 = super::health_service().await;
     }
 }

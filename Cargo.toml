@@ -71,6 +71,8 @@ opentelemetry_sdk = { version = "0.30", optional = true, default-features = fals
 opentelemetry-otlp = { version = "0.30", optional = true, default-features = false, features = ["trace", "grpc-tonic"] }
 # 需 transport feature 以启用 Interceptor trait
 tonic = { version = "0.13", optional = true, default-features = false, features = ["transport"] }
+# tonic-health：gRPC 标准健康检查服务（feature-gated: grpc），版本与 tonic 保持一致
+tonic-health = { version = "0.13", optional = true, default-features = false }
 fluent = { version = "0.17", optional = true, default-features = false }
 # fluent-rs 内部依赖，显式声明以直接使用
 unic-langid = { version = "0.9", optional = true, default-features = false }
@@ -382,8 +384,8 @@ tracing-log = ["tracing/log", "tracing-subscriber"]
 metrics-prometheus = ["prometheus", "tracing-subscriber"]
 # OpenTelemetry 分布式追踪（OTLP gRPC 导出），独立门控以隔离重依赖
 observability-otlp = ["opentelemetry", "opentelemetry_sdk", "opentelemetry-otlp", "tracing-subscriber"]
-# gRPC 鉴权拦截器（tonic::Interceptor 实现）
-grpc = ["tonic"]
+# gRPC 鉴权拦截器（tonic::Interceptor）+ 健康检查服务（tonic-health）
+grpc = ["tonic", "dep:tonic-health"]
 # 异常消息国际化（中英文切换，fluent-rs）
 i18n = ["fluent", "unic-langid"]
 # miette 富错误渲染
