@@ -504,7 +504,7 @@ mod tests {
         Mock::given(method("POST"))
             .and(path("/token"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "id_token": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyMTIzIn0.signature",
+                "id_token": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyMTIzIn0.signature", // nosemgrep
                 "access_token": "access-123",
                 "token_type": "Bearer",
                 "expires_in": 3600
@@ -519,7 +519,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             id_token,
-            "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyMTIzIn0.signature"
+            "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyMTIzIn0.signature" // nosemgrep
         );
     }
 
