@@ -393,19 +393,15 @@ impl PasswordPolicyRule for NotCommonPasswordRule {
 /// # 安全性
 ///
 /// stub 不触发 `todo!()`/`unimplemented!()` panic，可安全调用。
-pub struct MaxAgeRule {
-    /// 密码最大有效天数（v0.6.5 `PolicyContext` 扩展后启用）。
-    #[allow(dead_code)]
-    days: u32,
-}
+pub struct MaxAgeRule;
 
 impl MaxAgeRule {
     /// 创建密码过期规则。
     ///
     /// # 参数
-    /// - `days`: 密码最大有效天数（v0.6.5 启用校验）
-    pub fn new(days: u32) -> Self {
-        Self { days }
+    /// - `days`: 密码最大有效天数（v0.6.5 启用校验，当前 stub 不存储）
+    pub fn new(_days: u32) -> Self {
+        Self
     }
 }
 

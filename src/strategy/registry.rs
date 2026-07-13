@@ -261,17 +261,15 @@ impl SessionCreator for DefaultSessionCreator {
 /// [`BulwarkLogicDefault`] 无 `check_login_hooks` 方法，
 /// 默认 no-op 与现有 [`crate::strategy::BulwarkPermissionStrategy`] trait 的
 /// `check_login_hooks` 默认行为一致。
-pub struct DefaultFirewallStrategy {
-    // 保留 logic 字段以与其他 5 个 Default*Handler 保持构造签名一致，
-    // 虽然当前 check_login_hooks 无委托目标（BulwarkLogicDefault 无此方法）。
-    #[allow(dead_code)]
-    logic: Arc<BulwarkLogicDefault>,
-}
+pub struct DefaultFirewallStrategy;
 
 impl DefaultFirewallStrategy {
     /// 创建默认防火墙策略实例。
-    pub fn new(logic: Arc<BulwarkLogicDefault>) -> Self {
-        Self { logic }
+    ///
+    /// 接受 `logic` 参数以与其他 Default*Handler 保持构造签名一致，
+    /// 但 `check_login_hooks` 为 no-op，不存储 logic。
+    pub fn new(_logic: Arc<BulwarkLogicDefault>) -> Self {
+        Self
     }
 }
 
