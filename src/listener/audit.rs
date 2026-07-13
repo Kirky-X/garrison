@@ -1120,6 +1120,7 @@ mod db_sqlite_tests {
             login_id: "1".to_string(),
             token: "tok".to_string(),
             device: None,
+            request_context: None,
         };
 
         // 调用 on_event（async，依据 T071 spec：.await）
@@ -1221,6 +1222,7 @@ mod db_sqlite_tests {
                     login_id: "1".to_string(),
                     token: "t".into(),
                     device: None,
+                    request_context: None,
                 },
                 "login",
             ),
@@ -1228,6 +1230,7 @@ mod db_sqlite_tests {
                 BulwarkEvent::Logout {
                     login_id: "1".to_string(),
                     token: "t".into(),
+                    request_context: None,
                 },
                 "logout",
             ),
@@ -1236,6 +1239,7 @@ mod db_sqlite_tests {
                     login_id: "1".to_string(),
                     token: "t".into(),
                     reason: "r".into(),
+                    request_context: None,
                 },
                 "kickout",
             ),
@@ -1243,17 +1247,22 @@ mod db_sqlite_tests {
                 BulwarkEvent::LoginFailure {
                     login_id: "1".to_string(),
                     reason: "r".into(),
+                    request_context: None,
                 },
                 "login_failure",
             ),
             (
-                BulwarkEvent::RevokeToken { token: "t".into() },
+                BulwarkEvent::RevokeToken {
+                    token: "t".into(),
+                    request_context: None,
+                },
                 "revoke_token",
             ),
             (
                 BulwarkEvent::PermissionCheck {
                     login_id: "1".to_string(),
                     permission: "p".into(),
+                    request_context: None,
                 },
                 "permission_check",
             ),
@@ -1261,6 +1270,7 @@ mod db_sqlite_tests {
                 BulwarkEvent::RoleCheck {
                     login_id: "1".to_string(),
                     role: "r".into(),
+                    request_context: None,
                 },
                 "role_check",
             ),
@@ -1269,6 +1279,7 @@ mod db_sqlite_tests {
                     login_id: "1".to_string(),
                     old_token: "t1".into(),
                     new_token: "t2".into(),
+                    request_context: None,
                 },
                 "token_refresh",
             ),
@@ -1276,6 +1287,7 @@ mod db_sqlite_tests {
                 BulwarkEvent::TokenRotate {
                     old_key: "k1".into(),
                     new_key: "k2".into(),
+                    request_context: None,
                 },
                 "token_rotate",
             ),
@@ -1284,6 +1296,7 @@ mod db_sqlite_tests {
                     provider: "wechat".into(),
                     user_id: "u".into(),
                     login_id: Some("1".to_string()),
+                    request_context: None,
                 },
                 "social_login",
             ),
@@ -1292,6 +1305,7 @@ mod db_sqlite_tests {
                     login_id: "1".to_string(),
                     from_tenant: 100,
                     to_tenant: 200,
+                    request_context: None,
                 },
                 "tenant_switch",
             ),
@@ -1299,6 +1313,7 @@ mod db_sqlite_tests {
                 BulwarkEvent::DeviceBlock {
                     login_id: "1".to_string(),
                     device: "d".into(),
+                    request_context: None,
                 },
                 "device_block",
             ),
@@ -1306,11 +1321,15 @@ mod db_sqlite_tests {
                 BulwarkEvent::DeviceUnblock {
                     login_id: "1".to_string(),
                     device: "d".into(),
+                    request_context: None,
                 },
                 "device_unblock",
             ),
             (
-                BulwarkEvent::ConfigReload { config_version: 1 },
+                BulwarkEvent::ConfigReload {
+                    config_version: 1,
+                    request_context: None,
+                },
                 "config_reload",
             ),
         ];
@@ -1541,6 +1560,7 @@ mod db_sqlite_tests {
             login_id: "1".to_string(),
             token: "tok".to_string(),
             device: None,
+            request_context: None,
         };
         let ctx = TenantContext {
             tenant_id: 42,

@@ -340,7 +340,8 @@ impl AnomalousLoginAnalyzer {
     /// - 收到 shutdown 信号时优雅停止
     ///
     /// # 返回
-    /// `JoinHandle<()>`，调用方可 `.await` 等待任务结束。
+    /// `JoinHandle<()>`，调用方可 `.await` 等待任务结束，
+    /// 或通过 [`shutdown`](Self::shutdown) 优雅停止。
     pub fn start(self) -> tokio::task::JoinHandle<()> {
         let dao = self.dao;
         let config = self.config;
@@ -376,6 +377,60 @@ impl AnomalousLoginAnalyzer {
                 }
             }
         })
+    }
+
+    /// 优雅停止分析器任务（默认 5 秒超时，T008）。
+    ///
+    /// 发送 shutdown 信号后等待任务结束，超时则强制 abort。
+    /// 适用于异步上下文（BulwarkManager 的同步 Drop 仍用 `handle.abort()`）。
+    ///
+    /// # 参数
+    /// - `handle`: [`start`](Self::start) 返回的 `JoinHandle<()>`。
+    /// - `shutdown_tx`: `watch::Sender<bool>` shutdown 信号发送端。
+    ///
+    /// # 返回
+    /// - `Ok(())`: 任务正常结束（或已被 cancelled）。
+    /// - `Err(Internal)`: 任务 panic 或超时被 abort。
+    pub async fn shutdown(
+        handle: tokio::task::JoinHandle<()>,
+        shutdown_tx: watch::Sender<bool>,
+    ) -> BulwarkResult<()> {
+        Self::shutdown_with_timeout(handle, shutdown_tx, Duration::from_secs(5)).await
+    }
+
+    /// 优雅停止分析器任务（自定义超时，T008）。
+    ///
+    /// 1. 发送 shutdown 信号（`shutdown_tx.send(true)`）
+    /// 2. 用 `tokio::time::timeout` 包裹 `handle.await`
+    /// 3. 超时后调用 `abort_handle.abort()` 强制终止
+    ///
+    /// # 参数
+    /// - `handle`: [`start`](Self::start) 返回的 `JoinHandle<()>`。
+    /// - `shutdown_tx`: `watch::Sender<bool>` shutdown 信号发送端。
+    /// - `timeout`: 超时时间。
+    ///
+    /// # 返回
+    /// - `Ok(())`: 任务正常结束（或已被 cancelled）。
+    /// - `Err(Internal)`: 任务 panic 或超时被 abort。
+    pub async fn shutdown_with_timeout(
+        handle: tokio::task::JoinHandle<()>,
+        shutdown_tx: watch::Sender<bool>,
+        timeout: Duration,
+    ) -> BulwarkResult<()> {
+        let _ = shutdown_tx.send(true);
+        let abort_handle = handle.abort_handle();
+        match tokio::time::timeout(timeout, handle).await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) if e.is_cancelled() => Ok(()),
+            Ok(Err(e)) => Err(BulwarkError::Internal(format!("分析器任务 panic: {}", e))),
+            Err(_) => {
+                abort_handle.abort();
+                Err(BulwarkError::Internal(format!(
+                    "shutdown 超时 {}ms，已强制 abort",
+                    timeout.as_millis()
+                )))
+            },
+        }
     }
 }
 
@@ -1200,5 +1255,128 @@ mod tests {
             },
             _ => panic!("期望 AnomalousLoginDetected 事件"),
         }
+    }
+
+    // ========================================================================
+    // T008: shutdown + shutdown_with_timeout 测试
+    // ========================================================================
+
+    /// shutdown_with_timeout 对慢任务（不响应 shutdown 信号）超时后强制 abort。
+    ///
+    /// 创建一个永远 pending 的任务，100ms 超时后应返回 Err 且错误信息包含"超时"。
+    #[tokio::test]
+    async fn shutdown_with_timeout_aborts_slow_task() {
+        let handle = tokio::spawn(async {
+            std::future::pending::<()>().await;
+        });
+        let (tx, _rx) = watch::channel(false);
+
+        let result =
+            AnomalousLoginAnalyzer::shutdown_with_timeout(handle, tx, Duration::from_millis(100))
+                .await;
+
+        assert!(result.is_err(), "慢任务应超时返回 Err");
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("超时"),
+            "错误信息应包含 '超时'，实际: {}",
+            err_msg
+        );
+    }
+
+    /// shutdown_with_timeout 对正常结束的任务返回 Ok。
+    #[tokio::test]
+    async fn shutdown_with_timeout_normal_completion() {
+        let handle = tokio::spawn(async {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        });
+        let (tx, _rx) = watch::channel(false);
+
+        let result =
+            AnomalousLoginAnalyzer::shutdown_with_timeout(handle, tx, Duration::from_secs(1)).await;
+
+        assert!(result.is_ok(), "正常结束的任务应返回 Ok");
+    }
+
+    /// shutdown_with_timeout 对响应 shutdown 信号的任务返回 Ok。
+    ///
+    /// 任务通过 `rx.has_changed()` 检测信号并退出，验证 shutdown 信号机制有效。
+    #[tokio::test]
+    async fn shutdown_with_timeout_responds_to_signal() {
+        let (tx, rx) = watch::channel(false);
+        let rx = rx;
+        let handle = tokio::spawn(async move {
+            loop {
+                if rx.has_changed().unwrap_or(false) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        });
+
+        let result =
+            AnomalousLoginAnalyzer::shutdown_with_timeout(handle, tx, Duration::from_secs(1)).await;
+
+        assert!(result.is_ok(), "响应 shutdown 信号的任务应返回 Ok");
+    }
+
+    /// shutdown_with_timeout 对已 cancelled 的任务返回 Ok（幂等）。
+    #[tokio::test]
+    async fn shutdown_with_timeout_already_cancelled() {
+        let handle = tokio::spawn(async {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        });
+        let (tx, _rx) = watch::channel(false);
+        handle.abort();
+
+        let result =
+            AnomalousLoginAnalyzer::shutdown_with_timeout(handle, tx, Duration::from_secs(1)).await;
+
+        assert!(result.is_ok(), "已 cancelled 的任务应返回 Ok（幂等）");
+    }
+
+    /// shutdown_with_timeout 对 panic 的任务返回 Err（包含 panic 信息）。
+    #[tokio::test]
+    async fn shutdown_with_timeout_panic_task() {
+        let handle = tokio::spawn(async {
+            panic!("任务 panic 测试");
+        });
+        let (tx, _rx) = watch::channel(false);
+
+        // 等待任务 panic 完成
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let result =
+            AnomalousLoginAnalyzer::shutdown_with_timeout(handle, tx, Duration::from_secs(1)).await;
+
+        assert!(result.is_err(), "panic 任务应返回 Err");
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("panic"),
+            "错误信息应包含 'panic'，实际: {}",
+            err_msg
+        );
+    }
+
+    /// start + shutdown 集成测试：正常 shutdown 信号路径。
+    ///
+    /// 创建真实 analyzer，start 后用 shutdown_with_timeout 停止，
+    /// 验证任务在 1 秒内响应 shutdown 信号退出。
+    #[tokio::test]
+    async fn start_then_shutdown_normal_stop() {
+        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let (tx, rx) = watch::channel(false);
+        let config = AnomalousAnalyzerConfig {
+            interval_secs: 3600,
+            burst_threshold: 5,
+            max_scan: 100,
+        };
+        let analyzer = AnomalousLoginAnalyzer::new(dao, config, rx, None);
+        let handle = analyzer.start();
+
+        let result =
+            AnomalousLoginAnalyzer::shutdown_with_timeout(handle, tx, Duration::from_secs(1)).await;
+
+        assert!(result.is_ok(), "正常 shutdown 应返回 Ok");
     }
 }
