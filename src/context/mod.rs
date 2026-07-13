@@ -181,6 +181,28 @@ pub trait BulwarkResponse {
         value: &str,
         config: &crate::config::BulwarkConfig,
     ) -> BulwarkResult<()>;
+
+    /// 设置响应 Cookie（受 `frontend_separation` 控制）。
+    ///
+    /// 前后端分离模式（`frontend_separation=true`）跳过 Cookie 设置，直接返回 `Ok(())`；
+    /// 否则委托给 `set_cookie_with_config` 保持原有行为。
+    ///
+    /// # 参数
+    ///
+    /// - `name`: Cookie 名称。
+    /// - `value`: Cookie 值。
+    /// - `config`: 全局配置，读取 `frontend_separation` 字段。
+    fn set_cookie_with_frontend_check(
+        &mut self,
+        name: &str,
+        value: &str,
+        config: &crate::config::BulwarkConfig,
+    ) -> BulwarkResult<()> {
+        if config.frontend_separation {
+            return Ok(());
+        }
+        self.set_cookie_with_config(name, value, config)
+    }
 }
 
 /// 存储抽象 trait，提供请求级临时数据存储。
@@ -210,6 +232,26 @@ pub trait BulwarkStorage {
     /// # 参数
     /// - `key`: 存储键。
     fn delete(&mut self, key: &str) -> BulwarkResult<()>;
+}
+
+// ============================================================================
+// 前后端分离模式辅助函数
+// ============================================================================
+
+/// 前后端分离模式下有效的 Header 读取开关。
+///
+/// `frontend_separation=true` 时强制返回 `true`（必须从 Authorization Header 读取 Token），
+/// 忽略 `is_read_header` 配置。用于 Web 框架适配器的 token 提取逻辑。
+pub fn effective_is_read_header(config: &crate::config::BulwarkConfig) -> bool {
+    config.is_read_header || config.frontend_separation
+}
+
+/// 前后端分离模式下有效的 Cookie 读取开关。
+///
+/// `frontend_separation=true` 时强制返回 `false`（不读 Cookie），
+/// 忽略 `is_read_cookie` 配置。用于 Web 框架适配器的 token 提取逻辑。
+pub fn effective_is_read_cookie(config: &crate::config::BulwarkConfig) -> bool {
+    config.is_read_cookie && !config.frontend_separation
 }
 
 // ============================================================================
@@ -282,5 +324,67 @@ mod tests {
         resp.set_header("X-Custom", "value").unwrap();
         assert_eq!(resp.status, Some(401));
         assert_eq!(resp.headers.get("X-Custom"), Some(&"value".to_string()));
+    }
+
+    // ========================================================================
+    // T011 前后端分离行为变更测试
+    // ========================================================================
+
+    /// 验证 frontend_separation=true 时 effective_is_read_header 强制返回 true。
+    #[test]
+    fn t011_effective_is_read_header_frontend_separation_forces_true() {
+        let mut config = crate::config::BulwarkConfig::default_config();
+        config.is_read_header = false;
+        config.frontend_separation = true;
+        assert!(effective_is_read_header(&config));
+    }
+
+    /// 验证 frontend_separation=false 时 effective_is_read_header 遵循原配置。
+    #[test]
+    fn t011_effective_is_read_header_no_separation_respects_config() {
+        let mut config = crate::config::BulwarkConfig::default_config();
+        config.is_read_header = false;
+        config.frontend_separation = false;
+        assert!(!effective_is_read_header(&config));
+    }
+
+    /// 验证 frontend_separation=true 时 effective_is_read_cookie 强制返回 false。
+    #[test]
+    fn t011_effective_is_read_cookie_frontend_separation_forces_false() {
+        let mut config = crate::config::BulwarkConfig::default_config();
+        config.is_read_cookie = true;
+        config.frontend_separation = true;
+        assert!(!effective_is_read_cookie(&config));
+    }
+
+    /// 验证 frontend_separation=false 时 effective_is_read_cookie 遵循原配置。
+    #[test]
+    fn t011_effective_is_read_cookie_no_separation_respects_config() {
+        let mut config = crate::config::BulwarkConfig::default_config();
+        config.is_read_cookie = true;
+        config.frontend_separation = false;
+        assert!(effective_is_read_cookie(&config));
+    }
+
+    /// 验证 frontend_separation=true 时 set_cookie_with_frontend_check 跳过 Cookie 设置。
+    #[test]
+    fn t011_set_cookie_with_frontend_check_separation_skips_cookie() {
+        let mut resp = MockResponse::new();
+        let mut config = crate::config::BulwarkConfig::default_config();
+        config.frontend_separation = true;
+        let result = resp.set_cookie_with_frontend_check("session", "abc123", &config);
+        assert!(result.is_ok());
+        assert!(resp.cookies.is_empty());
+    }
+
+    /// 验证 frontend_separation=false 时 set_cookie_with_frontend_check 保持原有 Cookie 行为。
+    #[test]
+    fn t011_set_cookie_with_frontend_check_no_separation_sets_cookie() {
+        let mut resp = MockResponse::new();
+        let mut config = crate::config::BulwarkConfig::default_config();
+        config.frontend_separation = false;
+        let result = resp.set_cookie_with_frontend_check("session", "abc123", &config);
+        assert!(result.is_ok());
+        assert_eq!(resp.cookies.get("session"), Some(&"abc123".to_string()));
     }
 }
