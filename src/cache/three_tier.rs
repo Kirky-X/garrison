@@ -392,7 +392,7 @@ mod tests {
     use async_trait::async_trait;
     use parking_lot::Mutex;
     use std::collections::HashMap;
-    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
     use std::sync::Arc;
 
     // ------------------------------------------------------------------------
@@ -411,6 +411,12 @@ mod tests {
         set_keys: Mutex<Vec<String>>,
         /// 记录所有 delete 调用的 key（按调用顺序）
         delete_keys: Mutex<Vec<String>>,
+        /// 错误注入标志：设为 true 时 get 返回 Err
+        fail_get: AtomicBool,
+        /// 错误注入标志：设为 true 时 set 返回 Err
+        fail_set: AtomicBool,
+        /// 错误注入标志：设为 true 时 delete 返回 Err
+        fail_delete: AtomicBool,
     }
 
     impl CountingMockDao {
@@ -423,6 +429,9 @@ mod tests {
                 get_keys: Mutex::new(Vec::new()),
                 set_keys: Mutex::new(Vec::new()),
                 delete_keys: Mutex::new(Vec::new()),
+                fail_get: AtomicBool::new(false),
+                fail_set: AtomicBool::new(false),
+                fail_delete: AtomicBool::new(false),
             }
         }
 
@@ -455,6 +464,21 @@ mod tests {
         fn contains_key(&self, key: &str) -> bool {
             self.store.lock().contains_key(key)
         }
+
+        /// 设置 get 是否失败（用于错误路径测试）。
+        fn set_fail_get(&self, fail: bool) {
+            self.fail_get.store(fail, Ordering::SeqCst);
+        }
+
+        /// 设置 set 是否失败（用于错误路径测试）。
+        fn set_fail_set(&self, fail: bool) {
+            self.fail_set.store(fail, Ordering::SeqCst);
+        }
+
+        /// 设置 delete 是否失败（用于错误路径测试）。
+        fn set_fail_delete(&self, fail: bool) {
+            self.fail_delete.store(fail, Ordering::SeqCst);
+        }
     }
 
     #[async_trait]
@@ -462,12 +486,18 @@ mod tests {
         async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
             self.get_count.fetch_add(1, Ordering::SeqCst);
             self.get_keys.lock().push(key.to_string());
+            if self.fail_get.load(Ordering::SeqCst) {
+                return Err(BulwarkError::Dao("injected get error".to_string()));
+            }
             Ok(self.store.lock().get(key).cloned())
         }
 
         async fn set(&self, key: &str, value: &str, _ttl_seconds: u64) -> BulwarkResult<()> {
             self.set_count.fetch_add(1, Ordering::SeqCst);
             self.set_keys.lock().push(key.to_string());
+            if self.fail_set.load(Ordering::SeqCst) {
+                return Err(BulwarkError::Dao("injected set error".to_string()));
+            }
             self.store.lock().insert(key.to_string(), value.to_string());
             Ok(())
         }
@@ -484,6 +514,9 @@ mod tests {
         async fn delete(&self, key: &str) -> BulwarkResult<()> {
             self.delete_count.fetch_add(1, Ordering::SeqCst);
             self.delete_keys.lock().push(key.to_string());
+            if self.fail_delete.load(Ordering::SeqCst) {
+                return Err(BulwarkError::Dao("injected delete error".to_string()));
+            }
             self.store.lock().remove(key);
             Ok(())
         }
@@ -501,6 +534,12 @@ mod tests {
         perm_count: AtomicU32,
         role_count: AtomicU32,
         user_count: AtomicU32,
+        /// 错误注入标志：设为 true 时 get_permission_list 返回 Err
+        fail_perm: AtomicBool,
+        /// 错误注入标志：设为 true 时 get_role_list 返回 Err
+        fail_role: AtomicBool,
+        /// 错误注入标志：设为 true 时 get_user_info 返回 Err
+        fail_user: AtomicBool,
     }
 
     impl CountingMockInterface {
@@ -512,6 +551,9 @@ mod tests {
                 perm_count: AtomicU32::new(0),
                 role_count: AtomicU32::new(0),
                 user_count: AtomicU32::new(0),
+                fail_perm: AtomicBool::new(false),
+                fail_role: AtomicBool::new(false),
+                fail_user: AtomicBool::new(false),
             }
         }
 
@@ -541,12 +583,30 @@ mod tests {
         fn user_count(&self) -> u32 {
             self.user_count.load(Ordering::SeqCst)
         }
+
+        /// 设置 get_permission_list 是否失败（用于错误路径测试）。
+        fn set_fail_perm(&self, fail: bool) {
+            self.fail_perm.store(fail, Ordering::SeqCst);
+        }
+
+        /// 设置 get_role_list 是否失败（用于错误路径测试）。
+        fn set_fail_role(&self, fail: bool) {
+            self.fail_role.store(fail, Ordering::SeqCst);
+        }
+
+        /// 设置 get_user_info 是否失败（用于错误路径测试）。
+        fn set_fail_user(&self, fail: bool) {
+            self.fail_user.store(fail, Ordering::SeqCst);
+        }
     }
 
     #[async_trait]
     impl BulwarkPermissionStrategy for CountingMockInterface {
         async fn get_permission_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
             self.perm_count.fetch_add(1, Ordering::SeqCst);
+            if self.fail_perm.load(Ordering::SeqCst) {
+                return Err(BulwarkError::Internal("injected perm error".to_string()));
+            }
             Ok(self
                 .permissions
                 .lock()
@@ -557,6 +617,9 @@ mod tests {
 
         async fn get_role_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
             self.role_count.fetch_add(1, Ordering::SeqCst);
+            if self.fail_role.load(Ordering::SeqCst) {
+                return Err(BulwarkError::Internal("injected role error".to_string()));
+            }
             Ok(self.roles.lock().get(login_id).cloned().unwrap_or_default())
         }
 
@@ -582,6 +645,9 @@ mod tests {
 
         async fn get_user_info(&self, login_id: &str) -> BulwarkResult<Option<String>> {
             self.user_count.fetch_add(1, Ordering::SeqCst);
+            if self.fail_user.load(Ordering::SeqCst) {
+                return Err(BulwarkError::Internal("injected user error".to_string()));
+            }
             Ok(self.user_info.lock().get(login_id).cloned().unwrap_or(None))
         }
     }
@@ -1229,5 +1295,280 @@ mod tests {
             1,
             "singleflight 应保证 get_user 并发时只触发一次 L3 加载"
         );
+    }
+
+    // ------------------------------------------------------------------------
+    // 补充测试：覆盖 get_roles/get_user 的 L1 hit / L2 hit 回填 / L3 回填路径
+    // ------------------------------------------------------------------------
+
+    /// T17: get_roles L1 命中时不查询 L2/L3。
+    #[tokio::test]
+    async fn get_roles_l1_hit_does_not_query_l2_l3() {
+        let (dao, interface, service) = make_default_service();
+        interface.set_roles("17001", vec!["admin".to_string()]);
+
+        // 第一次调用：L1+L2 miss → L3 查询 → 回填 L1+L2
+        let roles1 = service.get_roles("17001").await.unwrap();
+        assert_eq!(roles1, vec!["admin".to_string()]);
+        assert_eq!(interface.role_count(), 1, "第一次应查询 L3");
+        assert_eq!(dao.get_count(), 1, "第一次应查询 L2");
+
+        // 第二次调用：L1 hit → 不查询 L2/L3
+        let roles2 = service.get_roles("17001").await.unwrap();
+        assert_eq!(roles2, vec!["admin".to_string()]);
+        assert_eq!(interface.role_count(), 1, "L1 命中不应查询 L3");
+        assert_eq!(dao.get_count(), 1, "L1 命中不应查询 L2");
+    }
+
+    /// T18: get_roles L1 未命中 L2 命中时回填 L1。
+    #[tokio::test]
+    async fn get_roles_l1_miss_l2_hit_backfills_l1() {
+        let (dao, interface, service) = make_default_service();
+
+        // 预填充 L2（模拟另一进程写入的缓存）
+        let roles_json = serde_json::to_string(&vec!["editor".to_string()]).unwrap();
+        dao.insert_direct("role:cache:18001", &roles_json);
+
+        // 第一次调用：L1 miss → L2 hit → 回填 L1 → 不查询 L3
+        let roles1 = service.get_roles("18001").await.unwrap();
+        assert_eq!(roles1, vec!["editor".to_string()]);
+        assert_eq!(interface.role_count(), 0, "L2 命中不应查询 L3");
+        assert_eq!(dao.get_count(), 1, "应查询 L2 一次");
+
+        // 第二次调用：L1 hit（已被回填）→ 不查询 L2/L3
+        let roles2 = service.get_roles("18001").await.unwrap();
+        assert_eq!(roles2, vec!["editor".to_string()]);
+        assert_eq!(dao.get_count(), 1, "L1 回填后不应再查询 L2");
+        assert_eq!(interface.role_count(), 0, "不应查询 L3");
+    }
+
+    /// T19: get_user L1 命中时不查询 L2/L3。
+    #[tokio::test]
+    async fn get_user_l1_hit_does_not_query_l2_l3() {
+        let (dao, interface, service) = make_default_service();
+        interface.set_user_info("19001", Some(r#"{"name":"alice"}"#.to_string()));
+
+        // 第一次调用：L1+L2 miss → L3 查询 → 回填 L1+L2
+        let user1 = service.get_user("19001").await.unwrap();
+        assert_eq!(user1, Some(r#"{"name":"alice"}"#.to_string()));
+        assert_eq!(interface.user_count(), 1, "第一次应查询 L3");
+        assert_eq!(dao.get_count(), 1, "第一次应查询 L2");
+
+        // 第二次调用：L1 hit → 不查询 L2/L3
+        let user2 = service.get_user("19001").await.unwrap();
+        assert_eq!(user2, Some(r#"{"name":"alice"}"#.to_string()));
+        assert_eq!(interface.user_count(), 1, "L1 命中不应查询 L3");
+        assert_eq!(dao.get_count(), 1, "L1 命中不应查询 L2");
+    }
+
+    /// T20: get_user L1 未命中 L2 命中时回填 L1。
+    #[tokio::test]
+    async fn get_user_l1_miss_l2_hit_backfills_l1() {
+        let (dao, interface, service) = make_default_service();
+
+        // 预填充 L2（模拟另一进程写入的缓存）
+        dao.insert_direct("user:cache:20001", r#"{"id":20001}"#);
+
+        // 第一次调用：L1 miss → L2 hit → 回填 L1 → 不查询 L3
+        let user1 = service.get_user("20001").await.unwrap();
+        assert_eq!(user1, Some(r#"{"id":20001}"#.to_string()));
+        assert_eq!(interface.user_count(), 0, "L2 命中不应查询 L3");
+        assert_eq!(dao.get_count(), 1, "应查询 L2 一次");
+
+        // 第二次调用：L1 hit（已被回填）→ 不查询 L2/L3
+        let user2 = service.get_user("20001").await.unwrap();
+        assert_eq!(user2, Some(r#"{"id":20001}"#.to_string()));
+        assert_eq!(dao.get_count(), 1, "L1 回填后不应再查询 L2");
+        assert_eq!(interface.user_count(), 0, "不应查询 L3");
+    }
+
+    /// T21: get_user L3 返回 Some 时回填 L1+L2。
+    #[tokio::test]
+    async fn get_user_l3_some_backfills_l1_and_l2() {
+        let (dao, interface, service) = make_default_service();
+        interface.set_user_info("21001", Some(r#"{"id":21001}"#.to_string()));
+
+        // 第一次调用：L1+L2 miss → L3 查询 → 回填 L1+L2
+        let user = service.get_user("21001").await.unwrap();
+        assert_eq!(user, Some(r#"{"id":21001}"#.to_string()));
+        assert_eq!(interface.user_count(), 1, "应查询 L3 一次");
+        assert_eq!(dao.get_count(), 1, "应查询 L2 一次");
+        assert_eq!(dao.set_count(), 1, "应回填 L2 一次");
+
+        // 验证 L2 已被回填
+        assert!(dao.contains_key("user:cache:21001"), "L2 应已被回填");
+
+        // 验证 L1 已被回填（第二次调用不走 L3）
+        let user2 = service.get_user("21001").await.unwrap();
+        assert_eq!(user2, Some(r#"{"id":21001}"#.to_string()));
+        assert_eq!(interface.user_count(), 1, "L1 回填后不应再查询 L3");
+    }
+
+    // ------------------------------------------------------------------------
+    // 补充测试：错误处理路径
+    // ------------------------------------------------------------------------
+
+    /// T22: L2 权限缓存反序列化失败返回 Internal 错误。
+    ///
+    /// 向 L2 注入非法 JSON 字符串，验证 get_permissions 返回
+    /// `BulwarkError::Internal` 且错误消息包含 "L2 权限缓存反序列化失败"。
+    #[tokio::test]
+    async fn l2_corrupt_permission_cache_returns_internal_error() {
+        let (dao, _interface, service) = make_default_service();
+
+        // 向 L2 注入非法 JSON（模拟缓存损坏）
+        dao.insert_direct("perm:cache:22001", "{invalid json");
+
+        let result = service.get_permissions("22001").await;
+        assert!(result.is_err(), "L2 缓存损坏应返回 Err");
+        match result {
+            Err(BulwarkError::Internal(msg)) => {
+                assert!(
+                    msg.contains("L2 权限缓存反序列化失败"),
+                    "错误消息应包含 'L2 权限缓存反序列化失败'，实际: {}",
+                    msg
+                );
+            },
+            Err(other) => panic!("期望 BulwarkError::Internal，实际: {:?}", other),
+            Ok(_) => panic!("期望 Err，实际 Ok"),
+        }
+    }
+
+    /// T23: L3 interface 失败时透传错误（权限/角色/用户三类）。
+    #[tokio::test]
+    async fn l3_failure_propagates_error() {
+        let (_dao, interface, service) = make_default_service();
+
+        // 注入 L3 权限错误
+        interface.set_fail_perm(true);
+        let result = service.get_permissions("23001").await;
+        assert!(result.is_err(), "L3 权限失败应返回 Err");
+        match result {
+            Err(BulwarkError::Internal(msg)) => {
+                assert!(
+                    msg.contains("injected perm error"),
+                    "应透传 L3 权限错误消息，实际: {}",
+                    msg
+                );
+            },
+            Err(other) => panic!("期望 BulwarkError::Internal，实际: {:?}", other),
+            Ok(_) => panic!("期望 Err，实际 Ok"),
+        }
+
+        // 注入 L3 角色错误
+        interface.set_fail_role(true);
+        let result = service.get_roles("23002").await;
+        assert!(result.is_err(), "L3 角色失败应返回 Err");
+        match result {
+            Err(BulwarkError::Internal(msg)) => {
+                assert!(
+                    msg.contains("injected role error"),
+                    "应透传 L3 角色错误消息，实际: {}",
+                    msg
+                );
+            },
+            Err(other) => panic!("期望 BulwarkError::Internal，实际: {:?}", other),
+            Ok(_) => panic!("期望 Err，实际 Ok"),
+        }
+
+        // 注入 L3 用户错误
+        interface.set_fail_user(true);
+        let result = service.get_user("23003").await;
+        assert!(result.is_err(), "L3 用户失败应返回 Err");
+        match result {
+            Err(BulwarkError::Internal(msg)) => {
+                assert!(
+                    msg.contains("injected user error"),
+                    "应透传 L3 用户错误消息，实际: {}",
+                    msg
+                );
+            },
+            Err(other) => panic!("期望 BulwarkError::Internal，实际: {:?}", other),
+            Ok(_) => panic!("期望 Err，实际 Ok"),
+        }
+    }
+
+    /// T24: L2 DAO get/set 失败时透传错误。
+    #[tokio::test]
+    async fn l2_dao_failure_propagates_error() {
+        // 场景 1：注入 DAO get 错误
+        // L1 miss → L2 get 失败 → 透传错误
+        let (dao, _interface, service) = make_default_service();
+        dao.set_fail_get(true);
+
+        let result = service.get_permissions("24001").await;
+        assert!(result.is_err(), "L2 DAO get 失败应返回 Err");
+        match result {
+            Err(BulwarkError::Dao(msg)) => {
+                assert!(
+                    msg.contains("injected get error"),
+                    "应透传 DAO get 错误消息，实际: {}",
+                    msg
+                );
+            },
+            Err(other) => panic!("期望 BulwarkError::Dao，实际: {:?}", other),
+            Ok(_) => panic!("期望 Err，实际 Ok"),
+        }
+
+        // 场景 2：注入 DAO set 错误
+        // L1 miss → L2 miss → L3 查询 → 回填 L1 成功 → 回填 L2 set 失败 → 透传错误
+        let (dao2, interface2, service2) = make_default_service();
+        interface2.set_permissions("24002", vec!["perm:set_fail".to_string()]);
+        dao2.set_fail_set(true);
+
+        let result = service2.get_permissions("24002").await;
+        assert!(result.is_err(), "L2 DAO set 失败应返回 Err");
+        match result {
+            Err(BulwarkError::Dao(msg)) => {
+                assert!(
+                    msg.contains("injected set error"),
+                    "应透传 DAO set 错误消息，实际: {}",
+                    msg
+                );
+            },
+            Err(other) => panic!("期望 BulwarkError::Dao，实际: {:?}", other),
+            Ok(_) => panic!("期望 Err，实际 Ok"),
+        }
+    }
+
+    /// T25: invalidate 时 L2 delete 失败透传错误。
+    #[tokio::test]
+    async fn invalidate_l2_delete_failure_propagates_error() {
+        let (dao, _interface, service) = make_default_service();
+        // 注入 DAO delete 错误
+        dao.set_fail_delete(true);
+
+        let result = service.invalidate("25001").await;
+        assert!(result.is_err(), "L2 delete 失败应返回 Err");
+        match result {
+            Err(BulwarkError::Dao(msg)) => {
+                assert!(
+                    msg.contains("injected delete error"),
+                    "应透传 DAO delete 错误消息，实际: {}",
+                    msg
+                );
+            },
+            Err(other) => panic!("期望 BulwarkError::Dao，实际: {:?}", other),
+            Ok(_) => panic!("期望 Err，实际 Ok"),
+        }
+
+        // 验证 delete 被调用过（至少一次）
+        assert!(
+            dao.delete_count() >= 1,
+            "应至少调用一次 L2 delete，实际: {}",
+            dao.delete_count()
+        );
+    }
+
+    // ------------------------------------------------------------------------
+    // 补充测试：getter 方法
+    // ------------------------------------------------------------------------
+
+    /// T26: l1_ttl_secs / l2_ttl_secs getter 返回构造时传入的值。
+    #[test]
+    fn ttl_getters_return_configured_values() {
+        let (_dao, _interface, service) = make_service(60, 600);
+        assert_eq!(service.l1_ttl_secs(), 60, "l1_ttl_secs 应返回 60");
+        assert_eq!(service.l2_ttl_secs(), 600, "l2_ttl_secs 应返回 600");
     }
 }

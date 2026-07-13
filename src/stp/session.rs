@@ -2186,4 +2186,498 @@ mod tests {
             .await;
         }
     }
+
+    // ========================================================================
+    // 覆盖率补充测试：覆盖 check_login 三种模式、auto_renewal、错误路径等
+    // 使用 `BulwarkLogicDefault` + `crate::stp::mock::{MockDao, MockFirewall}`
+    // ========================================================================
+
+    mod session_coverage_tests {
+        use super::*;
+        use crate::dao::BulwarkDao;
+        use crate::session::BulwarkSession;
+        use crate::stp::mock::{MockDao, MockFirewall};
+        use crate::stp::with_current_token;
+        use crate::strategy::BulwarkPermissionStrategy;
+        use std::sync::Arc;
+
+        // --------------------------------------------------------------------
+        // 辅助函数
+        // --------------------------------------------------------------------
+
+        /// 创建基础 BulwarkLogicDefault（uuid token_style，throw 可配置）。
+        fn make_logic(throw_on_not_login: bool) -> BulwarkLogicDefault {
+            let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+            let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
+            let mut config = BulwarkConfig::default_config();
+            config.throw_on_not_login = throw_on_not_login;
+            config.token_style = "uuid".to_string();
+            let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
+                has_permission: true,
+                has_role: true,
+            });
+            BulwarkLogicDefault::new(session, Arc::new(config), firewall)
+        }
+
+        /// 创建 JWT 模式 BulwarkLogicDefault（token_style=jwt + 自定义 jwt_secret + jwt_mode）。
+        #[cfg(feature = "protocol-jwt")]
+        fn make_jwt_logic(
+            throw_on_not_login: bool,
+            jwt_mode: JwtMode,
+            secret: &str,
+        ) -> BulwarkLogicDefault {
+            let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+            let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
+            let mut config = BulwarkConfig::default_config();
+            config.throw_on_not_login = throw_on_not_login;
+            config.token_style = "jwt".to_string();
+            config.jwt_secret = secret.to_string();
+            let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
+                has_permission: true,
+                has_role: true,
+            });
+            BulwarkLogicDefault::new(session, Arc::new(config), firewall).with_jwt_mode(jwt_mode)
+        }
+
+        // --------------------------------------------------------------------
+        // check_login：无 token 路径
+        // --------------------------------------------------------------------
+
+        /// 无 current_token + throw_on_not_login=true → Err Session("未登录")。
+        #[tokio::test]
+        async fn check_login_no_token_throws_when_configured() {
+            let logic = make_logic(true);
+            let result = logic.check_login().await;
+            assert!(
+                matches!(result, Err(BulwarkError::Session(ref msg)) if msg == "未登录"),
+                "无 token + throw_on_not_login=true 应返回 Err(Session(\"未登录\"))，实际: {:?}",
+                result
+            );
+        }
+
+        /// 无 current_token + throw_on_not_login=false → Ok(false)。
+        #[tokio::test]
+        async fn check_login_no_token_returns_false_when_not_throwing() {
+            let logic = make_logic(false);
+            let result = logic.check_login().await;
+            assert!(
+                result.is_ok(),
+                "无 token + throw_on_not_login=false 应返回 Ok，实际: {:?}",
+                result
+            );
+            assert!(
+                !result.unwrap(),
+                "无 token + throw_on_not_login=false 应返回 false"
+            );
+        }
+
+        // --------------------------------------------------------------------
+        // check_login_stateless 测试（需 protocol-jwt feature）
+        // --------------------------------------------------------------------
+
+        /// Stateless 模式 + 有效 JWT → Ok(true)。
+        #[cfg(feature = "protocol-jwt")]
+        #[tokio::test]
+        async fn check_login_stateless_valid_jwt_returns_true() {
+            let secret = "coverage-secret-stateless-valid";
+            let logic = make_jwt_logic(false, JwtMode::Stateless, secret);
+            let handler = crate::protocol::jwt::JwtHandler::new(secret);
+            let jwt_token = handler
+                .sign("stateless-user-001", 3600)
+                .expect("JWT 签发应成功");
+
+            let result = with_current_token(jwt_token, async { logic.check_login().await }).await;
+            assert!(
+                result.is_ok(),
+                "Stateless + 有效 JWT 应返回 Ok，实际: {:?}",
+                result
+            );
+            assert!(result.unwrap(), "Stateless + 有效 JWT 应返回 true");
+        }
+
+        /// Stateless 模式 + 无效 JWT → Err InvalidToken。
+        #[cfg(feature = "protocol-jwt")]
+        #[tokio::test]
+        async fn check_login_stateless_invalid_token_returns_error() {
+            let logic = make_jwt_logic(false, JwtMode::Stateless, "coverage-secret-stateless");
+            let result = with_current_token("invalid.jwt.token".to_string(), async {
+                logic.check_login().await
+            })
+            .await;
+            assert!(
+                matches!(result, Err(BulwarkError::InvalidToken(_))),
+                "Stateless + 无效 JWT 应返回 Err(InvalidToken)，实际: {:?}",
+                result
+            );
+        }
+
+        /// Stateless 模式 + token_style != jwt → Err Config。
+        #[cfg(feature = "protocol-jwt")]
+        #[tokio::test]
+        async fn check_login_stateless_wrong_token_style_returns_config_error() {
+            // token_style=uuid 但 jwt_mode=Stateless
+            let logic = make_logic(false).with_jwt_mode(JwtMode::Stateless);
+            let result =
+                with_current_token("any-token".to_string(), async { logic.check_login().await })
+                    .await;
+            assert!(
+                matches!(result, Err(BulwarkError::Config(ref msg)) if msg.contains("Stateless")),
+                "Stateless + token_style=uuid 应返回 Err(Config(...Stateless...))，实际: {:?}",
+                result
+            );
+        }
+
+        // --------------------------------------------------------------------
+        // check_login_simple 测试
+        // --------------------------------------------------------------------
+
+        /// Simple 模式 + 无效 token + throw_on_not_login=false → Ok(false)。
+        #[tokio::test]
+        async fn check_login_simple_invalid_token_returns_false() {
+            let logic = make_logic(false).with_jwt_mode(JwtMode::Simple);
+            let result = with_current_token("nonexistent-token".to_string(), async {
+                logic.check_login().await
+            })
+            .await;
+            assert!(
+                result.is_ok(),
+                "Simple + 无效 token + throw=false 应返回 Ok，实际: {:?}",
+                result
+            );
+            assert!(
+                !result.unwrap(),
+                "Simple + 无效 token + throw=false 应返回 false"
+            );
+        }
+
+        // --------------------------------------------------------------------
+        // check_login_mixin 测试（默认模式，无效 token 路径）
+        // --------------------------------------------------------------------
+
+        /// Mixin 模式 + 无效 token + throw_on_not_login=true → Err Session。
+        #[tokio::test]
+        async fn check_login_mixin_invalid_token_throws() {
+            let logic = make_logic(true).with_jwt_mode(JwtMode::Mixin);
+            let result = with_current_token("nonexistent-token".to_string(), async {
+                logic.check_login().await
+            })
+            .await;
+            assert!(
+                matches!(result, Err(BulwarkError::Session(ref msg)) if msg == "未登录"),
+                "Mixin + 无效 token + throw=true 应返回 Err(Session(\"未登录\"))，实际: {:?}",
+                result
+            );
+        }
+
+        // --------------------------------------------------------------------
+        // check_and_renew 测试（auto_renewal_threshold 路径）
+        // --------------------------------------------------------------------
+
+        /// threshold <= 0 → Ok(None)（未启用续签）。
+        #[tokio::test]
+        async fn check_and_renew_threshold_zero_returns_none() {
+            let logic = make_logic(false);
+            let result = logic.check_and_renew("any-token").await;
+            assert!(
+                result.is_ok(),
+                "threshold <= 0 应返回 Ok，实际: {:?}",
+                result
+            );
+            assert!(
+                result.unwrap().is_none(),
+                "threshold <= 0 应返回 None（未启用续签）"
+            );
+        }
+
+        /// threshold > 0 + TTL 充足 → Ok(None)（无需续签）。
+        #[tokio::test]
+        async fn check_and_renew_ttl_sufficient_returns_none() {
+            let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+            // session timeout=3600s，与 config.timeout 对齐以避免百分比计算偏差
+            let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
+            let mut config = BulwarkConfig::default_config();
+            config.throw_on_not_login = false;
+            config.token_style = "uuid".to_string();
+            config.auto_renewal_threshold = 50;
+            config.timeout = 3600;
+            let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
+                has_permission: true,
+                has_role: true,
+            });
+            let logic = BulwarkLogicDefault::new(session, Arc::new(config), firewall);
+
+            let token = logic
+                .login("renew-user-001", &LoginParams::default())
+                .await
+                .unwrap();
+            let result = logic.check_and_renew(&token).await;
+            assert!(result.is_ok(), "TTL 充足应返回 Ok，实际: {:?}", result);
+            assert!(result.unwrap().is_none(), "TTL 充足应返回 None（无需续签）");
+        }
+
+        /// threshold > 0 + TTL 低于阈值 + 无 auth_logic → Err Config（非 JWT 路径）。
+        #[cfg(feature = "protocol-jwt")]
+        #[tokio::test]
+        async fn check_and_renew_no_auth_logic_returns_config_error() {
+            let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+            // session timeout=5s，与 config.timeout 对齐
+            let session = Arc::new(BulwarkSession::new(dao, 5, 86400));
+            let mut config = BulwarkConfig::default_config();
+            config.throw_on_not_login = false;
+            config.token_style = "uuid".to_string();
+            config.auto_renewal_threshold = 95;
+            config.timeout = 5;
+            let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
+                has_permission: true,
+                has_role: true,
+            });
+            let logic = BulwarkLogicDefault::new(session, Arc::new(config), firewall);
+
+            let token = logic
+                .login("renew-user-002", &LoginParams::default())
+                .await
+                .unwrap();
+            // 等待 TTL 衰减至阈值以下（5s * 5% = 250ms 后即低于 95%）
+            tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
+            let result = logic.check_and_renew(&token).await;
+            assert!(
+                matches!(result, Err(BulwarkError::Config(ref msg)) if msg.contains("auth_logic")),
+                "TTL 低 + 无 auth_logic 应返回 Err(Config(...auth_logic...))，实际: {:?}",
+                result
+            );
+        }
+
+        // --------------------------------------------------------------------
+        // generate_token 错误路径
+        // --------------------------------------------------------------------
+
+        /// 未知 token_style → Err Config("unknown token_style")。
+        #[tokio::test]
+        async fn generate_token_unknown_style_returns_config_error() {
+            let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+            let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
+            let mut config = BulwarkConfig::default_config();
+            config.throw_on_not_login = false;
+            config.token_style = "unknown-style".to_string();
+            let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
+                has_permission: true,
+                has_role: true,
+            });
+            let logic = BulwarkLogicDefault::new(session, Arc::new(config), firewall);
+
+            let result = logic.login("test-user", &LoginParams::default()).await;
+            assert!(
+                matches!(result, Err(BulwarkError::Config(ref msg)) if msg.contains("unknown token_style")),
+                "未知 token_style 应返回 Err(Config(...unknown token_style...))，实际: {:?}",
+                result
+            );
+        }
+
+        // --------------------------------------------------------------------
+        // refresh_access_token 错误路径
+        // --------------------------------------------------------------------
+
+        /// 未注入 RefreshTokenRotation → Err NotImplemented。
+        #[tokio::test]
+        async fn refresh_access_token_returns_not_implemented() {
+            let logic = make_logic(false);
+            let result = logic.refresh_access_token("any-refresh-token").await;
+            assert!(
+                matches!(result, Err(BulwarkError::NotImplemented(_))),
+                "未注入 RefreshTokenRotation 应返回 Err(NotImplemented)，实际: {:?}",
+                result
+            );
+        }
+
+        // --------------------------------------------------------------------
+        // revoke_all_sessions 测试
+        // --------------------------------------------------------------------
+
+        /// 无 token 时返回 0。
+        #[tokio::test]
+        async fn revoke_all_sessions_returns_zero_for_no_tokens() {
+            let logic = make_logic(false);
+            let count = logic.revoke_all_sessions("no-sessions-user").await.unwrap();
+            assert_eq!(count, 0, "无 token 时应返回 0，实际: {}", count);
+        }
+
+        /// 有 token 时全部吊销并返回 count。
+        #[tokio::test]
+        async fn revoke_all_sessions_revokes_all_tokens() {
+            let logic = make_logic(false);
+            let t1 = logic
+                .login("revoke-user-001", &LoginParams::default())
+                .await
+                .unwrap();
+            let t2 = logic
+                .login("revoke-user-001", &LoginParams::default())
+                .await
+                .unwrap();
+            let t3 = logic
+                .login("revoke-user-001", &LoginParams::default())
+                .await
+                .unwrap();
+
+            let count = logic.revoke_all_sessions("revoke-user-001").await.unwrap();
+            assert_eq!(count, 3, "应吊销 3 个会话，实际: {}", count);
+
+            // 验证所有 token 已被吊销
+            assert!(
+                logic
+                    .session
+                    .get_token_session(&t1)
+                    .await
+                    .unwrap()
+                    .is_none(),
+                "t1 应被吊销"
+            );
+            assert!(
+                logic
+                    .session
+                    .get_token_session(&t2)
+                    .await
+                    .unwrap()
+                    .is_none(),
+                "t2 应被吊销"
+            );
+            assert!(
+                logic
+                    .session
+                    .get_token_session(&t3)
+                    .await
+                    .unwrap()
+                    .is_none(),
+                "t3 应被吊销"
+            );
+        }
+
+        // --------------------------------------------------------------------
+        // get_active_sessions 测试
+        // --------------------------------------------------------------------
+
+        /// get_active_sessions 过滤掉失效 token。
+        #[tokio::test]
+        async fn get_active_sessions_filters_invalid_tokens() {
+            let logic = make_logic(false);
+            let t1 = logic
+                .login("active-user-001", &LoginParams::default())
+                .await
+                .unwrap();
+            let t2 = logic
+                .login("active-user-001", &LoginParams::default())
+                .await
+                .unwrap();
+            // 手动吊销 t1（模拟 token 失效）
+            logic.session.logout(&t1).await.unwrap();
+
+            let active = logic.get_active_sessions("active-user-001").await.unwrap();
+            assert_eq!(
+                active.len(),
+                1,
+                "应只有 1 个活跃会话（t2），实际: {}",
+                active.len()
+            );
+            assert_eq!(active[0], t2, "活跃会话应为 t2，实际: {:?}", active);
+        }
+
+        // --------------------------------------------------------------------
+        // get_login_id 测试
+        // --------------------------------------------------------------------
+
+        /// 无 current_token → Ok(None)。
+        #[tokio::test]
+        async fn get_login_id_no_current_token_returns_none() {
+            let logic = make_logic(false);
+            let result = logic.get_login_id().await;
+            assert!(
+                result.is_ok(),
+                "无 current_token 应返回 Ok，实际: {:?}",
+                result
+            );
+            assert!(result.unwrap().is_none(), "无 current_token 应返回 None");
+        }
+
+        // --------------------------------------------------------------------
+        // login_inner: is_share 路径
+        // --------------------------------------------------------------------
+
+        /// is_share=true 时复用现有有效 token。
+        #[tokio::test]
+        async fn login_with_is_share_reuses_existing_token() {
+            let mut logic = make_logic(false);
+            Arc::make_mut(&mut logic.config).is_share = true;
+
+            let t1 = logic
+                .login("share-valid-001", &LoginParams::default())
+                .await
+                .unwrap();
+            let t2 = logic
+                .login("share-valid-001", &LoginParams::default())
+                .await
+                .unwrap();
+            assert_eq!(t1, t2, "is_share=true 应复用现有有效 token");
+        }
+
+        /// is_share=true + token 已失效 → 清理后创建新会话。
+        #[tokio::test]
+        async fn login_with_is_share_creates_new_when_existing_invalid() {
+            let mut logic = make_logic(false);
+            Arc::make_mut(&mut logic.config).is_share = true;
+
+            let t1 = logic
+                .login("share-invalid-001", &LoginParams::default())
+                .await
+                .unwrap();
+            // 手动吊销 t1（模拟 token 失效）
+            logic.session.logout(&t1).await.unwrap();
+            assert!(
+                logic
+                    .session
+                    .get_token_session(&t1)
+                    .await
+                    .unwrap()
+                    .is_none(),
+                "t1 应已失效"
+            );
+
+            // 第二次登录：is_share=true 但旧 token 失效，应创建新 token
+            let t2 = logic
+                .login("share-invalid-001", &LoginParams::default())
+                .await
+                .unwrap();
+            assert_ne!(t1, t2, "is_share=true 但旧 token 失效时应创建新 token");
+            assert!(
+                logic
+                    .session
+                    .get_token_session(&t2)
+                    .await
+                    .unwrap()
+                    .is_some(),
+                "新 token 应有对应 session"
+            );
+        }
+
+        // --------------------------------------------------------------------
+        // login_inner: NewDevice 模式（is_concurrent=false）允许首次登录
+        // --------------------------------------------------------------------
+
+        /// NewDevice 模式 + 无旧会话 → 允许登录。
+        #[tokio::test]
+        async fn login_new_device_mode_allows_first_login() {
+            let mut logic = make_logic(false);
+            Arc::make_mut(&mut logic.config).is_concurrent = false;
+            Arc::make_mut(&mut logic.config).replaced_login_exit_mode =
+                ReplacedLoginExitMode::NewDevice;
+
+            let token = logic
+                .login("new-device-first-001", &LoginParams::default())
+                .await;
+            assert!(
+                token.is_ok(),
+                "NewDevice 模式 + 无旧会话应允许登录，实际: {:?}",
+                token
+            );
+            assert!(!token.unwrap().is_empty(), "应返回非空 token");
+        }
+    }
 }

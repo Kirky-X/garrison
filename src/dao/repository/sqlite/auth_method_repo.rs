@@ -169,3 +169,201 @@ fn parse_auth_method_row(row: &QueryResult) -> BulwarkResult<AuthMethodRow> {
         })?,
     })
 }
+
+// ============================================================================
+// 单元测试
+// ============================================================================
+
+#[cfg(all(test, feature = "db-sqlite"))]
+mod tests {
+    use super::super::DbnexusUserRepository;
+    use super::*;
+    use crate::dao::repository::sqlite::test_support::setup_db;
+    use crate::dao::repository::{NewUser, UserRepository};
+
+    /// 在指定 tenant 创建 1 个 user，返回 user_id。
+    async fn setup_user(pool: &DbPool, tenant_id: i64) -> String {
+        let user_repo = DbnexusUserRepository::new(pool.clone());
+        user_repo
+            .create(
+                tenant_id,
+                NewUser {
+                    username: format!("am-user-{}", tenant_id),
+                    password_hash: "h".to_string(),
+                    status: "active".to_string(),
+                },
+            )
+            .await
+            .expect("创建 user 应成功")
+    }
+
+    /// create 插入认证方式后 find_by_id 应返回相同字段。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn create_and_find_by_id_roundtrip() {
+        let pool = setup_db().await;
+        let repo = DbnexusAuthMethodRepository::new(pool.clone());
+        let user_id = setup_user(&pool, 1).await;
+
+        let id = repo
+            .create(
+                1,
+                NewAuthMethod {
+                    user_id: user_id.clone(),
+                    method_type: "password".to_string(),
+                    external_id: None,
+                    metadata: Some(r#"{"v":1}"#.to_string()),
+                },
+            )
+            .await
+            .expect("create 应成功");
+
+        let row = repo
+            .find_by_id(1, &id)
+            .await
+            .expect("find_by_id 应成功")
+            .expect("认证方式应存在");
+        assert_eq!(row.id, id);
+        assert_eq!(row.user_id, user_id);
+        assert_eq!(row.method_type, "password");
+        assert!(row.external_id.is_none());
+        assert_eq!(row.metadata.as_deref(), Some(r#"{"v":1}"#));
+        assert_eq!(row.tenant_id, 1);
+    }
+
+    /// find_by_user_id 返回同一用户的所有认证方式。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn find_by_user_id_returns_all_methods() {
+        let pool = setup_db().await;
+        let repo = DbnexusAuthMethodRepository::new(pool.clone());
+        let user_id = setup_user(&pool, 1).await;
+
+        // 为同一用户创建 2 种认证方式
+        repo.create(
+            1,
+            NewAuthMethod {
+                user_id: user_id.clone(),
+                method_type: "password".to_string(),
+                external_id: None,
+                metadata: None,
+            },
+        )
+        .await
+        .expect("创建 password 方式应成功");
+
+        repo.create(
+            1,
+            NewAuthMethod {
+                user_id: user_id.clone(),
+                method_type: "oauth".to_string(),
+                external_id: Some("google-123".to_string()),
+                metadata: None,
+            },
+        )
+        .await
+        .expect("创建 oauth 方式应成功");
+
+        let rows = repo
+            .find_by_user_id(1, &user_id)
+            .await
+            .expect("find_by_user_id 应成功");
+        assert_eq!(rows.len(), 2, "应有 2 种认证方式");
+        let types: Vec<&str> = rows.iter().map(|r| r.method_type.as_str()).collect();
+        assert!(types.contains(&"password"));
+        assert!(types.contains(&"oauth"));
+    }
+
+    /// delete 删除后 find_by_id 返回 None；重复删除不报错。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn delete_is_idempotent() {
+        let pool = setup_db().await;
+        let repo = DbnexusAuthMethodRepository::new(pool.clone());
+        let user_id = setup_user(&pool, 1).await;
+
+        let id = repo
+            .create(
+                1,
+                NewAuthMethod {
+                    user_id: user_id.clone(),
+                    method_type: "passkey".to_string(),
+                    external_id: None,
+                    metadata: None,
+                },
+            )
+            .await
+            .expect("create 应成功");
+
+        repo.delete(1, &id).await.expect("首次 delete 应成功");
+        let after = repo.find_by_id(1, &id).await.expect("find_by_id 应成功");
+        assert!(after.is_none(), "删除后应查不到");
+
+        // 幂等：再次删除
+        repo.delete(1, &id).await.expect("幂等 delete 应成功");
+    }
+
+    /// list 按 tenant_id 隔离：不同租户的认证方式互不干扰。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn list_filters_by_tenant_id() {
+        let pool = setup_db().await;
+        let repo = DbnexusAuthMethodRepository::new(pool.clone());
+
+        // tenant 1
+        let user_1 = setup_user(&pool, 1).await;
+        repo.create(
+            1,
+            NewAuthMethod {
+                user_id: user_1,
+                method_type: "password".to_string(),
+                external_id: None,
+                metadata: None,
+            },
+        )
+        .await
+        .expect("create tenant 1 应成功");
+
+        // tenant 2
+        let user_2 = setup_user(&pool, 2).await;
+        repo.create(
+            2,
+            NewAuthMethod {
+                user_id: user_2,
+                method_type: "password".to_string(),
+                external_id: None,
+                metadata: None,
+            },
+        )
+        .await
+        .expect("create tenant 2 应成功");
+
+        let list_1 = repo.list(1, 0, 100).await.expect("list tenant 1 应成功");
+        let list_2 = repo.list(2, 0, 100).await.expect("list tenant 2 应成功");
+        assert_eq!(list_1.len(), 1, "tenant 1 应有 1 条");
+        assert_eq!(list_2.len(), 1, "tenant 2 应有 1 条");
+        assert_eq!(list_1[0].tenant_id, 1);
+        assert_eq!(list_2[0].tenant_id, 2);
+    }
+
+    /// find_by_id 跨租户查询应返回 None（tenant_id 过滤生效）。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn find_by_id_cross_tenant_returns_none() {
+        let pool = setup_db().await;
+        let repo = DbnexusAuthMethodRepository::new(pool.clone());
+        let user_id = setup_user(&pool, 1).await;
+
+        let id = repo
+            .create(
+                1,
+                NewAuthMethod {
+                    user_id,
+                    method_type: "password".to_string(),
+                    external_id: None,
+                    metadata: None,
+                },
+            )
+            .await
+            .expect("create 应成功");
+
+        // 用 tenant 2 查询 tenant 1 的记录应返回 None
+        let cross = repo.find_by_id(2, &id).await.expect("find_by_id 应成功");
+        assert!(cross.is_none(), "跨租户查询应返回 None");
+    }
+}

@@ -1435,4 +1435,163 @@ mod tests {
         );
         reset_backend_for_test();
     }
+
+    // ============================================================
+    // 覆盖率补充：JwtMode / has_permission/has_role 错误路径 / 委托链路
+    // ============================================================
+
+    /// 验证 `JwtMode::default()` 返回 `Mixin`（推荐默认模式）。
+    ///
+    /// 覆盖 `#[default]` 标注的 `Mixin` 变体。
+    #[test]
+    fn jwt_mode_default_is_mixin() {
+        let mode = JwtMode::default();
+        assert_eq!(
+            mode,
+            JwtMode::Mixin,
+            "JwtMode 默认应为 Mixin（推荐平衡模式）"
+        );
+    }
+
+    /// 验证 `JwtMode` 三个变体互不相等（PartialEq 派生正确）。
+    #[test]
+    fn jwt_mode_variants_distinct() {
+        assert_ne!(JwtMode::Stateless, JwtMode::Mixin);
+        assert_ne!(JwtMode::Mixin, JwtMode::Simple);
+        assert_ne!(JwtMode::Stateless, JwtMode::Simple);
+        // 自身相等
+        assert_eq!(JwtMode::Stateless, JwtMode::Stateless);
+        assert_eq!(JwtMode::Mixin, JwtMode::Mixin);
+        assert_eq!(JwtMode::Simple, JwtMode::Simple);
+    }
+
+    /// 验证 `JwtMode` 的 Clone / Copy 行为（值拷贝，不丢失原值）。
+    #[test]
+    fn jwt_mode_clone_preserves_value() {
+        let original = JwtMode::Stateless;
+        let cloned = original;
+        // Copy 语义：原值仍可用
+        assert_eq!(original, cloned);
+        // Clone 等价于 Copy
+        assert_eq!(JwtMode::Mixin.clone(), JwtMode::Mixin);
+    }
+
+    /// 验证 `has_permission("")` 返回 `InvalidParam`（空字符串校验在本地完成，
+    /// 不需要初始化 BulwarkManager）。
+    ///
+    /// 覆盖 `has_permission` 中的本地参数校验路径。
+    #[tokio::test]
+    async fn has_permission_empty_returns_invalid_param() {
+        let result = BulwarkUtil::has_permission("").await;
+        assert!(
+            matches!(result, Err(crate::error::BulwarkError::InvalidParam(_))),
+            "空 permission 应返回 InvalidParam，实际: {:?}",
+            result
+        );
+    }
+
+    /// 验证 `has_role("")` 返回 `InvalidParam`。
+    ///
+    /// 覆盖 `has_role` 中的本地参数校验路径。
+    #[tokio::test]
+    async fn has_role_empty_returns_invalid_param() {
+        let result = BulwarkUtil::has_role("").await;
+        assert!(
+            matches!(result, Err(crate::error::BulwarkError::InvalidParam(_))),
+            "空 role 应返回 InvalidParam，实际: {:?}",
+            result
+        );
+    }
+
+    /// 验证 `login_simple` 在未初始化 `BulwarkManager` 时返回 `Session` 错误。
+    ///
+    /// 覆盖 `login_simple` → `login` → `BulwarkManager::logic()?` 委托链路。
+    /// 在 backend-embedded feature 下，未 `init_backend()` 时 fallback 到 BulwarkManager 路径。
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn login_simple_delegates_to_bulwark_manager() {
+        #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
+        reset_backend_for_test();
+        crate::manager::BulwarkManager::reset_for_test();
+
+        let result = BulwarkUtil::login_simple("user1").await;
+        assert!(
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
+            result
+        );
+    }
+
+    /// 验证 `logout_by_login_id` 在未初始化时返回 `Session` 错误。
+    ///
+    /// 覆盖 `logout_by_login_id` → `BulwarkManager::logic()?` 委托链路。
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn logout_by_login_id_delegates_to_bulwark_manager() {
+        #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
+        reset_backend_for_test();
+        crate::manager::BulwarkManager::reset_for_test();
+
+        let result = BulwarkUtil::logout_by_login_id("user1").await;
+        assert!(
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
+            result
+        );
+    }
+
+    /// 验证 `kickout` 在未初始化时返回 `Session` 错误。
+    ///
+    /// 覆盖 `kickout` → `BulwarkManager::logic()?` 委托链路。
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn kickout_delegates_to_bulwark_manager() {
+        #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
+        reset_backend_for_test();
+        crate::manager::BulwarkManager::reset_for_test();
+
+        let result = BulwarkUtil::kickout("user1").await;
+        assert!(
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
+            result
+        );
+    }
+
+    /// 验证 `config()` 在未初始化时返回 `Session` 错误。
+    ///
+    /// 覆盖 `config()` → `BulwarkManager::logic()?` 委托链路。
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn config_delegates_to_bulwark_manager() {
+        #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
+        reset_backend_for_test();
+        crate::manager::BulwarkManager::reset_for_test();
+
+        let result = BulwarkUtil::config();
+        assert!(
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
+            result
+        );
+    }
+
+    /// 验证 `get_login_id_by_token` 在未初始化时返回 `Session` 错误。
+    ///
+    /// 覆盖 `get_login_id_by_token` → `with_current_token` → `get_login_id`
+    /// → `BulwarkManager::logic()?` 委托链路。
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn get_login_id_by_token_delegates_to_bulwark_manager() {
+        #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
+        reset_backend_for_test();
+        crate::manager::BulwarkManager::reset_for_test();
+
+        let result = BulwarkUtil::get_login_id_by_token("some-token").await;
+        assert!(
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
+            result
+        );
+    }
 }

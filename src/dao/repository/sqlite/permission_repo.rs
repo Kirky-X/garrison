@@ -189,3 +189,176 @@ fn parse_permission_row(row: &QueryResult) -> BulwarkResult<PermissionRow> {
         })?,
     })
 }
+
+// ============================================================================
+// 单元测试
+// ============================================================================
+
+#[cfg(all(test, feature = "db-sqlite"))]
+mod tests {
+    use super::*;
+    use crate::dao::repository::sqlite::test_support::setup_db;
+
+    /// create 插入权限后 find_by_id 应返回相同字段（含可选字段 resource_type/action）。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn create_and_find_by_id_roundtrip() {
+        let pool = setup_db().await;
+        let repo = DbnexusPermissionRepository::new(pool);
+
+        let id = repo
+            .create(NewPermission {
+                code: "user:read".to_string(),
+                name: "读取用户".to_string(),
+                resource_type: Some("user".to_string()),
+                action: Some("read".to_string()),
+            })
+            .await
+            .expect("create 应成功");
+
+        let row = repo
+            .find_by_id(&id)
+            .await
+            .expect("find_by_id 应成功")
+            .expect("权限应存在");
+        assert_eq!(row.id, id);
+        assert_eq!(row.code, "user:read");
+        assert_eq!(row.name, "读取用户");
+        assert_eq!(row.resource_type.as_deref(), Some("user"));
+        assert_eq!(row.action.as_deref(), Some("read"));
+    }
+
+    /// find_by_id 查询不存在的 ID 应返回 None。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn find_by_id_returns_none_for_nonexistent() {
+        let pool = setup_db().await;
+        let repo = DbnexusPermissionRepository::new(pool);
+
+        let result = repo
+            .find_by_id("nonexistent-uuid")
+            .await
+            .expect("find_by_id 应成功");
+        assert!(result.is_none(), "不存在的 ID 应返回 None");
+    }
+
+    /// find_by_code 按 code 精确查询，可选字段为 None 时也能正确返回。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn find_by_code_with_optional_fields_none() {
+        let pool = setup_db().await;
+        let repo = DbnexusPermissionRepository::new(pool);
+
+        repo.create(NewPermission {
+            code: "role:list".to_string(),
+            name: "列角色".to_string(),
+            resource_type: None,
+            action: None,
+        })
+        .await
+        .expect("create 应成功");
+
+        let row = repo
+            .find_by_code("role:list")
+            .await
+            .expect("find_by_code 应成功")
+            .expect("权限应存在");
+        assert_eq!(row.code, "role:list");
+        assert!(row.resource_type.is_none());
+        assert!(row.action.is_none());
+    }
+
+    /// update 更新 name/resource_type/action 后查询应反映新值；全 None 时不更新。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn update_changes_fields_and_noop_when_all_none() {
+        let pool = setup_db().await;
+        let repo = DbnexusPermissionRepository::new(pool);
+
+        let id = repo
+            .create(NewPermission {
+                code: "order:write".to_string(),
+                name: "旧名称".to_string(),
+                resource_type: Some("old_type".to_string()),
+                action: Some("old_action".to_string()),
+            })
+            .await
+            .expect("create 应成功");
+
+        // 全 None 时应直接返回 Ok(()) 不执行 SQL
+        repo.update(&id, None, None, None)
+            .await
+            .expect("全 None update 应为 no-op");
+
+        // 更新所有字段
+        repo.update(
+            &id,
+            Some("新名称".to_string()),
+            Some("new_type".to_string()),
+            Some("new_action".to_string()),
+        )
+        .await
+        .expect("update 应成功");
+
+        let row = repo
+            .find_by_id(&id)
+            .await
+            .expect("find_by_id 应成功")
+            .expect("权限应存在");
+        assert_eq!(row.name, "新名称");
+        assert_eq!(row.resource_type.as_deref(), Some("new_type"));
+        assert_eq!(row.action.as_deref(), Some("new_action"));
+        // code 不应被 update 改变
+        assert_eq!(row.code, "order:write");
+    }
+
+    /// delete 删除后 find_by_id 返回 None；重复删除不报错（幂等）。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn delete_is_idempotent() {
+        let pool = setup_db().await;
+        let repo = DbnexusPermissionRepository::new(pool);
+
+        let id = repo
+            .create(NewPermission {
+                code: "temp:delete".to_string(),
+                name: "临时".to_string(),
+                resource_type: None,
+                action: None,
+            })
+            .await
+            .expect("create 应成功");
+
+        repo.delete(&id).await.expect("首次 delete 应成功");
+        let after = repo.find_by_id(&id).await.expect("find_by_id 应成功");
+        assert!(after.is_none(), "删除后应查不到");
+
+        // 幂等：再次删除不存在的记录不报错
+        repo.delete(&id).await.expect("幂等 delete 应成功");
+    }
+
+    /// list 分页查询：插入 3 条记录后 offset/limit 正确分页。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn list_paginates_correctly() {
+        let pool = setup_db().await;
+        let repo = DbnexusPermissionRepository::new(pool);
+
+        for i in 0..3 {
+            repo.create(NewPermission {
+                code: format!("perm:list:{}", i),
+                name: format!("权限{}", i),
+                resource_type: None,
+                action: None,
+            })
+            .await
+            .expect("create 应成功");
+        }
+
+        // 查询全部 3 条
+        let all = repo.list(0, 100).await.expect("list 应成功");
+        assert_eq!(all.len(), 3, "应有 3 条记录");
+
+        // 分页：offset=1, limit=1 应返回第 2 条
+        let page = repo.list(1, 1).await.expect("list 分页应成功");
+        assert_eq!(page.len(), 1, "分页应返回 1 条");
+
+        // offset 超出范围应返回空
+        let empty = repo.list(100, 10).await.expect("list 超范围应成功");
+        assert!(empty.is_empty(), "超出范围的 offset 应返回空");
+    }
+}

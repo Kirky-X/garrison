@@ -123,6 +123,37 @@ pub struct DbnexusUserDeviceRepository {
 }
 
 // ============================================================================
+// 测试辅助模块（共享给各 _repo.rs 子模块的 mod tests 使用）
+// ============================================================================
+
+/// 共享测试辅助：初始化内存 SQLite + 执行迁移。
+#[cfg(all(test, feature = "db-sqlite"))]
+pub(crate) mod test_support {
+    use crate::dao::{init_dbnexus, BulwarkMigration};
+    use dbnexus::DbPool;
+    use std::path::PathBuf;
+
+    /// 定位项目根目录的 migrations/sqlite/ 目录。
+    pub fn project_migrations_dir() -> PathBuf {
+        let manifest_dir = env!("CARGO_MANIFEST_DIR");
+        PathBuf::from(manifest_dir)
+            .join("migrations")
+            .join("sqlite")
+    }
+
+    /// 创建并初始化 SQLite in-memory 数据库（迁移 + 返回 pool）。
+    pub async fn setup_db() -> DbPool {
+        let pool = init_dbnexus("sqlite::memory:")
+            .await
+            .expect("init_dbnexus 应成功");
+        let migration = BulwarkMigration::with_base_dir(pool.clone(), project_migrations_dir());
+        let applied = migration.migrate_core().await.expect("migrate_core 应成功");
+        assert!(applied >= 1, "migrate_core 应至少执行 1 个文件");
+        pool
+    }
+}
+
+// ============================================================================
 // 测试模块
 // ============================================================================
 

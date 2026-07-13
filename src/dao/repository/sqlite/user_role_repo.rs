@@ -168,3 +168,188 @@ fn parse_user_role_row(row: &QueryResult) -> BulwarkResult<UserRoleRow> {
         })?,
     })
 }
+
+// ============================================================================
+// 单元测试
+// ============================================================================
+
+#[cfg(all(test, feature = "db-sqlite"))]
+mod tests {
+    use super::super::{DbnexusRoleRepository, DbnexusUserRepository};
+    use super::*;
+    use crate::dao::repository::sqlite::test_support::setup_db;
+    use crate::dao::repository::{NewRole, NewUser, RoleRepository, UserRepository};
+
+    /// 创建辅助：在 tenant 1 中创建 1 个 user + 1 个 role，返回 (user_id, role_id)。
+    async fn setup_user_and_role(pool: &DbPool, tenant_id: i64) -> (String, String) {
+        let user_repo = DbnexusUserRepository::new(pool.clone());
+        let role_repo = DbnexusRoleRepository::new(pool.clone());
+        let user_id = user_repo
+            .create(
+                tenant_id,
+                NewUser {
+                    username: format!("ur-user-{}", tenant_id),
+                    password_hash: "h".to_string(),
+                    status: "active".to_string(),
+                },
+            )
+            .await
+            .expect("创建 user 应成功");
+        let role_id = role_repo
+            .create(
+                tenant_id,
+                NewRole {
+                    code: format!("ur-role-{}", tenant_id),
+                    name: "测试角色".to_string(),
+                    description: None,
+                    is_system: false,
+                },
+            )
+            .await
+            .expect("创建 role 应成功");
+        (user_id, role_id)
+    }
+
+    /// assign 分配角色后 find_by_user_id 应返回关联记录（含 scope 字段）。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn assign_and_find_by_user_id() {
+        let pool = setup_db().await;
+        let repo = DbnexusUserRoleRepository::new(pool.clone());
+        let (user_id, role_id) = setup_user_and_role(&pool, 1).await;
+
+        repo.assign(1, &user_id, &role_id, Some("read".to_string()))
+            .await
+            .expect("assign 应成功");
+
+        let rows = repo
+            .find_by_user_id(1, &user_id)
+            .await
+            .expect("find_by_user_id 应成功");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].user_id, user_id);
+        assert_eq!(rows[0].role_id, role_id);
+        assert_eq!(rows[0].scope.as_deref(), Some("read"));
+        assert_eq!(rows[0].tenant_id, 1);
+    }
+
+    /// find_by_role_id 查询同一角色下的所有用户关联。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn find_by_role_id_returns_all_assignments() {
+        let pool = setup_db().await;
+        let repo = DbnexusUserRoleRepository::new(pool.clone());
+        let role_repo = DbnexusRoleRepository::new(pool.clone());
+        let user_repo = DbnexusUserRepository::new(pool.clone());
+
+        let role_id = role_repo
+            .create(
+                1,
+                NewRole {
+                    code: "shared-role".to_string(),
+                    name: "共享角色".to_string(),
+                    description: None,
+                    is_system: false,
+                },
+            )
+            .await
+            .expect("创建 role 应成功");
+
+        // 为同一角色分配 2 个用户
+        for i in 0..2 {
+            let user_id = user_repo
+                .create(
+                    1,
+                    NewUser {
+                        username: format!("rbu-{}", i),
+                        password_hash: "h".to_string(),
+                        status: "active".to_string(),
+                    },
+                )
+                .await
+                .expect("创建 user 应成功");
+            repo.assign(1, &user_id, &role_id, None)
+                .await
+                .expect("assign 应成功");
+        }
+
+        let rows = repo
+            .find_by_role_id(1, &role_id)
+            .await
+            .expect("find_by_role_id 应成功");
+        assert_eq!(rows.len(), 2, "应有 2 条关联记录");
+        assert!(rows.iter().all(|r| r.role_id == role_id));
+    }
+
+    /// revoke 撤销角色后 find_by_user_id 返回空列表；重复 revoke 不报错。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn revoke_is_idempotent() {
+        let pool = setup_db().await;
+        let repo = DbnexusUserRoleRepository::new(pool.clone());
+        let (user_id, role_id) = setup_user_and_role(&pool, 1).await;
+
+        repo.assign(1, &user_id, &role_id, None)
+            .await
+            .expect("assign 应成功");
+        repo.revoke(1, &user_id, &role_id)
+            .await
+            .expect("首次 revoke 应成功");
+
+        let rows = repo
+            .find_by_user_id(1, &user_id)
+            .await
+            .expect("find_by_user_id 应成功");
+        assert!(rows.is_empty(), "revoke 后应查不到关联");
+
+        // 幂等：再次 revoke 不报错
+        repo.revoke(1, &user_id, &role_id)
+            .await
+            .expect("幂等 revoke 应成功");
+    }
+
+    /// list 按 tenant_id 隔离：不同租户的关联记录互不干扰。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn list_filters_by_tenant_id() {
+        let pool = setup_db().await;
+        let repo = DbnexusUserRoleRepository::new(pool.clone());
+
+        // tenant 1 分配 1 条
+        let (user_1, role_1) = setup_user_and_role(&pool, 1).await;
+        repo.assign(1, &user_1, &role_1, None)
+            .await
+            .expect("assign tenant 1 应成功");
+
+        // tenant 2 分配 1 条
+        let (user_2, role_2) = setup_user_and_role(&pool, 2).await;
+        repo.assign(2, &user_2, &role_2, None)
+            .await
+            .expect("assign tenant 2 应成功");
+
+        let list_1 = repo.list(1, 0, 100).await.expect("list tenant 1 应成功");
+        let list_2 = repo.list(2, 0, 100).await.expect("list tenant 2 应成功");
+        assert_eq!(list_1.len(), 1, "tenant 1 应有 1 条");
+        assert_eq!(list_2.len(), 1, "tenant 2 应有 1 条");
+        assert_eq!(list_1[0].tenant_id, 1);
+        assert_eq!(list_2[0].tenant_id, 2);
+    }
+
+    /// assign 同一 user+role 组合两次应因主键约束失败（Dao 错误）。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn assign_duplicate_pair_returns_error() {
+        let pool = setup_db().await;
+        let repo = DbnexusUserRoleRepository::new(pool.clone());
+        let (user_id, role_id) = setup_user_and_role(&pool, 1).await;
+
+        repo.assign(1, &user_id, &role_id, None)
+            .await
+            .expect("首次 assign 应成功");
+
+        // 第二次 assign 同一组合应失败（复合主键冲突）
+        let result = repo.assign(1, &user_id, &role_id, None).await;
+        assert!(result.is_err(), "重复 assign 应返回错误");
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("app_user_role") || err_msg.contains("UNIQUE"),
+            "错误信息应包含表名或约束信息，实际: {}",
+            err_msg
+        );
+    }
+}

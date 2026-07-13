@@ -284,3 +284,212 @@ fn detect_os(ua: &str) -> Option<String> {
         None
     }
 }
+
+// ============================================================================
+// 单元测试
+// ============================================================================
+
+#[cfg(all(test, feature = "db-sqlite"))]
+mod tests {
+    use super::*;
+    use crate::dao::repository::sqlite::test_support::setup_db;
+
+    /// register_device 首次注册应返回合法 UUID，且 list 中能查到。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn register_device_returns_uuid() {
+        let pool = setup_db().await;
+        let repo = DbnexusUserDeviceRepository::new(pool);
+
+        let device_id = repo
+            .register_device(
+                1,
+                "login-001",
+                "fingerprint-abc",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0",
+            )
+            .await
+            .expect("register_device 应成功");
+
+        // 验证返回的是合法 UUID
+        let parsed = uuid::Uuid::parse_str(&device_id).expect("返回的 device_id 应为合法 UUID");
+        assert_eq!(
+            parsed.get_version(),
+            Some(uuid::Version::Random),
+            "应为 UUID v4"
+        );
+
+        // list 中应能查到
+        let devices = repo
+            .list_user_devices(1, "login-001")
+            .await
+            .expect("list_user_devices 应成功");
+        assert_eq!(devices.len(), 1);
+        assert_eq!(devices[0].id, device_id);
+        assert_eq!(devices[0].device_identifier, "fingerprint-abc");
+        assert!(!devices[0].is_blocked);
+        // device_name 应从 UA 解析（Chrome on Windows）
+        assert_eq!(devices[0].device_name.as_deref(), Some("Chrome on Windows"));
+    }
+
+    /// register_device 幂等：相同 (tenant, login_id, identifier) 返回同一 ID，且 last_seen_at 更新。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn register_device_idempotent_returns_same_id() {
+        let pool = setup_db().await;
+        let repo = DbnexusUserDeviceRepository::new(pool);
+
+        let id1 = repo
+            .register_device(1, "login-002", "fp-same", "Firefox/120.0")
+            .await
+            .expect("首次 register 应成功");
+
+        let id2 = repo
+            .register_device(1, "login-002", "fp-same", "Firefox/121.0")
+            .await
+            .expect("幂等 register 应成功");
+
+        assert_eq!(id1, id2, "幂等注册应返回相同 ID");
+
+        // 仍只有 1 条记录
+        let count = repo
+            .count_user_devices(1, "login-002")
+            .await
+            .expect("count 应成功");
+        assert_eq!(count, 1, "幂等注册不应新增记录");
+    }
+
+    /// register_device 达到 MAX_DEVICES 后拒绝新设备，返回 InvalidParam 错误。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn register_device_exceeds_max_devices() {
+        let pool = setup_db().await;
+        let repo = DbnexusUserDeviceRepository::new(pool);
+
+        // 注册 MAX_DEVICES（5）个不同设备
+        for i in 0..MAX_DEVICES {
+            repo.register_device(
+                1,
+                "login-max",
+                &format!("fp-{}", i),
+                "Mozilla/5.0 Chrome/120.0",
+            )
+            .await
+            .expect("注册设备应成功");
+        }
+
+        let count = repo
+            .count_user_devices(1, "login-max")
+            .await
+            .expect("count 应成功");
+        assert_eq!(count, MAX_DEVICES, "应有 MAX_DEVICES 个设备");
+
+        // 第 6 个设备应被拒绝
+        let result = repo
+            .register_device(1, "login-max", "fp-overflow", "Chrome/120.0")
+            .await;
+        assert!(result.is_err(), "超过 MAX_DEVICES 应返回错误");
+        let err = result.unwrap_err();
+        match err {
+            BulwarkError::InvalidParam(msg) => {
+                assert!(
+                    msg.contains("MAX_DEVICES") || msg.contains("设备数已达上限"),
+                    "错误信息应包含设备上限，实际: {}",
+                    msg
+                );
+            },
+            other => panic!("应为 InvalidParam 错误，实际: {:?}", other),
+        }
+    }
+
+    /// block_device / unblock_device 切换 is_blocked 状态。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn block_and_unblock_device() {
+        let pool = setup_db().await;
+        let repo = DbnexusUserDeviceRepository::new(pool);
+
+        let device_id = repo
+            .register_device(1, "login-block", "fp-block", "Safari/17.0")
+            .await
+            .expect("register 应成功");
+
+        // 初始状态未阻断
+        let devices = repo
+            .list_user_devices(1, "login-block")
+            .await
+            .expect("list 应成功");
+        assert!(!devices[0].is_blocked, "初始状态应未阻断");
+
+        // 阻断
+        repo.block_device(&device_id)
+            .await
+            .expect("block_device 应成功");
+        let devices = repo
+            .list_user_devices(1, "login-block")
+            .await
+            .expect("list 应成功");
+        assert!(devices[0].is_blocked, "阻断后 is_blocked 应为 true");
+
+        // 解除阻断
+        repo.unblock_device(&device_id)
+            .await
+            .expect("unblock_device 应成功");
+        let devices = repo
+            .list_user_devices(1, "login-block")
+            .await
+            .expect("list 应成功");
+        assert!(!devices[0].is_blocked, "解除后 is_blocked 应为 false");
+    }
+
+    /// list_user_devices 按 (tenant_id, login_id) 过滤，不同 login_id 互不干扰。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn list_user_devices_filters_by_login_id() {
+        let pool = setup_db().await;
+        let repo = DbnexusUserDeviceRepository::new(pool);
+
+        // login-a 注册 2 个设备
+        repo.register_device(1, "login-a", "fp-a1", "Chrome/120.0")
+            .await
+            .expect("register 应成功");
+        repo.register_device(1, "login-a", "fp-a2", "Edge/120.0")
+            .await
+            .expect("register 应成功");
+
+        // login-b 注册 1 个设备
+        repo.register_device(1, "login-b", "fp-b1", "Firefox/120.0")
+            .await
+            .expect("register 应成功");
+
+        let list_a = repo
+            .list_user_devices(1, "login-a")
+            .await
+            .expect("list login-a 应成功");
+        let list_b = repo
+            .list_user_devices(1, "login-b")
+            .await
+            .expect("list login-b 应成功");
+        assert_eq!(list_a.len(), 2, "login-a 应有 2 个设备");
+        assert_eq!(list_b.len(), 1, "login-b 应有 1 个设备");
+    }
+
+    /// count_user_devices 返回正确计数，空用户返回 0。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn count_user_devices_empty_returns_zero() {
+        let pool = setup_db().await;
+        let repo = DbnexusUserDeviceRepository::new(pool);
+
+        // 空用户
+        let count = repo
+            .count_user_devices(1, "nonexistent-login")
+            .await
+            .expect("count 应成功");
+        assert_eq!(count, 0, "空用户设备数应为 0");
+
+        // 注册 1 个后
+        repo.register_device(1, "login-count", "fp-1", "Chrome/120.0")
+            .await
+            .expect("register 应成功");
+        let count = repo
+            .count_user_devices(1, "login-count")
+            .await
+            .expect("count 应成功");
+        assert_eq!(count, 1, "注册 1 个后应为 1");
+    }
+}

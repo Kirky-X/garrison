@@ -704,4 +704,112 @@ mod tests {
         assert_eq!(server.config.internal_api_key, "my-key");
         assert!(server.tls_config.is_some());
     }
+
+    // ========================================================================
+    // to_api_response 测试
+    // ========================================================================
+
+    /// 测试 to_api_response 在 Ok 时返回包含数据的成功响应。
+    #[test]
+    fn test_to_api_response_ok() {
+        let result: Result<i32, BulwarkError> = Ok(42);
+        let resp = to_api_response(result);
+        assert_eq!(resp.data, Some(42));
+        assert!(resp.error_code.is_none());
+        assert!(resp.message.is_none());
+    }
+
+    /// 测试 to_api_response 在 Err 时返回包含错误码和消息的失败响应。
+    #[test]
+    fn test_to_api_response_err() {
+        let result: Result<i32, BulwarkError> =
+            Err(BulwarkError::Internal("test error".to_string()));
+        let resp = to_api_response(result);
+        assert!(resp.data.is_none());
+        assert_eq!(resp.error_code.as_deref(), Some("INTERNAL_ERROR"));
+        assert_eq!(resp.message.as_deref(), Some("内部错误"));
+    }
+
+    // ========================================================================
+    // 路由 path-filter 测试
+    // ========================================================================
+
+    /// 测试外网路由拒绝内网路径（返回 404）。
+    ///
+    /// external_path_filter 中间件仅放行 login/logout/refresh，
+    /// 内网端点（如 check/login）应被拦截。
+    #[tokio::test]
+    async fn test_external_router_rejects_internal_path() {
+        let server = make_server();
+        let app = server.external_router();
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/api/v1/auth/check/login")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    /// 测试内网路由拒绝外网路径（返回 404）。
+    ///
+    /// internal_path_filter 中间件拒绝 login/logout/refresh，
+    /// 即使携带有效 API Key 也应被拦截。
+    #[tokio::test]
+    async fn test_internal_router_rejects_external_path() {
+        let server = make_server();
+        let app = server.internal_router();
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/auth/login")
+                    .header("x-api-key", "test-api-key")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    /// 测试内网路由在 API Key 错误时返回 401。
+    #[tokio::test]
+    async fn test_internal_router_rejects_wrong_api_key() {
+        let server = make_server();
+        let app = server.internal_router();
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/api/v1/auth/health")
+                    .header("x-api-key", "wrong-api-key")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    // ========================================================================
+    // AuthServerConfig 测试
+    // ========================================================================
+
+    /// 测试 AuthServerConfig::default() 返回正确的默认值。
+    #[test]
+    fn test_auth_server_config_default() {
+        let config = AuthServerConfig::default();
+        assert_eq!(config.external_port, 8080);
+        assert_eq!(config.internal_port, 8081);
+        assert_eq!(config.external_rate_limit_per_ip, 100);
+        assert!(
+            config.internal_api_key.is_empty(),
+            "Default internal_api_key 必须为空（fail-closed）"
+        );
+    }
 }

@@ -593,4 +593,191 @@ mod tests {
         let json = serde_json::to_string(&report).unwrap();
         assert!(!json.contains("message"));
     }
+
+    // ========================================================================
+    // axum_routes 测试（feature = "web-axum"）
+    // ========================================================================
+
+    /// 测试 axum liveness 探针始终返回 200。
+    #[cfg(feature = "web-axum")]
+    #[tokio::test]
+    async fn test_axum_live_returns_200() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt;
+
+        let registry = Arc::new(HealthRegistry::new());
+        let app = super::axum_routes::health_routes(registry);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/health/live")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    /// 测试 axum readiness 探针在所有检查健康时返回 200。
+    #[cfg(feature = "web-axum")]
+    #[tokio::test]
+    async fn test_axum_ready_returns_200_when_healthy() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt;
+
+        let mut registry = HealthRegistry::new();
+        registry.register(Box::new(AlwaysHealthy));
+        let app = super::axum_routes::health_routes(Arc::new(registry));
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/health/ready")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    /// 测试 axum readiness 探针在 Degraded 状态时返回 200（降级但可用）。
+    #[cfg(feature = "web-axum")]
+    #[tokio::test]
+    async fn test_axum_ready_returns_200_when_degraded() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt;
+
+        let mut registry = HealthRegistry::new();
+        registry.register(Box::new(AlwaysDegraded));
+        let app = super::axum_routes::health_routes(Arc::new(registry));
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/health/ready")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    /// 测试 axum readiness 探针在 Unhealthy 状态时返回 503。
+    #[cfg(feature = "web-axum")]
+    #[tokio::test]
+    async fn test_axum_ready_returns_503_when_unhealthy() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt;
+
+        let mut registry = HealthRegistry::new();
+        registry.register(Box::new(AlwaysUnhealthy));
+        let app = super::axum_routes::health_routes(Arc::new(registry));
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/health/ready")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    // ========================================================================
+    // warp_routes 测试（feature = "web-warp"）
+    // ========================================================================
+
+    /// 测试 warp liveness 探针返回 200。
+    #[cfg(feature = "web-warp")]
+    #[tokio::test]
+    async fn test_warp_live_filter_returns_200() {
+        use super::warp_routes::live_filter;
+        use warp::http::StatusCode;
+
+        let resp = warp::test::request()
+            .method("GET")
+            .path("/health/live")
+            .reply(&live_filter())
+            .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    /// 测试 warp readiness 探针在健康时返回 200。
+    #[cfg(feature = "web-warp")]
+    #[tokio::test]
+    async fn test_warp_ready_filter_returns_200_when_healthy() {
+        use super::warp_routes::ready_filter;
+        use warp::http::StatusCode;
+
+        let mut registry = HealthRegistry::new();
+        registry.register(Box::new(AlwaysHealthy));
+        let filter = ready_filter(Arc::new(registry));
+        let resp = warp::test::request()
+            .method("GET")
+            .path("/health/ready")
+            .reply(&filter)
+            .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    /// 测试 warp readiness 探针在 Unhealthy 时返回 503。
+    #[cfg(feature = "web-warp")]
+    #[tokio::test]
+    async fn test_warp_ready_filter_returns_503_when_unhealthy() {
+        use super::warp_routes::ready_filter;
+        use warp::http::StatusCode;
+
+        let mut registry = HealthRegistry::new();
+        registry.register(Box::new(AlwaysUnhealthy));
+        let filter = ready_filter(Arc::new(registry));
+        let resp = warp::test::request()
+            .method("GET")
+            .path("/health/ready")
+            .reply(&filter)
+            .await;
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    // ========================================================================
+    // HealthRegistry Default / register 链式调用测试
+    // ========================================================================
+
+    /// 测试 HealthRegistry 的 Default 实现返回空 registry。
+    #[tokio::test]
+    async fn test_health_registry_default() {
+        let registry = HealthRegistry::default();
+        let report = registry.check_all().await;
+        assert_eq!(report.overall, HealthStatus::Healthy);
+        assert!(report.checks.is_empty());
+    }
+
+    /// 测试 HealthReport::empty() 返回空报告且整体状态为 Healthy。
+    #[test]
+    fn test_health_report_empty() {
+        let report = HealthReport::empty();
+        assert_eq!(report.overall, HealthStatus::Healthy);
+        assert!(report.checks.is_empty());
+    }
+
+    /// 测试 HealthRegistry::register 链式调用（返回 &mut Self）。
+    #[tokio::test]
+    async fn test_health_registry_register_chain() {
+        let mut registry = HealthRegistry::new();
+        registry
+            .register(Box::new(AlwaysHealthy))
+            .register(Box::new(AlwaysDegraded));
+        let report = registry.check_all().await;
+        assert_eq!(report.checks.len(), 2);
+        assert_eq!(report.overall, HealthStatus::Degraded);
+    }
 }

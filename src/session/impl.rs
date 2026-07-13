@@ -1337,3 +1337,321 @@ impl BulwarkSession {
         search::search_token_session_id(self, keyword, start, size, sort_type).await
     }
 }
+
+// ============================================================================
+// 单元测试：覆盖 impl.rs 中尚未被 session::tests 覆盖的路径
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dao::tests::MockDao;
+    use crate::dao::BulwarkDao;
+    use chrono::Utc;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    /// 辅助函数：创建带 MockDao 的 BulwarkSession（与 session::tests 中保持一致）。
+    fn make_session(timeout: u64, active_timeout: u64) -> (Arc<MockDao>, BulwarkSession) {
+        let dao = Arc::new(MockDao::new());
+        let session = BulwarkSession::new(dao.clone(), timeout, active_timeout);
+        (dao, session)
+    }
+
+    // ----------------------------------------------------------------
+    // update_last_active_at：与 update_last_active 的差异（接受外部时间戳）
+    // ----------------------------------------------------------------
+
+    /// 验证 `update_last_active_at` 写入指定时间戳，而非当前时间。
+    ///
+    /// 覆盖与 `update_last_active` 的差异点：支持可注入时钟（MockClock）。
+    #[test]
+    fn update_last_active_at_sets_specified_timestamp() {
+        let (_dao, session) = make_session(3600, 86400);
+        // 固定时间戳，与当前时间无关
+        let specified_ts: i64 = 1_700_000_000_000;
+        session.update_last_active_at("user_injected", specified_ts);
+
+        let stored = session.get_last_active("user_injected");
+        assert_eq!(
+            stored,
+            Some(specified_ts),
+            "update_last_active_at 应写入指定时间戳而非当前时间"
+        );
+    }
+
+    // ----------------------------------------------------------------
+    // add_login_token：去重逻辑
+    // ----------------------------------------------------------------
+
+    /// 验证 `add_login_token` 重复添加同一 token 不会复制条目。
+    ///
+    /// 覆盖 `if !entry.contains(...)` 分支为 false 时的跳过路径。
+    #[test]
+    fn add_login_token_deduplicates_existing_token() {
+        let (_dao, session) = make_session(3600, 86400);
+        session.add_login_token("user1", "token1");
+        session.add_login_token("user1", "token1"); // 重复
+        session.add_login_token("user1", "token2");
+
+        let tokens = session.get_tokens_by_login_id("user1");
+        assert_eq!(
+            tokens,
+            vec!["token1".to_string(), "token2".to_string()],
+            "重复 token 不应重复计入列表"
+        );
+    }
+
+    // ----------------------------------------------------------------
+    // ensure_token_in_account_session：token 已存在仅更新 last_active_at
+    // ----------------------------------------------------------------
+
+    /// 验证 `ensure_token_in_account_session` 在 token 已存在时不重复添加，
+    /// 仅更新对应 TokenInfo 与 AccountSession 的 last_active_at。
+    ///
+    /// 覆盖 `if let Some(ti) = account.tokens.iter_mut().find(...)` 分支。
+    #[tokio::test]
+    async fn ensure_token_in_account_session_updates_last_active_for_existing_token() {
+        let (_dao, session) = make_session(3600, 86400);
+        session.create("1001", "T1").await.unwrap();
+
+        let original = session.get_account_session("1001").await.unwrap().unwrap();
+        let original_active = original.last_active_at;
+
+        // 跨秒等待，确保 last_active_at（秒级精度）有可测差异
+        tokio::time::sleep(Duration::from_secs(2)).await;
+
+        session
+            .ensure_token_in_account_session("1001", "T1")
+            .await
+            .unwrap();
+
+        let after = session.get_account_session("1001").await.unwrap().unwrap();
+        assert_eq!(
+            after.tokens.len(),
+            1,
+            "token 已存在时不应重复添加到 tokens 列表"
+        );
+        assert!(
+            after.last_active_at > original_active,
+            "ensure 已存在的 token 应更新 last_active_at（原={}, 新={})",
+            original_active,
+            after.last_active_at
+        );
+        // 对应 TokenInfo 的 last_active_at 也应更新
+        let ti = after.tokens.iter().find(|t| t.token == "T1").unwrap();
+        assert!(
+            ti.last_active_at > original_active,
+            "TokenInfo.last_active_at 也应被更新"
+        );
+    }
+
+    // ----------------------------------------------------------------
+    // ensure_token_in_account_session：Account-Session 不存在时创建
+    // ----------------------------------------------------------------
+
+    /// 验证 `ensure_token_in_account_session` 在 Account-Session 不存在时
+    /// 通过 `unwrap_or_else` 创建新的 AccountSession 并添加 token。
+    ///
+    /// 覆盖 `unwrap_or_else` 的 None 分支。
+    #[tokio::test]
+    async fn ensure_token_in_account_session_creates_account_when_missing() {
+        let (_dao, session) = make_session(3600, 86400);
+        // 直接调用 ensure，不预先 create
+        session
+            .ensure_token_in_account_session("2002", "T1")
+            .await
+            .unwrap();
+
+        let account = session.get_account_session("2002").await.unwrap().unwrap();
+        assert_eq!(account.login_id, "2002");
+        assert_eq!(
+            account.tokens.len(),
+            1,
+            "应创建包含 1 个 token 的 Account-Session"
+        );
+        assert_eq!(account.tokens[0].token, "T1");
+    }
+
+    // ----------------------------------------------------------------
+    // save_token_session：保留原 TTL 持久化修改
+    // ----------------------------------------------------------------
+
+    /// 验证 `save_token_session` 通过 `dao.update` 持久化修改后的 TokenSession，
+    /// 保留原 TTL（不重置过期时间）。
+    ///
+    /// 覆盖 `save_token_session` 调用路径。
+    #[tokio::test]
+    async fn save_token_session_persists_modified_session() {
+        let (_dao, session) = make_session(3600, 86400);
+        session.create("1001", "T1").await.unwrap();
+
+        // 读取并修改 TokenSession
+        let mut ts = session.get_token_session("T1").await.unwrap().unwrap();
+        ts.attrs
+            .insert("custom_key".to_string(), "custom_value".to_string());
+
+        // save_token_session 用 update（保留原 TTL）
+        session.save_token_session("T1", &ts).await.unwrap();
+
+        // 验证修改已持久化
+        let reloaded = session.get_token_session("T1").await.unwrap().unwrap();
+        assert_eq!(
+            reloaded.attrs.get("custom_key").map(|s| s.as_str()),
+            Some("custom_value"),
+            "save_token_session 后自定义属性应持久化"
+        );
+    }
+
+    // ----------------------------------------------------------------
+    // create_token_session_with_ttl + get_token_timeout + set_token_session_ttl
+    // ----------------------------------------------------------------
+
+    /// 验证 TTL 相关三个方法的往返：
+    /// - `create_token_session_with_ttl`：用指定 TTL 创建 TokenSession
+    /// - `get_token_timeout`：查询剩余 TTL
+    /// - `set_token_session_ttl`：重置 TTL
+    ///
+    /// 覆盖这三个方法未被现有测试覆盖的调用路径。
+    #[tokio::test]
+    async fn ttl_methods_roundtrip() {
+        let (_dao, session) = make_session(3600, 86400);
+        session.create("1001", "T1").await.unwrap();
+
+        // 用指定 TTL=600 创建新 TokenSession（构造最小可用 TokenSession）
+        let new_ts = TokenSession {
+            token: "T2".to_string(),
+            login_id: "1001".to_string(),
+            created_at: Utc::now().timestamp(),
+            last_active_at: Utc::now().timestamp(),
+            attrs: HashMap::new(),
+            device: None,
+            ip: None,
+            user_agent: None,
+            safe_services: HashMap::new(),
+            #[cfg(feature = "dynamic-active-timeout")]
+            dynamic_active_timeout: None,
+            #[cfg(feature = "anonymous-session")]
+            is_anon: false,
+        };
+        session
+            .create_token_session_with_ttl("T2", &new_ts, 600)
+            .await
+            .unwrap();
+
+        // get_token_timeout 应返回 Some（键存在且设置了 TTL）
+        let ttl = session.get_token_timeout("T2").await.unwrap();
+        assert!(
+            ttl.is_some(),
+            "create_token_session_with_ttl 设置了 TTL=600，应返回 Some"
+        );
+        let ttl_secs = ttl.unwrap().as_secs();
+        // 容差：执行时间内可能消耗少量秒，应仍在 590~600 之间
+        assert!(
+            (590..=600).contains(&ttl_secs),
+            "TTL 应接近 600 秒，实际: {}",
+            ttl_secs
+        );
+
+        // set_token_session_ttl 重置为 1200 秒
+        session.set_token_session_ttl("T2", 1200).await.unwrap();
+        let ttl_after = session
+            .get_token_timeout("T2")
+            .await
+            .unwrap()
+            .expect("set_token_session_ttl 后应仍返回 Some");
+        let ttl_after_secs = ttl_after.as_secs();
+        assert!(
+            (1190..=1200).contains(&ttl_after_secs),
+            "set_token_session_ttl 后 TTL 应接近 1200 秒，实际: {}",
+            ttl_after_secs
+        );
+    }
+
+    // ----------------------------------------------------------------
+    // with_anon_session_timeout builder（anonymous-session feature）
+    // ----------------------------------------------------------------
+
+    /// 验证 `with_anon_session_timeout` builder 设置 `anon_session_timeout` 字段，
+    /// 且 `new` 默认使用 `DEFAULT_ANON_SESSION_TIMEOUT_SECS`。
+    ///
+    /// 覆盖 anonymous-session feature 下的 builder 方法与默认值。
+    #[cfg(feature = "anonymous-session")]
+    #[test]
+    fn with_anon_session_timeout_sets_field() {
+        use crate::config::DEFAULT_ANON_SESSION_TIMEOUT_SECS;
+
+        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        // 默认值应为 DEFAULT_ANON_SESSION_TIMEOUT_SECS（1800 秒 = 30 分钟）
+        let default_session = BulwarkSession::new(dao.clone(), 3600, 86400);
+        assert_eq!(
+            default_session.anon_session_timeout, DEFAULT_ANON_SESSION_TIMEOUT_SECS,
+            "new 默认应使用 DEFAULT_ANON_SESSION_TIMEOUT_SECS"
+        );
+
+        // builder 覆盖默认值
+        let session = BulwarkSession::new(dao, 3600, 86400).with_anon_session_timeout(99);
+        assert_eq!(
+            session.anon_session_timeout, 99,
+            "with_anon_session_timeout 应设置字段为指定值"
+        );
+    }
+
+    // ----------------------------------------------------------------
+    // with_token_session_lock：per-token 锁（safe-auth / anonymous-session feature）
+    // ----------------------------------------------------------------
+
+    /// 验证 `with_token_session_lock` 串行化同一 token 的并发操作。
+    ///
+    /// 两个并发任务对同一 token 调用 `with_token_session_lock`，应串行执行
+    ///（第二个任务在第一个释放锁后才开始），通过共享计数器验证顺序。
+    #[cfg(any(feature = "safe-auth", feature = "anonymous-session"))]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn with_token_session_lock_serializes_same_token() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let (_dao, session) = make_session(3600, 86400);
+        let session = Arc::new(session);
+        let counter = Arc::new(AtomicUsize::new(0));
+        let max_concurrent = Arc::new(AtomicUsize::new(0));
+
+        let counter_a = counter.clone();
+        let max_a = max_concurrent.clone();
+        let session_a = session.clone();
+        let h1 = tokio::spawn(async move {
+            session_a
+                .with_token_session_lock("T1", async {
+                    let cur = counter_a.fetch_add(1, Ordering::SeqCst) + 1;
+                    max_a.fetch_max(cur, Ordering::SeqCst);
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    counter_a.fetch_sub(1, Ordering::SeqCst);
+                })
+                .await
+        });
+
+        let counter_b = counter.clone();
+        let max_b = max_concurrent.clone();
+        let session_b = session.clone();
+        let h2 = tokio::spawn(async move {
+            session_b
+                .with_token_session_lock("T1", async {
+                    let cur = counter_b.fetch_add(1, Ordering::SeqCst) + 1;
+                    max_b.fetch_max(cur, Ordering::SeqCst);
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    counter_b.fetch_sub(1, Ordering::SeqCst);
+                })
+                .await
+        });
+
+        h1.await.unwrap();
+        h2.await.unwrap();
+
+        // 串行执行时，counter 最大值为 1（不会有两个任务同时进入临界区）
+        assert_eq!(
+            max_concurrent.load(Ordering::SeqCst),
+            1,
+            "with_token_session_lock 应串行化同一 token 的并发操作"
+        );
+    }
+}
