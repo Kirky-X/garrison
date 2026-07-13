@@ -22,3 +22,9 @@ pub mod authorize;
 
 /// /oauth2/token 端点模块。
 pub mod token;
+
+/// /oauth2/revoke 端点模块（RFC 7009）。
+pub mod revoke;
+
+/// /oauth2/introspect 端点模块（RFC 7662）。
+pub mod introspect;
