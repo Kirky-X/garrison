@@ -3,6 +3,13 @@
 
 # cargo-audit 配置（依据 spec protocol-jwt Known Risks 章节）
 #
+# RUSTSEC-2023-0071: rsa 0.9.10 Marvin Attack
+# 依赖链：bulwark → rsa（social-alipay feature）
+# 影响范围：Marvin Attack 针对 RSA 解密（decryption）的时序侧信道攻击
+# 实际风险：bulwark 仅使用 RSA 签名（SigningKey/Signer），不使用解密功能，漏洞不可达
+# 官方状态：No patch available（截至 2026-07-13）
+# 处置策略：记录为已知/接受，等待上游修复或替换为 sad-rsa
+#
 # RUSTSEC-2026-0173: proc-macro-error2 v2.0.1 unmaintained
 # 依赖链：bulwark → dbnexus → dbnexus-macros/sea-bae → proc-macro-error2
 # 影响范围：仅编译期（proc-macro），无运行时风险
@@ -16,6 +23,6 @@
 [advisories]
 ignore = [
     "RUSTSEC-2026-0173", # proc-macro-error2 unmaintained（编译期依赖，无运行时风险）
-    "RUSTSEC-2023-0071", # rsa 0.9.10 Marvin Attack（仅影响 RS256/RS384/RS512，默认 HS256/HS512 不触发）
+    "RUSTSEC-2023-0071", # rsa 0.9.10 Marvin Attack（仅使用签名，不使用解密，漏洞不可达；官方无修复版本）
     "RUSTSEC-2026-0204", # crossbeam-epoch 0.9.18 fmt::Display null deref（transitive via moka，无 patched 版本）
 ]

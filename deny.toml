@@ -8,9 +8,10 @@
 db-urls = ["https://github.com/RustSec/advisory-db"]
 yanked = "deny"
 # rsa 0.9.x 有 RUSTSEC-2023-0071（Marvin Attack 定时侧信道），但目前无 patched 版本。
-# bulwark 仅将 rsa 作为 dev-dependency 用于 keycloak-oidc 测试生成 RSA 密钥对，
-# 生产代码不直接依赖 rsa（JWT 验签用 jsonwebtoken 的 DecodingKey）。
-# 测试环境无定时侧信道攻击风险，显式忽略此 advisory。
+# bulwark 在 social-alipay feature 中使用 RSA 签名（SigningKey/Signer），不使用解密功能。
+# Marvin Attack 针对 RSA 解密操作的时序侧信道，签名操作不受影响，漏洞不可达。
+# 另外 rsa 也作为 dev-dependency 用于 keycloak-oidc 测试生成 RSA 密钥对。
+# 官方状态：No patch available（截至 2026-07-13），显式忽略此 advisory。
 # 参考: https://rustsec.org/advisories/RUSTSEC-2023-0071
 #
 # crossbeam-epoch 0.9.18 有 RUSTSEC-2026-0204（fmt::Display 在 null pointer 上触发无效解引用）。
