@@ -71,6 +71,26 @@ impl XssProtector {
             XssMode::Whitelist(allowed) => sanitize_whitelist(input, allowed),
         }
     }
+
+    /// 对 Owned 字符串进行 XSS 防护处理（避免重复分配）。
+    ///
+    /// 若输入不包含 HTML 特殊字符（`<` / `>` / `&` / `"` / `'`），直接返回原 String。
+    /// 否则调用 `sanitize` 重新分配。
+    ///
+    /// # 参数
+    /// - `input`: 待处理的 HTML 输入（Owned String）。
+    ///
+    /// # 返回
+    /// 处理后的安全字符串。
+    pub fn sanitize_owned(&self, input: String) -> String {
+        let needs_escape = input
+            .chars()
+            .any(|c| matches!(c, '<' | '>' | '&' | '"' | '\''));
+        if !needs_escape {
+            return input;
+        }
+        self.sanitize(&input)
+    }
 }
 
 /// 将字符串中的 HTML 特殊字符转义并追加到 `out`。
@@ -350,5 +370,34 @@ mod tests {
             "single-quoted event handler attribute should be stripped, got: {}",
             result
         );
+    }
+
+    // ========================================================================
+    // sanitize_owned 测试
+    // ========================================================================
+
+    /// sanitize_owned 无特殊字符直接返回原 String（零分配）。
+    #[test]
+    fn sanitize_owned_no_escape_returns_original() {
+        let p = XssProtector::new(XssMode::EscapeAll);
+        let input = String::from("hello world");
+        let result = p.sanitize_owned(input);
+        assert_eq!(result, "hello world");
+    }
+
+    /// sanitize_owned 有特殊字符转义。
+    #[test]
+    fn sanitize_owned_escapes_special_chars() {
+        let p = XssProtector::new(XssMode::EscapeAll);
+        let result = p.sanitize_owned(String::from("<script>alert(1)</script>"));
+        assert_eq!(result, "&lt;script&gt;alert(1)&lt;/script&gt;");
+    }
+
+    /// sanitize_owned 空字符串返回空字符串。
+    #[test]
+    fn sanitize_owned_empty_string() {
+        let p = XssProtector::new(XssMode::EscapeAll);
+        let result = p.sanitize_owned(String::new());
+        assert_eq!(result, "");
     }
 }

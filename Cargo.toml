@@ -271,46 +271,34 @@ audit-log = ["listener"]
 # === 安全防护套件 ===
 # firewall 为基础 trait + FirewallContext + StrategyRegistration，无额外依赖
 firewall = []
-# 各 strategy 实现独立依赖 firewall 基础 trait
-# firewall-bruteforce / firewall-ratelimit / firewall-ddos 仅依赖 oxcache（通过 BulwarkDao 抽象）
-# firewall-bruteforce：用 limiteron BanStorage + DistributedLimiter 替换手写 TOCTOU 计数
+# firewall-bruteforce：limiteron BanStorage + DistributedLimiter
 firewall-bruteforce = ["firewall", "dep:limiteron"]
-# firewall-ratelimit：用 limiteron DistributedLimiter 原子 incr_with_ttl 替换手写滑动窗口
+# firewall-ratelimit：limiteron DistributedLimiter 原子 incr_with_ttl
 firewall-ratelimit = ["firewall", "dep:rand", "dep:limiteron"]
 firewall-anomalous = ["firewall"]
 firewall-geoip = ["firewall"]
 firewall-ddos = ["firewall"]
-# firewall-waf：WAF 级防火墙（策略层 Hook 链 + 9 个内置 Hook + axum middleware 适配器）
-# 与 web-waf（web 层 WafRule）的区别：firewall-waf 位于 strategy/firewall 层，
-# 使用 WafHook trait + WafVerdict 短路链模式，返回 FirewallBlocked（403），
-# 新增 Host/Header/Parameter/BannedChar 校验。依赖 firewall（基础 trait）+ web-axum（middleware 适配器）。
+# firewall-waf：策略层 WAF Hook 链 + axum middleware 适配器
 firewall-waf = ["firewall", "web-axum"]
 # rate-limit-redis：Redis 限流后端（RedisRateLimiter + Lua 脚本），继承 cache-redis（redis + futures）
 rate-limit-redis = ["cache-redis"]
-# firewall-maxminddb：生产 MaxMindDb 后端（MaxMindDbGeoLookup + MaxMindDbCountryLookup）
-# 依赖 firewall-geoip（CountryLookup）+ firewall-anomalous（GeoLookup）+ maxminddb crate
+# firewall-maxminddb：MaxMindDb GeoIP 生产后端
 firewall-maxminddb = ["dep:maxminddb", "firewall-geoip", "firewall-anomalous"]
-# anomalous-detector-dual：异常登录定时分析引擎（双引擎的定时部分）
-# 与实时引擎 firewall-anomalous 互补，定时扫描历史登录记录识别异常模式（burst/geo_jump/device_mutation）。
-# 依赖 listener（spec R-006 要求广播 AnomalousLoginDetected 事件）。
+# anomalous-detector-dual：异常登录定时分析引擎（burst/geo_jump/device_mutation）
 anomalous-detector-dual = ["firewall", "listener"]
 
 # === 安全告警系统 ===
-# 启用后提供 SecurityAlertEvent / AlertListener / AnomalyDetector 抽象，
-# 支持异常登录检测、新设备告警、封禁触发等安全事件广播。
+# security-alert：SecurityAlertEvent / AlertListener / AnomalyDetector 抽象
 security-alert = []
-# 设备绑定策略：依赖 security-alert（LooseBinding 需要广播 NewDeviceLogin 告警事件）。
-# 启用后提供 DeviceBindingPolicy trait 抽象，StrictBinding/LooseBinding/Disabled 由后续任务实现。
+# device-binding：DeviceBindingPolicy trait（StrictBinding/LooseBinding/Disabled）
 device-binding = ["security-alert"]
 
 # === 二级认证瞬态标记 ===
-# 启用后 BulwarkLogicDefault 覆写 open_safe/is_safe/close_safe 方法，
-# 在 TokenSession.safe_services 中记录/查询/移除 service 级二级认证标记。
+# safe-auth：TokenSession.safe_services service 级二级认证标记
 safe-auth = []
 
 # === 动态活跃超时 ===
-# 启用后支持基于用户活跃行为的动态会话超时（active timeout），
-# 区别于固定 timeout，可根据最后活跃时间动态延长/缩短会话有效期。
+# dynamic-active-timeout：基于用户活跃行为的动态会话超时
 dynamic-active-timeout = []
 
 # === 三层缓存架构 ===

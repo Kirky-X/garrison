@@ -95,7 +95,7 @@ v0.6.7 安全与性能增强，实施 5 个能力域：forbid 优先语义、WAF
   - `ParameterHook`：参数名黑名单
   - `BannedCharacterHook` / `DangerCharacterHook`：危险字符检测
   - `DirectoryTraversalHook`：路径遍历检测（`../`、`./`、`//`、`%2e`、`%2f`、`%00`）
-  - `SqlInjectionHook`：SQL 注入特征检测
+  - `HeaderHook`：请求头黑名单检测
 - `WafEngine::evaluate` 按 Hook 注册顺序执行，`AllowAndSkip` 短路
 - Phase 2.1 审计修复：WhitePathHook 百分号编码兜底 + BlackPathHook 前缀混淆防护
 
