@@ -5,6 +5,72 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.7.0] - 2026-07-13
+
+### 概述
+
+v0.7.0 微服务架构 + ABAC/Cedar + OAuth2 Server + 依赖优化 + 架构加固。通过 specmark `v0.7.0-microservice-abac-oauth2-hardening` change 管理，252 个 TDD 任务覆盖 7 个能力域。tiangang SAST 0 CRITICAL，diting 88/100（0 CRITICAL + 0 HIGH），2968 测试通过，满足发布门禁。
+
+### 新增
+
+#### D1: 架构加固
+
+- 错误类型统一：全代码库使用 `BulwarkError` / `BulwarkResult`，0 违规
+- mod.rs 加固：Mock 代码迁移到独立 `mock.rs` 文件，impl 块迁移到 `impl.rs` / `*_impl.rs`
+- `secure-sanitize` feature：通用输入消毒 `sanitize_input()` 函数（null 字节 / 控制字符移除 + 长度限制）
+
+#### D3: 微服务架构
+
+- `backend-remote` feature：远程后端适配器（HTTP API 调用）
+- `server/external.rs` + `server/internal.rs`：外部/内部 API 服务器
+- `src/bin/auth_server.rs`：独立认证服务器二进制
+
+#### D4: ABAC/Cedar DSL
+
+- `abac` feature：基于 Cedar DSL 的属性访问控制引擎
+- `src/abac/engine.rs`：ABAC 引擎核心
+- `src/abac/policy.rs`：策略解析与评估
+
+#### D5: OAuth2 Server
+
+- `oauth2-server` feature：完整 OAuth2 Server 实现
+- `/oauth2/authorize`：授权码流程 + PKCE 强制（S256）
+- `/oauth2/token`：4 种 grant type（authorization_code / refresh_token / client_credentials / password）
+- `/oauth2/revoke`：RFC 7009 token 撤销
+- `/oauth2/introspect`：RFC 7662 token 内省
+- redirect_uri 白名单精确匹配 + state 参数 CSRF 防护
+
+#### D7: 安全审查
+
+- tiangang SAST：0 CRITICAL（Semgrep 331 rules + cargo-audit）
+- diting 代码审查：0 真实 HIGH（88/100 score）
+- security.md 10 维度安全检查全部通过
+- 输入消毒 `sanitize_input()` + 响应体 4KB 限制 + zeroize 敏感数据
+
+### 优化
+
+#### D2: 依赖优化
+
+- clippy 零告警（全模式 + 特性组合）
+- cargo doc 零告警
+- 特性组合测试：10 种组合全部通过
+- cargo-audit：rsa Marvin Attack 显式忽略（仅使用签名，非解密）
+
+#### D6: 质量提升
+
+- 特性组合测试：backend-embedded / backend-remote / auth-server / abac / oauth2-server 等组合
+- clippy + doc 告警清理
+- 2968 测试通过（lib + examples + integration + doc-tests）
+
+### 修复
+
+- 6 个 SessionData 初始化缺少 `dynamic_active_timeout` / `is_anon` 字段
+- examples dbnexus 0.3→0.4 升级 + dbnexus/sqlite feature 传递
+- examples oxcache/redis feature 传递
+- 11 个 clippy bool_assert_comparison 告警（rust 1.96.0 新规则）
+- `test_check_safe_default_returns_true` → `false`（safe-auth feature 下行为变更）
+- GitHub Actions mutable tag 修复（docs.yml 固定 SHA + codeql.yml nosemgrep）
+
 ## [0.6.7] - 2026-07-13
 
 ### 概述
