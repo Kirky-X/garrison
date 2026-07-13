@@ -117,6 +117,13 @@ pub mod xss;
 #[cfg(feature = "sms-rate-limit")]
 pub mod sms;
 
+/// 通用输入消毒子模块。
+///
+/// 提供 `sanitize::sanitize_input` 对用户输入进行通用消毒：
+/// 移除 null 字节、控制字符，trim 空白，限制长度。零外部依赖。
+#[cfg(feature = "secure-sanitize")]
+pub mod sanitize;
+
 #[cfg(test)]
 mod tests {
     use super::*;

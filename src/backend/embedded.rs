@@ -297,14 +297,14 @@ mod tests {
 
     #[tokio::test]
     #[serial]
-    async fn test_check_safe_default_returns_true() {
+    async fn test_check_safe_default_returns_false() {
         let backend = setup_backend();
         let token = backend
             .login("user1", &LoginParams::default())
             .await
             .unwrap();
-        // 默认未启用 MFA，check_safe 返回 true
-        assert!(backend.check_safe(&token).await.unwrap());
+        // safe-auth feature 下，新用户未通过二级认证（safe_services 为空），check_safe 返回 false
+        assert!(!backend.check_safe(&token).await.unwrap());
     }
 
     #[tokio::test]

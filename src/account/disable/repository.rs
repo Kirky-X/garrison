@@ -345,18 +345,16 @@ mod tests {
         let dao = Arc::new(MockDao::new());
         let repo = DefaultDisableRepository::new(dao.clone());
         // 未封禁时 is_disable 返回 false
-        assert_eq!(
-            repo.is_disable("user-1007", "default").await.unwrap(),
-            false,
+        assert!(
+            !repo.is_disable("user-1007", "default").await.unwrap(),
             "未封禁时 is_disable 应返回 false"
         );
         // disable 后 is_disable 返回 true
         repo.disable("user-1007", "default", None, 0, 0)
             .await
             .unwrap();
-        assert_eq!(
+        assert!(
             repo.is_disable("user-1007", "default").await.unwrap(),
-            true,
             "disable 后 is_disable 应返回 true"
         );
     }
@@ -390,9 +388,8 @@ mod tests {
             .await
             .unwrap();
         // 同一 login_id 在 "payment" service 上应未封禁
-        assert_eq!(
-            repo.is_disable("user-2001", "payment").await.unwrap(),
-            false,
+        assert!(
+            !repo.is_disable("user-2001", "payment").await.unwrap(),
             "同一 login_id 在未封禁的 service 上 is_disable 应返回 false"
         );
     }
@@ -407,9 +404,8 @@ mod tests {
         repo.disable("user-2002", "default", Some(until), 0, 3600)
             .await
             .unwrap();
-        assert_eq!(
+        assert!(
             repo.is_disable("user-2002", "default").await.unwrap(),
-            true,
             "定时封禁后 is_disable 应返回 true"
         );
     }
@@ -506,16 +502,14 @@ mod tests {
             .await
             .unwrap();
         // 封禁后 is_disable 应为 true
-        assert_eq!(
+        assert!(
             repo.is_disable("user-2007", "default").await.unwrap(),
-            true,
             "disable 后 is_disable 应为 true"
         );
         // untie_disable 后 is_disable 应为 false
         repo.untie_disable("user-2007", "default").await.unwrap();
-        assert_eq!(
-            repo.is_disable("user-2007", "default").await.unwrap(),
-            false,
+        assert!(
+            !repo.is_disable("user-2007", "default").await.unwrap(),
             "untie_disable 后 is_disable 应返回 false"
         );
     }

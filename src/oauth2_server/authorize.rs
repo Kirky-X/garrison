@@ -284,7 +284,7 @@ pub fn verify_pkce(code_verifier: &str, code_challenge: &str) -> BulwarkResult<b
 mod tests {
     use super::*;
     use crate::dao::MockDao;
-    use crate::oauth2_server::client::{GrantType, OAuth2Client, OAuth2ClientStore};
+    use crate::oauth2_server::client::{GrantType, OAuth2Client};
 
     /// 创建测试用 OAuth2Client。
     fn make_test_client(id: &str) -> OAuth2Client {

@@ -117,6 +117,10 @@ impl AuthBackend for MockAuthBackend {
             ip: None,
             user_agent: None,
             safe_services: HashMap::new(),
+            #[cfg(feature = "dynamic-active-timeout")]
+            dynamic_active_timeout: None,
+            #[cfg(feature = "anonymous-session")]
+            is_anon: false,
         })
     }
 

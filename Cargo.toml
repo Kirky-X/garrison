@@ -215,6 +215,8 @@ secure-confusable = ["dep:unicode-security"]
 secure-masking = []
 # XSS 防护（HTML 转义 / 白名单过滤），无额外依赖
 secure-xss = []
+# 通用输入消毒（null 字节 / 控制字符移除 + 长度限制），无额外依赖
+secure-sanitize = []
 # SMS 验证码渐进式限速（双窗口限速 + 验证码服务 + 异常发送检测）
 # 依赖 rand 生成密码学安全验证码
 sms-rate-limit = ["dep:rand"]
@@ -379,7 +381,7 @@ full = [
     "protocol-oauth2", "protocol-sso", "protocol-jwt", "protocol-sign", "protocol-apikey", "protocol-temp", "protocol-zeroize",
     "protocol-oidc", "oauth2-scope-handler", "protocol-sso-server",
     "secure-totp", "secure-sign", "secure-httpbasic", "secure-httpdigest", "secure-masking",
-    "secure-xss", "sms-rate-limit",
+    "secure-xss", "secure-sanitize", "sms-rate-limit",
     "account-credential", "account-credential-zeroize", "account-policy", "account-lockout", "account-authflow",
     "web-axum", "web-actix", "web-warp",
     "web-waf", "web-cors", "web-csrf",

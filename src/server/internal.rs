@@ -242,6 +242,10 @@ mod tests {
                 ip: None,
                 user_agent: None,
                 safe_services: std::collections::HashMap::new(),
+                #[cfg(feature = "dynamic-active-timeout")]
+                dynamic_active_timeout: None,
+                #[cfg(feature = "anonymous-session")]
+                is_anon: false,
             })
         }
         async fn kickout(&self, _login_id: &str) -> Result<(), BulwarkError> {

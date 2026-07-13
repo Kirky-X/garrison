@@ -34,8 +34,8 @@ warp = { version = "0.4", default-features = false, features = ["test"], optiona
 tonic = { version = "0.13", default-features = false, features = ["transport"], optional = true }
 # 直接被 cache_redis 使用（RedisBackend L2 后端配置）
 oxcache = { version = "0.3", optional = true }
-# 直接被 v0_5_0_demo 使用（DbPool 类型签名，与 bulwark 同版本 0.3）
-dbnexus = { version = "0.3", default-features = false, optional = true }
+# 直接被 v0_5_0_demo 使用（DbPool 类型签名，与 bulwark 同版本 0.4）
+dbnexus = { version = "0.4", default-features = false, optional = true }
 # 直接被 oauth2_flow / scope_handler 使用（mock OAuth2 token / refresh 端点）
 wiremock = "0.6"
 # 直接被 macro_annotations 使用（读取 axum Response body）
@@ -79,7 +79,7 @@ protocol-sso = ["bulwark/protocol-sso"]
 listener = ["bulwark/listener"]
 web-axum = ["bulwark/web-axum", "dep:axum"]
 cache-memory = ["bulwark/cache-memory"]
-db-sqlite = ["bulwark/db-sqlite", "dep:dbnexus"]
+db-sqlite = ["bulwark/db-sqlite", "dep:dbnexus", "dbnexus/sqlite"]
 protocol-oidc = ["bulwark/protocol-oidc"]
 oauth2-scope-handler = ["bulwark/oauth2-scope-handler"]
 protocol-sso-server = ["bulwark/protocol-sso-server"]
@@ -93,7 +93,7 @@ grpc = ["bulwark/grpc", "dep:tonic"]
 i18n = ["bulwark/i18n"]
 metrics-prometheus = ["bulwark/metrics-prometheus"]
 observability-otlp = ["bulwark/observability-otlp"]
-cache-redis = ["bulwark/cache-redis", "dep:oxcache"]
+cache-redis = ["bulwark/cache-redis", "dep:oxcache", "oxcache/redis"]
 
 # 0.4.2 新增：过程宏注解（#[check_login]/#[check_permission]/#[check_role]）
 annotation-macros = ["bulwark/annotation-macros"]

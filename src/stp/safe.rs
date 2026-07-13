@@ -491,9 +491,8 @@ mod tests {
         })
         .await;
 
-        assert_eq!(
+        assert!(
             result.unwrap(),
-            true,
             "open_safe 后 3600 秒内 is_safe 应返回 true"
         );
     }
@@ -513,9 +512,8 @@ mod tests {
         })
         .await;
 
-        assert_eq!(
-            result.unwrap(),
-            false,
+        assert!(
+            !result.unwrap(),
             "duration=0 立即过期，is_safe 应返回 false"
         );
     }
@@ -535,9 +533,8 @@ mod tests {
         })
         .await;
 
-        assert_eq!(
-            result.unwrap(),
-            false,
+        assert!(
+            !result.unwrap(),
             "payment 未 open_safe，is_safe 应返回 false"
         );
     }
@@ -624,9 +621,8 @@ mod tests {
         let result =
             with_current_token(token.clone(), async { logic.is_safe("default").await }).await;
 
-        assert_eq!(
-            result.unwrap(),
-            false,
+        assert!(
+            !result.unwrap(),
             "删除 safe_services 标记后 is_safe 应返回 false"
         );
     }
@@ -643,7 +639,7 @@ mod tests {
             "未登录时 is_safe 应返回 Ok(false) 而非 Err，实际: {:?}",
             result
         );
-        assert_eq!(result.unwrap(), false, "未登录时 is_safe 应返回 Ok(false)");
+        assert!(!result.unwrap(), "未登录时 is_safe 应返回 Ok(false)");
     }
 
     /// is_safe("") 返回 Err(InvalidParam) — service 参数不能为空。
