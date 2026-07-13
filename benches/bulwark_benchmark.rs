@@ -35,7 +35,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use bulwark::prelude::*;
-use bulwark::stp::with_current_token;
+use bulwark::stp::{with_current_token, LoginParams};
 
 // ============================================================================
 // MockDao: HashMap + Instant 模拟 TTL（复用 stp/tests.rs 的 mock 模式）
@@ -175,14 +175,21 @@ fn make_logic() -> BulwarkLogicDefault {
 ///
 /// 依据 FRD §7.1 BLK-001：5000 TPS 并发登录，P99 ≤ 500ms。
 ///
-/// 流程：`BulwarkLogicDefault::login("bench-user")` 完整调用
+/// 流程：`BulwarkLogicDefault::login("bench-user", &LoginParams::default())` 完整调用
 /// （生成 token + 创建 Token-Session + 创建 Account-Session）。
 fn bench_login_flow(c: &mut Criterion) {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let logic = make_logic();
 
     c.bench_function("login_flow", |b| {
-        b.iter(|| rt.block_on(async { logic.login("bench-user").await.unwrap() }));
+        b.iter(|| {
+            rt.block_on(async {
+                logic
+                    .login("bench-user", &LoginParams::default())
+                    .await
+                    .unwrap()
+            })
+        });
     });
 }
 
@@ -261,7 +268,12 @@ fn bench_permission_check(c: &mut Criterion) {
     let logic = Arc::new(make_logic());
 
     // 预登录获取 token（模拟已登录用户）
-    let token = rt.block_on(async { logic.login("bench-user").await.unwrap() });
+    let token = rt.block_on(async {
+        logic
+            .login("bench-user", &LoginParams::default())
+            .await
+            .unwrap()
+    });
 
     c.bench_function("permission_check", |b| {
         b.iter(|| {
@@ -314,7 +326,14 @@ fn bench_oxcache_backend_switch(c: &mut Criterion) {
         BenchmarkId::new("backend", "memory"),
         &logic_memory,
         |b, logic| {
-            b.iter(|| rt.block_on(async { logic.login("bench-user").await.unwrap() }));
+            b.iter(|| {
+                rt.block_on(async {
+                    logic
+                        .login("bench-user", &LoginParams::default())
+                        .await
+                        .unwrap()
+                })
+            });
         },
     );
 
@@ -333,7 +352,14 @@ fn bench_oxcache_backend_switch(c: &mut Criterion) {
             BenchmarkId::new("backend", "redis_mock"),
             &logic_redis,
             |b, logic| {
-                b.iter(|| rt.block_on(async { logic.login("bench-user").await.unwrap() }));
+                b.iter(|| {
+                    rt.block_on(async {
+                        logic
+                            .login("bench-user", &LoginParams::default())
+                            .await
+                            .unwrap()
+                    })
+                });
             },
         );
     } else {

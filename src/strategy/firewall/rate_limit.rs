@@ -35,7 +35,7 @@
 //!
 //! ## 为何不使用原子计数器（与 BruteForce 对比）
 //!
-//! `BruteForceStrategy` 用 [`limiteron::distributed::DistributedLimiter::incr_with_ttl`]
+//! `BruteForceStrategy` 用 [`limiteron::limiters::DistributedLimiter`] 的 `incr_with_ttl`
 //! 原子递增计数器，无 TOCTOU 风险。但 `incr_with_ttl` 是**固定窗口**计数器，
 //! 无法满足滑动窗口语义（每次请求需过滤已过期的时间戳）。
 //!

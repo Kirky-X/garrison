@@ -207,10 +207,10 @@ fn init_manager(permissions: &[(&str, &[&str])], roles: &[(&str, &[&str])]) {
     let config = Arc::new(config);
     let mut interface = MockInterface::new();
     for (id, perms) in permissions {
-        interface = interface.with_permission(*id, perms);
+        interface = interface.with_permission(id, perms);
     }
     for (id, roles) in roles {
-        interface = interface.with_role(*id, roles);
+        interface = interface.with_role(id, roles);
     }
     let interface: Arc<dyn BulwarkInterface> = Arc::new(interface);
     BulwarkManager::init(dao, config, interface).unwrap();

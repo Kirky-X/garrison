@@ -11,10 +11,10 @@
 //!
 //! | 适配器 | 实现 trait | 用途 |
 //! |--------|-----------|------|
-//! | [`BulwarkDaoStorage`] | `Storage` | KV get/set/delete |
-//! | [`BulwarkDaoQuotaStorage`] | `QuotaStorage` | 原子配额消费（SMS 限速） |
-//! | [`BulwarkDaoDistributedLimiter`] | `DistributedLimiter` | 原子计数 + TTL（滑动窗口） |
-//! | [`BulwarkDaoBanStorage`] | `BanStorage` | 封禁记录管理（暴力破解防护） |
+//! | [`BulwarkDaoStorage`](crate::limiteron::BulwarkDaoStorage) | `Storage` | KV get/set/delete |
+//! | [`BulwarkDaoQuotaStorage`](crate::limiteron::BulwarkDaoQuotaStorage) | `QuotaStorage` | 原子配额消费（SMS 限速） |
+//! | [`BulwarkDaoDistributedLimiter`](crate::limiteron::BulwarkDaoDistributedLimiter) | `DistributedLimiter` | 原子计数 + TTL（滑动窗口） |
+//! | [`BulwarkDaoBanStorage`](crate::limiteron::BulwarkDaoBanStorage) | `BanStorage` | 封禁记录管理（暴力破解防护） |
 //!
 //! # 已知限制
 //!
