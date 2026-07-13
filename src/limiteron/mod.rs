@@ -288,6 +288,60 @@ impl BulwarkDaoDistributedLimiter {
     pub fn new(dao: Arc<dyn BulwarkDao>) -> Self {
         Self { dao }
     }
+
+    /// 原子 check-and-increment（Lua 脚本实现）。
+    ///
+    /// 原子递增计数器并检查是否超过阈值：
+    /// 1. 调用 `eval_lua` 执行 INCR + EXPIRE Lua 脚本（Redis 后端原子操作）
+    /// 2. 若返回计数 > 阈值，拒绝（计数已递增，TTL 后自动重置）
+    /// 3. 若 `eval_lua` 返回 `NotImplemented`（非 Redis 后端），降级到 `incr` + 阈值判断
+    ///
+    /// # 参数
+    /// - `key`: 计数器键。
+    /// - `threshold`: 允许的最大计数（超过则拒绝）。
+    /// - `ttl`: 计数器窗口 TTL（首次创建时设置）。
+    ///
+    /// # 返回
+    /// - `Ok(true)`: 允许（计数 <= 阈值）。
+    /// - `Ok(false)`: 拒绝（计数 > 阈值）。
+    pub async fn atomic_check_and_incr(
+        &self,
+        key: &str,
+        threshold: u64,
+        ttl: Duration,
+    ) -> Result<bool, LimiteronError> {
+        const LUA_SCRIPT: &str = "local c=redis.call('INCR',KEYS[1]); if c==1 then redis.call('EXPIRE',KEYS[1],ARGV[2]) end; return c";
+        let keys = vec![key.to_string()];
+        let args = vec![threshold.to_string(), ttl.as_secs().to_string()];
+
+        match self.dao.eval_lua(LUA_SCRIPT, keys, args).await {
+            Ok(values) => {
+                let count: u64 = values
+                    .first()
+                    .ok_or_else(|| {
+                        map_to_limiter_err(BulwarkError::Dao("eval_lua 返回空结果".to_string()))
+                    })?
+                    .parse()
+                    .map_err(|e| {
+                        map_to_limiter_err(BulwarkError::Dao(format!(
+                            "eval_lua 返回值解析失败: {}",
+                            e
+                        )))
+                    })?;
+                Ok(count <= threshold)
+            },
+            Err(BulwarkError::NotImplemented(_)) => {
+                // 降级：非 Redis 后端，用 incr + 阈值判断（进程内原子）
+                let count = self
+                    .dao
+                    .incr(key, ttl.as_secs())
+                    .await
+                    .map_err(map_to_limiter_err)?;
+                Ok(count <= threshold)
+            },
+            Err(e) => Err(map_to_limiter_err(e)),
+        }
+    }
 }
 
 #[async_trait]
@@ -978,6 +1032,121 @@ mod tests {
             err_msg.contains("parse 失败"),
             "错误消息应包含 'parse 失败'，实际: {}",
             err_msg
+        );
+    }
+
+    // ------------------------------------------------------------------------
+    // T010: Redis Lua 脚本原子化限速（check-and-increment）测试
+    // ------------------------------------------------------------------------
+
+    /// T010: 并发 100 次 atomic_check_and_incr（阈值 10）结果精确为 10 通过 + 90 拒绝。
+    ///
+    /// 验证 BulwarkDaoDistributedLimiter::atomic_check_and_incr 通过 eval_lua 实现
+    /// 原子 check-and-increment：100 个并发任务同时调用，仅前 10 个通过（count <= 10），
+    /// 后 90 个被拒绝（count > 10）。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn t010_atomic_check_and_incr_concurrent_threshold() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        let dao = Arc::new(MockDao::new());
+        let limiter = Arc::new(BulwarkDaoDistributedLimiter::new(
+            dao as Arc<dyn BulwarkDao>,
+        ));
+
+        let key = "rate_limit:t010:concurrent";
+        let threshold = 10u64;
+        let ttl = Duration::from_secs(60);
+
+        let allowed = Arc::new(AtomicU64::new(0));
+        let rejected = Arc::new(AtomicU64::new(0));
+
+        let mut handles = Vec::new();
+        for _ in 0..100 {
+            let l = limiter.clone();
+            let a = allowed.clone();
+            let r = rejected.clone();
+            handles.push(tokio::spawn(async move {
+                let ok = l
+                    .atomic_check_and_incr(key, threshold, ttl)
+                    .await
+                    .expect("atomic_check_and_incr 不应失败");
+                if ok {
+                    a.fetch_add(1, Ordering::SeqCst);
+                } else {
+                    r.fetch_add(1, Ordering::SeqCst);
+                }
+            }));
+        }
+
+        for handle in handles {
+            handle.await.expect("task panicked");
+        }
+
+        assert_eq!(
+            allowed.load(Ordering::SeqCst),
+            10,
+            "应精确 10 次通过，实际: {}",
+            allowed.load(Ordering::SeqCst)
+        );
+        assert_eq!(
+            rejected.load(Ordering::SeqCst),
+            90,
+            "应精确 90 次拒绝，实际: {}",
+            rejected.load(Ordering::SeqCst)
+        );
+    }
+
+    /// T010: 单线程连续 5 次 atomic_check_and_incr（阈值 3）— 前 3 通过，后 2 拒绝。
+    #[tokio::test]
+    async fn t010_atomic_check_and_incr_sequential_threshold() {
+        let dao = Arc::new(MockDao::new());
+        let limiter = BulwarkDaoDistributedLimiter::new(dao as Arc<dyn BulwarkDao>);
+
+        let key = "rate_limit:t010:seq";
+        let threshold = 3u64;
+        let ttl = Duration::from_secs(60);
+
+        assert!(limiter
+            .atomic_check_and_incr(key, threshold, ttl)
+            .await
+            .unwrap());
+        assert!(limiter
+            .atomic_check_and_incr(key, threshold, ttl)
+            .await
+            .unwrap());
+        assert!(limiter
+            .atomic_check_and_incr(key, threshold, ttl)
+            .await
+            .unwrap());
+        assert!(!limiter
+            .atomic_check_and_incr(key, threshold, ttl)
+            .await
+            .unwrap());
+        assert!(!limiter
+            .atomic_check_and_incr(key, threshold, ttl)
+            .await
+            .unwrap());
+    }
+
+    /// T010: eval_lua 默认实现返回 NotImplemented（BulwarkDaoOxcache 不支持 Lua）。
+    ///
+    /// 验证 trait 默认实现：未重写 eval_lua 的实现者调用时返回 NotImplemented。
+    #[tokio::test]
+    async fn t010_eval_lua_default_returns_not_implemented() {
+        use crate::dao::tests::MinimalDao;
+
+        let dao = MinimalDao::new();
+        let result = dao
+            .eval_lua(
+                "return 'test'",
+                vec!["k1".to_string()],
+                vec!["a1".to_string()],
+            )
+            .await;
+        assert!(
+            matches!(result, Err(BulwarkError::NotImplemented(_))),
+            "eval_lua 默认实现应返回 NotImplemented，实际: {:?}",
+            result
         );
     }
 }

@@ -290,6 +290,39 @@ pub trait BulwarkDao: Send + Sync {
             std::any::type_name::<Self>()
         )))
     }
+
+    /// 执行 Redis Lua 脚本（原子操作）。
+    ///
+    /// 用于实现原子 check-and-increment 等复合操作，消除多步操作间的竞态窗口。
+    /// 典型场景：限速计数器（INCR + EXPIRE 原子化）、一次性 token 消费（GET + DEL 原子化）。
+    ///
+    /// # 参数
+    /// - `script`: Lua 脚本字符串（Redis EVAL 语法）。
+    /// - `keys`: KEYS 数组（脚本中通过 `KEYS[1]`、`KEYS[2]`... 访问）。
+    /// - `args`: ARGV 数组（脚本中通过 `ARGV[1]`、`ARGV[2]`... 访问）。
+    ///
+    /// # 返回
+    /// - `Ok(Vec<String>)`: 脚本返回值（每个元素对应一个返回值）。
+    ///
+    /// # 默认实现
+    /// 返回 `BulwarkError::NotImplemented`（仅 Redis 后端支持 Lua 脚本）。
+    /// `MockDao` 重写为内存模拟（识别 INCR + EXPIRE 模式，委托 `incr` 实现）。
+    /// `BulwarkDaoOxcache` 使用默认实现（oxcache 未暴露 Redis Lua API）。
+    ///
+    /// # 降级策略
+    /// 调用方应在 `eval_lua` 返回 `NotImplemented` 时降级到非原子路径
+    /// （如 `incr` + 阈值判断，进程内原子但跨进程非原子）。
+    async fn eval_lua(
+        &self,
+        _script: &str,
+        _keys: Vec<String>,
+        _args: Vec<String>,
+    ) -> BulwarkResult<Vec<String>> {
+        Err(BulwarkError::NotImplemented(format!(
+            "eval_lua 未实现：{} 后端不支持 Lua 脚本（仅 Redis 后端支持）",
+            std::any::type_name::<Self>()
+        )))
+    }
 }
 
 // ============================================================================
@@ -1780,12 +1813,13 @@ pub mod tests {
     /// - `get_timeout` 默认返回 `NotImplemented`
     /// - `keys` 默认返回 `NotImplemented`
     /// - `rename` 默认 `get → set_permanent → delete`
-    struct MinimalDao {
+    pub struct MinimalDao {
         store: Mutex<HashMap<String, String>>,
     }
 
     impl MinimalDao {
-        fn new() -> Self {
+        /// 创建空的 MinimalDao 实例。
+        pub fn new() -> Self {
             Self {
                 store: Mutex::new(HashMap::new()),
             }

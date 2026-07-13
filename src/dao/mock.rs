@@ -206,6 +206,40 @@ impl BulwarkDao for MockDao {
             Ok(new_val)
         }
     }
+
+    /// eval_lua 内存模拟实现（识别 INCR + EXPIRE 模式，委托 incr）。
+    ///
+    /// MockDao 不支持真正的 Lua 脚本，但 `incr` 已用 Mutex 保证进程内原子性。
+    /// 识别脚本中的 INCR + EXPIRE 模式后，提取 KEYS[1] 和 ARGV[2]（TTL），
+    /// 委托 `self.incr` 实现，返回 `vec![count.to_string()]`。
+    async fn eval_lua(
+        &self,
+        script: &str,
+        keys: Vec<String>,
+        args: Vec<String>,
+    ) -> BulwarkResult<Vec<String>> {
+        if script.contains("INCR") && script.contains("EXPIRE") {
+            let key = keys
+                .first()
+                .ok_or_else(|| BulwarkError::InvalidParam("eval_lua 缺少 KEYS[1]".to_string()))?;
+            // ARGV[2] 是 TTL（ARGV[1] 是 threshold，由调用方处理）
+            let ttl: u64 = args
+                .get(1)
+                .ok_or_else(|| {
+                    BulwarkError::InvalidParam("eval_lua 缺少 ARGV[2] (TTL)".to_string())
+                })?
+                .parse()
+                .map_err(|e| {
+                    BulwarkError::InvalidParam(format!("eval_lua ARGV[2] parse 失败: {}", e))
+                })?;
+            let count = self.incr(key, ttl).await?;
+            return Ok(vec![count.to_string()]);
+        }
+        Err(BulwarkError::NotImplemented(format!(
+            "eval_lua 不支持的脚本模式: {}（MockDao 仅支持 INCR+EXPIRE）",
+            script
+        )))
+    }
 }
 
 // ------------------------------------------------------------------------
