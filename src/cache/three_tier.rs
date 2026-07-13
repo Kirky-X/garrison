@@ -28,9 +28,11 @@ use crate::constants::DaoKeyPrefix;
 use crate::dao::BulwarkDao;
 use crate::error::{BulwarkError, BulwarkResult};
 use crate::strategy::BulwarkPermissionStrategy;
+use dashmap::DashMap;
 use oxcache::Cache;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::RwLock;
 
 /// 三层缓存服务，提供权限/角色/用户信息的加速查询。
 ///
@@ -47,6 +49,12 @@ pub struct UserCacheService {
     l1_ttl_secs: u64,
     /// L2 缓存 TTL（秒），写入 DAO 时使用
     l2_ttl_secs: u64,
+    /// Per-key singleflight 锁，防止缓存击穿。
+    ///
+    /// 同一 key 并发请求时，仅一个任务执行 L2/L3 加载，其余任务等待 write lock 释放后
+    /// 通过 double-check 从 L1 读取（已被首个任务回填）。
+    /// 不同 key 的锁互相独立，不会跨 key 阻塞。
+    singleflight_locks: DashMap<String, Arc<RwLock<()>>>,
 }
 
 impl UserCacheService {
@@ -79,7 +87,19 @@ impl UserCacheService {
             interface,
             l1_ttl_secs,
             l2_ttl_secs,
+            singleflight_locks: DashMap::new(),
         })
+    }
+
+    /// 获取（或创建）指定 key 的 singleflight 锁。
+    ///
+    /// 返回 `Arc<RwLock<()>>` 的 clone，调用方在 await write() 前需 drop entry guard。
+    /// 不同 key 的锁互相独立，不会跨 key 阻塞。
+    fn singleflight_lock(&self, key: &str) -> Arc<RwLock<()>> {
+        self.singleflight_locks
+            .entry(key.to_string())
+            .or_insert_with(|| Arc::new(RwLock::new(())))
+            .clone()
     }
 
     /// 返回 L1 缓存 TTL（秒）。
@@ -111,7 +131,23 @@ impl UserCacheService {
     pub async fn get_permissions(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
         let key = DaoKeyPrefix::PermissionCache.build_key(login_id);
 
-        // L1 check
+        // L1 check（无锁快路径）
+        if let Some(cached) = self
+            .l1
+            .get(&key)
+            .await
+            .map_err(|e| BulwarkError::Internal(format!("oxcache L1 get 失败: {}", e)))?
+        {
+            let perms: Vec<String> = serde_json::from_str(&cached)
+                .map_err(|e| BulwarkError::Internal(format!("L1 权限缓存反序列化失败: {}", e)))?;
+            return Ok(perms);
+        }
+
+        // Singleflight: per-key write lock，防止并发重复加载（缓存击穿）
+        let lock = self.singleflight_lock(&key);
+        let _guard = lock.write().await;
+
+        // Double-check L1（在等待 write lock 期间，可能已被其他任务加载并回填 L1）
         if let Some(cached) = self
             .l1
             .get(&key)
@@ -174,7 +210,23 @@ impl UserCacheService {
     pub async fn get_roles(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
         let key = DaoKeyPrefix::RoleCache.build_key(login_id);
 
-        // L1 check
+        // L1 check（无锁快路径）
+        if let Some(cached) = self
+            .l1
+            .get(&key)
+            .await
+            .map_err(|e| BulwarkError::Internal(format!("oxcache L1 get 失败: {}", e)))?
+        {
+            let roles: Vec<String> = serde_json::from_str(&cached)
+                .map_err(|e| BulwarkError::Internal(format!("L1 角色缓存反序列化失败: {}", e)))?;
+            return Ok(roles);
+        }
+
+        // Singleflight: per-key write lock，防止并发重复加载（缓存击穿）
+        let lock = self.singleflight_lock(&key);
+        let _guard = lock.write().await;
+
+        // Double-check L1
         if let Some(cached) = self
             .l1
             .get(&key)
@@ -240,7 +292,21 @@ impl UserCacheService {
     pub async fn get_user(&self, login_id: &str) -> BulwarkResult<Option<String>> {
         let key = DaoKeyPrefix::UserCache.build_key(login_id);
 
-        // L1 check
+        // L1 check（无锁快路径）
+        if let Some(cached) = self
+            .l1
+            .get(&key)
+            .await
+            .map_err(|e| BulwarkError::Internal(format!("oxcache L1 get 失败: {}", e)))?
+        {
+            return Ok(Some(cached));
+        }
+
+        // Singleflight: per-key write lock，防止并发重复加载（缓存击穿）
+        let lock = self.singleflight_lock(&key);
+        let _guard = lock.write().await;
+
+        // Double-check L1
         if let Some(cached) = self
             .l1
             .get(&key)
@@ -992,5 +1058,176 @@ mod tests {
         config.l1_cache_capacity = 0;
         let result = config.validate();
         assert!(result.is_err(), "l1_cache_capacity=0 应校验失败");
+    }
+
+    // ------------------------------------------------------------------------
+    // T009: singleflight per-key RwLock 防击穿测试
+    // ------------------------------------------------------------------------
+
+    /// T13: singleflight 防击穿 — 并发 10 次同一 key 请求只触发 1 次 L3 加载。
+    ///
+    /// 验证 UserCacheService 的 per-key RwLock singleflight 机制：
+    /// 10 个并发任务同时请求同一 login_id 的权限列表时，
+    /// L3 interface.get_permission_list 应只被调用一次（而非 10 次）。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn singleflight_prevents_cache_stampede() {
+        let dao = Arc::new(CountingMockDao::new());
+        let interface = Arc::new(CountingMockInterface::new());
+        interface.set_permissions("13001", vec!["perm:sf".to_string()]);
+
+        let service = Arc::new(
+            UserCacheService::new(
+                dao.clone() as Arc<dyn BulwarkDao>,
+                interface.clone() as Arc<dyn BulwarkPermissionStrategy>,
+                30,
+                300,
+                10_000,
+            )
+            .expect("UserCacheService::new 应成功"),
+        );
+
+        // 并发 10 个任务同时调用 get_permissions
+        let mut handles = Vec::new();
+        for _ in 0..10 {
+            let s = service.clone();
+            handles.push(tokio::spawn(
+                async move { s.get_permissions("13001").await },
+            ));
+        }
+
+        for handle in handles {
+            let perms = handle.await.expect("task panicked").expect("应成功");
+            assert_eq!(perms, vec!["perm:sf".to_string()]);
+        }
+
+        // 核心断言：singleflight 应保证 L3 只被调用一次
+        assert_eq!(
+            interface.perm_count(),
+            1,
+            "singleflight 应保证并发请求同一 key 时只触发一次 L3 加载，实际: {}",
+            interface.perm_count()
+        );
+    }
+
+    /// T14: singleflight 不同 key 不互相阻塞。
+    ///
+    /// 验证 per-key 锁不会阻塞不同 key 的并发请求：
+    /// 同时请求 10 个不同 login_id，每个 key 应独立加载，perm_count 应为 10。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn singleflight_different_keys_no_blocking() {
+        let dao = Arc::new(CountingMockDao::new());
+        let interface = Arc::new(CountingMockInterface::new());
+
+        // 为 10 个不同 login_id 设置权限
+        for i in 0..10 {
+            let login_id = format!("1400{}", i);
+            interface.set_permissions(&login_id, vec![format!("perm:{}", i)]);
+        }
+
+        let service = Arc::new(
+            UserCacheService::new(
+                dao.clone() as Arc<dyn BulwarkDao>,
+                interface.clone() as Arc<dyn BulwarkPermissionStrategy>,
+                30,
+                300,
+                10_000,
+            )
+            .expect("UserCacheService::new 应成功"),
+        );
+
+        // 并发 10 个任务请求不同 login_id
+        let mut handles = Vec::new();
+        for i in 0..10u32 {
+            let s = service.clone();
+            handles.push(tokio::spawn(async move {
+                let login_id = format!("1400{}", i);
+                s.get_permissions(&login_id).await
+            }));
+        }
+
+        for (i, handle) in handles.into_iter().enumerate() {
+            let perms = handle.await.expect("task panicked").expect("应成功");
+            assert_eq!(perms, vec![format!("perm:{}", i)]);
+        }
+
+        // 10 个不同 key 应触发 10 次 L3 加载（per-key 锁不互相阻塞）
+        assert_eq!(
+            interface.perm_count(),
+            10,
+            "不同 key 应独立加载，L3 应被调用 10 次，实际: {}",
+            interface.perm_count()
+        );
+    }
+
+    /// T15: singleflight 角色列表也防击穿（get_roles 复用同一机制）。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn singleflight_protects_get_roles() {
+        let dao = Arc::new(CountingMockDao::new());
+        let interface = Arc::new(CountingMockInterface::new());
+        interface.set_roles("15001", vec!["admin".to_string()]);
+
+        let service = Arc::new(
+            UserCacheService::new(
+                dao.clone() as Arc<dyn BulwarkDao>,
+                interface.clone() as Arc<dyn BulwarkPermissionStrategy>,
+                30,
+                300,
+                10_000,
+            )
+            .expect("UserCacheService::new 应成功"),
+        );
+
+        let mut handles = Vec::new();
+        for _ in 0..10 {
+            let s = service.clone();
+            handles.push(tokio::spawn(async move { s.get_roles("15001").await }));
+        }
+
+        for handle in handles {
+            let roles = handle.await.expect("task panicked").expect("应成功");
+            assert_eq!(roles, vec!["admin".to_string()]);
+        }
+
+        assert_eq!(
+            interface.role_count(),
+            1,
+            "singleflight 应保证 get_roles 并发时只触发一次 L3 加载"
+        );
+    }
+
+    /// T16: singleflight 用户信息也防击穿（get_user 复用同一机制）。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn singleflight_protects_get_user() {
+        let dao = Arc::new(CountingMockDao::new());
+        let interface = Arc::new(CountingMockInterface::new());
+        interface.set_user_info("16001", Some(r#"{"id":16001}"#.to_string()));
+
+        let service = Arc::new(
+            UserCacheService::new(
+                dao.clone() as Arc<dyn BulwarkDao>,
+                interface.clone() as Arc<dyn BulwarkPermissionStrategy>,
+                30,
+                300,
+                10_000,
+            )
+            .expect("UserCacheService::new 应成功"),
+        );
+
+        let mut handles = Vec::new();
+        for _ in 0..10 {
+            let s = service.clone();
+            handles.push(tokio::spawn(async move { s.get_user("16001").await }));
+        }
+
+        for handle in handles {
+            let user = handle.await.expect("task panicked").expect("应成功");
+            assert_eq!(user, Some(r#"{"id":16001}"#.to_string()));
+        }
+
+        assert_eq!(
+            interface.user_count(),
+            1,
+            "singleflight 应保证 get_user 并发时只触发一次 L3 加载"
+        );
     }
 }
