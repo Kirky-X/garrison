@@ -311,6 +311,13 @@ pub mod protocol;
 #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
 pub mod backend;
 
+/// ABAC 策略引擎模块，提供 AbacEngine（基于 Cedar 策略语言）。
+///
+/// 启用 `abac` feature 时编译，依赖 `cedar-policy` crate。
+/// ABAC 作为 RBAC 的增量校验层，不替换 RBAC。RBAC 通过后再检查 ABAC。
+#[cfg(feature = "abac")]
+pub mod abac;
+
 /// Auth Server 模块，提供 BulwarkAuthServer（双端口 axum 服务器）。
 ///
 /// 启用 `auth-server` feature 时编译。
