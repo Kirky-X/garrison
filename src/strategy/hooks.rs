@@ -399,6 +399,7 @@ impl BulwarkFirewallCheckHook for BulwarkFirewallCheckHookDefault {
                     lm.broadcast(&BulwarkEvent::AccountLocked {
                         login_id: ctx.login_id.clone(),
                         reason: format!("brute_force: {} failures in 1h", count),
+                        request_context: None,
                     })
                     .await;
                 }
@@ -434,6 +435,7 @@ impl BulwarkFirewallCheckHook for BulwarkFirewallCheckHookDefault {
                 lm.broadcast(&BulwarkEvent::AccountLocked {
                     login_id: ctx.login_id.clone(),
                     reason: reason.clone(),
+                    request_context: None,
                 })
                 .await;
             }

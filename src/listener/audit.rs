@@ -109,6 +109,82 @@ fn json_metadata(pairs: &[(&str, &str)]) -> String {
     serde_json::Value::Object(map).to_string()
 }
 
+/// 从 `BulwarkEvent` 提取 `request_context` 引用（T004 辅助函数）。
+///
+/// 遍历所有变体，返回 `Option<&RequestContext>`。
+/// `None` 表示事件未携带请求上下文（向后兼容）。
+#[cfg(feature = "db-sqlite")]
+fn extract_request_context(event: &BulwarkEvent) -> Option<&super::RequestContext> {
+    match event {
+        BulwarkEvent::Login {
+            request_context, ..
+        }
+        | BulwarkEvent::Logout {
+            request_context, ..
+        }
+        | BulwarkEvent::Kickout {
+            request_context, ..
+        }
+        | BulwarkEvent::PermissionCheck {
+            request_context, ..
+        }
+        | BulwarkEvent::RoleCheck {
+            request_context, ..
+        }
+        | BulwarkEvent::TokenExpired {
+            request_context, ..
+        }
+        | BulwarkEvent::LoginFailure {
+            request_context, ..
+        }
+        | BulwarkEvent::TokenRefresh {
+            request_context, ..
+        }
+        | BulwarkEvent::RevokeToken {
+            request_context, ..
+        }
+        | BulwarkEvent::SessionTimeout {
+            request_context, ..
+        }
+        | BulwarkEvent::AccountLocked {
+            request_context, ..
+        }
+        | BulwarkEvent::FirewallBlock {
+            request_context, ..
+        }
+        | BulwarkEvent::TokenRotate {
+            request_context, ..
+        }
+        | BulwarkEvent::TempCredentialConsumed {
+            request_context, ..
+        }
+        | BulwarkEvent::SocialLogin {
+            request_context, ..
+        }
+        | BulwarkEvent::TenantSwitch {
+            request_context, ..
+        }
+        | BulwarkEvent::DeviceBlock {
+            request_context, ..
+        }
+        | BulwarkEvent::DeviceUnblock {
+            request_context, ..
+        }
+        | BulwarkEvent::ConfigReload {
+            request_context, ..
+        }
+        | BulwarkEvent::Replaced {
+            request_context, ..
+        } => request_context.as_ref(),
+        // anomalous-detector-dual feature 关闭时，无 AnomalousLoginDetected 变体，
+        // 上述 match 已穷尽所有变体，此分支不可达。
+        #[cfg(feature = "anomalous-detector-dual")]
+        BulwarkEvent::AnomalousLoginDetected {
+            request_context, ..
+        } => request_context.as_ref(),
+    }
+}
+
 /// `audit_logs` 表行结构（T072 Green）。
 ///
 /// 对应 `migrations/sqlite/core/004_audit_logs.sql` 的表定义，
@@ -227,6 +303,7 @@ impl AuditLogListener {
                 login_id,
                 token,
                 device,
+                ..
             } => AuditEntry {
                 tenant_id,
                 event_type: "login".to_string(),
@@ -238,7 +315,9 @@ impl AuditLogListener {
                 success: true,
                 created_at: now,
             },
-            BulwarkEvent::Logout { login_id, token } => AuditEntry {
+            BulwarkEvent::Logout {
+                login_id, token, ..
+            } => AuditEntry {
                 tenant_id,
                 event_type: "logout".to_string(),
                 login_id: Some(login_id.clone()),
@@ -253,6 +332,7 @@ impl AuditLogListener {
                 login_id,
                 token,
                 reason,
+                ..
             } => AuditEntry {
                 tenant_id,
                 event_type: "kickout".to_string(),
@@ -267,6 +347,7 @@ impl AuditLogListener {
             BulwarkEvent::PermissionCheck {
                 login_id,
                 permission,
+                ..
             } => AuditEntry {
                 tenant_id,
                 event_type: "permission_check".to_string(),
@@ -278,7 +359,7 @@ impl AuditLogListener {
                 success: false,
                 created_at: now,
             },
-            BulwarkEvent::RoleCheck { login_id, role } => AuditEntry {
+            BulwarkEvent::RoleCheck { login_id, role, .. } => AuditEntry {
                 tenant_id,
                 event_type: "role_check".to_string(),
                 login_id: Some(login_id.clone()),
@@ -289,7 +370,7 @@ impl AuditLogListener {
                 success: false,
                 created_at: now,
             },
-            BulwarkEvent::TokenExpired { token } => AuditEntry {
+            BulwarkEvent::TokenExpired { token, .. } => AuditEntry {
                 tenant_id,
                 event_type: "token_expired".to_string(),
                 login_id: None,
@@ -300,7 +381,9 @@ impl AuditLogListener {
                 success: false,
                 created_at: now,
             },
-            BulwarkEvent::LoginFailure { login_id, reason } => AuditEntry {
+            BulwarkEvent::LoginFailure {
+                login_id, reason, ..
+            } => AuditEntry {
                 tenant_id,
                 event_type: "login_failure".to_string(),
                 login_id: Some(login_id.clone()),
@@ -315,6 +398,7 @@ impl AuditLogListener {
                 login_id,
                 old_token,
                 new_token,
+                ..
             } => AuditEntry {
                 tenant_id,
                 event_type: "token_refresh".to_string(),
@@ -326,7 +410,7 @@ impl AuditLogListener {
                 success: true,
                 created_at: now,
             },
-            BulwarkEvent::RevokeToken { token } => AuditEntry {
+            BulwarkEvent::RevokeToken { token, .. } => AuditEntry {
                 tenant_id,
                 event_type: "revoke_token".to_string(),
                 login_id: None,
@@ -337,7 +421,9 @@ impl AuditLogListener {
                 success: true,
                 created_at: now,
             },
-            BulwarkEvent::SessionTimeout { login_id, token } => AuditEntry {
+            BulwarkEvent::SessionTimeout {
+                login_id, token, ..
+            } => AuditEntry {
                 tenant_id,
                 event_type: "session_timeout".to_string(),
                 login_id: Some(login_id.clone()),
@@ -348,7 +434,9 @@ impl AuditLogListener {
                 success: false,
                 created_at: now,
             },
-            BulwarkEvent::AccountLocked { login_id, reason } => AuditEntry {
+            BulwarkEvent::AccountLocked {
+                login_id, reason, ..
+            } => AuditEntry {
                 tenant_id,
                 event_type: "account_locked".to_string(),
                 login_id: Some(login_id.clone()),
@@ -359,7 +447,9 @@ impl AuditLogListener {
                 success: false,
                 created_at: now,
             },
-            BulwarkEvent::FirewallBlock { login_id, reason } => AuditEntry {
+            BulwarkEvent::FirewallBlock {
+                login_id, reason, ..
+            } => AuditEntry {
                 tenant_id,
                 event_type: "firewall_block".to_string(),
                 login_id: Some(login_id.clone()),
@@ -370,7 +460,9 @@ impl AuditLogListener {
                 success: false,
                 created_at: now,
             },
-            BulwarkEvent::TokenRotate { old_key, new_key } => AuditEntry {
+            BulwarkEvent::TokenRotate {
+                old_key, new_key, ..
+            } => AuditEntry {
                 tenant_id,
                 event_type: "token_rotate".to_string(),
                 login_id: None,
@@ -381,7 +473,7 @@ impl AuditLogListener {
                 success: true,
                 created_at: now,
             },
-            BulwarkEvent::TempCredentialConsumed { key, value } => AuditEntry {
+            BulwarkEvent::TempCredentialConsumed { key, value, .. } => AuditEntry {
                 tenant_id,
                 event_type: "temp_credential_consumed".to_string(),
                 login_id: None,
@@ -396,6 +488,7 @@ impl AuditLogListener {
                 provider,
                 user_id,
                 login_id,
+                ..
             } => AuditEntry {
                 tenant_id,
                 event_type: "social_login".to_string(),
@@ -414,6 +507,7 @@ impl AuditLogListener {
                 login_id,
                 from_tenant,
                 to_tenant,
+                ..
             } => AuditEntry {
                 tenant_id,
                 event_type: "tenant_switch".to_string(),
@@ -428,7 +522,9 @@ impl AuditLogListener {
                 success: true,
                 created_at: now,
             },
-            BulwarkEvent::DeviceBlock { login_id, device } => AuditEntry {
+            BulwarkEvent::DeviceBlock {
+                login_id, device, ..
+            } => AuditEntry {
                 tenant_id,
                 event_type: "device_block".to_string(),
                 login_id: Some(login_id.clone()),
@@ -439,7 +535,9 @@ impl AuditLogListener {
                 success: false,
                 created_at: now,
             },
-            BulwarkEvent::DeviceUnblock { login_id, device } => AuditEntry {
+            BulwarkEvent::DeviceUnblock {
+                login_id, device, ..
+            } => AuditEntry {
                 tenant_id,
                 event_type: "device_unblock".to_string(),
                 login_id: Some(login_id.clone()),
@@ -450,7 +548,7 @@ impl AuditLogListener {
                 success: true,
                 created_at: now,
             },
-            BulwarkEvent::ConfigReload { config_version } => AuditEntry {
+            BulwarkEvent::ConfigReload { config_version, .. } => AuditEntry {
                 tenant_id,
                 event_type: "config_reload".to_string(),
                 login_id: None,
@@ -484,6 +582,7 @@ impl AuditLogListener {
             reason,
             detail,
             timestamp: _,
+            ..
         } = event
         {
             entry = AuditEntry {
@@ -506,6 +605,12 @@ impl AuditLogListener {
         }
         // 对 metadata 进行字段掩码（如 password → ***）
         entry.metadata = entry.metadata.map(|m| self.mask_metadata(&m));
+        // T004: 从 event.request_context 提取 ip/user_agent 填充 audit entry
+        // 统一在 match 之后处理，避免每个 arm 重复提取逻辑
+        if let Some(ctx) = extract_request_context(event) {
+            entry.ip = ctx.ip.clone();
+            entry.user_agent = ctx.user_agent.clone();
+        }
         Ok(entry)
     }
 
@@ -894,7 +999,7 @@ mod tests {
 mod db_sqlite_tests {
     use super::{AuditConfig, AuditEntry, AuditLogListener, AuditQuery};
     use crate::dao::{init_dbnexus, BulwarkMigration};
-    use crate::listener::{BulwarkEvent, BulwarkListener};
+    use crate::listener::{BulwarkEvent, BulwarkListener, RequestContext};
     use dbnexus::DbPool;
     use sea_orm::{ConnectionTrait, DbBackend, Statement, Value};
     use std::path::PathBuf;
@@ -1766,5 +1871,133 @@ mod db_sqlite_tests {
         let json_str = listener.export_json(&[]).expect("export_json 空列表应成功");
 
         assert_eq!(json_str, "[]", "空列表 JSON 应为 []");
+    }
+
+    // ========================================================================
+    // T004: Audit IP/UA 从 request_context 填充
+    // ========================================================================
+
+    /// T004 Red: 当 `request_context` 携带 ip 与 user_agent 时，
+    /// `to_audit_entry` 应将其提取到返回的 `AuditEntry.ip` 与 `AuditEntry.user_agent`。
+    ///
+    /// 构造 `BulwarkEvent::Login` 携带 `request_context: Some(RequestContext {
+    ///     ip: Some("192.168.1.1"), user_agent: Some("Mozilla/5.0")
+    /// })`，调用 `to_audit_entry`，断言 `entry.ip` 与 `entry.user_agent` 与输入一致。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn audit_entry_extracts_ip_and_user_agent_from_request_context() {
+        run_with_tenant_scope(audit_entry_extracts_ip_and_user_agent_from_request_context_inner)
+            .await
+    }
+
+    async fn audit_entry_extracts_ip_and_user_agent_from_request_context_inner() {
+        let pool = setup_db().await;
+        let config = AuditConfig {
+            mask_fields: vec![],
+            retain_days: 0,
+            async_write: false,
+            signing_key: None,
+        };
+        let listener = AuditLogListener::new(pool, config);
+
+        let event = BulwarkEvent::Login {
+            login_id: "1".to_string(),
+            token: "tok".to_string(),
+            device: None,
+            request_context: Some(RequestContext {
+                ip: Some("192.168.1.1".to_string()),
+                user_agent: Some("Mozilla/5.0".to_string()),
+            }),
+        };
+
+        let entry = listener
+            .to_audit_entry(&event)
+            .expect("to_audit_entry 应成功");
+        assert_eq!(
+            entry.ip,
+            Some("192.168.1.1".to_string()),
+            "ip 应从 request_context 提取为 192.168.1.1"
+        );
+        assert_eq!(
+            entry.user_agent,
+            Some("Mozilla/5.0".to_string()),
+            "user_agent 应从 request_context 提取为 Mozilla/5.0"
+        );
+    }
+
+    /// T004 Red: 当 `request_context` 为 `None` 时，
+    /// `to_audit_entry` 返回的 `AuditEntry.ip` 与 `AuditEntry.user_agent` 应为 `None`。
+    ///
+    /// 构造 `BulwarkEvent::Login` 携带 `request_context: None`，
+    /// 调用 `to_audit_entry`，断言 `entry.ip` 与 `entry.user_agent` 均为 `None`。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn audit_entry_request_context_none_yields_none_ip_ua() {
+        run_with_tenant_scope(audit_entry_request_context_none_yields_none_ip_ua_inner).await
+    }
+
+    async fn audit_entry_request_context_none_yields_none_ip_ua_inner() {
+        let pool = setup_db().await;
+        let config = AuditConfig {
+            mask_fields: vec![],
+            retain_days: 0,
+            async_write: false,
+            signing_key: None,
+        };
+        let listener = AuditLogListener::new(pool, config);
+
+        let event = BulwarkEvent::Login {
+            login_id: "1".to_string(),
+            token: "tok".to_string(),
+            device: None,
+            request_context: None,
+        };
+
+        let entry = listener
+            .to_audit_entry(&event)
+            .expect("to_audit_entry 应成功");
+        assert!(entry.ip.is_none(), "request_context=None 时 ip 应为 None");
+        assert!(
+            entry.user_agent.is_none(),
+            "request_context=None 时 user_agent 应为 None"
+        );
+    }
+
+    /// T004 Red: 当 `request_context` 仅携带 ip（user_agent 为 None）时，
+    /// `to_audit_entry` 应正确提取 ip，user_agent 保持 None。
+    ///
+    /// 验证部分上下文场景（如代理注入 IP 但无 UA）。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn audit_entry_extracts_ip_only_when_user_agent_none() {
+        run_with_tenant_scope(audit_entry_extracts_ip_only_when_user_agent_none_inner).await
+    }
+
+    async fn audit_entry_extracts_ip_only_when_user_agent_none_inner() {
+        let pool = setup_db().await;
+        let config = AuditConfig {
+            mask_fields: vec![],
+            retain_days: 0,
+            async_write: false,
+            signing_key: None,
+        };
+        let listener = AuditLogListener::new(pool, config);
+
+        // 使用 Logout 变体验证 extract_request_context 覆盖多个变体
+        let event = BulwarkEvent::Logout {
+            login_id: "1".to_string(),
+            token: "tok".to_string(),
+            request_context: Some(RequestContext {
+                ip: Some("10.0.0.1".to_string()),
+                user_agent: None,
+            }),
+        };
+
+        let entry = listener
+            .to_audit_entry(&event)
+            .expect("to_audit_entry 应成功");
+        assert_eq!(
+            entry.ip,
+            Some("10.0.0.1".to_string()),
+            "ip 应从 request_context 提取为 10.0.0.1"
+        );
+        assert!(entry.user_agent.is_none(), "user_agent 未提供时应为 None");
     }
 }

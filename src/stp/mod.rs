@@ -27,7 +27,9 @@ use crate::listener::BulwarkListenerManager;
 use crate::plugin::BulwarkPluginManager;
 use crate::session::BulwarkSession;
 use crate::strategy::BulwarkPermissionStrategy;
+use chrono::{DateTime, Utc};
 use dashmap::DashMap;
+use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::future::Future;
 use std::sync::Arc;
@@ -214,6 +216,77 @@ impl BulwarkContext {
 }
 
 // ============================================================================
+// Clock trait：可注入时钟抽象
+// ============================================================================
+
+/// 时钟抽象 trait，统一时间源，支持测试注入 MockClock 消除 flaky 测试。
+///
+/// 生产环境使用 [`SystemClock`]（委托 `chrono::Utc::now()`），
+/// 测试环境使用 [`MockClock`] 手动控制时间推进。
+pub trait Clock: Send + Sync {
+    /// 返回当前 UTC 时间。
+    fn now(&self) -> DateTime<Utc>;
+}
+
+/// 系统时钟实现，委托 `chrono::Utc::now()`。
+pub struct SystemClock;
+
+impl SystemClock {
+    /// 创建系统时钟实例。
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for SystemClock {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Clock for SystemClock {
+    fn now(&self) -> DateTime<Utc> {
+        chrono::Utc::now()
+    }
+}
+
+/// Mock 时钟，持有可设置的固定时间，用于测试。
+///
+/// 通过 `Arc<RwLock<DateTime<Utc>>>` 共享时间状态，
+/// 测试中可 `advance` 推进时间或 `set_time` 设置固定时间，
+/// 消除依赖 `tokio::time::sleep` 的 flaky 测试。
+#[derive(Clone)]
+pub struct MockClock {
+    time: Arc<RwLock<DateTime<Utc>>>,
+}
+
+impl MockClock {
+    /// 创建 MockClock，初始时间为 `time`。
+    pub fn new(time: DateTime<Utc>) -> Self {
+        Self {
+            time: Arc::new(RwLock::new(time)),
+        }
+    }
+
+    /// 设置当前时间。
+    pub fn set_time(&self, time: DateTime<Utc>) {
+        *self.time.write() = time;
+    }
+
+    /// 推进时间（正数向前，负数向后）。
+    pub fn advance(&self, duration: chrono::Duration) {
+        let mut w = self.time.write();
+        *w += duration;
+    }
+}
+
+impl Clock for MockClock {
+    fn now(&self) -> DateTime<Utc> {
+        *self.time.read()
+    }
+}
+
+// ============================================================================
 // BulwarkLogicDefault：默认实现
 // ============================================================================
 
@@ -265,6 +338,10 @@ pub struct BulwarkLogicDefault {
     /// `login_locks` 后调用 `renew_to_equivalent`（内部 `logout` 再次获取
     /// `login_locks`）导致死锁。续签锁仅序列化并发 `check_and_renew` 调用。
     renewal_locks: DashMap<String, Arc<TokioMutex<()>>>,
+    /// 可注入时钟（默认 SystemClock，测试可替换为 MockClock）。
+    ///
+    /// 用于 hover_timeout 检查的时间读取，消除依赖 `tokio::time::sleep` 的 flaky 测试。
+    clock: Arc<dyn Clock>,
     /// 异常检测器列表（可选，注入后 login/check_login 触发异常检测）。
     ///
     /// 需启用 `security-alert` feature。未注入时为 no-op（向后兼容）。

@@ -115,6 +115,7 @@ impl PasswordLogic for BulwarkLogicDefault {
                     lm.broadcast(&BulwarkEvent::LoginFailure {
                         login_id: login_id.to_string(),
                         reason: EventReason::InvalidCredentials.to_string(),
+                        request_context: None,
                     })
                     .await;
                 }
@@ -147,6 +148,7 @@ impl PasswordLogic for BulwarkLogicDefault {
                 lm.broadcast(&BulwarkEvent::LoginFailure {
                     login_id: login_id.to_string(),
                     reason: EventReason::InvalidCredentials.to_string(),
+                    request_context: None,
                 })
                 .await;
             }

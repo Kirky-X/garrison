@@ -40,6 +40,7 @@ impl BulwarkLogicDefault {
             #[cfg(all(feature = "protocol-jwt", feature = "db-sqlite"))]
             refresh_token_rotation: None,
             renewal_locks: DashMap::new(),
+            clock: Arc::new(SystemClock::new()),
             #[cfg(feature = "security-alert")]
             anomaly_detectors: None,
             #[cfg(feature = "security-alert")]
@@ -162,6 +163,15 @@ impl BulwarkLogicDefault {
     /// ```
     pub fn with_jwt_mode(mut self, mode: JwtMode) -> Self {
         self.jwt_mode = mode;
+        self
+    }
+
+    /// 注入时钟（builder 模式）。
+    ///
+    /// 默认使用 `SystemClock`（委托 `chrono::Utc::now()`）。
+    /// 测试中可注入 `MockClock` 手动控制时间推进，消除依赖 `tokio::time::sleep` 的 flaky 测试。
+    pub fn with_clock(mut self, clock: Arc<dyn Clock>) -> Self {
+        self.clock = clock;
         self
     }
 

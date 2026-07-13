@@ -181,6 +181,7 @@ impl TokenLogic for BulwarkLogicDefault {
                 login_id,
                 old_token: token.to_string(),
                 new_token: new_token.clone(),
+                request_context: None,
             })
             .await;
         }

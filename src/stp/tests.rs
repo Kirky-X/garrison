@@ -2765,7 +2765,9 @@ async fn sync_check_api_key_executes_without_panic() {
 // ========================================================================
 
 /// R-hover-003: `session_hover_timeout=1`（1秒），login 后 check_login 返回 true，
-/// 等待 2 秒后 check_login 返回 false（踢出）。
+/// MockClock 推进 2 秒后 check_login 返回 false（踢出）。
+///
+/// 使用 MockClock 替代 `tokio::time::sleep` 消除 flaky 测试（T007）。
 #[tokio::test]
 async fn hover_timeout_evicts_inactive_session() {
     let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
@@ -2778,11 +2780,11 @@ async fn hover_timeout_evicts_inactive_session() {
         has_permission: true,
         has_role: true,
     });
-    let logic = Arc::new(BulwarkLogicDefault::new(
-        session,
-        Arc::new(config),
-        firewall,
-    ));
+    let mock_clock = Arc::new(MockClock::new(chrono::Utc::now()));
+    let logic = Arc::new(
+        BulwarkLogicDefault::new(session, Arc::new(config), firewall)
+            .with_clock(mock_clock.clone()),
+    );
 
     let token = logic.login("1001", &LoginParams::default()).await.unwrap();
 
@@ -2792,8 +2794,8 @@ async fn hover_timeout_evicts_inactive_session() {
         .unwrap();
     assert!(first_check, "首次 check_login 应返回 true");
 
-    // 等待 2 秒，超过 hover_timeout=1 秒
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    // 推进 MockClock 时间 2 秒，超过 hover_timeout=1 秒（无需真实 sleep）
+    mock_clock.advance(chrono::Duration::seconds(2));
 
     // 第二次 check_login：last_active_time 已过期 → 返回 false（踢出）
     let second_check = with_current_token(token.clone(), async { logic.check_login().await })
@@ -3741,6 +3743,7 @@ async fn enforce_max_login_count_overflow_logout_mode_replaced() {
                 login_id,
                 token,
                 reason,
+                ..
             } => {
                 login_id == "overflow-replaced-user-001"
                     && token == &t1

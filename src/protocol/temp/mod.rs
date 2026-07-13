@@ -132,6 +132,7 @@ impl TempCredentialHandler {
                 lm.broadcast(&BulwarkEvent::TempCredentialConsumed {
                     key: key.to_string(),
                     value: v.clone(),
+                    request_context: None,
                 })
                 .await;
             }

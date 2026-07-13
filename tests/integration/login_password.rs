@@ -77,7 +77,10 @@ struct PasswordLoginListener;
 #[async_trait]
 impl BulwarkListener for PasswordLoginListener {
     async fn on_event(&self, event: &BulwarkEvent) -> BulwarkResult<()> {
-        if let BulwarkEvent::LoginFailure { login_id, reason } = event {
+        if let BulwarkEvent::LoginFailure {
+            login_id, reason, ..
+        } = event
+        {
             // reason 现在统一为 "invalid_credentials"，用 login_id 区分场景
             if reason == "invalid_credentials" {
                 if *login_id == "9999" {

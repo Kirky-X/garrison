@@ -125,6 +125,7 @@ impl From<AnomalousLoginDetected> for BulwarkEvent {
             reason: e.reason,
             detail: e.detail,
             timestamp: e.timestamp,
+            request_context: None,
         }
     }
 }
@@ -1190,6 +1191,7 @@ mod tests {
                 reason,
                 detail,
                 timestamp,
+                ..
             } => {
                 assert_eq!(login_id, "1001");
                 assert_eq!(reason, "burst_login");

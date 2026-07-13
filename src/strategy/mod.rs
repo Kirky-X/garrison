@@ -532,6 +532,7 @@ impl BulwarkPermissionStrategyDefault {
             lm.broadcast(&BulwarkEvent::FirewallBlock {
                 login_id: login_id.to_string(),
                 reason: e.to_string(),
+                request_context: None,
             })
             .await;
         }

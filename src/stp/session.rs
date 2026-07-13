@@ -232,6 +232,7 @@ impl SessionLogic for BulwarkLogicDefault {
                     lm.broadcast(&BulwarkEvent::Logout {
                         login_id: id.clone(),
                         token: token.clone(),
+                        request_context: None,
                     })
                     .await;
                 }
@@ -270,6 +271,7 @@ impl SessionLogic for BulwarkLogicDefault {
                 login_id: login_id.to_string(),
                 token: String::new(),
                 reason: "管理员强制下线".to_string(),
+                request_context: None,
             })
             .await;
         }
@@ -289,6 +291,7 @@ impl SessionLogic for BulwarkLogicDefault {
         if let Some(lm) = &self.listener_manager {
             lm.broadcast(&BulwarkEvent::RevokeToken {
                 token: token.to_string(),
+                request_context: None,
             })
             .await;
         }
@@ -352,6 +355,7 @@ impl SessionLogic for BulwarkLogicDefault {
                 login_id,
                 token: token.to_string(),
                 device: None,
+                request_context: None,
             })
             .await;
         }
@@ -513,6 +517,7 @@ impl BulwarkLogicDefault {
                 login_id: login_id.to_string(),
                 token: token.clone(),
                 device: params.device.clone(),
+                request_context: None,
             })
             .await;
         }
@@ -596,6 +601,7 @@ impl BulwarkLogicDefault {
                         lm.broadcast(&BulwarkEvent::Logout {
                             login_id: login_id.to_string(),
                             token: token.clone(),
+                            request_context: None,
                         })
                         .await;
                     },
@@ -604,6 +610,7 @@ impl BulwarkLogicDefault {
                             login_id: login_id.to_string(),
                             token: token.clone(),
                             reason: "超过最大登录数限制".to_string(),
+                            request_context: None,
                         })
                         .await;
                     },
@@ -612,6 +619,7 @@ impl BulwarkLogicDefault {
                             login_id: login_id.to_string(),
                             token: token.clone(),
                             reason: "超过最大登录数限制，被新会话顶替".to_string(),
+                            request_context: None,
                         })
                         .await;
                     },
@@ -710,6 +718,7 @@ impl BulwarkLogicDefault {
                     lm.broadcast(&BulwarkEvent::SessionTimeout {
                         login_id: ts.login_id,
                         token: token.to_string(),
+                        request_context: None,
                     })
                     .await;
                 }
@@ -746,10 +755,15 @@ impl BulwarkLogicDefault {
     /// logout 失败时记录 `warn` 日志而非静默吞掉（Fix M-4）。
     async fn check_and_update_hover(&self, token: &str) -> BulwarkResult<bool> {
         if let Ok(Some(ts)) = self.session.get_token_session(token).await {
-            if !self
-                .session
-                .check_hover_timeout(&ts.login_id, self.config.session_hover_timeout)
-            {
+            let now_millis = self.clock.now().timestamp_millis();
+            let should_evict = self.config.session_hover_timeout > 0 && {
+                let timeout_millis = self.config.session_hover_timeout * 1000;
+                match self.session.get_last_active(&ts.login_id) {
+                    Some(last) => now_millis - last > timeout_millis,
+                    None => false,
+                }
+            };
+            if should_evict {
                 if let Err(e) = self.session.logout(token).await {
                     tracing::warn!(error = %e, "悬停超时 logout 失败");
                 }
@@ -758,6 +772,7 @@ impl BulwarkLogicDefault {
                     lm.broadcast(&BulwarkEvent::SessionTimeout {
                         login_id: ts.login_id.clone(),
                         token: token.to_string(),
+                        request_context: None,
                     })
                     .await;
                 }
@@ -766,7 +781,7 @@ impl BulwarkLogicDefault {
                 }
                 return Ok(false);
             }
-            self.session.update_last_active(&ts.login_id);
+            self.session.update_last_active_at(&ts.login_id, now_millis);
         }
         Ok(true)
     }
@@ -786,6 +801,7 @@ impl BulwarkLogicDefault {
                     lm.broadcast(&BulwarkEvent::SessionTimeout {
                         login_id: ts.login_id,
                         token: token.to_string(),
+                        request_context: None,
                     })
                     .await;
                 }

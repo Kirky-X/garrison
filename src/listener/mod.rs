@@ -24,6 +24,23 @@ use std::sync::Arc;
 #[cfg(feature = "audit-log")]
 pub mod audit;
 
+/// 请求上下文（T004 新增）。
+///
+/// 携带与 HTTP 请求相关的客户端信息，由事件广播方注入到 `BulwarkEvent` 的
+/// `request_context` 字段，供 `to_audit_entry` 提取 ip 与 user_agent 填充审计日志。
+///
+/// # 字段
+///
+/// - `ip`: 客户端 IP 地址（可选，未知时为 `None`）
+/// - `user_agent`: 客户端 User-Agent（可选，未知时为 `None`）
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RequestContext {
+    /// 客户端 IP 地址（可选）。
+    pub ip: Option<String>,
+    /// 客户端 User-Agent（可选）。
+    pub user_agent: Option<String>,
+}
+
 /// 事件枚举，定义框架广播的所有事件变体。
 ///
 /// 派生 `Debug`、`Clone`、`PartialEq`，便于在监听器中复制、打印与比较。
@@ -37,6 +54,8 @@ pub enum BulwarkEvent {
         token: String,
         /// 登录设备信息（可选）。
         device: Option<String>,
+        /// 请求上下文（IP + User-Agent，T004 新增）。
+        request_context: Option<RequestContext>,
     },
     /// 登出事件。
     Logout {
@@ -44,6 +63,8 @@ pub enum BulwarkEvent {
         login_id: String,
         /// 被登出的 token。
         token: String,
+        /// 请求上下文（IP + User-Agent，T004 新增）。
+        request_context: Option<RequestContext>,
     },
     /// 被踢下线事件。
     Kickout {
@@ -53,6 +74,8 @@ pub enum BulwarkEvent {
         token: String,
         /// 踢出原因。
         reason: String,
+        /// 请求上下文（IP + User-Agent，T004 新增）。
+        request_context: Option<RequestContext>,
     },
     /// 权限校验事件。
     PermissionCheck {
@@ -60,6 +83,8 @@ pub enum BulwarkEvent {
         login_id: String,
         /// 被校验的权限字符串。
         permission: String,
+        /// 请求上下文（IP + User-Agent，T004 新增）。
+        request_context: Option<RequestContext>,
     },
     /// 角色校验事件。
     RoleCheck {
@@ -67,11 +92,15 @@ pub enum BulwarkEvent {
         login_id: String,
         /// 被校验的角色字符串。
         role: String,
+        /// 请求上下文（IP + User-Agent，T004 新增）。
+        request_context: Option<RequestContext>,
     },
     /// Token 过期事件。
     TokenExpired {
         /// 过期的 token。
         token: String,
+        /// 请求上下文（IP + User-Agent，T004 新增）。
+        request_context: Option<RequestContext>,
     },
     /// 登录失败事件。
     ///
@@ -86,6 +115,8 @@ pub enum BulwarkEvent {
         /// v0.4.2 安全审计 A-014: user_not_found 与 wrong_password 统一为 "invalid_credentials"，
         /// 防止日志/事件泄露用户存在性（防用户枚举）。
         reason: String,
+        /// 请求上下文（IP + User-Agent，T004 新增）。
+        request_context: Option<RequestContext>,
     },
     /// Token 刷新事件。
     ///
@@ -97,6 +128,8 @@ pub enum BulwarkEvent {
         old_token: String,
         /// 刷新后的新 token。
         new_token: String,
+        /// 请求上下文（IP + User-Agent，T004 新增）。
+        request_context: Option<RequestContext>,
     },
     /// Token 主动吊销事件。
     ///
@@ -106,6 +139,8 @@ pub enum BulwarkEvent {
     RevokeToken {
         /// 被吊销的 token。
         token: String,
+        /// 请求上下文（IP + User-Agent，T004 新增）。
+        request_context: Option<RequestContext>,
     },
     /// 会话超时事件。
     ///
@@ -116,6 +151,8 @@ pub enum BulwarkEvent {
         login_id: String,
         /// 超时的 token。
         token: String,
+        /// 请求上下文（IP + User-Agent，T004 新增）。
+        request_context: Option<RequestContext>,
     },
     /// 账号锁定事件。
     ///
@@ -125,6 +162,8 @@ pub enum BulwarkEvent {
         login_id: String,
         /// 锁定原因（如 "brute_force: 5 failures in 1h"）。
         reason: String,
+        /// 请求上下文（IP + User-Agent，T004 新增）。
+        request_context: Option<RequestContext>,
     },
     /// 防火墙阻断事件。
     ///
@@ -134,6 +173,8 @@ pub enum BulwarkEvent {
         login_id: String,
         /// 阻断原因（hook 错误信息）。
         reason: String,
+        /// 请求上下文（IP + User-Agent，T004 新增）。
+        request_context: Option<RequestContext>,
     },
     /// API Key 轮换事件。
     ///
@@ -143,6 +184,8 @@ pub enum BulwarkEvent {
         old_key: String,
         /// 轮换后的新 key。
         new_key: String,
+        /// 请求上下文（IP + User-Agent，T004 新增）。
+        request_context: Option<RequestContext>,
     },
     /// 临时凭据消费事件。
     ///
@@ -152,6 +195,8 @@ pub enum BulwarkEvent {
         key: String,
         /// 凭据载荷值。
         value: String,
+        /// 请求上下文（IP + User-Agent，T004 新增）。
+        request_context: Option<RequestContext>,
     },
     // ========================================================================
     // 变体（spec R-audit-log-005 要求，T076 Green）
@@ -166,6 +211,8 @@ pub enum BulwarkEvent {
         user_id: String,
         /// 关联的本地 login_id（首次登录可能为 None，绑定后才有）。
         login_id: Option<String>,
+        /// 请求上下文（IP + User-Agent，T004 新增）。
+        request_context: Option<RequestContext>,
     },
     /// 租户切换事件（spec R-audit-log-005）。
     ///
@@ -177,6 +224,8 @@ pub enum BulwarkEvent {
         from_tenant: i64,
         /// 切换后的租户 ID。
         to_tenant: i64,
+        /// 请求上下文（IP + User-Agent，T004 新增）。
+        request_context: Option<RequestContext>,
     },
     /// 设备封禁事件（spec R-audit-log-005）。
     ///
@@ -186,6 +235,8 @@ pub enum BulwarkEvent {
         login_id: String,
         /// 被封禁的设备标识。
         device: String,
+        /// 请求上下文（IP + User-Agent，T004 新增）。
+        request_context: Option<RequestContext>,
     },
     /// 设备解封事件（spec R-audit-log-005）。
     ///
@@ -195,6 +246,8 @@ pub enum BulwarkEvent {
         login_id: String,
         /// 被解封的设备标识。
         device: String,
+        /// 请求上下文（IP + User-Agent，T004 新增）。
+        request_context: Option<RequestContext>,
     },
     /// 配置热重载事件（spec R-audit-log-005）。
     ///
@@ -202,6 +255,8 @@ pub enum BulwarkEvent {
     ConfigReload {
         /// 新配置版本号。
         config_version: u32,
+        /// 请求上下文（IP + User-Agent，T004 新增）。
+        request_context: Option<RequestContext>,
     },
     /// 异常登录检测事件（spec R-anomalous-detector-dual-006）。
     ///
@@ -216,6 +271,8 @@ pub enum BulwarkEvent {
         detail: serde_json::Value,
         /// 检测时间戳（Unix 秒）。
         timestamp: i64,
+        /// 请求上下文（IP + User-Agent，T004 新增）。
+        request_context: Option<RequestContext>,
     },
     /// 被顶替下线事件（超出最大登录数时，最旧会话被新会话顶替）。
     Replaced {
@@ -225,6 +282,8 @@ pub enum BulwarkEvent {
         token: String,
         /// 顶替原因。
         reason: String,
+        /// 请求上下文（IP + User-Agent，T004 新增）。
+        request_context: Option<RequestContext>,
     },
 }
 
@@ -296,12 +355,14 @@ mod tests {
             login_id: "1001".to_string(),
             token: "T1".to_string(),
             device: Some("web".to_string()),
+            request_context: None,
         };
         match event {
             BulwarkEvent::Login {
                 login_id,
                 token,
                 device,
+                ..
             } => {
                 assert_eq!(login_id, "1001".to_string());
                 assert_eq!(token, "T1");
@@ -318,9 +379,12 @@ mod tests {
         let event = BulwarkEvent::Logout {
             login_id: "1001".to_string(),
             token: "T1".to_string(),
+            request_context: None,
         };
         match event {
-            BulwarkEvent::Logout { login_id, token } => {
+            BulwarkEvent::Logout {
+                login_id, token, ..
+            } => {
                 assert_eq!(login_id, "1001".to_string());
                 assert_eq!(token, "T1");
             },
@@ -336,12 +400,14 @@ mod tests {
             login_id: "1001".to_string(),
             token: "T1".to_string(),
             reason: "管理员强制下线".to_string(),
+            request_context: None,
         };
         match event {
             BulwarkEvent::Kickout {
                 login_id,
                 token,
                 reason,
+                ..
             } => {
                 assert_eq!(login_id, "1001".to_string());
                 assert_eq!(token, "T1");
@@ -358,11 +424,13 @@ mod tests {
         let event = BulwarkEvent::PermissionCheck {
             login_id: "1001".to_string(),
             permission: "user:delete".to_string(),
+            request_context: None,
         };
         match event {
             BulwarkEvent::PermissionCheck {
                 login_id,
                 permission,
+                ..
             } => {
                 assert_eq!(login_id, "1001".to_string());
                 assert_eq!(permission, "user:delete");
@@ -378,9 +446,10 @@ mod tests {
         let event = BulwarkEvent::RoleCheck {
             login_id: "1001".to_string(),
             role: "admin".to_string(),
+            request_context: None,
         };
         match event {
-            BulwarkEvent::RoleCheck { login_id, role } => {
+            BulwarkEvent::RoleCheck { login_id, role, .. } => {
                 assert_eq!(login_id, "1001".to_string());
                 assert_eq!(role, "admin");
             },
@@ -394,9 +463,10 @@ mod tests {
     fn token_expired_event_carries_token() {
         let event = BulwarkEvent::TokenExpired {
             token: "T1".to_string(),
+            request_context: None,
         };
         match event {
-            BulwarkEvent::TokenExpired { token } => {
+            BulwarkEvent::TokenExpired { token, .. } => {
                 assert_eq!(token, "T1");
             },
             _ => panic!("期望 TokenExpired 事件"),
@@ -411,6 +481,7 @@ mod tests {
             login_id: "1001".to_string(),
             token: "T1".to_string(),
             device: None,
+            request_context: None,
         };
         // Clone
         let cloned = event.clone();
@@ -447,6 +518,7 @@ mod tests {
             login_id: "1".to_string(),
             token: "t".into(),
             device: None,
+            request_context: None,
         };
         assert!(matches!(e, BulwarkEvent::Login { .. }));
 
@@ -454,6 +526,7 @@ mod tests {
         let e = BulwarkEvent::Logout {
             login_id: "1".to_string(),
             token: "t".into(),
+            request_context: None,
         };
         assert!(matches!(e, BulwarkEvent::Logout { .. }));
 
@@ -462,6 +535,7 @@ mod tests {
             login_id: "1".to_string(),
             token: "t".into(),
             reason: "r".into(),
+            request_context: None,
         };
         assert!(matches!(e, BulwarkEvent::Kickout { .. }));
 
@@ -469,17 +543,22 @@ mod tests {
         let e = BulwarkEvent::LoginFailure {
             login_id: "1".to_string(),
             reason: "r".into(),
+            request_context: None,
         };
         assert!(matches!(e, BulwarkEvent::LoginFailure { .. }));
 
         // 5. RevokeToken（原 TokenRevoke 重命名）
-        let e = BulwarkEvent::RevokeToken { token: "t".into() };
+        let e = BulwarkEvent::RevokeToken {
+            token: "t".into(),
+            request_context: None,
+        };
         assert!(matches!(e, BulwarkEvent::RevokeToken { .. }));
 
         // 6. PermissionCheck（原 PermissionDenied 重命名）
         let e = BulwarkEvent::PermissionCheck {
             login_id: "1".to_string(),
             permission: "p".into(),
+            request_context: None,
         };
         assert!(matches!(e, BulwarkEvent::PermissionCheck { .. }));
 
@@ -487,6 +566,7 @@ mod tests {
         let e = BulwarkEvent::RoleCheck {
             login_id: "1".to_string(),
             role: "r".into(),
+            request_context: None,
         };
         assert!(matches!(e, BulwarkEvent::RoleCheck { .. }));
 
@@ -495,6 +575,7 @@ mod tests {
             login_id: "1".to_string(),
             old_token: "t1".into(),
             new_token: "t2".into(),
+            request_context: None,
         };
         assert!(matches!(e, BulwarkEvent::TokenRefresh { .. }));
 
@@ -502,6 +583,7 @@ mod tests {
         let e = BulwarkEvent::TokenRotate {
             old_key: "k1".into(),
             new_key: "k2".into(),
+            request_context: None,
         };
         assert!(matches!(e, BulwarkEvent::TokenRotate { .. }));
 
@@ -510,6 +592,7 @@ mod tests {
             provider: "wechat".into(),
             user_id: "u".into(),
             login_id: Some("1".to_string()),
+            request_context: None,
         };
         assert!(matches!(e, BulwarkEvent::SocialLogin { .. }));
 
@@ -518,6 +601,7 @@ mod tests {
             login_id: "1".to_string(),
             from_tenant: 100,
             to_tenant: 200,
+            request_context: None,
         };
         assert!(matches!(e, BulwarkEvent::TenantSwitch { .. }));
 
@@ -525,6 +609,7 @@ mod tests {
         let e = BulwarkEvent::DeviceBlock {
             login_id: "1".to_string(),
             device: "d".into(),
+            request_context: None,
         };
         assert!(matches!(e, BulwarkEvent::DeviceBlock { .. }));
 
@@ -532,11 +617,15 @@ mod tests {
         let e = BulwarkEvent::DeviceUnblock {
             login_id: "1".to_string(),
             device: "d".into(),
+            request_context: None,
         };
         assert!(matches!(e, BulwarkEvent::DeviceUnblock { .. }));
 
         // 14. ConfigReload（新增）
-        let e = BulwarkEvent::ConfigReload { config_version: 1 };
+        let e = BulwarkEvent::ConfigReload {
+            config_version: 1,
+            request_context: None,
+        };
         assert!(matches!(e, BulwarkEvent::ConfigReload { .. }));
     }
 
@@ -556,6 +645,7 @@ mod tests {
             login_id: "1".to_string(),
             token: "t".to_string(),
             device: None,
+            request_context: None,
         };
         assert!(listener.on_event(&event).await.is_ok());
     }
@@ -583,6 +673,7 @@ mod tests {
             login_id: "1001".to_string(),
             token: "T1".to_string(),
             device: Some("web".to_string()),
+            request_context: None,
         };
         manager.broadcast(&event).await;
         // OkListener 的 on_event 应被调用至少 1 次
@@ -598,6 +689,7 @@ mod tests {
         let event = BulwarkEvent::Logout {
             login_id: "1001".to_string(),
             token: "T1".to_string(),
+            request_context: None,
         };
         manager.broadcast(&event).await;
         // ErrListener 失败，但 OkListener 仍应被调用
@@ -639,6 +731,7 @@ mod tests {
         let event = BulwarkEvent::PermissionCheck {
             login_id: "1001".to_string(),
             permission: "user:delete".to_string(),
+            request_context: None,
         };
         manager.broadcast(&event).await;
         assert!(EVENT_CALLS.load(Ordering::SeqCst) >= 1);
@@ -653,6 +746,7 @@ mod tests {
         let event = BulwarkEvent::RoleCheck {
             login_id: "1001".to_string(),
             role: "admin".to_string(),
+            request_context: None,
         };
         manager.broadcast(&event).await;
         assert!(EVENT_CALLS.load(Ordering::SeqCst) >= 1);
@@ -666,6 +760,7 @@ mod tests {
         let manager = BulwarkListenerManager::new();
         let event = BulwarkEvent::TokenExpired {
             token: "expired-token".to_string(),
+            request_context: None,
         };
         manager.broadcast(&event).await;
         assert!(EVENT_CALLS.load(Ordering::SeqCst) >= 1);
@@ -681,6 +776,7 @@ mod tests {
             login_id: "1001".to_string(),
             token: "t1".to_string(),
             reason: "强制下线".to_string(),
+            request_context: None,
         };
         manager.broadcast(&event).await;
         assert!(EVENT_CALLS.load(Ordering::SeqCst) >= 1);
@@ -698,9 +794,12 @@ mod tests {
         let event = BulwarkEvent::LoginFailure {
             login_id: "1001".to_string(),
             reason: "wrong_password".to_string(),
+            request_context: None,
         };
         match event.clone() {
-            BulwarkEvent::LoginFailure { login_id, reason } => {
+            BulwarkEvent::LoginFailure {
+                login_id, reason, ..
+            } => {
                 assert_eq!(login_id, "1001".to_string());
                 assert_eq!(reason, "wrong_password");
             },
@@ -721,12 +820,14 @@ mod tests {
             login_id: "1001".to_string(),
             old_token: "old-tok".to_string(),
             new_token: "new-tok".to_string(),
+            request_context: None,
         };
         match event.clone() {
             BulwarkEvent::TokenRefresh {
                 login_id,
                 old_token,
                 new_token,
+                ..
             } => {
                 assert_eq!(login_id, "1001".to_string());
                 assert_eq!(old_token, "old-tok");
@@ -747,9 +848,10 @@ mod tests {
     fn revoke_token_event_carries_token() {
         let event = BulwarkEvent::RevokeToken {
             token: "revoke-tok".to_string(),
+            request_context: None,
         };
         match event.clone() {
-            BulwarkEvent::RevokeToken { token } => {
+            BulwarkEvent::RevokeToken { token, .. } => {
                 assert_eq!(token, "revoke-tok");
             },
             _ => panic!("期望 RevokeToken 事件"),
@@ -768,9 +870,12 @@ mod tests {
         let event = BulwarkEvent::SessionTimeout {
             login_id: "1001".to_string(),
             token: "expired-tok".to_string(),
+            request_context: None,
         };
         match event.clone() {
-            BulwarkEvent::SessionTimeout { login_id, token } => {
+            BulwarkEvent::SessionTimeout {
+                login_id, token, ..
+            } => {
                 assert_eq!(login_id, "1001".to_string());
                 assert_eq!(token, "expired-tok");
             },
@@ -790,9 +895,12 @@ mod tests {
         let event = BulwarkEvent::AccountLocked {
             login_id: "1001".to_string(),
             reason: "brute_force".to_string(),
+            request_context: None,
         };
         match event.clone() {
-            BulwarkEvent::AccountLocked { login_id, reason } => {
+            BulwarkEvent::AccountLocked {
+                login_id, reason, ..
+            } => {
                 assert_eq!(login_id, "1001".to_string());
                 assert_eq!(reason, "brute_force");
             },
@@ -812,9 +920,12 @@ mod tests {
         let event = BulwarkEvent::FirewallBlock {
             login_id: "1001".to_string(),
             reason: "frequency_exceeded".to_string(),
+            request_context: None,
         };
         match event.clone() {
-            BulwarkEvent::FirewallBlock { login_id, reason } => {
+            BulwarkEvent::FirewallBlock {
+                login_id, reason, ..
+            } => {
                 assert_eq!(login_id, "1001".to_string());
                 assert_eq!(reason, "frequency_exceeded");
             },
@@ -834,9 +945,12 @@ mod tests {
         let event = BulwarkEvent::TokenRotate {
             old_key: "old-key".to_string(),
             new_key: "new-key".to_string(),
+            request_context: None,
         };
         match event.clone() {
-            BulwarkEvent::TokenRotate { old_key, new_key } => {
+            BulwarkEvent::TokenRotate {
+                old_key, new_key, ..
+            } => {
                 assert_eq!(old_key, "old-key");
                 assert_eq!(new_key, "new-key");
             },
@@ -856,9 +970,10 @@ mod tests {
         let event = BulwarkEvent::TempCredentialConsumed {
             key: "invite-key".to_string(),
             value: "payload".to_string(),
+            request_context: None,
         };
         match event.clone() {
-            BulwarkEvent::TempCredentialConsumed { key, value } => {
+            BulwarkEvent::TempCredentialConsumed { key, value, .. } => {
                 assert_eq!(key, "invite-key");
                 assert_eq!(value, "payload");
             },

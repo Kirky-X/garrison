@@ -106,6 +106,15 @@ impl BulwarkSession {
         self.last_active_time.insert(login_id.to_string(), now);
     }
 
+    /// 更新 login_id 的最后活跃时间为指定时间戳（用于可注入时钟）。
+    ///
+    /// 与 `update_last_active` 的区别：接受外部传入的时间戳，
+    /// 支持 `MockClock` 注入测试场景。
+    pub fn update_last_active_at(&self, login_id: &str, timestamp_millis: i64) {
+        self.last_active_time
+            .insert(login_id.to_string(), timestamp_millis);
+    }
+
     /// 获取 login_id 的最后活跃时间（unix 毫秒），不存在返回 None。
     pub fn get_last_active(&self, login_id: &str) -> Option<i64> {
         self.last_active_time.get(login_id).map(|v| *v)
@@ -1201,6 +1210,7 @@ impl BulwarkSession {
                         login_id: login_id.clone(),
                         token: token.clone(),
                         reason: reason.clone(),
+                        request_context: None,
                     })
                     .await;
                 }

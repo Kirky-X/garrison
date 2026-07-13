@@ -208,6 +208,7 @@ async fn listener_receives_login_event() {
             login_id: "1001".to_string(),
             token: "T1".to_string(),
             device: Some("web".to_string()),
+            request_context: None,
         })
         .await;
     assert!(
@@ -226,6 +227,7 @@ async fn listener_receives_logout_event() {
         .broadcast(&BulwarkEvent::Logout {
             login_id: "1001".to_string(),
             token: "T1".to_string(),
+            request_context: None,
         })
         .await;
     assert!(
@@ -244,6 +246,7 @@ async fn listener_receives_permission_check_event() {
         .broadcast(&BulwarkEvent::PermissionCheck {
             login_id: "1001".to_string(),
             permission: "user:delete".to_string(),
+            request_context: None,
         })
         .await;
     assert!(
@@ -264,6 +267,7 @@ async fn listener_multiple_broadcasts_accumulate() {
                 login_id: "1".to_string(),
                 token: "t".to_string(),
                 device: None,
+                request_context: None,
             })
             .await;
     }
@@ -294,6 +298,7 @@ async fn full_lifecycle_plugin_and_listener_cooperate() {
             login_id: "1001".to_string(),
             token: "T1".to_string(),
             device: Some("web".to_string()),
+            request_context: None,
         })
         .await;
 
@@ -306,6 +311,7 @@ async fn full_lifecycle_plugin_and_listener_cooperate() {
         .broadcast(&BulwarkEvent::Logout {
             login_id: "1001".to_string(),
             token: "T1".to_string(),
+            request_context: None,
         })
         .await;
 
@@ -346,6 +352,7 @@ async fn permission_check_event_only_goes_to_listener() {
         .broadcast(&BulwarkEvent::PermissionCheck {
             login_id: "1001".to_string(),
             permission: "user:delete".to_string(),
+            request_context: None,
         })
         .await;
 

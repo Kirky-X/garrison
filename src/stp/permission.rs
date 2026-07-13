@@ -201,6 +201,7 @@ impl PermissionLogic for BulwarkLogicDefault {
                 lm.broadcast(&BulwarkEvent::PermissionCheck {
                     login_id,
                     permission: permission.to_string(),
+                    request_context: None,
                 })
                 .await;
             }
