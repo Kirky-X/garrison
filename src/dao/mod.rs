@@ -1817,6 +1817,12 @@ pub mod tests {
         store: Mutex<HashMap<String, String>>,
     }
 
+    impl Default for MinimalDao {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
     impl MinimalDao {
         /// 创建空的 MinimalDao 实例。
         pub fn new() -> Self {
