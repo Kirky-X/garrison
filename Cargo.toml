@@ -41,6 +41,8 @@ unicode-normalization = "0.1"
 
 # === Optional dependencies (feature-gated) ===
 axum = { version = "0.8", optional = true, default-features = false, features = ["json"] }
+# axum-server：HTTPS/TLS 终止支持（feature-gated: tls），独立于 axum，社区维护
+axum-server = { version = "0.8", optional = true, default-features = false }
 actix-web = { version = "4", optional = true, default-features = false }
 warp = { version = "0.4", optional = true, default-features = false }
 jsonwebtoken = { version = "10", optional = true, default-features = false, features = ["rust_crypto"] }
@@ -247,6 +249,12 @@ account-authflow = ["account-credential", "account-policy", "account-lockout"]
 web-axum = ["axum", "axum/tokio", "axum/http1"]
 web-actix = ["actix-web"]
 web-warp = ["warp"]
+
+# === HTTPS/TLS 终止（axum-server rustls） ===
+# 启用后 BulwarkAuthServer 支持 with_tls(cert_path, key_path) builder，
+# listen() 在 tls_config 存在时用 axum_server::bind_rustls 替代 axum::serve。
+# 依赖 auth-server（server 模块门控），不在 default 中。
+tls = ["dep:axum-server", "axum-server/tls-rustls", "auth-server"]
 
 # === Web 安全中间件 ===
 # web-waf：WAF 请求内容校验（路径/方法/危险字符检测），依赖 web-axum

@@ -29,6 +29,8 @@
 //! server.listen().await?;
 //! ```
 
+#[cfg(feature = "tls")]
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::Router;
@@ -88,6 +90,23 @@ impl Default for AuthServerConfig {
     }
 }
 
+/// TLS 配置（证书 + 私钥文件路径）。
+///
+/// 通过 [`BulwarkAuthServer::with_tls`] 设置，启用后 `listen()` 使用
+/// `axum_server::bind_rustls` 替代 `axum::serve`，实现 HTTPS/TLS 终止。
+///
+/// # Feature 门控
+///
+/// 仅在 `tls` feature 启用时编译。
+#[cfg(feature = "tls")]
+#[derive(Debug, Clone)]
+pub struct TlsConfig {
+    /// PEM 格式证书文件路径。
+    pub cert_path: PathBuf,
+    /// PEM 格式私钥文件路径。
+    pub key_path: PathBuf,
+}
+
 /// BulwarkAuthServer — 双端口 axum 认证服务器。
 ///
 /// 通过 builder 方法配置端口、限速、API Key，最终调用 `listen()` 启动。
@@ -96,6 +115,8 @@ pub struct BulwarkAuthServer {
     config: AuthServerConfig,
     #[cfg(feature = "oauth2-server")]
     oauth2_state: Option<Arc<oauth2_routes::OAuth2State>>,
+    #[cfg(feature = "tls")]
+    tls_config: Option<TlsConfig>,
 }
 
 impl BulwarkAuthServer {
@@ -109,6 +130,8 @@ impl BulwarkAuthServer {
             config: AuthServerConfig::default(),
             #[cfg(feature = "oauth2-server")]
             oauth2_state: None,
+            #[cfg(feature = "tls")]
+            tls_config: None,
         }
     }
 
@@ -176,6 +199,31 @@ impl BulwarkAuthServer {
     #[cfg(feature = "oauth2-server")]
     pub fn with_oauth2(mut self, state: Arc<oauth2_routes::OAuth2State>) -> Self {
         self.oauth2_state = Some(state);
+        self
+    }
+
+    /// 启用 HTTPS/TLS 终止（feature = "tls"）。
+    ///
+    /// 设置证书和私钥文件路径后，`listen()` 使用 `axum_server::bind_rustls`
+    /// 替代 `axum::serve`，对外网和内网端口均启用 TLS。
+    ///
+    /// # 参数
+    /// - `cert_path`：PEM 格式证书文件路径
+    /// - `key_path`：PEM 格式私钥文件路径
+    ///
+    /// # 示例
+    ///
+    /// ```ignore
+    /// let server = BulwarkAuthServer::new(backend)
+    ///     .with_tls("/etc/bulwark/cert.pem", "/etc/bulwark/key.pem");
+    /// server.listen().await?;
+    /// ```
+    #[cfg(feature = "tls")]
+    pub fn with_tls(mut self, cert_path: impl Into<PathBuf>, key_path: impl Into<PathBuf>) -> Self {
+        self.tls_config = Some(TlsConfig {
+            cert_path: cert_path.into(),
+            key_path: key_path.into(),
+        });
         self
     }
 
@@ -252,16 +300,19 @@ impl BulwarkAuthServer {
     /// 同时启动外网和内网两个 axum 服务器。
     ///
     /// 两个服务器并行运行，任一服务器异常退出时整体返回错误。
+    ///
+    /// # TLS 终止
+    ///
+    /// 启用 `tls` feature 且调用 `with_tls()` 后，两个端口均使用
+    /// `axum_server::bind_rustls` 替代 `axum::serve`，实现 HTTPS/TLS 终止。
     pub async fn listen(self) -> BulwarkResult<()> {
         let external_addr = format!("0.0.0.0:{}", self.config.external_port);
         let internal_addr = format!("0.0.0.0:{}", self.config.internal_port);
 
-        let external_listener = tokio::net::TcpListener::bind(&external_addr)
-            .await
-            .map_err(|e| BulwarkError::Internal(format!("绑定外网端口失败: {}", e)))?;
-        let internal_listener = tokio::net::TcpListener::bind(&internal_addr)
-            .await
-            .map_err(|e| BulwarkError::Internal(format!("绑定内网端口失败: {}", e)))?;
+        #[cfg(feature = "tls")]
+        let tls_config_ext = self.tls_config.clone();
+        #[cfg(feature = "tls")]
+        let tls_config_int = self.tls_config.clone();
 
         let external_router = self.external_router();
         let internal_router = self.internal_router();
@@ -273,6 +324,26 @@ impl BulwarkAuthServer {
         );
 
         let mut external_handle = tokio::spawn(async move {
+            #[cfg(feature = "tls")]
+            if let Some(tc) = tls_config_ext.as_ref() {
+                let rustls_config = axum_server::tls_rustls::RustlsConfig::from_pem_file(
+                    &tc.cert_path,
+                    &tc.key_path,
+                )
+                .await
+                .map_err(|e| BulwarkError::Internal(format!("加载外网 TLS 配置失败: {}", e)))?;
+                let addr: std::net::SocketAddr = external_addr
+                    .parse()
+                    .map_err(|e| BulwarkError::Internal(format!("外网地址解析失败: {}", e)))?;
+                return axum_server::bind_rustls(addr, rustls_config)
+                    .serve(external_router.into_make_service())
+                    .await
+                    .map_err(|e| BulwarkError::Internal(format!("外网服务器异常: {}", e)));
+            }
+
+            let external_listener = tokio::net::TcpListener::bind(&external_addr)
+                .await
+                .map_err(|e| BulwarkError::Internal(format!("绑定外网端口失败: {}", e)))?;
             if let Err(e) = axum::serve(external_listener, external_router).await {
                 tracing::error!(error = %e, "外网服务器异常");
                 return Err(BulwarkError::Internal(format!("外网服务器异常: {}", e)));
@@ -281,6 +352,26 @@ impl BulwarkAuthServer {
         });
 
         let mut internal_handle = tokio::spawn(async move {
+            #[cfg(feature = "tls")]
+            if let Some(tc) = tls_config_int.as_ref() {
+                let rustls_config = axum_server::tls_rustls::RustlsConfig::from_pem_file(
+                    &tc.cert_path,
+                    &tc.key_path,
+                )
+                .await
+                .map_err(|e| BulwarkError::Internal(format!("加载内网 TLS 配置失败: {}", e)))?;
+                let addr: std::net::SocketAddr = internal_addr
+                    .parse()
+                    .map_err(|e| BulwarkError::Internal(format!("内网地址解析失败: {}", e)))?;
+                return axum_server::bind_rustls(addr, rustls_config)
+                    .serve(internal_router.into_make_service())
+                    .await
+                    .map_err(|e| BulwarkError::Internal(format!("内网服务器异常: {}", e)));
+            }
+
+            let internal_listener = tokio::net::TcpListener::bind(&internal_addr)
+                .await
+                .map_err(|e| BulwarkError::Internal(format!("绑定内网端口失败: {}", e)))?;
             if let Err(e) = axum::serve(internal_listener, internal_router).await {
                 tracing::error!(error = %e, "内网服务器异常");
                 return Err(BulwarkError::Internal(format!("内网服务器异常: {}", e)));
@@ -557,5 +648,60 @@ mod tests {
             result.is_err(),
             "new_with_kit 应在 kit 未注册 BackendModule 时返回错误"
         );
+    }
+
+    /// 测试 with_tls 设置 TLS 配置（feature = "tls"）。
+    ///
+    /// 验证 with_tls(cert_path, key_path) 后 server.tls_config 含正确的证书/密钥路径。
+    #[cfg(feature = "tls")]
+    #[tokio::test]
+    async fn test_with_tls_sets_config() {
+        let backend: Arc<dyn AuthBackend> = Arc::new(MockAuthBackend);
+        let server =
+            BulwarkAuthServer::new(backend).with_tls("/path/to/cert.pem", "/path/to/key.pem");
+
+        let tls_config = server
+            .tls_config
+            .as_ref()
+            .expect("with_tls 后 tls_config 必须为 Some");
+        assert_eq!(
+            tls_config.cert_path,
+            std::path::PathBuf::from("/path/to/cert.pem")
+        );
+        assert_eq!(
+            tls_config.key_path,
+            std::path::PathBuf::from("/path/to/key.pem")
+        );
+    }
+
+    /// 测试未调用 with_tls 时 tls_config 为 None（feature = "tls"）。
+    #[cfg(feature = "tls")]
+    #[tokio::test]
+    async fn test_without_tls_config_is_none() {
+        let backend: Arc<dyn AuthBackend> = Arc::new(MockAuthBackend);
+        let server = BulwarkAuthServer::new(backend);
+        assert!(
+            server.tls_config.is_none(),
+            "未调用 with_tls 时 tls_config 必须为 None"
+        );
+    }
+
+    /// 测试 with_tls 链式调用不破坏其他 builder 设置（feature = "tls"）。
+    #[cfg(feature = "tls")]
+    #[tokio::test]
+    async fn test_with_tls_chainable() {
+        let backend: Arc<dyn AuthBackend> = Arc::new(MockAuthBackend);
+        let server = BulwarkAuthServer::new(backend)
+            .with_external_port(9000)
+            .with_internal_port(9001)
+            .with_rate_limit(50)
+            .with_internal_api_key("my-key")
+            .with_tls("/cert.pem", "/key.pem");
+
+        assert_eq!(server.config.external_port, 9000);
+        assert_eq!(server.config.internal_port, 9001);
+        assert_eq!(server.config.external_rate_limit_per_ip, 50);
+        assert_eq!(server.config.internal_api_key, "my-key");
+        assert!(server.tls_config.is_some());
     }
 }
