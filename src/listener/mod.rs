@@ -217,6 +217,15 @@ pub enum BulwarkEvent {
         /// 检测时间戳（Unix 秒）。
         timestamp: i64,
     },
+    /// 被顶替下线事件（超出最大登录数时，最旧会话被新会话顶替）。
+    Replaced {
+        /// 登录主体标识。
+        login_id: String,
+        /// 被顶替的 token。
+        token: String,
+        /// 顶替原因。
+        reason: String,
+    },
 }
 
 /// 监听器 trait，提供事件订阅抽象。

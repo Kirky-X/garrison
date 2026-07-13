@@ -608,8 +608,10 @@ impl BulwarkLogicDefault {
                         .await;
                     },
                     OverflowLogoutMode::Replaced => {
-                        lm.broadcast(&BulwarkEvent::RevokeToken {
+                        lm.broadcast(&BulwarkEvent::Replaced {
+                            login_id: login_id.to_string(),
                             token: token.clone(),
+                            reason: "超过最大登录数限制，被新会话顶替".to_string(),
                         })
                         .await;
                     },

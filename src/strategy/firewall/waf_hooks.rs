@@ -200,6 +200,16 @@ fn check_danger_chars(lower: &str) -> Option<&'static str> {
             return Some(desc);
         }
     }
+    // 双重编码检测：将 %25 解码为 % 后重新校验
+    // 防止 %252e（→ %2e → .）等双重 % 编码绕过
+    if lower.contains("%25") {
+        let decoded = lower.replace("%25", "%");
+        for &(pattern, desc) in PATTERNS {
+            if decoded.contains(pattern) {
+                return Some(desc);
+            }
+        }
+    }
     None
 }
 
@@ -1075,5 +1085,30 @@ mod tests {
             matches!(verdict, WafVerdict::Allow),
             "前缀混淆 /api-v2/secret 不应命中 /api 白名单"
         );
+    }
+
+    // ========================================================================
+    // 12. T-CONV-002: 双重编码边界测试（%252e）
+    // ========================================================================
+
+    /// 验证 `%252e` 双重编码被检测到。
+    ///
+    /// 当前实现检测 `%2e`（子串匹配）而非解码后检测，
+    /// `%252e` 被捕获是子串匹配的副作用。
+    #[tokio::test]
+    async fn double_encoding_percent_252e_detected() {
+        let mut chain = WafHookChain::new();
+        chain.register(Box::new(DangerCharacterHook::new()));
+
+        let ctx = crate::strategy::firewall::WafContext {
+            path: "/api/%252e%252e/admin",
+            method: "GET",
+            host: Some("example.com"),
+            headers: &[],
+            params: &[],
+        };
+
+        let result = chain.check(&ctx).await;
+        assert!(result.is_err(), "%252e 双重编码应被拦截");
     }
 }

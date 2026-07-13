@@ -25,8 +25,10 @@
 //! 现有 `BulwarkError::FirewallBlocked(String)` 为单字段变体，
 //! WAF Hook 链将 hook 名与 reason 编码为 `format!("[{}] {}", hook, reason)`。
 
+use crate::config::BulwarkConfig;
 use crate::error::{BulwarkError, BulwarkResult};
 use async_trait::async_trait;
+use std::collections::HashSet;
 
 /// WAF 校验上下文，包含请求内容快照（借用引用，零拷贝）。
 #[derive(Debug, Clone, Copy)]
@@ -112,6 +114,73 @@ impl WafHookChain {
             }
         }
         Ok(())
+    }
+
+    /// 根据配置创建 WAF Hook 链。
+    ///
+    /// `waf_enabled_hooks` 为空时注册所有可用 Hook。
+    /// 每个 Hook 仅在其对应配置非空时注册。
+    pub fn from_config(config: &BulwarkConfig) -> Self {
+        let mut chain = Self::new();
+
+        let enabled: HashSet<&str> = config
+            .waf_enabled_hooks
+            .iter()
+            .map(|s| s.as_str())
+            .collect();
+        let all_enabled = enabled.is_empty();
+
+        if (all_enabled || enabled.contains("white_path")) && !config.waf_white_paths.is_empty() {
+            chain.register(Box::new(super::waf_hooks::WhitePathHook::new(
+                config.waf_white_paths.clone(),
+            )));
+        }
+
+        if (all_enabled || enabled.contains("black_path")) && !config.waf_black_paths.is_empty() {
+            chain.register(Box::new(super::waf_hooks::BlackPathHook::new(
+                config.waf_black_paths.clone(),
+            )));
+        }
+
+        if all_enabled || enabled.contains("danger_char") {
+            chain.register(Box::new(super::waf_hooks::DangerCharacterHook::new()));
+        }
+
+        if all_enabled || enabled.contains("banned_char") {
+            chain.register(Box::new(super::waf_hooks::BannedCharacterHook::new()));
+        }
+
+        if all_enabled || enabled.contains("dir_traversal") {
+            chain.register(Box::new(super::waf_hooks::DirectoryTraversalHook::new()));
+        }
+
+        if (all_enabled || enabled.contains("host")) && !config.waf_allowed_hosts.is_empty() {
+            chain.register(Box::new(super::waf_hooks::HostHook::new(
+                config.waf_allowed_hosts.clone(),
+            )));
+        }
+
+        if (all_enabled || enabled.contains("http_method"))
+            && !config.waf_allowed_methods.is_empty()
+        {
+            chain.register(Box::new(super::waf_hooks::HttpMethodHook::new(
+                config.waf_allowed_methods.clone(),
+            )));
+        }
+
+        if (all_enabled || enabled.contains("header")) && !config.waf_banned_headers.is_empty() {
+            chain.register(Box::new(super::waf_hooks::HeaderHook::new(
+                config.waf_banned_headers.clone(),
+            )));
+        }
+
+        if (all_enabled || enabled.contains("parameter")) && !config.waf_banned_params.is_empty() {
+            chain.register(Box::new(super::waf_hooks::ParameterHook::new(
+                config.waf_banned_params.clone(),
+            )));
+        }
+
+        chain
     }
 }
 
@@ -369,5 +438,112 @@ mod tests {
         assert_eq!(executed.len(), 2, "应执行 2 个 Hook");
         assert_eq!(executed[0], "first", "第一个 Hook 应先执行");
         assert_eq!(executed[1], "second", "第二个 Hook 应后执行");
+    }
+
+    // ========================================================================
+    // T-CONV-001: WafHookChain::from_config 测试（4 个）
+    // ========================================================================
+
+    /// 验证空配置不注册任何 Hook。
+    #[tokio::test]
+    async fn from_config_empty_registers_none() {
+        let mut config = BulwarkConfig::default_config();
+        config.waf_enabled_hooks = Vec::new();
+        config.waf_white_paths = Vec::new();
+        config.waf_black_paths = Vec::new();
+        config.waf_allowed_hosts = Vec::new();
+        config.waf_allowed_methods = Vec::new();
+        config.waf_banned_headers = Vec::new();
+        config.waf_banned_params = Vec::new();
+
+        let chain = WafHookChain::from_config(&config);
+        let ctx = make_ctx();
+        assert!(chain.check(&ctx).await.is_ok(), "空配置应不注册任何 Hook");
+    }
+
+    /// 验证全量 Hook 注册（空 enabled_hooks = 全部启用）。
+    #[tokio::test]
+    async fn from_config_all_enabled_registers_all_hooks() {
+        let mut config = BulwarkConfig::default_config();
+        config.waf_enabled_hooks = Vec::new();
+        config.waf_white_paths = vec!["/api".to_string()];
+        config.waf_black_paths = vec!["/admin".to_string()];
+        config.waf_allowed_hosts = vec!["example.com".to_string()];
+        config.waf_allowed_methods = vec!["GET".to_string()];
+        config.waf_banned_headers = vec!["X-Blocked".to_string()];
+        config.waf_banned_params = vec!["secret".to_string()];
+
+        let chain = WafHookChain::from_config(&config);
+
+        // 白名单路径 → AllowAndSkip 短路放行
+        let ctx = make_ctx();
+        assert!(chain.check(&ctx).await.is_ok(), "白名单路径应放行");
+
+        // 黑名单路径 → Deny
+        let ctx = WafContext {
+            path: "/admin/secret",
+            method: "GET",
+            host: Some("example.com"),
+            headers: &[],
+            params: &[],
+        };
+        assert!(chain.check(&ctx).await.is_err(), "黑名单路径应拦截");
+    }
+
+    /// 验证选择性启用 Hook（仅 danger_char + host）。
+    #[tokio::test]
+    async fn from_config_selective_hooks() {
+        let mut config = BulwarkConfig::default_config();
+        config.waf_enabled_hooks = vec!["danger_char".to_string(), "host".to_string()];
+        config.waf_allowed_hosts = vec!["example.com".to_string()];
+
+        let chain = WafHookChain::from_config(&config);
+
+        // danger_char 应拦截 //
+        let ctx = WafContext {
+            path: "/api//test",
+            method: "GET",
+            host: Some("example.com"),
+            headers: &[],
+            params: &[],
+        };
+        assert!(chain.check(&ctx).await.is_err(), "danger_char 应拦截 //");
+
+        // host 应拦截非白名单域名
+        let ctx = WafContext {
+            path: "/api/test",
+            method: "GET",
+            host: Some("evil.com"),
+            headers: &[],
+            params: &[],
+        };
+        assert!(chain.check(&ctx).await.is_err(), "host 应拦截非白名单域名");
+
+        // 正常请求应放行
+        let ctx = make_ctx();
+        assert!(chain.check(&ctx).await.is_ok(), "正常请求应放行");
+    }
+
+    /// 验证 banned_char + dir_traversal 接线正确。
+    #[tokio::test]
+    async fn from_config_banned_char_and_dir_traversal() {
+        let mut config = BulwarkConfig::default_config();
+        config.waf_enabled_hooks = vec!["banned_char".to_string(), "dir_traversal".to_string()];
+
+        let chain = WafHookChain::from_config(&config);
+
+        // dir_traversal 应拦截 ../
+        let ctx = WafContext {
+            path: "/api/../etc",
+            method: "GET",
+            host: Some("example.com"),
+            headers: &[],
+            params: &[],
+        };
+        assert!(chain.check(&ctx).await.is_err(), "dir_traversal 应拦截 ../");
+
+        // 正常路径应放行
+        let ctx = make_ctx();
+        assert!(chain.check(&ctx).await.is_ok(), "正常路径应放行");
     }
 }

@@ -30,6 +30,11 @@ pub enum BulwarkError {
     /// Token 无效异常。
     InvalidToken(String),
 
+    /// Token 已吊销异常（RFC 7009 Token Revocation）。
+    ///
+    /// 适用于 refresh token 重用检测、令牌吊销等场景。
+    TokenRevoked(String),
+
     /// Token 已过期异常。
     ExpiredToken(String),
 
@@ -143,6 +148,7 @@ impl std::fmt::Display for BulwarkError {
             BulwarkError::NotPermission(s) => write!(f, "无权限: {}", s),
             BulwarkError::NotRole(s) => write!(f, "无角色: {}", s),
             BulwarkError::InvalidToken(s) => write!(f, "Token 无效: {}", s),
+            BulwarkError::TokenRevoked(s) => write!(f, "Token 已吊销: {}", s),
             BulwarkError::ExpiredToken(s) => write!(f, "Token 已过期: {}", s),
             BulwarkError::Dao(s) => write!(f, "DAO 错误: {}", s),
             BulwarkError::Config(s) => write!(f, "配置错误: {}", s),
@@ -208,6 +214,11 @@ impl BulwarkError {
     /// 对应 `BulwarkError::NotSafe`（第三方登录回退），HTTP 400 Bad Request。
     pub const BW_ERR_012: u32 = 400001;
 
+    /// BW-ERR-013：Token 已吊销（RFC 7009 Token Revocation）。
+    ///
+    /// 对应 `BulwarkError::TokenRevoked`，HTTP 401 Unauthorized。
+    pub const BW_ERR_013: u32 = 401005;
+
     /// 返回 HTTP 响应分片 `(status_code, error_code, message, exception_code)`。
     ///
     /// 框架无关方法，axum / actix-web / warp 适配器均复用此方法以保证三框架行为一致性
@@ -226,6 +237,7 @@ impl BulwarkError {
         match &self {
             BulwarkError::NotLogin(_) => (401, "NOT_LOGIN", "未登录", None),
             BulwarkError::InvalidToken(_) => (401, "INVALID_TOKEN", "Token 无效", None),
+            BulwarkError::TokenRevoked(_) => (401, "TOKEN_REVOKED", "Token 已吊销", None),
             BulwarkError::ExpiredToken(_) => (401, "EXPIRED_TOKEN", "Token 已过期", None),
             BulwarkError::NotPermission(_) => (403, "NOT_PERMISSION", "无权限", None),
             BulwarkError::NotRole(_) => (403, "NOT_ROLE", "无角色", None),
@@ -363,6 +375,7 @@ impl miette::Diagnostic for BulwarkError {
             BulwarkError::NotPermission(_) => "bulwark.not_permission",
             BulwarkError::NotRole(_) => "bulwark.not_role",
             BulwarkError::InvalidToken(_) => "bulwark.invalid_token",
+            BulwarkError::TokenRevoked(_) => "bulwark.token_revoked",
             BulwarkError::ExpiredToken(_) => "bulwark.expired_token",
             BulwarkError::Dao(_) => "bulwark.dao",
             BulwarkError::Config(_) => "bulwark.config",

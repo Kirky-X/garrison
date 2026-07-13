@@ -3734,15 +3734,23 @@ async fn enforce_max_login_count_overflow_logout_mode_replaced() {
         let ts1 = logic.session.get_token_session(&t1).await.unwrap();
         assert!(ts1.is_none(), "Replaced 模式：最旧 token 应被踢出");
 
-        // 验证广播了 RevokeToken 事件（含被踢出 token）
+        // 验证广播了 Replaced 事件（含被顶替的 login_id/token/reason）
         let events = captured_events.lock();
-        let has_revoke = events.iter().any(|e| match e {
-            crate::listener::BulwarkEvent::RevokeToken { token } => token == &t1,
+        let has_replaced = events.iter().any(|e| match e {
+            crate::listener::BulwarkEvent::Replaced {
+                login_id,
+                token,
+                reason,
+            } => {
+                login_id == "overflow-replaced-user-001"
+                    && token == &t1
+                    && reason == "超过最大登录数限制，被新会话顶替"
+            },
             _ => false,
         });
         assert!(
-            has_revoke,
-            "Replaced 模式应广播 RevokeToken 事件（含被踢出的 token），实际事件: {:?}",
+            has_replaced,
+            "Replaced 模式应广播 Replaced 事件（含 login_id/token/reason），实际事件: {:?}",
             events
                 .iter()
                 .map(|e| format!("{:?}", e))

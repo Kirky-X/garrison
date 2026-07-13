@@ -167,7 +167,7 @@ mod service {
             // 吊销整个链（old_hash 及其所有子代）后返回 InvalidToken
             if self.detect_reuse(&old_hash).await? {
                 self.revoke_chain(&old_hash).await?;
-                return Err(BulwarkError::InvalidToken(
+                return Err(BulwarkError::TokenRevoked(
                     "refresh token reuse detected, chain revoked".to_string(),
                 ));
             }
@@ -697,11 +697,11 @@ mod db_sqlite_tests {
             .expect("第一次 rotate 应成功");
         let t2_hash = sha256_hex(&t2_refresh);
 
-        // 第二次 rotate（重用 t1）：应返回 InvalidToken
+        // 第二次 rotate（重用 t1）：应返回 TokenRevoked（RFC 7009 Token Revocation）
         let result = rotation.rotate(t1_token).await;
         assert!(
-            matches!(result, Err(BulwarkError::InvalidToken(_))),
-            "重用已消费的 refresh token 应返回 InvalidToken，实际: {:?}",
+            matches!(result, Err(BulwarkError::TokenRevoked(_))),
+            "重用已消费的 refresh token 应返回 TokenRevoked，实际: {:?}",
             result
         );
 
