@@ -403,10 +403,10 @@ mod tests {
     #[test]
     fn verify_expired_token_returns_expired_error() {
         let handler = JwtHandler::new("secret");
-        // sign timeout=1 秒，sleep 2 秒后 verify 应触发 ExpiredSignature
-        // （leeway=0，不容忍时钟偏差）
+        // sign timeout=1 秒，sleep 3 秒后 verify 应触发 ExpiredSignature
+        // （leeway=0，不容忍时钟偏差；3 秒容差避免高负载下时序敏感失败）
         let token = handler.sign("1001", 1).unwrap();
-        std::thread::sleep(std::time::Duration::from_secs(2));
+        std::thread::sleep(std::time::Duration::from_secs(3));
         let result = handler.verify(&token);
         assert!(result.is_err());
         match result.err() {

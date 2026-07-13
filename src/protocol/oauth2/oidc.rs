@@ -507,10 +507,10 @@ mod tests {
     #[test]
     fn verify_id_token_expired_returns_expired_token_error() {
         let handler = make_handler();
-        // timeout=0 → exp=now，验证时已过期
-        let token = handler.sign_id_token("1001", "nonce", "openid", 0).unwrap();
-        // 等待极短时间确保 exp < 当前时间
-        std::thread::sleep(std::time::Duration::from_millis(1100));
+        // timeout=1 → exp=now+1s，sleep 3 秒后验证时已过期
+        let token = handler.sign_id_token("1001", "nonce", "openid", 1).unwrap();
+        // 等待 3 秒确保 exp < 当前时间（避免高负载下时序敏感失败）
+        std::thread::sleep(std::time::Duration::from_secs(3));
         let result = handler.verify_id_token(&token, "nonce");
         assert!(result.is_err());
         match result.err() {

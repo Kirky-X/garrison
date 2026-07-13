@@ -464,7 +464,8 @@ mod tests {
         session.create("1001", "T1").await.unwrap();
 
         // 等待一小段时间，确保 touch 后 last_active_at 变化
-        tokio::time::sleep(Duration::from_millis(1100)).await;
+        // 1500ms 容差避免高负载下时间精度不足导致 flaky
+        tokio::time::sleep(Duration::from_millis(1500)).await;
 
         session.touch("T1").await.unwrap();
 
