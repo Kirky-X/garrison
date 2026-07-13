@@ -147,6 +147,23 @@ pub struct ApiKeyState {
     pub api_key: String,
 }
 
+/// 常量时间字节比较，防止 timing attack（H-1）。
+///
+/// 用 XOR 累积比较所有字节，不在第一个不匹配字节处短路返回，
+/// 避免攻击者通过测量响应时间逐字节推断 API Key 内容。
+///
+/// 长度不同时直接返回 false（长度不是秘密，API Key 长度由配置决定）。
+fn constant_time_eq(a: &str, b: &str) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut result: u8 = 0;
+    for (x, y) in a.as_bytes().iter().zip(b.as_bytes().iter()) {
+        result |= x ^ y;
+    }
+    result == 0
+}
+
 /// API Key 认证中间件 — 验证 X-API-Key 头。
 ///
 /// 不匹配或缺失返回 401 Unauthorized，响应体为 JSON：
@@ -158,11 +175,24 @@ pub async fn api_key_auth_middleware(
     req: Request,
     next: Next,
 ) -> Response {
+    // M-SAST-1/M-5: fail-closed —— 空 api_key 时拒绝所有请求（防御默认值泄露）
+    if state.api_key.is_empty() {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({
+                "error": "unauthorized",
+                "message": "无效的 API Key"
+            })),
+        )
+            .into_response();
+    }
+
+    // H-1: 常量时间比较，防止 timing attack 逐字节推断 API Key
     let valid = req
         .headers()
         .get("x-api-key")
         .and_then(|v| v.to_str().ok())
-        .map(|k| k == state.api_key)
+        .map(|k| constant_time_eq(k, &state.api_key))
         .unwrap_or(false);
 
     if !valid {
@@ -199,12 +229,52 @@ pub async fn audit_log_middleware(req: Request, next: Next) -> Response {
     response
 }
 
+// ============================================================================
+// path-filter 中间件（C-1：双端口架构路由分离）
+// ============================================================================
+//
+// sdforge::http::build() 收集所有 15 个 #[forge] 路由到单一 Router，
+// 不支持按 name/path/group/tag 过滤。为在双端口架构中分离外网/内网路由，
+// 用 path-filter 中间件在请求入口处按路径过滤：
+//
+// - 外网端口：仅允许 /api/v1/auth/{login,logout,refresh}，其余 404
+// - 内网端口：拒绝上述 3 个外网路径，其余放行（由 api_key_auth 保护）
+
+/// 外网路径白名单（仅允许 3 个外网端点）。
+const EXTERNAL_ALLOWED_PATHS: &[&str] = &[
+    "/api/v1/auth/login",
+    "/api/v1/auth/logout",
+    "/api/v1/auth/refresh",
+];
+
+/// 外网 path-filter 中间件：仅允许外网路径，其余返回 404。
+///
+/// 用于外网端口，防止外部用户访问内网端点（check-*/get-*/kickout 等）。
+pub async fn external_path_filter(req: Request, next: Next) -> Response {
+    if EXTERNAL_ALLOWED_PATHS.contains(&req.uri().path()) {
+        next.run(req).await
+    } else {
+        StatusCode::NOT_FOUND.into_response()
+    }
+}
+
+/// 内网 path-filter 中间件：拒绝外网路径，其余放行。
+///
+/// 用于内网端口，防止内网调用方访问用户端端点（login/logout/refresh）。
+pub async fn internal_path_filter(req: Request, next: Next) -> Response {
+    if EXTERNAL_ALLOWED_PATHS.contains(&req.uri().path()) {
+        StatusCode::NOT_FOUND.into_response()
+    } else {
+        next.run(req).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use axum::body::Body;
     use axum::http::Request;
-    use axum::routing::get;
+    use axum::routing::{get, post};
     use axum::Router;
     use tower::ServiceExt;
 
@@ -330,5 +400,192 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    /// M-SAST-1/M-5: 空 API Key 时所有请求被拒绝（fail-closed）。
+    #[tokio::test]
+    async fn test_api_key_auth_empty_key_rejects_all() {
+        let state = Arc::new(ApiKeyState {
+            api_key: String::new(), // 空字符串
+        });
+        let app = ok_router().layer(axum::middleware::from_fn_with_state(
+            state,
+            api_key_auth_middleware,
+        ));
+        // 即使带 X-API-Key 头也应被拒绝
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/ping")
+                    .header("x-api-key", "any-key")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    /// H-1: 常量时间比较函数正确性验证。
+    #[test]
+    fn test_constant_time_eq() {
+        assert!(constant_time_eq("abc", "abc"));
+        assert!(!constant_time_eq("abc", "abd"));
+        assert!(!constant_time_eq("abc", "ab"));
+        assert!(!constant_time_eq("abc", "abcd"));
+        assert!(constant_time_eq("", ""));
+        assert!(!constant_time_eq("", "a"));
+        // 确保所有字节都被比较（非短路）
+        assert!(!constant_time_eq("abcdefgh", "abcdefgx"));
+    }
+
+    // ========================================================================
+    // C-1: path-filter 中间件测试
+    // ========================================================================
+
+    /// 内网路径列表（12 个）。
+    const INTERNAL_PATHS: &[&str] = &[
+        "/api/v1/auth/check-login",
+        "/api/v1/auth/check-permission",
+        "/api/v1/auth/check-role",
+        "/api/v1/auth/check-safe",
+        "/api/v1/auth/check-disable",
+        "/api/v1/auth/check-api-key",
+        "/api/v1/auth/get-token-info",
+        "/api/v1/auth/get-session",
+        "/api/v1/auth/kickout",
+        "/api/v1/auth/switch-to",
+        "/api/v1/auth/renew-to-equivalent",
+        "/api/v1/auth/health",
+    ];
+
+    /// 构建包含所有 15 个 auth 路由的测试 Router（用于 path-filter 测试）。
+    fn make_all_routes_router() -> Router {
+        Router::new()
+            .route("/api/v1/auth/login", post(|| async { "ok" }))
+            .route("/api/v1/auth/logout", post(|| async { "ok" }))
+            .route("/api/v1/auth/refresh", post(|| async { "ok" }))
+            .route("/api/v1/auth/check-login", post(|| async { "ok" }))
+            .route("/api/v1/auth/check-permission", post(|| async { "ok" }))
+            .route("/api/v1/auth/check-role", post(|| async { "ok" }))
+            .route("/api/v1/auth/check-safe", post(|| async { "ok" }))
+            .route("/api/v1/auth/check-disable", post(|| async { "ok" }))
+            .route("/api/v1/auth/check-api-key", post(|| async { "ok" }))
+            .route("/api/v1/auth/get-token-info", post(|| async { "ok" }))
+            .route("/api/v1/auth/get-session", post(|| async { "ok" }))
+            .route("/api/v1/auth/kickout", post(|| async { "ok" }))
+            .route("/api/v1/auth/switch-to", post(|| async { "ok" }))
+            .route("/api/v1/auth/renew-to-equivalent", post(|| async { "ok" }))
+            .route("/api/v1/auth/health", get(|| async { "ok" }))
+    }
+
+    /// C-1: 外网 path-filter 放行所有外网路径。
+    #[tokio::test]
+    async fn test_external_path_filter_allows_external_paths() {
+        for &path in EXTERNAL_ALLOWED_PATHS {
+            let app =
+                make_all_routes_router().layer(axum::middleware::from_fn(external_path_filter));
+            let resp = app
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri(path)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                resp.status(),
+                StatusCode::OK,
+                "外网 path-filter 应放行 {}",
+                path
+            );
+        }
+    }
+
+    /// C-1: 外网 path-filter 拒绝所有内网路径（返回 404）。
+    #[tokio::test]
+    async fn test_external_path_filter_blocks_internal_paths() {
+        for &path in INTERNAL_PATHS {
+            let method = if path == "/api/v1/auth/health" {
+                "GET"
+            } else {
+                "POST"
+            };
+            let app =
+                make_all_routes_router().layer(axum::middleware::from_fn(external_path_filter));
+            let resp = app
+                .oneshot(
+                    Request::builder()
+                        .method(method)
+                        .uri(path)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                resp.status(),
+                StatusCode::NOT_FOUND,
+                "外网 path-filter 应拒绝 {}",
+                path
+            );
+        }
+    }
+
+    /// C-1: 内网 path-filter 拒绝所有外网路径（返回 404）。
+    #[tokio::test]
+    async fn test_internal_path_filter_blocks_external_paths() {
+        for &path in EXTERNAL_ALLOWED_PATHS {
+            let app =
+                make_all_routes_router().layer(axum::middleware::from_fn(internal_path_filter));
+            let resp = app
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri(path)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                resp.status(),
+                StatusCode::NOT_FOUND,
+                "内网 path-filter 应拒绝 {}",
+                path
+            );
+        }
+    }
+
+    /// C-1: 内网 path-filter 放行所有内网路径。
+    #[tokio::test]
+    async fn test_internal_path_filter_allows_internal_paths() {
+        for &path in INTERNAL_PATHS {
+            let method = if path == "/api/v1/auth/health" {
+                "GET"
+            } else {
+                "POST"
+            };
+            let app =
+                make_all_routes_router().layer(axum::middleware::from_fn(internal_path_filter));
+            let resp = app
+                .oneshot(
+                    Request::builder()
+                        .method(method)
+                        .uri(path)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                resp.status(),
+                StatusCode::OK,
+                "内网 path-filter 应放行 {}",
+                path
+            );
+        }
     }
 }

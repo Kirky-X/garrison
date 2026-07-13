@@ -12,7 +12,7 @@
 //! - `BULWARK_EXTERNAL_PORT`：外网端口（默认 8080）
 //! - `BULWARK_INTERNAL_PORT`：内网端口（默认 8081）
 //! - `BULWARK_RATE_LIMIT`：外网每 IP 限速（默认 100）
-//! - `BULWARK_INTERNAL_API_KEY`：内网 API Key（默认 "bulwark-internal-key"）
+//! - `BULWARK_INTERNAL_API_KEY`：内网 API Key（必须配置，无默认值，fail-closed）
 //!
 //! # 使用
 //!
@@ -42,8 +42,48 @@ async fn main() -> BulwarkResult<()> {
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(100);
-    let internal_api_key = std::env::var("BULWARK_INTERNAL_API_KEY")
-        .unwrap_or_else(|_| "bulwark-internal-key".to_string());
+    let internal_api_key = std::env::var("BULWARK_INTERNAL_API_KEY").unwrap_or_else(|_| {
+        eprintln!(
+            "FATAL: BULWARK_INTERNAL_API_KEY 环境变量未配置，拒绝启动（fail-closed，M-SAST-1/M-5）"
+        );
+        std::process::exit(1);
+    });
+    if internal_api_key.is_empty() {
+        eprintln!("FATAL: BULWARK_INTERNAL_API_KEY 为空字符串，拒绝启动（fail-closed）");
+        std::process::exit(1);
+    }
+
+    // H-2: 初始化 tracing subscriber，避免所有 tracing::info!/error! 静默丢弃
+    #[cfg(feature = "audit-inklog")]
+    let _logger = bulwark::observability::init_inklog_logging_with_fallback().await;
+
+    // 无 audit-inklog 时，若 metrics-prometheus 或 tracing-log 启用，内联初始化 JSON 日志
+    #[cfg(all(
+        not(feature = "audit-inklog"),
+        any(feature = "metrics-prometheus", feature = "tracing-log")
+    ))]
+    {
+        use tracing_subscriber::EnvFilter;
+        let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+        let result = tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .json()
+            .with_current_span(true)
+            .with_span_list(false)
+            .try_init();
+        if let Err(e) = result {
+            tracing::debug!("tracing subscriber 已初始化，跳过：{}", e);
+        }
+    }
+
+    #[cfg(not(any(
+        feature = "audit-inklog",
+        feature = "metrics-prometheus",
+        feature = "tracing-log"
+    )))]
+    {
+        eprintln!("WARN: 未启用 observability feature，tracing 日志将丢弃。启用 audit-inklog 或 metrics-prometheus 获取结构化日志。");
+    }
 
     // 创建 BackendEmbedded 作为后端
     // 注意：BulwarkManager 需要在使用前通过 BulwarkManager::init() 初始化

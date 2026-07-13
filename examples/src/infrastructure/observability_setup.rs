@@ -7,7 +7,7 @@
 //! 1. `BulwarkMetrics::new()` / `register_to(&registry)` Prometheus 指标注册
 //! 2. `record_login` / `observe_token_validation` / `record_permission_query` / `record_role_query` 指标记录
 //! 3. `gather()` 收集 Prometheus 文本格式输出
-//! 4. `init_json_logging()` JSON 日志初始化（幂等）
+//! 4. `tracing_subscriber` JSON 日志初始化（幂等）
 //! 5. `init_otlp_tracing(endpoint)` OpenTelemetry OTLP 追踪初始化（全局一次性）
 //!
 //! 运行方式：
@@ -15,7 +15,7 @@
 //! cargo run -p bulwark-examples --bin observability_setup --features "metrics-prometheus observability-otlp"
 //! ```
 
-use bulwark::observability::{init_json_logging, BulwarkMetrics};
+use bulwark::observability::BulwarkMetrics;
 use std::time::Duration;
 
 /// 创建 BulwarkMetrics 实例并注册到自定义 registry（避免污染 default registry）。
@@ -121,10 +121,10 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!();
 
     // ----------------------------------------------------------------
-    // 3. init_json_logging（幂等）
+    // 3. tracing_subscriber JSON 日志（幂等）
     // ----------------------------------------------------------------
-    println!("[Logs] init_json_logging():");
-    init_json_logging();
+    println!("[Logs] tracing_subscriber::fmt().json():");
+    tracing_subscriber::fmt().json().try_init().ok();
     println!("    JSON 日志已初始化（幂等，重复调用安全）");
     println!();
 

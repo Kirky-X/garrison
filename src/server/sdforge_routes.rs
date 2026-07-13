@@ -39,8 +39,8 @@ use sdforge::forge;
 use sdforge::prelude::ApiError;
 use std::sync::Arc;
 
-// 复用 external.rs 的 to_api_response 逻辑（避免重复实现 — Rule 8）
-use super::external::to_api_response;
+// 复用 mod.rs 的 to_api_response 逻辑（避免重复实现 — Rule 8）
+use super::to_api_response;
 
 // ============================================================================
 // 外网路由（3 端点）

@@ -33,17 +33,33 @@ use std::sync::Arc;
 
 use axum::Router;
 
+use crate::backend::types::ApiResponse;
 use crate::backend::AuthBackend;
 use crate::error::{BulwarkError, BulwarkResult};
 
-pub mod external;
-pub mod internal;
 pub mod middleware;
 
 #[cfg(feature = "auth-server-sdforge")]
 pub mod sdforge_routes;
 
-pub use middleware::{api_key_auth_middleware, audit_log_middleware, rate_limit_middleware};
+pub use middleware::{
+    api_key_auth_middleware, audit_log_middleware, external_path_filter, internal_path_filter,
+    rate_limit_middleware,
+};
+
+/// 将 `BulwarkResult<T>` 转换为 `ApiResponse<T>`。
+///
+/// Ok → `ApiResponse::ok(data)`
+/// Err → `ApiResponse::err(error_code, message)`，error_code 来自 `response_parts()`
+pub fn to_api_response<T>(result: Result<T, BulwarkError>) -> ApiResponse<T> {
+    match result {
+        Ok(data) => ApiResponse::ok(data),
+        Err(e) => {
+            let (_, error_code, message, _) = e.response_parts();
+            ApiResponse::err(error_code, message)
+        },
+    }
+}
 
 /// Auth Server 配置。
 #[derive(Debug, Clone)]
@@ -64,7 +80,7 @@ impl Default for AuthServerConfig {
             external_port: 8080,
             internal_port: 8081,
             external_rate_limit_per_ip: 100,
-            internal_api_key: "bulwark-internal-key".to_string(),
+            internal_api_key: String::new(),
         }
     }
 }
@@ -147,14 +163,23 @@ impl BulwarkAuthServer {
         self
     }
 
-    /// 构建外网路由（含 rate_limit + audit_log middleware）。
+    /// 构建外网路由（sdforge + path-filter + rate_limit + audit_log）。
+    ///
+    /// 用 `sdforge::http::build()` 收集所有 `#[forge]` 路由（15 端点），
+    /// 通过 `external_path_filter` 中间件仅放行 3 个外网路径（login/logout/refresh），
+    /// 其余内网路径返回 404。
+    ///
+    /// 中间件栈（从外到内）：audit_log → rate_limit → external_path_filter → handler
     ///
     /// 用于测试时通过 `tower::ServiceExt::oneshot` 发送请求，避免实际 listen。
     pub fn external_router(&self) -> Router {
+        use axum::Extension;
         let rate_limit_state = Arc::new(middleware::RateLimitState::new(
             self.config.external_rate_limit_per_ip,
         ));
-        external::external_router(self.backend.clone())
+        sdforge::http::build()
+            .layer(Extension(self.backend.clone()))
+            .layer(axum::middleware::from_fn(middleware::external_path_filter))
             .layer(axum::middleware::from_fn_with_state(
                 rate_limit_state,
                 rate_limit_middleware,
@@ -162,34 +187,28 @@ impl BulwarkAuthServer {
             .layer(axum::middleware::from_fn(audit_log_middleware))
     }
 
-    /// 构建内网路由（含 api_key_auth + audit_log middleware）。
+    /// 构建内网路由（sdforge + path-filter + api_key_auth + audit_log）。
+    ///
+    /// 用 `sdforge::http::build()` 收集所有 `#[forge]` 路由（15 端点），
+    /// 通过 `internal_path_filter` 中间件拒绝 3 个外网路径（login/logout/refresh），
+    /// 其余内网路径放行（由 api_key_auth 保护）。
+    ///
+    /// 中间件栈（从外到内）：audit_log → api_key_auth → internal_path_filter → handler
     ///
     /// 用于测试时通过 `tower::ServiceExt::oneshot` 发送请求，避免实际 listen。
     pub fn internal_router(&self) -> Router {
+        use axum::Extension;
         let api_key_state = Arc::new(middleware::ApiKeyState {
             api_key: self.config.internal_api_key.clone(),
         });
-        internal::internal_router(self.backend.clone())
+        sdforge::http::build()
+            .layer(Extension(self.backend.clone()))
+            .layer(axum::middleware::from_fn(middleware::internal_path_filter))
             .layer(axum::middleware::from_fn_with_state(
                 api_key_state,
                 api_key_auth_middleware,
             ))
             .layer(axum::middleware::from_fn(audit_log_middleware))
-    }
-
-    /// 构建 sdforge 声明式路由（feature = "auth-server-sdforge"）。
-    ///
-    /// 用 `sdforge::http::build()` 收集所有 `#[forge]` 宏注册的路由（15 端点），
-    /// 通过 `Extension` layer 注入 `Arc<dyn AuthBackend>`。
-    ///
-    /// 与 `external_router()` + `internal_router()` 的区别：
-    /// - 手写路由用 `State<Arc<dyn AuthBackend>>` 注入后端
-    /// - sdforge 路由用 `Extension<Arc<dyn AuthBackend>>` 注入后端（`#[state]` 参数）
-    /// - sdforge 路由合并外网 + 内网到单一 Router，调用方按需添加 middleware
-    #[cfg(feature = "auth-server-sdforge")]
-    pub fn sdforge_router(&self) -> Router {
-        use axum::Extension;
-        sdforge::http::build().layer(Extension(self.backend.clone()))
     }
 
     /// 同时启动外网和内网两个 axum 服务器。
@@ -215,7 +234,7 @@ impl BulwarkAuthServer {
             "BulwarkAuthServer 启动"
         );
 
-        let external_handle = tokio::spawn(async move {
+        let mut external_handle = tokio::spawn(async move {
             if let Err(e) = axum::serve(external_listener, external_router).await {
                 tracing::error!(error = %e, "外网服务器异常");
                 return Err(BulwarkError::Internal(format!("外网服务器异常: {}", e)));
@@ -223,7 +242,7 @@ impl BulwarkAuthServer {
             Ok(())
         });
 
-        let internal_handle = tokio::spawn(async move {
+        let mut internal_handle = tokio::spawn(async move {
             if let Err(e) = axum::serve(internal_listener, internal_router).await {
                 tracing::error!(error = %e, "内网服务器异常");
                 return Err(BulwarkError::Internal(format!("内网服务器异常: {}", e)));
@@ -231,12 +250,14 @@ impl BulwarkAuthServer {
             Ok(())
         });
 
-        // 任一服务器异常即返回错误
+        // 任一服务器异常即返回错误，M-1: 显式 abort 另一个 task 避免资源泄漏
         tokio::select! {
-            res = external_handle => {
+            res = &mut external_handle => {
+                internal_handle.abort();
                 res.map_err(|e| BulwarkError::Internal(format!("外网 task panic: {}", e)))?
             },
-            res = internal_handle => {
+            res = &mut internal_handle => {
+                external_handle.abort();
                 res.map_err(|e| BulwarkError::Internal(format!("内网 task panic: {}", e)))?
             },
         }
@@ -460,6 +481,10 @@ mod tests {
         assert_eq!(server.config.external_port, 8080);
         assert_eq!(server.config.internal_port, 8081);
         assert_eq!(server.config.external_rate_limit_per_ip, 100);
+        assert!(
+            server.config.internal_api_key.is_empty(),
+            "Default internal_api_key 必须为空（fail-closed，M-SAST-1/M-5）"
+        );
     }
 
     /// 测试 new_with_kit 通过 AsyncKit 构建后端并创建 server。

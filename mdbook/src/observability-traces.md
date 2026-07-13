@@ -48,9 +48,9 @@ trace context 经 OpenTelemetry 自身的 `Context` 传播（task_local），通
 `observability-otlp` 聚合了 `tracing-subscriber`，可与 JSON 日志共用同一 span 上下文：
 
 ```rust
-use bulwark::observability::{init_otlp_tracing, init_json_logging};
+use bulwark::observability::init_otlp_tracing;
 
-init_json_logging();                              // JSON 日志
+tracing_subscriber::fmt().json().try_init().ok();  // JSON 日志
 init_otlp_tracing("http://otel-collector:4317")?; // OTLP 追踪
 // 两者共享 span，日志与追踪可按 trace_id 关联
 ```

@@ -7,8 +7,9 @@
 //!
 //! - **Metrics**（`BulwarkMetrics`）：Prometheus 格式指标，覆盖登录成功率 / Token 验证延迟 /
 //!   权限查询 QPS / 角色查询 QPS。启用 `metrics-prometheus` feature。
-//! - **Logs**（`init_json_logging`）：tracing-subscriber JSON 格式日志。启用 `tracing-log` 或
-//!   `metrics-prometheus` feature（后者聚合了 tracing-subscriber）。
+//! - **Logs**（`init_inklog_logging` / `init_inklog_logging_with_fallback`）：
+//!   inklog 结构化日志（含降级到 tracing-subscriber JSON）。启用 `audit-inklog` feature；
+//!   降级路径在 `metrics-prometheus` 或 `tracing-log` 启用时使用 tracing-subscriber JSON。
 //! - **Traces**（`init_otlp_tracing`）：OpenTelemetry 分布式追踪，OTLP gRPC 导出。
 //!   启用 `observability-otlp` feature。
 //!
@@ -19,7 +20,8 @@
 //!
 //! ## Feature 门控
 //!
-//! - `metrics-prometheus`：编译期包含 `BulwarkMetrics` 与 `init_json_logging`
+//! - `metrics-prometheus`：编译期包含 `BulwarkMetrics`，并为 inklog 降级路径提供 tracing-subscriber 依赖
+//! - `audit-inklog`：编译期包含 `init_inklog_logging` 与 `init_inklog_logging_with_fallback`
 //! - `observability-otlp`：编译期包含 `init_otlp_tracing` 与 OTLP 导出器
 //! - 未启用任一 feature：模块仍可导入但所有 API 返回 `None` / no-op，保证向后兼容
 
@@ -75,48 +77,13 @@ pub struct BulwarkMetrics {
 mod metrics_impl;
 
 // ============================================================================
-// JSON 日志初始化（feature = "tracing-log" 或 "metrics-prometheus"）
-// ============================================================================
-
-/// 初始化 tracing-subscriber 为 JSON 格式日志输出。
-///
-/// 启用 `metrics-prometheus` 或 `tracing-log` feature 时可用。
-///
-/// # 行为
-/// - 设置 `RUST_LOG` 环境变量解析（默认 `info`）
-/// - 输出 JSON 格式日志，包含 `timestamp` / `level` / `target` / `message` 字段
-/// - 调用多次幂等：若全局 subscriber 已设置，返回 `Ok(())` 不报错
-///
-/// # 错误
-/// 仅在 subscriber 设置失败时返回错误（实际不会发生，因 try_init 已处理）
-#[cfg(any(feature = "metrics-prometheus", feature = "tracing-log"))]
-pub fn init_json_logging() {
-    use tracing_subscriber::fmt;
-    use tracing_subscriber::EnvFilter;
-
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
-
-    let result = fmt()
-        .with_env_filter(filter)
-        .json()
-        .with_current_span(true)
-        .with_span_list(false)
-        .try_init();
-
-    // 幂等：若已初始化则忽略
-    if let Err(e) = result {
-        tracing::debug!("tracing subscriber 已初始化，跳过：{}", e);
-    }
-}
-
-// ============================================================================
 // inklog 结构化日志（feature = "audit-inklog"）
 // ============================================================================
 
-/// 使用 inklog 初始化 tracing subscriber，替换 `init_json_logging()` 的手写配置。
+/// 使用 inklog 初始化 tracing subscriber，提供企业级结构化日志能力。
 ///
 /// 启用 `audit-inklog` feature 时可用。inklog 提供多输出（console/file）、
-/// 日志轮转、压缩、脱敏等企业级功能，替换手写 `tracing_subscriber::fmt().json()` 配置。
+/// 日志轮转、压缩、脱敏等企业级功能，替代手写 `tracing_subscriber::fmt().json()` 配置。
 ///
 /// `tracing::warn!` / `tracing::error!` 宏不变 — inklog 是 subscriber 配置层，
 /// 不是宏替代品。inklog 初始化后，所有 tracing 宏自动经由 inklog pipeline 输出。
@@ -149,6 +116,105 @@ pub async fn init_inklog_logging() -> Result<inklog::LoggerManager, inklog::Inkl
         .console(true)
         .build()
         .await
+}
+
+// ============================================================================
+// inklog 降级初始化（spec R-dep-003，feature = "audit-inklog"）
+// ============================================================================
+
+/// inklog 初始化结果 — 包含可选的 LoggerManager guard 和降级状态。
+///
+/// M-4: `#[must_use]` 确保 guard 不会被意外丢弃（丢弃后 subscriber 可能注销）。
+#[cfg(feature = "audit-inklog")]
+#[must_use = "InklogInit 包含 LoggerManager guard，丢弃后日志 subscriber 可能注销"]
+pub struct InklogInit {
+    /// LoggerManager guard（降级时为 None，guard 不存在）。
+    guard: Option<inklog::LoggerManager>,
+    /// 降级标志：true 表示 inklog 失败，已降级到 tracing-subscriber 默认配置。
+    degraded: bool,
+}
+
+#[cfg(feature = "audit-inklog")]
+impl InklogInit {
+    /// 是否已降级。
+    pub fn is_degraded(&self) -> bool {
+        self.degraded
+    }
+    /// 获取 LoggerManager guard（降级时返回 None）。
+    pub fn guard(self) -> Option<inklog::LoggerManager> {
+        self.guard
+    }
+}
+
+/// 使用 inklog 初始化 tracing subscriber，失败时降级到 tracing-subscriber 默认配置。
+///
+/// spec R-dep-003 降级机制：inklog 初始化失败时回退到内联 `tracing_subscriber::fmt().json()`
+/// 配置，确保日志不丢失。调用方可通过 `InklogInit::is_degraded()` 判断是否降级。
+///
+/// # 行为
+/// 1. 尝试 inklog::LoggerManager::builder().level().console().build()
+/// 2. 成功 → 返回 `InklogInit { guard: Some(mgr), degraded: false }`
+/// 3. 失败 → 内联 `tracing_subscriber::fmt().json()` 降级（当 `metrics-prometheus` 或
+///    `tracing-log` 启用时）；无 observability feature 时用 `eprintln!` 警告；
+///    再 tracing::warn! 记录降级原因
+///    返回 `InklogInit { guard: None, degraded: true }`
+///
+/// # 使用示例
+///
+/// ```ignore
+/// use bulwark::observability::init_inklog_logging_with_fallback;
+///
+/// #[tokio::main]
+/// async fn main() {
+///     let logger = init_inklog_logging_with_fallback().await;
+///     if logger.is_degraded() {
+///         eprintln!("警告：inklog 降级到 tracing-subscriber 默认配置");
+///     }
+///     // guard 在 logger 中保持存活
+/// }
+/// ```
+#[cfg(feature = "audit-inklog")]
+pub async fn init_inklog_logging_with_fallback() -> InklogInit {
+    match init_inklog_logging().await {
+        Ok(mgr) => InklogInit {
+            guard: Some(mgr),
+            degraded: false,
+        },
+        Err(e) => {
+            // 降级路径：metrics-prometheus 或 tracing-log 启用时用 tracing-subscriber JSON
+            #[cfg(any(feature = "metrics-prometheus", feature = "tracing-log"))]
+            {
+                use tracing_subscriber::EnvFilter;
+                let filter =
+                    EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+                let result = tracing_subscriber::fmt()
+                    .with_env_filter(filter)
+                    .json()
+                    .with_current_span(true)
+                    .with_span_list(false)
+                    .try_init();
+                if let Err(init_err) = result {
+                    tracing::debug!("tracing subscriber 已初始化，跳过：{}", init_err);
+                }
+            }
+            // 无 observability feature 时，无 tracing-subscriber 可用，仅 eprintln! 警告
+            #[cfg(not(any(feature = "metrics-prometheus", feature = "tracing-log")))]
+            {
+                eprintln!(
+                    "WARN: inklog 初始化失败且未启用 observability feature，日志将丢失：{}",
+                    e
+                );
+            }
+            tracing::warn!(
+                error = %e,
+                "inklog 初始化失败，已降级到 tracing-subscriber 默认配置（spec R-dep-003）"
+            );
+            InklogInit {
+                guard: None,
+                degraded: true,
+            }
+        },
+    }
 }
 
 // ============================================================================
@@ -388,15 +454,6 @@ mod tests {
         }
     }
 
-    /// 测试 init_json_logging() 多次调用幂等（不 panic）。
-    #[test]
-    #[serial]
-    fn test_init_json_logging_idempotent() {
-        // 多次调用不应 panic
-        init_json_logging();
-        init_json_logging();
-    }
-
     /// 测试 Clone trait（用于 Arc<BulwarkMetrics> 在多线程共享场景）。
     #[test]
     #[serial]
@@ -543,5 +600,33 @@ mod tests_inklog {
             "init_inklog_logging 应成功（debug level）: {:?}",
             result.err()
         );
+    }
+
+    /// M-4: init_inklog_logging_with_fallback 成功时返回非降级 InklogInit。
+    #[tokio::test]
+    #[serial]
+    async fn m4_init_with_fallback_succeeds_not_degraded() {
+        let result = init_inklog_logging_with_fallback().await;
+        assert!(!result.is_degraded(), "inklog 初始化成功时不应降级");
+        assert!(result.guard().is_some(), "成功时应返回 LoggerManager guard");
+    }
+
+    /// M-4: InklogInit 的 is_degraded() 和 guard() 方法行为正确。
+    #[tokio::test]
+    #[serial]
+    async fn m4_inklog_init_degraded_flag() {
+        // 直接构造降级状态验证 API
+        let degraded = InklogInit {
+            guard: None,
+            degraded: true,
+        };
+        assert!(degraded.is_degraded());
+        assert!(degraded.guard().is_none());
+
+        let normal = InklogInit {
+            guard: None, // 不实际持有 guard，仅验证 API
+            degraded: false,
+        };
+        assert!(!normal.is_degraded());
     }
 }

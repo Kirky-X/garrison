@@ -16,21 +16,49 @@ bulwark = { version = "0.3", features = ["tracing-log"] }
 - `tracing-log`：启用 `tracing/log` feature，桥接 `log` crate 的日志到 `tracing`
 - `metrics-prometheus`：聚合 `tracing-subscriber`（含 `fmt` / `json` / `env-filter` feature）
 
-## init_json_logging
+## JSON 日志初始化
 
-调用 `init_json_logging()` 初始化全局 subscriber：
+> **v0.7.0 变更**：`init_json_logging()` 已移除，由 inklog（`audit-inklog` feature）作为更强大的替代方案。
+> 基础的 `tracing_subscriber` JSON 日志仍然支持，可通过内联调用或 inklog 降级路径使用。
+
+### 方式一：启用 `audit-inklog` feature（推荐）
+
+inklog 提供多输出 / 轮转 / 脱敏 / 健康监控等增强能力，初始化失败时自动降级到 `tracing_subscriber` JSON：
 
 ```rust
-use bulwark::observability::init_json_logging;
+use bulwark::observability::init_inklog_logging_with_fallback;
 
-init_json_logging(); // 在 main 早期调用
+// 在 async main 早期调用
+let logger = init_inklog_logging_with_fallback().await;
+if logger.is_degraded() {
+    eprintln!("警告：inklog 降级到 tracing-subscriber 默认配置");
+}
+// logger guard 在 logger 中保持存活，避免日志丢失
+```
+
+### 方式二：内联 `tracing_subscriber` JSON 初始化
+
+未启用 `audit-inklog` 时，可内联初始化基础的 JSON 日志（等价于原 `init_json_logging()` 的实现）：
+
+```rust
+use tracing_subscriber::EnvFilter;
+
+let filter = EnvFilter::try_from_default_env()
+    .unwrap_or_else(|_| EnvFilter::new("info"));
+tracing_subscriber::fmt()
+    .with_env_filter(filter)
+    .json()
+    .with_current_span(true)
+    .with_span_list(false)
+    .try_init()
+    .ok(); // 幂等：已初始化时静默跳过
 ```
 
 行为要点：
 
 - 解析 `RUST_LOG` 环境变量（默认 `info`）
 - 输出 JSON 格式日志，包含 `timestamp` / `level` / `target` / `message` / `span` 字段
-- **幂等**：若全局 subscriber 已设置，返回 `Ok(())` 不报错（多次调用安全）
+- **幂等**：`try_init().ok()` 使全局 subscriber 已设置时静默跳过（多次调用安全）
 - `with_current_span(true)` + `with_span_list(false)`：附加当前 span 但不输出完整 span 列表
 
 ## 日志格式示例

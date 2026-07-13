@@ -3,6 +3,7 @@
 
 //! BulwarkMetrics 实现块（从 mod.rs 迁移）。
 
+#[cfg(feature = "metrics-prometheus")]
 use super::*;
 
 #[cfg(feature = "metrics-prometheus")]

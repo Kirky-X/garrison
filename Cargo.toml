@@ -351,8 +351,9 @@ backend-embedded = []
 # 依赖 reqwest（HTTP client），客户端 SDK 用 reqwest 手写
 backend-remote = ["dep:reqwest"]
 # auth-server：启用 Auth Server 模式（HTTP Server 暴露 AuthBackend 端点）
-# 依赖 web-axum（HTTP server）+ backend-embedded（核心逻辑）
-auth-server = ["web-axum", "backend-embedded"]
+# 依赖 web-axum（HTTP server）+ backend-embedded（核心逻辑）+ auth-server-sdforge（声明式路由）
+# v0.7.0: sdforge 完全替代手写 axum 路由（external.rs/internal.rs 已移除）
+auth-server = ["web-axum", "backend-embedded", "auth-server-sdforge"]
 # abac：启用 ABAC/Cedar DSL 策略引擎（属性级权限模型）
 # 依赖 cedar-policy（Cedar 策略语言解析 + 评估）
 abac = ["dep:cedar-policy"]
@@ -373,13 +374,13 @@ audit-inklog = ["dep:inklog"]
 backend-kit = ["dep:trait-kit", "backend-embedded"]
 
 # === v0.7.0 sdforge 声明式路由 ===
-# 启用后用 #[forge] 宏替换手写 axum 路由（external.rs/internal.rs）
-# sdforge::http::build() 收集 inventory 注册的路由
-auth-server-sdforge = ["dep:sdforge", "auth-server"]
+# sdforge #[forge] 宏注册路由，sdforge::http::build() 收集 inventory 注册的路由
+# auth-server 依赖此 feature（v0.7.0 起强制使用 sdforge 路由，手写路由已移除）
+auth-server-sdforge = ["dep:sdforge"]
 
 # === 可观测性 ===
 listener = []
-tracing-log = ["tracing/log"]
+tracing-log = ["tracing/log", "tracing-subscriber"]
 metrics-prometheus = ["prometheus", "tracing-subscriber"]
 # OpenTelemetry 分布式追踪（OTLP gRPC 导出），独立门控以隔离重依赖
 observability-otlp = ["opentelemetry", "opentelemetry_sdk", "opentelemetry-otlp", "tracing-subscriber"]
@@ -488,8 +489,16 @@ name = "bulwark_benchmark"
 path = "benches/bulwark_benchmark.rs"
 harness = false
 
-# === 本地库 patch（开发时使用 /home/kirky/projects/base 中的本地版本验证）===
-# 发布前必须移除此 section，改用 crates.io 远程版本
+# ============================================================================
+# ⚠️  H-1 安全警示：[patch.crates-io] 本地路径覆盖
+# ----------------------------------------------------------------------------
+# 此 section 使用 /home/kirky/projects/base 中的本地开发版本覆盖 crates.io 远程版本。
+# 发布到 crates.io 前必须移除此整个 section，否则：
+#   1. cargo publish 会因 path 依赖失败
+#   2. 下游消费者无法解析这些 path
+#   3. 违反 crates.io 发布规范
+# 验证移除方式：grep -n "patch.crates-io" Cargo.toml 必须无输出
+# ============================================================================
 [patch.crates-io]
 oxcache = { path = "/home/kirky/projects/base/oxcache" }
 dbnexus = { path = "/home/kirky/projects/base/dbnexus" }

@@ -20,6 +20,41 @@
 //! - BruteForce：固定窗口计数（update 保留 TTL，不重置窗口）
 //! - RateLimit：滑动窗口（每次请求追加时间戳，过滤过期）
 //! - 滑动窗口避免边界突刺（固定窗口在窗口边界处可能瞬间放过 2× max_requests）
+//!
+//! # 已知限制：TOCTOU 竞争窗口（M-2，P1）
+//!
+//! `check` 方法使用 read-modify-write 模式（`storage.get → parse/filter → storage.set`），
+//! 在高并发场景下存在 TOCTOU（Time-of-Check-Time-of-Use）竞争窗口：
+//!
+//! 1. 线程 A 读取时间戳列表（count=N）
+//! 2. 线程 B 读取同一时间戳列表（count=N）
+//! 3. 线程 A 通过阈值检查，追加时间戳，回写（count=N+1）
+//! 4. 线程 B 通过阈值检查，追加时间戳，回写（count=N+1，覆盖线程 A 的写入）
+//!
+//! **净效果**：高并发下可能放过略多于 `max_requests` 的请求（最坏情况 ~2× 并发数）。
+//!
+//! ## 为何不使用原子计数器（与 BruteForce 对比）
+//!
+//! `BruteForceStrategy` 用 [`limiteron::distributed::DistributedLimiter::incr_with_ttl`]
+//! 原子递增计数器，无 TOCTOU 风险。但 `incr_with_ttl` 是**固定窗口**计数器，
+//! 无法满足滑动窗口语义（每次请求需过滤已过期的时间戳）。
+//!
+//! 滑动窗口的过滤操作本质上是 read-modify-write，无法用单一原子原语实现。
+//! 要彻底消除 TOCTOU，需要以下方案之一（均为未来工作）：
+//!
+//! - Redis Lua 脚本（原子 read-filter-check-write）
+//! - CAS（compare-and-swap）原语
+//! - 分布式锁（性能损失大）
+//!
+//! ## 当前缓解措施
+//!
+//! - **TTL 自动过期**：key 设置 `TTL=window_seconds`，窗口无请求时自动清理
+//! - **时间戳过滤**：每次读取时过滤过期时间戳，避免窗口膨胀
+//! - **阈值检查**：`current_threshold` 动态调整，提供一定的弹性缓冲
+//! - **适用场景**：中低并发场景（<1000 QPS per key）下竞争窗口影响可忽略；
+//!   超高并发场景建议改用 `BruteForceStrategy`（固定窗口，原子计数）
+//!
+//! 此限制与 M-4 BruteForce TOCTOU 处理方式一致（文档说明 + 测试加固，非代码修复）。
 
 use crate::dao::BulwarkDao;
 use crate::error::{BulwarkError, BulwarkResult};
@@ -172,6 +207,13 @@ impl RateLimitStrategy {
     ///
     /// 仅在 `dynamic_threshold=Some(_)` 时生效；`None` 时直接返回 `max_requests`。
     ///
+    /// # 已知限制：TOCTOU 竞争窗口（H-5）
+    ///
+    /// 此方法使用 read-modify-write（`current_threshold → 计算 → storage.set`），
+    /// 高并发下存在 TOCTOU 竞争：两个并发调用可能读到相同的 `current` 值，
+    /// 各自计算 `new_threshold` 后最后一次写入覆盖前一次。
+    /// 与 `check` 方法的 TOCTOU 处理方式一致（文档说明，保留语义）。
+    ///
     /// # 返回
     /// 调整后的当前阈值。
     pub async fn adjust_threshold(
@@ -255,12 +297,19 @@ impl BulwarkFirewallStrategy for RateLimitStrategy {
             .get(&key)
             .await
             .map_err(|e| BulwarkError::Dao(format!("limiteron storage 错误: {}", e)))?;
+        // M-3: parse 失败时 warn 记录脏数据，不静默丢弃
         let mut timestamps: Vec<u64> = stored
             .as_deref()
             .unwrap_or("")
             .split(',')
             .filter(|s| !s.is_empty())
-            .filter_map(|s| s.parse().ok())
+            .filter_map(|s| match s.parse::<u64>() {
+                Ok(v) => Some(v),
+                Err(_) => {
+                    tracing::warn!(key = %key, raw = %s, "rate_limit: 时间戳 parse 失败，跳过该条目（可能存储层并发写入截断）");
+                    None
+                }
+            })
             .collect();
 
         // 滑出窗口的时间戳清理

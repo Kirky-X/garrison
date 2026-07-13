@@ -137,16 +137,53 @@ impl QuotaStorage for BulwarkDaoQuotaStorage {
 
         match (meta, count) {
             (Some(meta_str), Some(count_str)) => {
-                let consumed: u64 = count_str.parse().unwrap_or(0);
+                // M-3: parse 失败显性化 — 脏数据返回 Err（fail-fast）
+                let consumed: u64 = count_str.parse().map_err(|e| {
+                    map_to_storage_err(BulwarkError::Dao(format!(
+                        "get_quota parse 失败 (count, key={}, val={}): {}",
+                        count_key, count_str, e
+                    )))
+                })?;
                 let parts: Vec<&str> = meta_str.split('|').collect();
                 if parts.len() != 4 {
-                    return Ok(None);
+                    return Err(map_to_storage_err(BulwarkError::Dao(format!(
+                        "get_quota meta 格式错误 (key={}, val={}): 期望 4 段, 实际 {} 段",
+                        meta_key,
+                        meta_str,
+                        parts.len()
+                    ))));
                 }
-                let limit: u64 = parts[1].parse().unwrap_or(0);
-                let window_start = DateTime::from_timestamp(parts[2].parse().unwrap_or(0), 0)
-                    .unwrap_or_else(Utc::now);
-                let window_end = DateTime::from_timestamp(parts[3].parse().unwrap_or(0), 0)
-                    .unwrap_or_else(Utc::now);
+                let limit: u64 = parts[1].parse().map_err(|e| {
+                    map_to_storage_err(BulwarkError::Dao(format!(
+                        "get_quota parse 失败 (limit, key={}, val={}): {}",
+                        meta_key, parts[1], e
+                    )))
+                })?;
+                let window_start_ts: i64 = parts[2].parse().map_err(|e| {
+                    map_to_storage_err(BulwarkError::Dao(format!(
+                        "get_quota parse 失败 (window_start_ts, key={}, val={}): {}",
+                        meta_key, parts[2], e
+                    )))
+                })?;
+                let window_end_ts: i64 = parts[3].parse().map_err(|e| {
+                    map_to_storage_err(BulwarkError::Dao(format!(
+                        "get_quota parse 失败 (window_end_ts, key={}, val={}): {}",
+                        meta_key, parts[3], e
+                    )))
+                })?;
+                let window_start =
+                    DateTime::from_timestamp(window_start_ts, 0).ok_or_else(|| {
+                        map_to_storage_err(BulwarkError::Dao(format!(
+                            "get_quota DateTime 转换失败 (window_start_ts={})",
+                            window_start_ts
+                        )))
+                    })?;
+                let window_end = DateTime::from_timestamp(window_end_ts, 0).ok_or_else(|| {
+                    map_to_storage_err(BulwarkError::Dao(format!(
+                        "get_quota DateTime 转换失败 (window_end_ts={})",
+                        window_end_ts
+                    )))
+                })?;
                 Ok(Some(QuotaInfo {
                     consumed,
                     limit,
@@ -300,7 +337,13 @@ impl DistributedLimiter for BulwarkDaoDistributedLimiter {
     async fn get_count(&self, key: &str) -> Result<u64, LimiteronError> {
         match self.dao.get(key).await.map_err(map_to_limiter_err)? {
             None => Ok(0),
-            Some(val) => Ok(val.parse().unwrap_or(0)),
+            // M-3: parse 失败显性化 — 脏数据返回错误而非静默用 0
+            Some(val) => val.parse::<u64>().map_err(|e| {
+                map_to_limiter_err(BulwarkError::Dao(format!(
+                    "get_count parse 失败 (key={}, val={}): {}",
+                    key, val, e
+                )))
+            }),
         }
     }
 
@@ -469,11 +512,28 @@ impl BanStorage for BulwarkDaoBanStorage {
             Some(val) => {
                 let parts: Vec<&str> = val.splitn(2, '|').collect();
                 if parts.len() != 2 {
-                    return Ok(None);
+                    return Err(StorageError::QueryError(format!(
+                        "get_history 格式错误 (key={}, val={}): 期望 2 段, 实际 {} 段",
+                        key,
+                        val,
+                        parts.len()
+                    )));
                 }
-                let ban_times: u32 = parts[0].parse().unwrap_or(0);
-                let last_banned_at = DateTime::from_timestamp(parts[1].parse().unwrap_or(0), 0)
-                    .unwrap_or_else(Utc::now);
+                // M-3: parse 失败显性化 — 脏数据返回 Err（fail-fast）
+                let ban_times: u32 = parts[0].parse().map_err(|e| {
+                    StorageError::QueryError(format!(
+                        "get_history parse 失败 (ban_times, key={}, val={}): {}",
+                        key, parts[0], e
+                    ))
+                })?;
+                let last_banned_at_ts: i64 = parts[1].parse().map_err(|e| {
+                    StorageError::QueryError(format!(
+                        "get_history parse 失败 (last_banned_at_ts, key={}, val={}): {}",
+                        key, parts[1], e
+                    ))
+                })?;
+                let last_banned_at =
+                    DateTime::from_timestamp(last_banned_at_ts, 0).unwrap_or_else(Utc::now);
                 Ok(Some(BanHistory {
                     ban_times,
                     last_banned_at,
@@ -492,7 +552,13 @@ impl BanStorage for BulwarkDaoBanStorage {
         let key = ban_times_key(target);
         match self.dao.get(&key).await.map_err(map_to_storage_err)? {
             None => Ok(0),
-            Some(val) => Ok(val.parse().unwrap_or(0)),
+            // M-3: parse 失败显性化 — 脏数据返回错误而非静默用 0
+            Some(val) => val.parse::<u64>().map_err(|e| {
+                StorageError::QueryError(format!(
+                    "get_ban_times parse 失败 (key={}, val={}): {}",
+                    key, val, e
+                ))
+            }),
         }
     }
 
@@ -793,6 +859,125 @@ mod tests {
         assert_eq!(
             count, 0,
             "cleanup_expired_bans 应返回 0（BulwarkDao 无 iter API）"
+        );
+    }
+
+    // --- M-3: unwrap_or(0) 静默吞错修复测试 ---
+
+    /// M-3: QuotaStorage::get_quota 遇到脏 count 数据时返回错误（fail-fast）。
+    #[tokio::test]
+    async fn m3_quota_get_quota_dirty_count_returns_err() {
+        let quota = BulwarkDaoQuotaStorage::new(make_dao());
+        // 直接注入脏数据：count 是非数字字符串
+        quota
+            .dao
+            .set("limiteron:quota:user1:res:count", "not-a-number", 0)
+            .await
+            .unwrap();
+        quota
+            .dao
+            .set("limiteron:quota:user1:res:meta", "1|5|1000|2000", 0)
+            .await
+            .unwrap();
+        let result = quota.get_quota("user1", "res").await;
+        assert!(
+            result.is_err(),
+            "脏 count 数据应返回错误，实际: {:?}",
+            result
+        );
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("parse 失败"),
+            "错误消息应包含 'parse 失败'，实际: {}",
+            err_msg
+        );
+    }
+
+    /// M-3: QuotaStorage::get_quota 遇到脏 meta 数据时返回错误（fail-fast）。
+    #[tokio::test]
+    async fn m3_quota_get_quota_dirty_meta_returns_err() {
+        let quota = BulwarkDaoQuotaStorage::new(make_dao());
+        quota
+            .dao
+            .set("limiteron:quota:user2:res:count", "1", 0)
+            .await
+            .unwrap();
+        // meta 中 limit 字段是非数字
+        quota
+            .dao
+            .set(
+                "limiteron:quota:user2:res:meta",
+                "1|not-number|1000|2000",
+                0,
+            )
+            .await
+            .unwrap();
+        let result = quota.get_quota("user2", "res").await;
+        assert!(
+            result.is_err(),
+            "脏 meta 数据应返回错误，实际: {:?}",
+            result
+        );
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("parse 失败"),
+            "错误消息应包含 'parse 失败'，实际: {}",
+            err_msg
+        );
+    }
+
+    /// M-3: DistributedLimiter::get_count 遇到脏数据时返回错误（非静默用 0）。
+    #[tokio::test]
+    async fn m3_limiter_get_count_dirty_data_returns_err() {
+        let limiter = BulwarkDaoDistributedLimiter::new(make_dao());
+        limiter
+            .dao
+            .set("dirty-count-key", "not-a-number", 0)
+            .await
+            .unwrap();
+        let result = limiter.get_count("dirty-count-key").await;
+        assert!(result.is_err(), "脏数据应返回错误，实际: {:?}", result);
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("parse 失败"),
+            "错误消息应包含 'parse 失败'，实际: {}",
+            err_msg
+        );
+    }
+
+    /// M-3: BanStorage::get_ban_times 遇到脏数据时返回错误（非静默用 0）。
+    #[tokio::test]
+    async fn m3_ban_get_ban_times_dirty_data_returns_err() {
+        let storage = BulwarkDaoBanStorage::new(make_dao());
+        let target = BanTarget::Ip("1.2.3.4".to_string());
+        // 直接注入脏数据
+        let key = ban_times_key(&target);
+        storage.dao.set(&key, "not-a-number", 0).await.unwrap();
+        let result = storage.get_ban_times(&target).await;
+        assert!(result.is_err(), "脏数据应返回错误，实际: {:?}", result);
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("parse 失败"),
+            "错误消息应包含 'parse 失败'，实际: {}",
+            err_msg
+        );
+    }
+
+    /// M-3: BanStorage::get_history 遇到脏数据时返回错误（fail-fast）。
+    #[tokio::test]
+    async fn m3_ban_get_history_dirty_data_returns_err() {
+        let storage = BulwarkDaoBanStorage::new(make_dao());
+        let target = BanTarget::Ip("5.6.7.8".to_string());
+        let key = ban_history_key(&target);
+        // ban_times 字段是非数字
+        storage.dao.set(&key, "not-number|1000", 0).await.unwrap();
+        let result = storage.get_history(&target).await;
+        assert!(result.is_err(), "脏数据应返回错误，实际: {:?}", result);
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("parse 失败"),
+            "错误消息应包含 'parse 失败'，实际: {}",
+            err_msg
         );
     }
 }
