@@ -89,7 +89,9 @@ inklog = { version = "0.1", optional = true, default-features = false }
 # 替换 bulwark 手写限速（SmsRateLimiter + RateLimitStrategy + BruteForceStrategy）
 limiteron = { version = "0.2", optional = true, default-features = false, features = ["distributed"] }
 # sdforge：已移除（0.3.5 forge! 宏不存在，实际是 #[service_api] 属性宏只能生成服务端路由，不能生成客户端 SDK；且默认依赖 axum 与现有 web 框架冲突，详见 specmark 冲突报告）
-# trait-kit：已移除（0.3.0 kit! 宏不存在，实际 AsyncKit typestate 与 BulwarkManager 抽象重叠，AuthBackend 只需 trait + dyn object 切换，详见 specmark 冲突报告）
+# trait-kit：typestate DI 构建器（0.3.0 AsyncKit 提供 AuthBackend 的可选构建路径）
+# 替换手写 BulwarkAuthServer::new(backend) 初始化，用 AsyncKit register/build/require 流程
+trait-kit = { version = "0.3", optional = true, default-features = false, features = ["async"] }
 # cedar-policy：Cedar 策略语言（ABAC 权限模型，feature-gated: abac）
 cedar-policy = { version = "4.11", optional = true }
 
@@ -363,6 +365,11 @@ oauth2-server = ["protocol-oauth2", "dep:reqwest", "dep:argon2", "dep:rand"]
 # tracing::warn!/error! 宏不变（inklog 是 subscriber 层，非宏替代品）。
 audit-inklog = ["dep:inklog"]
 
+# === v0.7.0 trait-kit typestate DI 构建 ===
+# 启用后可用 AsyncKit 构建 AuthBackend（BackendModule: AsyncAutoBuilder）
+# 作为手写 BulwarkAuthServer::new(backend) 的可选替代路径
+backend-kit = ["dep:trait-kit", "backend-embedded"]
+
 # === 可观测性 ===
 listener = []
 tracing-log = ["tracing/log"]
@@ -411,7 +418,7 @@ full = [
     "anonymous-session",
     "session-search",
     "social-wechat", "social-alipay",
-    "backend-embedded", "backend-remote", "auth-server", "abac", "oauth2-server",
+    "backend-embedded", "backend-kit", "backend-remote", "auth-server", "abac", "oauth2-server",
 ]
 
 # production 使用 db-postgres（dbnexus 0.3+ 已支持 postgres feature）
@@ -426,7 +433,7 @@ production = [
     "firewall-waf",
     "three-tier-cache",
     "sms-rate-limit",
-    "backend-embedded", "auth-server", "abac",
+    "backend-embedded", "backend-kit", "auth-server", "abac",
 ]
 
 development = [

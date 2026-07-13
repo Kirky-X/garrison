@@ -86,6 +86,40 @@ impl BulwarkAuthServer {
         }
     }
 
+    /// 用 trait-kit AsyncKit 构建后端（可选路径，feature = "backend-kit"）。
+    ///
+    /// 替换手写 `BulwarkAuthServer::new(Arc::new(BackendEmbedded::new()))`。
+    /// 从已构建的 `AsyncKit<Ready>` 中 require `BackendModule` 的 capability
+    /// （`Arc<dyn AuthBackend>`），委托给 [`Self::new`]。
+    ///
+    /// # 参数
+    /// - `kit`：已调用 `kit.build().await` 完成的 `AsyncKit<Ready>`
+    ///
+    /// # 错误
+    /// - `BulwarkError::Internal`：kit 中未注册/未构建 `BackendModule`
+    ///
+    /// # 示例
+    ///
+    /// ```ignore
+    /// use trait_kit::kit::AsyncKit;
+    /// use bulwark::backend::BackendModule;
+    ///
+    /// let mut kit = AsyncKit::new();
+    /// kit.register::<BackendModule>().unwrap();
+    /// let kit = kit.build().await.unwrap();
+    /// let server = BulwarkAuthServer::new_with_kit(kit).await.unwrap();
+    /// ```
+    #[cfg(feature = "backend-kit")]
+    pub async fn new_with_kit(
+        kit: trait_kit::kit::AsyncKit<trait_kit::kit::AsyncReady>,
+    ) -> BulwarkResult<Self> {
+        use crate::backend::BackendModule;
+        let backend = kit.require::<BackendModule>().map_err(|e| {
+            BulwarkError::Internal(format!("kit require BackendModule failed: {}", e))
+        })?;
+        Ok(Self::new(backend))
+    }
+
     /// 设置外网端口（默认 8080）。
     pub fn with_external_port(mut self, port: u16) -> Self {
         self.config.external_port = port;
@@ -408,5 +442,39 @@ mod tests {
         assert_eq!(server.config.external_port, 8080);
         assert_eq!(server.config.internal_port, 8081);
         assert_eq!(server.config.external_rate_limit_per_ip, 100);
+    }
+
+    /// 测试 new_with_kit 通过 AsyncKit 构建后端并创建 server。
+    #[cfg(feature = "backend-kit")]
+    #[tokio::test]
+    async fn test_new_with_kit_builds_server() {
+        use crate::backend::BackendModule;
+        use trait_kit::kit::AsyncKit;
+
+        let mut kit = AsyncKit::new();
+        kit.register::<BackendModule>()
+            .expect("register BackendModule failed");
+        let kit = kit.build().await.expect("kit build failed");
+        let server = BulwarkAuthServer::new_with_kit(kit)
+            .await
+            .expect("new_with_kit failed");
+        // 验证 server 用默认配置创建
+        assert_eq!(server.config.external_port, 8080);
+        assert_eq!(server.config.internal_port, 8081);
+    }
+
+    /// 测试 new_with_kit 在 kit 未注册 BackendModule 时返回错误。
+    #[cfg(feature = "backend-kit")]
+    #[tokio::test]
+    async fn test_new_with_kit_missing_module_fails() {
+        use trait_kit::kit::AsyncKit;
+
+        let kit = AsyncKit::new();
+        let kit = kit.build().await.expect("empty build should succeed");
+        let result = BulwarkAuthServer::new_with_kit(kit).await;
+        assert!(
+            result.is_err(),
+            "new_with_kit 应在 kit 未注册 BackendModule 时返回错误"
+        );
     }
 }

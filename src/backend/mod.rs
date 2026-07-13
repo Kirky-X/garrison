@@ -26,6 +26,9 @@ pub mod embedded;
 #[cfg(feature = "backend-remote")]
 pub mod remote;
 
+#[cfg(feature = "backend-kit")]
+pub mod kit_builder;
+
 pub use types::*;
 
 #[cfg(feature = "backend-embedded")]
@@ -33,6 +36,9 @@ pub use embedded::BackendEmbedded;
 
 #[cfg(feature = "backend-remote")]
 pub use remote::BackendRemote;
+
+#[cfg(feature = "backend-kit")]
+pub use kit_builder::{BackendKitError, BackendModule};
 
 /// 认证后端统一抽象。
 ///
