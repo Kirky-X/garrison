@@ -87,15 +87,22 @@ impl WafHook for WhitePathHook {
     /// **警告**：本 Hook 必须注册在所有安全关键 Hook（如
     /// [`DirectoryTraversalHook`] / [`DangerCharacterHook`]）**之后**。
     ///
-    /// 实现细节：匹配白名单前先检查 path 是否含可疑模式（`..` 或 `//`），
-    /// 若含可疑模式则返回 `Allow`（不短路），交给后续安全 Hook 处理。
+    /// 实现细节：匹配白名单前先检查 path 是否含可疑模式（字面量 `..`/`//` 或
+    /// URL 编码形式 `%2e`/`%2f`/`%5c`），若含可疑模式则返回 `Allow`（不短路），
+    /// 交给后续安全 Hook 处理。
     ///
     /// [`DirectoryTraversalHook`]: DirectoryTraversalHook
     /// [`DangerCharacterHook`]: DangerCharacterHook
     async fn check(&self, ctx: &WafContext<'_>) -> WafVerdict {
-        // 安全兜底：含可疑模式（`..` 或 `//`）时不短路，返回 Allow 交给后续安全 Hook 处理。
-        // 防止 `/api/../admin` 通过 `starts_with("/api")` 绕过 DirectoryTraversalHook。
-        if ctx.path.contains("..") || ctx.path.contains("//") {
+        // 安全兜底：含可疑模式（字面量或 URL 编码）时不短路，返回 Allow 交给后续安全 Hook 处理。
+        // 防止 `/api/../admin` 或 `/api/%2e%2e/admin` 通过 `starts_with("/api")` 绕过安全 Hook。
+        let lower = ctx.path.to_lowercase();
+        if lower.contains("..")
+            || lower.contains("//")
+            || lower.contains("%2e")
+            || lower.contains("%2f")
+            || lower.contains("%5c")
+        {
             return WafVerdict::Allow;
         }
         if self.paths.iter().any(|p| path_matches(p, ctx.path)) {
@@ -985,6 +992,48 @@ mod tests {
         assert!(
             !executed.is_empty(),
             "含 // 的路径不应短路，后续 Hook 应执行，实际执行: {:?}",
+            executed
+        );
+    }
+
+    /// 验证 path 含 URL 编码 `..`（`%2e%2e`）时 WhitePathHook 不短路（FM-013 修复）。
+    #[tokio::test]
+    async fn white_path_url_encoded_traversal_not_short_circuited() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let mut chain = WafHookChain::new();
+        chain.register(Box::new(WhitePathHook::new(vec!["/api".to_string()])));
+        chain.register(Box::new(RecordingHook {
+            hook_name: "recorder",
+            log: log.clone(),
+        }));
+        let ctx = make_ctx("/api/%2e%2e/admin", "GET", None, &[], &[]);
+        let result = chain.check(&ctx).await;
+        assert!(result.is_ok(), "含 %2e%2e 的路径应放行（不短路）");
+        let executed = log.lock().unwrap();
+        assert!(
+            !executed.is_empty(),
+            "含 %2e%2e 的路径不应短路，后续 Hook 应执行，实际执行: {:?}",
+            executed
+        );
+    }
+
+    /// 验证 path 含 URL 编码 `/`（`%2f`）时 WhitePathHook 不短路（FM-013 修复）。
+    #[tokio::test]
+    async fn white_path_url_encoded_slash_not_short_circuited() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let mut chain = WafHookChain::new();
+        chain.register(Box::new(WhitePathHook::new(vec!["/api".to_string()])));
+        chain.register(Box::new(RecordingHook {
+            hook_name: "recorder",
+            log: log.clone(),
+        }));
+        let ctx = make_ctx("/api%2ftest", "GET", None, &[], &[]);
+        let result = chain.check(&ctx).await;
+        assert!(result.is_ok(), "含 %2f 的路径应放行（不短路）");
+        let executed = log.lock().unwrap();
+        assert!(
+            !executed.is_empty(),
+            "含 %2f 的路径不应短路，后续 Hook 应执行，实际执行: {:?}",
             executed
         );
     }
