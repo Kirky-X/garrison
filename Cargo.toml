@@ -57,11 +57,11 @@ rand = { version = "0.8", optional = true }
 zeroize = { version = "1", optional = true, features = ["derive"] }
 regex = { version = "1", optional = true }
 oxcache = { version = "0.3", optional = true }
-# default-features = false：dbnexus 0.3+ 禁止 embedded(sqlite) 与 server-side(postgres) 混用，
+# default-features = false：dbnexus 0.4+ 禁止 embedded(sqlite) 与 server-side(postgres) 混用，
 # 由 db-base feature 显式启用基础 features，db-sqlite / db-postgres 分别启用 sqlite / postgres。
-dbnexus = { version = "0.3", optional = true, default-features = false }
+dbnexus = { version = "0.4", optional = true, default-features = false }
 # dbnexus 未 re-export 这些类型，需显式声明为直接依赖。
-sea-orm = { version = "2.0.0-rc.37", default-features = false, features = ["sqlx-sqlite", "runtime-tokio-rustls"], optional = true }
+sea-orm = { version = "2.0.0-rc.42", default-features = false, features = ["sqlx-sqlite", "runtime-tokio-rustls"], optional = true }
 prometheus = { version = "0.14", optional = true }
 tracing-subscriber = { version = "0.3", optional = true, features = ["fmt", "json", "env-filter"] }
 opentelemetry = { version = "0.30", optional = true, default-features = false, features = ["trace"] }
@@ -461,3 +461,13 @@ required-features = ["auth-server"]
 name = "bulwark_benchmark"
 path = "benches/bulwark_benchmark.rs"
 harness = false
+
+# === 本地库 patch（开发时使用 /home/kirky/projects/base 中的本地版本验证）===
+# 发布前必须移除此 section，改用 crates.io 远程版本
+[patch.crates-io]
+oxcache = { path = "/home/kirky/projects/base/oxcache" }
+dbnexus = { path = "/home/kirky/projects/base/dbnexus" }
+inklog = { path = "/home/kirky/projects/base/inklog" }
+limiteron = { path = "/home/kirky/projects/base/limiteron" }
+sdforge = { path = "/home/kirky/projects/base/sdforge" }
+trait-kit = { path = "/home/kirky/projects/base/trait-kit" }
