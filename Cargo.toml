@@ -96,6 +96,8 @@ sdforge = { version = "0.4", optional = true, default-features = false, features
 trait-kit = { version = "0.3", optional = true, default-features = false, features = ["async"] }
 # cedar-policy：Cedar 策略语言（ABAC 权限模型，feature-gated: abac）
 cedar-policy = { version = "4.11", optional = true }
+# moka：高速并发缓存（ABAC 决策缓存 TTL 60s，feature-gated: abac）
+moka = { version = "0.12", optional = true, default-features = false, features = ["sync"] }
 
 [dev-dependencies]
 toml = "1.0"
@@ -343,8 +345,8 @@ backend-remote = ["dep:reqwest"]
 # v0.7.0: sdforge 完全替代手写 axum 路由（external.rs/internal.rs 已移除）
 auth-server = ["web-axum", "backend-embedded", "auth-server-sdforge"]
 # abac：启用 ABAC/Cedar DSL 策略引擎（属性级权限模型）
-# 依赖 cedar-policy（Cedar 策略语言解析 + 评估）
-abac = ["dep:cedar-policy"]
+# 依赖 cedar-policy（Cedar 策略语言解析 + 评估）+ moka（决策缓存 TTL 60s）
+abac = ["dep:cedar-policy", "dep:moka"]
 # oauth2-server：启用 OAuth2 Server（4 端点 + 4 种 grant type + PKCE）
 # 依赖 protocol-oauth2（OAuth2 原语）+ reqwest（HTTP client）+ argon2（client_secret 哈希）+ rand（client_id 生成）
 oauth2-server = ["protocol-oauth2", "dep:reqwest", "dep:argon2", "dep:rand"]
