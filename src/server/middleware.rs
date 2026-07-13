@@ -247,11 +247,27 @@ const EXTERNAL_ALLOWED_PATHS: &[&str] = &[
     "/api/v1/auth/refresh",
 ];
 
+/// 判断路径是否为外网允许路径。
+///
+/// 基础 3 路径始终检查；`oauth2-server` feature 启用时额外放行 3 个 OAuth2 外网端点。
+pub fn is_external_allowed(path: &str) -> bool {
+    if EXTERNAL_ALLOWED_PATHS.contains(&path) {
+        return true;
+    }
+    if cfg!(feature = "oauth2-server") {
+        return matches!(
+            path,
+            "/oauth2/authorize" | "/oauth2/token" | "/oauth2/revoke"
+        );
+    }
+    false
+}
+
 /// 外网 path-filter 中间件：仅允许外网路径，其余返回 404。
 ///
 /// 用于外网端口，防止外部用户访问内网端点（check-*/get-*/kickout 等）。
 pub async fn external_path_filter(req: Request, next: Next) -> Response {
-    if EXTERNAL_ALLOWED_PATHS.contains(&req.uri().path()) {
+    if is_external_allowed(req.uri().path()) {
         next.run(req).await
     } else {
         StatusCode::NOT_FOUND.into_response()
@@ -262,7 +278,7 @@ pub async fn external_path_filter(req: Request, next: Next) -> Response {
 ///
 /// 用于内网端口，防止内网调用方访问用户端端点（login/logout/refresh）。
 pub async fn internal_path_filter(req: Request, next: Next) -> Response {
-    if EXTERNAL_ALLOWED_PATHS.contains(&req.uri().path()) {
+    if is_external_allowed(req.uri().path()) {
         StatusCode::NOT_FOUND.into_response()
     } else {
         next.run(req).await

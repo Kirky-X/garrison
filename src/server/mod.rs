@@ -42,6 +42,9 @@ pub mod middleware;
 #[cfg(feature = "auth-server-sdforge")]
 pub mod sdforge_routes;
 
+#[cfg(feature = "oauth2-server")]
+pub mod oauth2_routes;
+
 pub use middleware::{
     api_key_auth_middleware, audit_log_middleware, external_path_filter, internal_path_filter,
     rate_limit_middleware,
@@ -91,6 +94,8 @@ impl Default for AuthServerConfig {
 pub struct BulwarkAuthServer {
     backend: Arc<dyn AuthBackend>,
     config: AuthServerConfig,
+    #[cfg(feature = "oauth2-server")]
+    oauth2_state: Option<Arc<oauth2_routes::OAuth2State>>,
 }
 
 impl BulwarkAuthServer {
@@ -102,6 +107,8 @@ impl BulwarkAuthServer {
         Self {
             backend,
             config: AuthServerConfig::default(),
+            #[cfg(feature = "oauth2-server")]
+            oauth2_state: None,
         }
     }
 
@@ -163,6 +170,15 @@ impl BulwarkAuthServer {
         self
     }
 
+    /// 注入 OAuth2 状态，启用 4 个 OAuth2 端点（feature = "oauth2-server"）。
+    ///
+    /// 外网端口添加 authorize/token/revoke，内网端口添加 introspect。
+    #[cfg(feature = "oauth2-server")]
+    pub fn with_oauth2(mut self, state: Arc<oauth2_routes::OAuth2State>) -> Self {
+        self.oauth2_state = Some(state);
+        self
+    }
+
     /// 构建外网路由（sdforge + path-filter + rate_limit + audit_log）。
     ///
     /// 用 `sdforge::http::build()` 收集所有 `#[forge]` 路由（15 端点），
@@ -177,14 +193,25 @@ impl BulwarkAuthServer {
         let rate_limit_state = Arc::new(middleware::RateLimitState::new(
             self.config.external_rate_limit_per_ip,
         ));
-        sdforge::http::build()
+        let router = sdforge::http::build()
             .layer(Extension(self.backend.clone()))
             .layer(axum::middleware::from_fn(middleware::external_path_filter))
             .layer(axum::middleware::from_fn_with_state(
                 rate_limit_state,
                 rate_limit_middleware,
             ))
-            .layer(axum::middleware::from_fn(audit_log_middleware))
+            .layer(axum::middleware::from_fn(audit_log_middleware));
+
+        #[cfg(feature = "oauth2-server")]
+        let router = {
+            if let Some(state) = &self.oauth2_state {
+                router.merge(oauth2_routes::oauth2_external_router(state.clone()))
+            } else {
+                router
+            }
+        };
+
+        router
     }
 
     /// 构建内网路由（sdforge + path-filter + api_key_auth + audit_log）。
@@ -201,14 +228,25 @@ impl BulwarkAuthServer {
         let api_key_state = Arc::new(middleware::ApiKeyState {
             api_key: self.config.internal_api_key.clone(),
         });
-        sdforge::http::build()
+        let router = sdforge::http::build()
             .layer(Extension(self.backend.clone()))
             .layer(axum::middleware::from_fn(middleware::internal_path_filter))
             .layer(axum::middleware::from_fn_with_state(
                 api_key_state,
                 api_key_auth_middleware,
             ))
-            .layer(axum::middleware::from_fn(audit_log_middleware))
+            .layer(axum::middleware::from_fn(audit_log_middleware));
+
+        #[cfg(feature = "oauth2-server")]
+        let router = {
+            if let Some(state) = &self.oauth2_state {
+                router.merge(oauth2_routes::oauth2_internal_router(state.clone()))
+            } else {
+                router
+            }
+        };
+
+        router
     }
 
     /// 同时启动外网和内网两个 axum 服务器。
