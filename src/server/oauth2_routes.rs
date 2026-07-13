@@ -15,13 +15,14 @@
 
 use std::sync::Arc;
 
-use axum::extract::{Query, State};
+use axum::extract::{Extension, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde_json::json;
 
+use crate::context::BulwarkPrincipal;
 use crate::dao::BulwarkDao;
 use crate::oauth2_server::authorize::{AuthorizeHandler, AuthorizeRequest, AuthorizeResponse};
 use crate::oauth2_server::client::OAuth2ClientStore;
@@ -89,9 +90,10 @@ pub fn oauth2_internal_router(state: Arc<OAuth2State>) -> Router {
 async fn authorize_endpoint(
     State(state): State<Arc<OAuth2State>>,
     Query(req): Query<AuthorizeRequest>,
+    principal: Option<Extension<BulwarkPrincipal>>,
 ) -> Response {
-    // TODO: 从 session/cookie 提取 user_id，此处先传 None（未登录 → 重定向登录页）
-    let user_id: Option<i64> = None;
+    // 从 BulwarkPrincipal Extension 提取 user_id（无 principal 或 login_id 解析失败 → None → LoginRequired）
+    let user_id: Option<i64> = principal.and_then(|ext| ext.0.login_id.parse::<i64>().ok());
     match state.authorize_handler.authorize(&req, user_id).await {
         Ok(AuthorizeResponse::Redirect { location }) => {
             (StatusCode::FOUND, [("Location", location)]).into_response()
@@ -326,6 +328,76 @@ mod tests {
         assert!(
             location.starts_with("https://auth.example.com/login"),
             "应重定向到登录页，实际: {location}"
+        );
+    }
+
+    /// T003: 有 BulwarkPrincipal（Extension）时 authorize 端点返回 Redirect 含 code。
+    /// principal.login_id = "1001" → user_id = Some(1001) → 授权成功 → Redirect。
+    #[tokio::test]
+    async fn test_authorize_endpoint_returns_redirect_with_code_when_principal_present() {
+        let (state, store) = make_state();
+        store
+            .create(make_test_client("auth-principal"))
+            .await
+            .unwrap();
+        let app = oauth2_external_router(state).layer(Extension(BulwarkPrincipal {
+            login_id: "1001".to_string(),
+        }));
+        let uri = "/oauth2/authorize?response_type=code&client_id=auth-principal&redirect_uri=https://app.example.com/cb&code_challenge=test-challenge&code_challenge_method=S256";
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(uri)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::FOUND);
+        let location = resp
+            .headers()
+            .get("Location")
+            .expect("Location header 必须存在")
+            .to_str()
+            .unwrap();
+        assert!(
+            location.starts_with("https://app.example.com/cb?code="),
+            "有 principal 时应重定向到 redirect_uri 含 code，实际: {location}"
+        );
+    }
+
+    /// T003: 无 BulwarkPrincipal（Extension 缺失）时 authorize 端点返回 LoginRequired。
+    #[tokio::test]
+    async fn test_authorize_endpoint_returns_login_required_when_no_principal() {
+        let (state, store) = make_state();
+        store
+            .create(make_test_client("auth-no-principal"))
+            .await
+            .unwrap();
+        // 无 .layer(Extension(...)) → principal 提取为 None
+        let app = oauth2_external_router(state);
+        let uri = "/oauth2/authorize?response_type=code&client_id=auth-no-principal&redirect_uri=https://app.example.com/cb&code_challenge=test-challenge&code_challenge_method=S256";
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(uri)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::FOUND);
+        let location = resp
+            .headers()
+            .get("Location")
+            .expect("Location header 必须存在")
+            .to_str()
+            .unwrap();
+        assert!(
+            location.starts_with("https://auth.example.com/login"),
+            "无 principal 应重定向到登录页，实际: {location}"
         );
     }
 
