@@ -4126,3 +4126,107 @@ async fn per_token_active_timeout_none_falls_back_to_global() {
         "per-token=None 时应回退到全局 active_timeout=2，token（last_active_at 5 秒前）应已过期"
     );
 }
+
+// ============================================================================
+// T003-T004: revoke_all_sessions + get_active_sessions 工业标准 API 测试
+// ============================================================================
+
+/// 验证 `revoke_all_sessions` 终止指定用户的所有会话并返回数量。
+///
+/// 场景：同一 login_id 登录 2 次（产生 2 个 token），调用 revoke_all_sessions 后：
+/// - 返回值为 2（成功吊销数量）
+/// - 两个 token 的 Token-Session 均失效
+/// - Account-Session 被清除
+#[tokio::test]
+async fn revoke_all_sessions_terminates_all_tokens_for_login_id() {
+    let logic = make_logic(3600, 86400, false, "uuid", true, true);
+    let t1 = logic.login("1001", &LoginParams::default()).await.unwrap();
+    let t2 = logic.login("1001", &LoginParams::default()).await.unwrap();
+
+    let count = logic.revoke_all_sessions("1001").await.unwrap();
+
+    assert_eq!(count, 2, "应吊销 2 个 token，实际: {}", count);
+    assert!(
+        logic
+            .session
+            .get_token_session(&t1)
+            .await
+            .unwrap()
+            .is_none(),
+        "t1 应已失效"
+    );
+    assert!(
+        logic
+            .session
+            .get_token_session(&t2)
+            .await
+            .unwrap()
+            .is_none(),
+        "t2 应已失效"
+    );
+    assert!(
+        logic
+            .session
+            .get_account_session("1001")
+            .await
+            .unwrap()
+            .is_none(),
+        "Account-Session 应已清除"
+    );
+}
+
+/// 验证 `revoke_all_sessions` 对未知用户返回 0（幂等）。
+#[tokio::test]
+async fn revoke_all_sessions_returns_zero_for_unknown_user() {
+    let logic = make_logic(3600, 86400, false, "uuid", true, true);
+    let count = logic.revoke_all_sessions("unknown").await.unwrap();
+    assert_eq!(count, 0, "未知用户应返回 0，实际: {}", count);
+}
+
+/// 验证 `get_active_sessions` 返回当前活跃的 token 列表。
+///
+/// 场景：同一 login_id 登录 2 次，get_active_sessions 应返回 2 个 token；
+/// 登出其中一个后，再调用应返回 1 个。
+#[tokio::test]
+async fn get_active_sessions_returns_valid_tokens() {
+    let logic = make_logic(3600, 86400, false, "uuid", true, true);
+    let t1 = logic.login("1001", &LoginParams::default()).await.unwrap();
+    let t2 = logic.login("1001", &LoginParams::default()).await.unwrap();
+
+    let active = logic.get_active_sessions("1001").await.unwrap();
+    assert_eq!(
+        active.len(),
+        2,
+        "应有 2 个活跃 token，实际: {}",
+        active.len()
+    );
+    assert!(active.contains(&t1), "应包含 t1");
+    assert!(active.contains(&t2), "应包含 t2");
+
+    // 登出 t1 后再查询
+    logic.session.logout(&t1).await.unwrap();
+    let active_after = logic.get_active_sessions("1001").await.unwrap();
+    assert_eq!(
+        active_after.len(),
+        1,
+        "登出 t1 后应有 1 个活跃 token，实际: {}",
+        active_after.len()
+    );
+    assert!(
+        active_after.contains(&t2),
+        "应仅包含 t2，实际: {:?}",
+        active_after
+    );
+}
+
+/// 验证 `get_active_sessions` 对未知用户返回空 Vec。
+#[tokio::test]
+async fn get_active_sessions_returns_empty_for_unknown_user() {
+    let logic = make_logic(3600, 86400, false, "uuid", true, true);
+    let active = logic.get_active_sessions("unknown").await.unwrap();
+    assert!(
+        active.is_empty(),
+        "未知用户应返回空 Vec，实际: {:?}",
+        active
+    );
+}

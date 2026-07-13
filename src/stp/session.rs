@@ -130,6 +130,42 @@ pub trait SessionLogic: BulwarkCore {
     /// - 会话销毁失败：透传 `BulwarkError`。
     async fn revoke_token(&self, token: &str) -> BulwarkResult<()>;
 
+    /// 批量终止指定用户的所有会话。
+    ///
+    /// 遍历 `login_id` 的所有 token，逐个吊销并广播 `RevokeToken` 事件。
+    ///
+    /// # 参数
+    /// - `login_id`: 登录主体标识引用。
+    ///
+    /// # 返回
+    /// 被终止的会话数量。
+    ///
+    /// # 错误
+    /// - 单个 token 吊销失败时记录 warn 并继续（best-effort），不中断批量操作。
+    async fn revoke_all_sessions(&self, login_id: &str) -> BulwarkResult<usize> {
+        let _ = login_id;
+        Err(BulwarkError::NotImplemented(
+            "revoke_all_sessions 需 BulwarkLogicDefault 实现".to_string(),
+        ))
+    }
+
+    /// 查询指定用户当前活跃的 token 列表。
+    ///
+    /// # 参数
+    /// - `login_id`: 登录主体标识引用。
+    ///
+    /// # 返回
+    /// 活跃 token 字符串列表（空 Vec 表示无活跃会话）。
+    ///
+    /// # 错误
+    /// - DAO 读取失败：透传 `BulwarkError`。
+    async fn get_active_sessions(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+        let _ = login_id;
+        Err(BulwarkError::NotImplemented(
+            "get_active_sessions 需 BulwarkLogicDefault 实现".to_string(),
+        ))
+    }
+
     /// 检查登录状态：从 task_local 获取 token 验证有效性。
     ///
     /// # 返回
@@ -296,6 +332,47 @@ impl SessionLogic for BulwarkLogicDefault {
             .await;
         }
         Ok(())
+    }
+
+    async fn revoke_all_sessions(&self, login_id: &str) -> BulwarkResult<usize> {
+        let tokens = self.session.get_tokens_by_login_id(login_id);
+        let mut count = 0usize;
+        for token in tokens {
+            match self.revoke_token(&token).await {
+                Ok(()) => count += 1,
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        login_id,
+                        token = %token,
+                        "revoke_all_sessions: 单个 token 吊销失败，继续处理"
+                    );
+                },
+            }
+        }
+        // 清理 Account-Session + 失效三层缓存（与 logout_by_login_id 语义对齐）。
+        // revoke_token 仅删除 Token-Session 并从 Account-Session 移除该 token，
+        // 但保留空的 Account-Session（logout_inner L1106 设计），需额外调用
+        // logout_by_login_id 彻底清除 Account-Session + login_token_map + 三层缓存。
+        if let Err(e) = self.logout_by_login_id(login_id).await {
+            tracing::warn!(
+                error = %e,
+                login_id,
+                "revoke_all_sessions: Account-Session 清理失败"
+            );
+        }
+        Ok(count)
+    }
+
+    async fn get_active_sessions(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+        let tokens = self.session.get_tokens_by_login_id(login_id);
+        let mut active = Vec::with_capacity(tokens.len());
+        for token in tokens {
+            if self.session.get_token_session(&token).await?.is_some() {
+                active.push(token);
+            }
+        }
+        Ok(active)
     }
 
     async fn check_login(&self) -> BulwarkResult<bool> {
@@ -1075,6 +1152,34 @@ mod tests {
             config: Arc::new(BulwarkConfig::default()),
         };
         let result = mock.login_by_token("external").await;
+        assert!(
+            matches!(result, Err(BulwarkError::NotImplemented(_))),
+            "默认实现应返回 NotImplemented，实际: {:?}",
+            result
+        );
+    }
+
+    /// 验证 `revoke_all_sessions` 默认实现返回 `NotImplemented`。
+    #[tokio::test]
+    async fn revoke_all_sessions_default_returns_not_implemented() {
+        let mock = MockSession {
+            config: Arc::new(BulwarkConfig::default()),
+        };
+        let result = mock.revoke_all_sessions("1001").await;
+        assert!(
+            matches!(result, Err(BulwarkError::NotImplemented(_))),
+            "默认实现应返回 NotImplemented，实际: {:?}",
+            result
+        );
+    }
+
+    /// 验证 `get_active_sessions` 默认实现返回 `NotImplemented`。
+    #[tokio::test]
+    async fn get_active_sessions_default_returns_not_implemented() {
+        let mock = MockSession {
+            config: Arc::new(BulwarkConfig::default()),
+        };
+        let result = mock.get_active_sessions("1001").await;
         assert!(
             matches!(result, Err(BulwarkError::NotImplemented(_))),
             "默认实现应返回 NotImplemented，实际: {:?}",
