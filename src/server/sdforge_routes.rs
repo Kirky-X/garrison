@@ -286,6 +286,47 @@ async fn health() -> Result<ApiResponse<&'static str>, ApiError> {
     Ok(ApiResponse::ok("ok"))
 }
 
+// ============================================================================
+// Metrics 端点（feature = "metrics-prometheus"）
+// ============================================================================
+
+/// /metrics 端点，暴露 Prometheus 格式指标。
+///
+/// 调用 `prometheus::gather()` 收集 default registry 的所有指标
+/// （`BulwarkMetrics::new()` 注册的 `bulwark_*` 指标），
+/// 用 `TextEncoder` 编码为 Prometheus 文本格式。
+///
+/// # 设计权衡
+///
+/// `#[forge]` 宏在非 streaming 模式下用 `Json(value).into_response()` 包装返回值，
+/// 响应 Content-Type 为 `application/json`，body 为 JSON 序列化的字符串
+/// （含转义换行符）。若需标准 Prometheus `text/plain` 抓取，应在
+/// `BulwarkAuthServer::external_router()` / `internal_router()` 中直接用 axum
+/// 路由注册（绕过 `#[forge]` 宏）。本端点优先复用 `#[forge]` 声明式注册，
+/// 保持路由定义一致性。
+///
+/// # 错误
+///
+/// `TextEncoder::encode` 仅在 buffer 写入失败时返回错误（实际不会发生），
+/// 返回 `ApiError::Internal`（error_id = "metrics-encode-failure"）。
+#[cfg(feature = "metrics-prometheus")]
+#[forge(
+    name = "auth_metrics",
+    version = "v1",
+    path = "/metrics",
+    method = "GET",
+    tool_name = "auth_metrics",
+    description = "Prometheus 指标端点"
+)]
+async fn metrics() -> Result<String, ApiError> {
+    let output = prometheus::TextEncoder::new()
+        .encode_to_string(&prometheus::gather())
+        .map_err(|e| {
+            ApiError::internal_with_source("Prometheus 指标编码失败", "metrics-encode-failure", e)
+        })?;
+    Ok(output)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -595,13 +636,18 @@ mod tests {
     #[test]
     fn test_sdforge_route_count() {
         // sdforge::http::build() 收集所有 #[forge] 注册的路由
-        // 验证 15 个路由（3 外网 + 12 内网）全部注册成功
+        // metrics-prometheus 启用时 16 个（3 外网 + 12 内网 + 1 metrics）
+        // 未启用时 15 个（3 外网 + 12 内网）
         let router = sdforge::http::build();
         let route_count = count_routes(&router);
+        #[cfg(feature = "metrics-prometheus")]
+        let expected = 16;
+        #[cfg(not(feature = "metrics-prometheus"))]
+        let expected = 15;
         assert_eq!(
-            route_count, 15,
-            "sdforge 应注册 15 个路由（3 外网 + 12 内网），实际 {}",
-            route_count
+            route_count, expected,
+            "sdforge 应注册 {} 个路由，实际 {}",
+            expected, route_count
         );
     }
 
@@ -618,5 +664,75 @@ mod tests {
             .count();
         // 去重后的数量由 build() 内部处理，这里取注册总数作为近似值
         reg_count + direct_count
+    }
+
+    // ========================================================================
+    // Metrics 端点测试（feature = "metrics-prometheus"）
+    // ========================================================================
+
+    /// T005: /metrics 端点返回 200 + JSON 包装的 Prometheus 文本格式。
+    ///
+    /// `#[forge]` 宏用 `Json(value).into_response()` 包装返回值，
+    /// 响应 body 为 JSON 序列化的字符串（含转义换行符）。
+    /// 测试解析 JSON 字符串后验证包含 `bulwark_` 前缀指标。
+    #[cfg(feature = "metrics-prometheus")]
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn test_sdforge_metrics_returns_prometheus_format() {
+        use crate::observability::BulwarkMetrics;
+
+        // 注册 BulwarkMetrics 到 default registry（若已注册则跳过 AlreadyReg）
+        if let Ok(metrics) = BulwarkMetrics::register_to(prometheus::default_registry()) {
+            metrics.record_login(true);
+            metrics.record_permission_query(true);
+        }
+
+        let app = make_router();
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/api/v1/metrics")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        // #[forge] 宏用 Json(value) 包装返回值，响应是 JSON 字符串
+        let body: String = serde_json::from_slice(&bytes).expect("响应应为 JSON 序列化的字符串");
+        assert!(
+            body.contains("bulwark_login_total"),
+            "/metrics 应包含 bulwark_login_total 指标，实际: {}",
+            body
+        );
+    }
+
+    /// T005: /metrics 端点在未注册 BulwarkMetrics 时返回 200 + 空字符串。
+    ///
+    /// 验证 default registry 为空时端点不 panic，返回空 Prometheus 文本。
+    #[cfg(feature = "metrics-prometheus")]
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn test_sdforge_metrics_returns_empty_when_no_metrics() {
+        // 不注册任何指标，验证端点不 panic
+        // 注意：default registry 是全局共享的，其他测试可能已注册指标，
+        // 此测试仅验证端点不 panic 且返回 200（不验证 body 内容）
+        let app = make_router();
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/api/v1/metrics")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        // 响应应为有效 JSON 字符串（可能为空字符串 ""）
+        let _body: String = serde_json::from_slice(&bytes).expect("响应应为 JSON 序列化的字符串");
     }
 }
