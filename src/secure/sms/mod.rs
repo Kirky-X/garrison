@@ -294,7 +294,7 @@ impl SmsVerificationService {
         let stored = self.dao.get(&code_key).await?;
         let stored = stored.ok_or(BulwarkError::SmsCodeNotFound)?;
 
-        if stored == code {
+        if constant_time_eq(&stored, code) {
             // 验证成功：删除验证码 + 清零未验证计数 + 清零尝试次数
             self.dao.delete(&code_key).await?;
             let unverified_key = format!("sms:unverified:{}", phone);
@@ -324,6 +324,21 @@ fn generate_code() -> BulwarkResult<String> {
     use rand::Rng;
     let code: u32 = OsRng.gen_range(0..1000000);
     Ok(format!("{:06}", code))
+}
+
+/// 常量时间字符串比较（防止时序攻击）。
+///
+/// 长度相同时，逐字节 XOR 累积，无论在哪一位首次不同，循环次数相同。
+/// 长度不同时立即返回 false（仅泄露长度信息，不泄露内容；验证码固定 6 位，长度泄露无风险）。
+fn constant_time_eq(a: &str, b: &str) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut result: u8 = 0;
+    for (x, y) in a.bytes().zip(b.bytes()) {
+        result |= x ^ y;
+    }
+    result == 0
 }
 
 #[cfg(test)]
@@ -596,5 +611,45 @@ mod tests {
             matches!(result, Err(BulwarkError::SmsChannelRecycled)),
             "通道回收后应继续返回 SmsChannelRecycled"
         );
+    }
+
+    // ========================================================================
+    // 常量时间比较测试（时序攻击防护）
+    // ========================================================================
+
+    /// 验证 constant_time_eq 对相同字符串返回 true。
+    #[test]
+    fn constant_time_eq_same_string_returns_true() {
+        assert!(constant_time_eq("123456", "123456"));
+        assert!(constant_time_eq("", ""));
+        assert!(constant_time_eq("abcdef", "abcdef"));
+    }
+
+    /// 验证 constant_time_eq 对不同字符串返回 false。
+    #[test]
+    fn constant_time_eq_different_string_returns_false() {
+        assert!(!constant_time_eq("123456", "000000"));
+        assert!(!constant_time_eq("123456", "123457"));
+        assert!(!constant_time_eq("abcdef", "abcdeF"));
+    }
+
+    /// 验证 constant_time_eq 对不同长度字符串返回 false。
+    #[test]
+    fn constant_time_eq_different_length_returns_false() {
+        assert!(!constant_time_eq("12345", "123456"));
+        assert!(!constant_time_eq("1234567", "123456"));
+        assert!(!constant_time_eq("", "123456"));
+    }
+
+    /// 验证 constant_time_eq 对仅首位不同的字符串返回 false（覆盖首字节差异）。
+    #[test]
+    fn constant_time_eq_first_byte_diff_returns_false() {
+        assert!(!constant_time_eq("023456", "123456"));
+    }
+
+    /// 验证 constant_time_eq 对仅末位不同的字符串返回 false（覆盖末字节差异）。
+    #[test]
+    fn constant_time_eq_last_byte_diff_returns_false() {
+        assert!(!constant_time_eq("123450", "123456"));
     }
 }

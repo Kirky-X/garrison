@@ -14,7 +14,7 @@
 //! 多策略鉴权场景下，需聚合多个策略的决策为一个最终决策。
 //! Forbid 优先语义确保"强制拒绝"不可被其他策略的 Allow 覆盖。
 
-use super::Decision;
+use super::{Decision, DecisionReason};
 
 /// 决策组合器，聚合多个 [`Decision`] 为单个最终决策。
 ///
@@ -27,13 +27,12 @@ impl DecisionCombinator {
     /// 优先级为 Forbid > Deny > Allow：
     /// 1. 遇到第一个 Forbid 决策立即返回（短路）
     /// 2. 无 Forbid 时返回第一个 Deny 决策
-    /// 3. 无 Forbid 且无 Deny 时返回 Allow（含空列表场景）
+    /// 3. 无 Forbid 且无 Deny 时返回 Allow
     ///
     /// # 空列表行为
     ///
-    /// 空列表返回 `Decision::allow()`（fail-open）。调用方需自行保证
-    /// 传入非空决策列表——空列表通常表示策略未填充的 bug，静默放行
-    /// 可能导致权限绕过。
+    /// 空列表返回 `Decision::deny(ExplicitDeny)`（fail-closed）。空列表
+    /// 通常表示策略未填充的 bug，fail-closed 确保不会因 bug 导致权限绕过。
     ///
     /// # 参数
     ///
@@ -43,6 +42,9 @@ impl DecisionCombinator {
     ///
     /// 聚合后的最终决策。
     pub fn combine(decisions: &[Decision]) -> Decision {
+        if decisions.is_empty() {
+            return Decision::deny(DecisionReason::ExplicitDeny);
+        }
         let mut first_deny: Option<&Decision> = None;
         for d in decisions {
             #[cfg(feature = "safe-defaults")]
@@ -124,18 +126,18 @@ mod tests {
         );
     }
 
-    /// combine 对空列表返回 Allow（安全默认）。
+    /// combine 对空列表返回 Deny（fail-closed 安全默认）。
     ///
-    /// 验证 `[]` → allow。
+    /// 验证 `[]` → deny(ExplicitDeny)。
     #[test]
-    fn combine_returns_allow_for_empty_list() {
+    fn combine_returns_deny_for_empty_list() {
         let decisions: Vec<Decision> = vec![];
         let result = DecisionCombinator::combine(&decisions);
-        assert!(result.allowed, "空列表应返回 Allow");
+        assert!(!result.allowed, "空列表应返回 Deny（fail-closed）");
         assert_eq!(
             result.reason,
-            DecisionReason::ExplicitAllow,
-            "空列表 reason 应为 ExplicitAllow"
+            DecisionReason::ExplicitDeny,
+            "空列表 reason 应为 ExplicitDeny"
         );
     }
 
