@@ -206,6 +206,22 @@ pub enum TenantResolverKind {
     Claim,
 }
 
+/// 审计脱敏模式（T012）。
+///
+/// 控制 `AuditLogListener::mask_metadata` 的脱敏策略：
+/// - `Full`：所有 `mask_fields` 中的字段值替换为固定 `"***"`（完全屏蔽）
+/// - `Partial`：使用 `SensitiveDataMasker` 进行类型感知脱敏（如手机号 → `138****1234`），
+///   无匹配规则的字段回退为 `"***"`
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AuditMaskMode {
+    /// 所有敏感字段值替换为固定 `"***"`（完全屏蔽）。
+    Full,
+    /// 使用 `SensitiveDataMasker` 类型感知脱敏（保留部分可见信息）。
+    #[default]
+    Partial,
+}
+
 /// 多租户隔离配置段。
 ///
 /// # 默认值
@@ -444,6 +460,12 @@ pub struct BulwarkConfig {
     /// - `Replaced`：顶替最旧会话（触发 Replaced 事件）
     pub overflow_logout_mode: OverflowLogoutMode,
 
+    /// 审计日志脱敏模式（T012）。默认 `Partial`。
+    ///
+    /// - `Full`：所有 `mask_fields` 字段值替换为 `"***"`（完全屏蔽）
+    /// - `Partial`：使用 `SensitiveDataMasker` 类型感知脱敏（如手机号 → `138****1234`）
+    pub audit_mask_mode: AuditMaskMode,
+
     /// 多租户隔离配置段。
     ///
     /// 默认 `enabled: false`（向后兼容）。启用后需配合 `tenant-isolation` Cargo feature
@@ -601,6 +623,7 @@ impl BulwarkConfig {
             device_binding_mode: DEFAULT_DEVICE_BINDING_MODE.to_string(),
             replaced_login_exit_mode: ReplacedLoginExitMode::default(),
             overflow_logout_mode: OverflowLogoutMode::default(),
+            audit_mask_mode: AuditMaskMode::default(),
             tenant_isolation: TenantIsolationConfig::default(),
             #[cfg(feature = "web-waf")]
             waf_config: WafConfig::default(),
@@ -730,7 +753,8 @@ impl BulwarkConfig {
             .default(
                 "overflow_logout_mode",
                 ConfigValue::string(DEFAULT_OVERFLOW_LOGOUT_MODE),
-            );
+            )
+            .default("audit_mask_mode", ConfigValue::string("partial"));
 
         #[cfg(feature = "login-token-map-persistence")]
         {
@@ -1665,6 +1689,7 @@ jwt_secret = "test-secret""#,
             device_binding_mode: DEFAULT_DEVICE_BINDING_MODE.to_string(),
             replaced_login_exit_mode: ReplacedLoginExitMode::default(),
             overflow_logout_mode: OverflowLogoutMode::default(),
+            audit_mask_mode: AuditMaskMode::default(),
             tenant_isolation: TenantIsolationConfig::default(),
             #[cfg(feature = "web-waf")]
             waf_config: crate::web::waf::WafConfig::default(),
@@ -2589,6 +2614,56 @@ jwt_secret = "test-secret""#,
             "BULWARK_OVERFLOW_LOGOUT_MODE=kickout 应覆盖为 Kickout"
         );
         std::env::remove_var("BULWARK_OVERFLOW_LOGOUT_MODE");
+    }
+
+    // ========================================================================
+    // T012: audit_mask_mode 配置测试
+    // ========================================================================
+
+    /// T012: `default_config()` 的 `audit_mask_mode` 为 `Partial`。
+    #[test]
+    fn default_audit_mask_mode_is_partial() {
+        let config = BulwarkConfig::default_config();
+        assert_eq!(
+            config.audit_mask_mode,
+            AuditMaskMode::Partial,
+            "默认 audit_mask_mode 应为 Partial"
+        );
+    }
+
+    /// T012: `AuditMaskMode` 序列化为 snake_case 字符串 "full"/"partial"。
+    #[test]
+    fn audit_mask_mode_serde_snake_case() {
+        assert_eq!(
+            serde_json::to_string(&AuditMaskMode::Full).unwrap(),
+            r#""full""#
+        );
+        assert_eq!(
+            serde_json::to_string(&AuditMaskMode::Partial).unwrap(),
+            r#""partial""#
+        );
+        assert_eq!(
+            serde_json::from_str::<AuditMaskMode>(r#""full""#).unwrap(),
+            AuditMaskMode::Full
+        );
+        assert_eq!(
+            serde_json::from_str::<AuditMaskMode>(r#""partial""#).unwrap(),
+            AuditMaskMode::Partial
+        );
+    }
+
+    /// T012: `BULWARK_AUDIT_MASK_MODE=full` 环境变量覆盖配置为 Full。
+    #[test]
+    #[serial]
+    fn env_overrides_audit_mask_mode() {
+        std::env::set_var("BULWARK_AUDIT_MASK_MODE", "full");
+        let config = BulwarkConfig::load(None).expect("load with env");
+        assert_eq!(
+            config.audit_mask_mode,
+            AuditMaskMode::Full,
+            "BULWARK_AUDIT_MASK_MODE=full 应覆盖为 Full"
+        );
+        std::env::remove_var("BULWARK_AUDIT_MASK_MODE");
     }
 
     // ========================================================================

@@ -30,6 +30,7 @@
 //! );
 //! ```
 
+use crate::config::AuditMaskMode;
 #[cfg(feature = "db-sqlite")]
 use crate::error::{BulwarkError, BulwarkResult};
 
@@ -61,6 +62,11 @@ pub struct AuditConfig {
     /// 构成链式签名（第 N 行签名依赖第 N-1 行签名 + 当前行内容）。
     /// `None` 时 `export_csv`/`export_json` 返回 `BulwarkError::Config`。
     pub signing_key: Option<String>,
+    /// 审计脱敏模式（T012）。默认 `Partial`。
+    ///
+    /// - `Full`：所有 `mask_fields` 字段值替换为 `"***"`（完全屏蔽）
+    /// - `Partial`：使用 `SensitiveDataMasker` 类型感知脱敏（如手机号 → `138****1234`）
+    pub audit_mask_mode: AuditMaskMode,
 }
 
 // ============================================================================
@@ -90,6 +96,9 @@ use sea_orm::{ConnectionTrait, DbBackend, Statement, Value};
 use hmac::{Hmac, KeyInit, Mac};
 #[cfg(all(feature = "audit-log", feature = "db-sqlite"))]
 use sha2::Sha256;
+// T012: Partial 脱敏模式依赖 SensitiveDataMasker（secure-masking feature）
+#[cfg(all(feature = "secure-masking", feature = "db-sqlite"))]
+use crate::secure::masking::{MaskType, SensitiveDataMasker};
 
 /// 构造 metadata JSON 字符串（T078 辅助函数）。
 ///
@@ -183,6 +192,22 @@ fn extract_request_context(event: &BulwarkEvent) -> Option<&super::RequestContex
             request_context, ..
         } => request_context.as_ref(),
     }
+}
+
+/// 创建审计默认脱敏器（T012 辅助函数）。
+///
+/// 注册常见敏感字段的类型感知脱敏规则：
+/// - `phone` → 手机号脱敏（保留前 3 后 4）
+/// - `email` → 邮箱脱敏（保留首字符 + 域名）
+/// - `id_card` → 身份证脱敏（保留前 3 后 4）
+/// - `bank_card` → 银行卡脱敏（保留前 6 后 4，PCI-DSS 3.4）
+#[cfg(all(feature = "secure-masking", feature = "db-sqlite"))]
+fn default_audit_masker() -> SensitiveDataMasker {
+    SensitiveDataMasker::new()
+        .with_rule(MaskType::Phone, "phone")
+        .with_rule(MaskType::Email, "email")
+        .with_rule(MaskType::IdCard, "id_card")
+        .with_rule(MaskType::BankCard, "bank_card")
 }
 
 /// `audit_logs` 表行结构（T072 Green）。
@@ -628,6 +653,7 @@ impl AuditLogListener {
     ///     retain_days: 0,
     ///     async_write: false,
     ///     signing_key: None,
+    ///     audit_mask_mode: AuditMaskMode::Partial,
     /// };
     /// // 假设已有 pool
     /// // let listener = AuditLogListener::new(pool, config);
@@ -642,7 +668,20 @@ impl AuditLogListener {
             Ok(v) => v,
             Err(_) => return metadata.to_string(),
         };
-        self.mask_value_recursive(&mut value);
+        match self.config.audit_mask_mode {
+            AuditMaskMode::Full => self.mask_value_recursive(&mut value),
+            AuditMaskMode::Partial => {
+                #[cfg(feature = "secure-masking")]
+                {
+                    self.mask_value_partial(&mut value);
+                }
+                #[cfg(not(feature = "secure-masking"))]
+                {
+                    // secure-masking 未启用时回退到 Full 行为（安全优先）
+                    self.mask_value_recursive(&mut value);
+                }
+            },
+        }
         serde_json::to_string(&value).unwrap_or_else(|_| metadata.to_string())
     }
 
@@ -662,6 +701,38 @@ impl AuditLogListener {
         if let Some(arr) = value.as_array_mut() {
             for item in arr.iter_mut() {
                 self.mask_value_recursive(item);
+            }
+        }
+    }
+
+    /// Partial 模式递归脱敏：使用 `SensitiveDataMasker` 类型感知脱敏（T012）。
+    ///
+    /// 对 `mask_fields` 中的字段：
+    /// - 匹配 `SensitiveDataMasker` 规则的字段（phone/email/id_card/bank_card）→ 类型感知脱敏
+    /// - 无匹配规则的字段 → 回退为 `"***"`（安全优先）
+    #[cfg(feature = "secure-masking")]
+    fn mask_value_partial(&self, value: &mut serde_json::Value) {
+        let masker = default_audit_masker();
+        if let Some(obj) = value.as_object_mut() {
+            for field in &self.config.mask_fields {
+                if let Some(serde_json::Value::String(s)) = obj.get_mut(field) {
+                    let masked = masker.mask_field(field, s);
+                    if masked == *s {
+                        // 无匹配规则，回退为 "***"
+                        *s = "***".to_string();
+                    } else {
+                        *s = masked;
+                    }
+                }
+            }
+            // 递归处理嵌套对象
+            for (_, child) in obj.iter_mut() {
+                self.mask_value_partial(child);
+            }
+        }
+        if let Some(arr) = value.as_array_mut() {
+            for item in arr.iter_mut() {
+                self.mask_value_partial(item);
             }
         }
     }
@@ -984,6 +1055,7 @@ mod tests {
             retain_days: 30,
             async_write: true,
             signing_key: None,
+            audit_mask_mode: AuditMaskMode::Partial,
         };
         assert_eq!(config.mask_fields, vec!["password".to_string()]);
         assert_eq!(config.retain_days, 30);
@@ -997,7 +1069,7 @@ mod tests {
 
 #[cfg(all(test, feature = "audit-log", feature = "db-sqlite"))]
 mod db_sqlite_tests {
-    use super::{AuditConfig, AuditEntry, AuditLogListener, AuditQuery};
+    use super::{AuditConfig, AuditEntry, AuditLogListener, AuditMaskMode, AuditQuery};
     use crate::dao::{init_dbnexus, BulwarkMigration};
     use crate::listener::{BulwarkEvent, BulwarkListener, RequestContext};
     use dbnexus::DbPool;
@@ -1112,6 +1184,7 @@ mod db_sqlite_tests {
             retain_days: 0,
             async_write: false,
             signing_key: None,
+            audit_mask_mode: AuditMaskMode::Partial,
         };
         let listener = AuditLogListener::new(pool.clone(), config);
 
@@ -1170,6 +1243,7 @@ mod db_sqlite_tests {
             retain_days: 0,
             async_write: false,
             signing_key: None,
+            audit_mask_mode: AuditMaskMode::Partial,
         };
         let listener = AuditLogListener::new(pool, config);
 
@@ -1212,6 +1286,7 @@ mod db_sqlite_tests {
             retain_days: 0,
             async_write: false,
             signing_key: None,
+            audit_mask_mode: AuditMaskMode::Partial,
         };
         let listener = AuditLogListener::new(pool.clone(), config);
 
@@ -1401,6 +1476,7 @@ mod db_sqlite_tests {
             retain_days: 0,
             async_write: false,
             signing_key: None,
+            audit_mask_mode: AuditMaskMode::Partial,
         };
         let listener = AuditLogListener::new(pool.clone(), config);
 
@@ -1553,6 +1629,7 @@ mod db_sqlite_tests {
             retain_days: 0,
             async_write: false,
             signing_key: None,
+            audit_mask_mode: AuditMaskMode::Partial,
         };
         let listener = AuditLogListener::new(pool, config);
 
@@ -1599,6 +1676,7 @@ mod db_sqlite_tests {
             retain_days: 0,
             async_write: false,
             signing_key: Some("test-secret-key".to_string()),
+            audit_mask_mode: AuditMaskMode::Partial,
         };
         let listener = AuditLogListener::new(pool, config);
 
@@ -1662,6 +1740,7 @@ mod db_sqlite_tests {
             retain_days: 0,
             async_write: false,
             signing_key: Some("test-secret-key".to_string()),
+            audit_mask_mode: AuditMaskMode::Partial,
         };
         let listener = AuditLogListener::new(pool, config);
 
@@ -1711,6 +1790,7 @@ mod db_sqlite_tests {
             retain_days: 0,
             async_write: false,
             signing_key: Some("chain-test-key".to_string()),
+            audit_mask_mode: AuditMaskMode::Partial,
         };
         let listener = AuditLogListener::new(pool, config);
 
@@ -1796,6 +1876,7 @@ mod db_sqlite_tests {
             retain_days: 0,
             async_write: false,
             signing_key: Some("tamper-test-key".to_string()),
+            audit_mask_mode: AuditMaskMode::Partial,
         };
         let listener = AuditLogListener::new(pool, config);
 
@@ -1863,6 +1944,7 @@ mod db_sqlite_tests {
             retain_days: 0,
             async_write: false,
             signing_key: Some("empty-test-key".to_string()),
+            audit_mask_mode: AuditMaskMode::Partial,
         };
         let listener = AuditLogListener::new(pool, config);
 
@@ -1885,6 +1967,7 @@ mod db_sqlite_tests {
             retain_days: 0,
             async_write: false,
             signing_key: Some("empty-test-key".to_string()),
+            audit_mask_mode: AuditMaskMode::Partial,
         };
         let listener = AuditLogListener::new(pool, config);
 
@@ -1916,6 +1999,7 @@ mod db_sqlite_tests {
             retain_days: 0,
             async_write: false,
             signing_key: None,
+            audit_mask_mode: AuditMaskMode::Partial,
         };
         let listener = AuditLogListener::new(pool, config);
 
@@ -1961,6 +2045,7 @@ mod db_sqlite_tests {
             retain_days: 0,
             async_write: false,
             signing_key: None,
+            audit_mask_mode: AuditMaskMode::Partial,
         };
         let listener = AuditLogListener::new(pool, config);
 
@@ -1997,6 +2082,7 @@ mod db_sqlite_tests {
             retain_days: 0,
             async_write: false,
             signing_key: None,
+            audit_mask_mode: AuditMaskMode::Partial,
         };
         let listener = AuditLogListener::new(pool, config);
 
@@ -2019,5 +2105,74 @@ mod db_sqlite_tests {
             "ip 应从 request_context 提取为 10.0.0.1"
         );
         assert!(entry.user_agent.is_none(), "user_agent 未提供时应为 None");
+    }
+
+    // ========================================================================
+    // T012: Audit 脱敏配置 Full/Partial 切换
+    // ========================================================================
+
+    /// T012-1: Full 模式下 mask_fields 中的字段值全部替换为 "***"。
+    ///
+    /// 即使字段有类型感知规则（如 phone），Full 模式也强制替换为 "***"。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn audit_full_mode_masks_all_fields_with_stars() {
+        let pool = setup_db().await;
+        let config = AuditConfig {
+            mask_fields: vec!["phone".to_string(), "password".to_string()],
+            retain_days: 0,
+            async_write: false,
+            signing_key: None,
+            audit_mask_mode: AuditMaskMode::Full,
+        };
+        let listener = AuditLogListener::new(pool, config);
+
+        let metadata = r#"{"phone":"13812341234","password":"secret"}"#;
+        let masked = listener.mask_metadata(metadata);
+
+        let parsed: serde_json::Value =
+            serde_json::from_str(&masked).expect("masked JSON 应可解析");
+        assert_eq!(
+            parsed["phone"],
+            serde_json::Value::String("***".to_string()),
+            "Full 模式下 phone 应替换为 ***"
+        );
+        assert_eq!(
+            parsed["password"],
+            serde_json::Value::String("***".to_string()),
+            "Full 模式下 password 应替换为 ***"
+        );
+    }
+
+    /// T012-2: Partial 模式下 phone 使用 SensitiveDataMasker 类型感知脱敏。
+    ///
+    /// phone → "138****1234"（保留前 3 后 4），
+    /// password 无匹配规则 → 回退为 "***"（安全优先）。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn audit_partial_mode_uses_type_aware_masking() {
+        let pool = setup_db().await;
+        let config = AuditConfig {
+            mask_fields: vec!["phone".to_string(), "password".to_string()],
+            retain_days: 0,
+            async_write: false,
+            signing_key: None,
+            audit_mask_mode: AuditMaskMode::Partial,
+        };
+        let listener = AuditLogListener::new(pool, config);
+
+        let metadata = r#"{"phone":"13812341234","password":"secret"}"#;
+        let masked = listener.mask_metadata(metadata);
+
+        let parsed: serde_json::Value =
+            serde_json::from_str(&masked).expect("masked JSON 应可解析");
+        assert_eq!(
+            parsed["phone"],
+            serde_json::Value::String("138****1234".to_string()),
+            "Partial 模式下 phone 应类型感知脱敏为 138****1234"
+        );
+        assert_eq!(
+            parsed["password"],
+            serde_json::Value::String("***".to_string()),
+            "Partial 模式下 password 无匹配规则，应回退为 ***"
+        );
     }
 }
