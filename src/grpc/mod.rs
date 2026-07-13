@@ -9,7 +9,7 @@
 //!   - 从 gRPC 请求 metadata 提取 `authorization: Bearer <token>` header
 //!   - 调用 `BulwarkUtil::check_login()` 鉴权
 //!   - 鉴权失败返回 `tonic::Status::UNAUTHENTICATED`（code = 16）
-//! - [`health_service`]：返回 `tonic_health::server::HealthServer<impl Health>`
+//! - `health_service`：返回 `tonic_health::server::HealthServer<impl Health>`
 //!   - gRPC 标准健康检查协议（grpc.health.v1.Health）
 //!   - 默认设置 ServingStatus::Serving，供 kubelet / 服务网格探针调用
 //!

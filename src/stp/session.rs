@@ -362,6 +362,7 @@ impl SessionLogic for BulwarkLogicDefault {
         Ok(())
     }
 
+    #[tracing::instrument(level = "info", skip(self, refresh_token))]
     async fn refresh_access_token(&self, refresh_token: &str) -> BulwarkResult<(String, String)> {
         #[cfg(all(feature = "protocol-jwt", feature = "db-sqlite"))]
         {
