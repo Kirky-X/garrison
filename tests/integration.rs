@@ -3,6 +3,7 @@
 
 //! 跨模块集成测试入口——axum / login_password / tenant_isolation / strategy / refresh_token / plugin / keycloak / jwt_modes / annotation。
 
+#[cfg(feature = "db-sqlite")]
 #[path = "common/mod.rs"]
 mod common;
 

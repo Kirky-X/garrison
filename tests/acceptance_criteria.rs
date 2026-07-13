@@ -822,6 +822,7 @@ async fn bw_ac_009_logout_invalidates_token() {
 /// ```
 #[tokio::test]
 #[serial]
+#[cfg(feature = "account-lockout")]
 async fn bw_ac_010_login_failure_locks_account() {
     use bulwark::account::lockout::{UserLockoutConfig, UserLockoutStrategy, WaitStrategy};
 
