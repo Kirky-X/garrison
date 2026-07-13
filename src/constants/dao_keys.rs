@@ -39,6 +39,10 @@ pub enum DaoKeyPrefix {
     OAuth2Client,
     /// OAuth2 授权码 key 前缀：`oauth2:authcode:`
     OAuth2AuthCode,
+    /// OAuth2 access_token key 前缀：`oauth2:atoken:`
+    OAuth2AccessToken,
+    /// OAuth2 refresh_token key 前缀：`oauth2:rtoken:`
+    OAuth2RefreshToken,
 }
 
 impl DaoKeyPrefix {
@@ -59,6 +63,8 @@ impl DaoKeyPrefix {
             Self::UserCache => "user:cache:",
             Self::OAuth2Client => "oauth2:client:",
             Self::OAuth2AuthCode => "oauth2:authcode:",
+            Self::OAuth2AccessToken => "oauth2:atoken:",
+            Self::OAuth2RefreshToken => "oauth2:rtoken:",
         }
     }
 
