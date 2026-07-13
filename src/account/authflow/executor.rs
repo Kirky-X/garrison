@@ -1677,6 +1677,673 @@ mod tests {
         }
     }
 
+    // ------------------------------------------------------------------------
+    // 测试: login_without_user_id_returns_failed
+    // ------------------------------------------------------------------------
+
+    /// R-009: Login 步骤 — ctx.user_id 为 None → Failed（"Login 步骤需要 user_id"）。
+    #[tokio::test]
+    async fn login_without_user_id_returns_failed() {
+        let repo: Arc<dyn CredentialRepository> = Arc::new(MockCredentialRepository::default());
+        let executor = make_executor(repo, None);
+        let builder = MockCredentialBuilder {
+            password_verify_result: true,
+            totp_verify_result: false,
+        };
+        let flow = FlowBuilder::new("test").login("password").build();
+        let mut ctx = make_context("alice", "password");
+        ctx.user_id = None;
+
+        let result = executor
+            .execute_with_builder(&flow, &mut ctx, &builder)
+            .await
+            .unwrap();
+
+        match result {
+            AuthResult::Failed { reason, step } => {
+                assert!(
+                    reason.contains("user_id"),
+                    "reason 应含 user_id: {}",
+                    reason
+                );
+                assert_eq!(step, 0);
+            },
+            other => panic!("应为 Failed（无 user_id），实际: {:?}", other),
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // 测试: login_credential_not_found_returns_failed
+    // ------------------------------------------------------------------------
+
+    /// R-009: Login 步骤 — 凭证存储为空 → Failed（"未找到 X 类型的凭证"）。
+    #[tokio::test]
+    async fn login_credential_not_found_returns_failed() {
+        let repo: Arc<dyn CredentialRepository> = Arc::new(MockCredentialRepository::default());
+        let executor = make_executor(repo, None);
+        let builder = MockCredentialBuilder {
+            password_verify_result: true,
+            totp_verify_result: false,
+        };
+        let flow = FlowBuilder::new("test").login("password").build();
+        let mut ctx = make_context("alice", "password");
+
+        let result = executor
+            .execute_with_builder(&flow, &mut ctx, &builder)
+            .await
+            .unwrap();
+
+        match result {
+            AuthResult::Failed { reason, step } => {
+                assert!(reason.contains("未找到"), "reason 应含未找到: {}", reason);
+                assert!(
+                    reason.contains("password"),
+                    "reason 应含凭证类型 password: {}",
+                    reason
+                );
+                assert_eq!(step, 0);
+            },
+            other => panic!("应为 Failed（无凭证），实际: {:?}", other),
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // 测试: execute_without_builder_login_returns_failed
+    // ------------------------------------------------------------------------
+
+    /// R-009: execute()（spec R-009 签名）遇到 Login 步骤 → Failed（无 CredentialBuilder）。
+    #[tokio::test]
+    async fn execute_without_builder_login_returns_failed() {
+        let repo = make_repo_with_password("alice").await;
+        let executor = make_executor(repo, None);
+        let flow = FlowBuilder::new("test").login("password").build();
+        let mut ctx = make_context("alice", "password");
+
+        let result = executor.execute(&flow, &mut ctx).await.unwrap();
+
+        match result {
+            AuthResult::Failed { reason, step } => {
+                assert!(
+                    reason.contains("CredentialBuilder"),
+                    "reason 应含 CredentialBuilder: {}",
+                    reason
+                );
+                assert_eq!(step, 0);
+            },
+            other => panic!("应为 Failed（无 builder），实际: {:?}", other),
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // 测试: mfa_some_without_builder_returns_failed
+    // ------------------------------------------------------------------------
+
+    /// R-009: execute() 遇到 Mfa(Some("totp")) 步骤 → Failed（无 CredentialBuilder）。
+    /// 需 ctx.input 非空，否则会先返回 ChallengeRequired。
+    #[tokio::test]
+    async fn mfa_some_without_builder_returns_failed() {
+        let repo = make_repo_with_password_and_totp("alice").await;
+        let executor = make_executor(repo, None);
+        let flow = FlowBuilder::new("test").mfa(Some("totp")).build();
+        let mut ctx = make_context("alice", "123456");
+
+        let result = executor.execute(&flow, &mut ctx).await.unwrap();
+
+        match result {
+            AuthResult::Failed { reason, step } => {
+                assert!(
+                    reason.contains("CredentialBuilder"),
+                    "reason 应含 CredentialBuilder: {}",
+                    reason
+                );
+                assert_eq!(step, 0);
+            },
+            other => panic!("应为 Failed（无 builder），实际: {:?}", other),
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // 测试: mfa_without_user_id_returns_failed
+    // ------------------------------------------------------------------------
+
+    /// R-009: Mfa(Some) 步骤 — ctx.user_id 为 None → Failed（"Mfa 步骤需要 user_id"）。
+    #[tokio::test]
+    async fn mfa_without_user_id_returns_failed() {
+        let repo = make_repo_with_password_and_totp("alice").await;
+        let executor = make_executor(repo, None);
+        let builder = MockCredentialBuilder {
+            password_verify_result: false,
+            totp_verify_result: true,
+        };
+        let flow = FlowBuilder::new("test").mfa(Some("totp")).build();
+        let mut ctx = make_context("alice", "123456");
+        ctx.user_id = None;
+
+        let result = executor
+            .execute_with_builder(&flow, &mut ctx, &builder)
+            .await
+            .unwrap();
+
+        match result {
+            AuthResult::Failed { reason, step } => {
+                assert!(
+                    reason.contains("user_id"),
+                    "reason 应含 user_id: {}",
+                    reason
+                );
+                assert_eq!(step, 0);
+            },
+            other => panic!("应为 Failed（无 user_id），实际: {:?}", other),
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // 测试: mfa_credential_not_found_returns_failed
+    // ------------------------------------------------------------------------
+
+    /// R-009: Mfa(Some) 步骤 — 凭证存储中无对应类型 → Failed（"未找到 X 类型的凭证"）。
+    #[tokio::test]
+    async fn mfa_credential_not_found_returns_failed() {
+        // repo 只有 password 凭证，没有 totp 凭证
+        let repo = make_repo_with_password("alice").await;
+        let executor = make_executor(repo, None);
+        let builder = MockCredentialBuilder {
+            password_verify_result: false,
+            totp_verify_result: true,
+        };
+        let flow = FlowBuilder::new("test").mfa(Some("totp")).build();
+        let mut ctx = make_context("alice", "123456");
+
+        let result = executor
+            .execute_with_builder(&flow, &mut ctx, &builder)
+            .await
+            .unwrap();
+
+        match result {
+            AuthResult::Failed { reason, step } => {
+                assert!(reason.contains("未找到"), "reason 应含未找到: {}", reason);
+                assert!(
+                    reason.contains("totp"),
+                    "reason 应含凭证类型 totp: {}",
+                    reason
+                );
+                assert_eq!(step, 0);
+            },
+            other => panic!("应为 Failed（无 totp 凭证），实际: {:?}", other),
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // 测试: subflow_unknown_flow_returns_failed
+    // ------------------------------------------------------------------------
+
+    /// R-009: SubFlow 步骤 — registry 中无对应 flow_name → Failed（"未找到子流程: X"）。
+    #[tokio::test]
+    async fn subflow_unknown_flow_returns_failed() {
+        let repo: Arc<dyn CredentialRepository> = Arc::new(MockCredentialRepository::default());
+        // 空 registry（from_inventory 默认无注册流程）
+        let executor = make_executor_with_registry(repo, Arc::new(FlowRegistry::from_inventory()));
+        let flow = FlowBuilder::new("parent")
+            .sub_flow("nonexistent-flow")
+            .build();
+        let mut ctx = make_context("alice", "");
+
+        let result = executor.execute(&flow, &mut ctx).await.unwrap();
+
+        match result {
+            AuthResult::Failed { reason, step } => {
+                assert!(
+                    reason.contains("未找到子流程"),
+                    "reason 应含未找到子流程: {}",
+                    reason
+                );
+                assert!(
+                    reason.contains("nonexistent-flow"),
+                    "reason 应含 flow 名称: {}",
+                    reason
+                );
+                assert_eq!(step, 0);
+            },
+            other => panic!("应为 Failed（子流程未找到），实际: {:?}", other),
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // 测试: subflow_max_depth_exceeded_returns_failed
+    // ------------------------------------------------------------------------
+
+    /// R-009: SubFlow 步骤 — 递归深度超过 MAX_FLOW_DEPTH（10）→ Failed（"嵌套深度超过上限"）。
+    /// 构造自引用流程（flow 引用自身），递归至 depth=10 时被截断。
+    #[tokio::test]
+    async fn subflow_max_depth_exceeded_returns_failed() {
+        let repo: Arc<dyn CredentialRepository> = Arc::new(MockCredentialRepository::default());
+        let mut registry = FlowRegistry::from_inventory();
+        // 自引用流程：唯一步骤是 SubFlow("loop")，将递归自身
+        let recursive_flow = FlowBuilder::new("loop").sub_flow("loop").build();
+        registry.register(recursive_flow);
+        let executor = make_executor_with_registry(repo, Arc::new(registry));
+        let flow = FlowBuilder::new("parent").sub_flow("loop").build();
+        let mut ctx = make_context("alice", "");
+
+        let result = executor.execute(&flow, &mut ctx).await.unwrap();
+
+        match result {
+            AuthResult::Failed { reason, .. } => {
+                assert!(
+                    reason.contains("嵌套深度") || reason.contains("循环引用"),
+                    "reason 应含嵌套深度或循环引用: {}",
+                    reason
+                );
+            },
+            other => panic!("应为 Failed（深度超限），实际: {:?}", other),
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // 测试: required_action_step_returns_failed
+    // ------------------------------------------------------------------------
+
+    /// R-009: RequiredAction 步骤 — v0.6.0 未实现 → Failed（"RequiredAction 步骤在 v0.6.0 未实现"）。
+    /// FlowBuilder 未提供 required_action 方法，直接构造 AuthenticationFlow。
+    #[tokio::test]
+    async fn required_action_step_returns_failed() {
+        let repo: Arc<dyn CredentialRepository> = Arc::new(MockCredentialRepository::default());
+        let executor = make_executor(repo, None);
+        let flow = AuthenticationFlow {
+            name: "test".to_string(),
+            steps: vec![AuthStep::RequiredAction {
+                action: "verify_email".to_string(),
+            }],
+            allow_skip: false,
+        };
+        let mut ctx = make_context("alice", "");
+
+        let result = executor.execute(&flow, &mut ctx).await.unwrap();
+
+        match result {
+            AuthResult::Failed { reason, step } => {
+                assert!(
+                    reason.contains("RequiredAction"),
+                    "reason 应含 RequiredAction: {}",
+                    reason
+                );
+                assert!(reason.contains("v0.6.0"), "reason 应含 v0.6.0: {}", reason);
+                assert_eq!(step, 0);
+            },
+            other => panic!("应为 Failed（RequiredAction 未实现），实际: {:?}", other),
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // 测试: allow_skip_continues_after_failed_step
+    // ------------------------------------------------------------------------
+
+    /// R-009: allow_skip=true — 第一步 Failed (RequiredAction) 被跳过，
+    /// 第二步 Conditional (IpWhitelisted=false → else_step=None → Success) → 流程 Success。
+    #[tokio::test]
+    async fn allow_skip_continues_after_failed_step() {
+        let repo: Arc<dyn CredentialRepository> = Arc::new(MockCredentialRepository::default());
+        let executor = make_executor(repo, None);
+        let flow = AuthenticationFlow {
+            name: "test".to_string(),
+            steps: vec![
+                // 必失败步骤：RequiredAction 在 v0.6.0 未实现
+                AuthStep::RequiredAction {
+                    action: "verify_email".to_string(),
+                },
+                // 必成功步骤：IpWhitelisted 永远 false，else_step=None → 跳过视为 Success
+                AuthStep::Conditional {
+                    condition: AuthCondition::IpWhitelisted,
+                    if_step: Box::new(AuthStep::RequiredAction {
+                        action: "x".to_string(),
+                    }),
+                    else_step: None,
+                },
+            ],
+            allow_skip: true,
+        };
+        let mut ctx = make_context("alice", "");
+
+        let result = executor.execute(&flow, &mut ctx).await.unwrap();
+
+        match result {
+            AuthResult::Success { login_id, .. } => {
+                assert_eq!(login_id, "alice");
+                // 仅 Conditional 步骤成功被记入 completed_steps（RequiredAction 被跳过）
+                assert_eq!(
+                    ctx.completed_steps.len(),
+                    1,
+                    "应只完成 1 个步骤（跳过失败的 RequiredAction）"
+                );
+                assert_eq!(ctx.completed_steps[0], 1, "应记录第 2 步（索引 1）");
+            },
+            other => panic!("应为 Success（allow_skip 跳过失败），实际: {:?}", other),
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // 测试: pause_after_last_step_returns_success
+    // ------------------------------------------------------------------------
+
+    /// R-009: pause_after_step 指向最后一步 — 无 next_step 可暂停 → 返回 Success（不 Pending）。
+    #[tokio::test]
+    async fn pause_after_last_step_returns_success() {
+        let repo = make_repo_with_password("alice").await;
+        let executor = make_executor(repo, None);
+        let builder = MockCredentialBuilder {
+            password_verify_result: true,
+            totp_verify_result: false,
+        };
+        // 单步流程：仅一个 Login 步骤
+        let flow = FlowBuilder::new("single").login("password").build();
+        let mut ctx = make_context("alice", "correct-password");
+        // pause_after_step = 0 = 最后一步索引，无 next_step，不应触发 Pending
+        ctx.extras
+            .insert("pause_after_step".to_string(), "0".to_string());
+
+        let result = executor
+            .execute_with_builder(&flow, &mut ctx, &builder)
+            .await
+            .unwrap();
+
+        match result {
+            AuthResult::Success { login_id, token } => {
+                assert_eq!(login_id, "alice");
+                assert!(!token.is_empty(), "token 不应为空");
+            },
+            other => panic!("应为 Success（最后一步不暂停），实际: {:?}", other),
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // 测试: conditional_with_else_step_executed_when_false
+    // ------------------------------------------------------------------------
+
+    /// R-009: Conditional 步骤 — 条件为假且 else_step=Some(...) → 执行 else_step。
+    /// 验证 else_step 不为 None 时分支被实际执行（而非跳过）。
+    #[tokio::test]
+    async fn conditional_with_else_step_executed_when_false() {
+        let repo = make_repo_with_password("alice").await;
+        let executor = make_executor(repo, None);
+        let builder = MockCredentialBuilder {
+            password_verify_result: false, // else_step Login verify 失败 → Failed
+            totp_verify_result: false,
+        };
+        let flow = FlowBuilder::new("test")
+            .conditional(
+                // HasCredential("totp")=false（用户只有 password 凭证）
+                AuthCondition::HasCredential("totp".to_string()),
+                // if_step（不会执行）
+                AuthStep::Login {
+                    credential_type: "password".to_string(),
+                },
+                // else_step=Some(Login verify=false → Failed)
+                Some(AuthStep::Login {
+                    credential_type: "password".to_string(),
+                }),
+            )
+            .build();
+        let mut ctx = make_context("alice", "wrong-password");
+
+        let result = executor
+            .execute_with_builder(&flow, &mut ctx, &builder)
+            .await
+            .unwrap();
+
+        match result {
+            AuthResult::Failed { reason, .. } => {
+                assert!(
+                    reason.contains("凭证校验失败"),
+                    "reason 应含凭证校验失败（else_step 执行并失败）: {}",
+                    reason
+                );
+            },
+            other => panic!(
+                "应为 Failed（else_step 执行后 verify=false），实际: {:?}",
+                other
+            ),
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // 测试: subflow_child_failed_propagates_failed
+    // ------------------------------------------------------------------------
+
+    /// R-009: SubFlow 步骤 — 子流程返回 Failed → 父流程 Failed（"子流程 X 失败: ..."）。
+    #[tokio::test]
+    async fn subflow_child_failed_propagates_failed() {
+        let repo: Arc<dyn CredentialRepository> = Arc::new(MockCredentialRepository::default());
+        let mut registry = FlowRegistry::from_inventory();
+        // 子流程：RequiredAction 步骤（v0.6.0 必失败）
+        let child = AuthenticationFlow {
+            name: "failing-child".to_string(),
+            steps: vec![AuthStep::RequiredAction {
+                action: "verify_email".to_string(),
+            }],
+            allow_skip: false,
+        };
+        registry.register(child);
+        let executor = make_executor_with_registry(repo, Arc::new(registry));
+        let flow = FlowBuilder::new("parent").sub_flow("failing-child").build();
+        let mut ctx = make_context("alice", "");
+
+        let result = executor.execute(&flow, &mut ctx).await.unwrap();
+
+        match result {
+            AuthResult::Failed { reason, step } => {
+                assert!(reason.contains("子流程"), "reason 应含子流程: {}", reason);
+                assert!(
+                    reason.contains("failing-child"),
+                    "reason 应含子流程名称: {}",
+                    reason
+                );
+                assert!(
+                    reason.contains("RequiredAction"),
+                    "reason 应含原始失败原因: {}",
+                    reason
+                );
+                assert_eq!(step, 0);
+            },
+            other => panic!("应为 Failed（子流程失败传播），实际: {:?}", other),
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // 测试: accessors_return_some_when_provided
+    // ------------------------------------------------------------------------
+
+    /// R-008: AuthExecutor::policy_engine / lockout 访问器 — 注入 Some 时返回 Some，None 时返回 None。
+    #[tokio::test]
+    async fn accessors_return_some_when_provided() {
+        use crate::account::policy::{ErrorMode, PasswordPolicyEngine};
+
+        // 场景 1: 注入 policy_engine + lockout → 访问器返回 Some
+        let repo: Arc<dyn CredentialRepository> = Arc::new(MockCredentialRepository::default());
+        let policy = Arc::new(PasswordPolicyEngine::new(vec![], ErrorMode::FirstError));
+        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let lockout = Arc::new(UserLockoutStrategy::new(
+            crate::account::lockout::UserLockoutConfig {
+                max_failure_factor: 5,
+                permanent_lockout: false,
+                max_temporary_lockouts: 99,
+                wait_strategy: crate::account::lockout::WaitStrategy::Linear { base_seconds: 60 },
+                failure_window_seconds: 300,
+            },
+            dao,
+        ));
+        let executor_with = AuthExecutor::new(
+            make_logic(),
+            repo,
+            Some(policy),
+            Some(lockout),
+            Arc::new(FlowRegistry::from_inventory()),
+        );
+        assert!(
+            executor_with.policy_engine().is_some(),
+            "注入 policy_engine 后访问器应返回 Some"
+        );
+        assert!(
+            executor_with.lockout().is_some(),
+            "注入 lockout 后访问器应返回 Some"
+        );
+
+        // 场景 2: 不注入（None）→ 访问器返回 None
+        let repo_none: Arc<dyn CredentialRepository> =
+            Arc::new(MockCredentialRepository::default());
+        let executor_none = make_executor(repo_none, None);
+        assert!(
+            executor_none.policy_engine().is_none(),
+            "未注入 policy_engine 时访问器应返回 None"
+        );
+        assert!(
+            executor_none.lockout().is_none(),
+            "未注入 lockout 时访问器应返回 None"
+        );
+    }
+
+    // ------------------------------------------------------------------------
+    // 测试: conditional_is_locked_true_executes_if_step
+    // ------------------------------------------------------------------------
+
+    /// R-009: Conditional 步骤 — IsLocked 条件为真（用户被锁定）→ 执行 if_step。
+    /// 覆盖 evaluate_condition 的 IsLocked 分支返回 true 的路径。
+    /// 使用 RequiredAction 作为 if_step（不走 Login 的 lockout 检查，避免与条件判断耦合）。
+    #[tokio::test]
+    async fn conditional_is_locked_true_executes_if_step() {
+        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let lockout = Arc::new(UserLockoutStrategy::new(
+            crate::account::lockout::UserLockoutConfig {
+                max_failure_factor: 2,
+                permanent_lockout: false,
+                max_temporary_lockouts: 99,
+                wait_strategy: crate::account::lockout::WaitStrategy::Linear { base_seconds: 300 },
+                failure_window_seconds: 300,
+            },
+            dao,
+        ));
+        // 触发锁定（2 次失败达到 max_failure_factor 阈值）
+        lockout.record_failure("alice").await.unwrap();
+        lockout.record_failure("alice").await.unwrap();
+
+        let repo: Arc<dyn CredentialRepository> = Arc::new(MockCredentialRepository::default());
+        let executor = make_executor(repo, Some(lockout));
+        let flow = FlowBuilder::new("test")
+            .conditional(
+                AuthCondition::IsLocked,
+                // if_step: RequiredAction 永远返回 Failed（不走 lockout 检查，能区分条件分支）
+                AuthStep::RequiredAction {
+                    action: "verify_email".to_string(),
+                },
+                // else_step: None（条件为真时不执行）
+                None,
+            )
+            .build();
+        let mut ctx = make_context("alice", "");
+
+        let result = executor.execute(&flow, &mut ctx).await.unwrap();
+
+        match result {
+            AuthResult::Failed { reason, step } => {
+                // IsLocked=true → if_step (RequiredAction) 被执行 → "RequiredAction 步骤在 v0.6.0 未实现"
+                assert!(
+                    reason.contains("RequiredAction"),
+                    "reason 应含 RequiredAction（IsLocked=true → if_step 执行）: {}",
+                    reason
+                );
+                assert_eq!(step, 0);
+            },
+            other => panic!(
+                "应为 Failed（IsLocked=true，if_step 执行失败），实际: {:?}",
+                other
+            ),
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // 测试: conditional_custom_condition_returns_false_skips
+    // ------------------------------------------------------------------------
+
+    /// R-009: Conditional 步骤 — Custom 条件永远返回 false → else_step=None → 跳过 → Success。
+    /// 覆盖 evaluate_condition 的 Custom 分支（未实现，返回 false）。
+    #[tokio::test]
+    async fn conditional_custom_condition_returns_false_skips() {
+        let repo: Arc<dyn CredentialRepository> = Arc::new(MockCredentialRepository::default());
+        let executor = make_executor(repo, None);
+        let flow = FlowBuilder::new("test")
+            .conditional(
+                AuthCondition::Custom("my_check".to_string()),
+                // if_step（不会执行，因 Custom 返回 false）
+                AuthStep::RequiredAction {
+                    action: "x".to_string(),
+                },
+                // else_step=None → 跳过视为成功
+                None,
+            )
+            .build();
+        let mut ctx = make_context("alice", "");
+
+        let result = executor.execute(&flow, &mut ctx).await.unwrap();
+
+        match result {
+            AuthResult::Success { login_id, .. } => {
+                assert_eq!(login_id, "alice");
+            },
+            other => panic!("应为 Success（Custom=false → 跳过），实际: {:?}", other),
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // 测试: pause_after_step_challenge_for_login_step
+    // ------------------------------------------------------------------------
+
+    /// R-009: pause_after_step 标记 — 验证 step_challenge 对 Login 步骤的输出格式。
+    /// 在 Login 成功后暂停，下一步为 Login → challenge 应含 "请输入"。
+    #[tokio::test]
+    async fn pause_after_step_challenge_for_login_step() {
+        let repo = make_repo_with_password_and_totp("alice").await;
+        let executor = make_executor(repo, None);
+        let builder = MockCredentialBuilder {
+            password_verify_result: true,
+            totp_verify_result: false,
+        };
+        // 两步流程：Login + Login
+        let flow = FlowBuilder::new("two-login")
+            .login("password")
+            .login("totp")
+            .build();
+        let mut ctx = make_context("alice", "correct-password");
+        ctx.extras
+            .insert("pause_after_step".to_string(), "0".to_string());
+
+        let result = executor
+            .execute_with_builder(&flow, &mut ctx, &builder)
+            .await
+            .unwrap();
+
+        match result {
+            AuthResult::Pending {
+                completed_step,
+                next_step,
+                challenge,
+            } => {
+                assert_eq!(completed_step, 0);
+                assert_eq!(next_step, 1);
+                // 下一步是 Login("totp") → challenge 应为 "请输入 totp"
+                assert!(
+                    challenge.contains("请输入"),
+                    "challenge 应含请输入: {}",
+                    challenge
+                );
+                assert!(
+                    challenge.contains("totp"),
+                    "challenge 应含 totp: {}",
+                    challenge
+                );
+            },
+            other => panic!("应为 Pending，实际: {:?}", other),
+        }
+    }
+
     // ========================================================================
     // SocialProvider + SsoServer 步骤测试
     // ========================================================================
