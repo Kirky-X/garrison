@@ -60,7 +60,7 @@ pub use self::password::PasswordLogic;
 pub use self::permission::PermissionLogic;
 pub use self::session::SessionLogic;
 pub use self::token::TokenLogic;
-pub use self::util::{BulwarkUtil, JwtMode};
+pub use self::util::{init_backend, BulwarkUtil, JwtMode};
 
 /// 登录参数（v0.6.3 新增）。
 ///

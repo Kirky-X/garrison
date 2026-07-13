@@ -28,6 +28,12 @@ pub mod remote;
 
 pub use types::*;
 
+#[cfg(feature = "backend-embedded")]
+pub use embedded::BackendEmbedded;
+
+#[cfg(feature = "backend-remote")]
+pub use remote::BackendRemote;
+
 /// 认证后端统一抽象。
 ///
 /// 13 个 async 方法覆盖登录/登出/校验/查询/管理全生命周期。
