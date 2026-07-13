@@ -102,6 +102,12 @@ impl PasswordPolicyRule for LengthRule {
 ///
 /// 非 ASCII 字母数字字符（即 `char::is_alphanumeric()` 为 false 的字符，
 /// 如 `!@#$%^&*` 等）。
+///
+/// # 已弃用
+///
+/// NIST SP 800-63B §5.1.1.2 不推荐强制复杂度规则（用户倾向使用可预测的
+/// 替换模式如 `P@ssw0rd`）。请使用 [`NistComplianceRule`] 替代。
+#[deprecated(note = "NIST SP 800-63B 不推荐强制复杂度，使用 NistComplianceRule")]
 pub struct ComplexityRule {
     /// 大写字母最少数量。
     upper: u32,
@@ -113,6 +119,7 @@ pub struct ComplexityRule {
     special: u32,
 }
 
+#[allow(deprecated)]
 impl ComplexityRule {
     /// 创建复杂度规则。
     ///
@@ -131,6 +138,7 @@ impl ComplexityRule {
     }
 }
 
+#[allow(deprecated)]
 impl PasswordPolicyRule for ComplexityRule {
     fn name(&self) -> &'static str {
         "complexity"
@@ -464,11 +472,17 @@ impl PasswordPolicyRule for DictionaryRule {
 ///
 /// - `max_consecutive = 2`：`"aa"` 通过（2 个，≤ 2），`"aaa"` 失败（3 = 2+1）
 /// - `max_consecutive = 1`：`"a"` 通过，`"aa"` 失败（2 = 1+1）
+///
+/// # 已弃用
+///
+/// NIST SP 800-63B 不推荐此类字符模式校验规则。请使用 [`NistComplianceRule`] 替代。
+#[deprecated(note = "NIST SP 800-63B 不推荐强制复杂度，使用 NistComplianceRule")]
 pub struct NotRepeatCharRule {
     /// 允许的最大连续相同字符数（超过此数即触发错误）。
     max_consecutive: u32,
 }
 
+#[allow(deprecated)]
 impl NotRepeatCharRule {
     /// 创建重复字符规则。
     ///
@@ -479,6 +493,7 @@ impl NotRepeatCharRule {
     }
 }
 
+#[allow(deprecated)]
 impl PasswordPolicyRule for NotRepeatCharRule {
     fn name(&self) -> &'static str {
         "not_repeat_char"
@@ -528,11 +543,17 @@ impl PasswordPolicyRule for NotRepeatCharRule {
 ///
 /// - `max_sequence = 3`：`"abc"` 通过（长度 3，不 > 3），`"abcd"` 失败（长度 4 > 3）
 /// - `max_sequence = 2`：`"ab"` 通过，`"abc"` 失败，`"321"` 失败（反向长度 3 > 2）
+///
+/// # 已弃用
+///
+/// NIST SP 800-63B 不推荐此类字符模式校验规则。请使用 [`NistComplianceRule`] 替代。
+#[deprecated(note = "NIST SP 800-63B 不推荐强制复杂度，使用 NistComplianceRule")]
 pub struct NotSequenceRule {
     /// 允许的最大连续序列长度（超过此长度即触发错误）。
     max_sequence: u32,
 }
 
+#[allow(deprecated)]
 impl NotSequenceRule {
     /// 创建序列规则。
     ///
@@ -543,6 +564,7 @@ impl NotSequenceRule {
     }
 }
 
+#[allow(deprecated)]
 impl PasswordPolicyRule for NotSequenceRule {
     fn name(&self) -> &'static str {
         "not_sequence"
@@ -703,10 +725,120 @@ impl PasswordPolicyRule for RegexRule {
 }
 
 // ============================================================================
+// NistComplianceRule（T013 — NIST SP 800-63B 密码策略合规）
+// ============================================================================
+
+/// NIST SP 800-63B 密码策略合规规则。
+///
+/// 基于 NIST SP 800-63B §5.1.1.2 推荐实践：
+/// - **仅校验最小长度**（默认 ≥ 8 字符），不强制复杂度
+/// - **不强制大写/小写/数字/特殊字符混合**（NIST 不推荐此类规则）
+/// - **HIBP（Have I Been Pwned）检查为 stub**，始终返回 `Ok(())`，推迟到 v0.9.0
+///
+/// # 设计
+///
+/// NIST SP 800-63B 明确指出强制复杂度规则（混合大小写、数字、特殊字符）反而
+/// 降低密码安全性（用户倾向使用可预测的替换模式如 `P@ssw0rd`）。推荐做法是：
+/// 1. 仅校验最小长度（8 字符以上，鼓励长密码）
+/// 2. 检查密码是否在已知泄露密码库中（HIBP）
+/// 3. 不强制复杂度规则
+///
+/// # HIBP stub
+///
+/// `check_hibp` 方法为 v0.7.0 stub，始终返回 `Ok(())`。
+/// v0.9.0 将实现真实 HIBP API 调用（通过 range search k-anonymity 协议）。
+///
+/// # 替代关系
+///
+/// `NistComplianceRule` 替代 [`ComplexityRule`]（已 `#[deprecated]`）。
+/// 不需要替代 [`LengthRule`]（NIST 规则内部就是长度校验）。
+///
+/// # 示例
+///
+/// ```ignore
+/// use bulwark::account::policy::rules::NistComplianceRule;
+/// use bulwark::account::policy::{PasswordPolicyRule, PolicyContext};
+///
+/// let rule = NistComplianceRule::new(8);  // NIST 推荐最小长度
+/// let ctx = PolicyContext { /* ... */ };
+/// assert!(rule.validate(&ctx, "password").is_ok());     // 8 字符通过
+/// assert!(rule.validate(&ctx, "short").is_err());       // 5 字符拒绝
+/// assert!(rule.validate(&ctx, "Password123!").is_ok()); // 不强制复杂度
+/// ```
+pub struct NistComplianceRule {
+    /// 最小密码长度（含）。NIST SP 800-63B 推荐 ≥ 8。
+    min_length: u32,
+}
+
+impl NistComplianceRule {
+    /// 创建 NIST 合规规则。
+    ///
+    /// # 参数
+    /// - `min_length`: 最小密码长度（含）。NIST SP 800-63B §5.1.1.2 推荐 ≥ 8。
+    ///
+    /// # 示例
+    ///
+    /// ```ignore
+    /// use bulwark::account::policy::rules::NistComplianceRule;
+    ///
+    /// let rule = NistComplianceRule::new(8);  // NIST 推荐
+    /// let rule = NistComplianceRule::new(12); // 更严格策略
+    /// ```
+    pub fn new(min_length: u32) -> Self {
+        Self { min_length }
+    }
+
+    /// HIBP（Have I Been Pwned）泄露密码检查。
+    ///
+    /// # v0.7.0 stub
+    ///
+    /// 当前为 stub，始终返回 `Ok(())`。v0.9.0 将实现真实 HIBP API 调用：
+    /// - 使用 SHA-1 哈希密码
+    /// - 通过 k-anonymity range search 查询 HIBP API（仅发送哈希前缀）
+    /// - 匹配到的泄露次数 > 0 时返回 `Err(PolicyError)`
+    ///
+    /// # 参数
+    /// - `password`: 待检查的明文密码
+    ///
+    /// # 返回
+    /// - `Ok(())`: 密码未泄露（stub 阶段始终返回 Ok）
+    /// - `Err(PolicyError)`: 密码已泄露（v0.9.0 实现）
+    pub fn check_hibp(&self, _password: &str) -> Result<(), PolicyError> {
+        // v0.7.0 stub: 始终返回 Ok，推迟到 v0.9.0 实现真实 HIBP API 调用。
+        // v0.9.0 实现时需注意：
+        // - 使用 reqwest 异步 HTTP client（需将本方法改为 async）
+        // - k-anonymity 协议：仅发送 SHA-1 前 5 字符
+        // - 不阻塞密码修改（HIBP API 不可达时返回 Ok，记日志）
+        Ok(())
+    }
+}
+
+impl PasswordPolicyRule for NistComplianceRule {
+    fn name(&self) -> &'static str {
+        "nist_compliance"
+    }
+
+    fn validate(&self, _ctx: &PolicyContext, password: &str) -> Result<(), PolicyError> {
+        let len = password.len() as u32;
+        if len < self.min_length {
+            return Err(PolicyError::new(
+                "nist_compliance",
+                format!(
+                    "密码长度 {} 小于 NIST SP 800-63B 最小要求 {}",
+                    len, self.min_length
+                ),
+            ));
+        }
+        Ok(())
+    }
+}
+
+// ============================================================================
 // 测试
 // ============================================================================
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
     use crate::account::credential::Argon2Hasher;
