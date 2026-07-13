@@ -16,3 +16,6 @@
 
 /// OAuth2 客户端管理模块。
 pub mod client;
+
+/// /oauth2/authorize 端点模块。
+pub mod authorize;
