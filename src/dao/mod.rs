@@ -877,6 +877,7 @@ pub mod tests {
     use super::*;
     // 兼容层：重导出 mock 模块的 MockDao 与 glob_match，保持旧路径
     // `crate::dao::tests::MockDao` / `crate::dao::tests::glob_match` 可用
+    #[cfg(feature = "protocol-apikey")]
     pub(crate) use super::glob_match;
     pub use super::MockDao;
     use crate::error::BulwarkError;

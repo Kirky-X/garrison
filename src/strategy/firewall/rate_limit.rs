@@ -23,8 +23,10 @@
 
 use crate::dao::BulwarkDao;
 use crate::error::{BulwarkError, BulwarkResult};
+use crate::limiteron::BulwarkDaoStorage;
 use crate::strategy::firewall::{BulwarkFirewallStrategy, CaptchaChallenge, FirewallContext};
 use async_trait::async_trait;
+use limiteron::storage::Storage;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -76,7 +78,7 @@ impl Default for RateLimitConfig {
     }
 }
 
-/// 速率限制策略，用 oxcache 滑动窗口实现。
+/// 速率限制策略，用 limiteron `Storage` trait 滑动窗口实现。
 ///
 /// # 构造
 ///
@@ -97,18 +99,21 @@ impl Default for RateLimitConfig {
 pub struct RateLimitStrategy {
     /// 配置（阈值 + 窗口 + 作用域）。
     config: RateLimitConfig,
-    /// DAO（oxcache 抽象，用于时间戳列表存储）。
-    dao: Arc<dyn BulwarkDao>,
+    /// 存储（limiteron Storage 适配器，替换 dao 的 get/set/delete）。
+    storage: Arc<dyn Storage>,
 }
 
 impl RateLimitStrategy {
     /// 创建速率限制策略实例。
     ///
+    /// 内部创建 [`BulwarkDaoStorage`] 适配器，将 `dao` 桥接到 limiteron `Storage` trait。
+    ///
     /// # 参数
     /// - `config`: 配置（阈值 + 窗口 + 作用域 + 动态阈值上限）。
     /// - `dao`: DAO（oxcache 抽象，用于时间戳列表存储）。
     pub fn new(config: RateLimitConfig, dao: Arc<dyn BulwarkDao>) -> Self {
-        Self { config, dao }
+        let storage = Arc::new(BulwarkDaoStorage::new(dao));
+        Self { config, storage }
     }
 
     /// 设置期望的验证码答案，供后续 [`CaptchaChallenge::verify_challenge`] 比对。
@@ -127,9 +132,10 @@ impl RateLimitStrategy {
         let (key, _) = self.build_key(ctx)?;
         // key 形如 `rl:ip:{ip}`，答案 key 复用前缀并追加 `:answer`
         let answer_key = format!("{}:answer", key);
-        self.dao
-            .set(&answer_key, answer, self.config.window_seconds)
+        self.storage
+            .set(&answer_key, answer, Some(self.config.window_seconds))
             .await
+            .map_err(|e| BulwarkError::Dao(format!("limiteron storage 错误: {}", e)))
     }
 
     /// 返回当前生效的速率阈值。
@@ -144,7 +150,11 @@ impl RateLimitStrategy {
         };
         let (key, _) = self.build_key(ctx)?;
         let threshold_key = format!("{}:threshold", key);
-        let stored = self.dao.get(&threshold_key).await?;
+        let stored = self
+            .storage
+            .get(&threshold_key)
+            .await
+            .map_err(|e| BulwarkError::Dao(format!("limiteron storage 错误: {}", e)))?;
         let raw: usize = stored
             .as_deref()
             .and_then(|s| s.parse().ok())
@@ -193,13 +203,14 @@ impl RateLimitStrategy {
         };
 
         // 持久化（TTL=window_seconds，与计数器同窗口）
-        self.dao
+        self.storage
             .set(
                 &threshold_key,
                 &new_threshold.to_string(),
-                self.config.window_seconds,
+                Some(self.config.window_seconds),
             )
-            .await?;
+            .await
+            .map_err(|e| BulwarkError::Dao(format!("limiteron storage 错误: {}", e)))?;
 
         Ok(new_threshold)
     }
@@ -238,8 +249,12 @@ impl BulwarkFirewallStrategy for RateLimitStrategy {
             .as_millis() as u64;
         let window_start = now_ms.saturating_sub(self.config.window_seconds * 1000);
 
-        // 读取已有时间戳列表
-        let stored = self.dao.get(&key).await?;
+        // 读取已有时间戳列表（limiteron Storage.get 替换 dao.get）
+        let stored = self
+            .storage
+            .get(&key)
+            .await
+            .map_err(|e| BulwarkError::Dao(format!("limiteron storage 错误: {}", e)))?;
         let mut timestamps: Vec<u64> = stored
             .as_deref()
             .unwrap_or("")
@@ -272,9 +287,10 @@ impl BulwarkFirewallStrategy for RateLimitStrategy {
             .map(|t| t.to_string())
             .collect::<Vec<_>>()
             .join(",");
-        self.dao
-            .set(&key, &serialized, self.config.window_seconds)
-            .await?;
+        self.storage
+            .set(&key, &serialized, Some(self.config.window_seconds))
+            .await
+            .map_err(|e| BulwarkError::Dao(format!("limiteron storage 错误: {}", e)))?;
         Ok(())
     }
 }
@@ -290,7 +306,11 @@ impl CaptchaChallenge for RateLimitStrategy {
         let window_start = now_ms.saturating_sub(self.config.window_seconds * 1000);
 
         // 读取窗口内时间戳并过滤过期项（不修改状态，与 check 共享算法）
-        let stored = self.dao.get(&key).await?;
+        let stored = self
+            .storage
+            .get(&key)
+            .await
+            .map_err(|e| BulwarkError::Dao(format!("limiteron storage 错误: {}", e)))?;
         let count: usize = stored
             .as_deref()
             .unwrap_or("")
@@ -309,10 +329,17 @@ impl CaptchaChallenge for RateLimitStrategy {
     async fn verify_challenge(&self, ctx: &FirewallContext, answer: &str) -> BulwarkResult<bool> {
         let (key, _) = self.build_key(ctx)?;
         let answer_key = format!("{}:answer", key);
-        let stored = self.dao.get(&answer_key).await?;
+        let stored = self
+            .storage
+            .get(&answer_key)
+            .await
+            .map_err(|e| BulwarkError::Dao(format!("limiteron storage 错误: {}", e)))?;
         let matched = stored.as_deref() == Some(answer);
         if matched {
-            self.dao.delete(&answer_key).await?;
+            self.storage
+                .delete(&answer_key)
+                .await
+                .map_err(|e| BulwarkError::Dao(format!("limiteron storage 错误: {}", e)))?;
         }
         Ok(matched)
     }

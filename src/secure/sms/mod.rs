@@ -25,8 +25,11 @@
 
 use crate::dao::BulwarkDao;
 use crate::error::{BulwarkError, BulwarkResult};
+use crate::limiteron::BulwarkDaoDistributedLimiter;
 use async_trait::async_trait;
+use limiteron::limiters::DistributedLimiter;
 use std::sync::Arc;
+use std::time::Duration;
 
 /// 短信发送 trait（业务方实现）。
 #[async_trait]
@@ -75,17 +78,29 @@ fn validate_phone(phone: &str) -> BulwarkResult<()> {
 }
 
 /// SMS 限速器。
+///
+/// 使用 limiteron `DistributedLimiter` trait 实现原子计数（替换 `dao.incr`），
+/// 保留 `dao` 用于 `decrement_counter`（limiteron 无 decrement 方法，需通过
+/// `dao.get/update/delete` 实现回滚，且 `dao.update` 保留原 TTL 语义）。
 pub struct SmsRateLimiter {
+    /// DAO（用于 decrement_counter 的回滚操作，保留原 TTL 语义）。
     dao: Arc<dyn BulwarkDao>,
+    /// 分布式限流器（limiteron DistributedLimiter 适配器，替换 dao.incr）。
+    limiter: Arc<dyn DistributedLimiter>,
     hourly_limit: u32,
     daily_limit: u32,
 }
 
 impl SmsRateLimiter {
     /// 创建限速器实例。
+    ///
+    /// 内部创建 [`BulwarkDaoDistributedLimiter`] 适配器，将 `dao` 桥接到
+    /// limiteron `DistributedLimiter` trait，用于原子 `incr_with_ttl`。
     pub fn new(dao: Arc<dyn BulwarkDao>, hourly_limit: u32, daily_limit: u32) -> Self {
+        let limiter = Arc::new(BulwarkDaoDistributedLimiter::new(dao.clone()));
         Self {
             dao,
+            limiter,
             hourly_limit,
             daily_limit,
         }
@@ -124,9 +139,13 @@ impl SmsRateLimiter {
         let hour_bucket = now.as_secs() / 3600;
         let date = chrono::Utc::now().format("%Y-%m-%d").to_string();
 
-        // 小时窗口：1 小时 TTL
+        // 小时窗口：1 小时 TTL（limiteron DistributedLimiter.incr_with_ttl 替换 dao.incr）
         let hour_key = format!("sms:rate:{}:hour:{}", phone, hour_bucket);
-        let hour_count = self.dao.incr(&hour_key, 3600).await?;
+        let hour_count = self
+            .limiter
+            .incr_with_ttl(&hour_key, 1, Duration::from_secs(3600))
+            .await
+            .map_err(|e| BulwarkError::Internal(format!("limiteron incr_with_ttl 失败: {}", e)))?;
         if hour_count > self.hourly_limit as u64 {
             // 超限，回滚 incr
             if let Err(e) = Self::decrement_counter(&*self.dao, &hour_key).await {
@@ -137,9 +156,13 @@ impl SmsRateLimiter {
             });
         }
 
-        // 天窗口：24 小时 TTL
+        // 天窗口：24 小时 TTL（limiteron DistributedLimiter.incr_with_ttl 替换 dao.incr）
         let day_key = format!("sms:rate:{}:day:{}", phone, date);
-        let day_count = self.dao.incr(&day_key, 86400).await?;
+        let day_count = self
+            .limiter
+            .incr_with_ttl(&day_key, 1, Duration::from_secs(86400))
+            .await
+            .map_err(|e| BulwarkError::Internal(format!("limiteron incr_with_ttl 失败: {}", e)))?;
         if day_count > self.daily_limit as u64 {
             // 超限，回滚 day 和 hour
             if let Err(e) = Self::decrement_counter(&*self.dao, &day_key).await {

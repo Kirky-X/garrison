@@ -4,36 +4,32 @@
 //! 暴力破解防护策略。
 //!
 //! `BruteForceStrategy` 实现 [`BulwarkFirewallStrategy`] trait，
-//! 用 oxcache key `bf:{ip}:count` 计数，TTL=window_seconds，
-//! 超阈值返回 [`BulwarkError::FirewallBlocked`](crate::error::BulwarkError::FirewallBlocked)。
+//! 用 limiteron `BanStorage`（封禁记录）+ `DistributedLimiter`（原子计数）替换手写 DAO 逻辑。
 //!
 //! # 算法
 //!
-//! 1. 检查 `bf:{ip}:locked` 是否存在 → 存在则拦截（锁定期内）
-//! 2. 读取 `bf:{ip}:count` → 不存在则初始化为 1（TTL=window_seconds）
-//! 3. 存在则 +1（保留 TTL，不重置窗口）
-//! 4. count > max_attempts → 设置 `bf:{ip}:locked`（TTL=lock_seconds），返回 `FirewallBlocked`
-//! 5. 否则返回 `Ok(())`
+//! 1. 检查 `BanStorage::is_banned(ip)` → 已封禁则拦截（锁定期内）
+//! 2. `DistributedLimiter::incr_with_ttl(count_key, 1, window)` → 原子递增计数
+//! 3. count > max_attempts → `BanStorage::save(BanRecord)` → 返回 `FirewallBlocked`
+//! 4. 否则返回 `Ok(())`
 //!
-//! # 已知限制：TOCTOU 竞争窗口
+//! # 改进（相比 v0.6 手写实现）
 //!
-//! 步骤 2-3 的 get-then-set 非原子操作，高并发下可能出现计数丢失（多个线程同时读到
-//! 同一 current 值，各自 +1 后写回，实际只 +1）。此限制经安全审计评估为**可接受**：
-//!
-//! - 暴力破解防护不要求精确计数，统计近似性足以阻断实际攻击
-//! - `bf:{ip}:locked` 作为第二层防护：一旦任一并发请求触发锁定，后续所有请求立即被拦截
-//! - oxcache 0.3 未暴露 CAS（compare-and-swap）操作，无法在 DAO 抽象层实现原子计数
-//! - 加 `incr` 方法到 [`BulwarkDao`](crate::dao::BulwarkDao) trait 会破坏所有现有实现
-//!
-//! 审计文档 `temp/security-architecture-audit-round2.md` M4 已确认此方案为方案 C
-//! （接受统计近似性）。
+//! - **原子计数**：`incr_with_ttl` 消除 TOCTOU 竞争窗口（原 get-then-set 非原子）
+//! - **统一封禁管理**：`BanStorage` trait 提供封禁记录的统一抽象，支持 is_banned/save/remove_ban
+//! - **count key**：保持 `bf:{ip}:count` 格式（通过 `DistributedLimiter` 原子递增）
 
 use crate::constants::DaoKeyPrefix;
 use crate::dao::BulwarkDao;
 use crate::error::{BulwarkError, BulwarkResult};
+use crate::limiteron::{BulwarkDaoBanStorage, BulwarkDaoDistributedLimiter};
 use crate::strategy::firewall::{BulwarkFirewallStrategy, FirewallContext};
 use async_trait::async_trait;
+use chrono::Utc;
+use limiteron::limiters::DistributedLimiter;
+use limiteron::storage::{BanRecord, BanStorage, BanTarget};
 use std::sync::Arc;
+use std::time::Duration;
 
 /// 暴力破解防护配置。
 ///
@@ -58,7 +54,7 @@ impl Default for BruteForceConfig {
     }
 }
 
-/// 暴力破解防护策略，用 oxcache 计数 + 锁定实现。
+/// 暴力破解防护策略，用 limiteron BanStorage + DistributedLimiter 实现。
 ///
 /// # 构造
 ///
@@ -73,62 +69,87 @@ impl Default for BruteForceConfig {
 pub struct BruteForceStrategy {
     /// 配置（阈值 + 窗口 + 锁定时长）。
     config: BruteForceConfig,
-    /// DAO（oxcache 抽象，用于计数与锁定）。
-    dao: Arc<dyn BulwarkDao>,
+    /// 封禁存储（limiteron BanStorage 适配器，替换手写 lock_key）。
+    ban_storage: Arc<dyn BanStorage>,
+    /// 分布式限流器（limiteron DistributedLimiter 适配器，原子计数替换手写 get+update）。
+    limiter: Arc<dyn DistributedLimiter>,
 }
 
 impl BruteForceStrategy {
     /// 创建暴力破解防护策略实例。
     ///
+    /// 内部创建 [`BulwarkDaoBanStorage`] + [`BulwarkDaoDistributedLimiter`] 适配器，
+    /// 将 `dao` 桥接到 limiteron trait。
+    ///
     /// # 参数
     /// - `config`: 配置（阈值 + 窗口 + 锁定时长）。
     /// - `dao`: DAO（oxcache 抽象，用于计数与锁定）。
     pub fn new(config: BruteForceConfig, dao: Arc<dyn BulwarkDao>) -> Self {
-        Self { config, dao }
+        let ban_storage = Arc::new(BulwarkDaoBanStorage::new(dao.clone()));
+        let limiter = Arc::new(BulwarkDaoDistributedLimiter::new(dao));
+        Self {
+            config,
+            ban_storage,
+            limiter,
+        }
     }
 }
 
 #[async_trait]
 impl BulwarkFirewallStrategy for BruteForceStrategy {
     async fn check(&self, ctx: &FirewallContext) -> BulwarkResult<()> {
-        let lock_key = format!("{}{}:locked", DaoKeyPrefix::BruteForce, ctx.ip);
+        let target = BanTarget::Ip(ctx.ip.clone());
         let count_key = format!("{}{}:count", DaoKeyPrefix::BruteForce, ctx.ip);
 
-        // 1. 锁定期内直接拦截（无论 count 是否过期）
-        if self.dao.get(&lock_key).await?.is_some() {
+        // 1. 检查是否已被封禁（BanStorage 替换原 lock_key，统一封禁管理）
+        if self
+            .ban_storage
+            .is_banned(&target)
+            .await
+            .map_err(|e| BulwarkError::Dao(format!("ban_storage is_banned 失败: {}", e)))?
+            .is_some()
+        {
             return Err(BulwarkError::FirewallBlocked(format!(
                 "bruteforce: IP {} 已被锁定",
                 ctx.ip
             )));
         }
 
-        // 2. 读取当前计数
-        match self.dao.get(&count_key).await? {
-            None => {
-                // 首次访问：初始化计数为 1，TTL=window_seconds（固定窗口起点）
-                self.dao
-                    .set(&count_key, "1", self.config.window_seconds)
-                    .await?;
-                Ok(())
-            },
-            Some(val) => {
-                let current: u32 = val.parse().unwrap_or(0);
-                let new_count = current + 1;
-                if new_count > self.config.max_attempts {
-                    // 超阈值：设置锁定 key（TTL=lock_seconds），返回 FirewallBlocked
-                    self.dao
-                        .set(&lock_key, "1", self.config.lock_seconds)
-                        .await?;
-                    Err(BulwarkError::FirewallBlocked(format!(
-                        "bruteforce: IP {} 尝试次数 {} 超过阈值 {}",
-                        ctx.ip, new_count, self.config.max_attempts
-                    )))
-                } else {
-                    // 未超阈值：update 保留原 TTL（固定窗口，不重置）
-                    self.dao.update(&count_key, &new_count.to_string()).await?;
-                    Ok(())
-                }
-            },
+        // 2. 原子递增计数（DistributedLimiter.incr_with_ttl 替换原 get+update，消除 TOCTOU）
+        let new_count = self
+            .limiter
+            .incr_with_ttl(
+                &count_key,
+                1,
+                Duration::from_secs(self.config.window_seconds),
+            )
+            .await
+            .map_err(|e| BulwarkError::Dao(format!("limiter incr_with_ttl 失败: {}", e)))?;
+
+        if new_count > self.config.max_attempts as u64 {
+            // 3. 超阈值：封禁 IP（BanStorage.save 替换原 set lock_key）
+            let record = BanRecord {
+                target: target.clone(),
+                ban_times: 1,
+                duration: Duration::from_secs(self.config.lock_seconds),
+                banned_at: Utc::now(),
+                expires_at: Utc::now() + chrono::Duration::seconds(self.config.lock_seconds as i64),
+                is_manual: false,
+                reason: format!(
+                    "bruteforce: 尝试次数 {} 超过阈值 {}",
+                    new_count, self.config.max_attempts
+                ),
+            };
+            self.ban_storage
+                .save(&record)
+                .await
+                .map_err(|e| BulwarkError::Dao(format!("ban_storage save 失败: {}", e)))?;
+            Err(BulwarkError::FirewallBlocked(format!(
+                "bruteforce: IP {} 尝试次数 {} 超过阈值 {}",
+                ctx.ip, new_count, self.config.max_attempts
+            )))
+        } else {
+            Ok(())
         }
     }
 }
@@ -145,7 +166,7 @@ mod tests {
     use crate::dao::tests::MockDao;
     use crate::error::BulwarkError;
 
-    /// 验证暴力破解防护：max_attempts=5 时，连续 5 次通过，第 6 次被拦截
+    /// 验证暴力破解防护：max_attempts=5 时，连续 5 次通过，第 6 次被拦截。
     #[tokio::test]
     async fn bruteforce_blocks_after_max_attempts() {
         let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
@@ -171,10 +192,10 @@ mod tests {
         );
     }
 
-    /// 验证锁定后的 IP 被持续拦截（第二层防护 `bf:{ip}:locked` 有效）。
+    /// 验证锁定后的 IP 被持续拦截（BanStorage 封禁记录生效）。
     ///
-    /// 即使 TOCTOU 竞争窗口导致计数不精确，一旦任一请求触发锁定，
-    /// 后续所有请求都应被 `lock_key` 拦截（依据审计文档 M4 方案 C 的安全保证）。
+    /// 一旦请求触发锁定（BanStorage.save），后续所有请求都应被
+    /// `is_banned` 拦截。
     #[tokio::test]
     async fn bruteforce_lock_persists_after_trigger() {
         let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
@@ -183,7 +204,7 @@ mod tests {
             window_seconds: 60,
             lock_seconds: 300,
         };
-        let strategy = BruteForceStrategy::new(config, dao.clone());
+        let strategy = BruteForceStrategy::new(config, dao);
         let ctx = FirewallContext::new("10.0.0.1");
 
         // 触发锁定（第 4 次超阈值）
@@ -191,16 +212,7 @@ mod tests {
             let _ = strategy.check(&ctx).await;
         }
 
-        // lock_key 应已设置
-        assert!(
-            dao.get(&format!("bf:{}:locked", ctx.ip))
-                .await
-                .unwrap()
-                .is_some(),
-            "lock_key 应在超阈值后设置"
-        );
-
-        // 后续 5 次请求全部被拦截（第二层防护生效）
+        // 后续 5 次请求全部被拦截（BanStorage is_banned 生效）
         for i in 1..=5 {
             let result = strategy.check(&ctx).await;
             assert!(

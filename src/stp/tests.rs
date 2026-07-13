@@ -12,6 +12,7 @@ use crate::config::{OverflowLogoutMode, ReplacedLoginExitMode};
 use crate::dao::BulwarkDao;
 use crate::manager::BulwarkManager;
 use async_trait::async_trait;
+#[cfg(feature = "listener")]
 use parking_lot::Mutex;
 use serial_test::serial;
 use std::collections::HashMap;

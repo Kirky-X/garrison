@@ -146,6 +146,16 @@ pub mod router;
 /// DAO 模块，定义持久化数据访问抽象层。
 pub mod dao;
 
+/// limiteron 适配器模块，将 BulwarkDao 桥接到 limiteron Storage/QuotaStorage/BanStorage/DistributedLimiter trait。
+///
+/// 启用 `sms-rate-limit` / `firewall-ratelimit` / `firewall-bruteforce` feature 时编译。
+#[cfg(any(
+    feature = "sms-rate-limit",
+    feature = "firewall-ratelimit",
+    feature = "firewall-bruteforce"
+))]
+pub mod limiteron;
+
 /// 策略模块，提供鉴权策略与防火墙策略。
 pub mod strategy;
 

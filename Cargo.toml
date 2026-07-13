@@ -83,7 +83,9 @@ quick-xml = { version = "0.41", optional = true, default-features = false, featu
 redis = { version = "~1.2", optional = true, default-features = false, features = ["aio", "tokio-comp", "connection-manager", "script"] }
 futures = { version = "0.3", optional = true, default-features = false, features = ["std"] }
 # inklog：已移除（0.1.6 是 tracing 的上层 subscriber 非 tracing 替代品，无法替换 tracing::warn/error，详见 specmark 冲突报告）
-# limiteron：已移除（0.2.5 内存态限流器与 BulwarkDao 分布式 DAO 不兼容，详见 specmark 冲突报告）
+# limiteron：统一流控框架（0.2.6 新增 DBNexusStorageAdapter + QuotaStorage.consume 原子方法 + DistributedLimiter trait）
+# 替换 bulwark 手写限速（SmsRateLimiter + RateLimitStrategy + BruteForceStrategy）
+limiteron = { version = "0.2", optional = true, default-features = false, features = ["distributed"] }
 # sdforge：已移除（0.3.5 forge! 宏不存在，实际是 #[service_api] 属性宏只能生成服务端路由，不能生成客户端 SDK；且默认依赖 axum 与现有 web 框架冲突，详见 specmark 冲突报告）
 # trait-kit：已移除（0.3.0 kit! 宏不存在，实际 AsyncKit typestate 与 BulwarkManager 抽象重叠，AuthBackend 只需 trait + dyn object 切换，详见 specmark 冲突报告）
 # cedar-policy：Cedar 策略语言（ABAC 权限模型，feature-gated: abac）
@@ -218,8 +220,8 @@ secure-xss = []
 # 通用输入消毒（null 字节 / 控制字符移除 + 长度限制），无额外依赖
 secure-sanitize = []
 # SMS 验证码渐进式限速（双窗口限速 + 验证码服务 + 异常发送检测）
-# 依赖 rand 生成密码学安全验证码
-sms-rate-limit = ["dep:rand"]
+# 依赖 rand 生成密码学安全验证码 + limiteron QuotaStorage 原子配额消费
+sms-rate-limit = ["dep:rand", "dep:limiteron"]
 
 # === 账号安全引擎 ===
 # account-credential：统一凭证模型 SPI（Credential trait + PasswordCredential + TotpCredential）
@@ -265,8 +267,10 @@ audit-log = ["listener"]
 firewall = []
 # 各 strategy 实现独立依赖 firewall 基础 trait
 # firewall-bruteforce / firewall-ratelimit / firewall-ddos 仅依赖 oxcache（通过 BulwarkDao 抽象）
-firewall-bruteforce = ["firewall"]
-firewall-ratelimit = ["firewall", "dep:rand"]
+# firewall-bruteforce：用 limiteron BanStorage + DistributedLimiter 替换手写 TOCTOU 计数
+firewall-bruteforce = ["firewall", "dep:limiteron"]
+# firewall-ratelimit：用 limiteron DistributedLimiter 原子 incr_with_ttl 替换手写滑动窗口
+firewall-ratelimit = ["firewall", "dep:rand", "dep:limiteron"]
 firewall-anomalous = ["firewall"]
 firewall-geoip = ["firewall"]
 firewall-ddos = ["firewall"]

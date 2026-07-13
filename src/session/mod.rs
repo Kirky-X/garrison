@@ -1802,11 +1802,13 @@ mod tests {
     ///
     /// 用于测试 `add_login_token_persistent` / `remove_login_token_persistent`
     /// 在 DAO update 失败时不写入内存层（保证双层一致性）。
+    #[cfg(feature = "login-token-map-persistence")]
     struct FailingUpdateDao {
         inner: Arc<MockDao>,
         fail_update_key: String,
     }
 
+    #[cfg(feature = "login-token-map-persistence")]
     #[async_trait]
     impl BulwarkDao for FailingUpdateDao {
         async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {

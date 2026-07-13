@@ -1,0 +1,798 @@
+//! Copyright (c) 2026 Kirky.X. All rights reserved.
+//! See LICENSE for full license text.
+
+//! limiteron 适配器模块。
+//!
+//! 提供 4 个适配器，将 `BulwarkDao` 桥接到 limiteron 的 `Storage` / `QuotaStorage` /
+//! `BanStorage` / `DistributedLimiter` trait，使 bulwark 的限速/封禁策略可以
+//! 委托 limiteron 的统一抽象。
+//!
+//! # 适配器清单
+//!
+//! | 适配器 | 实现 trait | 用途 |
+//! |--------|-----------|------|
+//! | [`BulwarkDaoStorage`] | `Storage` | KV get/set/delete |
+//! | [`BulwarkDaoQuotaStorage`] | `QuotaStorage` | 原子配额消费（SMS 限速） |
+//! | [`BulwarkDaoDistributedLimiter`] | `DistributedLimiter` | 原子计数 + TTL（滑动窗口） |
+//! | [`BulwarkDaoBanStorage`] | `BanStorage` | 封禁记录管理（暴力破解防护） |
+//!
+//! # 已知限制
+//!
+//! - `BulwarkDao::incr` 默认实现非原子（get→parse→+1→update），`MockDao` 重写为进程内原子
+//! - `QuotaStorage::consume` 通过循环 `dao.incr` 实现，cost > 1 时非原子
+//! - `BanStorage::list_bans` / `cleanup_expired_bans` 无法实现（BulwarkDao 无 iter API），返回空/0
+
+use crate::dao::BulwarkDao;
+use crate::error::BulwarkError;
+use async_trait::async_trait;
+use chrono::{DateTime, Utc};
+use limiteron::error::{LimiteronError, StorageError};
+use limiteron::limiters::{DistributedLimiter, Limiter};
+use limiteron::storage::{
+    BanHistory, BanRecord, BanStorage, BanTarget, QuotaInfo, QuotaStorage, Storage,
+};
+use std::sync::Arc;
+use std::time::Duration;
+
+// ============================================================================
+// 错误映射
+// ============================================================================
+
+/// 将 `BulwarkError` 映射为 `StorageError`。
+fn map_to_storage_err(e: BulwarkError) -> StorageError {
+    StorageError::QueryError(format!("{}", e))
+}
+
+/// 将 `BulwarkError` 映射为 `LimiteronError`。
+fn map_to_limiter_err(e: BulwarkError) -> LimiteronError {
+    LimiteronError::StorageError(StorageError::QueryError(format!("{}", e)))
+}
+
+// ============================================================================
+// BulwarkDaoStorage — impl Storage
+// ============================================================================
+
+/// `Storage` 适配器，将 `BulwarkDao` 桥接到 limiteron `Storage` trait。
+///
+/// `set` 的 `ttl: None` 映射为 `dao.set(key, value, 0)`（永久驻留）。
+pub struct BulwarkDaoStorage {
+    /// 内部 DAO。
+    dao: Arc<dyn BulwarkDao>,
+}
+
+impl BulwarkDaoStorage {
+    /// 创建适配器实例。
+    ///
+    /// # 参数
+    /// - `dao`: 内部 DAO 实现。
+    pub fn new(dao: Arc<dyn BulwarkDao>) -> Self {
+        Self { dao }
+    }
+}
+
+#[async_trait]
+impl Storage for BulwarkDaoStorage {
+    async fn get(&self, key: &str) -> Result<Option<String>, StorageError> {
+        self.dao.get(key).await.map_err(map_to_storage_err)
+    }
+
+    async fn set(&self, key: &str, value: &str, ttl: Option<u64>) -> Result<(), StorageError> {
+        let ttl_secs = ttl.unwrap_or(0);
+        self.dao
+            .set(key, value, ttl_secs)
+            .await
+            .map_err(map_to_storage_err)
+    }
+
+    async fn delete(&self, key: &str) -> Result<(), StorageError> {
+        self.dao.delete(key).await.map_err(map_to_storage_err)
+    }
+}
+
+// ============================================================================
+// BulwarkDaoQuotaStorage — impl QuotaStorage
+// ============================================================================
+
+/// 配额 key 前缀。
+const QUOTA_KEY_PREFIX: &str = "limiteron:quota";
+/// 配额计数 key：`limiteron:quota:{user_id}:{resource}:count`，存储 u64 计数值。
+fn quota_count_key(user_id: &str, resource: &str) -> String {
+    format!("{}:{}:{}:count", QUOTA_KEY_PREFIX, user_id, resource)
+}
+/// 配额元数据 key：`limiteron:quota:{user_id}:{resource}:meta`，存储 `consumed|limit|window_start|window_end`。
+fn quota_meta_key(user_id: &str, resource: &str) -> String {
+    format!("{}:{}:{}:meta", QUOTA_KEY_PREFIX, user_id, resource)
+}
+
+/// `QuotaStorage` 适配器，用 `BulwarkDao::incr` 实现配额消费。
+///
+/// `consume` 通过循环 `dao.incr` 实现：cost=1 时单次 incr（进程内原子），
+/// cost>1 时多次 incr（非原子，中间可能被其他请求插入）。
+pub struct BulwarkDaoQuotaStorage {
+    dao: Arc<dyn BulwarkDao>,
+}
+
+impl BulwarkDaoQuotaStorage {
+    /// 创建适配器实例。
+    ///
+    /// # 参数
+    /// - `dao`: 内部 DAO 实现。
+    pub fn new(dao: Arc<dyn BulwarkDao>) -> Self {
+        Self { dao }
+    }
+}
+
+#[async_trait]
+impl QuotaStorage for BulwarkDaoQuotaStorage {
+    async fn get_quota(
+        &self,
+        user_id: &str,
+        resource: &str,
+    ) -> Result<Option<QuotaInfo>, StorageError> {
+        let meta_key = quota_meta_key(user_id, resource);
+        let count_key = quota_count_key(user_id, resource);
+
+        let meta = self.dao.get(&meta_key).await.map_err(map_to_storage_err)?;
+        let count = self.dao.get(&count_key).await.map_err(map_to_storage_err)?;
+
+        match (meta, count) {
+            (Some(meta_str), Some(count_str)) => {
+                let consumed: u64 = count_str.parse().unwrap_or(0);
+                let parts: Vec<&str> = meta_str.split('|').collect();
+                if parts.len() != 4 {
+                    return Ok(None);
+                }
+                let limit: u64 = parts[1].parse().unwrap_or(0);
+                let window_start = DateTime::from_timestamp(parts[2].parse().unwrap_or(0), 0)
+                    .unwrap_or_else(Utc::now);
+                let window_end = DateTime::from_timestamp(parts[3].parse().unwrap_or(0), 0)
+                    .unwrap_or_else(Utc::now);
+                Ok(Some(QuotaInfo {
+                    consumed,
+                    limit,
+                    window_start,
+                    window_end,
+                }))
+            },
+            _ => Ok(None),
+        }
+    }
+
+    async fn consume(
+        &self,
+        user_id: &str,
+        resource: &str,
+        cost: u64,
+        limit: u64,
+        window: Duration,
+    ) -> Result<limiteron::error::ConsumeResult, StorageError> {
+        let count_key = quota_count_key(user_id, resource);
+        let meta_key = quota_meta_key(user_id, resource);
+        let ttl = window.as_secs();
+
+        // 循环 incr cost 次（cost=1 时单次，进程内原子）
+        let mut new_count = 0u64;
+        for _ in 0..cost {
+            new_count = self
+                .dao
+                .incr(&count_key, ttl)
+                .await
+                .map_err(map_to_storage_err)?;
+        }
+
+        // 初始化/更新元数据（首次消费时设置窗口）
+        let now = Utc::now();
+        let window_end = now
+            + chrono::Duration::from_std(window)
+                .unwrap_or_else(|_| chrono::Duration::seconds(window.as_secs() as i64));
+        let meta_val = format!(
+            "{}|{}|{}|{}",
+            new_count,
+            limit,
+            now.timestamp(),
+            window_end.timestamp()
+        );
+        // 用 set 覆盖元数据（保留 TTL 与窗口一致）
+        self.dao
+            .set(&meta_key, &meta_val, ttl)
+            .await
+            .map_err(map_to_storage_err)?;
+
+        let allowed = new_count <= limit;
+        let remaining = limit.saturating_sub(new_count);
+        let usage_percent = if limit == 0 {
+            100.0
+        } else {
+            (new_count as f64 / limit as f64) * 100.0
+        };
+
+        Ok(limiteron::error::ConsumeResult {
+            allowed,
+            remaining,
+            alert_triggered: usage_percent >= 80.0,
+            usage_percent,
+        })
+    }
+
+    async fn reset(
+        &self,
+        user_id: &str,
+        resource: &str,
+        _limit: u64,
+        _window: Duration,
+    ) -> Result<(), StorageError> {
+        let count_key = quota_count_key(user_id, resource);
+        let meta_key = quota_meta_key(user_id, resource);
+        self.dao
+            .delete(&count_key)
+            .await
+            .map_err(map_to_storage_err)?;
+        self.dao.delete(&meta_key).await.map_err(map_to_storage_err)
+    }
+}
+
+// ============================================================================
+// BulwarkDaoDistributedLimiter — impl DistributedLimiter
+// ============================================================================
+
+/// `DistributedLimiter` 适配器，用 `BulwarkDao::incr` 实现原子计数。
+///
+/// `incr(key, amount)` 通过循环 `dao.incr(key, 0)` amount 次实现。
+/// `incr_with_ttl(key, amount, ttl)` 通过循环 `dao.incr(key, ttl_secs)` amount 次实现。
+pub struct BulwarkDaoDistributedLimiter {
+    dao: Arc<dyn BulwarkDao>,
+}
+
+impl BulwarkDaoDistributedLimiter {
+    /// 创建适配器实例。
+    ///
+    /// # 参数
+    /// - `dao`: 内部 DAO 实现。
+    pub fn new(dao: Arc<dyn BulwarkDao>) -> Self {
+        Self { dao }
+    }
+}
+
+#[async_trait]
+impl Limiter for BulwarkDaoDistributedLimiter {
+    async fn allow(&self, cost: u64) -> Result<bool, LimiteronError> {
+        // Limiter trait 的 allow 无 key 参数，用固定 key 计数
+        // 真正的分布式限流通过 incr + get_count + 阈值判断实现
+        self.incr("_global", cost).await?;
+        Ok(true)
+    }
+}
+
+#[async_trait]
+impl DistributedLimiter for BulwarkDaoDistributedLimiter {
+    async fn incr(&self, key: &str, amount: u64) -> Result<u64, LimiteronError> {
+        let mut count = 0u64;
+        for _ in 0..amount {
+            count = self.dao.incr(key, 0).await.map_err(map_to_limiter_err)?;
+        }
+        if amount == 0 {
+            count = self.get_count(key).await?;
+        }
+        Ok(count)
+    }
+
+    async fn incr_with_ttl(
+        &self,
+        key: &str,
+        amount: u64,
+        ttl: Duration,
+    ) -> Result<u64, LimiteronError> {
+        let ttl_secs = ttl.as_secs();
+        let mut count = 0u64;
+        for _ in 0..amount {
+            count = self
+                .dao
+                .incr(key, ttl_secs)
+                .await
+                .map_err(map_to_limiter_err)?;
+        }
+        if amount == 0 {
+            count = self.get_count(key).await?;
+        }
+        Ok(count)
+    }
+
+    async fn get_count(&self, key: &str) -> Result<u64, LimiteronError> {
+        match self.dao.get(key).await.map_err(map_to_limiter_err)? {
+            None => Ok(0),
+            Some(val) => Ok(val.parse().unwrap_or(0)),
+        }
+    }
+
+    async fn reset(&self, key: &str) -> Result<(), LimiteronError> {
+        self.dao.delete(key).await.map_err(map_to_limiter_err)
+    }
+}
+
+// ============================================================================
+// BulwarkDaoBanStorage — impl BanStorage
+// ============================================================================
+
+/// 封禁 key 前缀。
+const BAN_KEY_PREFIX: &str = "limiteron:ban";
+/// 封禁次数 key 前缀。
+const BAN_TIMES_KEY_PREFIX: &str = "limiteron:ban:times";
+/// 封禁历史 key 前缀。
+const BAN_HISTORY_KEY_PREFIX: &str = "limiteron:ban:history";
+
+/// 将 `BanTarget` 序列化为 key 片段。
+fn target_to_key_fragment(target: &BanTarget) -> String {
+    match target {
+        BanTarget::Ip(ip) => format!("ip:{}", ip),
+        BanTarget::UserId(uid) => format!("user:{}", uid),
+        BanTarget::Mac(mac) => format!("mac:{}", mac),
+        BanTarget::Geo { country_code } => format!("geo:{}", country_code),
+    }
+}
+
+/// 封禁记录 key：`limiteron:ban:{type}:{value}`。
+fn ban_record_key(target: &BanTarget) -> String {
+    format!("{}:{}", BAN_KEY_PREFIX, target_to_key_fragment(target))
+}
+
+/// 封禁次数 key：`limiteron:ban:times:{type}:{value}`。
+fn ban_times_key(target: &BanTarget) -> String {
+    format!(
+        "{}:{}",
+        BAN_TIMES_KEY_PREFIX,
+        target_to_key_fragment(target)
+    )
+}
+
+/// 封禁历史 key：`limiteron:ban:history:{type}:{value}`。
+fn ban_history_key(target: &BanTarget) -> String {
+    format!(
+        "{}:{}",
+        BAN_HISTORY_KEY_PREFIX,
+        target_to_key_fragment(target)
+    )
+}
+
+/// 序列化 `BanRecord` 为字符串：`expires_at_ts|ban_times|is_manual|reason`。
+fn serialize_ban_record(record: &BanRecord) -> String {
+    format!(
+        "{}|{}|{}|{}",
+        record.expires_at.timestamp(),
+        record.ban_times,
+        record.is_manual,
+        record.reason
+    )
+}
+
+/// 反序列化 `BanRecord`。
+fn deserialize_ban_record(target: &BanTarget, val: &str) -> Option<BanRecord> {
+    let parts: Vec<&str> = val.splitn(4, '|').collect();
+    if parts.len() != 4 {
+        return None;
+    }
+    let expires_at_ts: i64 = parts[0].parse().ok()?;
+    let ban_times: u32 = parts[1].parse().ok()?;
+    let is_manual = parts[2] == "true";
+    let reason = parts[3].to_string();
+    let expires_at = DateTime::from_timestamp(expires_at_ts, 0)?;
+    let banned_at = expires_at
+        - chrono::Duration::from_std(record_duration_from_ban(target, ban_times))
+            .unwrap_or_else(|_| chrono::Duration::seconds(0));
+    let duration = record_duration_from_ban(target, ban_times);
+    Some(BanRecord {
+        target: target.clone(),
+        ban_times,
+        duration,
+        banned_at,
+        expires_at,
+        is_manual,
+        reason,
+    })
+}
+
+/// 从 ban_times 推断 duration（简化：ban_times * 300s）。
+fn record_duration_from_ban(_target: &BanTarget, ban_times: u32) -> Duration {
+    Duration::from_secs((ban_times as u64).saturating_mul(300))
+}
+
+/// `BanStorage` 适配器，用 `BulwarkDao` KV 存储封禁记录。
+///
+/// # 存储格式
+/// - 封禁记录：`limiteron:ban:{type}:{value}` → `expires_at_ts|ban_times|is_manual|reason`
+/// - 封禁次数：`limiteron:ban:times:{type}:{value}` → `u64`
+/// - 封禁历史：`limiteron:ban:history:{type}:{value}` → `ban_times|last_banned_at_ts`
+///
+/// # 限制
+/// `list_bans` 和 `cleanup_expired_bans` 无法实现（BulwarkDao 无 iter API），
+/// `is_banned` 在查询时检查过期时间（过期返回 None）。
+pub struct BulwarkDaoBanStorage {
+    dao: Arc<dyn BulwarkDao>,
+}
+
+impl BulwarkDaoBanStorage {
+    /// 创建适配器实例。
+    ///
+    /// # 参数
+    /// - `dao`: 内部 DAO 实现。
+    pub fn new(dao: Arc<dyn BulwarkDao>) -> Self {
+        Self { dao }
+    }
+}
+
+#[async_trait]
+impl BanStorage for BulwarkDaoBanStorage {
+    async fn is_banned(&self, target: &BanTarget) -> Result<Option<BanRecord>, StorageError> {
+        let key = ban_record_key(target);
+        match self.dao.get(&key).await.map_err(map_to_storage_err)? {
+            None => Ok(None),
+            Some(val) => {
+                let record = deserialize_ban_record(target, &val);
+                if let Some(ref r) = record {
+                    if r.expires_at <= Utc::now() {
+                        // 已过期，返回 None
+                        return Ok(None);
+                    }
+                }
+                Ok(record)
+            },
+        }
+    }
+
+    async fn save(&self, record: &BanRecord) -> Result<(), StorageError> {
+        let key = ban_record_key(&record.target);
+        let val = serialize_ban_record(record);
+        let ttl = (record.expires_at - Utc::now()).num_seconds().max(0) as u64;
+        self.dao
+            .set(&key, &val, ttl)
+            .await
+            .map_err(map_to_storage_err)?;
+
+        // 同步更新封禁次数和历史
+        let times_key = ban_times_key(&record.target);
+        self.dao
+            .set(&times_key, &record.ban_times.to_string(), ttl)
+            .await
+            .map_err(map_to_storage_err)?;
+
+        let history_key = ban_history_key(&record.target);
+        let history_val = format!("{}|{}", record.ban_times, Utc::now().timestamp());
+        self.dao
+            .set(&history_key, &history_val, ttl)
+            .await
+            .map_err(map_to_storage_err)
+    }
+
+    async fn get_history(&self, target: &BanTarget) -> Result<Option<BanHistory>, StorageError> {
+        let key = ban_history_key(target);
+        match self.dao.get(&key).await.map_err(map_to_storage_err)? {
+            None => Ok(None),
+            Some(val) => {
+                let parts: Vec<&str> = val.splitn(2, '|').collect();
+                if parts.len() != 2 {
+                    return Ok(None);
+                }
+                let ban_times: u32 = parts[0].parse().unwrap_or(0);
+                let last_banned_at = DateTime::from_timestamp(parts[1].parse().unwrap_or(0), 0)
+                    .unwrap_or_else(Utc::now);
+                Ok(Some(BanHistory {
+                    ban_times,
+                    last_banned_at,
+                }))
+            },
+        }
+    }
+
+    async fn increment_ban_times(&self, target: &BanTarget) -> Result<u64, StorageError> {
+        let key = ban_times_key(target);
+        // 用 incr 递增（默认 TTL=0，永久存储）
+        self.dao.incr(&key, 0).await.map_err(map_to_storage_err)
+    }
+
+    async fn get_ban_times(&self, target: &BanTarget) -> Result<u64, StorageError> {
+        let key = ban_times_key(target);
+        match self.dao.get(&key).await.map_err(map_to_storage_err)? {
+            None => Ok(0),
+            Some(val) => Ok(val.parse().unwrap_or(0)),
+        }
+    }
+
+    async fn remove_ban(&self, target: &BanTarget) -> Result<(), StorageError> {
+        let record_key = ban_record_key(target);
+        let times_key = ban_times_key(target);
+        let history_key = ban_history_key(target);
+        self.dao
+            .delete(&record_key)
+            .await
+            .map_err(map_to_storage_err)?;
+        self.dao
+            .delete(&times_key)
+            .await
+            .map_err(map_to_storage_err)?;
+        self.dao
+            .delete(&history_key)
+            .await
+            .map_err(map_to_storage_err)
+    }
+
+    async fn cleanup_expired_bans(&self) -> Result<u64, StorageError> {
+        // BulwarkDao 无 iter API，无法扫描过期 key
+        // 封禁记录设置 TTL，过期自动删除；is_banned 查询时检查过期时间
+        Ok(0)
+    }
+
+    async fn list_bans(
+        &self,
+        _active_only: bool,
+        _offset: u64,
+        _limit: u64,
+    ) -> Result<Vec<BanRecord>, StorageError> {
+        // BulwarkDao 无 iter API，无法列出所有 key
+        Ok(Vec::new())
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+// ============================================================================
+// 测试
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dao::tests::MockDao;
+
+    fn make_dao() -> Arc<dyn BulwarkDao> {
+        Arc::new(MockDao::new())
+    }
+
+    // --- BulwarkDaoStorage 测试 ---
+
+    #[tokio::test]
+    async fn storage_get_set_delete() {
+        let storage = BulwarkDaoStorage::new(make_dao());
+
+        // 初始 get 返回 None
+        assert!(storage.get("key1").await.unwrap().is_none());
+
+        // set + get
+        storage.set("key1", "value1", Some(60)).await.unwrap();
+        assert_eq!(
+            storage.get("key1").await.unwrap(),
+            Some("value1".to_string())
+        );
+
+        // delete + get
+        storage.delete("key1").await.unwrap();
+        assert!(storage.get("key1").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn storage_set_ttl_none_is_permanent() {
+        let storage = BulwarkDaoStorage::new(make_dao());
+        storage.set("perm", "val", None).await.unwrap();
+        assert_eq!(storage.get("perm").await.unwrap(), Some("val".to_string()));
+    }
+
+    // --- BulwarkDaoQuotaStorage 测试 ---
+
+    #[tokio::test]
+    async fn quota_consume_within_limit() {
+        let quota = BulwarkDaoQuotaStorage::new(make_dao());
+        let result = quota
+            .consume("user1", "sms", 1, 5, Duration::from_secs(3600))
+            .await
+            .unwrap();
+        assert!(result.allowed);
+        assert_eq!(result.remaining, 4);
+    }
+
+    #[tokio::test]
+    async fn quota_consume_exceeds_limit() {
+        let quota = BulwarkDaoQuotaStorage::new(make_dao());
+        // 消费 5 次，第 6 次超限
+        for _ in 0..5 {
+            let r = quota
+                .consume("user2", "sms", 1, 5, Duration::from_secs(3600))
+                .await
+                .unwrap();
+            assert!(r.allowed);
+        }
+        let result = quota
+            .consume("user2", "sms", 1, 5, Duration::from_secs(3600))
+            .await
+            .unwrap();
+        assert!(!result.allowed);
+        assert_eq!(result.remaining, 0);
+    }
+
+    #[tokio::test]
+    async fn quota_reset_clears_counters() {
+        let quota = BulwarkDaoQuotaStorage::new(make_dao());
+        quota
+            .consume("user3", "sms", 3, 10, Duration::from_secs(60))
+            .await
+            .unwrap();
+        assert!(quota.get_quota("user3", "sms").await.unwrap().is_some());
+
+        quota
+            .reset("user3", "sms", 10, Duration::from_secs(60))
+            .await
+            .unwrap();
+        assert!(quota.get_quota("user3", "sms").await.unwrap().is_none());
+    }
+
+    // --- BulwarkDaoDistributedLimiter 测试 ---
+
+    #[tokio::test]
+    async fn limiter_incr_and_get_count() {
+        let limiter = BulwarkDaoDistributedLimiter::new(make_dao());
+
+        let count1 = limiter.incr("test:key", 1).await.unwrap();
+        assert_eq!(count1, 1);
+
+        let count2 = limiter.incr("test:key", 1).await.unwrap();
+        assert_eq!(count2, 2);
+
+        assert_eq!(limiter.get_count("test:key").await.unwrap(), 2);
+    }
+
+    #[tokio::test]
+    async fn limiter_incr_with_ttl() {
+        let limiter = BulwarkDaoDistributedLimiter::new(make_dao());
+        let count = limiter
+            .incr_with_ttl("ttl:key", 1, Duration::from_secs(60))
+            .await
+            .unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(limiter.get_count("ttl:key").await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn limiter_reset() {
+        let limiter = BulwarkDaoDistributedLimiter::new(make_dao());
+        limiter.incr("reset:key", 3).await.unwrap();
+        assert_eq!(limiter.get_count("reset:key").await.unwrap(), 3);
+
+        limiter.reset("reset:key").await.unwrap();
+        assert_eq!(limiter.get_count("reset:key").await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn limiter_get_count_nonexistent() {
+        let limiter = BulwarkDaoDistributedLimiter::new(make_dao());
+        assert_eq!(limiter.get_count("noexist").await.unwrap(), 0);
+    }
+
+    // --- BulwarkDaoBanStorage 测试 ---
+
+    #[tokio::test]
+    async fn ban_save_and_is_banned() {
+        let storage = BulwarkDaoBanStorage::new(make_dao());
+        let target = BanTarget::Ip("192.168.1.1".to_string());
+
+        // 未封禁
+        assert!(storage.is_banned(&target).await.unwrap().is_none());
+
+        // 封禁
+        let record = BanRecord {
+            target: target.clone(),
+            ban_times: 1,
+            duration: Duration::from_secs(300),
+            banned_at: Utc::now(),
+            expires_at: Utc::now() + chrono::Duration::seconds(300),
+            is_manual: false,
+            reason: "bruteforce".to_string(),
+        };
+        storage.save(&record).await.unwrap();
+
+        // 已封禁
+        let banned = storage.is_banned(&target).await.unwrap();
+        assert!(banned.is_some());
+        assert_eq!(banned.unwrap().ban_times, 1);
+    }
+
+    #[tokio::test]
+    async fn ban_expired_returns_none() {
+        let storage = BulwarkDaoBanStorage::new(make_dao());
+        let target = BanTarget::Ip("10.0.0.1".to_string());
+
+        let record = BanRecord {
+            target: target.clone(),
+            ban_times: 1,
+            duration: Duration::from_secs(1),
+            banned_at: Utc::now() - chrono::Duration::seconds(10),
+            expires_at: Utc::now() - chrono::Duration::seconds(5), // 已过期
+            is_manual: false,
+            reason: "test".to_string(),
+        };
+        // 直接写入 DAO（绕过 save 的 TTL 计算）
+        let key = ban_record_key(&target);
+        let val = serialize_ban_record(&record);
+        storage.dao.set(&key, &val, 0).await.unwrap();
+
+        // is_banned 应返回 None（已过期）
+        assert!(storage.is_banned(&target).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn ban_increment_and_get_times() {
+        let storage = BulwarkDaoBanStorage::new(make_dao());
+        let target = BanTarget::UserId("user123".to_string());
+
+        assert_eq!(storage.get_ban_times(&target).await.unwrap(), 0);
+
+        let t1 = storage.increment_ban_times(&target).await.unwrap();
+        assert_eq!(t1, 1);
+
+        let t2 = storage.increment_ban_times(&target).await.unwrap();
+        assert_eq!(t2, 2);
+
+        assert_eq!(storage.get_ban_times(&target).await.unwrap(), 2);
+    }
+
+    #[tokio::test]
+    async fn ban_remove() {
+        let storage = BulwarkDaoBanStorage::new(make_dao());
+        let target = BanTarget::Ip("172.16.0.1".to_string());
+
+        let record = BanRecord {
+            target: target.clone(),
+            ban_times: 1,
+            duration: Duration::from_secs(300),
+            banned_at: Utc::now(),
+            expires_at: Utc::now() + chrono::Duration::seconds(300),
+            is_manual: true,
+            reason: "manual".to_string(),
+        };
+        storage.save(&record).await.unwrap();
+        assert!(storage.is_banned(&target).await.unwrap().is_some());
+
+        storage.remove_ban(&target).await.unwrap();
+        assert!(storage.is_banned(&target).await.unwrap().is_none());
+        assert_eq!(storage.get_ban_times(&target).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn ban_get_history() {
+        let storage = BulwarkDaoBanStorage::new(make_dao());
+        let target = BanTarget::Mac("AA:BB:CC:DD:EE:FF".to_string());
+
+        let record = BanRecord {
+            target: target.clone(),
+            ban_times: 3,
+            duration: Duration::from_secs(900),
+            banned_at: Utc::now(),
+            expires_at: Utc::now() + chrono::Duration::seconds(900),
+            is_manual: false,
+            reason: "repeat".to_string(),
+        };
+        storage.save(&record).await.unwrap();
+
+        let history = storage.get_history(&target).await.unwrap();
+        assert!(history.is_some());
+        assert_eq!(history.unwrap().ban_times, 3);
+    }
+
+    #[tokio::test]
+    async fn ban_list_bans_returns_empty() {
+        let storage = BulwarkDaoBanStorage::new(make_dao());
+        let bans = storage.list_bans(true, 0, 10).await.unwrap();
+        assert!(
+            bans.is_empty(),
+            "list_bans 应返回空 Vec（BulwarkDao 无 iter API）"
+        );
+    }
+
+    #[tokio::test]
+    async fn ban_cleanup_returns_zero() {
+        let storage = BulwarkDaoBanStorage::new(make_dao());
+        let count = storage.cleanup_expired_bans().await.unwrap();
+        assert_eq!(
+            count, 0,
+            "cleanup_expired_bans 应返回 0（BulwarkDao 无 iter API）"
+        );
+    }
+}
