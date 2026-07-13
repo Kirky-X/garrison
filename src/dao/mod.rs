@@ -864,7 +864,7 @@ mod mock;
 #[cfg(test)]
 pub use mock::MockDao;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "protocol-apikey"))]
 pub(crate) use mock::glob_match;
 
 // ============================================================================

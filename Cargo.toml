@@ -82,7 +82,9 @@ quick-xml = { version = "0.41", optional = true, default-features = false, featu
 # 版本 ~1.2 与 oxcache 0.3 间接依赖的 redis 保持一致
 redis = { version = "~1.2", optional = true, default-features = false, features = ["aio", "tokio-comp", "connection-manager", "script"] }
 futures = { version = "0.3", optional = true, default-features = false, features = ["std"] }
-# inklog：已移除（0.1.6 是 tracing 的上层 subscriber 非 tracing 替代品，无法替换 tracing::warn/error，详见 specmark 冲突报告）
+# inklog：企业级日志基础设施（0.1.7 LoggerManager 作为 tracing subscriber 配置层）
+# 替换手写 init_json_logging()，提供多输出/轮转/脱敏/健康监控
+inklog = { version = "0.1", optional = true, default-features = false }
 # limiteron：统一流控框架（0.2.6 新增 DBNexusStorageAdapter + QuotaStorage.consume 原子方法 + DistributedLimiter trait）
 # 替换 bulwark 手写限速（SmsRateLimiter + RateLimitStrategy + BruteForceStrategy）
 limiteron = { version = "0.2", optional = true, default-features = false, features = ["distributed"] }
@@ -354,10 +356,12 @@ abac = ["dep:cedar-policy"]
 # 依赖 protocol-oauth2（OAuth2 原语）+ reqwest（HTTP client）+ argon2（client_secret 哈希）+ rand（client_id 生成）
 oauth2-server = ["protocol-oauth2", "dep:reqwest", "dep:argon2", "dep:rand"]
 
-# === v0.7.0 inklog 结构化审计日志（已跳过 — inklog 冲突）===
-# audit-inklog 已移除：inklog 0.1.6 是 tracing 的上层 subscriber（实现 Layer trait），
-# 不是 tracing 的替代品，无自有 warn!/error! 宏，无法替换 tracing::warn/error。
-# 详见 specmark 冲突报告 T067-T072。
+# === v0.7.0 inklog 结构化审计日志 ===
+# inklog 0.1.7 LoggerManager 作为 tracing subscriber 配置层，
+# 替换 init_json_logging() 的手写 tracing-subscriber 配置，
+# 提供多输出（console/file/db）/轮转/脱敏/健康监控。
+# tracing::warn!/error! 宏不变（inklog 是 subscriber 层，非宏替代品）。
+audit-inklog = ["dep:inklog"]
 
 # === 可观测性 ===
 listener = []
@@ -391,6 +395,7 @@ full = [
     "web-waf", "web-cors", "web-csrf",
     "alone-cache", "parameter-query",
     "listener", "metrics-prometheus", "observability-otlp", "grpc", "i18n",
+    "audit-inklog",
     "annotation-macros",
     "decision-trace", "tenant-isolation", "safe-defaults",
     "firewall", "firewall-bruteforce", "firewall-ratelimit", "firewall-anomalous",
@@ -414,6 +419,7 @@ production = [
     "cache-redis", "db-postgres", "web-axum",
     "protocol-jwt", "protocol-sign", "secure-sign",
     "listener", "tracing-log", "metrics-prometheus",
+    "audit-inklog",
     "tenant-isolation",
     "security-alert", "device-binding",
     "safe-defaults",

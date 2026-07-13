@@ -110,6 +110,48 @@ pub fn init_json_logging() {
 }
 
 // ============================================================================
+// inklog 结构化日志（feature = "audit-inklog"）
+// ============================================================================
+
+/// 使用 inklog 初始化 tracing subscriber，替换 `init_json_logging()` 的手写配置。
+///
+/// 启用 `audit-inklog` feature 时可用。inklog 提供多输出（console/file）、
+/// 日志轮转、压缩、脱敏等企业级功能，替换手写 `tracing_subscriber::fmt().json()` 配置。
+///
+/// `tracing::warn!` / `tracing::error!` 宏不变 — inklog 是 subscriber 配置层，
+/// 不是宏替代品。inklog 初始化后，所有 tracing 宏自动经由 inklog pipeline 输出。
+///
+/// # 行为
+/// - 读取 `RUST_LOG` 环境变量（默认 `info`）
+/// - 启用 console 输出
+/// - 返回 `LoggerManager` guard，调用方须保持存活以维持日志输出
+///
+/// # 错误
+/// - inklog 初始化失败（如配置错误）
+///
+/// # 使用示例
+///
+/// ```ignore
+/// use bulwark::observability::init_inklog_logging;
+///
+/// #[tokio::main]
+/// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+///     let _logger = init_inklog_logging().await?;
+///     tracing::info!("inklog 已启动");
+///     Ok(())
+/// }
+/// ```
+#[cfg(feature = "audit-inklog")]
+pub async fn init_inklog_logging() -> Result<inklog::LoggerManager, inklog::InklogError> {
+    let level = std::env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string());
+    inklog::LoggerManager::builder()
+        .level(level)
+        .console(true)
+        .build()
+        .await
+}
+
+// ============================================================================
 // OpenTelemetry 分布式追踪（feature = "observability-otlp"）
 // ============================================================================
 
@@ -467,5 +509,39 @@ mod tests_no_feature {
     #[test]
     fn test_no_feature_metrics_is_unit() {
         let _: BulwarkMetrics = ();
+    }
+}
+
+/// inklog 初始化测试（feature = "audit-inklog"）。
+#[cfg(all(test, feature = "audit-inklog"))]
+mod tests_inklog {
+    use super::*;
+    use serial_test::serial;
+
+    /// 测试 init_inklog_logging() 成功初始化（返回 LoggerManager guard）。
+    #[tokio::test]
+    #[serial]
+    async fn init_inklog_logging_succeeds() {
+        let result = init_inklog_logging().await;
+        assert!(
+            result.is_ok(),
+            "init_inklog_logging 应成功: {:?}",
+            result.err()
+        );
+        // logger guard 在 scope 结束时 drop，关闭 inklog
+    }
+
+    /// 测试 init_inklog_logging() 读取 RUST_LOG 环境变量。
+    #[tokio::test]
+    #[serial]
+    async fn init_inklog_logging_reads_rust_log() {
+        std::env::set_var("RUST_LOG", "debug");
+        let result = init_inklog_logging().await;
+        std::env::remove_var("RUST_LOG");
+        assert!(
+            result.is_ok(),
+            "init_inklog_logging 应成功（debug level）: {:?}",
+            result.err()
+        );
     }
 }
