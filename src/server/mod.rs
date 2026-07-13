@@ -40,6 +40,9 @@ pub mod external;
 pub mod internal;
 pub mod middleware;
 
+#[cfg(feature = "auth-server-sdforge")]
+pub mod sdforge_routes;
+
 pub use middleware::{api_key_auth_middleware, audit_log_middleware, rate_limit_middleware};
 
 /// Auth Server 配置。
@@ -172,6 +175,21 @@ impl BulwarkAuthServer {
                 api_key_auth_middleware,
             ))
             .layer(axum::middleware::from_fn(audit_log_middleware))
+    }
+
+    /// 构建 sdforge 声明式路由（feature = "auth-server-sdforge"）。
+    ///
+    /// 用 `sdforge::http::build()` 收集所有 `#[forge]` 宏注册的路由（15 端点），
+    /// 通过 `Extension` layer 注入 `Arc<dyn AuthBackend>`。
+    ///
+    /// 与 `external_router()` + `internal_router()` 的区别：
+    /// - 手写路由用 `State<Arc<dyn AuthBackend>>` 注入后端
+    /// - sdforge 路由用 `Extension<Arc<dyn AuthBackend>>` 注入后端（`#[state]` 参数）
+    /// - sdforge 路由合并外网 + 内网到单一 Router，调用方按需添加 middleware
+    #[cfg(feature = "auth-server-sdforge")]
+    pub fn sdforge_router(&self) -> Router {
+        use axum::Extension;
+        sdforge::http::build().layer(Extension(self.backend.clone()))
     }
 
     /// 同时启动外网和内网两个 axum 服务器。

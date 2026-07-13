@@ -88,7 +88,9 @@ inklog = { version = "0.1", optional = true, default-features = false }
 # limiteron：统一流控框架（0.2.6 新增 DBNexusStorageAdapter + QuotaStorage.consume 原子方法 + DistributedLimiter trait）
 # 替换 bulwark 手写限速（SmsRateLimiter + RateLimitStrategy + BruteForceStrategy）
 limiteron = { version = "0.2", optional = true, default-features = false, features = ["distributed"] }
-# sdforge：已移除（0.3.5 forge! 宏不存在，实际是 #[service_api] 属性宏只能生成服务端路由，不能生成客户端 SDK；且默认依赖 axum 与现有 web 框架冲突，详见 specmark 冲突报告）
+# sdforge：声明式服务定义框架（0.4.1 #[forge] 宏 + sdforge::http::build() 收集路由）
+# 替换手写 axum Router::new().route(...) 路由定义，用 #[forge] 宏声明式注册端点
+sdforge = { version = "0.4", optional = true, default-features = false, features = ["http"] }
 # trait-kit：typestate DI 构建器（0.3.0 AsyncKit 提供 AuthBackend 的可选构建路径）
 # 替换手写 BulwarkAuthServer::new(backend) 初始化，用 AsyncKit register/build/require 流程
 trait-kit = { version = "0.3", optional = true, default-features = false, features = ["async"] }
@@ -370,6 +372,11 @@ audit-inklog = ["dep:inklog"]
 # 作为手写 BulwarkAuthServer::new(backend) 的可选替代路径
 backend-kit = ["dep:trait-kit", "backend-embedded"]
 
+# === v0.7.0 sdforge 声明式路由 ===
+# 启用后用 #[forge] 宏替换手写 axum 路由（external.rs/internal.rs）
+# sdforge::http::build() 收集 inventory 注册的路由
+auth-server-sdforge = ["dep:sdforge", "auth-server"]
+
 # === 可观测性 ===
 listener = []
 tracing-log = ["tracing/log"]
@@ -418,7 +425,7 @@ full = [
     "anonymous-session",
     "session-search",
     "social-wechat", "social-alipay",
-    "backend-embedded", "backend-kit", "backend-remote", "auth-server", "abac", "oauth2-server",
+    "backend-embedded", "backend-kit", "backend-remote", "auth-server", "auth-server-sdforge", "abac", "oauth2-server",
 ]
 
 # production 使用 db-postgres（dbnexus 0.3+ 已支持 postgres feature）
@@ -433,7 +440,7 @@ production = [
     "firewall-waf",
     "three-tier-cache",
     "sms-rate-limit",
-    "backend-embedded", "backend-kit", "auth-server", "abac",
+    "backend-embedded", "backend-kit", "auth-server", "auth-server-sdforge", "abac",
 ]
 
 development = [
@@ -490,3 +497,10 @@ inklog = { path = "/home/kirky/projects/base/inklog" }
 limiteron = { path = "/home/kirky/projects/base/limiteron" }
 sdforge = { path = "/home/kirky/projects/base/sdforge" }
 trait-kit = { path = "/home/kirky/projects/base/trait-kit" }
+
+# === Lint 配置 ===
+# sdforge #[forge] 宏在 bulwark 中展开时生成 #[cfg(feature = "mcp")] /
+# #[cfg(feature = "cli")] / #[cfg(feature = "openapi")] 等代码，
+# bulwark 不具备这些 feature，允许 unexpected_cfgs 以避免 check-cfg 警告。
+[lints.rust]
+unexpected_cfgs = { level = "allow" }
