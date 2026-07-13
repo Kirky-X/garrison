@@ -47,6 +47,17 @@ async fn async_api_key_ns_handler() -> &'static str {
     "ok"
 }
 
+// v0.7.0 命名参数形式
+#[check_permission(permission = "order:read", abac = "resource.user_id == principal.id")]
+async fn async_named_abac_handler() -> &'static str {
+    "ok"
+}
+
+#[check_permission(permission = "user:read")]
+async fn async_named_no_abac_handler() -> &'static str {
+    "ok"
+}
+
 fn main() {
     let _ = async_login_handler;
     let _ = async_perm_handler;
@@ -56,4 +67,6 @@ fn main() {
     let _ = async_temp_token_handler;
     let _ = async_api_key_handler;
     let _ = async_api_key_ns_handler;
+    let _ = async_named_abac_handler;
+    let _ = async_named_no_abac_handler;
 }

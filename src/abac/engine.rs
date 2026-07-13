@@ -174,6 +174,71 @@ impl AbacEngine {
         *guard = new_set;
         Ok(())
     }
+
+    /// 使用临时策略求值（不修改共享策略集）。
+    ///
+    /// 供 `check_abac_with_policy` 调用：宏生成的 Cedar 条件表达式包装为完整策略后，
+    /// 通过本方法求值，避免临时策略污染全局策略集。
+    ///
+    /// 临时策略独立求值，不与 `load_policy` 加载的共享策略合并。
+    ///
+    /// # 参数
+    /// - `principal`：主体 EntityUid 字符串
+    /// - `action`：动作 EntityUid 字符串
+    /// - `resource`：资源 EntityUid 字符串
+    /// - `context_json`：可选的上下文 JSON
+    /// - `temp_policy_src`：临时 Cedar 策略文本
+    ///
+    /// # 错误
+    /// - EntityUid/Context/Request 解析失败：`BulwarkError::InvalidParam`
+    /// - 临时策略语法错误：`BulwarkError::InvalidParam`
+    pub async fn evaluate_with_temp_policy(
+        &self,
+        principal: &str,
+        action: &str,
+        resource: &str,
+        context_json: Option<&str>,
+        temp_policy_src: &str,
+    ) -> BulwarkResult<Decision> {
+        let principal_uid: EntityUid = principal
+            .parse()
+            .map_err(|e| BulwarkError::InvalidParam(format!("principal 解析失败: {e}")))?;
+        let action_uid: EntityUid = action
+            .parse()
+            .map_err(|e| BulwarkError::InvalidParam(format!("action 解析失败: {e}")))?;
+        let resource_uid: EntityUid = resource
+            .parse()
+            .map_err(|e| BulwarkError::InvalidParam(format!("resource 解析失败: {e}")))?;
+        let context = match context_json {
+            Some(json) => Context::from_json_str(json, Some((&self.schema, &action_uid)))
+                .map_err(|e| BulwarkError::InvalidParam(format!("context 解析失败: {e}")))?,
+            None => Context::empty(),
+        };
+        let request = Request::new(
+            principal_uid,
+            action_uid,
+            resource_uid,
+            context,
+            Some(&self.schema),
+        )
+        .map_err(|e| BulwarkError::InvalidParam(format!("Cedar Request 构造失败: {e}")))?;
+        let temp_policy = Policy::parse(None, temp_policy_src)
+            .map_err(|e| BulwarkError::InvalidParam(format!("临时 Cedar 策略解析失败: {e}")))?;
+        let mut temp_set = PolicySet::new();
+        temp_set
+            .add(temp_policy)
+            .map_err(|e| BulwarkError::InvalidParam(format!("临时 Cedar 策略添加失败: {e}")))?;
+        let entities = Entities::empty();
+        let response = self
+            .authorizer
+            .is_authorized(&request, &temp_set, &entities);
+        match response.decision() {
+            cedar_policy::Decision::Allow => Ok(Decision::allow()),
+            cedar_policy::Decision::Deny => {
+                Ok(Decision::deny(DecisionReason::NoMatchingPermission))
+            },
+        }
+    }
 }
 
 // ============================================================================
@@ -540,5 +605,144 @@ mod tests {
             let decision = handle.await.expect("task complete");
             assert!(decision.allowed, "并发求值应全部允许");
         }
+    }
+
+    // ============================================================
+    // evaluate_with_temp_policy 测试（T138/T139）
+    // ============================================================
+
+    /// T139: evaluate_with_temp_policy — 匹配的临时策略返回 Allow。
+    #[tokio::test]
+    async fn t139_evaluate_with_temp_policy_permit_returns_allow() {
+        let engine = AbacEngine::new(SCHEMA_JSON).expect("schema valid");
+        let temp_policy = r#"permit(principal, action == Action::"access", resource);"#;
+        let decision = engine
+            .evaluate_with_temp_policy(
+                r#"User::"alice""#,
+                r#"Action::"access""#,
+                r#"Resource::"doc1""#,
+                None,
+                temp_policy,
+            )
+            .await
+            .expect("evaluate temp policy");
+        assert!(decision.allowed, "匹配的临时策略应 Allow");
+    }
+
+    /// T139: evaluate_with_temp_policy — 不匹配的临时策略返回 Deny。
+    #[tokio::test]
+    async fn t139_evaluate_with_temp_policy_no_match_returns_deny() {
+        let engine = AbacEngine::new(SCHEMA_JSON).expect("schema valid");
+        let temp_policy =
+            r#"permit(principal == User::"bob", action == Action::"access", resource);"#;
+        let decision = engine
+            .evaluate_with_temp_policy(
+                r#"User::"alice""#,
+                r#"Action::"access""#,
+                r#"Resource::"doc1""#,
+                None,
+                temp_policy,
+            )
+            .await
+            .expect("evaluate temp policy");
+        assert!(!decision.allowed, "不匹配的临时策略应 Deny");
+    }
+
+    /// T139: evaluate_with_temp_policy — 无效策略返回 InvalidParam。
+    #[tokio::test]
+    async fn t139_evaluate_with_temp_policy_invalid_returns_error() {
+        let engine = AbacEngine::new(SCHEMA_JSON).expect("schema valid");
+        let result = engine
+            .evaluate_with_temp_policy(
+                r#"User::"alice""#,
+                r#"Action::"access""#,
+                r#"Resource::"doc1""#,
+                None,
+                "not a valid cedar policy",
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(
+            matches!(result, Err(BulwarkError::InvalidParam(_))),
+            "应为 InvalidParam"
+        );
+    }
+
+    /// T139: evaluate_with_temp_policy — 不修改共享策略集。
+    #[tokio::test]
+    async fn t139_evaluate_with_temp_policy_does_not_modify_shared() {
+        let engine = AbacEngine::new(SCHEMA_JSON).expect("schema valid");
+        // 共享策略集初始为空
+        let before = engine
+            .evaluate(
+                r#"User::"alice""#,
+                r#"Action::"access""#,
+                r#"Resource::"doc1""#,
+                None,
+            )
+            .await
+            .expect("evaluate");
+        assert!(!before.allowed, "共享策略集为空时应 Deny");
+
+        // 临时策略求值
+        let temp_policy = r#"permit(principal, action == Action::"access", resource);"#;
+        let temp_decision = engine
+            .evaluate_with_temp_policy(
+                r#"User::"alice""#,
+                r#"Action::"access""#,
+                r#"Resource::"doc1""#,
+                None,
+                temp_policy,
+            )
+            .await
+            .expect("evaluate temp");
+        assert!(temp_decision.allowed, "临时策略应 Allow");
+
+        // 共享策略集仍为空
+        let after = engine
+            .evaluate(
+                r#"User::"alice""#,
+                r#"Action::"access""#,
+                r#"Resource::"doc1""#,
+                None,
+            )
+            .await
+            .expect("evaluate");
+        assert!(!after.allowed, "临时策略求值后共享策略集应仍为空（Deny）");
+    }
+
+    /// T139: evaluate_with_temp_policy — 带 when 条件的策略。
+    #[tokio::test]
+    async fn t139_evaluate_with_temp_policy_when_condition() {
+        let engine = AbacEngine::new(SCHEMA_JSON).expect("schema valid");
+        // when 条件为 true（1 == 1）→ Allow
+        let temp_policy_true =
+            r#"permit(principal, action == Action::"access", resource) when { 1 == 1 };"#;
+        let decision_true = engine
+            .evaluate_with_temp_policy(
+                r#"User::"alice""#,
+                r#"Action::"access""#,
+                r#"Resource::"doc1""#,
+                None,
+                temp_policy_true,
+            )
+            .await
+            .expect("evaluate");
+        assert!(decision_true.allowed, "when {{ 1 == 1 }} 应 Allow");
+
+        // when 条件为 false（1 == 2）→ Deny
+        let temp_policy_false =
+            r#"permit(principal, action == Action::"access", resource) when { 1 == 2 };"#;
+        let decision_false = engine
+            .evaluate_with_temp_policy(
+                r#"User::"alice""#,
+                r#"Action::"access""#,
+                r#"Resource::"doc1""#,
+                None,
+                temp_policy_false,
+            )
+            .await
+            .expect("evaluate");
+        assert!(!decision_false.allowed, "when {{ 1 == 2 }} 应 Deny");
     }
 }

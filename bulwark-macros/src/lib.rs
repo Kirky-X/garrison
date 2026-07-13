@@ -126,12 +126,28 @@ pub fn check_login(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// 标注在 async fn 或 sync fn 上，编译期生成 wrapper 在 fn body 前插入
 /// `BulwarkUtil::check_permission("perm")`（async）或 `check_permission_sync("perm")`（sync）调用。无权限请求返回 403。
 ///
+/// # 两种参数形式
+///
+/// ## 1. 位置参数（向后兼容，仅 RBAC）
+///
 /// 支持多个权限参数 `#[check_permission("a", "b")]`（AND 语义：必须持有全部权限）。
+///
+/// ## 2. 命名参数（v0.7.0 新增，RBAC + ABAC）
+///
+/// `#[check_permission(permission = "order:read", abac = "resource.user_id == principal.id")]`
+///
+/// - `permission`（必填）：单个权限标识
+/// - `abac`（可选）：Cedar 条件表达式，RBAC 通过后自动调用 ABAC 求值
+///
+/// `abac` 参数存在时，RBAC 通过后调用 `bulwark::abac::check_abac_with_policy(permission, abac_expr)`。
+/// ABAC 拒绝时返回 `BulwarkError::NotPermission`。`abac` feature 关闭时 ABAC 调用为 no-op。
 ///
 /// # 限制
 ///
 /// - 支持 `async fn` 和 `sync fn`（sync fn 需在 tokio multi_thread runtime 内调用）
-/// - 至少一个权限参数
+/// - 位置参数形式：至少一个权限参数
+/// - 命名参数形式：`permission` 必填，`abac` 可选
+/// - 两种形式不可混用
 ///
 /// # 示例
 ///
@@ -139,17 +155,33 @@ pub fn check_login(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// use bulwark::check_permission;
 /// use axum::response::IntoResponse;
 ///
+/// // 位置参数（仅 RBAC）
 /// #[check_permission("user:read")]
 /// async fn handler() -> impl IntoResponse { "ok" }
 ///
 /// #[check_permission("user:read", "user:write")]
 /// async fn admin_handler() -> impl IntoResponse { "admin" }
 ///
+/// // 命名参数（RBAC + ABAC）
+/// #[check_permission(permission = "order:read", abac = "resource.user_id == principal.id")]
+/// async fn get_order() -> impl IntoResponse { "order" }
+///
+/// // 命名参数（仅 RBAC，等价于位置参数单权限形式）
+/// #[check_permission(permission = "user:read")]
+/// async fn named_handler() -> impl IntoResponse { "ok" }
+///
 /// #[check_permission("user:read")]
 /// fn sync_handler() -> impl IntoResponse { "ok" }
 /// ```
 #[proc_macro_attribute]
 pub fn check_permission(attr: TokenStream, item: TokenStream) -> TokenStream {
+    // 优先尝试命名参数解析（permission = "...", abac = "..."）
+    let attr2: proc_macro2::TokenStream = attr.clone().into();
+    if let Ok(named) = syn::parse2::<CheckPermissionAttr>(attr2) {
+        let item_fn = parse_macro_input!(item as ItemFn);
+        return expand_check_permission_named(&named.permission, named.abac.as_deref(), item_fn);
+    }
+    // 回退到位置参数解析（向后兼容："perm1", "perm2"）
     let args = parse_macro_input!(attr with Punctuated::<LitStr, Token![,]>::parse_terminated);
     let perms: Vec<String> = args.iter().map(|s| s.value()).collect();
     if perms.is_empty() {
@@ -327,6 +359,52 @@ impl Parse for CheckApiKeyAttr {
     }
 }
 
+/// 解析 `#[check_permission]` 命名参数形式（v0.7.0 新增）。
+///
+/// 支持形式：`#[check_permission(permission = "x", abac = "expr")]`
+///
+/// - `permission`（必填）：权限标识
+/// - `abac`（可选）：Cedar 条件表达式
+///
+/// 位置参数形式（`#[check_permission("x")]`）不走此解析器，
+/// 在 `check_permission` 函数中先尝试命名参数解析，失败后回退到位置参数。
+struct CheckPermissionAttr {
+    permission: String,
+    abac: Option<String>,
+}
+
+impl Parse for CheckPermissionAttr {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let mut permission = None;
+        let mut abac = None;
+        while !input.is_empty() {
+            let ident: Ident = input.parse()?;
+            let _: Token![=] = input.parse()?;
+            let lit: LitStr = input.parse()?;
+            match ident.to_string().as_str() {
+                "permission" => permission = Some(lit.value()),
+                "abac" => abac = Some(lit.value()),
+                _ => {
+                    return Err(syn::Error::new(
+                        ident.span(),
+                        "不支持的属性参数，仅支持 `permission` 和 `abac`",
+                    ))
+                },
+            }
+            if !input.is_empty() {
+                let _: Token![,] = input.parse()?;
+            }
+        }
+        let permission = permission.ok_or_else(|| {
+            syn::Error::new(
+                Span::call_site(),
+                "#[check_permission] 命名参数形式需要 `permission` 参数",
+            )
+        })?;
+        Ok(Self { permission, abac })
+    }
+}
+
 /// 展开 `#[check_api_key]`：在 fn body 前插入 `BulwarkUtil::check_api_key(namespace)` 调用。
 ///
 /// `check_api_key(namespace)` 返回 `BulwarkResult<()>`：
@@ -450,6 +528,77 @@ fn expand_check_with_args(method: &str, args: &[String], item_fn: ItemFn) -> Tok
         })
         .collect();
     let checks = quote! { #(#calls)* };
+    expand_wrapper(&item_fn, checks, asyncness)
+}
+
+/// 展开 `#[check_permission]` 命名参数形式（RBAC + 可选 ABAC）。
+///
+/// 生成两段检查代码：
+/// 1. RBAC 检查（始终）：`BulwarkUtil::check_permission(permission)` / `check_permission_sync(permission)`
+/// 2. ABAC 检查（`abac` 参数存在时）：`bulwark::abac::check_abac_with_policy(permission, expr)`
+///
+/// ABAC 检查在 RBAC 通过后执行，AND 语义：任一失败立即 return 错误响应。
+///
+/// sync fn 的 ABAC 检查通过 `block_in_place` + `block_on` 包装 async 调用，
+/// 与 `BulwarkUtil::check_permission_sync` 的同步包装模式一致。
+fn expand_check_permission_named(
+    permission: &str,
+    abac: Option<&str>,
+    item_fn: ItemFn,
+) -> TokenStream {
+    let asyncness = detect_asyncness(&item_fn);
+
+    // RBAC 检查（始终生成）
+    let rbac_check = match asyncness {
+        Asyncness::Async => quote! {
+            if let ::std::result::Result::Err(__bulwark_err) =
+                ::bulwark::BulwarkUtil::check_permission(#permission).await
+            {
+                return ::axum::response::IntoResponse::into_response(__bulwark_err);
+            }
+        },
+        Asyncness::Sync => quote! {
+            if let ::std::result::Result::Err(__bulwark_err) =
+                ::bulwark::BulwarkUtil::check_permission_sync(#permission)
+            {
+                return ::axum::response::IntoResponse::into_response(__bulwark_err);
+            }
+        },
+    };
+
+    // ABAC 检查（仅 abac 参数存在时生成）
+    let abac_check = match abac {
+        Some(expr) => match asyncness {
+            Asyncness::Async => quote! {
+                if let ::std::result::Result::Err(__bulwark_err) =
+                    ::bulwark::abac::check_abac_with_policy(#permission, #expr).await
+                {
+                    return ::axum::response::IntoResponse::into_response(__bulwark_err);
+                }
+            },
+            Asyncness::Sync => quote! {
+                {
+                    let __bulwark_perm = #permission.to_string();
+                    let __bulwark_abac = #expr.to_string();
+                    if let ::std::result::Result::Err(__bulwark_err) =
+                        ::tokio::task::block_in_place(||
+                            ::tokio::runtime::Handle::current().block_on(
+                                ::bulwark::abac::check_abac_with_policy(&__bulwark_perm, &__bulwark_abac)
+                            )
+                        )
+                    {
+                        return ::axum::response::IntoResponse::into_response(__bulwark_err);
+                    }
+                }
+            },
+        },
+        None => quote! {},
+    };
+
+    let checks = quote! {
+        #rbac_check
+        #abac_check
+    };
     expand_wrapper(&item_fn, checks, asyncness)
 }
 

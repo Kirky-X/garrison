@@ -313,9 +313,14 @@ pub mod backend;
 
 /// ABAC 策略引擎模块，提供 AbacEngine（基于 Cedar 策略语言）。
 ///
-/// 启用 `abac` feature 时编译，依赖 `cedar-policy` crate。
+/// 启用 `abac` feature 时编译核心引擎（AbacEngine / init_abac_engine），
+/// 依赖 `cedar-policy` crate。
+///
+/// `abac` feature 关闭时仅提供 `check_abac_with_policy` stub（no-op），
+/// 确保宏 `#[check_permission(permission = "...", abac = "...")]` 生成的代码
+/// 在任意 feature 组合下均可编译（R-abac-005）。
+///
 /// ABAC 作为 RBAC 的增量校验层，不替换 RBAC。RBAC 通过后再检查 ABAC。
-#[cfg(feature = "abac")]
 pub mod abac;
 
 /// Auth Server 模块，提供 BulwarkAuthServer（双端口 axum 服务器）。
