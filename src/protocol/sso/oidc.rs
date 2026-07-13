@@ -152,12 +152,6 @@ impl DefaultOidcProvider {
             http_client: reqwest::Client::new(),
         }
     }
-
-    /// 返回 HTTP 客户端引用（供测试使用）。
-    #[allow(dead_code)]
-    fn http_client(&self) -> &reqwest::Client {
-        &self.http_client
-    }
 }
 
 #[async_trait]
