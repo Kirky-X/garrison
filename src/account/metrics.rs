@@ -458,6 +458,26 @@ mod tests {
         assert!(debug_str.contains("HistogramVec"));
         assert!(debug_str.contains("CounterVec"));
     }
+
+    /// gather() 返回非空字符串（覆盖 TextEncoder 编码路径）。
+    #[test]
+    #[serial]
+    fn gather_returns_non_empty_string() {
+        let registry = prometheus::Registry::new();
+        let metrics = AccountMetrics::register_to(&registry).expect("注册失败");
+        metrics.observe_credential_verify("password", std::time::Duration::from_millis(10));
+        let output = metrics.gather();
+        assert!(!output.is_empty(), "gather() 应返回非空字符串");
+    }
+
+    /// Default trait 创建与 new() 等价的实例。
+    #[test]
+    #[serial]
+    fn default_creates_instance() {
+        let metrics = AccountMetrics::default();
+        // 验证实例可用（observe 不 panic）
+        metrics.observe_authflow_execute("test_flow", std::time::Duration::from_micros(100));
+    }
 }
 
 /// 无 feature 时的编译验证测试（确保向后兼容）。
