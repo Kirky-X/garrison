@@ -13,6 +13,9 @@
 --   3. UPDATE 旧 record revoked=1（防重放）
 -- detect_reuse() 查 revoked=1 判断 token 是否被重用。
 -- revoke_chain() 递归 UPDATE parent_token_hash 链吊销整条链。
+--
+-- v0.7.1 OAuth2 扩展字段（client_id/scopes/username/user_id）由
+-- 007_refresh_tokens_oauth2_fields.sql 通过 ALTER TABLE 添加。
 
 -- UP:
 
