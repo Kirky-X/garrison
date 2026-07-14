@@ -189,7 +189,7 @@ impl BulwarkManager {
         //     token_handler 由 TokenStyleFactory 依据 config.token_style 创建
         let token_handler: Arc<dyn crate::core::token::Token> = Arc::from(TokenStyleFactory::new(
             &config.token_style,
-            &config.jwt_secret,
+            config.jwt_secret.as_str(),
         )?);
         let auth_logic: Arc<dyn AuthLogic> = Arc::new(AuthLogicDefault::new(
             session.clone(),

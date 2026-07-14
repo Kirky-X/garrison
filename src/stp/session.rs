@@ -727,7 +727,8 @@ impl BulwarkLogicDefault {
                 // 委托 JwtHandler::sign
                 #[cfg(feature = "protocol-jwt")]
                 {
-                    let handler = crate::protocol::jwt::JwtHandler::new(&self.config.jwt_secret);
+                    let handler =
+                        crate::protocol::jwt::JwtHandler::new(self.config.jwt_secret.as_str());
                     handler.sign(login_id, self.config.timeout)
                 }
                 #[cfg(not(feature = "protocol-jwt"))]
@@ -757,7 +758,7 @@ impl BulwarkLogicDefault {
                     "Stateless 模式要求 token_style=jwt".to_string(),
                 ));
             }
-            let handler = crate::protocol::jwt::JwtHandler::new(&self.config.jwt_secret);
+            let handler = crate::protocol::jwt::JwtHandler::new(self.config.jwt_secret.as_str());
             // spec R-002: 无效签名返回 InvalidToken，过期返回 ExpiredToken（透传 verify 错误）
             handler.verify(token)?;
             Ok(true)
@@ -780,7 +781,8 @@ impl BulwarkLogicDefault {
         #[cfg(feature = "protocol-jwt")]
         {
             if self.config.token_style == "jwt" {
-                let handler = crate::protocol::jwt::JwtHandler::new(&self.config.jwt_secret);
+                let handler =
+                    crate::protocol::jwt::JwtHandler::new(self.config.jwt_secret.as_str());
                 // spec R-003: JWT 签名无效直接返回错误（不查询 session）
                 handler.verify(token)?;
             }
@@ -2231,7 +2233,7 @@ mod tests {
             let mut config = BulwarkConfig::default_config();
             config.throw_on_not_login = throw_on_not_login;
             config.token_style = "jwt".to_string();
-            config.jwt_secret = secret.to_string();
+            config.jwt_secret = secret.to_string().into();
             let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
                 has_permission: true,
                 has_role: true,
@@ -3274,7 +3276,7 @@ mod tests {
             let mut config = BulwarkConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = "jwt".to_string();
-            config.jwt_secret = "gen-jwt-secret".to_string();
+            config.jwt_secret = "gen-jwt-secret".to_string().into();
             let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
                 has_permission: true,
                 has_role: true,

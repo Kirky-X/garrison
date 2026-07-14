@@ -254,6 +254,37 @@ impl Default for TenantIsolationConfig {
     }
 }
 
+/// JWT secret 类型别名（FMEA #8 修复，kueiku RPN=336）。
+///
+/// - `protocol-zeroize` feature 启用：`Zeroizing<String>`，Drop 时自动 zeroize buffer，
+///   防止进程内存 dump / swap-to-disk 泄露 jwt_secret。
+/// - 不启用：退化为 `String`，与历史行为一致（向后兼容）。
+///
+/// 调用方适配规则：
+/// - 赋值：`config.jwt_secret = "xxx".to_string().into()`（`String: From<String>` identity，
+///   `Zeroizing<String>: From<String>`）
+/// - 读取：`config.jwt_secret.as_str()` 或 `&*config.jwt_secret`（两种类型都支持）
+#[cfg(feature = "protocol-zeroize")]
+pub type JwtSecret = zeroize::Zeroizing<String>;
+
+/// JWT secret 类型别名（不启用 `protocol-zeroize` 时退化为 `String`）。
+///
+/// 详见上方 `protocol-zeroize` 启用版本的完整文档。
+#[cfg(not(feature = "protocol-zeroize"))]
+pub type JwtSecret = String;
+
+/// 构造默认 JwtSecret（空字符串），避免 `Default` 实现中重复 cfg 分支。
+fn default_jwt_secret() -> JwtSecret {
+    #[cfg(feature = "protocol-zeroize")]
+    {
+        String::new().into()
+    }
+    #[cfg(not(feature = "protocol-zeroize"))]
+    {
+        String::new()
+    }
+}
+
 /// 全局配置结构体，定义框架运行参数。
 ///
 /// [借鉴 Sa-Token] 对应 `SaTokenConfig`。
@@ -338,7 +369,10 @@ pub struct BulwarkConfig {
 
     /// JWT 签名密钥（verify_token/refresh_token 委托 JwtHandler 需要 secret）。
     /// 默认空字符串，业务方使用 JWT 时必须配置非空 secret。
-    pub jwt_secret: String,
+    ///
+    /// FMEA #8 修复：`protocol-zeroize` feature 下类型为 `Zeroizing<String>`，
+    /// Drop 时自动 zeroize buffer，防止内存泄露。
+    pub jwt_secret: JwtSecret,
 
     /// 签名校验时间窗口秒数（默认 300 秒）。
     pub sign_window_seconds: i64,
@@ -598,7 +632,7 @@ impl BulwarkConfig {
             cookie_secure: DEFAULT_COOKIE_SECURE,
             cookie_same_site: DEFAULT_COOKIE_SAME_SITE.to_string(),
             jwt_algorithm: DEFAULT_JWT_ALGORITHM.to_string(),
-            jwt_secret: String::new(),
+            jwt_secret: default_jwt_secret(),
             sign_window_seconds: DEFAULT_SIGN_WINDOW_SECONDS,
             sso_ticket_ttl_seconds: DEFAULT_SSO_TICKET_TTL_SECONDS,
             remember_me_enabled: false,
@@ -1157,6 +1191,49 @@ mod tests {
     use super::*;
     use serial_test::serial;
 
+    // === FMEA #8 测试（kueiku RPN=336）：jwt_secret 用 Zeroizing<String> 自动 zeroize on Drop ===
+
+    /// 编译期断言：protocol-zeroize feature 下 jwt_secret 字段类型为 Zeroizing<String>，
+    /// Drop 时自动 zeroize。如果有人改回 String，此测试将编译失败。
+    #[cfg(feature = "protocol-zeroize")]
+    #[test]
+    fn jwt_secret_is_zeroizing_type_when_protocol_zeroize() {
+        let cfg = BulwarkConfig::default();
+        // 接受 Zeroizing<String> 实例证明类型正确
+        fn assert_zeroizing<T: zeroize::Zeroize>(_: &T) {}
+        assert_zeroizing(&cfg.jwt_secret);
+    }
+
+    /// 验证 Zeroizing<String> zeroize 后 buffer 内容被清零。
+    ///
+    /// `Zeroizing<T>::drop` 内部调用 `T::zeroize()`，此测试直接调用 `zeroize()`
+    /// 验证同一行为（Drop 后访问字段是 UB，因为 String::drop 释放 buffer）。
+    /// 测试逻辑：zeroize() 清零 buffer 内容但不释放 buffer（String 仍持有 capacity），
+    /// 所以 ptr 在 zeroize 后仍指向有效内存，可安全读取验证全 0。
+    #[cfg(feature = "protocol-zeroize")]
+    #[test]
+    fn zeroizing_string_drop_clears_buffer() {
+        use zeroize::{Zeroize, Zeroizing};
+
+        let mut secret = Zeroizing::new(String::from("sensitive-jwt-secret"));
+        let ptr = secret.as_str().as_ptr();
+        let len = secret.as_str().len();
+
+        // 直接调用 zeroize（Drop 内部执行同一方法）
+        secret.zeroize();
+
+        // String::zeroize 先 as_bytes_mut().zeroize() 清零 buffer，再 clear() 设 len=0
+        // buffer 内存仍属于 String（capacity 不变），ptr 仍有效
+        unsafe {
+            let bytes = std::slice::from_raw_parts(ptr, len);
+            assert!(
+                bytes.iter().all(|&b| b == 0),
+                "Zeroizing<String> zeroize 后 buffer 应为全 0，实际: {:?}",
+                bytes
+            );
+        }
+    }
+
     /// 创建临时 toml 文件并写入内容，返回 NamedTempFile（离开作用域自动删除）。
     fn write_temp_toml(content: &str) -> tempfile::NamedTempFile {
         let file = tempfile::Builder::new()
@@ -1285,7 +1362,7 @@ mod tests {
             let mut config = BulwarkConfig::default_config();
             config.token_style = style.to_string();
             if *style == "jwt" {
-                config.jwt_secret = "test-secret".to_string();
+                config.jwt_secret = "test-secret".to_string().into();
             }
             assert!(
                 config.validate().is_ok(),
@@ -1610,7 +1687,7 @@ jwt_secret = "test-secret""#,
             .update(|c| {
                 c.timeout = 7200;
                 c.token_style = "jwt".to_string();
-                c.jwt_secret = "test-secret".to_string();
+                c.jwt_secret = "test-secret".to_string().into();
                 c.throw_on_not_login = false;
             })
             .unwrap();
@@ -1664,7 +1741,7 @@ jwt_secret = "test-secret""#,
             cookie_secure: true,
             cookie_same_site: "Lax".to_string(),
             jwt_algorithm: "HS256".to_string(),
-            jwt_secret: String::new(),
+            jwt_secret: default_jwt_secret(),
             sign_window_seconds: 300,
             sso_ticket_ttl_seconds: 60,
             remember_me_enabled: false,

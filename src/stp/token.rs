@@ -148,7 +148,7 @@ impl TokenLogic for BulwarkLogicDefault {
         // 委托 core-token::Token::verify
         // spec: "不泄露 token 具体失效原因（统一 InvalidToken）"
         let token_handler =
-            TokenStyleFactory::new(&self.config.token_style, &self.config.jwt_secret)?;
+            TokenStyleFactory::new(&self.config.token_style, self.config.jwt_secret.as_str())?;
         match token_handler.verify(token) {
             Ok(Some(login_id)) => Ok(login_id),
             Ok(None) => Err(BulwarkError::InvalidToken(
@@ -168,7 +168,7 @@ impl TokenLogic for BulwarkLogicDefault {
         }
         // 获取 login_id（用于 plugin/listener 回调）
         let login_id = self.verify_token(token).await?;
-        let handler = crate::protocol::jwt::JwtHandler::new(&self.config.jwt_secret);
+        let handler = crate::protocol::jwt::JwtHandler::new(self.config.jwt_secret.as_str());
         let new_token = handler.refresh(token, self.config.timeout)?;
         // auto-wire: 触发 plugin on_login（新 token）
         if let Some(pm) = &self.plugin_manager {
@@ -501,7 +501,7 @@ mod tests {
             let mut config = BulwarkConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = "jwt".to_string();
-            config.jwt_secret = "verify-jwt-secret".to_string();
+            config.jwt_secret = "verify-jwt-secret".to_string().into();
             let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
                 has_permission: true,
                 has_role: true,
@@ -536,7 +536,7 @@ mod tests {
             let mut config = BulwarkConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = "jwt".to_string();
-            config.jwt_secret = "verify-jwt-secret".to_string();
+            config.jwt_secret = "verify-jwt-secret".to_string().into();
             let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
                 has_permission: true,
                 has_role: true,
@@ -577,7 +577,7 @@ mod tests {
             let mut config = BulwarkConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = "jwt".to_string();
-            config.jwt_secret = "refresh-jwt-secret".to_string();
+            config.jwt_secret = "refresh-jwt-secret".to_string().into();
             config.timeout = 3600;
             let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
                 has_permission: true,
@@ -613,7 +613,7 @@ mod tests {
             let mut config = BulwarkConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = "jwt".to_string();
-            config.jwt_secret = "refresh-jwt-secret".to_string();
+            config.jwt_secret = "refresh-jwt-secret".to_string().into();
             config.timeout = 3600;
             let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
                 has_permission: true,

@@ -1540,7 +1540,7 @@ async fn refresh_token_valid_jwt_returns_new_token() {
     let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
     let mut config = BulwarkConfig::default_config();
     config.token_style = "jwt".to_string();
-    config.jwt_secret = "refresh-test-secret".to_string();
+    config.jwt_secret = "refresh-test-secret".to_string().into();
     config.timeout = 3600;
     let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
         has_permission: true,
@@ -2181,7 +2181,7 @@ async fn check_login_stateless_only_jwt_verify() {
     let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
     let mut config = BulwarkConfig::default_config();
     config.token_style = "jwt".to_string();
-    config.jwt_secret = "stateless-test-secret".to_string();
+    config.jwt_secret = "stateless-test-secret".to_string().into();
     config.throw_on_not_login = true;
     let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
         has_permission: true,
@@ -2219,7 +2219,7 @@ async fn check_login_mixin_jwt_and_session() {
     let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
     let mut config = BulwarkConfig::default_config();
     config.token_style = "jwt".to_string();
-    config.jwt_secret = "mixin-test-secret".to_string();
+    config.jwt_secret = "mixin-test-secret".to_string().into();
     config.throw_on_not_login = true;
     let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
         has_permission: true,
@@ -3105,7 +3105,7 @@ async fn check_and_renew_renews_jwt_when_threshold_reached() {
     let mut config = BulwarkConfig::default_config();
     config.timeout = 10;
     config.token_style = "jwt".to_string();
-    config.jwt_secret = "test-secret".to_string();
+    config.jwt_secret = "test-secret".to_string().into();
     config.auto_renewal_threshold = 90;
     let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
         has_permission: true,
