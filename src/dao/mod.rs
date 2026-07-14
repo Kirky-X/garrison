@@ -2133,4 +2133,73 @@ pub mod tests {
             "未调用 with_redis_config 时 redis_config 应为 None"
         );
     }
+
+    // ========================================================================
+    // 覆盖率补充：BulwarkDao trait 默认方法（incr / eval_lua）
+    // ========================================================================
+
+    /// `incr` 默认实现初始化新键为 1。
+    ///
+    /// 覆盖 trait 默认实现中 `None` 分支（键不存在时 set 初始值 1）。
+    #[tokio::test]
+    async fn default_incr_initializes_new_key() {
+        let dao = MinimalDao::new();
+        let result = dao.incr("counter", 3600).await.unwrap();
+        assert_eq!(result, 1, "新键应初始化为 1");
+        // 验证值已写入
+        let val = dao.get("counter").await.unwrap();
+        assert_eq!(val.as_deref(), Some("1"));
+    }
+
+    /// `incr` 默认实现递增已存在键的值。
+    ///
+    /// 覆盖 trait 默认实现中 `Some` 分支（键存在时 parse + update）。
+    #[tokio::test]
+    async fn default_incr_increments_existing_key() {
+        let dao = MinimalDao::new();
+        dao.set("counter", "5", 3600).await.unwrap();
+        let result = dao.incr("counter", 3600).await.unwrap();
+        assert_eq!(result, 6, "已存在键 5 应递增为 6");
+        // 再次递增
+        let result = dao.incr("counter", 3600).await.unwrap();
+        assert_eq!(result, 7, "已存在键 6 应递增为 7");
+    }
+
+    /// `incr` 默认实现对非数字值回退为 0 后递增。
+    ///
+    /// 覆盖 trait 默认实现中 `v.parse::<u64>().unwrap_or(0)` 分支。
+    #[tokio::test]
+    async fn default_incr_handles_non_numeric_value() {
+        let dao = MinimalDao::new();
+        dao.set("bad_counter", "not_a_number", 3600).await.unwrap();
+        let result = dao.incr("bad_counter", 3600).await.unwrap();
+        assert_eq!(result, 1, "非数字值应回退为 0 后递增为 1");
+    }
+
+    /// `eval_lua` 默认实现返回 `NotImplemented`。
+    ///
+    /// 覆盖 trait 默认实现（仅 Redis 后端支持 Lua 脚本）。
+    #[tokio::test]
+    async fn default_eval_lua_returns_not_implemented() {
+        let dao = MinimalDao::new();
+        let result = dao
+            .eval_lua("return 1", vec!["k".to_string()], vec!["a".to_string()])
+            .await;
+        assert!(
+            matches!(result, Err(BulwarkError::NotImplemented(ref msg)) if msg.contains("eval_lua")),
+            "eval_lua 默认实现应返回 NotImplemented，实际: {:?}",
+            result
+        );
+    }
+
+    /// MinimalDao::default() 等价于 new()。
+    ///
+    /// 覆盖 MinimalDao 的 Default trait 实现。
+    #[tokio::test]
+    async fn minimal_dao_default_equals_new() {
+        let dao = MinimalDao::default();
+        dao.set("k", "v", 60).await.unwrap();
+        let got = dao.get("k").await.unwrap();
+        assert_eq!(got.as_deref(), Some("v"));
+    }
 }

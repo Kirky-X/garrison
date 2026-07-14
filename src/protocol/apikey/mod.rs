@@ -847,4 +847,77 @@ mod tests {
             .await;
         assert!(r.is_ok(), "含 _ - 数字 的 namespace 应通过");
     }
+
+    // ========================================================================
+    // 覆盖率补充：错误分支与边界路径
+    // ========================================================================
+
+    /// 验证 verify_with_namespace 在 JSON namespace 与请求 namespace 不匹配时返回 InvalidToken。
+    ///
+    /// 覆盖 verify_with_namespace 中 namespace 二次校验失败分支。
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn verify_with_namespace_returns_error_when_namespace_mismatch() {
+        let dao = Arc::new(MockDao::new());
+        let handler = ApiKeyHandler::new(dao.clone());
+        let key = "deadbeef".repeat(8); // 64 hex chars
+        let dao_key = format!("bulwark:apikey:internal:{}", key);
+        // 写入 namespace 不一致的 ApiKeyInfo（dao_key 用 internal，JSON 中 namespace=other）
+        let info = ApiKeyInfo {
+            login_id: "1001".to_string(),
+            scopes: vec![],
+            expire_at: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64
+                + 3600,
+            revoked: false,
+            namespace: "other".to_string(),
+        };
+        let value = serde_json::to_string(&info).unwrap();
+        dao.set(&dao_key, &value, 3600).await.unwrap();
+        // verify_with_namespace 应返回 InvalidToken（namespace 不匹配）
+        let result = handler.verify_with_namespace(&key, "internal").await;
+        assert!(
+            matches!(result, Err(BulwarkError::InvalidToken(ref msg)) if msg.contains("namespace 不匹配")),
+            "namespace 不匹配应返回 InvalidToken，实际: {:?}",
+            result
+        );
+    }
+
+    /// 验证 verify 在 value 不是有效 JSON 时返回 Internal 错误。
+    ///
+    /// 覆盖 decode_and_check 的反序列化失败分支。
+    #[tokio::test]
+    async fn verify_returns_internal_error_when_json_invalid() {
+        let dao = Arc::new(MockDao::new());
+        let handler = ApiKeyHandler::new(dao.clone());
+        let key = "deadbeef".repeat(8);
+        let dao_key = format!("bulwark:apikey:{}", key);
+        dao.set(&dao_key, "invalid-json", 3600).await.unwrap();
+        let result = handler.verify(&key).await;
+        assert!(
+            matches!(result, Err(BulwarkError::Internal(ref msg)) if msg.contains("反序列化 ApiKeyInfo 失败")),
+            "无效 JSON 应返回 Internal 错误，实际: {:?}",
+            result
+        );
+    }
+
+    /// 验证 revoke 在 value 不是有效 JSON 时返回 Internal 错误。
+    ///
+    /// 覆盖 revoke_at 的反序列化失败分支。
+    #[tokio::test]
+    async fn revoke_returns_internal_error_when_json_invalid() {
+        let dao = Arc::new(MockDao::new());
+        let handler = ApiKeyHandler::new(dao.clone());
+        let key = "deadbeef".repeat(8);
+        let dao_key = format!("bulwark:apikey:{}", key);
+        dao.set(&dao_key, "invalid-json", 3600).await.unwrap();
+        let result = handler.revoke(&key).await;
+        assert!(
+            matches!(result, Err(BulwarkError::Internal(ref msg)) if msg.contains("反序列化 ApiKeyInfo 失败")),
+            "无效 JSON 应返回 Internal 错误，实际: {:?}",
+            result
+        );
+    }
 }

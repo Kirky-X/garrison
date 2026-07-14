@@ -1111,4 +1111,136 @@ mod tests {
         let result = chain.check(&ctx).await;
         assert!(result.is_err(), "%252e 双重编码应被拦截");
     }
+
+    // ========================================================================
+    // 13. 覆盖率补充：边界分支与空列表路径
+    // ========================================================================
+
+    /// 验证 path 含 `%5c` 时 WhitePathHook 不短路（HIGH-001 修复）。
+    ///
+    /// 覆盖 WhitePathHook::check 中 `%5c` 可疑模式分支。
+    #[tokio::test]
+    async fn white_path_percent_5c_not_short_circuited() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let mut chain = WafHookChain::new();
+        chain.register(Box::new(WhitePathHook::new(vec!["/api".to_string()])));
+        chain.register(Box::new(RecordingHook {
+            hook_name: "recorder",
+            log: log.clone(),
+        }));
+        let ctx = make_ctx("/api%5ctest", "GET", None, &[], &[]);
+        let result = chain.check(&ctx).await;
+        assert!(result.is_ok(), "含 %5c 的路径应放行（不短路）");
+        let executed = log.lock().unwrap();
+        assert!(
+            !executed.is_empty(),
+            "含 %5c 的路径不应短路，后续 Hook 应执行，实际执行: {:?}",
+            executed
+        );
+    }
+
+    /// 验证 path 含高于 0x7E 的字符返回 Deny。
+    ///
+    /// 覆盖 BannedCharacterHook::check 中 `> 0x7E` 分支。
+    #[tokio::test]
+    async fn banned_char_high_ascii_returns_deny() {
+        let hook = BannedCharacterHook::new();
+        // 0x80 是不可打印字符（高于 0x7E）
+        let ctx = make_ctx("/api\u{80}test", "GET", None, &[], &[]);
+        let verdict = hook.check(&ctx).await;
+        assert!(
+            matches!(verdict, WafVerdict::Deny { .. }),
+            "高于 0x7E 的字符应被拦截"
+        );
+    }
+
+    /// 验证 path 含 `//` 返回 Deny。
+    ///
+    /// 覆盖 DirectoryTraversalHook::check 中 `//` 模式分支。
+    #[tokio::test]
+    async fn dir_traversal_double_slash_returns_deny() {
+        let hook = DirectoryTraversalHook::new();
+        let ctx = make_ctx("/api//test", "GET", None, &[], &[]);
+        let verdict = hook.check(&ctx).await;
+        assert!(
+            matches!(verdict, WafVerdict::Deny { .. }),
+            "含 // 的路径应被拦截"
+        );
+    }
+
+    /// 验证空 Host 白名单返回 Allow。
+    ///
+    /// 覆盖 HostHook::check 中 `self.hosts.is_empty()` 分支。
+    #[tokio::test]
+    async fn host_empty_list_returns_allow() {
+        let hook = HostHook::new(vec![]);
+        let ctx = make_ctx("/api/test", "GET", Some("evil.com"), &[], &[]);
+        let verdict = hook.check(&ctx).await;
+        assert!(matches!(verdict, WafVerdict::Allow));
+    }
+
+    /// 验证空 HTTP 方法白名单返回 Allow。
+    ///
+    /// 覆盖 HttpMethodHook::check 中 `self.methods.is_empty()` 分支。
+    #[tokio::test]
+    async fn http_method_empty_list_returns_allow() {
+        let hook = HttpMethodHook::new(vec![]);
+        let ctx = make_ctx("/api/test", "DELETE", None, &[], &[]);
+        let verdict = hook.check(&ctx).await;
+        assert!(matches!(verdict, WafVerdict::Allow));
+    }
+
+    /// 验证空 Header 黑名单返回 Allow。
+    ///
+    /// 覆盖 HeaderHook::check 中 `self.headers.is_empty()` 分支。
+    #[tokio::test]
+    async fn header_empty_list_returns_allow() {
+        let hook = HeaderHook::new(vec![]);
+        let headers = vec![("X-Any".to_string(), "v".to_string())];
+        let ctx = make_ctx("/api/test", "GET", None, &headers, &[]);
+        let verdict = hook.check(&ctx).await;
+        assert!(matches!(verdict, WafVerdict::Allow));
+    }
+
+    /// 验证空 Parameter 黑名单返回 Allow。
+    ///
+    /// 覆盖 ParameterHook::check 中 `self.params.is_empty()` 分支。
+    #[tokio::test]
+    async fn parameter_empty_list_returns_allow() {
+        let hook = ParameterHook::new(vec![]);
+        let params = vec![("any".to_string(), "v".to_string())];
+        let ctx = make_ctx("/api/test", "GET", None, &[], &params);
+        let verdict = hook.check(&ctx).await;
+        assert!(matches!(verdict, WafVerdict::Allow));
+    }
+
+    /// 验证 HeaderHook 大小写不敏感匹配。
+    ///
+    /// 覆盖 HeaderHook::check 中 `name.to_lowercase() == banned_lower` 分支。
+    #[tokio::test]
+    async fn header_case_insensitive_match_returns_deny() {
+        let hook = HeaderHook::new(vec!["X-Forbidden".to_string()]);
+        // header 名用小写，黑名单用大写，应仍命中
+        let headers = vec![("x-forbidden".to_string(), "value".to_string())];
+        let ctx = make_ctx("/api/test", "GET", None, &headers, &[]);
+        let verdict = hook.check(&ctx).await;
+        assert!(
+            matches!(verdict, WafVerdict::Deny { .. }),
+            "大小写不敏感匹配应命中黑名单"
+        );
+    }
+
+    /// 验证双重编码 `%252f` 被检测到。
+    ///
+    /// 覆盖 check_danger_chars 中 `%25` 双重编码检测路径。
+    #[tokio::test]
+    async fn danger_char_double_encoding_percent_25_2f_detected() {
+        let hook = DangerCharacterHook::new();
+        let ctx = make_ctx("/api/%252ftest", "GET", None, &[], &[]);
+        let verdict = hook.check(&ctx).await;
+        assert!(
+            matches!(verdict, WafVerdict::Deny { .. }),
+            "%252f 双重编码应被拦截"
+        );
+    }
 }
