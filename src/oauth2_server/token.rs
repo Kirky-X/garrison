@@ -14,6 +14,8 @@ use crate::dao::BulwarkDao;
 use crate::error::{BulwarkError, BulwarkResult};
 use crate::oauth2_server::authorize::AuthorizeHandler;
 use crate::oauth2_server::client::{GrantType, OAuth2Client, OAuth2ClientStore};
+#[cfg(feature = "db-sqlite")]
+use crate::protocol::jwt::refresh::RefreshTokenRotation;
 use async_trait::async_trait;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
@@ -119,11 +121,25 @@ pub trait PasswordVerifier: Send + Sync {
 }
 
 /// /oauth2/token handler，处理 4 种 grant type。
+///
+/// # Refresh Token 统一（v0.7.1）
+///
+/// 启用 `db-sqlite` feature 并通过 `with_refresh_rotation` 注入
+/// `RefreshTokenRotation` 后，refresh_token 走统一轮换路径：
+/// - `issue_tokens` 委托 `RefreshTokenRotation::issue`（hash chain + INSERT）
+/// - `handle_refresh_token` 委托 `RefreshTokenRotation::rotate`（reuse detection + 链式撤销）
+///
+/// 未注入时退化为 DAO 键值存储（`DaoKeyPrefix::OAuth2RefreshToken`），
+/// 无 reuse detection，文档明确标注安全风险。
 pub struct TokenHandler {
     store: Arc<dyn OAuth2ClientStore>,
     dao: Arc<dyn BulwarkDao>,
     authorize_handler: Arc<AuthorizeHandler>,
     password_verifier: Option<Arc<dyn PasswordVerifier>>,
+    /// 统一的 refresh token 轮换服务（db-sqlite feature 启用时可用）。
+    /// 为 None 时退化为 DAO 键值存储（无 reuse detection）。
+    #[cfg(feature = "db-sqlite")]
+    refresh_rotation: Option<Arc<RefreshTokenRotation>>,
 }
 
 impl TokenHandler {
@@ -138,12 +154,27 @@ impl TokenHandler {
             dao,
             authorize_handler,
             password_verifier: None,
+            #[cfg(feature = "db-sqlite")]
+            refresh_rotation: None,
         }
     }
 
     /// 注入 password grant type 验证器。
     pub fn with_password_verifier(mut self, verifier: Arc<dyn PasswordVerifier>) -> Self {
         self.password_verifier = Some(verifier);
+        self
+    }
+
+    /// 注入 RefreshTokenRotation 启用统一轮换 + reuse detection（v0.7.1）。
+    ///
+    /// 仅在 `db-sqlite` feature 启用时可用。注入后：
+    /// - `issue_tokens` 在 `with_refresh=true` 时委托 `rotation.issue()`
+    /// - `handle_refresh_token` 委托 `rotation.rotate()` 获得轮换 + hash chain
+    ///
+    /// 未注入时退化为 DAO 路径（`DaoKeyPrefix::OAuth2RefreshToken`，无 reuse detection）。
+    #[cfg(feature = "db-sqlite")]
+    pub fn with_refresh_rotation(mut self, rotation: Arc<RefreshTokenRotation>) -> Self {
+        self.refresh_rotation = Some(rotation);
         self
     }
 
@@ -249,6 +280,17 @@ impl TokenHandler {
     }
 
     /// refresh_token grant type：刷新令牌。
+    ///
+    /// # Refresh Token 统一（v0.7.1）
+    ///
+    /// 启用 `db-sqlite` 且注入 `RefreshTokenRotation` 时，走统一轮换路径：
+    /// - 调用 `rotation.rotate()` 获得 hash chain + reuse detection + 链式撤销
+    /// - 返回新 refresh_token（轮换，旧 token revoked=1）
+    ///
+    /// 未注入时退化为 DAO 路径（无轮换，仅签发新 access_token）：
+    /// - 查找 `DaoKeyPrefix::OAuth2RefreshToken` 记录
+    /// - 校验 client_id 一致性
+    /// - 签发新 access_token（refresh_token 继续使用，不轮换）
     async fn handle_refresh_token(
         &self,
         client: &OAuth2Client,
@@ -264,7 +306,54 @@ impl TokenHandler {
             BulwarkError::OAuth2("invalid_request: refresh_token 参数缺失".into())
         })?;
 
-        // 查找 refresh_token 记录
+        // v0.7.1 统一路径：RefreshTokenRotation.rotate（reuse detection + hash chain）
+        #[cfg(feature = "db-sqlite")]
+        {
+            if let Some(rotation) = &self.refresh_rotation {
+                // rotate 直接处理 reuse detection + 链式撤销：
+                // - reuse → TokenRevoked（透传）
+                // - not found → InvalidToken（映射为 OAuth2 invalid_grant）
+                let (new_access, new_refresh) = match rotation.rotate(refresh_token).await {
+                    Ok(t) => t,
+                    Err(BulwarkError::InvalidToken(_)) => {
+                        return Err(BulwarkError::OAuth2(
+                            "invalid_grant: refresh_token 无效或已过期".into(),
+                        ));
+                    },
+                    Err(e) => return Err(e),
+                };
+                // validate 新 token 获取 scopes + client_id 供响应
+                let record = rotation.validate(&new_refresh).await?.ok_or_else(|| {
+                    BulwarkError::Internal("rotate 后新 refresh_token validate 失败".into())
+                })?;
+                // 校验 client_id 一致性
+                let record_client_id = record.client_id.as_deref().unwrap_or("");
+                if record_client_id != client.client_id {
+                    return Err(BulwarkError::OAuth2(
+                        "invalid_grant: refresh_token 与 client_id 不匹配".into(),
+                    ));
+                }
+                let scopes: Vec<String> = record
+                    .scopes
+                    .as_ref()
+                    .map(|s| s.split_whitespace().map(|x| x.to_string()).collect())
+                    .unwrap_or_default();
+                let scope_str = if scopes.is_empty() {
+                    None
+                } else {
+                    Some(scopes.join(" "))
+                };
+                return Ok(TokenResponse {
+                    access_token: new_access,
+                    token_type: TokenType::Bearer.to_string(),
+                    expires_in: ACCESS_TOKEN_TTL_SECONDS,
+                    refresh_token: Some(new_refresh),
+                    scope: scope_str,
+                });
+            }
+        }
+
+        // Fallback: DAO 路径（无轮换，无 reuse detection）
         let key = DaoKeyPrefix::OAuth2RefreshToken.build_key(refresh_token);
         let json = self.dao.get(&key).await?.ok_or_else(|| {
             BulwarkError::OAuth2("invalid_grant: refresh_token 无效或已过期".into())
@@ -367,6 +456,12 @@ impl TokenHandler {
     /// 签发 token 并存储。
     ///
     /// `username` 仅 password grant type 有值（RFC 7662 §2.3 内省返回）。
+    ///
+    /// # Refresh Token 统一（v0.7.1）
+    ///
+    /// `with_refresh=true` 时：
+    /// - 启用 `db-sqlite` 且注入 `RefreshTokenRotation` → 委托 `rotation.issue()`
+    /// - 否则 → DAO 路径（`DaoKeyPrefix::OAuth2RefreshToken`，无 reuse detection）
     async fn issue_tokens(
         &self,
         client_id: &str,
@@ -401,27 +496,34 @@ impl TokenHandler {
             .await?;
 
         let refresh_token = if with_refresh {
-            let rt = generate_token();
-            let rt_expires_at = now + Duration::seconds(REFRESH_TOKEN_TTL_SECONDS as i64);
-            let rt_jti = uuid::Uuid::new_v4().to_string();
-            let rt_record = TokenRecord {
-                token: rt.clone(),
-                client_id: client_id.to_string(),
-                user_id,
-                scopes: scopes.to_vec(),
-                token_type: TokenType::Refresh.to_string(),
-                expires_at: rt_expires_at,
-                issued_at: now,
-                jti: Some(rt_jti),
-                username: username.map(|s| s.to_string()),
-            };
-            let rt_key = DaoKeyPrefix::OAuth2RefreshToken.build_key(&rt);
-            let rt_json = serde_json::to_string(&rt_record)
-                .map_err(|e| BulwarkError::Internal(format!("TokenRecord 序列化失败: {e}")))?;
-            self.dao
-                .set(&rt_key, &rt_json, REFRESH_TOKEN_TTL_SECONDS)
-                .await?;
-            Some(rt)
+            // v0.7.1 统一路径：RefreshTokenRotation.issue（hash chain + INSERT）
+            #[cfg(feature = "db-sqlite")]
+            {
+                if let Some(rotation) = &self.refresh_rotation {
+                    let login_id = user_id.unwrap_or(0);
+                    let rt = rotation
+                        .issue(
+                            client_id,
+                            user_id,
+                            scopes,
+                            username,
+                            login_id,
+                            0, // tenant_id: 默认租户
+                            REFRESH_TOKEN_TTL_SECONDS as i64,
+                        )
+                        .await?;
+                    Some(rt)
+                } else {
+                    // Fallback: DAO 存储（无 reuse detection）
+                    self.issue_refresh_via_dao(client_id, user_id, scopes, username, now)
+                        .await?
+                }
+            }
+            #[cfg(not(feature = "db-sqlite"))]
+            {
+                self.issue_refresh_via_dao(client_id, user_id, scopes, username, now)
+                    .await?
+            }
         } else {
             None
         };
@@ -439,6 +541,42 @@ impl TokenHandler {
             refresh_token,
             scope: scope_str,
         })
+    }
+
+    /// DAO fallback 路径签发 refresh_token（无 reuse detection）。
+    ///
+    /// 当 `RefreshTokenRotation` 未注入或 `db-sqlite` feature 未启用时使用。
+    /// refresh_token 存储在 DAO 中（`DaoKeyPrefix::OAuth2RefreshToken`），
+    /// 无 hash chain、无 reuse detection、无链式撤销。
+    async fn issue_refresh_via_dao(
+        &self,
+        client_id: &str,
+        user_id: Option<i64>,
+        scopes: &[String],
+        username: Option<&str>,
+        now: DateTime<Utc>,
+    ) -> BulwarkResult<Option<String>> {
+        let rt = generate_token();
+        let rt_expires_at = now + Duration::seconds(REFRESH_TOKEN_TTL_SECONDS as i64);
+        let rt_jti = uuid::Uuid::new_v4().to_string();
+        let rt_record = TokenRecord {
+            token: rt.clone(),
+            client_id: client_id.to_string(),
+            user_id,
+            scopes: scopes.to_vec(),
+            token_type: TokenType::Refresh.to_string(),
+            expires_at: rt_expires_at,
+            issued_at: now,
+            jti: Some(rt_jti),
+            username: username.map(|s| s.to_string()),
+        };
+        let rt_key = DaoKeyPrefix::OAuth2RefreshToken.build_key(&rt);
+        let rt_json = serde_json::to_string(&rt_record)
+            .map_err(|e| BulwarkError::Internal(format!("TokenRecord 序列化失败: {e}")))?;
+        self.dao
+            .set(&rt_key, &rt_json, REFRESH_TOKEN_TTL_SECONDS)
+            .await?;
+        Ok(Some(rt))
     }
 
     /// 查找 access_token 记录（供 introspect 端点使用）。
@@ -996,5 +1134,336 @@ mod tests {
         let t2 = generate_token();
         assert_ne!(t1, t2);
         assert!(t1.len() >= 43);
+    }
+}
+
+// ============================================================================
+// v0.7.1 统一 Refresh Token 轮换集成测试（db-sqlite feature）
+// ============================================================================
+
+#[cfg(all(test, feature = "db-sqlite"))]
+mod refresh_rotation_tests {
+    use super::*;
+    use crate::dao::{init_dbnexus, BulwarkMigration};
+    use crate::oauth2_server::authorize::AuthorizeHandler;
+    use crate::oauth2_server::client::{DaoOAuth2ClientStore, GrantType, OAuth2Client};
+    use crate::protocol::jwt::refresh::RefreshTokenRotation;
+    use crate::protocol::jwt::JwtHandler;
+    use dbnexus::DbPool;
+    use std::path::PathBuf;
+    use std::sync::{Arc, RwLock};
+
+    /// 定位项目根目录的 migrations/sqlite/ 目录。
+    fn project_migrations_dir() -> PathBuf {
+        let manifest_dir = env!("CARGO_MANIFEST_DIR");
+        PathBuf::from(manifest_dir)
+            .join("migrations")
+            .join("sqlite")
+    }
+
+    /// 创建并初始化 SQLite in-memory 数据库。
+    async fn setup_db() -> DbPool {
+        let pool = init_dbnexus("sqlite::memory:")
+            .await
+            .expect("init_dbnexus 应成功");
+        let migration = BulwarkMigration::with_base_dir(pool.clone(), project_migrations_dir());
+        migration.migrate_core().await.expect("migrate_core 应成功");
+        pool
+    }
+
+    /// 创建测试用 PasswordVerifier。
+    struct TestPasswordVerifier;
+    #[async_trait]
+    impl PasswordVerifier for TestPasswordVerifier {
+        async fn verify(&self, username: &str, password: &str) -> BulwarkResult<Option<i64>> {
+            if username == "alice" && password == "wonderland" {
+                Ok(Some(5001))
+            } else {
+                Ok(None)
+            }
+        }
+    }
+
+    /// 创建注入 RefreshTokenRotation 的 TokenHandler。
+    async fn make_handler_with_rotation() -> TokenHandler {
+        let pool = setup_db().await;
+        let dao = Arc::new(crate::dao::MockDao::new());
+        let store = Arc::new(DaoOAuth2ClientStore::new(dao.clone()));
+        let authorize_handler = Arc::new(AuthorizeHandler::new(
+            store.clone(),
+            dao.clone(),
+            "https://auth.example.com/login".into(),
+        ));
+        let jwt_handler = Arc::new(JwtHandler::new("test_secret"));
+        let rotation = Arc::new(RefreshTokenRotation::new(
+            pool,
+            jwt_handler,
+            Arc::new(RwLock::new(1)),
+        ));
+        TokenHandler::new(store, dao, authorize_handler)
+            .with_password_verifier(Arc::new(TestPasswordVerifier))
+            .with_refresh_rotation(rotation)
+    }
+
+    /// 创建未注入 RefreshTokenRotation 的 TokenHandler（fallback 路径）。
+    fn make_handler_without_rotation() -> TokenHandler {
+        let dao = Arc::new(crate::dao::MockDao::new());
+        let store = Arc::new(DaoOAuth2ClientStore::new(dao.clone()));
+        let authorize_handler = Arc::new(AuthorizeHandler::new(
+            store.clone(),
+            dao.clone(),
+            "https://auth.example.com/login".into(),
+        ));
+        TokenHandler::new(store, dao, authorize_handler)
+            .with_password_verifier(Arc::new(TestPasswordVerifier))
+    }
+
+    /// 创建支持所有 grant type 的客户端。
+    fn make_full_client(id: &str) -> OAuth2Client {
+        OAuth2Client::new(
+            id,
+            "secret-123",
+            vec!["https://app.example.com/cb".into()],
+            vec![
+                GrantType::AuthorizationCode,
+                GrantType::RefreshToken,
+                GrantType::ClientCredentials,
+                GrantType::Password,
+            ],
+            vec!["read".into(), "write".into()],
+        )
+        .unwrap()
+    }
+
+    /// 通过 authorize 端点获取授权码。
+    async fn get_auth_code(handler: &TokenHandler, client_id: &str, verifier: &str) -> String {
+        let challenge = crate::oauth2_server::authorize::generate_code_challenge(verifier);
+        let req = crate::oauth2_server::authorize::AuthorizeRequest {
+            response_type: "code".into(),
+            client_id: client_id.into(),
+            redirect_uri: "https://app.example.com/cb".into(),
+            scope: Some("read".into()),
+            state: Some("xyz".into()),
+            code_challenge: challenge,
+            code_challenge_method: "S256".into(),
+        };
+        let resp = handler
+            .authorize_handler
+            .authorize(&req, Some(1001))
+            .await
+            .unwrap();
+        match resp {
+            crate::oauth2_server::authorize::AuthorizeResponse::Redirect { location } => location
+                .split("code=")
+                .nth(1)
+                .unwrap()
+                .split('&')
+                .next()
+                .unwrap()
+                .to_string(),
+            _ => panic!("期望 Redirect"),
+        }
+    }
+
+    /// T006: `TokenHandler::with_refresh_rotation` 构造成功。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn token_handler_with_refresh_rotation() {
+        let handler = make_handler_with_rotation().await;
+        assert!(
+            handler.refresh_rotation.is_some(),
+            "注入后 refresh_rotation 应为 Some"
+        );
+    }
+
+    /// T007: 注入 rotation 后，authorization_code grant 签发的 refresh_token 存在于 refresh_tokens 表。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn issue_tokens_with_rotation_uses_issue_method() {
+        let handler = make_handler_with_rotation().await;
+        let client = make_full_client("rot-auth-001");
+        // 先注册客户端
+        handler
+            .store
+            .create(client.clone())
+            .await
+            .expect("create client 应成功");
+
+        let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        let code = get_auth_code(&handler, "rot-auth-001", verifier).await;
+
+        let req = TokenRequest {
+            grant_type: "authorization_code".into(),
+            client_id: "rot-auth-001".into(),
+            client_secret: "secret-123".into(),
+            code: Some(code),
+            redirect_uri: Some("https://app.example.com/cb".into()),
+            code_verifier: Some(verifier.into()),
+            refresh_token: None,
+            scope: None,
+            username: None,
+            password: None,
+        };
+        let resp = handler.handle(&req).await.expect("token 签发应成功");
+        assert!(resp.refresh_token.is_some(), "应返回 refresh_token");
+
+        // 验证 refresh_token 存在于 refresh_tokens 表
+        let rotation = handler.refresh_rotation.as_ref().unwrap();
+        let record = rotation
+            .validate(resp.refresh_token.as_ref().unwrap())
+            .await
+            .expect("validate 应成功");
+        assert!(record.is_some(), "refresh_token 应在 refresh_tokens 表中");
+        let record = record.unwrap();
+        assert_eq!(record.client_id, Some("rot-auth-001".to_string()));
+    }
+
+    /// T008: 注入 rotation 后，refresh_token grant type 返回新 refresh_token（轮换）。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn handle_refresh_token_with_rotation_rotates() {
+        let handler = make_handler_with_rotation().await;
+        let client = make_full_client("rot-refresh-001");
+        handler.store.create(client.clone()).await.unwrap();
+
+        let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        let code = get_auth_code(&handler, "rot-refresh-001", verifier).await;
+
+        // 签发初始 token
+        let issue_req = TokenRequest {
+            grant_type: "authorization_code".into(),
+            client_id: "rot-refresh-001".into(),
+            client_secret: "secret-123".into(),
+            code: Some(code),
+            redirect_uri: Some("https://app.example.com/cb".into()),
+            code_verifier: Some(verifier.into()),
+            refresh_token: None,
+            scope: None,
+            username: None,
+            password: None,
+        };
+        let issue_resp = handler.handle(&issue_req).await.unwrap();
+        let old_refresh = issue_resp.refresh_token.expect("应有 refresh_token");
+
+        // 使用 refresh_token 刷新
+        let refresh_req = TokenRequest {
+            grant_type: "refresh_token".into(),
+            client_id: "rot-refresh-001".into(),
+            client_secret: "secret-123".into(),
+            code: None,
+            redirect_uri: None,
+            code_verifier: None,
+            refresh_token: Some(old_refresh.clone()),
+            scope: None,
+            username: None,
+            password: None,
+        };
+        let refresh_resp = handler.handle(&refresh_req).await.expect("refresh 应成功");
+        assert!(
+            refresh_resp.refresh_token.is_some(),
+            "轮换后应返回新 refresh_token"
+        );
+        assert_ne!(
+            refresh_resp.refresh_token.as_ref().unwrap(),
+            &old_refresh,
+            "新 refresh_token 应与旧的不同（轮换）"
+        );
+    }
+
+    /// T008: reuse detection — 同一 refresh_token 两次使用，第二次返回 TokenRevoked。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn handle_refresh_token_reuse_detection() {
+        let handler = make_handler_with_rotation().await;
+        let client = make_full_client("rot-reuse-001");
+        handler.store.create(client.clone()).await.unwrap();
+
+        let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        let code = get_auth_code(&handler, "rot-reuse-001", verifier).await;
+
+        // 签发初始 token
+        let issue_req = TokenRequest {
+            grant_type: "authorization_code".into(),
+            client_id: "rot-reuse-001".into(),
+            client_secret: "secret-123".into(),
+            code: Some(code),
+            redirect_uri: Some("https://app.example.com/cb".into()),
+            code_verifier: Some(verifier.into()),
+            refresh_token: None,
+            scope: None,
+            username: None,
+            password: None,
+        };
+        let issue_resp = handler.handle(&issue_req).await.unwrap();
+        let old_refresh = issue_resp.refresh_token.expect("应有 refresh_token");
+
+        // 第一次 refresh：成功
+        let refresh_req = TokenRequest {
+            grant_type: "refresh_token".into(),
+            client_id: "rot-reuse-001".into(),
+            client_secret: "secret-123".into(),
+            code: None,
+            redirect_uri: None,
+            code_verifier: None,
+            refresh_token: Some(old_refresh.clone()),
+            scope: None,
+            username: None,
+            password: None,
+        };
+        let _first = handler
+            .handle(&refresh_req)
+            .await
+            .expect("第一次 refresh 应成功");
+
+        // 第二次 refresh（重用）：应返回 TokenRevoked
+        let result = handler.handle(&refresh_req).await;
+        assert!(
+            matches!(&result, Err(BulwarkError::TokenRevoked(_))),
+            "重用已消费的 refresh token 应返回 TokenRevoked，实际: {:?}",
+            result
+        );
+    }
+
+    /// T007/T008 fallback: 未注入 rotation 时退化为 DAO 路径（不轮换）。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn handle_refresh_token_without_rotation_fallback() {
+        let handler = make_handler_without_rotation();
+        let client = make_full_client("rot-fallback-001");
+        handler.store.create(client.clone()).await.unwrap();
+
+        let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        let code = get_auth_code(&handler, "rot-fallback-001", verifier).await;
+
+        // 签发初始 token
+        let issue_req = TokenRequest {
+            grant_type: "authorization_code".into(),
+            client_id: "rot-fallback-001".into(),
+            client_secret: "secret-123".into(),
+            code: Some(code),
+            redirect_uri: Some("https://app.example.com/cb".into()),
+            code_verifier: Some(verifier.into()),
+            refresh_token: None,
+            scope: None,
+            username: None,
+            password: None,
+        };
+        let issue_resp = handler.handle(&issue_req).await.unwrap();
+        let old_refresh = issue_resp.refresh_token.expect("应有 refresh_token");
+
+        // 使用 refresh_token 刷新（fallback：不轮换，仅新 access_token）
+        let refresh_req = TokenRequest {
+            grant_type: "refresh_token".into(),
+            client_id: "rot-fallback-001".into(),
+            client_secret: "secret-123".into(),
+            code: None,
+            redirect_uri: None,
+            code_verifier: None,
+            refresh_token: Some(old_refresh.clone()),
+            scope: None,
+            username: None,
+            password: None,
+        };
+        let refresh_resp = handler.handle(&refresh_req).await.expect("refresh 应成功");
+        // Fallback 路径不轮换：refresh_token 为 None（issue_tokens with_refresh=false）
+        assert!(
+            refresh_resp.refresh_token.is_none(),
+            "Fallback 路径不轮换，不应返回新 refresh_token"
+        );
     }
 }
