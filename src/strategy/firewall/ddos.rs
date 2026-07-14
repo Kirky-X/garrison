@@ -236,7 +236,7 @@ mod tests {
     async fn ddos_per_ip_isolation() {
         let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
         let config = DDoSConfig {
-            global_rps: 100, // 100 token/sec，sleep 50ms 可补 5 token（capped at burst=3）
+            global_rps: 10000, // 极高 rps，1ms 即可补满全局桶
             per_ip_rps: 1,
             burst: 3,
         };
@@ -254,9 +254,10 @@ mod tests {
             );
         }
 
-        // 等待 50ms：全局桶补充 5 token（capped at 3）恢复满；
-        // per_ip_a 仅补 0.05 token 仍不足（验证 per_ip 拦截）
-        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+        // 等待 1ms：全局桶补充 10 token（capped at 3）恢复满；
+        // per_ip_a 仅补 0.001 token 仍不足（验证 per_ip 拦截）
+        // 即使高负载下 sleep 实际耗时 999ms，per_ip 也只补 0.999 token < 1
+        tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
 
         // IP A 第 4 次被 per_ip_a 拦截（全局桶已恢复通过，per_ip_a 仍不足）
         let result = strategy.check(&ctx_a).await;
