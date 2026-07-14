@@ -820,6 +820,21 @@ impl BulwarkUtil {
         task::block_in_place(|| Handle::current().block_on(Self::check_api_key(&namespace)))
     }
 
+    /// 同步版 [`check_safe`](Self::check_safe)。
+    ///
+    /// 在当前 tokio runtime 上阻塞执行 async `check_safe`。
+    ///
+    /// # 返回
+    /// - `Ok(())`: 已通过二级认证或未启用 MFA。
+    ///
+    /// # 错误
+    /// - `BulwarkManager` 未初始化：`BulwarkError::Session`。
+    /// - 未通过二级认证：`BulwarkError::NotSafe`。
+    /// - 不在 tokio multi_thread runtime 上下文：panic。
+    pub fn check_safe_sync() -> BulwarkResult<()> {
+        task::block_in_place(|| Handle::current().block_on(Self::check_safe()))
+    }
+
     /// 获取当前 `BulwarkConfig` 引用（用于 extractor / middleware 等需要配置的场景）。
     ///
     /// # 返回
@@ -2115,6 +2130,25 @@ mod tests {
         crate::manager::BulwarkManager::reset_for_test();
 
         let result = BulwarkUtil::check_api_key_sync("default");
+        assert!(
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
+            result
+        );
+    }
+
+    /// 验证 `check_safe_sync` 在未初始化时返回 `Session` 错误。
+    ///
+    /// 覆盖 `check_safe_sync` → `block_in_place` → `check_safe`
+    /// → `BulwarkManager::logic()?` 委托链路。
+    #[tokio::test(flavor = "multi_thread")]
+    #[serial_test::serial]
+    async fn check_safe_sync_delegates_to_bulwark_manager() {
+        #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
+        reset_backend_for_test();
+        crate::manager::BulwarkManager::reset_for_test();
+
+        let result = BulwarkUtil::check_safe_sync();
         assert!(
             matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
             "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
