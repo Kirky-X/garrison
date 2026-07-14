@@ -9,7 +9,7 @@
 //! - `client_credentials`：服务间认证 token（无 user_id，无 refresh_token）
 //! - `password`：用户名密码验证 + token（需注入 PasswordVerifier）
 
-use crate::constants::DaoKeyPrefix;
+use crate::constants::{DaoKeyPrefix, TokenType};
 use crate::dao::BulwarkDao;
 use crate::error::{BulwarkError, BulwarkResult};
 use crate::oauth2_server::authorize::AuthorizeHandler;
@@ -70,6 +70,9 @@ pub struct TokenResponse {
 }
 
 /// token 记录（存储在 DAO 中）。
+///
+/// v0.7.1 扩展 `issued_at` / `jti` / `username` 字段以支持 RFC 7662 token 内省完整字段。
+/// 新字段使用 `#[serde(default)]` 保证旧 token 反序列化兼容。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenRecord {
     /// token 字符串。
@@ -84,6 +87,20 @@ pub struct TokenRecord {
     pub token_type: String,
     /// 过期时间（UTC）。
     pub expires_at: DateTime<Utc>,
+    /// 签发时间（UTC，RFC 7662 §2.3 `iat` 字段）。
+    #[serde(default = "default_issued_at")]
+    pub issued_at: DateTime<Utc>,
+    /// token 唯一标识（RFC 7519 §4.1.7 `jti`，RFC 7662 内省返回）。
+    #[serde(default)]
+    pub jti: Option<String>,
+    /// 用户名（password grant type 时有值，RFC 7662 §2.3 `username` 字段）。
+    #[serde(default)]
+    pub username: Option<String>,
+}
+
+/// `issued_at` 的 serde 默认值：Unix epoch（旧 token 无此字段时回退）。
+fn default_issued_at() -> DateTime<Utc> {
+    DateTime::<Utc>::from_timestamp(0, 0).unwrap_or_else(Utc::now)
 }
 
 /// password grant type 验证器 trait。
@@ -137,15 +154,13 @@ impl TokenHandler {
             .authenticate_client(&req.client_id, &req.client_secret)
             .await?;
 
-        // 2. 根据 grant_type 分发
-        match req.grant_type.as_str() {
-            "authorization_code" => self.handle_authorization_code(&client, req).await,
-            "refresh_token" => self.handle_refresh_token(&client, req).await,
-            "client_credentials" => self.handle_client_credentials(&client, req).await,
-            "password" => self.handle_password(&client, req).await,
-            other => Err(BulwarkError::OAuth2(format!(
-                "unsupported_grant_type: {other}"
-            ))),
+        // 2. 根据 grant_type 分发（使用 GrantType 枚举，避免硬编码字符串）
+        let grant_type: GrantType = req.grant_type.parse()?;
+        match grant_type {
+            GrantType::AuthorizationCode => self.handle_authorization_code(&client, req).await,
+            GrantType::RefreshToken => self.handle_refresh_token(&client, req).await,
+            GrantType::ClientCredentials => self.handle_client_credentials(&client, req).await,
+            GrantType::Password => self.handle_password(&client, req).await,
         }
     }
 
@@ -228,6 +243,7 @@ impl TokenHandler {
             Some(user_id),
             &scopes,
             true, // 返回 refresh_token
+            None, // authorization_code grant type 不携带 username
         )
         .await
     }
@@ -266,8 +282,15 @@ impl TokenHandler {
         // 签发新 access_token（不签发新 refresh_token，refresh_token 继续使用）
         let user_id = record.user_id;
         let scopes = record.scopes.clone();
-        self.issue_tokens(&client.client_id, user_id, &scopes, false)
-            .await
+        let username = record.username.clone();
+        self.issue_tokens(
+            &client.client_id,
+            user_id,
+            &scopes,
+            false,
+            username.as_deref(),
+        )
+        .await
     }
 
     /// client_credentials grant type：服务间认证 token。
@@ -289,7 +312,7 @@ impl TokenHandler {
             .unwrap_or_default();
 
         // 无 user_id，无 refresh_token
-        self.issue_tokens(&client.client_id, None, &scopes, false)
+        self.issue_tokens(&client.client_id, None, &scopes, false, None)
             .await
     }
 
@@ -331,29 +354,43 @@ impl TokenHandler {
             .map(|s| s.split_whitespace().map(|x| x.to_string()).collect())
             .unwrap_or_default();
 
-        self.issue_tokens(&client.client_id, Some(user_id), &scopes, true)
-            .await
+        self.issue_tokens(
+            &client.client_id,
+            Some(user_id),
+            &scopes,
+            true,
+            Some(username.as_str()),
+        )
+        .await
     }
 
     /// 签发 token 并存储。
+    ///
+    /// `username` 仅 password grant type 有值（RFC 7662 §2.3 内省返回）。
     async fn issue_tokens(
         &self,
         client_id: &str,
         user_id: Option<i64>,
         scopes: &[String],
         with_refresh: bool,
+        username: Option<&str>,
     ) -> BulwarkResult<TokenResponse> {
         let access_token = generate_token();
         let now = Utc::now();
         let at_expires_at = now + Duration::seconds(ACCESS_TOKEN_TTL_SECONDS as i64);
+        // RFC 7519 §4.1.7 jti：保证同一秒内签发的 token 唯一
+        let at_jti = uuid::Uuid::new_v4().to_string();
 
         let at_record = TokenRecord {
             token: access_token.clone(),
             client_id: client_id.to_string(),
             user_id,
             scopes: scopes.to_vec(),
-            token_type: "access".into(),
+            token_type: TokenType::Access.to_string(),
             expires_at: at_expires_at,
+            issued_at: now,
+            jti: Some(at_jti),
+            username: username.map(|s| s.to_string()),
         };
 
         let at_key = DaoKeyPrefix::OAuth2AccessToken.build_key(&access_token);
@@ -366,13 +403,17 @@ impl TokenHandler {
         let refresh_token = if with_refresh {
             let rt = generate_token();
             let rt_expires_at = now + Duration::seconds(REFRESH_TOKEN_TTL_SECONDS as i64);
+            let rt_jti = uuid::Uuid::new_v4().to_string();
             let rt_record = TokenRecord {
                 token: rt.clone(),
                 client_id: client_id.to_string(),
                 user_id,
                 scopes: scopes.to_vec(),
-                token_type: "refresh".into(),
+                token_type: TokenType::Refresh.to_string(),
                 expires_at: rt_expires_at,
+                issued_at: now,
+                jti: Some(rt_jti),
+                username: username.map(|s| s.to_string()),
             };
             let rt_key = DaoKeyPrefix::OAuth2RefreshToken.build_key(&rt);
             let rt_json = serde_json::to_string(&rt_record)
@@ -393,7 +434,7 @@ impl TokenHandler {
 
         Ok(TokenResponse {
             access_token,
-            token_type: "Bearer".into(),
+            token_type: TokenType::Bearer.to_string(),
             expires_in: ACCESS_TOKEN_TTL_SECONDS,
             refresh_token,
             scope: scope_str,

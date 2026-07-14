@@ -106,7 +106,7 @@ impl PasswordLogic for BulwarkLogicDefault {
                 // 不区分 user_not_found/wrong_password，防止日志泄露用户存在性
                 tracing::warn!(
                     login_id = login_id,
-                    reason = "invalid_credentials",
+                    reason = EventReason::InvalidCredentials.as_str(),
                     "login_with_password 失败"
                 );
                 // 广播 LoginFailure 事件
@@ -127,7 +127,7 @@ impl PasswordLogic for BulwarkLogicDefault {
         let verified = hasher.verify(password, &user.password_hash).map_err(|e| {
             tracing::warn!(
                 login_id = login_id,
-                reason = "hash_format_error",
+                reason = EventReason::HashFormatError.as_str(),
                 error = %e,
                 "login_with_password 密码哈希格式不支持"
             );
@@ -139,7 +139,7 @@ impl PasswordLogic for BulwarkLogicDefault {
             // 不区分 user_not_found/wrong_password，防止日志泄露用户存在性
             tracing::warn!(
                 login_id = login_id,
-                reason = "invalid_credentials",
+                reason = EventReason::InvalidCredentials.as_str(),
                 "login_with_password 失败"
             );
             // 广播 LoginFailure 事件

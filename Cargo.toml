@@ -56,16 +56,16 @@ base32 = { version = "0.5", optional = true }
 argon2 = { version = "0.5", optional = true }
 bcrypt = { version = "0.15", optional = true }
 rand = { version = "0.8", optional = true }
-zeroize = { version = "1", optional = true, features = ["derive"] }
-regex = { version = "1", optional = true }
-oxcache = { version = "0.3", optional = true }
+zeroize = { version = "1", optional = true, default-features = false, features = ["derive"] }
+regex = { version = "1", optional = true, default-features = false }
+oxcache = { version = "0.3", optional = true, default-features = false }
 # default-features = false：dbnexus 0.4+ 禁止 embedded(sqlite) 与 server-side(postgres) 混用，
 # 由 db-base feature 显式启用基础 features，db-sqlite / db-postgres 分别启用 sqlite / postgres。
 dbnexus = { version = "0.4", optional = true, default-features = false }
 # dbnexus 未 re-export 这些类型，需显式声明为直接依赖。
 sea-orm = { version = "2.0.0-rc.42", default-features = false, features = ["sqlx-sqlite", "runtime-tokio-rustls"], optional = true }
-prometheus = { version = "0.14", optional = true }
-tracing-subscriber = { version = "0.3", optional = true, features = ["fmt", "json", "env-filter"] }
+prometheus = { version = "0.14", optional = true, default-features = false }
+tracing-subscriber = { version = "0.3", optional = true, default-features = false, features = ["fmt", "json", "env-filter"] }
 opentelemetry = { version = "0.30", optional = true, default-features = false, features = ["trace"] }
 opentelemetry_sdk = { version = "0.30", optional = true, default-features = false, features = ["trace", "rt-tokio"] }
 opentelemetry-otlp = { version = "0.30", optional = true, default-features = false, features = ["trace", "grpc-tonic"] }
@@ -79,9 +79,9 @@ unic-langid = { version = "0.9", optional = true, default-features = false }
 miette = { version = "7", optional = true, default-features = false }
 bulwark-macros = { path = "bulwark-macros", version = "0.5.1", optional = true }
 # 注意：rsa 0.9 内部依赖 sha2 0.10，与项目 sha2 0.11 不兼容，故用 `rsa::pkcs1v15::SigningKey` + `rsa::sha2::Sha256`（sha2 0.10 re-export）
-rsa = { version = "0.9", optional = true, features = ["sha2", "pem"] }
-unicode-security = { version = "0.1", optional = true }
-maxminddb = { version = "0.29", optional = true }
+rsa = { version = "0.9", optional = true, default-features = false, features = ["sha2", "pem"] }
+unicode-security = { version = "0.1", optional = true, default-features = false }
+maxminddb = { version = "0.29", optional = true, default-features = false }
 quick-xml = { version = "0.41", optional = true, default-features = false, features = ["serialize"] }
 # 版本 ~1.2 与 oxcache 0.3 间接依赖的 redis 保持一致
 redis = { version = "~1.2", optional = true, default-features = false, features = ["aio", "tokio-comp", "connection-manager", "script"] }
@@ -99,9 +99,21 @@ sdforge = { version = "0.4", optional = true, default-features = false, features
 # 替换手写 BulwarkAuthServer::new(backend) 初始化，用 AsyncKit register/build/require 流程
 trait-kit = { version = "0.3", optional = true, default-features = false, features = ["async"] }
 # cedar-policy：Cedar 策略语言（ABAC 权限模型，feature-gated: abac）
-cedar-policy = { version = "4.11", optional = true }
+cedar-policy = { version = "4.11", optional = true, default-features = false }
 # moka：高速并发缓存（ABAC 决策缓存 TTL 60s，feature-gated: abac）
 moka = { version = "0.12", optional = true, default-features = false, features = ["sync"] }
+# === ICU4X 2.2 国际化增强（复数/日期/数字本地化），feature-gated: i18n-icu ===
+# compiled_data：将 CLDR 数据编译进二进制（无需运行时加载 .dat 文件）
+icu_plurals = { version = "2.2", optional = true, default-features = false, features = ["compiled_data"] }
+icu_datetime = { version = "2.2", optional = true, default-features = false, features = ["compiled_data"] }
+icu_decimal = { version = "2.2", optional = true, default-features = false, features = ["compiled_data", "alloc"] }
+# icu_locale_core 是 icu_* 的公共依赖，显式声明以直接使用 Locale 类型
+icu_locale_core = { version = "2.2", optional = true, default-features = false }
+# icu_calendar / icu_time：icu_datetime::input 的 Date/Time/DateTime 类型来源，显式声明以直接使用
+icu_calendar = { version = "2.2", optional = true, default-features = false, features = ["compiled_data"] }
+icu_time = { version = "2.2", optional = true, default-features = false, features = ["compiled_data"] }
+# fixed_decimal：icu_decimal 依赖，显式声明以直接使用 Decimal（0.7+ 重命名自 FixedDecimal）
+fixed_decimal = { version = "0.7", optional = true, default-features = false }
 
 [dev-dependencies]
 toml = "1.0"
@@ -388,6 +400,13 @@ observability-otlp = ["opentelemetry", "opentelemetry_sdk", "opentelemetry-otlp"
 grpc = ["tonic", "dep:tonic-health"]
 # 异常消息国际化（中英文切换，fluent-rs）
 i18n = ["fluent", "unic-langid"]
+# ICU4X 增强层：复数规则 + 日期/数字本地化（依赖 i18n 基础层）
+# 启用后提供 plural_category() / format_datetime_locale() / format_number_locale() API
+i18n-icu = [
+    "i18n",
+    "dep:icu_plurals", "dep:icu_datetime", "dep:icu_decimal",
+    "dep:icu_locale_core", "dep:icu_calendar", "dep:icu_time", "dep:fixed_decimal",
+]
 # miette 富错误渲染
 # 启用后 BulwarkError 实现 miette::Diagnostic trait（保留 thiserror::Error derive）
 miette = ["dep:miette"]
@@ -409,7 +428,7 @@ full = [
     "web-axum", "web-actix", "web-warp",
     "web-waf", "web-cors", "web-csrf",
     "alone-cache", "parameter-query",
-    "listener", "metrics-prometheus", "observability-otlp", "grpc", "i18n",
+    "listener", "metrics-prometheus", "observability-otlp", "grpc", "i18n", "i18n-icu",
     "audit-inklog",
     "annotation-macros",
     "decision-trace", "tenant-isolation", "safe-defaults",

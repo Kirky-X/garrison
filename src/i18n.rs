@@ -294,6 +294,74 @@ fn fallback_display(err: &BulwarkError) -> String {
 }
 
 // ============================================================================
+// ICU4X 增强层（feature = "i18n-icu"）
+// ============================================================================
+
+/// ICU4X 增强模块，提供复数规则、日期/数字本地化。
+///
+/// 仅在 `i18n-icu` feature 启用时编译，不影响现有翻译逻辑。
+#[cfg(feature = "i18n-icu")]
+pub mod icu_enhanced {
+    use crate::i18n::{current_locale, BulwarkLocale};
+    use chrono::{Datelike, Timelike};
+    use fixed_decimal::Decimal;
+    use icu_datetime::fieldsets;
+    use icu_datetime::DateTimeFormatter;
+    use icu_decimal::DecimalFormatter;
+    use icu_locale_core::{locale, Locale};
+    use icu_plurals::{PluralCategory, PluralRules};
+
+    /// 将 `BulwarkLocale` 转为 ICU `Locale`。
+    fn to_icu_locale(l: BulwarkLocale) -> Locale {
+        match l {
+            BulwarkLocale::Zh => locale!("zh"),
+            BulwarkLocale::En => locale!("en"),
+        }
+    }
+
+    /// 返回当前 locale 下 `count` 的复数类别（Cardinal）。
+    ///
+    /// 用于选择正确的复数形式（如 "1 item" vs "2 items"）。
+    pub fn plural_category(count: usize) -> PluralCategory {
+        let rules =
+            PluralRules::try_new(to_icu_locale(current_locale()).into(), Default::default())
+                .expect("ICU PluralRules compiled_data 已编译，不应失败");
+        rules.category_for(count)
+    }
+
+    /// 格式化 `chrono::DateTime` 为当前 locale 的本地化字符串。
+    ///
+    /// 替代 `format!("{:?}", dt)` 的 Debug 格式，输出如 "2026年1月1日" / "Jan 1, 2026"。
+    pub fn format_datetime_locale(dt: &chrono::DateTime<chrono::Utc>) -> String {
+        let icu_locale = to_icu_locale(current_locale());
+        // YMDT fieldset：年月日+时间，medium 长度（如 "Jan 1, 2026, 12:00:00 AM"）
+        let formatter = DateTimeFormatter::try_new(icu_locale.into(), fieldsets::YMDT::medium())
+            .expect("ICU DateTimeFormatter compiled_data 已编译，不应失败");
+        // 从 chrono 日期构造 ICU ISO Date
+        let date = icu_calendar::Date::try_new_iso(dt.year(), dt.month() as u8, dt.day() as u8)
+            .expect("chrono 日期转 ICU Date 不应失败");
+        // 从 chrono 时间构造 ICU Time
+        let time =
+            icu_time::Time::try_new(dt.hour() as u8, dt.minute() as u8, dt.second() as u8, 0)
+                .expect("chrono 时间转 ICU Time 不应失败");
+        // DateTime 是 #[allow(clippy::exhaustive_structs)] 的公开结构体，可直接构造
+        let datetime = icu_datetime::input::DateTime { date, time };
+        formatter.format(&datetime).to_string()
+    }
+
+    /// 格式化整数为当前 locale 的本地化字符串（千分位/数字系统）。
+    ///
+    /// 如 en: "1,000,000" / zh: "1,000,000" / ar: "١٬٠٠٠٬٠٠٠"。
+    pub fn format_number_locale(n: i64) -> String {
+        let decimal = Decimal::from(n);
+        let formatter =
+            DecimalFormatter::try_new(to_icu_locale(current_locale()).into(), Default::default())
+                .expect("ICU DecimalFormatter compiled_data 已编译，不应失败");
+        formatter.format_to_string(&decimal)
+    }
+}
+
+// ============================================================================
 // 单元测试
 // ============================================================================
 
@@ -918,5 +986,45 @@ mod tests {
         let result = translate_detail("sms-verify-max-attempts", &[]);
         assert!(!result.is_empty());
         assert_ne!(result, "sms-verify-max-attempts", "应返回翻译而非 key 本身");
+    }
+
+    // ========================================================================
+    // ICU4X 增强层测试（feature = "i18n-icu"）
+    // ========================================================================
+
+    #[cfg(feature = "i18n-icu")]
+    #[test]
+    fn icu_plural_category_en_one() {
+        let _guard = set_locale(BulwarkLocale::En);
+        let cat = icu_enhanced::plural_category(1);
+        assert_eq!(cat, icu_plurals::PluralCategory::One);
+    }
+
+    #[cfg(feature = "i18n-icu")]
+    #[test]
+    fn icu_plural_category_en_other() {
+        let _guard = set_locale(BulwarkLocale::En);
+        let cat = icu_enhanced::plural_category(2);
+        assert_eq!(cat, icu_plurals::PluralCategory::Other);
+    }
+
+    #[cfg(feature = "i18n-icu")]
+    #[test]
+    fn icu_format_number_en() {
+        let _guard = set_locale(BulwarkLocale::En);
+        let formatted = icu_enhanced::format_number_locale(1_000_000);
+        assert!(formatted.contains("1"), "应包含数字 1: {}", formatted);
+    }
+
+    #[cfg(feature = "i18n-icu")]
+    #[test]
+    fn icu_format_datetime_en() {
+        let _guard = set_locale(BulwarkLocale::En);
+        let dt = chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let formatted = icu_enhanced::format_datetime_locale(&dt);
+        assert!(!formatted.is_empty(), "日期格式化不应为空");
+        assert!(formatted.contains("2026"), "应包含年份: {}", formatted);
     }
 }

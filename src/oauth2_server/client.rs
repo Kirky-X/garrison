@@ -51,6 +51,27 @@ impl GrantType {
     }
 }
 
+impl std::str::FromStr for GrantType {
+    type Err = BulwarkError;
+
+    /// 从字符串解析 grant_type（RFC 6749 §4）。
+    ///
+    /// 与项目内 `Annotation` / `DigestAlgorithm` 一致采用 `std::str::FromStr` trait，
+    /// 调用方用 `"authorization_code".parse::<GrantType>()` 而非 inherent method，
+    /// 避免遮蔽 std trait（diting H-2）。
+    fn from_str(s: &str) -> BulwarkResult<Self> {
+        match s {
+            "authorization_code" => Ok(Self::AuthorizationCode),
+            "refresh_token" => Ok(Self::RefreshToken),
+            "client_credentials" => Ok(Self::ClientCredentials),
+            "password" => Ok(Self::Password),
+            other => Err(BulwarkError::OAuth2(format!(
+                "unsupported_grant_type: {other}"
+            ))),
+        }
+    }
+}
+
 /// OAuth2 客户端配置。
 ///
 /// 管理 OAuth2 客户端的元数据与凭证，对应 RFC 6749 §2 客户端凭证。
@@ -303,6 +324,55 @@ mod tests {
         assert_eq!(json, "\"authorization_code\"");
         let de: GrantType = serde_json::from_str(&json).unwrap();
         assert_eq!(de, gt);
+    }
+
+    // === FromStr trait 测试（diting H-2：与项目内 Annotation/DigestAlgorithm 惯例对齐） ===
+
+    #[test]
+    fn grant_type_from_str_parses_all_known_types() {
+        assert_eq!(
+            "authorization_code".parse::<GrantType>().unwrap(),
+            GrantType::AuthorizationCode
+        );
+        assert_eq!(
+            "refresh_token".parse::<GrantType>().unwrap(),
+            GrantType::RefreshToken
+        );
+        assert_eq!(
+            "client_credentials".parse::<GrantType>().unwrap(),
+            GrantType::ClientCredentials
+        );
+        assert_eq!(
+            "password".parse::<GrantType>().unwrap(),
+            GrantType::Password
+        );
+    }
+
+    #[test]
+    fn grant_type_from_str_rejects_unknown() {
+        let err = "unknown_grant".parse::<GrantType>().unwrap_err();
+        assert!(
+            matches!(err, BulwarkError::OAuth2(_)),
+            "未知 grant_type 应返回 OAuth2 错误"
+        );
+        assert!(
+            err.to_string().contains("unsupported_grant_type"),
+            "错误信息应包含 unsupported_grant_type"
+        );
+    }
+
+    #[test]
+    fn grant_type_from_str_roundtrips_with_as_str() {
+        for original in [
+            GrantType::AuthorizationCode,
+            GrantType::RefreshToken,
+            GrantType::ClientCredentials,
+            GrantType::Password,
+        ] {
+            let s = original.as_str();
+            let parsed: GrantType = s.parse().unwrap();
+            assert_eq!(parsed, original, "as_str -> FromStr 往返失败");
+        }
     }
 
     // === OAuth2Client 测试 ===

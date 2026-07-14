@@ -9,7 +9,7 @@ use std::fmt;
 /// 统一管理所有事件 reason 字符串，避免硬编码。
 ///
 /// 目前覆盖以下事件变体的 reason 字段：
-/// - [`crate::listener::BulwarkEvent::LoginFailure`]（`InvalidCredentials`）
+/// - [`crate::listener::BulwarkEvent::LoginFailure`]（`InvalidCredentials` / `HashFormatError`）
 /// - [`crate::listener::BulwarkEvent::Kickout`]（`Kickout` / `Logout` 等）
 /// - [`crate::listener::BulwarkEvent::AccountLocked`]（`Locked`）
 /// - [`crate::listener::BulwarkEvent::FirewallBlock`]（`Revoked` / `Expired` 等）
@@ -17,6 +17,8 @@ use std::fmt;
 pub enum EventReason {
     /// 无效凭证（v0.4.2 安全审计 A-014：user_not_found 与 wrong_password 统一）
     InvalidCredentials,
+    /// 密码哈希格式不支持（hasher.verify 失败，可泄露给运维定位）
+    HashFormatError,
     /// 已过期
     Expired,
     /// 已吊销
@@ -34,6 +36,7 @@ impl EventReason {
     pub const fn as_str(&self) -> &'static str {
         match self {
             Self::InvalidCredentials => "invalid_credentials",
+            Self::HashFormatError => "hash_format_error",
             Self::Expired => "expired",
             Self::Revoked => "revoked",
             Self::Locked => "locked",
@@ -59,6 +62,7 @@ mod tests {
             EventReason::InvalidCredentials.as_str(),
             "invalid_credentials"
         );
+        assert_eq!(EventReason::HashFormatError.as_str(), "hash_format_error");
         assert_eq!(EventReason::Expired.as_str(), "expired");
         assert_eq!(EventReason::Revoked.as_str(), "revoked");
         assert_eq!(EventReason::Locked.as_str(), "locked");
@@ -71,6 +75,10 @@ mod tests {
         assert_eq!(
             format!("{}", EventReason::InvalidCredentials),
             "invalid_credentials"
+        );
+        assert_eq!(
+            format!("{}", EventReason::HashFormatError),
+            "hash_format_error"
         );
         assert_eq!(format!("{}", EventReason::Kickout), "kickout");
     }

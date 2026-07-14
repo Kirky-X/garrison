@@ -6,6 +6,7 @@
 //! 返回 token 的活跃状态与元数据。有效 token 返回 active=true + scope + client_id + exp，
 //! 过期/无效 token 返回 active=false。仅内网端口 :8443 可访问。
 
+use crate::constants::TokenType;
 use crate::error::{BulwarkError, BulwarkResult};
 use crate::oauth2_server::client::OAuth2ClientStore;
 use crate::oauth2_server::token::TokenHandler;
@@ -26,6 +27,8 @@ pub struct IntrospectRequest {
 }
 
 /// /oauth2/introspect 响应（RFC 7662 §2.2）。
+///
+/// v0.7.1 补齐 RFC 7662 §2.3 全部字段：username / iat / nbf / aud / iss / jti。
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct IntrospectResponse {
     /// token 是否活跃（有效且未过期）。
@@ -45,7 +48,28 @@ pub struct IntrospectResponse {
     /// 关联的用户 ID（client_credentials 无）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sub: Option<String>,
+    /// 人类可读的用户标识（RFC 7662 §2.3，password grant type 有值）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+    /// 签发时间（Unix 秒，RFC 7662 §2.3）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub iat: Option<i64>,
+    /// 生效时间（Unix 秒，RFC 7662 §2.3，通常等于 iat）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nbf: Option<i64>,
+    /// 受众（RFC 7662 §2.3，OAuth2 中为 client_id）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aud: Option<String>,
+    /// 签发者（RFC 7662 §2.3）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub iss: Option<String>,
+    /// JWT 唯一标识（RFC 7662 §2.3，对应 TokenRecord.jti）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub jti: Option<String>,
 }
+
+/// OAuth2 token 签发者标识（RFC 7662 §2.3 `iss` 字段值）。
+const OAUTH2_ISSUER: &str = "bulwark-oauth2-server";
 
 impl IntrospectResponse {
     /// 创建 inactive 响应（token 无效或过期）。
@@ -57,6 +81,12 @@ impl IntrospectResponse {
             client_id: None,
             exp: None,
             sub: None,
+            username: None,
+            iat: None,
+            nbf: None,
+            aud: None,
+            iss: None,
+            jti: None,
         }
     }
 }
@@ -100,13 +130,21 @@ impl IntrospectHandler {
                 } else {
                     Some(record.scopes.join(" "))
                 };
+                // RFC 7662 §2.3：从 TokenRecord 填充完整字段
+                let iat_ts = record.issued_at.timestamp();
                 Ok(IntrospectResponse {
                     active: true,
-                    token_type: Some("Bearer".into()),
+                    token_type: Some(TokenType::Bearer.to_string()),
                     scope,
-                    client_id: Some(record.client_id),
+                    client_id: Some(record.client_id.clone()),
                     exp: Some(record.expires_at.timestamp()),
                     sub: record.user_id.map(|id| id.to_string()),
+                    username: record.username,
+                    iat: Some(iat_ts),
+                    nbf: Some(iat_ts), // OAuth2 token 签发即生效，nbf = iat
+                    aud: Some(record.client_id), // 受众为请求该 token 的客户端
+                    iss: Some(OAUTH2_ISSUER.into()),
+                    jti: record.jti,
                 })
             },
             None => Ok(IntrospectResponse::inactive()),
@@ -189,6 +227,14 @@ mod tests {
         assert_eq!(resp.scope.as_deref(), Some("read write"));
         assert!(resp.exp.is_some());
         assert!(resp.sub.is_none(), "client_credentials 无 user_id");
+        // RFC 7662 §2.3 新增字段验证
+        assert!(resp.iat.is_some(), "iat 必须有值");
+        assert!(resp.nbf.is_some(), "nbf 必须有值");
+        assert_eq!(resp.iat, resp.nbf, "OAuth2 token 签发即生效，nbf = iat");
+        assert_eq!(resp.aud.as_deref(), Some("int-001"), "aud = client_id");
+        assert_eq!(resp.iss.as_deref(), Some("bulwark-oauth2-server"));
+        assert!(resp.jti.is_some(), "jti 必须有值");
+        assert!(resp.username.is_none(), "client_credentials 无 username");
     }
 
     #[tokio::test]
@@ -263,5 +309,12 @@ mod tests {
         assert!(resp.client_id.is_none());
         assert!(resp.exp.is_none());
         assert!(resp.sub.is_none());
+        // RFC 7662 §2.3 新增字段在 inactive 响应中均为 None
+        assert!(resp.username.is_none());
+        assert!(resp.iat.is_none());
+        assert!(resp.nbf.is_none());
+        assert!(resp.aud.is_none());
+        assert!(resp.iss.is_none());
+        assert!(resp.jti.is_none());
     }
 }

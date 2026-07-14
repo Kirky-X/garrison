@@ -8,5 +8,9 @@ pub mod dao_keys;
 /// 事件 reason 枚举模块。
 pub mod events;
 
+/// Token 类型枚举模块。
+pub mod token;
+
 pub use dao_keys::DaoKeyPrefix;
 pub use events::EventReason;
+pub use token::TokenType;
