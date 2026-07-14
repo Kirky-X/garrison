@@ -605,11 +605,15 @@ async fn check_mfa_with_valid_token_returns_200() {
     let token = BulwarkUtil::login_simple("1001").await.unwrap();
 
     // 开启 "default" service 的二级认证标记（check_safe 检查此 service）
-    let logic = BulwarkManager::logic().expect("logic init");
-    bulwark::stp::with_current_token(token.clone(), async {
-        logic.open_safe("default", 3600).await.expect("open_safe");
-    })
-    .await;
+    // 仅 safe-auth feature 启用时需要：无 safe-auth 时 is_safe 默认返回 Ok(true)，check_safe 直接通过
+    #[cfg(feature = "safe-auth")]
+    {
+        let logic = BulwarkManager::logic().expect("logic init");
+        bulwark::stp::with_current_token(token.clone(), async {
+            logic.open_safe("default", 3600).await.expect("open_safe");
+        })
+        .await;
+    }
 
     let response = bulwark::stp::with_current_token(token, async { mfa_handler().await }).await;
     assert_eq!(response.status(), StatusCode::OK);
@@ -618,6 +622,10 @@ async fn check_mfa_with_valid_token_returns_200() {
 }
 
 /// `#[check_mfa]` 未登录时返回错误响应（check_safe 依赖 session，未登录时失败）。
+///
+/// 仅 `safe-auth` feature 启用时有效：无 `safe-auth` 时 `is_safe` 默认返回 `Ok(true)`，
+/// `check_safe` 为 no-op，MFA 不拦截。
+#[cfg(feature = "safe-auth")]
 #[tokio::test]
 #[serial]
 async fn check_mfa_without_token_forwards_error() {
@@ -626,7 +634,7 @@ async fn check_mfa_without_token_forwards_error() {
         mfa_handler().await
     })
     .await;
-    // check_safe 内部调用 is_safe，未登录时 session 查找失败 → 错误转发
+    // check_safe 内部调用 is_safe，未登录时 session 查找失败 → NotSafe → 400
     assert_ne!(response.status(), StatusCode::OK);
 }
 
