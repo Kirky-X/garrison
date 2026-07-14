@@ -182,3 +182,50 @@ impl<T> ApiResponse<T> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn api_response_ok_wraps_data() {
+        let resp: ApiResponse<i32> = ApiResponse::ok(42);
+        assert_eq!(resp.data, Some(42));
+        assert!(resp.error_code.is_none());
+        assert!(resp.message.is_none());
+    }
+
+    #[test]
+    fn api_response_err_wraps_error_info() {
+        let resp: ApiResponse<String> = ApiResponse::err("DENIED", "拒绝访问");
+        assert!(resp.data.is_none());
+        assert_eq!(resp.error_code.as_deref(), Some("DENIED"));
+        assert_eq!(resp.message.as_deref(), Some("拒绝访问"));
+    }
+
+    #[test]
+    fn into_result_ok_extracts_data() {
+        let resp: ApiResponse<i32> = ApiResponse::ok(7);
+        assert_eq!(resp.into_result().unwrap(), 7);
+    }
+
+    #[test]
+    fn into_result_err_with_explicit_fields() {
+        let resp: ApiResponse<i32> = ApiResponse::err("NOT_FOUND", "资源不存在");
+        let (code, msg) = resp.into_result().unwrap_err();
+        assert_eq!(code, "NOT_FOUND");
+        assert_eq!(msg, "资源不存在");
+    }
+
+    #[test]
+    fn into_result_err_with_none_fields_uses_defaults() {
+        let resp: ApiResponse<i32> = ApiResponse {
+            data: None,
+            error_code: None,
+            message: None,
+        };
+        let (code, msg) = resp.into_result().unwrap_err();
+        assert_eq!(code, "UNKNOWN");
+        assert_eq!(msg, "Unknown error");
+    }
+}

@@ -893,4 +893,33 @@ mod tests {
         let b2 = get_bundle(BulwarkLocale::En);
         assert!(std::ptr::eq(b1, b2), "英文 bundle 应为同一缓存实例");
     }
+
+    // ========================================================================
+    // translate_detail 测试
+    // ========================================================================
+
+    /// translate_detail 对已知 key 返回翻译后的字符串。
+    #[test]
+    fn translate_detail_known_key_returns_translation() {
+        let _guard = set_locale(BulwarkLocale::En);
+        let result = translate_detail("not-login", &[("detail", "test")]);
+        assert!(result.contains("test"), "应包含参数值: {}", result);
+    }
+
+    /// translate_detail 对未知 key 返回 key 本身。
+    #[test]
+    fn translate_detail_unknown_key_returns_key() {
+        let _guard = set_locale(BulwarkLocale::En);
+        let result = translate_detail("nonexistent-key-xyz", &[]);
+        assert_eq!(result, "nonexistent-key-xyz");
+    }
+
+    /// translate_detail 对已知 key 但无参数也能正常翻译。
+    #[test]
+    fn translate_detail_known_key_no_args() {
+        let _guard = set_locale(BulwarkLocale::Zh);
+        let result = translate_detail("sms-verify-max-attempts", &[]);
+        assert!(!result.is_empty());
+        assert_ne!(result, "sms-verify-max-attempts", "应返回翻译而非 key 本身");
+    }
 }

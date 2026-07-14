@@ -48,3 +48,30 @@ impl BulwarkDao for MockCacheDao {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn update_overwrites_existing_key() {
+        let dao = MockCacheDao::new();
+        dao.set("k1", "v1", 60).await.unwrap();
+        dao.update("k1", "v2").await.unwrap();
+        assert_eq!(dao.get("k1").await.unwrap(), Some("v2".to_string()));
+    }
+
+    #[tokio::test]
+    async fn expire_is_noop_ok() {
+        let dao = MockCacheDao::new();
+        assert!(dao.expire("k1", 120).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn delete_removes_key() {
+        let dao = MockCacheDao::new();
+        dao.set("k1", "v1", 60).await.unwrap();
+        dao.delete("k1").await.unwrap();
+        assert_eq!(dao.get("k1").await.unwrap(), None);
+    }
+}
