@@ -86,8 +86,7 @@ fn get_abac_engine() -> BulwarkResult<Option<Arc<AbacEngine>>> {
 ///
 /// 生产代码中严禁调用此函数。
 #[cfg(feature = "abac")]
-#[cfg(test)]
-pub(crate) fn reset_abac_for_test() {
+pub fn reset_abac_for_test() {
     if let Ok(mut guard) = CURRENT_ENGINE.lock() {
         *guard = None;
     }

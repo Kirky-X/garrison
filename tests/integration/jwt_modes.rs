@@ -53,7 +53,7 @@ async fn make_logic_with_mode(mode: JwtMode) -> Arc<BulwarkLogicDefault> {
     let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
     let mut config = bulwark::config::BulwarkConfig::default_config();
     config.token_style = "jwt".to_string();
-    config.jwt_secret = "jwt-modes-test-secret".to_string();
+    config.jwt_secret = "jwt-modes-test-secret".to_string().into();
     config.timeout = 3600;
     config.throw_on_not_login = true;
     let firewall: Arc<dyn bulwark::strategy::BulwarkPermissionStrategy> = Arc::new(

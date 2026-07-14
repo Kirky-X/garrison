@@ -22,9 +22,9 @@ use async_trait::async_trait;
 use axum::body::Body;
 use axum::http::StatusCode;
 use bulwark::{
-    check_access_token, check_client_token, check_login, check_permission, check_role,
-    check_temp_token, BulwarkConfig, BulwarkDao, BulwarkError, BulwarkInterface, BulwarkManager,
-    BulwarkUtil,
+    check_abac, check_access_token, check_client_token, check_login, check_mfa, check_permission,
+    check_role, check_temp_token, BulwarkConfig, BulwarkDao, BulwarkError, BulwarkInterface,
+    BulwarkManager, BulwarkUtil,
 };
 use http_body_util::BodyExt;
 use parking_lot::Mutex;
@@ -83,6 +83,25 @@ async fn client_token_handler() -> &'static str {
 #[check_temp_token]
 async fn temp_token_handler() -> &'static str {
     "temp_token_ok"
+}
+
+/// MFA 二级认证校验 handler（v0.7.x 新增，依据 spec annotation-macros R-anno-004）。
+#[check_mfa]
+async fn mfa_handler() -> &'static str {
+    "mfa_ok"
+}
+
+/// ABAC 策略校验 handler（v0.7.x 新增，依据 spec annotation-macros R-anno-005）。
+/// 纯 ABAC 校验，不依赖 RBAC 权限表。
+#[check_abac(action = "access", abac = "1 == 1")]
+async fn abac_allow_handler() -> &'static str {
+    "abac_ok"
+}
+
+/// ABAC 策略校验 handler（deny 场景，1 == 2 恒 false）。
+#[check_abac(action = "access", abac = "1 == 2")]
+async fn abac_deny_handler() -> &'static str {
+    "abac_deny"
 }
 
 // ============================================================================
@@ -569,4 +588,133 @@ async fn handler_works_with_axum_router() {
     })
     .await;
     assert_eq!(response.status(), StatusCode::OK);
+}
+
+// ============================================================================
+// #[check_mfa] 测试（依据 spec annotation-macros R-anno-004）
+// ============================================================================
+
+/// `#[check_mfa]` 已登录 + 已开启二级认证 → 200 + body。
+///
+/// `check_safe` 依赖 `TokenSession.safe_services`，仅 `login_simple` 不足以通过，
+/// 需先调用 `BulwarkLogicDefault::open_safe("default", ...)` 开启二级认证标记。
+#[tokio::test]
+#[serial]
+async fn check_mfa_with_valid_token_returns_200() {
+    init_manager(make_config_strict(), &[], &[]);
+    let token = BulwarkUtil::login_simple("1001").await.unwrap();
+
+    // 开启 "default" service 的二级认证标记（check_safe 检查此 service）
+    let logic = BulwarkManager::logic().expect("logic init");
+    bulwark::stp::with_current_token(token.clone(), async {
+        logic.open_safe("default", 3600).await.expect("open_safe");
+    })
+    .await;
+
+    let response = bulwark::stp::with_current_token(token, async { mfa_handler().await }).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = read_body(response).await;
+    assert_eq!(body, "mfa_ok");
+}
+
+/// `#[check_mfa]` 未登录时返回错误响应（check_safe 依赖 session，未登录时失败）。
+#[tokio::test]
+#[serial]
+async fn check_mfa_without_token_forwards_error() {
+    init_manager(make_config_strict(), &[], &[]);
+    let response = bulwark::stp::with_current_token("invalid-token".to_string(), async {
+        mfa_handler().await
+    })
+    .await;
+    // check_safe 内部调用 is_safe，未登录时 session 查找失败 → 错误转发
+    assert_ne!(response.status(), StatusCode::OK);
+}
+
+// ============================================================================
+// #[check_abac] 测试（依据 spec annotation-macros R-anno-005）
+// ============================================================================
+
+/// `#[check_abac]` ABAC 引擎未初始化时默认 Allow → 200 + body。
+#[tokio::test]
+#[serial]
+async fn check_abac_no_engine_returns_200() {
+    #[cfg(feature = "abac")]
+    {
+        bulwark::abac::reset_abac_for_test();
+    }
+    init_manager(make_config_strict(), &[], &[]);
+    let token = BulwarkUtil::login_simple("1001").await.unwrap();
+
+    let response =
+        bulwark::stp::with_current_token(token, async { abac_allow_handler().await }).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = read_body(response).await;
+    assert_eq!(body, "abac_ok");
+}
+
+/// `#[check_abac]` 未登录 + 无引擎 → no-op 放行 → 200（不检查登录状态）。
+///
+/// 验证 `#[check_abac]` 纯 ABAC 校验语义：无引擎时 `check_abac_with_policy`
+/// 为 no-op（返回 `Ok(())`），请求直接放行，与登录状态无关。
+#[tokio::test]
+#[serial]
+async fn check_abac_without_login_no_engine_passes_through() {
+    init_manager(make_config_strict(), &[], &[]);
+    // 不 login，直接以无效 token 调用 handler
+    let response = bulwark::stp::with_current_token("invalid-token".to_string(), async {
+        abac_allow_handler().await
+    })
+    .await;
+    // ABAC 引擎未初始化时 no-op 放行 → 200（不检查登录）
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = read_body(response).await;
+    assert_eq!(body, "abac_ok");
+}
+
+/// `#[check_abac]` ABAC 引擎已初始化 + 策略 Allow → 200。
+#[cfg(feature = "abac")]
+#[tokio::test]
+#[serial]
+async fn check_abac_engine_initialized_allow_returns_200() {
+    use bulwark::abac::{init_abac_engine, reset_abac_for_test, AbacEngine};
+
+    reset_abac_for_test();
+    init_manager(make_config_strict(), &[], &[]);
+
+    let schema_json = r#"{"":{"entityTypes":{"User":{"shape":{"type":"Record","attributes":{}}},"Resource":{"shape":{"type":"Record","attributes":{}}}},"actions":{"access":{"appliesTo":{"principalTypes":["User"],"resourceTypes":["Resource"]}}}}}"#;
+    let engine = AbacEngine::new(schema_json).expect("schema valid");
+    init_abac_engine(engine).expect("init_abac_engine");
+
+    let token = BulwarkUtil::login_simple("1001").await.unwrap();
+
+    let response =
+        bulwark::stp::with_current_token(token, async { abac_allow_handler().await }).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = read_body(response).await;
+    assert_eq!(body, "abac_ok");
+
+    reset_abac_for_test();
+}
+
+/// `#[check_abac]` ABAC 引擎已初始化 + 策略 Deny → 403。
+#[cfg(feature = "abac")]
+#[tokio::test]
+#[serial]
+async fn check_abac_engine_initialized_deny_returns_403() {
+    use bulwark::abac::{init_abac_engine, reset_abac_for_test, AbacEngine};
+
+    reset_abac_for_test();
+    init_manager(make_config_strict(), &[], &[]);
+
+    let schema_json = r#"{"":{"entityTypes":{"User":{"shape":{"type":"Record","attributes":{}}},"Resource":{"shape":{"type":"Record","attributes":{}}}},"actions":{"access":{"appliesTo":{"principalTypes":["User"],"resourceTypes":["Resource"]}}}}}"#;
+    let engine = AbacEngine::new(schema_json).expect("schema valid");
+    init_abac_engine(engine).expect("init_abac_engine");
+
+    let token = BulwarkUtil::login_simple("1001").await.unwrap();
+
+    let response =
+        bulwark::stp::with_current_token(token, async { abac_deny_handler().await }).await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+    reset_abac_for_test();
 }

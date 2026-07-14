@@ -659,6 +659,6 @@ pub use strategy::firewall::{CountryLookup, GeoCoord, GeoLookup};
 /// ```
 #[cfg(feature = "annotation-macros")]
 pub use bulwark_macros::{
-    check_access_token, check_api_key, check_client_token, check_login, check_permission,
-    check_role, check_temp_token,
+    check_abac, check_access_token, check_api_key, check_client_token, check_login, check_mfa,
+    check_permission, check_role, check_temp_token,
 };

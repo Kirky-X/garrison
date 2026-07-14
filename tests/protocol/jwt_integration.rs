@@ -129,7 +129,7 @@ fn init_jwt_manager() {
     let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
     let mut config = BulwarkConfig::default_config();
     config.token_style = "jwt".to_string();
-    config.jwt_secret = "test-secret-key".to_string();
+    config.jwt_secret = "test-secret-key".to_string().into();
     config.timeout = 3600;
     config.throw_on_not_login = false;
     let config = Arc::new(config);
