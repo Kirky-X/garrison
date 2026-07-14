@@ -1401,7 +1401,7 @@ mod tests {
         assert!(deserialized.is_some(), "反序列化应返回 Some");
         let deserialized = deserialized.unwrap();
         assert_eq!(deserialized.ban_times, 3);
-        assert_eq!(deserialized.is_manual, true);
+        assert!(deserialized.is_manual);
         assert_eq!(deserialized.reason, "test_reason");
         assert_eq!(deserialized.target, target);
     }

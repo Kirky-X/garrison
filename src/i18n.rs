@@ -642,9 +642,6 @@ mod tests {
     #[test]
     fn translate_error_en_disable_service() {
         let _guard = set_locale(BulwarkLocale::En);
-        let until = chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
-            .unwrap()
-            .with_timezone(&chrono::Utc);
         let err = BulwarkError::DisableService {
             service: "oidc".to_string(),
             until: None,

@@ -4238,7 +4238,7 @@ async fn get_active_sessions_returns_empty_for_unknown_user() {
 /// SystemClock::default() 等价于 SystemClock::new()，now() 返回当前 UTC 时间。
 #[test]
 fn system_clock_default_returns_valid_time() {
-    let clock = SystemClock::default();
+    let clock = SystemClock;
     let before = chrono::Utc::now();
     let now = clock.now();
     let after = chrono::Utc::now();

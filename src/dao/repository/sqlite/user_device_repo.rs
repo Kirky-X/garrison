@@ -677,7 +677,7 @@ mod tests {
         let pool = setup_db().await;
         let repo = DbnexusUserDeviceRepository::new(pool);
 
-        let device_id = repo
+        let _device_id = repo
             .register_device(1, "login-empty-ua", "fp-empty", "")
             .await
             .expect("空 UA register 应成功");
