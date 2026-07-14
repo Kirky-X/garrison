@@ -42,11 +42,25 @@ pub enum DaoKeyPrefix {
     /// OAuth2 access_token key 前缀：`oauth2:atoken:`
     OAuth2AccessToken,
     /// OAuth2 refresh_token key 前缀：`oauth2:rtoken:`
+    ///
+    /// # 废弃（v0.7.1）
+    ///
+    /// 启用 `db-sqlite` feature 并通过 `TokenHandler::with_refresh_rotation` 注入
+    /// `RefreshTokenRotation` 后，refresh_token 走统一轮换路径（hash chain +
+    /// reuse detection），不再使用 DAO 键值存储。
+    ///
+    /// 未启用 `db-sqlite` 时仍作为 fallback 路径使用（无 reuse detection，
+    /// 文档明确标注安全风险）。
+    #[deprecated(
+        since = "0.7.1",
+        note = "启用 db-sqlite feature + RefreshTokenRotation 走统一轮换路径"
+    )]
     OAuth2RefreshToken,
 }
 
 impl DaoKeyPrefix {
     /// 返回前缀字符串（含末尾冒号）。
+    #[allow(deprecated)]
     pub const fn as_str(&self) -> &'static str {
         match self {
             Self::Session => "session:",

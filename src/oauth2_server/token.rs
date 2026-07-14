@@ -354,6 +354,7 @@ impl TokenHandler {
         }
 
         // Fallback: DAO 路径（无轮换，无 reuse detection）
+        #[allow(deprecated)]
         let key = DaoKeyPrefix::OAuth2RefreshToken.build_key(refresh_token);
         let json = self.dao.get(&key).await?.ok_or_else(|| {
             BulwarkError::OAuth2("invalid_grant: refresh_token 无效或已过期".into())
@@ -570,6 +571,7 @@ impl TokenHandler {
             jti: Some(rt_jti),
             username: username.map(|s| s.to_string()),
         };
+        #[allow(deprecated)]
         let rt_key = DaoKeyPrefix::OAuth2RefreshToken.build_key(&rt);
         let rt_json = serde_json::to_string(&rt_record)
             .map_err(|e| BulwarkError::Internal(format!("TokenRecord 序列化失败: {e}")))?;
@@ -600,6 +602,7 @@ impl TokenHandler {
         let at_key = DaoKeyPrefix::OAuth2AccessToken.build_key(token);
         self.dao.delete(&at_key).await?;
         // 尝试删除 refresh_token（同一 token 值不会同时是两种类型）
+        #[allow(deprecated)]
         let rt_key = DaoKeyPrefix::OAuth2RefreshToken.build_key(token);
         self.dao.delete(&rt_key).await?;
         Ok(())
