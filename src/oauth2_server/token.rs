@@ -1469,4 +1469,105 @@ mod refresh_rotation_tests {
             "Fallback 路径不轮换，不应返回新 refresh_token"
         );
     }
+
+    /// T012: 端到端集成测试 — authorization_code → refresh → reuse detection → revoke_chain。
+    ///
+    /// 完整流程：
+    /// 1. authorization_code grant 签发初始 refresh_token（token1）
+    /// 2. refresh_token grant 轮换 token1 → token2（token1 revoked=1）
+    /// 3. refresh_token grant 轮换 token2 → token3（token2 revoked=1）
+    /// 4. 重用 token1 → TokenRevoked（reuse detection 触发 revoke_chain）
+    /// 5. 验证 token1 / token2 均为 revoked=1（链式撤销）
+    /// 6. 验证 token3 仍有效（revoked=0）
+    #[tokio::test(flavor = "multi_thread")]
+    async fn oauth2_full_flow_with_refresh_rotation() {
+        let handler = make_handler_with_rotation().await;
+        let client = make_full_client("rot-e2e-001");
+        handler.store.create(client.clone()).await.unwrap();
+
+        // 1. authorization_code grant 签发初始 token
+        let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        let code = get_auth_code(&handler, "rot-e2e-001", verifier).await;
+        let issue_req = TokenRequest {
+            grant_type: "authorization_code".into(),
+            client_id: "rot-e2e-001".into(),
+            client_secret: "secret-123".into(),
+            code: Some(code),
+            redirect_uri: Some("https://app.example.com/cb".into()),
+            code_verifier: Some(verifier.into()),
+            refresh_token: None,
+            scope: None,
+            username: None,
+            password: None,
+        };
+        let issue_resp = handler.handle(&issue_req).await.expect("签发 token");
+        let token1 = issue_resp.refresh_token.expect("应有 refresh_token");
+
+        // 2. 第一次 refresh：token1 → token2（轮换）
+        let refresh_req_1 = TokenRequest {
+            grant_type: "refresh_token".into(),
+            client_id: "rot-e2e-001".into(),
+            client_secret: "secret-123".into(),
+            code: None,
+            redirect_uri: None,
+            code_verifier: None,
+            refresh_token: Some(token1.clone()),
+            scope: None,
+            username: None,
+            password: None,
+        };
+        let resp1 = handler
+            .handle(&refresh_req_1)
+            .await
+            .expect("第一次 refresh");
+        let token2 = resp1.refresh_token.expect("应返回新 refresh_token");
+        assert_ne!(&token2, &token1, "token2 应与 token1 不同");
+
+        // 3. 第二次 refresh：token2 → token3（轮换）
+        let refresh_req_2 = TokenRequest {
+            grant_type: "refresh_token".into(),
+            client_id: "rot-e2e-001".into(),
+            client_secret: "secret-123".into(),
+            code: None,
+            redirect_uri: None,
+            code_verifier: None,
+            refresh_token: Some(token2.clone()),
+            scope: None,
+            username: None,
+            password: None,
+        };
+        let resp2 = handler
+            .handle(&refresh_req_2)
+            .await
+            .expect("第二次 refresh");
+        let token3 = resp2.refresh_token.expect("应返回新 refresh_token");
+        assert_ne!(&token3, &token2, "token3 应与 token2 不同");
+
+        // 4. 重用 token1 → TokenRevoked（reuse detection）
+        let reuse_result = handler.handle(&refresh_req_1).await;
+        assert!(
+            matches!(&reuse_result, Err(BulwarkError::TokenRevoked(_))),
+            "重用 token1 应返回 TokenRevoked，实际: {:?}",
+            reuse_result
+        );
+
+        // 5. 验证整条链 token1 / token2 / token3 均已 revoked（链式撤销）
+        // revoke_chain 撤销给定 token 及其所有子代（安全最佳实践：泄露一个即吊销全部）
+        let rotation = handler.refresh_rotation.as_ref().unwrap();
+        let token1_record = rotation.validate(&token1).await.expect("validate token1");
+        assert!(
+            token1_record.is_none(),
+            "token1 应已 revoked（validate 返回 None）"
+        );
+        let token2_record = rotation.validate(&token2).await.expect("validate token2");
+        assert!(
+            token2_record.is_none(),
+            "token2 应已 revoked（链式撤销子代，validate 返回 None）"
+        );
+        let token3_record = rotation.validate(&token3).await.expect("validate token3");
+        assert!(
+            token3_record.is_none(),
+            "token3 应已 revoked（链式撤销孙代，validate 返回 None）"
+        );
+    }
 }
