@@ -11,7 +11,18 @@
 
 use crate::dao::BulwarkDao;
 use crate::error::{BulwarkError, BulwarkResult};
+use dashmap::DashMap;
+use once_cell::sync::Lazy;
+use std::sync::Arc;
+use tokio::sync::Mutex as TokioMutex;
 use totp_rs::{Algorithm, TOTP};
+
+/// Per-login_id TOTP 验证锁，防止 `validate_and_consume` 的 TOCTOU 竞态（FMEA #7，RPN=288）。
+///
+/// 锁粒度为 login_id，不影响不同用户的并发。使用 `tokio::sync::Mutex`（持有锁跨 await 点）。
+/// `TotpHandler` 每次从 `TotpSecretData::to_handler()` 创建新实例，无法在实例上持有锁，
+/// 因此使用模块级全局 `DashMap` 存储 per-login_id 锁。
+static TOTP_LOCKS: Lazy<DashMap<String, Arc<TokioMutex<()>>>> = Lazy::new(DashMap::new);
 
 /// TOTP 处理器，封装 RFC 6238 动态验证码生成与校验。
 ///
@@ -119,6 +130,16 @@ impl TotpHandler {
             return Ok(false);
         }
         let replay_key = format!("totp:used:{}:{}", login_id, code);
+
+        // FMEA #7: per-login_id 锁包裹 get-then-set，防止 TOCTOU 竞态
+        //（kueiku RPN=288）。两个并发请求验证同一 login_id 的同一 code 时，
+        // 锁确保只有第一个通过，第二个读到 replay_key 后返回 false。
+        let lock = TOTP_LOCKS
+            .entry(login_id.to_string())
+            .or_insert_with(|| Arc::new(TokioMutex::new(())))
+            .clone();
+        let _guard = lock.lock().await;
+
         if dao.get(&replay_key).await?.is_some() {
             return Ok(false);
         }
@@ -387,5 +408,52 @@ mod tests {
             .await
             .unwrap();
         assert!(second, "code2（不同窗口）应通过");
+    }
+
+    // ========================================================================
+    // FMEA #7：TOCTOU 竞态防护
+    // ========================================================================
+
+    /// FMEA #7: 验证 `validate_and_consume` 在并发调用下不会让同一 code 通过两次。
+    ///
+    /// 10 个并发任务对同一 login_id + code 调用 `validate_and_consume`，
+    /// 应只有 1 个返回 `Ok(true)`，其余 9 个返回 `Ok(false)`（重放拒绝）。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn validate_and_consume_concurrent_no_double_accept() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
+        let dao = Arc::new(crate::dao::tests::MockDao::new());
+        let code = handler.generate(1700000000);
+        let accept_count = Arc::new(AtomicUsize::new(0));
+
+        let mut handles = Vec::new();
+        for _ in 0..10 {
+            let d = dao.clone();
+            let ac = accept_count.clone();
+            let code = code.clone();
+            handles.push(tokio::spawn(async move {
+                // 每个任务创建独立的 handler（同 secret → 同 code）
+                let h = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
+                let result = h
+                    .validate_and_consume("user-concurrent", &code, 1700000000, &*d)
+                    .await
+                    .unwrap();
+                if result {
+                    ac.fetch_add(1, Ordering::SeqCst);
+                }
+            }));
+        }
+        for handle in handles {
+            handle.await.unwrap();
+        }
+
+        assert_eq!(
+            accept_count.load(Ordering::SeqCst),
+            1,
+            "并发调用同一 code 应只有 1 个通过（TOCTOU 防护），实际: {}",
+            accept_count.load(Ordering::SeqCst)
+        );
     }
 }
