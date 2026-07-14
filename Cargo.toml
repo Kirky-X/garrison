@@ -415,6 +415,10 @@ miette = ["dep:miette"]
 # 加载测试用例并运行 Authorizer trait，输出测试报告。
 # 依赖 authorize-api（提供 Authorizer trait + AuthRequest/Decision 公开 API）。
 bulwark-testing = ["authorize-api"]
+# 测试专用特性：向集成测试（tests/ 外部二进制）暴露测试辅助函数（如 reset_abac_for_test）。
+# 单元测试（crate 内 #[cfg(test)]）无需此特性即可访问；集成测试是外部二进制，#[cfg(test)] 不生效，
+# 必须通过此特性门控。严禁在 full / production / development 中启用——生产构建绝不能暴露测试入口。
+testing = []
 
 # === 聚合特性 ===
 full = [

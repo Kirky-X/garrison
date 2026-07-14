@@ -85,7 +85,11 @@ fn get_abac_engine() -> BulwarkResult<Option<Arc<AbacEngine>>> {
 /// 重置全局 AbacEngine（仅测试用）。
 ///
 /// 生产代码中严禁调用此函数。
+///
+/// 通过 `testing` feature 门控：单元测试（crate 内 `#[cfg(test)]`）与
+/// 显式启用 `testing` 特性的集成测试（外部二进制）可访问。
 #[cfg(feature = "abac")]
+#[cfg(any(test, feature = "testing"))]
 pub fn reset_abac_for_test() {
     if let Ok(mut guard) = CURRENT_ENGINE.lock() {
         *guard = None;
