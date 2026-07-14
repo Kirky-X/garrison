@@ -289,4 +289,158 @@ mod tests {
         assert!(result3.is_ok());
         reset_abac_for_test();
     }
+
+    // ========================================================================
+    // check_abac_with_policy 实际求值路径测试（引擎已初始化）
+    // 覆盖 lines 126-157：engine 求值 + Allow/Deny/NotLogin 分支
+    // ========================================================================
+
+    /// 测试用 Cedar schema JSON（与 engine.rs 测试一致）。
+    const EVAL_SCHEMA_JSON: &str = r#"{
+        "": {
+            "entityTypes": {
+                "User": {
+                    "shape": {
+                        "type": "Record",
+                        "attributes": {
+                            "department": { "type": "String" }
+                        }
+                    }
+                },
+                "Resource": {
+                    "shape": {
+                        "type": "Record",
+                        "attributes": {
+                            "owner": { "type": "String" }
+                        }
+                    }
+                }
+            },
+            "actions": {
+                "access": {
+                    "appliesTo": {
+                        "principalTypes": ["User"],
+                        "resourceTypes": ["Resource"]
+                    }
+                }
+            }
+        }
+    }"#;
+
+    /// 初始化 BulwarkManager（空权限/角色，用于 get_login_id 上下文）。
+    fn init_manager_for_abac() {
+        use crate::dao::BulwarkDao;
+        use crate::manager::BulwarkManager;
+        use crate::stp::BulwarkInterface;
+        let dao: Arc<dyn BulwarkDao> = Arc::new(crate::dao::tests::MockDao::new());
+        let mut config = crate::config::BulwarkConfig::default_config();
+        config.timeout = 3600;
+        config.active_timeout = -1;
+        config.throw_on_not_login = false;
+        let interface: Arc<dyn BulwarkInterface> = Arc::new(crate::stp::mock::MockInterface);
+        BulwarkManager::init(dao, Arc::new(config), interface).unwrap();
+    }
+
+    /// 引擎已初始化且用户已登录时，abac_expr "1 == 1" 求值 Allow → 返回 Ok。
+    ///
+    /// 覆盖 lines 126-131, 138-153（engine 获取 + principal/action 构造 + evaluate + Allow 分支）。
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn check_abac_with_policy_engine_initialized_allow() {
+        use crate::stp::{with_current_token, BulwarkUtil};
+        reset_abac_for_test();
+        crate::manager::BulwarkManager::reset_for_test();
+        init_manager_for_abac();
+
+        // 初始化 ABAC 引擎
+        let engine = AbacEngine::new(EVAL_SCHEMA_JSON).expect("schema valid");
+        init_abac_engine(engine).expect("init_abac_engine 应成功");
+
+        // 登录获取 token
+        let token = BulwarkUtil::login_simple("1001")
+            .await
+            .expect("login 应成功");
+
+        // 在 token 作用域内调用 check_abac_with_policy
+        let result = with_current_token(token, async {
+            check_abac_with_policy("access", "1 == 1").await
+        })
+        .await;
+        assert!(result.is_ok(), "1 == 1 应 Allow: {:?}", result.err());
+
+        reset_abac_for_test();
+        crate::manager::BulwarkManager::reset_for_test();
+    }
+
+    /// 引擎已初始化且用户已登录时，abac_expr "1 == 2" 求值 Deny → 返回 Err(NotPermission)。
+    ///
+    /// 覆盖 lines 154-157（Deny 分支 → Err(NotPermission)）。
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn check_abac_with_policy_engine_initialized_deny() {
+        use crate::stp::{with_current_token, BulwarkUtil};
+        reset_abac_for_test();
+        crate::manager::BulwarkManager::reset_for_test();
+        init_manager_for_abac();
+
+        let engine = AbacEngine::new(EVAL_SCHEMA_JSON).expect("schema valid");
+        init_abac_engine(engine).expect("init_abac_engine 应成功");
+
+        let token = BulwarkUtil::login_simple("1001")
+            .await
+            .expect("login 应成功");
+
+        let result = with_current_token(token, async {
+            check_abac_with_policy("access", "1 == 2").await
+        })
+        .await;
+        assert!(result.is_err(), "1 == 2 应 Deny");
+        match result {
+            Err(crate::error::BulwarkError::NotPermission(msg)) => {
+                assert!(
+                    msg.contains("ABAC 策略拒绝"),
+                    "错误消息应包含 'ABAC 策略拒绝'，实际: {}",
+                    msg
+                );
+            },
+            Err(other) => panic!("期望 NotPermission，实际: {:?}", other),
+            Ok(_) => panic!("期望错误，实际返回 Ok"),
+        }
+
+        reset_abac_for_test();
+        crate::manager::BulwarkManager::reset_for_test();
+    }
+
+    /// 引擎已初始化但未登录时（无 token 上下文）→ 返回 Err(NotLogin)。
+    ///
+    /// 覆盖 lines 132-136（get_login_id 返回 None → NotLogin 分支）。
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn check_abac_with_policy_not_logged_in_returns_not_login() {
+        reset_abac_for_test();
+        crate::manager::BulwarkManager::reset_for_test();
+        init_manager_for_abac();
+
+        let engine = AbacEngine::new(EVAL_SCHEMA_JSON).expect("schema valid");
+        init_abac_engine(engine).expect("init_abac_engine 应成功");
+
+        // 不调用 login_simple，不设置 with_current_token
+        // current_token() 返回 Err → get_login_id 返回 Ok(None) → NotLogin
+        let result = check_abac_with_policy("access", "1 == 1").await;
+        assert!(result.is_err(), "未登录应返回错误");
+        match result {
+            Err(crate::error::BulwarkError::NotLogin(msg)) => {
+                assert!(
+                    msg.contains("未获取到 login_id"),
+                    "错误消息应包含 '未获取到 login_id'，实际: {}",
+                    msg
+                );
+            },
+            Err(other) => panic!("期望 NotLogin，实际: {:?}", other),
+            Ok(_) => panic!("期望错误，实际返回 Ok"),
+        }
+
+        reset_abac_for_test();
+        crate::manager::BulwarkManager::reset_for_test();
+    }
 }

@@ -352,4 +352,298 @@ mod tests {
         assert_eq!(list_1[0].tenant_id, 1);
         assert_eq!(list_2[0].tenant_id, 2);
     }
+
+    // ========================================================================
+    // 错误路径测试：DROP TABLE 后查询/插入触发 SQL 错误，覆盖 map_err 闭包
+    // ========================================================================
+
+    /// 删除 app_login_log 表后 find_by_id 应返回 Dao 错误。
+    ///
+    /// 覆盖 find_by_id 中 query_one_raw 的 map_err 闭包（line 38）。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn find_by_id_returns_error_when_table_dropped() {
+        let pool = setup_db().await;
+        let repo = DbnexusLoginLogRepository::new(pool.clone());
+
+        // 先删除表
+        {
+            let session = pool.get_session("admin").await.expect("获取 session 失败");
+            let conn = session.connection().expect("获取 connection 失败");
+            conn.execute_unprepared("DROP TABLE IF EXISTS app_login_log")
+                .await
+                .expect("DROP TABLE 失败");
+        }
+
+        let result = repo.find_by_id(1, "nonexistent").await;
+        assert!(result.is_err(), "表删除后 find_by_id 应返回错误");
+        match result {
+            Err(BulwarkError::Dao(msg)) => {
+                assert!(
+                    msg.contains("find_by_id 查询失败"),
+                    "错误消息应包含 'find_by_id 查询失败'，实际: {}",
+                    msg
+                );
+            },
+            Err(other) => panic!("期望 Dao 错误，实际: {:?}", other),
+            Ok(_) => panic!("期望错误，实际返回 Ok"),
+        }
+    }
+
+    /// 删除 app_login_log 表后 find_by_user_id 应返回 Dao 错误。
+    ///
+    /// 覆盖 find_by_user_id 中 query_all_raw 的 map_err 闭包（line 76）。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn find_by_user_id_returns_error_when_table_dropped() {
+        let pool = setup_db().await;
+        let repo = DbnexusLoginLogRepository::new(pool.clone());
+
+        {
+            let session = pool.get_session("admin").await.expect("获取 session 失败");
+            let conn = session.connection().expect("获取 connection 失败");
+            conn.execute_unprepared("DROP TABLE IF EXISTS app_login_log")
+                .await
+                .expect("DROP TABLE 失败");
+        }
+
+        let result = repo.find_by_user_id(1, "user-1", 0, 10).await;
+        assert!(result.is_err(), "表删除后 find_by_user_id 应返回错误");
+        match result {
+            Err(BulwarkError::Dao(msg)) => {
+                assert!(
+                    msg.contains("find_by_user_id 查询失败"),
+                    "错误消息应包含 'find_by_user_id 查询失败'，实际: {}",
+                    msg
+                );
+            },
+            Err(other) => panic!("期望 Dao 错误，实际: {:?}", other),
+            Ok(_) => panic!("期望错误，实际返回 Ok"),
+        }
+    }
+
+    /// 删除 app_login_log 表后 create 应返回 Dao 错误。
+    ///
+    /// 覆盖 create 中 execute_raw 的 map_err 闭包（line 107）。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn create_returns_error_when_table_dropped() {
+        let pool = setup_db().await;
+        let repo = DbnexusLoginLogRepository::new(pool.clone());
+
+        {
+            let session = pool.get_session("admin").await.expect("获取 session 失败");
+            let conn = session.connection().expect("获取 connection 失败");
+            conn.execute_unprepared("DROP TABLE IF EXISTS app_login_log")
+                .await
+                .expect("DROP TABLE 失败");
+        }
+
+        let result = repo
+            .create(
+                1,
+                NewLoginLog {
+                    user_id: Some("u-1".to_string()),
+                    action: "login".to_string(),
+                    ip: None,
+                    device_id: None,
+                    success: true,
+                    fail_reason: None,
+                },
+            )
+            .await;
+        assert!(result.is_err(), "表删除后 create 应返回错误");
+        match result {
+            Err(BulwarkError::Dao(msg)) => {
+                assert!(
+                    msg.contains("create 插入失败"),
+                    "错误消息应包含 'create 插入失败'，实际: {}",
+                    msg
+                );
+            },
+            Err(other) => panic!("期望 Dao 错误，实际: {:?}", other),
+            Ok(_) => panic!("期望错误，实际返回 Ok"),
+        }
+    }
+
+    /// 删除 app_login_log 表后 list 应返回 Dao 错误。
+    ///
+    /// 覆盖 list 中 query_all_raw 的 map_err 闭包（line 133）。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn list_returns_error_when_table_dropped() {
+        let pool = setup_db().await;
+        let repo = DbnexusLoginLogRepository::new(pool.clone());
+
+        {
+            let session = pool.get_session("admin").await.expect("获取 session 失败");
+            let conn = session.connection().expect("获取 connection 失败");
+            conn.execute_unprepared("DROP TABLE IF EXISTS app_login_log")
+                .await
+                .expect("DROP TABLE 失败");
+        }
+
+        let result = repo.list(1, 0, 10).await;
+        assert!(result.is_err(), "表删除后 list 应返回错误");
+        match result {
+            Err(BulwarkError::Dao(msg)) => {
+                assert!(
+                    msg.contains("list 查询失败"),
+                    "错误消息应包含 'list 查询失败'，实际: {}",
+                    msg
+                );
+            },
+            Err(other) => panic!("期望 Dao 错误，实际: {:?}", other),
+            Ok(_) => panic!("期望错误，实际返回 Ok"),
+        }
+    }
+
+    // ========================================================================
+    // parse_login_log_row 错误路径测试：重建表缺少列触发 try_get 解析失败
+    // ========================================================================
+
+    /// 重建 app_login_log 表（action 列插入 NULL）后 find_by_id 应返回 Dao 解析错误。
+    ///
+    /// 覆盖 parse_login_log_row 中 try_get("action") 的 map_err 闭包：
+    /// SQL 查询成功返回行，但 action 字段为 NULL 无法解析为 String（非 Option），触发 parse 错误路径。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn find_by_id_returns_error_when_column_missing() {
+        let pool = setup_db().await;
+        let repo = DbnexusLoginLogRepository::new(pool.clone());
+
+        // 删除原表，重建包含所有列的表，但插入 action=NULL 触发 parse 错误
+        {
+            let session = pool.get_session("admin").await.expect("获取 session 失败");
+            let conn = session.connection().expect("获取 connection 失败");
+            conn.execute_unprepared("DROP TABLE IF EXISTS app_login_log")
+                .await
+                .expect("DROP TABLE 失败");
+            // 重建包含所有 9 列的表（与原 schema 一致）
+            conn.execute_unprepared(
+                "CREATE TABLE app_login_log (\
+                 id TEXT, user_id TEXT, action TEXT, ip TEXT, device_id TEXT, \
+                 success INTEGER, fail_reason TEXT, create_time TEXT, tenant_id INTEGER)",
+            )
+            .await
+            .expect("CREATE TABLE 失败");
+            // 插入 action=NULL：WHERE tenant_id=1 AND id='test-id' 匹配，
+            // 但 try_get::<String>("", "action") 在 NULL 上返回 Err，触发 parse 错误路径
+            conn.execute_unprepared(
+                "INSERT INTO app_login_log \
+                 (id, user_id, action, ip, device_id, success, fail_reason, create_time, tenant_id) \
+                 VALUES ('test-id', 'u-1', NULL, '127.0.0.1', 'dev-1', 1, NULL, '2026-07-14', 1)",
+            )
+            .await
+            .expect("INSERT 失败");
+        }
+
+        let result = repo.find_by_id(1, "test-id").await;
+        assert!(
+            result.is_err(),
+            "action=NULL 时 find_by_id 应返回解析错误，实际: {:?}",
+            result
+        );
+        match result {
+            Err(BulwarkError::Dao(msg)) => {
+                // 应包含 action 字段解析失败的描述
+                assert!(
+                    msg.contains("app_login_log 行解析失败"),
+                    "错误消息应包含 'app_login_log 行解析失败'，实际: {}",
+                    msg
+                );
+            },
+            Err(other) => panic!("期望 Dao 错误，实际: {:?}", other),
+            Ok(_) => panic!("期望错误，实际返回 Ok"),
+        }
+    }
+
+    /// find_by_id 查询不存在的 ID 返回 Ok(None)。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn find_by_id_returns_none_for_nonexistent() {
+        let pool = setup_db().await;
+        let repo = DbnexusLoginLogRepository::new(pool);
+
+        let result = repo
+            .find_by_id(1, "nonexistent-id")
+            .await
+            .expect("find_by_id 应成功");
+        assert!(result.is_none(), "不存在的 ID 应返回 None");
+    }
+
+    /// find_by_user_id 查询不存在用户的日志返回空 Vec。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn find_by_user_id_returns_empty_for_nonexistent_user() {
+        let pool = setup_db().await;
+        let repo = DbnexusLoginLogRepository::new(pool);
+
+        let result = repo
+            .find_by_user_id(1, "nonexistent-user", 0, 10)
+            .await
+            .expect("find_by_user_id 应成功");
+        assert!(result.is_empty(), "不存在用户的日志应为空 Vec");
+    }
+
+    /// list 查询空表返回空 Vec。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn list_returns_empty_for_empty_table() {
+        let pool = setup_db().await;
+        let repo = DbnexusLoginLogRepository::new(pool);
+
+        let result = repo.list(1, 0, 10).await.expect("list 应成功");
+        assert!(result.is_empty(), "空表应返回空 Vec");
+    }
+
+    /// find_by_user_id 跨租户查询返回空 Vec（tenant_id 隔离）。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn find_by_user_id_isolates_by_tenant() {
+        let pool = setup_db().await;
+        let repo = DbnexusLoginLogRepository::new(pool.clone());
+        let user_1 = setup_user(&pool, 1).await;
+
+        repo.create(
+            1,
+            NewLoginLog {
+                user_id: Some(user_1.clone()),
+                action: "login".to_string(),
+                ip: None,
+                device_id: None,
+                success: true,
+                fail_reason: None,
+            },
+        )
+        .await
+        .expect("create 应成功");
+
+        // tenant 2 查询 tenant 1 的用户日志，应为空
+        let result = repo
+            .find_by_user_id(2, &user_1, 0, 10)
+            .await
+            .expect("find_by_user_id 应成功");
+        assert!(result.is_empty(), "跨租户查询应返回空 Vec（tenant 隔离）");
+    }
+
+    /// create 返回的 ID 为合法 UUID v4。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn create_returns_valid_uuid_v4() {
+        let pool = setup_db().await;
+        let repo = DbnexusLoginLogRepository::new(pool);
+
+        let id = repo
+            .create(
+                1,
+                NewLoginLog {
+                    user_id: None,
+                    action: "logout".to_string(),
+                    ip: None,
+                    device_id: None,
+                    success: true,
+                    fail_reason: None,
+                },
+            )
+            .await
+            .expect("create 应成功");
+
+        let parsed = uuid::Uuid::parse_str(&id).expect("返回的 id 应为合法 UUID");
+        assert_eq!(
+            parsed.get_version(),
+            Some(uuid::Version::Random),
+            "返回的 id 应为 UUID v4"
+        );
+    }
 }

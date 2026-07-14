@@ -230,6 +230,60 @@ mod tests {
     }
 
     // ========================================================================
+    // MockPassword SessionLogic 方法覆盖测试
+    // ========================================================================
+
+    /// MockPassword::login 返回 "mock-token"。
+    #[tokio::test]
+    async fn mock_password_login_returns_token() {
+        let mock = MockPassword {
+            config: Arc::new(BulwarkConfig::default()),
+        };
+        let token = mock
+            .login("alice", &crate::stp::LoginParams::default())
+            .await
+            .unwrap();
+        assert_eq!(token, "mock-token");
+    }
+
+    /// MockPassword::login_with_token / logout / logout_by_login_id /
+    /// kickout / kickout_by_token / revoke_token 均返回 Ok(())。
+    #[tokio::test]
+    async fn mock_password_session_methods_return_ok() {
+        let mock = MockPassword {
+            config: Arc::new(BulwarkConfig::default()),
+        };
+        mock.login_with_token("alice", "tok").await.unwrap();
+        mock.logout().await.unwrap();
+        mock.logout_by_login_id("alice").await.unwrap();
+        mock.kickout("alice").await.unwrap();
+        mock.kickout_by_token("tok").await.unwrap();
+        mock.revoke_token("tok").await.unwrap();
+    }
+
+    /// MockPassword::check_login 返回 true, get_login_id 返回 Some("42")。
+    #[tokio::test]
+    async fn mock_password_check_login_and_get_login_id() {
+        let mock = MockPassword {
+            config: Arc::new(BulwarkConfig::default()),
+        };
+        assert!(mock.check_login().await.unwrap());
+        let id = mock.get_login_id().await.unwrap();
+        assert_eq!(id.as_deref(), Some("42"));
+    }
+
+    /// MockPassword::config 返回内部 config 的 Arc clone。
+    #[tokio::test]
+    async fn mock_password_config_returns_arc_clone() {
+        let mock = MockPassword {
+            config: Arc::new(BulwarkConfig::default()),
+        };
+        let c1 = mock.config();
+        let c2 = mock.config();
+        assert!(Arc::ptr_eq(&c1, &c2), "两次 config() 应返回同一 Arc");
+    }
+
+    // ========================================================================
     // BulwarkLogicDefault impl 覆盖测试（cfg-gated: account-credential + db-sqlite）
     // 覆盖 hasher/repo 未注入 + listener_manager 广播 LoginFailure 路径
     // ========================================================================
@@ -239,7 +293,7 @@ mod tests {
         use super::*;
         use crate::account::credential::{Argon2Hasher, PasswordHasher};
         use crate::config::BulwarkConfig;
-        use crate::dao::repository::{UserRepository, UserRow};
+        use crate::dao::repository::{NewUser, UpdateUser, UserRepository, UserRow};
         use crate::dao::BulwarkDao;
         use crate::listener::{BulwarkEvent, BulwarkListener, BulwarkListenerManager};
         use crate::session::BulwarkSession;
@@ -480,6 +534,96 @@ mod tests {
             );
             let token = result.unwrap();
             assert!(!token.is_empty(), "返回的 token 不应为空字符串");
+        }
+
+        /// 模拟 UserRepository 查询失败的 mock。
+        ///
+        /// `find_by_username` 始终返回 Dao 错误，用于测试 password.rs 第 100 行
+        /// `map_err(|e| BulwarkError::Dao(...))` 错误传播路径。
+        struct ErrorUserRepository;
+
+        #[async_trait]
+        impl UserRepository for ErrorUserRepository {
+            async fn find_by_id(
+                &self,
+                _tenant_id: i64,
+                _id: &str,
+            ) -> BulwarkResult<Option<UserRow>> {
+                Err(BulwarkError::Dao("find_by_id 模拟失败".to_string()))
+            }
+
+            async fn find_by_username(
+                &self,
+                _tenant_id: i64,
+                _username: &str,
+            ) -> BulwarkResult<Option<UserRow>> {
+                Err(BulwarkError::Dao(
+                    "find_by_username 模拟连接断开".to_string(),
+                ))
+            }
+
+            async fn create(&self, _tenant_id: i64, _user: NewUser) -> BulwarkResult<String> {
+                Err(BulwarkError::Dao("create 模拟失败".to_string()))
+            }
+
+            async fn update(
+                &self,
+                _tenant_id: i64,
+                _id: &str,
+                _user: UpdateUser,
+            ) -> BulwarkResult<()> {
+                Err(BulwarkError::Dao("update 模拟失败".to_string()))
+            }
+
+            async fn delete(&self, _tenant_id: i64, _id: &str) -> BulwarkResult<()> {
+                Err(BulwarkError::Dao("delete 模拟失败".to_string()))
+            }
+
+            async fn list(
+                &self,
+                _tenant_id: i64,
+                _offset: i64,
+                _limit: i64,
+            ) -> BulwarkResult<Vec<UserRow>> {
+                Err(BulwarkError::Dao("list 模拟失败".to_string()))
+            }
+        }
+
+        /// login_with_password 在 UserRepository 查询失败时传播 Dao 错误。
+        ///
+        /// 覆盖 password.rs 第 100 行 `map_err(|e| BulwarkError::Dao(...))` 错误传播路径。
+        #[tokio::test]
+        async fn login_with_password_repo_query_error_propagates_dao_error() {
+            let logic = make_logic_without_creds();
+            let hasher: Arc<dyn PasswordHasher> = Arc::new(Argon2Hasher::default());
+            let repo: Arc<dyn UserRepository> = Arc::new(ErrorUserRepository);
+
+            let logic = logic
+                .with_password_hasher(hasher)
+                .with_user_repository(repo);
+
+            let result = logic.login_with_password("alice", "any").await;
+            assert!(
+                result.is_err(),
+                "UserRepository 查询失败应传播错误，实际: {:?}",
+                result
+            );
+            match result {
+                Err(BulwarkError::Dao(msg)) => {
+                    assert!(
+                        msg.contains("login_with_password 查询用户失败"),
+                        "错误消息应包含 'login_with_password 查询用户失败'，实际: {}",
+                        msg
+                    );
+                    assert!(
+                        msg.contains("find_by_username 模拟连接断开"),
+                        "错误消息应包含原始错误描述，实际: {}",
+                        msg
+                    );
+                },
+                Err(other) => panic!("期望 Dao 错误，实际: {:?}", other),
+                Ok(_) => panic!("期望错误传播，实际返回 Ok"),
+            }
         }
     }
 }

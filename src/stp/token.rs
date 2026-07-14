@@ -351,6 +351,63 @@ mod tests {
     }
 
     // ========================================================================
+    // MockToken SessionLogic 方法覆盖测试
+    // ========================================================================
+
+    /// MockToken::login 返回 "mock-token"。
+    #[tokio::test]
+    async fn mock_token_login_returns_token() {
+        let mock = MockToken {
+            config: Arc::new(BulwarkConfig::default()),
+            logged_in: false,
+        };
+        let token = mock
+            .login("alice", &crate::stp::LoginParams::default())
+            .await
+            .unwrap();
+        assert_eq!(token, "mock-token");
+    }
+
+    /// MockToken::login_with_token / logout / logout_by_login_id / kickout /
+    /// kickout_by_token / revoke_token 均返回 Ok(())。
+    #[tokio::test]
+    async fn mock_token_session_methods_return_ok() {
+        let mock = MockToken {
+            config: Arc::new(BulwarkConfig::default()),
+            logged_in: true,
+        };
+        mock.login_with_token("alice", "tok").await.unwrap();
+        mock.logout().await.unwrap();
+        mock.logout_by_login_id("alice").await.unwrap();
+        mock.kickout("alice").await.unwrap();
+        mock.kickout_by_token("tok").await.unwrap();
+        mock.revoke_token("tok").await.unwrap();
+    }
+
+    /// MockToken::config 返回内部 config 的 Arc clone。
+    #[tokio::test]
+    async fn mock_token_config_returns_arc_clone() {
+        let mock = MockToken {
+            config: Arc::new(BulwarkConfig::default()),
+            logged_in: true,
+        };
+        let c1 = mock.config();
+        let c2 = mock.config();
+        assert!(Arc::ptr_eq(&c1, &c2), "两次 config() 应返回同一 Arc");
+    }
+
+    /// MockToken::get_login_id 在 logged_in=true 时返回 Some("42")。
+    #[tokio::test]
+    async fn mock_token_get_login_id_when_logged_in() {
+        let mock = MockToken {
+            config: Arc::new(BulwarkConfig::default()),
+            logged_in: true,
+        };
+        let id = mock.get_login_id().await.unwrap();
+        assert_eq!(id.as_deref(), Some("42"));
+    }
+
+    // ========================================================================
     // BulwarkLogicDefault impl 覆盖测试（verify_token / refresh_token）
     // ========================================================================
 

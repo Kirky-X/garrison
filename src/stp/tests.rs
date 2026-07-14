@@ -4230,3 +4230,72 @@ async fn get_active_sessions_returns_empty_for_unknown_user() {
         active
     );
 }
+
+// ============================================================================
+// Clock trait 测试（覆盖 stp/mod.rs 中 SystemClock::default / MockClock::set_time）
+// ============================================================================
+
+/// SystemClock::default() 等价于 SystemClock::new()，now() 返回当前 UTC 时间。
+#[test]
+fn system_clock_default_returns_valid_time() {
+    let clock = SystemClock::default();
+    let before = chrono::Utc::now();
+    let now = clock.now();
+    let after = chrono::Utc::now();
+    assert!(
+        now >= before && now <= after,
+        "SystemClock::now() 应在调用前后时间范围内"
+    );
+}
+
+/// SystemClock::new() 与 Default 返回的实例 now() 均为有效时间。
+#[test]
+fn system_clock_new_works() {
+    let clock = SystemClock::new();
+    let now = clock.now();
+    assert!(now <= chrono::Utc::now());
+}
+
+/// MockClock::set_time 修改时间后 now() 返回新值。
+#[test]
+fn mock_clock_set_time_updates_time() {
+    let initial = chrono::Utc::now();
+    let clock = MockClock::new(initial);
+    assert_eq!(clock.now(), initial);
+
+    let new_time = initial + chrono::Duration::seconds(3600);
+    clock.set_time(new_time);
+    assert_eq!(clock.now(), new_time, "set_time 后 now() 应返回新时间");
+}
+
+/// MockClock::advance 正向推进时间。
+#[test]
+fn mock_clock_advance_forward() {
+    let initial = chrono::Utc::now();
+    let clock = MockClock::new(initial);
+    clock.advance(chrono::Duration::seconds(100));
+    assert_eq!(clock.now(), initial + chrono::Duration::seconds(100));
+}
+
+/// MockClock::advance 负数回退时间。
+#[test]
+fn mock_clock_advance_backward() {
+    let initial = chrono::Utc::now();
+    let clock = MockClock::new(initial);
+    clock.advance(chrono::Duration::seconds(-50));
+    assert_eq!(clock.now(), initial + chrono::Duration::seconds(-50));
+}
+
+/// MockClock Clone 后共享底层时间状态（Arc<RwLock>）。
+#[test]
+fn mock_clock_clone_shares_state() {
+    let initial = chrono::Utc::now();
+    let clock1 = MockClock::new(initial);
+    let clock2 = clock1.clone();
+    clock1.set_time(initial + chrono::Duration::seconds(999));
+    assert_eq!(
+        clock2.now(),
+        initial + chrono::Duration::seconds(999),
+        "Clone 后应共享时间状态"
+    );
+}

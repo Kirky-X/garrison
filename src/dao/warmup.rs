@@ -525,4 +525,191 @@ mod tests {
         assert!(debug_str.contains("tenants_loaded"));
         assert!(debug_str.contains("3"));
     }
+
+    // ========================================================================
+    // Mock DAO 完整方法覆盖测试
+    // ========================================================================
+
+    /// ExpiredKeyMockDao 的 set/update/expire/delete 方法均返回 Ok(())。
+    #[tokio::test]
+    async fn expired_key_mock_dao_all_methods_return_ok() {
+        let dao = ExpiredKeyMockDao::new(vec!["role:test".to_string()]);
+        dao.set("k", "v", 60).await.unwrap();
+        dao.update("k", "v2").await.unwrap();
+        dao.expire("k", 30).await.unwrap();
+        dao.delete("k").await.unwrap();
+        // get 始终返回 None
+        assert!(dao.get("k").await.unwrap().is_none());
+        // keys 按 pattern 过滤
+        let keys = dao.keys("role:*").await.unwrap();
+        assert_eq!(keys.len(), 1);
+        let empty = dao.keys("tenant:*").await.unwrap();
+        assert!(empty.is_empty());
+    }
+
+    /// NoKeysDao 的 get/set/update/expire/delete 方法均返回 Ok(()), get 返回 None。
+    #[tokio::test]
+    async fn no_keys_dao_all_methods_return_ok() {
+        let dao = NoKeysDao::new();
+        assert!(dao.get("k").await.unwrap().is_none());
+        dao.set("k", "v", 60).await.unwrap();
+        dao.update("k", "v2").await.unwrap();
+        dao.expire("k", 30).await.unwrap();
+        dao.delete("k").await.unwrap();
+        // keys 始终返回 NotImplemented
+        assert!(dao.keys("any:*").await.is_err());
+    }
+
+    /// ErrorKeysDao 的 get/set/update/expire/delete 方法均返回 Ok(()), keys 返回 Dao 错误。
+    #[tokio::test]
+    async fn error_keys_dao_all_methods_return_ok() {
+        let dao = ErrorKeysDao::new();
+        assert!(dao.get("k").await.unwrap().is_none());
+        dao.set("k", "v", 60).await.unwrap();
+        dao.update("k", "v2").await.unwrap();
+        dao.expire("k", 30).await.unwrap();
+        dao.delete("k").await.unwrap();
+        // keys 始终返回 Dao 错误
+        assert!(dao.keys("any:*").await.is_err());
+    }
+
+    /// ErrorGetDao 的 set/update/expire/delete 方法返回 Ok(()), get 返回 Dao 错误。
+    #[tokio::test]
+    async fn error_get_dao_non_get_methods_return_ok() {
+        let dao = ErrorGetDao::new(vec!["role:test".to_string()]);
+        dao.set("k", "v", 60).await.unwrap();
+        dao.update("k", "v2").await.unwrap();
+        dao.expire("k", 30).await.unwrap();
+        dao.delete("k").await.unwrap();
+        // get 返回错误
+        assert!(dao.get("k").await.is_err());
+        // keys 按 pattern 过滤
+        let keys = dao.keys("role:*").await.unwrap();
+        assert_eq!(keys.len(), 1);
+    }
+
+    /// PartialNotImplDao 的 set/update/expire/delete 方法返回 Ok(())。
+    #[tokio::test]
+    async fn partial_not_impl_dao_non_keys_methods_return_ok() {
+        let dao = PartialNotImplDao::new(vec!["role:test".to_string()]);
+        dao.set("k", "v", 60).await.unwrap();
+        dao.update("k", "v2").await.unwrap();
+        dao.expire("k", 30).await.unwrap();
+        dao.delete("k").await.unwrap();
+        // get 对已知 key 返回 Some
+        assert_eq!(
+            dao.get("role:test").await.unwrap().as_deref(),
+            Some("value")
+        );
+        // get 对未知 key 返回 None
+        assert!(dao.get("unknown").await.unwrap().is_none());
+        // keys 对 role: 返回成功
+        let keys = dao.keys("role:*").await.unwrap();
+        assert_eq!(keys.len(), 1);
+        // keys 对 tenant: 返回 NotImplemented
+        assert!(dao.keys("tenant:*").await.is_err());
+    }
+
+    // ========================================================================
+    // warmup tenant keys 非 NotImplemented 错误传播测试（覆盖 line 69）
+    // ========================================================================
+
+    /// 模拟 role keys() 成功但 tenant keys() 返回非 NotImplemented 错误的 mock DAO。
+    ///
+    /// 用于测试 warmup 中 tenant keys() 的非 NotImplemented 错误传播（line 69）。
+    struct TenantErrorDao {
+        role_keys: Vec<String>,
+    }
+
+    impl TenantErrorDao {
+        fn new(role_keys: Vec<String>) -> Self {
+            Self { role_keys }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl BulwarkDao for TenantErrorDao {
+        async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
+            if self.role_keys.contains(&key.to_string()) {
+                Ok(Some("value".to_string()))
+            } else {
+                Ok(None)
+            }
+        }
+
+        async fn set(&self, _key: &str, _value: &str, _ttl_seconds: u64) -> BulwarkResult<()> {
+            Ok(())
+        }
+
+        async fn update(&self, _key: &str, _value: &str) -> BulwarkResult<()> {
+            Ok(())
+        }
+
+        async fn expire(&self, _key: &str, _seconds: u64) -> BulwarkResult<()> {
+            Ok(())
+        }
+
+        async fn delete(&self, _key: &str) -> BulwarkResult<()> {
+            Ok(())
+        }
+
+        async fn keys(&self, pattern: &str) -> BulwarkResult<Vec<String>> {
+            if pattern.starts_with("role:") {
+                Ok(self
+                    .role_keys
+                    .iter()
+                    .filter(|k| k.starts_with("role:"))
+                    .cloned()
+                    .collect())
+            } else {
+                // tenant keys 返回非 NotImplemented 的 Dao 错误
+                Err(crate::error::BulwarkError::Dao(
+                    "tenant keys() 数据库连接断开".to_string(),
+                ))
+            }
+        }
+    }
+
+    /// warmup 在 role keys 成功但 tenant keys 返回非 NotImplemented 错误时应传播错误。
+    ///
+    /// 覆盖 warmup.rs line 69: `Err(e) => return Err(e)` 分支
+    /// （role keys 成功后的第二个 keys 调用返回非 NotImplemented 错误）。
+    #[tokio::test]
+    async fn warmup_propagates_tenant_keys_non_not_implemented_error() {
+        let dao = Arc::new(TenantErrorDao::new(vec![
+            "role:admin".to_string(),
+            "role:user".to_string(),
+        ]));
+        let service = CacheWarmupService::new(dao);
+        let result = service.warmup().await;
+
+        assert!(result.is_err(), "tenant keys 非 NotImplemented 错误应传播");
+        match result {
+            Err(crate::error::BulwarkError::Dao(msg)) => {
+                assert!(
+                    msg.contains("tenant keys() 数据库连接断开"),
+                    "错误消息应包含 tenant keys 错误描述，实际: {}",
+                    msg
+                );
+            },
+            Err(other) => panic!("期望 Dao 错误，实际: {:?}", other),
+            Ok(_) => panic!("期望错误传播，实际返回 Ok"),
+        }
+    }
+
+    /// warmup 同时加载 role 和 tenant 配置，返回正确统计。
+    #[tokio::test]
+    async fn warmup_loads_both_roles_and_tenants() {
+        let dao = Arc::new(crate::dao::tests::MockDao::new());
+        dao.set("role:admin", "perm1", 3600).await.unwrap();
+        dao.set("role:user", "perm2", 3600).await.unwrap();
+        dao.set("tenant:acme", "config1", 3600).await.unwrap();
+        dao.set("tenant:globex", "config2", 3600).await.unwrap();
+
+        let service = CacheWarmupService::new(dao);
+        let stats = service.warmup().await.unwrap();
+
+        assert_eq!(stats.roles_loaded, 2);
+        assert_eq!(stats.tenants_loaded, 2);
+    }
 }
