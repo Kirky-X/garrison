@@ -228,4 +228,258 @@ mod tests {
         let result = mock.login_with_password(id, "secret").await;
         assert!(matches!(result, Err(BulwarkError::NotImplemented(_))));
     }
+
+    // ========================================================================
+    // BulwarkLogicDefault impl 覆盖测试（cfg-gated: account-credential + db-sqlite）
+    // 覆盖 hasher/repo 未注入 + listener_manager 广播 LoginFailure 路径
+    // ========================================================================
+
+    #[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
+    mod default_impl_coverage {
+        use super::*;
+        use crate::account::credential::{Argon2Hasher, PasswordHasher};
+        use crate::config::BulwarkConfig;
+        use crate::dao::repository::{UserRepository, UserRow};
+        use crate::dao::BulwarkDao;
+        use crate::listener::{BulwarkEvent, BulwarkListener, BulwarkListenerManager};
+        use crate::session::BulwarkSession;
+        use crate::stp::mock::{MockDao, MockFirewall, MockUserRepository};
+        use crate::strategy::BulwarkPermissionStrategy;
+        use async_trait::async_trait;
+        use parking_lot::Mutex;
+        use std::sync::Arc;
+
+        /// 记录事件监听器，捕获广播的 BulwarkEvent 用于断言。
+        struct RecordingListener {
+            events: Mutex<Vec<BulwarkEvent>>,
+        }
+
+        impl RecordingListener {
+            fn new() -> Self {
+                Self {
+                    events: Mutex::new(Vec::new()),
+                }
+            }
+
+            fn captured(&self) -> Vec<BulwarkEvent> {
+                self.events.lock().clone()
+            }
+        }
+
+        #[async_trait]
+        impl BulwarkListener for RecordingListener {
+            async fn on_event(&self, event: &BulwarkEvent) -> crate::error::BulwarkResult<()> {
+                self.events.lock().push(event.clone());
+                Ok(())
+            }
+        }
+
+        fn make_user_row(login_id: &str, password_hash: &str) -> UserRow {
+            UserRow {
+                id: format!("u-{}", login_id),
+                username: login_id.to_string(),
+                password_hash: password_hash.to_string(),
+                status: "active".to_string(),
+                tenant_id: 0,
+                created_at: "2026-07-04T00:00:00Z".to_string(),
+                updated_at: "2026-07-04T00:00:00Z".to_string(),
+                last_login_at: None,
+            }
+        }
+
+        /// 构造 BulwarkLogicDefault（不注入 hasher/repo，测试 Config 错误路径）。
+        fn make_logic_without_creds() -> BulwarkLogicDefault {
+            let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+            let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
+            let mut config = BulwarkConfig::default_config();
+            config.throw_on_not_login = false;
+            config.token_style = "uuid".to_string();
+            let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
+                has_permission: true,
+                has_role: true,
+            });
+            BulwarkLogicDefault::new(session, Arc::new(config), firewall)
+        }
+
+        /// 未注入 password_hasher 时返回 Config("password hasher not configured")。
+        ///
+        /// 覆盖 password.rs 第 86-89 行 `hasher.as_ref().ok_or_else(...)` 路径。
+        #[tokio::test]
+        async fn login_with_password_missing_hasher_returns_config_error() {
+            let logic = make_logic_without_creds();
+            // 注入 repo 但不注入 hasher
+            let repo: Arc<dyn UserRepository> = Arc::new(MockUserRepository::new());
+            let logic = logic.with_user_repository(repo);
+
+            let result = logic.login_with_password("alice", "any").await;
+            assert!(
+                matches!(result, Err(BulwarkError::Config(ref msg)) if msg == "password hasher not configured"),
+                "未注入 hasher 应返回 Config(\"password hasher not configured\")，实际: {:?}",
+                result
+            );
+        }
+
+        /// 未注入 user_repository 时返回 Config("user repository not configured")。
+        ///
+        /// 覆盖 password.rs 第 90-93 行 `repo.as_ref().ok_or_else(...)` 路径。
+        #[tokio::test]
+        async fn login_with_password_missing_repo_returns_config_error() {
+            let logic = make_logic_without_creds();
+            // 注入 hasher 但不注入 repo
+            let hasher: Arc<dyn PasswordHasher> = Arc::new(Argon2Hasher::default());
+            let logic = logic.with_password_hasher(hasher);
+
+            let result = logic.login_with_password("alice", "any").await;
+            assert!(
+                matches!(result, Err(BulwarkError::Config(ref msg)) if msg == "user repository not configured"),
+                "未注入 repo 应返回 Config(\"user repository not configured\")，实际: {:?}",
+                result
+            );
+        }
+
+        /// 用户不存在 + listener_manager 注入 → 广播 LoginFailure 事件。
+        ///
+        /// 覆盖 password.rs 第 113-121 行 `#[cfg(feature = "listener")] lm.broadcast(LoginFailure)` 路径。
+        #[cfg(feature = "listener")]
+        #[tokio::test]
+        async fn login_with_password_user_not_found_broadcasts_login_failure() {
+            let logic = make_logic_without_creds();
+            let hasher: Arc<dyn PasswordHasher> = Arc::new(Argon2Hasher::default());
+            let repo: Arc<dyn UserRepository> = Arc::new(MockUserRepository::new()); // 空仓库
+            let recorder = Arc::new(RecordingListener::new());
+            let lm = Arc::new(BulwarkListenerManager::new());
+            lm.register(recorder.clone() as Arc<dyn BulwarkListener>);
+
+            let logic = logic
+                .with_password_hasher(hasher)
+                .with_user_repository(repo)
+                .with_listener_manager(lm);
+
+            let result = logic.login_with_password("missing-user", "any").await;
+            assert!(
+                matches!(result, Err(BulwarkError::InvalidParam(ref msg)) if msg == "invalid password"),
+                "用户不存在应返回 InvalidParam(\"invalid password\")，实际: {:?}",
+                result
+            );
+
+            // 验证广播了 LoginFailure 事件
+            let events = recorder.captured();
+            let failure_count = events
+                .iter()
+                .filter(|e| matches!(e, BulwarkEvent::LoginFailure { .. }))
+                .count();
+            assert_eq!(
+                failure_count, 1,
+                "应广播 1 次 LoginFailure 事件，实际广播: {} 次",
+                failure_count
+            );
+            // 验证事件 reason 为 "invalid_credentials"（防用户枚举）
+            if let Some(BulwarkEvent::LoginFailure {
+                login_id, reason, ..
+            }) = events.first()
+            {
+                assert_eq!(login_id, "missing-user");
+                assert_eq!(
+                    reason, "invalid_credentials",
+                    "reason 应为 'invalid_credentials'（防用户枚举），实际: {}",
+                    reason
+                );
+            }
+        }
+
+        /// 密码错误 + listener_manager 注入 → 广播 LoginFailure 事件。
+        ///
+        /// 覆盖 password.rs 第 145-153 行 `#[cfg(feature = "listener")] lm.broadcast(LoginFailure)` 路径。
+        #[cfg(feature = "listener")]
+        #[tokio::test]
+        async fn login_with_password_wrong_password_broadcasts_login_failure() {
+            let logic = make_logic_without_creds();
+            let hasher: Arc<dyn PasswordHasher> = Arc::new(Argon2Hasher::default());
+            let hash = hasher.hash("correct-password").unwrap();
+            let mock_repo = MockUserRepository::new();
+            mock_repo.insert(make_user_row("1001", &hash));
+            let repo: Arc<dyn UserRepository> = Arc::new(mock_repo);
+            let recorder = Arc::new(RecordingListener::new());
+            let lm = Arc::new(BulwarkListenerManager::new());
+            lm.register(recorder.clone() as Arc<dyn BulwarkListener>);
+
+            let logic = logic
+                .with_password_hasher(hasher)
+                .with_user_repository(repo)
+                .with_listener_manager(lm);
+
+            let result = logic.login_with_password("1001", "wrong-password").await;
+            assert!(
+                matches!(result, Err(BulwarkError::InvalidParam(ref msg)) if msg == "invalid password"),
+                "错误密码应返回 InvalidParam(\"invalid password\")，实际: {:?}",
+                result
+            );
+
+            // 验证广播了 LoginFailure 事件，reason 为 "invalid_credentials"
+            let events = recorder.captured();
+            if let Some(BulwarkEvent::LoginFailure {
+                login_id, reason, ..
+            }) = events.first()
+            {
+                assert_eq!(login_id, "1001");
+                assert_eq!(
+                    reason, "invalid_credentials",
+                    "reason 应为 'invalid_credentials'，实际: {}",
+                    reason
+                );
+            } else {
+                panic!("应广播 LoginFailure 事件，实际捕获: {:?}", events);
+            }
+        }
+
+        /// 哈希格式不支持 → 返回 InvalidParam("unsupported hash format")。
+        ///
+        /// 覆盖 password.rs 第 127-135 行 `hasher.verify(...).map_err(...)` 返回 Err 路径。
+        #[tokio::test]
+        async fn login_with_password_unsupported_hash_format_returns_error() {
+            let logic = make_logic_without_creds();
+            let hasher: Arc<dyn PasswordHasher> = Arc::new(Argon2Hasher::default());
+            let mock_repo = MockUserRepository::new();
+            // 插入格式非法的 password_hash（非 Argon2/Bcrypt 格式）
+            mock_repo.insert(make_user_row("1002", "not-a-valid-hash-format"));
+            let repo: Arc<dyn UserRepository> = Arc::new(mock_repo);
+
+            let logic = logic
+                .with_password_hasher(hasher)
+                .with_user_repository(repo);
+
+            let result = logic.login_with_password("1002", "any-password").await;
+            assert!(
+                matches!(result, Err(BulwarkError::InvalidParam(ref msg)) if msg == "unsupported hash format"),
+                "哈希格式不支持应返回 InvalidParam(\"unsupported hash format\")，实际: {:?}",
+                result
+            );
+        }
+
+        /// 用户存在 + 密码正确 → 返回 Ok(token)。
+        ///
+        /// 覆盖 password.rs 第 158-160 行成功登录路径（调用 login 签发 token）。
+        #[tokio::test]
+        async fn login_with_password_correct_credentials_returns_token() {
+            let logic = make_logic_without_creds();
+            let hasher: Arc<dyn PasswordHasher> = Arc::new(Argon2Hasher::default());
+            let hash = hasher.hash("correct-password").unwrap();
+            let mock_repo = MockUserRepository::new();
+            mock_repo.insert(make_user_row("1003", &hash));
+            let repo: Arc<dyn UserRepository> = Arc::new(mock_repo);
+
+            let logic = logic
+                .with_password_hasher(hasher)
+                .with_user_repository(repo);
+
+            let result = logic.login_with_password("1003", "correct-password").await;
+            assert!(
+                result.is_ok(),
+                "用户存在 + 密码正确应返回 Ok(token)，实际: {:?}",
+                result
+            );
+            let token = result.unwrap();
+            assert!(!token.is_empty(), "返回的 token 不应为空字符串");
+        }
+    }
 }

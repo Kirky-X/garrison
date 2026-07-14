@@ -361,4 +361,142 @@ mod tests {
         let empty = repo.list(100, 10).await.expect("list 超范围应成功");
         assert!(empty.is_empty(), "超出范围的 offset 应返回空");
     }
+
+    /// find_by_code 查询不存在的 code 应返回 None。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn find_by_code_returns_none_for_nonexistent() {
+        let pool = setup_db().await;
+        let repo = DbnexusPermissionRepository::new(pool);
+
+        let result = repo
+            .find_by_code("nonexistent-code")
+            .await
+            .expect("find_by_code 应成功");
+        assert!(result.is_none(), "不存在的 code 应返回 None");
+    }
+
+    /// update 仅更新 name 字段。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn update_partial_only_name() {
+        let pool = setup_db().await;
+        let repo = DbnexusPermissionRepository::new(pool);
+
+        let id = repo
+            .create(NewPermission {
+                code: "partial-name".to_string(),
+                name: "原名".to_string(),
+                resource_type: Some("user".to_string()),
+                action: Some("read".to_string()),
+            })
+            .await
+            .expect("create 应成功");
+
+        repo.update(&id, Some("仅改名".to_string()), None, None)
+            .await
+            .expect("update 应成功");
+
+        let row = repo
+            .find_by_id(&id)
+            .await
+            .expect("find_by_id 应成功")
+            .expect("权限应存在");
+        assert_eq!(row.name, "仅改名");
+        assert_eq!(
+            row.resource_type.as_deref(),
+            Some("user"),
+            "resource_type 不应变"
+        );
+        assert_eq!(row.action.as_deref(), Some("read"), "action 不应变");
+    }
+
+    /// update 仅更新 resource_type 字段。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn update_partial_only_resource_type() {
+        let pool = setup_db().await;
+        let repo = DbnexusPermissionRepository::new(pool);
+
+        let id = repo
+            .create(NewPermission {
+                code: "partial-rt".to_string(),
+                name: "名".to_string(),
+                resource_type: Some("old_type".to_string()),
+                action: None,
+            })
+            .await
+            .expect("create 应成功");
+
+        repo.update(&id, None, Some("new_type".to_string()), None)
+            .await
+            .expect("update 应成功");
+
+        let row = repo
+            .find_by_id(&id)
+            .await
+            .expect("find_by_id 应成功")
+            .expect("权限应存在");
+        assert_eq!(row.resource_type.as_deref(), Some("new_type"));
+        assert_eq!(row.name, "名", "name 不应变");
+    }
+
+    /// update 仅更新 action 字段。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn update_partial_only_action() {
+        let pool = setup_db().await;
+        let repo = DbnexusPermissionRepository::new(pool);
+
+        let id = repo
+            .create(NewPermission {
+                code: "partial-act".to_string(),
+                name: "名".to_string(),
+                resource_type: None,
+                action: Some("old_action".to_string()),
+            })
+            .await
+            .expect("create 应成功");
+
+        repo.update(&id, None, None, Some("new_action".to_string()))
+            .await
+            .expect("update 应成功");
+
+        let row = repo
+            .find_by_id(&id)
+            .await
+            .expect("find_by_id 应成功")
+            .expect("权限应存在");
+        assert_eq!(row.action.as_deref(), Some("new_action"));
+    }
+
+    /// list 空表查询应返回空列表。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn list_empty_returns_empty() {
+        let pool = setup_db().await;
+        let repo = DbnexusPermissionRepository::new(pool);
+
+        let result = repo.list(0, 100).await.expect("list 应成功");
+        assert!(result.is_empty(), "空表应返回空列表");
+    }
+
+    /// create 生成合法 UUID v4。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn create_generates_valid_uuid_v4() {
+        let pool = setup_db().await;
+        let repo = DbnexusPermissionRepository::new(pool);
+
+        let id = repo
+            .create(NewPermission {
+                code: "uuid-test".to_string(),
+                name: "UUID测试".to_string(),
+                resource_type: None,
+                action: None,
+            })
+            .await
+            .expect("create 应成功");
+
+        let parsed = uuid::Uuid::parse_str(&id).expect("返回的 id 应为合法 UUID");
+        assert_eq!(
+            parsed.get_version(),
+            Some(uuid::Version::Random),
+            "返回的 id 应为 UUID v4"
+        );
+    }
 }

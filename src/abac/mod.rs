@@ -201,4 +201,92 @@ mod tests {
         assert!(result.is_err(), "重复 init_abac_engine 应返回错误");
         reset_abac_for_test();
     }
+
+    /// init_abac_engine 成功初始化后 get_abac_engine 返回 Some。
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn init_abac_engine_success_then_get_returns_some() {
+        reset_abac_for_test();
+        let engine = AbacEngine::new(r#"{"":{"entityTypes":{},"actions":{}}}"#).unwrap();
+        init_abac_engine(engine).expect("首次 init_abac_engine 应成功");
+
+        // get_abac_engine 应返回 Some(Arc<AbacEngine>)
+        let result = get_abac_engine();
+        assert!(
+            result.is_ok(),
+            "get_abac_engine 应返回 Ok: {:?}",
+            result.err()
+        );
+        let engine_opt = result.unwrap();
+        assert!(engine_opt.is_some(), "初始化后应返回 Some");
+
+        reset_abac_for_test();
+    }
+
+    /// get_abac_engine 未初始化时返回 Ok(None)。
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn get_abac_engine_returns_none_when_not_initialized() {
+        reset_abac_for_test();
+        let result = get_abac_engine();
+        assert!(
+            result.is_ok(),
+            "get_abac_engine 应返回 Ok: {:?}",
+            result.err()
+        );
+        assert!(result.unwrap().is_none(), "未初始化时应返回 None");
+        reset_abac_for_test();
+    }
+
+    /// init_abac_engine 重复调用返回 Config 错误（验证错误类型）。
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn init_abac_engine_duplicate_returns_config_error() {
+        reset_abac_for_test();
+        let engine = AbacEngine::new(r#"{"":{"entityTypes":{},"actions":{}}}"#).unwrap();
+        init_abac_engine(engine).expect("首次 init 应成功");
+        let engine2 = AbacEngine::new(r#"{"":{"entityTypes":{},"actions":{}}}"#).unwrap();
+        let result = init_abac_engine(engine2);
+        assert!(result.is_err());
+        match result {
+            Err(crate::error::BulwarkError::Config(msg)) => {
+                assert!(
+                    msg.contains("already initialized"),
+                    "错误消息应包含 'already initialized'，实际: {}",
+                    msg
+                );
+            },
+            Err(other) => panic!("期望 Config 错误，实际: {:?}", other),
+            Ok(_) => panic!("期望错误，实际成功"),
+        }
+        reset_abac_for_test();
+    }
+
+    /// reset_abac_for_test 清除引擎后 get_abac_engine 返回 None。
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn reset_abac_for_test_clears_engine() {
+        reset_abac_for_test();
+        let engine = AbacEngine::new(r#"{"":{"entityTypes":{},"actions":{}}}"#).unwrap();
+        init_abac_engine(engine).expect("init 应成功");
+        assert!(get_abac_engine().unwrap().is_some());
+
+        reset_abac_for_test();
+        assert!(get_abac_engine().unwrap().is_none(), "reset 后应返回 None");
+    }
+
+    /// check_abac_with_policy 在引擎未初始化时对任意 action 均返回 Ok。
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn check_abac_with_policy_no_engine_various_actions() {
+        reset_abac_for_test();
+        // 不同 action 和 abac_expr 均应返回 Ok（引擎未初始化时默认 Allow）
+        let result1 = check_abac_with_policy("order:read", "1 == 1").await;
+        assert!(result1.is_ok());
+        let result2 = check_abac_with_policy("user:delete", "resource.owner == principal.id").await;
+        assert!(result2.is_ok());
+        let result3 = check_abac_with_policy("", "").await;
+        assert!(result3.is_ok());
+        reset_abac_for_test();
+    }
 }

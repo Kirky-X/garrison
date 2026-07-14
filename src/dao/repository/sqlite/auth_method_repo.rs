@@ -366,4 +366,142 @@ mod tests {
         let cross = repo.find_by_id(2, &id).await.expect("find_by_id 应成功");
         assert!(cross.is_none(), "跨租户查询应返回 None");
     }
+
+    /// find_by_id 查询不存在的 ID 应返回 None。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn find_by_id_returns_none_for_nonexistent() {
+        let pool = setup_db().await;
+        let repo = DbnexusAuthMethodRepository::new(pool);
+
+        let result = repo
+            .find_by_id(1, "nonexistent-id")
+            .await
+            .expect("find_by_id 应成功");
+        assert!(result.is_none(), "不存在的 ID 应返回 None");
+    }
+
+    /// find_by_user_id 查询无认证方式的用户应返回空列表。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn find_by_user_id_returns_empty_for_no_methods() {
+        let pool = setup_db().await;
+        let repo = DbnexusAuthMethodRepository::new(pool.clone());
+        let user_id = setup_user(&pool, 1).await;
+
+        let rows = repo
+            .find_by_user_id(1, &user_id)
+            .await
+            .expect("find_by_user_id 应成功");
+        assert!(rows.is_empty(), "无认证方式的用户应返回空列表");
+    }
+
+    /// list 分页查询：插入 3 条后 offset/limit 正确分页。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn list_paginates_correctly() {
+        let pool = setup_db().await;
+        let repo = DbnexusAuthMethodRepository::new(pool.clone());
+        let user_repo = DbnexusUserRepository::new(pool.clone());
+
+        for i in 0..3 {
+            // 每次创建不同 username 的用户（避免 unique 约束冲突）
+            let user_id = user_repo
+                .create(
+                    1,
+                    NewUser {
+                        username: format!("am-page-user-{}", i),
+                        password_hash: "h".to_string(),
+                        status: "active".to_string(),
+                    },
+                )
+                .await
+                .expect("创建 user 应成功");
+            repo.create(
+                1,
+                NewAuthMethod {
+                    user_id,
+                    method_type: "password".to_string(),
+                    external_id: None,
+                    metadata: None,
+                },
+            )
+            .await
+            .expect("create 应成功");
+        }
+
+        let all = repo.list(1, 0, 100).await.expect("list 应成功");
+        assert_eq!(all.len(), 3, "应有 3 条记录");
+
+        let page = repo.list(1, 1, 1).await.expect("list 分页应成功");
+        assert_eq!(page.len(), 1, "分页应返回 1 条");
+
+        let empty = repo.list(1, 100, 10).await.expect("list 超范围应成功");
+        assert!(empty.is_empty(), "超出范围的 offset 应返回空");
+    }
+
+    /// create 生成合法 UUID v4。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn create_generates_valid_uuid_v4() {
+        let pool = setup_db().await;
+        let repo = DbnexusAuthMethodRepository::new(pool.clone());
+        let user_id = setup_user(&pool, 1).await;
+
+        let id = repo
+            .create(
+                1,
+                NewAuthMethod {
+                    user_id,
+                    method_type: "password".to_string(),
+                    external_id: None,
+                    metadata: None,
+                },
+            )
+            .await
+            .expect("create 应成功");
+
+        let parsed = uuid::Uuid::parse_str(&id).expect("返回的 id 应为合法 UUID");
+        assert_eq!(
+            parsed.get_version(),
+            Some(uuid::Version::Random),
+            "返回的 id 应为 UUID v4"
+        );
+    }
+
+    /// create 时 external_id 和 metadata 均为 None 也能正确插入。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn create_with_all_optional_none() {
+        let pool = setup_db().await;
+        let repo = DbnexusAuthMethodRepository::new(pool.clone());
+        let user_id = setup_user(&pool, 1).await;
+
+        let id = repo
+            .create(
+                1,
+                NewAuthMethod {
+                    user_id: user_id.clone(),
+                    method_type: "did".to_string(),
+                    external_id: None,
+                    metadata: None,
+                },
+            )
+            .await
+            .expect("create 应成功");
+
+        let row = repo
+            .find_by_id(1, &id)
+            .await
+            .expect("find_by_id 应成功")
+            .expect("认证方式应存在");
+        assert!(row.external_id.is_none());
+        assert!(row.metadata.is_none());
+        assert_eq!(row.method_type, "did");
+    }
+
+    /// list 空表查询应返回空列表。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn list_empty_returns_empty() {
+        let pool = setup_db().await;
+        let repo = DbnexusAuthMethodRepository::new(pool);
+
+        let result = repo.list(1, 0, 100).await.expect("list 应成功");
+        assert!(result.is_empty(), "空表应返回空列表");
+    }
 }

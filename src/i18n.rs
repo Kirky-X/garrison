@@ -525,4 +525,372 @@ mod tests {
         // 指针相等表示同一实例
         assert!(std::ptr::eq(b1, b2));
     }
+
+    // ========================================================================
+    // translate_detail 测试（loc! 宏底层调用）
+    // ========================================================================
+
+    /// translate_detail 找到 key 时返回中文翻译。
+    #[test]
+    fn translate_detail_zh_returns_translated_message() {
+        let _guard = set_locale(BulwarkLocale::Zh);
+        let msg = translate_detail("not-login", &[("detail", "请先登录")]);
+        assert_eq!(msg, "未登录: 请先登录");
+    }
+
+    /// translate_detail 找到 key 时返回英文翻译。
+    #[test]
+    fn translate_detail_en_returns_translated_message() {
+        let _guard = set_locale(BulwarkLocale::En);
+        let msg = translate_detail("not-login", &[("detail", "please login")]);
+        assert_eq!(msg, "Not logged in: please login");
+    }
+
+    /// translate_detail 未找到 key 时返回 key 本身。
+    #[test]
+    fn translate_detail_missing_key_returns_key() {
+        let _guard = set_locale(BulwarkLocale::Zh);
+        let msg = translate_detail("nonexistent-key-xyz", &[]);
+        assert_eq!(msg, "nonexistent-key-xyz");
+    }
+
+    /// translate_detail 无参数时正常翻译。
+    #[test]
+    fn translate_detail_no_args_translates_successfully() {
+        let _guard = set_locale(BulwarkLocale::Zh);
+        let msg = translate_detail("sms-verify-max-attempts", &[]);
+        assert_eq!(msg, "SMS 验证码尝试次数超限");
+    }
+
+    /// translate_detail 多参数翻译（disable-service 含 service + until）。
+    #[test]
+    fn translate_detail_multiple_args_zh() {
+        let _guard = set_locale(BulwarkLocale::Zh);
+        let msg = translate_detail(
+            "disable-service",
+            &[
+                ("service", "default"),
+                ("until", "Some(2026-01-01T00:00:00Z)"),
+            ],
+        );
+        assert!(msg.contains("service=default"));
+        assert!(msg.contains("账号已被封禁"));
+    }
+
+    /// translate_detail 多参数翻译（英文）。
+    #[test]
+    fn translate_detail_multiple_args_en() {
+        let _guard = set_locale(BulwarkLocale::En);
+        let msg = translate_detail(
+            "invalid-state-transition",
+            &[("from", "Active"), ("to", "Closed")],
+        );
+        assert_eq!(msg, "Invalid state transition: Active -> Closed");
+    }
+
+    // ========================================================================
+    // 0.6.1 新增错误变体 translate_error 测试
+    // ========================================================================
+
+    /// TokenRevoked 在中文 locale 下输出翻译消息。
+    #[test]
+    fn translate_error_zh_token_revoked() {
+        let _guard = set_locale(BulwarkLocale::Zh);
+        let err = BulwarkError::TokenRevoked("reuse detected".to_string());
+        let translated = translate_error(&err);
+        // token-revoked key 不存在于 .ftl，走 fallback_display
+        assert_eq!(translated, "Token 已吊销: reuse detected");
+    }
+
+    /// TokenRevoked 在英文 locale 下输出翻译消息。
+    #[test]
+    fn translate_error_en_token_revoked() {
+        let _guard = set_locale(BulwarkLocale::En);
+        let err = BulwarkError::TokenRevoked("reuse detected".to_string());
+        let translated = translate_error(&err);
+        // token-revoked key 不存在于 .ftl，走 fallback_display（中文硬编码）
+        assert_eq!(translated, "Token 已吊销: reuse detected");
+    }
+
+    /// FirewallBlocked 在中文 locale 下输出翻译消息。
+    #[test]
+    fn translate_error_zh_firewall_blocked() {
+        let _guard = set_locale(BulwarkLocale::Zh);
+        let err = BulwarkError::FirewallBlocked("black_path: /admin".to_string());
+        let translated = translate_error(&err);
+        // firewall-blocked key 不存在于 .ftl，走 fallback_display
+        assert_eq!(translated, "防火墙拦截: black_path: /admin");
+    }
+
+    /// DisableService 在中文 locale 下输出翻译消息。
+    #[test]
+    fn translate_error_zh_disable_service() {
+        let _guard = set_locale(BulwarkLocale::Zh);
+        let until = chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let err = BulwarkError::DisableService {
+            service: "default".to_string(),
+            until: Some(until),
+        };
+        let translated = translate_error(&err);
+        assert!(translated.contains("service=default"));
+        assert!(translated.contains("账号已被封禁"));
+    }
+
+    /// DisableService 在英文 locale 下输出翻译消息。
+    #[test]
+    fn translate_error_en_disable_service() {
+        let _guard = set_locale(BulwarkLocale::En);
+        let until = chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let err = BulwarkError::DisableService {
+            service: "oidc".to_string(),
+            until: None,
+        };
+        let translated = translate_error(&err);
+        assert!(translated.contains("service=oidc"));
+        assert!(translated.contains("Account disabled"));
+    }
+
+    /// NotSafe 在中文 locale 下输出翻译消息。
+    #[test]
+    fn translate_error_zh_not_safe() {
+        let _guard = set_locale(BulwarkLocale::Zh);
+        let err = BulwarkError::NotSafe {
+            reason: "MFA_TOTP_REQUIRED".to_string(),
+        };
+        assert_eq!(translate_error(&err), "未完成二次认证：MFA_TOTP_REQUIRED");
+    }
+
+    /// NotSafe 在英文 locale 下输出翻译消息。
+    #[test]
+    fn translate_error_en_not_safe() {
+        let _guard = set_locale(BulwarkLocale::En);
+        let err = BulwarkError::NotSafe {
+            reason: "WEBAUTHN_REQUIRED".to_string(),
+        };
+        assert_eq!(
+            translate_error(&err),
+            "Second factor authentication required: WEBAUTHN_REQUIRED"
+        );
+    }
+
+    /// InvalidStateTransition 在中文 locale 下输出翻译消息。
+    #[test]
+    fn translate_error_zh_invalid_state_transition() {
+        let _guard = set_locale(BulwarkLocale::Zh);
+        let err = BulwarkError::InvalidStateTransition {
+            from: "Active".to_string(),
+            to: "Closed".to_string(),
+        };
+        assert_eq!(translate_error(&err), "非法状态转换：Active -> Closed");
+    }
+
+    /// InvalidStateTransition 在英文 locale 下输出翻译消息。
+    #[test]
+    fn translate_error_en_invalid_state_transition() {
+        let _guard = set_locale(BulwarkLocale::En);
+        let err = BulwarkError::InvalidStateTransition {
+            from: "Pending".to_string(),
+            to: "Active".to_string(),
+        };
+        assert_eq!(
+            translate_error(&err),
+            "Invalid state transition: Pending -> Active"
+        );
+    }
+
+    /// SmsRateLimitExceeded 在中文 locale 下输出翻译消息。
+    #[test]
+    fn translate_error_zh_sms_rate_limit_exceeded() {
+        let _guard = set_locale(BulwarkLocale::Zh);
+        let err = BulwarkError::SmsRateLimitExceeded {
+            window: "hourly".to_string(),
+        };
+        assert_eq!(translate_error(&err), "SMS 限速超出: hourly 窗口");
+    }
+
+    /// SmsRateLimitExceeded 在英文 locale 下输出翻译消息。
+    #[test]
+    fn translate_error_en_sms_rate_limit_exceeded() {
+        let _guard = set_locale(BulwarkLocale::En);
+        let err = BulwarkError::SmsRateLimitExceeded {
+            window: "daily".to_string(),
+        };
+        assert_eq!(
+            translate_error(&err),
+            "SMS rate limit exceeded: daily window"
+        );
+    }
+
+    /// SmsVerifyMaxAttempts 在中文 locale 下输出翻译消息。
+    #[test]
+    fn translate_error_zh_sms_verify_max_attempts() {
+        let _guard = set_locale(BulwarkLocale::Zh);
+        let err = BulwarkError::SmsVerifyMaxAttempts;
+        assert_eq!(translate_error(&err), "SMS 验证码尝试次数超限");
+    }
+
+    /// SmsVerifyMaxAttempts 在英文 locale 下输出翻译消息。
+    #[test]
+    fn translate_error_en_sms_verify_max_attempts() {
+        let _guard = set_locale(BulwarkLocale::En);
+        let err = BulwarkError::SmsVerifyMaxAttempts;
+        assert_eq!(
+            translate_error(&err),
+            "SMS verification max attempts exceeded"
+        );
+    }
+
+    /// SmsCodeNotFound 在中文 locale 下输出翻译消息。
+    #[test]
+    fn translate_error_zh_sms_code_not_found() {
+        let _guard = set_locale(BulwarkLocale::Zh);
+        let err = BulwarkError::SmsCodeNotFound;
+        assert_eq!(translate_error(&err), "SMS 验证码不存在");
+    }
+
+    /// SmsCodeNotFound 在英文 locale 下输出翻译消息。
+    #[test]
+    fn translate_error_en_sms_code_not_found() {
+        let _guard = set_locale(BulwarkLocale::En);
+        let err = BulwarkError::SmsCodeNotFound;
+        assert_eq!(translate_error(&err), "SMS verification code not found");
+    }
+
+    /// SmsChannelRecycled 在中文 locale 下输出翻译消息。
+    #[test]
+    fn translate_error_zh_sms_channel_recycled() {
+        let _guard = set_locale(BulwarkLocale::Zh);
+        let err = BulwarkError::SmsChannelRecycled;
+        assert_eq!(translate_error(&err), "SMS 通道已回收");
+    }
+
+    /// SmsChannelRecycled 在英文 locale 下输出翻译消息。
+    #[test]
+    fn translate_error_en_sms_channel_recycled() {
+        let _guard = set_locale(BulwarkLocale::En);
+        let err = BulwarkError::SmsChannelRecycled;
+        assert_eq!(translate_error(&err), "SMS channel recycled");
+    }
+
+    // ========================================================================
+    // fallback_display 补充测试（0.6.1 新增变体）
+    // ========================================================================
+
+    /// fallback_display 覆盖 0.6.1 新增变体。
+    #[test]
+    fn fallback_display_new_variants() {
+        let until = chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let cases: Vec<(BulwarkError, String)> = vec![
+            (
+                BulwarkError::TokenRevoked("x".into()),
+                "Token 已吊销: x".to_string(),
+            ),
+            (
+                BulwarkError::FirewallBlocked("x".into()),
+                "防火墙拦截: x".to_string(),
+            ),
+            (
+                BulwarkError::DisableService {
+                    service: "default".into(),
+                    until: Some(until),
+                },
+                format!("账号已被封禁：service=default, until={:?}", Some(until)),
+            ),
+            (
+                BulwarkError::DisableService {
+                    service: "oidc".into(),
+                    until: None,
+                },
+                "账号已被封禁：service=oidc, until=None".to_string(),
+            ),
+            (
+                BulwarkError::NotSafe { reason: "r".into() },
+                "未完成二次认证：r".to_string(),
+            ),
+            (
+                BulwarkError::InvalidStateTransition {
+                    from: "A".into(),
+                    to: "B".into(),
+                },
+                "非法状态转换：A -> B".to_string(),
+            ),
+            (
+                BulwarkError::SmsRateLimitExceeded { window: "w".into() },
+                "SMS 限速超出: w 窗口".to_string(),
+            ),
+            (
+                BulwarkError::SmsVerifyMaxAttempts,
+                "SMS 验证码尝试次数超限".to_string(),
+            ),
+            (
+                BulwarkError::SmsCodeNotFound,
+                "SMS 验证码不存在".to_string(),
+            ),
+            (
+                BulwarkError::SmsChannelRecycled,
+                "SMS 通道已回收".to_string(),
+            ),
+        ];
+        for (err, expected) in cases {
+            assert_eq!(fallback_display(&err), expected, "mismatch for {:?}", err);
+        }
+    }
+
+    /// error_to_key_args 覆盖所有变体（确保每个 match arm 都被执行）。
+    #[test]
+    fn error_to_key_args_all_variants() {
+        let until = chrono::Utc::now();
+        let cases: Vec<BulwarkError> = vec![
+            BulwarkError::NotLogin("a".into()),
+            BulwarkError::NotPermission("a".into()),
+            BulwarkError::NotRole("a".into()),
+            BulwarkError::InvalidToken("a".into()),
+            BulwarkError::TokenRevoked("a".into()),
+            BulwarkError::ExpiredToken("a".into()),
+            BulwarkError::Dao("a".into()),
+            BulwarkError::Config("a".into()),
+            BulwarkError::Internal("a".into()),
+            BulwarkError::Session("a".into()),
+            BulwarkError::Annotation("a".into()),
+            BulwarkError::Context("a".into()),
+            BulwarkError::OAuth2("a".into()),
+            BulwarkError::Network("a".into()),
+            BulwarkError::InvalidParam("a".into()),
+            BulwarkError::NotImplemented("a".into()),
+            BulwarkError::FirewallBlocked("a".into()),
+            BulwarkError::DisableService {
+                service: "s".into(),
+                until: Some(until),
+            },
+            BulwarkError::NotSafe { reason: "r".into() },
+            BulwarkError::InvalidStateTransition {
+                from: "f".into(),
+                to: "t".into(),
+            },
+            BulwarkError::SmsRateLimitExceeded { window: "w".into() },
+            BulwarkError::SmsVerifyMaxAttempts,
+            BulwarkError::SmsCodeNotFound,
+            BulwarkError::SmsChannelRecycled,
+            BulwarkError::Exception(BulwarkException::new(-1, "msg")),
+        ];
+        for err in cases {
+            // 仅验证不 panic 且返回非空 key
+            let (key, _args) = error_to_key_args(&err);
+            assert!(!key.is_empty(), "key 不应为空: {:?}", err);
+        }
+    }
+
+    /// get_bundle 对英文 locale 也返回缓存实例。
+    #[test]
+    fn get_bundle_en_returns_cached_instance() {
+        let b1 = get_bundle(BulwarkLocale::En);
+        let b2 = get_bundle(BulwarkLocale::En);
+        assert!(std::ptr::eq(b1, b2), "英文 bundle 应为同一缓存实例");
+    }
 }

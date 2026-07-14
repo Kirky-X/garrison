@@ -506,6 +506,169 @@ mod tests {
         let registry = prometheus::Registry::new();
         let _metrics = BulwarkMetrics::register_to(&registry).expect("注册失败");
     }
+
+    // ========================================================================
+    // 补充测试：边界情况与多操作组合
+    // ========================================================================
+
+    /// 测试 observe_token_validation 传入零时长不 panic 且被记录。
+    #[test]
+    #[serial]
+    fn test_observe_token_validation_zero_duration() {
+        let registry = prometheus::Registry::new();
+        let metrics = BulwarkMetrics::register_to(&registry).expect("注册失败");
+        metrics.observe_token_validation(Duration::from_millis(0));
+        let output = prometheus::TextEncoder::new()
+            .encode_to_string(&registry.gather())
+            .expect("encode 失败");
+        assert!(output.contains("bulwark_token_validation_duration_seconds_count 1"));
+    }
+
+    /// 测试所有 record/observe 操作在同一个实例上组合调用不冲突。
+    #[test]
+    #[serial]
+    fn test_all_record_operations_on_single_instance() {
+        let registry = prometheus::Registry::new();
+        let metrics = BulwarkMetrics::register_to(&registry).expect("注册失败");
+        metrics.record_login(true);
+        metrics.record_login(false);
+        metrics.observe_token_validation(Duration::from_millis(10));
+        metrics.record_permission_query(true);
+        metrics.record_permission_query(false);
+        metrics.record_role_query(true);
+        metrics.record_role_query(false);
+        let output = prometheus::TextEncoder::new()
+            .encode_to_string(&registry.gather())
+            .expect("encode 失败");
+        assert!(output.contains("bulwark_login_total{result=\"success\"} 1"));
+        assert!(output.contains("bulwark_login_total{result=\"failure\"} 1"));
+        assert!(output.contains("bulwark_permission_query_total{result=\"allow\"} 1"));
+        assert!(output.contains("bulwark_permission_query_total{result=\"deny\"} 1"));
+        assert!(output.contains("bulwark_role_query_total{result=\"allow\"} 1"));
+        assert!(output.contains("bulwark_role_query_total{result=\"deny\"} 1"));
+    }
+
+    /// 测试 gather() 在记录操作后返回包含所有指标名的非空字符串。
+    /// 注意：gather() 内部使用 default registry，此处用 custom registry 验证指标输出。
+    #[test]
+    #[serial]
+    fn test_gather_returns_non_empty_after_operations() {
+        let registry = prometheus::Registry::new();
+        let metrics = BulwarkMetrics::register_to(&registry).expect("注册失败");
+        metrics.record_login(true);
+        metrics.observe_token_validation(Duration::from_millis(5));
+        metrics.record_permission_query(true);
+        metrics.record_role_query(true);
+        // gather() 内部使用 default registry，此处验证 custom registry 的输出
+        let output = prometheus::TextEncoder::new()
+            .encode_to_string(&registry.gather())
+            .expect("encode 失败");
+        assert!(!output.is_empty(), "gather() 不应返回空字符串");
+        assert!(
+            output.contains("bulwark_login_total"),
+            "gather 应含 login_total"
+        );
+        assert!(
+            output.contains("bulwark_token_validation_duration_seconds"),
+            "gather 应含 token_validation"
+        );
+        assert!(
+            output.contains("bulwark_permission_query_total"),
+            "gather 应含 permission_query"
+        );
+        assert!(
+            output.contains("bulwark_role_query_total"),
+            "gather 应含 role_query"
+        );
+    }
+
+    /// 测试两个独立 registry 上的 BulwarkMetrics 实例互不干扰。
+    #[test]
+    #[serial]
+    fn test_two_registries_independent() {
+        let registry1 = prometheus::Registry::new();
+        let registry2 = prometheus::Registry::new();
+        let m1 = BulwarkMetrics::register_to(&registry1).expect("注册失败");
+        let m2 = BulwarkMetrics::register_to(&registry2).expect("注册失败");
+        m1.record_login(true);
+        m2.record_login(false);
+        let out1 = prometheus::TextEncoder::new()
+            .encode_to_string(&registry1.gather())
+            .expect("encode 失败");
+        let out2 = prometheus::TextEncoder::new()
+            .encode_to_string(&registry2.gather())
+            .expect("encode 失败");
+        assert!(out1.contains("bulwark_login_total{result=\"success\"} 1"));
+        assert!(!out1.contains("result=\"failure\""));
+        assert!(out2.contains("bulwark_login_total{result=\"failure\"} 1"));
+        assert!(!out2.contains("result=\"success\""));
+    }
+
+    /// 测试同一个实例上先记录 success 再记录 failure，两个标签值均正确。
+    #[test]
+    #[serial]
+    fn test_record_login_success_and_failure_on_same_instance() {
+        let registry = prometheus::Registry::new();
+        let metrics = BulwarkMetrics::register_to(&registry).expect("注册失败");
+        metrics.record_login(true);
+        metrics.record_login(true);
+        metrics.record_login(false);
+        let output = prometheus::TextEncoder::new()
+            .encode_to_string(&registry.gather())
+            .expect("encode 失败");
+        assert!(output.contains("bulwark_login_total{result=\"success\"} 2"));
+        assert!(output.contains("bulwark_login_total{result=\"failure\"} 1"));
+    }
+
+    /// 测试 observe_token_validation 多次观测后 count 和 sum 正确。
+    #[test]
+    #[serial]
+    fn test_observe_token_validation_multiple_values_count_and_sum() {
+        let registry = prometheus::Registry::new();
+        let metrics = BulwarkMetrics::register_to(&registry).expect("注册失败");
+        metrics.observe_token_validation(Duration::from_millis(100));
+        metrics.observe_token_validation(Duration::from_millis(200));
+        metrics.observe_token_validation(Duration::from_millis(300));
+        let output = prometheus::TextEncoder::new()
+            .encode_to_string(&registry.gather())
+            .expect("encode 失败");
+        assert!(output.contains("bulwark_token_validation_duration_seconds_count 3"));
+    }
+
+    /// 测试 record_permission_query 先 allow 再 deny，两个标签值均正确。
+    #[test]
+    #[serial]
+    fn test_record_permission_query_allow_and_deny_on_same_instance() {
+        let registry = prometheus::Registry::new();
+        let metrics = BulwarkMetrics::register_to(&registry).expect("注册失败");
+        metrics.record_permission_query(true);
+        metrics.record_permission_query(true);
+        metrics.record_permission_query(true);
+        metrics.record_permission_query(false);
+        metrics.record_permission_query(false);
+        let output = prometheus::TextEncoder::new()
+            .encode_to_string(&registry.gather())
+            .expect("encode 失败");
+        assert!(output.contains("bulwark_permission_query_total{result=\"allow\"} 3"));
+        assert!(output.contains("bulwark_permission_query_total{result=\"deny\"} 2"));
+    }
+
+    /// 测试 record_role_query 先 allow 再 deny，两个标签值均正确。
+    #[test]
+    #[serial]
+    fn test_record_role_query_allow_and_deny_on_same_instance() {
+        let registry = prometheus::Registry::new();
+        let metrics = BulwarkMetrics::register_to(&registry).expect("注册失败");
+        metrics.record_role_query(false);
+        metrics.record_role_query(false);
+        metrics.record_role_query(false);
+        metrics.record_role_query(true);
+        let output = prometheus::TextEncoder::new()
+            .encode_to_string(&registry.gather())
+            .expect("encode 失败");
+        assert!(output.contains("bulwark_role_query_total{result=\"allow\"} 1"));
+        assert!(output.contains("bulwark_role_query_total{result=\"deny\"} 3"));
+    }
 }
 
 /// OpenTelemetry OTLP 追踪测试（feature = "observability-otlp"）。

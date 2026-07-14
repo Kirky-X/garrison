@@ -236,4 +236,169 @@ mod tests {
             body["reason"]
         );
     }
+
+    // ========================================================================
+    // parse_query 单元测试
+    // ========================================================================
+
+    /// parse_query 解析标准 query string。
+    #[test]
+    fn parse_query_standard() {
+        let result = parse_query("key1=value1&key2=value2");
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0], ("key1".to_string(), "value1".to_string()));
+        assert_eq!(result[1], ("key2".to_string(), "value2".to_string()));
+    }
+
+    /// parse_query 解析无值的参数（key 无 =）。
+    #[test]
+    fn parse_query_key_without_value() {
+        let result = parse_query("flag&key=val");
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0], ("flag".to_string(), "".to_string()));
+        assert_eq!(result[1], ("key".to_string(), "val".to_string()));
+    }
+
+    /// parse_query 解析空字符串返回空 Vec。
+    #[test]
+    fn parse_query_empty_string() {
+        let result = parse_query("");
+        assert!(result.is_empty());
+    }
+
+    /// parse_query 跳过空段（连续 & 符号）。
+    #[test]
+    fn parse_query_skips_empty_segments() {
+        let result = parse_query("key=val&&&key2=val2");
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0], ("key".to_string(), "val".to_string()));
+        assert_eq!(result[1], ("key2".to_string(), "val2".to_string()));
+    }
+
+    /// parse_query 解析单个 key=value。
+    #[test]
+    fn parse_query_single_pair() {
+        let result = parse_query("name=alice");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], ("name".to_string(), "alice".to_string()));
+    }
+
+    /// parse_query 解析 key= （值为空）。
+    #[test]
+    fn parse_query_empty_value() {
+        let result = parse_query("empty=");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], ("empty".to_string(), "".to_string()));
+    }
+
+    // ========================================================================
+    // parse_firewall_blocked 单元测试
+    // ========================================================================
+
+    /// parse_firewall_blocked 解析标准格式 "[hook] reason"。
+    #[test]
+    fn parse_firewall_blocked_standard_format() {
+        let (hook, reason) = parse_firewall_blocked("[black_path] 路径 /admin 命中黑名单");
+        assert_eq!(hook, "black_path");
+        assert_eq!(reason, "路径 /admin 命中黑名单");
+    }
+
+    /// parse_firewall_blocked 解析无前导空格的 reason。
+    #[test]
+    fn parse_firewall_blocked_no_leading_space() {
+        let (hook, reason) = parse_firewall_blocked("[sql_inject]检测到SQL注入");
+        assert_eq!(hook, "sql_inject");
+        assert_eq!(reason, "检测到SQL注入");
+    }
+
+    /// parse_firewall_blocked 无 [hook] 前缀时返回 ("unknown", 原文)。
+    #[test]
+    fn parse_firewall_blocked_no_bracket_returns_unknown() {
+        let (hook, reason) = parse_firewall_blocked("普通错误消息");
+        assert_eq!(hook, "unknown");
+        assert_eq!(reason, "普通错误消息");
+    }
+
+    /// parse_firewall_blocked 有 [ 但无 ] 时返回 ("unknown", 原文)。
+    #[test]
+    fn parse_firewall_blocked_open_bracket_no_close() {
+        let (hook, reason) = parse_firewall_blocked("[incomplete hook message");
+        assert_eq!(hook, "unknown");
+        assert_eq!(reason, "[incomplete hook message");
+    }
+
+    /// parse_firewall_blocked 空中括号 "[]" 返回 ("", "")。
+    #[test]
+    fn parse_firewall_blocked_empty_brackets() {
+        let (hook, reason) = parse_firewall_blocked("[]");
+        assert_eq!(hook, "");
+        assert_eq!(reason, "");
+    }
+
+    /// parse_firewall_blocked 空字符串返回 ("unknown", "")。
+    #[test]
+    fn parse_firewall_blocked_empty_string() {
+        let (hook, reason) = parse_firewall_blocked("");
+        assert_eq!(hook, "unknown");
+        assert_eq!(reason, "");
+    }
+
+    /// parse_firewall_blocked 只有 [hook] 无 reason。
+    #[test]
+    fn parse_firewall_blocked_hook_only_no_reason() {
+        let (hook, reason) = parse_firewall_blocked("[rate_limit]");
+        assert_eq!(hook, "rate_limit");
+        assert_eq!(reason, "");
+    }
+
+    // ========================================================================
+    // middleware 查询参数与 host header 测试
+    // ========================================================================
+
+    /// 验证带查询参数的请求能正确传递给 WAF Hook。
+    #[tokio::test]
+    async fn middleware_passes_query_params() {
+        let mut chain = WafHookChain::new();
+        // DangerCharacterHook 检查危险字符，通过查询参数触发
+        chain.register(Box::new(DangerCharacterHook::new()));
+        let app = make_app(chain);
+        // 合法查询参数应放行
+        let resp = app
+            .clone()
+            .oneshot(make_request("GET", "/api/test?name=alice&page=1"))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    /// 验证 middleware 正确处理 host header。
+    #[tokio::test]
+    async fn middleware_handles_host_header() {
+        let mut chain = WafHookChain::new();
+        chain.register(Box::new(BlackPathHook::new(vec!["/admin".to_string()])));
+        let app = make_app(chain);
+
+        let req = Request::builder()
+            .method("GET")
+            .uri("/api/test")
+            .header("host", "example.com")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    /// 验证空查询参数不导致 panic。
+    #[tokio::test]
+    async fn middleware_handles_empty_query() {
+        let mut chain = WafHookChain::new();
+        chain.register(Box::new(BlackPathHook::new(vec!["/admin".to_string()])));
+        let app = make_app(chain);
+        // 带空查询参数的请求
+        let resp = app
+            .oneshot(make_request("GET", "/api/test?"))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
 }

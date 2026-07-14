@@ -492,4 +492,257 @@ mod tests {
             .expect("count 应成功");
         assert_eq!(count, 1, "注册 1 个后应为 1");
     }
+
+    // ========================================================================
+    // 纯函数测试：parse_device_name / detect_browser / detect_os
+    // （不依赖数据库，验证 UA 解析逻辑）
+    // ========================================================================
+
+    /// parse_device_name 从 Chrome on Windows UA 提取 "Chrome on Windows"。
+    #[test]
+    fn parse_device_name_chrome_on_windows() {
+        let ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0";
+        assert_eq!(parse_device_name(ua).as_deref(), Some("Chrome on Windows"));
+    }
+
+    /// parse_device_name 从 Firefox on macOS UA 提取 "Firefox on macOS"。
+    #[test]
+    fn parse_device_name_firefox_on_macos() {
+        let ua = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15) Firefox/121.0";
+        assert_eq!(parse_device_name(ua).as_deref(), Some("Firefox on macOS"));
+    }
+
+    /// parse_device_name 从 Edge UA 提取 "Edge"（Edg/ 必须在 Chrome/ 之前检测）。
+    #[test]
+    fn parse_device_name_edge_before_chrome() {
+        let ua = "Mozilla/5.0 (Windows NT 10.0) Edg/120.0 Chrome/120.0";
+        assert_eq!(parse_device_name(ua).as_deref(), Some("Edge on Windows"));
+    }
+
+    /// parse_device_name 从 Safari on iOS UA 提取 "Safari on iOS"。
+    #[test]
+    fn parse_device_name_safari_on_ios() {
+        let ua = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0) Safari/604.1";
+        assert_eq!(parse_device_name(ua).as_deref(), Some("Safari on iOS"));
+    }
+
+    /// parse_device_name 从 Opera UA 提取 "Opera"。
+    #[test]
+    fn parse_device_name_opera() {
+        let ua = "Mozilla/5.0 (Windows NT 10.0) OPR/120.0";
+        assert_eq!(parse_device_name(ua).as_deref(), Some("Opera on Windows"));
+    }
+
+    /// parse_device_name 从 Android UA 提取浏览器 + Android。
+    #[test]
+    fn parse_device_name_chrome_on_android() {
+        let ua = "Mozilla/5.0 (Linux; Android 14) Chrome/120.0";
+        assert_eq!(parse_device_name(ua).as_deref(), Some("Chrome on Android"));
+    }
+
+    /// parse_device_name 从 Linux UA 提取。
+    #[test]
+    fn parse_device_name_firefox_on_linux() {
+        let ua = "Mozilla/5.0 (X11; Linux x86_64) Firefox/121.0";
+        assert_eq!(parse_device_name(ua).as_deref(), Some("Firefox on Linux"));
+    }
+
+    /// parse_device_name 空字符串返回 None。
+    #[test]
+    fn parse_device_name_empty_returns_none() {
+        assert!(parse_device_name("").is_none());
+    }
+
+    /// parse_device_name 未知浏览器但有 OS 时仅返回 OS。
+    #[test]
+    fn parse_device_name_unknown_browser_with_os() {
+        let ua = "SomeBot/1.0 (Windows NT 10.0)";
+        assert_eq!(parse_device_name(ua).as_deref(), Some("Windows"));
+    }
+
+    /// parse_device_name 已知浏览器但无 OS 时仅返回浏览器名。
+    #[test]
+    fn parse_device_name_browser_without_os() {
+        let ua = "Mozilla/5.0 Chrome/120.0";
+        assert_eq!(parse_device_name(ua).as_deref(), Some("Chrome"));
+    }
+
+    /// parse_device_name 未知浏览器且无 OS 时返回 None。
+    #[test]
+    fn parse_device_name_unknown_no_browser_no_os() {
+        let ua = "curl/8.0";
+        assert!(parse_device_name(ua).is_none());
+    }
+
+    /// detect_browser 检测 Edge（Edg/ 优先于 Chrome/）。
+    #[test]
+    fn detect_browser_edge_priority() {
+        assert_eq!(
+            detect_browser("Edg/120 Chrome/120").as_deref(),
+            Some("Edge")
+        );
+    }
+
+    /// detect_browser 检测 Firefox。
+    #[test]
+    fn detect_browser_firefox() {
+        assert_eq!(detect_browser("Firefox/121").as_deref(), Some("Firefox"));
+    }
+
+    /// detect_browser 检测 Chrome。
+    #[test]
+    fn detect_browser_chrome() {
+        assert_eq!(detect_browser("Chrome/120").as_deref(), Some("Chrome"));
+    }
+
+    /// detect_browser 检测 Safari。
+    #[test]
+    fn detect_browser_safari() {
+        assert_eq!(detect_browser("Safari/604").as_deref(), Some("Safari"));
+    }
+
+    /// detect_browser 检测 Opera（OPR/ 变体）。
+    #[test]
+    fn detect_browser_opera_opr() {
+        assert_eq!(detect_browser("OPR/120").as_deref(), Some("Opera"));
+    }
+
+    /// detect_browser 检测 Opera（Opera/ 变体）。
+    #[test]
+    fn detect_browser_opera_opera() {
+        assert_eq!(detect_browser("Opera/120").as_deref(), Some("Opera"));
+    }
+
+    /// detect_browser 未知浏览器返回 None。
+    #[test]
+    fn detect_browser_unknown_returns_none() {
+        assert!(detect_browser("Bot/1.0").is_none());
+    }
+
+    /// detect_os 检测 Windows。
+    #[test]
+    fn detect_os_windows() {
+        assert_eq!(detect_os("Windows NT 10.0").as_deref(), Some("Windows"));
+    }
+
+    /// detect_os 检测 iOS（iPhone）。
+    #[test]
+    fn detect_os_ios_iphone() {
+        assert_eq!(detect_os("iPhone OS 17").as_deref(), Some("iOS"));
+    }
+
+    /// detect_os 检测 iOS（iPad）。
+    #[test]
+    fn detect_os_ios_ipad() {
+        assert_eq!(detect_os("iPad CPU OS 17").as_deref(), Some("iOS"));
+    }
+
+    /// detect_os 检测 macOS。
+    #[test]
+    fn detect_os_macos() {
+        assert_eq!(detect_os("Mac OS X 10_15").as_deref(), Some("macOS"));
+    }
+
+    /// detect_os 检测 macOS（Macintosh 变体）。
+    #[test]
+    fn detect_os_macos_macintosh() {
+        assert_eq!(detect_os("Macintosh").as_deref(), Some("macOS"));
+    }
+
+    /// detect_os 检测 Android。
+    #[test]
+    fn detect_os_android() {
+        assert_eq!(detect_os("Android 14").as_deref(), Some("Android"));
+    }
+
+    /// detect_os 检测 Linux。
+    #[test]
+    fn detect_os_linux() {
+        assert_eq!(detect_os("Linux x86_64").as_deref(), Some("Linux"));
+    }
+
+    /// detect_os 未知 OS 返回 None。
+    #[test]
+    fn detect_os_unknown_returns_none() {
+        assert!(detect_os("UnknownOS").is_none());
+    }
+
+    // ========================================================================
+    // DB 边界场景测试
+    // ========================================================================
+
+    /// register_device 空 UA 字符串时 device_name 为 None，但仍能注册。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn register_device_with_empty_ua() {
+        let pool = setup_db().await;
+        let repo = DbnexusUserDeviceRepository::new(pool);
+
+        let device_id = repo
+            .register_device(1, "login-empty-ua", "fp-empty", "")
+            .await
+            .expect("空 UA register 应成功");
+
+        let devices = repo
+            .list_user_devices(1, "login-empty-ua")
+            .await
+            .expect("list 应成功");
+        assert_eq!(devices.len(), 1);
+        assert!(
+            devices[0].device_name.is_none(),
+            "空 UA device_name 应为 None"
+        );
+        assert!(devices[0].user_agent.as_deref() == Some(""));
+    }
+
+    /// block_device / unblock_device 对不存在的 device_id 不报错（幂等）。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn block_nonexistent_device_is_noop() {
+        let pool = setup_db().await;
+        let repo = DbnexusUserDeviceRepository::new(pool);
+
+        repo.block_device("nonexistent-device")
+            .await
+            .expect("block 不存在的设备应为 no-op");
+        repo.unblock_device("nonexistent-device")
+            .await
+            .expect("unblock 不存在的设备应为 no-op");
+    }
+
+    /// list_user_devices 查询不存在的 login_id 应返回空列表。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn list_user_devices_nonexistent_returns_empty() {
+        let pool = setup_db().await;
+        let repo = DbnexusUserDeviceRepository::new(pool);
+
+        let devices = repo
+            .list_user_devices(1, "nonexistent-login")
+            .await
+            .expect("list 应成功");
+        assert!(devices.is_empty(), "不存在的 login_id 应返回空列表");
+    }
+
+    /// register_device 不同 tenant_id 下相同 login_id 互不干扰。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn register_device_isolates_by_tenant() {
+        let pool = setup_db().await;
+        let repo = DbnexusUserDeviceRepository::new(pool);
+
+        repo.register_device(1, "shared-login", "fp-1", "Chrome/120")
+            .await
+            .expect("tenant 1 register 应成功");
+        repo.register_device(2, "shared-login", "fp-2", "Chrome/120")
+            .await
+            .expect("tenant 2 register 应成功");
+
+        let count_1 = repo
+            .count_user_devices(1, "shared-login")
+            .await
+            .expect("count tenant 1 应成功");
+        let count_2 = repo
+            .count_user_devices(2, "shared-login")
+            .await
+            .expect("count tenant 2 应成功");
+        assert_eq!(count_1, 1, "tenant 1 应有 1 个设备");
+        assert_eq!(count_2, 1, "tenant 2 应有 1 个设备");
+    }
 }

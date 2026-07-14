@@ -362,4 +362,99 @@ mod tests {
             err_msg
         );
     }
+
+    /// find_by_role_id 查询无关联权限的角色应返回空列表。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn find_by_role_id_returns_empty_for_no_assignments() {
+        let pool = setup_db().await;
+        let repo = DbnexusRolePermissionRepository::new(pool.clone());
+        let (role_id, _) = setup_role_and_permission(&pool, 1).await;
+
+        let rows = repo
+            .find_by_role_id(1, &role_id)
+            .await
+            .expect("find_by_role_id 应成功");
+        assert!(rows.is_empty(), "无关联的角色应返回空列表");
+    }
+
+    /// find_by_permission_id 查询无关联角色的权限应返回空列表。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn find_by_permission_id_returns_empty_for_no_assignments() {
+        let pool = setup_db().await;
+        let repo = DbnexusRolePermissionRepository::new(pool.clone());
+        let (_, perm_id) = setup_role_and_permission(&pool, 1).await;
+
+        let rows = repo
+            .find_by_permission_id(1, &perm_id)
+            .await
+            .expect("find_by_permission_id 应成功");
+        assert!(rows.is_empty(), "无关联的权限应返回空列表");
+    }
+
+    /// list 分页查询：插入 3 条后 offset/limit 正确分页。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn list_paginates_correctly() {
+        let pool = setup_db().await;
+        let repo = DbnexusRolePermissionRepository::new(pool.clone());
+        let perm_repo = DbnexusPermissionRepository::new(pool.clone());
+        let role_repo = DbnexusRoleRepository::new(pool.clone());
+
+        let perm_id = perm_repo
+            .create(NewPermission {
+                code: "shared-page".to_string(),
+                name: "共享".to_string(),
+                resource_type: None,
+                action: None,
+            })
+            .await
+            .expect("创建 permission 应成功");
+
+        for i in 0..3 {
+            let role_id = role_repo
+                .create(
+                    1,
+                    NewRole {
+                        code: format!("page-role-{}", i),
+                        name: format!("角色{}", i),
+                        description: None,
+                        is_system: false,
+                    },
+                )
+                .await
+                .expect("创建 role 应成功");
+            repo.assign(1, &role_id, &perm_id)
+                .await
+                .expect("assign 应成功");
+        }
+
+        let all = repo.list(1, 0, 100).await.expect("list 应成功");
+        assert_eq!(all.len(), 3, "应有 3 条记录");
+
+        let page = repo.list(1, 1, 1).await.expect("list 分页应成功");
+        assert_eq!(page.len(), 1, "分页应返回 1 条");
+
+        let empty = repo.list(1, 100, 10).await.expect("list 超范围应成功");
+        assert!(empty.is_empty(), "超出范围的 offset 应返回空");
+    }
+
+    /// list 空表查询应返回空列表。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn list_empty_returns_empty() {
+        let pool = setup_db().await;
+        let repo = DbnexusRolePermissionRepository::new(pool);
+
+        let result = repo.list(1, 0, 100).await.expect("list 应成功");
+        assert!(result.is_empty(), "空表应返回空列表");
+    }
+
+    /// revoke 对不存在的关联不报错（幂等）。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn revoke_nonexistent_is_noop() {
+        let pool = setup_db().await;
+        let repo = DbnexusRolePermissionRepository::new(pool);
+
+        repo.revoke(1, "nonexistent-role", "nonexistent-perm")
+            .await
+            .expect("revoke 不存在的关联应为 no-op");
+    }
 }

@@ -204,3 +204,276 @@ fn parse_user_ext_row(row: &QueryResult) -> BulwarkResult<UserExtRow> {
         })?,
     })
 }
+
+// ============================================================================
+// 单元测试
+// ============================================================================
+
+#[cfg(all(test, feature = "db-sqlite"))]
+mod tests {
+    use super::super::DbnexusUserRepository;
+    use super::*;
+    use crate::dao::repository::sqlite::test_support::setup_db;
+    use crate::dao::repository::{NewUser, UserRepository};
+
+    /// 在指定 tenant 创建 1 个 user，返回 user_id。
+    async fn setup_user(pool: &DbPool, tenant_id: i64) -> String {
+        let user_repo = DbnexusUserRepository::new(pool.clone());
+        user_repo
+            .create(
+                tenant_id,
+                NewUser {
+                    username: format!("ext-user-{}", tenant_id),
+                    password_hash: "h".to_string(),
+                    status: "active".to_string(),
+                },
+            )
+            .await
+            .expect("创建 user 应成功")
+    }
+
+    /// upsert 插入扩展字段后 find_by_user_id 应返回该字段。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn upsert_inserts_and_finds_by_user_id() {
+        let pool = setup_db().await;
+        let repo = DbnexusUserExtRepository::new(pool.clone());
+        let user_id = setup_user(&pool, 1).await;
+
+        repo.upsert(
+            1,
+            &user_id,
+            "email",
+            Some("alice@example.com".to_string()),
+            "string",
+        )
+        .await
+        .expect("upsert 应成功");
+
+        let rows = repo
+            .find_by_user_id(1, &user_id)
+            .await
+            .expect("find_by_user_id 应成功");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].user_id, user_id);
+        assert_eq!(rows[0].field_key, "email");
+        assert_eq!(rows[0].field_value.as_deref(), Some("alice@example.com"));
+        assert_eq!(rows[0].field_type, "string");
+        assert_eq!(rows[0].tenant_id, 1);
+    }
+
+    /// upsert 对同一 user_id + field_key 执行两次应更新而非插入新记录。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn upsert_updates_existing_field() {
+        let pool = setup_db().await;
+        let repo = DbnexusUserExtRepository::new(pool.clone());
+        let user_id = setup_user(&pool, 1).await;
+
+        // 第一次插入
+        repo.upsert(1, &user_id, "phone", Some("12345".to_string()), "string")
+            .await
+            .expect("首次 upsert 应成功");
+
+        // 第二次 upsert 应更新
+        repo.upsert(1, &user_id, "phone", Some("67890".to_string()), "string")
+            .await
+            .expect("二次 upsert 应成功");
+
+        let rows = repo
+            .find_by_user_id(1, &user_id)
+            .await
+            .expect("find_by_user_id 应成功");
+        assert_eq!(rows.len(), 1, "upsert 不应新增记录");
+        assert_eq!(rows[0].field_value.as_deref(), Some("67890"), "值应被更新");
+    }
+
+    /// upsert 更新 field_type 字段。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn upsert_updates_field_type() {
+        let pool = setup_db().await;
+        let repo = DbnexusUserExtRepository::new(pool.clone());
+        let user_id = setup_user(&pool, 1).await;
+
+        repo.upsert(1, &user_id, "age", Some("30".to_string()), "string")
+            .await
+            .expect("首次 upsert 应成功");
+        repo.upsert(1, &user_id, "age", Some("30".to_string()), "number")
+            .await
+            .expect("二次 upsert 应成功");
+
+        let row = repo
+            .find_by_user_and_key(1, &user_id, "age")
+            .await
+            .expect("find_by_user_and_key 应成功")
+            .expect("字段应存在");
+        assert_eq!(row.field_type, "number", "field_type 应被更新");
+    }
+
+    /// upsert 插入 field_value 为 None 的字段。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn upsert_with_none_field_value() {
+        let pool = setup_db().await;
+        let repo = DbnexusUserExtRepository::new(pool.clone());
+        let user_id = setup_user(&pool, 1).await;
+
+        repo.upsert(1, &user_id, "avatar", None, "string")
+            .await
+            .expect("upsert None 应成功");
+
+        let row = repo
+            .find_by_user_and_key(1, &user_id, "avatar")
+            .await
+            .expect("find 应成功")
+            .expect("字段应存在");
+        assert!(row.field_value.is_none(), "field_value 应为 None");
+    }
+
+    /// find_by_user_and_key 按 user_id + field_key 精确查询。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn find_by_user_and_key_returns_specific_field() {
+        let pool = setup_db().await;
+        let repo = DbnexusUserExtRepository::new(pool.clone());
+        let user_id = setup_user(&pool, 1).await;
+
+        // 插入多个字段
+        repo.upsert(1, &user_id, "email", Some("a@b.com".to_string()), "string")
+            .await
+            .expect("upsert email 应成功");
+        repo.upsert(1, &user_id, "phone", Some("123".to_string()), "string")
+            .await
+            .expect("upsert phone 应成功");
+
+        let row = repo
+            .find_by_user_and_key(1, &user_id, "phone")
+            .await
+            .expect("find_by_user_and_key 应成功")
+            .expect("字段应存在");
+        assert_eq!(row.field_key, "phone");
+        assert_eq!(row.field_value.as_deref(), Some("123"));
+    }
+
+    /// find_by_user_and_key 查询不存在的 key 应返回 None。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn find_by_user_and_key_returns_none_for_nonexistent() {
+        let pool = setup_db().await;
+        let repo = DbnexusUserExtRepository::new(pool.clone());
+        let user_id = setup_user(&pool, 1).await;
+
+        let result = repo
+            .find_by_user_and_key(1, &user_id, "nonexistent")
+            .await
+            .expect("find_by_user_and_key 应成功");
+        assert!(result.is_none(), "不存在的 key 应返回 None");
+    }
+
+    /// find_by_user_id 查询无扩展字段的用户应返回空列表。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn find_by_user_id_returns_empty_for_no_fields() {
+        let pool = setup_db().await;
+        let repo = DbnexusUserExtRepository::new(pool.clone());
+        let user_id = setup_user(&pool, 1).await;
+
+        let rows = repo
+            .find_by_user_id(1, &user_id)
+            .await
+            .expect("find_by_user_id 应成功");
+        assert!(rows.is_empty(), "无扩展字段的用户应返回空列表");
+    }
+
+    /// delete 删除后 find_by_user_and_key 返回 None；重复删除不报错。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn delete_is_idempotent() {
+        let pool = setup_db().await;
+        let repo = DbnexusUserExtRepository::new(pool.clone());
+        let user_id = setup_user(&pool, 1).await;
+
+        repo.upsert(1, &user_id, "temp", Some("val".to_string()), "string")
+            .await
+            .expect("upsert 应成功");
+
+        repo.delete(1, &user_id, "temp")
+            .await
+            .expect("首次 delete 应成功");
+        let after = repo
+            .find_by_user_and_key(1, &user_id, "temp")
+            .await
+            .expect("find 应成功");
+        assert!(after.is_none(), "删除后应查不到");
+
+        // 幂等：再次删除
+        repo.delete(1, &user_id, "temp")
+            .await
+            .expect("幂等 delete 应成功");
+    }
+
+    /// list 分页查询：插入 3 条记录后 offset/limit 正确分页。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn list_paginates_correctly() {
+        let pool = setup_db().await;
+        let repo = DbnexusUserExtRepository::new(pool.clone());
+        let user_id = setup_user(&pool, 1).await;
+
+        for i in 0..3 {
+            repo.upsert(
+                1,
+                &user_id,
+                &format!("key-{}", i),
+                Some(format!("val-{}", i)),
+                "string",
+            )
+            .await
+            .expect("upsert 应成功");
+        }
+
+        let all = repo.list(1, 0, 100).await.expect("list 应成功");
+        assert_eq!(all.len(), 3, "应有 3 条记录");
+
+        let page = repo.list(1, 1, 1).await.expect("list 分页应成功");
+        assert_eq!(page.len(), 1, "分页应返回 1 条");
+
+        let empty = repo.list(1, 100, 10).await.expect("list 超范围应成功");
+        assert!(empty.is_empty(), "超出范围的 offset 应返回空");
+    }
+
+    /// list 按 tenant_id 隔离。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn list_filters_by_tenant_id() {
+        let pool = setup_db().await;
+        let repo = DbnexusUserExtRepository::new(pool.clone());
+
+        let user_1 = setup_user(&pool, 1).await;
+        repo.upsert(1, &user_1, "email", Some("t1@x.com".to_string()), "string")
+            .await
+            .expect("upsert tenant 1 应成功");
+
+        let user_2 = setup_user(&pool, 2).await;
+        repo.upsert(2, &user_2, "email", Some("t2@x.com".to_string()), "string")
+            .await
+            .expect("upsert tenant 2 应成功");
+
+        let list_1 = repo.list(1, 0, 100).await.expect("list tenant 1 应成功");
+        let list_2 = repo.list(2, 0, 100).await.expect("list tenant 2 应成功");
+        assert_eq!(list_1.len(), 1, "tenant 1 应有 1 条");
+        assert_eq!(list_2.len(), 1, "tenant 2 应有 1 条");
+        assert_eq!(list_1[0].tenant_id, 1);
+        assert_eq!(list_2[0].tenant_id, 2);
+    }
+
+    /// find_by_user_and_key 跨租户查询应返回 None。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn find_by_user_and_key_cross_tenant_returns_none() {
+        let pool = setup_db().await;
+        let repo = DbnexusUserExtRepository::new(pool.clone());
+        let user_id = setup_user(&pool, 1).await;
+
+        repo.upsert(1, &user_id, "email", Some("x@y.com".to_string()), "string")
+            .await
+            .expect("upsert 应成功");
+
+        // 用 tenant 2 查询 tenant 1 的字段应返回 None
+        let cross = repo
+            .find_by_user_and_key(2, &user_id, "email")
+            .await
+            .expect("find 应成功");
+        assert!(cross.is_none(), "跨租户查询应返回 None");
+    }
+}

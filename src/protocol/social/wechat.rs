@@ -798,4 +798,528 @@ mod tests {
             result
         );
     }
+
+    // ========================================================================
+    // urlencoding::encode 单元测试
+    // ========================================================================
+
+    /// urlencoding::encode 对纯字母数字不编码。
+    #[test]
+    fn urlencoding_encode_alphanumeric_no_change() {
+        assert_eq!(urlencoding::encode("abc123"), "abc123");
+    }
+
+    /// urlencoding::encode 对保留字符 -.~ 不编码。
+    #[test]
+    fn urlencoding_encode_reserved_chars_no_change() {
+        assert_eq!(urlencoding::encode("a-b_c.d~e"), "a-b_c.d~e");
+    }
+
+    /// urlencoding::encode 对空格编码为 %20。
+    #[test]
+    fn urlencoding_encode_space_to_percent_20() {
+        assert_eq!(urlencoding::encode("a b"), "a%20b");
+    }
+
+    /// urlencoding::encode 对特殊字符 &=?# 编码。
+    #[test]
+    fn urlencoding_encode_special_chars_encoded() {
+        let encoded = urlencoding::encode("a&b=c?d#e");
+        assert!(!encoded.contains('&'), " & 应被编码");
+        assert!(!encoded.contains('='), "= 应被编码");
+        assert!(!encoded.contains('?'), "? 应被编码");
+        assert!(!encoded.contains('#'), "# 应被编码");
+    }
+
+    /// urlencoding::encode 对空字符串返回空字符串。
+    #[test]
+    fn urlencoding_encode_empty_string_returns_empty() {
+        assert_eq!(urlencoding::encode(""), "");
+    }
+
+    /// urlencoding::encode 对中文字符按 UTF-8 字节编码。
+    #[test]
+    fn urlencoding_encode_chinese_chars_encoded() {
+        let encoded = urlencoding::encode("微信");
+        // 中文字符应全部被编码（每个字节为 %XX）
+        assert!(encoded.starts_with('%'), "中文字符应被百分号编码");
+        assert!(!encoded.contains('微'), "不应包含原始中文字符");
+    }
+
+    // ========================================================================
+    // WechatProvider 构造与 builder 测试
+    // ========================================================================
+
+    /// WechatProvider::new 正确设置 client_id。
+    #[tokio::test]
+    async fn wechat_provider_new_sets_client_id() {
+        let provider = WechatProvider::new("my_appid", "my_secret");
+        let url = provider
+            .get_authorization_url("state", "https://example.com/cb")
+            .await
+            .expect("get_authorization_url 应返回 Ok");
+        assert!(
+            url.contains("appid=my_appid"),
+            "URL 应含 client_id，实际: {}",
+            url
+        );
+    }
+
+    /// with_token_url 返回 Self 支持链式调用。
+    #[tokio::test]
+    async fn wechat_provider_with_token_url_returns_self_for_chaining() {
+        let provider = WechatProvider::new("appid", "secret")
+            .with_token_url("https://custom.token.url")
+            .with_userinfo_url("https://custom.userinfo.url");
+        // 验证链式调用后 provider 仍可用
+        let url = provider
+            .get_authorization_url("s", "r")
+            .await
+            .expect("get_authorization_url 应返回 Ok");
+        assert!(url.contains("appid=appid"));
+    }
+
+    /// get_authorization_url 对含特殊字符的 state 和 redirect_uri 进行 URL 编码。
+    #[tokio::test]
+    async fn wechat_provider_get_authorization_url_encodes_special_chars() {
+        let provider = WechatProvider::new("appid", "secret");
+        let url = provider
+            .get_authorization_url("state with space", "https://example.com/cb?foo=bar")
+            .await
+            .expect("get_authorization_url 应返回 Ok");
+        assert!(!url.contains("state with space"), "state 应被 URL 编码");
+        assert!(
+            url.contains("state=state%20with%20space"),
+            "state 空格应编码为 %20，实际: {}",
+            url
+        );
+    }
+
+    // ========================================================================
+    // WechatProvider::exchange_token 错误路径测试
+    // ========================================================================
+
+    /// exchange_token 在微信返回 errcode != 0 时返回 Network 错误。
+    #[tokio::test]
+    async fn wechat_provider_exchange_token_errcode_nonzero_returns_error() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/sns/oauth2/access_token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "errcode": 40029,
+                "errmsg": "invalid code",
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = WechatProvider::new("wx_appid", "wx_secret")
+            .with_token_url(format!("{}/sns/oauth2/access_token", server.uri()));
+        let result = provider.exchange_token("bad_code", "state").await;
+
+        assert!(result.is_err(), "errcode!=0 应返回 Err");
+        match result {
+            Err(BulwarkError::Network(_)) => {},
+            Err(other) => panic!("期望 Network 错误，实际: {:?}", other),
+            Ok(_) => unreachable!("errcode!=0 不应返回 Ok"),
+        }
+    }
+
+    /// exchange_token 在响应缺少 openid 字段时返回 Network 错误。
+    #[tokio::test]
+    async fn wechat_provider_exchange_token_missing_openid_returns_error() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/sns/oauth2/access_token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "access_token": "tok123",
+                "session_key": "sess",
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = WechatProvider::new("wx_appid", "wx_secret")
+            .with_token_url(format!("{}/sns/oauth2/access_token", server.uri()));
+        let result = provider.exchange_token("code", "state").await;
+
+        assert!(result.is_err(), "缺少 openid 应返回 Err");
+        match result {
+            Err(BulwarkError::Network(_)) => {},
+            Err(other) => panic!("期望 Network 错误，实际: {:?}", other),
+            Ok(_) => unreachable!("缺少 openid 不应返回 Ok"),
+        }
+    }
+
+    /// exchange_token 在 HTTP 500 时返回 Network 错误。
+    #[tokio::test]
+    async fn wechat_provider_exchange_token_http_500_returns_error() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/sns/oauth2/access_token"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+
+        let provider = WechatProvider::new("wx_appid", "wx_secret")
+            .with_token_url(format!("{}/sns/oauth2/access_token", server.uri()));
+        let result = provider.exchange_token("code", "state").await;
+
+        assert!(result.is_err(), "HTTP 500 应返回 Err");
+        match result {
+            Err(BulwarkError::Network(_)) => {},
+            Err(other) => panic!("期望 Network 错误，实际: {:?}", other),
+            Ok(_) => unreachable!("HTTP 500 不应返回 Ok"),
+        }
+    }
+
+    /// exchange_token 成功时 unionid 缺失返回 None。
+    #[tokio::test]
+    async fn wechat_provider_exchange_token_without_unionid_returns_none() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/sns/oauth2/access_token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "access_token": "tok123",
+                "openid": "openid456",
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = WechatProvider::new("wx_appid", "wx_secret")
+            .with_token_url(format!("{}/sns/oauth2/access_token", server.uri()));
+        let user_info = provider
+            .exchange_token("code", "state")
+            .await
+            .expect("exchange_token 应返回 Ok");
+
+        assert_eq!(user_info.provider_user_id, "openid456");
+        assert!(user_info.union_id.is_none(), "无 unionid 时应为 None");
+        assert!(user_info.nickname.is_none());
+        assert!(user_info.avatar.is_none());
+    }
+
+    // ========================================================================
+    // WechatProvider::get_user_info 错误路径与边界测试
+    // ========================================================================
+
+    /// get_user_info 在不含 | 分隔符时以整个字符串作为 access_token、openid 为空。
+    #[tokio::test]
+    async fn wechat_provider_get_user_info_without_separator_uses_empty_openid() {
+        use wiremock::matchers::{method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/sns/userinfo"))
+            .and(query_param("access_token", "tok_only"))
+            .and(query_param("openid", ""))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "openid": "openid1",
+                "nickname": "Test",
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = WechatProvider::new("wx_appid", "wx_secret")
+            .with_userinfo_url(format!("{}/sns/userinfo", server.uri()));
+        let user_info = provider
+            .get_user_info("tok_only")
+            .await
+            .expect("get_user_info 应返回 Ok");
+
+        assert_eq!(user_info.provider_user_id, "openid1");
+        assert_eq!(user_info.nickname.as_deref(), Some("Test"));
+    }
+
+    /// get_user_info 在微信返回 errcode != 0 时返回 Network 错误。
+    #[tokio::test]
+    async fn wechat_provider_get_user_info_errcode_nonzero_returns_error() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/sns/userinfo"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "errcode": 48001,
+                "errmsg": "api unauthorized",
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = WechatProvider::new("wx_appid", "wx_secret")
+            .with_userinfo_url(format!("{}/sns/userinfo", server.uri()));
+        let result = provider.get_user_info("tok|openid").await;
+
+        assert!(result.is_err(), "errcode!=0 应返回 Err");
+        match result {
+            Err(BulwarkError::Network(_)) => {},
+            Err(other) => panic!("期望 Network 错误，实际: {:?}", other),
+            Ok(_) => unreachable!("errcode!=0 不应返回 Ok"),
+        }
+    }
+
+    /// get_user_info 在响应缺少 openid 字段时返回 Network 错误。
+    #[tokio::test]
+    async fn wechat_provider_get_user_info_missing_openid_returns_error() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/sns/userinfo"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "nickname": "NoOpenid",
+                "headimgurl": "https://img.example.com/a.png",
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = WechatProvider::new("wx_appid", "wx_secret")
+            .with_userinfo_url(format!("{}/sns/userinfo", server.uri()));
+        let result = provider.get_user_info("tok|openid").await;
+
+        assert!(result.is_err(), "缺少 openid 应返回 Err");
+        match result {
+            Err(BulwarkError::Network(_)) => {},
+            Err(other) => panic!("期望 Network 错误，实际: {:?}", other),
+            Ok(_) => unreachable!("缺少 openid 不应返回 Ok"),
+        }
+    }
+
+    /// get_user_info 成功但 nickname/headimgurl/unionid 缺失时返回 None。
+    #[tokio::test]
+    async fn wechat_provider_get_user_info_missing_optional_fields_returns_none() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/sns/userinfo"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "openid": "openid_only",
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = WechatProvider::new("wx_appid", "wx_secret")
+            .with_userinfo_url(format!("{}/sns/userinfo", server.uri()));
+        let user_info = provider
+            .get_user_info("tok|openid")
+            .await
+            .expect("get_user_info 应返回 Ok");
+
+        assert_eq!(user_info.provider_user_id, "openid_only");
+        assert!(user_info.nickname.is_none());
+        assert!(user_info.avatar.is_none());
+        assert!(user_info.union_id.is_none());
+    }
+
+    // ========================================================================
+    // WechatMiniAppProvider 构造与 builder 测试
+    // ========================================================================
+
+    /// WechatMiniAppProvider::new 构造实例可用。
+    #[tokio::test]
+    async fn wechat_mini_app_provider_new_constructs() {
+        let provider = WechatMiniAppProvider::new("mini_appid", "mini_secret");
+        // get_authorization_url 返回 NotImplemented，验证实例已构造
+        let result = provider.get_authorization_url("state", "redirect").await;
+        assert!(
+            result.is_err(),
+            "get_authorization_url 应返回 NotImplemented"
+        );
+    }
+
+    /// WechatMiniAppProvider::with_jscode2session_url 返回 Self 支持链式调用。
+    #[tokio::test]
+    async fn wechat_mini_app_provider_with_jscode2session_url_chaining() {
+        let provider = WechatMiniAppProvider::new("appid", "secret")
+            .with_jscode2session_url("https://custom.jscode2session.url");
+        // 验证链式调用后 provider 仍可用（get_authorization_url 返回 NotImplemented）
+        let result = provider.get_authorization_url("s", "r").await;
+        assert!(result.is_err());
+    }
+
+    /// WechatMiniAppProvider::get_authorization_url 返回 NotImplemented 错误。
+    #[tokio::test]
+    async fn wechat_mini_app_provider_get_authorization_url_returns_not_implemented() {
+        let provider = WechatMiniAppProvider::new("appid", "secret");
+        let result = provider.get_authorization_url("state", "redirect").await;
+        match result {
+            Err(BulwarkError::NotImplemented(_)) => {},
+            Err(other) => panic!("期望 NotImplemented，实际: {:?}", other),
+            Ok(_) => unreachable!("不应返回 Ok"),
+        }
+    }
+
+    /// WechatMiniAppProvider::exchange_token 委托给 get_user_info。
+    #[tokio::test]
+    async fn wechat_mini_app_provider_exchange_token_delegates_to_get_user_info() {
+        use wiremock::matchers::{method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/sns/jscode2session"))
+            .and(query_param("js_code", "js_code_xyz"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "openid": "openid_via_exchange",
+                "session_key": "sess_key",
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = WechatMiniAppProvider::new("appid", "secret")
+            .with_jscode2session_url(format!("{}/sns/jscode2session", server.uri()));
+        let user_info = provider
+            .exchange_token("js_code_xyz", "state")
+            .await
+            .expect("exchange_token 应返回 Ok");
+
+        assert_eq!(user_info.provider_user_id, "openid_via_exchange");
+        assert_eq!(user_info.provider, SocialProvider::WechatMiniApp);
+    }
+
+    /// WechatMiniAppProvider::get_user_info 响应缺少 openid 时返回错误。
+    #[tokio::test]
+    async fn wechat_mini_app_provider_get_user_info_response_parse_failure() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/sns/jscode2session"))
+            .respond_with(ResponseTemplate::new(200).set_body_json("invalid_json_string"))
+            .mount(&server)
+            .await;
+
+        let provider = WechatMiniAppProvider::new("appid", "secret")
+            .with_jscode2session_url(format!("{}/sns/jscode2session", server.uri()));
+        let result = provider.get_user_info("js_code").await;
+
+        assert!(result.is_err(), "JSON 解析失败应返回 Err");
+    }
+
+    /// WechatMiniAppProvider::get_user_info 成功但 unionid 缺失时返回 None。
+    #[tokio::test]
+    async fn wechat_mini_app_provider_get_user_info_without_unionid() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/sns/jscode2session"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "openid": "openid_no_union",
+                "session_key": "sess_key",
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = WechatMiniAppProvider::new("appid", "secret")
+            .with_jscode2session_url(format!("{}/sns/jscode2session", server.uri()));
+        let user_info = provider
+            .get_user_info("js_code")
+            .await
+            .expect("get_user_info 应返回 Ok");
+
+        assert_eq!(user_info.provider_user_id, "openid_no_union");
+        assert!(user_info.union_id.is_none());
+        assert!(user_info.nickname.is_none());
+        assert!(user_info.avatar.is_none());
+    }
+
+    /// WechatMiniAppProvider::get_user_info errcode=0 时不返回错误（边界：errcode 存在但为 0）。
+    #[tokio::test]
+    async fn wechat_mini_app_provider_get_user_info_errcode_zero_succeeds() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/sns/jscode2session"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "errcode": 0,
+                "openid": "openid_ok",
+                "session_key": "sess",
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = WechatMiniAppProvider::new("appid", "secret")
+            .with_jscode2session_url(format!("{}/sns/jscode2session", server.uri()));
+        let user_info = provider
+            .get_user_info("js_code")
+            .await
+            .expect("errcode=0 应返回 Ok");
+
+        assert_eq!(user_info.provider_user_id, "openid_ok");
+    }
+
+    /// WechatProvider::exchange_token errcode=0 时不返回错误（边界：errcode 存在但为 0）。
+    #[tokio::test]
+    async fn wechat_provider_exchange_token_errcode_zero_succeeds() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/sns/oauth2/access_token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "errcode": 0,
+                "access_token": "tok123",
+                "openid": "openid456",
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = WechatProvider::new("wx_appid", "wx_secret")
+            .with_token_url(format!("{}/sns/oauth2/access_token", server.uri()));
+        let user_info = provider
+            .exchange_token("code", "state")
+            .await
+            .expect("errcode=0 应返回 Ok");
+
+        assert_eq!(user_info.provider_user_id, "openid456");
+    }
+
+    /// WechatProvider::get_user_info errcode=0 时不返回错误（边界：errcode 存在但为 0）。
+    #[tokio::test]
+    async fn wechat_provider_get_user_info_errcode_zero_succeeds() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/sns/userinfo"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "errcode": 0,
+                "openid": "openid_ok",
+                "nickname": "Alice",
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = WechatProvider::new("wx_appid", "wx_secret")
+            .with_userinfo_url(format!("{}/sns/userinfo", server.uri()));
+        let user_info = provider
+            .get_user_info("tok|openid")
+            .await
+            .expect("errcode=0 应返回 Ok");
+
+        assert_eq!(user_info.provider_user_id, "openid_ok");
+        assert_eq!(user_info.nickname.as_deref(), Some("Alice"));
+    }
 }

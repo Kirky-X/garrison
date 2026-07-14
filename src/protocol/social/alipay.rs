@@ -555,4 +555,426 @@ mod tests {
             Some("https://img.example.com/b.png")
         );
     }
+
+    // ========================================================================
+    // urlencoding::encode 单元测试
+    // ========================================================================
+
+    /// urlencoding::encode 对纯字母数字不编码。
+    #[test]
+    fn urlencoding_encode_alphanumeric_no_change() {
+        assert_eq!(urlencoding::encode("abc123"), "abc123");
+    }
+
+    /// urlencoding::encode 对保留字符 -.~ 不编码。
+    #[test]
+    fn urlencoding_encode_reserved_chars_no_change() {
+        assert_eq!(urlencoding::encode("a-b_c.d~e"), "a-b_c.d~e");
+    }
+
+    /// urlencoding::encode 对空格编码为 %20。
+    #[test]
+    fn urlencoding_encode_space_to_percent_20() {
+        assert_eq!(urlencoding::encode("a b"), "a%20b");
+    }
+
+    /// urlencoding::encode 对空字符串返回空字符串。
+    #[test]
+    fn urlencoding_encode_empty_string_returns_empty() {
+        assert_eq!(urlencoding::encode(""), "");
+    }
+
+    /// urlencoding::encode 对特殊字符 &=?# 编码。
+    #[test]
+    fn urlencoding_encode_special_chars_encoded() {
+        let encoded = urlencoding::encode("a&b=c?d#e");
+        assert!(!encoded.contains('&'), "& 应被编码");
+        assert!(!encoded.contains('='), "= 应被编码");
+        assert!(!encoded.contains('?'), "? 应被编码");
+        assert!(!encoded.contains('#'), "# 应被编码");
+    }
+
+    // ========================================================================
+    // AlipayProvider 构造与 builder 测试
+    // ========================================================================
+
+    /// AlipayProvider::new 正确设置 app_id。
+    #[tokio::test]
+    async fn alipay_provider_new_sets_app_id() {
+        let provider = AlipayProvider::new("my_app_id", "private_key_pem");
+        let url = provider
+            .get_authorization_url("state", "https://example.com/cb")
+            .await
+            .expect("get_authorization_url 应返回 Ok");
+        assert!(
+            url.contains("app_id=my_app_id"),
+            "URL 应含 app_id，实际: {}",
+            url
+        );
+    }
+
+    /// with_gateway_url 返回 Self 支持链式调用。
+    #[tokio::test]
+    async fn alipay_provider_with_gateway_url_returns_self_for_chaining() {
+        let pem = generate_test_rsa_pem();
+        let provider =
+            AlipayProvider::new("app_id", &pem).with_gateway_url("https://custom.gateway.url");
+        // 验证链式调用后 provider 仍可用
+        let url = provider
+            .get_authorization_url("s", "r")
+            .await
+            .expect("get_authorization_url 应返回 Ok");
+        assert!(url.contains("app_id=app_id"));
+    }
+
+    /// get_authorization_url 对含特殊字符的 state 和 redirect_uri 进行 URL 编码。
+    #[tokio::test]
+    async fn alipay_provider_get_authorization_url_encodes_special_chars() {
+        let provider = AlipayProvider::new("app_id", "private_key_pem");
+        let url = provider
+            .get_authorization_url("state with space", "https://example.com/cb?foo=bar")
+            .await
+            .expect("get_authorization_url 应返回 Ok");
+        assert!(!url.contains("state with space"), "state 应被 URL 编码");
+        assert!(
+            url.contains("state=state%20with%20space"),
+            "state 空格应编码为 %20，实际: {}",
+            url
+        );
+    }
+
+    // ========================================================================
+    // sign_request 单元测试
+    // ========================================================================
+
+    /// sign_request 用有效 PEM 返回 base64 编码的签名。
+    #[test]
+    fn sign_request_valid_pem_returns_signature() {
+        let pem = generate_test_rsa_pem();
+        let provider = AlipayProvider::new("app_id", &pem);
+        let params = vec![
+            ("app_id".to_string(), "test_app".to_string()),
+            ("method".to_string(), "test.method".to_string()),
+        ];
+        let result = provider.sign_request(&params);
+        assert!(result.is_ok(), "sign_request 应返回 Ok: {:?}", result.err());
+        let signature = result.expect("sign_request 应返回 Ok");
+        assert!(!signature.is_empty(), "签名不应为空");
+        // base64 编码的签名应可解码
+        let decoded = STANDARD.decode(&signature);
+        assert!(decoded.is_ok(), "签名应为有效 base64: {:?}", decoded.err());
+    }
+
+    /// sign_request 用无效 PEM 返回 Config 错误。
+    #[test]
+    fn sign_request_invalid_pem_returns_config_error() {
+        let provider = AlipayProvider::new("app_id", "invalid_pem");
+        let params = vec![("key".to_string(), "value".to_string())];
+        let result = provider.sign_request(&params);
+        assert!(result.is_err(), "无效 PEM 应返回 Err");
+        match result {
+            Err(BulwarkError::Config(_)) => {},
+            Err(other) => panic!("期望 Config 错误，实际: {:?}", other),
+            Ok(_) => unreachable!("无效 PEM 不应返回 Ok"),
+        }
+    }
+
+    /// sign_request 对相同参数返回相同签名（确定性）。
+    #[test]
+    fn sign_request_deterministic_same_params_same_signature() {
+        let pem = generate_test_rsa_pem();
+        let provider = AlipayProvider::new("app_id", &pem);
+        let params = vec![
+            ("app_id".to_string(), "test".to_string()),
+            ("method".to_string(), "test.method".to_string()),
+            ("charset".to_string(), "UTF-8".to_string()),
+        ];
+        let sig1 = provider
+            .sign_request(&params)
+            .expect("第一次 sign_request 应成功");
+        let sig2 = provider
+            .sign_request(&params)
+            .expect("第二次 sign_request 应成功");
+        assert_eq!(sig1, sig2, "相同参数应返回相同签名");
+    }
+
+    /// sign_request 对参数按 key ASCII 升序排序后签名（顺序不影响结果）。
+    #[test]
+    fn sign_request_sorts_params_before_signing() {
+        let pem = generate_test_rsa_pem();
+        let provider = AlipayProvider::new("app_id", &pem);
+        // 逆序参数
+        let params_reverse = vec![
+            ("z_param".to_string(), "z".to_string()),
+            ("a_param".to_string(), "a".to_string()),
+            ("m_param".to_string(), "m".to_string()),
+        ];
+        // 正序参数
+        let params_sorted = vec![
+            ("a_param".to_string(), "a".to_string()),
+            ("m_param".to_string(), "m".to_string()),
+            ("z_param".to_string(), "z".to_string()),
+        ];
+        let sig_reverse = provider
+            .sign_request(&params_reverse)
+            .expect("逆序 sign_request 应成功");
+        let sig_sorted = provider
+            .sign_request(&params_sorted)
+            .expect("正序 sign_request 应成功");
+        assert_eq!(
+            sig_reverse, sig_sorted,
+            "参数顺序不影响签名结果（内部已排序）"
+        );
+    }
+
+    /// sign_request 对空参数列表返回有效签名。
+    #[test]
+    fn sign_request_empty_params_returns_signature() {
+        let pem = generate_test_rsa_pem();
+        let provider = AlipayProvider::new("app_id", &pem);
+        let params: Vec<(String, String)> = vec![];
+        let result = provider.sign_request(&params);
+        assert!(result.is_ok(), "空参数 sign_request 应返回 Ok");
+        let signature = result.expect("sign_request 应返回 Ok");
+        assert!(!signature.is_empty(), "空参数签名不应为空");
+    }
+
+    // ========================================================================
+    // exchange_token 错误路径测试
+    // ========================================================================
+
+    /// exchange_token 在 HTTP 500 时返回 Network 错误。
+    #[tokio::test]
+    async fn alipay_provider_exchange_token_http_500_returns_error() {
+        let pem = generate_test_rsa_pem();
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/gateway.do"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+
+        let provider = AlipayProvider::new("app_id", &pem)
+            .with_gateway_url(format!("{}/gateway.do", server.uri()));
+        let result = provider.exchange_token("auth_code", "state").await;
+
+        assert!(result.is_err(), "HTTP 500 应返回 Err");
+        match result {
+            Err(BulwarkError::Network(_)) => {},
+            Err(other) => panic!("期望 Network 错误，实际: {:?}", other),
+            Ok(_) => unreachable!("HTTP 500 不应返回 Ok"),
+        }
+    }
+
+    /// exchange_token 在响应含 error_response 时返回 Network 错误。
+    #[tokio::test]
+    async fn alipay_provider_exchange_token_error_response_returns_error() {
+        let pem = generate_test_rsa_pem();
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/gateway.do"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "error_response": {
+                    "code": "20001",
+                    "msg": "_insufficient_permissions"
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = AlipayProvider::new("app_id", &pem)
+            .with_gateway_url(format!("{}/gateway.do", server.uri()));
+        let result = provider.exchange_token("auth_code", "state").await;
+
+        assert!(result.is_err(), "error_response 应返回 Err");
+        match result {
+            Err(BulwarkError::Network(_)) => {},
+            Err(other) => panic!("期望 Network 错误，实际: {:?}", other),
+            Ok(_) => unreachable!("error_response 不应返回 Ok"),
+        }
+    }
+
+    /// exchange_token 在响应缺少 user_id 字段时返回 Network 错误。
+    #[tokio::test]
+    async fn alipay_provider_exchange_token_missing_user_id_returns_error() {
+        let pem = generate_test_rsa_pem();
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/gateway.do"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "alipay_system_oauth_token_response": {
+                    "access_token": "tok123",
+                    "expires_in": 3600
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = AlipayProvider::new("app_id", &pem)
+            .with_gateway_url(format!("{}/gateway.do", server.uri()));
+        let result = provider.exchange_token("auth_code", "state").await;
+
+        assert!(result.is_err(), "缺少 user_id 应返回 Err");
+        match result {
+            Err(BulwarkError::Network(_)) => {},
+            Err(other) => panic!("期望 Network 错误，实际: {:?}", other),
+            Ok(_) => unreachable!("缺少 user_id 不应返回 Ok"),
+        }
+    }
+
+    /// exchange_token 在响应缺少 alipay_system_oauth_token_response 时返回 Network 错误。
+    #[tokio::test]
+    async fn alipay_provider_exchange_token_missing_response_object_returns_error() {
+        let pem = generate_test_rsa_pem();
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/gateway.do"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "some_other_field": "value"
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = AlipayProvider::new("app_id", &pem)
+            .with_gateway_url(format!("{}/gateway.do", server.uri()));
+        let result = provider.exchange_token("auth_code", "state").await;
+
+        assert!(result.is_err(), "缺少 oauth_token_response 应返回 Err");
+    }
+
+    // ========================================================================
+    // get_user_info 错误路径测试
+    // ========================================================================
+
+    /// get_user_info 在 HTTP 500 时返回 Network 错误。
+    #[tokio::test]
+    async fn alipay_provider_get_user_info_http_500_returns_error() {
+        let pem = generate_test_rsa_pem();
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/gateway.do"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+
+        let provider = AlipayProvider::new("app_id", &pem)
+            .with_gateway_url(format!("{}/gateway.do", server.uri()));
+        let result = provider.get_user_info("access_token").await;
+
+        assert!(result.is_err(), "HTTP 500 应返回 Err");
+        match result {
+            Err(BulwarkError::Network(_)) => {},
+            Err(other) => panic!("期望 Network 错误，实际: {:?}", other),
+            Ok(_) => unreachable!("HTTP 500 不应返回 Ok"),
+        }
+    }
+
+    /// get_user_info 在响应含 error_response 时返回 Network 错误。
+    #[tokio::test]
+    async fn alipay_provider_get_user_info_error_response_returns_error() {
+        let pem = generate_test_rsa_pem();
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/gateway.do"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "error_response": {
+                    "code": "20001",
+                    "msg": "insufficient permissions"
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = AlipayProvider::new("app_id", &pem)
+            .with_gateway_url(format!("{}/gateway.do", server.uri()));
+        let result = provider.get_user_info("access_token").await;
+
+        assert!(result.is_err(), "error_response 应返回 Err");
+        match result {
+            Err(BulwarkError::Network(_)) => {},
+            Err(other) => panic!("期望 Network 错误，实际: {:?}", other),
+            Ok(_) => unreachable!("error_response 不应返回 Ok"),
+        }
+    }
+
+    /// get_user_info 在响应缺少 alipay_user_info_share_response 时返回 Network 错误。
+    #[tokio::test]
+    async fn alipay_provider_get_user_info_missing_response_object_returns_error() {
+        let pem = generate_test_rsa_pem();
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/gateway.do"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "some_other_field": "value"
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = AlipayProvider::new("app_id", &pem)
+            .with_gateway_url(format!("{}/gateway.do", server.uri()));
+        let result = provider.get_user_info("access_token").await;
+
+        assert!(result.is_err(), "缺少 user_info_share_response 应返回 Err");
+        match result {
+            Err(BulwarkError::Network(_)) => {},
+            Err(other) => panic!("期望 Network 错误，实际: {:?}", other),
+            Ok(_) => unreachable!("缺少 response object 不应返回 Ok"),
+        }
+    }
+
+    /// get_user_info 在响应缺少 user_id 字段时返回 Network 错误。
+    #[tokio::test]
+    async fn alipay_provider_get_user_info_missing_user_id_returns_error() {
+        let pem = generate_test_rsa_pem();
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/gateway.do"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "alipay_user_info_share_response": {
+                    "nick": "Bob",
+                    "avatar": "https://img.example.com/b.png"
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = AlipayProvider::new("app_id", &pem)
+            .with_gateway_url(format!("{}/gateway.do", server.uri()));
+        let result = provider.get_user_info("access_token").await;
+
+        assert!(result.is_err(), "缺少 user_id 应返回 Err");
+        match result {
+            Err(BulwarkError::Network(_)) => {},
+            Err(other) => panic!("期望 Network 错误，实际: {:?}", other),
+            Ok(_) => unreachable!("缺少 user_id 不应返回 Ok"),
+        }
+    }
+
+    /// get_user_info 成功但 nick/avatar 缺失时返回 None。
+    #[tokio::test]
+    async fn alipay_provider_get_user_info_missing_optional_fields_returns_none() {
+        let pem = generate_test_rsa_pem();
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/gateway.do"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "alipay_user_info_share_response": {
+                    "user_id": "user123"
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = AlipayProvider::new("app_id", &pem)
+            .with_gateway_url(format!("{}/gateway.do", server.uri()));
+        let user_info = provider
+            .get_user_info("access_token")
+            .await
+            .expect("get_user_info 应返回 Ok");
+
+        assert_eq!(user_info.provider_user_id, "user123");
+        assert!(user_info.nickname.is_none());
+        assert!(user_info.avatar.is_none());
+        assert!(user_info.union_id.is_none());
+    }
 }

@@ -352,4 +352,120 @@ mod tests {
             err_msg
         );
     }
+
+    /// find_by_user_id 查询无角色关联的用户应返回空列表。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn find_by_user_id_returns_empty_for_no_roles() {
+        let pool = setup_db().await;
+        let repo = DbnexusUserRoleRepository::new(pool.clone());
+        let (user_id, _) = setup_user_and_role(&pool, 1).await;
+
+        let rows = repo
+            .find_by_user_id(1, &user_id)
+            .await
+            .expect("find_by_user_id 应成功");
+        assert!(rows.is_empty(), "无角色关联的用户应返回空列表");
+    }
+
+    /// find_by_role_id 查询无用户关联的角色应返回空列表。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn find_by_role_id_returns_empty_for_no_users() {
+        let pool = setup_db().await;
+        let repo = DbnexusUserRoleRepository::new(pool.clone());
+        let (_, role_id) = setup_user_and_role(&pool, 1).await;
+
+        let rows = repo
+            .find_by_role_id(1, &role_id)
+            .await
+            .expect("find_by_role_id 应成功");
+        assert!(rows.is_empty(), "无用户关联的角色应返回空列表");
+    }
+
+    /// assign 时 scope 为 None 也能正确插入。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn assign_with_scope_none() {
+        let pool = setup_db().await;
+        let repo = DbnexusUserRoleRepository::new(pool.clone());
+        let (user_id, role_id) = setup_user_and_role(&pool, 1).await;
+
+        repo.assign(1, &user_id, &role_id, None)
+            .await
+            .expect("assign scope=None 应成功");
+
+        let rows = repo
+            .find_by_user_id(1, &user_id)
+            .await
+            .expect("find_by_user_id 应成功");
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].scope.is_none(), "scope 应为 None");
+    }
+
+    /// list 分页查询：插入 3 条后 offset/limit 正确分页。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn list_paginates_correctly() {
+        let pool = setup_db().await;
+        let repo = DbnexusUserRoleRepository::new(pool.clone());
+        let role_repo = DbnexusRoleRepository::new(pool.clone());
+        let user_repo = DbnexusUserRepository::new(pool.clone());
+
+        let role_id = role_repo
+            .create(
+                1,
+                NewRole {
+                    code: "page-shared-role".to_string(),
+                    name: "共享角色".to_string(),
+                    description: None,
+                    is_system: false,
+                },
+            )
+            .await
+            .expect("创建 role 应成功");
+
+        for i in 0..3 {
+            let user_id = user_repo
+                .create(
+                    1,
+                    NewUser {
+                        username: format!("page-user-{}", i),
+                        password_hash: "h".to_string(),
+                        status: "active".to_string(),
+                    },
+                )
+                .await
+                .expect("创建 user 应成功");
+            repo.assign(1, &user_id, &role_id, None)
+                .await
+                .expect("assign 应成功");
+        }
+
+        let all = repo.list(1, 0, 100).await.expect("list 应成功");
+        assert_eq!(all.len(), 3, "应有 3 条记录");
+
+        let page = repo.list(1, 1, 1).await.expect("list 分页应成功");
+        assert_eq!(page.len(), 1, "分页应返回 1 条");
+
+        let empty = repo.list(1, 100, 10).await.expect("list 超范围应成功");
+        assert!(empty.is_empty(), "超出范围的 offset 应返回空");
+    }
+
+    /// list 空表查询应返回空列表。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn list_empty_returns_empty() {
+        let pool = setup_db().await;
+        let repo = DbnexusUserRoleRepository::new(pool);
+
+        let result = repo.list(1, 0, 100).await.expect("list 应成功");
+        assert!(result.is_empty(), "空表应返回空列表");
+    }
+
+    /// revoke 对不存在的关联不报错（幂等）。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn revoke_nonexistent_is_noop() {
+        let pool = setup_db().await;
+        let repo = DbnexusUserRoleRepository::new(pool);
+
+        repo.revoke(1, "nonexistent-user", "nonexistent-role")
+            .await
+            .expect("revoke 不存在的关联应为 no-op");
+    }
 }

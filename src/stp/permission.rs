@@ -595,4 +595,418 @@ mod tests {
             result
         );
     }
+
+    // ========================================================================
+    // BulwarkLogicDefault impl 覆盖测试
+    // 覆盖 check_permission/check_role 的 firewall 路径 + get_permission_list/get_role_list
+    // ========================================================================
+
+    mod default_impl_coverage {
+        use super::*;
+        use crate::dao::BulwarkDao;
+        use crate::session::BulwarkSession;
+        use crate::stp::mock::{MockDao, MockFirewall};
+        use crate::stp::with_current_token;
+        use crate::strategy::BulwarkPermissionStrategy;
+        use std::sync::Arc;
+
+        fn make_logic(
+            throw_on_not_login: bool,
+            has_permission: bool,
+            has_role: bool,
+        ) -> BulwarkLogicDefault {
+            let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+            let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
+            let mut config = BulwarkConfig::default_config();
+            config.throw_on_not_login = throw_on_not_login;
+            config.token_style = "uuid".to_string();
+            let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
+                has_permission,
+                has_role,
+            });
+            BulwarkLogicDefault::new(session, Arc::new(config), firewall)
+        }
+
+        // ----------------------------------------------------------------
+        // check_permission：未登录路径
+        // ----------------------------------------------------------------
+
+        /// 未登录 + throw_on_not_login=true → Err(NotLogin)。
+        #[tokio::test]
+        async fn check_permission_no_login_throws_not_login() {
+            let logic = make_logic(true, true, true);
+            let result = logic.check_permission("user:read").await;
+            assert!(
+                matches!(result, Err(BulwarkError::NotLogin(_))),
+                "未登录 + throw=true 应返回 NotLogin，实际: {:?}",
+                result
+            );
+        }
+
+        /// 未登录 + throw_on_not_login=false → Err(NotPermission)。
+        #[tokio::test]
+        async fn check_permission_no_login_returns_not_permission() {
+            let logic = make_logic(false, true, true);
+            let result = logic.check_permission("user:read").await;
+            assert!(
+                matches!(result, Err(BulwarkError::NotPermission(_))),
+                "未登录 + throw=false 应返回 NotPermission，实际: {:?}",
+                result
+            );
+        }
+
+        // ----------------------------------------------------------------
+        // check_permission：已登录 + firewall 路径
+        // ----------------------------------------------------------------
+
+        /// 已登录 + firewall.has_permission=true → Ok(())。
+        #[tokio::test]
+        async fn check_permission_logged_in_with_perm_returns_ok() {
+            let logic = make_logic(false, true, true);
+            let token = logic
+                .login("perm-user-001", &crate::stp::LoginParams::default())
+                .await
+                .unwrap();
+            let result =
+                with_current_token(token, async { logic.check_permission("user:read").await })
+                    .await;
+            assert!(
+                result.is_ok(),
+                "已登录 + has_permission=true 应返回 Ok，实际: {:?}",
+                result
+            );
+        }
+
+        /// 已登录 + firewall.has_permission=false → Err(NotPermission)。
+        #[tokio::test]
+        async fn check_permission_logged_in_without_perm_returns_not_permission() {
+            let logic = make_logic(false, false, true);
+            let token = logic
+                .login("perm-user-002", &crate::stp::LoginParams::default())
+                .await
+                .unwrap();
+            let result =
+                with_current_token(token, async { logic.check_permission("user:read").await })
+                    .await;
+            assert!(
+                matches!(result, Err(BulwarkError::NotPermission(_))),
+                "已登录 + has_permission=false 应返回 NotPermission，实际: {:?}",
+                result
+            );
+        }
+
+        // ----------------------------------------------------------------
+        // check_role：未登录路径
+        // ----------------------------------------------------------------
+
+        /// 未登录 + throw_on_not_login=true → Err(NotLogin)。
+        #[tokio::test]
+        async fn check_role_no_login_throws_not_login() {
+            let logic = make_logic(true, true, true);
+            let result = logic.check_role("admin").await;
+            assert!(
+                matches!(result, Err(BulwarkError::NotLogin(_))),
+                "未登录 + throw=true 应返回 NotLogin，实际: {:?}",
+                result
+            );
+        }
+
+        /// 未登录 + throw_on_not_login=false → Err(NotRole)。
+        #[tokio::test]
+        async fn check_role_no_login_returns_not_role() {
+            let logic = make_logic(false, true, true);
+            let result = logic.check_role("admin").await;
+            assert!(
+                matches!(result, Err(BulwarkError::NotRole(_))),
+                "未登录 + throw=false 应返回 NotRole，实际: {:?}",
+                result
+            );
+        }
+
+        // ----------------------------------------------------------------
+        // check_role：已登录 + firewall 路径
+        // ----------------------------------------------------------------
+
+        /// 已登录 + firewall.has_role=true → Ok(())。
+        #[tokio::test]
+        async fn check_role_logged_in_with_role_returns_ok() {
+            let logic = make_logic(false, true, true);
+            let token = logic
+                .login("role-user-001", &crate::stp::LoginParams::default())
+                .await
+                .unwrap();
+            let result = with_current_token(token, async { logic.check_role("admin").await }).await;
+            assert!(
+                result.is_ok(),
+                "已登录 + has_role=true 应返回 Ok，实际: {:?}",
+                result
+            );
+        }
+
+        /// 已登录 + firewall.has_role=false → Err(NotRole)。
+        #[tokio::test]
+        async fn check_role_logged_in_without_role_returns_not_role() {
+            let logic = make_logic(false, true, false);
+            let token = logic
+                .login("role-user-002", &crate::stp::LoginParams::default())
+                .await
+                .unwrap();
+            let result = with_current_token(token, async { logic.check_role("admin").await }).await;
+            assert!(
+                matches!(result, Err(BulwarkError::NotRole(_))),
+                "已登录 + has_role=false 应返回 NotRole，实际: {:?}",
+                result
+            );
+        }
+
+        // ----------------------------------------------------------------
+        // get_permission_list / get_role_list
+        // ----------------------------------------------------------------
+
+        /// 未登录 → get_permission_list 返回空 Vec。
+        #[tokio::test]
+        async fn get_permission_list_no_login_returns_empty() {
+            let logic = make_logic(false, true, true);
+            let result = logic.get_permission_list().await;
+            assert!(result.is_ok(), "未登录应返回 Ok，实际: {:?}", result);
+            assert!(result.unwrap().is_empty(), "未登录应返回空 Vec");
+        }
+
+        /// 未登录 → get_role_list 返回空 Vec。
+        #[tokio::test]
+        async fn get_role_list_no_login_returns_empty() {
+            let logic = make_logic(false, true, true);
+            let result = logic.get_role_list().await;
+            assert!(result.is_ok(), "未登录应返回 Ok，实际: {:?}", result);
+            assert!(result.unwrap().is_empty(), "未登录应返回空 Vec");
+        }
+
+        /// 已登录 → get_permission_list 委托 firewall（MockFirewall 返回空 Vec）。
+        #[tokio::test]
+        async fn get_permission_list_logged_in_delegates_to_firewall() {
+            let logic = make_logic(false, true, true);
+            let token = logic
+                .login("list-user-001", &crate::stp::LoginParams::default())
+                .await
+                .unwrap();
+            let result =
+                with_current_token(token, async { logic.get_permission_list().await }).await;
+            assert!(result.is_ok(), "已登录应返回 Ok，实际: {:?}", result);
+        }
+
+        /// 已登录 → get_role_list 委托 firewall。
+        #[tokio::test]
+        async fn get_role_list_logged_in_delegates_to_firewall() {
+            let logic = make_logic(false, true, true);
+            let token = logic
+                .login("list-user-002", &crate::stp::LoginParams::default())
+                .await
+                .unwrap();
+            let result = with_current_token(token, async { logic.get_role_list().await }).await;
+            assert!(result.is_ok(), "已登录应返回 Ok，实际: {:?}", result);
+        }
+
+        // ----------------------------------------------------------------
+        // has_permission / has_role（通过 BulwarkLogicDefault）
+        // ----------------------------------------------------------------
+
+        /// 已登录 + has_permission=true → has_permission 返回 Ok(true)。
+        #[tokio::test]
+        async fn has_permission_logged_in_with_perm_returns_true() {
+            let logic = make_logic(false, true, true);
+            let token = logic
+                .login("has-perm-001", &crate::stp::LoginParams::default())
+                .await
+                .unwrap();
+            let result =
+                with_current_token(token, async { logic.has_permission("user:read").await }).await;
+            assert!(result.is_ok(), "应返回 Ok，实际: {:?}", result);
+            assert!(result.unwrap(), "has_permission=true 应返回 true");
+        }
+
+        /// 已登录 + has_role=false → has_role 返回 Ok(false)。
+        #[tokio::test]
+        async fn has_role_logged_in_without_role_returns_false() {
+            let logic = make_logic(false, true, false);
+            let token = logic
+                .login("has-role-001", &crate::stp::LoginParams::default())
+                .await
+                .unwrap();
+            let result = with_current_token(token, async { logic.has_role("admin").await }).await;
+            assert!(result.is_ok(), "应返回 Ok，实际: {:?}", result);
+            assert!(!result.unwrap(), "has_role=false 应返回 false");
+        }
+    }
+
+    // ========================================================================
+    // permission_checker 注入路径测试
+    // 覆盖 check_permission 的 permission_checker 分支（lines 188-219）
+    // ========================================================================
+
+    mod permission_checker_coverage {
+        use super::*;
+        use crate::core::permission::{AuthRequest, Decision, DecisionReason, PermissionChecker};
+        use crate::dao::BulwarkDao;
+        use crate::session::BulwarkSession;
+        use crate::stp::mock::{MockDao, MockFirewall};
+        use crate::stp::with_current_token;
+        use crate::strategy::BulwarkPermissionStrategy;
+        use async_trait::async_trait;
+        use std::sync::Arc;
+
+        /// 可配置 authorize 返回值的 mock PermissionChecker。
+        struct MockPermissionChecker {
+            allowed: bool,
+            fail: bool,
+        }
+
+        #[async_trait]
+        impl PermissionChecker for MockPermissionChecker {
+            async fn has_permission(
+                &self,
+                _login_id: &str,
+                _permission: &str,
+            ) -> BulwarkResult<bool> {
+                Ok(self.allowed)
+            }
+            async fn has_role(&self, _login_id: &str, _role: &str) -> BulwarkResult<bool> {
+                Ok(self.allowed)
+            }
+            async fn authorize(&self, _request: &AuthRequest) -> BulwarkResult<Decision> {
+                if self.fail {
+                    return Err(BulwarkError::Dao("权限数据源故障".to_string()));
+                }
+                Ok(Decision {
+                    allowed: self.allowed,
+                    reason: if self.allowed {
+                        DecisionReason::ExplicitAllow
+                    } else {
+                        DecisionReason::NoMatchingPermission
+                    },
+                    errors: Vec::new(),
+                    checked_permissions: Vec::new(),
+                    matched_roles: Vec::new(),
+                    trace_id: None,
+                })
+            }
+            async fn has_any_permission(&self, _login_id: &str, _perms: &[&str]) -> bool {
+                self.allowed
+            }
+            async fn has_all_permissions(&self, _login_id: &str, _perms: &[&str]) -> bool {
+                self.allowed
+            }
+        }
+
+        /// 构造带 permission_checker 的 BulwarkLogicDefault。
+        fn make_logic_with_checker(allowed: bool, fail: bool) -> BulwarkLogicDefault {
+            let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+            let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
+            let mut config = BulwarkConfig::default_config();
+            config.throw_on_not_login = false;
+            config.token_style = "uuid".to_string();
+            let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
+                has_permission: true,
+                has_role: true,
+            });
+            let pc: Arc<dyn PermissionChecker> = Arc::new(MockPermissionChecker { allowed, fail });
+            BulwarkLogicDefault::new(session, Arc::new(config), firewall)
+                .with_permission_checker(pc)
+        }
+
+        /// 已登录 + permission_checker.authorize 返回 allowed=true → Ok(())。
+        ///
+        /// 覆盖 permission.rs 第 188-219 行 permission_checker 注入路径的 allowed=true 分支。
+        #[tokio::test]
+        async fn check_permission_with_checker_allowed_returns_ok() {
+            let logic = make_logic_with_checker(true, false);
+            let token = logic
+                .login("checker-user-001", &crate::stp::LoginParams::default())
+                .await
+                .unwrap();
+            let result =
+                with_current_token(token, async { logic.check_permission("user:read").await })
+                    .await;
+            assert!(
+                result.is_ok(),
+                "permission_checker allowed=true 应返回 Ok，实际: {:?}",
+                result
+            );
+        }
+
+        /// 已登录 + permission_checker.authorize 返回 allowed=false → Err(NotPermission)。
+        ///
+        /// 覆盖 permission.rs 第 214-218 行 `decision.allowed=false → Err(NotPermission)` 分支。
+        #[tokio::test]
+        async fn check_permission_with_checker_denied_returns_not_permission() {
+            let logic = make_logic_with_checker(false, false);
+            let token = logic
+                .login("checker-user-002", &crate::stp::LoginParams::default())
+                .await
+                .unwrap();
+            let result =
+                with_current_token(token, async { logic.check_permission("user:read").await })
+                    .await;
+            assert!(
+                matches!(result, Err(BulwarkError::NotPermission(_))),
+                "permission_checker allowed=false 应返回 NotPermission，实际: {:?}",
+                result
+            );
+        }
+
+        /// 已登录 + permission_checker.authorize 返回 Err → 透传错误。
+        ///
+        /// 覆盖 permission.rs 第 196 行 `pc.authorize(&request).await?` 错误传播路径。
+        #[tokio::test]
+        async fn check_permission_with_checker_error_propagates() {
+            let logic = make_logic_with_checker(false, true);
+            let token = logic
+                .login("checker-user-003", &crate::stp::LoginParams::default())
+                .await
+                .unwrap();
+            let result =
+                with_current_token(token, async { logic.check_permission("user:read").await })
+                    .await;
+            assert!(
+                matches!(result, Err(BulwarkError::Dao(ref s)) if s.contains("权限数据源故障")),
+                "permission_checker authorize 错误应透传，实际: {:?}",
+                result
+            );
+        }
+
+        /// permission_checker 注入时，has_permission 通过 check_permission 委托返回 true。
+        ///
+        /// 覆盖 permission.rs 第 188-219 行 permission_checker 路径 + has_permission 默认实现。
+        #[tokio::test]
+        async fn has_permission_with_checker_allowed_returns_true() {
+            let logic = make_logic_with_checker(true, false);
+            let token = logic
+                .login("checker-user-004", &crate::stp::LoginParams::default())
+                .await
+                .unwrap();
+            let result =
+                with_current_token(token, async { logic.has_permission("user:read").await }).await;
+            assert!(result.is_ok(), "应返回 Ok，实际: {:?}", result);
+            assert!(
+                result.unwrap(),
+                "permission_checker allowed=true 时 has_permission 应返回 true"
+            );
+        }
+
+        /// permission_checker 注入时，has_permission 返回 false（allowed=false 路径）。
+        #[tokio::test]
+        async fn has_permission_with_checker_denied_returns_false() {
+            let logic = make_logic_with_checker(false, false);
+            let token = logic
+                .login("checker-user-005", &crate::stp::LoginParams::default())
+                .await
+                .unwrap();
+            let result =
+                with_current_token(token, async { logic.has_permission("user:read").await }).await;
+            assert!(result.is_ok(), "应返回 Ok，实际: {:?}", result);
+            assert!(
+                !result.unwrap(),
+                "permission_checker allowed=false 时 has_permission 应返回 false"
+            );
+        }
+    }
 }

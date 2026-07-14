@@ -691,4 +691,353 @@ mod tests {
             "anon Session 不应出现在 login_id 搜索结果"
         );
     }
+
+    // ========================================================================
+    // 输入验证测试（MAX_KEYWORD_LEN / MAX_SIZE）
+    // ========================================================================
+
+    /// keyword 超过 MAX_KEYWORD_LEN 时返回 InvalidParam 错误。
+    #[tokio::test]
+    async fn search_token_value_keyword_too_long_returns_error() {
+        let (_dao, session) = make_session(3600, 86400);
+        let long_keyword = "a".repeat(MAX_KEYWORD_LEN + 1);
+        let result = session
+            .search_token_value(&long_keyword, 0, 10, SearchSortType::CreatedAsc)
+            .await;
+        assert!(result.is_err(), "超长 keyword 应返回错误");
+        match result {
+            Err(BulwarkError::InvalidParam(msg)) => {
+                assert!(
+                    msg.contains("keyword 长度超限"),
+                    "错误消息应包含 'keyword 长度超限'，实际: {}",
+                    msg
+                );
+            },
+            Err(other) => panic!("期望 InvalidParam，实际: {:?}", other),
+            Ok(_) => panic!("期望错误，实际返回 Ok"),
+        }
+    }
+
+    /// size 超过 MAX_SIZE 时返回 InvalidParam 错误。
+    #[tokio::test]
+    async fn search_token_value_size_too_large_returns_error() {
+        let (_dao, session) = make_session(3600, 86400);
+        let result = session
+            .search_token_value("", 0, MAX_SIZE + 1, SearchSortType::CreatedAsc)
+            .await;
+        assert!(result.is_err(), "超大 size 应返回错误");
+        match result {
+            Err(BulwarkError::InvalidParam(msg)) => {
+                assert!(
+                    msg.contains("size 超限"),
+                    "错误消息应包含 'size 超限'，实际: {}",
+                    msg
+                );
+            },
+            Err(other) => panic!("期望 InvalidParam，实际: {:?}", other),
+            Ok(_) => panic!("期望错误，实际返回 Ok"),
+        }
+    }
+
+    /// search_session_id keyword 超长时返回 InvalidParam。
+    #[tokio::test]
+    async fn search_session_id_keyword_too_long_returns_error() {
+        let (_dao, session) = make_session(3600, 86400);
+        let long_keyword = "x".repeat(MAX_KEYWORD_LEN + 1);
+        let result = session
+            .search_session_id(&long_keyword, 0, 10, SearchSortType::CreatedAsc)
+            .await;
+        assert!(result.is_err());
+        assert!(matches!(result, Err(BulwarkError::InvalidParam(_))));
+    }
+
+    /// search_session_id size 超大时返回 InvalidParam。
+    #[tokio::test]
+    async fn search_session_id_size_too_large_returns_error() {
+        let (_dao, session) = make_session(3600, 86400);
+        let result = session
+            .search_session_id("", 0, MAX_SIZE + 1, SearchSortType::CreatedAsc)
+            .await;
+        assert!(result.is_err());
+        assert!(matches!(result, Err(BulwarkError::InvalidParam(_))));
+    }
+
+    /// search_token_session_id keyword 超长时返回 InvalidParam。
+    #[tokio::test]
+    async fn search_token_session_id_keyword_too_long_returns_error() {
+        let (_dao, session) = make_session(3600, 86400);
+        let long_keyword = "y".repeat(MAX_KEYWORD_LEN + 1);
+        let result = session
+            .search_token_session_id(&long_keyword, 0, 10, SearchSortType::CreatedAsc)
+            .await;
+        assert!(result.is_err());
+        assert!(matches!(result, Err(BulwarkError::InvalidParam(_))));
+    }
+
+    /// search_token_session_id size 超大时返回 InvalidParam。
+    #[tokio::test]
+    async fn search_token_session_id_size_too_large_returns_error() {
+        let (_dao, session) = make_session(3600, 86400);
+        let result = session
+            .search_token_session_id("", 0, MAX_SIZE + 1, SearchSortType::CreatedAsc)
+            .await;
+        assert!(result.is_err());
+        assert!(matches!(result, Err(BulwarkError::InvalidParam(_))));
+    }
+
+    // ========================================================================
+    // 分页边界测试
+    // ========================================================================
+
+    /// start 超出范围时返回空 Vec。
+    #[tokio::test]
+    async fn search_token_value_start_beyond_range_returns_empty() {
+        let (dao, session) = make_session(3600, 86400);
+        put_token_session(&dao, "tok-1", "u1", 100, 100).await;
+        put_token_session(&dao, "tok-2", "u2", 200, 200).await;
+
+        let result = session
+            .search_token_value("", 10, 100, SearchSortType::CreatedAsc)
+            .await
+            .unwrap();
+        assert!(result.is_empty(), "start 超出范围应返回空 Vec");
+    }
+
+    /// size=0 返回空 Vec。
+    #[tokio::test]
+    async fn search_token_value_size_zero_returns_empty() {
+        let (dao, session) = make_session(3600, 86400);
+        put_token_session(&dao, "tok-1", "u1", 100, 100).await;
+
+        let result = session
+            .search_token_value("", 0, 0, SearchSortType::CreatedAsc)
+            .await
+            .unwrap();
+        assert!(result.is_empty(), "size=0 应返回空 Vec");
+    }
+
+    /// 空数据库 + 空 keyword 返回空 Vec（不报错）。
+    #[tokio::test]
+    async fn search_empty_db_empty_keyword_returns_empty() {
+        let (_dao, session) = make_session(3600, 86400);
+        let result = session
+            .search_token_value("", 0, 100, SearchSortType::CreatedAsc)
+            .await
+            .unwrap();
+        assert!(result.is_empty());
+
+        let result2 = session
+            .search_session_id("", 0, 100, SearchSortType::CreatedAsc)
+            .await
+            .unwrap();
+        assert!(result2.is_empty());
+    }
+
+    // ========================================================================
+    // 反序列化容错测试
+    // ========================================================================
+
+    /// 损坏的 TokenSession JSON 被跳过（不 panic，不传播错误）。
+    #[tokio::test]
+    async fn search_token_value_skips_corrupted_json() {
+        let (dao, session) = make_session(3600, 86400);
+        // 写入正常 session
+        put_token_session(&dao, "valid-tok", "u1", 100, 100).await;
+        // 写入损坏的 JSON
+        let corrupt_key = format!("{}{}", TOKEN_SESSION_PREFIX, "corrupt-tok");
+        dao.set(&corrupt_key, "{invalid json}", 3600).await.unwrap();
+
+        let result = session
+            .search_token_value("", 0, 100, SearchSortType::CreatedAsc)
+            .await
+            .unwrap();
+        // 损坏记录被跳过，只返回正常记录
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], "valid-tok");
+    }
+
+    /// 损坏的 AccountSession JSON 被跳过。
+    #[tokio::test]
+    async fn search_session_id_skips_corrupted_json() {
+        let (dao, session) = make_session(3600, 86400);
+        // 写入正常 AccountSession（通过 session.create 创建）
+        session.create("valid-user", "tok-1").await.unwrap();
+        // 写入损坏的 AccountSession JSON
+        let corrupt_key = format!("{}corrupt-user", ACCOUNT_SESSION_PREFIX);
+        dao.set(&corrupt_key, "not valid json{{{", 3600)
+            .await
+            .unwrap();
+
+        let result = session
+            .search_session_id("", 0, 100, SearchSortType::CreatedAsc)
+            .await
+            .unwrap();
+        // 损坏记录被跳过，只返回正常记录
+        assert_eq!(result.len(), 1);
+        assert!(result.contains(&"valid-user".to_string()));
+    }
+
+    /// search_token_session_id 跳过损坏的 TokenSession JSON。
+    #[tokio::test]
+    async fn search_token_session_id_skips_corrupted_json() {
+        let (dao, session) = make_session(3600, 86400);
+        put_token_session(&dao, "valid-tok", "user-1", 100, 100).await;
+        let corrupt_key = format!("{}{}", TOKEN_SESSION_PREFIX, "corrupt-tok");
+        dao.set(&corrupt_key, "broken json", 3600).await.unwrap();
+
+        let result = session
+            .search_token_session_id("user", 0, 100, SearchSortType::CreatedAsc)
+            .await
+            .unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], "valid-tok");
+    }
+
+    /// get() 返回 None 的 key 被跳过（key 在 keys() 与 get() 之间过期）。
+    #[tokio::test]
+    async fn search_skips_keys_with_none_get() {
+        let (dao, session) = make_session(3600, 86400);
+        // 写入一个正常 session
+        put_token_session(&dao, "exists-tok", "u1", 100, 100).await;
+        // 写入一个 key 但值被手动删除（模拟 TTL 过期）
+        let expired_key = format!("{}{}", TOKEN_SESSION_PREFIX, "expired-tok");
+        dao.set(&expired_key, "will_be_deleted", 3600)
+            .await
+            .unwrap();
+        dao.delete(&expired_key).await.unwrap();
+
+        let result = session
+            .search_token_value("", 0, 100, SearchSortType::CreatedAsc)
+            .await
+            .unwrap();
+        // expired-tok 的 get() 返回 None，被跳过
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], "exists-tok");
+    }
+
+    // ========================================================================
+    // MAX_SCAN 截断测试
+    // ========================================================================
+
+    /// 模拟返回大量 key 的 mock DAO，用于测试 MAX_SCAN 截断。
+    struct LargeKeyDao {
+        key_count: usize,
+    }
+
+    impl LargeKeyDao {
+        fn new(key_count: usize) -> Self {
+            Self { key_count }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl crate::dao::BulwarkDao for LargeKeyDao {
+        async fn get(&self, _key: &str) -> BulwarkResult<Option<String>> {
+            Ok(None) // 返回 None，所有 key 被跳过
+        }
+
+        async fn set(&self, _key: &str, _value: &str, _ttl_seconds: u64) -> BulwarkResult<()> {
+            Ok(())
+        }
+
+        async fn update(&self, _key: &str, _value: &str) -> BulwarkResult<()> {
+            Ok(())
+        }
+
+        async fn expire(&self, _key: &str, _seconds: u64) -> BulwarkResult<()> {
+            Ok(())
+        }
+
+        async fn delete(&self, _key: &str) -> BulwarkResult<()> {
+            Ok(())
+        }
+
+        async fn keys(&self, pattern: &str) -> BulwarkResult<Vec<String>> {
+            // 根据 pattern 前缀生成对应数量的 key
+            let prefix = pattern.trim_end_matches('*');
+            let keys: Vec<String> = (0..self.key_count)
+                .map(|i| format!("{}key_{}", prefix, i))
+                .collect();
+            Ok(keys)
+        }
+    }
+
+    /// MAX_SCAN 截断：keys() 返回超过 MAX_SCAN 条 key 时被截断为 MAX_SCAN。
+    ///
+    /// 验证 DoS 防护：大量 key 不会导致搜索耗时过长。
+    #[tokio::test]
+    async fn search_truncates_keys_exceeding_max_scan() {
+        let dao = Arc::new(LargeKeyDao::new(MAX_SCAN + 100));
+        let session = BulwarkSession::new(dao, 3600, 86400);
+
+        // 搜索应成功完成（截断后所有 key 的 get() 返回 None，结果为空）
+        let result = session
+            .search_token_value("", 0, 100, SearchSortType::CreatedAsc)
+            .await
+            .unwrap();
+        assert!(result.is_empty(), "所有 key 的 get() 返回 None，结果应为空");
+    }
+
+    /// MAX_SCAN 边界：keys() 返回恰好 MAX_SCAN 条 key 时不截断。
+    #[tokio::test]
+    async fn search_max_scan_boundary_not_truncated() {
+        let dao = Arc::new(LargeKeyDao::new(MAX_SCAN));
+        let session = BulwarkSession::new(dao, 3600, 86400);
+
+        let result = session
+            .search_token_value("", 0, 100, SearchSortType::CreatedAsc)
+            .await
+            .unwrap();
+        // 恰好 MAX_SCAN 条不截断，但 get() 返回 None，结果为空
+        assert!(result.is_empty());
+    }
+
+    // ========================================================================
+    // sort_entries 排序测试
+    // ========================================================================
+
+    /// sort_entries 对 CreatedDesc 降序排列正确。
+    #[test]
+    fn sort_entries_created_desc_correct() {
+        let mut entries = vec![
+            ("a".to_string(), 100i64, 50i64),
+            ("b".to_string(), 300, 200),
+            ("c".to_string(), 200, 100),
+        ];
+        sort_entries(&mut entries, SearchSortType::CreatedDesc);
+        assert_eq!(entries[0].0, "b"); // 300
+        assert_eq!(entries[1].0, "c"); // 200
+        assert_eq!(entries[2].0, "a"); // 100
+    }
+
+    /// sort_entries 对 LastActiveDesc 降序排列正确。
+    #[test]
+    fn sort_entries_last_active_desc_correct() {
+        let mut entries = vec![
+            ("a".to_string(), 100, 50),
+            ("b".to_string(), 300, 200),
+            ("c".to_string(), 200, 100),
+        ];
+        sort_entries(&mut entries, SearchSortType::LastActiveDesc);
+        assert_eq!(entries[0].0, "b"); // 200
+        assert_eq!(entries[1].0, "c"); // 100
+        assert_eq!(entries[2].0, "a"); // 50
+    }
+
+    /// sort_entries 空列表不 panic。
+    #[test]
+    fn sort_entries_empty_list_no_panic() {
+        let mut entries: Vec<(String, i64, i64)> = vec![];
+        sort_entries(&mut entries, SearchSortType::CreatedAsc);
+        assert!(entries.is_empty());
+    }
+
+    /// sort_entries 单元素列表不 panic。
+    #[test]
+    fn sort_entries_single_element_no_panic() {
+        let mut entries = vec![("only".to_string(), 42, 99)];
+        sort_entries(&mut entries, SearchSortType::LastActiveAsc);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].0, "only");
+    }
 }

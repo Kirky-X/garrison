@@ -272,6 +272,64 @@ mod tests {
         assert!(matches!(result, Err(BulwarkError::NotLogin(_))));
     }
 
+    /// 验证 `check_client_token` 在已登录时返回 Ok(())。
+    ///
+    /// 覆盖 trait 默认实现 `check_client_token` 的 Ok 分支（token.rs 第 69-78 行）。
+    #[tokio::test]
+    async fn check_client_token_ok_when_logged_in() {
+        let mock = MockToken {
+            config: Arc::new(BulwarkConfig::default()),
+            logged_in: true,
+        };
+        mock.check_client_token().await.unwrap();
+    }
+
+    /// 验证 `check_client_token` 在未登录时返回 Err(NotLogin)。
+    ///
+    /// 覆盖 trait 默认实现 `check_client_token` 的 Err 分支。
+    #[tokio::test]
+    async fn check_client_token_denies_when_not_logged_in() {
+        let mock = MockToken {
+            config: Arc::new(BulwarkConfig::default()),
+            logged_in: false,
+        };
+        let result = mock.check_client_token().await;
+        assert!(
+            matches!(result, Err(BulwarkError::NotLogin(ref msg)) if msg.contains("client_token")),
+            "未登录时应返回 NotLogin 包含 'client_token'，实际: {:?}",
+            result
+        );
+    }
+
+    /// 验证 `check_temp_token` 在已登录时返回 Ok(())。
+    ///
+    /// 覆盖 trait 默认实现 `check_temp_token` 的 Ok 分支（token.rs 第 89-98 行）。
+    #[tokio::test]
+    async fn check_temp_token_ok_when_logged_in() {
+        let mock = MockToken {
+            config: Arc::new(BulwarkConfig::default()),
+            logged_in: true,
+        };
+        mock.check_temp_token().await.unwrap();
+    }
+
+    /// 验证 `check_temp_token` 在未登录时返回 Err(NotLogin)。
+    ///
+    /// 覆盖 trait 默认实现 `check_temp_token` 的 Err 分支。
+    #[tokio::test]
+    async fn check_temp_token_denies_when_not_logged_in() {
+        let mock = MockToken {
+            config: Arc::new(BulwarkConfig::default()),
+            logged_in: false,
+        };
+        let result = mock.check_temp_token().await;
+        assert!(
+            matches!(result, Err(BulwarkError::NotLogin(ref msg)) if msg.contains("temp_token")),
+            "未登录时应返回 NotLogin 包含 'temp_token'，实际: {:?}",
+            result
+        );
+    }
+
     #[tokio::test]
     async fn verify_token_default_returns_not_implemented() {
         let mock = MockToken {
@@ -290,5 +348,228 @@ mod tests {
         };
         let result = mock.refresh_token("old").await;
         assert!(matches!(result, Err(BulwarkError::NotImplemented(_))));
+    }
+
+    // ========================================================================
+    // BulwarkLogicDefault impl 覆盖测试（verify_token / refresh_token）
+    // ========================================================================
+
+    mod default_impl_coverage {
+        use super::*;
+        use crate::dao::BulwarkDao;
+        use crate::session::BulwarkSession;
+        use crate::stp::mock::{MockDao, MockFirewall};
+        use crate::strategy::BulwarkPermissionStrategy;
+        use std::sync::Arc;
+
+        /// 构造 BulwarkLogicDefault，token_style 可配置。
+        fn make_logic(token_style: &str) -> BulwarkLogicDefault {
+            let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+            let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
+            let mut config = BulwarkConfig::default_config();
+            config.throw_on_not_login = false;
+            config.token_style = token_style.to_string();
+            let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
+                has_permission: true,
+                has_role: true,
+            });
+            BulwarkLogicDefault::new(session, Arc::new(config), firewall)
+        }
+
+        /// verify_token + simple token_style → 返回 login_id。
+        ///
+        /// 覆盖 token.rs 第 147-159 行 BulwarkLogicDefault::verify_token 的
+        /// `Ok(Some(login_id))` 分支。
+        ///
+        /// 注意：SimpleTokenStyle::verify 使用 `split_once('-')` 在首个 `-` 处分割，
+        /// 因此 login_id 不能包含 `-`（否则只会提取首个 `-` 前的部分）。
+        #[tokio::test]
+        async fn verify_token_simple_style_returns_login_id() {
+            let logic = make_logic("simple");
+            // simple 格式: <login_id>-<uuid>，login_id 不含 `-`
+            let token = format!("verifyuser-{}", uuid::Uuid::new_v4());
+            let result = logic.verify_token(&token).await;
+            assert!(
+                result.is_ok(),
+                "simple token verify_token 应返回 Ok，实际: {:?}",
+                result
+            );
+            assert_eq!(
+                result.unwrap(),
+                "verifyuser",
+                "verify_token 应提取 login_id 'verifyuser'"
+            );
+        }
+
+        /// verify_token + uuid token_style → 返回 InvalidToken（UUID 无法编码 login_id）。
+        ///
+        /// 覆盖 token.rs 第 154-156 行 `Ok(None)` → `Err(InvalidToken)` 分支。
+        #[tokio::test]
+        async fn verify_token_uuid_style_returns_invalid_token() {
+            let logic = make_logic("uuid");
+            let result = logic.verify_token("some-uuid-token").await;
+            assert!(
+                matches!(result, Err(BulwarkError::InvalidToken(ref msg)) if msg.contains("不包含 login_id")),
+                "uuid token verify_token 应返回 InvalidToken 包含 '不包含 login_id'，实际: {:?}",
+                result
+            );
+        }
+
+        /// verify_token + 无效 simple token（无连字符）→ 返回 InvalidToken。
+        ///
+        /// 覆盖 token.rs 第 157 行 `Err(_) => Err(InvalidToken)` 分支。
+        ///
+        /// 注意：SimpleTokenStyle::parse 在无 `-` 时返回 Err，
+        /// 但 verify 使用 split_once 返回 Ok(None) → InvalidToken。
+        #[tokio::test]
+        async fn verify_token_invalid_simple_token_returns_invalid_token() {
+            let logic = make_logic("simple");
+            // 无连字符的 simple token：split_once('-') 返回 None → Ok(None) → InvalidToken
+            let result = logic.verify_token("nodashtoken").await;
+            assert!(
+                matches!(result, Err(BulwarkError::InvalidToken(_))),
+                "无效 simple token 应返回 InvalidToken，实际: {:?}",
+                result
+            );
+        }
+
+        /// verify_token + JWT token → 返回 login_id。
+        ///
+        /// 覆盖 token.rs 第 153 行 `Ok(Some(login_id))` 分支（JWT 路径）。
+        #[cfg(feature = "protocol-jwt")]
+        #[tokio::test]
+        async fn verify_token_jwt_style_returns_login_id() {
+            let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+            let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
+            let mut config = BulwarkConfig::default_config();
+            config.throw_on_not_login = false;
+            config.token_style = "jwt".to_string();
+            config.jwt_secret = "verify-jwt-secret".to_string();
+            let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
+                has_permission: true,
+                has_role: true,
+            });
+            let logic = BulwarkLogicDefault::new(session, Arc::new(config), firewall);
+
+            // 签发 JWT token
+            let handler = crate::protocol::jwt::JwtHandler::new("verify-jwt-secret");
+            let jwt_token = handler.sign("jwt-verify-user", 3600).unwrap();
+
+            let result = logic.verify_token(&jwt_token).await;
+            assert!(
+                result.is_ok(),
+                "JWT token verify_token 应返回 Ok，实际: {:?}",
+                result
+            );
+            assert_eq!(
+                result.unwrap(),
+                "jwt-verify-user",
+                "verify_token 应提取 login_id 'jwt-verify-user'"
+            );
+        }
+
+        /// verify_token + 无效 JWT → 返回 InvalidToken。
+        ///
+        /// 覆盖 token.rs 第 157 行 `Err(_) => Err(InvalidToken("token 无效"))` 分支。
+        #[cfg(feature = "protocol-jwt")]
+        #[tokio::test]
+        async fn verify_token_invalid_jwt_returns_invalid_token() {
+            let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+            let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
+            let mut config = BulwarkConfig::default_config();
+            config.throw_on_not_login = false;
+            config.token_style = "jwt".to_string();
+            config.jwt_secret = "verify-jwt-secret".to_string();
+            let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
+                has_permission: true,
+                has_role: true,
+            });
+            let logic = BulwarkLogicDefault::new(session, Arc::new(config), firewall);
+
+            let result = logic.verify_token("invalid.jwt.token").await;
+            assert!(
+                matches!(result, Err(BulwarkError::InvalidToken(_))),
+                "无效 JWT 应返回 InvalidToken，实际: {:?}",
+                result
+            );
+        }
+
+        /// refresh_token + 非 JWT token_style → 返回 NotImplemented。
+        ///
+        /// 覆盖 token.rs 第 164-168 行 `token_style != "jwt"` → NotImplemented 分支。
+        #[cfg(feature = "protocol-jwt")]
+        #[tokio::test]
+        async fn refresh_token_non_jwt_style_returns_not_implemented() {
+            let logic = make_logic("uuid");
+            let result = logic.refresh_token("any-token").await;
+            assert!(
+                matches!(result, Err(BulwarkError::NotImplemented(ref msg)) if msg.contains("jwt")),
+                "非 JWT token_style refresh_token 应返回 NotImplemented 包含 'jwt'，实际: {:?}",
+                result
+            );
+        }
+
+        /// refresh_token + JWT token_style + 有效 token → 返回新 token。
+        ///
+        /// 覆盖 token.rs 第 162-189 行 refresh_token 成功路径。
+        #[cfg(feature = "protocol-jwt")]
+        #[tokio::test]
+        async fn refresh_token_jwt_valid_returns_new_token() {
+            let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+            let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
+            let mut config = BulwarkConfig::default_config();
+            config.throw_on_not_login = false;
+            config.token_style = "jwt".to_string();
+            config.jwt_secret = "refresh-jwt-secret".to_string();
+            config.timeout = 3600;
+            let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
+                has_permission: true,
+                has_role: true,
+            });
+            let logic = BulwarkLogicDefault::new(session, Arc::new(config), firewall);
+
+            // 签发 JWT token
+            let handler = crate::protocol::jwt::JwtHandler::new("refresh-jwt-secret");
+            let old_token = handler.sign("refresh-user", 3600).unwrap();
+
+            let result = logic.refresh_token(&old_token).await;
+            assert!(
+                result.is_ok(),
+                "JWT refresh_token 应返回 Ok，实际: {:?}",
+                result
+            );
+            let new_token = result.unwrap();
+            assert_ne!(
+                new_token, old_token,
+                "refresh_token 应返回新 token，与旧 token 不同"
+            );
+        }
+
+        /// refresh_token + 无效 JWT → 返回错误（verify_token 失败）。
+        ///
+        /// 覆盖 token.rs 第 170 行 `let login_id = self.verify_token(token).await?` 错误传播。
+        #[cfg(feature = "protocol-jwt")]
+        #[tokio::test]
+        async fn refresh_token_invalid_jwt_returns_error() {
+            let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+            let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
+            let mut config = BulwarkConfig::default_config();
+            config.throw_on_not_login = false;
+            config.token_style = "jwt".to_string();
+            config.jwt_secret = "refresh-jwt-secret".to_string();
+            config.timeout = 3600;
+            let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
+                has_permission: true,
+                has_role: true,
+            });
+            let logic = BulwarkLogicDefault::new(session, Arc::new(config), firewall);
+
+            let result = logic.refresh_token("invalid.jwt.token").await;
+            assert!(
+                result.is_err(),
+                "无效 JWT refresh_token 应返回 Err，实际: {:?}",
+                result
+            );
+        }
     }
 }

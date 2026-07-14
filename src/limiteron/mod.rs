@@ -1149,4 +1149,381 @@ mod tests {
             result
         );
     }
+
+    // ------------------------------------------------------------------------
+    // 补充覆盖：quota / limiter / ban 辅助函数与边界路径
+    // ------------------------------------------------------------------------
+
+    /// quota_count_key 与 quota_meta_key 生成正确的 key 格式。
+    #[test]
+    fn quota_key_format_correct() {
+        assert_eq!(
+            quota_count_key("user1", "sms"),
+            "limiteron:quota:user1:sms:count"
+        );
+        assert_eq!(
+            quota_meta_key("user1", "sms"),
+            "limiteron:quota:user1:sms:meta"
+        );
+        assert_eq!(quota_count_key("", ""), "limiteron:quota:::count");
+    }
+
+    /// get_quota 在 consume 后返回正确的 QuotaInfo（round-trip）。
+    #[tokio::test]
+    async fn quota_get_quota_after_consume_returns_valid_info() {
+        let quota = BulwarkDaoQuotaStorage::new(make_dao());
+        quota
+            .consume("user_rt", "res", 1, 10, Duration::from_secs(3600))
+            .await
+            .unwrap();
+        let info = quota.get_quota("user_rt", "res").await.unwrap();
+        assert!(info.is_some(), "consume 后 get_quota 应返回 Some");
+        let info = info.unwrap();
+        assert_eq!(info.consumed, 1);
+        assert_eq!(info.limit, 10);
+    }
+
+    /// consume cost > 1 时正确递增计数。
+    #[tokio::test]
+    async fn quota_consume_cost_greater_than_one() {
+        let quota = BulwarkDaoQuotaStorage::new(make_dao());
+        let result = quota
+            .consume("user_cost", "res", 5, 10, Duration::from_secs(60))
+            .await
+            .unwrap();
+        assert!(result.allowed, "5 <= 10 应允许");
+        assert_eq!(result.remaining, 5, "remaining = 10 - 5 = 5");
+        assert!(
+            result.usage_percent >= 50.0,
+            "usage_percent 应 >= 50%，实际: {}",
+            result.usage_percent
+        );
+    }
+
+    /// consume 在 limit=0 时 usage_percent 为 100%。
+    #[tokio::test]
+    async fn quota_consume_limit_zero_usage_100_percent() {
+        let quota = BulwarkDaoQuotaStorage::new(make_dao());
+        let result = quota
+            .consume("user_zero", "res", 1, 0, Duration::from_secs(60))
+            .await
+            .unwrap();
+        // limit=0, count=1 > 0 → 不允许
+        assert!(!result.allowed, "count 1 > limit 0 应拒绝");
+        assert_eq!(result.remaining, 0);
+        assert_eq!(
+            result.usage_percent, 100.0,
+            "limit=0 时 usage_percent 应为 100%"
+        );
+    }
+
+    /// consume 在使用率达到 80% 时触发 alert_triggered。
+    #[tokio::test]
+    async fn quota_consume_alert_triggered_at_80_percent() {
+        let quota = BulwarkDaoQuotaStorage::new(make_dao());
+        // 消费 8 次（limit=10），usage=80%，应触发 alert
+        let result = quota
+            .consume("user_alert", "res", 8, 10, Duration::from_secs(60))
+            .await
+            .unwrap();
+        assert!(
+            result.alert_triggered,
+            "usage 80% 应触发 alert，实际 usage_percent: {}",
+            result.usage_percent
+        );
+        assert!(result.usage_percent >= 80.0);
+    }
+
+    /// consume 在使用率低于 80% 时不触发 alert。
+    #[tokio::test]
+    async fn quota_consume_no_alert_below_80_percent() {
+        let quota = BulwarkDaoQuotaStorage::new(make_dao());
+        let result = quota
+            .consume("user_noalert", "res", 7, 10, Duration::from_secs(60))
+            .await
+            .unwrap();
+        assert!(
+            !result.alert_triggered,
+            "usage 70% 不应触发 alert，实际 usage_percent: {}",
+            result.usage_percent
+        );
+    }
+
+    /// get_quota meta 格式错误（段数不对）返回错误。
+    #[tokio::test]
+    async fn quota_get_quota_meta_wrong_parts_returns_err() {
+        let quota = BulwarkDaoQuotaStorage::new(make_dao());
+        // 注入 count 正确但 meta 段数不对的数据
+        quota
+            .dao
+            .set("limiteron:quota:user_w:res:count", "1", 0)
+            .await
+            .unwrap();
+        // meta 只有 2 段（应为 4 段）
+        quota
+            .dao
+            .set("limiteron:quota:user_w:res:meta", "1|5", 0)
+            .await
+            .unwrap();
+        let result = quota.get_quota("user_w", "res").await;
+        assert!(result.is_err(), "meta 段数不对应返回错误");
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("格式错误"),
+            "错误消息应包含 '格式错误'，实际: {}",
+            err_msg
+        );
+    }
+
+    /// get_quota window_start_ts 无效时返回错误。
+    #[tokio::test]
+    async fn quota_get_quota_invalid_window_start_ts_returns_err() {
+        let quota = BulwarkDaoQuotaStorage::new(make_dao());
+        quota
+            .dao
+            .set("limiteron:quota:user_ts:res:count", "1", 0)
+            .await
+            .unwrap();
+        // window_start_ts 不是数字
+        quota
+            .dao
+            .set("limiteron:quota:user_ts:res:meta", "1|5|not_number|2000", 0)
+            .await
+            .unwrap();
+        let result = quota.get_quota("user_ts", "res").await;
+        assert!(result.is_err(), "无效 window_start_ts 应返回错误");
+    }
+
+    /// get_quota 仅 count 存在但 meta 缺失时返回 None。
+    #[tokio::test]
+    async fn quota_get_quota_count_without_meta_returns_none() {
+        let quota = BulwarkDaoQuotaStorage::new(make_dao());
+        // 只有 count 没有 meta
+        quota
+            .dao
+            .set("limiteron:quota:user_nm:res:count", "5", 0)
+            .await
+            .unwrap();
+        let result = quota.get_quota("user_nm", "res").await.unwrap();
+        assert!(result.is_none(), "count 有但 meta 缺失时应返回 None");
+    }
+
+    /// Limiter::allow 始终返回 Ok(true)（全局计数器递增但不拒绝）。
+    #[tokio::test]
+    async fn limiter_allow_returns_true() {
+        let limiter = BulwarkDaoDistributedLimiter::new(make_dao());
+        let result = limiter.allow(3).await;
+        assert!(result.is_ok(), "allow 应返回 Ok");
+        assert!(result.unwrap(), "allow 应返回 true");
+        // 验证全局计数器已递增
+        assert!(
+            limiter.get_count("_global").await.unwrap() >= 3,
+            "_global 计数器应 >= 3"
+        );
+    }
+
+    /// incr amount=0 时返回当前 count（不递增）。
+    #[tokio::test]
+    async fn limiter_incr_zero_amount_returns_current_count() {
+        let limiter = BulwarkDaoDistributedLimiter::new(make_dao());
+        // 先递增到 3
+        limiter.incr("zero_key", 3).await.unwrap();
+        // amount=0 应返回当前值 3
+        let count = limiter.incr("zero_key", 0).await.unwrap();
+        assert_eq!(count, 3, "amount=0 应返回当前 count 而不递增");
+    }
+
+    /// incr_with_ttl amount=0 时返回当前 count。
+    #[tokio::test]
+    async fn limiter_incr_with_ttl_zero_amount_returns_current_count() {
+        let limiter = BulwarkDaoDistributedLimiter::new(make_dao());
+        limiter
+            .incr_with_ttl("ttl_zero_key", 2, Duration::from_secs(60))
+            .await
+            .unwrap();
+        let count = limiter
+            .incr_with_ttl("ttl_zero_key", 0, Duration::from_secs(60))
+            .await
+            .unwrap();
+        assert_eq!(count, 2, "amount=0 应返回当前 count");
+    }
+
+    /// target_to_key_fragment 对所有 BanTarget 变体生成正确的 key 片段。
+    #[test]
+    fn target_to_key_fragment_all_variants() {
+        assert_eq!(
+            target_to_key_fragment(&BanTarget::Ip("1.2.3.4".into())),
+            "ip:1.2.3.4"
+        );
+        assert_eq!(
+            target_to_key_fragment(&BanTarget::UserId("u123".into())),
+            "user:u123"
+        );
+        assert_eq!(
+            target_to_key_fragment(&BanTarget::Mac("AA:BB:CC".into())),
+            "mac:AA:BB:CC"
+        );
+        assert_eq!(
+            target_to_key_fragment(&BanTarget::Geo {
+                country_code: "CN".into()
+            }),
+            "geo:CN"
+        );
+    }
+
+    /// ban_record_key / ban_times_key / ban_history_key 生成正确格式。
+    #[test]
+    fn ban_key_functions_correct_format() {
+        let target = BanTarget::Ip("10.0.0.1".to_string());
+        assert_eq!(ban_record_key(&target), "limiteron:ban:ip:10.0.0.1");
+        assert_eq!(ban_times_key(&target), "limiteron:ban:times:ip:10.0.0.1");
+        assert_eq!(
+            ban_history_key(&target),
+            "limiteron:ban:history:ip:10.0.0.1"
+        );
+    }
+
+    /// serialize_ban_record / deserialize_ban_record round-trip 正确。
+    #[tokio::test]
+    async fn ban_serialize_deserialize_round_trip() {
+        let target = BanTarget::UserId("round_trip_user".to_string());
+        let original = BanRecord {
+            target: target.clone(),
+            ban_times: 3,
+            duration: Duration::from_secs(900),
+            banned_at: Utc::now(),
+            expires_at: Utc::now() + chrono::Duration::seconds(3600),
+            is_manual: true,
+            reason: "test_reason".to_string(),
+        };
+        let serialized = serialize_ban_record(&original);
+        let deserialized = deserialize_ban_record(&target, &serialized);
+        assert!(deserialized.is_some(), "反序列化应返回 Some");
+        let deserialized = deserialized.unwrap();
+        assert_eq!(deserialized.ban_times, 3);
+        assert_eq!(deserialized.is_manual, true);
+        assert_eq!(deserialized.reason, "test_reason");
+        assert_eq!(deserialized.target, target);
+    }
+
+    /// deserialize_ban_record 格式错误（段数不对）返回 None。
+    #[test]
+    fn ban_deserialize_malformed_data_returns_none() {
+        let target = BanTarget::Ip("1.1.1.1".to_string());
+        // 只有 2 段（应为 4 段）
+        assert!(deserialize_ban_record(&target, "100|5").is_none());
+        // 只有 1 段
+        assert!(deserialize_ban_record(&target, "100").is_none());
+        // 空字符串
+        assert!(deserialize_ban_record(&target, "").is_none());
+    }
+
+    /// deserialize_ban_record 数字解析失败返回 None。
+    #[test]
+    fn ban_deserialize_non_numeric_returns_none() {
+        let target = BanTarget::Ip("2.2.2.2".to_string());
+        // expires_at_ts 不是数字
+        assert!(deserialize_ban_record(&target, "not_num|5|true|reason").is_none());
+        // ban_times 不是数字
+        assert!(deserialize_ban_record(&target, "1000|not_num|true|reason").is_none());
+    }
+
+    /// record_duration_from_ban 正确计算 duration。
+    #[test]
+    fn ban_record_duration_from_ban_correct() {
+        let target = BanTarget::Ip("3.3.3.3".to_string());
+        assert_eq!(
+            record_duration_from_ban(&target, 1),
+            Duration::from_secs(300)
+        );
+        assert_eq!(
+            record_duration_from_ban(&target, 3),
+            Duration::from_secs(900)
+        );
+        assert_eq!(record_duration_from_ban(&target, 0), Duration::from_secs(0));
+    }
+
+    /// get_history 段数不对时返回错误。
+    #[tokio::test]
+    async fn ban_get_history_wrong_parts_returns_err() {
+        let storage = BulwarkDaoBanStorage::new(make_dao());
+        let target = BanTarget::Ip("9.9.9.9".to_string());
+        let key = ban_history_key(&target);
+        // 只有 1 段（应为 2 段）
+        storage.dao.set(&key, "only_one_segment", 0).await.unwrap();
+        let result = storage.get_history(&target).await;
+        assert!(result.is_err(), "段数不对应返回错误");
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("格式错误"),
+            "错误消息应包含 '格式错误'，实际: {}",
+            err_msg
+        );
+    }
+
+    /// get_history last_banned_at_ts 不是数字时返回错误。
+    #[tokio::test]
+    async fn ban_get_history_non_numeric_ts_returns_err() {
+        let storage = BulwarkDaoBanStorage::new(make_dao());
+        let target = BanTarget::Ip("8.8.8.8".to_string());
+        let key = ban_history_key(&target);
+        // ban_times 正确，但 last_banned_at_ts 不是数字
+        storage.dao.set(&key, "3|not_a_number", 0).await.unwrap();
+        let result = storage.get_history(&target).await;
+        assert!(result.is_err(), "非数字 ts 应返回错误");
+    }
+
+    /// get_history ban_times 不是数字时返回错误。
+    #[tokio::test]
+    async fn ban_get_history_non_numeric_ban_times_returns_err() {
+        let storage = BulwarkDaoBanStorage::new(make_dao());
+        let target = BanTarget::Mac("AA:BB".to_string());
+        let key = ban_history_key(&target);
+        storage.dao.set(&key, "not_num|1000", 0).await.unwrap();
+        let result = storage.get_history(&target).await;
+        assert!(result.is_err(), "非数字 ban_times 应返回错误");
+    }
+
+    /// map_to_storage_err 和 map_to_limiter_err 正确映射错误。
+    #[test]
+    fn error_mapping_functions_correct() {
+        let err1 = BulwarkError::Dao("test error".to_string());
+        let storage_err = map_to_storage_err(err1);
+        let storage_msg = format!("{}", storage_err);
+        assert!(storage_msg.contains("test error"));
+
+        let err2 = BulwarkError::Dao("test error".to_string());
+        let limiter_err = map_to_limiter_err(err2);
+        let limiter_msg = format!("{}", limiter_err);
+        assert!(limiter_msg.contains("test error"));
+    }
+
+    /// atomic_check_and_incr 在 eval_lua 成功时正确判断阈值。
+    ///
+    /// MockDao 支持 eval_lua（返回 INCR 结果），验证成功路径。
+    #[tokio::test]
+    async fn atomic_check_and_incr_eval_lua_success_path() {
+        let dao = Arc::new(MockDao::new());
+        let limiter = BulwarkDaoDistributedLimiter::new(dao as Arc<dyn BulwarkDao>);
+
+        // 阈值 5，首次 INCR 返回 1 <= 5 → 允许
+        let ok = limiter
+            .atomic_check_and_incr("lua_key", 5, Duration::from_secs(60))
+            .await
+            .unwrap();
+        assert!(ok, "count 1 <= 5 应允许");
+
+        // 继续递增到 6 > 5 → 拒绝
+        for _ in 0..5 {
+            limiter
+                .atomic_check_and_incr("lua_key", 5, Duration::from_secs(60))
+                .await
+                .unwrap();
+        }
+        let blocked = limiter
+            .atomic_check_and_incr("lua_key", 5, Duration::from_secs(60))
+            .await
+            .unwrap();
+        assert!(!blocked, "count 7 > 5 应拒绝");
+    }
 }

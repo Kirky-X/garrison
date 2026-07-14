@@ -1594,4 +1594,531 @@ mod tests {
             result
         );
     }
+
+    // ============================================================
+    // 委托链路覆盖率补充：BulwarkUtil 各方法 → BulwarkManager::logic()?
+    // ============================================================
+    //
+    // 以下测试验证未初始化 BulwarkManager 时，各 BulwarkUtil 静态方法
+    // 正确委托到 `BulwarkManager::logic()?` 并返回 `Session` 错误。
+    // 覆盖了 util.rs 中未被既有测试覆盖的委托路径。
+
+    /// 验证 `login(id, params)` 在未初始化时返回 `Session` 错误。
+    ///
+    /// 覆盖 `login` → `BulwarkManager::logic()?` 委托链路（带 LoginParams 版本）。
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn login_with_params_delegates_to_bulwark_manager() {
+        #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
+        reset_backend_for_test();
+        crate::manager::BulwarkManager::reset_for_test();
+
+        let result = BulwarkUtil::login("user1", &LoginParams::default()).await;
+        assert!(
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
+            result
+        );
+    }
+
+    /// 验证 `logout()` 在未初始化时返回 `Session` 错误。
+    ///
+    /// 覆盖 `logout` → `BulwarkManager::logic()?` 委托链路。
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn logout_delegates_to_bulwark_manager() {
+        #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
+        reset_backend_for_test();
+        crate::manager::BulwarkManager::reset_for_test();
+
+        let result = BulwarkUtil::logout().await;
+        assert!(
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
+            result
+        );
+    }
+
+    /// 验证 `kickout_by_token` 在未初始化时返回 `Session` 错误。
+    ///
+    /// 覆盖 `kickout_by_token` → `BulwarkManager::logic()?` 委托链路。
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn kickout_by_token_delegates_to_bulwark_manager() {
+        #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
+        reset_backend_for_test();
+        crate::manager::BulwarkManager::reset_for_test();
+
+        let result = BulwarkUtil::kickout_by_token("some-token").await;
+        assert!(
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
+            result
+        );
+    }
+
+    /// 验证 `revoke_token` 在未初始化时返回 `Session` 错误。
+    ///
+    /// 覆盖 `revoke_token` → `BulwarkManager::logic()?` 委托链路。
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn revoke_token_delegates_to_bulwark_manager() {
+        #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
+        reset_backend_for_test();
+        crate::manager::BulwarkManager::reset_for_test();
+
+        let result = BulwarkUtil::revoke_token("some-token").await;
+        assert!(
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
+            result
+        );
+    }
+
+    /// 验证 `check_login()` 在未初始化时返回 `Session` 错误。
+    ///
+    /// 覆盖 `check_login` → `BulwarkManager::logic()?` 委托链路。
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn check_login_delegates_to_bulwark_manager() {
+        #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
+        reset_backend_for_test();
+        crate::manager::BulwarkManager::reset_for_test();
+
+        let result = BulwarkUtil::check_login().await;
+        assert!(
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
+            result
+        );
+    }
+
+    /// 验证 `get_login_id()` 在未初始化时返回 `Session` 错误。
+    ///
+    /// 覆盖 `get_login_id` → `BulwarkManager::logic()?` 委托链路。
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn get_login_id_delegates_to_bulwark_manager() {
+        #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
+        reset_backend_for_test();
+        crate::manager::BulwarkManager::reset_for_test();
+
+        let result = BulwarkUtil::get_login_id().await;
+        assert!(
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
+            result
+        );
+    }
+
+    /// 验证 `check_permission` 在未初始化时返回 `Session` 错误。
+    ///
+    /// 覆盖 `check_permission` → `BulwarkManager::logic()?` 委托链路。
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn check_permission_delegates_to_bulwark_manager() {
+        #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
+        reset_backend_for_test();
+        crate::manager::BulwarkManager::reset_for_test();
+
+        let result = BulwarkUtil::check_permission("user:read").await;
+        assert!(
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
+            result
+        );
+    }
+
+    /// 验证 `check_role` 在未初始化时返回 `Session` 错误。
+    ///
+    /// 覆盖 `check_role` → `BulwarkManager::logic()?` 委托链路。
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn check_role_delegates_to_bulwark_manager() {
+        #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
+        reset_backend_for_test();
+        crate::manager::BulwarkManager::reset_for_test();
+
+        let result = BulwarkUtil::check_role("admin").await;
+        assert!(
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
+            result
+        );
+    }
+
+    /// 验证 `has_permission`（非空字符串）在未初始化时返回 `Session` 错误。
+    ///
+    /// 覆盖 `has_permission` 非空路径 → `BulwarkManager::logic()?` 委托链路。
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn has_permission_non_empty_delegates_to_bulwark_manager() {
+        #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
+        reset_backend_for_test();
+        crate::manager::BulwarkManager::reset_for_test();
+
+        let result = BulwarkUtil::has_permission("user:read").await;
+        assert!(
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
+            result
+        );
+    }
+
+    /// 验证 `has_role`（非空字符串）在未初始化时返回 `Session` 错误。
+    ///
+    /// 覆盖 `has_role` 非空路径 → `BulwarkManager::logic()?` 委托链路。
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn has_role_non_empty_delegates_to_bulwark_manager() {
+        #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
+        reset_backend_for_test();
+        crate::manager::BulwarkManager::reset_for_test();
+
+        let result = BulwarkUtil::has_role("admin").await;
+        assert!(
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
+            result
+        );
+    }
+
+    /// 验证 `get_permission_list` 在未初始化时返回 `Session` 错误。
+    ///
+    /// 覆盖 `get_permission_list` → `BulwarkManager::logic()?` 委托链路。
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn get_permission_list_delegates_to_bulwark_manager() {
+        #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
+        reset_backend_for_test();
+        crate::manager::BulwarkManager::reset_for_test();
+
+        let result = BulwarkUtil::get_permission_list().await;
+        assert!(
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
+            result
+        );
+    }
+
+    /// 验证 `get_role_list` 在未初始化时返回 `Session` 错误。
+    ///
+    /// 覆盖 `get_role_list` → `BulwarkManager::logic()?` 委托链路。
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn get_role_list_delegates_to_bulwark_manager() {
+        #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
+        reset_backend_for_test();
+        crate::manager::BulwarkManager::reset_for_test();
+
+        let result = BulwarkUtil::get_role_list().await;
+        assert!(
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
+            result
+        );
+    }
+
+    /// 验证 `check_access_token` 在未初始化时返回 `Session` 错误。
+    ///
+    /// 覆盖 `check_access_token` → `BulwarkManager::logic()?` 委托链路。
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn check_access_token_delegates_to_bulwark_manager() {
+        #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
+        reset_backend_for_test();
+        crate::manager::BulwarkManager::reset_for_test();
+
+        let result = BulwarkUtil::check_access_token().await;
+        assert!(
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
+            result
+        );
+    }
+
+    /// 验证 `check_client_token` 在未初始化时返回 `Session` 错误。
+    ///
+    /// 覆盖 `check_client_token` → `BulwarkManager::logic()?` 委托链路。
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn check_client_token_delegates_to_bulwark_manager() {
+        #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
+        reset_backend_for_test();
+        crate::manager::BulwarkManager::reset_for_test();
+
+        let result = BulwarkUtil::check_client_token().await;
+        assert!(
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
+            result
+        );
+    }
+
+    /// 验证 `check_temp_token` 在未初始化时返回 `Session` 错误。
+    ///
+    /// 覆盖 `check_temp_token` → `BulwarkManager::logic()?` 委托链路。
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn check_temp_token_delegates_to_bulwark_manager() {
+        #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
+        reset_backend_for_test();
+        crate::manager::BulwarkManager::reset_for_test();
+
+        let result = BulwarkUtil::check_temp_token().await;
+        assert!(
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
+            result
+        );
+    }
+
+    /// 验证 `check_safe` 在未初始化时返回 `Session` 错误。
+    ///
+    /// 覆盖 `check_safe` → `BulwarkManager::logic()?` 委托链路（fallback 路径）。
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn check_safe_delegates_to_bulwark_manager() {
+        #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
+        reset_backend_for_test();
+        crate::manager::BulwarkManager::reset_for_test();
+
+        let result = BulwarkUtil::check_safe().await;
+        assert!(
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
+            result
+        );
+    }
+
+    /// 验证 `check_disable` 在未初始化时返回 `Session` 错误。
+    ///
+    /// 覆盖 `check_disable` → `BulwarkManager::logic()?` 委托链路（fallback 路径）。
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn check_disable_delegates_to_bulwark_manager() {
+        #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
+        reset_backend_for_test();
+        crate::manager::BulwarkManager::reset_for_test();
+
+        let result = BulwarkUtil::check_disable().await;
+        assert!(
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
+            result
+        );
+    }
+
+    /// 验证 `check_api_key` 在未初始化时返回 `Session` 错误。
+    ///
+    /// 覆盖 `check_api_key` → `BulwarkManager::logic()?` 委托链路（fallback 路径）。
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn check_api_key_delegates_to_bulwark_manager() {
+        #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
+        reset_backend_for_test();
+        crate::manager::BulwarkManager::reset_for_test();
+
+        let result = BulwarkUtil::check_api_key("default").await;
+        assert!(
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
+            result
+        );
+    }
+
+    /// 验证 `login_by_token` 在未初始化时返回 `Session` 错误。
+    ///
+    /// 覆盖 `login_by_token` → `BulwarkManager::logic()?` 委托链路。
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn login_by_token_delegates_to_bulwark_manager() {
+        #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
+        reset_backend_for_test();
+        crate::manager::BulwarkManager::reset_for_test();
+
+        let result = BulwarkUtil::login_by_token("external-token").await;
+        assert!(
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
+            result
+        );
+    }
+
+    /// 验证 `verify_token` 在未初始化时返回 `Session` 错误。
+    ///
+    /// 覆盖 `verify_token` → `BulwarkManager::logic()?` 委托链路。
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn verify_token_delegates_to_bulwark_manager() {
+        #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
+        reset_backend_for_test();
+        crate::manager::BulwarkManager::reset_for_test();
+
+        let result = BulwarkUtil::verify_token("some-token").await;
+        assert!(
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
+            result
+        );
+    }
+
+    /// 验证 `refresh_token` 在未初始化时返回 `Session` 错误。
+    ///
+    /// 覆盖 `refresh_token` → `BulwarkManager::logic()?` 委托链路。
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn refresh_token_delegates_to_bulwark_manager() {
+        #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
+        reset_backend_for_test();
+        crate::manager::BulwarkManager::reset_for_test();
+
+        let result = BulwarkUtil::refresh_token("old-token").await;
+        assert!(
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
+            result
+        );
+    }
+
+    // ============================================================
+    // 同步版本（*_sync）委托链路测试
+    // ============================================================
+    //
+    // 验证 `*_sync` 方法在未初始化时返回 `Session` 错误。
+    // 使用 `flavor = "multi_thread"` 因为 `block_in_place` 要求
+    // multi_thread runtime 上下文。
+
+    /// 验证 `check_login_sync` 在未初始化时返回 `Session` 错误。
+    ///
+    /// 覆盖 `check_login_sync` → `block_in_place` → `check_login`
+    /// → `BulwarkManager::logic()?` 委托链路。
+    #[tokio::test(flavor = "multi_thread")]
+    #[serial_test::serial]
+    async fn check_login_sync_delegates_to_bulwark_manager() {
+        #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
+        reset_backend_for_test();
+        crate::manager::BulwarkManager::reset_for_test();
+
+        let result = BulwarkUtil::check_login_sync();
+        assert!(
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
+            result
+        );
+    }
+
+    /// 验证 `check_permission_sync` 在未初始化时返回 `Session` 错误。
+    ///
+    /// 覆盖 `check_permission_sync` → `block_in_place` → `check_permission`
+    /// → `BulwarkManager::logic()?` 委托链路。
+    #[tokio::test(flavor = "multi_thread")]
+    #[serial_test::serial]
+    async fn check_permission_sync_delegates_to_bulwark_manager() {
+        #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
+        reset_backend_for_test();
+        crate::manager::BulwarkManager::reset_for_test();
+
+        let result = BulwarkUtil::check_permission_sync("user:read");
+        assert!(
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
+            result
+        );
+    }
+
+    /// 验证 `check_role_sync` 在未初始化时返回 `Session` 错误。
+    ///
+    /// 覆盖 `check_role_sync` → `block_in_place` → `check_role`
+    /// → `BulwarkManager::logic()?` 委托链路。
+    #[tokio::test(flavor = "multi_thread")]
+    #[serial_test::serial]
+    async fn check_role_sync_delegates_to_bulwark_manager() {
+        #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
+        reset_backend_for_test();
+        crate::manager::BulwarkManager::reset_for_test();
+
+        let result = BulwarkUtil::check_role_sync("admin");
+        assert!(
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
+            result
+        );
+    }
+
+    /// 验证 `check_access_token_sync` 在未初始化时返回 `Session` 错误。
+    ///
+    /// 覆盖 `check_access_token_sync` → `block_in_place` → `check_access_token`
+    /// → `BulwarkManager::logic()?` 委托链路。
+    #[tokio::test(flavor = "multi_thread")]
+    #[serial_test::serial]
+    async fn check_access_token_sync_delegates_to_bulwark_manager() {
+        #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
+        reset_backend_for_test();
+        crate::manager::BulwarkManager::reset_for_test();
+
+        let result = BulwarkUtil::check_access_token_sync();
+        assert!(
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
+            result
+        );
+    }
+
+    /// 验证 `check_client_token_sync` 在未初始化时返回 `Session` 错误。
+    ///
+    /// 覆盖 `check_client_token_sync` → `block_in_place` → `check_client_token`
+    /// → `BulwarkManager::logic()?` 委托链路。
+    #[tokio::test(flavor = "multi_thread")]
+    #[serial_test::serial]
+    async fn check_client_token_sync_delegates_to_bulwark_manager() {
+        #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
+        reset_backend_for_test();
+        crate::manager::BulwarkManager::reset_for_test();
+
+        let result = BulwarkUtil::check_client_token_sync();
+        assert!(
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
+            result
+        );
+    }
+
+    /// 验证 `check_temp_token_sync` 在未初始化时返回 `Session` 错误。
+    ///
+    /// 覆盖 `check_temp_token_sync` → `block_in_place` → `check_temp_token`
+    /// → `BulwarkManager::logic()?` 委托链路。
+    #[tokio::test(flavor = "multi_thread")]
+    #[serial_test::serial]
+    async fn check_temp_token_sync_delegates_to_bulwark_manager() {
+        #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
+        reset_backend_for_test();
+        crate::manager::BulwarkManager::reset_for_test();
+
+        let result = BulwarkUtil::check_temp_token_sync();
+        assert!(
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
+            result
+        );
+    }
+
+    /// 验证 `check_api_key_sync` 在未初始化时返回 `Session` 错误。
+    ///
+    /// 覆盖 `check_api_key_sync` → `block_in_place` → `check_api_key`
+    /// → `BulwarkManager::logic()?` 委托链路。
+    #[tokio::test(flavor = "multi_thread")]
+    #[serial_test::serial]
+    async fn check_api_key_sync_delegates_to_bulwark_manager() {
+        #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
+        reset_backend_for_test();
+        crate::manager::BulwarkManager::reset_for_test();
+
+        let result = BulwarkUtil::check_api_key_sync("default");
+        assert!(
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
+            result
+        );
+    }
 }

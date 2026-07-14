@@ -371,6 +371,28 @@ mod tests {
         );
     }
 
+    /// 验证 `open_safe` trait 默认实现返回 Ok(())（no-op，向后兼容 0.6.4 之前）。
+    ///
+    /// 覆盖 trait default 路径（lines 78-80）：未覆写的实现者调用 open_safe 应直接返回 Ok。
+    #[tokio::test]
+    async fn open_safe_default_returns_ok() {
+        let mock = MockMfa {
+            config: Arc::new(BulwarkConfig::default()),
+        };
+        mock.open_safe("default", 3600).await.unwrap();
+    }
+
+    /// 验证 `close_safe` trait 默认实现返回 Ok(())（no-op，向后兼容 0.6.4 之前）。
+    ///
+    /// 覆盖 trait default 路径（lines 110-112）：未覆写的实现者调用 close_safe 应直接返回 Ok。
+    #[tokio::test]
+    async fn close_safe_default_returns_ok() {
+        let mock = MockMfa {
+            config: Arc::new(BulwarkConfig::default()),
+        };
+        mock.close_safe("default").await.unwrap();
+    }
+
     // ========================================================================
     // T025: check_safe 默认实现向后兼容测试
     // ========================================================================
@@ -401,6 +423,157 @@ mod tests {
         );
         // check_safe 调用 is_safe，因 is_safe=true，返回 Ok(())
         assert!(mock.check_safe().await.is_ok(), "check_safe 应返回 Ok(())");
+    }
+
+    // ========================================================================
+    // check_safe 默认实现：is_safe 覆写场景测试
+    // 覆盖 trait default check_safe（lines 42-47）的 false / Err 分支
+    // ========================================================================
+
+    /// 可配置 is_safe 返回值的 mock，用于测试 check_safe trait default 的各分支。
+    ///
+    /// `safe_result` 为 is_safe 预设返回值，覆盖 Ok(true)/Ok(false)/Err 三类分支。
+    struct MockMfaSafe {
+        config: Arc<BulwarkConfig>,
+        safe_result: BulwarkResult<bool>,
+    }
+
+    impl BulwarkCore for MockMfaSafe {
+        fn config(&self) -> Arc<BulwarkConfig> {
+            Arc::clone(&self.config)
+        }
+    }
+
+    #[async_trait]
+    impl SessionLogic for MockMfaSafe {
+        async fn login(
+            &self,
+            _login_id: &str,
+            _params: &crate::stp::LoginParams,
+        ) -> BulwarkResult<String> {
+            Ok("mock-token".to_string())
+        }
+        async fn login_with_token(&self, _login_id: &str, _token: &str) -> BulwarkResult<()> {
+            Ok(())
+        }
+        async fn logout(&self) -> BulwarkResult<()> {
+            Ok(())
+        }
+        async fn logout_by_login_id(&self, _login_id: &str) -> BulwarkResult<()> {
+            Ok(())
+        }
+        async fn kickout(&self, _login_id: &str) -> BulwarkResult<()> {
+            Ok(())
+        }
+        async fn kickout_by_token(&self, _token: &str) -> BulwarkResult<()> {
+            Ok(())
+        }
+        async fn revoke_token(&self, _token: &str) -> BulwarkResult<()> {
+            Ok(())
+        }
+        async fn check_login(&self) -> BulwarkResult<bool> {
+            Ok(true)
+        }
+        async fn get_login_id(&self) -> BulwarkResult<Option<String>> {
+            Ok(Some("42".to_string()))
+        }
+    }
+
+    #[async_trait]
+    impl MfaLogic for MockMfaSafe {
+        // 覆写 is_safe 返回预设值，测试 check_safe trait default 各分支
+        async fn is_safe(&self, _service: &str) -> BulwarkResult<bool> {
+            match &self.safe_result {
+                Ok(b) => Ok(*b),
+                Err(BulwarkError::Dao(s)) => Err(BulwarkError::Dao(s.clone())),
+                Err(BulwarkError::Internal(s)) => Err(BulwarkError::Internal(s.clone())),
+                Err(e) => panic!("MockMfaSafe 不支持此错误变体: {:?}", e),
+            }
+        }
+    }
+
+    /// check_safe + is_safe 返回 Ok(false) → 返回 Err(NotSafe("SAFE_EXPIRED"))。
+    ///
+    /// 覆盖 mfa.rs 第 43-45 行 `!is_safe → Err(Self::not_safe("SAFE_EXPIRED"))` 分支。
+    #[tokio::test]
+    async fn check_safe_is_safe_false_returns_not_safe() {
+        let mock = MockMfaSafe {
+            config: Arc::new(BulwarkConfig::default()),
+            safe_result: Ok(false),
+        };
+        let result = mock.check_safe().await;
+        match result {
+            Err(BulwarkError::NotSafe { reason }) => {
+                assert_eq!(
+                    reason, "SAFE_EXPIRED",
+                    "is_safe=false 时 check_safe 应返回 NotSafe(reason=\"SAFE_EXPIRED\")"
+                );
+            },
+            other => panic!(
+                "is_safe=false 时 check_safe 应返回 Err(NotSafe)，实际: {:?}",
+                other
+            ),
+        }
+    }
+
+    /// check_safe + is_safe 返回 Ok(true) → 返回 Ok(())。
+    ///
+    /// 覆盖 mfa.rs 第 46 行 `Ok(())` 分支（通过覆写 is_safe 而非 trait default）。
+    #[tokio::test]
+    async fn check_safe_is_safe_true_returns_ok() {
+        let mock = MockMfaSafe {
+            config: Arc::new(BulwarkConfig::default()),
+            safe_result: Ok(true),
+        };
+        mock.check_safe().await.unwrap();
+    }
+
+    /// check_safe + is_safe 返回 Err(Dao) → 透传错误。
+    ///
+    /// 覆盖 mfa.rs 第 43 行 `is_safe(...).await?` 错误传播路径。
+    #[tokio::test]
+    async fn check_safe_is_safe_error_propagates() {
+        let mock = MockMfaSafe {
+            config: Arc::new(BulwarkConfig::default()),
+            safe_result: Err(BulwarkError::Dao("数据源连接失败".to_string())),
+        };
+        let result = mock.check_safe().await;
+        assert!(
+            matches!(result, Err(BulwarkError::Dao(ref s)) if s.contains("数据源连接失败")),
+            "is_safe 返回 Dao 错误时应透传，实际: {:?}",
+            result
+        );
+    }
+
+    /// check_safe + is_safe 返回 Err(Internal) → 透传错误。
+    ///
+    /// 覆盖 mfa.rs 第 43 行 `is_safe(...).await?` 错误传播路径（Internal 变体）。
+    #[tokio::test]
+    async fn check_safe_is_safe_internal_error_propagates() {
+        let mock = MockMfaSafe {
+            config: Arc::new(BulwarkConfig::default()),
+            safe_result: Err(BulwarkError::Internal("内部错误".to_string())),
+        };
+        let result = mock.check_safe().await;
+        assert!(
+            matches!(result, Err(BulwarkError::Internal(ref s)) if s.contains("内部错误")),
+            "is_safe 返回 Internal 错误时应透传，实际: {:?}",
+            result
+        );
+    }
+
+    /// 验证 `disable_service` Display 输出包含 service 名称。
+    ///
+    /// 覆盖 mfa.rs disable_service 关联函数 + Display 实现。
+    #[test]
+    fn disable_service_display_includes_service() {
+        let err = MockMfa::disable_service("payment", None);
+        let display = err.to_string();
+        assert!(
+            display.contains("payment"),
+            "Display 应包含 service 名称，实际: {}",
+            display
+        );
     }
 
     // ========================================================================
@@ -632,6 +805,25 @@ mod tests {
             assert!(
                 result.is_ok(),
                 "未登录（无 current_token）时 check_disable 应返回 Ok，实际: {:?}",
+                result
+            );
+        }
+
+        /// 设置 current_token 但对应 TokenSession 不存在，check_disable 返回 Ok（幂等）。
+        ///
+        /// 覆盖 lines 219-222：token 存在但 session.get_token_session 返回 None → Ok(())。
+        #[tokio::test]
+        async fn test_check_disable_token_session_not_found_returns_ok() {
+            let (logic, _repo, _dao) = make_logic_with_repo();
+            // 不调用 login，直接设置一个不存在的 token
+            let result = with_current_token("nonexistent-token-xyz".to_string(), async {
+                logic.check_disable().await
+            })
+            .await;
+
+            assert!(
+                result.is_ok(),
+                "token 对应的 TokenSession 不存在时 check_disable 应返回 Ok，实际: {:?}",
                 result
             );
         }
