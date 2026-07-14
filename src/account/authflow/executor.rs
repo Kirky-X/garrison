@@ -2344,6 +2344,881 @@ mod tests {
         }
     }
 
+    // ------------------------------------------------------------------------
+    // 测试: login_with_lockout_success_resets_failure_count
+    // ------------------------------------------------------------------------
+
+    /// R-009: Login 步骤 — lockout=Some 且 verify=true → record_success 重置失败计数。
+    /// 验证：[fail, ok, fail] 后第 4 次 login 仍可成功（count=1 < 2）；
+    /// 若 record_success 未调用，count=3 → 已锁定，第 4 次会返回 Failed。
+    #[tokio::test]
+    async fn login_with_lockout_success_resets_failure_count() {
+        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let lockout = Arc::new(UserLockoutStrategy::new(
+            crate::account::lockout::UserLockoutConfig {
+                max_failure_factor: 2,
+                permanent_lockout: false,
+                max_temporary_lockouts: 99,
+                wait_strategy: crate::account::lockout::WaitStrategy::Linear { base_seconds: 300 },
+                failure_window_seconds: 300,
+            },
+            dao,
+        ));
+        let repo = make_repo_with_password("alice").await;
+        let executor = make_executor(repo, Some(lockout));
+        let flow = FlowBuilder::new("test").login("password").build();
+        let builder_fail = MockCredentialBuilder {
+            password_verify_result: false,
+            totp_verify_result: false,
+        };
+        let builder_ok = MockCredentialBuilder {
+            password_verify_result: true,
+            totp_verify_result: false,
+        };
+
+        // Step 1: wrong → record_failure (count=1)
+        let mut ctx1 = make_context("alice", "wrong");
+        let _ = executor
+            .execute_with_builder(&flow, &mut ctx1, &builder_fail)
+            .await
+            .unwrap();
+
+        // Step 2: correct → record_success (count=0)
+        let mut ctx2 = make_context("alice", "correct");
+        let _ = executor
+            .execute_with_builder(&flow, &mut ctx2, &builder_ok)
+            .await
+            .unwrap();
+
+        // Step 3: wrong → record_failure (count=1)
+        let mut ctx3 = make_context("alice", "wrong");
+        let _ = executor
+            .execute_with_builder(&flow, &mut ctx3, &builder_fail)
+            .await
+            .unwrap();
+
+        // Step 4: correct → 若 record_success 在 step 2 调用，count=1 < 2 → check 通过 → Success
+        //         若未调用，count=3 >= 2 → 已锁定 → Failed
+        let mut ctx4 = make_context("alice", "correct");
+        let result = executor
+            .execute_with_builder(&flow, &mut ctx4, &builder_ok)
+            .await
+            .unwrap();
+
+        match result {
+            AuthResult::Success { login_id, .. } => {
+                assert_eq!(
+                    login_id, "alice",
+                    "record_success 应在 step 2 重置失败计数，使 step 4 不被锁定"
+                );
+            },
+            AuthResult::Failed { reason, .. } => {
+                panic!(
+                    "应为 Success（record_success 重置了计数），但 Failed: {}",
+                    reason
+                );
+            },
+            other => panic!("应为 Success，实际: {:?}", other),
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // 测试: login_with_lockout_failure_triggers_lockout
+    // ------------------------------------------------------------------------
+
+    /// R-009: Login 步骤 — lockout=Some 且 verify=false → record_failure 增加失败计数。
+    /// 验证：max_failure_factor=1 时，1 次失败 login 后第 2 次 login 被 lockout.check 拦截。
+    #[tokio::test]
+    async fn login_with_lockout_failure_triggers_lockout() {
+        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let lockout = Arc::new(UserLockoutStrategy::new(
+            crate::account::lockout::UserLockoutConfig {
+                max_failure_factor: 1,
+                permanent_lockout: false,
+                max_temporary_lockouts: 99,
+                wait_strategy: crate::account::lockout::WaitStrategy::Linear { base_seconds: 300 },
+                failure_window_seconds: 300,
+            },
+            dao,
+        ));
+        let repo = make_repo_with_password("alice").await;
+        let executor = make_executor(repo, Some(lockout));
+        let flow = FlowBuilder::new("test").login("password").build();
+        let builder_fail = MockCredentialBuilder {
+            password_verify_result: false,
+            totp_verify_result: false,
+        };
+        let builder_ok = MockCredentialBuilder {
+            password_verify_result: true,
+            totp_verify_result: false,
+        };
+
+        // Step 1: wrong → record_failure (count=1 >= max_failure_factor=1 → 已锁定)
+        let mut ctx1 = make_context("alice", "wrong");
+        let r1 = executor
+            .execute_with_builder(&flow, &mut ctx1, &builder_fail)
+            .await
+            .unwrap();
+        assert!(
+            matches!(r1, AuthResult::Failed { ref reason, .. } if reason.contains("凭证校验失败")),
+            "step 1 应为凭证校验失败: {:?}",
+            r1
+        );
+
+        // Step 2: correct → lockout.check 拦截（record_failure 已在 step 1 调用）
+        let mut ctx2 = make_context("alice", "correct");
+        let r2 = executor
+            .execute_with_builder(&flow, &mut ctx2, &builder_ok)
+            .await
+            .unwrap();
+        match r2 {
+            AuthResult::Failed { reason, step } => {
+                assert!(
+                    reason.contains("锁定"),
+                    "reason 应含锁定（record_failure 已触发锁定）: {}",
+                    reason
+                );
+                assert_eq!(step, 0);
+            },
+            other => panic!(
+                "应为 Failed（record_failure 触发锁定，第 2 次 login 被拦截），实际: {:?}",
+                other
+            ),
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // 测试: subflow_pending_propagates_as_failed
+    // ------------------------------------------------------------------------
+
+    /// R-009: SubFlow 步骤 — 子流程返回 Pending → 父流程 Failed（"子流程 X 返回 Pending"）。
+    /// 子流程含 2 步（Login + Mfa(None)），ctx.extras 设 pause_after_step="0"
+    /// 使子流程 Login 成功后返回 Pending。验证 v0.6.0 不支持嵌套 Pending 传播。
+    #[tokio::test]
+    async fn subflow_pending_propagates_as_failed() {
+        let repo = make_repo_with_password("alice").await;
+        let mut registry = FlowRegistry::from_inventory();
+        let child = FlowBuilder::new("child-with-pause")
+            .login("password")
+            .mfa(None)
+            .build();
+        registry.register(child);
+        let executor = make_executor_with_registry(repo, Arc::new(registry));
+        let builder = MockCredentialBuilder {
+            password_verify_result: true,
+            totp_verify_result: false,
+        };
+        let flow = FlowBuilder::new("parent")
+            .sub_flow("child-with-pause")
+            .build();
+        let mut ctx = make_context("alice", "correct-password");
+        ctx.extras
+            .insert("pause_after_step".to_string(), "0".to_string());
+
+        let result = executor
+            .execute_with_builder(&flow, &mut ctx, &builder)
+            .await
+            .unwrap();
+
+        match result {
+            AuthResult::Failed { reason, step } => {
+                assert!(reason.contains("子流程"), "reason 应含子流程: {}", reason);
+                assert!(
+                    reason.contains("child-with-pause"),
+                    "reason 应含子流程名称: {}",
+                    reason
+                );
+                assert!(
+                    reason.contains("Pending"),
+                    "reason 应含 Pending: {}",
+                    reason
+                );
+                assert_eq!(step, 0);
+            },
+            other => panic!(
+                "应为 Failed（子流程 Pending 传播为 Failed），实际: {:?}",
+                other
+            ),
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // 测试: subflow_challenge_required_propagates
+    // ------------------------------------------------------------------------
+
+    /// R-009: SubFlow 步骤 — 子流程返回 ChallengeRequired → 父流程 ChallengeRequired。
+    /// 子流程含 Mfa(Some("totp"))，ctx.input 为空 → ChallengeRequired。
+    #[tokio::test]
+    async fn subflow_challenge_required_propagates() {
+        let repo = make_repo_with_password_and_totp("alice").await;
+        let mut registry = FlowRegistry::from_inventory();
+        let child = FlowBuilder::new("child-challenge")
+            .mfa(Some("totp"))
+            .build();
+        registry.register(child);
+        let executor = make_executor_with_registry(repo, Arc::new(registry));
+        let builder = MockCredentialBuilder {
+            password_verify_result: false,
+            totp_verify_result: true,
+        };
+        let flow = FlowBuilder::new("parent")
+            .sub_flow("child-challenge")
+            .build();
+        let mut ctx = make_context("alice", ""); // 空输入 → ChallengeRequired
+
+        let result = executor
+            .execute_with_builder(&flow, &mut ctx, &builder)
+            .await
+            .unwrap();
+
+        match result {
+            AuthResult::ChallengeRequired {
+                challenge_type,
+                message,
+            } => {
+                assert_eq!(challenge_type, "totp");
+                assert!(message.contains("totp"), "message 应含 totp: {}", message);
+            },
+            other => panic!(
+                "应为 ChallengeRequired（子流程 ChallengeRequired 传播），实际: {:?}",
+                other
+            ),
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // 测试: conditional_has_credential_without_user_id_returns_false
+    // ------------------------------------------------------------------------
+
+    /// R-009: Conditional 步骤 — HasCredential 条件且 ctx.user_id=None → 返回 false → else_step=None → Success。
+    /// 覆盖 evaluate_condition 的 HasCredential 分支中 user_id=None 的路径。
+    #[tokio::test]
+    async fn conditional_has_credential_without_user_id_returns_false() {
+        let repo: Arc<dyn CredentialRepository> = Arc::new(MockCredentialRepository::default());
+        let executor = make_executor(repo, None);
+        let flow = FlowBuilder::new("test")
+            .conditional(
+                AuthCondition::HasCredential("password".to_string()),
+                // if_step（不会执行）
+                AuthStep::RequiredAction {
+                    action: "x".to_string(),
+                },
+                // else_step=None → 跳过视为成功
+                None,
+            )
+            .build();
+        let mut ctx = make_context("alice", "");
+        ctx.user_id = None;
+
+        let result = executor.execute(&flow, &mut ctx).await.unwrap();
+
+        match result {
+            AuthResult::Success { login_id, .. } => {
+                // user_id=None → unwrap_or_default() → ""
+                assert_eq!(login_id, "", "user_id=None 时 login_id 应为空串");
+            },
+            other => panic!(
+                "应为 Success（HasCredential user_id=None → false → 跳过），实际: {:?}",
+                other
+            ),
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // 测试: conditional_is_locked_without_lockout_returns_false
+    // ------------------------------------------------------------------------
+
+    /// R-009: Conditional 步骤 — IsLocked 条件且 lockout=None → 返回 false → else_step=None → Success。
+    /// 覆盖 evaluate_condition 的 IsLocked 分支中 lockout=None 的路径。
+    #[tokio::test]
+    async fn conditional_is_locked_without_lockout_returns_false() {
+        let repo: Arc<dyn CredentialRepository> = Arc::new(MockCredentialRepository::default());
+        let executor = make_executor(repo, None); // lockout=None
+        let flow = FlowBuilder::new("test")
+            .conditional(
+                AuthCondition::IsLocked,
+                AuthStep::RequiredAction {
+                    action: "x".to_string(),
+                },
+                None,
+            )
+            .build();
+        let mut ctx = make_context("alice", "");
+
+        let result = executor.execute(&flow, &mut ctx).await.unwrap();
+
+        match result {
+            AuthResult::Success { .. } => {},
+            other => panic!(
+                "应为 Success（IsLocked lockout=None → false → 跳过），实际: {:?}",
+                other
+            ),
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // 测试: conditional_is_locked_without_user_id_returns_false
+    // ------------------------------------------------------------------------
+
+    /// R-009: Conditional 步骤 — IsLocked 条件且 lockout=Some 但 ctx.user_id=None → 返回 false。
+    /// 覆盖 evaluate_condition 的 IsLocked 分支中 user_id=None 的路径。
+    #[tokio::test]
+    async fn conditional_is_locked_without_user_id_returns_false() {
+        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let lockout = Arc::new(UserLockoutStrategy::new(
+            crate::account::lockout::UserLockoutConfig {
+                max_failure_factor: 2,
+                permanent_lockout: false,
+                max_temporary_lockouts: 99,
+                wait_strategy: crate::account::lockout::WaitStrategy::Linear { base_seconds: 300 },
+                failure_window_seconds: 300,
+            },
+            dao,
+        ));
+        let repo: Arc<dyn CredentialRepository> = Arc::new(MockCredentialRepository::default());
+        let executor = make_executor(repo, Some(lockout));
+        let flow = FlowBuilder::new("test")
+            .conditional(
+                AuthCondition::IsLocked,
+                AuthStep::RequiredAction {
+                    action: "x".to_string(),
+                },
+                None,
+            )
+            .build();
+        let mut ctx = make_context("alice", "");
+        ctx.user_id = None;
+
+        let result = executor.execute(&flow, &mut ctx).await.unwrap();
+
+        match result {
+            AuthResult::Success { .. } => {},
+            other => panic!(
+                "应为 Success（IsLocked user_id=None → false → 跳过），实际: {:?}",
+                other
+            ),
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // 测试: pause_after_step_challenge_for_mfa_some_step
+    // ------------------------------------------------------------------------
+
+    /// R-009: pause_after_step — 验证 step_challenge 对 Mfa(Some("totp")) 的输出格式。
+    /// Login 成功后暂停，下一步为 Mfa(Some("totp")) → challenge 应含 "请输入 totp 验证码"。
+    #[tokio::test]
+    async fn pause_after_step_challenge_for_mfa_some_step() {
+        let repo = make_repo_with_password("alice").await;
+        let executor = make_executor(repo, None);
+        let builder = MockCredentialBuilder {
+            password_verify_result: true,
+            totp_verify_result: false,
+        };
+        let flow = FlowBuilder::new("two-step")
+            .login("password")
+            .mfa(Some("totp"))
+            .build();
+        let mut ctx = make_context("alice", "correct-password");
+        ctx.extras
+            .insert("pause_after_step".to_string(), "0".to_string());
+
+        let result = executor
+            .execute_with_builder(&flow, &mut ctx, &builder)
+            .await
+            .unwrap();
+
+        match result {
+            AuthResult::Pending {
+                challenge,
+                next_step,
+                ..
+            } => {
+                assert_eq!(next_step, 1);
+                assert!(
+                    challenge.contains("totp"),
+                    "challenge 应含 totp: {}",
+                    challenge
+                );
+                assert!(
+                    challenge.contains("验证码"),
+                    "challenge 应含验证码: {}",
+                    challenge
+                );
+            },
+            other => panic!("应为 Pending，实际: {:?}", other),
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // 测试: pause_after_step_challenge_for_mfa_none_step
+    // ------------------------------------------------------------------------
+
+    /// R-009: pause_after_step — 验证 step_challenge 对 Mfa(None) 的输出格式。
+    /// Login 成功后暂停，下一步为 Mfa(None) → challenge 应为 "请完成 MFA 校验"。
+    #[tokio::test]
+    async fn pause_after_step_challenge_for_mfa_none_step() {
+        let repo = make_repo_with_password("alice").await;
+        let executor = make_executor(repo, None);
+        let builder = MockCredentialBuilder {
+            password_verify_result: true,
+            totp_verify_result: false,
+        };
+        let flow = FlowBuilder::new("two-step")
+            .login("password")
+            .mfa(None)
+            .build();
+        let mut ctx = make_context("alice", "correct-password");
+        ctx.extras
+            .insert("pause_after_step".to_string(), "0".to_string());
+
+        let result = executor
+            .execute_with_builder(&flow, &mut ctx, &builder)
+            .await
+            .unwrap();
+
+        match result {
+            AuthResult::Pending { challenge, .. } => {
+                assert!(
+                    challenge.contains("MFA"),
+                    "challenge 应含 MFA: {}",
+                    challenge
+                );
+            },
+            other => panic!("应为 Pending，实际: {:?}", other),
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // 测试: pause_after_step_challenge_for_required_action_step
+    // ------------------------------------------------------------------------
+
+    /// R-009: pause_after_step — 验证 step_challenge 对 RequiredAction 的输出格式。
+    #[tokio::test]
+    async fn pause_after_step_challenge_for_required_action_step() {
+        let repo = make_repo_with_password("alice").await;
+        let executor = make_executor(repo, None);
+        let builder = MockCredentialBuilder {
+            password_verify_result: true,
+            totp_verify_result: false,
+        };
+        let flow = AuthenticationFlow {
+            name: "two-step".to_string(),
+            steps: vec![
+                AuthStep::Login {
+                    credential_type: "password".to_string(),
+                },
+                AuthStep::RequiredAction {
+                    action: "verify_email".to_string(),
+                },
+            ],
+            allow_skip: false,
+        };
+        let mut ctx = make_context("alice", "correct-password");
+        ctx.extras
+            .insert("pause_after_step".to_string(), "0".to_string());
+
+        let result = executor
+            .execute_with_builder(&flow, &mut ctx, &builder)
+            .await
+            .unwrap();
+
+        match result {
+            AuthResult::Pending { challenge, .. } => {
+                assert!(
+                    challenge.contains("verify_email"),
+                    "challenge 应含 action 名: {}",
+                    challenge
+                );
+                assert!(
+                    challenge.contains("必需动作"),
+                    "challenge 应含必需动作: {}",
+                    challenge
+                );
+            },
+            other => panic!("应为 Pending，实际: {:?}", other),
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // 测试: pause_after_step_challenge_for_conditional_step
+    // ------------------------------------------------------------------------
+
+    /// R-009: pause_after_step — 验证 step_challenge 对 Conditional 的输出格式。
+    #[tokio::test]
+    async fn pause_after_step_challenge_for_conditional_step() {
+        let repo = make_repo_with_password("alice").await;
+        let executor = make_executor(repo, None);
+        let builder = MockCredentialBuilder {
+            password_verify_result: true,
+            totp_verify_result: false,
+        };
+        let flow = AuthenticationFlow {
+            name: "two-step".to_string(),
+            steps: vec![
+                AuthStep::Login {
+                    credential_type: "password".to_string(),
+                },
+                AuthStep::Conditional {
+                    condition: AuthCondition::IpWhitelisted,
+                    if_step: Box::new(AuthStep::RequiredAction {
+                        action: "x".to_string(),
+                    }),
+                    else_step: None,
+                },
+            ],
+            allow_skip: false,
+        };
+        let mut ctx = make_context("alice", "correct-password");
+        ctx.extras
+            .insert("pause_after_step".to_string(), "0".to_string());
+
+        let result = executor
+            .execute_with_builder(&flow, &mut ctx, &builder)
+            .await
+            .unwrap();
+
+        match result {
+            AuthResult::Pending { challenge, .. } => {
+                assert!(
+                    challenge.contains("条件分支"),
+                    "challenge 应含条件分支: {}",
+                    challenge
+                );
+            },
+            other => panic!("应为 Pending，实际: {:?}", other),
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // 测试: pause_after_step_challenge_for_subflow_step
+    // ------------------------------------------------------------------------
+
+    /// R-009: pause_after_step — 验证 step_challenge 对 SubFlow 的输出格式。
+    #[tokio::test]
+    async fn pause_after_step_challenge_for_subflow_step() {
+        let repo = make_repo_with_password("alice").await;
+        let mut registry = FlowRegistry::from_inventory();
+        let child = FlowBuilder::new("child-flow").login("password").build();
+        registry.register(child);
+        let executor = make_executor_with_registry(repo, Arc::new(registry));
+        let builder = MockCredentialBuilder {
+            password_verify_result: true,
+            totp_verify_result: false,
+        };
+        let flow = AuthenticationFlow {
+            name: "two-step".to_string(),
+            steps: vec![
+                AuthStep::Login {
+                    credential_type: "password".to_string(),
+                },
+                AuthStep::SubFlow {
+                    flow_name: "child-flow".to_string(),
+                },
+            ],
+            allow_skip: false,
+        };
+        let mut ctx = make_context("alice", "correct-password");
+        ctx.extras
+            .insert("pause_after_step".to_string(), "0".to_string());
+
+        let result = executor
+            .execute_with_builder(&flow, &mut ctx, &builder)
+            .await
+            .unwrap();
+
+        match result {
+            AuthResult::Pending { challenge, .. } => {
+                assert!(
+                    challenge.contains("child-flow"),
+                    "challenge 应含子流程名: {}",
+                    challenge
+                );
+                assert!(
+                    challenge.contains("子流程"),
+                    "challenge 应含子流程: {}",
+                    challenge
+                );
+            },
+            other => panic!("应为 Pending，实际: {:?}", other),
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // 测试: pause_after_step_invalid_value_does_not_pause
+    // ------------------------------------------------------------------------
+
+    /// R-009: pause_after_step 值非数字 → parse 失败 → 不触发暂停 → 全部步骤完成 → Success。
+    #[tokio::test]
+    async fn pause_after_step_invalid_value_does_not_pause() {
+        let repo: Arc<dyn CredentialRepository> = Arc::new(MockCredentialRepository::default());
+        let executor = make_executor(repo, None);
+        let flow = AuthenticationFlow {
+            name: "two-conditional".to_string(),
+            steps: vec![
+                AuthStep::Conditional {
+                    condition: AuthCondition::IpWhitelisted,
+                    if_step: Box::new(AuthStep::RequiredAction {
+                        action: "x".to_string(),
+                    }),
+                    else_step: None,
+                },
+                AuthStep::Conditional {
+                    condition: AuthCondition::IpWhitelisted,
+                    if_step: Box::new(AuthStep::RequiredAction {
+                        action: "y".to_string(),
+                    }),
+                    else_step: None,
+                },
+            ],
+            allow_skip: false,
+        };
+        let mut ctx = make_context("alice", "");
+        ctx.extras
+            .insert("pause_after_step".to_string(), "abc".to_string());
+
+        let result = executor.execute(&flow, &mut ctx).await.unwrap();
+
+        match result {
+            AuthResult::Success { .. } => {
+                assert_eq!(
+                    ctx.completed_steps.len(),
+                    2,
+                    "应完成 2 个步骤（无效 pause 值不触发暂停）"
+                );
+            },
+            other => panic!("应为 Success（无效 pause 值不触发暂停），实际: {:?}", other),
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // 测试: pause_after_step_out_of_range_index_does_not_pause
+    // ------------------------------------------------------------------------
+
+    /// R-009: pause_after_step 值越界（99，无对应步骤索引）→ 不触发暂停 → Success。
+    #[tokio::test]
+    async fn pause_after_step_out_of_range_index_does_not_pause() {
+        let repo: Arc<dyn CredentialRepository> = Arc::new(MockCredentialRepository::default());
+        let executor = make_executor(repo, None);
+        let flow = AuthenticationFlow {
+            name: "two-conditional".to_string(),
+            steps: vec![
+                AuthStep::Conditional {
+                    condition: AuthCondition::IpWhitelisted,
+                    if_step: Box::new(AuthStep::RequiredAction {
+                        action: "x".to_string(),
+                    }),
+                    else_step: None,
+                },
+                AuthStep::Conditional {
+                    condition: AuthCondition::IpWhitelisted,
+                    if_step: Box::new(AuthStep::RequiredAction {
+                        action: "y".to_string(),
+                    }),
+                    else_step: None,
+                },
+            ],
+            allow_skip: false,
+        };
+        let mut ctx = make_context("alice", "");
+        ctx.extras
+            .insert("pause_after_step".to_string(), "99".to_string());
+
+        let result = executor.execute(&flow, &mut ctx).await.unwrap();
+
+        match result {
+            AuthResult::Success { .. } => {
+                assert_eq!(
+                    ctx.completed_steps.len(),
+                    2,
+                    "应完成 2 个步骤（pause 索引越界不触发暂停）"
+                );
+            },
+            other => panic!(
+                "应为 Success（pause 索引越界不触发暂停），实际: {:?}",
+                other
+            ),
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // 测试: empty_flow_without_user_id_returns_success_with_empty_login_id
+    // ------------------------------------------------------------------------
+
+    /// R-009: 空步骤流程且 ctx.user_id=None → Success（login_id 为空串）。
+    /// 覆盖 execute_inner 中 `ctx.user_id.clone().unwrap_or_default()` 的 None 分支。
+    #[tokio::test]
+    async fn empty_flow_without_user_id_returns_success_with_empty_login_id() {
+        let repo: Arc<dyn CredentialRepository> = Arc::new(MockCredentialRepository::default());
+        let executor = make_executor(repo, None);
+        let flow = FlowBuilder::new("empty").build();
+        let mut ctx = make_context("alice", "");
+        ctx.user_id = None;
+
+        let result = executor.execute(&flow, &mut ctx).await.unwrap();
+
+        match result {
+            AuthResult::Success { login_id, token } => {
+                assert_eq!(login_id, "", "user_id=None 时 login_id 应为空串");
+                assert_eq!(token, "", "空流程 token 应为空");
+            },
+            other => panic!("应为 Success，实际: {:?}", other),
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // 测试: sso_step_without_resolver_returns_failed
+    // ------------------------------------------------------------------------
+
+    /// R-009: SsoServer 步骤 — execute()（无 resolver）→ Failed（"需要 SsoServerResolver"）。
+    /// 覆盖 execute_sso 中 sso_resolver=None 的分支（非 T017 门控路径）。
+    #[tokio::test]
+    async fn sso_step_without_resolver_returns_failed() {
+        let repo: Arc<dyn CredentialRepository> = Arc::new(MockCredentialRepository::default());
+        let executor = make_executor(repo, None);
+        let flow = FlowBuilder::new("sso-flow").sso("keycloak").build();
+        let mut ctx = make_context("alice", "ticket_abc");
+
+        let result = executor.execute(&flow, &mut ctx).await.unwrap();
+
+        match result {
+            AuthResult::Failed { reason, step } => {
+                assert!(
+                    reason.contains("SsoServerResolver"),
+                    "reason 应含 SsoServerResolver: {}",
+                    reason
+                );
+                assert_eq!(step, 0);
+            },
+            other => panic!("应为 Failed（无 SSO resolver），实际: {:?}", other),
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // 测试: execute_with_metrics_records_durations (metrics-prometheus)
+    // ------------------------------------------------------------------------
+
+    /// D-001: execute_with_metrics — Login 步骤成功 → 记录 authflow_execute_duration + credential_verify_duration。
+    /// 覆盖 execute_with_metrics 方法及 execute_inner / execute_login 中的 metrics 观测分支。
+    #[cfg(feature = "metrics-prometheus")]
+    #[tokio::test]
+    async fn execute_with_metrics_records_durations() {
+        let registry = prometheus::Registry::new();
+        let metrics = crate::account::metrics::AccountMetrics::register_to(&registry).unwrap();
+        let repo = make_repo_with_password("alice").await;
+        let executor = make_executor(repo, None);
+        let builder = MockCredentialBuilder {
+            password_verify_result: true,
+            totp_verify_result: false,
+        };
+        let flow = FlowBuilder::new("metrics-test").login("password").build();
+        let mut ctx = make_context("alice", "correct-password");
+
+        let result = executor
+            .execute_with_metrics(&flow, &mut ctx, &builder, &metrics)
+            .await
+            .unwrap();
+
+        match result {
+            AuthResult::Success { login_id, .. } => {
+                assert_eq!(login_id, "alice");
+            },
+            other => panic!("应为 Success，实际: {:?}", other),
+        }
+        let gathered = prometheus::TextEncoder::new()
+            .encode_to_string(&registry.gather())
+            .unwrap();
+        assert!(
+            gathered.contains("bulwark_authflow_execute_duration_seconds"),
+            "应记录 authflow_execute_duration: {}",
+            gathered
+        );
+        assert!(
+            gathered.contains("bulwark_credential_verify_duration_seconds"),
+            "应记录 credential_verify_duration: {}",
+            gathered
+        );
+    }
+
+    // ------------------------------------------------------------------------
+    // 测试: execute_with_metrics_records_mfa_verify_duration (metrics-prometheus)
+    // ------------------------------------------------------------------------
+
+    /// D-001: execute_with_metrics — Mfa(Some("totp")) 步骤成功 → 记录 credential_verify_duration（label=totp）。
+    /// 覆盖 execute_mfa 中的 metrics 观测分支。
+    #[cfg(feature = "metrics-prometheus")]
+    #[tokio::test]
+    async fn execute_with_metrics_records_mfa_verify_duration() {
+        let registry = prometheus::Registry::new();
+        let metrics = crate::account::metrics::AccountMetrics::register_to(&registry).unwrap();
+        let repo = make_repo_with_password_and_totp("alice").await;
+        let executor = make_executor(repo, None);
+        let builder = MockCredentialBuilder {
+            password_verify_result: false,
+            totp_verify_result: true,
+        };
+        let flow = FlowBuilder::new("mfa-metrics").mfa(Some("totp")).build();
+        let mut ctx = make_context("alice", "123456");
+
+        let result = executor
+            .execute_with_metrics(&flow, &mut ctx, &builder, &metrics)
+            .await
+            .unwrap();
+
+        match result {
+            AuthResult::Success { .. } => {},
+            other => panic!("应为 Success，实际: {:?}", other),
+        }
+        let gathered = prometheus::TextEncoder::new()
+            .encode_to_string(&registry.gather())
+            .unwrap();
+        assert!(
+            gathered.contains("bulwark_credential_verify_duration_seconds"),
+            "应记录 credential_verify_duration: {}",
+            gathered
+        );
+        assert!(gathered.contains("totp"), "应记录 totp 标签: {}", gathered);
+    }
+
+    // ------------------------------------------------------------------------
+    // 测试: execute_with_metrics_empty_flow_records_duration (metrics-prometheus)
+    // ------------------------------------------------------------------------
+
+    /// D-001: execute_with_metrics — 空流程 → 记录 authflow_execute_duration（空流程提前返回路径）。
+    #[cfg(feature = "metrics-prometheus")]
+    #[tokio::test]
+    async fn execute_with_metrics_empty_flow_records_duration() {
+        let registry = prometheus::Registry::new();
+        let metrics = crate::account::metrics::AccountMetrics::register_to(&registry).unwrap();
+        let repo: Arc<dyn CredentialRepository> = Arc::new(MockCredentialRepository::default());
+        let executor = make_executor(repo, None);
+        let builder = MockCredentialBuilder {
+            password_verify_result: false,
+            totp_verify_result: false,
+        };
+        let flow = FlowBuilder::new("empty-metrics").build();
+        let mut ctx = make_context("alice", "");
+
+        let result = executor
+            .execute_with_metrics(&flow, &mut ctx, &builder, &metrics)
+            .await
+            .unwrap();
+
+        match result {
+            AuthResult::Success { login_id, .. } => {
+                assert_eq!(login_id, "alice");
+            },
+            other => panic!("应为 Success，实际: {:?}", other),
+        }
+        let gathered = prometheus::TextEncoder::new()
+            .encode_to_string(&registry.gather())
+            .unwrap();
+        assert!(
+            gathered.contains("bulwark_authflow_execute_duration_seconds"),
+            "空流程也应记录 authflow_execute_duration: {}",
+            gathered
+        );
+    }
+
     // ========================================================================
     // SocialProvider + SsoServer 步骤测试
     // ========================================================================
@@ -2938,6 +3813,240 @@ mod tests {
                     assert_eq!(step, 0);
                 },
                 other => panic!("应为 Failed（无 resolver），实际: {:?}", other),
+            }
+        }
+
+        // --------------------------------------------------------------------
+        // 测试: t017_pause_after_step_challenge_for_social_step
+        // --------------------------------------------------------------------
+
+        /// R-010: pause_after_step — 验证 step_challenge 对 SocialProvider 的输出格式。
+        /// Login 成功后暂停，下一步为 SocialProvider("wechat") → challenge 应含 "请完成 wechat 社交登录"。
+        #[tokio::test]
+        async fn t017_pause_after_step_challenge_for_social_step() {
+            let repo = make_repo_with_password("alice").await;
+            let executor = make_executor(repo, None);
+            let builder = MockCredentialBuilder {
+                password_verify_result: true,
+                totp_verify_result: false,
+            };
+            // 2 步流程：Login + SocialProvider
+            let flow = FlowBuilder::new("two-step")
+                .login("password")
+                .social("wechat")
+                .build();
+            let mut ctx = make_context("alice", "correct-password");
+            ctx.extras
+                .insert("pause_after_step".to_string(), "0".to_string());
+
+            let result = executor
+                .execute_with_builder(&flow, &mut ctx, &builder)
+                .await
+                .unwrap();
+
+            match result {
+                AuthResult::Pending {
+                    challenge,
+                    next_step,
+                    ..
+                } => {
+                    assert_eq!(next_step, 1);
+                    assert!(
+                        challenge.contains("wechat"),
+                        "challenge 应含 wechat: {}",
+                        challenge
+                    );
+                    assert!(
+                        challenge.contains("社交登录"),
+                        "challenge 应含社交登录: {}",
+                        challenge
+                    );
+                },
+                other => panic!("应为 Pending，实际: {:?}", other),
+            }
+        }
+
+        // --------------------------------------------------------------------
+        // 测试: t017_pause_after_step_challenge_for_sso_step
+        // --------------------------------------------------------------------
+
+        /// R-011: pause_after_step — 验证 step_challenge 对 SsoServer 的输出格式。
+        /// Login 成功后暂停，下一步为 SsoServer("keycloak") → challenge 应含 "请完成 SSO 登录: keycloak"。
+        #[tokio::test]
+        async fn t017_pause_after_step_challenge_for_sso_step() {
+            let repo = make_repo_with_password("alice").await;
+            let executor = make_executor(repo, None);
+            let builder = MockCredentialBuilder {
+                password_verify_result: true,
+                totp_verify_result: false,
+            };
+            let flow = FlowBuilder::new("two-step")
+                .login("password")
+                .sso("keycloak")
+                .build();
+            let mut ctx = make_context("alice", "correct-password");
+            ctx.extras
+                .insert("pause_after_step".to_string(), "0".to_string());
+
+            let result = executor
+                .execute_with_builder(&flow, &mut ctx, &builder)
+                .await
+                .unwrap();
+
+            match result {
+                AuthResult::Pending {
+                    challenge,
+                    next_step,
+                    ..
+                } => {
+                    assert_eq!(next_step, 1);
+                    assert!(
+                        challenge.contains("keycloak"),
+                        "challenge 应含 keycloak: {}",
+                        challenge
+                    );
+                    assert!(
+                        challenge.contains("SSO"),
+                        "challenge 应含 SSO: {}",
+                        challenge
+                    );
+                },
+                other => panic!("应为 Pending，实际: {:?}", other),
+            }
+        }
+
+        // --------------------------------------------------------------------
+        // 测试: t017_sso_login_missing_client_id_uses_zero
+        // --------------------------------------------------------------------
+
+        /// R-011: SsoServer 步骤 — ctx.extras 中无 client_id → 默认 0 → 仍可成功。
+        /// 覆盖 execute_sso 中 client_id 缺失时 unwrap_or(0) 的默认分支。
+        #[tokio::test]
+        async fn t017_sso_login_missing_client_id_uses_zero() {
+            let server = Arc::new(MockSsoServer::new("1001"));
+            let server_ref = server.clone() as Arc<dyn SsoServer>;
+            let mut sso_resolver = MockSsoServerResolver::new();
+            sso_resolver.register("keycloak", server_ref);
+            let social_resolver = MockSocialProviderResolver::new();
+            let executor = make_t017_executor();
+            let builder = dummy_builder();
+            let flow = FlowBuilder::new("sso-flow").sso("keycloak").build();
+            let mut ctx = make_context("", "ticket_abc");
+            // 不设置 client_id → 默认 0
+
+            let result = executor
+                .execute_with_full(&flow, &mut ctx, &builder, &social_resolver, &sso_resolver)
+                .await
+                .unwrap();
+
+            match result {
+                AuthResult::Success { login_id, .. } => {
+                    assert_eq!(login_id, "1001");
+                },
+                other => panic!("应为 Success（缺失 client_id 默认 0），实际: {:?}", other),
+            }
+            assert_eq!(server.validate_count(), 1, "validate_ticket 应被调用 1 次");
+        }
+
+        // --------------------------------------------------------------------
+        // 测试: t017_sso_login_invalid_client_id_uses_zero
+        // --------------------------------------------------------------------
+
+        /// R-011: SsoServer 步骤 — ctx.extras["client_id"] 非数字 → parse 失败 → 默认 0 → 仍可成功。
+        /// 覆盖 execute_sso 中 client_id 解析失败时 unwrap_or(0) 的默认分支。
+        #[tokio::test]
+        async fn t017_sso_login_invalid_client_id_uses_zero() {
+            let server = Arc::new(MockSsoServer::new("1001"));
+            let server_ref = server.clone() as Arc<dyn SsoServer>;
+            let mut sso_resolver = MockSsoServerResolver::new();
+            sso_resolver.register("keycloak", server_ref);
+            let social_resolver = MockSocialProviderResolver::new();
+            let executor = make_t017_executor();
+            let builder = dummy_builder();
+            let flow = FlowBuilder::new("sso-flow").sso("keycloak").build();
+            let mut ctx = make_context("", "ticket_abc");
+            // 非数字 client_id → parse 失败 → 默认 0
+            ctx.extras
+                .insert("client_id".to_string(), "not-a-number".to_string());
+
+            let result = executor
+                .execute_with_full(&flow, &mut ctx, &builder, &social_resolver, &sso_resolver)
+                .await
+                .unwrap();
+
+            match result {
+                AuthResult::Success { login_id, .. } => {
+                    assert_eq!(login_id, "1001");
+                },
+                other => panic!("应为 Success（无效 client_id 回退为 0），实际: {:?}", other),
+            }
+            assert_eq!(server.validate_count(), 1, "validate_ticket 应被调用 1 次");
+        }
+
+        // --------------------------------------------------------------------
+        // 测试: t017_social_login_without_state_succeeds
+        // --------------------------------------------------------------------
+
+        /// R-010: SocialProvider 步骤 — ctx.extras 中无 state → 默认空串 → 仍可成功。
+        /// 覆盖 execute_social 中 state 缺失时 unwrap_or_default() 的默认分支。
+        #[tokio::test]
+        async fn t017_social_login_without_state_succeeds() {
+            let wechat = Arc::new(MockSocialLoginProvider::new("wx_user"));
+            let wechat_ref = wechat.clone() as Arc<dyn SocialLoginProvider>;
+            let mut social_resolver = MockSocialProviderResolver::new();
+            social_resolver.register("wechat", wechat_ref);
+            let executor = make_t017_executor();
+            let builder = dummy_builder();
+            let sso_resolver = MockSsoServerResolver::new();
+            let flow = FlowBuilder::new("wechat-flow").social("wechat").build();
+            let mut ctx = make_context("", "auth_code");
+            // 不设置 state → 默认空串
+
+            let result = executor
+                .execute_with_full(&flow, &mut ctx, &builder, &social_resolver, &sso_resolver)
+                .await
+                .unwrap();
+
+            match result {
+                AuthResult::Success { login_id, .. } => {
+                    assert_eq!(login_id, "wx_user");
+                },
+                other => panic!("应为 Success（无 state 仍可执行），实际: {:?}", other),
+            }
+            assert_eq!(wechat.exchange_count(), 1, "exchange_token 应被调用 1 次");
+        }
+
+        // --------------------------------------------------------------------
+        // 测试: t017_sso_step_without_resolver_returns_failed
+        // --------------------------------------------------------------------
+
+        /// R-011: SsoServer 步骤 — execute_with_builder 无 sso_resolver → Failed。
+        /// 覆盖 execute_with_builder 路径中 SsoServer 步骤的占位失败信息。
+        #[tokio::test]
+        async fn t017_sso_step_without_resolver_returns_failed() {
+            let repo: Arc<dyn CredentialRepository> = Arc::new(MockCredentialRepository::default());
+            let executor = make_executor(repo, None);
+            let builder = dummy_builder();
+            let flow = FlowBuilder::new("sso-flow").sso("keycloak").build();
+            let mut ctx = make_context("", "ticket_abc");
+            ctx.extras
+                .insert("client_id".to_string(), "2001".to_string());
+
+            let result = executor
+                .execute_with_builder(&flow, &mut ctx, &builder)
+                .await
+                .unwrap();
+
+            match result {
+                AuthResult::Failed { reason, step } => {
+                    assert!(
+                        reason.contains("SsoServerResolver"),
+                        "reason 应含 SsoServerResolver: {}",
+                        reason
+                    );
+                    assert_eq!(step, 0);
+                },
+                other => panic!("应为 Failed（无 SSO resolver），实际: {:?}", other),
             }
         }
     }

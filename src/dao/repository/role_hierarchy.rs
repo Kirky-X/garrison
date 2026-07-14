@@ -738,4 +738,689 @@ mod db_sqlite_tests {
         assert!(ancestors2.contains("admin"));
         assert!(ancestors2.contains("super_admin"));
     }
+
+    // ========================================================================
+    // 补充测试：get_ancestors 缓存命中 / 损坏降级 / 不存在角色
+    // ========================================================================
+
+    /// `get_ancestors` 缓存命中时不查询 SQL。
+    ///
+    /// 流程：
+    /// 1. 首次调用 get_ancestors 触发 compute_closure + 缓存写入
+    /// 2. 删除 role_hierarchy 表所有数据
+    /// 3. 再次调用 get_ancestors，缓存命中应返回与首次相同的结果（不查 SQL）
+    #[tokio::test(flavor = "multi_thread")]
+    async fn get_ancestors_cache_hit_does_not_query_db() {
+        let pool = setup_db().await;
+        let dao = mock_dao();
+
+        insert_edge(&pool, 0, "user", "admin").await;
+        let svc = RoleHierarchyService::new(pool.clone(), dao.clone());
+
+        // 首次调用：触发 compute_closure + 缓存写入
+        let ancestors1 = svc
+            .get_ancestors("user", 0)
+            .await
+            .expect("get_ancestors 应成功");
+        assert!(ancestors1.contains("admin"));
+
+        // 删除 role_hierarchy 表所有数据
+        let session = pool.get_session("admin").await.unwrap();
+        let conn = session.connection().unwrap();
+        conn.execute_raw(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "DELETE FROM role_hierarchy",
+            vec![],
+        ))
+        .await
+        .expect("DELETE 应成功");
+
+        // 再次调用：缓存命中，不查 SQL，返回与首次相同的结果
+        let ancestors2 = svc
+            .get_ancestors("user", 0)
+            .await
+            .expect("缓存命中时 get_ancestors 应成功");
+        assert!(
+            ancestors2.contains("admin"),
+            "缓存命中应返回与首次相同的结果"
+        );
+    }
+
+    /// `get_ancestors` 缓存损坏时降级重新计算。
+    ///
+    /// 向 oxcache 注入损坏的闭包 JSON，验证 get_ancestors 降级走
+    /// compute_closure 并重新写入有效缓存。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn get_ancestors_corrupt_cache_falls_back_to_recompute() {
+        let pool = setup_db().await;
+        let dao = mock_dao();
+
+        insert_edge(&pool, 0, "user", "admin").await;
+        let svc = RoleHierarchyService::new(pool, dao.clone());
+
+        // 向 oxcache 注入损坏的闭包 JSON
+        dao.set("tenant:0:role_closure", "{invalid json", 3600)
+            .await
+            .expect("注入损坏缓存应成功");
+
+        // 调用 get_ancestors：缓存损坏 → 降级重新计算
+        let ancestors = svc
+            .get_ancestors("user", 0)
+            .await
+            .expect("降级重新计算应成功");
+        assert!(ancestors.contains("admin"), "降级重新计算后应返回正确结果");
+
+        // 验证缓存已被更新（覆盖损坏数据）
+        let cached = dao
+            .get("tenant:0:role_closure")
+            .await
+            .expect("dao.get 应成功");
+        assert!(cached.is_some(), "缓存应已被重新写入");
+        // 验证缓存内容是有效的 JSON
+        let closure: std::collections::HashMap<String, std::collections::HashSet<String>> =
+            serde_json::from_str(&cached.unwrap()).expect("缓存应为有效 JSON");
+        assert!(closure.contains_key("user"), "闭包应包含 user");
+    }
+
+    /// `get_ancestors` 对不在闭包中的角色返回空集合。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn get_ancestors_for_nonexistent_role_returns_empty() {
+        let pool = setup_db().await;
+        let dao = mock_dao();
+
+        insert_edge(&pool, 0, "user", "admin").await;
+        let svc = RoleHierarchyService::new(pool, dao);
+
+        // 查询不存在的角色
+        let ancestors = svc
+            .get_ancestors("nonexistent_role", 0)
+            .await
+            .expect("get_ancestors 应成功");
+        assert!(ancestors.is_empty(), "不存在的角色应返回空祖先集合");
+    }
+
+    /// `invalidate_cache` 单独调用是幂等的。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn invalidate_cache_is_idempotent() {
+        let pool = setup_db().await;
+        let dao = mock_dao();
+
+        let svc = RoleHierarchyService::new(pool, dao);
+
+        // 对从未缓存过的租户调用 invalidate_cache
+        let result = svc.invalidate_cache(999).await;
+        assert!(result.is_ok(), "invalidate_cache 不存在的缓存应幂等返回 Ok");
+
+        // 再次调用也不报错
+        let result2 = svc.invalidate_cache(999).await;
+        assert!(result2.is_ok(), "多次调用 invalidate_cache 应幂等");
+    }
+
+    // ========================================================================
+    // 补充测试：get_descendants（完全未覆盖的方法）
+    // ========================================================================
+
+    /// `get_descendants` 返回间接后代。
+    ///
+    /// 构造层级 user -> admin -> super_admin（user 继承 admin，admin 继承 super_admin），
+    /// 验证 super_admin 的后代含 admin（直接）和 user（间接）。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn get_descendants_returns_indirect_descendants() {
+        let pool = setup_db().await;
+
+        // user -> admin -> super_admin
+        insert_edge(&pool, 0, "user", "admin").await;
+        insert_edge(&pool, 0, "admin", "super_admin").await;
+
+        let svc = RoleHierarchyService::new(pool, mock_dao());
+
+        // super_admin 的后代应含 admin（直接子角色）和 user（间接后代）
+        let descendants = svc
+            .get_descendants("super_admin", 0)
+            .await
+            .expect("get_descendants 应成功");
+        assert!(
+            descendants.contains("admin"),
+            "super_admin 的后代应含 admin（直接子角色）"
+        );
+        assert!(
+            descendants.contains("user"),
+            "super_admin 的后代应含 user（间接后代）"
+        );
+
+        // admin 的后代应含 user，不含 super_admin
+        let admin_descendants = svc
+            .get_descendants("admin", 0)
+            .await
+            .expect("get_descendants 应成功");
+        assert!(admin_descendants.contains("user"), "admin 的后代应含 user");
+        assert!(
+            !admin_descendants.contains("super_admin"),
+            "admin 的后代不应含 super_admin（方向相反）"
+        );
+
+        // user 的后代应为空（user 是最底层）
+        let user_descendants = svc
+            .get_descendants("user", 0)
+            .await
+            .expect("get_descendants 应成功");
+        assert!(
+            user_descendants.is_empty(),
+            "user 无后代（user 是最底层角色）"
+        );
+    }
+
+    /// `get_descendants` 空表返回空集合。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn get_descendants_empty_table_returns_empty() {
+        let pool = setup_db().await;
+        let svc = RoleHierarchyService::new(pool, mock_dao());
+
+        let descendants = svc
+            .get_descendants("any_role", 0)
+            .await
+            .expect("get_descendants 应成功");
+        assert!(descendants.is_empty(), "空表应返回空后代集合");
+    }
+
+    /// `get_descendants` 处理环（A -> B -> A 不应无限递归）。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn get_descendants_handles_cycle_without_infinite_recursion() {
+        let pool = setup_db().await;
+
+        // 构造环：A -> B -> A（A 继承 B，B 继承 A）
+        insert_edge(&pool, 0, "A", "B").await;
+        insert_edge(&pool, 0, "B", "A").await;
+
+        let svc = RoleHierarchyService::new(pool, mock_dao());
+
+        // 不应 stack overflow 或 hang
+        let descendants_a = svc
+            .get_descendants("A", 0)
+            .await
+            .expect("get_descendants 应成功");
+        // A 的后代应含 B（A 继承 B，所以 B 的后代包含 A，A 的后代包含 B）
+        assert!(descendants_a.contains("B"), "A 的后代应含 B");
+
+        let descendants_b = svc
+            .get_descendants("B", 0)
+            .await
+            .expect("get_descendants 应成功");
+        assert!(descendants_b.contains("A"), "B 的后代应含 A");
+    }
+
+    /// `get_descendants` 按租户隔离。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn get_descendants_filters_by_tenant_id() {
+        let pool = setup_db().await;
+
+        // tenant 0: user -> admin
+        insert_edge(&pool, 0, "user", "admin").await;
+        // tenant 1: user -> super_admin
+        insert_edge(&pool, 1, "user", "super_admin").await;
+
+        let svc = RoleHierarchyService::new(pool, mock_dao());
+
+        // tenant 0：admin 的后代应含 user，不含 super_admin
+        let desc_0 = svc
+            .get_descendants("admin", 0)
+            .await
+            .expect("get_descendants(0) 应成功");
+        assert!(desc_0.contains("user"), "tenant 0: admin 的后代应含 user");
+        assert!(
+            !desc_0.contains("super_admin"),
+            "tenant 0: admin 的后代不应含 super_admin"
+        );
+
+        // tenant 1：super_admin 的后代应含 user，不含 admin
+        let desc_1 = svc
+            .get_descendants("super_admin", 1)
+            .await
+            .expect("get_descendants(1) 应成功");
+        assert!(
+            desc_1.contains("user"),
+            "tenant 1: super_admin 的后代应含 user"
+        );
+        assert!(
+            !desc_1.contains("admin"),
+            "tenant 1: super_admin 的后代不应含 admin"
+        );
+    }
+
+    /// `get_descendants` 对不存在的角色返回空集合。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn get_descendants_for_nonexistent_role_returns_empty() {
+        let pool = setup_db().await;
+
+        insert_edge(&pool, 0, "user", "admin").await;
+        let svc = RoleHierarchyService::new(pool, mock_dao());
+
+        let descendants = svc
+            .get_descendants("nonexistent_role", 0)
+            .await
+            .expect("get_descendants 应成功");
+        assert!(descendants.is_empty(), "不存在的角色应返回空后代集合");
+    }
+
+    /// `get_descendants` 处理多分支（菱形继承）。
+    ///
+    /// 构造：D -> B -> A, D -> C -> A
+    /// A 的后代应含 B, C, D。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn get_descendants_handles_diamond_inheritance() {
+        let pool = setup_db().await;
+
+        // D 继承 B, B 继承 A
+        insert_edge(&pool, 0, "D", "B").await;
+        insert_edge(&pool, 0, "B", "A").await;
+        // D 继承 C, C 继承 A
+        insert_edge(&pool, 0, "D", "C").await;
+        insert_edge(&pool, 0, "C", "A").await;
+
+        let svc = RoleHierarchyService::new(pool, mock_dao());
+
+        // A 的后代应含 B, C, D
+        let descendants = svc
+            .get_descendants("A", 0)
+            .await
+            .expect("get_descendants 应成功");
+        assert!(descendants.contains("B"), "A 的后代应含 B");
+        assert!(descendants.contains("C"), "A 的后代应含 C");
+        assert!(descendants.contains("D"), "A 的后代应含 D");
+
+        // B 的后代应含 D，不含 C/A
+        let b_descendants = svc
+            .get_descendants("B", 0)
+            .await
+            .expect("get_descendants 应成功");
+        assert!(b_descendants.contains("D"), "B 的后代应含 D");
+        assert!(!b_descendants.contains("A"), "B 的后代不应含 A");
+    }
+
+    // ========================================================================
+    // 补充测试：add_edge 幂等性
+    // ========================================================================
+
+    /// `add_edge` 重复插入相同边是幂等的（INSERT OR IGNORE）。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn add_edge_is_idempotent() {
+        let pool = setup_db().await;
+        let dao = mock_dao();
+
+        let svc = RoleHierarchyService::new(pool.clone(), dao);
+
+        // 第一次插入
+        svc.add_edge("user", "admin", 0)
+            .await
+            .expect("第一次 add_edge 应成功");
+
+        // 第二次插入相同边（应幂等不报错）
+        let result = svc.add_edge("user", "admin", 0).await;
+        assert!(result.is_ok(), "重复插入相同边应幂等返回 Ok");
+
+        // 验证只有一条记录
+        let session = pool.get_session("admin").await.unwrap();
+        let conn = session.connection().unwrap();
+        let stmt = Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT COUNT(*) as cnt FROM role_hierarchy WHERE tenant_id = 0 AND child_role = 'user' AND parent_role = 'admin'",
+            vec![],
+        );
+        let rows = conn.query_all_raw(stmt).await.expect("COUNT 查询应成功");
+        let count: i64 = rows[0].try_get::<i64>("", "cnt").expect("读取 cnt 应成功");
+        assert_eq!(count, 1, "重复插入后应只有 1 条记录（INSERT OR IGNORE）");
+    }
+
+    // ========================================================================
+    // 补充测试：compute_closure 菱形继承 / 自环 / 多分量 / 多层链
+    // ========================================================================
+
+    /// `compute_closure` 处理菱形继承（ancestors 方向）。
+    ///
+    /// 构造 D -> B -> A, D -> C -> A：
+    /// D 的祖先应含 B, C, A（通过两条路径都能到达 A，但集合去重）。
+    /// 覆盖 `dfs_ancestors` 的 backtracking 逻辑（`visited.remove(role)`）——
+    /// 若不回溯，C -> A 路径会因 A 已被 B -> A 访问而漏掉。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn compute_closure_diamond_inheritance_collects_all_ancestors() {
+        let pool = setup_db().await;
+
+        // D 继承 B, B 继承 A
+        insert_edge(&pool, 0, "D", "B").await;
+        insert_edge(&pool, 0, "B", "A").await;
+        // D 继承 C, C 继承 A
+        insert_edge(&pool, 0, "D", "C").await;
+        insert_edge(&pool, 0, "C", "A").await;
+
+        let svc = RoleHierarchyService::new(pool, mock_dao());
+        let closure = svc
+            .compute_closure(0)
+            .await
+            .expect("compute_closure 应成功");
+
+        let d_ancestors = closure.get("D").expect("closure 应包含 D");
+        assert!(d_ancestors.contains("B"), "D 的祖先应含 B");
+        assert!(d_ancestors.contains("C"), "D 的祖先应含 C");
+        assert!(
+            d_ancestors.contains("A"),
+            "D 的祖先应含 A（菱形继承的顶点）"
+        );
+        assert_eq!(
+            d_ancestors.len(),
+            3,
+            "D 的祖先应为 {{B, C, A}}（去重后 3 个）"
+        );
+
+        // B 的祖先应含 A，不含 C/D
+        let b_ancestors = closure.get("B").expect("closure 应包含 B");
+        assert!(b_ancestors.contains("A"), "B 的祖先应含 A");
+        assert!(!b_ancestors.contains("C"), "B 的祖先不应含 C");
+        assert!(!b_ancestors.contains("D"), "B 的祖先不应含 D");
+    }
+
+    /// `compute_closure` 处理自环（A -> A）。
+    ///
+    /// 自环 A -> A 时，A 被插入为自身的祖先（`ancestors.insert(parent)` 先于
+    /// 递归调用执行），但 `visited` 防止无限递归。
+    /// 此测试验证自环不会 stack overflow，并记录实际行为。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn compute_closure_self_loop_does_not_infinite_recurse() {
+        let pool = setup_db().await;
+
+        // 自环：A -> A
+        insert_edge(&pool, 0, "A", "A").await;
+
+        let svc = RoleHierarchyService::new(pool, mock_dao());
+        let closure = svc
+            .compute_closure(0)
+            .await
+            .expect("compute_closure 应成功");
+
+        // A 在邻接表中（有自环边），所以 closure 应包含 A
+        let a_ancestors = closure
+            .get("A")
+            .expect("closure 应包含 A（自环边使 A 在 adj 中）");
+        // 自环导致 A 被插入为自身的祖先（当前实现行为）
+        assert!(
+            a_ancestors.contains("A"),
+            "自环 A->A 时 A 出现在自身祖先集合中（实现行为）"
+        );
+    }
+
+    /// `compute_closure` 处理多个不连通分量。
+    ///
+    /// 构造两组独立的层级：A -> B 和 C -> D，
+    /// 验证两组都出现在闭包中且互不干扰。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn compute_closure_multiple_disconnected_components() {
+        let pool = setup_db().await;
+
+        // 分量 1: A -> B
+        insert_edge(&pool, 0, "A", "B").await;
+        // 分量 2: C -> D
+        insert_edge(&pool, 0, "C", "D").await;
+
+        let svc = RoleHierarchyService::new(pool, mock_dao());
+        let closure = svc
+            .compute_closure(0)
+            .await
+            .expect("compute_closure 应成功");
+
+        assert_eq!(closure.len(), 2, "应有两个不连通分量（A 和 C）");
+
+        let a_ancestors = closure.get("A").expect("closure 应包含 A");
+        assert!(a_ancestors.contains("B"), "A 的祖先应含 B");
+        assert!(!a_ancestors.contains("D"), "A 的祖先不应含 D（不连通）");
+
+        let c_ancestors = closure.get("C").expect("closure 应包含 C");
+        assert!(c_ancestors.contains("D"), "C 的祖先应含 D");
+        assert!(!c_ancestors.contains("B"), "C 的祖先不应含 B（不连通）");
+    }
+
+    /// `compute_closure` 处理多层链（5 层深度）。
+    ///
+    /// 构造 L0 -> L1 -> L2 -> L3 -> L4，
+    /// 验证 L0 的祖先含 L1~L4 全部，L4 的祖先为空。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn compute_closure_multi_level_chain_collects_all_ancestors() {
+        let pool = setup_db().await;
+
+        // 5 层链: L0 -> L1 -> L2 -> L3 -> L4
+        insert_edge(&pool, 0, "L0", "L1").await;
+        insert_edge(&pool, 0, "L1", "L2").await;
+        insert_edge(&pool, 0, "L2", "L3").await;
+        insert_edge(&pool, 0, "L3", "L4").await;
+
+        let svc = RoleHierarchyService::new(pool, mock_dao());
+        let closure = svc
+            .compute_closure(0)
+            .await
+            .expect("compute_closure 应成功");
+
+        let l0_ancestors = closure.get("L0").expect("closure 应包含 L0");
+        assert_eq!(
+            l0_ancestors.len(),
+            4,
+            "L0 的祖先应含 L1, L2, L3, L4（共 4 个）"
+        );
+        assert!(l0_ancestors.contains("L1"));
+        assert!(l0_ancestors.contains("L2"));
+        assert!(l0_ancestors.contains("L3"));
+        assert!(l0_ancestors.contains("L4"));
+
+        let l3_ancestors = closure.get("L3").expect("closure 应包含 L3");
+        assert!(
+            l3_ancestors.contains("L4"),
+            "L3 的祖先应含 L4（直接父角色）"
+        );
+        assert_eq!(l3_ancestors.len(), 1, "L3 的祖先应只有 L4");
+    }
+
+    // ========================================================================
+    // 补充测试：get_ancestors 缓存复用（同一租户不同角色共享缓存）
+    // ========================================================================
+
+    /// `get_ancestors` 首次调用缓存整个租户闭包后，第二次调用不同角色应命中缓存。
+    ///
+    /// 流程：
+    /// 1. 构造 user -> admin, reader -> viewer
+    /// 2. 首次 get_ancestors("user") 触发 compute_closure + 缓存写入
+    /// 3. 删除 role_hierarchy 所有数据
+    /// 4. get_ancestors("reader") 应从缓存返回 viewer（而非空集合）
+    ///
+    /// 覆盖 `closure.get(role).cloned().unwrap_or_default()` 在缓存命中时的路径。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn get_ancestors_second_role_hits_cached_closure() {
+        let pool = setup_db().await;
+        let dao = mock_dao();
+
+        insert_edge(&pool, 0, "user", "admin").await;
+        insert_edge(&pool, 0, "reader", "viewer").await;
+
+        let svc = RoleHierarchyService::new(pool.clone(), dao.clone());
+
+        // 首次调用 user：触发 compute_closure + 缓存写入
+        let user_ancestors = svc
+            .get_ancestors("user", 0)
+            .await
+            .expect("首次 get_ancestors(user) 应成功");
+        assert!(user_ancestors.contains("admin"));
+
+        // 删除所有数据
+        let session = pool.get_session("admin").await.unwrap();
+        let conn = session.connection().unwrap();
+        conn.execute_raw(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "DELETE FROM role_hierarchy",
+            vec![],
+        ))
+        .await
+        .expect("DELETE 应成功");
+
+        // 第二次调用 reader：应从缓存返回 viewer（而非重新计算返回空）
+        let reader_ancestors = svc
+            .get_ancestors("reader", 0)
+            .await
+            .expect("缓存命中时 get_ancestors(reader) 应成功");
+        assert!(
+            reader_ancestors.contains("viewer"),
+            "缓存命中时应返回 reader 的祖先 viewer"
+        );
+    }
+
+    // ========================================================================
+    // 补充测试：add_edge 跨租户缓存隔离
+    // ========================================================================
+
+    /// `add_edge` 在 tenant 1 添加边只失效 tenant 1 的缓存，不影响 tenant 0。
+    ///
+    /// 流程：
+    /// 1. tenant 0 和 tenant 1 各自 get_ancestors 触发缓存写入
+    /// 2. tenant 1 add_edge 失效 tenant 1 缓存
+    /// 3. tenant 0 缓存应仍存在
+    #[tokio::test(flavor = "multi_thread")]
+    async fn add_edge_invalidates_only_same_tenant_cache() {
+        let pool = setup_db().await;
+        let dao = mock_dao();
+
+        insert_edge(&pool, 0, "user0", "admin0").await;
+        insert_edge(&pool, 1, "user1", "admin1").await;
+
+        let svc = RoleHierarchyService::new(pool, dao.clone());
+
+        // 两个租户各自触发缓存写入
+        svc.get_ancestors("user0", 0)
+            .await
+            .expect("tenant 0 首次查询应成功");
+        svc.get_ancestors("user1", 1)
+            .await
+            .expect("tenant 1 首次查询应成功");
+
+        // 两个缓存都应存在
+        assert!(
+            dao.get("tenant:0:role_closure").await.unwrap().is_some(),
+            "tenant 0 缓存应已写入"
+        );
+        assert!(
+            dao.get("tenant:1:role_closure").await.unwrap().is_some(),
+            "tenant 1 缓存应已写入"
+        );
+
+        // tenant 1 add_edge 只失效 tenant 1 缓存
+        svc.add_edge("user1", "super_admin1", 1)
+            .await
+            .expect("add_edge(tenant 1) 应成功");
+
+        assert!(
+            dao.get("tenant:0:role_closure").await.unwrap().is_some(),
+            "tenant 0 缓存应仍存在（跨租户隔离）"
+        );
+        assert!(
+            dao.get("tenant:1:role_closure").await.unwrap().is_none(),
+            "tenant 1 缓存应已失效"
+        );
+    }
+
+    // ========================================================================
+    // 补充测试：get_descendants 自环 / 多父节点
+    // ========================================================================
+
+    /// `get_descendants` 处理自环（A -> A）。
+    ///
+    /// 自环 A -> A 时，A 被插入为自身的后代（`descendants.insert(child)` 先于
+    /// 递归调用执行），但 `visited` 防止无限递归。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn get_descendants_self_loop_does_not_infinite_recurse() {
+        let pool = setup_db().await;
+
+        // 自环：A -> A（A 继承 A）
+        insert_edge(&pool, 0, "A", "A").await;
+
+        let svc = RoleHierarchyService::new(pool, mock_dao());
+        // 不应 stack overflow 或 hang
+        let descendants = svc
+            .get_descendants("A", 0)
+            .await
+            .expect("get_descendants 应成功");
+
+        // 自环导致 A 出现在自身的后代集合中（当前实现行为）
+        assert!(
+            descendants.contains("A"),
+            "自环 A->A 时 A 出现在自身后代集合中（实现行为）"
+        );
+    }
+
+    /// `get_descendants` 处理多父节点（一个 child 继承多个 parent）。
+    ///
+    /// 构造：user -> admin, user -> manager
+    ///（user 同时继承 admin 和 manager）
+    /// admin 的后代应含 user，manager 的后代也应含 user。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn get_descendants_multi_parent_child_appears_under_all_parents() {
+        let pool = setup_db().await;
+
+        // user 同时继承 admin 和 manager
+        insert_edge(&pool, 0, "user", "admin").await;
+        insert_edge(&pool, 0, "user", "manager").await;
+
+        let svc = RoleHierarchyService::new(pool, mock_dao());
+
+        // admin 的后代应含 user
+        let admin_desc = svc
+            .get_descendants("admin", 0)
+            .await
+            .expect("get_descendants(admin) 应成功");
+        assert!(
+            admin_desc.contains("user"),
+            "admin 的后代应含 user（user 继承 admin）"
+        );
+
+        // manager 的后代应含 user
+        let mgr_desc = svc
+            .get_descendants("manager", 0)
+            .await
+            .expect("get_descendants(manager) 应成功");
+        assert!(
+            mgr_desc.contains("user"),
+            "manager 的后代应含 user（user 继承 manager）"
+        );
+
+        // user 的后代应为空
+        let user_desc = svc
+            .get_descendants("user", 0)
+            .await
+            .expect("get_descendants(user) 应成功");
+        assert!(user_desc.is_empty(), "user 无后代");
+    }
+
+    /// `compute_closure` 处理多父节点（一个 child 继承多个 parent）。
+    ///
+    /// 构造：user -> admin, user -> super_admin
+    /// user 的祖先应含 admin 和 super_admin（两个都在集合中）。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn compute_closure_multi_parent_collects_all_parents() {
+        let pool = setup_db().await;
+
+        // user 同时继承 admin 和 super_admin
+        insert_edge(&pool, 0, "user", "admin").await;
+        insert_edge(&pool, 0, "user", "super_admin").await;
+
+        let svc = RoleHierarchyService::new(pool, mock_dao());
+        let closure = svc
+            .compute_closure(0)
+            .await
+            .expect("compute_closure 应成功");
+
+        let user_ancestors = closure.get("user").expect("closure 应包含 user");
+        assert!(user_ancestors.contains("admin"), "user 的祖先应含 admin");
+        assert!(
+            user_ancestors.contains("super_admin"),
+            "user 的祖先应含 super_admin"
+        );
+        assert_eq!(
+            user_ancestors.len(),
+            2,
+            "user 的祖先应为 {{admin, super_admin}}（共 2 个）"
+        );
+    }
 }

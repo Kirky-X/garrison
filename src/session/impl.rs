@@ -1654,4 +1654,414 @@ mod tests {
             "with_token_session_lock 应串行化同一 token 的并发操作"
         );
     }
+
+    // ----------------------------------------------------------------
+    // check_hover_timeout：4 个分支
+    // ----------------------------------------------------------------
+
+    /// `check_hover_timeout` 在 `hover_timeout_secs <= 0` 时返回 true（不启用悬停检查）。
+    ///
+    /// 覆盖 `if hover_timeout_secs <= 0 { return true; }` 分支。
+    #[test]
+    fn check_hover_timeout_disabled_when_secs_le_zero() {
+        let (_dao, session) = make_session(3600, 86400);
+        // 不更新 last_active_time，直接检查
+        assert!(
+            session.check_hover_timeout("user1", 0),
+            "hover_timeout_secs=0 应返回 true（不启用）"
+        );
+        assert!(
+            session.check_hover_timeout("user1", -1),
+            "hover_timeout_secs=-1 应返回 true（不启用）"
+        );
+    }
+
+    /// `check_hover_timeout` 在 `last_active_time` 不存在时返回 true（首次 check_login 不踢出）。
+    ///
+    /// 覆盖 `None => true` 分支。
+    #[test]
+    fn check_hover_timeout_returns_true_when_no_active_record() {
+        let (_dao, session) = make_session(3600, 86400);
+        // 不调用 update_last_active，直接检查
+        assert!(
+            session.check_hover_timeout("never_seen_user", 300),
+            "无活跃记录时应返回 true（不踢出首次 check_login）"
+        );
+    }
+
+    /// `check_hover_timeout` 在活跃时间未超时时返回 true。
+    ///
+    /// 覆盖 `Some(last) => elapsed <= timeout => true` 分支。
+    #[test]
+    fn check_hover_timeout_returns_true_when_within_timeout() {
+        let (_dao, session) = make_session(3600, 86400);
+        // 设置当前时间为最近活跃
+        let now = chrono::Utc::now().timestamp_millis();
+        session.update_last_active_at("active_user", now);
+
+        // 300 秒悬停超时，刚刚活跃（0 秒前），不应踢出
+        assert!(
+            session.check_hover_timeout("active_user", 300),
+            "刚活跃的用户在悬停超时内应返回 true"
+        );
+    }
+
+    /// `check_hover_timeout` 在悬停超时后返回 false（应踢出）。
+    ///
+    /// 覆盖 `Some(last) => elapsed > timeout => false` 分支。
+    #[test]
+    fn check_hover_timeout_returns_false_when_hover_expired() {
+        let (_dao, session) = make_session(3600, 86400);
+        // 设置活跃时间为 600 秒前（超过 300 秒悬停超时）
+        let old_time = chrono::Utc::now().timestamp_millis() - 600_000; // 600 秒前
+        session.update_last_active_at("idle_user", old_time);
+
+        // 300 秒悬停超时，600 秒前活跃，应踢出
+        assert!(
+            !session.check_hover_timeout("idle_user", 300),
+            "悬停超时后应返回 false（应踢出）"
+        );
+    }
+
+    // ----------------------------------------------------------------
+    // update_last_active + get_last_active（nonexistent login_id）
+    // ----------------------------------------------------------------
+
+    /// `update_last_active` 写入当前时间戳，`get_last_active` 读取它。
+    /// `get_last_active` 对不存在的 login_id 返回 None。
+    #[test]
+    fn update_last_active_and_get_last_active_roundtrip() {
+        let (_dao, session) = make_session(3600, 86400);
+        let before = chrono::Utc::now().timestamp_millis();
+        session.update_last_active("roundtrip_user");
+        let after = chrono::Utc::now().timestamp_millis();
+
+        let stored = session.get_last_active("roundtrip_user");
+        assert!(
+            stored.is_some(),
+            "update_last_active 后应能 get_last_active"
+        );
+        let ts = stored.unwrap();
+        assert!(
+            ts >= before && ts <= after,
+            "存储的时间戳应在调用前后的范围内"
+        );
+
+        // 不存在的 login_id 返回 None
+        assert!(
+            session.get_last_active("nonexistent_user").is_none(),
+            "不存在的 login_id 应返回 None"
+        );
+    }
+
+    // ----------------------------------------------------------------
+    // remove_login_token：entry 为空时移除整个 entry
+    // ----------------------------------------------------------------
+
+    /// `remove_login_token` 移除最后一个 token 后整个 entry 被删除。
+    #[test]
+    fn remove_login_token_removes_entry_when_empty() {
+        let (_dao, session) = make_session(3600, 86400);
+        session.add_login_token("user1", "token1");
+        assert_eq!(
+            session.get_tokens_by_login_id("user1"),
+            vec!["token1".to_string()]
+        );
+
+        session.remove_login_token("user1", "token1");
+        // entry 应被完全移除（get_tokens_by_login_id 返回空 Vec）
+        assert!(
+            session.get_tokens_by_login_id("user1").is_empty(),
+            "移除最后一个 token 后 entry 应被删除"
+        );
+        // get_token_by_login_id 应返回 None
+        assert!(
+            session.get_token_by_login_id("user1").is_none(),
+            "移除最后一个 token 后 get_token_by_login_id 应返回 None"
+        );
+    }
+
+    /// `remove_login_token` 移除非最后一个 token 时保留其他 token。
+    #[test]
+    fn remove_login_token_preserves_other_tokens() {
+        let (_dao, session) = make_session(3600, 86400);
+        session.add_login_token("user1", "token1");
+        session.add_login_token("user1", "token2");
+        session.add_login_token("user1", "token3");
+
+        session.remove_login_token("user1", "token2");
+        let tokens = session.get_tokens_by_login_id("user1");
+        assert_eq!(
+            tokens,
+            vec!["token1".to_string(), "token3".to_string()],
+            "移除 token2 后应保留 token1 和 token3"
+        );
+    }
+
+    // ----------------------------------------------------------------
+    // get_token_by_login_id / get_tokens_by_login_id（nonexistent）
+    // ----------------------------------------------------------------
+
+    /// `get_token_by_login_id` 返回第一个 token，对不存在的 login_id 返回 None。
+    #[test]
+    fn get_token_by_login_id_returns_first_or_none() {
+        let (_dao, session) = make_session(3600, 86400);
+        session.add_login_token("user1", "first_token");
+        session.add_login_token("user1", "second_token");
+
+        // 返回第一个 token
+        assert_eq!(
+            session.get_token_by_login_id("user1"),
+            Some("first_token".to_string()),
+            "应返回第一个 token"
+        );
+
+        // 不存在的 login_id 返回 None
+        assert!(
+            session.get_token_by_login_id("nonexistent").is_none(),
+            "不存在的 login_id 应返回 None"
+        );
+    }
+
+    /// `get_tokens_by_login_id` 对不存在的 login_id 返回空 Vec。
+    #[test]
+    fn get_tokens_by_login_id_returns_empty_for_nonexistent() {
+        let (_dao, session) = make_session(3600, 86400);
+        assert!(
+            session
+                .get_tokens_by_login_id("nonexistent_user")
+                .is_empty(),
+            "不存在的 login_id 应返回空 Vec"
+        );
+    }
+
+    // ----------------------------------------------------------------
+    // set / get 自定义属性（error case + success case）
+    // ----------------------------------------------------------------
+
+    /// `set` 对不存在的 token 返回 `InvalidToken` 错误。
+    #[tokio::test]
+    async fn set_attr_on_nonexistent_token_returns_invalid_token() {
+        let (_dao, session) = make_session(3600, 86400);
+        let result = session.set("nonexistent_token", "key", "value").await;
+        assert!(
+            matches!(result, Err(BulwarkError::InvalidToken(_))),
+            "set 不存在的 token 应返回 InvalidToken 错误"
+        );
+    }
+
+    /// `set` / `get` 自定义属性的往返测试。
+    #[tokio::test]
+    async fn set_and_get_custom_attr_roundtrip() {
+        let (_dao, session) = make_session(3600, 86400);
+        session.create("1001", "T1").await.unwrap();
+
+        // set 属性
+        session
+            .set("T1", "custom_key", "custom_value")
+            .await
+            .unwrap();
+
+        // get 属性
+        let val = session.get("T1", "custom_key").await.unwrap();
+        assert_eq!(val.as_deref(), Some("custom_value"), "应读取已设置的属性");
+
+        // get 不存在的属性
+        let missing = session.get("T1", "missing_key").await.unwrap();
+        assert!(missing.is_none(), "不存在的属性应返回 None");
+
+        // get 不存在的 token 的属性
+        let missing_token = session.get("no_token", "key").await.unwrap();
+        assert!(missing_token.is_none(), "不存在的 token 应返回 None");
+    }
+
+    // ----------------------------------------------------------------
+    // set_device：error case
+    // ----------------------------------------------------------------
+
+    /// `set_device` 对不存在的 token 返回 `InvalidToken` 错误。
+    #[tokio::test]
+    async fn set_device_on_nonexistent_token_returns_invalid_token() {
+        let (_dao, session) = make_session(3600, 86400);
+        let result = session.set_device("nonexistent_token", "web-chrome").await;
+        assert!(
+            matches!(result, Err(BulwarkError::InvalidToken(_))),
+            "set_device 不存在的 token 应返回 InvalidToken 错误"
+        );
+    }
+
+    // ----------------------------------------------------------------
+    // create_token_session：LoginParams 中的 device/ip/user_agent 写入 TokenSession
+    // ----------------------------------------------------------------
+
+    /// `create_token_session` 将 LoginParams 中的 device/ip/user_agent 写入 TokenSession。
+    #[tokio::test]
+    async fn create_token_session_writes_device_ip_user_agent_from_login_params() {
+        let (_dao, session) = make_session(3600, 86400);
+        let params = crate::stp::LoginParams {
+            device: Some("mobile-ios".to_string()),
+            ip: Some("192.168.1.100".to_string()),
+            user_agent: Some("Mozilla/5.0 (iPhone)".to_string()),
+            remember_me: false,
+            require_mfa: false,
+        };
+
+        session
+            .create_token_session("user1", "T1", &params)
+            .await
+            .expect("create_token_session 应成功");
+
+        let ts = session
+            .get_token_session("T1")
+            .await
+            .expect("get_token_session 应成功")
+            .expect("Token-Session 应存在");
+        assert_eq!(ts.device.as_deref(), Some("mobile-ios"), "device 应被写入");
+        assert_eq!(ts.ip.as_deref(), Some("192.168.1.100"), "ip 应被写入");
+        assert_eq!(
+            ts.user_agent.as_deref(),
+            Some("Mozilla/5.0 (iPhone)"),
+            "user_agent 应被写入"
+        );
+    }
+
+    /// `create_token_session` 中 LoginParams 的 device/ip/user_agent 为 None 时
+    /// TokenSession 对应字段也为 None（向后兼容 `create`）。
+    #[tokio::test]
+    async fn create_token_session_with_none_params_leaves_fields_none() {
+        let (_dao, session) = make_session(3600, 86400);
+        let params = crate::stp::LoginParams::default();
+
+        session
+            .create_token_session("user1", "T1", &params)
+            .await
+            .expect("create_token_session 应成功");
+
+        let ts = session
+            .get_token_session("T1")
+            .await
+            .expect("get_token_session 应成功")
+            .expect("Token-Session 应存在");
+        assert!(ts.device.is_none(), "device 应为 None");
+        assert!(ts.ip.is_none(), "ip 应为 None");
+        assert!(ts.user_agent.is_none(), "user_agent 应为 None");
+    }
+
+    // ----------------------------------------------------------------
+    // link_sso_ticket / link_oauth2_token / link_temp_credential（success cases）
+    // ----------------------------------------------------------------
+
+    /// `link_sso_ticket` + `get_sso_ticket` 往返测试。
+    #[tokio::test]
+    async fn link_and_get_sso_ticket_roundtrip() {
+        let (_dao, session) = make_session(3600, 86400);
+        session.create("user1", "T1").await.unwrap();
+
+        session
+            .link_sso_ticket("T1", "ticket-abc-123")
+            .await
+            .expect("link_sso_ticket 应成功");
+
+        let ticket = session
+            .get_sso_ticket("T1")
+            .await
+            .expect("get_sso_ticket 应成功");
+        assert_eq!(
+            ticket.as_deref(),
+            Some("ticket-abc-123"),
+            "应读取已关联的 SSO ticket"
+        );
+    }
+
+    /// `link_oauth2_token` + `get_oauth2_token` 往返测试。
+    #[tokio::test]
+    async fn link_and_get_oauth2_token_roundtrip() {
+        let (_dao, session) = make_session(3600, 86400);
+        session.create("user1", "T1").await.unwrap();
+
+        session
+            .link_oauth2_token("T1", "oauth2-access-token-xyz")
+            .await
+            .expect("link_oauth2_token 应成功");
+
+        let token = session
+            .get_oauth2_token("T1")
+            .await
+            .expect("get_oauth2_token 应成功");
+        assert_eq!(
+            token.as_deref(),
+            Some("oauth2-access-token-xyz"),
+            "应读取已关联的 OAuth2 access_token"
+        );
+    }
+
+    /// `link_temp_credential` + `get_temp_credential` 往返测试。
+    #[tokio::test]
+    async fn link_and_get_temp_credential_roundtrip() {
+        let (_dao, session) = make_session(3600, 86400);
+        session.create("user1", "T1").await.unwrap();
+
+        let temp_key = "temp:cred:user1:20260714";
+        session
+            .link_temp_credential("T1", temp_key)
+            .await
+            .expect("link_temp_credential 应成功");
+
+        let stored = session
+            .get_temp_credential("T1")
+            .await
+            .expect("get_temp_credential 应成功");
+        assert_eq!(
+            stored.as_deref(),
+            Some(temp_key),
+            "应读取已关联的临时凭证 key"
+        );
+    }
+
+    // ----------------------------------------------------------------
+    // renew：error case（token 不存在）
+    // ----------------------------------------------------------------
+
+    /// `renew` 对不存在的 token 返回 `InvalidToken` 错误。
+    #[tokio::test]
+    async fn renew_nonexistent_token_returns_invalid_token() {
+        let (_dao, session) = make_session(3600, 86400);
+        let result = session.renew("nonexistent_token").await;
+        assert!(
+            matches!(result, Err(BulwarkError::InvalidToken(_))),
+            "renew 不存在的 token 应返回 InvalidToken 错误"
+        );
+    }
+
+    // ----------------------------------------------------------------
+    // logout：幂等性（不存在的 token）
+    // ----------------------------------------------------------------
+
+    /// `logout` 对不存在的 token 幂等返回 `Ok(())`。
+    #[tokio::test]
+    async fn logout_nonexistent_token_is_idempotent() {
+        let (_dao, session) = make_session(3600, 86400);
+        let result = session.logout("nonexistent_token").await;
+        assert!(result.is_ok(), "logout 不存在的 token 应幂等返回 Ok(())");
+    }
+
+    // ----------------------------------------------------------------
+    // dao() 访问器（protocol-apikey feature）
+    // ----------------------------------------------------------------
+
+    /// `dao()` 返回内部 DAO 引用（protocol-apikey feature）。
+    #[cfg(feature = "protocol-apikey")]
+    #[test]
+    fn dao_accessor_returns_dao_reference() {
+        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let session = BulwarkSession::new(dao.clone(), 3600, 86400);
+        let returned = session.dao();
+        // 验证返回的是同一个 Arc（通过比较指针是否指向同一对象）
+        let returned_ptr = Arc::as_ptr(returned);
+        let original_ptr = Arc::as_ptr(&dao);
+        assert!(
+            std::ptr::eq(returned_ptr, original_ptr),
+            "dao() 应返回内部 DAO 的引用"
+        );
+    }
 }

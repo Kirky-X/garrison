@@ -455,6 +455,11 @@ mod tests {
             self.set_keys.lock().clone()
         }
 
+        /// 返回所有 delete 调用的 key（按调用顺序）。
+        fn delete_keys(&self) -> Vec<String> {
+            self.delete_keys.lock().clone()
+        }
+
         /// 直接写入 store（用于测试预填充 L2），不计数。
         fn insert_direct(&self, key: &str, value: &str) {
             self.store.lock().insert(key.to_string(), value.to_string());
@@ -1570,5 +1575,716 @@ mod tests {
         let (_dao, _interface, service) = make_service(60, 600);
         assert_eq!(service.l1_ttl_secs(), 60, "l1_ttl_secs 应返回 60");
         assert_eq!(service.l2_ttl_secs(), 600, "l2_ttl_secs 应返回 600");
+    }
+
+    // ------------------------------------------------------------------------
+    // 补充测试：L1 缓存反序列化失败路径（覆盖 line 141-143 / 220-222）
+    // ------------------------------------------------------------------------
+
+    /// T27: L1 权限缓存反序列化失败返回 Internal 错误。
+    ///
+    /// 直接向 L1 oxcache 注入损坏的 JSON 字符串，
+    /// 验证 get_permissions 返回 BulwarkError::Internal 且消息包含
+    /// "L1 权限缓存反序列化失败"。
+    #[tokio::test]
+    async fn l1_corrupt_permission_cache_returns_internal_error() {
+        let (_dao, _interface, service) = make_default_service();
+
+        // 直接向 L1 注入损坏 JSON（模拟 oxcache 内数据损坏）
+        let key = "perm:cache:27001".to_string();
+        let bad_value = "{invalid json".to_string();
+        service
+            .l1
+            .set_with_ttl(&key, &bad_value, Some(Duration::from_secs(30)))
+            .await
+            .expect("向 L1 注入损坏数据应成功");
+
+        let result = service.get_permissions("27001").await;
+        assert!(result.is_err(), "L1 缓存损坏应返回 Err");
+        match result {
+            Err(BulwarkError::Internal(msg)) => {
+                assert!(
+                    msg.contains("L1 权限缓存反序列化失败"),
+                    "错误消息应包含 'L1 权限缓存反序列化失败'，实际: {}",
+                    msg
+                );
+            },
+            Err(other) => panic!("期望 BulwarkError::Internal，实际: {:?}", other),
+            Ok(_) => panic!("期望 Err，实际 Ok"),
+        }
+    }
+
+    /// T28: L1 角色缓存反序列化失败返回 Internal 错误。
+    #[tokio::test]
+    async fn l1_corrupt_role_cache_returns_internal_error() {
+        let (_dao, _interface, service) = make_default_service();
+
+        let key = "role:cache:28001".to_string();
+        let bad_value = "{invalid json".to_string();
+        service
+            .l1
+            .set_with_ttl(&key, &bad_value, Some(Duration::from_secs(30)))
+            .await
+            .expect("向 L1 注入损坏数据应成功");
+
+        let result = service.get_roles("28001").await;
+        assert!(result.is_err(), "L1 缓存损坏应返回 Err");
+        match result {
+            Err(BulwarkError::Internal(msg)) => {
+                assert!(
+                    msg.contains("L1 角色缓存反序列化失败"),
+                    "错误消息应包含 'L1 角色缓存反序列化失败'，实际: {}",
+                    msg
+                );
+            },
+            Err(other) => panic!("期望 BulwarkError::Internal，实际: {:?}", other),
+            Ok(_) => panic!("期望 Err，实际 Ok"),
+        }
+    }
+
+    /// T29: L2 角色缓存反序列化失败返回 Internal 错误。
+    ///
+    /// 向 L2 注入损坏 JSON，验证 get_roles 返回 BulwarkError::Internal
+    /// 且消息包含 "L2 角色缓存反序列化失败"。
+    #[tokio::test]
+    async fn l2_corrupt_role_cache_returns_internal_error() {
+        let (dao, _interface, service) = make_default_service();
+
+        dao.insert_direct("role:cache:29001", "{invalid json");
+
+        let result = service.get_roles("29001").await;
+        assert!(result.is_err(), "L2 缓存损坏应返回 Err");
+        match result {
+            Err(BulwarkError::Internal(msg)) => {
+                assert!(
+                    msg.contains("L2 角色缓存反序列化失败"),
+                    "错误消息应包含 'L2 角色缓存反序列化失败'，实际: {}",
+                    msg
+                );
+            },
+            Err(other) => panic!("期望 BulwarkError::Internal，实际: {:?}", other),
+            Ok(_) => panic!("期望 Err，实际 Ok"),
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // 补充测试：invalidate 对角色和用户缓存的 L1 失效验证
+    // ------------------------------------------------------------------------
+
+    /// T30: invalidate 后 get_roles 重新查询 L3（L1+L2 失效验证）。
+    #[tokio::test]
+    async fn invalidate_clears_l1_for_roles() {
+        let (_dao, interface, service) = make_default_service();
+        interface.set_roles("30001", vec!["admin".to_string()]);
+
+        // 填充 L1
+        let _ = service.get_roles("30001").await.unwrap();
+        assert_eq!(interface.role_count(), 1, "第一次应查询 L3");
+
+        // invalidate 失效 L1+L2
+        service.invalidate("30001").await.unwrap();
+
+        // 再次查询：L1 已失效 → L2 也被删除 → L3 查询
+        let _ = service.get_roles("30001").await.unwrap();
+        assert_eq!(interface.role_count(), 2, "invalidate 后应重新查询 L3");
+    }
+
+    /// T31: invalidate 后 get_user 重新查询 L3（L1+L2 失效验证）。
+    #[tokio::test]
+    async fn invalidate_clears_l1_for_user() {
+        let (_dao, interface, service) = make_default_service();
+        interface.set_user_info("31001", Some(r#"{"id":31001}"#.to_string()));
+
+        // 填充 L1
+        let _ = service.get_user("31001").await.unwrap();
+        assert_eq!(interface.user_count(), 1, "第一次应查询 L3");
+
+        // invalidate 失效 L1+L2
+        service.invalidate("31001").await.unwrap();
+
+        // 再次查询：L1 已失效 → L2 也被删除 → L3 查询
+        let _ = service.get_user("31001").await.unwrap();
+        assert_eq!(interface.user_count(), 2, "invalidate 后应重新查询 L3");
+    }
+
+    // ------------------------------------------------------------------------
+    // 补充测试：L3 回填验证 + 空列表 + TTL 过期（角色/用户）
+    // ------------------------------------------------------------------------
+
+    /// T32: get_roles L3 命中后回填 L1+L2。
+    #[tokio::test]
+    async fn get_roles_l3_backfills_l1_and_l2() {
+        let (dao, interface, service) = make_default_service();
+        interface.set_roles("32001", vec!["editor".to_string()]);
+
+        // 第一次调用：L1+L2 miss → L3 查询 → 回填 L1+L2
+        let roles = service.get_roles("32001").await.unwrap();
+        assert_eq!(roles, vec!["editor".to_string()]);
+        assert_eq!(interface.role_count(), 1, "应查询 L3 一次");
+        assert_eq!(dao.get_count(), 1, "应查询 L2 一次");
+        assert_eq!(dao.set_count(), 1, "应回填 L2 一次");
+
+        // 验证 L2 已被回填
+        assert!(dao.contains_key("role:cache:32001"), "L2 应已被回填");
+
+        // 验证 L1 已被回填（第二次调用不走 L3）
+        let roles2 = service.get_roles("32001").await.unwrap();
+        assert_eq!(roles2, vec!["editor".to_string()]);
+        assert_eq!(interface.role_count(), 1, "L1 回填后不应再查询 L3");
+    }
+
+    /// T33: get_permissions 返回空列表时正确缓存。
+    #[tokio::test]
+    async fn get_permissions_returns_empty_vec() {
+        let (dao, interface, service) = make_default_service();
+        // 不设置 permissions → L3 返回空 Vec
+
+        let perms = service.get_permissions("33001").await.unwrap();
+        assert!(perms.is_empty(), "未设置权限时应返回空列表");
+        assert_eq!(interface.perm_count(), 1, "应查询 L3 一次");
+        // 空列表也应被缓存到 L2
+        assert_eq!(dao.set_count(), 1, "空列表也应回填 L2");
+    }
+
+    /// T34: get_roles 返回空列表时正确缓存。
+    #[tokio::test]
+    async fn get_roles_returns_empty_vec() {
+        let (dao, interface, service) = make_default_service();
+
+        let roles = service.get_roles("34001").await.unwrap();
+        assert!(roles.is_empty(), "未设置角色时应返回空列表");
+        assert_eq!(interface.role_count(), 1, "应查询 L3 一次");
+        assert_eq!(dao.set_count(), 1, "空列表也应回填 L2");
+    }
+
+    /// T35: TTL 过期后 get_roles 走 L2 回填 L1。
+    #[tokio::test]
+    async fn ttl_expires_l1_for_roles() {
+        let (_dao, interface, service) = make_service(1, 300);
+        interface.set_roles("35001", vec!["admin".to_string()]);
+
+        // 第一次调用：填充 L1
+        let _ = service.get_roles("35001").await.unwrap();
+        assert_eq!(interface.role_count(), 1, "第一次应查询 L3");
+
+        // 等待 L1 TTL 过期
+        tokio::time::sleep(Duration::from_secs(2)).await;
+
+        // 第二次调用：L1 已过期 → L2 命中 → 回填 L1 → 不查询 L3
+        let roles = service.get_roles("35001").await.unwrap();
+        assert_eq!(roles, vec!["admin".to_string()]);
+        assert_eq!(interface.role_count(), 1, "L1 过期后 L2 命中，不应查询 L3");
+    }
+
+    /// T36: TTL 过期后 get_user 走 L2 回填 L1。
+    #[tokio::test]
+    async fn ttl_expires_l1_for_user() {
+        let (_dao, interface, service) = make_service(1, 300);
+        interface.set_user_info("36001", Some(r#"{"id":36001}"#.to_string()));
+
+        // 第一次调用：填充 L1
+        let _ = service.get_user("36001").await.unwrap();
+        assert_eq!(interface.user_count(), 1, "第一次应查询 L3");
+
+        // 等待 L1 TTL 过期
+        tokio::time::sleep(Duration::from_secs(2)).await;
+
+        // 第二次调用：L1 已过期 → L2 命中 → 回填 L1 → 不查询 L3
+        let user = service.get_user("36001").await.unwrap();
+        assert_eq!(user, Some(r#"{"id":36001}"#.to_string()));
+        assert_eq!(interface.user_count(), 1, "L1 过期后 L2 命中，不应查询 L3");
+    }
+
+    // ------------------------------------------------------------------------
+    // 补充测试：L2 DAO 失败路径（get_roles / get_user）
+    // ------------------------------------------------------------------------
+
+    /// T37: L2 DAO get 失败时 get_roles 透传错误。
+    ///
+    /// L1 miss → L2 get 失败 → 透传 BulwarkError::Dao。
+    #[tokio::test]
+    async fn l2_dao_get_failure_propagates_error_for_get_roles() {
+        let (dao, _interface, service) = make_default_service();
+        dao.set_fail_get(true);
+
+        let result = service.get_roles("37001").await;
+        assert!(result.is_err(), "L2 DAO get 失败应返回 Err");
+        match result {
+            Err(BulwarkError::Dao(msg)) => {
+                assert!(
+                    msg.contains("injected get error"),
+                    "应透传 DAO get 错误消息，实际: {}",
+                    msg
+                );
+            },
+            Err(other) => panic!("期望 BulwarkError::Dao，实际: {:?}", other),
+            Ok(_) => panic!("期望 Err，实际 Ok"),
+        }
+    }
+
+    /// T38: L2 DAO get 失败时 get_user 透传错误。
+    #[tokio::test]
+    async fn l2_dao_get_failure_propagates_error_for_get_user() {
+        let (dao, _interface, service) = make_default_service();
+        dao.set_fail_get(true);
+
+        let result = service.get_user("38001").await;
+        assert!(result.is_err(), "L2 DAO get 失败应返回 Err");
+        match result {
+            Err(BulwarkError::Dao(msg)) => {
+                assert!(
+                    msg.contains("injected get error"),
+                    "应透传 DAO get 错误消息，实际: {}",
+                    msg
+                );
+            },
+            Err(other) => panic!("期望 BulwarkError::Dao，实际: {:?}", other),
+            Ok(_) => panic!("期望 Err，实际 Ok"),
+        }
+    }
+
+    /// T39: L2 DAO set 失败时 get_roles 透传错误（L3 回填 L2 失败）。
+    ///
+    /// L1 miss → L2 miss → L3 查询成功 → 回填 L1 成功 → 回填 L2 set 失败 → 透传错误。
+    #[tokio::test]
+    async fn l2_dao_set_failure_propagates_error_for_get_roles() {
+        let (dao, interface, service) = make_default_service();
+        interface.set_roles("39001", vec!["editor".to_string()]);
+        dao.set_fail_set(true);
+
+        let result = service.get_roles("39001").await;
+        assert!(result.is_err(), "L2 DAO set 失败应返回 Err");
+        match result {
+            Err(BulwarkError::Dao(msg)) => {
+                assert!(
+                    msg.contains("injected set error"),
+                    "应透传 DAO set 错误消息，实际: {}",
+                    msg
+                );
+            },
+            Err(other) => panic!("期望 BulwarkError::Dao，实际: {:?}", other),
+            Ok(_) => panic!("期望 Err，实际 Ok"),
+        }
+    }
+
+    /// T40: L2 DAO set 失败时 get_user(Some) 透传错误（L3 回填 L2 失败）。
+    #[tokio::test]
+    async fn l2_dao_set_failure_propagates_error_for_get_user_some() {
+        let (dao, interface, service) = make_default_service();
+        interface.set_user_info("40001", Some(r#"{"id":40001}"#.to_string()));
+        dao.set_fail_set(true);
+
+        let result = service.get_user("40001").await;
+        assert!(result.is_err(), "L2 DAO set 失败应返回 Err");
+        match result {
+            Err(BulwarkError::Dao(msg)) => {
+                assert!(
+                    msg.contains("injected set error"),
+                    "应透传 DAO set 错误消息，实际: {}",
+                    msg
+                );
+            },
+            Err(other) => panic!("期望 BulwarkError::Dao，实际: {:?}", other),
+            Ok(_) => panic!("期望 Err，实际 Ok"),
+        }
+    }
+
+    /// T41: L2 DAO set 失败时 get_user(None) 不触发 set（None 不缓存）。
+    ///
+    /// L3 返回 None → 不回填 L1+L2 → DAO set 不被调用 → 返回 Ok(None)。
+    #[tokio::test]
+    async fn l2_dao_set_failure_does_not_affect_get_user_none() {
+        let (dao, _interface, service) = make_default_service();
+        dao.set_fail_set(true);
+
+        // L3 返回 None（未设置 user_info）→ 不回填 L2 → set 失败不影响结果
+        let result = service.get_user("41001").await;
+        assert!(
+            result.is_ok(),
+            "get_user(None) 不应受 L2 set 失败影响，实际: {:?}",
+            result
+        );
+        assert!(result.unwrap().is_none());
+        assert_eq!(dao.set_count(), 0, "None 不应触发 L2 set 操作");
+    }
+
+    // ------------------------------------------------------------------------
+    // 补充测试：invalidate 部分失败（第二个 delete 失败）
+    // ------------------------------------------------------------------------
+
+    /// T42: invalidate 在 L2 delete role_key 失败时透传错误。
+    ///
+    /// invalidate 按 perm → role → user 顺序删除 L2，
+    /// 注入 role delete 失败（通过 fail_delete 在第一次成功后开启）。
+    /// 验证：第一个 delete（perm）成功，第二个 delete（role）失败 → 返回 Err。
+    #[tokio::test]
+    async fn invalidate_partial_l2_delete_failure_propagates_error() {
+        let (dao, interface, service) = make_default_service();
+        interface.set_permissions("42001", vec!["perm:a".to_string()]);
+        interface.set_roles("42001", vec!["role:a".to_string()]);
+        interface.set_user_info("42001", Some(r#"{"id":42001}"#.to_string()));
+
+        // 填充所有三类缓存
+        let _ = service.get_permissions("42001").await.unwrap();
+        let _ = service.get_roles("42001").await.unwrap();
+        let _ = service.get_user("42001").await.unwrap();
+
+        // 验证所有三类缓存已填充到 L2
+        assert!(dao.contains_key("perm:cache:42001"));
+        assert!(dao.contains_key("role:cache:42001"));
+        assert!(dao.contains_key("user:cache:42001"));
+
+        // 注入 delete 失败
+        dao.set_fail_delete(true);
+
+        let result = service.invalidate("42001").await;
+        assert!(result.is_err(), "L2 delete 失败应返回 Err");
+        match result {
+            Err(BulwarkError::Dao(msg)) => {
+                assert!(
+                    msg.contains("injected delete error"),
+                    "应透传 DAO delete 错误消息，实际: {}",
+                    msg
+                );
+            },
+            Err(other) => panic!("期望 BulwarkError::Dao，实际: {:?}", other),
+            Ok(_) => panic!("期望 Err，实际 Ok"),
+        }
+
+        // 验证第一个 delete（perm_key）已执行
+        assert_eq!(
+            dao.delete_count(),
+            1,
+            "perm_key delete 应已执行，后续 delete 应在错误后中断"
+        );
+    }
+
+    /// T43: invalidate 在所有 L2 delete 成功后 L1 delete 也执行。
+    ///
+    /// 验证 invalidate 的完整流程：L2 delete 3 次 + L1 delete 3 次 = 6 次操作。
+    #[tokio::test]
+    async fn invalidate_executes_all_l2_and_l1_deletes() {
+        let (dao, interface, service) = make_default_service();
+        interface.set_permissions("43001", vec!["perm:a".to_string()]);
+        interface.set_roles("43001", vec!["role:a".to_string()]);
+        interface.set_user_info("43001", Some(r#"{"id":43001}"#.to_string()));
+
+        // 填充所有三类缓存
+        let _ = service.get_permissions("43001").await.unwrap();
+        let _ = service.get_roles("43001").await.unwrap();
+        let _ = service.get_user("43001").await.unwrap();
+
+        // 验证 L2 缓存已填充
+        assert!(dao.contains_key("perm:cache:43001"));
+        assert!(dao.contains_key("role:cache:43001"));
+        assert!(dao.contains_key("user:cache:43001"));
+
+        // 执行 invalidate
+        service.invalidate("43001").await.unwrap();
+
+        // 验证 L2 缓存已全部删除
+        assert!(!dao.contains_key("perm:cache:43001"));
+        assert!(!dao.contains_key("role:cache:43001"));
+        assert!(!dao.contains_key("user:cache:43001"));
+
+        // 验证 L2 delete 被调用 3 次
+        assert_eq!(
+            dao.delete_count(),
+            3,
+            "invalidate 应执行 3 次 L2 delete（perm + role + user）"
+        );
+
+        // 验证 delete 调用顺序：perm → role → user
+        let delete_keys = dao.delete_keys();
+        assert_eq!(delete_keys.len(), 3, "应记录 3 次 delete 调用");
+        assert_eq!(
+            delete_keys[0], "perm:cache:43001",
+            "第一个 delete 应为 perm_key"
+        );
+        assert_eq!(
+            delete_keys[1], "role:cache:43001",
+            "第二个 delete 应为 role_key"
+        );
+        assert_eq!(
+            delete_keys[2], "user:cache:43001",
+            "第三个 delete 应为 user_key"
+        );
+    }
+
+    // ------------------------------------------------------------------------
+    // 补充测试：get_user 边缘条件
+    // ------------------------------------------------------------------------
+
+    /// T44: get_user L3 返回 Some("") 时缓存空字符串。
+    ///
+    /// 空字符串是 Some 值，应被缓存到 L1+L2（与 None 不同）。
+    #[tokio::test]
+    async fn get_user_l3_some_empty_string_is_cached() {
+        let (dao, interface, service) = make_default_service();
+        interface.set_user_info("44001", Some(String::new()));
+
+        // 第一次调用：L1+L2 miss → L3 查询 → 返回 Some("") → 回填 L1+L2
+        let user = service.get_user("44001").await.unwrap();
+        assert_eq!(user, Some(String::new()), "L3 返回 Some(\"\") 应透传");
+        assert_eq!(interface.user_count(), 1, "应查询 L3 一次");
+        assert_eq!(dao.set_count(), 1, "Some(\"\") 应回填 L2");
+
+        // 验证 L2 已被回填
+        assert!(
+            dao.contains_key("user:cache:44001"),
+            "Some(\"\") 应被缓存到 L2"
+        );
+
+        // 第二次调用：L1 hit → 不查询 L2/L3
+        let user2 = service.get_user("44001").await.unwrap();
+        assert_eq!(user2, Some(String::new()));
+        assert_eq!(interface.user_count(), 1, "L1 命中不应查询 L3");
+    }
+
+    /// T45: get_user L2 命中时返回 L2 中的原始字符串（无反序列化）。
+    ///
+    /// get_user 不做 JSON 反序列化，直接返回缓存字符串，
+    /// 因此 L2 中的任意字符串（包括非法 JSON）都应被原样返回。
+    #[tokio::test]
+    async fn get_user_l2_hit_returns_raw_string_without_deserialization() {
+        let (dao, _interface, service) = make_default_service();
+
+        // 向 L2 注入非 JSON 字符串
+        dao.insert_direct("user:cache:45001", "not-a-json-string");
+
+        // L1 miss → L2 hit → 回填 L1 → 返回原始字符串
+        let user = service.get_user("45001").await.unwrap();
+        assert_eq!(
+            user,
+            Some("not-a-json-string".to_string()),
+            "get_user 应原样返回 L2 中的字符串，不做反序列化"
+        );
+    }
+
+    // ------------------------------------------------------------------------
+    // 补充测试：special characters in login_id
+    // ------------------------------------------------------------------------
+
+    /// T46: get_permissions 处理包含特殊字符的 login_id。
+    ///
+    /// 验证 login_id 包含 URL 安全字符（冒号、点、下划线）时缓存键正确构建。
+    #[tokio::test]
+    async fn get_permissions_handles_special_chars_in_login_id() {
+        let (dao, interface, service) = make_default_service();
+        interface.set_permissions("user:1001.v2", vec!["perm:special".to_string()]);
+
+        let perms = service.get_permissions("user:1001.v2").await.unwrap();
+        assert_eq!(perms, vec!["perm:special".to_string()]);
+
+        // 验证缓存键包含原始 login_id（不做转义）
+        let set_keys = dao.set_keys();
+        assert!(
+            set_keys.iter().any(|k| k == "perm:cache:user:1001.v2"),
+            "缓存键应包含原始 login_id，实际: {:?}",
+            set_keys
+        );
+
+        // 第二次调用：L1 hit → 不查询 L2/L3
+        let perms2 = service.get_permissions("user:1001.v2").await.unwrap();
+        assert_eq!(perms2, vec!["perm:special".to_string()]);
+        assert_eq!(interface.perm_count(), 1, "L1 命中不应查询 L3");
+    }
+
+    /// T47: invalidate 处理包含特殊字符的 login_id。
+    #[tokio::test]
+    async fn invalidate_handles_special_chars_in_login_id() {
+        let (dao, interface, service) = make_default_service();
+        interface.set_permissions("user:2001.v2", vec!["perm:a".to_string()]);
+
+        // 填充缓存
+        let _ = service.get_permissions("user:2001.v2").await.unwrap();
+        assert!(dao.contains_key("perm:cache:user:2001.v2"));
+
+        // invalidate
+        service.invalidate("user:2001.v2").await.unwrap();
+
+        // 验证 L2 已清除
+        assert!(!dao.contains_key("perm:cache:user:2001.v2"));
+
+        // 验证 delete 调用使用了正确的 key
+        let delete_keys = dao.delete_keys();
+        assert!(
+            delete_keys.iter().any(|k| k == "perm:cache:user:2001.v2"),
+            "delete 应使用 key 'perm:cache:user:2001.v2'，实际: {:?}",
+            delete_keys
+        );
+    }
+
+    // ------------------------------------------------------------------------
+    // 补充测试：singleflight_lock 方法验证
+    // ------------------------------------------------------------------------
+
+    /// T48: singleflight_lock 对同一 key 返回同一锁实例。
+    ///
+    /// 验证 singleflight_lock 内部使用 DashMap entry API：
+    /// 同一 key 多次调用返回 Arc::clone 的同一 RwLock。
+    #[tokio::test]
+    async fn singleflight_lock_returns_same_lock_for_same_key() {
+        let (_dao, _interface, service) = make_default_service();
+
+        let lock1 = service.singleflight_lock("test-key-1");
+        let lock2 = service.singleflight_lock("test-key-1");
+
+        // 同一 key 应返回同一锁（Arc::ptr_eq）
+        assert!(
+            Arc::ptr_eq(&lock1, &lock2),
+            "同一 key 的 singleflight_lock 应返回同一 Arc<RwLock>"
+        );
+
+        // 不同 key 应返回不同锁
+        let lock3 = service.singleflight_lock("test-key-2");
+        assert!(
+            !Arc::ptr_eq(&lock1, &lock3),
+            "不同 key 的 singleflight_lock 应返回不同 Arc<RwLock>"
+        );
+    }
+
+    // ------------------------------------------------------------------------
+    // 补充测试：UserCacheService::new 边缘条件
+    // ------------------------------------------------------------------------
+
+    /// T49: UserCacheService::new 接受 l1_capacity=0（参数保留但 oxcache 使用默认 capacity）。
+    #[tokio::test]
+    async fn new_accepts_zero_l1_capacity() {
+        let dao = Arc::new(CountingMockDao::new());
+        let interface = Arc::new(CountingMockInterface::new());
+        let service = UserCacheService::new(
+            dao.clone() as Arc<dyn BulwarkDao>,
+            interface.clone() as Arc<dyn BulwarkPermissionStrategy>,
+            30,
+            300,
+            0, // l1_capacity=0
+        );
+        assert!(service.is_ok(), "l1_capacity=0 应成功创建 service");
+
+        // 验证 service 可正常使用
+        interface.set_permissions("49001", vec!["perm:a".to_string()]);
+        let perms = service.unwrap().get_permissions("49001").await.unwrap();
+        assert_eq!(perms, vec!["perm:a".to_string()]);
+    }
+
+    /// T50: UserCacheService::new 接受不同 TTL 值并正确存储。
+    #[tokio::test]
+    async fn new_stores_ttl_values_correctly() {
+        let dao = Arc::new(CountingMockDao::new());
+        let interface = Arc::new(CountingMockInterface::new());
+        let service = UserCacheService::new(
+            dao.clone() as Arc<dyn BulwarkDao>,
+            interface.clone() as Arc<dyn BulwarkPermissionStrategy>,
+            120,
+            3600,
+            10_000,
+        )
+        .unwrap();
+
+        assert_eq!(service.l1_ttl_secs(), 120, "l1_ttl_secs 应为 120");
+        assert_eq!(service.l2_ttl_secs(), 3600, "l2_ttl_secs 应为 3600");
+    }
+
+    // ------------------------------------------------------------------------
+    // 补充测试：L3 返回空 Vec 的回填验证（get_user 对应 None）
+    // ------------------------------------------------------------------------
+
+    /// T51: get_permissions L3 返回空 Vec 时仍回填 L1+L2（与 None 语义不同）。
+    #[tokio::test]
+    async fn get_permissions_l3_empty_vec_backfills_both_layers() {
+        let (dao, interface, service) = make_default_service();
+        // 不设置 permissions → L3 返回空 Vec
+
+        let perms = service.get_permissions("51001").await.unwrap();
+        assert!(perms.is_empty(), "未设置权限时应返回空列表");
+        assert_eq!(interface.perm_count(), 1, "应查询 L3 一次");
+        assert_eq!(dao.set_count(), 1, "空 Vec 也应回填 L2");
+
+        // 验证 L2 已被回填（空列表 "[]" ）
+        assert!(dao.contains_key("perm:cache:51001"), "空 Vec 应被缓存到 L2");
+
+        // 验证 L1 已被回填（第二次调用不走 L3）
+        let perms2 = service.get_permissions("51001").await.unwrap();
+        assert!(perms2.is_empty());
+        assert_eq!(interface.perm_count(), 1, "L1 回填后不应再查询 L3");
+    }
+
+    /// T52: get_roles L3 返回空 Vec 时仍回填 L1+L2。
+    #[tokio::test]
+    async fn get_roles_l3_empty_vec_backfills_both_layers() {
+        let (dao, interface, service) = make_default_service();
+
+        let roles = service.get_roles("52001").await.unwrap();
+        assert!(roles.is_empty(), "未设置角色时应返回空列表");
+        assert_eq!(interface.role_count(), 1, "应查询 L3 一次");
+        assert_eq!(dao.set_count(), 1, "空 Vec 也应回填 L2");
+        assert!(dao.contains_key("role:cache:52001"), "空 Vec 应被缓存到 L2");
+
+        // 验证 L1 已被回填
+        let roles2 = service.get_roles("52001").await.unwrap();
+        assert!(roles2.is_empty());
+        assert_eq!(interface.role_count(), 1, "L1 回填后不应再查询 L3");
+    }
+
+    // ------------------------------------------------------------------------
+    // 补充测试：并发 invalidate + get 验证
+    // ------------------------------------------------------------------------
+
+    /// T53: invalidate 后立即 get_permissions 返回新数据（无缓存残留）。
+    ///
+    /// 验证 invalidate 的原子性：L2+L1 全部清除后，下次 get 必走 L3。
+    #[tokio::test]
+    async fn invalidate_then_get_returns_fresh_data() {
+        let (_dao, interface, service) = make_default_service();
+        interface.set_permissions("53001", vec!["old:perm".to_string()]);
+
+        // 第一次查询：缓存旧权限
+        let perms1 = service.get_permissions("53001").await.unwrap();
+        assert_eq!(perms1, vec!["old:perm".to_string()]);
+
+        // 更新 L3 数据
+        interface.set_permissions("53001", vec!["new:perm".to_string()]);
+
+        // invalidate
+        service.invalidate("53001").await.unwrap();
+
+        // 立即查询：应返回新权限
+        let perms2 = service.get_permissions("53001").await.unwrap();
+        assert_eq!(
+            perms2,
+            vec!["new:perm".to_string()],
+            "invalidate 后应返回 L3 的新数据"
+        );
+        assert_eq!(
+            interface.perm_count(),
+            2,
+            "应查询 L3 两次（首次 + invalidate 后）"
+        );
+    }
+
+    /// T54: get_user L2 命中后再次调用走 L1（回填验证）。
+    ///
+    /// 与 T20 类似，但验证 L2 中的值被回填到 L1 后，
+    /// 后续 get_user 不再查询 L2（get_count 不增加）。
+    #[tokio::test]
+    async fn get_user_l2_hit_backfills_l1_no_repeat_l2_query() {
+        let (dao, _interface, service) = make_default_service();
+        dao.insert_direct("user:cache:54001", r#"{"id":54001}"#);
+
+        // 第一次调用：L1 miss → L2 hit → 回填 L1
+        let user1 = service.get_user("54001").await.unwrap();
+        assert_eq!(user1, Some(r#"{"id":54001}"#.to_string()));
+        assert_eq!(dao.get_count(), 1, "应查询 L2 一次");
+
+        // 第二次调用：L1 hit → 不查询 L2
+        let user2 = service.get_user("54001").await.unwrap();
+        assert_eq!(user2, Some(r#"{"id":54001}"#.to_string()));
+        assert_eq!(dao.get_count(), 1, "L1 回填后不应再查询 L2");
+
+        // 第三次调用：L1 hit → 不查询 L2
+        let user3 = service.get_user("54001").await.unwrap();
+        assert_eq!(user3, Some(r#"{"id":54001}"#.to_string()));
+        assert_eq!(dao.get_count(), 1, "L1 仍命中，不应查询 L2");
     }
 }
