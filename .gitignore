@@ -198,6 +198,7 @@ flamegraph.svg
 .history/
 .claude/
 .agents/
+.mimocode/
 /coverage_report/
 
 # specmark 工作目录与 skills lock 不入库
