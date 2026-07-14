@@ -233,11 +233,10 @@ pub struct BulwarkSession {
     anon_session_timeout: u64,
     /// per-login_id 操作锁，保护 Account-Session 的 read-modify-write 序列（R-001~R-004）。
     login_locks: DashMap<String, Arc<TokioMutex<()>>>,
-    /// per-token 操作锁，保护 Token-Session 的 read-modify-write 序列（CRIT-001）。
+    /// per-token 操作锁，保护 Token-Session 的 read-modify-write 序列（CRIT-001 / FMEA #5）。
     ///
-    /// 用于 `open_safe`/`close_safe` 等 modifying TokenSession 操作的串行化，
-    /// 避免并发 read-modify-write 导致 lost update。只读操作（如 `is_safe`）不需要锁。
-    #[cfg(any(feature = "safe-auth", feature = "anonymous-session"))]
+    /// 用于 `set`/`set_device`/`touch`/`set_active_timeout` 等 modifying TokenSession
+    /// 操作的串行化，避免并发 read-modify-write 导致 lost update。只读操作（如 `is_safe`）不需要锁。
     token_session_locks: DashMap<String, Arc<TokioMutex<()>>>,
     /// login_id → token 列表的内存索引，用于并发登录控制快速查询。
     ///

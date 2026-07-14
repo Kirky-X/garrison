@@ -23,7 +23,6 @@ impl BulwarkSession {
             #[cfg(feature = "anonymous-session")]
             anon_session_timeout: crate::config::DEFAULT_ANON_SESSION_TIMEOUT_SECS,
             login_locks: DashMap::new(),
-            #[cfg(any(feature = "safe-auth", feature = "anonymous-session"))]
             token_session_locks: DashMap::new(),
             login_token_map: DashMap::new(),
             #[cfg(feature = "listener")]
@@ -167,12 +166,12 @@ impl BulwarkSession {
     /// 获取 per-token 锁并执行 future（保护 Token-Session read-modify-write 序列）。
     ///
     /// 锁粒度为 token，不影响不同 token 的并发。使用 `tokio::sync::Mutex`（持有锁跨 await 点）。
-    /// 用于 `open_safe`/`close_safe` 等修改 TokenSession 的操作，避免并发 read-modify-write
-    /// 导致 lost update（CRIT-001）。
+    /// 用于 `set`/`set_device`/`touch`/`set_active_timeout`/`open_safe`/`close_safe` 等
+    /// 修改 TokenSession 的操作，避免并发 read-modify-write 导致 lost update
+    ///（CRIT-001 / FMEA #5，kueiku RPN=288）。
     ///
     /// 注意：`get_token_session`/`save_token_session` 本身不加锁，调用方需通过此方法
     /// 包裹 read-modify-write 序列。只读操作（如 `is_safe`）不需要锁。
-    #[cfg(any(feature = "safe-auth", feature = "anonymous-session"))]
     pub(crate) async fn with_token_session_lock<F, R>(&self, token: &str, f: F) -> R
     where
         F: std::future::Future<Output = R>,
@@ -673,17 +672,20 @@ impl BulwarkSession {
     /// # 错误
     /// - 若 token 不存在，返回 `BulwarkError::InvalidToken`。
     pub async fn set(&self, token: &str, key: &str, value: &str) -> BulwarkResult<()> {
-        let mut ts = self
-            .get_token_session(token)
-            .await?
-            .ok_or_else(|| BulwarkError::InvalidToken("token 不存在".to_string()))?;
-        ts.attrs.insert(key.to_string(), value.to_string());
-        ts.last_active_at = Utc::now().timestamp();
-        let json = serde_json::to_string(&ts)
-            .map_err(|e| BulwarkError::Session(format!("序列化 TokenSession 失败: {}", e)))?;
-        // 用 update 保留原 TTL（不重置过期时间）
-        self.dao.update(&token_key(token), &json).await?;
-        Ok(())
+        self.with_token_session_lock(token, async {
+            let mut ts = self
+                .get_token_session(token)
+                .await?
+                .ok_or_else(|| BulwarkError::InvalidToken("token 不存在".to_string()))?;
+            ts.attrs.insert(key.to_string(), value.to_string());
+            ts.last_active_at = Utc::now().timestamp();
+            let json = serde_json::to_string(&ts)
+                .map_err(|e| BulwarkError::Session(format!("序列化 TokenSession 失败: {}", e)))?;
+            // 用 update 保留原 TTL（不重置过期时间）
+            self.dao.update(&token_key(token), &json).await?;
+            Ok(())
+        })
+        .await
     }
 
     /// 获取 Token-Session 自定义属性。
@@ -871,16 +873,19 @@ impl BulwarkSession {
     /// - 序列化失败：`BulwarkError::Session`。
     /// - DAO 更新失败：透传 `BulwarkError`。
     pub async fn set_device(&self, token: &str, device: &str) -> BulwarkResult<()> {
-        let mut ts = self
-            .get_token_session(token)
-            .await?
-            .ok_or_else(|| BulwarkError::InvalidToken("token 不存在".to_string()))?;
-        ts.device = Some(device.to_string());
-        ts.last_active_at = Utc::now().timestamp();
-        let json = serde_json::to_string(&ts)
-            .map_err(|e| BulwarkError::Session(format!("序列化 TokenSession 失败: {}", e)))?;
-        self.dao.update(&token_key(token), &json).await?;
-        Ok(())
+        self.with_token_session_lock(token, async {
+            let mut ts = self
+                .get_token_session(token)
+                .await?
+                .ok_or_else(|| BulwarkError::InvalidToken("token 不存在".to_string()))?;
+            ts.device = Some(device.to_string());
+            ts.last_active_at = Utc::now().timestamp();
+            let json = serde_json::to_string(&ts)
+                .map_err(|e| BulwarkError::Session(format!("序列化 TokenSession 失败: {}", e)))?;
+            self.dao.update(&token_key(token), &json).await?;
+            Ok(())
+        })
+        .await
     }
 
     /// 设置 per-token 动态 active timeout（秒）。
@@ -904,16 +909,19 @@ impl BulwarkSession {
                 "timeout_secs 必须为 -1 或 >0".to_string(),
             ));
         }
-        let mut ts = self
-            .get_token_session(token)
-            .await?
-            .ok_or_else(|| BulwarkError::InvalidToken(format!("token 不存在: {}", token)))?;
-        ts.dynamic_active_timeout = Some(timeout_secs);
-        ts.last_active_at = Utc::now().timestamp();
-        let json = serde_json::to_string(&ts)
-            .map_err(|e| BulwarkError::Session(format!("序列化 TokenSession 失败: {}", e)))?;
-        self.dao.update(&token_key(token), &json).await?;
-        Ok(())
+        self.with_token_session_lock(token, async {
+            let mut ts = self
+                .get_token_session(token)
+                .await?
+                .ok_or_else(|| BulwarkError::InvalidToken(format!("token 不存在: {}", token)))?;
+            ts.dynamic_active_timeout = Some(timeout_secs);
+            ts.last_active_at = Utc::now().timestamp();
+            let json = serde_json::to_string(&ts)
+                .map_err(|e| BulwarkError::Session(format!("序列化 TokenSession 失败: {}", e)))?;
+            self.dao.update(&token_key(token), &json).await?;
+            Ok(())
+        })
+        .await
     }
 
     /// 检查 token 是否有效（Token-Session 存在且 Account-Session 未过期）。
@@ -979,36 +987,40 @@ impl BulwarkSession {
     /// # 错误
     /// - 若 token 不存在，返回 `BulwarkError::InvalidToken`。
     pub async fn touch(&self, token: &str) -> BulwarkResult<()> {
-        let mut ts = self
-            .get_token_session(token)
-            .await?
-            .ok_or_else(|| BulwarkError::InvalidToken(format!("token 不存在: {}", token)))?;
-        let now = Utc::now().timestamp();
-        ts.last_active_at = now;
-        let json = serde_json::to_string(&ts)
-            .map_err(|e| BulwarkError::Session(format!("序列化 TokenSession 失败: {}", e)))?;
-        // 更新值 + 重置 TTL（用 set 覆盖，重置 TTL）
-        self.dao.set(&token_key(token), &json, self.timeout).await?;
+        self.with_token_session_lock(token, async {
+            let mut ts = self
+                .get_token_session(token)
+                .await?
+                .ok_or_else(|| BulwarkError::InvalidToken(format!("token 不存在: {}", token)))?;
+            let now = Utc::now().timestamp();
+            ts.last_active_at = now;
+            let json = serde_json::to_string(&ts)
+                .map_err(|e| BulwarkError::Session(format!("序列化 TokenSession 失败: {}", e)))?;
+            // 更新值 + 重置 TTL（用 set 覆盖，重置 TTL）
+            self.dao.set(&token_key(token), &json, self.timeout).await?;
 
-        // 同时更新 Account-Session 的 last_active_at + 对应 TokenInfo + 重置 TTL
-        if let Some(mut account) = self.get_account_session(&ts.login_id).await? {
-            account.last_active_at = now;
-            for ti in &mut account.tokens {
-                if ti.token == token {
-                    ti.last_active_at = now;
+            // 同时更新 Account-Session 的 last_active_at + 对应 TokenInfo + 重置 TTL
+            if let Some(mut account) = self.get_account_session(&ts.login_id).await? {
+                account.last_active_at = now;
+                for ti in &mut account.tokens {
+                    if ti.token == token {
+                        ti.last_active_at = now;
+                    }
                 }
+                let account_json = serde_json::to_string(&account).map_err(|e| {
+                    BulwarkError::Session(format!("序列化 AccountSession 失败: {}", e))
+                })?;
+                self.dao
+                    .set(
+                        &account_key(&ts.login_id),
+                        &account_json,
+                        self.active_timeout,
+                    )
+                    .await?;
             }
-            let account_json = serde_json::to_string(&account)
-                .map_err(|e| BulwarkError::Session(format!("序列化 AccountSession 失败: {}", e)))?;
-            self.dao
-                .set(
-                    &account_key(&ts.login_id),
-                    &account_json,
-                    self.active_timeout,
-                )
-                .await?;
-        }
-        Ok(())
+            Ok(())
+        })
+        .await
     }
 
     /// 主动续期：重置过期时间为完整 timeout。
@@ -1599,14 +1611,13 @@ mod tests {
     }
 
     // ----------------------------------------------------------------
-    // with_token_session_lock：per-token 锁（safe-auth / anonymous-session feature）
+    // with_token_session_lock：per-token 锁（CRIT-001 / FMEA #5）
     // ----------------------------------------------------------------
 
     /// 验证 `with_token_session_lock` 串行化同一 token 的并发操作。
     ///
     /// 两个并发任务对同一 token 调用 `with_token_session_lock`，应串行执行
     ///（第二个任务在第一个释放锁后才开始），通过共享计数器验证顺序。
-    #[cfg(any(feature = "safe-auth", feature = "anonymous-session"))]
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn with_token_session_lock_serializes_same_token() {
         use std::sync::atomic::{AtomicUsize, Ordering};
@@ -2063,5 +2074,98 @@ mod tests {
             std::ptr::eq(returned_ptr, original_ptr),
             "dao() 应返回内部 DAO 的引用"
         );
+    }
+
+    // ----------------------------------------------------------------
+    // FMEA #5：并发 read-modify-write lost update 防护
+    // ----------------------------------------------------------------
+
+    /// FMEA #5: 验证 `set` 在并发调用下不会 lost update。
+    ///
+    /// 10 个并发任务对同一 token 调用 `set` 写入不同 key，
+    /// 完成后所有 10 个 key 都应存在（无 lost update）。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn set_concurrent_no_lost_update() {
+        let (_dao, session) = make_session(3600, 86400);
+        let session = Arc::new(session);
+        session.create("user1", "T1").await.unwrap();
+
+        let mut handles = Vec::new();
+        for i in 0..10 {
+            let s = session.clone();
+            handles.push(tokio::spawn(async move {
+                s.set("T1", &format!("key{}", i), &format!("val{}", i))
+                    .await
+                    .unwrap();
+            }));
+        }
+        for h in handles {
+            h.await.unwrap();
+        }
+
+        // 验证所有 10 个 key 都存在（无 lost update）
+        for i in 0..10 {
+            let val = session.get("T1", &format!("key{}", i)).await.unwrap();
+            assert_eq!(
+                val,
+                Some(format!("val{}", i)),
+                "key{} 应存在（无 lost update），实际: {:?}",
+                i,
+                val
+            );
+        }
+    }
+
+    /// FMEA #5: 验证 `set_device` 与 `set` 并发调用不会互相覆盖。
+    ///
+    /// 一个任务调用 `set_device`，另一个调用 `set`，
+    /// 完成后 device 和 attr 都应存在。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn set_device_concurrent_with_set_no_lost_update() {
+        let (_dao, session) = make_session(3600, 86400);
+        let session = Arc::new(session);
+        session.create("user1", "T1").await.unwrap();
+
+        let s1 = session.clone();
+        let s2 = session.clone();
+        let h1 = tokio::spawn(async move {
+            s1.set_device("T1", "device-A").await.unwrap();
+        });
+        let h2 = tokio::spawn(async move {
+            s2.set("T1", "attr1", "val1").await.unwrap();
+        });
+        h1.await.unwrap();
+        h2.await.unwrap();
+
+        // 验证 device 和 attr 都存在
+        let ts = session.get_token_session("T1").await.unwrap().unwrap();
+        assert_eq!(ts.device, Some("device-A".to_string()));
+        assert_eq!(ts.attrs.get("attr1"), Some(&"val1".to_string()));
+    }
+
+    /// FMEA #5: 验证 `touch` 在并发调用下不会损坏 session。
+    ///
+    /// 10 个并发任务对同一 token 调用 `touch`，
+    /// 完成后 session 应仍然存在且 last_active_at 已更新。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn touch_concurrent_no_corruption() {
+        let (_dao, session) = make_session(3600, 86400);
+        let session = Arc::new(session);
+        session.create("user1", "T1").await.unwrap();
+
+        let mut handles = Vec::new();
+        for _ in 0..10 {
+            let s = session.clone();
+            handles.push(tokio::spawn(async move {
+                s.touch("T1").await.unwrap();
+            }));
+        }
+        for h in handles {
+            h.await.unwrap();
+        }
+
+        // 验证 session 仍然存在
+        let ts = session.get_token_session("T1").await.unwrap();
+        assert!(ts.is_some(), "touch 并发后 session 应仍然存在");
     }
 }
