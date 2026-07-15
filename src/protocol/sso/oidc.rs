@@ -10,17 +10,28 @@
 //! - `get_authorization_url`：构造授权 URL（纯 URL 拼接，不需 HTTP）
 //! - `exchange_code`：通过 reqwest POST 到 token_endpoint 交换 id_token
 //! - `get_user_info`：通过 reqwest GET userinfo_endpoint 获取用户信息
-//! - `validate_id_token`：返回 `NotImplemented`（JWT 验证需 `protocol-jwt` feature，defer 到后续变更）
+//! - `validate_id_token`：JWKS 验签（RS256）+ iss/aud/exp 校验（需 `protocol-jwt` feature，
+//!   VULN-0001 修复）；未启用 feature 时返回 `NotImplemented`
 //!
 //! 与 `protocol::oauth2::oidc::OidcHandler` 的区别：
 //! - `OidcHandler`：Bulwark 作为 IdP 签发/验证 id_token
 //! - `OidcProvider` trait：Bulwark 作为 RP 与外部 IdP 交互
 //!
-//! 仅在启用 `protocol-sso` 特性时编译。
+//! 仅在启用 `protocol-sso` 特性时编译。`protocol-jwt` 特性启用后 `exchange_code`
+//! 在返回前自动调用 `validate_id_token`，未启用时保持向后兼容行为。
 
 use crate::error::{BulwarkError, BulwarkResult};
 use async_trait::async_trait;
+use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+/// JWKS 公钥缓存 TTL（VULN-0001 修复）。
+///
+/// 10 分钟内复用缓存的 JWKS 公钥，避免每次 `validate_id_token` 都拉取 JWKS endpoint。
+/// 与 `protocol::oauth2::keycloak::JWKS_CACHE_TTL` 保持一致。
+const JWKS_CACHE_TTL: Duration = Duration::from_secs(600);
 
 // ============================================================================
 // OIDC 数据结构
@@ -120,10 +131,71 @@ pub trait OidcProvider: Send + Sync {
 // DefaultOidcProvider
 // ============================================================================
 
+/// JWKS 中的单个 RSA 公钥（VULN-0001 修复）。
+///
+/// 表示从 `jwks_uri` 拉取的公钥集合中的一个条目。
+/// 仅声明 RS256 验签所需字段；其他字段（如 `use` / `alg`）在反序列化时被忽略。
+#[cfg_attr(not(feature = "protocol-jwt"), allow(dead_code))]
+#[derive(Debug, Clone, Deserialize)]
+struct Jwk {
+    /// 公钥标识（Key ID），与 JWT header 的 `kid` 匹配以选择验签公钥。
+    kid: String,
+    /// RSA 模数（base64url 编码，无 padding）。
+    n: String,
+    /// RSA 公钥指数（base64url 编码，无 padding）。
+    e: String,
+}
+
+/// JWKS 公钥集合响应（VULN-0001 修复）。
+#[cfg_attr(not(feature = "protocol-jwt"), allow(dead_code))]
+#[derive(Debug, Clone, Deserialize)]
+struct JwksResponse {
+    /// 公钥列表。
+    keys: Vec<Jwk>,
+}
+
+/// JWKS 公钥缓存（VULN-0001 修复）。
+///
+/// 缓存 JWKS 公钥集合 + 拉取时间戳，避免每次 `validate_id_token` 都拉取 JWKS endpoint。
+/// TTL 由 [`JWKS_CACHE_TTL`] 控制，过期后下次调用重新拉取。
+/// 设计与 `protocol::oauth2::keycloak::JwksCache` 一致。
+#[cfg_attr(not(feature = "protocol-jwt"), allow(dead_code))]
+#[derive(Debug, Clone, Default)]
+struct JwksCache {
+    /// 缓存的公钥列表。
+    keys: Vec<Jwk>,
+    /// 上次拉取时间戳（`None` 表示从未拉取）。
+    fetched_at: Option<Instant>,
+}
+
+#[cfg_attr(not(feature = "protocol-jwt"), allow(dead_code))]
+impl JwksCache {
+    /// 判断缓存是否为空或已过期。
+    ///
+    /// 缓存为空或距上次拉取超过 [`JWKS_CACHE_TTL`] 时返回 `true`。
+    fn is_empty_or_expired(&self) -> bool {
+        match self.fetched_at {
+            None => true,
+            Some(t) => Instant::now().duration_since(t) > JWKS_CACHE_TTL,
+        }
+    }
+
+    /// 按 `kid` 查找公钥。
+    fn find_by_kid(&self, kid: &str) -> Option<&Jwk> {
+        self.keys.iter().find(|k| k.kid == kid)
+    }
+}
+
 /// 默认 OIDC Provider 实现。
 ///
 /// 使用 reqwest 发送 HTTP 请求，与外部 IdP 交互。
-/// `validate_id_token` 返回 `NotImplemented`（JWT 验证需 `protocol-jwt` feature）。
+///
+/// # VULN-0001 修复
+///
+/// `validate_id_token` 在启用 `protocol-jwt` feature 时执行 JWKS 验签（RS256）+
+/// iss/aud/exp 校验；未启用时返回 `NotImplemented`。
+/// `exchange_code` 在启用 `protocol-jwt` feature 时返回前自动调用
+/// `validate_id_token`，未启用时保持向后兼容行为（不验签）。
 pub struct DefaultOidcProvider {
     /// Discovery 配置（含 endpoints）。
     config: OidcDiscoveryConfig,
@@ -133,6 +205,9 @@ pub struct DefaultOidcProvider {
     client_secret: String,
     /// HTTP 客户端。
     http_client: reqwest::Client,
+    /// JWKS 公钥缓存（TTL 控制，避免每次验签都拉取，VULN-0001 修复）。
+    #[cfg_attr(not(feature = "protocol-jwt"), allow(dead_code))]
+    jwks_cache: Arc<RwLock<JwksCache>>,
 }
 
 impl DefaultOidcProvider {
@@ -150,7 +225,142 @@ impl DefaultOidcProvider {
             client_id: client_id.to_string(),
             client_secret: client_secret.to_string(),
             http_client: reqwest::Client::new(),
+            jwks_cache: Arc::new(RwLock::new(JwksCache::default())),
         }
+    }
+
+    /// 拉取 JWKS 公钥集合并更新缓存（VULN-0001 修复）。
+    ///
+    /// HTTP GET [`OidcDiscoveryConfig::jwks_uri`]，响应体按 JSON 解析为 [`JwksResponse`]，
+    /// 将 `keys` 写入 `jwks_cache` 并更新 `fetched_at` 时间戳。
+    ///
+    /// # 错误
+    ///
+    /// - `BulwarkError::Internal`: HTTP 请求失败、非 2xx 状态码或 JSON 解析失败。
+    #[cfg(feature = "protocol-jwt")]
+    async fn fetch_jwks(&self) -> BulwarkResult<()> {
+        let resp = self
+            .http_client
+            .get(&self.config.jwks_uri)
+            .send()
+            .await
+            .map_err(|e| BulwarkError::Internal(format!("OIDC JWKS 请求失败: {}", e)))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(BulwarkError::Internal(format!(
+                "OIDC JWKS 端点返回错误状态: {} body: {}",
+                status, body
+            )));
+        }
+
+        let jwks = resp
+            .json::<JwksResponse>()
+            .await
+            .map_err(|e| BulwarkError::Internal(format!("OIDC JWKS 响应解析失败: {}", e)))?;
+
+        let mut cache = self.jwks_cache.write();
+        cache.keys = jwks.keys;
+        cache.fetched_at = Some(Instant::now());
+        Ok(())
+    }
+
+    /// 验证 id_token 的内部实现（VULN-0001 修复）。
+    ///
+    /// 仅在启用 `protocol-jwt` feature 时编译。流程参考
+    /// `protocol::oauth2::keycloak::KeycloakProvider::verify_id_token`：
+    ///
+    /// 1. 解析 JWT header，提取 `kid`。
+    /// 2. 检查 `jwks_cache`，缓存为空或过期时调用 `fetch_jwks` 拉取。
+    /// 3. 按 `kid` 匹配 JWKS 公钥，用 `n`/`e` 模数构造 `DecodingKey`。
+    /// 4. 用 RS256 算法验签，解析为 [`IdTokenClaims`]。
+    /// 5. 校验 `iss`（匹配 `config.issuer`）。
+    /// 6. 校验 `aud`（匹配 `client_id`）。
+    /// 7. 校验 `exp`（由 jsonwebtoken 内置 `validate_exp = true` 完成）。
+    ///
+    /// # 错误
+    ///
+    /// - `BulwarkError::InvalidToken`: JWT header 解析失败 / kid 缺失 / JWKS 无匹配公钥 /
+    ///   签名验证失败 / claims 解析失败 / token 已过期 / iss 不匹配 / aud 不匹配。
+    /// - `BulwarkError::Internal`: JWKS 拉取失败。
+    #[cfg(feature = "protocol-jwt")]
+    async fn validate_id_token_impl(&self, id_token: &str) -> BulwarkResult<bool> {
+        use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
+
+        /// id_token 标准 claims（仅声明验签所需字段，其他字段被忽略）。
+        #[derive(Deserialize)]
+        struct IdTokenClaims {
+            /// 签发者标识（必须匹配 `config.issuer`）。
+            iss: String,
+            /// 受众（必须匹配 `client_id`）。
+            aud: String,
+        }
+
+        // 1. 解析 JWT header，提取 kid
+        let header = jsonwebtoken::decode_header(id_token).map_err(|e| {
+            BulwarkError::InvalidToken(format!("OIDC id_token header 解析失败: {}", e))
+        })?;
+        let kid = header.kid.as_deref().ok_or_else(|| {
+            BulwarkError::InvalidToken("OIDC id_token header 缺少 kid 字段".to_string())
+        })?;
+
+        // 2. 检查 jwks_cache，缓存为空或过期时拉取
+        //    用独立作用域确保 read guard 在 await 前 drop（避免 clippy::await_holding_lock）
+        let needs_fetch = {
+            let cache = self.jwks_cache.read();
+            cache.is_empty_or_expired()
+        };
+        if needs_fetch {
+            self.fetch_jwks().await?;
+        }
+
+        // 3. 按 kid 匹配 JWKS 公钥
+        let jwk = {
+            let cache = self.jwks_cache.read();
+            cache.find_by_kid(kid).cloned()
+        };
+        let jwk = jwk.ok_or_else(|| {
+            BulwarkError::InvalidToken(format!("OIDC JWKS 中未找到 kid={} 的公钥", kid))
+        })?;
+
+        // 4. 构造 DecodingKey 并验签
+        let decoding_key = DecodingKey::from_rsa_components(&jwk.n, &jwk.e)
+            .map_err(|e| BulwarkError::InvalidToken(format!("OIDC 构造 RSA 公钥失败: {}", e)))?;
+        let mut validation = Validation::new(Algorithm::RS256);
+        validation.validate_exp = true;
+        validation.leeway = 0;
+        // jsonwebtoken 10 默认 validate_aud=true，但未设置 expected audience 会触发
+        // InvalidAudience。关闭库内置 aud 校验，由我们手动校验 client_id 以提供精确错误信息。
+        validation.validate_aud = false;
+
+        let token_data =
+            decode::<IdTokenClaims>(id_token, &decoding_key, &validation).map_err(|e| {
+                let msg = e.to_string();
+                if msg.contains("ExpiredSignature") {
+                    BulwarkError::InvalidToken("OIDC id_token 已过期".to_string())
+                } else {
+                    BulwarkError::InvalidToken(format!("OIDC id_token 验签失败: {}", e))
+                }
+            })?;
+
+        // 5. 校验 iss（必须匹配 config.issuer）
+        if token_data.claims.iss != self.config.issuer {
+            return Err(BulwarkError::InvalidToken(format!(
+                "OIDC id_token iss 不匹配: 期望 {}, 实际 {}",
+                self.config.issuer, token_data.claims.iss
+            )));
+        }
+
+        // 6. 校验 aud（必须匹配 client_id）
+        if token_data.claims.aud != self.client_id {
+            return Err(BulwarkError::InvalidToken(format!(
+                "OIDC id_token aud 不匹配: 期望 {}, 实际 {}",
+                self.client_id, token_data.claims.aud
+            )));
+        }
+
+        Ok(true)
     }
 }
 
@@ -205,9 +415,18 @@ impl OidcProvider for DefaultOidcProvider {
             .await
             .map_err(|e| BulwarkError::Internal(format!("OIDC token 响应解析失败: {}", e)))?;
 
-        token_response
+        let id_token = token_response
             .id_token
-            .ok_or_else(|| BulwarkError::Internal("OIDC token 响应中缺少 id_token".to_string()))
+            .ok_or_else(|| BulwarkError::Internal("OIDC token 响应中缺少 id_token".to_string()))?;
+
+        // VULN-0001 修复：启用 protocol-jwt 时在返回前验证 id_token 签名 + iss/aud/exp。
+        // 未启用 protocol-jwt 时保持向后兼容行为（不验签，直接返回 id_token）。
+        #[cfg(feature = "protocol-jwt")]
+        {
+            self.validate_id_token_impl(&id_token).await?;
+        }
+
+        Ok(id_token)
     }
 
     async fn get_user_info(&self, access_token: &str) -> BulwarkResult<OidcUserInfo> {
@@ -233,10 +452,20 @@ impl OidcProvider for DefaultOidcProvider {
             .map_err(|e| BulwarkError::Internal(format!("OIDC userinfo 响应解析失败: {}", e)))
     }
 
-    async fn validate_id_token(&self, _id_token: &str) -> BulwarkResult<bool> {
-        Err(BulwarkError::NotImplemented(
-            "OIDC id_token 验证尚未实现（需 protocol-jwt feature）".to_string(),
-        ))
+    async fn validate_id_token(&self, id_token: &str) -> BulwarkResult<bool> {
+        // VULN-0001 修复：启用 protocol-jwt 时执行 JWKS 验签 + iss/aud/exp 校验。
+        // 未启用 protocol-jwt 时返回 NotImplemented（保持向后兼容）。
+        #[cfg(feature = "protocol-jwt")]
+        {
+            return self.validate_id_token_impl(id_token).await;
+        }
+        #[cfg(not(feature = "protocol-jwt"))]
+        {
+            let _ = id_token;
+            Err(BulwarkError::NotImplemented(
+                "OIDC id_token 验证尚未实现（需 protocol-jwt feature）".to_string(),
+            ))
+        }
     }
 }
 
@@ -465,6 +694,11 @@ mod tests {
     // ========================================================================
 
     /// validate_id_token 返回 NotImplemented（spec R-004: JWT 验证需 protocol-jwt feature）。
+    ///
+    /// VULN-0001 修复后：此测试仅在未启用 `protocol-jwt` feature 时运行。
+    /// 启用 `protocol-jwt` 时 `validate_id_token` 执行 JWKS 验签，由下面的
+    /// `validate_id_token_rejects_*` 系列测试覆盖。
+    #[cfg(not(feature = "protocol-jwt"))]
     #[tokio::test]
     async fn validate_id_token_returns_not_implemented() {
         let config = make_test_config();
@@ -482,24 +716,47 @@ mod tests {
     // ========================================================================
 
     /// exchange_code 成功返回 id_token（spec R-004）。
+    ///
+    /// VULN-0001 修复后：启用 `protocol-jwt` 时 `exchange_code` 返回前会调用
+    /// `validate_id_token`，需要 mock JWKS endpoint + 真实 RSA 签发的 JWT。
+    /// 未启用 `protocol-jwt` 时不验签，使用假 JWT（保持向后兼容行为）。
     #[tokio::test]
     async fn exchange_code_success_returns_id_token() {
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
         let mock_server = MockServer::start().await;
+        let issuer = "https://idp.example.com".to_string();
+
+        // 启用 protocol-jwt 时生成真实 RSA 签发的 JWT + JWKS JSON
+        // 未启用时使用假 JWT 字符串（不验签）
+        #[cfg(feature = "protocol-jwt")]
+        let (id_token, jwks_json) = make_valid_id_token(&issuer, "cid");
+        #[cfg(not(feature = "protocol-jwt"))]
+        let id_token: String = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyMTIzIn0.signature".to_string(); // nosemgrep
+
+        // 启用 protocol-jwt 时 mock JWKS endpoint
+        #[cfg(feature = "protocol-jwt")]
+        {
+            Mock::given(method("GET"))
+                .and(path("/jwks"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(jwks_json))
+                .mount(&mock_server)
+                .await;
+        }
+
         let config = OidcDiscoveryConfig {
-            issuer: "https://idp.example.com".to_string(),
+            issuer,
             authorization_endpoint: "https://idp.example.com/authorize".to_string(),
             token_endpoint: format!("{}/token", mock_server.uri()),
             userinfo_endpoint: format!("{}/userinfo", mock_server.uri()),
-            jwks_uri: "https://idp.example.com/jwks".to_string(),
+            jwks_uri: format!("{}/jwks", mock_server.uri()),
         };
 
         Mock::given(method("POST"))
             .and(path("/token"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "id_token": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyMTIzIn0.signature", // nosemgrep
+                "id_token": id_token,
                 "access_token": "access-123",
                 "token_type": "Bearer",
                 "expires_in": 3600
@@ -508,14 +765,11 @@ mod tests {
             .await;
 
         let provider = DefaultOidcProvider::new(config, "cid", "cs");
-        let id_token = provider
+        let returned_id_token = provider
             .exchange_code("auth-code-123", "https://sp.example.com/callback")
             .await
             .unwrap();
-        assert_eq!(
-            id_token,
-            "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyMTIzIn0.signature" // nosemgrep
-        );
+        assert_eq!(returned_id_token, id_token);
     }
 
     /// exchange_code 端点返回错误状态时返回 Internal 错误（spec R-004）。
@@ -666,5 +920,357 @@ mod tests {
         // 已编码序列应被双重编码，防止解码后注入
         assert_eq!(url_encode("%26"), "%2526");
         assert_eq!(url_encode("%3D"), "%253D");
+    }
+
+    // ========================================================================
+    // VULN-0001 修复：validate_id_token JWKS 验签测试
+    //
+    // 启用 protocol-jwt feature 时执行 JWKS 验签（RS256）+ iss/aud/exp 校验。
+    // 测试使用 wiremock mock JWKS 端点 + RSA 2048 测试密钥对。
+    // 参考实现：protocol::oauth2::keycloak::tests::keycloak_provider_verify_id_token_validates_signature_and_claims
+    // ========================================================================
+
+    /// VULN-0001 测试辅助：生成 RSA 2048 测试密钥对。
+    ///
+    /// 返回 (EncodingKey, n_b64, e_b64)，其中 n_b64/e_b64 为 base64url 无 padding 编码，
+    /// 可直接构造 JWKS JSON。
+    #[cfg(feature = "protocol-jwt")]
+    fn make_test_rsa_key() -> (jsonwebtoken::EncodingKey, String, String) {
+        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        use base64::Engine;
+        use jsonwebtoken::EncodingKey;
+        use rand::rngs::OsRng;
+        use rsa::pkcs1::EncodeRsaPrivateKey;
+        use rsa::traits::PublicKeyParts;
+        use rsa::{RsaPrivateKey, RsaPublicKey};
+
+        let mut rng = OsRng;
+        let private_key = RsaPrivateKey::new(&mut rng, 2048).expect("生成 RSA 私钥应成功");
+        let public_key = RsaPublicKey::from(&private_key);
+        let n_b64 = URL_SAFE_NO_PAD.encode(public_key.n().to_bytes_be());
+        let e_b64 = URL_SAFE_NO_PAD.encode(public_key.e().to_bytes_be());
+        // jsonwebtoken 10 的 EncodingKey::from_rsa_der 期望 PKCS#1 DER（非 PKCS#8）
+        let der = private_key.to_pkcs1_der().expect("转 PKCS#1 DER 应成功");
+        let encoding_key = EncodingKey::from_rsa_der(der.as_bytes());
+        (encoding_key, n_b64, e_b64)
+    }
+
+    /// VULN-0001 测试辅助：当前 Unix 时间戳（秒）。
+    #[cfg(feature = "protocol-jwt")]
+    fn now_unix() -> i64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("系统时间应早于 UNIX_EPOCH")
+            .as_secs() as i64
+    }
+
+    /// VULN-0001 测试辅助：用 RSA 私钥签发 JWT。
+    ///
+    /// # 参数
+    /// - `encoding_key`: RSA 编码密钥
+    /// - `kid`: JWT header 的 key ID
+    /// - `iss`: 签发者
+    /// - `aud`: 受众
+    /// - `exp`: 过期时间（Unix 秒）
+    #[cfg(feature = "protocol-jwt")]
+    fn sign_test_jwt(
+        encoding_key: &jsonwebtoken::EncodingKey,
+        kid: &str,
+        iss: &str,
+        aud: &str,
+        exp: i64,
+    ) -> String {
+        use jsonwebtoken::{encode, Algorithm, Header};
+        use serde::Serialize;
+
+        #[derive(Serialize)]
+        struct TestClaims {
+            iss: String,
+            aud: String,
+            exp: i64,
+            sub: String,
+        }
+
+        let mut header = Header::new(Algorithm::RS256);
+        header.kid = Some(kid.to_string());
+        let claims = TestClaims {
+            iss: iss.to_string(),
+            aud: aud.to_string(),
+            exp,
+            sub: "user-123".to_string(),
+        };
+        encode(&header, &claims, encoding_key).expect("签发 JWT 应成功")
+    }
+
+    /// VULN-0001 测试辅助：构造 JWKS JSON 响应体（单个 RSA 公钥）。
+    #[cfg(feature = "protocol-jwt")]
+    fn make_jwks_json(kid: &str, n_b64: &str, e_b64: &str) -> serde_json::Value {
+        serde_json::json!({
+            "keys": [{
+                "kty": "RSA",
+                "kid": kid,
+                "use": "sig",
+                "alg": "RS256",
+                "n": n_b64,
+                "e": e_b64,
+            }]
+        })
+    }
+
+    /// VULN-0001 测试辅助：生成有效 id_token + 对应的 JWKS JSON。
+    ///
+    /// 生成 RSA 密钥对，用私钥签发 JWT（iss/aud/exp 与 provider 配置匹配），
+    /// 返回 (id_token, jwks_json) 供 mock 使用。
+    #[cfg(feature = "protocol-jwt")]
+    fn make_valid_id_token(issuer: &str, client_id: &str) -> (String, serde_json::Value) {
+        let (encoding_key, n_b64, e_b64) = make_test_rsa_key();
+        // exp 设为当前时间 + 3600 秒（1 小时后过期，确保 validate_exp 通过）
+        let id_token = sign_test_jwt(&encoding_key, "key1", issuer, client_id, now_unix() + 3600);
+        let jwks_json = make_jwks_json("key1", &n_b64, &e_b64);
+        (id_token, jwks_json)
+    }
+
+    /// VULN-0001 测试辅助：启动 mock server 并挂载 JWKS endpoint，返回 OidcDiscoveryConfig。
+    #[cfg(feature = "protocol-jwt")]
+    async fn setup_jwks_mock_server(
+        jwks_json: serde_json::Value,
+    ) -> (wiremock::MockServer, OidcDiscoveryConfig) {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let issuer = "https://idp.example.com".to_string();
+
+        Mock::given(method("GET"))
+            .and(path("/jwks"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(jwks_json))
+            .mount(&server)
+            .await;
+
+        let config = OidcDiscoveryConfig {
+            issuer,
+            authorization_endpoint: "https://idp.example.com/authorize".to_string(),
+            token_endpoint: format!("{}/token", server.uri()),
+            userinfo_endpoint: format!("{}/userinfo", server.uri()),
+            jwks_uri: format!("{}/jwks", server.uri()),
+        };
+        (server, config)
+    }
+
+    /// VULN-0001 测试 1：validate_id_token 拒绝无效签名的 JWT。
+    ///
+    /// 用 key_signer 私钥签发 JWT，但 JWKS 返回 key_other 公钥 → 验签失败。
+    /// 覆盖 `validate_id_token_impl` 中 `decode` 失败分支。
+    #[cfg(feature = "protocol-jwt")]
+    #[tokio::test]
+    async fn validate_id_token_rejects_invalid_signature() {
+        // 签发用 key_signer，JWKS 返回 key_other（不同密钥对）的公钥
+        let (encoding_key_signer, _n_signer, _e_signer) = make_test_rsa_key();
+        let (_encoding_key_other, n_other, e_other) = make_test_rsa_key();
+
+        let jwks_json = make_jwks_json("key1", &n_other, &e_other);
+        let (_server, config) = setup_jwks_mock_server(jwks_json).await;
+
+        let id_token = sign_test_jwt(
+            &encoding_key_signer,
+            "key1",
+            &config.issuer,
+            "client-id",
+            now_unix() + 3600,
+        );
+
+        let provider = DefaultOidcProvider::new(config, "client-id", "secret");
+        let result = provider.validate_id_token(&id_token).await;
+        assert!(result.is_err(), "无效签名应返回错误");
+        match result.err() {
+            Some(BulwarkError::InvalidToken(msg)) => {
+                assert!(
+                    msg.contains("验签失败") || msg.contains("signature"),
+                    "无效签名应返回验签失败消息，实际: {}",
+                    msg
+                );
+            },
+            other => panic!("期望 InvalidToken 错误，实际: {:?}", other),
+        }
+    }
+
+    /// VULN-0001 测试 2：validate_id_token 拒绝过期 token。
+    ///
+    /// 签发 exp=now-3600（1 小时前已过期）的 JWT，验签时 jsonwebtoken 触发
+    /// ExpiredSignature，映射到 InvalidToken("OIDC id_token 已过期")。
+    #[cfg(feature = "protocol-jwt")]
+    #[tokio::test]
+    async fn validate_id_token_rejects_expired_token() {
+        let (encoding_key, n_b64, e_b64) = make_test_rsa_key();
+        let jwks_json = make_jwks_json("key1", &n_b64, &e_b64);
+        let (_server, config) = setup_jwks_mock_server(jwks_json).await;
+
+        // exp 设为当前时间 - 3600 秒（已过期）
+        let id_token = sign_test_jwt(
+            &encoding_key,
+            "key1",
+            &config.issuer,
+            "client-id",
+            now_unix() - 3600,
+        );
+
+        let provider = DefaultOidcProvider::new(config, "client-id", "secret");
+        let result = provider.validate_id_token(&id_token).await;
+        assert!(result.is_err(), "过期 token 应返回错误");
+        match result.err() {
+            Some(BulwarkError::InvalidToken(msg)) => {
+                assert!(
+                    msg.contains("过期") || msg.contains("expired"),
+                    "过期 token 应返回过期相关消息，实际: {}",
+                    msg
+                );
+            },
+            other => panic!("期望 InvalidToken 错误，实际: {:?}", other),
+        }
+    }
+
+    /// VULN-0001 测试 3：validate_id_token 拒绝 iss 不匹配的 token。
+    ///
+    /// 签发 iss="https://wrong-issuer.example.com"，但 provider 配置 issuer 不同。
+    /// 验签通过，但 iss 校验失败。
+    #[cfg(feature = "protocol-jwt")]
+    #[tokio::test]
+    async fn validate_id_token_rejects_wrong_issuer() {
+        let (encoding_key, n_b64, e_b64) = make_test_rsa_key();
+        let jwks_json = make_jwks_json("key1", &n_b64, &e_b64);
+        let (_server, config) = setup_jwks_mock_server(jwks_json).await;
+
+        // 用错误的 issuer 签发
+        let id_token = sign_test_jwt(
+            &encoding_key,
+            "key1",
+            "https://wrong-issuer.example.com",
+            "client-id",
+            now_unix() + 3600,
+        );
+
+        let provider = DefaultOidcProvider::new(config, "client-id", "secret");
+        let result = provider.validate_id_token(&id_token).await;
+        assert!(result.is_err(), "iss 不匹配应返回错误");
+        match result.err() {
+            Some(BulwarkError::InvalidToken(msg)) => {
+                assert!(
+                    msg.contains("iss"),
+                    "iss 不匹配应返回 iss 相关消息，实际: {}",
+                    msg
+                );
+            },
+            other => panic!("期望 InvalidToken 错误，实际: {:?}", other),
+        }
+    }
+
+    /// VULN-0001 测试 4：validate_id_token 拒绝 aud 不匹配的 token。
+    ///
+    /// 签发 aud="wrong-aud"，但 provider 配置 client_id="client-id"。
+    /// 验签通过，但 aud 校验失败。
+    #[cfg(feature = "protocol-jwt")]
+    #[tokio::test]
+    async fn validate_id_token_rejects_wrong_audience() {
+        let (encoding_key, n_b64, e_b64) = make_test_rsa_key();
+        let jwks_json = make_jwks_json("key1", &n_b64, &e_b64);
+        let (_server, config) = setup_jwks_mock_server(jwks_json).await;
+
+        // 用错误的 audience 签发
+        let id_token = sign_test_jwt(
+            &encoding_key,
+            "key1",
+            &config.issuer,
+            "wrong-aud",
+            now_unix() + 3600,
+        );
+
+        let provider = DefaultOidcProvider::new(config, "client-id", "secret");
+        let result = provider.validate_id_token(&id_token).await;
+        assert!(result.is_err(), "aud 不匹配应返回错误");
+        match result.err() {
+            Some(BulwarkError::InvalidToken(msg)) => {
+                assert!(
+                    msg.contains("aud"),
+                    "aud 不匹配应返回 aud 相关消息，实际: {}",
+                    msg
+                );
+            },
+            other => panic!("期望 InvalidToken 错误，实际: {:?}", other),
+        }
+    }
+
+    /// VULN-0001 测试 5：exchange_code 在返回前调用 validate_id_token。
+    ///
+    /// mock token endpoint 返回无效签名的 id_token（用 key_signer 签发，
+    /// 但 JWKS 返回 key_other 公钥），exchange_code 应在返回前调用
+    /// validate_id_token 并失败。
+    #[cfg(feature = "protocol-jwt")]
+    #[tokio::test]
+    async fn exchange_code_validates_id_token() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        // 签发用 key_signer，JWKS 返回 key_other（不同密钥对）的公钥
+        let (encoding_key_signer, _n_signer, _e_signer) = make_test_rsa_key();
+        let (_encoding_key_other, n_other, e_other) = make_test_rsa_key();
+
+        let mock_server = MockServer::start().await;
+        let issuer = "https://idp.example.com".to_string();
+
+        // mock JWKS endpoint（返回与签名密钥不匹配的公钥）
+        Mock::given(method("GET"))
+            .and(path("/jwks"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(make_jwks_json("key1", &n_other, &e_other)),
+            )
+            .mount(&mock_server)
+            .await;
+
+        // mock token endpoint 返回无效签名的 id_token
+        let id_token = sign_test_jwt(
+            &encoding_key_signer,
+            "key1",
+            &issuer,
+            "cid",
+            now_unix() + 3600,
+        );
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id_token": id_token,
+                "access_token": "access-123",
+                "token_type": "Bearer",
+                "expires_in": 3600
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let config = OidcDiscoveryConfig {
+            issuer,
+            authorization_endpoint: "https://idp.example.com/authorize".to_string(),
+            token_endpoint: format!("{}/token", mock_server.uri()),
+            userinfo_endpoint: format!("{}/userinfo", mock_server.uri()),
+            jwks_uri: format!("{}/jwks", mock_server.uri()),
+        };
+
+        let provider = DefaultOidcProvider::new(config, "cid", "secret");
+        let result = provider
+            .exchange_code("auth-code-123", "https://sp.example.com/callback")
+            .await;
+        assert!(
+            result.is_err(),
+            "exchange_code 应在 validate_id_token 失败时返回错误"
+        );
+        match result.err() {
+            Some(BulwarkError::InvalidToken(msg)) => {
+                assert!(
+                    msg.contains("验签失败") || msg.contains("signature"),
+                    "exchange_code 应传递验签失败错误，实际: {}",
+                    msg
+                );
+            },
+            other => panic!("期望 InvalidToken 错误，实际: {:?}", other),
+        }
     }
 }
