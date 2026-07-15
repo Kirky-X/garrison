@@ -651,6 +651,9 @@ mod tests {
     async fn switch_to_updates_login_id_and_stores_switched_from() {
         let auth = make_auth_logic_allow_switch(3600, 86400);
         let token = auth.login("1001", None).await.unwrap();
+        // VULN-0015 修复后 ensure_token_in_account_session 拒绝创建新 Account-Session，
+        // 需预先 login target 以确保其 Account-Session 存在。
+        let _ = auth.login("2002", None).await.unwrap();
         auth.switch_to(&token, "2002").await.unwrap();
         // get_login_id 应返回新的 login_id
         assert_eq!(
@@ -667,6 +670,8 @@ mod tests {
     async fn switch_to_preserves_token_validity() {
         let auth = make_auth_logic_allow_switch(3600, 86400);
         let token = auth.login("1001", None).await.unwrap();
+        // VULN-0015 修复后需预先创建 target Account-Session。
+        let _ = auth.login("2002", None).await.unwrap();
         auth.switch_to(&token, "2002").await.unwrap();
         assert!(auth.is_login(&token).await.unwrap());
     }
@@ -701,6 +706,8 @@ mod tests {
     async fn switch_to_verify_token_returns_new_login_id() {
         let auth = make_auth_logic_allow_switch(3600, 86400);
         let token = auth.login("1001", None).await.unwrap();
+        // VULN-0015 修复后需预先创建 target Account-Session。
+        let _ = auth.login("9999", None).await.unwrap();
         auth.switch_to(&token, "9999").await.unwrap();
         assert_eq!(auth.verify_token(&token).await.unwrap(), "9999");
     }
@@ -710,6 +717,9 @@ mod tests {
     async fn switch_to_multiple_times_updates_switched_from() {
         let auth = make_auth_logic_allow_switch(3600, 86400);
         let token = auth.login("1001", None).await.unwrap();
+        // VULN-0015 修复后需预先创建 target Account-Session（2002 + 3003）。
+        let _ = auth.login("2002", None).await.unwrap();
+        let _ = auth.login("3003", None).await.unwrap();
         // 第一次切换：1001 -> 2002
         auth.switch_to(&token, "2002").await.unwrap();
         assert_eq!(
@@ -734,6 +744,8 @@ mod tests {
     async fn switch_to_preserves_existing_attrs() {
         let auth = make_auth_logic_allow_switch(3600, 86400);
         let token = auth.login("1001", None).await.unwrap();
+        // VULN-0015 修复后需预先创建 target Account-Session。
+        let _ = auth.login("2002", None).await.unwrap();
         // 设置一个自定义 attr
         auth.session.set(&token, "device", "web").await.unwrap();
         // 执行 switch_to
@@ -817,6 +829,8 @@ mod tests {
         }
         let auth = make_auth_logic(3600, 86400).with_switch_to_guard(Arc::new(DenyTargetGuard));
         let token = auth.login("1001", None).await.unwrap();
+        // VULN-0015 修复后需预先创建 target Account-Session（user-2002）。
+        let _ = auth.login("user-2002", None).await.unwrap();
 
         // 切换到 admin 应被拒绝
         let result = auth.switch_to(&token, "admin").await;

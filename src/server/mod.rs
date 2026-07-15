@@ -75,6 +75,10 @@ pub struct AuthServerConfig {
     pub internal_port: u16,
     /// 每个 IP 每秒允许的外网请求数（默认 100）。
     pub external_rate_limit_per_ip: u32,
+    /// 限速 HashMap 最大条目数（VULN-0008，默认 100_000）。
+    pub rate_limit_max_entries: usize,
+    /// 可信代理 IP 列表（VULN-0010，仅这些 IP 的 X-Forwarded-For 被信任）。
+    pub rate_limit_trusted_proxies: Vec<std::net::IpAddr>,
     /// 内网 API Key（用于 X-API-Key 头校验）。
     pub internal_api_key: String,
 }
@@ -85,6 +89,8 @@ impl Default for AuthServerConfig {
             external_port: 8080,
             internal_port: 8081,
             external_rate_limit_per_ip: 100,
+            rate_limit_max_entries: 100_000,
+            rate_limit_trusted_proxies: Vec::new(),
             internal_api_key: String::new(),
         }
     }
@@ -187,6 +193,22 @@ impl BulwarkAuthServer {
         self
     }
 
+    /// 设置限速 HashMap 最大条目数（VULN-0008，默认 100_000）。
+    ///
+    /// 超过此值时 LRU 淘汰最久未访问的 bucket，防 DoS 内存耗尽。
+    pub fn with_rate_limit_max_entries(mut self, max_entries: usize) -> Self {
+        self.config.rate_limit_max_entries = max_entries;
+        self
+    }
+
+    /// 设置可信代理 IP 列表（VULN-0010）。
+    ///
+    /// 仅来自这些 IP 的请求的 X-Forwarded-For 头被信任，其余使用连接 IP。
+    pub fn with_trusted_proxies(mut self, proxies: Vec<std::net::IpAddr>) -> Self {
+        self.config.rate_limit_trusted_proxies = proxies;
+        self
+    }
+
     /// 设置内网 API Key（用于 X-API-Key 头校验）。
     pub fn with_internal_api_key(mut self, api_key: impl Into<String>) -> Self {
         self.config.internal_api_key = api_key.into();
@@ -238,8 +260,10 @@ impl BulwarkAuthServer {
     /// 用于测试时通过 `tower::ServiceExt::oneshot` 发送请求，避免实际 listen。
     pub fn external_router(&self) -> Router {
         use axum::Extension;
-        let rate_limit_state = Arc::new(middleware::RateLimitState::new(
+        let rate_limit_state = Arc::new(middleware::RateLimitState::with_options(
             self.config.external_rate_limit_per_ip,
+            self.config.rate_limit_max_entries,
+            self.config.rate_limit_trusted_proxies.clone(),
         ));
         let router = sdforge::http::build()
             .layer(Extension(self.backend.clone()))
@@ -341,7 +365,10 @@ impl BulwarkAuthServer {
                     .parse()
                     .map_err(|e| BulwarkError::Internal(format!("外网地址解析失败: {}", e)))?;
                 return axum_server::bind_rustls(addr, rustls_config)
-                    .serve(external_router.into_make_service())
+                    .serve(
+                        external_router
+                            .into_make_service_with_connect_info::<std::net::SocketAddr>(),
+                    )
                     .await
                     .map_err(|e| BulwarkError::Internal(format!("外网服务器异常: {}", e)));
             }
@@ -349,7 +376,12 @@ impl BulwarkAuthServer {
             let external_listener = tokio::net::TcpListener::bind(&external_addr)
                 .await
                 .map_err(|e| BulwarkError::Internal(format!("绑定外网端口失败: {}", e)))?;
-            if let Err(e) = axum::serve(external_listener, external_router).await {
+            if let Err(e) = axum::serve(
+                external_listener,
+                external_router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
+            .await
+            {
                 tracing::error!(error = %e, "外网服务器异常");
                 return Err(BulwarkError::Internal(format!("外网服务器异常: {}", e)));
             }

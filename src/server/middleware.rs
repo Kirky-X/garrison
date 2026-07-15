@@ -14,6 +14,7 @@
 //! - **parking_lot::Mutex**：比 std::sync::Mutex 更高效，无需 await 持锁
 //! - **from_fn_with_state**：通过 axum middleware state 共享配置
 
+use axum::extract::ConnectInfo;
 use axum::extract::Request;
 use axum::http::StatusCode;
 use axum::middleware::Next;
@@ -22,6 +23,7 @@ use axum::Json;
 use parking_lot::Mutex;
 use serde_json::json;
 use std::collections::HashMap;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -72,37 +74,82 @@ impl TokenBucket {
 ///
 /// 持有 IP → TokenBucket 的映射和限速配置。
 /// 通过 `Arc<RateLimitState>` 共享给 middleware。
+///
+/// # 安全性
+///
+/// - **VULN-0008**：`max_entries` 上限防 DoS 内存耗尽，超限时 LRU 淘汰最久未访问的 bucket。
+/// - **VULN-0010**：`trusted_proxies` 限定 X-Forwarded-For 信任边界，非可信来源的 XFF 被忽略。
 #[derive(Debug)]
 pub struct RateLimitState {
     buckets: Mutex<HashMap<String, TokenBucket>>,
     /// 每个 IP 的令牌桶容量（也是每秒补充速率）。
     capacity: f64,
+    /// HashMap 最大条目数（VULN-0008：防 DoS 内存耗尽）。
+    max_entries: usize,
+    /// 可信代理 IP 列表（VULN-0010：仅信任来自这些 IP 的 X-Forwarded-For）。
+    trusted_proxies: Vec<IpAddr>,
 }
 
+/// 默认最大 bucket 数（VULN-0008）。
+const DEFAULT_MAX_ENTRIES: usize = 100_000;
+
 impl RateLimitState {
-    /// 创建限速状态。
+    /// 创建限速状态（向后兼容，默认 max_entries=100_000，无可信代理）。
     ///
     /// # 参数
     /// - `capacity`：每个 IP 每秒允许的请求数
     pub fn new(capacity: u32) -> Self {
+        Self::with_options(capacity, DEFAULT_MAX_ENTRIES, Vec::new())
+    }
+
+    /// 创建限速状态（完整配置）。
+    ///
+    /// # 参数
+    /// - `capacity`：每个 IP 每秒允许的请求数
+    /// - `max_entries`：HashMap 最大条目数（VULN-0008）
+    /// - `trusted_proxies`：可信代理 IP 列表（VULN-0010）
+    pub fn with_options(capacity: u32, max_entries: usize, trusted_proxies: Vec<IpAddr>) -> Self {
         Self {
             buckets: Mutex::new(HashMap::new()),
             capacity: capacity as f64,
+            // 至少保留 1 个条目，避免 max_entries=0 导致所有请求被驱逐
+            max_entries: max_entries.max(1),
+            trusted_proxies,
         }
+    }
+
+    /// 当前 bucket 数量（测试/运维用）。
+    pub fn bucket_count(&self) -> usize {
+        self.buckets.lock().len()
     }
 }
 
 /// 从请求中提取客户端 IP。
 ///
-/// 优先使用 X-Forwarded-For 头（代理场景），
-/// 无则使用 "unknown"（兼容 oneshot 测试，无法获取真实连接 IP）。
-fn extract_client_ip(req: &Request) -> String {
-    req.headers()
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.split(',').next())
-        .map(|s| s.trim().to_string())
-        .unwrap_or_else(|| "unknown".to_string())
+/// # 信任模型（VULN-0010 修复）
+///
+/// - 若连接 IP 在 `trusted_proxies` 中：采用 X-Forwarded-For 最左值（原始客户端）。
+/// - 若连接 IP 不在 `trusted_proxies` 中：使用连接 IP 本身，忽略 XFF（防伪造）。
+/// - 若无 `ConnectInfo`（如 oneshot 测试）：返回 "unknown"（fail-closed，不信任 XFF）。
+///
+/// 这修复了原实现无条件信任 XFF 的漏洞——攻击者无法再通过伪造 XFF 绕过限速或嫁祸他人。
+fn extract_client_ip(req: &Request, trusted_proxies: &[IpAddr]) -> String {
+    let connect_ip = req
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|ci| ci.0.ip());
+
+    match connect_ip {
+        Some(ip) if trusted_proxies.contains(&ip) => req
+            .headers()
+            .get("x-forwarded-for")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.split(',').next())
+            .map(|s| s.trim().to_string())
+            .unwrap_or_else(|| ip.to_string()),
+        Some(ip) => ip.to_string(),
+        None => "unknown".to_string(),
+    }
 }
 
 /// 限速中间件 — 基于 IP 的令牌桶。
@@ -116,9 +163,19 @@ pub async fn rate_limit_middleware(
     req: Request,
     next: Next,
 ) -> Response {
-    let ip = extract_client_ip(&req);
+    let ip = extract_client_ip(&req, &state.trusted_proxies);
     let allowed = {
         let mut buckets = state.buckets.lock();
+        // VULN-0008：新 IP 插入前若已达 max_entries，淘汰最久未访问的 bucket（LRU）
+        if !buckets.contains_key(&ip) && buckets.len() >= state.max_entries {
+            if let Some(oldest_key) = buckets
+                .iter()
+                .min_by_key(|(_, b)| b.last_refill)
+                .map(|(k, _)| k.clone())
+            {
+                buckets.remove(&oldest_key);
+            }
+        }
         let bucket = buckets.entry(ip.clone()).or_insert_with(|| {
             // 每秒补充 capacity 个令牌，桶容量为 capacity
             TokenBucket::new(state.capacity)
@@ -150,21 +207,36 @@ pub struct ApiKeyState {
     pub api_key: String,
 }
 
-/// 常量时间字节比较，防止 timing attack（H-1）。
+/// 常量时间字节比较，防止 timing attack（H-1, VULN-0012）。
 ///
-/// 用 XOR 累积比较所有字节，不在第一个不匹配字节处短路返回，
-/// 避免攻击者通过测量响应时间逐字节推断 API Key 内容。
+/// 用 `subtle::ConstantTimeEq` 做常量时间比较，既不在第一个不匹配字节处短路返回，
+/// 也不在长度不同时提前返回，避免攻击者通过测量响应时间逐字节推断 API Key 内容，
+/// 或通过长度差异的时间差推断 API Key 长度（VULN-0012，CVSS 7.5）。
 ///
-/// 长度不同时直接返回 false（长度不是秘密，API Key 长度由配置决定）。
+/// # 安全性
+///
+/// - 长度比较用 `u64::ct_eq`（常量时间），不 early return
+/// - 字节比较遍历到 `max(a.len, b.len)`，短的一方用 0 padding
+/// - 无论长度是否相等，都做同样多的工作（max_len 次比较）
 fn constant_time_eq(a: &str, b: &str) -> bool {
-    if a.len() != b.len() {
-        return false;
+    use subtle::ConstantTimeEq;
+
+    let a_bytes = a.as_bytes();
+    let b_bytes = b.as_bytes();
+
+    // VULN-0012: 长度比较用常量时间，不 early return
+    let len_eq = (a_bytes.len() as u64).ct_eq(&(b_bytes.len() as u64));
+
+    // 字节比较：遍历到 max_len，短的一方用 0 padding
+    let max_len = a_bytes.len().max(b_bytes.len());
+    let mut byte_eq = subtle::Choice::from(1);
+    for i in 0..max_len {
+        let x = a_bytes.get(i).copied().unwrap_or(0);
+        let y = b_bytes.get(i).copied().unwrap_or(0);
+        byte_eq &= x.ct_eq(&y);
     }
-    let mut result: u8 = 0;
-    for (x, y) in a.as_bytes().iter().zip(b.as_bytes().iter()) {
-        result |= x ^ y;
-    }
-    result == 0
+
+    (len_eq & byte_eq).unwrap_u8() == 1
 }
 
 /// API Key 认证中间件 — 验证 X-API-Key 头。
@@ -322,6 +394,7 @@ mod tests {
     use axum::routing::{get, post};
     use axum::Extension;
     use axum::Router;
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use tower::ServiceExt;
 
     /// 创建一个简单的 ok 路由用于测试 middleware。
@@ -372,6 +445,105 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    // ========================================================================
+    // VULN-0008: Rate limiter 内存上限 + LRU 淘汰测试
+    // --------------------------------------------------------------------
+    // 原实现无 max_entries 上限，攻击者用唯一 IP 耗尽内存致 OOM。
+    // 修复后 RateLimitState 持有 max_entries 上限，超限时 LRU 淘汰最旧 bucket。
+    // ========================================================================
+
+    /// VULN-0008：超过 max_entries 时淘汰旧 bucket，bucket 数量不超过上限。
+    #[tokio::test]
+    async fn rate_limit_bucket_cleanup_when_exceeds_max_entries() {
+        // capacity=5 req/s，max_entries=2（仅保留 2 个 bucket）
+        let state = Arc::new(RateLimitState::with_options(5, 2, Vec::new()));
+        let app = ok_router().layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            rate_limit_middleware,
+        ));
+
+        // 3 个不同 connecting IP，第 3 个会触发淘汰（max_entries=2）
+        for addr in ["10.0.0.1:8080", "10.0.0.2:8080", "10.0.0.3:8080"] {
+            let req = Request::builder()
+                .uri("/ping")
+                .extension(ConnectInfo::<SocketAddr>(addr.parse().unwrap()))
+                .body(Body::empty())
+                .unwrap();
+            let _resp = app.clone().oneshot(req).await.unwrap();
+        }
+
+        assert!(
+            state.bucket_count() <= 2,
+            "bucket 数量 {} 超过 max_entries=2",
+            state.bucket_count()
+        );
+    }
+
+    // ========================================================================
+    // VULN-0010: X-Forwarded-For 信任边界测试
+    // --------------------------------------------------------------------
+    // 原实现无条件信任 XFF，攻击者可伪造 IP 绕过限速或嫁祸他人。
+    // 修复后仅信任来自 trusted_proxies 的 XFF，非可信来源的 XFF 被忽略。
+    // ========================================================================
+
+    /// VULN-0010：非可信代理 IP 的 XFF 被忽略，使用连接 IP。
+    #[test]
+    fn extract_client_ip_ignores_untrusted_proxy_xff() {
+        let trusted = [IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))];
+        // 连接来自 203.0.113.1（非可信代理）
+        let req = Request::builder()
+            .uri("/ping")
+            .header("x-forwarded-for", "1.2.3.4")
+            .extension(ConnectInfo::<SocketAddr>(
+                "203.0.113.1:1234".parse().unwrap(),
+            ))
+            .body(Body::empty())
+            .unwrap();
+        // XFF 被忽略，使用连接 IP
+        assert_eq!(extract_client_ip(&req, &trusted), "203.0.113.1");
+    }
+
+    /// VULN-0010：可信代理 IP 的 XFF 被采用。
+    #[test]
+    fn extract_client_ip_uses_xff_from_trusted_proxy() {
+        let trusted = [IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))];
+        // 连接来自 10.0.0.1（可信代理）
+        let req = Request::builder()
+            .uri("/ping")
+            .header("x-forwarded-for", "1.2.3.4")
+            .extension(ConnectInfo::<SocketAddr>("10.0.0.1:8080".parse().unwrap()))
+            .body(Body::empty())
+            .unwrap();
+        // XFF 被信任，取最左值 = "1.2.3.4"
+        assert_eq!(extract_client_ip(&req, &trusted), "1.2.3.4");
+    }
+
+    /// VULN-0010：无 ConnectInfo 时返回 "unknown"（fail-closed，不信任 XFF）。
+    #[test]
+    fn extract_client_ip_no_connect_info_returns_unknown() {
+        let trusted = [IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))];
+        let req = Request::builder()
+            .uri("/ping")
+            .header("x-forwarded-for", "1.2.3.4")
+            .body(Body::empty())
+            .unwrap();
+        // 无 ConnectInfo → "unknown"（不信任 XFF）
+        assert_eq!(extract_client_ip(&req, &trusted), "unknown");
+    }
+
+    /// VULN-0010：可信代理但无 XFF 头时使用连接 IP。
+    #[test]
+    fn extract_client_ip_trusted_proxy_no_xff_uses_connect_ip() {
+        let trusted = [IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))];
+        let req = Request::builder()
+            .uri("/ping")
+            .extension(ConnectInfo::<SocketAddr>("10.0.0.1:8080".parse().unwrap()))
+            .body(Body::empty())
+            .unwrap();
+        // 可信代理但无 XFF → 使用连接 IP
+        assert_eq!(extract_client_ip(&req, &trusted), "10.0.0.1");
     }
 
     #[tokio::test]
@@ -483,6 +655,79 @@ mod tests {
         assert!(!constant_time_eq("", "a"));
         // 确保所有字节都被比较（非短路）
         assert!(!constant_time_eq("abcdefgh", "abcdefgx"));
+    }
+
+    // ========================================================================
+    // VULN-0012: constant_time_eq 长度泄露修复测试
+    // --------------------------------------------------------------------
+    // 原实现 `if a.len() != b.len() { return false; }` 在长度不同时提前返回，
+    // 泄露 API key 长度（CVSS 7.5）。修复后移除长度 early return，
+    // 用 subtle::ConstantTimeEq 做常量时间比较。以下测试验证功能正确性。
+    // ========================================================================
+
+    /// VULN-0012: 不同长度返回 false（多种长度组合）。
+    #[test]
+    fn constant_time_eq_different_lengths_returns_false() {
+        // 短 vs 长
+        assert!(!constant_time_eq("a", "ab"));
+        assert!(!constant_time_eq("ab", "a"));
+        // 空 vs 非空
+        assert!(!constant_time_eq("", "x"));
+        assert!(!constant_time_eq("x", ""));
+        // 长度差 1 / 多
+        assert!(!constant_time_eq("abc", "abcd"));
+        assert!(!constant_time_eq("abcd", "abc"));
+        assert!(!constant_time_eq("hello", "hello world"));
+        // 长输入
+        assert!(!constant_time_eq("0123456789abcdef", "0123456789abcdef0"));
+    }
+
+    /// VULN-0012: 相同值返回 true（多种内容）。
+    #[test]
+    fn constant_time_eq_same_value_returns_true() {
+        assert!(constant_time_eq("", ""));
+        assert!(constant_time_eq("a", "a"));
+        assert!(constant_time_eq("abc", "abc"));
+        assert!(constant_time_eq("hello", "hello"));
+        // 长 key（模拟真实 API key 长度）
+        assert!(constant_time_eq(
+            "sk-bulwark-0123456789abcdef0123456789abcdef",
+            "sk-bulwark-0123456789abcdef0123456789abcdef"
+        ));
+        // 含特殊字符
+        assert!(constant_time_eq("p@ssw0rd!#$%", "p@ssw0rd!#$%"));
+    }
+
+    /// VULN-0012: 相同长度不同值返回 false（确保不短路）。
+    #[test]
+    fn constant_time_eq_different_value_returns_false() {
+        // 首字节不同
+        assert!(!constant_time_eq("abc", "xbc"));
+        // 末字节不同
+        assert!(!constant_time_eq("abc", "abx"));
+        // 中间字节不同
+        assert!(!constant_time_eq("abc", "axc"));
+        // 单字节
+        assert!(!constant_time_eq("a", "b"));
+        // 长 key 全部不同
+        assert!(!constant_time_eq(
+            "sk-bulwark-aaaaaaaaaaaaaaaaaaaaaaaa",
+            "sk-bulwark-bbbbbbbbbbbbbbbbbbbbbbbb"
+        ));
+        // 长 key 仅末字节不同（验证非常量时间提前返回）
+        assert!(!constant_time_eq(
+            "sk-bulwark-0123456789abcdef0123456789abcdef",
+            "sk-bulwark-0123456789abcdef0123456789abcdeg"
+        ));
+    }
+
+    /// VULN-0012: 空字符串返回 true。
+    #[test]
+    fn constant_time_eq_empty_strings_returns_true() {
+        assert!(constant_time_eq("", ""));
+        // 双重确认：空 vs 非空仍为 false
+        assert!(!constant_time_eq("", " "));
+        assert!(!constant_time_eq(" ", ""));
     }
 
     // ========================================================================

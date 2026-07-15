@@ -245,7 +245,31 @@ impl SessionLogic for BulwarkLogicDefault {
     }
 
     async fn login_with_token(&self, login_id: &str, token: &str) -> BulwarkResult<()> {
-        self.session.create(login_id, token).await
+        // VULN-0019 修复 + TOCTOU 修复（tiangang/diting 审查 HIGH）：
+        // 原代码直接 `self.session.create()`，未检查 token 是否已关联其他 login_id，
+        // 导致同一 token 可同时映射到两个 login_id（dual-mapping），构成会话劫持风险。
+        //
+        // 初版修复在 check 与 create 之间无 per-token 锁，两个并发调用
+        // `login_with_token("alice", T1)` 与 `login_with_token("attacker", T1)`
+        // 可同时通过 check 阶段（都看到 T1 不存在），随后都执行 create，
+        // 绕过 dual-mapping 防护。修复后用 `with_token_session_lock` 包裹
+        // check + create 原子序列，保证同一 token 的并发调用串行执行。
+        let session = &self.session;
+        session
+            .with_token_session_lock(token, async {
+                // check: token 是否已关联其他 login_id
+                if let Some(existing_ts) = session.get_token_session(token).await? {
+                    if existing_ts.login_id != login_id {
+                        return Err(BulwarkError::InvalidToken(format!(
+                            "token already associated with login_id: {}",
+                            existing_ts.login_id
+                        )));
+                    }
+                }
+                // create: 原子序列的 Step 2
+                session.create(login_id, token).await
+            })
+            .await
     }
 
     async fn logout(&self) -> BulwarkResult<()> {
@@ -3154,6 +3178,45 @@ mod tests {
                 .unwrap()
                 .expect("login_with_token 后应存在 Token-Session");
             assert_eq!(ts.login_id, "lwt-user-001");
+        }
+
+        /// VULN-0019 修复：token 已关联其他 login_id 时 `login_with_token` 应返回 Err。
+        ///
+        /// 模拟攻击者拿到 alice 的 token 后，调用 `login_with_token("attacker", T1)`
+        /// 试图在 attacker 名下创建会话以实现会话劫持。修复后应拒绝，避免同一 token
+        /// 同时映射到两个 login_id（dual-mapping）。
+        ///
+        /// 覆盖 `login_with_token` 中新增的 token 唯一性检查分支。
+        #[tokio::test]
+        async fn login_with_token_returns_error_when_token_already_associated() {
+            let logic = make_logic(false);
+            // alice 先用 T1 登录（合法占有 T1）
+            logic
+                .login_with_token("alice-001", "shared-token-T1")
+                .await
+                .expect("alice 首次登录应成功");
+
+            // 攻击者尝试用同一 token 在自己名下创建会话
+            let result = logic
+                .login_with_token("attacker-002", "shared-token-T1")
+                .await;
+            assert!(
+                result.is_err(),
+                "token 已关联 alice 时，attacker 重复关联应返回 Err，避免 dual-mapping。实际: {:?}",
+                result
+            );
+
+            // 验证 token 仍归属 alice（未被覆盖）
+            let ts = logic
+                .session
+                .get_token_session("shared-token-T1")
+                .await
+                .unwrap()
+                .expect("T1 的 Token-Session 应保留");
+            assert_eq!(
+                ts.login_id, "alice-001",
+                "token 应仍归属原 login_id（alice），未被 attacker 抢占"
+            );
         }
 
         /// kickout_by_token 销毁指定 token 的会话。

@@ -20,9 +20,12 @@ use async_trait::async_trait;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use chrono::{DateTime, Duration, Utc};
+use parking_lot::Mutex;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Instant;
 
 /// access_token 有效期（1 小时，RFC 6749 建议）。
 const ACCESS_TOKEN_TTL_SECONDS: u64 = 3600;
@@ -120,6 +123,154 @@ pub trait PasswordVerifier: Send + Sync {
     async fn verify(&self, username: &str, password: &str) -> BulwarkResult<Option<i64>>;
 }
 
+/// Password grant 失败计数器 — 防 brute-force（VULN-0005）。
+///
+/// 按 username 维度跟踪窗口内失败次数，超阈值后锁定至窗口过期。
+/// 验证成功后重置计数。
+///
+/// # 设计
+///
+/// - **per-username 维度**：与 `crate::server::middleware::RateLimitState`（per-IP）不同 ——
+///   防御多 IP 撞库同一账户的暴力破解
+/// - **滑动窗口**：`window_seconds` 内累计失败次数达 `max_attempts` 即锁定至窗口过期
+/// - **in-memory**：与 `RateLimitState` 一致，简化实现不依赖 Redis
+/// - **parking_lot::Mutex**：与 `RateLimitState` 一致
+/// - **max_entries 上限**（tiangang/diting 审查 HIGH 修复）：与 `RateLimitState` 对称设计，
+///   防止攻击者用大量伪造 username 耗尽内存（与 VULN-0008 同类风险）
+///
+/// # 与 RateLimitState 的区别
+///
+/// `RateLimitState` 是 HTTP 中间件级别的 per-IP 令牌桶，限制每秒请求数；
+/// 本结构是 OAuth2 handler 级别的 per-username 失败计数器，限制窗口内失败次数。
+/// 两者互补：IP 限速防御分布式扫描，账户锁定防御定向撞库。
+#[derive(Debug)]
+pub struct PasswordRateLimiter {
+    /// username → 失败记录
+    attempts: Mutex<HashMap<String, FailedAttemptRecord>>,
+    /// 窗口内允许的最大失败次数（达此值后锁定至窗口过期）
+    max_attempts: u32,
+    /// 滑动窗口时长（秒）
+    window_seconds: u64,
+    /// HashMap 最大条目数（tiangang/diting 审查 HIGH 修复：防 DoS 内存耗尽）。
+    /// 超限时 LRU 淘汰最久未访问的 entry，与 `RateLimitState::max_entries` 对称。
+    max_entries: usize,
+}
+
+/// 默认最大 entry 数（与 `RateLimitState::DEFAULT_MAX_ENTRIES` 一致）。
+const DEFAULT_PASSWORD_LIMITER_MAX_ENTRIES: usize = 100_000;
+
+/// 单个 username 的失败记录。
+#[derive(Debug, Clone)]
+struct FailedAttemptRecord {
+    /// 窗口内累计失败次数
+    count: u32,
+    /// 窗口起始时间
+    first_failure: Instant,
+}
+
+impl PasswordRateLimiter {
+    /// 创建失败计数器（向后兼容，默认 max_entries=100_000）。
+    ///
+    /// # 参数
+    /// - `max_attempts`：窗口内允许的最大失败次数（达此值后锁定至窗口过期）
+    /// - `window_seconds`：滑动窗口时长（秒），窗口过期后计数自动重置
+    pub fn new(max_attempts: u32, window_seconds: u64) -> Self {
+        Self::with_max_entries(
+            max_attempts,
+            window_seconds,
+            DEFAULT_PASSWORD_LIMITER_MAX_ENTRIES,
+        )
+    }
+
+    /// 创建失败计数器（完整配置）。
+    ///
+    /// # 参数
+    /// - `max_attempts`：窗口内允许的最大失败次数（达此值后锁定至窗口过期）
+    /// - `window_seconds`：滑动窗口时长（秒），窗口过期后计数自动重置
+    /// - `max_entries`：HashMap 最大条目数（防 DoS 内存耗尽，与 `RateLimitState` 对称）
+    pub fn with_max_entries(max_attempts: u32, window_seconds: u64, max_entries: usize) -> Self {
+        Self {
+            attempts: Mutex::new(HashMap::new()),
+            // 至少 1，避免 max_attempts=0 导致所有请求被锁
+            max_attempts: max_attempts.max(1),
+            window_seconds,
+            // 至少 1，避免 max_entries=0 导致所有 entry 被驱逐
+            max_entries: max_entries.max(1),
+        }
+    }
+
+    /// 检查 username 是否允许尝试（未锁定）。
+    ///
+    /// 返回 `true` 表示允许尝试，`false` 表示已被锁定（窗口内失败次数达上限）。
+    /// 窗口过期时自动重置计数并允许尝试。
+    fn check(&self, username: &str) -> bool {
+        let mut attempts = self.attempts.lock();
+        let now = Instant::now();
+        match attempts.get(username) {
+            Some(record) => {
+                // 窗口已过期 → 重置
+                if now.duration_since(record.first_failure).as_secs() >= self.window_seconds {
+                    attempts.remove(username);
+                    return true;
+                }
+                // 窗口内失败次数未达上限 → 允许尝试
+                record.count < self.max_attempts
+            },
+            None => true,
+        }
+    }
+
+    /// 记录一次失败。
+    ///
+    /// 窗口过期时重置计数后再记录。新 entry 插入前若达 `max_entries` 上限，
+    /// LRU 淘汰最久未访问的 entry（tiangang/diting 审查 HIGH 修复）。
+    fn record_failure(&self, username: &str) {
+        let mut attempts = self.attempts.lock();
+        let now = Instant::now();
+        match attempts.get_mut(username) {
+            Some(record) => {
+                if now.duration_since(record.first_failure).as_secs() >= self.window_seconds {
+                    // 窗口过期 → 重置后再记录
+                    record.count = 1;
+                    record.first_failure = now;
+                } else {
+                    record.count += 1;
+                }
+            },
+            None => {
+                // tiangang/diting 审查 HIGH 修复：插入前检查 max_entries，
+                // 超限时 LRU 淘汰最旧 entry（与 RateLimitState 对称设计）
+                if attempts.len() >= self.max_entries {
+                    if let Some(oldest_key) = attempts
+                        .iter()
+                        .min_by_key(|(_, r)| r.first_failure)
+                        .map(|(k, _)| k.clone())
+                    {
+                        attempts.remove(&oldest_key);
+                    }
+                }
+                attempts.insert(
+                    username.to_string(),
+                    FailedAttemptRecord {
+                        count: 1,
+                        first_failure: now,
+                    },
+                );
+            },
+        }
+    }
+
+    /// 验证成功后重置 username 的计数。
+    fn reset(&self, username: &str) {
+        self.attempts.lock().remove(username);
+    }
+
+    /// 当前 entry 数量（测试/运维用）。
+    pub fn entry_count(&self) -> usize {
+        self.attempts.lock().len()
+    }
+}
+
 /// /oauth2/token handler，处理 4 种 grant type。
 ///
 /// # Refresh Token 统一（v0.7.1）
@@ -136,6 +287,9 @@ pub struct TokenHandler {
     dao: Arc<dyn BulwarkDao>,
     authorize_handler: Arc<AuthorizeHandler>,
     password_verifier: Option<Arc<dyn PasswordVerifier>>,
+    /// Password grant 失败计数器（VULN-0005：防 brute-force）。
+    /// 为 None 时不启用账户锁定（向后兼容，但不推荐生产使用）。
+    password_rate_limiter: Option<Arc<PasswordRateLimiter>>,
     /// 统一的 refresh token 轮换服务（db-sqlite feature 启用时可用）。
     /// 为 None 时退化为 DAO 键值存储（无 reuse detection）。
     #[cfg(feature = "db-sqlite")]
@@ -154,6 +308,7 @@ impl TokenHandler {
             dao,
             authorize_handler,
             password_verifier: None,
+            password_rate_limiter: None,
             #[cfg(feature = "db-sqlite")]
             refresh_rotation: None,
         }
@@ -162,6 +317,14 @@ impl TokenHandler {
     /// 注入 password grant type 验证器。
     pub fn with_password_verifier(mut self, verifier: Arc<dyn PasswordVerifier>) -> Self {
         self.password_verifier = Some(verifier);
+        self
+    }
+
+    /// 注入 PasswordRateLimiter 启用 password grant 失败计数 + 账户锁定（VULN-0005）。
+    ///
+    /// 未注入时 password grant 无账户级速率限制（向后兼容，但不推荐生产使用）。
+    pub fn with_password_rate_limiter(mut self, limiter: Arc<PasswordRateLimiter>) -> Self {
+        self.password_rate_limiter = Some(limiter);
         self
     }
 
@@ -438,10 +601,32 @@ impl TokenHandler {
             .as_ref()
             .ok_or_else(|| BulwarkError::OAuth2("invalid_request: password 参数缺失".into()))?;
 
-        let user_id = verifier
-            .verify(username, password)
-            .await?
-            .ok_or_else(|| BulwarkError::OAuth2("invalid_grant: 用户名或密码错误".into()))?;
+        // VULN-0005: 验证密码前检查账户锁定状态（防 brute-force）
+        if let Some(limiter) = &self.password_rate_limiter {
+            if !limiter.check(username) {
+                return Err(BulwarkError::OAuth2(
+                    "rate_limited: 账户已被临时锁定，请稍后再试".into(),
+                ));
+            }
+        }
+
+        let user_id = match verifier.verify(username, password).await? {
+            Some(uid) => uid,
+            None => {
+                // VULN-0005: 验证失败后增加失败计数
+                if let Some(limiter) = &self.password_rate_limiter {
+                    limiter.record_failure(username);
+                }
+                return Err(BulwarkError::OAuth2(
+                    "invalid_grant: 用户名或密码错误".into(),
+                ));
+            },
+        };
+
+        // VULN-0005: 验证成功后重置失败计数
+        if let Some(limiter) = &self.password_rate_limiter {
+            limiter.reset(username);
+        }
 
         let scopes: Vec<String> = req
             .scope
@@ -1060,6 +1245,186 @@ mod tests {
         };
         let err = handler.handle(&req).await.unwrap_err();
         assert!(err.to_string().contains("invalid_grant"));
+    }
+
+    // === VULN-0005: password grant rate limiting 测试 ===
+
+    /// VULN-0005: 连续失败超过阈值后，再尝试应返回 rate_limited 错误（账户锁定）。
+    ///
+    /// max_attempts=3，window=300s：
+    /// - 前 3 次失败：返回 invalid_grant（凭据错误，未超阈值）
+    /// - 第 4 次尝试：返回 rate_limited（账户锁定，不调用 verifier）
+    #[tokio::test]
+    async fn handle_password_rate_limited_after_max_attempts() {
+        let limiter = Arc::new(PasswordRateLimiter::new(3, 300));
+        let (handler, _) = make_handler();
+        let handler = handler.with_password_rate_limiter(limiter);
+        handler
+            .store
+            .create(make_full_client("pw-rl-001"))
+            .await
+            .unwrap();
+
+        let wrong_req = TokenRequest {
+            grant_type: "password".into(),
+            client_id: "pw-rl-001".into(),
+            client_secret: "secret-123".into(),
+            code: None,
+            redirect_uri: None,
+            code_verifier: None,
+            refresh_token: None,
+            scope: None,
+            username: Some("alice".into()),
+            password: Some("wrong".into()),
+        };
+
+        // 前 3 次失败：返回 invalid_grant（凭据错误，未超阈值 max_attempts=3）
+        for i in 0..3 {
+            let err = handler.handle(&wrong_req).await.unwrap_err();
+            assert!(
+                err.to_string().contains("invalid_grant"),
+                "第 {} 次失败应为 invalid_grant，实际: {}",
+                i + 1,
+                err
+            );
+        }
+
+        // 第 4 次尝试：rate_limited（账户锁定）
+        let err = handler.handle(&wrong_req).await.unwrap_err();
+        assert!(
+            err.to_string().contains("rate_limited"),
+            "第 4 次尝试应为 rate_limited，实际: {}",
+            err
+        );
+    }
+
+    /// VULN-0005: 成功登录后重置失败计数，可重新尝试至再次超阈值。
+    ///
+    /// max_attempts=3，window=300s：
+    /// 1. 2 次失败（未超阈值）
+    /// 2. 1 次成功 → 计数重置
+    /// 3. 3 次失败（重新累计，未超阈值）
+    /// 4. 第 4 次尝试 → rate_limited（重置后再次达上限）
+    #[tokio::test]
+    async fn handle_password_rate_limit_resets_on_success() {
+        let limiter = Arc::new(PasswordRateLimiter::new(3, 300));
+        let (handler, _) = make_handler();
+        let handler = handler.with_password_rate_limiter(limiter);
+        handler
+            .store
+            .create(make_full_client("pw-rl-002"))
+            .await
+            .unwrap();
+
+        let wrong_req = TokenRequest {
+            grant_type: "password".into(),
+            client_id: "pw-rl-002".into(),
+            client_secret: "secret-123".into(),
+            code: None,
+            redirect_uri: None,
+            code_verifier: None,
+            refresh_token: None,
+            scope: None,
+            username: Some("alice".into()),
+            password: Some("wrong".into()),
+        };
+
+        let right_req = TokenRequest {
+            grant_type: "password".into(),
+            client_id: "pw-rl-002".into(),
+            client_secret: "secret-123".into(),
+            code: None,
+            redirect_uri: None,
+            code_verifier: None,
+            refresh_token: None,
+            scope: None,
+            username: Some("alice".into()),
+            password: Some("wonderland".into()),
+        };
+
+        // 1. 2 次失败（未超阈值 3）
+        for _ in 0..2 {
+            let _ = handler.handle(&wrong_req).await.unwrap_err();
+        }
+
+        // 2. 1 次成功：重置计数
+        let resp = handler.handle(&right_req).await.expect("成功登录");
+        assert_eq!(resp.token_type, "Bearer");
+
+        // 3. 重置后再 3 次失败：仍应返回 invalid_grant（计数已重置，未超阈值）
+        for i in 0..3 {
+            let err = handler.handle(&wrong_req).await.unwrap_err();
+            assert!(
+                err.to_string().contains("invalid_grant"),
+                "重置后第 {} 次失败应为 invalid_grant，实际: {}",
+                i + 1,
+                err
+            );
+        }
+
+        // 4. 第 4 次尝试：rate_limited（重置后再次达上限）
+        let err = handler.handle(&wrong_req).await.unwrap_err();
+        assert!(
+            err.to_string().contains("rate_limited"),
+            "重置后第 4 次尝试应为 rate_limited，实际: {}",
+            err
+        );
+    }
+
+    /// tiangang/diting 审查 HIGH 修复：PasswordRateLimiter max_entries LRU 淘汰测试。
+    ///
+    /// 验证 `record_failure` 在 HashMap 达到 `max_entries` 上限时淘汰最旧 entry，
+    /// 防止攻击者用大量伪造 username 耗尽内存（与 VULN-0008 同类风险）。
+    #[test]
+    fn password_rate_limiter_evicts_oldest_when_max_entries_reached() {
+        // max_attempts=10（不触发账户锁定），max_entries=3（仅保留 3 个 entry）
+        let limiter = PasswordRateLimiter::with_max_entries(10, 300, 3);
+
+        // 插入 3 个 username（u1, u2, u3），都达上限
+        limiter.record_failure("u1");
+        limiter.record_failure("u2");
+        limiter.record_failure("u3");
+        assert_eq!(limiter.entry_count(), 3, "应保留 3 个 entry");
+
+        // 插入第 4 个 username（u4），应淘汰最旧（u1，因 first_failure 最早）
+        limiter.record_failure("u4");
+        assert_eq!(
+            limiter.entry_count(),
+            3,
+            "max_entries=3 时插入新 entry 后总数应保持 3"
+        );
+
+        // u1 应已被淘汰（check 返回 true 表示未锁定 = entry 不存在或窗口内失败次数 < max_attempts）
+        // 由于 u1 被淘汰，check("u1") 应返回 true（entry 不存在）
+        // 而 u2/u3/u4 仍存在，且 count=1 < max_attempts=10，check 也返回 true
+        // 此处仅验证 entry_count，不验证具体哪个被淘汰（依赖 min_by_key 实现）
+    }
+
+    /// tiangang/diting 审查 HIGH 修复：PasswordRateLimiter::new 默认 max_entries=100_000。
+    #[test]
+    fn password_rate_limiter_new_uses_default_max_entries() {
+        let limiter = PasswordRateLimiter::new(5, 300);
+        // 默认 max_entries 应为 100_000（DEFAULT_PASSWORD_LIMITER_MAX_ENTRIES）
+        // 间接验证：插入 1 个 entry 后 entry_count=1，未触发淘汰
+        limiter.record_failure("test-user");
+        assert_eq!(limiter.entry_count(), 1);
+    }
+
+    /// tiangang/diting 审查 HIGH 修复：with_max_entries 的 max_entries=0 会被 clamp 到 1。
+    #[test]
+    fn password_rate_limiter_with_max_entries_zero_clamps_to_one() {
+        // max_entries=0 应被 clamp 到 1，避免所有 entry 被驱逐
+        let limiter = PasswordRateLimiter::with_max_entries(5, 300, 0);
+        limiter.record_failure("u1");
+        assert_eq!(limiter.entry_count(), 1, "max_entries=0 应被 clamp 到 1");
+
+        // 插入第 2 个 entry 时应淘汰 u1（max_entries=1）
+        limiter.record_failure("u2");
+        assert_eq!(
+            limiter.entry_count(),
+            1,
+            "max_entries=1 时插入新 entry 应淘汰旧 entry"
+        );
     }
 
     // === VULN-0003: OAuth2 scope 校验测试 ===

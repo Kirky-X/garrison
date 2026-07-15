@@ -50,6 +50,9 @@ reqwest = { version = "0.13", optional = true, default-features = false, feature
 totp-rs = { version = "5", optional = true }
 sha2 = { version = "0.11", optional = true }
 hmac = { version = "0.13", optional = true }
+# subtle：密码学常量时间比较（ConstantTimeEq trait），用于 API Key 比较（VULN-0012 修复）
+# 防止 timing side-channel 泄露 key 长度/内容
+subtle = { version = "2.6", optional = true, default-features = false, features = ["std"] }
 base64 = { version = "0.22", optional = true }
 md5 = { version = "0.7", optional = true }
 base32 = { version = "0.5", optional = true }
@@ -273,7 +276,7 @@ web-waf = ["web-axum"]
 # web-cors：CORS 跨域资源共享中间件，依赖 web-axum
 web-cors = ["web-axum"]
 # web-csrf：CSRF 跨站请求伪造防护中间件（Double-Submit Cookie 模式），依赖 web-axum + rand + base64
-web-csrf = ["web-axum", "dep:rand", "dep:base64"]
+web-csrf = ["web-axum", "dep:rand", "dep:base64", "dep:subtle"]
 
 # === 过程宏注解（#[check_login]/#[check_permission]/#[check_role]） ===
 # 依赖 web-axum（宏生成的 wrapper 返回 axum::response::Response）
@@ -362,7 +365,8 @@ backend-remote = ["dep:reqwest"]
 # auth-server：启用 Auth Server 模式（HTTP Server 暴露 AuthBackend 端点）
 # 依赖 web-axum（HTTP server）+ backend-embedded（核心逻辑）+ auth-server-sdforge（声明式路由）
 # v0.7.0: sdforge 完全替代手写 axum 路由（external.rs/internal.rs 已移除）
-auth-server = ["web-axum", "backend-embedded", "auth-server-sdforge"]
+# subtle 用于 middleware.rs constant_time_eq（VULN-0012：防 timing side-channel）
+auth-server = ["web-axum", "backend-embedded", "auth-server-sdforge", "dep:subtle"]
 # abac：启用 ABAC/Cedar DSL 策略引擎（属性级权限模型）
 # 依赖 cedar-policy（Cedar 策略语言解析 + 评估）+ moka（决策缓存 TTL 60s）
 abac = ["dep:cedar-policy", "dep:moka"]

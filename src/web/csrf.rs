@@ -15,6 +15,7 @@
 //! - **受保护方法**（在 `protected_methods` 中的方法）：
 //!   - `enabled == false`：直接放行。
 //!   - 路径命中 `excluded_paths`：直接放行。
+//!   - Origin/Referer 同源校验失败返回 403（VULN-0006 修复）。
 //!   - 从 Cookie 和 Header 提取 token，任一缺失返回 403。
 //!   - `validate_csrf_token` 校验失败返回 403。
 //!   - 校验通过放行。
@@ -34,7 +35,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// # 默认值
 ///
-/// - `enabled`: `false`（不启用，向后兼容）
+/// - `enabled`: `true`（默认启用，secure-by-default；VULN-0006 修复）
 /// - `cookie_name`: `"bulwark_csrf_token"`
 /// - `header_name`: `"X-CSRF-Token"`
 /// - `excluded_paths`: 空列表
@@ -68,7 +69,8 @@ pub struct CsrfConfig {
 impl Default for CsrfConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
+            // VULN-0006 修复：secure-by-default，默认启用 CSRF 防护
+            enabled: true,
             cookie_name: "bulwark_csrf_token".to_string(),
             header_name: "X-CSRF-Token".to_string(),
             excluded_paths: Vec::new(),
@@ -120,20 +122,34 @@ pub fn generate_csrf_token() -> BulwarkResult<String> {
 /// 任一 token 为空时返回 `false`（空 token 视为非法输入）；
 /// 否则长度一致且所有字节匹配时返回 `true`，否则返回 `false`。
 pub fn validate_csrf_token(header_token: &str, cookie_token: &str) -> bool {
-    // 空 token 视为非法输入，直接拒绝（非空路径仍保持常量时间比较）
-    if header_token.is_empty() || cookie_token.is_empty() {
-        return false;
-    }
+    // VULN-0012 统一修复（diting 架构审查 HIGH）：原手写 XOR 累积与
+    // middleware.rs::constant_time_eq 形成双实现，违反 DRY。改为统一使用
+    // subtle::ConstantTimeEq，并移除 is_empty early return（长度泄露）。
+    use std::ops::Not;
+    use subtle::ConstantTimeEq;
+
     let h = header_token.as_bytes();
     let c = cookie_token.as_bytes();
-    let min_len = h.len().min(c.len());
-    let mut diff: u8 = 0;
-    for i in 0..min_len {
-        diff |= h[i] ^ c[i];
+
+    let h_len = h.len() as u64;
+    let c_len = c.len() as u64;
+
+    // 长度比较用常量时间（u64::ct_eq），不 early return
+    let len_eq = h_len.ct_eq(&c_len);
+
+    // 空 token 视为非法输入：常量时间检查双方都非空（不 early return）
+    let non_empty = h_len.ct_eq(&0).not() & c_len.ct_eq(&0).not();
+
+    // 字节比较：遍历到 max_len，短的一方用 0 padding
+    let max_len = h.len().max(c.len());
+    let mut byte_eq = subtle::Choice::from(1);
+    for i in 0..max_len {
+        let x = h.get(i).copied().unwrap_or(0);
+        let y = c.get(i).copied().unwrap_or(0);
+        byte_eq &= x.ct_eq(&y);
     }
-    // 长度差异单独追踪（不提前返回）
-    let len_diff = h.len() ^ c.len();
-    diff == 0 && len_diff == 0
+
+    (non_empty & len_eq & byte_eq).unwrap_u8() == 1
 }
 
 // ============================================================================
@@ -163,6 +179,67 @@ fn build_set_cookie(cookie_name: &str, token: &str, cookie_secure: bool) -> Stri
         "{}={}; HttpOnly; SameSite=Lax; Path=/{}",
         cookie_name, token, secure_flag
     )
+}
+
+/// 从绝对 URI（Origin/Referer header 值）中提取 `host[:port]`。
+///
+/// 输入应为 `scheme://host[:port]/path` 形式。返回 `host[:port]` 字符串；
+/// 解析失败或无 host 时返回 `None`。
+fn extract_origin_host(uri_str: &str) -> Option<String> {
+    let uri: axum::http::Uri = uri_str.parse().ok()?;
+    let host = uri.host()?;
+    match uri.port_u16() {
+        Some(port) => Some(format!("{}:{}", host, port)),
+        None => Some(host.to_string()),
+    }
+}
+
+/// 校验请求的 Origin/Referer 是否与 Host header 同源（VULN-0006 修复）。
+///
+/// 优先检查 `Origin` header；若不存在则回退到 `Referer` header。
+/// 两者都不存在时返回 `false`（受保护方法要求同源校验，secure-by-default）。
+///
+/// # 比较策略
+///
+/// - 提取 Host header 值作为期望源（`host[:port]`）。
+/// - 从 Origin/Referer 解析出 `host[:port]`，与 Host header 严格比较。
+/// - Host header 缺失时返回 `false`（无法确定期望源）。
+///
+/// # 返回
+///
+/// - Origin 或 Referer 存在且 host 与 Host header 一致：`true`
+/// - 都不存在、host 不一致或 Host header 缺失：`false`
+fn validate_same_origin(headers: &HeaderMap) -> bool {
+    let host = match headers
+        .get(axum::http::header::HOST)
+        .and_then(|v| v.to_str().ok())
+    {
+        Some(h) => h,
+        None => return false,
+    };
+
+    // 优先检查 Origin header
+    if let Some(origin) = headers
+        .get(axum::http::header::ORIGIN)
+        .and_then(|v| v.to_str().ok())
+    {
+        return extract_origin_host(origin)
+            .map(|oh| oh == host)
+            .unwrap_or(false);
+    }
+
+    // Origin 不存在，回退到 Referer header
+    if let Some(referer) = headers
+        .get(axum::http::header::REFERER)
+        .and_then(|v| v.to_str().ok())
+    {
+        return extract_origin_host(referer)
+            .map(|rh| rh == host)
+            .unwrap_or(false);
+    }
+
+    // Origin 和 Referer 都不存在：受保护方法拒绝
+    false
 }
 
 /// CSRF 防护中间件。
@@ -206,6 +283,10 @@ pub async fn bulwark_csrf_middleware(
         let path = req.uri().path().to_string();
         if config.excluded_paths.iter().any(|p| p == &path) {
             return next.run(req).await;
+        }
+        // VULN-0006 修复：Origin/Referer 同源校验（defense-in-depth）
+        if !validate_same_origin(req.headers()) {
+            return (StatusCode::FORBIDDEN, "CSRF origin validation failed").into_response();
         }
         let cookie_token = extract_cookie_value(req.headers(), &config.cookie_name);
         let header_token = req
@@ -292,6 +373,8 @@ mod tests {
         Request::builder()
             .method(method)
             .uri(path)
+            .header("host", "example.com")
+            .header("origin", "https://example.com")
             .header("cookie", format!("bulwark_csrf_token={}", cookie_token))
             .header("X-CSRF-Token", header_token)
             .body(Body::empty())
@@ -380,7 +463,7 @@ mod tests {
     #[test]
     fn csrf_config_default_values() {
         let config = CsrfConfig::default();
-        assert!(!config.enabled);
+        assert!(config.enabled, "VULN-0006: 默认应启用 CSRF 防护");
         assert_eq!(config.cookie_name, "bulwark_csrf_token");
         assert_eq!(config.header_name, "X-CSRF-Token");
         assert!(config.excluded_paths.is_empty());
@@ -412,9 +495,9 @@ mod tests {
     #[test]
     fn csrf_config_enabled_field() {
         let mut config = CsrfConfig::default();
+        assert!(config.enabled, "VULN-0006: 默认应启用");
+        config.enabled = false;
         assert!(!config.enabled);
-        config.enabled = true;
-        assert!(config.enabled);
     }
 
     #[test]
@@ -433,6 +516,20 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(config.protected_methods, vec!["POST", "PUT"]);
+    }
+
+    // ----------------------------------------------------------------
+    // VULN-0006 修复测试
+    // ----------------------------------------------------------------
+
+    /// VULN-0006: CsrfConfig::default() 应默认启用 CSRF 防护（secure-by-default）。
+    #[test]
+    fn csrf_config_default_enabled_is_true() {
+        let config = CsrfConfig::default();
+        assert!(
+            config.enabled,
+            "VULN-0006: CsrfConfig::default().enabled 必须为 true（secure-by-default）"
+        );
     }
 
     // ========================================================================
@@ -641,5 +738,63 @@ mod tests {
         // GET 也应放行
         let resp = app.oneshot(make_request("GET", "/api/test")).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    // ----------------------------------------------------------------
+    // VULN-0006 修复测试：Origin/Referer 同源校验
+    // ----------------------------------------------------------------
+
+    /// VULN-0006: 受保护方法的跨源请求（Origin 不匹配 Host）应被拒绝。
+    #[tokio::test]
+    async fn csrf_middleware_rejects_cross_origin_request() {
+        let config = CsrfConfig {
+            enabled: true,
+            ..Default::default()
+        };
+        let app = make_app(config);
+        let token = generate_csrf_token().unwrap();
+        // Origin = evil.com，Host = example.com → 跨源
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/test")
+            .header("host", "example.com")
+            .header("origin", "https://evil.com")
+            .header("cookie", format!("bulwark_csrf_token={}", token))
+            .header("X-CSRF-Token", &token)
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::FORBIDDEN,
+            "VULN-0006: 跨源请求应被 CSRF 中间件拒绝"
+        );
+    }
+
+    /// VULN-0006: 受保护方法的同源请求（Origin 匹配 Host）应通过。
+    #[tokio::test]
+    async fn csrf_middleware_allows_same_origin_request() {
+        let config = CsrfConfig {
+            enabled: true,
+            ..Default::default()
+        };
+        let app = make_app(config);
+        let token = generate_csrf_token().unwrap();
+        // Origin = example.com，Host = example.com → 同源
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/test")
+            .header("host", "example.com")
+            .header("origin", "https://example.com")
+            .header("cookie", format!("bulwark_csrf_token={}", token))
+            .header("X-CSRF-Token", &token)
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::OK,
+            "VULN-0006: 同源请求应通过 CSRF 中间件"
+        );
     }
 }

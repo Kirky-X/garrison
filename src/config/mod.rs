@@ -522,7 +522,7 @@ pub struct BulwarkConfig {
 
     /// CSRF 跨站请求伪造防护配置段。
     ///
-    /// 默认 `enabled: false`（向后兼容）。启用后需配合 `web-csrf` Cargo feature
+    /// 默认 `enabled: true`（secure-by-default；VULN-0006 修复）。启用后需配合 `web-csrf` Cargo feature
     /// + `bulwark_csrf_middleware` 才能生效。
     #[cfg(feature = "web-csrf")]
     pub csrf_config: CsrfConfig,
