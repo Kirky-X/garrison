@@ -10,6 +10,14 @@ use super::{make_client, start_e2e_server_with_oauth2};
 use bulwark::oauth2_server::client::{GrantType, OAuth2Client};
 use serial_test::serial;
 
+/// 创建不跟随重定向的 reqwest 客户端。
+fn make_no_redirect_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap()
+}
+
 /// 创建测试用 OAuth2Client（支持 ClientCredentials grant）。
 fn make_test_client(id: &str) -> OAuth2Client {
     OAuth2Client::new(
@@ -180,5 +188,131 @@ async fn test_e2e_oauth2_revoke_token_succeeds() {
     assert_eq!(
         body["active"], false,
         "revoke 后 introspect 应返回 active=false"
+    );
+}
+
+/// 未登录时 /oauth2/authorize 重定向到登录页。
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn test_e2e_oauth2_authorize_redirects_to_login_when_not_logged_in() {
+    let (external_url, _internal_url, _handle, store) =
+        start_e2e_server_with_oauth2(100, "test-key").await;
+    let client = make_no_redirect_client();
+
+    // 注册 OAuth2Client（支持 authorization_code grant）
+    store
+        .create(
+            OAuth2Client::new(
+                "auth-e2e-login",
+                "secret-123",
+                vec!["https://app.example.com/cb".into()],
+                vec![GrantType::AuthorizationCode],
+                vec!["read".into()],
+            )
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let resp = client
+        .get(format!(
+            "{}/oauth2/authorize?response_type=code&client_id=auth-e2e-login&redirect_uri=https://app.example.com/cb&code_challenge=test-challenge&code_challenge_method=S256",
+            external_url
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 302, "未登录应返回 302 重定向");
+    let location = resp
+        .headers()
+        .get("location")
+        .expect("Location header 必须存在")
+        .to_str()
+        .unwrap();
+    assert!(
+        location.contains("return_to="),
+        "未登录应重定向到登录页含 return_to，实际: {location}"
+    );
+}
+
+/// 已登录时 /oauth2/authorize 重定向到 redirect_uri 含 code。
+///
+/// 通过 `/api/v1/auth/login` 获取 token，携带 `Authorization: Bearer <token>` header
+/// 调用 authorize 端点。`principal_inject_middleware` 从 header 提取 token、验证后
+/// 注入 `BulwarkPrincipal` extension，authorize handler 走授权码签发路径。
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn test_e2e_oauth2_authorize_redirects_with_code_when_logged_in() {
+    let (external_url, _internal_url, _handle, store) =
+        start_e2e_server_with_oauth2(100, "test-key").await;
+    let client = make_no_redirect_client();
+
+    // 注册 OAuth2Client（支持 authorization_code grant）
+    store
+        .create(
+            OAuth2Client::new(
+                "auth-e2e-code",
+                "secret-123",
+                vec!["https://app.example.com/cb".into()],
+                vec![GrantType::AuthorizationCode],
+                vec!["read".into()],
+            )
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // 登录获取 token
+    let token = super::http_login(&client, &external_url, "1001").await;
+
+    // 携带 Bearer token 调用 authorize，应重定向到 redirect_uri?code=xxx
+    let resp = client
+        .get(format!(
+            "{}/oauth2/authorize?response_type=code&client_id=auth-e2e-code&redirect_uri=https://app.example.com/cb&code_challenge=test-challenge-abc123&code_challenge_method=S256&state=xyz",
+            external_url
+        ))
+        .header("authorization", format!("Bearer {}", token))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 302, "已登录应返回 302 重定向到 redirect_uri");
+    let location = resp
+        .headers()
+        .get("location")
+        .expect("Location header 必须存在")
+        .to_str()
+        .unwrap();
+    assert!(
+        location.starts_with("https://app.example.com/cb?code="),
+        "已登录应重定向到 redirect_uri 含 code，实际: {location}"
+    );
+    assert!(
+        location.contains("state=xyz"),
+        "应原样回传 state 参数，实际: {location}"
+    );
+}
+
+/// /oauth2/authorize 非法 client_id 返回 400。
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn test_e2e_oauth2_authorize_invalid_client_returns_400() {
+    let (external_url, _internal_url, _handle, _store) =
+        start_e2e_server_with_oauth2(100, "test-key").await;
+    let client = make_no_redirect_client();
+
+    let resp = client
+        .get(format!(
+            "{}/oauth2/authorize?response_type=code&client_id=nonexistent-client&redirect_uri=https://app.example.com/cb&code_challenge=test-challenge&code_challenge_method=S256",
+            external_url
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400, "无效 client_id 应返回 400");
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(
+        body["error"], "OAUTH2_ERROR",
+        "应返回 OAUTH2_ERROR，实际: {:?}",
+        body
     );
 }

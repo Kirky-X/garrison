@@ -1358,7 +1358,6 @@ impl BulwarkSession {
 mod tests {
     use super::*;
     use crate::dao::tests::MockDao;
-    use crate::dao::BulwarkDao;
     use chrono::Utc;
     use std::collections::HashMap;
     use std::sync::Arc;
@@ -1593,6 +1592,7 @@ mod tests {
     #[test]
     fn with_anon_session_timeout_sets_field() {
         use crate::config::DEFAULT_ANON_SESSION_TIMEOUT_SECS;
+        use crate::dao::BulwarkDao;
 
         let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
         // 默认值应为 DEFAULT_ANON_SESSION_TIMEOUT_SECS（1800 秒 = 30 分钟）
@@ -2064,6 +2064,8 @@ mod tests {
     #[cfg(feature = "protocol-apikey")]
     #[test]
     fn dao_accessor_returns_dao_reference() {
+        use crate::dao::BulwarkDao;
+
         let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
         let session = BulwarkSession::new(dao.clone(), 3600, 86400);
         let returned = session.dao();

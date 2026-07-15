@@ -2686,446 +2686,451 @@ mod tests {
         // Listener 广播测试：logout / kickout / revoke_token
         // ==================================================================
 
-        use crate::config::OverflowLogoutMode;
-        use crate::listener::{BulwarkEvent, BulwarkListener, BulwarkListenerManager};
-        use crate::stp::{Clock, MockClock};
-        use async_trait::async_trait;
-        use parking_lot::Mutex;
+        #[cfg(feature = "listener")]
+        mod listener_tests {
+            use super::*;
+            use crate::config::OverflowLogoutMode;
+            use crate::listener::{BulwarkEvent, BulwarkListener, BulwarkListenerManager};
+            use crate::stp::{Clock, MockClock};
+            use parking_lot::Mutex;
 
-        /// 记录事件监听器，捕获广播的 BulwarkEvent 用于断言。
-        struct RecordingListener {
-            events: Mutex<Vec<BulwarkEvent>>,
-        }
+            /// 记录事件监听器，捕获广播的 BulwarkEvent 用于断言。
+            struct RecordingListener {
+                events: Mutex<Vec<BulwarkEvent>>,
+            }
 
-        impl RecordingListener {
-            fn new() -> Self {
-                Self {
-                    events: Mutex::new(Vec::new()),
+            impl RecordingListener {
+                fn new() -> Self {
+                    Self {
+                        events: Mutex::new(Vec::new()),
+                    }
+                }
+
+                fn captured(&self) -> Vec<BulwarkEvent> {
+                    self.events.lock().clone()
                 }
             }
 
-            fn captured(&self) -> Vec<BulwarkEvent> {
-                self.events.lock().clone()
+            #[async_trait]
+            impl BulwarkListener for RecordingListener {
+                async fn on_event(&self, event: &BulwarkEvent) -> crate::error::BulwarkResult<()> {
+                    self.events.lock().push(event.clone());
+                    Ok(())
+                }
             }
-        }
 
-        #[async_trait]
-        impl BulwarkListener for RecordingListener {
-            async fn on_event(&self, event: &BulwarkEvent) -> crate::error::BulwarkResult<()> {
-                self.events.lock().push(event.clone());
-                Ok(())
+            /// 创建带 listener_manager 的 BulwarkLogicDefault，返回 (logic, recorder)。
+            fn make_logic_with_listener(
+                throw_on_not_login: bool,
+            ) -> (BulwarkLogicDefault, Arc<RecordingListener>) {
+                let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+                let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
+                let mut config = BulwarkConfig::default_config();
+                config.throw_on_not_login = throw_on_not_login;
+                config.token_style = "uuid".to_string();
+                let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
+                    has_permission: true,
+                    has_role: true,
+                });
+                let recorder = Arc::new(RecordingListener::new());
+                let lm = Arc::new(BulwarkListenerManager::new());
+                lm.register(recorder.clone() as Arc<dyn BulwarkListener>);
+                let logic = BulwarkLogicDefault::new(session, Arc::new(config), firewall)
+                    .with_listener_manager(lm);
+                (logic, recorder)
             }
-        }
 
-        /// 创建带 listener_manager 的 BulwarkLogicDefault，返回 (logic, recorder)。
-        fn make_logic_with_listener(
-            throw_on_not_login: bool,
-        ) -> (BulwarkLogicDefault, Arc<RecordingListener>) {
-            let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
-            let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
-            let mut config = BulwarkConfig::default_config();
-            config.throw_on_not_login = throw_on_not_login;
-            config.token_style = "uuid".to_string();
-            let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
-                has_permission: true,
-                has_role: true,
-            });
-            let recorder = Arc::new(RecordingListener::new());
-            let lm = Arc::new(BulwarkListenerManager::new());
-            lm.register(recorder.clone() as Arc<dyn BulwarkListener>);
-            let logic = BulwarkLogicDefault::new(session, Arc::new(config), firewall)
-                .with_listener_manager(lm);
-            (logic, recorder)
-        }
+            /// logout 广播 Logout 事件。
+            ///
+            /// 覆盖 lines 251-286：current_token 存在 → session.logout → broadcast Logout。
+            #[tokio::test]
+            async fn logout_broadcasts_logout_event() {
+                let (logic, recorder) = make_logic_with_listener(false);
+                let token = logic
+                    .login("logout-user-001", &LoginParams::default())
+                    .await
+                    .unwrap();
 
-        /// logout 广播 Logout 事件。
-        ///
-        /// 覆盖 lines 251-286：current_token 存在 → session.logout → broadcast Logout。
-        #[tokio::test]
-        async fn logout_broadcasts_logout_event() {
-            let (logic, recorder) = make_logic_with_listener(false);
-            let token = logic
-                .login("logout-user-001", &LoginParams::default())
-                .await
-                .unwrap();
+                let result =
+                    with_current_token(token.clone(), async { logic.logout().await }).await;
+                assert!(result.is_ok(), "logout 应返回 Ok，实际: {:?}", result);
 
-            let result = with_current_token(token.clone(), async { logic.logout().await }).await;
-            assert!(result.is_ok(), "logout 应返回 Ok，实际: {:?}", result);
+                let events = recorder.captured();
+                assert!(
+                    events.iter().any(|e| matches!(
+                        e,
+                        BulwarkEvent::Logout {
+                            login_id,
+                            token: t,
+                            ..
+                        } if login_id == "logout-user-001" && t == &token
+                    )),
+                    "应广播 Logout 事件 (login_id=logout-user-001)，实际事件: {:?}",
+                    events
+                );
+            }
 
-            let events = recorder.captured();
-            assert!(
-                events.iter().any(|e| matches!(
-                    e,
-                    BulwarkEvent::Logout {
-                        login_id,
-                        token: t,
-                        ..
-                    } if login_id == "logout-user-001" && t == &token
-                )),
-                "应广播 Logout 事件 (login_id=logout-user-001)，实际事件: {:?}",
-                events
-            );
-        }
+            /// kickout 广播 Kickout 事件。
+            ///
+            /// 覆盖 lines 300-315：logout_by_login_id → broadcast Kickout。
+            #[tokio::test]
+            async fn kickout_broadcasts_kickout_event() {
+                let (logic, recorder) = make_logic_with_listener(false);
+                logic
+                    .login("kickout-user-001", &LoginParams::default())
+                    .await
+                    .unwrap();
 
-        /// kickout 广播 Kickout 事件。
-        ///
-        /// 覆盖 lines 300-315：logout_by_login_id → broadcast Kickout。
-        #[tokio::test]
-        async fn kickout_broadcasts_kickout_event() {
-            let (logic, recorder) = make_logic_with_listener(false);
-            logic
-                .login("kickout-user-001", &LoginParams::default())
-                .await
-                .unwrap();
+                let result = logic.kickout("kickout-user-001").await;
+                assert!(result.is_ok(), "kickout 应返回 Ok，实际: {:?}", result);
 
-            let result = logic.kickout("kickout-user-001").await;
-            assert!(result.is_ok(), "kickout 应返回 Ok，实际: {:?}", result);
+                let events = recorder.captured();
+                assert!(
+                    events.iter().any(|e| matches!(
+                        e,
+                        BulwarkEvent::Kickout {
+                            login_id,
+                            reason,
+                            ..
+                        } if login_id == "kickout-user-001" && reason == "管理员强制下线"
+                    )),
+                    "应广播 Kickout 事件 (login_id=kickout-user-001)，实际事件: {:?}",
+                    events
+                );
+            }
 
-            let events = recorder.captured();
-            assert!(
-                events.iter().any(|e| matches!(
-                    e,
-                    BulwarkEvent::Kickout {
-                        login_id,
-                        reason,
-                        ..
-                    } if login_id == "kickout-user-001" && reason == "管理员强制下线"
-                )),
-                "应广播 Kickout 事件 (login_id=kickout-user-001)，实际事件: {:?}",
-                events
-            );
-        }
+            /// revoke_token 广播 RevokeToken 事件。
+            ///
+            /// 覆盖 lines 322-335：session.logout → broadcast RevokeToken。
+            #[tokio::test]
+            async fn revoke_token_broadcasts_revoke_event() {
+                let (logic, recorder) = make_logic_with_listener(false);
+                let token = logic
+                    .login("revoke-user-001", &LoginParams::default())
+                    .await
+                    .unwrap();
 
-        /// revoke_token 广播 RevokeToken 事件。
-        ///
-        /// 覆盖 lines 322-335：session.logout → broadcast RevokeToken。
-        #[tokio::test]
-        async fn revoke_token_broadcasts_revoke_event() {
-            let (logic, recorder) = make_logic_with_listener(false);
-            let token = logic
-                .login("revoke-user-001", &LoginParams::default())
-                .await
-                .unwrap();
+                let result = logic.revoke_token(&token).await;
+                assert!(result.is_ok(), "revoke_token 应返回 Ok，实际: {:?}", result);
 
-            let result = logic.revoke_token(&token).await;
-            assert!(result.is_ok(), "revoke_token 应返回 Ok，实际: {:?}", result);
+                let events = recorder.captured();
+                assert!(
+                    events.iter().any(|e| matches!(
+                        e,
+                        BulwarkEvent::RevokeToken { token: t, .. } if t == &token
+                    )),
+                    "应广播 RevokeToken 事件 (token={})，实际事件: {:?}",
+                    token,
+                    events
+                );
+            }
 
-            let events = recorder.captured();
-            assert!(
-                events.iter().any(|e| matches!(
-                    e,
-                    BulwarkEvent::RevokeToken { token: t, .. } if t == &token
-                )),
-                "应广播 RevokeToken 事件 (token={})，实际事件: {:?}",
-                token,
-                events
-            );
-        }
+            // ==================================================================
+            // enforce_max_login_count 测试
+            // ==================================================================
 
-        // ==================================================================
-        // enforce_max_login_count 测试
-        // ==================================================================
+            /// max=0 时不做任何操作（no-op）。
+            ///
+            /// 覆盖 lines 647-649：max == 0 → return Ok(())。
+            #[tokio::test]
+            async fn enforce_max_login_count_zero_is_noop() {
+                let logic = make_logic(false);
+                let token = logic
+                    .login("max-user-001", &LoginParams::default())
+                    .await
+                    .unwrap();
 
-        /// max=0 时不做任何操作（no-op）。
-        ///
-        /// 覆盖 lines 647-649：max == 0 → return Ok(())。
-        #[tokio::test]
-        async fn enforce_max_login_count_zero_is_noop() {
-            let logic = make_logic(false);
-            let token = logic
-                .login("max-user-001", &LoginParams::default())
-                .await
-                .unwrap();
+                let result = logic.enforce_max_login_count("max-user-001", 0).await;
+                assert!(result.is_ok(), "max=0 应返回 Ok，实际: {:?}", result);
+                assert!(
+                    logic
+                        .session
+                        .get_token_session(&token)
+                        .await
+                        .unwrap()
+                        .is_some(),
+                    "max=0 时 session 应仍然存在"
+                );
+            }
 
-            let result = logic.enforce_max_login_count("max-user-001", 0).await;
-            assert!(result.is_ok(), "max=0 应返回 Ok，实际: {:?}", result);
-            assert!(
+            /// 超过 max_login_count 时踢出最旧会话，OverflowLogoutMode::Logout 广播 Logout 事件。
+            ///
+            /// 覆盖 lines 651-709（Logout 模式分支 lines 678-685）。
+            #[tokio::test]
+            async fn enforce_max_login_count_evicts_oldest_with_logout_mode() {
+                let (logic, recorder) = make_logic_with_listener(false);
+                let t1 = logic
+                    .login("max-logout-001", &LoginParams::default())
+                    .await
+                    .unwrap();
+                let _t2 = logic
+                    .login("max-logout-001", &LoginParams::default())
+                    .await
+                    .unwrap();
+                let _t3 = logic
+                    .login("max-logout-001", &LoginParams::default())
+                    .await
+                    .unwrap();
+
+                let result = logic.enforce_max_login_count("max-logout-001", 1).await;
+                assert!(result.is_ok(), "enforce 应返回 Ok，实际: {:?}", result);
+                // t1 是最旧的，应被踢出
+                assert!(
+                    logic
+                        .session
+                        .get_token_session(&t1)
+                        .await
+                        .unwrap()
+                        .is_none(),
+                    "最旧 token 应已被踢出"
+                );
+
+                let events = recorder.captured();
+                assert!(
+                    events.iter().any(|e| matches!(
+                        e,
+                        BulwarkEvent::Logout { login_id, token, .. } if login_id == "max-logout-001"
+                            && token == &t1
+                    )),
+                    "应广播 Logout 事件 (最旧 token 被踢出)，实际事件: {:?}",
+                    events
+                );
+            }
+
+            /// OverflowLogoutMode::Kickout 广播 Kickout 事件。
+            ///
+            /// 覆盖 lines 686-694（Kickout 模式分支）。
+            #[tokio::test]
+            async fn enforce_max_login_count_evicts_oldest_with_kickout_mode() {
+                let (mut logic, recorder) = make_logic_with_listener(false);
+                Arc::make_mut(&mut logic.config).overflow_logout_mode = OverflowLogoutMode::Kickout;
+                let t1 = logic
+                    .login("max-kickout-001", &LoginParams::default())
+                    .await
+                    .unwrap();
+                let _t2 = logic
+                    .login("max-kickout-001", &LoginParams::default())
+                    .await
+                    .unwrap();
+
+                let result = logic.enforce_max_login_count("max-kickout-001", 1).await;
+                assert!(result.is_ok(), "enforce 应返回 Ok，实际: {:?}", result);
+
+                let events = recorder.captured();
+                assert!(
+                    events.iter().any(|e| matches!(
+                        e,
+                        BulwarkEvent::Kickout {
+                            login_id,
+                            token,
+                            reason,
+                            ..
+                        } if login_id == "max-kickout-001"
+                            && token == &t1
+                            && reason == "超过最大登录数限制"
+                    )),
+                    "应广播 Kickout 事件 (reason=超过最大登录数限制)，实际事件: {:?}",
+                    events
+                );
+            }
+
+            /// OverflowLogoutMode::Replaced 广播 Replaced 事件。
+            ///
+            /// 覆盖 lines 695-704（Replaced 模式分支）。
+            #[tokio::test]
+            async fn enforce_max_login_count_evicts_oldest_with_replaced_mode() {
+                let (mut logic, recorder) = make_logic_with_listener(false);
+                Arc::make_mut(&mut logic.config).overflow_logout_mode =
+                    OverflowLogoutMode::Replaced;
+                let t1 = logic
+                    .login("max-replaced-001", &LoginParams::default())
+                    .await
+                    .unwrap();
+                let _t2 = logic
+                    .login("max-replaced-001", &LoginParams::default())
+                    .await
+                    .unwrap();
+
+                let result = logic.enforce_max_login_count("max-replaced-001", 1).await;
+                assert!(result.is_ok(), "enforce 应返回 Ok，实际: {:?}", result);
+
+                let events = recorder.captured();
+                assert!(
+                    events.iter().any(|e| matches!(
+                        e,
+                        BulwarkEvent::Replaced {
+                            login_id,
+                            token,
+                            reason,
+                            ..
+                        } if login_id == "max-replaced-001" && token == &t1
+                    )),
+                    "应广播 Replaced 事件，实际事件: {:?}",
+                    events
+                );
+            }
+
+            // ==================================================================
+            // login_by_token 测试（token_style=simple，verify_token 路径）
+            // ==================================================================
+
+            /// login_by_token 通过 verify_token 解析 login_id 并创建会话，广播 Login 事件。
+            ///
+            /// 覆盖 lines 416-440：无 auth_logic → self.verify_token → session.create → broadcast Login。
+            #[tokio::test]
+            async fn login_by_token_creates_session_and_broadcasts_login() {
+                let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+                let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
+                let mut config = BulwarkConfig::default_config();
+                config.throw_on_not_login = false;
+                config.token_style = "simple".to_string();
+                let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
+                    has_permission: true,
+                    has_role: true,
+                });
+                let recorder = Arc::new(RecordingListener::new());
+                let lm = Arc::new(BulwarkListenerManager::new());
+                lm.register(recorder.clone() as Arc<dyn BulwarkListener>);
+                let logic = BulwarkLogicDefault::new(session, Arc::new(config), firewall)
+                    .with_listener_manager(lm);
+
+                // simple 格式 token: <login_id>-<uuid>（login_id 不能含 '-'，因 split_once 分割）
+                let external_token = format!("externaluser001-{}", uuid::Uuid::new_v4());
+                let result = logic.login_by_token(&external_token).await;
+                assert!(
+                    result.is_ok(),
+                    "login_by_token 应返回 Ok，实际: {:?}",
+                    result
+                );
+
+                // 验证会话已创建
+                assert!(
+                    logic
+                        .session
+                        .get_token_session(&external_token)
+                        .await
+                        .unwrap()
+                        .is_some(),
+                    "login_by_token 后应存在 Token-Session"
+                );
+
+                let events = recorder.captured();
+                assert!(
+                    events.iter().any(|e| matches!(
+                        e,
+                        BulwarkEvent::Login {
+                            login_id,
+                            token,
+                            ..
+                        } if login_id == "externaluser001" && token == &external_token
+                    )),
+                    "应广播 Login 事件 (login_id=externaluser001)，实际事件: {:?}",
+                    events
+                );
+            }
+
+            // ==================================================================
+            // check_and_update_hover 测试（session_hover_timeout + MockClock）
+            // ==================================================================
+
+            /// 悬停超时后 check_login 返回 false 并广播 SessionTimeout 事件。
+            ///
+            /// 覆盖 lines 834-865：session_hover_timeout > 0 + last_active 过期 → logout + broadcast。
+            #[tokio::test]
+            async fn check_and_update_hover_evicts_on_timeout() {
+                let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+                let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
+                let mut config = BulwarkConfig::default_config();
+                config.throw_on_not_login = false;
+                config.token_style = "uuid".to_string();
+                config.session_hover_timeout = 1; // 1 second
+                let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
+                    has_permission: true,
+                    has_role: true,
+                });
+                let clock = Arc::new(MockClock::new(chrono::Utc::now()));
+                let recorder = Arc::new(RecordingListener::new());
+                let lm = Arc::new(BulwarkListenerManager::new());
+                lm.register(recorder.clone() as Arc<dyn BulwarkListener>);
+                let logic = BulwarkLogicDefault::new(session, Arc::new(config), firewall)
+                    .with_listener_manager(lm)
+                    .with_clock(clock.clone() as Arc<dyn Clock>);
+
+                let token = logic
+                    .login("hover-user-001", &LoginParams::default())
+                    .await
+                    .unwrap();
+
+                // 手动设置 last_active_at 为当前 MockClock 时间
+                let now_millis = clock.now().timestamp_millis();
                 logic
                     .session
-                    .get_token_session(&token)
+                    .update_last_active_at("hover-user-001", now_millis);
+
+                // 推进 MockClock 2 秒（超过 1 秒悬停超时）
+                clock.advance(chrono::Duration::seconds(2));
+
+                let result =
+                    with_current_token(token.clone(), async { logic.check_login().await }).await;
+                assert!(
+                    result.is_ok(),
+                    "悬停超时 + throw=false 时 check_login 应返回 Ok，实际: {:?}",
+                    result
+                );
+                assert!(!result.unwrap(), "悬停超时后 check_login 应返回 false");
+
+                let events = recorder.captured();
+                assert!(
+                    events.iter().any(|e| matches!(
+                        e,
+                        BulwarkEvent::SessionTimeout {
+                            login_id,
+                            token: t,
+                            ..
+                        } if login_id == "hover-user-001" && t == &token
+                    )),
+                    "应广播 SessionTimeout 事件，实际事件: {:?}",
+                    events
+                );
+            }
+
+            /// 悬停超时 + throw_on_not_login=true → Err(Session("会话悬停超时"))。
+            ///
+            /// 覆盖 lines 857-859：throw_on_not_login=true → return Err。
+            #[tokio::test]
+            async fn check_and_update_hover_evicts_on_timeout_throws() {
+                let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+                let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
+                let mut config = BulwarkConfig::default_config();
+                config.throw_on_not_login = true;
+                config.token_style = "uuid".to_string();
+                config.session_hover_timeout = 1;
+                let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
+                    has_permission: true,
+                    has_role: true,
+                });
+                let clock = Arc::new(MockClock::new(chrono::Utc::now()));
+                let logic = BulwarkLogicDefault::new(session, Arc::new(config), firewall)
+                    .with_clock(clock.clone() as Arc<dyn Clock>);
+
+                let token = logic
+                    .login("hover-user-002", &LoginParams::default())
                     .await
-                    .unwrap()
-                    .is_some(),
-                "max=0 时 session 应仍然存在"
-            );
-        }
-
-        /// 超过 max_login_count 时踢出最旧会话，OverflowLogoutMode::Logout 广播 Logout 事件。
-        ///
-        /// 覆盖 lines 651-709（Logout 模式分支 lines 678-685）。
-        #[tokio::test]
-        async fn enforce_max_login_count_evicts_oldest_with_logout_mode() {
-            let (logic, recorder) = make_logic_with_listener(false);
-            let t1 = logic
-                .login("max-logout-001", &LoginParams::default())
-                .await
-                .unwrap();
-            let _t2 = logic
-                .login("max-logout-001", &LoginParams::default())
-                .await
-                .unwrap();
-            let _t3 = logic
-                .login("max-logout-001", &LoginParams::default())
-                .await
-                .unwrap();
-
-            let result = logic.enforce_max_login_count("max-logout-001", 1).await;
-            assert!(result.is_ok(), "enforce 应返回 Ok，实际: {:?}", result);
-            // t1 是最旧的，应被踢出
-            assert!(
+                    .unwrap();
+                let now_millis = clock.now().timestamp_millis();
                 logic
                     .session
-                    .get_token_session(&t1)
-                    .await
-                    .unwrap()
-                    .is_none(),
-                "最旧 token 应已被踢出"
-            );
+                    .update_last_active_at("hover-user-002", now_millis);
+                clock.advance(chrono::Duration::seconds(2));
 
-            let events = recorder.captured();
-            assert!(
-                events.iter().any(|e| matches!(
-                    e,
-                    BulwarkEvent::Logout { login_id, token, .. } if login_id == "max-logout-001"
-                        && token == &t1
-                )),
-                "应广播 Logout 事件 (最旧 token 被踢出)，实际事件: {:?}",
-                events
-            );
-        }
-
-        /// OverflowLogoutMode::Kickout 广播 Kickout 事件。
-        ///
-        /// 覆盖 lines 686-694（Kickout 模式分支）。
-        #[tokio::test]
-        async fn enforce_max_login_count_evicts_oldest_with_kickout_mode() {
-            let (mut logic, recorder) = make_logic_with_listener(false);
-            Arc::make_mut(&mut logic.config).overflow_logout_mode = OverflowLogoutMode::Kickout;
-            let t1 = logic
-                .login("max-kickout-001", &LoginParams::default())
-                .await
-                .unwrap();
-            let _t2 = logic
-                .login("max-kickout-001", &LoginParams::default())
-                .await
-                .unwrap();
-
-            let result = logic.enforce_max_login_count("max-kickout-001", 1).await;
-            assert!(result.is_ok(), "enforce 应返回 Ok，实际: {:?}", result);
-
-            let events = recorder.captured();
-            assert!(
-                events.iter().any(|e| matches!(
-                    e,
-                    BulwarkEvent::Kickout {
-                        login_id,
-                        token,
-                        reason,
-                        ..
-                    } if login_id == "max-kickout-001"
-                        && token == &t1
-                        && reason == "超过最大登录数限制"
-                )),
-                "应广播 Kickout 事件 (reason=超过最大登录数限制)，实际事件: {:?}",
-                events
-            );
-        }
-
-        /// OverflowLogoutMode::Replaced 广播 Replaced 事件。
-        ///
-        /// 覆盖 lines 695-704（Replaced 模式分支）。
-        #[tokio::test]
-        async fn enforce_max_login_count_evicts_oldest_with_replaced_mode() {
-            let (mut logic, recorder) = make_logic_with_listener(false);
-            Arc::make_mut(&mut logic.config).overflow_logout_mode = OverflowLogoutMode::Replaced;
-            let t1 = logic
-                .login("max-replaced-001", &LoginParams::default())
-                .await
-                .unwrap();
-            let _t2 = logic
-                .login("max-replaced-001", &LoginParams::default())
-                .await
-                .unwrap();
-
-            let result = logic.enforce_max_login_count("max-replaced-001", 1).await;
-            assert!(result.is_ok(), "enforce 应返回 Ok，实际: {:?}", result);
-
-            let events = recorder.captured();
-            assert!(
-                events.iter().any(|e| matches!(
-                    e,
-                    BulwarkEvent::Replaced {
-                        login_id,
-                        token,
-                        reason,
-                        ..
-                    } if login_id == "max-replaced-001" && token == &t1
-                )),
-                "应广播 Replaced 事件，实际事件: {:?}",
-                events
-            );
-        }
-
-        // ==================================================================
-        // login_by_token 测试（token_style=simple，verify_token 路径）
-        // ==================================================================
-
-        /// login_by_token 通过 verify_token 解析 login_id 并创建会话，广播 Login 事件。
-        ///
-        /// 覆盖 lines 416-440：无 auth_logic → self.verify_token → session.create → broadcast Login。
-        #[tokio::test]
-        async fn login_by_token_creates_session_and_broadcasts_login() {
-            let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
-            let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
-            let mut config = BulwarkConfig::default_config();
-            config.throw_on_not_login = false;
-            config.token_style = "simple".to_string();
-            let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
-                has_permission: true,
-                has_role: true,
-            });
-            let recorder = Arc::new(RecordingListener::new());
-            let lm = Arc::new(BulwarkListenerManager::new());
-            lm.register(recorder.clone() as Arc<dyn BulwarkListener>);
-            let logic = BulwarkLogicDefault::new(session, Arc::new(config), firewall)
-                .with_listener_manager(lm);
-
-            // simple 格式 token: <login_id>-<uuid>（login_id 不能含 '-'，因 split_once 分割）
-            let external_token = format!("externaluser001-{}", uuid::Uuid::new_v4());
-            let result = logic.login_by_token(&external_token).await;
-            assert!(
-                result.is_ok(),
-                "login_by_token 应返回 Ok，实际: {:?}",
-                result
-            );
-
-            // 验证会话已创建
-            assert!(
-                logic
-                    .session
-                    .get_token_session(&external_token)
-                    .await
-                    .unwrap()
-                    .is_some(),
-                "login_by_token 后应存在 Token-Session"
-            );
-
-            let events = recorder.captured();
-            assert!(
-                events.iter().any(|e| matches!(
-                    e,
-                    BulwarkEvent::Login {
-                        login_id,
-                        token,
-                        ..
-                    } if login_id == "externaluser001" && token == &external_token
-                )),
-                "应广播 Login 事件 (login_id=externaluser001)，实际事件: {:?}",
-                events
-            );
-        }
-
-        // ==================================================================
-        // check_and_update_hover 测试（session_hover_timeout + MockClock）
-        // ==================================================================
-
-        /// 悬停超时后 check_login 返回 false 并广播 SessionTimeout 事件。
-        ///
-        /// 覆盖 lines 834-865：session_hover_timeout > 0 + last_active 过期 → logout + broadcast。
-        #[tokio::test]
-        async fn check_and_update_hover_evicts_on_timeout() {
-            let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
-            let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
-            let mut config = BulwarkConfig::default_config();
-            config.throw_on_not_login = false;
-            config.token_style = "uuid".to_string();
-            config.session_hover_timeout = 1; // 1 second
-            let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
-                has_permission: true,
-                has_role: true,
-            });
-            let clock = Arc::new(MockClock::new(chrono::Utc::now()));
-            let recorder = Arc::new(RecordingListener::new());
-            let lm = Arc::new(BulwarkListenerManager::new());
-            lm.register(recorder.clone() as Arc<dyn BulwarkListener>);
-            let logic = BulwarkLogicDefault::new(session, Arc::new(config), firewall)
-                .with_listener_manager(lm)
-                .with_clock(clock.clone() as Arc<dyn Clock>);
-
-            let token = logic
-                .login("hover-user-001", &LoginParams::default())
-                .await
-                .unwrap();
-
-            // 手动设置 last_active_at 为当前 MockClock 时间
-            let now_millis = clock.now().timestamp_millis();
-            logic
-                .session
-                .update_last_active_at("hover-user-001", now_millis);
-
-            // 推进 MockClock 2 秒（超过 1 秒悬停超时）
-            clock.advance(chrono::Duration::seconds(2));
-
-            let result =
-                with_current_token(token.clone(), async { logic.check_login().await }).await;
-            assert!(
-                result.is_ok(),
-                "悬停超时 + throw=false 时 check_login 应返回 Ok，实际: {:?}",
-                result
-            );
-            assert!(!result.unwrap(), "悬停超时后 check_login 应返回 false");
-
-            let events = recorder.captured();
-            assert!(
-                events.iter().any(|e| matches!(
-                    e,
-                    BulwarkEvent::SessionTimeout {
-                        login_id,
-                        token: t,
-                        ..
-                    } if login_id == "hover-user-001" && t == &token
-                )),
-                "应广播 SessionTimeout 事件，实际事件: {:?}",
-                events
-            );
-        }
-
-        /// 悬停超时 + throw_on_not_login=true → Err(Session("会话悬停超时"))。
-        ///
-        /// 覆盖 lines 857-859：throw_on_not_login=true → return Err。
-        #[tokio::test]
-        async fn check_and_update_hover_evicts_on_timeout_throws() {
-            let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
-            let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
-            let mut config = BulwarkConfig::default_config();
-            config.throw_on_not_login = true;
-            config.token_style = "uuid".to_string();
-            config.session_hover_timeout = 1;
-            let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
-                has_permission: true,
-                has_role: true,
-            });
-            let clock = Arc::new(MockClock::new(chrono::Utc::now()));
-            let logic = BulwarkLogicDefault::new(session, Arc::new(config), firewall)
-                .with_clock(clock.clone() as Arc<dyn Clock>);
-
-            let token = logic
-                .login("hover-user-002", &LoginParams::default())
-                .await
-                .unwrap();
-            let now_millis = clock.now().timestamp_millis();
-            logic
-                .session
-                .update_last_active_at("hover-user-002", now_millis);
-            clock.advance(chrono::Duration::seconds(2));
-
-            let result = with_current_token(token, async { logic.check_login().await }).await;
-            assert!(
-                matches!(result, Err(BulwarkError::Session(ref msg)) if msg == "会话悬停超时"),
-                "悬停超时 + throw=true 应返回 Err(Session(\"会话悬停超时\"))，实际: {:?}",
-                result
-            );
-        }
+                let result = with_current_token(token, async { logic.check_login().await }).await;
+                assert!(
+                    matches!(result, Err(BulwarkError::Session(ref msg)) if msg == "会话悬停超时"),
+                    "悬停超时 + throw=true 应返回 Err(Session(\"会话悬停超时\"))，实际: {:?}",
+                    result
+                );
+            }
+        } // end listener_tests
 
         // ==================================================================
         // login_with_token / kickout_by_token / logout 无 token 路径

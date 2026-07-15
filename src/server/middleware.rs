@@ -25,6 +25,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
+use crate::backend::AuthBackend;
+use crate::context::BulwarkPrincipal;
+
 /// 令牌桶 — 简化限速算法。
 ///
 /// 每次请求前 refill（按时间比例补充令牌），再尝试消耗 1 个令牌。
@@ -285,12 +288,39 @@ pub async fn internal_path_filter(req: Request, next: Next) -> Response {
     }
 }
 
+/// Principal 注入中间件 — 从 Authorization header 提取 Bearer token，
+/// 验证后注入 `BulwarkPrincipal` extension。
+///
+/// 用于 OAuth2 外网路由，使 `/oauth2/authorize` 能检测用户登录状态：
+/// - 有效 token → 注入 `Extension(BulwarkPrincipal { login_id })`，authorize 走授权码签发路径
+/// - 无 token / token 无效 → 不注入（principal 为 None），authorize 重定向到登录页
+///
+/// 本中间件**不阻断请求**，仅做 best-effort 注入。
+pub async fn principal_inject_middleware(mut req: Request, next: Next) -> Response {
+    if let Some(backend) = req.extensions().get::<Arc<dyn AuthBackend>>().cloned() {
+        if let Some(token) = req
+            .headers()
+            .get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.strip_prefix("Bearer "))
+        {
+            if let Ok(session) = backend.get_session(token).await {
+                req.extensions_mut().insert(BulwarkPrincipal {
+                    login_id: session.login_id,
+                });
+            }
+        }
+    }
+    next.run(req).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use axum::body::Body;
     use axum::http::Request;
     use axum::routing::{get, post};
+    use axum::Extension;
     use axum::Router;
     use tower::ServiceExt;
 
@@ -603,5 +633,192 @@ mod tests {
                 path
             );
         }
+    }
+
+    // ========================================================================
+    // principal_inject_middleware 测试
+    // ========================================================================
+
+    /// 测试用 Mock AuthBackend —— `get_session` 对 "valid-token" 返回 login_id="1001"。
+    struct MockAuthBackend;
+
+    #[async_trait::async_trait]
+    impl AuthBackend for MockAuthBackend {
+        async fn login(
+            &self,
+            _login_id: &str,
+            _params: &crate::backend::types::LoginParams,
+        ) -> crate::error::BulwarkResult<String> {
+            Ok("valid-token".to_string())
+        }
+        async fn logout(&self, _token: &str) -> crate::error::BulwarkResult<()> {
+            Ok(())
+        }
+        async fn check_login(&self, token: &str) -> crate::error::BulwarkResult<bool> {
+            Ok(token == "valid-token")
+        }
+        async fn check_permission(
+            &self,
+            _token: &str,
+            _permission: &str,
+        ) -> crate::error::BulwarkResult<()> {
+            Ok(())
+        }
+        async fn check_role(&self, _token: &str, _role: &str) -> crate::error::BulwarkResult<()> {
+            Ok(())
+        }
+        async fn check_safe(&self, _token: &str) -> crate::error::BulwarkResult<bool> {
+            Ok(false)
+        }
+        async fn check_disable(&self, _token: &str) -> crate::error::BulwarkResult<bool> {
+            Ok(false)
+        }
+        async fn check_api_key(
+            &self,
+            _api_key: &str,
+            _namespace: &str,
+        ) -> crate::error::BulwarkResult<()> {
+            Ok(())
+        }
+        async fn get_token_info(
+            &self,
+            token: &str,
+        ) -> crate::error::BulwarkResult<crate::backend::types::TokenInfo> {
+            Ok(crate::backend::types::TokenInfo {
+                token: token.to_string(),
+                created_at: 1000,
+                last_active_at: 2000,
+            })
+        }
+        async fn get_session(
+            &self,
+            token: &str,
+        ) -> crate::error::BulwarkResult<crate::backend::types::SessionData> {
+            if token == "valid-token" {
+                Ok(crate::backend::types::SessionData {
+                    token: token.to_string(),
+                    login_id: "1001".to_string(),
+                    created_at: 1000,
+                    last_active_at: 2000,
+                    attrs: std::collections::HashMap::new(),
+                    device: None,
+                    ip: None,
+                    user_agent: None,
+                    safe_services: std::collections::HashMap::new(),
+                    #[cfg(feature = "dynamic-active-timeout")]
+                    dynamic_active_timeout: None,
+                    #[cfg(feature = "anonymous-session")]
+                    is_anon: false,
+                })
+            } else {
+                Err(crate::error::BulwarkError::InvalidToken(
+                    "token 无效".to_string(),
+                ))
+            }
+        }
+        async fn kickout(&self, _login_id: &str) -> crate::error::BulwarkResult<()> {
+            Ok(())
+        }
+        async fn switch_to(
+            &self,
+            _token: &str,
+            _target_login_id: &str,
+        ) -> crate::error::BulwarkResult<()> {
+            Ok(())
+        }
+        async fn renew_to_equivalent(&self, _token: &str) -> crate::error::BulwarkResult<String> {
+            Ok("new-token".to_string())
+        }
+    }
+
+    /// 无 Authorization header 时请求正常通过（不注入 principal）。
+    #[tokio::test]
+    async fn test_principal_inject_no_auth_header_passes_through() {
+        let backend: Arc<dyn AuthBackend> = Arc::new(MockAuthBackend);
+        let app = ok_router()
+            .layer(axum::middleware::from_fn(principal_inject_middleware))
+            .layer(Extension(backend));
+
+        let resp = app
+            .oneshot(Request::builder().uri("/ping").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    /// 无效 token 时请求正常通过（不注入 principal，不阻断）。
+    #[tokio::test]
+    async fn test_principal_inject_invalid_token_passes_through() {
+        let backend: Arc<dyn AuthBackend> = Arc::new(MockAuthBackend);
+        let app = ok_router()
+            .layer(axum::middleware::from_fn(principal_inject_middleware))
+            .layer(Extension(backend));
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/ping")
+                    .header("authorization", "Bearer invalid-token")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    /// 有效 token 时 principal 被正确注入到 request extensions。
+    #[tokio::test]
+    async fn test_principal_inject_valid_token_injects_principal() {
+        let backend: Arc<dyn AuthBackend> = Arc::new(MockAuthBackend);
+        let app = Router::new()
+            .route(
+                "/principal",
+                get(
+                    |principal: axum::extract::Extension<BulwarkPrincipal>| async move {
+                        principal.0.login_id
+                    },
+                ),
+            )
+            .layer(axum::middleware::from_fn(principal_inject_middleware))
+            .layer(Extension(backend));
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/principal")
+                    .header("authorization", "Bearer valid-token")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(
+            std::str::from_utf8(&body).unwrap(),
+            "1001",
+            "有效 token 应注入 login_id=1001"
+        );
+    }
+
+    /// 无 backend extension 时请求正常通过（不注入 principal，不 panic）。
+    #[tokio::test]
+    async fn test_principal_inject_no_backend_passes_through() {
+        let app = ok_router().layer(axum::middleware::from_fn(principal_inject_middleware));
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/ping")
+                    .header("authorization", "Bearer some-token")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
     }
 }

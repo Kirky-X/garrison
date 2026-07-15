@@ -109,3 +109,55 @@ async fn test_e2e_internal_rejects_external_path() {
         .unwrap();
     assert_eq!(resp.status(), 404, "内网访问外网路径应返回 404");
 }
+
+/// check-api-key 无效 key 返回 INVALID_TOKEN。
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn test_e2e_check_api_key_invalid_returns_error() {
+    let (_external_url, internal_url, _handle) = start_e2e_server(100, "test-key").await;
+    let client = make_client();
+
+    let resp = client
+        .post(format!("{}/api/v1/auth/check-api-key", internal_url))
+        .header("x-api-key", "test-key")
+        .json(&serde_json::json!({
+            "api_key": "nonexistent-api-key",
+            "namespace": "default"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(
+        body["error_code"], "INVALID_TOKEN",
+        "无效 API Key 应返回 INVALID_TOKEN，实际: {:?}",
+        body
+    );
+}
+
+/// check-api-key 空 key 返回 INVALID_TOKEN。
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn test_e2e_check_api_key_empty_returns_error() {
+    let (_external_url, internal_url, _handle) = start_e2e_server(100, "test-key").await;
+    let client = make_client();
+
+    let resp = client
+        .post(format!("{}/api/v1/auth/check-api-key", internal_url))
+        .header("x-api-key", "test-key")
+        .json(&serde_json::json!({
+            "api_key": "",
+            "namespace": "default"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(
+        body["error_code"], "INVALID_TOKEN",
+        "空 API Key 应返回 INVALID_TOKEN，实际: {:?}",
+        body
+    );
+}

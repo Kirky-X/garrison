@@ -253,7 +253,12 @@ impl BulwarkAuthServer {
         #[cfg(feature = "oauth2-server")]
         let router = {
             if let Some(state) = &self.oauth2_state {
-                router.merge(oauth2_routes::oauth2_external_router(state.clone()))
+                let oauth2_router = oauth2_routes::oauth2_external_router(state.clone())
+                    .layer(axum::middleware::from_fn(
+                        middleware::principal_inject_middleware,
+                    ))
+                    .layer(Extension(self.backend.clone()));
+                router.merge(oauth2_router)
             } else {
                 router
             }
