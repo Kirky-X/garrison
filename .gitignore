@@ -146,6 +146,7 @@ credentials.json
 tarpaulin-report.html
 cobertura.xml
 lcov.info
+strix_runs
 
 # -----------------------------------------------------------------------------
 # 数据库文件（本地开发）
