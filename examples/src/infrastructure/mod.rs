@@ -5,6 +5,10 @@
 
 #[cfg(feature = "alone-cache")]
 pub mod alone_cache;
+#[cfg(feature = "auth-server")]
+pub mod auth_server;
+#[cfg(feature = "backend-remote")]
+pub mod backend_remote;
 #[cfg(feature = "cache-redis")]
 pub mod cache_redis;
 pub mod config_loader;

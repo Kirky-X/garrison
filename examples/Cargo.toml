@@ -54,6 +54,7 @@ default = []
 full = [
     "bulwark/full", "dep:axum",
     "secure-sign", "secure-httpbasic", "secure-httpdigest", "secure-totp",
+    "secure-masking", "secure-xss", "secure-sanitize", "secure-confusable",
     "protocol-sign", "protocol-apikey", "protocol-temp",
     "protocol-jwt", "protocol-oauth2", "protocol-sso",
     "protocol-oidc", "oauth2-scope-handler", "protocol-sso-server",
@@ -64,6 +65,7 @@ full = [
     "annotation-macros", "account-credential",
     "tenant-isolation", "audit-log", "decision-trace", "keycloak-oidc",
     "social-wechat",
+    "abac", "backend-embedded", "backend-remote", "auth-server",
 ]
 
 # 单特性转发到 bulwark（保持与 bulwark feature 名一致）
@@ -106,6 +108,16 @@ audit-log = ["bulwark/audit-log"]
 decision-trace = ["bulwark/decision-trace"]
 keycloak-oidc = ["bulwark/keycloak-oidc"]
 social-wechat = ["bulwark/social-wechat"]
+
+# v0.7.0 新增特性转发
+abac = ["bulwark/abac"]
+backend-embedded = ["bulwark/backend-embedded"]
+backend-remote = ["bulwark/backend-remote"]
+auth-server = ["bulwark/auth-server", "backend-embedded"]
+secure-masking = ["bulwark/secure-masking"]
+secure-xss = ["bulwark/secure-xss"]
+secure-sanitize = ["bulwark/secure-sanitize"]
+secure-confusable = ["bulwark/secure-confusable"]
 
 # ====================================================================
 # Feature-gated bins（required-features 防止 feature 关闭时编译失败）
@@ -308,3 +320,27 @@ required-features = [
     "db-sqlite", "cache-memory",
 ]
 path = "src/bin/v0_5_0_demo.rs"
+
+# ====================================================================
+# v0.7.0 新增示例
+# ====================================================================
+
+[[bin]]
+name = "abac_policy"
+required-features = ["abac"]
+path = "src/bin/abac_policy.rs"
+
+[[bin]]
+name = "backend_remote"
+required-features = ["backend-remote"]
+path = "src/bin/backend_remote.rs"
+
+[[bin]]
+name = "auth_server"
+required-features = ["auth-server", "backend-embedded"]
+path = "src/bin/auth_server.rs"
+
+[[bin]]
+name = "secure_module"
+required-features = ["secure-masking", "secure-xss", "secure-sanitize", "secure-confusable"]
+path = "src/bin/secure_module.rs"

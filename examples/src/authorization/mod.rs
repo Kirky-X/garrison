@@ -3,6 +3,8 @@
 
 //! 授权 / 权限 / 策略示例模块。
 
+#[cfg(feature = "abac")]
+pub mod abac_policy;
 pub mod permission_check;
 #[cfg(all(feature = "cache-memory", feature = "web-axum"))]
 pub mod strategy_firewall;

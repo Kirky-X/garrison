@@ -30,7 +30,7 @@ tokio = { version = "1", features = ["sync", "macros", "rt-multi-thread", "time"
 once_cell = "1.19"
 inventory = "0.3"
 thiserror = "2.0"
-tracing = "0.1.43"
+tracing = "0.1"
 async-trait = "0.1"
 parking_lot = "0.12"
 dashmap = { version = "6", default-features = false }
@@ -190,11 +190,8 @@ cache-memory = ["oxcache"]
 cache-redis = ["oxcache", "dep:redis", "dep:futures"]
 # 注意：oxcache 无 caffeine feature（L1 用 moka），cache-caffeine 已移除
 
-# === 数据库后端（通过 dbnexus 0.3） ===
-# db-base：dbnexus 基础 features（runtime + permission + sql-parser + macros + config-env + with-time
-# + auto-migrate）+ sea-orm。auto-migrate 是 backend-agnostic 的，SQLite/PostgreSQL 均需要。
-# 内部 feature，由 db-sqlite / db-postgres 继承，不直接暴露给用户。
-# dbnexus 0.3+ 禁止 embedded(sqlite) 与 server-side(postgres) 混用，故 db-sqlite / db-postgres 互斥。
+# === 数据库后端（通过 dbnexus 0.4） ===
+# db-base 为内部 feature，由 db-sqlite / db-postgres / db-mysql 继承；dbnexus 禁止 embedded 与 server-side 混用。
 db-base = [
     "dbnexus",
     "dbnexus/runtime-tokio-rustls",
@@ -495,6 +492,12 @@ required-features = ["db-mysql"]
 name = "auth_server_integration"
 path = "tests/auth_server_integration.rs"
 required-features = ["auth-server"]
+
+# e2e：BackendEmbedded + 真实 HTTP 全栈 E2E 测试
+[[test]]
+name = "e2e"
+path = "tests/e2e.rs"
+required-features = ["full", "testing"]
 
 # === 二进制目标 ===
 # auth_server：BulwarkAuthServer 独立运行入口（双端口 axum 服务器）

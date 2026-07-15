@@ -409,7 +409,7 @@ impl BulwarkManager {
     ///
     /// 清空全局 `BulwarkLogicDefault` 与 `Strategy` 引用，
     /// 使后续 `BulwarkUtil::login(id)` 等返回未初始化错误。
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testing"))]
     pub fn reset_for_test() {
         // T030: abort cleanup task 避免测试间残留后台线程
         if let Some(handle) = BULWARK_MANAGER.cleanup_task_handle.write().take() {

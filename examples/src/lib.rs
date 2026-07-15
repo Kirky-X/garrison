@@ -31,5 +31,6 @@ pub mod demo;
 pub mod extension;
 pub mod infrastructure;
 pub mod oauth2;
+pub mod security;
 pub mod sign;
 pub mod web;
