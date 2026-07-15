@@ -116,6 +116,15 @@ impl Token for Random64TokenStyle {
 /// Simple 风格 Token。
 ///
 /// 格式为 `<login_id>-<uuid>`，可通过前缀解析 login_id。
+///
+/// # 安全限制
+///
+/// **此风格仅适用于测试/演示场景，不应用于生产环境。**
+/// token 不含签名或 MAC，无法防止伪造。攻击者可构造任意 `<login_id>-<uuid>` 格式的 token
+/// 冒充其他用户。生产环境应使用 [`JwtTokenStyle`]（需 `protocol-jwt` feature）或
+/// [`Random64TokenStyle`] + 服务端 Session 查表验证。
+///
+/// `verify` / `parse` 会校验 UUID 部分为合法 UUID 格式，作为最低防御措施。
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SimpleTokenStyle;
 
@@ -126,14 +135,27 @@ impl Token for SimpleTokenStyle {
 
     fn verify(&self, token: &str) -> BulwarkResult<Option<String>> {
         match token.split_once('-') {
-            Some((id_str, _)) => Ok(Some(id_str.to_string())),
+            Some((id_str, uuid_part)) => {
+                // 校验 UUID 部分为合法格式，防止任意字符串伪造
+                if Uuid::parse_str(uuid_part).is_ok() {
+                    Ok(Some(id_str.to_string()))
+                } else {
+                    Ok(None)
+                }
+            },
             None => Ok(None),
         }
     }
 
     fn parse(&self, token: &str) -> BulwarkResult<TokenClaims> {
         match token.split_once('-') {
-            Some((id_str, _)) => {
+            Some((id_str, uuid_part)) => {
+                // 校验 UUID 部分为合法格式
+                if Uuid::parse_str(uuid_part).is_err() {
+                    return Err(BulwarkError::Internal(
+                        "Simple token 格式错误：UUID 部分无效".to_string(),
+                    ));
+                }
                 // Simple token 不包含过期时间，expire_at 设为 0
                 Ok(TokenClaims {
                     login_id: id_str.to_string(),
@@ -339,12 +361,11 @@ mod tests {
     #[test]
     fn simple_style_parse_non_numeric_login_id_returns_ok() {
         let style = SimpleTokenStyle;
-        // "no-dash-here" split_once('-') => Some(("no", "dash-here"))
-        // String 类型 login_id 接受任意字符串
-        let result = style.parse("no-dash-here");
+        // 使用合法 UUID v4 格式确保通过 UUID 校验
+        let result = style.parse("admin-550e8400-e29b-41d4-a716-446655440000");
         assert!(result.is_ok());
         let claims = result.unwrap();
-        assert_eq!(claims.login_id, "no");
+        assert_eq!(claims.login_id, "admin");
     }
 
     /// SimpleTokenStyle parse 无分隔符返回 Err。
@@ -352,6 +373,43 @@ mod tests {
     fn simple_style_parse_no_separator_errors() {
         let style = SimpleTokenStyle;
         assert!(style.parse("noseparator").is_err());
+    }
+
+    /// VULN-0013 修复: verify 拒绝 UUID 部分无效的伪造 token。
+    #[test]
+    fn simple_style_verify_rejects_invalid_uuid_suffix() {
+        let style = SimpleTokenStyle;
+        // 伪造 token：UUID 部分不是合法 UUID 格式
+        let forged = "admin-not-a-valid-uuid";
+        let result = style.verify(forged).unwrap();
+        assert_eq!(result, None, "UUID 部分无效的伪造 token 应返回 None");
+    }
+
+    /// VULN-0013 修复: verify 拒绝任意字符串后缀的伪造 token。
+    #[test]
+    fn simple_style_verify_rejects_arbitrary_string_suffix() {
+        let style = SimpleTokenStyle;
+        let forged = "admin-anything";
+        let result = style.verify(forged).unwrap();
+        assert_eq!(result, None, "非 UUID 后缀的伪造 token 应返回 None");
+    }
+
+    /// VULN-0013 修复: parse 拒绝 UUID 部分无效的伪造 token。
+    #[test]
+    fn simple_style_parse_rejects_invalid_uuid_suffix() {
+        let style = SimpleTokenStyle;
+        let forged = "admin-fake-uuid-string";
+        let result = style.parse(forged);
+        assert!(result.is_err(), "UUID 部分无效的 token parse 应返回 Err");
+    }
+
+    /// VULN-0013 修复: verify 接受合法 UUID 后缀的 token。
+    #[test]
+    fn simple_style_verify_accepts_valid_uuid_suffix() {
+        let style = SimpleTokenStyle;
+        let token = "root-550e8400-e29b-41d4-a716-446655440000";
+        let result = style.verify(token).unwrap();
+        assert_eq!(result, Some("root".to_string()));
     }
 
     // ========================================================================
@@ -439,8 +497,8 @@ mod tests {
     #[test]
     fn simple_style_verify_non_numeric_returns_ok() {
         let style = SimpleTokenStyle;
-        // "abc-xyz" 中 "abc" 作为 String login_id 合法
-        let result = style.verify("abc-xyz");
+        // 使用合法 UUID v4 后缀确保通过 UUID 校验
+        let result = style.verify("abc-550e8400-e29b-41d4-a716-446655440000");
         assert!(result.is_ok(), "verify 应返回 Ok，实际: {:?}", result);
         assert_eq!(result.unwrap(), Some("abc".to_string()));
     }

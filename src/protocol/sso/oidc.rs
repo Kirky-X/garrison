@@ -273,6 +273,7 @@ fn url_encode(s: &str) -> String {
             '!' => result.push_str("%21"),
             '#' => result.push_str("%23"),
             '$' => result.push_str("%24"),
+            '%' => result.push_str("%25"),
             '&' => result.push_str("%26"),
             '\'' => result.push_str("%27"),
             '(' => result.push_str("%28"),
@@ -654,5 +655,16 @@ mod tests {
             "https%3A%2F%2Fexample.com"
         );
         assert_eq!(url_encode("plain"), "plain");
+    }
+
+    /// VULN-0004 修复: url_encode 必须编码百分号，否则已编码序列会被二次解码导致注入。
+    /// "%" → "%25"，防止攻击者构造 "%26" 绕过 scope/redirect_uri 校验。
+    #[test]
+    fn url_encode_encodes_percent_sign() {
+        assert_eq!(url_encode("%"), "%25");
+        assert_eq!(url_encode("100%done"), "100%25done");
+        // 已编码序列应被双重编码，防止解码后注入
+        assert_eq!(url_encode("%26"), "%2526");
+        assert_eq!(url_encode("%3D"), "%253D");
     }
 }

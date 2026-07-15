@@ -163,7 +163,11 @@ fn strip_event_handlers(attrs: &str) -> String {
 
     while i < bytes.len() {
         let is_attr_start = i == 0 || bytes[i - 1].is_ascii_whitespace();
-        if is_attr_start && i + 2 <= bytes.len() && bytes[i] == b'o' && bytes[i + 1] == b'n' {
+        if is_attr_start
+            && i + 2 <= bytes.len()
+            && bytes[i].eq_ignore_ascii_case(&b'o')
+            && bytes[i + 1].eq_ignore_ascii_case(&b'n')
+        {
             let mut j = i + 2;
             while j < bytes.len() && bytes[j].is_ascii_alphanumeric() {
                 j += 1;
@@ -368,6 +372,42 @@ mod tests {
         assert!(
             !result.contains("onclick"),
             "single-quoted event handler attribute should be stripped, got: {}",
+            result
+        );
+    }
+
+    /// VULN-0014 修复: 大写 ONCLICK 事件处理器应被移除。
+    #[test]
+    fn whitelist_strips_uppercase_event_handler() {
+        let protector = XssProtector::new(XssMode::Whitelist(vec!["b"]));
+        let result = protector.sanitize(r#"<b ONCLICK=alert(1)>text</b>"#);
+        assert!(
+            !result.to_lowercase().contains("onclick"),
+            "uppercase ONCLICK should be stripped, got: {}",
+            result
+        );
+    }
+
+    /// VULN-0014 修复: 混合大小写 OnClick 事件处理器应被移除。
+    #[test]
+    fn whitelist_strips_mixedcase_event_handler() {
+        let protector = XssProtector::new(XssMode::Whitelist(vec!["b"]));
+        let result = protector.sanitize(r#"<b OnClick=alert(1)>text</b>"#);
+        assert!(
+            !result.to_lowercase().contains("onclick"),
+            "mixed-case OnClick should be stripped, got: {}",
+            result
+        );
+    }
+
+    /// VULN-0014 修复: 混合大小写 oNsUbMiT 事件处理器应被移除。
+    #[test]
+    fn whitelist_strips_mixedcase_onsubmit() {
+        let protector = XssProtector::new(XssMode::Whitelist(vec!["b"]));
+        let result = protector.sanitize(r#"<b oNsUbMiT=alert(1)>text</b>"#);
+        assert!(
+            !result.to_lowercase().contains("onsubmit"),
+            "mixed-case oNsUbMiT should be stripped, got: {}",
             result
         );
     }

@@ -24,6 +24,42 @@
 
 use crate::error::{BulwarkError, BulwarkResult};
 
+/// 检测 Unicode 格式字符（Cf 类）和分隔符字符（Zl/Zp 类）。
+///
+/// 这些字符在大多数渲染环境中不可见，但会影响字符串比较、数据库查询和日志渲染，
+/// 可被用于钓鱼、显示欺骗和日志注入攻击。
+///
+/// 覆盖范围：
+/// - Cf（Format）：U+00AD, U+0600-0605, U+061C, U+06DD, U+070F, U+180E,
+///   U+200B-200F, U+202A-202E, U+2060-206F, U+FEFF, U+FFF9-FFFB
+/// - Zl（Line Separator）：U+2028
+/// - Zp（Paragraph Separator）：U+2029
+fn is_unicode_format_or_separator(c: char) -> bool {
+    let cp = c as u32;
+    // Zl: Line Separator
+    if cp == 0x2028 {
+        return true;
+    }
+    // Zp: Paragraph Separator
+    if cp == 0x2029 {
+        return true;
+    }
+    // Cf: Format characters（安全相关的高频子集）
+    matches!(cp,
+        0x00AD |        // Soft Hyphen
+        0x0600..=0x0605 | // Arabic number signs
+        0x061C |         // Arabic Letter Mark
+        0x06DD |         // Arabic End of Ayah
+        0x070F |         // Syriac Abbreviation Mark
+        0x180E |         // Mongolian Vowel Separator
+        0x200B..=0x200F | // Zero Width Space/Non-Joiner/Joiner, LRM, RLM
+        0x202A..=0x202E | // Bidi controls (LRE, RLE, PDF, LRO, RLO)
+        0x2060..=0x206F | // Word Joiner, Invisible operators, deprecated format chars
+        0xFEFF |         // BOM / Zero Width No-Break Space
+        0xFFF9..=0xFFFB   // Interlinear annotation
+    )
+}
+
 /// 通用输入消毒：移除 null 字节、控制字符，trim 前后空白，限制长度。
 ///
 /// # 参数
@@ -37,8 +73,9 @@ use crate::error::{BulwarkError, BulwarkResult};
 /// # 消毒规则
 /// 1. 移除 null 字节（`\0`）— 防止 C 字符串截断
 /// 2. 移除控制字符（U+0000..=U+001F 除 `\t` `\n` `\r`，及 U+007F DEL）
-/// 3. trim 前后空白
-/// 4. 长度检查（按 char count）
+/// 3. 移除 Unicode 格式字符（Cf 类）和分隔符字符（Zl/Zp 类）— 防止零宽字符绕过、BOM 绕过、日志注入
+/// 4. trim 前后空白
+/// 5. 长度检查（按 char count）
 ///
 /// # 示例
 ///
@@ -68,6 +105,11 @@ pub fn sanitize_input(input: &str, max_len: usize) -> BulwarkResult<String> {
         }
         // 移除控制字符（保留 \t \n \r）
         if c.is_control() && c != '\t' && c != '\n' && c != '\r' {
+            continue;
+        }
+        // 移除 Unicode 格式字符（Cf）和分隔符字符（Zl/Zp）
+        // 防止零宽字符绕过比较、BOM 绕过前缀检查、行分隔符注入日志
+        if is_unicode_format_or_separator(c) {
             continue;
         }
         cleaned.push(c);
@@ -139,6 +181,54 @@ mod tests {
         let input = "ab\x7Fcd";
         let result = sanitize_input(input, 100).unwrap();
         assert_eq!(result, "abcd");
+    }
+
+    /// VULN-0017 修复: 移除零宽空格（U+200B）。
+    #[test]
+    fn sanitize_removes_zero_width_space() {
+        let input = "admin\u{200B}@example.com";
+        let result = sanitize_input(input, 100).unwrap();
+        assert_eq!(result, "admin@example.com", "U+200B 应被移除");
+    }
+
+    /// VULN-0017 修复: 移除 BOM（U+FEFF）。
+    #[test]
+    fn sanitize_removes_bom() {
+        let input = "\u{FEFF}admin";
+        let result = sanitize_input(input, 100).unwrap();
+        assert_eq!(result, "admin", "U+FEFF BOM 应被移除");
+    }
+
+    /// VULN-0017 修复: 移除行分隔符（U+2028）防止日志注入。
+    #[test]
+    fn sanitize_removes_line_separator() {
+        let input = "log entry\u{2028}injected entry";
+        let result = sanitize_input(input, 100).unwrap();
+        assert_eq!(result, "log entryinjected entry", "U+2028 应被移除");
+    }
+
+    /// VULN-0017 修复: 移除段落分隔符（U+2029）。
+    #[test]
+    fn sanitize_removes_paragraph_separator() {
+        let input = "para1\u{2029}para2";
+        let result = sanitize_input(input, 100).unwrap();
+        assert_eq!(result, "para1para2", "U+2029 应被移除");
+    }
+
+    /// VULN-0017 修复: 移除零宽连接符（U+200D）和非连接符（U+200C）。
+    #[test]
+    fn sanitize_removes_zero_width_joiners() {
+        let input = "a\u{200C}b\u{200D}c";
+        let result = sanitize_input(input, 100).unwrap();
+        assert_eq!(result, "abc", "U+200C 和 U+200D 应被移除");
+    }
+
+    /// VULN-0017 修复: 移除双向格式控制字符（U+202A-202E）。
+    #[test]
+    fn sanitize_removes_bidi_controls() {
+        let input = "hello\u{202E}world";
+        let result = sanitize_input(input, 100).unwrap();
+        assert_eq!(result, "helloworld", "U+202E (RLO) 应被移除");
     }
 
     /// T235-7: 空输入返回空字符串。
@@ -222,13 +312,13 @@ mod tests {
         assert_eq!(result, "abcd");
     }
 
-    /// T235-17: Unicode 控制字符 U+200B (ZERO WIDTH SPACE) 不被 is_control() 识别，保留。
-    /// 注：ZWSP 是 format 字符非 control，此测试验证 is_control 的行为边界。
+    /// T235-17: VULN-0017 修复后，U+200B (ZERO WIDTH SPACE) 作为 Cf 类字符被移除。
+    /// 旧行为保留 ZWSP，新行为移除以防止 Unicode 同形/绕过攻击。
     #[test]
     fn sanitize_keeps_zero_width_space() {
         let input = "ab\u{200B}cd";
         let result = sanitize_input(input, 100).unwrap();
-        assert_eq!(result, "ab\u{200B}cd");
+        assert_eq!(result, "abcd");
     }
 
     /// T235-18: 混合攻击 payload（null + 控制字符 + 前后空白）。

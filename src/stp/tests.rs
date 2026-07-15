@@ -1200,16 +1200,19 @@ async fn verify_token_invalid_returns_error() {
     );
 }
 
-/// verify_token 对任意字符串 login_id 的 simple-format token 返回 login_id（spec Scenario）。
+/// verify_token 对合法 UUID 后缀的 simple-format token 返回 login_id（spec Scenario）。
 ///
-/// v0.5.2 起 login_id 迁移为 String，"abc-xyz" 中 "abc" 为合法 login_id。
+/// VULN-0013 修复后，SimpleTokenStyle 要求 token 后缀为合法 UUID，防止身份伪造。
 #[tokio::test]
 async fn verify_token_malformed_returns_invalid_token() {
     let logic = make_logic(3600, 86400, false, "simple", true, true);
-    let result = logic.verify_token("abc-xyz").await;
+    // 使用合法 UUID 后缀
+    let result = logic
+        .verify_token("abc-550e8400-e29b-41d4-a716-446655440000")
+        .await;
     assert!(
         result.is_ok(),
-        "simple-format token with string login_id 应返回 Ok，实际: {:?}",
+        "simple-format token with valid UUID suffix 应返回 Ok，实际: {:?}",
         result
     );
     assert_eq!(result.unwrap(), "abc");
