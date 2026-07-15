@@ -184,6 +184,9 @@ impl AuthorizeHandler {
             .map(|s| s.split_whitespace().map(|x| x.to_string()).collect())
             .unwrap_or_default();
 
+        // VULN-0003: 存储前校验 scope 是否在客户端 allowed_scopes 内
+        client.validate_scopes(&scopes)?;
+
         // 8. 生成授权码
         let code = generate_authorization_code();
         let auth_code = AuthorizationCode {
@@ -508,6 +511,49 @@ mod tests {
             },
             _ => panic!("期望 Redirect"),
         }
+    }
+
+    /// VULN-0003: authorize 端点请求超出 allowed_scopes 的 scope 返回 invalid_scope。
+    /// make_test_client 的 allowed_scopes = ["read"]，请求 "admin" 应被拒绝。
+    #[tokio::test]
+    async fn authorize_scope_not_allowed() {
+        let (handler, _) = make_handler();
+        handler
+            .store
+            .create(make_test_client("auth-scope-001"))
+            .await
+            .unwrap();
+
+        let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        let challenge = generate_code_challenge(verifier);
+        let mut req = make_request("auth-scope-001", &challenge);
+        req.scope = Some("admin".into());
+
+        let err = handler.authorize(&req, Some(1)).await.unwrap_err();
+        assert!(
+            err.to_string().contains("invalid_scope"),
+            "期望 invalid_scope 错误，实际: {}",
+            err
+        );
+    }
+
+    /// VULN-0003: authorize 端点请求合法 scope 正常通过。
+    #[tokio::test]
+    async fn authorize_scope_allowed() {
+        let (handler, _) = make_handler();
+        handler
+            .store
+            .create(make_test_client("auth-scope-002"))
+            .await
+            .unwrap();
+
+        let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        let challenge = generate_code_challenge(verifier);
+        let mut req = make_request("auth-scope-002", &challenge);
+        req.scope = Some("read".into());
+
+        let resp = handler.authorize(&req, Some(1)).await.unwrap();
+        assert!(matches!(resp, AuthorizeResponse::Redirect { .. }));
     }
 
     // === consume_code 测试 ===

@@ -268,6 +268,8 @@ impl TokenHandler {
 
         // 签发 token
         let scopes = auth_code.scopes.clone();
+        // VULN-0003: 校验授权码中的 scope 是否在客户端 allowed_scopes 内（纵深防御）
+        client.validate_scopes(&scopes)?;
         let user_id = auth_code.user_id;
         self.issue_tokens(
             &client.client_id,
@@ -401,6 +403,9 @@ impl TokenHandler {
             .map(|s| s.split_whitespace().map(|x| x.to_string()).collect())
             .unwrap_or_default();
 
+        // VULN-0003: 校验请求的 scope 是否在客户端 allowed_scopes 内
+        client.validate_scopes(&scopes)?;
+
         // 无 user_id，无 refresh_token
         self.issue_tokens(&client.client_id, None, &scopes, false, None)
             .await
@@ -443,6 +448,9 @@ impl TokenHandler {
             .as_ref()
             .map(|s| s.split_whitespace().map(|x| x.to_string()).collect())
             .unwrap_or_default();
+
+        // VULN-0003: 校验请求的 scope 是否在客户端 allowed_scopes 内
+        client.validate_scopes(&scopes)?;
 
         self.issue_tokens(
             &client.client_id,
@@ -1052,6 +1060,130 @@ mod tests {
         };
         let err = handler.handle(&req).await.unwrap_err();
         assert!(err.to_string().contains("invalid_grant"));
+    }
+
+    // === VULN-0003: OAuth2 scope 校验测试 ===
+
+    /// VULN-0003: client_credentials 请求超出 allowed_scopes 的 scope 返回 invalid_scope。
+    /// make_full_client 的 allowed_scopes = ["read", "write"]，请求 "admin" 应被拒绝。
+    #[tokio::test]
+    async fn handle_client_credentials_scope_not_allowed() {
+        let (handler, _) = make_handler();
+        handler
+            .store
+            .create(make_full_client("cc-scope-001"))
+            .await
+            .unwrap();
+
+        let req = TokenRequest {
+            grant_type: "client_credentials".into(),
+            client_id: "cc-scope-001".into(),
+            client_secret: "secret-123".into(),
+            code: None,
+            redirect_uri: None,
+            code_verifier: None,
+            refresh_token: None,
+            scope: Some("admin".into()),
+            username: None,
+            password: None,
+        };
+        let err = handler.handle(&req).await.unwrap_err();
+        assert!(
+            err.to_string().contains("invalid_scope"),
+            "期望 invalid_scope 错误，实际: {}",
+            err
+        );
+    }
+
+    /// VULN-0003: client_credentials 请求部分 scope 超出 allowed_scopes 也应拒绝。
+    /// 请求 "read admin"（read 合法，admin 不合法）应返回 invalid_scope。
+    #[tokio::test]
+    async fn handle_client_credentials_partial_scope_not_allowed() {
+        let (handler, _) = make_handler();
+        handler
+            .store
+            .create(make_full_client("cc-scope-002"))
+            .await
+            .unwrap();
+
+        let req = TokenRequest {
+            grant_type: "client_credentials".into(),
+            client_id: "cc-scope-002".into(),
+            client_secret: "secret-123".into(),
+            code: None,
+            redirect_uri: None,
+            code_verifier: None,
+            refresh_token: None,
+            scope: Some("read admin".into()),
+            username: None,
+            password: None,
+        };
+        let err = handler.handle(&req).await.unwrap_err();
+        assert!(err.to_string().contains("invalid_scope"));
+    }
+
+    /// VULN-0003: password grant 请求超出 allowed_scopes 的 scope 返回 invalid_scope。
+    #[tokio::test]
+    async fn handle_password_scope_not_allowed() {
+        let (handler, _) = make_handler();
+        handler
+            .store
+            .create(make_full_client("pw-scope-001"))
+            .await
+            .unwrap();
+
+        let req = TokenRequest {
+            grant_type: "password".into(),
+            client_id: "pw-scope-001".into(),
+            client_secret: "secret-123".into(),
+            code: None,
+            redirect_uri: None,
+            code_verifier: None,
+            refresh_token: None,
+            scope: Some("admin".into()),
+            username: Some("alice".into()),
+            password: Some("wonderland".into()),
+        };
+        let err = handler.handle(&req).await.unwrap_err();
+        assert!(
+            err.to_string().contains("invalid_scope"),
+            "期望 invalid_scope 错误，实际: {}",
+            err
+        );
+    }
+
+    /// VULN-0003: 空 allowed_scopes 的客户端允许任意 scope（向后兼容）。
+    #[tokio::test]
+    async fn handle_client_credentials_empty_allowed_scopes_allows_any() {
+        let (handler, _) = make_handler();
+        // 空 allowed_scopes 表示允许任意 scope
+        let client = OAuth2Client::new(
+            "cc-empty-scopes",
+            "secret-123",
+            vec!["https://app.example.com/cb".into()],
+            vec![GrantType::ClientCredentials],
+            vec![],
+        )
+        .unwrap();
+        handler.store.create(client).await.unwrap();
+
+        let req = TokenRequest {
+            grant_type: "client_credentials".into(),
+            client_id: "cc-empty-scopes".into(),
+            client_secret: "secret-123".into(),
+            code: None,
+            redirect_uri: None,
+            code_verifier: None,
+            refresh_token: None,
+            scope: Some("any-scope".into()),
+            username: None,
+            password: None,
+        };
+        let resp = handler
+            .handle(&req)
+            .await
+            .expect("空 allowed_scopes 应允许任意 scope");
+        assert_eq!(resp.scope.as_deref(), Some("any-scope"));
     }
 
     // === revoke / introspect 辅助方法测试 ===

@@ -160,6 +160,32 @@ impl OAuth2Client {
     pub fn allows_scope(&self, scope: &str) -> bool {
         self.scopes.is_empty() || self.scopes.iter().any(|s| s == scope)
     }
+
+    /// 批量校验 scope 列表是否全部在 allowed_scopes 内（VULN-0003 修复）。
+    ///
+    /// 空 allowed_scopes 表示允许任意 scope（向后兼容）。
+    /// 任一 scope 不在 allowed_scopes 内则返回 `invalid_scope` 错误。
+    ///
+    /// # 参数
+    /// - `scopes`: 待校验的 scope 列表
+    ///
+    /// # 返回
+    /// - `Ok(())`: 所有 scope 均允许（或 allowed_scopes 为空）
+    /// - `Err(BulwarkError::OAuth2)`: 存在不允许的 scope，错误消息含 `invalid_scope`
+    pub fn validate_scopes(&self, scopes: &[String]) -> BulwarkResult<()> {
+        if self.scopes.is_empty() {
+            return Ok(());
+        }
+        for s in scopes {
+            if !self.allows_scope(s) {
+                return Err(BulwarkError::OAuth2(format!(
+                    "invalid_scope: scope '{}' 不在客户端 allowed_scopes 内",
+                    s
+                )));
+            }
+        }
+        Ok(())
+    }
 }
 
 /// OAuth2 客户端存储 trait。
