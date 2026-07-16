@@ -21,6 +21,10 @@
 use crate::config::BulwarkConfig;
 use crate::core::auth::AuthLogic;
 use crate::core::permission::PermissionChecker;
+// `BulwarkError`/`BulwarkResult` 供 `default_impl.rs` 和 `tests.rs` 通过 `use super::*` glob 使用。
+// `BulwarkError` 仅在 `protocol-apikey` feature 下被 `default_impl.rs` 直接使用，
+// 但 `tests.rs` 在所有 feature 配置下通过 glob 引用，故不可 cfg-gate。
+#[allow(unused_imports)]
 use crate::error::{BulwarkError, BulwarkResult};
 #[cfg(feature = "listener")]
 use crate::listener::BulwarkListenerManager;
@@ -31,7 +35,6 @@ use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
-use std::future::Future;
 use std::sync::Arc;
 use tokio::sync::Mutex as TokioMutex;
 
@@ -41,6 +44,7 @@ pub mod parameter;
 
 // 原 BulwarkLogic 上帝 trait 拆分为 6 个细粒度子 trait
 // （BulwarkCore 基座 + 5 个职责域 trait），按职责域分离。
+pub mod clock;
 pub mod context;
 pub mod core;
 pub mod interface;
@@ -55,6 +59,7 @@ pub mod token;
 pub mod util;
 
 // 子 trait re-exports（供 crate::stp::SessionLogic 等路径访问）
+pub use self::context::{current_token, with_current_token};
 pub use self::core::BulwarkCore;
 pub use self::interface::BulwarkInterface;
 pub use self::mfa::MfaLogic;
@@ -127,26 +132,8 @@ tokio::task_local! {
     static CURRENT_TOKEN: String;
 }
 
-/// 设置当前请求的 token 作用域。
-///
-/// 在 axum middleware 中调用：
-/// ```ignore
-/// bulwark::stp::with_current_token(token, async { handler(req).await }).await
-/// ```
-pub async fn with_current_token<R>(token: String, f: impl Future<Output = R>) -> R {
-    CURRENT_TOKEN.scope(token, f).await
-}
-
-/// 获取当前请求的 token（从 task_local 读取）。
-///
-/// # 错误
-/// - 若未在 `with_current_token` 作用域内调用，返回 `BulwarkError::Session`。
-#[allow(clippy::map_clone)]
-pub fn current_token() -> BulwarkResult<String> {
-    CURRENT_TOKEN.try_get().map(|t| t.clone()).map_err(|_| {
-        BulwarkError::Session("未设置当前请求上下文（未调用 with_current_token）".to_string())
-    })
-}
+// `with_current_token` / `current_token` 实现已迁移至 `context.rs`（规则 25）。
+// 此处通过 re-export 保持外部调用路径 `crate::stp::with_current_token` 不变。
 
 // ============================================================================
 // BulwarkContext：task_local 上下文传播工具（跨 spawn 传播 CURRENT_TOKEN）
@@ -189,32 +176,6 @@ pub struct BulwarkContext {
     token: Option<String>,
 }
 
-impl BulwarkContext {
-    /// 捕获当前 task_local 上下文（`CURRENT_TOKEN`）。
-    ///
-    /// 在父任务中调用，返回的 `BulwarkContext` 可移动到子任务中。
-    /// 未设置 `CURRENT_TOKEN` 时返回 `token: None` 的上下文。
-    pub fn capture() -> Self {
-        Self {
-            token: current_token().ok(),
-        }
-    }
-
-    /// 在当前 task 恢复上下文，执行 `f` 期间设置 `CURRENT_TOKEN`。
-    ///
-    /// 使用 tokio `task_local::scope` 设置值，`f` 结束后自动清除。
-    /// 若 `capture()` 时未设置 token，直接执行 `f`（不设置 task_local）。
-    pub async fn within<F, R>(self, f: F) -> R
-    where
-        F: Future<Output = R>,
-    {
-        match self.token {
-            Some(token) => CURRENT_TOKEN.scope(token, f).await,
-            None => f.await,
-        }
-    }
-}
-
 // ============================================================================
 // Clock trait：可注入时钟抽象
 // ============================================================================
@@ -231,25 +192,6 @@ pub trait Clock: Send + Sync {
 /// 系统时钟实现，委托 `chrono::Utc::now()`。
 pub struct SystemClock;
 
-impl SystemClock {
-    /// 创建系统时钟实例。
-    pub fn new() -> Self {
-        Self
-    }
-}
-
-impl Default for SystemClock {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Clock for SystemClock {
-    fn now(&self) -> DateTime<Utc> {
-        chrono::Utc::now()
-    }
-}
-
 /// Mock 时钟，持有可设置的固定时间，用于测试。
 ///
 /// 通过 `Arc<RwLock<DateTime<Utc>>>` 共享时间状态，
@@ -258,32 +200,6 @@ impl Clock for SystemClock {
 #[derive(Clone)]
 pub struct MockClock {
     time: Arc<RwLock<DateTime<Utc>>>,
-}
-
-impl MockClock {
-    /// 创建 MockClock，初始时间为 `time`。
-    pub fn new(time: DateTime<Utc>) -> Self {
-        Self {
-            time: Arc::new(RwLock::new(time)),
-        }
-    }
-
-    /// 设置当前时间。
-    pub fn set_time(&self, time: DateTime<Utc>) {
-        *self.time.write() = time;
-    }
-
-    /// 推进时间（正数向前，负数向后）。
-    pub fn advance(&self, duration: chrono::Duration) {
-        let mut w = self.time.write();
-        *w += duration;
-    }
-}
-
-impl Clock for MockClock {
-    fn now(&self) -> DateTime<Utc> {
-        *self.time.read()
-    }
 }
 
 // ============================================================================

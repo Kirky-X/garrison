@@ -12,8 +12,10 @@
 //! - `BulwarkSerializerTemplate` 重命名为 `BulwarkSerializer`，方法签名保持兼容
 //! - 新增 `BulwarkSerializerDefault` 默认实现（委托 serde_json）
 
-use crate::error::{BulwarkError, BulwarkResult};
-use std::collections::HashMap;
+pub mod serializer;
+pub mod template;
+
+use crate::error::BulwarkResult;
 
 /// JSON 模板 struct，持有解析后的 `serde_json::Value`，支持 `${key}` 占位符替换。
 ///
@@ -35,77 +37,6 @@ use std::collections::HashMap;
 pub struct BulwarkJsonTemplate {
     /// 解析后的 JSON Value（不保留原始字符串，避免重复解析）。
     value: serde_json::Value,
-}
-
-impl BulwarkJsonTemplate {
-    /// 解析 JSON 字符串为模板。
-    ///
-    /// # 参数
-    /// - `template`: JSON 字符串，可包含 `${key}` 占位符。
-    ///
-    /// # 返回
-    /// - `Ok(Self)`: 解析成功，struct 内部持有解析后的 `Value`。
-    /// - `Err(BulwarkError::Internal)`: JSON 解析失败，消息含解析错误信息。
-    pub fn new(template: &str) -> BulwarkResult<Self> {
-        let value: serde_json::Value = serde_json::from_str(template)
-            .map_err(|e| BulwarkError::Internal(format!("JSON 模板解析失败: {}", e)))?;
-        Ok(Self { value })
-    }
-
-    /// 递归替换 `${key}` 占位符并序列化为 JSON 字符串。
-    ///
-    /// # 参数
-    /// - `params`: 占位符键值对。未在 `params` 中提供的 `${key}` 保留原样。
-    ///
-    /// # 返回
-    /// - `Ok(String)`: 渲染后的 JSON 字符串（可被 `serde_json::from_str` 再次解析）。
-    /// - `Err(BulwarkError::Internal)`: 序列化失败。
-    pub fn render(&self, params: &HashMap<String, String>) -> BulwarkResult<String> {
-        let rendered = render_value(self.value.clone(), params);
-        serde_json::to_string(&rendered)
-            .map_err(|e| BulwarkError::Internal(format!("JSON 序列化失败: {}", e)))
-    }
-
-    /// 获取内部 `Value` 的引用（便于直接访问）。
-    pub fn value(&self) -> &serde_json::Value {
-        &self.value
-    }
-}
-
-/// 递归替换 `Value` 中的 `${key}` 占位符。
-///
-/// - `String` 类型: 执行占位符替换
-/// - `Object` 类型: 递归处理每个值
-/// - `Array` 类型: 递归处理每个元素
-/// - 其他类型: 原样返回
-fn render_value(
-    mut value: serde_json::Value,
-    params: &HashMap<String, String>,
-) -> serde_json::Value {
-    match &mut value {
-        serde_json::Value::String(s) => {
-            for (key, val) in params {
-                let placeholder = format!("${{{}}}", key);
-                if s.contains(&placeholder) {
-                    *s = s.replace(&placeholder, val);
-                }
-            }
-            value
-        },
-        serde_json::Value::Object(map) => {
-            for (_, v) in map.iter_mut() {
-                *v = render_value(v.clone(), params);
-            }
-            value
-        },
-        serde_json::Value::Array(arr) => {
-            for v in arr.iter_mut() {
-                *v = render_value(v.clone(), params);
-            }
-            value
-        },
-        _ => value,
-    }
 }
 
 /// 序列化抽象 trait，提供类型化的序列化/反序列化。
@@ -131,22 +62,12 @@ pub trait BulwarkSerializer {
 #[derive(Debug, Clone, Default)]
 pub struct BulwarkSerializerDefault;
 
-impl BulwarkSerializer for BulwarkSerializerDefault {
-    fn serialize<T: serde::Serialize>(&self, value: &T) -> BulwarkResult<String> {
-        serde_json::to_string(value)
-            .map_err(|e| BulwarkError::Internal(format!("JSON 序列化失败: {}", e)))
-    }
-
-    fn deserialize<T: serde::de::DeserializeOwned>(&self, json: &str) -> BulwarkResult<T> {
-        serde_json::from_str(json)
-            .map_err(|e| BulwarkError::Internal(format!("JSON 反序列化失败: {}", e)))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::BulwarkError;
     use serde::{Deserialize, Serialize};
+    use std::collections::HashMap;
 
     // ========================================================================
     // BulwarkJsonTemplate 测试

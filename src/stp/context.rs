@@ -1,7 +1,10 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! task_local 上下文 — Token 续签结果传递。
+//! task_local 上下文 — Token 续签结果传递 + CURRENT_TOKEN 跨 spawn 传播。
+use super::{BulwarkContext, CURRENT_TOKEN};
+use crate::error::{BulwarkError, BulwarkResult};
+use std::future::Future;
 use std::sync::{Arc, Mutex};
 
 tokio::task_local! {
@@ -137,4 +140,65 @@ mod tests {
         })
         .await;
     }
+}
+
+// ============================================================================
+// BulwarkContext：task_local CURRENT_TOKEN 跨 spawn 传播
+// ============================================================================
+//
+// `BulwarkContext` 结构体定义位于 `super::mod`，本节仅承载 impl 块。
+// tokio `task_local!` 不会自动传播到 `tokio::spawn` 子任务，
+// `BulwarkContext` 通过 capture/within 模式手动传播 `CURRENT_TOKEN`。
+
+impl BulwarkContext {
+    /// 捕获当前 task_local 上下文（`CURRENT_TOKEN`）。
+    ///
+    /// 在父任务中调用，返回的 `BulwarkContext` 可移动到子任务中。
+    /// 未设置 `CURRENT_TOKEN` 时返回 `token: None` 的上下文。
+    pub fn capture() -> Self {
+        Self {
+            token: current_token().ok(),
+        }
+    }
+
+    /// 在当前 task 恢复上下文，执行 `f` 期间设置 `CURRENT_TOKEN`。
+    ///
+    /// 使用 tokio `task_local::scope` 设置值，`f` 结束后自动清除。
+    /// 若 `capture()` 时未设置 token，直接执行 `f`（不设置 task_local）。
+    pub async fn within<F, R>(self, f: F) -> R
+    where
+        F: Future<Output = R>,
+    {
+        match self.token {
+            Some(token) => CURRENT_TOKEN.scope(token, f).await,
+            None => f.await,
+        }
+    }
+}
+
+// ============================================================================
+// CURRENT_TOKEN task_local 上下文 API（with_current_token / current_token）
+// ============================================================================
+//
+// `CURRENT_TOKEN` task_local 定义于 `super::mod`，本节提供作用域设置与读取 API。
+
+/// 设置当前请求的 token 作用域。
+///
+/// 在 axum middleware 中调用：
+/// ```ignore
+/// bulwark::stp::with_current_token(token, async { handler(req).await }).await
+/// ```
+pub async fn with_current_token<R>(token: String, f: impl Future<Output = R>) -> R {
+    CURRENT_TOKEN.scope(token, f).await
+}
+
+/// 获取当前请求的 token（从 task_local 读取）。
+///
+/// # 错误
+/// - 若未在 `with_current_token` 作用域内调用，返回 `BulwarkError::Session`。
+#[allow(clippy::map_clone)]
+pub fn current_token() -> BulwarkResult<String> {
+    CURRENT_TOKEN.try_get().map(|t| t.clone()).map_err(|_| {
+        BulwarkError::Session("未设置当前请求上下文（未调用 with_current_token）".to_string())
+    })
 }
