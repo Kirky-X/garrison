@@ -73,9 +73,10 @@ opentelemetry = { version = "0.32", optional = true, default-features = false, f
 opentelemetry_sdk = { version = "0.32", optional = true, default-features = false, features = ["trace", "rt-tokio"] }
 opentelemetry-otlp = { version = "0.32", optional = true, default-features = false, features = ["trace", "grpc-tonic"] }
 # 需 transport feature 以启用 Interceptor trait
-tonic = { version = "0.13", optional = true, default-features = false, features = ["transport"] }
+# design.md D8：与 opentelemetry-otlp 0.32 统一到 tonic 0.14，避免双版本共存
+tonic = { version = "0.14", optional = true, default-features = false, features = ["transport"] }
 # tonic-health：gRPC 标准健康检查服务（feature-gated: grpc），版本与 tonic 保持一致
-tonic-health = { version = "0.13", optional = true, default-features = false }
+tonic-health = { version = "0.14", optional = true, default-features = false }
 fluent = { version = "0.17", optional = true, default-features = false }
 # fluent-rs 内部依赖，显式声明以直接使用
 unic-langid = { version = "0.9", optional = true, default-features = false }
