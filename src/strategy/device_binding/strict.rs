@@ -53,7 +53,7 @@ impl StrictBinding {
 #[async_trait]
 impl DeviceBindingPolicy for StrictBinding {
     async fn is_new_device(&self, login_id: &str, device_id: &str) -> BulwarkResult<bool> {
-        super::check_is_new_device(&self.session, login_id, device_id).await
+        super::policies::check_is_new_device(&self.session, login_id, device_id).await
     }
 
     async fn require_secondary_auth(
