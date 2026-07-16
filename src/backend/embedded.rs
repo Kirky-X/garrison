@@ -53,16 +53,19 @@ impl Default for BackendEmbedded {
 
 #[async_trait]
 impl AuthBackend for BackendEmbedded {
+    #[tracing::instrument(skip_all, fields(login_id = %login_id))]
     async fn login(&self, login_id: &str, params: &LoginParams) -> BulwarkResult<String> {
         let logic = BulwarkManager::logic()?;
         logic.login(login_id, params).await
     }
 
+    #[tracing::instrument(skip_all)]
     async fn logout(&self, token: &str) -> BulwarkResult<()> {
         let logic = BulwarkManager::logic()?;
         with_current_token(token.to_string(), async { logic.logout().await }).await
     }
 
+    #[tracing::instrument(skip_all)]
     async fn check_login(&self, token: &str) -> BulwarkResult<bool> {
         let logic = BulwarkManager::logic()?;
         with_current_token(token.to_string(), async { logic.check_login().await }).await
@@ -156,6 +159,7 @@ impl AuthBackend for BackendEmbedded {
         auth_logic.switch_to(token, target_login_id).await
     }
 
+    #[tracing::instrument(skip_all)]
     async fn renew_to_equivalent(&self, token: &str) -> BulwarkResult<String> {
         let logic = BulwarkManager::logic()?;
         let auth_logic = logic.auth_logic.as_ref().ok_or_else(|| {
@@ -370,5 +374,93 @@ mod tests {
             .await
             .unwrap();
         assert!(backend.check_login(&token).await.unwrap());
+    }
+
+    // ========================================================================
+    // T014 D4-2: Tracing #[instrument] span 覆盖验证
+    // ========================================================================
+
+    use std::sync::Mutex;
+    use tracing::span::Attributes;
+    use tracing::{Id, Metadata, Subscriber};
+
+    /// 轻量测试 subscriber：记录所有被创建的 span 名称，用于断言
+    /// 目标函数（login/logout/check_login/renew_to_equivalent）是否创建了 span。
+    #[derive(Default)]
+    struct SpanNameCollector {
+        names: Arc<Mutex<Vec<&'static str>>>,
+    }
+
+    impl Subscriber for SpanNameCollector {
+        fn enabled(&self, _metadata: &Metadata<'_>) -> bool {
+            true
+        }
+
+        fn new_span(&self, span: &Attributes<'_>) -> Id {
+            self.names.lock().unwrap().push(span.metadata().name());
+            Id::from_u64(1)
+        }
+
+        fn record(&self, _span: &Id, _values: &tracing::span::Record<'_>) {}
+        fn record_follows_from(&self, _span: &Id, _follows: &Id) {}
+        fn event(&self, _event: &tracing::Event<'_>) {}
+        fn enter(&self, _span: &Id) {}
+        fn exit(&self, _span: &Id) {}
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    #[serial]
+    async fn test_login_creates_tracing_span() {
+        let backend = setup_backend();
+        let names = Arc::new(Mutex::new(Vec::new()));
+        let _guard = tracing::subscriber::set_default(SpanNameCollector {
+            names: names.clone(),
+        });
+        let _ = backend.login("span-user", &LoginParams::default()).await;
+        assert!(
+            names.lock().unwrap().contains(&"login"),
+            "login 应创建名为 'login' 的 tracing span，实际捕获: {:?}",
+            names.lock().unwrap()
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    #[serial]
+    async fn test_logout_creates_tracing_span() {
+        let backend = setup_backend();
+        let token = backend
+            .login("span-user", &LoginParams::default())
+            .await
+            .unwrap();
+        let names = Arc::new(Mutex::new(Vec::new()));
+        let _guard = tracing::subscriber::set_default(SpanNameCollector {
+            names: names.clone(),
+        });
+        let _ = backend.logout(&token).await;
+        assert!(
+            names.lock().unwrap().contains(&"logout"),
+            "logout 应创建名为 'logout' 的 tracing span，实际捕获: {:?}",
+            names.lock().unwrap()
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    #[serial]
+    async fn test_check_login_creates_tracing_span() {
+        let backend = setup_backend();
+        let token = backend
+            .login("span-user", &LoginParams::default())
+            .await
+            .unwrap();
+        let names = Arc::new(Mutex::new(Vec::new()));
+        let _guard = tracing::subscriber::set_default(SpanNameCollector {
+            names: names.clone(),
+        });
+        let _ = backend.check_login(&token).await;
+        assert!(
+            names.lock().unwrap().contains(&"check_login"),
+            "check_login 应创建名为 'check_login' 的 tracing span，实际捕获: {:?}",
+            names.lock().unwrap()
+        );
     }
 }

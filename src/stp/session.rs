@@ -231,6 +231,7 @@ pub trait SessionLogic: BulwarkCore {
 
 #[async_trait]
 impl SessionLogic for BulwarkLogicDefault {
+    #[tracing::instrument(skip_all, fields(login_id = %login_id))]
     async fn login(&self, login_id: &str, params: &LoginParams) -> BulwarkResult<String> {
         // emit metrics：登录尝试（成功/失败均记录）
         #[cfg(feature = "metrics-prometheus")]
@@ -272,6 +273,7 @@ impl SessionLogic for BulwarkLogicDefault {
             .await
     }
 
+    #[tracing::instrument(skip_all)]
     async fn logout(&self) -> BulwarkResult<()> {
         // 未登录时幂等返回 Ok（不抛错）
         match current_token() {
@@ -399,6 +401,7 @@ impl SessionLogic for BulwarkLogicDefault {
         Ok(active)
     }
 
+    #[tracing::instrument(skip_all)]
     async fn check_login(&self) -> BulwarkResult<bool> {
         let token = match current_token() {
             Ok(t) => t,
