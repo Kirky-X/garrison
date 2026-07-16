@@ -200,8 +200,8 @@ db-postgres = ["db-base", "dbnexus/postgres"]
 db-mysql = ["db-base", "dbnexus/mysql"]
 
 # === 协议层插件 ===
-protocol-oauth2 = ["dep:reqwest", "dep:sha2", "dep:base64"]
-protocol-sso = ["dep:reqwest", "dep:quick-xml", "dep:sha2", "hmac", "dep:base64"]
+protocol-oauth2 = ["dep:reqwest", "dep:sha2", "dep:base64", "dep:percent-encoding"]
+protocol-sso = ["dep:reqwest", "dep:quick-xml", "dep:sha2", "hmac", "dep:base64", "dep:percent-encoding"]
 protocol-jwt = ["jsonwebtoken", "dep:sha2"]
 protocol-sign = ["dep:sha2", "hmac", "dep:base64", "dep:hkdf"]
 protocol-apikey = []

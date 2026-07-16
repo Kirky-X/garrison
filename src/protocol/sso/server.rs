@@ -15,9 +15,10 @@ use async_trait::async_trait;
 use std::sync::Arc;
 use uuid::Uuid;
 
-// 复用 `sso::mod.rs` 中的 `SsoTicketData` + `sign_ticket` + `verify_ticket_signature`，
-// 避免 ticket 格式漂移（M6 修复）和签名逻辑重复（M5 修复）。
-use super::{sign_ticket, verify_ticket_signature, SsoTicketData};
+// 复用 `sso::client` 中的 `sign_ticket` + `verify_ticket_signature`，
+// 以及 `sso::mod.rs` 中的 `SsoTicketData`，避免 ticket 格式漂移和签名逻辑重复。
+use super::client::{sign_ticket, verify_ticket_signature};
+use super::SsoTicketData;
 
 /// SSO ticket 默认 TTL（秒），与 `SsoClient` 保持一致。
 const DEFAULT_TICKET_TTL: u64 = 60;
@@ -272,6 +273,14 @@ impl SsoServer for DefaultSsoServer {
         }
         // 未注入 channel 时 noop
         Ok(())
+    }
+}
+
+#[cfg(feature = "protocol-zeroize")]
+impl Drop for DefaultSsoServer {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        self.secret.zeroize();
     }
 }
 

@@ -21,8 +21,20 @@ use crate::core::permission::PermissionChecker;
 use crate::dao::BulwarkDao;
 use crate::error::{BulwarkError, BulwarkResult};
 // listener_manager 注入（feature-gated）
+#[cfg(all(
+    feature = "listener",
+    any(
+        feature = "sms-rate-limit",
+        feature = "firewall-ratelimit",
+        feature = "firewall-bruteforce",
+        feature = "firewall-ddos",
+        feature = "firewall",
+        feature = "oauth2-server"
+    )
+))]
+use crate::listener::BulwarkEvent;
 #[cfg(feature = "listener")]
-use crate::listener::{BulwarkEvent, BulwarkListenerManager};
+use crate::listener::BulwarkListenerManager;
 use crate::plugin::BulwarkPluginManager;
 use crate::stp::BulwarkInterface;
 // hooks 模块依赖 limiteron，仅在 limiteron 启用时编译（匹配 lib.rs 的 limiteron cfg）

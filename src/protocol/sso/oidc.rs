@@ -23,6 +23,7 @@
 use crate::dao::BulwarkDao;
 use crate::error::{BulwarkError, BulwarkResult};
 use async_trait::async_trait;
+use percent_encoding::{utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
@@ -31,6 +32,7 @@ use std::time::Duration;
 ///
 /// 10 分钟内复用缓存的 JWKS 公钥，避免每次 `validate_id_token` 都拉取 JWKS endpoint。
 /// 与 `protocol::oauth2::keycloak::JWKS_CACHE_TTL` 保持一致。
+#[cfg(feature = "protocol-jwt")]
 const JWKS_CACHE_TTL: Duration = Duration::from_secs(600);
 
 /// OIDC state 参数 TTL。
@@ -43,6 +45,7 @@ const OIDC_STATE_TTL: Duration = Duration::from_secs(600);
 ///
 /// 通过 [`BulwarkDao`] 抽象层委托 oxcache 管理 JWKS JSON + TTL，
 /// 禁止手写内存缓存（用户铁律：所有缓存由 oxcache 接管）。
+#[cfg(feature = "protocol-jwt")]
 const JWKS_CACHE_KEY_PREFIX: &str = "oidc:jwks:";
 
 /// OIDC state 缓存 key 前缀（拼入 DAO key：`oidc:state:{state}`）。
@@ -51,6 +54,17 @@ const JWKS_CACHE_KEY_PREFIX: &str = "oidc:jwks:";
 /// 替代手写 `Mutex<HashMap<String, Instant>>`。
 /// oxcache 自动管理 TTL 过期与容量上限，无需 LRU 淘汰逻辑。
 const OIDC_STATE_KEY_PREFIX: &str = "oidc:state:";
+
+/// URL 编码集（与 oauth2/client.rs 保持一致：保留 `-_.~` 不编码）。
+///
+/// 基于 `NON_ALPHANUMERIC` 移除 `- _ . ~` 四个 RFC 3986 unreserved 字符，
+/// 其余非字母数字字符按 `%HH` 编码。原手写 `url_encode` 不编码非 ASCII 与控制字符，
+/// 存在 URL 注入风险，统一委托 `percent-encoding` crate 处理。
+const URLENCODE_SET: &AsciiSet = &NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'_')
+    .remove(b'.')
+    .remove(b'~');
 
 // ============================================================================
 // OIDC 数据结构
@@ -220,6 +234,13 @@ pub struct DefaultOidcProvider {
     /// 通过 `dao.set("oidc:state:{state}", "1", state_ttl.as_secs())` 写入 DAO，
     /// oxcache 自动管理 TTL 过期。
     state_ttl: Duration,
+    /// JWKS 拉取 single-flight 锁（防止缓存击穿惊群效应）。
+    ///
+    /// 仅在启用 `protocol-jwt` feature 时使用：JWKS 缓存 miss 时获取锁，
+    /// 防止 N 个并发 `validate_id_token` 同时触发 `fetch_jwks` 对 IdP JWKS endpoint
+    /// 形成"惊群效应"。持锁后二次检查缓存，命中则直接复用，未命中才真正发起 HTTP 请求。
+    #[cfg(feature = "protocol-jwt")]
+    jwks_fetch_lock: tokio::sync::Mutex<()>,
 }
 
 impl DefaultOidcProvider {
@@ -243,6 +264,8 @@ impl DefaultOidcProvider {
             http_client: reqwest::Client::new(),
             dao: None,
             state_ttl: OIDC_STATE_TTL,
+            #[cfg(feature = "protocol-jwt")]
+            jwks_fetch_lock: tokio::sync::Mutex::new(()),
         }
     }
 
@@ -302,6 +325,7 @@ impl DefaultOidcProvider {
     /// 构造 JWKS 在 DAO 中的缓存 key。
     ///
     /// 格式：`oidc:jwks:{issuer}`，按 issuer 区分不同 IdP。
+    #[cfg(feature = "protocol-jwt")]
     fn jwks_cache_key(&self) -> String {
         format!("{}{}", JWKS_CACHE_KEY_PREFIX, self.config.issuer)
     }
@@ -452,7 +476,10 @@ impl DefaultOidcProvider {
             BulwarkError::InvalidToken("OIDC id_token header 缺少 kid 字段".to_string())
         })?;
 
-        // 2. 从 DAO 读取 JWKS 缓存；缓存 miss 或反序列化失败（缓存损坏）时重新拉取
+        // 2. 从 DAO 读取 JWKS 缓存；缓存 miss 或反序列化失败（缓存损坏）时重新拉取。
+        //    single-flight 锁：缓存 miss 时获取 `jwks_fetch_lock`，防止 N 个并发请求
+        //    同时触发 `fetch_jwks` 对 IdP JWKS endpoint 形成惊群效应。持锁后二次检查
+        //    缓存（其他请求可能已填充），命中则复用，未命中才真正发起 HTTP 请求。
         let cache_key = self.jwks_cache_key();
         let cached = dao.get(&cache_key).await?;
         let jwks: JwksResponse = match cached
@@ -461,15 +488,28 @@ impl DefaultOidcProvider {
         {
             Some(jwks) => jwks,
             None => {
-                // 缓存 miss / TTL 过期 / 反序列化失败：重新拉取并写入缓存
-                self.fetch_jwks().await?;
-                let json = dao.get(&cache_key).await?.ok_or_else(|| {
-                    BulwarkError::Internal(
-                        "OIDC fetch_jwks 后缓存仍为空（DAO 写入异常）".to_string(),
-                    )
-                })?;
-                serde_json::from_str(&json)
-                    .map_err(|e| BulwarkError::Internal(format!("OIDC JWKS 反序列化失败: {}", e)))?
+                // 缓存 miss / TTL 过期 / 反序列化失败：获取 single-flight 锁
+                let _lock = self.jwks_fetch_lock.lock().await;
+                // 二次检查：持锁期间其他请求可能已填充缓存，命中则直接复用
+                let cached = dao.get(&cache_key).await?;
+                match cached
+                    .as_deref()
+                    .and_then(|s| serde_json::from_str::<JwksResponse>(s).ok())
+                {
+                    Some(jwks) => jwks,
+                    None => {
+                        // 仍未命中：真正发起 JWKS 拉取并写入缓存
+                        self.fetch_jwks().await?;
+                        let json = dao.get(&cache_key).await?.ok_or_else(|| {
+                            BulwarkError::Internal(
+                                "OIDC fetch_jwks 后缓存仍为空（DAO 写入异常）".to_string(),
+                            )
+                        })?;
+                        serde_json::from_str(&json).map_err(|e| {
+                            BulwarkError::Internal(format!("OIDC JWKS 反序列化失败: {}", e))
+                        })?
+                    },
+                }
             },
         };
 
@@ -661,35 +701,12 @@ struct TokenResponse {
     expires_in: Option<i64>,
 }
 
-/// 简单的 URL 编码（仅编码特殊字符）。
+/// URL 百分号编码（保留 `-_.~` 不编码）。
+///
+/// 委托 `percent-encoding` crate，与 `protocol::oauth2::client::url_encode` 行为一致。
+/// 原手写实现不编码非 ASCII 与控制字符，存在 URL 注入风险，已废弃。
 fn url_encode(s: &str) -> String {
-    let mut result = String::with_capacity(s.len());
-    for c in s.chars() {
-        match c {
-            ' ' => result.push_str("%20"),
-            '!' => result.push_str("%21"),
-            '#' => result.push_str("%23"),
-            '$' => result.push_str("%24"),
-            '%' => result.push_str("%25"),
-            '&' => result.push_str("%26"),
-            '\'' => result.push_str("%27"),
-            '(' => result.push_str("%28"),
-            ')' => result.push_str("%29"),
-            '*' => result.push_str("%2A"),
-            '+' => result.push_str("%2B"),
-            ',' => result.push_str("%2C"),
-            '/' => result.push_str("%2F"),
-            ':' => result.push_str("%3A"),
-            ';' => result.push_str("%3B"),
-            '=' => result.push_str("%3D"),
-            '?' => result.push_str("%3F"),
-            '@' => result.push_str("%40"),
-            '[' => result.push_str("%5B"),
-            ']' => result.push_str("%5D"),
-            _ => result.push(c),
-        }
-    }
-    result
+    utf8_percent_encode(s, URLENCODE_SET).to_string()
 }
 
 #[cfg(test)]
