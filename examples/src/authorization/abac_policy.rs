@@ -14,8 +14,9 @@
 //! 本示例直接使用 `AbacEngine::evaluate_with_temp_policy` 演示核心求值逻辑，
 //! 避免引入 BulwarkManager 全局状态依赖。
 
-use bulwark::abac::AbacEngine;
+use bulwark::abac::{AbacEngine, EmptyEntityLoader};
 use bulwark::error::BulwarkResult;
+use std::sync::Arc;
 
 /// Cedar schema JSON：定义 User / Resource 实体类型和 access 动作。
 const SCHEMA_JSON: &str = r#"{
@@ -61,7 +62,7 @@ pub async fn run() -> BulwarkResult<()> {
     println!("=== Bulwark ABAC 策略示例 ===\n");
 
     // 1. 创建 AbacEngine
-    let engine = AbacEngine::new(SCHEMA_JSON)?;
+    let engine = AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader))?;
     println!("[1] AbacEngine 创建成功（schema: User / Resource / access 动作）\n");
 
     // 2. 临时策略求值：when { 1 == 1 } → Allow

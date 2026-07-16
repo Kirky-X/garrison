@@ -276,6 +276,20 @@ async fn read_body(response: axum::response::Response) -> String {
     String::from_utf8(bytes.to_vec()).expect("utf8 body")
 }
 
+/// 设置默认 TENANT scope（tenant_id=0），避免 tenant-isolation feature 启用时
+/// `current_tenant_id_or_error()` 返回 Err(Config) 导致权限校验提前失败。
+async fn with_default_tenant<F, R>(f: F) -> R
+where
+    F: std::future::Future<Output = R>,
+{
+    use bulwark::{TenantContext, TenantSource, TENANT};
+    let ctx = TenantContext {
+        tenant_id: 0,
+        resolved_from: TenantSource::Header,
+    };
+    TENANT.scope(ctx, f).await
+}
+
 // ============================================================================
 // #[check_login] 测试
 // ============================================================================
@@ -337,54 +351,68 @@ async fn check_login_without_token_loose_returns_401() {
 #[tokio::test]
 #[serial]
 async fn check_permission_with_permission_returns_200() {
-    init_manager(make_config_strict(), &[("1001", &["user:read"])], &[]);
-    let token = BulwarkUtil::login_simple("1001").await.unwrap();
+    with_default_tenant(async {
+        init_manager(make_config_strict(), &[("1001", &["user:read"])], &[]);
+        let token = BulwarkUtil::login_simple("1001").await.unwrap();
 
-    let response = bulwark::stp::with_current_token(token, async { perm_handler().await }).await;
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = read_body(response).await;
-    assert_eq!(body, "perm_ok");
+        let response =
+            bulwark::stp::with_current_token(token, async { perm_handler().await }).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = read_body(response).await;
+        assert_eq!(body, "perm_ok");
+    })
+    .await
 }
 
 /// 无权限 → 403。
 #[tokio::test]
 #[serial]
 async fn check_permission_without_permission_returns_403() {
-    init_manager(make_config_strict(), &[], &[]); // 无权限数据
-    let token = BulwarkUtil::login_simple("1001").await.unwrap();
+    with_default_tenant(async {
+        init_manager(make_config_strict(), &[], &[]); // 无权限数据
+        let token = BulwarkUtil::login_simple("1001").await.unwrap();
 
-    let response = bulwark::stp::with_current_token(token, async { perm_handler().await }).await;
-    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let response =
+            bulwark::stp::with_current_token(token, async { perm_handler().await }).await;
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    })
+    .await
 }
 
 /// AND 语义：仅持有部分权限 → 403。
 #[tokio::test]
 #[serial]
 async fn check_permission_and_partial_returns_403() {
-    init_manager(make_config_strict(), &[("1001", &["user:read"])], &[]); // 缺 user:write
-    let token = BulwarkUtil::login_simple("1001").await.unwrap();
+    with_default_tenant(async {
+        init_manager(make_config_strict(), &[("1001", &["user:read"])], &[]); // 缺 user:write
+        let token = BulwarkUtil::login_simple("1001").await.unwrap();
 
-    let response =
-        bulwark::stp::with_current_token(token, async { perm_and_handler().await }).await;
-    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let response =
+            bulwark::stp::with_current_token(token, async { perm_and_handler().await }).await;
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    })
+    .await
 }
 
 /// AND 语义：持有全部权限 → 200。
 #[tokio::test]
 #[serial]
 async fn check_permission_and_all_returns_200() {
-    init_manager(
-        make_config_strict(),
-        &[("1001", &["user:read", "user:write"])],
-        &[],
-    );
-    let token = BulwarkUtil::login_simple("1001").await.unwrap();
+    with_default_tenant(async {
+        init_manager(
+            make_config_strict(),
+            &[("1001", &["user:read", "user:write"])],
+            &[],
+        );
+        let token = BulwarkUtil::login_simple("1001").await.unwrap();
 
-    let response =
-        bulwark::stp::with_current_token(token, async { perm_and_handler().await }).await;
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = read_body(response).await;
-    assert_eq!(body, "perm_and_ok");
+        let response =
+            bulwark::stp::with_current_token(token, async { perm_and_handler().await }).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = read_body(response).await;
+        assert_eq!(body, "perm_and_ok");
+    })
+    .await
 }
 
 // ============================================================================
@@ -647,7 +675,8 @@ async fn check_mfa_without_token_forwards_error() {
 #[tokio::test]
 #[serial]
 async fn check_abac_no_engine_returns_200() {
-    #[cfg(feature = "abac")]
+    // reset_abac_for_test 需要 testing 特性（spec 约束：testing 严禁在 full/production 启用）
+    #[cfg(all(feature = "abac", feature = "testing"))]
     {
         bulwark::abac::reset_abac_for_test();
     }
@@ -678,17 +707,20 @@ async fn check_abac_without_login_no_engine_passes_through() {
 }
 
 /// `#[check_abac]` ABAC 引擎已初始化 + 策略 Allow → 200。
-#[cfg(feature = "abac")]
+///
+/// `reset_abac_for_test` 需要 `testing` 特性（spec 约束：testing 严禁在 full/production 启用），
+/// 故此测试仅在 `testing` 特性下编译运行。
+#[cfg(all(feature = "abac", feature = "testing"))]
 #[tokio::test]
 #[serial]
 async fn check_abac_engine_initialized_allow_returns_200() {
-    use bulwark::abac::{init_abac_engine, reset_abac_for_test, AbacEngine};
+    use bulwark::abac::{init_abac_engine, reset_abac_for_test, AbacEngine, EmptyEntityLoader};
 
     reset_abac_for_test();
     init_manager(make_config_strict(), &[], &[]);
 
     let schema_json = r#"{"":{"entityTypes":{"User":{"shape":{"type":"Record","attributes":{}}},"Resource":{"shape":{"type":"Record","attributes":{}}}},"actions":{"access":{"appliesTo":{"principalTypes":["User"],"resourceTypes":["Resource"]}}}}}"#;
-    let engine = AbacEngine::new(schema_json).expect("schema valid");
+    let engine = AbacEngine::new(schema_json, Arc::new(EmptyEntityLoader)).expect("schema valid");
     init_abac_engine(engine).expect("init_abac_engine");
 
     let token = BulwarkUtil::login_simple("1001").await.unwrap();
@@ -703,17 +735,19 @@ async fn check_abac_engine_initialized_allow_returns_200() {
 }
 
 /// `#[check_abac]` ABAC 引擎已初始化 + 策略 Deny → 403。
-#[cfg(feature = "abac")]
+///
+/// 同 `check_abac_engine_initialized_allow_returns_200`，需 `testing` 特性。
+#[cfg(all(feature = "abac", feature = "testing"))]
 #[tokio::test]
 #[serial]
 async fn check_abac_engine_initialized_deny_returns_403() {
-    use bulwark::abac::{init_abac_engine, reset_abac_for_test, AbacEngine};
+    use bulwark::abac::{init_abac_engine, reset_abac_for_test, AbacEngine, EmptyEntityLoader};
 
     reset_abac_for_test();
     init_manager(make_config_strict(), &[], &[]);
 
     let schema_json = r#"{"":{"entityTypes":{"User":{"shape":{"type":"Record","attributes":{}}},"Resource":{"shape":{"type":"Record","attributes":{}}}},"actions":{"access":{"appliesTo":{"principalTypes":["User"],"resourceTypes":["Resource"]}}}}}"#;
-    let engine = AbacEngine::new(schema_json).expect("schema valid");
+    let engine = AbacEngine::new(schema_json, Arc::new(EmptyEntityLoader)).expect("schema valid");
     init_abac_engine(engine).expect("init_abac_engine");
 
     let token = BulwarkUtil::login_simple("1001").await.unwrap();

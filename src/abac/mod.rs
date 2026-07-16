@@ -9,6 +9,8 @@
 //! # 核心类型
 //!
 //! - `AbacEngine`：Cedar 策略求值器（`abac` feature 开启时可用）
+//! - `EntityLoader`：Cedar Entities 数据源 trait（vuln-0001 修复引入）
+//! - `EmptyEntityLoader` / `StaticEntityLoader`：内置实现
 //!
 //! # 全局引擎管理
 //!
@@ -25,7 +27,59 @@
 mod engine;
 
 #[cfg(feature = "abac")]
+mod loader;
+
+#[cfg(feature = "abac")]
 pub use engine::AbacEngine;
+
+#[cfg(feature = "abac")]
+pub use loader::{EmptyEntityLoader, StaticEntityLoader};
+
+// ============================================================================
+// EntityLoader trait（vuln-0001 修复）
+// ============================================================================
+
+/// Cedar Entities 数据源 trait。
+///
+/// vuln-0001 修复：原 `AbacEngine::evaluate` / `evaluate_with_temp_policy` 硬编码
+/// `let entities = Entities::empty();`，导致基于实体属性的策略（如
+/// `resource.owner == principal.id`）永远返回 false。本 trait 抽象实体加载逻辑，
+/// 让调用方注入实体数据源，支持基于属性的 ABAC 策略。
+///
+/// # 内置实现
+///
+/// - [`EmptyEntityLoader`]：返回空 Entities（向后兼容默认行为）
+/// - [`StaticEntityLoader`]：持有预构造 Entities，clone 返回（测试与固定实体场景）
+///
+/// # 自定义实现
+///
+/// 生产代码可实现本 trait 从数据库 / 远程服务加载实体，例如：
+///
+/// ```ignore
+/// #[async_trait::async_trait]
+/// impl EntityLoader for MyDbEntityLoader {
+///     async fn load_entities(&self) -> BulwarkResult<cedar_policy::Entities> {
+///         // 从数据库查询实体并构造 Entities
+///         todo!()
+///     }
+/// }
+/// ```
+///
+/// # 缓存语义
+///
+/// `load_entities` 在每次 `AbacEngine::evaluate` 时调用。决策缓存不主动失效，
+/// 调用方需保证 `EntityLoader` 返回稳定实体集合（同一实体集合的多次加载应返回一致结果）。
+/// 若 `load_entities` 返回错误，错误通过 `?` 传播，缓存不受污染。
+#[cfg(feature = "abac")]
+#[async_trait::async_trait]
+pub trait EntityLoader: Send + Sync {
+    /// 加载 Cedar Entities 集合。
+    ///
+    /// # 错误
+    ///
+    /// - 实体加载失败（数据源不可达、解析错误等）：返回 `BulwarkError`
+    async fn load_entities(&self) -> BulwarkResult<cedar_policy::Entities>;
+}
 
 // ============================================================================
 // 全局 AbacEngine 管理（abac feature 开启时）
@@ -54,9 +108,10 @@ static CURRENT_ENGINE: Mutex<Option<Arc<AbacEngine>>> = Mutex::new(None);
 /// # 示例
 ///
 /// ```ignore
-/// use bulwark::abac::{AbacEngine, init_abac_engine};
+/// use bulwark::abac::{AbacEngine, EmptyEntityLoader, init_abac_engine};
+/// use std::sync::Arc;
 ///
-/// let engine = AbacEngine::new(schema_json).unwrap();
+/// let engine = AbacEngine::new(schema_json, Arc::new(EmptyEntityLoader)).unwrap();
 /// init_abac_engine(engine).unwrap();
 /// ```
 #[cfg(feature = "abac")]
@@ -190,6 +245,7 @@ pub async fn check_abac_with_policy(
 #[cfg(all(test, feature = "abac"))]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     /// 全局引擎未初始化时 check_abac_with_policy fail-closed 返回 Err(Config)（vuln-0005 修复）。
     #[tokio::test]
@@ -221,9 +277,17 @@ mod tests {
     #[serial_test::serial]
     async fn init_abac_engine_duplicate_fails() {
         reset_abac_for_test();
-        let engine = AbacEngine::new(r#"{"":{"entityTypes":{},"actions":{}}}"#).unwrap();
+        let engine = AbacEngine::new(
+            r#"{"":{"entityTypes":{},"actions":{}}}"#,
+            Arc::new(EmptyEntityLoader),
+        )
+        .unwrap();
         init_abac_engine(engine).unwrap();
-        let engine2 = AbacEngine::new(r#"{"":{"entityTypes":{},"actions":{}}}"#).unwrap();
+        let engine2 = AbacEngine::new(
+            r#"{"":{"entityTypes":{},"actions":{}}}"#,
+            Arc::new(EmptyEntityLoader),
+        )
+        .unwrap();
         let result = init_abac_engine(engine2);
         assert!(result.is_err(), "重复 init_abac_engine 应返回错误");
         reset_abac_for_test();
@@ -234,7 +298,11 @@ mod tests {
     #[serial_test::serial]
     async fn init_abac_engine_success_then_get_returns_some() {
         reset_abac_for_test();
-        let engine = AbacEngine::new(r#"{"":{"entityTypes":{},"actions":{}}}"#).unwrap();
+        let engine = AbacEngine::new(
+            r#"{"":{"entityTypes":{},"actions":{}}}"#,
+            Arc::new(EmptyEntityLoader),
+        )
+        .unwrap();
         init_abac_engine(engine).expect("首次 init_abac_engine 应成功");
 
         // get_abac_engine 应返回 Some(Arc<AbacEngine>)
@@ -270,9 +338,17 @@ mod tests {
     #[serial_test::serial]
     async fn init_abac_engine_duplicate_returns_config_error() {
         reset_abac_for_test();
-        let engine = AbacEngine::new(r#"{"":{"entityTypes":{},"actions":{}}}"#).unwrap();
+        let engine = AbacEngine::new(
+            r#"{"":{"entityTypes":{},"actions":{}}}"#,
+            Arc::new(EmptyEntityLoader),
+        )
+        .unwrap();
         init_abac_engine(engine).expect("首次 init 应成功");
-        let engine2 = AbacEngine::new(r#"{"":{"entityTypes":{},"actions":{}}}"#).unwrap();
+        let engine2 = AbacEngine::new(
+            r#"{"":{"entityTypes":{},"actions":{}}}"#,
+            Arc::new(EmptyEntityLoader),
+        )
+        .unwrap();
         let result = init_abac_engine(engine2);
         assert!(result.is_err());
         match result {
@@ -294,7 +370,11 @@ mod tests {
     #[serial_test::serial]
     async fn reset_abac_for_test_clears_engine() {
         reset_abac_for_test();
-        let engine = AbacEngine::new(r#"{"":{"entityTypes":{},"actions":{}}}"#).unwrap();
+        let engine = AbacEngine::new(
+            r#"{"":{"entityTypes":{},"actions":{}}}"#,
+            Arc::new(EmptyEntityLoader),
+        )
+        .unwrap();
         init_abac_engine(engine).expect("init 应成功");
         assert!(get_abac_engine().unwrap().is_some());
 
@@ -392,7 +472,8 @@ mod tests {
         init_manager_for_abac();
 
         // 初始化 ABAC 引擎
-        let engine = AbacEngine::new(EVAL_SCHEMA_JSON).expect("schema valid");
+        let engine =
+            AbacEngine::new(EVAL_SCHEMA_JSON, Arc::new(EmptyEntityLoader)).expect("schema valid");
         init_abac_engine(engine).expect("init_abac_engine 应成功");
 
         // 登录获取 token
@@ -422,7 +503,8 @@ mod tests {
         crate::manager::BulwarkManager::reset_for_test();
         init_manager_for_abac();
 
-        let engine = AbacEngine::new(EVAL_SCHEMA_JSON).expect("schema valid");
+        let engine =
+            AbacEngine::new(EVAL_SCHEMA_JSON, Arc::new(EmptyEntityLoader)).expect("schema valid");
         init_abac_engine(engine).expect("init_abac_engine 应成功");
 
         let token = BulwarkUtil::login_simple("1001")
@@ -460,7 +542,8 @@ mod tests {
         crate::manager::BulwarkManager::reset_for_test();
         init_manager_for_abac();
 
-        let engine = AbacEngine::new(EVAL_SCHEMA_JSON).expect("schema valid");
+        let engine =
+            AbacEngine::new(EVAL_SCHEMA_JSON, Arc::new(EmptyEntityLoader)).expect("schema valid");
         init_abac_engine(engine).expect("init_abac_engine 应成功");
 
         // 不调用 login_simple，不设置 with_current_token
@@ -502,7 +585,8 @@ mod tests {
         crate::manager::BulwarkManager::reset_for_test();
         init_manager_for_abac();
 
-        let engine = AbacEngine::new(EVAL_SCHEMA_JSON).expect("schema valid");
+        let engine =
+            AbacEngine::new(EVAL_SCHEMA_JSON, Arc::new(EmptyEntityLoader)).expect("schema valid");
         init_abac_engine(engine).expect("init_abac_engine 应成功");
 
         let token = BulwarkUtil::login_simple("1001")
@@ -549,7 +633,8 @@ mod tests {
         crate::manager::BulwarkManager::reset_for_test();
         init_manager_for_abac();
 
-        let engine = AbacEngine::new(EVAL_SCHEMA_JSON).expect("schema valid");
+        let engine =
+            AbacEngine::new(EVAL_SCHEMA_JSON, Arc::new(EmptyEntityLoader)).expect("schema valid");
         init_abac_engine(engine).expect("init_abac_engine 应成功");
 
         let token = BulwarkUtil::login_simple("1001")
