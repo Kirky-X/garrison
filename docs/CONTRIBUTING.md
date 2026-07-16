@@ -2,7 +2,7 @@
 
 首先，感谢你对 Bulwark 项目的关注与支持！本文档将引导你完成从环境搭建到提交 Pull Request 的完整贡献流程。
 
-Bulwark 是一个面向 Rust 生态的身份认证鉴权框架，借鉴 Sa-Token v1.45.0 设计。项目采用 TDD（测试驱动开发）工作流，对代码质量有严格要求：292 个单元测试 + 30 个集成测试 + doc-tests、97.81% 覆盖率、clippy 零警告、所有 public API 均带 `///` 文档注释。
+Bulwark 是一个面向 Rust 生态的身份认证鉴权框架。项目采用 TDD（测试驱动开发）工作流，对代码质量有严格要求：292 个单元测试 + 30 个集成测试 + doc-tests、97.81% 覆盖率、clippy 零警告、所有 public API 均带 `///` 文档注释。
 
 > 相关文档：[开发规范](./DEVELOPMENT.md) | [架构设计](./ARCHITECTURE.md) | [配置指南](./CONFIGURATION.md)
 

@@ -6,7 +6,7 @@
 - License：Apache-2.0
 - 作者：Kirky.X
 - MSRV：Rust 1.85+
-- 设计参考：Sa-Token v1.45.0
+- 设计参考：13 特性域领域建模
 
 > 贡献流程详见 [CONTRIBUTING.md](./CONTRIBUTING.md)；架构设计详见 [architecture.md](./ARCHITECTURE.md)。
 

@@ -6,7 +6,7 @@
 <h1 align="center">Bulwark</h1>
 
 <p align="center">
-  <b>面向 Rust 生态的身份认证鉴权框架，借鉴 Sa-Token v1.45.0 设计理念</b><br/>
+  <b>面向 Rust 生态的一站式身份认证鉴权框架</b><br/>
   <a href="#quick-start">🚀 快速开始</a> •
   <a href="#features">📖 特性</a> •
   <a href="./docs/ARCHITECTURE.md">🏗 架构</a> •
@@ -49,7 +49,7 @@
 
 ## 🔭 概述
 
-**Bulwark** 是一个面向 Rust 生态的身份认证鉴权框架，借鉴 Sa-Token v1.45.0 的设计理念，
+**Bulwark** 是一个面向 Rust 生态的身份认证鉴权框架，
 提供基于 Token 的会话管理、RBAC 权限模型、axum Web 框架集成等核心能力。
 
 框架采用**双抽象层 + 全局单例**架构：
@@ -80,7 +80,7 @@
 | 🧪 **高覆盖** | 1463+ 个测试通过，95%+ 行覆盖率，clippy 零警告 |
 | 🌐 **Web 框架适配** | axum/actix/warp 三框架注解式 extractor（`CheckLogin` / `CheckRole` / `CheckPermission` + 过程宏） |
 
-### 特性域覆盖（对标 Sa-Token + 0.4.0~0.6.0 协议层与生产能力补齐）
+### 特性域覆盖（0.4.0~0.6.0 协议层与生产能力补齐）
 
 | 特性域 | 状态 | 说明 |
 |--------|------|------|
@@ -443,7 +443,7 @@ async fn main() -> BulwarkResult<()> {
 
 ## 🙏 致谢
 
-- [Sa-Token](https://github.com/dromara/sa-token)：本项目的设计灵感来源，Java 生态最优秀的认证鉴权框架之一
+- [Sa-Token](https://github.com/dromara/sa-token)：Java 生态的认证鉴权框架，为本项目早期领域建模提供参考
 - [axum](https://github.com/tokio-rs/axum)：tokio 团队出品的 Rust Web 框架
 - [oxcache](https://github.com/Kirky-X/oxcache)：Rust 多级缓存库（L1 moka + L2 redis）
 - [dbnexus](https://github.com/Kirky-X/dbnexus)：Rust 数据库抽象层（SQLite / PostgreSQL / MySQL）

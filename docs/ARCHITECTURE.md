@@ -1,6 +1,6 @@
 # Bulwark 架构设计文档
 
-> Bulwark 是面向 Rust 生态的身份认证鉴权框架，借鉴 Sa-Token v1.45.0 设计理念。
+> Bulwark 是面向 Rust 生态的身份认证鉴权框架。
 >
 > - 版本：0.6.0（账号安全引擎 + gap closure：account/ 模块 / Credential SPI / PasswordPolicyEngine / AuthenticationFlow DSL / remember-me / Redis 部署模式 / switch_to / SAML 2.0 / OIDC RP / Redis pub/sub SsoChannel / 多租户 / 社交登录 / 审计日志 / 安全防护 / 角色层级 / 决策溯源 / Keycloak OIDC RP / PostgreSQL / MySQL）
 > - 运行时：tokio 1.x
@@ -17,7 +17,7 @@
 Bulwark 采用 **双抽象层 + 全局单例** 架构，核心设计目标：
 
 1. 业务代码只面向 trait 编程，存储后端可平滑替换；
-2. 启动时一次性注入依赖，运行期零状态调用，使用体验对标 Sa-Token 的 `StpUtil`。
+2. 启动时一次性注入依赖，运行期零状态调用，业务代码通过 `BulwarkManager` 静态 API 即可使用。
 
 ### 1.1 双抽象层
 
@@ -372,5 +372,5 @@ impl BulwarkPermissionStrategy for MyStrategy {
 - 开发规范与 TDD 工作流：[development.md](./DEVELOPMENT.md)
 - 版本演进规划：[roadmap.md](./ROADMAP.md)
 - 部署指南：[deployment.md](./DEPLOYMENT.md)
-- Sa-Token v1.45.0 设计原型
+- 早期领域建模参考
 - specmark specs：`specmark/specs/*`

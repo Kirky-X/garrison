@@ -1,6 +1,6 @@
 # 版本路线图
 
-本页描述 Bulwark（Rust 认证授权框架，借鉴 Sa-Token v1.45.0）的版本演进规划。
+本页描述 Bulwark（Rust 认证授权框架）的版本演进规划。
 
 > 变更管理通过 OpenSpec 工作流进行：proposal → design → tasks → archive。
 
@@ -36,7 +36,7 @@
 - ✅ 核心扩展：`Token` trait + `AuthLogic` + `PermissionChecker` + `BulwarkPlugin` + `BulwarkListener`
 - ✅ 新增配置字段：`jwt_algorithm` / `sign_window_seconds` / `sso_ticket_ttl_seconds`
 
-**里程碑**：覆盖 Sa-Token 13 个特性域的大部分协议与安全子域，从"可用"走向"完整"。
+**里程碑**：覆盖 13 个特性域的大部分协议与安全子域，从"可用"走向"完整"。
 
 ## v0.2.1 稳定性优化（已完成）
 
@@ -64,7 +64,7 @@
 - 📋 Refresh Token 自动轮换
 - 📋 审计日志持久化
 
-**里程碑**：补充高级安全特性，对标 Sa-Token 的高级场景能力。
+**里程碑**：补充高级安全特性，对标企业级高级场景能力。
 
 ## v1.0.0 稳定版（待规划）
 
