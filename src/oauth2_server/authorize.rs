@@ -36,7 +36,7 @@ const CODE_VERIFIER_MIN_LEN: usize = 43;
 /// code_verifier 最大长度（RFC 7636 §4.1）。
 const CODE_VERIFIER_MAX_LEN: usize = 128;
 
-/// VULN-0007 修复：URL 查询参数值编码集。
+/// URL 查询参数值编码集。
 ///
 /// 编码控制字符 + 保留字符 + 不安全字符，防止参数注入和 URL 解析歧义。
 /// `&` / `=` / `#` / `+` / `%` 等保留字符被编码，避免在查询参数值中被误解析。
@@ -204,7 +204,7 @@ impl AuthorizeHandler {
         let user_id = match user_id {
             Some(id) => id,
             None => {
-                // VULN-0007 修复：return_to 中所有参数值必须百分号编码，
+                // return_to 中所有参数值必须百分号编码，
                 // 防止 redirect_uri/state 含特殊字符导致参数注入或解析歧义。
                 let return_to = format!(
                     "/oauth2/authorize?client_id={}&redirect_uri={}&response_type=code&code_challenge={}&code_challenge_method=S256",
@@ -228,7 +228,7 @@ impl AuthorizeHandler {
             .map(|s| s.split_whitespace().map(|x| x.to_string()).collect())
             .unwrap_or_default();
 
-        // VULN-0003: 存储前校验 scope 是否在客户端 allowed_scopes 内
+        // 存储前校验 scope 是否在客户端 allowed_scopes 内
         client.validate_scopes(&scopes)?;
 
         // 8. 生成授权码
@@ -249,7 +249,7 @@ impl AuthorizeHandler {
         self.dao.set(&key, &json, AUTH_CODE_TTL_SECONDS).await?;
 
         // 10. 构造重定向 URL
-        // VULN-0007 修复：state 参数必须百分号编码，防止含 & = # 等特殊字符导致解析歧义。
+        // state 参数必须百分号编码，防止含 & = # 等特殊字符导致解析歧义。
         // code 为 base64url 编码（仅含 [A-Za-z0-9_-]），无需额外编码。
         let mut location = format!("{}?code={}", req.redirect_uri, code);
         if let Some(state) = &req.state {
@@ -324,10 +324,6 @@ pub fn verify_pkce(code_verifier: &str, code_challenge: &str) -> BulwarkResult<b
     let computed = generate_code_challenge(code_verifier);
     Ok(computed == code_challenge)
 }
-
-// ============================================================================
-// 测试
-// ============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -559,7 +555,7 @@ mod tests {
         }
     }
 
-    /// VULN-0007: authorize 端点 return_to 参数必须对 redirect_uri 进行百分号编码。
+    /// authorize 端点 return_to 参数必须对 redirect_uri 进行百分号编码。
     /// redirect_uri 含 `&` 时，未编码会导致 return_to 被截断/解析错误（参数注入）。
     #[tokio::test]
     async fn authorize_return_to_encodes_redirect_uri_with_ampersand() {
@@ -593,7 +589,7 @@ mod tests {
             .expect("应返回 LoginRequired");
         match resp {
             AuthorizeResponse::LoginRequired { login_url } => {
-                // VULN-0007: return_to 必须被整体百分号编码，
+                // return_to 必须被整体百分号编码，
                 // 原始 URL 中的 & = ? / 等保留字符不能以字面形式出现在 login_url 查询参数中。
                 // 验证：return_to= 后的值中不应出现未编码的 & 或 =（来自原始 URL 结构）
                 let return_to_part = login_url
@@ -622,7 +618,7 @@ mod tests {
         }
     }
 
-    /// VULN-0007: redirect URL 中的 state 参数必须百分号编码。
+    /// redirect URL 中的 state 参数必须百分号编码。
     #[tokio::test]
     async fn authorize_redirect_url_encodes_state() {
         let (handler, _) = make_handler();
@@ -660,7 +656,7 @@ mod tests {
         }
     }
 
-    /// VULN-0003: authorize 端点请求超出 allowed_scopes 的 scope 返回 invalid_scope。
+    /// authorize 端点请求超出 allowed_scopes 的 scope 返回 invalid_scope。
     /// make_test_client 的 allowed_scopes = ["read"]，请求 "admin" 应被拒绝。
     #[tokio::test]
     async fn authorize_scope_not_allowed() {
@@ -684,7 +680,7 @@ mod tests {
         );
     }
 
-    /// VULN-0003: authorize 端点请求合法 scope 正常通过。
+    /// authorize 端点请求合法 scope 正常通过。
     #[tokio::test]
     async fn authorize_scope_allowed() {
         let (handler, _) = make_handler();

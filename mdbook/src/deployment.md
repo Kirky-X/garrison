@@ -58,7 +58,7 @@ OXCACHE_REDIS_URL=redis://:password@redis-host:6379/0
 
 要点：
 
-- L1 moka 进程内缓存 + L2 redis 跨实例共享
+- L1 内存 + L2 redis 跨实例共享
 - Token-Session 与 Account-Session 均写入 redis
 - TTL 由 `config.timeout` 控制，redis 自动过期
 - 生产环境建议 Redis 启用 AOF/RDB 持久化

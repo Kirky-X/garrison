@@ -52,7 +52,6 @@ impl BulwarkAuthServer {
 
     /// 用 trait-kit AsyncKit 构建后端（可选路径，feature = "backend-kit"）。
     ///
-    /// 替换手写 `BulwarkAuthServer::new(Arc::new(BackendEmbedded::new()))`。
     /// 从已构建的 `AsyncKit<Ready>` 中 require `BackendModule` 的 capability
     /// （`Arc<dyn AuthBackend>`），委托给 [`Self::new`]。
     ///
@@ -102,7 +101,7 @@ impl BulwarkAuthServer {
         self
     }
 
-    /// 设置限速 HashMap 最大条目数（VULN-0008，默认 100_000）。
+    /// 设置限速 HashMap 最大条目数（默认 100_000）。
     ///
     /// 超过此值时 LRU 淘汰最久未访问的 bucket，防 DoS 内存耗尽。
     pub fn with_rate_limit_max_entries(mut self, max_entries: usize) -> Self {
@@ -110,7 +109,7 @@ impl BulwarkAuthServer {
         self
     }
 
-    /// 设置可信代理 IP 列表（VULN-0010）。
+    /// 设置可信代理 IP 列表。
     ///
     /// 仅来自这些 IP 的请求的 X-Forwarded-For 头被信任，其余使用连接 IP。
     pub fn with_trusted_proxies(mut self, proxies: Vec<std::net::IpAddr>) -> Self {

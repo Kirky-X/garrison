@@ -94,7 +94,7 @@ impl SwitchToGuard for DenyAllSwitchToGuard {
 ///
 /// # Deprecated
 ///
-/// vuln-0004 修复：裸用此 guard 等价于关闭 switch_to 权限校验，任何身份可切换到任意
+/// 裸用此 guard 等价于关闭 switch_to 权限校验，任何身份可切换到任意
 /// 目标身份（含管理员），构成垂直越权风险。测试代码也应实现自定义 guard，参考
 /// [`AdminOnlyGuard`] doctest 示例。
 ///
@@ -254,7 +254,7 @@ mod tests {
 
     /// 辅助函数：创建 AuthLogicDefault 实例，注入 AllowAllSwitchToGuard（L4 测试用）。
     /// 生产环境禁止使用此函数，应注入自定义权限 guard。
-    /// `#[allow(deprecated)]` 抑制 vuln-0004 deprecated 警告（测试专用）。
+    /// `#[allow(deprecated)]` 抑制 deprecated 警告（测试专用）。
     #[allow(deprecated)]
     fn make_auth_logic_allow_switch(timeout: u64, active_timeout: u64) -> AuthLogicDefault {
         make_auth_logic(timeout, active_timeout)
@@ -413,7 +413,7 @@ mod tests {
     async fn switch_to_updates_login_id_and_stores_switched_from() {
         let auth = make_auth_logic_allow_switch(3600, 86400);
         let token = auth.login("1001", None).await.unwrap();
-        // VULN-0015 修复后 ensure_token_in_account_session 拒绝创建新 Account-Session，
+        // ensure_token_in_account_session 拒绝创建新 Account-Session，
         // 需预先 login target 以确保其 Account-Session 存在。
         let _ = auth.login("2002", None).await.unwrap();
         auth.switch_to(&token, "2002").await.unwrap();
@@ -432,7 +432,7 @@ mod tests {
     async fn switch_to_preserves_token_validity() {
         let auth = make_auth_logic_allow_switch(3600, 86400);
         let token = auth.login("1001", None).await.unwrap();
-        // VULN-0015 修复后需预先创建 target Account-Session。
+        // 需预先创建 target Account-Session。
         let _ = auth.login("2002", None).await.unwrap();
         auth.switch_to(&token, "2002").await.unwrap();
         assert!(auth.is_login(&token).await.unwrap());
@@ -468,7 +468,7 @@ mod tests {
     async fn switch_to_verify_token_returns_new_login_id() {
         let auth = make_auth_logic_allow_switch(3600, 86400);
         let token = auth.login("1001", None).await.unwrap();
-        // VULN-0015 修复后需预先创建 target Account-Session。
+        // 需预先创建 target Account-Session。
         let _ = auth.login("9999", None).await.unwrap();
         auth.switch_to(&token, "9999").await.unwrap();
         assert_eq!(auth.verify_token(&token).await.unwrap(), "9999");
@@ -479,7 +479,7 @@ mod tests {
     async fn switch_to_multiple_times_updates_switched_from() {
         let auth = make_auth_logic_allow_switch(3600, 86400);
         let token = auth.login("1001", None).await.unwrap();
-        // VULN-0015 修复后需预先创建 target Account-Session（2002 + 3003）。
+        // 需预先创建 target Account-Session（2002 + 3003）。
         let _ = auth.login("2002", None).await.unwrap();
         let _ = auth.login("3003", None).await.unwrap();
         // 第一次切换：1001 -> 2002
@@ -506,7 +506,7 @@ mod tests {
     async fn switch_to_preserves_existing_attrs() {
         let auth = make_auth_logic_allow_switch(3600, 86400);
         let token = auth.login("1001", None).await.unwrap();
-        // VULN-0015 修复后需预先创建 target Account-Session。
+        // 需预先创建 target Account-Session。
         let _ = auth.login("2002", None).await.unwrap();
         // 设置一个自定义 attr
         auth.session.set(&token, "device", "web").await.unwrap();
@@ -591,7 +591,7 @@ mod tests {
         }
         let auth = make_auth_logic(3600, 86400).with_switch_to_guard(Arc::new(DenyTargetGuard));
         let token = auth.login("1001", None).await.unwrap();
-        // VULN-0015 修复后需预先创建 target Account-Session（user-2002）。
+        // 需预先创建 target Account-Session（user-2002）。
         let _ = auth.login("user-2002", None).await.unwrap();
 
         // 切换到 admin 应被拒绝
@@ -773,10 +773,10 @@ mod tests {
     }
 
     // ========================================================================
-    // VULN-0020 测试：renew_to_equivalent 原子化（先失效旧 token，再创建新 token）
+    // renew_to_equivalent 原子化测试（先失效旧 token，再创建新 token）
     // ========================================================================
 
-    /// VULN-0020 测试辅助：追踪 DAO 操作顺序的 wrapper。
+    /// 追踪 DAO 操作顺序的 wrapper。
     ///
     /// 包装 `MockDao`，在 `set("token:session:*")` 时检测旧 token 是否已被 `delete`。
     /// 若旧 token 未先失效就创建新 token，标记 `violation_detected = true`。
@@ -831,7 +831,7 @@ mod tests {
         }
 
         async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> BulwarkResult<()> {
-            // VULN-0020 检测：若正在追踪且 key 是 token:session:*，
+            // 若正在追踪且 key 是 token:session:*，
             // 检查旧 token 是否已被 delete
             {
                 let mut state = self.tracking_state.lock().unwrap();
@@ -866,10 +866,9 @@ mod tests {
         }
     }
 
-    /// VULN-0020: renew_to_equivalent 必须先失效旧 token，再创建新 token（原子化）。
+    /// renew_to_equivalent 必须先失效旧 token，再创建新 token（原子化）。
     ///
-    /// 当前实现顺序为"先 create 后 delete"，存在窗口期双 token 同时有效。
-    /// 修复后顺序应为"先 delete 后 create"，消除窗口期。
+    /// 顺序为"先 delete 后 create"，消除窗口期双 token 同时有效的风险。
     #[tokio::test]
     async fn renew_to_equivalent_deletes_old_token_before_creating_new() {
         let tracking_dao = Arc::new(OrderTrackingDao::new());
@@ -894,7 +893,7 @@ mod tests {
             new_token.err()
         );
 
-        // VULN-0020 验证：新 token session 不应在旧 token session 删除前被创建
+        // 验证：新 token session 不应在旧 token session 删除前被创建
         assert!(
             !tracking_dao.was_violation_detected(),
             "VULN-0020 违规：新 token session 在旧 token session 删除前被创建（双 token 窗口期）"

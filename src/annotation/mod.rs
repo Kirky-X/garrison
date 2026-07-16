@@ -546,10 +546,6 @@ mod extractors {
 #[cfg(feature = "web-axum")]
 pub use extractors::{CheckLogin, CheckPermission, CheckRole, Ignore, Mode};
 
-// ============================================================================
-// 测试（cfg all(test, feature = "web-axum")）
-// ============================================================================
-
 #[cfg(all(test, feature = "web-axum"))]
 mod mock;
 

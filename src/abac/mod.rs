@@ -9,7 +9,7 @@
 //! # 核心类型
 //!
 //! - `AbacEngine`：Cedar 策略求值器（`abac` feature 开启时可用）
-//! - `EntityLoader`：Cedar Entities 数据源 trait（vuln-0001 修复引入）
+//! - `EntityLoader`：Cedar Entities 数据源 trait
 //! - `EmptyEntityLoader` / `StaticEntityLoader`：内置实现
 //!
 //! # 全局引擎管理
@@ -36,15 +36,13 @@ pub use engine::AbacEngine;
 pub use loader::{EmptyEntityLoader, StaticEntityLoader};
 
 // ============================================================================
-// EntityLoader trait（vuln-0001 修复）
+// EntityLoader trait
 // ============================================================================
 
 /// Cedar Entities 数据源 trait。
 ///
-/// vuln-0001 修复：原 `AbacEngine::evaluate` / `evaluate_with_temp_policy` 硬编码
-/// `let entities = Entities::empty();`，导致基于实体属性的策略（如
-/// `resource.owner == principal.id`）永远返回 false。本 trait 抽象实体加载逻辑，
-/// 让调用方注入实体数据源，支持基于属性的 ABAC 策略。
+/// 抽象实体加载逻辑，让调用方注入实体数据源，支持基于属性的 ABAC 策略
+/// （如 `resource.owner == principal.id`）。
 ///
 /// # 内置实现
 ///
@@ -93,7 +91,7 @@ use std::sync::{Arc, Mutex};
 
 /// 全局 AbacEngine 实例。
 ///
-/// 通过 [`init_abac_engine`] 初始化。未初始化时 [`check_abac_with_policy`] 返回 `Err(Config)`（fail-closed，vuln-0005 修复）。
+/// 通过 [`init_abac_engine`] 初始化。未初始化时 [`check_abac_with_policy`] 返回 `Err(Config)`（fail-closed）。
 #[cfg(feature = "abac")]
 static CURRENT_ENGINE: Mutex<Option<Arc<AbacEngine>>> = Mutex::new(None);
 
@@ -111,7 +109,7 @@ static CURRENT_ENGINE: Mutex<Option<Arc<AbacEngine>>> = Mutex::new(None);
 /// use bulwark::abac::{AbacEngine, EmptyEntityLoader, init_abac_engine};
 /// use std::sync::Arc;
 ///
-/// let engine = AbacEngine::new(schema_json, Arc::new(EmptyEntityLoader)).unwrap();
+/// let engine = AbacEngine::new(schema_json, Arc::new(EmptyEntityLoader)).await.unwrap();
 /// init_abac_engine(engine).unwrap();
 /// ```
 #[cfg(feature = "abac")]
@@ -162,7 +160,7 @@ pub fn reset_abac_for_test() {
 ///
 /// # 行为
 ///
-/// 1. 全局 AbacEngine 未初始化 → 返回 `Err(BulwarkError::Config(...))`（R-abac-001 fail-closed，vuln-0005 修复）
+/// 1. 全局 AbacEngine 未初始化 → 返回 `Err(BulwarkError::Config(...))`（R-abac-001 fail-closed）
 /// 2. 获取当前 `login_id` 作为 principal，未登录 → 返回 `Err(NotLogin)`
 /// 3. 将 `abac_expr` 包装为 Cedar 策略：
 ///    `permit(principal, action == Action::"<action>", resource) when { <abac_expr> };`
@@ -172,7 +170,7 @@ pub fn reset_abac_for_test() {
 /// # 参数
 /// - `action`: 权限标识（如 "order:read"），作为 Cedar action
 /// - `resource`: Cedar resource EntityUid 字符串（如 `Resource::"default"`、`Resource::"order"`）。
-///   由宏属性 `resource = "..."` 注入，避免硬编码（vuln-0006 修复）。
+///   由宏属性 `resource = "..."` 注入，避免硬编码。
 ///   非法格式由 Cedar 解析器拒绝（返回 `Err(InvalidParam)`，fail-closed）。
 /// - `abac_expr`: Cedar 条件表达式（如 "resource.user_id == principal.id"）
 ///
@@ -193,7 +191,7 @@ pub async fn check_abac_with_policy(
             return Err(BulwarkError::Config(
                 "AbacEngine 未初始化，ABAC 校验失败（fail-closed）".into(),
             ))
-        }, // R-abac-001: 未初始化 fail-closed（vuln-0005 修复）
+        }, // R-abac-001: 未初始化 fail-closed
     };
     let login_id = crate::stp::BulwarkUtil::get_login_id().await?;
     let login_id = match login_id {
@@ -209,7 +207,7 @@ pub async fn check_abac_with_policy(
     let policy_src = format!(
         r#"permit(principal, action == Action::"{action}", resource) when {{ {abac_expr} }};"#
     );
-    // vuln-0006 修复：resource 由调用方显式传入，移除硬编码 Resource::"default"。
+    // resource 由调用方显式传入，移除硬编码 Resource::"default"。
     // 非法 resource 字符串（含注入尝试）由 evaluate_with_temp_policy 内部 EntityUid::parse 拒绝。
     let decision = engine
         .evaluate_with_temp_policy(&principal, &action_uid, resource, None, &policy_src)
@@ -238,16 +236,12 @@ pub async fn check_abac_with_policy(
     Ok(())
 }
 
-// ============================================================================
-// 测试
-// ============================================================================
-
 #[cfg(all(test, feature = "abac"))]
 mod tests {
     use super::*;
     use std::sync::Arc;
 
-    /// 全局引擎未初始化时 check_abac_with_policy fail-closed 返回 Err(Config)（vuln-0005 修复）。
+    /// 全局引擎未初始化时 check_abac_with_policy fail-closed 返回 Err(Config)。
     #[tokio::test]
     #[serial_test::serial]
     async fn check_abac_with_policy_no_engine_returns_ok() {
@@ -281,12 +275,14 @@ mod tests {
             r#"{"":{"entityTypes":{},"actions":{}}}"#,
             Arc::new(EmptyEntityLoader),
         )
+        .await
         .unwrap();
         init_abac_engine(engine).unwrap();
         let engine2 = AbacEngine::new(
             r#"{"":{"entityTypes":{},"actions":{}}}"#,
             Arc::new(EmptyEntityLoader),
         )
+        .await
         .unwrap();
         let result = init_abac_engine(engine2);
         assert!(result.is_err(), "重复 init_abac_engine 应返回错误");
@@ -302,6 +298,7 @@ mod tests {
             r#"{"":{"entityTypes":{},"actions":{}}}"#,
             Arc::new(EmptyEntityLoader),
         )
+        .await
         .unwrap();
         init_abac_engine(engine).expect("首次 init_abac_engine 应成功");
 
@@ -342,12 +339,14 @@ mod tests {
             r#"{"":{"entityTypes":{},"actions":{}}}"#,
             Arc::new(EmptyEntityLoader),
         )
+        .await
         .unwrap();
         init_abac_engine(engine).expect("首次 init 应成功");
         let engine2 = AbacEngine::new(
             r#"{"":{"entityTypes":{},"actions":{}}}"#,
             Arc::new(EmptyEntityLoader),
         )
+        .await
         .unwrap();
         let result = init_abac_engine(engine2);
         assert!(result.is_err());
@@ -374,6 +373,7 @@ mod tests {
             r#"{"":{"entityTypes":{},"actions":{}}}"#,
             Arc::new(EmptyEntityLoader),
         )
+        .await
         .unwrap();
         init_abac_engine(engine).expect("init 应成功");
         assert!(get_abac_engine().unwrap().is_some());
@@ -382,7 +382,7 @@ mod tests {
         assert!(get_abac_engine().unwrap().is_none(), "reset 后应返回 None");
     }
 
-    /// check_abac_with_policy 在引擎未初始化时对任意 action 均返回 Err(Config)（vuln-0005 修复）。
+    /// check_abac_with_policy 在引擎未初始化时对任意 action 均返回 Err(Config)。
     #[tokio::test]
     #[serial_test::serial]
     async fn check_abac_with_policy_no_engine_various_actions() {
@@ -472,8 +472,9 @@ mod tests {
         init_manager_for_abac();
 
         // 初始化 ABAC 引擎
-        let engine =
-            AbacEngine::new(EVAL_SCHEMA_JSON, Arc::new(EmptyEntityLoader)).expect("schema valid");
+        let engine = AbacEngine::new(EVAL_SCHEMA_JSON, Arc::new(EmptyEntityLoader))
+            .await
+            .expect("schema valid");
         init_abac_engine(engine).expect("init_abac_engine 应成功");
 
         // 登录获取 token
@@ -503,8 +504,9 @@ mod tests {
         crate::manager::BulwarkManager::reset_for_test();
         init_manager_for_abac();
 
-        let engine =
-            AbacEngine::new(EVAL_SCHEMA_JSON, Arc::new(EmptyEntityLoader)).expect("schema valid");
+        let engine = AbacEngine::new(EVAL_SCHEMA_JSON, Arc::new(EmptyEntityLoader))
+            .await
+            .expect("schema valid");
         init_abac_engine(engine).expect("init_abac_engine 应成功");
 
         let token = BulwarkUtil::login_simple("1001")
@@ -542,8 +544,9 @@ mod tests {
         crate::manager::BulwarkManager::reset_for_test();
         init_manager_for_abac();
 
-        let engine =
-            AbacEngine::new(EVAL_SCHEMA_JSON, Arc::new(EmptyEntityLoader)).expect("schema valid");
+        let engine = AbacEngine::new(EVAL_SCHEMA_JSON, Arc::new(EmptyEntityLoader))
+            .await
+            .expect("schema valid");
         init_abac_engine(engine).expect("init_abac_engine 应成功");
 
         // 不调用 login_simple，不设置 with_current_token
@@ -567,13 +570,13 @@ mod tests {
     }
 
     // ========================================================================
-    // vuln-0006 修复测试：resource 注入防御
+    // resource 注入防御测试
     // 验证恶意 resource 字符串被 Cedar 解析器拒绝（fail-closed，返回 Err 而非 Allow）
     // ========================================================================
 
     /// resource 注入尝试 `Resource::"x"); forbid(principal); //"` 应被 Cedar 解析拒绝。
     ///
-    /// vuln-0006 修复：resource 由调用方显式传入，移除硬编码。
+    /// resource 由调用方显式传入，移除硬编码。
     /// 蓝军视角：若攻击者能控制 resource 字符串，可能注入 Cedar 策略语法。
     /// 防御层：`evaluate_with_temp_policy` 内部 `EntityUid::parse` 拒绝非合法 EntityUid 字符串。
     /// 预期：返回 `Err(InvalidParam)`（Cedar 解析失败），而非 `Ok(())` 或 `Err(NotPermission)`。
@@ -585,8 +588,9 @@ mod tests {
         crate::manager::BulwarkManager::reset_for_test();
         init_manager_for_abac();
 
-        let engine =
-            AbacEngine::new(EVAL_SCHEMA_JSON, Arc::new(EmptyEntityLoader)).expect("schema valid");
+        let engine = AbacEngine::new(EVAL_SCHEMA_JSON, Arc::new(EmptyEntityLoader))
+            .await
+            .expect("schema valid");
         init_abac_engine(engine).expect("init_abac_engine 应成功");
 
         let token = BulwarkUtil::login_simple("1001")
@@ -624,7 +628,7 @@ mod tests {
 
     /// 合法 resource 参数（如 `Resource::"order"`）应正常通过 Cedar 解析。
     ///
-    /// 验证 vuln-0006 修复不破坏合法场景：resource 参数为合法 EntityUid 时正常求值。
+    /// 验证合法场景不被破坏：resource 参数为合法 EntityUid 时正常求值。
     #[tokio::test]
     #[serial_test::serial]
     async fn check_abac_with_policy_accepts_legitimate_resource() {
@@ -633,8 +637,9 @@ mod tests {
         crate::manager::BulwarkManager::reset_for_test();
         init_manager_for_abac();
 
-        let engine =
-            AbacEngine::new(EVAL_SCHEMA_JSON, Arc::new(EmptyEntityLoader)).expect("schema valid");
+        let engine = AbacEngine::new(EVAL_SCHEMA_JSON, Arc::new(EmptyEntityLoader))
+            .await
+            .expect("schema valid");
         init_abac_engine(engine).expect("init_abac_engine 应成功");
 
         let token = BulwarkUtil::login_simple("1001")

@@ -170,10 +170,6 @@ fn parse_auth_method_row(row: &QueryResult) -> BulwarkResult<AuthMethodRow> {
     })
 }
 
-// ============================================================================
-// 单元测试
-// ============================================================================
-
 #[cfg(all(test, feature = "db-sqlite"))]
 mod tests {
     use super::super::DbnexusUserRepository;

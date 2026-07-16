@@ -455,10 +455,6 @@ mod web_axum {
 #[cfg(all(feature = "web-axum", feature = "tenant-isolation"))]
 pub use web_axum::tenant_resolution_middleware;
 
-// ============================================================================
-// 测试（cfg all(test, feature = "web-axum")）
-// ============================================================================
-
 #[cfg(all(test, feature = "web-axum"))]
 mod mock;
 

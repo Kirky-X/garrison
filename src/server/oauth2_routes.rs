@@ -117,7 +117,7 @@ async fn token_endpoint(
     headers: HeaderMap,
     Json(req): Json<TokenRequest>,
 ) -> Response {
-    // VULN-0011: 提取 Authorization 头（RFC 6749 §2.3.1 HTTP Basic Auth）
+    // 提取 Authorization 头（RFC 6749 §2.3.1 HTTP Basic Auth）
     let authorization = headers
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
@@ -129,7 +129,7 @@ async fn token_endpoint(
         .await
     {
         Ok(resp) => {
-            // VULN-0011: RFC 6749 §5.1 — token 响应必须含 Cache-Control: no-store + Pragma: no-cache
+            // RFC 6749 §5.1 — token 响应必须含 Cache-Control: no-store + Pragma: no-cache
             let mut response = (StatusCode::OK, Json(resp)).into_response();
             response.headers_mut().insert(
                 HeaderName::from_static("cache-control"),
@@ -185,10 +185,6 @@ async fn introspect_endpoint(
         },
     }
 }
-
-// ============================================================================
-// 测试
-// ============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -447,7 +443,7 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
-    /// VULN-0011: token 端点成功响应必须含 Cache-Control: no-store + Pragma: no-cache（RFC 6749 §5.1）。
+    /// token 端点成功响应必须含 Cache-Control: no-store + Pragma: no-cache（RFC 6749 §5.1）。
     #[tokio::test]
     async fn test_token_endpoint_returns_cache_control_no_store_header() {
         let (state, store) = make_state();
@@ -470,7 +466,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
-        // VULN-0011: RFC 6749 §5.1 — 必须含 Cache-Control: no-store
+        // RFC 6749 §5.1 — 必须含 Cache-Control: no-store
         let cache_control = resp
             .headers()
             .get("cache-control")
@@ -480,7 +476,7 @@ mod tests {
             "no-store",
             "Cache-Control 必须为 no-store"
         );
-        // VULN-0011: RFC 6749 §5.1 — 必须含 Pragma: no-cache
+        // RFC 6749 §5.1 — 必须含 Pragma: no-cache
         let pragma = resp.headers().get("pragma").expect("Pragma 头必须存在");
         assert_eq!(
             pragma.to_str().unwrap(),
@@ -489,7 +485,7 @@ mod tests {
         );
     }
 
-    /// VULN-0011: token 端点接受 HTTP Basic Auth 头认证客户端（RFC 6749 §2.3.1）。
+    /// token 端点接受 HTTP Basic Auth 头认证客户端（RFC 6749 §2.3.1）。
     #[tokio::test]
     async fn test_token_endpoint_accepts_basic_auth_header() {
         use base64::engine::general_purpose::STANDARD;

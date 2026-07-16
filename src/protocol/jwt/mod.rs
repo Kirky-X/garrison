@@ -48,7 +48,7 @@ pub struct BulwarkJwtClaims {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub jti: Option<String>,
 
-    /// Not Before（RFC 7519 §4.1.5，vuln-0019 修复）。
+    /// Not Before（RFC 7519 §4.1.5）。
     ///
     /// `sign` 时自动设置为当前时间；旧 token 反序列化时缺失该字段则为 `None`（向后兼容）。
     /// `verify` 启用 `validate_nbf = true` 后，`nbf` 为未来时间时拒绝 token（ImmatureSignature）。

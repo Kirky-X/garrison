@@ -41,7 +41,6 @@ unicode-normalization = "0.1"
 
 # === Optional dependencies (feature-gated) ===
 axum = { version = "0.8", optional = true, default-features = false, features = ["json"] }
-# axum-server：HTTPS/TLS 终止支持（feature-gated: tls），独立于 axum，社区维护
 axum-server = { version = "0.8", optional = true, default-features = false }
 actix-web = { version = "4", optional = true, default-features = false }
 warp = { version = "0.4", optional = true, default-features = false }
@@ -50,8 +49,6 @@ reqwest = { version = "0.13", optional = true, default-features = false, feature
 totp-rs = { version = "5", optional = true }
 sha2 = { version = "0.11", optional = true }
 hmac = { version = "0.13", optional = true }
-# subtle：密码学常量时间比较（ConstantTimeEq trait），用于 API Key 比较（VULN-0012 修复）
-# 防止 timing side-channel 泄露 key 长度/内容
 subtle = { version = "2.6", optional = true, default-features = false, features = ["std"] }
 base64 = { version = "0.22", optional = true }
 md5 = { version = "0.7", optional = true }
@@ -72,16 +69,14 @@ tracing-subscriber = { version = "0.3", optional = true, default-features = fals
 opentelemetry = { version = "0.32", optional = true, default-features = false, features = ["trace"] }
 opentelemetry_sdk = { version = "0.32", optional = true, default-features = false, features = ["trace", "rt-tokio"] }
 opentelemetry-otlp = { version = "0.32", optional = true, default-features = false, features = ["trace", "grpc-tonic"] }
-# 需 transport feature 以启用 Interceptor trait
-# design.md D8：与 opentelemetry-otlp 0.32 统一到 tonic 0.14，避免双版本共存
+# 与 opentelemetry-otlp 0.32 统一到 tonic 0.14，避免双版本共存
 tonic = { version = "0.14", optional = true, default-features = false, features = ["transport"] }
-# tonic-health：gRPC 标准健康检查服务（feature-gated: grpc），版本与 tonic 保持一致
 tonic-health = { version = "0.14", optional = true, default-features = false }
 fluent = { version = "0.17", optional = true, default-features = false }
 # fluent-rs 内部依赖，显式声明以直接使用
 unic-langid = { version = "0.9", optional = true, default-features = false }
 miette = { version = "7", optional = true, default-features = false }
-bulwark-macros = { path = "bulwark-macros", version = "0.5.1", optional = true }
+bulwark-macros = { path = "bulwark-macros", version = "0.5", optional = true }
 # 注意：rsa 0.9 内部依赖 sha2 0.10，与项目 sha2 0.11 不兼容，故用 `rsa::pkcs1v15::SigningKey` + `rsa::sha2::Sha256`（sha2 0.10 re-export）
 rsa = { version = "0.9", optional = true, default-features = false, features = ["sha2", "pem"] }
 unicode-security = { version = "0.1", optional = true, default-features = false }
@@ -90,24 +85,11 @@ quick-xml = { version = "0.41", optional = true, default-features = false, featu
 # 版本 ~1.2 与 oxcache 0.3 间接依赖的 redis 保持一致
 redis = { version = "~1.2", optional = true, default-features = false, features = ["aio", "tokio-comp", "connection-manager", "script"] }
 futures = { version = "0.3", optional = true, default-features = false, features = ["std"] }
-# inklog：企业级日志基础设施（0.1.7 LoggerManager 作为 tracing subscriber 配置层）
-# 替换手写 init_json_logging()，提供多输出/轮转/脱敏/健康监控
 inklog = { version = "0.1", optional = true, default-features = false }
-# limiteron：统一流控框架（0.2.6 新增 DBNexusStorageAdapter + QuotaStorage.consume 原子方法 + DistributedLimiter trait）
-# 替换 bulwark 手写限速（SmsRateLimiter + RateLimitStrategy + BruteForceStrategy）
 limiteron = { version = "0.2", optional = true, default-features = false, features = ["distributed"] }
-# sdforge：声明式服务定义框架（0.4.1 #[forge] 宏 + sdforge::http::build() 收集路由）
-# 替换手写 axum Router::new().route(...) 路由定义，用 #[forge] 宏声明式注册端点
 sdforge = { version = "0.4", optional = true, default-features = false, features = ["http"] }
-# trait-kit：typestate DI 构建器（0.3.0 AsyncKit 提供 AuthBackend 的可选构建路径）
-# 替换手写 BulwarkAuthServer::new(backend) 初始化，用 AsyncKit register/build/require 流程
 trait-kit = { version = "0.3", optional = true, default-features = false, features = ["async"] }
-# cedar-policy：Cedar 策略语言（ABAC 权限模型，feature-gated: abac）
 cedar-policy = { version = "4.11", optional = true, default-features = false }
-# moka：高速并发缓存（ABAC 决策缓存 TTL 60s，feature-gated: abac）
-moka = { version = "0.12", optional = true, default-features = false, features = ["sync"] }
-# === ICU4X 2.2 国际化增强（复数/日期/数字本地化），feature-gated: i18n-icu ===
-# compiled_data：将 CLDR 数据编译进二进制（无需运行时加载 .dat 文件）
 icu_plurals = { version = "2.2", optional = true, default-features = false, features = ["compiled_data"] }
 icu_datetime = { version = "2.2", optional = true, default-features = false, features = ["compiled_data"] }
 icu_decimal = { version = "2.2", optional = true, default-features = false, features = ["compiled_data", "alloc"] }
@@ -118,9 +100,9 @@ icu_calendar = { version = "2.2", optional = true, default-features = false, fea
 icu_time = { version = "2.2", optional = true, default-features = false, features = ["compiled_data"] }
 # fixed_decimal：icu_decimal 依赖，显式声明以直接使用 Decimal（0.7+ 重命名自 FixedDecimal）
 fixed_decimal = { version = "0.7", optional = true, default-features = false }
-# percent-encoding：URL 百分号编码（VULN-0007 修复 — authorize 端点 return_to 编码）
+# percent-encoding：URL 百分号编码（authorize 端点 return_to 编码）
 percent-encoding = { version = "2.3", optional = true, default-features = false }
-# hkdf：HMAC-based Extract-and-Expand Key Derivation（VULN-0018 修复 — HMAC 密钥派生）
+# hkdf：HMAC-based Extract-and-Expand Key Derivation（HMAC 密钥派生）
 hkdf = { version = "0.13", optional = true, default-features = false }
 
 [dev-dependencies]
@@ -142,7 +124,6 @@ testcontainers = "0.27"
 criterion = { version = "0.5", features = ["html_reports"] }
 # rcgen 用于 BackendRemote mTLS 测试中生成自签名证书
 rcgen = "0.14"
-# reqwest 用于 auth_server_integration 集成测试的 HTTP 客户端
 # 主依赖中 reqwest 是 optional（仅 backend-remote 启用），
 # 集成测试需要直接发送 HTTP 请求到服务器，因此在这里无条件引入
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "rustls-native-certs"] }
@@ -192,11 +173,11 @@ safe-defaults = []
 # === 聚合特性：等价于原 default，方便快速启用全部默认后端 ===
 all-defaults = ["cache-memory", "db-sqlite", "web-axum"]
 
-# === 缓存后端（通过 oxcache，默认 full 包含 L1 moka + L2 redis） ===
-# cache-memory 与 cache-redis 均启用 oxcache（语义别名，区分用途）
-cache-memory = ["oxcache"]
-cache-redis = ["oxcache", "dep:redis", "dep:futures"]
-# 注意：oxcache 无 caffeine feature（L1 用 moka），cache-caffeine 已移除
+# === 缓存后端（通过 oxcache） ===
+# cache-memory 启用 oxcache L1 moka 内存后端 + 序列化（serde_json）
+# cache-redis 在 cache-memory 基础上叠加 L2 redis 后端
+cache-memory = ["oxcache", "oxcache/memory", "oxcache/serialization"]
+cache-redis = ["cache-memory", "oxcache/redis", "dep:redis", "dep:futures"]
 
 # === 数据库后端（通过 dbnexus 0.4） ===
 # db-base 为内部 feature，由 db-sqlite / db-postgres / db-mysql 继承；dbnexus 禁止 embedded 与 server-side 混用。
@@ -298,19 +279,19 @@ parameter-query = []
 audit-log = ["listener", "dep:sha2", "hmac", "secure-masking"]
 
 # === 安全防护套件 ===
-# firewall 为基础 trait + FirewallContext + StrategyRegistration，无额外依赖
-firewall = []
+# firewall 为基础 trait + FirewallContext + StrategyRegistration。
+# v0.7.2：BulwarkFirewallCheckHookDefault 统一使用 limiteron BulwarkDaoDistributedLimiter，
+# 因此 firewall feature 传递启用 dep:limiteron（禁止手写限流实现）。
+firewall = ["dep:limiteron"]
 # firewall-bruteforce：limiteron BanStorage + DistributedLimiter
 firewall-bruteforce = ["firewall", "dep:limiteron"]
 # firewall-ratelimit：limiteron DistributedLimiter 原子 incr_with_ttl
 firewall-ratelimit = ["firewall", "dep:rand", "dep:limiteron"]
 firewall-anomalous = ["firewall"]
 firewall-geoip = ["firewall"]
-firewall-ddos = ["firewall"]
+firewall-ddos = ["firewall", "dep:limiteron"]
 # firewall-waf：策略层 WAF Hook 链 + axum middleware 适配器
 firewall-waf = ["firewall", "web-axum"]
-# rate-limit-redis：Redis 限流后端（RedisRateLimiter + Lua 脚本），继承 cache-redis（redis + futures）
-rate-limit-redis = ["cache-redis"]
 # firewall-maxminddb：MaxMindDb GeoIP 生产后端
 firewall-maxminddb = ["dep:maxminddb", "firewall-geoip", "firewall-anomalous"]
 # anomalous-detector-dual：异常登录定时分析引擎（burst/geo_jump/device_mutation）
@@ -365,35 +346,34 @@ keycloak-oidc = ["protocol-oidc"]
 # backend-embedded（默认）：启用 BackendEmbedded（进程内认证，委托 BulwarkManager，zero-break 兼容）
 backend-embedded = []
 # backend-remote：启用 BackendRemote（HTTP 客户端，连接远程 Auth Server）
-# 依赖 reqwest（HTTP client），客户端 SDK 用 reqwest 手写
+# 依赖 reqwest（HTTP client）
 backend-remote = ["dep:reqwest"]
 # auth-server：启用 Auth Server 模式（HTTP Server 暴露 AuthBackend 端点）
 # 依赖 web-axum（HTTP server）+ backend-embedded（核心逻辑）+ auth-server-sdforge（声明式路由）
-# v0.7.0: sdforge 完全替代手写 axum 路由（external.rs/internal.rs 已移除）
-# subtle 用于 middleware.rs constant_time_eq（VULN-0012：防 timing side-channel）
-auth-server = ["web-axum", "backend-embedded", "auth-server-sdforge", "dep:subtle"]
+# subtle 用于 middleware.rs constant_time_eq（防 timing side-channel）
+# limiteron 用于 middleware.rs rate_limit_middleware（TokenBucketLimiter，禁止手写令牌桶）
+auth-server = ["web-axum", "backend-embedded", "auth-server-sdforge", "dep:subtle", "dep:limiteron"]
 # abac：启用 ABAC/Cedar DSL 策略引擎（属性级权限模型）
-# 依赖 cedar-policy（Cedar 策略语言解析 + 评估）+ moka（决策缓存 TTL 60s）
-abac = ["dep:cedar-policy", "dep:moka"]
+# 依赖 cedar-policy（Cedar 策略语言解析 + 评估）+ cache-memory（oxcache 决策缓存 TTL 60s）
+abac = ["dep:cedar-policy", "cache-memory"]
 # oauth2-server：启用 OAuth2 Server（4 端点 + 4 种 grant type + PKCE）
 # 依赖 protocol-oauth2（OAuth2 原语）+ reqwest（HTTP client）+ argon2（client_secret 哈希）+ rand（client_id 生成）
-oauth2-server = ["protocol-oauth2", "dep:reqwest", "dep:argon2", "dep:rand", "dep:percent-encoding"]
+# v0.7.2：PasswordRateLimiter 统一使用 limiteron BulwarkDaoDistributedLimiter（禁止手写限流实现）；
+# db-sqlite 下的 RefreshTokenRotation 依赖 protocol::jwt，因此传递启用 protocol-jwt。
+oauth2-server = ["protocol-oauth2", "dep:reqwest", "dep:argon2", "dep:rand", "dep:percent-encoding", "dep:limiteron", "protocol-jwt"]
 
 # === v0.7.0 inklog 结构化审计日志 ===
-# inklog 0.1.7 LoggerManager 作为 tracing subscriber 配置层，
-# 替换 init_json_logging() 的手写 tracing-subscriber 配置，
-# 提供多输出（console/file/db）/轮转/脱敏/健康监控。
+# inklog LoggerManager 作为 tracing subscriber 配置层，提供多输出（console/file/db）/轮转/脱敏/健康监控。
 # tracing::warn!/error! 宏不变（inklog 是 subscriber 层，非宏替代品）。
 audit-inklog = ["dep:inklog"]
 
 # === v0.7.0 trait-kit typestate DI 构建 ===
 # 启用后可用 AsyncKit 构建 AuthBackend（BackendModule: AsyncAutoBuilder）
-# 作为手写 BulwarkAuthServer::new(backend) 的可选替代路径
 backend-kit = ["dep:trait-kit", "backend-embedded"]
 
 # === v0.7.0 sdforge 声明式路由 ===
 # sdforge #[forge] 宏注册路由，sdforge::http::build() 收集 inventory 注册的路由
-# auth-server 依赖此 feature（v0.7.0 起强制使用 sdforge 路由，手写路由已移除）
+# auth-server 依赖此 feature
 auth-server-sdforge = ["dep:sdforge"]
 
 # === 可观测性 ===
@@ -445,7 +425,6 @@ full = [
     "firewall", "firewall-bruteforce", "firewall-ratelimit", "firewall-anomalous",
     "firewall-geoip", "firewall-ddos", "firewall-maxminddb", "firewall-waf",
     "anomalous-detector-dual",
-    "rate-limit-redis",
     "security-alert",
     "device-binding",
     "safe-auth",

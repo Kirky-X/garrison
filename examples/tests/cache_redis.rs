@@ -3,20 +3,20 @@
 
 //! cache_redis 示例测试（cache-redis feature）。
 //!
-//! 验证 BulwarkDaoOxcache L1 moka DAO 操作 + Redis L2 配置：
+//! 验证 BulwarkDaoOxcache L1 DAO 操作 + Redis L2 配置：
 //! - `BulwarkDaoOxcache::new()` 创建 L1 DAO
 //! - get/set/update/expire/delete CRUD 操作
 //! - `RedisBackend::builder()` 配置构造
 //!
 //! 注：实际 Redis 连接测试标记为 `#[ignore]`（需要 Redis 实例运行）。
-//! L1 moka DAO 测试可独立运行（无需 Redis）。
+//! L1 DAO 测试可独立运行（无需 Redis）。
 
 #![cfg(feature = "cache-redis")]
 
 use bulwark::dao::BulwarkDao;
 use serial_test::serial;
 
-/// 测试 BulwarkDaoOxcache::new() 创建 L1 moka DAO（无需 Redis）。
+/// 测试 BulwarkDaoOxcache::new() 创建 L1 DAO（无需 Redis）。
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn test_create_l1_dao() {

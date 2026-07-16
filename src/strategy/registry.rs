@@ -30,6 +30,15 @@
 
 use crate::error::BulwarkResult;
 use crate::stp::{BulwarkLogicDefault, LoginParams, PermissionLogic, SessionLogic, TokenLogic};
+// LoginContext 来自 hooks 模块，依赖 limiteron（匹配 lib.rs 的 limiteron cfg）
+#[cfg(any(
+    feature = "sms-rate-limit",
+    feature = "firewall-ratelimit",
+    feature = "firewall-bruteforce",
+    feature = "firewall-ddos",
+    feature = "firewall",
+    feature = "oauth2-server"
+))]
 use crate::strategy::hooks::LoginContext;
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -134,6 +143,14 @@ pub trait SessionCreator: Send + Sync {
 #[async_trait]
 pub trait FirewallStrategy: Send + Sync {
     /// 登录前防火墙安全检查。
+    #[cfg(any(
+        feature = "sms-rate-limit",
+        feature = "firewall-ratelimit",
+        feature = "firewall-bruteforce",
+        feature = "firewall-ddos",
+        feature = "firewall",
+        feature = "oauth2-server"
+    ))]
     async fn check_login_hooks(&self, login_id: &str, ctx: &LoginContext) -> BulwarkResult<()>;
 }
 
@@ -275,6 +292,14 @@ impl DefaultFirewallStrategy {
 
 #[async_trait]
 impl FirewallStrategy for DefaultFirewallStrategy {
+    #[cfg(any(
+        feature = "sms-rate-limit",
+        feature = "firewall-ratelimit",
+        feature = "firewall-bruteforce",
+        feature = "firewall-ddos",
+        feature = "firewall",
+        feature = "oauth2-server"
+    ))]
     async fn check_login_hooks(&self, _login_id: &str, _ctx: &LoginContext) -> BulwarkResult<()> {
         Ok(())
     }
@@ -497,10 +522,6 @@ impl Strategy {
     }
 }
 
-// ============================================================================
-// 测试
-// ============================================================================
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -646,6 +667,14 @@ mod tests {
     }
 
     /// 验证 `FirewallStrategy` trait 可被自定义实现。
+    #[cfg(any(
+        feature = "sms-rate-limit",
+        feature = "firewall-ratelimit",
+        feature = "firewall-bruteforce",
+        feature = "firewall-ddos",
+        feature = "firewall",
+        feature = "oauth2-server"
+    ))]
     #[tokio::test]
     async fn firewall_strategy_trait_can_be_implemented() {
         struct MyFirewallStrategy;
@@ -877,6 +906,14 @@ mod tests {
     }
 
     /// 验证 `DefaultFirewallStrategy::check_login_hooks` 返回 Ok（no-op）。
+    #[cfg(any(
+        feature = "sms-rate-limit",
+        feature = "firewall-ratelimit",
+        feature = "firewall-bruteforce",
+        feature = "firewall-ddos",
+        feature = "firewall",
+        feature = "oauth2-server"
+    ))]
     #[tokio::test]
     async fn default_firewall_strategy_is_noop() {
         let logic = make_logic();

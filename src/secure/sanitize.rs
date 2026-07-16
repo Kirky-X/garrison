@@ -183,7 +183,7 @@ mod tests {
         assert_eq!(result, "abcd");
     }
 
-    /// VULN-0017 修复: 移除零宽空格（U+200B）。
+    /// 移除零宽空格（U+200B）。
     #[test]
     fn sanitize_removes_zero_width_space() {
         let input = "admin\u{200B}@example.com";
@@ -191,7 +191,7 @@ mod tests {
         assert_eq!(result, "admin@example.com", "U+200B 应被移除");
     }
 
-    /// VULN-0017 修复: 移除 BOM（U+FEFF）。
+    /// 移除 BOM（U+FEFF）。
     #[test]
     fn sanitize_removes_bom() {
         let input = "\u{FEFF}admin";
@@ -199,7 +199,7 @@ mod tests {
         assert_eq!(result, "admin", "U+FEFF BOM 应被移除");
     }
 
-    /// VULN-0017 修复: 移除行分隔符（U+2028）防止日志注入。
+    /// 移除行分隔符（U+2028）防止日志注入。
     #[test]
     fn sanitize_removes_line_separator() {
         let input = "log entry\u{2028}injected entry";
@@ -207,7 +207,7 @@ mod tests {
         assert_eq!(result, "log entryinjected entry", "U+2028 应被移除");
     }
 
-    /// VULN-0017 修复: 移除段落分隔符（U+2029）。
+    /// 移除段落分隔符（U+2029）。
     #[test]
     fn sanitize_removes_paragraph_separator() {
         let input = "para1\u{2029}para2";
@@ -215,7 +215,7 @@ mod tests {
         assert_eq!(result, "para1para2", "U+2029 应被移除");
     }
 
-    /// VULN-0017 修复: 移除零宽连接符（U+200D）和非连接符（U+200C）。
+    /// 移除零宽连接符（U+200D）和非连接符（U+200C）。
     #[test]
     fn sanitize_removes_zero_width_joiners() {
         let input = "a\u{200C}b\u{200D}c";
@@ -223,7 +223,7 @@ mod tests {
         assert_eq!(result, "abc", "U+200C 和 U+200D 应被移除");
     }
 
-    /// VULN-0017 修复: 移除双向格式控制字符（U+202A-202E）。
+    /// 移除双向格式控制字符（U+202A-202E）。
     #[test]
     fn sanitize_removes_bidi_controls() {
         let input = "hello\u{202E}world";
@@ -312,8 +312,7 @@ mod tests {
         assert_eq!(result, "abcd");
     }
 
-    /// T235-17: VULN-0017 修复后，U+200B (ZERO WIDTH SPACE) 作为 Cf 类字符被移除。
-    /// 旧行为保留 ZWSP，新行为移除以防止 Unicode 同形/绕过攻击。
+    /// T235-17: U+200B (ZERO WIDTH SPACE) 作为 Cf 类字符被移除，防止 Unicode 同形/绕过攻击。
     #[test]
     fn sanitize_keeps_zero_width_space() {
         let input = "ab\u{200B}cd";

@@ -6,8 +6,7 @@
 //! 对应 Digest 认证能力，
 //! 基于 `md5` / `sha2` crate 实现摘要认证。
 //!
-//! VULN-0016 修复后：
-//! - `DigestAlgorithm::default()` 返回 `Sha256`（不再默认 MD5）
+//! - `DigestAlgorithm::default()` 返回 `Sha256`
 //! - nonce 格式为 `base64(timestamp:random_uuid)`，validate 时校验时间戳防过期
 //! - 支持 `qop=auth` 与 `qop=auth-int`（后者需通过 `validate_with_body` 传入请求体）
 //!
@@ -29,7 +28,7 @@ const DEFAULT_NONCE_TTL_SECONDS: u64 = 300;
 pub enum DigestAlgorithm {
     /// MD5 算法（兼容旧客户端，安全性较弱）。
     Md5,
-    /// SHA256 算法（VULN-0016 后为默认值，安全性较高）。
+    /// SHA256 算法（默认值，安全性较高）。
     Sha256,
 }
 
@@ -60,7 +59,7 @@ impl DigestAlgorithm {
 }
 
 impl Default for DigestAlgorithm {
-    /// VULN-0016 修复：默认算法从 MD5 升级为 SHA256。
+    /// 默认算法为 SHA256。
     ///
     /// 新系统应使用 SHA256 以避免 MD5 碰撞攻击。需要在兼容旧客户端时
     /// 通过 `HttpDigestAuth::new(realm, "MD5")` 显式指定。
@@ -109,7 +108,7 @@ pub struct HttpDigestAuth {
     realm: String,
     /// 摘要算法。
     algorithm: DigestAlgorithm,
-    /// VULN-0016: nonce 有效期（秒），质询生成时嵌入时间戳，校验时检查是否过期。
+    /// nonce 有效期（秒），质询生成时嵌入时间戳，校验时检查是否过期。
     nonce_ttl: u64,
 }
 
@@ -162,7 +161,7 @@ impl HttpDigestAuth {
         )
     }
 
-    /// VULN-0016 修复：生成带时间戳的 nonce。
+    /// 生成带时间戳的 nonce。
     ///
     /// 格式：`base64("{timestamp}:{random_uuid}")`
     /// - timestamp: 当前 Unix 秒
@@ -174,7 +173,7 @@ impl HttpDigestAuth {
         STANDARD.encode(raw.as_bytes())
     }
 
-    /// VULN-0016 修复：校验 nonce 是否有效（格式正确且未过期）。
+    /// 校验 nonce 是否有效（格式正确且未过期）。
     ///
     /// nonce 格式: `base64("{timestamp}:{random}")`
     /// - 解码失败 → 无效
@@ -238,7 +237,7 @@ impl HttpDigestAuth {
         self.validate_inner(authorization_header, method, uri, None, ha1)
     }
 
-    /// VULN-0016 修复：校验客户端 Authorization header（支持 qop=auth 和 qop=auth-int）。
+    /// 校验客户端 Authorization header（支持 qop=auth 和 qop=auth-int）。
     ///
     /// qop=auth-int 时，HA2 = H(method:uri:H(body))，需传入请求体。
     /// qop=auth 时，HA2 = H(method:uri)，body 参数被忽略。
@@ -271,7 +270,7 @@ impl HttpDigestAuth {
     ) -> bool {
         match self.parse_authorization(authorization_header) {
             Ok(resp) => {
-                // VULN-0016: 检查 nonce 是否有效（格式 + 过期）
+                // 检查 nonce 是否有效（格式 + 过期）
                 if !self.is_nonce_valid(&resp.nonce) {
                     return false;
                 }
@@ -493,7 +492,7 @@ mod tests {
         assert!("".parse::<DigestAlgorithm>().is_err());
     }
 
-    /// VULN-0016: DigestAlgorithm::default() 返回 Sha256。
+    /// DigestAlgorithm::default() 返回 Sha256。
     #[test]
     fn algorithm_default_is_sha256() {
         assert_eq!(DigestAlgorithm::default(), DigestAlgorithm::Sha256);
@@ -524,7 +523,7 @@ mod tests {
         let challenge = auth.challenge();
         assert!(challenge.starts_with("Digest "));
         assert!(challenge.contains(r#"realm="test@realm""#));
-        // VULN-0016: qop 现在声明支持 auth 和 auth-int
+        // qop 现在声明支持 auth 和 auth-int
         assert!(challenge.contains(r#"qop="auth,auth-int""#));
         assert!(challenge.contains("algorithm=MD5"));
         assert!(challenge.contains("nonce="));
@@ -551,7 +550,7 @@ mod tests {
         assert!(challenge.contains("algorithm=SHA256"));
     }
 
-    /// VULN-0016: challenge 生成的 nonce 可被 is_nonce_valid 接受。
+    /// challenge 生成的 nonce 可被 is_nonce_valid 接受。
     #[test]
     fn challenge_nonce_is_valid() {
         let auth = HttpDigestAuth::new("realm", "SHA256").unwrap();
@@ -560,7 +559,7 @@ mod tests {
         assert!(auth.is_nonce_valid(&nonce));
     }
 
-    /// VULN-0016: with_nonce_ttl 设置 TTL。
+    /// with_nonce_ttl 设置 TTL。
     #[test]
     fn with_nonce_ttl_sets_ttl() {
         let auth = HttpDigestAuth::new("realm", "MD5")
@@ -598,7 +597,7 @@ mod tests {
     // validate 测试（qop=auth）
     // ========================================================================
 
-    /// VULN-0016: 辅助函数 — 生成有效 nonce（base64(timestamp:uuid)）。
+    /// 辅助函数 — 生成有效 nonce（base64(timestamp:uuid)）。
     fn make_valid_nonce() -> String {
         let timestamp = current_unix_seconds();
         let random = Uuid::new_v4().simple().to_string();
@@ -606,7 +605,7 @@ mod tests {
         STANDARD.encode(raw.as_bytes())
     }
 
-    /// VULN-0016: 辅助函数 — 生成过期 nonce（时间戳在 TTL 之前）。
+    /// 辅助函数 — 生成过期 nonce（时间戳在 TTL 之前）。
     fn make_expired_nonce(ttl: u64) -> String {
         let expired_timestamp = current_unix_seconds().saturating_sub(ttl + 10);
         let random = Uuid::new_v4().simple().to_string();
@@ -614,7 +613,7 @@ mod tests {
         STANDARD.encode(raw.as_bytes())
     }
 
-    /// VULN-0016: 辅助函数 — 生成未来 nonce（时间戳在未来）。
+    /// 辅助函数 — 生成未来 nonce（时间戳在未来）。
     fn make_future_nonce() -> String {
         let future_timestamp = current_unix_seconds() + 100;
         let random = Uuid::new_v4().simple().to_string();
@@ -622,7 +621,7 @@ mod tests {
         STANDARD.encode(raw.as_bytes())
     }
 
-    /// VULN-0016: 辅助函数 — 构造合法 MD5 Authorization header。
+    /// 辅助函数 — 构造合法 MD5 Authorization header。
     #[allow(clippy::too_many_arguments)]
     fn build_md5_auth_header(
         _auth: &HttpDigestAuth,
@@ -647,7 +646,7 @@ mod tests {
         )
     }
 
-    /// VULN-0016: 辅助函数 — 构造合法 SHA256 Authorization header。
+    /// 辅助函数 — 构造合法 SHA256 Authorization header。
     #[allow(clippy::too_many_arguments)]
     fn build_sha256_auth_header(
         _auth: &HttpDigestAuth,
@@ -751,7 +750,7 @@ mod tests {
         assert!(!auth.validate(&header, "GET", uri, &ha1));
     }
 
-    /// VULN-0016: 过期 nonce 被拒绝。
+    /// 过期 nonce 被拒绝。
     #[test]
     fn validate_expired_nonce_rejected() {
         let auth = HttpDigestAuth::new("test@realm", "MD5").unwrap();
@@ -777,7 +776,7 @@ mod tests {
         assert!(!auth.validate(&header, method, uri, &ha1));
     }
 
-    /// VULN-0016: 未来 nonce 被拒绝（防止伪造未来时间戳）。
+    /// 未来 nonce 被拒绝（防止伪造未来时间戳）。
     #[test]
     fn validate_future_nonce_rejected() {
         let auth = HttpDigestAuth::new("test@realm", "MD5").unwrap();
@@ -802,7 +801,7 @@ mod tests {
         assert!(!auth.validate(&header, method, uri, &ha1));
     }
 
-    /// VULN-0016: 非 base64 格式的 nonce 被拒绝。
+    /// 非 base64 格式的 nonce 被拒绝。
     #[test]
     fn validate_malformed_nonce_rejected() {
         let auth = HttpDigestAuth::new("test@realm", "MD5").unwrap();
@@ -828,7 +827,7 @@ mod tests {
         assert!(!auth.validate(&header, method, uri, &ha1));
     }
 
-    /// VULN-0016: 自定义 TTL — 短 TTL 的过期 nonce 被拒绝，但刚生成的 nonce 通过。
+    /// 自定义 TTL — 短 TTL 的过期 nonce 被拒绝，但刚生成的 nonce 通过。
     #[test]
     fn validate_custom_ttl_works() {
         let auth = HttpDigestAuth::new("test@realm", "MD5")
@@ -883,7 +882,7 @@ mod tests {
         assert!(!auth.validate(&header, "GET", "/resource", &ha1));
     }
 
-    /// VULN-0016: validate_with_body 支持 qop=auth-int（MD5）。
+    /// validate_with_body 支持 qop=auth-int（MD5）。
     #[test]
     fn validate_with_body_auth_int_md5_succeeds() {
         let auth = HttpDigestAuth::new("test@realm", "MD5").unwrap();
@@ -909,7 +908,7 @@ mod tests {
         assert!(auth.validate_with_body(&header, method, uri, body, &ha1));
     }
 
-    /// VULN-0016: validate_with_body 支持 qop=auth-int（SHA256）。
+    /// validate_with_body 支持 qop=auth-int（SHA256）。
     #[test]
     fn validate_with_body_auth_int_sha256_succeeds() {
         let auth = HttpDigestAuth::new("test@realm", "SHA256").unwrap();
@@ -945,7 +944,7 @@ mod tests {
         assert!(auth.validate_with_body(&header, method, uri, body, &ha1));
     }
 
-    /// VULN-0016: validate_with_body 中 body 不匹配导致校验失败。
+    /// validate_with_body 中 body 不匹配导致校验失败。
     #[test]
     fn validate_with_body_tampered_body_fails() {
         let auth = HttpDigestAuth::new("test@realm", "MD5").unwrap();
@@ -973,7 +972,7 @@ mod tests {
         assert!(!auth.validate_with_body(&header, method, uri, tampered_body, &ha1));
     }
 
-    /// VULN-0016: validate_with_body 也支持 qop=auth（body 被忽略）。
+    /// validate_with_body 也支持 qop=auth（body 被忽略）。
     #[test]
     fn validate_with_body_supports_auth_qop() {
         let auth = HttpDigestAuth::new("test@realm", "MD5").unwrap();
@@ -1114,21 +1113,21 @@ mod tests {
     // is_nonce_valid 直接测试
     // ========================================================================
 
-    /// VULN-0016: is_nonce_valid 对空字符串返回 false。
+    /// is_nonce_valid 对空字符串返回 false。
     #[test]
     fn is_nonce_valid_empty_returns_false() {
         let auth = HttpDigestAuth::new("realm", "MD5").unwrap();
         assert!(!auth.is_nonce_valid(""));
     }
 
-    /// VULN-0016: is_nonce_valid 对纯文本（非 base64）返回 false。
+    /// is_nonce_valid 对纯文本（非 base64）返回 false。
     #[test]
     fn is_nonce_valid_plain_text_returns_false() {
         let auth = HttpDigestAuth::new("realm", "MD5").unwrap();
         assert!(!auth.is_nonce_valid("abc123nonce"));
     }
 
-    /// VULN-0016: is_nonce_valid 对缺少冒号分隔符的 base64 返回 false。
+    /// is_nonce_valid 对缺少冒号分隔符的 base64 返回 false。
     #[test]
     fn is_nonce_valid_no_colon_returns_false() {
         let auth = HttpDigestAuth::new("realm", "MD5").unwrap();
@@ -1137,7 +1136,7 @@ mod tests {
         assert!(!auth.is_nonce_valid(&nonce));
     }
 
-    /// VULN-0016: is_nonce_valid 对时间戳非数字返回 false。
+    /// is_nonce_valid 对时间戳非数字返回 false。
     #[test]
     fn is_nonce_valid_non_numeric_timestamp_returns_false() {
         let auth = HttpDigestAuth::new("realm", "MD5").unwrap();

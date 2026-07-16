@@ -14,14 +14,14 @@ Bulwark 的持久化与缓存能力由两个独立抽象层提供，二者均通
 
 | 层级 | 实现 | 用途 |
 |:---|:---|:---|
-| L1 | moka（进程内） | 低延迟热点访问，承载 Token-Session 与 Account-Session |
+| L1 | oxcache 内存层 | 低延迟热点访问，承载 Token-Session 与 Account-Session |
 | L2 | redis（可选） | 多实例共享，跨进程会话一致性 |
 
 特性要点：
 
 - 支持 per-entry TTL 与 `ttl()` 查询（0.3 新增）
 - 通过 `cache-memory` / `cache-redis` feature 启用（语义别名，均启用 oxcache）
-- L1 用 moka（oxcache 无 caffeine feature，`cache-caffeine` 已移除）
+- L1 用 oxcache 内存后端（oxcache 无 caffeine feature，`cache-caffeine` 已移除）
 - 承载 **Token-Session**（token → 会话）与 **Account-Session**（账号 → token 列表）双向映射
 
 ## dbnexus 数据库抽象层

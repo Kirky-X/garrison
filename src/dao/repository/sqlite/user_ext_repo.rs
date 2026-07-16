@@ -205,10 +205,6 @@ fn parse_user_ext_row(row: &QueryResult) -> BulwarkResult<UserExtRow> {
     })
 }
 
-// ============================================================================
-// 单元测试
-// ============================================================================
-
 #[cfg(all(test, feature = "db-sqlite"))]
 mod tests {
     use super::super::DbnexusUserRepository;

@@ -11,19 +11,10 @@
 //! - [`Authorizer`] 是公开 API，不假设具体实现，可由任何授权引擎实现
 //! - 通过 blanket impl 自动为所有 [`PermissionChecker`] 提供 [`Authorizer`] 实现
 //!
-//! # Rule 7 冲突说明（design.md D6 vs 现有实现）
+//! # Rule 7 冲突说明
 //!
-//! design.md D6 原计划在本文件定义 `AuthRequest` + `Decision` + `Authorizer` trait，
-//! 但 `AuthRequest` / `Decision` / `DecisionReason` 已在 `decision` 模块定义（v0.5.0）。
-//! 遵循 Rule 8（先读再写，不重复造轮子）+ Rule 11（惯例优先），本文件仅新增 `Authorizer` trait，
-//! 复用现有类型。字段命名差异保留现有惯例：
-//!
-//! | 字段 | design.md D6 | 现有 decision.rs | 决策 |
-//! |---|---|---|---|
-//! | 主体标识 | `principal: i64` | `login_id: i64` | 保留 `login_id`（既有惯例，Rule 11） |
-//! | 租户隔离 | 缺失 | `tenant_id: i64` | 保留（现有更全） |
-//! | 上下文 | `HashMap<String, Value>` | `serde_json::Value` | 保留 `serde_json::Value`（更灵活） |
-//! | 决策原因 | `String` | `DecisionReason` 枚举 | 保留枚举（更类型安全） |
+//! `AuthRequest` / `Decision` / `DecisionReason` 已在 `decision` 模块定义，
+//! 本文件仅新增 `Authorizer` trait，复用现有类型（Rule 8 先读再写 + Rule 11 惯例优先）。
 //!
 //! [`PermissionChecker`]: crate::core::permission::PermissionChecker
 
@@ -84,7 +75,6 @@ pub trait Authorizer: Send + Sync {
 ///
 /// # Rule 7 冲突处理
 ///
-/// design.md D6 原计划为 `BulwarkLogicDefault` 单独实现 `Authorizer`，但
 /// `PermissionChecker` trait 已有 `authorize` 方法且 `PermissionCheckerDefault`
 /// 已实现之。通过 blanket impl 复用现有实现，避免重复代码（Rule 8 先读再写）。
 ///
@@ -95,10 +85,6 @@ impl<T: PermissionChecker> Authorizer for T {
         PermissionChecker::authorize(self, req).await
     }
 }
-
-// ============================================================================
-// 测试
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

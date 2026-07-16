@@ -24,6 +24,15 @@ use crate::error::{BulwarkError, BulwarkResult};
 use crate::listener::BulwarkEvent;
 use crate::stp::core::BulwarkCore;
 use crate::stp::token::TokenLogic;
+// FirewallLoginContext 来自 hooks 模块，依赖 limiteron（匹配 lib.rs 的 limiteron cfg）
+#[cfg(any(
+    feature = "sms-rate-limit",
+    feature = "firewall-ratelimit",
+    feature = "firewall-bruteforce",
+    feature = "firewall-ddos",
+    feature = "firewall",
+    feature = "oauth2-server"
+))]
 use crate::strategy::FirewallLoginContext;
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -246,15 +255,10 @@ impl SessionLogic for BulwarkLogicDefault {
     }
 
     async fn login_with_token(&self, login_id: &str, token: &str) -> BulwarkResult<()> {
-        // VULN-0019 修复 + TOCTOU 修复（tiangang/diting 审查 HIGH）：
-        // 原代码直接 `self.session.create()`，未检查 token 是否已关联其他 login_id，
-        // 导致同一 token 可同时映射到两个 login_id（dual-mapping），构成会话劫持风险。
-        //
-        // 初版修复在 check 与 create 之间无 per-token 锁，两个并发调用
-        // `login_with_token("alice", T1)` 与 `login_with_token("attacker", T1)`
-        // 可同时通过 check 阶段（都看到 T1 不存在），随后都执行 create，
-        // 绕过 dual-mapping 防护。修复后用 `with_token_session_lock` 包裹
-        // check + create 原子序列，保证同一 token 的并发调用串行执行。
+        // 检查 token 是否已关联其他 login_id，避免同一 token 同时映射到两个
+        // login_id（dual-mapping）构成会话劫持风险。
+        // 用 `with_token_session_lock` 包裹 check + create 原子序列，
+        // 保证同一 token 的并发调用串行执行，避免 TOCTOU 竞态绕过 dual-mapping 防护。
         let session = &self.session;
         session
             .with_token_session_lock(token, async {
@@ -498,8 +502,19 @@ impl BulwarkLogicDefault {
     async fn login_inner(&self, login_id: &str, params: &LoginParams) -> BulwarkResult<String> {
         // 登录前防火墙安全钩子检查
         // 任一 hook Err 阻断登录；未注入 hook 时为 no-op（向后兼容 0.2.x）
-        let ctx = FirewallLoginContext::new(login_id);
-        self.firewall.check_login_hooks(login_id, &ctx).await?;
+        // hooks 模块依赖 limiteron，仅在 limiteron 启用时编译（匹配 lib.rs 的 limiteron cfg）
+        #[cfg(any(
+            feature = "sms-rate-limit",
+            feature = "firewall-ratelimit",
+            feature = "firewall-bruteforce",
+            feature = "firewall-ddos",
+            feature = "firewall",
+            feature = "oauth2-server"
+        ))]
+        {
+            let ctx = FirewallLoginContext::new(login_id);
+            self.firewall.check_login_hooks(login_id, &ctx).await?;
+        }
 
         // is_share=true: 复用现有有效 token，不创建新会话
         if self.config.is_share {
@@ -627,7 +642,7 @@ impl BulwarkLogicDefault {
             .await;
         }
         // max_login_count > 0 时，强制最大登录数量（踢出最旧会话）
-        // HIGH-002 修复：enforce 失败时回滚（登出新创建的 token），避免孤儿会话泄漏
+        // enforce 失败时回滚（登出新创建的 token），避免孤儿会话泄漏
         if self.config.max_login_count > 0 {
             if let Err(e) = self
                 .enforce_max_login_count(login_id, self.config.max_login_count)
@@ -993,13 +1008,13 @@ impl BulwarkLogicDefault {
     /// 检查 Token 剩余 TTL 百分比，低于阈值则触发续签。
     /// 续签成功后通过 `CURRENT_RENEWED_TOKEN` task_local 传递新 Token。
     ///
-    /// # HIGH-001 修复：并发续签竞态防护
+    /// # 并发续签竞态防护
     ///
     /// 两个并发 `check_login` 可能同时通过 TTL 检查并各自触发续签。
     /// Call A 续签成功（旧 token 删除），Call B 的续签失败（token 已不存在），
     /// 错误被 `tracing::warn!` 吞掉，Call B 返回 `Ok(true)` 但旧 token 已失效 → "会话假活"。
     ///
-    /// 修复：在续签前获取 per-login_id 锁，进入锁后**二次检查** TTL。
+    /// 在续签前获取 per-login_id 锁，进入锁后**二次检查** TTL。
     /// 若另一并发调用已完成续签，当前调用的 TTL 已被重置 → 返回 `None`（无需续签）。
     ///
     /// # 参数
@@ -1029,7 +1044,7 @@ impl BulwarkLogicDefault {
             return Ok(None);
         }
 
-        // HIGH-001 修复：获取 login_id 用于 per-login_id 续签锁
+        // 获取 login_id 用于 per-login_id 续签锁
         let login_id = match self.session.get_token_session(token).await? {
             Some(ts) => ts.login_id,
             None => return Ok(None),
@@ -3183,10 +3198,10 @@ mod tests {
             assert_eq!(ts.login_id, "lwt-user-001");
         }
 
-        /// VULN-0019 修复：token 已关联其他 login_id 时 `login_with_token` 应返回 Err。
+        /// token 已关联其他 login_id 时 `login_with_token` 应返回 Err。
         ///
         /// 模拟攻击者拿到 alice 的 token 后，调用 `login_with_token("attacker", T1)`
-        /// 试图在 attacker 名下创建会话以实现会话劫持。修复后应拒绝，避免同一 token
+        /// 试图在 attacker 名下创建会话以实现会话劫持。应拒绝，避免同一 token
         /// 同时映射到两个 login_id（dual-mapping）。
         ///
         /// 覆盖 `login_with_token` 中新增的 token 唯一性检查分支。

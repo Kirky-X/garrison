@@ -540,7 +540,7 @@ async fn bw_ac_005_permission_check_returns_403() {
 
 /// BW-AC-006：oxcache 后端切换为 Memory 后功能正常（FRD §8.1 BW-AC-006）。
 ///
-/// 验证使用 MockDao（模拟 oxcache memory/moka 后端）时，登录、鉴权、
+/// 验证使用 MockDao（模拟 oxcache 内存后端）时，登录、鉴权、
 /// 会话管理功能正常工作。代码无需修改即可适配不同后端。
 ///
 /// # Gherkin

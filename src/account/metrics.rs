@@ -226,10 +226,6 @@ impl std::fmt::Debug for AccountMetrics {
 #[cfg(not(feature = "metrics-prometheus"))]
 pub type AccountMetrics = ();
 
-// ============================================================================
-// 单元测试
-// ============================================================================
-
 #[cfg(all(test, feature = "metrics-prometheus"))]
 mod tests {
     use super::*;

@@ -172,9 +172,17 @@ impl BulwarkDao for MockDao {
     /// get_and_delete 用 `parking_lot::Mutex` 保护原子性。
     ///
     /// 在单个 `lock()` 作用域内完成 get + remove，保证进程内原子。
+    /// TTL 语义与 `get` 一致：已过期的 key 视为不存在（返回 None）。
     async fn get_and_delete(&self, key: &str) -> BulwarkResult<Option<String>> {
         let mut store = self.store.lock();
-        Ok(store.remove(key).map(|(value, _)| value))
+        match store.remove(key) {
+            Some((_value, Some(deadline))) if Instant::now() >= deadline => {
+                // 已过期，视为不存在（value 已丢弃）
+                Ok(None)
+            },
+            Some((value, _)) => Ok(Some(value)),
+            None => Ok(None),
+        }
     }
 
     /// incr 用 Mutex 保护原子性（进程内原子）。

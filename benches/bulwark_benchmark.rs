@@ -300,7 +300,7 @@ fn bench_permission_check(c: &mut Criterion) {
 /// # 规则7 冲突说明
 ///
 /// 1. **Caffeine 不存在**：spec R-bench-005 要求验证 "Memory → Caffeine" 切换，
-///    但 Rust 生态无 Caffeine（oxcache 使用 moka 作为 L1 后端），故适配为
+///    但 Rust 生态无 Caffeine（oxcache 内存后端），故适配为
 ///    memory / redis 两后端
 /// 2. **无 runtime backend 字段**：spec 要求修改 `BulwarkConfig.oxcache.backend`
 ///    字段验证切换，但 `BulwarkConfig` 无此字段（后端选择通过 Cargo feature
@@ -311,7 +311,7 @@ fn bench_permission_check(c: &mut Criterion) {
 /// 使用不同 `MockDao` 实例（模拟不同后端），同一 `BulwarkLogicDefault` 代码
 /// 无修改即可运行，证明 DAO 抽象层的后端切换开销 = 0。
 ///
-/// - `memory`：HashMap 后端（模拟 oxcache moka L1）
+/// - `memory`：HashMap 后端（模拟 oxcache 内存 L1）
 /// - `redis_mock`：另一个 HashMap 实例（模拟 redis L2）
 ///
 /// 运行时 skip：设置环境变量 `BULWARK_SKIP_REDIS_BENCH=1` 可跳过 redis 相关子 bench

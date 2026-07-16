@@ -3,7 +3,7 @@
 
 //! trait-kit AsyncKit 构建器集成（feature = "backend-kit"）。
 //!
-//! 用 typestate DI 替换手写 `BulwarkAuthServer::new(backend)` 初始化路径。
+//! 用 typestate DI 构建 `BulwarkAuthServer` 初始化路径。
 //! `BackendModule` 实现 `AsyncAutoBuilder`，`Capability = Arc<dyn AuthBackend>`。
 
 #![cfg(feature = "backend-kit")]

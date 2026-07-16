@@ -375,7 +375,7 @@ mod tests {
         assert!(style.parse("noseparator").is_err());
     }
 
-    /// VULN-0013 修复: verify 拒绝 UUID 部分无效的伪造 token。
+    /// verify 拒绝 UUID 部分无效的伪造 token。
     #[test]
     fn simple_style_verify_rejects_invalid_uuid_suffix() {
         let style = SimpleTokenStyle;
@@ -385,7 +385,7 @@ mod tests {
         assert_eq!(result, None, "UUID 部分无效的伪造 token 应返回 None");
     }
 
-    /// VULN-0013 修复: verify 拒绝任意字符串后缀的伪造 token。
+    /// verify 拒绝任意字符串后缀的伪造 token。
     #[test]
     fn simple_style_verify_rejects_arbitrary_string_suffix() {
         let style = SimpleTokenStyle;
@@ -394,7 +394,7 @@ mod tests {
         assert_eq!(result, None, "非 UUID 后缀的伪造 token 应返回 None");
     }
 
-    /// VULN-0013 修复: parse 拒绝 UUID 部分无效的伪造 token。
+    /// parse 拒绝 UUID 部分无效的伪造 token。
     #[test]
     fn simple_style_parse_rejects_invalid_uuid_suffix() {
         let style = SimpleTokenStyle;
@@ -403,7 +403,7 @@ mod tests {
         assert!(result.is_err(), "UUID 部分无效的 token parse 应返回 Err");
     }
 
-    /// VULN-0013 修复: verify 接受合法 UUID 后缀的 token。
+    /// verify 接受合法 UUID 后缀的 token。
     #[test]
     fn simple_style_verify_accepts_valid_uuid_suffix() {
         let style = SimpleTokenStyle;

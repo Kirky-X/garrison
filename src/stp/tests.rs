@@ -1219,7 +1219,7 @@ async fn verify_token_invalid_returns_error() {
 
 /// verify_token 对合法 UUID 后缀的 simple-format token 返回 login_id（spec Scenario）。
 ///
-/// VULN-0013 修复后，SimpleTokenStyle 要求 token 后缀为合法 UUID，防止身份伪造。
+/// SimpleTokenStyle 要求 token 后缀为合法 UUID，防止身份伪造。
 #[tokio::test]
 async fn verify_token_malformed_returns_invalid_token() {
     let logic = make_logic(3600, 86400, false, "simple", true, true);
@@ -1317,7 +1317,7 @@ async fn util_refresh_token_returns_not_implemented_without_jwt() {
 }
 
 // ------------------------------------------------------------------------
-// 0.2.1 auto-wire gap 修复测试：builder 方法 + plugin/listener 触发
+// builder 方法 + plugin/listener 触发测试
 // ------------------------------------------------------------------------
 
 /// builder 方法链式调用返回 Self（spec Scenario: 4.8 builder 方法验证）。
@@ -3376,7 +3376,7 @@ async fn login_new_device_mode_allows_when_old_session_expired() {
     assert_ne!(token1, token2, "新登录应生成新 token");
 }
 
-/// T002: OldDevice 模式下，已有旧会话时踢出旧会话允许新登录（验证现有行为不回归）。
+/// OldDevice 模式下，已有旧会话时踢出旧会话允许新登录。
 #[tokio::test]
 async fn login_old_device_mode_kickout_old_session() {
     let mut logic = make_logic(3600, 86400, false, "uuid", true, true);
@@ -3919,7 +3919,7 @@ async fn login_auto_generates_device_fingerprint() {
 }
 
 // ============================================================================
-// v0.6.3 审查修复：HIGH-001 + HIGH-002 测试
+// HIGH-001 + HIGH-002 测试
 // ============================================================================
 
 /// HIGH-001: 续签后对旧 token 再次调用 check_and_renew 应返回 None（非错误）。

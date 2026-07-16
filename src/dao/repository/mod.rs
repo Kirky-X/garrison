@@ -6,14 +6,13 @@
 //! 为 9 张核心表定义 Repository trait，提供 CRUD 抽象。
 //! SQLite 实现见 `sqlite` 子模块（启用 `db-sqlite` feature）。
 //!
-//! ## 设计偏差
+//! ## 设计要点
 //!
-//! - **D4（已撤销）**：v0.4.2 曾以 origin FRD `VARCHAR(64)/string` 为由采用 `tenant_id: i64`。
-//!   v0.5.0 推翻此偏差，统一采用 `tenant_id: i64`：性能更优（INTEGER 索引/存储紧凑）、
+//! - `tenant_id` 统一采用 `i64`：性能更优（INTEGER 索引/存储紧凑）、
 //!   类型安全（避免字符串业务码解析）、与 spec/tenant-isolation `TenantContext.tenant_id: i64` 一致。
 //!   origin FRD `VARCHAR(64)` 视为可偏离项；若需保留业务码（如 `tenant_001`），
 //!   由调用方维护 `i64 ↔ String` 映射表，DAO 层只认 i64。
-//! - **D5**: spec/design 要求 `create` 返回 `LoginId`，但 dao 模块不应依赖 stp 模块（分层原则）。
+//! - `create` 返回 `String` 而非 `LoginId`：dao 模块不应依赖 stp 模块（分层原则），
 //!   采用 `String` 返回新插入的 ID（UUID 字符串）。
 //!
 //! ## 9 张核心表
@@ -310,8 +309,8 @@ pub struct UserExtRow {
 /// 用户设备表行（app_user_device）。
 ///
 /// 记录用户登录设备指纹与 UA 信息，支持设备阻断与多设备管理。
-/// 时间字段用 i64（epoch seconds），与 design.md D4 schema 一致。
-/// `login_id` 为字符串类型（v0.5.2 迁移：原 i64 → String，与全局 login_id 迁移一致）。
+/// 时间字段用 i64（epoch seconds）。
+/// `login_id` 为字符串类型（与全局 login_id 类型一致）。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct UserDeviceRow {
     /// 设备 ID（UUID v4）。
@@ -627,7 +626,7 @@ pub const MAX_DEVICES: usize = 5;
 /// 提供设备注册 / 阻断 / 查询能力，`register_device` 在设备数超过 [`MAX_DEVICES`] 时
 /// 返回 `BulwarkError::InvalidParam`。重复注册同一设备（相同 identifier）幂等返回已有 ID。
 ///
-/// `login_id` 为 `&str`（v0.5.2 迁移：原 i64 → String，与全局 login_id 迁移一致）。
+/// `login_id` 为 `&str`（与全局 login_id 类型一致）。
 #[async_trait::async_trait]
 pub trait UserDeviceRepository: Send + Sync {
     /// 注册设备，返回设备 ID（UUID）。

@@ -166,10 +166,6 @@ fn parse_login_log_row(row: &QueryResult) -> BulwarkResult<LoginLogRow> {
     })
 }
 
-// ============================================================================
-// 单元测试
-// ============================================================================
-
 #[cfg(all(test, feature = "db-sqlite"))]
 mod tests {
     use super::super::DbnexusUserRepository;

@@ -317,7 +317,7 @@ impl AuditLogListener {
         let now = Utc::now().timestamp();
         // 从 TENANT task_local 读取当前租户 ID
         // - tenant-isolation feature 关闭：current_tenant_id() 无上下文时返回 0（向后兼容）
-        // - tenant-isolation feature 启用：current_tenant_id_or_error() 无上下文时返回 Err（Rule 12 失败显性化，vuln-0003）
+        // - tenant-isolation feature 启用：current_tenant_id_or_error() 无上下文时返回 Err（Rule 12 失败显性化）
         #[cfg(not(feature = "tenant-isolation"))]
         #[allow(deprecated)]
         let tenant_id = crate::context::tenant::current_tenant_id();
@@ -1034,10 +1034,6 @@ impl BulwarkListener for AuditLogListener {
     }
 }
 
-// ============================================================================
-// 测试模块
-// ============================================================================
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1097,9 +1093,9 @@ mod db_sqlite_tests {
 
     /// 在 `TENANT` task_local 上下文中执行测试体（`tenant-isolation` feature 启用时）。
     ///
-    /// 修复 Phase 2 T017 引入的测试回归：`to_audit_entry` 在 `tenant-isolation` 启用时
-    /// 调用 `current_tenant_id_strict()`，无 `TENANT.scope` 时返回 `None` → `BulwarkError::Config`。
-    /// 实现正确（Rule 12 失败显性化），缺失的是测试上下文，本 helper 补齐 scope。
+    /// `to_audit_entry` 在 `tenant-isolation` 启用时调用 `current_tenant_id_strict()`，
+    /// 无 `TENANT.scope` 时返回 `None` → `BulwarkError::Config`（Rule 12 失败显性化）。
+    /// 本 helper 补齐 scope，让测试在正确上下文中运行。
     #[cfg(feature = "tenant-isolation")]
     async fn run_with_tenant_scope<F, Fut, T>(f: F) -> T
     where

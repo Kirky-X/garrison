@@ -102,7 +102,7 @@ v0.6.7 安全与性能增强，实施 5 个能力域：forbid 优先语义、WAF
 #### D3: 三层缓存架构（`three-tier-cache` feature）
 
 - 新建 `src/cache/three_tier.rs` 模块：`UserCacheService`
-- L1（moka 内存缓存）→ L2（DAO 持久化缓存）→ L3（interface 回调）三层递进查询
+- L1（oxcache 内存缓存）→ L2（DAO 持久化缓存）→ L3（interface 回调）三层递进查询
 - `get_permissions` / `get_roles` / `get_user` 三层缓存方法
 - `invalidate(login_id)` 失效用户所有缓存（L1 + L2）
 - `BulwarkConfig` 新增 `l1_cache_ttl_secs`（默认 30）/ `l2_cache_ttl_secs`（默认 300）/ `l1_cache_capacity`（默认 10000）
@@ -1508,7 +1508,7 @@ axum Web 框架集成等核心能力。
 
 ### 技术栈
 
-- **缓存抽象层**：oxcache 0.3（L1 moka + L2 redis，支持 per-entry TTL）
+- **缓存抽象层**：oxcache 0.3（L1 内存 + L2 redis，支持 per-entry TTL）
 - **数据库抽象层**：dbnexus 0.2（SQLite + 自动迁移）
 - **Web 框架**：axum 0.7
 - **异步运行时**：tokio 1.x

@@ -48,7 +48,7 @@ Bulwark 维护两个方向的会话映射，承载于 oxcache：
 
 - **Token 超时**：`config.timeout`（默认 30 天 = 2592000 秒），到期自动失效
 - **活动超时**：`config.active_timeout`（默认 -1 不启用）；启用后长时间无活动会话失效
-- TTL 在写入 oxcache 时设置，L1 moka 与 L2 redis 共享同一 TTL 语义
+- TTL 在写入 oxcache 时设置，L1 内存与 L2 redis 共享同一 TTL 语义
 
 ## 会话续期
 

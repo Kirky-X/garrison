@@ -10,7 +10,8 @@ use crate::abac::EntityLoader;
 use crate::core::permission::{Decision, DecisionReason};
 use crate::error::{BulwarkError, BulwarkResult};
 use cedar_policy::{Authorizer, Context, EntityUid, Policy, PolicyId, PolicySet, Request, Schema};
-use moka::sync::Cache;
+use oxcache::traits::CacheKey;
+use oxcache::Cache;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -22,9 +23,17 @@ use tokio::sync::RwLock;
 ///
 /// `context_json` 不参与缓存 key。原因：
 /// - 任务规格 T016 明确 `key = (principal, action, resource)`
-/// - ABAC 策略热加载时通过 `invalidate_all()` 清空缓存，保证策略变更后决策一致
+/// - ABAC 策略热加载时通过 `clear()` 清空缓存，保证策略变更后决策一致
 /// - 调用方若需 context 敏感的求值，应使用 `evaluate_with_temp_policy`（不走缓存）
-type DecisionKey = (String, String, String);
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct DecisionKey(String, String, String);
+
+impl CacheKey for DecisionKey {
+    fn to_key_string(&self) -> String {
+        // 使用 \x1F (ASCII Unit Separator) 作为字段分隔符，避免与 Cedar EntityUid 中的 ::" 冲突
+        format!("{}\x1F{}\x1F{}", self.0, self.1, self.2)
+    }
+}
 
 /// ABAC 决策缓存 TTL（秒）。
 const DECISION_CACHE_TTL_SECS: u64 = 60;
@@ -42,8 +51,8 @@ const DECISION_CACHE_MAX_CAPACITY: u64 = 10_000;
 /// - `authorizer`：Cedar 授权器（无状态，可共享）
 /// - `policies`：策略集（`Arc<RwLock<PolicySet>>` 支持读写分离热加载）
 /// - `schema`：Cedar schema（定义实体类型、属性、动作）
-/// - `cache`：决策缓存（moka TTL 60s, max 10000），key 为 (principal, action, resource)
-/// - `entity_loader`：实体加载器（vuln-0001 修复引入，替代硬编码 `Entities::empty()`）
+/// - `cache`：决策缓存（`oxcache::Cache`，全局 TTL 60s, max 10000），key 为 DecisionKey
+/// - `entity_loader`：实体加载器
 ///
 /// # 线程安全
 ///
@@ -56,11 +65,11 @@ pub struct AbacEngine {
     policies: Arc<RwLock<PolicySet>>,
     /// Cedar schema（定义实体类型、属性、动作）。
     schema: Schema,
-    /// 决策缓存（moka sync::Cache，TTL 60s, max 10000）。
+    /// 决策缓存（`oxcache::Cache<DecisionKey, Decision>`，全局 TTL 60s, max 10000）。
     ///
-    /// 策略热加载（load/unload/reload_all 成功）时调用 `invalidate_all()` 清空。
+    /// 策略热加载（load/unload/reload_all 成功）时调用 `clear()` 清空。
     cache: Cache<DecisionKey, Decision>,
-    /// 实体加载器（vuln-0001 修复）。
+    /// 实体加载器。
     ///
     /// 每次 `evaluate` 时调用 `load_entities` 获取 Cedar Entities 集合，
     /// 支持基于实体属性的策略（如 `resource.owner == principal.id`）。
@@ -73,20 +82,25 @@ impl AbacEngine {
     ///
     /// # 参数
     /// - `schema_json`：Cedar schema JSON 字符串
-    /// - `entity_loader`：实体加载器（`Arc<dyn EntityLoader>`）。vuln-0001 修复：
-    ///   原实现硬编码 `Entities::empty()`，导致基于实体属性的策略永远 Deny。
-    ///   传 `Arc::new(EmptyEntityLoader)` 保持旧行为，传 `Arc::new(StaticEntityLoader::new(...))`
+    /// - `entity_loader`：实体加载器（`Arc<dyn EntityLoader>`）。
+    ///   传 `Arc::new(EmptyEntityLoader)` 保持空实体行为，传 `Arc::new(StaticEntityLoader::new(...))`
     ///   支持基于属性的策略。
     ///
     /// # 错误
     /// - schema JSON 解析失败：`BulwarkError::InvalidParam`
-    pub fn new(schema_json: &str, entity_loader: Arc<dyn EntityLoader>) -> BulwarkResult<Self> {
+    /// - oxcache 初始化失败：`BulwarkError::InvalidParam`
+    pub async fn new(
+        schema_json: &str,
+        entity_loader: Arc<dyn EntityLoader>,
+    ) -> BulwarkResult<Self> {
         let schema = Schema::from_json_str(schema_json)
             .map_err(|e| BulwarkError::InvalidParam(format!("Cedar schema 解析失败: {e}")))?;
         let cache = Cache::builder()
-            .time_to_live(Duration::from_secs(DECISION_CACHE_TTL_SECS))
-            .max_capacity(DECISION_CACHE_MAX_CAPACITY)
-            .build();
+            .ttl(Duration::from_secs(DECISION_CACHE_TTL_SECS))
+            .capacity(DECISION_CACHE_MAX_CAPACITY)
+            .build()
+            .await
+            .map_err(|e| BulwarkError::InvalidParam(format!("oxcache 决策缓存初始化失败: {e}")))?;
         Ok(Self {
             authorizer: Authorizer::new(),
             policies: Arc::new(RwLock::new(PolicySet::new())),
@@ -120,12 +134,17 @@ impl AbacEngine {
         context_json: Option<&str>,
     ) -> BulwarkResult<Decision> {
         // 缓存查询：命中则直接返回（不调用 Cedar）
-        let cache_key: DecisionKey = (
+        let cache_key = DecisionKey(
             principal.to_string(),
             action.to_string(),
             resource.to_string(),
         );
-        if let Some(cached) = self.cache.get(&cache_key) {
+        if let Some(cached) = self
+            .cache
+            .get(&cache_key)
+            .await
+            .map_err(|e| BulwarkError::InvalidParam(format!("决策缓存读取失败: {e}")))?
+        {
             return Ok(cached);
         }
 
@@ -153,8 +172,7 @@ impl AbacEngine {
         )
         .map_err(|e| BulwarkError::InvalidParam(format!("Cedar Request 构造失败: {e}")))?;
         let policies = self.policies.read().await;
-        // vuln-0001 修复：通过 EntityLoader 加载实体，替代硬编码 Entities::empty()。
-        // 若 EntityLoader 返回错误，通过 ? 传播，缓存不受污染（未到达 insert）。
+        // 通过 EntityLoader 加载实体。若返回错误，通过 ? 传播，缓存不受污染（未到达 set）。
         let entities = self.entity_loader.load_entities().await?;
         let response = self
             .authorizer
@@ -165,7 +183,10 @@ impl AbacEngine {
         };
 
         // 写入缓存（仅在求值成功后）
-        self.cache.insert(cache_key, decision.clone());
+        self.cache
+            .set(&cache_key, &decision)
+            .await
+            .map_err(|e| BulwarkError::InvalidParam(format!("决策缓存写入失败: {e}")))?;
 
         Ok(decision)
     }
@@ -187,7 +208,10 @@ impl AbacEngine {
             .add(policy)
             .map_err(|e| BulwarkError::InvalidParam(format!("Cedar 策略添加失败: {e}")))?;
         // 策略变更后清空决策缓存（新策略可能改变现有 key 的决策）
-        self.cache.invalidate_all();
+        self.cache
+            .clear()
+            .await
+            .map_err(|e| BulwarkError::InvalidParam(format!("决策缓存清空失败: {e}")))?;
         Ok(())
     }
 
@@ -205,7 +229,10 @@ impl AbacEngine {
             .remove_static(policy_id)
             .map_err(|e| BulwarkError::InvalidParam(format!("Cedar 策略删除失败: {e}")))?;
         // 策略变更后清空决策缓存（移除策略可能改变现有 key 的决策）
-        self.cache.invalidate_all();
+        self.cache
+            .clear()
+            .await
+            .map_err(|e| BulwarkError::InvalidParam(format!("决策缓存清空失败: {e}")))?;
         Ok(())
     }
 
@@ -233,7 +260,10 @@ impl AbacEngine {
         *guard = new_set;
         // 策略集原子替换后清空决策缓存（新策略集可能改变现有 key 的决策）
         // 仅在替换成功后执行；任一策略解析失败时提前 return Err，不会到达此处
-        self.cache.invalidate_all();
+        self.cache
+            .clear()
+            .await
+            .map_err(|e| BulwarkError::InvalidParam(format!("决策缓存清空失败: {e}")))?;
         Ok(())
     }
 
@@ -290,8 +320,7 @@ impl AbacEngine {
         temp_set
             .add(temp_policy)
             .map_err(|e| BulwarkError::InvalidParam(format!("临时 Cedar 策略添加失败: {e}")))?;
-        // vuln-0001 修复：通过 EntityLoader 加载实体，替代硬编码 Entities::empty()。
-        // evaluate_with_temp_policy 不写入缓存，错误通过 ? 传播。
+        // 通过 EntityLoader 加载实体；evaluate_with_temp_policy 不写入缓存，错误通过 ? 传播。
         let entities = self.entity_loader.load_entities().await?;
         let response = self
             .authorizer
@@ -305,15 +334,29 @@ impl AbacEngine {
     }
 }
 
-// ============================================================================
-// 测试
-// ============================================================================
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::abac::{EmptyEntityLoader, StaticEntityLoader};
     use cedar_policy::Entities;
+
+    /// 测试辅助：判断指定 (principal, action, resource) 决策是否已在缓存中。
+    ///
+    /// 使用 oxcache `get()` 而非 `len()`：oxcache `len()` 是
+    /// 最终一致估算值，写入后未必立即可见；`get()` 强制检索 key，可靠。
+    async fn cache_has_entry(
+        engine: &AbacEngine,
+        principal: &str,
+        action: &str,
+        resource: &str,
+    ) -> bool {
+        let key = DecisionKey(
+            principal.to_string(),
+            action.to_string(),
+            resource.to_string(),
+        );
+        engine.cache.get(&key).await.unwrap_or(None).is_some()
+    }
 
     /// 测试用 Cedar schema JSON（空 namespace，EntityUid 直接用 `User::"alice"` 格式）。
     ///
@@ -350,16 +393,16 @@ mod tests {
     }"#;
 
     /// T121: AbacEngine::new 从 JSON schema 初始化成功。
-    #[test]
-    fn t121_new_from_json_schema_success() {
-        let engine = AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader));
+    #[tokio::test]
+    async fn t121_new_from_json_schema_success() {
+        let engine = AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader)).await;
         assert!(engine.is_ok(), "AbacEngine::new 应成功: {:?}", engine.err());
     }
 
     /// T121: 无效 JSON schema 返回 InvalidParam。
-    #[test]
-    fn t121_new_invalid_schema_returns_invalid_param() {
-        let result = AbacEngine::new("not a valid json", Arc::new(EmptyEntityLoader));
+    #[tokio::test]
+    async fn t121_new_invalid_schema_returns_invalid_param() {
+        let result = AbacEngine::new("not a valid json", Arc::new(EmptyEntityLoader)).await;
         assert!(result.is_err());
         assert!(
             matches!(result, Err(BulwarkError::InvalidParam(_))),
@@ -370,8 +413,9 @@ mod tests {
     /// T123: evaluate — 匹配 permit 策略时返回 Allow。
     #[tokio::test]
     async fn t123_evaluate_permit_returns_allow() {
-        let engine =
-            AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader)).expect("schema valid");
+        let engine = AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader))
+            .await
+            .expect("schema valid");
         engine
             .load_policy(
                 "p1",
@@ -395,8 +439,9 @@ mod tests {
     /// T123: evaluate — 不匹配 permit 策略时返回 Deny（默认拒绝）。
     #[tokio::test]
     async fn t123_evaluate_no_match_returns_deny() {
-        let engine =
-            AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader)).expect("schema valid");
+        let engine = AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader))
+            .await
+            .expect("schema valid");
         engine
             .load_policy(
                 "p1",
@@ -420,8 +465,9 @@ mod tests {
     /// T123: evaluate — 无策略时默认 Deny。
     #[tokio::test]
     async fn t123_evaluate_no_policies_returns_deny() {
-        let engine =
-            AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader)).expect("schema valid");
+        let engine = AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader))
+            .await
+            .expect("schema valid");
         let decision = engine
             .evaluate(
                 r#"User::"alice""#,
@@ -437,8 +483,9 @@ mod tests {
     /// T123: evaluate — 无效 principal 格式返回 InvalidParam。
     #[tokio::test]
     async fn t123_evaluate_invalid_principal_returns_error() {
-        let engine =
-            AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader)).expect("schema valid");
+        let engine = AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader))
+            .await
+            .expect("schema valid");
         let result = engine
             .evaluate(
                 "invalid",
@@ -457,8 +504,9 @@ mod tests {
     /// T125: Decision 映射 — Cedar Allow → Decision::allow()。
     #[tokio::test]
     async fn t125_decision_mapping_allow() {
-        let engine =
-            AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader)).expect("schema valid");
+        let engine = AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader))
+            .await
+            .expect("schema valid");
         engine
             .load_policy("p1", r#"permit(principal, action, resource);"#)
             .await
@@ -479,8 +527,9 @@ mod tests {
     /// T125: Decision 映射 — Cedar Deny → Decision::deny()。
     #[tokio::test]
     async fn t125_decision_mapping_deny() {
-        let engine =
-            AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader)).expect("schema valid");
+        let engine = AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader))
+            .await
+            .expect("schema valid");
         // 空策略集，默认 Deny
         let decision = engine
             .evaluate(
@@ -498,8 +547,9 @@ mod tests {
     /// T125: forbid 策略覆盖 permit — Cedar 语义验证。
     #[tokio::test]
     async fn t125_forbid_overrides_permit() {
-        let engine =
-            AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader)).expect("schema valid");
+        let engine = AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader))
+            .await
+            .expect("schema valid");
         engine
             .load_policy("p1", r#"permit(principal, action, resource);"#)
             .await
@@ -526,8 +576,9 @@ mod tests {
     /// T125: evaluate 带 context JSON 不报错。
     #[tokio::test]
     async fn t125_evaluate_with_context() {
-        let engine =
-            AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader)).expect("schema valid");
+        let engine = AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader))
+            .await
+            .expect("schema valid");
         engine
             .load_policy("p1", r#"permit(principal, action, resource);"#)
             .await
@@ -547,8 +598,9 @@ mod tests {
     /// 策略语法错误返回 InvalidParam。
     #[tokio::test]
     async fn load_policy_syntax_error_returns_invalid_param() {
-        let engine =
-            AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader)).expect("schema valid");
+        let engine = AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader))
+            .await
+            .expect("schema valid");
         let result = engine
             .load_policy("p1", "this is not a valid cedar policy")
             .await;
@@ -562,8 +614,9 @@ mod tests {
     /// unload_policy 删除策略后求值变化。
     #[tokio::test]
     async fn unload_policy_changes_decision() {
-        let engine =
-            AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader)).expect("schema valid");
+        let engine = AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader))
+            .await
+            .expect("schema valid");
         engine
             .load_policy("p1", r#"permit(principal, action, resource);"#)
             .await
@@ -594,8 +647,9 @@ mod tests {
     /// reload_all 原子替换全部策略。
     #[tokio::test]
     async fn reload_all_atomically_replaces_policies() {
-        let engine =
-            AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader)).expect("schema valid");
+        let engine = AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader))
+            .await
+            .expect("schema valid");
         engine
             .load_policy("p1", r#"permit(principal, action, resource);"#)
             .await
@@ -633,8 +687,9 @@ mod tests {
     /// reload_all 任一策略语法错误时不替换（原子性）。
     #[tokio::test]
     async fn reload_all_syntax_error_keeps_existing() {
-        let engine =
-            AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader)).expect("schema valid");
+        let engine = AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader))
+            .await
+            .expect("schema valid");
         engine
             .load_policy("p1", r#"permit(principal, action, resource);"#)
             .await
@@ -660,7 +715,9 @@ mod tests {
     #[tokio::test]
     async fn concurrent_evaluate_does_not_block() {
         let engine = Arc::new(
-            AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader)).expect("schema valid"),
+            AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader))
+                .await
+                .expect("schema valid"),
         );
         engine
             .load_policy("p1", r#"permit(principal, action, resource);"#)
@@ -694,8 +751,9 @@ mod tests {
     /// T139: evaluate_with_temp_policy — 匹配的临时策略返回 Allow。
     #[tokio::test]
     async fn t139_evaluate_with_temp_policy_permit_returns_allow() {
-        let engine =
-            AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader)).expect("schema valid");
+        let engine = AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader))
+            .await
+            .expect("schema valid");
         let temp_policy = r#"permit(principal, action == Action::"access", resource);"#;
         let decision = engine
             .evaluate_with_temp_policy(
@@ -713,8 +771,9 @@ mod tests {
     /// T139: evaluate_with_temp_policy — 不匹配的临时策略返回 Deny。
     #[tokio::test]
     async fn t139_evaluate_with_temp_policy_no_match_returns_deny() {
-        let engine =
-            AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader)).expect("schema valid");
+        let engine = AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader))
+            .await
+            .expect("schema valid");
         let temp_policy =
             r#"permit(principal == User::"bob", action == Action::"access", resource);"#;
         let decision = engine
@@ -733,8 +792,9 @@ mod tests {
     /// T139: evaluate_with_temp_policy — 无效策略返回 InvalidParam。
     #[tokio::test]
     async fn t139_evaluate_with_temp_policy_invalid_returns_error() {
-        let engine =
-            AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader)).expect("schema valid");
+        let engine = AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader))
+            .await
+            .expect("schema valid");
         let result = engine
             .evaluate_with_temp_policy(
                 r#"User::"alice""#,
@@ -754,8 +814,9 @@ mod tests {
     /// T139: evaluate_with_temp_policy — 不修改共享策略集。
     #[tokio::test]
     async fn t139_evaluate_with_temp_policy_does_not_modify_shared() {
-        let engine =
-            AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader)).expect("schema valid");
+        let engine = AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader))
+            .await
+            .expect("schema valid");
         // 共享策略集初始为空
         let before = engine
             .evaluate(
@@ -798,8 +859,9 @@ mod tests {
     /// T139: evaluate_with_temp_policy — 带 when 条件的策略。
     #[tokio::test]
     async fn t139_evaluate_with_temp_policy_when_condition() {
-        let engine =
-            AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader)).expect("schema valid");
+        let engine = AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader))
+            .await
+            .expect("schema valid");
         // when 条件为 true（1 == 1）→ Allow
         let temp_policy_true =
             r#"permit(principal, action == Action::"access", resource) when { 1 == 1 };"#;
@@ -832,14 +894,15 @@ mod tests {
     }
 
     // ============================================================
-    // T016: ABAC 决策缓存 moka TTL 60s 测试
+    // T016: ABAC 决策缓存 oxcache TTL 60s 测试
     // ============================================================
 
-    /// T016: 同 key 两次 evaluate，第二次命中缓存（entry_count == 1）。
+    /// T016: 同 key 两次 evaluate，第二次命中缓存（len == 1）。
     #[tokio::test]
     async fn t016_cache_hit_on_second_evaluate_same_key() {
-        let engine =
-            AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader)).expect("schema valid");
+        let engine = AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader))
+            .await
+            .expect("schema valid");
         engine
             .load_policy("p1", r#"permit(principal, action, resource);"#)
             .await
@@ -853,27 +916,28 @@ mod tests {
             .evaluate(principal, action, resource, None)
             .await
             .expect("evaluate 1");
-        engine.cache.run_pending_tasks();
-        assert_eq!(engine.cache.entry_count(), 1, "首次求值后缓存应有 1 条");
+        assert!(
+            cache_has_entry(&engine, principal, action, resource).await,
+            "首次求值后缓存应包含该 key"
+        );
 
         let d2 = engine
             .evaluate(principal, action, resource, None)
             .await
             .expect("evaluate 2");
-        engine.cache.run_pending_tasks();
-        assert_eq!(
-            engine.cache.entry_count(),
-            1,
-            "第二次求值命中缓存，缓存仍为 1 条"
+        assert!(
+            cache_has_entry(&engine, principal, action, resource).await,
+            "第二次求值后缓存仍应包含该 key"
         );
         assert_eq!(d1.allowed, d2.allowed, "两次求值结果应一致");
     }
 
-    /// T016: 不同 key 两次 evaluate，缓存各存一条（entry_count == 2）。
+    /// T016: 不同 key 两次 evaluate，缓存各存一条（len == 2）。
     #[tokio::test]
     async fn t016_cache_miss_on_different_keys() {
-        let engine =
-            AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader)).expect("schema valid");
+        let engine = AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader))
+            .await
+            .expect("schema valid");
         engine
             .load_policy("p1", r#"permit(principal, action, resource);"#)
             .await
@@ -897,15 +961,31 @@ mod tests {
             )
             .await
             .expect("evaluate 2");
-        engine.cache.run_pending_tasks();
-        assert_eq!(engine.cache.entry_count(), 2, "不同 key 应缓存 2 条");
+        assert!(
+            cache_has_entry(
+                &engine,
+                r#"User::"alice""#,
+                r#"Action::"access""#,
+                r#"Resource::"doc1""#
+            )
+            .await
+                && cache_has_entry(
+                    &engine,
+                    r#"User::"bob""#,
+                    r#"Action::"access""#,
+                    r#"Resource::"doc1""#
+                )
+                .await,
+            "不同 key 应分别缓存"
+        );
     }
 
-    /// T016: unload_policy 后缓存失效（entry_count == 0）。
+    /// T016: unload_policy 后缓存失效（len == 0）。
     #[tokio::test]
     async fn t016_cache_invalidated_on_unload_policy() {
-        let engine =
-            AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader)).expect("schema valid");
+        let engine = AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader))
+            .await
+            .expect("schema valid");
         engine
             .load_policy("p1", r#"permit(principal, action, resource);"#)
             .await
@@ -920,12 +1000,28 @@ mod tests {
             )
             .await
             .expect("evaluate");
-        engine.cache.run_pending_tasks();
-        assert_eq!(engine.cache.entry_count(), 1, "求值后应有缓存");
+        assert!(
+            cache_has_entry(
+                &engine,
+                r#"User::"alice""#,
+                r#"Action::"access""#,
+                r#"Resource::"doc1""#
+            )
+            .await,
+            "求值后缓存应包含该 key"
+        );
 
         engine.unload_policy("p1").await.expect("unload");
-        engine.cache.run_pending_tasks();
-        assert_eq!(engine.cache.entry_count(), 0, "unload 后缓存应清空");
+        assert!(
+            !cache_has_entry(
+                &engine,
+                r#"User::"alice""#,
+                r#"Action::"access""#,
+                r#"Resource::"doc1""#
+            )
+            .await,
+            "unload 后缓存应清空"
+        );
 
         // 再次求值，应重新调用 Cedar（结果变为 Deny）
         let after = engine
@@ -940,11 +1036,12 @@ mod tests {
         assert!(!after.allowed, "unload 后应 Deny");
     }
 
-    /// T016: reload_all 成功后缓存失效（entry_count == 0）。
+    /// T016: reload_all 成功后缓存失效（len == 0）。
     #[tokio::test]
     async fn t016_cache_invalidated_on_reload_all() {
-        let engine =
-            AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader)).expect("schema valid");
+        let engine = AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader))
+            .await
+            .expect("schema valid");
         engine
             .load_policy("p1", r#"permit(principal, action, resource);"#)
             .await
@@ -959,8 +1056,16 @@ mod tests {
             )
             .await
             .expect("evaluate");
-        engine.cache.run_pending_tasks();
-        assert_eq!(engine.cache.entry_count(), 1);
+        assert!(
+            cache_has_entry(
+                &engine,
+                r#"User::"alice""#,
+                r#"Action::"access""#,
+                r#"Resource::"doc1""#
+            )
+            .await,
+            "求值后缓存应包含该 key"
+        );
 
         let mut new_policies = HashMap::new();
         new_policies.insert(
@@ -968,8 +1073,16 @@ mod tests {
             r#"permit(principal == User::"bob", action, resource);"#.to_string(),
         );
         engine.reload_all(new_policies).await.expect("reload");
-        engine.cache.run_pending_tasks();
-        assert_eq!(engine.cache.entry_count(), 0, "reload 后缓存应清空");
+        assert!(
+            !cache_has_entry(
+                &engine,
+                r#"User::"alice""#,
+                r#"Action::"access""#,
+                r#"Resource::"doc1""#
+            )
+            .await,
+            "reload 后缓存应清空"
+        );
 
         // alice 应被拒绝（p1 已替换为 p2）
         let alice = engine
@@ -987,8 +1100,9 @@ mod tests {
     /// T016: reload_all 失败时缓存保持不变（不失效）。
     #[tokio::test]
     async fn t016_cache_kept_on_reload_all_failure() {
-        let engine =
-            AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader)).expect("schema valid");
+        let engine = AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader))
+            .await
+            .expect("schema valid");
         engine
             .load_policy("p1", r#"permit(principal, action, resource);"#)
             .await
@@ -1003,15 +1117,31 @@ mod tests {
             )
             .await
             .expect("evaluate");
-        engine.cache.run_pending_tasks();
-        assert_eq!(engine.cache.entry_count(), 1);
+        assert!(
+            cache_has_entry(
+                &engine,
+                r#"User::"alice""#,
+                r#"Action::"access""#,
+                r#"Resource::"doc1""#
+            )
+            .await,
+            "求值后缓存应包含该 key"
+        );
 
         let mut bad_policies = HashMap::new();
         bad_policies.insert("p2".to_string(), "invalid policy".to_string());
         let result = engine.reload_all(bad_policies).await;
         assert!(result.is_err(), "reload_all 应失败");
-        engine.cache.run_pending_tasks();
-        assert_eq!(engine.cache.entry_count(), 1, "reload 失败时缓存应保持不变");
+        assert!(
+            cache_has_entry(
+                &engine,
+                r#"User::"alice""#,
+                r#"Action::"access""#,
+                r#"Resource::"doc1""#
+            )
+            .await,
+            "reload 失败时缓存应保持不变"
+        );
 
         // alice 仍应被允许（缓存命中）
         let alice = engine
@@ -1029,8 +1159,9 @@ mod tests {
     /// T016: load_policy 后缓存失效（新策略可能改变现有 key 的决策）。
     #[tokio::test]
     async fn t016_cache_invalidated_on_load_policy() {
-        let engine =
-            AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader)).expect("schema valid");
+        let engine = AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader))
+            .await
+            .expect("schema valid");
 
         // 初始无策略，evaluate 返回 Deny
         let before = engine
@@ -1043,16 +1174,32 @@ mod tests {
             .await
             .expect("evaluate");
         assert!(!before.allowed, "无策略时应 Deny");
-        engine.cache.run_pending_tasks();
-        assert_eq!(engine.cache.entry_count(), 1);
+        assert!(
+            cache_has_entry(
+                &engine,
+                r#"User::"alice""#,
+                r#"Action::"access""#,
+                r#"Resource::"doc1""#
+            )
+            .await,
+            "首次求值后缓存应包含该 key"
+        );
 
         // load_policy 后缓存失效
         engine
             .load_policy("p1", r#"permit(principal, action, resource);"#)
             .await
             .expect("load");
-        engine.cache.run_pending_tasks();
-        assert_eq!(engine.cache.entry_count(), 0, "load 后缓存应清空");
+        assert!(
+            !cache_has_entry(
+                &engine,
+                r#"User::"alice""#,
+                r#"Action::"access""#,
+                r#"Resource::"doc1""#
+            )
+            .await,
+            "load 后缓存应清空"
+        );
 
         // 再次 evaluate 应返回 Allow（重新调用 Cedar）
         let after = engine
@@ -1070,8 +1217,9 @@ mod tests {
     /// T016: evaluate_with_temp_policy 不写入缓存。
     #[tokio::test]
     async fn t016_evaluate_with_temp_policy_does_not_cache() {
-        let engine =
-            AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader)).expect("schema valid");
+        let engine = AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader))
+            .await
+            .expect("schema valid");
 
         let temp_policy = r#"permit(principal, action == Action::"access", resource);"#;
         engine
@@ -1084,18 +1232,26 @@ mod tests {
             )
             .await
             .expect("temp evaluate");
-        engine.cache.run_pending_tasks();
-        assert_eq!(engine.cache.entry_count(), 0, "temp policy 不应写入缓存");
+        assert!(
+            !cache_has_entry(
+                &engine,
+                r#"User::"alice""#,
+                r#"Action::"access""#,
+                r#"Resource::"doc1""#
+            )
+            .await,
+            "temp policy 不应写入缓存"
+        );
     }
 
     // ============================================================
-    // vuln-0001 修复测试：EntityLoader 集成
-    // 验证带属性的实体能被 ABAC 策略正确求值（之前硬编码 Entities::empty() 永远 Deny）
+    // EntityLoader 集成测试
+    // 验证带属性的实体能被 ABAC 策略正确求值
     // ============================================================
 
     /// 带属性实体集合的 Cedar schema：User 带 id 属性，Resource 带 owner 属性。
     ///
-    /// 用于 vuln-0001 回归测试：策略 `resource.owner == principal.id` 需访问实体属性，
+    /// 策略 `resource.owner == principal.id` 需访问实体属性，
     /// 必须通过 EntityLoader 提供带属性的 Entities 才能正确求值。
     const ATTR_SCHEMA_JSON: &str = r#"{
         "": {
@@ -1128,11 +1284,8 @@ mod tests {
         }
     }"#;
 
-    /// vuln-0001 回归：StaticEntityLoader + 带属性实体 + `resource.owner == principal.id`
-    /// 策略应 Allow（属性匹配）。
-    ///
-    /// 原实现硬编码 `Entities::empty()`，导致属性访问永远返回 false，策略永远 Deny。
-    /// 修复后通过 EntityLoader 注入带属性实体，策略能正确求值。
+    /// StaticEntityLoader + 带属性实体 + `resource.owner == principal.id` 策略应 Allow（属性匹配）。
+    /// 通过 EntityLoader 注入带属性实体，策略能正确求值。
     #[tokio::test]
     async fn test_evaluate_with_static_entity_loader_attribute_based_policy() {
         // 构造带属性的实体：User "alice" {id: "alice"}, Resource "doc1" {owner: "alice"}。
@@ -1149,6 +1302,7 @@ mod tests {
             ATTR_SCHEMA_JSON,
             Arc::new(StaticEntityLoader::new(entities)),
         )
+        .await
         .expect("schema valid");
 
         // 策略：当 resource.owner == principal.id 时允许（基于实体属性的条件）
@@ -1167,7 +1321,7 @@ mod tests {
             .expect("evaluate");
         assert!(
             decision_allow.allowed,
-            "属性匹配时应 Allow（vuln-0001 修复后应能访问实体属性）"
+            "属性匹配时应 Allow（EntityLoader 提供实体属性后应能求值基于属性的策略）"
         );
 
         // 切换为 owner 不匹配的实体 → Deny
@@ -1181,6 +1335,7 @@ mod tests {
             ATTR_SCHEMA_JSON,
             Arc::new(StaticEntityLoader::new(entities_mismatch)),
         )
+        .await
         .expect("schema valid");
         engine_deny
             .load_policy("p1", policy)
@@ -1201,9 +1356,7 @@ mod tests {
         );
     }
 
-    /// vuln-0001 回归：EntityLoader 返回错误时，evaluate 通过 ? 传播错误，缓存不污染。
-    ///
-    /// 原实现硬编码 `Entities::empty()` 不存在错误路径；修复后引入 EntityLoader，
+    /// EntityLoader 返回错误时，evaluate 通过 ? 传播错误，缓存不污染。
     /// 若 load_entities 失败（如数据源不可达），错误必须显式传播，禁止默认成功。
     #[tokio::test]
     async fn test_evaluate_with_entity_loader_error_propagates() {
@@ -1219,8 +1372,9 @@ mod tests {
             }
         }
 
-        let engine =
-            AbacEngine::new(SCHEMA_JSON, Arc::new(ErrorEntityLoader)).expect("schema valid");
+        let engine = AbacEngine::new(SCHEMA_JSON, Arc::new(ErrorEntityLoader))
+            .await
+            .expect("schema valid");
         // 即使加载了 permit 策略，evaluate 也应因 EntityLoader 错误而失败
         engine
             .load_policy("p1", r#"permit(principal, action, resource);"#)
@@ -1255,10 +1409,14 @@ mod tests {
         }
 
         // 验证缓存未受污染（错误传播路径不应写入缓存）
-        engine.cache.run_pending_tasks();
-        assert_eq!(
-            engine.cache.entry_count(),
-            0,
+        assert!(
+            !cache_has_entry(
+                &engine,
+                r#"User::"alice""#,
+                r#"Action::"access""#,
+                r#"Resource::"doc1""#
+            )
+            .await,
             "EntityLoader 错误传播时缓存不应被污染"
         );
 

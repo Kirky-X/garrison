@@ -109,7 +109,7 @@ Bulwark 采用 **responsible disclosure（负责任披露）** 策略：
 ### 2. Redis 连接（生产必改）
 
 - 生产环境**必须启用 `cache-redis`** 而非 `cache-memory`。
-  - `cache-memory` 基于 moka 进程内缓存，进程重启即丢失，多实例部署时无法共享会话状态。
+  - `cache-memory` 基于 oxcache 内存缓存，进程重启即丢失，多实例部署时无法共享会话状态。
   - `cache-redis` 通过 oxcache 接入 Redis，支持分布式部署与会话共享。
 - 通过 `BULWARK_REDIS_URL` 配置 Redis 连接，建议启用 TLS 与密码认证。
 

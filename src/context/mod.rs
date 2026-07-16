@@ -284,10 +284,6 @@ pub mod warp_adapter;
 #[cfg(feature = "web-warp")]
 pub use warp_adapter::{WarpContext, WarpRequest, WarpResponse, WarpStorage};
 
-// ============================================================================
-// 测试
-// ============================================================================
-
 #[cfg(test)]
 mod mock;
 

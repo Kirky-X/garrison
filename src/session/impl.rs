@@ -782,11 +782,9 @@ impl BulwarkSession {
     ///
     /// 若 token 已在 Account-Session 中，则仅更新 `last_active_at`，不重复添加。
     ///
-    /// # 错误（VULN-0015 修复）
+    /// # 错误
     /// - 目标 `login_id` 的 Account-Session 不存在时返回
-    ///   `BulwarkError::InvalidParam`。原实现用 `unwrap_or_else` 静默创建新
-    ///   AccountSession，使 `switch_to` 可切换到任意 login_id（包括不存在
-    ///   账号），构成提权风险。修复后强制调用方先通过 `login()` 等路径确保
+    ///   `BulwarkError::InvalidParam`。强制调用方先通过 `login()` 等路径确保
     ///   目标 Account-Session 已存在。
     pub async fn ensure_token_in_account_session(
         &self,
@@ -794,10 +792,8 @@ impl BulwarkSession {
         token: &str,
     ) -> BulwarkResult<()> {
         let now = Utc::now().timestamp();
-        // VULN-0015 修复：原 `unwrap_or_else` 在 Account-Session 不存在时静默
-        // 创建新 AccountSession，导致 `switch_to` 可切换到任意 login_id（含
-        // 不存在账号），构成提权风险。改为返回 Err，强制调用方先确保目标
-        // login_id 已存在（如通过 `login()` 创建）。
+        // Account-Session 不存在时返回 Err，强制调用方先确保目标 login_id 已存在
+        //（如通过 `login()` 创建）。
         let mut account = match self.get_account_session(login_id).await? {
             Some(acc) => acc,
             None => {
@@ -1519,15 +1515,12 @@ mod tests {
     // ----------------------------------------------------------------
     // ensure_token_in_account_session：Account-Session 不存在时拒绝
     // ----------------------------------------------------------------
-    // VULN-0015 修复：原 `unwrap_or_else` 在 Account-Session 不存在时
-    // 静默创建新 AccountSession，导致 `switch_to` 可切换到任意 login_id
-    //（包括不存在的账号），构成提权风险。修复后改为返回 `Err`，强制
-    // 调用方先确保目标 login_id 已存在。
+    // Account-Session 不存在时返回 Err，强制调用方先确保目标 login_id 已存在。
 
     /// 验证 `ensure_token_in_account_session` 在目标 login_id 的
     /// Account-Session 不存在时返回 `Err`，而不是静默创建新会话。
     ///
-    /// 覆盖 VULN-0015 修复后的 `match None` 分支。
+    /// 覆盖 `match None` 分支。
     #[tokio::test]
     async fn ensure_token_in_account_session_returns_error_for_nonexistent_login_id() {
         let (_dao, session) = make_session(3600, 86400);

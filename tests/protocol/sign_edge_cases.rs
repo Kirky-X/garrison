@@ -106,7 +106,7 @@ impl BulwarkDao for MockDao {
 /// 创建 SignHandler（使用 MockDao）。
 fn make_handler() -> SignHandler {
     let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
-    // VULN-0018: app_secret 最小 32 字节
+    // app_secret 最小 32 字节
     SignHandler::new("app-001", "test-secret-key-with-32-bytes!!!", dao).unwrap()
 }
 

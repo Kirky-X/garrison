@@ -26,13 +26,13 @@
 //! | Token | `{base_url}/protocol/openid-connect/token` |
 //! | UserInfo | `{base_url}/protocol/openid-connect/userinfo` |
 
+use crate::dao::BulwarkDao;
 use crate::error::{BulwarkError, BulwarkResult};
 use crate::loc;
-use parking_lot::RwLock;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// JWKS 公钥缓存 TTL。
 ///
@@ -43,7 +43,7 @@ const JWKS_CACHE_TTL: Duration = Duration::from_secs(600);
 ///
 /// 持有对接 Keycloak IdP 所需的最小配置：realm base_url、client_id、
 /// client_secret（confidential client 必填，public client 可为 None）、redirect_uri、
-/// expected_iss（vuln-0020 修复：issuer 校验）。
+/// expected_iss（issuer 校验）。
 ///
 /// # 字段
 ///
@@ -52,7 +52,7 @@ const JWKS_CACHE_TTL: Duration = Duration::from_secs(600);
 /// - `client_id`: 在 Keycloak 中注册的 OIDC client ID。
 /// - `client_secret`: confidential client 的密钥；public client（如 SPA）为 `None`。
 /// - `redirect_uri`: 授权码回调地址，必须与 Keycloak client 配置中登记的 URL 一致。
-/// - `expected_iss`: 预期的 issuer（vuln-0020 修复），通常等于 `base_url`，
+/// - `expected_iss`: 预期的 issuer，通常等于 `base_url`，
 ///   用于 [`KeycloakProvider::verify_id_token`] 的 `validate_iss` 校验。
 ///
 /// # 端点推导
@@ -71,7 +71,7 @@ pub struct KeycloakConfig {
     pub client_secret: Option<String>,
     /// 授权码回调地址。
     pub redirect_uri: String,
-    /// 预期的 issuer（vuln-0020 修复）。
+    /// 预期的 issuer。
     /// 通常等于 `base_url`，用于 [`KeycloakProvider::verify_id_token`] 的 `validate_iss` 校验。
     pub expected_iss: String,
 }
@@ -137,7 +137,7 @@ pub struct OidcDiscoveryMetadata {
 ///
 /// 表示从 `/.well-known/openid-configuration` 的 `jwks_uri` 拉取的公钥集合中的一个条目。
 /// 仅声明 RS256 验签所需字段；其他字段（如 `use` / `alg`）在反序列化时被忽略。
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Jwk {
     /// 公钥标识（Key ID），与 JWT header 的 `kid` 匹配以选择验签公钥。
     pub kid: String,
@@ -148,40 +148,17 @@ pub struct Jwk {
 }
 
 /// JWKS 公钥集合响应。
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct JwksResponse {
     /// 公钥列表。
     pub keys: Vec<Jwk>,
 }
 
-/// JWKS 公钥缓存。
+/// JWKS 缓存 key 前缀（拼入 DAO key：`keycloak:jwks:{expected_iss}`）。
 ///
-/// 缓存 JWKS 公钥集合 + 拉取时间戳，避免每次 `verify_id_token` 都拉取 JWKS endpoint。
-/// TTL 由 `JWKS_CACHE_TTL` 控制，过期后下次调用重新拉取。
-#[derive(Debug, Clone, Default)]
-pub struct JwksCache {
-    /// 缓存的公钥列表。
-    keys: Vec<Jwk>,
-    /// 上次拉取时间戳（`None` 表示从未拉取）。
-    fetched_at: Option<Instant>,
-}
-
-impl JwksCache {
-    /// 判断缓存是否为空或已过期。
-    ///
-    /// 缓存为空或距上次拉取超过 [`JWKS_CACHE_TTL`] 时返回 `true`。
-    fn is_empty_or_expired(&self) -> bool {
-        match self.fetched_at {
-            None => true,
-            Some(t) => Instant::now().duration_since(t) > JWKS_CACHE_TTL,
-        }
-    }
-
-    /// 按 `kid` 查找公钥。
-    fn find_by_kid(&self, kid: &str) -> Option<&Jwk> {
-        self.keys.iter().find(|k| k.kid == kid)
-    }
-}
+/// 通过 [`BulwarkDao`] 抽象层委托 oxcache 管理 JWKS JSON + TTL，
+/// 禁止手写内存缓存（用户铁律：所有缓存由 oxcache 接管）。
+const JWKS_CACHE_KEY_PREFIX: &str = "keycloak:jwks:";
 
 /// Keycloak realm 访问信息。
 ///
@@ -201,9 +178,9 @@ pub struct RealmAccess {
 ///
 /// - `sub`: 主体标识（Keycloak 用户 ID）。
 /// - `exp`: 过期时间（Unix 秒，RFC 7519 §4.1.4，用于 `validate_exp` 校验）。
-/// - `aud`: Audience（RFC 7519 §4.1.3，vuln-0020 修复）。支持单个 String 或 Vec<String>，
+/// - `aud`: Audience（RFC 7519 §4.1.3）。支持单个 String 或 Vec<String>，
 ///   用 `serde_json::Value` 兼容两种形式，由 `verify_id_token` 的 `validate_aud` 校验。
-/// - `iss`: Issuer（RFC 7519 §4.1.1，vuln-0020 修复）。由 `verify_id_token` 的
+/// - `iss`: Issuer（RFC 7519 §4.1.1）。由 `verify_id_token` 的
 ///   `validate_iss` 校验，旧 token 可能无此字段故用 `Option`。
 /// - `preferred_username`: 用户名（Keycloak 登录名）。
 /// - `email`: 邮箱（可选，需 `email` scope）。
@@ -216,11 +193,11 @@ pub struct KeycloakClaims {
     pub sub: String,
     /// 过期时间（Unix 秒，RFC 7519 §4.1.4，用于 `validate_exp` 校验）。
     pub exp: i64,
-    /// Audience（RFC 7519 §4.1.3，vuln-0020 修复）。
+    /// Audience（RFC 7519 §4.1.3）。
     /// 支持单个 String 或 Vec<String>，用 `serde_json::Value` 兼容两种形式。
     #[serde(default)]
     pub aud: serde_json::Value,
-    /// Issuer（RFC 7519 §4.1.1，vuln-0020 修复）。旧 token 可能无此字段故用 `Option`。
+    /// Issuer（RFC 7519 §4.1.1）。旧 token 可能无此字段故用 `Option`。
     #[serde(default)]
     pub iss: Option<String>,
     /// 用户名（Keycloak 登录名）。
@@ -262,15 +239,21 @@ pub struct KeycloakTokenSet {
 /// # 设计决策
 ///
 /// - `http: reqwest::Client` 复用连接池，`Send + Sync` 可在多线程共享。
-/// - `jwks_cache: Arc<RwLock<JwksCache>>` 缓存 JWKS 公钥，TTL 由 `JWKS_CACHE_TTL` 控制，
-///   避免每次 `verify_id_token` 都拉取 JWKS endpoint。
+/// - JWKS 公钥缓存通过 [`BulwarkDao`]（oxcache 抽象层）管理，TTL 由 [`JWKS_CACHE_TTL`]
+///   控制，避免每次 `verify_id_token` 都拉取 JWKS endpoint。
+///   **禁止手写内存缓存**（用户铁律：所有缓存由 oxcache 接管）。
+///   调用方必须通过 [`with_dao`](Self::with_dao) 注入 DAO 实例，
+///   否则 `verify_id_token` 返回 [`BulwarkError::Config`] 错误。
 pub struct KeycloakProvider {
     /// RP 配置（base_url / client_id / client_secret / redirect_uri / expected_iss）。
     config: KeycloakConfig,
     /// 可复用的 HTTP 客户端。
     http: reqwest::Client,
-    /// JWKS 公钥缓存（TTL 控制，避免每次验签都拉取）。
-    jwks_cache: Arc<RwLock<JwksCache>>,
+    /// DAO 抽象（通过 oxcache 管理 JWKS 缓存）。
+    ///
+    /// `None` 时 `verify_id_token` 返回 [`BulwarkError::Config`] 错误。
+    /// 调用方通过 [`with_dao`](Self::with_dao) 注入。
+    dao: Option<Arc<dyn BulwarkDao>>,
     /// PKCE code_verifier。
     ///
     /// 由 [`with_pkce`](Self::with_pkce) 设置；`Some` 时 `exchange_code` 改用 PKCE 鉴权
@@ -300,9 +283,31 @@ impl KeycloakProvider {
         Ok(Self {
             config,
             http,
-            jwks_cache: Arc::new(RwLock::new(JwksCache::default())),
+            dao: None,
             pkce_verifier: None,
         })
+    }
+
+    /// 注入 [`BulwarkDao`] 实例以接管 JWKS 缓存。
+    ///
+    /// **必选调用**：`verify_id_token` 依赖 DAO 缓存 JWKS 公钥集合，
+    /// 未注入 DAO 时返回 [`BulwarkError::Config`] 错误。
+    ///
+    /// JWKS 缓存 key 格式：`keycloak:jwks:{expected_iss}`，TTL 由 [`JWKS_CACHE_TTL`] 控制。
+    ///
+    /// # 参数
+    ///
+    /// - `dao`: DAO 实例（通常为 `Arc<BulwarkDaoOxcache>` 或测试用 `Arc<MockDao>`）。
+    ///
+    /// # 示例
+    ///
+    /// ```ignore
+    /// let provider = KeycloakProvider::new(config)?
+    ///     .with_dao(Arc::new(BulwarkDaoOxcache::new().await?));
+    /// ```
+    pub fn with_dao(mut self, dao: Arc<dyn BulwarkDao>) -> Self {
+        self.dao = Some(dao);
+        self
     }
 
     /// 设置 PKCE code_verifier。
@@ -367,15 +372,32 @@ impl KeycloakProvider {
         })
     }
 
-    /// 拉取 JWKS 公钥集合并更新缓存。
+    /// 构造 JWKS 在 DAO 中的缓存 key。
+    ///
+    /// 格式：`keycloak:jwks:{expected_iss}`，按 issuer 区分不同 Keycloak realm。
+    fn jwks_cache_key(&self) -> String {
+        format!("{}{}", JWKS_CACHE_KEY_PREFIX, self.config.expected_iss)
+    }
+
+    /// 拉取 JWKS 公钥集合并写入 DAO 缓存。
     ///
     /// HTTP GET [`KeycloakConfig::jwks_url`]，响应体按 JSON 解析为 [`JwksResponse`]，
-    /// 将 `keys` 写入 `jwks_cache` 并更新 `fetched_at` 时间戳。
+    /// 序列化为 JSON 字符串后通过 `dao.set(key, json, JWKS_CACHE_TTL.as_secs())` 写入缓存。
+    /// TTL 由 oxcache 自动管理（set 时传入 TTL），过期后下次 `verify_id_token` 自动重新拉取。
     ///
     /// # 错误
     ///
+    /// - `BulwarkError::Config`: 未调用 [`with_dao`](Self::with_dao) 注入 DAO。
     /// - `BulwarkError::Network`: HTTP 请求失败、非 2xx 状态码或 JSON 解析失败。
+    /// - `BulwarkError::Dao`: DAO 写入失败。
     async fn fetch_jwks(&self) -> BulwarkResult<()> {
+        let dao = self.dao.as_ref().ok_or_else(|| {
+            BulwarkError::Config(loc!(
+                "keycloak-dao-not-injected",
+                "KeycloakProvider 未注入 DAO，无法缓存 JWKS（调用 with_dao 注入 BulwarkDao）"
+                    .to_string()
+            ))
+        })?;
         let url = self.config.jwks_url();
         let resp = self.http.get(&url).send().await.map_err(|e| {
             BulwarkError::Network(loc!(
@@ -398,9 +420,16 @@ impl KeycloakProvider {
                 ("detail", &e.to_string())
             ))
         })?;
-        let mut cache = self.jwks_cache.write();
-        cache.keys = jwks.keys;
-        cache.fetched_at = Some(Instant::now());
+        // 序列化为 JSON 字符串存入 DAO（反序列化时按相同结构解析）
+        let json = serde_json::to_string(&jwks).map_err(|e| {
+            BulwarkError::Internal(loc!(
+                "keycloak-jwks-serialize-failed",
+                format!("JWKS 序列化失败: {}", e),
+                ("detail", &e.to_string())
+            ))
+        })?;
+        let cache_key = self.jwks_cache_key();
+        dao.set(&cache_key, &json, JWKS_CACHE_TTL.as_secs()).await?;
         Ok(())
     }
 
@@ -409,19 +438,30 @@ impl KeycloakProvider {
     /// # 流程
     ///
     /// 1. 解析 JWT header，提取 `kid`。
-    /// 2. 检查 `jwks_cache`，缓存为空或过期时调用 `fetch_jwks` 拉取。
+    /// 2. 从 DAO 缓存读取 JWKS（key=`keycloak:jwks:{expected_iss}`），
+    ///    缓存 miss 或反序列化失败时调用 `fetch_jwks` 重新拉取并写入缓存。
     /// 3. 按 `kid` 匹配 JWKS 公钥，用 `n`/`e` 模数构造 `DecodingKey`。
     /// 4. 用 RS256 算法验签，解析为 [`KeycloakClaims`]。
     /// 5. 校验 `exp`（过期时间）/ `nbf`（生效时间）/ `aud`（受众）/ `iss`（签发者），
-    ///    vuln-0020 修复：启用 aud/iss/nbf 三重校验，防止 token 被重放给非预期 client/issuer。
+    ///    启用 aud/iss/nbf 三重校验，防止 token 被重放给非预期 client/issuer。
     ///
     /// # 错误
     ///
+    /// - `BulwarkError::Config`: 未调用 [`with_dao`](Self::with_dao) 注入 DAO。
     /// - `BulwarkError::InvalidToken`: JWT header 解析失败 / kid 缺失 / JWKS 无匹配公钥 /
     ///   签名验证失败 / claims 解析失败 / token 已过期 / aud 不匹配 / iss 不匹配 / nbf 未生效。
     /// - `BulwarkError::Network`: JWKS 拉取失败。
+    /// - `BulwarkError::Dao`: DAO 读写失败。
     pub async fn verify_id_token(&self, id_token: &str) -> BulwarkResult<KeycloakClaims> {
         use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
+
+        let dao = self.dao.as_ref().ok_or_else(|| {
+            BulwarkError::Config(loc!(
+                "keycloak-dao-not-injected",
+                "KeycloakProvider 未注入 DAO，无法缓存 JWKS（调用 with_dao 注入 BulwarkDao）"
+                    .to_string()
+            ))
+        })?;
 
         // 1. 解析 JWT header，提取 kid
         let header = jsonwebtoken::decode_header(id_token).map_err(|e| {
@@ -438,21 +478,35 @@ impl KeycloakProvider {
             ))
         })?;
 
-        // 2. 检查 jwks_cache，缓存为空或过期时拉取
-        //    用独立作用域确保 read guard 在 await 前 drop（避免 clippy::await_holding_lock）
-        let needs_fetch = {
-            let cache = self.jwks_cache.read();
-            cache.is_empty_or_expired()
+        // 2. 从 DAO 读取 JWKS 缓存；缓存 miss 或反序列化失败（缓存损坏）时重新拉取
+        let cache_key = self.jwks_cache_key();
+        let cached = dao.get(&cache_key).await?;
+        let jwks: JwksResponse = match cached
+            .as_deref()
+            .and_then(|json| serde_json::from_str(json).ok())
+        {
+            Some(jwks) => jwks,
+            None => {
+                // 缓存 miss / TTL 过期 / 反序列化失败：重新拉取并写入缓存
+                self.fetch_jwks().await?;
+                let json = dao.get(&cache_key).await?.ok_or_else(|| {
+                    BulwarkError::Internal(loc!(
+                        "keycloak-jwks-cache-miss-after-fetch",
+                        "fetch_jwks 后缓存仍为空（DAO 写入异常）".to_string()
+                    ))
+                })?;
+                serde_json::from_str(&json).map_err(|e| {
+                    BulwarkError::Internal(loc!(
+                        "keycloak-jwks-deserialize-failed",
+                        format!("JWKS 反序列化失败: {}", e),
+                        ("detail", &e.to_string())
+                    ))
+                })?
+            },
         };
-        if needs_fetch {
-            self.fetch_jwks().await?;
-        }
 
         // 3. 按 kid 匹配 JWKS 公钥
-        let jwk = {
-            let cache = self.jwks_cache.read();
-            cache.find_by_kid(kid).cloned()
-        };
+        let jwk = jwks.keys.iter().find(|k| k.kid == kid).cloned();
         let jwk = jwk.ok_or_else(|| {
             BulwarkError::InvalidToken(loc!(
                 "keycloak-jwks-key-not-found",
@@ -469,7 +523,7 @@ impl KeycloakProvider {
                 ("detail", &e.to_string())
             ))
         })?;
-        // vuln-0020 修复：启用 aud/iss/nbf 三重校验
+        // 启用 aud/iss/nbf 三重校验
         // - validate_exp: 校验 exp（过期时间），T119-T120 已启用
         // - validate_nbf: 校验 nbf（生效时间），防止 token 在生效前被使用
         // - validate_aud: 校验 aud（受众），期望 aud 包含 client_id，防止 token 被重放给非预期 client
@@ -477,8 +531,8 @@ impl KeycloakProvider {
         // - set_issuer: 设置期望的 issuer = expected_iss，防止 token 被重放给非预期 issuer
         let mut validation = Validation::new(Algorithm::RS256);
         validation.validate_exp = true;
-        validation.validate_nbf = true; // vuln-0020 修复：启用 nbf 校验
-        validation.validate_aud = true; // vuln-0020 修复：启用 aud 校验
+        validation.validate_nbf = true; // 启用 nbf 校验
+        validation.validate_aud = true; // 启用 aud 校验
         validation.set_audience(&[&self.config.client_id]); // 期望 aud = client_id
         validation.set_issuer(&[&self.config.expected_iss]); // 期望 iss = expected_iss
         validation.leeway = 0;
@@ -492,19 +546,19 @@ impl KeycloakProvider {
                         "token expired".to_string()
                     ))
                 } else if msg.contains("ImmatureSignature") {
-                    // vuln-0020 修复：nbf 校验失败（token 尚未生效）
+                    // nbf 校验失败（token 尚未生效）
                     BulwarkError::InvalidToken(loc!(
                         "keycloak-token-immature",
                         "token not yet valid (nbf)".to_string()
                     ))
                 } else if msg.contains("InvalidAudience") {
-                    // vuln-0020 修复：aud 校验失败（audience 不匹配 client_id）
+                    // aud 校验失败（audience 不匹配 client_id）
                     BulwarkError::InvalidToken(loc!(
                         "keycloak-token-invalid-audience",
                         "invalid audience".to_string()
                     ))
                 } else if msg.contains("InvalidIssuer") {
-                    // vuln-0020 修复：iss 校验失败（issuer 不匹配 expected_iss）
+                    // iss 校验失败（issuer 不匹配 expected_iss）
                     BulwarkError::InvalidToken(loc!(
                         "keycloak-token-invalid-issuer",
                         "invalid issuer".to_string()
@@ -600,6 +654,7 @@ impl KeycloakProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dao::MockDao;
 
     // ========================================================================
     // T111-KeycloakConfig Red-Green
@@ -754,8 +809,8 @@ mod tests {
         struct KeycloakTestClaims {
             sub: String,
             exp: i64,
-            aud: serde_json::Value, // vuln-0020：audience claim
-            iss: String,            // vuln-0020：issuer claim
+            aud: serde_json::Value, // audience claim
+            iss: String,            // issuer claim
             preferred_username: String,
             email: String,
             realm_access: serde_json::Value,
@@ -775,8 +830,8 @@ mod tests {
         let claims = KeycloakTestClaims {
             sub: "user-123".into(),
             exp,
-            aud: serde_json::Value::String("bulwark-rp".to_string()), // vuln-0020：aud = client_id
-            iss: issuer.clone(), // vuln-0020：iss = expected_iss
+            aud: serde_json::Value::String("bulwark-rp".to_string()), // aud = client_id
+            iss: issuer.clone(),                                      // iss = expected_iss
             preferred_username: "alice".into(),
             email: "alice@example.com".into(),
             realm_access: serde_json::json!({ "roles": ["user", "admin"] }),
@@ -811,7 +866,9 @@ mod tests {
             redirect_uri: "https://app.example.com/cb".into(),
             expected_iss: issuer,
         };
-        let provider = KeycloakProvider::new(config).expect("KeycloakProvider::new 应成功");
+        let provider = KeycloakProvider::new(config)
+            .expect("KeycloakProvider::new 应成功")
+            .with_dao(Arc::new(MockDao::new()));
         let keycloak_claims = provider
             .verify_id_token(&id_token)
             .await
@@ -925,8 +982,8 @@ mod tests {
         struct ExpiredTestClaims {
             sub: String,
             exp: i64,
-            aud: serde_json::Value, // vuln-0020：audience claim（正确值以隔离 exp 校验）
-            iss: String,            // vuln-0020：issuer claim（正确值以隔离 exp 校验）
+            aud: serde_json::Value, // audience claim（正确值以隔离 exp 校验）
+            iss: String,            // issuer claim（正确值以隔离 exp 校验）
             realm_access: serde_json::Value,
             resource_access: serde_json::Value,
         }
@@ -944,8 +1001,8 @@ mod tests {
         let claims = ExpiredTestClaims {
             sub: "user-123".into(),
             exp,
-            aud: serde_json::Value::String("bulwark-rp".to_string()), // vuln-0020：aud 正确
-            iss: issuer.clone(),                                      // vuln-0020：iss 正确
+            aud: serde_json::Value::String("bulwark-rp".to_string()), // aud 正确
+            iss: issuer.clone(),                                      // iss 正确
             realm_access: serde_json::json!({ "roles": ["user"] }),
             resource_access: serde_json::json!({
                 "account": { "roles": ["manage-account"] }
@@ -977,7 +1034,9 @@ mod tests {
             redirect_uri: "https://app.example.com/cb".into(),
             expected_iss: issuer,
         };
-        let provider = KeycloakProvider::new(config).expect("KeycloakProvider::new 应成功");
+        let provider = KeycloakProvider::new(config)
+            .expect("KeycloakProvider::new 应成功")
+            .with_dao(Arc::new(MockDao::new()));
         let result = provider.verify_id_token(&id_token).await;
 
         match result {
@@ -993,10 +1052,10 @@ mod tests {
     }
 
     // ========================================================================
-    // vuln-0020 修复：aud/iss 校验测试
+    // aud/iss 校验测试
     // ========================================================================
 
-    /// vuln-0020 测试 1：`verify_id_token` 拒绝 aud 不匹配 client_id 的 id_token
+    /// 测试 1：`verify_id_token` 拒绝 aud 不匹配 client_id 的 id_token
     ///
     /// 启用 `validate_aud = true` + `set_audience(&[client_id])` 后，
     /// aud 不包含 client_id 的 token 应返回 `InvalidToken("invalid audience")`。
@@ -1084,7 +1143,9 @@ mod tests {
             redirect_uri: "https://app.example.com/cb".into(),
             expected_iss: issuer,
         };
-        let provider = KeycloakProvider::new(config).expect("KeycloakProvider::new 应成功");
+        let provider = KeycloakProvider::new(config)
+            .expect("KeycloakProvider::new 应成功")
+            .with_dao(Arc::new(MockDao::new()));
         let result = provider.verify_id_token(&id_token).await;
 
         match result {
@@ -1099,7 +1160,7 @@ mod tests {
         }
     }
 
-    /// vuln-0020 测试 2：`verify_id_token` 拒绝 iss 不匹配 expected_iss 的 id_token
+    /// 测试 2：`verify_id_token` 拒绝 iss 不匹配 expected_iss 的 id_token
     ///
     /// 启用 `set_issuer(&[expected_iss])` 后，
     /// iss 不等于 expected_iss 的 token 应返回 `InvalidToken("invalid issuer")`。
@@ -1187,7 +1248,9 @@ mod tests {
             redirect_uri: "https://app.example.com/cb".into(),
             expected_iss: issuer,
         };
-        let provider = KeycloakProvider::new(config).expect("KeycloakProvider::new 应成功");
+        let provider = KeycloakProvider::new(config)
+            .expect("KeycloakProvider::new 应成功")
+            .with_dao(Arc::new(MockDao::new()));
         let result = provider.verify_id_token(&id_token).await;
 
         match result {
@@ -1202,7 +1265,7 @@ mod tests {
         }
     }
 
-    /// vuln-0020 测试 3：`verify_id_token` 接受 aud 为数组形式（包含 client_id）的 id_token
+    /// 测试 3：`verify_id_token` 接受 aud 为数组形式（包含 client_id）的 id_token
     ///
     /// RFC 7519 §4.1.3 规定 aud 可以是 String 或 Vec<String>。
     /// Keycloak 实际签发的 token 中 aud 常为数组（如 `["bulwark-rp", "account"]`）。
@@ -1292,7 +1355,9 @@ mod tests {
             redirect_uri: "https://app.example.com/cb".into(),
             expected_iss: issuer,
         };
-        let provider = KeycloakProvider::new(config).expect("KeycloakProvider::new 应成功");
+        let provider = KeycloakProvider::new(config)
+            .expect("KeycloakProvider::new 应成功")
+            .with_dao(Arc::new(MockDao::new()));
         let keycloak_claims = provider
             .verify_id_token(&id_token)
             .await

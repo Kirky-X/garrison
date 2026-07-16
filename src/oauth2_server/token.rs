@@ -10,8 +10,10 @@
 //! - `password`：用户名密码验证 + token（需注入 PasswordVerifier）
 
 use crate::constants::{DaoKeyPrefix, TokenType};
-use crate::dao::BulwarkDao;
+use crate::dao::{BulwarkDao, MockDao};
 use crate::error::{BulwarkError, BulwarkResult};
+use crate::limiteron::BulwarkDaoDistributedLimiter;
+// 导入 DistributedLimiter trait 以使用 get_count / incr_with_ttl 方法
 use crate::oauth2_server::authorize::AuthorizeHandler;
 use crate::oauth2_server::client::{GrantType, OAuth2Client, OAuth2ClientStore};
 #[cfg(feature = "db-sqlite")]
@@ -20,12 +22,11 @@ use async_trait::async_trait;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use base64::Engine;
 use chrono::{DateTime, Duration, Utc};
-use parking_lot::Mutex;
+use limiteron::limiters::DistributedLimiter;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::Duration as StdDuration;
 
 /// access_token 有效期（1 小时，RFC 6749 建议）。
 const ACCESS_TOKEN_TTL_SECONDS: u64 = 3600;
@@ -108,7 +109,7 @@ fn default_issued_at() -> DateTime<Utc> {
     DateTime::<Utc>::from_timestamp(0, 0).unwrap_or_else(Utc::now)
 }
 
-/// 解析 HTTP Basic Authentication 头（VULN-0011 修复，RFC 6749 §2.3.1）。
+/// 解析 HTTP Basic Authentication 头（RFC 6749 §2.3.1）。
 ///
 /// # 参数
 /// - `header`: `Authorization` 头值，期望格式 `"Basic <base64(client_id:client_secret)>"`。
@@ -148,7 +149,7 @@ pub trait PasswordVerifier: Send + Sync {
     async fn verify(&self, username: &str, password: &str) -> BulwarkResult<Option<i64>>;
 }
 
-/// Password grant 失败计数器 — 防 brute-force（VULN-0005）。
+/// Password grant 失败计数器 — 防 brute-force。
 ///
 /// 按 username 维度跟踪窗口内失败次数，超阈值后锁定至窗口过期。
 /// 验证成功后重置计数。
@@ -158,141 +159,108 @@ pub trait PasswordVerifier: Send + Sync {
 /// - **per-username 维度**：与 `crate::server::middleware::RateLimitState`（per-IP）不同 ——
 ///   防御多 IP 撞库同一账户的暴力破解
 /// - **滑动窗口**：`window_seconds` 内累计失败次数达 `max_attempts` 即锁定至窗口过期
-/// - **in-memory**：与 `RateLimitState` 一致，简化实现不依赖 Redis
-/// - **parking_lot::Mutex**：与 `RateLimitState` 一致
-/// - **max_entries 上限**（tiangang/diting 审查 HIGH 修复）：与 `RateLimitState` 对称设计，
-///   防止攻击者用大量伪造 username 耗尽内存（与 VULN-0008 同类风险）
+/// - **limiteron 委托**：通过 `BulwarkDaoDistributedLimiter` + `MockDao` 实现原子计数 + TTL，
+///   不再手写 `Mutex<HashMap>` + 滑动窗口算法（limiteron 适配器统一抽象）
+/// - **进程内原子**：`MockDao::incr` 用 `parking_lot::Mutex` 保护，单进程内原子
+/// - **TTL 自动重置**：窗口过期由 `MockDao` 的 TTL 语义保证（首次 `incr` 后过期会重新初始化），
+///   无需手动时间窗口判断
 ///
 /// # 与 RateLimitState 的区别
 ///
 /// `RateLimitState` 是 HTTP 中间件级别的 per-IP 令牌桶，限制每秒请求数；
 /// 本结构是 OAuth2 handler 级别的 per-username 失败计数器，限制窗口内失败次数。
 /// 两者互补：IP 限速防御分布式扫描，账户锁定防御定向撞库。
-#[derive(Debug)]
+///
+/// # Key 格式
+///
+/// `rate_limit:pw:{username}` — 通过 `MockDao::keys("rate_limit:pw:*")` 可扫描全部 entry。
 pub struct PasswordRateLimiter {
-    /// username → 失败记录
-    attempts: Mutex<HashMap<String, FailedAttemptRecord>>,
+    /// 限流器（基于 `BulwarkDaoDistributedLimiter`，内部用 `MockDao` 进程内原子）
+    limiter: BulwarkDaoDistributedLimiter,
+    /// 保留 `MockDao` 引用以支持 `entry_count()` 测试辅助方法
+    dao: Arc<MockDao>,
     /// 窗口内允许的最大失败次数（达此值后锁定至窗口过期）
     max_attempts: u32,
     /// 滑动窗口时长（秒）
     window_seconds: u64,
-    /// HashMap 最大条目数（tiangang/diting 审查 HIGH 修复：防 DoS 内存耗尽）。
-    /// 超限时 LRU 淘汰最久未访问的 entry，与 `RateLimitState::max_entries` 对称。
-    max_entries: usize,
-}
-
-/// 默认最大 entry 数（与 `RateLimitState::DEFAULT_MAX_ENTRIES` 一致）。
-const DEFAULT_PASSWORD_LIMITER_MAX_ENTRIES: usize = 100_000;
-
-/// 单个 username 的失败记录。
-#[derive(Debug, Clone)]
-struct FailedAttemptRecord {
-    /// 窗口内累计失败次数
-    count: u32,
-    /// 窗口起始时间
-    first_failure: Instant,
 }
 
 impl PasswordRateLimiter {
-    /// 创建失败计数器（向后兼容，默认 max_entries=100_000）。
+    /// 创建失败计数器。
+    ///
+    /// 内部创建 `MockDao` + `BulwarkDaoDistributedLimiter`，进程内原子计数。
     ///
     /// # 参数
     /// - `max_attempts`：窗口内允许的最大失败次数（达此值后锁定至窗口过期）
     /// - `window_seconds`：滑动窗口时长（秒），窗口过期后计数自动重置
     pub fn new(max_attempts: u32, window_seconds: u64) -> Self {
-        Self::with_max_entries(
-            max_attempts,
-            window_seconds,
-            DEFAULT_PASSWORD_LIMITER_MAX_ENTRIES,
-        )
-    }
-
-    /// 创建失败计数器（完整配置）。
-    ///
-    /// # 参数
-    /// - `max_attempts`：窗口内允许的最大失败次数（达此值后锁定至窗口过期）
-    /// - `window_seconds`：滑动窗口时长（秒），窗口过期后计数自动重置
-    /// - `max_entries`：HashMap 最大条目数（防 DoS 内存耗尽，与 `RateLimitState` 对称）
-    pub fn with_max_entries(max_attempts: u32, window_seconds: u64, max_entries: usize) -> Self {
+        let dao = Arc::new(MockDao::new());
+        let limiter = BulwarkDaoDistributedLimiter::new(dao.clone());
         Self {
-            attempts: Mutex::new(HashMap::new()),
+            limiter,
+            dao,
             // 至少 1，避免 max_attempts=0 导致所有请求被锁
             max_attempts: max_attempts.max(1),
             window_seconds,
-            // 至少 1，避免 max_entries=0 导致所有 entry 被驱逐
-            max_entries: max_entries.max(1),
         }
     }
 
     /// 检查 username 是否允许尝试（未锁定）。
     ///
     /// 返回 `true` 表示允许尝试，`false` 表示已被锁定（窗口内失败次数达上限）。
-    /// 窗口过期时自动重置计数并允许尝试。
-    fn check(&self, username: &str) -> bool {
-        let mut attempts = self.attempts.lock();
-        let now = Instant::now();
-        match attempts.get(username) {
-            Some(record) => {
-                // 窗口已过期 → 重置
-                if now.duration_since(record.first_failure).as_secs() >= self.window_seconds {
-                    attempts.remove(username);
-                    return true;
-                }
-                // 窗口内失败次数未达上限 → 允许尝试
-                record.count < self.max_attempts
+    /// 窗口过期时由 `MockDao` 的 TTL 语义自动重置（首次 `incr` 后过期会重新初始化）。
+    ///
+    /// # Fail-Open 策略
+    ///
+    /// 当 `limiteron::get_count` 出错（如 DAO 通信失败 / 计数器值损坏）时返回 `true`，
+    /// 与原 `Mutex` 实现不失败的语义一致。错误经 `tracing::warn` 记录后吞掉，
+    /// 避免单次 DAO 故障导致用户被错误锁定。
+    pub async fn check(&self, username: &str) -> bool {
+        let key = format!("rate_limit:pw:{}", username);
+        match self.limiter.get_count(&key).await {
+            Ok(count) => count < self.max_attempts as u64,
+            Err(e) => {
+                tracing::warn!("PasswordRateLimiter::check get_count failed: {}", e);
+                true
             },
-            None => true,
         }
     }
 
     /// 记录一次失败。
     ///
-    /// 窗口过期时重置计数后再记录。新 entry 插入前若达 `max_entries` 上限，
-    /// LRU 淘汰最久未访问的 entry（tiangang/diting 审查 HIGH 修复）。
-    fn record_failure(&self, username: &str) {
-        let mut attempts = self.attempts.lock();
-        let now = Instant::now();
-        match attempts.get_mut(username) {
-            Some(record) => {
-                if now.duration_since(record.first_failure).as_secs() >= self.window_seconds {
-                    // 窗口过期 → 重置后再记录
-                    record.count = 1;
-                    record.first_failure = now;
-                } else {
-                    record.count += 1;
-                }
-            },
-            None => {
-                // tiangang/diting 审查 HIGH 修复：插入前检查 max_entries，
-                // 超限时 LRU 淘汰最旧 entry（与 RateLimitState 对称设计）
-                if attempts.len() >= self.max_entries {
-                    if let Some(oldest_key) = attempts
-                        .iter()
-                        .min_by_key(|(_, r)| r.first_failure)
-                        .map(|(k, _)| k.clone())
-                    {
-                        attempts.remove(&oldest_key);
-                    }
-                }
-                attempts.insert(
-                    username.to_string(),
-                    FailedAttemptRecord {
-                        count: 1,
-                        first_failure: now,
-                    },
-                );
-            },
+    /// 通过 `limiteron::incr_with_ttl` 原子递增计数器。
+    /// - 首次失败：设置 count=1 + TTL=`window_seconds`（窗口起始时间）
+    /// - 后续失败：仅递增 count，不重置 TTL（保持窗口起点）
+    /// - 窗口过期：由 `MockDao` 的 TTL 语义自动重置（首次 `incr` 重新初始化）
+    pub async fn record_failure(&self, username: &str) {
+        let key = format!("rate_limit:pw:{}", username);
+        let ttl = StdDuration::from_secs(self.window_seconds);
+        if let Err(e) = self.limiter.incr_with_ttl(&key, 1, ttl).await {
+            tracing::warn!(
+                "PasswordRateLimiter::record_failure incr_with_ttl failed: {}",
+                e
+            );
         }
     }
 
     /// 验证成功后重置 username 的计数。
-    fn reset(&self, username: &str) {
-        self.attempts.lock().remove(username);
+    pub async fn reset(&self, username: &str) {
+        let key = format!("rate_limit:pw:{}", username);
+        if let Err(e) = self.limiter.reset(&key).await {
+            tracing::warn!("PasswordRateLimiter::reset failed: {}", e);
+        }
     }
 
-    /// 当前 entry 数量（测试/运维用）。
-    pub fn entry_count(&self) -> usize {
-        self.attempts.lock().len()
+    /// 当前未过期 entry 数量（测试/运维用）。
+    ///
+    /// 通过 `MockDao::keys("rate_limit:pw:*")` 扫描，返回未过期的 entry 数。
+    /// 已过期的 key 不会计入（与 `MockDao::keys` 语义一致）。
+    pub async fn entry_count(&self) -> usize {
+        self.dao
+            .keys("rate_limit:pw:*")
+            .await
+            .map(|v| v.len())
+            .unwrap_or(0)
     }
 }
 
@@ -312,7 +280,7 @@ pub struct TokenHandler {
     dao: Arc<dyn BulwarkDao>,
     authorize_handler: Arc<AuthorizeHandler>,
     password_verifier: Option<Arc<dyn PasswordVerifier>>,
-    /// Password grant 失败计数器（VULN-0005：防 brute-force）。
+    /// Password grant 失败计数器（防 brute-force）。
     /// 为 None 时不启用账户锁定（向后兼容，但不推荐生产使用）。
     password_rate_limiter: Option<Arc<PasswordRateLimiter>>,
     /// 统一的 refresh token 轮换服务（db-sqlite feature 启用时可用）。
@@ -345,7 +313,7 @@ impl TokenHandler {
         self
     }
 
-    /// 注入 PasswordRateLimiter 启用 password grant 失败计数 + 账户锁定（VULN-0005）。
+    /// 注入 PasswordRateLimiter 启用 password grant 失败计数 + 账户锁定。
     ///
     /// 未注入时 password grant 无账户级速率限制（向后兼容，但不推荐生产使用）。
     pub fn with_password_rate_limiter(mut self, limiter: Arc<PasswordRateLimiter>) -> Self {
@@ -371,7 +339,7 @@ impl TokenHandler {
         self.handle_with_authorization(req, None).await
     }
 
-    /// 处理 token 请求，支持 HTTP Basic Auth 客户端认证（VULN-0011 修复，RFC 6749 §2.3.1）。
+    /// 处理 token 请求，支持 HTTP Basic Auth 客户端认证（RFC 6749 §2.3.1）。
     ///
     /// # 参数
     /// - `req`: token 请求参数。
@@ -388,7 +356,7 @@ impl TokenHandler {
         req: &TokenRequest,
         authorization: Option<&str>,
     ) -> BulwarkResult<TokenResponse> {
-        // 1. 验证客户端凭证（VULN-0011: 优先 Basic Auth）
+        // 1. 验证客户端凭证（优先 Basic Auth）
         let client = self
             .authenticate_client_with_authorization(
                 authorization,
@@ -407,7 +375,7 @@ impl TokenHandler {
         }
     }
 
-    /// 验证客户端凭证，支持 HTTP Basic Auth（VULN-0011 修复）。
+    /// 验证客户端凭证，支持 HTTP Basic Auth。
     ///
     /// 优先解析 `Authorization: Basic` 头；若未提供或解析失败，回退到 body 参数。
     /// 两种来源均未提供 client_id 时返回 `invalid_client`。
@@ -417,7 +385,7 @@ impl TokenHandler {
         body_client_id: &str,
         body_client_secret: &str,
     ) -> BulwarkResult<OAuth2Client> {
-        // VULN-0011: 优先解析 Authorization: Basic 头（RFC 6749 §2.3.1）
+        // 优先解析 Authorization: Basic 头（RFC 6749 §2.3.1）
         let (client_id, client_secret) = match authorization.and_then(parse_basic_auth) {
             Some((id, secret)) => (id, secret),
             None => (body_client_id.to_string(), body_client_secret.to_string()),
@@ -497,7 +465,7 @@ impl TokenHandler {
 
         // 签发 token
         let scopes = auth_code.scopes.clone();
-        // VULN-0003: 校验授权码中的 scope 是否在客户端 allowed_scopes 内（纵深防御）
+        // 校验授权码中的 scope 是否在客户端 allowed_scopes 内（纵深防御）
         client.validate_scopes(&scopes)?;
         let user_id = auth_code.user_id;
         self.issue_tokens(
@@ -518,7 +486,7 @@ impl TokenHandler {
     /// - 调用 `rotation.rotate()` 获得 hash chain + reuse detection + 链式撤销
     /// - 返回新 refresh_token（轮换，旧 token revoked=1）
     ///
-    /// VULN-0009 修复：未注入时退化为 DAO 路径（轮换 + 删除旧 token）：
+    /// 未注入时退化为 DAO 路径（轮换 + 删除旧 token）：
     /// - 查找 `DaoKeyPrefix::OAuth2RefreshToken` 记录
     /// - 校验 client_id 一致性
     /// - 删除旧 refresh_token（防止重放）
@@ -586,12 +554,11 @@ impl TokenHandler {
             }
         }
 
-        // VULN-0009 修复：DAO fallback 路径 — refresh_token 轮换 + 删除旧 token
+        // DAO fallback 路径 — refresh_token 轮换 + 删除旧 token
         //
-        // 旧实现：with_refresh=false（不轮换，refresh_token 继续使用）→ 旧 token 泄露后可无限重用
-        // 新实现：删除旧 refresh_token + 签发新 refresh_token（轮换）
-        //         旧 token 删除后，再次使用会因 dao.get 返回 None 而返回 invalid_grant
-        //         （隐式 reuse detection：旧 token 无法重用）
+        // 删除旧 refresh_token + 签发新 refresh_token（轮换）
+        // 旧 token 删除后，再次使用会因 dao.get 返回 None 而返回 invalid_grant
+        // （隐式 reuse detection：旧 token 无法重用）
         #[allow(deprecated)]
         let key = DaoKeyPrefix::OAuth2RefreshToken.build_key(refresh_token);
         let json = self.dao.get(&key).await?.ok_or_else(|| {
@@ -607,7 +574,7 @@ impl TokenHandler {
             ));
         }
 
-        // VULN-0009: 删除旧 refresh_token（轮换核心步骤）
+        // 删除旧 refresh_token（轮换核心步骤）
         // 删除后旧 token 无法再次使用，防止旧 token 泄露后被重放
         self.dao.delete(&key).await?;
 
@@ -619,7 +586,7 @@ impl TokenHandler {
             &client.client_id,
             user_id,
             &scopes,
-            true, // VULN-0009: 轮换 — 签发新 refresh_token
+            true, // 轮换 — 签发新 refresh_token
             username.as_deref(),
         )
         .await
@@ -643,7 +610,7 @@ impl TokenHandler {
             .map(|s| s.split_whitespace().map(|x| x.to_string()).collect())
             .unwrap_or_default();
 
-        // VULN-0003: 校验请求的 scope 是否在客户端 allowed_scopes 内
+        // 校验请求的 scope 是否在客户端 allowed_scopes 内
         client.validate_scopes(&scopes)?;
 
         // 无 user_id，无 refresh_token
@@ -678,9 +645,9 @@ impl TokenHandler {
             .as_ref()
             .ok_or_else(|| BulwarkError::OAuth2("invalid_request: password 参数缺失".into()))?;
 
-        // VULN-0005: 验证密码前检查账户锁定状态（防 brute-force）
+        // 验证密码前检查账户锁定状态（防 brute-force）
         if let Some(limiter) = &self.password_rate_limiter {
-            if !limiter.check(username) {
+            if !limiter.check(username).await {
                 return Err(BulwarkError::OAuth2(
                     "rate_limited: 账户已被临时锁定，请稍后再试".into(),
                 ));
@@ -690,9 +657,9 @@ impl TokenHandler {
         let user_id = match verifier.verify(username, password).await? {
             Some(uid) => uid,
             None => {
-                // VULN-0005: 验证失败后增加失败计数
+                // 验证失败后增加失败计数
                 if let Some(limiter) = &self.password_rate_limiter {
-                    limiter.record_failure(username);
+                    limiter.record_failure(username).await;
                 }
                 return Err(BulwarkError::OAuth2(
                     "invalid_grant: 用户名或密码错误".into(),
@@ -700,9 +667,9 @@ impl TokenHandler {
             },
         };
 
-        // VULN-0005: 验证成功后重置失败计数
+        // 验证成功后重置失败计数
         if let Some(limiter) = &self.password_rate_limiter {
-            limiter.reset(username);
+            limiter.reset(username).await;
         }
 
         let scopes: Vec<String> = req
@@ -711,7 +678,7 @@ impl TokenHandler {
             .map(|s| s.split_whitespace().map(|x| x.to_string()).collect())
             .unwrap_or_default();
 
-        // VULN-0003: 校验请求的 scope 是否在客户端 allowed_scopes 内
+        // 校验请求的 scope 是否在客户端 allowed_scopes 内
         client.validate_scopes(&scopes)?;
 
         self.issue_tokens(
@@ -886,10 +853,6 @@ fn generate_token() -> String {
     URL_SAFE_NO_PAD.encode(bytes)
 }
 
-// ============================================================================
-// 测试
-// ============================================================================
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1016,9 +979,9 @@ mod tests {
         assert!(err.to_string().contains("invalid_client"));
     }
 
-    // === VULN-0011: HTTP Basic Auth 测试 ===
+    // === HTTP Basic Auth 测试 ===
 
-    /// VULN-0011: parse_basic_auth 正确解析标准 Basic Auth 头。
+    /// parse_basic_auth 正确解析标准 Basic Auth 头。
     #[test]
     fn parse_basic_auth_decodes_valid_header() {
         // "cid:secret" → base64 → "Y2lkOnNlY3JldA=="
@@ -1027,27 +990,27 @@ mod tests {
         assert_eq!(result, Some(("cid".to_string(), "secret".to_string())));
     }
 
-    /// VULN-0011: parse_basic_auth 对非 Basic 头返回 None。
+    /// parse_basic_auth 对非 Basic 头返回 None。
     #[test]
     fn parse_basic_auth_rejects_non_basic() {
         assert!(parse_basic_auth("Bearer token123").is_none());
         assert!(parse_basic_auth("").is_none());
     }
 
-    /// VULN-0011: parse_basic_auth 对无效 base64 返回 None。
+    /// parse_basic_auth 对无效 base64 返回 None。
     #[test]
     fn parse_basic_auth_rejects_invalid_base64() {
         assert!(parse_basic_auth("Basic !!!not-base64!!!").is_none());
     }
 
-    /// VULN-0011: parse_basic_auth 对不含 `:` 的解码结果返回 None。
+    /// parse_basic_auth 对不含 `:` 的解码结果返回 None。
     #[test]
     fn parse_basic_auth_rejects_no_colon() {
         // "noseparator" → base64 → "bm9zZXBhcmF0b3I="
         assert!(parse_basic_auth("Basic bm9zZXBhcmF0b3I=").is_none());
     }
 
-    /// VULN-0011: parse_basic_auth 正确处理空 client_id（":secret"）。
+    /// parse_basic_auth 正确处理空 client_id（":secret"）。
     #[test]
     fn parse_basic_auth_handles_empty_client_id() {
         // ":secret" → base64 → "OnNlY3JldA=="
@@ -1055,7 +1018,7 @@ mod tests {
         assert_eq!(result, Some(("".to_string(), "secret".to_string())));
     }
 
-    /// VULN-0011: handle_with_authorization 使用 Basic Auth 头认证客户端。
+    /// handle_with_authorization 使用 Basic Auth 头认证客户端。
     ///
     /// 场景：client_id/client_secret 通过 Authorization 头传递，body 中为空。
     /// 期望：认证成功，token 签发成功。
@@ -1093,7 +1056,7 @@ mod tests {
         assert_eq!(resp.expires_in, 3600);
     }
 
-    /// VULN-0011: Basic Auth 头优先于 body 参数。
+    /// Basic Auth 头优先于 body 参数。
     ///
     /// 场景：Authorization 头含正确凭证，body 中含错误凭证。
     /// 期望：使用 Basic Auth 头的凭证认证成功（RFC 6749 §2.3.1 优先级）。
@@ -1130,7 +1093,7 @@ mod tests {
         assert_eq!(resp.token_type, "Bearer");
     }
 
-    /// VULN-0011: 无 Basic Auth 头时回退到 body 参数（向后兼容）。
+    /// 无 Basic Auth 头时回退到 body 参数（向后兼容）。
     #[tokio::test]
     async fn handle_with_authorization_falls_back_to_body() {
         let (handler, _) = make_handler();
@@ -1161,7 +1124,7 @@ mod tests {
         assert_eq!(resp.token_type, "Bearer");
     }
 
-    /// VULN-0011: Basic Auth 头凭证错误时返回 invalid_client。
+    /// Basic Auth 头凭证错误时返回 invalid_client。
     #[tokio::test]
     async fn handle_with_authorization_basic_auth_wrong_secret() {
         let (handler, _) = make_handler();
@@ -1195,7 +1158,7 @@ mod tests {
         assert!(err.to_string().contains("invalid_client"));
     }
 
-    /// VULN-0011: 既无 Basic Auth 头又无 body client_id 时返回 invalid_client。
+    /// 既无 Basic Auth 头又无 body client_id 时返回 invalid_client。
     #[tokio::test]
     async fn handle_with_authorization_no_credentials_returns_error() {
         let (handler, _) = make_handler();
@@ -1387,7 +1350,7 @@ mod tests {
         let resp = handler.handle(&refresh_req).await.expect("刷新 token");
         assert_eq!(resp.token_type, "Bearer");
         assert_eq!(resp.expires_in, 3600);
-        // VULN-0009: refresh_token 轮换 — 应返回新 refresh_token
+        // refresh_token 轮换 — 应返回新 refresh_token
         assert!(
             resp.refresh_token.is_some(),
             "VULN-0009: 刷新应轮换返回新 refresh_token"
@@ -1424,7 +1387,7 @@ mod tests {
         assert!(err.to_string().contains("invalid_grant"));
     }
 
-    /// VULN-0009: refresh_token 轮换后，旧 token 被删除，重用返回 invalid_grant。
+    /// refresh_token 轮换后，旧 token 被删除，重用返回 invalid_grant。
     ///
     /// 流程：
     /// 1. authorization_code 获取 refresh_token（old_token）
@@ -1603,9 +1566,9 @@ mod tests {
         assert!(err.to_string().contains("invalid_grant"));
     }
 
-    // === VULN-0005: password grant rate limiting 测试 ===
+    // === password grant rate limiting 测试 ===
 
-    /// VULN-0005: 连续失败超过阈值后，再尝试应返回 rate_limited 错误（账户锁定）。
+    /// 连续失败超过阈值后，再尝试应返回 rate_limited 错误（账户锁定）。
     ///
     /// max_attempts=3，window=300s：
     /// - 前 3 次失败：返回 invalid_grant（凭据错误，未超阈值）
@@ -1654,7 +1617,7 @@ mod tests {
         );
     }
 
-    /// VULN-0005: 成功登录后重置失败计数，可重新尝试至再次超阈值。
+    /// 成功登录后重置失败计数，可重新尝试至再次超阈值。
     ///
     /// max_attempts=3，window=300s：
     /// 1. 2 次失败（未超阈值）
@@ -1727,65 +1690,104 @@ mod tests {
         );
     }
 
-    /// tiangang/diting 审查 HIGH 修复：PasswordRateLimiter max_entries LRU 淘汰测试。
+    /// `record_failure` 通过 `limiteron::incr_with_ttl` 原子递增计数器。
     ///
-    /// 验证 `record_failure` 在 HashMap 达到 `max_entries` 上限时淘汰最旧 entry，
-    /// 防止攻击者用大量伪造 username 耗尽内存（与 VULN-0008 同类风险）。
-    #[test]
-    fn password_rate_limiter_evicts_oldest_when_max_entries_reached() {
-        // max_attempts=10（不触发账户锁定），max_entries=3（仅保留 3 个 entry）
-        let limiter = PasswordRateLimiter::with_max_entries(10, 300, 3);
-
-        // 插入 3 个 username（u1, u2, u3），都达上限
-        limiter.record_failure("u1");
-        limiter.record_failure("u2");
-        limiter.record_failure("u3");
-        assert_eq!(limiter.entry_count(), 3, "应保留 3 个 entry");
-
-        // 插入第 4 个 username（u4），应淘汰最旧（u1，因 first_failure 最早）
-        limiter.record_failure("u4");
-        assert_eq!(
-            limiter.entry_count(),
-            3,
-            "max_entries=3 时插入新 entry 后总数应保持 3"
-        );
-
-        // u1 应已被淘汰（check 返回 true 表示未锁定 = entry 不存在或窗口内失败次数 < max_attempts）
-        // 由于 u1 被淘汰，check("u1") 应返回 true（entry 不存在）
-        // 而 u2/u3/u4 仍存在，且 count=1 < max_attempts=10，check 也返回 true
-        // 此处仅验证 entry_count，不验证具体哪个被淘汰（依赖 min_by_key 实现）
-    }
-
-    /// tiangang/diting 审查 HIGH 修复：PasswordRateLimiter::new 默认 max_entries=100_000。
-    #[test]
-    fn password_rate_limiter_new_uses_default_max_entries() {
+    /// 验证：
+    /// - 首次失败：count=1
+    /// - 后续失败：count 递增（不重置 TTL，窗口起点保持）
+    #[tokio::test]
+    async fn password_rate_limiter_record_failure_increments_count() {
         let limiter = PasswordRateLimiter::new(5, 300);
-        // 默认 max_entries 应为 100_000（DEFAULT_PASSWORD_LIMITER_MAX_ENTRIES）
-        // 间接验证：插入 1 个 entry 后 entry_count=1，未触发淘汰
-        limiter.record_failure("test-user");
-        assert_eq!(limiter.entry_count(), 1);
+        // 首次失败：count 应为 1
+        limiter.record_failure("alice").await;
+        assert!(
+            limiter.check("alice").await,
+            "count=1 < max_attempts=5，应允许"
+        );
+        // 第 2、3 次失败：count 应分别为 2、3
+        limiter.record_failure("alice").await;
+        limiter.record_failure("alice").await;
+        assert!(
+            limiter.check("alice").await,
+            "count=3 < max_attempts=5，应允许"
+        );
+        // 验证 entry_count 反映活跃 entry
+        assert_eq!(limiter.entry_count().await, 1, "应仅 1 个 entry");
     }
 
-    /// tiangang/diting 审查 HIGH 修复：with_max_entries 的 max_entries=0 会被 clamp 到 1。
-    #[test]
-    fn password_rate_limiter_with_max_entries_zero_clamps_to_one() {
-        // max_entries=0 应被 clamp 到 1，避免所有 entry 被驱逐
-        let limiter = PasswordRateLimiter::with_max_entries(5, 300, 0);
-        limiter.record_failure("u1");
-        assert_eq!(limiter.entry_count(), 1, "max_entries=0 应被 clamp 到 1");
-
-        // 插入第 2 个 entry 时应淘汰 u1（max_entries=1）
-        limiter.record_failure("u2");
-        assert_eq!(
-            limiter.entry_count(),
-            1,
-            "max_entries=1 时插入新 entry 应淘汰旧 entry"
+    /// `check` 在失败次数达阈值时返回 `false`（账户锁定）。
+    #[tokio::test]
+    async fn password_rate_limiter_check_returns_false_at_threshold() {
+        let limiter = PasswordRateLimiter::new(3, 300);
+        // 3 次失败后，第 4 次 check 应返回 false
+        limiter.record_failure("bob").await;
+        limiter.record_failure("bob").await;
+        limiter.record_failure("bob").await;
+        // count=3 = max_attempts=3，应锁定
+        assert!(
+            !limiter.check("bob").await,
+            "count=3 = max_attempts=3，应锁定（check 返回 false）"
         );
     }
 
-    // === VULN-0003: OAuth2 scope 校验测试 ===
+    /// `check` 对未失败的 username 返回 `true`（无 entry = 未锁定）。
+    #[tokio::test]
+    async fn password_rate_limiter_check_passes_for_new_user() {
+        let limiter = PasswordRateLimiter::new(3, 300);
+        assert!(
+            limiter.check("new-user").await,
+            "未失败的 username 应允许尝试（check 返回 true）"
+        );
+        assert_eq!(limiter.entry_count().await, 0, "无失败记录时 entry_count=0");
+    }
 
-    /// VULN-0003: client_credentials 请求超出 allowed_scopes 的 scope 返回 invalid_scope。
+    /// `reset` 清除指定 username 的计数（验证成功后调用）。
+    #[tokio::test]
+    async fn password_rate_limiter_reset_clears_counter() {
+        let limiter = PasswordRateLimiter::new(3, 300);
+        limiter.record_failure("carol").await;
+        limiter.record_failure("carol").await;
+        assert_eq!(limiter.entry_count().await, 1, "失败 2 次后应有 1 个 entry");
+        // 验证成功后 reset
+        limiter.reset("carol").await;
+        assert_eq!(limiter.entry_count().await, 0, "reset 后应无 entry");
+        // reset 后再次失败应从 1 开始（而非继续累加）
+        limiter.record_failure("carol").await;
+        assert!(
+            limiter.check("carol").await,
+            "reset 后重新计数，count=1 < max_attempts=3，应允许"
+        );
+    }
+
+    /// 不同 username 的计数器相互独立（验证 per-username 维度隔离）。
+    #[tokio::test]
+    async fn password_rate_limiter_users_are_independent() {
+        let limiter = PasswordRateLimiter::new(2, 300);
+        // alice 失败 2 次（达阈值，锁定）
+        limiter.record_failure("alice").await;
+        limiter.record_failure("alice").await;
+        assert!(!limiter.check("alice").await, "alice 应被锁定");
+        // bob 未失败，应允许
+        assert!(limiter.check("bob").await, "bob 应允许（独立计数器）");
+        assert_eq!(limiter.entry_count().await, 1, "应仅 alice 1 个 entry");
+    }
+
+    /// `max_attempts=0` 会被 clamp 到 1（避免所有请求被锁）。
+    #[tokio::test]
+    async fn password_rate_limiter_max_attempts_zero_clamps_to_one() {
+        let limiter = PasswordRateLimiter::new(0, 300);
+        // max_attempts 被 clamp 到 1，首次失败后即锁定
+        limiter.record_failure("dave").await;
+        // count=1 = max_attempts=1（clamped），应锁定
+        assert!(
+            !limiter.check("dave").await,
+            "max_attempts=0 被 clamp 到 1，首次失败后应锁定"
+        );
+    }
+
+    // === OAuth2 scope 校验测试 ===
+
+    /// client_credentials 请求超出 allowed_scopes 的 scope 返回 invalid_scope。
     /// make_full_client 的 allowed_scopes = ["read", "write"]，请求 "admin" 应被拒绝。
     #[tokio::test]
     async fn handle_client_credentials_scope_not_allowed() {
@@ -1816,7 +1818,7 @@ mod tests {
         );
     }
 
-    /// VULN-0003: client_credentials 请求部分 scope 超出 allowed_scopes 也应拒绝。
+    /// client_credentials 请求部分 scope 超出 allowed_scopes 也应拒绝。
     /// 请求 "read admin"（read 合法，admin 不合法）应返回 invalid_scope。
     #[tokio::test]
     async fn handle_client_credentials_partial_scope_not_allowed() {
@@ -1843,7 +1845,7 @@ mod tests {
         assert!(err.to_string().contains("invalid_scope"));
     }
 
-    /// VULN-0003: password grant 请求超出 allowed_scopes 的 scope 返回 invalid_scope。
+    /// password grant 请求超出 allowed_scopes 的 scope 返回 invalid_scope。
     #[tokio::test]
     async fn handle_password_scope_not_allowed() {
         let (handler, _) = make_handler();
@@ -1873,7 +1875,7 @@ mod tests {
         );
     }
 
-    /// VULN-0003: 空 allowed_scopes 的客户端允许任意 scope（向后兼容）。
+    /// 空 allowed_scopes 的客户端允许任意 scope（向后兼容）。
     #[tokio::test]
     async fn handle_client_credentials_empty_allowed_scopes_allows_any() {
         let (handler, _) = make_handler();
@@ -2276,7 +2278,7 @@ mod refresh_rotation_tests {
         );
     }
 
-    /// T007/T008 fallback: 未注入 rotation 时退化为 DAO 路径（VULN-0009: 轮换 + 删除旧 token）。
+    /// T007/T008 fallback: 未注入 rotation 时退化为 DAO 路径（轮换 + 删除旧 token）。
     #[tokio::test(flavor = "multi_thread")]
     async fn handle_refresh_token_without_rotation_fallback() {
         let handler = make_handler_without_rotation();
@@ -2302,7 +2304,7 @@ mod refresh_rotation_tests {
         let issue_resp = handler.handle(&issue_req).await.unwrap();
         let old_refresh = issue_resp.refresh_token.expect("应有 refresh_token");
 
-        // 使用 refresh_token 刷新（VULN-0009: fallback 路径轮换 + 删除旧 token）
+        // 使用 refresh_token 刷新（fallback 路径轮换 + 删除旧 token）
         let refresh_req = TokenRequest {
             grant_type: "refresh_token".into(),
             client_id: "rot-fallback-001".into(),
@@ -2316,7 +2318,7 @@ mod refresh_rotation_tests {
             password: None,
         };
         let refresh_resp = handler.handle(&refresh_req).await.expect("refresh 应成功");
-        // VULN-0009: fallback 路径现在轮换 — 应返回新 refresh_token
+        // fallback 路径现在轮换 — 应返回新 refresh_token
         assert!(
             refresh_resp.refresh_token.is_some(),
             "VULN-0009: Fallback 路径应轮换返回新 refresh_token"
@@ -2327,7 +2329,7 @@ mod refresh_rotation_tests {
             "VULN-0009: 新 refresh_token 应与旧的不同"
         );
 
-        // VULN-0009: 旧 refresh_token 应已删除，重用返回 invalid_grant
+        // 旧 refresh_token 应已删除，重用返回 invalid_grant
         let reuse_err = handler.handle(&refresh_req).await.unwrap_err();
         assert!(
             reuse_err.to_string().contains("invalid_grant"),

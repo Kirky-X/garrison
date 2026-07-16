@@ -25,6 +25,15 @@ use crate::error::{BulwarkError, BulwarkResult};
 use crate::listener::{BulwarkEvent, BulwarkListenerManager};
 use crate::plugin::BulwarkPluginManager;
 use crate::stp::BulwarkInterface;
+// hooks 模块依赖 limiteron，仅在 limiteron 启用时编译（匹配 lib.rs 的 limiteron cfg）
+#[cfg(any(
+    feature = "sms-rate-limit",
+    feature = "firewall-ratelimit",
+    feature = "firewall-bruteforce",
+    feature = "firewall-ddos",
+    feature = "firewall",
+    feature = "oauth2-server"
+))]
 use crate::strategy::hooks::{BulwarkFirewallCheckHook, LoginContext};
 use async_trait::async_trait;
 use std::collections::{HashMap, HashSet};
@@ -39,19 +48,30 @@ pub mod device_binding;
 /// IP 级防火墙策略套件模块。
 #[cfg(feature = "firewall")]
 pub mod firewall;
-/// 防火墙安全钩子模块（）。
+/// 防火墙安全钩子模块（feature-gated：依赖 limiteron，匹配 lib.rs 的 limiteron cfg）。
+#[cfg(any(
+    feature = "sms-rate-limit",
+    feature = "firewall-ratelimit",
+    feature = "firewall-bruteforce",
+    feature = "firewall-ddos",
+    feature = "firewall",
+    feature = "oauth2-server"
+))]
 pub mod hooks;
-/// 通用令牌桶限流器模块。
-pub mod rate_limiter;
-/// 限流器后端抽象模块（trait 始终可用，无 feature gate）。
+/// 限流后端配置 enum 模块（trait 始终可用，无 feature gate）。
 pub mod rate_limiter_backend;
-/// Redis 限流器模块（feature-gated: `rate-limit-redis`）。
-#[cfg(feature = "rate-limit-redis")]
-pub mod redis_rate_limiter;
 /// 策略注册表模块。
 pub mod registry;
 
 // Re-export 核心 trait 与类型以便外部使用
+#[cfg(any(
+    feature = "sms-rate-limit",
+    feature = "firewall-ratelimit",
+    feature = "firewall-bruteforce",
+    feature = "firewall-ddos",
+    feature = "firewall",
+    feature = "oauth2-server"
+))]
 pub use hooks::{
     BulwarkFirewallCheckHookDefault, LoginContext as FirewallLoginContext, BRUTE_FORCE_THRESHOLD,
     BRUTE_FORCE_WINDOW, LOGIN_FREQUENCY_THRESHOLD, LOGIN_FREQUENCY_WINDOW,
@@ -195,6 +215,14 @@ pub trait BulwarkPermissionStrategy: Send + Sync {
     /// # 返回
     /// - `Ok(())`: 所有 hook 通过，允许登录。
     /// - `Err`: 任一 hook 阻断，返回 `BulwarkError::Session`。
+    #[cfg(any(
+        feature = "sms-rate-limit",
+        feature = "firewall-ratelimit",
+        feature = "firewall-bruteforce",
+        feature = "firewall-ddos",
+        feature = "firewall",
+        feature = "oauth2-server"
+    ))]
     async fn check_login_hooks(&self, _login_id: &str, _ctx: &LoginContext) -> BulwarkResult<()> {
         Ok(())
     }
@@ -233,6 +261,14 @@ pub struct BulwarkPermissionStrategyDefault {
     /// 可选插件管理器，注入后 check_permission 前后触发钩子。
     plugin_manager: Option<Arc<BulwarkPluginManager>>,
     /// 可选防火墙安全钩子，注入后 login 前按序调用 5 个 hook。
+    #[cfg(any(
+        feature = "sms-rate-limit",
+        feature = "firewall-ratelimit",
+        feature = "firewall-bruteforce",
+        feature = "firewall-ddos",
+        feature = "firewall",
+        feature = "oauth2-server"
+    ))]
     firewall_hook: Option<Arc<dyn BulwarkFirewallCheckHook>>,
     /// 可选监听器管理器，注入后 check_login_hooks 阻断时广播 FirewallBlock 事件
     #[cfg(feature = "listener")]
@@ -255,6 +291,14 @@ impl BulwarkPermissionStrategyDefault {
             dao: None,
             role_hierarchy: HashMap::new(),
             plugin_manager: None,
+            #[cfg(any(
+                feature = "sms-rate-limit",
+                feature = "firewall-ratelimit",
+                feature = "firewall-bruteforce",
+                feature = "firewall-ddos",
+                feature = "firewall",
+                feature = "oauth2-server"
+            ))]
             firewall_hook: None,
             #[cfg(feature = "listener")]
             listener_manager: None,
@@ -301,6 +345,14 @@ impl BulwarkPermissionStrategyDefault {
     ///
     /// 注入后 `check_login_hooks` 将按序调用 5 个 hook（登录频率 / 暴力破解 /
     /// 异地登录 / Token 复用 / 设备异常），任一返回 `Err` 阻断登录。
+    #[cfg(any(
+        feature = "sms-rate-limit",
+        feature = "firewall-ratelimit",
+        feature = "firewall-bruteforce",
+        feature = "firewall-ddos",
+        feature = "firewall",
+        feature = "oauth2-server"
+    ))]
     pub fn with_firewall_hook(mut self, hook: Arc<dyn BulwarkFirewallCheckHook>) -> Self {
         self.firewall_hook = Some(hook);
         self
@@ -490,6 +542,14 @@ impl BulwarkPermissionStrategy for BulwarkPermissionStrategyDefault {
     ///
     /// v0.4.2 扩展：任一 hook 返回 Err 时，若注入了 `listener_manager`，
     /// 广播 `BulwarkEvent::FirewallBlock` 事件。
+    #[cfg(any(
+        feature = "sms-rate-limit",
+        feature = "firewall-ratelimit",
+        feature = "firewall-bruteforce",
+        feature = "firewall-ddos",
+        feature = "firewall",
+        feature = "oauth2-server"
+    ))]
     async fn check_login_hooks(&self, login_id: &str, ctx: &LoginContext) -> BulwarkResult<()> {
         let Some(hook) = &self.firewall_hook else {
             return Ok(());
@@ -525,6 +585,14 @@ impl BulwarkPermissionStrategyDefault {
     /// 仅在注入 `listener_manager` 且启用 `listener` feature 时广播，否则为 no-op。
     ///
     /// v0.5.0 改为 async：broadcast 改为 async 后此helper 也需 async。
+    #[cfg(any(
+        feature = "sms-rate-limit",
+        feature = "firewall-ratelimit",
+        feature = "firewall-bruteforce",
+        feature = "firewall-ddos",
+        feature = "firewall",
+        feature = "oauth2-server"
+    ))]
     #[cfg_attr(not(feature = "listener"), allow(unused_variables))]
     async fn broadcast_firewall_block(&self, login_id: &str, e: &BulwarkError) {
         #[cfg(feature = "listener")]
@@ -538,10 +606,6 @@ impl BulwarkPermissionStrategyDefault {
         }
     }
 }
-
-// ============================================================================
-// 测试
-// ============================================================================
 
 #[cfg(test)]
 mod mock;
@@ -1104,6 +1168,14 @@ mod tests {
     // ------------------------------------------------------------------------
 
     /// 验证未注入 firewall_hook 时 check_login_hooks 为 no-op（向后兼容 0.2.x）。
+    #[cfg(any(
+        feature = "sms-rate-limit",
+        feature = "firewall-ratelimit",
+        feature = "firewall-bruteforce",
+        feature = "firewall-ddos",
+        feature = "firewall",
+        feature = "oauth2-server"
+    ))]
     #[tokio::test]
     async fn check_login_hooks_noop_without_hook() {
         let iface = MockInterface::new();
@@ -1118,6 +1190,14 @@ mod tests {
     }
 
     /// 验证注入 hook 且所有检查通过时 check_login_hooks 返回 Ok。
+    #[cfg(any(
+        feature = "sms-rate-limit",
+        feature = "firewall-ratelimit",
+        feature = "firewall-bruteforce",
+        feature = "firewall-ddos",
+        feature = "firewall",
+        feature = "oauth2-server"
+    ))]
     #[tokio::test]
     async fn check_login_hooks_passes_with_hook() {
         let iface = MockInterface::new();
@@ -1133,6 +1213,14 @@ mod tests {
     }
 
     /// 验证 hook 在登录频率超限时阻断 check_login_hooks。
+    #[cfg(any(
+        feature = "sms-rate-limit",
+        feature = "firewall-ratelimit",
+        feature = "firewall-bruteforce",
+        feature = "firewall-ddos",
+        feature = "firewall",
+        feature = "oauth2-server"
+    ))]
     #[tokio::test]
     async fn check_login_hooks_blocks_on_frequency_exceeded() {
         let iface = MockInterface::new();
@@ -1156,6 +1244,14 @@ mod tests {
     }
 
     /// 验证 hook 在暴力破解超限时阻断 check_login_hooks。
+    #[cfg(any(
+        feature = "sms-rate-limit",
+        feature = "firewall-ratelimit",
+        feature = "firewall-bruteforce",
+        feature = "firewall-ddos",
+        feature = "firewall",
+        feature = "oauth2-server"
+    ))]
     #[tokio::test]
     async fn check_login_hooks_blocks_on_brute_force_exceeded() {
         let iface = MockInterface::new();
@@ -1175,6 +1271,14 @@ mod tests {
     }
 
     /// 验证 with_firewall_hook builder 方法正确注入 hook。
+    #[cfg(any(
+        feature = "sms-rate-limit",
+        feature = "firewall-ratelimit",
+        feature = "firewall-bruteforce",
+        feature = "firewall-ddos",
+        feature = "firewall",
+        feature = "oauth2-server"
+    ))]
     #[tokio::test]
     async fn with_firewall_hook_injects_hook() {
         let iface = MockInterface::new();
@@ -1194,6 +1298,14 @@ mod tests {
     /// 验证 check_login_hooks 按 5 个 hook 顺序调用（login_frequency 先于 brute_force）。
     ///
     /// 当 IP 维度先达阈值时，应优先返回 login_frequency 错误。
+    #[cfg(any(
+        feature = "sms-rate-limit",
+        feature = "firewall-ratelimit",
+        feature = "firewall-bruteforce",
+        feature = "firewall-ddos",
+        feature = "firewall",
+        feature = "oauth2-server"
+    ))]
     #[tokio::test]
     async fn check_login_hooks_calls_in_order() {
         use crate::strategy::hooks::BulwarkFirewallCheckHook;
@@ -1243,6 +1355,14 @@ mod tests {
     }
 
     /// 验证 check_login_hooks 任一 hook Err 立即阻断后续 hook。
+    #[cfg(any(
+        feature = "sms-rate-limit",
+        feature = "firewall-ratelimit",
+        feature = "firewall-bruteforce",
+        feature = "firewall-ddos",
+        feature = "firewall",
+        feature = "oauth2-server"
+    ))]
     #[tokio::test]
     async fn check_login_hooks_short_circuits_on_err() {
         use crate::strategy::hooks::BulwarkFirewallCheckHook;

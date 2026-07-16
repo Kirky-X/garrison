@@ -6,7 +6,7 @@
 //! super-trait 为 [`SessionLogic`]（权限校验需先通过 `get_login_id` 获取当前登录主体）。
 
 use super::BulwarkLogicDefault;
-// vuln-0003 修复：tenant-isolation feature 启用时强制 fail-closed（current_tenant_id_or_error?）
+// tenant-isolation feature 启用时强制 fail-closed
 // feature 关闭时保留旧 current_tenant_id() 向后兼容行为，但 #[allow(deprecated)] 显式标注
 #[cfg(not(feature = "tenant-isolation"))]
 #[allow(deprecated)]
@@ -192,7 +192,7 @@ impl PermissionLogic for BulwarkLogicDefault {
         // 优先委托 PermissionChecker（若注入），走 authorize + Decision 路径
         // 并广播 PermissionCheck 事件供 AuditLogListener 记录审计日志
         if let Some(pc) = &self.permission_checker {
-            // vuln-0003 修复：tenant-isolation feature 启用时强制 fail-closed
+            // tenant-isolation feature 启用时强制 fail-closed
             // feature 关闭时保留旧 current_tenant_id() 向后兼容行为（#[allow(deprecated)] 显式标注）
             #[cfg(not(feature = "tenant-isolation"))]
             #[allow(deprecated)]
@@ -232,8 +232,8 @@ impl PermissionLogic for BulwarkLogicDefault {
         }
 
         // 回退到 firewall 路径（permission_checker 未注入时）
-        // vuln-0003 修复延伸：firewall 路径同样需要租户隔离校验，
-        // 否则 tenant-isolation 启用 + permission_checker 未注入时租户隔离被绕过
+        // firewall 路径同样需要租户隔离校验，否则 tenant-isolation 启用 +
+        // permission_checker 未注入时租户隔离被绕过
         #[cfg(not(feature = "tenant-isolation"))]
         #[allow(deprecated)]
         let _tenant_id = current_tenant_id();

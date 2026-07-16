@@ -815,7 +815,7 @@ async fn rbac_full_chain_user_to_permissions() {
 }
 
 // ============================================================================
-// 10. UserDeviceRepository CRUD（v0.5.1 新增，依据 design.md D4 / M2）
+// 10. UserDeviceRepository CRUD
 // ============================================================================
 
 /// 测试用 UA 字符串（Chrome on Windows）。

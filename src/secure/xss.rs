@@ -228,7 +228,7 @@ fn sanitize_whitelist(input: &str, allowed: &[&'static str]) -> String {
                         out.push('/');
                     }
                     out.push_str(name);
-                    // vuln-0007 修复：先 strip event handlers，再 strip dangerous URI（顺序保证 on* 属性
+                    // 先 strip event handlers，再 strip dangerous URI（顺序保证 on* 属性
                     // 被移除后，剩余 href/src/xlink:href 中的危险 scheme 被替换为 #）
                     let cleaned = strip_event_handlers(attrs);
                     let cleaned = strip_dangerous_uri(&cleaned);
@@ -253,7 +253,7 @@ fn sanitize_whitelist(input: &str, allowed: &[&'static str]) -> String {
     out
 }
 
-/// 从属性段中移除危险 URI scheme（vuln-0007 修复）。
+/// 从属性段中移除危险 URI scheme。
 ///
 /// 扫描 `href=`/`src=`/`xlink:href=` 属性值，若 scheme 不在安全白名单
 /// （`http`/`https`/`mailto`/`#`/`/`/`./`/`../`/相对路径无 scheme）则将值替换为 `#`。
@@ -552,7 +552,7 @@ mod tests {
         );
     }
 
-    /// VULN-0014 修复: 大写 ONCLICK 事件处理器应被移除。
+    /// 大写 ONCLICK 事件处理器应被移除。
     #[test]
     fn whitelist_strips_uppercase_event_handler() {
         let protector = XssProtector::new(XssMode::Whitelist(vec!["b"]));
@@ -564,7 +564,7 @@ mod tests {
         );
     }
 
-    /// VULN-0014 修复: 混合大小写 OnClick 事件处理器应被移除。
+    /// 混合大小写 OnClick 事件处理器应被移除。
     #[test]
     fn whitelist_strips_mixedcase_event_handler() {
         let protector = XssProtector::new(XssMode::Whitelist(vec!["b"]));
@@ -576,7 +576,7 @@ mod tests {
         );
     }
 
-    /// VULN-0014 修复: 混合大小写 oNsUbMiT 事件处理器应被移除。
+    /// 混合大小写 oNsUbMiT 事件处理器应被移除。
     #[test]
     fn whitelist_strips_mixedcase_onsubmit() {
         let protector = XssProtector::new(XssMode::Whitelist(vec!["b"]));
@@ -618,10 +618,10 @@ mod tests {
     }
 
     // ========================================================================
-    // vuln-0007 修复：strip_dangerous_uri 测试
+    // strip_dangerous_uri 测试
     // ========================================================================
 
-    /// vuln-0007: `javascript:` URI scheme 在 href 中应被替换为 `#`。
+    /// `javascript:` URI scheme 在 href 中应被替换为 `#`。
     #[test]
     fn whitelist_strips_javascript_uri_in_href() {
         let protector = XssProtector::new(XssMode::Whitelist(vec!["a"]));
@@ -635,7 +635,7 @@ mod tests {
         assert!(result.contains("#"), "href 值应含 #，实际: {}", result);
     }
 
-    /// vuln-0007: `JavaScript:` 大小写绕过应被替换为 `#`。
+    /// `JavaScript:` 大小写绕过应被替换为 `#`。
     #[test]
     fn whitelist_strips_mixedcase_javascript_uri() {
         let protector = XssProtector::new(XssMode::Whitelist(vec!["a"]));
@@ -647,7 +647,7 @@ mod tests {
         );
     }
 
-    /// vuln-0007: `JAVASCRIPT:` 全大写绕过应被替换为 `#`。
+    /// `JAVASCRIPT:` 全大写绕过应被替换为 `#`。
     #[test]
     fn whitelist_strips_uppercase_javascript_uri() {
         let protector = XssProtector::new(XssMode::Whitelist(vec!["a"]));
@@ -659,7 +659,7 @@ mod tests {
         );
     }
 
-    /// vuln-0007: 前导空白的 `javascript:` 应被替换为 `#`。
+    /// 前导空白的 `javascript:` 应被替换为 `#`。
     #[test]
     fn whitelist_strips_javascript_uri_with_leading_whitespace() {
         let protector = XssProtector::new(XssMode::Whitelist(vec!["a"]));
@@ -671,7 +671,7 @@ mod tests {
         );
     }
 
-    /// vuln-0007: `data:` URI scheme 应被替换为 `#`。
+    /// `data:` URI scheme 应被替换为 `#`。
     #[test]
     fn whitelist_strips_data_uri_scheme() {
         let protector = XssProtector::new(XssMode::Whitelist(vec!["a"]));
@@ -684,7 +684,7 @@ mod tests {
         );
     }
 
-    /// vuln-0007: `vbscript:` URI scheme 应被替换为 `#`。
+    /// `vbscript:` URI scheme 应被替换为 `#`。
     #[test]
     fn whitelist_strips_vbscript_uri_scheme() {
         let protector = XssProtector::new(XssMode::Whitelist(vec!["a"]));
@@ -696,7 +696,7 @@ mod tests {
         );
     }
 
-    /// vuln-0007: 合法的 `https://` URL 应保留原样。
+    /// 合法的 `https://` URL 应保留原样。
     #[test]
     fn whitelist_keeps_https_url() {
         let protector = XssProtector::new(XssMode::Whitelist(vec!["a"]));
@@ -708,7 +708,7 @@ mod tests {
         );
     }
 
-    /// vuln-0007: 合法的 `http://` URL 应保留原样。
+    /// 合法的 `http://` URL 应保留原样。
     #[test]
     fn whitelist_keeps_http_url() {
         let protector = XssProtector::new(XssMode::Whitelist(vec!["a"]));
@@ -720,7 +720,7 @@ mod tests {
         );
     }
 
-    /// vuln-0007: 合法的 `mailto:` 应保留原样。
+    /// 合法的 `mailto:` 应保留原样。
     #[test]
     fn whitelist_keeps_mailto_uri() {
         let protector = XssProtector::new(XssMode::Whitelist(vec!["a"]));
@@ -732,7 +732,7 @@ mod tests {
         );
     }
 
-    /// vuln-0007: 锚点 `#section` 应保留原样。
+    /// 锚点 `#section` 应保留原样。
     #[test]
     fn whitelist_keeps_anchor_uri() {
         let protector = XssProtector::new(XssMode::Whitelist(vec!["a"]));
@@ -745,7 +745,7 @@ mod tests {
         );
     }
 
-    /// vuln-0007: 绝对路径 `/path/to/resource` 应保留原样。
+    /// 绝对路径 `/path/to/resource` 应保留原样。
     #[test]
     fn whitelist_keeps_absolute_path() {
         let protector = XssProtector::new(XssMode::Whitelist(vec!["a"]));
@@ -757,7 +757,7 @@ mod tests {
         );
     }
 
-    /// vuln-0007: 相对路径 `./relative` 应保留原样。
+    /// 相对路径 `./relative` 应保留原样。
     #[test]
     fn whitelist_keeps_relative_path() {
         let protector = XssProtector::new(XssMode::Whitelist(vec!["a"]));
@@ -769,7 +769,7 @@ mod tests {
         );
     }
 
-    /// vuln-0007: `<img src="javascript:alert(1)">` 的 src 也应被替换为 `#`。
+    /// `<img src="javascript:alert(1)">` 的 src 也应被替换为 `#`。
     #[test]
     fn whitelist_strips_javascript_uri_in_src() {
         let protector = XssProtector::new(XssMode::Whitelist(vec!["img"]));
@@ -781,7 +781,7 @@ mod tests {
         );
     }
 
-    /// vuln-0007: 单引号包裹的 `javascript:` 也应被替换为 `#`。
+    /// 单引号包裹的 `javascript:` 也应被替换为 `#`。
     #[test]
     fn whitelist_strips_javascript_uri_single_quoted() {
         let protector = XssProtector::new(XssMode::Whitelist(vec!["a"]));
@@ -793,7 +793,7 @@ mod tests {
         );
     }
 
-    /// vuln-0007: 无引号包裹的 `javascript:` 也应被替换为 `#`。
+    /// 无引号包裹的 `javascript:` 也应被替换为 `#`。
     #[test]
     fn whitelist_strips_javascript_uri_unquoted() {
         let protector = XssProtector::new(XssMode::Whitelist(vec!["a"]));
@@ -805,7 +805,7 @@ mod tests {
         );
     }
 
-    /// vuln-0007: 大写 HREF 属性名也应被识别。
+    /// 大写 HREF 属性名也应被识别。
     #[test]
     fn whitelist_strips_javascript_uri_uppercase_attr() {
         let protector = XssProtector::new(XssMode::Whitelist(vec!["a"]));
@@ -817,7 +817,7 @@ mod tests {
         );
     }
 
-    /// vuln-0007: 混合大小写 `Href` 属性名也应被识别。
+    /// 混合大小写 `Href` 属性名也应被识别。
     #[test]
     fn whitelist_strips_javascript_uri_mixedcase_attr() {
         let protector = XssProtector::new(XssMode::Whitelist(vec!["a"]));
@@ -829,7 +829,7 @@ mod tests {
         );
     }
 
-    /// vuln-0007: 多个属性中混合危险 URI，仅危险 URI 被替换，其他属性保留。
+    /// 多个属性中混合危险 URI，仅危险 URI 被替换，其他属性保留。
     #[test]
     fn whitelist_strips_only_dangerous_uri_keeps_safe_attrs() {
         let protector = XssProtector::new(XssMode::Whitelist(vec!["a"]));
@@ -852,7 +852,7 @@ mod tests {
         );
     }
 
-    /// vuln-0007: 同一标签中同时有安全和不安全 URI，仅不安全 URI 被替换。
+    /// 同一标签中同时有安全和不安全 URI，仅不安全 URI 被替换。
     /// 注意：HTML 规范中同名属性只取第一个，但这里测试 src（安全）和 href（不安全）共存。
     #[test]
     fn whitelist_strips_only_dangerous_uri_keeps_safe_uri() {
@@ -870,7 +870,7 @@ mod tests {
         // 这个测试验证 strip_dangerous_uri 只处理 href/src/xlink:href
     }
 
-    /// vuln-0007: `xlink:href` 属性（SVG 中使用）的危险 URI 也应被替换。
+    /// `xlink:href` 属性（SVG 中使用）的危险 URI 也应被替换。
     #[test]
     fn whitelist_strips_javascript_uri_in_xlink_href() {
         let protector = XssProtector::new(XssMode::Whitelist(vec!["use"]));

@@ -187,10 +187,6 @@ fn parse_role_permission_row(row: &QueryResult) -> BulwarkResult<RolePermissionR
     })
 }
 
-// ============================================================================
-// 单元测试
-// ============================================================================
-
 #[cfg(all(test, feature = "db-sqlite"))]
 mod tests {
     use super::super::{DbnexusPermissionRepository, DbnexusRoleRepository};

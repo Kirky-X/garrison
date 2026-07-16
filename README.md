@@ -55,7 +55,7 @@
 框架采用**双抽象层 + 全局单例**架构：
 
 - **dbnexus** 数据库抽象层（SQLite / PostgreSQL / MySQL，由 `BulwarkDao` trait 屏蔽后端差异）
-- **oxcache** 缓存抽象层（L1 moka + L2 redis，承载会话与 Token 存储）
+- **oxcache** 缓存抽象层（L1 内存 + L2 redis，承载会话与 Token 存储）
 - **BulwarkManager** 全局单例，持有 `Arc<dyn BulwarkLogic>`，业务方启动时一次性注入依赖即可使用静态 API
 
 ### 适用场景
@@ -154,7 +154,7 @@ graph TD
     Logic --> Strategy["BulwarkPermissionStrategy"]
     Session --> Dao["BulwarkDao trait"]
     Strategy --> Interface["BulwarkInterface 业务回调"]
-    Dao --> Oxcache["oxcache (L1 moka + L2 redis)"]
+    Dao --> Oxcache["oxcache (L1 内存 + L2 redis)"]
     Dao --> Dbnexus["dbnexus (SQLite)"]
     Logic --> Plugin["BulwarkPlugin (inventory)"]
     Logic --> Listener["BulwarkListener (inventory)"]
@@ -318,7 +318,7 @@ async fn main() -> BulwarkResult<()> {
 
 | 特性 | 默认 | 说明 |
 | --- | :---: | --- |
-| `cache-memory` | ✅ | 内存缓存后端（oxcache moka） |
+| `cache-memory` | ✅ | 内存缓存后端（oxcache 内存层） |
 | `cache-redis` | ✅ | Redis 缓存后端（oxcache L2） |
 | `db-sqlite` | ✅ | SQLite 数据库后端（dbnexus + auto-migrate） |
 | `web-axum` | ✅ | axum Web 框架适配 |
@@ -445,7 +445,7 @@ async fn main() -> BulwarkResult<()> {
 
 - [Sa-Token](https://github.com/dromara/sa-token)：Java 生态的认证鉴权框架，为本项目早期领域建模提供参考
 - [axum](https://github.com/tokio-rs/axum)：tokio 团队出品的 Rust Web 框架
-- [oxcache](https://github.com/Kirky-X/oxcache)：Rust 多级缓存库（L1 moka + L2 redis）
+- [oxcache](https://github.com/Kirky-X/oxcache)：Rust 多级缓存库（L1 内存 + L2 redis）
 - [dbnexus](https://github.com/Kirky-X/dbnexus)：Rust 数据库抽象层（SQLite / PostgreSQL / MySQL）
 - [inventory](https://github.com/dtolnay/inventory)：David Tolnay 的编译期插件注册库
 

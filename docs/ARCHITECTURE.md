@@ -6,7 +6,7 @@
 > - 运行时：tokio 1.x
 > - Web 适配：axum 0.8 / actix-web 4 / warp 0.4
 > - 存储：dbnexus 0.3（SQLite / PostgreSQL / MySQL + auto-migrate）+ Repository 层（9 trait + SqliteRepository，tenant_id 隔离）
-> - 缓存：oxcache 0.3.3（L1 moka + L2 redis，per-entry TTL + ttl_sync 查询）
+> - 缓存：oxcache 0.3.3（L1 内存 + L2 redis，per-entry TTL + ttl_sync 查询）
 > - License：Apache-2.0
 > 配置相关字段说明详见 [configuration.md](./CONFIGURATION.md)；开发规范详见 [development.md](./DEVELOPMENT.md)。
 
@@ -22,7 +22,7 @@ Bulwark 采用 **双抽象层 + 全局单例** 架构，核心设计目标：
 ### 1.1 双抽象层
 
 - **DAO 抽象层**：`BulwarkDao` trait 屏蔽存储后端差异，底层由 `dbnexus`（数据库）+ `oxcache`（缓存）实现，切换 SQLite / PostgreSQL / MySQL 时上层无需改动。
-- **缓存抽象层**：`oxcache` 0.3 提供 L1（moka 进程内）+ L2（redis 分布式）两级缓存，支持 per-entry TTL 精细化过期控制，对上层呈现统一 `get / set / remove` 语义。
+- **缓存抽象层**：`oxcache` 0.3 提供 L1（oxcache 内存层）+ L2（redis 分布式）两级缓存，支持 per-entry TTL 精细化过期控制，对上层呈现统一 `get / set / remove` 语义。
 
 ### 1.2 全局单例
 
@@ -88,7 +88,7 @@ graph TB
     end
 
     subgraph InfraLayer["基础设施"]
-        oxcache[oxcache 0.3.3<br/>L1 moka + L2 redis]
+        oxcache[oxcache 0.3.3<br/>L1 内存 + L2 redis]
         dbnexus[dbnexus 0.3<br/>SQLite / PostgreSQL / MySQL + auto-migrate]
     end
 
@@ -189,7 +189,7 @@ graph LR
     BLD --> BCtx
     BS --> BD
     BLD --> BI
-    BD --> oxcache[oxcache 0.3.3<br/>L1 moka + L2 redis]
+    BD --> oxcache[oxcache 0.3.3<br/>L1 内存 + L2 redis]
     BD --> dbnexus[dbnexus 0.3<br/>SQLite / PostgreSQL / MySQL]
 ```
 
@@ -227,7 +227,7 @@ sequenceDiagram
     participant BL as BulwarkLogic
     participant BS as BulwarkSession
     participant BD as BulwarkDao
-    participant OC as oxcache (L1 moka + L2 redis)
+    participant OC as oxcache (L1 内存 + L2 redis)
     participant DB as dbnexus (SQLite / PostgreSQL / MySQL)
 
     C->>AX: HTTP 请求 (Header/Cookie: bulwark_token)
@@ -239,7 +239,7 @@ sequenceDiagram
     TL-->>BL: Some(token)
     BL->>BS: session.get_token_session(token)
     BS->>BD: dao.get_session(token)
-    BD->>OC: L1 moka 命中?
+    BD->>OC: L1 内存命中?
     alt L1 命中
         OC-->>BD: 命中返回
     else L1 未命中
@@ -305,7 +305,7 @@ sequenceDiagram
 **方案**：
 
 - `BulwarkDao` trait 定义统一接口（`get_session` / `set_session` / `delete_token` 等），底层由 dbnexus + oxcache 实现。
-- `oxcache` 作为缓存抽象，L1 为 moka 进程内 LRU，L2 为 redis 分布式，per-entry TTL 精细控制。
+- `oxcache` 作为缓存抽象，L1 为 oxcache 内存层 LRU，L2 为 redis 分布式，per-entry TTL 精细控制。
 - 切换存储后端时仅替换 `BulwarkLogicFactoryEntry` 的实现，**上层零改动**。
 
 ### 5. 为什么用 feature 门控？

@@ -15,16 +15,16 @@
 //! | API 风格 | 静态方法（`BulwarkUtil::login`） | 实例方法（`manager.authorize`） |
 //! | 适用场景 | 生产单例（向后兼容） | 测试隔离 / 多实例 / 显式 DI |
 //!
-//! # Rule 7 冲突说明（design.md D9 vs `PermissionLogic` trait）
+//! # `PermissionLogic` trait 与 `Manager` API 的差异
 //!
 //! `PermissionLogic` trait 的 `check_permission` 签名为
 //! `(&self, permission: &str) -> BulwarkResult<()>`（基于 task_local token 上下文获取 login_id），
-//! 而 design.md D9 要求 `Manager::check_permission(&self, login_id: &str, permission: &str) -> BulwarkResult<bool>`。
+//! 而 `Manager::check_permission` 要求 `(&self, login_id: &str, permission: &str) -> BulwarkResult<bool>`。
 //!
 //! 两者无法直接匹配，且 `PermissionLogic` trait 不暴露内部 `BulwarkInterface` / `firewall`。
 //! 本模块采用**委托策略**：`Manager` 内部调用 `PermissionLogic::check_permission(permission)`，
 //! 将 `Ok(())` 映射为 `true`、`Err(NotPermission)` 映射为 `false`，其他错误透传。
-//! `login_id` 参数保留以匹配 D9 API 契约（与 `BulwarkUtil` 同样基于 task_local 鉴权上下文）。
+//! `login_id` 参数保留以匹配 API 契约（与 `BulwarkUtil` 同样基于 task_local 鉴权上下文）。
 
 use std::sync::Arc;
 
@@ -120,7 +120,7 @@ impl Manager {
     /// # 鉴权上下文
     ///
     /// 实际 `login_id` 由 task_local token 上下文决定（与 `BulwarkUtil` 一致）。
-    /// `login_id` 参数保留以匹配 design.md D9 API 契约，便于未来支持直接 login_id 鉴权。
+    /// `login_id` 参数保留以匹配 API 契约，便于未来支持直接 login_id 鉴权。
     ///
     /// # 参数
     /// - `login_id`: 登录主体标识（保留用于 API 契约，实际鉴权使用 task_local 上下文）。
@@ -140,20 +140,18 @@ impl Manager {
     }
 }
 
-// ============================================================================
-// 测试
-// ============================================================================
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::config::BulwarkConfig;
+    use crate::context::tenant::with_default_tenant;
     use crate::dao::tests::MockDao;
     use crate::dao::BulwarkDao;
     use crate::manager::BulwarkManager;
     use crate::session::BulwarkSession;
     use crate::stp::{
-        with_current_token, BulwarkInterface, BulwarkLogicDefault, BulwarkUtil, SessionLogic,
+        with_current_token, BulwarkInterface, BulwarkLogicDefault, BulwarkUtil, LoginParams,
+        SessionLogic,
     };
     use crate::strategy::{BulwarkPermissionStrategy, BulwarkPermissionStrategyDefault};
     use async_trait::async_trait;
@@ -272,9 +270,12 @@ mod tests {
         let logic = make_logic(interface);
         let manager = Manager::new(Arc::clone(&logic));
 
-        let token = logic.login("1001").await.unwrap();
+        let token = logic.login("1001", &LoginParams::default()).await.unwrap();
         let req = AuthRequest::new("1001", "user:read");
-        let result = with_token(token, manager.authorize(&req)).await;
+        let result = with_token(token, async {
+            with_default_tenant(async { manager.authorize(&req).await }).await
+        })
+        .await;
         assert!(result.is_ok(), "authorize 应返回 Ok: {:?}", result.err());
         let decision = result.unwrap();
         // 仅断言 Decision 结构正确（allowed/reason 在后续测试细化）
@@ -294,11 +295,13 @@ mod tests {
         let logic = make_logic(interface);
         let manager = Manager::new(Arc::clone(&logic));
 
-        let token = logic.login("1001").await.unwrap();
+        let token = logic.login("1001", &LoginParams::default()).await.unwrap();
         let req = AuthRequest::new("1001", "user:read");
-        let decision = with_token(token, manager.authorize(&req))
-            .await
-            .expect("authorize ok");
+        let decision = with_token(token, async {
+            with_default_tenant(async { manager.authorize(&req).await }).await
+        })
+        .await
+        .expect("authorize ok");
         assert!(decision.allowed, "持有权限应 allowed=true");
         assert_eq!(
             decision.reason,
@@ -319,11 +322,13 @@ mod tests {
         let logic = make_logic(interface);
         let manager = Manager::new(Arc::clone(&logic));
 
-        let token = logic.login("1001").await.unwrap();
+        let token = logic.login("1001", &LoginParams::default()).await.unwrap();
         let req = AuthRequest::new("1001", "user:delete");
-        let decision = with_token(token, manager.authorize(&req))
-            .await
-            .expect("authorize 应返回 Ok(Decision deny) 而非 Err");
+        let decision = with_token(token, async {
+            with_default_tenant(async { manager.authorize(&req).await }).await
+        })
+        .await
+        .expect("authorize 应返回 Ok(Decision deny) 而非 Err");
         assert!(!decision.allowed, "未持有权限应 allowed=false");
         assert_eq!(
             decision.reason,
@@ -347,12 +352,17 @@ mod tests {
         let logic = make_logic(interface);
         let manager = Manager::new(Arc::clone(&logic));
 
-        let token = logic.login("1001").await.unwrap();
+        let token = logic.login("1001", &LoginParams::default()).await.unwrap();
 
         // 持有权限：logic.check_permission → Ok(())，manager.check_permission → Ok(true)
-        let logic_held = with_token(token.clone(), logic.check_permission("user:read")).await;
-        let mgr_held =
-            with_token(token.clone(), manager.check_permission("1001", "user:read")).await;
+        let logic_held = with_token(token.clone(), async {
+            with_default_tenant(async { logic.check_permission("user:read").await }).await
+        })
+        .await;
+        let mgr_held = with_token(token.clone(), async {
+            with_default_tenant(async { manager.check_permission("1001", "user:read").await }).await
+        })
+        .await;
         assert!(logic_held.is_ok(), "logic 持有权限应 Ok(())");
         assert!(
             mgr_held.expect("manager check_permission ok"),
@@ -360,11 +370,14 @@ mod tests {
         );
 
         // 未持有权限：logic.check_permission → Err(NotPermission)，manager.check_permission → Ok(false)
-        let logic_denied = with_token(token.clone(), logic.check_permission("user:delete")).await;
-        let mgr_denied = with_token(
-            token.clone(),
-            manager.check_permission("1001", "user:delete"),
-        )
+        let logic_denied = with_token(token.clone(), async {
+            with_default_tenant(async { logic.check_permission("user:delete").await }).await
+        })
+        .await;
+        let mgr_denied = with_token(token.clone(), async {
+            with_default_tenant(async { manager.check_permission("1001", "user:delete").await })
+                .await
+        })
         .await;
         assert!(
             matches!(logic_denied, Err(BulwarkError::NotPermission(_))),

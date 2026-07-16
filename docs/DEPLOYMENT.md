@@ -174,12 +174,12 @@ Bulwark 通过 `oxcache` 0.3 提供两级缓存：
 ### 4.1 缓存架构
 
 ```text
-请求 → L1 (moka 进程内) → L2 (redis 分布式) → 数据库
+请求 → L1 (oxcache 内存层) → L2 (redis 分布式) → 数据库
 ```
 
 | 层级 | 实现 | 用途 | 特性 |
 |------|------|------|------|
-| L1 | moka | 进程内 LRU 缓存 | 低延迟，进程重启丢失 |
+| L1 | oxcache 内存层 | 进程内 LRU 缓存 | 低延迟，进程重启丢失 |
 | L2 | redis | 分布式缓存 | 跨实例共享，持久化 |
 
 ### 4.2 cache-memory（开发环境）
@@ -189,7 +189,7 @@ Bulwark 通过 `oxcache` 0.3 提供两级缓存：
 bulwark = { version = "0.6", features = ["cache-memory"] }
 ```
 
-- 使用 moka 进程内缓存
+- 使用 oxcache 内存缓存
 - 适合单实例开发与测试
 - 进程重启后缓存丢失
 
@@ -385,7 +385,7 @@ cargo build --release --target x86_64-unknown-linux-musl --features production
 ### 7.3 运行时调优
 
 - **tokio worker 线程数**：默认等于 CPU 核心数，可通过 `TOKIO_WORKER_THREADS` 调整。
-- **moka 缓存容量**：根据内存与并发量调整 L1 缓存上限。
+- **oxcache 内存层缓存容量**：根据内存与并发量调整 L1 缓存上限。
 - **Redis 连接池**：根据并发量调整 Redis 连接池大小。
 
 ### 7.4 性能基准

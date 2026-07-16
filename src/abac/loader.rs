@@ -3,10 +3,8 @@
 
 //! EntityLoader 实现：为 AbacEngine 提供 Cedar Entities 数据源。
 //!
-//! vuln-0001 修复：原 `AbacEngine::evaluate` / `evaluate_with_temp_policy` 硬编码
-//! `let entities = Entities::empty();`，导致基于实体属性的策略（如
-//! `resource.owner == principal.id`）永远返回 false。本模块引入 `EntityLoader`
-//! 抽象，让调用方注入实体数据源。
+//! 引入 `EntityLoader` 抽象，让调用方注入实体数据源，
+//! 支持基于实体属性的策略（如 `resource.owner == principal.id`）。
 //!
 //! - `EmptyEntityLoader`：返回空 Entities（默认实现，保持向后兼容）
 //! - `StaticEntityLoader`：持有预构造 Entities，每次 clone 返回（测试用）
@@ -50,7 +48,7 @@ impl EntityLoader for EmptyEntityLoader {
 ///
 /// # 用途
 ///
-/// - vuln-0001 回归测试：验证带属性实体的策略能正确求值
+/// - 回归测试：验证带属性实体的策略能正确求值
 /// - 集成测试场景：构造固定实体集合，避免依赖外部数据源
 pub struct StaticEntityLoader {
     entities: Entities,
@@ -74,18 +72,13 @@ impl EntityLoader for StaticEntityLoader {
     }
 }
 
-// ============================================================================
-// 测试
-// ============================================================================
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     /// `EmptyEntityLoader::load_entities` 返回空 Entities。
     ///
-    /// vuln-0001 回归：原 `Entities::empty()` 硬编码路径已被替换为
-    /// `EmptyEntityLoader::load_entities`，但语义保持一致（空实体集合）。
+    /// `EmptyEntityLoader::load_entities` 返回空实体集合，语义与 `Entities::empty()` 一致。
     #[tokio::test]
     async fn test_empty_entity_loader_returns_empty_entities() {
         let loader = EmptyEntityLoader;
@@ -102,7 +95,7 @@ mod tests {
 
     /// `StaticEntityLoader::load_entities` 返回构造时持有的 Entities（clone）。
     ///
-    /// vuln-0001 回归：验证带属性的实体集合能被正确加载，且多次调用返回一致结果。
+    /// 验证带属性的实体集合能被正确加载，且多次调用返回一致结果。
     #[tokio::test]
     async fn test_static_entity_loader_loads_entities() {
         // 构造带属性的实体：User "alice" 带 id 属性，Resource "doc1" 带 owner 属性。

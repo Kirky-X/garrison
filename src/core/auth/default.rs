@@ -173,7 +173,7 @@ impl AuthLogic for AuthLogicDefault {
             .await?
             .ok_or_else(|| BulwarkError::NotLogin("token 无效或已过期".to_string()))?;
 
-        // L4 修复：执行权限校验（guard 默认 DenyAllSwitchToGuard，fail-closed）
+        // 执行权限校验（guard 默认 DenyAllSwitchToGuard，fail-closed）
         // 在修改 session 前校验，确保无权限时不产生任何副作用
         let original_login_id = ts.login_id.clone();
         self.switch_to_guard
@@ -213,12 +213,9 @@ impl AuthLogic for AuthLogicDefault {
     }
 
     async fn renew_to_equivalent(&self, token: &str) -> BulwarkResult<String> {
-        // VULN-0020 修复：调整顺序为"先失效旧 token，再创建新 token"。
+        // 调整顺序为"先失效旧 token，再创建新 token"，消除窗口期双 token 同时有效的风险。
         //
-        // 原实现顺序为"先 create 后 delete"，存在窗口期双 token 同时有效，
-        // 攻击者若窃取旧 token，可在窗口期内继续使用。
-        //
-        // 修复后顺序：
+        // 顺序：
         // 1. 获取旧 TokenSession + 剩余 TTL（性能优化：合并为单次 DAO 调用）
         // 2. 先 logout 旧 token（失效旧 token，消除窗口期）
         // 3. 生成新 token + 构建新 TokenSession
@@ -234,7 +231,7 @@ impl AuthLogic for AuthLogicDefault {
             .ok_or_else(|| BulwarkError::NotLogin("token 无效或已过期".to_string()))?;
         let ttl_secs = remaining_ttl.map(|d| d.as_secs()).unwrap_or(0);
 
-        // 2. 先失效旧 token（VULN-0020 核心修复）
+        // 2. 先失效旧 token（消除窗口期）
         //    若此步失败，旧 token 状态可能不变或部分删除，返回错误让调用方决策。
         if let Err(e) = self.session.logout(token).await {
             let prefix = if token.len() >= 8 { &token[..8] } else { token };
@@ -335,7 +332,7 @@ impl AuthLogic for AuthLogicDefault {
 }
 
 impl AuthLogicDefault {
-    /// VULN-0020 回滚辅助：重新创建旧 token session + 重新添加到 Account-Session。
+    /// 回滚辅助：重新创建旧 token session + 重新添加到 Account-Session。
     ///
     /// 在 `renew_to_equivalent` 创建新 token 失败时调用，恢复旧 token 到有效状态。
     /// 回滚失败返回 Err，调用方据此在错误消息中标注回滚状态（rule 12 失败显性化）。

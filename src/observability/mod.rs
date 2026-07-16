@@ -294,10 +294,6 @@ impl From<opentelemetry_otlp::ExporterBuildError> for BulwarkOtelError {
 #[cfg(not(feature = "metrics-prometheus"))]
 pub type BulwarkMetrics = ();
 
-// ============================================================================
-// 单元测试
-// ============================================================================
-
 #[cfg(all(test, feature = "metrics-prometheus"))]
 mod tests {
     use super::*;

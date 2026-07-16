@@ -20,6 +20,7 @@ use axum::http::StatusCode;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
+use limiteron::limiters::{Limiter, TokenBucketLimiter};
 use parking_lot::Mutex;
 use serde_json::json;
 use std::collections::HashMap;
@@ -30,74 +31,44 @@ use std::time::Instant;
 use crate::backend::AuthBackend;
 use crate::context::BulwarkPrincipal;
 
-/// 令牌桶 — 简化限速算法。
+/// per-IP 限速桶条目 — 持有 limiteron 令牌桶 + 最后访问时间（用于 LRU 淘汰）。
 ///
-/// 每次请求前 refill（按时间比例补充令牌），再尝试消耗 1 个令牌。
-/// 令牌不足时拒绝请求。
-#[derive(Debug, Clone)]
-struct TokenBucket {
-    /// 当前令牌数。
-    tokens: f64,
-    /// 上次 refill 时间。
-    last_refill: Instant,
-}
-
-impl TokenBucket {
-    /// 创建满桶。
-    fn new(capacity: f64) -> Self {
-        Self {
-            tokens: capacity,
-            last_refill: Instant::now(),
-        }
-    }
-
-    /// 按时间比例补充令牌，上限为 capacity。
-    fn refill(&mut self, capacity: f64, refill_per_sec: f64) {
-        let now = Instant::now();
-        let elapsed = now.duration_since(self.last_refill).as_secs_f64();
-        self.tokens = (self.tokens + elapsed * refill_per_sec).min(capacity);
-        self.last_refill = now;
-    }
-
-    /// 尝试消耗 1 个令牌，返回是否成功。
-    fn try_consume(&mut self) -> bool {
-        if self.tokens >= 1.0 {
-            self.tokens -= 1.0;
-            true
-        } else {
-            false
-        }
-    }
+/// `TokenBucketLimiter` 内部用 `AtomicU64` 管理令牌数与补充时间（线程安全），
+/// 不暴露 `last_refill`，故在此额外追踪 `last_access` 实现 LRU 淘汰。
+struct BucketEntry {
+    limiter: Arc<TokenBucketLimiter>,
+    last_access: Instant,
 }
 
 /// 限速中间件状态。
 ///
-/// 持有 IP → TokenBucket 的映射和限速配置。
+/// 持有 IP → BucketEntry 的映射和限速配置。
 /// 通过 `Arc<RateLimitState>` 共享给 middleware。
 ///
 /// # 安全性
 ///
-/// - **VULN-0008**：`max_entries` 上限防 DoS 内存耗尽，超限时 LRU 淘汰最久未访问的 bucket。
-/// - **VULN-0010**：`trusted_proxies` 限定 X-Forwarded-For 信任边界，非可信来源的 XFF 被忽略。
-#[derive(Debug)]
+/// - `max_entries` 上限防 DoS 内存耗尽，超限时 LRU 淘汰最久未访问的 bucket。
+/// - `trusted_proxies` 限定 X-Forwarded-For 信任边界，非可信来源的 XFF 被忽略。
 pub struct RateLimitState {
-    buckets: Mutex<HashMap<String, TokenBucket>>,
-    /// 每个 IP 的令牌桶容量（也是每秒补充速率）。
-    capacity: f64,
-    /// HashMap 最大条目数（VULN-0008：防 DoS 内存耗尽）。
+    buckets: Mutex<HashMap<String, BucketEntry>>,
+    /// 每个 IP 的令牌桶容量（u64，匹配 limiteron TokenBucketLimiter）。
+    capacity: u64,
+    /// 每个 IP 的令牌补充速率（令牌/秒）。
+    refill_rate: u64,
+    /// HashMap 最大条目数（防 DoS 内存耗尽）。
     max_entries: usize,
-    /// 可信代理 IP 列表（VULN-0010：仅信任来自这些 IP 的 X-Forwarded-For）。
+    /// 可信代理 IP 列表（仅信任来自这些 IP 的 X-Forwarded-For）。
     trusted_proxies: Vec<IpAddr>,
 }
 
-/// 默认最大 bucket 数（VULN-0008）。
+/// 默认最大 bucket 数。
 const DEFAULT_MAX_ENTRIES: usize = 100_000;
 
 impl RateLimitState {
     /// 创建限速状态（向后兼容，默认 max_entries=100_000，无可信代理）。
     ///
     /// # 参数
-    /// - `capacity`：每个 IP 每秒允许的请求数
+    /// - `capacity`：每个 IP 每秒允许的请求数（既是桶容量也是补充速率）
     pub fn new(capacity: u32) -> Self {
         Self::with_options(capacity, DEFAULT_MAX_ENTRIES, Vec::new())
     }
@@ -105,13 +76,16 @@ impl RateLimitState {
     /// 创建限速状态（完整配置）。
     ///
     /// # 参数
-    /// - `capacity`：每个 IP 每秒允许的请求数
-    /// - `max_entries`：HashMap 最大条目数（VULN-0008）
-    /// - `trusted_proxies`：可信代理 IP 列表（VULN-0010）
+    /// - `capacity`：每个 IP 每秒允许的请求数（既是桶容量也是补充速率）
+    /// - `max_entries`：HashMap 最大条目数
+    /// - `trusted_proxies`：可信代理 IP 列表
     pub fn with_options(capacity: u32, max_entries: usize, trusted_proxies: Vec<IpAddr>) -> Self {
+        let capacity = capacity as u64;
         Self {
             buckets: Mutex::new(HashMap::new()),
-            capacity: capacity as f64,
+            // 桶容量 = 补充速率 = capacity（与原手写实现一致）
+            capacity,
+            refill_rate: capacity,
             // 至少保留 1 个条目，避免 max_entries=0 导致所有请求被驱逐
             max_entries: max_entries.max(1),
             trusted_proxies,
@@ -126,13 +100,11 @@ impl RateLimitState {
 
 /// 从请求中提取客户端 IP。
 ///
-/// # 信任模型（VULN-0010 修复）
+/// # 信任模型
 ///
 /// - 若连接 IP 在 `trusted_proxies` 中：采用 X-Forwarded-For 最左值（原始客户端）。
 /// - 若连接 IP 不在 `trusted_proxies` 中：使用连接 IP 本身，忽略 XFF（防伪造）。
 /// - 若无 `ConnectInfo`（如 oneshot 测试）：返回 "unknown"（fail-closed，不信任 XFF）。
-///
-/// 这修复了原实现无条件信任 XFF 的漏洞——攻击者无法再通过伪造 XFF 绕过限速或嫁祸他人。
 fn extract_client_ip(req: &Request, trusted_proxies: &[IpAddr]) -> String {
     let connect_ip = req
         .extensions()
@@ -164,24 +136,38 @@ pub async fn rate_limit_middleware(
     next: Next,
 ) -> Response {
     let ip = extract_client_ip(&req, &state.trusted_proxies);
-    let allowed = {
+    // 短暂持锁：取出 bucket Arc 并更新 last_access，然后在锁外调用 async allow
+    // （limiteron allow 内部用原子 CAS，不阻塞，但避免跨 await 持有 parking_lot 锁）
+    let bucket = {
         let mut buckets = state.buckets.lock();
-        // VULN-0008：新 IP 插入前若已达 max_entries，淘汰最久未访问的 bucket（LRU）
+        // 新 IP 插入前若已达 max_entries，淘汰最久未访问的 bucket（LRU）
         if !buckets.contains_key(&ip) && buckets.len() >= state.max_entries {
             if let Some(oldest_key) = buckets
                 .iter()
-                .min_by_key(|(_, b)| b.last_refill)
+                .min_by_key(|(_, e)| e.last_access)
                 .map(|(k, _)| k.clone())
             {
                 buckets.remove(&oldest_key);
             }
         }
-        let bucket = buckets.entry(ip.clone()).or_insert_with(|| {
-            // 每秒补充 capacity 个令牌，桶容量为 capacity
-            TokenBucket::new(state.capacity)
+        let entry = buckets.entry(ip.clone()).or_insert_with(|| BucketEntry {
+            // 每秒补充 refill_rate 个令牌，桶容量为 capacity
+            limiter: Arc::new(TokenBucketLimiter::new(state.capacity, state.refill_rate)),
+            last_access: Instant::now(),
         });
-        bucket.refill(state.capacity, state.capacity);
-        bucket.try_consume()
+        entry.last_access = Instant::now();
+        entry.limiter.clone()
+    };
+
+    // 在锁外调用 allow(1)（limiteron 内部原子操作，无需持锁）
+    let allowed = match bucket.allow(1).await {
+        Ok(allowed) => allowed,
+        Err(e) => {
+            // LimiteronError 仅在 cost 非法时出现（cost=0 或超限），cost=1 不应触发，
+            // 但仍按 fail-closed 处理为限速拒绝并记录日志（规则12：失败显性化）
+            tracing::warn!(error = %e, "rate limiter error");
+            false
+        },
     };
 
     if !allowed {
@@ -207,11 +193,11 @@ pub struct ApiKeyState {
     pub api_key: String,
 }
 
-/// 常量时间字节比较，防止 timing attack（H-1, VULN-0012）。
+/// 常量时间字节比较，防止 timing attack。
 ///
 /// 用 `subtle::ConstantTimeEq` 做常量时间比较，既不在第一个不匹配字节处短路返回，
 /// 也不在长度不同时提前返回，避免攻击者通过测量响应时间逐字节推断 API Key 内容，
-/// 或通过长度差异的时间差推断 API Key 长度（VULN-0012，CVSS 7.5）。
+/// 或通过长度差异的时间差推断 API Key 长度。
 ///
 /// # 安全性
 ///
@@ -224,7 +210,7 @@ fn constant_time_eq(a: &str, b: &str) -> bool {
     let a_bytes = a.as_bytes();
     let b_bytes = b.as_bytes();
 
-    // VULN-0012: 长度比较用常量时间，不 early return
+    // 长度比较用常量时间，不 early return
     let len_eq = (a_bytes.len() as u64).ct_eq(&(b_bytes.len() as u64));
 
     // 字节比较：遍历到 max_len，短的一方用 0 padding
@@ -250,7 +236,7 @@ pub async fn api_key_auth_middleware(
     req: Request,
     next: Next,
 ) -> Response {
-    // M-SAST-1/M-5: fail-closed —— 空 api_key 时拒绝所有请求（防御默认值泄露）
+    // fail-closed —— 空 api_key 时拒绝所有请求（防御默认值泄露）
     if state.api_key.is_empty() {
         return (
             StatusCode::UNAUTHORIZED,
@@ -262,7 +248,7 @@ pub async fn api_key_auth_middleware(
             .into_response();
     }
 
-    // H-1: 常量时间比较，防止 timing attack 逐字节推断 API Key
+    // 常量时间比较，防止 timing attack 逐字节推断 API Key
     let valid = req
         .headers()
         .get("x-api-key")
@@ -448,13 +434,10 @@ mod tests {
     }
 
     // ========================================================================
-    // VULN-0008: Rate limiter 内存上限 + LRU 淘汰测试
-    // --------------------------------------------------------------------
-    // 原实现无 max_entries 上限，攻击者用唯一 IP 耗尽内存致 OOM。
-    // 修复后 RateLimitState 持有 max_entries 上限，超限时 LRU 淘汰最旧 bucket。
+    // Rate limiter 内存上限 + LRU 淘汰测试
     // ========================================================================
 
-    /// VULN-0008：超过 max_entries 时淘汰旧 bucket，bucket 数量不超过上限。
+    /// 超过 max_entries 时淘汰旧 bucket，bucket 数量不超过上限。
     #[tokio::test]
     async fn rate_limit_bucket_cleanup_when_exceeds_max_entries() {
         // capacity=5 req/s，max_entries=2（仅保留 2 个 bucket）
@@ -482,13 +465,62 @@ mod tests {
     }
 
     // ========================================================================
-    // VULN-0010: X-Forwarded-For 信任边界测试
-    // --------------------------------------------------------------------
-    // 原实现无条件信任 XFF，攻击者可伪造 IP 绕过限速或嫁祸他人。
-    // 修复后仅信任来自 trusted_proxies 的 XFF，非可信来源的 XFF 被忽略。
+    // 多 IP 限速隔离测试
     // ========================================================================
 
-    /// VULN-0010：非可信代理 IP 的 XFF 被忽略，使用连接 IP。
+    /// 不同 IP 的限速桶相互隔离 — 一个 IP 耗尽配额不影响另一个 IP。
+    #[tokio::test]
+    async fn rate_limit_multi_ip_isolation() {
+        // capacity=2 per IP
+        let state = Arc::new(RateLimitState::new(2));
+        let app = ok_router().layer(axum::middleware::from_fn_with_state(
+            state,
+            rate_limit_middleware,
+        ));
+
+        // IP 1: 2 requests OK, 3rd 429
+        for _ in 0..2 {
+            let req = Request::builder()
+                .uri("/ping")
+                .extension(ConnectInfo::<SocketAddr>("10.0.0.1:8080".parse().unwrap()))
+                .body(Body::empty())
+                .unwrap();
+            let resp = app.clone().oneshot(req).await.unwrap();
+            assert_eq!(resp.status(), StatusCode::OK);
+        }
+        let req = Request::builder()
+            .uri("/ping")
+            .extension(ConnectInfo::<SocketAddr>("10.0.0.1:8080".parse().unwrap()))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::TOO_MANY_REQUESTS,
+            "IP 10.0.0.1 第 3 个请求应被限速"
+        );
+
+        // IP 2: 仍有完整配额（2 个请求都 OK）
+        for _ in 0..2 {
+            let req = Request::builder()
+                .uri("/ping")
+                .extension(ConnectInfo::<SocketAddr>("10.0.0.2:8080".parse().unwrap()))
+                .body(Body::empty())
+                .unwrap();
+            let resp = app.clone().oneshot(req).await.unwrap();
+            assert_eq!(
+                resp.status(),
+                StatusCode::OK,
+                "IP 10.0.0.2 应有独立配额，不受 10.0.0.1 影响"
+            );
+        }
+    }
+
+    // ========================================================================
+    // X-Forwarded-For 信任边界测试
+    // ========================================================================
+
+    /// 非可信代理 IP 的 XFF 被忽略，使用连接 IP。
     #[test]
     fn extract_client_ip_ignores_untrusted_proxy_xff() {
         let trusted = [IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))];
@@ -505,7 +537,7 @@ mod tests {
         assert_eq!(extract_client_ip(&req, &trusted), "203.0.113.1");
     }
 
-    /// VULN-0010：可信代理 IP 的 XFF 被采用。
+    /// 可信代理 IP 的 XFF 被采用。
     #[test]
     fn extract_client_ip_uses_xff_from_trusted_proxy() {
         let trusted = [IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))];
@@ -520,7 +552,7 @@ mod tests {
         assert_eq!(extract_client_ip(&req, &trusted), "1.2.3.4");
     }
 
-    /// VULN-0010：无 ConnectInfo 时返回 "unknown"（fail-closed，不信任 XFF）。
+    /// 无 ConnectInfo 时返回 "unknown"（fail-closed，不信任 XFF）。
     #[test]
     fn extract_client_ip_no_connect_info_returns_unknown() {
         let trusted = [IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))];
@@ -533,7 +565,7 @@ mod tests {
         assert_eq!(extract_client_ip(&req, &trusted), "unknown");
     }
 
-    /// VULN-0010：可信代理但无 XFF 头时使用连接 IP。
+    /// 可信代理但无 XFF 头时使用连接 IP。
     #[test]
     fn extract_client_ip_trusted_proxy_no_xff_uses_connect_ip() {
         let trusted = [IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))];
@@ -620,7 +652,7 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
     }
 
-    /// M-SAST-1/M-5: 空 API Key 时所有请求被拒绝（fail-closed）。
+    /// 空 API Key 时所有请求被拒绝（fail-closed）。
     #[tokio::test]
     async fn test_api_key_auth_empty_key_rejects_all() {
         let state = Arc::new(ApiKeyState {
@@ -644,7 +676,7 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 
-    /// H-1: 常量时间比较函数正确性验证。
+    /// 常量时间比较函数正确性验证。
     #[test]
     fn test_constant_time_eq() {
         assert!(constant_time_eq("abc", "abc"));
@@ -658,14 +690,10 @@ mod tests {
     }
 
     // ========================================================================
-    // VULN-0012: constant_time_eq 长度泄露修复测试
-    // --------------------------------------------------------------------
-    // 原实现 `if a.len() != b.len() { return false; }` 在长度不同时提前返回，
-    // 泄露 API key 长度（CVSS 7.5）。修复后移除长度 early return，
-    // 用 subtle::ConstantTimeEq 做常量时间比较。以下测试验证功能正确性。
+    // constant_time_eq 长度泄露修复测试
     // ========================================================================
 
-    /// VULN-0012: 不同长度返回 false（多种长度组合）。
+    /// 不同长度返回 false（多种长度组合）。
     #[test]
     fn constant_time_eq_different_lengths_returns_false() {
         // 短 vs 长
@@ -682,7 +710,7 @@ mod tests {
         assert!(!constant_time_eq("0123456789abcdef", "0123456789abcdef0"));
     }
 
-    /// VULN-0012: 相同值返回 true（多种内容）。
+    /// 相同值返回 true（多种内容）。
     #[test]
     fn constant_time_eq_same_value_returns_true() {
         assert!(constant_time_eq("", ""));
@@ -698,7 +726,7 @@ mod tests {
         assert!(constant_time_eq("p@ssw0rd!#$%", "p@ssw0rd!#$%"));
     }
 
-    /// VULN-0012: 相同长度不同值返回 false（确保不短路）。
+    /// 相同长度不同值返回 false（确保不短路）。
     #[test]
     fn constant_time_eq_different_value_returns_false() {
         // 首字节不同
@@ -721,7 +749,7 @@ mod tests {
         ));
     }
 
-    /// VULN-0012: 空字符串返回 true。
+    /// 空字符串返回 true。
     #[test]
     fn constant_time_eq_empty_strings_returns_true() {
         assert!(constant_time_eq("", ""));

@@ -204,10 +204,6 @@ fn parse_session_row(row: &QueryResult) -> BulwarkResult<SessionRow> {
     })
 }
 
-// ============================================================================
-// 单元测试
-// ============================================================================
-
 #[cfg(all(test, feature = "db-sqlite"))]
 mod tests {
     use super::super::DbnexusUserRepository;

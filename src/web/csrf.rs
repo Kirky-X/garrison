@@ -15,7 +15,7 @@
 //! - **受保护方法**（在 `protected_methods` 中的方法）：
 //!   - `enabled == false`：直接放行。
 //!   - 路径命中 `excluded_paths`：直接放行。
-//!   - Origin/Referer 同源校验失败返回 403（VULN-0006 修复）。
+//!   - Origin/Referer 同源校验失败返回 403。
 //!   - 从 Cookie 和 Header 提取 token，任一缺失返回 403。
 //!   - `validate_csrf_token` 校验失败返回 403。
 //!   - 校验通过放行。
@@ -35,7 +35,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// # 默认值
 ///
-/// - `enabled`: `true`（默认启用，secure-by-default；VULN-0006 修复）
+/// - `enabled`: `true`（默认启用，secure-by-default）
 /// - `cookie_name`: `"bulwark_csrf_token"`
 /// - `header_name`: `"X-CSRF-Token"`
 /// - `excluded_paths`: 空列表
@@ -69,7 +69,7 @@ pub struct CsrfConfig {
 impl Default for CsrfConfig {
     fn default() -> Self {
         Self {
-            // VULN-0006 修复：secure-by-default，默认启用 CSRF 防护
+            // secure-by-default，默认启用 CSRF 防护
             enabled: true,
             cookie_name: "bulwark_csrf_token".to_string(),
             header_name: "X-CSRF-Token".to_string(),
@@ -122,9 +122,8 @@ pub fn generate_csrf_token() -> BulwarkResult<String> {
 /// 任一 token 为空时返回 `false`（空 token 视为非法输入）；
 /// 否则长度一致且所有字节匹配时返回 `true`，否则返回 `false`。
 pub fn validate_csrf_token(header_token: &str, cookie_token: &str) -> bool {
-    // VULN-0012 统一修复（diting 架构审查 HIGH）：原手写 XOR 累积与
-    // middleware.rs::constant_time_eq 形成双实现，违反 DRY。改为统一使用
-    // subtle::ConstantTimeEq，并移除 is_empty early return（长度泄露）。
+    // 统一使用 subtle::ConstantTimeEq 做常量时间比较，
+    // 并移除 is_empty early return（避免长度泄露）。
     use std::ops::Not;
     use subtle::ConstantTimeEq;
 
@@ -194,7 +193,7 @@ fn extract_origin_host(uri_str: &str) -> Option<String> {
     }
 }
 
-/// 校验请求的 Origin/Referer 是否与 Host header 同源（VULN-0006 修复）。
+/// 校验请求的 Origin/Referer 是否与 Host header 同源。
 ///
 /// 优先检查 `Origin` header；若不存在则回退到 `Referer` header。
 /// 两者都不存在时返回 `false`（受保护方法要求同源校验，secure-by-default）。
@@ -284,7 +283,7 @@ pub async fn bulwark_csrf_middleware(
         if config.excluded_paths.iter().any(|p| p == &path) {
             return next.run(req).await;
         }
-        // VULN-0006 修复：Origin/Referer 同源校验（defense-in-depth）
+        // Origin/Referer 同源校验（defense-in-depth）
         if !validate_same_origin(req.headers()) {
             return (StatusCode::FORBIDDEN, "CSRF origin validation failed").into_response();
         }
@@ -321,10 +320,6 @@ pub async fn bulwark_csrf_middleware(
         resp
     }
 }
-
-// ============================================================================
-// 测试
-// ============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -519,10 +514,10 @@ mod tests {
     }
 
     // ----------------------------------------------------------------
-    // VULN-0006 修复测试
+    // CsrfConfig 默认启用测试
     // ----------------------------------------------------------------
 
-    /// VULN-0006: CsrfConfig::default() 应默认启用 CSRF 防护（secure-by-default）。
+    /// CsrfConfig::default() 应默认启用 CSRF 防护（secure-by-default）。
     #[test]
     fn csrf_config_default_enabled_is_true() {
         let config = CsrfConfig::default();
@@ -741,10 +736,10 @@ mod tests {
     }
 
     // ----------------------------------------------------------------
-    // VULN-0006 修复测试：Origin/Referer 同源校验
+    // Origin/Referer 同源校验测试
     // ----------------------------------------------------------------
 
-    /// VULN-0006: 受保护方法的跨源请求（Origin 不匹配 Host）应被拒绝。
+    /// 受保护方法的跨源请求（Origin 不匹配 Host）应被拒绝。
     #[tokio::test]
     async fn csrf_middleware_rejects_cross_origin_request() {
         let config = CsrfConfig {
@@ -771,7 +766,7 @@ mod tests {
         );
     }
 
-    /// VULN-0006: 受保护方法的同源请求（Origin 匹配 Host）应通过。
+    /// 受保护方法的同源请求（Origin 匹配 Host）应通过。
     #[tokio::test]
     async fn csrf_middleware_allows_same_origin_request() {
         let config = CsrfConfig {

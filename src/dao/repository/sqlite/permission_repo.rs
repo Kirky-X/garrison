@@ -190,10 +190,6 @@ fn parse_permission_row(row: &QueryResult) -> BulwarkResult<PermissionRow> {
     })
 }
 
-// ============================================================================
-// 单元测试
-// ============================================================================
-
 #[cfg(all(test, feature = "db-sqlite"))]
 mod tests {
     use super::*;

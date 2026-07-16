@@ -87,11 +87,11 @@ pub async fn run() -> BulwarkResult<()> {
     // ----------------------------------------------------------------
     // 1. 构建 SignHandler
     // ----------------------------------------------------------------
-    // VULN-0018 修复后签名算法：
+    // 签名算法：
     //   sign = base64(hmac_sha256(hkdf_key, "{method}\n{path}\n{timestamp}\n{nonce}\n{body_sha256}"))
     //   其中 hkdf_key = HKDF-SHA256(app_secret, salt=app_key, info="bulwark-sign-v2")
     let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
-    // VULN-0018: app_secret 最小 32 字节（256 位）
+    // app_secret 最小 32 字节（256 位）
     let handler = SignHandler::new("app-001", "my-secret-key-with-at-least-32-bytes!", dao)?
         .with_timestamp_window(300); // 默认 300 秒时间戳窗口
     println!("[1] SignHandler 构建完成");

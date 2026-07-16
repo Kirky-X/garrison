@@ -4,7 +4,7 @@
 //! cache_redis 示例（cache-redis feature）。
 //!
 //! 演示 Redis L2 后端配置：
-//! 1. `BulwarkDaoOxcache::new()` 默认 L1(moka) DAO（无需 Redis 连接）
+//! 1. `BulwarkDaoOxcache::new()` 默认 L1(内存) DAO（无需 Redis 连接）
 //! 2. `oxcache::backend::RedisBackend::builder()` Redis L2 后端配置
 //! 3. `oxcache::Cache::builder().backend_arc(...)` 组合 L1+L2 多级缓存
 //! 4. `BulwarkDao` trait 操作（get/set/update/expire/delete）
@@ -24,10 +24,10 @@ use std::sync::Arc;
 /// 默认 Redis 连接字符串（开发环境）。
 const DEFAULT_REDIS_URL: &str = "redis://127.0.0.1:6379";
 
-/// 创建默认的 L1(moka) DAO 实例（无需 Redis 连接）。
+/// 创建默认的 L1(内存) DAO 实例（无需 Redis 连接）。
 ///
 /// `BulwarkDaoOxcache::new()` 内部使用 `oxcache::Cache::builder().sync_mode(true).build()`，
-/// 仅启用 L1 moka 内存缓存，适合开发/测试环境。
+/// 仅启用 L1 oxcache 内存缓存，适合开发/测试环境。
 pub async fn create_l1_dao() -> BulwarkDaoOxcache {
     BulwarkDaoOxcache::new()
         .await
@@ -42,7 +42,7 @@ pub fn build_redis_l2_config() -> oxcache::backend::RedisBackendBuilder {
     oxcache::backend::RedisBackend::builder().connection_string(DEFAULT_REDIS_URL)
 }
 
-/// 创建组合 L1(moka) + L2(redis) 的多级缓存（需要 Redis 实例运行）。
+/// 创建组合 L1(内存) + L2(redis) 的多级缓存（需要 Redis 实例运行）。
 ///
 /// 注：`sync_mode(true)` + `backend_arc()` 不兼容（oxcache 0.3 限制），
 /// 此函数使用 async API（无 sync_mode）。
@@ -56,7 +56,7 @@ pub async fn create_tiered_cache(
     Ok(cache)
 }
 
-/// 演示 BulwarkDao 操作（通过 L1 moka DAO，无需 Redis）。
+/// 演示 BulwarkDao 操作（通过 L1 DAO，无需 Redis）。
 ///
 /// 展示完整的 CRUD + TTL 流程：
 /// 1. set + get
@@ -89,19 +89,19 @@ pub async fn demo_dao_operations(
 
 /// 运行 cache_redis 示例。
 ///
-/// 演示 Redis L2 后端配置 + L1 moka DAO 操作：
-/// 1. 创建 L1 moka DAO 并演示 CRUD
+/// 演示 Redis L2 后端配置 + L1 DAO 操作：
+/// 1. 创建 L1 DAO 并演示 CRUD
 /// 2. 展示 Redis L2 后端配置（不实际连接）
 /// 3. 说明 L1+L2 多级缓存组合方式
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Bulwark cache-redis Redis L2 后端示例 ===\n");
 
     // ----------------------------------------------------------------
-    // 1. L1 moka DAO（无需 Redis）
+    // 1. L1 DAO（无需 Redis）
     // ----------------------------------------------------------------
-    println!("[L1] BulwarkDaoOxcache::new()（L1 moka，无需 Redis）:");
+    println!("[L1] BulwarkDaoOxcache::new()（L1 内存，无需 Redis）:");
     let dao = create_l1_dao().await;
-    println!("    创建 L1 moka DAO 实例成功");
+    println!("    创建 L1 DAO 实例成功");
     println!();
 
     println!("[CRUD] 演示 BulwarkDao 操作:");
@@ -132,7 +132,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // ----------------------------------------------------------------
     // 3. L1+L2 多级缓存组合
     // ----------------------------------------------------------------
-    println!("[Tiered] L1(moka) + L2(redis) 多级缓存组合:");
+    println!("[Tiered] L1(内存) + L2(redis) 多级缓存组合:");
     println!("    // 1. 创建 Redis L2 后端");
     println!("    let redis = RedisBackend::builder()");
     println!("        .connection_string(\"rediss://localhost:6379\")");
@@ -144,7 +144,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("        .build().await?;");
     println!();
     println!("    限制：sync_mode(true) + backend_arc() 不兼容（oxcache 0.3）");
-    println!("    BulwarkDaoOxcache 使用 sync_mode，因此仅支持 L1 moka。");
+    println!("    BulwarkDaoOxcache 使用 sync_mode，因此仅支持 L1 内存。");
     println!("    如需 L2 Redis，需直接使用 oxcache async API。");
     println!();
 
@@ -159,7 +159,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         Err(e) => {
             println!("    Redis 连接失败（预期行为，需 Redis 实例运行）:");
             println!("    错误: {}", e);
-            println!("    这不影响 L1 moka DAO 的正常使用");
+            println!("    这不影响 L1 DAO 的正常使用");
         },
     }
     println!();

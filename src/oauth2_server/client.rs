@@ -58,7 +58,7 @@ impl std::str::FromStr for GrantType {
     ///
     /// 与项目内 `Annotation` / `DigestAlgorithm` 一致采用 `std::str::FromStr` trait，
     /// 调用方用 `"authorization_code".parse::<GrantType>()` 而非 inherent method，
-    /// 避免遮蔽 std trait（diting H-2）。
+    /// 避免遮蔽 std trait。
     fn from_str(s: &str) -> BulwarkResult<Self> {
         match s {
             "authorization_code" => Ok(Self::AuthorizationCode),
@@ -161,7 +161,7 @@ impl OAuth2Client {
         self.scopes.is_empty() || self.scopes.iter().any(|s| s == scope)
     }
 
-    /// 批量校验 scope 列表是否全部在 allowed_scopes 内（VULN-0003 修复）。
+    /// 批量校验 scope 列表是否全部在 allowed_scopes 内。
     ///
     /// 空 allowed_scopes 表示允许任意 scope（向后兼容）。
     /// 任一 scope 不在 allowed_scopes 内则返回 `invalid_scope` 错误。
@@ -325,10 +325,6 @@ fn verify_secret(secret: &str, hash_str: &str) -> BulwarkResult<bool> {
         .is_ok())
 }
 
-// ============================================================================
-// 测试
-// ============================================================================
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -352,7 +348,7 @@ mod tests {
         assert_eq!(de, gt);
     }
 
-    // === FromStr trait 测试（diting H-2：与项目内 Annotation/DigestAlgorithm 惯例对齐） ===
+    // === FromStr trait 测试（与项目内 Annotation/DigestAlgorithm 惯例对齐） ===
 
     #[test]
     fn grant_type_from_str_parses_all_known_types() {

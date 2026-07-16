@@ -169,10 +169,6 @@ fn parse_user_role_row(row: &QueryResult) -> BulwarkResult<UserRoleRow> {
     })
 }
 
-// ============================================================================
-// 单元测试
-// ============================================================================
-
 #[cfg(all(test, feature = "db-sqlite"))]
 mod tests {
     use super::super::{DbnexusRoleRepository, DbnexusUserRepository};

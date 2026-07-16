@@ -76,7 +76,7 @@ impl JwtHandler {
             login_id,
             device: self.device.clone(),
             jti: Some(uuid::Uuid::new_v4().to_string()),
-            nbf: Some(now), // vuln-0019 修复：签发时设置 nbf，verify 时强制校验
+            nbf: Some(now), // 签发时设置 nbf，verify 时强制校验
         };
         let header = Header::new(self.algorithm);
         let key = EncodingKey::from_secret(self.secret.as_bytes());
@@ -101,7 +101,7 @@ impl JwtHandler {
         let key = DecodingKey::from_secret(self.secret.as_bytes());
         let mut validation = Validation::new(self.algorithm);
         validation.validate_exp = true;
-        validation.validate_nbf = true; // vuln-0019 修复：拒绝 nbf 为未来的 token
+        validation.validate_nbf = true; // 拒绝 nbf 为未来的 token
                                         // leeway=0：不容忍时钟偏差，过期立即拒绝（安全框架默认严格）
         validation.leeway = 0;
         decode::<BulwarkJwtClaims>(token, &key, &validation)
@@ -111,7 +111,7 @@ impl JwtHandler {
                 if msg.contains("ExpiredSignature") {
                     BulwarkError::ExpiredToken(format!("JWT 已过期: {}", e))
                 } else if msg.contains("ImmatureSignature") || msg.contains("nbf") {
-                    // vuln-0019 修复：nbf 为未来时间 → ImmatureSignature
+                    // nbf 为未来时间 → ImmatureSignature
                     BulwarkError::InvalidToken(format!("JWT 未生效（nbf 校验失败）: {}", e))
                 } else {
                     BulwarkError::InvalidToken(format!("JWT 校验失败: {}", e))

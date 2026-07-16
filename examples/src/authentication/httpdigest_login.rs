@@ -23,7 +23,7 @@ pub fn run() -> BulwarkResult<()> {
     // ----------------------------------------------------------------
     // 1. 构造 Digest 认证工具并生成质询头
     // ----------------------------------------------------------------
-    // VULN-0016 修复后：默认算法为 SHA256（更安全），qop 声明支持 auth 和 auth-int，
+    // 默认算法为 SHA256（更安全），qop 声明支持 auth 和 auth-int，
     // nonce 格式为 base64(timestamp:uuid)，validate 时校验时间戳防过期。
     let auth = HttpDigestAuth::new("bulwark@realm", "SHA256")?;
     let challenge = auth.challenge();
@@ -48,7 +48,7 @@ pub fn run() -> BulwarkResult<()> {
     // ----------------------------------------------------------------
     // 3. 模拟客户端构造 Authorization header 并由服务端 validate
     // ----------------------------------------------------------------
-    // VULN-0016: 客户端从质询头提取 nonce（base64(timestamp:uuid) 格式），
+    // 客户端从质询头提取 nonce（base64(timestamp:uuid) 格式），
     // 使用 HA1 + nonce + method + uri 计算 response。
     let nonce = extract_nonce_from_challenge(&challenge)
         .ok_or_else(|| bulwark::error::BulwarkError::Internal("无法提取 nonce".into()))?;

@@ -209,7 +209,7 @@ pub trait BulwarkDao: Send + Sync {
     /// # 默认实现（非原子）
     /// 默认实现为 `get → delete` 两步操作，**存在 TOCTOU 竞态**：
     /// 并发调用同一 key 时可能多个调用都返回 `Some`。
-    /// 后端若支持原子操作（如 Redis Lua / moka 内部锁），应重写此方法。
+    /// 后端若支持原子操作（如 Redis Lua / oxcache 内存后端原子操作），应重写此方法。
     ///
     /// # 已重写的实现
     /// - `MockDao`：`parking_lot::Mutex` 保护，进程内原子
@@ -386,17 +386,6 @@ pub enum RedisDeploymentMode {
     },
 }
 
-/// Default 实现，返回 Single 模式（`redis://127.6379`）。
-///
-/// 供 `RedisConfig` 的 `#[serde(default)]` 在反序列化时填充缺失的 `mode` 字段。
-impl Default for RedisDeploymentMode {
-    fn default() -> Self {
-        RedisDeploymentMode::Single {
-            url: "redis://127.0.0.1:6379".to_string(),
-        }
-    }
-}
-
 /// Redis 配置聚合结构，包含部署模式、连接池参数与认证信息。
 ///
 /// # 默认值
@@ -421,50 +410,11 @@ pub struct RedisConfig {
     pub pool_size: u32,
 }
 
-impl Default for RedisConfig {
-    fn default() -> Self {
-        Self {
-            mode: RedisDeploymentMode::Single {
-                url: "redis://127.0.0.1:6379".to_string(),
-            },
-            password: None,
-            db: 0,
-            connection_timeout_secs: 5,
-            pool_size: 10,
-        }
-    }
-}
-
-/// Display 实现，输出人类可读的部署模式描述。
-impl std::fmt::Display for RedisDeploymentMode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            RedisDeploymentMode::Single { url } => write!(f, "single({})", url),
-            RedisDeploymentMode::Sentinel { master_name, urls } => {
-                write!(
-                    f,
-                    "sentinel(master={}, {} sentinels)",
-                    master_name,
-                    urls.len()
-                )
-            },
-            RedisDeploymentMode::Cluster { urls } => {
-                write!(f, "cluster({} nodes)", urls.len())
-            },
-            RedisDeploymentMode::MasterSlave {
-                master_url,
-                slave_urls,
-            } => {
-                write!(
-                    f,
-                    "master-slave(master={}, {} slaves)",
-                    master_url,
-                    slave_urls.len()
-                )
-            },
-        }
-    }
-}
+// ============================================================================
+// `RedisDeploymentMode` 与 `RedisConfig` 的 trait 实现分离至 `defaults` 子模块
+// （规则 25：mod.rs 只放 trait/struct/enum 定义，impl 块拆到独立文件）
+// ============================================================================
+pub mod defaults;
 
 // ============================================================================
 // oxcache 实现（feature = "cache-memory" 或 "cache-redis"）
@@ -543,7 +493,7 @@ mod oxcache_impl {
 
     /// oxcache 0.3 默认实现，包装 `oxcache::Cache<String, String>`。
     ///
-    /// - L1（moka）+ L2（redis）由 oxcache 0.3 自动管理（0.3 起 moka 后端支持 per-entry TTL）。
+    /// - L1（内存）+ L2（redis）由 oxcache 0.3 自动管理（oxcache 0.3 支持 per-entry TTL）。
     /// - Bulwark 自身不实现任何缓存逻辑，全部委托给 oxcache。
     /// - 启用 `sync_mode(true)` 后使用 `_sync` API，
     ///   要求调用方在 multi_thread tokio runtime 中执行。
@@ -555,7 +505,7 @@ mod oxcache_impl {
     ///
     /// # 性能约束（A-009 评估结论）
     ///
-    /// `_sync` API 仅适用于 in-memory backend（Moka `DashMap` 后端）：
+    /// `_sync` API 仅适用于 oxcache in-memory 后端：
     /// - 读操作（`get_sync`/`exists_sync`/`ttl_sync`）：无锁读，<100ns
     /// - 写操作（`set_with_ttl_sync`/`delete_sync`/`expire_sync`）：短临界区，<1μs
     /// - 对比 `tokio::task::spawn_blocking` 开销：~10-50μs（线程池调度）
@@ -916,18 +866,15 @@ pub mod alone_cache;
 
 pub mod warmup;
 
-#[cfg(test)]
+// `MockDao` 在生产代码中也作为进程内原子 DAO 使用
+// （如 `PasswordRateLimiter` / `BulwarkFirewallCheckHookDefault` 的内存模式），
+// 不再限制为 `cfg(test)`。
 mod mock;
 
-#[cfg(test)]
 pub use mock::MockDao;
 
 #[cfg(all(test, feature = "protocol-apikey"))]
 pub(crate) use mock::glob_match;
-
-// ============================================================================
-// 测试
-// ============================================================================
 
 #[cfg(test)]
 /// DAO trait 契约测试与跨模块共享的 mock 实现（仅 `cfg(test)` 下编译）。

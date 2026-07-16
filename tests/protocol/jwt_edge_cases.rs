@@ -111,7 +111,7 @@ async fn iat_future_time_tolerates_clock_skew() {
         login_id: "1001".to_string(),
         device: None,
         jti: None,
-        nbf: None, // vuln-0019 修复：补充 nbf 字段
+        nbf: None, // 补充 nbf 字段
     };
 
     // 使用 jsonwebtoken::encode 直接编码（绕过 JwtHandler::sign 的 iat=now 逻辑）

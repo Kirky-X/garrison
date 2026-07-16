@@ -248,10 +248,10 @@ fn verify_algorithm_mismatch_fails() {
 }
 
 // ============================================================================
-// nbf 校验测试（vuln-0019 修复）
+// nbf 校验测试
 // ============================================================================
 
-/// verify 拒绝 nbf 为未来时间的 token（vuln-0019 修复）。
+/// verify 拒绝 nbf 为未来时间的 token。
 #[test]
 fn verify_future_nbf_returns_invalid_token() {
     let handler = JwtHandler::new("secret");
@@ -287,7 +287,7 @@ fn verify_future_nbf_returns_invalid_token() {
     }
 }
 
-/// verify 接受 nbf = now 的 token（边界场景，vuln-0019 修复）。
+/// verify 接受 nbf = now 的 token（边界场景）。
 #[test]
 fn verify_present_nbf_returns_ok() {
     let handler = JwtHandler::new("secret");
@@ -299,7 +299,7 @@ fn verify_present_nbf_returns_ok() {
     assert!(claims.nbf.is_some(), "sign 应设置 nbf");
 }
 
-/// verify 接受 nbf = now - 10 的 token（过去时间，vuln-0019 修复）。
+/// verify 接受 nbf = now - 10 的 token（过去时间）。
 #[test]
 fn verify_past_nbf_returns_ok() {
     let handler = JwtHandler::new("secret");
@@ -323,7 +323,7 @@ fn verify_past_nbf_returns_ok() {
     assert!(result.is_ok(), "nbf = 过去应通过校验: {:?}", result.err());
 }
 
-/// verify 接受无 nbf 字段的旧 token（向后兼容，vuln-0019 修复）。
+/// verify 接受无 nbf 字段的旧 token（向后兼容）。
 #[test]
 fn verify_token_without_nbf_field_returns_ok() {
     let handler = JwtHandler::new("secret");
@@ -386,7 +386,7 @@ fn jwt_claims_alias_works() {
         login_id: "1".to_string(),
         device: None,
         jti: None,
-        nbf: None, // vuln-0019 修复：补充 nbf 字段
+        nbf: None, // 补充 nbf 字段
     };
     assert_eq!(claims.login_id, "1");
 }

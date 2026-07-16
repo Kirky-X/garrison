@@ -4,7 +4,7 @@
 //! 暴力破解防护策略。
 //!
 //! `BruteForceStrategy` 实现 [`BulwarkFirewallStrategy`] trait，
-//! 用 limiteron `BanStorage`（封禁记录）+ `DistributedLimiter`（原子计数）替换手写 DAO 逻辑。
+//! 用 limiteron `BanStorage`（封禁记录）+ `DistributedLimiter`（原子计数）实现。
 //!
 //! # 算法
 //!
@@ -13,9 +13,9 @@
 //! 3. count > max_attempts → `BanStorage::save(BanRecord)` → 返回 `FirewallBlocked`
 //! 4. 否则返回 `Ok(())`
 //!
-//! # 改进（相比 v0.6 手写实现）
+//! # 特性
 //!
-//! - **原子计数**：`incr_with_ttl` 消除 TOCTOU 竞争窗口（原 get-then-set 非原子）
+//! - **原子计数**：`incr_with_ttl` 消除 TOCTOU 竞争窗口
 //! - **统一封禁管理**：`BanStorage` trait 提供封禁记录的统一抽象，支持 is_banned/save/remove_ban
 //! - **count key**：保持 `bf:{ip}:count` 格式（通过 `DistributedLimiter` 原子递增）
 
@@ -69,9 +69,9 @@ impl Default for BruteForceConfig {
 pub struct BruteForceStrategy {
     /// 配置（阈值 + 窗口 + 锁定时长）。
     config: BruteForceConfig,
-    /// 封禁存储（limiteron BanStorage 适配器，替换手写 lock_key）。
+    /// 封禁存储（limiteron BanStorage 适配器）。
     ban_storage: Arc<dyn BanStorage>,
-    /// 分布式限流器（limiteron DistributedLimiter 适配器，原子计数替换手写 get+update）。
+    /// 分布式限流器（limiteron DistributedLimiter 适配器，原子计数）。
     limiter: Arc<dyn DistributedLimiter>,
 }
 
@@ -101,7 +101,7 @@ impl BulwarkFirewallStrategy for BruteForceStrategy {
         let target = BanTarget::Ip(ctx.ip.clone());
         let count_key = format!("{}{}:count", DaoKeyPrefix::BruteForce, ctx.ip);
 
-        // 1. 检查是否已被封禁（BanStorage 替换原 lock_key，统一封禁管理）
+        // 1. 检查是否已被封禁（BanStorage 统一封禁管理）
         if self
             .ban_storage
             .is_banned(&target)
@@ -115,7 +115,7 @@ impl BulwarkFirewallStrategy for BruteForceStrategy {
             )));
         }
 
-        // 2. 原子递增计数（DistributedLimiter.incr_with_ttl 替换原 get+update，消除 TOCTOU）
+        // 2. 原子递增计数（DistributedLimiter.incr_with_ttl 消除 TOCTOU）
         let new_count = self
             .limiter
             .incr_with_ttl(
@@ -127,7 +127,7 @@ impl BulwarkFirewallStrategy for BruteForceStrategy {
             .map_err(|e| BulwarkError::Dao(format!("limiter incr_with_ttl 失败: {}", e)))?;
 
         if new_count > self.config.max_attempts as u64 {
-            // 3. 超阈值：封禁 IP（BanStorage.save 替换原 set lock_key）
+            // 3. 超阈值：封禁 IP（BanStorage.save）
             let record = BanRecord {
                 target: target.clone(),
                 ban_times: 1,

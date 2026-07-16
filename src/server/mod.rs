@@ -60,9 +60,9 @@ pub struct AuthServerConfig {
     pub internal_port: u16,
     /// 每个 IP 每秒允许的外网请求数（默认 100）。
     pub external_rate_limit_per_ip: u32,
-    /// 限速 HashMap 最大条目数（VULN-0008，默认 100_000）。
+    /// 限速 HashMap 最大条目数（默认 100_000）。
     pub rate_limit_max_entries: usize,
-    /// 可信代理 IP 列表（VULN-0010，仅这些 IP 的 X-Forwarded-For 被信任）。
+    /// 可信代理 IP 列表（仅这些 IP 的 X-Forwarded-For 被信任）。
     pub rate_limit_trusted_proxies: Vec<std::net::IpAddr>,
     /// 内网 API Key（用于 X-API-Key 头校验）。
     pub internal_api_key: String,

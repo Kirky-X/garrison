@@ -38,7 +38,7 @@
 //! | 类别 | Feature | 说明 |
 //! |:---|:---|:---|
 //! | 默认 | `default` | 空（按需启用所需 feature；`all-defaults` 可一键启用常用组合） |
-//! | 缓存 | `cache-memory` / `cache-redis` | 基于 oxcache 0.3 的 L1(moka) + L2(redis)，均启用 oxcache（语义别名） |
+//! | 缓存 | `cache-memory` / `cache-redis` | 基于 oxcache 0.3 的 L1(内存) + L2(redis)，均启用 oxcache（语义别名） |
 //! | 数据库 | `db-sqlite` | 基于 dbnexus 0.2 + auto-migrate |
 //! | Web 框架 | `web-axum` / `web-actix` / `web-warp` | 路由拦截器与 extractor 适配 |
 //! | 协议层 | `protocol-jwt` / `protocol-oauth2` / `protocol-sso` / `protocol-sign` / `protocol-apikey` / `protocol-temp` | 鉴权协议插件 |
@@ -95,7 +95,7 @@
 //!
 //! - **双抽象层**
 //!   - `dbnexus`：数据库抽象层（SQLite / PostgreSQL / MySQL），由 [`BulwarkDao`] trait 屏蔽后端差异
-//!   - `oxcache`：缓存抽象层（L1 moka + L2 redis），承载 Token-Session 与 Account-Session
+//!   - `oxcache`：缓存抽象层（L1 内存 + L2 redis），承载 Token-Session 与 Account-Session
 //! - **BulwarkManager 单例模式**
 //!   - [`BulwarkManager`] 持有全局 `Arc<BulwarkLogicDefault>`（基于 `parking_lot::RwLock`，支持覆盖式 `init`）
 //!   - 业务方启动时调用 [`BulwarkManager::init`] 注入 dao / config / interface 依赖
@@ -105,7 +105,7 @@
 //! ## 双抽象层
 //!
 //! - **dbnexus** - 数据库抽象层（SQLite / PostgreSQL / MySQL）
-//! - **oxcache** - 缓存抽象层（L1 moka + L2 redis）
+//! - **oxcache** - 缓存抽象层（L1 内存 + L2 redis）
 //!
 //! ## 使用示例
 //!
@@ -148,11 +148,18 @@ pub mod dao;
 
 /// limiteron 适配器模块，将 BulwarkDao 桥接到 limiteron Storage/QuotaStorage/BanStorage/DistributedLimiter trait。
 ///
-/// 启用 `sms-rate-limit` / `firewall-ratelimit` / `firewall-bruteforce` feature 时编译。
+/// 启用 `sms-rate-limit` / `firewall-ratelimit` / `firewall-bruteforce` / `firewall-ddos` /
+/// `firewall` / `oauth2-server` feature 时编译。
+///
+/// v0.7.2：`firewall` 和 `oauth2-server` 传递启用 `dep:limiteron`，
+/// 因 `BulwarkFirewallCheckHookDefault` / `PasswordRateLimiter` 统一使用 limiteron（禁止手写限流实现）。
 #[cfg(any(
     feature = "sms-rate-limit",
     feature = "firewall-ratelimit",
-    feature = "firewall-bruteforce"
+    feature = "firewall-bruteforce",
+    feature = "firewall-ddos",
+    feature = "firewall",
+    feature = "oauth2-server"
 ))]
 pub mod limiteron;
 
@@ -162,7 +169,7 @@ pub mod strategy;
 /// 会话模块，提供 BulwarkSession 会话模型。
 pub mod session;
 
-/// 缓存模块，提供三层缓存架构（L1 moka + L2 DAO + L3 interface）。
+/// 缓存模块，提供三层缓存架构（L1 oxcache 内存 + L2 DAO + L3 interface）。
 ///
 /// 启用 `three-tier-cache` feature 时编译。提供 [`UserCacheService`]，
 /// 用于权限/角色/用户信息的加速查询。

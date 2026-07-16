@@ -8,7 +8,7 @@
 //!
 //! 仅在启用 `protocol-sign` 特性时编译。
 //!
-//! ## 签名算法（VULN-0018 修复后）
+//! ## 签名算法
 //!
 //! `sign = base64(hmac_sha256(hkdf_key, "{method}\n{path}\n{timestamp}\n{nonce}\n{body_sha256}"))`
 //!
@@ -30,7 +30,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// 默认时间戳窗口（秒）。
 const DEFAULT_TIMESTAMP_WINDOW: i64 = 300;
 
-/// VULN-0018 修复：app_secret 最小长度（32 字节 = 256 位，满足 HMAC-SHA256 安全要求）。
+/// app_secret 最小长度（32 字节 = 256 位，满足 HMAC-SHA256 安全要求）。
 const MIN_APP_SECRET_LEN: usize = 32;
 
 /// HKDF info 上下文字符串（域分隔，防止同一密钥在不同用途间复用）。
@@ -44,7 +44,7 @@ type HmacSha256 = Hmac<Sha256>;
 /// 持有 `app_key`、`app_secret` 与 `Arc<dyn BulwarkDao>`（用于 nonce 存储）。
 /// 实现 `Send + Sync`，可在多线程环境共享。
 ///
-/// VULN-0018 修复：`app_secret` 最小 32 字节，内部用 HKDF-SHA256 派生 HMAC 密钥。
+/// `app_secret` 最小 32 字节，内部用 HKDF-SHA256 派生 HMAC 密钥。
 ///
 /// 性能优化：HKDF 派生密钥在构造时一次性计算并缓存到 `derived_key` 字段，
 /// `sign`/`validate` 直接使用缓存密钥，避免每次签名重复 HKDF 计算。
@@ -68,7 +68,7 @@ impl SignHandler {
     ///
     /// # 参数
     /// - `app_key`: 应用标识，不可为空。
-    /// - `app_secret`: HMAC 密钥（VULN-0018：最小 32 字节）。
+    /// - `app_secret`: HMAC 密钥（最小 32 字节）。
     /// - `dao`: DAO 抽象层实例。
     ///
     /// # 错误
@@ -83,7 +83,7 @@ impl SignHandler {
         if app_key.is_empty() {
             return Err(BulwarkError::Config("app_key 不可为空".to_string()));
         }
-        // VULN-0018 修复：强制 app_secret 最小 32 字节（256 位）
+        // 强制 app_secret 最小 32 字节（256 位）
         if app_secret.len() < MIN_APP_SECRET_LEN {
             return Err(BulwarkError::Config(format!(
                 "app_secret 长度不足：当前 {} 字节，要求至少 {} 字节（256 位）",
@@ -122,7 +122,7 @@ impl SignHandler {
         self.timestamp_window
     }
 
-    /// VULN-0018 修复：用 HKDF-SHA256 从 (app_secret, app_key) 派生 HMAC 密钥。
+    /// 用 HKDF-SHA256 从 (app_secret, app_key) 派生 HMAC 密钥。
     ///
     /// HKDF 提供域分隔，防止同一密钥在不同用途间复用导致跨协议攻击。
     /// - IKM = app_secret
@@ -145,7 +145,7 @@ impl SignHandler {
 
     /// 生成签名。
     ///
-    /// 签名算法（VULN-0018 修复后）：
+    /// 签名算法：
     /// `base64(hmac_sha256(hkdf_key, "{method}\n{path}\n{timestamp}\n{nonce}\n{body_sha256}"))`
     ///
     /// 其中 `hkdf_key = HKDF-SHA256(app_secret, salt=app_key, info="bulwark-sign-v2")`。
@@ -179,7 +179,7 @@ impl SignHandler {
     /// - `path`: 请求路径。
     /// - `timestamp`: 请求时间戳（秒）。
     /// - `nonce`: 随机串。
-    /// - `body_sha256`: 请求体 SHA-256（VULN-0018：从 MD5 升级为 SHA-256）。
+    /// - `body_sha256`: 请求体 SHA-256。
     /// - `signature`: 待校验的签名。
     ///
     /// # 返回
@@ -210,7 +210,7 @@ impl SignHandler {
             return Err(BulwarkError::InvalidToken("nonce 重放".to_string()));
         }
 
-        // (3) 重新计算签名并常量时间比较（VULN-0018：使用 HKDF 派生密钥）
+        // (3) 重新计算签名并常量时间比较（使用 HKDF 派生密钥）
         // 性能优化：使用构造时缓存的 derived_key，避免每次校验重复 HKDF 计算
         let payload = format!(
             "{}\n{}\n{}\n{}\n{}",
@@ -256,7 +256,7 @@ mod tests {
     use super::mock::MockDao;
     use super::*;
 
-    /// VULN-0018 测试用 app_secret（32 字节，满足最小长度要求）。
+    /// 测试用 app_secret（32 字节，满足最小长度要求）。
     const TEST_APP_SECRET: &str = "test-secret-key-with-32-bytes!!!";
 
     /// 创建 SignHandler（使用 MockDao）。
@@ -297,7 +297,7 @@ mod tests {
         }
     }
 
-    /// VULN-0018: app_secret 短于 32 字节返回 Config 错误。
+    /// app_secret 短于 32 字节返回 Config 错误。
     #[test]
     fn new_short_app_secret_returns_config_error() {
         let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
@@ -315,7 +315,7 @@ mod tests {
         }
     }
 
-    /// VULN-0018: app_secret 正好 32 字节通过校验。
+    /// app_secret 正好 32 字节通过校验。
     #[test]
     fn new_app_secret_exactly_32_bytes_passes() {
         let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
@@ -373,7 +373,7 @@ mod tests {
         assert_ne!(s1, s2);
     }
 
-    /// VULN-0018: HKDF 派生确保不同 app_key 产生不同签名（域分隔）。
+    /// HKDF 派生确保不同 app_key 产生不同签名（域分隔）。
     #[test]
     fn sign_different_app_key_produces_different_signatures() {
         let dao1: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());

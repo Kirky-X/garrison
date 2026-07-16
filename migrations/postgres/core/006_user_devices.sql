@@ -1,7 +1,7 @@
 -- Copyright (c) 2026 Kirky.X. All rights reserved.
 -- See LICENSE for full license text.
 
--- Migration: 用户设备表（PostgreSQL 版本，v0.5.1 新增，依据 design.md D4 / M2 UserDevice）
+-- Migration: 用户设备表（PostgreSQL 版本）
 -- 对应 spec: repository-layer（UserDeviceRepository trait）
 -- 数据库: PostgreSQL
 -- 幂等性: CREATE TABLE/INDEX 使用 IF NOT EXISTS
@@ -10,7 +10,7 @@
 -- register_device 读取此表实现"幂等注册 + 超限拒绝"语义。
 -- UNIQUE(tenant_id, login_id, device_identifier) 保证同一用户下同一设备指纹仅一条记录。
 --
--- 注意：时间字段用 BIGINT（epoch seconds），与 design.md D4 schema 一致，
+-- 注意：时间字段用 BIGINT（epoch seconds），
 -- 不同于 001_init.sql 中其他表使用的 TEXT（CURRENT_TIMESTAMP）。
 
 -- UP:
