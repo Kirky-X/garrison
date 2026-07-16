@@ -108,4 +108,34 @@ impl BulwarkDao for MockDao {
             _ => Ok(None),
         }
     }
+
+    /// 原子获取 value + TTL（性能优化重写）。
+    ///
+    /// 单次 lookup + 锁获取，避免 `get` + `get_timeout` 两次锁获取。
+    /// 用于 `renew_to_equivalent` 热路径性能优化。
+    async fn get_with_ttl(&self, key: &str) -> BulwarkResult<Option<(String, Option<Duration>)>> {
+        let mut store = self.store.lock().await;
+        match store.get(key) {
+            Some((value, expire_at)) => {
+                if let Some(deadline) = expire_at {
+                    if Instant::now() >= *deadline {
+                        store.remove(key);
+                        return Ok(None);
+                    }
+                }
+                let ttl = if let Some(deadline) = expire_at {
+                    let now = Instant::now();
+                    if *deadline > now {
+                        Some(*deadline - now)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+                Ok(Some((value.clone(), ttl)))
+            },
+            None => Ok(None),
+        }
+    }
 }

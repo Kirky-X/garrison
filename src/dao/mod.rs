@@ -105,6 +105,31 @@ pub trait BulwarkDao: Send + Sync {
         )))
     }
 
+    /// 原子地获取键值与剩余 TTL（性能优化接口）。
+    ///
+    /// 单次 DAO 调用同时返回 value 与 TTL，避免 `get` + `get_timeout` 两次调用。
+    /// 用于 `renew_to_equivalent` 等热路径，减少 DAO 往返次数。
+    ///
+    /// # 参数
+    /// - `key`: 存储键。
+    ///
+    /// # 返回
+    /// - `Ok(Some((value, ttl)))`: 键存在。`ttl` 为 `Some(d)` 表示设置了 TTL，`None` 表示永久驻留。
+    /// - `Ok(None)`: 键不存在或已过期。
+    ///
+    /// # 默认实现
+    /// 委托 `self.get(key)` + `self.get_timeout(key)` 两次调用（向后兼容）。
+    /// 后端若支持原子获取 value + TTL（如 Redis pipeline / 内存 HashMap 单次 lookup），
+    /// 应重写此方法以减少 DAO 往返。
+    async fn get_with_ttl(&self, key: &str) -> BulwarkResult<Option<(String, Option<Duration>)>> {
+        let value = self.get(key).await?;
+        if value.is_none() {
+            return Ok(None);
+        }
+        let ttl = self.get_timeout(key).await?;
+        Ok(Some((value.unwrap(), ttl)))
+    }
+
     /// 按 glob pattern 扫描 key。
     ///
     /// 。

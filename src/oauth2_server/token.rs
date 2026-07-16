@@ -17,7 +17,7 @@ use crate::oauth2_server::client::{GrantType, OAuth2Client, OAuth2ClientStore};
 #[cfg(feature = "db-sqlite")]
 use crate::protocol::jwt::refresh::RefreshTokenRotation;
 use async_trait::async_trait;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use base64::Engine;
 use chrono::{DateTime, Duration, Utc};
 use parking_lot::Mutex;
@@ -108,7 +108,32 @@ fn default_issued_at() -> DateTime<Utc> {
     DateTime::<Utc>::from_timestamp(0, 0).unwrap_or_else(Utc::now)
 }
 
-/// password grant type 验证器 trait。
+/// 解析 HTTP Basic Authentication 头（VULN-0011 修复，RFC 6749 §2.3.1）。
+///
+/// # 参数
+/// - `header`: `Authorization` 头值，期望格式 `"Basic <base64(client_id:client_secret)>"`。
+///
+/// # 返回
+/// - `Some((client_id, client_secret))`: 解析成功。
+/// - `None`: 头不是 Basic Auth、base64 解码失败、UTF-8 解码失败、或不含 `:` 分隔符。
+///
+/// # 安全
+///
+/// - 不限制 `client_id` / `client_secret` 中的字符（RFC 6749 §2.3.1 允许 percent-encoded）。
+/// - 空客户端 ID（`":secret"`）返回 `Some(("", "secret"))`，由调用方决定是否拒绝。
+/// - 空密钥（`"cid:"`）返回 `Some(("cid", ""))`，由 `verify_secret` 拒绝。
+pub(crate) fn parse_basic_auth(header: &str) -> Option<(String, String)> {
+    let encoded = header.strip_prefix("Basic ")?;
+    // RFC 7617: HTTP Basic Auth 使用 STANDARD base64（含 +/= 和 padding）。
+    // RFC 6749 §2.3.1: client_id 和 client_secret 在编码前需 percent-encoding，
+    // 但大多数客户端直接 base64 编码。这里接受 STANDARD base64 输入。
+    let decoded = STANDARD.decode(encoded.trim()).ok()?;
+    let decoded_str = String::from_utf8(decoded).ok()?;
+    let (client_id, client_secret) = decoded_str.split_once(':')?;
+    Some((client_id.to_string(), client_secret.to_string()))
+}
+
+/// password grant type 验证器 trait.
 ///
 /// 业务方实现此 trait 注入到 `TokenHandler`，用于 password grant type 的用户名密码验证。
 /// 未注入时 password grant type 返回 `unauthorized_grant_type` 错误。
@@ -343,9 +368,33 @@ impl TokenHandler {
 
     /// 处理 token 请求。
     pub async fn handle(&self, req: &TokenRequest) -> BulwarkResult<TokenResponse> {
-        // 1. 验证客户端凭证
+        self.handle_with_authorization(req, None).await
+    }
+
+    /// 处理 token 请求，支持 HTTP Basic Auth 客户端认证（VULN-0011 修复，RFC 6749 §2.3.1）。
+    ///
+    /// # 参数
+    /// - `req`: token 请求参数。
+    /// - `authorization`: 可选的 `Authorization` 头值。若为 `Some("Basic ...")`，
+    ///   优先从头中解码 `client_id:client_secret`，否则回退到 `req.client_id` /
+    ///   `req.client_secret`（body 参数）。
+    ///
+    /// # RFC 6749 §2.3.1
+    ///
+    /// 客户端可通过 HTTP Basic Auth 传递凭证，避免凭证出现在 URL 或 body 中。
+    /// 此方法遵循 RFC：优先使用 Basic Auth 头，body 参数作为回退。
+    pub async fn handle_with_authorization(
+        &self,
+        req: &TokenRequest,
+        authorization: Option<&str>,
+    ) -> BulwarkResult<TokenResponse> {
+        // 1. 验证客户端凭证（VULN-0011: 优先 Basic Auth）
         let client = self
-            .authenticate_client(&req.client_id, &req.client_secret)
+            .authenticate_client_with_authorization(
+                authorization,
+                &req.client_id,
+                &req.client_secret,
+            )
             .await?;
 
         // 2. 根据 grant_type 分发（使用 GrantType 枚举，避免硬编码字符串）
@@ -358,17 +407,34 @@ impl TokenHandler {
         }
     }
 
-    /// 验证客户端凭证。
-    async fn authenticate_client(
+    /// 验证客户端凭证，支持 HTTP Basic Auth（VULN-0011 修复）。
+    ///
+    /// 优先解析 `Authorization: Basic` 头；若未提供或解析失败，回退到 body 参数。
+    /// 两种来源均未提供 client_id 时返回 `invalid_client`。
+    async fn authenticate_client_with_authorization(
         &self,
-        client_id: &str,
-        client_secret: &str,
+        authorization: Option<&str>,
+        body_client_id: &str,
+        body_client_secret: &str,
     ) -> BulwarkResult<OAuth2Client> {
+        // VULN-0011: 优先解析 Authorization: Basic 头（RFC 6749 §2.3.1）
+        let (client_id, client_secret) = match authorization.and_then(parse_basic_auth) {
+            Some((id, secret)) => (id, secret),
+            None => (body_client_id.to_string(), body_client_secret.to_string()),
+        };
+
+        if client_id.is_empty() {
+            return Err(BulwarkError::OAuth2(
+                "invalid_client: client_id 缺失（既未在 Authorization 头也未在 body 中提供）"
+                    .into(),
+            ));
+        }
+
         let client =
-            self.store.get(client_id).await?.ok_or_else(|| {
+            self.store.get(&client_id).await?.ok_or_else(|| {
                 BulwarkError::OAuth2(format!("invalid_client: {client_id} 不存在"))
             })?;
-        if !client.verify_secret(client_secret)? {
+        if !client.verify_secret(&client_secret)? {
             return Err(BulwarkError::OAuth2(
                 "invalid_client: client_secret 不匹配".into(),
             ));
@@ -452,10 +518,12 @@ impl TokenHandler {
     /// - 调用 `rotation.rotate()` 获得 hash chain + reuse detection + 链式撤销
     /// - 返回新 refresh_token（轮换，旧 token revoked=1）
     ///
-    /// 未注入时退化为 DAO 路径（无轮换，仅签发新 access_token）：
+    /// VULN-0009 修复：未注入时退化为 DAO 路径（轮换 + 删除旧 token）：
     /// - 查找 `DaoKeyPrefix::OAuth2RefreshToken` 记录
     /// - 校验 client_id 一致性
-    /// - 签发新 access_token（refresh_token 继续使用，不轮换）
+    /// - 删除旧 refresh_token（防止重放）
+    /// - 签发新 access_token + 新 refresh_token（with_refresh=true 轮换）
+    /// - 旧 token 删除后再次使用 → `invalid_grant`（隐式 reuse detection）
     async fn handle_refresh_token(
         &self,
         client: &OAuth2Client,
@@ -518,7 +586,12 @@ impl TokenHandler {
             }
         }
 
-        // Fallback: DAO 路径（无轮换，无 reuse detection）
+        // VULN-0009 修复：DAO fallback 路径 — refresh_token 轮换 + 删除旧 token
+        //
+        // 旧实现：with_refresh=false（不轮换，refresh_token 继续使用）→ 旧 token 泄露后可无限重用
+        // 新实现：删除旧 refresh_token + 签发新 refresh_token（轮换）
+        //         旧 token 删除后，再次使用会因 dao.get 返回 None 而返回 invalid_grant
+        //         （隐式 reuse detection：旧 token 无法重用）
         #[allow(deprecated)]
         let key = DaoKeyPrefix::OAuth2RefreshToken.build_key(refresh_token);
         let json = self.dao.get(&key).await?.ok_or_else(|| {
@@ -534,7 +607,11 @@ impl TokenHandler {
             ));
         }
 
-        // 签发新 access_token（不签发新 refresh_token，refresh_token 继续使用）
+        // VULN-0009: 删除旧 refresh_token（轮换核心步骤）
+        // 删除后旧 token 无法再次使用，防止旧 token 泄露后被重放
+        self.dao.delete(&key).await?;
+
+        // 签发新 access_token + 新 refresh_token（with_refresh=true 轮换）
         let user_id = record.user_id;
         let scopes = record.scopes.clone();
         let username = record.username.clone();
@@ -542,7 +619,7 @@ impl TokenHandler {
             &client.client_id,
             user_id,
             &scopes,
-            false,
+            true, // VULN-0009: 轮换 — 签发新 refresh_token
             username.as_deref(),
         )
         .await
@@ -939,6 +1016,214 @@ mod tests {
         assert!(err.to_string().contains("invalid_client"));
     }
 
+    // === VULN-0011: HTTP Basic Auth 测试 ===
+
+    /// VULN-0011: parse_basic_auth 正确解析标准 Basic Auth 头。
+    #[test]
+    fn parse_basic_auth_decodes_valid_header() {
+        // "cid:secret" → base64 → "Y2lkOnNlY3JldA=="
+        let header = "Basic Y2lkOnNlY3JldA==";
+        let result = parse_basic_auth(header);
+        assert_eq!(result, Some(("cid".to_string(), "secret".to_string())));
+    }
+
+    /// VULN-0011: parse_basic_auth 对非 Basic 头返回 None。
+    #[test]
+    fn parse_basic_auth_rejects_non_basic() {
+        assert!(parse_basic_auth("Bearer token123").is_none());
+        assert!(parse_basic_auth("").is_none());
+    }
+
+    /// VULN-0011: parse_basic_auth 对无效 base64 返回 None。
+    #[test]
+    fn parse_basic_auth_rejects_invalid_base64() {
+        assert!(parse_basic_auth("Basic !!!not-base64!!!").is_none());
+    }
+
+    /// VULN-0011: parse_basic_auth 对不含 `:` 的解码结果返回 None。
+    #[test]
+    fn parse_basic_auth_rejects_no_colon() {
+        // "noseparator" → base64 → "bm9zZXBhcmF0b3I="
+        assert!(parse_basic_auth("Basic bm9zZXBhcmF0b3I=").is_none());
+    }
+
+    /// VULN-0011: parse_basic_auth 正确处理空 client_id（":secret"）。
+    #[test]
+    fn parse_basic_auth_handles_empty_client_id() {
+        // ":secret" → base64 → "OnNlY3JldA=="
+        let result = parse_basic_auth("Basic OnNlY3JldA==");
+        assert_eq!(result, Some(("".to_string(), "secret".to_string())));
+    }
+
+    /// VULN-0011: handle_with_authorization 使用 Basic Auth 头认证客户端。
+    ///
+    /// 场景：client_id/client_secret 通过 Authorization 头传递，body 中为空。
+    /// 期望：认证成功，token 签发成功。
+    #[tokio::test]
+    async fn handle_with_authorization_uses_basic_auth() {
+        let (handler, _) = make_handler();
+        handler
+            .store
+            .create(make_full_client("basic-auth-cid"))
+            .await
+            .unwrap();
+
+        // "basic-auth-cid:secret-123" → base64
+        let credentials = STANDARD.encode("basic-auth-cid:secret-123");
+        let auth_header = format!("Basic {}", credentials);
+
+        let req = TokenRequest {
+            grant_type: "client_credentials".into(),
+            client_id: "".into(), // body 中为空，依赖 Basic Auth
+            client_secret: "".into(),
+            code: None,
+            redirect_uri: None,
+            code_verifier: None,
+            refresh_token: None,
+            scope: None,
+            username: None,
+            password: None,
+        };
+
+        let resp = handler
+            .handle_with_authorization(&req, Some(&auth_header))
+            .await
+            .expect("Basic Auth 认证应成功");
+        assert_eq!(resp.token_type, "Bearer");
+        assert_eq!(resp.expires_in, 3600);
+    }
+
+    /// VULN-0011: Basic Auth 头优先于 body 参数。
+    ///
+    /// 场景：Authorization 头含正确凭证，body 中含错误凭证。
+    /// 期望：使用 Basic Auth 头的凭证认证成功（RFC 6749 §2.3.1 优先级）。
+    #[tokio::test]
+    async fn handle_with_authorization_basic_auth_overrides_body() {
+        let (handler, _) = make_handler();
+        handler
+            .store
+            .create(make_full_client("override-cid"))
+            .await
+            .unwrap();
+
+        // Basic Auth 头：正确凭证
+        let credentials = STANDARD.encode("override-cid:secret-123");
+        let auth_header = format!("Basic {}", credentials);
+
+        let req = TokenRequest {
+            grant_type: "client_credentials".into(),
+            client_id: "override-cid".into(),
+            client_secret: "WRONG-SECRET".into(), // body 中错误
+            code: None,
+            redirect_uri: None,
+            code_verifier: None,
+            refresh_token: None,
+            scope: None,
+            username: None,
+            password: None,
+        };
+
+        let resp = handler
+            .handle_with_authorization(&req, Some(&auth_header))
+            .await
+            .expect("Basic Auth 应优先，body 错误凭证被忽略");
+        assert_eq!(resp.token_type, "Bearer");
+    }
+
+    /// VULN-0011: 无 Basic Auth 头时回退到 body 参数（向后兼容）。
+    #[tokio::test]
+    async fn handle_with_authorization_falls_back_to_body() {
+        let (handler, _) = make_handler();
+        handler
+            .store
+            .create(make_full_client("fallback-cid"))
+            .await
+            .unwrap();
+
+        let req = TokenRequest {
+            grant_type: "client_credentials".into(),
+            client_id: "fallback-cid".into(),
+            client_secret: "secret-123".into(),
+            code: None,
+            redirect_uri: None,
+            code_verifier: None,
+            refresh_token: None,
+            scope: None,
+            username: None,
+            password: None,
+        };
+
+        // 不传 Authorization 头
+        let resp = handler
+            .handle_with_authorization(&req, None)
+            .await
+            .expect("body 参数认证应成功");
+        assert_eq!(resp.token_type, "Bearer");
+    }
+
+    /// VULN-0011: Basic Auth 头凭证错误时返回 invalid_client。
+    #[tokio::test]
+    async fn handle_with_authorization_basic_auth_wrong_secret() {
+        let (handler, _) = make_handler();
+        handler
+            .store
+            .create(make_full_client("wrong-secret-cid"))
+            .await
+            .unwrap();
+
+        // 错误密钥
+        let credentials = STANDARD.encode("wrong-secret-cid:WRONG");
+        let auth_header = format!("Basic {}", credentials);
+
+        let req = TokenRequest {
+            grant_type: "client_credentials".into(),
+            client_id: "".into(),
+            client_secret: "".into(),
+            code: None,
+            redirect_uri: None,
+            code_verifier: None,
+            refresh_token: None,
+            scope: None,
+            username: None,
+            password: None,
+        };
+
+        let err = handler
+            .handle_with_authorization(&req, Some(&auth_header))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("invalid_client"));
+    }
+
+    /// VULN-0011: 既无 Basic Auth 头又无 body client_id 时返回 invalid_client。
+    #[tokio::test]
+    async fn handle_with_authorization_no_credentials_returns_error() {
+        let (handler, _) = make_handler();
+
+        let req = TokenRequest {
+            grant_type: "client_credentials".into(),
+            client_id: "".into(),
+            client_secret: "".into(),
+            code: None,
+            redirect_uri: None,
+            code_verifier: None,
+            refresh_token: None,
+            scope: None,
+            username: None,
+            password: None,
+        };
+
+        let err = handler
+            .handle_with_authorization(&req, None)
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("invalid_client"),
+            "无凭证应返回 invalid_client，实际: {}",
+            err
+        );
+    }
+
     // === unsupported_grant_type 测试 ===
 
     #[tokio::test]
@@ -1084,7 +1369,7 @@ mod tests {
             password: None,
         };
         let first_resp = handler.handle(&req).await.unwrap();
-        let refresh_token = first_resp.refresh_token.unwrap();
+        let refresh_token = first_resp.refresh_token.clone().unwrap();
 
         // 使用 refresh_token 刷新
         let refresh_req = TokenRequest {
@@ -1102,7 +1387,16 @@ mod tests {
         let resp = handler.handle(&refresh_req).await.expect("刷新 token");
         assert_eq!(resp.token_type, "Bearer");
         assert_eq!(resp.expires_in, 3600);
-        assert!(resp.refresh_token.is_none(), "刷新不应返回新 refresh_token");
+        // VULN-0009: refresh_token 轮换 — 应返回新 refresh_token
+        assert!(
+            resp.refresh_token.is_some(),
+            "VULN-0009: 刷新应轮换返回新 refresh_token"
+        );
+        assert_ne!(
+            resp.refresh_token.as_ref().unwrap(),
+            first_resp.refresh_token.as_ref().unwrap(),
+            "VULN-0009: 新 refresh_token 应与旧的不同（轮换）"
+        );
     }
 
     #[tokio::test]
@@ -1128,6 +1422,68 @@ mod tests {
         };
         let err = handler.handle(&req).await.unwrap_err();
         assert!(err.to_string().contains("invalid_grant"));
+    }
+
+    /// VULN-0009: refresh_token 轮换后，旧 token 被删除，重用返回 invalid_grant。
+    ///
+    /// 流程：
+    /// 1. authorization_code 获取 refresh_token（old_token）
+    /// 2. 用 old_token 刷新 → 返回新 refresh_token（new_token），old_token 被删除
+    /// 3. 再次用 old_token 刷新 → invalid_grant（旧 token 已删除）
+    #[tokio::test]
+    async fn handle_refresh_token_rotation_deletes_old_token() {
+        let (handler, _) = make_handler();
+        handler
+            .store
+            .create(make_full_client("rt-rot-001"))
+            .await
+            .unwrap();
+
+        // 1. 获取初始 refresh_token
+        let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        let code = get_auth_code(&handler, "rt-rot-001", verifier).await;
+        let issue_req = TokenRequest {
+            grant_type: "authorization_code".into(),
+            client_id: "rt-rot-001".into(),
+            client_secret: "secret-123".into(),
+            code: Some(code),
+            redirect_uri: Some("https://app.example.com/cb".into()),
+            code_verifier: Some(verifier.into()),
+            refresh_token: None,
+            scope: None,
+            username: None,
+            password: None,
+        };
+        let issue_resp = handler.handle(&issue_req).await.unwrap();
+        let old_token = issue_resp.refresh_token.unwrap();
+
+        // 2. 用 old_token 刷新（轮换）
+        let refresh_req = TokenRequest {
+            grant_type: "refresh_token".into(),
+            client_id: "rt-rot-001".into(),
+            client_secret: "secret-123".into(),
+            code: None,
+            redirect_uri: None,
+            code_verifier: None,
+            refresh_token: Some(old_token.clone()),
+            scope: None,
+            username: None,
+            password: None,
+        };
+        let refresh_resp = handler
+            .handle(&refresh_req)
+            .await
+            .expect("第一次刷新应成功");
+        let new_token = refresh_resp.refresh_token.unwrap();
+        assert_ne!(&new_token, &old_token, "新 refresh_token 应与旧的不同");
+
+        // 3. 再次用 old_token 刷新 → invalid_grant（旧 token 已删除）
+        let err = handler.handle(&refresh_req).await.unwrap_err();
+        assert!(
+            err.to_string().contains("invalid_grant"),
+            "VULN-0009: 重用已删除的旧 refresh_token 应返回 invalid_grant，实际: {}",
+            err
+        );
     }
 
     // === client_credentials grant type 测试 ===
@@ -1920,7 +2276,7 @@ mod refresh_rotation_tests {
         );
     }
 
-    /// T007/T008 fallback: 未注入 rotation 时退化为 DAO 路径（不轮换）。
+    /// T007/T008 fallback: 未注入 rotation 时退化为 DAO 路径（VULN-0009: 轮换 + 删除旧 token）。
     #[tokio::test(flavor = "multi_thread")]
     async fn handle_refresh_token_without_rotation_fallback() {
         let handler = make_handler_without_rotation();
@@ -1946,7 +2302,7 @@ mod refresh_rotation_tests {
         let issue_resp = handler.handle(&issue_req).await.unwrap();
         let old_refresh = issue_resp.refresh_token.expect("应有 refresh_token");
 
-        // 使用 refresh_token 刷新（fallback：不轮换，仅新 access_token）
+        // 使用 refresh_token 刷新（VULN-0009: fallback 路径轮换 + 删除旧 token）
         let refresh_req = TokenRequest {
             grant_type: "refresh_token".into(),
             client_id: "rot-fallback-001".into(),
@@ -1960,10 +2316,23 @@ mod refresh_rotation_tests {
             password: None,
         };
         let refresh_resp = handler.handle(&refresh_req).await.expect("refresh 应成功");
-        // Fallback 路径不轮换：refresh_token 为 None（issue_tokens with_refresh=false）
+        // VULN-0009: fallback 路径现在轮换 — 应返回新 refresh_token
         assert!(
-            refresh_resp.refresh_token.is_none(),
-            "Fallback 路径不轮换，不应返回新 refresh_token"
+            refresh_resp.refresh_token.is_some(),
+            "VULN-0009: Fallback 路径应轮换返回新 refresh_token"
+        );
+        assert_ne!(
+            refresh_resp.refresh_token.as_ref().unwrap(),
+            &old_refresh,
+            "VULN-0009: 新 refresh_token 应与旧的不同"
+        );
+
+        // VULN-0009: 旧 refresh_token 应已删除，重用返回 invalid_grant
+        let reuse_err = handler.handle(&refresh_req).await.unwrap_err();
+        assert!(
+            reuse_err.to_string().contains("invalid_grant"),
+            "VULN-0009: 重用旧 refresh_token 应返回 invalid_grant，实际: {}",
+            reuse_err
         );
     }
 

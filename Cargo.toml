@@ -117,6 +117,10 @@ icu_calendar = { version = "2.2", optional = true, default-features = false, fea
 icu_time = { version = "2.2", optional = true, default-features = false, features = ["compiled_data"] }
 # fixed_decimal：icu_decimal 依赖，显式声明以直接使用 Decimal（0.7+ 重命名自 FixedDecimal）
 fixed_decimal = { version = "0.7", optional = true, default-features = false }
+# percent-encoding：URL 百分号编码（VULN-0007 修复 — authorize 端点 return_to 编码）
+percent-encoding = { version = "2.3", optional = true, default-features = false }
+# hkdf：HMAC-based Extract-and-Expand Key Derivation（VULN-0018 修复 — HMAC 密钥派生）
+hkdf = { version = "0.13", optional = true, default-features = false }
 
 [dev-dependencies]
 toml = "1.0"
@@ -217,7 +221,7 @@ db-mysql = ["db-base", "dbnexus/mysql"]
 protocol-oauth2 = ["dep:reqwest", "dep:sha2", "dep:base64"]
 protocol-sso = ["dep:reqwest", "dep:quick-xml", "dep:sha2", "hmac", "dep:base64"]
 protocol-jwt = ["jsonwebtoken", "dep:sha2"]
-protocol-sign = ["dep:sha2", "hmac", "dep:base64"]
+protocol-sign = ["dep:sha2", "hmac", "dep:base64", "dep:hkdf"]
 protocol-apikey = []
 protocol-temp = []
 # protocol-zeroize：协议层密钥零化（Drop 时清零 secret 字段，防止内存残留）
@@ -372,7 +376,7 @@ auth-server = ["web-axum", "backend-embedded", "auth-server-sdforge", "dep:subtl
 abac = ["dep:cedar-policy", "dep:moka"]
 # oauth2-server：启用 OAuth2 Server（4 端点 + 4 种 grant type + PKCE）
 # 依赖 protocol-oauth2（OAuth2 原语）+ reqwest（HTTP client）+ argon2（client_secret 哈希）+ rand（client_id 生成）
-oauth2-server = ["protocol-oauth2", "dep:reqwest", "dep:argon2", "dep:rand"]
+oauth2-server = ["protocol-oauth2", "dep:reqwest", "dep:argon2", "dep:rand", "dep:percent-encoding"]
 
 # === v0.7.0 inklog 结构化审计日志 ===
 # inklog 0.1.7 LoggerManager 作为 tracing subscriber 配置层，

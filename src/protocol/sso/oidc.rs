@@ -22,8 +22,9 @@
 
 use crate::error::{BulwarkError, BulwarkResult};
 use async_trait::async_trait;
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -32,6 +33,18 @@ use std::time::{Duration, Instant};
 /// 10 分钟内复用缓存的 JWKS 公钥，避免每次 `validate_id_token` 都拉取 JWKS endpoint。
 /// 与 `protocol::oauth2::keycloak::JWKS_CACHE_TTL` 保持一致。
 const JWKS_CACHE_TTL: Duration = Duration::from_secs(600);
+
+/// OIDC state 参数 TTL（VULN-0002 修复）。
+///
+/// `get_authorization_url` 注册的 state 在 10 分钟内有效，超时后 `exchange_code` 拒绝。
+/// 与 `JWKS_CACHE_TTL` 一致，覆盖 OAuth2 授权码典型生命周期（≤10 min）。
+const OIDC_STATE_TTL: Duration = Duration::from_secs(600);
+
+/// state_store 最大条目数（VULN-0002 修复：防 DoS 内存耗尽）。
+///
+/// 与 `PasswordRateLimiter::DEFAULT_PASSWORD_LIMITER_MAX_ENTRIES` 对称设计。
+/// 超限时 LRU 淘汰最久未访问的 state。
+const OIDC_STATE_MAX_ENTRIES: usize = 10_000;
 
 // ============================================================================
 // OIDC 数据结构
@@ -102,10 +115,20 @@ pub trait OidcProvider: Send + Sync {
     /// # 参数
     /// - `code`: 授权码。
     /// - `redirect_uri`: 回调 URL（必须与 `get_authorization_url` 一致）。
+    /// - `state`: OAuth2 state 参数（VULN-0002 修复：必须与 `get_authorization_url`
+    ///   注册的 state 匹配，否则返回 `InvalidParam` 错误）。
     ///
     /// # 返回
     /// id_token 字符串（JWT 格式）。
-    async fn exchange_code(&self, code: &str, redirect_uri: &str) -> BulwarkResult<String>;
+    ///
+    /// # 错误
+    /// - `BulwarkError::InvalidParam`: state 未注册、不匹配或已过期（CSRF 防护）。
+    async fn exchange_code(
+        &self,
+        code: &str,
+        redirect_uri: &str,
+        state: &str,
+    ) -> BulwarkResult<String>;
 
     /// 获取用户信息。
     ///
@@ -208,6 +231,15 @@ pub struct DefaultOidcProvider {
     /// JWKS 公钥缓存（TTL 控制，避免每次验签都拉取，VULN-0001 修复）。
     #[cfg_attr(not(feature = "protocol-jwt"), allow(dead_code))]
     jwks_cache: Arc<RwLock<JwksCache>>,
+    /// state 注册表（VULN-0002 修复：CSRF 防护）。
+    ///
+    /// `get_authorization_url` 注册 state，`exchange_code` 校验并消费（one-time use）。
+    /// 超过 `state_ttl` 的 state 自动过期，`max_state_entries` 上限防 DoS。
+    state_store: Mutex<HashMap<String, Instant>>,
+    /// state TTL（默认 `OIDC_STATE_TTL`，可通过 `with_state_ttl` 自定义）。
+    state_ttl: Duration,
+    /// state_store 最大条目数（默认 `OIDC_STATE_MAX_ENTRIES`）。
+    max_state_entries: usize,
 }
 
 impl DefaultOidcProvider {
@@ -226,7 +258,83 @@ impl DefaultOidcProvider {
             client_secret: client_secret.to_string(),
             http_client: reqwest::Client::new(),
             jwks_cache: Arc::new(RwLock::new(JwksCache::default())),
+            state_store: Mutex::new(HashMap::new()),
+            state_ttl: OIDC_STATE_TTL,
+            max_state_entries: OIDC_STATE_MAX_ENTRIES,
         }
+    }
+
+    /// 自定义 state TTL（VULN-0002 修复，主要用于测试）。
+    ///
+    /// # 参数
+    /// - `ttl`: state 有效期。设为极短时长可测试过期场景。
+    #[cfg(test)]
+    pub fn with_state_ttl(mut self, ttl: Duration) -> Self {
+        self.state_ttl = ttl;
+        self
+    }
+
+    /// 自定义 state_store 最大条目数（VULN-0002 修复，主要用于测试 DoS 防护）。
+    #[cfg(test)]
+    pub fn with_max_state_entries(mut self, max: usize) -> Self {
+        self.max_state_entries = max.max(1);
+        self
+    }
+
+    /// 注册 state（VULN-0002 修复）。
+    ///
+    /// `get_authorization_url` 调用此方法将 state 加入注册表。
+    /// 超过 `max_state_entries` 上限时 LRU 淘汰最旧 entry（与 `PasswordRateLimiter` 对称）。
+    fn register_state(&self, state: &str) {
+        let mut store = self.state_store.lock();
+        // LRU 淘汰：超上限时移除最旧 entry
+        if store.len() >= self.max_state_entries && !store.contains_key(state) {
+            if let Some(oldest_key) = store.iter().min_by_key(|(_, t)| *t).map(|(k, _)| k.clone()) {
+                store.remove(&oldest_key);
+            }
+        }
+        store.insert(state.to_string(), Instant::now());
+    }
+
+    /// 校验并消费 state（VULN-0002 修复，one-time use）。
+    ///
+    /// `exchange_code` 调用此方法校验 state 是否已注册且未过期。
+    /// 校验通过后立即移除 state（one-time use，防止重放）。
+    ///
+    /// # 返回
+    /// - `Ok(())`: state 有效
+    /// - `Err(BulwarkError::InvalidParam)`: state 未注册 / 不匹配 / 已过期
+    fn validate_and_consume_state(&self, state: &str) -> BulwarkResult<()> {
+        let mut store = self.state_store.lock();
+        match store.remove(state) {
+            Some(issued_at) => {
+                if Instant::now().duration_since(issued_at) > self.state_ttl {
+                    return Err(BulwarkError::InvalidParam(format!(
+                        "OIDC state 已过期（TTL={}s）",
+                        self.state_ttl.as_secs()
+                    )));
+                }
+                Ok(())
+            },
+            None => Err(BulwarkError::InvalidParam(
+                "OIDC state 不匹配或未注册（CSRF 防护）".to_string(),
+            )),
+        }
+    }
+
+    /// 清理过期 state（VULN-0002 修复，opportunistic cleanup）。
+    ///
+    /// 在 `get_authorization_url` 注册前调用，移除已过期的 state 释放内存。
+    fn cleanup_expired_states(&self) {
+        let mut store = self.state_store.lock();
+        let now = Instant::now();
+        store.retain(|_, issued_at| now.duration_since(*issued_at) <= self.state_ttl);
+    }
+
+    /// 当前 state_store 条目数（测试/运维用）。
+    #[cfg(test)]
+    pub fn state_store_len(&self) -> usize {
+        self.state_store.lock().len()
     }
 
     /// 拉取 JWKS 公钥集合并更新缓存（VULN-0001 修复）。
@@ -372,6 +480,10 @@ impl OidcProvider for DefaultOidcProvider {
         state: &str,
         scopes: &[&str],
     ) -> BulwarkResult<String> {
+        // VULN-0002 修复：注册 state 供 exchange_code 校验（CSRF 防护）
+        self.cleanup_expired_states();
+        self.register_state(state);
+
         let scope = scopes.join(" ");
         let url = format!(
             "{}?response_type=code&client_id={}&redirect_uri={}&state={}&scope={}",
@@ -384,7 +496,16 @@ impl OidcProvider for DefaultOidcProvider {
         Ok(url)
     }
 
-    async fn exchange_code(&self, code: &str, redirect_uri: &str) -> BulwarkResult<String> {
+    async fn exchange_code(
+        &self,
+        code: &str,
+        redirect_uri: &str,
+        state: &str,
+    ) -> BulwarkResult<String> {
+        // VULN-0002 修复：校验 state 是否已注册且未过期（CSRF 防护）
+        // 校验通过后立即消费 state（one-time use，防止重放）
+        self.validate_and_consume_state(state)?;
+
         let params = [
             ("grant_type", "authorization_code"),
             ("code", code),
@@ -765,8 +886,21 @@ mod tests {
             .await;
 
         let provider = DefaultOidcProvider::new(config, "cid", "cs");
+        // VULN-0002: 先注册 state，再交换授权码
+        provider
+            .get_authorization_url(
+                "https://sp.example.com/callback",
+                "state-test-1",
+                &["openid"],
+            )
+            .await
+            .unwrap();
         let returned_id_token = provider
-            .exchange_code("auth-code-123", "https://sp.example.com/callback")
+            .exchange_code(
+                "auth-code-123",
+                "https://sp.example.com/callback",
+                "state-test-1",
+            )
             .await
             .unwrap();
         assert_eq!(returned_id_token, id_token);
@@ -794,8 +928,21 @@ mod tests {
             .await;
 
         let provider = DefaultOidcProvider::new(config, "cid", "cs");
+        // VULN-0002: 先注册 state
+        provider
+            .get_authorization_url(
+                "https://sp.example.com/callback",
+                "state-test-2",
+                &["openid"],
+            )
+            .await
+            .unwrap();
         let result = provider
-            .exchange_code("bad-code", "https://sp.example.com/callback")
+            .exchange_code(
+                "bad-code",
+                "https://sp.example.com/callback",
+                "state-test-2",
+            )
             .await;
         assert!(result.is_err());
     }
@@ -826,8 +973,21 @@ mod tests {
             .await;
 
         let provider = DefaultOidcProvider::new(config, "cid", "cs");
+        // VULN-0002: 先注册 state
+        provider
+            .get_authorization_url(
+                "https://sp.example.com/callback",
+                "state-test-3",
+                &["openid"],
+            )
+            .await
+            .unwrap();
         let result = provider
-            .exchange_code("auth-code", "https://sp.example.com/callback")
+            .exchange_code(
+                "auth-code",
+                "https://sp.example.com/callback",
+                "state-test-3",
+            )
             .await;
         assert!(result.is_err());
     }
@@ -1255,8 +1415,21 @@ mod tests {
         };
 
         let provider = DefaultOidcProvider::new(config, "cid", "secret");
+        // VULN-0002: 先注册 state
+        provider
+            .get_authorization_url(
+                "https://sp.example.com/callback",
+                "state-jwt-test",
+                &["openid"],
+            )
+            .await
+            .unwrap();
         let result = provider
-            .exchange_code("auth-code-123", "https://sp.example.com/callback")
+            .exchange_code(
+                "auth-code-123",
+                "https://sp.example.com/callback",
+                "state-jwt-test",
+            )
             .await;
         assert!(
             result.is_err(),
@@ -1272,5 +1445,293 @@ mod tests {
             },
             other => panic!("期望 InvalidToken 错误，实际: {:?}", other),
         }
+    }
+
+    // ========================================================================
+    // VULN-0002: OIDC state 参数验证测试
+    // ========================================================================
+
+    /// VULN-0002: exchange_code 拒绝未注册的 state（CSRF 防护）。
+    ///
+    /// 攻击场景：攻击者直接调用 exchange_code，未经过 get_authorization_url 注册 state。
+    /// 期望：返回 InvalidParam 错误。
+    #[tokio::test]
+    async fn exchange_code_rejects_unregistered_state() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        let config = OidcDiscoveryConfig {
+            issuer: "https://idp.example.com".to_string(),
+            authorization_endpoint: "https://idp.example.com/authorize".to_string(),
+            token_endpoint: format!("{}/token", mock_server.uri()),
+            userinfo_endpoint: format!("{}/userinfo", mock_server.uri()),
+            jwks_uri: "https://idp.example.com/jwks".to_string(),
+        };
+
+        // mock token endpoint（不应被调用，因为 state 校验会先失败）
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id_token": "fake-token",
+                "access_token": "access",
+                "token_type": "Bearer",
+                "expires_in": 3600
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = DefaultOidcProvider::new(config, "cid", "cs");
+        // 未注册 state 直接调用 exchange_code
+        let result = provider
+            .exchange_code("code", "https://sp.example.com/cb", "unregistered-state")
+            .await;
+        assert!(result.is_err(), "未注册的 state 应被拒绝");
+        match result.err() {
+            Some(BulwarkError::InvalidParam(msg)) => {
+                assert!(msg.contains("state"), "错误消息应提及 state，实际: {}", msg);
+            },
+            other => panic!("期望 InvalidParam 错误，实际: {:?}", other),
+        }
+    }
+
+    /// VULN-0002: exchange_code 拒绝不匹配的 state。
+    ///
+    /// 攻击场景：注册了 state "abc"，但传入 state "xyz"。
+    /// 期望：返回 InvalidParam 错误。
+    #[tokio::test]
+    async fn exchange_code_rejects_mismatched_state() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        let config = OidcDiscoveryConfig {
+            issuer: "https://idp.example.com".to_string(),
+            authorization_endpoint: "https://idp.example.com/authorize".to_string(),
+            token_endpoint: format!("{}/token", mock_server.uri()),
+            userinfo_endpoint: format!("{}/userinfo", mock_server.uri()),
+            jwks_uri: "https://idp.example.com/jwks".to_string(),
+        };
+
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id_token": "fake-token",
+                "access_token": "access",
+                "token_type": "Bearer",
+                "expires_in": 3600
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = DefaultOidcProvider::new(config, "cid", "cs");
+        // 注册 state "abc"
+        provider
+            .get_authorization_url("https://sp.example.com/cb", "abc", &["openid"])
+            .await
+            .unwrap();
+        // 传入不匹配的 state "xyz"
+        let result = provider
+            .exchange_code("code", "https://sp.example.com/cb", "xyz")
+            .await;
+        assert!(result.is_err(), "不匹配的 state 应被拒绝");
+        match result.err() {
+            Some(BulwarkError::InvalidParam(_)) => {},
+            other => panic!("期望 InvalidParam 错误，实际: {:?}", other),
+        }
+    }
+
+    /// VULN-0002: state 是 one-time use，重用应被拒绝。
+    ///
+    /// 攻击场景：攻击者截获合法的 state，尝试重放。
+    /// 期望：第一次成功，第二次失败（state 已被消费）。
+    #[tokio::test]
+    async fn exchange_code_state_is_one_time_use() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        let issuer = "https://idp.example.com".to_string();
+
+        #[cfg(feature = "protocol-jwt")]
+        let (id_token, jwks_json) = make_valid_id_token(&issuer, "cid");
+        #[cfg(not(feature = "protocol-jwt"))]
+        let id_token: String = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyMTIzIn0.signature".to_string(); // nosemgrep
+
+        #[cfg(feature = "protocol-jwt")]
+        {
+            Mock::given(method("GET"))
+                .and(path("/jwks"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(jwks_json))
+                .mount(&mock_server)
+                .await;
+        }
+
+        let config = OidcDiscoveryConfig {
+            issuer,
+            authorization_endpoint: "https://idp.example.com/authorize".to_string(),
+            token_endpoint: format!("{}/token", mock_server.uri()),
+            userinfo_endpoint: format!("{}/userinfo", mock_server.uri()),
+            jwks_uri: format!("{}/jwks", mock_server.uri()),
+        };
+
+        // mock token endpoint，期望被调用一次
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id_token": id_token,
+                "access_token": "access-123",
+                "token_type": "Bearer",
+                "expires_in": 3600
+            })))
+            .up_to_n_times(1)
+            .mount(&mock_server)
+            .await;
+
+        let provider = DefaultOidcProvider::new(config, "cid", "cs");
+        // 注册 state
+        provider
+            .get_authorization_url("https://sp.example.com/cb", "one-time-state", &["openid"])
+            .await
+            .unwrap();
+        // 第一次：成功
+        let first = provider
+            .exchange_code("code", "https://sp.example.com/cb", "one-time-state")
+            .await;
+        assert!(first.is_ok(), "首次使用 state 应成功");
+        // 第二次：失败（state 已被消费）
+        let second = provider
+            .exchange_code("code", "https://sp.example.com/cb", "one-time-state")
+            .await;
+        assert!(second.is_err(), "重用 state 应被拒绝（one-time use）");
+        match second.err() {
+            Some(BulwarkError::InvalidParam(_)) => {},
+            other => panic!("期望 InvalidParam 错误，实际: {:?}", other),
+        }
+    }
+
+    /// VULN-0002: state 过期后应被拒绝。
+    ///
+    /// 使用极短 TTL（1ms），注册后等待过期，再调用 exchange_code 应失败。
+    #[tokio::test]
+    async fn exchange_code_rejects_expired_state() {
+        use std::thread::sleep;
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        let config = OidcDiscoveryConfig {
+            issuer: "https://idp.example.com".to_string(),
+            authorization_endpoint: "https://idp.example.com/authorize".to_string(),
+            token_endpoint: format!("{}/token", mock_server.uri()),
+            userinfo_endpoint: format!("{}/userinfo", mock_server.uri()),
+            jwks_uri: "https://idp.example.com/jwks".to_string(),
+        };
+
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id_token": "fake-token",
+                "access_token": "access",
+                "token_type": "Bearer",
+                "expires_in": 3600
+            })))
+            .mount(&mock_server)
+            .await;
+
+        // 使用 1ms TTL
+        let provider =
+            DefaultOidcProvider::new(config, "cid", "cs").with_state_ttl(Duration::from_millis(1));
+        provider
+            .get_authorization_url("https://sp.example.com/cb", "expiring-state", &["openid"])
+            .await
+            .unwrap();
+        // 等待 state 过期（阻塞 50ms 确保 Instant 推进）
+        sleep(Duration::from_millis(50));
+        let result = provider
+            .exchange_code("code", "https://sp.example.com/cb", "expiring-state")
+            .await;
+        assert!(result.is_err(), "过期的 state 应被拒绝");
+        match result.err() {
+            Some(BulwarkError::InvalidParam(msg)) => {
+                assert!(msg.contains("过期"), "错误消息应提及过期，实际: {}", msg);
+            },
+            other => panic!("期望 InvalidParam 错误，实际: {:?}", other),
+        }
+    }
+
+    /// VULN-0002: state_store 超过 max_entries 时 LRU 淘汰最旧 entry。
+    ///
+    /// 防御场景：攻击者大量调用 get_authorization_url 耗尽内存。
+    /// 期望：超限时淘汰最旧 state，对应 state 再次使用时返回未注册错误。
+    #[tokio::test]
+    async fn state_store_evicts_oldest_when_max_entries_reached() {
+        let config = OidcDiscoveryConfig {
+            issuer: "https://idp.example.com".to_string(),
+            authorization_endpoint: "https://idp.example.com/authorize".to_string(),
+            token_endpoint: "https://idp.example.com/token".to_string(),
+            userinfo_endpoint: "https://idp.example.com/userinfo".to_string(),
+            jwks_uri: "https://idp.example.com/jwks".to_string(),
+        };
+
+        // max_entries = 2
+        let provider = DefaultOidcProvider::new(config, "cid", "cs").with_max_state_entries(2);
+        // 注册 3 个 state（max=2，第一个应被淘汰）
+        provider
+            .get_authorization_url("https://cb.com/cb", "state-1", &["openid"])
+            .await
+            .unwrap();
+        provider
+            .get_authorization_url("https://cb.com/cb", "state-2", &["openid"])
+            .await
+            .unwrap();
+        provider
+            .get_authorization_url("https://cb.com/cb", "state-3", &["openid"])
+            .await
+            .unwrap();
+        // state-1 应被淘汰（最旧），state-2 / state-3 仍在
+        assert_eq!(provider.state_store_len(), 2);
+        // 直接调用 validate_and_consume_state 的等价测试：通过 exchange_code 验证
+        // state-1 已被淘汰，应返回 InvalidParam
+        let result = provider
+            .exchange_code("code", "https://cb.com/cb", "state-1")
+            .await;
+        assert!(result.is_err(), "被淘汰的 state 应返回未注册错误");
+        match result.err() {
+            Some(BulwarkError::InvalidParam(_)) => {},
+            other => panic!("期望 InvalidParam 错误，实际: {:?}", other),
+        }
+    }
+
+    /// VULN-0002: get_authorization_url 注册 state 后，state_store_len 增加。
+    ///
+    /// 验证 state 注册机制正常工作。
+    #[tokio::test]
+    async fn get_authorization_url_registers_state() {
+        let config = OidcDiscoveryConfig {
+            issuer: "https://idp.example.com".to_string(),
+            authorization_endpoint: "https://idp.example.com/authorize".to_string(),
+            token_endpoint: "https://idp.example.com/token".to_string(),
+            userinfo_endpoint: "https://idp.example.com/userinfo".to_string(),
+            jwks_uri: "https://idp.example.com/jwks".to_string(),
+        };
+        let provider = DefaultOidcProvider::new(config, "cid", "cs");
+        assert_eq!(provider.state_store_len(), 0);
+        provider
+            .get_authorization_url("https://cb.com/cb", "first-state", &["openid"])
+            .await
+            .unwrap();
+        assert_eq!(provider.state_store_len(), 1);
+        provider
+            .get_authorization_url("https://cb.com/cb", "second-state", &["openid"])
+            .await
+            .unwrap();
+        assert_eq!(provider.state_store_len(), 2);
+        // 同一 state 重复注册不增加条目（覆盖）
+        provider
+            .get_authorization_url("https://cb.com/cb", "first-state", &["openid"])
+            .await
+            .unwrap();
+        assert_eq!(provider.state_store_len(), 2);
     }
 }

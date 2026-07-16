@@ -16,7 +16,7 @@
 use std::sync::Arc;
 
 use axum::extract::{Extension, Query, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -114,10 +114,33 @@ async fn authorize_endpoint(
 
 async fn token_endpoint(
     State(state): State<Arc<OAuth2State>>,
+    headers: HeaderMap,
     Json(req): Json<TokenRequest>,
 ) -> Response {
-    match state.token_handler.handle(&req).await {
-        Ok(resp) => (StatusCode::OK, Json(resp)).into_response(),
+    // VULN-0011: 提取 Authorization 头（RFC 6749 §2.3.1 HTTP Basic Auth）
+    let authorization = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
+    match state
+        .token_handler
+        .handle_with_authorization(&req, authorization.as_deref())
+        .await
+    {
+        Ok(resp) => {
+            // VULN-0011: RFC 6749 §5.1 — token 响应必须含 Cache-Control: no-store + Pragma: no-cache
+            let mut response = (StatusCode::OK, Json(resp)).into_response();
+            response.headers_mut().insert(
+                HeaderName::from_static("cache-control"),
+                HeaderValue::from_static("no-store"),
+            );
+            response.headers_mut().insert(
+                HeaderName::from_static("pragma"),
+                HeaderValue::from_static("no-cache"),
+            );
+            response
+        },
         Err(e) => {
             let (_, error_code, message, _) = e.response_parts();
             (
@@ -422,6 +445,83 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    /// VULN-0011: token 端点成功响应必须含 Cache-Control: no-store + Pragma: no-cache（RFC 6749 §5.1）。
+    #[tokio::test]
+    async fn test_token_endpoint_returns_cache_control_no_store_header() {
+        let (state, store) = make_state();
+        store.create(make_test_client("cc-cid")).await.unwrap();
+        let app = oauth2_external_router(state);
+        let body = serde_json::json!({
+            "grant_type": "client_credentials",
+            "client_id": "cc-cid",
+            "client_secret": "secret-123",
+        });
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/oauth2/token")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        // VULN-0011: RFC 6749 §5.1 — 必须含 Cache-Control: no-store
+        let cache_control = resp
+            .headers()
+            .get("cache-control")
+            .expect("Cache-Control 头必须存在");
+        assert_eq!(
+            cache_control.to_str().unwrap(),
+            "no-store",
+            "Cache-Control 必须为 no-store"
+        );
+        // VULN-0011: RFC 6749 §5.1 — 必须含 Pragma: no-cache
+        let pragma = resp.headers().get("pragma").expect("Pragma 头必须存在");
+        assert_eq!(
+            pragma.to_str().unwrap(),
+            "no-cache",
+            "Pragma 必须为 no-cache"
+        );
+    }
+
+    /// VULN-0011: token 端点接受 HTTP Basic Auth 头认证客户端（RFC 6749 §2.3.1）。
+    #[tokio::test]
+    async fn test_token_endpoint_accepts_basic_auth_header() {
+        use base64::engine::general_purpose::STANDARD;
+        use base64::Engine;
+        let (state, store) = make_state();
+        store.create(make_test_client("basic-cid")).await.unwrap();
+        let app = oauth2_external_router(state);
+        // "basic-cid:secret-123" → base64
+        let credentials = STANDARD.encode("basic-cid:secret-123");
+        let auth_header = format!("Basic {}", credentials);
+        let body = serde_json::json!({
+            "grant_type": "client_credentials",
+            "client_id": "",
+            "client_secret": "",
+        });
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/oauth2/token")
+                    .header("content-type", "application/json")
+                    .header("authorization", &auth_header)
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::OK,
+            "Basic Auth 认证应成功，body 留空"
+        );
     }
 
     #[tokio::test]

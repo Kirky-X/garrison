@@ -393,17 +393,41 @@ impl AuthLogic for AuthLogicDefault {
     }
 
     async fn renew_to_equivalent(&self, token: &str) -> BulwarkResult<String> {
-        // 1. 获取旧 TokenSession
-        let old_ts = self
+        // VULN-0020 修复：调整顺序为"先失效旧 token，再创建新 token"。
+        //
+        // 原实现顺序为"先 create 后 delete"，存在窗口期双 token 同时有效，
+        // 攻击者若窃取旧 token，可在窗口期内继续使用。
+        //
+        // 修复后顺序：
+        // 1. 获取旧 TokenSession + 剩余 TTL（性能优化：合并为单次 DAO 调用）
+        // 2. 先 logout 旧 token（失效旧 token，消除窗口期）
+        // 3. 生成新 token + 构建新 TokenSession
+        // 4. 保存新 Token-Session + 添加到 Account-Session
+        //    若失败，回滚：重新创建旧 token session + 重新添加到 Account-Session
+
+        // 1. 获取旧 TokenSession + 剩余 TTL（性能优化：单次 DAO 调用替代 get_token_session + get_token_timeout）
+        //    None 表示永久键（无 TTL），用 0 表示永久驻留
+        let (old_ts, remaining_ttl) = self
             .session
-            .get_token_session(token)
+            .get_token_session_with_ttl(token)
             .await?
             .ok_or_else(|| BulwarkError::NotLogin("token 无效或已过期".to_string()))?;
-
-        // 2. 查询剩余 TTL
-        //    None 表示永久键（无 TTL），用 0 表示永久驻留
-        let remaining_ttl = self.session.get_token_timeout(token).await?;
         let ttl_secs = remaining_ttl.map(|d| d.as_secs()).unwrap_or(0);
+
+        // 2. 先失效旧 token（VULN-0020 核心修复）
+        //    若此步失败，旧 token 状态可能不变或部分删除，返回错误让调用方决策。
+        if let Err(e) = self.session.logout(token).await {
+            let prefix = if token.len() >= 8 { &token[..8] } else { token };
+            tracing::warn!(
+                error = %e,
+                old_token_prefix = %prefix,
+                "renew_to_equivalent 失效旧 token 失败，中止置换"
+            );
+            return Err(BulwarkError::Internal(format!(
+                "token 置换失败：失效旧 token 出错（old_prefix={}...）",
+                prefix
+            )));
+        }
 
         // 3. 生成新 token（同 token_style + 同 login_id）
         let new_token = self
@@ -431,43 +455,87 @@ impl AuthLogic for AuthLogicDefault {
         };
 
         // 5. 保存新 Token-Session with remaining TTL
-        //    若此步失败，旧 session 保持不变
-        self.session
+        //    若此步失败，回滚：重新创建旧 token session + 重新添加到 Account-Session
+        if let Err(e) = self
+            .session
             .create_token_session_with_ttl(&new_token, &new_ts, ttl_secs)
-            .await?;
+            .await
+        {
+            tracing::error!(
+                error = %e,
+                "renew_to_equivalent 创建新 token session 失败，回滚旧 token"
+            );
+            self.rollback_renew(token, &old_ts, ttl_secs).await;
+            return Err(BulwarkError::Internal(
+                "token 置换失败：创建新 token session 出错，已回滚旧 token".to_string(),
+            ));
+        }
 
         // 6. 添加新 token 到 Account-Session
-        //    若此步失败，旧 session 保持不变
-        self.session
+        //    若此步失败，回滚：删除新 token + 重新创建旧 token session + 重新添加到 Account-Session
+        if let Err(e) = self
+            .session
             .ensure_token_in_account_session(&old_ts.login_id, &new_token)
-            .await?;
-
-        // 7. 删除旧 token
-        //    若删除失败，回滚新 token（防止双 token 共存），返回错误
-        if let Err(e) = self.session.logout(token).await {
-            let old_prefix = if token.len() >= 8 { &token[..8] } else { token };
+            .await
+        {
             let new_prefix = if new_token.len() >= 8 {
                 &new_token[..8]
             } else {
                 &new_token
             };
-            // 回滚：删除新创建的 token session，防止新旧 token 同时有效
+            tracing::error!(
+                error = %e,
+                new_token_prefix = %new_prefix,
+                "renew_to_equivalent 添加新 token 到 Account-Session 失败，回滚"
+            );
+            // 删除新创建的 token session
             if let Err(rb_err) = self.session.logout(&new_token).await {
                 tracing::error!(
-                    error = %e,
                     rollback_error = %rb_err,
-                    old_token_prefix = %old_prefix,
                     new_token_prefix = %new_prefix,
-                    "renew_to_equivalent 删除旧 token 失败且回滚新 token 也失败，可能存在双 token 共存"
+                    "renew_to_equivalent 回滚删除新 token 也失败，新 token 可能残留"
                 );
             }
-            return Err(BulwarkError::Internal(format!(
-                "token 置换失败：删除旧 token session 出错，已回滚新 token（old_prefix={}...）",
-                old_prefix
-            )));
+            // 重新创建旧 token session
+            self.rollback_renew(token, &old_ts, ttl_secs).await;
+            return Err(BulwarkError::Internal(
+                "token 置换失败：添加新 token 到 Account-Session 出错，已回滚旧 token".to_string(),
+            ));
         }
 
         Ok(new_token)
+    }
+}
+
+impl AuthLogicDefault {
+    /// VULN-0020 回滚辅助：重新创建旧 token session + 重新添加到 Account-Session。
+    ///
+    /// 在 `renew_to_equivalent` 创建新 token 失败时调用，恢复旧 token 到有效状态。
+    /// 回滚失败仅记录 tracing::error，不返回错误（调用方已返回错误）。
+    async fn rollback_renew(&self, old_token: &str, old_ts: &TokenSession, ttl_secs: u64) {
+        // 重新创建旧 token session
+        if let Err(e) = self
+            .session
+            .create_token_session_with_ttl(old_token, old_ts, ttl_secs)
+            .await
+        {
+            tracing::error!(
+                error = %e,
+                "rollback_renew 重新创建旧 token session 失败，旧 token 可能无法恢复"
+            );
+            return;
+        }
+        // 重新添加旧 token 到 Account-Session
+        if let Err(e) = self
+            .session
+            .ensure_token_in_account_session(&old_ts.login_id, old_token)
+            .await
+        {
+            tracing::error!(
+                error = %e,
+                "rollback_renew 重新添加旧 token 到 Account-Session 失败"
+            );
+        }
     }
 }
 
@@ -1007,6 +1075,137 @@ mod tests {
             matches!(result, Err(BulwarkError::NotImplemented(_))),
             "默认实现应返回 NotImplemented，实际: {:?}",
             result
+        );
+    }
+
+    // ========================================================================
+    // VULN-0020 测试：renew_to_equivalent 原子化（先失效旧 token，再创建新 token）
+    // ========================================================================
+
+    /// VULN-0020 测试辅助：追踪 DAO 操作顺序的 wrapper。
+    ///
+    /// 包装 `MockDao`，在 `set("token:session:*")` 时检测旧 token 是否已被 `delete`。
+    /// 若旧 token 未先失效就创建新 token，标记 `violation_detected = true`。
+    struct OrderTrackingDao {
+        inner: MockDao,
+        tracking_state: std::sync::Mutex<OrderTrackingState>,
+    }
+
+    struct OrderTrackingState {
+        /// 是否开始追踪（仅在 renew_to_equivalent 期间启用）。
+        enabled: bool,
+        /// 旧 token（用于检测 delete("token:session:{old_token}") 是否已调用）。
+        old_token: String,
+        /// 旧 token 的 session key 是否已被 delete。
+        old_token_deleted: bool,
+        /// 是否检测到违规（set(new) 在 delete(old) 之前）。
+        violation_detected: bool,
+    }
+
+    impl OrderTrackingDao {
+        fn new() -> Self {
+            Self {
+                inner: MockDao::new(),
+                tracking_state: std::sync::Mutex::new(OrderTrackingState {
+                    enabled: false,
+                    old_token: String::new(),
+                    old_token_deleted: false,
+                    violation_detected: false,
+                }),
+            }
+        }
+
+        /// 开始追踪 renew 操作顺序（login 完成后调用）。
+        fn start_tracking(&self, old_token: String) {
+            let mut state = self.tracking_state.lock().unwrap();
+            state.enabled = true;
+            state.old_token = old_token;
+            state.old_token_deleted = false;
+            state.violation_detected = false;
+        }
+
+        /// 是否检测到违规（新 token session 在旧 token session 删除前被创建）。
+        fn was_violation_detected(&self) -> bool {
+            self.tracking_state.lock().unwrap().violation_detected
+        }
+    }
+
+    #[async_trait]
+    impl BulwarkDao for OrderTrackingDao {
+        async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
+            self.inner.get(key).await
+        }
+
+        async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> BulwarkResult<()> {
+            // VULN-0020 检测：若正在追踪且 key 是 token:session:*，
+            // 检查旧 token 是否已被 delete
+            {
+                let mut state = self.tracking_state.lock().unwrap();
+                if state.enabled && key.starts_with("token:session:") {
+                    if !state.old_token_deleted {
+                        state.violation_detected = true;
+                    }
+                }
+            }
+            self.inner.set(key, value, ttl_seconds).await
+        }
+
+        async fn update(&self, key: &str, value: &str) -> BulwarkResult<()> {
+            self.inner.update(key, value).await
+        }
+
+        async fn expire(&self, key: &str, seconds: u64) -> BulwarkResult<()> {
+            self.inner.expire(key, seconds).await
+        }
+
+        async fn delete(&self, key: &str) -> BulwarkResult<()> {
+            // 标记旧 token 已被 delete
+            {
+                let mut state = self.tracking_state.lock().unwrap();
+                if state.enabled && key == format!("token:session:{}", state.old_token) {
+                    state.old_token_deleted = true;
+                }
+            }
+            self.inner.delete(key).await
+        }
+
+        async fn get_timeout(&self, key: &str) -> BulwarkResult<Option<Duration>> {
+            self.inner.get_timeout(key).await
+        }
+    }
+
+    /// VULN-0020: renew_to_equivalent 必须先失效旧 token，再创建新 token（原子化）。
+    ///
+    /// 当前实现顺序为"先 create 后 delete"，存在窗口期双 token 同时有效。
+    /// 修复后顺序应为"先 delete 后 create"，消除窗口期。
+    #[tokio::test]
+    async fn renew_to_equivalent_deletes_old_token_before_creating_new() {
+        let tracking_dao = Arc::new(OrderTrackingDao::new());
+        let session = Arc::new(BulwarkSession::new(
+            tracking_dao.clone() as Arc<dyn BulwarkDao>,
+            3600,
+            86400,
+        ));
+        let token_handler: Arc<dyn Token> = Arc::new(UuidTokenStyle);
+        let auth = AuthLogicDefault::new(session, token_handler, 3600);
+
+        let old_token = auth.login("1001", None).await.unwrap();
+
+        // 开始追踪 renew 操作的顺序
+        tracking_dao.start_tracking(old_token.clone());
+
+        // renew_to_equivalent 应成功
+        let new_token = auth.renew_to_equivalent(&old_token).await;
+        assert!(
+            new_token.is_ok(),
+            "renew 应成功，实际: {:?}",
+            new_token.err()
+        );
+
+        // VULN-0020 验证：新 token session 不应在旧 token session 删除前被创建
+        assert!(
+            !tracking_dao.was_violation_detected(),
+            "VULN-0020 违规：新 token session 在旧 token session 删除前被创建（双 token 窗口期）"
         );
     }
 

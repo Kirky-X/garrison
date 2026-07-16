@@ -347,6 +347,53 @@ impl BulwarkSession {
         }
     }
 
+    /// 获取 Token-Session 与剩余 TTL（性能优化版）。
+    ///
+    /// 单次 DAO 调用同时获取 value 与 TTL，避免 `get_token_session` + `get_token_timeout`
+    /// 两次 DAO 往返。用于 `renew_to_equivalent` 热路径。
+    ///
+    /// # 参数
+    /// - `token`: token 字符串。
+    ///
+    /// # 返回
+    /// - `Ok(Some((ts, ttl)))`: token 存在。`ttl` 为 `Some(d)` 表示设置了 TTL，`None` 表示永久驻留。
+    /// - `Ok(None)`: token 不存在或已过期。
+    ///
+    /// # 错误
+    /// - 反序列化失败：`BulwarkError::Session`。
+    /// - DAO 读取失败：透传 `BulwarkError`。
+    pub async fn get_token_session_with_ttl(
+        &self,
+        token: &str,
+    ) -> BulwarkResult<Option<(TokenSession, Option<Duration>)>> {
+        let key = token_key(token);
+        match self.dao.get_with_ttl(&key).await? {
+            Some((json, ttl)) => {
+                let ts: TokenSession = serde_json::from_str(&json).map_err(|e| {
+                    BulwarkError::Session(format!("反序列化 TokenSession 失败: {}", e))
+                })?;
+                // R-session-lifecycle-003: 检查 session 级过期（last_active_at + timeout < now）
+                let now = Utc::now().timestamp();
+                if ts.last_active_at + (self.timeout as i64) < now {
+                    // 触发过期回调
+                    self.trigger_expiry_listeners(&ts.login_id, token).await;
+                    // 从 DAO 删除过期 session（清理）
+                    if let Err(e) = self.dao.delete(&key).await {
+                        let token_preview = if token.len() > 8 { &token[..8] } else { token };
+                        tracing::warn!(
+                            "删除过期 Token-Session 失败 (token={}...): {}",
+                            token_preview,
+                            e
+                        );
+                    }
+                    return Ok(None);
+                }
+                Ok(Some((ts, ttl)))
+            },
+            None => Ok(None),
+        }
+    }
+
     /// 获取 Account-Session。
     ///
     /// # 参数
