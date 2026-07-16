@@ -3,7 +3,7 @@
 
 //! 插件模块，定义插件 trait 与编译期注册。
 //!
-//! [借鉴 Sa-Token] 通过 `inventory` crate 实现编译期插件注册（替代 Java SPI），
+//! 通过 `inventory` crate 实现编译期插件注册（替代 Java SPI），
 //! 插件在编译期通过 `inventory::submit!` 注册，运行期通过 `inventory::iter!` 收集。
 //!
 //! 0.2.0 提供完整的生命周期钩子（on_login/on_logout/on_permission_check），

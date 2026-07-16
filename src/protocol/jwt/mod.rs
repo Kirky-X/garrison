@@ -3,7 +3,7 @@
 
 //! JWT 协议插件模块。
 //!
-//! [借鉴 Sa-Token] 对应 Sa-Token 的 JWT 协议支持，
+//! 对应 JWT 协议支持，
 //! 基于 `jsonwebtoken` 10 crate 实现签发、校验与刷新。
 //!
 //! 仅在启用 `protocol-jwt` 特性时编译。
@@ -43,6 +43,14 @@ pub struct BulwarkJwtClaims {
     /// 用于保证同一秒内为同一用户签发的 token 仍唯一，支持 token rotation 语义。
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub jti: Option<String>,
+
+    /// Not Before（RFC 7519 §4.1.5，vuln-0019 修复）。
+    ///
+    /// `sign` 时自动设置为当前时间；旧 token 反序列化时缺失该字段则为 `None`（向后兼容）。
+    /// `verify` 启用 `validate_nbf = true` 后，`nbf` 为未来时间时拒绝 token（ImmatureSignature）。
+    /// `nbf` 为 `None` 时 jsonwebtoken 跳过 nbf 校验（向后兼容旧 token）。
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub nbf: Option<i64>,
 }
 
 /// 0.1.0 兼容别名。
@@ -126,6 +134,7 @@ impl JwtHandler {
             login_id,
             device: self.device.clone(),
             jti: Some(uuid::Uuid::new_v4().to_string()),
+            nbf: Some(now), // vuln-0019 修复：签发时设置 nbf，verify 时强制校验
         };
         let header = Header::new(self.algorithm);
         let key = EncodingKey::from_secret(self.secret.as_bytes());
@@ -150,7 +159,8 @@ impl JwtHandler {
         let key = DecodingKey::from_secret(self.secret.as_bytes());
         let mut validation = Validation::new(self.algorithm);
         validation.validate_exp = true;
-        // leeway=0：不容忍时钟偏差，过期立即拒绝（安全框架默认严格）
+        validation.validate_nbf = true; // vuln-0019 修复：拒绝 nbf 为未来的 token
+                                        // leeway=0：不容忍时钟偏差，过期立即拒绝（安全框架默认严格）
         validation.leeway = 0;
         decode::<BulwarkJwtClaims>(token, &key, &validation)
             .map(|data| data.claims)
@@ -158,6 +168,9 @@ impl JwtHandler {
                 let msg = e.to_string();
                 if msg.contains("ExpiredSignature") {
                     BulwarkError::ExpiredToken(format!("JWT 已过期: {}", e))
+                } else if msg.contains("ImmatureSignature") || msg.contains("nbf") {
+                    // vuln-0019 修复：nbf 为未来时间 → ImmatureSignature
+                    BulwarkError::InvalidToken(format!("JWT 未生效（nbf 校验失败）: {}", e))
                 } else {
                     BulwarkError::InvalidToken(format!("JWT 校验失败: {}", e))
                 }
@@ -205,6 +218,7 @@ mod tests {
             login_id: "1001".to_string(),
             device: Some("web".to_string()),
             jti: Some("test-jti".to_string()),
+            nbf: Some(1700000000),
         };
         let json = serde_json::to_string(&claims).unwrap();
         assert!(json.contains("\"sub\":\"1001\""));
@@ -213,6 +227,7 @@ mod tests {
         assert!(json.contains("\"login_id\":\"1001\""));
         assert!(json.contains("\"device\":\"web\""));
         assert!(json.contains("\"jti\":\"test-jti\""));
+        assert!(json.contains("\"nbf\":1700000000"));
     }
 
     /// BulwarkJwtClaims device 字段为 None 时序列化为 null（spec Scenario）。
@@ -225,11 +240,14 @@ mod tests {
             login_id: "1001".to_string(),
             device: None,
             jti: None,
+            nbf: None,
         };
         let json = serde_json::to_string(&claims).unwrap();
         assert!(json.contains("\"device\":null"));
         // jti=None 时应跳过序列化（skip_serializing_if）
         assert!(!json.contains("jti"), "jti=None 时不应序列化 jti 字段");
+        // nbf=None 时应跳过序列化（skip_serializing_if）
+        assert!(!json.contains("nbf"), "nbf=None 时不应序列化 nbf 字段");
     }
 
     /// jti=None 时序列化结果不含 jti 字段（向后兼容旧 token）。
@@ -242,9 +260,11 @@ mod tests {
             login_id: "1001".to_string(),
             device: None,
             jti: None,
+            nbf: None,
         };
         let json = serde_json::to_string(&claims).unwrap();
         assert!(!json.contains("jti"));
+        assert!(!json.contains("nbf"));
     }
 
     /// sign 生成的新 token 包含唯一的 jti（UUID v4）。
@@ -426,6 +446,114 @@ mod tests {
     }
 
     // ========================================================================
+    // nbf 校验测试（vuln-0019 修复）
+    // ========================================================================
+
+    /// verify 拒绝 nbf 为未来时间的 token（vuln-0019 修复）。
+    #[test]
+    fn verify_future_nbf_returns_invalid_token() {
+        let handler = JwtHandler::new("secret");
+        // 手动构造 nbf = now + 10 的 token
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        let claims = BulwarkJwtClaims {
+            sub: "1001".to_string(),
+            iat: now,
+            exp: now + 3600,
+            login_id: "1001".to_string(),
+            device: None,
+            jti: Some(uuid::Uuid::new_v4().to_string()),
+            nbf: Some(now + 10), // 未来 10 秒生效
+        };
+        let header = jsonwebtoken::Header::new(Algorithm::HS256);
+        let key = jsonwebtoken::EncodingKey::from_secret(b"secret");
+        let token = jsonwebtoken::encode(&header, &claims, &key).unwrap();
+        // 立即 verify 应返回 Err(InvalidToken)
+        let result = handler.verify(&token);
+        assert!(result.is_err(), "未来 nbf 应被拒绝: {:?}", result.ok());
+        match result.err() {
+            Some(BulwarkError::InvalidToken(msg)) => {
+                assert!(
+                    msg.contains("nbf")
+                        || msg.contains("ImmatureSignature")
+                        || msg.contains("未生效"),
+                    "错误消息应包含 nbf/ImmatureSignature/未生效，实际: {}",
+                    msg
+                );
+            },
+            other => panic!("期望 InvalidToken，实际: {:?}", other),
+        }
+    }
+
+    /// verify 接受 nbf = now 的 token（边界场景，vuln-0019 修复）。
+    #[test]
+    fn verify_present_nbf_returns_ok() {
+        let handler = JwtHandler::new("secret");
+        // sign 自动设置 nbf = now，verify 应通过
+        let token = handler.sign("1001", 3600).unwrap();
+        let result = handler.verify(&token);
+        assert!(result.is_ok(), "nbf = now 应通过校验: {:?}", result.err());
+        let claims = result.unwrap();
+        assert!(claims.nbf.is_some(), "sign 应设置 nbf");
+    }
+
+    /// verify 接受 nbf = now - 10 的 token（过去时间，vuln-0019 修复）。
+    #[test]
+    fn verify_past_nbf_returns_ok() {
+        let handler = JwtHandler::new("secret");
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        let claims = BulwarkJwtClaims {
+            sub: "1001".to_string(),
+            iat: now - 10,
+            exp: now + 3600,
+            login_id: "1001".to_string(),
+            device: None,
+            jti: Some(uuid::Uuid::new_v4().to_string()),
+            nbf: Some(now - 10), // 过去 10 秒已生效
+        };
+        let header = jsonwebtoken::Header::new(Algorithm::HS256);
+        let key = jsonwebtoken::EncodingKey::from_secret(b"secret");
+        let token = jsonwebtoken::encode(&header, &claims, &key).unwrap();
+        let result = handler.verify(&token);
+        assert!(result.is_ok(), "nbf = 过去应通过校验: {:?}", result.err());
+    }
+
+    /// verify 接受无 nbf 字段的旧 token（向后兼容，vuln-0019 修复）。
+    #[test]
+    fn verify_token_without_nbf_field_returns_ok() {
+        let handler = JwtHandler::new("secret");
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        // 手动构造无 nbf 字段的 JSON（模拟旧 token）
+        let claims_json = serde_json::json!({
+            "sub": "1001",
+            "iat": now,
+            "exp": now + 3600,
+            "login_id": "1001",
+            "device": null,
+            "jti": uuid::Uuid::new_v4().to_string()
+        });
+        let header = jsonwebtoken::Header::new(Algorithm::HS256);
+        let key = jsonwebtoken::EncodingKey::from_secret(b"secret");
+        let token = jsonwebtoken::encode(&header, &claims_json, &key).unwrap();
+        let result = handler.verify(&token);
+        assert!(
+            result.is_ok(),
+            "无 nbf 字段应通过校验（向后兼容）: {:?}",
+            result.err()
+        );
+        let claims = result.unwrap();
+        assert!(claims.nbf.is_none(), "旧 token nbf 应为 None");
+    }
+
+    // ========================================================================
     // refresh 测试
     // ========================================================================
 
@@ -458,6 +586,7 @@ mod tests {
             login_id: "1".to_string(),
             device: None,
             jti: None,
+            nbf: None, // vuln-0019 修复：补充 nbf 字段
         };
         assert_eq!(claims.login_id, "1");
     }

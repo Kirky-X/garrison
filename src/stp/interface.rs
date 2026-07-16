@@ -7,7 +7,7 @@ use async_trait::async_trait;
 
 /// 接口 trait，定义获取权限 / 角色数据的回调。
 ///
-/// [借鉴 Sa-Token] 对应 `StpInterface`，由业务方实现以提供权限数据。
+/// 对应 `StpInterface`，由业务方实现以提供权限数据。
 ///
 /// # 数据来源
 ///

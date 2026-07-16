@@ -3,7 +3,7 @@
 
 //! 策略注册表模块，提供 6 个可插拔策略 trait + Strategy 注册表。
 //!
-//! [借鉴 Sa-Token] 对应 Sa-Token 的策略模式设计，
+//! 对应 策略模式设计，
 //! 允许运行时替换鉴权策略组件。
 //!
 //! ## 6 个策略 trait
@@ -40,7 +40,7 @@ use std::sync::Arc;
 
 /// 登录策略 trait，定义登录行为的可插拔契约。
 ///
-/// [借鉴 Sa-Token] 对应 Sa-Token 的 `SaTokenStrategy` 登录部分，
+/// 对应 `SaTokenStrategy` 登录部分，
 /// 业务方可通过实现此 trait 替换默认的登录逻辑。
 ///
 /// # 默认实现

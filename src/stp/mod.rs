@@ -3,7 +3,7 @@
 
 //! Stp 模块，提供核心认证逻辑与工具入口。
 //!
-//! [借鉴 Sa-Token] 对应 Sa-Token 的 `StpLogic` / `StpInterface` / `StpUtil` 三件套，
+//! 对应 `StpLogic` / `StpInterface` / `StpUtil` 三件套，
 //! Bulwark 中统一使用 `Bulwark*` 前缀。
 //!
 //! ## 核心设计
@@ -11,7 +11,7 @@
 //! - 5 个子 trait（`SessionLogic`/`PermissionLogic`/`TokenLogic`/`MfaLogic`/`PasswordLogic`）：
 //!   v0.5.2 拆分原 `BulwarkLogic` 上帝 trait，按职责域分离，super-trait 为 `BulwarkCore`
 //! - `BulwarkLogicDefault`：默认实现，组合 `BulwarkSession` + `BulwarkConfig`，实现全部 5 个子 trait
-//! - `tokio::task_local`：存储当前请求的 token（类似 Sa-Token 的 `SaHolder`，但适配 async）
+//! - `tokio::task_local`：存储当前请求的 token（类似 `SaHolder`，但适配 async）
 //!
 //! ## task_local 上下文
 //!
@@ -69,7 +69,7 @@ pub use self::util::{BulwarkUtil, JwtMode};
 /// 登录参数（v0.6.3 新增）。
 ///
 /// 封装登录时的可选元数据，传递给 `SessionLogic::login`。
-/// [借鉴 Sa-Token] 对应 Sa-Token 的 `SaLoginParameter`，但简化为 5 个字段。
+/// 对应 `SaLoginParameter`，但简化为 5 个字段。
 ///
 /// # 字段
 ///
@@ -119,7 +119,7 @@ pub struct LoginParams {
 // 方法调用通过子 trait（SessionLogic/PermissionLogic/TokenLogic/MfaLogic/PasswordLogic）解析。
 
 // ============================================================================
-// task_local：存储当前请求的 token（类似 Sa-Token 的 SaHolder）
+// task_local：存储当前请求的 token（类似 SaHolder）
 // ============================================================================
 
 tokio::task_local! {
@@ -292,7 +292,7 @@ impl Clock for MockClock {
 
 /// 默认实现，实现全部 5 个子 trait（SessionLogic/PermissionLogic/TokenLogic/MfaLogic/PasswordLogic）。
 ///
-/// [借鉴 Sa-Token] 对应 `StpLogic` 默认实现（design.md Decision 8）。
+/// 对应 `StpLogic` 默认实现（design.md Decision 8）。
 pub struct BulwarkLogicDefault {
     /// 会话管理器（pub(crate) 供测试验证）。
     pub(crate) session: Arc<BulwarkSession>,

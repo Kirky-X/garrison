@@ -3,7 +3,7 @@
 
 //! DAO 模块，定义持久化数据访问抽象层。
 //!
-//! [借鉴 Sa-Token] 对应 Sa-Token 的 `SaTokenDao`，
+//! 对应 `SaTokenDao`，
 //! 通过 oxcache / dbnexus 提供多后端（缓存 / 关系型数据库）支持。
 
 use crate::error::{BulwarkError, BulwarkResult};
@@ -13,10 +13,10 @@ use std::time::Duration;
 
 /// DAO 抽象层 trait，定义 Token 与会话的持久化操作。
 ///
-/// [借鉴 Sa-Token] 对应 `SaTokenDao`，提供 get / set / update / delete / expire 五元操作
+/// 对应 `SaTokenDao`，提供 get / set / update / delete / expire 五元操作
 /// + set_permanent / get_timeout / keys / rename 四个扩展方法。
 ///
-/// - `set` 必须指定 TTL（Token/Session 不应永久驻留，与 Sa-Token 语义一致）
+/// - `set` 必须指定 TTL（Token/Session 不应永久驻留，与 既有语义一致）
 /// - `update` 更新值时保留原有 TTL（不重置过期时间）
 /// - `expire` 重置键的过期时间
 /// - `set_permanent` 存储永久键（无 TTL，默认实现委托 `set(key, value, 0)`）

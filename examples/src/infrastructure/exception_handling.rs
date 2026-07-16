@@ -25,7 +25,7 @@ pub fn run() -> BulwarkResult<()> {
     println!("=== Bulwark 异常处理示例 ===\n");
 
     // ----------------------------------------------------------------
-    // 1. NotLoginException：未登录异常（对应 Sa-Token NotLoginException）
+    // 1. NotLoginException：未登录异常（对应 NotLoginException）
     // ----------------------------------------------------------------
     let ex = NotLoginException::new("请先登录").with_login_type("account");
     println!("[1] NotLoginException:");

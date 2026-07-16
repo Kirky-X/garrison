@@ -4,7 +4,7 @@
 [book]
 title = "Bulwark 身份认证鉴权框架"
 authors = ["Bulwark Contributors"]
-description = "面向 Rust 生态的身份认证鉴权框架，借鉴 Sa-Token v1.45.0 设计理念"
+description = "面向 Rust 生态的一站式身份认证鉴权框架"
 language = "zh"
 src = "src"
 

@@ -93,13 +93,14 @@ async fn mfa_handler() -> &'static str {
 
 /// ABAC 策略校验 handler（v0.7.x 新增，依据 spec annotation-macros R-anno-005）。
 /// 纯 ABAC 校验，不依赖 RBAC 权限表。
-#[check_abac(action = "access", abac = "1 == 1")]
+/// resource 显式注入（vuln-0006 修复）。
+#[check_abac(action = "access", resource = "Resource::\"default\"", abac = "1 == 1")]
 async fn abac_allow_handler() -> &'static str {
     "abac_ok"
 }
 
 /// ABAC 策略校验 handler（deny 场景，1 == 2 恒 false）。
-#[check_abac(action = "access", abac = "1 == 2")]
+#[check_abac(action = "access", resource = "Resource::\"default\"", abac = "1 == 2")]
 async fn abac_deny_handler() -> &'static str {
     "abac_deny"
 }
@@ -642,7 +643,7 @@ async fn check_mfa_without_token_forwards_error() {
 // #[check_abac] 测试（依据 spec annotation-macros R-anno-005）
 // ============================================================================
 
-/// `#[check_abac]` ABAC 引擎未初始化时默认 Allow → 200 + body。
+/// `#[check_abac]` ABAC 引擎未初始化时 fail-closed 返回 500（vuln-0005 修复）。
 #[tokio::test]
 #[serial]
 async fn check_abac_no_engine_returns_200() {
@@ -655,15 +656,14 @@ async fn check_abac_no_engine_returns_200() {
 
     let response =
         bulwark::stp::with_current_token(token, async { abac_allow_handler().await }).await;
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = read_body(response).await;
-    assert_eq!(body, "abac_ok");
+    // T001 修复：未初始化时 fail-closed → 500 CONFIG_ERROR（不再 200 放行）
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
 }
 
-/// `#[check_abac]` 未登录 + 无引擎 → no-op 放行 → 200（不检查登录状态）。
+/// `#[check_abac]` 未登录 + 无引擎 → fail-closed 返回 500（vuln-0005 修复，不再放行）。
 ///
 /// 验证 `#[check_abac]` 纯 ABAC 校验语义：无引擎时 `check_abac_with_policy`
-/// 为 no-op（返回 `Ok(())`），请求直接放行，与登录状态无关。
+/// 返回 `Err(Config)`（fail-closed），请求被拒绝。即便未登录也优先返回 ABAC 错误。
 #[tokio::test]
 #[serial]
 async fn check_abac_without_login_no_engine_passes_through() {
@@ -673,10 +673,8 @@ async fn check_abac_without_login_no_engine_passes_through() {
         abac_allow_handler().await
     })
     .await;
-    // ABAC 引擎未初始化时 no-op 放行 → 200（不检查登录）
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = read_body(response).await;
-    assert_eq!(body, "abac_ok");
+    // T001 修复：未初始化时 fail-closed → 500（不再 no-op 放行）
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
 }
 
 /// `#[check_abac]` ABAC 引擎已初始化 + 策略 Allow → 200。

@@ -4,9 +4,9 @@
 //! Keycloak OIDC RP 模块。
 //!
 //! 提供 `KeycloakProvider` 作为 OIDC 依赖方（RP），对接 Keycloak IdP：
-//! - `KeycloakConfig`：配置 base_url / client_id / client_secret / redirect_uri
+//! - `KeycloakConfig`：配置 base_url / client_id / client_secret / redirect_uri / expected_iss
 //! - `KeycloakProvider`：discover / verify_id_token / exchange_code
-//! - `KeycloakClaims`：Keycloak 特有 claim（realm_access.roles / resource_access）
+//! - `KeycloakClaims`：Keycloak 特有 claim（realm_access.roles / resource_access / aud / iss）
 //!
 //! ## 与 `oauth2::oidc` 模块的关系
 //!
@@ -42,7 +42,8 @@ const JWKS_CACHE_TTL: Duration = Duration::from_secs(600);
 /// Keycloak OIDC RP 配置。
 ///
 /// 持有对接 Keycloak IdP 所需的最小配置：realm base_url、client_id、
-/// client_secret（confidential client 必填，public client 可为 None）、redirect_uri。
+/// client_secret（confidential client 必填，public client 可为 None）、redirect_uri、
+/// expected_iss（vuln-0020 修复：issuer 校验）。
 ///
 /// # 字段
 ///
@@ -51,6 +52,8 @@ const JWKS_CACHE_TTL: Duration = Duration::from_secs(600);
 /// - `client_id`: 在 Keycloak 中注册的 OIDC client ID。
 /// - `client_secret`: confidential client 的密钥；public client（如 SPA）为 `None`。
 /// - `redirect_uri`: 授权码回调地址，必须与 Keycloak client 配置中登记的 URL 一致。
+/// - `expected_iss`: 预期的 issuer（vuln-0020 修复），通常等于 `base_url`，
+///   用于 [`KeycloakProvider::verify_id_token`] 的 `validate_iss` 校验。
 ///
 /// # 端点推导
 ///
@@ -68,6 +71,9 @@ pub struct KeycloakConfig {
     pub client_secret: Option<String>,
     /// 授权码回调地址。
     pub redirect_uri: String,
+    /// 预期的 issuer（vuln-0020 修复）。
+    /// 通常等于 `base_url`，用于 [`KeycloakProvider::verify_id_token`] 的 `validate_iss` 校验。
+    pub expected_iss: String,
 }
 
 impl KeycloakConfig {
@@ -188,12 +194,17 @@ pub struct RealmAccess {
 
 /// Keycloak id_token 的 claims。
 ///
-/// 包含标准 OIDC claims（`sub` / `preferred_username` / `email`）+ Keycloak 特有 claim
-/// （`realm_access` / `resource_access`）+ 多租户扩展（`tenant_id`）。
+/// 包含标准 OIDC claims（`sub` / `preferred_username` / `email` / `aud` / `iss`）+
+/// Keycloak 特有 claim（`realm_access` / `resource_access`）+ 多租户扩展（`tenant_id`）。
 ///
 /// # 字段
 ///
 /// - `sub`: 主体标识（Keycloak 用户 ID）。
+/// - `exp`: 过期时间（Unix 秒，RFC 7519 §4.1.4，用于 `validate_exp` 校验）。
+/// - `aud`: Audience（RFC 7519 §4.1.3，vuln-0020 修复）。支持单个 String 或 Vec<String>，
+///   用 `serde_json::Value` 兼容两种形式，由 `verify_id_token` 的 `validate_aud` 校验。
+/// - `iss`: Issuer（RFC 7519 §4.1.1，vuln-0020 修复）。由 `verify_id_token` 的
+///   `validate_iss` 校验，旧 token 可能无此字段故用 `Option`。
 /// - `preferred_username`: 用户名（Keycloak 登录名）。
 /// - `email`: 邮箱（可选，需 `email` scope）。
 /// - `realm_access`: realm 级别角色（[`RealmAccess`]）。
@@ -203,8 +214,15 @@ pub struct RealmAccess {
 pub struct KeycloakClaims {
     /// 主体标识（Keycloak 用户 ID）。
     pub sub: String,
-    /// 过期时间（Unix 秒，RFC 7519 标准 claim，用于 `validate_exp` 校验）。
+    /// 过期时间（Unix 秒，RFC 7519 §4.1.4，用于 `validate_exp` 校验）。
     pub exp: i64,
+    /// Audience（RFC 7519 §4.1.3，vuln-0020 修复）。
+    /// 支持单个 String 或 Vec<String>，用 `serde_json::Value` 兼容两种形式。
+    #[serde(default)]
+    pub aud: serde_json::Value,
+    /// Issuer（RFC 7519 §4.1.1，vuln-0020 修复）。旧 token 可能无此字段故用 `Option`。
+    #[serde(default)]
+    pub iss: Option<String>,
     /// 用户名（Keycloak 登录名）。
     pub preferred_username: Option<String>,
     /// 邮箱（可选，需 `email` scope）。
@@ -247,7 +265,7 @@ pub struct KeycloakTokenSet {
 /// - `jwks_cache: Arc<RwLock<JwksCache>>` 缓存 JWKS 公钥，TTL 由 `JWKS_CACHE_TTL` 控制，
 ///   避免每次 `verify_id_token` 都拉取 JWKS endpoint。
 pub struct KeycloakProvider {
-    /// RP 配置（base_url / client_id / client_secret / redirect_uri）。
+    /// RP 配置（base_url / client_id / client_secret / redirect_uri / expected_iss）。
     config: KeycloakConfig,
     /// 可复用的 HTTP 客户端。
     http: reqwest::Client,
@@ -394,12 +412,13 @@ impl KeycloakProvider {
     /// 2. 检查 `jwks_cache`，缓存为空或过期时调用 `fetch_jwks` 拉取。
     /// 3. 按 `kid` 匹配 JWKS 公钥，用 `n`/`e` 模数构造 `DecodingKey`。
     /// 4. 用 RS256 算法验签，解析为 [`KeycloakClaims`]。
-    /// 5. 校验 `exp`（过期时间），过期返回 `InvalidToken`（T119-T120 强化）。
+    /// 5. 校验 `exp`（过期时间）/ `nbf`（生效时间）/ `aud`（受众）/ `iss`（签发者），
+    ///    vuln-0020 修复：启用 aud/iss/nbf 三重校验，防止 token 被重放给非预期 client/issuer。
     ///
     /// # 错误
     ///
     /// - `BulwarkError::InvalidToken`: JWT header 解析失败 / kid 缺失 / JWKS 无匹配公钥 /
-    ///   签名验证失败 / claims 解析失败 / token 已过期。
+    ///   签名验证失败 / claims 解析失败 / token 已过期 / aud 不匹配 / iss 不匹配 / nbf 未生效。
     /// - `BulwarkError::Network`: JWKS 拉取失败。
     pub async fn verify_id_token(&self, id_token: &str) -> BulwarkResult<KeycloakClaims> {
         use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
@@ -450,12 +469,19 @@ impl KeycloakProvider {
                 ("detail", &e.to_string())
             ))
         })?;
+        // vuln-0020 修复：启用 aud/iss/nbf 三重校验
+        // - validate_exp: 校验 exp（过期时间），T119-T120 已启用
+        // - validate_nbf: 校验 nbf（生效时间），防止 token 在生效前被使用
+        // - validate_aud: 校验 aud（受众），期望 aud 包含 client_id，防止 token 被重放给非预期 client
+        // - set_audience: 设置期望的 audience = client_id
+        // - set_issuer: 设置期望的 issuer = expected_iss，防止 token 被重放给非预期 issuer
         let mut validation = Validation::new(Algorithm::RS256);
         validation.validate_exp = true;
+        validation.validate_nbf = true; // vuln-0020 修复：启用 nbf 校验
+        validation.validate_aud = true; // vuln-0020 修复：启用 aud 校验
+        validation.set_audience(&[&self.config.client_id]); // 期望 aud = client_id
+        validation.set_issuer(&[&self.config.expected_iss]); // 期望 iss = expected_iss
         validation.leeway = 0;
-        // jsonwebtoken 10 默认 validate_aud=true，但未设置 expected audience 会触发
-        // InvalidAudience。关闭库内置 aud 校验，由调用方按需校验 client_id。
-        validation.validate_aud = false;
 
         let token_data =
             decode::<KeycloakClaims>(id_token, &decoding_key, &validation).map_err(|e| {
@@ -464,6 +490,24 @@ impl KeycloakProvider {
                     BulwarkError::InvalidToken(loc!(
                         "keycloak-token-expired",
                         "token expired".to_string()
+                    ))
+                } else if msg.contains("ImmatureSignature") {
+                    // vuln-0020 修复：nbf 校验失败（token 尚未生效）
+                    BulwarkError::InvalidToken(loc!(
+                        "keycloak-token-immature",
+                        "token not yet valid (nbf)".to_string()
+                    ))
+                } else if msg.contains("InvalidAudience") {
+                    // vuln-0020 修复：aud 校验失败（audience 不匹配 client_id）
+                    BulwarkError::InvalidToken(loc!(
+                        "keycloak-token-invalid-audience",
+                        "invalid audience".to_string()
+                    ))
+                } else if msg.contains("InvalidIssuer") {
+                    // vuln-0020 修复：iss 校验失败（issuer 不匹配 expected_iss）
+                    BulwarkError::InvalidToken(loc!(
+                        "keycloak-token-invalid-issuer",
+                        "invalid issuer".to_string()
                     ))
                 } else {
                     BulwarkError::InvalidToken(loc!(
@@ -578,6 +622,7 @@ mod tests {
             client_id: "bulwark-rp".into(),
             client_secret: None,
             redirect_uri: "https://app.example.com/cb".into(),
+            expected_iss: "https://kc.example.com:8443/realms/myrealm".into(),
         };
 
         assert_eq!(
@@ -642,6 +687,7 @@ mod tests {
             client_id: "bulwark-rp".into(),
             client_secret: None,
             redirect_uri: "https://app.example.com/cb".into(),
+            expected_iss: server.uri(),
         };
         let provider = KeycloakProvider::new(config).expect("KeycloakProvider::new 应成功");
         let metadata = provider.discover().await.expect("discover 应返回 Ok");
@@ -667,7 +713,7 @@ mod tests {
     /// 1. 生成 RSA 2048 测试密钥对
     /// 2. 提取公钥 n/e 模数编码为 base64url（JWKS 格式）
     /// 3. 用私钥签发 JWT（header 含 kid=key1，claims 含 sub/preferred_username/
-    ///    realm_access.roles/resource_access.account.roles）
+    ///    realm_access.roles/resource_access.account.roles/aud/iss）
     /// 4. mock JWKS endpoint 返回公钥集合
     /// 5. 调用 `verify_id_token(id_token).await?`
     /// 6. 断言返回 `KeycloakClaims` 的 `sub` 与 `realm_access.roles` 正确
@@ -700,10 +746,16 @@ mod tests {
         let der = private_key.to_pkcs1_der().expect("转 PKCS#1 DER 应成功");
         let encoding_key = EncodingKey::from_rsa_der(der.as_bytes());
 
+        // 先启动 mock server，iss claim 需要 server.uri() 作为 issuer
+        let server = MockServer::start().await;
+        let issuer = server.uri();
+
         #[derive(Serialize)]
         struct KeycloakTestClaims {
             sub: String,
             exp: i64,
+            aud: serde_json::Value, // vuln-0020：audience claim
+            iss: String,            // vuln-0020：issuer claim
             preferred_username: String,
             email: String,
             realm_access: serde_json::Value,
@@ -723,6 +775,8 @@ mod tests {
         let claims = KeycloakTestClaims {
             sub: "user-123".into(),
             exp,
+            aud: serde_json::Value::String("bulwark-rp".to_string()), // vuln-0020：aud = client_id
+            iss: issuer.clone(), // vuln-0020：iss = expected_iss
             preferred_username: "alice".into(),
             email: "alice@example.com".into(),
             realm_access: serde_json::json!({ "roles": ["user", "admin"] }),
@@ -734,7 +788,6 @@ mod tests {
         let id_token = encode(&header, &claims, &encoding_key).expect("签发 JWT 应成功");
 
         // 4. mock JWKS endpoint
-        let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/protocol/openid-connect/certs"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
@@ -756,6 +809,7 @@ mod tests {
             client_id: "bulwark-rp".into(),
             client_secret: None,
             redirect_uri: "https://app.example.com/cb".into(),
+            expected_iss: issuer,
         };
         let provider = KeycloakProvider::new(config).expect("KeycloakProvider::new 应成功");
         let keycloak_claims = provider
@@ -810,6 +864,7 @@ mod tests {
             client_id: "bulwark-rp".into(),
             client_secret: Some("secret123".into()),
             redirect_uri: "https://app.example.com/cb".into(),
+            expected_iss: server.uri(),
         };
         let provider = KeycloakProvider::new(config).expect("KeycloakProvider::new 应成功");
         let token_set = provider
@@ -835,7 +890,7 @@ mod tests {
     ///
     /// # 测试流程
     ///
-    /// 1. 生成 RSA 密钥对，签发一个 `exp` 已过期的 ID Token
+    /// 1. 生成 RSA 密钥对，签发一个 `exp` 已过期的 ID Token（aud/iss 正确以隔离 exp 校验）
     /// 2. mock JWKS endpoint 返回公钥
     /// 3. 调用 `verify_id_token`，断言返回 `BulwarkError::InvalidToken("token expired")`
     #[tokio::test]
@@ -862,10 +917,16 @@ mod tests {
         let der = private_key.to_pkcs1_der().expect("转 PKCS#1 DER 应成功");
         let encoding_key = EncodingKey::from_rsa_der(der.as_bytes());
 
+        // 先启动 mock server，iss claim 需要 server.uri() 作为 issuer
+        let server = MockServer::start().await;
+        let issuer = server.uri();
+
         #[derive(Serialize)]
         struct ExpiredTestClaims {
             sub: String,
             exp: i64,
+            aud: serde_json::Value, // vuln-0020：audience claim（正确值以隔离 exp 校验）
+            iss: String,            // vuln-0020：issuer claim（正确值以隔离 exp 校验）
             realm_access: serde_json::Value,
             resource_access: serde_json::Value,
         }
@@ -883,6 +944,8 @@ mod tests {
         let claims = ExpiredTestClaims {
             sub: "user-123".into(),
             exp,
+            aud: serde_json::Value::String("bulwark-rp".to_string()), // vuln-0020：aud 正确
+            iss: issuer.clone(),                                      // vuln-0020：iss 正确
             realm_access: serde_json::json!({ "roles": ["user"] }),
             resource_access: serde_json::json!({
                 "account": { "roles": ["manage-account"] }
@@ -892,7 +955,6 @@ mod tests {
         let id_token = encode(&header, &claims, &encoding_key).expect("签发 JWT 应成功");
 
         // 2. mock JWKS endpoint
-        let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/protocol/openid-connect/certs"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
@@ -913,6 +975,7 @@ mod tests {
             client_id: "bulwark-rp".into(),
             client_secret: None,
             redirect_uri: "https://app.example.com/cb".into(),
+            expected_iss: issuer,
         };
         let provider = KeycloakProvider::new(config).expect("KeycloakProvider::new 应成功");
         let result = provider.verify_id_token(&id_token).await;
@@ -927,6 +990,316 @@ mod tests {
             },
             other => panic!("过期 token 应返回 InvalidToken 过期消息，实际: {:?}", other),
         }
+    }
+
+    // ========================================================================
+    // vuln-0020 修复：aud/iss 校验测试
+    // ========================================================================
+
+    /// vuln-0020 测试 1：`verify_id_token` 拒绝 aud 不匹配 client_id 的 id_token
+    ///
+    /// 启用 `validate_aud = true` + `set_audience(&[client_id])` 后，
+    /// aud 不包含 client_id 的 token 应返回 `InvalidToken("invalid audience")`。
+    ///
+    /// # 测试流程
+    ///
+    /// 1. 生成 RSA 密钥对，签发 aud="wrong-audience"（不匹配 client_id="bulwark-rp"）的 JWT
+    /// 2. mock JWKS endpoint 返回公钥
+    /// 3. 调用 `verify_id_token`，断言返回 `InvalidToken` 且消息含 "audience"
+    #[tokio::test]
+    async fn keycloak_verify_id_token_rejects_wrong_audience() {
+        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        use base64::Engine;
+        use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
+        use rand::rngs::OsRng;
+        use rsa::pkcs1::EncodeRsaPrivateKey;
+        use rsa::traits::PublicKeyParts;
+        use rsa::{RsaPrivateKey, RsaPublicKey};
+        use serde::Serialize;
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mut rng = OsRng;
+        let private_key = RsaPrivateKey::new(&mut rng, 2048).expect("生成 RSA 私钥应成功");
+        let public_key = RsaPublicKey::from(&private_key);
+
+        let n_b64 = URL_SAFE_NO_PAD.encode(public_key.n().to_bytes_be());
+        let e_b64 = URL_SAFE_NO_PAD.encode(public_key.e().to_bytes_be());
+
+        let der = private_key.to_pkcs1_der().expect("转 PKCS#1 DER 应成功");
+        let encoding_key = EncodingKey::from_rsa_der(der.as_bytes());
+
+        let server = MockServer::start().await;
+        let issuer = server.uri();
+
+        #[derive(Serialize)]
+        struct WrongAudTestClaims {
+            sub: String,
+            exp: i64,
+            aud: serde_json::Value,
+            iss: String,
+            realm_access: serde_json::Value,
+            resource_access: serde_json::Value,
+        }
+
+        let mut header = Header::new(Algorithm::RS256);
+        header.kid = Some("key1".to_string());
+
+        let exp = (std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("系统时间应早于 UNIX_EPOCH")
+            .as_secs() as i64)
+            + 3600;
+
+        let claims = WrongAudTestClaims {
+            sub: "user-123".into(),
+            exp,
+            aud: serde_json::Value::String("wrong-audience".to_string()), // 故意不匹配 client_id
+            iss: issuer.clone(),
+            realm_access: serde_json::json!({ "roles": ["user"] }),
+            resource_access: serde_json::json!({
+                "account": { "roles": ["manage-account"] }
+            }),
+        };
+
+        let id_token = encode(&header, &claims, &encoding_key).expect("签发 JWT 应成功");
+
+        Mock::given(method("GET"))
+            .and(path("/protocol/openid-connect/certs"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "keys": [{
+                    "kty": "RSA",
+                    "kid": "key1",
+                    "n": n_b64,
+                    "e": e_b64,
+                }]
+            })))
+            .mount(&server)
+            .await;
+
+        let config = KeycloakConfig {
+            base_url: server.uri(),
+            client_id: "bulwark-rp".into(),
+            client_secret: None,
+            redirect_uri: "https://app.example.com/cb".into(),
+            expected_iss: issuer,
+        };
+        let provider = KeycloakProvider::new(config).expect("KeycloakProvider::new 应成功");
+        let result = provider.verify_id_token(&id_token).await;
+
+        match result {
+            Err(crate::error::BulwarkError::InvalidToken(msg)) => {
+                assert!(
+                    msg.contains("audience"),
+                    "aud 不匹配应返回 audience 相关消息，实际: {}",
+                    msg
+                );
+            },
+            other => panic!("aud 不匹配应返回 InvalidToken，实际: {:?}", other),
+        }
+    }
+
+    /// vuln-0020 测试 2：`verify_id_token` 拒绝 iss 不匹配 expected_iss 的 id_token
+    ///
+    /// 启用 `set_issuer(&[expected_iss])` 后，
+    /// iss 不等于 expected_iss 的 token 应返回 `InvalidToken("invalid issuer")`。
+    ///
+    /// # 测试流程
+    ///
+    /// 1. 生成 RSA 密钥对，签发 iss="https://wrong-issuer.example.com"（不匹配 expected_iss）的 JWT
+    /// 2. mock JWKS endpoint 返回公钥
+    /// 3. 调用 `verify_id_token`，断言返回 `InvalidToken` 且消息含 "issuer"
+    #[tokio::test]
+    async fn keycloak_verify_id_token_rejects_wrong_issuer() {
+        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        use base64::Engine;
+        use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
+        use rand::rngs::OsRng;
+        use rsa::pkcs1::EncodeRsaPrivateKey;
+        use rsa::traits::PublicKeyParts;
+        use rsa::{RsaPrivateKey, RsaPublicKey};
+        use serde::Serialize;
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mut rng = OsRng;
+        let private_key = RsaPrivateKey::new(&mut rng, 2048).expect("生成 RSA 私钥应成功");
+        let public_key = RsaPublicKey::from(&private_key);
+
+        let n_b64 = URL_SAFE_NO_PAD.encode(public_key.n().to_bytes_be());
+        let e_b64 = URL_SAFE_NO_PAD.encode(public_key.e().to_bytes_be());
+
+        let der = private_key.to_pkcs1_der().expect("转 PKCS#1 DER 应成功");
+        let encoding_key = EncodingKey::from_rsa_der(der.as_bytes());
+
+        let server = MockServer::start().await;
+        let issuer = server.uri();
+
+        #[derive(Serialize)]
+        struct WrongIssTestClaims {
+            sub: String,
+            exp: i64,
+            aud: serde_json::Value,
+            iss: String,
+            realm_access: serde_json::Value,
+            resource_access: serde_json::Value,
+        }
+
+        let mut header = Header::new(Algorithm::RS256);
+        header.kid = Some("key1".to_string());
+
+        let exp = (std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("系统时间应早于 UNIX_EPOCH")
+            .as_secs() as i64)
+            + 3600;
+
+        let claims = WrongIssTestClaims {
+            sub: "user-123".into(),
+            exp,
+            aud: serde_json::Value::String("bulwark-rp".to_string()), // aud 正确
+            iss: "https://wrong-issuer.example.com".to_string(),      // 故意不匹配 expected_iss
+            realm_access: serde_json::json!({ "roles": ["user"] }),
+            resource_access: serde_json::json!({
+                "account": { "roles": ["manage-account"] }
+            }),
+        };
+
+        let id_token = encode(&header, &claims, &encoding_key).expect("签发 JWT 应成功");
+
+        Mock::given(method("GET"))
+            .and(path("/protocol/openid-connect/certs"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "keys": [{
+                    "kty": "RSA",
+                    "kid": "key1",
+                    "n": n_b64,
+                    "e": e_b64,
+                }]
+            })))
+            .mount(&server)
+            .await;
+
+        let config = KeycloakConfig {
+            base_url: server.uri(),
+            client_id: "bulwark-rp".into(),
+            client_secret: None,
+            redirect_uri: "https://app.example.com/cb".into(),
+            expected_iss: issuer,
+        };
+        let provider = KeycloakProvider::new(config).expect("KeycloakProvider::new 应成功");
+        let result = provider.verify_id_token(&id_token).await;
+
+        match result {
+            Err(crate::error::BulwarkError::InvalidToken(msg)) => {
+                assert!(
+                    msg.contains("issuer"),
+                    "iss 不匹配应返回 issuer 相关消息，实际: {}",
+                    msg
+                );
+            },
+            other => panic!("iss 不匹配应返回 InvalidToken，实际: {:?}", other),
+        }
+    }
+
+    /// vuln-0020 测试 3：`verify_id_token` 接受 aud 为数组形式（包含 client_id）的 id_token
+    ///
+    /// RFC 7519 §4.1.3 规定 aud 可以是 String 或 Vec<String>。
+    /// Keycloak 实际签发的 token 中 aud 常为数组（如 `["bulwark-rp", "account"]`）。
+    /// 本测试验证 `serde_json::Value` 反序列化 + `validate_aud` 能正确处理数组形式。
+    ///
+    /// # 测试流程
+    ///
+    /// 1. 生成 RSA 密钥对，签发 aud=`["bulwark-rp", "account"]`（数组含 client_id）的 JWT
+    /// 2. mock JWKS endpoint 返回公钥
+    /// 3. 调用 `verify_id_token`，断言返回 `Ok` 且 `sub` 正确
+    #[tokio::test]
+    async fn keycloak_verify_id_token_accepts_aud_array() {
+        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        use base64::Engine;
+        use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
+        use rand::rngs::OsRng;
+        use rsa::pkcs1::EncodeRsaPrivateKey;
+        use rsa::traits::PublicKeyParts;
+        use rsa::{RsaPrivateKey, RsaPublicKey};
+        use serde::Serialize;
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mut rng = OsRng;
+        let private_key = RsaPrivateKey::new(&mut rng, 2048).expect("生成 RSA 私钥应成功");
+        let public_key = RsaPublicKey::from(&private_key);
+
+        let n_b64 = URL_SAFE_NO_PAD.encode(public_key.n().to_bytes_be());
+        let e_b64 = URL_SAFE_NO_PAD.encode(public_key.e().to_bytes_be());
+
+        let der = private_key.to_pkcs1_der().expect("转 PKCS#1 DER 应成功");
+        let encoding_key = EncodingKey::from_rsa_der(der.as_bytes());
+
+        let server = MockServer::start().await;
+        let issuer = server.uri();
+
+        #[derive(Serialize)]
+        struct AudArrayTestClaims {
+            sub: String,
+            exp: i64,
+            aud: serde_json::Value,
+            iss: String,
+            realm_access: serde_json::Value,
+            resource_access: serde_json::Value,
+        }
+
+        let mut header = Header::new(Algorithm::RS256);
+        header.kid = Some("key1".to_string());
+
+        let exp = (std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("系统时间应早于 UNIX_EPOCH")
+            .as_secs() as i64)
+            + 3600;
+
+        let claims = AudArrayTestClaims {
+            sub: "user-123".into(),
+            exp,
+            // aud 为数组形式，包含 client_id "bulwark-rp" 和 "account"
+            aud: serde_json::json!(["bulwark-rp", "account"]),
+            iss: issuer.clone(),
+            realm_access: serde_json::json!({ "roles": ["user", "admin"] }),
+            resource_access: serde_json::json!({
+                "account": { "roles": ["manage-account"] }
+            }),
+        };
+
+        let id_token = encode(&header, &claims, &encoding_key).expect("签发 JWT 应成功");
+
+        Mock::given(method("GET"))
+            .and(path("/protocol/openid-connect/certs"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "keys": [{
+                    "kty": "RSA",
+                    "kid": "key1",
+                    "n": n_b64,
+                    "e": e_b64,
+                }]
+            })))
+            .mount(&server)
+            .await;
+
+        let config = KeycloakConfig {
+            base_url: server.uri(),
+            client_id: "bulwark-rp".into(),
+            client_secret: None,
+            redirect_uri: "https://app.example.com/cb".into(),
+            expected_iss: issuer,
+        };
+        let provider = KeycloakProvider::new(config).expect("KeycloakProvider::new 应成功");
+        let keycloak_claims = provider
+            .verify_id_token(&id_token)
+            .await
+            .expect("aud 为数组含 client_id 时应返回 Ok");
+
+        assert_eq!(keycloak_claims.sub, "user-123");
+        assert_eq!(keycloak_claims.realm_access.roles, vec!["user", "admin"]);
     }
 
     // ========================================================================
@@ -969,6 +1342,7 @@ mod tests {
             client_id: "bulwark-rp".into(),
             client_secret: None,
             redirect_uri: "https://app.example.com/cb".into(),
+            expected_iss: server.uri(),
         };
         let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
         let provider = KeycloakProvider::new(config)
@@ -1013,6 +1387,7 @@ mod tests {
             client_id: "bulwark-rp".into(),
             client_secret: None,
             redirect_uri: "https://app.example.com/cb".into(),
+            expected_iss: "https://kc.example.com:8443/realms/myrealm".into(),
         };
         let provider = KeycloakProvider::new(config).expect("KeycloakProvider::new 应成功");
 
@@ -1066,6 +1441,7 @@ mod tests {
             client_id: "bulwark-rp".into(),
             client_secret: None,
             redirect_uri: "https://app.example.com/cb".into(),
+            expected_iss: server.uri(),
         };
         let provider = KeycloakProvider::new(config).expect("KeycloakProvider::new 应成功");
 
@@ -1128,6 +1504,7 @@ mod tests {
             client_id: "bulwark-rp".into(),
             client_secret: Some("secret123".into()),
             redirect_uri: "https://app.example.com/cb".into(),
+            expected_iss: server.uri(),
         };
         let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
         let provider = KeycloakProvider::new(config)

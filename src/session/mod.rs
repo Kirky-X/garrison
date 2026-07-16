@@ -3,7 +3,7 @@
 
 //! 会话模块，提供双模会话管理（Account-Session + Token-Session）。
 //!
-//! [借鉴 Sa-Token] 对应 Sa-Token 的 `SaSession`，
+//! 对应 `SaSession`，
 //! 提供会话级数据存储与 Token 列表管理。
 //!
 //! ## 双模会话
@@ -95,7 +95,7 @@ pub struct TokenInfo {
 
 /// Account-Session 数据（以 login_id 为 key）。
 ///
-/// [借鉴 Sa-Token] 对应 Sa-Token 的 Account-Session，
+/// 对应 Account-Session，
 /// 存储账号所有 token 列表与最后活跃时间。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AccountSession {
@@ -111,7 +111,7 @@ pub struct AccountSession {
 
 /// Token-Session 数据（以 token 为 key）。
 ///
-/// [借鉴 Sa-Token] 对应 Sa-Token 的 Token-Session，
+/// 对应 Token-Session，
 /// 存储 token 关联的 login_id、创建时间与自定义属性。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenSession {
@@ -211,7 +211,7 @@ pub trait SessionExpiryListener: Send + Sync {
 
 /// 会话管理器，封装 `BulwarkDao` 提供双模会话操作。
 ///
-/// [借鉴 Sa-Token] 对应 Sa-Token 的 `SaSession` 管理逻辑，
+/// 对应 `SaSession` 管理逻辑，
 /// 持有 DAO 引用与超时配置，提供会话 CRUD / 过期检查 / 续期 / 登出。
 ///
 /// # 存储格式

@@ -3,7 +3,7 @@
 
 //! 签名工具模块，提供 HMAC-SHA256/SHA512、Base64、MD5 签名与编码工具。
 //!
-//! [借鉴 Sa-Token] 对应 Sa-Token 的 `SaSign` 工具类，
+//! 对应 `SaSign` 工具类，
 //! 提供微服务网关签名认证所需的加密原语。
 //!
 //! 所有方法均为关联函数（static method），`Signer` struct 不持有任何状态。
@@ -92,7 +92,7 @@ impl Signer {
     /// 计算 MD5 摘要，输出小写十六进制字符串。
     ///
     /// # 废弃说明
-    /// MD5 已被证明不安全（存在碰撞攻击），仅用于兼容 Sa-Token 旧版签名协议。
+    /// MD5 已被证明不安全（存在碰撞攻击），仅用于兼容旧版签名协议。
     /// 新业务请使用 [`hmac_sha256`](Self::hmac_sha256) 或 [`hmac_sha512`](Self::hmac_sha512)。
     #[deprecated(note = "MD5 已不安全，请使用 hmac_sha256 或 hmac_sha512")]
     pub fn md5(data: &[u8]) -> String {

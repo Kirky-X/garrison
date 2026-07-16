@@ -3,7 +3,7 @@
 
 //! 策略模块，提供鉴权策略与可插拔权限策略。
 //!
-//! [借鉴 Sa-Token] 对应 Sa-Token 的策略模式设计，
+//! 对应 策略模式设计，
 //! 允许通过策略对象定制鉴权行为。
 //!
 //! ## 权限策略
@@ -70,7 +70,7 @@ pub use registry::{
 
 /// 权限策略 trait，定义权限/角色校验的可插拔契约。
 ///
-/// [借鉴 Sa-Token] 对应 Sa-Token 的可插拔权限策略，
+/// 对应 可插拔权限策略，
 /// 业务方可通过实现此 trait 替换默认的权限校验逻辑。
 ///
 /// # 默认实现
@@ -206,7 +206,7 @@ pub trait BulwarkPermissionStrategy: Send + Sync {
 
 /// `BulwarkPermissionStrategy` 的默认实现，持有 `BulwarkInterface` 回调获取权限/角色数据。
 ///
-/// [借鉴 Sa-Token] 对应 Sa-Token 的 `StpInterface` 回调模式：
+/// 对应 `StpInterface` 回调模式：
 /// 框架不假定权限/角色数据来源（数据库 / YAML / 内存等），
 /// 由业务方实现 `BulwarkInterface` 提供数据，本结构做字符串匹配校验。
 ///

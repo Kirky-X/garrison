@@ -14,14 +14,16 @@
 use super::BulwarkLogicDefault;
 use crate::core::token::TokenStyleFactory;
 use crate::error::{BulwarkError, BulwarkResult};
-#[cfg(feature = "listener")]
+// BulwarkEvent 仅在 refresh_token（protocol-jwt feature）中使用，故 import 同时门控两个 feature
+// 避免 listener 启用但 protocol-jwt 关闭时出现 unused import 警告
+#[cfg(all(feature = "listener", feature = "protocol-jwt"))]
 use crate::listener::BulwarkEvent;
 use crate::stp::session::SessionLogic;
 use async_trait::async_trait;
 
 /// Token 逻辑 trait，定义 token 类型校验、显式验证与刷新契约。
 ///
-/// [借鉴 Sa-Token] 对应 `StpLogic` 的 token 类型区分与 `getTokenValue` 校验部分。
+/// 对应 `StpLogic` 的 token 类型区分与 `getTokenValue` 校验部分。
 ///
 /// # 默认实现
 ///

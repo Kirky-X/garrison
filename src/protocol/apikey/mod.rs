@@ -3,7 +3,7 @@
 
 //! API Key 协议模块，提供 API Key 生成/校验/吊销/轮换。
 //!
-//! [借鉴 Sa-Token] 对应 Sa-Token 的 API 接口鉴权能力，
+//! 对应 API 接口鉴权能力，
 //! 适用于服务间调用与开放 API 场景。
 //!
 //! 仅在启用 `protocol-apikey` 特性时编译。

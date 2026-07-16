@@ -6,7 +6,13 @@
 //! super-trait 为 [`SessionLogic`]（权限校验需先通过 `get_login_id` 获取当前登录主体）。
 
 use super::BulwarkLogicDefault;
+// vuln-0003 修复：tenant-isolation feature 启用时强制 fail-closed（current_tenant_id_or_error?）
+// feature 关闭时保留旧 current_tenant_id() 向后兼容行为，但 #[allow(deprecated)] 显式标注
+#[cfg(not(feature = "tenant-isolation"))]
+#[allow(deprecated)]
 use crate::context::tenant::current_tenant_id;
+#[cfg(feature = "tenant-isolation")]
+use crate::context::tenant::current_tenant_id_or_error;
 use crate::core::permission::AuthRequest;
 use crate::error::{BulwarkError, BulwarkResult};
 #[cfg(feature = "listener")]
@@ -16,7 +22,7 @@ use async_trait::async_trait;
 
 /// 权限逻辑 trait，定义权限与角色校验契约。
 ///
-/// [借鉴 Sa-Token] 对应 `StpLogic` 的 `checkPermission` / `checkRole` / `hasPermission` / `hasRole` 部分。
+/// 对应 `StpLogic` 的 `checkPermission` / `checkRole` / `hasPermission` / `hasRole` 部分。
 ///
 /// # 方法
 ///
@@ -186,9 +192,16 @@ impl PermissionLogic for BulwarkLogicDefault {
         // 优先委托 PermissionChecker（若注入），走 authorize + Decision 路径
         // 并广播 PermissionCheck 事件供 AuditLogListener 记录审计日志
         if let Some(pc) = &self.permission_checker {
+            // vuln-0003 修复：tenant-isolation feature 启用时强制 fail-closed
+            // feature 关闭时保留旧 current_tenant_id() 向后兼容行为（#[allow(deprecated)] 显式标注）
+            #[cfg(not(feature = "tenant-isolation"))]
+            #[allow(deprecated)]
+            let tenant_id = current_tenant_id();
+            #[cfg(feature = "tenant-isolation")]
+            let tenant_id = current_tenant_id_or_error()?;
             let request = AuthRequest {
                 login_id: login_id.clone(),
-                tenant_id: current_tenant_id(),
+                tenant_id,
                 action: permission.to_string(),
                 resource: None,
                 context: serde_json::Value::Null,

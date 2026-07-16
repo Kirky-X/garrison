@@ -317,12 +317,12 @@ impl AuditLogListener {
         let now = Utc::now().timestamp();
         // 从 TENANT task_local 读取当前租户 ID
         // - tenant-isolation feature 关闭：current_tenant_id() 无上下文时返回 0（向后兼容）
-        // - tenant-isolation feature 启用：current_tenant_id_strict() 无上下文时返回 Err（Rule 12 失败显性化）
+        // - tenant-isolation feature 启用：current_tenant_id_or_error() 无上下文时返回 Err（Rule 12 失败显性化，vuln-0003）
         #[cfg(not(feature = "tenant-isolation"))]
+        #[allow(deprecated)]
         let tenant_id = crate::context::tenant::current_tenant_id();
         #[cfg(feature = "tenant-isolation")]
-        let tenant_id = crate::context::tenant::current_tenant_id_strict()
-            .ok_or_else(|| BulwarkError::Config("tenant context missing".into()))?;
+        let tenant_id = crate::context::tenant::current_tenant_id_or_error()?;
         let mut entry = match event {
             BulwarkEvent::Login {
                 login_id,

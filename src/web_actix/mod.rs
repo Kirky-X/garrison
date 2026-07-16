@@ -3,7 +3,7 @@
 
 //! actix-web 框架适配模块。
 //!
-//! [借鉴 Sa-Token] 对应 Sa-Token 的 actix-web 适配器，
+//! 对应 actix-web 适配器，
 //! 提供 BulwarkRouter + FromRequest extractor + BulwarkInterceptor 完整集成。
 //!
 //! ## 设计
@@ -108,7 +108,7 @@ pub struct RouteRule {
 
 /// actix-web 路由器，收集鉴权路由规则并生成 middleware。
 ///
-/// [借鉴 Sa-Token] 对应 axum 版 `BulwarkRouter`，API 对齐。
+/// 对应 axum 版 `BulwarkRouter`，API 对齐。
 pub struct BulwarkRouter {
     rules: HashMap<String, Annotation>,
     interceptor: Arc<dyn BulwarkInterceptor>,

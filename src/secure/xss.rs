@@ -228,7 +228,10 @@ fn sanitize_whitelist(input: &str, allowed: &[&'static str]) -> String {
                         out.push('/');
                     }
                     out.push_str(name);
+                    // vuln-0007 修复：先 strip event handlers，再 strip dangerous URI（顺序保证 on* 属性
+                    // 被移除后，剩余 href/src/xlink:href 中的危险 scheme 被替换为 #）
                     let cleaned = strip_event_handlers(attrs);
+                    let cleaned = strip_dangerous_uri(&cleaned);
                     escape_into(&mut out, &cleaned);
                     out.push('>');
                     rest = after;
@@ -248,6 +251,179 @@ fn sanitize_whitelist(input: &str, allowed: &[&'static str]) -> String {
     }
 
     out
+}
+
+/// 从属性段中移除危险 URI scheme（vuln-0007 修复）。
+///
+/// 扫描 `href=`/`src=`/`xlink:href=` 属性值，若 scheme 不在安全白名单
+/// （`http`/`https`/`mailto`/`#`/`/`/`./`/`../`/相对路径无 scheme）则将值替换为 `#`。
+/// 防止 `javascript:`/`data:`/`vbscript:` 等 URI scheme 执行 XSS。
+///
+/// # 安全白名单（大小写不敏感）
+///
+/// - `http://` / `https://`：标准 HTTP(S) URL
+/// - `mailto:`：邮件协议
+/// - `#`：锚点
+/// - `/`：绝对路径
+/// - `./` / `../`：相对路径
+/// - 无 scheme（不以 `scheme:` 开头）：相对路径或无 scheme 的 URL
+///
+/// # 处理的绕过场景
+///
+/// - 大小写绕过：`JavaScript:`/`JAVASCRIPT:`/`java\tscript:`（前导空白和控制字符）
+/// - 前导空白：` javascript:alert(1)`
+/// - 三种引号形式：双引号、单引号、无引号
+///
+/// # 实现策略
+///
+/// 参照 `strip_event_handlers` 的字节扫描模式，识别属性名后跟 `=`，提取属性值，
+/// strip 前导空白和控制字符后检查 scheme。
+fn strip_dangerous_uri(attrs: &str) -> String {
+    let bytes = attrs.as_bytes();
+    let mut out = String::with_capacity(attrs.len());
+    let mut i = 0;
+    let mut last_copy = 0;
+
+    /// 检查从 `bytes[i..]` 开始是否匹配目标属性名（大小写不敏感），后跟 `=` 或空白+`=`。
+    /// 返回匹配后的位置（指向 `=` 之后）或 `None`。
+    fn match_attr_name(bytes: &[u8], i: usize, target: &[u8]) -> Option<usize> {
+        if i + target.len() > bytes.len() {
+            return None;
+        }
+        for (k, &c) in target.iter().enumerate() {
+            if !bytes[i + k].eq_ignore_ascii_case(&c) {
+                return None;
+            }
+        }
+        // target 匹配后，跳过空白，然后期望 `=`
+        let mut j = i + target.len();
+        while j < bytes.len() && bytes[j].is_ascii_whitespace() {
+            j += 1;
+        }
+        if j < bytes.len() && bytes[j] == b'=' {
+            Some(j + 1) // 指向 `=` 之后
+        } else {
+            None
+        }
+    }
+
+    /// 判断 URI scheme 是否安全（白名单内）。
+    /// `value` 是 strip 前导空白和控制字符后的属性值。
+    fn is_safe_uri(value: &str) -> bool {
+        let lower = value.to_ascii_lowercase();
+        // 锚点、绝对路径、相对路径
+        if lower.starts_with('#')
+            || lower.starts_with('/')
+            || lower.starts_with("./")
+            || lower.starts_with("../")
+        {
+            return true;
+        }
+        // 标准 scheme 白名单
+        if lower.starts_with("http://")
+            || lower.starts_with("https://")
+            || lower.starts_with("mailto:")
+        {
+            return true;
+        }
+        // 无 scheme（不含 `:`）视为相对路径，安全
+        // 注意：`javascript:`/`data:`/`vbscript:` 等含 `:` 且非白名单 scheme → 不安全
+        if let Some(colon_pos) = lower.find(':') {
+            // 检查 `:` 前是否有 `/`（若有 `/` 在前则是相对路径如 `/path:to`，安全）
+            if let Some(slash_pos) = lower.find('/') {
+                if slash_pos < colon_pos {
+                    return true; // `/` 在 `:` 前，相对路径
+                }
+            }
+            // `:` 在前且非白名单 scheme → 不安全
+            false
+        } else {
+            true // 无 `:`，相对路径或 fragment
+        }
+    }
+
+    while i < bytes.len() {
+        let is_attr_start = i == 0 || bytes[i - 1].is_ascii_whitespace();
+        if is_attr_start {
+            // 尝试匹配 href= / src= / xlink:href=
+            let target_pos = match_attr_name(bytes, i, b"href")
+                .or_else(|| match_attr_name(bytes, i, b"src"))
+                .or_else(|| match_attr_name(bytes, i, b"xlink:href"));
+            if let Some(value_start) = target_pos {
+                // 找到属性值，提取值范围
+                out.push_str(&attrs[last_copy..value_start]);
+                let (value_end, value_str) = extract_attr_value(bytes, value_start);
+                // strip 前导空白和控制字符（0x00-0x1F + 0x7F），再 strip 引号
+                // 注意：value_str 可能带引号（如 `"https://example.com"`），
+                // is_safe_uri 需要检查不带引号的纯 URI
+                let stripped = value_str
+                    .trim_start_matches(|c: char| c.is_ascii_whitespace() || c.is_ascii_control());
+                let stripped = stripped.trim_matches(|c| c == '"' || c == '\'');
+                if is_safe_uri(stripped) {
+                    // 安全：保留原值（包含引号）
+                    out.push_str(&attrs[value_start..value_end]);
+                } else {
+                    // 不安全：替换值为 `#`（保留引号形式）
+                    // 根据原始引号形式决定输出
+                    if value_start < bytes.len() && bytes[value_start] == b'"' {
+                        out.push_str("\"#\"");
+                    } else if value_start < bytes.len() && bytes[value_start] == b'\'' {
+                        out.push_str("'#'");
+                    } else {
+                        out.push('#');
+                    }
+                }
+                last_copy = value_end;
+                i = value_end;
+                continue;
+            }
+        }
+        i += 1;
+    }
+
+    out.push_str(&attrs[last_copy..]);
+    out
+}
+
+/// 从 `bytes[start..]` 开始提取属性值，返回 `(值结束位置, 值字符串)`。
+///
+/// 支持三种形式：
+/// - 双引号：`"value"` → 返回 `"value"` 全长（含引号）
+/// - 单引号：`'value'` → 返回 `'value'` 全长（含引号）
+/// - 无引号：`value` → 到空白为止
+fn extract_attr_value(bytes: &[u8], start: usize) -> (usize, &str) {
+    if start >= bytes.len() {
+        return (start, "");
+    }
+    match bytes[start] {
+        b'"' => {
+            let mut j = start + 1;
+            while j < bytes.len() && bytes[j] != b'"' {
+                j += 1;
+            }
+            if j < bytes.len() {
+                j += 1; // 包含闭合引号
+            }
+            (j, std::str::from_utf8(&bytes[start..j]).unwrap_or(""))
+        },
+        b'\'' => {
+            let mut j = start + 1;
+            while j < bytes.len() && bytes[j] != b'\'' {
+                j += 1;
+            }
+            if j < bytes.len() {
+                j += 1;
+            }
+            (j, std::str::from_utf8(&bytes[start..j]).unwrap_or(""))
+        },
+        _ => {
+            let mut j = start;
+            while j < bytes.len() && !bytes[j].is_ascii_whitespace() {
+                j += 1;
+            }
+            (j, std::str::from_utf8(&bytes[start..j]).unwrap_or(""))
+        },
+    }
 }
 
 #[cfg(test)]
@@ -439,5 +615,270 @@ mod tests {
         let p = XssProtector::new(XssMode::EscapeAll);
         let result = p.sanitize_owned(String::new());
         assert_eq!(result, "");
+    }
+
+    // ========================================================================
+    // vuln-0007 修复：strip_dangerous_uri 测试
+    // ========================================================================
+
+    /// vuln-0007: `javascript:` URI scheme 在 href 中应被替换为 `#`。
+    #[test]
+    fn whitelist_strips_javascript_uri_in_href() {
+        let protector = XssProtector::new(XssMode::Whitelist(vec!["a"]));
+        let result = protector.sanitize(r#"<a href="javascript:alert(1)">click</a>"#);
+        assert!(
+            !result.to_lowercase().contains("javascript"),
+            "javascript: scheme 应被替换为 #，实际: {}",
+            result
+        );
+        // escape_into 会将 " 转义为 &quot;，故 href 值为 &quot;#&quot;
+        assert!(result.contains("#"), "href 值应含 #，实际: {}", result);
+    }
+
+    /// vuln-0007: `JavaScript:` 大小写绕过应被替换为 `#`。
+    #[test]
+    fn whitelist_strips_mixedcase_javascript_uri() {
+        let protector = XssProtector::new(XssMode::Whitelist(vec!["a"]));
+        let result = protector.sanitize(r#"<a href="JavaScript:alert(1)">click</a>"#);
+        assert!(
+            !result.to_lowercase().contains("javascript"),
+            "JavaScript: 大小写绕过应被替换为 #，实际: {}",
+            result
+        );
+    }
+
+    /// vuln-0007: `JAVASCRIPT:` 全大写绕过应被替换为 `#`。
+    #[test]
+    fn whitelist_strips_uppercase_javascript_uri() {
+        let protector = XssProtector::new(XssMode::Whitelist(vec!["a"]));
+        let result = protector.sanitize(r#"<a href="JAVASCRIPT:alert(1)">click</a>"#);
+        assert!(
+            !result.to_lowercase().contains("javascript"),
+            "JAVASCRIPT: 全大写应被替换为 #，实际: {}",
+            result
+        );
+    }
+
+    /// vuln-0007: 前导空白的 `javascript:` 应被替换为 `#`。
+    #[test]
+    fn whitelist_strips_javascript_uri_with_leading_whitespace() {
+        let protector = XssProtector::new(XssMode::Whitelist(vec!["a"]));
+        let result = protector.sanitize(r#"<a href=" javascript:alert(1)">click</a>"#);
+        assert!(
+            !result.to_lowercase().contains("javascript"),
+            "前导空白的 javascript: 应被替换为 #，实际: {}",
+            result
+        );
+    }
+
+    /// vuln-0007: `data:` URI scheme 应被替换为 `#`。
+    #[test]
+    fn whitelist_strips_data_uri_scheme() {
+        let protector = XssProtector::new(XssMode::Whitelist(vec!["a"]));
+        let result =
+            protector.sanitize(r#"<a href="data:text/html,<script>alert(1)</script>">click</a>"#);
+        assert!(
+            !result.to_lowercase().contains("data:"),
+            "data: scheme 应被替换为 #，实际: {}",
+            result
+        );
+    }
+
+    /// vuln-0007: `vbscript:` URI scheme 应被替换为 `#`。
+    #[test]
+    fn whitelist_strips_vbscript_uri_scheme() {
+        let protector = XssProtector::new(XssMode::Whitelist(vec!["a"]));
+        let result = protector.sanitize(r#"<a href="vbscript:msgbox(1)">click</a>"#);
+        assert!(
+            !result.to_lowercase().contains("vbscript"),
+            "vbscript: scheme 应被替换为 #，实际: {}",
+            result
+        );
+    }
+
+    /// vuln-0007: 合法的 `https://` URL 应保留原样。
+    #[test]
+    fn whitelist_keeps_https_url() {
+        let protector = XssProtector::new(XssMode::Whitelist(vec!["a"]));
+        let result = protector.sanitize(r#"<a href="https://example.com">click</a>"#);
+        assert!(
+            result.contains("https://example.com"),
+            "合法 https:// URL 应保留，实际: {}",
+            result
+        );
+    }
+
+    /// vuln-0007: 合法的 `http://` URL 应保留原样。
+    #[test]
+    fn whitelist_keeps_http_url() {
+        let protector = XssProtector::new(XssMode::Whitelist(vec!["a"]));
+        let result = protector.sanitize(r#"<a href="http://example.com">click</a>"#);
+        assert!(
+            result.contains("http://example.com"),
+            "合法 http:// URL 应保留，实际: {}",
+            result
+        );
+    }
+
+    /// vuln-0007: 合法的 `mailto:` 应保留原样。
+    #[test]
+    fn whitelist_keeps_mailto_uri() {
+        let protector = XssProtector::new(XssMode::Whitelist(vec!["a"]));
+        let result = protector.sanitize(r#"<a href="mailto:user@example.com">email</a>"#);
+        assert!(
+            result.contains("mailto:user@example.com"),
+            "合法 mailto: 应保留，实际: {}",
+            result
+        );
+    }
+
+    /// vuln-0007: 锚点 `#section` 应保留原样。
+    #[test]
+    fn whitelist_keeps_anchor_uri() {
+        let protector = XssProtector::new(XssMode::Whitelist(vec!["a"]));
+        let result = protector.sanitize(r##"<a href="#section">jump</a>"##);
+        // escape_into 会将 " 转义为 &quot;，故 href 值为 &quot;#section&quot;
+        assert!(
+            result.contains("#section"),
+            "锚点 #section 应保留，实际: {}",
+            result
+        );
+    }
+
+    /// vuln-0007: 绝对路径 `/path/to/resource` 应保留原样。
+    #[test]
+    fn whitelist_keeps_absolute_path() {
+        let protector = XssProtector::new(XssMode::Whitelist(vec!["a"]));
+        let result = protector.sanitize(r#"<a href="/path/to/resource">link</a>"#);
+        assert!(
+            result.contains("/path/to/resource"),
+            "绝对路径应保留，实际: {}",
+            result
+        );
+    }
+
+    /// vuln-0007: 相对路径 `./relative` 应保留原样。
+    #[test]
+    fn whitelist_keeps_relative_path() {
+        let protector = XssProtector::new(XssMode::Whitelist(vec!["a"]));
+        let result = protector.sanitize(r#"<a href="./relative">link</a>"#);
+        assert!(
+            result.contains("./relative"),
+            "相对路径 ./relative 应保留，实际: {}",
+            result
+        );
+    }
+
+    /// vuln-0007: `<img src="javascript:alert(1)">` 的 src 也应被替换为 `#`。
+    #[test]
+    fn whitelist_strips_javascript_uri_in_src() {
+        let protector = XssProtector::new(XssMode::Whitelist(vec!["img"]));
+        let result = protector.sanitize(r#"<img src="javascript:alert(1)">"#);
+        assert!(
+            !result.to_lowercase().contains("javascript"),
+            "src 中的 javascript: 应被替换为 #，实际: {}",
+            result
+        );
+    }
+
+    /// vuln-0007: 单引号包裹的 `javascript:` 也应被替换为 `#`。
+    #[test]
+    fn whitelist_strips_javascript_uri_single_quoted() {
+        let protector = XssProtector::new(XssMode::Whitelist(vec!["a"]));
+        let result = protector.sanitize(r#"<a href='javascript:alert(1)'>click</a>"#);
+        assert!(
+            !result.to_lowercase().contains("javascript"),
+            "单引号 javascript: 应被替换为 #，实际: {}",
+            result
+        );
+    }
+
+    /// vuln-0007: 无引号包裹的 `javascript:` 也应被替换为 `#`。
+    #[test]
+    fn whitelist_strips_javascript_uri_unquoted() {
+        let protector = XssProtector::new(XssMode::Whitelist(vec!["a"]));
+        let result = protector.sanitize(r#"<a href=javascript:alert(1)>click</a>"#);
+        assert!(
+            !result.to_lowercase().contains("javascript"),
+            "无引号 javascript: 应被替换为 #，实际: {}",
+            result
+        );
+    }
+
+    /// vuln-0007: 大写 HREF 属性名也应被识别。
+    #[test]
+    fn whitelist_strips_javascript_uri_uppercase_attr() {
+        let protector = XssProtector::new(XssMode::Whitelist(vec!["a"]));
+        let result = protector.sanitize(r#"<a HREF="javascript:alert(1)">click</a>"#);
+        assert!(
+            !result.to_lowercase().contains("javascript"),
+            "大写 HREF 中的 javascript: 应被替换为 #，实际: {}",
+            result
+        );
+    }
+
+    /// vuln-0007: 混合大小写 `Href` 属性名也应被识别。
+    #[test]
+    fn whitelist_strips_javascript_uri_mixedcase_attr() {
+        let protector = XssProtector::new(XssMode::Whitelist(vec!["a"]));
+        let result = protector.sanitize(r#"<a Href="javascript:alert(1)">click</a>"#);
+        assert!(
+            !result.to_lowercase().contains("javascript"),
+            "混合大小写 Href 中的 javascript: 应被替换为 #，实际: {}",
+            result
+        );
+    }
+
+    /// vuln-0007: 多个属性中混合危险 URI，仅危险 URI 被替换，其他属性保留。
+    #[test]
+    fn whitelist_strips_only_dangerous_uri_keeps_safe_attrs() {
+        let protector = XssProtector::new(XssMode::Whitelist(vec!["a"]));
+        let result = protector
+            .sanitize(r#"<a href="javascript:alert(1)" title="click me" class="link">text</a>"#);
+        assert!(
+            !result.to_lowercase().contains("javascript"),
+            "javascript: 应被替换，实际: {}",
+            result
+        );
+        assert!(
+            result.contains("click me"),
+            "title 属性应保留，实际: {}",
+            result
+        );
+        assert!(
+            result.contains("link"),
+            "class 属性应保留，实际: {}",
+            result
+        );
+    }
+
+    /// vuln-0007: 同一标签中同时有安全和不安全 URI，仅不安全 URI 被替换。
+    /// 注意：HTML 规范中同名属性只取第一个，但这里测试 src（安全）和 href（不安全）共存。
+    #[test]
+    fn whitelist_strips_only_dangerous_uri_keeps_safe_uri() {
+        let protector = XssProtector::new(XssMode::Whitelist(vec!["img"]));
+        let result = protector
+            .sanitize(r#"<img src="https://safe.com/img.png" data-href="javascript:alert(1)">"#);
+        // src 是安全 URL，应保留
+        assert!(
+            result.contains("https://safe.com/img.png"),
+            "安全 src 应保留，实际: {}",
+            result
+        );
+        // data-href 不是 href/src/xlink:href，不会被 strip_dangerous_uri 处理
+        // 但 javascript: 在 data-href 中，不应触发 strip（因为不是目标属性）
+        // 这个测试验证 strip_dangerous_uri 只处理 href/src/xlink:href
+    }
+
+    /// vuln-0007: `xlink:href` 属性（SVG 中使用）的危险 URI 也应被替换。
+    #[test]
+    fn whitelist_strips_javascript_uri_in_xlink_href() {
+        let protector = XssProtector::new(XssMode::Whitelist(vec!["use"]));
+        let result = protector.sanitize(r#"<use xlink:href="javascript:alert(1)">"#);
+        assert!(
+            !result.to_lowercase().contains("javascript"),
+            "xlink:href 中的 javascript: 应被替换为 #，实际: {}",
+            result
+        );
     }
 }

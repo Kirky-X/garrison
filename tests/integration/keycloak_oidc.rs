@@ -144,6 +144,7 @@ mod keycloak_e2e {
             client_id: "bulwark-rp".into(),
             client_secret: Some("client-secret-123".into()),
             redirect_uri: "https://app.example.com/cb".into(),
+            expected_iss: server.uri(),
         };
         let provider = KeycloakProvider::new(config).expect("KeycloakProvider::new 应成功");
 

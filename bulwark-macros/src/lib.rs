@@ -137,19 +137,21 @@ pub fn check_login(_attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// ## 2. 命名参数（v0.7.0 新增，RBAC + ABAC）
 ///
-/// `#[check_permission(permission = "order:read", abac = "resource.user_id == principal.id")]`
+/// `#[check_permission(permission = "order:read", resource = "Resource::\"order\"", abac = "resource.user_id == principal.id")]`
 ///
 /// - `permission`（必填）：单个权限标识
+/// - `resource`（可选）：Cedar resource EntityUid 字符串（默认 `Resource::"default"`，vuln-0006 修复）
 /// - `abac`（可选）：Cedar 条件表达式，RBAC 通过后自动调用 ABAC 求值
 ///
-/// `abac` 参数存在时，RBAC 通过后调用 `bulwark::abac::check_abac_with_policy(permission, abac_expr)`。
+/// `abac` 参数存在时，RBAC 通过后调用 `bulwark::abac::check_abac_with_policy(permission, resource, abac_expr)`。
+/// resource 由 `resource` 属性注入（默认 `Resource::"default"`，vuln-0006 修复）。
 /// ABAC 拒绝时返回 `BulwarkError::NotPermission`。`abac` feature 关闭时 ABAC 调用为 no-op。
 ///
 /// # 限制
 ///
 /// - 支持 `async fn` 和 `sync fn`（sync fn 需在 tokio multi_thread runtime 内调用）
 /// - 位置参数形式：至少一个权限参数
-/// - 命名参数形式：`permission` 必填，`abac` 可选
+/// - 命名参数形式：`permission` 必填，`resource` 和 `abac` 可选
 /// - 两种形式不可混用
 ///
 /// # 示例
@@ -165,9 +167,13 @@ pub fn check_login(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// #[check_permission("user:read", "user:write")]
 /// async fn admin_handler() -> impl IntoResponse { "admin" }
 ///
-/// // 命名参数（RBAC + ABAC）
-/// #[check_permission(permission = "order:read", abac = "resource.user_id == principal.id")]
+/// // 命名参数（RBAC + ABAC，显式 resource）
+/// #[check_permission(permission = "order:read", resource = "Resource::\"order\"", abac = "resource.user_id == principal.id")]
 /// async fn get_order() -> impl IntoResponse { "order" }
+///
+/// // 命名参数（RBAC + ABAC，默认 resource）
+/// #[check_permission(permission = "order:read", abac = "resource.user_id == principal.id")]
+/// async fn get_order_default() -> impl IntoResponse { "order" }
 ///
 /// // 命名参数（仅 RBAC，等价于位置参数单权限形式）
 /// #[check_permission(permission = "user:read")]
@@ -178,11 +184,18 @@ pub fn check_login(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// ```
 #[proc_macro_attribute]
 pub fn check_permission(attr: TokenStream, item: TokenStream) -> TokenStream {
-    // 优先尝试命名参数解析（permission = "...", abac = "..."）
+    // 优先尝试命名参数解析（permission = "...", resource = "...", abac = "..."）
     let attr2: proc_macro2::TokenStream = attr.clone().into();
     if let Ok(named) = syn::parse2::<CheckPermissionAttr>(attr2) {
         let item_fn = parse_macro_input!(item as ItemFn);
-        return expand_check_permission_named(&named.permission, named.abac.as_deref(), item_fn);
+        // resource 未提供时使用默认值（向后兼容，vuln-0006 修复）
+        let resource = named.resource.as_deref().unwrap_or(DEFAULT_RESOURCE);
+        return expand_check_permission_named(
+            &named.permission,
+            resource,
+            named.abac.as_deref(),
+            item_fn,
+        );
     }
     // 回退到位置参数解析（向后兼容："perm1", "perm2"）
     let args = parse_macro_input!(attr with Punctuated::<LitStr, Token![,]>::parse_terminated);
@@ -358,14 +371,15 @@ pub fn check_mfa(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// ABAC 策略校验属性宏（v0.7.x 新增，依据 spec annotation-macros R-anno-005）。
 ///
 /// 标注在 async fn 或 sync fn 上，编译期生成 wrapper 在 fn body 前插入
-/// `bulwark::abac::check_abac_with_policy(action, abac_expr)` 调用。ABAC 策略拒绝返回 403。
+/// `bulwark::abac::check_abac_with_policy(action, resource, abac_expr)` 调用。ABAC 策略拒绝返回 403。
 ///
-/// 纯 ABAC 校验，不依赖 RBAC 权限表。与 `#[check_permission(permission=, abac=)]` 区别：
+/// 纯 ABAC 校验，不依赖 RBAC 权限表。与 `#[check_permission(permission=, resource=, abac=)]` 区别：
 /// 后者先做 RBAC 校验，本宏直接做 ABAC 校验。
 ///
 /// # 参数
 ///
 /// - `action`（必填）：Cedar action 标识（权限名，如 "order:read"）
+/// - `resource`（可选）：Cedar resource EntityUid 字符串（默认 `Resource::"default"`，vuln-0006 修复）
 /// - `abac`（必填）：Cedar 条件表达式（如 "resource.user_id == principal.id"）
 ///
 /// # Feature 依赖
@@ -377,7 +391,7 @@ pub fn check_mfa(_attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// - 支持 `async fn` 和 `sync fn`（sync fn 需在 tokio multi_thread runtime 内调用）
 /// - 仅支持 axum handler
-/// - `action` 和 `abac` 均为必填
+/// - `action` 和 `abac` 均为必填，`resource` 可选
 ///
 /// # 示例
 ///
@@ -385,22 +399,34 @@ pub fn check_mfa(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// use bulwark::check_abac;
 /// use axum::response::IntoResponse;
 ///
-/// #[check_abac(action = "order:read", abac = "resource.user_id == principal.id")]
+/// // 显式 resource
+/// #[check_abac(action = "order:read", resource = "Resource::\"order\"", abac = "resource.user_id == principal.id")]
 /// async fn handler() -> impl IntoResponse { "abac_ok" }
 ///
+/// // 默认 resource（Resource::"default"）
 /// #[check_abac(action = "order:read", abac = "resource.user_id == principal.id")]
+/// async fn default_resource_handler() -> impl IntoResponse { "abac_ok" }
+///
+/// #[check_abac(action = "order:read", resource = "Resource::\"order\"", abac = "resource.user_id == principal.id")]
 /// fn sync_handler() -> impl IntoResponse { "abac_ok" }
 /// ```
 #[proc_macro_attribute]
 pub fn check_abac(attr: TokenStream, item: TokenStream) -> TokenStream {
     let attr_parsed = parse_macro_input!(attr as CheckAbacAttr);
     let item_fn = parse_macro_input!(item as ItemFn);
-    expand_check_abac(&attr_parsed.action, &attr_parsed.abac, item_fn)
+    // resource 未提供时使用默认值（向后兼容，vuln-0006 修复）
+    let resource = attr_parsed.resource.as_deref().unwrap_or(DEFAULT_RESOURCE);
+    expand_check_abac(&attr_parsed.action, resource, &attr_parsed.abac, item_fn)
 }
 
 // ============================================================================
 // 内部展开逻辑
 // ============================================================================
+
+/// 默认 Cedar resource EntityUid 字符串（向后兼容，vuln-0006 修复）。
+///
+/// 宏属性 `resource = "..."` 未提供时使用此默认值。
+const DEFAULT_RESOURCE: &str = r#"Resource::"default""#;
 
 /// 解析 `#[check_api_key]` 属性参数。
 ///
@@ -436,21 +462,25 @@ impl Parse for CheckApiKeyAttr {
 
 /// 解析 `#[check_permission]` 命名参数形式（v0.7.0 新增）。
 ///
-/// 支持形式：`#[check_permission(permission = "x", abac = "expr")]`
+/// 支持形式：`#[check_permission(permission = "x", resource = "r", abac = "expr")]`
 ///
 /// - `permission`（必填）：权限标识
+/// - `resource`（可选）：Cedar resource EntityUid 字符串（如 `Resource::"default"`）。
+///   未提供时使用默认值 `Resource::"default"`（向后兼容，vuln-0006 修复）。
 /// - `abac`（可选）：Cedar 条件表达式
 ///
 /// 位置参数形式（`#[check_permission("x")]`）不走此解析器，
 /// 在 `check_permission` 函数中先尝试命名参数解析，失败后回退到位置参数。
 struct CheckPermissionAttr {
     permission: String,
+    resource: Option<String>,
     abac: Option<String>,
 }
 
 impl Parse for CheckPermissionAttr {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let mut permission = None;
+        let mut resource = None;
         let mut abac = None;
         while !input.is_empty() {
             let ident: Ident = input.parse()?;
@@ -458,11 +488,12 @@ impl Parse for CheckPermissionAttr {
             let lit: LitStr = input.parse()?;
             match ident.to_string().as_str() {
                 "permission" => permission = Some(lit.value()),
+                "resource" => resource = Some(lit.value()),
                 "abac" => abac = Some(lit.value()),
                 _ => {
                     return Err(syn::Error::new(
                         ident.span(),
-                        "不支持的属性参数，仅支持 `permission` 和 `abac`",
+                        "不支持的属性参数，仅支持 `permission`、`resource` 和 `abac`",
                     ))
                 },
             }
@@ -476,26 +507,34 @@ impl Parse for CheckPermissionAttr {
                 "#[check_permission] 命名参数形式需要 `permission` 参数",
             )
         })?;
-        Ok(Self { permission, abac })
+        Ok(Self {
+            permission,
+            resource,
+            abac,
+        })
     }
 }
 
 /// 解析 `#[check_abac]` 命名参数形式（v0.7.x 新增）。
 ///
-/// 支持形式：`#[check_abac(action = "x", abac = "expr")]`
+/// 支持形式：`#[check_abac(action = "x", resource = "r", abac = "expr")]`
 ///
 /// - `action`（必填）：Cedar action 标识
+/// - `resource`（可选）：Cedar resource EntityUid 字符串（如 `Resource::"default"`）。
+///   未提供时使用默认值 `Resource::"default"`（向后兼容，vuln-0006 修复）。
 /// - `abac`（必填）：Cedar 条件表达式
 ///
-/// 两个参数均为必填，缺失任一返回编译错误。
+/// `action` 和 `abac` 均为必填，缺失任一返回编译错误。
 struct CheckAbacAttr {
     action: String,
+    resource: Option<String>,
     abac: String,
 }
 
 impl Parse for CheckAbacAttr {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let mut action = None;
+        let mut resource = None;
         let mut abac = None;
         while !input.is_empty() {
             let ident: Ident = input.parse()?;
@@ -503,11 +542,12 @@ impl Parse for CheckAbacAttr {
             let lit: LitStr = input.parse()?;
             match ident.to_string().as_str() {
                 "action" => action = Some(lit.value()),
+                "resource" => resource = Some(lit.value()),
                 "abac" => abac = Some(lit.value()),
                 _ => {
                     return Err(syn::Error::new(
                         ident.span(),
-                        "不支持的属性参数，仅支持 `action` 和 `abac`",
+                        "不支持的属性参数，仅支持 `action`、`resource` 和 `abac`",
                     ))
                 },
             }
@@ -527,7 +567,11 @@ impl Parse for CheckAbacAttr {
                 "#[check_abac] 需要 `abac` 参数，例如 #[check_abac(action = \"...\", abac = \"resource.user_id == principal.id\")]",
             )
         })?;
-        Ok(Self { action, abac })
+        Ok(Self {
+            action,
+            resource,
+            abac,
+        })
     }
 }
 
@@ -661,14 +705,16 @@ fn expand_check_with_args(method: &str, args: &[String], item_fn: ItemFn) -> Tok
 ///
 /// 生成两段检查代码：
 /// 1. RBAC 检查（始终）：`BulwarkUtil::check_permission(permission)` / `check_permission_sync(permission)`
-/// 2. ABAC 检查（`abac` 参数存在时）：`bulwark::abac::check_abac_with_policy(permission, expr)`
+/// 2. ABAC 检查（`abac` 参数存在时）：`bulwark::abac::check_abac_with_policy(permission, resource, expr)`
 ///
 /// ABAC 检查在 RBAC 通过后执行，AND 语义：任一失败立即 return 错误响应。
+/// resource 参数由宏属性注入，避免硬编码（vuln-0006 修复）。
 ///
 /// sync fn 的 ABAC 检查通过 `block_in_place` + `block_on` 包装 async 调用，
 /// 与 `BulwarkUtil::check_permission_sync` 的同步包装模式一致。
 fn expand_check_permission_named(
     permission: &str,
+    resource: &str,
     abac: Option<&str>,
     item_fn: ItemFn,
 ) -> TokenStream {
@@ -693,11 +739,12 @@ fn expand_check_permission_named(
     };
 
     // ABAC 检查（仅 abac 参数存在时生成）
+    // resource 参数显式注入，避免硬编码（vuln-0006 修复）
     let abac_check = match abac {
         Some(expr) => match asyncness {
             Asyncness::Async => quote! {
                 if let ::std::result::Result::Err(__bulwark_err) =
-                    ::bulwark::abac::check_abac_with_policy(#permission, #expr).await
+                    ::bulwark::abac::check_abac_with_policy(#permission, #resource, #expr).await
                 {
                     return ::axum::response::IntoResponse::into_response(__bulwark_err);
                 }
@@ -705,11 +752,16 @@ fn expand_check_permission_named(
             Asyncness::Sync => quote! {
                 {
                     let __bulwark_perm = #permission.to_string();
+                    let __bulwark_resource = #resource.to_string();
                     let __bulwark_abac = #expr.to_string();
                     if let ::std::result::Result::Err(__bulwark_err) =
                         ::tokio::task::block_in_place(||
                             ::tokio::runtime::Handle::current().block_on(
-                                ::bulwark::abac::check_abac_with_policy(&__bulwark_perm, &__bulwark_abac)
+                                ::bulwark::abac::check_abac_with_policy(
+                                    &__bulwark_perm,
+                                    &__bulwark_resource,
+                                    &__bulwark_abac,
+                                )
                             )
                         )
                     {
@@ -730,17 +782,23 @@ fn expand_check_permission_named(
 
 /// 展开 `#[check_abac]`：纯 ABAC 校验（无 RBAC 前置）。
 ///
-/// 生成 wrapper 在 fn body 前插入 `::bulwark::abac::check_abac_with_policy(action, expr)` 调用。
+/// 生成 wrapper 在 fn body 前插入 `::bulwark::abac::check_abac_with_policy(action, resource, expr)` 调用。
 /// async fn 直接 `.await`；sync fn 通过 `block_in_place` + `Handle::current().block_on()` 包装。
+/// resource 参数由宏属性注入，避免硬编码（vuln-0006 修复）。
 ///
 /// 与 `expand_check_permission_named` 的 ABAC 部分类似，但不生成 RBAC 检查代码。
-fn expand_check_abac(action: &str, abac_expr: &str, item_fn: ItemFn) -> TokenStream {
+fn expand_check_abac(
+    action: &str,
+    resource: &str,
+    abac_expr: &str,
+    item_fn: ItemFn,
+) -> TokenStream {
     let asyncness = detect_asyncness(&item_fn);
 
     let checks = match asyncness {
         Asyncness::Async => quote! {
             if let ::std::result::Result::Err(__bulwark_err) =
-                ::bulwark::abac::check_abac_with_policy(#action, #abac_expr).await
+                ::bulwark::abac::check_abac_with_policy(#action, #resource, #abac_expr).await
             {
                 return ::axum::response::IntoResponse::into_response(__bulwark_err);
             }
@@ -748,11 +806,16 @@ fn expand_check_abac(action: &str, abac_expr: &str, item_fn: ItemFn) -> TokenStr
         Asyncness::Sync => quote! {
             {
                 let __bulwark_action = #action.to_string();
+                let __bulwark_resource = #resource.to_string();
                 let __bulwark_abac = #abac_expr.to_string();
                 if let ::std::result::Result::Err(__bulwark_err) =
                     ::tokio::task::block_in_place(||
                         ::tokio::runtime::Handle::current().block_on(
-                            ::bulwark::abac::check_abac_with_policy(&__bulwark_action, &__bulwark_abac)
+                            ::bulwark::abac::check_abac_with_policy(
+                                &__bulwark_action,
+                                &__bulwark_resource,
+                                &__bulwark_abac,
+                            )
                         )
                     )
                 {

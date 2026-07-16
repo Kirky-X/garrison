@@ -3,7 +3,7 @@
 
 //! 认证逻辑模块，定义以 token 为入参的登录/登出核心抽象。
 //!
-//! [借鉴 Sa-Token] 登录认证核心逻辑，对应 Sa-Token 的 `StpLogic.login / logout` 方法。
+//! 登录认证核心逻辑，对应 `StpLogic.login / logout` 方法。
 //!
 //! 0.2.0 将 API 改为 token-as-input，与 0.1.0 的 `BulwarkLogic`（依赖 task_local 上下文）解耦，
 //! 便于 `protocol-jwt` 等协议层模块干净复用。

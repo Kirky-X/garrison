@@ -3,7 +3,7 @@
 
 //! 错误类型定义模块。
 //!
-//! [借鉴 Sa-Token] Sa-TokenException 异常体系，提供框架统一的错误类型与 Result 别名。
+//! SaTokenException 异常体系，提供框架统一的错误类型与 Result 别名。
 
 use crate::exception::BulwarkException;
 use thiserror::Error;
@@ -18,13 +18,13 @@ use thiserror::Error;
 /// - 启用 `i18n` feature：依据线程本地 locale 切换中英文（详见 [`crate::i18n`]）
 #[derive(Debug, Error)]
 pub enum BulwarkError {
-    /// 未登录异常（对应 Sa-Token NotLoginException）。
+    /// 未登录异常（对应 NotLoginException）。
     NotLogin(String),
 
-    /// 无权限异常（对应 Sa-Token NotPermissionException）。
+    /// 无权限异常（对应 NotPermissionException）。
     NotPermission(String),
 
-    /// 无角色异常（对应 Sa-Token NotRoleException）。
+    /// 无角色异常（对应 NotRoleException）。
     NotRole(String),
 
     /// Token 无效异常。
@@ -191,7 +191,7 @@ impl BulwarkError {
     // BW-ERR 错误码常量
     // ========================================================================
     // 与 response_parts() 返回的字符串 error_code（如 "DISABLE_SERVICE"）解耦：
-    // - response_parts().1 → 面向 HTTP 响应体（Sa-Token 既有惯例）
+    // - response_parts().1 → 面向 HTTP 响应体（既有惯例）
     // - BW_ERR_XXX 常量 → 面向 audit-log / 监控埋点 / FRD §3.4 数值追溯
 
     /// BW-ERR-009：并发登录冲突（FRD §3.4）。
@@ -359,7 +359,7 @@ impl axum::response::IntoResponse for BulwarkError {
 //
 // [借鉴 miette] miette 推荐使用 dotted kebab-case 形式作为错误代码（如 `bulwark.not_login`），
 // 与 `response_parts()` 返回的 UPPER_SNAKE_CASE error_code（如 `NOT_LOGIN`）解耦：
-// - `response_parts().error_code` → 面向 HTTP 响应体（与 Sa-Token 既有惯例一致）
+// - `response_parts().error_code` → 面向 HTTP 响应体（与 既有惯例一致）
 // - `Diagnostic::code()` → 面向开发者诊断终端（miette 渲染惯例）
 #[cfg(feature = "miette")]
 impl miette::Diagnostic for BulwarkError {
@@ -367,7 +367,7 @@ impl miette::Diagnostic for BulwarkError {
     ///
     /// 形如 `bulwark.not_login` / `bulwark.config` / `bulwark.firewall_blocked`。
     /// 与 `response_parts().1` 返回的 UPPER_SNAKE_CASE error_code 解耦：
-    /// - `response_parts` 的 error_code → 面向 HTTP 响应体（与 Sa-Token 既有惯例一致）
+    /// - `response_parts` 的 error_code → 面向 HTTP 响应体（与 既有惯例一致）
     /// - `Diagnostic::code()` → 面向开发者诊断终端（miette 渲染惯例）
     fn code(&self) -> Option<Box<dyn std::fmt::Display + '_>> {
         let code_str: &'static str = match self {

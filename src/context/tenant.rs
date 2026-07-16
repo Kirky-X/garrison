@@ -81,6 +81,20 @@ pub use tenant_local::TENANT;
 /// 供 `BulwarkLogicDefault::check_permission`（构造 `AuthRequest`）和
 /// `AuditLogListener::to_audit_entry`（填充审计日志 tenant_id）使用。
 /// 在未进入 `TENANT.scope` 时返回 0（向后兼容单租户场景）。
+///
+/// # ⚠️ 已弃用（vuln-0003 修复）
+///
+/// 无上下文时静默返回 0 会导致租户隔离被绕过——多租户环境下 `tenant_id=0`
+/// 可能命中默认租户的数据。新代码应使用：
+/// - [`current_tenant_id_strict`]：返回 `Option<i64>`，调用方显式处理 `None`
+/// - [`current_tenant_id_or_error`]：返回 `BulwarkResult<i64>`，无上下文时 `Err(Config)`
+///
+/// 仅在 `tenant-isolation` feature 关闭的向后兼容场景下使用本函数，
+/// 并应在调用处用 `#[allow(deprecated)]` 显式标注保留原因。
+#[deprecated(
+    since = "0.7.0",
+    note = "使用 current_tenant_id_strict() 或 current_tenant_id_or_error() 替代，避免租户隔离静默绕过（vuln-0003）"
+)]
 pub fn current_tenant_id() -> i64 {
     TENANT.try_get().map(|ctx| ctx.tenant_id).unwrap_or(0)
 }
@@ -102,6 +116,32 @@ pub fn current_tenant_id() -> i64 {
 /// - 多租户严格隔离的缓存 key 前缀生成：无租户上下文不应静默退化为 `tenant:0:`
 pub fn current_tenant_id_strict() -> Option<i64> {
     TENANT.try_get().ok().map(|ctx| ctx.tenant_id)
+}
+
+/// 读取当前 task_local 中的 tenant_id（无上下文时返回 `Err(Config)`，fail-closed）。
+///
+/// 与 [`current_tenant_id_strict`] 的差异：后者返回 `Option<i64>` 由调用方决定如何处理 `None`，
+/// 本函数直接返回 `BulwarkResult<i64>`，无上下文时返回 `Err(BulwarkError::Config)`，
+/// 强制 fail-closed（Rule 12 失败显性化 + 安全框架默认拒绝）。
+///
+/// # 返回
+///
+/// - `Ok(tenant_id)`：当前在 `TENANT.scope` 内，返回上下文中的 `tenant_id`
+/// - `Err(BulwarkError::Config)`：未进入 `TENANT.scope`，租户隔离校验失败
+///
+/// # 适用场景
+///
+/// - 多租户严格隔离的权限校验（`AuthRequest` 构造）：无租户上下文应拒绝请求
+/// - 多租户严格隔离的缓存 key 前缀生成：无租户上下文应报错而非退化为 `tenant:0:`
+///
+/// # vuln-0003 修复
+///
+/// 旧 `current_tenant_id()` 在无上下文时返回 0，可能导致多租户环境下 `tenant_id=0`
+/// 命中默认租户数据，绕过租户隔离。本函数强制 fail-closed，避免静默绕过。
+pub fn current_tenant_id_or_error() -> BulwarkResult<i64> {
+    current_tenant_id_strict().ok_or_else(|| {
+        BulwarkError::Config("无租户上下文，租户隔离校验失败（current_tenant_id_or_error）".into())
+    })
 }
 
 /// 租户解析器 trait。
@@ -391,6 +431,100 @@ mod tests {
             .scope(ctx, async { current_tenant_id_strict() })
             .await;
         assert_eq!(result, Some(42));
+    }
+
+    // ========================================================================
+    // vuln-0003 修复：current_tenant_id_or_error 测试
+    // ========================================================================
+
+    /// vuln-0003: `current_tenant_id_or_error` 在无 `TENANT.scope` 时返回 `Err(Config)`（fail-closed）。
+    ///
+    /// 与旧 `current_tenant_id()` 返回 0 的行为对比：本函数强制返回错误，
+    /// 避免租户隔离被静默绕过（Rule 12 失败显性化）。
+    #[tokio::test]
+    async fn or_error_returns_err_when_no_scope() {
+        let result = current_tenant_id_or_error();
+        assert!(
+            result.is_err(),
+            "无 scope 时应 fail-closed 返回 Err: {:?}",
+            result.ok()
+        );
+        match result {
+            Err(BulwarkError::Config(msg)) => {
+                assert!(
+                    msg.contains("无租户上下文") || msg.contains("租户隔离"),
+                    "错误消息应含 '无租户上下文' 或 '租户隔离'，实际: {}",
+                    msg
+                );
+            },
+            Err(other) => panic!("期望 Config 错误，实际: {:?}", other),
+            Ok(_) => panic!("期望 Err(fail-closed)，实际 Ok"),
+        }
+    }
+
+    /// vuln-0003: `current_tenant_id_or_error` 在 `TENANT.scope` 内返回 `Ok(tenant_id)`。
+    ///
+    /// 在 `TENANT.scope(TenantContext { tenant_id: 42, .. }, async { current_tenant_id_or_error() })` 内
+    /// 断言返回 `Ok(42)`，验证函数能正确读取 task_local 上下文。
+    #[tokio::test]
+    async fn or_error_returns_ok_with_scope() {
+        let ctx = TenantContext {
+            tenant_id: 42,
+            resolved_from: TenantSource::Header,
+        };
+        let result = TENANT
+            .scope(ctx, async { current_tenant_id_or_error() })
+            .await;
+        assert!(result.is_ok(), "scope 内应返回 Ok: {:?}", result.err());
+        assert_eq!(result.unwrap(), 42);
+    }
+
+    /// vuln-0003: `current_tenant_id_or_error` 在不同 tenant_id 值下正确读取。
+    ///
+    /// 覆盖 tenant_id=0（合法的默认租户）、负数、大数等边界值，
+    /// 确保函数不依赖具体 tenant_id 值，只依赖 scope 是否存在。
+    #[tokio::test]
+    async fn or_error_handles_various_tenant_ids() {
+        // tenant_id = 0（合法的默认租户，scope 已进入）
+        let ctx0 = TenantContext {
+            tenant_id: 0,
+            resolved_from: TenantSource::Header,
+        };
+        let result0 = TENANT
+            .scope(ctx0, async { current_tenant_id_or_error() })
+            .await;
+        assert!(result0.is_ok(), "tenant_id=0 + scope 应 Ok");
+        assert_eq!(result0.unwrap(), 0);
+
+        // tenant_id = i64::MAX（边界值）
+        let ctx_max = TenantContext {
+            tenant_id: i64::MAX,
+            resolved_from: TenantSource::Header,
+        };
+        let result_max = TENANT
+            .scope(ctx_max, async { current_tenant_id_or_error() })
+            .await;
+        assert!(result_max.is_ok());
+        assert_eq!(result_max.unwrap(), i64::MAX);
+    }
+
+    /// vuln-0003: 旧 `current_tenant_id()` 已被 `#[deprecated]` 标注，但在 `#[allow(deprecated)]` 下仍可调用。
+    ///
+    /// 验证 deprecation 不破坏向后兼容——现有代码可用 `#[allow(deprecated)]` 显式抑制警告，
+    /// 同时新代码应迁移到 `current_tenant_id_strict` / `current_tenant_id_or_error`。
+    #[tokio::test]
+    #[allow(deprecated)]
+    async fn deprecated_current_tenant_id_still_callable_with_allow() {
+        // 无 scope 时返回 0（向后兼容行为保留）
+        assert_eq!(current_tenant_id(), 0);
+
+        // 有 scope 时返回 tenant_id
+        let ctx = TenantContext {
+            tenant_id: 42,
+            resolved_from: TenantSource::Header,
+        };
+        let result = TENANT.scope(ctx, async { current_tenant_id() }).await;
+        assert_eq!(result, 42);
     }
 
     /// R-tenant-isolation-002: SubdomainTenantResolver 从 Host 提取 subdomain 并查 mapping。

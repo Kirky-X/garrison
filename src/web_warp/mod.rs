@@ -3,7 +3,7 @@
 
 //! warp 框架适配模块。
 //!
-//! [借鉴 Sa-Token] 对应 Sa-Token 的 warp 适配器，
+//! 对应 warp 适配器，
 //! 提供 BulwarkRouter + Filter extractor + BulwarkInterceptor 完整集成。
 //!
 //! ## 设计
@@ -85,7 +85,7 @@ impl Reply for BulwarkError {
 
 /// warp 路由器，收集鉴权路由规则并生成守卫 Filter。
 ///
-/// [借鉴 Sa-Token] 对应 axum 版 `BulwarkRouter`，API 对齐。
+/// 对应 axum 版 `BulwarkRouter`，API 对齐。
 pub struct BulwarkRouter {
     /// 路径 → 注解映射
     pub rules: HashMap<String, Annotation>,

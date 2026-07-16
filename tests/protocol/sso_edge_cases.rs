@@ -149,7 +149,7 @@ async fn ticket_invalid_format_returns_error() {
 ///
 /// 验证当 centerId（在此实现中等价为 client_id）映射不存在时返回错误。
 ///
-/// SSO 模块未实现独立的 centerId 映射概念（Sa-Token 中的 centerId → login_id 映射），
+/// SSO 模块未实现独立的 centerId 映射概念（centerId → login_id 映射），
 /// 而是通过 `client_id` 参数实现客户端隔离。此测试验证：用未注册的 client_id
 /// 校验已签发的 ticket 时，返回 `InvalidToken` 错误（client_id 不匹配，0.4.1 修复 M5：
 /// 原为 Config，现改为 InvalidToken，认证失败语义更准确），等价于

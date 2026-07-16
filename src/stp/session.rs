@@ -31,7 +31,7 @@ use tokio::sync::Mutex as TokioMutex;
 
 /// 会话逻辑 trait，定义登录/登出/踢出/校验完整契约。
 ///
-/// [借鉴 Sa-Token] 对应 `StpLogic` 的会话生命周期部分。
+/// 对应 `StpLogic` 的会话生命周期部分。
 ///
 /// # 方法分组
 ///
@@ -516,7 +516,7 @@ impl BulwarkLogicDefault {
         }
 
         // is_concurrent=false: 根据 replaced_login_exit_mode 决定行为
-        // - OldDevice：踢出旧设备的所有会话（默认，对应 Sa-Token 语义）
+        // - OldDevice：踢出旧设备的所有会话（默认，对应 既有语义）
         // - NewDevice：若存在有效旧会话则拒绝新登录，保留旧设备
         // 注：is_share=true 时 is_concurrent 必为 true（T006 validate 保证），两分支互斥
         if !self.config.is_concurrent {

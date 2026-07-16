@@ -3,7 +3,7 @@
 
 //! HTTP Digest 认证子模块（RFC 7616）。
 //!
-//! [借鉴 Sa-Token] 对应 Sa-Token 的 Digest 认证能力，
+//! 对应 Digest 认证能力，
 //! 基于 `md5` / `sha2` crate 实现摘要认证。
 //!
 //! VULN-0016 修复后：

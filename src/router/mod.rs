@@ -3,7 +3,7 @@
 
 //! 路由模块，提供路由器与拦截器抽象。
 //!
-//! [借鉴 Sa-Token] 对应 Sa-Token 的路由拦截器（`SaInterceptor`），
+//! 对应 路由拦截器（`SaInterceptor`），
 //! 适配 axum Web 框架的路由层。
 //!
 //! ## 设计
@@ -26,7 +26,7 @@ use std::sync::Arc;
 
 /// 拦截器 trait，定义请求预处理抽象。
 ///
-/// [借鉴 Sa-Token] 对应 `SaInterceptor`，根据 annotation 执行鉴权逻辑。
+/// 对应 `SaInterceptor`，根据 annotation 执行鉴权逻辑。
 ///
 /// 实现方在 `pre_handle` 中根据 annotation 调用 `BulwarkUtil::check_login` 等方法。
 /// middleware 在执行 handler 前调用此方法，返回 `Err` 时短路返回错误响应。
@@ -175,7 +175,7 @@ mod web_axum {
 
     /// 路由器，包装 `axum::Router` 并管理鉴权路由规则。
     ///
-    /// [借鉴 Sa-Token] 对应 Sa-Token 的路由拦截器配置。
+    /// 对应 路由拦截器配置。
     ///
     /// # 使用
     ///

@@ -47,8 +47,8 @@ async fn async_api_key_ns_handler() -> &'static str {
     "ok"
 }
 
-// v0.7.0 命名参数形式
-#[check_permission(permission = "order:read", abac = "resource.user_id == principal.id")]
+// v0.7.0 命名参数形式（含 resource，vuln-0006 修复）
+#[check_permission(permission = "order:read", resource = "Resource::\"order\"", abac = "resource.user_id == principal.id")]
 async fn async_named_abac_handler() -> &'static str {
     "ok"
 }

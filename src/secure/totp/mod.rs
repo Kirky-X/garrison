@@ -3,7 +3,7 @@
 
 //! TOTP 子模块，时间一次性密码实现（RFC 6238）。
 //!
-//! [借鉴 Sa-Token] 基于 `totp-rs` crate 实现，
+//! 基于 `totp-rs` crate 实现，
 //! 提供二步验证（2FA）能力。
 //!
 //! 使用 SHA1 算法（RFC 6238 默认，兼容主流 Authenticator App），

@@ -3,7 +3,7 @@
 
 //! 配置模块，提供 BulwarkConfig 全局配置。
 //!
-//! [借鉴 Sa-Token] 对应 Sa-Token 的 `SaTokenConfig`，
+//! 对应 `SaTokenConfig`，
 //! 定义 Token 名称、超时、持久化等配置项。
 //!
 //! ## 配置源
@@ -35,7 +35,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tokio::sync::watch;
 
-/// Token 风格枚举（对应 Sa-Token 的 token 风格）。
+/// Token 风格枚举（对应 token 风格）。
 ///
 /// 配置校验——token_style 必须是以下 4 个合法值之一。
 pub const TOKEN_STYLES: &[&str] = &["uuid", "random_64", "simple", "jwt"];
@@ -49,7 +49,7 @@ pub const DEFAULT_TOKEN_NAME: &str = "bulwark_token";
 /// 默认 Token 超时秒数（30 天）。
 pub const DEFAULT_TIMEOUT: i64 = 2_592_000;
 
-/// 默认活动超时检测值（-1 表示不启用，保留 Sa-Token 语义）。
+/// 默认活动超时检测值（-1 表示不启用，保留 既有语义）。
 pub const DEFAULT_ACTIVE_TIMEOUT: i64 = -1;
 
 /// 默认 Cookie Secure 标志（生产环境应为 true，dev 环境可设为 false 以支持 HTTP 调试）。
@@ -70,7 +70,7 @@ pub const DEFAULT_SSO_TICKET_TTL_SECONDS: u64 = 60;
 /// 默认 remember-me 超时秒数（90 天，必须 > DEFAULT_TIMEOUT 30 天）。
 pub const REMEMBER_ME_DEFAULT_TIMEOUT: i64 = 7_776_000;
 
-/// 默认会话悬停超时秒数（-1 = 不启用，保留 Sa-Token 语义）。
+/// 默认会话悬停超时秒数（-1 = 不启用，保留 既有语义）。
 pub const DEFAULT_SESSION_HOVER_TIMEOUT: i64 = -1;
 
 /// 默认前后端分离模式（false = Cookie 模式，true = Token Header 模式）。
@@ -158,7 +158,7 @@ pub const ENV_PREFIX: &str = "BULWARK_";
 /// 顶人下线策略（is_concurrent=false 时生效）。
 ///
 /// 控制 `is_concurrent=false` 场景下新设备登录时的行为：
-/// - `OldDevice`：踢出旧设备，允许新设备登录（默认，对应 Sa-Token 语义）
+/// - `OldDevice`：踢出旧设备，允许新设备登录（默认，对应 既有语义）
 /// - `NewDevice`：拒绝新设备登录，保留旧设备
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -287,7 +287,7 @@ fn default_jwt_secret() -> JwtSecret {
 
 /// 全局配置结构体，定义框架运行参数。
 ///
-/// [借鉴 Sa-Token] 对应 `SaTokenConfig`。
+/// 对应 `SaTokenConfig`。
 ///
 /// # 字段说明
 ///
@@ -328,7 +328,7 @@ pub struct BulwarkConfig {
     /// Token 超时秒数（必须 > 0）。
     pub timeout: i64,
 
-    /// 活动超时检测（-1 表示不启用，保留 Sa-Token 语义）。
+    /// 活动超时检测（-1 表示不启用，保留 既有语义）。
     pub active_timeout: i64,
 
     /// 是否从 Cookie 中读取 Token。
@@ -452,20 +452,20 @@ pub struct BulwarkConfig {
 
     /// 是否允许并发登录（true = 同一账号可同时在多设备登录）。
     ///
-    /// [借鉴 Sa-Token] 对应 `isConcurrent` 配置。默认 true。
+    /// 对应 `isConcurrent` 配置。默认 true。
     /// 设为 false 时，新登录会先踢出该账号的所有现有会话。
     pub is_concurrent: bool,
 
     /// 是否共享 Token（true = 同一账号多登录复用同一 Token）。
     ///
-    /// [借鉴 Sa-Token] 对应 `isShare` 配置。默认 false。
+    /// 对应 `isShare` 配置。默认 false。
     /// 设为 true 时，同一账号再次登录返回已有 Token，不创建新会话。
     /// 要求 `is_concurrent=true`，否则 `validate()` 报错。
     pub is_share: bool,
 
     /// 最大登录数量（0 = 不限制，>0 = 超出时踢出最早登录的会话）。
     ///
-    /// [借鉴 Sa-Token] 对应 `maxLoginCount` 配置。默认 0。
+    /// 对应 `maxLoginCount` 配置。默认 0。
     /// 登录后若该账号的活跃 Token 数超过此值，按 `last_active_time` 升序踢出最早的。
     pub max_login_count: u32,
 
@@ -481,14 +481,14 @@ pub struct BulwarkConfig {
 
     /// 顶人下线策略（is_concurrent=false 时生效）。默认 `OldDevice`。
     ///
-    /// [借鉴 Sa-Token] `is_concurrent=false` 时新设备登录的行为：
+    /// `is_concurrent=false` 时新设备登录的行为：
     /// - `OldDevice`：踢出旧设备，允许新设备登录（默认）
     /// - `NewDevice`：拒绝新设备登录，保留旧设备
     pub replaced_login_exit_mode: ReplacedLoginExitMode,
 
     /// 溢出处理策略（max_login_count 超限时生效）。默认 `Logout`。
     ///
-    /// [借鉴 Sa-Token] `max_login_count > 0` 且登录数量超限时的处理方式：
+    /// `max_login_count > 0` 且登录数量超限时的处理方式：
     /// - `Logout`：登出最旧会话（默认，触发 Logout 事件）
     /// - `Kickout`：踢出最旧会话（触发 Kickout 事件）
     /// - `Replaced`：顶替最旧会话（触发 Replaced 事件）

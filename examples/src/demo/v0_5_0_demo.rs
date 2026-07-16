@@ -230,6 +230,7 @@ fn demo_keycloak_config() -> DemoResult<()> {
         client_id: "bulwark-rp".into(),
         client_secret: Some("client-secret-123".into()),
         redirect_uri: "https://app.example.com/cb".into(),
+        expected_iss: "https://kc.example.com:8443/realms/myrealm".into(),
     };
     println!("    ✓ KeycloakConfig 已构造");
     println!("      → discovery_url: {}", kc_config.discovery_url());

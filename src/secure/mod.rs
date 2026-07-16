@@ -3,7 +3,7 @@
 
 //! 安全模块，提供 TOTP / 签名 / Basic / Digest 验证。
 //!
-//! [借鉴 Sa-Token] 对应 Sa-Token 的安全模块（`secure` 包），
+//! 对应 安全模块（`secure` 包），
 //! 提供二步验证、签名校验、HTTP Basic/Digest 认证能力。
 //!
 //! 该模块在启用任一 `secure-*` 特性时编译（见 `lib.rs` 的 `#[cfg(any(...))]`）。
@@ -13,7 +13,7 @@ use crate::error::{BulwarkError, BulwarkResult};
 
 /// TOTP 验证器 trait，定义动态验证码校验抽象。
 ///
-/// [借鉴 Sa-Token] 对应 Sa-Token 的 TOTP 能力，
+/// 对应 TOTP 能力，
 /// 通过 `totp-rs` crate 实现基于时间的一次性密码。
 ///
 /// 具体实现见 `totp::TotpHandler`（启用 `secure-totp` 特性）。
@@ -38,7 +38,7 @@ pub trait TotpVerifier {
 
 /// 签名验证器 trait，定义请求签名校验抽象。
 ///
-/// [借鉴 Sa-Token] 对应 Sa-Token 的签名校验能力，
+/// 对应 签名校验能力，
 /// 通过 `sha2` / `hmac` / `base64` 实现网关签名认证。
 #[cfg(feature = "secure-sign")]
 pub trait SignVerifier {

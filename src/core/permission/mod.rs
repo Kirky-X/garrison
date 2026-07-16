@@ -3,7 +3,7 @@
 
 //! 权限校验模块，定义以 login_id 为入参的权限与角色校验抽象。
 //!
-//! [借鉴 Sa-Token] 权限认证核心逻辑，对应 Sa-Token 的 `StpLogic.checkPermission / checkRole` 方法。
+//! 权限认证核心逻辑，对应 `StpLogic.checkPermission / checkRole` 方法。
 //!
 //! 0.2.0 将 API 改为 login_id-as-input，与 token 格式无关，便于在任意 token 风格下复用。
 //!

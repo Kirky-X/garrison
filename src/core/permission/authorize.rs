@@ -20,7 +20,7 @@
 //!
 //! | 字段 | design.md D6 | 现有 decision.rs | 决策 |
 //! |---|---|---|---|
-//! | 主体标识 | `principal: i64` | `login_id: i64` | 保留 `login_id`（Sa-Token 惯例，Rule 11） |
+//! | 主体标识 | `principal: i64` | `login_id: i64` | 保留 `login_id`（既有惯例，Rule 11） |
 //! | 租户隔离 | 缺失 | `tenant_id: i64` | 保留（现有更全） |
 //! | 上下文 | `HashMap<String, Value>` | `serde_json::Value` | 保留 `serde_json::Value`（更灵活） |
 //! | 决策原因 | `String` | `DecisionReason` 枚举 | 保留枚举（更类型安全） |

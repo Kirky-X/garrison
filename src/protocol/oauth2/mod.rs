@@ -3,7 +3,7 @@
 
 //! OAuth2 协议模块，提供 Authorization Code / Client Credentials / Password / Refresh Token 四种授权流程。
 //!
-//! [借鉴 Sa-Token] 对应 Sa-Token 的 OAuth2 协议支持，
+//! 对应 OAuth2 协议支持，
 //! 基于 `reqwest` crate 实现 HTTP 请求。
 //!
 //! 仅在启用 `protocol-oauth2` 特性时编译。

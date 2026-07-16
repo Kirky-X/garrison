@@ -3,7 +3,7 @@
 
 //! 注解模块，定义鉴权注解枚举与 axum extractor。
 //!
-//! [借鉴 Sa-Token] 对应 Sa-Token 的注解体系（`@SaCheckLogin` 等），
+//! 对应 注解体系（`@SaCheckLogin` 等），
 //! Rust 中以枚举变体表达（用于 router 中间件配置），
 //! 同时提供 axum extractor（`CheckLogin` 等）用于 handler 参数提取。
 //!
@@ -73,7 +73,7 @@ impl ModeSpec for Loose {
 
 /// 鉴权注解枚举，列出 16 个核心注解。
 ///
-/// [借鉴 Sa-Token] 对应 Sa-Token 的注解集合。
+/// 对应 注解集合。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Annotation {
     /// 检查登录（对应 `@SaCheckLogin`）。
@@ -172,7 +172,7 @@ impl std::fmt::Display for AnnotationMode {
 impl Annotation {
     /// 获取注解的字符串名称。
     ///
-    /// 返回对应 Sa-Token 注解的字符串标识（用于 router 中间件配置与日志记录）。
+    /// 返回对应 注解的字符串标识（用于 router 中间件配置与日志记录）。
     pub fn name(&self) -> &'static str {
         match self {
             Annotation::CheckLogin => "CheckLogin",

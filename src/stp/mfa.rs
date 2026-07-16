@@ -14,7 +14,7 @@ use async_trait::async_trait;
 
 /// MFA 逻辑 trait，定义二级认证与账号禁用校验契约。
 ///
-/// [借鉴 Sa-Token] 对应 `StpLogic` 的 `checkSafe` / `checkDisable` 部分。
+/// 对应 `StpLogic` 的 `checkSafe` / `checkDisable` 部分。
 ///
 /// # 默认实现（向后兼容）
 ///

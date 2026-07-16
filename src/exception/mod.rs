@@ -3,7 +3,7 @@
 
 //! 异常模块，定义框架异常类型。
 //!
-//! [借鉴 Sa-Token] 对应 Sa-Token 的异常体系，
+//! 对应 异常体系，
 //! 提供细化异常类型与统一错误枚举。
 
 use std::collections::HashMap;
@@ -13,7 +13,7 @@ pub use crate::error::BulwarkError;
 
 /// 未登录异常，表示请求缺少有效登录态。
 ///
-/// [借鉴 Sa-Token] 对应 `NotLoginException`。
+/// 对应 `NotLoginException`。
 #[derive(Debug, Clone)]
 pub struct NotLoginException {
     /// 异常消息。
@@ -29,7 +29,7 @@ pub struct NotLoginException {
 /// 业务方可通过 `BulwarkException::new(code, msg).with_token(t).build()` 链式构造，
 /// 并通过 `Into<BulwarkError>` 转换为 `BulwarkError::Exception` 上抛。
 ///
-/// [借鉴 Sa-Token] 对应 Sa-TokenException 的"携带上下文"语义。
+/// 对应 SaTokenException 的"携带上下文"语义。
 #[derive(Debug, Clone)]
 pub struct BulwarkException {
     /// 业务错误码（如 -1 表示未登录）。

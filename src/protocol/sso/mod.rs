@@ -3,7 +3,7 @@
 
 //! 单点登录 (SSO) 协议模块，提供 ticket 签发/校验/销毁能力。
 //!
-//! [借鉴 Sa-Token] 对应 Sa-Token 的 SSO 单点登录支持，
+//! 对应 SSO 单点登录支持，
 //! 通过 `BulwarkDao` 存储 ticket（TTL 60 秒，一次性使用）。
 //!
 //! 仅在启用 `protocol-sso` 特性时编译。

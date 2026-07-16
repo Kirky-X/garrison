@@ -3,7 +3,7 @@
 
 //! 监听器模块，提供事件订阅抽象与编译期注册。
 //!
-//! [借鉴 Sa-Token] 对应 Sa-Token 的 `SaTokenListener`，
+//! 对应 `SaTokenListener`，
 //! 通过 `inventory` crate 实现编译期监听器注册（替代 Java SPI）。
 //!
 //! 与 `plugin` 模块的区别：

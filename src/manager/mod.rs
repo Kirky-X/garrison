@@ -3,7 +3,7 @@
 
 //! 管理器模块，提供全局管理器单例与编译期工厂注册。
 //!
-//! [借鉴 Sa-Token] 对应 Sa-Token 的 `SaManager`，
+//! 对应 `SaManager`，
 //! 统筹 DAO、配置、策略等组件的全局生命周期。
 //!
 //! ## 设计
@@ -61,7 +61,7 @@ pub mod explicit;
 
 /// 全局管理器，统筹 `BulwarkLogicDefault` 的生命周期。
 ///
-/// [借鉴 Sa-Token] 对应 `SaManager`，
+/// 对应 `SaManager`，
 /// 持有全局 `Arc<BulwarkLogicDefault>` 引用，提供静态方法入口。
 ///
 /// # 初始化
@@ -155,7 +155,7 @@ impl BulwarkManager {
         let timeout = u64::try_from(config.timeout)
             .map_err(|_| BulwarkError::Config(format!("timeout 溢出 u64: {}", config.timeout)))?;
         let active_timeout = if config.active_timeout < 0 {
-            // -1 表示不启用 activity 超时，使用 timeout 兜底（保留 Sa-Token 语义）
+            // -1 表示不启用 activity 超时，使用 timeout 兜底（保留 既有语义）
             timeout
         } else {
             u64::try_from(config.active_timeout).map_err(|_| {

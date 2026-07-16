@@ -3,7 +3,7 @@
 
 //! dbnexus 集成模块。
 //!
-//! [借鉴 Sa-Token] 对应 Sa-Token 的二级持久化层（DB），
+//! 对应 二级持久化层（DB），
 //! 通过 dbnexus 0.2 提供 SQLite/PostgreSQL/MySQL 连接池、Session、迁移能力。
 //!
 //! Bulwark 不定义 `BulwarkDb` trait，直接复用 `dbnexus::DbPool`：

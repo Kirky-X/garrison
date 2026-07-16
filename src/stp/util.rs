@@ -159,7 +159,7 @@ pub enum JwtMode {
 
 /// 工具结构体，提供静态方法入口。
 ///
-/// [借鉴 Sa-Token] 对应 `StpUtil`，是面向使用者的便捷入口。
+/// 对应 `StpUtil`，是面向使用者的便捷入口。
 /// 内部委托给 `BulwarkManager::logic()` 全局单例。
 ///
 /// # 使用前提

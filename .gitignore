@@ -12,7 +12,7 @@ docs/archive/
 docs/origin/
 # OpenSpec 规划工件（change/archive/specs）
 openspec/
-# 第三方参考源码（Sa-Token v1.45.0）——锚定根目录，避免误匹配 tests/protocol/temp_edge_cases.rs
+# 第三方参考源码（早期领域建模参考）——锚定根目录，避免误匹配 tests/protocol/temp_edge_cases.rs
 /temp*
 # Trae IDE 技能与命令配置
 .trae/

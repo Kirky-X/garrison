@@ -1190,7 +1190,7 @@ impl BulwarkSession {
 
     /// 按账号登出：删除所有关联 token + Account-Session。
     ///
-    /// 对应 Sa-Token 的 `logout(login_id)` 语义。
+    /// 对应 `logout(login_id)` 语义。
     ///
     /// # 参数
     /// - `login_id`: 登录主体标识（接受 `String` / `&str`）。

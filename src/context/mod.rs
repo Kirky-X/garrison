@@ -3,7 +3,7 @@
 
 //! 上下文模块，提供请求 / 响应 / 存储上下文抽象。
 //!
-//! [借鉴 Sa-Token] 对应 Sa-Token 的上下文抽象层，
+//! 对应 上下文抽象层，
 //! 通过 trait 隔离 Web 框架差异，实现框架无关的鉴权逻辑。
 //!
 //! ## 架构
@@ -81,7 +81,7 @@ pub struct BulwarkPrincipal {
 
 /// 上下文 trait，提供请求访问入口。
 ///
-/// [借鉴 Sa-Token] 对应 `SaTokenContext`，
+/// 对应 `SaTokenContext`，
 /// 各 Web 框架适配需实现此 trait。
 ///
 /// # 设计
@@ -96,7 +96,7 @@ pub trait BulwarkContext {
 
 /// 请求抽象 trait，提供 HTTP 请求数据访问。
 ///
-/// [借鉴 Sa-Token] 对应 `SaTokenRequest`。
+/// 对应 `SaTokenRequest`。
 pub trait BulwarkRequest {
     /// 获取请求路径。
     fn path(&self) -> BulwarkResult<String>;
@@ -142,7 +142,7 @@ pub trait BulwarkRequest {
 
 /// 响应抽象 trait，提供 HTTP 响应数据写入。
 ///
-/// [借鉴 Sa-Token] 对应 `SaTokenResponse`。
+/// 对应 `SaTokenResponse`。
 pub trait BulwarkResponse {
     /// 设置响应状态码。
     ///
@@ -207,7 +207,7 @@ pub trait BulwarkResponse {
 
 /// 存储抽象 trait，提供请求级临时数据存储。
 ///
-/// [借鉴 Sa-Token] 对应 `SaTokenStorage`，
+/// 对应 `SaTokenStorage`，
 /// 用于在单次请求范围内传递数据（如 trace_id、用户上下文）。
 pub trait BulwarkStorage {
     /// 存储键值对。

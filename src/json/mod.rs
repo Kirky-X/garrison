@@ -3,7 +3,7 @@
 
 //! JSON 模块，提供 JSON 模板与序列化抽象。
 //!
-//! [借鉴 Sa-Token] 对应 Sa-Token 的 JSON 模板层，
+//! 对应 JSON 模板层，
 //! 隔离具体 JSON 库（serde_json / simd-json 等）。
 //!
 //! ## 0.2.0 变更
@@ -110,7 +110,7 @@ fn render_value(
 
 /// 序列化抽象 trait，提供类型化的序列化/反序列化。
 ///
-/// [借鉴 Sa-Token] 对应 `SaSerializerTemplate`，0.1.0 的 `BulwarkSerializerTemplate` 重命名为此。
+/// 对应 `SaSerializerTemplate`，0.1.0 的 `BulwarkSerializerTemplate` 重命名为此。
 pub trait BulwarkSerializer {
     /// 将类型化对象序列化为 JSON 字符串。
     ///
