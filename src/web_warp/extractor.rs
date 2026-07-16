@@ -27,6 +27,7 @@
 //! ```
 
 use crate::config::BulwarkConfig;
+use crate::context::token_extract::extract_token_from_headers;
 use crate::context::BulwarkPrincipal;
 use crate::error::BulwarkError;
 use crate::stp::BulwarkUtil;
@@ -57,7 +58,7 @@ pub fn bulwark_principal(
         .and_then(move |headers: HeaderMap| {
             let config = config.clone();
             async move {
-                let token = super::extract_token_from_headers(&headers, &config)
+                let token = extract_token_from_headers(&headers, &config)
                     .map_err(|e| warp::reject::custom(super::BulwarkRejection(e)))?
                     .ok_or_else(|| {
                         warp::reject::custom(super::BulwarkRejection(BulwarkError::NotLogin(
@@ -124,118 +125,12 @@ pub fn tenant_context(
 
 #[cfg(test)]
 mod tests {
+    use super::super::mock::{MockDao, MockInterface};
     use super::*;
     use crate::dao::BulwarkDao;
     use crate::manager::BulwarkManager;
     use crate::stp::{BulwarkInterface, BulwarkUtil};
-    use async_trait::async_trait;
-    use parking_lot::Mutex;
     use serial_test::serial;
-    use std::collections::HashMap;
-    use std::time::{Duration, Instant};
-
-    // ----------------------------------------------------------------
-    // MockDao / MockInterface（复用 web_warp/mod.rs 测试模式）
-    // ----------------------------------------------------------------
-
-    struct MockDao {
-        store: Mutex<HashMap<String, (String, Option<Instant>)>>,
-    }
-
-    impl MockDao {
-        fn new() -> Self {
-            Self {
-                store: Mutex::new(HashMap::new()),
-            }
-        }
-    }
-
-    #[async_trait]
-    impl BulwarkDao for MockDao {
-        async fn get(&self, key: &str) -> Result<Option<String>, BulwarkError> {
-            let mut store = self.store.lock();
-            match store.get(key) {
-                Some((value, expire_at)) => {
-                    if let Some(deadline) = expire_at {
-                        if Instant::now() >= *deadline {
-                            store.remove(key);
-                            return Ok(None);
-                        }
-                    }
-                    Ok(Some(value.clone()))
-                },
-                None => Ok(None),
-            }
-        }
-
-        async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> Result<(), BulwarkError> {
-            let expire_at = if ttl_seconds == 0 {
-                None
-            } else {
-                Some(Instant::now() + Duration::from_secs(ttl_seconds))
-            };
-            self.store
-                .lock()
-                .insert(key.to_string(), (value.to_string(), expire_at));
-            Ok(())
-        }
-
-        async fn update(&self, key: &str, value: &str) -> Result<(), BulwarkError> {
-            let mut store = self.store.lock();
-            match store.get_mut(key) {
-                Some((existing, _)) => {
-                    *existing = value.to_string();
-                    Ok(())
-                },
-                None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
-            }
-        }
-
-        async fn expire(&self, key: &str, seconds: u64) -> Result<(), BulwarkError> {
-            let mut store = self.store.lock();
-            match store.get_mut(key) {
-                Some((_, expire_at)) => {
-                    *expire_at = if seconds == 0 {
-                        None
-                    } else {
-                        Some(Instant::now() + Duration::from_secs(seconds))
-                    };
-                    Ok(())
-                },
-                None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
-            }
-        }
-
-        async fn delete(&self, key: &str) -> Result<(), BulwarkError> {
-            self.store.lock().remove(key);
-            Ok(())
-        }
-    }
-
-    struct MockInterface {
-        permissions: HashMap<String, Vec<String>>,
-        roles: HashMap<String, Vec<String>>,
-    }
-
-    impl MockInterface {
-        fn new() -> Self {
-            Self {
-                permissions: HashMap::new(),
-                roles: HashMap::new(),
-            }
-        }
-    }
-
-    #[async_trait]
-    impl BulwarkInterface for MockInterface {
-        async fn get_permission_list(&self, login_id: &str) -> Result<Vec<String>, BulwarkError> {
-            Ok(self.permissions.get(login_id).cloned().unwrap_or_default())
-        }
-
-        async fn get_role_list(&self, login_id: &str) -> Result<Vec<String>, BulwarkError> {
-            Ok(self.roles.get(login_id).cloned().unwrap_or_default())
-        }
-    }
 
     fn make_config() -> BulwarkConfig {
         let mut config = BulwarkConfig::default_config();

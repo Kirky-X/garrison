@@ -3,14 +3,17 @@
 
 //! actix-web Extractor 适配器。
 //!
-//! 提供 `BulwarkPrincipal` extractor：从 `Authorization: Bearer <token>` header
-//! 解析当前登录用户 ID，供 handler 参数注入使用。
+//! 集中提供 actix-web `FromRequest` extractor 实现：
+//! - `BulwarkPrincipal`：从 `Authorization: Bearer <token>` header 解析当前登录用户 ID，
+//!   携带 `login_id` 字段供 handler 直接读取。
+//! - `CheckLogin` / `CheckRole` / `CheckPermission`：per-handler 鉴权 extractor，
+//!   仅执行鉴权（返回 unit-like struct），struct 声明位于 `mod.rs`。
+//! - `TenantContext`（feature gate `tenant-isolation`）：从 `X-Tenant-Id` header 解析租户 ID。
 //!
 //! ## 设计
 //!
-//! - 与现有 `CheckLogin` / `CheckRole` / `CheckPermission` extractor 互补：
-//!   现有 extractor 仅执行鉴权（返回 unit-like struct），`BulwarkPrincipal` 携带
-//!   `login_id` 字段供 handler 直接读取当前用户身份。
+//! - `BulwarkPrincipal` 与 `CheckLogin`/`CheckRole`/`CheckPermission` 互补：
+//!   前者携带身份信息，后者仅做鉴权校验。
 //! - 与 `BulwarkContext` trait（请求/响应/存储上下文抽象层）解耦：trait 名字保持不变，
 //!   extractor 使用不同名称 `BulwarkPrincipal` 避免命名冲突（Rule 7 决策）。
 //!
@@ -27,6 +30,8 @@
 // ============================================================================
 // BulwarkPrincipal：携带 login_id 的 extractor
 // ============================================================================
+
+use crate::context::token_extract::extract_token_from_headers;
 
 pub use crate::context::BulwarkPrincipal;
 
@@ -48,7 +53,7 @@ impl actix_web::FromRequest for BulwarkPrincipal {
             .unwrap_or_else(|| std::sync::Arc::new(crate::config::BulwarkConfig::default_config()));
 
         Box::pin(async move {
-            let token = super::extract_token_from_headers(&headers, &config)?
+            let token = extract_token_from_headers(&headers, &config)?
                 .ok_or_else(|| crate::error::BulwarkError::NotLogin("未提供 token".to_string()))?;
 
             let login_id = crate::stp::BulwarkUtil::get_login_id_by_token(&token)
@@ -58,6 +63,146 @@ impl actix_web::FromRequest for BulwarkPrincipal {
                 })?;
 
             Ok(BulwarkPrincipal { login_id })
+        })
+    }
+}
+
+// ============================================================================
+// CheckLogin / CheckRole / CheckPermission extractors（per-handler 鉴权）
+// ============================================================================
+//
+// 这三个 extractor 与上方 `BulwarkPrincipal` 互补：
+// - `BulwarkPrincipal` 携带 login_id 供 handler 读取
+// - `CheckLogin` / `CheckRole` / `CheckPermission` 仅执行鉴权，返回 unit-like struct
+//
+// struct 声明位于 `mod.rs`，此处仅提供 `FromRequest` 实现。
+
+/// CheckLogin extractor：验证用户已登录。
+///
+/// 在 handler 参数中使用：
+/// ```ignore
+/// async fn handler(_auth: CheckLogin) -> &'static str { "ok" }
+/// ```
+impl actix_web::FromRequest for super::CheckLogin {
+    type Error = crate::error::BulwarkError;
+    type Future = std::pin::Pin<Box<dyn std::future::Future<Output = Result<Self, Self::Error>>>>;
+
+    fn from_request(req: &actix_web::HttpRequest, _: &mut actix_web::dev::Payload) -> Self::Future {
+        let headers = req.headers().clone();
+        let config = req
+            .app_data::<actix_web::web::Data<std::sync::Arc<crate::config::BulwarkConfig>>>()
+            .map(|d| d.get_ref().clone())
+            .unwrap_or_else(|| std::sync::Arc::new(crate::config::BulwarkConfig::default_config()));
+
+        Box::pin(async move {
+            let token = extract_token_from_headers(&headers, &config)?
+                .ok_or_else(|| crate::error::BulwarkError::NotLogin("未提供 token".to_string()))?;
+
+            let result: crate::error::BulwarkResult<()> =
+                crate::stp::with_current_token(token, async {
+                    let logged_in = crate::stp::BulwarkUtil::check_login().await?;
+                    if !logged_in {
+                        return Err(crate::error::BulwarkError::NotLogin("未登录".to_string()));
+                    }
+                    Ok(())
+                })
+                .await;
+
+            result.map(|_| super::CheckLogin)
+        })
+    }
+}
+
+/// CheckRole extractor：验证用户持有指定角色。
+impl actix_web::FromRequest for super::CheckRole {
+    type Error = crate::error::BulwarkError;
+    type Future = std::pin::Pin<Box<dyn std::future::Future<Output = Result<Self, Self::Error>>>>;
+
+    fn from_request(req: &actix_web::HttpRequest, _: &mut actix_web::dev::Payload) -> Self::Future {
+        let headers = req.headers().clone();
+        let config = req
+            .app_data::<actix_web::web::Data<std::sync::Arc<crate::config::BulwarkConfig>>>()
+            .map(|d| d.get_ref().clone())
+            .unwrap_or_else(|| std::sync::Arc::new(crate::config::BulwarkConfig::default_config()));
+
+        // 角色从 header X-Bulwark-Role 或 query param role 获取
+        let role = req
+            .headers()
+            .get("x-bulwark-role")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string())
+            .or_else(|| {
+                req.uri().query().and_then(|q| {
+                    q.split('&').find_map(|kv| {
+                        let mut parts = kv.splitn(2, '=');
+                        if parts.next() == Some("role") {
+                            parts.next().map(|s| s.to_string())
+                        } else {
+                            None
+                        }
+                    })
+                })
+            })
+            .unwrap_or_default();
+
+        Box::pin(async move {
+            let token = extract_token_from_headers(&headers, &config)?
+                .ok_or_else(|| crate::error::BulwarkError::NotLogin("未提供 token".to_string()))?;
+
+            let result: crate::error::BulwarkResult<()> =
+                crate::stp::with_current_token(token, async {
+                    crate::stp::BulwarkUtil::check_role(&role).await
+                })
+                .await;
+
+            result.map(|_| super::CheckRole(role))
+        })
+    }
+}
+
+/// CheckPermission extractor：验证用户持有指定权限。
+impl actix_web::FromRequest for super::CheckPermission {
+    type Error = crate::error::BulwarkError;
+    type Future = std::pin::Pin<Box<dyn std::future::Future<Output = Result<Self, Self::Error>>>>;
+
+    fn from_request(req: &actix_web::HttpRequest, _: &mut actix_web::dev::Payload) -> Self::Future {
+        let headers = req.headers().clone();
+        let config = req
+            .app_data::<actix_web::web::Data<std::sync::Arc<crate::config::BulwarkConfig>>>()
+            .map(|d| d.get_ref().clone())
+            .unwrap_or_else(|| std::sync::Arc::new(crate::config::BulwarkConfig::default_config()));
+
+        // 权限从 header X-Bulwark-Permission 或 query param permission 获取
+        let permission = req
+            .headers()
+            .get("x-bulwark-permission")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string())
+            .or_else(|| {
+                req.uri().query().and_then(|q| {
+                    q.split('&').find_map(|kv| {
+                        let mut parts = kv.splitn(2, '=');
+                        if parts.next() == Some("permission") {
+                            parts.next().map(|s| s.to_string())
+                        } else {
+                            None
+                        }
+                    })
+                })
+            })
+            .unwrap_or_default();
+
+        Box::pin(async move {
+            let token = extract_token_from_headers(&headers, &config)?
+                .ok_or_else(|| crate::error::BulwarkError::NotLogin("未提供 token".to_string()))?;
+
+            let result: crate::error::BulwarkResult<()> =
+                crate::stp::with_current_token(token, async {
+                    crate::stp::BulwarkUtil::check_permission(&permission).await
+                })
+                .await;
+
+            result.map(|_| super::CheckPermission(permission))
         })
     }
 }
@@ -95,137 +240,14 @@ impl actix_web::FromRequest for crate::context::tenant::TenantContext {
 
 #[cfg(test)]
 mod tests {
+    use super::super::mock::{MockDao, MockInterface};
     use super::*;
     use crate::dao::BulwarkDao;
     use crate::manager::BulwarkManager;
     use crate::stp::{BulwarkInterface, BulwarkUtil};
     use actix_web::test;
     use actix_web::FromRequest;
-    use async_trait::async_trait;
-    use parking_lot::Mutex;
     use serial_test::serial;
-    use std::collections::HashMap;
-    use std::time::{Duration, Instant};
-
-    // ----------------------------------------------------------------
-    // MockDao / MockInterface（复用 web_actix/mod.rs 测试模式）
-    // ----------------------------------------------------------------
-
-    struct MockDao {
-        store: Mutex<HashMap<String, (String, Option<Instant>)>>,
-    }
-
-    impl MockDao {
-        fn new() -> Self {
-            Self {
-                store: Mutex::new(HashMap::new()),
-            }
-        }
-    }
-
-    #[async_trait]
-    impl BulwarkDao for MockDao {
-        async fn get(&self, key: &str) -> Result<Option<String>, crate::error::BulwarkError> {
-            let mut store = self.store.lock();
-            match store.get(key) {
-                Some((value, expire_at)) => {
-                    if let Some(deadline) = expire_at {
-                        if Instant::now() >= *deadline {
-                            store.remove(key);
-                            return Ok(None);
-                        }
-                    }
-                    Ok(Some(value.clone()))
-                },
-                None => Ok(None),
-            }
-        }
-
-        async fn set(
-            &self,
-            key: &str,
-            value: &str,
-            ttl_seconds: u64,
-        ) -> Result<(), crate::error::BulwarkError> {
-            let expire_at = if ttl_seconds == 0 {
-                None
-            } else {
-                Some(Instant::now() + Duration::from_secs(ttl_seconds))
-            };
-            self.store
-                .lock()
-                .insert(key.to_string(), (value.to_string(), expire_at));
-            Ok(())
-        }
-
-        async fn update(&self, key: &str, value: &str) -> Result<(), crate::error::BulwarkError> {
-            let mut store = self.store.lock();
-            match store.get_mut(key) {
-                Some((existing, _)) => {
-                    *existing = value.to_string();
-                    Ok(())
-                },
-                None => Err(crate::error::BulwarkError::Dao(format!(
-                    "键不存在: {}",
-                    key
-                ))),
-            }
-        }
-
-        async fn expire(&self, key: &str, seconds: u64) -> Result<(), crate::error::BulwarkError> {
-            let mut store = self.store.lock();
-            match store.get_mut(key) {
-                Some((_, expire_at)) => {
-                    *expire_at = if seconds == 0 {
-                        None
-                    } else {
-                        Some(Instant::now() + Duration::from_secs(seconds))
-                    };
-                    Ok(())
-                },
-                None => Err(crate::error::BulwarkError::Dao(format!(
-                    "键不存在: {}",
-                    key
-                ))),
-            }
-        }
-
-        async fn delete(&self, key: &str) -> Result<(), crate::error::BulwarkError> {
-            self.store.lock().remove(key);
-            Ok(())
-        }
-    }
-
-    struct MockInterface {
-        permissions: HashMap<String, Vec<String>>,
-        roles: HashMap<String, Vec<String>>,
-    }
-
-    impl MockInterface {
-        fn new() -> Self {
-            Self {
-                permissions: HashMap::new(),
-                roles: HashMap::new(),
-            }
-        }
-    }
-
-    #[async_trait]
-    impl BulwarkInterface for MockInterface {
-        async fn get_permission_list(
-            &self,
-            login_id: &str,
-        ) -> Result<Vec<String>, crate::error::BulwarkError> {
-            Ok(self.permissions.get(login_id).cloned().unwrap_or_default())
-        }
-
-        async fn get_role_list(
-            &self,
-            login_id: &str,
-        ) -> Result<Vec<String>, crate::error::BulwarkError> {
-            Ok(self.roles.get(login_id).cloned().unwrap_or_default())
-        }
-    }
 
     fn make_config() -> crate::config::BulwarkConfig {
         let mut config = crate::config::BulwarkConfig::default_config();
