@@ -9,6 +9,7 @@ use super::mock::{
 };
 use super::*;
 use crate::config::{OverflowLogoutMode, ReplacedLoginExitMode};
+use crate::context::tenant::with_default_tenant;
 use crate::dao::BulwarkDao;
 use crate::manager::BulwarkManager;
 use async_trait::async_trait;
@@ -564,7 +565,11 @@ async fn bulwark_context_capture_without_token_propagates_none() {
 async fn check_permission_held_returns_ok() {
     let logic = make_logic(3600, 86400, true, "uuid", true, true);
     let token = logic.login("1001", &LoginParams::default()).await.unwrap();
-    let result = with_token(&token, logic.check_permission("user:read")).await;
+    let result = with_token(
+        &token,
+        with_default_tenant(async { logic.check_permission("user:read").await }),
+    )
+    .await;
     assert!(result.is_ok(), "持有权限应返回 Ok");
 }
 
@@ -573,7 +578,11 @@ async fn check_permission_held_returns_ok() {
 async fn check_permission_not_held_throws_not_permission() {
     let logic = make_logic(3600, 86400, true, "uuid", false, true);
     let token = logic.login("1001", &LoginParams::default()).await.unwrap();
-    let result = with_token(&token, logic.check_permission("user:delete")).await;
+    let result = with_token(
+        &token,
+        with_default_tenant(async { logic.check_permission("user:delete").await }),
+    )
+    .await;
     assert!(
         matches!(result, Err(BulwarkError::NotPermission(_))),
         "未持有权限应抛 NotPermission"
@@ -837,7 +846,11 @@ async fn util_has_permission_returns_true_when_granted() {
         vec!["admin".to_string()],
     );
     let token = BulwarkUtil::login_simple("1001").await.unwrap();
-    let result = with_token(&token, BulwarkUtil::has_permission("user:read")).await;
+    let result = with_token(
+        &token,
+        with_default_tenant(BulwarkUtil::has_permission("user:read")),
+    )
+    .await;
     assert!(result.unwrap(), "持有权限应返回 true");
 }
 
@@ -847,7 +860,11 @@ async fn util_has_permission_returns_true_when_granted() {
 async fn util_has_permission_returns_false_when_not_granted() {
     init_global_manager_with_perms(false, vec![], vec![]);
     let token = BulwarkUtil::login_simple("1001").await.unwrap();
-    let result = with_token(&token, BulwarkUtil::has_permission("user:read")).await;
+    let result = with_token(
+        &token,
+        with_default_tenant(BulwarkUtil::has_permission("user:read")),
+    )
+    .await;
     assert!(!result.unwrap(), "未持有权限应返回 false");
 }
 
@@ -1991,7 +2008,11 @@ async fn check_permission_with_metrics_records_query() {
     let token = logic.login("1001", &LoginParams::default()).await.unwrap();
 
     // check_permission 应记录 deny（MockInterface 返回空权限列表）
-    let result = with_token(&token, async { logic.check_permission("user:read").await }).await;
+    let result = with_token(
+        &token,
+        with_default_tenant(async { logic.check_permission("user:read").await }),
+    )
+    .await;
     assert!(result.is_err(), "未授权权限应返回 Err");
 
     let output = prometheus::TextEncoder::new()
@@ -2397,9 +2418,12 @@ async fn check_permission_with_checker_emits_metric() {
 
     let token = logic.login("1001", &LoginParams::default()).await.unwrap();
     with_current_token(token, async {
-        // check_permission 持有权限 → Ok(()) + emit allow metric
-        let result = logic.check_permission("user:read").await;
-        assert!(result.is_ok());
+        with_default_tenant(async {
+            // check_permission 持有权限 → Ok(()) + emit allow metric
+            let result = logic.check_permission("user:read").await;
+            assert!(result.is_ok());
+        })
+        .await
     })
     .await;
 
@@ -2646,12 +2670,15 @@ async fn sync_check_permission_held_returns_ok() {
     let token = BulwarkUtil::login_simple("1001").await.unwrap();
 
     with_current_token(token, async {
-        let result = BulwarkUtil::check_permission_sync("user:read");
-        assert!(
-            result.is_ok(),
-            "持有权限时 check_permission_sync 应返回 Ok，实际: {:?}",
-            result
-        );
+        with_default_tenant(async {
+            let result = BulwarkUtil::check_permission_sync("user:read");
+            assert!(
+                result.is_ok(),
+                "持有权限时 check_permission_sync 应返回 Ok，实际: {:?}",
+                result
+            );
+        })
+        .await
     })
     .await;
 

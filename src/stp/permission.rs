@@ -232,6 +232,13 @@ impl PermissionLogic for BulwarkLogicDefault {
         }
 
         // 回退到 firewall 路径（permission_checker 未注入时）
+        // vuln-0003 修复延伸：firewall 路径同样需要租户隔离校验，
+        // 否则 tenant-isolation 启用 + permission_checker 未注入时租户隔离被绕过
+        #[cfg(not(feature = "tenant-isolation"))]
+        #[allow(deprecated)]
+        let _tenant_id = current_tenant_id();
+        #[cfg(feature = "tenant-isolation")]
+        let _tenant_id = current_tenant_id_or_error()?;
         let has_perm = self
             .firewall
             .check_permission(&login_id, permission)
@@ -616,6 +623,7 @@ mod tests {
 
     mod default_impl_coverage {
         use super::*;
+        use crate::context::tenant::with_default_tenant;
         use crate::dao::BulwarkDao;
         use crate::session::BulwarkSession;
         use crate::stp::mock::{MockDao, MockFirewall};
@@ -680,9 +688,10 @@ mod tests {
                 .login("perm-user-001", &crate::stp::LoginParams::default())
                 .await
                 .unwrap();
-            let result =
-                with_current_token(token, async { logic.check_permission("user:read").await })
-                    .await;
+            let result = with_current_token(token, async {
+                with_default_tenant(async { logic.check_permission("user:read").await }).await
+            })
+            .await;
             assert!(
                 result.is_ok(),
                 "已登录 + has_permission=true 应返回 Ok，实际: {:?}",
@@ -698,9 +707,10 @@ mod tests {
                 .login("perm-user-002", &crate::stp::LoginParams::default())
                 .await
                 .unwrap();
-            let result =
-                with_current_token(token, async { logic.check_permission("user:read").await })
-                    .await;
+            let result = with_current_token(token, async {
+                with_default_tenant(async { logic.check_permission("user:read").await }).await
+            })
+            .await;
             assert!(
                 matches!(result, Err(BulwarkError::NotPermission(_))),
                 "已登录 + has_permission=false 应返回 NotPermission，实际: {:?}",
@@ -831,8 +841,10 @@ mod tests {
                 .login("has-perm-001", &crate::stp::LoginParams::default())
                 .await
                 .unwrap();
-            let result =
-                with_current_token(token, async { logic.has_permission("user:read").await }).await;
+            let result = with_current_token(token, async {
+                with_default_tenant(async { logic.has_permission("user:read").await }).await
+            })
+            .await;
             assert!(result.is_ok(), "应返回 Ok，实际: {:?}", result);
             assert!(result.unwrap(), "has_permission=true 应返回 true");
         }
@@ -858,6 +870,7 @@ mod tests {
 
     mod permission_checker_coverage {
         use super::*;
+        use crate::context::tenant::with_default_tenant;
         use crate::core::permission::{AuthRequest, Decision, DecisionReason, PermissionChecker};
         use crate::dao::BulwarkDao;
         use crate::session::BulwarkSession;
@@ -936,9 +949,10 @@ mod tests {
                 .login("checker-user-001", &crate::stp::LoginParams::default())
                 .await
                 .unwrap();
-            let result =
-                with_current_token(token, async { logic.check_permission("user:read").await })
-                    .await;
+            let result = with_current_token(token, async {
+                with_default_tenant(async { logic.check_permission("user:read").await }).await
+            })
+            .await;
             assert!(
                 result.is_ok(),
                 "permission_checker allowed=true 应返回 Ok，实际: {:?}",
@@ -956,9 +970,10 @@ mod tests {
                 .login("checker-user-002", &crate::stp::LoginParams::default())
                 .await
                 .unwrap();
-            let result =
-                with_current_token(token, async { logic.check_permission("user:read").await })
-                    .await;
+            let result = with_current_token(token, async {
+                with_default_tenant(async { logic.check_permission("user:read").await }).await
+            })
+            .await;
             assert!(
                 matches!(result, Err(BulwarkError::NotPermission(_))),
                 "permission_checker allowed=false 应返回 NotPermission，实际: {:?}",
@@ -976,9 +991,10 @@ mod tests {
                 .login("checker-user-003", &crate::stp::LoginParams::default())
                 .await
                 .unwrap();
-            let result =
-                with_current_token(token, async { logic.check_permission("user:read").await })
-                    .await;
+            let result = with_current_token(token, async {
+                with_default_tenant(async { logic.check_permission("user:read").await }).await
+            })
+            .await;
             assert!(
                 matches!(result, Err(BulwarkError::Dao(ref s)) if s.contains("权限数据源故障")),
                 "permission_checker authorize 错误应透传，实际: {:?}",
@@ -996,8 +1012,10 @@ mod tests {
                 .login("checker-user-004", &crate::stp::LoginParams::default())
                 .await
                 .unwrap();
-            let result =
-                with_current_token(token, async { logic.has_permission("user:read").await }).await;
+            let result = with_current_token(token, async {
+                with_default_tenant(async { logic.has_permission("user:read").await }).await
+            })
+            .await;
             assert!(result.is_ok(), "应返回 Ok，实际: {:?}", result);
             assert!(
                 result.unwrap(),
@@ -1013,8 +1031,10 @@ mod tests {
                 .login("checker-user-005", &crate::stp::LoginParams::default())
                 .await
                 .unwrap();
-            let result =
-                with_current_token(token, async { logic.has_permission("user:read").await }).await;
+            let result = with_current_token(token, async {
+                with_default_tenant(async { logic.has_permission("user:read").await }).await
+            })
+            .await;
             assert!(result.is_ok(), "应返回 Ok，实际: {:?}", result);
             assert!(
                 !result.unwrap(),

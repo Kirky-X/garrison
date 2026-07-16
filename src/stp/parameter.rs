@@ -184,6 +184,7 @@ impl ParameterQuery for ParameterQueryBuilder {
 mod tests {
     use super::*;
     use crate::config::BulwarkConfig;
+    use crate::context::tenant::with_default_tenant;
     use crate::dao::BulwarkDao;
     use crate::manager::BulwarkManager;
     use crate::stp::BulwarkInterface;
@@ -390,10 +391,13 @@ mod tests {
         perms.insert("1001".to_string(), vec!["user:create".to_string()]);
         init_manager_with_perms(false, perms, HashMap::new());
 
-        let result = ParameterQueryBuilder::new()
-            .with_login_id("1001".to_string())
-            .check_permission("user:create")
-            .await;
+        let result = with_default_tenant(async {
+            ParameterQueryBuilder::new()
+                .with_login_id("1001".to_string())
+                .check_permission("user:create")
+                .await
+        })
+        .await;
         assert!(result.is_ok(), "持有权限时应返回 Ok，实际: {:?}", result);
 
         BulwarkManager::reset_for_test();
@@ -407,10 +411,13 @@ mod tests {
         let perms: HashMap<String, Vec<String>> = HashMap::new();
         init_manager_with_perms(false, perms, HashMap::new());
 
-        let result = ParameterQueryBuilder::new()
-            .with_login_id("1001".to_string())
-            .check_permission("user:delete")
-            .await;
+        let result = with_default_tenant(async {
+            ParameterQueryBuilder::new()
+                .with_login_id("1001".to_string())
+                .check_permission("user:delete")
+                .await
+        })
+        .await;
         assert!(
             matches!(result, Err(BulwarkError::NotPermission(ref perm)) if perm == "user:delete"),
             "未持有权限应返回 NotPermission，实际: {:?}",
@@ -432,10 +439,13 @@ mod tests {
         // 先 login 获取有效 token
         let token = BulwarkUtil::login_simple("1001").await.unwrap();
 
-        let result = ParameterQueryBuilder::new()
-            .with_token(&token)
-            .check_permission("user:read")
-            .await;
+        let result = with_default_tenant(async {
+            ParameterQueryBuilder::new()
+                .with_token(&token)
+                .check_permission("user:read")
+                .await
+        })
+        .await;
         assert!(
             result.is_ok(),
             "token 上下文持有权限应返回 Ok，实际: {:?}",
@@ -455,10 +465,13 @@ mod tests {
 
         let token = BulwarkUtil::login_simple("1001").await.unwrap();
 
-        let result = ParameterQueryBuilder::new()
-            .with_token(&token)
-            .check_permission("user:delete")
-            .await;
+        let result = with_default_tenant(async {
+            ParameterQueryBuilder::new()
+                .with_token(&token)
+                .check_permission("user:delete")
+                .await
+        })
+        .await;
         assert!(
             matches!(result, Err(BulwarkError::NotPermission(_))),
             "token 上下文未持有权限应返回 NotPermission，实际: {:?}",
@@ -581,10 +594,13 @@ mod tests {
         init_manager_with_perms(false, perms, HashMap::new());
 
         // async 调用并 await
-        let result = ParameterQueryBuilder::new()
-            .with_login_id("2002".to_string())
-            .check_permission("user:read")
-            .await;
+        let result = with_default_tenant(async {
+            ParameterQueryBuilder::new()
+                .with_login_id("2002".to_string())
+                .check_permission("user:read")
+                .await
+        })
+        .await;
         assert!(
             result.is_ok(),
             "async check_permission 应正常工作，实际: {:?}",
