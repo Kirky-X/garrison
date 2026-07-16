@@ -557,6 +557,7 @@ mod mock;
 mod tests {
     use super::mock::{MockDao, MockInterface};
     use super::*;
+    use crate::context::tenant::with_default_tenant;
     use crate::dao::BulwarkDao;
     use crate::error::BulwarkError;
     use crate::manager::BulwarkManager;
@@ -768,7 +769,10 @@ mod tests {
 
         let mut parts = make_parts();
         let result = with_current_token(token, async {
-            CheckPermission::<UserRead>::from_request_parts(&mut parts, &()).await
+            with_default_tenant(async {
+                CheckPermission::<UserRead>::from_request_parts(&mut parts, &()).await
+            })
+            .await
         })
         .await;
         assert!(result.is_ok(), "持有权限应返回 Ok");
@@ -785,7 +789,10 @@ mod tests {
 
         let mut parts = make_parts();
         let result = with_current_token(token, async {
-            CheckPermission::<UserRead>::from_request_parts(&mut parts, &()).await
+            with_default_tenant(async {
+                CheckPermission::<UserRead>::from_request_parts(&mut parts, &()).await
+            })
+            .await
         })
         .await;
         assert!(
@@ -1166,7 +1173,10 @@ mod tests {
         let token = BulwarkUtil::login_simple("1001").await.unwrap();
 
         let mut parts = make_parts_with_bearer(&token);
-        let result = CheckPermission::<UserRead>::from_request_parts(&mut parts, &()).await;
+        let result = with_default_tenant(async {
+            CheckPermission::<UserRead>::from_request_parts(&mut parts, &()).await
+        })
+        .await;
         assert!(result.is_ok(), "持有权限时通过 header token 校验应通过");
 
         BulwarkManager::reset_for_test();

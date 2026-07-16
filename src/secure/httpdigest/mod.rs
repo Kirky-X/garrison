@@ -623,6 +623,7 @@ mod tests {
     }
 
     /// VULN-0016: 辅助函数 — 构造合法 MD5 Authorization header。
+    #[allow(clippy::too_many_arguments)]
     fn build_md5_auth_header(
         _auth: &HttpDigestAuth,
         username: &str,
@@ -647,6 +648,7 @@ mod tests {
     }
 
     /// VULN-0016: 辅助函数 — 构造合法 SHA256 Authorization header。
+    #[allow(clippy::too_many_arguments)]
     fn build_sha256_auth_header(
         _auth: &HttpDigestAuth,
         username: &str,

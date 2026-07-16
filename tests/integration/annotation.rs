@@ -218,6 +218,20 @@ fn make_request(path: &str, token: Option<&str>) -> Request<Body> {
     builder.body(Body::empty()).unwrap()
 }
 
+/// 设置默认 TENANT scope（tenant_id=0），避免 tenant-isolation feature 启用时
+/// `current_tenant_id_or_error()` 返回 Err(Config) 导致权限校验提前失败。
+async fn with_default_tenant<F, R>(f: F) -> R
+where
+    F: std::future::Future<Output = R>,
+{
+    use bulwark::{TenantContext, TenantSource, TENANT};
+    let ctx = TenantContext {
+        tenant_id: 0,
+        resolved_from: TenantSource::Header,
+    };
+    TENANT.scope(ctx, f).await
+}
+
 // ============================================================================
 // 集成测试
 // ============================================================================
@@ -305,30 +319,36 @@ async fn admin_without_admin_role_returns_403() {
 #[tokio::test]
 #[serial]
 async fn users_with_user_read_permission_returns_200() {
-    init_manager(&[("1001", &["user:read"])], &[]);
-    let token = BulwarkUtil::login_simple("1001").await.unwrap();
+    with_default_tenant(async {
+        init_manager(&[("1001", &["user:read"])], &[]);
+        let token = BulwarkUtil::login_simple("1001").await.unwrap();
 
-    let app = make_app();
-    let response = app
-        .oneshot(make_request("/users", Some(&token)))
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
+        let app = make_app();
+        let response = app
+            .oneshot(make_request("/users", Some(&token)))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    })
+    .await
 }
 
 /// 未持有 user:read 权限访问 /users → 403。
 #[tokio::test]
 #[serial]
 async fn users_without_user_read_permission_returns_403() {
-    init_manager(&[], &[]); // 无权限数据
-    let token = BulwarkUtil::login_simple("1001").await.unwrap();
+    with_default_tenant(async {
+        init_manager(&[], &[]); // 无权限数据
+        let token = BulwarkUtil::login_simple("1001").await.unwrap();
 
-    let app = make_app();
-    let response = app
-        .oneshot(make_request("/users", Some(&token)))
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let app = make_app();
+        let response = app
+            .oneshot(make_request("/users", Some(&token)))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    })
+    .await
 }
 
 /// Ignore extractor 允许匿名访问 /public → 200。

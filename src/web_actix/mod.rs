@@ -614,6 +614,7 @@ mod tests {
     // ========================================================================
 
     use super::mock::{MockDao, MockInterface};
+    use crate::context::tenant::with_default_tenant;
     use crate::dao::BulwarkDao;
     use crate::manager::BulwarkManager;
     use crate::stp::{BulwarkInterface, BulwarkUtil};
@@ -772,7 +773,7 @@ mod tests {
             .uri("/admin")
             .insert_header(("Authorization", format!("Bearer {}", token)))
             .to_srv_request();
-        let resp = service.call(req).await.unwrap();
+        let resp = with_default_tenant(async { service.call(req).await.unwrap() }).await;
         assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 
         BulwarkManager::reset_for_test();
@@ -1034,7 +1035,7 @@ mod tests {
             .insert_header(("Authorization", format!("Bearer {}", token)))
             .insert_header(("X-Bulwark-Permission", "user:read"))
             .to_request();
-        let resp = test::call_service(&app, req).await;
+        let resp = with_default_tenant(async { test::call_service(&app, req).await }).await;
         assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 
         BulwarkManager::reset_for_test();
@@ -1060,7 +1061,7 @@ mod tests {
             .uri("/perm?permission=user:read")
             .insert_header(("Authorization", format!("Bearer {}", token)))
             .to_request();
-        let resp = test::call_service(&app, req).await;
+        let resp = with_default_tenant(async { test::call_service(&app, req).await }).await;
         assert_eq!(resp.status(), StatusCode::OK);
 
         BulwarkManager::reset_for_test();

@@ -513,6 +513,7 @@ mod tests {
     // ========================================================================
 
     use super::mock::{MockDao, MockInterface};
+    use crate::context::tenant::with_default_tenant;
     use crate::dao::BulwarkDao;
     use crate::manager::BulwarkManager;
     use crate::stp::{BulwarkInterface, BulwarkUtil};
@@ -784,10 +785,13 @@ mod tests {
         let token = BulwarkUtil::login_simple("1001").await.unwrap();
         let filter = check_permission(Arc::new(make_config()), "user:read".to_string());
 
-        let result = warp::test::request()
-            .header("authorization", format!("Bearer {}", token))
-            .filter(&filter)
-            .await;
+        let result = with_default_tenant(async {
+            warp::test::request()
+                .header("authorization", format!("Bearer {}", token))
+                .filter(&filter)
+                .await
+        })
+        .await;
         assert!(result.is_ok());
 
         BulwarkManager::reset_for_test();

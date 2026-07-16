@@ -37,6 +37,25 @@ use bulwark::stp::{with_current_token, BulwarkInterface, BulwarkUtil};
 use bulwark::{BulwarkConfig, BulwarkDao, BulwarkManager};
 
 // ============================================================================
+// TENANT scope helper（外部集成测试中 lib 的 with_default_tenant 不可见，
+// 因 cfg(test) 不传到依赖项；本地定义避免 tenant-isolation fail-closed 误触发）
+// ============================================================================
+
+/// 设置默认 TENANT scope（tenant_id=0），避免 tenant-isolation feature 启用时
+/// `current_tenant_id_or_error()` 返回 Err(Config) 导致权限校验提前失败。
+async fn with_default_tenant<F, R>(f: F) -> R
+where
+    F: std::future::Future<Output = R>,
+{
+    use bulwark::{TenantContext, TenantSource, TENANT};
+    let ctx = TenantContext {
+        tenant_id: 0,
+        resolved_from: TenantSource::Header,
+    };
+    TENANT.scope(ctx, f).await
+}
+
+// ============================================================================
 // db-sqlite feature 依赖的共享模块（BW-AC-007 使用）
 // ============================================================================
 
@@ -491,25 +510,28 @@ async fn bw_ac_004_role_check_returns_403() {
 #[tokio::test]
 #[serial]
 async fn bw_ac_005_permission_check_returns_403() {
-    let _dao = init_manager(vec!["order:read".to_string()], vec![]);
-    let token = BulwarkUtil::login_simple("user-005")
-        .await
-        .expect("login 应成功");
+    with_default_tenant(async {
+        let _dao = init_manager(vec!["order:read".to_string()], vec![]);
+        let token = BulwarkUtil::login_simple("user-005")
+            .await
+            .expect("login 应成功");
 
-    let result = with_current_token(token, async {
-        BulwarkUtil::check_permission("order:write").await
+        let result = with_current_token(token, async {
+            BulwarkUtil::check_permission("order:write").await
+        })
+        .await;
+
+        assert!(
+            matches!(result, Err(BulwarkError::NotPermission(_))),
+            "期望 NotPermission 错误，实际: {:?}",
+            result
+        );
+
+        let err = result.unwrap_err();
+        let (status, _, _, _) = err.response_parts();
+        assert_eq!(status, 403, "NotPermission 的 HTTP status 应为 403");
     })
     .await;
-
-    assert!(
-        matches!(result, Err(BulwarkError::NotPermission(_))),
-        "期望 NotPermission 错误，实际: {:?}",
-        result
-    );
-
-    let err = result.unwrap_err();
-    let (status, _, _, _) = err.response_parts();
-    assert_eq!(status, 403, "NotPermission 的 HTTP status 应为 403");
 }
 
 // ============================================================================
@@ -533,44 +555,47 @@ async fn bw_ac_005_permission_check_returns_403() {
 #[tokio::test]
 #[serial]
 async fn bw_ac_006_oxcache_memory_backend_works() {
-    let _dao = init_manager(
-        vec!["bench:read".to_string()],
-        vec!["bench-user".to_string()],
-    );
+    with_default_tenant(async {
+        let _dao = init_manager(
+            vec!["bench:read".to_string()],
+            vec!["bench-user".to_string()],
+        );
 
-    // When: 执行登录 → 鉴权 → 登出完整流程
-    let token = BulwarkUtil::login_simple("user-006")
+        // When: 执行登录 → 鉴权 → 登出完整流程
+        let token = BulwarkUtil::login_simple("user-006")
+            .await
+            .expect("login 应成功");
+
+        // 验证已登录
+        let check_result =
+            with_current_token(token.clone(), async { BulwarkUtil::check_login().await }).await;
+        assert!(
+            check_result.unwrap_or(false),
+            "check_login 应返回 true（已登录）"
+        );
+
+        // 验证权限检查（持有 bench:read）
+        let has_perm = with_current_token(token.clone(), async {
+            BulwarkUtil::has_permission("bench:read").await
+        })
         .await
-        .expect("login 应成功");
+        .expect("has_permission 应成功");
+        assert!(has_perm, "用户应持有 bench:read 权限");
 
-    // 验证已登录
-    let check_result =
-        with_current_token(token.clone(), async { BulwarkUtil::check_login().await }).await;
-    assert!(
-        check_result.unwrap_or(false),
-        "check_login 应返回 true（已登录）"
-    );
-
-    // 验证权限检查（持有 bench:read）
-    let has_perm = with_current_token(token.clone(), async {
-        BulwarkUtil::has_permission("bench:read").await
-    })
-    .await
-    .expect("has_permission 应成功");
-    assert!(has_perm, "用户应持有 bench:read 权限");
-
-    // 验证角色检查（持有 bench-user）
-    let has_role = with_current_token(token.clone(), async {
-        BulwarkUtil::has_role("bench-user").await
-    })
-    .await
-    .expect("has_role 应成功");
-    assert!(has_role, "用户应持有 bench-user 角色");
-
-    // 登出
-    with_current_token(token, async { BulwarkUtil::logout().await })
+        // 验证角色检查（持有 bench-user）
+        let has_role = with_current_token(token.clone(), async {
+            BulwarkUtil::has_role("bench-user").await
+        })
         .await
-        .expect("logout 应成功");
+        .expect("has_role 应成功");
+        assert!(has_role, "用户应持有 bench-user 角色");
+
+        // 登出
+        with_current_token(token, async { BulwarkUtil::logout().await })
+            .await
+            .expect("logout 应成功");
+    })
+    .await;
 }
 
 // ============================================================================

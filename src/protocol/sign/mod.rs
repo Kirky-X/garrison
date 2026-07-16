@@ -133,6 +133,7 @@ impl SignHandler {
     /// 性能优化：派生密钥在构造时一次性计算并缓存到 `self.derived_key`，
     /// 此方法仅供测试验证派生结果使用。
     #[cfg(test)]
+    #[allow(dead_code)]
     fn derive_hmac_key(&self) -> [u8; 32] {
         let hkdf = Hkdf::<Sha256>::new(Some(self.app_key.as_bytes()), self.app_secret.as_bytes());
         let mut okm = [0u8; 32];

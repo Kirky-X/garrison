@@ -209,6 +209,20 @@ fn make_request(path: &str, token: Option<&str>) -> Request<Body> {
     builder.body(Body::empty()).unwrap()
 }
 
+/// 设置默认 TENANT scope（tenant_id=0），避免 tenant-isolation feature 启用时
+/// `current_tenant_id_or_error()` 返回 Err(Config) 导致权限校验提前失败。
+async fn with_default_tenant<F, R>(f: F) -> R
+where
+    F: std::future::Future<Output = R>,
+{
+    use bulwark::{TenantContext, TenantSource, TENANT};
+    let ctx = TenantContext {
+        tenant_id: 0,
+        resolved_from: TenantSource::Header,
+    };
+    TENANT.scope(ctx, f).await
+}
+
 // ============================================================================
 // 集成测试
 // ============================================================================
@@ -257,30 +271,36 @@ async fn check_login_with_invalid_token_returns_401() {
 #[tokio::test]
 #[serial]
 async fn check_permission_without_permission_returns_403() {
-    init_manager(&[], &[]); // 无权限数据
-    let token = BulwarkUtil::login_simple("1001").await.unwrap();
+    with_default_tenant(async {
+        init_manager(&[], &[]); // 无权限数据
+        let token = BulwarkUtil::login_simple("1001").await.unwrap();
 
-    let app = make_app();
-    let response = app
-        .oneshot(make_request("/api/users", Some(&token)))
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let app = make_app();
+        let response = app
+            .oneshot(make_request("/api/users", Some(&token)))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    })
+    .await
 }
 
 /// CheckPermission 注解 + 持有权限 → 200。
 #[tokio::test]
 #[serial]
 async fn check_permission_with_permission_returns_200() {
-    init_manager(&[("1001", &["user:read"])], &[]);
-    let token = BulwarkUtil::login_simple("1001").await.unwrap();
+    with_default_tenant(async {
+        init_manager(&[("1001", &["user:read"])], &[]);
+        let token = BulwarkUtil::login_simple("1001").await.unwrap();
 
-    let app = make_app();
-    let response = app
-        .oneshot(make_request("/api/users", Some(&token)))
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
+        let app = make_app();
+        let response = app
+            .oneshot(make_request("/api/users", Some(&token)))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    })
+    .await
 }
 
 /// CheckRole 注解 + 未持有角色 → 403。
@@ -383,26 +403,29 @@ async fn unauthorized_response_body_contains_error_json() {
 #[tokio::test]
 #[serial]
 async fn forbidden_response_body_contains_error_json() {
-    init_manager(&[], &[]); // 无权限
-    let token = BulwarkUtil::login_simple("1001").await.unwrap();
+    with_default_tenant(async {
+        init_manager(&[], &[]); // 无权限
+        let token = BulwarkUtil::login_simple("1001").await.unwrap();
 
-    let app = make_app();
-    let response = app
-        .oneshot(make_request("/api/users", Some(&token)))
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let app = make_app();
+        let response = app
+            .oneshot(make_request("/api/users", Some(&token)))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
 
-    let body = response.into_body().collect().await.unwrap().to_bytes();
-    let body_str = String::from_utf8(body.to_vec()).unwrap();
-    assert!(
-        body_str.contains("\"error_code\":\"NOT_PERMISSION\""),
-        "响应体应是 JSON 且包含 error_code 字段: {}",
-        body_str
-    );
-    assert!(
-        body_str.contains("\"message\":\"无权限\""),
-        "响应体应包含 '无权限' 通用消息: {}",
-        body_str
-    );
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+        assert!(
+            body_str.contains("\"error_code\":\"NOT_PERMISSION\""),
+            "响应体应是 JSON 且包含 error_code 字段: {}",
+            body_str
+        );
+        assert!(
+            body_str.contains("\"message\":\"无权限\""),
+            "响应体应包含 '无权限' 通用消息: {}",
+            body_str
+        );
+    })
+    .await
 }

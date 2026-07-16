@@ -177,12 +177,20 @@ impl AccountMetrics {
     /// 收集所有指标为 Prometheus 文本格式。
     ///
     /// 用于暴露给 `/metrics` 端点供 Prometheus 抓取。
-    /// 内部调用 `prometheus::gather()` 收集 default registry。
+    /// 直接从自身 4 个字段（`HistogramVec` / `CounterVec`）调用 `Collector::collect`，
+    /// 不依赖任何外部 registry（包括 `prometheus::default_registry()`）。
+    /// 这样无论 metrics 注册到 default registry 还是自定义 registry，
+    /// `gather()` 均能正确返回指标数据。
     pub fn gather(&self) -> String {
+        use prometheus::core::Collector;
         use prometheus::Encoder;
+        let mut metric_families = Vec::new();
+        metric_families.extend(self.credential_verify_duration.collect());
+        metric_families.extend(self.policy_validate_duration.collect());
+        metric_families.extend(self.lockout_triggered_total.collect());
+        metric_families.extend(self.authflow_execute_duration.collect());
         let mut buffer = Vec::new();
         let encoder = prometheus::TextEncoder::new();
-        let metric_families = prometheus::gather();
         encoder.encode(&metric_families, &mut buffer).ok();
         String::from_utf8_lossy(&buffer).into_owned()
     }

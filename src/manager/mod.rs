@@ -586,6 +586,7 @@ mod mock;
 mod tests {
     use super::mock::MockInterface;
     use super::*;
+    use crate::context::tenant::with_default_tenant;
     use crate::dao::tests::MockDao;
     use crate::dao::BulwarkDao;
     use crate::stp::{BulwarkUtil, LoginParams, SessionLogic};
@@ -748,7 +749,7 @@ mod tests {
 
         // 持有权限
         let check_result = with_token(token.clone(), async {
-            BulwarkUtil::check_permission("user:read").await
+            with_default_tenant(async { BulwarkUtil::check_permission("user:read").await }).await
         })
         .await;
         assert!(
@@ -759,7 +760,7 @@ mod tests {
 
         // 未持有权限
         let check_result = with_token(token.clone(), async {
-            BulwarkUtil::check_permission("user:delete").await
+            with_default_tenant(async { BulwarkUtil::check_permission("user:delete").await }).await
         })
         .await;
         assert!(check_result.is_err());

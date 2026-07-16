@@ -468,6 +468,7 @@ mod tests {
     use super::*;
     use crate::annotation::Annotation;
     use crate::config::BulwarkConfig;
+    use crate::context::tenant::with_default_tenant;
     use crate::dao::BulwarkDao;
     use crate::error::BulwarkError;
     use crate::manager::BulwarkManager;
@@ -628,10 +629,12 @@ mod tests {
         let token = BulwarkUtil::login_simple("1001").await.unwrap();
 
         let app = make_router().build();
-        let response = app
-            .oneshot(make_request("/users", Some(&token)))
-            .await
-            .unwrap();
+        let response = with_default_tenant(async {
+            app.oneshot(make_request("/users", Some(&token)))
+                .await
+                .unwrap()
+        })
+        .await;
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
 
         BulwarkManager::reset_for_test();
@@ -645,10 +648,12 @@ mod tests {
         let token = BulwarkUtil::login_simple("1001").await.unwrap();
 
         let app = make_router().build();
-        let response = app
-            .oneshot(make_request("/users", Some(&token)))
-            .await
-            .unwrap();
+        let response = with_default_tenant(async {
+            app.oneshot(make_request("/users", Some(&token)))
+                .await
+                .unwrap()
+        })
+        .await;
         assert_eq!(response.status(), StatusCode::OK);
 
         BulwarkManager::reset_for_test();
@@ -845,7 +850,11 @@ mod tests {
         let interceptor = DefaultBulwarkInterceptor;
         let result = crate::stp::with_current_token(
             token,
-            interceptor.pre_handle("/x", &Annotation::CheckPermission("user:read".to_string())),
+            with_default_tenant(async {
+                interceptor
+                    .pre_handle("/x", &Annotation::CheckPermission("user:read".to_string()))
+                    .await
+            }),
         )
         .await;
         assert!(
