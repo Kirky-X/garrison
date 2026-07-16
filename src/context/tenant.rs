@@ -334,6 +334,45 @@ impl TenantResolver for ClaimTenantResolver {
     }
 }
 
+// ============================================================================
+// 测试专用 helper（Rule 9：测试桩显式设置 TENANT scope，避免 Rule 12 fail-closed 误触发）
+// ============================================================================
+
+/// 测试专用：用默认 `TenantContext { tenant_id: 0, resolved_from: Header }` 包裹 future。
+///
+/// `tenant-isolation` feature 启用时，`BulwarkLogicDefault::check_permission` 会调用
+/// `current_tenant_id_or_error()`（fail-closed）。permission 相关测试验证的是权限逻辑，
+/// 不是 tenant 隔离——tenant 隔离有专门测试（本模块 `tests`）。因此 permission 测试应
+/// 显式设置默认 TENANT scope 作为测试桩（Rule 9 测试必须有意义），而非修改生产代码
+/// 用 `unwrap_or(0)` 规避（Rule 12 失败必须显性化）。
+///
+/// # 使用
+///
+/// ```ignore
+/// #[tokio::test]
+/// async fn my_permission_test() {
+///     with_default_tenant(async {
+///         // 此处调用 check_permission / has_permission / handler
+///     }).await;
+/// }
+/// ```
+///
+/// # 门控
+///
+/// `#[cfg(any(test, feature = "testing"))]`——单元测试（`cfg(test)`）与集成测试
+/// （`testing` feature，tests/ 目录外部二进制）均可用。
+#[cfg(any(test, feature = "testing"))]
+pub async fn with_default_tenant<F, R>(f: F) -> R
+where
+    F: std::future::Future<Output = R>,
+{
+    let ctx = TenantContext {
+        tenant_id: 0,
+        resolved_from: TenantSource::Header,
+    };
+    TENANT.scope(ctx, f).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
