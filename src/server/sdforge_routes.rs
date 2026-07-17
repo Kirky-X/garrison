@@ -37,10 +37,80 @@ use crate::backend::types::{
 use crate::backend::AuthBackend;
 use sdforge::forge;
 use sdforge::prelude::ApiError;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 // 复用 mod.rs 的 to_api_response 逻辑（避免重复实现 — Rule 8）
 use super::to_api_response;
+
+// ============================================================================
+// A5: get-session / get-token-info 所有权校验请求类型
+// ============================================================================
+//
+// `caller_login_id` 用于所有权校验：当 caller 非 session 属主时，过滤 PII 字段
+// （ip/user_agent/device）。`caller_token` 可选，用于校验 `admin:sessions` 权限——
+// 有此权限的 caller（如运维/审计）即使非属主也可查看 PII。
+//
+// `#[serde(default)]` 保证 BackendRemote 旧版客户端仅发送 `{"token": "..."}` 时
+// 仍可反序列化：`caller_login_id` 默认为空串 → fail-closed（PII 被过滤）。
+
+/// get-session 请求体（A5 所有权校验）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct GetSessionRequest {
+    /// 待查询的目标 token。
+    pub token: String,
+    /// Caller 自身 login_id（用于所有权校验）。
+    /// 空串时 fail-closed（PII 被过滤）。
+    #[serde(default)]
+    pub caller_login_id: String,
+    /// Caller 自身 token（可选，用于 `admin:sessions` 权限校验）。
+    /// 提供且具备 `admin:sessions` 权限时，即使非属主也返回完整 PII。
+    #[serde(default)]
+    pub caller_token: Option<String>,
+}
+
+/// get-token-info 请求体（A5 所有权校验）。
+///
+/// TokenInfo 本身不含 PII（仅 token/created_at/last_active_at），
+/// 但仍要求 `caller_login_id` 以保持一致性与未来扩展（如添加 PII 字段时）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct GetTokenInfoRequest {
+    /// 待查询的目标 token。
+    pub token: String,
+    /// Caller 自身 login_id（用于所有权校验）。
+    #[serde(default)]
+    pub caller_login_id: String,
+    /// Caller 自身 token（可选，用于 `admin:sessions` 权限校验）。
+    #[serde(default)]
+    pub caller_token: Option<String>,
+}
+
+/// 校验 caller 是否可查看目标 session 的 PII。
+///
+/// 规则：
+/// - `caller_login_id == session_login_id` → 所有人，允许 PII
+/// - 否则检查 `caller_token` 是否有 `admin:sessions` 权限
+/// - 都不满足 → false（PII 应被过滤）
+///
+/// # 错误处理
+///
+/// `check_permission` 失败（如 token 无效/后端不可达）时返回 `false`（fail-closed）。
+async fn can_view_pii(
+    backend: &Arc<dyn AuthBackend>,
+    caller_login_id: &str,
+    session_login_id: &str,
+    caller_token: &Option<String>,
+) -> bool {
+    // 快速路径：caller 即属主
+    if !caller_login_id.is_empty() && caller_login_id == session_login_id {
+        return true;
+    }
+    // 非属主：检查 admin:sessions 权限
+    match caller_token {
+        Some(t) if !t.is_empty() => backend.check_permission(t, "admin:sessions").await.is_ok(),
+        _ => false,
+    }
+}
 
 // ============================================================================
 // 外网路由（3 端点）
@@ -204,7 +274,7 @@ async fn check_api_key(
 )]
 async fn get_token_info(
     #[state] backend: Arc<dyn AuthBackend>,
-    req: CheckLoginRequest,
+    req: GetTokenInfoRequest,
 ) -> Result<ApiResponse<crate::backend::types::TokenInfo>, ApiError> {
     let result = backend.get_token_info(&req.token).await;
     Ok(to_api_response(result))
@@ -220,10 +290,28 @@ async fn get_token_info(
 )]
 async fn get_session(
     #[state] backend: Arc<dyn AuthBackend>,
-    req: CheckLoginRequest,
+    req: GetSessionRequest,
 ) -> Result<ApiResponse<crate::backend::types::SessionData>, ApiError> {
     let result = backend.get_session(&req.token).await;
-    Ok(to_api_response(result))
+    match result {
+        Ok(mut session) => {
+            // A5: 所有权校验 — 非属主且无 admin:sessions 权限时过滤 PII（ip/user_agent/device）
+            if !can_view_pii(
+                &backend,
+                &req.caller_login_id,
+                &session.login_id,
+                &req.caller_token,
+            )
+            .await
+            {
+                session.ip = None;
+                session.user_agent = None;
+                session.device = None;
+            }
+            Ok(to_api_response(Ok(session)))
+        },
+        Err(e) => Ok(to_api_response(Err(e))),
+    }
 }
 
 #[forge(
@@ -405,9 +493,9 @@ mod tests {
                 created_at: 1000,
                 last_active_at: 2000,
                 attrs: std::collections::HashMap::new(),
-                device: None,
-                ip: None,
-                user_agent: None,
+                device: Some("web-chrome".to_string()),
+                ip: Some("192.168.1.1".to_string()),
+                user_agent: Some("Mozilla/5.0".to_string()),
                 safe_services: std::collections::HashMap::new(),
                 #[cfg(feature = "dynamic-active-timeout")]
                 dynamic_active_timeout: None,
@@ -571,7 +659,7 @@ mod tests {
     #[tokio::test]
     async fn test_sdforge_get_token_info() {
         let app = make_router();
-        let body = serde_json::json!({ "token": "my-token" });
+        let body = serde_json::json!({ "token": "my-token", "caller_login_id": "mock-user" });
         let resp_json = post_json(app, "/api/v1/auth/get-token-info", body).await;
         assert_eq!(resp_json["data"]["token"], "my-token");
         assert_eq!(resp_json["data"]["created_at"], 1000);
@@ -580,10 +668,73 @@ mod tests {
     #[tokio::test]
     async fn test_sdforge_get_session() {
         let app = make_router();
-        let body = serde_json::json!({ "token": "my-token" });
+        // 属主调用：caller_login_id == session.login_id → PII 保留
+        let body = serde_json::json!({
+            "token": "my-token",
+            "caller_login_id": "mock-user"
+        });
         let resp_json = post_json(app, "/api/v1/auth/get-session", body).await;
         assert_eq!(resp_json["data"]["token"], "my-token");
         assert_eq!(resp_json["data"]["login_id"], "mock-user");
+        // 属主应见 PII
+        assert_eq!(resp_json["data"]["ip"], "192.168.1.1");
+        assert_eq!(resp_json["data"]["user_agent"], "Mozilla/5.0");
+        assert_eq!(resp_json["data"]["device"], "web-chrome");
+    }
+
+    /// A5: 非属主调用 get-session 时 PII 字段（ip/user_agent/device）被脱敏。
+    #[tokio::test]
+    async fn test_sdforge_get_session_masks_pii_for_non_owner() {
+        let app = make_router();
+        // 非属主：caller_login_id != session.login_id（"mock-user"）
+        let body = serde_json::json!({
+            "token": "my-token",
+            "caller_login_id": "attacker"
+        });
+        let resp_json = post_json(app, "/api/v1/auth/get-session", body).await;
+        // 非 PII 字段保留
+        assert_eq!(resp_json["data"]["token"], "my-token");
+        assert_eq!(resp_json["data"]["login_id"], "mock-user");
+        assert_eq!(resp_json["data"]["created_at"], 1000);
+        // PII 字段被脱敏（null）
+        assert!(
+            resp_json["data"]["ip"].is_null(),
+            "非属主 ip 应被脱敏，实际: {:?}",
+            resp_json["data"]["ip"]
+        );
+        assert!(
+            resp_json["data"]["user_agent"].is_null(),
+            "非属主 user_agent 应被脱敏，实际: {:?}",
+            resp_json["data"]["user_agent"]
+        );
+        assert!(
+            resp_json["data"]["device"].is_null(),
+            "非属主 device 应被脱敏，实际: {:?}",
+            resp_json["data"]["device"]
+        );
+    }
+
+    /// A5: caller_login_id 为空（fail-closed）时 PII 被脱敏。
+    /// 模拟 BackendRemote 旧版客户端仅发送 `{"token": "..."}` 的场景。
+    #[tokio::test]
+    async fn test_sdforge_get_session_masks_pii_when_caller_login_id_empty() {
+        let app = make_router();
+        // 不提供 caller_login_id（serde default = ""）→ fail-closed
+        let body = serde_json::json!({ "token": "my-token" });
+        let resp_json = post_json(app, "/api/v1/auth/get-session", body).await;
+        assert_eq!(resp_json["data"]["login_id"], "mock-user");
+        assert!(
+            resp_json["data"]["ip"].is_null(),
+            "空 caller_login_id 时 ip 应被脱敏（fail-closed）"
+        );
+        assert!(
+            resp_json["data"]["user_agent"].is_null(),
+            "空 caller_login_id 时 user_agent 应被脱敏（fail-closed）"
+        );
+        assert!(
+            resp_json["data"]["device"].is_null(),
+            "空 caller_login_id 时 device 应被脱敏（fail-closed）"
+        );
     }
 
     #[tokio::test]
