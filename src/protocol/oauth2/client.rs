@@ -14,8 +14,98 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use percent_encoding::{utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
 use sha2::{Digest, Sha256};
+use std::time::Duration;
 
 use super::{TokenIntrospectionResponse, TokenResponse};
+
+/// HTTP 客户端安全默认配置（E1）。
+///
+/// 统一所有 OAuth2/OIDC 出站 HTTP 请求的连接与读超时，防止恶意或慢速 IdP
+/// 拖垮服务端连接池（slowloris 类攻击）。
+///
+/// - `connect_timeout = 10s`：DNS + TCP + TLS 握手上限
+/// - `read_timeout = 30s`：单次响应读取上限（覆盖 token endpoint / JWKS / userinfo）
+///
+/// `reqwest::Client` 内部连接池由 reqwest 默认配置管理（pool_idle_timeout=90s 等），
+/// 此处只追加超时阈值，不重写其他 builder 项。
+///
+/// # 公开范围
+///
+/// `pub(crate)` 仅供 `protocol::oauth2` 与 `protocol::oauth2::keycloak` 复用
+/// （`keycloak-oidc` feature 强依赖 `protocol-oauth2`）。
+/// `protocol::sso::oidc` 因 feature 隔离（`protocol-sso` 不依赖 `protocol-oauth2`）
+/// 自行维护等价 helper，避免引入跨 feature 强耦合。
+pub(crate) const HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+pub(crate) const HTTP_READ_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// 构造带超时配置的 `reqwest::Client`（E1 修复）。
+///
+/// 三处 `reqwest::Client::builder().build()` 统一委托此函数，确保超时配置不漏配。
+///
+/// # 错误
+/// - `BulwarkError::Network`: reqwest builder 失败（如 TLS 后端不可用）。
+pub(crate) fn build_safe_http_client() -> BulwarkResult<reqwest::Client> {
+    reqwest::Client::builder()
+        .connect_timeout(HTTP_CONNECT_TIMEOUT)
+        .read_timeout(HTTP_READ_TIMEOUT)
+        .build()
+        .map_err(|e| BulwarkError::Network(format!("构建 HTTP 客户端失败: {}", e)))
+}
+
+/// HTTP 响应体大小上限（E2）：4 MiB。
+///
+/// 超出此上限的响应体直接返回 `BulwarkError::Network`，防止恶意 IdP 通过超大 JSON
+/// 触发 OOM 或反序列化放大攻击。4 MiB 足以容纳标准 JWT/JWKS/userinfo 响应
+/// （典型 JWKS < 10 KiB，userinfo < 4 KiB）。
+pub(crate) const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
+
+/// 读取响应体并强制大小上限（E2 修复）。
+///
+/// 使用 `resp.chunk()` 流式累积，超过 [`MAX_BODY_BYTES`] 立即中断返回 Err。
+/// 替代 `resp.bytes()` / `resp.json()` / `resp.text()` 的无界读取。
+///
+/// # 错误
+/// - `BulwarkError::Network`: 响应体超过 `MAX_BODY_BYTES` 或底层读取失败。
+pub(crate) async fn read_limited_bytes(resp: reqwest::Response) -> BulwarkResult<Vec<u8>> {
+    let mut buf: Vec<u8> = Vec::new();
+    let mut resp = resp;
+    while let Some(chunk) = resp
+        .chunk()
+        .await
+        .map_err(|e| BulwarkError::Network(format!("读取响应体失败: {}", e)))?
+    {
+        let new_len = buf
+            .len()
+            .checked_add(chunk.len())
+            .ok_or_else(|| BulwarkError::Network("响应体长度溢出 usize（E2）".to_string()))?;
+        if new_len > MAX_BODY_BYTES {
+            return Err(BulwarkError::Network(format!(
+                "响应体超过 {} 字节上限（E2）",
+                MAX_BODY_BYTES
+            )));
+        }
+        buf.extend_from_slice(&chunk);
+    }
+    Ok(buf)
+}
+
+/// 读取响应体为 UTF-8 字符串，强制大小上限（E2 修复）。
+///
+/// 组合 [`read_limited_bytes`] + `String::from_utf8`，替代 `resp.text()` 的无界读取。
+/// 主要用于错误响应体读取（保留原有 `unwrap_or_default` 语义由调用方决定）。
+///
+/// # 死代码说明
+///
+/// 当前 `protocol::oauth2` 模块内的错误响应路径直接用 `resp.status().to_string()`
+/// 构造错误消息（不读取 body），因此本函数在生产路径未被调用。保留为 `pub(crate)`
+/// 是为了：(1) 与 `protocol::sso::oidc` 的本地副本保持 API 对称；
+/// (2) 后续若需读取错误响应体（如 Keycloak 错误 JSON 解析）可直接复用。
+#[allow(dead_code)]
+pub(crate) async fn read_limited_text(resp: reqwest::Response) -> BulwarkResult<String> {
+    let bytes = read_limited_bytes(resp).await?;
+    String::from_utf8(bytes)
+        .map_err(|e| BulwarkError::Network(format!("响应体 UTF-8 解码失败: {}", e)))
+}
 
 /// URL 编码字符集。
 ///
@@ -90,9 +180,7 @@ impl OAuth2Client {
         }
         let redirect_uri = redirect_uri.into();
         Self::validate_redirect_uri(&redirect_uri)?;
-        let http = reqwest::Client::builder()
-            .build()
-            .map_err(|e| BulwarkError::Network(format!("构建 HTTP 客户端失败: {}", e)))?;
+        let http = build_safe_http_client()?;
         Ok(Self {
             client_id,
             client_secret: client_secret.into(),
@@ -504,9 +592,10 @@ impl OAuth2Client {
             )));
         }
 
-        let token = resp
-            .json::<TokenResponse>()
+        let token_bytes = read_limited_bytes(resp)
             .await
+            .map_err(|e| BulwarkError::OAuth2(format!("读取 token 响应体失败: {}", e)))?;
+        let token: TokenResponse = serde_json::from_slice(&token_bytes)
             .map_err(|e| BulwarkError::OAuth2(format!("解析 token 响应失败: {}", e)))?;
         Ok(token)
     }
@@ -556,9 +645,10 @@ impl OAuth2Client {
             )));
         }
 
-        let response = resp
-            .json::<TokenIntrospectionResponse>()
+        let introspect_bytes = read_limited_bytes(resp)
             .await
+            .map_err(|e| BulwarkError::OAuth2(format!("读取 introspection 响应体失败: {}", e)))?;
+        let response: TokenIntrospectionResponse = serde_json::from_slice(&introspect_bytes)
             .map_err(|e| BulwarkError::OAuth2(format!("解析 introspection 响应失败: {}", e)))?;
         Ok(response)
     }
@@ -589,7 +679,7 @@ impl Drop for OAuth2Client {
 
 #[cfg(test)]
 mod tests {
-    use super::url_encode;
+    use super::{url_encode, *};
 
     /// URL 编码保留安全字符（与原自实现 `encode` 行为等价）。
     #[test]
@@ -611,5 +701,215 @@ mod tests {
             let s = ch.to_string();
             assert_eq!(url_encode(&s), s, "字符 {} 应被保留", ch);
         }
+    }
+
+    // ========================================================================
+    // E1: reqwest 客户端超时配置
+    // ========================================================================
+
+    /// E1 单元测试：`build_safe_http_client()` 返回有效的 Client 实例。
+    ///
+    /// 验证 builder 配置可编译且不报错。reqwest 不暴露 timeout 设置项的运行时
+    /// 内省 API，因此超时行为由 `e1_read_timeout_triggers_on_slow_server` 行为测试覆盖。
+    #[test]
+    fn e1_build_safe_http_client_returns_valid_client() {
+        let client = build_safe_http_client();
+        assert!(client.is_ok(), "build_safe_http_client 必须返回 Ok");
+    }
+
+    /// E1 单元测试：超时常量值符合 spec（connect=10s, read=30s）。
+    #[test]
+    fn e1_timeout_constants_match_spec() {
+        assert_eq!(HTTP_CONNECT_TIMEOUT, Duration::from_secs(10));
+        assert_eq!(HTTP_READ_TIMEOUT, Duration::from_secs(30));
+    }
+
+    /// E1 行为测试：read_timeout=30s 触发于慢速 token endpoint。
+    ///
+    /// 使用 wiremock 模拟延迟 35s 的响应，验证请求在 ~30s 内失败（而非挂起）。
+    /// 标记 `#[ignore]` 避免拖慢 CI（按需 `cargo test -- --ignored` 运行）。
+    #[tokio::test]
+    #[ignore = "慢测试（~30s），按需运行：cargo test e1_read_timeout_triggers -- --ignored"]
+    async fn e1_read_timeout_triggers_on_slow_server() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        // 延迟 35s > read_timeout=30s，确保触发读超时
+        let delay = std::time::Duration::from_secs(35);
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(ResponseTemplate::new(200).set_delay(delay))
+            .mount(&server)
+            .await;
+
+        let client = build_safe_http_client().expect("client 构建成功");
+        let start = std::time::Instant::now();
+        let result = client
+            .post(format!("{}/token", server.uri()))
+            .form(&[("grant_type", "test")])
+            .send()
+            .await;
+        let elapsed = start.elapsed();
+
+        assert!(result.is_err(), "慢服务器必须触发超时错误");
+        // 允许 ±2s 抖动：reqwest 内部重试 + tokio 调度
+        assert!(
+            elapsed >= Duration::from_secs(28) && elapsed <= Duration::from_secs(33),
+            "超时应约 30s 触发，实际 {:?}",
+            elapsed
+        );
+    }
+
+    // ========================================================================
+    // E2: 响应体大小限制（4 MiB）
+    // ========================================================================
+
+    /// E2 单元测试：MAX_BODY_BYTES 常量值为 4 MiB。
+    #[test]
+    fn e2_max_body_bytes_is_4_mib() {
+        assert_eq!(MAX_BODY_BYTES, 4 * 1024 * 1024);
+    }
+
+    /// E2 行为测试：超过 4 MiB 的响应被 `read_limited_bytes` 拒绝。
+    ///
+    /// 使用 wiremock 返回 5 MiB 响应体，验证 helper 返回 Err。
+    #[tokio::test]
+    async fn e2_read_limited_bytes_rejects_oversized_response() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        // 5 MiB > 4 MiB 上限
+        let oversized_body = "x".repeat(5 * 1024 * 1024);
+        Mock::given(method("GET"))
+            .and(path("/oversized"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(oversized_body))
+            .mount(&server)
+            .await;
+
+        let client = build_safe_http_client().expect("client 构建成功");
+        let resp = client
+            .get(format!("{}/oversized", server.uri()))
+            .send()
+            .await
+            .expect("请求必须成功（错误在读取阶段）");
+        let result = read_limited_bytes(resp).await;
+        assert!(result.is_err(), "5 MiB 响应必须被拒绝");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("超过") && err_msg.contains("字节上限"),
+            "错误消息应说明超限，实际: {}",
+            err_msg
+        );
+    }
+
+    /// E2 行为测试：刚好 4 MiB 的响应被 `read_limited_bytes` 接受。
+    ///
+    /// 边界值测试：恰好等于上限的响应应通过（`>` 而非 `>=` 判定）。
+    #[tokio::test]
+    async fn e2_read_limited_bytes_accepts_exact_limit() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        // 恰好 4 MiB = MAX_BODY_BYTES，应被接受（边界值）
+        let exact_body = "x".repeat(MAX_BODY_BYTES);
+        Mock::given(method("GET"))
+            .and(path("/exact"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(exact_body))
+            .mount(&server)
+            .await;
+
+        let client = build_safe_http_client().expect("client 构建成功");
+        let resp = client
+            .get(format!("{}/exact", server.uri()))
+            .send()
+            .await
+            .expect("请求必须成功");
+        let result = read_limited_bytes(resp).await;
+        assert!(result.is_ok(), "恰好 {} 字节应被接受", MAX_BODY_BYTES);
+        assert_eq!(result.unwrap().len(), MAX_BODY_BYTES);
+    }
+
+    /// E2 行为测试：小响应正常读取。
+    ///
+    /// 回归保护：常规 < 1 KiB 响应不应被错误拒绝。
+    #[tokio::test]
+    async fn e2_read_limited_bytes_accepts_small_response() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/small"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("hello world"))
+            .mount(&server)
+            .await;
+
+        let client = build_safe_http_client().expect("client 构建成功");
+        let resp = client
+            .get(format!("{}/small", server.uri()))
+            .send()
+            .await
+            .expect("请求必须成功");
+        let bytes = read_limited_bytes(resp).await.expect("小响应必须通过");
+        assert_eq!(bytes, b"hello world");
+    }
+
+    /// E2 行为测试：`read_limited_text` 正确解码 UTF-8。
+    #[tokio::test]
+    async fn e2_read_limited_text_decodes_utf8() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/utf8"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("错误响应体"))
+            .mount(&server)
+            .await;
+
+        let client = build_safe_http_client().expect("client 构建成功");
+        let resp = client
+            .get(format!("{}/utf8", server.uri()))
+            .send()
+            .await
+            .expect("请求必须成功");
+        let text = read_limited_text(resp).await.expect("UTF-8 解码必须成功");
+        assert_eq!(text, "错误响应体");
+    }
+
+    /// E2 集成测试：OAuth2Client::post_token_request 拒绝超大 token 响应。
+    ///
+    /// 端到端验证：wiremock 返回 5 MiB JSON，OAuth2Client::exchange_code 返回 Err。
+    #[tokio::test]
+    #[allow(deprecated)]
+    async fn e2_oauth2_client_rejects_oversized_token_response() {
+        use wiremock::matchers::{body_string, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        // 构造 5 MiB 的 JSON（合法 JSON 但超过上限）
+        let huge_value = "x".repeat(5 * 1024 * 1024);
+        let huge_json = format!(r#"{{"access_token":"{}"}}"#, huge_value);
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .and(body_string("grant_type=authorization_code"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(huge_json))
+            .mount(&server)
+            .await;
+
+        let client = OAuth2Client::new(
+            "cid",
+            "secret",
+            "https://localhost/callback",
+            "https://auth.example.com/auth",
+            format!("{}/token", server.uri()),
+        )
+        .expect("client 构建成功");
+
+        let result = client.exchange_code("code123", "state").await;
+        assert!(result.is_err(), "超大 token 响应必须被拒绝");
     }
 }

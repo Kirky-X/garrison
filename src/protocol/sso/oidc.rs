@@ -28,6 +28,62 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
 
+/// HTTP 客户端安全默认配置（E1，protocol-sso 本地副本）。
+///
+/// `protocol-sso` feature 不依赖 `protocol-oauth2`，无法复用
+/// `crate::protocol::oauth2::client::build_safe_http_client`。
+/// 此处维护等价实现，避免引入跨 feature 强耦合。
+/// 与 `protocol::oauth2::client::HTTP_CONNECT_TIMEOUT` / `HTTP_READ_TIMEOUT` 保持同值。
+const HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const HTTP_READ_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// HTTP 响应体大小上限（E2，protocol-sso 本地副本）：4 MiB。
+///
+/// 与 `protocol::oauth2::client::MAX_BODY_BYTES` 保持同值。
+const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
+
+/// 构造带超时配置的 `reqwest::Client`（E1 修复，protocol-sso 本地副本）。
+fn build_safe_http_client() -> BulwarkResult<reqwest::Client> {
+    reqwest::Client::builder()
+        .connect_timeout(HTTP_CONNECT_TIMEOUT)
+        .read_timeout(HTTP_READ_TIMEOUT)
+        .build()
+        .map_err(|e| BulwarkError::Network(format!("构建 HTTP 客户端失败: {}", e)))
+}
+
+/// 读取响应体并强制大小上限（E2 修复，protocol-sso 本地副本）。
+///
+/// 使用 `resp.chunk()` 流式累积，超过 [`MAX_BODY_BYTES`] 立即中断返回 Err。
+async fn read_limited_bytes(resp: reqwest::Response) -> BulwarkResult<Vec<u8>> {
+    let mut buf: Vec<u8> = Vec::new();
+    let mut resp = resp;
+    while let Some(chunk) = resp
+        .chunk()
+        .await
+        .map_err(|e| BulwarkError::Network(format!("读取响应体失败: {}", e)))?
+    {
+        let new_len = buf
+            .len()
+            .checked_add(chunk.len())
+            .ok_or_else(|| BulwarkError::Network("响应体长度溢出 usize（E2）".to_string()))?;
+        if new_len > MAX_BODY_BYTES {
+            return Err(BulwarkError::Network(format!(
+                "响应体超过 {} 字节上限（E2）",
+                MAX_BODY_BYTES
+            )));
+        }
+        buf.extend_from_slice(&chunk);
+    }
+    Ok(buf)
+}
+
+/// 读取响应体为 UTF-8 字符串，强制大小上限（E2 修复，protocol-sso 本地副本）。
+async fn read_limited_text(resp: reqwest::Response) -> BulwarkResult<String> {
+    let bytes = read_limited_bytes(resp).await?;
+    String::from_utf8(bytes)
+        .map_err(|e| BulwarkError::Network(format!("响应体 UTF-8 解码失败: {}", e)))
+}
+
 /// JWKS 公钥缓存 TTL。
 ///
 /// 10 分钟内复用缓存的 JWKS 公钥，避免每次 `validate_id_token` 都拉取 JWKS endpoint。
@@ -256,17 +312,27 @@ impl DefaultOidcProvider {
     /// - `config`: OIDC Discovery 配置（含 issuer 和 endpoints）。
     /// - `client_id`: 客户端 ID。
     /// - `client_secret`: 客户端密钥。
-    pub fn new(config: OidcDiscoveryConfig, client_id: &str, client_secret: &str) -> Self {
-        Self {
+    ///
+    /// # 错误
+    /// - `BulwarkError::Network`: `reqwest::Client` 构建失败（E1：含超时配置）。
+    pub fn new(
+        config: OidcDiscoveryConfig,
+        client_id: &str,
+        client_secret: &str,
+    ) -> BulwarkResult<Self> {
+        // E1：使用 build_safe_http_client 注入 connect_timeout=10s / read_timeout=30s，
+        // 防止恶意或慢速 IdP 拖垮服务端连接池（slowloris 类攻击）。
+        let http_client = build_safe_http_client()?;
+        Ok(Self {
             config,
             client_id: client_id.to_string(),
             client_secret: client_secret.to_string(),
-            http_client: reqwest::Client::new(),
+            http_client,
             dao: None,
             state_ttl: OIDC_STATE_TTL,
             #[cfg(feature = "protocol-jwt")]
             jwks_fetch_lock: tokio::sync::Mutex::new(()),
-        }
+        })
     }
 
     /// 注入 [`BulwarkDao`] 实例以接管 JWKS 缓存与 state 注册表。
@@ -408,16 +474,19 @@ impl DefaultOidcProvider {
 
         if !resp.status().is_success() {
             let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
+            // E2：错误响应体也限大小（4 MiB），防止恶意 IdP 通过错误响应触发 OOM
+            let body = read_limited_text(resp).await.unwrap_or_default();
             return Err(BulwarkError::Internal(format!(
                 "OIDC JWKS 端点返回错误状态: {} body: {}",
                 status, body
             )));
         }
 
-        let jwks = resp
-            .json::<JwksResponse>()
+        // E2：限制响应体大小（4 MiB），防止恶意 IdP 通过超大 JWKS JSON 触发 OOM
+        let bytes = read_limited_bytes(resp)
             .await
+            .map_err(|e| BulwarkError::Internal(format!("OIDC JWKS 响应体读取失败: {}", e)))?;
+        let jwks: JwksResponse = serde_json::from_slice(&bytes)
             .map_err(|e| BulwarkError::Internal(format!("OIDC JWKS 响应解析失败: {}", e)))?;
 
         // 序列化为 JSON 字符串存入 DAO（反序列化时按相同结构解析）
@@ -611,16 +680,19 @@ impl OidcProvider for DefaultOidcProvider {
 
         if !resp.status().is_success() {
             let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
+            // E2：错误响应体也限大小（4 MiB），防止恶意 IdP 通过错误响应触发 OOM
+            let body = read_limited_text(resp).await.unwrap_or_default();
             return Err(BulwarkError::Internal(format!(
                 "OIDC token 端点返回错误状态: {} body: {}",
                 status, body
             )));
         }
 
-        let token_response: TokenResponse = resp
-            .json()
+        // E2：限制响应体大小（4 MiB），防止恶意 IdP 通过超大 token JSON 触发 OOM
+        let bytes = read_limited_bytes(resp)
             .await
+            .map_err(|e| BulwarkError::Internal(format!("OIDC token 响应体读取失败: {}", e)))?;
+        let token_response: TokenResponse = serde_json::from_slice(&bytes)
             .map_err(|e| BulwarkError::Internal(format!("OIDC token 响应解析失败: {}", e)))?;
 
         let id_token = token_response
@@ -648,15 +720,19 @@ impl OidcProvider for DefaultOidcProvider {
 
         if !resp.status().is_success() {
             let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
+            // E2：错误响应体也限大小（4 MiB），防止恶意 IdP 通过错误响应触发 OOM
+            let body = read_limited_text(resp).await.unwrap_or_default();
             return Err(BulwarkError::Internal(format!(
                 "OIDC userinfo 端点返回错误状态: {} body: {}",
                 status, body
             )));
         }
 
-        resp.json()
+        // E2：限制响应体大小（4 MiB），防止恶意 IdP 通过超大 userinfo JSON 触发 OOM
+        let bytes = read_limited_bytes(resp)
             .await
+            .map_err(|e| BulwarkError::Internal(format!("OIDC userinfo 响应体读取失败: {}", e)))?;
+        serde_json::from_slice::<OidcUserInfo>(&bytes)
             .map_err(|e| BulwarkError::Internal(format!("OIDC userinfo 响应解析失败: {}", e)))
     }
 
@@ -810,7 +886,7 @@ mod tests {
     #[test]
     fn default_oidc_provider_new_returns_instance() {
         let config = make_test_config();
-        let provider = DefaultOidcProvider::new(config, "client-id", "client-secret");
+        let provider = DefaultOidcProvider::new(config, "client-id", "client-secret").unwrap();
         assert_eq!(provider.client_id, "client-id");
         assert_eq!(provider.client_secret, "client-secret");
     }
@@ -820,7 +896,7 @@ mod tests {
     fn default_oidc_provider_implements_oidc_provider() {
         fn assert_oidc_provider<T: OidcProvider>(_provider: &T) {}
         let config = make_test_config();
-        let provider = DefaultOidcProvider::new(config, "id", "secret");
+        let provider = DefaultOidcProvider::new(config, "id", "secret").unwrap();
         assert_oidc_provider(&provider);
     }
 
@@ -833,6 +909,7 @@ mod tests {
     async fn get_authorization_url_constructs_valid_url() {
         let config = make_test_config();
         let provider = DefaultOidcProvider::new(config, "test-client-id", "secret")
+            .unwrap()
             .with_dao(Arc::new(MockDao::new()));
         let url = provider
             .get_authorization_url(
@@ -855,8 +932,9 @@ mod tests {
     #[tokio::test]
     async fn get_authorization_url_single_scope() {
         let config = make_test_config();
-        let provider =
-            DefaultOidcProvider::new(config, "cid", "cs").with_dao(Arc::new(MockDao::new()));
+        let provider = DefaultOidcProvider::new(config, "cid", "cs")
+            .unwrap()
+            .with_dao(Arc::new(MockDao::new()));
         let url = provider
             .get_authorization_url("https://cb.com/cb", "st", &["openid"])
             .await
@@ -868,8 +946,9 @@ mod tests {
     #[tokio::test]
     async fn get_authorization_url_empty_scopes() {
         let config = make_test_config();
-        let provider =
-            DefaultOidcProvider::new(config, "cid", "cs").with_dao(Arc::new(MockDao::new()));
+        let provider = DefaultOidcProvider::new(config, "cid", "cs")
+            .unwrap()
+            .with_dao(Arc::new(MockDao::new()));
         let url = provider
             .get_authorization_url("https://cb.com/cb", "st", &[])
             .await
@@ -890,7 +969,7 @@ mod tests {
     #[tokio::test]
     async fn validate_id_token_returns_not_implemented() {
         let config = make_test_config();
-        let provider = DefaultOidcProvider::new(config, "id", "secret");
+        let provider = DefaultOidcProvider::new(config, "id", "secret").unwrap();
         let result = provider.validate_id_token("fake.jwt.token").await;
         assert!(result.is_err());
         match result.err() {
@@ -952,8 +1031,9 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let provider =
-            DefaultOidcProvider::new(config, "cid", "cs").with_dao(Arc::new(MockDao::new()));
+        let provider = DefaultOidcProvider::new(config, "cid", "cs")
+            .unwrap()
+            .with_dao(Arc::new(MockDao::new()));
         //  先注册 state，再交换授权码
         provider
             .get_authorization_url(
@@ -995,8 +1075,9 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let provider =
-            DefaultOidcProvider::new(config, "cid", "cs").with_dao(Arc::new(MockDao::new()));
+        let provider = DefaultOidcProvider::new(config, "cid", "cs")
+            .unwrap()
+            .with_dao(Arc::new(MockDao::new()));
         //  先注册 state
         provider
             .get_authorization_url(
@@ -1041,8 +1122,9 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let provider =
-            DefaultOidcProvider::new(config, "cid", "cs").with_dao(Arc::new(MockDao::new()));
+        let provider = DefaultOidcProvider::new(config, "cid", "cs")
+            .unwrap()
+            .with_dao(Arc::new(MockDao::new()));
         //  先注册 state
         provider
             .get_authorization_url(
@@ -1090,8 +1172,9 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let provider =
-            DefaultOidcProvider::new(config, "cid", "cs").with_dao(Arc::new(MockDao::new()));
+        let provider = DefaultOidcProvider::new(config, "cid", "cs")
+            .unwrap()
+            .with_dao(Arc::new(MockDao::new()));
         let user_info = provider.get_user_info("access-token-123").await.unwrap();
         assert_eq!(user_info.sub, "user-123");
         assert_eq!(user_info.email, "user@example.com");
@@ -1121,8 +1204,9 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let provider =
-            DefaultOidcProvider::new(config, "cid", "cs").with_dao(Arc::new(MockDao::new()));
+        let provider = DefaultOidcProvider::new(config, "cid", "cs")
+            .unwrap()
+            .with_dao(Arc::new(MockDao::new()));
         let result = provider.get_user_info("bad-token").await;
         assert!(result.is_err());
     }
@@ -1312,6 +1396,7 @@ mod tests {
         );
 
         let provider = DefaultOidcProvider::new(config, "client-id", "secret")
+            .unwrap()
             .with_dao(Arc::new(MockDao::new()));
         let result = provider.validate_id_token(&id_token).await;
         assert!(result.is_err(), "无效签名应返回错误");
@@ -1348,6 +1433,7 @@ mod tests {
         );
 
         let provider = DefaultOidcProvider::new(config, "client-id", "secret")
+            .unwrap()
             .with_dao(Arc::new(MockDao::new()));
         let result = provider.validate_id_token(&id_token).await;
         assert!(result.is_err(), "过期 token 应返回错误");
@@ -1384,6 +1470,7 @@ mod tests {
         );
 
         let provider = DefaultOidcProvider::new(config, "client-id", "secret")
+            .unwrap()
             .with_dao(Arc::new(MockDao::new()));
         let result = provider.validate_id_token(&id_token).await;
         assert!(result.is_err(), "iss 不匹配应返回错误");
@@ -1420,6 +1507,7 @@ mod tests {
         );
 
         let provider = DefaultOidcProvider::new(config, "client-id", "secret")
+            .unwrap()
             .with_dao(Arc::new(MockDao::new()));
         let result = provider.validate_id_token(&id_token).await;
         assert!(result.is_err(), "aud 不匹配应返回错误");
@@ -1490,8 +1578,9 @@ mod tests {
             jwks_uri: format!("{}/jwks", mock_server.uri()),
         };
 
-        let provider =
-            DefaultOidcProvider::new(config, "cid", "secret").with_dao(Arc::new(MockDao::new()));
+        let provider = DefaultOidcProvider::new(config, "cid", "secret")
+            .unwrap()
+            .with_dao(Arc::new(MockDao::new()));
         //  先注册 state
         provider
             .get_authorization_url(
@@ -1558,8 +1647,9 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let provider =
-            DefaultOidcProvider::new(config, "cid", "cs").with_dao(Arc::new(MockDao::new()));
+        let provider = DefaultOidcProvider::new(config, "cid", "cs")
+            .unwrap()
+            .with_dao(Arc::new(MockDao::new()));
         // 未注册 state 直接调用 exchange_code
         let result = provider
             .exchange_code("code", "https://sp.example.com/cb", "unregistered-state")
@@ -1602,8 +1692,9 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let provider =
-            DefaultOidcProvider::new(config, "cid", "cs").with_dao(Arc::new(MockDao::new()));
+        let provider = DefaultOidcProvider::new(config, "cid", "cs")
+            .unwrap()
+            .with_dao(Arc::new(MockDao::new()));
         // 注册 state "abc"
         provider
             .get_authorization_url("https://sp.example.com/cb", "abc", &["openid"])
@@ -1667,8 +1758,9 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let provider =
-            DefaultOidcProvider::new(config, "cid", "cs").with_dao(Arc::new(MockDao::new()));
+        let provider = DefaultOidcProvider::new(config, "cid", "cs")
+            .unwrap()
+            .with_dao(Arc::new(MockDao::new()));
         // 注册 state
         provider
             .get_authorization_url("https://sp.example.com/cb", "one-time-state", &["openid"])
@@ -1723,6 +1815,7 @@ mod tests {
 
         // 使用 1 秒 TTL（BulwarkDao::set 的 ttl_seconds: u64 最小粒度为秒）
         let provider = DefaultOidcProvider::new(config, "cid", "cs")
+            .unwrap()
             .with_dao(Arc::new(MockDao::new()))
             .with_state_ttl(Duration::from_secs(1));
         provider
@@ -1760,6 +1853,7 @@ mod tests {
 
         // with_max_state_entries 是 no-op（DAO 模式下容量由 oxcache 自管理）
         let provider = DefaultOidcProvider::new(config, "cid", "cs")
+            .unwrap()
             .with_dao(Arc::new(MockDao::new()))
             .with_max_state_entries(2);
         // 注册 3 个 state（max=2，但 no-op 不淘汰）
@@ -1793,8 +1887,9 @@ mod tests {
             userinfo_endpoint: "https://idp.example.com/userinfo".to_string(),
             jwks_uri: "https://idp.example.com/jwks".to_string(),
         };
-        let provider =
-            DefaultOidcProvider::new(config, "cid", "cs").with_dao(Arc::new(MockDao::new()));
+        let provider = DefaultOidcProvider::new(config, "cid", "cs")
+            .unwrap()
+            .with_dao(Arc::new(MockDao::new()));
         // state_store_len 始终返回 0（stub）
         assert_eq!(provider.state_store_len(), 0);
         provider
@@ -1814,5 +1909,214 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(provider.state_store_len(), 0);
+    }
+
+    // ========================================================================
+    // E1 + E2 测试：HTTP 客户端超时 + 响应体大小限制
+    //
+    // 验证 DefaultOidcProvider 使用 build_safe_http_client（含 connect_timeout=10s,
+    // read_timeout=30s）与 read_limited_bytes（4 MiB 上限），防止恶意 IdP 通过
+    // slowloris / 超大响应体 OOM 攻击。
+    // ========================================================================
+
+    /// E1：`build_safe_http_client` 返回有效客户端（含 connect/read 超时配置）。
+    #[test]
+    fn e1_build_safe_http_client_returns_valid_client() {
+        let client = build_safe_http_client();
+        assert!(client.is_ok(), "build_safe_http_client 应返回 Ok(Client)");
+    }
+
+    /// E1：超时常量与规格匹配（connect=10s, read=30s）。
+    #[test]
+    fn e1_timeout_constants_match_spec() {
+        assert_eq!(HTTP_CONNECT_TIMEOUT, Duration::from_secs(10));
+        assert_eq!(HTTP_READ_TIMEOUT, Duration::from_secs(30));
+    }
+
+    /// E1：`DefaultOidcProvider::new` 成功构造（HTTP 客户端构建不应失败）。
+    #[test]
+    fn e1_default_oidc_provider_new_succeeds() {
+        let config = make_test_config();
+        let result = DefaultOidcProvider::new(config, "cid", "cs");
+        assert!(result.is_ok(), "DefaultOidcProvider::new 应返回 Ok");
+    }
+
+    /// E2：`MAX_BODY_BYTES` 常量等于 4 MiB。
+    #[test]
+    fn e2_max_body_bytes_is_4_mib() {
+        assert_eq!(MAX_BODY_BYTES, 4 * 1024 * 1024);
+    }
+
+    /// E2：`read_limited_bytes` 接受小响应（< 4 MiB）。
+    #[tokio::test]
+    async fn e2_read_limited_bytes_accepts_small_response() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/small"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("hello"))
+            .mount(&mock_server)
+            .await;
+
+        let client = build_safe_http_client().unwrap();
+        let resp = client
+            .get(format!("{}/small", mock_server.uri()))
+            .send()
+            .await
+            .unwrap();
+        let bytes = read_limited_bytes(resp).await.unwrap();
+        assert_eq!(bytes, b"hello");
+    }
+
+    /// E2：`read_limited_bytes` 接受恰好等于上限的响应（4 MiB，边界值）。
+    #[tokio::test]
+    async fn e2_read_limited_bytes_accepts_exact_limit() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        let body = "x".repeat(MAX_BODY_BYTES);
+        Mock::given(method("GET"))
+            .and(path("/exact"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(body.clone()))
+            .mount(&mock_server)
+            .await;
+
+        let client = build_safe_http_client().unwrap();
+        let resp = client
+            .get(format!("{}/exact", mock_server.uri()))
+            .send()
+            .await
+            .unwrap();
+        let bytes = read_limited_bytes(resp).await.unwrap();
+        assert_eq!(bytes.len(), MAX_BODY_BYTES);
+    }
+
+    /// E2：`read_limited_bytes` 拒绝超过 4 MiB 的响应（返回 Network 错误）。
+    #[tokio::test]
+    async fn e2_read_limited_bytes_rejects_oversized_response() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        // 5 MiB 超过 4 MiB 上限
+        let oversized_body = "x".repeat(MAX_BODY_BYTES + 1024 * 1024);
+        Mock::given(method("GET"))
+            .and(path("/oversized"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(oversized_body))
+            .mount(&mock_server)
+            .await;
+
+        let client = build_safe_http_client().unwrap();
+        let resp = client
+            .get(format!("{}/oversized", mock_server.uri()))
+            .send()
+            .await
+            .unwrap();
+        let result = read_limited_bytes(resp).await;
+        assert!(result.is_err(), "超大响应应返回错误");
+        match result.err() {
+            Some(BulwarkError::Network(msg)) => {
+                assert!(
+                    msg.contains("上限") || msg.contains("E2"),
+                    "错误消息应提及上限/E2，实际: {}",
+                    msg
+                );
+            },
+            other => panic!("期望 Network 错误，实际: {:?}", other),
+        }
+    }
+
+    /// E2：`read_limited_text` 正确解码 UTF-8 字符串。
+    #[tokio::test]
+    async fn e2_read_limited_text_decodes_utf8() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/text"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("hello 你好"))
+            .mount(&mock_server)
+            .await;
+
+        let client = build_safe_http_client().unwrap();
+        let resp = client
+            .get(format!("{}/text", mock_server.uri()))
+            .send()
+            .await
+            .unwrap();
+        let text = read_limited_text(resp).await.unwrap();
+        assert_eq!(text, "hello 你好");
+    }
+
+    /// E2：`get_user_info` 拒绝超过 4 MiB 的 userinfo 响应。
+    ///
+    /// mock userinfo endpoint 返回 5 MiB body，期望 `get_user_info` 返回 Internal 错误
+    /// （由 `read_limited_bytes` 返回 Network 错误后包装为 Internal）。
+    #[tokio::test]
+    async fn e2_get_user_info_rejects_oversized_response() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        let oversized_body = "x".repeat(MAX_BODY_BYTES + 1024 * 1024);
+        Mock::given(method("GET"))
+            .and(path("/userinfo"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(oversized_body))
+            .mount(&mock_server)
+            .await;
+
+        let config = OidcDiscoveryConfig {
+            issuer: "https://idp.example.com".to_string(),
+            authorization_endpoint: "https://idp.example.com/authorize".to_string(),
+            token_endpoint: format!("{}/token", mock_server.uri()),
+            userinfo_endpoint: format!("{}/userinfo", mock_server.uri()),
+            jwks_uri: "https://idp.example.com/jwks".to_string(),
+        };
+        let provider = DefaultOidcProvider::new(config, "cid", "cs")
+            .unwrap()
+            .with_dao(Arc::new(MockDao::new()));
+        let result = provider.get_user_info("access-token").await;
+        assert!(result.is_err(), "超大 userinfo 响应应返回错误");
+    }
+
+    /// E2：`exchange_code` 拒绝超过 4 MiB 的 token 响应。
+    ///
+    /// mock token endpoint 返回 5 MiB body，期望 `exchange_code` 返回 Internal 错误。
+    #[tokio::test]
+    async fn e2_exchange_code_rejects_oversized_token_response() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        let oversized_body = "x".repeat(MAX_BODY_BYTES + 1024 * 1024);
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(oversized_body))
+            .mount(&mock_server)
+            .await;
+
+        let config = OidcDiscoveryConfig {
+            issuer: "https://idp.example.com".to_string(),
+            authorization_endpoint: "https://idp.example.com/authorize".to_string(),
+            token_endpoint: format!("{}/token", mock_server.uri()),
+            userinfo_endpoint: format!("{}/userinfo", mock_server.uri()),
+            jwks_uri: "https://idp.example.com/jwks".to_string(),
+        };
+        let provider = DefaultOidcProvider::new(config, "cid", "cs")
+            .unwrap()
+            .with_dao(Arc::new(MockDao::new()));
+        // 先注册 state
+        provider
+            .get_authorization_url("https://sp.example.com/cb", "state-e2", &["openid"])
+            .await
+            .unwrap();
+        let result = provider
+            .exchange_code("code", "https://sp.example.com/cb", "state-e2")
+            .await;
+        assert!(result.is_err(), "超大 token 响应应返回错误");
     }
 }

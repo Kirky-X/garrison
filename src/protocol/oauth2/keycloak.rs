@@ -29,6 +29,7 @@
 use crate::dao::BulwarkDao;
 use crate::error::{BulwarkError, BulwarkResult};
 use crate::loc;
+use crate::protocol::oauth2::client::{build_safe_http_client, read_limited_bytes};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -273,7 +274,7 @@ impl KeycloakProvider {
     ///
     /// - `BulwarkError::Network`: `reqwest::Client` 构建失败。
     pub fn new(config: KeycloakConfig) -> BulwarkResult<Self> {
-        let http = reqwest::Client::builder().build().map_err(|e| {
+        let http = build_safe_http_client().map_err(|e| {
             BulwarkError::Network(loc!(
                 "keycloak-http-client-build-failed",
                 format!("构建 HTTP 客户端失败: {}", e),
@@ -363,7 +364,15 @@ impl KeycloakProvider {
                 ("detail", &resp.status().to_string())
             )));
         }
-        resp.json::<OidcDiscoveryMetadata>().await.map_err(|e| {
+        // E2：限制响应体大小，防止恶意 IdP 通过超大 discovery JSON 触发 OOM
+        let bytes = read_limited_bytes(resp).await.map_err(|e| {
+            BulwarkError::Network(loc!(
+                "keycloak-discovery-body-read-failed",
+                format!("discovery 响应体读取失败: {}", e),
+                ("detail", &e.to_string())
+            ))
+        })?;
+        serde_json::from_slice::<OidcDiscoveryMetadata>(&bytes).map_err(|e| {
             BulwarkError::Network(loc!(
                 "keycloak-discovery-response-parse-failed",
                 format!("discovery 响应解析失败: {}", e),
@@ -413,7 +422,15 @@ impl KeycloakProvider {
                 ("detail", &resp.status().to_string())
             )));
         }
-        let jwks = resp.json::<JwksResponse>().await.map_err(|e| {
+        // E2：限制响应体大小，防止恶意 IdP 通过超大 JWKS JSON 触发 OOM
+        let bytes = read_limited_bytes(resp).await.map_err(|e| {
+            BulwarkError::Network(loc!(
+                "keycloak-jwks-body-read-failed",
+                format!("JWKS 响应体读取失败: {}", e),
+                ("detail", &e.to_string())
+            ))
+        })?;
+        let jwks: JwksResponse = serde_json::from_slice(&bytes).map_err(|e| {
             BulwarkError::Network(loc!(
                 "keycloak-jwks-response-parse-failed",
                 format!("JWKS 响应解析失败: {}", e),
@@ -641,7 +658,15 @@ impl KeycloakProvider {
                 ("detail", &resp.status().to_string())
             )));
         }
-        resp.json::<KeycloakTokenSet>().await.map_err(|e| {
+        // E2：限制响应体大小，防止恶意 IdP 通过超大 token JSON 触发 OOM
+        let bytes = read_limited_bytes(resp).await.map_err(|e| {
+            BulwarkError::Network(loc!(
+                "keycloak-exchange-code-body-read-failed",
+                format!("exchange_code 响应体读取失败: {}", e),
+                ("detail", &e.to_string())
+            ))
+        })?;
+        serde_json::from_slice::<KeycloakTokenSet>(&bytes).map_err(|e| {
             BulwarkError::Network(loc!(
                 "keycloak-exchange-code-response-parse-failed",
                 format!("exchange_code 响应解析失败: {}", e),
@@ -1638,5 +1663,93 @@ mod tests {
             ("kid", "abc123")
         );
         assert_eq!(msg, "JWKS 中未找到 kid=abc123 的公钥");
+    }
+
+    // ========================================================================
+    // E1: reqwest 客户端超时（KeycloakProvider 复用 protocol::oauth2::client）
+    // ========================================================================
+
+    /// E1 回归测试：KeycloakProvider::new 使用带超时的 HTTP 客户端。
+    ///
+    /// 验证 `build_safe_http_client()` 通过 `KeycloakProvider::new` 正常注入。
+    /// 不直接断言 timeout 值（reqwest 不暴露运行时内省），由 client.rs 的
+    /// `e1_read_timeout_triggers_on_slow_server` 行为测试覆盖。
+    #[test]
+    fn e1_keycloak_provider_new_uses_safe_http_client() {
+        let config = KeycloakConfig {
+            base_url: "https://kc.example.com:8443/realms/myrealm".into(),
+            client_id: "bulwark-rp".into(),
+            client_secret: Some("secret".into()),
+            redirect_uri: "https://app.example.com/cb".into(),
+            expected_iss: "https://kc.example.com:8443/realms/myrealm".into(),
+        };
+        let provider = KeycloakProvider::new(config);
+        assert!(provider.is_ok(), "KeycloakProvider::new 必须成功");
+    }
+
+    // ========================================================================
+    // E2: 响应体大小限制（KeycloakProvider discover/fetch_jwks/exchange_code）
+    // ========================================================================
+
+    /// E2 集成测试：KeycloakProvider::discover 拒绝超大 discovery JSON。
+    ///
+    /// wiremock 返回 5 MiB 的 discovery JSON，验证 discover() 返回 Err。
+    #[tokio::test]
+    async fn e2_keycloak_discover_rejects_oversized_response() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        // 构造 5 MiB 的 discovery JSON（合法结构但超过上限）
+        let huge_value = "x".repeat(5 * 1024 * 1024);
+        let huge_json = format!(
+            r#"{{"issuer":"https://kc.example.com","authorization_endpoint":"{}","token_endpoint":"{}","jwks_uri":"{}","userinfo_endpoint":"{}"}}"#,
+            huge_value, huge_value, huge_value, huge_value
+        );
+        Mock::given(method("GET"))
+            .and(path("/.well-known/openid-configuration"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(huge_json))
+            .mount(&server)
+            .await;
+
+        let config = KeycloakConfig {
+            base_url: server.uri(),
+            client_id: "bulwark-rp".into(),
+            client_secret: Some("secret".into()),
+            redirect_uri: "https://app.example.com/cb".into(),
+            expected_iss: server.uri(),
+        };
+        let provider = KeycloakProvider::new(config).expect("provider 构建成功");
+        let result = provider.discover().await;
+        assert!(result.is_err(), "超大 discovery JSON 必须被拒绝");
+    }
+
+    /// E2 集成测试：KeycloakProvider::exchange_code 拒绝超大 token 响应。
+    ///
+    /// wiremock 返回 5 MiB 的 token JSON，验证 exchange_code() 返回 Err。
+    #[tokio::test]
+    async fn e2_keycloak_exchange_code_rejects_oversized_response() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let huge_value = "x".repeat(5 * 1024 * 1024);
+        let huge_json = format!(r#"{{"access_token":"{}"}}"#, huge_value);
+        Mock::given(method("POST"))
+            .and(path("/protocol/openid-connect/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(huge_json))
+            .mount(&server)
+            .await;
+
+        let config = KeycloakConfig {
+            base_url: server.uri(),
+            client_id: "bulwark-rp".into(),
+            client_secret: Some("secret".into()),
+            redirect_uri: "https://app.example.com/cb".into(),
+            expected_iss: server.uri(),
+        };
+        let provider = KeycloakProvider::new(config).expect("provider 构建成功");
+        let result = provider.exchange_code("code123").await;
+        assert!(result.is_err(), "超大 token JSON 必须被拒绝");
     }
 }
