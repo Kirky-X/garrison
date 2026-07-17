@@ -77,6 +77,68 @@ pub fn reset_abac_for_test() {
 }
 
 // ============================================================================
+// validate_abac_expr — Cedar 策略注入防御（A3）
+// ============================================================================
+
+/// ABAC 表达式最大长度（512 字符），防止 DoS 攻击。
+#[cfg(feature = "abac")]
+const ABAC_EXPR_MAX_LEN: usize = 512;
+
+/// 校验 ABAC 表达式，防止 Cedar 策略注入。
+///
+/// 拒绝以下恶意模式：
+/// - 空表达式或仅空白
+/// - 超长表达式（>512 字符，DoS 防御）
+/// - 含 `};`：尝试闭合 `when { ... }` 块并注入新策略
+/// - 含 `permit(` / `forbid(`：尝试在表达式内声明新策略
+/// - 纯字面量：无 `principal` / `resource` / `action` 引用（要求表达式绑定到上下文）
+///
+/// # 参数
+/// - `expr`: Cedar 条件表达式字符串（如 "resource.owner == principal.id"）
+///
+/// # 返回
+/// - `Ok(())`: 表达式通过校验
+/// - `Err(BulwarkError::InvalidParam)`: 表达式含恶意模式或为纯字面量
+///
+/// # 安全考量
+///
+/// 此校验为纵深防御层。即便攻击者绕过宏属性注入恶意 `abac_expr`，
+/// 本函数也会拒绝已知的策略注入 payload。Cedar 解析器仍会再次校验语法。
+#[cfg(feature = "abac")]
+pub fn validate_abac_expr(expr: &str) -> BulwarkResult<()> {
+    let trimmed = expr.trim();
+    if trimmed.is_empty() {
+        return Err(BulwarkError::InvalidParam("abac_expr 不能为空".to_string()));
+    }
+    if expr.len() > ABAC_EXPR_MAX_LEN {
+        return Err(BulwarkError::InvalidParam(format!(
+            "abac_expr 长度超过 {} 字符（DoS 防御）",
+            ABAC_EXPR_MAX_LEN
+        )));
+    }
+    // 拒绝策略终止符（闭合 when 块并注入新策略）
+    if expr.contains("};") {
+        return Err(BulwarkError::InvalidParam(
+            "abac_expr 含非法字符 `};`（疑似策略注入）".to_string(),
+        ));
+    }
+    // 拒绝显式 permit/forbid 策略声明
+    if expr.contains("permit(") || expr.contains("forbid(") {
+        return Err(BulwarkError::InvalidParam(
+            "abac_expr 不允许声明 permit/forbid 策略".to_string(),
+        ));
+    }
+    // 要求至少含 principal/resource/action 之一，拒绝纯字面量
+    let lower = expr.to_lowercase();
+    if !lower.contains("principal") && !lower.contains("resource") && !lower.contains("action") {
+        return Err(BulwarkError::InvalidParam(
+            "abac_expr 必须引用 principal/resource/action 之一（拒绝纯字面量）".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+// ============================================================================
 // check_abac_with_policy — 宏入口（R-abac-004 / R-abac-005）
 // ============================================================================
 
@@ -88,11 +150,12 @@ pub fn reset_abac_for_test() {
 /// # 行为
 ///
 /// 1. 全局 AbacEngine 未初始化 → 返回 `Err(BulwarkError::Config(...))`（R-abac-001 fail-closed）
-/// 2. 获取当前 `login_id` 作为 principal，未登录 → 返回 `Err(NotLogin)`
-/// 3. 将 `abac_expr` 包装为 Cedar 策略：
+/// 2. 校验 `abac_expr` 防止 Cedar 策略注入（A3）
+/// 3. 获取当前 `login_id` 作为 principal，未登录 → 返回 `Err(NotLogin)`
+/// 4. 将 `abac_expr` 包装为 Cedar 策略：
 ///    `permit(principal, action == Action::"<action>", resource) when { <abac_expr> };`
-/// 4. 使用 `evaluate_with_temp_policy` 求值（不修改共享策略集），resource 由调用方显式传入
-/// 5. Allow → `Ok(())`，Deny → `Err(NotPermission)`
+/// 5. 使用 `evaluate_with_temp_policy` 求值（不修改共享策略集），resource 由调用方显式传入
+/// 6. Allow → `Ok(())`，Deny → `Err(NotPermission)`
 ///
 /// # 参数
 /// - `action`: 权限标识（如 "order:read"），作为 Cedar action
@@ -104,7 +167,7 @@ pub fn reset_abac_for_test() {
 /// # 错误
 /// - `BulwarkError::NotLogin`: 未登录（`get_login_id` 返回 None）
 /// - `BulwarkError::NotPermission`: ABAC 策略拒绝
-/// - `BulwarkError::InvalidParam`: Cedar 策略解析失败（含 resource 注入尝试）
+/// - `BulwarkError::InvalidParam`: abac_expr 含恶意模式或 Cedar 策略解析失败（含 resource 注入尝试）
 /// - 其他: 透传 `BulwarkManager` / AbacEngine 错误
 #[cfg(feature = "abac")]
 pub async fn check_abac_with_policy(
@@ -120,6 +183,8 @@ pub async fn check_abac_with_policy(
             ))
         }, // R-abac-001: 未初始化 fail-closed
     };
+    // A3: 校验 abac_expr 防止 Cedar 策略注入
+    validate_abac_expr(abac_expr)?;
     let login_id = crate::stp::BulwarkUtil::get_login_id().await?;
     let login_id = match login_id {
         Some(id) => id,

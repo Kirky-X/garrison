@@ -248,16 +248,20 @@ async fn check_abac_with_policy_engine_initialized_allow() {
 
     // 在 token 作用域内调用 check_abac_with_policy
     let result = with_current_token(token, async {
-        check_abac_with_policy("access", r#"Resource::"default""#, "1 == 1").await
+        check_abac_with_policy("access", r#"Resource::"default""#, "principal == principal").await
     })
     .await;
-    assert!(result.is_ok(), "1 == 1 应 Allow: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "principal == principal 应 Allow: {:?}",
+        result.err()
+    );
 
     reset_abac_for_test();
     crate::manager::BulwarkManager::reset_for_test();
 }
 
-/// 引擎已初始化且用户已登录时，abac_expr "1 == 2" 求值 Deny → 返回 Err(NotPermission)。
+/// 引擎已初始化且用户已登录时，abac_expr "principal != principal" 求值 Deny → 返回 Err(NotPermission)。
 ///
 /// 覆盖 lines 154-157（Deny 分支 → Err(NotPermission)）。
 #[tokio::test]
@@ -278,10 +282,10 @@ async fn check_abac_with_policy_engine_initialized_deny() {
         .expect("login 应成功");
 
     let result = with_current_token(token, async {
-        check_abac_with_policy("access", r#"Resource::"default""#, "1 == 2").await
+        check_abac_with_policy("access", r#"Resource::"default""#, "principal != principal").await
     })
     .await;
-    assert!(result.is_err(), "1 == 2 应 Deny");
+    assert!(result.is_err(), "principal != principal 应 Deny");
     match result {
         Err(crate::error::BulwarkError::NotPermission(msg)) => {
             assert!(
@@ -315,7 +319,8 @@ async fn check_abac_with_policy_not_logged_in_returns_not_login() {
 
     // 不调用 login_simple，不设置 with_current_token
     // current_token() 返回 Err → get_login_id 返回 Ok(None) → NotLogin
-    let result = check_abac_with_policy("access", r#"Resource::"default""#, "1 == 1").await;
+    let result =
+        check_abac_with_policy("access", r#"Resource::"default""#, "principal == principal").await;
     assert!(result.is_err(), "未登录应返回错误");
     match result {
         Err(crate::error::BulwarkError::NotLogin(msg)) => {
@@ -364,7 +369,7 @@ async fn check_abac_with_policy_rejects_resource_injection() {
     // 蓝军注入 payload：尝试闭合 Cedar 字符串并注入 forbid 策略
     let malicious_resource = r#"Resource::"x"); forbid(principal); //"#;
     let result = with_current_token(token, async {
-        check_abac_with_policy("access", malicious_resource, "1 == 1").await
+        check_abac_with_policy("access", malicious_resource, "principal == principal").await
     })
     .await;
     // 必须返回 Err（fail-closed），绝不能 Ok 或 NotPermission（那意味着注入成功）
@@ -412,11 +417,99 @@ async fn check_abac_with_policy_accepts_legitimate_resource() {
 
     // 合法 resource：正常 EntityUid 字符串
     let result = with_current_token(token, async {
-        check_abac_with_policy("access", r#"Resource::"order""#, "1 == 1").await
+        check_abac_with_policy("access", r#"Resource::"order""#, "principal == principal").await
     })
     .await;
     assert!(result.is_ok(), "合法 resource 应 Allow: {:?}", result.err());
 
     reset_abac_for_test();
     crate::manager::BulwarkManager::reset_for_test();
+}
+
+// ========================================================================
+// A3: validate_abac_expr — 防御 Cedar 策略注入
+// 验证 abac_expr 参数中的恶意模式被拒绝，合法表达式被接受
+// ========================================================================
+
+/// 合法 abac_expr 应通过校验。
+#[test]
+fn validate_abac_expr_accepts_legitimate_expressions() {
+    // 引用 principal/resource/action 的合法表达式
+    assert!(validate_abac_expr("resource.owner == principal.id").is_ok());
+    assert!(validate_abac_expr("principal.department == \"eng\"").is_ok());
+    assert!(validate_abac_expr("action in [Action::\"read\"]").is_ok());
+    assert!(validate_abac_expr(
+        "resource.owner == principal.id && principal.department == \"eng\""
+    )
+    .is_ok());
+}
+
+/// 拒绝 `};` 模式（尝试闭合 when 块并注入新策略）。
+#[test]
+fn validate_abac_expr_rejects_policy_termination() {
+    let payloads = [
+        "}; permit(principal, action, resource);",
+        "}; forbid(principal, action, resource);",
+        "1 == 1 }; permit(principal, action, resource);",
+        "resource.owner == principal.id }; forbid(principal);",
+    ];
+    for p in payloads {
+        assert!(
+            validate_abac_expr(p).is_err(),
+            "应拒绝 `}};` 注入 payload: {:?}",
+            p
+        );
+    }
+}
+
+/// 拒绝显式 `permit(` / `forbid(` 关键字（不允许在表达式内声明新策略）。
+#[test]
+fn validate_abac_expr_rejects_policy_declarations() {
+    let payloads = [
+        "permit(principal, action, resource)",
+        "forbid(principal, action, resource)",
+        "true || permit(principal, action, resource)",
+        "forbid(principal)",
+    ];
+    for p in payloads {
+        assert!(
+            validate_abac_expr(p).is_err(),
+            "应拒绝 permit/forbid 声明: {:?}",
+            p
+        );
+    }
+}
+
+/// 拒绝纯字面量（无 principal/resource/action 引用）。
+#[test]
+fn validate_abac_expr_rejects_pure_literal() {
+    let payloads = ["1 == 1", "true", "false", "0", "\"hello\""];
+    for p in payloads {
+        assert!(
+            validate_abac_expr(p).is_err(),
+            "应拒绝纯字面量（无 principal/resource/action 引用）: {:?}",
+            p
+        );
+    }
+}
+
+/// 拒绝空表达式。
+#[test]
+fn validate_abac_expr_rejects_empty() {
+    assert!(validate_abac_expr("").is_err());
+    assert!(validate_abac_expr("   ").is_err());
+}
+
+/// 拒绝超长表达式（>512 字符，DoS 防御）。
+#[test]
+fn validate_abac_expr_rejects_overlong() {
+    let long_expr = "a".repeat(513);
+    assert!(validate_abac_expr(&long_expr).is_err());
+}
+
+/// 包含 principal/resource/action 关键字但含 `};` 仍应被拒绝。
+#[test]
+fn validate_abac_expr_rejects_injection_with_keywords() {
+    let payload = "principal.id == resource.owner }; permit(principal, action, resource);";
+    assert!(validate_abac_expr(payload).is_err());
 }
