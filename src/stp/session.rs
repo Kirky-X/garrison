@@ -238,6 +238,51 @@ pub trait SessionLogic: BulwarkCore {
 // BulwarkLogicDefault impl
 // ============================================================================
 
+/// A8: `login_with_token` 入口校验 — 阻断会话固定/劫持的常见攻击向量。
+///
+/// 在 `with_token_session_lock` 之前执行纯输入校验，避免无谓持锁。
+///
+/// # 校验规则
+///
+/// - `login_id` 非空：防止空标识创建无主会话（攻击者可借此构造游离会话）
+/// - `token` 非空：空 token 无法标识会话，且可能在下游 DAO 层产生异常键
+/// - `token` 长度 `8..=256`：
+///   - 下限 8：拒绝过短 token（易碰撞/伪造，如 "0"/"1" 等单字符 token）
+///   - 上限 256：拒绝超长 token（DoS 防护，避免 DAO 存储与序列化开销过大）
+/// - `token` 不含控制字符（U+0000..=U+001F / U+007F..=U+009F）：
+///   阻断 CRLF 注入、HTTP header smuggling、日志污染等攻击
+///
+/// # 错误
+///
+/// - `BulwarkError::InvalidParam`：任一校验失败时返回，消息含失败原因（不含敏感数据）。
+fn validate_login_with_token_inputs(login_id: &str, token: &str) -> BulwarkResult<()> {
+    if login_id.is_empty() {
+        return Err(BulwarkError::InvalidParam("login_id 不能为空".to_string()));
+    }
+    if token.is_empty() {
+        return Err(BulwarkError::InvalidParam("token 不能为空".to_string()));
+    }
+    // 长度校验（字节长度，与 DAO 存储开销一致）
+    let len = token.len();
+    if len < 8 {
+        return Err(BulwarkError::InvalidParam(format!(
+            "token 长度不足：{} < 8",
+            len
+        )));
+    }
+    if len > 256 {
+        return Err(BulwarkError::InvalidParam(format!(
+            "token 长度超限：{} > 256",
+            len
+        )));
+    }
+    // 控制字符校验：阻断 CRLF 注入 / header smuggling / 日志污染
+    if token.chars().any(|c| c.is_control()) {
+        return Err(BulwarkError::InvalidParam("token 含控制字符".to_string()));
+    }
+    Ok(())
+}
+
 #[async_trait]
 impl SessionLogic for BulwarkLogicDefault {
     #[tracing::instrument(skip_all, fields(login_id = %login_id))]
@@ -255,6 +300,14 @@ impl SessionLogic for BulwarkLogicDefault {
     }
 
     async fn login_with_token(&self, login_id: &str, token: &str) -> BulwarkResult<()> {
+        // A8: 入口校验 — 阻断会话固定/劫持的常见攻击向量。
+        // 校验在锁外执行：纯输入校验无需临界区保护，避免无谓持锁。
+        //
+        // - login_id 非空：防止空标识创建无主会话
+        // - token 非空 + 长度 8..=256：拒绝过短（易碰撞/伪造）/过长（DoS）的 token
+        // - token 不含控制字符：阻断 CRLF 注入、HTTP header smuggling、日志污染
+        validate_login_with_token_inputs(login_id, token)?;
+
         // 检查 token 是否已关联其他 login_id，避免同一 token 同时映射到两个
         // login_id（dual-mapping）构成会话劫持风险。
         // 用 `with_token_session_lock` 包裹 check + create 原子序列，
@@ -3235,6 +3288,154 @@ mod tests {
                 ts.login_id, "alice-001",
                 "token 应仍归属原 login_id（alice），未被 attacker 抢占"
             );
+        }
+
+        // ==================================================================
+        // A8: login_with_token 入口校验（会话固定/劫持防护）
+        // ==================================================================
+
+        /// A8: 空 `login_id` 应被拒绝。
+        ///
+        /// 攻击场景：攻击者尝试用空 login_id 创建无主会话，绕过账号绑定。
+        /// 期望返回 `InvalidParam`，且不创建任何会话。
+        #[tokio::test]
+        async fn a8_login_with_token_rejects_empty_login_id() {
+            let logic = make_logic(false);
+            let result = logic.login_with_token("", "valid-token-001").await;
+            assert!(
+                matches!(result, Err(BulwarkError::InvalidParam(_))),
+                "空 login_id 应返回 InvalidParam，实际: {:?}",
+                result
+            );
+            // 验证未创建会话（fail-closed）
+            assert!(
+                logic
+                    .session
+                    .get_token_session("valid-token-001")
+                    .await
+                    .unwrap()
+                    .is_none(),
+                "校验失败时不应创建会话"
+            );
+        }
+
+        /// A8: 空 `token` 应被拒绝。
+        ///
+        /// 攻击场景：空 token 无法标识会话，且可能在下游 DAO 层产生异常键。
+        /// 期望返回 `InvalidParam`。
+        #[tokio::test]
+        async fn a8_login_with_token_rejects_empty_token() {
+            let logic = make_logic(false);
+            let result = logic.login_with_token("user-001", "").await;
+            assert!(
+                matches!(result, Err(BulwarkError::InvalidParam(_))),
+                "空 token 应返回 InvalidParam，实际: {:?}",
+                result
+            );
+        }
+
+        /// A8: 过短 token（< 8 字节）应被拒绝。
+        ///
+        /// 攻击场景：过短 token 易碰撞/伪造（如 "0"/"1"/"abc"），
+        /// 攻击者可枚举短 token 劫持他人会话。
+        /// 期望返回 `InvalidParam`。
+        #[tokio::test]
+        async fn a8_login_with_token_rejects_too_short_token() {
+            let logic = make_logic(false);
+            // 7 字节 token（< 8 下限）
+            let result = logic.login_with_token("user-001", "short12").await;
+            assert!(
+                matches!(result, Err(BulwarkError::InvalidParam(_))),
+                "过短 token 应返回 InvalidParam，实际: {:?}",
+                result
+            );
+        }
+
+        /// A8: 超长 token（> 256 字节）应被拒绝。
+        ///
+        /// 攻击场景：超长 token 可触发 DAO 存储放大 / 序列化开销过大（DoS）。
+        /// 期望返回 `InvalidParam`。
+        #[tokio::test]
+        async fn a8_login_with_token_rejects_too_long_token() {
+            let logic = make_logic(false);
+            // 257 字节 token（> 256 上限）
+            let long_token = "a".repeat(257);
+            let result = logic.login_with_token("user-001", &long_token).await;
+            assert!(
+                matches!(result, Err(BulwarkError::InvalidParam(_))),
+                "超长 token 应返回 InvalidParam，实际: {:?}",
+                result
+            );
+        }
+
+        /// A8: 含控制字符的 token 应被拒绝。
+        ///
+        /// 攻击场景：控制字符（如 `\r\n`）可触发 CRLF 注入 / HTTP header
+        /// smuggling / 日志污染。例如 token="valid\r\nX-Evil: 1" 可在日志
+        /// 或下游 HTTP 客户端注入伪造 header。
+        /// 期望返回 `InvalidParam`。
+        #[tokio::test]
+        async fn a8_login_with_token_rejects_token_with_control_chars() {
+            let logic = make_logic(false);
+            // 含 \r\n 的 token（CRLF 注入向量）
+            let result = logic
+                .login_with_token("user-001", "valid-token\r\nX-Evil: 1")
+                .await;
+            assert!(
+                matches!(result, Err(BulwarkError::InvalidParam(_))),
+                "含控制字符的 token 应返回 InvalidParam，实际: {:?}",
+                result
+            );
+            // 含 NUL 字节的 token（二进制注入向量）
+            let result2 = logic.login_with_token("user-001", "valid\0token").await;
+            assert!(
+                matches!(result2, Err(BulwarkError::InvalidParam(_))),
+                "含 NUL 字节的 token 应返回 InvalidParam，实际: {:?}",
+                result2
+            );
+        }
+
+        /// A8: 边界值 — 8 字节 token 应通过校验（下限包含）。
+        ///
+        /// 验证 `8..=256` 区间为闭区间，避免 off-by-one 错误。
+        #[tokio::test]
+        async fn a8_login_with_token_accepts_min_length_token() {
+            let logic = make_logic(false);
+            // 恰好 8 字节 token（下限包含）
+            logic
+                .login_with_token("user-001", "12345678")
+                .await
+                .expect("8 字节 token 应通过校验");
+            // 验证会话已创建
+            let ts = logic
+                .session
+                .get_token_session("12345678")
+                .await
+                .unwrap()
+                .expect("8 字节 token 应已创建会话");
+            assert_eq!(ts.login_id, "user-001");
+        }
+
+        /// A8: 边界值 — 256 字节 token 应通过校验（上限包含）。
+        ///
+        /// 验证 `8..=256` 区间为闭区间，避免 off-by-one 错误。
+        #[tokio::test]
+        async fn a8_login_with_token_accepts_max_length_token() {
+            let logic = make_logic(false);
+            // 恰好 256 字节 token（上限包含）
+            let max_token = "a".repeat(256);
+            logic
+                .login_with_token("user-001", &max_token)
+                .await
+                .expect("256 字节 token 应通过校验");
+            // 验证会话已创建
+            let ts = logic
+                .session
+                .get_token_session(&max_token)
+                .await
+                .unwrap()
+                .expect("256 字节 token 应已创建会话");
+            assert_eq!(ts.login_id, "user-001");
         }
 
         /// kickout_by_token 销毁指定 token 的会话。
