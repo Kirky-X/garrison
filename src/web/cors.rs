@@ -268,6 +268,87 @@ pub async fn bulwark_cors_middleware(
     resp
 }
 
+// ============================================================================
+// C4: compose_security_stack — 安全中间件组合函数
+// ============================================================================
+
+/// 组合安全中间件栈（C4 修复 CORS preflight 绕过问题）。
+///
+/// 按正确顺序叠加 WAF、CSRF、CORS 中间件到给定 Router，确保请求处理方向为：
+///
+/// ```text
+/// 请求 → WAF → CSRF → CORS → handler
+/// ```
+///
+/// # 为什么需要这个函数
+///
+/// **CORS preflight 绕过问题**：若 CORS 中间件在 WAF/CSRF 之前叠加，
+/// OPTIONS 请求会被 CORS 中间件短路返回 204 No Content，**跳过 WAF/CSRF 校验**。
+/// 攻击者可利用恶意 OPTIONS 请求（如 `/api/../etc/passwd`）绕过 WAF 目录遍历防护，
+/// 或绕过 CSRF Origin 校验。
+///
+/// 本函数确保 CORS 在**最内层**（最后执行），preflight 短路时 WAF/CSRF 已执行完毕。
+///
+/// # axum layer 叠加语义
+///
+/// axum 中 `router.layer(L)` 将 `L` 添加为**最外层**（请求最先经过）。
+/// 想要请求顺序 `WAF → CSRF → CORS → handler`，需按 `CORS → CSRF → WAF` 顺序叠加。
+///
+/// # 参数
+///
+/// - `router`: 已定义路由的 axum Router
+/// - `waf_config`: WAF 配置（`Arc<WafConfig>`）
+/// - `csrf_config`: CSRF 配置（`Arc<CsrfConfig>`）
+/// - `cors_config`: CORS 配置（`Arc<CorsConfig>`）
+///
+/// # 返回
+///
+/// 叠加好三层安全中间件的 Router。
+///
+/// # 使用
+///
+/// ```ignore
+/// use bulwark::web::cors::compose_security_stack;
+/// use bulwark::web::waf::WafConfig;
+/// use bulwark::web::csrf::CsrfConfig;
+/// use bulwark::web::cors::CorsConfig;
+/// use std::sync::Arc;
+/// use axum::Router;
+///
+/// let router = Router::new()
+///     .route("/api", axum::routing::get(|| async { "ok" }));
+/// let app = compose_security_stack(
+///     router,
+///     Arc::new(WafConfig::default()),
+///     Arc::new(CsrfConfig::default()),
+///     Arc::new(CorsConfig::default()),
+/// );
+/// ```
+#[cfg(all(feature = "web-waf", feature = "web-csrf", feature = "web-cors"))]
+pub fn compose_security_stack(
+    router: axum::Router,
+    waf_config: std::sync::Arc<crate::web::waf::WafConfig>,
+    csrf_config: std::sync::Arc<crate::web::csrf::CsrfConfig>,
+    cors_config: std::sync::Arc<CorsConfig>,
+) -> axum::Router {
+    // axum layer 顺序：后添加的在外层（先执行）
+    // 想要请求顺序 WAF → CSRF → CORS → handler
+    // 叠加顺序：CORS（最内）→ CSRF（中间）→ WAF（最外）
+    router
+        .layer(axum::middleware::from_fn_with_state(
+            cors_config,
+            bulwark_cors_middleware,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            csrf_config,
+            crate::web::csrf::bulwark_csrf_middleware,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            waf_config,
+            crate::web::waf::bulwark_waf_middleware,
+        ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -752,5 +833,242 @@ mod tests {
         // 改回精确 origin 后应通过
         config.allowed_origins = vec!["https://safe.com".to_string()];
         assert!(config.validate().is_ok());
+    }
+
+    // ========================================================================
+    // C4: compose_security_stack 测试（8 个）
+    // 验证中间件顺序 WAF → CSRF → CORS，防止 CORS preflight 绕过
+    // ========================================================================
+
+    #[cfg(all(feature = "web-waf", feature = "web-csrf"))]
+    mod c4_compose_stack {
+        use super::*;
+        use crate::web::csrf::CsrfConfig;
+        use crate::web::waf::WafConfig;
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use axum::routing::get;
+        use axum::Router;
+        use std::sync::Arc;
+        use tower::ServiceExt;
+
+        fn make_composed_app(waf: WafConfig, csrf: CsrfConfig, cors: CorsConfig) -> Router {
+            let router =
+                Router::new().route("/api/test", get(|| async { "ok" }).post(|| async { "ok" }));
+            compose_security_stack(router, Arc::new(waf), Arc::new(csrf), Arc::new(cors))
+        }
+
+        fn make_request_with_origin(method: &str, path: &str, origin: &str) -> Request<Body> {
+            Request::builder()
+                .method(method)
+                .uri(path)
+                .header("origin", origin)
+                .header("host", "example.com")
+                .body(Body::empty())
+                .unwrap()
+        }
+
+        /// C4: compose_security_stack 函数存在且可调用。
+        #[tokio::test]
+        async fn compose_stack_function_exists() {
+            let app = make_composed_app(
+                WafConfig::default(),
+                CsrfConfig::default(),
+                CorsConfig {
+                    allowed_origins: vec!["https://example.com".to_string()],
+                    ..Default::default()
+                },
+            );
+            // 正常 GET 请求应通过所有三层中间件
+            let resp = app
+                .oneshot(make_request_with_origin(
+                    "GET",
+                    "/api/test",
+                    "https://example.com",
+                ))
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::OK);
+        }
+
+        /// C4 核心：OPTIONS 请求带恶意 path 应被 WAF 拦截（返回 400 而非 204）。
+        /// 若 CORS 在 WAF 之前，OPTIONS 会被 CORS 短路返回 204，绕过 WAF。
+        #[tokio::test]
+        async fn options_with_malicious_path_blocked_by_waf() {
+            let app = make_composed_app(
+                WafConfig::default(),
+                CsrfConfig::default(),
+                CorsConfig {
+                    allowed_origins: vec!["https://example.com".to_string()],
+                    ..Default::default()
+                },
+            );
+            // OPTIONS 请求带目录遍历 path
+            let resp = app
+                .oneshot(make_request_with_origin(
+                    "OPTIONS",
+                    "/api/../etc/passwd",
+                    "https://example.com",
+                ))
+                .await
+                .unwrap();
+            assert_eq!(
+                resp.status(),
+                StatusCode::BAD_REQUEST,
+                "C4: OPTIONS preflight 不应绕过 WAF，恶意 path 应返回 400"
+            );
+        }
+
+        /// C4: OPTIONS 请求带危险字符应被 WAF 拦截。
+        #[tokio::test]
+        async fn options_with_dangerous_chars_blocked_by_waf() {
+            let app = make_composed_app(
+                WafConfig::default(),
+                CsrfConfig::default(),
+                CorsConfig {
+                    allowed_origins: vec!["https://example.com".to_string()],
+                    ..Default::default()
+                },
+            );
+            // OPTIONS 请求带双斜杠
+            let resp = app
+                .oneshot(make_request_with_origin(
+                    "OPTIONS",
+                    "/api//test",
+                    "https://example.com",
+                ))
+                .await
+                .unwrap();
+            assert_eq!(
+                resp.status(),
+                StatusCode::BAD_REQUEST,
+                "C4: OPTIONS preflight 不应绕过 WAF，危险字符应返回 400"
+            );
+        }
+
+        /// C4: 正常 OPTIONS 请求（匹配 Origin + 干净 path）应返回 204。
+        #[tokio::test]
+        async fn normal_options_returns_204_with_cors_headers() {
+            let app = make_composed_app(
+                WafConfig::default(),
+                CsrfConfig::default(),
+                CorsConfig {
+                    allowed_origins: vec!["https://example.com".to_string()],
+                    ..Default::default()
+                },
+            );
+            let resp = app
+                .oneshot(make_request_with_origin(
+                    "OPTIONS",
+                    "/api/test",
+                    "https://example.com",
+                ))
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+            assert_eq!(
+                resp.headers().get("access-control-allow-origin").unwrap(),
+                "https://example.com"
+            );
+        }
+
+        /// C4: OPTIONS 请求不匹配 Origin 应返回 204 无 CORS 头（WAF 已通过）。
+        #[tokio::test]
+        async fn options_non_matching_origin_returns_204_no_cors() {
+            let app = make_composed_app(
+                WafConfig::default(),
+                CsrfConfig::default(),
+                CorsConfig {
+                    allowed_origins: vec!["https://example.com".to_string()],
+                    ..Default::default()
+                },
+            );
+            let resp = app
+                .oneshot(make_request_with_origin(
+                    "OPTIONS",
+                    "/api/test",
+                    "https://evil.com",
+                ))
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+            // 不匹配 Origin → 无 CORS 头
+            assert!(resp.headers().get("access-control-allow-origin").is_none());
+        }
+
+        /// C4: GET 请求带恶意 path 也应被 WAF 拦截（非 OPTIONS 场景）。
+        #[tokio::test]
+        async fn get_with_malicious_path_blocked_by_waf() {
+            let app = make_composed_app(
+                WafConfig::default(),
+                CsrfConfig::default(),
+                CorsConfig {
+                    allowed_origins: vec!["https://example.com".to_string()],
+                    ..Default::default()
+                },
+            );
+            let resp = app
+                .oneshot(make_request_with_origin(
+                    "GET",
+                    "/api/../etc/passwd",
+                    "https://example.com",
+                ))
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        }
+
+        /// C4: POST 请求跨源应被 CSRF 拦截（403）。
+        #[tokio::test]
+        async fn post_cross_origin_blocked_by_csrf() {
+            let app = make_composed_app(
+                WafConfig::default(),
+                CsrfConfig::default(),
+                CorsConfig {
+                    allowed_origins: vec!["https://example.com".to_string()],
+                    ..Default::default()
+                },
+            );
+            // POST 跨源（Origin=evil.com, Host=example.com）→ CSRF 拦截
+            let resp = app
+                .oneshot(make_request_with_origin(
+                    "POST",
+                    "/api/test",
+                    "https://evil.com",
+                ))
+                .await
+                .unwrap();
+            assert_eq!(
+                resp.status(),
+                StatusCode::FORBIDDEN,
+                "C4: POST 跨源应被 CSRF 拦截返回 403"
+            );
+        }
+
+        /// C4: POST 同源 + 匹配 CSRF token 应通过所有中间件。
+        #[tokio::test]
+        async fn post_same_origin_with_token_passes_all() {
+            use crate::web::csrf::generate_csrf_token;
+            let app = make_composed_app(
+                WafConfig::default(),
+                CsrfConfig::default(),
+                CorsConfig {
+                    allowed_origins: vec!["https://example.com".to_string()],
+                    ..Default::default()
+                },
+            );
+            let token = generate_csrf_token().unwrap();
+            let req = Request::builder()
+                .method("POST")
+                .uri("/api/test")
+                .header("host", "example.com")
+                .header("origin", "https://example.com")
+                .header("cookie", format!("bulwark_csrf_token={}", token))
+                .header("X-CSRF-Token", &token)
+                .body(Body::empty())
+                .unwrap();
+            let resp = app.oneshot(req).await.unwrap();
+            assert_eq!(resp.status(), StatusCode::OK);
+        }
     }
 }
