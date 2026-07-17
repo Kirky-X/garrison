@@ -589,7 +589,7 @@ impl Drop for OAuth2Client {
 
 #[cfg(test)]
 mod tests {
-    use super::{url_encode, URLENCODE_SET};
+    use super::url_encode;
 
     /// URL 编码保留安全字符（与原自实现 `encode` 行为等价）。
     #[test]

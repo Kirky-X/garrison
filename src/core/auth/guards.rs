@@ -8,6 +8,7 @@
 use async_trait::async_trait;
 
 #[cfg(test)]
+#[allow(deprecated)]
 use super::AllowAllSwitchToGuard;
 use super::{DenyAllSwitchToGuard, SwitchToGuard};
 use crate::error::{BulwarkError, BulwarkResult};

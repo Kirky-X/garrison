@@ -34,6 +34,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::backend::AuthBackend;
+#[cfg(feature = "tenant-isolation")]
+use crate::context::tenant::TenantResolver;
 
 pub mod config;
 pub mod middleware;
@@ -92,6 +94,14 @@ pub struct TlsConfig {
 pub struct BulwarkAuthServer {
     backend: Arc<dyn AuthBackend>,
     config: AuthServerConfig,
+    /// 租户解析器（feature = "tenant-isolation"）。
+    ///
+    /// `Some(resolver)` 时，external_router / internal_router 自动注入
+    /// `tenant_resolution_middleware`，从请求 headers 解析 `TenantContext` 并
+    /// 在 `TENANT` task_local scope 内执行下游 handler。
+    /// `None` 时跳过租户中间件（向后兼容单租户场景或测试桩）。
+    #[cfg(feature = "tenant-isolation")]
+    tenant_resolver: Option<Arc<dyn TenantResolver>>,
     #[cfg(feature = "oauth2-server")]
     oauth2_state: Option<Arc<oauth2_routes::OAuth2State>>,
     #[cfg(feature = "tls")]

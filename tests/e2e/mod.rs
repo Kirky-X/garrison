@@ -9,15 +9,21 @@
 //! - `start_e2e_server()`：随机端口启动 BulwarkAuthServer，返回 (external_url, internal_url, handle)
 //! - `start_e2e_server_with_oauth2()`：含 OAuth2 端点
 //!
+//! # 租户隔离
+//!
+//! `full` feature 启用 `tenant-isolation`，`start_e2e_server*` 自动注入
+//! `HeaderTenantResolver` + `tenant_resolution_middleware`，`make_client()`
+//! 默认携带 `X-Tenant-Id: 0` header，使 `current_tenant_id_or_error()` 在
+//! `check_permission` / `check_role` / 审计日志等场景能正确读取租户上下文。
+//!
 //! 所有 E2E 测试使用 `#[serial_test::serial]` 保证 BulwarkManager 全局单例安全。
 
 #![allow(dead_code)]
 
-use async_trait::async_trait;
 use bulwark::backend::{AuthBackend, BackendEmbedded};
 use bulwark::config::BulwarkConfig;
+use bulwark::context::tenant::HeaderTenantResolver;
 use bulwark::dao::{BulwarkDao, BulwarkDaoOxcache};
-use bulwark::error::BulwarkResult;
 use bulwark::manager::BulwarkManager;
 use bulwark::oauth2_server::client::DaoOAuth2ClientStore;
 use bulwark::server::BulwarkAuthServer;
@@ -27,21 +33,15 @@ use std::sync::Arc;
 pub mod auth_flow;
 pub mod error_scenarios;
 pub mod middleware;
+pub mod mock;
 pub mod oauth2_flow;
 pub mod permission_flow;
 pub mod session_flow;
 
-struct MockInterface;
-
-#[async_trait]
-impl BulwarkInterface for MockInterface {
-    async fn get_permission_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
-        Ok(vec![])
-    }
-    async fn get_role_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
-        Ok(vec![])
-    }
-}
+/// E2E 测试用的空权限/空角色 mock 接口实现。
+///
+/// `BulwarkInterface` trait 实现位于 [`mock`] 子模块（规则 25 接口隔离）。
+pub(super) struct MockInterface;
 
 /// 创建 BulwarkDaoOxcache 实例（真实 oxcache 实现，非 Mock）。
 async fn make_dao() -> Arc<dyn BulwarkDao> {
@@ -98,6 +98,16 @@ pub async fn start_e2e_server(
     let external_url = format!("http://127.0.0.1:{}", external_port);
     let internal_url = format!("http://127.0.0.1:{}", internal_port);
 
+    // tenant-isolation feature 启用时注入 HeaderTenantResolver，使
+    // tenant_resolution_middleware 解析 X-Tenant-Id header 进入 TENANT scope
+    #[cfg(feature = "tenant-isolation")]
+    let server = BulwarkAuthServer::new(backend)
+        .with_external_port(external_port)
+        .with_internal_port(internal_port)
+        .with_rate_limit(rate_limit)
+        .with_internal_api_key(api_key)
+        .with_tenant_resolver(Some(Arc::new(HeaderTenantResolver)));
+    #[cfg(not(feature = "tenant-isolation"))]
     let server = BulwarkAuthServer::new(backend)
         .with_external_port(external_port)
         .with_internal_port(internal_port)
@@ -156,6 +166,17 @@ pub async fn start_e2e_server_with_oauth2(
     let external_url = format!("http://127.0.0.1:{}", external_port);
     let internal_url = format!("http://127.0.0.1:{}", internal_port);
 
+    // tenant-isolation feature 启用时注入 HeaderTenantResolver，使
+    // tenant_resolution_middleware 解析 X-Tenant-Id header 进入 TENANT scope
+    #[cfg(feature = "tenant-isolation")]
+    let server = BulwarkAuthServer::new(backend)
+        .with_external_port(external_port)
+        .with_internal_port(internal_port)
+        .with_rate_limit(rate_limit)
+        .with_internal_api_key(api_key)
+        .with_oauth2(oauth2_state)
+        .with_tenant_resolver(Some(Arc::new(HeaderTenantResolver)));
+    #[cfg(not(feature = "tenant-isolation"))]
     let server = BulwarkAuthServer::new(backend)
         .with_external_port(external_port)
         .with_internal_port(internal_port)
@@ -183,9 +204,34 @@ pub async fn start_e2e_server_with_oauth2(
     (external_url, internal_url, handle, store)
 }
 
+/// 构造默认租户上下文所需的 HTTP headers。
+///
+/// `tenant-isolation` feature 启用时插入 `X-Tenant-Id: 0`（默认租户），
+/// 未启用时返回空 HeaderMap。供 `make_client` 与 `make_no_redirect_client`
+/// 共享，避免重复实现（DRY）。
+pub(super) fn default_tenant_headers() -> reqwest::header::HeaderMap {
+    let mut headers = reqwest::header::HeaderMap::new();
+    #[cfg(feature = "tenant-isolation")]
+    {
+        headers.insert(
+            "X-Tenant-Id",
+            reqwest::header::HeaderValue::from_static("0"),
+        );
+    }
+    headers
+}
+
 /// 创建 reqwest 客户端。
+///
+/// `tenant-isolation` feature 启用时，`start_e2e_server*` 会注入
+/// `HeaderTenantResolver` + `tenant_resolution_middleware`，要求所有请求
+/// 携带 `X-Tenant-Id` header。客户端通过 `default_headers` 设置默认值
+/// `X-Tenant-Id: 0`（默认租户），所有 E2E 测试无需单独添加。
 pub fn make_client() -> reqwest::Client {
-    reqwest::Client::new()
+    reqwest::Client::builder()
+        .default_headers(default_tenant_headers())
+        .build()
+        .expect("构造 reqwest 客户端失败")
 }
 
 /// 通过 HTTP 登录，返回 token。
@@ -202,4 +248,29 @@ pub async fn http_login(client: &reqwest::Client, external_url: &str, login_id: 
     assert_eq!(resp.status(), 200);
     let body: serde_json::Value = resp.json().await.unwrap();
     body["data"].as_str().unwrap().to_string()
+}
+
+/// 在默认租户上下文（tenant_id=0）内注册 OAuth2 客户端。
+///
+/// `start_e2e_server_with_oauth2` 注入 `tenant_resolution_middleware` 后，
+/// server 端在 TENANT scope 内读写 DAO（key 含 `tenant:0:` 前缀）。
+/// 测试代码直接调用 `store.create` 不在 TENANT scope 内，写入的 key 无前缀，
+/// 导致 server 端读取时找不到。本 helper 用 `with_default_tenant` 包裹，
+/// 保证写入 key 与 server 端读取 key 一致。
+///
+/// # 依赖
+/// `testing` feature（间接通过 `with_default_tenant` 的 `cfg(any(test, feature = "testing"))`）。
+///
+/// # 失败处理
+/// `store.create` 失败时 panic 并透传完整错误信息（规则 12 失败显性化）。
+pub async fn register_oauth2_client(
+    store: &dyn bulwark::oauth2_server::client::OAuth2ClientStore,
+    client: bulwark::oauth2_server::client::OAuth2Client,
+) {
+    bulwark::context::tenant::with_default_tenant(async {
+        if let Err(e) = store.create(client).await {
+            panic!("register_oauth2_client failed: {e:?}");
+        }
+    })
+    .await;
 }

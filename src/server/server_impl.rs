@@ -43,6 +43,8 @@ impl BulwarkAuthServer {
         Self {
             backend,
             config: AuthServerConfig::default(),
+            #[cfg(feature = "tenant-isolation")]
+            tenant_resolver: None,
             #[cfg(feature = "oauth2-server")]
             oauth2_state: None,
             #[cfg(feature = "tls")]
@@ -123,6 +125,37 @@ impl BulwarkAuthServer {
         self
     }
 
+    /// 注入租户解析器（feature = "tenant-isolation"）。
+    ///
+    /// `Some(resolver)` 时，`external_router` / `internal_router` 自动注入
+    /// `tenant_resolution_middleware`，从请求 headers 解析 `TenantContext` 并
+    /// 在 `TENANT` task_local scope 内执行下游 handler——使 `check_permission`
+    /// / `check_role` / 审计日志等能通过 `current_tenant_id_or_error()` 读取租户上下文。
+    ///
+    /// `None` 时跳过租户中间件（向后兼容单租户场景）。
+    ///
+    /// # 参数
+    /// - `resolver`：`Arc<dyn TenantResolver>`（如 `HeaderTenantResolver` /
+    ///   `SubdomainTenantResolver` / `ClaimTenantResolver`）
+    ///
+    /// # 示例
+    ///
+    /// ```ignore
+    /// use bulwark::context::tenant::HeaderTenantResolver;
+    /// use std::sync::Arc;
+    ///
+    /// let server = BulwarkAuthServer::new(backend)
+    ///     .with_tenant_resolver(Some(Arc::new(HeaderTenantResolver)));
+    /// ```
+    #[cfg(feature = "tenant-isolation")]
+    pub fn with_tenant_resolver(
+        mut self,
+        resolver: Option<Arc<dyn crate::context::tenant::TenantResolver>>,
+    ) -> Self {
+        self.tenant_resolver = resolver;
+        self
+    }
+
     /// 注入 OAuth2 状态，启用 4 个 OAuth2 端点（feature = "oauth2-server"）。
     ///
     /// 外网端口添加 authorize/token/revoke，内网端口添加 introspect。
@@ -157,13 +190,17 @@ impl BulwarkAuthServer {
         self
     }
 
-    /// 构建外网路由（sdforge + path-filter + rate_limit + audit_log）。
+    /// 构建外网路由（sdforge + path-filter + rate_limit + audit_log + tenant_resolution）。
     ///
     /// 用 `sdforge::http::build()` 收集所有 `#[forge]` 路由（15 端点），
     /// 通过 `external_path_filter` 中间件仅放行 3 个外网路径（login/logout/refresh），
     /// 其余内网路径返回 404。
     ///
-    /// 中间件栈（从外到内）：audit_log → rate_limit → external_path_filter → handler
+    /// 中间件栈（从外到内）：
+    /// `audit_log → rate_limit → external_path_filter → tenant_resolution? → handler`
+    ///
+    /// `tenant_resolution_middleware` 仅在 `tenant-isolation` feature 启用且
+    /// `with_tenant_resolver(Some(..))` 设置时注入。
     ///
     /// 用于测试时通过 `tower::ServiceExt::oneshot` 发送请求，避免实际 listen。
     pub fn external_router(&self) -> Router {
@@ -182,6 +219,19 @@ impl BulwarkAuthServer {
             ))
             .layer(axum::middleware::from_fn(audit_log_middleware));
 
+        // 租户中间件：tenant-isolation feature 启用且注入 resolver 时才挂载
+        #[cfg(feature = "tenant-isolation")]
+        let router = {
+            if let Some(resolver) = &self.tenant_resolver {
+                router.layer(axum::middleware::from_fn_with_state(
+                    resolver.clone(),
+                    crate::router::tenant_resolution_middleware,
+                ))
+            } else {
+                router
+            }
+        };
+
         #[cfg(feature = "oauth2-server")]
         let router = {
             if let Some(state) = &self.oauth2_state {
@@ -190,6 +240,23 @@ impl BulwarkAuthServer {
                         middleware::principal_inject_middleware,
                     ))
                     .layer(Extension(self.backend.clone()));
+
+                // 租户中间件：axum merge 不合并 layer，必须为 OAuth2 router 单独注入。
+                // 否则 login 写入 key 含 tenant 前缀（`tenant:0:session:xxx`），
+                // 而 OAuth2 端点（principal_inject_middleware → backend.get_session）
+                // 读时无 TENANT scope 导致 key 不带前缀（`session:xxx`），命中失败。
+                #[cfg(feature = "tenant-isolation")]
+                let oauth2_router = {
+                    if let Some(resolver) = &self.tenant_resolver {
+                        oauth2_router.layer(axum::middleware::from_fn_with_state(
+                            resolver.clone(),
+                            crate::router::tenant_resolution_middleware,
+                        ))
+                    } else {
+                        oauth2_router
+                    }
+                };
+
                 router.merge(oauth2_router)
             } else {
                 router
@@ -199,13 +266,17 @@ impl BulwarkAuthServer {
         router
     }
 
-    /// 构建内网路由（sdforge + path-filter + api_key_auth + audit_log）。
+    /// 构建内网路由（sdforge + path-filter + api_key_auth + audit_log + tenant_resolution）。
     ///
     /// 用 `sdforge::http::build()` 收集所有 `#[forge]` 路由（15 端点），
     /// 通过 `internal_path_filter` 中间件拒绝 3 个外网路径（login/logout/refresh），
     /// 其余内网路径放行（由 api_key_auth 保护）。
     ///
-    /// 中间件栈（从外到内）：audit_log → api_key_auth → internal_path_filter → handler
+    /// 中间件栈（从外到内）：
+    /// `audit_log → api_key_auth → internal_path_filter → tenant_resolution? → handler`
+    ///
+    /// `tenant_resolution_middleware` 仅在 `tenant-isolation` feature 启用且
+    /// `with_tenant_resolver(Some(..))` 设置时注入。
     ///
     /// 用于测试时通过 `tower::ServiceExt::oneshot` 发送请求，避免实际 listen。
     pub fn internal_router(&self) -> Router {
@@ -222,10 +293,39 @@ impl BulwarkAuthServer {
             ))
             .layer(axum::middleware::from_fn(audit_log_middleware));
 
+        // 租户中间件：tenant-isolation feature 启用且注入 resolver 时才挂载
+        #[cfg(feature = "tenant-isolation")]
+        let router = {
+            if let Some(resolver) = &self.tenant_resolver {
+                router.layer(axum::middleware::from_fn_with_state(
+                    resolver.clone(),
+                    crate::router::tenant_resolution_middleware,
+                ))
+            } else {
+                router
+            }
+        };
+
         #[cfg(feature = "oauth2-server")]
         let router = {
             if let Some(state) = &self.oauth2_state {
-                router.merge(oauth2_routes::oauth2_internal_router(state.clone()))
+                let oauth2_router = oauth2_routes::oauth2_internal_router(state.clone());
+
+                // 租户中间件：与 external_router 同理，axum merge 不合并 layer。
+                // introspect 端点需在 TENANT scope 内读 access_token（与 token_endpoint 写入前缀一致）。
+                #[cfg(feature = "tenant-isolation")]
+                let oauth2_router = {
+                    if let Some(resolver) = &self.tenant_resolver {
+                        oauth2_router.layer(axum::middleware::from_fn_with_state(
+                            resolver.clone(),
+                            crate::router::tenant_resolution_middleware,
+                        ))
+                    } else {
+                        oauth2_router
+                    }
+                };
+
+                router.merge(oauth2_router)
             } else {
                 router
             }

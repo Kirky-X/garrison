@@ -720,7 +720,9 @@ async fn check_abac_engine_initialized_allow_returns_200() {
     init_manager(make_config_strict(), &[], &[]);
 
     let schema_json = r#"{"":{"entityTypes":{"User":{"shape":{"type":"Record","attributes":{}}},"Resource":{"shape":{"type":"Record","attributes":{}}}},"actions":{"access":{"appliesTo":{"principalTypes":["User"],"resourceTypes":["Resource"]}}}}}"#;
-    let engine = AbacEngine::new(schema_json, Arc::new(EmptyEntityLoader)).expect("schema valid");
+    let engine = AbacEngine::new(schema_json, Arc::new(EmptyEntityLoader))
+        .await
+        .expect("schema valid");
     init_abac_engine(engine).expect("init_abac_engine");
 
     let token = BulwarkUtil::login_simple("1001").await.unwrap();
@@ -747,7 +749,9 @@ async fn check_abac_engine_initialized_deny_returns_403() {
     init_manager(make_config_strict(), &[], &[]);
 
     let schema_json = r#"{"":{"entityTypes":{"User":{"shape":{"type":"Record","attributes":{}}},"Resource":{"shape":{"type":"Record","attributes":{}}}},"actions":{"access":{"appliesTo":{"principalTypes":["User"],"resourceTypes":["Resource"]}}}}}"#;
-    let engine = AbacEngine::new(schema_json, Arc::new(EmptyEntityLoader)).expect("schema valid");
+    let engine = AbacEngine::new(schema_json, Arc::new(EmptyEntityLoader))
+        .await
+        .expect("schema valid");
     init_abac_engine(engine).expect("init_abac_engine");
 
     let token = BulwarkUtil::login_simple("1001").await.unwrap();

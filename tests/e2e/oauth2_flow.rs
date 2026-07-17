@@ -6,16 +6,22 @@
 //! 通过 HTTP 调用真实 BulwarkAuthServer + BackendEmbedded + OAuth2State，
 //! 测试 OAuth2 完整流程：注册客户端、签发 token、内省 token、撤销 token。
 
-use super::{make_client, start_e2e_server_with_oauth2};
+use super::{
+    default_tenant_headers, make_client, register_oauth2_client, start_e2e_server_with_oauth2,
+};
 use bulwark::oauth2_server::client::{GrantType, OAuth2Client};
 use serial_test::serial;
 
 /// 创建不跟随重定向的 reqwest 客户端。
+///
+/// 复用 `super::default_tenant_headers()` 保证与 `make_client()` 一致的
+/// `X-Tenant-Id` 默认 header（DRY），仅额外禁用重定向。
 fn make_no_redirect_client() -> reqwest::Client {
     reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
+        .default_headers(default_tenant_headers())
         .build()
-        .unwrap()
+        .expect("构造不重定向 reqwest 客户端失败")
 }
 
 /// 创建测试用 OAuth2Client（支持 ClientCredentials grant）。
@@ -38,7 +44,7 @@ async fn test_e2e_oauth2_register_client_and_get_token() {
         start_e2e_server_with_oauth2(100, "test-key").await;
     let client = make_client();
 
-    store.create(make_test_client("e2e-cc")).await.unwrap();
+    register_oauth2_client(&*store, make_test_client("e2e-cc")).await;
 
     let resp = client
         .post(format!("{}/oauth2/token", external_url))
@@ -65,10 +71,7 @@ async fn test_e2e_oauth2_introspect_active_token() {
         start_e2e_server_with_oauth2(100, "test-key").await;
     let client = make_client();
 
-    store
-        .create(make_test_client("e2e-introspect"))
-        .await
-        .unwrap();
+    register_oauth2_client(&*store, make_test_client("e2e-introspect")).await;
 
     // 签发 token
     let resp = client
@@ -114,7 +117,7 @@ async fn test_e2e_oauth2_introspect_unknown_token_inactive() {
         start_e2e_server_with_oauth2(100, "test-key").await;
     let client = make_client();
 
-    store.create(make_test_client("e2e-unknown")).await.unwrap();
+    register_oauth2_client(&*store, make_test_client("e2e-unknown")).await;
 
     let resp = client
         .post(format!("{}/oauth2/introspect", internal_url))
@@ -143,7 +146,7 @@ async fn test_e2e_oauth2_revoke_token_succeeds() {
         start_e2e_server_with_oauth2(100, "test-key").await;
     let client = make_client();
 
-    store.create(make_test_client("e2e-revoke")).await.unwrap();
+    register_oauth2_client(&*store, make_test_client("e2e-revoke")).await;
 
     // 签发 token
     let resp = client
@@ -200,19 +203,18 @@ async fn test_e2e_oauth2_authorize_redirects_to_login_when_not_logged_in() {
     let client = make_no_redirect_client();
 
     // 注册 OAuth2Client（支持 authorization_code grant）
-    store
-        .create(
-            OAuth2Client::new(
-                "auth-e2e-login",
-                "secret-123",
-                vec!["https://app.example.com/cb".into()],
-                vec![GrantType::AuthorizationCode],
-                vec!["read".into()],
-            )
-            .unwrap(),
+    register_oauth2_client(
+        &*store,
+        OAuth2Client::new(
+            "auth-e2e-login",
+            "secret-123",
+            vec!["https://app.example.com/cb".into()],
+            vec![GrantType::AuthorizationCode],
+            vec!["read".into()],
         )
-        .await
-        .unwrap();
+        .unwrap(),
+    )
+    .await;
 
     let resp = client
         .get(format!(
@@ -248,19 +250,18 @@ async fn test_e2e_oauth2_authorize_redirects_with_code_when_logged_in() {
     let client = make_no_redirect_client();
 
     // 注册 OAuth2Client（支持 authorization_code grant）
-    store
-        .create(
-            OAuth2Client::new(
-                "auth-e2e-code",
-                "secret-123",
-                vec!["https://app.example.com/cb".into()],
-                vec![GrantType::AuthorizationCode],
-                vec!["read".into()],
-            )
-            .unwrap(),
+    register_oauth2_client(
+        &*store,
+        OAuth2Client::new(
+            "auth-e2e-code",
+            "secret-123",
+            vec!["https://app.example.com/cb".into()],
+            vec![GrantType::AuthorizationCode],
+            vec!["read".into()],
         )
-        .await
-        .unwrap();
+        .unwrap(),
+    )
+    .await;
 
     // 登录获取 token
     let token = super::http_login(&client, &external_url, "1001").await;
