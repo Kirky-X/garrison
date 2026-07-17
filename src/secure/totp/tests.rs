@@ -295,3 +295,321 @@ async fn validate_and_consume_concurrent_no_double_accept() {
         accept_count.load(Ordering::SeqCst)
     );
 }
+
+// ========================================================================
+// E3 修复验证：DashMap → BulwarkDao::incr 原子操作
+// ========================================================================
+
+/// E3: 验证 handler.rs 源码不再使用 DashMap / once_cell / TOTP_LOCKS 无界 static。
+///
+/// 通过 `include_str!` 读取源文件并检查关键代码模式的缺失/存在，作为编译期的
+/// 源码级守护测试，防止后续回归引入无界内存增长。
+///
+/// 仅检查真实的代码模式（import / 实例化 / static 声明），文档注释中允许
+/// 引用历史类型签名（用于解释修复原因）。
+#[test]
+fn e3_source_has_no_dashmap_or_unbounded_static() {
+    let source = include_str!("handler.rs");
+    // 过滤掉所有注释行（`//!` 模块文档、`///` 项文档、`//` 行注释），只检查真实代码
+    let code_only: String = source
+        .lines()
+        .filter(|line| {
+            let trimmed = line.trim_start();
+            !(trimmed.starts_with("//!") || trimmed.starts_with("///") || trimmed.starts_with("//"))
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        !code_only.contains("use dashmap"),
+        "E3: handler.rs 代码不应再 import dashmap crate"
+    );
+    assert!(
+        !code_only.contains("DashMap::new"),
+        "E3: handler.rs 代码不应再实例化 DashMap"
+    );
+    assert!(
+        !code_only.contains("DashMap<"),
+        "E3: handler.rs 代码不应再使用 DashMap< 类型"
+    );
+    assert!(
+        !code_only.contains("static TOTP_LOCKS"),
+        "E3: handler.rs 代码不应再声明 TOTP_LOCKS 无界 static"
+    );
+    assert!(
+        !code_only.contains("use once_cell"),
+        "E3: handler.rs 代码不应再依赖 once_cell::sync::Lazy"
+    );
+    assert!(
+        !code_only.contains("Lazy::new"),
+        "E3: handler.rs 代码不应再使用 Lazy::new 初始化容器"
+    );
+    assert!(
+        code_only.contains("dao.incr"),
+        "E3: handler.rs 应使用 dao.incr 原子操作替代 per-login_id 锁"
+    );
+    // 文档注释中应保留 E3 修复说明（用于审计与回归防护）
+    assert!(
+        source.contains("E3 修复"),
+        "E3: handler.rs 文档应保留 E3 修复说明"
+    );
+}
+
+/// E3: 验证 `dao.incr` 在首次调用时返回 1。
+///
+/// 直接调用 MockDao::incr 验证契约：key 不存在时初始化为 "1" 并返回 1。
+#[tokio::test]
+async fn e3_incr_returns_1_on_first_call() {
+    let dao = crate::dao::tests::MockDao::new();
+    let count = dao.incr("totp:used:user-001:123456", 90).await.unwrap();
+    assert_eq!(count, 1, "E3: incr 首次调用应返回 1（视为首次使用验证码）");
+}
+
+/// E3: 验证 `dao.incr` 在第二次调用时返回 2（重放检测）。
+#[tokio::test]
+async fn e3_incr_returns_2_on_replay() {
+    let dao = crate::dao::tests::MockDao::new();
+    let key = "totp:used:user-001:123456";
+    let first = dao.incr(key, 90).await.unwrap();
+    let second = dao.incr(key, 90).await.unwrap();
+    assert_eq!(first, 1, "首次应返回 1");
+    assert_eq!(
+        second, 2,
+        "E3: incr 第二次调用应返回 2（重放检测，>1 即拒绝）"
+    );
+}
+
+/// E3: 验证 replay_key 格式为 `totp:used:<login_id>:<code>`。
+///
+/// 通过 `dao.get_timeout` 间接验证 key 存在（首次 validate_and_consume 后写入）。
+#[tokio::test]
+async fn e3_replay_key_format_is_correct() {
+    let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
+    let dao = crate::dao::tests::MockDao::new();
+    let code = handler.generate(1700000000);
+    handler
+        .validate_and_consume("user-format-test", &code, 1700000000, &dao)
+        .await
+        .unwrap();
+
+    let expected_key = format!("totp:used:user-format-test:{}", code);
+    let timeout = dao.get_timeout(&expected_key).await.unwrap();
+    assert!(
+        timeout.is_some(),
+        "E3: replay_key 应存在且设置 TTL，格式: totp:used:<login_id>:<code>"
+    );
+}
+
+/// E3: 验证 replay_key 的 TTL = step * 3（覆盖 skew=1 的 3 个时间窗口）。
+///
+/// step=30 → TTL=90 秒。
+#[tokio::test]
+async fn e3_replay_key_ttl_is_step_times_3() {
+    let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
+    let dao = crate::dao::tests::MockDao::new();
+    let code = handler.generate(1700000000);
+    handler
+        .validate_and_consume("user-ttl-30", &code, 1700000000, &dao)
+        .await
+        .unwrap();
+
+    let replay_key = format!("totp:used:user-ttl-30:{}", code);
+    let timeout = dao.get_timeout(&replay_key).await.unwrap();
+    let remaining = timeout.expect("TTL 应存在");
+    // 剩余 ≤ 90s（刚写入，应接近 90s）
+    assert!(
+        remaining.as_secs() <= 90,
+        "E3: step=30 时 TTL 应 ≤ 90s，实际: {:?}",
+        remaining
+    );
+    assert!(
+        remaining.as_secs() > 85,
+        "E3: step=30 时刚写入的 TTL 应接近 90s，实际: {:?}",
+        remaining
+    );
+}
+
+/// E3: 验证不同 step 产生不同的 TTL（step=60 → TTL=180s）。
+#[tokio::test]
+async fn e3_step_60_produces_ttl_180() {
+    let handler = TotpHandler::new(TEST_SECRET.to_vec(), 60, 6).unwrap();
+    let dao = crate::dao::tests::MockDao::new();
+    let code = handler.generate(1700000000);
+    handler
+        .validate_and_consume("user-ttl-60", &code, 1700000000, &dao)
+        .await
+        .unwrap();
+
+    let replay_key = format!("totp:used:user-ttl-60:{}", code);
+    let timeout = dao.get_timeout(&replay_key).await.unwrap();
+    let remaining = timeout.expect("TTL 应存在");
+    assert!(
+        remaining.as_secs() <= 180,
+        "E3: step=60 时 TTL 应 ≤ 180s，实际: {:?}",
+        remaining
+    );
+    assert!(
+        remaining.as_secs() > 175,
+        "E3: step=60 时刚写入的 TTL 应接近 180s，实际: {:?}",
+        remaining
+    );
+}
+
+/// E3: 验证前一窗口（skew=1 容差内）的验证码首次使用应通过。
+#[tokio::test]
+async fn e3_previous_window_code_accepted_first_time() {
+    let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
+    let dao = crate::dao::tests::MockDao::new();
+    // 生成前一窗口的验证码（now-30s）
+    let prev_code = handler.generate(1699999970);
+    let result = handler
+        .validate_and_consume("user-prev-win", &prev_code, 1700000000, &dao)
+        .await
+        .unwrap();
+    assert!(result, "E3: 前一窗口验证码首次使用应通过（skew=1 容差）");
+}
+
+/// E3: 验证前一窗口的验证码重放应被拒绝。
+#[tokio::test]
+async fn e3_previous_window_code_rejected_on_replay() {
+    let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
+    let dao = crate::dao::tests::MockDao::new();
+    let prev_code = handler.generate(1699999970);
+    let first = handler
+        .validate_and_consume("user-prev-replay", &prev_code, 1700000000, &dao)
+        .await
+        .unwrap();
+    assert!(first, "首次应通过");
+    let second = handler
+        .validate_and_consume("user-prev-replay", &prev_code, 1700000000, &dao)
+        .await
+        .unwrap();
+    assert!(!second, "E3: 前一窗口验证码重放应被拒绝（incr 返回 2 > 1）");
+}
+
+/// E3: 验证不同 login_id 的并发调用不互相干扰（跨 login_id 隔离）。
+///
+/// 10 个并发任务，每个用不同的 login_id 但同一 code，应全部通过。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn e3_concurrent_different_login_ids_no_interference() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
+    let dao = Arc::new(crate::dao::tests::MockDao::new());
+    let code = handler.generate(1700000000);
+    let accept_count = Arc::new(AtomicUsize::new(0));
+
+    let mut handles = Vec::new();
+    for i in 0..10 {
+        let d = dao.clone();
+        let ac = accept_count.clone();
+        let code = code.clone();
+        handles.push(tokio::spawn(async move {
+            let h = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
+            let login_id = format!("user-isolated-{}", i);
+            let result = h
+                .validate_and_consume(&login_id, &code, 1700000000, &*d)
+                .await
+                .unwrap();
+            if result {
+                ac.fetch_add(1, Ordering::SeqCst);
+            }
+        }));
+    }
+    for handle in handles {
+        handle.await.unwrap();
+    }
+
+    assert_eq!(
+        accept_count.load(Ordering::SeqCst),
+        10,
+        "E3: 10 个不同 login_id 的并发调用应全部通过（隔离性）"
+    );
+}
+
+/// E3: 验证不同 code 的 replay_key 互不影响（同一 login_id 的不同 code 都能首次通过）。
+#[tokio::test]
+async fn e3_replay_key_isolated_per_code() {
+    let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
+    let dao = crate::dao::tests::MockDao::new();
+    let code1 = handler.generate(1700000000);
+    let code2 = handler.generate(1700000030);
+
+    // 若两个窗口的 code 恰好相同（极小概率），跳过测试
+    if code1 == code2 {
+        return;
+    }
+
+    let r1 = handler
+        .validate_and_consume("user-multi-code", &code1, 1700000000, &dao)
+        .await
+        .unwrap();
+    let r2 = handler
+        .validate_and_consume("user-multi-code", &code2, 1700000030, &dao)
+        .await
+        .unwrap();
+    assert!(r1, "code1 首次应通过");
+    assert!(
+        r2,
+        "E3: code2（不同窗口）首次应通过，replay_key 按 (login_id, code) 隔离"
+    );
+
+    // 验证两个 replay_key 都存在
+    let key1 = format!("totp:used:user-multi-code:{}", code1);
+    let key2 = format!("totp:used:user-multi-code:{}", code2);
+    let t1 = dao.get_timeout(&key1).await.unwrap();
+    let t2 = dao.get_timeout(&key2).await.unwrap();
+    assert!(t1.is_some(), "code1 的 replay_key 应存在");
+    assert!(t2.is_some(), "code2 的 replay_key 应存在");
+}
+
+/// E3: 验证错误验证码不调用 incr（不写入 replay_key，不占用缓存）。
+#[tokio::test]
+async fn e3_wrong_code_does_not_write_replay_key() {
+    let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
+    let dao = crate::dao::tests::MockDao::new();
+    let result = handler
+        .validate_and_consume("user-wrong-code", "000000", 1700000000, &dao)
+        .await
+        .unwrap();
+    assert!(!result, "错误验证码应返回 false");
+
+    let replay_key = "totp:used:user-wrong-code:000000";
+    let stored = dao.get(replay_key).await.unwrap();
+    assert!(
+        stored.is_none(),
+        "E3: 错误验证码不应写入 replay_key（避免无效码占用缓存）"
+    );
+    let timeout = dao.get_timeout(replay_key).await.unwrap();
+    assert!(timeout.is_none(), "E3: 错误验证码的 replay_key 不应有 TTL");
+}
+
+/// E3: 验证 replay_key 的 incr 计数随重放次数递增（3 次重放后 count=4）。
+#[tokio::test]
+async fn e3_incr_count_increments_with_replays() {
+    let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
+    let dao = crate::dao::tests::MockDao::new();
+    let code = handler.generate(1700000000);
+    let replay_key = format!("totp:used:user-count:{}", code);
+
+    // 首次通过 + 3 次重放
+    for i in 0..4 {
+        let result = handler
+            .validate_and_consume("user-count", &code, 1700000000, &dao)
+            .await
+            .unwrap();
+        if i == 0 {
+            assert!(result, "首次应通过");
+        } else {
+            assert!(!result, "第 {} 次重放应被拒绝", i);
+        }
+    }
+
+    // 直接验证 incr 计数 = 4
+    let stored = dao.get(&replay_key).await.unwrap();
+    assert_eq!(
+        stored,
+        Some("4".to_string()),
+        "E3: 4 次调用后 replay_key 的 incr 计数应为 4"
+    );
+}

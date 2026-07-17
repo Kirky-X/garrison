@@ -5,20 +5,9 @@
 
 use crate::dao::BulwarkDao;
 use crate::error::{BulwarkError, BulwarkResult};
-use dashmap::DashMap;
-use once_cell::sync::Lazy;
-use std::sync::Arc;
-use tokio::sync::Mutex as TokioMutex;
 use totp_rs::{Algorithm, TOTP};
 
 use super::TotpHandler;
-
-/// Per-login_id TOTP 验证锁，防止 `validate_and_consume` 的 TOCTOU 竞态（FMEA #7，RPN=288）。
-///
-/// 锁粒度为 login_id，不影响不同用户的并发。使用 `tokio::sync::Mutex`（持有锁跨 await 点）。
-/// `TotpHandler` 每次从 `TotpSecretData::to_handler()` 创建新实例，无法在实例上持有锁，
-/// 因此使用模块级全局 `DashMap` 存储 per-login_id 锁。
-static TOTP_LOCKS: Lazy<DashMap<String, Arc<TokioMutex<()>>>> = Lazy::new(DashMap::new);
 
 impl TotpHandler {
     /// 创建新的 TOTP 处理器。
@@ -74,20 +63,42 @@ impl TotpHandler {
     /// 校验 TOTP 验证码并防止重放攻击。
     ///
     /// 在 [`validate`](Self::validate) 的基础上增加重放防护：
-    /// 验证通过后将 `(login_id, code)` 记录到 DAO，同一验证码在 TTL 内不可重复使用。
+    /// 验证通过后通过 DAO 的原子 `incr` 操作记录 `(login_id, code)`，同一验证码在
+    /// TTL 内不可重复使用。
     ///
-    /// TTL = `step * 3`，覆盖 skew=1 的 3 个时间窗口（前一窗口 + 当前窗口 + 后一窗口），
-    /// 确保验证码在整个有效期内不可重放。
+    /// # E3 修复：消除无界 DashMap
+    ///
+    /// 原实现使用 `static TOTP_LOCKS: Lazy<DashMap<String, Arc<TokioMutex<()>>>>` 存储
+    /// per-login_id 锁，无 TTL 且无容量上限，每个 login_id 创建一个永久条目，
+    /// 导致无界内存增长（攻击者可用大量 login_id OOM）。
+    ///
+    /// 新实现使用 [`BulwarkDao::incr`] 的原子性消除 TOCTOU 竞态：
+    /// - `incr` 在后端（`BulwarkDaoOxcache` 用 `parking_lot::Mutex`，`MockDao` 用
+    ///   `parking_lot::Mutex`，Redis 后端用 `INCR` 命令）保证进程内原子
+    /// - 首次调用返回 1（key 不存在 → 初始化为 "1"），后续调用返回 2+（递增）
+    /// - `incr` 返回 1 时视为首次使用，返回 >1 时视为重放
+    ///
+    /// 此方案完全消除 per-login_id 锁，内存由 DAO 后端（oxcache）自管理：
+    /// - replay_key 的 TTL = `step * 3`（覆盖 skew=1 的 3 个时间窗口）
+    /// - oxcache 后端的容量与淘汰策略由调用方通过 `BulwarkDaoOxcache::new()` 配置
+    /// - 不再需要 `DashMap` / `once_cell` / `Arc<TokioMutex>` 等进程内状态
+    ///
+    /// # FMEA #7 TOCTOU 防护保留
+    ///
+    /// 原锁的目的是防止两个并发请求同时通过 `get → set` 序列（TOCTOU）。
+    /// `incr` 将 get + set 合并为单次原子操作，从语义上消除 TOCTOU 窗口：
+    /// - 两个并发 `incr` 调用，后端保证只有一个返回 1，另一个返回 2
+    /// - 无需进程内锁，跨进程（Redis 后端）也保证原子性
     ///
     /// # 参数
     /// - `login_id`: 登录主体标识（用户 ID）。
     /// - `code`: 用户输入的验证码。
     /// - `now`: 当前 Unix 时间戳（秒）。
-    /// - `dao`: DAO 抽象（用于记录已用验证码）。
+    /// - `dao`: DAO 抽象（用于原子记录已用验证码）。
     ///
     /// # 返回
-    /// - `Ok(true)`: 校验通过且首次使用。
-    /// - `Ok(false)`: 校验失败或验证码已使用（重放拒绝）。
+    /// - `Ok(true)`: 校验通过且首次使用（`incr` 返回 1）。
+    /// - `Ok(false)`: 校验失败或验证码已使用（重放拒绝，`incr` 返回 >1）。
     /// - `Err(_)`: DAO 读写失败。
     pub async fn validate_and_consume(
         &self,
@@ -101,20 +112,11 @@ impl TotpHandler {
         }
         let replay_key = format!("totp:used:{}:{}", login_id, code);
 
-        // FMEA #7: per-login_id 锁包裹 get-then-set，防止 TOCTOU 竞态
-        //（kueiku RPN=288）。两个并发请求验证同一 login_id 的同一 code 时，
-        // 锁确保只有第一个通过，第二个读到 replay_key 后返回 false。
-        let lock = TOTP_LOCKS
-            .entry(login_id.to_string())
-            .or_insert_with(|| Arc::new(TokioMutex::new(())))
-            .clone();
-        let _guard = lock.lock().await;
-
-        if dao.get(&replay_key).await?.is_some() {
-            return Ok(false);
-        }
-        dao.set(&replay_key, "1", self.step * 3).await?;
-        Ok(true)
+        // E3 + FMEA #7：用 DAO 的原子 incr 替代 per-login_id 锁 + get-then-set。
+        // incr 在后端用 Mutex/INCR 保证原子性：首次返回 1，重放返回 >1。
+        // TTL = step * 3，覆盖 skew=1 的 3 个时间窗口（前 + 当前 + 后）。
+        let count = dao.incr(&replay_key, self.step * 3).await?;
+        Ok(count == 1)
     }
 
     /// 将 Google Authenticator 风格的 Base32 密钥解码为原始字节。
