@@ -555,3 +555,394 @@ async fn revoke_returns_internal_error_when_json_invalid() {
         result
     );
 }
+
+// ========================================================================
+// E4 修复验证：API Key 反向索引 O(1) 查询
+// ========================================================================
+
+/// E4: 验证 `idx_key_for` helper 返回正确的索引 key 格式。
+#[test]
+fn e4_idx_key_for_returns_correct_format() {
+    let key = "abcd1234".repeat(8); // 64 chars
+    let idx_key = super::handler::idx_key_for(&key);
+    assert_eq!(
+        idx_key,
+        format!("bulwark:apikey:idx:{}", key),
+        "E4: 索引 key 格式应为 bulwark:apikey:idx:<key>"
+    );
+}
+
+/// E4: 验证 handler.rs 源码不再使用 `keys("bulwark:apikey:*:<key>")` 全表扫描。
+///
+/// 通过 `include_str!` 读取源文件并检查 `verify` / `revoke` 不再使用
+/// `bulwark:apikey:*:` 通配符模式（旧 verify/revoke 的 O(N) 扫描路径）。
+///
+/// `list_by_namespace` 仍合法使用 `keys("bulwark:apikey:<namespace>:*")`（用于
+/// 列举指定 namespace 下所有 key，非单点查询），其模式为
+/// `bulwark:apikey:<namespace>:*`（通配符在末尾），不在禁用范围。
+#[test]
+fn e4_source_verify_revoke_have_no_keys_scan() {
+    let source = include_str!("handler.rs");
+    // 过滤掉所有注释行，只检查真实代码
+    let code_only: String = source
+        .lines()
+        .filter(|line| {
+            let trimmed = line.trim_start();
+            !(trimmed.starts_with("//!") || trimmed.starts_with("///") || trimmed.starts_with("//"))
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    // 检查代码中不再出现 `bulwark:apikey:*:` 模式（旧 verify/revoke 的 O(N) 扫描路径）。
+    // 注意：`list_by_namespace` 使用 `bulwark:apikey:<namespace>:*`（通配符在末尾），
+    // 不匹配此模式，因此不受影响。
+    assert!(
+        !code_only.contains("\"bulwark:apikey:*:"),
+        "E4: handler.rs 代码不应再使用 bulwark:apikey:*: 通配符扫描模式（verify/revoke 旧路径）"
+    );
+    // 检查代码中存在反向索引查询
+    assert!(
+        code_only.contains("idx_key_for"),
+        "E4: handler.rs 代码应使用 idx_key_for 构造反向索引 key"
+    );
+    assert!(
+        code_only.contains("bulwark:apikey:idx:"),
+        "E4: handler.rs 代码应包含 bulwark:apikey:idx: 索引 key 前缀"
+    );
+}
+
+/// E4: 验证 `generate_with_namespace` 同步写入反向索引。
+///
+/// 生成 key 后，`bulwark:apikey:idx:<key>` 应存在，value 为 dao_key
+/// （`bulwark:apikey:<namespace>:<key>`）。
+#[tokio::test]
+#[serial_test::serial]
+async fn e4_generate_with_namespace_writes_reverse_index() {
+    let dao = Arc::new(MockDao::new());
+    let handler = ApiKeyHandler::new(dao.clone());
+    let key = handler
+        .generate_with_namespace("1001", "internal", vec!["read".into()], 3600)
+        .await
+        .unwrap();
+
+    let idx_key = format!("bulwark:apikey:idx:{}", key);
+    let idx_value = dao.get(&idx_key).await.unwrap();
+    assert!(
+        idx_value.is_some(),
+        "E4: 反向索引 bulwark:apikey:idx:<key> 应存在"
+    );
+
+    let expected_dao_key = format!("bulwark:apikey:internal:{}", key);
+    assert_eq!(
+        idx_value.unwrap(),
+        expected_dao_key,
+        "E4: 索引 value 应为 dao_key（bulwark:apikey:<namespace>:<key>）"
+    );
+}
+
+/// E4: 验证默认 `generate`（namespace="default"）也写入反向索引。
+#[tokio::test]
+#[serial_test::serial]
+async fn e4_generate_writes_reverse_index_default_namespace() {
+    let dao = Arc::new(MockDao::new());
+    let handler = ApiKeyHandler::new(dao.clone());
+    let key = handler.generate("1001", vec![], 3600).await.unwrap();
+
+    let idx_key = format!("bulwark:apikey:idx:{}", key);
+    let idx_value = dao.get(&idx_key).await.unwrap();
+    assert!(idx_value.is_some(), "E4: 默认 generate 也应写入反向索引");
+
+    let expected_dao_key = format!("bulwark:apikey:default:{}", key);
+    assert_eq!(
+        idx_value.unwrap(),
+        expected_dao_key,
+        "E4: 默认 namespace 的索引 value 应为 bulwark:apikey:default:<key>"
+    );
+}
+
+/// E4: 验证 `verify` 通过反向索引找到 key（不再依赖 keys() 扫描）。
+///
+/// 生成 key 后，即使 DAO 中有大量其他 key，verify 也应 O(1) 命中。
+#[tokio::test]
+#[serial_test::serial]
+async fn e4_verify_uses_reverse_index() {
+    let dao = Arc::new(MockDao::new());
+    let handler = ApiKeyHandler::new(dao.clone());
+
+    // 预填充一些干扰 key（模拟生产环境中大量 key 共存的场景）
+    for i in 0..50 {
+        let noise_key = format!("bulwark:apikey:noise:{}:{}", i, "a".repeat(64));
+        dao.set(&noise_key, "noise", 3600).await.unwrap();
+    }
+
+    let key = handler
+        .generate_with_namespace("1001", "internal", vec!["read".into()], 3600)
+        .await
+        .unwrap();
+    let info = handler.verify(&key).await.unwrap();
+    assert_eq!(info.login_id, "1001");
+    assert_eq!(info.namespace, "internal");
+}
+
+/// E4: 验证 `revoke` 通过反向索引找到 key。
+#[tokio::test]
+#[serial_test::serial]
+async fn e4_revoke_uses_reverse_index() {
+    let dao = Arc::new(MockDao::new());
+    let handler = ApiKeyHandler::new(dao.clone());
+    let key = handler
+        .generate_with_namespace("1001", "internal", vec!["read".into()], 3600)
+        .await
+        .unwrap();
+
+    handler.revoke(&key).await.unwrap();
+
+    // verify 应失败（已吊销）
+    let result = handler.verify(&key).await;
+    assert!(
+        matches!(result, Err(BulwarkError::InvalidToken(_))),
+        "E4: revoke 后 verify 应返回 InvalidToken"
+    );
+}
+
+/// E4: 验证 `verify` 在无反向索引时回退到旧格式 `bulwark:apikey:<key>`。
+///
+/// 手动写入旧格式 key（不写索引），verify 应能通过回退路径找到。
+#[tokio::test]
+#[serial_test::serial]
+async fn e4_verify_falls_back_to_legacy_format() {
+    let dao = Arc::new(MockDao::new());
+    let handler = ApiKeyHandler::new(dao.clone());
+    let key = "deadbeef".repeat(8); // 64 hex chars
+    let old_dao_key = format!("bulwark:apikey:{}", key);
+    let info = ApiKeyInfo {
+        login_id: "legacy-user".to_string(),
+        scopes: vec!["legacy".into()],
+        expire_at: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64
+            + 3600,
+        revoked: false,
+        namespace: "default".to_string(),
+    };
+    let value = serde_json::to_string(&info).unwrap();
+    dao.set(&old_dao_key, &value, 3600).await.unwrap();
+    // 不写入反向索引
+
+    let verified = handler.verify(&key).await.unwrap();
+    assert_eq!(
+        verified.login_id, "legacy-user",
+        "E4: 无索引时应回退到旧格式 bulwark:apikey:<key>"
+    );
+}
+
+/// E4: 验证 `revoke` 在无反向索引时回退到旧格式。
+#[tokio::test]
+#[serial_test::serial]
+async fn e4_revoke_falls_back_to_legacy_format() {
+    let dao = Arc::new(MockDao::new());
+    let handler = ApiKeyHandler::new(dao.clone());
+    let key = "cafebeef".repeat(8);
+    let old_dao_key = format!("bulwark:apikey:{}", key);
+    let info = ApiKeyInfo {
+        login_id: "legacy-revoke".to_string(),
+        scopes: vec![],
+        expire_at: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64
+            + 3600,
+        revoked: false,
+        namespace: "default".to_string(),
+    };
+    let value = serde_json::to_string(&info).unwrap();
+    dao.set(&old_dao_key, &value, 3600).await.unwrap();
+    // 不写入反向索引
+
+    handler.revoke(&key).await.unwrap();
+    let result = handler.verify(&key).await;
+    assert!(
+        matches!(result, Err(BulwarkError::InvalidToken(_))),
+        "E4: revoke 旧格式 key 后 verify 应失败"
+    );
+}
+
+/// E4: 验证反向索引的 TTL 与主 key 一致。
+///
+/// 使用 `crate::dao::tests::MockDao`（支持 TTL 跟踪）验证索引和主 key 的
+/// 剩余 TTL 接近（均 ≤ timeout 秒）。
+#[tokio::test]
+#[serial_test::serial]
+async fn e4_index_has_same_ttl_as_key() {
+    let dao = Arc::new(crate::dao::tests::MockDao::new());
+    let handler = ApiKeyHandler::new(dao.clone());
+    let timeout = 3600i64;
+    let key = handler
+        .generate_with_namespace("ttl-test", "internal", vec![], timeout)
+        .await
+        .unwrap();
+
+    let dao_key = format!("bulwark:apikey:internal:{}", key);
+    let idx_key = format!("bulwark:apikey:idx:{}", key);
+
+    let key_ttl = dao.get_timeout(&dao_key).await.unwrap();
+    let idx_ttl = dao.get_timeout(&idx_key).await.unwrap();
+
+    assert!(key_ttl.is_some(), "E4: 主 key 应有 TTL");
+    assert!(idx_ttl.is_some(), "E4: 反向索引应有 TTL（与主 key 一致）");
+
+    let key_secs = key_ttl.unwrap().as_secs();
+    let idx_secs = idx_ttl.unwrap().as_secs();
+    // 两者都应 ≤ timeout（刚写入，接近 timeout）
+    assert!(
+        key_secs <= timeout as u64,
+        "E4: 主 key TTL 应 ≤ {}，实际: {}",
+        timeout,
+        key_secs
+    );
+    assert!(
+        idx_secs <= timeout as u64,
+        "E4: 索引 TTL 应 ≤ {}，实际: {}",
+        timeout,
+        idx_secs
+    );
+    // 两者差距应 ≤ 2 秒（写入顺序相邻）
+    let diff = if key_secs > idx_secs {
+        key_secs - idx_secs
+    } else {
+        idx_secs - key_secs
+    };
+    assert!(
+        diff <= 2,
+        "E4: 主 key 与索引的 TTL 差距应 ≤ 2s，实际: {}s",
+        diff
+    );
+}
+
+/// E4: 验证 `rotate` 为新 key 写入反向索引。
+///
+/// rotate 后：
+/// - old_key 应被吊销（verify 失败）
+/// - new_key 应有效且反向索引存在
+#[tokio::test]
+#[serial_test::serial]
+async fn e4_rotate_writes_index_for_new_key() {
+    let dao = Arc::new(MockDao::new());
+    let handler = ApiKeyHandler::new(dao.clone());
+    let old_key = handler
+        .generate("1001", vec!["read".into()], 3600)
+        .await
+        .unwrap();
+
+    let new_key = handler.rotate(&old_key).await.unwrap();
+    assert_ne!(old_key, new_key);
+
+    // old_key 应被吊销
+    let old_result = handler.verify(&old_key).await;
+    assert!(old_result.is_err(), "old_key 应被吊销");
+
+    // new_key 应有效
+    let info = handler.verify(&new_key).await.unwrap();
+    assert_eq!(info.login_id, "1001");
+
+    // new_key 的反向索引应存在
+    let new_idx_key = format!("bulwark:apikey:idx:{}", new_key);
+    let idx_value = dao.get(&new_idx_key).await.unwrap();
+    assert!(idx_value.is_some(), "E4: rotate 后新 key 的反向索引应存在");
+}
+
+/// E4: 验证多个 namespace 的 key 都有正确的反向索引。
+#[tokio::test]
+#[serial_test::serial]
+async fn e4_multiple_namespaces_all_indexed() {
+    let dao = Arc::new(MockDao::new());
+    let handler = ApiKeyHandler::new(dao.clone());
+
+    let k1 = handler
+        .generate_with_namespace("1001", "internal", vec![], 3600)
+        .await
+        .unwrap();
+    let k2 = handler
+        .generate_with_namespace("2002", "partner", vec![], 3600)
+        .await
+        .unwrap();
+    let k3 = handler
+        .generate_with_namespace("3003", "default", vec![], 3600)
+        .await
+        .unwrap();
+
+    // 三个 key 的反向索引都应存在
+    for (key, ns) in &[(&k1, "internal"), (&k2, "partner"), (&k3, "default")] {
+        let idx_key = format!("bulwark:apikey:idx:{}", key);
+        let idx_value = dao.get(&idx_key).await.unwrap();
+        assert!(
+            idx_value.is_some(),
+            "E4: namespace={} 的 key 反向索引应存在",
+            ns
+        );
+        let expected_dao_key = format!("bulwark:apikey:{}:{}", ns, key);
+        assert_eq!(
+            idx_value.unwrap(),
+            expected_dao_key,
+            "E4: namespace={} 的索引 value 应为 {}",
+            ns,
+            expected_dao_key
+        );
+    }
+
+    // verify 三个 key 都能通过反向索引找到
+    assert_eq!(handler.verify(&k1).await.unwrap().login_id, "1001");
+    assert_eq!(handler.verify(&k2).await.unwrap().login_id, "2002");
+    assert_eq!(handler.verify(&k3).await.unwrap().login_id, "3003");
+}
+
+/// E4: 验证 `verify` 对不存在的 key 返回 InvalidToken（O(1) 路径，无扫描）。
+#[tokio::test]
+async fn e4_verify_nonexistent_key_returns_invalid_token() {
+    let handler = make_handler();
+    let result = handler.verify("nonexistent-key-12345").await;
+    assert!(
+        matches!(result, Err(BulwarkError::InvalidToken(_))),
+        "E4: 不存在的 key 应返回 InvalidToken（无扫描），实际: {:?}",
+        result
+    );
+}
+
+/// E4: 验证 `revoke` 对不存在的 key 返回 InvalidToken（O(1) 路径，无扫描）。
+#[tokio::test]
+async fn e4_revoke_nonexistent_key_returns_invalid_token() {
+    let handler = make_handler();
+    let result = handler.revoke("nonexistent-key-67890").await;
+    assert!(
+        matches!(result, Err(BulwarkError::InvalidToken(_))),
+        "E4: 不存在的 key 应返回 InvalidToken（无扫描），实际: {:?}",
+        result
+    );
+}
+
+/// E4: 验证索引存在但 dao_key 已被删除时，verify 回退到 legacy 路径。
+///
+/// 模拟场景：管理员手动 delete 了主 key 但索引残留。verify 应继续查找
+/// legacy 格式，最终返回 InvalidToken。
+#[tokio::test]
+#[serial_test::serial]
+async fn e4_verify_falls_through_when_dao_key_deleted() {
+    let dao = Arc::new(MockDao::new());
+    let handler = ApiKeyHandler::new(dao.clone());
+    let key = handler
+        .generate_with_namespace("1001", "internal", vec![], 3600)
+        .await
+        .unwrap();
+
+    // 手动删除主 key（保留索引）
+    let dao_key = format!("bulwark:apikey:internal:{}", key);
+    dao.delete(&dao_key).await.unwrap();
+
+    // verify 应回退到 legacy，最终返回 InvalidToken
+    let result = handler.verify(&key).await;
+    assert!(
+        matches!(result, Err(BulwarkError::InvalidToken(_))),
+        "E4: 索引存在但主 key 已删除时应返回 InvalidToken，实际: {:?}",
+        result
+    );
+}

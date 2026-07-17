@@ -25,6 +25,29 @@ pub(crate) fn default_namespace() -> String {
     "default".to_string()
 }
 
+/// E4: 构造 API Key 反向索引的存储 key。
+///
+/// 反向索引格式：`bulwark:apikey:idx:<key>`，value 为对应的 dao_key
+/// （`bulwark:apikey:<namespace>:<key>`），使 `verify` / `revoke` 能以 O(1)
+/// 查询替代 `keys("bulwark:apikey:*:<key>")` 全表扫描。
+///
+/// # 设计说明
+///
+/// 任务规格建议使用 `sha256(key)` 作为索引 key 的一部分。本实现直接使用 `key`
+/// 本身，因为：
+/// 1. `protocol-apikey` feature 不依赖 `sha2` crate（Cargo.toml 受文件边界限制
+///    不可修改），添加 sha2 依赖会破坏 feature 隔离
+/// 2. API Key 本身已是 64 字符的随机 hex 字符串（两个 UUID v4 simple 拼接），
+///    具备固定长度、高熵、URL 安全（仅 `[0-9a-f]`）的特性，功能上等价于
+///    `sha256(key)` 的输出
+/// 3. 索引 key 长度固定（`bulwark:apikey:idx:` + 64 hex = 82 字符），无特殊字符
+///
+/// # 参数
+/// - `key`: API Key（64 字符 hex 字符串）
+pub(crate) fn idx_key_for(key: &str) -> String {
+    format!("bulwark:apikey:idx:{}", key)
+}
+
 /// 校验 namespace 合法性。
 ///
 /// 规则：
@@ -103,6 +126,15 @@ impl ApiKeyHandler {
     /// 生成 64 字符随机 hex 字符串，存储到 `bulwark:apikey:<namespace>:<key>`，
     /// value 为 JSON `ApiKeyInfo`（含 `namespace` 字段），TTL 为 `timeout` 秒。
     ///
+    /// # E4 修复：同步写入反向索引
+    ///
+    /// 生成 key 时同步写入反向索引 `bulwark:apikey:idx:<key> -> <dao_key>`，
+    /// 使 `verify` / `revoke` 能以 O(1) 查询替代 `keys("bulwark:apikey:*:<key>")`
+    /// 全表扫描，避免攻击者用大量 key 触发 OOM。
+    ///
+    /// 反向索引的 TTL 与主 key 相同（`timeout` 秒），确保索引随主 key 一起过期，
+    /// 不会残留指向已失效 key 的索引条目。
+    ///
     /// # 参数
     /// - `login_id`: 登录主体标识。
     /// - `namespace`: 命名空间（1-64 字符，仅 `[a-zA-Z0-9_-]`）。
@@ -140,32 +172,45 @@ impl ApiKeyHandler {
         let key = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
         let dao_key = format!("bulwark:apikey:{}:{}", namespace, key);
         self.dao.set(&dao_key, &value, timeout as u64).await?;
+        // E4: 同步写入反向索引（TTL 与主 key 一致），使 verify/revoke 能 O(1) 查询
+        let idx_key = idx_key_for(&key);
+        self.dao.set(&idx_key, &dao_key, timeout as u64).await?;
         Ok(key)
     }
 
     /// 校验 API Key。
     ///
-    /// 校验逻辑（向后兼容）：
-    /// 1. 先查旧格式 `bulwark:apikey:<key>`（无 namespace，历史 key）
-    /// 2. 未命中再扫描新格式 `bulwark:apikey:*:<key>`（含 namespace）
+    /// 校验逻辑（E4 优化 + 向后兼容）：
+    /// 1. **O(1) 反向索引查询**：查 `bulwark:apikey:idx:<key>` 获取 dao_key
+    /// 2. **回退到旧格式**：查 `bulwark:apikey:<key>`（无 namespace，v0.4.1 历史 key）
     /// 3. 找到后检查 `revoked == false` 且 `expire_at > now`
+    ///
+    /// # E4 修复
+    ///
+    /// 原实现使用 `keys("bulwark:apikey:*:<key>")` 全表扫描，时间复杂度 O(N)
+    /// （N 为 DAO 中所有 apikey 条目数）。攻击者可通过大量 generate 调用填满
+    /// DAO，使单次 verify 耗时显著上升，最终拖垮服务（DoS）。
+    ///
+    /// 新实现优先查反向索引（O(1)），仅在索引未命中时回退到旧格式单 key 查询
+    /// （也是 O(1)），完全消除 `keys()` 扫描路径。
     ///
     /// # 错误
     /// - `BulwarkError::InvalidToken`: key 不存在或已吊销。
     /// - `BulwarkError::ExpiredToken`: key 已过期。
     pub async fn verify(&self, key: &str) -> BulwarkResult<ApiKeyInfo> {
-        // 1. 先查旧格式（无 namespace）
-        let old_dao_key = format!("bulwark:apikey:{}", key);
-        if let Some(value) = self.dao.get(&old_dao_key).await? {
-            return self.decode_and_check(&value).await;
-        }
-        // 2. 扫描新格式 bulwark:apikey:*:<key>
-        let pattern = format!("bulwark:apikey:*:{}", key);
-        let matched = self.dao.keys(&pattern).await?;
-        for dao_key in matched {
+        // 1. E4: O(1) 反向索引查询（新生成的 key 都会写入索引）
+        let idx_key = idx_key_for(key);
+        if let Some(dao_key) = self.dao.get(&idx_key).await? {
             if let Some(value) = self.dao.get(&dao_key).await? {
                 return self.decode_and_check(&value).await;
             }
+            // 索引存在但 dao_key 已被删除（极少见，如管理员手动 delete）：
+            // 继续走 legacy 回退，避免误判为不存在
+        }
+        // 2. 回退：旧格式 bulwark:apikey:<key>（无 namespace，v0.4.1 历史 key）
+        let old_dao_key = format!("bulwark:apikey:{}", key);
+        if let Some(value) = self.dao.get(&old_dao_key).await? {
+            return self.decode_and_check(&value).await;
         }
         Err(BulwarkError::InvalidToken("API Key 不存在".to_string()))
     }
@@ -218,22 +263,28 @@ impl ApiKeyHandler {
 
     /// 吊销 API Key。
     ///
-    /// 向后兼容：先查旧格式 `bulwark:apikey:<key>`，未命中再扫描新格式。
-    /// 找到后将 `revoked` 设为 `true` 并写回 dao（保留 TTL）。
+    /// 吊销逻辑（E4 优化 + 向后兼容）：
+    /// 1. **O(1) 反向索引查询**：查 `bulwark:apikey:idx:<key>` 获取 dao_key
+    /// 2. **回退到旧格式**：查 `bulwark:apikey:<key>`（无 namespace，v0.4.1 历史 key）
+    /// 3. 找到后将 `revoked` 设为 `true` 并写回 dao（保留 TTL）
+    ///
+    /// # E4 修复
+    ///
+    /// 与 `verify` 同理，原实现使用 `keys("bulwark:apikey:*:<key>")` 全表扫描，
+    /// 新实现改为 O(1) 反向索引查询 + O(1) 旧格式回退，完全消除 `keys()` 扫描。
     ///
     /// # 错误
     /// - `BulwarkError::InvalidToken`: key 不存在。
     pub async fn revoke(&self, key: &str) -> BulwarkResult<()> {
-        // 1. 先查旧格式
+        // 1. E4: O(1) 反向索引查询
+        let idx_key = idx_key_for(key);
+        if let Some(dao_key) = self.dao.get(&idx_key).await? {
+            return self.revoke_at(&dao_key).await;
+        }
+        // 2. 回退：旧格式 bulwark:apikey:<key>（无 namespace，v0.4.1 历史 key）
         let old_dao_key = format!("bulwark:apikey:{}", key);
         if self.dao.get(&old_dao_key).await?.is_some() {
             return self.revoke_at(&old_dao_key).await;
-        }
-        // 2. 扫描新格式
-        let pattern = format!("bulwark:apikey:*:{}", key);
-        let matched = self.dao.keys(&pattern).await?;
-        if let Some(dao_key) = matched.into_iter().next() {
-            return self.revoke_at(&dao_key).await;
         }
         Err(BulwarkError::InvalidToken("API Key 不存在".to_string()))
     }
