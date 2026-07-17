@@ -117,10 +117,14 @@ impl SmsVerificationService {
 }
 
 /// 生成 6 位随机数字验证码（密码学安全）。
-fn generate_code() -> BulwarkResult<String> {
+///
+/// 范围 `100000..1000000` 保证：
+/// 1. 永远不生成 `000000`（弱验证码，易被暴力破解）
+/// 2. 所有结果均为 6 位数字（首位非零）
+pub(super) fn generate_code() -> BulwarkResult<String> {
     use rand::rngs::OsRng;
     use rand::Rng;
-    let code: u32 = OsRng.gen_range(0..1000000);
+    let code: u32 = OsRng.gen_range(100000..1000000);
     Ok(format!("{:06}", code))
 }
 

@@ -314,3 +314,55 @@ fn constant_time_eq_first_byte_diff_returns_false() {
 fn constant_time_eq_last_byte_diff_returns_false() {
     assert!(!constant_time_eq("123450", "123456"));
 }
+
+// ============================================================================
+// 验证码生成范围测试（21a6/vuln-0009：排除 000000）
+// ============================================================================
+
+/// 验证 generate_code 返回 6 位字符串。
+#[test]
+fn generate_code_returns_6_char_string() {
+    let code = super::service::generate_code().expect("生成验证码不应失败");
+    assert_eq!(code.len(), 6, "验证码必须是 6 位字符: {}", code);
+}
+
+/// 验证 generate_code 永不返回 "000000"（弱验证码）。
+///
+/// 生成 10000 次，断言无 "000000" 且所有结果均为 6 位数字字符。
+/// 旧实现 `gen_range(0..1000000)` 有 1/1000000 概率生成 0，
+/// 虽然单次概率低，但在高频发送场景下累积风险不可忽视。
+#[test]
+fn generate_code_never_returns_000000() {
+    for _ in 0..10000 {
+        let code = super::service::generate_code().expect("生成验证码不应失败");
+        assert_ne!(code, "000000", "验证码不应为 000000（弱验证码）");
+        assert_eq!(code.len(), 6, "验证码必须是 6 位字符: {}", code);
+    }
+}
+
+/// 验证 generate_code 所有结果均为 [100000, 999999] 范围内的 6 位数字。
+///
+/// 此测试在旧实现（`gen_range(0..1000000)`）下会失败：
+/// 旧实现 ~10% 概率生成 < 100000 的值（格式化后首位为 '0'），
+/// 10000 次迭代中全部 >= 100000 的概率约为 0.9^10000 ≈ 0（必然失败）。
+#[test]
+fn generate_code_always_in_6_digit_range() {
+    for _ in 0..10000 {
+        let code = super::service::generate_code().expect("生成验证码不应失败");
+        let parsed: u32 = code
+            .parse()
+            .unwrap_or_else(|_| panic!("验证码必须是纯数字: {}", code));
+        assert!(
+            (100000..1000000).contains(&parsed),
+            "验证码必须在 [100000, 999999] 范围内: {}",
+            code
+        );
+        // 首位字符不应为 '0'（与 000000 弱验证码防护一致）
+        assert_ne!(
+            code.chars().next().unwrap(),
+            '0',
+            "验证码首位不应为 0: {}",
+            code
+        );
+    }
+}
