@@ -57,45 +57,155 @@ impl Token for Random64TokenStyle {
 // SimpleTokenStyle
 // ====================================================================
 
+#[cfg(feature = "secure-simple-token")]
+impl SimpleTokenStyle {
+    /// 计算 HMAC-SHA256 并返回 URL-safe Base64 编码。
+    ///
+    /// 输入为 `login_id|uuid`（管道分隔），输出为 Base64 编码的 HMAC（43 字符，无 padding）。
+    fn compute_hmac(&self, login_id: &str, uuid_part: &str) -> BulwarkResult<String> {
+        use hmac::{Hmac, KeyInit, Mac};
+        use sha2::Sha256;
+
+        type HmacSha256 = Hmac<Sha256>;
+        let message = format!("{}|{}", login_id, uuid_part);
+        let mut mac = HmacSha256::new_from_slice(self.secret.as_bytes())
+            .map_err(|e| BulwarkError::Config(format!("HMAC 密钥长度无效: {}", e)))?;
+        mac.update(message.as_bytes());
+        // URL-safe Base64 无 padding（43 字符），适合放入 token
+        Ok(Self::base64_url_no_pad(&mac.finalize().into_bytes()))
+    }
+
+    /// 将字节切片编码为 URL-safe Base64（无 padding）。
+    fn base64_url_no_pad(bytes: &[u8]) -> String {
+        // 手动实现 URL-safe Base64 无 padding，避免引入额外 base64 依赖
+        // （base64 crate 已是 optional dep，但 secure-simple-token feature 未启用它）
+        const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+        let mut result = String::with_capacity((bytes.len() * 4).div_ceil(3));
+        for chunk in bytes.chunks(3) {
+            let b0 = chunk[0] as u32;
+            let b1 = chunk.get(1).copied().unwrap_or(0) as u32;
+            let b2 = chunk.get(2).copied().unwrap_or(0) as u32;
+            let n = (b0 << 16) | (b1 << 8) | b2;
+            result.push(CHARS[((n >> 18) & 0x3F) as usize] as char);
+            result.push(CHARS[((n >> 12) & 0x3F) as usize] as char);
+            if chunk.len() > 1 {
+                result.push(CHARS[((n >> 6) & 0x3F) as usize] as char);
+            }
+            if chunk.len() > 2 {
+                result.push(CHARS[(n & 0x3F) as usize] as char);
+            }
+        }
+        result
+    }
+}
+
+#[cfg(feature = "secure-simple-token")]
 impl Token for SimpleTokenStyle {
     fn generate(&self, login_id: &str, _timeout: i64) -> BulwarkResult<String> {
-        Ok(format!("{}-{}", login_id, Uuid::new_v4()))
+        // A11: fail-closed — 空密钥拒绝生成 token
+        if self.secret.is_empty() {
+            return Err(BulwarkError::Config(
+                "SimpleTokenStyle secret 不能为空（A11 fail-closed）".to_string(),
+            ));
+        }
+        let uuid = Uuid::new_v4();
+        let uuid_str = uuid.to_string();
+        // 格式：<login_id>-<uuid>.<hmac_sha256_base64(secret, login_id|uuid)>
+        let hmac = self.compute_hmac(login_id, &uuid_str)?;
+        Ok(format!("{}-{}.{}", login_id, uuid_str, hmac))
     }
 
     fn verify(&self, token: &str) -> BulwarkResult<Option<String>> {
-        match token.split_once('-') {
-            Some((id_str, uuid_part)) => {
-                // 校验 UUID 部分为合法格式，防止任意字符串伪造
-                if Uuid::parse_str(uuid_part).is_ok() {
-                    Ok(Some(id_str.to_string()))
-                } else {
-                    Ok(None)
-                }
-            },
-            None => Ok(None),
+        use subtle::ConstantTimeEq;
+
+        // A11: fail-closed — 空密钥拒绝验证（所有 token 视为无效）
+        if self.secret.is_empty() {
+            return Ok(None);
+        }
+        // 格式：<login_id>-<uuid>.<hmac>
+        // 先按 '.' 分割出 HMAC 部分，再按 '-' 分割出 login_id 和 uuid
+        let (body, hmac_part) = match token.rsplit_once('.') {
+            Some((b, h)) => (b, h),
+            None => return Ok(None), // 旧格式无 HMAC → 视为无效
+        };
+        let (login_id, uuid_part) = match body.split_once('-') {
+            Some((l, u)) => (l, u),
+            None => return Ok(None),
+        };
+        // 校验 UUID 部分为合法格式
+        if Uuid::parse_str(uuid_part).is_err() {
+            return Ok(None);
+        }
+        // 计算期望的 HMAC 并常数时间比较
+        let expected_hmac = match self.compute_hmac(login_id, uuid_part) {
+            Ok(h) => h,
+            Err(_) => return Ok(None),
+        };
+        // ConstantTimeEq 防止 timing side-channel 攻击
+        let ct_result = expected_hmac.as_bytes().ct_eq(hmac_part.as_bytes());
+        if bool::from(ct_result) {
+            Ok(Some(login_id.to_string()))
+        } else {
+            Ok(None)
         }
     }
 
     fn parse(&self, token: &str) -> BulwarkResult<TokenClaims> {
-        match token.split_once('-') {
-            Some((id_str, uuid_part)) => {
-                // 校验 UUID 部分为合法格式
-                if Uuid::parse_str(uuid_part).is_err() {
-                    return Err(BulwarkError::Internal(
-                        "Simple token 格式错误：UUID 部分无效".to_string(),
-                    ));
-                }
-                // Simple token 不包含过期时间，expire_at 设为 0
-                Ok(TokenClaims {
-                    login_id: id_str.to_string(),
-                    expire_at: 0,
-                    device: None,
-                })
-            },
-            None => Err(BulwarkError::Internal(
-                "Simple token 格式错误：缺少 '-' 分隔符".to_string(),
-            )),
+        // A11: fail-closed — 空密钥拒绝解析
+        if self.secret.is_empty() {
+            return Err(BulwarkError::Config(
+                "SimpleTokenStyle secret 不能为空（A11 fail-closed）".to_string(),
+            ));
         }
+        // 格式：<login_id>-<uuid>.<hmac>
+        let (body, hmac_part) = token.rsplit_once('.').ok_or_else(|| {
+            BulwarkError::Internal("Simple token 格式错误：缺少 '.' HMAC 分隔符".to_string())
+        })?;
+        let (id_str, uuid_part) = body.split_once('-').ok_or_else(|| {
+            BulwarkError::Internal("Simple token 格式错误：缺少 '-' 分隔符".to_string())
+        })?;
+        // 校验 UUID 部分
+        if Uuid::parse_str(uuid_part).is_err() {
+            return Err(BulwarkError::Internal(
+                "Simple token 格式错误：UUID 部分无效".to_string(),
+            ));
+        }
+        // 校验 HMAC（常数时间比较）
+        use subtle::ConstantTimeEq;
+        let expected_hmac = self.compute_hmac(id_str, uuid_part)?;
+        let ct_result = expected_hmac.as_bytes().ct_eq(hmac_part.as_bytes());
+        if !bool::from(ct_result) {
+            return Err(BulwarkError::InvalidToken(
+                "Simple token HMAC 校验失败".to_string(),
+            ));
+        }
+        // Simple token 不包含过期时间，expire_at 设为 0
+        Ok(TokenClaims {
+            login_id: id_str.to_string(),
+            expire_at: 0,
+            device: None,
+        })
+    }
+}
+
+#[cfg(not(feature = "secure-simple-token"))]
+impl Token for SimpleTokenStyle {
+    fn generate(&self, _login_id: &str, _timeout: i64) -> BulwarkResult<String> {
+        // A11 fail-closed：未启用 secure-simple-token feature 时拒绝生成 token
+        Err(BulwarkError::Config(
+            "SimpleTokenStyle 需启用 secure-simple-token feature（A11 安全修复）".to_string(),
+        ))
+    }
+
+    fn verify(&self, _token: &str) -> BulwarkResult<Option<String>> {
+        // A11 fail-closed：未启用 feature 时所有 token 视为无效
+        Ok(None)
+    }
+
+    fn parse(&self, _token: &str) -> BulwarkResult<TokenClaims> {
+        Err(BulwarkError::Config(
+            "SimpleTokenStyle 需启用 secure-simple-token feature（A11 安全修复）".to_string(),
+        ))
     }
 }
 
@@ -158,7 +268,8 @@ impl TokenStyleFactory {
         match style {
             "uuid" => Ok(Box::new(UuidTokenStyle)),
             "random_64" => Ok(Box::new(Random64TokenStyle)),
-            "simple" => Ok(Box::new(SimpleTokenStyle)),
+            // A11: SimpleTokenStyle 需传入 secret 用于 HMAC-SHA256 签名
+            "simple" => Ok(Box::new(SimpleTokenStyle::new(secret.to_string()))),
             #[cfg(feature = "protocol-jwt")]
             "jwt" => Ok(Box::new(JwtTokenStyle::new(secret))),
             #[cfg(not(feature = "protocol-jwt"))]

@@ -415,11 +415,27 @@ mod tests {
 
     mod default_impl_coverage {
         use super::*;
+        use crate::core::token::Token;
         use crate::dao::BulwarkDao;
         use crate::session::BulwarkSession;
         use crate::stp::mock::{MockDao, MockFirewall};
         use crate::strategy::BulwarkPermissionStrategy;
         use std::sync::Arc;
+
+        /// A11: simple 模式测试用的 HMAC 密钥（与 make_logic 中设置的 jwt_secret 一致）。
+        const STP_TOKEN_SIMPLE_TEST_SECRET: &str = "stp-token-simple-test-secret";
+
+        /// A11: 构造测试用 JwtSecret（兼容 protocol-zeroize 启用/禁用两种配置）。
+        fn test_jwt_secret(secret: &str) -> crate::config::JwtSecret {
+            #[cfg(feature = "protocol-zeroize")]
+            {
+                secret.to_string().into()
+            }
+            #[cfg(not(feature = "protocol-zeroize"))]
+            {
+                secret.to_string()
+            }
+        }
 
         /// 构造 BulwarkLogicDefault，token_style 可配置。
         fn make_logic(token_style: &str) -> BulwarkLogicDefault {
@@ -428,6 +444,11 @@ mod tests {
             let mut config = BulwarkConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = token_style.to_string();
+            // A11: simple 模式下 verify_token 委托 core-token SimpleTokenStyle（需 HMAC），
+            // 设置非空 jwt_secret 避免 fail-closed。
+            if token_style == "simple" {
+                config.jwt_secret = test_jwt_secret(STP_TOKEN_SIMPLE_TEST_SECRET);
+            }
             let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
                 has_permission: true,
                 has_role: true,
@@ -440,13 +461,16 @@ mod tests {
         /// 覆盖 token.rs 第 147-159 行 BulwarkLogicDefault::verify_token 的
         /// `Ok(Some(login_id))` 分支。
         ///
-        /// 注意：SimpleTokenStyle::verify 使用 `split_once('-')` 在首个 `-` 处分割，
-        /// 因此 login_id 不能包含 `-`（否则只会提取首个 `-` 前的部分）。
+        /// A11: SimpleTokenStyle 改为 HMAC-SHA256 签名格式 `<login_id>-<uuid>.<hmac>`，
+        /// 需用 SimpleTokenStyle::new(secret).generate 生成合法 token。
+        /// 注意：login_id 不能含 `-`（verify 在首个 `-` 处分割 login_id 与 uuid 部分）。
         #[tokio::test]
         async fn verify_token_simple_style_returns_login_id() {
             let logic = make_logic("simple");
-            // simple 格式: <login_id>-<uuid>，login_id 不含 `-`
-            let token = format!("verifyuser-{}", uuid::Uuid::new_v4());
+            // A11: 用 SimpleTokenStyle 生成合法 HMAC token
+            let style =
+                crate::core::token::SimpleTokenStyle::new(STP_TOKEN_SIMPLE_TEST_SECRET.to_string());
+            let token = style.generate("verifyuser", 3600).unwrap();
             let result = logic.verify_token(&token).await;
             assert!(
                 result.is_ok(),

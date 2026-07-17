@@ -10,6 +10,7 @@ use super::mock::{
 use super::*;
 use crate::config::{OverflowLogoutMode, ReplacedLoginExitMode};
 use crate::context::tenant::with_default_tenant;
+use crate::core::token::Token;
 use crate::dao::BulwarkDao;
 use crate::manager::BulwarkManager;
 use async_trait::async_trait;
@@ -33,11 +34,35 @@ fn make_logic(
     let mut config = BulwarkConfig::default_config();
     config.throw_on_not_login = throw_on_not_login;
     config.token_style = token_style.to_string();
+    // A11: simple 模式下 verify_token 委托 core-token SimpleTokenStyle（需 HMAC），
+    // 设置非空 jwt_secret 避免 fail-closed（generate_token 仍走 stp 自有 simple UUID 路径）。
+    if token_style == "simple" {
+        config.jwt_secret = test_jwt_secret(STP_SIMPLE_TEST_SECRET);
+    }
     let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
         has_permission,
         has_role,
     });
     BulwarkLogicDefault::new(session, Arc::new(config), firewall)
+}
+
+/// A11: simple 模式测试用的 HMAC 密钥（与 make_logic 中设置的 jwt_secret 一致）。
+///
+/// 用于 SimpleTokenStyle::new 生成合法 HMAC token，供 verify_token 委托测试使用。
+const STP_SIMPLE_TEST_SECRET: &str = "stp-simple-test-secret";
+
+/// A11: 构造测试用 JwtSecret（兼容 protocol-zeroize 启用/禁用两种配置）。
+///
+/// 与 `config::helpers::default_jwt_secret` 风格一致，避免 clippy::useless_conversion 警告。
+fn test_jwt_secret(secret: &str) -> crate::config::JwtSecret {
+    #[cfg(feature = "protocol-zeroize")]
+    {
+        secret.to_string().into()
+    }
+    #[cfg(not(feature = "protocol-zeroize"))]
+    {
+        secret.to_string()
+    }
 }
 
 /// 辅助函数：创建 BulwarkLogicDefault 实例并返回 dao 引用（用于测试中操作 dao 内部状态）。
@@ -58,6 +83,10 @@ fn make_logic_with_dao(
     let mut config = BulwarkConfig::default_config();
     config.throw_on_not_login = throw_on_not_login;
     config.token_style = token_style.to_string();
+    // A11: simple 模式下同步设置非空 jwt_secret（与 make_logic 一致）
+    if token_style == "simple" {
+        config.jwt_secret = test_jwt_secret(STP_SIMPLE_TEST_SECRET);
+    }
     let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
         has_permission,
         has_role,
@@ -1176,14 +1205,14 @@ async fn util_login_by_token_fails_when_not_initialized() {
 
 /// verify_token 对 simple style token 返回 login_id（spec Scenario）。
 ///
-/// 注意：0.1.0 `generate_token("simple")` 生成 32 字符 UUID，
-/// 与 core-token `SimpleTokenStyle` 的 `<login_id>-<uuid>` 格式不同。
-/// 此测试手动构造 simple-format token 验证 verify_token 委托逻辑。
+/// A11: core-token `SimpleTokenStyle` 改为 HMAC-SHA256 签名格式
+/// `<login_id>-<uuid>.<hmac>`，需用 SimpleTokenStyle::new(secret).generate 生成合法 token。
 #[tokio::test]
 async fn verify_token_simple_style_returns_login_id() {
     let logic = make_logic(3600, 86400, false, "simple", true, true);
-    // 手动构造 simple-format token: <login_id>-<uuid>
-    let token = format!("1001-{}", uuid::Uuid::new_v4());
+    // A11: 用 SimpleTokenStyle 生成合法 HMAC token（secret 与 make_logic 中 jwt_secret 一致）
+    let style = crate::core::token::SimpleTokenStyle::new(STP_SIMPLE_TEST_SECRET.to_string());
+    let token = style.generate("1001", 3600).unwrap();
     let login_id = logic.verify_token(&token).await.unwrap();
     assert_eq!(login_id, "1001".to_string(), "verify_token 应返回 login_id");
 }
@@ -1217,19 +1246,19 @@ async fn verify_token_invalid_returns_error() {
     );
 }
 
-/// verify_token 对合法 UUID 后缀的 simple-format token 返回 login_id（spec Scenario）。
+/// verify_token 对合法 HMAC 的 simple-format token 返回 login_id（spec Scenario）。
 ///
-/// SimpleTokenStyle 要求 token 后缀为合法 UUID，防止身份伪造。
+/// A11: SimpleTokenStyle 要求 token 含合法 HMAC-SHA256 签名，防止身份伪造。
 #[tokio::test]
 async fn verify_token_malformed_returns_invalid_token() {
     let logic = make_logic(3600, 86400, false, "simple", true, true);
-    // 使用合法 UUID 后缀
-    let result = logic
-        .verify_token("abc-550e8400-e29b-41d4-a716-446655440000")
-        .await;
+    // A11: 用 SimpleTokenStyle 生成合法 HMAC token（login_id="abc"）
+    let style = crate::core::token::SimpleTokenStyle::new(STP_SIMPLE_TEST_SECRET.to_string());
+    let token = style.generate("abc", 3600).unwrap();
+    let result = logic.verify_token(&token).await;
     assert!(
         result.is_ok(),
-        "simple-format token with valid UUID suffix 应返回 Ok，实际: {:?}",
+        "simple-format token with valid HMAC 应返回 Ok，实际: {:?}",
         result
     );
     assert_eq!(result.unwrap(), "abc");
@@ -1273,8 +1302,8 @@ async fn util_refresh_token_fails_when_not_initialized() {
 
 /// BulwarkUtil::verify_token 端到端：simple style token → 返回 login_id。
 ///
-/// 注意：BulwarkUtil::login 使用 0.1.0 generate_token，"simple" 生成 32 字符 UUID，
-/// 与 core-token SimpleTokenStyle 格式不同。此测试手动构造 simple-format token。
+/// A11: core-token SimpleTokenStyle 改为 HMAC-SHA256 签名格式，
+/// 需用 SimpleTokenStyle::new(secret).generate 生成合法 token（secret 与 config.jwt_secret 一致）。
 #[tokio::test]
 #[serial]
 async fn util_verify_token_returns_login_id() {
@@ -1284,11 +1313,14 @@ async fn util_verify_token_returns_login_id() {
     config.timeout = 3600;
     config.active_timeout = -1;
     config.token_style = "simple".to_string();
+    // A11: 设置非空 jwt_secret，与 SimpleTokenStyle 生成 token 用的 secret 一致
+    config.jwt_secret = test_jwt_secret(STP_SIMPLE_TEST_SECRET);
     let interface: Arc<dyn BulwarkInterface> = Arc::new(MockInterface);
     BulwarkManager::init(dao, Arc::new(config), interface).unwrap();
 
-    // 手动构造 simple-format token: <login_id>-<uuid>
-    let token = format!("1001-{}", uuid::Uuid::new_v4());
+    // A11: 用 SimpleTokenStyle 生成合法 HMAC token
+    let style = crate::core::token::SimpleTokenStyle::new(STP_SIMPLE_TEST_SECRET.to_string());
+    let token = style.generate("1001", 3600).unwrap();
     let login_id = BulwarkUtil::verify_token(&token).await.unwrap();
     assert_eq!(login_id, "1001".to_string());
 
@@ -1822,6 +1854,8 @@ async fn minimal_logic_returns_not_implemented() {
 // ------------------------------------------------------------------------
 
 /// login_by_token 注入 plugin_manager + listener_manager 后触发 auto-wire 钩子（simple style）。
+///
+/// A11: SimpleTokenStyle 改为 HMAC 签名格式，需用 SimpleTokenStyle::new(secret).generate 生成合法 token。
 #[tokio::test]
 async fn login_by_token_with_managers_triggers_hooks() {
     let logic = make_logic(3600, 86400, false, "simple", true, true);
@@ -1830,8 +1864,9 @@ async fn login_by_token_with_managers_triggers_hooks() {
     #[cfg(feature = "listener")]
     let logic = logic.with_listener_manager(Arc::new(BulwarkListenerManager::new()));
 
-    // 构造 simple 格式 token: "<login_id>-<uuid>"
-    let token = format!("8008-{}", uuid::Uuid::new_v4());
+    // A11: 用 SimpleTokenStyle 生成合法 HMAC token（secret 与 make_logic 中 jwt_secret 一致）
+    let style = crate::core::token::SimpleTokenStyle::new(STP_SIMPLE_TEST_SECRET.to_string());
+    let token = style.generate("8008", 3600).unwrap();
 
     // login_by_token 应成功（plugin/listener 失败仅 warn 不中断）
     logic.login_by_token(&token).await.unwrap();
@@ -3039,7 +3074,7 @@ mod check_api_key_tests {
 
 use super::context::{current_renewed_token, with_renewed_token_scope};
 use crate::core::auth::AuthLogicDefault;
-use crate::core::token::{Token, UuidTokenStyle};
+use crate::core::token::UuidTokenStyle;
 
 /// 辅助函数：创建 BulwarkLogicDefault 实例并注入 auth_logic（用于 check_and_renew 测试）。
 /// 返回 MockDao 引用以便测试中操作 TTL。

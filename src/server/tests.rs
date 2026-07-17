@@ -4,7 +4,7 @@
 use super::*;
 use crate::backend::types::LoginParams;
 use crate::error::BulwarkError;
-use crate::{BulwarkDao, BulwarkResult};
+use crate::BulwarkResult;
 use async_trait::async_trait;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};

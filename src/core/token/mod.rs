@@ -76,20 +76,42 @@ pub struct Random64TokenStyle;
 // SimpleTokenStyle
 // ====================================================================
 
-/// Simple 风格 Token。
+/// Simple 风格 Token（A11 安全修复版）。
 ///
-/// 格式为 `<login_id>-<uuid>`，可通过前缀解析 login_id。
+/// 格式为 `<login_id>-<uuid>.<hmac_sha256_base64(secret, login_id|uuid)>`，
+/// 通过 HMAC-SHA256 签名防止 token 伪造（CRITICAL 漏洞修复）。
 ///
-/// # 安全限制
+/// # 安全模型（A11）
 ///
-/// **此风格仅适用于测试/演示场景，不应用于生产环境。**
-/// token 不含签名或 MAC，无法防止伪造。攻击者可构造任意 `<login_id>-<uuid>` 格式的 token
-/// 冒充其他用户。生产环境应使用 [`JwtTokenStyle`]（需 `protocol-jwt` feature）或
-/// [`Random64TokenStyle`] + 服务端 Session 查表验证。
+/// - **生成**：服务端用 `secret` 对 `login_id|uuid` 计算 HMAC-SHA256，附加到 token 末尾
+/// - **验证**：用 `subtle::ConstantTimeEq` 常数时间比较 HMAC，防止 timing side-channel
+/// - **fail-closed**：`secure-simple-token` feature 未启用时，`generate` 返回 `Err`，
+///   杜绝无签名的不安全 token 流入生产环境
 ///
-/// `verify` / `parse` 会校验 UUID 部分为合法 UUID 格式，作为最低防御措施。
-#[derive(Debug, Clone, Copy, Default)]
-pub struct SimpleTokenStyle;
+/// # Feature 依赖
+///
+/// 需启用 `secure-simple-token` feature（已包含在 `auth-server` 中）。
+/// 未启用时 `generate` / `verify` / `parse` 均返回 `Err`。
+///
+/// # 迁移说明
+///
+/// 旧格式 `<login_id>-<uuid>`（无 HMAC）的 token 在 `verify` 时返回 `Ok(None)`，
+/// 视为无效 token，用户需重新登录获取新格式 token。
+#[derive(Debug, Clone, Default)]
+pub struct SimpleTokenStyle {
+    /// HMAC-SHA256 签名密钥（服务端保管，不随 token 下发）。
+    secret: String,
+}
+
+impl SimpleTokenStyle {
+    /// 创建 SimpleTokenStyle 实例。
+    ///
+    /// # 参数
+    /// - `secret`: HMAC-SHA256 签名密钥。空串时返回实例但 `generate` 会 fail-closed。
+    pub fn new(secret: String) -> Self {
+        Self { secret }
+    }
+}
 
 // ====================================================================
 // JwtTokenStyle

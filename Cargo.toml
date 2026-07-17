@@ -353,11 +353,17 @@ backend-embedded = []
 # backend-remote：启用 BackendRemote（HTTP 客户端，连接远程 Auth Server）
 # 依赖 reqwest（HTTP client）
 backend-remote = ["dep:reqwest"]
+# secure-simple-token：为 SimpleTokenStyle 启用 HMAC-SHA256 签名（A11 安全修复）
+# 格式：<login_id>-<uuid>.<hmac_sha256(secret, login_id|uuid)>
+# 使用 subtle::ConstantTimeEq 防止 timing side-channel 攻击
+# 未启用此 feature 时，SimpleTokenStyle::generate 返回 Err（fail-closed，杜绝无签名伪造）
+secure-simple-token = ["dep:sha2", "hmac", "dep:subtle"]
 # auth-server：启用 Auth Server 模式（HTTP Server 暴露 AuthBackend 端点）
 # 依赖 web-axum（HTTP server）+ backend-embedded（核心逻辑）+ auth-server-sdforge（声明式路由）
 # subtle 用于 middleware.rs constant_time_eq（防 timing side-channel）
 # limiteron 用于 middleware.rs rate_limit_middleware（TokenBucketLimiter，禁止手写令牌桶）
-auth-server = ["web-axum", "backend-embedded", "auth-server-sdforge", "dep:subtle", "dep:limiteron"]
+# secure-simple-token 确保 SimpleTokenStyle 使用 HMAC 签名（A11 CRITICAL 修复）
+auth-server = ["web-axum", "backend-embedded", "auth-server-sdforge", "dep:subtle", "dep:limiteron", "secure-simple-token"]
 # abac：启用 ABAC/Cedar DSL 策略引擎（属性级权限模型）
 # 依赖 cedar-policy（Cedar 策略语言解析 + 评估）+ cache-memory（oxcache 决策缓存 TTL 60s）
 abac = ["dep:cedar-policy", "cache-memory"]
