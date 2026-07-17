@@ -2150,13 +2150,16 @@ pub mod tests {
 
     /// `incr` 默认实现对非数字值回退为 0 后递增。
     ///
-    /// 覆盖 trait 默认实现中 `v.parse::<u64>().unwrap_or(0)` 分支。
+    /// 覆盖 Rule 12：非数字值必须显式报错，禁止静默回退为 0 导致计数器重置。
     #[tokio::test]
-    async fn default_incr_handles_non_numeric_value() {
+    async fn default_incr_rejects_non_numeric_value() {
         let dao = MinimalDao::new();
         dao.set("bad_counter", "not_a_number", 3600).await.unwrap();
-        let result = dao.incr("bad_counter", 3600).await.unwrap();
-        assert_eq!(result, 1, "非数字值应回退为 0 后递增为 1");
+        let result = dao.incr("bad_counter", 3600).await;
+        assert!(
+            result.is_err(),
+            "非数字值必须显式报错，禁止静默回退为 0 导致计数器重置（Rule 12）"
+        );
     }
 
     /// `eval_lua` 默认实现返回 `NotImplemented`。
