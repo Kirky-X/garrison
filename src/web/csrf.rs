@@ -40,6 +40,7 @@ use serde::{Deserialize, Serialize};
 /// - `header_name`: `"X-CSRF-Token"`
 /// - `excluded_paths`: 空列表
 /// - `protected_methods`: `["POST", "PUT", "PATCH", "DELETE"]`
+/// - `cookie_domain`: `None`（不设置 Domain 属性，Cookie 仅对当前 host 生效）
 ///
 /// # 配置示例
 ///
@@ -48,6 +49,7 @@ use serde::{Deserialize, Serialize};
 /// enabled = true
 /// excluded_paths = ["/api/webhook"]
 /// cookie_name = "my_csrf"
+/// cookie_domain = "example.com"
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -64,6 +66,17 @@ pub struct CsrfConfig {
     pub protected_methods: Vec<String>,
     /// 是否在 Cookie 中设置 Secure 标志（默认 `true`，与 BulwarkConfig 一致）。
     pub cookie_secure: bool,
+    /// CSRF Cookie 的 Domain 属性（C3 修复）。
+    ///
+    /// - `None`（默认）：不设置 Domain，Cookie 仅对设置它的 host 生效（最严格作用域，secure-by-default）。
+    /// - `Some(d)`：设置 `Domain=<d>`，Cookie 对 `<d>` 及其所有子域生效。
+    ///
+    /// # 安全注意
+    ///
+    /// 设置 Domain 会扩大 Cookie 作用域到子域。若子域不可信（如用户托管页面），
+    /// 应保持 `None`。仅在确需跨子域共享 CSRF token 时设置（如 `example.com`
+    /// 同时服务 `api.example.com` 与 `www.example.com`）。
+    pub cookie_domain: Option<String>,
 }
 
 impl Default for CsrfConfig {
@@ -81,6 +94,8 @@ impl Default for CsrfConfig {
                 "DELETE".to_string(),
             ],
             cookie_secure: true,
+            // C3: 默认 None，不设置 Domain，Cookie 仅对当前 host 生效（最严格作用域）
+            cookie_domain: None,
         }
     }
 }
@@ -171,12 +186,27 @@ fn extract_cookie_value(headers: &HeaderMap, cookie_name: &str) -> Option<String
 
 /// 构建 Set-Cookie 值字符串。
 ///
-/// 当 `cookie_secure` 为 `true` 时追加 `; Secure` 标志。
-fn build_set_cookie(cookie_name: &str, token: &str, cookie_secure: bool) -> String {
+/// - `cookie_secure == true`：追加 `; Secure` 标志
+/// - `cookie_domain == Some(d)`：追加 `; Domain=<d>` 属性（C3 修复）
+///
+/// # 安全注意
+///
+/// `Domain` 属性会扩大 Cookie 作用域到子域。调用方应仅在确需跨子域共享
+/// CSRF token 时传入 `Some`，否则传 `None`（最严格作用域，secure-by-default）。
+fn build_set_cookie(
+    cookie_name: &str,
+    token: &str,
+    cookie_secure: bool,
+    cookie_domain: Option<&str>,
+) -> String {
     let secure_flag = if cookie_secure { "; Secure" } else { "" };
+    let domain_attr = cookie_domain
+        .filter(|d| !d.is_empty())
+        .map(|d| format!("; Domain={}", d))
+        .unwrap_or_default();
     format!(
-        "{}={}; HttpOnly; SameSite=Lax; Path=/{}",
-        cookie_name, token, secure_flag
+        "{}={}; HttpOnly; SameSite=Lax; Path=/{}{}",
+        cookie_name, token, secure_flag, domain_attr
     )
 }
 
@@ -309,8 +339,12 @@ pub async fn bulwark_csrf_middleware(
         let mut resp = next.run(req).await;
         if !has_cookie {
             if let Ok(token) = generate_csrf_token() {
-                let set_cookie =
-                    build_set_cookie(&config.cookie_name, &token, config.cookie_secure);
+                let set_cookie = build_set_cookie(
+                    &config.cookie_name,
+                    &token,
+                    config.cookie_secure,
+                    config.cookie_domain.as_deref(),
+                );
                 if let Ok(value) = HeaderValue::from_str(&set_cookie) {
                     resp.headers_mut()
                         .append(axum::http::header::SET_COOKIE, value);
@@ -467,6 +501,11 @@ mod tests {
             vec!["POST", "PUT", "PATCH", "DELETE"]
         );
         assert!(config.cookie_secure, "cookie_secure 默认应为 true");
+        // C3: 默认 cookie_domain 为 None（不设置 Domain 属性，最严格作用域）
+        assert!(
+            config.cookie_domain.is_none(),
+            "C3: 默认 cookie_domain 应为 None"
+        );
     }
 
     #[test]
@@ -478,6 +517,7 @@ mod tests {
             excluded_paths: vec!["/webhook".to_string()],
             protected_methods: vec!["POST".to_string()],
             cookie_secure: false,
+            cookie_domain: Some("example.com".to_string()),
         };
         assert!(config.enabled);
         assert_eq!(config.cookie_name, "my_csrf");
@@ -485,6 +525,12 @@ mod tests {
         assert_eq!(config.excluded_paths, vec!["/webhook"]);
         assert_eq!(config.protected_methods, vec!["POST"]);
         assert!(!config.cookie_secure);
+        // C3: 自定义 cookie_domain 应正确设置
+        assert_eq!(
+            config.cookie_domain.as_deref(),
+            Some("example.com"),
+            "C3: 自定义 cookie_domain 应正确设置"
+        );
     }
 
     #[test]
@@ -790,6 +836,143 @@ mod tests {
             resp.status(),
             StatusCode::OK,
             "VULN-0006: 同源请求应通过 CSRF 中间件"
+        );
+    }
+
+    // ========================================================================
+    // C3: cookie_domain 字段测试（8 个）
+    // ========================================================================
+
+    /// build_set_cookie 不传 cookie_domain 时不应包含 Domain 属性。
+    #[test]
+    fn build_set_cookie_without_domain() {
+        let cookie = build_set_cookie("bulwark_csrf_token", "abc123", true, None);
+        assert!(
+            !cookie.contains("Domain="),
+            "C3: cookie_domain=None 时不应包含 Domain 属性，实际: {}",
+            cookie
+        );
+        assert!(cookie.contains("Secure"));
+        assert!(cookie.contains("HttpOnly"));
+        assert!(cookie.contains("SameSite=Lax"));
+        assert!(cookie.contains("Path=/"));
+    }
+
+    /// build_set_cookie 传 Some(domain) 时应包含 `; Domain=<domain>`。
+    #[test]
+    fn build_set_cookie_with_domain() {
+        let cookie = build_set_cookie("bulwark_csrf_token", "abc123", true, Some("example.com"));
+        assert!(
+            cookie.contains("; Domain=example.com"),
+            "C3: cookie_domain=Some(\"example.com\") 时应包含 `; Domain=example.com`，实际: {}",
+            cookie
+        );
+        assert!(cookie.contains("Secure"));
+        assert!(cookie.contains("HttpOnly"));
+        assert!(cookie.contains("SameSite=Lax"));
+        assert!(cookie.contains("Path=/"));
+    }
+
+    /// build_set_cookie 传 Some("") 时应忽略空 Domain（不输出 Domain 属性）。
+    #[test]
+    fn build_set_cookie_with_empty_domain_ignored() {
+        let cookie = build_set_cookie("bulwark_csrf_token", "abc123", true, Some(""));
+        assert!(
+            !cookie.contains("Domain="),
+            "C3: 空字符串 Domain 应被忽略，实际: {}",
+            cookie
+        );
+    }
+
+    /// build_set_cookie 不启用 Secure 且无 Domain 时格式正确。
+    #[test]
+    fn build_set_cookie_no_secure_no_domain() {
+        let cookie = build_set_cookie("csrf", "tok", false, None);
+        assert!(!cookie.contains("Secure"));
+        assert!(!cookie.contains("Domain="));
+        assert!(cookie.contains("HttpOnly"));
+        assert!(cookie.contains("SameSite=Lax"));
+        assert!(cookie.contains("Path=/"));
+    }
+
+    /// build_set_cookie 同时启用 Secure 与 Domain 时格式正确。
+    #[test]
+    fn build_set_cookie_secure_and_domain() {
+        let cookie = build_set_cookie("csrf", "tok", true, Some("api.example.com"));
+        assert!(cookie.contains("Secure"));
+        assert!(cookie.contains("; Domain=api.example.com"));
+        assert!(cookie.contains("HttpOnly"));
+        assert!(cookie.contains("SameSite=Lax"));
+        assert!(cookie.contains("Path=/"));
+    }
+
+    /// 默认配置（cookie_domain=None）的 GET 请求 Set-Cookie 不应含 Domain。
+    #[tokio::test]
+    async fn middleware_default_no_domain_in_set_cookie() {
+        let config = CsrfConfig::default();
+        let app = make_app(config);
+        let resp = app.oneshot(make_request("GET", "/api/test")).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let set_cookie = resp.headers().get("set-cookie").expect("应设置 Set-Cookie");
+        let cookie_str = set_cookie.to_str().unwrap();
+        assert!(
+            !cookie_str.contains("Domain="),
+            "C3: 默认配置不应含 Domain 属性，实际: {}",
+            cookie_str
+        );
+    }
+
+    /// 配置 cookie_domain=Some("example.com") 时 GET 请求 Set-Cookie 应含 Domain。
+    #[tokio::test]
+    async fn middleware_with_domain_in_set_cookie() {
+        let config = CsrfConfig {
+            cookie_domain: Some("example.com".to_string()),
+            ..Default::default()
+        };
+        let app = make_app(config);
+        let resp = app.oneshot(make_request("GET", "/api/test")).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let set_cookie = resp.headers().get("set-cookie").expect("应设置 Set-Cookie");
+        let cookie_str = set_cookie.to_str().unwrap();
+        assert!(
+            cookie_str.contains("; Domain=example.com"),
+            "C3: 配置 cookie_domain 后 Set-Cookie 应含 `; Domain=example.com`，实际: {}",
+            cookie_str
+        );
+    }
+
+    /// 配置 cookie_domain=Some("api.example.com") 验证子域场景。
+    #[tokio::test]
+    async fn middleware_with_subdomain_in_set_cookie() {
+        let config = CsrfConfig {
+            cookie_domain: Some("api.example.com".to_string()),
+            ..Default::default()
+        };
+        let app = make_app(config);
+        let resp = app
+            .clone()
+            .oneshot(make_request("GET", "/api/test"))
+            .await
+            .unwrap();
+        let set_cookie = resp.headers().get("set-cookie").expect("应设置 Set-Cookie");
+        let cookie_str = set_cookie.to_str().unwrap();
+        assert!(
+            cookie_str.contains("; Domain=api.example.com"),
+            "C3: 子域场景应正确设置 Domain，实际: {}",
+            cookie_str
+        );
+        // 已有 cookie 时不重新设置
+        let resp2 = app
+            .oneshot(make_request_with_cookie(
+                "GET",
+                "/api/test",
+                "bulwark_csrf_token=existing",
+            ))
+            .await
+            .unwrap();
+        assert!(
+            resp2.headers().get("set-cookie").is_none(),
+            "C3: 已有 cookie 时不应重新设置"
         );
     }
 }
