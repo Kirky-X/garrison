@@ -5,6 +5,8 @@
 //!
 //! 验证 run() 完整执行（内部对 Network 错误做了预期处理，不会 panic）。
 
+#![cfg(feature = "backend-remote")]
+
 use bulwark_examples::infrastructure::backend_remote;
 
 #[tokio::test]

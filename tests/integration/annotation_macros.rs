@@ -674,6 +674,7 @@ async fn check_mfa_without_token_forwards_error() {
 /// `#[check_abac]` ABAC 引擎未初始化时 fail-closed 返回 500。
 #[tokio::test]
 #[serial]
+#[cfg(feature = "abac")]
 async fn check_abac_no_engine_returns_200() {
     // reset_abac_for_test 需要 testing 特性（spec 约束：testing 严禁在 full/production 启用）
     #[cfg(all(feature = "abac", feature = "testing"))]
@@ -695,6 +696,7 @@ async fn check_abac_no_engine_returns_200() {
 /// 返回 `Err(Config)`（fail-closed），请求被拒绝。即便未登录也优先返回 ABAC 错误。
 #[tokio::test]
 #[serial]
+#[cfg(feature = "abac")]
 async fn check_abac_without_login_no_engine_passes_through() {
     init_manager(make_config_strict(), &[], &[]);
     // 不 login，直接以无效 token 调用 handler

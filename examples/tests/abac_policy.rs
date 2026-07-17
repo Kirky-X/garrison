@@ -5,6 +5,8 @@
 //!
 //! 验证 run() 完整执行（内部已包含 Allow/Deny 断言）。
 
+#![cfg(feature = "abac")]
+
 use bulwark_examples::authorization::abac_policy;
 
 #[tokio::test]

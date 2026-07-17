@@ -112,7 +112,10 @@ impl BulwarkMetrics {
         let encoder = prometheus::TextEncoder::new();
         // 收集 default registry（包含 BulwarkMetrics 注册的所有指标）
         let metric_families = prometheus::gather();
-        encoder.encode(&metric_families, &mut buffer).ok();
+        // Rule 12：编码失败显式记录 warn（不中断主流程，但禁止静默吞掉）
+        if let Err(e) = encoder.encode(&metric_families, &mut buffer) {
+            tracing::warn!(error = %e, "BulwarkMetrics::gather prometheus encode 失败");
+        }
         String::from_utf8_lossy(&buffer).into_owned()
     }
 }

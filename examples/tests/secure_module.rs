@@ -5,6 +5,13 @@
 //!
 //! 验证 run() 完整执行（内部已包含脱敏/XSS/消毒/同形异义字断言）。
 
+#![cfg(any(
+    feature = "secure-masking",
+    feature = "secure-xss",
+    feature = "secure-sanitize",
+    feature = "secure-confusable"
+))]
+
 use bulwark_examples::security::secure_module;
 
 #[tokio::test]

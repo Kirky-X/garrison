@@ -1556,3 +1556,45 @@ axum Web 框架集成等核心能力。
 ### 最低支持 Rust 版本
 
 - Rust 1.85+（部分 deps 如 inventory 0.3 要求 edition2024）
+
+## [0.7.0] - 2026-07-17 (mod-crate-hardening 加固)
+
+### 概述
+
+v0.7.0 mod/crate 接口隔离加固 + 发布前强制安全审查。通过 specmark `mod-crate-hardening` change 管理，Rule 19 审查通过后发布。
+
+### 修复（Rule 19 发布前强制审查）
+
+#### CRITICAL: C1 本地路径依赖移除
+
+- 删除 `[patch.crates-io]` 段：oxcache / dbnexus / inklog / limiteron / sdforge / trait-kit 全部切换到 crates.io 远程版本（oxcache 0.3.9 / dbnexus 0.4.1 / inklog 0.1.10 / limiteron 0.2.7 / sdforge 0.4.2 / trait-kit 0.3.0）
+
+#### HIGH: H1 Rule 25 mod.rs 接口隔离
+
+- 15 个 mod.rs 拆分测试代码到独立 `tests.rs` 文件：exception / state / listener / json / annotation / context / router / strategy::alert / plugin / account::authflow / account::credential / dao / config / session / abac
+- 实现函数迁移到 `helpers.rs` / `init.rs` / `oxcache_impl.rs`：context (effective_is_read_header/cookie) / config (default_jwt_secret/collect_env_vars) / session (account_key/token_key) / abac (init_abac_engine/get_abac_engine/reset_abac_for_test/check_abac_with_policy) / dao (BulwarkDaoOxcache impl)
+- mod.rs 现仅保留：trait 定义、pub struct/enum 字段声明、pub type 别名、pub use re-export、mod 声明
+
+#### HIGH: H2 Rule 12 错误显性化
+
+- `src/dao/mod.rs` BulwarkDao::incr 默认实现 + BulwarkDaoOxcache::incr：`v.parse::<u64>().unwrap_or(0)` 改为 `v.parse().map_err(...)` 显式报错
+- `src/account/metrics.rs` AccountMetrics::gather + `src/observability/metrics_impl.rs` BulwarkMetrics::gather：`encoder.encode(...).ok()` 改为 `if let Err(e) = ... { tracing::warn!(...) }`
+
+#### HIGH: H3 Rule 25 接口 re-export 补全
+
+- `src/protocol/sso/mod.rs`：添加 `pub use oidc::{DefaultOidcProvider, OidcDiscoveryConfig, OidcProvider, OidcUserInfo}`
+- `src/session/mod.rs`：添加 `pub use security_listener::SessionSecurityListener`
+
+#### MEDIUM: 版本格式合规
+
+- `serde` 1.0 → 1，`serde_json` 1.0 → 1（Rule 29 x.x 格式）
+- `redis` ~1.2 → 1.2（移除 tilde requirement）
+- `sea-orm` 2.0.0-rc.42 → 2.0.0-rc.43（升级到最新 RC，注释标注上游无稳定版）
+
+### 验证
+
+- 全量测试：3785 passed, 0 failed（full feature）
+- clippy（主项目）：0 warnings（`-D warnings`）
+- cargo doc：0 warnings（`RUSTDOCFLAGS="-D warnings"`）
+- tiangang SAST：0 CRITICAL（唯一 MEDIUM 为 rsa 0.9.10 Marvin Attack 上游无补丁）
+- diting 代码审查：1 CRITICAL + 3 HIGH 全部修复

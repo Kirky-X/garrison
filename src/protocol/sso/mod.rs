@@ -28,6 +28,12 @@ pub mod saml;
 // OIDC RP 协议支持。
 pub mod oidc;
 
+/// Re-export OIDC 核心类型（Rule 25：mod.rs 暴露接口）。
+///
+/// 通过 `bulwark::protocol::sso::OidcProvider` / `DefaultOidcProvider`
+/// / `OidcDiscoveryConfig` / `OidcUserInfo` 直接访问，无需 `oidc::` 前缀。
+pub use oidc::{DefaultOidcProvider, OidcDiscoveryConfig, OidcProvider, OidcUserInfo};
+
 // Redis pub/sub SsoChannel 实现。
 // 仅在 cache-redis + protocol-sso-server feature 同时启用时编译。
 #[cfg(all(feature = "cache-redis", feature = "protocol-sso-server"))]

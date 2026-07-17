@@ -23,8 +23,8 @@ path = "src/lib.rs"
 
 [dependencies]
 # === Required dependencies ===
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 confers = "0.4"
 tokio = { version = "1", features = ["sync", "macros", "rt-multi-thread", "time"] }
 once_cell = "1.19"
@@ -63,7 +63,8 @@ oxcache = { version = "0.3", optional = true, default-features = false }
 # 由 db-base feature 显式启用基础 features，db-sqlite / db-postgres 分别启用 sqlite / postgres。
 dbnexus = { version = "0.4", optional = true, default-features = false }
 # dbnexus 未 re-export 这些类型，需显式声明为直接依赖。
-sea-orm = { version = "2.0.0-rc.42", default-features = false, features = ["sqlx-sqlite", "runtime-tokio-rustls"], optional = true }
+# sea-orm 2.0 尚无稳定版（仅 RC），dbnexus 0.4 硬性要求此版本，待上游发布稳定版后升级。
+sea-orm = { version = "2.0.0-rc.43", default-features = false, features = ["sqlx-sqlite", "runtime-tokio-rustls"], optional = true }
 prometheus = { version = "0.14", optional = true, default-features = false }
 tracing-subscriber = { version = "0.3", optional = true, default-features = false, features = ["fmt", "json", "env-filter"] }
 opentelemetry = { version = "0.32", optional = true, default-features = false, features = ["trace"] }
@@ -83,7 +84,7 @@ unicode-security = { version = "0.1", optional = true, default-features = false 
 maxminddb = { version = "0.29", optional = true, default-features = false }
 quick-xml = { version = "0.41", optional = true, default-features = false, features = ["serialize"] }
 # 版本 ~1.2 与 oxcache 0.3 间接依赖的 redis 保持一致
-redis = { version = "~1.2", optional = true, default-features = false, features = ["aio", "tokio-comp", "connection-manager", "script"] }
+redis = { version = "1.2", optional = true, default-features = false, features = ["aio", "tokio-comp", "connection-manager", "script"] }
 # futures：health 模块的 join_all 并发调度等核心异步原语（必需依赖，非 optional）
 futures = { version = "0.3", default-features = false, features = ["std"] }
 inklog = { version = "0.1", optional = true, default-features = false }
@@ -507,24 +508,6 @@ required-features = ["auth-server"]
 name = "bulwark_benchmark"
 path = "benches/bulwark_benchmark.rs"
 harness = false
-
-# ============================================================================
-# ⚠️  H-1 安全警示：[patch.crates-io] 本地路径覆盖
-# ----------------------------------------------------------------------------
-# 此 section 使用 /home/kirky/projects/base 中的本地开发版本覆盖 crates.io 远程版本。
-# 发布到 crates.io 前必须移除此整个 section，否则：
-#   1. cargo publish 会因 path 依赖失败
-#   2. 下游消费者无法解析这些 path
-#   3. 违反 crates.io 发布规范
-# 验证移除方式：grep -n "patch.crates-io" Cargo.toml 必须无输出
-# ============================================================================
-[patch.crates-io]
-oxcache = { path = "/home/kirky/projects/base/oxcache" }
-dbnexus = { path = "/home/kirky/projects/base/dbnexus" }
-inklog = { path = "/home/kirky/projects/base/inklog" }
-limiteron = { path = "/home/kirky/projects/base/limiteron" }
-sdforge = { path = "/home/kirky/projects/base/sdforge" }
-trait-kit = { path = "/home/kirky/projects/base/trait-kit" }
 
 # === Lint 配置 ===
 # sdforge #[forge] 宏在 bulwark 中展开时生成 #[cfg(feature = "mcp")] /
