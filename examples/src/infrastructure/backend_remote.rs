@@ -26,28 +26,51 @@ use std::time::Duration;
 pub async fn run() -> BulwarkResult<()> {
     println!("=== Bulwark 远程后端示例 ===\n");
 
-    // 1. 构造内网 BackendRemote（连接 Auth Server 内网端口 8081）
+    // 1. 从环境变量读取 API Key（禁止硬编码，防止泄漏）
+    let internal_api_key = std::env::var("EXAMPLE_INTERNAL_API_KEY").unwrap_or_else(|_| {
+        eprintln!(
+            "⚠️  警告：未设置 EXAMPLE_INTERNAL_API_KEY 环境变量，使用占位值 \"REPLACE_ME\"。\n\
+             请通过 `export EXAMPLE_INTERNAL_API_KEY=<your-key>` 设置真实 API Key 后再运行示例。"
+        );
+        "REPLACE_ME".to_string()
+    });
+    let external_api_key = std::env::var("EXAMPLE_EXTERNAL_API_KEY").unwrap_or_else(|_| {
+        eprintln!(
+            "⚠️  警告：未设置 EXAMPLE_EXTERNAL_API_KEY 环境变量，使用占位值 \"REPLACE_ME\"。\n\
+             请通过 `export EXAMPLE_EXTERNAL_API_KEY=<your-key>` 设置真实 API Key 后再运行示例。"
+        );
+        "REPLACE_ME".to_string()
+    });
+
+    // 2. 构造内网 BackendRemote（连接 Auth Server 内网端口 8081）
     let internal = BackendRemote::new(
         "http://127.0.0.1:8081",
-        "internal-api-key-2026",
+        &internal_api_key,
         Duration::from_secs(10),
     )?;
     println!("[1] 内网 BackendRemote 构造成功");
     println!("    base_url = http://127.0.0.1:8081");
-    println!("    api_key  = internal-api-key-2026");
+    println!(
+        "    api_key  = {}（来源：EXAMPLE_INTERNAL_API_KEY）",
+        internal_api_key
+    );
     println!("    timeout  = 10s\n");
 
-    // 2. 构造外网 BackendRemote（连接外网端口 8080）
+    // 3. 构造外网 BackendRemote（连接外网端口 8080）
     let external = BackendRemote::new(
         "http://127.0.0.1:8080",
-        "external-api-key",
+        &external_api_key,
         Duration::from_secs(5),
     )?;
     println!("[2] 外网 BackendRemote 构造成功");
     println!("    base_url = http://127.0.0.1:8080");
+    println!(
+        "    api_key  = {}（来源：EXAMPLE_EXTERNAL_API_KEY）",
+        external_api_key
+    );
     println!("    timeout  = 5s\n");
 
-    // 3. 尝试 login（预期失败：无服务器运行）
+    // 4. 尝试 login（预期失败：无服务器运行）
     let login_result = internal.login("user1001", &LoginParams::default()).await;
     println!("[3] login(\"user1001\") 结果:");
     match &login_result {

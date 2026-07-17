@@ -30,19 +30,31 @@ pub async fn run() -> bulwark::error::BulwarkResult<()> {
     let backend: Arc<dyn AuthBackend> = Arc::new(BackendEmbedded::new());
     println!("[1] BackendEmbedded 创建成功");
 
-    // 2. 创建 BulwarkAuthServer 并配置
+    // 2. 从环境变量读取 internal API Key（禁止硬编码，防止泄漏）
+    let internal_api_key = std::env::var("EXAMPLE_INTERNAL_API_KEY").unwrap_or_else(|_| {
+        eprintln!(
+            "⚠️  警告：未设置 EXAMPLE_INTERNAL_API_KEY 环境变量，使用占位值 \"REPLACE_ME\"。\n\
+             请通过 `export EXAMPLE_INTERNAL_API_KEY=<your-key>` 设置真实 API Key 后再运行示例。"
+        );
+        "REPLACE_ME".to_string()
+    });
+
+    // 3. 创建 BulwarkAuthServer 并配置
     let server = BulwarkAuthServer::new(backend)
         .with_external_port(8080)
         .with_internal_port(8081)
         .with_rate_limit(100)
-        .with_internal_api_key("my-secret-api-key-2026");
+        .with_internal_api_key(&internal_api_key);
     println!("[2] BulwarkAuthServer 配置完成:");
     println!("    external_port = 8080（面向用户）");
     println!("    internal_port = 8081（服务间调用）");
     println!("    rate_limit    = 100 req/s per IP");
-    println!("    internal_api_key = my-secret-api-key-2026\n");
+    println!(
+        "    internal_api_key = {}（来源：EXAMPLE_INTERNAL_API_KEY 环境变量）\n",
+        internal_api_key
+    );
 
-    // 3. 获取路由（不调用 listen，避免阻塞）
+    // 4. 获取路由（不调用 listen，避免阻塞）
     let _external_router = server.external_router();
     println!("[3] external_router() 获取成功（login/logout/refresh 端点）");
 
