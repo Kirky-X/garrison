@@ -583,13 +583,19 @@ async fn renew_to_equivalent_default_impl_returns_not_implemented() {
 }
 
 // ========================================================================
-// renew_to_equivalent 原子化测试（先失效旧 token，再创建新 token）
+// A9: renew_to_equivalent 顺序测试（先创建新 token，再失效旧 token）
 // ========================================================================
+//
+// 历史背景：原 VULN-0020 修复采用"先 delete 后 create"消除双 token 窗口。
+// strix vuln-0003（CWE-362 / CVSS 7.5）发现此顺序在 delete 与 create 之间
+// 存在 DoS gap window，用户在此窗口内无任何有效 token。
+// A9 修复：调换为"先 create 后 delete"，消除 DoS gap；双 token 窗口缩短至
+// 毫秒级（create 与 delete 之间），且旧 token 在 delete 成功后立即失效。
 
 /// 追踪 DAO 操作顺序的 wrapper。
 ///
-/// 包装 `MockDao`，在 `set("token:session:*")` 时检测旧 token 是否已被 `delete`。
-/// 若旧 token 未先失效就创建新 token，标记 `violation_detected = true`。
+/// 包装 `MockDao`，记录 `set("token:session:{new}")` 与 `delete("token:session:{old}")`
+/// 的相对顺序，用于验证 A9 不变量：**新 token 必须在旧 token 删除之前创建**。
 struct OrderTrackingDao {
     inner: MockDao,
     tracking_state: std::sync::Mutex<OrderTrackingState>,
@@ -600,10 +606,15 @@ struct OrderTrackingState {
     enabled: bool,
     /// 旧 token（用于检测 delete("token:session:{old_token}") 是否已调用）。
     old_token: String,
+    /// 新 token session 是否已创建（set("token:session:{new}") 已调用）。
+    /// 注意：追踪期间 new_token 未知，因此只要 set 任意 token:session:* 且
+    /// key != old_token 即视为"新 token 已创建"。
+    new_token_created: bool,
     /// 旧 token 的 session key 是否已被 delete。
     old_token_deleted: bool,
-    /// 是否检测到违规（set(new) 在 delete(old) 之前）。
-    violation_detected: bool,
+    /// 是否检测到 DoS gap 违规（delete(old) 在 set(new) 之前）。
+    /// A9 不变量：此值应为 false（不允许 delete 先于 create）。
+    dos_gap_violation: bool,
 }
 
 impl OrderTrackingDao {
@@ -613,8 +624,9 @@ impl OrderTrackingDao {
             tracking_state: std::sync::Mutex::new(OrderTrackingState {
                 enabled: false,
                 old_token: String::new(),
+                new_token_created: false,
                 old_token_deleted: false,
-                violation_detected: false,
+                dos_gap_violation: false,
             }),
         }
     }
@@ -624,13 +636,20 @@ impl OrderTrackingDao {
         let mut state = self.tracking_state.lock().unwrap();
         state.enabled = true;
         state.old_token = old_token;
+        state.new_token_created = false;
         state.old_token_deleted = false;
-        state.violation_detected = false;
+        state.dos_gap_violation = false;
     }
 
-    /// 是否检测到违规（新 token session 在旧 token session 删除前被创建）。
-    fn was_violation_detected(&self) -> bool {
-        self.tracking_state.lock().unwrap().violation_detected
+    /// 是否检测到 DoS gap 违规（delete(old) 在 set(new) 之前）。
+    /// A9 不变量：应为 false。
+    fn was_dos_gap_violation(&self) -> bool {
+        self.tracking_state.lock().unwrap().dos_gap_violation
+    }
+
+    /// 旧 token 是否最终被删除（清理完成）。
+    fn was_old_token_deleted(&self) -> bool {
+        self.tracking_state.lock().unwrap().old_token_deleted
     }
 }
 
@@ -641,12 +660,15 @@ impl BulwarkDao for OrderTrackingDao {
     }
 
     async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> BulwarkResult<()> {
-        // 若正在追踪且 key 是 token:session:*，
-        // 检查旧 token 是否已被 delete
+        // 若正在追踪且 key 是 token:session:*（非 old_token），
+        // 标记新 token 已创建。
         {
             let mut state = self.tracking_state.lock().unwrap();
-            if state.enabled && key.starts_with("token:session:") && !state.old_token_deleted {
-                state.violation_detected = true;
+            if state.enabled
+                && key.starts_with("token:session:")
+                && key != format!("token:session:{}", state.old_token)
+            {
+                state.new_token_created = true;
             }
         }
         self.inner.set(key, value, ttl_seconds).await
@@ -661,10 +683,15 @@ impl BulwarkDao for OrderTrackingDao {
     }
 
     async fn delete(&self, key: &str) -> BulwarkResult<()> {
-        // 标记旧 token 已被 delete
+        // 标记旧 token 已被 delete；同时检测 DoS gap 违规
+        // （delete(old) 在 set(new) 之前 = DoS gap）
         {
             let mut state = self.tracking_state.lock().unwrap();
             if state.enabled && key == format!("token:session:{}", state.old_token) {
+                if !state.new_token_created {
+                    // 旧 token 被删除时，新 token 尚未创建 → DoS gap 违规
+                    state.dos_gap_violation = true;
+                }
                 state.old_token_deleted = true;
             }
         }
@@ -676,11 +703,12 @@ impl BulwarkDao for OrderTrackingDao {
     }
 }
 
-/// renew_to_equivalent 必须先失效旧 token，再创建新 token（原子化）。
+/// A9: renew_to_equivalent 必须先创建新 token session，再失效旧 token session。
 ///
-/// 顺序为"先 delete 后 create"，消除窗口期双 token 同时有效的风险。
+/// 顺序为"先 create 后 delete"，消除 DoS gap（vuln-0003 / CWE-362 / CVSS 7.5）。
+/// 旧实现"先 delete 后 create"在 delete 与 create 之间存在窗口期，用户无任何有效 token。
 #[tokio::test]
-async fn renew_to_equivalent_deletes_old_token_before_creating_new() {
+async fn a9_renew_to_equivalent_creates_new_before_deleting_old() {
     let tracking_dao = Arc::new(OrderTrackingDao::new());
     let session = Arc::new(BulwarkSession::new(
         tracking_dao.clone() as Arc<dyn BulwarkDao>,
@@ -703,10 +731,60 @@ async fn renew_to_equivalent_deletes_old_token_before_creating_new() {
         new_token.err()
     );
 
-    // 验证：新 token session 不应在旧 token session 删除前被创建
+    // A9 不变量 1：不允许 DoS gap（delete(old) 在 set(new) 之前）
     assert!(
-        !tracking_dao.was_violation_detected(),
-        "VULN-0020 违规：新 token session 在旧 token session 删除前被创建（双 token 窗口期）"
+        !tracking_dao.was_dos_gap_violation(),
+        "A9 违规：旧 token 在新 token 创建前被删除（DoS gap window），\
+         应先创建新 token 再删除旧 token"
+    );
+
+    // A9 不变量 2：旧 token 最终应被删除（清理完成，避免旧 token 永久残留）
+    assert!(
+        tracking_dao.was_old_token_deleted(),
+        "A9 清理校验：旧 token session 应在 renew 完成后被删除"
+    );
+}
+
+/// A9: renew_to_equivalent 期间旧 token 在新 token 创建时仍应有效（无 DoS gap）。
+///
+/// 模拟攻击者/用户在 renew 过程中并发使用旧 token：旧 token 在新 token 完全建立前
+/// 不应被失效。此测试通过追踪 DAO 操作时序验证：set(new) 发生时 delete(old) 尚未执行。
+#[tokio::test]
+async fn a9_renew_to_equivalent_old_token_valid_until_new_created() {
+    let tracking_dao = Arc::new(OrderTrackingDao::new());
+    let session = Arc::new(BulwarkSession::new(
+        tracking_dao.clone() as Arc<dyn BulwarkDao>,
+        3600,
+        86400,
+    ));
+    let token_handler: Arc<dyn Token> = Arc::new(UuidTokenStyle);
+    let auth = AuthLogicDefault::new(session, token_handler, 3600);
+
+    let old_token = auth.login("1002", None).await.unwrap();
+    tracking_dao.start_tracking(old_token.clone());
+
+    // 执行 renew
+    let new_token = auth.renew_to_equivalent(&old_token).await.unwrap();
+
+    // 验证：renew 成功后旧 token 失效，新 token 有效
+    assert!(
+        !auth.is_login(&old_token).await.unwrap(),
+        "renew 后旧 token 应失效"
+    );
+    assert!(
+        auth.is_login(&new_token).await.unwrap(),
+        "renew 后新 token 应有效"
+    );
+    assert_eq!(
+        auth.get_login_id(&new_token).await.unwrap(),
+        Some("1002".to_string()),
+        "新 token 的 login_id 应与旧 token 相同"
+    );
+
+    // A9 核心校验：整个 renew 过程中无 DoS gap
+    assert!(
+        !tracking_dao.was_dos_gap_violation(),
+        "A9 违规：renew 过程中存在 DoS gap（旧 token 先于新 token 创建被删除）"
     );
 }
 

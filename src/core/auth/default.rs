@@ -232,16 +232,33 @@ impl AuthLogic for AuthLogicDefault {
     }
 
     async fn renew_to_equivalent(&self, token: &str) -> BulwarkResult<String> {
-        // 调整顺序为"先失效旧 token，再创建新 token"，消除窗口期双 token 同时有效的风险。
+        // A9: 调整顺序为"先创建新 token session，再失效旧 token"，消除续期窗口漏洞
+        // （vuln-0003 / CWE-362 / CVSS 7.5）。
         //
-        // 顺序：
-        // 1. 获取旧 TokenSession + 剩余 TTL（性能优化：合并为单次 DAO 调用）
-        // 2. 先 logout 旧 token（失效旧 token，消除窗口期）
-        // 3. 生成新 token + 构建新 TokenSession
-        // 4. 保存新 Token-Session + 添加到 Account-Session
-        //    若失败，回滚：重新创建旧 token session + 重新添加到 Account-Session
+        // 原实现"先失效旧 token，再创建新 token"在步骤 2（logout old）与步骤 5
+        // （create new）之间存在 DoS gap window：用户在此窗口内无任何有效 token，
+        // 若新 token 创建失败且回滚也失败，用户将彻底失去会话。
+        //
+        // 新顺序的权衡（rule 7 暴露冲突）：
+        // - 旧设计（VULN-0020）：delete first → 无双 token 窗口，但有 DoS gap（HIGH 风险）
+        // - 新设计（A9 / vuln-0003 修复）：create first → 无 DoS gap，但有短暂双 token 窗口
+        //
+        // 决策依据：strix vuln-0003 明确指出 DoS gap 为 HIGH 风险（CVSS 7.5），
+        // 而双 token 窗口仅持续毫秒级（create 与 delete 之间），且旧 token 在 delete
+        // 成功后立即失效，攻击窗口极小。可用性 > 短暂安全窗口，故采用 create first。
+        //
+        // 新顺序：
+        // 1. 获取旧 TokenSession + 剩余 TTL
+        // 2. 生成新 token + 构建新 TokenSession
+        // 3. 保存新 Token-Session with TTL
+        //    若失败，旧 token 仍有效 → 直接返回错误（无需回滚）
+        // 4. 添加新 token 到 Account-Session
+        //    若失败，删除新 token session → 旧 token 仍有效 → 返回错误
+        // 5. 失效旧 token（logout 同时删除 Token-Session 与 Account-Session 条目）
+        //    若失败，记录 warn 但返回 Ok(new_token) — 用户已持有新 token，
+        //    旧 token 残留属安全风险但非 DoS，需运维介入清理
 
-        // 1. 获取旧 TokenSession + 剩余 TTL（性能优化：单次 DAO 调用替代 get_token_session + get_token_timeout）
+        // 1. 获取旧 TokenSession + 剩余 TTL（性能优化：单次 DAO 调用）
         //    None 表示永久键（无 TTL），用 0 表示永久驻留
         let (old_ts, remaining_ttl) = self
             .session
@@ -250,27 +267,12 @@ impl AuthLogic for AuthLogicDefault {
             .ok_or_else(|| BulwarkError::NotLogin("token 无效或已过期".to_string()))?;
         let ttl_secs = remaining_ttl.map(|d| d.as_secs()).unwrap_or(0);
 
-        // 2. 先失效旧 token（消除窗口期）
-        //    若此步失败，旧 token 状态可能不变或部分删除，返回错误让调用方决策。
-        if let Err(e) = self.session.logout(token).await {
-            let prefix = if token.len() >= 8 { &token[..8] } else { token };
-            tracing::warn!(
-                error = %e,
-                old_token_prefix = %prefix,
-                "renew_to_equivalent 失效旧 token 失败，中止置换"
-            );
-            return Err(BulwarkError::Internal(format!(
-                "token 置换失败：失效旧 token 出错（old_prefix={}...）",
-                prefix
-            )));
-        }
-
-        // 3. 生成新 token（同 token_style + 同 login_id）
+        // 2. 生成新 token（同 token_style + 同 login_id）
         let new_token = self
             .token_handler
             .generate(&old_ts.login_id, self.timeout)?;
 
-        // 4. 构建新 TokenSession（复制 attrs + device + ip + user_agent + safe_services）
+        // 3. 构建新 TokenSession（复制 attrs + device + ip + user_agent + safe_services）
         let now = Utc::now().timestamp();
         let new_ts = TokenSession {
             token: new_token.clone(),
@@ -290,29 +292,30 @@ impl AuthLogic for AuthLogicDefault {
             is_anon: false,
         };
 
-        // 5. 保存新 Token-Session with remaining TTL
-        //    若此步失败，回滚：重新创建旧 token session + 重新添加到 Account-Session
+        // 4. 保存新 Token-Session with remaining TTL
+        //    若失败，旧 token 仍有效（未触碰），直接返回错误 — 无 DoS
         if let Err(e) = self
             .session
             .create_token_session_with_ttl(&new_token, &new_ts, ttl_secs)
             .await
         {
+            let new_prefix = if new_token.len() >= 8 {
+                &new_token[..8]
+            } else {
+                &new_token
+            };
             tracing::error!(
                 error = %e,
-                "renew_to_equivalent 创建新 token session 失败，回滚旧 token"
+                new_token_prefix = %new_prefix,
+                "renew_to_equivalent 创建新 token session 失败，旧 token 仍有效（A9 无 DoS）"
             );
-            // rule 12：回滚失败在错误消息中显性标注
-            let rollback_ok = self.rollback_renew(token, &old_ts, ttl_secs).await.is_ok();
-            let msg = if rollback_ok {
-                "token 置换失败：创建新 token session 出错，已回滚旧 token".to_string()
-            } else {
-                "token 置换失败：创建新 token session 出错，回滚也失败，旧 token 可能无法恢复，需手动恢复会话".to_string()
-            };
-            return Err(BulwarkError::Internal(msg));
+            return Err(BulwarkError::Internal(
+                "token 置换失败：创建新 token session 出错（old token 仍有效）".to_string(),
+            ));
         }
 
-        // 6. 添加新 token 到 Account-Session
-        //    若此步失败，回滚：删除新 token + 重新创建旧 token session + 重新添加到 Account-Session
+        // 5. 添加新 token 到 Account-Session
+        //    若失败，删除新 token session → 旧 token 仍有效 → 返回错误 — 无 DoS
         if let Err(e) = self
             .session
             .ensure_token_in_account_session(&old_ts.login_id, &new_token)
@@ -326,65 +329,40 @@ impl AuthLogic for AuthLogicDefault {
             tracing::error!(
                 error = %e,
                 new_token_prefix = %new_prefix,
-                "renew_to_equivalent 添加新 token 到 Account-Session 失败，回滚"
+                "renew_to_equivalent 添加新 token 到 Account-Session 失败，清理新 token"
             );
-            // 删除新创建的 token session
+            // 清理刚创建的新 token session（best-effort）
             if let Err(rb_err) = self.session.logout(&new_token).await {
                 tracing::error!(
                     rollback_error = %rb_err,
                     new_token_prefix = %new_prefix,
-                    "renew_to_equivalent 回滚删除新 token 也失败，新 token 可能残留"
+                    "renew_to_equivalent 清理新 token session 失败，新 token 可能残留"
                 );
             }
-            // 重新创建旧 token session（rule 12：回滚失败在错误消息中显性标注）
-            let rollback_ok = self.rollback_renew(token, &old_ts, ttl_secs).await.is_ok();
-            let msg = if rollback_ok {
-                "token 置换失败：添加新 token 到 Account-Session 出错，已回滚旧 token".to_string()
-            } else {
-                "token 置换失败：添加新 token 到 Account-Session 出错，回滚也失败，旧 token 可能无法恢复，需手动恢复会话".to_string()
-            };
-            return Err(BulwarkError::Internal(msg));
+            // rule 12：失败显性化 — 旧 token 仍有效，用户可用旧 token 重试
+            return Err(BulwarkError::Internal(
+                "token 置换失败：添加新 token 到 Account-Session 出错（old token 仍有效）"
+                    .to_string(),
+            ));
+        }
+
+        // 6. 失效旧 token（logout 同时删除 Token-Session 与 Account-Session 条目）
+        //    A9 关键变化：此步在"新 token 已完全建立"之后执行。
+        //    若此步失败，用户已持有新 token（无 DoS），但旧 token 残留（安全风险）。
+        //    决策：返回 Ok(new_token) 让用户继续操作，旧 token 残留由运维介入清理。
+        //    理由：若因 delete 失败而返回 Err，用户将丢失新 token（已建立），
+        //    反而制造新的 DoS — 与 A9 修复目标相悖。
+        if let Err(e) = self.session.logout(token).await {
+            let old_prefix = if token.len() >= 8 { &token[..8] } else { token };
+            tracing::warn!(
+                error = %e,
+                old_token_prefix = %old_prefix,
+                new_token_prefix = %&new_token[..new_token.len().min(8)],
+                "renew_to_equivalent 失效旧 token 失败，旧 token 可能残留（安全风险），\
+                 但新 token 已建立，用户可用新 token 继续 — 需运维清理旧 token"
+            );
         }
 
         Ok(new_token)
-    }
-}
-
-impl AuthLogicDefault {
-    /// 回滚辅助：重新创建旧 token session + 重新添加到 Account-Session。
-    ///
-    /// 在 `renew_to_equivalent` 创建新 token 失败时调用，恢复旧 token 到有效状态。
-    /// 回滚失败返回 Err，调用方据此在错误消息中标注回滚状态（rule 12 失败显性化）。
-    async fn rollback_renew(
-        &self,
-        old_token: &str,
-        old_ts: &TokenSession,
-        ttl_secs: u64,
-    ) -> BulwarkResult<()> {
-        // 重新创建旧 token session
-        if let Err(e) = self
-            .session
-            .create_token_session_with_ttl(old_token, old_ts, ttl_secs)
-            .await
-        {
-            tracing::error!(
-                error = %e,
-                "rollback_renew 重新创建旧 token session 失败，旧 token 可能无法恢复"
-            );
-            return Err(e);
-        }
-        // 重新添加旧 token 到 Account-Session
-        if let Err(e) = self
-            .session
-            .ensure_token_in_account_session(&old_ts.login_id, old_token)
-            .await
-        {
-            tracing::error!(
-                error = %e,
-                "rollback_renew 重新添加旧 token 到 Account-Session 失败"
-            );
-            return Err(e);
-        }
-        Ok(())
     }
 }
