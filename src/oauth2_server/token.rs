@@ -159,10 +159,11 @@ pub trait PasswordVerifier: Send + Sync {
 /// - **per-username 维度**：与 `crate::server::middleware::RateLimitState`（per-IP）不同 ——
 ///   防御多 IP 撞库同一账户的暴力破解
 /// - **滑动窗口**：`window_seconds` 内累计失败次数达 `max_attempts` 即锁定至窗口过期
-/// - **limiteron 委托**：通过 `BulwarkDaoDistributedLimiter` + `MockDao` 实现原子计数 + TTL，
+/// - **limiteron 委托**：通过 `BulwarkDaoDistributedLimiter` + `BulwarkDao` 实现原子计数 + TTL，
 ///   不再手写 `Mutex<HashMap>` + 滑动窗口算法（limiteron 适配器统一抽象）
-/// - **进程内原子**：`MockDao::incr` 用 `parking_lot::Mutex` 保护，单进程内原子
-/// - **TTL 自动重置**：窗口过期由 `MockDao` 的 TTL 语义保证（首次 `incr` 后过期会重新初始化），
+/// - **分布式语义**：DAO 由调用方注入，注入 Redis/dbnexus 等分布式 DAO 时多实例共享计数；
+///   `MockDao` 仅进程内原子（单实例测试用）
+/// - **TTL 自动重置**：窗口过期由 DAO 的 TTL 语义保证（首次 `incr` 后过期会重新初始化），
 ///   无需手动时间窗口判断
 ///
 /// # 与 RateLimitState 的区别
@@ -173,12 +174,12 @@ pub trait PasswordVerifier: Send + Sync {
 ///
 /// # Key 格式
 ///
-/// `rate_limit:pw:{username}` — 通过 `MockDao::keys("rate_limit:pw:*")` 可扫描全部 entry。
+/// `rate_limit:pw:{username}` — 通过 `BulwarkDao::keys("rate_limit:pw:*")` 可扫描全部 entry。
 pub struct PasswordRateLimiter {
-    /// 限流器（基于 `BulwarkDaoDistributedLimiter`，内部用 `MockDao` 进程内原子）
+    /// 限流器（基于 `BulwarkDaoDistributedLimiter`，DAO 由调用方注入）
     limiter: BulwarkDaoDistributedLimiter,
-    /// 保留 `MockDao` 引用以支持 `entry_count()` 测试辅助方法
-    dao: Arc<MockDao>,
+    /// 保留 DAO 引用以支持 `entry_count()` 测试辅助方法
+    dao: Arc<dyn BulwarkDao>,
     /// 窗口内允许的最大失败次数（达此值后锁定至窗口过期）
     max_attempts: u32,
     /// 滑动窗口时长（秒）
@@ -186,15 +187,48 @@ pub struct PasswordRateLimiter {
 }
 
 impl PasswordRateLimiter {
-    /// 创建失败计数器。
+    /// 创建失败计数器（仅单实例测试用）。
     ///
     /// 内部创建 `MockDao` + `BulwarkDaoDistributedLimiter`，进程内原子计数。
+    ///
+    /// # 警告
+    ///
+    /// 此方法使用进程内 `MockDao`，**仅适用于单实例测试**。
+    /// **生产部署必须使用 [`with_dao`](Self::with_dao) 注入真实分布式 DAO**
+    /// （如基于 Redis / dbnexus 的实现），否则多实例部署时限速器将形同虚设 ——
+    /// 各进程独立计数，攻击者分散请求即可绕过限速。
     ///
     /// # 参数
     /// - `max_attempts`：窗口内允许的最大失败次数（达此值后锁定至窗口过期）
     /// - `window_seconds`：滑动窗口时长（秒），窗口过期后计数自动重置
     pub fn new(max_attempts: u32, window_seconds: u64) -> Self {
-        let dao = Arc::new(MockDao::new());
+        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let limiter = BulwarkDaoDistributedLimiter::new(dao.clone());
+        Self {
+            limiter,
+            dao,
+            // 至少 1，避免 max_attempts=0 导致所有请求被锁
+            max_attempts: max_attempts.max(1),
+            window_seconds,
+        }
+    }
+
+    /// 使用指定 DAO 构造失败计数器（生产部署必须使用此方法）。
+    ///
+    /// 与 [`new`](Self::new) 的区别仅在于 DAO 来源 —— `new` 内部创建进程内 `MockDao`，
+    /// 此方法接收外部注入的 DAO，使多实例共享计数成为可能（分布式限速前提）。
+    ///
+    /// # 推荐用法
+    ///
+    /// - **生产部署**：注入 `BulwarkDaoOxcache`（Redis 后端）或 `BulwarkDaoDbnexus`（SQL 后端），
+    ///   多实例共享计数器
+    /// - **集成测试**：注入共享的 `MockDao`，验证多 limiter 实例的计数隔离 / 共享行为
+    ///
+    /// # 参数
+    /// - `max_attempts`：窗口内允许的最大失败次数（达此值后锁定至窗口过期）
+    /// - `window_seconds`：滑动窗口时长（秒），窗口过期后计数自动重置
+    /// - `dao`：分布式 DAO 实现（Redis / dbnexus / MockDao 等）
+    pub fn with_dao(max_attempts: u32, window_seconds: u64, dao: Arc<dyn BulwarkDao>) -> Self {
         let limiter = BulwarkDaoDistributedLimiter::new(dao.clone());
         Self {
             limiter,
@@ -208,7 +242,7 @@ impl PasswordRateLimiter {
     /// 检查 username 是否允许尝试（未锁定）。
     ///
     /// 返回 `true` 表示允许尝试，`false` 表示已被锁定（窗口内失败次数达上限）。
-    /// 窗口过期时由 `MockDao` 的 TTL 语义自动重置（首次 `incr` 后过期会重新初始化）。
+    /// 窗口过期时由 DAO 的 TTL 语义自动重置（首次 `incr` 后过期会重新初始化）。
     ///
     /// # Fail-Open 策略
     ///
@@ -231,7 +265,7 @@ impl PasswordRateLimiter {
     /// 通过 `limiteron::incr_with_ttl` 原子递增计数器。
     /// - 首次失败：设置 count=1 + TTL=`window_seconds`（窗口起始时间）
     /// - 后续失败：仅递增 count，不重置 TTL（保持窗口起点）
-    /// - 窗口过期：由 `MockDao` 的 TTL 语义自动重置（首次 `incr` 重新初始化）
+    /// - 窗口过期：由 DAO 的 TTL 语义自动重置（首次 `incr` 重新初始化）
     pub async fn record_failure(&self, username: &str) {
         let key = format!("rate_limit:pw:{}", username);
         let ttl = StdDuration::from_secs(self.window_seconds);
@@ -253,8 +287,13 @@ impl PasswordRateLimiter {
 
     /// 当前未过期 entry 数量（测试/运维用）。
     ///
-    /// 通过 `MockDao::keys("rate_limit:pw:*")` 扫描，返回未过期的 entry 数。
-    /// 已过期的 key 不会计入（与 `MockDao::keys` 语义一致）。
+    /// 通过 `BulwarkDao::keys("rate_limit:pw:*")` 扫描，返回未过期的 entry 数。
+    /// 已过期的 key 不会计入（与 `BulwarkDao::keys` 语义一致）。
+    ///
+    /// # 注意
+    ///
+    /// 部分后端（如 `BulwarkDaoOxcache`）未实现 `keys()`，会返回 0。
+    /// `MockDao` 与 dbnexus 后端已实现。
     pub async fn entry_count(&self) -> usize {
         self.dao
             .keys("rate_limit:pw:*")
@@ -274,9 +313,11 @@ impl PasswordRateLimiter {
 ///
 /// # 设计
 ///
-/// - **limiteron 委托**：通过 `BulwarkDaoDistributedLimiter` + `MockDao` 实现原子计数 + TTL，
+/// - **limiteron 委托**：通过 `BulwarkDaoDistributedLimiter` + `BulwarkDao` 实现原子计数 + TTL，
 ///   `atomic_check_and_incr` 在 Redis 后端走 Lua 脚本原子 check-and-increment，
 ///   `MockDao` 后端退化为 `incr` + 阈值判断（单进程原子）
+/// - **分布式语义**：DAO 由调用方注入，注入 Redis/dbnexus 等分布式 DAO 时多实例共享计数；
+///   `MockDao` 仅进程内原子（单实例测试用）
 /// - **Fail-Open**：DAO 错误时返回 `true`（放行），避免单次故障导致全部 client 被锁
 /// - **独立于 PasswordRateLimiter**：后者是失败计数器（账户锁定），
 ///   本结构是请求速率限制（QPS 限制），两者互补
@@ -295,7 +336,7 @@ impl PasswordRateLimiter {
 /// - `rate_limit:token:client:{client_id}` — per-client_id 计数
 /// - `rate_limit:token:user:{username}` — per-username 计数
 pub struct TokenRateLimiter {
-    /// 限流器（基于 `BulwarkDaoDistributedLimiter`，内部用 `MockDao` 进程内原子）
+    /// 限流器（基于 `BulwarkDaoDistributedLimiter`，DAO 由调用方注入）
     limiter: BulwarkDaoDistributedLimiter,
     /// per-client_id 窗口内最大请求数
     client_max: u64,
@@ -308,25 +349,70 @@ pub struct TokenRateLimiter {
 }
 
 impl TokenRateLimiter {
-    /// 创建默认配置的速率限制器（10 req/s per-client_id + 5 req/min per-username）。
+    /// 创建默认配置的速率限制器（10 req/s per-client_id + 5 req/min per-username，仅单实例测试用）。
     ///
     /// 默认值依据：
     /// - client_id 10 req/s：覆盖正常客户端的 token 刷新 + 短时重试需求
     /// - username 5 req/min：限制单账户密码暴力尝试，与 `PasswordRateLimiter` 失败计数器互补
+    ///
+    /// # 警告
+    ///
+    /// 此方法使用进程内 `MockDao`，**仅适用于单实例测试**。
+    /// **生产部署必须使用 [`with_dao_and_limits`](Self::with_dao_and_limits) 注入真实分布式 DAO**
+    /// （如基于 Redis / dbnexus 的实现），否则多实例部署时限速器将形同虚设 ——
+    /// 各进程独立计数，攻击者分散请求即可绕过限速。
     pub fn new() -> Self {
         Self::with_limits(10, 1, 5, 60)
     }
 
-    /// 自定义限速参数（测试 / 运维调优用）。
+    /// 自定义限速参数（仅单实例测试用）。
     ///
     /// 所有参数会被 clamp 到至少 1，避免 `max=0` 导致所有请求被拒。
+    ///
+    /// # 警告
+    ///
+    /// 此方法使用进程内 `MockDao`，**仅适用于单实例测试**。
+    /// **生产部署必须使用 [`with_dao_and_limits`](Self::with_dao_and_limits) 注入真实分布式 DAO**。
     pub fn with_limits(
         client_max: u64,
         client_window_secs: u64,
         username_max: u64,
         username_window_secs: u64,
     ) -> Self {
-        let dao = Arc::new(MockDao::new());
+        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        Self::with_dao_and_limits(
+            client_max,
+            client_window_secs,
+            username_max,
+            username_window_secs,
+            dao,
+        )
+    }
+
+    /// 使用指定 DAO + 自定义限速参数构造（生产部署必须使用此方法）。
+    ///
+    /// 与 [`with_limits`](Self::with_limits) 的区别仅在于 DAO 来源 —— `with_limits` 内部创建
+    /// 进程内 `MockDao`，此方法接收外部注入的 DAO，使多实例共享计数成为可能（分布式限速前提）。
+    ///
+    /// # 推荐用法
+    ///
+    /// - **生产部署**：注入 `BulwarkDaoOxcache`（Redis 后端）或 `BulwarkDaoDbnexus`（SQL 后端），
+    ///   多实例共享计数器
+    /// - **集成测试**：注入共享的 `MockDao`，验证多 limiter 实例的计数隔离 / 共享行为
+    ///
+    /// # 参数
+    /// - `client_max`：per-client_id 窗口内最大请求数（至少 1）
+    /// - `client_window_secs`：per-client_id 窗口时长（秒，至少 1）
+    /// - `username_max`：per-username 窗口内最大请求数（至少 1）
+    /// - `username_window_secs`：per-username 窗口时长（秒，至少 1）
+    /// - `dao`：分布式 DAO 实现（Redis / dbnexus / MockDao 等）
+    pub fn with_dao_and_limits(
+        client_max: u64,
+        client_window_secs: u64,
+        username_max: u64,
+        username_window_secs: u64,
+        dao: Arc<dyn BulwarkDao>,
+    ) -> Self {
         let limiter = BulwarkDaoDistributedLimiter::new(dao);
         Self {
             limiter,
@@ -1960,6 +2046,105 @@ mod tests {
             !limiter.check("dave").await,
             "max_attempts=0 被 clamp 到 1，首次失败后应锁定"
         );
+    }
+
+    // === with_dao 注入测试（diting HIGH #1 修复）===
+
+    /// `PasswordRateLimiter::with_dao` 使用注入的 DAO，验证失败计数写入注入的 DAO。
+    ///
+    /// 场景：注入外部 MockDao，调用 `record_failure` 后通过注入 DAO 的 `keys()` 验证
+    /// 计数器 key 存在 —— 证明 with_dao 没有像 `new()` 那样内部创建 MockDao。
+    #[tokio::test]
+    async fn password_rate_limiter_with_dao_uses_injected_dao() {
+        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let limiter = PasswordRateLimiter::with_dao(3, 300, dao.clone());
+
+        // 注入的 DAO 初始无 entry
+        assert_eq!(
+            dao.keys("rate_limit:pw:*").await.unwrap().len(),
+            0,
+            "注入 DAO 初始应无 entry"
+        );
+
+        limiter.record_failure("alice").await;
+
+        // 验证计数器 key 写入注入的 DAO（而非 with_dao 内部创建的 MockDao）
+        let keys = dao.keys("rate_limit:pw:*").await.unwrap();
+        assert_eq!(
+            keys.len(),
+            1,
+            "record_failure 后注入 DAO 应有 1 个 entry，实际: {:?}",
+            keys
+        );
+        assert!(
+            keys.iter().any(|k| k == "rate_limit:pw:alice"),
+            "应含 rate_limit:pw:alice key"
+        );
+    }
+
+    /// `TokenRateLimiter::with_dao_and_limits` 使用注入的 DAO，验证 check_client 后计数写入注入的 DAO。
+    ///
+    /// 场景：注入外部 MockDao，调用 `check_client` 后通过注入 DAO 的 `keys()` 验证
+    /// 计数器 key 存在 —— 证明 with_dao_and_limits 没有内部创建 MockDao。
+    #[tokio::test]
+    async fn token_rate_limiter_with_dao_uses_injected_dao() {
+        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let limiter = TokenRateLimiter::with_dao_and_limits(10, 1, 5, 60, dao.clone());
+
+        // 注入的 DAO 初始无 entry
+        assert_eq!(
+            dao.keys("rate_limit:token:*").await.unwrap().len(),
+            0,
+            "注入 DAO 初始应无 entry"
+        );
+
+        // check_client 调用即计数（atomic_check_and_incr）
+        assert!(limiter.check_client("client-X").await);
+
+        // 验证计数器 key 写入注入的 DAO
+        let keys = dao.keys("rate_limit:token:*").await.unwrap();
+        assert_eq!(
+            keys.len(),
+            1,
+            "check_client 后注入 DAO 应有 1 个 entry，实际: {:?}",
+            keys
+        );
+        assert!(
+            keys.iter().any(|k| k == "rate_limit:token:client:client-X"),
+            "应含 rate_limit:token:client:client-X key"
+        );
+    }
+
+    /// `PasswordRateLimiter::with_dao` 注入同一 DAO 后多 username 隔离。
+    ///
+    /// 场景：注入同一 DAO 到两个独立的 PasswordRateLimiter（模拟多实例共享 DAO），
+    /// 验证 username 计数器相互独立 —— 这是分布式限速的前提（多实例共享 DAO 计数）。
+    #[tokio::test]
+    async fn password_rate_limiter_with_dao_isolates_usernames() {
+        let shared_dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+
+        // 模拟两个实例共享同一 DAO
+        let limiter1 = PasswordRateLimiter::with_dao(2, 300, shared_dao.clone());
+        let limiter2 = PasswordRateLimiter::with_dao(2, 300, shared_dao.clone());
+
+        // 实例1 记录 alice 失败 2 次（达阈值）
+        limiter1.record_failure("alice").await;
+        limiter1.record_failure("alice").await;
+
+        // 实例2 检查 alice — 应被锁定（共享 DAO 计数）
+        // 这是分布式限速的关键：不同实例通过共享 DAO 看到同一计数
+        assert!(
+            !limiter2.check("alice").await,
+            "实例2 应看到实例1 累计的失败计数，alice 应被锁定（共享 DAO）"
+        );
+
+        // bob 未失败，两实例均应允许
+        assert!(limiter1.check("bob").await, "bob 应允许（独立计数器）");
+        assert!(limiter2.check("bob").await, "bob 应允许（独立计数器）");
+
+        // 验证共享 DAO 中只有 alice 的 entry（bob 未触发 record_failure）
+        let keys = shared_dao.keys("rate_limit:pw:*").await.unwrap();
+        assert_eq!(keys.len(), 1, "应仅 alice 1 个 entry");
     }
 
     // === OAuth2 scope 校验测试 ===
