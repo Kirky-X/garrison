@@ -32,7 +32,7 @@
 
 use crate::backend::types::{
     ApiResponse, CheckApiKeyRequest, CheckLoginRequest, CheckPermissionRequest, CheckRoleRequest,
-    KickoutRequest, LoginRequest, LogoutRequest, RenewToEquivalentRequest,
+    LoginRequest, LogoutRequest, RenewToEquivalentRequest,
 };
 use crate::backend::AuthBackend;
 use crate::error::BulwarkError;
@@ -110,6 +110,28 @@ struct SwitchToRequest {
     pub caller_token: Option<String>,
 }
 
+/// kickout 请求体（A7 所有权校验）。
+///
+/// `caller_login_id` 用于所有权校验：caller 必须是目标 `login_id` 的属主（或具备
+/// `admin:sessions` 权限），防止任意用户踢出他人的会话。`caller_token` 可选，用于
+/// 校验 `admin:sessions` 权限。
+///
+/// `#[serde(default)]` 保证 BackendRemote 旧版客户端仅发送 `{login_id}` 时仍可反序列化：
+/// `caller_login_id` 默认为空串 → fail-closed（请求被拒绝）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct KickoutRequest {
+    /// 待踢出的登录主体标识。
+    pub login_id: String,
+    /// Caller 自身 login_id（用于所有权校验）。
+    /// 空串时 fail-closed（请求被拒绝）。
+    #[serde(default)]
+    pub caller_login_id: String,
+    /// Caller 自身 token（可选，用于 `admin:sessions` 权限校验）。
+    /// 提供且具备 `admin:sessions` 权限时，即使非属主也允许踢出。
+    #[serde(default)]
+    pub caller_token: Option<String>,
+}
+
 /// 校验 caller 是否可查看目标 session 的 PII。
 ///
 /// 规则：
@@ -159,6 +181,38 @@ async fn can_switch_to(
 ) -> bool {
     // 快速路径：caller 即属主
     if !caller_login_id.is_empty() && caller_login_id == session_login_id {
+        return true;
+    }
+    // 非属主：检查 admin:sessions 权限
+    match caller_token {
+        Some(t) if !t.is_empty() => backend.check_permission(t, "admin:sessions").await.is_ok(),
+        _ => false,
+    }
+}
+
+/// 校验 caller 是否可执行 kickout（A7 所有权校验）。
+///
+/// 规则与 [`can_switch_to`] 一致：caller 必须是目标 `login_id` 的属主，或具备
+/// `admin:sessions` 权限。kickout 是踢出指定登录主体所有会话的高危操作，
+/// 校验失败时直接拒绝请求。
+///
+/// # 安全语义
+///
+/// kickout 影响目标 `login_id` 的所有会话（含其他设备），要求 caller 显式声明身份
+/// （`caller_login_id`）。`caller_login_id` 为空（BackendRemote 旧版客户端）时
+/// fail-closed 拒绝，防止任意用户踢出他人的所有会话。
+///
+/// # 错误处理
+///
+/// `check_permission` 失败（如 token 无效/后端不可达）时返回 `false`（fail-closed）。
+async fn can_kickout(
+    backend: &Arc<dyn AuthBackend>,
+    caller_login_id: &str,
+    target_login_id: &str,
+    caller_token: &Option<String>,
+) -> bool {
+    // 快速路径：caller 即属主（踢自己）
+    if !caller_login_id.is_empty() && caller_login_id == target_login_id {
         return true;
     }
     // 非属主：检查 admin:sessions 权限
@@ -382,6 +436,20 @@ async fn kickout(
     #[state] backend: Arc<dyn AuthBackend>,
     req: KickoutRequest,
 ) -> Result<ApiResponse<()>, ApiError> {
+    // A7: caller 所有权校验 — 防止任意用户踢出他人的所有会话
+    // caller 必须是目标 login_id 的属主，或具备 admin:sessions 权限
+    if !can_kickout(
+        &backend,
+        &req.caller_login_id,
+        &req.login_id,
+        &req.caller_token,
+    )
+    .await
+    {
+        return Ok(to_api_response(Err(BulwarkError::NotPermission(
+            "caller 非属主且无 admin:sessions 权限，禁止 kickout".to_string(),
+        ))));
+    }
     let result = backend.kickout(&req.login_id).await;
     Ok(to_api_response(result))
 }
@@ -815,11 +883,69 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_sdforge_kickout_succeeds() {
+    async fn test_sdforge_kickout_succeeds_for_owner() {
         let app = make_router();
+        // caller_login_id == login_id → 属主，允许踢出自己
+        let body = serde_json::json!({
+            "login_id": "user1",
+            "caller_login_id": "user1"
+        });
+        let resp_json = post_json(app, "/api/v1/auth/kickout", body).await;
+        assert!(
+            resp_json.get("error_code").is_none() || resp_json["error_code"].is_null(),
+            "属主应允许 kickout，实际: {:?}",
+            resp_json
+        );
+    }
+
+    /// A7: 非属主且无 admin:sessions 权限的 caller 被拒绝 kickout。
+    #[tokio::test]
+    async fn test_sdforge_kickout_denies_non_owner() {
+        let app = make_router();
+        // caller_login_id != login_id，无 caller_token
+        let body = serde_json::json!({
+            "login_id": "victim",
+            "caller_login_id": "attacker"
+        });
+        let resp_json = post_json(app, "/api/v1/auth/kickout", body).await;
+        assert!(
+            !resp_json["error_code"].is_null(),
+            "非属主应被拒绝 kickout，实际: {:?}",
+            resp_json
+        );
+    }
+
+    /// A7: caller_login_id 为空（fail-closed）时 kickout 被拒绝。
+    /// 模拟 BackendRemote 旧版客户端仅发送 `{"login_id": "..."}` 的场景。
+    #[tokio::test]
+    async fn test_sdforge_kickout_denies_empty_caller_login_id() {
+        let app = make_router();
+        // 不提供 caller_login_id（serde default = ""）→ fail-closed
         let body = serde_json::json!({ "login_id": "user1" });
         let resp_json = post_json(app, "/api/v1/auth/kickout", body).await;
-        assert!(resp_json.get("error_code").is_none() || resp_json["error_code"].is_null());
+        assert!(
+            !resp_json["error_code"].is_null(),
+            "空 caller_login_id 应 fail-closed 拒绝，实际: {:?}",
+            resp_json
+        );
+    }
+
+    /// A7: 非属主但有 admin:sessions 权限的 caller 允许 kickout。
+    #[tokio::test]
+    async fn test_sdforge_kickout_allows_admin_permission() {
+        let app = make_router();
+        // caller_login_id != login_id，但 caller_token 有 admin:sessions 权限
+        let body = serde_json::json!({
+            "login_id": "victim",
+            "caller_login_id": "admin-user",
+            "caller_token": "admin-token"
+        });
+        let resp_json = post_json(app, "/api/v1/auth/kickout", body).await;
+        assert!(
+            resp_json.get("error_code").is_none() || resp_json["error_code"].is_null(),
+            "有 admin:sessions 权限应允许 kickout，实际: {:?}",
+            resp_json
+        );
     }
 
     #[tokio::test]
