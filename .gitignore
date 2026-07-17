@@ -146,6 +146,7 @@ credentials.json
 tarpaulin-report.html
 cobertura.xml
 lcov.info
+# strix_runs：审计运行目录，整体忽略；REMEDIATION-STATUS.md 通过 git add -f 强制纳入版本控制（Convergence 阶段审计追踪）
 strix_runs
 
 # -----------------------------------------------------------------------------

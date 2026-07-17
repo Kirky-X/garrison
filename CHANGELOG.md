@@ -5,6 +5,82 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased] - 2026-07-18
+
+### 概述
+
+本期为 **strix 安全审计修复批次**，整合 3 轮 strix 渗透测试（`bulwark_21a6` / `bulwark_371b` / `bulwark_6704`）发现的 21 个安全漏洞修复，覆盖认证授权（A1–A11）、OAuth2/OIDC（B1–B10）、Web 安全（C1–C7）、密码学（D1–D6）、性能（E1–E4）与供应链（F1–F4）六大维度。共 21 个 commit，CRITICAL 漏洞全部修复并通过 Convergence 阶段代码-文档一致性审查。
+
+### Security
+
+- **CRITICAL**: 修复 ABAC 表达式注入漏洞（A3, b28ef5c）— `validate_abac_expr()` 拒绝 `true` / 策略终止符 / 空串
+- **CRITICAL**: 修复 switch_to 权限提升 + AccountSession 自动创建（A6, 43ab79c）— 强制校验目标用户存在 + caller 所有权
+- **CRITICAL**: 修复跨用户会话管理未授权漏洞（A7, a1d6e8b）— kickout 端点强制 caller 所有权校验
+- **CRITICAL**: 修复 login_with_token 会话固定/劫持漏洞（A8, 5648f2a）— 入口校验目标 token 不存在
+- **CRITICAL**: 修复 SimpleTokenStyle 伪造漏洞（A11, 2084933）— HMAC-SHA256 签名 + `subtle::ConstantTimeEq` 常量时间比较
+- **CRITICAL**: 实现 OIDC id_token 验证（B1, 4e13b21）— KeycloakProvider JWKS 验签
+- **CRITICAL**: 强制 OAuth2 scope 校验（B3, c5a325b）— ScopeHandler 注册表强制注册
+- **CRITICAL**: 修复 KeycloakProvider aud/iss 校验缺失（B9, 4e13b21）— 严格 audience + issuer 双校验
+- **HIGH**: 修复 ABAC 引擎使用 `Entities::empty()` 漏洞（A1）— 注入实际 entity 数据
+- **HIGH**: 修复租户隔离 `tenant_id=0` fallback 漏洞（A4）— 显式拒绝无 tenant 上下文的请求
+- **HIGH**: 修复 renew_to_equivalent 续期窗口漏洞（A9, 954ad49）— swap 顺序消除 DoS gap window
+- **HIGH**: 修复设备指纹可欺骗漏洞（A10, 81feb09）— `device_fingerprint_rich()` UA + IP + Accept-Language 多维度
+- **HIGH**: CSRF/WAF 默认启用 + Origin/Referer 校验（C1, 6960b53）
+- **HIGH**: 修复速率限制器内存泄漏 + XFF 欺骗（C5）
+- **HIGH**: 修复 API Key 时序侧信道（C6）
+- **HIGH**: 添加 OAuth2 /token 端点速率限制（B5, 6a5c63b）— 按 client_id + username 双维度
+- **HIGH**: reqwest 客户端添加超时（E1, 65cc6b6）— `build_safe_http_client()` helper
+- **HIGH**: reqwest 响应体大小限制（E2, 65cc6b6）— 4 MiB 上限
+- **HIGH**: TOTP 锁改用 oxcache 有界缓存（E3, accf1e1）— DashMap → 原子 DAO incr
+- **HIGH**: API Key 反向索引避免全表扫描（E4, 811ee10）— O(1) verify
+
+### Added
+
+- 新增 `secure-simple-token` feature（A11）— SimpleTokenStyle HMAC-SHA256 签名
+- 新增 `validate_abac_expr()` 函数（A3）— Cedar 策略注入防御
+- 新增 `compose_security_stack()` 帮助函数（C4）— CORS preflight 绕过 WAF/CSRF 修复
+- 新增 `cookie_domain` 配置项（C3）— CsrfConfig 字段
+- 新增 `build_safe_http_client()` helper（E1）— 统一超时 + body 限制
+- 新增 `device_fingerprint_rich()` 函数（A10）— 多维度设备指纹
+- 新增 `dep:subtle` 加入 `secure-sign` feature（D1, b9312f0）— 常量时间 HMAC 验证
+
+### Changed
+
+- ABAC 引擎未初始化从 fail-open 改为 fail-closed（A2）
+- SimpleTokenStyle 从 ZST 改为 `struct { secret: String }`，**破坏性 API 变更**
+- `require_secondary_auth` 从软提示改为 hard block（A10）
+
+### Fixed
+
+- get-session 内部端点缺少所有权校验（A5, 0d7a8fe）
+- get-token-info 内部端点缺少所有权校验（A5, 0d7a8fe）
+- OIDC state 参数未校验（B2, 4e13b21）
+- URL 编码器遗漏 % 字符（B4, 4e13b21）
+- redirect_uri 未编码导致开放重定向（B6, 4e13b21）
+- DAO fallback 路径 refresh token 未轮换（B7, 4e13b21）
+- 不支持 HTTP Basic Auth 传输 client_secret（B8, 4e13b21）
+- JWT 未校验 nbf（B10, 1944271）
+- WAF 不检查 query 参数（C2, 04f8f66）— DangerousCharacter + DirectoryTraversal
+- CORS preflight 绕过 CSRF/WAF（C4, 72975a5）
+- JSON body token 注入（C7, 8903cd4）— body token 提取限制为 POST/PUT/PATCH
+- Signer HMAC verify 时序侧信道（D1, 4476395）— `subtle::ConstantTimeEq`
+- HMAC 密钥未做 HKDF 派生（D2, 1599858）
+- HTTP Digest 默认 MD5（D3, 0229d3f）— 默认 SHA-256
+- sanitize_input 未过滤 Unicode Cf 字符（D4, 80d2f08）
+- XSS whitelist 未阻止 `javascript:` URL（D5, 45a3146）
+- Custom mask 未真实脱敏（D6, a79b5a4）
+- 移除 [patch.crates-io] 本地路径覆盖（F1）
+- examples 中硬编码 API Key（F2, 8932f3e）— 改用 env var
+- 升级 opentelemetry 修复 CVE-2026-48504（F3, 7037764）
+- SMS 验证码范围排除 `000000`（F4, 87c62ba）
+
+### 审查验证（Convergence 阶段）
+
+- 代码-文档一致性审查完成（本 commit）
+- tiangang SAST 扫描：见 `strix_runs/*/REMEDIATION-STATUS.md`
+- 修复 commit 范围：`811ee10`..`2084933`（21 个 commit）
+- 修复日期：2026-07-18
+
 ## [0.7.0] - 2026-07-13
 
 ### 概述
