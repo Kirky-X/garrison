@@ -109,6 +109,97 @@ pub fn device_fingerprint(user_agent: &str, ip: &str) -> String {
         .collect()
 }
 
+/// 设备指纹输入维度（A10 强化：防止攻击者仅伪造部分 header 即可复用指纹）。
+///
+/// 封装参与设备指纹计算的全部维度。`accept_language` / `sec_ch_ua` /
+/// `sec_ch_ua_platform` 为 `Option`，未提供时以哨兵字节 `\0` 参与 hash，
+/// 与 `Some("")` 区分（fail-safe：缺失维度不等于空串维度，防止攻击者
+/// 通过省略 header 绕过维度校验）。
+#[derive(Debug, Clone, Copy)]
+pub struct DeviceFingerprintInput<'a> {
+    /// 客户端 User-Agent。
+    pub user_agent: &'a str,
+    /// 客户端 IP 地址。
+    pub ip: &'a str,
+    /// Accept-Language header（如 "zh-CN,zh;q=0.9,en;q=0.8"）。
+    pub accept_language: Option<&'a str>,
+    /// sec-ch-ua header（如 `"Chromium";v="120", "Not.A/Brand";v="24"`）。
+    pub sec_ch_ua: Option<&'a str>,
+    /// sec-ch-ua-platform header（如 `"Windows"`）。
+    pub sec_ch_ua_platform: Option<&'a str>,
+}
+
+impl<'a> DeviceFingerprintInput<'a> {
+    /// 创建包含全部维度的输入。
+    pub fn new(
+        user_agent: &'a str,
+        ip: &'a str,
+        accept_language: Option<&'a str>,
+        sec_ch_ua: Option<&'a str>,
+        sec_ch_ua_platform: Option<&'a str>,
+    ) -> Self {
+        Self {
+            user_agent,
+            ip,
+            accept_language,
+            sec_ch_ua,
+            sec_ch_ua_platform,
+        }
+    }
+
+    /// 仅从 ua + ip 构造（其他维度为 None，向后兼容旧 `device_fingerprint` 调用方）。
+    pub fn from_ua_ip(user_agent: &'a str, ip: &'a str) -> Self {
+        Self {
+            user_agent,
+            ip,
+            accept_language: None,
+            sec_ch_ua: None,
+            sec_ch_ua_platform: None,
+        }
+    }
+}
+
+/// 生成强化设备指纹：SHA-256(ua | ip | accept_language | sec_ch_ua | sec_ch_ua_platform)，
+/// 截断 16 字节 hex = 32 字符（A10 修复）。
+///
+/// 加入 Accept-Language / sec-ch-ua / sec-ch-ua-platform 维度，攻击者仅伪造 UA 或 IP
+/// 无法复用指纹，必须同时匹配全部维度。各维度以 `\x1f`（Unit Separator）分隔，
+/// 防止维度拼接歧义（如 ua="ab"+ip="c" 与 ua="a"+ip="bc" 在无分隔符时 hash 相同）。
+///
+/// # 参数
+/// - `input`: 设备指纹输入维度（[`DeviceFingerprintInput`]）。
+///
+/// # 返回
+/// 32 字符的十六进制字符串（SHA-256 前 16 字节）。
+pub fn device_fingerprint_rich(input: &DeviceFingerprintInput<'_>) -> String {
+    let mut hasher = Sha256::new();
+    const SEP: u8 = 0x1f;
+    hasher.update(input.user_agent.as_bytes());
+    hasher.update([SEP]);
+    hasher.update(input.ip.as_bytes());
+    hasher.update([SEP]);
+    match input.accept_language {
+        Some(v) => hasher.update(v.as_bytes()),
+        None => hasher.update([0x00]),
+    }
+    hasher.update([SEP]);
+    match input.sec_ch_ua {
+        Some(v) => hasher.update(v.as_bytes()),
+        None => hasher.update([0x00]),
+    }
+    hasher.update([SEP]);
+    match input.sec_ch_ua_platform {
+        Some(v) => hasher.update(v.as_bytes()),
+        None => hasher.update([0x00]),
+    }
+    let result = hasher.finalize();
+    result
+        .iter()
+        .take(16)
+        .map(|b| format!("{:02x}", b))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -134,6 +225,150 @@ mod tests {
     fn device_fingerprint_length_is_32() {
         let fp = device_fingerprint("TestAgent", "127.0.0.1");
         assert_eq!(fp.len(), 32, "指纹应为 32 字符（16 字节 hex）");
+    }
+
+    // ------------------------------------------------------------------------
+    // A10: device_fingerprint_rich 强化指纹测试
+    // ------------------------------------------------------------------------
+
+    #[test]
+    fn a10_rich_fingerprint_deterministic() {
+        let input = DeviceFingerprintInput::new(
+            "Mozilla/5.0 Chrome",
+            "192.168.1.1",
+            Some("zh-CN,zh;q=0.9"),
+            Some("\"Chromium\";v=\"120\""),
+            Some("\"Windows\""),
+        );
+        let fp1 = device_fingerprint_rich(&input);
+        let fp2 = device_fingerprint_rich(&input);
+        assert_eq!(fp1, fp2, "相同输入应生成相同指纹");
+    }
+
+    #[test]
+    fn a10_rich_fingerprint_length_is_32() {
+        let input = DeviceFingerprintInput::new("UA", "IP", None, None, None);
+        let fp = device_fingerprint_rich(&input);
+        assert_eq!(fp.len(), 32, "强化指纹应为 32 字符（16 字节 hex）");
+    }
+
+    /// A10 核心：伪造任意单一维度仍触发指纹变化（防止部分 header 伪造绕过）。
+    #[test]
+    fn a10_rich_fingerprint_spoofing_partial_dimensions_detected() {
+        let base = DeviceFingerprintInput::new(
+            "Mozilla/5.0 Chrome",
+            "192.168.1.1",
+            Some("zh-CN,zh;q=0.9"),
+            Some("\"Chromium\";v=\"120\""),
+            Some("\"Windows\""),
+        );
+        let base_fp = device_fingerprint_rich(&base);
+
+        // 仅伪造 UA
+        let spoof_ua = DeviceFingerprintInput::new(
+            "Mozilla/5.0 Firefox",
+            "192.168.1.1",
+            Some("zh-CN,zh;q=0.9"),
+            Some("\"Chromium\";v=\"120\""),
+            Some("\"Windows\""),
+        );
+        assert_ne!(
+            device_fingerprint_rich(&spoof_ua),
+            base_fp,
+            "伪造 UA 应改变指纹"
+        );
+
+        // 仅伪造 IP
+        let spoof_ip = DeviceFingerprintInput::new(
+            "Mozilla/5.0 Chrome",
+            "10.0.0.1",
+            Some("zh-CN,zh;q=0.9"),
+            Some("\"Chromium\";v=\"120\""),
+            Some("\"Windows\""),
+        );
+        assert_ne!(
+            device_fingerprint_rich(&spoof_ip),
+            base_fp,
+            "伪造 IP 应改变指纹"
+        );
+
+        // 仅伪造 Accept-Language
+        let spoof_al = DeviceFingerprintInput::new(
+            "Mozilla/5.0 Chrome",
+            "192.168.1.1",
+            Some("en-US,en;q=0.9"),
+            Some("\"Chromium\";v=\"120\""),
+            Some("\"Windows\""),
+        );
+        assert_ne!(
+            device_fingerprint_rich(&spoof_al),
+            base_fp,
+            "伪造 Accept-Language 应改变指纹"
+        );
+
+        // 仅伪造 sec-ch-ua
+        let spoof_chua = DeviceFingerprintInput::new(
+            "Mozilla/5.0 Chrome",
+            "192.168.1.1",
+            Some("zh-CN,zh;q=0.9"),
+            Some("\"Firefox\";v=\"121\""),
+            Some("\"Windows\""),
+        );
+        assert_ne!(
+            device_fingerprint_rich(&spoof_chua),
+            base_fp,
+            "伪造 sec-ch-ua 应改变指纹"
+        );
+
+        // 仅伪造 sec-ch-ua-platform
+        let spoof_plat = DeviceFingerprintInput::new(
+            "Mozilla/5.0 Chrome",
+            "192.168.1.1",
+            Some("zh-CN,zh;q=0.9"),
+            Some("\"Chromium\";v=\"120\""),
+            Some("\"macOS\""),
+        );
+        assert_ne!(
+            device_fingerprint_rich(&spoof_plat),
+            base_fp,
+            "伪造 sec-ch-ua-platform 应改变指纹"
+        );
+    }
+
+    /// A10: None 与 Some("") 应产生不同指纹（防止攻击者用空串绕过 None 维度）。
+    #[test]
+    fn a10_rich_fingerprint_none_vs_some_empty_differ() {
+        let with_none = DeviceFingerprintInput::new("UA", "IP", None, None, None);
+        let with_empty = DeviceFingerprintInput::new("UA", "IP", Some(""), Some(""), Some(""));
+        assert_ne!(
+            device_fingerprint_rich(&with_none),
+            device_fingerprint_rich(&with_empty),
+            "None 与 Some(\"\") 应产生不同指纹（哨兵字节区分）"
+        );
+    }
+
+    /// A10: from_ua_ip 构造等价于显式 None 构造。
+    #[test]
+    fn a10_rich_fingerprint_from_ua_ip_equivalent_to_none() {
+        let input1 = DeviceFingerprintInput::from_ua_ip("UA", "IP");
+        let input2 = DeviceFingerprintInput::new("UA", "IP", None, None, None);
+        assert_eq!(
+            device_fingerprint_rich(&input1),
+            device_fingerprint_rich(&input2),
+            "from_ua_ip 应等价于显式 None 构造"
+        );
+    }
+
+    /// A10: 维度拼接歧义防护（ua="ab"+ip="c" 与 ua="a"+ip="bc" 应产生不同指纹）。
+    #[test]
+    fn a10_rich_fingerprint_delimiter_prevents_concat_ambiguity() {
+        let ambiguous1 = DeviceFingerprintInput::from_ua_ip("ab", "c");
+        let ambiguous2 = DeviceFingerprintInput::from_ua_ip("a", "bc");
+        assert_ne!(
+            device_fingerprint_rich(&ambiguous1),
+            device_fingerprint_rich(&ambiguous2),
+            "分隔符应防止维度拼接歧义"
+        );
     }
 
     // ------------------------------------------------------------------------

@@ -612,9 +612,11 @@ impl BulwarkLogicDefault {
             }
         }
 
-        // T020: 自动生成设备指纹。
+        // T020: 自动生成设备指纹（A10 强化：使用 `device_fingerprint_rich`）。
         // `LoginParams.device` 为 None 但 `user_agent` + `ip` 有值时，
-        // 调用 `device_fingerprint` 生成 SHA-256(UA+IP) 前 16 字节 hex 指纹写入 device。
+        // 调用 `device_fingerprint_rich` 生成 SHA-256 多维度指纹写入 device。
+        // 当前 LoginParams 仅含 ua/ip 两个维度，其余维度为 None（API 已就绪，
+        // 未来扩展 LoginParams 后可直接传入 Accept-Language / sec-ch-ua 等 header）。
         // 仅在 device 模块可用时执行（feature gate 与 device 模块一致）；
         // 未启用时 device 保持 None，不影响登录主流程。
         // `cfg_attr` 抑制未启用 device feature 时的 `unused_mut` 警告。
@@ -643,13 +645,15 @@ impl BulwarkLogicDefault {
         ))]
         if params.device.is_none() {
             if let (Some(ua), Some(ip)) = (&params.user_agent, &params.ip) {
-                params.device = Some(crate::session::device::device_fingerprint(ua, ip));
+                let fp_input = crate::session::device::DeviceFingerprintInput::from_ua_ip(ua, ip);
+                params.device = Some(crate::session::device::device_fingerprint_rich(&fp_input));
             }
         }
 
-        // T013: 设备绑定策略检测（device-binding feature）。
+        // T013: 设备绑定策略检测（device-binding feature，A10 强化：hard block）。
         // 创建 session 前调用 `DeviceBindingPolicy::is_new_device`，若为新设备
-        // 且 `require_secondary_auth` 返回 true，设置 `params.require_mfa = true`。
+        // 且 `require_secondary_auth` 返回 true，直接返回 `Err(NotPermission)` 阻断登录
+        // （A10 修复：原仅设置 `params.require_mfa = true` 软提示，未真正阻断）。
         // 未注入 policy 时跳过（向后兼容）；检测失败只 warn 不中断 login。
         #[cfg(feature = "device-binding")]
         if let Some(policy) = &self.device_binding_policy {
@@ -658,8 +662,14 @@ impl BulwarkLogicDefault {
                 match policy.is_new_device(login_id, device_id).await {
                     Ok(true) => match policy.require_secondary_auth(login_id, device_id).await {
                         Ok(true) => {
-                            tracing::info!(login_id, device_id, "设备绑定策略触发二级认证要求");
-                            params.require_mfa = true;
+                            tracing::info!(
+                                login_id,
+                                device_id,
+                                "设备绑定策略触发二级认证阻断（hard block）"
+                            );
+                            return Err(BulwarkError::NotPermission(
+                                "secondary auth required".to_string(),
+                            ));
                         },
                         Ok(false) => {},
                         Err(e) => tracing::warn!(
@@ -1815,11 +1825,11 @@ mod tests {
         }
 
         // --------------------------------------------------------------------
-        // 6 个集成测试
+        // 7 个集成测试（A10 新增 hard block 验证）
         // --------------------------------------------------------------------
 
-        /// strict 模式下新设备 login 触发 MFA 标记（policy.is_new_device=true +
-        /// require_secondary_auth=true → params.require_mfa=true），login 仍成功。
+        /// A10 修复：strict 模式下新设备 login 被 hard block（require_secondary_auth=true
+        /// → 返回 `Err(NotPermission)`），login 失败且不创建 session。
         #[tokio::test]
         async fn test_strict_mode_new_device_triggers_mfa() {
             let logic = make_logic_base();
@@ -1827,26 +1837,50 @@ mod tests {
             let policy = Arc::new(StrictBinding::new(logic.session.clone()));
             let logic = logic.with_device_binding_policy(policy);
 
-            // 无历史 session → is_new_device=true → require_secondary_auth=true
+            // 无历史 session → is_new_device=true → require_secondary_auth=true → hard block
             let params = LoginParams {
                 device: Some("web-chrome".to_string()),
                 ..Default::default()
             };
-            let token = logic
-                .login("1001", &params)
-                .await
-                .expect("strict 模式新设备 login 应成功（设置 require_mfa 标记但不阻断）");
+            let result = logic.login("1001", &params).await;
 
-            assert!(!token.is_empty(), "login 应返回非空 token");
-            // 验证 session 已创建
-            let ts = logic
-                .session
-                .get_token_session(&token)
-                .await
-                .unwrap()
-                .expect("会话应已创建");
-            assert_eq!(ts.login_id, "1001");
-            assert_eq!(ts.device.as_deref(), Some("web-chrome"));
+            // A10: login 应返回 Err(NotPermission) 而非成功
+            assert!(
+                result.is_err(),
+                "strict 模式新设备 login 应被 hard block 阻断（A10 修复）"
+            );
+            match result {
+                Err(BulwarkError::NotPermission(msg)) => {
+                    assert_eq!(
+                        msg, "secondary auth required",
+                        "错误消息应为 'secondary auth required'"
+                    );
+                },
+                Err(other) => panic!("期望 NotPermission 错误，实际: {:?}", other),
+                Ok(_) => panic!("strict 模式新设备 login 不应成功（A10 hard block）"),
+            }
+        }
+
+        /// A10 修复：strict 模式新设备 login 被阻断后不创建 session（无孤儿会话泄漏）。
+        #[tokio::test]
+        async fn test_strict_mode_new_device_block_creates_no_session() {
+            let logic = make_logic_base();
+            let policy = Arc::new(StrictBinding::new(logic.session.clone()));
+            let logic = logic.with_device_binding_policy(policy);
+
+            let params = LoginParams {
+                device: Some("web-chrome".to_string()),
+                ..Default::default()
+            };
+            // login 被阻断
+            let _ = logic.login("1001", &params).await;
+
+            // 验证无 session 被创建
+            let tokens = logic.session.get_tokens_by_login_id("1001");
+            assert!(
+                tokens.is_empty(),
+                "hard block 后不应创建任何 session（无孤儿会话）"
+            );
         }
 
         /// strict 模式下旧设备 login 不触发 MFA（policy.is_new_device=false →
