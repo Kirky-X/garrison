@@ -324,6 +324,8 @@ async fn switch_to_default_impl_returns_not_implemented() {
 async fn switch_to_default_guard_denies_all_switches() {
     let auth = make_auth_logic(3600, 86400); // 默认 DenyAllSwitchToGuard
     let token = auth.login("1001", None).await.unwrap();
+    // A6: 需预先创建 target Account-Session，否则 target_account_exists 校验先返回 InvalidParam
+    let _ = auth.login("2002", None).await.unwrap();
     let result = auth.switch_to(&token, "2002").await;
     assert!(
         matches!(result, Err(BulwarkError::NotPermission(ref msg)) if msg.contains("deny-all")),
@@ -355,8 +357,10 @@ async fn switch_to_custom_guard_denies_preserves_session() {
     }
     let auth = make_auth_logic(3600, 86400).with_switch_to_guard(Arc::new(DenyTargetGuard));
     let token = auth.login("1001", None).await.unwrap();
-    // 需预先创建 target Account-Session（user-2002）。
+    // 需预先创建 target Account-Session（user-2002 + admin）。
     let _ = auth.login("user-2002", None).await.unwrap();
+    // A6: admin 也需预先创建 Account-Session，否则 target_account_exists 校验先返回 InvalidParam
+    let _ = auth.login("admin", None).await.unwrap();
 
     // 切换到 admin 应被拒绝
     let result = auth.switch_to(&token, "admin").await;
@@ -376,6 +380,48 @@ async fn switch_to_custom_guard_denies_preserves_session() {
     assert_eq!(
         auth.get_login_id(&token).await.unwrap(),
         Some("user-2002".to_string())
+    );
+}
+
+// ========================================================================
+// A6 新增：target_account_exists 校验测试
+// ========================================================================
+
+/// A6: switch_to 切换到不存在的 target_login_id 应返回 InvalidParam。
+///
+/// target_account_exists 校验在 guard 检查前执行，确保不会执行到后续步骤
+/// （如修改 session、调用 ensure_token_in_account_session）。
+#[tokio::test]
+async fn switch_to_nonexistent_target_returns_invalid_param() {
+    let auth = make_auth_logic_allow_switch(3600, 86400);
+    let token = auth.login("1001", None).await.unwrap();
+    // 不创建 "ghost-user" 的 Account-Session
+    let result = auth.switch_to(&token, "ghost-user").await;
+    assert!(
+        matches!(result, Err(BulwarkError::InvalidParam(ref msg)) if msg.contains("不存在")),
+        "切换到不存在的 target 应返回 InvalidParam，实际: {:?}",
+        result
+    );
+    // session 未被修改
+    assert_eq!(
+        auth.get_login_id(&token).await.unwrap(),
+        Some("1001".to_string())
+    );
+}
+
+/// A6: target_account_exists 校验在 guard 之前执行（target 不存在时优先返回 InvalidParam）。
+///
+/// 即使 guard 是 AllowAllSwitchToGuard，target 不存在仍应被拒绝。
+#[tokio::test]
+async fn switch_to_target_check_precedes_guard() {
+    let auth = make_auth_logic_allow_switch(3600, 86400);
+    let token = auth.login("1001", None).await.unwrap();
+    // 不创建 "ghost" 的 Account-Session
+    let result = auth.switch_to(&token, "ghost").await;
+    assert!(
+        matches!(result, Err(BulwarkError::InvalidParam(_))),
+        "target 不存在时应先返回 InvalidParam（而非 guard 的 NotPermission），实际: {:?}",
+        result
     );
 }
 

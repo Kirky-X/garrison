@@ -173,6 +173,25 @@ impl AuthLogic for AuthLogicDefault {
             .await?
             .ok_or_else(|| BulwarkError::NotLogin("token 无效或已过期".to_string()))?;
 
+        // A6: 校验目标 Account-Session 存在（纵深防御层）。
+        // 在 guard 检查前校验，原因有二：
+        // 1. 防止 switch_to 切到不存在的 login_id（ensure_token_in_account_session 已 fail-closed，
+        //    此层提前拒绝，避免执行到后续步骤）
+        // 2. guard 可能依赖 target 的属性，target 不存在时 guard 行为未定义
+        // 安全权衡：此校验会泄露 login_id 存在性，但 switch_to 本身是高危操作，
+        // 调用方通常已通过 login 流程知道 target 存在，泄露风险可接受。
+        if self
+            .session
+            .get_account_session(target_login_id)
+            .await?
+            .is_none()
+        {
+            return Err(BulwarkError::InvalidParam(format!(
+                "target login_id 不存在: {}",
+                target_login_id
+            )));
+        }
+
         // 执行权限校验（guard 默认 DenyAllSwitchToGuard，fail-closed）
         // 在修改 session 前校验，确保无权限时不产生任何副作用
         let original_login_id = ts.login_id.clone();

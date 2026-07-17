@@ -32,9 +32,10 @@
 
 use crate::backend::types::{
     ApiResponse, CheckApiKeyRequest, CheckLoginRequest, CheckPermissionRequest, CheckRoleRequest,
-    KickoutRequest, LoginRequest, LogoutRequest, RenewToEquivalentRequest, SwitchToRequest,
+    KickoutRequest, LoginRequest, LogoutRequest, RenewToEquivalentRequest,
 };
 use crate::backend::AuthBackend;
+use crate::error::BulwarkError;
 use sdforge::forge;
 use sdforge::prelude::ApiError;
 use serde::{Deserialize, Serialize};
@@ -85,6 +86,30 @@ struct GetTokenInfoRequest {
     pub caller_token: Option<String>,
 }
 
+/// switch_to 请求体（A6 所有权校验）。
+///
+/// `caller_login_id` 用于所有权校验：caller 必须是 token 的属主（或具备 `admin:sessions`
+/// 权限），防止攻击者用泄露的 token 切换身份。`caller_token` 可选，用于校验
+/// `admin:sessions` 权限。
+///
+/// `#[serde(default)]` 保证 BackendRemote 旧版客户端仅发送 `{token, target_login_id}` 时
+/// 仍可反序列化：`caller_login_id` 默认为空串 → fail-closed（请求被拒绝）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SwitchToRequest {
+    /// 当前 token 字符串。
+    pub token: String,
+    /// 待切换到的登录主体标识。
+    pub target_login_id: String,
+    /// Caller 自身 login_id（用于所有权校验）。
+    /// 空串时 fail-closed（请求被拒绝）。
+    #[serde(default)]
+    pub caller_login_id: String,
+    /// Caller 自身 token（可选，用于 `admin:sessions` 权限校验）。
+    /// 提供且具备 `admin:sessions` 权限时，即使非属主也允许切换。
+    #[serde(default)]
+    pub caller_token: Option<String>,
+}
+
 /// 校验 caller 是否可查看目标 session 的 PII。
 ///
 /// 规则：
@@ -96,6 +121,37 @@ struct GetTokenInfoRequest {
 ///
 /// `check_permission` 失败（如 token 无效/后端不可达）时返回 `false`（fail-closed）。
 async fn can_view_pii(
+    backend: &Arc<dyn AuthBackend>,
+    caller_login_id: &str,
+    session_login_id: &str,
+    caller_token: &Option<String>,
+) -> bool {
+    // 快速路径：caller 即属主
+    if !caller_login_id.is_empty() && caller_login_id == session_login_id {
+        return true;
+    }
+    // 非属主：检查 admin:sessions 权限
+    match caller_token {
+        Some(t) if !t.is_empty() => backend.check_permission(t, "admin:sessions").await.is_ok(),
+        _ => false,
+    }
+}
+
+/// 校验 caller 是否可执行 switch_to（A6 所有权校验）。
+///
+/// 规则与 [`can_view_pii`] 一致，但语义不同：switch_to 是高危写操作，
+/// 校验失败时直接拒绝请求（而非仅过滤 PII）。
+///
+/// # 安全语义
+///
+/// switch_to 是身份切换的高危操作，要求 caller 显式声明身份（`caller_login_id`）。
+/// `caller_login_id` 为空（BackendRemote 旧版客户端）时 fail-closed 拒绝，
+/// 防止攻击者用泄露的 token 在不声明身份的情况下切换身份。
+///
+/// # 错误处理
+///
+/// `check_permission` 失败（如 token 无效/后端不可达）时返回 `false`（fail-closed）。
+async fn can_switch_to(
     backend: &Arc<dyn AuthBackend>,
     caller_login_id: &str,
     session_login_id: &str,
@@ -342,8 +398,29 @@ async fn switch_to(
     #[state] backend: Arc<dyn AuthBackend>,
     req: SwitchToRequest,
 ) -> Result<ApiResponse<()>, ApiError> {
-    let result = backend.switch_to(&req.token, &req.target_login_id).await;
-    Ok(to_api_response(result))
+    // A6: caller 所有权校验 — 先获取 session 校验 caller 身份
+    // 防止攻击者用泄露的 token 在不声明身份的情况下切换身份
+    let session = backend.get_session(&req.token).await;
+    match session {
+        Ok(s) => {
+            if !can_switch_to(
+                &backend,
+                &req.caller_login_id,
+                &s.login_id,
+                &req.caller_token,
+            )
+            .await
+            {
+                return Ok(to_api_response(Err(BulwarkError::NotPermission(
+                    "caller 非属主且无 admin:sessions 权限，禁止 switch_to".to_string(),
+                ))));
+            }
+            // 校验通过，执行 switch_to（内部还有 target_account_exists + guard 两层防御）
+            let result = backend.switch_to(&req.token, &req.target_login_id).await;
+            Ok(to_api_response(result))
+        },
+        Err(e) => Ok(to_api_response(Err(e))),
+    }
 }
 
 #[forge(
@@ -746,11 +823,72 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_sdforge_switch_to_succeeds() {
+    async fn test_sdforge_switch_to_succeeds_for_owner() {
         let app = make_router();
+        // caller_login_id == session.login_id ("mock-user") → 属主，允许
+        let body = serde_json::json!({
+            "token": "tok",
+            "target_login_id": "user2",
+            "caller_login_id": "mock-user"
+        });
+        let resp_json = post_json(app, "/api/v1/auth/switch-to", body).await;
+        assert!(
+            resp_json.get("error_code").is_none() || resp_json["error_code"].is_null(),
+            "属主应允许 switch_to，实际: {:?}",
+            resp_json
+        );
+    }
+
+    /// A6: 非属主且无 admin:sessions 权限的 caller 被拒绝 switch_to。
+    #[tokio::test]
+    async fn test_sdforge_switch_to_denies_non_owner() {
+        let app = make_router();
+        // caller_login_id != session.login_id ("mock-user")，无 caller_token
+        let body = serde_json::json!({
+            "token": "tok",
+            "target_login_id": "user2",
+            "caller_login_id": "attacker"
+        });
+        let resp_json = post_json(app, "/api/v1/auth/switch-to", body).await;
+        assert!(
+            !resp_json["error_code"].is_null(),
+            "非属主应被拒绝，实际: {:?}",
+            resp_json
+        );
+    }
+
+    /// A6: caller_login_id 为空（fail-closed）时 switch_to 被拒绝。
+    /// 模拟 BackendRemote 旧版客户端仅发送 `{"token", "target_login_id"}` 的场景。
+    #[tokio::test]
+    async fn test_sdforge_switch_to_denies_empty_caller_login_id() {
+        let app = make_router();
+        // 不提供 caller_login_id（serde default = ""）→ fail-closed
         let body = serde_json::json!({ "token": "tok", "target_login_id": "user2" });
         let resp_json = post_json(app, "/api/v1/auth/switch-to", body).await;
-        assert!(resp_json.get("error_code").is_none() || resp_json["error_code"].is_null());
+        assert!(
+            !resp_json["error_code"].is_null(),
+            "空 caller_login_id 应 fail-closed 拒绝，实际: {:?}",
+            resp_json
+        );
+    }
+
+    /// A6: 非属主但有 admin:sessions 权限的 caller 允许 switch_to。
+    #[tokio::test]
+    async fn test_sdforge_switch_to_allows_admin_permission() {
+        let app = make_router();
+        // caller_login_id != session.login_id，但 caller_token 有 admin:sessions 权限
+        let body = serde_json::json!({
+            "token": "tok",
+            "target_login_id": "user2",
+            "caller_login_id": "admin-user",
+            "caller_token": "admin-token"
+        });
+        let resp_json = post_json(app, "/api/v1/auth/switch-to", body).await;
+        assert!(
+            resp_json.get("error_code").is_none() || resp_json["error_code"].is_null(),
+            "有 admin:sessions 权限应允许，实际: {:?}",
+            resp_json
+        );
     }
 
     #[tokio::test]

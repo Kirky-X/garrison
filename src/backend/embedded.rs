@@ -332,6 +332,11 @@ mod tests {
             .login("user1", &LoginParams::default())
             .await
             .unwrap();
+        // A6: 需预先创建 target Account-Session，否则 target_account_exists 校验先返回 InvalidParam
+        let _ = backend
+            .login("user2", &LoginParams::default())
+            .await
+            .unwrap();
         // 默认 DenyAllSwitchToGuard 拒绝所有切换（安全默认）
         let result = backend.switch_to(&token, "user2").await;
         assert!(result.is_err());
