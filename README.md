@@ -196,7 +196,7 @@ graph TD
 
 ```toml
 [dependencies]
-bulwark = { version = "0.6", features = ["web-axum"] }
+bulwark = { version = "0.7", features = ["web-axum"] }
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -204,7 +204,7 @@ tokio = { version = "1", features = ["full"] }
 
 ```toml
 [dependencies]
-bulwark = { version = "0.6", features = ["full"] }
+bulwark = { version = "0.7", features = ["full"] }
 ```
 
 ### 最小示例
@@ -318,10 +318,11 @@ async fn main() -> BulwarkResult<()> {
 
 | 特性 | 默认 | 说明 |
 | --- | :---: | --- |
-| `cache-memory` | ✅ | 内存缓存后端（oxcache 内存层） |
-| `cache-redis` | ✅ | Redis 缓存后端（oxcache L2） |
-| `db-sqlite` | ✅ | SQLite 数据库后端（dbnexus + auto-migrate） |
-| `web-axum` | ✅ | axum Web 框架适配 |
+| `backend-embedded` | ✅ | 内嵌后端模式（进程内认证，委托 BulwarkManager，0.7.0 新增） |
+| `cache-memory` | ❌ | 内存缓存后端（oxcache 内存层） |
+| `cache-redis` | ❌ | Redis 缓存后端（oxcache L2） |
+| `db-sqlite` | ❌ | SQLite 数据库后端（dbnexus + auto-migrate） |
+| `web-axum` | ❌ | axum Web 框架适配 |
 | `web-actix` | ❌ | actix-web Web 框架适配 |
 | `web-warp` | ❌ | warp Web 框架适配 |
 | `protocol-jwt` | ❌ | JWT 签发与验证 |
@@ -339,7 +340,7 @@ async fn main() -> BulwarkResult<()> {
 | `secure-sign` | ❌ | HMAC-SHA256/SHA512 工具 |
 | `secure-httpbasic` | ❌ | HTTP Basic 认证 (RFC 7617) |
 | `secure-httpdigest` | ❌ | HTTP Digest 认证 (RFC 7616) |
-| `secure-password` | ❌ | 密码哈希（argon2 + bcrypt，0.4.2 新增） |
+| `account-credential-zeroize` | ❌ | 凭证模型 zeroize 扩展（argon2 + bcrypt + zeroize，0.6.0 新增） |
 | `listener` | ❌ | 事件监听器（15 个事件变体，0.4.2 扩展） |
 | `tracing-log` | ❌ | tracing 日志桥接 |
 | `metrics-prometheus` | ❌ | Prometheus 指标 |
@@ -427,6 +428,7 @@ async fn main() -> BulwarkResult<()> {
 - [x] **v0.5.2**（2026-07-08）架构重构：BulwarkLogic trait 拆分为 6 个子 trait + LoginId 迁移到 String
 - [x] **v0.5.3**（2026-07-09）功能补全：oxcache 升级 / stp 完整拆分 / MySQL 后端 / Firewall MaxMindDb
 - [x] **v0.6.0**（2026-07-09）账号安全引擎：account/ 模块 + Credential SPI + PasswordPolicyEngine + AuthenticationFlow DSL + remember-me / Redis 部署模式 / switch_to / SAML 2.0 / OIDC RP / Redis pub/sub SsoChannel
+- [x] **v0.7.0**（2026-07-13）微服务架构 + ABAC/Cedar + OAuth2 Server：backend-remote / Auth Server / ABAC 引擎 / OAuth2 Server 4 端点 + 架构加固 + 依赖优化
 - [ ] **v1.0.0** 稳定版：API 冻结 + 性能基准 + 生产案例
 
 完整规划见 [docs/ROADMAP.md](./docs/ROADMAP.md)。

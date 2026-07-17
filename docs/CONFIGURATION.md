@@ -2,7 +2,7 @@
 
 > Bulwark 配置由 `BulwarkConfig` 统一管理，支持三级配置源合并与 `tokio::sync::watch` 热更新能力。
 >
-> - 适用版本：0.6.0（核心配置 + JWT / 签名 / SSO / remember-me / Redis 部署模式 / 多租户 / 账号安全引擎等扩展配置）
+> - 适用版本：0.7.0（核心配置 + JWT / 签名 / SSO / remember-me / Redis 部署模式 / 多租户 / 账号安全引擎 / 微服务架构 / ABAC / OAuth2 Server 等扩展配置）
 > - 配置类型：`BulwarkConfig`，实现 `serde::Serialize / Deserialize`
 > 架构设计详见 [architecture.md](./ARCHITECTURE.md)；部署配置详见 [deployment.md](./DEPLOYMENT.md)。
 

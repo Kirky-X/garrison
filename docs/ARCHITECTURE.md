@@ -2,10 +2,10 @@
 
 > Bulwark 是面向 Rust 生态的身份认证鉴权框架。
 >
-> - 版本：0.6.0（账号安全引擎 + gap closure：account/ 模块 / Credential SPI / PasswordPolicyEngine / AuthenticationFlow DSL / remember-me / Redis 部署模式 / switch_to / SAML 2.0 / OIDC RP / Redis pub/sub SsoChannel / 多租户 / 社交登录 / 审计日志 / 安全防护 / 角色层级 / 决策溯源 / Keycloak OIDC RP / PostgreSQL / MySQL）
+> - 版本：0.7.0（微服务架构 + ABAC/Cedar + OAuth2 Server + 架构加固 + 依赖优化：backend-remote / Auth Server / ABAC 引擎 / OAuth2 Server 4 端点 / secure-sanitize / 错误类型统一 / mod.rs 加固）
 > - 运行时：tokio 1.x
 > - Web 适配：axum 0.8 / actix-web 4 / warp 0.4
-> - 存储：dbnexus 0.3（SQLite / PostgreSQL / MySQL + auto-migrate）+ Repository 层（9 trait + SqliteRepository，tenant_id 隔离）
+> - 存储：dbnexus 0.4（SQLite / PostgreSQL / MySQL + auto-migrate）+ Repository 层（9 trait + SqliteRepository，tenant_id 隔离）
 > - 缓存：oxcache 0.3.3（L1 内存 + L2 redis，per-entry TTL + ttl_sync 查询）
 > - License：Apache-2.0
 > 配置相关字段说明详见 [configuration.md](./CONFIGURATION.md)；开发规范详见 [development.md](./DEVELOPMENT.md)。

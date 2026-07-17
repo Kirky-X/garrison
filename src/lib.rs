@@ -111,7 +111,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! bulwark = { version = "0.2", features = ["web-axum", "protocol-jwt"] }
+//! bulwark = { version = "0.7", features = ["web-axum", "protocol-jwt"] }
 //! ```
 //!
 //! ```rust
