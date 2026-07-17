@@ -13,7 +13,7 @@
 //! - `AxumStorage` 用 `HashMap<String, String>`，请求结束自动清理
 
 use crate::config::BulwarkConfig;
-use crate::context::token_extract::strip_bearer_prefix;
+use crate::context::token_extract::{is_body_token_allowed_method, strip_bearer_prefix};
 use crate::context::{BulwarkContext, BulwarkRequest, BulwarkResponse, BulwarkStorage};
 use crate::error::{BulwarkError, BulwarkResult};
 use axum::body::Body;
@@ -130,6 +130,16 @@ impl<'a> BulwarkRequest for AxumRequest<'a> {
         }
         // 3. 从 body 提取（优先级最低，仅当 is_read_body=true 且有预读 body 字节时）
         if config.is_read_body {
+            // C7: 仅 POST/PUT/PATCH 允许从 body 提取 token，防止 GET/HEAD 等方法的
+            // body 注入攻击（攻击者可通过 `<img src="...?token=...">` 注入恶意 token）。
+            let method = self.request.method().as_str();
+            if !is_body_token_allowed_method(method) {
+                tracing::warn!(
+                    method = method,
+                    "C7: HTTP 方法不允许从 body 提取 token，已跳过 body 读取"
+                );
+                return Ok(None);
+            }
             if let Some(token) = extract_token_from_json_body(
                 &self.body_bytes,
                 self.request.headers(),
@@ -438,6 +448,15 @@ impl BulwarkRequest for AxumRequestWrapper {
         }
         // 3. 从 body 提取（优先级最低，仅当 is_read_body=true 且有预读 body 字节时）
         if config.is_read_body {
+            // C7: 仅 POST/PUT/PATCH 允许从 body 提取 token（与 AxumRequest::get_token 一致）。
+            let method = self.method.as_str();
+            if !is_body_token_allowed_method(method) {
+                tracing::warn!(
+                    method = method,
+                    "C7: HTTP 方法不允许从 body 提取 token，已跳过 body 读取"
+                );
+                return Ok(None);
+            }
             if let Some(token) =
                 extract_token_from_json_body(&self.body_bytes, &self.headers, &config.token_name)?
             {
@@ -1130,5 +1149,114 @@ mod tests {
             Some("header_tok_456".to_string()),
             "body 无 token 字段时应回退到 header 读取"
         );
+    }
+
+    // ========================================================================
+    // C7: body token 提取方法限制测试（防 body 注入攻击）
+    // ========================================================================
+
+    /// C7: GET 方法 + body 含 token + is_read_body=true 应跳过 body 提取。
+    ///
+    /// 直接测试 `AxumRequest::get_token`。GET 方法不应从 body 提取 token，
+    /// 否则攻击者可通过 `<img src="...?token=...">` 注入恶意 token。
+    #[test]
+    fn c7_axum_request_get_method_skips_body_token() {
+        let body_str = r#"{"bulwark_token":"body_token_should_be_skipped"}"#;
+        let req = make_request_with_body(
+            "/",
+            "GET",
+            &[("Content-Type", "application/json")],
+            body_str,
+        );
+        let axum_req = AxumRequest::with_body(&req, body_str.as_bytes().to_vec());
+        let mut config = BulwarkConfig::default_config();
+        config.is_read_header = false;
+        config.is_read_cookie = false;
+        config.is_read_body = true;
+        let token = axum_req.get_token(&config).unwrap();
+        assert_eq!(
+            token, None,
+            "C7: GET 方法不应从 body 提取 token（防 body 注入攻击）"
+        );
+    }
+
+    /// C7: POST 方法 + body 含 token + is_read_body=true 应正常提取。
+    ///
+    /// 直接测试 `AxumRequest::get_token`。POST 方法允许从 body 提取 token。
+    #[test]
+    fn c7_axum_request_post_method_allows_body_token() {
+        let body_str = r#"{"bulwark_token":"body_token_ok"}"#;
+        let req = make_request_with_body(
+            "/",
+            "POST",
+            &[("Content-Type", "application/json")],
+            body_str,
+        );
+        let axum_req = AxumRequest::with_body(&req, body_str.as_bytes().to_vec());
+        let mut config = BulwarkConfig::default_config();
+        config.is_read_header = false;
+        config.is_read_cookie = false;
+        config.is_read_body = true;
+        let token = axum_req.get_token(&config).unwrap();
+        assert_eq!(
+            token,
+            Some("body_token_ok".to_string()),
+            "C7: POST 方法应允许从 body 提取 token"
+        );
+    }
+
+    /// C7: GET 方法 + body 含 token + is_read_body=true 应跳过 body 提取（通过 AxumContext，验证 Wrapper）。
+    ///
+    /// 通过 `AxumContext::with_body` + `request()` 测试 `AxumRequestWrapper::get_token`，
+    /// 确保 Wrapper 路径也正确应用 C7 method 限制。
+    #[test]
+    fn c7_axum_context_get_method_skips_body_token_via_wrapper() {
+        let body_str = r#"{"bulwark_token":"wrapper_skipped"}"#;
+        let req = make_request_with_body(
+            "/",
+            "GET",
+            &[("Content-Type", "application/json")],
+            body_str,
+        );
+        let ctx = AxumContext::with_body(&req, body_str.as_bytes().to_vec());
+        let request = ctx.request().unwrap();
+        let mut config = BulwarkConfig::default_config();
+        config.is_read_header = false;
+        config.is_read_cookie = false;
+        config.is_read_body = true;
+        let token = request.get_token(&config).unwrap();
+        assert_eq!(
+            token, None,
+            "C7: 通过 AxumContext 的 GET 方法不应从 body 提取 token"
+        );
+    }
+
+    /// C7: PUT/PATCH 方法 + body 含 token + is_read_body=true 应正常提取（通过 AxumContext）。
+    ///
+    /// 通过 `AxumContext::with_body` + `request()` 验证 PUT/PATCH 也允许提取 token。
+    #[test]
+    fn c7_axum_context_put_patch_methods_allow_body_token_via_wrapper() {
+        for method in &["PUT", "PATCH"] {
+            let body_str = format!(r#"{{"bulwark_token":"tok_{}"}}"#, method);
+            let req = make_request_with_body(
+                "/",
+                method,
+                &[("Content-Type", "application/json")],
+                &body_str,
+            );
+            let ctx = AxumContext::with_body(&req, body_str.as_bytes().to_vec());
+            let request = ctx.request().unwrap();
+            let mut config = BulwarkConfig::default_config();
+            config.is_read_header = false;
+            config.is_read_cookie = false;
+            config.is_read_body = true;
+            let token = request.get_token(&config).unwrap();
+            assert_eq!(
+                token,
+                Some(format!("tok_{}", method)),
+                "C7: {} 方法应允许从 body 提取 token",
+                method
+            );
+        }
     }
 }

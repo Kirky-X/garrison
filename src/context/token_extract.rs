@@ -74,6 +74,28 @@ pub fn strip_bearer_prefix(auth_str: &str) -> Option<&str> {
     }
 }
 
+/// C7: 检查 HTTP 方法是否允许从 body 提取 token。
+///
+/// 仅 `POST` / `PUT` / `PATCH` 允许从 body 提取 token。`GET` / `HEAD` / `DELETE` /
+/// `OPTIONS` 等方法不应从 body 提取 token，原因有二：
+/// 1. **语义层面**：RFC 7231 规定 GET/HEAD/DELETE 请求语义上不应有 body，
+///    部分代理 / CDN / WAF 会丢弃或拒绝转发 GET 请求的 body。
+/// 2. **安全层面**：允许 GET 请求携带 token 会被攻击者利用构造恶意链接
+///    （如 `<img src="https://victim.com/api?token=attacker_token">`），
+///    在用户不知情的情况下用 body 中的 token 替换正常 token（CSRF 变种）。
+///
+/// # 参数
+/// - `method`: HTTP 方法字符串（如 `"POST"` / `"get"` / `"Put"`）。
+///
+/// # 返回
+/// - `true`: 方法允许从 body 提取 token（POST/PUT/PATCH，大小写不敏感）。
+/// - `false`: 方法不允许（其他所有方法，包括 GET/HEAD/DELETE/OPTIONS/CONNECT/TRACE）。
+pub fn is_body_token_allowed_method(method: &str) -> bool {
+    method.eq_ignore_ascii_case("POST")
+        || method.eq_ignore_ascii_case("PUT")
+        || method.eq_ignore_ascii_case("PATCH")
+}
+
 /// 从 `HeaderMap` 提取 token。
 ///
 /// 提取顺序：
@@ -391,5 +413,51 @@ mod tests {
         // Authorization 无 Bearer 前缀，应回退到 cookie
         let token = extract_token_from_headers(&headers, &config).unwrap();
         assert_eq!(token, Some("cookie_tok".to_string()));
+    }
+
+    // ========================================================================
+    // is_body_token_allowed_method 测试（C7）
+    // ========================================================================
+
+    /// C7: POST 方法应允许从 body 提取 token。
+    #[test]
+    fn c7_is_body_token_allowed_method_post() {
+        assert!(is_body_token_allowed_method("POST"));
+    }
+
+    /// C7: PUT / PATCH 方法应允许从 body 提取 token。
+    #[test]
+    fn c7_is_body_token_allowed_method_put_patch() {
+        assert!(is_body_token_allowed_method("PUT"));
+        assert!(is_body_token_allowed_method("PATCH"));
+    }
+
+    /// C7: GET / HEAD / DELETE / OPTIONS / CONNECT / TRACE 方法应拒绝从 body 提取 token。
+    ///
+    /// 这些方法语义上不应携带 body（RFC 7231），允许从 body 提取 token 会引入
+    /// CSRF 变种攻击（如 `<img src="https://victim.com/api?token=...">`）。
+    #[test]
+    fn c7_is_body_token_allowed_method_rejects_others() {
+        assert!(!is_body_token_allowed_method("GET"));
+        assert!(!is_body_token_allowed_method("HEAD"));
+        assert!(!is_body_token_allowed_method("DELETE"));
+        assert!(!is_body_token_allowed_method("OPTIONS"));
+        assert!(!is_body_token_allowed_method("CONNECT"));
+        assert!(!is_body_token_allowed_method("TRACE"));
+    }
+
+    /// C7: 方法判断应大小写不敏感；空字符串与未知方法应拒绝。
+    #[test]
+    fn c7_is_body_token_allowed_method_case_insensitive_and_edge() {
+        // 大小写不敏感
+        assert!(is_body_token_allowed_method("post"));
+        assert!(is_body_token_allowed_method("Put"));
+        assert!(is_body_token_allowed_method("pAtCh"));
+        assert!(is_body_token_allowed_method("PoSt"));
+        // 边界
+        assert!(!is_body_token_allowed_method(""));
+        assert!(!is_body_token_allowed_method("unknown"));
+        assert!(!is_body_token_allowed_method("POST ")); // 带空格
+        assert!(!is_body_token_allowed_method(" POST")); // 带空格
     }
 }

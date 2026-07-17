@@ -14,7 +14,7 @@
 //! - `ActixContext` 组合 `&HttpRequest + ActixResponse + ActixStorage`
 
 use crate::config::BulwarkConfig;
-use crate::context::token_extract::strip_bearer_prefix;
+use crate::context::token_extract::{is_body_token_allowed_method, strip_bearer_prefix};
 use crate::context::{BulwarkContext, BulwarkRequest, BulwarkResponse, BulwarkStorage};
 use crate::error::{BulwarkError, BulwarkResult};
 use actix_web::http::header::{HeaderMap, HeaderName, HeaderValue};
@@ -134,6 +134,16 @@ impl<'a> BulwarkRequest for ActixRequest<'a> {
         }
         // 3. 从 body 提取（优先级最低，仅当 is_read_body=true 且有预读 body 字节时）
         if config.is_read_body && !self.body_bytes.is_empty() {
+            // C7: 仅 POST/PUT/PATCH 允许从 body 提取 token，防止 GET/HEAD 等方法的
+            // body 注入攻击（攻击者可通过 `<img src="...?token=...">` 注入恶意 token）。
+            let method = self.request.method().as_str();
+            if !is_body_token_allowed_method(method) {
+                tracing::warn!(
+                    method = method,
+                    "C7: HTTP 方法不允许从 body 提取 token，已跳过 body 读取"
+                );
+                return Ok(None);
+            }
             // 检查 Content-Type: application/json
             let content_type = self.header("Content-Type")?.unwrap_or_default();
             if content_type.contains("application/json") {
@@ -435,6 +445,15 @@ impl BulwarkRequest for ActixRequestWrapper {
         }
         // 3. 从 body 提取（优先级最低，仅当 is_read_body=true 且有预读 body 字节时）
         if config.is_read_body && !self.body_bytes.is_empty() {
+            // C7: 仅 POST/PUT/PATCH 允许从 body 提取 token（与 ActixRequest::get_token 一致）。
+            let method = self.method.as_str();
+            if !is_body_token_allowed_method(method) {
+                tracing::warn!(
+                    method = method,
+                    "C7: HTTP 方法不允许从 body 提取 token，已跳过 body 读取"
+                );
+                return Ok(None);
+            }
             // 检查 Content-Type: application/json
             let content_type = self.header("Content-Type")?.unwrap_or_default();
             if content_type.contains("application/json") {
@@ -908,5 +927,95 @@ mod tests {
             Some("ctx_body_token".to_string()),
             "ActixContext::with_body 应通过 request() 传递 body_bytes，使 get_token 能从 body 提取 token"
         );
+    }
+
+    // ========================================================================
+    // C7: body token 提取方法限制测试（防 body 注入攻击）
+    // ========================================================================
+
+    /// C7: GET 方法 + body 含 token + is_read_body=true 应跳过 body 提取。
+    ///
+    /// 直接测试 `ActixRequest::get_token`。GET 方法不应从 body 提取 token，
+    /// 否则攻击者可通过 `<img src="...?token=...">` 注入恶意 token。
+    #[test]
+    fn c7_actix_request_get_method_skips_body_token() {
+        let req = make_request("/", "GET", &[("Content-Type", "application/json")]);
+        let actix_req = ActixRequest::with_body(
+            &req,
+            br#"{"bulwark_token":"body_token_should_be_skipped"}"#.to_vec(),
+        );
+        let mut config = BulwarkConfig::default_config();
+        config.is_read_header = false;
+        config.is_read_cookie = false;
+        config.is_read_body = true;
+        let token = actix_req.get_token(&config).unwrap();
+        assert_eq!(
+            token, None,
+            "C7: GET 方法不应从 body 提取 token（防 body 注入攻击）"
+        );
+    }
+
+    /// C7: POST 方法 + body 含 token + is_read_body=true 应正常提取。
+    ///
+    /// 直接测试 `ActixRequest::get_token`。POST 方法允许从 body 提取 token。
+    #[test]
+    fn c7_actix_request_post_method_allows_body_token() {
+        let req = make_request("/", "POST", &[("Content-Type", "application/json")]);
+        let actix_req =
+            ActixRequest::with_body(&req, br#"{"bulwark_token":"body_token_ok"}"#.to_vec());
+        let mut config = BulwarkConfig::default_config();
+        config.is_read_header = false;
+        config.is_read_cookie = false;
+        config.is_read_body = true;
+        let token = actix_req.get_token(&config).unwrap();
+        assert_eq!(
+            token,
+            Some("body_token_ok".to_string()),
+            "C7: POST 方法应允许从 body 提取 token"
+        );
+    }
+
+    /// C7: GET 方法 + body 含 token + is_read_body=true 应跳过 body 提取（通过 ActixContext，验证 Wrapper）。
+    ///
+    /// 通过 `ActixContext::with_body` + `request()` 测试 `ActixRequestWrapper::get_token`，
+    /// 确保 Wrapper 路径也正确应用 C7 method 限制。
+    #[test]
+    fn c7_actix_context_get_method_skips_body_token_via_wrapper() {
+        let req = make_request("/", "GET", &[("Content-Type", "application/json")]);
+        let ctx = ActixContext::with_body(&req, br#"{"bulwark_token":"wrapper_skipped"}"#.to_vec());
+        let request = ctx.request().unwrap();
+        let mut config = BulwarkConfig::default_config();
+        config.is_read_header = false;
+        config.is_read_cookie = false;
+        config.is_read_body = true;
+        let token = request.get_token(&config).unwrap();
+        assert_eq!(
+            token, None,
+            "C7: 通过 ActixContext 的 GET 方法不应从 body 提取 token"
+        );
+    }
+
+    /// C7: PUT/PATCH 方法 + body 含 token + is_read_body=true 应正常提取（通过 ActixContext）。
+    ///
+    /// 通过 `ActixContext::with_body` + `request()` 验证 PUT/PATCH 也允许提取 token。
+    #[test]
+    fn c7_actix_context_put_patch_methods_allow_body_token_via_wrapper() {
+        for method in &["PUT", "PATCH"] {
+            let req = make_request("/", method, &[("Content-Type", "application/json")]);
+            let body_bytes = format!(r#"{{"bulwark_token":"tok_{}"}}"#, method).into_bytes();
+            let ctx = ActixContext::with_body(&req, body_bytes);
+            let request = ctx.request().unwrap();
+            let mut config = BulwarkConfig::default_config();
+            config.is_read_header = false;
+            config.is_read_cookie = false;
+            config.is_read_body = true;
+            let token = request.get_token(&config).unwrap();
+            assert_eq!(
+                token,
+                Some(format!("tok_{}", method)),
+                "C7: {} 方法应允许从 body 提取 token",
+                method
+            );
+        }
     }
 }

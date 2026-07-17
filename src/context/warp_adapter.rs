@@ -14,7 +14,7 @@
 //! - `WarpContext` 组合 `WarpRequest + WarpResponse + WarpStorage`
 
 use crate::config::BulwarkConfig;
-use crate::context::token_extract::strip_bearer_prefix;
+use crate::context::token_extract::{is_body_token_allowed_method, strip_bearer_prefix};
 use crate::context::{BulwarkContext, BulwarkRequest, BulwarkResponse, BulwarkStorage};
 use crate::error::{BulwarkError, BulwarkResult};
 use std::collections::HashMap;
@@ -151,6 +151,16 @@ impl BulwarkRequest for WarpRequest {
         }
         // 3. 从 body 提取（优先级最低，仅当 is_read_body=true 且有预读 body 字节时）
         if config.is_read_body && !self.body_bytes.is_empty() {
+            // C7: 仅 POST/PUT/PATCH 允许从 body 提取 token，防止 GET/HEAD 等方法的
+            // body 注入攻击（攻击者可通过 `<img src="...?token=...">` 注入恶意 token）。
+            let method = self.method.as_str();
+            if !is_body_token_allowed_method(method) {
+                tracing::warn!(
+                    method = method,
+                    "C7: HTTP 方法不允许从 body 提取 token，已跳过 body 读取"
+                );
+                return Ok(None);
+            }
             // 检查 Content-Type: application/json
             let content_type = self.header("Content-Type")?.unwrap_or_default();
             if content_type.contains("application/json") {
@@ -825,6 +835,84 @@ mod tests {
             token,
             Some("ctx_body_token".to_string()),
             "WarpContext::with_body 应通过 request() 传递 body_bytes，使 get_token 能从 body 提取 token"
+        );
+    }
+
+    // ========================================================================
+    // C7: body token 提取方法限制测试（防 body 注入攻击）
+    // ========================================================================
+
+    /// C7: GET 方法 + body 含 token + is_read_body=true 应跳过 body 提取。
+    ///
+    /// GET 方法不应从 body 提取 token，否则攻击者可通过构造恶意链接
+    /// （如 `<img src="https://victim.com/api?token=attacker_token">`）
+    /// 在用户不知情的情况下注入恶意 token（CSRF 变种）。
+    #[test]
+    fn c7_warp_request_get_method_skips_body_token() {
+        let req = WarpRequest::with_body(
+            "/".to_string(),
+            "GET".to_string(),
+            make_headers(&[("Content-Type", "application/json")]),
+            br#"{"bulwark_token":"body_token_should_be_skipped"}"#.to_vec(),
+        );
+        let mut config = BulwarkConfig::default_config();
+        config.is_read_header = false;
+        config.is_read_cookie = false;
+        config.is_read_body = true;
+        let token = req.get_token(&config).unwrap();
+        assert_eq!(
+            token, None,
+            "C7: GET 方法不应从 body 提取 token（防 body 注入攻击）"
+        );
+    }
+
+    /// C7: POST/PUT/PATCH 方法 + body 含 token + is_read_body=true 应正常提取。
+    ///
+    /// 验证三个允许的方法都能正常从 body 提取 token。
+    #[test]
+    fn c7_warp_request_post_put_patch_methods_allow_body_token() {
+        for method in &["POST", "PUT", "PATCH"] {
+            let body_bytes = format!(r#"{{"bulwark_token":"tok_{}"}}"#, method).into_bytes();
+            let req = WarpRequest::with_body(
+                "/".to_string(),
+                method.to_string(),
+                make_headers(&[("Content-Type", "application/json")]),
+                body_bytes,
+            );
+            let mut config = BulwarkConfig::default_config();
+            config.is_read_header = false;
+            config.is_read_cookie = false;
+            config.is_read_body = true;
+            let token = req.get_token(&config).unwrap();
+            assert_eq!(
+                token,
+                Some(format!("tok_{}", method)),
+                "C7: {} 方法应允许从 body 提取 token",
+                method
+            );
+        }
+    }
+
+    /// C7: 通过 WarpContext（Wrapper 路径）的 GET 方法也应跳过 body 提取。
+    ///
+    /// 通过 `WarpContext::with_body` + `request()` 验证 GET 方法在 Wrapper 路径下也被拦截。
+    #[test]
+    fn c7_warp_context_get_method_skips_body_token_via_wrapper() {
+        let ctx = WarpContext::with_body(
+            "/".to_string(),
+            "GET".to_string(),
+            make_headers(&[("Content-Type", "application/json")]),
+            br#"{"bulwark_token":"wrapper_skipped"}"#.to_vec(),
+        );
+        let request = ctx.request().unwrap();
+        let mut config = BulwarkConfig::default_config();
+        config.is_read_header = false;
+        config.is_read_cookie = false;
+        config.is_read_body = true;
+        let token = request.get_token(&config).unwrap();
+        assert_eq!(
+            token, None,
+            "C7: 通过 WarpContext 的 GET 方法不应从 body 提取 token"
         );
     }
 }
