@@ -795,7 +795,7 @@
         use async_trait::async_trait;
         use std::sync::atomic::{AtomicUsize, Ordering};
 
-        #[allow(dead_code)]
+        #[allow(dead_code, reason = "test helper: 测试用计数器，部分断言场景暂未使用全部字段")]
         struct KickoutCounter {
             count: AtomicUsize,
         }

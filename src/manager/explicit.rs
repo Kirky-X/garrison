@@ -165,7 +165,10 @@ mod tests {
 
     struct MockInterface {
         permissions: HashMap<String, Vec<String>>,
-        #[allow(dead_code)]
+        #[allow(
+            dead_code,
+            reason = "test helper: 测试用 mock 字段，当前用例仅校验 permissions"
+        )]
         roles: HashMap<String, Vec<String>>,
     }
 

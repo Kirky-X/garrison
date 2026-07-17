@@ -693,11 +693,14 @@ impl Drop for DefaultOidcProvider {
 #[derive(Debug, Deserialize)]
 struct TokenResponse {
     id_token: Option<String>,
-    #[allow(dead_code)]
+    #[allow(
+        dead_code,
+        reason = "OAuth2 兼容字段：当前仅用 id_token，access_token 预留供 protocol-jwt 扩展"
+    )]
     access_token: Option<String>,
-    #[allow(dead_code)]
+    #[allow(dead_code, reason = "OAuth2 兼容字段：预留 token_type 供后续扩展")]
     token_type: Option<String>,
-    #[allow(dead_code)]
+    #[allow(dead_code, reason = "OAuth2 兼容字段：预留 expires_in 供后续扩展")]
     expires_in: Option<i64>,
 }
 
