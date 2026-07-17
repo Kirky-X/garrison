@@ -219,7 +219,7 @@ protocol-sso-server = ["protocol-sso"]
 
 # === 安全模块 ===
 secure-totp = ["totp-rs", "dep:base32"]
-secure-sign = ["dep:sha2", "hmac", "dep:base64", "md5"]
+secure-sign = ["dep:sha2", "hmac", "dep:base64", "md5", "dep:subtle"]
 secure-httpbasic = ["dep:base64"]
 secure-httpdigest = ["dep:sha2", "dep:base64", "md5"]
 # Unicode 同形异义字检测
