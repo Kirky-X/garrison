@@ -84,7 +84,8 @@ maxminddb = { version = "0.29", optional = true, default-features = false }
 quick-xml = { version = "0.41", optional = true, default-features = false, features = ["serialize"] }
 # 版本 ~1.2 与 oxcache 0.3 间接依赖的 redis 保持一致
 redis = { version = "~1.2", optional = true, default-features = false, features = ["aio", "tokio-comp", "connection-manager", "script"] }
-futures = { version = "0.3", optional = true, default-features = false, features = ["std"] }
+# futures：health 模块的 join_all 并发调度等核心异步原语（必需依赖，非 optional）
+futures = { version = "0.3", default-features = false, features = ["std"] }
 inklog = { version = "0.1", optional = true, default-features = false }
 limiteron = { version = "0.2", optional = true, default-features = false, features = ["distributed"] }
 sdforge = { version = "0.4", optional = true, default-features = false, features = ["http"] }
@@ -177,7 +178,7 @@ all-defaults = ["cache-memory", "db-sqlite", "web-axum"]
 # cache-memory 启用 oxcache L1 moka 内存后端 + 序列化（serde_json）
 # cache-redis 在 cache-memory 基础上叠加 L2 redis 后端
 cache-memory = ["oxcache", "oxcache/memory", "oxcache/serialization"]
-cache-redis = ["cache-memory", "oxcache/redis", "dep:redis", "dep:futures"]
+cache-redis = ["cache-memory", "oxcache/redis", "dep:redis"]
 
 # === 数据库后端（通过 dbnexus 0.4） ===
 # db-base 为内部 feature，由 db-sqlite / db-postgres / db-mysql 继承；dbnexus 禁止 embedded 与 server-side 混用。

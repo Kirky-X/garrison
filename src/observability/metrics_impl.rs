@@ -4,7 +4,9 @@
 //! BulwarkMetrics 实现块（从 mod.rs 迁移）。
 
 #[cfg(feature = "metrics-prometheus")]
-use super::*;
+use super::BulwarkMetrics;
+#[cfg(feature = "metrics-prometheus")]
+use std::time::Duration;
 
 #[cfg(feature = "metrics-prometheus")]
 impl BulwarkMetrics {
