@@ -264,6 +264,137 @@ impl PasswordRateLimiter {
     }
 }
 
+/// /token 端点速率限制器 — 防暴力枚举 `client_secret` / 密码。
+///
+/// 两层独立限速：
+/// - **per-client_id**：限制每个 client 的 `/token` 请求速率（默认 10 req/s），
+///   防御针对单一 client 的暴力枚举 `client_secret`
+/// - **per-username**：限制 password grant 中每个 username 的请求速率（默认 5 req/min），
+///   与 `PasswordRateLimiter`（失败计数器）互补 —— 后者限制失败次数，本结构限制请求次数
+///
+/// # 设计
+///
+/// - **limiteron 委托**：通过 `BulwarkDaoDistributedLimiter` + `MockDao` 实现原子计数 + TTL，
+///   `atomic_check_and_incr` 在 Redis 后端走 Lua 脚本原子 check-and-increment，
+///   `MockDao` 后端退化为 `incr` + 阈值判断（单进程原子）
+/// - **Fail-Open**：DAO 错误时返回 `true`（放行），避免单次故障导致全部 client 被锁
+/// - **独立于 PasswordRateLimiter**：后者是失败计数器（账户锁定），
+///   本结构是请求速率限制（QPS 限制），两者互补
+///
+/// # 与 PasswordRateLimiter 的区别
+///
+/// | 维度 | PasswordRateLimiter | TokenRateLimiter |
+/// |------|---------------------|------------------|
+/// | 限速对象 | username | client_id + username |
+/// | 计数事件 | 验证失败 | 每次请求 |
+/// | 重置条件 | 验证成功 | 窗口过期 |
+/// | 防御场景 | 撞库（同账户多 IP） | 暴力枚举 / QPS 滥用 |
+///
+/// # Key 格式
+///
+/// - `rate_limit:token:client:{client_id}` — per-client_id 计数
+/// - `rate_limit:token:user:{username}` — per-username 计数
+pub struct TokenRateLimiter {
+    /// 限流器（基于 `BulwarkDaoDistributedLimiter`，内部用 `MockDao` 进程内原子）
+    limiter: BulwarkDaoDistributedLimiter,
+    /// per-client_id 窗口内最大请求数
+    client_max: u64,
+    /// per-client_id 窗口时长（秒）
+    client_window_secs: u64,
+    /// per-username 窗口内最大请求数
+    username_max: u64,
+    /// per-username 窗口时长（秒）
+    username_window_secs: u64,
+}
+
+impl TokenRateLimiter {
+    /// 创建默认配置的速率限制器（10 req/s per-client_id + 5 req/min per-username）。
+    ///
+    /// 默认值依据：
+    /// - client_id 10 req/s：覆盖正常客户端的 token 刷新 + 短时重试需求
+    /// - username 5 req/min：限制单账户密码暴力尝试，与 `PasswordRateLimiter` 失败计数器互补
+    pub fn new() -> Self {
+        Self::with_limits(10, 1, 5, 60)
+    }
+
+    /// 自定义限速参数（测试 / 运维调优用）。
+    ///
+    /// 所有参数会被 clamp 到至少 1，避免 `max=0` 导致所有请求被拒。
+    pub fn with_limits(
+        client_max: u64,
+        client_window_secs: u64,
+        username_max: u64,
+        username_window_secs: u64,
+    ) -> Self {
+        let dao = Arc::new(MockDao::new());
+        let limiter = BulwarkDaoDistributedLimiter::new(dao);
+        Self {
+            limiter,
+            // 至少 1，避免 max=0 导致所有请求被拒
+            client_max: client_max.max(1),
+            client_window_secs: client_window_secs.max(1),
+            username_max: username_max.max(1),
+            username_window_secs: username_window_secs.max(1),
+        }
+    }
+
+    /// 检查 client_id 是否允许请求（未超 per-client_id 速率）。
+    ///
+    /// 调用即计数（`atomic_check_and_incr` 原子 check-and-increment）：
+    /// - 返回 `true`：本次请求计入窗口，允许继续
+    /// - 返回 `false`：已达窗口上限，拒绝
+    ///
+    /// # Fail-Open
+    ///
+    /// DAO 错误时返回 `true`（放行），与 `PasswordRateLimiter::check` 语义一致 ——
+    /// 避免单次 DAO 故障导致全部 client 被锁，可用性优先于限速准确性。
+    pub async fn check_client(&self, client_id: &str) -> bool {
+        let key = format!("rate_limit:token:client:{}", client_id);
+        let ttl = StdDuration::from_secs(self.client_window_secs);
+        match self
+            .limiter
+            .atomic_check_and_incr(&key, self.client_max, ttl)
+            .await
+        {
+            Ok(allowed) => allowed,
+            Err(e) => {
+                tracing::warn!("TokenRateLimiter::check_client failed: {}", e);
+                true
+            },
+        }
+    }
+
+    /// 检查 username 是否允许请求（未超 per-username 速率）。
+    ///
+    /// 调用即计数（`atomic_check_and_incr` 原子 check-and-increment）。
+    /// 仅 password grant type 调用，限制单账户的密码尝试 QPS。
+    ///
+    /// # Fail-Open
+    ///
+    /// DAO 错误时返回 `true`（放行）。
+    pub async fn check_username(&self, username: &str) -> bool {
+        let key = format!("rate_limit:token:user:{}", username);
+        let ttl = StdDuration::from_secs(self.username_window_secs);
+        match self
+            .limiter
+            .atomic_check_and_incr(&key, self.username_max, ttl)
+            .await
+        {
+            Ok(allowed) => allowed,
+            Err(e) => {
+                tracing::warn!("TokenRateLimiter::check_username failed: {}", e);
+                true
+            },
+        }
+    }
+}
+
+impl Default for TokenRateLimiter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// /oauth2/token handler，处理 4 种 grant type。
 ///
 /// # Refresh Token 统一（v0.7.1）
@@ -283,6 +414,9 @@ pub struct TokenHandler {
     /// Password grant 失败计数器（防 brute-force）。
     /// 为 None 时不启用账户锁定（向后兼容，但不推荐生产使用）。
     password_rate_limiter: Option<Arc<PasswordRateLimiter>>,
+    /// /token 端点速率限制器（per-client_id + per-username QPS 限制）。
+    /// 为 None 时不启用请求速率限制（向后兼容，但不推荐生产使用）。
+    token_rate_limiter: Option<Arc<TokenRateLimiter>>,
     /// 统一的 refresh token 轮换服务（db-sqlite feature 启用时可用）。
     /// 为 None 时退化为 DAO 键值存储（无 reuse detection）。
     #[cfg(feature = "db-sqlite")]
@@ -302,6 +436,7 @@ impl TokenHandler {
             authorize_handler,
             password_verifier: None,
             password_rate_limiter: None,
+            token_rate_limiter: None,
             #[cfg(feature = "db-sqlite")]
             refresh_rotation: None,
         }
@@ -318,6 +453,19 @@ impl TokenHandler {
     /// 未注入时 password grant 无账户级速率限制（向后兼容，但不推荐生产使用）。
     pub fn with_password_rate_limiter(mut self, limiter: Arc<PasswordRateLimiter>) -> Self {
         self.password_rate_limiter = Some(limiter);
+        self
+    }
+
+    /// 注入 `TokenRateLimiter` 启用 `/token` 端点速率限制（v0.7.1 B5）。
+    ///
+    /// 注入后：
+    /// - `handle_with_authorization` 在 client 认证前按 `client_id` 限速（默认 10 req/s）
+    /// - `handle_password` 在账户锁定检查前按 `username` 限速（默认 5 req/min）
+    ///
+    /// 未注入时 `/token` 端点无 QPS 限制（向后兼容，但不推荐生产使用 ——
+    /// 暴力枚举 `client_secret` / 密码无速率约束）。
+    pub fn with_token_rate_limiter(mut self, limiter: Arc<TokenRateLimiter>) -> Self {
+        self.token_rate_limiter = Some(limiter);
         self
     }
 
@@ -356,6 +504,23 @@ impl TokenHandler {
         req: &TokenRequest,
         authorization: Option<&str>,
     ) -> BulwarkResult<TokenResponse> {
+        // 0. per-client_id 速率限制（在 client 认证前，防暴力枚举 client_secret）
+        //
+        // 从 Basic Auth 头或 body 提取 client_id 用于限速 —— 即使凭证错误也计入，
+        // 防御攻击者用错误凭证暴力枚举 client_secret（与 PasswordRateLimiter 在
+        // 密码验证前 check 的设计一致）。
+        if let Some(limiter) = &self.token_rate_limiter {
+            let client_id = authorization
+                .and_then(parse_basic_auth)
+                .map(|(id, _)| id)
+                .unwrap_or_else(|| req.client_id.clone());
+            if !client_id.is_empty() && !limiter.check_client(&client_id).await {
+                return Err(BulwarkError::OAuth2(
+                    "rate_limited: 客户端请求过于频繁，请稍后再试".into(),
+                ));
+            }
+        }
+
         // 1. 验证客户端凭证（优先 Basic Auth）
         let client = self
             .authenticate_client_with_authorization(
@@ -644,6 +809,18 @@ impl TokenHandler {
             .password
             .as_ref()
             .ok_or_else(|| BulwarkError::OAuth2("invalid_request: password 参数缺失".into()))?;
+
+        // per-username QPS 速率限制（在账户锁定检查前，防暴力撞库）
+        //
+        // 与 PasswordRateLimiter（失败计数器）互补 —— 后者限制窗口内失败次数，
+        // 本结构限制窗口内请求 QPS，两者叠加形成纵深防御。
+        if let Some(limiter) = &self.token_rate_limiter {
+            if !limiter.check_username(username).await {
+                return Err(BulwarkError::OAuth2(
+                    "rate_limited: 用户请求过于频繁，请稍后再试".into(),
+                ));
+            }
+        }
 
         // 验证密码前检查账户锁定状态（防 brute-force）
         if let Some(limiter) = &self.password_rate_limiter {
@@ -1992,6 +2169,260 @@ mod tests {
         let t2 = generate_token();
         assert_ne!(t1, t2);
         assert!(t1.len() >= 43);
+    }
+
+    // === TokenRateLimiter 速率限制测试（B5）===
+
+    /// `TokenRateLimiter::new()` 使用默认配置（10 req/s per-client + 5 req/min per-username）。
+    #[test]
+    fn token_rate_limiter_new_uses_defaults() {
+        let limiter = TokenRateLimiter::new();
+        assert_eq!(limiter.client_max, 10);
+        assert_eq!(limiter.client_window_secs, 1);
+        assert_eq!(limiter.username_max, 5);
+        assert_eq!(limiter.username_window_secs, 60);
+    }
+
+    /// `Default::default()` 与 `new()` 等价。
+    #[test]
+    fn token_rate_limiter_default_equals_new() {
+        let limiter = TokenRateLimiter::default();
+        assert_eq!(limiter.client_max, 10);
+        assert_eq!(limiter.username_max, 5);
+    }
+
+    /// `with_limits(0, 0, 0, 0)` 被 clamp 到 (1, 1, 1, 1)，避免 max=0 导致全部被拒。
+    #[test]
+    fn token_rate_limiter_with_limits_zero_clamps_to_one() {
+        let limiter = TokenRateLimiter::with_limits(0, 0, 0, 0);
+        assert_eq!(limiter.client_max, 1);
+        assert_eq!(limiter.client_window_secs, 1);
+        assert_eq!(limiter.username_max, 1);
+        assert_eq!(limiter.username_window_secs, 1);
+    }
+
+    /// per-client_id 限速：前 N 次允许，第 N+1 次拒绝。
+    #[tokio::test]
+    async fn token_rate_limiter_check_client_allows_within_limit() {
+        let limiter = TokenRateLimiter::with_limits(3, 60, 100, 60);
+        for i in 0..3 {
+            assert!(
+                limiter.check_client("client-A").await,
+                "第 {} 次应允许",
+                i + 1
+            );
+        }
+        assert!(
+            !limiter.check_client("client-A").await,
+            "第 4 次应拒绝（超 client_max=3）"
+        );
+    }
+
+    /// per-client_id 隔离：不同 client_id 独立计数。
+    #[tokio::test]
+    async fn token_rate_limiter_check_client_isolates_clients() {
+        let limiter = TokenRateLimiter::with_limits(2, 60, 100, 60);
+        assert!(limiter.check_client("client-A").await);
+        assert!(limiter.check_client("client-A").await);
+        assert!(!limiter.check_client("client-A").await, "client-A 达上限");
+        // client-B 独立计数，仍允许
+        assert!(
+            limiter.check_client("client-B").await,
+            "client-B 应允许（独立计数器）"
+        );
+    }
+
+    /// per-username 限速：前 N 次允许，第 N+1 次拒绝。
+    #[tokio::test]
+    async fn token_rate_limiter_check_username_allows_within_limit() {
+        let limiter = TokenRateLimiter::with_limits(100, 60, 3, 60);
+        for i in 0..3 {
+            assert!(
+                limiter.check_username("alice").await,
+                "第 {} 次应允许",
+                i + 1
+            );
+        }
+        assert!(
+            !limiter.check_username("alice").await,
+            "第 4 次应拒绝（超 username_max=3）"
+        );
+    }
+
+    /// per-username 隔离：不同 username 独立计数。
+    #[tokio::test]
+    async fn token_rate_limiter_check_username_isolates_users() {
+        let limiter = TokenRateLimiter::with_limits(100, 60, 2, 60);
+        assert!(limiter.check_username("alice").await);
+        assert!(limiter.check_username("alice").await);
+        assert!(!limiter.check_username("alice").await, "alice 达上限");
+        // bob 独立计数
+        assert!(
+            limiter.check_username("bob").await,
+            "bob 应允许（独立计数器）"
+        );
+    }
+
+    /// `handle_with_authorization` per-client_id 限速：超阈值后返回 rate_limited。
+    ///
+    /// client_max=2，前 2 次 client_credentials grant 成功，第 3 次被限速。
+    #[tokio::test]
+    async fn handle_with_authorization_rate_limited_after_client_threshold() {
+        let limiter = Arc::new(TokenRateLimiter::with_limits(2, 60, 100, 60));
+        let (handler, _) = make_handler();
+        let handler = handler.with_token_rate_limiter(limiter);
+        handler
+            .store
+            .create(make_full_client("rl-cid"))
+            .await
+            .unwrap();
+
+        let req = TokenRequest {
+            grant_type: "client_credentials".into(),
+            client_id: "rl-cid".into(),
+            client_secret: "secret-123".into(),
+            code: None,
+            redirect_uri: None,
+            code_verifier: None,
+            refresh_token: None,
+            scope: None,
+            username: None,
+            password: None,
+        };
+
+        // 前 2 次成功
+        for i in 0..2 {
+            let resp = handler.handle(&req).await;
+            assert!(resp.is_ok(), "第 {} 次应成功，实际: {:?}", i + 1, resp);
+        }
+
+        // 第 3 次被 per-client_id 限速
+        let err = handler.handle(&req).await.unwrap_err();
+        assert!(
+            err.to_string().contains("rate_limited"),
+            "第 3 次应被限速，实际: {}",
+            err
+        );
+    }
+
+    /// per-client_id 限速通过 Basic Auth 头提取 client_id（body 中 client_id 为空时）。
+    #[tokio::test]
+    async fn handle_with_authorization_rate_limits_by_basic_auth_client_id() {
+        let limiter = Arc::new(TokenRateLimiter::with_limits(1, 60, 100, 60));
+        let (handler, _) = make_handler();
+        let handler = handler.with_token_rate_limiter(limiter);
+        handler
+            .store
+            .create(make_full_client("ba-rl"))
+            .await
+            .unwrap();
+
+        let credentials = STANDARD.encode("ba-rl:secret-123");
+        let auth_header = format!("Basic {}", credentials);
+
+        let req = TokenRequest {
+            grant_type: "client_credentials".into(),
+            client_id: "".into(), // body 中为空，依赖 Basic Auth
+            client_secret: "".into(),
+            code: None,
+            redirect_uri: None,
+            code_verifier: None,
+            refresh_token: None,
+            scope: None,
+            username: None,
+            password: None,
+        };
+
+        // 第 1 次成功
+        let _ = handler
+            .handle_with_authorization(&req, Some(&auth_header))
+            .await
+            .expect("第 1 次应成功");
+
+        // 第 2 次被限速（通过 Basic Auth 提取的 client_id 限速）
+        let err = handler
+            .handle_with_authorization(&req, Some(&auth_header))
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("rate_limited"),
+            "第 2 次应被限速（Basic Auth client_id），实际: {}",
+            err
+        );
+    }
+
+    /// `handle_password` per-username 限速：超阈值后返回 rate_limited。
+    ///
+    /// username_max=2，前 2 次成功登录，第 3 次被 per-username 限速。
+    #[tokio::test]
+    async fn handle_password_rate_limited_after_username_threshold() {
+        let limiter = Arc::new(TokenRateLimiter::with_limits(100, 60, 2, 60));
+        let (handler, _) = make_handler();
+        let handler = handler.with_token_rate_limiter(limiter);
+        handler
+            .store
+            .create(make_full_client("pw-url-001"))
+            .await
+            .unwrap();
+
+        let req = TokenRequest {
+            grant_type: "password".into(),
+            client_id: "pw-url-001".into(),
+            client_secret: "secret-123".into(),
+            code: None,
+            redirect_uri: None,
+            code_verifier: None,
+            refresh_token: None,
+            scope: None,
+            username: Some("alice".into()),
+            password: Some("wonderland".into()),
+        };
+
+        // 前 2 次成功
+        for i in 0..2 {
+            let resp = handler.handle(&req).await;
+            assert!(resp.is_ok(), "第 {} 次应成功，实际: {:?}", i + 1, resp);
+        }
+
+        // 第 3 次被 per-username 限速
+        let err = handler.handle(&req).await.unwrap_err();
+        assert!(
+            err.to_string().contains("rate_limited"),
+            "第 3 次应被 per-username 限速，实际: {}",
+            err
+        );
+    }
+
+    /// 未注入 `TokenRateLimiter` 时不启用限速（向后兼容）。
+    ///
+    /// 连续 50 次请求仍全部成功。
+    #[tokio::test]
+    async fn handle_without_token_rate_limiter_no_limit() {
+        let (handler, _) = make_handler();
+        // 未注入 token_rate_limiter
+        handler
+            .store
+            .create(make_full_client("nrl-cid"))
+            .await
+            .unwrap();
+
+        let req = TokenRequest {
+            grant_type: "client_credentials".into(),
+            client_id: "nrl-cid".into(),
+            client_secret: "secret-123".into(),
+            code: None,
+            redirect_uri: None,
+            code_verifier: None,
+            refresh_token: None,
+            scope: None,
+            username: None,
+            password: None,
+        };
+
+        // 连续 50 次也应成功（无限速）
+        for _ in 0..50 {
+            let _ = handler.handle(&req).await.expect("无限速应全部成功");
+        }
     }
 }
 

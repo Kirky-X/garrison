@@ -143,9 +143,25 @@ async fn token_endpoint(
         },
         Err(e) => {
             let (_, error_code, message, _) = e.response_parts();
+            // 速率限制错误返回 429 Too Many Requests（RFC 6585 §4）
+            //
+            // `BulwarkError::OAuth2(_)` 的 error_code 统一为 "OAUTH2_ERROR"，
+            // 需通过错误消息中的 "rate_limited" 标识区分（与 token handler 中
+            // `PasswordRateLimiter` / `TokenRateLimiter` 的错误格式一致）。
+            let is_rate_limited = e.to_string().contains("rate_limited");
+            let status = if is_rate_limited {
+                StatusCode::TOO_MANY_REQUESTS
+            } else {
+                StatusCode::BAD_REQUEST
+            };
+            let body_error: &str = if is_rate_limited {
+                "RATE_LIMIT_EXCEEDED"
+            } else {
+                error_code
+            };
             (
-                StatusCode::BAD_REQUEST,
-                Json(json!({ "error": error_code, "message": message })),
+                status,
+                Json(json!({ "error": body_error, "message": message })),
             )
                 .into_response()
         },
@@ -567,5 +583,116 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    }
+
+    // === /token 端点速率限制测试（B5）===
+
+    /// /token 端点超速率限制时返回 429 Too Many Requests（RFC 6585 §4）。
+    ///
+    /// 注入 `TokenRateLimiter`（client_max=1），第 2 次请求应返回 429 + `RATE_LIMIT_EXCEEDED`。
+    #[tokio::test]
+    async fn test_token_endpoint_returns_429_on_rate_limit_exceeded() {
+        use crate::oauth2_server::token::TokenRateLimiter;
+
+        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let store: Arc<dyn OAuth2ClientStore> = Arc::new(DaoOAuth2ClientStore::new(dao.clone()));
+        let authorize_handler = Arc::new(AuthorizeHandler::new(
+            store.clone(),
+            dao.clone(),
+            "https://auth.example.com/login".to_string(),
+        ));
+        let token_handler = Arc::new(
+            TokenHandler::new(store.clone(), dao.clone(), authorize_handler.clone())
+                .with_token_rate_limiter(Arc::new(TokenRateLimiter::with_limits(1, 60, 100, 60))),
+        );
+        let revoke_handler = Arc::new(RevokeHandler::new(store.clone(), token_handler.clone()));
+        let introspect_handler =
+            Arc::new(IntrospectHandler::new(store.clone(), token_handler.clone()));
+        let state = Arc::new(OAuth2State {
+            authorize_handler,
+            token_handler,
+            revoke_handler,
+            introspect_handler,
+        });
+
+        store.create(make_test_client("rl-429")).await.unwrap();
+        let app = oauth2_external_router(state);
+
+        let body = serde_json::json!({
+            "grant_type": "client_credentials",
+            "client_id": "rl-429",
+            "client_secret": "secret-123",
+        });
+
+        // 第 1 次成功（200 OK）
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/oauth2/token")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        // 第 2 次被限速（429 Too Many Requests）
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/oauth2/token")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::TOO_MANY_REQUESTS,
+            "超速率限制应返回 429"
+        );
+
+        // 验证响应体含 RATE_LIMIT_EXCEEDED error code
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let resp_json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            resp_json["error"].as_str().unwrap(),
+            "RATE_LIMIT_EXCEEDED",
+            "error code 应为 RATE_LIMIT_EXCEEDED"
+        );
+    }
+
+    /// /token 端点未注入 `TokenRateLimiter` 时，非 rate_limited 错误仍返回 400（向后兼容）。
+    #[tokio::test]
+    async fn test_token_endpoint_returns_400_on_non_rate_limited_error() {
+        let (state, store) = make_state();
+        store.create(make_test_client("nrl-400")).await.unwrap();
+        let app = oauth2_external_router(state);
+
+        // 用错误 client_secret 触发 OAuth2 错误（非 rate_limited）
+        let body = serde_json::json!({
+            "grant_type": "client_credentials",
+            "client_id": "nrl-400",
+            "client_secret": "wrong-secret",
+        });
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/oauth2/token")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        // 非 rate_limited 错误应返回 400（非 429）
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 }
