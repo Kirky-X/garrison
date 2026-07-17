@@ -68,7 +68,7 @@ pub trait WafRule: Send + Sync {
 ///
 /// # 默认值
 ///
-/// - `enabled`: `false`（不启用，向后兼容）
+/// - `enabled`: `true`（默认启用，secure-by-default）
 /// - `check_dangerous_chars`: `true`
 /// - `check_directory_traversal`: `true`
 /// - `path_whitelist` / `path_blacklist` / `allowed_methods`: 空列表（不限制）
@@ -128,7 +128,8 @@ impl std::fmt::Debug for WafConfig {
 impl Default for WafConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
+            // secure-by-default，默认启用 WAF 校验
+            enabled: true,
             path_whitelist: Vec::new(),
             path_blacklist: Vec::new(),
             check_dangerous_chars: true,
@@ -896,5 +897,49 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    // ========================================================================
+    // C1: WAF 默认启用测试（secure-by-default）
+    // ========================================================================
+
+    /// WafConfig::default() 应默认启用 WAF 防护（secure-by-default）。
+    #[test]
+    fn waf_config_default_enabled_is_true() {
+        let config = WafConfig::default();
+        assert!(
+            config.enabled,
+            "VULN-0006: WafConfig::default().enabled 必须为 true（secure-by-default）"
+        );
+    }
+
+    /// 默认配置应阻止危险路径（无需用户显式启用）。
+    #[tokio::test]
+    async fn default_config_blocks_dangerous_path() {
+        let app = make_app(WafConfig::default());
+        let resp = app
+            .oneshot(make_request("GET", "/api//test"))
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::BAD_REQUEST,
+            "VULN-0006: 默认配置应阻止危险路径"
+        );
+    }
+
+    /// 默认配置应阻止目录遍历。
+    #[tokio::test]
+    async fn default_config_blocks_directory_traversal() {
+        let app = make_app(WafConfig::default());
+        let resp = app
+            .oneshot(make_request("GET", "/api/../etc/passwd"))
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::BAD_REQUEST,
+            "VULN-0006: 默认配置应阻止目录遍历"
+        );
     }
 }
