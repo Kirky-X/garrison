@@ -274,9 +274,9 @@ impl DefaultOidcProvider {
     /// **必选调用**：`get_authorization_url` / `exchange_code` / `validate_id_token`
     /// 依赖 DAO 管理缓存与 state，未注入 DAO 时返回 [`BulwarkError::Config`] 错误。
     ///
-    /// - JWKS 缓存 key：`oidc:jwks:{issuer}`，TTL 由 [`JWKS_CACHE_TTL`] 控制。
-    /// - state 缓存 key：`oidc:state:{state}`，TTL 由 [`OIDC_STATE_TTL`] 或
-    ///   [`with_state_ttl`](Self::with_state_ttl) 控制。
+    /// - JWKS 缓存 key：`oidc:jwks:{issuer}`，TTL 由 `JWKS_CACHE_TTL` 控制。
+    /// - state 缓存 key：`oidc:state:{state}`，TTL 由 `OIDC_STATE_TTL` 或
+    ///   `with_state_ttl` 控制。
     ///
     /// # 参数
     ///

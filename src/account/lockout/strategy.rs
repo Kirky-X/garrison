@@ -3,7 +3,7 @@
 
 //! 用户级双态锁定策略实现（T012）。
 //!
-//! 本文件包含 [`UserLockoutStrategy`](super::UserLockoutStrategy) 的 impl 块、
+//! 本文件包含 `UserLockoutStrategy` 的 impl 块、
 //! [`BulwarkFirewallStrategy`](crate::strategy::firewall::BulwarkFirewallStrategy) trait 实现，
 //! 以及辅助函数 `now_timestamp` / `calculate_lock_seconds`。
 //!

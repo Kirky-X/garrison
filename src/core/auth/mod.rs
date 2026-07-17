@@ -38,7 +38,7 @@ use crate::session::BulwarkSession;
 /// 3. **审计日志**：每次 switch_to 记录 `original / target / timestamp / request_context`，
 ///    便于事后追溯
 ///
-/// 推荐参考 [`AdminOnlyGuard`] 示例实现，而非裸用 [`AllowAllSwitchToGuard`]。
+/// 推荐参考 `AdminOnlyGuard` 示例实现，而非裸用 `AllowAllSwitchToGuard`。
 ///
 /// # 示例
 ///

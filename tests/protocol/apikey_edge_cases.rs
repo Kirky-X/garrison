@@ -145,8 +145,6 @@ fn make_handler() -> ApiKeyHandler {
 /// - 为 login_id=1001（namespace A）生成的 key，verify 返回 login_id=1001
 /// - 为 login_id=2002（namespace B）生成的 key，verify 返回 login_id=2002
 /// - 两个 key 互不相同，且各自的 login_id 不匹配对方的命名空间
-///
-/// TODO(0.2.2): 考虑在 ApiKeyInfo 中增加显式 namespace 字段，实现协议层隔离。
 #[tokio::test]
 async fn namespace_isolation_blocks_cross_namespace_access() {
     let handler = make_handler();

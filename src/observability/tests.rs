@@ -8,7 +8,7 @@
 // ============================================================================
 
 #[cfg(all(test, feature = "metrics-prometheus"))]
-mod tests {
+mod tests_metrics {
     use super::super::*;
     use serial_test::serial;
     use std::time::Duration;

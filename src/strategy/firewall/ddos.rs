@@ -4,7 +4,7 @@
 //! DDoS 防护策略。
 //!
 //! `DDoSStrategy` 实现 [`BulwarkFirewallStrategy`] trait，
-//! 用 limiteron 的 [`BulwarkDaoDistributedLimiter::atomic_check_and_incr`] 实现
+//! 用 limiteron 的 `BulwarkDaoDistributedLimiter::atomic_check_and_incr` 实现
 //! 全局 + 单 IP 双重限流（fixed window counter 语义，禁止手写 token bucket）。
 //!
 //! # 算法（Fixed Window Counter，委托 limiteron）
@@ -23,7 +23,7 @@
 //!
 //! # 原子性保证
 //!
-//! [`BulwarkDaoDistributedLimiter::atomic_check_and_incr`] 在 Redis 后端用 Lua 脚本
+//! `BulwarkDaoDistributedLimiter::atomic_check_and_incr` 在 Redis 后端用 Lua 脚本
 //! （INCR + EXPIRE 原子），在非 Redis 后端降级到 `dao.incr`（进程内 Mutex 原子）。
 
 use crate::dao::BulwarkDao;

@@ -218,7 +218,7 @@ impl BulwarkDao for MockDao {
     /// eval_lua 内存模拟实现（识别 INCR + EXPIRE 模式，委托 incr）。
     ///
     /// MockDao 不支持真正的 Lua 脚本，但 `incr` 已用 Mutex 保证进程内原子性。
-    /// 识别脚本中的 INCR + EXPIRE 模式后，提取 KEYS[1] 和 ARGV[2]（TTL），
+    /// 识别脚本中的 INCR + EXPIRE 模式后，提取 KEYS\[1\] 和 ARGV\[2\]（TTL），
     /// 委托 `self.incr` 实现，返回 `vec![count.to_string()]`。
     async fn eval_lua(
         &self,

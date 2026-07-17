@@ -17,12 +17,12 @@
 //!
 //! ## 子模块
 //!
-//! - [`registry`]：`HealthRegistry` impl 块（构造 / 注册 / 并发执行 / 聚合）
-//! - [`report`]：`HealthReport` impl 块
-//! - [`checks`]：内置 `HealthCheck` 实现（ConfigHealthCheck / CacheHealthCheck / DbHealthCheck）
-//! - [`axum_routes`]：axum 框架的健康检查路由集成
-//! - [`actix_routes`]：actix-web 框架的健康检查路由集成
-//! - [`warp_routes`]：warp 框架的健康检查路由集成
+//! - `registry`：`HealthRegistry` impl 块（构造 / 注册 / 并发执行 / 聚合）
+//! - `report`：`HealthReport` impl 块
+//! - `checks`：内置 `HealthCheck` 实现（ConfigHealthCheck / CacheHealthCheck / DbHealthCheck）
+//! - `axum_routes`：axum 框架的健康检查路由集成
+//! - `actix_routes`：actix-web 框架的健康检查路由集成
+//! - `warp_routes`：warp 框架的健康检查路由集成
 
 use crate::error::BulwarkResult;
 use serde::{Deserialize, Serialize};

@@ -9,7 +9,7 @@
 //! - 配额限流 → [`crate::limiteron::BulwarkDaoQuotaStorage`]
 //! - 封禁记录 → [`crate::limiteron::BulwarkDaoBanStorage`]
 //!
-//! 本模块仅保留 [`RateLimitBackend`] 配置 enum，用于 `BulwarkConfig`
+//! 本模块仅保留 `RateLimitBackend` 配置 enum，用于 `BulwarkConfig`
 //! 表达限流后端选择（向后兼容 v0.6 配置）。运行时由 `BulwarkDaoDistributedLimiter`
 //! 根据 `BulwarkDao` 后端（MockDao/SQLite/Redis 等）自动选择原子或降级实现。
 

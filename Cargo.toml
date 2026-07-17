@@ -288,6 +288,9 @@ firewall = ["dep:limiteron"]
 firewall-bruteforce = ["firewall", "dep:limiteron"]
 # firewall-ratelimit：limiteron DistributedLimiter 原子 incr_with_ttl
 firewall-ratelimit = ["firewall", "dep:rand", "dep:limiteron"]
+# rate-limit-redis：BulwarkConfig.rate_limit_backend 字段 + Redis 后端配置
+# 启用后可在配置中选择 Memory/Redis 限流后端（RateLimitBackend enum）
+rate-limit-redis = ["firewall-ratelimit", "cache-redis"]
 firewall-anomalous = ["firewall"]
 firewall-geoip = ["firewall"]
 firewall-ddos = ["firewall", "dep:limiteron"]
@@ -425,6 +428,7 @@ full = [
     "decision-trace", "tenant-isolation", "safe-defaults",
     "firewall", "firewall-bruteforce", "firewall-ratelimit", "firewall-anomalous",
     "firewall-geoip", "firewall-ddos", "firewall-maxminddb", "firewall-waf",
+    "rate-limit-redis",
     "anomalous-detector-dual",
     "security-alert",
     "device-binding",

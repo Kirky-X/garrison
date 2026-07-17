@@ -16,8 +16,8 @@
 //! ## 模块结构（Rule 25 接口隔离）
 //!
 //! - `mod.rs`：仅声明 `BulwarkRouter` / `BulwarkRejection` 结构体 + re-export
-//! - [`extractor`]：value-extracting Filter（`bulwark_principal` / `tenant_context`）
-//! - [`extractors`]：guard Filter（`check_login` / `check_role` / `check_permission`）+ `Reject` / `Reply` impl
+//! - `extractor`：value-extracting Filter（`bulwark_principal` / `tenant_context`）
+//! - `extractors`：guard Filter（`check_login` / `check_role` / `check_permission`）+ `Reject` / `Reply` impl
 //! - [`router`]：`impl BulwarkRouter` + `impl Default`
 //!
 //! ## 使用示例

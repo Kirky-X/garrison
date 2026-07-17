@@ -13,7 +13,7 @@
 //!
 //! # 策略实现（T012）
 //!
-//! T012 的 `UserLockoutStrategy` + `BulwarkFirewallStrategy` trait 实现位于 [`strategy`] 子模块。
+//! T012 的 `UserLockoutStrategy` + `BulwarkFirewallStrategy` trait 实现位于 `strategy` 子模块。
 
 use crate::dao::BulwarkDao;
 use serde::{Deserialize, Serialize};

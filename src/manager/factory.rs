@@ -8,7 +8,7 @@
 //!
 //! 工厂上下文 [`BulwarkLogicFactoryContext`] 持有 init 阶段构造的 5 个 manager（用于 auto-wire）。
 //! factory 函数通过此 context 获取 manager 引用，使用 builder 链式调用注入到
-//! [`BulwarkLogicDefault`](crate::stp::BulwarkLogicDefault)。
+//! [`BulwarkLogicDefault`]。
 
 use std::sync::Arc;
 

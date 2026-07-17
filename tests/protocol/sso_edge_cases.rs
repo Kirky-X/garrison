@@ -154,8 +154,6 @@ async fn ticket_invalid_format_returns_error() {
 /// 校验已签发的 ticket 时，返回 `InvalidToken` 错误（client_id 不匹配，0.4.1 修复 M5：
 /// 原为 Config，现改为 InvalidToken，认证失败语义更准确），等价于
 /// "centerId 映射不存在"的语义。
-///
-/// TODO(0.2.2): 考虑实现独立的 centerId → login_id 映射层，与 client_id 隔离解耦。
 #[tokio::test]
 async fn center_id_mapping_not_found_returns_error() {
     let client = make_client();

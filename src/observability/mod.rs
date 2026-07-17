@@ -5,7 +5,7 @@
 //!
 //! ## 三层架构
 //!
-//! - **Metrics**（[`BulwarkMetrics`]）：Prometheus 格式指标，覆盖登录成功率 / Token 验证延迟 /
+//! - **Metrics**（`BulwarkMetrics`）：Prometheus 格式指标，覆盖登录成功率 / Token 验证延迟 /
 //!   权限查询 QPS / 角色查询 QPS。启用 `metrics-prometheus` feature。
 //! - **Logs**（[`init_inklog_logging`](crate::observability::inklog::init_inklog_logging) /
 //!   [`init_inklog_logging_with_fallback`](crate::observability::inklog::init_inklog_logging_with_fallback)）：
