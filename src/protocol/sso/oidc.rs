@@ -521,13 +521,35 @@ impl DefaultOidcProvider {
     async fn validate_id_token_impl(&self, id_token: &str) -> BulwarkResult<bool> {
         use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
 
+        /// id_token 的 aud claim 类型（H3 修复：支持 String 或 Vec<String>）。
+        ///
+        /// RFC 7519 §4.1.3 规定 aud 可以是 String 或数组形式。原实现仅接受
+        /// String，导致 IdP 返回 `aud: ["client-a", "client-b"]` 时反序列化
+        /// 失败，所有 OIDC 登录失败（InvalidToken）。
+        #[derive(Deserialize, Debug)]
+        #[serde(untagged)]
+        enum Aud {
+            Single(String),
+            Multi(Vec<String>),
+        }
+
+        impl Aud {
+            /// 判断 client_id 是否在 aud 中（支持 String 和数组形式）。
+            fn contains(&self, client_id: &str) -> bool {
+                match self {
+                    Aud::Single(s) => s == client_id,
+                    Aud::Multi(v) => v.iter().any(|s| s == client_id),
+                }
+            }
+        }
+
         /// id_token 标准 claims（仅声明验签所需字段，其他字段被忽略）。
         #[derive(Deserialize)]
         struct IdTokenClaims {
             /// 签发者标识（必须匹配 `config.issuer`）。
             iss: String,
-            /// 受众（必须匹配 `client_id`）。
-            aud: String,
+            /// 受众（必须包含 `client_id`，支持 String 或数组形式，见 H3）。
+            aud: Aud,
         }
 
         let dao = self.dao.as_ref().ok_or_else(|| {
@@ -616,10 +638,10 @@ impl DefaultOidcProvider {
             )));
         }
 
-        // 6. 校验 aud（必须匹配 client_id）
-        if token_data.claims.aud != self.client_id {
+        // 6. 校验 aud（必须包含 client_id，支持 String 或数组形式，见 H3）
+        if !token_data.claims.aud.contains(&self.client_id) {
             return Err(BulwarkError::InvalidToken(format!(
-                "OIDC id_token aud 不匹配: 期望 {}, 实际 {}",
+                "OIDC id_token aud 不匹配: 期望 {}, 实际 {:?}",
                 self.client_id, token_data.claims.aud
             )));
         }
@@ -1318,6 +1340,40 @@ mod tests {
         encode(&header, &claims, encoding_key).expect("签发 JWT 应成功")
     }
 
+    /// 测试辅助：用 RSA 私钥签发 JWT，aud 接受任意 JSON Value（H3 测试用）。
+    ///
+    /// 用于测试 aud 为数组形式（`["client-a", "client-b"]`）的 id_token。
+    /// 其他参数与 [`sign_test_jwt`] 一致。
+    #[cfg(feature = "protocol-jwt")]
+    fn sign_test_jwt_with_aud_value(
+        encoding_key: &jsonwebtoken::EncodingKey,
+        kid: &str,
+        iss: &str,
+        aud: serde_json::Value,
+        exp: i64,
+    ) -> String {
+        use jsonwebtoken::{encode, Algorithm, Header};
+        use serde::Serialize;
+
+        #[derive(Serialize)]
+        struct TestClaims {
+            iss: String,
+            aud: serde_json::Value,
+            exp: i64,
+            sub: String,
+        }
+
+        let mut header = Header::new(Algorithm::RS256);
+        header.kid = Some(kid.to_string());
+        let claims = TestClaims {
+            iss: iss.to_string(),
+            aud,
+            exp,
+            sub: "user-123".to_string(),
+        };
+        encode(&header, &claims, encoding_key).expect("签发 JWT 应成功")
+    }
+
     /// 测试辅助：构造 JWKS JSON 响应体（单个 RSA 公钥）。
     #[cfg(feature = "protocol-jwt")]
     fn make_jwks_json(kid: &str, n_b64: &str, e_b64: &str) -> serde_json::Value {
@@ -1511,6 +1567,78 @@ mod tests {
             .with_dao(Arc::new(MockDao::new()));
         let result = provider.validate_id_token(&id_token).await;
         assert!(result.is_err(), "aud 不匹配应返回错误");
+        match result.err() {
+            Some(BulwarkError::InvalidToken(msg)) => {
+                assert!(
+                    msg.contains("aud"),
+                    "aud 不匹配应返回 aud 相关消息，实际: {}",
+                    msg
+                );
+            },
+            other => panic!("期望 InvalidToken 错误，实际: {:?}", other),
+        }
+    }
+
+    /// 测试 4b（H3）：validate_id_token 接受 aud 为数组形式（含 client_id）的 token。
+    ///
+    /// RFC 7519 §4.1.3 规定 aud 可以是 String 或数组形式。
+    /// IdP（如 Keycloak/Auth0）实际签发的 token 中 aud 常为数组
+    /// （如 `["client-id", "account"]`）。原实现 IdTokenClaims.aud: String
+    /// 反序列化数组失败 → 所有 OIDC 登录失败。
+    /// H3 修复后用 Aud enum（untagged）兼容两种形式。
+    #[cfg(feature = "protocol-jwt")]
+    #[tokio::test]
+    async fn validate_id_token_accepts_aud_array_containing_client_id() {
+        let (encoding_key, n_b64, e_b64) = make_test_rsa_key();
+        let jwks_json = make_jwks_json("key1", &n_b64, &e_b64);
+        let (_server, config) = setup_jwks_mock_server(jwks_json).await;
+
+        // aud 为数组形式，包含 client_id "client-id" 和 "account"
+        let id_token = sign_test_jwt_with_aud_value(
+            &encoding_key,
+            "key1",
+            &config.issuer,
+            serde_json::json!(["client-id", "account"]),
+            now_unix() + 3600,
+        );
+
+        let provider = DefaultOidcProvider::new(config, "client-id", "secret")
+            .unwrap()
+            .with_dao(Arc::new(MockDao::new()));
+        let result = provider.validate_id_token(&id_token).await;
+        assert!(
+            result.is_ok(),
+            "aud 为数组含 client_id 时应校验通过（H3），实际: {:?}",
+            result
+        );
+        assert_eq!(result.unwrap(), true);
+    }
+
+    /// 测试 4c（H3）：validate_id_token 拒绝 aud 为数组但不含 client_id 的 token。
+    ///
+    /// aud=`["other-client", "account"]`（数组不含 client_id "client-id"），
+    /// H3 修复后 contains 返回 false，校验失败返回 InvalidToken。
+    #[cfg(feature = "protocol-jwt")]
+    #[tokio::test]
+    async fn validate_id_token_rejects_aud_array_without_client_id() {
+        let (encoding_key, n_b64, e_b64) = make_test_rsa_key();
+        let jwks_json = make_jwks_json("key1", &n_b64, &e_b64);
+        let (_server, config) = setup_jwks_mock_server(jwks_json).await;
+
+        // aud 为数组形式，但不含 client_id "client-id"
+        let id_token = sign_test_jwt_with_aud_value(
+            &encoding_key,
+            "key1",
+            &config.issuer,
+            serde_json::json!(["other-client", "account"]),
+            now_unix() + 3600,
+        );
+
+        let provider = DefaultOidcProvider::new(config, "client-id", "secret")
+            .unwrap()
+            .with_dao(Arc::new(MockDao::new()));
+        let result = provider.validate_id_token(&id_token).await;
+        assert!(result.is_err(), "aud 数组不含 client_id 时应返回错误");
         match result.err() {
             Some(BulwarkError::InvalidToken(msg)) => {
                 assert!(
