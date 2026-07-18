@@ -569,3 +569,74 @@ account-disable-deserialize = 反序列化 DisableEntry 失败: {$arg0}
 
 stp-token-invalid-or-not-login = token 无效或未登录
 stp-token-invalid-or-no-login-id = token 无效或不包含 login_id
+
+# ============================================================================
+# i18n 迁移补全（2026-07-18）
+# ============================================================================
+
+# --- session mock ---
+session-mock-delete-failed = mock delete 失败: {$arg0}
+session-mock-read-failed = mock read 失败: {$arg0}
+session-mock-update-failed = mock update 失败: {$arg0}
+
+# --- sso 补全 ---
+sso-mock-key-not-found = key 不存在
+sso-oidc-token-status-error = token exchange 响应状态错误: {$arg0}
+sso-oidc-userinfo-status-error = userinfo 响应状态错误: {$arg0}
+sso-oidc-validate-not-implemented = OIDC id_token 验证未实现
+sso-ticket-client-id-mismatch = SSO ticket client_id 不匹配: 期望 {$arg0}, 实际 {$arg1}
+sso-ticket-consumed-by-concurrent = SSO ticket 被并发消费
+sso-saml-signature-not-implemented = SAML 签名验证未实现
+sso-saml-assertion-expired = SAML assertion 已过期: {$arg0}
+
+# --- sign / apikey 补全 ---
+sign-app-secret-too-short = app_secret 长度不足: 当前 {$arg0} 字节, 要求至少 {$arg1} 字节 (256 位)
+apikey-namespace-too-long = namespace 长度不能超过 64 字符, 实际: {$arg0}
+apikey-namespace-invalid-chars = namespace 仅允许 [a-zA-Z0-9_-], 实际: {$arg0}
+apikey-namespace-mismatch = API Key namespace 不匹配: 期望 {$arg0}, 实际 {$arg1}
+apikey-expired-cannot-rotate = API Key 已过期, 无法轮换
+
+# --- keycloak 补全 ---
+keycloak-discovery-body-read-failed = discovery 响应体读取失败: {$detail}
+keycloak-dao-not-injected = KeycloakProvider 未注入 DAO, 无法缓存 JWKS (调用 with_dao 注入 BulwarkDao)
+keycloak-jwks-body-read-failed = JWKS 响应体读取失败: {$detail}
+keycloak-jwks-serialize-failed = JWKS 序列化失败: {$detail}
+keycloak-jwks-cache-miss-after-fetch = fetch_jwks 后缓存仍为空 (DAO 写入异常)
+keycloak-jwks-deserialize-failed = JWKS 反序列化失败: {$detail}
+keycloak-token-immature = token 尚未生效 (nbf 校验失败)
+keycloak-token-invalid-audience = token audience 无效
+keycloak-token-invalid-issuer = token issuer 无效
+keycloak-exchange-code-body-read-failed = exchange_code 响应体读取失败: {$detail}
+
+# --- server / backend 补全 ---
+server-caller-not-owner-kickout = caller 非属主且无 admin:sessions 权限, 禁止 kickout
+server-caller-not-owner-switch-to = caller 非属主且无 admin:sessions 权限, 禁止 switch_to
+backend-auth-logic-not-injected-renew = auth_logic 未注入, renew_to_equivalent 不可用
+
+# --- oauth2_server 补全 ---
+oauth2-server-client-invalid-scope = client 不允许请求 scope: {$arg0}
+oauth2-server-client-exists = client 已存在: {$arg0}
+oauth2-server-client-not-found = client 不存在: {$arg0}
+oauth2-server-token-rate-limited-client = client 限速超出: {$arg0}
+oauth2-server-token-invalid-client-missing = invalid_client: client_id 缺失
+oauth2-server-token-invalid-client-secret = invalid_client: client_secret 错误
+oauth2-server-token-unauthorized-auth-code = unauthorized: authorization code 无效或已过期
+oauth2-server-token-unauthorized-refresh = unauthorized: refresh token 无效或已过期
+oauth2-server-token-invalid-grant-refresh-mismatch = invalid_grant: refresh token 与 client 不匹配
+oauth2-server-token-unauthorized-client-credentials = unauthorized: client credentials 无效
+oauth2-server-token-unauthorized-password = unauthorized: 用户名或密码错误
+oauth2-server-token-unauthorized-grant-no-verifier = unauthorized: 缺少 code_verifier
+oauth2-server-token-rate-limited-username = username 限速超出: {$arg0}
+oauth2-server-token-rate-limited-locked = account locked: {$arg0}
+oauth2-server-token-invalid-grant-credentials = invalid_grant: 凭证无效
+oauth2-server-authorize-unsupported-response-type = unsupported response_type: {$arg0}
+oauth2-server-authorize-unsupported-code-challenge-method = unsupported code_challenge_method: {$arg0}
+oauth2-server-authorize-code-challenge-empty = code_challenge 不能为空
+oauth2-server-authorize-redirect-uri-not-allowed = redirect_uri 不被允许: {$arg0}
+oauth2-server-authorize-code-verifier-invalid-length = code_verifier 长度无效
+oauth2-server-introspect-invalid-client-secret = invalid_client: client_secret 错误
+oauth2-server-revoke-invalid-client-secret = invalid_client: client_secret 错误
+
+# --- account 补全 ---
+account-password-unsupported-hash-format = 不支持的哈希格式: {$arg0}
+account-backup-deserialize = backup_code secret_data 反序列化失败: {$arg0}

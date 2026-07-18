@@ -569,3 +569,74 @@ account-disable-deserialize = deserialize DisableEntry failed: {$arg0}
 
 stp-token-invalid-or-not-login = token invalid or not logged in
 stp-token-invalid-or-no-login-id = token invalid or missing login_id
+
+# ============================================================================
+# i18n migration completion (2026-07-18)
+# ============================================================================
+
+# --- session mock ---
+session-mock-delete-failed = mock delete failed: {$arg0}
+session-mock-read-failed = mock read failed: {$arg0}
+session-mock-update-failed = mock update failed: {$arg0}
+
+# --- sso completion ---
+sso-mock-key-not-found = key not found
+sso-oidc-token-status-error = token exchange response status error: {$arg0}
+sso-oidc-userinfo-status-error = userinfo response status error: {$arg0}
+sso-oidc-validate-not-implemented = OIDC id_token validation not implemented
+sso-ticket-client-id-mismatch = SSO ticket client_id mismatch: expected {$arg0}, actual {$arg1}
+sso-ticket-consumed-by-concurrent = SSO ticket consumed by concurrent request
+sso-saml-signature-not-implemented = SAML signature verification not implemented
+sso-saml-assertion-expired = SAML assertion expired: {$arg0}
+
+# --- sign / apikey completion ---
+sign-app-secret-too-short = app_secret too short: current {$arg0} bytes, requires at least {$arg1} bytes (256 bits)
+apikey-namespace-too-long = namespace length cannot exceed 64 chars, actual: {$arg0}
+apikey-namespace-invalid-chars = namespace only allows [a-zA-Z0-9_-], actual: {$arg0}
+apikey-namespace-mismatch = API Key namespace mismatch: expected {$arg0}, actual {$arg1}
+apikey-expired-cannot-rotate = API Key expired, cannot rotate
+
+# --- keycloak completion ---
+keycloak-discovery-body-read-failed = discovery body read failed: {$detail}
+keycloak-dao-not-injected = KeycloakProvider DAO not injected, cannot cache JWKS (call with_dao to inject BulwarkDao)
+keycloak-jwks-body-read-failed = JWKS body read failed: {$detail}
+keycloak-jwks-serialize-failed = JWKS serialize failed: {$detail}
+keycloak-jwks-cache-miss-after-fetch = cache miss after fetch_jwks (DAO write anomaly)
+keycloak-jwks-deserialize-failed = JWKS deserialize failed: {$detail}
+keycloak-token-immature = token not yet valid (nbf)
+keycloak-token-invalid-audience = invalid audience
+keycloak-token-invalid-issuer = invalid issuer
+keycloak-exchange-code-body-read-failed = exchange_code body read failed: {$detail}
+
+# --- server / backend completion ---
+server-caller-not-owner-kickout = Caller is not the owner and lacks admin:sessions permission; kickout is forbidden
+server-caller-not-owner-switch-to = Caller is not the owner and lacks admin:sessions permission; switch_to is forbidden
+backend-auth-logic-not-injected-renew = auth_logic is not injected; renew_to_equivalent is unavailable
+
+# --- oauth2_server completion ---
+oauth2-server-client-invalid-scope = client does not allow scope: {$arg0}
+oauth2-server-client-exists = client already exists: {$arg0}
+oauth2-server-client-not-found = client not found: {$arg0}
+oauth2-server-token-rate-limited-client = client rate limit exceeded: {$arg0}
+oauth2-server-token-invalid-client-missing = invalid_client: client_id missing
+oauth2-server-token-invalid-client-secret = invalid_client: client_secret incorrect
+oauth2-server-token-unauthorized-auth-code = unauthorized: authorization code invalid or expired
+oauth2-server-token-unauthorized-refresh = unauthorized: refresh token invalid or expired
+oauth2-server-token-invalid-grant-refresh-mismatch = invalid_grant: refresh token client mismatch
+oauth2-server-token-unauthorized-client-credentials = unauthorized: client credentials invalid
+oauth2-server-token-unauthorized-password = unauthorized: username or password incorrect
+oauth2-server-token-unauthorized-grant-no-verifier = unauthorized: missing code_verifier
+oauth2-server-token-rate-limited-username = username rate limit exceeded: {$arg0}
+oauth2-server-token-rate-limited-locked = account locked: {$arg0}
+oauth2-server-token-invalid-grant-credentials = invalid_grant: credentials invalid
+oauth2-server-authorize-unsupported-response-type = unsupported response_type: {$arg0}
+oauth2-server-authorize-unsupported-code-challenge-method = unsupported code_challenge_method: {$arg0}
+oauth2-server-authorize-code-challenge-empty = code_challenge cannot be empty
+oauth2-server-authorize-redirect-uri-not-allowed = redirect_uri not allowed: {$arg0}
+oauth2-server-authorize-code-verifier-invalid-length = code_verifier invalid length
+oauth2-server-introspect-invalid-client-secret = invalid_client: client_secret incorrect
+oauth2-server-revoke-invalid-client-secret = invalid_client: client_secret incorrect
+
+# --- account completion ---
+account-password-unsupported-hash-format = unsupported hash format: {$arg0}
+account-backup-deserialize = backup_code secret_data deserialize failed: {$arg0}
