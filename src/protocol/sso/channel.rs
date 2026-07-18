@@ -56,7 +56,7 @@ impl SsoChannel for RedisPubSubSsoChannel {
             .arg(message)
             .query_async::<i64>(&mut conn)
             .await
-            .map_err(|e| BulwarkError::Internal(format!("Redis PUBLISH 失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Internal(format!("sso-redis-publish::{}", e)))?;
         Ok(())
     }
 

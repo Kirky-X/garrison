@@ -244,8 +244,9 @@ impl AuthorizeHandler {
 
         // 9. 存储授权码（10 分钟 TTL）
         let key = DaoKeyPrefix::OAuth2AuthCode.build_key(&code);
-        let json = serde_json::to_string(&auth_code)
-            .map_err(|e| BulwarkError::Internal(format!("AuthorizationCode 序列化失败: {e}")))?;
+        let json = serde_json::to_string(&auth_code).map_err(|e| {
+            BulwarkError::Internal(format!("oauth2-server-authorize-serialize::{}", e))
+        })?;
         self.dao.set(&key, &json, AUTH_CODE_TTL_SECONDS).await?;
 
         // 10. 构造重定向 URL
@@ -274,7 +275,7 @@ impl AuthorizeHandler {
                 // 一次性使用：立即删除
                 self.dao.delete(&key).await?;
                 let auth_code: AuthorizationCode = serde_json::from_str(&json).map_err(|e| {
-                    BulwarkError::Internal(format!("AuthorizationCode 反序列化失败: {e}"))
+                    BulwarkError::Internal(format!("oauth2-server-authorize-deserialize::{}", e))
                 })?;
                 Ok(Some(auth_code))
             },

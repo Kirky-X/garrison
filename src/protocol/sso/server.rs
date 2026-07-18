@@ -216,7 +216,7 @@ impl SsoServer for DefaultSsoServer {
             client_id,
         };
         let value = serde_json::to_string(&data)
-            .map_err(|e| BulwarkError::Internal(format!("序列化 SSO ticket 失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Internal(format!("sso-ticket-serialize::{}", e)))?;
         let key = format!("bulwark:sso:ticket:{}", ticket);
         self.dao.set(&key, &value, self.ticket_ttl_seconds).await?;
         Ok(ticket)
@@ -234,11 +234,12 @@ impl SsoServer for DefaultSsoServer {
             .dao
             .get(&key)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("SSO ticket 读取失败: {}", e)))?;
-        let value = value
-            .ok_or_else(|| BulwarkError::InvalidToken("SSO 票据不存在或已过期".to_string()))?;
+            .map_err(|e| BulwarkError::Dao(format!("sso-ticket-read::{}", e)))?;
+        let value = value.ok_or_else(|| {
+            BulwarkError::InvalidToken("sso-ticket-missing-or-expired".to_string())
+        })?;
         let data: SsoTicketData = serde_json::from_str(&value)
-            .map_err(|e| BulwarkError::Internal(format!("反序列化 SSO ticket 失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Internal(format!("sso-ticket-deserialize::{}", e)))?;
         if data.client_id != client_id {
             return Err(BulwarkError::InvalidToken(format!(
                 "SSO client_id 不匹配: 期望 {}, 实际 {}",
@@ -250,7 +251,7 @@ impl SsoServer for DefaultSsoServer {
             .dao
             .get_and_delete(&key)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("SSO ticket 原子消费失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Dao(format!("sso-ticket-atomic-consume::{}", e)))?;
         if consumed.is_none() {
             return Err(BulwarkError::InvalidToken(
                 "SSO 票据已被并发消费".to_string(),

@@ -114,10 +114,12 @@ impl OAuth2Client {
         scopes: Vec<String>,
     ) -> BulwarkResult<Self> {
         if client_id.is_empty() {
-            return Err(BulwarkError::InvalidParam("client_id 不能为空".into()));
+            return Err(BulwarkError::InvalidParam("oauth2-client-id-empty".into()));
         }
         if client_secret.is_empty() {
-            return Err(BulwarkError::InvalidParam("client_secret 不能为空".into()));
+            return Err(BulwarkError::InvalidParam(
+                "oauth2-client-secret-empty".into(),
+            ));
         }
         let client_secret_hash = hash_secret(client_secret)?;
         Ok(Self {
@@ -239,8 +241,9 @@ impl OAuth2ClientStore for DaoOAuth2ClientStore {
                 client.client_id
             )));
         }
-        let json = serde_json::to_string(&client)
-            .map_err(|e| BulwarkError::Internal(format!("OAuth2Client 序列化失败: {e}")))?;
+        let json = serde_json::to_string(&client).map_err(|e| {
+            BulwarkError::Internal(format!("oauth2-server-client-serialize::{}", e))
+        })?;
         self.dao.set_permanent(&key, &json).await
     }
 
@@ -249,7 +252,7 @@ impl OAuth2ClientStore for DaoOAuth2ClientStore {
         match self.dao.get(&key).await? {
             Some(json) => {
                 let client: OAuth2Client = serde_json::from_str(&json).map_err(|e| {
-                    BulwarkError::Internal(format!("OAuth2Client 反序列化失败: {e}"))
+                    BulwarkError::Internal(format!("oauth2-server-client-deserialize::{}", e))
                 })?;
                 Ok(Some(client))
             },
@@ -265,8 +268,9 @@ impl OAuth2ClientStore for DaoOAuth2ClientStore {
                 client.client_id
             )));
         }
-        let json = serde_json::to_string(&client)
-            .map_err(|e| BulwarkError::Internal(format!("OAuth2Client 序列化失败: {e}")))?;
+        let json = serde_json::to_string(&client).map_err(|e| {
+            BulwarkError::Internal(format!("oauth2-server-client-serialize::{}", e))
+        })?;
         self.dao.update(&key, &json).await
     }
 
@@ -283,7 +287,7 @@ impl OAuth2ClientStore for DaoOAuth2ClientStore {
             match self.dao.get(&key).await? {
                 Some(json) => {
                     let client: OAuth2Client = serde_json::from_str(&json).map_err(|e| {
-                        BulwarkError::Internal(format!("OAuth2Client 反序列化失败: {e}"))
+                        BulwarkError::Internal(format!("oauth2-server-client-deserialize::{}", e))
                     })?;
                     clients.push(client);
                 },
@@ -312,14 +316,15 @@ fn hash_secret(secret: &str) -> BulwarkResult<String> {
     );
     let hash = argon2
         .hash_password(secret.as_bytes(), &salt)
-        .map_err(|e| BulwarkError::Internal(format!("Argon2 哈希失败: {e}")))?;
+        .map_err(|e| BulwarkError::Internal(format!("oauth2-server-client-hash::{}", e)))?;
     Ok(hash.to_string())
 }
 
 /// 验证明文密钥与 Argon2id 哈希是否匹配。
 fn verify_secret(secret: &str, hash_str: &str) -> BulwarkResult<bool> {
-    let parsed = PasswordHash::new(hash_str)
-        .map_err(|e| BulwarkError::InvalidParam(format!("Argon2 哈希格式无效: {e}")))?;
+    let parsed = PasswordHash::new(hash_str).map_err(|e| {
+        BulwarkError::InvalidParam(format!("oauth2-server-client-hash-format::{}", e))
+    })?;
     Ok(Argon2::default()
         .verify_password(secret.as_bytes(), &parsed)
         .is_ok())

@@ -74,7 +74,9 @@ impl OidcHandler {
     ) -> BulwarkResult<Self> {
         let secret = secret.into();
         if secret.is_empty() {
-            return Err(BulwarkError::Config("OIDC secret 不能为空".to_string()));
+            return Err(BulwarkError::Config(
+                "oauth2-client-secret-empty".to_string(),
+            ));
         }
         Ok(Self {
             issuer: issuer.into(),
@@ -146,7 +148,7 @@ impl OidcHandler {
         self.require_hmac_algorithm()?;
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map_err(|e| BulwarkError::Internal(format!("系统时间错误: {}", e)))?
+            .map_err(|e| BulwarkError::Internal(format!("system-clock-error::{}", e)))?
             .as_secs() as i64;
         let claims = OidcClaims {
             iss: self.issuer.clone(),
@@ -160,7 +162,7 @@ impl OidcHandler {
         let header = Header::new(self.algorithm);
         let key = EncodingKey::from_secret(self.secret.as_bytes());
         encode(&header, &claims, &key)
-            .map_err(|e| BulwarkError::Internal(format!("OIDC id_token 签发失败: {}", e)))
+            .map_err(|e| BulwarkError::Internal(format!("jwt-sign::{}", e)))
     }
 
     /// 验证 OIDC id_token。
@@ -196,9 +198,9 @@ impl OidcHandler {
         let decoded = decode::<OidcClaims>(id_token, &key, &validation).map_err(|e| {
             let msg = e.to_string();
             if msg.contains("ExpiredSignature") {
-                BulwarkError::ExpiredToken(format!("OIDC id_token 已过期: {}", e))
+                BulwarkError::ExpiredToken(format!("jwt-expired::{}", e))
             } else {
-                BulwarkError::InvalidToken(format!("OIDC id_token 校验失败: {}", e))
+                BulwarkError::InvalidToken(format!("jwt-invalid::{}", e))
             }
         })?;
         let claims = decoded.claims;

@@ -57,7 +57,7 @@ impl JwtHandler {
     pub fn sign(&self, login_id: impl Into<String>, timeout: i64) -> BulwarkResult<String> {
         let login_id: String = login_id.into();
         if self.secret.is_empty() {
-            return Err(BulwarkError::Config("JWT secret 不能为空".to_string()));
+            return Err(BulwarkError::Config("jwt-secret-empty".to_string()));
         }
         if timeout < 0 {
             return Err(BulwarkError::Config(format!(
@@ -67,7 +67,7 @@ impl JwtHandler {
         }
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map_err(|e| BulwarkError::Internal(format!("系统时间错误: {}", e)))?
+            .map_err(|e| BulwarkError::Internal(format!("system-clock-error::{}", e)))?
             .as_secs() as i64;
         let claims = BulwarkJwtClaims {
             sub: login_id.clone(),
@@ -81,7 +81,7 @@ impl JwtHandler {
         let header = Header::new(self.algorithm);
         let key = EncodingKey::from_secret(self.secret.as_bytes());
         encode(&header, &claims, &key)
-            .map_err(|e| BulwarkError::Internal(format!("JWT 签发失败: {}", e)))
+            .map_err(|e| BulwarkError::Internal(format!("jwt-sign::{}", e)))
     }
 
     /// 校验 JWT 并返回 Claims。
@@ -96,7 +96,7 @@ impl JwtHandler {
     /// - `Err(BulwarkError::InvalidToken)`: 签名/格式/算法校验失败。
     pub fn verify(&self, token: &str) -> BulwarkResult<BulwarkJwtClaims> {
         if self.secret.is_empty() {
-            return Err(BulwarkError::Config("JWT secret 不能为空".to_string()));
+            return Err(BulwarkError::Config("jwt-secret-empty".to_string()));
         }
         let key = DecodingKey::from_secret(self.secret.as_bytes());
         let mut validation = Validation::new(self.algorithm);
@@ -109,12 +109,12 @@ impl JwtHandler {
             .map_err(|e| {
                 let msg = e.to_string();
                 if msg.contains("ExpiredSignature") {
-                    BulwarkError::ExpiredToken(format!("JWT 已过期: {}", e))
+                    BulwarkError::ExpiredToken(format!("jwt-expired::{}", e))
                 } else if msg.contains("ImmatureSignature") || msg.contains("nbf") {
                     // nbf 为未来时间 → ImmatureSignature
-                    BulwarkError::InvalidToken(format!("JWT 未生效（nbf 校验失败）: {}", e))
+                    BulwarkError::InvalidToken(format!("jwt-not-yet-valid::{}", e))
                 } else {
-                    BulwarkError::InvalidToken(format!("JWT 校验失败: {}", e))
+                    BulwarkError::InvalidToken(format!("jwt-invalid::{}", e))
                 }
             })
     }

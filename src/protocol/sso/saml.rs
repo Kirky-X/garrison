@@ -261,7 +261,7 @@ fn parse_saml_response_xml(xml: &str) -> BulwarkResult<SamlResponse> {
 
     loop {
         match reader.read_event_into(&mut buf) {
-            Err(e) => return Err(BulwarkError::Internal(format!("SAML XML 解析失败: {}", e))),
+            Err(e) => return Err(BulwarkError::Internal(format!("sso-saml-xml-parse::{}", e))),
             Ok(Event::Eof) => break,
 
             // Start 元素：设置状态标志 + 提取属性
@@ -438,7 +438,7 @@ fn parse_saml_response_xml(xml: &str) -> BulwarkResult<SamlResponse> {
         if !assertion.not_on_or_after.is_empty() {
             let expiry =
                 chrono::DateTime::parse_from_rfc3339(&assertion.not_on_or_after).map_err(|e| {
-                    BulwarkError::InvalidToken(format!("SAML NotOnOrAfter 解析失败: {}", e))
+                    BulwarkError::InvalidToken(format!("sso-saml-not-on-or-after-parse::{}", e))
                 })?;
             if Utc::now().timestamp() >= expiry.timestamp() {
                 return Err(BulwarkError::InvalidToken(format!(
@@ -491,7 +491,7 @@ pub async fn check_assertion_replay(
         300
     } else {
         let expiry = chrono::DateTime::parse_from_rfc3339(not_on_or_after).map_err(|e| {
-            BulwarkError::InvalidToken(format!("SAML NotOnOrAfter 解析失败: {}", e))
+            BulwarkError::InvalidToken(format!("sso-saml-not-on-or-after-parse::{}", e))
         })?;
         let remaining = expiry.timestamp().saturating_sub(Utc::now().timestamp());
         if remaining > 0 {

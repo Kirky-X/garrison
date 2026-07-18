@@ -649,10 +649,9 @@ impl TokenHandler {
             ));
         }
 
-        let client =
-            self.store.get(&client_id).await?.ok_or_else(|| {
-                BulwarkError::OAuth2(format!("invalid_client: {client_id} 不存在"))
-            })?;
+        let client = self.store.get(&client_id).await?.ok_or_else(|| {
+            BulwarkError::OAuth2(format!("oauth2-server-token-invalid-client::{}", client_id))
+        })?;
         if !client.verify_secret(&client_secret)? {
             return Err(BulwarkError::OAuth2(
                 "invalid_client: client_secret 不匹配".into(),
@@ -676,42 +675,37 @@ impl TokenHandler {
         let code = req
             .code
             .as_ref()
-            .ok_or_else(|| BulwarkError::OAuth2("invalid_request: code 参数缺失".into()))?;
-        let code_verifier = req.code_verifier.as_ref().ok_or_else(|| {
-            BulwarkError::OAuth2("invalid_request: code_verifier 参数缺失（PKCE 强制）".into())
-        })?;
+            .ok_or_else(|| BulwarkError::OAuth2("invalid_request".into()))?;
+        let code_verifier = req
+            .code_verifier
+            .as_ref()
+            .ok_or_else(|| BulwarkError::OAuth2("invalid_request".into()))?;
         let redirect_uri = req
             .redirect_uri
             .as_ref()
-            .ok_or_else(|| BulwarkError::OAuth2("invalid_request: redirect_uri 参数缺失".into()))?;
+            .ok_or_else(|| BulwarkError::OAuth2("invalid_request".into()))?;
 
         // 消费授权码（一次性）
         let auth_code = self
             .authorize_handler
             .consume_code(code)
             .await?
-            .ok_or_else(|| BulwarkError::OAuth2("invalid_grant: 授权码无效或已过期".into()))?;
+            .ok_or_else(|| BulwarkError::OAuth2("invalid_grant".into()))?;
 
         // 校验 client_id 一致性
         if auth_code.client_id != client.client_id {
-            return Err(BulwarkError::OAuth2(
-                "invalid_grant: 授权码与 client_id 不匹配".into(),
-            ));
+            return Err(BulwarkError::OAuth2("invalid_grant".into()));
         }
 
         // 校验 redirect_uri 一致性
         if auth_code.redirect_uri != *redirect_uri {
-            return Err(BulwarkError::OAuth2(
-                "invalid_grant: redirect_uri 与授权时不一致".into(),
-            ));
+            return Err(BulwarkError::OAuth2("invalid_grant".into()));
         }
 
         // PKCE 验证
         if !crate::oauth2_server::authorize::verify_pkce(code_verifier, &auth_code.code_challenge)?
         {
-            return Err(BulwarkError::OAuth2(
-                "invalid_grant: PKCE code_verifier 校验失败".into(),
-            ));
+            return Err(BulwarkError::OAuth2("invalid_grant".into()));
         }
 
         // 签发 token
@@ -754,9 +748,10 @@ impl TokenHandler {
             ));
         }
 
-        let refresh_token = req.refresh_token.as_ref().ok_or_else(|| {
-            BulwarkError::OAuth2("invalid_request: refresh_token 参数缺失".into())
-        })?;
+        let refresh_token = req
+            .refresh_token
+            .as_ref()
+            .ok_or_else(|| BulwarkError::OAuth2("invalid_request".into()))?;
 
         // v0.7.1 统一路径：RefreshTokenRotation.rotate（reuse detection + hash chain）
         #[cfg(feature = "db-sqlite")]
@@ -768,15 +763,13 @@ impl TokenHandler {
                 let (new_access, new_refresh) = match rotation.rotate(refresh_token).await {
                     Ok(t) => t,
                     Err(BulwarkError::InvalidToken(_)) => {
-                        return Err(BulwarkError::OAuth2(
-                            "invalid_grant: refresh_token 无效或已过期".into(),
-                        ));
+                        return Err(BulwarkError::OAuth2("invalid_grant".into()));
                     },
                     Err(e) => return Err(e),
                 };
                 // validate 新 token 获取 scopes + client_id 供响应
                 let record = rotation.validate(&new_refresh).await?.ok_or_else(|| {
-                    BulwarkError::Internal("rotate 后新 refresh_token validate 失败".into())
+                    BulwarkError::Internal("oauth2-refresh-rotate-validate".into())
                 })?;
                 // 校验 client_id 一致性
                 let record_client_id = record.client_id.as_deref().unwrap_or("");
@@ -812,11 +805,14 @@ impl TokenHandler {
         // （隐式 reuse detection：旧 token 无法重用）
         #[allow(deprecated)]
         let key = DaoKeyPrefix::OAuth2RefreshToken.build_key(refresh_token);
-        let json = self.dao.get(&key).await?.ok_or_else(|| {
-            BulwarkError::OAuth2("invalid_grant: refresh_token 无效或已过期".into())
+        let json = self
+            .dao
+            .get(&key)
+            .await?
+            .ok_or_else(|| BulwarkError::OAuth2("invalid_grant".into()))?;
+        let record: TokenRecord = serde_json::from_str(&json).map_err(|e| {
+            BulwarkError::Internal(format!("oauth2-server-token-deserialize::{}", e))
         })?;
-        let record: TokenRecord = serde_json::from_str(&json)
-            .map_err(|e| BulwarkError::Internal(format!("TokenRecord 反序列化失败: {e}")))?;
 
         // 校验 client_id 一致性
         if record.client_id != client.client_id {
@@ -890,11 +886,11 @@ impl TokenHandler {
         let username = req
             .username
             .as_ref()
-            .ok_or_else(|| BulwarkError::OAuth2("invalid_request: username 参数缺失".into()))?;
+            .ok_or_else(|| BulwarkError::OAuth2("invalid_request".into()))?;
         let password = req
             .password
             .as_ref()
-            .ok_or_else(|| BulwarkError::OAuth2("invalid_request: password 参数缺失".into()))?;
+            .ok_or_else(|| BulwarkError::OAuth2("invalid_request".into()))?;
 
         // per-username QPS 速率限制（在账户锁定检查前，防暴力撞库）
         //
@@ -991,7 +987,7 @@ impl TokenHandler {
 
         let at_key = DaoKeyPrefix::OAuth2AccessToken.build_key(&access_token);
         let at_json = serde_json::to_string(&at_record)
-            .map_err(|e| BulwarkError::Internal(format!("TokenRecord 序列化失败: {e}")))?;
+            .map_err(|e| BulwarkError::Internal(format!("oauth2-server-token-serialize::{}", e)))?;
         self.dao
             .set(&at_key, &at_json, ACCESS_TOKEN_TTL_SECONDS)
             .await?;
@@ -1074,7 +1070,7 @@ impl TokenHandler {
         #[allow(deprecated)]
         let rt_key = DaoKeyPrefix::OAuth2RefreshToken.build_key(&rt);
         let rt_json = serde_json::to_string(&rt_record)
-            .map_err(|e| BulwarkError::Internal(format!("TokenRecord 序列化失败: {e}")))?;
+            .map_err(|e| BulwarkError::Internal(format!("oauth2-server-token-serialize::{}", e)))?;
         self.dao
             .set(&rt_key, &rt_json, REFRESH_TOKEN_TTL_SECONDS)
             .await?;
@@ -1088,7 +1084,7 @@ impl TokenHandler {
         match json {
             Some(json) => {
                 let record: TokenRecord = serde_json::from_str(&json).map_err(|e| {
-                    BulwarkError::Internal(format!("TokenRecord 反序列化失败: {e}"))
+                    BulwarkError::Internal(format!("oauth2-server-token-deserialize::{}", e))
                 })?;
                 Ok(Some(record))
             },
@@ -1215,7 +1211,9 @@ mod tests {
             password: None,
         };
         let err = handler.handle(&req).await.unwrap_err();
-        assert!(err.to_string().contains("invalid_client"));
+        assert!(err
+            .to_string()
+            .contains("oauth2-server-token-invalid-client"));
     }
 
     #[tokio::test]
@@ -1534,7 +1532,7 @@ mod tests {
             password: None,
         };
         let err = handler.handle(&req).await.unwrap_err();
-        assert!(err.to_string().contains("PKCE"));
+        assert!(err.to_string().contains("invalid_grant"));
     }
 
     #[tokio::test]

@@ -49,7 +49,7 @@ pub(crate) fn build_safe_http_client() -> BulwarkResult<reqwest::Client> {
         .connect_timeout(HTTP_CONNECT_TIMEOUT)
         .read_timeout(HTTP_READ_TIMEOUT)
         .build()
-        .map_err(|e| BulwarkError::Network(format!("构建 HTTP 客户端失败: {}", e)))
+        .map_err(|e| BulwarkError::Network(format!("oauth2-http-client-build::{}", e)))
 }
 
 /// HTTP 响应体大小上限（E2）：4 MiB。
@@ -72,12 +72,12 @@ pub(crate) async fn read_limited_bytes(resp: reqwest::Response) -> BulwarkResult
     while let Some(chunk) = resp
         .chunk()
         .await
-        .map_err(|e| BulwarkError::Network(format!("读取响应体失败: {}", e)))?
+        .map_err(|e| BulwarkError::Network(format!("oauth2-body-read::{}", e)))?
     {
         let new_len = buf
             .len()
             .checked_add(chunk.len())
-            .ok_or_else(|| BulwarkError::Network("响应体长度溢出 usize（E2）".to_string()))?;
+            .ok_or_else(|| BulwarkError::Network("oauth2-body-overflow".to_string()))?;
         if new_len > MAX_BODY_BYTES {
             return Err(BulwarkError::Network(format!(
                 "响应体超过 {} 字节上限（E2）",
@@ -103,8 +103,7 @@ pub(crate) async fn read_limited_bytes(resp: reqwest::Response) -> BulwarkResult
 #[allow(dead_code)]
 pub(crate) async fn read_limited_text(resp: reqwest::Response) -> BulwarkResult<String> {
     let bytes = read_limited_bytes(resp).await?;
-    String::from_utf8(bytes)
-        .map_err(|e| BulwarkError::Network(format!("响应体 UTF-8 解码失败: {}", e)))
+    String::from_utf8(bytes).map_err(|e| BulwarkError::Network(format!("oauth2-body-utf8::{}", e)))
 }
 
 /// URL 编码字符集。
@@ -176,7 +175,7 @@ impl OAuth2Client {
     ) -> BulwarkResult<Self> {
         let client_id = client_id.into();
         if client_id.is_empty() {
-            return Err(BulwarkError::Config("client_id 不可为空".to_string()));
+            return Err(BulwarkError::Config("oauth2-client-id-empty".to_string()));
         }
         let redirect_uri = redirect_uri.into();
         Self::validate_redirect_uri(&redirect_uri)?;
@@ -517,7 +516,9 @@ impl OAuth2Client {
         scope: Option<&str>,
     ) -> BulwarkResult<TokenResponse> {
         if username.is_empty() {
-            return Err(BulwarkError::InvalidParam("username 不可为空".to_string()));
+            return Err(BulwarkError::InvalidParam(
+                "oauth2-username-empty".to_string(),
+            ));
         }
         #[cfg(feature = "oauth2-scope-handler")]
         self.validate_scope(scope).await?;
@@ -579,7 +580,7 @@ impl OAuth2Client {
             .form(params)
             .send()
             .await
-            .map_err(|e| BulwarkError::Network(format!("请求 token 端点失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Network(format!("oauth2-token-endpoint::{}", e)))?;
 
         let status = resp.status();
         if !status.is_success() {
@@ -594,9 +595,9 @@ impl OAuth2Client {
 
         let token_bytes = read_limited_bytes(resp)
             .await
-            .map_err(|e| BulwarkError::OAuth2(format!("读取 token 响应体失败: {}", e)))?;
+            .map_err(|e| BulwarkError::OAuth2(format!("oauth2-token-body-read::{}", e)))?;
         let token: TokenResponse = serde_json::from_slice(&token_bytes)
-            .map_err(|e| BulwarkError::OAuth2(format!("解析 token 响应失败: {}", e)))?;
+            .map_err(|e| BulwarkError::OAuth2(format!("oauth2-token-body-parse::{}", e)))?;
         Ok(token)
     }
 
@@ -631,7 +632,7 @@ impl OAuth2Client {
             .form(&params)
             .send()
             .await
-            .map_err(|e| BulwarkError::Network(format!("请求 introspect 端点失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Network(format!("oauth2-introspect-endpoint::{}", e)))?;
 
         let status = resp.status();
         if !status.is_success() {
@@ -647,9 +648,9 @@ impl OAuth2Client {
 
         let introspect_bytes = read_limited_bytes(resp)
             .await
-            .map_err(|e| BulwarkError::OAuth2(format!("读取 introspection 响应体失败: {}", e)))?;
+            .map_err(|e| BulwarkError::OAuth2(format!("oauth2-introspect-body-read::{}", e)))?;
         let response: TokenIntrospectionResponse = serde_json::from_slice(&introspect_bytes)
-            .map_err(|e| BulwarkError::OAuth2(format!("解析 introspection 响应失败: {}", e)))?;
+            .map_err(|e| BulwarkError::OAuth2(format!("oauth2-introspect-body-parse::{}", e)))?;
         Ok(response)
     }
 

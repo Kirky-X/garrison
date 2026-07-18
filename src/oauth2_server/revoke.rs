@@ -48,7 +48,10 @@ impl RevokeHandler {
     pub async fn handle(&self, req: &RevokeRequest) -> BulwarkResult<()> {
         // 1. 客户端认证
         let client = self.store.get(&req.client_id).await?.ok_or_else(|| {
-            BulwarkError::OAuth2(format!("invalid_client: {} 不存在", req.client_id))
+            BulwarkError::OAuth2(format!(
+                "oauth2-server-revoke-invalid-client::{}",
+                req.client_id
+            ))
         })?;
         if !client.verify_secret(&req.client_secret)? {
             return Err(BulwarkError::OAuth2(
@@ -170,7 +173,9 @@ mod tests {
             client_secret: "secret".into(),
         };
         let err = handler.handle(&req).await.unwrap_err();
-        assert!(err.to_string().contains("invalid_client"));
+        assert!(err
+            .to_string()
+            .contains("oauth2-server-revoke-invalid-client"));
     }
 
     #[tokio::test]

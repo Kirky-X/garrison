@@ -200,12 +200,14 @@ mod service {
 
             // 查表验证 old_hash 存在且 revoked=0
             // T005: 扩展 SELECT 读取 OAuth2 字段以便继承到新记录
-            let session = self.pool.get_session("admin").await.map_err(|e| {
-                BulwarkError::Dao(format!("refresh_tokens 获取 session 失败: {}", e))
-            })?;
-            let conn = session.connection().map_err(|e| {
-                BulwarkError::Dao(format!("refresh_tokens 获取 connection 失败: {}", e))
-            })?;
+            let session = self
+                .pool
+                .get_session("admin")
+                .await
+                .map_err(|e| BulwarkError::Dao(format!("jwt-refresh-get-session::{}", e)))?;
+            let conn = session
+                .connection()
+                .map_err(|e| BulwarkError::Dao(format!("jwt-refresh-get-conn::{}", e)))?;
 
             let select_stmt = Statement::from_sql_and_values(
                 DbBackend::Sqlite,
@@ -216,7 +218,7 @@ mod service {
             let row = conn
                 .query_one_raw(select_stmt)
                 .await
-                .map_err(|e| BulwarkError::Dao(format!("refresh_tokens 查询失败: {}", e)))?
+                .map_err(|e| BulwarkError::Dao(format!("jwt-refresh-query::{}", e)))?
                 .ok_or_else(|| {
                     BulwarkError::InvalidToken(
                         "refresh token not found or already consumed".to_string(),
@@ -225,10 +227,10 @@ mod service {
 
             let login_id: String = row
                 .try_get("", "login_id")
-                .map_err(|e| BulwarkError::Dao(format!("login_id 读取失败: {}", e)))?;
+                .map_err(|e| BulwarkError::Dao(format!("jwt-refresh-query::{}", e)))?;
             let tenant_id: i64 = row
                 .try_get("", "tenant_id")
-                .map_err(|e| BulwarkError::Dao(format!("tenant_id 读取失败: {}", e)))?;
+                .map_err(|e| BulwarkError::Dao(format!("jwt-refresh-query::{}", e)))?;
             // T005: 读取 OAuth2 扩展字段（旧记录可能为 NULL，使用 ok().flatten() 容错）
             let client_id: Option<String> = row.try_get("", "client_id").ok().flatten();
             let scopes: Option<String> = row.try_get("", "scopes").ok().flatten();
@@ -281,7 +283,7 @@ mod service {
             );
             conn.execute_raw(insert_stmt)
                 .await
-                .map_err(|e| BulwarkError::Dao(format!("refresh_tokens INSERT 失败: {}", e)))?;
+                .map_err(|e| BulwarkError::Dao(format!("jwt-refresh-insert::{}", e)))?;
 
             // UPDATE old record revoked=1
             let update_stmt = Statement::from_sql_and_values(
@@ -291,7 +293,7 @@ mod service {
             );
             conn.execute_raw(update_stmt)
                 .await
-                .map_err(|e| BulwarkError::Dao(format!("refresh_tokens UPDATE 失败: {}", e)))?;
+                .map_err(|e| BulwarkError::Dao(format!("jwt-refresh-update::{}", e)))?;
 
             Ok((new_access, new_refresh))
         }
@@ -339,12 +341,14 @@ mod service {
                 Some(scopes.join(" "))
             };
 
-            let session = self.pool.get_session("admin").await.map_err(|e| {
-                BulwarkError::Dao(format!("refresh_tokens 获取 session 失败: {}", e))
-            })?;
-            let conn = session.connection().map_err(|e| {
-                BulwarkError::Dao(format!("refresh_tokens 获取 connection 失败: {}", e))
-            })?;
+            let session = self
+                .pool
+                .get_session("admin")
+                .await
+                .map_err(|e| BulwarkError::Dao(format!("jwt-refresh-get-session::{}", e)))?;
+            let conn = session
+                .connection()
+                .map_err(|e| BulwarkError::Dao(format!("jwt-refresh-get-conn::{}", e)))?;
 
             let insert_stmt = Statement::from_sql_and_values(
                 DbBackend::Sqlite,
@@ -373,7 +377,7 @@ mod service {
             );
             conn.execute_raw(insert_stmt)
                 .await
-                .map_err(|e| BulwarkError::Dao(format!("refresh_tokens INSERT 失败: {}", e)))?;
+                .map_err(|e| BulwarkError::Dao(format!("jwt-refresh-insert::{}", e)))?;
 
             Ok(refresh_token)
         }
@@ -391,12 +395,14 @@ mod service {
         /// - `Err(BulwarkError::Dao)`: SQL 查询失败
         pub async fn validate(&self, token: &str) -> BulwarkResult<Option<RefreshTokenRecord>> {
             let token_hash = Self::sha256_hex(token);
-            let session = self.pool.get_session("admin").await.map_err(|e| {
-                BulwarkError::Dao(format!("refresh_tokens 获取 session 失败: {}", e))
-            })?;
-            let conn = session.connection().map_err(|e| {
-                BulwarkError::Dao(format!("refresh_tokens 获取 connection 失败: {}", e))
-            })?;
+            let session = self
+                .pool
+                .get_session("admin")
+                .await
+                .map_err(|e| BulwarkError::Dao(format!("jwt-refresh-get-session::{}", e)))?;
+            let conn = session
+                .connection()
+                .map_err(|e| BulwarkError::Dao(format!("jwt-refresh-get-conn::{}", e)))?;
 
             let stmt = Statement::from_sql_and_values(
                 DbBackend::Sqlite,
@@ -409,28 +415,28 @@ mod service {
             let row = conn
                 .query_one_raw(stmt)
                 .await
-                .map_err(|e| BulwarkError::Dao(format!("refresh_tokens 查询失败: {}", e)))?;
+                .map_err(|e| BulwarkError::Dao(format!("jwt-refresh-query::{}", e)))?;
 
             match row {
                 Some(row) => {
                     let login_id: String = row
                         .try_get("", "login_id")
-                        .map_err(|e| BulwarkError::Dao(format!("login_id 读取失败: {}", e)))?;
+                        .map_err(|e| BulwarkError::Dao(format!("jwt-refresh-query::{}", e)))?;
                     let tenant_id: i64 = row
                         .try_get("", "tenant_id")
-                        .map_err(|e| BulwarkError::Dao(format!("tenant_id 读取失败: {}", e)))?;
+                        .map_err(|e| BulwarkError::Dao(format!("jwt-refresh-query::{}", e)))?;
                     let key_version: i64 = row
                         .try_get("", "key_version")
-                        .map_err(|e| BulwarkError::Dao(format!("key_version 读取失败: {}", e)))?;
+                        .map_err(|e| BulwarkError::Dao(format!("jwt-refresh-query::{}", e)))?;
                     let expires_at: i64 = row
                         .try_get("", "expires_at")
-                        .map_err(|e| BulwarkError::Dao(format!("expires_at 读取失败: {}", e)))?;
+                        .map_err(|e| BulwarkError::Dao(format!("jwt-refresh-query::{}", e)))?;
                     let revoked: i64 = row
                         .try_get("", "revoked")
-                        .map_err(|e| BulwarkError::Dao(format!("revoked 读取失败: {}", e)))?;
+                        .map_err(|e| BulwarkError::Dao(format!("jwt-refresh-query::{}", e)))?;
                     let created_at: i64 = row
                         .try_get("", "created_at")
-                        .map_err(|e| BulwarkError::Dao(format!("created_at 读取失败: {}", e)))?;
+                        .map_err(|e| BulwarkError::Dao(format!("jwt-refresh-query::{}", e)))?;
                     let parent_token_hash: Option<String> =
                         row.try_get("", "parent_token_hash").ok().flatten();
                     let client_id: Option<String> = row.try_get("", "client_id").ok().flatten();
@@ -474,12 +480,14 @@ mod service {
         /// 不存在与 revoked=0 同等对待（均返回 false）——
         /// 只有已 revoked 才视为 reuse。不存在视为"未签发"，由调用方决定如何处理。
         pub async fn detect_reuse(&self, token_hash: &str) -> BulwarkResult<bool> {
-            let session = self.pool.get_session("admin").await.map_err(|e| {
-                BulwarkError::Dao(format!("refresh_tokens 获取 session 失败: {}", e))
-            })?;
-            let conn = session.connection().map_err(|e| {
-                BulwarkError::Dao(format!("refresh_tokens 获取 connection 失败: {}", e))
-            })?;
+            let session = self
+                .pool
+                .get_session("admin")
+                .await
+                .map_err(|e| BulwarkError::Dao(format!("jwt-refresh-get-session::{}", e)))?;
+            let conn = session
+                .connection()
+                .map_err(|e| BulwarkError::Dao(format!("jwt-refresh-get-conn::{}", e)))?;
 
             let stmt = Statement::from_sql_and_values(
                 DbBackend::Sqlite,
@@ -489,13 +497,13 @@ mod service {
             let row = conn
                 .query_one_raw(stmt)
                 .await
-                .map_err(|e| BulwarkError::Dao(format!("refresh_tokens 查询失败: {}", e)))?;
+                .map_err(|e| BulwarkError::Dao(format!("jwt-refresh-query::{}", e)))?;
 
             // 不存在 → false（未签发，不算 reuse）；存在且 revoked=1 → true
             let revoked = match row {
                 Some(row) => row
                     .try_get::<i64>("", "revoked")
-                    .map_err(|e| BulwarkError::Dao(format!("revoked 读取失败: {}", e)))?,
+                    .map_err(|e| BulwarkError::Dao(format!("jwt-refresh-query::{}", e)))?,
                 None => return Ok(false),
             };
             Ok(revoked == 1)
@@ -519,12 +527,14 @@ mod service {
         /// # 错误
         /// - `BulwarkError::Dao`: SQL 查询/UPDATE 失败
         pub async fn revoke_chain(&self, token_hash: &str) -> BulwarkResult<()> {
-            let session = self.pool.get_session("admin").await.map_err(|e| {
-                BulwarkError::Dao(format!("refresh_tokens 获取 session 失败: {}", e))
-            })?;
-            let conn = session.connection().map_err(|e| {
-                BulwarkError::Dao(format!("refresh_tokens 获取 connection 失败: {}", e))
-            })?;
+            let session = self
+                .pool
+                .get_session("admin")
+                .await
+                .map_err(|e| BulwarkError::Dao(format!("jwt-refresh-get-session::{}", e)))?;
+            let conn = session
+                .connection()
+                .map_err(|e| BulwarkError::Dao(format!("jwt-refresh-get-conn::{}", e)))?;
 
             let mut stack = vec![token_hash.to_string()];
             while let Some(hash) = stack.pop() {
@@ -536,7 +546,7 @@ mod service {
                 );
                 conn.execute_raw(update_stmt)
                     .await
-                    .map_err(|e| BulwarkError::Dao(format!("refresh_tokens UPDATE 失败: {}", e)))?;
+                    .map_err(|e| BulwarkError::Dao(format!("jwt-refresh-update::{}", e)))?;
 
                 // 查子代（parent_token_hash == hash）
                 let select_stmt = Statement::from_sql_and_values(
@@ -544,13 +554,14 @@ mod service {
                     "SELECT token_hash FROM refresh_tokens WHERE parent_token_hash = ?",
                     vec![Value::String(Some(hash))],
                 );
-                let rows = conn.query_all_raw(select_stmt).await.map_err(|e| {
-                    BulwarkError::Dao(format!("refresh_tokens 查询子代失败: {}", e))
-                })?;
+                let rows = conn
+                    .query_all_raw(select_stmt)
+                    .await
+                    .map_err(|e| BulwarkError::Dao(format!("jwt-refresh-select-child::{}", e)))?;
                 for row in rows {
                     let child_hash: String = row
                         .try_get("", "token_hash")
-                        .map_err(|e| BulwarkError::Dao(format!("token_hash 读取失败: {}", e)))?;
+                        .map_err(|e| BulwarkError::Dao(format!("jwt-refresh-query::{}", e)))?;
                     stack.push(child_hash);
                 }
             }

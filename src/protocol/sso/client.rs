@@ -31,7 +31,7 @@ const DEFAULT_TICKET_TTL: u64 = 60;
 /// 签名输入为 `random_part`，输出为 base64 编码的 HMAC-SHA256。
 pub(crate) fn sign_ticket(secret: &str, random_part: &str) -> BulwarkResult<String> {
     let mut mac = HmacSha256::new_from_slice(secret.as_bytes())
-        .map_err(|e| BulwarkError::Internal(format!("HMAC 密钥初始化失败: {}", e)))?;
+        .map_err(|e| BulwarkError::Internal(format!("sso-ticket-hmac-init::{}", e)))?;
     mac.update(random_part.as_bytes());
     Ok(BASE64_STANDARD.encode(mac.finalize().into_bytes()))
 }
@@ -40,20 +40,19 @@ pub(crate) fn sign_ticket(secret: &str, random_part: &str) -> BulwarkResult<Stri
 ///
 /// 返回 `Ok(random_part)` 验证通过，`Err` 表示签名无效或格式错误。
 pub(crate) fn verify_ticket_signature(secret: &str, ticket: &str) -> BulwarkResult<String> {
-    let (random_part, sig_b64) = ticket.split_once('.').ok_or_else(|| {
-        BulwarkError::InvalidToken("SSO ticket 格式错误：缺少签名部分".to_string())
-    })?;
+    let (random_part, sig_b64) = ticket
+        .split_once('.')
+        .ok_or_else(|| BulwarkError::InvalidToken("sso-ticket-format-no-sig".to_string()))?;
     // 常量时间比较：解码 base64 签名后用 mac.verify_slice 验证（与 sign/handler.rs 一致）
     let mut mac = HmacSha256::new_from_slice(secret.as_bytes())
-        .map_err(|e| BulwarkError::Internal(format!("HMAC 密钥初始化失败: {}", e)))?;
+        .map_err(|e| BulwarkError::Internal(format!("sso-ticket-hmac-init::{}", e)))?;
     mac.update(random_part.as_bytes());
     // 签名解码或验证失败均统一返回 "签名验证失败"，避免向调用方泄露失败原因（防侧信道）
-    let sig_bytes = BASE64_STANDARD.decode(sig_b64).map_err(|_| {
-        BulwarkError::InvalidToken("SSO ticket 签名验证失败：可能被篡改或伪造".to_string())
-    })?;
-    mac.verify_slice(&sig_bytes).map_err(|_| {
-        BulwarkError::InvalidToken("SSO ticket 签名验证失败：可能被篡改或伪造".to_string())
-    })?;
+    let sig_bytes = BASE64_STANDARD
+        .decode(sig_b64)
+        .map_err(|_| BulwarkError::InvalidToken("sso-ticket-sig-verify".to_string()))?;
+    mac.verify_slice(&sig_bytes)
+        .map_err(|_| BulwarkError::InvalidToken("sso-ticket-sig-verify".to_string()))?;
     Ok(random_part.to_string())
 }
 
@@ -122,7 +121,7 @@ impl SsoClient {
             client_id,
         };
         let value = serde_json::to_string(&data)
-            .map_err(|e| BulwarkError::Internal(format!("序列化 SSO ticket 失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Internal(format!("sso-ticket-serialize::{}", e)))?;
         let key = format!("bulwark:sso:ticket:{}", ticket);
         self.dao.set(&key, &value, self.ticket_ttl_seconds).await?;
         Ok(ticket)
@@ -163,11 +162,12 @@ impl SsoClient {
             .dao
             .get(&key)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("SSO ticket 读取失败: {}", e)))?;
-        let value = value
-            .ok_or_else(|| BulwarkError::InvalidToken("SSO 票据不存在或已过期".to_string()))?;
+            .map_err(|e| BulwarkError::Dao(format!("sso-ticket-read::{}", e)))?;
+        let value = value.ok_or_else(|| {
+            BulwarkError::InvalidToken("sso-ticket-missing-or-expired".to_string())
+        })?;
         let data: SsoTicketData = serde_json::from_str(&value)
-            .map_err(|e| BulwarkError::Internal(format!("反序列化 SSO ticket 失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Internal(format!("sso-ticket-deserialize::{}", e)))?;
         if data.client_id != client_id {
             // client_id 不匹配：不消费票据，允许正确 client_id 后续重试
             return Err(BulwarkError::InvalidToken(format!(
@@ -181,7 +181,7 @@ impl SsoClient {
             .dao
             .get_and_delete(&key)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("SSO ticket 原子消费失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Dao(format!("sso-ticket-atomic-consume::{}", e)))?;
         if consumed.is_none() {
             return Err(BulwarkError::InvalidToken(
                 "SSO 票据已被并发消费".to_string(),

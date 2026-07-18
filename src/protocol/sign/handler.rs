@@ -34,7 +34,7 @@ impl SignHandler {
         let app_key = app_key.into();
         let app_secret = app_secret.into();
         if app_key.is_empty() {
-            return Err(BulwarkError::Config("app_key 不可为空".to_string()));
+            return Err(BulwarkError::Config("sign-app-key-empty".to_string()));
         }
         // 强制 app_secret 最小 32 字节（256 位）
         if app_secret.len() < MIN_APP_SECRET_LEN {
@@ -152,15 +152,17 @@ impl SignHandler {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
-            .map_err(|e| BulwarkError::Internal(format!("获取系统时间失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Internal(format!("sign-clock::{}", e)))?;
         if (now - timestamp).abs() > self.timestamp_window {
-            return Err(BulwarkError::ExpiredToken("签名时间戳超出窗口".to_string()));
+            return Err(BulwarkError::ExpiredToken(
+                "sign-timestamp-window".to_string(),
+            ));
         }
 
         // (2) nonce 防重放检查
         let nonce_key = format!("bulwark:sign:nonce:{}", nonce);
         if self.dao.get(&nonce_key).await?.is_some() {
-            return Err(BulwarkError::InvalidToken("nonce 重放".to_string()));
+            return Err(BulwarkError::InvalidToken("sign-nonce-replay".to_string()));
         }
 
         // (3) 重新计算签名并常量时间比较（使用 HKDF 派生密钥）
@@ -175,12 +177,12 @@ impl SignHandler {
         // 将传入的 signature（Base64）解码为字节
         let signature_bytes = STANDARD
             .decode(signature)
-            .map_err(|e| BulwarkError::InvalidToken(format!("签名 Base64 解码失败: {}", e)))?;
+            .map_err(|e| BulwarkError::InvalidToken(format!("sign-base64-decode::{}", e)))?;
         // 使用 verify_slice 进行常量时间比较
         match mac.verify_slice(&signature_bytes) {
             Ok(_) => {},
             Err(_) => {
-                return Err(BulwarkError::InvalidToken("签名不匹配".to_string()));
+                return Err(BulwarkError::InvalidToken("sign-mismatch".to_string()));
             },
         }
 

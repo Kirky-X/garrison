@@ -236,7 +236,7 @@ async fn validate_ticket_rejects_unsigned_ticket() {
     let fake_ticket = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
     let result = client.validate_ticket(fake_ticket, 2001).await;
     assert!(
-        matches!(result, Err(BulwarkError::InvalidToken(ref msg)) if msg.contains("格式错误")),
+        matches!(result, Err(BulwarkError::InvalidToken(ref msg)) if msg.contains("sso-ticket-format-no-sig")),
         "无签名的 ticket 应被拒绝，实际: {:?}",
         result
     );
@@ -251,7 +251,7 @@ async fn validate_ticket_rejects_tampered_signature() {
     let tampered_ticket = format!("{}X", ticket);
     let result = client.validate_ticket(&tampered_ticket, 2001).await;
     assert!(
-        matches!(result, Err(BulwarkError::InvalidToken(ref msg)) if msg.contains("签名验证失败")),
+        matches!(result, Err(BulwarkError::InvalidToken(ref msg)) if msg.contains("sso-ticket-sig-verify")),
         "篡改签名的 ticket 应被拒绝，实际: {:?}",
         result
     );
@@ -267,7 +267,7 @@ async fn validate_ticket_rejects_different_secret() {
     let ticket = issuer.issue_ticket("1001", 2001).await.unwrap();
     let result = validator.validate_ticket(&ticket, 2001).await;
     assert!(
-        matches!(result, Err(BulwarkError::InvalidToken(ref msg)) if msg.contains("签名验证失败")),
+        matches!(result, Err(BulwarkError::InvalidToken(ref msg)) if msg.contains("sso-ticket-sig-verify")),
         "不同 secret 签发的 ticket 应被拒绝，实际: {:?}",
         result
     );

@@ -3,7 +3,8 @@
 
 use super::mock::make_client;
 use super::*;
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::error::BulwarkError;
+use crate::BulwarkResult;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 

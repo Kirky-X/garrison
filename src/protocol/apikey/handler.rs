@@ -58,7 +58,9 @@ pub(crate) fn idx_key_for(key: &str) -> String {
 /// - `BulwarkError::InvalidParam`: namespace 为空、过长或包含非法字符。
 fn validate_namespace(namespace: &str) -> BulwarkResult<()> {
     if namespace.is_empty() {
-        return Err(BulwarkError::InvalidParam("namespace 不能为空".to_string()));
+        return Err(BulwarkError::InvalidParam(
+            "apikey-namespace-empty".to_string(),
+        ));
     }
     if namespace.len() > 64 {
         return Err(BulwarkError::InvalidParam(format!(
@@ -152,13 +154,15 @@ impl ApiKeyHandler {
     ) -> BulwarkResult<String> {
         let login_id: String = login_id.into();
         if timeout <= 0 {
-            return Err(BulwarkError::InvalidParam("timeout 必须大于 0".to_string()));
+            return Err(BulwarkError::InvalidParam(
+                "apikey-timeout-positive".to_string(),
+            ));
         }
         validate_namespace(namespace)?;
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
-            .map_err(|e| BulwarkError::Internal(format!("获取系统时间失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Internal(format!("apikey-clock::{}", e)))?;
         let info = ApiKeyInfo {
             login_id,
             scopes,
@@ -167,7 +171,7 @@ impl ApiKeyHandler {
             namespace: namespace.to_string(),
         };
         let value = serde_json::to_string(&info)
-            .map_err(|e| BulwarkError::Internal(format!("序列化 ApiKeyInfo 失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Internal(format!("apikey-serialize::{}", e)))?;
         // 拼接两个 UUID v4 simple（各 32 hex = 64 字符）
         let key = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
         let dao_key = format!("bulwark:apikey:{}:{}", namespace, key);
@@ -212,7 +216,7 @@ impl ApiKeyHandler {
         if let Some(value) = self.dao.get(&old_dao_key).await? {
             return self.decode_and_check(&value).await;
         }
-        Err(BulwarkError::InvalidToken("API Key 不存在".to_string()))
+        Err(BulwarkError::InvalidToken("apikey-not-found".to_string()))
     }
 
     /// 校验指定 namespace 下的 API Key。
@@ -232,7 +236,7 @@ impl ApiKeyHandler {
         let dao_key = format!("bulwark:apikey:{}:{}", namespace, key);
         let value = self.dao.get(&dao_key).await?;
         let value =
-            value.ok_or_else(|| BulwarkError::InvalidToken("API Key 不存在".to_string()))?;
+            value.ok_or_else(|| BulwarkError::InvalidToken("apikey-not-found".to_string()))?;
         let info = self.decode_and_check(&value).await?;
         // 二次校验：JSON 中 namespace 必须与请求 namespace 一致（防止存储错位）
         if info.namespace != namespace {
@@ -247,16 +251,16 @@ impl ApiKeyHandler {
     /// 解码 ApiKeyInfo 并校验 revoked / expire（verify 内部复用）。
     async fn decode_and_check(&self, value: &str) -> BulwarkResult<ApiKeyInfo> {
         let info: ApiKeyInfo = serde_json::from_str(value)
-            .map_err(|e| BulwarkError::Internal(format!("反序列化 ApiKeyInfo 失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Internal(format!("apikey-deserialize::{}", e)))?;
         if info.revoked {
-            return Err(BulwarkError::InvalidToken("API Key 已吊销".to_string()));
+            return Err(BulwarkError::InvalidToken("apikey-revoked".to_string()));
         }
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
-            .map_err(|e| BulwarkError::Internal(format!("获取系统时间失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Internal(format!("apikey-clock::{}", e)))?;
         if info.expire_at <= now {
-            return Err(BulwarkError::ExpiredToken("API Key 已过期".to_string()));
+            return Err(BulwarkError::ExpiredToken("apikey-expired".to_string()));
         }
         Ok(info)
     }
@@ -286,19 +290,19 @@ impl ApiKeyHandler {
         if self.dao.get(&old_dao_key).await?.is_some() {
             return self.revoke_at(&old_dao_key).await;
         }
-        Err(BulwarkError::InvalidToken("API Key 不存在".to_string()))
+        Err(BulwarkError::InvalidToken("apikey-not-found".to_string()))
     }
 
     /// 内部：根据 dao_key 吊销（写回 revoked=true，保留 TTL）。
     async fn revoke_at(&self, dao_key: &str) -> BulwarkResult<()> {
         let value = self.dao.get(dao_key).await?;
         let value =
-            value.ok_or_else(|| BulwarkError::InvalidToken("API Key 不存在".to_string()))?;
+            value.ok_or_else(|| BulwarkError::InvalidToken("apikey-not-found".to_string()))?;
         let mut info: ApiKeyInfo = serde_json::from_str(&value)
-            .map_err(|e| BulwarkError::Internal(format!("反序列化 ApiKeyInfo 失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Internal(format!("apikey-deserialize::{}", e)))?;
         info.revoked = true;
         let new_value = serde_json::to_string(&info)
-            .map_err(|e| BulwarkError::Internal(format!("序列化 ApiKeyInfo 失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Internal(format!("apikey-serialize::{}", e)))?;
         // 使用 update 保留 TTL
         self.dao.update(dao_key, &new_value).await
     }
@@ -322,9 +326,8 @@ impl ApiKeyHandler {
         for dao_key in dao_keys {
             let value = self.dao.get(&dao_key).await?;
             if let Some(v) = value {
-                let info: ApiKeyInfo = serde_json::from_str(&v).map_err(|e| {
-                    BulwarkError::Internal(format!("反序列化 ApiKeyInfo 失败: {}", e))
-                })?;
+                let info: ApiKeyInfo = serde_json::from_str(&v)
+                    .map_err(|e| BulwarkError::Internal(format!("apikey-deserialize::{}", e)))?;
                 if !info.revoked {
                     result.push(info);
                 }
@@ -352,7 +355,7 @@ impl ApiKeyHandler {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
-            .map_err(|e| BulwarkError::Internal(format!("获取系统时间失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Internal(format!("apikey-clock::{}", e)))?;
         let remaining_ttl = info.expire_at - now;
         if remaining_ttl <= 0 {
             return Err(BulwarkError::ExpiredToken(

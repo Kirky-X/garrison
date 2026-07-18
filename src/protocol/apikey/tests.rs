@@ -532,7 +532,7 @@ async fn verify_returns_internal_error_when_json_invalid() {
     dao.set(&dao_key, "invalid-json", 3600).await.unwrap();
     let result = handler.verify(&key).await;
     assert!(
-        matches!(result, Err(BulwarkError::Internal(ref msg)) if msg.contains("反序列化 ApiKeyInfo 失败")),
+        matches!(result, Err(BulwarkError::Internal(ref msg)) if msg.contains("apikey-deserialize")),
         "无效 JSON 应返回 Internal 错误，实际: {:?}",
         result
     );
@@ -550,7 +550,7 @@ async fn revoke_returns_internal_error_when_json_invalid() {
     dao.set(&dao_key, "invalid-json", 3600).await.unwrap();
     let result = handler.revoke(&key).await;
     assert!(
-        matches!(result, Err(BulwarkError::Internal(ref msg)) if msg.contains("反序列化 ApiKeyInfo 失败")),
+        matches!(result, Err(BulwarkError::Internal(ref msg)) if msg.contains("apikey-deserialize")),
         "无效 JSON 应返回 Internal 错误，实际: {:?}",
         result
     );
