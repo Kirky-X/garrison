@@ -193,7 +193,7 @@ impl AnomalousLoginAnalyzer {
         }
         if record.login_id.contains(':') {
             return Err(BulwarkError::InvalidParam(
-                "login_id 不能包含 ':'".to_string(),
+                "strategy-login-id-no-colon".to_string(),
             ));
         }
         let key = Self::make_storage_key(&record.login_id, record.timestamp);
@@ -435,7 +435,7 @@ impl AnomalousLoginAnalyzer {
             Err(_) => {
                 abort_handle.abort();
                 Err(BulwarkError::Internal(format!(
-                    "shutdown 超时 {}ms，已强制 abort",
+                    "strategy-analyzer-shutdown-timeout::{}",
                     timeout.as_millis()
                 )))
             },
@@ -1287,8 +1287,8 @@ mod tests {
         assert!(result.is_err(), "慢任务应超时返回 Err");
         let err_msg = format!("{}", result.unwrap_err());
         assert!(
-            err_msg.contains("超时"),
-            "错误信息应包含 '超时'，实际: {}",
+            err_msg.contains("strategy-analyzer-shutdown-timeout"),
+            "错误信息应包含 'strategy-analyzer-shutdown-timeout'，实际: {}",
             err_msg
         );
     }

@@ -95,7 +95,7 @@ impl BulwarkManager {
         } else {
             u64::try_from(config.active_timeout).map_err(|_| {
                 BulwarkError::Config(format!(
-                    "active_timeout 溢出 u64: {}",
+                    "manager-active-timeout-overflow::{}",
                     config.active_timeout
                 ))
             })?

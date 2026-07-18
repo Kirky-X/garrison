@@ -66,7 +66,7 @@ pub fn check_login(
                     .map_err(|e| warp::reject::custom(super::BulwarkRejection(e)))?
                     .ok_or_else(|| {
                         warp::reject::custom(super::BulwarkRejection(BulwarkError::NotLogin(
-                            "未提供 token".to_string(),
+                            "web-not-login".to_string(),
                         )))
                     })?;
 
@@ -100,7 +100,7 @@ pub fn check_role(
                     .map_err(|e| warp::reject::custom(super::BulwarkRejection(e)))?
                     .ok_or_else(|| {
                         warp::reject::custom(super::BulwarkRejection(BulwarkError::NotLogin(
-                            "未提供 token".to_string(),
+                            "web-not-login".to_string(),
                         )))
                     })?;
 
@@ -130,7 +130,7 @@ pub fn check_permission(
                     .map_err(|e| warp::reject::custom(super::BulwarkRejection(e)))?
                     .ok_or_else(|| {
                         warp::reject::custom(super::BulwarkRejection(BulwarkError::NotLogin(
-                            "未提供 token".to_string(),
+                            "web-not-login".to_string(),
                         )))
                     })?;
 

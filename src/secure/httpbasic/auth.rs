@@ -64,7 +64,7 @@ impl HttpBasicAuth {
 
         if !scheme.eq_ignore_ascii_case("basic") {
             return Err(BulwarkError::Internal(format!(
-                "认证方案不支持: {}，仅支持 Basic",
+                "secure-httpbasic-unsupported-scheme::{}",
                 scheme
             )));
         }
@@ -72,7 +72,7 @@ impl HttpBasicAuth {
         let credentials = credentials.trim();
         if credentials.is_empty() {
             return Err(BulwarkError::Internal(
-                "Authorization header 缺少凭证部分".to_string(),
+                "secure-auth-header-no-cred::".to_string(),
             ));
         }
 

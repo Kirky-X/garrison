@@ -552,7 +552,7 @@ async fn default_interceptor_check_basic_auth_error_message_contains_guidance() 
         .await;
     if let Err(BulwarkError::NotImplemented(msg)) = result {
         assert!(
-            msg.contains("secure::httpbasic") || msg.contains("extractor"),
+            msg.contains("router-check-basic-auth-need-http-context"),
             "错误消息应包含使用建议，实际: {}",
             msg
         );
@@ -607,7 +607,7 @@ async fn default_interceptor_check_access_token_error_contains_guidance() {
         .await;
     if let Err(BulwarkError::NotImplemented(msg)) = result {
         assert!(
-            msg.contains("OAuth2Handler") || msg.contains("oauth2"),
+            msg.contains("router-check-access-token-need-oauth2"),
             "错误消息应包含 OAuth2 使用建议，实际: {}",
             msg
         );

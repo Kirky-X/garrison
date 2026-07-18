@@ -110,7 +110,7 @@ impl BulwarkFirewallStrategy for BruteForceStrategy {
             .is_some()
         {
             return Err(BulwarkError::FirewallBlocked(format!(
-                "bruteforce: IP {} 已被锁定",
+                "strategy-firewall-bruteforce-locked::{}",
                 ctx.ip
             )));
         }
@@ -136,7 +136,7 @@ impl BulwarkFirewallStrategy for BruteForceStrategy {
                 expires_at: Utc::now() + chrono::Duration::seconds(self.config.lock_seconds as i64),
                 is_manual: false,
                 reason: format!(
-                    "bruteforce: 尝试次数 {} 超过阈值 {}",
+                    "strategy-firewall-bruteforce-reason::{}::{}",
                     new_count, self.config.max_attempts
                 ),
             };
@@ -145,7 +145,7 @@ impl BulwarkFirewallStrategy for BruteForceStrategy {
                 .await
                 .map_err(|e| BulwarkError::Dao(format!("strategy-ban-save::{}", e)))?;
             Err(BulwarkError::FirewallBlocked(format!(
-                "bruteforce: IP {} 尝试次数 {} 超过阈值 {}",
+                "strategy-firewall-bruteforce-blocked::{}::{}::{}",
                 ctx.ip, new_count, self.config.max_attempts
             )))
         } else {

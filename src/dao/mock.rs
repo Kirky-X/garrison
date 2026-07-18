@@ -165,7 +165,10 @@ impl BulwarkDao for MockDao {
                 store.remove(old_key);
                 Ok(())
             },
-            None => Err(BulwarkError::InvalidParam(format!("键不存在: {}", old_key))),
+            None => Err(BulwarkError::InvalidParam(format!(
+                "dao-key-not-found::{}",
+                old_key
+            ))),
         }
     }
 
@@ -227,24 +230,24 @@ impl BulwarkDao for MockDao {
         args: Vec<String>,
     ) -> BulwarkResult<Vec<String>> {
         if script.contains("INCR") && script.contains("EXPIRE") {
-            let key = keys
-                .first()
-                .ok_or_else(|| BulwarkError::InvalidParam("eval_lua 缺少 KEYS[1]".to_string()))?;
+            let key = keys.first().ok_or_else(|| {
+                BulwarkError::InvalidParam("dao-eval-lua-missing-keys-1".to_string())
+            })?;
             // ARGV[2] 是 TTL（ARGV[1] 是 threshold，由调用方处理）
             let ttl: u64 = args
                 .get(1)
                 .ok_or_else(|| {
-                    BulwarkError::InvalidParam("eval_lua 缺少 ARGV[2] (TTL)".to_string())
+                    BulwarkError::InvalidParam("dao-eval-lua-missing-argv-2-ttl".to_string())
                 })?
                 .parse()
                 .map_err(|e| {
-                    BulwarkError::InvalidParam(format!("eval_lua ARGV[2] parse 失败: {}", e))
+                    BulwarkError::InvalidParam(format!("dao-eval-lua-argv-2-parse-failed::{}", e))
                 })?;
             let count = self.incr(key, ttl).await?;
             return Ok(vec![count.to_string()]);
         }
         Err(BulwarkError::NotImplemented(format!(
-            "eval_lua 不支持的脚本模式: {}（MockDao 仅支持 INCR+EXPIRE）",
+            "dao-eval-lua-unsupported-script::{}",
             script
         )))
     }

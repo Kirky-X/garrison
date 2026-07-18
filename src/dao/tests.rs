@@ -945,7 +945,7 @@ impl BulwarkDao for MinimalDao {
                 *existing = value.to_string();
                 Ok(())
             },
-            None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
+            None => Err(BulwarkError::Dao(format!("dao-key-not-found::{}", key))),
         }
     }
 

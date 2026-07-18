@@ -179,7 +179,7 @@ impl BanStorage for BulwarkDaoBanStorage {
                 let parts: Vec<&str> = val.splitn(2, '|').collect();
                 if parts.len() != 2 {
                     return Err(StorageError::QueryError(format!(
-                        "get_history 格式错误 (key={}, val={}): 期望 2 段, 实际 {} 段",
+                        "limiteron-ban-history-format-error::{}::{}::{}",
                         key,
                         val,
                         parts.len()
@@ -188,13 +188,13 @@ impl BanStorage for BulwarkDaoBanStorage {
                 // M-3: parse 失败显性化 — 脏数据返回 Err（fail-fast）
                 let ban_times: u32 = parts[0].parse().map_err(|e| {
                     StorageError::QueryError(format!(
-                        "get_history parse 失败 (ban_times, key={}, val={}): {}",
+                        "limiteron-ban-history-parse-ban-times::{}::{}::{}",
                         key, parts[0], e
                     ))
                 })?;
                 let last_banned_at_ts: i64 = parts[1].parse().map_err(|e| {
                     StorageError::QueryError(format!(
-                        "get_history parse 失败 (last_banned_at_ts, key={}, val={}): {}",
+                        "limiteron-ban-history-parse-last-banned::{}::{}::{}",
                         key, parts[1], e
                     ))
                 })?;
@@ -221,7 +221,7 @@ impl BanStorage for BulwarkDaoBanStorage {
             // M-3: parse 失败显性化 — 脏数据返回错误而非静默用 0
             Some(val) => val.parse::<u64>().map_err(|e| {
                 StorageError::QueryError(format!(
-                    "get_ban_times parse 失败 (key={}, val={}): {}",
+                    "limiteron-ban-times-parse-failed::{}::{}::{}",
                     key, val, e
                 ))
             }),
@@ -420,8 +420,8 @@ mod tests {
         assert!(result.is_err(), "脏数据应返回错误，实际: {:?}", result);
         let err_msg = format!("{}", result.unwrap_err());
         assert!(
-            err_msg.contains("parse 失败"),
-            "错误消息应包含 'parse 失败'，实际: {}",
+            err_msg.contains("limiteron-ban-times-parse-failed"),
+            "错误消息应包含 'limiteron-ban-times-parse-failed'，实际: {}",
             err_msg
         );
     }
@@ -438,8 +438,8 @@ mod tests {
         assert!(result.is_err(), "脏数据应返回错误，实际: {:?}", result);
         let err_msg = format!("{}", result.unwrap_err());
         assert!(
-            err_msg.contains("parse 失败"),
-            "错误消息应包含 'parse 失败'，实际: {}",
+            err_msg.contains("limiteron-ban-history-parse-ban-times"),
+            "错误消息应包含 'limiteron-ban-history-parse-ban-times'，实际: {}",
             err_msg
         );
     }
@@ -553,8 +553,8 @@ mod tests {
         assert!(result.is_err(), "段数不对应返回错误");
         let err_msg = format!("{}", result.unwrap_err());
         assert!(
-            err_msg.contains("格式错误"),
-            "错误消息应包含 '格式错误'，实际: {}",
+            err_msg.contains("limiteron-ban-history-format-error"),
+            "错误消息应包含 'limiteron-ban-history-format-error'，实际: {}",
             err_msg
         );
     }

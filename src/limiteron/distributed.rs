@@ -70,7 +70,7 @@ impl BulwarkDaoDistributedLimiter {
                     .parse()
                     .map_err(|e| {
                         map_to_limiter_err(BulwarkError::Dao(format!(
-                            "eval_lua 返回值解析失败: {}",
+                            "limiteron-eval-lua-parse-failed::{}",
                             e
                         )))
                     })?;
@@ -140,7 +140,7 @@ impl DistributedLimiter for BulwarkDaoDistributedLimiter {
             // M-3: parse 失败显性化 — 脏数据返回错误而非静默用 0
             Some(val) => val.parse::<u64>().map_err(|e| {
                 map_to_limiter_err(BulwarkError::Dao(format!(
-                    "get_count parse 失败 (key={}, val={}): {}",
+                    "limiteron-get-count-parse-failed::{}::{}::{}",
                     key, val, e
                 )))
             }),
@@ -218,8 +218,8 @@ mod tests {
         assert!(result.is_err(), "脏数据应返回错误，实际: {:?}", result);
         let err_msg = format!("{}", result.unwrap_err());
         assert!(
-            err_msg.contains("parse 失败"),
-            "错误消息应包含 'parse 失败'，实际: {}",
+            err_msg.contains("limiteron-get-count-parse-failed"),
+            "错误消息应包含 'limiteron-get-count-parse-failed'，实际: {}",
             err_msg
         );
     }

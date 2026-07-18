@@ -154,7 +154,9 @@ impl AuthLogic for AuthLogicDefault {
     async fn verify_token(&self, token: &str) -> BulwarkResult<String> {
         match self.get_login_id(token).await? {
             Some(id) => Ok(id),
-            None => Err(BulwarkError::InvalidToken("token 无效或已过期".to_string())),
+            None => Err(BulwarkError::InvalidToken(
+                "core-auth-token-invalid-or-expired".to_string(),
+            )),
         }
     }
 
@@ -162,7 +164,7 @@ impl AuthLogic for AuthLogicDefault {
         // 验证 target_login_id 非空
         if target_login_id.is_empty() {
             return Err(BulwarkError::InvalidParam(
-                "target_login_id 不能为空".to_string(),
+                "core-auth-target-login-id-empty".to_string(),
             ));
         }
 
@@ -171,7 +173,9 @@ impl AuthLogic for AuthLogicDefault {
             .session
             .get_token_session(token)
             .await?
-            .ok_or_else(|| BulwarkError::NotLogin("token 无效或已过期".to_string()))?;
+            .ok_or_else(|| {
+                BulwarkError::NotLogin("core-auth-token-invalid-or-expired".to_string())
+            })?;
 
         // A6: 校验目标 Account-Session 存在（纵深防御层）。
         // 在 guard 检查前校验，原因有二：
@@ -187,7 +191,7 @@ impl AuthLogic for AuthLogicDefault {
             .is_none()
         {
             return Err(BulwarkError::InvalidParam(format!(
-                "target login_id 不存在: {}",
+                "core-auth-target-login-id-not-found::{}",
                 target_login_id
             )));
         }
@@ -284,7 +288,9 @@ impl AuthLogic for AuthLogicDefault {
             .session
             .get_token_session_with_ttl(token)
             .await?
-            .ok_or_else(|| BulwarkError::NotLogin("token 无效或已过期".to_string()))?;
+            .ok_or_else(|| {
+                BulwarkError::NotLogin("core-auth-token-invalid-or-expired".to_string())
+            })?;
         let ttl_secs = remaining_ttl.map(|d| d.as_secs()).unwrap_or(0);
 
         // 2. 生成新 token（同 token_style + 同 login_id）
@@ -330,7 +336,7 @@ impl AuthLogic for AuthLogicDefault {
                 "renew_to_equivalent 创建新 token session 失败，旧 token 仍有效（A9 无 DoS）"
             );
             return Err(BulwarkError::Internal(
-                "token 置换失败：创建新 token session 出错（old token 仍有效）".to_string(),
+                "core-auth-token-renew-create-failed".to_string(),
             ));
         }
 
@@ -361,8 +367,7 @@ impl AuthLogic for AuthLogicDefault {
             }
             // rule 12：失败显性化 — 旧 token 仍有效，用户可用旧 token 重试
             return Err(BulwarkError::Internal(
-                "token 置换失败：添加新 token 到 Account-Session 出错（old token 仍有效）"
-                    .to_string(),
+                "core-auth-token-renew-add-to-account-failed".to_string(),
             ));
         }
 

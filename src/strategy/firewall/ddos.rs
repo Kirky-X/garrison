@@ -112,7 +112,7 @@ impl BulwarkFirewallStrategy for DDoSStrategy {
             .map_err(|e| BulwarkError::Dao(format!("strategy-ddos-global::{}", e)))?;
         if !global_ok {
             return Err(BulwarkError::FirewallBlocked(format!(
-                "ddos: 全局速率限制 (burst={})",
+                "strategy-ddos-global-blocked::{}",
                 self.config.burst
             )));
         }
@@ -126,7 +126,7 @@ impl BulwarkFirewallStrategy for DDoSStrategy {
             .map_err(|e| BulwarkError::Dao(format!("strategy-ddos-ip::{}::{}", ctx.ip, e)))?;
         if !ip_ok {
             return Err(BulwarkError::FirewallBlocked(format!(
-                "ddos: IP {} 速率限制 (per_ip_rps={})",
+                "strategy-ddos-ip-blocked::{}::{}",
                 ctx.ip, self.config.per_ip_rps
             )));
         }

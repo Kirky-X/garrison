@@ -493,7 +493,7 @@ async fn switch_to_nonexistent_target_returns_invalid_param() {
     // 不创建 "ghost-user" 的 Account-Session
     let result = auth.switch_to(&token, "ghost-user").await;
     assert!(
-        matches!(result, Err(BulwarkError::InvalidParam(ref msg)) if msg.contains("不存在")),
+        matches!(result, Err(BulwarkError::InvalidParam(ref msg)) if msg.contains("core-auth-target-login-id-not-found")),
         "切换到不存在的 target 应返回 InvalidParam，实际: {:?}",
         result
     );

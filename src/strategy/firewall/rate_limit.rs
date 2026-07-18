@@ -321,7 +321,7 @@ impl BulwarkFirewallStrategy for RateLimitStrategy {
         let threshold = self.current_threshold(ctx).await?;
         if timestamps.len() >= threshold {
             return Err(BulwarkError::FirewallBlocked(format!(
-                "ratelimit: {} {} 窗口内请求数 {} 达到上限 {}",
+                "strategy-firewall-ratelimit-blocked::{}::{}::{}::{}",
                 scope_id,
                 format!("{:?}", self.config.scope).to_lowercase(),
                 timestamps.len(),

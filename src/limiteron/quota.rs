@@ -64,14 +64,14 @@ impl QuotaStorage for BulwarkDaoQuotaStorage {
                 // M-3: parse 失败显性化 — 脏数据返回 Err（fail-fast）
                 let consumed: u64 = count_str.parse().map_err(|e| {
                     map_to_storage_err(BulwarkError::Dao(format!(
-                        "get_quota parse 失败 (count, key={}, val={}): {}",
+                        "limiteron-quota-count-parse-failed::{}::{}::{}",
                         count_key, count_str, e
                     )))
                 })?;
                 let parts: Vec<&str> = meta_str.split('|').collect();
                 if parts.len() != 4 {
                     return Err(map_to_storage_err(BulwarkError::Dao(format!(
-                        "get_quota meta 格式错误 (key={}, val={}): 期望 4 段, 实际 {} 段",
+                        "limiteron-quota-meta-format-error::{}::{}::{}",
                         meta_key,
                         meta_str,
                         parts.len()
@@ -79,33 +79,33 @@ impl QuotaStorage for BulwarkDaoQuotaStorage {
                 }
                 let limit: u64 = parts[1].parse().map_err(|e| {
                     map_to_storage_err(BulwarkError::Dao(format!(
-                        "get_quota parse 失败 (limit, key={}, val={}): {}",
+                        "limiteron-quota-limit-parse-failed::{}::{}::{}",
                         meta_key, parts[1], e
                     )))
                 })?;
                 let window_start_ts: i64 = parts[2].parse().map_err(|e| {
                     map_to_storage_err(BulwarkError::Dao(format!(
-                        "get_quota parse 失败 (window_start_ts, key={}, val={}): {}",
+                        "limiteron-quota-window-start-parse-failed::{}::{}::{}",
                         meta_key, parts[2], e
                     )))
                 })?;
                 let window_end_ts: i64 = parts[3].parse().map_err(|e| {
                     map_to_storage_err(BulwarkError::Dao(format!(
-                        "get_quota parse 失败 (window_end_ts, key={}, val={}): {}",
+                        "limiteron-quota-window-end-parse-failed::{}::{}::{}",
                         meta_key, parts[3], e
                     )))
                 })?;
                 let window_start = chrono::DateTime::from_timestamp(window_start_ts, 0)
                     .ok_or_else(|| {
                         map_to_storage_err(BulwarkError::Dao(format!(
-                            "get_quota DateTime 转换失败 (window_start_ts={})",
+                            "limiteron-quota-window-start-datetime-failed::{}",
                             window_start_ts
                         )))
                     })?;
                 let window_end =
                     chrono::DateTime::from_timestamp(window_end_ts, 0).ok_or_else(|| {
                         map_to_storage_err(BulwarkError::Dao(format!(
-                            "get_quota DateTime 转换失败 (window_end_ts={})",
+                            "limiteron-quota-window-end-datetime-failed::{}",
                             window_end_ts
                         )))
                     })?;
@@ -275,8 +275,8 @@ mod tests {
         );
         let err_msg = format!("{}", result.unwrap_err());
         assert!(
-            err_msg.contains("parse 失败"),
-            "错误消息应包含 'parse 失败'，实际: {}",
+            err_msg.contains("limiteron-quota-count-parse-failed"),
+            "错误消息应包含 'limiteron-quota-count-parse-failed'，实际: {}",
             err_msg
         );
     }
@@ -308,8 +308,8 @@ mod tests {
         );
         let err_msg = format!("{}", result.unwrap_err());
         assert!(
-            err_msg.contains("parse 失败"),
-            "错误消息应包含 'parse 失败'，实际: {}",
+            err_msg.contains("limiteron-quota-limit-parse-failed"),
+            "错误消息应包含 'limiteron-quota-limit-parse-failed'，实际: {}",
             err_msg
         );
     }
@@ -431,8 +431,8 @@ mod tests {
         assert!(result.is_err(), "meta 段数不对应返回错误");
         let err_msg = format!("{}", result.unwrap_err());
         assert!(
-            err_msg.contains("格式错误"),
-            "错误消息应包含 '格式错误'，实际: {}",
+            err_msg.contains("limiteron-quota-meta-format-error"),
+            "错误消息应包含 'limiteron-quota-meta-format-error'，实际: {}",
             err_msg
         );
     }

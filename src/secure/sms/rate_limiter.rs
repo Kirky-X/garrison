@@ -24,17 +24,17 @@ pub(super) fn validate_phone(phone: &str) -> BulwarkResult<()> {
     }
     if phone.contains(':') {
         return Err(BulwarkError::InvalidParam(
-            "phone 不能包含 ':' 字符".to_string(),
+            "secure-phone-no-colon".to_string(),
         ));
     }
     if phone.chars().any(|c| c.is_control()) {
         return Err(BulwarkError::InvalidParam(
-            "phone 不能包含控制字符".to_string(),
+            "secure-phone-no-control-char".to_string(),
         ));
     }
     if phone.len() > 20 {
         return Err(BulwarkError::InvalidParam(
-            "phone 长度不能超过 20 字符".to_string(),
+            "secure-phone-too-long".to_string(),
         ));
     }
     Ok(())

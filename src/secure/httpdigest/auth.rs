@@ -217,7 +217,7 @@ impl HttpDigestAuth {
 
         if !scheme.eq_ignore_ascii_case("digest") {
             return Err(BulwarkError::Internal(format!(
-                "Authorization 方案不支持: {}，仅支持 Digest",
+                "secure-httpdigest-unsupported-scheme::{}",
                 scheme
             )));
         }
