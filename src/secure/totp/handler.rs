@@ -30,7 +30,7 @@ impl TotpHandler {
             step,
             secret,
         )
-        .map_err(|e| BulwarkError::Internal(format!("TOTP 初始化失败: {}", e)))?;
+        .map_err(|e| BulwarkError::Internal(format!("secure-totp-init::{}", e)))?;
         Ok(Self { totp, step })
     }
 
@@ -131,6 +131,6 @@ impl TotpHandler {
     /// - `Err(BulwarkError::Internal)`: Base32 解码失败。
     pub fn secret_from_base32(s: &str) -> BulwarkResult<Vec<u8>> {
         base32::decode(base32::Alphabet::Rfc4648 { padding: false }, s)
-            .ok_or_else(|| BulwarkError::Internal(format!("Base32 解码失败: {}", s)))
+            .ok_or_else(|| BulwarkError::Internal(format!("secure-base32-decode::{}", s)))
     }
 }

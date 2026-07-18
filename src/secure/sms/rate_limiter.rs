@@ -18,7 +18,9 @@ use std::time::Duration;
 /// 额外校验：非空、无控制字符、长度 <= 20（防止超大 key 消耗内存）。
 pub(super) fn validate_phone(phone: &str) -> BulwarkResult<()> {
     if phone.is_empty() {
-        return Err(BulwarkError::InvalidParam("phone 不能为空".to_string()));
+        return Err(BulwarkError::InvalidParam(
+            "secure-phone-empty::".to_string(),
+        ));
     }
     if phone.contains(':') {
         return Err(BulwarkError::InvalidParam(
@@ -60,7 +62,7 @@ impl SmsRateLimiter {
     pub(super) async fn decrement_counter(dao: &dyn BulwarkDao, key: &str) -> BulwarkResult<()> {
         if let Some(v) = dao.get(key).await? {
             let count: u64 = v.parse::<u64>().map_err(|e| {
-                BulwarkError::Internal(format!("计数器值解析失败 key={}: {}", key, e))
+                BulwarkError::Internal(format!("secure-counter-parse::{}::{}", key, e))
             })?;
             if count > 0 {
                 let new_val = count - 1;
@@ -82,7 +84,7 @@ impl SmsRateLimiter {
 
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|e| BulwarkError::Internal(format!("系统时间错误: {}", e)))?;
+            .map_err(|e| BulwarkError::Internal(format!("secure-system-time::{}", e)))?;
         let hour_bucket = now.as_secs() / 3600;
         let date = chrono::Utc::now().format("%Y-%m-%d").to_string();
 
@@ -92,7 +94,7 @@ impl SmsRateLimiter {
             .limiter
             .incr_with_ttl(&hour_key, 1, Duration::from_secs(3600))
             .await
-            .map_err(|e| BulwarkError::Internal(format!("limiteron incr_with_ttl 失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Internal(format!("secure-limiter-incr::{}", e)))?;
         if hour_count > self.hourly_limit as u64 {
             // 超限，回滚 incr
             if let Err(e) = Self::decrement_counter(&*self.dao, &hour_key).await {
@@ -109,7 +111,7 @@ impl SmsRateLimiter {
             .limiter
             .incr_with_ttl(&day_key, 1, Duration::from_secs(86400))
             .await
-            .map_err(|e| BulwarkError::Internal(format!("limiteron incr_with_ttl 失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Internal(format!("secure-limiter-incr::{}", e)))?;
         if day_count > self.daily_limit as u64 {
             // 超限，回滚 day 和 hour
             if let Err(e) = Self::decrement_counter(&*self.dao, &day_key).await {
@@ -132,7 +134,7 @@ impl SmsRateLimiter {
 
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|e| BulwarkError::Internal(format!("系统时间错误: {}", e)))?;
+            .map_err(|e| BulwarkError::Internal(format!("secure-system-time::{}", e)))?;
         let hour_bucket = now.as_secs() / 3600;
         let date = chrono::Utc::now().format("%Y-%m-%d").to_string();
 

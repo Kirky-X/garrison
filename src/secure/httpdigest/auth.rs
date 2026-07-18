@@ -211,9 +211,9 @@ impl HttpDigestAuth {
     /// 解析 Authorization header 为 DigestResponse。
     fn parse_authorization(&self, header: &str) -> BulwarkResult<DigestResponse> {
         let header = header.trim();
-        let (scheme, params) = header.split_once(char::is_whitespace).ok_or_else(|| {
-            BulwarkError::Internal("Authorization header 格式错误：缺少参数部分".to_string())
-        })?;
+        let (scheme, params) = header
+            .split_once(char::is_whitespace)
+            .ok_or_else(|| BulwarkError::Internal("secure-http-digest-no-params::".to_string()))?;
 
         if !scheme.eq_ignore_ascii_case("digest") {
             return Err(BulwarkError::Internal(format!(
@@ -242,12 +242,19 @@ impl HttpDigestAuth {
         }
 
         Ok(DigestResponse {
-            nonce: nonce.ok_or_else(|| BulwarkError::Internal("缺失 nonce 参数".to_string()))?,
-            response: response
-                .ok_or_else(|| BulwarkError::Internal("缺失 response 参数".to_string()))?,
+            nonce: nonce.ok_or_else(|| {
+                BulwarkError::Internal("secure-http-digest-missing-nonce::".to_string())
+            })?,
+            response: response.ok_or_else(|| {
+                BulwarkError::Internal("secure-http-digest-missing-response::".to_string())
+            })?,
             qop,
-            nc: nc.ok_or_else(|| BulwarkError::Internal("缺失 nc 参数".to_string()))?,
-            cnonce: cnonce.ok_or_else(|| BulwarkError::Internal("缺失 cnonce 参数".to_string()))?,
+            nc: nc.ok_or_else(|| {
+                BulwarkError::Internal("secure-http-digest-missing-nc::".to_string())
+            })?,
+            cnonce: cnonce.ok_or_else(|| {
+                BulwarkError::Internal("secure-http-digest-missing-cnonce::".to_string())
+            })?,
         })
     }
 }

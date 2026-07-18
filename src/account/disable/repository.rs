@@ -165,9 +165,8 @@ impl DisableRepository for DefaultDisableRepository {
             level,
             created_at: Utc::now(),
         };
-        let json = serde_json::to_string(&entry).map_err(|e| {
-            BulwarkError::Internal(format!("序列化 DisableEntry 为 JSON 失败: {}", e))
-        })?;
+        let json = serde_json::to_string(&entry)
+            .map_err(|e| BulwarkError::Internal(format!("account-disable-serialize::{}", e)))?;
         let key = Self::disable_key(service, login_id)?;
         if duration_secs == 0 {
             self.dao.set_permanent(&key, &json).await
@@ -197,8 +196,9 @@ impl DisableRepository for DefaultDisableRepository {
         let key = Self::disable_key(service, login_id)?;
         match self.dao.get(&key).await? {
             Some(json) => {
-                let entry: DisableEntry = serde_json::from_str(&json)
-                    .map_err(|e| BulwarkError::Dao(format!("反序列化 DisableEntry 失败: {}", e)))?;
+                let entry: DisableEntry = serde_json::from_str(&json).map_err(|e| {
+                    BulwarkError::Dao(format!("account-disable-deserialize::{}", e))
+                })?;
                 Ok(entry.until)
             },
             None => Ok(None),
@@ -209,8 +209,9 @@ impl DisableRepository for DefaultDisableRepository {
         let key = Self::disable_key(service, login_id)?;
         match self.dao.get(&key).await? {
             Some(json) => {
-                let entry: DisableEntry = serde_json::from_str(&json)
-                    .map_err(|e| BulwarkError::Dao(format!("反序列化 DisableEntry 失败: {}", e)))?;
+                let entry: DisableEntry = serde_json::from_str(&json).map_err(|e| {
+                    BulwarkError::Dao(format!("account-disable-deserialize::{}", e))
+                })?;
                 Ok(Some(entry.level))
             },
             None => Ok(None),
@@ -487,7 +488,7 @@ mod tests {
         dao.set(key, "{invalid json}", 0).await.unwrap();
         let result = repo.get_disable_time("user-2006", "default").await;
         assert!(
-            matches!(result, Err(BulwarkError::Dao(ref msg)) if msg.contains("反序列化 DisableEntry 失败")),
+            matches!(result, Err(BulwarkError::Dao(ref msg)) if msg.contains("account-disable-deserialize")),
             "损坏 JSON 应返回 Err(BulwarkError::Dao) 含 '反序列化 DisableEntry 失败'，实际: {:?}",
             result
         );

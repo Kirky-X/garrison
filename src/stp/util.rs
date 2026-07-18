@@ -1527,7 +1527,7 @@ mod tests {
 
         let result = BulwarkUtil::login_simple("user1").await;
         assert!(
-            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
             "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
             result
         );
@@ -1545,7 +1545,7 @@ mod tests {
 
         let result = BulwarkUtil::logout_by_login_id("user1").await;
         assert!(
-            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
             "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
             result
         );
@@ -1563,7 +1563,7 @@ mod tests {
 
         let result = BulwarkUtil::kickout("user1").await;
         assert!(
-            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
             "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
             result
         );
@@ -1581,7 +1581,7 @@ mod tests {
 
         let result = BulwarkUtil::config();
         assert!(
-            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
             "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
             result
         );
@@ -1600,7 +1600,7 @@ mod tests {
 
         let result = BulwarkUtil::get_login_id_by_token("some-token").await;
         assert!(
-            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
             "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
             result
         );
@@ -1626,7 +1626,7 @@ mod tests {
 
         let result = BulwarkUtil::login("user1", &LoginParams::default()).await;
         assert!(
-            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
             "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
             result
         );
@@ -1644,7 +1644,7 @@ mod tests {
 
         let result = BulwarkUtil::logout().await;
         assert!(
-            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
             "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
             result
         );
@@ -1662,7 +1662,7 @@ mod tests {
 
         let result = BulwarkUtil::kickout_by_token("some-token").await;
         assert!(
-            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
             "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
             result
         );
@@ -1680,7 +1680,7 @@ mod tests {
 
         let result = BulwarkUtil::revoke_token("some-token").await;
         assert!(
-            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
             "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
             result
         );
@@ -1698,7 +1698,7 @@ mod tests {
 
         let result = BulwarkUtil::check_login().await;
         assert!(
-            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
             "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
             result
         );
@@ -1716,7 +1716,7 @@ mod tests {
 
         let result = BulwarkUtil::get_login_id().await;
         assert!(
-            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
             "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
             result
         );
@@ -1734,7 +1734,7 @@ mod tests {
 
         let result = BulwarkUtil::check_permission("user:read").await;
         assert!(
-            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
             "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
             result
         );
@@ -1752,7 +1752,7 @@ mod tests {
 
         let result = BulwarkUtil::check_role("admin").await;
         assert!(
-            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
             "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
             result
         );
@@ -1770,7 +1770,7 @@ mod tests {
 
         let result = BulwarkUtil::has_permission("user:read").await;
         assert!(
-            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
             "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
             result
         );
@@ -1788,7 +1788,7 @@ mod tests {
 
         let result = BulwarkUtil::has_role("admin").await;
         assert!(
-            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
             "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
             result
         );
@@ -1806,7 +1806,7 @@ mod tests {
 
         let result = BulwarkUtil::get_permission_list().await;
         assert!(
-            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
             "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
             result
         );
@@ -1824,7 +1824,7 @@ mod tests {
 
         let result = BulwarkUtil::get_role_list().await;
         assert!(
-            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
             "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
             result
         );
@@ -1842,7 +1842,7 @@ mod tests {
 
         let result = BulwarkUtil::check_access_token().await;
         assert!(
-            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
             "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
             result
         );
@@ -1860,7 +1860,7 @@ mod tests {
 
         let result = BulwarkUtil::check_client_token().await;
         assert!(
-            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
             "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
             result
         );
@@ -1878,7 +1878,7 @@ mod tests {
 
         let result = BulwarkUtil::check_temp_token().await;
         assert!(
-            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
             "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
             result
         );
@@ -1896,7 +1896,7 @@ mod tests {
 
         let result = BulwarkUtil::check_safe().await;
         assert!(
-            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
             "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
             result
         );
@@ -1914,7 +1914,7 @@ mod tests {
 
         let result = BulwarkUtil::check_disable().await;
         assert!(
-            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
             "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
             result
         );
@@ -1932,7 +1932,7 @@ mod tests {
 
         let result = BulwarkUtil::check_api_key("default").await;
         assert!(
-            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
             "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
             result
         );
@@ -1950,7 +1950,7 @@ mod tests {
 
         let result = BulwarkUtil::login_by_token("external-token").await;
         assert!(
-            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
             "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
             result
         );
@@ -1968,7 +1968,7 @@ mod tests {
 
         let result = BulwarkUtil::verify_token("some-token").await;
         assert!(
-            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
             "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
             result
         );
@@ -1986,7 +1986,7 @@ mod tests {
 
         let result = BulwarkUtil::refresh_token("old-token").await;
         assert!(
-            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
             "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
             result
         );
@@ -2013,7 +2013,7 @@ mod tests {
 
         let result = BulwarkUtil::check_login_sync();
         assert!(
-            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
             "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
             result
         );
@@ -2032,7 +2032,7 @@ mod tests {
 
         let result = BulwarkUtil::check_permission_sync("user:read");
         assert!(
-            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
             "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
             result
         );
@@ -2051,7 +2051,7 @@ mod tests {
 
         let result = BulwarkUtil::check_role_sync("admin");
         assert!(
-            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
             "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
             result
         );
@@ -2070,7 +2070,7 @@ mod tests {
 
         let result = BulwarkUtil::check_access_token_sync();
         assert!(
-            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
             "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
             result
         );
@@ -2089,7 +2089,7 @@ mod tests {
 
         let result = BulwarkUtil::check_client_token_sync();
         assert!(
-            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
             "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
             result
         );
@@ -2108,7 +2108,7 @@ mod tests {
 
         let result = BulwarkUtil::check_temp_token_sync();
         assert!(
-            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
             "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
             result
         );
@@ -2127,7 +2127,7 @@ mod tests {
 
         let result = BulwarkUtil::check_api_key_sync("default");
         assert!(
-            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
             "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
             result
         );
@@ -2146,7 +2146,7 @@ mod tests {
 
         let result = BulwarkUtil::check_safe_sync();
         assert!(
-            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("BulwarkManager 未初始化")),
+            matches!(result, Err(crate::error::BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
             "未初始化时应返回 'BulwarkManager 未初始化'，实际: {:?}",
             result
         );

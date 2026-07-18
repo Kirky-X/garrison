@@ -47,7 +47,7 @@ impl SessionExpiryListener for MockExpiryListener {
             .unwrap()
             .push((login_id.to_string(), token.to_string()));
         if self.fail {
-            return Err(BulwarkError::Session("模拟回调失败".to_string()));
+            return Err(BulwarkError::Session("session-mock-callback::".to_string()));
         }
         Ok(())
     }

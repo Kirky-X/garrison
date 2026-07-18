@@ -54,7 +54,7 @@ pub trait TokenLogic: SessionLogic {
             Ok(())
         } else {
             Err(BulwarkError::NotLogin(
-                "access_token 无效或未登录".to_string(),
+                "stp-token-invalid-or-not-login".to_string(),
             ))
         }
     }
@@ -74,7 +74,7 @@ pub trait TokenLogic: SessionLogic {
             Ok(())
         } else {
             Err(BulwarkError::NotLogin(
-                "client_token 无效或未登录".to_string(),
+                "stp-token-invalid-or-not-login".to_string(),
             ))
         }
     }
@@ -94,7 +94,7 @@ pub trait TokenLogic: SessionLogic {
             Ok(())
         } else {
             Err(BulwarkError::NotLogin(
-                "temp_token 无效或未登录".to_string(),
+                "stp-token-invalid-or-not-login".to_string(),
             ))
         }
     }
@@ -154,9 +154,11 @@ impl TokenLogic for BulwarkLogicDefault {
         match token_handler.verify(token) {
             Ok(Some(login_id)) => Ok(login_id),
             Ok(None) => Err(BulwarkError::InvalidToken(
-                "token 无效或不包含 login_id".to_string(),
+                "stp-token-invalid-or-no-login-id".to_string(),
             )),
-            Err(_) => Err(BulwarkError::InvalidToken("token 无效".to_string())),
+            Err(_) => Err(BulwarkError::InvalidToken(
+                "stp-token-invalid::".to_string(),
+            )),
         }
     }
 
@@ -297,7 +299,7 @@ mod tests {
         };
         let result = mock.check_client_token().await;
         assert!(
-            matches!(result, Err(BulwarkError::NotLogin(ref msg)) if msg.contains("client_token")),
+            matches!(result, Err(BulwarkError::NotLogin(ref msg)) if msg.contains("stp-token-invalid-or-not-login")),
             "未登录时应返回 NotLogin 包含 'client_token'，实际: {:?}",
             result
         );
@@ -326,7 +328,7 @@ mod tests {
         };
         let result = mock.check_temp_token().await;
         assert!(
-            matches!(result, Err(BulwarkError::NotLogin(ref msg)) if msg.contains("temp_token")),
+            matches!(result, Err(BulwarkError::NotLogin(ref msg)) if msg.contains("stp-token-invalid-or-not-login")),
             "未登录时应返回 NotLogin 包含 'temp_token'，实际: {:?}",
             result
         );
@@ -492,7 +494,7 @@ mod tests {
             let logic = make_logic("uuid");
             let result = logic.verify_token("some-uuid-token").await;
             assert!(
-                matches!(result, Err(BulwarkError::InvalidToken(ref msg)) if msg.contains("不包含 login_id")),
+                matches!(result, Err(BulwarkError::InvalidToken(ref msg)) if msg.contains("stp-token-invalid-or-no-login-id")),
                 "uuid token verify_token 应返回 InvalidToken 包含 '不包含 login_id'，实际: {:?}",
                 result
             );

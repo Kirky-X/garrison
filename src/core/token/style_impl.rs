@@ -69,7 +69,7 @@ impl SimpleTokenStyle {
         type HmacSha256 = Hmac<Sha256>;
         let message = format!("{}|{}", login_id, uuid_part);
         let mut mac = HmacSha256::new_from_slice(self.secret.as_bytes())
-            .map_err(|e| BulwarkError::Config(format!("HMAC 密钥长度无效: {}", e)))?;
+            .map_err(|e| BulwarkError::Config(format!("core-hmac-key-invalid::{}", e)))?;
         mac.update(message.as_bytes());
         // URL-safe Base64 无 padding（43 字符），适合放入 token
         Ok(Self::base64_url_no_pad(&mac.finalize().into_bytes()))
@@ -159,12 +159,12 @@ impl Token for SimpleTokenStyle {
             ));
         }
         // 格式：<login_id>\x1f<uuid>.<hmac>（\x1f = ASCII Unit Separator，见 H2）
-        let (body, hmac_part) = token.rsplit_once('.').ok_or_else(|| {
-            BulwarkError::Internal("Simple token 格式错误：缺少 '.' HMAC 分隔符".to_string())
-        })?;
-        let (id_str, uuid_part) = body.split_once('\x1f').ok_or_else(|| {
-            BulwarkError::Internal("Simple token 格式错误：缺少分隔符".to_string())
-        })?;
+        let (body, hmac_part) = token
+            .rsplit_once('.')
+            .ok_or_else(|| BulwarkError::Internal("core-simple-token-no-hmac-sep::".to_string()))?;
+        let (id_str, uuid_part) = body
+            .split_once('\x1f')
+            .ok_or_else(|| BulwarkError::Internal("core-simple-token-no-sep::".to_string()))?;
         // 校验 UUID 部分
         if Uuid::parse_str(uuid_part).is_err() {
             return Err(BulwarkError::Internal(

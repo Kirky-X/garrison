@@ -182,7 +182,7 @@ impl PermissionLogic for BulwarkLogicDefault {
                     m.record_permission_query(false);
                 }
                 return if self.config.throw_on_not_login {
-                    Err(BulwarkError::NotLogin("未登录，无法校验权限".to_string()))
+                    Err(BulwarkError::NotLogin("stp-not-login::".to_string()))
                 } else {
                     // throw_on_not_login=false：未登录视为无权限，抛 NotPermission
                     Err(BulwarkError::NotPermission(permission.to_string()))
@@ -266,7 +266,7 @@ impl PermissionLogic for BulwarkLogicDefault {
                     m.record_role_query(false);
                 }
                 return if self.config.throw_on_not_login {
-                    Err(BulwarkError::NotLogin("未登录，无法校验角色".to_string()))
+                    Err(BulwarkError::NotLogin("stp-not-login::".to_string()))
                 } else {
                     // throw_on_not_login=false：未登录视为无角色，抛 NotRole
                     Err(BulwarkError::NotRole(role.to_string()))
@@ -900,7 +900,7 @@ mod tests {
             }
             async fn authorize(&self, _request: &AuthRequest) -> BulwarkResult<Decision> {
                 if self.fail {
-                    return Err(BulwarkError::Dao("权限数据源故障".to_string()));
+                    return Err(BulwarkError::Dao("stp-dao-connect::".to_string()));
                 }
                 Ok(Decision {
                     allowed: self.allowed,
@@ -996,7 +996,7 @@ mod tests {
             })
             .await;
             assert!(
-                matches!(result, Err(BulwarkError::Dao(ref s)) if s.contains("权限数据源故障")),
+                matches!(result, Err(BulwarkError::Dao(ref s)) if s.contains("stp-dao-connect")),
                 "permission_checker authorize 错误应透传，实际: {:?}",
                 result
             );

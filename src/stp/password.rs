@@ -97,7 +97,7 @@ impl PasswordLogic for BulwarkLogicDefault {
         let user = repo
             .find_by_username(0, &username)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("login_with_password 查询用户失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Dao(format!("stp-dao-find-by-id::{}", e)))?;
 
         let user = match user {
             Some(u) => u,
@@ -611,7 +611,7 @@ mod tests {
             match result {
                 Err(BulwarkError::Dao(msg)) => {
                     assert!(
-                        msg.contains("login_with_password 查询用户失败"),
+                        msg.contains("stp-dao-find-by-id"),
                         "错误消息应包含 'login_with_password 查询用户失败'，实际: {}",
                         msg
                     );

@@ -128,11 +128,11 @@ impl PasswordHasher for Argon2Hasher {
         let salt = SaltString::generate(&mut OsRng);
         // H4: 显式预分配 32 字节输出缓冲区（与 argon2 默认一致，但显式化意图并锁定行为）
         let params = Params::new(self.m_cost, self.t_cost, self.p_cost, Some(32))
-            .map_err(|e| BulwarkError::InvalidParam(format!("Argon2 参数无效: {}", e)))?;
+            .map_err(|e| BulwarkError::InvalidParam(format!("account-argon2-param::{}", e)))?;
         let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
         let hash = argon2
             .hash_password(password_ref, &salt)
-            .map_err(|e| BulwarkError::Internal(format!("Argon2 哈希失败: {}", e)))?
+            .map_err(|e| BulwarkError::Internal(format!("account-argon2-hash::{}", e)))?
             .to_string();
         Ok(hash)
         // password_bytes drops here (if zeroize on); Zeroizing<Vec<u8>>::drop zeroes bytes
@@ -148,13 +148,16 @@ impl PasswordHasher for Argon2Hasher {
         let password_ref: &[u8] = password.as_bytes();
 
         let parsed = PasswordHash::new(hash)
-            .map_err(|e| BulwarkError::InvalidParam(format!("Argon2 哈希格式无效: {}", e)))?;
+            .map_err(|e| BulwarkError::InvalidParam(format!("account-argon2-format::{}", e)))?;
         // verify 时用默认 Argon2（参数从 hash 字符串解析）
         let argon2 = Argon2::default();
         match argon2.verify_password(password_ref, &parsed) {
             Ok(()) => Ok(true),
             Err(argon2::password_hash::Error::Password) => Ok(false),
-            Err(e) => Err(BulwarkError::Internal(format!("Argon2 校验失败: {}", e))),
+            Err(e) => Err(BulwarkError::Internal(format!(
+                "account-argon2-verify::{}",
+                e
+            ))),
         }
         // password_bytes drops here (if zeroize on); Zeroizing<Vec<u8>>::drop zeroes bytes
     }
@@ -196,12 +199,12 @@ impl BcryptHasher {
 impl PasswordHasher for BcryptHasher {
     fn hash(&self, password: &str) -> BulwarkResult<String> {
         bcrypt::hash(password, self.cost)
-            .map_err(|e| BulwarkError::Internal(format!("Bcrypt 哈希失败: {}", e)))
+            .map_err(|e| BulwarkError::Internal(format!("account-bcrypt-hash::{}", e)))
     }
 
     fn verify(&self, password: &str, hash: &str) -> BulwarkResult<bool> {
         bcrypt::verify(password, hash)
-            .map_err(|e| BulwarkError::InvalidParam(format!("Bcrypt 哈希格式无效: {}", e)))
+            .map_err(|e| BulwarkError::InvalidParam(format!("account-bcrypt-format::{}", e)))
     }
 }
 

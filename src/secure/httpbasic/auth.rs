@@ -34,12 +34,12 @@ impl HttpBasicAuth {
     pub fn decode(header_value: &str) -> BulwarkResult<Credential> {
         let decoded = STANDARD
             .decode(header_value)
-            .map_err(|e| BulwarkError::Internal(format!("Base64 解码失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Internal(format!("secure-base64-decode::{}", e)))?;
         let decoded_str = String::from_utf8(decoded)
-            .map_err(|e| BulwarkError::Internal(format!("UTF-8 解码失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Internal(format!("secure-utf8-decode::{}", e)))?;
         let (user, pass) = decoded_str
             .split_once(':')
-            .ok_or_else(|| BulwarkError::Internal("凭证格式错误：缺失冒号分隔符".to_string()))?;
+            .ok_or_else(|| BulwarkError::Internal("secure-cred-missing-colon::".to_string()))?;
         Ok(Credential {
             user: user.to_string(),
             pass: pass.to_string(),
@@ -58,9 +58,9 @@ impl HttpBasicAuth {
     /// - `Err(BulwarkError::Internal)`: 方案非 Basic / 缺少凭证 / Base64 解码失败。
     pub fn parse_authorization_header(header: &str) -> BulwarkResult<Credential> {
         let header = header.trim();
-        let (scheme, credentials) = header.split_once(char::is_whitespace).ok_or_else(|| {
-            BulwarkError::Internal("Authorization header 格式错误：缺少凭证部分".to_string())
-        })?;
+        let (scheme, credentials) = header
+            .split_once(char::is_whitespace)
+            .ok_or_else(|| BulwarkError::Internal("secure-auth-header-no-cred::".to_string()))?;
 
         if !scheme.eq_ignore_ascii_case("basic") {
             return Err(BulwarkError::Internal(format!(

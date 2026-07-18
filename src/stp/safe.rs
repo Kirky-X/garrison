@@ -62,7 +62,7 @@ impl BulwarkLogicDefault {
                     .get_token_session(&token)
                     .await?
                     .ok_or_else(|| {
-                        BulwarkError::InvalidToken(format!("token 不存在: {}", token_prefix))
+                        BulwarkError::InvalidToken(format!("stp-token-not-found::{}", token_prefix))
                     })?;
                 let now = chrono::Utc::now().timestamp();
                 let expire_at = now + duration_secs as i64;
@@ -143,7 +143,7 @@ impl BulwarkLogicDefault {
                     .get_token_session(&token)
                     .await?
                     .ok_or_else(|| {
-                        BulwarkError::InvalidToken(format!("token 不存在: {}", token_prefix))
+                        BulwarkError::InvalidToken(format!("stp-token-not-found::{}", token_prefix))
                     })?;
                 ts.safe_services.remove(&service);
                 self.session.save_token_session(&token, &ts).await
@@ -423,7 +423,7 @@ mod tests {
         match result {
             Err(BulwarkError::Session(msg)) => {
                 assert!(
-                    msg.contains("未设置") || msg.contains("with_current_token"),
+                    msg.contains("stp-context-not-set"),
                     "Session 错误消息应说明未设置 current_token，实际: {}",
                     msg
                 );
@@ -997,10 +997,9 @@ mod tests {
         let service = service.to_string();
         session
             .with_token_session_lock(token, async {
-                let mut ts = session
-                    .get_token_session(token)
-                    .await?
-                    .ok_or_else(|| BulwarkError::InvalidToken("token 不存在".to_string()))?;
+                let mut ts = session.get_token_session(token).await?.ok_or_else(|| {
+                    BulwarkError::InvalidToken("stp-token-not-found::".to_string())
+                })?;
                 let now = chrono::Utc::now().timestamp();
                 let expire_at = now + duration_secs as i64;
                 ts.safe_services.insert(service.clone(), expire_at);
@@ -1018,10 +1017,9 @@ mod tests {
         let service = service.to_string();
         session
             .with_token_session_lock(token, async {
-                let mut ts = session
-                    .get_token_session(token)
-                    .await?
-                    .ok_or_else(|| BulwarkError::InvalidToken("token 不存在".to_string()))?;
+                let mut ts = session.get_token_session(token).await?.ok_or_else(|| {
+                    BulwarkError::InvalidToken("stp-token-not-found::".to_string())
+                })?;
                 ts.safe_services.remove(&service);
                 session.save_token_session(token, &ts).await
             })

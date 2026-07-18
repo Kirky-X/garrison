@@ -75,7 +75,7 @@ fn extract_token_from_parts(parts: &Parts, config: &BulwarkConfig) -> Option<Str
 async fn enforce_login() -> Result<(), BulwarkError> {
     let logged_in = BulwarkUtil::check_login().await?;
     if !logged_in {
-        return Err(BulwarkError::NotLogin("未登录".to_string()));
+        return Err(BulwarkError::NotLogin("annotation-not-login::".to_string()));
     }
     Ok(())
 }
@@ -251,11 +251,11 @@ impl<S: Send + Sync> FromRequestParts<S> for crate::context::BulwarkPrincipal {
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
         let config = BulwarkUtil::config()?;
         let token = extract_token_from_parts(parts, &config)
-            .ok_or_else(|| BulwarkError::NotLogin("未提供 token".to_string()))?;
+            .ok_or_else(|| BulwarkError::NotLogin("annotation-no-token::".to_string()))?;
 
         let login_id = BulwarkUtil::get_login_id_by_token(&token)
             .await?
-            .ok_or_else(|| BulwarkError::NotLogin("token 无效或会话不存在".to_string()))?;
+            .ok_or_else(|| BulwarkError::NotLogin("annotation-token-invalid::".to_string()))?;
 
         Ok(crate::context::BulwarkPrincipal { login_id })
     }
@@ -286,7 +286,7 @@ impl<S: Send + Sync> FromRequestParts<S> for crate::context::tenant::TenantConte
 
         let tenant_id: i64 = raw
             .parse()
-            .map_err(|_| BulwarkError::Config(format!("X-Tenant-Id 不是合法的 i64: {}", raw)))?;
+            .map_err(|_| BulwarkError::Config(format!("annotation-tenant-id-invalid::{}", raw)))?;
 
         Ok(crate::context::tenant::TenantContext {
             tenant_id,

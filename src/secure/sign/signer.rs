@@ -117,7 +117,7 @@ impl Signer {
     pub fn base64_decode(s: &str) -> BulwarkResult<Vec<u8>> {
         STANDARD
             .decode(s)
-            .map_err(|e| BulwarkError::Internal(format!("Base64 解码失败: {}", e)))
+            .map_err(|e| BulwarkError::Internal(format!("secure-base64-decode::{}", e)))
     }
 
     /// 计算 MD5 摘要，输出小写十六进制字符串。

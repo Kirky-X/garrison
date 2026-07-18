@@ -331,7 +331,7 @@ async fn has_role_empty_string_returns_error() {
     let checker = make_checker();
     let result = checker.has_role("1001", "").await;
     assert!(
-        matches!(result, Err(BulwarkError::InvalidParam(ref msg)) if msg.contains("角色字符串不能为空")),
+        matches!(result, Err(BulwarkError::InvalidParam(ref msg)) if msg.contains("core-role-empty")),
         "has_role 空字符串应返回 InvalidParam，实际: {:?}",
         result
     );

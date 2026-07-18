@@ -283,7 +283,7 @@ impl BulwarkLogicDefault {
         let key = match current_token() {
             Ok(t) => t,
             Err(_) => {
-                return Err(BulwarkError::NotLogin("未提供 API Key".to_string()));
+                return Err(BulwarkError::NotLogin("stp-no-api-key::".to_string()));
             },
         };
         let handler = crate::protocol::apikey::ApiKeyHandler::new(self.session.dao().clone());

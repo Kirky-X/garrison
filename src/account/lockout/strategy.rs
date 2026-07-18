@@ -86,7 +86,7 @@ impl UserLockoutStrategy {
         let key = DaoKeyPrefix::Lockout.build_key(user_id);
         match self.dao.get(&key).await? {
             Some(json) => serde_json::from_str(&json)
-                .map_err(|e| BulwarkError::Dao(format!("反序列化 LockoutState 失败: {}", e))),
+                .map_err(|e| BulwarkError::Dao(format!("account-lockout-deserialize::{}", e))),
             None => Ok(LockoutState::default()),
         }
     }
@@ -95,7 +95,7 @@ impl UserLockoutStrategy {
     pub(super) async fn set_state(&self, user_id: &str, state: &LockoutState) -> BulwarkResult<()> {
         let key = DaoKeyPrefix::Lockout.build_key(user_id);
         let json = serde_json::to_string(state)
-            .map_err(|e| BulwarkError::Dao(format!("序列化 LockoutState 失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Dao(format!("account-lockout-serialize::{}", e)))?;
         self.dao.set(&key, &json, 0).await
     }
 

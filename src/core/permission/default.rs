@@ -19,7 +19,7 @@ impl PermissionChecker for PermissionCheckerDefault {
         // （NFD 与 NFC 形式视觉相同但字节不同，规范化后统一比较）
         let normalized = permission.nfc().collect::<String>();
         if normalized.is_empty() {
-            return Err(BulwarkError::InvalidParam("权限字符串不能为空".to_string()));
+            return Err(BulwarkError::InvalidParam("core-perm-empty::".to_string()));
         }
         // P2.4: 长度校验（>256 字节返回 InvalidParam），防止 DoS
         if normalized.len() > 256 {
@@ -34,7 +34,7 @@ impl PermissionChecker for PermissionCheckerDefault {
 
     async fn has_role(&self, login_id: &str, role: &str) -> BulwarkResult<bool> {
         if role.is_empty() {
-            return Err(BulwarkError::InvalidParam("角色字符串不能为空".to_string()));
+            return Err(BulwarkError::InvalidParam("core-role-empty::".to_string()));
         }
         let roles = self.interface.get_role_list(login_id).await?;
         Ok(roles.iter().any(|r| r == role))

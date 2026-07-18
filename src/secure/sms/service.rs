@@ -110,7 +110,9 @@ impl SmsVerificationService {
                 self.dao.delete(&attempts_key).await?;
                 Err(BulwarkError::SmsVerifyMaxAttempts)
             } else {
-                Err(BulwarkError::InvalidParam("验证码错误".to_string()))
+                Err(BulwarkError::InvalidParam(
+                    "secure-sms-code-wrong::".to_string(),
+                ))
             }
         }
     }

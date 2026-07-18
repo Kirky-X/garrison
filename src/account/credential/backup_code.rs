@@ -131,10 +131,8 @@ impl BackupCodeCredential {
             codes.push(formatted);
             hashes.push(sha256_hex(&normalized));
         }
-        let secret_data =
-            serde_json::to_string(&BackupCodeSecretData { codes: hashes }).map_err(|e| {
-                BulwarkError::Internal(format!("backup_code secret_data 序列化失败: {}", e))
-            })?;
+        let secret_data = serde_json::to_string(&BackupCodeSecretData { codes: hashes })
+            .map_err(|e| BulwarkError::Internal(format!("account-backup-serialize::{}", e)))?;
         let model = CredentialModel {
             id: uuid::Uuid::new_v4().to_string(),
             user_id: login_id.to_string(),
@@ -183,19 +181,17 @@ impl BackupCodeCredential {
             },
         };
         let model: CredentialModel = serde_json::from_str(&json)
-            .map_err(|e| BulwarkError::Internal(format!("CredentialModel 反序列化失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Internal(format!("account-cred-deserialize::{}", e)))?;
         let mut data = BackupCodeSecretData::from_json(&model.secret_data)?;
         let input_hash = sha256_hex(&normalize(input));
         if let Some(idx) = data.codes.iter().position(|h| *h == input_hash) {
             data.codes.remove(idx);
-            let new_secret = serde_json::to_string(&data).map_err(|e| {
-                BulwarkError::Internal(format!("backup_code secret_data 序列化失败: {}", e))
-            })?;
+            let new_secret = serde_json::to_string(&data)
+                .map_err(|e| BulwarkError::Internal(format!("account-backup-serialize::{}", e)))?;
             let mut updated_model = model.clone();
             updated_model.secret_data = new_secret;
-            let updated_json = serde_json::to_string(&updated_model).map_err(|e| {
-                BulwarkError::Internal(format!("CredentialModel 序列化失败: {}", e))
-            })?;
+            let updated_json = serde_json::to_string(&updated_model)
+                .map_err(|e| BulwarkError::Internal(format!("account-cred-serialize::{}", e)))?;
             dao.set_permanent(&key, &updated_json).await?;
             Ok(true)
         } else {

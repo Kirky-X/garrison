@@ -702,7 +702,7 @@ async fn util_logout_fails_when_not_initialized() {
     BulwarkManager::reset_for_test();
     let result = BulwarkUtil::logout().await;
     assert!(
-        matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("未初始化")),
+        matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
         "未初始化时 logout 应返回 Session 错误"
     );
 }
@@ -714,7 +714,7 @@ async fn util_logout_by_login_id_fails_when_not_initialized() {
     BulwarkManager::reset_for_test();
     let result = BulwarkUtil::logout_by_login_id("1001").await;
     assert!(
-        matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("未初始化")),
+        matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
         "未初始化时 logout_by_login_id 应返回 Session 错误"
     );
 }
@@ -726,7 +726,7 @@ async fn util_kickout_fails_when_not_initialized() {
     BulwarkManager::reset_for_test();
     let result = BulwarkUtil::kickout("1001").await;
     assert!(
-        matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("未初始化")),
+        matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
         "未初始化时 kickout 应返回 Session 错误"
     );
 }
@@ -738,7 +738,7 @@ async fn util_kickout_by_token_fails_when_not_initialized() {
     BulwarkManager::reset_for_test();
     let result = BulwarkUtil::kickout_by_token("some-token").await;
     assert!(
-        matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("未初始化")),
+        matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
         "未初始化时 kickout_by_token 应返回 Session 错误"
     );
 }
@@ -750,7 +750,7 @@ async fn util_check_login_fails_when_not_initialized() {
     BulwarkManager::reset_for_test();
     let result = BulwarkUtil::check_login().await;
     assert!(
-        matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("未初始化")),
+        matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
         "未初始化时 check_login 应返回 Session 错误"
     );
 }
@@ -762,7 +762,7 @@ async fn util_get_login_id_fails_when_not_initialized() {
     BulwarkManager::reset_for_test();
     let result = BulwarkUtil::get_login_id().await;
     assert!(
-        matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("未初始化")),
+        matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
         "未初始化时 get_login_id 应返回 Session 错误"
     );
 }
@@ -774,7 +774,7 @@ async fn util_check_permission_fails_when_not_initialized() {
     BulwarkManager::reset_for_test();
     let result = BulwarkUtil::check_permission("user:read").await;
     assert!(
-        matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("未初始化")),
+        matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
         "未初始化时 check_permission 应返回 Session 错误"
     );
 }
@@ -786,7 +786,7 @@ async fn util_check_role_fails_when_not_initialized() {
     BulwarkManager::reset_for_test();
     let result = BulwarkUtil::check_role("admin").await;
     assert!(
-        matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("未初始化")),
+        matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
         "未初始化时 check_role 应返回 Session 错误"
     );
 }
@@ -798,7 +798,7 @@ async fn util_check_safe_fails_when_not_initialized() {
     BulwarkManager::reset_for_test();
     let result = BulwarkUtil::check_safe().await;
     assert!(
-        matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("未初始化")),
+        matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
         "未初始化时 check_safe 应返回 Session 错误"
     );
 }
@@ -810,7 +810,7 @@ async fn util_check_disable_fails_when_not_initialized() {
     BulwarkManager::reset_for_test();
     let result = BulwarkUtil::check_disable().await;
     assert!(
-        matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("未初始化")),
+        matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
         "未初始化时 check_disable 应返回 Session 错误"
     );
 }
@@ -848,7 +848,7 @@ async fn util_has_permission_fails_when_not_initialized() {
     BulwarkManager::reset_for_test();
     let result = BulwarkUtil::has_permission("user:read").await;
     assert!(
-        matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("未初始化")),
+        matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
         "未初始化时 has_permission 应返回 Session 错误"
     );
 }
@@ -860,7 +860,7 @@ async fn util_has_role_fails_when_not_initialized() {
     BulwarkManager::reset_for_test();
     let result = BulwarkUtil::has_role("admin").await;
     assert!(
-        matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("未初始化")),
+        matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
         "未初始化时 has_role 应返回 Session 错误"
     );
 }
@@ -951,7 +951,7 @@ async fn util_get_permission_list_fails_when_not_initialized() {
     BulwarkManager::reset_for_test();
     let result = BulwarkUtil::get_permission_list().await;
     assert!(
-        matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("未初始化")),
+        matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
         "未初始化时 get_permission_list 应返回 Session 错误"
     );
 }
@@ -963,7 +963,7 @@ async fn util_get_role_list_fails_when_not_initialized() {
     BulwarkManager::reset_for_test();
     let result = BulwarkUtil::get_role_list().await;
     assert!(
-        matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("未初始化")),
+        matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
         "未初始化时 get_role_list 应返回 Session 错误"
     );
 }
@@ -1198,7 +1198,7 @@ async fn util_login_by_token_fails_when_not_initialized() {
     BulwarkManager::reset_for_test();
     let result = BulwarkUtil::login_by_token("any-token").await;
     assert!(
-        matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("未初始化")),
+        matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
         "未初始化时 login_by_token 应返回 Session 错误"
     );
 }
@@ -1271,7 +1271,7 @@ async fn util_verify_token_fails_when_not_initialized() {
     BulwarkManager::reset_for_test();
     let result = BulwarkUtil::verify_token("any-token").await;
     assert!(
-        matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("未初始化")),
+        matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
         "未初始化时 verify_token 应返回 Session 错误"
     );
 }
@@ -1295,7 +1295,7 @@ async fn util_refresh_token_fails_when_not_initialized() {
     BulwarkManager::reset_for_test();
     let result = BulwarkUtil::refresh_token("any-token").await;
     assert!(
-        matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("未初始化")),
+        matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
         "未初始化时 refresh_token 应返回 Session 错误"
     );
 }
@@ -2558,7 +2558,7 @@ async fn util_login_by_token_delegates_to_logic_after_init() {
     // uuid style token → verify_token 返回 InvalidToken
     let result = BulwarkUtil::login_by_token("any-token").await;
     assert!(
-        !matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("未初始化")),
+        !matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
         "初始化后 login_by_token 不应返回 '未初始化' Session 错误，实际: {:?}",
         result
     );

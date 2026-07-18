@@ -32,7 +32,7 @@ impl CredentialRepository for DaoCredentialRepository {
             )));
         }
         let json = serde_json::to_string(&credential)
-            .map_err(|e| BulwarkError::Internal(format!("CredentialModel 序列化失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Internal(format!("account-cred-serialize::{}", e)))?;
         self.dao.set_permanent(&key, &json).await
     }
 
@@ -43,7 +43,7 @@ impl CredentialRepository for DaoCredentialRepository {
         for key in keys {
             if let Some(json) = self.dao.get(&key).await? {
                 let model: CredentialModel = serde_json::from_str(&json).map_err(|e| {
-                    BulwarkError::Internal(format!("CredentialModel 反序列化失败: {}", e))
+                    BulwarkError::Internal(format!("account-cred-deserialize::{}", e))
                 })?;
                 result.push(model);
             }
@@ -75,7 +75,7 @@ impl CredentialRepository for DaoCredentialRepository {
             )));
         }
         let json = serde_json::to_string(&credential)
-            .map_err(|e| BulwarkError::Internal(format!("CredentialModel 序列化失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Internal(format!("account-cred-serialize::{}", e)))?;
         self.dao.set_permanent(&key, &json).await
     }
 

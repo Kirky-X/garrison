@@ -257,10 +257,12 @@ pub trait SessionLogic: BulwarkCore {
 /// - `BulwarkError::InvalidParam`：任一校验失败时返回，消息含失败原因（不含敏感数据）。
 fn validate_login_with_token_inputs(login_id: &str, token: &str) -> BulwarkResult<()> {
     if login_id.is_empty() {
-        return Err(BulwarkError::InvalidParam("login_id 不能为空".to_string()));
+        return Err(BulwarkError::InvalidParam(
+            "stp-login-id-empty::".to_string(),
+        ));
     }
     if token.is_empty() {
-        return Err(BulwarkError::InvalidParam("token 不能为空".to_string()));
+        return Err(BulwarkError::InvalidParam("stp-token-empty::".to_string()));
     }
     // 长度校验（字节长度，与 DAO 存储开销一致）
     let len = token.len();
@@ -278,7 +280,9 @@ fn validate_login_with_token_inputs(login_id: &str, token: &str) -> BulwarkResul
     }
     // 控制字符校验：阻断 CRLF 注入 / header smuggling / 日志污染
     if token.chars().any(|c| c.is_control()) {
-        return Err(BulwarkError::InvalidParam("token 含控制字符".to_string()));
+        return Err(BulwarkError::InvalidParam(
+            "stp-token-control-char::".to_string(),
+        ));
     }
     Ok(())
 }
@@ -465,7 +469,7 @@ impl SessionLogic for BulwarkLogicDefault {
             Err(_) => {
                 // 未设置 token = 未登录（保持现有 throw_on_not_login 语义）
                 if self.config.throw_on_not_login {
-                    return Err(BulwarkError::Session("未登录".to_string()));
+                    return Err(BulwarkError::Session("stp-not-login::".to_string()));
                 }
                 return Ok(false);
             },
@@ -909,7 +913,7 @@ impl BulwarkLogicDefault {
                 }
             }
             if self.config.throw_on_not_login {
-                return Err(BulwarkError::Session("未登录".to_string()));
+                return Err(BulwarkError::Session("stp-not-login::".to_string()));
             }
         }
         // 悬停检查（仅 valid 时）
@@ -962,7 +966,7 @@ impl BulwarkLogicDefault {
                     .await;
                 }
                 if self.config.throw_on_not_login {
-                    return Err(BulwarkError::Session("会话悬停超时".to_string()));
+                    return Err(BulwarkError::Session("stp-session-timeout::".to_string()));
                 }
                 return Ok(false);
             }
@@ -992,7 +996,7 @@ impl BulwarkLogicDefault {
                 }
             }
             if self.config.throw_on_not_login {
-                return Err(BulwarkError::Session("未登录".to_string()));
+                return Err(BulwarkError::Session("stp-not-login::".to_string()));
             }
         }
         // 悬停检查（仅 valid 时）
@@ -1366,7 +1370,7 @@ mod tests {
                         *existing = value.to_string();
                         Ok(())
                     },
-                    None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
+                    None => Err(BulwarkError::Dao(format!("stp-dao-find-by-id::{}", key))),
                 }
             }
             async fn expire(&self, key: &str, seconds: u64) -> BulwarkResult<()> {
@@ -1380,7 +1384,7 @@ mod tests {
                         };
                         Ok(())
                     },
-                    None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
+                    None => Err(BulwarkError::Dao(format!("stp-dao-find-by-id::{}", key))),
                 }
             }
             async fn delete(&self, key: &str) -> BulwarkResult<()> {
@@ -2124,7 +2128,7 @@ mod tests {
                         *existing = value.to_string();
                         Ok(())
                     },
-                    None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
+                    None => Err(BulwarkError::Dao(format!("stp-dao-find-by-id::{}", key))),
                 }
             }
 
@@ -2139,7 +2143,7 @@ mod tests {
                         };
                         Ok(())
                     },
-                    None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
+                    None => Err(BulwarkError::Dao(format!("stp-dao-find-by-id::{}", key))),
                 }
             }
 
@@ -2380,8 +2384,8 @@ mod tests {
             let logic = make_logic(true);
             let result = logic.check_login().await;
             assert!(
-                matches!(result, Err(BulwarkError::Session(ref msg)) if msg == "未登录"),
-                "无 token + throw_on_not_login=true 应返回 Err(Session(\"未登录\"))，实际: {:?}",
+                matches!(result, Err(BulwarkError::Session(ref msg)) if msg == "stp-not-login::"),
+                "无 token + throw_on_not_login=true 应返回 Err(Session(\"stp-not-login::\"))，实际: {:?}",
                 result
             );
         }
@@ -2494,8 +2498,8 @@ mod tests {
             })
             .await;
             assert!(
-                matches!(result, Err(BulwarkError::Session(ref msg)) if msg == "未登录"),
-                "Mixin + 无效 token + throw=true 应返回 Err(Session(\"未登录\"))，实际: {:?}",
+                matches!(result, Err(BulwarkError::Session(ref msg)) if msg == "stp-not-login::"),
+                "Mixin + 无效 token + throw=true 应返回 Err(Session(\"stp-not-login::\"))，实际: {:?}",
                 result
             );
         }
@@ -3254,7 +3258,7 @@ mod tests {
 
                 let result = with_current_token(token, async { logic.check_login().await }).await;
                 assert!(
-                    matches!(result, Err(BulwarkError::Session(ref msg)) if msg == "会话悬停超时"),
+                    matches!(result, Err(BulwarkError::Session(ref msg)) if msg == "stp-session-timeout::"),
                     "悬停超时 + throw=true 应返回 Err(Session(\"会话悬停超时\"))，实际: {:?}",
                     result
                 );

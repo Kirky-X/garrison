@@ -30,10 +30,14 @@ fn anon_token_key(token: &str) -> String {
 /// 拒绝空字符串和超长 token（>128 字节），防止 DoS 和语义混淆。
 fn validate_anon_token(token: &str) -> BulwarkResult<()> {
     if token.is_empty() {
-        return Err(BulwarkError::InvalidParam("token 不能为空".to_string()));
+        return Err(BulwarkError::InvalidParam(
+            "session-token-empty::".to_string(),
+        ));
     }
     if token.len() > 128 {
-        return Err(BulwarkError::InvalidParam("token 长度超限".to_string()));
+        return Err(BulwarkError::InvalidParam(
+            "session-token-too-long::".to_string(),
+        ));
     }
     Ok(())
 }
@@ -66,7 +70,7 @@ pub async fn get_anon_token_session(
             // 已存在则返回
             if let Some(json) = session.dao.get(&key).await? {
                 let ts: TokenSession = serde_json::from_str(&json).map_err(|e| {
-                    BulwarkError::Session(format!("反序列化匿名 TokenSession 失败: {}", e))
+                    BulwarkError::Session(format!("session-sim-anon-deserialize::{}", e))
                 })?;
                 return Ok(ts);
             }
@@ -88,9 +92,8 @@ pub async fn get_anon_token_session(
                 is_anon: true,
             };
 
-            let json = serde_json::to_string(&ts).map_err(|e| {
-                BulwarkError::Session(format!("序列化匿名 TokenSession 失败: {}", e))
-            })?;
+            let json = serde_json::to_string(&ts)
+                .map_err(|e| BulwarkError::Session(format!("session-sim-anon-serialize::{}", e)))?;
             session
                 .dao
                 .set(&key, &json, session.anon_session_timeout)
