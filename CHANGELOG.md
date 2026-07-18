@@ -33,6 +33,10 @@
 - **HIGH**: reqwest 响应体大小限制（E2, 65cc6b6）— 4 MiB 上限
 - **HIGH**: TOTP 锁改用 oxcache 有界缓存（E3, accf1e1）— DashMap → 原子 DAO incr
 - **HIGH**: API Key 反向索引避免全表扫描（E4, 811ee10）— O(1) verify
+- **HIGH**: OAuth2 限速器添加 `with_dao()` 注入点（diting HIGH, 844eaef）— 生产部署可注入分布式 DAO
+- **HIGH**: switch_to 清理原 Account-Session token 条目（H1, 24e1a1e）— 防止 `logout_by_login_id` 越权踢出已切换会话
+- **HIGH**: SimpleTokenStyle 用 `\x1f` 分隔符支持含 `-` 的 login_id（H2, 235e98b）— email/UUID/kebab-case login_id 不再 verify 失败
+- **HIGH**: OIDC id_token `aud` 支持数组形式（H3, b21478b）— 兼容 RFC 7519，支持 Google/Azure AD 多 audience 场景
 
 ### Added
 
@@ -76,9 +80,13 @@
 
 ### 审查验证（Convergence 阶段）
 
-- 代码-文档一致性审查完成（本 commit）
-- tiangang SAST 扫描：见 `strix_runs/*/REMEDIATION-STATUS.md`
-- 修复 commit 范围：`811ee10`..`2084933`（21 个 commit）
+- 代码-文档一致性审查完成
+- tiangang SAST 扫描：0 CRITICAL，1 HIGH（rsa crate CVE-2023-49092，受 `social-alipay` feature gate 隔离，可接受）
+- diting 架构+性能审查：HIGH #1（OAuth2 限速器硬编码 MockDao）已修复（844eaef）
+- kueiku bug 分析：3 个 HIGH（H1/H2/H3）已修复（24e1a1e / 235e98b / b21478b）
+- 全量测试：2593 passed, 0 failed, 1 ignored
+- clippy：零告警（`-D warnings`）
+- 修复 commit 范围：`811ee10`..`171b7bd`（25 个 commit）
 - 修复日期：2026-07-18
 
 ## [0.7.0] - 2026-07-13
