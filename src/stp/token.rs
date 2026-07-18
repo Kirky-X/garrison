@@ -466,6 +466,7 @@ mod tests {
         /// A11: SimpleTokenStyle 改为 HMAC-SHA256 签名格式 `<login_id>-<uuid>.<hmac>`，
         /// 需用 SimpleTokenStyle::new(secret).generate 生成合法 token。
         /// 注意：login_id 不能含 `-`（verify 在首个 `-` 处分割 login_id 与 uuid 部分）。
+        #[cfg(feature = "secure-simple-token")]
         #[tokio::test]
         async fn verify_token_simple_style_returns_login_id() {
             let logic = make_logic("simple");

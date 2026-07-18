@@ -154,7 +154,7 @@ pub trait SessionLogic: BulwarkCore {
     async fn revoke_all_sessions(&self, login_id: &str) -> BulwarkResult<usize> {
         let _ = login_id;
         Err(BulwarkError::NotImplemented(
-            "revoke_all_sessions 需 BulwarkLogicDefault 实现".to_string(),
+            "stp-revoke-all-sessions-not-implemented::".to_string(),
         ))
     }
 
@@ -171,7 +171,7 @@ pub trait SessionLogic: BulwarkCore {
     async fn get_active_sessions(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
         let _ = login_id;
         Err(BulwarkError::NotImplemented(
-            "get_active_sessions 需 BulwarkLogicDefault 实现".to_string(),
+            "stp-get-active-sessions-not-implemented::".to_string(),
         ))
     }
 
@@ -208,7 +208,7 @@ pub trait SessionLogic: BulwarkCore {
     /// - 默认实现：`BulwarkError::NotImplemented`（未启用 protocol-oauth2/protocol-sso）。
     async fn login_by_token(&self, _token: &str) -> BulwarkResult<()> {
         Err(BulwarkError::NotImplemented(
-            "login_by_token 需启用 protocol-oauth2 或 protocol-sso feature".to_string(),
+            "stp-login-by-token-feature-required::".to_string(),
         ))
     }
 
@@ -228,8 +228,7 @@ pub trait SessionLogic: BulwarkCore {
     /// - refresh token 已撤销/重用：`BulwarkError::InvalidToken` 或 `BulwarkError::TokenRevoked`。
     async fn refresh_access_token(&self, _refresh_token: &str) -> BulwarkResult<(String, String)> {
         Err(BulwarkError::NotImplemented(
-            "refresh_access_token 未实现：需启用 db-sqlite feature 并注入 RefreshTokenRotation"
-                .to_string(),
+            "stp-refresh-access-token-not-implemented-db::".to_string(),
         ))
     }
 }
@@ -268,13 +267,13 @@ fn validate_login_with_token_inputs(login_id: &str, token: &str) -> BulwarkResul
     let len = token.len();
     if len < 8 {
         return Err(BulwarkError::InvalidParam(format!(
-            "token 长度不足：{} < 8",
+            "stp-token-length-too-short::{}",
             len
         )));
     }
     if len > 256 {
         return Err(BulwarkError::InvalidParam(format!(
-            "token 长度超限：{} > 256",
+            "stp-token-length-too-long::{}",
             len
         )));
     }
@@ -535,14 +534,14 @@ impl SessionLogic for BulwarkLogicDefault {
                 return rtr.rotate(refresh_token).await;
             }
             return Err(BulwarkError::NotImplemented(
-                "refresh_access_token 未注入 RefreshTokenRotation".to_string(),
+                "stp-refresh-access-token-no-rotation::".to_string(),
             ));
         }
         #[cfg(not(all(feature = "protocol-jwt", feature = "db-sqlite")))]
         {
             let _ = refresh_token;
             Err(BulwarkError::NotImplemented(
-                "refresh_access_token 需启用 protocol-jwt + db-sqlite feature".to_string(),
+                "stp-refresh-access-token-feature-required::".to_string(),
             ))
         }
     }
@@ -606,8 +605,7 @@ impl BulwarkLogicDefault {
                                 "新设备登录被拒绝：当前为 NewDevice 模式，已有有效旧会话"
                             );
                             return Err(BulwarkError::NotLogin(
-                                "新设备登录被拒绝：当前为 NewDevice 模式，不允许新设备登录"
-                                    .to_string(),
+                                "stp-new-device-login-rejected-not-allowed::".to_string(),
                             ));
                         }
                     }
@@ -844,12 +842,12 @@ impl BulwarkLogicDefault {
                 {
                     let _ = login_id;
                     Err(BulwarkError::Config(
-                        "jwt token_style 需启用 protocol-jwt feature".to_string(),
+                        "stp-jwt-token-style-requires-protocol-jwt::".to_string(),
                     ))
                 }
             },
             other => Err(BulwarkError::Config(format!(
-                "unknown token_style: {}",
+                "stp-unknown-token-style::{}",
                 other
             ))),
         }
@@ -864,7 +862,7 @@ impl BulwarkLogicDefault {
         {
             if self.config.token_style != "jwt" {
                 return Err(BulwarkError::Config(
-                    "Stateless 模式要求 token_style=jwt".to_string(),
+                    "stp-stateless-requires-jwt-token-style::".to_string(),
                 ));
             }
             let handler = crate::protocol::jwt::JwtHandler::new(self.config.jwt_secret.as_str());
@@ -876,7 +874,7 @@ impl BulwarkLogicDefault {
         {
             let _ = token;
             Err(BulwarkError::Config(
-                "Stateless 模式要求启用 protocol-jwt feature".to_string(),
+                "stp-stateless-requires-protocol-jwt::".to_string(),
             ))
         }
     }
@@ -1146,9 +1144,7 @@ impl BulwarkLogicDefault {
                 self.refresh_token(token).await?
             } else {
                 let auth = self.auth_logic.as_ref().ok_or_else(|| {
-                    BulwarkError::Config(
-                        "auto_renewal_threshold 启用但 auth_logic 未注入，无法续签".to_string(),
-                    )
+                    BulwarkError::Config("stp-auto-renewal-no-auth-logic::".to_string())
                 })?;
                 auth.renew_to_equivalent(token).await?
             };
@@ -1159,14 +1155,11 @@ impl BulwarkLogicDefault {
         {
             if self.config.token_style == "jwt" {
                 return Err(BulwarkError::Config(
-                    "auto_renewal_threshold 启用且 token_style=jwt，但未启用 protocol-jwt feature"
-                        .to_string(),
+                    "stp-auto-renewal-jwt-requires-protocol-jwt::".to_string(),
                 ));
             }
             let auth = self.auth_logic.as_ref().ok_or_else(|| {
-                BulwarkError::Config(
-                    "auto_renewal_threshold 启用但 auth_logic 未注入，无法续签".to_string(),
-                )
+                BulwarkError::Config("stp-auto-renewal-no-auth-logic::".to_string())
             })?;
             let new_token = auth.renew_to_equivalent(token).await?;
             set_renewed_token(new_token.clone());
@@ -1370,7 +1363,7 @@ mod tests {
                         *existing = value.to_string();
                         Ok(())
                     },
-                    None => Err(BulwarkError::Dao(format!("stp-dao-find-by-id::{}", key))),
+                    None => Err(BulwarkError::Dao(format!("dao-key-not-found::{}", key))),
                 }
             }
             async fn expire(&self, key: &str, seconds: u64) -> BulwarkResult<()> {
@@ -1384,7 +1377,7 @@ mod tests {
                         };
                         Ok(())
                     },
-                    None => Err(BulwarkError::Dao(format!("stp-dao-find-by-id::{}", key))),
+                    None => Err(BulwarkError::Dao(format!("dao-key-not-found::{}", key))),
                 }
             }
             async fn delete(&self, key: &str) -> BulwarkResult<()> {
@@ -1502,7 +1495,7 @@ mod tests {
                 self.login_call_count.fetch_add(1, Ordering::SeqCst);
                 if self.fail_on_login {
                     return Err(BulwarkError::Internal(
-                        "mock login detection 失败".to_string(),
+                        "stp-mock-login-detection-failed::".to_string(),
                     ));
                 }
                 Ok(self.login_events.lock().clone())
@@ -1516,7 +1509,7 @@ mod tests {
                 self.check_login_call_count.fetch_add(1, Ordering::SeqCst);
                 if self.fail_on_check_login {
                     return Err(BulwarkError::Internal(
-                        "mock check_login detection 失败".to_string(),
+                        "stp-mock-check-login-detection-failed::".to_string(),
                     ));
                 }
                 Ok(self.check_login_events.lock().clone())
@@ -2128,7 +2121,7 @@ mod tests {
                         *existing = value.to_string();
                         Ok(())
                     },
-                    None => Err(BulwarkError::Dao(format!("stp-dao-find-by-id::{}", key))),
+                    None => Err(BulwarkError::Dao(format!("dao-key-not-found::{}", key))),
                 }
             }
 
@@ -2143,7 +2136,7 @@ mod tests {
                         };
                         Ok(())
                     },
-                    None => Err(BulwarkError::Dao(format!("stp-dao-find-by-id::{}", key))),
+                    None => Err(BulwarkError::Dao(format!("dao-key-not-found::{}", key))),
                 }
             }
 
@@ -2456,7 +2449,7 @@ mod tests {
                 with_current_token("any-token".to_string(), async { logic.check_login().await })
                     .await;
             assert!(
-                matches!(result, Err(BulwarkError::Config(ref msg)) if msg.contains("Stateless")),
+                matches!(result, Err(BulwarkError::Config(ref msg)) if msg.contains("stp-stateless-requires")),
                 "Stateless + token_style=uuid 应返回 Err(Config(...Stateless...))，实际: {:?}",
                 result
             );
@@ -2576,7 +2569,7 @@ mod tests {
             tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
             let result = logic.check_and_renew(&token).await;
             assert!(
-                matches!(result, Err(BulwarkError::Config(ref msg)) if msg.contains("auth_logic")),
+                matches!(result, Err(BulwarkError::Config(ref msg)) if msg.contains("stp-auto-renewal-no-auth-logic")),
                 "TTL 低 + 无 auth_logic 应返回 Err(Config(...auth_logic...))，实际: {:?}",
                 result
             );
@@ -2602,8 +2595,8 @@ mod tests {
 
             let result = logic.login("test-user", &LoginParams::default()).await;
             assert!(
-                matches!(result, Err(BulwarkError::Config(ref msg)) if msg.contains("unknown token_style")),
-                "未知 token_style 应返回 Err(Config(...unknown token_style...))，实际: {:?}",
+                matches!(result, Err(BulwarkError::Config(ref msg)) if msg.contains("stp-unknown-token-style")),
+                "未知 token_style 应返回 Err(Config(...stp-unknown-token-style...))，实际: {:?}",
                 result
             );
         }
@@ -3677,8 +3670,8 @@ mod tests {
             let logic = make_logic(false);
             let result = logic.refresh_access_token("any-refresh").await;
             assert!(
-                matches!(result, Err(BulwarkError::NotImplemented(ref msg)) if msg.contains("RefreshTokenRotation")),
-                "未注入 RefreshTokenRotation 应返回 NotImplemented 包含 'RefreshTokenRotation'，实际: {:?}",
+                matches!(result, Err(BulwarkError::NotImplemented(ref msg)) if msg.contains("stp-refresh-access-token-no-rotation")),
+                "未注入 RefreshTokenRotation 应返回 NotImplemented 包含 'stp-refresh-access-token-no-rotation'，实际: {:?}",
                 result
             );
         }
@@ -3708,7 +3701,7 @@ mod tests {
                 .login("new-device-reject-001", &LoginParams::default())
                 .await;
             assert!(
-                matches!(result, Err(BulwarkError::NotLogin(ref msg)) if msg.contains("NewDevice")),
+                matches!(result, Err(BulwarkError::NotLogin(ref msg)) if msg.contains("stp-new-device-login-rejected")),
                 "NewDevice 模式 + 已有旧会话应返回 NotLogin 包含 'NewDevice'，实际: {:?}",
                 result
             );

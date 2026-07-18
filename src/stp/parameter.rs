@@ -244,7 +244,7 @@ mod tests {
                     *existing = value.to_string();
                     Ok(())
                 },
-                None => Err(BulwarkError::Dao(format!("stp-dao-find-by-id::{}", key))),
+                None => Err(BulwarkError::Dao(format!("dao-key-not-found::{}", key))),
             }
         }
 
@@ -259,7 +259,7 @@ mod tests {
                     };
                     Ok(())
                 },
-                None => Err(BulwarkError::Dao(format!("stp-dao-find-by-id::{}", key))),
+                None => Err(BulwarkError::Dao(format!("dao-key-not-found::{}", key))),
             }
         }
 

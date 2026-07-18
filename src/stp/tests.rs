@@ -214,8 +214,8 @@ async fn create_token_unknown_style_errors() {
     let logic = make_logic(3600, 86400, false, "unknown_style", true, true);
     let result = logic.login("1001", &LoginParams::default()).await;
     assert!(
-        matches!(result, Err(BulwarkError::Config(ref msg)) if msg.contains("unknown token_style")),
-        "未知 token_style 应返回含 'unknown token_style' 的 Config 错误，实际: {:?}",
+        matches!(result, Err(BulwarkError::Config(ref msg)) if msg.contains("stp-unknown-token-style")),
+        "未知 token_style 应返回含 'stp-unknown-token-style' 的 Config 错误，实际: {:?}",
         result
     );
 }
@@ -1207,6 +1207,7 @@ async fn util_login_by_token_fails_when_not_initialized() {
 ///
 /// A11: core-token `SimpleTokenStyle` 改为 HMAC-SHA256 签名格式
 /// `<login_id>-<uuid>.<hmac>`，需用 SimpleTokenStyle::new(secret).generate 生成合法 token。
+#[cfg(feature = "secure-simple-token")]
 #[tokio::test]
 async fn verify_token_simple_style_returns_login_id() {
     let logic = make_logic(3600, 86400, false, "simple", true, true);
@@ -1249,6 +1250,7 @@ async fn verify_token_invalid_returns_error() {
 /// verify_token 对合法 HMAC 的 simple-format token 返回 login_id（spec Scenario）。
 ///
 /// A11: SimpleTokenStyle 要求 token 含合法 HMAC-SHA256 签名，防止身份伪造。
+#[cfg(feature = "secure-simple-token")]
 #[tokio::test]
 async fn verify_token_malformed_returns_invalid_token() {
     let logic = make_logic(3600, 86400, false, "simple", true, true);
@@ -1304,6 +1306,7 @@ async fn util_refresh_token_fails_when_not_initialized() {
 ///
 /// A11: core-token SimpleTokenStyle 改为 HMAC-SHA256 签名格式，
 /// 需用 SimpleTokenStyle::new(secret).generate 生成合法 token（secret 与 config.jwt_secret 一致）。
+#[cfg(feature = "secure-simple-token")]
 #[tokio::test]
 #[serial]
 async fn util_verify_token_returns_login_id() {
@@ -1716,7 +1719,7 @@ async fn trait_default_login_by_token_returns_not_implemented() {
     };
     let result = logic.login_by_token("any-token").await;
     assert!(
-        matches!(result, Err(BulwarkError::NotImplemented(ref msg)) if msg.contains("protocol-oauth2")),
+        matches!(result, Err(BulwarkError::NotImplemented(ref msg)) if msg.contains("stp-login-by-token-feature-required")),
         "trait default login_by_token 应返回 NotImplemented，实际: {:?}",
         result
     );
@@ -1856,6 +1859,7 @@ async fn minimal_logic_returns_not_implemented() {
 /// login_by_token 注入 plugin_manager + listener_manager 后触发 auto-wire 钩子（simple style）。
 ///
 /// A11: SimpleTokenStyle 改为 HMAC 签名格式，需用 SimpleTokenStyle::new(secret).generate 生成合法 token。
+#[cfg(feature = "secure-simple-token")]
 #[tokio::test]
 async fn login_by_token_with_managers_triggers_hooks() {
     let logic = make_logic(3600, 86400, false, "simple", true, true);
@@ -3352,7 +3356,7 @@ async fn login_new_device_mode_rejects_new_login() {
         .login("new-device-user-001", &LoginParams::default())
         .await;
     assert!(
-        matches!(result, Err(BulwarkError::NotLogin(ref msg)) if msg.contains("NewDevice")),
+        matches!(result, Err(BulwarkError::NotLogin(ref msg)) if msg.contains("stp-new-device-login-rejected-not-allowed")),
         "NewDevice 模式下已有旧会话时应返回 NotLogin 错误，实际: {:?}",
         result
     );
