@@ -4,6 +4,7 @@
 use super::mock::make_client;
 use super::*;
 use crate::error::BulwarkError;
+#[cfg(feature = "oauth2-scope-handler")]
 use crate::BulwarkResult;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};

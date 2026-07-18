@@ -1046,6 +1046,22 @@ async fn default_insert_social_binding_returns_not_implemented() {
     );
 }
 
+/// `compare_and_update_if_greater` 默认实现返回 `NotImplemented`（M2 修复）。
+///
+/// 默认实现原为 get → parse → compare → set 四步操作，存在 TOCTOU 竞态。
+/// M2 修复：改为返回 `NotImplemented`（fail-closed），强制后端重写以使用原子 CAS。
+/// 此测试验证 MinimalDao（不重写任何默认方法）调用时返回 NotImplemented。
+#[tokio::test]
+async fn default_compare_and_update_if_greater_returns_not_implemented() {
+    let dao = MinimalDao::new();
+    let result = dao.compare_and_update_if_greater("key", 1, 60).await;
+    assert!(
+        matches!(result, Err(BulwarkError::NotImplemented(ref msg)) if msg.contains("compare_and_update_if_greater")),
+        "compare_and_update_if_greater 默认实现应返回 NotImplemented，实际: {:?}",
+        result
+    );
+}
+
 /// `get_and_delete` 默认实现（非原子 get → delete）在键存在时返回值并删除。
 ///
 /// 覆盖 trait 默认实现（行 182-188）。

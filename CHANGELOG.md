@@ -37,6 +37,7 @@
 - **HIGH**: switch_to 清理原 Account-Session token 条目（H1, 24e1a1e）— 防止 `logout_by_login_id` 越权踢出已切换会话
 - **HIGH**: SimpleTokenStyle 用 `\x1f` 分隔符支持含 `-` 的 login_id（H2, 235e98b）— email/UUID/kebab-case login_id 不再 verify 失败
 - **HIGH**: OIDC id_token `aud` 支持数组形式（H3, b21478b）— 兼容 RFC 7519，支持 Google/Azure AD 多 audience 场景
+- **HIGH**: `OidcClaims.aud` 类型从 `String` 改为 `OidcAudience` enum（破坏性 API 变更，H3, b21478b）— 兼容 RFC 7519，旧代码需改用 `aud.contains(&self.audience)` 比较
 
 ### Added
 
@@ -52,6 +53,7 @@
 
 - ABAC 引擎未初始化从 fail-open 改为 fail-closed（A2）
 - SimpleTokenStyle 从 ZST 改为 `struct { secret: String }`，**破坏性 API 变更**
+- `OidcClaims.aud` 类型从 `String` 改为 `OidcAudience` enum，**破坏性 API 变更**（旧代码 `claims.aud == self.audience` 需改用 `claims.aud.contains(&self.audience)`）
 - `require_secondary_auth` 从软提示改为 hard block（A10）
 
 ### Fixed
@@ -113,6 +115,41 @@
 - `cargo clippy --features "db-sqlite,protocol-jwt,secure-simple-token" -- -D warnings`：0 warnings
 - zh/en FTL key 各 591，成对一致（迁移前 524，本次新增 67）
 - 4 个 commit 全部 pre-commit hook 通过（fmt + clippy×2 + cargo-deny + codespell + markdownlint）
+
+### strix bulwark_e024 安全审查修复批次
+
+**触发**：strix 渗透测试报告 `strix_runs/bulwark_e024/` 中 9 个漏洞（4 CRITICAL + 3 HIGH + 2 MEDIUM）+ tiangang SAST 审查 3 MEDIUM + 7 LOW。
+
+**修复内容**（单批多 subagent 并行）：
+
+- **CRITICAL**: 实现 SAML 签名验证（vuln-0001）— 新增 `XmlSecSamlProvider` + `verify_saml_signature()`，RSA-SHA256 / ECDSA-SHA256 算法白名单，拒绝 `rsa-1_5`，新增 `secure-saml` feature（`rsa` + `dep:base64`）
+- **CRITICAL**: 添加 SAML Destination/Audience 校验（vuln-0002）— `expected_destination` / `expected_audience` builder + fail-loud 校验，`build_authn_request` 新增 `idp_sso_endpoint` 参数
+- **CRITICAL**: 修复 Credential Repository IDOR（vuln-0004）— `find_by_user` / `update` / `delete` 新增 `caller_login_id` 参数 + ownership 校验 + user_id 不可变约束 + `tracing::warn!` 审计日志
+- **HIGH**: 修复 SAML Assertion Replay TOCTOU（vuln-0003）— `check_assertion_replay` 改用 `dao.get_and_delete` 原子操作
+- **HIGH**: 修复 Temp Credential Consume TOCTOU（vuln-0005）— `consume` 改用 `dao.get_and_delete` 原子操作
+- **HIGH**: 修复 Rate Limit 滑动窗口 TOCTOU（vuln-0009）— 优先 `dao.eval_lua` Redis Lua 脚本原子路径，降级 `atomic_lock` 保护 read-modify-write（仅进程内原子，文档说明跨进程限制）
+- **MEDIUM**: `compare_and_update_if_greater` `unwrap_or(0)` 改为显式报错（违反 Rule 12）— oxcache / MockDao 实现同步更新
+- **MEDIUM**: `compare_and_update_if_greater` trait 默认实现改为返回 `NotImplemented`（强制后端重写以提供原子 CAS）— `AloneCache` 添加 forward 到 inner
+- **MEDIUM**: `fallback_counter` 添加容量限制 `MAX_FALLBACK_ENTRIES=10000` + LRU 驱逐（`FALLBACK_EVICT_BATCH=100`）— 防 DAO 故障期间无限增长
+- **LOW**: `constant_time_eq` 改用 `subtle::ConstantTimeEq`（消除长度泄漏）
+- **LOW**: `verify_id_token` nonce 比较改用 `subtle::ConstantTimeEq`
+- **LOW**: `check_and_incr_fallback` 窗口边界文档说明（DashMap shard 锁保证实际安全）
+- **LOW**: `entry_count` O(n) 遍历文档说明 + MAX 上限保护
+- **LOW**: `validate_inner` 添加 `MAX_AUTHORIZATION_HEADER_LEN=8KB` 输入长度校验（DoS 防护）
+- **LOW**: `verify_id_token` 错误消息不泄露 token claim 信息
+- **LOW**: `MockDao::keys` 添加 O(n) 复杂度说明文档
+
+**3 维度审查结果**：
+
+- tiangang SAST：0 CRITICAL + 0 HIGH = ✅ 通过
+- diting 架构：3 CRITICAL（误报）+ 1 HIGH（误报）+ 1 MEDIUM + 1 LOW — 误报原因为审查未识别所有调用方已更新
+- diting 性能：3 HIGH（误报）+ 3 MEDIUM + 2 LOW — 误报原因为 evict_oldest 仅在容量上限时触发（摊销开销）
+
+**最终验证**：
+
+- `cargo test --features "full" --lib`：3756 passed, 0 failed, 5 ignored（比基线 3722 增加 34 个新测试）
+- `cargo clippy --features "full" --lib --tests -- -D warnings`：0 warnings
+- 27 个文件修改（5 个新文件、22 个现有文件）
 
 ## [0.7.0] - 2026-07-13
 

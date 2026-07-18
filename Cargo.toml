@@ -211,22 +211,29 @@ protocol-temp = []
 # protocol-zeroize：协议层密钥零化（Drop 时清零 secret 字段，防止内存残留）
 protocol-zeroize = ["zeroize"]
 # OIDC 扩展（id_token 签发/验证 + discovery endpoint），依赖 protocol-jwt + protocol-oauth2
-protocol-oidc = ["protocol-jwt", "protocol-oauth2"]
+# subtle 用于 verify_id_token 中 nonce 常量时间比较（L2 修复，防 timing side-channel）
+protocol-oidc = ["protocol-jwt", "protocol-oauth2", "dep:subtle"]
 # OAuth2 Scope Handler 注册表（ScopeHandler trait + ScopeRegistry），依赖 protocol-oauth2
 oauth2-scope-handler = ["protocol-oauth2"]
 # SSO Server 独立抽象（SsoServer trait + CenterIdConverter + SsoChannel），依赖 protocol-sso
 protocol-sso-server = ["protocol-sso"]
+# secure-saml：启用 XmlSecSamlProvider（vuln-0001 修复），使用 rsa crate 验证 SAML Assertion XML 签名
+# - 算法白名单：仅允许 rsa-sha256 / ecdsa-sha256，禁止 rsa-1_5 等弱算法
+# - 复用 protocol-sso 已有的 base64 依赖 + rsa crate（含 sha2/pem features）
+# - 限制：不执行 XML Canonicalization (C14N)，详见 saml.rs 文档注释
+secure-saml = ["protocol-sso", "rsa", "dep:base64"]
 
 # === 安全模块 ===
 secure-totp = ["totp-rs", "dep:base32"]
 secure-sign = ["dep:sha2", "hmac", "dep:base64", "md5", "dep:subtle"]
 secure-httpbasic = ["dep:base64"]
-secure-httpdigest = ["dep:sha2", "dep:base64", "md5"]
+secure-httpdigest = ["dep:sha2", "dep:base64", "md5", "dep:subtle"]
 # Unicode 同形异义字检测
 # 启用后提供 check_confusable 函数 + PermissionRegistry::register 集成（tracing::warn）
 secure-confusable = ["dep:unicode-security"]
-# 敏感数据脱敏（手机号 / 身份证 / 邮箱 / 银行卡 + JSON 递归脱敏），无额外依赖
-secure-masking = []
+# 敏感数据脱敏（手机号 / 身份证 / 邮箱 / 银行卡 + JSON 递归脱敏 + Custom 正则脱敏）
+# 依赖 regex：Custom mask 真实脱敏（vuln-0010 D6 修复，原 placeholder 实现静默泄露敏感数据）
+secure-masking = ["dep:regex"]
 # XSS 防护（HTML 转义 / 白名单过滤），无额外依赖
 secure-xss = []
 # 通用输入消毒（null 字节 / 控制字符移除 + 长度限制），无额外依赖
@@ -420,7 +427,7 @@ full = [
     "cache-memory", "cache-redis",
     "db-sqlite",
     "protocol-oauth2", "protocol-sso", "protocol-jwt", "protocol-sign", "protocol-apikey", "protocol-temp", "protocol-zeroize",
-    "protocol-oidc", "oauth2-scope-handler", "protocol-sso-server",
+    "protocol-oidc", "oauth2-scope-handler", "protocol-sso-server", "secure-saml",
     "secure-totp", "secure-sign", "secure-httpbasic", "secure-httpdigest", "secure-masking",
     "secure-xss", "secure-sanitize", "sms-rate-limit",
     "account-credential", "account-credential-zeroize", "account-policy", "account-lockout", "account-authflow",

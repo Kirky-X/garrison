@@ -21,6 +21,47 @@ use crate::error::{BulwarkError, BulwarkResult};
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
+use subtle::ConstantTimeEq;
+
+/// OIDC id_token 的 `aud` claim 类型（支持 String 或 `Vec<String>`）。
+///
+/// RFC 7519 §4.1.3 规定 `aud` 可以是 String 或数组形式。原实现仅接受 String，
+/// 导致 IdP 返回 `aud: ["client-a", "client-b"]` 时反序列化失败，所有 OIDC
+/// 登录失败（vuln-0006 修复：与 `sso/oidc.rs` H3 修复同步）。
+///
+/// `#[serde(untagged)]` 让 serde 根据JSON 值类型自动选择变体：
+/// - JSON 字符串 → `OidcAudience::Single(String)`
+/// - JSON 数组   → `OidcAudience::Multi(Vec<String>)`
+///
+/// 序列化时：`Single` 输出 String（向后兼容），`Multi` 输出数组。
+///
+/// # 与 `sso/oidc.rs::Aud` 的重复说明
+///
+/// 本类型与 `crate::protocol::sso::oidc::Aud` 功能相同（都表示 JWT aud 双形式），
+/// 重复是有意为之，因 `protocol-oauth2` 和 `protocol-sso` 是独立 feature：
+/// - 共享类型会引入跨 feature 依赖，违反 feature 隔离原则
+/// - 用户启用任一 feature 时不需要另一 feature 的依赖
+/// - 未来若 feature 隔离策略调整（如合并为统一 `protocol-jwt` feature），应统一为单一类型
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum OidcAudience {
+    /// 单一受众（JSON 字符串形式，向后兼容）。
+    Single(String),
+    /// 多受众（JSON 数组形式，RFC 7519 允许）。
+    Multi(Vec<String>),
+}
+
+impl OidcAudience {
+    /// 判断 `client_id` 是否在 `aud` 中（支持 String 和数组形式）。
+    ///
+    /// 用于 `verify_id_token` 校验 `aud` 是否包含本客户端的 `client_id`。
+    pub fn contains(&self, client_id: &str) -> bool {
+        match self {
+            OidcAudience::Single(s) => s == client_id,
+            OidcAudience::Multi(v) => v.iter().any(|s| s == client_id),
+        }
+    }
+}
 
 /// OIDC id_token 的 claims 载荷。
 ///
@@ -31,8 +72,8 @@ pub struct OidcClaims {
     pub iss: String,
     /// 主体标识（subject），与 login_id 字符串一致。
     pub sub: String,
-    /// 受众（audience），通常为 client_id。
-    pub aud: String,
+    /// 受众（audience），通常为 client_id。支持 String 或数组形式（vuln-0006 修复）。
+    pub aud: OidcAudience,
     /// 签发时间（Unix 秒）。
     pub iat: i64,
     /// 过期时间（Unix 秒）。
@@ -153,7 +194,8 @@ impl OidcHandler {
         let claims = OidcClaims {
             iss: self.issuer.clone(),
             sub: login_id.clone(),
-            aud: self.audience.clone(),
+            // 签发时使用 Single 形式（向后兼容，序列化为 JSON 字符串）
+            aud: OidcAudience::Single(self.audience.clone()),
             iat: now,
             exp: now + timeout,
             login_id,
@@ -198,27 +240,34 @@ impl OidcHandler {
         let decoded = decode::<OidcClaims>(id_token, &key, &validation).map_err(|e| {
             let msg = e.to_string();
             if msg.contains("ExpiredSignature") {
+                // L6 修复：错误消息不含 token 内容，仅含 jsonwebtoken 错误类别
                 BulwarkError::ExpiredToken(format!("jwt-expired::{}", e))
             } else {
+                // L6 修复：错误消息不含 token 内容/密钥，仅含 jsonwebtoken 错误类别
+                //（如 "InvalidSignature" / "InvalidToken"）
                 BulwarkError::InvalidToken(format!("jwt-invalid::{}", e))
             }
         })?;
         let claims = decoded.claims;
         // OIDC 规范要求校验 iss 和 aud
+        // L6 修复：错误消息不含 claims.iss 实际值（虽 iss 通常公开，但 fail-closed 不泄露任何 token claim）
         if claims.iss != self.issuer {
-            return Err(BulwarkError::InvalidToken(format!(
-                "OIDC iss 不匹配: 期望 {}, 实际 {}",
-                self.issuer, claims.iss
-            )));
+            return Err(BulwarkError::InvalidToken(
+                "OIDC iss 不匹配: token 中的 issuer 与期望不符".to_string(),
+            ));
         }
-        if claims.aud != self.audience {
-            return Err(BulwarkError::InvalidToken(format!(
-                "OIDC aud 不匹配: 期望 {}, 实际 {}",
-                self.audience, claims.aud
-            )));
+        // vuln-0006 修复：aud 支持String 或数组形式（RFC 7519 §4.1.3）。
+        // 校验 `aud` 是否包含本客户端的 `client_id`，与 `sso/oidc.rs` 行为对齐。
+        // L6 修复：错误消息不含 claims.aud 实际值（虽 aud 通常公开，但 fail-closed 不泄露任何 token claim）
+        if !claims.aud.contains(&self.audience) {
+            return Err(BulwarkError::InvalidToken(
+                "OIDC aud 不匹配: token 中的 audience 不包含本客户端 client_id".to_string(),
+            ));
         }
-        // nonce 校验（防重放）
-        if claims.nonce != expected_nonce {
+        // nonce 校验（防重放）— L2 修复：使用 subtle::ConstantTimeEq 常量时间比较，
+        // 避免 nonce 长度/前缀差异导致的 timing side-channel 泄漏 nonce 信息。
+        // subtle 的 ct_eq 在长度不等时返回 0（不提前 return），全程常量时间。
+        if !bool::from(claims.nonce.as_bytes().ct_eq(expected_nonce.as_bytes())) {
             return Err(BulwarkError::OAuth2("nonce mismatch".to_string()));
         }
         Ok(claims)
@@ -329,7 +378,12 @@ mod tests {
         let claims = handler.verify_id_token(&token, "nonce-abc").unwrap();
         assert_eq!(claims.iss, "https://auth.example.com");
         assert_eq!(claims.sub, "1001");
-        assert_eq!(claims.aud, "test-client-id");
+        // vuln-0006: aud 类型改为 OidcAudience，签发时为 Single 形式
+        assert_eq!(
+            claims.aud,
+            OidcAudience::Single("test-client-id".to_string())
+        );
+        assert!(claims.aud.contains("test-client-id"));
         assert_eq!(claims.login_id, "1001");
         assert_eq!(claims.nonce, "nonce-abc");
         assert!(claims.exp > claims.iat);
@@ -582,5 +636,166 @@ mod tests {
             .unwrap();
         let claims = handler.verify_id_token(&token, "nonce").unwrap();
         assert_eq!(claims.login_id, "1001");
+    }
+
+    // ========================================================================
+    // vuln-0006: OIDC aud 数组形式测试（RFC 7519 §4.1.3）
+    // ========================================================================
+
+    /// 手动签发一个 aud 为数组形式的 id_token（模拟 IdP 返回多受众 token）。
+    ///
+    /// `OidcHandler::sign_id_token` 总是签发 `Single` 形式（向后兼容），
+    /// 测试数组形式需直接调用 `jsonwebtoken::encode` 构造 `Multi` 形式的 claims。
+    fn sign_token_with_multi_aud(
+        issuer: &str,
+        audiences: Vec<&str>,
+        secret: &str,
+        nonce: &str,
+        timeout: i64,
+    ) -> String {
+        use jsonwebtoken::{Algorithm, EncodingKey, Header};
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        let claims = OidcClaims {
+            iss: issuer.to_string(),
+            sub: "1001".to_string(),
+            aud: OidcAudience::Multi(audiences.into_iter().map(String::from).collect()),
+            iat: now,
+            exp: now + timeout,
+            login_id: "1001".to_string(),
+            nonce: nonce.to_string(),
+        };
+        let header = Header::new(Algorithm::HS256);
+        let key = EncodingKey::from_secret(secret.as_bytes());
+        encode(&header, &claims, &key).expect("签发 multi-aud token 失败")
+    }
+
+    /// 数组形式 aud 包含 client_id 时校验通过（vuln-0006 核心修复验证）。
+    ///
+    /// 场景：IdP 返回 `aud: ["client-a", "client-b"]`，本客户端 `client_id = "client-b"`，
+    /// 原实现因 `aud: String` 反序列化失败导致所有 OIDC 登录失败；
+    /// 修复后 `OidcAudience::Multi` 可正确反序列化，且 `contains` 判定通过。
+    #[test]
+    fn verify_id_token_multi_aud_contains_client_id_succeeds() {
+        let handler = OidcHandler::new("https://auth.example.com", "client-b", "secret").unwrap();
+        // 模拟 IdP 签发的多受众 id_token（aud 包含 client-b）
+        let token = sign_token_with_multi_aud(
+            "https://auth.example.com",
+            vec!["client-a", "client-b", "client-c"],
+            "secret",
+            "nonce-xyz",
+            3600,
+        );
+        // 修复后应能反序列化 + 校验通过
+        let claims = handler
+            .verify_id_token(&token, "nonce-xyz")
+            .expect("数组形式 aud 包含 client_id 时应校验通过");
+        assert_eq!(claims.sub, "1001");
+        assert_eq!(
+            claims.aud,
+            OidcAudience::Multi(vec![
+                "client-a".to_string(),
+                "client-b".to_string(),
+                "client-c".to_string(),
+            ])
+        );
+        assert!(claims.aud.contains("client-b"));
+        assert!(!claims.aud.contains("client-d"));
+    }
+
+    /// 数组形式 aud 不包含 client_id 时校验失败（vuln-0006 修复后行为正确）。
+    ///
+    /// 场景：IdP 返回 `aud: ["client-a", "client-b"]`，本客户端 `client_id = "client-x"`，
+    /// 修复后能正确反序列化，但 `contains` 判定不通过，返回 InvalidToken 错误
+    /// （而非原实现的反序列化失败错误）。
+    #[test]
+    fn verify_id_token_multi_aud_not_containing_client_id_fails() {
+        let handler = OidcHandler::new("https://auth.example.com", "client-x", "secret").unwrap();
+        let token = sign_token_with_multi_aud(
+            "https://auth.example.com",
+            vec!["client-a", "client-b"],
+            "secret",
+            "nonce-xyz",
+            3600,
+        );
+        let result = handler.verify_id_token(&token, "nonce-xyz");
+        assert!(result.is_err(), "aud 不包含 client_id 时应校验失败");
+        match result.err() {
+            Some(BulwarkError::InvalidToken(msg)) => {
+                assert!(msg.contains("aud"), "错误消息应包含 aud，实际: {}", msg)
+            },
+            other => panic!("期望 InvalidToken (aud 不匹配) 错误，实际: {:?}", other),
+        }
+    }
+
+    /// 单元素数组形式 aud 也能正确处理（边界场景）。
+    ///
+    /// RFC 7519 允许 `aud: ["single-client"]`（单元素数组），虽不常见但合规。
+    /// 验证 `OidcAudience::Multi` 单元素场景的 `contains` 行为。
+    #[test]
+    fn verify_id_token_single_element_multi_aud_works() {
+        let handler =
+            OidcHandler::new("https://auth.example.com", "only-client", "secret").unwrap();
+        let token = sign_token_with_multi_aud(
+            "https://auth.example.com",
+            vec!["only-client"],
+            "secret",
+            "nonce",
+            3600,
+        );
+        let claims = handler
+            .verify_id_token(&token, "nonce")
+            .expect("单元素数组 aud 应校验通过");
+        assert!(claims.aud.contains("only-client"));
+        assert_eq!(
+            claims.aud,
+            OidcAudience::Multi(vec!["only-client".to_string()])
+        );
+    }
+
+    /// `OidcAudience` serde 序列化/反序列化 round-trip 测试。
+    ///
+    /// 验证 `#[serde(untagged)]` 行为：
+    /// - `Single` 序列化为 JSON 字符串，反序列化回 `Single`
+    /// - `Multi` 序列化为 JSON 数组，反序列化回 `Multi`
+    #[test]
+    fn oidc_audience_serde_roundtrip() {
+        // Single 形式 round-trip
+        let single = OidcAudience::Single("client-a".to_string());
+        let json = serde_json::to_string(&single).unwrap();
+        assert_eq!(json, r#""client-a""#, "Single 应序列化为 JSON 字符串");
+        let de: OidcAudience = serde_json::from_str(&json).unwrap();
+        assert_eq!(de, single);
+
+        // Multi 形式 round-trip
+        let multi = OidcAudience::Multi(vec!["client-a".to_string(), "client-b".to_string()]);
+        let json = serde_json::to_string(&multi).unwrap();
+        assert_eq!(
+            json, r#"["client-a","client-b"]"#,
+            "Multi 应序列化为 JSON 数组"
+        );
+        let de: OidcAudience = serde_json::from_str(&json).unwrap();
+        assert_eq!(de, multi);
+    }
+
+    /// `OidcAudience::contains` 行为验证。
+    ///
+    /// 单元测试 `contains` 方法对 Single / Multi 两种形式的判定。
+    #[test]
+    fn oidc_audience_contains_behavior() {
+        let single = OidcAudience::Single("client-a".to_string());
+        assert!(single.contains("client-a"));
+        assert!(!single.contains("client-b"));
+
+        let multi = OidcAudience::Multi(vec!["client-a".to_string(), "client-b".to_string()]);
+        assert!(multi.contains("client-a"));
+        assert!(multi.contains("client-b"));
+        assert!(!multi.contains("client-c"));
+
+        // 空数组
+        let empty = OidcAudience::Multi(vec![]);
+        assert!(!empty.contains("client-a"));
     }
 }

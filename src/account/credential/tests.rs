@@ -185,7 +185,7 @@ async fn repository_create_and_find_by_user() {
     repo.create(m1.clone()).await.unwrap();
     repo.create(m2.clone()).await.unwrap();
 
-    let found = repo.find_by_user("alice").await.unwrap();
+    let found = repo.find_by_user("alice", "alice").await.unwrap();
     assert_eq!(found.len(), 2);
     // 按 priority 升序：password(0) 在前，totp(1) 在后
     assert_eq!(found[0].id, "c1");
@@ -247,8 +247,8 @@ async fn repository_update_overwrites_and_errors_on_missing() {
         enabled: false,
         priority: 5,
     };
-    repo.update(updated.clone()).await.unwrap();
-    let found = repo.find_by_user("alice").await.unwrap();
+    repo.update("alice", updated.clone()).await.unwrap();
+    let found = repo.find_by_user("alice", "alice").await.unwrap();
     assert_eq!(found[0].secret_data, "new-hash");
     assert_eq!(found[0].label, Some("updated".to_string()));
     assert!(!found[0].enabled);
@@ -256,7 +256,7 @@ async fn repository_update_overwrites_and_errors_on_missing() {
 
     // 更新不存在凭证
     let missing = make_model("nonexistent", "alice", "password", 0);
-    let result = repo.update(missing).await;
+    let result = repo.update("alice", missing).await;
     assert!(result.is_err(), "更新不存在的凭证应返回错误");
 }
 
@@ -269,12 +269,12 @@ async fn repository_delete_removes_and_errors_on_missing() {
         .unwrap();
 
     // 删除已存在凭证
-    repo.delete("c1").await.unwrap();
-    let found = repo.find_by_user("alice").await.unwrap();
+    repo.delete("alice", "c1").await.unwrap();
+    let found = repo.find_by_user("alice", "alice").await.unwrap();
     assert_eq!(found.len(), 0, "删除后应查不到凭证");
 
     // 删除不存在凭证
-    let result = repo.delete("c1").await;
+    let result = repo.delete("alice", "c1").await;
     assert!(result.is_err(), "删除不存在的凭证应返回错误");
 }
 
@@ -289,15 +289,15 @@ async fn repository_multi_user_isolation() {
         .await
         .unwrap();
 
-    let alice_creds = repo.find_by_user("alice").await.unwrap();
+    let alice_creds = repo.find_by_user("alice", "alice").await.unwrap();
     assert_eq!(alice_creds.len(), 1);
     assert_eq!(alice_creds[0].id, "c1");
 
-    let bob_creds = repo.find_by_user("bob").await.unwrap();
+    let bob_creds = repo.find_by_user("bob", "bob").await.unwrap();
     assert_eq!(bob_creds.len(), 1);
     assert_eq!(bob_creds[0].id, "c2");
 
-    let empty = repo.find_by_user("carol").await.unwrap();
+    let empty = repo.find_by_user("carol", "carol").await.unwrap();
     assert_eq!(empty.len(), 0);
 }
 
@@ -309,7 +309,7 @@ async fn repository_usable_as_trait_object() {
     repo.create(make_model("c1", "alice", "password", 0))
         .await
         .unwrap();
-    let found = repo.find_by_user("alice").await.unwrap();
+    let found = repo.find_by_user("alice", "alice").await.unwrap();
     assert_eq!(found.len(), 1);
 }
 
@@ -329,7 +329,7 @@ async fn dao_repo_create_and_find_by_user() {
     let m = make_model("c1", "alice", "password", 0);
     repo.create(m.clone()).await.unwrap();
 
-    let found = repo.find_by_user("alice").await.unwrap();
+    let found = repo.find_by_user("alice", "alice").await.unwrap();
     assert_eq!(found.len(), 1);
     assert_eq!(found[0].id, "c1");
     assert_eq!(found[0].user_id, "alice");
@@ -344,7 +344,7 @@ async fn dao_repo_find_by_user_returns_empty_for_unknown() {
         .await
         .unwrap();
 
-    let found = repo.find_by_user("bob").await.unwrap();
+    let found = repo.find_by_user("bob", "bob").await.unwrap();
     assert!(found.is_empty(), "未知用户应返回空 Vec");
 }
 
@@ -393,8 +393,8 @@ async fn dao_repo_update_overwrites_and_errors_on_missing() {
         enabled: false,
         priority: 5,
     };
-    repo.update(updated.clone()).await.unwrap();
-    let found = repo.find_by_user("alice").await.unwrap();
+    repo.update("alice", updated.clone()).await.unwrap();
+    let found = repo.find_by_user("alice", "alice").await.unwrap();
     assert_eq!(found[0].secret_data, "new-hash");
     assert_eq!(found[0].label, Some("updated".to_string()));
     assert!(!found[0].enabled);
@@ -402,7 +402,7 @@ async fn dao_repo_update_overwrites_and_errors_on_missing() {
 
     // 更新不存在凭证
     let missing = make_model("nonexistent", "alice", "password", 0);
-    let result = repo.update(missing).await;
+    let result = repo.update("alice", missing).await;
     assert!(result.is_err(), "更新不存在的凭证应返回错误");
 }
 
@@ -414,12 +414,12 @@ async fn dao_repo_delete_removes_and_errors_on_missing() {
         .await
         .unwrap();
 
-    repo.delete("c1").await.unwrap();
-    let found = repo.find_by_user("alice").await.unwrap();
+    repo.delete("alice", "c1").await.unwrap();
+    let found = repo.find_by_user("alice", "alice").await.unwrap();
     assert!(found.is_empty(), "删除后应查不到凭证");
 
     // 删除不存在凭证
-    let result = repo.delete("c1").await;
+    let result = repo.delete("alice", "c1").await;
     assert!(result.is_err(), "删除不存在的凭证应返回错误");
 }
 
@@ -434,16 +434,16 @@ async fn dao_repo_multi_user_isolation() {
         .await
         .unwrap();
 
-    let alice = repo.find_by_user("alice").await.unwrap();
+    let alice = repo.find_by_user("alice", "alice").await.unwrap();
     assert_eq!(alice.len(), 1);
     assert_eq!(alice[0].id, "c1");
 
-    let bob = repo.find_by_user("bob").await.unwrap();
+    let bob = repo.find_by_user("bob", "bob").await.unwrap();
     assert_eq!(bob.len(), 1);
     assert_eq!(bob[0].id, "c2");
 
     // carol 无凭证
-    let carol = repo.find_by_user("carol").await.unwrap();
+    let carol = repo.find_by_user("carol", "carol").await.unwrap();
     assert!(carol.is_empty());
 }
 
@@ -461,7 +461,7 @@ async fn dao_repo_multi_credential_types_per_user() {
         .await
         .unwrap();
 
-    let all = repo.find_by_user("alice").await.unwrap();
+    let all = repo.find_by_user("alice", "alice").await.unwrap();
     assert_eq!(all.len(), 3);
     let types: Vec<&str> = all.iter().map(|c| c.credential_type.as_str()).collect();
     assert!(types.contains(&"password"));
@@ -489,7 +489,7 @@ async fn dao_repo_find_returns_disabled_credentials() {
     };
     repo.create(disabled).await.unwrap();
 
-    let found = repo.find_by_user("alice").await.unwrap();
+    let found = repo.find_by_user("alice", "alice").await.unwrap();
     assert_eq!(
         found.len(),
         2,
@@ -514,7 +514,7 @@ async fn dao_repo_priority_order_ascending() {
         .await
         .unwrap();
 
-    let found = repo.find_by_user("alice").await.unwrap();
+    let found = repo.find_by_user("alice", "alice").await.unwrap();
     assert_eq!(found.len(), 3);
     // 按 priority 升序：1, 3, 5
     assert_eq!(found[0].id, "c2");
@@ -544,6 +544,313 @@ async fn dao_repo_usable_as_trait_object() {
     repo.create(make_model("c1", "alice", "password", 0))
         .await
         .unwrap();
-    let found = repo.find_by_user("alice").await.unwrap();
+    let found = repo.find_by_user("alice", "alice").await.unwrap();
     assert_eq!(found.len(), 1);
+}
+
+// ========================================================================
+// R-IDOR: IDOR 防护测试（vuln-0004 修复）
+//
+// 验证 CredentialRepository 的 find_by_user / update / delete 在 caller_login_id
+// 与目标凭证 owner 不一致时返回 BulwarkError::NotPermission（403 Forbidden）。
+// 同时验证 update 不得改变 user_id 字段（防止凭证跨用户转移）。
+// 覆盖 MockCredentialRepository + DaoCredentialRepository 两个实现。
+// ========================================================================
+
+/// 辅助：断言 err 是 NotPermission（IDOR 拒绝）。
+fn assert_idor_denied(err: BulwarkError, ctx: &str) {
+    assert!(
+        matches!(err, BulwarkError::NotPermission(_)),
+        "{} 应返回 NotPermission（IDOR 拒绝），实际: {:?}",
+        ctx,
+        err
+    );
+}
+
+// ------------------------------------------------------------------------
+// IDOR: find_by_user 跨用户查询拒绝
+// ------------------------------------------------------------------------
+
+/// IDOR: Mock - alice 调用 find_by_user 查询 bob 的凭证应被拒绝。
+#[tokio::test]
+async fn mock_find_by_user_denied_when_caller_not_target() {
+    let repo = MockCredentialRepository::default();
+    repo.create(make_model("c1", "bob", "password", 0))
+        .await
+        .unwrap();
+
+    let err = repo
+        .find_by_user("alice", "bob")
+        .await
+        .expect_err("alice 查询 bob 凭证应被拒绝");
+    assert_idor_denied(err, "mock find_by_user alice→bob");
+}
+
+/// IDOR: DAO - alice 调用 find_by_user 查询 bob 的凭证应被拒绝。
+#[tokio::test]
+async fn dao_find_by_user_denied_when_caller_not_target() {
+    let repo = make_dao_repo();
+    repo.create(make_model("c1", "bob", "password", 0))
+        .await
+        .unwrap();
+
+    let err = repo
+        .find_by_user("alice", "bob")
+        .await
+        .expect_err("alice 查询 bob 凭证应被拒绝");
+    assert_idor_denied(err, "dao find_by_user alice→bob");
+}
+
+/// IDOR: 合法 caller 查询自己的凭证应成功（正向用例）。
+#[tokio::test]
+async fn dao_find_by_user_succeeds_when_caller_is_owner() {
+    let repo = make_dao_repo();
+    repo.create(make_model("c1", "alice", "password", 0))
+        .await
+        .unwrap();
+    repo.create(make_model("c2", "alice", "totp", 1))
+        .await
+        .unwrap();
+
+    let found = repo.find_by_user("alice", "alice").await.unwrap();
+    assert_eq!(found.len(), 2, "alice 查询自己的凭证应成功返回 2 条");
+}
+
+// ------------------------------------------------------------------------
+// IDOR: delete 跨用户删除拒绝
+// ------------------------------------------------------------------------
+
+/// IDOR: Mock - alice 尝试删除 bob 的凭证应被拒绝。
+#[tokio::test]
+async fn mock_delete_denied_when_caller_not_owner() {
+    let repo = MockCredentialRepository::default();
+    repo.create(make_model("c1", "bob", "password", 0))
+        .await
+        .unwrap();
+
+    let err = repo
+        .delete("alice", "c1")
+        .await
+        .expect_err("alice 删除 bob 的凭证应被拒绝");
+    assert_idor_denied(err, "mock delete alice→bob c1");
+
+    // 验证 bob 的凭证未被删除
+    let remaining = repo.find_by_user("bob", "bob").await.unwrap();
+    assert_eq!(remaining.len(), 1, "拒绝后 bob 的凭证应仍存在");
+    assert_eq!(remaining[0].id, "c1");
+}
+
+/// IDOR: DAO - alice 尝试删除 bob 的凭证应被拒绝。
+#[tokio::test]
+async fn dao_delete_denied_when_caller_not_owner() {
+    let repo = make_dao_repo();
+    repo.create(make_model("c1", "bob", "password", 0))
+        .await
+        .unwrap();
+
+    let err = repo
+        .delete("alice", "c1")
+        .await
+        .expect_err("alice 删除 bob 的凭证应被拒绝");
+    assert_idor_denied(err, "dao delete alice→bob c1");
+
+    // 验证 bob 的凭证未被删除
+    let remaining = repo.find_by_user("bob", "bob").await.unwrap();
+    assert_eq!(remaining.len(), 1, "拒绝后 bob 的凭证应仍存在");
+}
+
+/// IDOR: 合法 caller 删除自己的凭证应成功（正向用例）。
+#[tokio::test]
+async fn dao_delete_succeeds_when_caller_is_owner() {
+    let repo = make_dao_repo();
+    repo.create(make_model("c1", "alice", "password", 0))
+        .await
+        .unwrap();
+
+    repo.delete("alice", "c1").await.unwrap();
+    let remaining = repo.find_by_user("alice", "alice").await.unwrap();
+    assert!(remaining.is_empty(), "alice 删除自己的凭证后应查不到");
+}
+
+// ------------------------------------------------------------------------
+// IDOR: update 跨用户修改拒绝
+// ------------------------------------------------------------------------
+
+/// IDOR: Mock - alice 尝试更新 bob 的凭证应被拒绝。
+#[tokio::test]
+async fn mock_update_denied_when_caller_not_owner() {
+    let repo = MockCredentialRepository::default();
+    repo.create(make_model("c1", "bob", "password", 0))
+        .await
+        .unwrap();
+
+    // alice 伪造一条 user_id=bob 的更新（典型 IDOR 攻击）
+    let forged = make_model("c1", "bob", "password", 0);
+    let err = repo
+        .update("alice", forged)
+        .await
+        .expect_err("alice 更新 bob 的凭证应被拒绝");
+    assert_idor_denied(err, "mock update alice→bob c1");
+
+    // 验证 bob 的凭证未被修改
+    let remaining = repo.find_by_user("bob", "bob").await.unwrap();
+    assert_eq!(remaining[0].secret_data, "hash", "凭证应未被修改");
+}
+
+/// IDOR: DAO - alice 尝试更新 bob 的凭证应被拒绝。
+#[tokio::test]
+async fn dao_update_denied_when_caller_not_owner() {
+    let repo = make_dao_repo();
+    repo.create(make_model("c1", "bob", "password", 0))
+        .await
+        .unwrap();
+
+    let forged = CredentialModel {
+        id: "c1".to_string(),
+        user_id: "bob".to_string(),
+        credential_type: "password".to_string(),
+        secret_data: "attacker-hash".to_string(),
+        label: None,
+        created_at: 0,
+        enabled: true,
+        priority: 0,
+    };
+    let err = repo
+        .update("alice", forged)
+        .await
+        .expect_err("alice 更新 bob 的凭证应被拒绝");
+    assert_idor_denied(err, "dao update alice→bob c1");
+
+    // 验证 bob 的凭证未被修改
+    let remaining = repo.find_by_user("bob", "bob").await.unwrap();
+    assert_eq!(
+        remaining[0].secret_data, "hash",
+        "凭证 secret_data 应未被攻击者覆盖"
+    );
+}
+
+// ------------------------------------------------------------------------
+// IDOR: update 禁止 user_id 转移
+// ------------------------------------------------------------------------
+
+/// IDOR: Mock - alice 尝试通过 update 把自己的凭证 user_id 改成 bob（跨用户转移）应被拒绝。
+#[tokio::test]
+async fn mock_update_denied_when_user_id_transferred() {
+    let repo = MockCredentialRepository::default();
+    repo.create(make_model("c1", "alice", "password", 0))
+        .await
+        .unwrap();
+
+    // alice 把自己的凭证 user_id 改成 bob（凭证转移攻击）
+    let transfer = CredentialModel {
+        id: "c1".to_string(),
+        user_id: "bob".to_string(), // 试图改变 owner
+        credential_type: "password".to_string(),
+        secret_data: "hash".to_string(),
+        label: None,
+        created_at: 0,
+        enabled: true,
+        priority: 0,
+    };
+    let err = repo
+        .update("alice", transfer)
+        .await
+        .expect_err("alice 转移凭证到 bob 应被拒绝");
+    assert_idor_denied(err, "mock update user_id transfer");
+
+    // 验证凭证仍属于 alice
+    let alice_creds = repo.find_by_user("alice", "alice").await.unwrap();
+    assert_eq!(alice_creds.len(), 1, "凭证应仍属于 alice");
+    assert_eq!(alice_creds[0].user_id, "alice");
+}
+
+/// IDOR: DAO - alice 尝试通过 update 把自己的凭证 user_id 改成 bob 应被拒绝。
+#[tokio::test]
+async fn dao_update_denied_when_user_id_transferred() {
+    let repo = make_dao_repo();
+    repo.create(make_model("c1", "alice", "password", 0))
+        .await
+        .unwrap();
+
+    let transfer = CredentialModel {
+        id: "c1".to_string(),
+        user_id: "bob".to_string(), // 试图改变 owner
+        credential_type: "password".to_string(),
+        secret_data: "hash".to_string(),
+        label: None,
+        created_at: 0,
+        enabled: true,
+        priority: 0,
+    };
+    let err = repo
+        .update("alice", transfer)
+        .await
+        .expect_err("alice 转移凭证到 bob 应被拒绝");
+    assert_idor_denied(err, "dao update user_id transfer");
+
+    // 验证凭证仍属于 alice
+    let alice_creds = repo.find_by_user("alice", "alice").await.unwrap();
+    assert_eq!(alice_creds.len(), 1, "凭证应仍属于 alice");
+    assert_eq!(alice_creds[0].user_id, "alice");
+}
+
+/// IDOR: 合法 caller 更新自己的凭证（不改 user_id）应成功（正向用例）。
+#[tokio::test]
+async fn dao_update_succeeds_when_caller_is_owner_and_user_id_unchanged() {
+    let repo = make_dao_repo();
+    repo.create(make_model("c1", "alice", "password", 0))
+        .await
+        .unwrap();
+
+    let updated = CredentialModel {
+        id: "c1".to_string(),
+        user_id: "alice".to_string(), // user_id 保持不变
+        credential_type: "password".to_string(),
+        secret_data: "new-hash".to_string(),
+        label: Some("updated".to_string()),
+        created_at: 100,
+        enabled: false,
+        priority: 5,
+    };
+    repo.update("alice", updated).await.unwrap();
+
+    let found = repo.find_by_user("alice", "alice").await.unwrap();
+    assert_eq!(found[0].secret_data, "new-hash");
+    assert_eq!(found[0].label, Some("updated".to_string()));
+    assert!(!found[0].enabled);
+    assert_eq!(found[0].priority, 5);
+}
+
+// ------------------------------------------------------------------------
+// IDOR: trait object 动态分发也生效
+// ------------------------------------------------------------------------
+
+/// IDOR: 通过 `Arc<dyn CredentialRepository>` 调用也应执行 IDOR 校验。
+#[tokio::test]
+async fn trait_object_enforces_idor_on_delete() {
+    let repo: Arc<dyn CredentialRepository> = Arc::new(make_dao_repo());
+    repo.create(make_model("c1", "bob", "password", 0))
+        .await
+        .unwrap();
+
+    let err = repo
+        .delete("alice", "c1")
+        .await
+        .expect_err("trait object: alice 删除 bob 的凭证应被拒绝");
+    assert_idor_denied(err, "trait object delete alice→bob");
+}
+
+/// IDOR: 通过 `Arc<dyn CredentialRepository>` 调用 find_by_user 也应执行校验。
+#[tokio::test]
+async fn trait_object_enforces_idor_on_find_by_user() {
+    let repo: Arc<dyn CredentialRepository> = Arc::new(make_dao_repo());
+    repo.create(make_model("c1", "bob", "password", 0))
+        .await
+        .unwrap();
+
+    let err = repo
+        .find_by_user("alice", "bob")
+        .await
+        .expect_err("trait object: alice 查询 bob 凭证应被拒绝");
+    assert_idor_denied(err, "trait object find_by_user alice→bob");
 }

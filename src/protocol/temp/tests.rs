@@ -52,6 +52,20 @@ impl BulwarkDao for MockDao {
         data.remove(key);
         Ok(())
     }
+
+    /// 原子地 get + delete（vuln-0005 测试支撑）。
+    ///
+    /// 在同一把 `tokio::sync::Mutex` 锁内完成 get + remove，
+    /// 保证并发调用同一 key 时仅一个返回 Some（进程内原子）。
+    /// 与 `BulwarkDaoOxcache` / 生产 `MockDao` 的 `parking_lot::Mutex` 实现等价。
+    async fn get_and_delete(&self, key: &str) -> BulwarkResult<Option<String>> {
+        let mut data = self.data.lock().await;
+        let value = data.get(key).cloned();
+        if value.is_some() {
+            data.remove(key);
+        }
+        Ok(value)
+    }
 }
 
 /// 创建 handler（使用 MockDao）。
@@ -231,6 +245,68 @@ async fn consume_after_revoke_returns_none() {
     handler.revoke(&key).await.unwrap();
     let value = handler.consume(&key).await.unwrap();
     assert_eq!(value, None);
+}
+
+// ========================================================================
+// consume TOCTOU 原子性测试（vuln-0005 修复验证）
+// ========================================================================
+
+/// 并发 consume 同一 key 仅一个返回 Some（vuln-0005 TOCTOU 修复验证）。
+///
+/// 场景：10 个并发任务同时 consume 同一 key，原 `get + delete` 两步操作下
+/// 可能多个任务都读到 value 然后才 delete，导致 double-spend。修复后
+/// `get_and_delete` 原子执行，仅一个任务返回 Some。
+///
+/// 参考：`dao::tests::mock_get_and_delete_concurrent_only_one_succeeds`
+/// 与 `dao::tests::oxcache_get_and_delete_concurrent_only_one_succeeds`。
+#[tokio::test(flavor = "multi_thread")]
+async fn consume_concurrent_only_one_succeeds() {
+    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+    let handler = Arc::new(TempCredentialHandler::new(dao));
+    let key = handler
+        .issue("invite", "concurrent-value", 60)
+        .await
+        .unwrap();
+
+    let mut handles = Vec::new();
+    for _ in 0..10 {
+        let h = handler.clone();
+        let k = key.clone();
+        handles.push(tokio::spawn(async move { h.consume(&k).await }));
+    }
+
+    let mut success = 0;
+    let mut none_count = 0;
+    for handle in handles {
+        let result = handle.await.expect("tokio task panicked");
+        match result {
+            Ok(Some(_)) => success += 1,
+            Ok(None) => none_count += 1,
+            Err(e) => panic!("consume 不应返回错误: {:?}", e),
+        }
+    }
+
+    assert_eq!(
+        success, 1,
+        "并发 consume 仅一个返回 Some（防 double-spend）"
+    );
+    assert_eq!(none_count, 9, "其余 9 个返回 None");
+}
+
+/// 串行 consume 一次性语义验证（vuln-0005 修复后回归）。
+///
+/// 验证修复 `get_and_delete` 后仍保持原有一次性语义：
+/// 第一次返回 Some，第二次及之后返回 None。
+#[tokio::test]
+async fn consume_atomic_still_one_time_use() {
+    let handler = make_handler();
+    let key = handler.issue("invite", "data", 60).await.unwrap();
+    let v1 = handler.consume(&key).await.unwrap();
+    let v2 = handler.consume(&key).await.unwrap();
+    let v3 = handler.consume(&key).await.unwrap();
+    assert_eq!(v1, Some("data".to_string()));
+    assert_eq!(v2, None);
+    assert_eq!(v3, None);
 }
 
 // ========================================================================

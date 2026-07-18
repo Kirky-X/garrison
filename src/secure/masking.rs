@@ -9,14 +9,15 @@
 //! - `MaskType` 枚举定义脱敏类型，`SensitiveDataMasker` 持有 `(MaskType, field_name)` 规则列表
 //! - `mask_value` 对单个字符串值按指定类型脱敏
 //! - `mask_json` 递归遍历 JSON Object，匹配 field 名后调用 `mask_value`
-//! - `Custom(String)` 变体仅存储正则模式字符串，不实现实际脱敏（返回原值 + warn 日志）
+//! - `Custom(String)` 变体使用 `regex::Regex` 将所有匹配项替换为 `***`（vuln-0010 D6 修复）
 
 use serde_json::Value;
 
 /// 脱敏类型枚举。
 ///
-/// 定义常见敏感字段的脱敏策略。`Custom` 变体预留正则模式字符串，
-/// 本批次不实现实际脱敏逻辑（返回原值并记录 `tracing::warn`）。
+/// 定义常见敏感字段的脱敏策略。`Custom` 变体存储正则模式字符串，
+/// 使用 `regex::Regex` 将所有匹配项替换为 `***`；正则编译失败时记录
+/// `tracing::error!` 并返回 `"***"` 作为安全 fallback（fail-closed，避免泄露原值）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MaskType {
     /// 手机号（11 位）：保留前 3 后 4，中间 `*` 填充，如 `138****1234`。
@@ -27,7 +28,7 @@ pub enum MaskType {
     Email,
     /// 银行卡号：保留前 6 后 4（PCI-DSS 3.4），中间 `*` 填充，如 `622588******7890`。
     BankCard,
-    /// 自定义正则模式（本批次不实现，返回原值 + warn 日志）。
+    /// 自定义正则模式：所有匹配项替换为 `***`（正则无效时返回 `"***"` + error 日志）。
     Custom(String),
 }
 
@@ -76,17 +77,15 @@ impl SensitiveDataMasker {
     /// - `mask_type`: 脱敏类型。
     ///
     /// # 返回
-    /// 脱敏后的字符串。不满足最小长度要求时返回原值。
+    /// 脱敏后的字符串。`Custom` 类型正则编译失败时返回 `"***"`（安全 fallback，
+    /// 避免泄露原值）并记录 `tracing::error!`；其他类型不满足最小长度要求时返回原值。
     pub fn mask_value(&self, value: &str, mask_type: &MaskType) -> String {
         match mask_type {
             MaskType::Phone => mask_phone(value),
             MaskType::IdCard => mask_id_card(value),
             MaskType::Email => mask_email(value),
             MaskType::BankCard => mask_bank_card(value),
-            MaskType::Custom(_) => {
-                tracing::warn!("Custom mask type not implemented in this batch");
-                value.to_string()
-            },
+            MaskType::Custom(regex_str) => mask_custom(value, regex_str),
         }
     }
 
@@ -209,6 +208,43 @@ fn mask_bank_card(value: &str) -> String {
     format!("{prefix}{stars}{suffix}")
 }
 
+/// 自定义正则脱敏（vuln-0010 D6 修复）。
+///
+/// 使用 `regex::Regex` 将 `value` 中所有匹配 `regex_str` 的子串替换为 `"***"`。
+/// 正则编译失败时记录 `tracing::error!`（含 pattern 与错误信息）并返回 `"***"`
+/// 作为安全 fallback（fail-closed，避免泄露原值）。
+///
+/// # 安全语义
+///
+/// - 正则编译成功 + 有匹配 → 返回真实脱敏后的值（匹配项替换为 `***`）
+/// - 正则编译成功 + 无匹配 → 返回原值（用户配置的正则不匹配任何内容，
+///   等价于无脱敏需求，由用户负责正则正确性）
+/// - 正则编译失败 → 返回 `"***"`（无法解析用户意图时保守屏蔽全部内容，
+///   而非返回可能含敏感数据的原值；同时记录 error 日志便于排查）
+///
+/// # 示例
+///
+/// ```ignore
+/// use bulwark::secure::masking::MaskType;
+/// let masker = bulwark::secure::masking::SensitiveDataMasker::new();
+/// // SSN 脱敏：123-45-6789 → ***-***-***（每个数字组替换为 ***，不论原长度）
+/// let result = masker.mask_value("123-45-6789", &MaskType::Custom(r"\d+".to_string()));
+/// assert_eq!(result, "***-***-***");
+/// ```
+fn mask_custom(value: &str, regex_str: &str) -> String {
+    match regex::Regex::new(regex_str) {
+        Ok(re) => re.replace_all(value, "***").to_string(),
+        Err(e) => {
+            tracing::error!(
+                error = %e,
+                pattern = regex_str,
+                "Custom mask regex compilation failed; returning '***' as safe fallback"
+            );
+            "***".to_string()
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -250,12 +286,43 @@ mod tests {
         assert_eq!(result, "622202******7890");
     }
 
-    /// T001-5: Custom 类型返回原值（本批次不实现实际脱敏）。
+    /// T001-5: Custom 类型真实脱敏 — 正则 `\d+` 匹配所有数字组替换为 `***`。
+    /// SSN `123-45-6789` → `***-***-***`（每个数字组替换为 `***`，不论原长度）。
+    /// vuln-0010 D6 修复：原 placeholder 静默返回原值（敏感数据泄露）。
     #[test]
-    fn mask_custom_returns_original() {
+    fn mask_custom_redacts_matching_digits() {
         let masker = SensitiveDataMasker::new();
-        let result = masker.mask_value("sensitive", &MaskType::Custom(r"\d+".to_string()));
-        assert_eq!(result, "sensitive");
+        let result = masker.mask_value("123-45-6789", &MaskType::Custom(r"\d+".to_string()));
+        assert_eq!(result, "***-***-***");
+    }
+
+    /// T001-5a: Custom 类型正则无匹配时返回原值（用户负责正则正确性）。
+    #[test]
+    fn mask_custom_no_match_returns_original() {
+        let masker = SensitiveDataMasker::new();
+        let result = masker.mask_value("no-digits-here", &MaskType::Custom(r"\d+".to_string()));
+        assert_eq!(result, "no-digits-here");
+    }
+
+    /// T001-5b: Custom 类型正则编译失败时返回 `"***"` 作为安全 fallback。
+    /// 无效正则 `[` 不能编译，返回 `"***"`（fail-closed，避免泄露原值）+ error 日志。
+    #[test]
+    fn mask_custom_invalid_regex_returns_safe_fallback() {
+        let masker = SensitiveDataMasker::new();
+        let result = masker.mask_value("sensitive-secret", &MaskType::Custom(r"[".to_string()));
+        assert_eq!(result, "***");
+    }
+
+    /// T001-5c: Custom 类型正则匹配 IP 地址（多组数字 + 点号）替换为 `***`。
+    /// 验证复杂正则（多 `\d+\.` 组合）也正确脱敏。
+    #[test]
+    fn mask_custom_redacts_ip_pattern() {
+        let masker = SensitiveDataMasker::new();
+        let result = masker.mask_value(
+            "client_ip=192.168.1.1;",
+            &MaskType::Custom(r"\d+\.\d+\.\d+\.\d+".to_string()),
+        );
+        assert_eq!(result, "client_ip=***;");
     }
 
     /// T001-6: 手机号少于 7 位返回原值。

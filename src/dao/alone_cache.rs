@@ -82,6 +82,21 @@ impl BulwarkDao for AloneCache {
     async fn get_and_delete(&self, key: &str) -> BulwarkResult<Option<String>> {
         self.inner.get_and_delete(&self.prefixed_key(key)).await
     }
+
+    /// M2 修复：compare_and_update_if_greater 委托内部 dao（消除 TOCTOU 竞态）。
+    ///
+    /// 默认实现已改为返回 `NotImplemented`（fail-closed），AloneCache 必须显式 forward
+    /// 到 inner dao，保证装饰器透明委托语义，使内部 dao 的原子 CAS 实现得以复用。
+    async fn compare_and_update_if_greater(
+        &self,
+        key: &str,
+        new_value: u64,
+        ttl_seconds: u64,
+    ) -> BulwarkResult<bool> {
+        self.inner
+            .compare_and_update_if_greater(&self.prefixed_key(key), new_value, ttl_seconds)
+            .await
+    }
 }
 
 /// AloneCacheManager 管理多个 AloneCache 实例，支持多 Redis 实例路由。

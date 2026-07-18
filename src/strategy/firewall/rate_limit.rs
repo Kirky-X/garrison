@@ -21,40 +21,26 @@
 //! - RateLimit：滑动窗口（每次请求追加时间戳，过滤过期）
 //! - 滑动窗口避免边界突刺（固定窗口在窗口边界处可能瞬间放过 2× max_requests）
 //!
-//! # 已知限制：TOCTOU 竞争窗口（M-2，P1）
+//! # 原子性保证（vuln-0009 修复）
 //!
-//! `check` 方法使用 read-modify-write 模式（`storage.get → parse/filter → storage.set`），
-//! 在高并发场景下存在 TOCTOU（Time-of-Check-Time-of-Use）竞争窗口：
+//! `check` 方法优先调用 [`BulwarkDao::eval_lua`] 执行原子 read-filter-check-write
+//! （Lua 脚本由 Redis 后端原子执行，[`crate::dao::tests::MockDao`] 也模拟此模式）。
+//! 当后端不支持 Lua（返回 `BulwarkError::NotImplemented`，如 `BulwarkDaoOxcache`）时，
+//! 降级到 `atomic_lock`（`parking_lot::Mutex`）保护的非原子路径，仅保证**进程内原子**。
 //!
-//! 1. 线程 A 读取时间戳列表（count=N）
-//! 2. 线程 B 读取同一时间戳列表（count=N）
-//! 3. 线程 A 通过阈值检查，追加时间戳，回写（count=N+1）
-//! 4. 线程 B 通过阈值检查，追加时间戳，回写（count=N+1，覆盖线程 A 的写入）
+//! ## 跨进程限制
 //!
-//! **净效果**：高并发下可能放过略多于 `max_requests` 的请求（最坏情况 ~2× 并发数）。
+//! 降级路径（oxcache 等不支持 Lua 的后端）仅进程内原子：
+//! 多进程共享同一后端时仍存在 TOCTOU。生产环境若需跨进程原子：
+//! - 启用 `rate-limit-redis` feature 切换 Redis 后端（支持 Lua 脚本）
+//! - 或改用 [`crate::strategy::firewall::BruteForceStrategy`]（固定窗口，原子计数）
 //!
-//! ## 为何不使用原子计数器（与 BruteForce 对比）
+//! # 与 BruteForce 的对比（与旧版文档说明一致）
 //!
 //! `BruteForceStrategy` 用 [`limiteron::limiters::DistributedLimiter`] 的 `incr_with_ttl`
 //! 原子递增计数器，无 TOCTOU 风险。但 `incr_with_ttl` 是**固定窗口**计数器，
 //! 无法满足滑动窗口语义（每次请求需过滤已过期的时间戳）。
-//!
-//! 滑动窗口的过滤操作本质上是 read-modify-write，无法用单一原子原语实现。
-//! 要彻底消除 TOCTOU，需要以下方案之一（均为未来工作）：
-//!
-//! - Redis Lua 脚本（原子 read-filter-check-write）
-//! - CAS（compare-and-swap）原语
-//! - 分布式锁（性能损失大）
-//!
-//! ## 当前缓解措施
-//!
-//! - **TTL 自动过期**：key 设置 `TTL=window_seconds`，窗口无请求时自动清理
-//! - **时间戳过滤**：每次读取时过滤过期时间戳，避免窗口膨胀
-//! - **阈值检查**：`current_threshold` 动态调整，提供一定的弹性缓冲
-//! - **适用场景**：中低并发场景（<1000 QPS per key）下竞争窗口影响可忽略；
-//!   超高并发场景建议改用 `BruteForceStrategy`（固定窗口，原子计数）
-//!
-//! 此限制与 M-4 BruteForce TOCTOU 处理方式一致（文档说明 + 测试加固，非代码修复）。
+//! 滑动窗口的过滤操作本质上是 read-modify-write，需要 Lua 脚本或锁保护。
 
 use crate::dao::BulwarkDao;
 use crate::error::{BulwarkError, BulwarkResult};
@@ -64,6 +50,28 @@ use async_trait::async_trait;
 use limiteron::storage::Storage;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::sync::Mutex;
+
+/// `eval_lua` 滑动窗口脚本标识（识别用，MockDao 据此分发到滑动窗口模拟路径）。
+///
+/// 真正的 Redis 后端会执行完整 Lua 脚本，MockDao 识别此标记后在单次 `lock()` 内
+/// 原子执行 read-filter-check-write。
+const RATE_LIMIT_SLIDING_WINDOW_LUA: &str = "-- rate_limit_sliding_window\n\
+local raw = redis.call('GET', KEYS[1]) or ''\n\
+local timestamps = {}\n\
+for ts in string.gmatch(raw, '[^,]+') do\n\
+  local t = tonumber(ts)\n\
+  if t and t > tonumber(ARGV[2]) then\n\
+    table.insert(timestamps, t)\n\
+  end\n\
+end\n\
+if #timestamps >= tonumber(ARGV[3]) then\n\
+  return 0\n\
+end\n\
+table.insert(timestamps, tonumber(ARGV[1]))\n\
+local new_raw = table.concat(timestamps, ',')\n\
+redis.call('SETEX', KEYS[1], tonumber(ARGV[4]), new_raw)\n\
+return 1";
 
 /// 速率限制作用域。
 ///
@@ -136,6 +144,12 @@ pub struct RateLimitStrategy {
     config: RateLimitConfig,
     /// 存储（limiteron Storage 适配器，替换 dao 的 get/set/delete）。
     storage: Arc<dyn Storage>,
+    /// DAO 引用（vuln-0009 修复）：用于调用 `eval_lua` 执行原子滑动窗口。
+    /// 与 `storage` 指向同一底层 DAO，仅用于 `eval_lua` 路径。
+    dao: Arc<dyn BulwarkDao>,
+    /// 进程内原子锁（vuln-0009 修复降级路径）：保护 `eval_lua` 不可用时的
+    /// read-modify-write。仅进程内原子，跨进程仍存在 TOCTOU（见模块文档）。
+    atomic_lock: Mutex<()>,
 }
 
 impl RateLimitStrategy {
@@ -147,8 +161,13 @@ impl RateLimitStrategy {
     /// - `config`: 配置（阈值 + 窗口 + 作用域 + 动态阈值上限）。
     /// - `dao`: DAO（oxcache 抽象，用于时间戳列表存储）。
     pub fn new(config: RateLimitConfig, dao: Arc<dyn BulwarkDao>) -> Self {
-        let storage = Arc::new(BulwarkDaoStorage::new(dao));
-        Self { config, storage }
+        let storage = Arc::new(BulwarkDaoStorage::new(dao.clone()));
+        Self {
+            config,
+            storage,
+            dao,
+            atomic_lock: Mutex::new(()),
+        }
     }
 
     /// 设置期望的验证码答案，供后续 [`CaptchaChallenge::verify_challenge`] 比对。
@@ -291,10 +310,82 @@ impl BulwarkFirewallStrategy for RateLimitStrategy {
             .as_millis() as u64;
         let window_start = now_ms.saturating_sub(self.config.window_seconds * 1000);
 
+        // 阈值提前读取（Lua 路径与降级路径共用）
+        // 注意：current_threshold 自身的 TOCTOU（adjust_threshold 注释中说明）不在本修复范围。
+        let threshold = self.current_threshold(ctx).await?;
+
+        // 优先尝试 eval_lua 原子路径（vuln-0009 修复）。
+        // Redis 后端 / MockDao 支持此模式，在单次原子操作内完成 read-filter-check-write。
+        let lua_result = self
+            .dao
+            .eval_lua(
+                RATE_LIMIT_SLIDING_WINDOW_LUA,
+                vec![key.clone()],
+                vec![
+                    now_ms.to_string(),
+                    window_start.to_string(),
+                    threshold.to_string(),
+                    self.config.window_seconds.to_string(),
+                ],
+            )
+            .await;
+        match lua_result {
+            Ok(vals) => {
+                // eval_lua 成功：返回值 "1" 表示允许，"0" 表示拦截
+                let allowed = vals.first().map(|s| s == "1").unwrap_or(false);
+                if allowed {
+                    return Ok(());
+                }
+                return Err(BulwarkError::FirewallBlocked(format!(
+                    "strategy-firewall-ratelimit-blocked::{}::{}::lua::{}",
+                    scope_id,
+                    format!("{:?}", self.config.scope).to_lowercase(),
+                    threshold
+                )));
+            },
+            Err(BulwarkError::NotImplemented(_)) => {
+                // 后端不支持 Lua：降级到 atomic_lock 保护的非原子路径（进程内原子）
+                tracing::debug!(
+                    "rate_limit: eval_lua 不可用，降级到 atomic_lock 路径（仅进程内原子）"
+                );
+                self.check_fallback(&key, &scope_id, now_ms, window_start, threshold)
+                    .await
+            },
+            Err(e) => {
+                // 其他错误（Dao / InvalidParam）显性抛出（Rule 12）
+                Err(BulwarkError::Dao(format!(
+                    "strategy-limiter-eval-lua::{}",
+                    e
+                )))
+            },
+        }
+    }
+}
+
+impl RateLimitStrategy {
+    /// 降级路径：`eval_lua` 不可用时，用 `atomic_lock` 保护 read-modify-write。
+    ///
+    /// **仅进程内原子**：跨进程共享同一 DAO 后端时仍存在 TOCTOU（见模块文档）。
+    ///
+    /// 与 `check` 主体共享算法（read → filter → check → write），但在
+    /// `let _guard = self.atomic_lock.lock()` 作用域内执行，保证同进程内
+    /// 不会有并发调用穿插。
+    async fn check_fallback(
+        &self,
+        key: &str,
+        scope_id: &str,
+        now_ms: u64,
+        window_start: u64,
+        threshold: usize,
+    ) -> BulwarkResult<()> {
+        // 进程内原子锁：保护 read-modify-write
+        // tokio::sync::Mutex 可跨 await 持有（parking_lot::Mutex 不可跨 await）。
+        let _guard = self.atomic_lock.lock().await;
+
         // 读取已有时间戳列表（limiteron Storage.get 替换 dao.get）
         let stored = self
             .storage
-            .get(&key)
+            .get(key)
             .await
             .map_err(|e| BulwarkError::Dao(format!("strategy-limiter-storage::{}", e)))?;
         // M-3: parse 失败时 warn 记录脏数据，不静默丢弃
@@ -316,9 +407,6 @@ impl BulwarkFirewallStrategy for RateLimitStrategy {
         timestamps.retain(|&t| t > window_start);
 
         // 剩余数量 >= 当前阈值 → 拦截
-        // 使用 current_threshold 而非 max_requests，与 should_challenge 保持一致
-        // （dynamic_threshold=None 时 current_threshold 恒等于 max_requests，行为不变）
-        let threshold = self.current_threshold(ctx).await?;
         if timestamps.len() >= threshold {
             return Err(BulwarkError::FirewallBlocked(format!(
                 "strategy-firewall-ratelimit-blocked::{}::{}::{}::{}",
@@ -337,7 +425,7 @@ impl BulwarkFirewallStrategy for RateLimitStrategy {
             .collect::<Vec<_>>()
             .join(",");
         self.storage
-            .set(&key, &serialized, Some(self.config.window_seconds))
+            .set(key, &serialized, Some(self.config.window_seconds))
             .await
             .map_err(|e| BulwarkError::Dao(format!("strategy-limiter-storage::{}", e)))?;
         Ok(())
@@ -792,6 +880,130 @@ mod tests {
         assert!(
             matches!(result, Err(BulwarkError::FirewallBlocked(_))),
             "动态阈值=20 时第 21 次 check 应被拦截，实际: {:?}",
+            result
+        );
+    }
+
+    // ========================================================================
+    // vuln-0009 修复验证：并发 check 同一 key 仅 max_requests 个返回 Ok
+    // ========================================================================
+
+    /// 并发 check 同一 key 仅 max_requests 个返回 Ok（Lua 原子路径，vuln-0009 修复）。
+    ///
+    /// 场景：max_requests=5，并发发起 20 个 check 请求。
+    /// 修复前（非原子 read-modify-write）：多个线程读到相同 timestamps 列表，
+    /// 各自通过阈值检查后回写，可能放过远超 max_requests 的请求（最坏 ~2× 并发数）。
+    /// 修复后（eval_lua 原子路径）：MockDao 在单次 lock() 内执行 read-filter-check-write，
+    /// 仅 max_requests 个返回 Ok，其余返回 FirewallBlocked。
+    ///
+    /// MockDao 支持 eval_lua 滑动窗口模式（识别 `rate_limit_sliding_window` 标记）。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn check_concurrent_only_max_requests_allowed_lua_path() {
+        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let config = RateLimitConfig {
+            max_requests: 5,
+            window_seconds: 60,
+            scope: RateLimitScope::Ip,
+            dynamic_threshold: None,
+        };
+        let strategy = Arc::new(RateLimitStrategy::new(config, dao));
+        let ctx = Arc::new(FirewallContext::new("10.0.0.1"));
+
+        let mut handles = Vec::new();
+        for _ in 0..20 {
+            let s = strategy.clone();
+            let c = ctx.clone();
+            handles.push(tokio::spawn(async move { s.check(&c).await }));
+        }
+
+        let mut allowed = 0;
+        let mut blocked = 0;
+        for handle in handles {
+            match handle.await.expect("tokio task panicked") {
+                Ok(()) => allowed += 1,
+                Err(BulwarkError::FirewallBlocked(_)) => blocked += 1,
+                Err(e) => {
+                    panic!("check 不应返回非 FirewallBlocked 错误: {:?}", e);
+                },
+            }
+        }
+        assert_eq!(
+            allowed, 5,
+            "Lua 路径：并发 check 仅 max_requests=5 个返回 Ok（防 TOCTOU 绕过），实际: {}",
+            allowed
+        );
+        assert_eq!(blocked, 15, "其余 15 个应被拦截");
+    }
+
+    /// 并发 check 同一 key 仅 max_requests 个返回 Ok（降级路径，vuln-0009 修复）。
+    ///
+    /// 使用 `MinimalDao`（不重写 `eval_lua`，默认返回 `NotImplemented`）触发降级路径，
+    /// 验证 `atomic_lock` 保护的 read-modify-write 在进程内原子。
+    ///
+    /// 场景同上：max_requests=5，并发 20 个 check，仅 5 个 Ok。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn check_concurrent_only_max_requests_allowed_fallback_path() {
+        use crate::dao::tests::MinimalDao;
+
+        let dao: Arc<dyn BulwarkDao> = Arc::new(MinimalDao::new());
+        let config = RateLimitConfig {
+            max_requests: 5,
+            window_seconds: 60,
+            scope: RateLimitScope::Ip,
+            dynamic_threshold: None,
+        };
+        let strategy = Arc::new(RateLimitStrategy::new(config, dao));
+        let ctx = Arc::new(FirewallContext::new("10.0.0.2"));
+
+        let mut handles = Vec::new();
+        for _ in 0..20 {
+            let s = strategy.clone();
+            let c = ctx.clone();
+            handles.push(tokio::spawn(async move { s.check(&c).await }));
+        }
+
+        let mut allowed = 0;
+        let mut blocked = 0;
+        for handle in handles {
+            match handle.await.expect("tokio task panicked") {
+                Ok(()) => allowed += 1,
+                Err(BulwarkError::FirewallBlocked(_)) => blocked += 1,
+                Err(e) => {
+                    panic!("check 不应返回非 FirewallBlocked 错误: {:?}", e);
+                },
+            }
+        }
+        assert_eq!(
+            allowed, 5,
+            "降级路径：atomic_lock 保护下并发 check 仅 max_requests=5 个返回 Ok，实际: {}",
+            allowed
+        );
+        assert_eq!(blocked, 15, "其余 15 个应被拦截");
+    }
+
+    /// 验证 Lua 路径下单次 check 行为与原有非原子路径一致（vuln-0009 修复回归）。
+    ///
+    /// max_requests=3，串行 check 4 次：前 3 次通过，第 4 次拦截。
+    /// 确保 eval_lua 路径不破坏既有串行语义。
+    #[tokio::test]
+    async fn check_lua_path_preserves_serial_semantics() {
+        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let config = RateLimitConfig {
+            max_requests: 3,
+            window_seconds: 60,
+            scope: RateLimitScope::Ip,
+            dynamic_threshold: None,
+        };
+        let strategy = RateLimitStrategy::new(config, dao);
+        let ctx = FirewallContext::new("10.0.0.3");
+
+        assert!(strategy.check(&ctx).await.is_ok(), "第 1 次 check 应通过");
+        assert!(strategy.check(&ctx).await.is_ok(), "第 2 次 check 应通过");
+        assert!(strategy.check(&ctx).await.is_ok(), "第 3 次 check 应通过");
+        let result = strategy.check(&ctx).await;
+        assert!(
+            matches!(result, Err(BulwarkError::FirewallBlocked(_))),
+            "第 4 次 check 应被拦截，实际: {:?}",
             result
         );
     }

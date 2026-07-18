@@ -145,6 +145,12 @@ pub struct CredentialModel {
 /// 5 方法 CRUD：`create` / `find_by_user` / `find_by_user_and_type` / `update` / `delete`。
 /// 由 `DaoCredentialRepository`（T006 实现）基于 `BulwarkDao` 实现，也可由业务方自定义实现。
 ///
+/// # IDOR 防护（vuln-0004 修复）
+///
+/// `find_by_user` / `update` / `delete` 强制要求 `caller_login_id` 参数，由实现层验证
+/// `caller_login_id` 与目标凭证的 `user_id` 一致，否则返回 `BulwarkError::NotPermission`
+/// （HTTP 403 Forbidden）。`update` 额外禁止修改 `user_id` 字段（防止凭证跨用户转移）。
+///
 /// # DAO key 格式
 ///
 /// `cred:{user_id}:{cred_id}`（如 `cred:alice:550e8400-...`）
@@ -156,7 +162,8 @@ pub struct CredentialModel {
 /// use std::sync::Arc;
 ///
 /// let repo: Arc<dyn CredentialRepository> = /* DaoCredentialRepository */;
-/// let creds = repo.find_by_user("alice").await?;
+/// // caller_login_id 必须等于 user_id，否则返回 NotPermission
+/// let creds = repo.find_by_user("alice", "alice").await?;
 /// ```
 #[async_trait]
 pub trait CredentialRepository: Send + Sync {
@@ -167,33 +174,60 @@ pub trait CredentialRepository: Send + Sync {
     /// - DAO 故障：透传 `BulwarkError::Dao`
     async fn create(&self, credential: CredentialModel) -> BulwarkResult<()>;
 
-    /// 按 `user_id` 查询所有凭证。
+    /// 按 `user_id` 查询所有凭证（IDOR 防护：需 caller 身份校验）。
     ///
-    /// 返回顺序按 `priority` 升序（小值优先）。
-    async fn find_by_user(&self, user_id: &str) -> BulwarkResult<Vec<CredentialModel>>;
+    /// 实现层必须验证 `caller_login_id == user_id`，否则返回
+    /// `BulwarkError::NotPermission`。返回顺序按 `priority` 升序（小值优先）。
+    ///
+    /// # 错误
+    /// - `caller_login_id != user_id`：`BulwarkError::NotPermission`（403 Forbidden）
+    /// - DAO 故障：透传 `BulwarkError::Dao`
+    async fn find_by_user(
+        &self,
+        caller_login_id: &str,
+        user_id: &str,
+    ) -> BulwarkResult<Vec<CredentialModel>>;
 
     /// 按 `user_id` + `credential_type` 查询凭证。
     ///
     /// 在 `find_by_user` 基础上按 `credential_type` 字段过滤。
+    ///
+    /// # 安全语义
+    ///
+    /// 此方法未显式接收 `caller_login_id`，调用方应在认证上下文中使用，
+    /// 确保 `user_id` 即为当前会话主体（如 `execute_login` / `execute_mfa` 内部调用）。
+    /// 默认实现 (`DaoCredentialRepository`) 内部以 `find_by_user(user_id, user_id)` 调用，
+    /// 即假定 caller 即 user_id。
     async fn find_by_user_and_type(
         &self,
         user_id: &str,
         cred_type: &str,
     ) -> BulwarkResult<Vec<CredentialModel>>;
 
-    /// 更新凭证（覆盖写）。
+    /// 更新凭证（覆盖写，IDOR 防护：需 caller 身份校验）。
+    ///
+    /// 实现层必须验证 `caller_login_id` 与既有凭证的 `user_id` 一致，
+    /// 且新 `credential.user_id` 不得改变（防止凭证跨用户转移），
+    /// 否则返回 `BulwarkError::NotPermission`。
     ///
     /// # 错误
     /// - 凭证 ID 不存在：`BulwarkError::InvalidParam`
+    /// - `caller_login_id != 既有凭证.user_id`：`BulwarkError::NotPermission`
+    /// - `credential.user_id != 既有凭证.user_id`：`BulwarkError::NotPermission`（禁止转移）
     /// - DAO 故障：透传 `BulwarkError::Dao`
-    async fn update(&self, credential: CredentialModel) -> BulwarkResult<()>;
+    async fn update(&self, caller_login_id: &str, credential: CredentialModel)
+        -> BulwarkResult<()>;
 
-    /// 删除凭证。
+    /// 删除凭证（IDOR 防护：需 caller 身份校验）。
+    ///
+    /// 实现层必须先定位凭证，验证 `caller_login_id` 与凭证的 `user_id` 一致，
+    /// 否则返回 `BulwarkError::NotPermission`。
     ///
     /// # 错误
     /// - 凭证 ID 不存在：`BulwarkError::InvalidParam`
+    /// - `caller_login_id != 凭证.user_id`：`BulwarkError::NotPermission`（403 Forbidden）
     /// - DAO 故障：透传 `BulwarkError::Dao`
-    async fn delete(&self, credential_id: &str) -> BulwarkResult<()>;
+    async fn delete(&self, caller_login_id: &str, credential_id: &str) -> BulwarkResult<()>;
 }
 
 // ============================================================================
@@ -214,9 +248,9 @@ pub trait CredentialRepository: Send + Sync {
 /// - `find_by_user` / `find_by_user_and_type` / `delete` 依赖 `BulwarkDao::keys()`。
 ///   `BulwarkDaoOxcache` 当前未实现 `keys()`（返回 `NotImplemented`，详见 A-010），
 ///   生产环境需使用支持 `keys()` 的 DAO 后端，或由业务方维护 key 索引。
-/// - `delete(credential_id)` 因 trait 签名仅含 `credential_id`，需扫描
-///   `cred:*:{credential_id}` 定位完整 key（`credential_id` 为 UUID v4 全局唯一，
-///   理论上仅匹配一个 key）。
+/// - `delete(caller_login_id, credential_id)` 通过扫描 `cred:*:{credential_id}` 定位
+///   完整 key（`credential_id` 为 UUID v4 全局唯一，理论上仅匹配一个 key），
+///   再反序列化校验 `user_id == caller_login_id` 后删除。
 pub struct DaoCredentialRepository {
     dao: Arc<dyn BulwarkDao>,
 }

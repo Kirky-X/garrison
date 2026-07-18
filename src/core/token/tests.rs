@@ -110,9 +110,11 @@ fn random64_style_verify_returns_none() {
 // 未启用 feature 时，SimpleTokenStyle::generate 返回 Err（fail-closed）。
 
 /// 测试用 HMAC 密钥（生产环境应从配置注入）。
+#[cfg(feature = "secure-simple-token")]
 const TEST_SECRET: &str = "test-hmac-secret-key-for-unit-tests";
 
 /// 创建带 TEST_SECRET 的 SimpleTokenStyle 实例。
+#[cfg(feature = "secure-simple-token")]
 fn make_simple_style() -> SimpleTokenStyle {
     SimpleTokenStyle::new(TEST_SECRET.to_string())
 }

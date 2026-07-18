@@ -1601,7 +1601,7 @@ mod tests {
             "aud 为数组含 client_id 时应校验通过（H3），实际: {:?}",
             result
         );
-        assert_eq!(result.unwrap(), true);
+        assert!(result.unwrap());
     }
 
     /// 测试 4c（H3）：validate_id_token 拒绝 aud 为数组但不含 client_id 的 token。

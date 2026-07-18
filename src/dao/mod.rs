@@ -215,6 +215,17 @@ pub trait BulwarkDao: Send + Sync {
     /// - `MockDao`：`parking_lot::Mutex` 保护，进程内原子
     /// - `BulwarkDaoOxcache`：`parking_lot::Mutex` 保护，进程内原子
     /// - `AloneCache`：委托内部 dao
+    ///
+    /// # 生产实现警告
+    ///
+    /// **生产部署必须重写此方法**，使用后端原子的 CAS / GETDEL / Lua 脚本：
+    /// - `BulwarkDaoOxcache`：已重写，用 `parking_lot::Mutex` 保护（进程内原子）
+    /// - `MockDao`：已重写，用 `parking_lot::Mutex` 保护（进程内原子）
+    /// - Redis 后端：应重写为 `GETDEL` 原子命令或 Lua 脚本
+    /// - dbnexus 后端：应重写为 SQL `DELETE ... RETURNING` 语句
+    ///
+    /// 使用默认实现（如 `MinimalDao`）在生产环境会导致 TOCTOU 竞态：
+    /// 并发调用同一 key 时多个调用都可能返回 `Some`。
     async fn get_and_delete(&self, key: &str) -> BulwarkResult<Option<String>> {
         let value = self.get(key).await?;
         if value.is_some() {
@@ -257,6 +268,55 @@ pub trait BulwarkDao: Send + Sync {
                 Ok(1)
             },
         }
+    }
+
+    /// 原子地比较并更新（仅当新值大于当前值时）。
+    ///
+    /// 读取当前值（解析为 u64），若 `new_value > current_value` 则更新为 `new_value` 并返回 true；
+    /// 否则不修改，返回 false。键不存在时 current_value 视为 0。
+    ///
+    /// 用于 HTTP Digest nc 单调性校验（RFC 7616 §3.4.6），消除 get→compare→set TOCTOU 竞态。
+    ///
+    /// # 参数
+    /// - `key`: 存储键。
+    /// - `new_value`: 待比较并写入的新值。
+    /// - `ttl_seconds`: TTL 秒数（仅 key 首次创建时设置，已存在时不重置 TTL）。
+    ///
+    /// # 返回
+    /// - `Ok(true)`: new_value > current_value，已更新。
+    /// - `Ok(false)`: new_value <= current_value，未更新。
+    ///
+    /// # 默认实现（返回 NotImplemented）
+    /// 默认实现返回 `BulwarkError::NotImplemented`（M2 修复，消除 TOCTOU 竞态）：
+    /// 原默认实现为 get → parse → compare → set 四步操作，存在 TOCTOU 竞态，
+    /// 在并发场景下多个调用可能同时读到旧值并各自执行 set，破坏 nc 单调性。
+    /// 此方法用于 HTTP Digest nc 单调性校验等安全敏感场景，必须由后端用原子 CAS 实现。
+    ///
+    /// # 已重写的实现
+    /// - `MockDao`：`parking_lot::Mutex` 保护，进程内原子
+    /// - `BulwarkDaoOxcache`：`atomic_lock` + oxcache set_with_ttl_sync 保护，进程内原子
+    /// - `AloneCache`：委托内部 dao
+    ///
+    /// # 生产实现警告
+    ///
+    /// **生产部署必须重写此方法**，使用后端原子的 CAS / Lua 脚本：
+    /// - `BulwarkDaoOxcache`：已重写，用 `atomic_lock` 保护（进程内原子）
+    /// - `MockDao`：已重写，用 `parking_lot::Mutex` 保护（进程内原子）
+    /// - Redis 后端：应重写为 Lua 脚本（GET + COMPARE + SET 原子执行）
+    /// - dbnexus 后端：应重写为 SQL `UPDATE ... WHERE ... RETURNING` 语句
+    ///
+    /// 使用默认实现（如 `MinimalDao`）会返回 `NotImplemented` 错误，
+    /// fail-closed 语义：宁可拒绝所有请求也不接受非原子 CAS。
+    async fn compare_and_update_if_greater(
+        &self,
+        _key: &str,
+        _new_value: u64,
+        _ttl_seconds: u64,
+    ) -> BulwarkResult<bool> {
+        Err(BulwarkError::NotImplemented(format!(
+            "compare_and_update_if_greater 未实现：{} 后端不支持原子 CAS（HTTP Digest nc 单调性校验必须重写）",
+            std::any::type_name::<Self>()
+        )))
     }
 
     /// 查询社交账号绑定关系。
@@ -795,6 +855,61 @@ mod oxcache_impl {
                         })?;
                     Ok(1)
                 },
+            }
+        }
+
+        /// compare_and_update_if_greater 用 `atomic_lock` 保护原子性（进程内原子）。
+        ///
+        /// 在单个 lock() 作用域内完成 get → parse → compare → set_with_ttl_sync。
+        /// - key 不存在或已过期：current_val = 0，new_value > 0 时初始化并设置 TTL
+        /// - key 已存在且 new_value > current_val：用 `ttl_sync` 读取剩余 TTL 保留（不重置）
+        /// - key 已存在但 new_value <= current_val：不修改，返回 false
+        ///
+        /// 用于 HTTP Digest nc 单调性校验（RFC 7616 §3.4.6），消除 TOCTOU 竞态。
+        async fn compare_and_update_if_greater(
+            &self,
+            key: &str,
+            new_value: u64,
+            ttl_seconds: u64,
+        ) -> BulwarkResult<bool> {
+            let _guard = self.atomic_lock.lock();
+            let actual_key = prefixed_key(key);
+            // M1 修复：parse 失败必须显式报错（与 incr 方法一致，Rule 12 错误显性化），
+            // 禁止 unwrap_or(0) 静默返回 0 导致 nc 计数器被错误重置
+            let current_val: u64 = match self
+                .cache
+                .get_sync(&actual_key)
+                .map_err(|e| BulwarkError::Dao(format!("dao-oxcache-get-sync::{}", e)))?
+            {
+                Some(v) => v.parse::<u64>().map_err(|_| {
+                    BulwarkError::Dao(format!(
+                        "dao-compare-and-update-parse-u64::{}::{}",
+                        actual_key, v
+                    ))
+                })?,
+                None => 0,
+            };
+            if new_value > current_val {
+                // 保留原 TTL：若键已存在，读取剩余 TTL；新键用传入的 ttl_seconds
+                let ttl = if ttl_seconds == 0 {
+                    None
+                } else {
+                    let remaining = self
+                        .cache
+                        .ttl_sync(&actual_key)
+                        .map_err(|e| BulwarkError::Dao(format!("dao-oxcache-ttl-sync::{}", e)))?;
+                    Some(remaining.unwrap_or_else(|| Duration::from_secs(ttl_seconds)))
+                };
+                self.cache
+                    .set_with_ttl_sync(&actual_key, &new_value.to_string(), ttl)
+                    .map_err(|e| {
+                        BulwarkError::Dao(format!("dao-oxcache-set-with-ttl-sync::{}", e))
+                    })?;
+                #[cfg(feature = "anomalous-detector-dual")]
+                self.key_index.write().insert(actual_key);
+                Ok(true)
+            } else {
+                Ok(false)
             }
         }
 

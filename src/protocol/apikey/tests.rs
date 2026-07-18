@@ -807,11 +807,7 @@ async fn e4_index_has_same_ttl_as_key() {
         idx_secs
     );
     // 两者差距应 ≤ 2 秒（写入顺序相邻）
-    let diff = if key_secs > idx_secs {
-        key_secs - idx_secs
-    } else {
-        idx_secs - key_secs
-    };
+    let diff = key_secs.abs_diff(idx_secs);
     assert!(
         diff <= 2,
         "E4: 主 key 与索引的 TTL 差距应 ≤ 2s，实际: {}s",

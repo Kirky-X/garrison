@@ -93,7 +93,8 @@ impl TempCredentialHandler {
 
     /// 消费临时凭据。
     ///
-    /// 原子地读取并删除凭据（get + delete 组合），保证一次性使用语义。
+    /// 原子地读取并删除凭据（调用 `BulwarkDao::get_and_delete`），消除 TOCTOU 竞态，
+    /// 保证一次性使用语义（vuln-0005 修复：原 `get + delete` 两步操作存在 double-spend 风险）。
     ///
     /// v0.4.2 扩展：成功消费（value 为 Some）时若注入了 `listener_manager`，
     /// 广播 `BulwarkEvent::TempCredentialConsumed`。
@@ -102,11 +103,9 @@ impl TempCredentialHandler {
     /// - `Ok(Some(value))`: 凭据存在且已被消费（删除）。
     /// - `Ok(None)`: 凭据不存在或已过期。
     pub async fn consume(&self, key: &str) -> BulwarkResult<Option<String>> {
-        let value = self.dao.get(key).await?;
-        if value.is_some() {
-            // 存在则删除（一次性使用语义）
-            self.dao.delete(key).await?;
-        }
+        // 原子 get_and_delete：消除 get 与 delete 之间的 TOCTOU 竞态窗口，
+        // 保证并发调用同一 key 时仅一个返回 Some（防 double-spend）。
+        let value = self.dao.get_and_delete(key).await?;
         // 广播 TempCredentialConsumed 事件（仅 value 为 Some 时）
         #[cfg(feature = "listener")]
         if let Some(lm) = &self.listener_manager {

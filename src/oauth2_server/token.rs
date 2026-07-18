@@ -22,16 +22,28 @@ use async_trait::async_trait;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use base64::Engine;
 use chrono::{DateTime, Duration, Utc};
+use dashmap::DashMap;
 use limiteron::limiters::DistributedLimiter;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use std::time::Duration as StdDuration;
+use std::time::{Duration as StdDuration, Instant};
 
 /// access_token 有效期（1 小时，RFC 6749 建议）。
 const ACCESS_TOKEN_TTL_SECONDS: u64 = 3600;
 /// refresh_token 有效期（30 天）。
 const REFRESH_TOKEN_TTL_SECONDS: u64 = 30 * 24 * 3600;
+/// fallback_counter 容量上限（M3 修复：防止 DAO 长时间故障期间无限增长）。
+///
+/// 达到此上限时，record_failure_fallback / check_and_incr_fallback 会清理最旧的
+/// N 个 entry（按 window_start Instant 排序），保证内存占用有界。
+/// 10000 是经验值：覆盖典型分布式部署的活跃用户数，同时内存占用可控
+///（每 entry ~80 字节，10000 entry ~800KB）。
+const MAX_FALLBACK_ENTRIES: usize = 10000;
+/// 容量达上限时一次清理的 entry 数（批量清理摊销开销）。
+///
+/// 一次清理 100 个 entry，避免每次写入都触发 O(n) 清理。
+const FALLBACK_EVICT_BATCH: usize = 100;
 
 /// /oauth2/token 请求参数。
 #[derive(Debug, Clone, Deserialize)]
@@ -184,6 +196,12 @@ pub struct PasswordRateLimiter {
     max_attempts: u32,
     /// 滑动窗口时长（秒）
     window_seconds: u64,
+    /// DAO 故障时的本地降级限速器（vuln-0007 修复）。
+    ///
+    /// key 为 username，value 为 (count, window_start Instant)。
+    /// 仅在 `get_count` / `incr_with_ttl` / `reset` 返回 Err 时启用，fail-closed 语义。
+    /// 阈值保守（与 `max_attempts` 一致），保证 DAO 宕机期间暴力破解保护不失效。
+    fallback_counter: Arc<DashMap<String, (u64, Instant)>>,
 }
 
 impl PasswordRateLimiter {
@@ -210,6 +228,7 @@ impl PasswordRateLimiter {
             // 至少 1，避免 max_attempts=0 导致所有请求被锁
             max_attempts: max_attempts.max(1),
             window_seconds,
+            fallback_counter: Arc::new(DashMap::new()),
         }
     }
 
@@ -236,6 +255,7 @@ impl PasswordRateLimiter {
             // 至少 1，避免 max_attempts=0 导致所有请求被锁
             max_attempts: max_attempts.max(1),
             window_seconds,
+            fallback_counter: Arc::new(DashMap::new()),
         }
     }
 
@@ -244,18 +264,30 @@ impl PasswordRateLimiter {
     /// 返回 `true` 表示允许尝试，`false` 表示已被锁定（窗口内失败次数达上限）。
     /// 窗口过期时由 DAO 的 TTL 语义自动重置（首次 `incr` 后过期会重新初始化）。
     ///
-    /// # Fail-Open 策略
+    /// # Fail-Closed 降级（vuln-0007 修复）
     ///
-    /// 当 `limiteron::get_count` 出错（如 DAO 通信失败 / 计数器值损坏）时返回 `true`，
-    /// 与原 `Mutex` 实现不失败的语义一致。错误经 `tracing::warn` 记录后吞掉，
-    /// 避免单次 DAO 故障导致用户被错误锁定。
+    /// 当 `limiteron::get_count` 出错（如 DAO 通信失败 / 计数器值损坏）时，
+    /// 改用本地 `fallback_counter` 执行 check，保证 DAO 宕机期间暴力破解保护不失效。
+    /// 错误经 `tracing::warn` 记录后吞掉，避免单次 DAO 故障导致用户被错误锁定。
+    ///
+    /// # Fail 策略说明（vuln-0007 vs vuln-0008）
+    ///
+    /// 本限速器采用 **fail-closed** 策略（DAO 错误时改用 DashMap fallback 计数），
+    /// 与 `HttpDigestAuth::validate_nc` 的 **fail-open** 策略不同。原因：
+    /// - 限速器是暴力破解防护的**最后一道防线**，必须 fail-closed 防止攻击者在 DAO
+    ///   宕机期间绕过限速
+    /// - nc 校验是 nonce 重放防护的**辅助层**，nonce TTL（默认 300s）已提供
+    ///   时间bounded 防护；fail-closed 会在 DAO 抖动时锁定所有用户，可用性损失过大
     pub async fn check(&self, username: &str) -> bool {
         let key = format!("rate_limit:pw:{}", username);
         match self.limiter.get_count(&key).await {
             Ok(count) => count < self.max_attempts as u64,
             Err(e) => {
-                tracing::warn!("PasswordRateLimiter::check get_count failed: {}", e);
-                true
+                tracing::warn!(
+                    "PasswordRateLimiter::check get_count failed, using fallback: {}",
+                    e
+                );
+                self.check_fallback(username)
             },
         }
     }
@@ -266,40 +298,144 @@ impl PasswordRateLimiter {
     /// - 首次失败：设置 count=1 + TTL=`window_seconds`（窗口起始时间）
     /// - 后续失败：仅递增 count，不重置 TTL（保持窗口起点）
     /// - 窗口过期：由 DAO 的 TTL 语义自动重置（首次 `incr` 重新初始化）
+    ///
+    /// # Fail-Closed 降级（vuln-0007 修复）
+    ///
+    /// DAO 错误时改用本地 `fallback_counter` 记录失败，保证 DAO 宕机期间失败计数仍生效。
+    ///
+    /// # Fail 策略说明（vuln-0007 vs vuln-0008）
+    ///
+    /// 本限速器采用 **fail-closed** 策略（DAO 错误时改用 DashMap fallback 计数），
+    /// 与 `HttpDigestAuth::validate_nc` 的 **fail-open** 策略不同。原因：
+    /// - 限速器是暴力破解防护的**最后一道防线**，必须 fail-closed 防止攻击者在 DAO
+    ///   宕机期间绕过限速
+    /// - nc 校验是 nonce 重放防护的**辅助层**，nonce TTL（默认 300s）已提供
+    ///   时间bounded 防护；fail-closed 会在 DAO 抖动时锁定所有用户，可用性损失过大
     pub async fn record_failure(&self, username: &str) {
         let key = format!("rate_limit:pw:{}", username);
         let ttl = StdDuration::from_secs(self.window_seconds);
         if let Err(e) = self.limiter.incr_with_ttl(&key, 1, ttl).await {
             tracing::warn!(
-                "PasswordRateLimiter::record_failure incr_with_ttl failed: {}",
+                "PasswordRateLimiter::record_failure incr_with_ttl failed, using fallback: {}",
                 e
             );
+            self.record_failure_fallback(username);
         }
     }
 
     /// 验证成功后重置 username 的计数。
+    ///
+    /// # Fail-Closed 降级（vuln-0007 修复）
+    ///
+    /// 始终清理 `fallback_counter` 中对应 username 的 entry（即使 DAO reset 成功），
+    /// 避免残留计数导致用户在 DAO 恢复后仍被 fallback 锁定。
     pub async fn reset(&self, username: &str) {
         let key = format!("rate_limit:pw:{}", username);
         if let Err(e) = self.limiter.reset(&key).await {
-            tracing::warn!("PasswordRateLimiter::reset failed: {}", e);
+            tracing::warn!(
+                "PasswordRateLimiter::reset failed, clearing fallback only: {}",
+                e
+            );
         }
+        // 始终清理 fallback 计数（避免残留）
+        self.fallback_counter.remove(username);
     }
 
     /// 当前未过期 entry 数量（测试/运维用）。
     ///
-    /// 通过 `BulwarkDao::keys("rate_limit:pw:*")` 扫描，返回未过期的 entry 数。
-    /// 已过期的 key 不会计入（与 `BulwarkDao::keys` 语义一致）。
+    /// 返回 DAO 中 `rate_limit:pw:*` 未过期 entry 数 + `fallback_counter` 中
+    /// 未过期 entry 数。DAO 故障期间用户被 fallback 锁定时，`fallback_counter` 计数
+    /// 也会被纳入监控，避免出现 DAO 故障期间 entry_count=0 的监控盲点。
     ///
     /// # 注意
     ///
-    /// 部分后端（如 `BulwarkDaoOxcache`）未实现 `keys()`，会返回 0。
-    /// `MockDao` 与 dbnexus 后端已实现。
+    /// 部分后端（如 `BulwarkDaoOxcache`）未实现 `keys()`，DAO 部分会计为 0。
+    /// `MockDao` 与 dbnexus 后端已实现。`fallback_counter` 部分始终可用（进程内 DashMap）。
+    ///
+    /// # L4 复杂度说明
+    ///
+    /// `fallback_counter.iter().filter().count()` 是 O(n) 遍历，**这是预期行为**：
+    /// entry_count 的语义是"未过期 entry 数"，必须检查每个 entry 的过期时间，
+    /// 无法用 `fallback_counter.len()` 替代（len() 包含已过期但未清理的 entry）。
+    ///
+    /// 上限保护：由于 M3 修复已将 `fallback_counter.len()` 限制在 MAX_FALLBACK_ENTRIES
+    /// 附近（达到上限时清理最旧 entry），O(n) 遍历的最坏情况被限制在 ~10000 次，
+    /// 监控场景下可接受（通常 < 1ms）。DAO 故障长时间持续时也不会失控。
     pub async fn entry_count(&self) -> usize {
-        self.dao
+        let dao_count = self
+            .dao
             .keys("rate_limit:pw:*")
             .await
             .map(|v| v.len())
-            .unwrap_or(0)
+            .unwrap_or(0);
+        // 统计 fallback_counter 中未过期 entry（修复 Performance MEDIUM 监控盲点）
+        // L4: O(n) 遍历是预期行为（必须检查每个 entry 的过期时间），
+        // 上限由 M3 的 MAX_FALLBACK_ENTRIES 容量限制保证
+        let window = StdDuration::from_secs(self.window_seconds);
+        let fallback_count = self
+            .fallback_counter
+            .iter()
+            .filter(|entry| entry.1.elapsed() < window)
+            .count();
+        dao_count + fallback_count
+    }
+
+    /// 降级限速器：检查 username 是否允许尝试（未锁定）。
+    ///
+    /// 读取 `fallback_counter` 中 username 的当前计数，返回 `count < max_attempts`。
+    /// 窗口过期时 count 视为 0（允许尝试）并主动清理 entry（修复内存泄漏）。
+    /// entry 不存在视为 count=0。
+    ///
+    /// 使用 DashMap `remove_if` 在 shard 级锁内完成过期检测 + 清理，
+    /// 保证进程内一致性，避免 `get()` 返回的 `Ref` 与 `remove()` 借用冲突。
+    fn check_fallback(&self, username: &str) -> bool {
+        let window = StdDuration::from_secs(self.window_seconds);
+        // 过期 entry 主动清理（修复 MEDIUM-1 内存泄漏）：
+        // 长期运行下曾触发 fallback 的 username 会驻留 DashMap，造成内存泄漏。
+        // `remove_if` 在 shard 级锁内原子完成过期检测 + 移除，避免 borrow checker 陷阱。
+        self.fallback_counter
+            .remove_if(username, |_, v| v.1.elapsed() >= window);
+        // 此时 entry 要么不存在（已清理或从未创建），要么未过期
+        let count = self
+            .fallback_counter
+            .get(username)
+            .map(|entry| entry.0)
+            .unwrap_or(0);
+        count < self.max_attempts as u64
+    }
+
+    /// 降级限速器：记录一次失败。
+    ///
+    /// 在 `fallback_counter` 中递增 username 的计数。
+    /// - entry 不存在 → 初始化为 (0, now) 后递增为 (1, now)
+    /// - entry 存在且窗口未过期 → count += 1
+    /// - entry 存在但窗口已过期 → 重置为 (0, now) 后递增为 (1, now)
+    ///
+    /// 使用 DashMap entry API 在 shard 级锁内完成 read-modify-write，保证进程内原子性。
+    ///
+    /// # M3 修复：容量限制
+    ///
+    /// 写入后检查 `fallback_counter.len() >= MAX_FALLBACK_ENTRIES`，达到上限时
+    /// 调用 `evict_oldest_fallback_entries` 清理最旧的 FALLBACK_EVICT_BATCH 个 entry
+    ///（按 window_start Instant 排序），防止 DAO 长时间故障期间内存无限增长。
+    fn record_failure_fallback(&self, username: &str) {
+        let window = StdDuration::from_secs(self.window_seconds);
+        let now = Instant::now();
+        let mut entry = self
+            .fallback_counter
+            .entry(username.to_string())
+            .or_insert((0, now));
+        if entry.1.elapsed() >= window {
+            *entry = (0, now);
+        }
+        entry.0 += 1;
+        // 显式释放 entry 持有的 shard 写锁，避免 evict_oldest_fallback_entries
+        // 中的 iter()/remove() 尝试获取锁导致死锁
+        drop(entry);
+        // M3 修复：容量达上限时清理最旧 entry，防止 DAO 长时间故障期间无限增长
+        if self.fallback_counter.len() >= MAX_FALLBACK_ENTRIES {
+            evict_oldest_fallback_entries(&self.fallback_counter, FALLBACK_EVICT_BATCH);
+        }
     }
 }
 
@@ -346,6 +482,12 @@ pub struct TokenRateLimiter {
     username_max: u64,
     /// per-username 窗口时长（秒）
     username_window_secs: u64,
+    /// DAO 故障时的本地降级限速器（vuln-0007 修复）。
+    ///
+    /// key 由调用方拼装（含 "client:" / "user:" 前缀以区分两类计数），
+    /// value 为 (count, window_start Instant)。
+    /// 仅在 `atomic_check_and_incr` 返回 Err 时启用，fail-closed 语义。
+    fallback_counter: Arc<DashMap<String, (u64, Instant)>>,
 }
 
 impl TokenRateLimiter {
@@ -421,6 +563,7 @@ impl TokenRateLimiter {
             client_window_secs: client_window_secs.max(1),
             username_max: username_max.max(1),
             username_window_secs: username_window_secs.max(1),
+            fallback_counter: Arc::new(DashMap::new()),
         }
     }
 
@@ -430,10 +573,10 @@ impl TokenRateLimiter {
     /// - 返回 `true`：本次请求计入窗口，允许继续
     /// - 返回 `false`：已达窗口上限，拒绝
     ///
-    /// # Fail-Open
+    /// # Fail-Closed 降级（vuln-0007 修复）
     ///
-    /// DAO 错误时返回 `true`（放行），与 `PasswordRateLimiter::check` 语义一致 ——
-    /// 避免单次 DAO 故障导致全部 client 被锁，可用性优先于限速准确性。
+    /// DAO 错误时改用本地 `fallback_counter` 执行 check-and-increment，
+    /// 保证 DAO 宕机期间 per-client_id 速率限制仍生效。
     pub async fn check_client(&self, client_id: &str) -> bool {
         let key = format!("rate_limit:token:client:{}", client_id);
         let ttl = StdDuration::from_secs(self.client_window_secs);
@@ -444,8 +587,15 @@ impl TokenRateLimiter {
         {
             Ok(allowed) => allowed,
             Err(e) => {
-                tracing::warn!("TokenRateLimiter::check_client failed: {}", e);
-                true
+                tracing::warn!(
+                    "TokenRateLimiter::check_client failed, using fallback: {}",
+                    e
+                );
+                self.check_and_incr_fallback(
+                    &format!("client:{}", client_id),
+                    self.client_max,
+                    self.client_window_secs,
+                )
             },
         }
     }
@@ -455,9 +605,9 @@ impl TokenRateLimiter {
     /// 调用即计数（`atomic_check_and_incr` 原子 check-and-increment）。
     /// 仅 password grant type 调用，限制单账户的密码尝试 QPS。
     ///
-    /// # Fail-Open
+    /// # Fail-Closed 降级（vuln-0007 修复）
     ///
-    /// DAO 错误时返回 `true`（放行）。
+    /// DAO 错误时改用本地 `fallback_counter` 执行 check-and-increment。
     pub async fn check_username(&self, username: &str) -> bool {
         let key = format!("rate_limit:token:user:{}", username);
         let ttl = StdDuration::from_secs(self.username_window_secs);
@@ -468,16 +618,112 @@ impl TokenRateLimiter {
         {
             Ok(allowed) => allowed,
             Err(e) => {
-                tracing::warn!("TokenRateLimiter::check_username failed: {}", e);
-                true
+                tracing::warn!(
+                    "TokenRateLimiter::check_username failed, using fallback: {}",
+                    e
+                );
+                self.check_and_incr_fallback(
+                    &format!("user:{}", username),
+                    self.username_max,
+                    self.username_window_secs,
+                )
             },
         }
+    }
+
+    /// 降级限速器：原子 check-and-increment。
+    ///
+    /// 模拟 `atomic_check_and_incr` 语义：本次调用即计数，
+    /// 返回 `count <= max`（允许）或 `count > max`（拒绝）。
+    ///
+    /// 使用 DashMap `remove_if` + entry API 完成 read-modify-write：
+    /// - entry 不存在 → 初始化为 (0, now) 后递增为 (1, now)，返回 `1 <= max`
+    /// - entry 存在且窗口未过期 → count += 1，返回 `count <= max`
+    /// - entry 存在但窗口已过期 → `remove_if` 清理后重新插入 (0, now)，
+    ///   递增为 (1, now)，返回 `1 <= max`（修复 MEDIUM-1 内存泄漏）
+    ///
+    /// # L3 原子性保证
+    ///
+    /// `remove_if` + `entry` 都在 DashMap shard 级锁内完成，进程内原子：
+    /// 同一 key 的并发调用会被 shard 锁串行化，不会出现 TOCTOU。
+    /// 跨 shard 的不同 key 互不影响。
+    ///
+    /// # M3 修复：容量限制
+    ///
+    /// 写入后检查 `fallback_counter.len() >= MAX_FALLBACK_ENTRIES`，达到上限时
+    /// 调用 `evict_oldest_fallback_entries` 清理最旧的 FALLBACK_EVICT_BATCH 个 entry
+    ///（按 window_start Instant 排序），防止 DAO 长时间故障期间内存无限增长。
+    fn check_and_incr_fallback(&self, key: &str, max: u64, window_secs: u64) -> bool {
+        let window = StdDuration::from_secs(window_secs);
+        let now = Instant::now();
+        // 过期 entry 主动清理（修复 MEDIUM-1 内存泄漏）：
+        // 与 `check_fallback` 一致，`remove_if` 在 shard 级锁内原子完成过期检测 + 移除。
+        self.fallback_counter
+            .remove_if(key, |_, v| v.1.elapsed() >= window);
+        // 此时 entry 要么不存在（已清理或从未创建），要么未过期
+        let mut entry = self
+            .fallback_counter
+            .entry(key.to_string())
+            .or_insert((0, now));
+        entry.0 += 1;
+        let allowed = entry.0 <= max;
+        // 显式释放 entry 持有的 shard 写锁，避免 evict_oldest_fallback_entries
+        // 中的 iter()/remove() 尝试获取锁导致死锁
+        drop(entry);
+        // M3 修复：容量达上限时清理最旧 entry，防止 DAO 长时间故障期间无限增长
+        if self.fallback_counter.len() >= MAX_FALLBACK_ENTRIES {
+            evict_oldest_fallback_entries(&self.fallback_counter, FALLBACK_EVICT_BATCH);
+        }
+        allowed
     }
 }
 
 impl Default for TokenRateLimiter {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// 清理 fallback_counter 中最旧的 N 个 entry（M3 修复）。
+///
+/// 当 `fallback_counter.len() >= MAX_FALLBACK_ENTRIES` 时调用，按 window_start Instant
+/// 升序排序后移除前 `evict_count` 个 entry（最旧的）。
+///
+/// # 实现
+///
+/// DashMap 无原生按值排序 API，需先收集到 Vec 再排序：
+/// 1. `iter().collect()` 收集 `(key, (count, window_start))` 元组
+/// 2. `sort_by_key` 按 `window_start` 升序（最旧在前）
+/// 3. 取前 `evict_count` 个 key，逐个 `remove`
+///
+/// # 复杂度
+///
+/// - 时间：O(n log n)（n = 当前 entry 数），仅在容量达上限时触发，摊销开销低
+/// - 空间：O(n)（临时 Vec）
+///
+/// # 并发
+///
+/// `iter()` / `remove()` 各自获取 shard 级读/写锁，不保证原子快照，
+/// 但 evict 是 best-effort 清理，不要求精确：少量新增 entry 不影响整体内存控制目标。
+fn evict_oldest_fallback_entries(
+    fallback_counter: &DashMap<String, (u64, Instant)>,
+    evict_count: usize,
+) {
+    // 收集所有 entry 的 (key, window_start)，用于按时间排序
+    let mut entries: Vec<(String, Instant)> = fallback_counter
+        .iter()
+        .map(|entry| (entry.key().clone(), entry.1))
+        .collect();
+    if entries.len() <= evict_count {
+        // entry 数少于 evict_count，全部清理
+        fallback_counter.clear();
+        return;
+    }
+    // 按 window_start 升序（最旧在前）
+    entries.sort_by_key(|(_, instant)| *instant);
+    // 移除前 evict_count 个最旧的 entry
+    for (key, _) in entries.iter().take(evict_count) {
+        fallback_counter.remove(key);
     }
 }
 
@@ -2149,6 +2395,566 @@ mod tests {
         // 验证共享 DAO 中只有 alice 的 entry（bob 未触发 record_failure）
         let keys = shared_dao.keys("rate_limit:pw:*").await.unwrap();
         assert_eq!(keys.len(), 1, "应仅 alice 1 个 entry");
+    }
+
+    // === vuln-0007: DAO 故障降级限速测试（fail-closed）===
+
+    /// 测试用 DAO — 所有方法均返回 `BulwarkError::Dao`，模拟 DAO 宕机。
+    ///
+    /// 用于触发 `PasswordRateLimiter` / `TokenRateLimiter` 的 fallback 路径，
+    /// 验证降级限速器在 DAO 故障期间仍能阻止暴力破解。
+    struct FailingDao;
+
+    #[async_trait]
+    impl BulwarkDao for FailingDao {
+        async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
+            Err(BulwarkError::Dao(format!(
+                "vuln-0007-failing-dao-get::{}",
+                key
+            )))
+        }
+        async fn set(&self, key: &str, _value: &str, _ttl_seconds: u64) -> BulwarkResult<()> {
+            Err(BulwarkError::Dao(format!(
+                "vuln-0007-failing-dao-set::{}",
+                key
+            )))
+        }
+        async fn update(&self, key: &str, _value: &str) -> BulwarkResult<()> {
+            Err(BulwarkError::Dao(format!(
+                "vuln-0007-failing-dao-update::{}",
+                key
+            )))
+        }
+        async fn expire(&self, key: &str, _seconds: u64) -> BulwarkResult<()> {
+            Err(BulwarkError::Dao(format!(
+                "vuln-0007-failing-dao-expire::{}",
+                key
+            )))
+        }
+        async fn delete(&self, key: &str) -> BulwarkResult<()> {
+            Err(BulwarkError::Dao(format!(
+                "vuln-0007-failing-dao-delete::{}",
+                key
+            )))
+        }
+    }
+
+    /// `PasswordRateLimiter` 在 DAO 故障时启用降级限速器 ——
+    /// 前 N 次失败 `check` 仍返回 true（未锁定），第 N+1 次返回 false（锁定）。
+    ///
+    /// 这是 vuln-0007 修复的核心验证：DAO 宕机期间暴力破解保护不失效。
+    #[tokio::test]
+    async fn password_rate_limiter_fallback_on_dao_error() {
+        let dao: Arc<dyn BulwarkDao> = Arc::new(FailingDao);
+        let limiter = PasswordRateLimiter::with_dao(3, 300, dao);
+
+        // 前 2 次失败：check 返回 true（fallback 计数 1,2 < max_attempts=3）
+        for i in 0..2 {
+            limiter.record_failure("attacker").await;
+            assert!(
+                limiter.check("attacker").await,
+                "vuln-0007: 第 {} 次失败后 fallback check 应允许（count={} < max=3）",
+                i + 1,
+                i + 1
+            );
+        }
+
+        // 第 3 次失败后：count=3，3 < 3 = false，应锁定
+        limiter.record_failure("attacker").await;
+        assert!(
+            !limiter.check("attacker").await,
+            "vuln-0007: 第 3 次失败后 fallback 应锁定（count=3，3 < 3 = false）"
+        );
+    }
+
+    /// `PasswordRateLimiter` 降级限速器按 username 维度隔离 ——
+    /// DAO 故障时 attacker 被锁定不影响 victim。
+    #[tokio::test]
+    async fn password_rate_limiter_fallback_isolates_usernames() {
+        let dao: Arc<dyn BulwarkDao> = Arc::new(FailingDao);
+        let limiter = PasswordRateLimiter::with_dao(2, 300, dao);
+
+        // attacker 失败 3 次（超阈值 2，锁定）
+        limiter.record_failure("attacker").await;
+        limiter.record_failure("attacker").await;
+        limiter.record_failure("attacker").await;
+        assert!(
+            !limiter.check("attacker").await,
+            "attacker 应被锁定（fallback count=3 > max=2）"
+        );
+
+        // victim 未失败，应允许（fallback 独立计数）
+        assert!(
+            limiter.check("victim").await,
+            "victim 应允许（fallback 按 username 隔离）"
+        );
+    }
+
+    /// `PasswordRateLimiter::reset` 清理 fallback 计数 ——
+    /// 验证成功后即使 DAO 故障，fallback 计数也被清理，避免残留锁定。
+    #[tokio::test]
+    async fn password_rate_limiter_fallback_reset_clears_counter() {
+        let dao: Arc<dyn BulwarkDao> = Arc::new(FailingDao);
+        let limiter = PasswordRateLimiter::with_dao(2, 300, dao);
+
+        // 失败 2 次（达阈值，锁定）
+        limiter.record_failure("alice").await;
+        limiter.record_failure("alice").await;
+        assert!(!limiter.check("alice").await, "alice 应被锁定");
+
+        // 验证成功后 reset（DAO 失败，但 fallback 应被清理）
+        limiter.reset("alice").await;
+
+        // reset 后应允许（fallback 计数被清理）
+        assert!(
+            limiter.check("alice").await,
+            "vuln-0007: reset 后 fallback 应清理，alice 应允许"
+        );
+    }
+
+    /// `TokenRateLimiter::check_client` 在 DAO 故障时启用降级限速 ——
+    /// 前 N 次允许，第 N+1 次拒绝。
+    #[tokio::test]
+    async fn token_rate_limiter_fallback_check_client() {
+        let dao: Arc<dyn BulwarkDao> = Arc::new(FailingDao);
+        // client_max=3
+        let limiter = TokenRateLimiter::with_dao_and_limits(3, 60, 100, 60, dao);
+
+        // 前 3 次允许（fallback check-and-incr：1,2,3 <= 3）
+        for i in 0..3 {
+            assert!(
+                limiter.check_client("client-X").await,
+                "vuln-0007: 第 {} 次 check_client fallback 应允许（count={} <= max=3）",
+                i + 1,
+                i + 1
+            );
+        }
+        // 第 4 次拒绝（count=4 > max=3）
+        assert!(
+            !limiter.check_client("client-X").await,
+            "vuln-0007: 第 4 次 check_client fallback 应拒绝（count=4 > max=3）"
+        );
+    }
+
+    /// `TokenRateLimiter::check_username` 在 DAO 故障时启用降级限速。
+    #[tokio::test]
+    async fn token_rate_limiter_fallback_check_username() {
+        let dao: Arc<dyn BulwarkDao> = Arc::new(FailingDao);
+        // username_max=2
+        let limiter = TokenRateLimiter::with_dao_and_limits(100, 60, 2, 60, dao);
+
+        // 前 2 次允许
+        for i in 0..2 {
+            assert!(
+                limiter.check_username("alice").await,
+                "vuln-0007: 第 {} 次 check_username fallback 应允许",
+                i + 1
+            );
+        }
+        // 第 3 次拒绝
+        assert!(
+            !limiter.check_username("alice").await,
+            "vuln-0007: 第 3 次 check_username fallback 应拒绝（count=3 > max=2）"
+        );
+    }
+
+    /// `TokenRateLimiter` 降级限速器按 client_id / username 维度隔离。
+    #[tokio::test]
+    async fn token_rate_limiter_fallback_isolates_dimensions() {
+        let dao: Arc<dyn BulwarkDao> = Arc::new(FailingDao);
+        // client_max=1, username_max=1
+        let limiter = TokenRateLimiter::with_dao_and_limits(1, 60, 1, 60, dao);
+
+        // client-A 1 次后达上限
+        assert!(limiter.check_client("client-A").await);
+        assert!(
+            !limiter.check_client("client-A").await,
+            "client-A 应被 fallback 限速"
+        );
+        // client-B 独立计数
+        assert!(
+            limiter.check_client("client-B").await,
+            "client-B 应允许（fallback 按 client_id 隔离）"
+        );
+
+        // username alice 1 次后达上限
+        assert!(limiter.check_username("alice").await);
+        assert!(
+            !limiter.check_username("alice").await,
+            "alice 应被 fallback 限速"
+        );
+        // username bob 独立计数
+        assert!(
+            limiter.check_username("bob").await,
+            "bob 应允许（fallback 按 username 隔离）"
+        );
+    }
+
+    /// `handle_password` 端到端：DAO 故障期间暴力破解仍被 fallback 锁定。
+    ///
+    /// 场景：注入 FailingDao 到 PasswordRateLimiter，max_attempts=2，
+    /// 前 2 次失败返回 invalid_grant，第 3 次返回 rate_limited。
+    #[tokio::test]
+    async fn handle_password_fallback_locks_after_dao_failure() {
+        let dao: Arc<dyn BulwarkDao> = Arc::new(FailingDao);
+        let limiter = Arc::new(PasswordRateLimiter::with_dao(2, 300, dao));
+        let (handler, _) = make_handler();
+        let handler = handler.with_password_rate_limiter(limiter);
+        handler
+            .store
+            .create(make_full_client("pw-fb-001"))
+            .await
+            .unwrap();
+
+        let wrong_req = TokenRequest {
+            grant_type: "password".into(),
+            client_id: "pw-fb-001".into(),
+            client_secret: "secret-123".into(),
+            code: None,
+            redirect_uri: None,
+            code_verifier: None,
+            refresh_token: None,
+            scope: None,
+            username: Some("alice".into()),
+            password: Some("wrong".into()),
+        };
+
+        // 前 2 次失败：返回 invalid_grant（fallback 计数 1,2 < max=2）
+        for i in 0..2 {
+            let err = handler.handle(&wrong_req).await.unwrap_err();
+            assert!(
+                err.to_string()
+                    .contains("oauth2-server-token-invalid-grant"),
+                "vuln-0007: 第 {} 次失败应为 invalid_grant，实际: {}",
+                i + 1,
+                err
+            );
+        }
+
+        // 第 3 次：fallback count=3 > max=2，应被 rate_limited
+        let err = handler.handle(&wrong_req).await.unwrap_err();
+        assert!(
+            err.to_string().contains("oauth2-server-token-rate-limited"),
+            "vuln-0007: 第 3 次应为 rate_limited（fallback 锁定），实际: {}",
+            err
+        );
+    }
+
+    /// `handle_with_authorization` 端到端：DAO 故障期间 per-client_id 限速仍生效。
+    ///
+    /// 场景：注入 FailingDao 到 TokenRateLimiter，client_max=2，
+    /// 前 2 次成功，第 3 次被 rate_limited。
+    #[tokio::test]
+    async fn handle_with_authorization_fallback_rate_limited_client() {
+        let dao: Arc<dyn BulwarkDao> = Arc::new(FailingDao);
+        let limiter = Arc::new(TokenRateLimiter::with_dao_and_limits(2, 60, 100, 60, dao));
+        let (handler, _) = make_handler();
+        let handler = handler.with_token_rate_limiter(limiter);
+        handler
+            .store
+            .create(make_full_client("rl-fb-001"))
+            .await
+            .unwrap();
+
+        let req = TokenRequest {
+            grant_type: "client_credentials".into(),
+            client_id: "rl-fb-001".into(),
+            client_secret: "secret-123".into(),
+            code: None,
+            redirect_uri: None,
+            code_verifier: None,
+            refresh_token: None,
+            scope: None,
+            username: None,
+            password: None,
+        };
+
+        // 前 2 次成功（fallback check-and-incr：1,2 <= max=2）
+        for i in 0..2 {
+            let resp = handler.handle(&req).await;
+            assert!(
+                resp.is_ok(),
+                "vuln-0007: 第 {} 次应成功（fallback 允许），实际: {:?}",
+                i + 1,
+                resp
+            );
+        }
+
+        // 第 3 次：fallback count=3 > max=2，应被 rate_limited
+        let err = handler.handle(&req).await.unwrap_err();
+        assert!(
+            err.to_string().contains("oauth2-server-token-rate-limited"),
+            "vuln-0007: 第 3 次应被 fallback 限速，实际: {}",
+            err
+        );
+    }
+
+    /// `PasswordRateLimiter::check_fallback` 检测到过期 entry 时主动清理 ——
+    /// 修复 MEDIUM-1 内存泄漏：长期运行下曾触发 fallback 的 username 不应驻留 DashMap。
+    ///
+    /// 场景：注入 FailingDao + 短 window（1 秒），record_failure 让 fallback_counter 有 entry，
+    /// sleep 等待过期，check 触发清理，验证 fallback_counter.len() == 0。
+    #[tokio::test]
+    async fn password_rate_limiter_fallback_counter_expired_entry_cleaned_up() {
+        let dao: Arc<dyn BulwarkDao> = Arc::new(FailingDao);
+        // window=1 秒，便于测试过期清理
+        let limiter = PasswordRateLimiter::with_dao(3, 1, dao);
+
+        // 触发 fallback 路径：record_failure 失败时写入 fallback_counter
+        limiter.record_failure("leak-user").await;
+        assert_eq!(
+            limiter.fallback_counter.len(),
+            1,
+            "fallback_counter 应有 1 个 entry"
+        );
+
+        // sleep 2 秒等待 window 过期（window=1s）
+        tokio::time::sleep(StdDuration::from_secs(2)).await;
+
+        // check 触发 check_fallback，检测到过期 entry 主动清理（remove_if）
+        let allowed = limiter.check("leak-user").await;
+        assert!(
+            allowed,
+            "过期 entry 应视为 count=0，允许尝试（count=0 < max=3）"
+        );
+        assert_eq!(
+            limiter.fallback_counter.len(),
+            0,
+            "MEDIUM-1: 过期 entry 应被 check_fallback 主动清理，避免内存泄漏"
+        );
+    }
+
+    /// `TokenRateLimiter::check_and_incr_fallback` 检测到过期 entry 时主动清理 ——
+    /// 修复 MEDIUM-1 内存泄漏：与 PasswordRateLimiter 行为一致。
+    ///
+    /// 场景：注入 FailingDao + 短 window（1 秒），check_client 让 fallback_counter 有 entry，
+    /// sleep 等待过期，再次 check_client 触发 remove_if 清理 + 重新计数。
+    /// 验证过期后计数重置（不累加旧窗口计数）。
+    #[tokio::test]
+    async fn token_rate_limiter_fallback_counter_expired_entry_cleaned_up() {
+        let dao: Arc<dyn BulwarkDao> = Arc::new(FailingDao);
+        // client_window=1 秒，便于测试过期清理；client_max=3
+        let limiter = TokenRateLimiter::with_dao_and_limits(3, 1, 100, 60, dao);
+
+        // 触发 fallback 路径：第 1 次 check_client 写入 fallback_counter（count=1）
+        assert!(
+            limiter.check_client("leak-client").await,
+            "第 1 次 check_client 应允许（count=1 <= max=3）"
+        );
+        assert_eq!(
+            limiter.fallback_counter.len(),
+            1,
+            "fallback_counter 应有 1 个 entry"
+        );
+
+        // sleep 2 秒等待 window 过期（window=1s）
+        tokio::time::sleep(StdDuration::from_secs(2)).await;
+
+        // 再次 check_client：remove_if 清理过期 entry + 重新插入 (count=1)
+        let allowed = limiter.check_client("leak-client").await;
+        assert!(
+            allowed,
+            "过期 entry 清理后重新计数，count=1 <= max=3，应允许"
+        );
+        // entry 仍存在（重新插入），但计数已重置为 1
+        assert_eq!(
+            limiter.fallback_counter.len(),
+            1,
+            "过期后再次访问应重新插入 entry（count=1）"
+        );
+
+        // 验证计数已重置（非累加旧窗口）：再 check 2 次应允许（count=2,3 <= max=3）
+        assert!(
+            limiter.check_client("leak-client").await,
+            "count=2 <= max=3，应允许"
+        );
+        assert!(
+            limiter.check_client("leak-client").await,
+            "count=3 <= max=3，应允许"
+        );
+        // 第 4 次应拒绝（count=4 > max=3）
+        assert!(
+            !limiter.check_client("leak-client").await,
+            "count=4 > max=3，应拒绝（验证计数重置后正常累加）"
+        );
+    }
+
+    /// `PasswordRateLimiter::entry_count` 包含 fallback_counter 中的未过期 entry ——
+    /// 修复 Performance MEDIUM 监控盲点：DAO 故障期间用户被 fallback 锁定时，
+    /// entry_count 不应返回 0。
+    ///
+    /// 场景：注入 FailingDao，record_failure 写入 fallback_counter，
+    /// 验证 entry_count 返回 fallback_counter 中的未过期 entry 数。
+    #[tokio::test]
+    async fn password_rate_limiter_entry_count_includes_fallback() {
+        let dao: Arc<dyn BulwarkDao> = Arc::new(FailingDao);
+        let limiter = PasswordRateLimiter::with_dao(3, 300, dao);
+
+        // DAO 故障，entry_count 的 DAO 部分返回 0
+        assert_eq!(
+            limiter.entry_count().await,
+            0,
+            "无 fallback entry 时 entry_count 应为 0"
+        );
+
+        // 触发 fallback 路径，写入 2 个 username 的 fallback entry
+        limiter.record_failure("alice").await;
+        limiter.record_failure("bob").await;
+
+        // entry_count 应包含 fallback_counter 中的 2 个未过期 entry
+        assert_eq!(
+            limiter.entry_count().await,
+            2,
+            "Performance MEDIUM: entry_count 应包含 fallback_counter 中的 2 个 entry，避免监控盲点"
+        );
+
+        // reset alice 后，fallback_counter 中 alice 被清理，只剩 bob
+        limiter.reset("alice").await;
+        assert_eq!(
+            limiter.entry_count().await,
+            1,
+            "reset alice 后 entry_count 应为 1（只剩 bob）"
+        );
+    }
+
+    // === M3: fallback_counter 容量限制测试 ===
+
+    /// `evict_oldest_fallback_entries` 清理最旧的 N 个 entry ——
+    /// M3 修复核心验证：按 window_start Instant 升序排序后移除前 N 个。
+    ///
+    /// 场景：构造 5 个 entry（window_start 递增），evict 3 个，
+    /// 验证最旧的 3 个被清理，最新的 2 个保留。
+    #[tokio::test]
+    async fn evict_oldest_fallback_entries_removes_oldest() {
+        let counter: DashMap<String, (u64, Instant)> = DashMap::new();
+        // 构造 5 个 entry，window_start 递增（最旧在前）
+        let base = Instant::now();
+        counter.insert("oldest".to_string(), (1, base));
+        counter.insert("old".to_string(), (1, base + StdDuration::from_secs(1)));
+        counter.insert("mid".to_string(), (1, base + StdDuration::from_secs(2)));
+        counter.insert("new".to_string(), (1, base + StdDuration::from_secs(3)));
+        counter.insert("newest".to_string(), (1, base + StdDuration::from_secs(4)));
+
+        // evict 3 个最旧的
+        evict_oldest_fallback_entries(&counter, 3);
+
+        assert_eq!(counter.len(), 2, "evict 3 个后应剩 2 个 entry");
+        // 最旧的 3 个应被清理
+        assert!(!counter.contains_key("oldest"), "最旧的 entry 应被清理");
+        assert!(!counter.contains_key("old"), "第二旧的 entry 应被清理");
+        assert!(!counter.contains_key("mid"), "第三旧的 entry 应被清理");
+        // 最新的 2 个应保留
+        assert!(counter.contains_key("new"), "第四新的 entry 应保留");
+        assert!(counter.contains_key("newest"), "最新的 entry 应保留");
+    }
+
+    /// `evict_oldest_fallback_entries` 在 evict_count >= entry 数时全部清理。
+    #[tokio::test]
+    async fn evict_oldest_fallback_entries_clears_all_when_count_exceeds() {
+        let counter: DashMap<String, (u64, Instant)> = DashMap::new();
+        counter.insert("a".to_string(), (1, Instant::now()));
+        counter.insert("b".to_string(), (1, Instant::now()));
+
+        // evict 100 个（远超 entry 数 2），应全部清理
+        evict_oldest_fallback_entries(&counter, 100);
+
+        assert_eq!(counter.len(), 0, "evict 数超过 entry 数时应全部清理");
+    }
+
+    /// `PasswordRateLimiter::record_failure` 在 fallback_counter 达到
+    /// MAX_FALLBACK_ENTRIES 时触发清理 ——
+    /// M3 修复集成验证：DAO 长时间故障期间 fallback_counter 不会无限增长。
+    ///
+    /// 场景：直接向 fallback_counter 插入 MAX_FALLBACK_ENTRIES 个 entry（避免 10000 次
+    /// async 调用太慢），然后调用 record_failure 1 次（触发 FailingDao 错误 →
+    /// record_failure_fallback → 容量检查 → 清理），验证 fallback_counter.len() 减少。
+    #[tokio::test]
+    async fn password_rate_limiter_fallback_counter_capped_at_max() {
+        let dao: Arc<dyn BulwarkDao> = Arc::new(FailingDao);
+        let limiter = PasswordRateLimiter::with_dao(3, 300, dao);
+
+        // 直接向 fallback_counter 插入 MAX_FALLBACK_ENTRIES 个 entry（模拟 DAO 长时间
+        // 故障期间累积的 fallback 计数），避免 10000 次 async record_failure 调用太慢
+        let now = Instant::now();
+        for i in 0..MAX_FALLBACK_ENTRIES {
+            limiter
+                .fallback_counter
+                .insert(format!("user-{}", i), (1, now));
+        }
+        assert_eq!(
+            limiter.fallback_counter.len(),
+            MAX_FALLBACK_ENTRIES,
+            "预填 MAX_FALLBACK_ENTRIES 个 entry"
+        );
+
+        // 调用 record_failure 1 次：FailingDao 错误 → record_failure_fallback
+        // → 写入新 entry（user-trigger）→ 容量达上限 → 触发 evict_oldest_fallback_entries
+        limiter.record_failure("user-trigger").await;
+
+        // 验证 fallback_counter.len() 已被清理到 MAX_FALLBACK_ENTRIES 以下
+        let final_len = limiter.fallback_counter.len();
+        assert!(
+            final_len < MAX_FALLBACK_ENTRIES,
+            "M3: fallback_counter 应被清理到 MAX_FALLBACK_ENTRIES 以下，实际: {}",
+            final_len
+        );
+        // 应至少清理了 FALLBACK_EVICT_BATCH 个（每次触发清理 100 个）
+        // 容许并发或时序差异，最终 len 应在 [MAX - FALLBACK_EVICT_BATCH, MAX) 区间附近
+        assert!(
+            final_len >= MAX_FALLBACK_ENTRIES - FALLBACK_EVICT_BATCH,
+            "M3: fallback_counter 清理后应保留大部分 entry，实际: {}",
+            final_len
+        );
+    }
+
+    /// `TokenRateLimiter::check_client` 在 fallback_counter 达到
+    /// MAX_FALLBACK_ENTRIES 时触发清理 ——
+    /// M3 修复集成验证：与 PasswordRateLimiter 行为一致。
+    ///
+    /// 场景：直接向 fallback_counter 插入 MAX_FALLBACK_ENTRIES 个 entry（避免 10000 次
+    /// async 调用太慢），然后调用 check_client 1 次（触发 FailingDao 错误 →
+    /// check_and_incr_fallback → 容量检查 → 清理），验证 fallback_counter.len() 减少。
+    #[tokio::test]
+    async fn token_rate_limiter_fallback_counter_capped_at_max() {
+        let dao: Arc<dyn BulwarkDao> = Arc::new(FailingDao);
+        // client_max 设大，避免触发限速拒绝（仅验证容量清理）
+        let limiter = TokenRateLimiter::with_dao_and_limits(
+            (MAX_FALLBACK_ENTRIES + 200) as u64,
+            60,
+            (MAX_FALLBACK_ENTRIES + 200) as u64,
+            60,
+            dao,
+        );
+
+        // 直接向 fallback_counter 插入 MAX_FALLBACK_ENTRIES 个 entry
+        let now = Instant::now();
+        for i in 0..MAX_FALLBACK_ENTRIES {
+            limiter
+                .fallback_counter
+                .insert(format!("client-{}", i), (1, now));
+        }
+        assert_eq!(
+            limiter.fallback_counter.len(),
+            MAX_FALLBACK_ENTRIES,
+            "预填 MAX_FALLBACK_ENTRIES 个 entry"
+        );
+
+        // 调用 check_client 1 次：FailingDao 错误 → check_and_incr_fallback
+        // → 写入新 entry（client-trigger）→ 容量达上限 → 触发 evict_oldest_fallback_entries
+        limiter.check_client("client-trigger").await;
+
+        // 验证 fallback_counter.len() 已被清理到 MAX_FALLBACK_ENTRIES 以下
+        let final_len = limiter.fallback_counter.len();
+        assert!(
+            final_len < MAX_FALLBACK_ENTRIES,
+            "M3: TokenRateLimiter fallback_counter 应被清理到 MAX_FALLBACK_ENTRIES 以下，实际: {}",
+            final_len
+        );
+        assert!(
+            final_len >= MAX_FALLBACK_ENTRIES - FALLBACK_EVICT_BATCH,
+            "M3: TokenRateLimiter fallback_counter 清理后应保留大部分 entry，实际: {}",
+            final_len
+        );
     }
 
     // === OAuth2 scope 校验测试 ===

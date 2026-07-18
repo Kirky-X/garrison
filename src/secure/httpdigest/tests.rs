@@ -7,6 +7,7 @@ use super::algorithm::hex_encode;
 use super::auth::{constant_time_eq, current_unix_seconds};
 use super::*;
 use base64::{engine::general_purpose::STANDARD, Engine};
+use std::sync::Arc;
 use uuid::Uuid;
 
 // ========================================================================
@@ -740,6 +741,408 @@ fn hex_encode_empty_bytes() {
 #[test]
 fn hex_encode_known_bytes() {
     assert_eq!(hex_encode(&[0x00, 0xff, 0x0a]), "00ff0a");
+}
+
+// ========================================================================
+// vuln-0008: nc 单调性校验测试（RFC 7616 §3.4.6 重放防护）
+// ========================================================================
+
+/// `validate_nc` 首次使用 nonce 时接受任意 nc（with DAO）。
+///
+/// 场景：注入 DAO，首次请求 nc=00000001 应通过。
+#[tokio::test(flavor = "multi_thread")]
+async fn validate_nc_first_use_accepted_with_dao() {
+    let dao: Arc<dyn crate::dao::BulwarkDao> = Arc::new(crate::dao::MockDao::new());
+    let auth = HttpDigestAuth::new("test@realm", "MD5")
+        .unwrap()
+        .with_dao(dao);
+    let ha1 = auth.compute_ha1("admin", "secret");
+    let nonce = make_valid_nonce();
+    let nc = "00000001";
+    let cnonce = "0a4f113c";
+    let method = "GET";
+    let uri = "/resource";
+    let header = build_md5_auth_header(
+        &auth,
+        "admin",
+        "test@realm",
+        &nonce,
+        nc,
+        cnonce,
+        method,
+        uri,
+        &ha1,
+    );
+    assert!(
+        auth.validate(&header, method, uri, &ha1),
+        "vuln-0008: 首次使用 nonce 应通过 nc 校验"
+    );
+}
+
+/// `validate_nc` 拒绝同一 nonce 的 nc 重复（重放攻击，with DAO）。
+///
+/// 场景：注入 DAO，第一次 nc=00000001 通过，第二次相同 nc=00000001 应被拒绝。
+#[tokio::test(flavor = "multi_thread")]
+async fn validate_nc_replay_rejected_with_dao() {
+    let dao: Arc<dyn crate::dao::BulwarkDao> = Arc::new(crate::dao::MockDao::new());
+    let auth = HttpDigestAuth::new("test@realm", "MD5")
+        .unwrap()
+        .with_dao(dao);
+    let ha1 = auth.compute_ha1("admin", "secret");
+    let nonce = make_valid_nonce();
+    let nc = "00000001";
+    let cnonce = "0a4f113c";
+    let method = "GET";
+    let uri = "/resource";
+    let header = build_md5_auth_header(
+        &auth,
+        "admin",
+        "test@realm",
+        &nonce,
+        nc,
+        cnonce,
+        method,
+        uri,
+        &ha1,
+    );
+    // 第一次：通过
+    assert!(
+        auth.validate(&header, method, uri, &ha1),
+        "vuln-0008: 首次请求应通过"
+    );
+    // 第二次相同 nc：应被拒绝（重放）
+    assert!(
+        !auth.validate(&header, method, uri, &ha1),
+        "vuln-0008: 相同 nc 重放应被拒绝"
+    );
+}
+
+/// `validate_nc` 拒绝 nc 回退（with DAO）。
+///
+/// 场景：注入 DAO，第一次 nc=00000003 通过，第二次 nc=00000002 应被拒绝（nc 回退）。
+#[tokio::test(flavor = "multi_thread")]
+async fn validate_nc_decrease_rejected_with_dao() {
+    let dao: Arc<dyn crate::dao::BulwarkDao> = Arc::new(crate::dao::MockDao::new());
+    let auth = HttpDigestAuth::new("test@realm", "MD5")
+        .unwrap()
+        .with_dao(dao);
+    let ha1 = auth.compute_ha1("admin", "secret");
+    let nonce = make_valid_nonce();
+    let cnonce = "0a4f113c";
+    let method = "GET";
+    let uri = "/resource";
+    // 第一次 nc=00000003
+    let header1 = build_md5_auth_header(
+        &auth,
+        "admin",
+        "test@realm",
+        &nonce,
+        "00000003",
+        cnonce,
+        method,
+        uri,
+        &ha1,
+    );
+    assert!(
+        auth.validate(&header1, method, uri, &ha1),
+        "vuln-0008: nc=3 应通过"
+    );
+    // 第二次 nc=00000002（回退）应被拒绝
+    let header2 = build_md5_auth_header(
+        &auth,
+        "admin",
+        "test@realm",
+        &nonce,
+        "00000002",
+        cnonce,
+        method,
+        uri,
+        &ha1,
+    );
+    assert!(
+        !auth.validate(&header2, method, uri, &ha1),
+        "vuln-0008: nc 回退（3→2）应被拒绝"
+    );
+}
+
+/// `validate_nc` 接受 nc 单调递增（with DAO）。
+///
+/// 场景：注入 DAO，nc=1→2→3 连续递增，每次都应通过。
+#[tokio::test(flavor = "multi_thread")]
+async fn validate_nc_increasing_accepted_with_dao() {
+    let dao: Arc<dyn crate::dao::BulwarkDao> = Arc::new(crate::dao::MockDao::new());
+    let auth = HttpDigestAuth::new("test@realm", "MD5")
+        .unwrap()
+        .with_dao(dao);
+    let ha1 = auth.compute_ha1("admin", "secret");
+    let nonce = make_valid_nonce();
+    let cnonce = "0a4f113c";
+    let method = "GET";
+    let uri = "/resource";
+    for i in 1..=3u64 {
+        let nc = format!("{:08x}", i);
+        let header = build_md5_auth_header(
+            &auth,
+            "admin",
+            "test@realm",
+            &nonce,
+            &nc,
+            cnonce,
+            method,
+            uri,
+            &ha1,
+        );
+        assert!(
+            auth.validate(&header, method, uri, &ha1),
+            "vuln-0008: nc={} 应通过（单调递增）",
+            nc
+        );
+    }
+}
+
+/// 未注入 DAO 时跳过 nc 校验（向后兼容）。
+///
+/// 场景：不注入 DAO（dao=None），相同 nc 重放仍被接受（仅依赖 nonce TTL 防重放）。
+#[tokio::test(flavor = "multi_thread")]
+async fn validate_nc_skipped_without_dao() {
+    let auth = HttpDigestAuth::new("test@realm", "MD5").unwrap();
+    let ha1 = auth.compute_ha1("admin", "secret");
+    let nonce = make_valid_nonce();
+    let nc = "00000001";
+    let cnonce = "0a4f113c";
+    let method = "GET";
+    let uri = "/resource";
+    let header = build_md5_auth_header(
+        &auth,
+        "admin",
+        "test@realm",
+        &nonce,
+        nc,
+        cnonce,
+        method,
+        uri,
+        &ha1,
+    );
+    // 第一次：通过
+    assert!(
+        auth.validate(&header, method, uri, &ha1),
+        "vuln-0008: 无 DAO 时首次请求应通过"
+    );
+    // 第二次相同 nc：仍通过（无 DAO 跳过 nc 校验，向后兼容）
+    assert!(
+        auth.validate(&header, method, uri, &ha1),
+        "vuln-0008: 无 DAO 时相同 nc 重放仍通过（向后兼容）"
+    );
+}
+
+/// 不同 nonce 的 nc 计数独立（with DAO）。
+///
+/// 场景：注入 DAO，nonce-A nc=1 通过，nonce-B nc=1 也应通过（不同 nonce 独立计数）。
+#[tokio::test(flavor = "multi_thread")]
+async fn validate_nc_isolates_nonces_with_dao() {
+    let dao: Arc<dyn crate::dao::BulwarkDao> = Arc::new(crate::dao::MockDao::new());
+    let auth = HttpDigestAuth::new("test@realm", "MD5")
+        .unwrap()
+        .with_dao(dao);
+    let ha1 = auth.compute_ha1("admin", "secret");
+    let cnonce = "0a4f113c";
+    let method = "GET";
+    let uri = "/resource";
+    let nc = "00000001";
+    // nonce-A nc=1
+    let nonce_a = make_valid_nonce();
+    let header_a = build_md5_auth_header(
+        &auth,
+        "admin",
+        "test@realm",
+        &nonce_a,
+        nc,
+        cnonce,
+        method,
+        uri,
+        &ha1,
+    );
+    assert!(
+        auth.validate(&header_a, method, uri, &ha1),
+        "vuln-0008: nonce-A nc=1 应通过"
+    );
+    // nonce-B nc=1（不同 nonce，应独立计数，通过）
+    let nonce_b = make_valid_nonce();
+    let header_b = build_md5_auth_header(
+        &auth,
+        "admin",
+        "test@realm",
+        &nonce_b,
+        nc,
+        cnonce,
+        method,
+        uri,
+        &ha1,
+    );
+    assert!(
+        auth.validate(&header_b, method, uri, &ha1),
+        "vuln-0008: nonce-B nc=1 应通过（不同 nonce 独立计数）"
+    );
+}
+
+// ========================================================================
+// vuln-0008 三维度审查修复验证测试
+// ========================================================================
+
+/// `validate_nc` 在 current_thread runtime 下 fail-open（HIGH-1 修复验证）。
+///
+/// 场景：注入 DAO，但在 current_thread tokio runtime 下调用 validate()。
+/// validate_nc 检测到 current_thread runtime 后应 fail-open（不调用 block_in_place，
+/// 否则会 panic "Cannot block the current thread from within a runtime"），
+/// 相同 nc 重放仍被接受。
+///
+/// 注意：使用 `#[tokio::test]`（不带 `flavor = "multi_thread"`）创建 current_thread runtime。
+#[tokio::test]
+async fn validate_nc_current_thread_runtime_fail_open() {
+    let dao: Arc<dyn crate::dao::BulwarkDao> = Arc::new(crate::dao::MockDao::new());
+    let auth = HttpDigestAuth::new("test@realm", "MD5")
+        .unwrap()
+        .with_dao(dao);
+    let ha1 = auth.compute_ha1("admin", "secret");
+    let nonce = make_valid_nonce();
+    let nc = "00000001";
+    let cnonce = "0a4f113c";
+    let method = "GET";
+    let uri = "/resource";
+    let header = build_md5_auth_header(
+        &auth,
+        "admin",
+        "test@realm",
+        &nonce,
+        nc,
+        cnonce,
+        method,
+        uri,
+        &ha1,
+    );
+    // 第一次：current_thread runtime 下 fail-open，应通过（不 panic）
+    assert!(
+        auth.validate(&header, method, uri, &ha1),
+        "HIGH-1: current_thread runtime 下 validate_nc 应 fail-open，首次请求通过"
+    );
+    // 第二次相同 nc：仍 fail-open，应通过（不调用 DAO，无重放检测）
+    assert!(
+        auth.validate(&header, method, uri, &ha1),
+        "HIGH-1: current_thread runtime 下相同 nc 重放仍通过（fail-open）"
+    );
+}
+
+/// 始终返回 DAO 错误的 mock DAO（参考 oauth2_server/token.rs 的 FailingDao 模式）。
+///
+/// 用于触发 `validate_nc` 的 fail-open 路径（DAO 错误时接受请求）。
+struct FailingDao;
+
+#[async_trait::async_trait]
+impl crate::dao::BulwarkDao for FailingDao {
+    async fn get(&self, key: &str) -> crate::error::BulwarkResult<Option<String>> {
+        Err(crate::error::BulwarkError::Dao(format!(
+            "vuln-0008-failing-dao-get::{}",
+            key
+        )))
+    }
+    async fn set(
+        &self,
+        key: &str,
+        _value: &str,
+        _ttl_seconds: u64,
+    ) -> crate::error::BulwarkResult<()> {
+        Err(crate::error::BulwarkError::Dao(format!(
+            "vuln-0008-failing-dao-set::{}",
+            key
+        )))
+    }
+    async fn update(&self, key: &str, _value: &str) -> crate::error::BulwarkResult<()> {
+        Err(crate::error::BulwarkError::Dao(format!(
+            "vuln-0008-failing-dao-update::{}",
+            key
+        )))
+    }
+    async fn expire(&self, key: &str, _seconds: u64) -> crate::error::BulwarkResult<()> {
+        Err(crate::error::BulwarkError::Dao(format!(
+            "vuln-0008-failing-dao-expire::{}",
+            key
+        )))
+    }
+    async fn delete(&self, key: &str) -> crate::error::BulwarkResult<()> {
+        Err(crate::error::BulwarkError::Dao(format!(
+            "vuln-0008-failing-dao-delete::{}",
+            key
+        )))
+    }
+}
+
+/// `validate_nc` 在 DAO 错误时 fail-open（HIGH-2 修复验证）。
+///
+/// 场景：注入始终返回错误的 FailingDao，validate_nc 内部 compare_and_update_if_greater
+/// 调用 DAO 失败后应 fail-open（返回 true），相同 nc 重放仍被接受。
+/// nonce TTL 仍提供时间bounded 防护。
+#[tokio::test(flavor = "multi_thread")]
+async fn validate_nc_dao_error_fail_open() {
+    let dao: Arc<dyn crate::dao::BulwarkDao> = Arc::new(FailingDao);
+    let auth = HttpDigestAuth::new("test@realm", "MD5")
+        .unwrap()
+        .with_dao(dao);
+    let ha1 = auth.compute_ha1("admin", "secret");
+    let nonce = make_valid_nonce();
+    let nc = "00000001";
+    let cnonce = "0a4f113c";
+    let method = "GET";
+    let uri = "/resource";
+    let header = build_md5_auth_header(
+        &auth,
+        "admin",
+        "test@realm",
+        &nonce,
+        nc,
+        cnonce,
+        method,
+        uri,
+        &ha1,
+    );
+    // DAO 错误时 fail-open，应通过
+    assert!(
+        auth.validate(&header, method, uri, &ha1),
+        "HIGH-2: DAO 错误时 validate_nc 应 fail-open（接受请求）"
+    );
+    // 再次调用，DAO 仍错误，仍 fail-open（nonce TTL 提供时间bounded 防护）
+    assert!(
+        auth.validate(&header, method, uri, &ha1),
+        "HIGH-2: DAO 错误时相同 nc 重放仍通过（fail-open）"
+    );
+}
+
+/// `validate_nc` 拒绝非 hex 格式的 nc（LOW-2 修复验证）。
+///
+/// 场景：nc="gggggggg"（非 hex 字符），`u64::from_str_radix(_, 16)` 解析失败，
+/// validate_nc 返回 false（拒绝畸形请求，不是 fail-open）。
+#[tokio::test(flavor = "multi_thread")]
+async fn validate_nc_malformed_hex_rejected() {
+    let dao: Arc<dyn crate::dao::BulwarkDao> = Arc::new(crate::dao::MockDao::new());
+    let auth = HttpDigestAuth::new("test@realm", "MD5")
+        .unwrap()
+        .with_dao(dao);
+    let ha1 = auth.compute_ha1("admin", "secret");
+    let nonce = make_valid_nonce();
+    // "gggggggg" 不是有效的 hex 字符
+    let nc = "gggggggg";
+    let cnonce = "0a4f113c";
+    let method = "GET";
+    let uri = "/resource";
+    // 构造 header 时 nc 字段直接放入（parse_authorization 仅提取字符串，不校验格式）
+    let header = format!(
+        r#"Digest username="admin", realm="test@realm", nonce="{}", uri="{}", response="dummy", qop=auth, nc={}, cnonce="{}""#,
+        nonce, uri, nc, cnonce
+    );
+    // nc 非 hex 格式 → validate_nc 返回 false → validate 返回 false
+    assert!(
+        !auth.validate(&header, method, uri, &ha1),
+        "LOW-2: 非 hex 格式的 nc 应被拒绝（不是 fail-open）"
+    );
 }
 
 // ========================================================================

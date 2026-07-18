@@ -7,10 +7,17 @@ use super::{DigestAlgorithm, HttpDigestAuth};
 use crate::error::{BulwarkError, BulwarkResult};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use std::time::{SystemTime, UNIX_EPOCH};
+use subtle::ConstantTimeEq;
 use uuid::Uuid;
 
 /// 默认 nonce 有效期（秒），RFC 7616 §3.2.1 建议 nonce 应有合理 TTL。
 const DEFAULT_NONCE_TTL_SECONDS: u64 = 300;
+/// Authorization header 最大长度（字节），L5 修复：防止超长 header 导致 DoS。
+///
+/// 8KB 覆盖正常 Digest Auth header（通常 < 1KB），拒绝明显恶意的超长输入。
+/// 超过此长度时 validate_inner 直接返回 false（拒绝认证），不进入 parse_authorization
+/// 避免 O(n) 解析 + 多次 hash 计算被恶意输入放大。
+const MAX_AUTHORIZATION_HEADER_LEN: usize = 8 * 1024;
 
 impl HttpDigestAuth {
     /// 创建新的 Digest 认证工具。
@@ -27,7 +34,27 @@ impl HttpDigestAuth {
             realm: realm.to_string(),
             algorithm: algorithm.parse()?,
             nonce_ttl: DEFAULT_NONCE_TTL_SECONDS,
+            dao: None,
         })
+    }
+
+    /// 注入 DAO 用于 nc 单调性校验（vuln-0008 修复，RFC 7616 §3.4.6）。
+    ///
+    /// 注入后 `validate` / `validate_with_body` 会通过 DAO 跟踪每个 nonce 的最后 nc 值，
+    /// 拒绝 nc 回退或重复（重放攻击）。未注入时跳过 nc 校验（向后兼容）。
+    ///
+    /// # 参数
+    /// - `dao`: 分布式 DAO 实现（Redis / dbnexus / MockDao 等）。
+    ///
+    /// # 运行时要求
+    ///
+    /// `validate` / `validate_with_body` 是 sync API，但 DAO 操作是 async。
+    /// 注入 DAO 后，validate 内部使用 `tokio::task::block_in_place` + `Handle::block_on`
+    /// 桥接 sync-to-async，**要求在 multi_thread tokio runtime 上下文中调用**。
+    /// 在无 runtime 或 current_thread runtime 下调用会跳过 nc 校验（fail-open）并记录 warn。
+    pub fn with_dao(mut self, dao: std::sync::Arc<dyn crate::dao::BulwarkDao>) -> Self {
+        self.dao = Some(dao);
+        self
     }
 
     /// 设置 nonce 有效期（秒），默认 300 秒。
@@ -109,6 +136,93 @@ impl HttpDigestAuth {
         true
     }
 
+    /// 校验 nc（nonce count）单调性，拒绝重放攻击（vuln-0008，RFC 7616 §3.4.6）。
+    ///
+    /// 通过 DAO 跟踪每个 nonce 的最后接受的 nc 值，拒绝 nc 回退或重复。
+    /// - `dao` 为 None：跳过校验（向后兼容，返回 true）
+    /// - `dao` 为 Some：get `digest:nc:{nonce}` → 比较 → set 更新
+    /// - DAO 错误：fail-open（返回 true），nonce TTL 仍提供时间bounded 防护
+    /// - nc 非法 hex 格式：返回 false（拒绝畸形请求）
+    ///
+    /// # Key 格式
+    ///
+    /// `digest:nc:{nonce}` — value 为最后接受的 nc 十进制字符串。
+    /// TTL 与 `nonce_ttl` 一致，nonce 过期后 nc 记录自动清理。
+    ///
+    /// # 运行时要求
+    ///
+    /// `validate` / `validate_with_body` 是 sync API，但 DAO 操作是 async。
+    /// 注入 DAO 后，本方法使用 `tokio::task::block_in_place` + `Handle::block_on`
+    /// 桥接 sync-to-async，要求 multi_thread tokio runtime。
+    /// 无 runtime 时跳过 nc 校验（fail-open）并记录 warn。
+    fn validate_nc(&self, nonce: &str, nc_hex: &str) -> bool {
+        let dao = match &self.dao {
+            Some(d) => d,
+            None => return true,
+        };
+        // 解析 nc hex → u64（RFC 7616 §3.4.6：nc 为 8 位 hex）
+        let nc = match u64::from_str_radix(nc_hex, 16) {
+            Ok(v) => v,
+            Err(_) => return false,
+        };
+        // 桥接 sync-to-async：要求 multi_thread tokio runtime。
+        // HIGH-1 修复：`Handle::try_current()` 对 multi_thread 和 current_thread runtime
+        // 都返回 `Ok(handle)`，但 `block_in_place` 在 current_thread runtime 下会 panic
+        // （"Cannot block the current thread from within a runtime"），与 fail-open 文档承诺不符。
+        // 用 `runtime_flavor()` 区分 runtime 类型。
+        match tokio::runtime::Handle::try_current() {
+            Ok(handle) => {
+                if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::CurrentThread {
+                    tracing::warn!(
+                        "validate_nc skipped: current_thread runtime does not support block_in_place"
+                    );
+                    return true; // fail-open
+                }
+                tokio::task::block_in_place(|| {
+                    handle.block_on(async move {
+                        Self::validate_nc_async(dao, nonce, nc, self.nonce_ttl).await
+                    })
+                })
+            },
+            Err(_) => {
+                tracing::warn!("validate_nc skipped: no tokio runtime available");
+                true
+            },
+        }
+    }
+
+    /// `validate_nc` 的 async 实现（通过 `block_in_place` + `block_on` 调用）。
+    ///
+    /// 通过 `dao.compare_and_update_if_greater` 原子地完成「读取当前 last_nc → 比较 → 写入新 nc」，
+    /// 消除 HIGH-2 的 TOCTOU 竞态（多个并发请求都读到相同的 last_nc 值，都通过 nc > last_nc 检查）。
+    ///
+    /// 逻辑：
+    /// - `compare_and_update_if_greater` 返回 `Ok(true)`：nc > last_nc，已更新 → return true
+    /// - `compare_and_update_if_greater` 返回 `Ok(false)`：nc <= last_nc，重放/回退 → return false
+    /// - DAO 错误 → fail-open（return true）+ warn，nonce TTL 仍提供时间bounded 防护
+    async fn validate_nc_async(
+        dao: &std::sync::Arc<dyn crate::dao::BulwarkDao>,
+        nonce: &str,
+        nc: u64,
+        ttl_seconds: u64,
+    ) -> bool {
+        let key = format!("digest:nc:{}", nonce);
+        match dao
+            .compare_and_update_if_greater(&key, nc, ttl_seconds)
+            .await
+        {
+            Ok(updated) => updated,
+            Err(e) => {
+                // fail-open：DAO 错误时接受请求，nonce TTL 仍提供时间bounded 防护
+                tracing::warn!(
+                    "validate_nc: compare_and_update_if_greater failed, fail-open: {}",
+                    e
+                );
+                true
+            },
+        }
+    }
+
     /// 计算 HA1 = H(username:realm:password)。
     ///
     /// HA1 为预先计算的摘要，避免框架持有明文密码。
@@ -168,10 +282,21 @@ impl HttpDigestAuth {
         body: Option<&[u8]>,
         ha1: &str,
     ) -> bool {
+        // L5 修复：input validation，拒绝过长的 Authorization header 防 DoS。
+        // 超长 header 会触发 O(n) parse_authorization + 多次 hash 计算，
+        // 恶意客户端可发送超大 header 耗尽 CPU。8KB 上限覆盖所有合法 Digest Auth 请求。
+        if authorization_header.len() > MAX_AUTHORIZATION_HEADER_LEN {
+            return false;
+        }
         match self.parse_authorization(authorization_header) {
             Ok(resp) => {
                 // 检查 nonce 是否有效（格式 + 过期）
                 if !self.is_nonce_valid(&resp.nonce) {
+                    return false;
+                }
+                // vuln-0008: nc 单调性校验（RFC 7616 §3.4.6）
+                // 拒绝同一 nonce 的 nc 回退或重复，防止重放攻击
+                if !self.validate_nc(&resp.nonce, &resp.nc) {
                     return false;
                 }
                 let qop = resp.qop.as_deref();
@@ -337,16 +462,16 @@ fn parse_digest_params(s: &str) -> Vec<(String, String)> {
     result
 }
 
-/// 常量时间字符串比较，避免时序攻击。
+/// 常量时间字符串比较，避免时序攻击（L1 修复）。
+///
+/// 使用 `subtle::ConstantTimeEq` trait 的 `ct_eq` 方法，全程常量时间：
+/// - 长度不等时返回 0（subtle 库内部处理，不提前 return，避免长度泄漏）
+/// - 长度相等时按字节异或累积，最后一次性比较
+///
+/// 替代原手写的 `if a.len() != b.len() { return false; }` 实现，
+/// 原实现虽然循环部分常量时间，但长度检查的提前 return 会泄漏长度信息。
 pub(super) fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut diff = 0u8;
-    for (x, y) in a.iter().zip(b.iter()) {
-        diff |= x ^ y;
-    }
-    diff == 0
+    a.ct_eq(b).into()
 }
 
 /// 获取当前 Unix 时间戳（秒）。

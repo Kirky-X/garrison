@@ -3103,6 +3103,10 @@ mod tests {
             /// login_by_token 通过 verify_token 解析 login_id 并创建会话，广播 Login 事件。
             ///
             /// 覆盖 lines 416-440：无 auth_logic → self.verify_token → session.create → broadcast Login。
+            ///
+            /// A11: SimpleTokenStyle 改为 HMAC-SHA256 签名格式 `<login_id>\x1f<uuid>.<hmac>`，
+            /// 需用 SimpleTokenStyle::new(secret).generate 生成合法 token（secret 与 config.jwt_secret 一致）。
+            #[cfg(feature = "secure-simple-token")]
             #[tokio::test]
             async fn login_by_token_creates_session_and_broadcasts_login() {
                 let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
@@ -3110,6 +3114,10 @@ mod tests {
                 let mut config = BulwarkConfig::default_config();
                 config.throw_on_not_login = false;
                 config.token_style = "simple".to_string();
+                // A11: simple 模式下 verify_token 委托 SimpleTokenStyle（需 HMAC），
+                // 设置非空 jwt_secret 避免 fail-closed。
+                const SESSION_SIMPLE_TEST_SECRET: &str = "stp-session-simple-test-secret";
+                config.jwt_secret = SESSION_SIMPLE_TEST_SECRET.to_string().into();
                 let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
                     has_permission: true,
                     has_role: true,
@@ -3120,8 +3128,12 @@ mod tests {
                 let logic = BulwarkLogicDefault::new(session, Arc::new(config), firewall)
                     .with_listener_manager(lm);
 
-                // simple 格式 token: <login_id>-<uuid>（login_id 不能含 '-'，因 split_once 分割）
-                let external_token = format!("externaluser001-{}", uuid::Uuid::new_v4());
+                // A11: 用 SimpleTokenStyle 生成合法 HMAC token（与 verify_token 使用相同 secret）
+                use crate::core::token::Token;
+                let style = crate::core::token::SimpleTokenStyle::new(
+                    SESSION_SIMPLE_TEST_SECRET.to_string(),
+                );
+                let external_token = style.generate("externaluser001", 3600).unwrap();
                 let result = logic.login_by_token(&external_token).await;
                 assert!(
                     result.is_ok(),

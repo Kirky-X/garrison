@@ -100,6 +100,10 @@ pub struct Random64TokenStyle;
 #[derive(Debug, Clone, Default)]
 pub struct SimpleTokenStyle {
     /// HMAC-SHA256 签名密钥（服务端保管，不随 token 下发）。
+    ///
+    /// 仅在启用 `secure-simple-token` feature 时由 `Token` impl 读取；
+    /// 未启用 feature 时为 dead code，此处 allow 以避免 feature-gated 警告。
+    #[allow(dead_code)]
     secret: String,
 }
 

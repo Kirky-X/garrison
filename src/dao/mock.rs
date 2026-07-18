@@ -138,6 +138,12 @@ impl BulwarkDao for MockDao {
     /// keys 按 glob pattern 扫描 key（支持 `*` 与 `?`）。
     ///
     /// 遍历所有 key，过滤已过期的，然后用 glob_match 匹配 pattern。
+    ///
+    /// # L7 复杂度说明
+    ///
+    /// O(n) 遍历是预期行为：`MockDao` 是测试用实现，store 容量小（通常 < 1000 entry），
+    /// 无需索引优化。生产环境应使用 `BulwarkDaoOxcache`（Redis SCAN）或 dbnexus（SQL LIKE），
+    /// 它们的 keys() 实现委托后端原生 scan API，不在此 O(n) 路径上。
     async fn keys(&self, pattern: &str) -> BulwarkResult<Vec<String>> {
         let mut result = Vec::new();
         let now = Instant::now();
@@ -218,17 +224,81 @@ impl BulwarkDao for MockDao {
         }
     }
 
-    /// eval_lua 内存模拟实现（识别 INCR + EXPIRE 模式，委托 incr）。
+    /// compare_and_update_if_greater 用 Mutex 保护原子性（进程内原子）。
     ///
-    /// MockDao 不支持真正的 Lua 脚本，但 `incr` 已用 Mutex 保证进程内原子性。
-    /// 识别脚本中的 INCR + EXPIRE 模式后，提取 KEYS\[1\] 和 ARGV\[2\]（TTL），
-    /// 委托 `self.incr` 实现，返回 `vec![count.to_string()]`。
+    /// 在单个 lock() 作用域内完成 get → parse → compare → set，消除 TOCTOU 竞态。
+    /// 用于 HTTP Digest nc 单调性校验（RFC 7616 §3.4.6）。
+    /// - key 不存在或已过期：current_val = 0，new_value > 0 时初始化并设置 TTL
+    /// - key 已存在且 new_value > current_val：保留原 expire_at（不重置 TTL）
+    /// - key 已存在但 new_value <= current_val：不修改，返回 false
+    async fn compare_and_update_if_greater(
+        &self,
+        key: &str,
+        new_value: u64,
+        ttl_seconds: u64,
+    ) -> BulwarkResult<bool> {
+        let mut store = self.store.lock();
+        let now = Instant::now();
+        // M1 修复：parse 失败必须显式报错（与 incr 方法一致，Rule 12 错误显性化），
+        // 禁止 unwrap_or(0) 静默返回 0 导致 nc 计数器被错误重置
+        let (current_val, existing_expire_at) = match store.get(key) {
+            Some((v, Some(deadline))) if *deadline > now => (
+                v.parse::<u64>().map_err(|_| {
+                    BulwarkError::Dao(format!("dao-compare-and-update-parse-u64::{}::{}", key, v))
+                })?,
+                Some(*deadline),
+            ),
+            Some((v, None)) => (
+                v.parse::<u64>().map_err(|_| {
+                    BulwarkError::Dao(format!("dao-compare-and-update-parse-u64::{}::{}", key, v))
+                })?,
+                None,
+            ),
+            // 已过期或不存在
+            _ => (0, None),
+        };
+        if new_value > current_val {
+            // 保留原 TTL：键已存在用原 expire_at；新键用 ttl_seconds
+            let expire_at = if existing_expire_at.is_some() {
+                existing_expire_at
+            } else if ttl_seconds == 0 {
+                None
+            } else {
+                Some(now + Duration::from_secs(ttl_seconds))
+            };
+            store.insert(key.to_string(), (new_value.to_string(), expire_at));
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    /// eval_lua 内存模拟实现（识别两类脚本模式）。
+    ///
+    /// MockDao 不支持真正的 Lua 脚本，但用 `parking_lot::Mutex` 保证进程内原子性。
+    ///
+    /// # 支持的脚本模式
+    ///
+    /// 1. **INCR + EXPIRE**（limiteron BruteForceStrategy 用）：
+    ///    识别脚本中含 `INCR` + `EXPIRE`，提取 `KEYS[1]` 与 `ARGV[2]`（TTL），
+    ///    委托 `self.incr`，返回 `vec![count.to_string()]`。
+    ///
+    /// 2. **rate_limit_sliding_window**（RateLimitStrategy 用，vuln-0009 修复）：
+    ///    识别脚本中含标记 `rate_limit_sliding_window`，在单次 `lock()` 作用域内
+    ///    原子执行 read → filter → check → write（消除 TOCTOU）。
+    ///    - `KEYS[1]`：时间戳列表 key
+    ///    - `ARGV[1]`：now_ms（u64）
+    ///    - `ARGV[2]`：window_start_ms（u64，此时刻之前的时间戳被滑出）
+    ///    - `ARGV[3]`：threshold（usize，>= 即拦截）
+    ///    - `ARGV[4]`：ttl_seconds（u64，窗口 TTL）
+    ///    - 返回 `vec!["1"]` 表示允许（已追加时间戳），`vec!["0"]` 表示拦截（未修改）
     async fn eval_lua(
         &self,
         script: &str,
         keys: Vec<String>,
         args: Vec<String>,
     ) -> BulwarkResult<Vec<String>> {
+        // 模式 1：INCR + EXPIRE（limiteron BruteForceStrategy）
         if script.contains("INCR") && script.contains("EXPIRE") {
             let key = keys.first().ok_or_else(|| {
                 BulwarkError::InvalidParam("dao-eval-lua-missing-keys-1".to_string())
@@ -246,6 +316,108 @@ impl BulwarkDao for MockDao {
             let count = self.incr(key, ttl).await?;
             return Ok(vec![count.to_string()]);
         }
+
+        // 模式 2：rate_limit_sliding_window（RateLimitStrategy vuln-0009 修复）
+        // 在单次 lock() 内原子执行 read-filter-check-write，消除 TOCTOU。
+        if script.contains("rate_limit_sliding_window") {
+            let key = keys.first().ok_or_else(|| {
+                BulwarkError::InvalidParam("dao-eval-lua-rl-missing-keys-1".to_string())
+            })?;
+            let now_ms: u64 = args
+                .first()
+                .ok_or_else(|| {
+                    BulwarkError::InvalidParam("dao-eval-lua-rl-missing-argv-1-now-ms".to_string())
+                })?
+                .parse()
+                .map_err(|e| {
+                    BulwarkError::InvalidParam(format!(
+                        "dao-eval-lua-rl-argv-1-parse-failed::{}",
+                        e
+                    ))
+                })?;
+            let window_start_ms: u64 = args
+                .get(1)
+                .ok_or_else(|| {
+                    BulwarkError::InvalidParam(
+                        "dao-eval-lua-rl-missing-argv-2-window-start".to_string(),
+                    )
+                })?
+                .parse()
+                .map_err(|e| {
+                    BulwarkError::InvalidParam(format!(
+                        "dao-eval-lua-rl-argv-2-parse-failed::{}",
+                        e
+                    ))
+                })?;
+            let threshold: usize = args
+                .get(2)
+                .ok_or_else(|| {
+                    BulwarkError::InvalidParam(
+                        "dao-eval-lua-rl-missing-argv-3-threshold".to_string(),
+                    )
+                })?
+                .parse()
+                .map_err(|e| {
+                    BulwarkError::InvalidParam(format!(
+                        "dao-eval-lua-rl-argv-3-parse-failed::{}",
+                        e
+                    ))
+                })?;
+            let ttl_seconds: u64 = args
+                .get(3)
+                .ok_or_else(|| {
+                    BulwarkError::InvalidParam("dao-eval-lua-rl-missing-argv-4-ttl".to_string())
+                })?
+                .parse()
+                .map_err(|e| {
+                    BulwarkError::InvalidParam(format!(
+                        "dao-eval-lua-rl-argv-4-parse-failed::{}",
+                        e
+                    ))
+                })?;
+
+            // 原子 read-filter-check-write（单次 lock 作用域内）
+            let mut store = self.store.lock();
+            let now = Instant::now();
+            // 读取并过滤过期时间戳，收集到 Vec
+            let mut timestamps: Vec<u64> = match store.get(key) {
+                Some((raw, Some(deadline))) if *deadline > now => raw
+                    .split(',')
+                    .filter(|s| !s.is_empty())
+                    .filter_map(|s| s.parse::<u64>().ok())
+                    .filter(|&t| t > window_start_ms)
+                    .collect(),
+                Some((raw, None)) => raw
+                    .split(',')
+                    .filter(|s| !s.is_empty())
+                    .filter_map(|s| s.parse::<u64>().ok())
+                    .filter(|&t| t > window_start_ms)
+                    .collect(),
+                // 已过期或不存在：空列表
+                _ => Vec::new(),
+            };
+
+            // 阈值检查
+            if timestamps.len() >= threshold {
+                return Ok(vec!["0".to_string()]);
+            }
+
+            // 追加当前时间戳并回写
+            timestamps.push(now_ms);
+            let new_raw = timestamps
+                .iter()
+                .map(|t| t.to_string())
+                .collect::<Vec<_>>()
+                .join(",");
+            let expire_at = if ttl_seconds == 0 {
+                None
+            } else {
+                Some(now + Duration::from_secs(ttl_seconds))
+            };
+            store.insert(key.to_string(), (new_raw, expire_at));
+            return Ok(vec!["1".to_string()]);
+        }
+
         Err(BulwarkError::NotImplemented(format!(
             "dao-eval-lua-unsupported-script::{}",
             script
