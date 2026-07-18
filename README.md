@@ -346,7 +346,6 @@ async fn main() -> BulwarkResult<()> {
 | `metrics-prometheus` | ❌ | Prometheus 指标 |
 | `observability-otlp` | ❌ | OpenTelemetry OTLP 分布式追踪（0.3.0 新增） |
 | `grpc` | ❌ | gRPC 鉴权拦截器（tonic::Interceptor，0.3.0 新增） |
-| `i18n` | ❌ | 异常消息国际化（fluent-rs，0.3.0 新增） |
 | `annotation-macros` | ❌ | `#[check_login]`/`#[check_permission]`/`#[check_role]` 过程宏（0.4.2 新增） |
 | `tenant-isolation` | ❌ | 多租户逻辑隔离（0.5.0 新增） |
 | `social-wechat` | ❌ | 微信扫码社交登录（0.5.0 新增） |

@@ -89,6 +89,31 @@
 - 修复 commit 范围：`811ee10`..`171b7bd`（25 个 commit）
 - 修复日期：2026-07-18
 
+### i18n 迁移补全（specmark `i18n-hardcoded-to-icu`）
+
+**触发**：FIN1 全量复测后发现 250+ 处遗漏硬编码中文未迁移，用户要求"全部都实现国际化能力"。
+
+**补修内容**（4 个 commit）：
+
+- `4ae8b31` i18n(ftl-mock)：补全 `dao-key-not-found` FTL key（11 处代码引用但 FTL 缺失）+ `src/stp/mock.rs` 2 处中文迁移 + `src/protocol/{sign,apikey}/mock.rs` 2 处 dao-key-not-found 添加 `::` 后缀
+- `c3935a7` i18n(stp-session-parameter)：`src/stp/session.rs` 17 处硬编码中文迁移到 stp-* FTL key + `src/stp/parameter.rs` 2 处 + `src/stp/session.rs` 4 处 stp-dao-find-by-id → dao-key-not-found 统一 + 1 处 unknown token_style → stp-unknown-token-style + `src/stp/{tests,token}.rs` 5 处 SimpleTokenStyle feature 门 + 2 处断言失效修复
+- `93a9c23` fix(session)：`renew_resets_ttl` flaky test 修复（TTL 3→5, margin 1→3，sleep 总时间不变）
+- `1bc963f` fix(i18n)：kueiku review 修复 — `src/stp/token.rs` 4 处 stp-token-invalid-or-* 缺 `::` 后缀 + `src/stp/safe.rs` 2 处 stp-token-not-found 缺 token 参数 + `src/protocol/temp/tests.rs` 1 处 dao-key-not-found 参数化
+
+**3 维度审查结果**：
+
+- tiangang SAST：0 CRITICAL + 0 HIGH = ✅ 通过
+- diting 架构：HIGH-1（15 处 stp- key 缺 `::` 后缀）+ 4 MEDIUM，全部修复后通过
+- diting 性能：HIGH-1（Box::leak 内存泄漏，已有问题，不阻断）+ 3 MEDIUM（可接受）
+- kueiku bug 分析：3 个 i18n bug（1 MEDIUM + 2 LOW）已全部修复
+
+**最终验证**：
+
+- `cargo test --features "db-sqlite,protocol-jwt,secure-simple-token"`：1395 passed, 0 failed
+- `cargo clippy --features "db-sqlite,protocol-jwt,secure-simple-token" -- -D warnings`：0 warnings
+- zh/en FTL key 各 591，成对一致（迁移前 524，本次新增 67）
+- 4 个 commit 全部 pre-commit hook 通过（fmt + clippy×2 + cargo-deny + codespell + markdownlint）
+
 ## [0.7.0] - 2026-07-13
 
 ### 概述
