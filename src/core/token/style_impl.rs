@@ -110,9 +110,10 @@ impl Token for SimpleTokenStyle {
         }
         let uuid = Uuid::new_v4();
         let uuid_str = uuid.to_string();
-        // 格式：<login_id>-<uuid>.<hmac_sha256_base64(secret, login_id|uuid)>
+        // 格式：<login_id>\x1f<uuid>.<hmac_sha256_base64(secret, login_id|uuid)>
+        //（\x1f = ASCII Unit Separator，替代 `-` 避免 login_id 含 `-` 时分割歧义，见 H2）
         let hmac = self.compute_hmac(login_id, &uuid_str)?;
-        Ok(format!("{}-{}.{}", login_id, uuid_str, hmac))
+        Ok(format!("{}\x1f{}.{}", login_id, uuid_str, hmac))
     }
 
     fn verify(&self, token: &str) -> BulwarkResult<Option<String>> {
@@ -122,13 +123,13 @@ impl Token for SimpleTokenStyle {
         if self.secret.is_empty() {
             return Ok(None);
         }
-        // 格式：<login_id>-<uuid>.<hmac>
-        // 先按 '.' 分割出 HMAC 部分，再按 '-' 分割出 login_id 和 uuid
+        // 格式：<login_id>\x1f<uuid>.<hmac>（\x1f = ASCII Unit Separator，见 H2）
+        // 先按 '.' 分割出 HMAC 部分，再按 \x1f 分割出 login_id 和 uuid
         let (body, hmac_part) = match token.rsplit_once('.') {
             Some((b, h)) => (b, h),
             None => return Ok(None), // 旧格式无 HMAC → 视为无效
         };
-        let (login_id, uuid_part) = match body.split_once('-') {
+        let (login_id, uuid_part) = match body.split_once('\x1f') {
             Some((l, u)) => (l, u),
             None => return Ok(None),
         };
@@ -157,12 +158,12 @@ impl Token for SimpleTokenStyle {
                 "SimpleTokenStyle secret 不能为空（A11 fail-closed）".to_string(),
             ));
         }
-        // 格式：<login_id>-<uuid>.<hmac>
+        // 格式：<login_id>\x1f<uuid>.<hmac>（\x1f = ASCII Unit Separator，见 H2）
         let (body, hmac_part) = token.rsplit_once('.').ok_or_else(|| {
             BulwarkError::Internal("Simple token 格式错误：缺少 '.' HMAC 分隔符".to_string())
         })?;
-        let (id_str, uuid_part) = body.split_once('-').ok_or_else(|| {
-            BulwarkError::Internal("Simple token 格式错误：缺少 '-' 分隔符".to_string())
+        let (id_str, uuid_part) = body.split_once('\x1f').ok_or_else(|| {
+            BulwarkError::Internal("Simple token 格式错误：缺少分隔符".to_string())
         })?;
         // 校验 UUID 部分
         if Uuid::parse_str(uuid_part).is_err() {

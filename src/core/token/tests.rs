@@ -117,15 +117,15 @@ fn make_simple_style() -> SimpleTokenStyle {
     SimpleTokenStyle::new(TEST_SECRET.to_string())
 }
 
-/// SimpleTokenStyle 生成 `<login_id>-<uuid>.<hmac>` 格式。
+/// SimpleTokenStyle 生成 `<login_id>\x1f<uuid>.<hmac>` 格式。
 #[cfg(feature = "secure-simple-token")]
 #[test]
 fn simple_style_generates_login_id_prefix() {
     let style = make_simple_style();
     let token = style.generate("1001", 3600).unwrap();
     assert!(
-        token.starts_with("1001-"),
-        "token 应以 login_id 开头，实际: {}",
+        token.starts_with("1001\x1f"),
+        "token 应以 login_id + \\x1f 开头，实际: {}",
         token
     );
     // A11: token 应含 '.' 分隔 HMAC 部分
@@ -134,8 +134,8 @@ fn simple_style_generates_login_id_prefix() {
         "token 应含 '.' 分隔 HMAC，实际: {}",
         token
     );
-    // 验证 UUID 部分（'-' 之后、'.' 之前）为合法 UUID
-    let after_login = &token["1001-".len()..];
+    // 验证 UUID 部分（\x1f 之后、'.' 之前）为合法 UUID
+    let after_login = &token["1001\x1f".len()..];
     let uuid_part = after_login.split('.').next().expect("应有 '.' 分隔");
     assert!(
         uuid::Uuid::parse_str(uuid_part).is_ok(),
@@ -190,7 +190,7 @@ fn simple_style_parse_no_separator_errors() {
 fn simple_style_verify_rejects_invalid_uuid_suffix() {
     let style = make_simple_style();
     // 伪造 token：UUID 部分不是合法 UUID 格式 + 伪造 HMAC
-    let forged = "admin-not-a-valid-uuid.fakeHmac";
+    let forged = "admin\x1fnot-a-valid-uuid.fakeHmac";
     let result = style.verify(forged).unwrap();
     assert_eq!(result, None, "UUID 部分无效的伪造 token 应返回 None");
 }
@@ -210,7 +210,7 @@ fn simple_style_verify_rejects_arbitrary_string_suffix() {
 #[test]
 fn simple_style_parse_rejects_invalid_uuid_suffix() {
     let style = make_simple_style();
-    let forged = "admin-fake-uuid-string.fakeHmac";
+    let forged = "admin\x1ffake-uuid-string.fakeHmac";
     let result = style.parse(forged);
     assert!(result.is_err(), "UUID 部分无效的 token parse 应返回 Err");
 }
@@ -235,14 +235,14 @@ fn a11_simple_style_verify_rejects_legacy_token_without_hmac() {
 /// A11 核心测试：verify 拒绝 HMAC 不匹配的伪造 token。
 ///
 /// 攻击场景：攻击者知道 token 格式但不知道 secret，
-/// 构造 `<login_id>-<valid_uuid>.<fake_hmac>` 试图冒充。
+/// 构造 `<login_id>\x1f<valid_uuid>.<fake_hmac>` 试图冒充。
 /// HMAC 校验失败应返回 None。
 #[cfg(feature = "secure-simple-token")]
 #[test]
 fn a11_simple_style_verify_rejects_forged_hmac() {
     let style = make_simple_style();
     // 用合法 UUID + 伪造 HMAC
-    let forged = "admin-550e8400-e29b-41d4-a716-446655440000.fake-hmac-value";
+    let forged = "admin\x1f550e8400-e29b-41d4-a716-446655440000.fake-hmac-value";
     let result = style.verify(forged).unwrap();
     assert_eq!(result, None, "A11: HMAC 不匹配的伪造 token 应被拒绝");
 }
@@ -290,8 +290,8 @@ fn a11_simple_style_empty_secret_verify_returns_none() {
 
 /// A11 核心测试：generate + verify + parse 往返一致性。
 ///
-/// 注意：login_id 不能含 `-`，因为 SimpleTokenStyle 的 token 格式为
-/// `<login_id>-<uuid>.<hmac>`，verify 在首个 `-` 处分割 login_id 与 uuid 部分。
+/// H2 修复后 token 格式为 `<login_id>\x1f<uuid>.<hmac>`，login_id 可含任意字符
+/// （除 `\x1f` 和 `.`，但二者在正常 login_id 中不会出现）。
 #[cfg(feature = "secure-simple-token")]
 #[test]
 fn a11_simple_style_roundtrip() {
@@ -314,13 +314,91 @@ fn a11_simple_style_roundtrip() {
 #[test]
 fn a11_simple_style_parse_rejects_forged_hmac() {
     let style = make_simple_style();
-    let forged = "admin-550e8400-e29b-41d4-a716-446655440000.fake-hmac";
+    let forged = "admin\x1f550e8400-e29b-41d4-a716-446655440000.fake-hmac";
     let result = style.parse(forged);
     assert!(
         matches!(result, Err(BulwarkError::InvalidToken(_))),
         "A11: HMAC 不匹配的 token parse 应返回 InvalidToken，实际: {:?}",
         result
     );
+}
+
+// ========================================================================
+// H2 修复测试：SimpleTokenStyle 支持含 `-` 的 login_id
+//（原格式用 `-` 分割 login_id 与 uuid，login_id 含 `-` 时 verify 返回 None）
+// ========================================================================
+
+/// H2: login_id 含 `-`（email 形式）时 generate + verify + parse 往返一致。
+///
+/// 复现：login_id = "user-1@example.com"，原实现 verify 用 `split_once('-')`
+/// 会得到 login_id="user"、uuid_part="1@example.com-<uuid>"，UUID 解析失败 → 返回 None。
+/// 修复后用 `\x1f` Unit Separator 分割，login_id 可含任意 `-`。
+#[cfg(feature = "secure-simple-token")]
+#[test]
+fn h2_simple_style_supports_dashed_login_id_email() {
+    let style = make_simple_style();
+    let login_id = "user-1@example.com";
+    let token = style.generate(login_id, 3600).unwrap();
+    // token 应以 "user-1@example.com\x1f" 开头（login_id 完整保留）
+    assert!(
+        token.starts_with(&format!("{}\x1f", login_id)),
+        "token 应以 login_id + \\x1f 开头，实际: {}",
+        token
+    );
+    // verify 返回完整 login_id
+    assert_eq!(
+        style.verify(&token).unwrap(),
+        Some(login_id.to_string()),
+        "verify 应返回完整 login_id（含 `-`），实际 token: {}",
+        token
+    );
+    // parse 返回完整 login_id
+    let claims = style.parse(&token).unwrap();
+    assert_eq!(
+        claims.login_id, login_id,
+        "parse 应返回完整 login_id（含 `-`）"
+    );
+}
+
+/// H2: login_id 为 UUID 格式（含 4 个 `-`）时 generate + verify + parse 往返一致。
+///
+/// 复现：login_id = "550e8400-e29b-41d4-a716-446655440000"（UUID 形式），
+/// 原实现 verify 用 `split_once('-')` 会得到 login_id="550e8400"、
+/// uuid_part="e29b-41d4-a716-446655440000-<uuid>"，UUID 解析失败 → 返回 None。
+#[cfg(feature = "secure-simple-token")]
+#[test]
+fn h2_simple_style_supports_uuid_login_id() {
+    let style = make_simple_style();
+    let login_id = "550e8400-e29b-41d4-a716-446655440000";
+    let token = style.generate(login_id, 3600).unwrap();
+    assert_eq!(
+        style.verify(&token).unwrap(),
+        Some(login_id.to_string()),
+        "verify 应返回完整 UUID 形式 login_id，实际 token: {}",
+        token
+    );
+    let claims = style.parse(&token).unwrap();
+    assert_eq!(
+        claims.login_id, login_id,
+        "parse 应返回完整 UUID 形式 login_id"
+    );
+}
+
+/// H2: login_id 含多个连续 `-`（kebab-case）时往返一致。
+#[cfg(feature = "secure-simple-token")]
+#[test]
+fn h2_simple_style_supports_kebab_case_login_id() {
+    let style = make_simple_style();
+    let login_id = "service-account-admin";
+    let token = style.generate(login_id, 3600).unwrap();
+    assert_eq!(
+        style.verify(&token).unwrap(),
+        Some(login_id.to_string()),
+        "verify 应返回完整 kebab-case login_id，实际 token: {}",
+        token
+    );
+    let claims = style.parse(&token).unwrap();
+    assert_eq!(claims.login_id, login_id);
 }
 
 /// A11 核心测试：未启用 secure-simple-token feature 时 generate 返回 Err。
@@ -361,7 +439,7 @@ fn factory_creates_random64_style() {
 fn factory_creates_simple_style() {
     let token = TokenStyleFactory::new("simple", "factory-secret").unwrap();
     let t = token.generate("42", 60).unwrap();
-    assert!(t.starts_with("42-"), "token 应以 login_id 开头");
+    assert!(t.starts_with("42\x1f"), "token 应以 login_id + \\x1f 开头");
     assert!(t.contains('.'), "token 应含 '.' 分隔 HMAC");
 }
 
