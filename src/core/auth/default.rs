@@ -210,6 +210,26 @@ impl AuthLogic for AuthLogicDefault {
         // 保存更新后的 session 到 DAO（保留原 TTL）
         self.session.save_token_session(token, &ts).await?;
 
+        // H1 修复：在添加 token 到 target Account-Session 之前，先从 original
+        // Account-Session 中移除该 token，避免数据不一致：
+        // 1. `list_devices(original)` 否则会误返回已切换的 token
+        // 2. `logout_by_login_id(original)` 否则会误杀已切到 target 的 token（越权踢出）
+        // 3. `enforce_max_login_count(original)` 否则会误算已切换的 token
+        //
+        // 顺序选择：先 remove original，再 ensure target。
+        // - 若 remove original 失败：返回 Err，token 仍在 original。ts.login_id 已改为
+        //   target（save_token_session 已执行），但 is_valid 会失败（target 未含 token）。
+        //   用户需重新登录或重试 switch_to。权衡：相比"双指"残留（先 ensure target 再
+        //   remove original 失败导致 token 同时在两边），孤立状态更易被发现且不会越权踢出。
+        // - 若 ensure target 失败：token 已从 original 移除但未加到 target，is_valid 失败。
+        //   用户需重新登录。trade-off：可观测的失败优于静默的双指状态。
+        //
+        // remove_token_from_account_session 内部用 `with_login_lock(original)` 串行化
+        // Account-Session read-modify-write，避免与 original 的 login/logout 竞态。
+        self.session
+            .remove_token_from_account_session(&original_login_id, token)
+            .await?;
+
         // 确保 token 存在于目标 login_id 的 Account-Session 中
         //（否则 is_valid 检查会因 Account-Session 不存在而返回 false）
         self.session

@@ -284,6 +284,101 @@ async fn switch_to_preserves_existing_attrs() {
     assert_eq!(switched_from, Some("1001".to_string()));
 }
 
+// ========================================================================
+// H1 修复测试：switch_to 必须从 original Account-Session 中移除 token
+//（数据一致性：避免 list_devices(original) 误返回已切换 token，
+// 避免 logout_by_login_id(original) 误杀已切到 target 的 token，
+// 避免 enforce_max_login_count(original) 误算已切换 token）
+// ========================================================================
+
+/// H1: switch_to 后，original login_id 的 AccountSession.tokens 不应再包含该 token。
+///
+/// 复现：login("1001") 创建 token；login("2002") 预创建 target Account-Session；
+/// switch_to(token, "2002") 后，原 1001 的 AccountSession.tokens 应不再含 token。
+#[tokio::test]
+async fn switch_to_removes_token_from_original_account_session() {
+    let auth = make_auth_logic_allow_switch(3600, 86400);
+    let token = auth.login("1001", None).await.unwrap();
+    let _ = auth.login("2002", None).await.unwrap();
+
+    // 切换前：original AccountSession 应包含 token
+    let original_before = auth
+        .session
+        .get_account_session("1001")
+        .await
+        .unwrap()
+        .expect("切换前 original AccountSession 应存在");
+    assert!(
+        original_before.tokens.iter().any(|ti| ti.token == token),
+        "切换前 original AccountSession 应包含该 token"
+    );
+
+    // 执行 switch_to
+    auth.switch_to(&token, "2002").await.unwrap();
+
+    // 切换后：original AccountSession 不应再包含 token
+    let original_after = auth
+        .session
+        .get_account_session("1001")
+        .await
+        .unwrap()
+        .expect("切换后 original AccountSession 应仍存在");
+    assert!(
+        !original_after.tokens.iter().any(|ti| ti.token == token),
+        "切换后 original AccountSession 不应再包含该 token（H1 数据一致性），实际 tokens: {:?}",
+        original_after.tokens
+    );
+
+    // 同时：target AccountSession 应包含 token
+    let target_after = auth
+        .session
+        .get_account_session("2002")
+        .await
+        .unwrap()
+        .expect("切换后 target AccountSession 应存在");
+    assert!(
+        target_after.tokens.iter().any(|ti| ti.token == token),
+        "切换后 target AccountSession 应包含该 token，实际 tokens: {:?}",
+        target_after.tokens
+    );
+}
+
+/// H1: switch_to 后，内存 login_token_map 也应从 original 移除该 token。
+///
+/// `list_devices(original)` 通过 `get_tokens_by_login_id` 读内存索引，
+/// 若内存索引未同步移除，会导致 list_devices 误返回已切换的 token。
+#[tokio::test]
+async fn switch_to_removes_token_from_original_login_token_map() {
+    let auth = make_auth_logic_allow_switch(3600, 86400);
+    let token = auth.login("1001", None).await.unwrap();
+    let _ = auth.login("2002", None).await.unwrap();
+
+    // 切换前：original 内存索引应包含 token
+    let tokens_before: Vec<String> = auth.session.get_tokens_by_login_id("1001");
+    assert!(
+        tokens_before.iter().any(|t| t == &token),
+        "切换前 original 内存索引应包含该 token"
+    );
+
+    auth.switch_to(&token, "2002").await.unwrap();
+
+    // 切换后：original 内存索引不应再包含 token
+    let tokens_after: Vec<String> = auth.session.get_tokens_by_login_id("1001");
+    assert!(
+        !tokens_after.iter().any(|t| t == &token),
+        "切换后 original 内存索引不应再包含该 token（H1 内存索引一致性），实际: {:?}",
+        tokens_after
+    );
+
+    // target 内存索引应包含 token
+    let target_tokens: Vec<String> = auth.session.get_tokens_by_login_id("2002");
+    assert!(
+        target_tokens.iter().any(|t| t == &token),
+        "切换后 target 内存索引应包含该 token，实际: {:?}",
+        target_tokens
+    );
+}
+
 /// R-001: switch_to 默认实现返回 NotImplemented。
 #[tokio::test]
 async fn switch_to_default_impl_returns_not_implemented() {

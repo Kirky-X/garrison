@@ -821,7 +821,67 @@ impl BulwarkSession {
         self.dao
             .set(&account_key(login_id), &json, self.active_timeout)
             .await?;
+
+        // H1 修复：同步内存 login_token_map（与 create_inner 行为一致）。
+        // 否则 `list_devices(target)` 通过 `get_tokens_by_login_id` 读内存索引会漏掉该 token，
+        // 与 `ensure_token_in_account_session` 的语义不一致。
+        self.add_login_token(login_id, token);
+
         Ok(())
+    }
+
+    /// 从指定 login_id 的 Account-Session 中移除 token（H1 修复）。
+    ///
+    /// 供 `AuthLogicDefault::switch_to` 使用：切换身份后需将 token 从
+    /// 原 login_id 的 Account-Session 中移除，否则会导致：
+    /// 1. `list_devices(original)` 仍返回该 token（数据不一致）
+    /// 2. `logout_by_login_id(original)` 会误杀已切到 target 的 token（越权踢出）
+    /// 3. `enforce_max_login_count(original)` 会误算已切换的 token
+    ///
+    /// 与 [`ensure_token_in_account_session`] 对称：一个加、一个减。
+    /// 双层写入：先写 DAO `AccountSession.tokens`（用 `dao.update` 保留原 TTL），
+    /// 再写内存 `login_token_map`。DAO 失败时内存不写（返回 Err），保证双层一致性。
+    ///
+    /// 通过 `with_login_lock` 串行化对 original Account-Session 的 read-modify-write，
+    /// 避免与 original 的其它写操作（如 login/logout）竞态。
+    ///
+    /// # 错误
+    /// - 目标 `login_id` 的 Account-Session 不存在时返回
+    ///   `BulwarkError::InvalidParam`（与 `ensure_token_in_account_session` 对称）。
+    /// - 序列化失败：`BulwarkError::Session`。
+    /// - DAO update 失败：透传 `BulwarkError`。
+    pub async fn remove_token_from_account_session(
+        &self,
+        login_id: &str,
+        token: &str,
+    ) -> BulwarkResult<()> {
+        let login_id: String = login_id.to_string();
+        self.with_login_lock(&login_id, async {
+            // 1. 读取现有 AccountSession（必须已存在，与 ensure_token_in_account_session 对称）
+            let mut account = match self.get_account_session(&login_id).await? {
+                Some(acc) => acc,
+                None => {
+                    return Err(BulwarkError::InvalidParam(format!(
+                        "Account-Session does not exist for login_id: {}",
+                        login_id
+                    )));
+                },
+            };
+
+            // 2. 移除 token（若不存在则幂等无操作）
+            account.tokens.retain(|ti| ti.token != token);
+
+            // 3. 写回 DAO（用 update 保留原 TTL，不重置过期时间）
+            let json = serde_json::to_string(&account)
+                .map_err(|e| BulwarkError::Session(format!("序列化 AccountSession 失败: {}", e)))?;
+            self.dao.update(&account_key(&login_id), &json).await?;
+
+            // 4. DAO 成功后同步内存 login_token_map（与 logout_inner 行为一致）
+            self.remove_login_token(&login_id, token);
+
+            Ok(())
+        })
+        .await
     }
 
     /// 查询 token 的剩余 TTL。
