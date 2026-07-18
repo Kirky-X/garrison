@@ -487,20 +487,21 @@ mod tests {
     /// spec scenario "主动续期重置过期时间"。
     #[tokio::test]
     async fn renew_resets_ttl() {
-        // token TTL=3 秒，留足 margin 避免 sleep 精度问题
-        let (_dao, session) = make_session(3, 86400);
+        // token TTL=5 秒，sleep 总计 3 秒，留 2 秒 margin 避免高负载下 sleep
+        // 精度问题（参考 567e123：原 TTL=3 margin=1 在 CI 高负载时 flaky）
+        let (_dao, session) = make_session(5, 86400);
         session.create("1001", "T1").await.unwrap();
 
-        // 在过期前 renew（已过 1 秒，剩余 2 秒）
+        // 在过期前 renew（已过 1 秒，剩余 4 秒）
         tokio::time::sleep(Duration::from_secs(1)).await;
         session.renew("T1").await.unwrap();
 
-        // renew 重置 TTL 为 3 秒；再 sleep 2 秒，距过期还有 1 秒 margin
+        // renew 重置 TTL 为 5 秒；再 sleep 2 秒，距过期还有 3 秒 margin
         tokio::time::sleep(Duration::from_secs(2)).await;
         let valid = session.is_valid("T1").await.unwrap();
         assert!(
             valid,
-            "renew 后 token 应仍有效（TTL 已重置，还有 1 秒 margin）"
+            "renew 后 token 应仍有效（TTL 已重置，还有 3 秒 margin）"
         );
     }
 
