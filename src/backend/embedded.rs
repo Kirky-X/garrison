@@ -129,7 +129,9 @@ impl AuthBackend for BackendEmbedded {
             .session
             .get_token_session(token)
             .await?
-            .ok_or_else(|| BulwarkError::InvalidToken("token 无效或已过期".to_string()))?;
+            .ok_or_else(|| {
+                BulwarkError::InvalidToken("backend-token-invalid-or-expired".to_string())
+            })?;
         Ok(TokenInfo {
             token: ts.token,
             created_at: ts.created_at,
@@ -143,7 +145,9 @@ impl AuthBackend for BackendEmbedded {
             .session
             .get_token_session(token)
             .await?
-            .ok_or_else(|| BulwarkError::InvalidToken("token 无效或已过期".to_string()))
+            .ok_or_else(|| {
+                BulwarkError::InvalidToken("backend-token-invalid-or-expired".to_string())
+            })
     }
 
     async fn kickout(&self, login_id: &str) -> BulwarkResult<()> {
@@ -154,7 +158,7 @@ impl AuthBackend for BackendEmbedded {
     async fn switch_to(&self, token: &str, target_login_id: &str) -> BulwarkResult<()> {
         let logic = BulwarkManager::logic()?;
         let auth_logic = logic.auth_logic.as_ref().ok_or_else(|| {
-            BulwarkError::NotImplemented("auth_logic 未注入，switch_to 不可用".to_string())
+            BulwarkError::NotImplemented("backend-auth-logic-not-injected".to_string())
         })?;
         auth_logic.switch_to(token, target_login_id).await
     }

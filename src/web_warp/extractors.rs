@@ -73,7 +73,7 @@ pub fn check_login(
                 let result: BulwarkResult<()> = with_current_token(token, async {
                     let logged_in = crate::stp::BulwarkUtil::check_login().await?;
                     if !logged_in {
-                        return Err(BulwarkError::NotLogin("未登录".to_string()));
+                        return Err(BulwarkError::NotLogin("web-not-login".to_string()));
                     }
                     Ok(())
                 })

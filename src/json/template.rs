@@ -18,7 +18,7 @@ impl BulwarkJsonTemplate {
     /// - `Err(BulwarkError::Internal)`: JSON 解析失败，消息含解析错误信息。
     pub fn new(template: &str) -> BulwarkResult<Self> {
         let value: serde_json::Value = serde_json::from_str(template)
-            .map_err(|e| BulwarkError::Internal(format!("JSON 模板解析失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Internal(format!("json-template-parse::{}", e)))?;
         Ok(Self { value })
     }
 
@@ -33,7 +33,7 @@ impl BulwarkJsonTemplate {
     pub fn render(&self, params: &HashMap<String, String>) -> BulwarkResult<String> {
         let rendered = render_value(self.value.clone(), params);
         serde_json::to_string(&rendered)
-            .map_err(|e| BulwarkError::Internal(format!("JSON 序列化失败: {}", e)))
+            .map_err(|e| BulwarkError::Internal(format!("json-serialize::{}", e)))
     }
 
     /// 获取内部 `Value` 的引用（便于直接访问）。

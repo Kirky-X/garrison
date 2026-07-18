@@ -51,11 +51,8 @@ fn logic_returns_error_when_not_initialized() {
     let result = BulwarkManager::logic();
     assert!(result.is_err());
     match result {
-        Err(BulwarkError::Session(ref msg)) if msg.contains("未初始化") => {},
-        other => panic!(
-            "应返回 'BulwarkManager 未初始化'，实际: {:?}",
-            other.map(|_| ())
-        ),
+        Err(BulwarkError::Session(ref msg)) if msg.contains("manager-not-init") => {},
+        other => panic!("应返回 manager-not-init，实际: {:?}", other.map(|_| ())),
     }
 }
 
@@ -246,7 +243,7 @@ async fn util_login_fails_when_not_initialized() {
     assert!(result.is_err());
     assert!(matches!(
         result.unwrap_err(),
-        BulwarkError::Session(ref msg) if msg.contains("未初始化")
+        BulwarkError::Session(ref msg) if msg.contains("manager-not-init")
     ));
 }
 
@@ -471,11 +468,8 @@ async fn strategy_returns_error_when_not_initialized() {
     BulwarkManager::reset_for_test();
     let result = BulwarkManager::strategy();
     match result {
-        Err(BulwarkError::Session(ref msg)) if msg.contains("未初始化") => {},
-        other => panic!(
-            "应返回 'BulwarkManager 未初始化'，实际: {:?}",
-            other.map(|_| ())
-        ),
+        Err(BulwarkError::Session(ref msg)) if msg.contains("manager-not-init") => {},
+        other => panic!("应返回 manager-not-init，实际: {:?}", other.map(|_| ())),
     }
 }
 

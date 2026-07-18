@@ -54,12 +54,12 @@ impl actix_web::FromRequest for BulwarkPrincipal {
 
         Box::pin(async move {
             let token = extract_token_from_headers(&headers, &config)?
-                .ok_or_else(|| crate::error::BulwarkError::NotLogin("未提供 token".to_string()))?;
+                .ok_or_else(|| crate::error::BulwarkError::NotLogin("web-not-login".to_string()))?;
 
             let login_id = crate::stp::BulwarkUtil::get_login_id_by_token(&token)
                 .await?
                 .ok_or_else(|| {
-                    crate::error::BulwarkError::NotLogin("token 无效或会话不存在".to_string())
+                    crate::error::BulwarkError::NotLogin("web-token-invalid".to_string())
                 })?;
 
             Ok(BulwarkPrincipal { login_id })
@@ -96,13 +96,15 @@ impl actix_web::FromRequest for super::CheckLogin {
 
         Box::pin(async move {
             let token = extract_token_from_headers(&headers, &config)?
-                .ok_or_else(|| crate::error::BulwarkError::NotLogin("未提供 token".to_string()))?;
+                .ok_or_else(|| crate::error::BulwarkError::NotLogin("web-not-login".to_string()))?;
 
             let result: crate::error::BulwarkResult<()> =
                 crate::stp::with_current_token(token, async {
                     let logged_in = crate::stp::BulwarkUtil::check_login().await?;
                     if !logged_in {
-                        return Err(crate::error::BulwarkError::NotLogin("未登录".to_string()));
+                        return Err(crate::error::BulwarkError::NotLogin(
+                            "web-not-login".to_string(),
+                        ));
                     }
                     Ok(())
                 })
@@ -147,7 +149,7 @@ impl actix_web::FromRequest for super::CheckRole {
 
         Box::pin(async move {
             let token = extract_token_from_headers(&headers, &config)?
-                .ok_or_else(|| crate::error::BulwarkError::NotLogin("未提供 token".to_string()))?;
+                .ok_or_else(|| crate::error::BulwarkError::NotLogin("web-not-login".to_string()))?;
 
             let result: crate::error::BulwarkResult<()> =
                 crate::stp::with_current_token(token, async {
@@ -194,7 +196,7 @@ impl actix_web::FromRequest for super::CheckPermission {
 
         Box::pin(async move {
             let token = extract_token_from_headers(&headers, &config)?
-                .ok_or_else(|| crate::error::BulwarkError::NotLogin("未提供 token".to_string()))?;
+                .ok_or_else(|| crate::error::BulwarkError::NotLogin("web-not-login".to_string()))?;
 
             let result: crate::error::BulwarkResult<()> =
                 crate::stp::with_current_token(token, async {
@@ -227,7 +229,7 @@ impl actix_web::FromRequest for crate::context::tenant::TenantContext {
                 })?;
 
             let tenant_id: i64 = raw.parse().map_err(|_| {
-                crate::error::BulwarkError::Config(format!("X-Tenant-Id 不是合法的 i64: {}", raw))
+                crate::error::BulwarkError::Config(format!("ctx-tenant-id-invalid::{}", raw))
             })?;
 
             Ok(crate::context::tenant::TenantContext {

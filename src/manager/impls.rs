@@ -86,8 +86,9 @@ impl BulwarkManager {
         config.validate()?;
 
         // 2. 构造 session（处理 active_timeout = -1 的兜底语义）
-        let timeout = u64::try_from(config.timeout)
-            .map_err(|_| BulwarkError::Config(format!("timeout 溢出 u64: {}", config.timeout)))?;
+        let timeout = u64::try_from(config.timeout).map_err(|_| {
+            BulwarkError::Config(format!("manager-timeout-overflow::{}", config.timeout))
+        })?;
         let active_timeout = if config.active_timeout < 0 {
             // -1 表示不启用 activity 超时，使用 timeout 兜底（保留 既有语义）
             timeout
@@ -270,7 +271,7 @@ impl BulwarkManager {
             .logic
             .read()
             .clone()
-            .ok_or_else(|| BulwarkError::Session("BulwarkManager 未初始化".to_string()))
+            .ok_or_else(|| BulwarkError::Session("manager-not-init".to_string()))
     }
 
     /// 获取全局 `Strategy` 注册表引用。
@@ -288,7 +289,7 @@ impl BulwarkManager {
             .strategy
             .read()
             .clone()
-            .ok_or_else(|| BulwarkError::Session("BulwarkManager 未初始化".to_string()))
+            .ok_or_else(|| BulwarkError::Session("manager-not-init".to_string()))
     }
 
     /// 获取全局 `DisableRepository` 引用（v0.6.5 T020）。

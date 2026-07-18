@@ -149,9 +149,8 @@ impl AlertListener for AuditAlertListener {
             _ => uuid::Uuid::new_v4().to_string(),
         };
         let key = format!("audit:alert:{}", identifier);
-        let json = serde_json::to_string(event).map_err(|e| {
-            BulwarkError::Internal(format!("序列化 SecurityAlertEvent 为 JSON 失败: {}", e))
-        })?;
+        let json = serde_json::to_string(event)
+            .map_err(|e| BulwarkError::Internal(format!("strategy-alert-serialize::{}", e)))?;
         self.dao.set(&key, &json, self.ttl_seconds).await
     }
 }

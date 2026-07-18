@@ -28,8 +28,8 @@ fn new_rejects_invalid_json() {
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert!(
-        matches!(err, BulwarkError::Internal(ref msg) if msg.contains("JSON 模板解析失败")),
-        "应返回 Internal 错误含 'JSON 模板解析失败'，实际: {:?}",
+        matches!(err, BulwarkError::Internal(ref msg) if msg.contains("json-template-parse")),
+        "应返回 Internal 错误含 json-template-parse，实际: {:?}",
         err
     );
 }

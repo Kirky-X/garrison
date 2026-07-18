@@ -743,10 +743,10 @@ impl AuditLogListener {
             .pool
             .get_session("admin")
             .await
-            .map_err(|e| BulwarkError::Dao(format!("get_session 失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Dao(format!("listener-get-session::{}", e)))?;
         let conn = session
             .connection()
-            .map_err(|e| BulwarkError::Dao(format!("connection 失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Dao(format!("listener-connection::{}", e)))?;
 
         let stmt = Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -765,7 +765,7 @@ impl AuditLogListener {
         );
         conn.execute_raw(stmt)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("INSERT audit_logs 失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Dao(format!("listener-audit-insert::{}", e)))?;
         Ok(())
     }
 
@@ -785,10 +785,10 @@ impl AuditLogListener {
             .pool
             .get_session("admin")
             .await
-            .map_err(|e| BulwarkError::Dao(format!("get_session 失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Dao(format!("listener-get-session::{}", e)))?;
         let conn = session
             .connection()
-            .map_err(|e| BulwarkError::Dao(format!("connection 失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Dao(format!("listener-connection::{}", e)))?;
 
         // 动态拼 SQL WHERE 子句（参数化防注入）
         let mut sql = String::from(
@@ -817,37 +817,37 @@ impl AuditLogListener {
         let rows = conn
             .query_all_raw(stmt)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("SELECT audit_logs 失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Dao(format!("listener-audit-select::{}", e)))?;
 
         rows.iter()
             .map(|row| {
                 let tenant_id: i64 = row.try_get("", "tenant_id").map_err(|e| {
-                    BulwarkError::Dao(format!("audit_logs 行解析失败 (tenant_id): {}", e))
+                    BulwarkError::Dao(format!("listener-audit-parse-tenant-id::{}", e))
                 })?;
                 let event_type: String = row.try_get("", "event_type").map_err(|e| {
-                    BulwarkError::Dao(format!("audit_logs 行解析失败 (event_type): {}", e))
+                    BulwarkError::Dao(format!("listener-audit-parse-event-type::{}", e))
                 })?;
                 let login_id: Option<String> = row.try_get("", "login_id").map_err(|e| {
-                    BulwarkError::Dao(format!("audit_logs 行解析失败 (login_id): {}", e))
+                    BulwarkError::Dao(format!("listener-audit-parse-login-id::{}", e))
                 })?;
-                let token: Option<String> = row.try_get("", "token").map_err(|e| {
-                    BulwarkError::Dao(format!("audit_logs 行解析失败 (token): {}", e))
-                })?;
+                let token: Option<String> = row
+                    .try_get("", "token")
+                    .map_err(|e| BulwarkError::Dao(format!("listener-audit-parse-token::{}", e)))?;
                 let ip: Option<String> = row
                     .try_get("", "ip")
-                    .map_err(|e| BulwarkError::Dao(format!("audit_logs 行解析失败 (ip): {}", e)))?;
+                    .map_err(|e| BulwarkError::Dao(format!("listener-audit-parse-ip::{}", e)))?;
                 let user_agent: Option<String> = row.try_get("", "user_agent").map_err(|e| {
-                    BulwarkError::Dao(format!("audit_logs 行解析失败 (user_agent): {}", e))
+                    BulwarkError::Dao(format!("listener-audit-parse-user-agent::{}", e))
                 })?;
                 let metadata: Option<String> = row.try_get("", "metadata").map_err(|e| {
-                    BulwarkError::Dao(format!("audit_logs 行解析失败 (metadata): {}", e))
+                    BulwarkError::Dao(format!("listener-audit-parse-metadata::{}", e))
                 })?;
                 // success 存储为 INTEGER（0/1），读为 i64 后转 bool
                 let success_int: i64 = row.try_get("", "success").map_err(|e| {
-                    BulwarkError::Dao(format!("audit_logs 行解析失败 (success): {}", e))
+                    BulwarkError::Dao(format!("listener-audit-parse-success::{}", e))
                 })?;
                 let created_at: i64 = row.try_get("", "created_at").map_err(|e| {
-                    BulwarkError::Dao(format!("audit_logs 行解析失败 (created_at): {}", e))
+                    BulwarkError::Dao(format!("listener-audit-parse-created-at::{}", e))
                 })?;
                 Ok(AuditEntry {
                     tenant_id,
@@ -930,7 +930,7 @@ impl AuditLogListener {
             })
             .collect();
         serde_json::to_string(&arr)
-            .map_err(|e| BulwarkError::Config(format!("JSON 序列化失败: {}", e)))
+            .map_err(|e| BulwarkError::Config(format!("listener-json-serialize::{}", e)))
     }
 
     /// 验证 HMAC-SHA256 签名链（D4 新增）。
@@ -968,9 +968,10 @@ impl AuditLogListener {
     /// - `row_content` = `timestamp,login_id,tenant_id,event_type`
     #[cfg(feature = "audit-log")]
     fn compute_signature_chain(&self, entries: &[AuditEntry]) -> BulwarkResult<Vec<String>> {
-        let key = self.config.signing_key.as_ref().ok_or_else(|| {
-            BulwarkError::Config("signing_key 未配置，无法导出签名链".to_string())
-        })?;
+        let key =
+            self.config.signing_key.as_ref().ok_or_else(|| {
+                BulwarkError::Config("listener-signing-key-not-config".to_string())
+            })?;
         let mut prev_sig = String::new();
         let mut signatures = Vec::with_capacity(entries.len());
         for entry in entries {
@@ -992,7 +993,7 @@ impl AuditLogListener {
     fn hmac_sha256_hex(&self, key: &str, input: &[u8]) -> BulwarkResult<String> {
         type HmacSha256 = Hmac<Sha256>;
         let mut mac = HmacSha256::new_from_slice(key.as_bytes())
-            .map_err(|e| BulwarkError::Config(format!("HMAC key 无效: {}", e)))?;
+            .map_err(|e| BulwarkError::Config(format!("listener-hmac-key-invalid::{}", e)))?;
         mac.update(input);
         let bytes = mac.finalize().into_bytes();
         Ok(bytes.iter().map(|b| format!("{:02x}", b)).collect())
@@ -1015,14 +1016,16 @@ impl BulwarkListener for AuditLogListener {
                     let config = self.config.clone();
                     tokio::spawn(async move {
                         let listener = AuditLogListener::new(pool, config);
-                        if let Err(e) = listener.insert(&entry).await {
-                            tracing::warn!("审计日志异步写入失败: {}", e);
+                        match listener.insert(&entry).await {
+                            Ok(_) => audit_log_written(&entry),
+                            Err(e) => tracing::warn!("审计日志异步写入失败: {}", e),
                         }
                     });
                 } else {
                     // 同步写入：失败时 tracing::warn 不传播错误
-                    if let Err(e) = self.insert(&entry).await {
-                        tracing::warn!("审计日志写入失败: {}", e);
+                    match self.insert(&entry).await {
+                        Ok(_) => audit_log_written(&entry),
+                        Err(e) => tracing::warn!("审计日志写入失败: {}", e),
                     }
                 }
             },
@@ -1032,6 +1035,32 @@ impl BulwarkListener for AuditLogListener {
         }
         Ok(())
     }
+}
+
+/// 审计日志写入成功后输出一条含本地化时间戳的 info 日志。
+///
+/// 启用 `i18n-icu` 时用 ICU4X 格式化当前 locale 的日期时间；未启用时回退到 Unix 时间戳，
+/// 保持零额外依赖成本。
+#[cfg(feature = "i18n-icu")]
+fn audit_log_written(entry: &AuditEntry) {
+    use crate::i18n::icu_enhanced::format_datetime_locale;
+    let dt = chrono::DateTime::from_timestamp(entry.created_at, 0).unwrap_or_else(chrono::Utc::now);
+    tracing::info!(
+        "审计日志已写入: event_type={}, login_id={:?}, time={}",
+        entry.event_type,
+        entry.login_id,
+        format_datetime_locale(&dt)
+    );
+}
+
+#[cfg(not(feature = "i18n-icu"))]
+fn audit_log_written(entry: &AuditEntry) {
+    tracing::info!(
+        "审计日志已写入: event_type={}, login_id={:?}, created_at={}",
+        entry.event_type,
+        entry.login_id,
+        entry.created_at
+    );
 }
 
 #[cfg(test)]

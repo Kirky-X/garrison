@@ -314,7 +314,7 @@ impl BulwarkFirewallCheckHookDefault {
 /// limiteron 适配器返回的错误统一包装为 `BulwarkError::Dao`，
 /// 表示底层 DAO 操作失败。
 fn map_limiteron_err(e: limiteron::error::LimiteronError) -> BulwarkError {
-    BulwarkError::Dao(format!("limiteron 操作失败: {}", e))
+    BulwarkError::Dao(format!("strategy-limiteron-op::{}", e))
 }
 
 impl Default for BulwarkFirewallCheckHookDefault {

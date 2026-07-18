@@ -4,6 +4,7 @@
 use super::*;
 use crate::backend::types::LoginParams;
 use crate::error::BulwarkError;
+use crate::BulwarkDao;
 use crate::BulwarkResult;
 use async_trait::async_trait;
 use axum::body::Body;

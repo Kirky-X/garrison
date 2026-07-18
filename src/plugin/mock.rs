@@ -46,10 +46,12 @@ impl BulwarkPlugin for ErrPlugin {
         "err-plugin"
     }
     fn on_login(&self, _login_id: &str, _token: &str) -> BulwarkResult<()> {
-        Err(BulwarkError::Internal("on_login 失败".to_string()))
+        Err(BulwarkError::Internal("plugin-on-login-failed".to_string()))
     }
     fn on_logout(&self, _login_id: &str, _token: &str) -> BulwarkResult<()> {
-        Err(BulwarkError::Internal("on_logout 失败".to_string()))
+        Err(BulwarkError::Internal(
+            "plugin-on-logout-failed".to_string(),
+        ))
     }
     fn on_permission_check(&self, _login_id: &str, _permission: &str) -> BulwarkResult<()> {
         Err(BulwarkError::Internal(

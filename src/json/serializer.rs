@@ -9,11 +9,11 @@ use crate::json::{BulwarkSerializer, BulwarkSerializerDefault};
 impl BulwarkSerializer for BulwarkSerializerDefault {
     fn serialize<T: serde::Serialize>(&self, value: &T) -> BulwarkResult<String> {
         serde_json::to_string(value)
-            .map_err(|e| BulwarkError::Internal(format!("JSON 序列化失败: {}", e)))
+            .map_err(|e| BulwarkError::Internal(format!("json-serialize::{}", e)))
     }
 
     fn deserialize<T: serde::de::DeserializeOwned>(&self, json: &str) -> BulwarkResult<T> {
         serde_json::from_str(json)
-            .map_err(|e| BulwarkError::Internal(format!("JSON 反序列化失败: {}", e)))
+            .map_err(|e| BulwarkError::Internal(format!("json-deserialize::{}", e)))
     }
 }

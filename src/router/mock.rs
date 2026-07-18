@@ -72,7 +72,7 @@ impl BulwarkDao for MockDao {
                 *existing = value.to_string();
                 Ok(())
             },
-            None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
+            None => Err(BulwarkError::Dao(format!("router-key-not-found::{}", key))),
         }
     }
 
@@ -87,7 +87,7 @@ impl BulwarkDao for MockDao {
                 };
                 Ok(())
             },
-            None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
+            None => Err(BulwarkError::Dao(format!("router-key-not-found::{}", key))),
         }
     }
 

@@ -137,9 +137,8 @@ pub fn current_tenant_id_strict() -> Option<i64> {
 /// 强制 fail-closed：无上下文时返回 Err，避免多租户环境下 `tenant_id=0`
 /// 命中默认租户数据、绕过租户隔离。
 pub fn current_tenant_id_or_error() -> BulwarkResult<i64> {
-    current_tenant_id_strict().ok_or_else(|| {
-        BulwarkError::Config("无租户上下文，租户隔离校验失败（current_tenant_id_or_error）".into())
-    })
+    current_tenant_id_strict()
+        .ok_or_else(|| BulwarkError::Config("ctx-tenant-context-missing".into()))
 }
 
 /// 租户解析器 trait。
@@ -488,8 +487,8 @@ mod tests {
         match result {
             Err(BulwarkError::Config(msg)) => {
                 assert!(
-                    msg.contains("无租户上下文") || msg.contains("租户隔离"),
-                    "错误消息应含 '无租户上下文' 或 '租户隔离'，实际: {}",
+                    msg.contains("ctx-tenant-context-missing") || msg.contains("租户隔离"),
+                    "错误消息应含 'ctx-tenant-context-missing' 或 '租户隔离'，实际: {}",
                     msg
                 );
             },

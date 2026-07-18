@@ -225,7 +225,9 @@ impl BulwarkPermissionStrategy for BulwarkPermissionStrategyDefault {
     async fn check_permission(&self, login_id: &str, permission: &str) -> BulwarkResult<bool> {
         // spec scenario "权限为空字符串"：空字符串抛 InvalidParam
         if permission.is_empty() {
-            return Err(BulwarkError::InvalidParam("权限字符串不能为空".to_string()));
+            return Err(BulwarkError::InvalidParam(
+                "strategy-perm-empty".to_string(),
+            ));
         }
 
         // 插件钩子（before）— 内部已处理 Err 仅 warn 不中断
@@ -268,7 +270,9 @@ impl BulwarkPermissionStrategy for BulwarkPermissionStrategyDefault {
 
     async fn check_role(&self, login_id: &str, role: &str) -> BulwarkResult<bool> {
         if role.is_empty() {
-            return Err(BulwarkError::InvalidParam("角色字符串不能为空".to_string()));
+            return Err(BulwarkError::InvalidParam(
+                "strategy-role-empty".to_string(),
+            ));
         }
         let roles = self.get_role_list(login_id).await?;
         // 层级角色展开

@@ -382,7 +382,7 @@ async fn check_abac_with_policy_rejects_resource_injection() {
     match result {
         Err(crate::error::BulwarkError::InvalidParam(msg)) => {
             assert!(
-                msg.contains("resource 解析失败") || msg.contains("解析失败"),
+                msg.contains("abac-resource-parse"),
                 "错误消息应含 '解析失败'，实际: {}",
                 msg
             );

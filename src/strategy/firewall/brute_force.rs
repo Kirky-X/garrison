@@ -106,7 +106,7 @@ impl BulwarkFirewallStrategy for BruteForceStrategy {
             .ban_storage
             .is_banned(&target)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("ban_storage is_banned 失败: {}", e)))?
+            .map_err(|e| BulwarkError::Dao(format!("strategy-ban-is-banned::{}", e)))?
             .is_some()
         {
             return Err(BulwarkError::FirewallBlocked(format!(
@@ -124,7 +124,7 @@ impl BulwarkFirewallStrategy for BruteForceStrategy {
                 Duration::from_secs(self.config.window_seconds),
             )
             .await
-            .map_err(|e| BulwarkError::Dao(format!("limiter incr_with_ttl 失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Dao(format!("strategy-incr-ttl::{}", e)))?;
 
         if new_count > self.config.max_attempts as u64 {
             // 3. 超阈值：封禁 IP（BanStorage.save）
@@ -143,7 +143,7 @@ impl BulwarkFirewallStrategy for BruteForceStrategy {
             self.ban_storage
                 .save(&record)
                 .await
-                .map_err(|e| BulwarkError::Dao(format!("ban_storage save 失败: {}", e)))?;
+                .map_err(|e| BulwarkError::Dao(format!("strategy-ban-save::{}", e)))?;
             Err(BulwarkError::FirewallBlocked(format!(
                 "bruteforce: IP {} 尝试次数 {} 超过阈值 {}",
                 ctx.ip, new_count, self.config.max_attempts

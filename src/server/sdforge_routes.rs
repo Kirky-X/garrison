@@ -596,10 +596,12 @@ mod tests {
             permission: &str,
         ) -> Result<(), BulwarkError> {
             if token.is_empty() {
-                return Err(BulwarkError::InvalidToken("token 为空".to_string()));
+                return Err(BulwarkError::InvalidToken("server-token-empty".to_string()));
             }
             if permission == "denied" {
-                return Err(BulwarkError::NotPermission("无权限".to_string()));
+                return Err(BulwarkError::NotPermission(
+                    "server-no-permission".to_string(),
+                ));
             }
             Ok(())
         }
@@ -614,7 +616,9 @@ mod tests {
         }
         async fn check_api_key(&self, api_key: &str, _namespace: &str) -> Result<(), BulwarkError> {
             if api_key == "invalid" {
-                return Err(BulwarkError::InvalidToken("API Key 无效".to_string()));
+                return Err(BulwarkError::InvalidToken(
+                    "server-apikey-invalid".to_string(),
+                ));
             }
             Ok(())
         }

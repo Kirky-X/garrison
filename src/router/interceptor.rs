@@ -18,7 +18,7 @@ impl BulwarkInterceptor for DefaultBulwarkInterceptor {
             Annotation::CheckLogin => {
                 let logged_in = BulwarkUtil::check_login().await?;
                 if !logged_in {
-                    return Err(BulwarkError::NotLogin("未登录".to_string()));
+                    return Err(BulwarkError::NotLogin("router-not-login".to_string()));
                 }
                 Ok(())
             },

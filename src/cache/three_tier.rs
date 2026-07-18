@@ -136,10 +136,10 @@ impl UserCacheService {
             .l1
             .get(&key)
             .await
-            .map_err(|e| BulwarkError::Internal(format!("oxcache L1 get 失败: {}", e)))?
+            .map_err(|e| BulwarkError::Internal(format!("cache-l1-get::{}", e)))?
         {
             let perms: Vec<String> = serde_json::from_str(&cached)
-                .map_err(|e| BulwarkError::Internal(format!("L1 权限缓存反序列化失败: {}", e)))?;
+                .map_err(|e| BulwarkError::Internal(format!("cache-l1-perm-deser::{}", e)))?;
             return Ok(perms);
         }
 
@@ -152,10 +152,10 @@ impl UserCacheService {
             .l1
             .get(&key)
             .await
-            .map_err(|e| BulwarkError::Internal(format!("oxcache L1 get 失败: {}", e)))?
+            .map_err(|e| BulwarkError::Internal(format!("cache-l1-get::{}", e)))?
         {
             let perms: Vec<String> = serde_json::from_str(&cached)
-                .map_err(|e| BulwarkError::Internal(format!("L1 权限缓存反序列化失败: {}", e)))?;
+                .map_err(|e| BulwarkError::Internal(format!("cache-l1-perm-deser::{}", e)))?;
             return Ok(perms);
         }
 
@@ -165,18 +165,16 @@ impl UserCacheService {
             self.l1
                 .set_with_ttl(&key, &cached, Some(Duration::from_secs(self.l1_ttl_secs)))
                 .await
-                .map_err(|e| {
-                    BulwarkError::Internal(format!("oxcache L1 set_with_ttl 失败: {}", e))
-                })?;
+                .map_err(|e| BulwarkError::Internal(format!("cache-l1-set::{}", e)))?;
             let perms: Vec<String> = serde_json::from_str(&cached)
-                .map_err(|e| BulwarkError::Internal(format!("L2 权限缓存反序列化失败: {}", e)))?;
+                .map_err(|e| BulwarkError::Internal(format!("cache-l2-perm-deser::{}", e)))?;
             return Ok(perms);
         }
 
         // L3 query
         let perms = self.interface.get_permission_list(login_id).await?;
         let serialized = serde_json::to_string(&perms)
-            .map_err(|e| BulwarkError::Internal(format!("权限列表序列化失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Internal(format!("cache-perm-serialize::{}", e)))?;
         // Backfill L1 + L2
         self.l1
             .set_with_ttl(
@@ -185,7 +183,7 @@ impl UserCacheService {
                 Some(Duration::from_secs(self.l1_ttl_secs)),
             )
             .await
-            .map_err(|e| BulwarkError::Internal(format!("oxcache L1 set_with_ttl 失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Internal(format!("cache-l1-set::{}", e)))?;
         self.dao.set(&key, &serialized, self.l2_ttl_secs).await?;
 
         Ok(perms)
@@ -215,10 +213,10 @@ impl UserCacheService {
             .l1
             .get(&key)
             .await
-            .map_err(|e| BulwarkError::Internal(format!("oxcache L1 get 失败: {}", e)))?
+            .map_err(|e| BulwarkError::Internal(format!("cache-l1-get::{}", e)))?
         {
             let roles: Vec<String> = serde_json::from_str(&cached)
-                .map_err(|e| BulwarkError::Internal(format!("L1 角色缓存反序列化失败: {}", e)))?;
+                .map_err(|e| BulwarkError::Internal(format!("cache-l1-role-deser::{}", e)))?;
             return Ok(roles);
         }
 
@@ -231,10 +229,10 @@ impl UserCacheService {
             .l1
             .get(&key)
             .await
-            .map_err(|e| BulwarkError::Internal(format!("oxcache L1 get 失败: {}", e)))?
+            .map_err(|e| BulwarkError::Internal(format!("cache-l1-get::{}", e)))?
         {
             let roles: Vec<String> = serde_json::from_str(&cached)
-                .map_err(|e| BulwarkError::Internal(format!("L1 角色缓存反序列化失败: {}", e)))?;
+                .map_err(|e| BulwarkError::Internal(format!("cache-l1-role-deser::{}", e)))?;
             return Ok(roles);
         }
 
@@ -244,18 +242,16 @@ impl UserCacheService {
             self.l1
                 .set_with_ttl(&key, &cached, Some(Duration::from_secs(self.l1_ttl_secs)))
                 .await
-                .map_err(|e| {
-                    BulwarkError::Internal(format!("oxcache L1 set_with_ttl 失败: {}", e))
-                })?;
+                .map_err(|e| BulwarkError::Internal(format!("cache-l1-set::{}", e)))?;
             let roles: Vec<String> = serde_json::from_str(&cached)
-                .map_err(|e| BulwarkError::Internal(format!("L2 角色缓存反序列化失败: {}", e)))?;
+                .map_err(|e| BulwarkError::Internal(format!("cache-l2-role-deser::{}", e)))?;
             return Ok(roles);
         }
 
         // L3 query
         let roles = self.interface.get_role_list(login_id).await?;
         let serialized = serde_json::to_string(&roles)
-            .map_err(|e| BulwarkError::Internal(format!("角色列表序列化失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Internal(format!("cache-role-serialize::{}", e)))?;
         // Backfill L1 + L2
         self.l1
             .set_with_ttl(
@@ -264,7 +260,7 @@ impl UserCacheService {
                 Some(Duration::from_secs(self.l1_ttl_secs)),
             )
             .await
-            .map_err(|e| BulwarkError::Internal(format!("oxcache L1 set_with_ttl 失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Internal(format!("cache-l1-set::{}", e)))?;
         self.dao.set(&key, &serialized, self.l2_ttl_secs).await?;
 
         Ok(roles)
@@ -297,7 +293,7 @@ impl UserCacheService {
             .l1
             .get(&key)
             .await
-            .map_err(|e| BulwarkError::Internal(format!("oxcache L1 get 失败: {}", e)))?
+            .map_err(|e| BulwarkError::Internal(format!("cache-l1-get::{}", e)))?
         {
             return Ok(Some(cached));
         }
@@ -311,7 +307,7 @@ impl UserCacheService {
             .l1
             .get(&key)
             .await
-            .map_err(|e| BulwarkError::Internal(format!("oxcache L1 get 失败: {}", e)))?
+            .map_err(|e| BulwarkError::Internal(format!("cache-l1-get::{}", e)))?
         {
             return Ok(Some(cached));
         }
@@ -322,9 +318,7 @@ impl UserCacheService {
             self.l1
                 .set_with_ttl(&key, &cached, Some(Duration::from_secs(self.l1_ttl_secs)))
                 .await
-                .map_err(|e| {
-                    BulwarkError::Internal(format!("oxcache L1 set_with_ttl 失败: {}", e))
-                })?;
+                .map_err(|e| BulwarkError::Internal(format!("cache-l1-set::{}", e)))?;
             return Ok(Some(cached));
         }
 
@@ -335,9 +329,7 @@ impl UserCacheService {
             self.l1
                 .set_with_ttl(&key, info, Some(Duration::from_secs(self.l1_ttl_secs)))
                 .await
-                .map_err(|e| {
-                    BulwarkError::Internal(format!("oxcache L1 set_with_ttl 失败: {}", e))
-                })?;
+                .map_err(|e| BulwarkError::Internal(format!("cache-l1-set::{}", e)))?;
             self.dao.set(&key, info, self.l2_ttl_secs).await?;
         }
         Ok(user_info)
@@ -366,15 +358,15 @@ impl UserCacheService {
         self.l1
             .delete(&perm_key)
             .await
-            .map_err(|e| BulwarkError::Internal(format!("oxcache L1 delete 失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Internal(format!("cache-l1-delete::{}", e)))?;
         self.l1
             .delete(&role_key)
             .await
-            .map_err(|e| BulwarkError::Internal(format!("oxcache L1 delete 失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Internal(format!("cache-l1-delete::{}", e)))?;
         self.l1
             .delete(&user_key)
             .await
-            .map_err(|e| BulwarkError::Internal(format!("oxcache L1 delete 失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Internal(format!("cache-l1-delete::{}", e)))?;
 
         Ok(())
     }
@@ -1425,7 +1417,7 @@ mod tests {
         match result {
             Err(BulwarkError::Internal(msg)) => {
                 assert!(
-                    msg.contains("L2 权限缓存反序列化失败"),
+                    msg.contains("cache-l2-perm-deser"),
                     "错误消息应包含 'L2 权限缓存反序列化失败'，实际: {}",
                     msg
                 );
@@ -1600,7 +1592,7 @@ mod tests {
         match result {
             Err(BulwarkError::Internal(msg)) => {
                 assert!(
-                    msg.contains("L1 权限缓存反序列化失败"),
+                    msg.contains("cache-l1-perm-deser"),
                     "错误消息应包含 'L1 权限缓存反序列化失败'，实际: {}",
                     msg
                 );
@@ -1628,7 +1620,7 @@ mod tests {
         match result {
             Err(BulwarkError::Internal(msg)) => {
                 assert!(
-                    msg.contains("L1 角色缓存反序列化失败"),
+                    msg.contains("cache-l1-role-deser"),
                     "错误消息应包含 'L1 角色缓存反序列化失败'，实际: {}",
                     msg
                 );
@@ -1653,7 +1645,7 @@ mod tests {
         match result {
             Err(BulwarkError::Internal(msg)) => {
                 assert!(
-                    msg.contains("L2 角色缓存反序列化失败"),
+                    msg.contains("cache-l2-role-deser"),
                     "错误消息应包含 'L2 角色缓存反序列化失败'，实际: {}",
                     msg
                 );

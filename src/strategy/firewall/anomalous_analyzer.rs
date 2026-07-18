@@ -91,13 +91,17 @@ impl AnomalousAnalyzerConfig {
     /// - `max_scan` 为 0
     pub fn validate(&self) -> BulwarkResult<()> {
         if self.interval_secs == 0 {
-            return Err(BulwarkError::Config("interval_secs 不能为 0".to_string()));
+            return Err(BulwarkError::Config(
+                "strategy-interval-secs-zero".to_string(),
+            ));
         }
         if self.burst_threshold == 0 {
-            return Err(BulwarkError::Config("burst_threshold 不能为 0".to_string()));
+            return Err(BulwarkError::Config(
+                "strategy-burst-threshold-zero".to_string(),
+            ));
         }
         if self.max_scan == 0 {
-            return Err(BulwarkError::Config("max_scan 不能为 0".to_string()));
+            return Err(BulwarkError::Config("strategy-max-scan-zero".to_string()));
         }
         Ok(())
     }
@@ -183,7 +187,9 @@ impl AnomalousLoginAnalyzer {
     /// - 序列化失败 → `Internal`
     pub async fn record_login(&self, record: &AnomalousLoginRecord) -> BulwarkResult<()> {
         if record.login_id.is_empty() {
-            return Err(BulwarkError::InvalidParam("login_id 不能为空".to_string()));
+            return Err(BulwarkError::InvalidParam(
+                "strategy-login-id-empty".to_string(),
+            ));
         }
         if record.login_id.contains(':') {
             return Err(BulwarkError::InvalidParam(
@@ -192,7 +198,7 @@ impl AnomalousLoginAnalyzer {
         }
         let key = Self::make_storage_key(&record.login_id, record.timestamp);
         let value = serde_json::to_string(record)
-            .map_err(|e| BulwarkError::Internal(format!("序列化登录记录失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Internal(format!("strategy-anomalous-serialize::{}", e)))?;
         self.dao.set(&key, &value, RECORD_TTL_SECS).await
     }
 
@@ -422,7 +428,10 @@ impl AnomalousLoginAnalyzer {
         match tokio::time::timeout(timeout, handle).await {
             Ok(Ok(())) => Ok(()),
             Ok(Err(e)) if e.is_cancelled() => Ok(()),
-            Ok(Err(e)) => Err(BulwarkError::Internal(format!("分析器任务 panic: {}", e))),
+            Ok(Err(e)) => Err(BulwarkError::Internal(format!(
+                "strategy-analyzer-panic::{}",
+                e
+            ))),
             Err(_) => {
                 abort_handle.abort();
                 Err(BulwarkError::Internal(format!(

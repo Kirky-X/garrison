@@ -63,7 +63,7 @@ impl BackendRemote {
         let client = reqwest::Client::builder()
             .timeout(timeout)
             .build()
-            .map_err(|e| BulwarkError::Network(format!("构建 HTTP 客户端失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Network(format!("backend-http-client-build::{}", e)))?;
         Ok(Self {
             client,
             base_url: base_url.into(),
@@ -91,7 +91,7 @@ impl BackendRemote {
             .json(req)
             .send()
             .await
-            .map_err(|e| BulwarkError::Network(format!("HTTP 请求失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Network(format!("backend-http-request::{}", e)))?;
 
         let status = resp.status();
         if !status.is_success() {
@@ -105,7 +105,7 @@ impl BackendRemote {
 
         resp.json::<ApiResponse<T>>()
             .await
-            .map_err(|e| BulwarkError::Network(format!("响应反序列化失败: {}", e)))
+            .map_err(|e| BulwarkError::Network(format!("backend-response-deser::{}", e)))
     }
 
     /// 发送 POST 请求，解析 `ApiResponse<T>` 并提取 `data`。
@@ -119,7 +119,7 @@ impl BackendRemote {
         let api_resp = self.post::<Req, T>(path, req).await?;
         api_resp
             .into_result()
-            .map_err(|(code, msg)| BulwarkError::Network(format!("API 错误 [{}]: {}", code, msg)))
+            .map_err(|(code, _msg)| BulwarkError::Network(format!("backend-api-error::{}", code)))
     }
 
     /// 发送 POST 请求，检查 `error_code` 判断成功/失败（无 data 提取）。
@@ -308,7 +308,7 @@ impl BackendRemoteBuilder {
         // 加载 CA 证书（用于自签名服务器）
         if let Some(ca_pem) = self.ca_cert {
             let cert = reqwest::Certificate::from_pem(&ca_pem)
-                .map_err(|e| BulwarkError::Network(format!("加载 CA 证书失败: {}", e)))?;
+                .map_err(|e| BulwarkError::Network(format!("backend-ca-load::{}", e)))?;
             builder = builder.add_root_certificate(cert);
         }
 
@@ -318,13 +318,13 @@ impl BackendRemoteBuilder {
             let mut combined = cert_pem;
             combined.extend_from_slice(&key_pem);
             let identity = reqwest::Identity::from_pem(&combined)
-                .map_err(|e| BulwarkError::Network(format!("加载客户端证书失败: {}", e)))?;
+                .map_err(|e| BulwarkError::Network(format!("backend-client-cert-load::{}", e)))?;
             builder = builder.identity(identity);
         }
 
         let client = builder
             .build()
-            .map_err(|e| BulwarkError::Network(format!("构建 HTTP 客户端失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Network(format!("backend-http-client-build::{}", e)))?;
 
         Ok(BackendRemote {
             client,

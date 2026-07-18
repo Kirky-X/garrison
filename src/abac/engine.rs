@@ -94,13 +94,13 @@ impl AbacEngine {
         entity_loader: Arc<dyn EntityLoader>,
     ) -> BulwarkResult<Self> {
         let schema = Schema::from_json_str(schema_json)
-            .map_err(|e| BulwarkError::InvalidParam(format!("Cedar schema 解析失败: {e}")))?;
+            .map_err(|e| BulwarkError::InvalidParam(format!("abac-cedar-schema-parse::{}", e)))?;
         let cache = Cache::builder()
             .ttl(Duration::from_secs(DECISION_CACHE_TTL_SECS))
             .capacity(DECISION_CACHE_MAX_CAPACITY)
             .build()
             .await
-            .map_err(|e| BulwarkError::InvalidParam(format!("oxcache 决策缓存初始化失败: {e}")))?;
+            .map_err(|e| BulwarkError::InvalidParam(format!("abac-decision-cache-init::{}", e)))?;
         Ok(Self {
             authorizer: Authorizer::new(),
             policies: Arc::new(RwLock::new(PolicySet::new())),
@@ -139,11 +139,10 @@ impl AbacEngine {
             action.to_string(),
             resource.to_string(),
         );
-        if let Some(cached) = self
-            .cache
-            .get(&cache_key)
-            .await
-            .map_err(|e| BulwarkError::InvalidParam(format!("决策缓存读取失败: {e}")))?
+        if let Some(cached) =
+            self.cache.get(&cache_key).await.map_err(|e| {
+                BulwarkError::InvalidParam(format!("abac-decision-cache-read::{}", e))
+            })?
         {
             return Ok(cached);
         }
@@ -151,16 +150,16 @@ impl AbacEngine {
         // 缓存未命中，调用 Cedar 求值
         let principal_uid: EntityUid = principal
             .parse()
-            .map_err(|e| BulwarkError::InvalidParam(format!("principal 解析失败: {e}")))?;
+            .map_err(|e| BulwarkError::InvalidParam(format!("abac-principal-parse::{}", e)))?;
         let action_uid: EntityUid = action
             .parse()
-            .map_err(|e| BulwarkError::InvalidParam(format!("action 解析失败: {e}")))?;
+            .map_err(|e| BulwarkError::InvalidParam(format!("abac-action-parse::{}", e)))?;
         let resource_uid: EntityUid = resource
             .parse()
-            .map_err(|e| BulwarkError::InvalidParam(format!("resource 解析失败: {e}")))?;
+            .map_err(|e| BulwarkError::InvalidParam(format!("abac-resource-parse::{}", e)))?;
         let context = match context_json {
             Some(json) => Context::from_json_str(json, Some((&self.schema, &action_uid)))
-                .map_err(|e| BulwarkError::InvalidParam(format!("context 解析失败: {e}")))?,
+                .map_err(|e| BulwarkError::InvalidParam(format!("abac-context-parse::{}", e)))?,
             None => Context::empty(),
         };
         let request = Request::new(
@@ -170,7 +169,7 @@ impl AbacEngine {
             context,
             Some(&self.schema),
         )
-        .map_err(|e| BulwarkError::InvalidParam(format!("Cedar Request 构造失败: {e}")))?;
+        .map_err(|e| BulwarkError::InvalidParam(format!("abac-cedar-request-build::{}", e)))?;
         let policies = self.policies.read().await;
         // 通过 EntityLoader 加载实体。若返回错误，通过 ? 传播，缓存不受污染（未到达 set）。
         let entities = self.entity_loader.load_entities().await?;
@@ -186,7 +185,7 @@ impl AbacEngine {
         self.cache
             .set(&cache_key, &decision)
             .await
-            .map_err(|e| BulwarkError::InvalidParam(format!("决策缓存写入失败: {e}")))?;
+            .map_err(|e| BulwarkError::InvalidParam(format!("abac-decision-cache-write::{}", e)))?;
 
         Ok(decision)
     }
@@ -202,16 +201,16 @@ impl AbacEngine {
     /// - 策略 ID 冲突：`BulwarkError::InvalidParam`
     pub async fn load_policy(&self, policy_id: &str, policy_src: &str) -> BulwarkResult<()> {
         let policy = Policy::parse(Some(PolicyId::new(policy_id)), policy_src)
-            .map_err(|e| BulwarkError::InvalidParam(format!("Cedar 策略解析失败: {e}")))?;
+            .map_err(|e| BulwarkError::InvalidParam(format!("abac-cedar-policy-parse::{}", e)))?;
         let mut policies = self.policies.write().await;
         policies
             .add(policy)
-            .map_err(|e| BulwarkError::InvalidParam(format!("Cedar 策略添加失败: {e}")))?;
+            .map_err(|e| BulwarkError::InvalidParam(format!("abac-cedar-policy-add::{}", e)))?;
         // 策略变更后清空决策缓存（新策略可能改变现有 key 的决策）
         self.cache
             .clear()
             .await
-            .map_err(|e| BulwarkError::InvalidParam(format!("决策缓存清空失败: {e}")))?;
+            .map_err(|e| BulwarkError::InvalidParam(format!("abac-decision-cache-clear::{}", e)))?;
         Ok(())
     }
 
@@ -227,12 +226,12 @@ impl AbacEngine {
         let mut policies = self.policies.write().await;
         policies
             .remove_static(policy_id)
-            .map_err(|e| BulwarkError::InvalidParam(format!("Cedar 策略删除失败: {e}")))?;
+            .map_err(|e| BulwarkError::InvalidParam(format!("abac-cedar-policy-delete::{}", e)))?;
         // 策略变更后清空决策缓存（移除策略可能改变现有 key 的决策）
         self.cache
             .clear()
             .await
-            .map_err(|e| BulwarkError::InvalidParam(format!("决策缓存清空失败: {e}")))?;
+            .map_err(|e| BulwarkError::InvalidParam(format!("abac-decision-cache-clear::{}", e)))?;
         Ok(())
     }
 
@@ -250,10 +249,10 @@ impl AbacEngine {
         let mut new_set = PolicySet::new();
         for (id, src) in &policies {
             let policy = Policy::parse(Some(PolicyId::new(id)), src).map_err(|e| {
-                BulwarkError::InvalidParam(format!("Cedar 策略 {id} 解析失败: {e}"))
+                BulwarkError::InvalidParam(format!("abac-cedar-policy-parse-id::{}::{}", id, e))
             })?;
             new_set.add(policy).map_err(|e| {
-                BulwarkError::InvalidParam(format!("Cedar 策略 {id} 添加失败: {e}"))
+                BulwarkError::InvalidParam(format!("abac-cedar-policy-add-id::{}::{}", id, e))
             })?;
         }
         let mut guard = self.policies.write().await;
@@ -263,7 +262,7 @@ impl AbacEngine {
         self.cache
             .clear()
             .await
-            .map_err(|e| BulwarkError::InvalidParam(format!("决策缓存清空失败: {e}")))?;
+            .map_err(|e| BulwarkError::InvalidParam(format!("abac-decision-cache-clear::{}", e)))?;
         Ok(())
     }
 
@@ -294,16 +293,16 @@ impl AbacEngine {
     ) -> BulwarkResult<Decision> {
         let principal_uid: EntityUid = principal
             .parse()
-            .map_err(|e| BulwarkError::InvalidParam(format!("principal 解析失败: {e}")))?;
+            .map_err(|e| BulwarkError::InvalidParam(format!("abac-principal-parse::{}", e)))?;
         let action_uid: EntityUid = action
             .parse()
-            .map_err(|e| BulwarkError::InvalidParam(format!("action 解析失败: {e}")))?;
+            .map_err(|e| BulwarkError::InvalidParam(format!("abac-action-parse::{}", e)))?;
         let resource_uid: EntityUid = resource
             .parse()
-            .map_err(|e| BulwarkError::InvalidParam(format!("resource 解析失败: {e}")))?;
+            .map_err(|e| BulwarkError::InvalidParam(format!("abac-resource-parse::{}", e)))?;
         let context = match context_json {
             Some(json) => Context::from_json_str(json, Some((&self.schema, &action_uid)))
-                .map_err(|e| BulwarkError::InvalidParam(format!("context 解析失败: {e}")))?,
+                .map_err(|e| BulwarkError::InvalidParam(format!("abac-context-parse::{}", e)))?,
             None => Context::empty(),
         };
         let request = Request::new(
@@ -313,13 +312,14 @@ impl AbacEngine {
             context,
             Some(&self.schema),
         )
-        .map_err(|e| BulwarkError::InvalidParam(format!("Cedar Request 构造失败: {e}")))?;
-        let temp_policy = Policy::parse(None, temp_policy_src)
-            .map_err(|e| BulwarkError::InvalidParam(format!("临时 Cedar 策略解析失败: {e}")))?;
+        .map_err(|e| BulwarkError::InvalidParam(format!("abac-cedar-request-build::{}", e)))?;
+        let temp_policy = Policy::parse(None, temp_policy_src).map_err(|e| {
+            BulwarkError::InvalidParam(format!("abac-temp-cedar-policy-parse::{}", e))
+        })?;
         let mut temp_set = PolicySet::new();
-        temp_set
-            .add(temp_policy)
-            .map_err(|e| BulwarkError::InvalidParam(format!("临时 Cedar 策略添加失败: {e}")))?;
+        temp_set.add(temp_policy).map_err(|e| {
+            BulwarkError::InvalidParam(format!("abac-temp-cedar-policy-add::{}", e))
+        })?;
         // 通过 EntityLoader 加载实体；evaluate_with_temp_policy 不写入缓存，错误通过 ? 传播。
         let entities = self.entity_loader.load_entities().await?;
         let response = self

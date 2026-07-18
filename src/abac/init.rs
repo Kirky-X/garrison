@@ -108,7 +108,7 @@ const ABAC_EXPR_MAX_LEN: usize = 512;
 pub fn validate_abac_expr(expr: &str) -> BulwarkResult<()> {
     let trimmed = expr.trim();
     if trimmed.is_empty() {
-        return Err(BulwarkError::InvalidParam("abac_expr 不能为空".to_string()));
+        return Err(BulwarkError::InvalidParam("abac-expr-empty".to_string()));
     }
     if expr.len() > ABAC_EXPR_MAX_LEN {
         return Err(BulwarkError::InvalidParam(format!(

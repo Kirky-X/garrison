@@ -109,7 +109,7 @@ impl BulwarkFirewallStrategy for DDoSStrategy {
             .limiter
             .atomic_check_and_incr("ddos:global", self.config.burst as u64, WINDOW_TTL)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("ddos 全局限流器错误: {}", e)))?;
+            .map_err(|e| BulwarkError::Dao(format!("strategy-ddos-global::{}", e)))?;
         if !global_ok {
             return Err(BulwarkError::FirewallBlocked(format!(
                 "ddos: 全局速率限制 (burst={})",
@@ -123,7 +123,7 @@ impl BulwarkFirewallStrategy for DDoSStrategy {
             .limiter
             .atomic_check_and_incr(&ip_key, self.config.per_ip_rps as u64, WINDOW_TTL)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("ddos IP {} 限流器错误: {}", ctx.ip, e)))?;
+            .map_err(|e| BulwarkError::Dao(format!("strategy-ddos-ip::{}::{}", ctx.ip, e)))?;
         if !ip_ok {
             return Err(BulwarkError::FirewallBlocked(format!(
                 "ddos: IP {} 速率限制 (per_ip_rps={})",

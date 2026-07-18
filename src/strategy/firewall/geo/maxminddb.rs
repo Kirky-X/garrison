@@ -69,7 +69,7 @@ impl MaxMindDbGeoLookup {
     /// - `BulwarkError::Internal`: 文件不存在、格式错误或 IO 错误。
     pub fn open(path: &str) -> BulwarkResult<Self> {
         let reader = maxminddb::Reader::open_readfile(path).map_err(|e| {
-            BulwarkError::Internal(format!("MaxMindDb 打开文件失败 {}: {}", path, e))
+            BulwarkError::Internal(format!("strategy-maxmind-open::{}::{}", path, e))
         })?;
         Ok(Self { reader })
     }
@@ -83,7 +83,7 @@ impl MaxMindDbGeoLookup {
     /// - `BulwarkError::Internal`: 数据格式错误。
     pub fn from_bytes(data: Vec<u8>) -> BulwarkResult<Self> {
         let reader = maxminddb::Reader::from_source(data)
-            .map_err(|e| BulwarkError::Internal(format!("MaxMindDb 从字节构造失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Internal(format!("strategy-maxmind-from-bytes::{}", e)))?;
         Ok(Self { reader })
     }
 }
@@ -93,10 +93,10 @@ impl GeoLookup for MaxMindDbGeoLookup {
     async fn lookup(&self, ip: &str) -> BulwarkResult<Option<GeoCoord>> {
         let ip_addr: IpAddr = ip
             .parse()
-            .map_err(|_| BulwarkError::InvalidParam(format!("无效的 IP 地址: {}", ip)))?;
+            .map_err(|_| BulwarkError::InvalidParam(format!("strategy-invalid-ip::{}", ip)))?;
 
         let result = self.reader.lookup(ip_addr).map_err(|e| {
-            BulwarkError::Internal(format!("MaxMindDb 查询失败 (IP={}): {}", ip, e))
+            BulwarkError::Internal(format!("strategy-maxmind-query::{}::{}", ip, e))
         })?;
 
         match result.decode::<geoip2::City>() {
@@ -155,7 +155,7 @@ impl MaxMindDbCountryLookup {
     /// - `BulwarkError::Internal`: 文件不存在、格式错误或 IO 错误。
     pub fn open(path: &str) -> BulwarkResult<Self> {
         let reader = maxminddb::Reader::open_readfile(path).map_err(|e| {
-            BulwarkError::Internal(format!("MaxMindDb 打开文件失败 {}: {}", path, e))
+            BulwarkError::Internal(format!("strategy-maxmind-open::{}::{}", path, e))
         })?;
         Ok(Self { reader })
     }
@@ -169,7 +169,7 @@ impl MaxMindDbCountryLookup {
     /// - `BulwarkError::Internal`: 数据格式错误。
     pub fn from_bytes(data: Vec<u8>) -> BulwarkResult<Self> {
         let reader = maxminddb::Reader::from_source(data)
-            .map_err(|e| BulwarkError::Internal(format!("MaxMindDb 从字节构造失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Internal(format!("strategy-maxmind-from-bytes::{}", e)))?;
         Ok(Self { reader })
     }
 }
@@ -179,10 +179,10 @@ impl CountryLookup for MaxMindDbCountryLookup {
     async fn lookup_country(&self, ip: &str) -> BulwarkResult<Option<String>> {
         let ip_addr: IpAddr = ip
             .parse()
-            .map_err(|_| BulwarkError::InvalidParam(format!("无效的 IP 地址: {}", ip)))?;
+            .map_err(|_| BulwarkError::InvalidParam(format!("strategy-invalid-ip::{}", ip)))?;
 
         let result = self.reader.lookup(ip_addr).map_err(|e| {
-            BulwarkError::Internal(format!("MaxMindDb 查询失败 (IP={}): {}", ip, e))
+            BulwarkError::Internal(format!("strategy-maxmind-query::{}::{}", ip, e))
         })?;
 
         match result.decode::<geoip2::Country>() {

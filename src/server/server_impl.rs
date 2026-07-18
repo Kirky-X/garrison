@@ -368,22 +368,24 @@ impl BulwarkAuthServer {
                     &tc.key_path,
                 )
                 .await
-                .map_err(|e| BulwarkError::Internal(format!("加载外网 TLS 配置失败: {}", e)))?;
-                let addr: std::net::SocketAddr = external_addr
-                    .parse()
-                    .map_err(|e| BulwarkError::Internal(format!("外网地址解析失败: {}", e)))?;
+                .map_err(|e| BulwarkError::Internal(format!("server-external-tls-load::{}", e)))?;
+                let addr: std::net::SocketAddr = external_addr.parse().map_err(|e| {
+                    BulwarkError::Internal(format!("server-external-addr-parse::{}", e))
+                })?;
                 return axum_server::bind_rustls(addr, rustls_config)
                     .serve(
                         external_router
                             .into_make_service_with_connect_info::<std::net::SocketAddr>(),
                     )
                     .await
-                    .map_err(|e| BulwarkError::Internal(format!("外网服务器异常: {}", e)));
+                    .map_err(|e| {
+                        BulwarkError::Internal(format!("server-external-server-error::{}", e))
+                    });
             }
 
             let external_listener = tokio::net::TcpListener::bind(&external_addr)
                 .await
-                .map_err(|e| BulwarkError::Internal(format!("绑定外网端口失败: {}", e)))?;
+                .map_err(|e| BulwarkError::Internal(format!("server-external-bind::{}", e)))?;
             if let Err(e) = axum::serve(
                 external_listener,
                 external_router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
@@ -391,7 +393,10 @@ impl BulwarkAuthServer {
             .await
             {
                 tracing::error!(error = %e, "外网服务器异常");
-                return Err(BulwarkError::Internal(format!("外网服务器异常: {}", e)));
+                return Err(BulwarkError::Internal(format!(
+                    "server-external-server-error::{}",
+                    e
+                )));
             }
             Ok(())
         });
@@ -404,22 +409,27 @@ impl BulwarkAuthServer {
                     &tc.key_path,
                 )
                 .await
-                .map_err(|e| BulwarkError::Internal(format!("加载内网 TLS 配置失败: {}", e)))?;
-                let addr: std::net::SocketAddr = internal_addr
-                    .parse()
-                    .map_err(|e| BulwarkError::Internal(format!("内网地址解析失败: {}", e)))?;
+                .map_err(|e| BulwarkError::Internal(format!("server-internal-tls-load::{}", e)))?;
+                let addr: std::net::SocketAddr = internal_addr.parse().map_err(|e| {
+                    BulwarkError::Internal(format!("server-internal-addr-parse::{}", e))
+                })?;
                 return axum_server::bind_rustls(addr, rustls_config)
                     .serve(internal_router.into_make_service())
                     .await
-                    .map_err(|e| BulwarkError::Internal(format!("内网服务器异常: {}", e)));
+                    .map_err(|e| {
+                        BulwarkError::Internal(format!("server-internal-server-error::{}", e))
+                    });
             }
 
             let internal_listener = tokio::net::TcpListener::bind(&internal_addr)
                 .await
-                .map_err(|e| BulwarkError::Internal(format!("绑定内网端口失败: {}", e)))?;
+                .map_err(|e| BulwarkError::Internal(format!("server-internal-bind::{}", e)))?;
             if let Err(e) = axum::serve(internal_listener, internal_router).await {
                 tracing::error!(error = %e, "内网服务器异常");
-                return Err(BulwarkError::Internal(format!("内网服务器异常: {}", e)));
+                return Err(BulwarkError::Internal(format!(
+                    "server-internal-server-error::{}",
+                    e
+                )));
             }
             Ok(())
         });
@@ -428,11 +438,11 @@ impl BulwarkAuthServer {
         tokio::select! {
             res = &mut external_handle => {
                 internal_handle.abort();
-                res.map_err(|e| BulwarkError::Internal(format!("外网 task panic: {}", e)))?
+                res.map_err(|e| BulwarkError::Internal(format!("server-external-task-panic::{}", e)))?
             },
             res = &mut internal_handle => {
                 external_handle.abort();
-                res.map_err(|e| BulwarkError::Internal(format!("内网 task panic: {}", e)))?
+                res.map_err(|e| BulwarkError::Internal(format!("server-internal-task-panic::{}", e)))?
             },
         }
     }

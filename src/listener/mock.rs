@@ -33,7 +33,9 @@ pub struct ErrListener;
 #[async_trait]
 impl BulwarkListener for ErrListener {
     async fn on_event(&self, _event: &BulwarkEvent) -> BulwarkResult<()> {
-        Err(BulwarkError::Internal("on_event 失败".to_string()))
+        Err(BulwarkError::Internal(
+            "listener-on-event-failed".to_string(),
+        ))
     }
 }
 

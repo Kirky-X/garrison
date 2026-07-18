@@ -65,7 +65,7 @@ impl BulwarkDaoDistributedLimiter {
                 let count: u64 = values
                     .first()
                     .ok_or_else(|| {
-                        map_to_limiter_err(BulwarkError::Dao("eval_lua 返回空结果".to_string()))
+                        map_to_limiter_err(BulwarkError::Dao("limiter-eval-lua-empty".to_string()))
                     })?
                     .parse()
                     .map_err(|e| {

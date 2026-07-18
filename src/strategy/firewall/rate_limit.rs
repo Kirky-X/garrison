@@ -170,7 +170,7 @@ impl RateLimitStrategy {
         self.storage
             .set(&answer_key, answer, Some(self.config.window_seconds))
             .await
-            .map_err(|e| BulwarkError::Dao(format!("limiteron storage 错误: {}", e)))
+            .map_err(|e| BulwarkError::Dao(format!("strategy-limiter-storage::{}", e)))
     }
 
     /// 返回当前生效的速率阈值。
@@ -189,7 +189,7 @@ impl RateLimitStrategy {
             .storage
             .get(&threshold_key)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("limiteron storage 错误: {}", e)))?;
+            .map_err(|e| BulwarkError::Dao(format!("strategy-limiter-storage::{}", e)))?;
         let raw: usize = stored
             .as_deref()
             .and_then(|s| s.parse().ok())
@@ -252,7 +252,7 @@ impl RateLimitStrategy {
                 Some(self.config.window_seconds),
             )
             .await
-            .map_err(|e| BulwarkError::Dao(format!("limiteron storage 错误: {}", e)))?;
+            .map_err(|e| BulwarkError::Dao(format!("strategy-limiter-storage::{}", e)))?;
 
         Ok(new_threshold)
     }
@@ -287,7 +287,7 @@ impl BulwarkFirewallStrategy for RateLimitStrategy {
         let (key, scope_id) = self.build_key(ctx)?;
         let now_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map_err(|e| BulwarkError::Dao(format!("系统时间错误: {}", e)))?
+            .map_err(|e| BulwarkError::Dao(format!("strategy-system-time::{}", e)))?
             .as_millis() as u64;
         let window_start = now_ms.saturating_sub(self.config.window_seconds * 1000);
 
@@ -296,7 +296,7 @@ impl BulwarkFirewallStrategy for RateLimitStrategy {
             .storage
             .get(&key)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("limiteron storage 错误: {}", e)))?;
+            .map_err(|e| BulwarkError::Dao(format!("strategy-limiter-storage::{}", e)))?;
         // M-3: parse 失败时 warn 记录脏数据，不静默丢弃
         let mut timestamps: Vec<u64> = stored
             .as_deref()
@@ -339,7 +339,7 @@ impl BulwarkFirewallStrategy for RateLimitStrategy {
         self.storage
             .set(&key, &serialized, Some(self.config.window_seconds))
             .await
-            .map_err(|e| BulwarkError::Dao(format!("limiteron storage 错误: {}", e)))?;
+            .map_err(|e| BulwarkError::Dao(format!("strategy-limiter-storage::{}", e)))?;
         Ok(())
     }
 }
@@ -350,7 +350,7 @@ impl CaptchaChallenge for RateLimitStrategy {
         let (key, _) = self.build_key(ctx)?;
         let now_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map_err(|e| BulwarkError::Dao(format!("系统时间错误: {}", e)))?
+            .map_err(|e| BulwarkError::Dao(format!("strategy-system-time::{}", e)))?
             .as_millis() as u64;
         let window_start = now_ms.saturating_sub(self.config.window_seconds * 1000);
 
@@ -359,7 +359,7 @@ impl CaptchaChallenge for RateLimitStrategy {
             .storage
             .get(&key)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("limiteron storage 错误: {}", e)))?;
+            .map_err(|e| BulwarkError::Dao(format!("strategy-limiter-storage::{}", e)))?;
         let count: usize = stored
             .as_deref()
             .unwrap_or("")
@@ -382,13 +382,13 @@ impl CaptchaChallenge for RateLimitStrategy {
             .storage
             .get(&answer_key)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("limiteron storage 错误: {}", e)))?;
+            .map_err(|e| BulwarkError::Dao(format!("strategy-limiter-storage::{}", e)))?;
         let matched = stored.as_deref() == Some(answer);
         if matched {
             self.storage
                 .delete(&answer_key)
                 .await
-                .map_err(|e| BulwarkError::Dao(format!("limiteron storage 错误: {}", e)))?;
+                .map_err(|e| BulwarkError::Dao(format!("strategy-limiter-storage::{}", e)))?;
         }
         Ok(matched)
     }
