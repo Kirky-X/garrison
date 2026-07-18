@@ -47,21 +47,17 @@ pub mod social;
 // loc! 宏：异常 detail 的 i18n 翻译
 // ============================================================================
 
-/// 按 locale 翻译异常 detail，未启用 `i18n` 特性时返回 fallback。
+/// 按 locale 翻译异常 detail。i18n 基础层已无条件编译，始终优先查 FTL 翻译。
 ///
 /// 供社交登录（wechat/alipay）与 Keycloak 等模块在构造 `BulwarkError` detail 字符串时
-/// 使用，实现中英文切换。
+/// 使用，实现中英文切换。宏定义位于 crate 根（`crate::loc`），此处 re-export 以兼容
+/// 既有 `crate::protocol::loc` 调用。
 ///
 /// # 参数
 ///
 /// - `$key`：FTL message key（如 `"wechat-token-request-failed"`）
-/// - `$fallback`：未启用 `i18n` 特性时返回的 `String` 表达式（须与原硬编码消息完全一致）
+/// - `$fallback`：FTL 缺失 key 时返回的 `String` 表达式（须与原硬编码消息完全一致）
 /// - `($arg_k, $arg_v)`：可选的命名参数（如 `("detail", &e.to_string())`），对应 FTL 中的 `{$detail}`
-///
-/// # 行为
-///
-/// - `i18n` 特性启用：调用 [`crate::i18n::translate_detail`] 查询 fluent bundle，返回本地化字符串
-/// - `i18n` 特性未启用：直接返回 `$fallback`，行为与 0.5.x 硬编码一致
 ///
 /// # 示例
 ///
@@ -82,16 +78,4 @@ pub mod social;
 ///     "wechat response missing openid field".to_string()
 /// ));
 /// ```
-#[macro_export]
-macro_rules! loc {
-    ($key:expr, $fallback:expr $(, ($arg_k:expr, $arg_v:expr))*) => {{
-        #[cfg(feature = "i18n")]
-        {
-            $crate::i18n::translate_detail($key, &[$(($arg_k, $arg_v)),*])
-        }
-        #[cfg(not(feature = "i18n"))]
-        {
-            $fallback
-        }
-    }};
-}
+pub use crate::loc;

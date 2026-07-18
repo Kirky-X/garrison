@@ -36,6 +36,25 @@ use once_cell::sync::OnceCell;
 use std::cell::RefCell;
 use unic_langid::LanguageIdentifier;
 
+/// 构造本地化错误文案：优先按 `key` 查 FTL 翻译，缺失时回退 `$fallback` 字符串。
+///
+/// i18n 基础层已无条件编译，本宏始终委托 [`translate_detail`]，无需 feature 门控。
+///
+/// # 示例
+///
+/// ```ignore
+/// let err = BulwarkError::Network(loc!(
+///     "wechat-response-missing-openid",
+///     "wechat response missing openid field".to_string()
+/// ));
+/// ```
+#[macro_export]
+macro_rules! loc {
+    ($key:expr, $fallback:expr $(, ($arg_k:expr, $arg_v:expr))*) => {{
+        $crate::i18n::translate_detail($key, &[$(($arg_k, $arg_v)),*])
+    }};
+}
+
 /// 支持的语言枚举。
 ///
 /// 默认 `Zh`（中文），向后兼容 0.2.x 硬编码中文行为。
@@ -208,26 +227,79 @@ pub fn translate_detail(key: &str, args: &[(&str, &str)]) -> String {
     }
 }
 
+/// 解析结构化错误 detail：`key::arg0::arg1`。
+///
+/// 调用方在去语言化后，将 `BulwarkError` 的 `String` 字段写为
+/// `format!("some-key::{}", arg0)` 或 `format!("some-key::{}::{}", arg0, arg1)`，
+/// 本函数拆出 FTL message key 与位置化参数（键 `"arg0"`/`"arg1"` 对应 FTL 模板的 `{$arg0}`/`{$arg1}`，
+/// 因 Fluent 变量标识符必须以字母开头，`0`/`1` 数字前缀非法，故统一加 `arg` 前缀）。
+///
+/// 非结构化（旧式中文或普通串）返回 `None`，交由调用方回退到 variant 默认 key。
+fn parse_keyed_detail(s: &str) -> Option<(&'static str, Vec<(&'static str, String)>)> {
+    // 仅当包含 `::` 分隔符才视为结构化 key，避免把普通中文/英文串误判为 key
+    if !s.contains("::") {
+        return None;
+    }
+    let mut parts = s.splitn(3, "::");
+    let key = parts.next()?;
+    // key 必须以字母开头且为合法 kebab-case（避免误命中文串）
+    if key.is_empty() || !key.chars().next().unwrap().is_ascii_alphabetic() {
+        return None;
+    }
+    if key.chars().any(|c| !c.is_ascii_lowercase() && c != '-') {
+        return None;
+    }
+    let a0 = parts.next();
+    let a1 = parts.next();
+    match (a0, a1) {
+        (None, None) | (None, Some(_)) => {
+            Some((Box::leak(key.to_string().into_boxed_str()), vec![]))
+        },
+        (Some(x), None) => Some((
+            Box::leak(key.to_string().into_boxed_str()),
+            vec![("arg0", x.to_string())],
+        )),
+        (Some(x), Some(y)) => Some((
+            Box::leak(key.to_string().into_boxed_str()),
+            vec![("arg0", x.to_string()), ("arg1", y.to_string())],
+        )),
+    }
+}
+
+/// 将单个 `String` 错误字段映射为 (key, args)。
+///
+/// 优先尝试结构化 `key::arg` 形式；否则回退到 variant 默认 key + `detail` 参数
+/// （兼容未迁移的硬编码中文串，保证向后可读）。
+fn string_detail(
+    variant_key: &'static str,
+    s: &str,
+) -> (&'static str, Vec<(&'static str, String)>) {
+    match parse_keyed_detail(s) {
+        Some((k, args)) => (k, args),
+        None => (variant_key, vec![("detail", s.to_string())]),
+    }
+}
+
 /// 错误到 FTL message key + args 的映射。
 fn error_to_key_args(err: &BulwarkError) -> (&'static str, Vec<(&'static str, String)>) {
     match err {
-        BulwarkError::NotLogin(s) => ("not-login", vec![("detail", s.clone())]),
-        BulwarkError::NotPermission(s) => ("not-permission", vec![("detail", s.clone())]),
-        BulwarkError::NotRole(s) => ("not-role", vec![("detail", s.clone())]),
-        BulwarkError::InvalidToken(s) => ("invalid-token", vec![("detail", s.clone())]),
-        BulwarkError::TokenRevoked(s) => ("token-revoked", vec![("detail", s.clone())]),
-        BulwarkError::ExpiredToken(s) => ("expired-token", vec![("detail", s.clone())]),
-        BulwarkError::Dao(s) => ("dao", vec![("detail", s.clone())]),
-        BulwarkError::Config(s) => ("config", vec![("detail", s.clone())]),
-        BulwarkError::Internal(s) => ("internal", vec![("detail", s.clone())]),
-        BulwarkError::Session(s) => ("session", vec![("detail", s.clone())]),
-        BulwarkError::Annotation(s) => ("annotation", vec![("detail", s.clone())]),
-        BulwarkError::Context(s) => ("context", vec![("detail", s.clone())]),
-        BulwarkError::OAuth2(s) => ("oauth2", vec![("detail", s.clone())]),
-        BulwarkError::Network(s) => ("network", vec![("detail", s.clone())]),
-        BulwarkError::InvalidParam(s) => ("invalid-param", vec![("detail", s.clone())]),
-        BulwarkError::NotImplemented(s) => ("not-implemented", vec![("detail", s.clone())]),
-        BulwarkError::FirewallBlocked(s) => ("firewall-blocked", vec![("detail", s.clone())]),
+        BulwarkError::NotLogin(s) => string_detail("not-login", s),
+        BulwarkError::NotPermission(s) => string_detail("not-permission", s),
+        BulwarkError::NotRole(s) => string_detail("not-role", s),
+        BulwarkError::InvalidToken(s) => string_detail("invalid-token", s),
+        BulwarkError::TokenRevoked(s) => string_detail("token-revoked", s),
+        BulwarkError::ExpiredToken(s) => string_detail("expired-token", s),
+        BulwarkError::Dao(s) => string_detail("dao", s),
+        BulwarkError::Config(s) => string_detail("config", s),
+        BulwarkError::Internal(s) => string_detail("internal", s),
+        BulwarkError::Session(s) => string_detail("session", s),
+        BulwarkError::Annotation(s) => string_detail("annotation", s),
+        BulwarkError::Context(s) => string_detail("context", s),
+        BulwarkError::OAuth2(s) => string_detail("oauth2", s),
+        BulwarkError::Network(s) => string_detail("network", s),
+        BulwarkError::InvalidParam(s) => string_detail("invalid-param", s),
+        BulwarkError::NotImplemented(s) => string_detail("not-implemented", s),
+        BulwarkError::FirewallBlocked(s) => string_detail("firewall-blocked", s),
         BulwarkError::DisableService { service, until } => (
             "disable-service",
             vec![

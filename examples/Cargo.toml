@@ -62,7 +62,7 @@ full = [
     "protocol-oidc", "oauth2-scope-handler", "protocol-sso-server",
     "alone-cache", "parameter-query",
     "listener", "web-axum", "cache-memory", "db-sqlite",
-    "web-actix", "web-warp", "grpc", "i18n",
+    "web-actix", "web-warp", "grpc",
     "metrics-prometheus", "observability-otlp", "cache-redis",
     "annotation-macros", "account-credential",
     "tenant-isolation", "audit-log", "decision-trace", "keycloak-oidc",
@@ -96,7 +96,6 @@ parameter-query = ["bulwark/parameter-query"]
 web-actix = ["bulwark/web-actix", "dep:actix-web"]
 web-warp = ["bulwark/web-warp", "dep:warp"]
 grpc = ["bulwark/grpc", "dep:tonic"]
-i18n = ["bulwark/i18n"]
 metrics-prometheus = ["bulwark/metrics-prometheus", "dep:tracing-subscriber"]
 observability-otlp = ["bulwark/observability-otlp", "dep:tracing-subscriber"]
 cache-redis = ["bulwark/cache-redis", "dep:oxcache", "oxcache/redis"]
@@ -258,7 +257,6 @@ path = "src/bin/grpc_interceptor.rs"
 
 [[bin]]
 name = "i18n_usage"
-required-features = ["i18n"]
 path = "src/bin/i18n_usage.rs"
 
 [[bin]]

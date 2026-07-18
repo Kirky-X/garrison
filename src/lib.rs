@@ -225,9 +225,8 @@ pub mod grpc;
 
 /// 国际化模块，提供异常消息中英文切换（fluent-rs）。
 ///
-/// 启用 `i18n` feature 时编译。通过 `set_locale(BulwarkLocale::En)` 切换至英文，
-/// 默认 `Zh`（中文，向后兼容 0.2.x 硬编码行为）。
-#[cfg(feature = "i18n")]
+/// 默认 `Zh`（中文，向后兼容 0.2.x 硬编码行为），通过 `set_locale(BulwarkLocale::En)`
+/// 切换至英文。
 pub mod i18n;
 
 /// 声明式 JSON 测试套件模块。

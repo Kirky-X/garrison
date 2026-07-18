@@ -128,54 +128,12 @@ pub enum BulwarkError {
 }
 
 // ============================================================================
-// Display 实现：依据 i18n feature 切换硬编码中文 / fluent-rs 多语言
+// Display 实现：始终委托 i18n 层翻译（未匹配 key 时回退中文，向后兼容 0.2.x）
 // ============================================================================
 
-/// 启用 `i18n` feature 时：委托 `i18n::translate_error` 依据当前 locale 翻译。
-#[cfg(feature = "i18n")]
 impl std::fmt::Display for BulwarkError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&crate::i18n::translate_error(self))
-    }
-}
-
-/// 未启用 `i18n` feature 时：硬编码中文（与 0.2.x 行为一致，向后兼容）。
-#[cfg(not(feature = "i18n"))]
-impl std::fmt::Display for BulwarkError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            BulwarkError::NotLogin(s) => write!(f, "未登录: {}", s),
-            BulwarkError::NotPermission(s) => write!(f, "无权限: {}", s),
-            BulwarkError::NotRole(s) => write!(f, "无角色: {}", s),
-            BulwarkError::InvalidToken(s) => write!(f, "Token 无效: {}", s),
-            BulwarkError::TokenRevoked(s) => write!(f, "Token 已吊销: {}", s),
-            BulwarkError::ExpiredToken(s) => write!(f, "Token 已过期: {}", s),
-            BulwarkError::Dao(s) => write!(f, "DAO 错误: {}", s),
-            BulwarkError::Config(s) => write!(f, "配置错误: {}", s),
-            BulwarkError::Internal(s) => write!(f, "内部错误: {}", s),
-            BulwarkError::Session(s) => write!(f, "会话错误: {}", s),
-            BulwarkError::Annotation(s) => write!(f, "注解错误: {}", s),
-            BulwarkError::Context(s) => write!(f, "上下文错误: {}", s),
-            BulwarkError::OAuth2(s) => write!(f, "OAuth2 错误: {}", s),
-            BulwarkError::Network(s) => write!(f, "网络错误: {}", s),
-            BulwarkError::InvalidParam(s) => write!(f, "参数无效: {}", s),
-            BulwarkError::NotImplemented(s) => write!(f, "未实现: {}", s),
-            BulwarkError::FirewallBlocked(s) => write!(f, "防火墙拦截: {}", s),
-            BulwarkError::DisableService { service, until } => {
-                write!(f, "账号已被封禁：service={}, until={:?}", service, until)
-            },
-            BulwarkError::NotSafe { reason } => write!(f, "未完成二次认证：{}", reason),
-            BulwarkError::InvalidStateTransition { from, to } => {
-                write!(f, "非法状态转换：{} -> {}", from, to)
-            },
-            BulwarkError::SmsRateLimitExceeded { window } => {
-                write!(f, "SMS 限速超出: {} 窗口", window)
-            },
-            BulwarkError::SmsVerifyMaxAttempts => write!(f, "SMS 验证码尝试次数超限"),
-            BulwarkError::SmsCodeNotFound => write!(f, "SMS 验证码不存在"),
-            BulwarkError::SmsChannelRecycled => write!(f, "SMS 通道已回收"),
-            BulwarkError::Exception(ex) => write!(f, "业务异常[{}]: {}", ex.code, ex.message),
-        }
     }
 }
 
