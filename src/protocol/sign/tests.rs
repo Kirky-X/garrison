@@ -58,8 +58,8 @@ fn new_short_app_secret_returns_config_error() {
     match result.err() {
         Some(BulwarkError::Config(msg)) => {
             assert!(
-                msg.contains("32") && msg.contains("字节"),
-                "错误消息应包含最小长度提示: {}",
+                msg.starts_with("sign-app-secret-too-short::"),
+                "错误消息应使用 i18n key 形式: {}",
                 msg
             );
         },

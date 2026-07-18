@@ -39,7 +39,7 @@ impl SignHandler {
         // 强制 app_secret 最小 32 字节（256 位）
         if app_secret.len() < MIN_APP_SECRET_LEN {
             return Err(BulwarkError::Config(format!(
-                "app_secret 长度不足：当前 {} 字节，要求至少 {} 字节（256 位）",
+                "sign-app-secret-too-short::{}::{}",
                 app_secret.len(),
                 MIN_APP_SECRET_LEN
             )));

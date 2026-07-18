@@ -267,8 +267,9 @@ impl BulwarkSession {
                 #[cfg(feature = "anonymous-session")]
                 is_anon: false,
             };
-            let token_json = serde_json::to_string(&token_session)
-                .map_err(|e| BulwarkError::Session(format!("序列化 TokenSession 失败: {}", e)))?;
+            let token_json = serde_json::to_string(&token_session).map_err(|e| {
+                BulwarkError::Session(format!("session-sim-token-serialize::{}", e))
+            })?;
             self.dao
                 .set(&token_key(token), &token_json, self.timeout)
                 .await?;
@@ -292,8 +293,9 @@ impl BulwarkSession {
             });
             account.last_active_at = now;
 
-            let account_json = serde_json::to_string(&account)
-                .map_err(|e| BulwarkError::Session(format!("序列化 AccountSession 失败: {}", e)))?;
+            let account_json = serde_json::to_string(&account).map_err(|e| {
+                BulwarkError::Session(format!("session-sim-account-serialize::{}", e))
+            })?;
             self.dao
                 .set(&account_key(&login_id), &account_json, self.active_timeout)
                 .await?;
@@ -323,7 +325,7 @@ impl BulwarkSession {
         match self.dao.get(&token_key(token)).await? {
             Some(json) => {
                 let ts: TokenSession = serde_json::from_str(&json).map_err(|e| {
-                    BulwarkError::Session(format!("反序列化 TokenSession 失败: {}", e))
+                    BulwarkError::Session(format!("session-sim-token-deserialize::{}", e))
                 })?;
                 // R-session-lifecycle-003: 检查 session 级过期（last_active_at + timeout < now）
                 let now = Utc::now().timestamp();
@@ -370,7 +372,7 @@ impl BulwarkSession {
         match self.dao.get_with_ttl(&key).await? {
             Some((json, ttl)) => {
                 let ts: TokenSession = serde_json::from_str(&json).map_err(|e| {
-                    BulwarkError::Session(format!("反序列化 TokenSession 失败: {}", e))
+                    BulwarkError::Session(format!("session-sim-token-deserialize::{}", e))
                 })?;
                 // R-session-lifecycle-003: 检查 session 级过期（last_active_at + timeout < now）
                 let now = Utc::now().timestamp();
@@ -414,7 +416,7 @@ impl BulwarkSession {
         match self.dao.get(&account_key(&login_id)).await? {
             Some(json) => {
                 let as_: AccountSession = serde_json::from_str(&json).map_err(|e| {
-                    BulwarkError::Session(format!("反序列化 AccountSession 失败: {}", e))
+                    BulwarkError::Session(format!("session-sim-account-deserialize::{}", e))
                 })?;
                 // R-session-lifecycle-003: 检查 session 级过期（last_active_at + active_timeout < now）
                 let now = Utc::now().timestamp();
@@ -636,7 +638,7 @@ impl BulwarkSession {
         self.with_login_lock(&login_id, async {
             // 1. 读取现有 AccountSession（必须已存在）
             let mut account = self.get_account_session(&login_id).await?.ok_or_else(|| {
-                BulwarkError::Session(format!("AccountSession 不存在: {}", login_id))
+                BulwarkError::Session(format!("session-account-not-found::{}", login_id))
             })?;
 
             // 2. 添加 token（去重）
@@ -651,8 +653,9 @@ impl BulwarkSession {
             account.last_active_at = now;
 
             // 3. 写回 DAO（用 update 保留原 TTL）
-            let json = serde_json::to_string(&account)
-                .map_err(|e| BulwarkError::Session(format!("序列化 AccountSession 失败: {}", e)))?;
+            let json = serde_json::to_string(&account).map_err(|e| {
+                BulwarkError::Session(format!("session-sim-account-serialize::{}", e))
+            })?;
             self.dao.update(&account_key(&login_id), &json).await?;
 
             // 4. DAO 成功后写内存 login_token_map
@@ -686,15 +689,16 @@ impl BulwarkSession {
         self.with_login_lock(&login_id, async {
             // 1. 读取现有 AccountSession（必须已存在）
             let mut account = self.get_account_session(&login_id).await?.ok_or_else(|| {
-                BulwarkError::Session(format!("AccountSession 不存在: {}", login_id))
+                BulwarkError::Session(format!("session-account-not-found::{}", login_id))
             })?;
 
             // 2. 移除 token
             account.tokens.retain(|ti| ti.token != token);
 
             // 3. 写回 DAO（用 update 保留原 TTL）
-            let json = serde_json::to_string(&account)
-                .map_err(|e| BulwarkError::Session(format!("序列化 AccountSession 失败: {}", e)))?;
+            let json = serde_json::to_string(&account).map_err(|e| {
+                BulwarkError::Session(format!("session-sim-account-serialize::{}", e))
+            })?;
             self.dao.update(&account_key(&login_id), &json).await?;
 
             // 4. DAO 成功后写内存 login_token_map
@@ -723,11 +727,12 @@ impl BulwarkSession {
             let mut ts = self
                 .get_token_session(token)
                 .await?
-                .ok_or_else(|| BulwarkError::InvalidToken("token 不存在".to_string()))?;
+                .ok_or_else(|| BulwarkError::InvalidToken("session-token-not-found".to_string()))?;
             ts.attrs.insert(key.to_string(), value.to_string());
             ts.last_active_at = Utc::now().timestamp();
-            let json = serde_json::to_string(&ts)
-                .map_err(|e| BulwarkError::Session(format!("序列化 TokenSession 失败: {}", e)))?;
+            let json = serde_json::to_string(&ts).map_err(|e| {
+                BulwarkError::Session(format!("session-sim-token-serialize::{}", e))
+            })?;
             // 用 update 保留原 TTL（不重置过期时间）
             self.dao.update(&token_key(token), &json).await?;
             Ok(())
@@ -769,7 +774,7 @@ impl BulwarkSession {
     /// - DAO 更新失败：透传 `BulwarkError`。
     pub async fn save_token_session(&self, token: &str, ts: &TokenSession) -> BulwarkResult<()> {
         let json = serde_json::to_string(ts)
-            .map_err(|e| BulwarkError::Session(format!("序列化 TokenSession 失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Session(format!("session-sim-token-serialize::{}", e)))?;
         self.dao.update(&token_key(token), &json).await?;
         Ok(())
     }
@@ -798,7 +803,7 @@ impl BulwarkSession {
             Some(acc) => acc,
             None => {
                 return Err(BulwarkError::InvalidParam(format!(
-                    "Account-Session does not exist for login_id: {}",
+                    "session-account-not-found::{}",
                     login_id
                 )));
             },
@@ -817,7 +822,7 @@ impl BulwarkSession {
         account.last_active_at = now;
 
         let json = serde_json::to_string(&account)
-            .map_err(|e| BulwarkError::Session(format!("序列化 AccountSession 失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Session(format!("session-sim-account-serialize::{}", e)))?;
         self.dao
             .set(&account_key(login_id), &json, self.active_timeout)
             .await?;
@@ -862,7 +867,7 @@ impl BulwarkSession {
                 Some(acc) => acc,
                 None => {
                     return Err(BulwarkError::InvalidParam(format!(
-                        "Account-Session does not exist for login_id: {}",
+                        "session-account-not-found::{}",
                         login_id
                     )));
                 },
@@ -872,8 +877,9 @@ impl BulwarkSession {
             account.tokens.retain(|ti| ti.token != token);
 
             // 3. 写回 DAO（用 update 保留原 TTL，不重置过期时间）
-            let json = serde_json::to_string(&account)
-                .map_err(|e| BulwarkError::Session(format!("序列化 AccountSession 失败: {}", e)))?;
+            let json = serde_json::to_string(&account).map_err(|e| {
+                BulwarkError::Session(format!("session-sim-account-serialize::{}", e))
+            })?;
             self.dao.update(&account_key(&login_id), &json).await?;
 
             // 4. DAO 成功后同步内存 login_token_map（与 logout_inner 行为一致）
@@ -912,7 +918,7 @@ impl BulwarkSession {
         ttl_seconds: u64,
     ) -> BulwarkResult<()> {
         let json = serde_json::to_string(ts)
-            .map_err(|e| BulwarkError::Session(format!("序列化 TokenSession 失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Session(format!("session-sim-token-serialize::{}", e)))?;
         self.dao.set(&token_key(token), &json, ttl_seconds).await?;
         Ok(())
     }
@@ -991,11 +997,12 @@ impl BulwarkSession {
             let mut ts = self
                 .get_token_session(token)
                 .await?
-                .ok_or_else(|| BulwarkError::InvalidToken("token 不存在".to_string()))?;
+                .ok_or_else(|| BulwarkError::InvalidToken("session-token-not-found".to_string()))?;
             ts.device = Some(device.to_string());
             ts.last_active_at = Utc::now().timestamp();
-            let json = serde_json::to_string(&ts)
-                .map_err(|e| BulwarkError::Session(format!("序列化 TokenSession 失败: {}", e)))?;
+            let json = serde_json::to_string(&ts).map_err(|e| {
+                BulwarkError::Session(format!("session-sim-token-serialize::{}", e))
+            })?;
             self.dao.update(&token_key(token), &json).await?;
             Ok(())
         })
@@ -1020,18 +1027,18 @@ impl BulwarkSession {
     pub async fn set_active_timeout(&self, token: &str, timeout_secs: i64) -> BulwarkResult<()> {
         if timeout_secs == 0 {
             return Err(BulwarkError::InvalidParam(
-                "timeout_secs 必须为 -1 或 >0".to_string(),
+                "session-timeout-secs-invalid".to_string(),
             ));
         }
         self.with_token_session_lock(token, async {
-            let mut ts = self
-                .get_token_session(token)
-                .await?
-                .ok_or_else(|| BulwarkError::InvalidToken(format!("token 不存在: {}", token)))?;
+            let mut ts = self.get_token_session(token).await?.ok_or_else(|| {
+                BulwarkError::InvalidToken(format!("session-token-not-found::{}", token))
+            })?;
             ts.dynamic_active_timeout = Some(timeout_secs);
             ts.last_active_at = Utc::now().timestamp();
-            let json = serde_json::to_string(&ts)
-                .map_err(|e| BulwarkError::Session(format!("序列化 TokenSession 失败: {}", e)))?;
+            let json = serde_json::to_string(&ts).map_err(|e| {
+                BulwarkError::Session(format!("session-sim-token-serialize::{}", e))
+            })?;
             self.dao.update(&token_key(token), &json).await?;
             Ok(())
         })
@@ -1102,14 +1109,14 @@ impl BulwarkSession {
     /// - 若 token 不存在，返回 `BulwarkError::InvalidToken`。
     pub async fn touch(&self, token: &str) -> BulwarkResult<()> {
         self.with_token_session_lock(token, async {
-            let mut ts = self
-                .get_token_session(token)
-                .await?
-                .ok_or_else(|| BulwarkError::InvalidToken(format!("token 不存在: {}", token)))?;
+            let mut ts = self.get_token_session(token).await?.ok_or_else(|| {
+                BulwarkError::InvalidToken(format!("session-token-not-found::{}", token))
+            })?;
             let now = Utc::now().timestamp();
             ts.last_active_at = now;
-            let json = serde_json::to_string(&ts)
-                .map_err(|e| BulwarkError::Session(format!("序列化 TokenSession 失败: {}", e)))?;
+            let json = serde_json::to_string(&ts).map_err(|e| {
+                BulwarkError::Session(format!("session-sim-token-serialize::{}", e))
+            })?;
             // 更新值 + 重置 TTL（用 set 覆盖，重置 TTL）
             self.dao.set(&token_key(token), &json, self.timeout).await?;
 
@@ -1122,7 +1129,7 @@ impl BulwarkSession {
                     }
                 }
                 let account_json = serde_json::to_string(&account).map_err(|e| {
-                    BulwarkError::Session(format!("序列化 AccountSession 失败: {}", e))
+                    BulwarkError::Session(format!("session-sim-account-serialize::{}", e))
                 })?;
                 self.dao
                     .set(
@@ -1152,7 +1159,7 @@ impl BulwarkSession {
         // 检查 token 存在（Fail Loud）
         if self.get_token_session(token).await?.is_none() {
             return Err(BulwarkError::InvalidToken(format!(
-                "token 不存在: {}",
+                "session-token-not-found::{}",
                 token
             )));
         }
@@ -1230,8 +1237,9 @@ impl BulwarkSession {
         if let Some(mut account) = self.get_account_session(&ts.login_id).await? {
             account.tokens.retain(|ti| ti.token != token);
             // spec: 若列表为空，Account-Session 标记为空（但不删除，保留历史）
-            let account_json = serde_json::to_string(&account)
-                .map_err(|e| BulwarkError::Session(format!("序列化 AccountSession 失败: {}", e)))?;
+            let account_json = serde_json::to_string(&account).map_err(|e| {
+                BulwarkError::Session(format!("session-sim-account-serialize::{}", e))
+            })?;
             // 用 update 保留原 TTL（不重置 Account-Session 的过期时间）
             self.dao
                 .update(&account_key(&ts.login_id), &account_json)

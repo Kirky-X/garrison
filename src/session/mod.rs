@@ -573,8 +573,8 @@ mod tests {
             .unwrap();
         let result = session.get_token_session("corrupt").await;
         assert!(
-            matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("反序列化 TokenSession 失败")),
-            "非法 JSON 应返回 '反序列化 TokenSession 失败' 错误，实际: {:?}",
+            matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("session-sim-token-deserialize")),
+            "非法 JSON 应返回 'session-sim-token-deserialize' 错误，实际: {:?}",
             result
         );
     }
@@ -591,8 +591,8 @@ mod tests {
             .unwrap();
         let result = session.get_account_session("2001").await;
         assert!(
-            matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("反序列化 AccountSession 失败")),
-            "非法 JSON 应返回 '反序列化 AccountSession 失败' 错误，实际: {:?}",
+            matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("session-sim-account-deserialize")),
+            "非法 JSON 应返回 'session-sim-account-deserialize' 错误，实际: {:?}",
             result
         );
     }
@@ -1147,7 +1147,7 @@ mod tests {
         }
         async fn delete(&self, key: &str) -> BulwarkResult<()> {
             if key == self.fail_delete_key {
-                return Err(BulwarkError::Dao("模拟删除失败".to_string()));
+                return Err(BulwarkError::Dao("session-mock-delete-failed".to_string()));
             }
             self.inner.delete(key).await
         }
@@ -1784,7 +1784,7 @@ mod tests {
     impl BulwarkDao for FailingGetDao {
         async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
             if key == self.fail_get_key {
-                return Err(BulwarkError::Dao("模拟读取失败".to_string()));
+                return Err(BulwarkError::Dao("session-mock-read-failed".to_string()));
             }
             self.inner.get(key).await
         }
@@ -1823,7 +1823,7 @@ mod tests {
         }
         async fn update(&self, key: &str, value: &str) -> BulwarkResult<()> {
             if key == self.fail_update_key {
-                return Err(BulwarkError::Dao("模拟更新失败".to_string()));
+                return Err(BulwarkError::Dao("session-mock-update-failed".to_string()));
             }
             self.inner.update(key, value).await
         }

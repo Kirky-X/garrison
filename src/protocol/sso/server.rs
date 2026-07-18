@@ -242,7 +242,7 @@ impl SsoServer for DefaultSsoServer {
             .map_err(|e| BulwarkError::Internal(format!("sso-ticket-deserialize::{}", e)))?;
         if data.client_id != client_id {
             return Err(BulwarkError::InvalidToken(format!(
-                "SSO client_id 不匹配: 期望 {}, 实际 {}",
+                "sso-ticket-client-id-mismatch::{}::{}",
                 data.client_id, client_id
             )));
         }
@@ -254,7 +254,7 @@ impl SsoServer for DefaultSsoServer {
             .map_err(|e| BulwarkError::Dao(format!("sso-ticket-atomic-consume::{}", e)))?;
         if consumed.is_none() {
             return Err(BulwarkError::InvalidToken(
-                "SSO 票据已被并发消费".to_string(),
+                "sso-ticket-consumed-by-concurrent".to_string(),
             ));
         }
         // 委托 converter 将 center_id 转回原始 login_id

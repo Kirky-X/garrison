@@ -48,7 +48,7 @@ fn build_safe_http_client() -> BulwarkResult<reqwest::Client> {
         .connect_timeout(HTTP_CONNECT_TIMEOUT)
         .read_timeout(HTTP_READ_TIMEOUT)
         .build()
-        .map_err(|e| BulwarkError::Network(format!("构建 HTTP 客户端失败: {}", e)))
+        .map_err(|e| BulwarkError::Network(format!("sso-oidc-http-client-build::{}", e)))
 }
 
 /// 读取响应体并强制大小上限（E2 修复，protocol-sso 本地副本）。
@@ -60,15 +60,15 @@ async fn read_limited_bytes(resp: reqwest::Response) -> BulwarkResult<Vec<u8>> {
     while let Some(chunk) = resp
         .chunk()
         .await
-        .map_err(|e| BulwarkError::Network(format!("读取响应体失败: {}", e)))?
+        .map_err(|e| BulwarkError::Network(format!("sso-oidc-body-read::{}", e)))?
     {
         let new_len = buf
             .len()
             .checked_add(chunk.len())
-            .ok_or_else(|| BulwarkError::Network("响应体长度溢出 usize（E2）".to_string()))?;
+            .ok_or_else(|| BulwarkError::Network("sso-oidc-body-overflow".to_string()))?;
         if new_len > MAX_BODY_BYTES {
             return Err(BulwarkError::Network(format!(
-                "响应体超过 {} 字节上限（E2）",
+                "sso-oidc-body-exceeds-limit::{}",
                 MAX_BODY_BYTES
             )));
         }
@@ -81,7 +81,7 @@ async fn read_limited_bytes(resp: reqwest::Response) -> BulwarkResult<Vec<u8>> {
 async fn read_limited_text(resp: reqwest::Response) -> BulwarkResult<String> {
     let bytes = read_limited_bytes(resp).await?;
     String::from_utf8(bytes)
-        .map_err(|e| BulwarkError::Network(format!("响应体 UTF-8 解码失败: {}", e)))
+        .map_err(|e| BulwarkError::Network(format!("sso-oidc-body-utf8::{}", e)))
 }
 
 /// JWKS 公钥缓存 TTL。
@@ -409,10 +409,7 @@ impl DefaultOidcProvider {
     /// `dao.set("oidc:state:{state}", "1", state_ttl.as_secs())`
     async fn register_state(&self, state: &str) -> BulwarkResult<()> {
         let dao = self.dao.as_ref().ok_or_else(|| {
-            BulwarkError::Config(
-                "DefaultOidcProvider 未注入 DAO，无法注册 state（调用 with_dao 注入 BulwarkDao）"
-                    .to_string(),
-            )
+            BulwarkError::Config("sso-oidc-dao-missing-register-state".to_string())
         })?;
         let key = Self::state_cache_key(state);
         dao.set(&key, "1", self.state_ttl.as_secs()).await
@@ -430,17 +427,14 @@ impl DefaultOidcProvider {
     /// - `Err(BulwarkError::Config)`: 未注入 DAO
     async fn validate_and_consume_state(&self, state: &str) -> BulwarkResult<()> {
         let dao = self.dao.as_ref().ok_or_else(|| {
-            BulwarkError::Config(
-                "DefaultOidcProvider 未注入 DAO，无法校验 state（调用 with_dao 注入 BulwarkDao）"
-                    .to_string(),
-            )
+            BulwarkError::Config("sso-oidc-dao-missing-validate-state".to_string())
         })?;
         let key = Self::state_cache_key(state);
         let value = dao.get_and_delete(&key).await?;
         match value {
             Some(_) => Ok(()),
             None => Err(BulwarkError::InvalidParam(format!(
-                "OIDC state 不匹配或未注册或已过期（CSRF 防护，TTL={}s）",
+                "sso-oidc-state-mismatch-or-expired::{}",
                 self.state_ttl.as_secs()
             ))),
         }
@@ -458,26 +452,24 @@ impl DefaultOidcProvider {
     /// - `BulwarkError::Internal`: HTTP 请求失败、非 2xx 状态码、JSON 解析失败或 DAO 写入失败。
     #[cfg(feature = "protocol-jwt")]
     async fn fetch_jwks(&self) -> BulwarkResult<()> {
-        let dao = self.dao.as_ref().ok_or_else(|| {
-            BulwarkError::Config(
-                "DefaultOidcProvider 未注入 DAO，无法缓存 JWKS（调用 with_dao 注入 BulwarkDao）"
-                    .to_string(),
-            )
-        })?;
+        let dao = self
+            .dao
+            .as_ref()
+            .ok_or_else(|| BulwarkError::Config("sso-oidc-dao-missing-cache-jwks".to_string()))?;
 
         let resp = self
             .http_client
             .get(&self.config.jwks_uri)
             .send()
             .await
-            .map_err(|e| BulwarkError::Internal(format!("OIDC JWKS 请求失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Internal(format!("sso-oidc-jwks-request::{}", e)))?;
 
         if !resp.status().is_success() {
             let status = resp.status();
             // E2：错误响应体也限大小（4 MiB），防止恶意 IdP 通过错误响应触发 OOM
             let body = read_limited_text(resp).await.unwrap_or_default();
             return Err(BulwarkError::Internal(format!(
-                "OIDC JWKS 端点返回错误状态: {} body: {}",
+                "sso-oidc-jwks-status-error::{}::{}",
                 status, body
             )));
         }
@@ -485,13 +477,13 @@ impl DefaultOidcProvider {
         // E2：限制响应体大小（4 MiB），防止恶意 IdP 通过超大 JWKS JSON 触发 OOM
         let bytes = read_limited_bytes(resp)
             .await
-            .map_err(|e| BulwarkError::Internal(format!("OIDC JWKS 响应体读取失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Internal(format!("sso-oidc-jwks-body-read::{}", e)))?;
         let jwks: JwksResponse = serde_json::from_slice(&bytes)
-            .map_err(|e| BulwarkError::Internal(format!("OIDC JWKS 响应解析失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Internal(format!("sso-oidc-jwks-parse::{}", e)))?;
 
         // 序列化为 JSON 字符串存入 DAO（反序列化时按相同结构解析）
         let json = serde_json::to_string(&jwks)
-            .map_err(|e| BulwarkError::Internal(format!("OIDC JWKS 序列化失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Internal(format!("sso-oidc-jwks-serialize::{}", e)))?;
         let cache_key = self.jwks_cache_key();
         dao.set(&cache_key, &json, JWKS_CACHE_TTL.as_secs()).await?;
         Ok(())
@@ -552,19 +544,17 @@ impl DefaultOidcProvider {
             aud: Aud,
         }
 
-        let dao = self.dao.as_ref().ok_or_else(|| {
-            BulwarkError::Config(
-                "DefaultOidcProvider 未注入 DAO，无法缓存 JWKS（调用 with_dao 注入 BulwarkDao）"
-                    .to_string(),
-            )
-        })?;
+        let dao = self
+            .dao
+            .as_ref()
+            .ok_or_else(|| BulwarkError::Config("sso-oidc-dao-missing-cache-jwks".to_string()))?;
 
         // 1. 解析 JWT header，提取 kid
         let header = jsonwebtoken::decode_header(id_token).map_err(|e| {
-            BulwarkError::InvalidToken(format!("OIDC id_token header 解析失败: {}", e))
+            BulwarkError::InvalidToken(format!("sso-oidc-id-token-header-parse::{}", e))
         })?;
         let kid = header.kid.as_deref().ok_or_else(|| {
-            BulwarkError::InvalidToken("OIDC id_token header 缺少 kid 字段".to_string())
+            BulwarkError::InvalidToken("sso-oidc-id-token-header-missing-kid".to_string())
         })?;
 
         // 2. 从 DAO 读取 JWKS 缓存；缓存 miss 或反序列化失败（缓存损坏）时重新拉取。
@@ -593,11 +583,11 @@ impl DefaultOidcProvider {
                         self.fetch_jwks().await?;
                         let json = dao.get(&cache_key).await?.ok_or_else(|| {
                             BulwarkError::Internal(
-                                "OIDC fetch_jwks 后缓存仍为空（DAO 写入异常）".to_string(),
+                                "sso-oidc-jwks-cache-empty-after-fetch".to_string(),
                             )
                         })?;
                         serde_json::from_str(&json).map_err(|e| {
-                            BulwarkError::Internal(format!("OIDC JWKS 反序列化失败: {}", e))
+                            BulwarkError::Internal(format!("sso-oidc-jwks-parse::{}", e))
                         })?
                     },
                 }
@@ -607,12 +597,12 @@ impl DefaultOidcProvider {
         // 3. 按 kid 匹配 JWKS 公钥
         let jwk = jwks.keys.iter().find(|k| k.kid == kid).cloned();
         let jwk = jwk.ok_or_else(|| {
-            BulwarkError::InvalidToken(format!("OIDC JWKS 中未找到 kid={} 的公钥", kid))
+            BulwarkError::InvalidToken(format!("sso-oidc-jwks-key-not-found::{}", kid))
         })?;
 
         // 4. 构造 DecodingKey 并验签
         let decoding_key = DecodingKey::from_rsa_components(&jwk.n, &jwk.e)
-            .map_err(|e| BulwarkError::InvalidToken(format!("OIDC 构造 RSA 公钥失败: {}", e)))?;
+            .map_err(|e| BulwarkError::InvalidToken(format!("sso-oidc-rsa-build::{}", e)))?;
         let mut validation = Validation::new(Algorithm::RS256);
         validation.validate_exp = true;
         validation.leeway = 0;
@@ -624,16 +614,16 @@ impl DefaultOidcProvider {
             decode::<IdTokenClaims>(id_token, &decoding_key, &validation).map_err(|e| {
                 let msg = e.to_string();
                 if msg.contains("ExpiredSignature") {
-                    BulwarkError::InvalidToken("OIDC id_token 已过期".to_string())
+                    BulwarkError::InvalidToken("sso-oidc-id-token-expired".to_string())
                 } else {
-                    BulwarkError::InvalidToken(format!("OIDC id_token 验签失败: {}", e))
+                    BulwarkError::InvalidToken(format!("sso-oidc-id-token-verify::{}", e))
                 }
             })?;
 
         // 5. 校验 iss（必须匹配 config.issuer）
         if token_data.claims.iss != self.config.issuer {
             return Err(BulwarkError::InvalidToken(format!(
-                "OIDC id_token iss 不匹配: 期望 {}, 实际 {}",
+                "sso-oidc-id-token-invalid::{}::{}",
                 self.config.issuer, token_data.claims.iss
             )));
         }
@@ -641,7 +631,7 @@ impl DefaultOidcProvider {
         // 6. 校验 aud（必须包含 client_id，支持 String 或数组形式，见 H3）
         if !token_data.claims.aud.contains(&self.client_id) {
             return Err(BulwarkError::InvalidToken(format!(
-                "OIDC id_token aud 不匹配: 期望 {}, 实际 {:?}",
+                "sso-oidc-id-token-invalid::{}::{:?}",
                 self.client_id, token_data.claims.aud
             )));
         }
@@ -698,14 +688,14 @@ impl OidcProvider for DefaultOidcProvider {
             .form(&params)
             .send()
             .await
-            .map_err(|e| BulwarkError::Internal(format!("OIDC token 交换失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Internal(format!("sso-oidc-token-exchange::{}", e)))?;
 
         if !resp.status().is_success() {
             let status = resp.status();
             // E2：错误响应体也限大小（4 MiB），防止恶意 IdP 通过错误响应触发 OOM
             let body = read_limited_text(resp).await.unwrap_or_default();
             return Err(BulwarkError::Internal(format!(
-                "OIDC token 端点返回错误状态: {} body: {}",
+                "sso-oidc-token-status-error::{}::{}",
                 status, body
             )));
         }
@@ -713,13 +703,13 @@ impl OidcProvider for DefaultOidcProvider {
         // E2：限制响应体大小（4 MiB），防止恶意 IdP 通过超大 token JSON 触发 OOM
         let bytes = read_limited_bytes(resp)
             .await
-            .map_err(|e| BulwarkError::Internal(format!("OIDC token 响应体读取失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Internal(format!("sso-oidc-token-body-read::{}", e)))?;
         let token_response: TokenResponse = serde_json::from_slice(&bytes)
-            .map_err(|e| BulwarkError::Internal(format!("OIDC token 响应解析失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Internal(format!("sso-oidc-token-parse::{}", e)))?;
 
         let id_token = token_response
             .id_token
-            .ok_or_else(|| BulwarkError::Internal("OIDC token 响应中缺少 id_token".to_string()))?;
+            .ok_or_else(|| BulwarkError::Internal("sso-oidc-missing-id-token".to_string()))?;
 
         // 启用 protocol-jwt 时在返回前验证 id_token 签名 + iss/aud/exp。
         // 未启用 protocol-jwt 时保持向后兼容行为（不验签，直接返回 id_token）。
@@ -738,14 +728,14 @@ impl OidcProvider for DefaultOidcProvider {
             .bearer_auth(access_token)
             .send()
             .await
-            .map_err(|e| BulwarkError::Internal(format!("OIDC userinfo 请求失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Internal(format!("sso-oidc-userinfo-request::{}", e)))?;
 
         if !resp.status().is_success() {
             let status = resp.status();
             // E2：错误响应体也限大小（4 MiB），防止恶意 IdP 通过错误响应触发 OOM
             let body = read_limited_text(resp).await.unwrap_or_default();
             return Err(BulwarkError::Internal(format!(
-                "OIDC userinfo 端点返回错误状态: {} body: {}",
+                "sso-oidc-userinfo-status-error::{}::{}",
                 status, body
             )));
         }
@@ -753,9 +743,9 @@ impl OidcProvider for DefaultOidcProvider {
         // E2：限制响应体大小（4 MiB），防止恶意 IdP 通过超大 userinfo JSON 触发 OOM
         let bytes = read_limited_bytes(resp)
             .await
-            .map_err(|e| BulwarkError::Internal(format!("OIDC userinfo 响应体读取失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Internal(format!("sso-oidc-userinfo-body-read::{}", e)))?;
         serde_json::from_slice::<OidcUserInfo>(&bytes)
-            .map_err(|e| BulwarkError::Internal(format!("OIDC userinfo 响应解析失败: {}", e)))
+            .map_err(|e| BulwarkError::Internal(format!("sso-oidc-userinfo-parse::{}", e)))
     }
 
     async fn validate_id_token(&self, id_token: &str) -> BulwarkResult<bool> {
@@ -769,7 +759,7 @@ impl OidcProvider for DefaultOidcProvider {
         {
             let _ = id_token;
             Err(BulwarkError::NotImplemented(
-                "OIDC id_token 验证尚未实现（需 protocol-jwt feature）".to_string(),
+                "sso-oidc-validate-not-implemented".to_string(),
             ))
         }
     }
@@ -1459,7 +1449,7 @@ mod tests {
         match result.err() {
             Some(BulwarkError::InvalidToken(msg)) => {
                 assert!(
-                    msg.contains("验签失败") || msg.contains("signature"),
+                    msg.contains("sso-oidc-id-token-verify"),
                     "无效签名应返回验签失败消息，实际: {}",
                     msg
                 );
@@ -1570,7 +1560,7 @@ mod tests {
         match result.err() {
             Some(BulwarkError::InvalidToken(msg)) => {
                 assert!(
-                    msg.contains("aud"),
+                    msg.contains("sso-oidc-id-token-invalid"),
                     "aud 不匹配应返回 aud 相关消息，实际: {}",
                     msg
                 );
@@ -1642,7 +1632,7 @@ mod tests {
         match result.err() {
             Some(BulwarkError::InvalidToken(msg)) => {
                 assert!(
-                    msg.contains("aud"),
+                    msg.contains("sso-oidc-id-token-invalid"),
                     "aud 不匹配应返回 aud 相关消息，实际: {}",
                     msg
                 );
@@ -1732,7 +1722,7 @@ mod tests {
         match result.err() {
             Some(BulwarkError::InvalidToken(msg)) => {
                 assert!(
-                    msg.contains("验签失败") || msg.contains("signature"),
+                    msg.contains("sso-oidc-id-token-verify"),
                     "exchange_code 应传递验签失败错误，实际: {}",
                     msg
                 );
@@ -1958,7 +1948,11 @@ mod tests {
         assert!(result.is_err(), "过期的 state 应被拒绝");
         match result.err() {
             Some(BulwarkError::InvalidParam(msg)) => {
-                assert!(msg.contains("过期"), "错误消息应提及过期，实际: {}", msg);
+                assert!(
+                    msg.contains("sso-oidc-state-mismatch-or-expired"),
+                    "错误消息应提及过期，实际: {}",
+                    msg
+                );
             },
             other => panic!("期望 InvalidParam 错误，实际: {:?}", other),
         }
@@ -2148,7 +2142,8 @@ mod tests {
         match result.err() {
             Some(BulwarkError::Network(msg)) => {
                 assert!(
-                    msg.contains("上限") || msg.contains("E2"),
+                    msg.contains("sso-oidc-body-exceeds-limit")
+                        || msg.contains("sso-oidc-body-overflow"),
                     "错误消息应提及上限/E2，实际: {}",
                     msg
                 );

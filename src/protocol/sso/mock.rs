@@ -46,7 +46,7 @@ impl BulwarkDao for MockDao {
             data.insert(key.to_string(), value.to_string());
             Ok(())
         } else {
-            Err(BulwarkError::Dao("key 不存在".to_string()))
+            Err(BulwarkError::Dao("sso-mock-key-not-found".to_string()))
         }
     }
 

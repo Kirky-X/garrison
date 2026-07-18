@@ -171,7 +171,7 @@ impl SsoClient {
         if data.client_id != client_id {
             // client_id 不匹配：不消费票据，允许正确 client_id 后续重试
             return Err(BulwarkError::InvalidToken(format!(
-                "SSO client_id 不匹配: 期望 {}, 实际 {}",
+                "sso-ticket-client-id-mismatch::{}::{}",
                 data.client_id, client_id
             )));
         }
@@ -184,7 +184,7 @@ impl SsoClient {
             .map_err(|e| BulwarkError::Dao(format!("sso-ticket-atomic-consume::{}", e)))?;
         if consumed.is_none() {
             return Err(BulwarkError::InvalidToken(
-                "SSO 票据已被并发消费".to_string(),
+                "sso-ticket-consumed-by-concurrent".to_string(),
             ));
         }
         Ok(data.login_id)

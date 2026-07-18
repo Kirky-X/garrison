@@ -514,7 +514,7 @@ async fn verify_with_namespace_returns_error_when_namespace_mismatch() {
     // verify_with_namespace 应返回 InvalidToken（namespace 不匹配）
     let result = handler.verify_with_namespace(&key, "internal").await;
     assert!(
-        matches!(result, Err(BulwarkError::InvalidToken(ref msg)) if msg.contains("namespace 不匹配")),
+        matches!(result, Err(BulwarkError::InvalidToken(ref msg)) if msg.starts_with("apikey-namespace-mismatch::")),
         "namespace 不匹配应返回 InvalidToken，实际: {:?}",
         result
     );

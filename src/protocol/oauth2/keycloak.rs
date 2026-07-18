@@ -277,7 +277,7 @@ impl KeycloakProvider {
         let http = build_safe_http_client().map_err(|e| {
             BulwarkError::Network(loc!(
                 "keycloak-http-client-build-failed",
-                format!("构建 HTTP 客户端失败: {}", e),
+                format!("Failed to build HTTP client: {}", e),
                 ("detail", &e.to_string())
             ))
         })?;
@@ -353,14 +353,14 @@ impl KeycloakProvider {
         let resp = self.http.get(&url).send().await.map_err(|e| {
             BulwarkError::Network(loc!(
                 "keycloak-discovery-request-failed",
-                format!("discovery 请求失败: {}", e),
+                format!("discovery request failed: {}", e),
                 ("detail", &e.to_string())
             ))
         })?;
         if !resp.status().is_success() {
             return Err(BulwarkError::Network(loc!(
                 "keycloak-discovery-status-not-2xx",
-                format!("discovery 响应状态码非 2xx: {}", resp.status()),
+                format!("discovery response status not 2xx: {}", resp.status()),
                 ("detail", &resp.status().to_string())
             )));
         }
@@ -368,14 +368,14 @@ impl KeycloakProvider {
         let bytes = read_limited_bytes(resp).await.map_err(|e| {
             BulwarkError::Network(loc!(
                 "keycloak-discovery-body-read-failed",
-                format!("discovery 响应体读取失败: {}", e),
+                format!("discovery body read failed: {}", e),
                 ("detail", &e.to_string())
             ))
         })?;
         serde_json::from_slice::<OidcDiscoveryMetadata>(&bytes).map_err(|e| {
             BulwarkError::Network(loc!(
                 "keycloak-discovery-response-parse-failed",
-                format!("discovery 响应解析失败: {}", e),
+                format!("discovery response parse failed: {}", e),
                 ("detail", &e.to_string())
             ))
         })
@@ -403,7 +403,7 @@ impl KeycloakProvider {
         let dao = self.dao.as_ref().ok_or_else(|| {
             BulwarkError::Config(loc!(
                 "keycloak-dao-not-injected",
-                "KeycloakProvider 未注入 DAO，无法缓存 JWKS（调用 with_dao 注入 BulwarkDao）"
+                "KeycloakProvider DAO not injected, cannot cache JWKS (call with_dao to inject BulwarkDao)"
                     .to_string()
             ))
         })?;
@@ -411,14 +411,14 @@ impl KeycloakProvider {
         let resp = self.http.get(&url).send().await.map_err(|e| {
             BulwarkError::Network(loc!(
                 "keycloak-jwks-request-failed",
-                format!("JWKS 请求失败: {}", e),
+                format!("JWKS request failed: {}", e),
                 ("detail", &e.to_string())
             ))
         })?;
         if !resp.status().is_success() {
             return Err(BulwarkError::Network(loc!(
                 "keycloak-jwks-status-not-2xx",
-                format!("JWKS 响应状态码非 2xx: {}", resp.status()),
+                format!("JWKS response status not 2xx: {}", resp.status()),
                 ("detail", &resp.status().to_string())
             )));
         }
@@ -426,14 +426,14 @@ impl KeycloakProvider {
         let bytes = read_limited_bytes(resp).await.map_err(|e| {
             BulwarkError::Network(loc!(
                 "keycloak-jwks-body-read-failed",
-                format!("JWKS 响应体读取失败: {}", e),
+                format!("JWKS body read failed: {}", e),
                 ("detail", &e.to_string())
             ))
         })?;
         let jwks: JwksResponse = serde_json::from_slice(&bytes).map_err(|e| {
             BulwarkError::Network(loc!(
                 "keycloak-jwks-response-parse-failed",
-                format!("JWKS 响应解析失败: {}", e),
+                format!("JWKS response parse failed: {}", e),
                 ("detail", &e.to_string())
             ))
         })?;
@@ -441,7 +441,7 @@ impl KeycloakProvider {
         let json = serde_json::to_string(&jwks).map_err(|e| {
             BulwarkError::Internal(loc!(
                 "keycloak-jwks-serialize-failed",
-                format!("JWKS 序列化失败: {}", e),
+                format!("JWKS serialize failed: {}", e),
                 ("detail", &e.to_string())
             ))
         })?;
@@ -475,7 +475,7 @@ impl KeycloakProvider {
         let dao = self.dao.as_ref().ok_or_else(|| {
             BulwarkError::Config(loc!(
                 "keycloak-dao-not-injected",
-                "KeycloakProvider 未注入 DAO，无法缓存 JWKS（调用 with_dao 注入 BulwarkDao）"
+                "KeycloakProvider DAO not injected, cannot cache JWKS (call with_dao to inject BulwarkDao)"
                     .to_string()
             ))
         })?;
@@ -484,14 +484,14 @@ impl KeycloakProvider {
         let header = jsonwebtoken::decode_header(id_token).map_err(|e| {
             BulwarkError::InvalidToken(loc!(
                 "keycloak-id-token-header-parse-failed",
-                format!("id_token header 解析失败: {}", e),
+                format!("id_token header parse failed: {}", e),
                 ("detail", &e.to_string())
             ))
         })?;
         let kid = header.kid.as_deref().ok_or_else(|| {
             BulwarkError::InvalidToken(loc!(
                 "keycloak-id-token-header-missing-kid",
-                "id_token header 缺少 kid 字段".to_string()
+                "id_token header missing kid field".to_string()
             ))
         })?;
 
@@ -509,13 +509,13 @@ impl KeycloakProvider {
                 let json = dao.get(&cache_key).await?.ok_or_else(|| {
                     BulwarkError::Internal(loc!(
                         "keycloak-jwks-cache-miss-after-fetch",
-                        "fetch_jwks 后缓存仍为空（DAO 写入异常）".to_string()
+                        "cache miss after fetch_jwks (DAO write anomaly)".to_string()
                     ))
                 })?;
                 serde_json::from_str(&json).map_err(|e| {
                     BulwarkError::Internal(loc!(
                         "keycloak-jwks-deserialize-failed",
-                        format!("JWKS 反序列化失败: {}", e),
+                        format!("JWKS deserialize failed: {}", e),
                         ("detail", &e.to_string())
                     ))
                 })?
@@ -527,7 +527,7 @@ impl KeycloakProvider {
         let jwk = jwk.ok_or_else(|| {
             BulwarkError::InvalidToken(loc!(
                 "keycloak-jwks-key-not-found",
-                format!("JWKS 中未找到 kid={} 的公钥", kid),
+                format!("JWKS key not found for kid={}", kid),
                 ("kid", kid)
             ))
         })?;
@@ -536,7 +536,7 @@ impl KeycloakProvider {
         let decoding_key = DecodingKey::from_rsa_components(&jwk.n, &jwk.e).map_err(|e| {
             BulwarkError::InvalidToken(loc!(
                 "keycloak-rsa-public-key-build-failed",
-                format!("构造 RSA 公钥失败: {}", e),
+                format!("Failed to build RSA public key: {}", e),
                 ("detail", &e.to_string())
             ))
         })?;
@@ -583,7 +583,7 @@ impl KeycloakProvider {
                 } else {
                     BulwarkError::InvalidToken(loc!(
                         "keycloak-id-token-verify-failed",
-                        format!("id_token 验签失败: {}", e),
+                        format!("id_token verify failed: {}", e),
                         ("detail", &e.to_string())
                     ))
                 }
@@ -616,7 +616,7 @@ impl KeycloakProvider {
         if code.is_empty() {
             return Err(BulwarkError::InvalidParam(loc!(
                 "keycloak-code-empty",
-                "code 不可为空".to_string()
+                "code cannot be empty".to_string()
             )));
         }
 
@@ -637,7 +637,7 @@ impl KeycloakProvider {
             (None, None) => {
                 return Err(BulwarkError::Config(loc!(
                     "keycloak-public-client-requires-pkce",
-                    "public client（client_secret=None）必须调用 with_pkce 设置 PKCE verifier"
+                    "public client (client_secret=None) must call with_pkce to set PKCE verifier"
                         .to_string()
                 )));
             },
@@ -647,14 +647,14 @@ impl KeycloakProvider {
         let resp = self.http.post(&url).form(&form).send().await.map_err(|e| {
             BulwarkError::Network(loc!(
                 "keycloak-exchange-code-request-failed",
-                format!("exchange_code 请求失败: {}", e),
+                format!("exchange_code request failed: {}", e),
                 ("detail", &e.to_string())
             ))
         })?;
         if !resp.status().is_success() {
             return Err(BulwarkError::Network(loc!(
                 "keycloak-exchange-code-status-not-2xx",
-                format!("exchange_code 响应状态码非 2xx: {}", resp.status()),
+                format!("exchange_code response status not 2xx: {}", resp.status()),
                 ("detail", &resp.status().to_string())
             )));
         }
@@ -662,14 +662,14 @@ impl KeycloakProvider {
         let bytes = read_limited_bytes(resp).await.map_err(|e| {
             BulwarkError::Network(loc!(
                 "keycloak-exchange-code-body-read-failed",
-                format!("exchange_code 响应体读取失败: {}", e),
+                format!("exchange_code body read failed: {}", e),
                 ("detail", &e.to_string())
             ))
         })?;
         serde_json::from_slice::<KeycloakTokenSet>(&bytes).map_err(|e| {
             BulwarkError::Network(loc!(
                 "keycloak-exchange-code-response-parse-failed",
-                format!("exchange_code 响应解析失败: {}", e),
+                format!("exchange_code response parse failed: {}", e),
                 ("detail", &e.to_string())
             ))
         })
@@ -1659,7 +1659,7 @@ mod tests {
         let _guard = set_locale(BulwarkLocale::Zh);
         let msg = crate::loc!(
             "keycloak-jwks-key-not-found",
-            "JWKS 中未找到 kid=abc123 的公钥".to_string(),
+            "JWKS key not found for kid=abc123".to_string(),
             ("kid", "abc123")
         );
         assert_eq!(msg, "JWKS 中未找到 kid=abc123 的公钥");

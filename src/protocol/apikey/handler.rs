@@ -64,7 +64,7 @@ fn validate_namespace(namespace: &str) -> BulwarkResult<()> {
     }
     if namespace.len() > 64 {
         return Err(BulwarkError::InvalidParam(format!(
-            "namespace 长度不能超过 64 字符，实际: {}",
+            "apikey-namespace-too-long::{}",
             namespace.len()
         )));
     }
@@ -73,7 +73,7 @@ fn validate_namespace(namespace: &str) -> BulwarkResult<()> {
         .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
     {
         return Err(BulwarkError::InvalidParam(format!(
-            "namespace 仅允许 [a-zA-Z0-9_-]，实际: {}",
+            "apikey-namespace-invalid-chars::{}",
             namespace
         )));
     }
@@ -241,7 +241,7 @@ impl ApiKeyHandler {
         // 二次校验：JSON 中 namespace 必须与请求 namespace 一致（防止存储错位）
         if info.namespace != namespace {
             return Err(BulwarkError::InvalidToken(format!(
-                "API Key namespace 不匹配：期望 {}，实际 {}",
+                "apikey-namespace-mismatch::{}::{}",
                 namespace, info.namespace
             )));
         }
@@ -359,7 +359,7 @@ impl ApiKeyHandler {
         let remaining_ttl = info.expire_at - now;
         if remaining_ttl <= 0 {
             return Err(BulwarkError::ExpiredToken(
-                "API Key 已过期，无法轮换".to_string(),
+                "apikey-expired-cannot-rotate".to_string(),
             ));
         }
         let new_key = self

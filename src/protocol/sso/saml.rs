@@ -217,7 +217,7 @@ impl SamlProvider for DefaultSamlProvider {
 
     async fn validate_assertion(&self, _assertion: &SamlAssertion) -> BulwarkResult<bool> {
         Err(BulwarkError::NotImplemented(
-            "SAML 签名验证尚未实现".to_string(),
+            "sso-saml-signature-not-implemented".to_string(),
         ))
     }
 }
@@ -442,7 +442,7 @@ fn parse_saml_response_xml(xml: &str) -> BulwarkResult<SamlResponse> {
                 })?;
             if Utc::now().timestamp() >= expiry.timestamp() {
                 return Err(BulwarkError::InvalidToken(format!(
-                    "SAML Assertion 已过期 (NotOnOrAfter: {})",
+                    "sso-saml-assertion-expired::{}",
                     assertion.not_on_or_after
                 )));
             }
