@@ -998,7 +998,7 @@ mod tests {
         session
             .with_token_session_lock(token, async {
                 let mut ts = session.get_token_session(token).await?.ok_or_else(|| {
-                    BulwarkError::InvalidToken("stp-token-not-found::".to_string())
+                    BulwarkError::InvalidToken(format!("stp-token-not-found::{}", token))
                 })?;
                 let now = chrono::Utc::now().timestamp();
                 let expire_at = now + duration_secs as i64;
@@ -1018,7 +1018,7 @@ mod tests {
         session
             .with_token_session_lock(token, async {
                 let mut ts = session.get_token_session(token).await?.ok_or_else(|| {
-                    BulwarkError::InvalidToken("stp-token-not-found::".to_string())
+                    BulwarkError::InvalidToken(format!("stp-token-not-found::{}", token))
                 })?;
                 ts.safe_services.remove(&service);
                 session.save_token_session(token, &ts).await

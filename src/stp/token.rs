@@ -54,7 +54,7 @@ pub trait TokenLogic: SessionLogic {
             Ok(())
         } else {
             Err(BulwarkError::NotLogin(
-                "stp-token-invalid-or-not-login".to_string(),
+                "stp-token-invalid-or-not-login::".to_string(),
             ))
         }
     }
@@ -74,7 +74,7 @@ pub trait TokenLogic: SessionLogic {
             Ok(())
         } else {
             Err(BulwarkError::NotLogin(
-                "stp-token-invalid-or-not-login".to_string(),
+                "stp-token-invalid-or-not-login::".to_string(),
             ))
         }
     }
@@ -94,7 +94,7 @@ pub trait TokenLogic: SessionLogic {
             Ok(())
         } else {
             Err(BulwarkError::NotLogin(
-                "stp-token-invalid-or-not-login".to_string(),
+                "stp-token-invalid-or-not-login::".to_string(),
             ))
         }
     }
@@ -154,7 +154,7 @@ impl TokenLogic for BulwarkLogicDefault {
         match token_handler.verify(token) {
             Ok(Some(login_id)) => Ok(login_id),
             Ok(None) => Err(BulwarkError::InvalidToken(
-                "stp-token-invalid-or-no-login-id".to_string(),
+                "stp-token-invalid-or-no-login-id::".to_string(),
             )),
             Err(_) => Err(BulwarkError::InvalidToken(
                 "stp-token-invalid::".to_string(),
