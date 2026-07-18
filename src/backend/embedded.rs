@@ -167,9 +167,7 @@ impl AuthBackend for BackendEmbedded {
     async fn renew_to_equivalent(&self, token: &str) -> BulwarkResult<String> {
         let logic = BulwarkManager::logic()?;
         let auth_logic = logic.auth_logic.as_ref().ok_or_else(|| {
-            BulwarkError::NotImplemented(
-                "auth_logic 未注入，renew_to_equivalent 不可用".to_string(),
-            )
+            BulwarkError::NotImplemented("backend-auth-logic-not-injected-renew".to_string())
         })?;
         auth_logic.renew_to_equivalent(token).await
     }

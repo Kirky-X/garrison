@@ -166,7 +166,7 @@ impl AuthorizeHandler {
         // 1. 校验 response_type
         if req.response_type != "code" {
             return Err(BulwarkError::OAuth2(format!(
-                "unsupported response_type: {}（仅支持 code）",
+                "oauth2-server-authorize-unsupported-response-type::{}",
                 req.response_type
             )));
         }
@@ -174,7 +174,7 @@ impl AuthorizeHandler {
         // 2. 校验 PKCE code_challenge_method
         if req.code_challenge_method != "S256" {
             return Err(BulwarkError::OAuth2(format!(
-                "unsupported code_challenge_method: {}（仅支持 S256）",
+                "oauth2-server-authorize-unsupported-code-challenge-method::{}",
                 req.code_challenge_method
             )));
         }
@@ -182,7 +182,7 @@ impl AuthorizeHandler {
         // 3. 校验 code_challenge 非空
         if req.code_challenge.is_empty() {
             return Err(BulwarkError::OAuth2(
-                "code_challenge 不能为空（PKCE 强制）".into(),
+                "oauth2-server-authorize-code-challenge-empty".into(),
             ));
         }
 
@@ -195,7 +195,7 @@ impl AuthorizeHandler {
         // 5. 校验 redirect_uri 白名单
         if !client.is_redirect_uri_allowed(&req.redirect_uri) {
             return Err(BulwarkError::OAuth2(format!(
-                "redirect_uri 不在白名单中: {}",
+                "oauth2-server-authorize-redirect-uri-not-allowed::{}",
                 req.redirect_uri
             )));
         }
@@ -318,7 +318,7 @@ pub fn is_valid_code_verifier_len(code_verifier: &str) -> bool {
 pub fn verify_pkce(code_verifier: &str, code_challenge: &str) -> BulwarkResult<bool> {
     if !is_valid_code_verifier_len(code_verifier) {
         return Err(BulwarkError::OAuth2(format!(
-            "code_verifier 长度无效: {}（要求 {CODE_VERIFIER_MIN_LEN}-{CODE_VERIFIER_MAX_LEN} 字符）",
+            "oauth2-server-authorize-code-verifier-invalid-length::{}",
             code_verifier.len()
         )));
     }
@@ -675,7 +675,8 @@ mod tests {
 
         let err = handler.authorize(&req, Some(1)).await.unwrap_err();
         assert!(
-            err.to_string().contains("invalid_scope"),
+            err.to_string()
+                .contains("oauth2-server-client-invalid-scope"),
             "期望 invalid_scope 错误，实际: {}",
             err
         );

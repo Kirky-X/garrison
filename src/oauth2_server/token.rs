@@ -602,7 +602,7 @@ impl TokenHandler {
                 .unwrap_or_else(|| req.client_id.clone());
             if !client_id.is_empty() && !limiter.check_client(&client_id).await {
                 return Err(BulwarkError::OAuth2(
-                    "rate_limited: 客户端请求过于频繁，请稍后再试".into(),
+                    "oauth2-server-token-rate-limited-client".into(),
                 ));
             }
         }
@@ -644,8 +644,7 @@ impl TokenHandler {
 
         if client_id.is_empty() {
             return Err(BulwarkError::OAuth2(
-                "invalid_client: client_id 缺失（既未在 Authorization 头也未在 body 中提供）"
-                    .into(),
+                "oauth2-server-token-invalid-client-missing".into(),
             ));
         }
 
@@ -654,7 +653,7 @@ impl TokenHandler {
         })?;
         if !client.verify_secret(&client_secret)? {
             return Err(BulwarkError::OAuth2(
-                "invalid_client: client_secret 不匹配".into(),
+                "oauth2-server-token-invalid-client-secret".into(),
             ));
         }
         Ok(client)
@@ -668,7 +667,7 @@ impl TokenHandler {
     ) -> BulwarkResult<TokenResponse> {
         if !client.allows_grant_type(&GrantType::AuthorizationCode) {
             return Err(BulwarkError::OAuth2(
-                "unauthorized_client: 客户端未授权 authorization_code grant type".into(),
+                "oauth2-server-token-unauthorized-auth-code".into(),
             ));
         }
 
@@ -744,7 +743,7 @@ impl TokenHandler {
     ) -> BulwarkResult<TokenResponse> {
         if !client.allows_grant_type(&GrantType::RefreshToken) {
             return Err(BulwarkError::OAuth2(
-                "unauthorized_client: 客户端未授权 refresh_token grant type".into(),
+                "oauth2-server-token-unauthorized-refresh".into(),
             ));
         }
 
@@ -775,7 +774,7 @@ impl TokenHandler {
                 let record_client_id = record.client_id.as_deref().unwrap_or("");
                 if record_client_id != client.client_id {
                     return Err(BulwarkError::OAuth2(
-                        "invalid_grant: refresh_token 与 client_id 不匹配".into(),
+                        "oauth2-server-token-invalid-grant-refresh-mismatch".into(),
                     ));
                 }
                 let scopes: Vec<String> = record
@@ -817,7 +816,7 @@ impl TokenHandler {
         // 校验 client_id 一致性
         if record.client_id != client.client_id {
             return Err(BulwarkError::OAuth2(
-                "invalid_grant: refresh_token 与 client_id 不匹配".into(),
+                "oauth2-server-token-invalid-grant-refresh-mismatch".into(),
             ));
         }
 
@@ -847,7 +846,7 @@ impl TokenHandler {
     ) -> BulwarkResult<TokenResponse> {
         if !client.allows_grant_type(&GrantType::ClientCredentials) {
             return Err(BulwarkError::OAuth2(
-                "unauthorized_client: 客户端未授权 client_credentials grant type".into(),
+                "oauth2-server-token-unauthorized-client-credentials".into(),
             ));
         }
 
@@ -873,14 +872,12 @@ impl TokenHandler {
     ) -> BulwarkResult<TokenResponse> {
         if !client.allows_grant_type(&GrantType::Password) {
             return Err(BulwarkError::OAuth2(
-                "unauthorized_client: 客户端未授权 password grant type".into(),
+                "oauth2-server-token-unauthorized-password".into(),
             ));
         }
 
         let verifier = self.password_verifier.as_ref().ok_or_else(|| {
-            BulwarkError::OAuth2(
-                "unauthorized_grant_type: password grant type 未配置 PasswordVerifier".into(),
-            )
+            BulwarkError::OAuth2("oauth2-server-token-unauthorized-grant-no-verifier".into())
         })?;
 
         let username = req
@@ -899,7 +896,7 @@ impl TokenHandler {
         if let Some(limiter) = &self.token_rate_limiter {
             if !limiter.check_username(username).await {
                 return Err(BulwarkError::OAuth2(
-                    "rate_limited: 用户请求过于频繁，请稍后再试".into(),
+                    "oauth2-server-token-rate-limited-username".into(),
                 ));
             }
         }
@@ -908,7 +905,7 @@ impl TokenHandler {
         if let Some(limiter) = &self.password_rate_limiter {
             if !limiter.check(username).await {
                 return Err(BulwarkError::OAuth2(
-                    "rate_limited: 账户已被临时锁定，请稍后再试".into(),
+                    "oauth2-server-token-rate-limited-locked".into(),
                 ));
             }
         }
@@ -921,7 +918,7 @@ impl TokenHandler {
                     limiter.record_failure(username).await;
                 }
                 return Err(BulwarkError::OAuth2(
-                    "invalid_grant: 用户名或密码错误".into(),
+                    "oauth2-server-token-invalid-grant-credentials".into(),
                 ));
             },
         };
@@ -1237,7 +1234,9 @@ mod tests {
             password: None,
         };
         let err = handler.handle(&req).await.unwrap_err();
-        assert!(err.to_string().contains("invalid_client"));
+        assert!(err
+            .to_string()
+            .contains("oauth2-server-token-invalid-client"));
     }
 
     // === HTTP Basic Auth 测试 ===
@@ -1416,7 +1415,9 @@ mod tests {
             .handle_with_authorization(&req, Some(&auth_header))
             .await
             .unwrap_err();
-        assert!(err.to_string().contains("invalid_client"));
+        assert!(err
+            .to_string()
+            .contains("oauth2-server-token-invalid-client"));
     }
 
     /// 既无 Basic Auth 头又无 body client_id 时返回 invalid_client。
@@ -1442,7 +1443,8 @@ mod tests {
             .await
             .unwrap_err();
         assert!(
-            err.to_string().contains("invalid_client"),
+            err.to_string()
+                .contains("oauth2-server-token-invalid-client"),
             "无凭证应返回 invalid_client，实际: {}",
             err
         );
@@ -1770,7 +1772,7 @@ mod tests {
             password: None,
         };
         let err = handler.handle(&req).await.unwrap_err();
-        assert!(err.to_string().contains("unauthorized_client"));
+        assert!(err.to_string().contains("oauth2-server-token-unauthorized"));
     }
 
     // === password grant type 测试 ===
@@ -1824,7 +1826,9 @@ mod tests {
             password: Some("wrong-password".into()),
         };
         let err = handler.handle(&req).await.unwrap_err();
-        assert!(err.to_string().contains("invalid_grant"));
+        assert!(err
+            .to_string()
+            .contains("oauth2-server-token-invalid-grant"));
     }
 
     // === password grant rate limiting 测试 ===
@@ -1862,7 +1866,8 @@ mod tests {
         for i in 0..3 {
             let err = handler.handle(&wrong_req).await.unwrap_err();
             assert!(
-                err.to_string().contains("invalid_grant"),
+                err.to_string()
+                    .contains("oauth2-server-token-invalid-grant"),
                 "第 {} 次失败应为 invalid_grant，实际: {}",
                 i + 1,
                 err
@@ -1872,7 +1877,7 @@ mod tests {
         // 第 4 次尝试：rate_limited（账户锁定）
         let err = handler.handle(&wrong_req).await.unwrap_err();
         assert!(
-            err.to_string().contains("rate_limited"),
+            err.to_string().contains("oauth2-server-token-rate-limited"),
             "第 4 次尝试应为 rate_limited，实际: {}",
             err
         );
@@ -1935,7 +1940,8 @@ mod tests {
         for i in 0..3 {
             let err = handler.handle(&wrong_req).await.unwrap_err();
             assert!(
-                err.to_string().contains("invalid_grant"),
+                err.to_string()
+                    .contains("oauth2-server-token-invalid-grant"),
                 "重置后第 {} 次失败应为 invalid_grant，实际: {}",
                 i + 1,
                 err
@@ -1945,7 +1951,7 @@ mod tests {
         // 4. 第 4 次尝试：rate_limited（重置后再次达上限）
         let err = handler.handle(&wrong_req).await.unwrap_err();
         assert!(
-            err.to_string().contains("rate_limited"),
+            err.to_string().contains("oauth2-server-token-rate-limited"),
             "重置后第 4 次尝试应为 rate_limited，实际: {}",
             err
         );
@@ -2172,7 +2178,8 @@ mod tests {
         };
         let err = handler.handle(&req).await.unwrap_err();
         assert!(
-            err.to_string().contains("invalid_scope"),
+            err.to_string()
+                .contains("oauth2-server-client-invalid-scope"),
             "期望 invalid_scope 错误，实际: {}",
             err
         );
@@ -2202,7 +2209,9 @@ mod tests {
             password: None,
         };
         let err = handler.handle(&req).await.unwrap_err();
-        assert!(err.to_string().contains("invalid_scope"));
+        assert!(err
+            .to_string()
+            .contains("oauth2-server-client-invalid-scope"));
     }
 
     /// password grant 请求超出 allowed_scopes 的 scope 返回 invalid_scope。
@@ -2229,7 +2238,8 @@ mod tests {
         };
         let err = handler.handle(&req).await.unwrap_err();
         assert!(
-            err.to_string().contains("invalid_scope"),
+            err.to_string()
+                .contains("oauth2-server-client-invalid-scope"),
             "期望 invalid_scope 错误，实际: {}",
             err
         );
@@ -2482,7 +2492,7 @@ mod tests {
         // 第 3 次被 per-client_id 限速
         let err = handler.handle(&req).await.unwrap_err();
         assert!(
-            err.to_string().contains("rate_limited"),
+            err.to_string().contains("oauth2-server-token-rate-limited"),
             "第 3 次应被限速，实际: {}",
             err
         );
@@ -2528,7 +2538,7 @@ mod tests {
             .await
             .unwrap_err();
         assert!(
-            err.to_string().contains("rate_limited"),
+            err.to_string().contains("oauth2-server-token-rate-limited"),
             "第 2 次应被限速（Basic Auth client_id），实际: {}",
             err
         );
@@ -2570,7 +2580,7 @@ mod tests {
         // 第 3 次被 per-username 限速
         let err = handler.handle(&req).await.unwrap_err();
         assert!(
-            err.to_string().contains("rate_limited"),
+            err.to_string().contains("oauth2-server-token-rate-limited"),
             "第 3 次应被 per-username 限速，实际: {}",
             err
         );

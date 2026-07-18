@@ -146,9 +146,10 @@ async fn token_endpoint(
             // 速率限制错误返回 429 Too Many Requests（RFC 6585 §4）
             //
             // `BulwarkError::OAuth2(_)` 的 error_code 统一为 "OAUTH2_ERROR"，
-            // 需通过错误消息中的 "rate_limited" 标识区分（与 token handler 中
-            // `PasswordRateLimiter` / `TokenRateLimiter` 的错误格式一致）。
-            let is_rate_limited = e.to_string().contains("rate_limited");
+            // 需通过错误消息中的 i18n key 前缀 "oauth2-server-token-rate-limited"
+            // 标识区分（与 token handler 中 `PasswordRateLimiter` / `TokenRateLimiter`
+            // 的错误格式一致，迁移至 i18n key 后下划线变为连字符）。
+            let is_rate_limited = e.to_string().contains("oauth2-server-token-rate-limited");
             let status = if is_rate_limited {
                 StatusCode::TOO_MANY_REQUESTS
             } else {

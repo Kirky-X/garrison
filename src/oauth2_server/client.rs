@@ -181,7 +181,7 @@ impl OAuth2Client {
         for s in scopes {
             if !self.allows_scope(s) {
                 return Err(BulwarkError::OAuth2(format!(
-                    "invalid_scope: scope '{}' 不在客户端 allowed_scopes 内",
+                    "oauth2-server-client-invalid-scope::{}",
                     s
                 )));
             }
@@ -237,7 +237,7 @@ impl OAuth2ClientStore for DaoOAuth2ClientStore {
         let key = Self::build_key(&client.client_id);
         if self.dao.get(&key).await?.is_some() {
             return Err(BulwarkError::OAuth2(format!(
-                "客户端已存在: {}",
+                "oauth2-server-client-exists::{}",
                 client.client_id
             )));
         }
@@ -264,7 +264,7 @@ impl OAuth2ClientStore for DaoOAuth2ClientStore {
         let key = Self::build_key(&client.client_id);
         if self.dao.get(&key).await?.is_none() {
             return Err(BulwarkError::OAuth2(format!(
-                "客户端不存在: {}",
+                "oauth2-server-client-not-found::{}",
                 client.client_id
             )));
         }

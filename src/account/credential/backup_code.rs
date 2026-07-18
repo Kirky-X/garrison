@@ -44,12 +44,8 @@ struct BackupCodeSecretData {
 impl BackupCodeSecretData {
     /// 从 `secret_data` JSON 字符串解析。
     fn from_json(secret_data: &str) -> BulwarkResult<Self> {
-        serde_json::from_str(secret_data).map_err(|e| {
-            BulwarkError::InvalidParam(format!(
-                "backup_code secret_data 解析失败（期望 JSON {{codes: [...]}}）: {}",
-                e
-            ))
-        })
+        serde_json::from_str(secret_data)
+            .map_err(|e| BulwarkError::InvalidParam(format!("account-backup-deserialize::{}", e)))
     }
 }
 

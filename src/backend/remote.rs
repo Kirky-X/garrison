@@ -134,9 +134,8 @@ impl BackendRemote {
         let api_resp = self.post::<Req, ()>(path, req).await?;
         if let Some(code) = api_resp.error_code {
             return Err(BulwarkError::Network(format!(
-                "API 错误 [{}]: {}",
-                code,
-                api_resp.message.unwrap_or_default()
+                "backend-api-error::{}",
+                code
             )));
         }
         Ok(())

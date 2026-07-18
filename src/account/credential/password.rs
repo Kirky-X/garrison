@@ -237,7 +237,7 @@ impl PasswordVerifier {
             BcryptHasher::default().verify(password, hash)
         } else {
             Err(BulwarkError::InvalidParam(format!(
-                "不支持的 hash 格式: {}",
+                "account-password-unsupported-hash-format::{}",
                 &hash[..hash.len().min(10)]
             )))
         }

@@ -117,7 +117,7 @@ impl IntrospectHandler {
         })?;
         if !client.verify_secret(&req.client_secret)? {
             return Err(BulwarkError::OAuth2(
-                "invalid_client: client_secret 不匹配".into(),
+                "oauth2-server-introspect-invalid-client-secret".into(),
             ));
         }
 
@@ -298,7 +298,9 @@ mod tests {
             client_secret: "wrong".into(),
         };
         let err = handler.handle(&req).await.unwrap_err();
-        assert!(err.to_string().contains("invalid_client"));
+        assert!(err
+            .to_string()
+            .contains("oauth2-server-introspect-invalid-client"));
     }
 
     #[test]
