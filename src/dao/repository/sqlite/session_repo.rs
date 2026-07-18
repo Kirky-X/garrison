@@ -42,7 +42,7 @@ impl SessionRepository for DbnexusSessionRepository {
                    FROM app_session WHERE tenant_id = ? AND session_id = ?";
         let stmt = make_statement(conn, sql, vec![v_i64(tenant_id), v_str(session_id)]);
         let row = conn.query_one_raw(stmt).await.map_err(|e| {
-            BulwarkError::Dao(format!("app_session find_by_session_id 查询失败: {}", e))
+            BulwarkError::Dao(format!("dao-app-session-find-by-session-id-query::{}", e))
         })?;
         row.map(|r| parse_session_row(&r)).transpose()
     }
@@ -70,18 +70,20 @@ impl SessionRepository for DbnexusSessionRepository {
                    FROM app_session WHERE tenant_id = ? AND user_id = ?";
         let stmt = make_statement(conn, sql, vec![v_i64(tenant_id), v_str(user_id)]);
         let rows = conn.query_all_raw(stmt).await.map_err(|e| {
-            BulwarkError::Dao(format!("app_session find_by_user_id 查询失败: {}", e))
+            BulwarkError::Dao(format!("dao-app-session-find-by-user-id-query::{}", e))
         })?;
         rows.iter().map(parse_session_row).collect()
     }
 
     async fn create(&self, tenant_id: i64, session: NewSession) -> BulwarkResult<String> {
-        let db_session = self.pool.get_session("admin").await.map_err(|e| {
-            BulwarkError::Dao(format!("app_session create 获取 session 失败: {}", e))
-        })?;
-        let conn = db_session.connection().map_err(|e| {
-            BulwarkError::Dao(format!("app_session create 获取 connection 失败: {}", e))
-        })?;
+        let db_session = self
+            .pool
+            .get_session("admin")
+            .await
+            .map_err(|e| BulwarkError::Dao(format!("dao-app-session-create-session::{}", e)))?;
+        let conn = db_session
+            .connection()
+            .map_err(|e| BulwarkError::Dao(format!("dao-app-session-create-connection::{}", e)))?;
         let sql = "INSERT INTO app_session \
                    (session_id, user_id, device_id, ip, user_agent, expire_time, tenant_id) \
                    VALUES (?, ?, ?, ?, ?, ?, ?)";
@@ -100,7 +102,7 @@ impl SessionRepository for DbnexusSessionRepository {
         );
         conn.execute_raw(stmt)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("app_session create 插入失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Dao(format!("dao-app-session-create-insert::{}", e)))?;
         Ok(session.session_id)
     }
 
@@ -121,23 +123,25 @@ impl SessionRepository for DbnexusSessionRepository {
                    WHERE tenant_id = ? AND session_id = ?";
         let stmt = make_statement(conn, sql, vec![v_i64(tenant_id), v_str(session_id)]);
         conn.execute_raw(stmt).await.map_err(|e| {
-            BulwarkError::Dao(format!("app_session update_last_active 更新失败: {}", e))
+            BulwarkError::Dao(format!("dao-app-session-update-last-active-update::{}", e))
         })?;
         Ok(())
     }
 
     async fn delete(&self, tenant_id: i64, session_id: &str) -> BulwarkResult<()> {
-        let session = self.pool.get_session("admin").await.map_err(|e| {
-            BulwarkError::Dao(format!("app_session delete 获取 session 失败: {}", e))
-        })?;
-        let conn = session.connection().map_err(|e| {
-            BulwarkError::Dao(format!("app_session delete 获取 connection 失败: {}", e))
-        })?;
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
+            .map_err(|e| BulwarkError::Dao(format!("dao-app-session-delete-session::{}", e)))?;
+        let conn = session
+            .connection()
+            .map_err(|e| BulwarkError::Dao(format!("dao-app-session-delete-connection::{}", e)))?;
         let sql = "DELETE FROM app_session WHERE tenant_id = ? AND session_id = ?";
         let stmt = make_statement(conn, sql, vec![v_i64(tenant_id), v_str(session_id)]);
         conn.execute_raw(stmt)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("app_session delete 删除失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Dao(format!("dao-app-session-delete-delete::{}", e)))?;
         Ok(())
     }
 
@@ -147,13 +151,14 @@ impl SessionRepository for DbnexusSessionRepository {
         offset: i64,
         limit: i64,
     ) -> BulwarkResult<Vec<SessionRow>> {
-        let session =
-            self.pool.get_session("admin").await.map_err(|e| {
-                BulwarkError::Dao(format!("app_session list 获取 session 失败: {}", e))
-            })?;
-        let conn = session.connection().map_err(|e| {
-            BulwarkError::Dao(format!("app_session list 获取 connection 失败: {}", e))
-        })?;
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
+            .map_err(|e| BulwarkError::Dao(format!("dao-app-session-list-session::{}", e)))?;
+        let conn = session
+            .connection()
+            .map_err(|e| BulwarkError::Dao(format!("dao-app-session-list-connection::{}", e)))?;
         let sql =
             "SELECT session_id, user_id, device_id, ip, user_agent, login_time, last_active, \
                    expire_time, tenant_id \
@@ -166,7 +171,7 @@ impl SessionRepository for DbnexusSessionRepository {
         let rows = conn
             .query_all_raw(stmt)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("app_session list 查询失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Dao(format!("dao-app-session-list-query::{}", e)))?;
         rows.iter().map(parse_session_row).collect()
     }
 }
@@ -175,32 +180,32 @@ impl SessionRepository for DbnexusSessionRepository {
 fn parse_session_row(row: &QueryResult) -> BulwarkResult<SessionRow> {
     Ok(SessionRow {
         session_id: row.try_get("", "session_id").map_err(|e| {
-            BulwarkError::Dao(format!("app_session 行解析失败 (session_id): {}", e))
+            BulwarkError::Dao(format!("dao-app-session-row-parse-session-id::{}", e))
         })?,
         user_id: row
             .try_get("", "user_id")
-            .map_err(|e| BulwarkError::Dao(format!("app_session 行解析失败 (user_id): {}", e)))?,
-        device_id: row
-            .try_get("", "device_id")
-            .map_err(|e| BulwarkError::Dao(format!("app_session 行解析失败 (device_id): {}", e)))?,
+            .map_err(|e| BulwarkError::Dao(format!("dao-app-session-row-parse-user-id::{}", e)))?,
+        device_id: row.try_get("", "device_id").map_err(|e| {
+            BulwarkError::Dao(format!("dao-app-session-row-parse-device-id::{}", e))
+        })?,
         ip: row
             .try_get("", "ip")
-            .map_err(|e| BulwarkError::Dao(format!("app_session 行解析失败 (ip): {}", e)))?,
+            .map_err(|e| BulwarkError::Dao(format!("dao-app-session-row-parse-ip::{}", e)))?,
         user_agent: row.try_get("", "user_agent").map_err(|e| {
-            BulwarkError::Dao(format!("app_session 行解析失败 (user_agent): {}", e))
+            BulwarkError::Dao(format!("dao-app-session-row-parse-user-agent::{}", e))
         })?,
         login_time: row.try_get("", "login_time").map_err(|e| {
-            BulwarkError::Dao(format!("app_session 行解析失败 (login_time): {}", e))
+            BulwarkError::Dao(format!("dao-app-session-row-parse-login-time::{}", e))
         })?,
         last_active: row.try_get("", "last_active").map_err(|e| {
-            BulwarkError::Dao(format!("app_session 行解析失败 (last_active): {}", e))
+            BulwarkError::Dao(format!("dao-app-session-row-parse-last-active::{}", e))
         })?,
         expire_time: row.try_get("", "expire_time").map_err(|e| {
-            BulwarkError::Dao(format!("app_session 行解析失败 (expire_time): {}", e))
+            BulwarkError::Dao(format!("dao-app-session-row-parse-expire-time::{}", e))
         })?,
-        tenant_id: row
-            .try_get("", "tenant_id")
-            .map_err(|e| BulwarkError::Dao(format!("app_session 行解析失败 (tenant_id): {}", e)))?,
+        tenant_id: row.try_get("", "tenant_id").map_err(|e| {
+            BulwarkError::Dao(format!("dao-app-session-row-parse-tenant-id::{}", e))
+        })?,
     })
 }
 

@@ -20,12 +20,13 @@ impl DbnexusRoleRepository {
 #[async_trait]
 impl RoleRepository for DbnexusRoleRepository {
     async fn find_by_id(&self, tenant_id: i64, id: &str) -> BulwarkResult<Option<RoleRow>> {
-        let session = self.pool.get_session("admin").await.map_err(|e| {
-            BulwarkError::Dao(format!("app_role find_by_id 获取 session 失败: {}", e))
-        })?;
-        let conn = session.connection().map_err(|e| {
-            BulwarkError::Dao(format!("app_role find_by_id 获取 connection 失败: {}", e))
-        })?;
+        let session =
+            self.pool.get_session("admin").await.map_err(|e| {
+                BulwarkError::Dao(format!("dao-app-role-find-by-id-session::{}", e))
+            })?;
+        let conn = session
+            .connection()
+            .map_err(|e| BulwarkError::Dao(format!("dao-app-role-find-by-id-connection::{}", e)))?;
         let sql =
             "SELECT id, code, name, description, tenant_id, is_system, created_at, updated_at \
                    FROM app_role WHERE tenant_id = ? AND id = ?";
@@ -33,16 +34,17 @@ impl RoleRepository for DbnexusRoleRepository {
         let row = conn
             .query_one_raw(stmt)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("app_role find_by_id 查询失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Dao(format!("dao-app-role-find-by-id-query::{}", e)))?;
         row.map(|r| parse_role_row(&r)).transpose()
     }
 
     async fn find_by_code(&self, tenant_id: i64, code: &str) -> BulwarkResult<Option<RoleRow>> {
-        let session = self.pool.get_session("admin").await.map_err(|e| {
-            BulwarkError::Dao(format!("app_role find_by_code 获取 session 失败: {}", e))
-        })?;
+        let session =
+            self.pool.get_session("admin").await.map_err(|e| {
+                BulwarkError::Dao(format!("dao-app-role-find-by-code-session::{}", e))
+            })?;
         let conn = session.connection().map_err(|e| {
-            BulwarkError::Dao(format!("app_role find_by_code 获取 connection 失败: {}", e))
+            BulwarkError::Dao(format!("dao-app-role-find-by-code-connection::{}", e))
         })?;
         let sql =
             "SELECT id, code, name, description, tenant_id, is_system, created_at, updated_at \
@@ -51,19 +53,20 @@ impl RoleRepository for DbnexusRoleRepository {
         let row = conn
             .query_one_raw(stmt)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("app_role find_by_code 查询失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Dao(format!("dao-app-role-find-by-code-query::{}", e)))?;
         row.map(|r| parse_role_row(&r)).transpose()
     }
 
     async fn create(&self, tenant_id: i64, role: NewRole) -> BulwarkResult<String> {
         let id = uuid::Uuid::new_v4().to_string();
-        let session =
-            self.pool.get_session("admin").await.map_err(|e| {
-                BulwarkError::Dao(format!("app_role create 获取 session 失败: {}", e))
-            })?;
-        let conn = session.connection().map_err(|e| {
-            BulwarkError::Dao(format!("app_role create 获取 connection 失败: {}", e))
-        })?;
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
+            .map_err(|e| BulwarkError::Dao(format!("dao-app-role-create-session::{}", e)))?;
+        let conn = session
+            .connection()
+            .map_err(|e| BulwarkError::Dao(format!("dao-app-role-create-connection::{}", e)))?;
         let sql = "INSERT INTO app_role (id, code, name, description, tenant_id, is_system) \
                    VALUES (?, ?, ?, ?, ?, ?)";
         let stmt = make_statement(
@@ -80,7 +83,7 @@ impl RoleRepository for DbnexusRoleRepository {
         );
         conn.execute_raw(stmt)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("app_role create 插入失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Dao(format!("dao-app-role-create-insert::{}", e)))?;
         Ok(id)
     }
 
@@ -115,44 +118,47 @@ impl RoleRepository for DbnexusRoleRepository {
             "UPDATE app_role SET {} WHERE tenant_id = ? AND id = ?",
             sets.join(", ")
         );
-        let session =
-            self.pool.get_session("admin").await.map_err(|e| {
-                BulwarkError::Dao(format!("app_role update 获取 session 失败: {}", e))
-            })?;
-        let conn = session.connection().map_err(|e| {
-            BulwarkError::Dao(format!("app_role update 获取 connection 失败: {}", e))
-        })?;
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
+            .map_err(|e| BulwarkError::Dao(format!("dao-app-role-update-session::{}", e)))?;
+        let conn = session
+            .connection()
+            .map_err(|e| BulwarkError::Dao(format!("dao-app-role-update-connection::{}", e)))?;
         let stmt = make_statement(conn, &sql, params);
         conn.execute_raw(stmt)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("app_role update 更新失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Dao(format!("dao-app-role-update-update::{}", e)))?;
         Ok(())
     }
 
     async fn delete(&self, tenant_id: i64, id: &str) -> BulwarkResult<()> {
-        let session =
-            self.pool.get_session("admin").await.map_err(|e| {
-                BulwarkError::Dao(format!("app_role delete 获取 session 失败: {}", e))
-            })?;
-        let conn = session.connection().map_err(|e| {
-            BulwarkError::Dao(format!("app_role delete 获取 connection 失败: {}", e))
-        })?;
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
+            .map_err(|e| BulwarkError::Dao(format!("dao-app-role-delete-session::{}", e)))?;
+        let conn = session
+            .connection()
+            .map_err(|e| BulwarkError::Dao(format!("dao-app-role-delete-connection::{}", e)))?;
         let sql = "DELETE FROM app_role WHERE tenant_id = ? AND id = ?";
         let stmt = make_statement(conn, sql, vec![v_i64(tenant_id), v_str(id)]);
         conn.execute_raw(stmt)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("app_role delete 删除失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Dao(format!("dao-app-role-delete-delete::{}", e)))?;
         Ok(())
     }
 
     async fn list(&self, tenant_id: i64, offset: i64, limit: i64) -> BulwarkResult<Vec<RoleRow>> {
-        let session =
-            self.pool.get_session("admin").await.map_err(|e| {
-                BulwarkError::Dao(format!("app_role list 获取 session 失败: {}", e))
-            })?;
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
+            .map_err(|e| BulwarkError::Dao(format!("dao-app-role-list-session::{}", e)))?;
         let conn = session
             .connection()
-            .map_err(|e| BulwarkError::Dao(format!("app_role list 获取 connection 失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Dao(format!("dao-app-role-list-connection::{}", e)))?;
         let sql =
             "SELECT id, code, name, description, tenant_id, is_system, created_at, updated_at \
                    FROM app_role WHERE tenant_id = ? LIMIT ? OFFSET ?";
@@ -164,7 +170,7 @@ impl RoleRepository for DbnexusRoleRepository {
         let rows = conn
             .query_all_raw(stmt)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("app_role list 查询失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Dao(format!("dao-app-role-list-query::{}", e)))?;
         rows.iter().map(parse_role_row).collect()
     }
 }
@@ -174,26 +180,26 @@ fn parse_role_row(row: &QueryResult) -> BulwarkResult<RoleRow> {
     Ok(RoleRow {
         id: row
             .try_get("", "id")
-            .map_err(|e| BulwarkError::Dao(format!("app_role 行解析失败 (id): {}", e)))?,
+            .map_err(|e| BulwarkError::Dao(format!("dao-app-role-row-parse-id::{}", e)))?,
         code: row
             .try_get("", "code")
-            .map_err(|e| BulwarkError::Dao(format!("app_role 行解析失败 (code): {}", e)))?,
+            .map_err(|e| BulwarkError::Dao(format!("dao-app-role-row-parse-code::{}", e)))?,
         name: row
             .try_get("", "name")
-            .map_err(|e| BulwarkError::Dao(format!("app_role 行解析失败 (name): {}", e)))?,
+            .map_err(|e| BulwarkError::Dao(format!("dao-app-role-row-parse-name::{}", e)))?,
         description: row
             .try_get("", "description")
-            .map_err(|e| BulwarkError::Dao(format!("app_role 行解析失败 (description): {}", e)))?,
+            .map_err(|e| BulwarkError::Dao(format!("dao-app-role-row-parse-description::{}", e)))?,
         tenant_id: row
             .try_get("", "tenant_id")
-            .map_err(|e| BulwarkError::Dao(format!("app_role 行解析失败 (tenant_id): {}", e)))?,
+            .map_err(|e| BulwarkError::Dao(format!("dao-app-role-row-parse-tenant-id::{}", e)))?,
         is_system: read_bool(row, "is_system"),
         created_at: row
             .try_get("", "created_at")
-            .map_err(|e| BulwarkError::Dao(format!("app_role 行解析失败 (created_at): {}", e)))?,
+            .map_err(|e| BulwarkError::Dao(format!("dao-app-role-row-parse-created-at::{}", e)))?,
         updated_at: row
             .try_get("", "updated_at")
-            .map_err(|e| BulwarkError::Dao(format!("app_role 行解析失败 (updated_at): {}", e)))?,
+            .map_err(|e| BulwarkError::Dao(format!("dao-app-role-row-parse-updated-at::{}", e)))?,
     })
 }
 

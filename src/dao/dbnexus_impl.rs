@@ -32,7 +32,7 @@ use std::path::{Path, PathBuf};
 pub async fn init_dbnexus(url: &str) -> BulwarkResult<DbPool> {
     DbPool::new(url)
         .await
-        .map_err(|e| BulwarkError::Dao(format!("dbnexus 初始化失败: {}", e)))
+        .map_err(|e| BulwarkError::Dao(format!("dao-dbnexus-init::{}", e)))
 }
 
 /// Bulwark schema 迁移管理器。
@@ -110,10 +110,9 @@ impl BulwarkMigration {
     ///
     /// 不存在的目录返回 0（不报错，符合 dbnexus scan_migrations 行为）。
     async fn run_dir(&self, dir: &Path) -> BulwarkResult<u32> {
-        self.pool
-            .run_migrations(dir)
-            .await
-            .map_err(|e| BulwarkError::Dao(format!("dbnexus 迁移失败 ({:?}): {}", dir, e)))
+        self.pool.run_migrations(dir).await.map_err(|e| {
+            BulwarkError::Dao(format!("dao-dbnexus-migrate::{}::{}", dir.display(), e))
+        })
     }
 }
 

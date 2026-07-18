@@ -98,12 +98,14 @@ mod service {
         ///
         /// 返回 `Vec<RoleHierarchyRecord>`（child_role → parent_role 边集合）。
         async fn query_all_edges(&self, tenant_id: i64) -> BulwarkResult<Vec<RoleHierarchyRecord>> {
-            let session = self.pool.get_session("admin").await.map_err(|e| {
-                BulwarkError::Dao(format!("role_hierarchy 获取 session 失败: {}", e))
-            })?;
-            let conn = session.connection().map_err(|e| {
-                BulwarkError::Dao(format!("role_hierarchy 获取 connection 失败: {}", e))
-            })?;
+            let session = self
+                .pool
+                .get_session("admin")
+                .await
+                .map_err(|e| BulwarkError::Dao(format!("dao-role-hierarchy-session::{}", e)))?;
+            let conn = session
+                .connection()
+                .map_err(|e| BulwarkError::Dao(format!("dao-role-hierarchy-connection::{}", e)))?;
             let stmt = Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "SELECT child_role, parent_role FROM role_hierarchy WHERE tenant_id = ?",
@@ -112,16 +114,16 @@ mod service {
             let rows = conn
                 .query_all_raw(stmt)
                 .await
-                .map_err(|e| BulwarkError::Dao(format!("role_hierarchy 查询失败: {}", e)))?;
+                .map_err(|e| BulwarkError::Dao(format!("dao-role-hierarchy-query::{}", e)))?;
             let records = rows
                 .into_iter()
                 .map(|row| {
                     let child_role = row
                         .try_get::<String>("", "child_role")
-                        .map_err(|e| BulwarkError::Dao(format!("child_role 读取失败: {}", e)))?;
+                        .map_err(|e| BulwarkError::Dao(format!("dao-child-role-read::{}", e)))?;
                     let parent_role = row
                         .try_get::<String>("", "parent_role")
-                        .map_err(|e| BulwarkError::Dao(format!("parent_role 读取失败: {}", e)))?;
+                        .map_err(|e| BulwarkError::Dao(format!("dao-parent-role-read::{}", e)))?;
                     Ok::<_, BulwarkError>(RoleHierarchyRecord {
                         child_role,
                         parent_role,
@@ -243,7 +245,7 @@ mod service {
             // 未命中或反序列化失败：重新计算并缓存
             let closure = self.compute_closure(tenant_id).await?;
             let json = serde_json::to_string(&closure)
-                .map_err(|e| BulwarkError::Dao(format!("role_closure 序列化失败: {}", e)))?;
+                .map_err(|e| BulwarkError::Dao(format!("dao-role-closure-serialize::{}", e)))?;
             self.dao.set(&cache_key, &json, 3600).await?;
 
             Ok(closure.get(role).cloned().unwrap_or_default())
@@ -269,7 +271,7 @@ mod service {
             tenant_id: i64,
         ) -> BulwarkResult<()> {
             let session = self.pool.get_session("admin").await.map_err(|e| {
-                BulwarkError::Dao(format!("role_hierarchy add_edge 获取 session 失败: {}", e))
+                BulwarkError::Dao(format!("dao-role-hierarchy-add-edge-session::{}", e))
             })?;
             let conn = session.connection().map_err(|e| {
                 BulwarkError::Dao(format!(
@@ -287,7 +289,7 @@ mod service {
                 ],
             );
             conn.execute_raw(stmt).await.map_err(|e| {
-                BulwarkError::Dao(format!("role_hierarchy add_edge 插入失败: {}", e))
+                BulwarkError::Dao(format!("dao-role-hierarchy-add-edge-insert::{}", e))
             })?;
 
             self.invalidate_cache(tenant_id).await

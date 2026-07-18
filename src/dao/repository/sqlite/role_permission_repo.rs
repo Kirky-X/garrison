@@ -103,7 +103,7 @@ impl RolePermissionRepository for DbnexusRolePermissionRepository {
             vec![v_str(role_id), v_str(permission_id), v_i64(tenant_id)],
         );
         conn.execute_raw(stmt).await.map_err(|e| {
-            BulwarkError::Dao(format!("app_role_permission assign 插入失败: {}", e))
+            BulwarkError::Dao(format!("dao-app-role-permission-assign-insert::{}", e))
         })?;
         Ok(())
     }
@@ -134,7 +134,7 @@ impl RolePermissionRepository for DbnexusRolePermissionRepository {
             vec![v_i64(tenant_id), v_str(role_id), v_str(permission_id)],
         );
         conn.execute_raw(stmt).await.map_err(|e| {
-            BulwarkError::Dao(format!("app_role_permission revoke 删除失败: {}", e))
+            BulwarkError::Dao(format!("dao-app-role-permission-revoke-delete::{}", e))
         })?;
         Ok(())
     }
@@ -146,7 +146,7 @@ impl RolePermissionRepository for DbnexusRolePermissionRepository {
         limit: i64,
     ) -> BulwarkResult<Vec<RolePermissionRow>> {
         let session = self.pool.get_session("admin").await.map_err(|e| {
-            BulwarkError::Dao(format!("app_role_permission list 获取 session 失败: {}", e))
+            BulwarkError::Dao(format!("dao-app-role-permission-list-session::{}", e))
         })?;
         let conn = session.connection().map_err(|e| {
             BulwarkError::Dao(format!(
@@ -164,7 +164,7 @@ impl RolePermissionRepository for DbnexusRolePermissionRepository {
         let rows = conn
             .query_all_raw(stmt)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("app_role_permission list 查询失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Dao(format!("dao-app-role-permission-list-query::{}", e)))?;
         rows.iter().map(parse_role_permission_row).collect()
     }
 }
@@ -173,7 +173,7 @@ impl RolePermissionRepository for DbnexusRolePermissionRepository {
 fn parse_role_permission_row(row: &QueryResult) -> BulwarkResult<RolePermissionRow> {
     Ok(RolePermissionRow {
         role_id: row.try_get("", "role_id").map_err(|e| {
-            BulwarkError::Dao(format!("app_role_permission 行解析失败 (role_id): {}", e))
+            BulwarkError::Dao(format!("dao-app-role-permission-row-parse-role-id::{}", e))
         })?,
         permission_id: row.try_get("", "permission_id").map_err(|e| {
             BulwarkError::Dao(format!(
@@ -182,7 +182,10 @@ fn parse_role_permission_row(row: &QueryResult) -> BulwarkResult<RolePermissionR
             ))
         })?,
         tenant_id: row.try_get("", "tenant_id").map_err(|e| {
-            BulwarkError::Dao(format!("app_role_permission 行解析失败 (tenant_id): {}", e))
+            BulwarkError::Dao(format!(
+                "dao-app-role-permission-row-parse-tenant-id::{}",
+                e
+            ))
         })?,
     })
 }

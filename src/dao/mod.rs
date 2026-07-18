@@ -189,7 +189,7 @@ pub trait BulwarkDao: Send + Sync {
         let value = self
             .get(old_key)
             .await?
-            .ok_or_else(|| BulwarkError::InvalidParam(format!("键不存在: {}", old_key)))?;
+            .ok_or_else(|| BulwarkError::InvalidParam(format!("dao-key-missing::{}", old_key)))?;
         self.set_permanent(new_key, &value).await?;
         self.delete(old_key).await
     }
@@ -246,7 +246,7 @@ pub trait BulwarkDao: Send + Sync {
             Some(v) => {
                 // Rule 12：parse 失败必须显式报错，禁止静默返回 0 导致计数器重置
                 let cur_val: u64 = v.parse().map_err(|_| {
-                    BulwarkError::Dao(format!("incr: 现存值非 u64，key={}, value={}", key, v))
+                    BulwarkError::Dao(format!("dao-incr-parse-u64::{}::{}", key, v))
                 })?;
                 let new_val = cur_val + 1;
                 self.update(key, &new_val.to_string()).await?;
@@ -550,7 +550,7 @@ mod oxcache_impl {
                 .sync_mode(true)
                 .build()
                 .await
-                .map_err(|e| BulwarkError::Dao(format!("oxcache 初始化失败: {}", e)))?;
+                .map_err(|e| BulwarkError::Dao(format!("dao-oxcache-init::{}", e)))?;
             Ok(Self {
                 cache,
                 atomic_lock: parking_lot::Mutex::new(()),
@@ -599,7 +599,7 @@ mod oxcache_impl {
             let actual_key = prefixed_key(key);
             self.cache
                 .get_sync(&actual_key)
-                .map_err(|e| BulwarkError::Dao(format!("oxcache get_sync 失败: {}", e)))
+                .map_err(|e| BulwarkError::Dao(format!("dao-oxcache-get-sync::{}", e)))
         }
 
         async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> BulwarkResult<()> {
@@ -611,7 +611,7 @@ mod oxcache_impl {
             };
             self.cache
                 .set_with_ttl_sync(&actual_key, &value.to_string(), ttl)
-                .map_err(|e| BulwarkError::Dao(format!("oxcache set_with_ttl_sync 失败: {}", e)))?;
+                .map_err(|e| BulwarkError::Dao(format!("dao-oxcache-set-with-ttl-sync::{}", e)))?;
             #[cfg(feature = "anomalous-detector-dual")]
             self.key_index.write().insert(actual_key);
             Ok(())
@@ -625,18 +625,18 @@ mod oxcache_impl {
             if !self
                 .cache
                 .exists_sync(&actual_key)
-                .map_err(|e| BulwarkError::Dao(format!("oxcache exists_sync 失败: {}", e)))?
+                .map_err(|e| BulwarkError::Dao(format!("dao-oxcache-exists-sync::{}", e)))?
             {
-                return Err(BulwarkError::Dao(format!("键不存在: {}", key)));
+                return Err(BulwarkError::Dao(format!("dao-key-missing::{}", key)));
             }
             let remaining_ttl = self
                 .cache
                 .ttl_sync(&actual_key)
-                .map_err(|e| BulwarkError::Dao(format!("oxcache ttl_sync 失败: {}", e)))?;
+                .map_err(|e| BulwarkError::Dao(format!("dao-oxcache-ttl-sync::{}", e)))?;
             self.cache
                 .set_with_ttl_sync(&actual_key, &value.to_string(), remaining_ttl)
                 .map_err(|e| {
-                    BulwarkError::Dao(format!("oxcache update (set_with_ttl_sync) 失败: {}", e))
+                    BulwarkError::Dao(format!("dao-oxcache-update-set-with-ttl-sync::{}", e))
                 })
         }
 
@@ -650,20 +650,20 @@ mod oxcache_impl {
                 let value = self
                     .cache
                     .get_sync(&actual_key)
-                    .map_err(|e| BulwarkError::Dao(format!("oxcache get_sync 失败: {}", e)))?
-                    .ok_or_else(|| BulwarkError::Dao(format!("键不存在: {}", key)))?;
+                    .map_err(|e| BulwarkError::Dao(format!("dao-oxcache-get-sync::{}", e)))?
+                    .ok_or_else(|| BulwarkError::Dao(format!("dao-key-missing::{}", key)))?;
                 self.cache
                     .set_with_ttl_sync(&actual_key, &value, None)
                     .map_err(|e| {
-                        BulwarkError::Dao(format!("oxcache expire (set_with_ttl_sync) 失败: {}", e))
+                        BulwarkError::Dao(format!("dao-oxcache-expire-set-with-ttl-sync::{}", e))
                     })
             } else {
                 let updated = self
                     .cache
                     .expire_sync(&actual_key, Duration::from_secs(seconds))
-                    .map_err(|e| BulwarkError::Dao(format!("oxcache expire_sync 失败: {}", e)))?;
+                    .map_err(|e| BulwarkError::Dao(format!("dao-oxcache-expire-sync::{}", e)))?;
                 if !updated {
-                    return Err(BulwarkError::Dao(format!("键不存在: {}", key)));
+                    return Err(BulwarkError::Dao(format!("dao-key-missing::{}", key)));
                 }
                 Ok(())
             }
@@ -673,7 +673,7 @@ mod oxcache_impl {
             let actual_key = prefixed_key(key);
             self.cache
                 .delete_sync(&actual_key)
-                .map_err(|e| BulwarkError::Dao(format!("oxcache delete_sync 失败: {}", e)))?;
+                .map_err(|e| BulwarkError::Dao(format!("dao-oxcache-delete-sync::{}", e)))?;
             #[cfg(feature = "anomalous-detector-dual")]
             self.key_index.write().remove(&actual_key);
             Ok(())
@@ -686,7 +686,7 @@ mod oxcache_impl {
             let actual_key = prefixed_key(key);
             self.cache
                 .set_with_ttl_sync(&actual_key, &value.to_string(), None)
-                .map_err(|e| BulwarkError::Dao(format!("oxcache set_with_ttl_sync 失败: {}", e)))?;
+                .map_err(|e| BulwarkError::Dao(format!("dao-oxcache-set-with-ttl-sync::{}", e)))?;
             #[cfg(feature = "anomalous-detector-dual")]
             self.key_index.write().insert(actual_key);
             Ok(())
@@ -701,7 +701,7 @@ mod oxcache_impl {
             let actual_key = prefixed_key(key);
             self.cache
                 .ttl_sync(&actual_key)
-                .map_err(|e| BulwarkError::Dao(format!("oxcache ttl_sync 失败: {}", e)))
+                .map_err(|e| BulwarkError::Dao(format!("dao-oxcache-ttl-sync::{}", e)))
         }
 
         /// rename 用 get → ttl_sync → set_with_ttl_sync → delete 四步。
@@ -714,18 +714,20 @@ mod oxcache_impl {
             let value = self
                 .cache
                 .get_sync(&actual_old)
-                .map_err(|e| BulwarkError::Dao(format!("oxcache get_sync 失败: {}", e)))?
-                .ok_or_else(|| BulwarkError::InvalidParam(format!("键不存在: {}", old_key)))?;
+                .map_err(|e| BulwarkError::Dao(format!("dao-oxcache-get-sync::{}", e)))?
+                .ok_or_else(|| {
+                    BulwarkError::InvalidParam(format!("dao-key-missing::{}", old_key))
+                })?;
             let remaining_ttl = self
                 .cache
                 .ttl_sync(&actual_old)
-                .map_err(|e| BulwarkError::Dao(format!("oxcache ttl_sync 失败: {}", e)))?;
+                .map_err(|e| BulwarkError::Dao(format!("dao-oxcache-ttl-sync::{}", e)))?;
             self.cache
                 .set_with_ttl_sync(&actual_new, &value, remaining_ttl)
-                .map_err(|e| BulwarkError::Dao(format!("oxcache set_with_ttl_sync 失败: {}", e)))?;
+                .map_err(|e| BulwarkError::Dao(format!("dao-oxcache-set-with-ttl-sync::{}", e)))?;
             self.cache
                 .delete_sync(&actual_old)
-                .map_err(|e| BulwarkError::Dao(format!("oxcache delete_sync 失败: {}", e)))
+                .map_err(|e| BulwarkError::Dao(format!("dao-oxcache-delete-sync::{}", e)))
         }
 
         /// get_and_delete 用 `parking_lot::Mutex` 保护 get+delete。
@@ -739,11 +741,11 @@ mod oxcache_impl {
             let value = self
                 .cache
                 .get_sync(&actual_key)
-                .map_err(|e| BulwarkError::Dao(format!("oxcache get_sync 失败: {}", e)))?;
+                .map_err(|e| BulwarkError::Dao(format!("dao-oxcache-get-sync::{}", e)))?;
             if value.is_some() {
                 self.cache
                     .delete_sync(&actual_key)
-                    .map_err(|e| BulwarkError::Dao(format!("oxcache delete_sync 失败: {}", e)))?;
+                    .map_err(|e| BulwarkError::Dao(format!("dao-oxcache-delete-sync::{}", e)))?;
             }
             Ok(value)
         }
@@ -758,7 +760,7 @@ mod oxcache_impl {
             match self
                 .cache
                 .get_sync(&actual_key)
-                .map_err(|e| BulwarkError::Dao(format!("oxcache get_sync 失败: {}", e)))?
+                .map_err(|e| BulwarkError::Dao(format!("dao-oxcache-get-sync::{}", e)))?
             {
                 Some(v) => {
                     // Rule 12：parse 失败必须显式报错，禁止静默返回 0 导致计数器重置
@@ -772,11 +774,11 @@ mod oxcache_impl {
                     let remaining_ttl = self
                         .cache
                         .ttl_sync(&actual_key)
-                        .map_err(|e| BulwarkError::Dao(format!("oxcache ttl_sync 失败: {}", e)))?;
+                        .map_err(|e| BulwarkError::Dao(format!("dao-oxcache-ttl-sync::{}", e)))?;
                     self.cache
                         .set_with_ttl_sync(&actual_key, &new_val.to_string(), remaining_ttl)
                         .map_err(|e| {
-                            BulwarkError::Dao(format!("oxcache set_with_ttl_sync 失败: {}", e))
+                            BulwarkError::Dao(format!("dao-oxcache-set-with-ttl-sync::{}", e))
                         })?;
                     Ok(new_val)
                 },
@@ -789,7 +791,7 @@ mod oxcache_impl {
                     self.cache
                         .set_with_ttl_sync(&actual_key, &"1".to_string(), ttl)
                         .map_err(|e| {
-                            BulwarkError::Dao(format!("oxcache set_with_ttl_sync 失败: {}", e))
+                            BulwarkError::Dao(format!("dao-oxcache-set-with-ttl-sync::{}", e))
                         })?;
                     Ok(1)
                 },
@@ -1382,8 +1384,8 @@ pub mod tests {
             let dao = BulwarkDaoOxcache::new().await.unwrap();
             let result = dao.expire("oc_missing_expire", 3600).await;
             assert!(
-                matches!(result, Err(BulwarkError::Dao(ref msg)) if msg.contains("键不存在")),
-                "expire 不存在的键应返回含 '键不存在' 的 Dao 错误，实际: {:?}",
+                matches!(result, Err(BulwarkError::Dao(ref msg)) if msg.contains("dao-key-missing")),
+                "expire 不存在的键应返回含 'dao-key-missing' 的 Dao 错误，实际: {:?}",
                 result
             );
         }
@@ -1832,7 +1834,7 @@ pub mod tests {
                     *existing = value.to_string();
                     Ok(())
                 },
-                None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
+                None => Err(BulwarkError::Dao(format!("dao-key-missing::{}", key))),
             }
         }
 

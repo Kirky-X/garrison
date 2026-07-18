@@ -35,10 +35,9 @@ impl PermissionRepository for DbnexusPermissionRepository {
         let sql = "SELECT id, code, name, resource_type, action, created_at, updated_at \
                    FROM app_permission WHERE id = ?";
         let stmt = make_statement(conn, sql, vec![v_str(id)]);
-        let row = conn
-            .query_one_raw(stmt)
-            .await
-            .map_err(|e| BulwarkError::Dao(format!("app_permission find_by_id 查询失败: {}", e)))?;
+        let row = conn.query_one_raw(stmt).await.map_err(|e| {
+            BulwarkError::Dao(format!("dao-app-permission-find-by-id-query::{}", e))
+        })?;
         row.map(|r| parse_permission_row(&r)).transpose()
     }
 
@@ -59,18 +58,19 @@ impl PermissionRepository for DbnexusPermissionRepository {
                    FROM app_permission WHERE code = ?";
         let stmt = make_statement(conn, sql, vec![v_str(code)]);
         let row = conn.query_one_raw(stmt).await.map_err(|e| {
-            BulwarkError::Dao(format!("app_permission find_by_code 查询失败: {}", e))
+            BulwarkError::Dao(format!("dao-app-permission-find-by-code-query::{}", e))
         })?;
         row.map(|r| parse_permission_row(&r)).transpose()
     }
 
     async fn create(&self, permission: NewPermission) -> BulwarkResult<String> {
         let id = uuid::Uuid::new_v4().to_string();
-        let session = self.pool.get_session("admin").await.map_err(|e| {
-            BulwarkError::Dao(format!("app_permission create 获取 session 失败: {}", e))
-        })?;
+        let session =
+            self.pool.get_session("admin").await.map_err(|e| {
+                BulwarkError::Dao(format!("dao-app-permission-create-session::{}", e))
+            })?;
         let conn = session.connection().map_err(|e| {
-            BulwarkError::Dao(format!("app_permission create 获取 connection 失败: {}", e))
+            BulwarkError::Dao(format!("dao-app-permission-create-connection::{}", e))
         })?;
         let sql = "INSERT INTO app_permission (id, code, name, resource_type, action) \
                    VALUES (?, ?, ?, ?, ?)";
@@ -87,7 +87,7 @@ impl PermissionRepository for DbnexusPermissionRepository {
         );
         conn.execute_raw(stmt)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("app_permission create 插入失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Dao(format!("dao-app-permission-create-insert::{}", e)))?;
         Ok(id)
     }
 
@@ -117,48 +117,51 @@ impl PermissionRepository for DbnexusPermissionRepository {
         }
         params.push(v_str(id));
         let sql = format!("UPDATE app_permission SET {} WHERE id = ?", sets.join(", "));
-        let session = self.pool.get_session("admin").await.map_err(|e| {
-            BulwarkError::Dao(format!("app_permission update 获取 session 失败: {}", e))
-        })?;
+        let session =
+            self.pool.get_session("admin").await.map_err(|e| {
+                BulwarkError::Dao(format!("dao-app-permission-update-session::{}", e))
+            })?;
         let conn = session.connection().map_err(|e| {
-            BulwarkError::Dao(format!("app_permission update 获取 connection 失败: {}", e))
+            BulwarkError::Dao(format!("dao-app-permission-update-connection::{}", e))
         })?;
         let stmt = make_statement(conn, &sql, params);
         conn.execute_raw(stmt)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("app_permission update 更新失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Dao(format!("dao-app-permission-update-update::{}", e)))?;
         Ok(())
     }
 
     async fn delete(&self, id: &str) -> BulwarkResult<()> {
-        let session = self.pool.get_session("admin").await.map_err(|e| {
-            BulwarkError::Dao(format!("app_permission delete 获取 session 失败: {}", e))
-        })?;
+        let session =
+            self.pool.get_session("admin").await.map_err(|e| {
+                BulwarkError::Dao(format!("dao-app-permission-delete-session::{}", e))
+            })?;
         let conn = session.connection().map_err(|e| {
-            BulwarkError::Dao(format!("app_permission delete 获取 connection 失败: {}", e))
+            BulwarkError::Dao(format!("dao-app-permission-delete-connection::{}", e))
         })?;
         let sql = "DELETE FROM app_permission WHERE id = ?";
         let stmt = make_statement(conn, sql, vec![v_str(id)]);
         conn.execute_raw(stmt)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("app_permission delete 删除失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Dao(format!("dao-app-permission-delete-delete::{}", e)))?;
         Ok(())
     }
 
     async fn list(&self, offset: i64, limit: i64) -> BulwarkResult<Vec<PermissionRow>> {
-        let session = self.pool.get_session("admin").await.map_err(|e| {
-            BulwarkError::Dao(format!("app_permission list 获取 session 失败: {}", e))
-        })?;
-        let conn = session.connection().map_err(|e| {
-            BulwarkError::Dao(format!("app_permission list 获取 connection 失败: {}", e))
-        })?;
+        let session =
+            self.pool.get_session("admin").await.map_err(|e| {
+                BulwarkError::Dao(format!("dao-app-permission-list-session::{}", e))
+            })?;
+        let conn = session
+            .connection()
+            .map_err(|e| BulwarkError::Dao(format!("dao-app-permission-list-connection::{}", e)))?;
         let sql = "SELECT id, code, name, resource_type, action, created_at, updated_at \
                    FROM app_permission LIMIT ? OFFSET ?";
         let stmt = make_statement(conn, sql, vec![v_i64(limit), v_i64(offset)]);
         let rows = conn
             .query_all_raw(stmt)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("app_permission list 查询失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Dao(format!("dao-app-permission-list-query::{}", e)))?;
         rows.iter().map(parse_permission_row).collect()
     }
 }
@@ -168,24 +171,24 @@ fn parse_permission_row(row: &QueryResult) -> BulwarkResult<PermissionRow> {
     Ok(PermissionRow {
         id: row
             .try_get("", "id")
-            .map_err(|e| BulwarkError::Dao(format!("app_permission 行解析失败 (id): {}", e)))?,
+            .map_err(|e| BulwarkError::Dao(format!("dao-app-permission-row-parse-id::{}", e)))?,
         code: row
             .try_get("", "code")
-            .map_err(|e| BulwarkError::Dao(format!("app_permission 行解析失败 (code): {}", e)))?,
+            .map_err(|e| BulwarkError::Dao(format!("dao-app-permission-row-parse-code::{}", e)))?,
         name: row
             .try_get("", "name")
-            .map_err(|e| BulwarkError::Dao(format!("app_permission 行解析失败 (name): {}", e)))?,
+            .map_err(|e| BulwarkError::Dao(format!("dao-app-permission-row-parse-name::{}", e)))?,
         resource_type: row.try_get("", "resource_type").map_err(|e| {
-            BulwarkError::Dao(format!("app_permission 行解析失败 (resource_type): {}", e))
+            BulwarkError::Dao(format!("dao-app-permission-row-parse-resource-type::{}", e))
         })?,
-        action: row
-            .try_get("", "action")
-            .map_err(|e| BulwarkError::Dao(format!("app_permission 行解析失败 (action): {}", e)))?,
+        action: row.try_get("", "action").map_err(|e| {
+            BulwarkError::Dao(format!("dao-app-permission-row-parse-action::{}", e))
+        })?,
         created_at: row.try_get("", "created_at").map_err(|e| {
-            BulwarkError::Dao(format!("app_permission 行解析失败 (created_at): {}", e))
+            BulwarkError::Dao(format!("dao-app-permission-row-parse-created-at::{}", e))
         })?,
         updated_at: row.try_get("", "updated_at").map_err(|e| {
-            BulwarkError::Dao(format!("app_permission 行解析失败 (updated_at): {}", e))
+            BulwarkError::Dao(format!("dao-app-permission-row-parse-updated-at::{}", e))
         })?,
     })
 }

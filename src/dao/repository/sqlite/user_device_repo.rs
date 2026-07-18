@@ -50,18 +50,18 @@ impl UserDeviceRepository for DbnexusUserDeviceRepository {
         let existing = conn
             .query_one_raw(stmt)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("app_user_device 查询已存在失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Dao(format!("dao-app-user-device-query-exists::{}", e)))?;
 
         if let Some(row) = existing {
             let existing_id: String = row.try_get("", "id").map_err(|e| {
-                BulwarkError::Dao(format!("app_user_device 解析已存在 id 失败: {}", e))
+                BulwarkError::Dao(format!("dao-app-user-device-parse-exists-id::{}", e))
             })?;
             // 更新 last_seen_at（幂等注册视为一次活跃）
             let now = chrono::Utc::now().timestamp();
             let update_sql = "UPDATE app_user_device SET last_seen_at = ? WHERE id = ?";
             let stmt = make_statement(conn, update_sql, vec![v_i64(now), v_str(&existing_id)]);
             conn.execute_raw(stmt).await.map_err(|e| {
-                BulwarkError::Dao(format!("app_user_device 更新 last_seen_at 失败: {}", e))
+                BulwarkError::Dao(format!("dao-app-user-device-update-last-seen-at::{}", e))
             })?;
             return Ok(existing_id);
         }
@@ -73,11 +73,11 @@ impl UserDeviceRepository for DbnexusUserDeviceRepository {
         let count_row = conn
             .query_one_raw(stmt)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("app_user_device count 查询失败: {}", e)))?
-            .ok_or_else(|| BulwarkError::Dao("app_user_device COUNT(*) 未返回行".into()))?;
+            .map_err(|e| BulwarkError::Dao(format!("dao-app-user-device-count-query::{}", e)))?
+            .ok_or_else(|| BulwarkError::Dao("dao-app-user-device-count-empty".into()))?;
         let current_count: i64 = count_row
             .try_get("", "cnt")
-            .map_err(|e| BulwarkError::Dao(format!("app_user_device 解析 count 失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Dao(format!("dao-app-user-device-parse-count::{}", e)))?;
         if (current_count as usize) >= MAX_DEVICES {
             return Err(BulwarkError::InvalidParam(format!(
                 "用户 (tenant_id={}, login_id={}) 设备数已达上限 {}，无法注册新设备",
@@ -108,7 +108,7 @@ impl UserDeviceRepository for DbnexusUserDeviceRepository {
         );
         conn.execute_raw(stmt)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("app_user_device 插入失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Dao(format!("dao-app-user-device-insert::{}", e)))?;
         Ok(device_id)
     }
 
@@ -129,7 +129,7 @@ impl UserDeviceRepository for DbnexusUserDeviceRepository {
         let stmt = make_statement(conn, sql, vec![v_str(device_id)]);
         conn.execute_raw(stmt)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("app_user_device block 更新失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Dao(format!("dao-app-user-device-block-update::{}", e)))?;
         Ok(())
     }
 
@@ -150,7 +150,7 @@ impl UserDeviceRepository for DbnexusUserDeviceRepository {
         let stmt = make_statement(conn, sql, vec![v_str(device_id)]);
         conn.execute_raw(stmt)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("app_user_device unblock 更新失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Dao(format!("dao-app-user-device-unblock-update::{}", e)))?;
         Ok(())
     }
 
@@ -159,11 +159,12 @@ impl UserDeviceRepository for DbnexusUserDeviceRepository {
         tenant_id: i64,
         login_id: &str,
     ) -> BulwarkResult<Vec<UserDeviceRow>> {
-        let session = self.pool.get_session("admin").await.map_err(|e| {
-            BulwarkError::Dao(format!("app_user_device list 获取 session 失败: {}", e))
-        })?;
+        let session =
+            self.pool.get_session("admin").await.map_err(|e| {
+                BulwarkError::Dao(format!("dao-app-user-device-list-session::{}", e))
+            })?;
         let conn = session.connection().map_err(|e| {
-            BulwarkError::Dao(format!("app_user_device list 获取 connection 失败: {}", e))
+            BulwarkError::Dao(format!("dao-app-user-device-list-connection::{}", e))
         })?;
         let sql = "SELECT id, tenant_id, login_id, device_identifier, device_name, user_agent, \
                   is_blocked, last_seen_at, created_at \
@@ -172,16 +173,17 @@ impl UserDeviceRepository for DbnexusUserDeviceRepository {
         let rows = conn
             .query_all_raw(stmt)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("app_user_device list 查询失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Dao(format!("dao-app-user-device-list-query::{}", e)))?;
         rows.iter().map(parse_user_device_row).collect()
     }
 
     async fn count_user_devices(&self, tenant_id: i64, login_id: &str) -> BulwarkResult<usize> {
-        let session = self.pool.get_session("admin").await.map_err(|e| {
-            BulwarkError::Dao(format!("app_user_device count 获取 session 失败: {}", e))
-        })?;
+        let session =
+            self.pool.get_session("admin").await.map_err(|e| {
+                BulwarkError::Dao(format!("dao-app-user-device-count-session::{}", e))
+            })?;
         let conn = session.connection().map_err(|e| {
-            BulwarkError::Dao(format!("app_user_device count 获取 connection 失败: {}", e))
+            BulwarkError::Dao(format!("dao-app-user-device-count-connection::{}", e))
         })?;
         let sql =
             "SELECT COUNT(*) AS cnt FROM app_user_device WHERE tenant_id = ? AND login_id = ?";
@@ -189,11 +191,11 @@ impl UserDeviceRepository for DbnexusUserDeviceRepository {
         let row = conn
             .query_one_raw(stmt)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("app_user_device count 查询失败: {}", e)))?
-            .ok_or_else(|| BulwarkError::Dao("app_user_device COUNT(*) 未返回行".into()))?;
+            .map_err(|e| BulwarkError::Dao(format!("dao-app-user-device-count-query::{}", e)))?
+            .ok_or_else(|| BulwarkError::Dao("dao-app-user-device-count-empty".into()))?;
         let count: i64 = row
             .try_get("", "cnt")
-            .map_err(|e| BulwarkError::Dao(format!("app_user_device 解析 count 失败: {}", e)))?;
+            .map_err(|e| BulwarkError::Dao(format!("dao-app-user-device-parse-count::{}", e)))?;
         Ok(count as usize)
     }
 }
@@ -203,12 +205,12 @@ fn parse_user_device_row(row: &QueryResult) -> BulwarkResult<UserDeviceRow> {
     Ok(UserDeviceRow {
         id: row
             .try_get("", "id")
-            .map_err(|e| BulwarkError::Dao(format!("app_user_device 行解析失败 (id): {}", e)))?,
+            .map_err(|e| BulwarkError::Dao(format!("dao-app-user-device-row-parse-id::{}", e)))?,
         tenant_id: row.try_get("", "tenant_id").map_err(|e| {
-            BulwarkError::Dao(format!("app_user_device 行解析失败 (tenant_id): {}", e))
+            BulwarkError::Dao(format!("dao-app-user-device-row-parse-tenant-id::{}", e))
         })?,
         login_id: row.try_get("", "login_id").map_err(|e| {
-            BulwarkError::Dao(format!("app_user_device 行解析失败 (login_id): {}", e))
+            BulwarkError::Dao(format!("dao-app-user-device-row-parse-login-id::{}", e))
         })?,
         device_identifier: row.try_get("", "device_identifier").map_err(|e| {
             BulwarkError::Dao(format!(
@@ -217,17 +219,17 @@ fn parse_user_device_row(row: &QueryResult) -> BulwarkResult<UserDeviceRow> {
             ))
         })?,
         device_name: row.try_get("", "device_name").map_err(|e| {
-            BulwarkError::Dao(format!("app_user_device 行解析失败 (device_name): {}", e))
+            BulwarkError::Dao(format!("dao-app-user-device-row-parse-device-name::{}", e))
         })?,
         user_agent: row.try_get("", "user_agent").map_err(|e| {
-            BulwarkError::Dao(format!("app_user_device 行解析失败 (user_agent): {}", e))
+            BulwarkError::Dao(format!("dao-app-user-device-row-parse-user-agent::{}", e))
         })?,
         is_blocked: read_bool(row, "is_blocked"),
         last_seen_at: row.try_get("", "last_seen_at").map_err(|e| {
-            BulwarkError::Dao(format!("app_user_device 行解析失败 (last_seen_at): {}", e))
+            BulwarkError::Dao(format!("dao-app-user-device-row-parse-last-seen-at::{}", e))
         })?,
         created_at: row.try_get("", "created_at").map_err(|e| {
-            BulwarkError::Dao(format!("app_user_device 行解析失败 (created_at): {}", e))
+            BulwarkError::Dao(format!("dao-app-user-device-row-parse-created-at::{}", e))
         })?,
     })
 }
