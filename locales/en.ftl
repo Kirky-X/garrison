@@ -386,6 +386,7 @@ dao-social-binding-get-conn = social_binding get connection failed: {$arg0}
 dao-social-binding-query = social_binding query failed: {$arg0}
 dao-social-binding-login-id-read = login_id read failed: {$arg0}
 dao-social-binding-insert-select = INSERT/SELECT login_id failed: {$arg0}
+dao-key-not-found = DAO key not found: {$arg0}
 
 # oauth2_server
 oauth2-server-authorize-serialize = AuthorizationCode serialize failed: {$arg0}
@@ -640,3 +641,36 @@ oauth2-server-revoke-invalid-client-secret = invalid_client: client_secret incor
 # --- account completion ---
 account-password-unsupported-hash-format = unsupported hash format: {$arg0}
 account-backup-deserialize = backup_code secret_data deserialize failed: {$arg0}
+
+# ============================================================================
+# Stp layer errors (i18n refactor - session.rs hardcoded Chinese migration)
+# ============================================================================
+
+# --- SessionLogic trait default impl + BulwarkLogicDefault impl ---
+stp-revoke-all-sessions-not-implemented = revoke_all_sessions requires BulwarkLogicDefault implementation
+stp-get-active-sessions-not-implemented = get_active_sessions requires BulwarkLogicDefault implementation
+stp-login-by-token-feature-required = login_by_token requires protocol-oauth2 or protocol-sso feature
+stp-refresh-access-token-not-implemented-db = refresh_access_token not implemented: requires db-sqlite feature and RefreshTokenRotation injection
+stp-refresh-access-token-no-rotation = refresh_access_token missing RefreshTokenRotation injection
+stp-refresh-access-token-feature-required = refresh_access_token requires protocol-jwt + db-sqlite feature
+
+# --- validate_login_with_token_inputs input validation ---
+stp-token-length-too-short = token length too short: {$arg0} < 8
+stp-token-length-too-long = token length exceeds limit: {$arg0} > 256
+
+# --- login_inner NewDevice mode ---
+stp-new-device-login-rejected-not-allowed = new device login rejected: NewDevice mode, new device login not allowed
+
+# --- check_login_stateless / token_style feature validation ---
+stp-jwt-token-style-requires-protocol-jwt = jwt token_style requires protocol-jwt feature
+stp-stateless-requires-jwt-token-style = Stateless mode requires token_style=jwt
+stp-stateless-requires-protocol-jwt = Stateless mode requires protocol-jwt feature
+stp-unknown-token-style = unsupported token_style: {$arg0}
+
+# --- auto_renewal config validation ---
+stp-auto-renewal-no-auth-logic = auto_renewal_threshold enabled but auth_logic not injected, cannot renew
+stp-auto-renewal-jwt-requires-protocol-jwt = auto_renewal_threshold enabled and token_style=jwt, but protocol-jwt feature not enabled
+
+# --- MockAnomalyDetector failure simulation ---
+stp-mock-login-detection-failed = mock login detection failed
+stp-mock-check-login-detection-failed = mock check_login detection failed

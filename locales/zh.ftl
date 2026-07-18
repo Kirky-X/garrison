@@ -386,6 +386,7 @@ dao-social-binding-get-conn = social_binding 获取 connection 失败: {$arg0}
 dao-social-binding-query = social_binding 查询失败: {$arg0}
 dao-social-binding-login-id-read = login_id 读取失败: {$arg0}
 dao-social-binding-insert-select = INSERT/SELECT login_id 失败: {$arg0}
+dao-key-not-found = DAO 键不存在: {$arg0}
 
 # oauth2_server
 oauth2-server-authorize-serialize = AuthorizationCode 序列化失败: {$arg0}
@@ -640,3 +641,36 @@ oauth2-server-revoke-invalid-client-secret = invalid_client: client_secret 错�
 # --- account 补全 ---
 account-password-unsupported-hash-format = 不支持的哈希格式: {$arg0}
 account-backup-deserialize = backup_code secret_data 反序列化失败: {$arg0}
+
+# ============================================================================
+# Stp 层错误（i18n 改造 - session.rs 硬编码中文迁移）
+# ============================================================================
+
+# --- SessionLogic trait 默认实现 + BulwarkLogicDefault impl ---
+stp-revoke-all-sessions-not-implemented = revoke_all_sessions 需 BulwarkLogicDefault 实现
+stp-get-active-sessions-not-implemented = get_active_sessions 需 BulwarkLogicDefault 实现
+stp-login-by-token-feature-required = login_by_token 需启用 protocol-oauth2 或 protocol-sso feature
+stp-refresh-access-token-not-implemented-db = refresh_access_token 未实现：需启用 db-sqlite feature 并注入 RefreshTokenRotation
+stp-refresh-access-token-no-rotation = refresh_access_token 未注入 RefreshTokenRotation
+stp-refresh-access-token-feature-required = refresh_access_token 需启用 protocol-jwt + db-sqlite feature
+
+# --- validate_login_with_token_inputs 输入校验 ---
+stp-token-length-too-short = token 长度不足: {$arg0} < 8
+stp-token-length-too-long = token 长度超限: {$arg0} > 256
+
+# --- login_inner NewDevice 模式 ---
+stp-new-device-login-rejected-not-allowed = 新设备登录被拒绝：当前为 NewDevice 模式，不允许新设备登录
+
+# --- check_login_stateless / token_style feature 校验 ---
+stp-jwt-token-style-requires-protocol-jwt = jwt token_style 需启用 protocol-jwt feature
+stp-stateless-requires-jwt-token-style = Stateless 模式要求 token_style=jwt
+stp-stateless-requires-protocol-jwt = Stateless 模式要求启用 protocol-jwt feature
+stp-unknown-token-style = 不支持的 token_style: {$arg0}
+
+# --- auto_renewal 续签配置校验 ---
+stp-auto-renewal-no-auth-logic = auto_renewal_threshold 启用但 auth_logic 未注入，无法续签
+stp-auto-renewal-jwt-requires-protocol-jwt = auto_renewal_threshold 启用且 token_style=jwt，但未启用 protocol-jwt feature
+
+# --- MockAnomalyDetector 失败模拟 ---
+stp-mock-login-detection-failed = mock login detection 失败
+stp-mock-check-login-detection-failed = mock check_login detection 失败

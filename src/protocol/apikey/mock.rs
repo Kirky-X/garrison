@@ -48,7 +48,7 @@ impl BulwarkDao for MockDao {
             data.insert(key.to_string(), value.to_string());
             Ok(())
         } else {
-            Err(BulwarkError::Dao("dao-key-not-found".to_string()))
+            Err(BulwarkError::Dao(format!("dao-key-not-found::{}", key)))
         }
     }
 
