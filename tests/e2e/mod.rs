@@ -28,14 +28,21 @@ use bulwark::manager::BulwarkManager;
 use bulwark::oauth2_server::client::DaoOAuth2ClientStore;
 use bulwark::server::BulwarkAuthServer;
 use bulwark::stp::BulwarkInterface;
+use once_cell::sync::OnceCell;
 use std::sync::Arc;
 
+pub mod api_authz_boundary;
+pub mod api_boundary;
+pub mod api_errors;
+pub mod api_happy;
 pub mod auth_flow;
 pub mod error_scenarios;
+pub mod har_recorder;
 pub mod middleware;
 pub mod mock;
 pub mod oauth2_flow;
 pub mod permission_flow;
+pub mod remote;
 pub mod session_flow;
 
 /// E2E 测试用的空权限/空角色 mock 接口实现。
@@ -273,4 +280,75 @@ pub async fn register_oauth2_client(
         }
     })
     .await;
+}
+
+/// HTTP 抓包日志共享单例（OnceCell）。
+///
+/// 首次调用 `open_http_log()` 时以 truncate 模式打开 `logs/e2e_http.jsonl`，
+/// 后续调用复用同一 `Arc<Mutex<BufWriter<File>>>`，所有 `RecordingClient`
+/// 共享同一文件句柄。
+static HTTP_LOG: OnceCell<Arc<parking_lot::Mutex<std::io::BufWriter<std::fs::File>>>> =
+    OnceCell::new();
+
+/// 打开 HTTP 抓包日志文件（共享单例）。
+///
+/// 若 `logs/` 目录不存在则创建。文件以 truncate 模式打开（每次测试运行清空），
+/// 后续调用复用同一 `Arc<Mutex<BufWriter<File>>>`。
+///
+/// # 失败处理
+/// 创建目录 / 打开文件失败时 panic（规则 12 失败显性化），测试无法继续。
+pub fn open_http_log() -> Arc<parking_lot::Mutex<std::io::BufWriter<std::fs::File>>> {
+    HTTP_LOG
+        .get_or_init(|| {
+            std::fs::create_dir_all("logs").expect("创建 logs/ 目录失败");
+            let file = std::fs::OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open("logs/e2e_http.jsonl")
+                .expect("打开 logs/e2e_http.jsonl 失败");
+            Arc::new(parking_lot::Mutex::new(std::io::BufWriter::new(file)))
+        })
+        .clone()
+}
+
+/// 创建带 HTTP 抓包能力的 `RecordingClient`。
+///
+/// 共享 `open_http_log()` 单例作为日志写入端，设置初始 `test_name`。
+/// 调用方可在测试中通过 `set_test_name()` 切换 test_name。
+pub fn make_recording_client(test_name: &str) -> har_recorder::RecordingClient {
+    let log_writer = open_http_log();
+    har_recorder::RecordingClient::new(log_writer, test_name.to_string())
+}
+
+/// 断言 check-login 响应表达"token 已失效/拒绝"语义。
+///
+/// # Spec 与实际行为差异（spawn_child 模式）
+///
+/// `examples/auth_server.rs::serve()` 使用 `BulwarkConfig::default_config()`，
+/// `throw_on_not_login` 默认为 `true`。`start_e2e_server()` 的 in-process 模式
+/// 显式设置 `throw_on_not_login=false`，二者行为不同：
+///
+/// | 模式 | throw_on_not_login | 无效 token check-login 响应 |
+/// |------|-------------------|---------------------------|
+/// | in-process | false | `{"data": false}` |
+/// | spawn_child | true  | `{"error_code": "SESSION_ERROR", "message": "会话错误"}` |
+///
+/// 用户约束"禁止修改 src/ 主 crate 代码 - 只能修改 tests/e2e/ 目录下的文件"，
+/// 且 specmark T002 规定 `serve()` 用 `default_config()`，不可调整 config。
+/// 因此 `RemoteContext::setup()` 走 spawn_child 分支时，测试断言需同时接受
+/// 两种表达方式：`data=false` 或 `error_code` 存在（业务层拒绝语义）。
+///
+/// # 参数
+/// - `body`: check-login 响应 JSON。
+/// - `context`: 失败时的上下文描述（用于 panic message）。
+pub fn assert_check_login_denied(body: &serde_json::Value, context: &str) {
+    let data_false = body["data"] == false;
+    let has_error_code = body.get("error_code").is_some() && !body["error_code"].is_null();
+    assert!(
+        data_false || has_error_code,
+        "{}: check-login 应表达拒绝语义（data=false 或 error_code 存在），实际 body={:?}",
+        context,
+        body
+    );
 }
