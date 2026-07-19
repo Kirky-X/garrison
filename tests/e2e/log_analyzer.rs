@@ -115,7 +115,9 @@ pub fn analyze_http_log(input: &Path, output: &Path) -> std::io::Result<Summary>
 
     let mut latencies: Vec<u64> = Vec::new();
     let mut total_duration_ms: u64 = 0;
-    let mut status_distribution: HashMap<String, u64> = HashMap::new();
+    // MEDIUM-4: 内部用 HashMap<u16, u64> 避免每行 to_string() 分配 String，
+    // 序列化输出时再转换为 HashMap<String, u64>
+    let mut status_distribution: HashMap<u16, u64> = HashMap::new();
     let mut failed_requests: Vec<FailedRequest> = Vec::new();
     let mut oversized_responses: Vec<OversizedResponse> = Vec::new();
     let mut total: u64 = 0;
@@ -154,7 +156,7 @@ pub fn analyze_http_log(input: &Path, output: &Path) -> std::io::Result<Summary>
             .unwrap_or("")
             .to_string();
 
-        *status_distribution.entry(status.to_string()).or_insert(0) += 1;
+        *status_distribution.entry(status).or_insert(0) += 1;
         latencies.push(duration_ms);
         total_duration_ms += duration_ms;
 
@@ -168,15 +170,19 @@ pub fn analyze_http_log(input: &Path, output: &Path) -> std::io::Result<Summary>
             });
         }
 
-        let resp_body_bytes = resp_body_size(&v);
-        if resp_body_bytes > OVERSIZE_THRESHOLD {
-            oversized_responses.push(OversizedResponse {
-                test_name,
-                method,
-                url,
-                status,
-                resp_body_bytes,
-            });
+        // MEDIUM-5: 原始行长度 <= OVERSIZE_THRESHOLD 时，resp_body 一定不超过阈值
+        // 跳过 resp_body_size 调用避免 serde_json::to_string 重新序列化开销
+        if (trimmed.len() as u64) > OVERSIZE_THRESHOLD {
+            let resp_body_bytes = resp_body_size(&v);
+            if resp_body_bytes > OVERSIZE_THRESHOLD {
+                oversized_responses.push(OversizedResponse {
+                    test_name,
+                    method,
+                    url,
+                    status,
+                    resp_body_bytes,
+                });
+            }
         }
     }
 
@@ -196,9 +202,15 @@ pub fn analyze_http_log(input: &Path, output: &Path) -> std::io::Result<Summary>
         latencies[idx]
     };
 
+    // MEDIUM-4: 输出时将 HashMap<u16, u64> 转换为 HashMap<String, u64>
+    let status_distribution_str: HashMap<String, u64> = status_distribution
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v))
+        .collect();
+
     let summary = Summary {
         total,
-        status_distribution,
+        status_distribution: status_distribution_str,
         avg_latency_ms,
         p95_latency_ms: percentile(95),
         p99_latency_ms: percentile(99),

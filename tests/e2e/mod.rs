@@ -17,6 +17,39 @@
 //! `check_permission` / `check_role` / 审计日志等场景能正确读取租户上下文。
 //!
 //! 所有 E2E 测试使用 `#[serial_test::serial]` 保证 BulwarkManager 全局单例安全。
+//!
+//! # 已知 LOW 级重构建议（规则 26 审查遗留，未实施）
+//!
+//! 以下 LOW 项改动较大且非必要，按"重构建议若改动过大可标记 TODO"原则记录在此，
+//! 待后续整体重构时统一处理：
+//!
+//! - **架构 LOW-1**：`open_http_log` / `open_pentest_log` / `open_perf_log` 三处
+//!   OnceCell 单例模式重复。可抽 `LogSingleton` 工厂函数，但跨文件抽取收益有限。
+//! - **架构 LOW-2**：`har_recorder.rs` 的 `post` / `get` 方法重复构造
+//!   `RecordingRequestBuilder`。可抽 `build_request(method, url)` 辅助函数，
+//!   但 reqwest::Client 的 `post` / `get` 返回类型不同，抽取消除重复需泛型。
+//! - **架构 LOW-4**：`perf.rs` / `log_analyzer.rs` / `e2e_analyze.py` 三处
+//!   percentile 算法重复。可新建 `stats.rs` 模块统一实现，但跨 Rust/Python
+//!   语言无法共享，仅 Rust 端可统一。
+//! - **架构 LOW-5**：子模块普遍 `use super::*;` 引入所有 pub 项。显式 `use`
+//!   可读性更好但改动量大，且 `super::*` 在测试代码中是 Rust 惯用写法。
+//! - **性能 LOW-1**：`perf.rs` worker 每次循环 `req.json(b)` 重新序列化 body。
+//!   可预序列化为 `Vec<u8>` 后用 `req.body(bytes)`，但需重构 LoadRunner
+//!   字段类型（`Option<serde_json::Value>` → `Option<Vec<u8>>`）。
+//! - **性能 LOW-2**：`perf.rs` worker 每次循环遍历 `headers` Vec 构造请求
+//!   header。可预构造 `HeaderMap` 一次，但 LoadRunner 字段需改为 `HeaderMap`。
+//! - **性能 LOW-3**：`har_recorder.rs` `send()` 中克隆 `RequestSnapshot` 字段。
+//!   可用 `Arc<RequestSnapshot>` 共享，但 `RecordingRequestBuilder` 消费 self
+//!   模式下 Arc 收益有限。
+//! - **性能 LOW-4**：`remote.rs` stderr 读线程在 channel 断开后退出，但子进程
+//!   stderr 仍可能写入。可改为 `BufReader::lines` + drop 检测，但当前 60s
+//!   超时 panic 已能覆盖。
+//! - **性能 LOW-5**：`log_analyzer.rs` failed_requests 每条 clone String。
+//!   可用 `&str` 引用 + lifetime，但 Summary 结构体需 'a lifetime 污染。
+//! - **安全 LOW-3**：`csrf.rs` evil Origin 测试未校验 SameSite Cookie。
+//!   API 模式下无 Cookie，不适用；浏览器场景需独立测试套件覆盖。
+//! - **安全 LOW-5**：`sql_injection.rs` panic 消息含 payload 字符串。
+//!   payload 是测试输入（非用户数据），泄漏到 panic 消息中有助于调试，可接受。
 
 #![allow(dead_code)]
 
@@ -99,49 +132,7 @@ pub async fn start_e2e_server(
     api_key: &str,
 ) -> (String, String, tokio::task::JoinHandle<()>) {
     let backend: Arc<dyn AuthBackend> = Arc::new(setup_backend().await);
-
-    let external_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let internal_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let external_port = external_listener.local_addr().unwrap().port();
-    let internal_port = internal_listener.local_addr().unwrap().port();
-
-    let external_url = format!("http://127.0.0.1:{}", external_port);
-    let internal_url = format!("http://127.0.0.1:{}", internal_port);
-
-    // tenant-isolation feature 启用时注入 HeaderTenantResolver，使
-    // tenant_resolution_middleware 解析 X-Tenant-Id header 进入 TENANT scope
-    #[cfg(feature = "tenant-isolation")]
-    let server = BulwarkAuthServer::new(backend)
-        .with_external_port(external_port)
-        .with_internal_port(internal_port)
-        .with_rate_limit(rate_limit)
-        .with_internal_api_key(api_key)
-        .with_tenant_resolver(Some(Arc::new(HeaderTenantResolver)));
-    #[cfg(not(feature = "tenant-isolation"))]
-    let server = BulwarkAuthServer::new(backend)
-        .with_external_port(external_port)
-        .with_internal_port(internal_port)
-        .with_rate_limit(rate_limit)
-        .with_internal_api_key(api_key);
-
-    let external_router = server.external_router();
-    let internal_router = server.internal_router();
-
-    let handle = tokio::spawn(async move {
-        let (ext_res, int_res) = tokio::join!(
-            axum::serve(external_listener, external_router),
-            axum::serve(internal_listener, internal_router)
-        );
-        if let Err(e) = ext_res {
-            eprintln!("E2E 外网服务器异常: {}", e);
-        }
-        if let Err(e) = int_res {
-            eprintln!("E2E 内网服务器异常: {}", e);
-        }
-    });
-
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    (external_url, internal_url, handle)
+    spawn_server(backend, rate_limit, api_key, None, "外网").await
 }
 
 /// 随机端口启动 E2E 测试服务器（含 OAuth2 端点）。
@@ -168,6 +159,29 @@ pub async fn start_e2e_server_with_oauth2(
         "http://localhost/login".to_string(),
     ));
 
+    let (external_url, internal_url, handle) =
+        spawn_server(backend, rate_limit, api_key, Some(oauth2_state), "OAuth2").await;
+    (external_url, internal_url, handle, store)
+}
+
+/// 通用 server spawn 辅助函数（MEDIUM-6 修复：消除三个 start_e2e_server* 重复代码）。
+///
+/// 接受已构造的 backend、可选 OAuth2State，绑定随机端口并 spawn axum::serve。
+/// tenant-isolation feature 启用时自动注入 HeaderTenantResolver。
+///
+/// # 参数
+/// - `backend`：AuthBackend trait 对象
+/// - `rate_limit`：速率限制
+/// - `api_key`：内网 API Key
+/// - `oauth2_state`：可选 OAuth2State（None 时不注入 OAuth2 路由）
+/// - `log_prefix`：日志前缀（用于区分外网/OAuth2/no_concurrent）
+async fn spawn_server(
+    backend: Arc<dyn AuthBackend>,
+    rate_limit: u32,
+    api_key: &str,
+    oauth2_state: Option<Arc<bulwark::server::oauth2_routes::OAuth2State>>,
+    log_prefix: &str,
+) -> (String, String, tokio::task::JoinHandle<()>) {
     let external_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let internal_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let external_port = external_listener.local_addr().unwrap().port();
@@ -176,42 +190,41 @@ pub async fn start_e2e_server_with_oauth2(
     let external_url = format!("http://127.0.0.1:{}", external_port);
     let internal_url = format!("http://127.0.0.1:{}", internal_port);
 
+    // 通用 builder 链：所有三个 start_e2e_server* 共享（MEDIUM-6）
+    let server = BulwarkAuthServer::new(backend)
+        .with_external_port(external_port)
+        .with_internal_port(internal_port)
+        .with_rate_limit(rate_limit)
+        .with_internal_api_key(api_key);
+    let server = if let Some(state) = oauth2_state {
+        server.with_oauth2(state)
+    } else {
+        server
+    };
     // tenant-isolation feature 启用时注入 HeaderTenantResolver，使
     // tenant_resolution_middleware 解析 X-Tenant-Id header 进入 TENANT scope
     #[cfg(feature = "tenant-isolation")]
-    let server = BulwarkAuthServer::new(backend)
-        .with_external_port(external_port)
-        .with_internal_port(internal_port)
-        .with_rate_limit(rate_limit)
-        .with_internal_api_key(api_key)
-        .with_oauth2(oauth2_state)
-        .with_tenant_resolver(Some(Arc::new(HeaderTenantResolver)));
-    #[cfg(not(feature = "tenant-isolation"))]
-    let server = BulwarkAuthServer::new(backend)
-        .with_external_port(external_port)
-        .with_internal_port(internal_port)
-        .with_rate_limit(rate_limit)
-        .with_internal_api_key(api_key)
-        .with_oauth2(oauth2_state);
+    let server = server.with_tenant_resolver(Some(Arc::new(HeaderTenantResolver)));
 
     let external_router = server.external_router();
     let internal_router = server.internal_router();
 
+    let prefix = log_prefix.to_string();
     let handle = tokio::spawn(async move {
         let (ext_res, int_res) = tokio::join!(
             axum::serve(external_listener, external_router),
             axum::serve(internal_listener, internal_router)
         );
         if let Err(e) = ext_res {
-            eprintln!("E2E OAuth2 外网服务器异常: {}", e);
+            eprintln!("E2E {} 外网服务器异常: {}", prefix, e);
         }
         if let Err(e) = int_res {
-            eprintln!("E2E OAuth2 内网服务器异常: {}", e);
+            eprintln!("E2E {} 内网服务器异常: {}", prefix, e);
         }
     });
 
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    (external_url, internal_url, handle, store)
+    (external_url, internal_url, handle)
 }
 
 /// 构造默认租户上下文所需的 HTTP headers。
@@ -340,18 +353,33 @@ pub fn make_recording_client(test_name: &str) -> har_recorder::RecordingClient {
 /// 用户约束"禁止修改 src/ 主 crate 代码 - 只能修改 tests/e2e/ 目录下的文件"，
 /// 且 specmark T002 规定 `serve()` 用 `default_config()`，不可调整 config。
 /// 因此 `RemoteContext::setup()` 走 spawn_child 分支时，测试断言需同时接受
-/// 两种表达方式：`data=false` 或 `error_code` 存在（业务层拒绝语义）。
+/// 两种表达方式：`data=false` 或 `error_code ∈ ALLOWED_ERROR_CODES`（业务层拒绝语义）。
+///
+/// # error_code 白名单（MEDIUM-4 修复）
+///
+/// 不再接受任意非 null `error_code`——攻击者可能注入未知 error_code 绕过断言。
+/// 仅接受业务层实际可能返回的拒绝语义 error_code：
+/// - `SESSION_ERROR`：spawn_child 模式无效 token
+/// - `NOT_LOGIN`：未登录
+/// - `NOT_PERMISSION`：无权限
 ///
 /// # 参数
 /// - `body`: check-login 响应 JSON。
 /// - `context`: 失败时的上下文描述（用于 panic message）。
 pub fn assert_check_login_denied(body: &serde_json::Value, context: &str) {
+    /// 业务层实际可能返回的拒绝语义 error_code 白名单（MEDIUM-4）。
+    const ALLOWED_ERROR_CODES: &[&str] = &["SESSION_ERROR", "NOT_LOGIN", "NOT_PERMISSION"];
+
     let data_false = body["data"] == false;
-    let has_error_code = body.get("error_code").is_some() && !body["error_code"].is_null();
+    let has_allowed_error_code = body
+        .get("error_code")
+        .and_then(|v| v.as_str())
+        .is_some_and(|code| ALLOWED_ERROR_CODES.contains(&code));
     assert!(
-        data_false || has_error_code,
-        "{}: check-login 应表达拒绝语义（data=false 或 error_code 存在），实际 body={:?}",
+        data_false || has_allowed_error_code,
+        "{}: check-login 应表达拒绝语义（data=false 或 error_code ∈ {:?}），实际 body={:?}",
         context,
+        ALLOWED_ERROR_CODES,
         body
     );
 }
@@ -388,45 +416,5 @@ pub async fn start_e2e_server_no_concurrent(
     api_key: &str,
 ) -> (String, String, tokio::task::JoinHandle<()>) {
     let backend: Arc<dyn AuthBackend> = Arc::new(setup_backend_no_concurrent().await);
-
-    let external_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let internal_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let external_port = external_listener.local_addr().unwrap().port();
-    let internal_port = internal_listener.local_addr().unwrap().port();
-
-    let external_url = format!("http://127.0.0.1:{}", external_port);
-    let internal_url = format!("http://127.0.0.1:{}", internal_port);
-
-    #[cfg(feature = "tenant-isolation")]
-    let server = BulwarkAuthServer::new(backend)
-        .with_external_port(external_port)
-        .with_internal_port(internal_port)
-        .with_rate_limit(rate_limit)
-        .with_internal_api_key(api_key)
-        .with_tenant_resolver(Some(Arc::new(HeaderTenantResolver)));
-    #[cfg(not(feature = "tenant-isolation"))]
-    let server = BulwarkAuthServer::new(backend)
-        .with_external_port(external_port)
-        .with_internal_port(internal_port)
-        .with_rate_limit(rate_limit)
-        .with_internal_api_key(api_key);
-
-    let external_router = server.external_router();
-    let internal_router = server.internal_router();
-
-    let handle = tokio::spawn(async move {
-        let (ext_res, int_res) = tokio::join!(
-            axum::serve(external_listener, external_router),
-            axum::serve(internal_listener, internal_router)
-        );
-        if let Err(e) = ext_res {
-            eprintln!("E2E no_concurrent 外网服务器异常: {}", e);
-        }
-        if let Err(e) = int_res {
-            eprintln!("E2E no_concurrent 内网服务器异常: {}", e);
-        }
-    });
-
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    (external_url, internal_url, handle)
+    spawn_server(backend, rate_limit, api_key, None, "no_concurrent").await
 }

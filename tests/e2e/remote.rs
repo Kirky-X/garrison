@@ -97,10 +97,18 @@ impl RemoteContext {
     /// 从 stderr 行 `[auth_server_serve] listening on external=0.0.0.0:PORT internal=0.0.0.0:PORT`
     /// 解析端口。60s 超时 panic dump stderr（规则 12 失败显性化；60s 容纳首次
     /// `cargo run` 编译时间，预编译后通常 <1s）。
+    ///
+    /// # API Key（MEDIUM-3 / LOW-1）
+    ///
+    /// 从 env `EXAMPLE_INTERNAL_API_KEY` 读取，未设置时使用 fallback
+    /// `"e2e-test-key-12345"`（仅 e2e 测试用，生产环境必须显式设置 env）。
+    /// `scripts/e2e_run.sh` 已采用 fail-closed 校验强制要求显式设置。
     pub fn spawn_child() -> Self {
         let external_port = pick_free_port();
         let internal_port = pick_free_port();
-        let api_key = "e2e-test-key-12345".to_string();
+        // LOW-1: fallback "e2e-test-key-12345" 仅 e2e 测试用，不应在生产环境使用
+        let api_key = std::env::var("EXAMPLE_INTERNAL_API_KEY")
+            .unwrap_or_else(|_| "e2e-test-key-12345".to_string());
 
         let mut child = Command::new("cargo")
             .args([

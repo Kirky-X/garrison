@@ -18,6 +18,7 @@
 
 use super::assert_check_login_denied;
 use super::make_recording_client;
+use super::pentest::SQL_ERROR_KEYWORDS;
 use super::remote::RemoteContext;
 use bulwark::backend::types::LoginParams;
 use serde_json::json;
@@ -80,31 +81,17 @@ async fn test_api_errors_invalid_token() {
 
         // T060: SQL 关键字泄漏断言（R-e2e-error-edge-001）
         // 确保响应体不含 sql/syntax/mysql/sqlite 关键字（防止数据库错误信息泄漏）
+        // LOW-3: 复用 pentest::SQL_ERROR_KEYWORDS 常量，消除重复定义
         let body_lower = body_text.to_lowercase();
-        assert!(
-            !body_lower.contains("sql"),
-            "响应体泄漏 SQL 关键字 (token={:?}): {}",
-            token,
-            body_text
-        );
-        assert!(
-            !body_lower.contains("syntax"),
-            "响应体泄漏 syntax 关键字 (token={:?}): {}",
-            token,
-            body_text
-        );
-        assert!(
-            !body_lower.contains("mysql"),
-            "响应体泄漏 mysql 关键字 (token={:?}): {}",
-            token,
-            body_text
-        );
-        assert!(
-            !body_lower.contains("sqlite"),
-            "响应体泄漏 sqlite 关键字 (token={:?}): {}",
-            token,
-            body_text
-        );
+        for keyword in SQL_ERROR_KEYWORDS {
+            assert!(
+                !body_lower.contains(keyword),
+                "响应体泄漏 SQL 错误关键字 {:?} (token={:?}): {}",
+                keyword,
+                token,
+                body_text
+            );
+        }
     }
 }
 

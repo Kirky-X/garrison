@@ -6,6 +6,13 @@
 //! 包装 `reqwest::Client`，记录每个请求/响应到 JSONL 文件（`logs/e2e_http.jsonl`），
 //! 供渗透测试 / 性能分析 / 调试回放使用。
 //!
+//! # 安全警示（LOW-4）
+//!
+//! 日志包含完整的请求/响应内容，可能含敏感数据（token、密码、个人信息）。
+//! - **禁止**将 `logs/e2e_http.jsonl` 提交到 git（已在 `.gitignore`）
+//! - **禁止**在生产环境启用 RecordingClient
+//! - 共享日志前需脱敏（删除/掩码 token、密码等字段）
+//!
 //! # JSONL 行格式
 //!
 //! ```json
@@ -14,14 +21,30 @@
 //!  "resp_headers":{...},"resp_body":{...},"duration_ms":42}
 //! ```
 //!
-//! 写入后立即 flush，确保测试可读取磁盘内容（OnceCell 单例的 BufWriter
-//! 不会在程序生命周期内 drop，必须显式 flush）。
+//! 写入后每 `FLUSH_INTERVAL`（=10）次 flush 一次（MEDIUM-3：避免每请求 fsync 开销）。
+//! 测试需要立即读取磁盘内容时，应显式调用 `open_http_log().lock().flush()` 强制 flush
+//! （OnceCell 单例的 BufWriter 不会在程序生命周期内 drop）。
 
 use parking_lot::Mutex;
 use serial_test::serial;
 use std::io::Write;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
+
+/// 全局写入计数器（MEDIUM-3：每 N 次 flush 一次，避免每请求 fsync 开销）。
+///
+/// `RecordingClient` 是无状态包装器，每次 `send()` 创建新的
+/// `RecordingRequestBuilder`，无法在 client 实例上维护计数。用进程级
+/// `AtomicU64` 计数器，每 `FLUSH_INTERVAL` 次写入 flush 一次。
+static WRITE_COUNT: AtomicU64 = AtomicU64::new(0);
+
+/// flush 间隔——每 10 次写入 flush 一次（MEDIUM-3）。
+///
+/// perf/pentest 测试产生 100+ 条记录，每 10 条 flush 一次减少 10x fsync
+/// 开销。test_recording_client_writes_jsonl 测试只发 1 个请求，需要在读取前
+/// 显式调用 `open_http_log().lock().flush()` 强制 flush。
+const FLUSH_INTERVAL: u64 = 10;
 
 /// HTTP 抓包客户端，包装 `reqwest::Client` 并记录每个请求/响应到 JSONL 文件。
 pub struct RecordingClient {
@@ -146,7 +169,8 @@ impl RecordingRequestBuilder {
     /// 记录字段：`ts` / `test_name` / `method` / `url` / `req_headers` / `req_body` /
     /// `status` / `resp_headers` / `resp_body` / `duration_ms`。
     ///
-    /// 写入后立即 flush，确保测试可读取磁盘内容。
+    /// 写入后每 `FLUSH_INTERVAL` 次 flush 一次（MEDIUM-3：避免每请求 fsync 开销；
+    /// 测试需要立即读取磁盘内容时，应显式调用 `open_http_log().lock().flush()`）。
     /// 重建 `reqwest::Response` 返回（保留原 status/headers/body）。
     pub async fn send(self) -> Result<reqwest::Response, reqwest::Error> {
         let start = Instant::now();
@@ -159,7 +183,8 @@ impl RecordingRequestBuilder {
         let resp = self.inner.send().await?;
         let status = resp.status();
         let resp_headers = resp.headers().clone();
-        let resp_body = resp.text().await?;
+        // MEDIUM-6: 用 bytes() 一次解析，避免 text() + from_str 双重解析
+        let resp_bytes = resp.bytes().await?;
         let duration_ms = start.elapsed().as_millis();
 
         // 序列化 JSONL 行
@@ -173,15 +198,18 @@ impl RecordingRequestBuilder {
             "req_body": req_body,
             "status": status.as_u16(),
             "resp_headers": headers_to_json(&resp_headers),
-            "resp_body": parse_body_to_json(&resp_body),
+            "resp_body": parse_body_from_bytes(&resp_bytes),
             "duration_ms": duration_ms,
         });
 
-        // 写入并 flush（BufWriter 不会在程序生命周期内 drop，必须显式 flush）
+        // 写入并按间隔 flush（MEDIUM-3：每 FLUSH_INTERVAL 次 flush 一次）
+        let count = WRITE_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
         {
             let mut writer = self.log_writer.lock();
             writeln!(writer, "{}", jsonl).expect("写入 JSONL 失败");
-            writer.flush().expect("flush JSONL 失败");
+            if count % FLUSH_INTERVAL == 0 {
+                writer.flush().expect("flush JSONL 失败");
+            }
         }
 
         // 重建 reqwest::Response（保留原 status/headers/body）
@@ -189,7 +217,7 @@ impl RecordingRequestBuilder {
         for (key, value) in resp_headers.iter() {
             builder = builder.header(key, value);
         }
-        let http_resp = builder.body(resp_body).expect("构造 http::Response 失败");
+        let http_resp = builder.body(resp_bytes).expect("构造 http::Response 失败");
         Ok(http_resp.into())
     }
 }
@@ -205,12 +233,18 @@ fn headers_to_json(headers: &reqwest::header::HeaderMap) -> serde_json::Value {
     serde_json::Value::Object(map)
 }
 
-/// 将响应 body 字符串解析为 JSON（失败则包装为 JSON 字符串，空 body 返回 Null）。
-fn parse_body_to_json(body: &str) -> serde_json::Value {
+/// 将响应 body 字节切片解析为 JSON（MEDIUM-6：用 bytes() 一次解析，避免
+/// `text().await` + `from_str` 双重解析的 UTF-8 校验 + 分配开销）。
+///
+/// 空 body 返回 Null；解析失败则将原始字节以 UTF-8 lossy 字符串包装返回
+/// （保留与 `parse_body_to_json` 相同的 fallback 语义）。
+fn parse_body_from_bytes(body: &[u8]) -> serde_json::Value {
     if body.is_empty() {
         return serde_json::Value::Null;
     }
-    serde_json::from_str(body).unwrap_or(serde_json::Value::String(body.to_string()))
+    // 优先尝试 from_slice 一次解析为 JSON
+    serde_json::from_slice(body)
+        .unwrap_or_else(|_| serde_json::Value::String(String::from_utf8_lossy(body).into_owned()))
 }
 
 /// 测试 RecordingClient 能正确写入 JSONL 日志。
@@ -220,7 +254,7 @@ fn parse_body_to_json(body: &str) -> serde_json::Value {
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn test_recording_client_writes_jsonl() {
-    use super::{make_recording_client, start_e2e_server};
+    use super::{make_recording_client, open_http_log, start_e2e_server};
 
     let (external_url, _internal_url, _handle) = start_e2e_server(100, "test-key").await;
     let client = make_recording_client("test_recording");
@@ -235,6 +269,10 @@ async fn test_recording_client_writes_jsonl() {
         .await
         .expect("登录请求失败");
     assert_eq!(resp.status(), 200, "login 应返回 200");
+
+    // MEDIUM-3: send() 不再每次 flush（每 FLUSH_INTERVAL 次 flush 一次），
+    // 测试需要立即读取磁盘内容，显式 flush 一次确保数据落盘
+    open_http_log().lock().flush().expect("flush JSONL 失败");
 
     // 读取 JSONL 文件验证
     let content = std::fs::read_to_string("logs/e2e_http.jsonl").expect("读取 JSONL 失败");

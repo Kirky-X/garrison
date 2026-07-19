@@ -26,10 +26,12 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Bulwark OIDC 处理器示例 ===\n");
 
     // 1. 创建 OidcHandler（issuer / audience / secret）
+    // 注意：此处 secret 为示例硬编码值，仅用于演示。
+    // 生产环境必须从安全配置源（env / secret manager）读取，不可硬编码。
     let handler = OidcHandler::new(
         "https://auth.example.com",
         "my-client-id",
-        "super-secret-key",
+        "super-secret-key", // nosemgrep: generic.secrets.security.detected-generic-secret
     )?;
     println!("[配置] issuer: https://auth.example.com");
     println!("[配置] audience: my-client-id");

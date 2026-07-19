@@ -69,12 +69,15 @@ fn open_perf_log() -> Arc<Mutex<std::io::BufWriter<std::fs::File>>> {
 
 /// 追加一条性能报告到 `logs/perf.jsonl`（每行一个 JSON 对象）。
 ///
-/// JSONL 格式：`{"test_name":"...","endpoint":"...","total":N,"errors":N,"rps":N,"p50_ms":N,"p95_ms":N,"p99_ms":N}`
+/// JSONL 格式：`{"ts":"...","test_name":"...","endpoint":"...","total":N,"errors":N,"rps":N,"p50_ms":N,"p95_ms":N,"p99_ms":N}`
 ///
 /// 写入后立即 flush，确保测试进程结束前数据落盘（OnceCell 单例的 BufWriter
 /// 不会在程序生命周期内 drop）。
 fn append_perf_report(report: &LoadReport, test_name: &str, endpoint: &str) {
+    // LOW-7: 加 ts 字段，供 e2e_analyze.py 按 ts 取每个 test_name 的最新一条
+    // （避免 perf.jsonl 顺序非时间序时 latest_by_name 取到旧数据）
     let entry = json!({
+        "ts": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
         "test_name": test_name,
         "endpoint": endpoint,
         "total": report.total,
@@ -99,9 +102,68 @@ fn append_perf_report(report: &LoadReport, test_name: &str, endpoint: &str) {
 /// # 线程安全
 /// `#[serial]` 保证测试间串行执行，`set_var` 无并发竞争。env 在测试进程
 /// 生命周期内持续生效，不影响后续非性能测试（其他测试不依赖 rate_limit）。
-fn setup_perf_env() {
+///
+/// # LOW-2 修复：RAII Guard 自动还原 env
+///
+/// 返回 `PerfEnvGuard`，测试函数结束时 Drop 自动还原原 env 值（或移除），
+/// 避免全局 env 跨测试泄漏。调用方需绑定到 `_guard`（如 `let _guard = setup_perf_env();`）。
+fn setup_perf_env() -> PerfEnvGuard {
     // Rust 2021 edition 中 set_var 是 safe；项目 edition = "2021"（见 Cargo.toml）。
+    let original = std::env::var("BULWARK_RATE_LIMIT").ok();
     std::env::set_var("BULWARK_RATE_LIMIT", "100000");
+    PerfEnvGuard { original }
+}
+
+/// 性能测试 env RAII Guard（LOW-2 修复）。
+///
+/// `setup_perf_env()` 返回此 guard，Drop 时还原原 env 值或移除 env，
+/// 防止 `BULWARK_RATE_LIMIT=100000` 跨测试泄漏到非 perf 测试。
+struct PerfEnvGuard {
+    /// 原 env 值（None 表示原本未设置）。
+    original: Option<String>,
+}
+
+impl Drop for PerfEnvGuard {
+    fn drop(&mut self) {
+        match self.original.take() {
+            Some(orig) => std::env::set_var("BULWARK_RATE_LIMIT", orig),
+            None => std::env::remove_var("BULWARK_RATE_LIMIT"),
+        }
+    }
+}
+
+/// 性能基线断言：release 模式 HARD panic，debug 模式 SOFT 警告。
+///
+/// spec 预判（perf-load/spec.md Constraints）："如性能测试因环境（CPU/内存）
+/// 不达标，记录实际数值并分析瓶颈，但不阻塞任务完成。" debug 模式因编译优化
+/// 未启用 + 审计日志 stderr 同步写入 + spawn_child 子进程开销，P99/RPS 通常
+/// 不达标；release 模式严格断言，验证真实性能基线。
+///
+/// # 参数
+/// - `metric`: 指标名（如 "P99" / "RPS"）
+/// - `actual`: 实测值
+/// - `target`: 目标值
+/// - `op`: 比较运算符（"lt" = <, "ge" = >=）
+/// - `scenario`: 场景名（如 "login" / "check-login"）
+fn assert_perf_baseline(metric: &str, actual: u64, target: u64, op: &str, scenario: &str) {
+    let (met, symbol) = match op {
+        "lt" => (actual < target, "<"),
+        "ge" => (actual >= target, ">="),
+        _ => panic!("assert_perf_baseline: 未知 op {}", op),
+    };
+    if !met {
+        if cfg!(debug_assertions) {
+            eprintln!(
+                "⚠️  [debug SOFT] {}={} 未达标（{}{}，{} 性能基线），spec 预判 debug 模式不阻塞",
+                metric, actual, symbol, target, scenario
+            );
+        } else {
+            panic!(
+                "{}={} 应 {}{}（{} 性能基线）",
+                metric, actual, symbol, target, scenario
+            );
+        }
+    }
 }
 
 /// T031: 自实现负载生成器（约 100 行）。
@@ -117,6 +179,7 @@ fn setup_perf_env() {
 /// - `headers`：自定义 headers（如 `x-api-key`）
 /// - `concurrency`：worker 数量
 /// - `duration`：测试持续时间
+/// - `max_requests`：可选最大请求数上限（LOW-3：防止 duration 过长导致资源耗尽）
 pub struct LoadRunner {
     client: reqwest::Client,
     url: String,
@@ -125,6 +188,7 @@ pub struct LoadRunner {
     headers: Vec<(String, String)>,
     concurrency: usize,
     duration: Duration,
+    max_requests: Option<u64>,
 }
 
 /// T031: 负载测试报告。
@@ -167,6 +231,7 @@ impl LoadRunner {
             headers: Vec::new(),
             concurrency,
             duration,
+            max_requests: None,
         }
     }
 
@@ -176,26 +241,47 @@ impl LoadRunner {
         self
     }
 
+    /// 设置最大请求数上限（LOW-3：防止 duration 过长导致资源耗尽）。
+    ///
+    /// worker 循环在 `total >= max_requests` 时主动退出，避免无限制发请求。
+    /// 默认 `None` 表示不限制（仅由 `duration` 控制）。
+    pub fn with_max_requests(mut self, max: u64) -> Self {
+        self.max_requests = Some(max);
+        self
+    }
+
     /// T032: Worker 循环——发请求记录 latency_ms，错误递增 AtomicU64，总计数递增。
     ///
-    /// 单个 worker 独立运行直到 `stop=true`。latency 记录到共享 Vec<u64>，
-    /// errors/total 用 AtomicU64 原子递增避免锁竞争。
+    /// 单个 worker 独立运行直到 `stop=true`，维护**私有** `Vec<u64>` 避免 100 个
+    /// worker 共享同一 Mutex 导致的锁争用（HIGH-2 修复）。errors/total 用 AtomicU64
+    /// 原子递增避免锁竞争。run() 末尾 merge 所有 worker 的 latencies。
     ///
     /// # 错误处理（规则 12 失败显性化）
     /// - HTTP 请求错误：errors 递增 1，total 递增 1，不 panic
     /// - HTTP 响应非 2xx：errors 递增 1，total 递增 1，不 panic
-    /// - HTTP 响应 2xx：latency 记录到 Vec，total 递增 1
+    /// - HTTP 响应 2xx：latency 记录到私有 Vec，total 递增 1
     ///
     /// 上述两种错误情形下 total 都递增（总请求数包含错误），便于计算
     /// error_rate = errors / total。
+    ///
+    /// # 连接复用（CRITICAL-1 修复）
+    /// reqwest 连接池要求消费 response body 才能将连接归还池中，否则每请求
+    /// 重建 TCP 连接，导致 P99 飙升 5x。本函数在 `status()` 判断后强制
+    /// `resp.bytes().await` 消费 body 释放连接。
     async fn worker(
         runner: Arc<LoadRunner>,
         stop: Arc<AtomicBool>,
-        latencies: Arc<Mutex<Vec<u64>>>,
         errors: Arc<AtomicU64>,
         total: Arc<AtomicU64>,
-    ) {
+    ) -> Vec<u64> {
+        let mut latencies: Vec<u64> = Vec::new();
         while !stop.load(Ordering::Relaxed) {
+            // LOW-3: 达到 max_requests 上限时主动退出，防止资源耗尽
+            if let Some(max) = runner.max_requests {
+                if total.load(Ordering::Relaxed) >= max {
+                    break;
+                }
+            }
             let mut req = runner
                 .client
                 .request(runner.method.clone(), runner.url.as_str());
@@ -209,8 +295,11 @@ impl LoadRunner {
             match req.send().await {
                 Ok(resp) => {
                     let latency = start.elapsed().as_millis() as u64;
-                    if resp.status().is_success() {
-                        latencies.lock().push(latency);
+                    let is_success = resp.status().is_success();
+                    // CRITICAL-1: 消费 body 释放连接归还 reqwest 连接池
+                    let _ = resp.bytes().await;
+                    if is_success {
+                        latencies.push(latency);
                     } else {
                         errors.fetch_add(1, Ordering::Relaxed);
                     }
@@ -222,15 +311,16 @@ impl LoadRunner {
                 },
             }
         }
+        latencies
     }
 
     /// T033: 运行负载测试——spawn `concurrency` 个 worker，sleep `duration`，停止后计算统计。
     ///
     /// 流程：
-    /// 1. 创建 stop flag / latencies Vec / errors / total 共享状态
-    /// 2. spawn `concurrency` 个 worker（每个 worker 独立 tokio task）
+    /// 1. 创建 stop flag / errors / total 共享状态（latencies 由各 worker 私有，HIGH-2）
+    /// 2. spawn `concurrency` 个 worker（每个 worker 独立 tokio task + 私有 Vec<u64>）
     /// 3. sleep `duration` 后设 stop=true
-    /// 4. await 所有 worker handle（等待 in-flight 请求完成）
+    /// 4. await 所有 worker handle，flat_map merge 所有 latencies（HIGH-2）
     /// 5. sort latencies，计算 P50/P95/P99（nearest rank）+ RPS
     ///
     /// # 百分位算法
@@ -243,7 +333,6 @@ impl LoadRunner {
     pub async fn run(self) -> LoadReport {
         let runner = Arc::new(self);
         let stop = Arc::new(AtomicBool::new(false));
-        let latencies: Arc<Mutex<Vec<u64>>> = Arc::new(Mutex::new(Vec::new()));
         let errors = Arc::new(AtomicU64::new(0));
         let total = Arc::new(AtomicU64::new(0));
 
@@ -252,7 +341,6 @@ impl LoadRunner {
             let handle = tokio::spawn(Self::worker(
                 runner.clone(),
                 stop.clone(),
-                latencies.clone(),
                 errors.clone(),
                 total.clone(),
             ));
@@ -262,12 +350,15 @@ impl LoadRunner {
         tokio::time::sleep(runner.duration).await;
         stop.store(true, Ordering::Relaxed);
 
-        // 等待所有 worker 退出（in-flight 请求完成后退出循环）
+        // 等待所有 worker 退出并收集各自的私有 latencies（HIGH-2 修复）
+        let mut latencies_v: Vec<u64> = Vec::new();
         for handle in handles {
-            let _ = handle.await;
+            match handle.await {
+                Ok(worker_latencies) => latencies_v.extend(worker_latencies),
+                Err(e) => eprintln!("worker join 失败: {}", e),
+            }
         }
 
-        let mut latencies_v = latencies.lock();
         latencies_v.sort_unstable();
         let count = latencies_v.len();
         let total_count = total.load(Ordering::Relaxed);
@@ -306,7 +397,7 @@ impl LoadRunner {
 #[serial]
 #[ignore]
 async fn perf_login_p99_under_200ms_1000rps() {
-    setup_perf_env();
+    let _guard = setup_perf_env();
     let ctx = RemoteContext::setup().await;
     let runner = LoadRunner::new(
         ctx.plain_client(),
@@ -334,16 +425,8 @@ async fn perf_login_p99_under_200ms_1000rps() {
         "perf_login_p99_under_200ms_1000rps",
         "/api/v1/auth/login",
     );
-    assert!(
-        report.p99_ms < 200,
-        "P99={} 应 < 200ms（login 性能基线）",
-        report.p99_ms
-    );
-    assert!(
-        report.rps >= 1000,
-        "RPS={} 应 >= 1000（login 性能基线）",
-        report.rps
-    );
+    assert_perf_baseline("P99", report.p99_ms, 200, "lt", "login");
+    assert_perf_baseline("RPS", report.rps, 1000, "ge", "login");
     assert!(
         error_rate < 0.001,
         "error_rate={:.4} 应 < 0.1%（login 性能基线）",
@@ -363,7 +446,7 @@ async fn perf_login_p99_under_200ms_1000rps() {
 #[serial]
 #[ignore]
 async fn perf_check_login_p99_under_50ms_5000rps() {
-    setup_perf_env();
+    let _guard = setup_perf_env();
     let ctx = RemoteContext::setup().await;
     let client = ctx.plain_client();
 
@@ -409,16 +492,8 @@ async fn perf_check_login_p99_under_50ms_5000rps() {
         "perf_check_login_p99_under_50ms_5000rps",
         "/api/v1/auth/check-login",
     );
-    assert!(
-        report.p99_ms < 50,
-        "P99={} 应 < 50ms（check-login 性能基线）",
-        report.p99_ms
-    );
-    assert!(
-        report.rps >= 5000,
-        "RPS={} 应 >= 5000（check-login 性能基线）",
-        report.rps
-    );
+    assert_perf_baseline("P99", report.p99_ms, 50, "lt", "check-login");
+    assert_perf_baseline("RPS", report.rps, 5000, "ge", "check-login");
 }
 
 /// T036: check-permission 性能基线——P99 < 50ms，RPS >= 5000。
@@ -435,7 +510,7 @@ async fn perf_check_login_p99_under_50ms_5000rps() {
 #[serial]
 #[ignore]
 async fn perf_check_permission_p99_under_50ms_5000rps() {
-    setup_perf_env();
+    let _guard = setup_perf_env();
     let ctx = RemoteContext::setup().await;
     let client = ctx.plain_client();
 
@@ -484,14 +559,6 @@ async fn perf_check_permission_p99_under_50ms_5000rps() {
         "perf_check_permission_p99_under_50ms_5000rps",
         "/api/v1/auth/check-permission",
     );
-    assert!(
-        report.p99_ms < 50,
-        "P99={} 应 < 50ms（check-permission 性能基线）",
-        report.p99_ms
-    );
-    assert!(
-        report.rps >= 5000,
-        "RPS={} 应 >= 5000（check-permission 性能基线）",
-        report.rps
-    );
+    assert_perf_baseline("P99", report.p99_ms, 50, "lt", "check-permission");
+    assert_perf_baseline("RPS", report.rps, 5000, "ge", "check-permission");
 }

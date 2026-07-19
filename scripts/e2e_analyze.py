@@ -142,10 +142,16 @@ def section_perf_baseline(perf_entries: list[dict[str, Any]]) -> str:
     )
 
     # 按 test_name 索引实际数据，允许同一 test_name 多次运行取最新一条
+    # LOW-7: 用 ts 字段（RFC3339）字典序比较取真正最新一条，
+    # 而非依赖 perf_entries 列表顺序（顺序可能非时间序）
     latest_by_name: dict[str, dict[str, Any]] = {}
+    latest_ts: dict[str, str] = {}
     for entry in perf_entries:
         name = entry.get("test_name", "")
-        latest_by_name[name] = entry
+        ts = entry.get("ts", "")
+        if name not in latest_by_name or ts > latest_ts[name]:
+            latest_by_name[name] = entry
+            latest_ts[name] = ts
 
     for test_name, endpoint, t_p99, t_rps, t_err in PERF_TARGETS:
         actual = latest_by_name.get(test_name)
@@ -264,15 +270,21 @@ def section_anomalies(http_entries: list[dict[str, Any]]) -> str:
         lines.extend(["- 无 HTTP 交互数据", ""])
         return "\n".join(lines)
 
-    # 5xx 请求
-    five_xx = [e for e in http_entries if int(e.get("status", 0)) >= 500]
-    # 超时（duration_ms > 5000 视为超时）
+    # LOW-7: 单次遍历 http_entries 同时筛 5xx / 超时 / oversized，避免 3 次遍历
+    # LOW-8: oversized 缓存 body_size，避免输出时重复调用 resp_body_size
     timeout_threshold_ms = 5000
-    timeouts = [e for e in http_entries if int(e.get("duration_ms", 0)) >= timeout_threshold_ms]
-    # 响应体 > 4KB
-    oversized = [
-        e for e in http_entries if resp_body_size(e.get("resp_body")) > OVERSIZE_THRESHOLD
-    ]
+    five_xx: list[dict[str, Any]] = []
+    timeouts: list[dict[str, Any]] = []
+    oversized: list[tuple[dict[str, Any], int]] = []  # (entry, body_size)
+    for e in http_entries:
+        status = int(e.get("status", 0))
+        if status >= 500:
+            five_xx.append(e)
+        if int(e.get("duration_ms", 0)) >= timeout_threshold_ms:
+            timeouts.append(e)
+        body_size = resp_body_size(e.get("resp_body"))
+        if body_size > OVERSIZE_THRESHOLD:
+            oversized.append((e, body_size))
 
     lines.append(f"### 4.1 5xx 请求 ({len(five_xx)} 条)")
     lines.append("")
@@ -313,8 +325,7 @@ def section_anomalies(http_entries: list[dict[str, Any]]) -> str:
     if oversized:
         lines.append("| Test | Method | URL | Status | Body Bytes |")
         lines.append("|------|--------|-----|--------|------------|")
-        for e in oversized[:50]:
-            body_size = resp_body_size(e.get("resp_body"))
+        for e, body_size in oversized[:50]:
             lines.append(
                 f"| {e.get('test_name', '')} | {e.get('method', '')} | "
                 f"`{e.get('url', '')}` | {e.get('status', '')} | {body_size} |"
@@ -328,8 +339,13 @@ def section_anomalies(http_entries: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def build_report(log_dir: Path) -> str:
-    """聚合 4 节内容生成完整 Markdown 报告。"""
+def build_report(log_dir: Path) -> tuple[str, int]:
+    """聚合 4 节内容生成完整 Markdown 报告。
+
+    返回 (report_text, http_total)，其中 http_total 为 HTTP 交互日志行数
+    （避免在 main 中用 `report.count('总请求数')` 统计字符串出现次数——
+    该写法在报告含多节"总请求数"字样时恒为 1，MEDIUM-1 修复）。
+    """
     http_path = log_dir / "e2e_http.jsonl"
     perf_path = log_dir / "perf.jsonl"
     pentest_path = log_dir / "pentest_report.json"
@@ -364,7 +380,7 @@ def build_report(log_dir: Path) -> str:
         section_anomalies(http_entries),
     ]
 
-    return "\n".join(sections) + "\n"
+    return "\n".join(sections) + "\n", len(http_entries)
 
 
 def main() -> int:
@@ -383,11 +399,11 @@ def main() -> int:
         print(f"错误: 日志目录 {log_dir} 不存在", file=sys.stderr)
         return 1
 
-    report = build_report(log_dir)
+    report, http_total = build_report(log_dir)
     out_path = log_dir / "e2e_final_report.md"
     out_path.write_text(report, encoding="utf-8")
     print(f"报告已生成: {out_path}")
-    print(f"  - 总请求数: {report.count('总请求数')}")
+    print(f"  - 总请求数: {http_total}")
     return 0
 
 

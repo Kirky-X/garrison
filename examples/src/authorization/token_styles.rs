@@ -53,7 +53,11 @@ pub fn run() -> BulwarkResult<()> {
     // ----------------------------------------------------------------
     // 3. Simple 风格：`<login_id>-<uuid>`，可解析 login_id
     // ----------------------------------------------------------------
-    let simple_style = SimpleTokenStyle::new("simple-demo-secret".to_string());
+    // 注意：此处 secret 为示例硬编码值，仅用于演示。
+    // 生产环境必须从安全配置源（env / secret manager）读取，不可硬编码。
+    let simple_style = SimpleTokenStyle::new(
+        "simple-demo-secret".to_string(), // nosemgrep: generic.secrets.security.detected-generic-secret
+    );
     let token = simple_style.generate("2002", 3600)?;
     println!("[3] SimpleTokenStyle:");
     println!("    token = {}", token);
@@ -85,9 +89,13 @@ pub fn run() -> BulwarkResult<()> {
     println!("\n    未知风格 \"unknown\" → 返回 Config 错误 ✓");
 
     // jwt 风格需启用 protocol-jwt feature（此处 full 已启用）
+    // 注意：此处 secret 为示例硬编码值，仅用于演示。生产环境必须从 env / secret manager 读取。
     #[cfg(feature = "protocol-jwt")]
     {
-        let jwt_handler = TokenStyleFactory::new("jwt", "my-jwt-secret")?;
+        let jwt_handler = TokenStyleFactory::new(
+            "jwt",
+            "my-jwt-secret", // nosemgrep: generic.secrets.security.detected-generic-secret
+        )?;
         let jwt_token = jwt_handler.generate("3003", 3600)?;
         println!("\n    jwt → {}", jwt_token);
         // verify 解析 login_id
