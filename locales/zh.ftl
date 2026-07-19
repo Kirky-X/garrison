@@ -674,3 +674,37 @@ stp-auto-renewal-jwt-requires-protocol-jwt = auto_renewal_threshold 启用且 to
 # --- MockAnomalyDetector 失败模拟 ---
 stp-mock-login-detection-failed = mock login detection 失败
 stp-mock-check-login-detection-failed = mock check_login detection 失败
+
+# ============================================================================
+# response_parts 专用 message keys（不含 detail，用于 HTTP 响应体）
+# ============================================================================
+# 这些 key 用于 BulwarkError::response_parts_i18n() 方法，返回不含变体 detail
+# 的通用描述，避免泄露敏感信息（与 response_parts() 的 &'static str 一一对应）。
+not-login-msg = 未登录
+not-permission-msg = 无权限
+not-role-msg = 无角色
+invalid-token-msg = Token 无效
+token-revoked-msg = Token 已吊销
+expired-token-msg = Token 已过期
+dao-msg = 数据访问错误
+config-msg = 配置错误
+internal-msg = 内部错误
+session-msg = 会话错误
+annotation-msg = 注解错误
+context-msg = 上下文错误
+oauth2-msg = OAuth2 错误
+network-msg = 网络错误
+invalid-param-msg = 参数无效
+not-implemented-msg = 未实现
+firewall-blocked-msg = 防火墙拦截
+disable-service-msg = 账号已被封禁
+not-safe-msg = 未完成二次认证
+invalid-state-transition-msg = 非法状态转换
+sms-rate-limit-exceeded-msg = 短信发送频繁
+sms-verify-max-attempts-msg = 验证码尝试次数超限
+sms-code-not-found-msg = 验证码不存在或已过期
+sms-channel-recycled-msg = 短信通道已回收
+# Exception 变体依据 code 字段映射的 message
+exception-not-login-msg = 未登录
+exception-not-permission-msg = 无权限
+exception-default-msg = 业务异常

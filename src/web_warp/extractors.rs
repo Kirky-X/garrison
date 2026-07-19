@@ -28,16 +28,29 @@ use warp::Filter;
 /// `impl Reject for BulwarkRejection`：接入 warp 拒绝链（空 impl，仅需 Reject marker）。
 impl Reject for super::BulwarkRejection {}
 
-/// `impl Reply for BulwarkError`：复用 `response_parts()` 保证三框架一致。
+/// `impl Reply for BulwarkError`：复用 `response_parts_i18n()` 保证三框架一致。
 ///
 /// 状态码与错误码映射与 axum `IntoResponse` / actix-web `ResponseError` 完全一致。
 impl Reply for BulwarkError {
     fn into_response(self) -> Response {
         tracing::error!(error = ?self, "bulwark rejection");
-        let (status, _, _, _) = self.response_parts();
+        // 单次调用 response_parts_i18n() 获取所有字段（M2：消除冗余调用）
+        let (status, error_code, message, ex_code) = self.response_parts_i18n();
         let status = StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+        let body = if let Some(code) = ex_code {
+            serde_json::json!({
+                "error_code": error_code,
+                "message": message,
+                "code": code,
+            })
+        } else {
+            serde_json::json!({
+                "error_code": error_code,
+                "message": message,
+            })
+        };
         // warp 内置 json + with_status 组合，自动设置 content-type: application/json
-        let body = warp::reply::json(&self.to_json_body());
+        let body = warp::reply::json(&body);
         warp::reply::with_status(body, status).into_response()
     }
 }

@@ -59,12 +59,12 @@ impl SmsVerificationService {
             // 回滚限速计数器
             if let Err(e) = self.rate_limiter.rollback(phone).await {
                 // MEDIUM-2 修复：decr 失败不再 warn 吞错，改为 error 触发运维告警
-                tracing::error!(error = %e, phone = phone, "通道回收时回滚限速计数器失败");
+                tracing::error!(error = %e, phone = phone, "rollback rate limiter counter failed during channel recycling");
             }
             // 回滚未验证计数
             if let Err(e) = SmsRateLimiter::decrement_counter(&*self.dao, &unverified_key).await {
                 // MEDIUM-2 修复：decr 失败不再 warn 吞错，改为 error 触发运维告警
-                tracing::error!(error = %e, key = %unverified_key, "回滚未验证计数器失败");
+                tracing::error!(error = %e, key = %unverified_key, "rollback unverified counter failed");
             }
             // 回收通道（TTL 24 小时）
             self.dao.set(&recycled_key, "1", 86400).await?;
@@ -79,7 +79,7 @@ impl SmsVerificationService {
             // 递减未验证计数
             if let Err(e) = SmsRateLimiter::decrement_counter(&*self.dao, &unverified_key).await {
                 // MEDIUM-2 修复：decr 失败不再 warn 吞错，改为 error 触发运维告警
-                tracing::error!(error = %e, key = %unverified_key, "发送失败回滚未验证计数器失败");
+                tracing::error!(error = %e, key = %unverified_key, "rollback unverified counter failed after send failure");
             }
             return Err(e);
         }

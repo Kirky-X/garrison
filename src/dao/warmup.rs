@@ -49,7 +49,7 @@ impl CacheWarmupService {
         let role_keys = match self.dao.keys(&role_pattern).await {
             Ok(keys) => keys,
             Err(crate::error::BulwarkError::NotImplemented(_)) => {
-                tracing::warn!("DAO 后端不支持 keys()，缓存预热跳过");
+                tracing::warn!("DAO backend does not support keys(), cache warmup skipped");
                 return Ok(WarmupStats {
                     roles_loaded: 0,
                     tenants_loaded: 0,
@@ -60,7 +60,7 @@ impl CacheWarmupService {
         let tenant_keys = match self.dao.keys(&tenant_pattern).await {
             Ok(keys) => keys,
             Err(crate::error::BulwarkError::NotImplemented(_)) => {
-                tracing::warn!("DAO 后端不支持 keys()，缓存预热跳过");
+                tracing::warn!("DAO backend does not support keys(), cache warmup skipped");
                 return Ok(WarmupStats {
                     roles_loaded: 0,
                     tenants_loaded: 0,

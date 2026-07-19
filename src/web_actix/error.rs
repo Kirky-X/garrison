@@ -27,7 +27,7 @@ impl HeaderLookup for actix_web::http::header::HeaderMap {
     }
 }
 
-/// 实现 actix-web `ResponseError` trait，复用 `response_parts()` 保证三框架一致。
+/// 实现 actix-web `ResponseError` trait，复用 `response_parts_i18n()` 保证三框架一致。
 ///
 /// 状态码与错误码映射与 axum `IntoResponse` 完全一致。
 impl ResponseError for BulwarkError {
@@ -38,8 +38,21 @@ impl ResponseError for BulwarkError {
 
     fn error_response(&self) -> HttpResponse {
         tracing::error!(error = ?self, "bulwark rejection");
-        let (s, _, _, _) = self.response_parts();
+        // 单次调用 response_parts_i18n() 获取所有字段（M2：消除冗余调用）
+        let (s, error_code, message, ex_code) = self.response_parts_i18n();
         let status = StatusCode::from_u16(s).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-        HttpResponse::build(status).json(self.to_json_body())
+        let body = if let Some(code) = ex_code {
+            serde_json::json!({
+                "error_code": error_code,
+                "message": message,
+                "code": code,
+            })
+        } else {
+            serde_json::json!({
+                "error_code": error_code,
+                "message": message,
+            })
+        };
+        HttpResponse::build(status).json(body)
     }
 }

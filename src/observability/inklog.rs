@@ -79,7 +79,7 @@ pub async fn init_inklog_logging_with_fallback() -> InklogInit {
                     .with_span_list(false)
                     .try_init();
                 if let Err(init_err) = result {
-                    tracing::debug!("tracing subscriber 已初始化，跳过：{}", init_err);
+                    tracing::debug!("tracing subscriber already initialized, skip: {}", init_err);
                 }
             }
             // 无 observability feature 时，无 tracing-subscriber 可用，仅 eprintln! 警告

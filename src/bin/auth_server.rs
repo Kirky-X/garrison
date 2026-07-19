@@ -72,7 +72,7 @@ async fn main() -> BulwarkResult<()> {
             .with_span_list(false)
             .try_init();
         if let Err(e) = result {
-            tracing::debug!("tracing subscriber 已初始化，跳过：{}", e);
+            tracing::debug!("tracing subscriber already initialized, skip: {}", e);
         }
     }
 
@@ -96,11 +96,11 @@ async fn main() -> BulwarkResult<()> {
         .with_rate_limit(rate_limit)
         .with_internal_api_key(internal_api_key);
 
-    tracing::info!(external_port, internal_port, "启动 BulwarkAuthServer");
+    tracing::info!(external_port, internal_port, "starting BulwarkAuthServer");
 
     // 启动双端口服务器（阻塞直到任一服务器异常）
     if let Err(e) = server.listen().await {
-        tracing::error!(error = %e, "服务器异常退出");
+        tracing::error!(error = %e, "server exited abnormally");
         return Err(e);
     }
 

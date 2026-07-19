@@ -101,11 +101,11 @@ impl WafHookChain {
             match hook.check(ctx).await {
                 WafVerdict::Allow => continue,
                 WafVerdict::AllowAndSkip => {
-                    tracing::debug!(hook = hook.name(), "WAF 白名单放行");
+                    tracing::debug!(hook = hook.name(), "WAF whitelist allowed");
                     return Ok(());
                 },
                 WafVerdict::Deny { reason, hook: name } => {
-                    tracing::warn!(hook = name, reason = %reason, "WAF 拦截请求");
+                    tracing::warn!(hook = name, reason = %reason, "WAF blocked request");
                     return Err(BulwarkError::FirewallBlocked(format!(
                         "[{}] {}",
                         name, reason

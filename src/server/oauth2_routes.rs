@@ -102,7 +102,7 @@ async fn authorize_endpoint(
             (StatusCode::FOUND, [("Location", login_url)]).into_response()
         },
         Err(e) => {
-            let (_, error_code, message, _) = e.response_parts();
+            let (_, error_code, message, _) = e.response_parts_i18n();
             (
                 StatusCode::BAD_REQUEST,
                 Json(json!({ "error": error_code, "message": message })),
@@ -142,7 +142,7 @@ async fn token_endpoint(
             response
         },
         Err(e) => {
-            let (_, error_code, message, _) = e.response_parts();
+            let (_, error_code, message, _) = e.response_parts_i18n();
             // 速率限制错误返回 429 Too Many Requests（RFC 6585 §4）
             //
             // `BulwarkError::OAuth2(_)` 的 error_code 统一为 "OAUTH2_ERROR"，
@@ -176,7 +176,7 @@ async fn revoke_endpoint(
     match state.revoke_handler.handle(&req).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => {
-            let (_, error_code, message, _) = e.response_parts();
+            let (_, error_code, message, _) = e.response_parts_i18n();
             (
                 StatusCode::BAD_REQUEST,
                 Json(json!({ "error": error_code, "message": message })),
@@ -193,7 +193,7 @@ async fn introspect_endpoint(
     match state.introspect_handler.handle(&req).await {
         Ok(resp) => (StatusCode::OK, Json(resp)).into_response(),
         Err(e) => {
-            let (_, error_code, message, _) = e.response_parts();
+            let (_, error_code, message, _) = e.response_parts_i18n();
             (
                 StatusCode::BAD_REQUEST,
                 Json(json!({ "error": error_code, "message": message })),

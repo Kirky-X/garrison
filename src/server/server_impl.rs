@@ -23,12 +23,14 @@ use crate::error::{BulwarkError, BulwarkResult};
 /// 将 `BulwarkResult<T>` 转换为 `ApiResponse<T>`。
 ///
 /// Ok → `ApiResponse::ok(data)`
-/// Err → `ApiResponse::err(error_code, message)`，error_code 来自 `response_parts()`
+/// Err → `ApiResponse::err(error_code, message)`，error_code 来自 `response_parts_i18n()`
+///
+/// `message` 字段通过 i18n 层翻译为当前 locale 文本，避免硬编码中文泄露到响应体。
 pub fn to_api_response<T>(result: Result<T, BulwarkError>) -> ApiResponse<T> {
     match result {
         Ok(data) => ApiResponse::ok(data),
         Err(e) => {
-            let (_, error_code, message, _) = e.response_parts();
+            let (_, error_code, message, _) = e.response_parts_i18n();
             ApiResponse::err(error_code, message)
         },
     }
@@ -357,7 +359,7 @@ impl BulwarkAuthServer {
         tracing::info!(
             external_port = self.config.external_port,
             internal_port = self.config.internal_port,
-            "BulwarkAuthServer 启动"
+            "BulwarkAuthServer starting"
         );
 
         let mut external_handle = tokio::spawn(async move {
@@ -392,7 +394,7 @@ impl BulwarkAuthServer {
             )
             .await
             {
-                tracing::error!(error = %e, "外网服务器异常");
+                tracing::error!(error = %e, "external server error");
                 return Err(BulwarkError::Internal(format!(
                     "server-external-server-error::{}",
                     e
@@ -425,7 +427,7 @@ impl BulwarkAuthServer {
                 .await
                 .map_err(|e| BulwarkError::Internal(format!("server-internal-bind::{}", e)))?;
             if let Err(e) = axum::serve(internal_listener, internal_router).await {
-                tracing::error!(error = %e, "内网服务器异常");
+                tracing::error!(error = %e, "internal server error");
                 return Err(BulwarkError::Internal(format!(
                     "server-internal-server-error::{}",
                     e

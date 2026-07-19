@@ -94,7 +94,7 @@ impl SmsRateLimiter {
         if hour_count > self.hourly_limit as u64 {
             // 超限，回滚 incr
             if let Err(e) = Self::decrement_counter(&*self.dao, &hour_key).await {
-                tracing::warn!(error = %e, key = %hour_key, "回滚小时窗口计数器失败");
+                tracing::warn!(error = %e, key = %hour_key, "rollback hourly window counter failed");
             }
             return Err(BulwarkError::SmsRateLimitExceeded {
                 window: "hourly".to_string(),
@@ -111,10 +111,10 @@ impl SmsRateLimiter {
         if day_count > self.daily_limit as u64 {
             // 超限，回滚 day 和 hour
             if let Err(e) = Self::decrement_counter(&*self.dao, &day_key).await {
-                tracing::warn!(error = %e, key = %day_key, "回滚天窗口计数器失败");
+                tracing::warn!(error = %e, key = %day_key, "rollback daily window counter failed");
             }
             if let Err(e) = Self::decrement_counter(&*self.dao, &hour_key).await {
-                tracing::warn!(error = %e, key = %hour_key, "回滚小时窗口计数器失败");
+                tracing::warn!(error = %e, key = %hour_key, "rollback hourly window counter failed");
             }
             return Err(BulwarkError::SmsRateLimitExceeded {
                 window: "daily".to_string(),

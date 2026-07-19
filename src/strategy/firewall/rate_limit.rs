@@ -346,7 +346,7 @@ impl BulwarkFirewallStrategy for RateLimitStrategy {
             Err(BulwarkError::NotImplemented(_)) => {
                 // 后端不支持 Lua：降级到 atomic_lock 保护的非原子路径（进程内原子）
                 tracing::debug!(
-                    "rate_limit: eval_lua 不可用，降级到 atomic_lock 路径（仅进程内原子）"
+                    "rate_limit: eval_lua unavailable, falling back to atomic_lock path (in-process atomic only)"
                 );
                 self.check_fallback(&key, &scope_id, now_ms, window_start, threshold)
                     .await
@@ -397,7 +397,7 @@ impl RateLimitStrategy {
             .filter_map(|s| match s.parse::<u64>() {
                 Ok(v) => Some(v),
                 Err(_) => {
-                    tracing::warn!(key = %key, raw = %s, "rate_limit: 时间戳 parse 失败，跳过该条目（可能存储层并发写入截断）");
+                    tracing::warn!(key = %key, raw = %s, "rate_limit: timestamp parse failed, skipping entry (possible storage layer concurrent write truncation)");
                     None
                 }
             })

@@ -261,12 +261,12 @@ impl AnomalousLoginAnalyzer {
                         }
                     },
                     Err(e) => {
-                        tracing::warn!("反序列化登录记录失败（key={}）: {}", key, e);
+                        tracing::warn!("failed to deserialize login record (key={}): {}", key, e);
                     },
                 },
                 Ok(None) => {},
                 Err(e) => {
-                    tracing::warn!("读取登录记录失败（key={}）: {}", key, e);
+                    tracing::warn!("failed to read login record (key={}): {}", key, e);
                 },
             }
         }
@@ -324,13 +324,13 @@ impl AnomalousLoginAnalyzer {
             tracing::warn!(
                 elapsed_ms = scan_elapsed.as_millis(),
                 key_count = keys.len(),
-                "异常登录分析扫描耗时超过 1s，Redis 后端需优化为批量 mget"
+                "anomaly login analysis scan exceeded 1s, Redis backend needs optimization to batch mget"
             );
         } else {
             tracing::debug!(
                 elapsed_ms = scan_elapsed.as_millis(),
                 key_count = keys.len(),
-                "异常登录分析扫描完成"
+                "anomaly login analysis scan completed"
             );
         }
 
@@ -370,13 +370,13 @@ impl AnomalousLoginAnalyzer {
                                 }
                             },
                             Err(e) => {
-                                tracing::warn!("异常登录分析失败: {}", e);
+                                tracing::warn!("anomaly login analysis failed: {}", e);
                             },
                         }
                     },
                     _ = shutdown_rx.changed() => {
                         tracing::info!(
-                            "异常登录分析引擎收到 shutdown 信号，停止"
+                            "anomaly login analysis engine received shutdown signal, stopping"
                         );
                         break;
                     },

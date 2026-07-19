@@ -47,7 +47,7 @@ impl BulwarkListenerManager {
         let listeners = self.listeners.read().clone();
         for listener in &listeners {
             if let Err(e) = listener.on_event(event).await {
-                tracing::warn!("监听器 on_event 失败: {}", e);
+                tracing::warn!("listener on_event failed: {}", e);
             }
         }
     }

@@ -674,3 +674,38 @@ stp-auto-renewal-jwt-requires-protocol-jwt = auto_renewal_threshold enabled and 
 # --- MockAnomalyDetector failure simulation ---
 stp-mock-login-detection-failed = mock login detection failed
 stp-mock-check-login-detection-failed = mock check_login detection failed
+
+# ============================================================================
+# response_parts 专用 message keys（不含 detail，用于 HTTP 响应体）
+# ============================================================================
+# These keys are used by BulwarkError::response_parts_i18n() to return a
+# generic description without variant detail, avoiding sensitive info
+# leakage (one-to-one correspondence with response_parts() &'static str).
+not-login-msg = Not logged in
+not-permission-msg = Permission denied
+not-role-msg = Role required
+invalid-token-msg = Invalid token
+token-revoked-msg = Token revoked
+expired-token-msg = Token expired
+dao-msg = Data access error
+config-msg = Configuration error
+internal-msg = Internal error
+session-msg = Session error
+annotation-msg = Annotation error
+context-msg = Context error
+oauth2-msg = OAuth2 error
+network-msg = Network error
+invalid-param-msg = Invalid parameter
+not-implemented-msg = Not implemented
+firewall-blocked-msg = Firewall blocked
+disable-service-msg = Account disabled
+not-safe-msg = Two-factor authentication required
+invalid-state-transition-msg = Invalid state transition
+sms-rate-limit-exceeded-msg = SMS rate limit exceeded
+sms-verify-max-attempts-msg = Verification code attempts exceeded
+sms-code-not-found-msg = Verification code not found or expired
+sms-channel-recycled-msg = SMS channel recycled
+# Exception 变体依据 code 字段映射的 message
+exception-not-login-msg = Not logged in
+exception-not-permission-msg = Permission denied
+exception-default-msg = Business exception

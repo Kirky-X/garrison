@@ -13,7 +13,7 @@ impl BulwarkPluginManager {
             .map(|entry| (entry.factory)())
             .collect();
         for p in &plugins {
-            tracing::info!("已加载插件: {}", p.name());
+            tracing::info!("plugin loaded: {}", p.name());
         }
         Self { plugins }
     }
@@ -29,7 +29,7 @@ impl BulwarkPluginManager {
     pub fn on_login(&self, login_id: &str, token: &str) {
         for plugin in &self.plugins {
             if let Err(e) = plugin.on_login(login_id, token) {
-                tracing::warn!("插件 {} on_login 失败: {}", plugin.name(), e);
+                tracing::warn!("plugin {} on_login failed: {}", plugin.name(), e);
             }
         }
     }
@@ -40,7 +40,7 @@ impl BulwarkPluginManager {
     pub fn on_logout(&self, login_id: &str, token: &str) {
         for plugin in &self.plugins {
             if let Err(e) = plugin.on_logout(login_id, token) {
-                tracing::warn!("插件 {} on_logout 失败: {}", plugin.name(), e);
+                tracing::warn!("plugin {} on_logout failed: {}", plugin.name(), e);
             }
         }
     }
@@ -51,7 +51,7 @@ impl BulwarkPluginManager {
     pub fn on_permission_check(&self, login_id: &str, permission: &str) {
         for plugin in &self.plugins {
             if let Err(e) = plugin.on_permission_check(login_id, permission) {
-                tracing::warn!("插件 {} on_permission_check 失败: {}", plugin.name(), e);
+                tracing::warn!("plugin {} on_permission_check failed: {}", plugin.name(), e);
             }
         }
     }

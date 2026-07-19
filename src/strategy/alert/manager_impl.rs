@@ -31,7 +31,7 @@ impl AlertListenerManager {
         let listeners = self.listeners.read().clone();
         for listener in &listeners {
             if let Err(e) = listener.on_alert(event).await {
-                tracing::warn!("告警监听器 on_alert 失败: {}", e);
+                tracing::warn!("alert listener on_alert failed: {}", e);
             }
         }
     }

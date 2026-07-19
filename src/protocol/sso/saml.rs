@@ -262,11 +262,11 @@ impl SamlProvider for DefaultSamlProvider {
             match self.validate_assertion(assertion).await {
                 Ok(true) => {},
                 Ok(false) => {
-                    tracing::warn!("SAML Assertion 签名验证失败，已剥离");
+                    tracing::warn!("SAML Assertion signature verification failed, stripped");
                     response.assertion = None;
                 },
                 Err(BulwarkError::NotImplemented(_)) => {
-                    tracing::warn!("SAML 签名验证未实现，已剥离 Assertion（fail-closed）");
+                    tracing::warn!("SAML signature verification not implemented, Assertion stripped (fail-closed)");
                     response.assertion = None;
                 },
                 Err(e) => return Err(e),
@@ -843,7 +843,9 @@ fn verify_saml_signature(assertion_xml: &str, idp_public_key_pem: &str) -> Bulwa
     let signature_xml = match extract_signature_xml(assertion_xml) {
         Some(xml) => xml,
         None => {
-            tracing::warn!("SAML Assertion 缺少 <ds:Signature> 元素，签名验证失败");
+            tracing::warn!(
+                "SAML Assertion missing <ds:Signature> element, signature verification failed"
+            );
             return Ok(false);
         },
     };
@@ -874,7 +876,7 @@ fn verify_saml_signature(assertion_xml: &str, idp_public_key_pem: &str) -> Bulwa
             return Ok(false);
         },
         None => {
-            tracing::warn!("SAML <ds:Signature> 缺少 <ds:SignatureMethod Algorithm=...>");
+            tracing::warn!("SAML <ds:Signature> missing <ds:SignatureMethod Algorithm=...>");
             return Ok(false);
         },
     }
@@ -883,7 +885,7 @@ fn verify_saml_signature(assertion_xml: &str, idp_public_key_pem: &str) -> Bulwa
     let signature_value_b64 = match extract_signature_value(&signature_xml) {
         Some(v) => v,
         None => {
-            tracing::warn!("SAML <ds:Signature> 缺少 <ds:SignatureValue>");
+            tracing::warn!("SAML <ds:Signature> missing <ds:SignatureValue>");
             return Ok(false);
         },
     };
@@ -898,7 +900,7 @@ fn verify_saml_signature(assertion_xml: &str, idp_public_key_pem: &str) -> Bulwa
     let signed_info_xml = match extract_signed_info_xml(assertion_xml) {
         Some(xml) => xml,
         None => {
-            tracing::warn!("SAML Assertion 缺少 <ds:SignedInfo>");
+            tracing::warn!("SAML Assertion missing <ds:SignedInfo>");
             return Ok(false);
         },
     };
@@ -933,7 +935,9 @@ fn verify_saml_signature(assertion_xml: &str, idp_public_key_pem: &str) -> Bulwa
     match verifying_key.verify(signed_info_xml.as_bytes(), &signature) {
         Ok(()) => Ok(true),
         Err(_) => {
-            tracing::warn!("SAML 签名验证失败：签名值与 SignedInfo 不匹配");
+            tracing::warn!(
+                "SAML signature verification failed: signature value does not match SignedInfo"
+            );
             Ok(false)
         },
     }
@@ -1056,7 +1060,7 @@ impl SamlProvider for XmlSecSamlProvider {
             match self.validate_assertion(assertion).await {
                 Ok(true) => {},
                 Ok(false) => {
-                    tracing::warn!("SAML Assertion 签名验证失败，已剥离");
+                    tracing::warn!("SAML Assertion signature verification failed, stripped");
                     response.assertion = None;
                 },
                 Err(e) => return Err(e),

@@ -209,12 +209,17 @@ pub fn translate_detail(key: &str, args: &[(&str, &str)]) -> String {
     match bundle.get_message(key) {
         Some(msg) => match msg.value() {
             Some(pattern) => {
-                let mut fluent_args = FluentArgs::new();
-                for (k, v) in args {
-                    fluent_args.set(*k, (*v).to_string());
-                }
                 let mut errors = vec![];
-                let value = bundle.format_pattern(pattern, Some(&fluent_args), &mut errors);
+                // LOW-001：args 为空时短路，避免无意义的 FluentArgs 分配
+                let value = if args.is_empty() {
+                    bundle.format_pattern(pattern, None, &mut errors)
+                } else {
+                    let mut fluent_args = FluentArgs::new();
+                    for (k, v) in args {
+                        fluent_args.set(*k, (*v).to_string());
+                    }
+                    bundle.format_pattern(pattern, Some(&fluent_args), &mut errors)
+                };
                 if errors.is_empty() {
                     value.into_owned()
                 } else {

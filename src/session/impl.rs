@@ -89,10 +89,12 @@ impl BulwarkSession {
     async fn trigger_expiry_listeners(&self, login_id: &str, token: &str) {
         for listener in &self.expiry_listeners {
             if let Err(e) = listener.on_session_expired(login_id, token).await {
+                // 脱敏：只打印 token 前 8 字符，避免完整 token 泄露到日志
+                let token_preview = if token.len() > 8 { &token[..8] } else { token };
                 tracing::warn!(
-                    "SessionExpiryListener 回调失败 (login_id={}, token={}): {}",
+                    "SessionExpiryListener callback failed (login_id={}, token={}...): {}",
                     login_id,
-                    token,
+                    token_preview,
                     e
                 );
             }
@@ -370,7 +372,7 @@ impl BulwarkSession {
                     if let Err(e) = self.dao.delete(&token_key(token)).await {
                         let token_preview = if token.len() > 8 { &token[..8] } else { token };
                         tracing::warn!(
-                            "删除过期 Token-Session 失败 (token={}...): {}",
+                            "failed to delete expired Token-Session (token={}...): {}",
                             token_preview,
                             e
                         );
@@ -417,7 +419,7 @@ impl BulwarkSession {
                     if let Err(e) = self.dao.delete(&key).await {
                         let token_preview = if token.len() > 8 { &token[..8] } else { token };
                         tracing::warn!(
-                            "删除过期 Token-Session 失败 (token={}...): {}",
+                            "failed to delete expired Token-Session (token={}...): {}",
                             token_preview,
                             e
                         );
@@ -460,7 +462,7 @@ impl BulwarkSession {
                     // 从 DAO 删除过期 session（清理）
                     if let Err(e) = self.dao.delete(&account_key(&login_id)).await {
                         tracing::warn!(
-                            "删除过期 Account-Session 失败 (login_id={}): {}",
+                            "failed to delete expired Account-Session (login_id={}): {}",
                             login_id,
                             e
                         );
@@ -562,7 +564,7 @@ impl BulwarkSession {
                     Ok(None) => expired.push(token.clone()),
                     Ok(Some(_)) => {}, // token 仍有效，保留
                     Err(e) => tracing::warn!(
-                        "cleanup_expired_tokens: token={} DAO 读取失败，跳过该 token: {}",
+                        "cleanup_expired_tokens: token={} DAO read failed, skipping this token: {}",
                         token,
                         e
                     ),
@@ -622,7 +624,7 @@ impl BulwarkSession {
             // 3. 从 key 解析 login_id（key 格式：account:session:{login_id}）
             let Some(login_id) = key.strip_prefix("account:session:") else {
                 tracing::warn!(
-                    "rebuild_login_token_map: 跳过不符合 account:session:{{login_id}} 模式的 key: {}",
+                    "rebuild_login_token_map: skipping key not matching account:session:{{login_id}} pattern: {}",
                     key
                 );
                 continue;
@@ -636,7 +638,7 @@ impl BulwarkSession {
                         tracing::warn!(
                             key = %key,
                             error = %e,
-                            "rebuild_login_token_map: 跳过反序列化失败的 AccountSession"
+                            "rebuild_login_token_map: skipping AccountSession that failed deserialization"
                         );
                         continue;
                     },
@@ -1282,7 +1284,11 @@ impl BulwarkSession {
         if let Some(ticket) = ts.attrs.get("sso_ticket") {
             let sso_key = format!("bulwark:sso:ticket:{}", ticket);
             if let Err(e) = self.dao.delete(&sso_key).await {
-                tracing::warn!("logout 联动删除 SSO ticket 失败 (key={}): {}", sso_key, e);
+                tracing::warn!(
+                    "logout failed to delete SSO ticket (key={}): {}",
+                    sso_key,
+                    e
+                );
             }
         }
 

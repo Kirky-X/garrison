@@ -73,13 +73,21 @@ impl SsoChannel for RedisPubSubSsoChannel {
             let mut pubsub = match client.get_async_pubsub().await {
                 Ok(p) => p,
                 Err(e) => {
-                    tracing::error!("Redis SUBSCRIBE 连接失败: topic={}, err={}", topic, e);
+                    tracing::error!(
+                        "Redis SUBSCRIBE connection failed: topic={}, err={}",
+                        topic,
+                        e
+                    );
                     return;
                 },
             };
 
             if let Err(e) = pubsub.subscribe(&topic).await {
-                tracing::error!("Redis SUBSCRIBE 订阅失败: topic={}, err={}", topic, e);
+                tracing::error!(
+                    "Redis SUBSCRIBE subscribe failed: topic={}, err={}",
+                    topic,
+                    e
+                );
                 return;
             }
 
@@ -94,16 +102,23 @@ impl SsoChannel for RedisPubSubSsoChannel {
                             handler_clone(payload_str);
                         }));
                         if result.is_err() {
-                            tracing::warn!("SSO channel handler panic: topic={}, 继续订阅", topic);
+                            tracing::warn!(
+                                "SSO channel handler panic: topic={}, continue subscribing",
+                                topic
+                            );
                         }
                     },
                     Err(e) => {
-                        tracing::warn!("Redis 消息 payload 解析失败: topic={}, err={}", topic, e);
+                        tracing::warn!(
+                            "Redis message payload parse failed: topic={}, err={}",
+                            topic,
+                            e
+                        );
                     },
                 }
             }
             // Stream 结束表示连接断开，后台 task 自然退出
-            tracing::info!("Redis SUBSCRIBE stream 结束: topic={}", topic);
+            tracing::info!("Redis SUBSCRIBE stream ended: topic={}", topic);
         });
 
         Ok(())

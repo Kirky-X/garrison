@@ -191,61 +191,195 @@ impl BulwarkError {
     ///
     /// 返回的 `message` 仅暴露通用描述（如 "未登录"），完整错误通过 `tracing::error!` 记录。
     pub fn response_parts(&self) -> (u16, &'static str, &'static str, Option<i32>) {
-        match &self {
-            BulwarkError::NotLogin(_) => (401, "NOT_LOGIN", "未登录", None),
-            BulwarkError::InvalidToken(_) => (401, "INVALID_TOKEN", "Token 无效", None),
-            BulwarkError::TokenRevoked(_) => (401, "TOKEN_REVOKED", "Token 已吊销", None),
-            BulwarkError::ExpiredToken(_) => (401, "EXPIRED_TOKEN", "Token 已过期", None),
-            BulwarkError::NotPermission(_) => (403, "NOT_PERMISSION", "无权限", None),
-            BulwarkError::NotRole(_) => (403, "NOT_ROLE", "无角色", None),
-            BulwarkError::Dao(_) => (500, "DAO_ERROR", "数据访问错误", None),
-            BulwarkError::Config(_) => (500, "CONFIG_ERROR", "配置错误", None),
-            BulwarkError::Internal(_) => (500, "INTERNAL_ERROR", "内部错误", None),
-            BulwarkError::Session(_) => (500, "SESSION_ERROR", "会话错误", None),
-            BulwarkError::Annotation(_) => (500, "ANNOTATION_ERROR", "注解错误", None),
-            BulwarkError::Context(_) => (500, "CONTEXT_ERROR", "上下文错误", None),
-            BulwarkError::OAuth2(_) => (500, "OAUTH2_ERROR", "OAuth2 错误", None),
-            BulwarkError::Network(_) => (502, "NETWORK_ERROR", "网络错误", None),
-            BulwarkError::InvalidParam(_) => (400, "INVALID_PARAM", "参数无效", None),
-            BulwarkError::NotImplemented(_) => (501, "NOT_IMPLEMENTED", "未实现", None),
-            BulwarkError::FirewallBlocked(_) => (403, "FIREWALL_BLOCKED", "防火墙拦截", None),
-            // 变体
-            BulwarkError::DisableService { .. } => (403, "DISABLE_SERVICE", "账号已被封禁", None),
-            BulwarkError::NotSafe { .. } => (400, "NOT_SAFE", "未完成二次认证", None),
-            BulwarkError::InvalidStateTransition { .. } => {
-                (500, "INVALID_STATE_TRANSITION", "非法状态转换", None)
+        let (status, error_code, _, fallback_msg, ex_code) = self.parts_and_msg_key();
+        (status, error_code, fallback_msg, ex_code)
+    }
+
+    /// 内部方法：单次 match 产出所有字段（status, error_code, msg_key, fallback_msg, ex_code）。
+    ///
+    /// [`Self::response_parts`] 和 [`Self::response_parts_i18n`] 都复用此方法，
+    /// 避免 27 个变体的 match 被重复维护两份（DRY）。
+    ///
+    /// # 返回
+    /// - `status`: HTTP 状态码
+    /// - `error_code`: 结构化错误码字符串
+    /// - `msg_key`: FTL message key（如 `"not-login-msg"`），用于 i18n 翻译
+    /// - `fallback_msg`: 硬编码中文回退消息（i18n 翻译失败时使用）
+    /// - `ex_code`: 仅 `Exception` 变体返回 `Some(code)`
+    fn parts_and_msg_key(&self) -> (u16, &'static str, &'static str, &'static str, Option<i32>) {
+        match self {
+            BulwarkError::NotLogin(_) => (401, "NOT_LOGIN", "not-login-msg", "未登录", None),
+            BulwarkError::InvalidToken(_) => (
+                401,
+                "INVALID_TOKEN",
+                "invalid-token-msg",
+                "Token 无效",
+                None,
+            ),
+            BulwarkError::TokenRevoked(_) => (
+                401,
+                "TOKEN_REVOKED",
+                "token-revoked-msg",
+                "Token 已吊销",
+                None,
+            ),
+            BulwarkError::ExpiredToken(_) => (
+                401,
+                "EXPIRED_TOKEN",
+                "expired-token-msg",
+                "Token 已过期",
+                None,
+            ),
+            BulwarkError::NotPermission(_) => {
+                (403, "NOT_PERMISSION", "not-permission-msg", "无权限", None)
             },
-            BulwarkError::SmsRateLimitExceeded { .. } => {
-                (429, "SMS_RATE_LIMIT_EXCEEDED", "短信发送频繁", None)
+            BulwarkError::NotRole(_) => (403, "NOT_ROLE", "not-role-msg", "无角色", None),
+            BulwarkError::Dao(_) => (500, "DAO_ERROR", "dao-msg", "数据访问错误", None),
+            BulwarkError::Config(_) => (500, "CONFIG_ERROR", "config-msg", "配置错误", None),
+            BulwarkError::Internal(_) => (500, "INTERNAL_ERROR", "internal-msg", "内部错误", None),
+            BulwarkError::Session(_) => (500, "SESSION_ERROR", "session-msg", "会话错误", None),
+            BulwarkError::Annotation(_) => {
+                (500, "ANNOTATION_ERROR", "annotation-msg", "注解错误", None)
             },
-            BulwarkError::SmsVerifyMaxAttempts => {
-                (400, "SMS_VERIFY_MAX_ATTEMPTS", "验证码尝试次数超限", None)
+            BulwarkError::Context(_) => (500, "CONTEXT_ERROR", "context-msg", "上下文错误", None),
+            BulwarkError::OAuth2(_) => (500, "OAUTH2_ERROR", "oauth2-msg", "OAuth2 错误", None),
+            BulwarkError::Network(_) => (502, "NETWORK_ERROR", "network-msg", "网络错误", None),
+            BulwarkError::InvalidParam(_) => {
+                (400, "INVALID_PARAM", "invalid-param-msg", "参数无效", None)
             },
-            BulwarkError::SmsCodeNotFound => {
-                (400, "SMS_CODE_NOT_FOUND", "验证码不存在或已过期", None)
+            BulwarkError::NotImplemented(_) => (
+                501,
+                "NOT_IMPLEMENTED",
+                "not-implemented-msg",
+                "未实现",
+                None,
+            ),
+            BulwarkError::FirewallBlocked(_) => (
+                403,
+                "FIREWALL_BLOCKED",
+                "firewall-blocked-msg",
+                "防火墙拦截",
+                None,
+            ),
+            BulwarkError::DisableService { .. } => (
+                403,
+                "DISABLE_SERVICE",
+                "disable-service-msg",
+                "账号已被封禁",
+                None,
+            ),
+            BulwarkError::NotSafe { .. } => {
+                (400, "NOT_SAFE", "not-safe-msg", "未完成二次认证", None)
             },
-            BulwarkError::SmsChannelRecycled => {
-                (403, "SMS_CHANNEL_RECYCLED", "短信通道已回收", None)
-            },
+            BulwarkError::InvalidStateTransition { .. } => (
+                500,
+                "INVALID_STATE_TRANSITION",
+                "invalid-state-transition-msg",
+                "非法状态转换",
+                None,
+            ),
+            BulwarkError::SmsRateLimitExceeded { .. } => (
+                429,
+                "SMS_RATE_LIMIT_EXCEEDED",
+                "sms-rate-limit-exceeded-msg",
+                "短信发送频繁",
+                None,
+            ),
+            BulwarkError::SmsVerifyMaxAttempts => (
+                400,
+                "SMS_VERIFY_MAX_ATTEMPTS",
+                "sms-verify-max-attempts-msg",
+                "验证码尝试次数超限",
+                None,
+            ),
+            BulwarkError::SmsCodeNotFound => (
+                400,
+                "SMS_CODE_NOT_FOUND",
+                "sms-code-not-found-msg",
+                "验证码不存在或已过期",
+                None,
+            ),
+            BulwarkError::SmsChannelRecycled => (
+                403,
+                "SMS_CHANNEL_RECYCLED",
+                "sms-channel-recycled-msg",
+                "短信通道已回收",
+                None,
+            ),
             // Exception 依据 BulwarkException.code 字段映射状态码
             // code = -1 → 未登录 → 401；code = -2 → 无权限 → 403；其他 → 500
-            BulwarkError::Exception(ex) => {
-                let (status, error_code, message) = match ex.code {
-                    -1 => (401, "NOT_LOGIN", "未登录"),
-                    -2 => (403, "NOT_PERMISSION", "无权限"),
-                    _ => (500, "EXCEPTION", "业务异常"),
-                };
-                (status, error_code, message, Some(ex.code))
+            BulwarkError::Exception(ex) => match ex.code {
+                -1 => (
+                    401,
+                    "NOT_LOGIN",
+                    "exception-not-login-msg",
+                    "未登录",
+                    Some(ex.code),
+                ),
+                -2 => (
+                    403,
+                    "NOT_PERMISSION",
+                    "exception-not-permission-msg",
+                    "无权限",
+                    Some(ex.code),
+                ),
+                _ => (
+                    500,
+                    "EXCEPTION",
+                    "exception-default-msg",
+                    "业务异常",
+                    Some(ex.code),
+                ),
             },
         }
     }
 
-    /// 构造 JSON 响应体（框架无关）。
+    /// 返回 i18n 化的 HTTP 响应分片 `(status_code, error_code, message, exception_code)`。
+    ///
+    /// 与 [`Self::response_parts`] 的区别：第三字段 `message` 通过 i18n 层翻译
+    /// （`translate_detail("xxx-msg", &[])`），依据当前 thread_local locale
+    /// 返回对应语言文本；其余字段（status_code / error_code / exception_code）
+    /// 与 `response_parts()` 完全一致。
+    ///
+    /// # 返回
+    /// - `status_code`: HTTP 状态码（401/403/500/502/400/501/429）。
+    /// - `error_code`: 结构化错误码字符串（如 `"NOT_LOGIN"`）。
+    /// - `message`: i18n 翻译后的通用错误消息（不泄漏内部细节）。
+    /// - `exception_code`: 仅 `Exception` 变体返回 `Some(code)`，其他变体返回 `None`。
+    ///
+    /// # 安全性
+    ///
+    /// 返回的 `message` 仅暴露通用描述（如 "未登录" / "Not logged in"），
+    /// 不含变体 detail，避免泄露敏感信息；完整错误通过 `tracing::error!` 记录。
+    /// 翻译失败时（如 FTL key 缺失）回退到硬编码 `&'static str`，**不泄露 FTL key**。
+    ///
+    /// # FTL keys
+    ///
+    /// 使用 `locales/{zh,en}.ftl` 中以 `-msg` 后缀结尾的 27 个专用 keys
+    /// （如 `not-login-msg`、`exception-default-msg`），与 `response_parts()`
+    /// 的硬编码中文一一对应。
+    pub fn response_parts_i18n(&self) -> (u16, &'static str, String, Option<i32>) {
+        let (status, error_code, msg_key, fallback_msg, ex_code) = self.parts_and_msg_key();
+        let translated = crate::i18n::translate_detail(msg_key, &[]);
+        // 翻译失败时（translate_detail 返回 key 本身）回退到硬编码 fallback，
+        // 避免泄露 FTL key 到 HTTP 响应体（M4 安全修复）。
+        let message = if translated == msg_key {
+            fallback_msg.to_string()
+        } else {
+            translated
+        };
+        (status, error_code, message, ex_code)
+    }
+
+    /// 构造 JSON 响应体（框架无关，i18n 化）。
     ///
     /// 返回 `serde_json::Value`，由各框架适配器自行序列化为响应 body。
     /// `Exception` 变体额外包含 `code` 字段。
+    ///
+    /// `message` 字段通过 [`Self::response_parts_i18n`] 翻译为当前 locale 文本，
+    /// 避免硬编码中文泄露到 HTTP 响应体（A 类 i18n 遗漏修复）。
     pub fn to_json_body(&self) -> serde_json::Value {
-        let (_, error_code, message, ex_code) = self.response_parts();
+        let (_, error_code, message, ex_code) = self.response_parts_i18n();
         let mut body = serde_json::json!({
             "error_code": error_code,
             "message": message,
@@ -280,17 +414,30 @@ impl axum::response::IntoResponse for BulwarkError {
         // 完整错误记录到日志（不返回给客户端）
         tracing::error!(error = ?self, "bulwark rejection");
 
-        // 复用 response_parts() 保证三框架行为一致
-        let (status_code, error_code, _, _) = self.response_parts();
+        // 单次调用 response_parts_i18n() 获取所有字段（M2+LOW-002：消除冗余调用），
+        // 复用 response_parts_i18n() 保证三框架行为一致（L1：更新注释）。
+        let (status_code, error_code, message, ex_code) = self.response_parts_i18n();
         let status = StatusCode::from_u16(status_code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-        let json_value = self.to_json_body();
+        let json_value = if let Some(code) = ex_code {
+            serde_json::json!({
+                "error_code": error_code,
+                "message": message,
+                "code": code,
+            })
+        } else {
+            serde_json::json!({
+                "error_code": error_code,
+                "message": message,
+            })
+        };
 
         // 防御性截断：限制响应体大小为 4KB
         // 当前架构下 message 是固定字符串，body 永远 < 4KB；
         // 此截断保护未来架构变化（如 message 字段包含可变内容时）不会导致响应体过大。
         const MAX_BODY_SIZE: usize = 4096;
         let body_str = serde_json::to_string(&json_value).unwrap_or_else(|_| {
-            r#"{"error_code":"INTERNAL_ERROR","message":"序列化失败"}"#.to_string()
+            // L2：i18n 化（英文，避免硬编码中文泄露到响应体）
+            r#"{"error_code":"INTERNAL_ERROR","message":"serialization failed"}"#.to_string()
         });
 
         if body_str.len() <= MAX_BODY_SIZE {

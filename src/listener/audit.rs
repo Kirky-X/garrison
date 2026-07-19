@@ -1018,19 +1018,19 @@ impl BulwarkListener for AuditLogListener {
                         let listener = AuditLogListener::new(pool, config);
                         match listener.insert(&entry).await {
                             Ok(_) => audit_log_written(&entry),
-                            Err(e) => tracing::warn!("审计日志异步写入失败: {}", e),
+                            Err(e) => tracing::warn!("audit log async write failed: {}", e),
                         }
                     });
                 } else {
                     // 同步写入：失败时 tracing::warn 不传播错误
                     match self.insert(&entry).await {
                         Ok(_) => audit_log_written(&entry),
-                        Err(e) => tracing::warn!("审计日志写入失败: {}", e),
+                        Err(e) => tracing::warn!("audit log write failed: {}", e),
                     }
                 }
             },
             Err(e) => {
-                tracing::warn!("审计日志事件转换失败: {}", e);
+                tracing::warn!("audit log event conversion failed: {}", e);
             },
         }
         Ok(())

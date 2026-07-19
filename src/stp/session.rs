@@ -376,7 +376,7 @@ impl SessionLogic for BulwarkLogicDefault {
                 #[cfg(feature = "three-tier-cache")]
                 if let (Some(ucs), Some(id)) = (&self.user_cache_service, login_id.as_ref()) {
                     if let Err(e) = ucs.invalidate(id).await {
-                        tracing::warn!(error = %e, login_id = id, "logout 失效用户缓存失败");
+                        tracing::warn!(error = %e, login_id = id, "logout invalidate user cache failed");
                     }
                 }
                 Ok(())
@@ -391,7 +391,7 @@ impl SessionLogic for BulwarkLogicDefault {
         #[cfg(feature = "three-tier-cache")]
         if let Some(ucs) = &self.user_cache_service {
             if let Err(e) = ucs.invalidate(login_id).await {
-                tracing::warn!(error = %e, login_id, "logout_by_login_id 失效用户缓存失败");
+                tracing::warn!(error = %e, login_id, "logout_by_login_id invalidate user cache failed");
             }
         }
         Ok(())
@@ -441,11 +441,13 @@ impl SessionLogic for BulwarkLogicDefault {
             match self.revoke_token(&token).await {
                 Ok(()) => count += 1,
                 Err(e) => {
+                    // 脱敏：只打印 token 前 8 字符，避免完整 token 泄露到日志
+                    let token_preview = if token.len() > 8 { &token[..8] } else { &token };
                     tracing::warn!(
                         error = %e,
                         login_id,
-                        token = %token,
-                        "revoke_all_sessions: 单个 token 吊销失败，继续处理"
+                        token = %token_preview,
+                        "revoke_all_sessions: single token revoke failed, continuing"
                     );
                 },
             }
@@ -458,7 +460,7 @@ impl SessionLogic for BulwarkLogicDefault {
             tracing::warn!(
                 error = %e,
                 login_id,
-                "revoke_all_sessions: Account-Session 清理失败"
+                "revoke_all_sessions: Account-Session cleanup failed"
             );
         }
         Ok(count)
@@ -627,7 +629,7 @@ impl BulwarkLogicDefault {
                             tracing::warn!(
                                 login_id,
                                 mode = "new_device",
-                                "新设备登录被拒绝：当前为 NewDevice 模式，已有有效旧会话"
+                                "new device login rejected: currently in NewDevice mode, valid existing session exists"
                             );
                             return Err(BulwarkError::NotLogin(
                                 "stp-new-device-login-rejected-not-allowed::".to_string(),
@@ -692,7 +694,7 @@ impl BulwarkLogicDefault {
                             tracing::info!(
                                 login_id,
                                 device_id,
-                                "设备绑定策略触发二级认证阻断（hard block）"
+                                "device binding policy triggered secondary auth block (hard block)"
                             );
                             return Err(BulwarkError::NotPermission(
                                 "secondary auth required".to_string(),
@@ -701,13 +703,13 @@ impl BulwarkLogicDefault {
                         Ok(false) => {},
                         Err(e) => tracing::warn!(
                             error = %e,
-                            "DeviceBindingPolicy::require_secondary_auth 失败"
+                            "DeviceBindingPolicy::require_secondary_auth failed"
                         ),
                     },
                     Ok(false) => {},
                     Err(e) => tracing::warn!(
                         error = %e,
-                        "DeviceBindingPolicy::is_new_device 失败"
+                        "DeviceBindingPolicy::is_new_device failed"
                     ),
                 }
             }
@@ -756,7 +758,7 @@ impl BulwarkLogicDefault {
                     {
                         tracing::error!(
                             error = %e,
-                            "enforce_max_login_count 失败，回滚新创建的会话"
+                            "enforce_max_login_count failed, rolling back newly created session"
                         );
                         // 已在 with_login_lock 内，用 logout_inner 避免重入死锁。
                         // 先读取 token session 供 logout_inner 使用（与原 logout 流程一致）。
@@ -767,19 +769,19 @@ impl BulwarkLogicDefault {
                                 {
                                     tracing::error!(
                                         error = %logout_err,
-                                        "回滚 logout_inner 失败，可能产生孤儿会话（token 仍在 DAO 但 login 返回 Err）"
+                                        "rollback logout_inner failed, may produce orphan session (token still in DAO but login returned Err)"
                                     );
                                 }
                             },
                             Ok(None) => {
                                 tracing::warn!(
-                                    "回滚时 token session 已不存在，跳过 logout_inner"
+                                    "token session no longer exists during rollback, skipping logout_inner"
                                 );
                             },
                             Err(get_err) => {
                                 tracing::error!(
                                     error = %get_err,
-                                    "回滚 get_token_session 失败，token 可能残留为孤儿会话"
+                                    "rollback get_token_session failed, token may remain as orphan session"
                                 );
                             },
                         }
@@ -916,9 +918,11 @@ impl BulwarkLogicDefault {
             match self.session.get_token_session(token).await? {
                 Some(ts) => self.session.logout_inner(token, &ts).await?,
                 None => {
+                    // 脱敏：只打印 token 前 8 字符，避免完整 token 泄露到日志
+                    let token_preview = if token.len() > 8 { &token[..8] } else { token };
                     tracing::warn!(
-                        token = %token,
-                        "enforce_max_login_count: token 不存在，跳过 logout_inner"
+                        token = %token_preview,
+                        "enforce_max_login_count: token not found, skipping logout_inner"
                     );
                 },
             }
@@ -1066,7 +1070,7 @@ impl BulwarkLogicDefault {
             }
             // Token 自动续签（若启用且剩余 TTL 低于阈值）
             if let Err(e) = self.check_and_renew(token).await {
-                tracing::warn!(error = %e, "Token 自动续签失败，旧 Token 继续使用");
+                tracing::warn!(error = %e, "Token auto-renewal failed, old Token still in use");
             }
             return Ok(true);
         }
@@ -1096,7 +1100,7 @@ impl BulwarkLogicDefault {
             };
             if should_evict {
                 if let Err(e) = self.session.logout(token).await {
-                    tracing::warn!(error = %e, "悬停超时 logout 失败");
+                    tracing::warn!(error = %e, "hover timeout logout failed");
                 }
                 #[cfg(feature = "listener")]
                 if let Some(lm) = &self.listener_manager {
@@ -1149,7 +1153,7 @@ impl BulwarkLogicDefault {
             }
             // Token 自动续签（若启用且剩余 TTL 低于阈值）
             if let Err(e) = self.check_and_renew(token).await {
-                tracing::warn!(error = %e, "Token 自动续签失败，旧 Token 继续使用");
+                tracing::warn!(error = %e, "Token auto-renewal failed, old Token still in use");
             }
             return Ok(true);
         }
@@ -1173,7 +1177,7 @@ impl BulwarkLogicDefault {
         for detector in detectors {
             match detector.check_on_login(login_id, device_id, ip).await {
                 Ok(events) => self.broadcast_anomaly_events(events).await,
-                Err(e) => tracing::warn!(error = %e, "AnomalyDetector::check_on_login 失败"),
+                Err(e) => tracing::warn!(error = %e, "AnomalyDetector::check_on_login failed"),
             }
         }
     }
@@ -1186,7 +1190,9 @@ impl BulwarkLogicDefault {
         for detector in detectors {
             match detector.check_on_check_login(login_id, token).await {
                 Ok(events) => self.broadcast_anomaly_events(events).await,
-                Err(e) => tracing::warn!(error = %e, "AnomalyDetector::check_on_check_login 失败"),
+                Err(e) => {
+                    tracing::warn!(error = %e, "AnomalyDetector::check_on_check_login failed")
+                },
             }
         }
     }
