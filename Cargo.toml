@@ -58,10 +58,11 @@ bcrypt = { version = "0.15", optional = true }
 rand = { version = "0.8", optional = true }
 zeroize = { version = "1", optional = true, default-features = false, features = ["derive", "serde"] }
 regex = { version = "1", optional = true, default-features = false }
-oxcache = { version = "0.3", optional = true, default-features = false }
-# dbnexus 0.4+ 禁止 embedded(sqlite) 与 server-side(postgres) 混用，由 db-base feature 显式启用。
+oxcache = { version = "0.3", default-features = false }
+# dbnexus 0.4+ 在 src/lib.rs#L51 设置 compile_error!，强制至少启用一个数据库驱动 feature
+# （sqlite/postgres/mysql/duckdb/ladybug/neo4j）。因此 dbnexus 必须 optional，由 db-base feature
+# 透传 dbnexus/<driver> 启用对应驱动。这并非手写绕过，而是 dbnexus 0.4 API 设计的硬性约束。
 dbnexus = { version = "0.4", optional = true, default-features = false }
-# sea-orm 2.0 尚无稳定版（仅 RC），dbnexus 0.4 硬性要求此版本，待上游发布稳定版后升级。
 sea-orm = { version = "2.0.0-rc.43", default-features = false, features = ["sqlx-sqlite", "runtime-tokio-rustls"], optional = true }
 prometheus = { version = "0.14", optional = true, default-features = false }
 tracing-subscriber = { version = "0.3", optional = true, default-features = false, features = ["fmt", "json", "env-filter"] }
@@ -82,10 +83,10 @@ quick-xml = { version = "0.41", optional = true, default-features = false, featu
 # 版本 ~1.2 与 oxcache 0.3 间接依赖的 redis 保持一致
 redis = { version = "1.2", optional = true, default-features = false, features = ["aio", "tokio-comp", "connection-manager", "script"] }
 futures = { version = "0.3", default-features = false, features = ["std"] }
-inklog = { version = "0.1", optional = true, default-features = false }
-limiteron = { version = "0.2", optional = true, default-features = false, features = ["distributed"] }
-sdforge = { version = "0.4", optional = true, default-features = false, features = ["http"] }
-trait-kit = { version = "0.3", optional = true, default-features = false, features = ["async"] }
+inklog = { version = "0.1", default-features = false }
+limiteron = { version = "0.2", default-features = false, features = ["distributed"] }
+sdforge = { version = "0.4", default-features = false, features = ["http"] }
+trait-kit = { version = "0.3", default-features = false, features = ["async"] }
 cedar-policy = { version = "4.11", optional = true, default-features = false }
 icu_plurals = { version = "2.2", optional = true, default-features = false, features = ["compiled_data"] }
 icu_datetime = { version = "2.2", optional = true, default-features = false, features = ["compiled_data"] }
@@ -149,7 +150,7 @@ safe-defaults = []
 all-defaults = ["cache-memory", "db-sqlite", "web-axum"]
 
 # === 缓存后端（通过 oxcache） ===
-cache-memory = ["oxcache", "oxcache/memory", "oxcache/serialization"]
+cache-memory = ["oxcache/memory", "oxcache/serialization"]
 cache-redis = ["cache-memory", "oxcache/redis", "dep:redis"]
 
 # === 数据库后端（通过 dbnexus 0.4） ===
@@ -180,15 +181,12 @@ protocol-temp = []
 # protocol-zeroize：协议层密钥零化（Drop 时清零 secret 字段，防止内存残留）
 protocol-zeroize = ["zeroize"]
 # OIDC 扩展（id_token 签发/验证 + discovery endpoint），依赖 protocol-jwt + protocol-oauth2
-# subtle 用于 verify_id_token 中 nonce 常量时间比较（L2 修复，防 timing side-channel）
 protocol-oidc = ["protocol-jwt", "protocol-oauth2", "dep:subtle"]
 # OAuth2 Scope Handler 注册表（ScopeHandler trait + ScopeRegistry），依赖 protocol-oauth2
 oauth2-scope-handler = ["protocol-oauth2"]
 # SSO Server 独立抽象（SsoServer trait + CenterIdConverter + SsoChannel），依赖 protocol-sso
 protocol-sso-server = ["protocol-sso"]
 # secure-saml：启用 XmlSecSamlProvider（vuln-0001 修复），使用 rsa crate 验证 SAML Assertion XML 签名
-# 算法白名单：仅允许 rsa-sha256 / ecdsa-sha256，禁止 rsa-1_5 等弱算法
-# 限制：不执行 XML Canonicalization (C14N)
 secure-saml = ["protocol-sso", "rsa", "dep:base64"]
 
 # === 安全模块 ===
@@ -202,7 +200,7 @@ secure-confusable = ["dep:unicode-security"]
 secure-masking = ["dep:regex"]
 secure-xss = []
 secure-sanitize = []
-sms-rate-limit = ["dep:rand", "dep:limiteron"]
+sms-rate-limit = ["dep:rand"]
 
 # === 账号安全引擎 ===
 account-credential = ["dep:argon2", "dep:bcrypt", "dep:rand", "dep:sha2", "dep:base32"]
@@ -238,14 +236,14 @@ audit-log = ["listener", "dep:sha2", "hmac", "secure-masking"]
 
 # === 安全防护套件 ===
 # v0.7.2：统一使用 limiteron BulwarkDaoDistributedLimiter，禁止手写限流实现。
-firewall = ["dep:limiteron"]
-firewall-bruteforce = ["firewall", "dep:limiteron"]
-firewall-ratelimit = ["firewall", "dep:rand", "dep:limiteron"]
+firewall = []
+firewall-bruteforce = ["firewall"]
+firewall-ratelimit = ["firewall", "dep:rand"]
 # 启用后可在配置中选择 Memory/Redis 限流后端（RateLimitBackend enum）
 rate-limit-redis = ["firewall-ratelimit", "cache-redis"]
 firewall-anomalous = ["firewall"]
 firewall-geoip = ["firewall"]
-firewall-ddos = ["firewall", "dep:limiteron"]
+firewall-ddos = ["firewall"]
 firewall-waf = ["firewall", "web-axum"]
 firewall-maxminddb = ["dep:maxminddb", "firewall-geoip", "firewall-anomalous"]
 anomalous-detector-dual = ["firewall", "listener"]
@@ -261,7 +259,7 @@ safe-auth = []
 dynamic-active-timeout = []
 
 # === 三层缓存架构 ===
-three-tier-cache = ["oxcache"]
+three-tier-cache = []
 
 # === login_token_map 持久化 ===
 login-token-map-persistence = []
@@ -287,21 +285,20 @@ backend-remote = ["dep:reqwest"]
 # 格式：<login_id>-<uuid>.<hmac_sha256(secret, login_id|uuid)>
 # 未启用此 feature 时，SimpleTokenStyle::generate 返回 Err（fail-closed，杜绝无签名伪造）
 secure-simple-token = ["dep:sha2", "hmac", "dep:subtle"]
-# subtle 用于 middleware.rs constant_time_eq；limiteron 用于 rate_limit_middleware（禁止手写令牌桶）
 # secure-simple-token 确保 SimpleTokenStyle 使用 HMAC 签名（A11 CRITICAL 修复）
-auth-server = ["web-axum", "backend-embedded", "auth-server-sdforge", "dep:subtle", "dep:limiteron", "secure-simple-token"]
+auth-server = ["web-axum", "backend-embedded", "auth-server-sdforge", "dep:subtle", "secure-simple-token"]
 abac = ["dep:cedar-policy", "cache-memory"]
 # db-sqlite 下的 RefreshTokenRotation 依赖 protocol::jwt，因此传递启用 protocol-jwt。
-oauth2-server = ["protocol-oauth2", "dep:reqwest", "dep:argon2", "dep:rand", "dep:percent-encoding", "dep:limiteron", "protocol-jwt"]
+oauth2-server = ["protocol-oauth2", "dep:reqwest", "dep:argon2", "dep:rand", "dep:percent-encoding", "protocol-jwt"]
 
 # === v0.7.0 inklog 结构化审计日志 ===
-audit-inklog = ["dep:inklog"]
+audit-inklog = []
 
 # === v0.7.0 trait-kit typestate DI 构建 ===
-backend-kit = ["dep:trait-kit", "backend-embedded"]
+backend-kit = ["backend-embedded"]
 
 # === v0.7.0 sdforge 声明式路由 ===
-auth-server-sdforge = ["dep:sdforge"]
+auth-server-sdforge = []
 
 # === 可观测性 ===
 listener = []
@@ -321,9 +318,6 @@ i18n-icu = [
 # 启用后 BulwarkError 实现 miette::Diagnostic trait（保留 thiserror::Error derive）
 miette = ["dep:miette"]
 bulwark-testing = ["authorize-api"]
-# 测试专用特性：向集成测试（tests/ 外部二进制）暴露测试辅助函数。
-# 单元测试无需此特性即可访问；集成测试是外部二进制，#[cfg(test)] 不生效，必须门控。
-# 严禁在 full / production / development 中启用——生产构建绝不能暴露测试入口。
 testing = []
 
 # === 聚合特性 ===
