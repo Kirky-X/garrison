@@ -77,7 +77,7 @@ pub struct SamlAssertion {
     pub attributes: Vec<(String, String)>,
     /// Assertion 的原始 XML 字符串（含 `<ds:Signature>`，用于签名验证）。
     ///
-    /// 仅在 [`parse_saml_response_xml`] 解析时填充；手动构造的 `SamlAssertion` 该字段为 `None`。
+    /// 仅在 `parse_saml_response_xml` 解析时填充；手动构造的 `SamlAssertion` 该字段为 `None`。
     /// [`XmlSecSamlProvider::validate_assertion`] 依赖此字段执行 XML 签名验证。
     ///
     /// `skip_serializing` / `skip_deserializing`：避免序列化循环与跨版本兼容问题，

@@ -23,8 +23,8 @@
 //!
 //! # 原子性保证（vuln-0009 修复）
 //!
-//! `check` 方法优先调用 [`BulwarkDao::eval_lua`] 执行原子 read-filter-check-write
-//! （Lua 脚本由 Redis 后端原子执行，[`crate::dao::tests::MockDao`] 也模拟此模式）。
+//! `check` 方法优先调用 `BulwarkDao::eval_lua` 执行原子 read-filter-check-write
+//! （Lua 脚本由 Redis 后端原子执行，`crate::dao::tests::MockDao` 也模拟此模式）。
 //! 当后端不支持 Lua（返回 `BulwarkError::NotImplemented`，如 `BulwarkDaoOxcache`）时，
 //! 降级到 `atomic_lock`（`parking_lot::Mutex`）保护的非原子路径，仅保证**进程内原子**。
 //!

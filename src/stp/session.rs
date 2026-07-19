@@ -833,9 +833,8 @@ impl BulwarkLogicDefault {
     /// `tokio::sync::Mutex` 不可重入，已持锁的调用方再调用本方法会直接死锁。
     ///
     /// `login_inner` 需要将 create + enforce 组合成真正的原子序列时，应直接调用
-    /// [`enforce_max_login_count_inner`](Self::enforce_max_login_count_inner)
-    /// （无锁版本），而非本方法。本方法仅供独立调用场景（如外部 API 主动触发踢出、
-    /// 测试代码）使用。
+    /// `enforce_max_login_count_inner`（无锁版本，`pub(crate)` 不出现在公开文档），
+    /// 而非本方法。本方法仅供独立调用场景（如外部 API 主动触发踢出、测试代码）使用。
     ///
     /// # 持锁时间（性能审查 MEDIUM-1 标注）
     ///

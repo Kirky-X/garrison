@@ -886,7 +886,7 @@ impl BulwarkSession {
     /// 2. `logout_by_login_id(original)` 会误杀已切到 target 的 token（越权踢出）
     /// 3. `enforce_max_login_count(original)` 会误算已切换的 token
     ///
-    /// 与 [`ensure_token_in_account_session`] 对称：一个加、一个减。
+    /// 与 [`Self::ensure_token_in_account_session`] 对称：一个加、一个减。
     /// 双层写入：先写 DAO `AccountSession.tokens`（用 `dao.update` 保留原 TTL），
     /// 再写内存 `login_token_map`。DAO 失败时内存不写（返回 Err），保证双层一致性。
     ///

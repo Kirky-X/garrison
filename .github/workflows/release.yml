@@ -1,5 +1,20 @@
 # Copyright (c) 2026 Kirky.X. All rights reserved.
 # See LICENSE for full license text.
+#
+# Release 工作流
+#
+# 触发：
+#   1. push tag v*.*.* → 自动触发完整发布流程
+#   2. workflow_dispatch → 手动触发（输入 version 经 env 传递，防 shell 注入）
+#
+# 流程（规则 19 + project_memory 安全/质量门禁）：
+#   阶段 1: lint-check + test-check + security-check + doc-check (并行)
+#   阶段 2: version-consistency (依赖阶段 1 全部通过)
+#   阶段 3: publish-crates-io (依赖阶段 2)
+#   阶段 4: github-release (依赖阶段 3，crates.io 失败则不创建 GitHub Release)
+#   阶段 5: verify-release (依赖阶段 4，验证 GitHub Release + crates.io)
+#
+# 失败显性化（规则 12）：所有 job 都不用 continue-on-error，失败即阻断发布
 
 name: Release
 
@@ -7,66 +22,268 @@ on:
   push:
     tags:
       - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "要发布的版本号（如 0.7.1，不带 v 前缀）"
+        required: false
+        type: string
+
+# 防止并发发布（同一 tag 重试 / 多 tag 同时触发）
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false   # 发布流程不可取消，必须完整执行
+
+# 最小权限原则：默认所有 job 只读，github-release 单独提权 contents: write
+permissions:
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  RUSTFLAGS: "-D warnings"
 
 jobs:
-  # === 发布到 crates.io ===
-  publish:
-    name: Publish to crates.io
+  # ============================================================================
+  # 阶段 1：前置检查（并行执行，任一失败阻断发布）
+  # ============================================================================
+
+  lint-check:
+    name: Lint Check (fmt + clippy)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
-      - uses: dtolnay/rust-toolchain@stable  # nosemgrep
+      - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be  # 1.85, nosemgrep
+        with:
+          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@400e7407cfd7a091e5fbb6afec01ec146c432b7c  # v2.7.7
-      - name: Check package
-        run: cargo package --no-verify
-      - name: Publish
-        run: cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        continue-on-error: true  # 首次发布可能需手动注册
+        with:
+          shared-key: release-full-deps
+      - name: Rustfmt check
+        run: cargo fmt --all -- --check
+      - name: Clippy (full features)
+        run: cargo clippy --features full --lib --tests -- -D warnings
 
-  # === 创建 GitHub Release ===
+  test-check:
+    name: Test Check (lib + E2E)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be  # 1.85, nosemgrep
+      - uses: Swatinem/rust-cache@400e7407cfd7a091e5fbb6afec01ec146c432b7c  # v2.7.7
+        with:
+          shared-key: release-full-deps
+      - name: Lib tests
+        run: cargo test --features full --lib
+      - name: E2E tests
+        run: cargo test --features full --test '*' --no-fail-fast
+
+  security-check:
+    name: Security Check (audit + deny)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998  # v2.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Cargo deny check (license/advisory/ban)
+        uses: EmbarkStudios/cargo-deny-action@e2a4908d1097e728b8e290bb28f59d3ed6b01b68  # v2.0.11
+        with:
+          arguments: --all-features
+
+  doc-check:
+    name: Doc Check (zero warnings)
+    runs-on: ubuntu-latest
+    env:
+      RUSTDOCFLAGS: "-D warnings"
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be  # 1.85, nosemgrep
+      - uses: Swatinem/rust-cache@400e7407cfd7a091e5fbb6afec01ec146c432b7c  # v2.7.7
+        with:
+          shared-key: release-full-deps
+      - name: Build docs (zero warnings)
+        run: cargo doc --features full --no-deps
+
+  # ============================================================================
+  # 阶段 2：版本一致性检查（依赖前置检查全部通过）
+  # ============================================================================
+
+  version-consistency:
+    name: Version Consistency
+    runs-on: ubuntu-latest
+    needs: [lint-check, test-check, security-check, doc-check]
+    outputs:
+      version: ${{ steps.extract-version.outputs.version }}
+      body: ${{ steps.changelog-body.outputs.body }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          fetch-depth: 0  # 完整历史，用于读取 CHANGELOG
+
+      - name: Extract version
+        id: extract-version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          # 优先从 tag 名提取，其次从 workflow_dispatch 输入（通过 env 传递防注入）
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          elif [[ -n "$INPUT_VERSION" ]]; then
+            VERSION="$INPUT_VERSION"
+          else
+            VERSION=$(grep -E '^version = ' Cargo.toml | head -1 | sed -E 's/version = "([^"]+)".*/\1/')
+          fi
+          # semver 格式校验（防注入）
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
+            echo "::error::非法版本号格式: $VERSION"
+            exit 1
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "提取到版本号: $VERSION"
+
+      - name: Check Cargo.toml version
+        env:
+          VERSION: ${{ steps.extract-version.outputs.version }}
+        run: |
+          CARGO_VERSION=$(grep -E '^version = ' Cargo.toml | head -1 | sed -E 's/version = "([^"]+)".*/\1/')
+          if [[ "$CARGO_VERSION" != "$VERSION" ]]; then
+            echo "::error::Cargo.toml version ($CARGO_VERSION) 与发布版本 ($VERSION) 不一致"
+            exit 1
+          fi
+          echo "Cargo.toml version: $CARGO_VERSION ✓"
+
+      - name: Check CHANGELOG.md
+        env:
+          VERSION: ${{ steps.extract-version.outputs.version }}
+        run: |
+          if ! grep -qE "^## \[${VERSION}\] " CHANGELOG.md; then
+            echo "::error::CHANGELOG.md 缺少 ## [${VERSION}] - YYYY-MM-DD 章节"
+            exit 1
+          fi
+          echo "CHANGELOG.md 包含 ## [${VERSION}] 章节 ✓"
+
+      - name: Extract CHANGELOG body
+        id: changelog-body
+        env:
+          VERSION: ${{ steps.extract-version.outputs.version }}
+        run: |
+          # 提取 ## [VERSION] 到下一个 ## [ 之间的内容
+          BODY=$(awk -v ver="## \[${VERSION}\]" '
+            $0 ~ "^" ver " " {flag=1; next}
+            /^## \[/ {if (flag) exit}
+            flag {print}
+          ' CHANGELOG.md)
+          if [[ -z "$BODY" ]]; then
+            echo "::error::CHANGELOG.md 中未提取到 ## [${VERSION}] 章节内容"
+            exit 1
+          fi
+          # 用 EOF delimiter 避免特殊字符问题
+          echo "body<<EOF" >> $GITHUB_OUTPUT
+          echo "$BODY" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+  # ============================================================================
+  # 阶段 3：发布到 crates.io（依赖版本一致性检查通过）
+  # ============================================================================
+
+  publish-crates-io:
+    name: Publish to crates.io
+    runs-on: ubuntu-latest
+    needs: version-consistency
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be  # 1.85, nosemgrep
+      - uses: Swatinem/rust-cache@400e7407cfd7a091e5fbb6afec01ec146c432b7c  # v2.7.7
+        with:
+          shared-key: release-full-deps
+      - name: Publish to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish
+
+  # ============================================================================
+  # 阶段 4：创建 GitHub Release（依赖 crates.io 发布成功，避免半发布不一致）
+  # ============================================================================
+
   github-release:
     name: GitHub Release
     runs-on: ubuntu-latest
-    needs: publish
-    if: always()
+    needs: [version-consistency, publish-crates-io]
+    permissions:
+      contents: write   # 创建 Release 需要
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with:
           fetch-depth: 0
-      - name: Generate changelog
-        id: changelog
-        run: |
-          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
-          if [ -z "$PREV_TAG" ]; then
-            echo "changelog<<EOF" >> $GITHUB_OUTPUT
-            git log --oneline >> $GITHUB_OUTPUT
-            echo "EOF" >> $GITHUB_OUTPUT
-          else
-            echo "changelog<<EOF" >> $GITHUB_OUTPUT
-            git log --oneline $PREV_TAG..HEAD >> $GITHUB_OUTPUT
-            echo "EOF" >> $GITHUB_OUTPUT
-          fi
-      - name: Create Release
+
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@c95fe1489396fe8a9eb87c0abf8aa5b2ef267fda  # v2.2.1
         with:
-          body: ${{ steps.changelog.outputs.changelog }}
-          draft: true
-          prerelease: ${{ contains(github.ref, '-rc') || contains(github.ref, '-beta') || contains(github.ref, '-alpha') }}
+          tag_name: v${{ needs.version-consistency.outputs.version }}
+          name: Release v${{ needs.version-consistency.outputs.version }}
+          body: ${{ needs.version-consistency.outputs.body }}
+          draft: false
+          prerelease: ${{ contains(needs.version-consistency.outputs.version, '-rc') || contains(needs.version-consistency.outputs.version, '-beta') || contains(needs.version-consistency.outputs.version, '-alpha') }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # === 构建 Release 二进制（仅示例，库 crate 可跳过） ===
-  build:
-    name: Build Artifacts
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    if: false  # 库 crate，暂不构建二进制
+  # ============================================================================
+  # 阶段 5：发布后验证（GitHub Release + crates.io 双重验证）
+  # ============================================================================
+
+  verify-release:
+    name: Verify Release
+    runs-on: ubuntu-latest
+    needs: [github-release, publish-crates-io]
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
-      - uses: dtolnay/rust-toolchain@stable  # nosemgrep
-      - run: cargo build --release --features "full"
+
+      - name: Extract version from Cargo.toml
+        id: extract-version
+        run: |
+          VERSION=$(grep -E '^version = ' Cargo.toml | head -1 | sed -E 's/version = "([^"]+)".*/\1/')
+          # semver 格式校验
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
+            echo "::error::非法版本号格式: $VERSION"
+            exit 1
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "提取到版本号: $VERSION"
+
+      - name: Verify GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.extract-version.outputs.version }}
+        run: |
+          # gh release view 可能因传播延迟失败，重试 3 次
+          for i in 1 2 3; do
+            if gh release view "v${VERSION}" >/dev/null 2>&1; then
+              echo "GitHub Release v${VERSION} 验证通过 ✓"
+              break
+            fi
+            echo "等待 GitHub Release 传播（尝试 $i/3）..."
+            sleep 5
+            if [[ $i -eq 3 ]]; then
+              echo "::error::GitHub Release v${VERSION} 验证失败"
+              exit 1
+            fi
+          done
+
+      - name: Verify crates.io publish
+        env:
+          VERSION: ${{ steps.extract-version.outputs.version }}
+        run: |
+          # crates.io 索引传播通常 30-60 秒，重试 6 次（共 60 秒）
+          PUBLISHED=""
+          for i in 1 2 3 4 5 6; do
+            PUBLISHED=$(curl -sS "https://crates.io/api/v1/crates/bulwark" | grep -o "\"newest_version\":\"[^\"]*\"" | head -1)
+            if echo "$PUBLISHED" | grep -q "\"$VERSION\""; then
+              echo "crates.io 已发布 v${VERSION} ✓"
+              exit 0
+            fi
+            echo "等待 crates.io 索引传播（尝试 $i/6）..."
+            sleep 10
+          done
+          echo "::error::crates.io 未发现 v${VERSION}（最后查询结果: $PUBLISHED）"
+          exit 1
