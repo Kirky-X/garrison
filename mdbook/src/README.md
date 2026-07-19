@@ -4,6 +4,7 @@ Bulwark 是一个面向 Rust 生态的身份认证鉴权框架，目标是提供
 
 - 仓库：<https://github.com/Kirky-X/bulwark>
 - License：Apache-2.0
+- 当前版本：0.7.0（2026-07-13 发布）
 - MSRV：Rust 1.85+（部分依赖如 `inventory 0.3` 要求 edition 2024）
 
 ## 框架定位
@@ -34,20 +35,25 @@ Bulwark 采用 **双抽象层 + 全局单例** 的架构：
 
 - **dbnexus**：数据库抽象层（SQLite / PostgreSQL / MySQL），由 `BulwarkDao` trait 屏蔽后端差异
 - **oxcache**：缓存抽象层（L1 内存 + L2 redis），承载 Token-Session 与 Account-Session 双向映射
-- **BulwarkManager**：全局单例，持有 `Arc<dyn BulwarkLogic>`（基于 `parking_lot::RwLock`，支持覆盖式 `init`）
-- **inventory 编译期注册**：`BulwarkLogicFactory` 通过 `inventory::submit!` 注册，运行时由 `inventory::iter` 选取
+- **BulwarkManager**：全局单例，持有 `Arc<BulwarkLogicDefault>`（基于 `parking_lot::RwLock`，支持覆盖式 `init`）；自 0.5.2 起 `BulwarkLogic` 上帝 trait 已拆分为 6 个职责子 trait（BulwarkCore / SessionLogic / PermissionLogic / TokenLogic / MfaLogic / PasswordLogic），Manager 持有具体类型而非 trait 对象
+- **inventory 编译期注册**：`PermissionRegistration`（权限注册表）/ `StrategyRegistration`（Firewall 策略）等通过 `inventory::submit!` 注册，运行时由 `inventory::iter` 收集
 
-逻辑层分为三层：`BulwarkLogic`（顶层抽象）/ `BulwarkInterface`（业务方实现的回调）/ `BulwarkUtil`（面向使用者的静态 API）。
+逻辑层分为三层：`BulwarkLogicDefault`（默认实现，组合 6 个子 trait）/ `BulwarkInterface`（业务方实现的回调）/ `BulwarkUtil`（面向使用者的静态 API）。
 
-## 0.3.0 新增能力
+## 版本演进
 
-0.3.0 在 0.2.x 基础上扩展了生态与可观测性：
+Bulwark 自 0.1.0 起逐步演进至当前 0.7.0，主要能力域落地节奏如下：
 
-- **可观测性**：Prometheus 指标 + 结构化 JSON 日志 + OpenTelemetry 分布式追踪（OTLP gRPC 导出）
-- **gRPC 鉴权拦截器**：`BulwarkGrpcInterceptor` 实现 `tonic::Interceptor`，从 metadata 提取 Bearer token
-- **异常消息 i18n**：基于 fluent-rs 的中英文切换，`set_locale(BulwarkLocale::En)` 即时生效
-- **防火墙安全钩子**：`BulwarkFirewallCheckHook` 提供 5 个登录流程检查点，返回 `Err` 阻断登录
-- **多框架适配**：新增 actix-web 与 warp 适配（`web-actix` / `web-warp` feature），与 axum 对齐
+- **0.2.0**：协议层（JWT / OAuth2 / SSO / Sign / APIKey / Temp）与安全模块（TOTP / HMAC / HTTP Basic / HTTP Digest）
+- **0.3.0**：可观测性（Prometheus 指标 + 结构化 JSON 日志 + OpenTelemetry OTLP）、gRPC 鉴权拦截器（`BulwarkGrpcInterceptor` 实现 `tonic::Interceptor`）、异常消息 i18n（fluent-rs 中英文切换）、防火墙安全钩子（`BulwarkFirewallCheckHook` 5 个登录流程检查点）、多框架适配（`web-actix` / `web-warp` feature 与 axum 对齐）
+- **0.4.0 / 0.4.2**：协议层 gap 补齐（OIDC / ScopeHandler / SsoServer / AloneCache / ParameterQuery / token-introspection / apikey-namespace 等）
+- **0.5.0**：生产刚需版（多租户隔离 / 社交登录 / 审计日志 / Token Rotation / 安全防护套件 / 角色层级 / 决策溯源 / Keycloak OIDC RP / PostgreSQL 后端 / actix+warp 完整适配）
+- **0.5.1~0.5.3**：RBAC 实体 / UserDevice / 权限注册表 / 请求对象 API / miette 富错误 / 显式 Manager API / BulwarkLogic trait 拆分 / LoginId newtype 删除 / oxcache 升级 / MySQL 后端 / Firewall MaxMindDb 生产后端
+- **0.6.0 / 0.6.1**：账号安全引擎版（account/ 模块 + Credential SPI + PasswordPolicyEngine + UserLockoutStrategy + AuthenticationFlow DSL + i18n 社交登录异常 + AccountMetrics）+ gap-closure-remaining 11 项能力（remember_me / Redis 部署模式 / switch_to / Token 置换 / OAuth2 注解 / group() / SessionExpiryListener / SAML 2.0 / OIDC RP / Redis pub/sub SsoChannel）
+- **0.6.7**：安全与性能增强（forbid 优先语义 / WAF 级防火墙 / 三层缓存架构 / SMS 验证码渐进式限速 / AnomalousLoginDetector 双引擎）
+- **0.7.0**：微服务架构（`backend-remote` + Auth Server + `auth_server` 二进制）+ ABAC/Cedar DSL 策略引擎 + OAuth2 Server（authorize / token / revoke / introspect + PKCE）+ 依赖优化与架构加固
+
+详细演进历史与里程碑意义见 [版本路线图](./roadmap.md)。
 
 ## 下一步
 

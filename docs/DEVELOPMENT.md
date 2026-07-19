@@ -62,7 +62,7 @@ pkg-config --exists openssl && echo "openssl OK"
 
 ### 1.3 克隆仓库与本地依赖
 
-Bulwark 使用 crates.io 发布的 `oxcache 0.3.3`（支持 per-entry TTL + `ttl_sync()` 查询）与 `dbnexus 0.3`（SQLite / PostgreSQL / MySQL 多后端），无需额外克隆本地依赖：
+Bulwark 使用 crates.io 发布的 `oxcache 0.3`（支持 per-entry TTL + `ttl_sync()` 查询）与 `dbnexus 0.4`（SQLite / PostgreSQL / MySQL 多后端），无需额外克隆本地依赖：
 
 ```bash
 # 1. 克隆 Bulwark
@@ -79,7 +79,7 @@ cargo build --features full
 # 全量编译
 cargo build --features full
 
-# 全量测试（1463+ 个单元测试应全部通过）
+# 全量测试（3776+ 个 lib 测试 + 65 E2E 应全部通过）
 cargo test --features full
 
 # Lint（零警告）
@@ -117,6 +117,7 @@ bulwark/
 │   │   ├── credential/       # Credential SPI + PasswordCredential + TotpCredential
 │   │   ├── policy/           # PasswordPolicyEngine + 12+ 规则
 │   │   ├── lockout/          # UserLockoutStrategy
+│   │   ├── disable/          # 账号禁用 / DisableRepository（v0.7.0 新增）
 │   │   ├── authflow/         # AuthenticationFlow DSL
 │   │   └── metrics.rs        # AccountMetrics Prometheus 指标
 │   ├── protocol/             # 协议层（feature 门控）
@@ -139,7 +140,8 @@ bulwark/
 │   ├── dao/                  # 数据访问层
 │   │   ├── mod.rs            # BulwarkDao trait + RedisDeploymentMode + RedisConfig
 │   │   ├── oxcache_impl.rs   # oxcache 实现
-│   │   └── repository/       # Repository 层（9 trait + SqliteRepository）
+│   │   ├── dbnexus_impl.rs   # dbnexus 初始化 + BulwarkMigration
+│   │   └── repository/       # Repository 层（9 trait + Sqlite/Mysql/Postgres Repository）
 │   ├── context/              # 请求上下文抽象
 │   │   ├── mod.rs
 │   │   ├── axum_adapter.rs   # axum 适配器
@@ -160,12 +162,15 @@ bulwark/
 │   ├── i18n.rs               # 国际化（fluent-rs）
 │   ├── error.rs              # 错误类型定义
 │   ├── prelude.rs            # 预导出
+│   ├── bin/                  # 二进制入口
+│   │   └── auth_server.rs    # BulwarkAuthServer 独立运行入口（v0.7.0 新增，需 auth-server feature）
 │   └── lib.rs                # crate 入口
 ├── tests/                    # 集成测试
 ├── examples/                 # 示例代码（独立 workspace member）
 ├── migrations/               # 数据库迁移脚本
 │   ├── sqlite/core/          # SQLite 迁移
-│   └── mysql/core/           # MySQL 兼容迁移（v0.5.3 新增）
+│   ├── mysql/core/           # MySQL 兼容迁移（v0.5.3 新增）
+│   └── postgres/core/        # PostgreSQL 迁移（v0.7.0 新增）
 ├── benches/                  # 基准测试（criterion）
 ├── bulwark-macros/           # 过程宏 crate（#[check_login] 等）
 ├── locales/                  # i18n 资源文件（zh.ftl / en.ftl）
@@ -256,7 +261,7 @@ mod tests {
     #[serial]
     async fn test_manager_init() {
         // 修改全局单例，必须串行
-        BulwarkManager::init(config).await;
+        BulwarkManager::init(dao, config, interface).unwrap();
         assert!(BulwarkManager::is_initialized());
     }
 
@@ -297,7 +302,7 @@ Bulwark 要求测试覆盖率 **≥ 95%**（当前 95%+）：
 | 协议/安全插件 | ≥ 90% |
 | Web 适配层 | 集成测试覆盖主要中间件路径即可 |
 
-- 1463+ 个单元测试 + 集成测试 + doc-tests
+- 3841+ 个测试通过（3776 lib + 65 E2E）+ doc-tests
 - 不追求 100% 覆盖率，但每个分支必须有对应测试用例
 - 禁止通过「不写测试」来提高覆盖率的行为
 
@@ -487,10 +492,10 @@ cargo doc --no-deps --features full --open
 
 | Feature | 说明 |
 |---------|------|
-| `default` | 空（无默认特性，需显式启用） |
+| `default` | `backend-embedded`（仅启用进程内认证后端，作为最小可启动配置） |
 | `all-defaults` | 等价于 `cache-memory + db-sqlite + web-axum` |
 | `full` | 启用全部特性（开发首选） |
-| `production` | 生产推荐组合（cache-redis + db-postgres + web-axum + 协议/安全子集 + 可观测性 + 多租户隔离） |
+| `production` | 生产推荐组合（cache-redis + db-postgres + web-axum + 协议/安全子集 + 可观测性 + 多租户隔离 + auth-server + abac + firewall-waf + 三层缓存等，详见 Cargo.toml `[features]` production 段） |
 | `development` | 开发推荐组合（cache-memory + db-sqlite + web-axum） |
 
 > 常见问题排查详见 [troubleshooting.md](./TROUBLESHOOTING.md)。

@@ -10,7 +10,9 @@ Bulwark 采用 **双抽象层 + 全局单例** 架构，采用双抽象层设计
 ├──────────────────────────────────────────────┤
 │  BulwarkUtil（静态 API：login/check_login…）  │  ← 使用者面向的入口
 ├──────────────────────────────────────────────┤
-│  BulwarkLogic（顶层逻辑 trait）               │
+│  5 子 trait + BulwarkCore（基座）             │
+│  ├─ SessionLogic / PermissionLogic            │
+│  ├─ TokenLogic / MfaLogic / PasswordLogic     │
 │  └─ BulwarkLogicDefault（默认实现 + builder） │  ← 编排层
 ├──────────────────────────────────────────────┤
 │  BulwarkInterface（业务回调 trait）           │  ← 业务方实现
@@ -21,18 +23,20 @@ Bulwark 采用 **双抽象层 + 全局单例** 架构，采用双抽象层设计
 
 ## BulwarkManager 单例
 
-`BulwarkManager` 持有全局 `Arc<dyn BulwarkLogic>`（基于 `parking_lot::RwLock`），支持覆盖式 `init`：
+`BulwarkManager` 持有全局 `Arc<BulwarkLogicDefault>`（基于 `parking_lot::RwLock`），支持覆盖式 `init`：
 
 - 业务方启动时调用 `BulwarkManager::init(dao, config, interface)` 注入依赖
 - `BulwarkUtil::login` / `BulwarkUtil::check_login` 等静态方法委托到全局单例
 - `init` 自动注入 `PluginManager` / `ListenerManager` / `AuthLogic` / `PermissionChecker`（0.2.1 auto-wire 修复）
 
+> v0.5.2 起，原 `BulwarkLogic` 上帝 trait 已删除，拆分为 5 个子 trait（`SessionLogic` / `PermissionLogic` / `TokenLogic` / `MfaLogic` / `PasswordLogic`），super-trait 为 `BulwarkCore`。`BulwarkLogicDefault` 实现全部 5 个子 trait，Manager / Strategy / Factory 等持有方改为具体类型 `Arc<BulwarkLogicDefault>`，方法调用通过子 trait 解析。
+
 ## 三层逻辑结构
 
 | 层 | 角色 | 职责 |
 |:---|:---|:---|
-| `BulwarkLogic` | 顶层抽象 | 定义 login / logout / check_login / check_permission / check_role 等核心方法 |
-| `BulwarkLogicDefault` | 默认实现 | 编排 dao / interface / plugin / listener / metrics / firewall，提供 `with_*` builder |
+| `BulwarkCore` + 5 子 trait | 接口抽象 | `SessionLogic`（login / logout / check_login）、`PermissionLogic`（check_permission / check_role）、`TokenLogic`（token 生成/校验/续期）、`MfaLogic`（二级认证）、`PasswordLogic`（密码校验） |
+| `BulwarkLogicDefault` | 默认实现 | 编排 dao / interface / plugin / listener / metrics / firewall，实现全部 5 个子 trait，提供 `with_*` builder |
 | `BulwarkInterface` | 业务回调 | 业务方实现，提供 `get_permission_list` / `get_role_list` / `get_device_info` 等 |
 | `BulwarkUtil` | 静态 API | 面向使用者的便捷入口，委托到 `BulwarkManager` 全局单例 |
 
@@ -49,7 +53,15 @@ inventory::submit! {
 
 ## 核心模块组织（always on）
 
-`core` / `stp` / `annotation` / `router` / `dao` / `strategy` / `session` / `config` / `context` / `json` / `exception` / `manager` / `plugin` 这些模块无 feature flag，总是编译。协议层、安全模块、Web 适配、可观测性通过 feature 按需启用。
+以下模块无 feature flag，总是编译：
+
+- **核心编排**：`core` / `stp` / `manager` / `strategy` / `plugin`
+- **数据访问**：`dao` / `session` / `state` / `config` / `context`
+- **基础设施**：`constants` / `error` / `exception` / `json` / `i18n` / `health` / `annotation` / `router`
+- **业务能力**：`account` / `abac`
+- **公共入口**：`prelude`
+
+协议层、安全模块、Web 适配、可观测性、缓存三层架构、监听器等通过 feature 按需启用。
 
 ## 上下文传播
 

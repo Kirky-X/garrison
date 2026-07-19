@@ -7,14 +7,22 @@ Bulwark 提供 RBAC 权限模型，通过 `BulwarkStrategy` 与 `BulwarkPermissi
 ```rust
 use bulwark::prelude::*;
 
-// 权限校验：当前登录用户是否拥有 "user:create" 权限
-let ok = BulwarkUtil::check_permission("user:create").await?;
+// 权限校验：当前登录用户是否拥有 "user:create" 权限（未持有抛 NotPermission）
+BulwarkUtil::check_permission("user:create").await?;
 
-// 角色校验：当前登录用户是否拥有 "admin" 角色
-let ok = BulwarkUtil::check_role("admin").await?;
+// 角色校验：当前登录用户是否拥有 "admin" 角色（未持有抛 NotRole）
+BulwarkUtil::check_role("admin").await?;
+
+// 布尔式查询：未持有或未登录返回 Ok(false)，不抛异常
+let has = BulwarkUtil::has_permission("user:create").await?;
+let has = BulwarkUtil::has_role("admin").await?;
+
+// 获取当前登录主体的权限/角色列表（未登录返回空 Vec）
+let perms = BulwarkUtil::get_permission_list().await?;
+let roles = BulwarkUtil::get_role_list().await?;
 ```
 
-校验结果受 `throw_on_not_login` 影响：默认未登录抛异常。校验失败返回 `BulwarkError::NotPermission` / `BulwarkError::NotRole`。
+校验结果受 `throw_on_not_login` 影响：默认未登录抛异常。`check_*` 失败返回 `BulwarkError::NotPermission` / `BulwarkError::NotRole`；`has_*` 将 `NotLogin` / `NotPermission` / `NotRole` 映射为 `Ok(false)`，其余错误透传。
 
 ## 权限来源
 
@@ -39,7 +47,7 @@ impl BulwarkInterface for MyInterface {
 |:---|:---|
 | `BulwarkStrategy` | 权限/角色校验的顶层策略抽象 |
 | `BulwarkPermissionStrategy` | 默认实现，编排 interface 查询、缓存、插件钩子 |
-| `BulwarkPermissionStrategyDefault` | 0.2.0 扩展，支持 `with_permission_checker` / `with_role_hierarchy` / `with_plugin_manager` / `with_dao`（权限缓存） |
+| `BulwarkPermissionStrategyDefault` | 0.2.0 扩展，支持 `with_permission_checker` / `with_role_hierarchy` / `with_plugin_manager` / `with_dao` / `with_firewall_hook` / `with_listener_manager` |
 
 `BulwarkPermissionStrategyDefault` 通过 builder 注入依赖：
 
@@ -48,7 +56,9 @@ let strategy = BulwarkPermissionStrategyDefault::new(interface.clone())
     .with_permission_checker(checker)
     .with_role_hierarchy(hierarchy)
     .with_plugin_manager(plugin_mgr)
-    .with_dao(dao.clone());  // 启用权限缓存
+    .with_dao(dao.clone())               // 启用权限缓存
+    .with_firewall_hook(fw_hook)         // 启用登录前 5 项防火墙检查（需 firewall feature）
+    .with_listener_manager(lm);          // 启用 FirewallBlock 事件广播（需 listener feature）
 ```
 
 ## 角色层级 hierarchy
@@ -60,6 +70,24 @@ let strategy = BulwarkPermissionStrategyDefault::new(interface.clone())
 ## 权限缓存
 
 启用 `with_dao` 后，`BulwarkPermissionStrategyDefault` 会将权限/角色列表缓存到 oxcache，避免每次校验都查询 `BulwarkInterface`。缓存 TTL 与会话一致，登出时自动失效。
+
+## ABAC（属性级访问控制）
+
+除 RBAC 外，Bulwark 通过 `abac` feature 提供基于 `cedar-policy` 的 ABAC 引擎，作为 RBAC 的增量校验层（RBAC 通过后再检查 ABAC）：
+
+```toml
+[dependencies]
+bulwark = { version = "0.7", features = ["abac"] }
+```
+
+核心类型：
+
+- `AbacEngine`：Cedar 策略求值器
+- `EntityLoader` trait：Cedar Entities 数据源（内置 `EmptyEntityLoader` / `StaticEntityLoader`）
+- `init_abac_engine`：初始化全局 AbacEngine
+- `check_abac_with_policy`：宏入口，用于在 RBAC 通过后调用 ABAC 求值
+
+`abac` feature 关闭时 `check_abac_with_policy` 提供 no-op stub，确保宏生成的代码在任意 feature 组合下均可编译。详见 `src/abac/`。
 
 ## 校验流程
 
@@ -73,3 +101,4 @@ let strategy = BulwarkPermissionStrategyDefault::new(interface.clone())
 
 - [登录认证与会话](./auth-session.md)
 - [插件系统](./plugin-system.md)
+- [防火墙安全钩子](./firewall.md)（登录前 5 项安全检查）

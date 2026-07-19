@@ -6,7 +6,7 @@
 
 - **`BulwarkFirewallCheckHook` trait**：5 个 async hook 方法，默认实现全 pass
 - **`LoginContext`**：登录上下文（login_id + 可选 IP / 设备指纹 / 地理位置）
-- **`BulwarkFirewallCheckHookDefault`**：基于内存计数器 + 时间窗口的默认实现
+- **`BulwarkFirewallCheckHookDefault`**：基于 `BulwarkDaoDistributedLimiter`（limiteron 适配器）的默认实现，5 项检测全部实现
 - **`with_firewall_hook` builder**：注入到 `BulwarkLogicDefault`
 - **Hook 在 login 流程中调用**：任一返回 `Err` 阻止登录
 
@@ -50,24 +50,25 @@ let ctx = LoginContext::new(1001)
 
 ## 默认实现
 
-`BulwarkFirewallCheckHookDefault` 仅实现前两项检测（基于 `parking_lot::Mutex<HashMap>` 内存计数器）：
+`BulwarkFirewallCheckHookDefault` 基于 `BulwarkDaoDistributedLimiter`（limiteron 适配器）实现，5 项检测全部覆盖：
 
 ```rust
 use bulwark::strategy::hooks::{BulwarkFirewallCheckHookDefault, BulwarkFirewallCheckHook, LoginContext};
 
 let hook = BulwarkFirewallCheckHookDefault::new();
-let ctx = LoginContext::new(1001).with_ip("1.2.3.4");
+let ctx = LoginContext::new("1001").with_ip("1.2.3.4");
 
-// 业务方在登录失败时调用 record_failure
-for _ in 0..10 { hook.record_failure(&ctx); }
+// 业务方在登录失败时调用 record_failure（async）
+for _ in 0..10 { hook.record_failure(&ctx).await?; }
 
 // 后续登录时，hook 自动检查
 assert!(hook.check_login_frequency(&ctx).await.is_err());  // ≥10 次阻断
 ```
 
 - IP 计数器与账号计数器相互独立
-- 窗口（1h）过后自动重置
-- 其他 3 项检测保持默认 `Ok(())`（需外部数据源，0.3.0 简化）
+- 窗口（1h）由 limiteron TTL 自动重置
+- 异地登录 / Token 复用 / 设备异常 3 项通过 DAO KV 读取实现（无数据时 pass）
+- `record_failure` 为 async 方法（通过 limiteron 原子递增）
 
 ## 注入到逻辑层
 
@@ -80,10 +81,24 @@ let logic = BulwarkLogicDefault::new(interface.clone())
 
 未注入时，login 流程跳过所有 hook（等同于全 pass）。
 
+## 分布式模式
+
+`BulwarkFirewallCheckHookDefault` 提供 2 个 builder 方法切换后端：
+
+- `new()`：内存模式（内部 `MockDao` 作为 limiteron 后端，开发/CI 场景）
+- `with_dao(dao)`：分布式模式（注入 `BulwarkDao`，oxcache/redis 作为 limiteron 后端，生产场景）
+- `with_listener_manager(lm)`：注入监听器管理器（需 `listener` feature），`check_brute_force` 阻断时广播 `AccountLocked` 事件
+
+```rust
+let hook = BulwarkFirewallCheckHookDefault::new()
+    .with_dao(dao.clone())
+    .with_listener_manager(lm);  // 需 listener feature
+```
+
 ## 重要语义
 
 - **强约束**：与 [插件系统](./plugin-system.md) 不同，防火墙 hook 返回 `Err` **会阻断登录**
-- **单进程**：默认实现仅在单进程内有效；多实例部署需替换为基于 oxcache/redis 的分布式计数器
+- **分布式**：默认 `new()` 走 `MockDao`（进程内）；生产环境用 `with_dao` 切换到 oxcache/redis，跨实例计数
 - **错误类型**：阻断时返回 `BulwarkError::Session`（含阈值与计数信息）
 
 ## 相关章节

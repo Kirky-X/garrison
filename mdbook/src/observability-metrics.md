@@ -6,7 +6,7 @@
 
 ```toml
 [dependencies]
-bulwark = { version = "0.3", features = ["metrics-prometheus"] }
+bulwark = { version = "0.7", features = ["metrics-prometheus"] }
 ```
 
 `metrics-prometheus` 启用 `prometheus` + `tracing-subscriber`（聚合了 JSON 日志能力）。

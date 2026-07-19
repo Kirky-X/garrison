@@ -5,8 +5,8 @@
 > - 版本：0.7.0（微服务架构 + ABAC/Cedar + OAuth2 Server + 架构加固 + 依赖优化：backend-remote / Auth Server / ABAC 引擎 / OAuth2 Server 4 端点 / secure-sanitize / 错误类型统一 / mod.rs 加固）
 > - 运行时：tokio 1.x
 > - Web 适配：axum 0.8 / actix-web 4 / warp 0.4
-> - 存储：dbnexus 0.4（SQLite / PostgreSQL / MySQL + auto-migrate）+ Repository 层（9 trait + SqliteRepository，tenant_id 隔离）
-> - 缓存：oxcache 0.3.3（L1 内存 + L2 redis，per-entry TTL + ttl_sync 查询）
+> - 存储：dbnexus 0.4（SQLite / PostgreSQL / MySQL + auto-migrate）+ Repository 层（10 trait + SqliteRepository，tenant_id 隔离）
+> - 缓存：oxcache 0.3（L1 内存 + L2 redis，per-entry TTL + ttl_sync 查询）
 > - License：Apache-2.0
 > 配置相关字段说明详见 [configuration.md](./CONFIGURATION.md)；开发规范详见 [development.md](./DEVELOPMENT.md)。
 
@@ -26,7 +26,7 @@ Bulwark 采用 **双抽象层 + 全局单例** 架构，核心设计目标：
 
 ### 1.2 全局单例
 
-- `BulwarkManager` 通过 `parking_lot::RwLock` 持有 `Arc<BulwarkLogicDefault>`（v0.5.2 起 `BulwarkLogic` trait 拆分为 6 个子 trait：`BulwarkCore` / `SessionLogic` / `PermissionLogic` / `TokenLogic` / `MfaLogic` / `PasswordLogic`），启动时调用 `BulwarkManager::init()` 一次性注入 dao / config / interface。
+- `BulwarkManager` 通过 `parking_lot::RwLock` 持有 `Arc<BulwarkLogicDefault>`（v0.5.2 起 `BulwarkLogic` trait 拆分为 `BulwarkCore` base trait + 5 个子 trait：`SessionLogic` / `PermissionLogic` / `TokenLogic` / `MfaLogic` / `PasswordLogic`），启动时调用 `BulwarkManager::init()` 一次性注入 dao / config / interface。
 - `BulwarkLogicFactoryEntry` 通过 `inventory::submit!` 在编译期注册，运行时由 `inventory::iter` 选取默认实现。
 - `BulwarkUtil` 暴露静态方法（`login` / `check_login` / `logout` 等），内部全部委托 `BULWARK_MANAGER` 单例，业务侧零状态调用。
 
@@ -88,8 +88,8 @@ graph TB
     end
 
     subgraph InfraLayer["基础设施"]
-        oxcache[oxcache 0.3.3<br/>L1 内存 + L2 redis]
-        dbnexus[dbnexus 0.3<br/>SQLite / PostgreSQL / MySQL + auto-migrate]
+        oxcache[oxcache 0.3<br/>L1 内存 + L2 redis]
+        dbnexus[dbnexus 0.4<br/>SQLite / PostgreSQL / MySQL + auto-migrate]
     end
 
     subgraph Observable["可观测性（feature 门控）"]
@@ -189,8 +189,8 @@ graph LR
     BLD --> BCtx
     BS --> BD
     BLD --> BI
-    BD --> oxcache[oxcache 0.3.3<br/>L1 内存 + L2 redis]
-    BD --> dbnexus[dbnexus 0.3<br/>SQLite / PostgreSQL / MySQL]
+    BD --> oxcache[oxcache 0.3<br/>L1 内存 + L2 redis]
+    BD --> dbnexus[dbnexus 0.4<br/>SQLite / PostgreSQL / MySQL]
 ```
 
 ### trait 职责说明
@@ -198,10 +198,10 @@ graph LR
 | trait | 职责 | 默认实现 |
 |-------|------|---------|
 | `BulwarkCore` | base trait（1 方法） | `BulwarkLogicDefault` |
-| `SessionLogic` | 会话逻辑：登录、登出、校验、kickout（10 方法，继承 BulwarkCore） | `BulwarkLogicDefault` |
-| `PermissionLogic` | 权限逻辑：check_permission / check_role（2 方法，继承 SessionLogic） | `BulwarkLogicDefault` |
-| `TokenLogic` | Token 逻辑：verify / refresh / revoke（5 方法，继承 SessionLogic） | `BulwarkLogicDefault` |
-| `MfaLogic` | MFA 逻辑：TOTP 校验（2 方法，继承 SessionLogic） | `BulwarkLogicDefault` |
+| `SessionLogic` | 会话逻辑：登录、登出、校验、kickout（13 方法，继承 BulwarkCore） | `BulwarkLogicDefault` |
+| `PermissionLogic` | 权限逻辑：check_permission / check_role / has_permission / has_role / get_permission_list / get_role_list（6 方法，继承 SessionLogic） | `BulwarkLogicDefault` |
+| `TokenLogic` | Token 逻辑：check_access_token / check_client_token / check_temp_token / verify_token / refresh_token（5 方法，继承 SessionLogic） | `BulwarkLogicDefault` |
+| `MfaLogic` | MFA 逻辑：二级认证与账号禁用校验（5 async 方法 + 2 关联函数，继承 SessionLogic） | `BulwarkLogicDefault` |
 | `PasswordLogic` | 密码逻辑：login_with_password（1 方法，继承 SessionLogic） | `BulwarkLogicDefault` |
 | `BulwarkInterface` | 业务数据源接入点：查询用户权限、角色等 | 业务方必须实现 |
 | `BulwarkDao` | 持久化抽象：session CRUD、token 映射 + `RedisDeploymentMode` 配置 | dbnexus + oxcache 实现 |

@@ -54,17 +54,19 @@ A: 直接使用 `jsonwebtoken` 有三个痛点：
 A: 在 `BulwarkConfig` 中配置 `token_style` 字段即可：
 
 ```rust
-let mut config = BulwarkConfig::default();
-config.token_style = TokenStyle::Uuid;       // 32 位 UUID
-// config.token_style = TokenStyle::Random64; // 64 位随机串
-// config.token_style = TokenStyle::Jwt;     // JWT（需启用 protocol-jwt feature）
-BulwarkManager::init(config)?;
+let mut config = BulwarkConfig::default_config();
+config.token_style = "uuid".to_string();        // 32 位 UUID
+// config.token_style = "random_64".to_string(); // 64 位随机串
+// config.token_style = "jwt".to_string();       // JWT（需启用 protocol-jwt feature）
+// 初始化时需注入 dao 与 interface（参见下文「如何自定义权限数据源」）
+BulwarkManager::init(dao, Arc::new(config), interface)?;
 ```
 
 需要注意：
 
-- `Uuid` 与 `Random64` 无需额外 feature；
-- `Jwt` 风格需要启用 `protocol-jwt` feature（0.2.0 起已支持）；
+- `uuid` 与 `random_64` 无需额外 feature；
+- `jwt` 风格需要启用 `protocol-jwt` feature（0.2.0 起已支持）；
+- `token_style` 字段为字符串类型，合法值见 `TOKEN_STYLES` 常量（`uuid` / `random_64` / `simple` / `jwt`）；
 - 切换风格后，已签发的旧 Token 仍可正常校验，直至其自然过期。
 
 ### Q: 如何实现多端登录互踢？
@@ -72,25 +74,26 @@ BulwarkManager::init(config)?;
 A: 配置 `is_concurrent = false` 即可。Bulwark 默认允许多端并发登录（如 Web + App 同时在线），当 `is_concurrent` 关闭时，同一账号在新端登录会自动踢掉旧端会话，旧端下次请求会收到 `NotLoginException`。
 
 ```rust
+let mut config = BulwarkConfig::default_config();
 config.is_concurrent = false;
-config.include_old_token_count = 5; // 可选：保留最近 5 个旧 Token 用于回放检测
+config.max_login_count = 5; // 可选：同一账号最多保留 5 个活跃 Token，超出按 overflow_logout_mode 处理
 ```
 
-如需更细粒度控制（如 PC 端互踢但 PC 与 App 共存），可启用 `device-type` feature，按 `device_type` 维度分别配置并发策略。
+如需更细粒度控制（如 PC 端互踢但 PC 与 App 共存），可启用 `device-binding` feature（参考 `device_binding_mode` 字段：`strict` / `loose` / `disabled`），按设备维度分别配置绑定策略。
 
 ### Q: 如何在非 axum 框架（如 actix-web、warp、自研 HTTP 框架）中使用？
 
-A: Bulwark 的核心逻辑与 HTTP 框架解耦，axum 集成只是 `BulwarkAxum` crate。在其他框架中：
+A: Bulwark 的核心逻辑与 HTTP 框架解耦，axum 集成只是 `bulwark` crate 的 `web-axum` feature。在其他框架中：
 
 ```rust
-use bulwark::task_local_token;
+use bulwark::stp::with_current_token;
 
 // 1. 在请求中间件中手动设置 task_local
 async fn auth_middleware(req: Request, next: Next) -> Response {
     let token = req.headers().get("Authorization")
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "));
-    task_local_token::scope(token.unwrap_or(""), next.run(req)).await
+    with_current_token(token.unwrap_or("").to_string(), next.run(req)).await
 }
 
 // 2. 在 handler 中直接调用 BulwarkUtil
@@ -100,7 +103,7 @@ async fn handler() -> &'static str {
 }
 ```
 
-只需实现 `with_current_token` 这一层 task_local 注入即可。Bulwark 已提供 `web-actix`、`web-warp` 官方适配 feature（0.5.0 起完整 Extractor 适配）。
+只需实现 `with_current_token` 这一层 task_local 注入即可。Bulwark 已提供 `web-actix`、`web-warp` 官方适配 feature（0.4.2 起 ActixContext / WarpContext 4 件套 Extractor 适配）。
 
 ### Q: 如何自定义权限数据源（如从 RPC 服务、文件、自研权限中心加载）？
 
@@ -111,7 +114,7 @@ struct MyAuthSource;
 
 #[async_trait]
 impl BulwarkInterface for MyAuthSource {
-    async fn get_permissions(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+    async fn get_permission_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
         // 从你的权限中心 RPC 拉取
         let perms = rpc_client.query_permissions(login_id).await?;
         Ok(perms)
@@ -119,21 +122,25 @@ impl BulwarkInterface for MyAuthSource {
     // 其他方法按需实现
 }
 
-BulwarkManager::init_with_interface(BulwarkConfig::default(), Arc::new(MyAuthSource))?;
+let config = Arc::new(BulwarkConfig::default_config());
+let interface: Arc<dyn BulwarkInterface> = Arc::new(MyAuthSource);
+BulwarkManager::init(dao, config, interface)?;
 ```
 
 `BulwarkInterface` 提供 Default 实现（返回空集合），你只需覆写关心的方法。该 trait 对所有方法都返回 `BulwarkResult`，便于把外部错误统一收敛进 `BulwarkError`。
 
 ### Q: 如何禁用"未登录抛异常"，改为返回 `false` 或自定义错误？
 
-A: 配置 `throw_on_not_login = false`。默认情况下 `BulwarkUtil::check_login` 在未登录时会 `panic` 或返回 `Err`（取决于调用的是 `_` 还是 `_or_false` 变体）；关闭后，所有 check 系列方法在未登录时返回 `false`，便于业务侧用 `if !BulwarkUtil::is_login() { ... }` 的柔和分支。
+A: 配置 `throw_on_not_login = false`。默认情况下 `BulwarkUtil::check_login` 在未登录时会返回 `Err(BulwarkError::NotLogin)`；关闭后，所有 check 系列方法在未登录时返回 `Ok(false)`，便于业务侧用 `if !BulwarkUtil::check_login().await? { ... }` 的柔和分支。
 
 ```rust
+let mut config = BulwarkConfig::default_config();
 config.throw_on_not_login = false;
-config.throw_on_not_permission = false; // 同理：无权限时返回 false 而非抛异常
 ```
 
-如需自定义错误响应体（而非默认 JSON），实现 `BulwarkExceptionTemplate` trait 并注入 `BulwarkManager`。
+> 注：当前版本仅有 `throw_on_not_login`，无独立的 `throw_on_not_permission` 字段。`check_permission` 在未登录时与 `check_login` 行为一致（受 `throw_on_not_login` 控制）；已登录但无权限时始终返回 `Ok(false)`，不抛异常。
+
+如需自定义错误响应体（而非 `BulwarkError::into_response()` 默认 JSON），可在 axum handler / middleware 中捕获 `BulwarkError` 后自行构造响应，或为自定义错误类型实现 `axum::response::IntoResponse`。
 
 ### Q: 如何在测试中重置全局单例 `BulwarkManager`？
 
@@ -146,8 +153,9 @@ mod tests {
 
     fn setup() {
         BulwarkManager::reset_for_test();
-        // 重新 init 你的测试 config
-        BulwarkManager::init(BulwarkConfig::default_for_test()).unwrap();
+        // 重新 init 你的测试 config（注入测试 dao / interface）
+        let config = Arc::new(BulwarkConfig::default_config());
+        BulwarkManager::init(test_dao(), config, test_interface()).unwrap();
     }
 
     #[test]
@@ -170,21 +178,33 @@ A: 推荐使用聚合 feature `production`，它包含以下子特性：
 
 ```toml
 [dependencies]
-bulwark = { version = "0.6", features = ["production"] }
+bulwark = { version = "0.7", features = ["production"] }
 ```
 
-`production` 等价于：
+`production` 等价于（参见 `Cargo.toml` 中的 `production` 聚合特性）：
 
-- `web-axum`（axum extractor + Router + Interceptor）
-- `cache-redis`（Redis 缓存后端）
+- `cache-redis`（Redis 缓存后端，含 `cache-memory`）
 - `db-postgres`（PostgreSQL 持久化）
+- `web-axum`（axum extractor + Router + Interceptor）
 - `protocol-jwt`（JWT 签发与验证）
 - `protocol-sign`（API 签名 + nonce 防重放）
 - `secure-sign`（HMAC 签名工具）
 - `listener`（事件监听器，用于审计、日志）
 - `tracing-log`（追踪日志）
 - `metrics-prometheus`（Prometheus 指标导出）
+- `audit-inklog`（inklog 结构化审计日志）
 - `tenant-isolation`（多租户逻辑隔离）
+- `security-alert`（安全告警系统）
+- `device-binding`（设备绑定策略）
+- `safe-defaults`（forbid 优先语义）
+- `firewall-waf`（WAF 请求内容校验）
+- `three-tier-cache`（三层缓存架构）
+- `sms-rate-limit`（SMS 验证码渐进式限速）
+- `backend-embedded`（默认嵌入式后端）
+- `backend-kit`（trait-kit typestate DI 构建）
+- `auth-server`（独立 Auth Server 模式）
+- `auth-server-sdforge`（声明式路由）
+- `abac`（基于 Cedar DSL 的属性访问控制引擎）
 
 如需 OAuth2、SSO 等其他协议层特性，单独追加：
 
@@ -192,11 +212,21 @@ bulwark = { version = "0.6", features = ["production"] }
 features = ["production", "protocol-oauth2", "protocol-sso"]
 ```
 
-注意：`default = []`（空），仅 `cargo build` 不带 `--features` 时只编译核心模块，便于在无外部依赖的环境（如 Edge、WASM）中使用。
+若需 OAuth2 Server（ authorize / token / revoke / introspect 端点 + PKCE），追加 `oauth2-server`：
+
+```toml
+features = ["production", "protocol-oauth2", "oauth2-server"]
+```
+
+注意：`default = ["backend-embedded"]`（仅启用嵌入式后端），仅 `cargo build` 不带 `--features` 时只编译核心模块 + 嵌入式后端，便于在无外部依赖的环境（如 Edge、WASM）中使用。
 
 ### Q: 是否支持 PostgreSQL / MySQL？
 
-A: **支持。** 0.5.0 起 `dbnexus` 0.3 提供 SQLite / PostgreSQL / MySQL 三种后端统一抽象，通过 `db-sqlite` / `db-postgres` / `db-mysql` feature 选择。`production` 聚合 feature 默认使用 `db-postgres`。
+A: **支持。** 0.5.0 起 `dbnexus` 0.3+ 提供 SQLite / PostgreSQL / MySQL 三种后端统一抽象，通过 `db-sqlite` / `db-postgres` / `db-mysql` feature 选择。`production` 聚合 feature 默认使用 `db-postgres`。
+
+- 0.5.0 起 PostgreSQL 后端可用（`db-postgres` feature）
+- 0.5.3 起 MySQL 后端可用（`db-mysql` feature）
+- 当前 `dbnexus` 已升级至 0.4（参见 `Cargo.toml`）
 
 注意：`db-sqlite` 与 `db-mysql` 不能同时启用（dbnexus 编译期 `compile_error!` 约束）。MySQL 后端的集成测试需要 Docker 环境（使用 `testcontainers`）。
 
@@ -212,7 +242,7 @@ config.cache = CacheConfig::Redis {
 };
 ```
 
-多端会话、互踢、权限缓存等所有运行期状态都会落到 Redis，多个 Bulwark 实例共享同一 Redis 即可构成分布式会话集群。0.6.0 起支持四种 Redis 部署模式（`RedisDeploymentMode`：Single / Sentinel / Cluster / MasterSlave），详见 [configuration.md](./CONFIGURATION.md) 的 Redis 部署模式配置章节。
+多端会话、互踢、权限缓存等所有运行期状态都会落到 Redis，多个 Bulwark 实例共享同一 Redis 即可构成分布式会话集群。0.6.1 起支持四种 Redis 部署模式（`RedisDeploymentMode`：Single / Sentinel / Cluster / MasterSlave），详见 [configuration.md](./CONFIGURATION.md) 的 Redis 部署模式配置章节。
 
 注意：单机 `oxcache` 内存模式无法跨实例共享，仅适合单实例部署或开发环境。
 
@@ -221,8 +251,9 @@ config.cache = CacheConfig::Redis {
 A: 启用 `listener` 与 `metrics-prometheus` feature：
 
 ```rust
-config.features |= FeatureFlag::LISTENER | FeatureFlag::METRICS;
-BulwarkManager::init(config)?;
+// Cargo.toml: features = ["listener", "metrics-prometheus"]
+let config = Arc::new(BulwarkConfig::default_config());
+BulwarkManager::init(dao, config, interface)?;
 ```
 
 随后：

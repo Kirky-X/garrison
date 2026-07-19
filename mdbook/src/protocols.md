@@ -66,7 +66,8 @@ let handler = OidcHandler::new(
 
 // 签发 id_token（login_id + nonce + scope + timeout 秒）
 // 含标准 OIDC claims: iss/sub/aud/exp/iat/nonce/login_id
-let id_token = handler.sign_id_token(1001, "nonce-xyz", "read", 3600)?;
+// login_id 接收 impl Into<String>，需传字符串或 String
+let id_token = handler.sign_id_token("1001", "nonce-xyz", "read", 3600)?;
 
 // 验证 id_token（三重校验: iss + aud + nonce，防重放）
 let claims = handler.verify_id_token(&id_token, "nonce-xyz")?;
@@ -86,25 +87,26 @@ let metadata = handler.discovery_metadata();
 ```rust
 use bulwark::protocol::oauth2::scope::{ScopeHandler, ScopeRegistry};
 use bulwark::protocol::oauth2::OAuth2Client;
-use async_trait::async_trait;
 use bulwark::error::BulwarkResult;
 use std::sync::Arc;
 
-// 业务方实现 ScopeHandler
+// 业务方实现 ScopeHandler（同步方法，接收 login_id 参数）
 struct MyScopeHandler;
-#[async_trait]
 impl ScopeHandler for MyScopeHandler {
-    async fn validate(&self, scope: &str) -> BulwarkResult<()> { /* ... */ Ok(()) }
+    fn validate(&self, scope: &str, login_id: i64) -> BulwarkResult<bool> {
+        // 返回 Ok(true) 允许，Ok(false) 拒绝，Err 透传错误
+        Ok(true)
+    }
 }
 
 // 注册并注入 OAuth2Client
-let mut registry = ScopeRegistry::new();
+let registry = ScopeRegistry::new();
 registry.register("read", Arc::new(MyScopeHandler));
 let client = OAuth2Client::new(
     "client-id", "client-secret", "https://example.com/cb",
     "https://auth.example.com/auth", "https://auth.example.com/token",
 )?.with_scope_registry(Arc::new(registry));
-// 此后 exchange_code / get_client_credentials_token / get_password_token 在 HTTP 请求前委托校验
+// 此后 get_password_token / get_client_credentials_token / refresh_access_token 在 HTTP 请求前委托校验
 ```
 
 ## SSO（ticket 一次性 60s）
@@ -115,10 +117,12 @@ let client = OAuth2Client::new(
 - 签发 → 校验 → 销毁，校验后立即失效
 - `BulwarkSession::link_sso_ticket` 关联 ticket 与会话
 - `client_id` 不匹配时返回 `InvalidToken`（M5 修复，原为 `Config`）
+- ticket 签名验证（M5 修复）：所有 ticket 包含 HMAC 签名，DAO 被攻破也无法伪造
 
-> ⚠️ **TOCTOU 竞态限制（M1）**：`validate_ticket` 的 get→delete 非原子，并发调用同一
-> ticket 时理论上可重放。60 秒 TTL 窗口内影响有限，安全敏感场景应通过外层加锁或单点
-> 校验保证。待 0.5.0+ 设计原子 get-and-delete 后统一修复。
+> ✅ **TOCTOU 竞态已修复**：`validate_ticket` 使用 `BulwarkDao::get_and_delete` 原子操作
+> 消费票据，并发调用同一 ticket 时仅一个调用成功。`SsoServer::validate_ticket` 进一步
+> 采用两步校验：先 `get` 校验 `client_id`（不消费票据），再 `get_and_delete` 原子消费，
+> 兼顾 client_id 不匹配时不消费票据的用户友好语义与原子性保证。
 
 ### SsoServer（0.4.0 新增，gap #5）
 
@@ -128,20 +132,21 @@ let client = OAuth2Client::new(
 use bulwark::protocol::sso::server::{DefaultSsoServer, IdentityCenterIdConverter};
 use std::sync::Arc;
 
-// DefaultSsoServer::new 只接收 dao，converter 通过 with_converter 注入
+// DefaultSsoServer::new 接收 dao + HMAC secret（与 SsoClient 必须一致，禁止空字符串）
+// converter 通过 with_converter 注入（默认 IdentityCenterIdConverter）
 let dao: Arc<dyn bulwark::dao::BulwarkDao> = /* ... */;
-let server = DefaultSsoServer::new(dao)
+let server = DefaultSsoServer::new(dao, "sso-hmac-secret")
     .with_converter(Arc::new(IdentityCenterIdConverter));  // identity 直通映射
 
-// 签发 ticket（client_id 视角）
-let ticket = server.issue_ticket(1001, 2001).await?;
+// 签发 ticket（login_id 为 &str，client_id 为 i64）
+let ticket = server.issue_ticket("1001", 2001).await?;
 // 校验 ticket（返回 client_id 对应的 login_id）
 let login_id = server.validate_ticket(&ticket, 2001).await?;
 ```
 
 核心组件：
 
-- `SsoServer` trait：定义 `issue_ticket` / `validate_ticket` / `destroy_ticket` 契约
+- `SsoServer` trait：定义 `issue_ticket` / `validate_ticket` / `destroy_ticket` / `push_message` 契约
 - `CenterIdConverter` trait：center_id ↔ login_id 映射（`IdentityCenterIdConverter` 直通实现）
 - `SsoChannel` trait：服务端推送通道（`NoopSsoChannel` 空实现）
 - `DefaultSsoServer`：默认实现，通过共享 `BulwarkDao` 与 `SsoClient` 间接通信
@@ -204,9 +209,9 @@ if let Some(cache) = manager.get("tenant-a") {
 ```rust
 use bulwark::stp::parameter::{ParameterQuery, ParameterQueryBuilder};
 
-// 链式构造
+// 链式构造（login_id 为 String，与全局 login_id 类型一致）
 let builder = ParameterQueryBuilder::new()
-    .with_login_id(1001);
+    .with_login_id("1001".to_string());
 
 // async check_permission / check_role
 builder.check_permission("user:read").await?;

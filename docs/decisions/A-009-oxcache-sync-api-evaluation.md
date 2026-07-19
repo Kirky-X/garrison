@@ -3,11 +3,11 @@
 - **状态**：已采纳（v0.5.2）
 - **决策日期**：2026-07-08
 - **相关变更**：v0-5-2-architecture-refactor
-- **相关代码**：`src/dao/mod.rs` `BulwarkDaoOxcache`
+- **相关代码**：`src/dao/oxcache_impl.rs` `BulwarkDaoOxcache`
 
 ## 背景
 
-`BulwarkDaoOxcache` 使用 oxcache 0.3 的 `_sync` API（`get_sync`/`set_with_ttl_sync`/`ttl_sync`/`expire_sync`/`delete_sync`）实现 `BulwarkDao` trait 的异步方法。这引发了"在 async 上下文中调用 sync API 是否合适"的疑问。
+`BulwarkDaoOxcache` 使用 oxcache 0.3（Cargo.lock 当前解析为 0.3.9）的 `_sync` API（`get_sync`/`set_with_ttl_sync`/`ttl_sync`/`expire_sync`/`delete_sync`/`exists_sync`）实现 `BulwarkDao` trait 的异步方法。这引发了"在 async 上下文中调用 sync API 是否合适"的疑问。
 
 ## 评估依据
 

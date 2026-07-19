@@ -6,14 +6,14 @@
 
 ```toml
 [dependencies]
-bulwark = { version = "0.3", features = ["observability-otlp"] }
+bulwark = { version = "0.7", features = ["observability-otlp"] }
 ```
 
 `observability-otlp` 独立门控以隔离重依赖（opentelemetry / opentelemetry_sdk / opentelemetry-otlp / tracing-subscriber）：
 
-- `opentelemetry` 0.30（`trace` feature）
-- `opentelemetry_sdk` 0.30（`trace` + `rt-tokio`）
-- `opentelemetry-otlp` 0.30（`trace` + `grpc-tonic`，OTLP gRPC 导出）
+- `opentelemetry` 0.32（`trace` feature）
+- `opentelemetry_sdk` 0.32（`trace` + `rt-tokio`）
+- `opentelemetry-otlp` 0.32（`trace` + `grpc-tonic`，OTLP gRPC 导出）
 
 ## init_otlp_tracing
 
@@ -38,10 +38,13 @@ init_otlp_tracing("http://localhost:4317")?;
 
 trace context 经 OpenTelemetry 自身的 `Context` 传播（task_local），通过全局 tracer provider 导出 OTLP span：
 
-- 请求进入时，web 中间件从 HTTP header 提取 `traceparent`（W3C Trace Context）
+- 业务方在 web 中间件 / handler 内通过 `tracing::info_span!` / `tracing::Span` 创建 span，自动关联到当前 trace
 - 通过 `BulwarkContext` 在异步任务间传播上下文
 - `BulwarkUtil::login` 等方法内的 `tracing::Span` 自动关联到当前 trace
 - 子 span 继承父 span 的 trace_id，形成完整调用链
+
+> **注意**：当前 `BulwarkRouter` 中间件仅从 HTTP header 提取 token（用于鉴权），不提取 W3C `traceparent`。
+> 跨进程 trace context 注入 / 提取需业务方在 web 中间件层自行配置 OTel propagator（如 `opentelemetry-http` / `opentelemetry-text-map-propagator`）。
 
 ## 与 JSON 日志协同
 

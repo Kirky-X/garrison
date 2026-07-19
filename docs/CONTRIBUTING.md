@@ -2,7 +2,7 @@
 
 首先，感谢你对 Bulwark 项目的关注与支持！本文档将引导你完成从环境搭建到提交 Pull Request 的完整贡献流程。
 
-Bulwark 是一个面向 Rust 生态的身份认证鉴权框架。项目采用 TDD（测试驱动开发）工作流，对代码质量有严格要求：292 个单元测试 + 30 个集成测试 + doc-tests、97.81% 覆盖率、clippy 零警告、所有 public API 均带 `///` 文档注释。
+Bulwark 是一个面向 Rust 生态的身份认证鉴权框架。项目采用 TDD（测试驱动开发）工作流，对代码质量有严格要求：3841+ 个测试通过（3776 lib + 65 E2E）+ doc-tests、95%+ 覆盖率、clippy 零警告、所有 public API 均带 `///` 文档注释。
 
 > 相关文档：[开发规范](./DEVELOPMENT.md) | [架构设计](./ARCHITECTURE.md) | [配置指南](./CONFIGURATION.md)
 
@@ -52,15 +52,11 @@ rustup update
 rustup show  # 验证 toolchain 已就绪
 ```
 
-### 3. 克隆本地依赖（oxcache）
+### 3. 克隆本地依赖（可选）
 
-Bulwark 通过 `path` 依赖引用本地的 `oxcache`（crates.io 0.3.0 未暴露 `Cache<K,V>::ttl()`，本地仓库已暴露），需先将其克隆到固定路径：
+Bulwark 的核心依赖 `oxcache 0.3` 与 `dbnexus 0.4` 均已发布到 crates.io，**无需额外克隆本地依赖**。正常执行 `cargo build` 即可自动拉取。
 
-```bash
-git clone https://github.com/Kirky-X/oxcache.git /home/kirky/projects/oxcache
-```
-
-若路径不一致，请修改 `Cargo.toml` 中 `oxcache` 的 `path` 字段或建立软链。
+> 若需对 `oxcache` / `dbnexus` 上游做本地修改验证，可自行 `git clone` 对应仓库并改用 `path` 依赖，但不要将 `path` 配置提交到 PR。
 
 ### 4. 构建项目
 
@@ -76,7 +72,7 @@ cargo build --features full
 cargo test --features full
 ```
 
-预期输出：292 个单元测试 + 30 个集成测试 + doc-tests 全部通过。
+预期输出：3841+ 个测试通过（3776 lib + 65 E2E）+ doc-tests 全部通过。
 
 ---
 
@@ -288,7 +284,7 @@ cargo doc --no-deps --features full
 
 ## 测试覆盖率要求
 
-Bulwark 要求测试覆盖率 **≥ 90%**（当前 97.81%）。新增代码不得使总覆盖率下降。
+Bulwark 要求测试覆盖率 **≥ 95%**（当前 95%+）。新增代码不得使总覆盖率下降。
 
 使用 `cargo-tarpaulin` 生成覆盖率报告：
 

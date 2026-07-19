@@ -6,7 +6,7 @@ warp 适配在 0.3.0 新增，采用 Filter 组合模型，通过 `web-warp` fea
 
 ```toml
 [dependencies]
-bulwark = { version = "0.3", features = ["web-warp"] }
+bulwark = { version = "0.7", features = ["web-warp"] }
 warp = "0.4"
 ```
 
@@ -19,29 +19,33 @@ warp = "0.4"
 | `BulwarkRouter` | 路由构建器，注册受保护路由规则 |
 | `impl Reply for BulwarkError` | 错误自动转为 HTTP 响应（复用统一 `response_parts()`） |
 | `BulwarkRejection(BulwarkError)` | 实现 `warp::reject::Reject`，用于 Filter 鉴权拒绝 |
-| `check_login()` / `check_role(role)` / `check_permission(perm)` | Filter 函数，校验失败返回 `BulwarkRejection` |
+| `check_login(config)` / `check_role(config, role)` / `check_permission(config, perm)` | Filter 函数，校验失败返回 `BulwarkRejection` |
 
 ## Filter 鉴权示例
 
 warp 采用 Filter 组合模型，鉴权作为 Filter 在路由链中应用：
 
 ```rust
-use bulwark::web_warp::{BulwarkRouter, check_login, check_role, check_permission};
+use std::sync::Arc;
+use bulwark::web_warp::{check_login, check_permission};
+use bulwark::config::BulwarkConfig;
 use warp::Filter;
 
 async fn profile() -> &'static str { "ok" }
 
 #[tokio::main]
 async fn main() {
-    BulwarkManager::init(dao, config, interface).await.ok();
+    BulwarkManager::init(dao, config, interface).ok();
+
+    let config = Arc::new(BulwarkConfig::default_config());
 
     // 受保护路由：先 check_login Filter，再处理
     let profile_route = warp::path!("api" / "profile")
-        .and(check_login())
+        .and(check_login(config.clone()))
         .map(|| "ok");
 
     let create_route = warp::path!("api" / "user" / "create")
-        .and(check_permission("user:create".to_string()))
+        .and(check_permission(config.clone(), "user:create".to_string()))
         .map(|| "created");
 
     let routes = profile_route.or(create_route);
@@ -53,9 +57,12 @@ async fn main() {
 
 | Filter | 签名 | 行为 |
 |:---|:---|:---|
-| `check_login()` | `Filter<Extract = (), Error = BulwarkRejection>` | 校验已登录，失败 reject |
-| `check_role(role: String)` | 同上 | 校验角色，失败 reject |
-| `check_permission(perm: String)` | 同上 | 校验权限，失败 reject |
+| `check_login(config)` | `Filter<Extract = ((),), Error = warp::Rejection>` | 校验已登录，失败 reject 为 `BulwarkRejection` |
+| `check_role(config, role)` | 同上 | 校验角色，失败 reject |
+| `check_permission(config, perm)` | 同上 | 校验权限，失败 reject |
+
+> **注**：三个 Filter 函数均需传入 `Arc<BulwarkConfig>`（决定从 header / cookie 提取 token 的策略）；
+> 失败时通过 `warp::reject::custom(BulwarkRejection(e))` 包装为 `warp::Rejection`，需在 `recover()` 中统一转响应。
 
 Filter 在 `and()` 链中组合，通过即继续下游 handler，失败则短路返回 `BulwarkRejection`。
 

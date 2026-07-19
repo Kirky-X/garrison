@@ -15,11 +15,11 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.6.0-blue" alt="version" />
+  <img src="https://img.shields.io/github/v/release/kirky/bulwark?include_prereleases&label=version" alt="version" />
   <img src="https://img.shields.io/badge/license-Apache--2.0-green" alt="license" />
   <img src="https://img.shields.io/badge/MSRV-1.85+-orange" alt="msrv" />
   <img src="https://img.shields.io/badge/coverage-95%25%2B-brightgreen" alt="coverage" />
-  <img src="https://img.shields.io/badge/tests-1463%2B%20passed-success" alt="tests" />
+  <img src="https://img.shields.io/badge/tests-3841%2B%20passed-success" alt="tests" />
   <img src="https://img.shields.io/badge/clippy-zero%20warnings-success" alt="clippy" />
 </p>
 
@@ -77,7 +77,7 @@
 | 🔧 **可插拔扩展** | trait + Default 实现模式，替换任意组件（DAO / 策略 / 逻辑）无需改业务 |
 | 🎯 **Feature 门控** | 40+ 个特性域独立 feature flag，按需编译减小体积 |
 | 📊 **高可观测** | `tracing` 日志 + `listener` 事件订阅 + `prometheus` 指标（可选） |
-| 🧪 **高覆盖** | 1463+ 个测试通过，95%+ 行覆盖率，clippy 零警告 |
+| 🧪 **高覆盖** | 3841+ 个测试通过（3776 lib + 65 E2E），95%+ 行覆盖率，clippy 零警告 |
 | 🌐 **Web 框架适配** | axum/actix/warp 三框架注解式 extractor（`CheckLogin` / `CheckRole` / `CheckPermission` + 过程宏） |
 
 ### 特性域覆盖（0.4.0~0.6.0 协议层与生产能力补齐）
@@ -277,7 +277,7 @@ async fn main() -> BulwarkResult<()> {
 
 ### axum 集成示例
 
-完整 Web 应用示例见 [examples/src/bin/axum_integration.rs](./examples/src/bin/axum_integration.rs)（244 行），包含：
+完整 Web 应用示例见 [examples/src/bin/axum_integration.rs](./examples/src/bin/axum_integration.rs)（253 行），包含：
 
 - `BulwarkRouter` 包装 axum Router
 - 4 个 `route_protected` 路由（带 `CheckLogin` / `CheckRole<AdminRole>` / `CheckPermission<ReadPerm>` 注解）
@@ -378,8 +378,8 @@ async fn main() -> BulwarkResult<()> {
 - **在线文档**：[https://docs.rs/bulwark](https://docs.rs/bulwark)
 - **本地生成**：`cargo doc --no-deps --features full --open`
 - **示例代码**（独立 workspace member，`cargo run -p bulwark-examples --bin <name> --features full`）：
-  - [examples/src/bin/basic_login.rs](./examples/src/bin/basic_login.rs)：完整业务场景（144 行）
-  - [examples/src/bin/axum_integration.rs](./examples/src/bin/axum_integration.rs)：完整 Web 应用（244 行）
+  - [examples/src/bin/basic_login.rs](./examples/src/bin/basic_login.rs)：完整业务场景（167 行）
+  - [examples/src/bin/axum_integration.rs](./examples/src/bin/axum_integration.rs)：完整 Web 应用（253 行）
   - [examples/src/bin/oidc_handler.rs](./examples/src/bin/oidc_handler.rs)：OIDC id_token 签发/验证（0.4.0 新增）
   - [examples/src/bin/scope_handler.rs](./examples/src/bin/scope_handler.rs)：ScopeHandler 注册表（0.4.0 新增）
   - [examples/src/bin/sso_server.rs](./examples/src/bin/sso_server.rs)：SSO Server 独立抽象（0.4.0 新增）
@@ -415,7 +415,7 @@ async fn main() -> BulwarkResult<()> {
 
 ### 测试
 
-Bulwark 提供三层测试体系：单元测试（1463+ 个）+ 集成测试 + E2E 测试（API 矩阵 / 性能基线 / 渗透测试）。
+Bulwark 提供三层测试体系：单元测试（3776+ 个 lib）+ E2E 测试（65+ 个，含 API 矩阵 / 性能基线 / 渗透测试）+ doc-tests。
 
 ```bash
 # 单元测试 + 集成测试

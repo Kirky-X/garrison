@@ -6,7 +6,7 @@ axum 是 Bulwark 的首选 Web 框架适配（0.1.0 起支持），通过 `web-a
 
 ```toml
 [dependencies]
-bulwark = { version = "0.3", features = ["web-axum"] }
+bulwark = { version = "0.7", features = ["web-axum"] }
 ```
 
 `web-axum` 启用 `axum`（`tokio` + `http1` feature），不引入 default features 以减少依赖。
@@ -25,28 +25,34 @@ bulwark = { version = "0.3", features = ["web-axum"] }
 ```rust
 use std::sync::Arc;
 use bulwark::prelude::*;
-use bulwark::annotation::{CheckLogin, CheckPermission};
-use axum::{routing::get, Router};
+use bulwark::annotation::{CheckPermission, PermissionName};
+use axum::Router;
 
 async fn profile() -> &'static str { "ok" }
 
+struct UserCreatePerm;
+impl PermissionName for UserCreatePerm {
+    const NAME: &'static str = "user:create";
+}
+
 async fn create_user(
-    _p: CheckPermission,  // 校验权限（失败返回 BulwarkError）
+    _p: CheckPermission<UserCreatePerm>,  // 校验权限（失败返回 BulwarkError）
 ) -> &'static str { "created" }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    BulwarkManager::init(dao, config, interface).await?;
+    BulwarkManager::init(dao, config, interface)?;
 
     let router = BulwarkRouter::new(Arc::new(BulwarkConfig::default_config()))
-        .route_protected("/api/profile", Annotation::Login)
-        .route_protected("/api/user/create", Annotation::Permission("user:create".into()))
-        .into_router();
+        .route_protected("/api/profile", profile, Annotation::CheckLogin)
+        .route_protected(
+            "/api/user/create",
+            create_user,
+            Annotation::CheckPermission("user:create".into()),
+        )
+        .build();
 
-    let app = Router::new()
-        .route("/api/profile", get(profile))
-        .route("/api/user/create", get(create_user))
-        .merge(router);
+    let app = Router::new().merge(router);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
     axum::serve(listener, app).await?;
@@ -59,14 +65,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 extractor 在 handler 参数中声明即触发校验，失败返回 `BulwarkError`（由 `IntoResponse` 转为 HTTP 响应）：
 
 ```rust
-use bulwark::annotation::{CheckLogin, CheckRole, CheckPermission};
+use bulwark::annotation::{CheckLogin, CheckRole, CheckPermission, RoleName, PermissionName};
+
+struct AdminRole;
+impl RoleName for AdminRole {
+    const NAME: &'static str = "admin";
+}
+
+struct UserReadPerm;
+impl PermissionName for UserReadPerm {
+    const NAME: &'static str = "user:read";
+}
 
 async fn handler(
     _login: CheckLogin,                       // 校验已登录
-    _role: CheckRole("admin".into()),          // 校验角色
-    _perm: CheckPermission("user:read".into()),// 校验权限
+    _role: CheckRole<AdminRole>,              // 校验角色
+    _perm: CheckPermission<UserReadPerm>,     // 校验权限
 ) -> &'static str { "ok" }
 ```
+
+> **注**：axum 的 `CheckRole<R>` / `CheckPermission<P>` 为泛型 extractor，需通过实现 `RoleName` / `PermissionName` trait 的类型参数指定角色 / 权限名（编译期常量）。actix-web / warp 版本使用运行时 `String` 参数。
 
 ## 错误响应
 
@@ -83,4 +101,4 @@ async fn handler(
 
 - `BulwarkLayer` 负责设置 task_local 上下文，`BulwarkUtil` 静态方法依赖此上下文
 - 未注册 `BulwarkLayer` 的路由调用 `BulwarkUtil` 会因 task_local 缺失失败
-- 0.1.0 已知限制：`route_protected` 仅支持 GET 方法（0.2.x 已完善）
+- 当前已知限制：`route_protected` 仅支持 GET 方法（其他 HTTP 方法请直接使用 `axum::Router::route` 注册并通过 `Annotation` 在 `BulwarkRouter` 中同步规则）

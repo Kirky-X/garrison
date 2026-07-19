@@ -19,13 +19,13 @@
 
 ## 检查清单
 
-- [ ] 代码符合项目编码规范（`cargo fmt --check`）
-- [ ] 通过 clippy 检查（`cargo clippy -- -D warnings`）
+- [ ] 代码符合项目编码规范（`cargo fmt --all -- --check`）
+- [ ] 通过 clippy 检查（`cargo clippy --features full -- -D warnings`）
 - [ ] 添加/更新了必要的测试
-- [ ] 所有测试通过（`cargo test`）
-- [ ] 文档已更新（`cargo doc` 无 warning）
+- [ ] 所有测试通过（`cargo test --features full --lib`）
+- [ ] 文档已更新（`cargo doc --no-deps --features full` 无 warning）
 - [ ] CHANGELOG 已更新（如适用）
-- [ ] 关联的 OpenSpec change 已归档（如适用）
+- [ ] 关联的 specmark change 已归档（如适用）
 
 ## 截图/输出（如适用）
 

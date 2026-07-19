@@ -6,7 +6,7 @@ actix-web 适配在 0.3.0 新增，与 axum 适配对齐，通过 `web-actix` fe
 
 ```toml
 [dependencies]
-bulwark = { version = "0.3", features = ["web-actix"] }
+bulwark = { version = "0.7", features = ["web-actix"] }
 actix-web = "4"
 ```
 
@@ -36,10 +36,10 @@ async fn index() -> &'static str { "ok" }
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    BulwarkManager::init(dao, config, interface).await.ok();
+    BulwarkManager::init(dao, config, interface).ok();
 
     let mw = BulwarkRouter::new(config)
-        .route_protected("/api/index", Annotation::Login)
+        .route_protected("/api/index", Annotation::CheckLogin)
         .into_middleware();
 
     HttpServer::new(move || {

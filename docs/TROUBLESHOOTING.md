@@ -23,12 +23,12 @@ Caused by:
   No such file or directory (os error 2)
 ```
 
-**原因**：早期版本（≤ 0.5.3）的 `Cargo.toml` 中 `oxcache` 使用本地 `path` 依赖，但该路径下不存在项目。0.6.0 起已切换为 crates.io 发布的 `oxcache = "0.3.3"`，不再需要本地 path 依赖。
+**原因**：早期版本（≤ 0.5.3）的 `Cargo.toml` 中 `oxcache` 使用本地 `path` 依赖，但该路径下不存在项目。0.6.0 起已切换为 crates.io 发布的 `oxcache = "0.3"`，不再需要本地 path 依赖。
 
 **解决**：升级到 0.6.0+，`Cargo.toml` 中 oxcache 已改为 crates.io 依赖：
 
 ```toml
-oxcache = { version = "0.3.3", optional = true }
+oxcache = { version = "0.3", optional = true, default-features = false }
 ```
 
 若仍使用旧版本，将 oxcache 仓库克隆到指定路径：
@@ -106,7 +106,7 @@ cargo build --features protocol-jwt
 cargo build --features full
 ```
 
-> 注意：`default = []`（空），仅 `cargo build` 不带 `--features` 时只编译核心模块。
+> 注意：`default = ["backend-embedded"]`（仅启用嵌入式后端），仅 `cargo build` 不带 `--features` 时只编译核心模块 + 嵌入式后端。
 
 ---
 
@@ -146,9 +146,9 @@ cargo clippy --features full --lib --tests -- -D warnings
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 1. 建立数据库连接
     // 2. 执行迁移
-    // 3. 初始化 BulwarkManager（必须在所有 API 调用前）
-    let config = BulwarkConfig::default_config();
-    BulwarkManager::init(dao, config, interface).await?;
+    // 3. 初始化 BulwarkManager（必须在所有 API 调用前，同步 API）
+    let config = Arc::new(BulwarkConfig::default_config());
+    BulwarkManager::init(dao, config, interface)?;
 
     // 4. 启动 axum 服务
     let app = Router::new()
@@ -167,17 +167,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 **原因**：Bulwark 通过 task_local 上下文读取当前请求的 token。若 axum middleware 未正确提取并设置 token 到 task_local，则上下文为空。
 
-**解决**：确保 `BulwarkLayer` 已注册到路由：
+**解决**：确保路由通过 `BulwarkRouter` 构建（自动应用 token 提取 middleware）：
 
 ```rust
-use bulwark::axum::BulwarkLayer;
+use bulwark::router::BulwarkRouter;
+use std::sync::Arc;
 
-let app = Router::new()
+let app = BulwarkRouter::new(Arc::new(config))
     .route("/protected", get(protected_handler))
-    .layer(BulwarkLayer::new());   // 必须注册，负责从请求头提取 token 并写入 task_local
+    .build();   // build() 自动应用 bulwark_middleware，从请求头提取 token 并写入 task_local
 ```
 
-`BulwarkLayer` 会从 `bulwark_token` 请求头（或 Cookie）提取 token，解析会话，并写入 task_local 上下文，后续 `check_login()` 即可正确读取。
+`BulwarkRouter::build()` 内部通过 `from_fn_with_state(state, bulwark_middleware)` 应用中间件，从 `bulwark_token` 请求头（或 Cookie）提取 token，解析会话，并写入 task_local 上下文，后续 `check_login()` 即可正确读取。
 
 ---
 
@@ -210,7 +211,7 @@ let app = Router::new()
 
 **现象**：已登录用户调用 `check_permission("user:read")` 始终返回 `false`。
 
-**原因**：`BulwarkLogic` trait 的 `get_permission_list` 实现返回空列表，或数据源中该用户未被授予该权限。
+**原因**：`BulwarkInterface` trait 的 `get_permission_list` 实现返回空列表，或数据源中该用户未被授予该权限。
 
 **解决**：
 
@@ -252,7 +253,9 @@ use serial_test::serial;
 #[tokio::test]
 #[serial]
 async fn test_init_manager() {
-    BulwarkManager::init(config).await;  // 修改全局单例
+    BulwarkManager::reset_for_test();
+    // init 为同步 API，注入 dao / config / interface 三参数
+    BulwarkManager::init(dao, config, interface).unwrap();  // 修改全局单例
     assert!(BulwarkManager::is_initialized());
 }
 
