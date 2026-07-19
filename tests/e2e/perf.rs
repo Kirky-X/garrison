@@ -103,33 +103,14 @@ fn append_perf_report(report: &LoadReport, test_name: &str, endpoint: &str) {
 /// `#[serial]` 保证测试间串行执行，`set_var` 无并发竞争。env 在测试进程
 /// 生命周期内持续生效，不影响后续非性能测试（其他测试不依赖 rate_limit）。
 ///
-/// # LOW-2 修复：RAII Guard 自动还原 env
+/// # RAII Guard 自动还原 env
 ///
-/// 返回 `PerfEnvGuard`，测试函数结束时 Drop 自动还原原 env 值（或移除），
+/// 返回 `super::EnvGuard`，测试函数结束时 Drop 自动还原原 env 值（或移除），
 /// 避免全局 env 跨测试泄漏。调用方需绑定到 `_guard`（如 `let _guard = setup_perf_env();`）。
-fn setup_perf_env() -> PerfEnvGuard {
+fn setup_perf_env() -> super::EnvGuard {
+    // 复用 mod.rs 通用 EnvGuard（规则 8 先读再写：消除重复实现）。
     // Rust 2021 edition 中 set_var 是 safe；项目 edition = "2021"（见 Cargo.toml）。
-    let original = std::env::var("BULWARK_RATE_LIMIT").ok();
-    std::env::set_var("BULWARK_RATE_LIMIT", "100000");
-    PerfEnvGuard { original }
-}
-
-/// 性能测试 env RAII Guard（LOW-2 修复）。
-///
-/// `setup_perf_env()` 返回此 guard，Drop 时还原原 env 值或移除 env，
-/// 防止 `BULWARK_RATE_LIMIT=100000` 跨测试泄漏到非 perf 测试。
-struct PerfEnvGuard {
-    /// 原 env 值（None 表示原本未设置）。
-    original: Option<String>,
-}
-
-impl Drop for PerfEnvGuard {
-    fn drop(&mut self) {
-        match self.original.take() {
-            Some(orig) => std::env::set_var("BULWARK_RATE_LIMIT", orig),
-            None => std::env::remove_var("BULWARK_RATE_LIMIT"),
-        }
-    }
+    super::EnvGuard::new("BULWARK_RATE_LIMIT", "100000")
 }
 
 /// 性能基线断言：release 模式 HARD panic，debug 模式 SOFT 警告。

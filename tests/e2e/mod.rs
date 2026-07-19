@@ -227,6 +227,53 @@ async fn spawn_server(
     (external_url, internal_url, handle)
 }
 
+/// 通用 env 变量 RAII Guard（规则 8 先读再写：消除 perf.rs::PerfEnvGuard 与
+/// brute_force.rs::EnvGuard 的重复实现）。
+///
+/// 构造时设置 env 变量并记录原值，Drop 时还原原值或移除 env 变量。
+/// 即使测试 panic 也会通过 unwind 触发 Drop，保证 env 不跨测试泄漏。
+///
+/// # 线程安全
+///
+/// `#[serial_test::serial]` 保证测试间串行执行，`set_var` 无并发竞争。
+/// Rust 2021 edition 中 `set_var` 是 safe（项目 edition = "2021"）。
+///
+/// # 用法
+///
+/// ```ignore
+/// let _guard = EnvGuard::new("BULWARK_RATE_LIMIT", "10");
+/// // 测试逻辑...
+/// // _guard 离开作用域时 Drop 自动还原 env
+/// ```
+pub struct EnvGuard {
+    /// env 变量名（String 以便 Drop 时借用引用）。
+    key: String,
+    /// 原 env 值（None 表示原本未设置，Drop 时 remove_var）。
+    original: Option<String>,
+}
+
+impl EnvGuard {
+    /// 设置 env 变量，记录原值用于 Drop 时还原。
+    pub fn new(key: &str, val: &str) -> Self {
+        let original = std::env::var(key).ok();
+        std::env::set_var(key, val);
+        Self {
+            key: key.to_string(),
+            original,
+        }
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        // Rust 惯用法：take() 消费 Option，避免半 move 状态。
+        match self.original.take() {
+            Some(orig) => std::env::set_var(&self.key, orig),
+            None => std::env::remove_var(&self.key),
+        }
+    }
+}
+
 /// 构造默认租户上下文所需的 HTTP headers。
 ///
 /// `tenant-isolation` feature 启用时插入 `X-Tenant-Id: 0`（默认租户），
