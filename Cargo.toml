@@ -59,10 +59,8 @@ rand = { version = "0.8", optional = true }
 zeroize = { version = "1", optional = true, default-features = false, features = ["derive", "serde"] }
 regex = { version = "1", optional = true, default-features = false }
 oxcache = { version = "0.3", optional = true, default-features = false }
-# default-features = false：dbnexus 0.4+ 禁止 embedded(sqlite) 与 server-side(postgres) 混用，
-# 由 db-base feature 显式启用基础 features，db-sqlite / db-postgres 分别启用 sqlite / postgres。
+# dbnexus 0.4+ 禁止 embedded(sqlite) 与 server-side(postgres) 混用，由 db-base feature 显式启用。
 dbnexus = { version = "0.4", optional = true, default-features = false }
-# dbnexus 未 re-export 这些类型，需显式声明为直接依赖。
 # sea-orm 2.0 尚无稳定版（仅 RC），dbnexus 0.4 硬性要求此版本，待上游发布稳定版后升级。
 sea-orm = { version = "2.0.0-rc.43", default-features = false, features = ["sqlx-sqlite", "runtime-tokio-rustls"], optional = true }
 prometheus = { version = "0.14", optional = true, default-features = false }
@@ -70,22 +68,19 @@ tracing-subscriber = { version = "0.3", optional = true, default-features = fals
 opentelemetry = { version = "0.32", optional = true, default-features = false, features = ["trace"] }
 opentelemetry_sdk = { version = "0.32", optional = true, default-features = false, features = ["trace", "rt-tokio"] }
 opentelemetry-otlp = { version = "0.32", optional = true, default-features = false, features = ["trace", "grpc-tonic"] }
-# 与 opentelemetry-otlp 0.32 统一到 tonic 0.14，避免双版本共存
 tonic = { version = "0.14", optional = true, default-features = false, features = ["transport"] }
 tonic-health = { version = "0.14", optional = true, default-features = false }
 fluent = { version = "0.17", default-features = false }
-# fluent-rs 内部依赖，显式声明以直接使用
 unic-langid = { version = "0.9", default-features = false }
 miette = { version = "7", optional = true, default-features = false }
 bulwark-macros = { path = "bulwark-macros", version = "0.5", optional = true }
-# 注意：rsa 0.9 内部依赖 sha2 0.10，与项目 sha2 0.11 不兼容，故用 `rsa::pkcs1v15::SigningKey` + `rsa::sha2::Sha256`（sha2 0.10 re-export）
+# rsa 0.9 内部依赖 sha2 0.10，与项目 sha2 0.11 不兼容，故用 `rsa::pkcs1v15::SigningKey` + `rsa::sha2::Sha256`（sha2 0.10 re-export）
 rsa = { version = "0.9", optional = true, default-features = false, features = ["sha2", "pem"] }
 unicode-security = { version = "0.1", optional = true, default-features = false }
 maxminddb = { version = "0.29", optional = true, default-features = false }
 quick-xml = { version = "0.41", optional = true, default-features = false, features = ["serialize"] }
 # 版本 ~1.2 与 oxcache 0.3 间接依赖的 redis 保持一致
 redis = { version = "1.2", optional = true, default-features = false, features = ["aio", "tokio-comp", "connection-manager", "script"] }
-# futures：health 模块的 join_all 并发调度等核心异步原语（必需依赖，非 optional）
 futures = { version = "0.3", default-features = false, features = ["std"] }
 inklog = { version = "0.1", optional = true, default-features = false }
 limiteron = { version = "0.2", optional = true, default-features = false, features = ["distributed"] }
@@ -95,16 +90,11 @@ cedar-policy = { version = "4.11", optional = true, default-features = false }
 icu_plurals = { version = "2.2", optional = true, default-features = false, features = ["compiled_data"] }
 icu_datetime = { version = "2.2", optional = true, default-features = false, features = ["compiled_data"] }
 icu_decimal = { version = "2.2", optional = true, default-features = false, features = ["compiled_data", "alloc"] }
-# icu_locale_core 是 icu_* 的公共依赖，显式声明以直接使用 Locale 类型
 icu_locale_core = { version = "2.2", optional = true, default-features = false }
-# icu_calendar / icu_time：icu_datetime::input 的 Date/Time/DateTime 类型来源，显式声明以直接使用
 icu_calendar = { version = "2.2", optional = true, default-features = false, features = ["compiled_data"] }
 icu_time = { version = "2.2", optional = true, default-features = false, features = ["compiled_data"] }
-# fixed_decimal：icu_decimal 依赖，显式声明以直接使用 Decimal（0.7+ 重命名自 FixedDecimal）
 fixed_decimal = { version = "0.7", optional = true, default-features = false }
-# percent-encoding：URL 百分号编码（authorize 端点 return_to 编码）
 percent-encoding = { version = "2.3", optional = true, default-features = false }
-# hkdf：HMAC-based Extract-and-Expand Key Derivation（HMAC 密钥派生）
 hkdf = { version = "0.13", optional = true, default-features = false }
 
 [dev-dependencies]
@@ -117,17 +107,14 @@ serial_test = "3"
 tower = { version = "0.5", default-features = false, features = ["util"] }
 http-body-util = "0.1"
 wiremock = "0.6"
-# warp test feature 仅在测试时启用 warp::test 模块（不影响生产构建）
 warp = { version = "0.4", default-features = false, features = ["test"] }
-# rsa 0.9 已是 jsonwebtoken rust_crypto feature 的间接依赖，不增加构建开销
 rsa = "0.9"
 rand = "0.8"
 testcontainers = "0.27"
 criterion = { version = "0.5", features = ["html_reports"] }
 # rcgen 用于 BackendRemote mTLS 测试中生成自签名证书
 rcgen = "0.14"
-# 主依赖中 reqwest 是 optional（仅 backend-remote 启用），
-# 集成测试需要直接发送 HTTP 请求到服务器，因此在这里无条件引入
+# 集成测试需要直接发送 HTTP 请求到服务器，因此无条件引入 reqwest
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "rustls-native-certs"] }
 
 [features]
@@ -138,38 +125,22 @@ default = ["backend-embedded"]
 # 这些模块无 feature flag，总是编译
 
 # === 核心扩展：决策溯源 ===
-# 启用后 PermissionChecker::authorize 的实现者可填充 checked_permissions / matched_roles / trace_id 字段。
-# 不启用时这三字段为空 vec/None，仅保留 allowed 与 reason（性能优先）。
 decision-trace = []
 
 # === 核心扩展：权限注册表 ===
-# 启用后通过 inventory::submit! 在编译期声明权限 -> required_roles 映射，
-# 启动时 PermissionRegistry::from_inventory() 收集所有静态注册项，
-# PermissionChecker::check_permission 前调用 validate() 校验权限已注册。
 permission-registry = []
 
 # === 核心扩展：请求对象式授权 API ===
-# 启用后提供 Authorizer trait（公开 API，不假设具体实现），
-# 通过 blanket impl 任何 PermissionChecker 自动实现 Authorizer。
-# 依赖 decision-trace 以确保 Decision 的 trace 字段可用。
 authorize-api = ["decision-trace"]
 
 # === 核心扩展：显式 Manager API ===
-# 启用后提供显式 Manager struct（不依赖全局单例），通过 new(logic) 注入 BulwarkLogic，
-# 支持 authorize(req) / check_permission(login_id, perm) 实例方法。
-# 依赖 authorize-api 以复用 AuthRequest / Decision / Authorizer 类型。
 manager-explicit = ["authorize-api"]
 
 # === 核心扩展：多租户逻辑隔离 ===
-# 启用后 BulwarkDaoOxcache 的 set/get/delete 在 TENANT task_local 上下文存在时
-# 自动为 key prepend `tenant:{tid}:` 前缀，实现缓存层租户隔离。
-# 注意：Repository SQL 过滤不门控此 feature（始终生效，安全优先）。
+# Repository SQL 过滤不门控此 feature（始终生效，安全优先）。
 tenant-isolation = []
 
 # === 核心扩展：forbid 优先语义（safe-defaults） ===
-# 启用后 DecisionReason 新增 Forbid(String) 变体，Decision 新增 forbid()/is_forbid() 方法，
-# 提供"强制拒绝"语义：Forbid 决策不可被 Allow 覆盖，组合时优先级最高。
-# 同时提供 DecisionCombinator::combine() 聚合多个决策（Forbid > Deny > Allow）。
 safe-defaults = []
 
 # === 聚合特性：等价于原 default，方便快速启用全部默认后端 ===
@@ -178,13 +149,11 @@ safe-defaults = []
 all-defaults = ["cache-memory", "db-sqlite", "web-axum"]
 
 # === 缓存后端（通过 oxcache） ===
-# cache-memory 启用 oxcache L1 moka 内存后端 + 序列化（serde_json）
-# cache-redis 在 cache-memory 基础上叠加 L2 redis 后端
 cache-memory = ["oxcache", "oxcache/memory", "oxcache/serialization"]
 cache-redis = ["cache-memory", "oxcache/redis", "dep:redis"]
 
 # === 数据库后端（通过 dbnexus 0.4） ===
-# db-base 为内部 feature，由 db-sqlite / db-postgres / db-mysql 继承；dbnexus 禁止 embedded 与 server-side 混用。
+# dbnexus 禁止 embedded 与 server-side 混用。
 db-base = [
     "dbnexus",
     "dbnexus/runtime-tokio-rustls",
@@ -198,9 +167,7 @@ db-base = [
 ]
 # db-sqlite 启用 sqlite embedded 驱动
 db-sqlite = ["db-base", "dbnexus/sqlite"]
-# db-postgres 启用 postgres server-side 驱动（sea-orm/sqlx-postgres 由 dbnexus/postgres 传递启用）
 db-postgres = ["db-base", "dbnexus/postgres"]
-# db-mysql 启用 mysql server-side 驱动（sea-orm/sqlx-mysql 由 dbnexus/mysql 传递启用）
 db-mysql = ["db-base", "dbnexus/mysql"]
 
 # === 协议层插件 ===
@@ -220,9 +187,8 @@ oauth2-scope-handler = ["protocol-oauth2"]
 # SSO Server 独立抽象（SsoServer trait + CenterIdConverter + SsoChannel），依赖 protocol-sso
 protocol-sso-server = ["protocol-sso"]
 # secure-saml：启用 XmlSecSamlProvider（vuln-0001 修复），使用 rsa crate 验证 SAML Assertion XML 签名
-# - 算法白名单：仅允许 rsa-sha256 / ecdsa-sha256，禁止 rsa-1_5 等弱算法
-# - 复用 protocol-sso 已有的 base64 依赖 + rsa crate（含 sha2/pem features）
-# - 限制：不执行 XML Canonicalization (C14N)，详见 saml.rs 文档注释
+# 算法白名单：仅允许 rsa-sha256 / ecdsa-sha256，禁止 rsa-1_5 等弱算法
+# 限制：不执行 XML Canonicalization (C14N)
 secure-saml = ["protocol-sso", "rsa", "dep:base64"]
 
 # === 安全模块 ===
@@ -231,29 +197,18 @@ secure-sign = ["dep:sha2", "hmac", "dep:base64", "md5", "dep:subtle"]
 secure-httpbasic = ["dep:base64"]
 secure-httpdigest = ["dep:sha2", "dep:base64", "md5", "dep:subtle"]
 # Unicode 同形异义字检测
-# 启用后提供 check_confusable 函数 + PermissionRegistry::register 集成（tracing::warn）
 secure-confusable = ["dep:unicode-security"]
-# 敏感数据脱敏（手机号 / 身份证 / 邮箱 / 银行卡 + JSON 递归脱敏 + Custom 正则脱敏）
 # 依赖 regex：Custom mask 真实脱敏（vuln-0010 D6 修复，原 placeholder 实现静默泄露敏感数据）
 secure-masking = ["dep:regex"]
-# XSS 防护（HTML 转义 / 白名单过滤），门控 `secure::xss` 模块，无额外依赖
 secure-xss = []
-# 通用输入消毒（null 字节 / 控制字符移除 + 长度限制），门控 `secure::sanitize` 模块，无额外依赖
 secure-sanitize = []
-# SMS 验证码渐进式限速（双窗口限速 + 验证码服务 + 异常发送检测）
-# 依赖 rand 生成密码学安全验证码 + limiteron QuotaStorage 原子配额消费
 sms-rate-limit = ["dep:rand", "dep:limiteron"]
 
 # === 账号安全引擎 ===
-# account-credential：统一凭证模型 SPI（Credential trait + PasswordCredential + TotpCredential）
 account-credential = ["dep:argon2", "dep:bcrypt", "dep:rand", "dep:sha2", "dep:base32"]
-# account-credential-zeroize：在 account-credential 基础上启用 zeroize
 account-credential-zeroize = ["account-credential", "zeroize"]
-# account-policy：密码策略套件（12+ PasswordPolicyRule），依赖 account-credential + regex（RegexRule）
 account-policy = ["account-credential", "dep:regex"]
-# account-lockout：用户级双态锁定（与 BruteForceStrategy 组合）
 account-lockout = ["firewall"]
-# account-authflow：AuthenticationFlow DSL（全认证流程编排）
 account-authflow = ["account-credential", "account-policy", "account-lockout"]
 
 # === Web 框架适配 ===
@@ -262,17 +217,12 @@ web-actix = ["actix-web"]
 web-warp = ["warp"]
 
 # === HTTPS/TLS 终止（axum-server rustls） ===
-# 启用后 BulwarkAuthServer 支持 with_tls(cert_path, key_path) builder，
-# listen() 在 tls_config 存在时用 axum_server::bind_rustls 替代 axum::serve。
-# 依赖 auth-server（server 模块门控），不在 default 中。
+# 依赖 auth-server（server 模块门控）
 tls = ["dep:axum-server", "axum-server/tls-rustls", "auth-server"]
 
 # === Web 安全中间件 ===
-# web-waf：WAF 请求内容校验（路径/方法/危险字符检测），依赖 web-axum
 web-waf = ["web-axum"]
-# web-cors：CORS 跨域资源共享中间件，依赖 web-axum
 web-cors = ["web-axum"]
-# web-csrf：CSRF 跨站请求伪造防护中间件（Double-Submit Cookie 模式），依赖 web-axum + rand + base64
 web-csrf = ["web-axum", "dep:rand", "dep:base64", "dep:subtle"]
 
 # === 过程宏注解（#[check_login]/#[check_permission]/#[check_role]） ===
@@ -280,120 +230,77 @@ web-csrf = ["web-axum", "dep:rand", "dep:base64", "dep:subtle"]
 annotation-macros = ["dep:bulwark-macros", "web-axum"]
 
 # === 扩展 ===
-# alone-cache：多 Redis 实例隔离（AloneCache 装饰器 + AloneCacheManager），无额外依赖
 alone-cache = []
-# parameter-query：参数化查询机制（ParameterQuery trait + Builder + async），无额外依赖
 parameter-query = []
 
 # === 审计日志 ===
-# audit-log 依赖 listener（AuditLogListener 实现 BulwarkListener trait）
 audit-log = ["listener", "dep:sha2", "hmac", "secure-masking"]
 
 # === 安全防护套件 ===
-# firewall 为基础 trait + FirewallContext + StrategyRegistration。
-# v0.7.2：BulwarkFirewallCheckHookDefault 统一使用 limiteron BulwarkDaoDistributedLimiter，
-# 因此 firewall feature 传递启用 dep:limiteron（禁止手写限流实现）。
+# v0.7.2：统一使用 limiteron BulwarkDaoDistributedLimiter，禁止手写限流实现。
 firewall = ["dep:limiteron"]
-# firewall-bruteforce：limiteron BanStorage + DistributedLimiter
 firewall-bruteforce = ["firewall", "dep:limiteron"]
-# firewall-ratelimit：limiteron DistributedLimiter 原子 incr_with_ttl
 firewall-ratelimit = ["firewall", "dep:rand", "dep:limiteron"]
-# rate-limit-redis：BulwarkConfig.rate_limit_backend 字段 + Redis 后端配置
 # 启用后可在配置中选择 Memory/Redis 限流后端（RateLimitBackend enum）
 rate-limit-redis = ["firewall-ratelimit", "cache-redis"]
 firewall-anomalous = ["firewall"]
 firewall-geoip = ["firewall"]
 firewall-ddos = ["firewall", "dep:limiteron"]
-# firewall-waf：策略层 WAF Hook 链 + axum middleware 适配器
 firewall-waf = ["firewall", "web-axum"]
-# firewall-maxminddb：MaxMindDb GeoIP 生产后端
 firewall-maxminddb = ["dep:maxminddb", "firewall-geoip", "firewall-anomalous"]
-# anomalous-detector-dual：异常登录定时分析引擎（burst/geo_jump/device_mutation）
 anomalous-detector-dual = ["firewall", "listener"]
 
 # === 安全告警系统 ===
-# security-alert：SecurityAlertEvent / AlertListener / AnomalyDetector 抽象
 security-alert = []
-# device-binding：DeviceBindingPolicy trait（StrictBinding/LooseBinding/Disabled）
 device-binding = ["security-alert"]
 
 # === 二级认证瞬态标记 ===
-# safe-auth：TokenSession.safe_services service 级二级认证标记
 safe-auth = []
 
 # === 动态活跃超时 ===
-# dynamic-active-timeout：基于用户活跃行为的动态会话超时
 dynamic-active-timeout = []
 
 # === 三层缓存架构 ===
-# 启用后提供 UserCacheService，实现 L1(oxcache 内存) + L2(DAO 持久化) + L3(interface 回调) 三层缓存，
-# 用于权限/角色/用户信息的加速查询。L1+L2 完全委托 oxcache（内部使用 moka 内存后端）。
 three-tier-cache = ["oxcache"]
 
 # === login_token_map 持久化 ===
-# 启用后 login_token_map 内存层与 DAO AccountSession.tokens 双层同步，
-# 重启后可通过 rebuild_login_token_map() 重建内存层。
 login-token-map-persistence = []
 
 # === 匿名 Session ===
-# 启用后支持未登录用户的匿名会话（购物车、访客浏览场景），
-# 通过 token:session:anon:{token} key 空间隔离匿名会话。
 anonymous-session = []
 
 # === 会话搜索 ===
-# 启用后支持按关键字搜索 Token-Session / Account-Session，
-# 提供分页与排序（创建时间 / 最后活跃时间）。
 session-search = []
 
 # === 社交登录 ===
-# social-wechat：微信扫码登录（WechatProvider），依赖 protocol-oauth2（reqwest HTTP client）
 social-wechat = ["protocol-oauth2"]
-# social-alipay：支付宝授权登录（AlipayProvider），依赖 protocol-oauth2 + rsa 签名
-# 启用 rsa（含 sha2/pem features，用于 RSA2 签名 + PEM 解析）+ base64（签名值编码）
+# 启用 rsa（RSA2 签名 + PEM 解析）+ base64（签名值编码）
 social-alipay = ["protocol-oauth2", "rsa", "dep:base64"]
 
 # === Keycloak OIDC RP ===
-# keycloak-oidc：Keycloak 作为 OIDC 依赖方（KeycloakProvider），依赖 protocol-oidc（JWKS 验签 + discovery）
 keycloak-oidc = ["protocol-oidc"]
 
 # === v0.7.0 微服务架构 ===
-# backend-embedded（默认）：启用 BackendEmbedded（进程内认证，委托 BulwarkManager，zero-break 兼容）
 backend-embedded = []
-# backend-remote：启用 BackendRemote（HTTP 客户端，连接远程 Auth Server）
-# 依赖 reqwest（HTTP client）
 backend-remote = ["dep:reqwest"]
 # secure-simple-token：为 SimpleTokenStyle 启用 HMAC-SHA256 签名（A11 安全修复）
 # 格式：<login_id>-<uuid>.<hmac_sha256(secret, login_id|uuid)>
-# 使用 subtle::ConstantTimeEq 防止 timing side-channel 攻击
 # 未启用此 feature 时，SimpleTokenStyle::generate 返回 Err（fail-closed，杜绝无签名伪造）
 secure-simple-token = ["dep:sha2", "hmac", "dep:subtle"]
-# auth-server：启用 Auth Server 模式（HTTP Server 暴露 AuthBackend 端点）
-# 依赖 web-axum（HTTP server）+ backend-embedded（核心逻辑）+ auth-server-sdforge（声明式路由）
-# subtle 用于 middleware.rs constant_time_eq（防 timing side-channel）
-# limiteron 用于 middleware.rs rate_limit_middleware（TokenBucketLimiter，禁止手写令牌桶）
+# subtle 用于 middleware.rs constant_time_eq；limiteron 用于 rate_limit_middleware（禁止手写令牌桶）
 # secure-simple-token 确保 SimpleTokenStyle 使用 HMAC 签名（A11 CRITICAL 修复）
 auth-server = ["web-axum", "backend-embedded", "auth-server-sdforge", "dep:subtle", "dep:limiteron", "secure-simple-token"]
-# abac：启用 ABAC/Cedar DSL 策略引擎（属性级权限模型）
-# 依赖 cedar-policy（Cedar 策略语言解析 + 评估）+ cache-memory（oxcache 决策缓存 TTL 60s）
 abac = ["dep:cedar-policy", "cache-memory"]
-# oauth2-server：启用 OAuth2 Server（4 端点 + 4 种 grant type + PKCE）
-# 依赖 protocol-oauth2（OAuth2 原语）+ reqwest（HTTP client）+ argon2（client_secret 哈希）+ rand（client_id 生成）
-# v0.7.2：PasswordRateLimiter 统一使用 limiteron BulwarkDaoDistributedLimiter（禁止手写限流实现）；
 # db-sqlite 下的 RefreshTokenRotation 依赖 protocol::jwt，因此传递启用 protocol-jwt。
 oauth2-server = ["protocol-oauth2", "dep:reqwest", "dep:argon2", "dep:rand", "dep:percent-encoding", "dep:limiteron", "protocol-jwt"]
 
 # === v0.7.0 inklog 结构化审计日志 ===
-# inklog LoggerManager 作为 tracing subscriber 配置层，提供多输出（console/file/db）/轮转/脱敏/健康监控。
-# tracing::warn!/error! 宏不变（inklog 是 subscriber 层，非宏替代品）。
 audit-inklog = ["dep:inklog"]
 
 # === v0.7.0 trait-kit typestate DI 构建 ===
-# 启用后可用 AsyncKit 构建 AuthBackend（BackendModule: AsyncAutoBuilder）
 backend-kit = ["dep:trait-kit", "backend-embedded"]
 
 # === v0.7.0 sdforge 声明式路由 ===
-# sdforge #[forge] 宏注册路由，sdforge::http::build() 收集 inventory 注册的路由
-# auth-server 依赖此 feature
 auth-server-sdforge = ["dep:sdforge"]
 
 # === 可观测性 ===
@@ -402,32 +309,21 @@ tracing-log = ["tracing/log", "tracing-subscriber"]
 metrics-prometheus = ["prometheus", "tracing-subscriber"]
 # OpenTelemetry 分布式追踪（OTLP gRPC 导出），独立门控以隔离重依赖
 observability-otlp = ["opentelemetry", "opentelemetry_sdk", "opentelemetry-otlp", "tracing-subscriber"]
-# gRPC 鉴权拦截器（tonic::Interceptor）+ 健康检查服务（tonic-health）
 grpc = ["tonic", "dep:tonic-health"]
-# 异常消息国际化（中英文切换，fluent-rs）—— 基础层
-# 0.7.x：基础层（translate_error / loc! 宏 / FTL 文件加载）已无条件编译，此 feature 仅门控 i18n 相关测试代码
-# （src/protocol/social/tests.rs 5 处 + src/protocol/oauth2/keycloak.rs 3 处 `#[cfg(feature = "i18n")]` 测试），
-# 不改变运行时行为。允许用户在 Cargo.toml 中显式声明 `features = ["i18n"]` 表达"启用基础国际化"语义。
-# 0.8.0 计划评估是否将基础层门控到此 feature（破坏性变更，需 semver bump）。
+# 0.7.x：基础层已无条件编译，此 feature 仅门控 i18n 相关测试代码，不改变运行时行为。
 i18n = []
 # ICU4X 增强层：复数规则 + 日期/数字本地化（依赖 i18n 基础层）
-# 启用后提供 plural_category() / format_datetime_locale() / format_number_locale() API
 i18n-icu = [
     "i18n",
     "dep:icu_plurals", "dep:icu_datetime", "dep:icu_decimal",
     "dep:icu_locale_core", "dep:icu_calendar", "dep:icu_time", "dep:fixed_decimal",
 ]
-# miette 富错误渲染
 # 启用后 BulwarkError 实现 miette::Diagnostic trait（保留 thiserror::Error derive）
 miette = ["dep:miette"]
-# 声明式 JSON 测试套件
-# 启用后提供 JsonTestSuite / JsonTestCase / TestReport 类型，支持从 JSON 文件
-# 加载测试用例并运行 Authorizer trait，输出测试报告。
-# 依赖 authorize-api（提供 Authorizer trait + AuthRequest/Decision 公开 API）。
 bulwark-testing = ["authorize-api"]
-# 测试专用特性：向集成测试（tests/ 外部二进制）暴露测试辅助函数（如 reset_abac_for_test）。
-# 单元测试（crate 内 #[cfg(test)]）无需此特性即可访问；集成测试是外部二进制，#[cfg(test)] 不生效，
-# 必须通过此特性门控。严禁在 full / production / development 中启用——生产构建绝不能暴露测试入口。
+# 测试专用特性：向集成测试（tests/ 外部二进制）暴露测试辅助函数。
+# 单元测试无需此特性即可访问；集成测试是外部二进制，#[cfg(test)] 不生效，必须门控。
+# 严禁在 full / production / development 中启用——生产构建绝不能暴露测试入口。
 testing = []
 
 # === 聚合特性 ===
@@ -494,35 +390,28 @@ codegen-units = 1
 strip = true
 
 # === 测试目标 ===
-# db_mysql_testcontainers：MySQL 8.0 testcontainers 集成测试
 [[test]]
 name = "db_mysql_testcontainers"
 path = "tests/db_mysql_testcontainers.rs"
 required-features = ["db-mysql"]
 
-# auth_server_integration：BulwarkAuthServer 端到端集成测试
 [[test]]
 name = "auth_server_integration"
 path = "tests/auth_server_integration.rs"
 required-features = ["auth-server"]
 
-# e2e：BackendEmbedded + 真实 HTTP 全栈 E2E 测试
 [[test]]
 name = "e2e"
 path = "tests/e2e.rs"
 required-features = ["full", "testing"]
 
 # === 二进制目标 ===
-# auth_server：BulwarkAuthServer 独立运行入口（双端口 axum 服务器）
 [[bin]]
 name = "auth_server"
 path = "src/bin/auth_server.rs"
 required-features = ["auth-server"]
 
 # === 基准测试目标 ===
-# bulwark_benchmark：criterion 基准测试套件
-# 包含 4 个基准场景：login_flow / token_verify_stateless / permission_check / oxcache_backend_switch
-# harness = false：使用 criterion 自己的 main 函数（非标准 libtest harness）
 [[bench]]
 name = "bulwark_benchmark"
 path = "benches/bulwark_benchmark.rs"
