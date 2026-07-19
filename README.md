@@ -367,6 +367,8 @@ async fn main() -> BulwarkResult<()> {
 | `account-lockout` | ❌ | 用户锁定策略（0.6.0 新增） |
 | `account-authflow` | ❌ | AuthenticationFlow DSL（0.6.0 新增） |
 | `secure-confusable` | ❌ | Unicode 同形异义字检测（0.5.1 新增） |
+| `i18n` | ❌ | 国际化基础层（API 语义占位，基础层已无条件编译，0.7.x 新增） |
+| `i18n-icu` | ❌ | ICU4X 增强层（复数 + 日期 + 数字本地化，0.3.0 新增） |
 | `full` | ❌ | 聚合所有特性 |
 | `production` | ❌ | 生产环境推荐组合 |
 | `development` | ❌ | 开发环境组合 |

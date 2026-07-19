@@ -151,6 +151,40 @@
 - `cargo clippy --features "full" --lib --tests -- -D warnings`：0 warnings
 - 27 个文件修改（5 个新文件、22 个现有文件）
 
+### Changed (0.7.x Phase 1 - cargo feature 划分优化)
+
+本期为 **cargo feature 划分优化 Phase 1（保守，0.7.x 兼容）**，基于 kueiku 决策分析（方案 B 分层重构 + 渐进式迁移）实施。无破坏性变更，0.7.x 内向后兼容。
+
+#### Added
+
+- 新增 `i18n` 基础 feature（空 stub）— API 语义占位，允许用户在 Cargo.toml 中显式声明 `features = ["i18n"]` 表达"启用基础国际化"语义。基础层（translate_error / loc! 宏 / FTL 文件加载）已无条件编译，此 feature 不改变编译行为。
+- `i18n-icu` 现显式依赖 `i18n`（`i18n-icu = ["i18n", ...]`），形成清晰的"基础层 + 增强层"依赖关系。
+
+#### Deprecated
+
+- `all-defaults` 聚合特性标记为 DEPRECATED — 与 `development` 聚合特性完全重复（均 = `["cache-memory", "db-sqlite", "web-axum"]`）。0.8.0 将删除，请改用 `development`。
+
+#### Documented
+
+- 审查确认 `protocol-apikey` / `protocol-temp` / `secure-xss` / `secure-sanitize` 4 个 feature 均有实际 `#[cfg(feature = "...")]` 门控（如 `src/protocol/mod.rs:32,36` / `src/secure/mod.rs:108,124`），**不是占位特性**，启用后编译对应模块。原 Phase 1 草案误标为 PLACEHOLDER，已修正回正常 feature 注释。
+- `i18n` feature 标注修正为"启用后编译 i18n 相关测试代码"（src 中有 8 处 `#[cfg(feature = "i18n")]` 测试门控，与运行时行为无关）。
+
+### 0.8.0 重命名计划预告（破坏性变更）
+
+0.8.0 将执行 cargo feature 重新划分 Phase 2（方案 B 分层重构），包含以下破坏性变更（旧名作为 alias 保留至 0.9.0）：
+
+| 0.7.x 旧名 | 0.8.0 新名 | 理由 |
+|-----------|-----------|------|
+| `rate-limit-redis` | `firewall-ratelimit-redis` | 依赖 firewall-ratelimit，应统一命名空间 |
+| `anomalous-detector-dual` | `firewall-anomalous-detector` | 依赖 firewall，应统一命名空间 |
+| `secure-simple-token` | `auth-server-simple-token` | auth-server 专用，不应位于 secure-* 命名空间 |
+| `oauth2-scope-handler` | `protocol-oauth2-scope-handler` | 应统一 protocol-* 命名空间 |
+| `audit-log` | `audit-log-listener` | 与 `audit-inklog` 区分（事件监听 vs 日志管理） |
+| `all-defaults` | （删除） | 与 `development` 重复 |
+| `firewall-maxminddb` | （合并入 `firewall-geoip`） | 前者仅是后者生产后端 |
+
+详见 `docs/decisions/A-011-cargo-feature-reorganization.md`（待 0.8.0 创建）。
+
 ## [0.7.0] - 2026-07-13
 
 ### 概述

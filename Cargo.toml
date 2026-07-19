@@ -173,6 +173,8 @@ tenant-isolation = []
 safe-defaults = []
 
 # === 聚合特性：等价于原 default，方便快速启用全部默认后端 ===
+# DEPRECATED：与 `development` 聚合特性完全重复（均 = `["cache-memory", "db-sqlite", "web-axum"]`）。
+# 0.8.0 将删除，请改用 `development`。
 all-defaults = ["cache-memory", "db-sqlite", "web-axum"]
 
 # === 缓存后端（通过 oxcache） ===
@@ -234,9 +236,9 @@ secure-confusable = ["dep:unicode-security"]
 # 敏感数据脱敏（手机号 / 身份证 / 邮箱 / 银行卡 + JSON 递归脱敏 + Custom 正则脱敏）
 # 依赖 regex：Custom mask 真实脱敏（vuln-0010 D6 修复，原 placeholder 实现静默泄露敏感数据）
 secure-masking = ["dep:regex"]
-# XSS 防护（HTML 转义 / 白名单过滤），无额外依赖
+# XSS 防护（HTML 转义 / 白名单过滤），门控 `secure::xss` 模块，无额外依赖
 secure-xss = []
-# 通用输入消毒（null 字节 / 控制字符移除 + 长度限制），无额外依赖
+# 通用输入消毒（null 字节 / 控制字符移除 + 长度限制），门控 `secure::sanitize` 模块，无额外依赖
 secure-sanitize = []
 # SMS 验证码渐进式限速（双窗口限速 + 验证码服务 + 异常发送检测）
 # 依赖 rand 生成密码学安全验证码 + limiteron QuotaStorage 原子配额消费
@@ -402,10 +404,16 @@ metrics-prometheus = ["prometheus", "tracing-subscriber"]
 observability-otlp = ["opentelemetry", "opentelemetry_sdk", "opentelemetry-otlp", "tracing-subscriber"]
 # gRPC 鉴权拦截器（tonic::Interceptor）+ 健康检查服务（tonic-health）
 grpc = ["tonic", "dep:tonic-health"]
-# 异常消息国际化（中英文切换，fluent-rs）—— 基础层已无条件编译，不再作为 feature
+# 异常消息国际化（中英文切换，fluent-rs）—— 基础层
+# 0.7.x：基础层（translate_error / loc! 宏 / FTL 文件加载）已无条件编译，此 feature 仅门控 i18n 相关测试代码
+# （src/protocol/social/tests.rs 5 处 + src/protocol/oauth2/keycloak.rs 3 处 `#[cfg(feature = "i18n")]` 测试），
+# 不改变运行时行为。允许用户在 Cargo.toml 中显式声明 `features = ["i18n"]` 表达"启用基础国际化"语义。
+# 0.8.0 计划评估是否将基础层门控到此 feature（破坏性变更，需 semver bump）。
+i18n = []
 # ICU4X 增强层：复数规则 + 日期/数字本地化（依赖 i18n 基础层）
 # 启用后提供 plural_category() / format_datetime_locale() / format_number_locale() API
 i18n-icu = [
+    "i18n",
     "dep:icu_plurals", "dep:icu_datetime", "dep:icu_decimal",
     "dep:icu_locale_core", "dep:icu_calendar", "dep:icu_time", "dep:fixed_decimal",
 ]
