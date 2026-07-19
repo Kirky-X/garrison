@@ -138,7 +138,7 @@ async fn test_e2e_login_with_device_ip_ua() {
     let resp = client
         .post(format!("{}/api/v1/auth/get-session", internal_url))
         .header("x-api-key", "test-key")
-        .json(&serde_json::json!({ "token": token }))
+        .json(&serde_json::json!({ "token": token, "caller_login_id": "user-device" }))
         .send()
         .await
         .unwrap();

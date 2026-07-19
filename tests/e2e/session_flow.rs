@@ -79,7 +79,7 @@ async fn test_e2e_kickout_invalidates_all_sessions() {
     let resp = client
         .post(format!("{}/api/v1/auth/kickout", internal_url))
         .header("x-api-key", "test-key")
-        .json(&serde_json::json!({ "login_id": "kickout-user" }))
+        .json(&serde_json::json!({ "login_id": "kickout-user", "caller_login_id": "kickout-user" }))
         .send()
         .await
         .unwrap();

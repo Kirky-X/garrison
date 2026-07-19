@@ -141,43 +141,59 @@ async fn test_api_boundary_concurrent_refresh_same_token() {
 
     let (r1, r2, r3) = tokio::join!(refresh1.send(), refresh2.send(), refresh3.send());
 
-    let statuses = [r1, r2, r3]
-        .into_iter()
-        .map(|r| r.expect("refresh 请求失败"))
-        .collect::<Vec<_>>();
+    // 收集每个响应的 (status, body_json)，body 含 data（成功）或 error_code（失败）字段
+    // refresh handler 通过 #[forge] 宏包装，始终返回 Ok(ApiResponse::...)，
+    // HTTP 状态码恒为 200，业务错误通过 body 的 error_code 字段表达
+    let mut responses: Vec<(reqwest::StatusCode, serde_json::Value)> = Vec::with_capacity(3);
+    for r in [r1, r2, r3] {
+        let resp = r.expect("refresh 请求失败");
+        let status = resp.status();
+        let body: serde_json::Value = resp.json().await.expect("refresh 响应非 JSON");
+        responses.push((status, body));
+    }
 
-    // 至少 1 个 200
-    let success_count = statuses.iter().filter(|r| r.status() == 200).count();
-    assert!(
-        success_count >= 1,
-        "并发 refresh 至少 1 个应成功，实际 success_count={}",
-        success_count
+    // HTTP 状态码应全部为 200（#[forge] 宏 + ApiResponse 设计：业务错误用 body 表达）
+    for (s, _) in &responses {
+        assert_eq!(
+            *s,
+            reqwest::StatusCode::OK,
+            "refresh HTTP 状态码应为 200（业务错误通过 body error_code 表达），实际 {}",
+            s
+        );
+    }
+
+    // 业务层断言：恰好 1 个成功（body 含 data 字段），2 个失败（body 含 error_code 字段）
+    // per-token 锁串行化 renew_to_equivalent，确保"恰好 1 个 Ok + 2 个 Err"
+    let success_count = responses
+        .iter()
+        .filter(|(_, b)| b.get("data").is_some() && b.get("error_code").is_none())
+        .count();
+    let failure_count = responses
+        .iter()
+        .filter(|(_, b)| b.get("error_code").is_some() && b.get("data").is_none())
+        .count();
+
+    assert_eq!(
+        success_count, 1,
+        "并发 refresh 同一 token 应恰好 1 个成功（per-token 锁串行化），\
+         实际成功数={}，responses={:?}",
+        success_count, responses
+    );
+    assert_eq!(
+        failure_count, 2,
+        "并发 refresh 同一 token 应恰好 2 个失败（旧 token 已被第 1 个请求 logout），\
+         实际失败数={}，responses={:?}",
+        failure_count, responses
     );
 
-    // T061: 补强 4xx 断言（R-e2e-error-edge-005）
-    // spec 要求：其他请求返回 4xx（401/409 之一），无 5xx，无 panic
-    //
-    // ⚠️ 已知冲突（规则 7：暴露冲突，不要折中）：
-    // - spec R-e2e-error-edge-005 验收标准："其他请求返回 4xx（401/409 之一）"
-    // - 实际实现：src/ 主 crate 的 refresh 逻辑存在竞态 bug，多个并发 refresh 同时成功
-    //   （旧 token 未被刷新失效），导致 3 个请求全部返回 200
-    // - 约束："禁止修改 src/ 主 crate"，无法在此修复
-    //
-    // 处理策略：SOFT 断言（eprintln 警告但不 panic），记录 bug 待 src/ 修复后恢复 HARD
-    let failed: Vec<_> = statuses.iter().filter(|r| r.status() != 200).collect();
-    if failed.is_empty() {
-        eprintln!(
-            "⚠️  [SOFT] 并发 refresh 全部成功，揭示 src/ refresh 竞态 bug \
-             （旧 token 未失效），spec R-e2e-error-edge-005 要求其他请求 4xx。\
-             待 src/ 修复后恢复 HARD 断言。"
-        );
-    } else {
-        for f in &failed {
-            let s = f.status();
-            assert!(
-                s.is_client_error(),
-                "失败请求必须为 4xx（401/409），实际 status={}",
-                s
+    // 失败请求的 error_code 应为 NOT_LOGIN（旧 token 已失效，step 1 读 token session 返回 None）
+    for (_, b) in responses.iter() {
+        if let Some(code) = b.get("error_code").and_then(|v| v.as_str()) {
+            assert_eq!(
+                code, "NOT_LOGIN",
+                "失败 refresh 的 error_code 应为 NOT_LOGIN（旧 token 已被 logout），\
+                 实际 error_code={}，body={:?}",
+                code, b
             );
         }
     }
