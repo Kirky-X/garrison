@@ -55,25 +55,21 @@ impl SmsRateLimiter {
         }
     }
 
-    /// 递减计数器（get → parse → update/delete）。
+    /// 递减计数器（委托 `dao.decr` 原子操作）。
     ///
-    /// 计数器值降为 0 时删除 key，否则更新为新值。
-    /// 解析失败返回错误（不静默吞掉）。
+    /// 委托 [`BulwarkDao::decr`] 在单次 DAO 调用内完成 get → parse → update/delete，
+    /// 消除原三步组合的 TOCTOU 竞态（fix-refresh-race-and-test-contracts / T014）。
+    ///
+    /// 语义（与 `dao.decr` 一致）：
+    /// - key 不存在或已过期：返回 Ok(())（dao.decr 返回 0，无副作用）
+    /// - cur_val == 0：返回 Ok(())（dao.decr 返回 0，不递减为负）
+    /// - cur_val > 0：递减 1；new_val == 0 时删除 key；new_val > 0 时保留原 TTL
+    ///
+    /// # 错误
+    /// - `BulwarkError::Dao`：dao.decr 内部 parse 失败（非数字值）
+    /// - 其他 `BulwarkError`：dao.decr 内部 get/update/delete 错误
     pub(super) async fn decrement_counter(dao: &dyn BulwarkDao, key: &str) -> BulwarkResult<()> {
-        if let Some(v) = dao.get(key).await? {
-            let count: u64 = v.parse::<u64>().map_err(|e| {
-                BulwarkError::Internal(format!("secure-counter-parse::{}::{}", key, e))
-            })?;
-            if count > 0 {
-                let new_val = count - 1;
-                if new_val == 0 {
-                    dao.delete(key).await?;
-                } else {
-                    dao.update(key, &new_val.to_string()).await?;
-                }
-            }
-        }
-        Ok(())
+        dao.decr(key).await.map(|_| ())
     }
 
     /// 检查并递增限速计数器。

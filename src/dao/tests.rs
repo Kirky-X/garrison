@@ -1062,6 +1062,37 @@ async fn default_compare_and_update_if_greater_returns_not_implemented() {
     );
 }
 
+/// `decr` 默认实现返回 `NotImplemented`（M2 修复）。
+///
+/// 默认实现原为 get → parse → update/delete 三步组合，存在 TOCTOU 竞态：
+/// 并发调用同一 key 时多个调用可能基于同一过时 get 值计算新值并覆盖写入，
+/// 导致"跨越式递减"（实际递减量大于 1）。`SmsRateLimiter::decrement_counter`
+/// 的 flaky test（`concurrent_send_does_not_exceed_limit`）即由此引发。
+/// M2 修复：改为返回 `NotImplemented`（fail-closed），与
+/// `compare_and_update_if_greater` 对齐，强制后端重写以使用原子 decr。
+///
+/// 此测试验证 MinimalDao（不重写任何默认方法）调用 decr 时返回 NotImplemented。
+#[tokio::test]
+async fn default_decr_returns_not_implemented() {
+    let dao = MinimalDao::new();
+    // 即使 key 存在（get 会返回 Some），decr 默认实现也直接返回 NotImplemented，
+    // 不进入 get → parse → update/delete 路径，避免静默引入 TOCTOU 竞态
+    dao.set("counter", "5", 60).await.unwrap();
+    let result = dao.decr("counter").await;
+    assert!(
+        matches!(result, Err(BulwarkError::NotImplemented(ref msg)) if msg.contains("decr") && msg.contains("原子 decr")),
+        "decr 默认实现应返回 NotImplemented（含 '原子 decr' 提示），实际: {:?}",
+        result
+    );
+    // 验证 key 未被修改（默认实现完全 short-circuit，不执行任何 DAO 操作）
+    let after = dao.get("counter").await.unwrap();
+    assert_eq!(
+        after.as_deref(),
+        Some("5"),
+        "decr 默认实现 short-circuit 后 key 不应被修改"
+    );
+}
+
 /// `get_and_delete` 默认实现（非原子 get → delete）在键存在时返回值并删除。
 ///
 /// 覆盖 trait 默认实现（行 182-188）。

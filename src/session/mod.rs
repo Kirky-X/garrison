@@ -237,11 +237,39 @@ pub struct BulwarkSession {
     #[cfg(feature = "anonymous-session")]
     anon_session_timeout: u64,
     /// per-login_id 操作锁，保护 Account-Session 的 read-modify-write 序列（R-001~R-004）。
+    ///
+    /// # 清理策略（架构审查 MEDIUM-1 显式标注）
+    ///
+    /// **不清理**：entry 一旦创建即永久驻留 DashMap，直到 `BulwarkSession` 实例销毁。
+    /// 原因：login_id 是有限业务实体（用户/服务账号），总量可控且可预估；
+    /// 长期驻留可避免高频登录用户的锁 entry 反复创建/销毁开销。
+    ///
+    /// 与 `core::auth::AuthLogicDefault::renew_locks` 的清理策略**有意不同**：
+    /// `renew_locks` 的 key 是 token（高基数、攻击者可控），必须在 renew 流程结束
+    /// 时按 `Arc::strong_count == 1` 清理，防止 OOM（CWE-770）；本字段的 key 是
+    /// login_id（低基数、业务可控），无需清理。详见
+    /// `AuthLogicDefault::renew_locks` 字段文档。
     login_locks: DashMap<String, Arc<TokioMutex<()>>>,
     /// per-token 操作锁，保护 Token-Session 的 read-modify-write 序列（CRIT-001 / FMEA #5）。
     ///
     /// 用于 `set`/`set_device`/`touch`/`set_active_timeout` 等 modifying TokenSession
     /// 操作的串行化，避免并发 read-modify-write 导致 lost update。只读操作（如 `is_safe`）不需要锁。
+    ///
+    /// # 清理策略（架构审查 MEDIUM-1 + 安全审查 MEDIUM 修复）
+    ///
+    /// **清理**：`with_token_session_lock` 在 `f.await` 结束后按 `Arc::strong_count == 1`
+    /// 清理无等待者的 entry（与 `core::auth::AuthLogicDefault::renew_locks` 一致）。
+    ///
+    /// 原因：`with_token_session_lock` 的 `token: &str` 参数来自调用方（用户面 API
+    /// `set`/`touch`/`set_device`/`set_active_timeout` 等），**攻击者可直接控制 key**。
+    /// 若不清理，攻击者用大量随机 token 调用 `set("random-token-N", ...)` 会在
+    /// `token_session_locks` 创建大量 entry（即使 `get_token_session` 后续返回 None
+    /// 早退，entry 已驻留），导致 CWE-770 资源耗尽。
+    ///
+    /// 与 `login_locks` 的清理策略对比：`login_locks` 的 key 是 login_id（低基数、
+    /// 业务可控，无需清理）；本字段 key 是 token（高基数、攻击者可控，必须清理）。
+    /// 与 `renew_locks` 的清理策略一致：两者都面临 token 灌满攻击，都用
+    /// `Arc::strong_count == 1` 清理。
     token_session_locks: DashMap<String, Arc<TokioMutex<()>>>,
     /// login_id → token 列表的内存索引，用于并发登录控制快速查询。
     ///

@@ -39,6 +39,7 @@ impl AuthLogicDefault {
             remember_me_enabled: false,
             remember_me_timeout: 7_776_000,
             switch_to_guard: Arc::new(DenyAllSwitchToGuard),
+            renew_locks: Arc::new(DashMap::new()),
         }
     }
 
@@ -256,138 +257,208 @@ impl AuthLogic for AuthLogicDefault {
     }
 
     async fn renew_to_equivalent(&self, token: &str) -> BulwarkResult<String> {
-        // A9: 调整顺序为"先创建新 token session，再失效旧 token"，消除续期窗口漏洞
-        // （vuln-0003 / CWE-362 / CVSS 7.5）。
+        // 修复 CWE-362 TOCTOU 竞态：per-token 串行化整个 renew 流程
+        //（fix-refresh-race-and-test-contracts / spec R-refresh-token-001）。
         //
-        // 原实现"先失效旧 token，再创建新 token"在步骤 2（logout old）与步骤 5
-        // （create new）之间存在 DoS gap window：用户在此窗口内无任何有效 token，
-        // 若新 token 创建失败且回滚也失败，用户将彻底失去会话。
+        // 多个并发 renew 同一 token 时，第 1 个拿到锁执行完整流程（读旧 → 生成新 → 失效旧），
+        // 其他请求等待锁。第 1 个完成（旧 token 已失效）后，其他请求拿到锁，
+        // step 1 读旧 token 返回 None → NotLogin 错误，确保"恰好 1 个成功"。
         //
-        // 新顺序的权衡（rule 7 暴露冲突）：
-        // - 旧设计（VULN-0020）：delete first → 无双 token 窗口，但有 DoS gap（HIGH 风险）
-        // - 新设计（A9 / vuln-0003 修复）：create first → 无 DoS gap，但有短暂双 token 窗口
+        // 锁粒度：per-token（不同 token 仍可并行），不使用 per-login_id（粒度过粗）
+        // 或全局锁（性能不可接受）。
         //
-        // 决策依据：strix vuln-0003 明确指出 DoS gap 为 HIGH 风险（CVSS 7.5），
-        // 而双 token 窗口仅持续毫秒级（create 与 delete 之间），且旧 token 在 delete
-        // 成功后立即失效，攻击窗口极小。可用性 > 短暂安全窗口，故采用 create first。
+        // 锁类型：`tokio::sync::Mutex`（异步锁，保护 renew 流程可跨 `.await` 持有）。
+        // 数据结构：`DashMap`（分片锁，与 `BulwarkSession::login_locks` 一致，rule 11）。
         //
-        // 新顺序：
-        // 1. 获取旧 TokenSession + 剩余 TTL
-        // 2. 生成新 token + 构建新 TokenSession
-        // 3. 保存新 Token-Session with TTL
-        //    若失败，旧 token 仍有效 → 直接返回错误（无需回滚）
-        // 4. 添加新 token 到 Account-Session
-        //    若失败，删除新 token session → 旧 token 仍有效 → 返回错误
-        // 5. 失效旧 token（logout 同时删除 Token-Session 与 Account-Session 条目）
-        //    若失败，记录 warn 但返回 Ok(new_token) — 用户已持有新 token，
-        //    旧 token 残留属安全风险但非 DoS，需运维介入清理
+        // 内存清理：renew 流程结束（无论成功/失败）、锁释放后，用 `remove_if` 检查
+        // `Arc::strong_count`，若 == 1（无其他等待者）则移除 entry，避免攻击者用大量
+        // 不同随机 token 灌满 DashMap 导致 OOM（CWE-770 / HIGH-1 修复）。
+        //
+        // 实现模式：用 `async { ... }.await` block 包裹整个 renew 流程，外层统一执行
+        // entry 清理。这样无论 inner block 内任何 `?` 提前返回 Err，外层清理都会执行
+        //（HIGH-1 修复：失败路径也必须清理 entry，防止失败 renew 累积导致 OOM）。
+        let renew_lock = self
+            .renew_locks
+            .entry(token.to_string())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone();
+        let _renew_guard = renew_lock.lock().await;
 
-        // 1. 获取旧 TokenSession + 剩余 TTL（性能优化：单次 DAO 调用）
-        //    None 表示永久键（无 TTL），用 0 表示永久驻留
-        let (old_ts, remaining_ttl) = self
-            .session
-            .get_token_session_with_ttl(token)
-            .await?
-            .ok_or_else(|| {
-                BulwarkError::NotLogin("core-auth-token-invalid-or-expired".to_string())
-            })?;
-        let ttl_secs = remaining_ttl.map(|d| d.as_secs()).unwrap_or(0);
+        // 用 inner async block 包裹整个 renew 流程，使所有 ? 提前返回路径统一经过外层清理。
+        //
+        // LOW 文档补全（fix-refresh-race-and-test-contracts）：此模式的设计意图：
+        // - renew 流程有 6 个步骤，其中 step 1/3/4/5 可能通过 `?` 提前返回 Err
+        // - 若不包裹 inner async block，提前返回路径会跳过末尾的 `renew_locks.remove_if` 清理
+        // - 残留的 entry 会被攻击者用大量随机 token 灌满（CWE-770 OOM）
+        // - inner async block 将所有 `?` 路径统一收敛到外层的 `drop(_renew_guard)` + `remove_if`
+        // - 代价：多一次 `async { ... }.await` 的状态机包装（编译期完成，运行时零开销）
+        // - 替代方案（已否决）：在每个 `?` 前手动清理 entry — 代码重复 4 次，易遗漏
+        let result: BulwarkResult<String> = async {
+            // A9: 调整顺序为"先创建新 token session，再失效旧 token"，消除续期窗口漏洞
+            // （vuln-0003 / CWE-362 / CVSS 7.5）。
+            //
+            // 原实现"先失效旧 token，再创建新 token"在步骤 2（logout old）与步骤 5
+            //（create new）之间存在 DoS gap window：用户在此窗口内无任何有效 token，
+            // 若新 token 创建失败且回滚也失败，用户将彻底失去会话。
+            //
+            // 新顺序的权衡（rule 7 暴露冲突）：
+            // - 旧设计（VULN-0020）：delete first → 无双 token 窗口，但有 DoS gap（HIGH 风险）
+            // - 新设计（A9 / vuln-0003 修复）：create first → 无 DoS gap，但有短暂双 token 窗口
+            //
+            // 决策依据：strix vuln-0003 明确指出 DoS gap 为 HIGH 风险（CVSS 7.5），
+            // 而双 token 窗口仅持续毫秒级（create 与 delete 之间），且旧 token 在 delete
+            // 成功后立即失效，攻击窗口极小。可用性 > 短暂安全窗口，故采用 create first。
+            //
+            // 新顺序：
+            // 1. 获取旧 TokenSession + 剩余 TTL
+            // 2. 生成新 token + 构建新 TokenSession
+            // 3. 保存新 Token-Session with TTL
+            //    若失败，旧 token 仍有效 → 直接返回错误（无需回滚）
+            // 4. 添加新 token 到 Account-Session
+            //    若失败，删除新 token session → 旧 token 仍有效 → 返回错误
+            // 5. 失效旧 token（logout 同时删除 Token-Session 与 Account-Session 条目）
+            //    若失败，记录 warn 但返回 Ok(new_token) — 用户已持有新 token，
+            //    旧 token 残留属安全风险但非 DoS，需运维介入清理
 
-        // 2. 生成新 token（同 token_style + 同 login_id）
-        let new_token = self
-            .token_handler
-            .generate(&old_ts.login_id, self.timeout)?;
+            // 1. 获取旧 TokenSession + 剩余 TTL（性能优化：单次 DAO 调用）
+            //    None 表示永久键（无 TTL），用 0 表示永久驻留
+            let (old_ts, remaining_ttl) = self
+                .session
+                .get_token_session_with_ttl(token)
+                .await?
+                .ok_or_else(|| {
+                    BulwarkError::NotLogin("core-auth-token-invalid-or-expired".to_string())
+                })?;
+            let ttl_secs = remaining_ttl.map(|d| d.as_secs()).unwrap_or(0);
 
-        // 3. 构建新 TokenSession（复制 attrs + device + ip + user_agent + safe_services）
-        let now = Utc::now().timestamp();
-        let new_ts = TokenSession {
-            token: new_token.clone(),
-            login_id: old_ts.login_id.clone(),
-            created_at: now,
-            last_active_at: now,
-            attrs: old_ts.attrs.clone(),
-            device: old_ts.device.clone(),
-            ip: old_ts.ip.clone(),
-            user_agent: old_ts.user_agent.clone(),
-            safe_services: old_ts.safe_services.clone(),
-            #[cfg(feature = "dynamic-active-timeout")]
-            dynamic_active_timeout: old_ts.dynamic_active_timeout,
-            // 匿名 token 不可达此路径（get_token_session 读 token:session:{token}，
-            // 匿名 session 在 token:session:anon:{token}，入口即返回 NotLogin）
-            #[cfg(feature = "anonymous-session")]
-            is_anon: false,
-        };
+            // 2. 生成新 token（同 token_style + 同 login_id）
+            let new_token = self
+                .token_handler
+                .generate(&old_ts.login_id, self.timeout)?;
 
-        // 4. 保存新 Token-Session with remaining TTL
-        //    若失败，旧 token 仍有效（未触碰），直接返回错误 — 无 DoS
-        if let Err(e) = self
-            .session
-            .create_token_session_with_ttl(&new_token, &new_ts, ttl_secs)
-            .await
-        {
-            let new_prefix = if new_token.len() >= 8 {
-                &new_token[..8]
-            } else {
-                &new_token
+            // 3. 构建新 TokenSession（复制 attrs + device + ip + user_agent + safe_services）
+            let now = Utc::now().timestamp();
+            let new_ts = TokenSession {
+                token: new_token.clone(),
+                login_id: old_ts.login_id.clone(),
+                created_at: now,
+                last_active_at: now,
+                attrs: old_ts.attrs.clone(),
+                device: old_ts.device.clone(),
+                ip: old_ts.ip.clone(),
+                user_agent: old_ts.user_agent.clone(),
+                safe_services: old_ts.safe_services.clone(),
+                #[cfg(feature = "dynamic-active-timeout")]
+                dynamic_active_timeout: old_ts.dynamic_active_timeout,
+                // 匿名 token 不可达此路径（get_token_session 读 token:session:{token}，
+                // 匿名 session 在 token:session:anon:{token}，入口即返回 NotLogin）
+                #[cfg(feature = "anonymous-session")]
+                is_anon: false,
             };
-            tracing::error!(
-                error = %e,
-                new_token_prefix = %new_prefix,
-                "renew_to_equivalent 创建新 token session 失败，旧 token 仍有效（A9 无 DoS）"
-            );
-            return Err(BulwarkError::Internal(
-                "core-auth-token-renew-create-failed".to_string(),
-            ));
-        }
 
-        // 5. 添加新 token 到 Account-Session
-        //    若失败，删除新 token session → 旧 token 仍有效 → 返回错误 — 无 DoS
-        if let Err(e) = self
-            .session
-            .ensure_token_in_account_session(&old_ts.login_id, &new_token)
-            .await
-        {
-            let new_prefix = if new_token.len() >= 8 {
-                &new_token[..8]
-            } else {
-                &new_token
-            };
-            tracing::error!(
-                error = %e,
-                new_token_prefix = %new_prefix,
-                "renew_to_equivalent 添加新 token 到 Account-Session 失败，清理新 token"
-            );
-            // 清理刚创建的新 token session（best-effort）
-            if let Err(rb_err) = self.session.logout(&new_token).await {
+            // 4. 保存新 Token-Session with remaining TTL
+            //    若失败，旧 token 仍有效（未触碰），直接返回错误 — 无 DoS
+            if let Err(e) = self
+                .session
+                .create_token_session_with_ttl(&new_token, &new_ts, ttl_secs)
+                .await
+            {
+                let new_prefix = if new_token.len() >= 8 {
+                    &new_token[..8]
+                } else {
+                    &new_token
+                };
                 tracing::error!(
-                    rollback_error = %rb_err,
+                    error = %e,
                     new_token_prefix = %new_prefix,
-                    "renew_to_equivalent 清理新 token session 失败，新 token 可能残留"
+                    "renew_to_equivalent 创建新 token session 失败，旧 token 仍有效（A9 无 DoS）"
+                );
+                return Err(BulwarkError::Internal(
+                    "core-auth-token-renew-create-failed".to_string(),
+                ));
+            }
+
+            // 5. 添加新 token 到 Account-Session
+            //    若失败，删除新 token session → 旧 token 仍有效 → 返回错误 — 无 DoS
+            if let Err(e) = self
+                .session
+                .ensure_token_in_account_session(&old_ts.login_id, &new_token)
+                .await
+            {
+                let new_prefix = if new_token.len() >= 8 {
+                    &new_token[..8]
+                } else {
+                    &new_token
+                };
+                tracing::error!(
+                    error = %e,
+                    new_token_prefix = %new_prefix,
+                    "renew_to_equivalent 添加新 token 到 Account-Session 失败，清理新 token"
+                );
+                // 清理刚创建的新 token session（best-effort）
+                if let Err(rb_err) = self.session.logout(&new_token).await {
+                    tracing::error!(
+                        rollback_error = %rb_err,
+                        new_token_prefix = %new_prefix,
+                        "renew_to_equivalent 清理新 token session 失败，新 token 可能残留"
+                    );
+                }
+                // rule 12：失败显性化 — 旧 token 仍有效，用户可用旧 token 重试
+                return Err(BulwarkError::Internal(
+                    "core-auth-token-renew-add-to-account-failed".to_string(),
+                ));
+            }
+
+            // 6. 失效旧 token（logout 同时删除 Token-Session 与 Account-Session 条目）
+            //    A9 关键变化：此步在"新 token 已完全建立"之后执行。
+            //    若此步失败，用户已持有新 token（无 DoS），但旧 token 残留（安全风险）。
+            //    决策：返回 Ok(new_token) 让用户继续操作，旧 token 残留由运维介入清理。
+            //    理由：若因 delete 失败而返回 Err，用户将丢失新 token（已建立），
+            //    反而制造新的 DoS — 与 A9 修复目标相悖。
+            //
+            //    rule 12（失败显性化）+ 安全审查 MEDIUM-1（主动告警）：
+            //    - 用 `error` 级别记录（而非 `warn`），确保生产环境监控系统触发告警
+            //    - 携带稳定 `error_code = "renew_old_token_cleanup_failed"` 字段，
+            //      供运维日志告警系统（如 Loki/ELK + Alertmanager）基于此 code 配置告警规则
+            //    - 告警规则建议：error_code="renew_old_token_cleanup_failed" 出现 >0 次即触发
+            //      P2 告警，运维需在 5 分钟内介入清理残留旧 token（CWE-613 缓解）
+            //    - 未注入 `AlertListenerManager` 时无法主动广播 `SecurityAlertEvent`，
+            //      日志告警是兜底手段；注入了 alert_manager 的部署应额外调用
+            //      `broadcast_alert` 触发告警链路（本层不持有 alert_manager 引用，
+            //      由调用方 `BulwarkLogicDefault` 在 renew 失败回调中转发）
+            if let Err(e) = self.session.logout(token).await {
+                let old_prefix = if token.len() >= 8 { &token[..8] } else { token };
+                tracing::error!(
+                    error_code = "renew_old_token_cleanup_failed",
+                    error = %e,
+                    old_token_prefix = %old_prefix,
+                    new_token_prefix = %&new_token[..new_token.len().min(8)],
+                    "renew_to_equivalent 失效旧 token 失败，旧 token 残留（CWE-613 安全风险），\
+                     新 token 已建立无 DoS，但需运维立即清理旧 token 防止被攻击者利用。\
+                     告警规则：error_code=\"renew_old_token_cleanup_failed\" 出现即触发 P2 告警"
                 );
             }
-            // rule 12：失败显性化 — 旧 token 仍有效，用户可用旧 token 重试
-            return Err(BulwarkError::Internal(
-                "core-auth-token-renew-add-to-account-failed".to_string(),
-            ));
-        }
 
-        // 6. 失效旧 token（logout 同时删除 Token-Session 与 Account-Session 条目）
-        //    A9 关键变化：此步在"新 token 已完全建立"之后执行。
-        //    若此步失败，用户已持有新 token（无 DoS），但旧 token 残留（安全风险）。
-        //    决策：返回 Ok(new_token) 让用户继续操作，旧 token 残留由运维介入清理。
-        //    理由：若因 delete 失败而返回 Err，用户将丢失新 token（已建立），
-        //    反而制造新的 DoS — 与 A9 修复目标相悖。
-        if let Err(e) = self.session.logout(token).await {
-            let old_prefix = if token.len() >= 8 { &token[..8] } else { token };
-            tracing::warn!(
-                error = %e,
-                old_token_prefix = %old_prefix,
-                new_token_prefix = %&new_token[..new_token.len().min(8)],
-                "renew_to_equivalent 失效旧 token 失败，旧 token 可能残留（安全风险），\
-                 但新 token 已建立，用户可用新 token 继续 — 需运维清理旧 token"
-            );
+            Ok(new_token)
         }
+        .await;
 
-        Ok(new_token)
+        // HIGH-1 修复：无论 renew 成功/失败，都清理 DashMap entry，防止无限制增长。
+        // 必须先 drop `_renew_guard`（释放 tokio::sync::Mutex 锁），再 drop `renew_lock`
+        //（释放 Arc clone），最后用 `remove_if` 原子检查 `Arc::strong_count == 1`。
+        //
+        // 安全性分析：
+        // - `remove_if` 在 DashMap shard 锁内检查条件，原子操作不会 race
+        // - 若 strong_count == 1（只有 DashMap 持有），说明无其他等待者，安全移除
+        // - 若 strong_count > 1（有其他等待者已 clone Arc），保留 entry，其他等待者继续用
+        // - 移除后，新调用方通过 `or_insert_with` 创建新 Arc，不影响串行化语义
+        // - 失败路径（NotLogin / 创建新 token 失败 / 添加 Account-Session 失败）也走此清理
+        //   防止攻击者用大量不同随机 token 触发失败路径累积 entry 导致 OOM
+        drop(_renew_guard);
+        drop(renew_lock);
+        self.renew_locks
+            .remove_if(token, |_, lock| Arc::strong_count(lock) == 1);
+
+        result
     }
 }

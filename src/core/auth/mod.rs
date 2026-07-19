@@ -9,6 +9,7 @@
 //! 便于 `protocol-jwt` 等协议层模块干净复用。
 
 use async_trait::async_trait;
+use dashmap::DashMap;
 use std::sync::Arc;
 
 use crate::core::token::Token;
@@ -206,6 +207,24 @@ pub struct AuthLogicDefault {
     remember_me_timeout: i64,
     /// 身份切换权限校验 guard（L4 修复，默认 DenyAllSwitchToGuard fail-closed）。
     switch_to_guard: Arc<dyn SwitchToGuard>,
+    /// per-token 异步互斥锁，串行化同一 token 的 `renew_to_equivalent` 操作
+    ///（修复 CWE-362 TOCTOU 竞态，fix-refresh-race-and-test-contracts）。
+    ///
+    /// key: token 字符串；value: `Arc<tokio::sync::Mutex<()>>`（异步锁，可跨 `.await` 持有）。
+    ///
+    /// 数据结构选择：`DashMap`（分片锁，与 `BulwarkSession::login_locks` /
+    /// `token_session_locks` 一致）。相比 `parking_lot::Mutex<HashMap>`：
+    /// - 并发性更好（分片锁 vs 单锁序列化）
+    /// - API 更简洁（`entry().or_insert_with()` 无需外层锁包裹）
+    /// - 风格一致（rule 11 惯例优先于新颖，rule 7 暴露冲突不折中）
+    ///
+    /// 锁粒度选择：per-token 而非 per-login_id（粒度过粗影响并发吞吐），
+    /// per-token 而非全局（性能不可接受）。不同 token 的 renew 仍可并行。
+    ///
+    /// 内存清理：renew 流程结束时检查 `Arc::strong_count`，若 == 1（无其他等待者）
+    /// 则从 DashMap 移除 entry，避免攻击者用大量不同随机 token 灌满 HashMap 导致 OOM
+    ///（CWE-770 / HIGH-1 修复）。
+    renew_locks: Arc<DashMap<String, Arc<tokio::sync::Mutex<()>>>>,
 }
 
 mod default;

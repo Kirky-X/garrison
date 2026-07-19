@@ -3560,7 +3560,15 @@ async fn login_with_max_login_count_evicts_oldest_session() {
     // max_login_count=2：最多 2 个并发会话
     Arc::make_mut(&mut logic.config).max_login_count = 2;
 
-    // 创建 3 个会话，sleep 确保 last_active_at 递增（Unix 秒级时间戳）
+    // 创建 3 个会话，sleep 确保 last_active_at 递增（Unix 秒级时间戳）。
+    //
+    // LOW 时序断言说明（fix-refresh-race-and-test-contracts）：
+    // - last_active_at 用 `Utc::now().timestamp()`（秒级精度），同一秒内创建的
+    //   token 时间戳相同，enforce_max_login_count 排序结果不确定
+    // - sleep(1s) 确保下次 login 的 last_active_at 至少比上次大 1，排序确定
+    // - 这是确定性断言（非 flaky）：sleep(1s) >> Unix 秒精度 1s，且 tokio::time::sleep
+    //   保证至少 sleep 指定时长
+    // - 替代方案（已否决）：mock 时间——项目未引入 mock 时间库，引入会增加依赖
     let t1 = logic
         .login("max-login-user-001", &LoginParams::default())
         .await

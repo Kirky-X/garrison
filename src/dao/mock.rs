@@ -224,6 +224,53 @@ impl BulwarkDao for MockDao {
         }
     }
 
+    /// decr 用 Mutex 保护原子性（进程内原子，与 `incr` 对称）。
+    ///
+    /// 在单个 lock() 作用域内完成 get → parse → update/delete，消除 TOCTOU 竞态。
+    /// 语义：
+    /// - key 不存在或已过期：清理（若已过期）并返回 0
+    /// - 当前值为 0：返回 0（不递减为负）
+    /// - 当前值 > 0：递减 1；递减后值为 0 时删除 key；递减后值 > 0 时保留原 expire_at
+    ///
+    /// 修复 `concurrent_send_does_not_exceed_limit` flaky test（fix-refresh-race-and-test-contracts）：
+    /// 原 `SmsRateLimiter::decrement_counter` 用 `dao.get → parse → dao.update/delete` 三步组合，
+    /// 跨越 await 间隙允许其他 task 的 `incr` 插入，导致 update 基于过时 get 值覆盖 incr 结果。
+    async fn decr(&self, key: &str) -> BulwarkResult<u64> {
+        let mut store = self.store.lock();
+        let now = Instant::now();
+        let (cur_val, expire_at) = match store.get(key) {
+            Some((v, Some(deadline))) => {
+                if *deadline <= now {
+                    // 已过期：清理并视为不存在
+                    store.remove(key);
+                    return Ok(0);
+                }
+                let val: u64 = v.parse().map_err(|_| {
+                    BulwarkError::Dao(format!("dao-decr-parse-u64::{}::{}", key, v))
+                })?;
+                (val, Some(*deadline))
+            },
+            Some((v, None)) => {
+                let val: u64 = v.parse().map_err(|_| {
+                    BulwarkError::Dao(format!("dao-decr-parse-u64::{}::{}", key, v))
+                })?;
+                (val, None)
+            },
+            None => return Ok(0),
+        };
+        if cur_val == 0 {
+            return Ok(0);
+        }
+        let new_val = cur_val - 1;
+        if new_val == 0 {
+            store.remove(key);
+        } else {
+            // 保留原 expire_at（不重置 TTL，与 incr 语义对称）
+            store.insert(key.to_string(), (new_val.to_string(), expire_at));
+        }
+        Ok(new_val)
+    }
+
     /// compare_and_update_if_greater 用 Mutex 保护原子性（进程内原子）。
     ///
     /// 在单个 lock() 作用域内完成 get → parse → compare → set，消除 TOCTOU 竞态。

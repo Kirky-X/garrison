@@ -1024,3 +1024,151 @@ fn parse_remember_me_param_various_inputs() {
     assert!(!parse_remember_me_param(Some("remember_me=1")));
     assert!(!parse_remember_me_param(Some("malformed")));
 }
+
+// ========================================================================
+// renew_to_equivalent 并发串行化测试（fix-refresh-race-and-test-contracts）
+// ========================================================================
+
+/// T001: 并发 renew_to_equivalent 同一 token 必须串行化（修复 CWE-362 TOCTOU 竞态）。
+///
+/// spec R-refresh-token-001: 3 个并发 renew 同一 token，恰好 1 个 Ok + 2 个 Err。
+///
+/// **Red 阶段**：当前 src/ 无锁，3 个全部 Ok → 测试失败（success_count=3 ≠ 1）。
+/// **Green 阶段**：实现 per-token 锁后，第 1 个拿到锁成功，第 2/3 个拿到锁时旧 token
+/// 已失效 → 返回 NotLogin 错误 → 测试通过。
+///
+/// 用 `tokio::spawn` 创建独立 task 真正并行（`tokio::join!` 在当前 task 内顺序 poll
+/// 无法触发竞态）。`Arc<AuthLogicDefault>` 跨 task 共享，`renew_to_equivalent(&self)`
+/// 是 `&self` 方法可共享调用。
+#[tokio::test(flavor = "multi_thread")]
+async fn renew_to_equivalent_concurrent_serialization() {
+    let auth = Arc::new(make_auth_logic(3600, 86400));
+    let old_token = auth.login("race-user", None).await.unwrap();
+
+    // 用 tokio::spawn 真正并行 3 个 renew task（multi_thread runtime worker 并行）
+    let auth1 = auth.clone();
+    let auth2 = auth.clone();
+    let auth3 = auth.clone();
+    let old1 = old_token.clone();
+    let old2 = old_token.clone();
+    let old3 = old_token.clone();
+    let h1 = tokio::spawn(async move { auth1.renew_to_equivalent(&old1).await });
+    let h2 = tokio::spawn(async move { auth2.renew_to_equivalent(&old2).await });
+    let h3 = tokio::spawn(async move { auth3.renew_to_equivalent(&old3).await });
+
+    let res1 = h1.await.expect("h1 join failed");
+    let res2 = h2.await.expect("h2 join failed");
+    let res3 = h3.await.expect("h3 join failed");
+
+    let results = [res1, res2, res3];
+    let success_count = results.iter().filter(|r| r.is_ok()).count();
+    let err_count = results.iter().filter(|r| r.is_err()).count();
+
+    assert_eq!(
+        success_count, 1,
+        "并发 renew 应恰好 1 个成功，实际 {} 个成功 — 揭示 CWE-362 TOCTOU 竞态未修复",
+        success_count
+    );
+    assert_eq!(
+        err_count, 2,
+        "并发 renew 应 2 个失败，实际 {} 个失败",
+        err_count
+    );
+}
+
+/// HIGH-1 修复：renew 完成后 renew_locks DashMap 不残留无引用 entry。
+///
+/// 验证内存清理逻辑（`src/core/auth/default.rs:418-430`）：
+/// - renew 流程结束后 `drop(_renew_guard); drop(renew_lock);` 释放 Arc clone
+/// - `remove_if(token, |_, lock| Arc::strong_count(lock) == 1)` 移除无等待者的 entry
+///
+/// 攻击场景：若无清理，攻击者可发送大量不同随机 token 灌满 DashMap 导致 OOM
+///（CWE-770）。此测试验证：单次 renew 成功后，对应 token 的 entry 已被清理。
+#[tokio::test]
+async fn renew_locks_entry_cleaned_after_successful_renew() {
+    let auth = Arc::new(make_auth_logic(3600, 86400));
+    let old_token = auth.login("cleanup-user", None).await.unwrap();
+
+    // renew 前 renew_locks 应为空（无并发 renew 进行中）
+    assert!(
+        auth.renew_locks.is_empty(),
+        "renew 前 renew_locks 应为空，实际有 {} 个 entry",
+        auth.renew_locks.len()
+    );
+
+    // 执行单次 renew
+    let new_token = auth
+        .renew_to_equivalent(&old_token)
+        .await
+        .expect("renew 应成功");
+
+    // renew 后 renew_locks 应再次为空（entry 已被清理）
+    assert!(
+        auth.renew_locks.is_empty(),
+        "renew 后 renew_locks 应被清理为空，实际残留 {} 个 entry",
+        auth.renew_locks.len()
+    );
+
+    // 验证 renew 本身成功：旧 token 失效，新 token 有效
+    assert!(
+        !auth.is_login(&old_token).await.unwrap(),
+        "旧 token 应已失效"
+    );
+    assert!(auth.is_login(&new_token).await.unwrap(), "新 token 应有效");
+}
+
+/// HIGH-1 修复：renew 失败（NotLogin）后 renew_locks entry 也应被清理。
+///
+/// 验证失败路径同样清理 entry（避免失败 renew 累积导致 OOM）。
+/// 此测试对同一无效 token 调用 renew 多次，每次失败后 entry 应被清理。
+#[tokio::test]
+async fn renew_locks_entry_cleaned_after_failed_renew() {
+    let auth = Arc::new(make_auth_logic(3600, 86400));
+
+    // 对不存在的 token 调用 renew（应返回 NotLogin）
+    for i in 0..5 {
+        let fake_token = format!("fake-token-{}", i);
+        let result = auth.renew_to_equivalent(&fake_token).await;
+        assert!(result.is_err(), "fake token renew 应失败（迭代 {}）", i);
+        // 每次失败后 renew_locks 应为空（entry 已清理）
+        assert!(
+            auth.renew_locks.is_empty(),
+            "失败 renew 后 renew_locks 应清理为空（迭代 {}），实际残留 {} 个 entry",
+            i,
+            auth.renew_locks.len()
+        );
+    }
+}
+
+/// HIGH-1 修复：并发 renew 完成后 renew_locks 不残留 entry。
+///
+/// 此测试与 `renew_to_equivalent_concurrent_serialization` 互补：
+/// 后者验证并发下的串行化语义，此测试验证并发完成后的内存清理。
+#[tokio::test(flavor = "multi_thread")]
+async fn renew_locks_entry_cleaned_after_concurrent_renew() {
+    let auth = Arc::new(make_auth_logic(3600, 86400));
+    let old_token = auth.login("concurrent-cleanup-user", None).await.unwrap();
+
+    // 并发 3 个 renew 同一 token
+    let auth1 = auth.clone();
+    let auth2 = auth.clone();
+    let auth3 = auth.clone();
+    let old1 = old_token.clone();
+    let old2 = old_token.clone();
+    let old3 = old_token.clone();
+    let h1 = tokio::spawn(async move { auth1.renew_to_equivalent(&old1).await });
+    let h2 = tokio::spawn(async move { auth2.renew_to_equivalent(&old2).await });
+    let h3 = tokio::spawn(async move { auth3.renew_to_equivalent(&old3).await });
+
+    // 等所有 task 完成
+    let _ = h1.await.expect("h1 join failed");
+    let _ = h2.await.expect("h2 join failed");
+    let _ = h3.await.expect("h3 join failed");
+
+    // 所有 task 完成后 renew_locks 应为空（所有 entry 已清理）
+    assert!(
+        auth.renew_locks.is_empty(),
+        "并发 renew 全部完成后 renew_locks 应清理为空，实际残留 {} 个 entry",
+        auth.renew_locks.len()
+    );
+}

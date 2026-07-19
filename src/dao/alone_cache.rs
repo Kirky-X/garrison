@@ -97,6 +97,19 @@ impl BulwarkDao for AloneCache {
             .compare_and_update_if_greater(&self.prefixed_key(key), new_value, ttl_seconds)
             .await
     }
+
+    /// M1 修复：decr 委托内部 dao（消除 TOCTOU 竞态）。
+    ///
+    /// 与 `compare_and_update_if_greater` 对称：默认实现已改为返回 `NotImplemented`
+    ///（fail-closed），AloneCache 必须显式 forward 到 inner dao，保证装饰器透明委托语义，
+    /// 使内部 dao 的原子 decr 实现得以复用。
+    ///
+    /// 修复前：AloneCache 走默认实现（get → parse → update/delete 三步组合），
+    /// 在并发场景下存在 TOCTOU 竞态，SMS 限速器等通过 AloneCache 部署的场景
+    /// 仍会触发 flaky test。
+    async fn decr(&self, key: &str) -> BulwarkResult<u64> {
+        self.inner.decr(&self.prefixed_key(key)).await
+    }
 }
 
 /// AloneCacheManager 管理多个 AloneCache 实例，支持多 Redis 实例路由。
@@ -366,5 +379,133 @@ mod tests {
             result.is_ok(),
             "delete 不存在的键应返回 Ok（与 MockDao 一致）"
         );
+    }
+
+    /// Scenario: AloneCache::decr 透明委托内部 dao（M1 修复，消除 TOCTOU 竞态）。
+    ///
+    /// 覆盖 spec alone-cache Requirement "AloneCache 与既有 BulwarkDao 行为一致"
+    /// Scenario "AloneCache 透明委托"（扩展到 decr 方法）。
+    ///
+    /// M1 修复前：AloneCache 走默认实现（get → parse → update/delete 三步组合），
+    /// 在并发场景下存在 TOCTOU 竞态，SMS 限速器等通过 AloneCache 部署的场景
+    /// 仍会触发 flaky test。M1 修复：AloneCache::decr 显式 forward 到 inner dao。
+    ///
+    /// 此测试验证：
+    /// 1. AloneCache::decr 调用经 prefix 拼接后到达 inner dao
+    /// 2. 返回值与直接调用 inner dao 一致（透明委托）
+    /// 3. TTL 保留（递减后值 > 0 时保留原 TTL，与 MockDao::decr 语义一致）
+    #[tokio::test]
+    async fn alone_cache_decr_delegates_to_inner_with_prefix() {
+        let mock = Arc::new(MockDao::new());
+        let cache = AloneCache::new(mock.clone(), "perm:");
+
+        // 初始化计数器值为 3（TTL=3600s）
+        mock.set("perm:counter", "3", 3600).await.unwrap();
+
+        // 第一次 decr：3 → 2
+        let r1 = cache.decr("counter").await.unwrap();
+        assert_eq!(r1, 2, "第一次 decr 应返回 2");
+        let v1 = mock.get("perm:counter").await.unwrap();
+        assert_eq!(v1.as_deref(), Some("2"), "decr 后内部 dao 应为 '2'");
+
+        // 第二次 decr：2 → 1
+        let r2 = cache.decr("counter").await.unwrap();
+        assert_eq!(r2, 1, "第二次 decr 应返回 1");
+
+        // 第三次 decr：1 → 0，key 应被删除（与 MockDao::decr 语义一致）
+        let r3 = cache.decr("counter").await.unwrap();
+        assert_eq!(r3, 0, "第三次 decr 应返回 0");
+        let v3 = mock.get("perm:counter").await.unwrap();
+        assert!(v3.is_none(), "decr 到 0 时 key 应被删除");
+
+        // 第四次 decr：key 不存在，返回 0（不报错，不创建 key）
+        let r4 = cache.decr("counter").await.unwrap();
+        assert_eq!(r4, 0, "key 不存在时 decr 应返回 0");
+        let v4 = mock.get("perm:counter").await.unwrap();
+        assert!(v4.is_none(), "key 不存在时 decr 不应创建 key");
+    }
+
+    /// Scenario: AloneCache::decr 不存在的 key（无 prefix 时）返回 0（透明委托边界）。
+    #[tokio::test]
+    async fn alone_cache_decr_missing_key_returns_zero() {
+        let mock = Arc::new(MockDao::new());
+        let cache = AloneCache::new(mock.clone(), "perm:");
+
+        // 不存在的 key（mock 上无 "perm:never"）
+        let r = cache.decr("never").await.unwrap();
+        assert_eq!(r, 0, "不存在的 key decr 应返回 0");
+
+        // 验证 inner dao 上对应 prefixed key 也确实不存在
+        let v = mock.get("perm:never").await.unwrap();
+        assert!(v.is_none(), "inner dao 上 'perm:never' 不应存在");
+    }
+
+    /// Scenario: AloneCache::decr 并发原子性验证（M1 修复核心目标）。
+    ///
+    /// 此测试是 M1 修复的关键验证：在 multi_thread runtime 下并发 10 个 task
+    /// decr 同一 key（初始值 5），断言恰好 4 个返回非 0 + 6 个返回 0 + key 最终删除。
+    ///
+    /// 返回值分析（decr 返回 new_val = 递减后的值）：
+    /// - decr 1: 5→4, 返回 4 ✓
+    /// - decr 2: 4→3, 返回 3 ✓
+    /// - decr 3: 3→2, 返回 2 ✓
+    /// - decr 4: 2→1, 返回 1 ✓
+    /// - decr 5: 1→0, 返回 0（key 删除）
+    /// - decr 6-10: key 不存在, 返回 0
+    /// → 4 个非 0 + 6 个 0
+    ///
+    /// 修复前：AloneCache 走默认实现（get → parse → update/delete 三步组合），
+    /// 多个 task 可能同时读到同一过时值并各自计算 new_val，导致"跨越式递减"。
+    /// 修复后：AloneCache::decr 委托内部 MockDao（parking_lot::Mutex 保护原子），
+    /// 多个 task 串行进入 MockDao::decr 临界区，每次 decr 都基于最新值。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn alone_cache_decr_concurrent_atomic() {
+        let mock = Arc::new(MockDao::new());
+        let cache = Arc::new(AloneCache::new(mock.clone(), "perm:"));
+
+        // 初始化计数器值为 5
+        mock.set("perm:counter", "5", 3600).await.unwrap();
+
+        // 并发 10 个 task 同时 decr 同一 key
+        let mut handles = Vec::with_capacity(10);
+        for _ in 0..10 {
+            let c = cache.clone();
+            handles.push(tokio::spawn(
+                async move { c.decr("counter").await.unwrap() },
+            ));
+        }
+
+        let mut results = Vec::with_capacity(10);
+        for h in handles {
+            results.push(h.await.expect("task join failed"));
+        }
+
+        // 4 个 task 拿到非 0 值（4, 3, 2, 1），6 个 task 拿到 0（第 5 次 + 6-10 次）
+        let nonzero_count = results.iter().filter(|&&v| v > 0).count();
+        let zero_count = results.iter().filter(|&&v| v == 0).count();
+        assert_eq!(
+            nonzero_count, 4,
+            "应恰好 4 个非 0 返回值（4, 3, 2, 1），实际: {:?}",
+            results
+        );
+        assert_eq!(
+            zero_count, 6,
+            "应恰好 6 个 0 返回值（第 5 次 decr + key 删除后 5 次），实际: {:?}",
+            results
+        );
+
+        // 验证非 0 值集合恰好为 {4, 3, 2, 1}（无重复、无遗漏、无跨越式递减）
+        let mut nonzero_vals: Vec<u64> = results.iter().copied().filter(|&v| v > 0).collect();
+        nonzero_vals.sort_unstable();
+        assert_eq!(
+            nonzero_vals,
+            vec![1, 2, 3, 4],
+            "非 0 返回值应恰好为 {{1, 2, 3, 4}}，实际: {:?}",
+            nonzero_vals
+        );
+
+        // 验证 key 最终被删除
+        let v = mock.get("perm:counter").await.unwrap();
+        assert!(v.is_none(), "并发 decr 后 key 应被删除");
     }
 }

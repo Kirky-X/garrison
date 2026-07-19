@@ -150,7 +150,12 @@ impl BulwarkSession {
     ///
     /// 锁粒度为 login_id，不影响不同用户的并发。使用 `tokio::sync::Mutex`（持有锁跨 await 点）。
     /// `kickout_by_device` 持有锁后调用 `logout_inner`（不获取锁），避免死锁。
-    async fn with_login_lock<F, R>(&self, login_id: &str, f: F) -> R
+    ///
+    /// # pub(crate) 可见性说明
+    /// 暴露给 `stp::session::AuthLogicDefault::enforce_max_login_count` 使用，
+    /// 将 `enforce_max_login_count` 纳入 per-login_id 锁保护，与 `create_token_session`
+    /// 形成原子序列，消除并发 login 时的 TOCTOU 竞态（fix-refresh-race-and-test-contracts / T015）。
+    pub(crate) async fn with_login_lock<F, R>(&self, login_id: &str, f: F) -> R
     where
         F: std::future::Future<Output = R>,
     {
@@ -182,7 +187,19 @@ impl BulwarkSession {
             .or_insert_with(|| Arc::new(TokioMutex::new(())))
             .clone();
         let _guard = lock.lock().await;
-        f.await
+        let result = f.await;
+        // 安全审查 MEDIUM 修复（fix-refresh-race-and-test-contracts）：
+        // 清理无等待者的 entry，防止攻击者用大量随机 token 调用 `set`/`touch` 等
+        // 用户面 API 灌满 `token_session_locks` 导致 OOM（CWE-770）。
+        // 与 `renew_locks` 的清理模式一致：先 drop guard 再 drop lock（Arc clone），
+        // 使 strong_count 减到 1（只剩 DashMap 中的 entry），再 remove_if 移除。
+        // 注意：若不 drop(lock)，strong_count 仍为 2（DashMap + 本地 lock 变量），
+        // remove_if 不会移除，清理失效。
+        drop(_guard);
+        drop(lock);
+        self.token_session_locks
+            .remove_if(token, |_, l| Arc::strong_count(l) == 1);
+        result
     }
 
     /// 创建会话（login 时调用）：双写 Account-Session + Token-Session。
@@ -249,63 +266,80 @@ impl BulwarkSession {
     ) -> BulwarkResult<()> {
         let login_id: String = login_id.to_string();
         self.with_login_lock(&login_id, async {
-            let now = Utc::now().timestamp();
+            self.create_token_session_inner(&login_id, token, device, ip, user_agent)
+                .await
+        })
+        .await
+    }
 
-            // 创建 Token-Session
-            let token_session = TokenSession {
-                token: token.to_string(),
-                login_id: login_id.clone(),
-                created_at: now,
-                last_active_at: now,
-                attrs: HashMap::new(),
-                device: device.map(|s| s.to_string()),
-                ip: ip.map(|s| s.to_string()),
-                user_agent: user_agent.map(|s| s.to_string()),
-                safe_services: HashMap::new(),
-                #[cfg(feature = "dynamic-active-timeout")]
-                dynamic_active_timeout: None,
-                #[cfg(feature = "anonymous-session")]
-                is_anon: false,
-            };
-            let token_json = serde_json::to_string(&token_session).map_err(|e| {
-                BulwarkError::Session(format!("session-sim-token-serialize::{}", e))
-            })?;
-            self.dao
-                .set(&token_key(token), &token_json, self.timeout)
-                .await?;
+    /// `create_token_session` 的无锁内部实现（HIGH-1 修复，fix-refresh-race-and-test-contracts）。
+    ///
+    /// 调用方必须已通过 [`with_login_lock`](Self::with_login_lock) 持有 `login_id` 的锁，
+    /// 才能将 `create` 与后续的 `enforce_max_login_count_inner` 组合成原子序列。
+    /// 未持锁调用会破坏 Account-Session read-modify-write 的并发安全。
+    ///
+    /// 双写 Token-Session + Account-Session，device/ip/user_agent 为 None 时对应字段留空。
+    pub(crate) async fn create_token_session_inner(
+        &self,
+        login_id: &str,
+        token: &str,
+        device: Option<&str>,
+        ip: Option<&str>,
+        user_agent: Option<&str>,
+    ) -> BulwarkResult<()> {
+        let now = Utc::now().timestamp();
 
-            // 读取或创建 Account-Session
-            let mut account = self
-                .get_account_session(&login_id)
-                .await?
-                .unwrap_or_else(|| AccountSession {
-                    login_id: login_id.clone(),
-                    tokens: vec![],
-                    created_at: now,
-                    last_active_at: now,
-                });
+        // 创建 Token-Session
+        let token_session = TokenSession {
+            token: token.to_string(),
+            login_id: login_id.to_string(),
+            created_at: now,
+            last_active_at: now,
+            attrs: HashMap::new(),
+            device: device.map(|s| s.to_string()),
+            ip: ip.map(|s| s.to_string()),
+            user_agent: user_agent.map(|s| s.to_string()),
+            safe_services: HashMap::new(),
+            #[cfg(feature = "dynamic-active-timeout")]
+            dynamic_active_timeout: None,
+            #[cfg(feature = "anonymous-session")]
+            is_anon: false,
+        };
+        let token_json = serde_json::to_string(&token_session)
+            .map_err(|e| BulwarkError::Session(format!("session-sim-token-serialize::{}", e)))?;
+        self.dao
+            .set(&token_key(token), &token_json, self.timeout)
+            .await?;
 
-            // 添加 token 信息（spec scenario "Account-Session 记录多 token"）
-            account.tokens.push(TokenInfo {
-                token: token.to_string(),
+        // 读取或创建 Account-Session
+        let mut account = self
+            .get_account_session(login_id)
+            .await?
+            .unwrap_or_else(|| AccountSession {
+                login_id: login_id.to_string(),
+                tokens: vec![],
                 created_at: now,
                 last_active_at: now,
             });
-            account.last_active_at = now;
 
-            let account_json = serde_json::to_string(&account).map_err(|e| {
-                BulwarkError::Session(format!("session-sim-account-serialize::{}", e))
-            })?;
-            self.dao
-                .set(&account_key(&login_id), &account_json, self.active_timeout)
-                .await?;
+        // 添加 token 信息（spec scenario "Account-Session 记录多 token"）
+        account.tokens.push(TokenInfo {
+            token: token.to_string(),
+            created_at: now,
+            last_active_at: now,
+        });
+        account.last_active_at = now;
 
-            // 同步内存索引（login_id → token 列表），用于并发登录控制快速查询
-            self.add_login_token(&login_id, token);
+        let account_json = serde_json::to_string(&account)
+            .map_err(|e| BulwarkError::Session(format!("session-sim-account-serialize::{}", e)))?;
+        self.dao
+            .set(&account_key(login_id), &account_json, self.active_timeout)
+            .await?;
 
-            Ok(())
-        })
-        .await
+        // 同步内存索引（login_id → token 列表），用于并发登录控制快速查询
+        self.add_login_token(login_id, token);
+
+        Ok(())
     }
 
     /// 获取 Token-Session。
@@ -796,43 +830,52 @@ impl BulwarkSession {
         login_id: &str,
         token: &str,
     ) -> BulwarkResult<()> {
-        let now = Utc::now().timestamp();
-        // Account-Session 不存在时返回 Err，强制调用方先确保目标 login_id 已存在
-        //（如通过 `login()` 创建）。
-        let mut account = match self.get_account_session(login_id).await? {
-            Some(acc) => acc,
-            None => {
-                return Err(BulwarkError::InvalidParam(format!(
-                    "session-account-not-found::{}",
-                    login_id
-                )));
-            },
-        };
+        // 修复规则 7 风格冲突（fix-refresh-race-and-test-contracts / spec R-refresh-token-002）：
+        // 与对称方法 `remove_token_from_account_session`（line 858-891）一致，
+        // 用 `with_login_lock` 串行化对同一 login_id 的 AccountSession read-modify-write，
+        // 避免与同一 login_id 的其它写操作（如 login/logout/renew）竞态。
+        let login_id: String = login_id.to_string();
+        self.with_login_lock(&login_id, async {
+            let now = Utc::now().timestamp();
+            // Account-Session 不存在时返回 Err，强制调用方先确保目标 login_id 已存在
+            //（如通过 `login()` 创建）。
+            let mut account = match self.get_account_session(&login_id).await? {
+                Some(acc) => acc,
+                None => {
+                    return Err(BulwarkError::InvalidParam(format!(
+                        "session-account-not-found::{}",
+                        login_id
+                    )));
+                },
+            };
 
-        // 若 token 已存在，仅更新 last_active_at；否则添加
-        if let Some(ti) = account.tokens.iter_mut().find(|t| t.token == token) {
-            ti.last_active_at = now;
-        } else {
-            account.tokens.push(TokenInfo {
-                token: token.to_string(),
-                created_at: now,
-                last_active_at: now,
-            });
-        }
-        account.last_active_at = now;
+            // 若 token 已存在，仅更新 last_active_at；否则添加
+            if let Some(ti) = account.tokens.iter_mut().find(|t| t.token == token) {
+                ti.last_active_at = now;
+            } else {
+                account.tokens.push(TokenInfo {
+                    token: token.to_string(),
+                    created_at: now,
+                    last_active_at: now,
+                });
+            }
+            account.last_active_at = now;
 
-        let json = serde_json::to_string(&account)
-            .map_err(|e| BulwarkError::Session(format!("session-sim-account-serialize::{}", e)))?;
-        self.dao
-            .set(&account_key(login_id), &json, self.active_timeout)
-            .await?;
+            let json = serde_json::to_string(&account).map_err(|e| {
+                BulwarkError::Session(format!("session-sim-account-serialize::{}", e))
+            })?;
+            self.dao
+                .set(&account_key(&login_id), &json, self.active_timeout)
+                .await?;
 
-        // H1 修复：同步内存 login_token_map（与 create_inner 行为一致）。
-        // 否则 `list_devices(target)` 通过 `get_tokens_by_login_id` 读内存索引会漏掉该 token，
-        // 与 `ensure_token_in_account_session` 的语义不一致。
-        self.add_login_token(login_id, token);
+            // H1 修复：同步内存 login_token_map（与 create_inner 行为一致）。
+            // 否则 `list_devices(target)` 通过 `get_tokens_by_login_id` 读内存索引会漏掉该 token，
+            // 与 `ensure_token_in_account_session` 的语义不一致。
+            self.add_login_token(&login_id, token);
 
-        Ok(())
+            Ok(())
+        })
+        .await
     }
 
     /// 从指定 login_id 的 Account-Session 中移除 token（H1 修复）。
@@ -1219,7 +1262,17 @@ impl BulwarkSession {
     /// logout 内部实现（不获取 per-login_id 锁）。
     ///
     /// 供 `logout`（获取锁后调用）和 `kickout_by_device`（已持有锁）复用，避免死锁。
-    async fn logout_inner(&self, token: &str, ts: &TokenSession) -> BulwarkResult<()> {
+    ///
+    /// # pub(crate) 可见性说明
+    /// 暴露给 `stp::session::AuthLogicDefault::enforce_max_login_count` 使用，
+    /// 在 `with_login_lock` 已持锁状态下调用 `logout_inner`（不重入锁），避免死锁
+    /// （fix-refresh-race-and-test-contracts / T015）。
+    ///
+    /// # 调用契约
+    /// **调用方必须已持有 `with_login_lock(login_id)` 锁**，否则会破坏 Account-Session
+    /// read-modify-write 序列的原子性。`logout` 方法已内部封装了获取锁 + 调用本方法的流程，
+    /// 外部调用方应优先使用 `logout`，仅在已持锁场景下使用本方法。
+    pub(crate) async fn logout_inner(&self, token: &str, ts: &TokenSession) -> BulwarkResult<()> {
         // 删除 Token-Session
         self.dao.delete(&token_key(token)).await?;
 
@@ -2298,5 +2351,98 @@ mod tests {
         // 验证 session 仍然存在
         let ts = session.get_token_session("T1").await.unwrap();
         assert!(ts.is_some(), "touch 并发后 session 应仍然存在");
+    }
+
+    // ----------------------------------------------------------------
+    // with_token_session_lock：entry 清理逻辑（安全审查 MEDIUM 修复验证）
+    // ----------------------------------------------------------------
+
+    /// `with_token_session_lock` 完成后清理无等待者的 entry（CWE-770 防护）。
+    ///
+    /// 安全审查 MEDIUM 修复验证：调用 `with_token_session_lock` 后，
+    /// `token_session_locks` 不应残留无引用 entry（防止攻击者用大量随机 token 灌满）。
+    #[tokio::test]
+    async fn with_token_session_lock_cleans_entry_after_completion() {
+        let (_dao, session) = make_session(3600, 86400);
+        assert!(
+            session.token_session_locks.is_empty(),
+            "调用前 token_session_locks 应为空"
+        );
+        // 调用 with_token_session_lock 执行任意操作
+        let _ = session
+            .with_token_session_lock("test-token-cleanup", async { 42 })
+            .await;
+        assert!(
+            session.token_session_locks.is_empty(),
+            "调用后 token_session_locks 应清理为空（无等待者）"
+        );
+    }
+
+    /// `with_token_session_lock` 并发调用完成后清理所有 entry。
+    ///
+    /// 验证：多个不同 token 的并发调用完成后，所有 entry 都应被清理。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn with_token_session_lock_cleans_all_entries_after_concurrent_calls() {
+        let (_dao, session) = make_session(3600, 86400);
+        let session = Arc::new(session);
+        assert!(
+            session.token_session_locks.is_empty(),
+            "并发调用前 token_session_locks 应为空"
+        );
+
+        let mut handles = Vec::new();
+        for i in 0..10 {
+            let s = session.clone();
+            handles.push(tokio::spawn(async move {
+                let token = format!("concurrent-token-{}", i);
+                s.with_token_session_lock(&token, async { i }).await
+            }));
+        }
+        for h in handles {
+            h.await.unwrap();
+        }
+
+        assert!(
+            session.token_session_locks.is_empty(),
+            "并发调用全部完成后 token_session_locks 应清理为空，实际残留 {} 个 entry",
+            session.token_session_locks.len()
+        );
+    }
+
+    /// `with_token_session_lock` 持锁期间 entry 不被清理（有等待者）。
+    ///
+    /// 验证：当一个 task 持锁时，另一个 task 等待锁期间 entry 不应被清理
+    ///（strong_count == 2，remove_if 不移除）。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn with_token_session_lock_keeps_entry_while_contended() {
+        let (_dao, session) = make_session(3600, 86400);
+        let session = Arc::new(session);
+
+        let barrier = Arc::new(tokio::sync::Barrier::new(2));
+        let b1 = barrier.clone();
+        let s1 = session.clone();
+        let h1 = tokio::spawn(async move {
+            s1.with_token_session_lock("contended-token", async move {
+                b1.wait().await;
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            })
+            .await
+        });
+
+        let b2 = barrier.clone();
+        let s2 = session.clone();
+        let h2 = tokio::spawn(async move {
+            b2.wait().await;
+            s2.with_token_session_lock("contended-token", async { 42 })
+                .await
+        });
+
+        h1.await.unwrap();
+        h2.await.unwrap();
+
+        assert!(
+            session.token_session_locks.is_empty(),
+            "两个 task 都完成后 token_session_locks 应清理为空"
+        );
     }
 }

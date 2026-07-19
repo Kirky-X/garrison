@@ -270,6 +270,55 @@ pub trait BulwarkDao: Send + Sync {
         }
     }
 
+    /// 原子递减计数器（与 [`incr`](Self::incr) 对称）。
+    ///
+    /// 将 key 的值递减 1。语义：
+    /// - key 不存在或已过期：返回 0（不报错，不创建 key）
+    /// - 当前值为 0：返回 0（不递减为负）
+    /// - 当前值 > 0：递减 1；递减后值为 0 时删除 key（与 `SmsRateLimiter::decrement_counter` 语义一致）；
+    ///   递减后值 > 0 时保留原 TTL（不重置窗口）
+    ///
+    /// 用于 SMS 限速计数器回滚（`SmsRateLimiter::decrement_counter`）等场景，
+    /// 消除 `get → parse → update/delete` 三步组合的 TOCTOU 竞态。
+    ///
+    /// # 参数
+    /// - `key`: 计数器键。
+    ///
+    /// # 返回
+    /// - `Ok(new_value)`: 递减后的新值（key 不存在/已过期/值为 0 时返回 0）。
+    ///
+    /// # 默认实现（返回 NotImplemented）
+    /// 默认实现返回 `BulwarkError::NotImplemented`（M2 修复，与
+    /// `compare_and_update_if_greater` 对齐，消除 TOCTOU 竞态）：
+    /// 原默认实现为 `get → parse → update/delete` 三步操作，存在 TOCTOU 竞态，
+    /// 并发调用同一 key 时多个调用可能基于同一过时 get 值计算新值并覆盖写入，
+    /// 导致"跨越式递减"（实际递减量大于 1）。`SmsRateLimiter::decrement_counter`
+    /// 的 flaky test（`concurrent_send_does_not_exceed_limit`）即由此引发。
+    /// 此方法用于 SMS 限速等安全敏感场景，必须由后端用原子 decr 实现。
+    ///
+    /// # 已重写的实现
+    /// - `MockDao`：`parking_lot::Mutex` 保护，进程内原子
+    /// - `BulwarkDaoOxcache`：`atomic_lock` 保护，进程内原子
+    /// - `AloneCache`：委托内部 dao（M1 修复，与 `compare_and_update_if_greater` 对称）
+    ///
+    /// # 生产实现警告
+    ///
+    /// **生产部署必须重写此方法**，使用后端原子的 DECR / Lua 脚本：
+    /// - `BulwarkDaoOxcache`：已重写，用 `atomic_lock` 保护（进程内原子）
+    /// - `MockDao`：已重写，用 `parking_lot::Mutex` 保护（进程内原子）
+    /// - `AloneCache`：已重写，委托内部 dao（M1 修复）
+    /// - Redis 后端：应重写为 `DECR` 原子命令（值为 0 时额外 `DEL`）
+    /// - dbnexus 后端：应重写为 SQL `UPDATE ... WHERE ... RETURNING` 语句
+    ///
+    /// 使用默认实现（如 `MinimalDao`）会返回 `NotImplemented` 错误，
+    /// 强制调用方显式选择支持原子 decr 的后端，避免静默引入 TOCTOU 竞态。
+    async fn decr(&self, _key: &str) -> BulwarkResult<u64> {
+        Err(BulwarkError::NotImplemented(format!(
+            "decr 未实现：{} 后端不支持原子 decr（SMS 限速计数器回滚必须重写）",
+            std::any::type_name::<Self>()
+        )))
+    }
+
     /// 原子地比较并更新（仅当新值大于当前值时）。
     ///
     /// 读取当前值（解析为 u64），若 `new_value > current_value` 则更新为 `new_value` 并返回 true；
@@ -856,6 +905,62 @@ mod oxcache_impl {
                     Ok(1)
                 },
             }
+        }
+
+        /// decr 用 `atomic_lock` 保护原子性（进程内原子，与 `incr` 对称）。
+        ///
+        /// 在单个 lock() 作用域内完成 get → parse → set_with_ttl_sync/delete_sync，
+        /// 消除 `SmsRateLimiter::decrement_counter` 的 TOCTOU 竞态。
+        /// 语义（与 trait 默认实现 + `MockDao::decr` 一致）：
+        /// - key 不存在或已过期：返回 0（不创建 key）
+        /// - cur_val == 0：返回 0（不递减为负，不删除 key）
+        /// - cur_val > 0：递减 1；new_val == 0 时 `delete_sync` 删除 key；
+        ///   new_val > 0 时用 `ttl_sync` 读取剩余 TTL 并 `set_with_ttl_sync` 保留（不重置窗口）
+        ///
+        /// 修复 `concurrent_send_does_not_exceed_limit` flaky test（fix-refresh-race-and-test-contracts）：
+        /// 原 `SmsRateLimiter::decrement_counter` 用 `dao.get → parse → dao.update/delete`
+        /// 三步组合，跨越 await 间隙允许其他 task 的 `incr` 插入，导致 update 基于过时 get 值
+        /// 覆盖 incr 结果，产生"跨越式递减"（实际递减量大于 1）。
+        async fn decr(&self, key: &str) -> BulwarkResult<u64> {
+            let _guard = self.atomic_lock.lock();
+            let actual_key = prefixed_key(key);
+            let v = match self
+                .cache
+                .get_sync(&actual_key)
+                .map_err(|e| BulwarkError::Dao(format!("dao-oxcache-get-sync::{}", e)))?
+            {
+                Some(v) => v,
+                None => return Ok(0),
+            };
+            // Rule 12：parse 失败必须显式报错（与 incr 一致，禁止静默返回 0）
+            let cur_val: u64 = v.parse().map_err(|_| {
+                BulwarkError::Dao(format!(
+                    "decr: 现存值非 u64，key={}, value={}",
+                    actual_key, v
+                ))
+            })?;
+            if cur_val == 0 {
+                return Ok(0);
+            }
+            let new_val = cur_val - 1;
+            if new_val == 0 {
+                // 递减到 0：删除 key（与 trait 默认实现 + MockDao::decr 一致）
+                self.cache
+                    .delete_sync(&actual_key)
+                    .map_err(|e| BulwarkError::Dao(format!("dao-oxcache-delete-sync::{}", e)))?;
+            } else {
+                // 保留原 TTL（不重置窗口）：用 ttl_sync 读取剩余 TTL
+                let remaining_ttl = self
+                    .cache
+                    .ttl_sync(&actual_key)
+                    .map_err(|e| BulwarkError::Dao(format!("dao-oxcache-ttl-sync::{}", e)))?;
+                self.cache
+                    .set_with_ttl_sync(&actual_key, &new_val.to_string(), remaining_ttl)
+                    .map_err(|e| {
+                        BulwarkError::Dao(format!("dao-oxcache-set-with-ttl-sync::{}", e))
+                    })?;
+            }
+            Ok(new_val)
         }
 
         /// compare_and_update_if_greater 用 `atomic_lock` 保护原子性（进程内原子）。
@@ -1903,6 +2008,133 @@ pub mod tests {
     }
 
     // ========================================================================
+    // decr 并发原子性测试（fix-refresh-race-and-test-contracts / T011-T012）
+    // ========================================================================
+
+    /// 验证 MockDao::decr 并发原子性：10 个 task 并发 decr 同一 key（初始值 5），
+    /// 恰好 5 次 decr 实际生效（5→4→3→2→1→0）+ 5 次返回 0（key 已删除）。
+    ///
+    /// 返回值分类：
+    /// - 4 个返回非 0（4,3,2,1）：归入 effective
+    /// - 1 个返回 0（1→0，new_val==0 删除 key）：归入 zero_count（返回值无法区分"递减到 0"与"key 不存在"）
+    /// - 5 个返回 0（key 已删除）：归入 zero_count
+    ///
+    /// 修复前：`SmsRateLimiter::decrement_counter` 用 `dao.get → parse → dao.update/delete`
+    /// 三步组合，跨越 await 间隙允许其他 task 的 `incr` 插入，导致 update 基于过时 get 值
+    /// 覆盖 incr 结果，产生"跨越式递减"（实际递减量大于 1）。
+    ///
+    /// 修复后：MockDao::decr 在单次 `parking_lot::Mutex` lock 作用域内完成 get→parse→update/delete，
+    /// 消除 TOCTOU 竞态。10 个并发 task decr 同一 key（初始值 5），恰好 5 次 decr 生效（4 个返回非 0 + 1 个返回 0）+ 5 次返回 0。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn mock_decr_concurrent_only_5_effective() {
+        let dao = Arc::new(MockDao::new());
+        dao.set("counter", "5", 3600).await.unwrap();
+
+        let mut handles = Vec::new();
+        for _ in 0..10 {
+            let d = dao.clone();
+            handles.push(tokio::spawn(async move { d.decr("counter").await }));
+        }
+
+        let mut effective = 0;
+        let mut zero_count = 0;
+        for handle in handles {
+            let result = handle.await.unwrap();
+            match result {
+                Ok(0) => zero_count += 1,
+                Ok(_) => effective += 1,
+                Err(e) => panic!("decr 不应返回错误: {:?}", e),
+            }
+        }
+
+        // 5 次 decr 生效：4 次返回非 0（4,3,2,1）+ 1 次返回 0（1→0 删除 key）
+        assert_eq!(
+            effective, 4,
+            "4 次 decr 返回非 0（5→4→3→2→1），实际 {} 个",
+            effective
+        );
+        // 6 次返回 0：1 次（1→0）+ 5 次（key 已删除）
+        assert_eq!(
+            zero_count, 6,
+            "6 次 decr 返回 0（1 次 1→0 + 5 次 key 不存在），实际 {} 个",
+            zero_count
+        );
+
+        // 计数器最终应为 0（已被删除）
+        let final_val = dao.get("counter").await.unwrap();
+        assert!(
+            final_val.is_none(),
+            "decr 到 0 后 key 应被删除，实际存在: {:?}",
+            final_val
+        );
+    }
+
+    /// 验证 MockDao::decr 单线程基本语义（覆盖率补充）。
+    ///
+    /// 语义（与 trait 默认实现 + incr 对称）：
+    /// - key 不存在或已过期：返回 0（不创建 key）
+    /// - cur_val == 0：返回 0（不递减为负，不删除 key）
+    /// - cur_val > 0：递减 1；new_val == 0 时删除 key；new_val > 0 时保留原 TTL
+    #[tokio::test]
+    async fn mock_decr_basic_semantics() {
+        let dao = MockDao::new();
+
+        // key 不存在 → 返回 0（不创建 key）
+        assert_eq!(dao.decr("missing").await.unwrap(), 0);
+        assert!(
+            dao.get("missing").await.unwrap().is_none(),
+            "decr 不存在的 key 不应创建 key"
+        );
+
+        // 设置初始值 3，递减 3 → 2 → 1 → 0
+        dao.set("counter", "3", 3600).await.unwrap();
+        assert_eq!(dao.decr("counter").await.unwrap(), 2);
+        assert_eq!(dao.decr("counter").await.unwrap(), 1);
+        assert_eq!(dao.decr("counter").await.unwrap(), 0);
+
+        // 从 1 decr 到 0 时（new_val == 0）应删除 key（与默认实现一致）
+        assert!(
+            dao.get("counter").await.unwrap().is_none(),
+            "从 1 decr 到 0 应删除 key（new_val == 0 分支）"
+        );
+
+        // key 已删除后 decr 返回 0（key 不存在分支）
+        assert_eq!(dao.decr("counter").await.unwrap(), 0);
+
+        // 单独验证 cur_val == 0 分支：直接 set "0"（绕过 decr 的删除逻辑）
+        dao.set("zero_counter", "0", 3600).await.unwrap();
+        assert_eq!(
+            dao.decr("zero_counter").await.unwrap(),
+            0,
+            "cur_val == 0 时返回 0（不递减为负）"
+        );
+        assert_eq!(
+            dao.get("zero_counter").await.unwrap(),
+            Some("0".to_string()),
+            "cur_val == 0 时 decr 不删除 key（提前返回，不进入 new_val == 0 分支）"
+        );
+    }
+
+    /// 验证 MockDao::decr 非数字值返回 Dao 错误（Rule 12：禁止静默吞掉 parse 失败）。
+    #[tokio::test]
+    async fn mock_decr_non_numeric_value_returns_error() {
+        let dao = MockDao::new();
+        dao.set("bad_counter", "not_a_number", 3600).await.unwrap();
+        let result = dao.decr("bad_counter").await;
+        assert!(result.is_err(), "非数字值应返回 Dao 错误");
+        match result.err().unwrap() {
+            BulwarkError::Dao(msg) => {
+                assert!(
+                    msg.contains("dao-decr-parse-u64"),
+                    "错误消息应含 dao-decr-parse-u64，实际: {}",
+                    msg
+                );
+            },
+            other => panic!("期望 BulwarkError::Dao，实际: {:?}", other),
+        }
+    }
+
+    // ========================================================================
     // 覆盖率补充：BulwarkDao trait 默认方法测试
     // ========================================================================
 
@@ -2047,6 +2279,53 @@ pub mod tests {
             matches!(result, Err(BulwarkError::NotImplemented(ref msg)) if msg.contains("insert_social_binding")),
             "insert_social_binding 默认实现应返回 NotImplemented，实际: {:?}",
             result
+        );
+    }
+
+    /// `compare_and_update_if_greater` 默认实现返回 `NotImplemented`（M2 修复）。
+    ///
+    /// 默认实现原为 get → parse → compare → set 四步操作，存在 TOCTOU 竞态。
+    /// M2 修复：改为返回 `NotImplemented`（fail-closed），强制后端重写以使用原子 CAS。
+    /// 此测试验证 MinimalDao（不重写任何默认方法）调用时返回 NotImplemented。
+    #[tokio::test]
+    async fn default_compare_and_update_if_greater_returns_not_implemented() {
+        let dao = MinimalDao::new();
+        let result = dao.compare_and_update_if_greater("key", 1, 60).await;
+        assert!(
+            matches!(result, Err(BulwarkError::NotImplemented(ref msg)) if msg.contains("compare_and_update_if_greater")),
+            "compare_and_update_if_greater 默认实现应返回 NotImplemented，实际: {:?}",
+            result
+        );
+    }
+
+    /// `decr` 默认实现返回 `NotImplemented`（M2 修复）。
+    ///
+    /// 默认实现原为 get → parse → update/delete 三步组合，存在 TOCTOU 竞态：
+    /// 并发调用同一 key 时多个调用可能基于同一过时 get 值计算新值并覆盖写入，
+    /// 导致"跨越式递减"（实际递减量大于 1）。`SmsRateLimiter::decrement_counter`
+    /// 的 flaky test（`concurrent_send_does_not_exceed_limit`）即由此引发。
+    /// M2 修复：改为返回 `NotImplemented`（fail-closed），与
+    /// `compare_and_update_if_greater` 对齐，强制后端重写以使用原子 decr。
+    ///
+    /// 此测试验证 MinimalDao（不重写任何默认方法）调用 decr 时返回 NotImplemented。
+    #[tokio::test]
+    async fn default_decr_returns_not_implemented() {
+        let dao = MinimalDao::new();
+        // 即使 key 存在（get 会返回 Some），decr 默认实现也直接返回 NotImplemented，
+        // 不进入 get → parse → update/delete 路径，避免静默引入 TOCTOU 竞态
+        dao.set("counter", "5", 60).await.unwrap();
+        let result = dao.decr("counter").await;
+        assert!(
+            matches!(result, Err(BulwarkError::NotImplemented(ref msg)) if msg.contains("decr") && msg.contains("原子 decr")),
+            "decr 默认实现应返回 NotImplemented（含 '原子 decr' 提示），实际: {:?}",
+            result
+        );
+        // 验证 key 未被修改（默认实现完全 short-circuit，不执行任何 DAO 操作）
+        let after = dao.get("counter").await.unwrap();
+        assert_eq!(
+            after.as_deref(),
+            Some("5"),
+            "decr 默认实现 short-circuit 后 key 不应被修改"
         );
     }
 
