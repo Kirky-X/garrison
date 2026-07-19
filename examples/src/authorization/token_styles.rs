@@ -53,7 +53,7 @@ pub fn run() -> BulwarkResult<()> {
     // ----------------------------------------------------------------
     // 3. Simple 风格：`<login_id>-<uuid>`，可解析 login_id
     // ----------------------------------------------------------------
-    let simple_style = SimpleTokenStyle;
+    let simple_style = SimpleTokenStyle::new("simple-demo-secret".to_string());
     let token = simple_style.generate("2002", 3600)?;
     println!("[3] SimpleTokenStyle:");
     println!("    token = {}", token);

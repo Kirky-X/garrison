@@ -163,8 +163,9 @@ impl RecordingRequestBuilder {
         let duration_ms = start.elapsed().as_millis();
 
         // 序列化 JSONL 行
+        // T064: ts 使用 to_rfc3339_opts(Millis, true) 显式输出毫秒精度（R-http-logging-001）
         let jsonl = serde_json::json!({
-            "ts": chrono::Utc::now().to_rfc3339(),
+            "ts": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
             "test_name": test_name,
             "method": method,
             "url": url,

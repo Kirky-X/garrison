@@ -61,9 +61,8 @@ async fn test_api_errors_invalid_token() {
             .unwrap_or_else(|e| panic!("check-login 请求失败 (token={:?}): {}", token, e));
 
         let status = resp.status();
-        let body: serde_json::Value = resp
-            .json()
-            .await
+        let body_text = resp.text().await.unwrap_or_default();
+        let body: serde_json::Value = serde_json::from_str(&body_text)
             .unwrap_or_else(|e| panic!("check-login 响应非 JSON (token={:?}): {}", token, e));
 
         // 断言：200 + 拒绝语义（data=false 或 error_code 存在），或 4xx/5xx
@@ -78,6 +77,34 @@ async fn test_api_errors_invalid_token() {
                 status
             );
         }
+
+        // T060: SQL 关键字泄漏断言（R-e2e-error-edge-001）
+        // 确保响应体不含 sql/syntax/mysql/sqlite 关键字（防止数据库错误信息泄漏）
+        let body_lower = body_text.to_lowercase();
+        assert!(
+            !body_lower.contains("sql"),
+            "响应体泄漏 SQL 关键字 (token={:?}): {}",
+            token,
+            body_text
+        );
+        assert!(
+            !body_lower.contains("syntax"),
+            "响应体泄漏 syntax 关键字 (token={:?}): {}",
+            token,
+            body_text
+        );
+        assert!(
+            !body_lower.contains("mysql"),
+            "响应体泄漏 mysql 关键字 (token={:?}): {}",
+            token,
+            body_text
+        );
+        assert!(
+            !body_lower.contains("sqlite"),
+            "响应体泄漏 sqlite 关键字 (token={:?}): {}",
+            token,
+            body_text
+        );
     }
 }
 

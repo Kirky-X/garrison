@@ -413,6 +413,26 @@ async fn main() -> BulwarkResult<()> {
 - **文档**：所有 public API 必须有 `///` 文档注释
 - **测试串行化**：修改全局 `BulwarkManager` 单例的测试需标注 `#[serial_test::serial]`
 
+### 测试
+
+Bulwark 提供三层测试体系：单元测试（1463+ 个）+ 集成测试 + E2E 测试（API 矩阵 / 性能基线 / 渗透测试）。
+
+```bash
+# 单元测试 + 集成测试
+cargo test --features full
+
+# E2E 测试（含 API 矩阵 + 渗透测试，不含 #[ignore] 性能测试）
+cargo test --test e2e --features "full testing" -- --nocapture
+
+# 性能基线测试（#[ignore] 默认不跑，需显式触发）
+cargo test --test e2e --features "full testing" -- --ignored perf_ --test-threads=1 --nocapture
+
+# 一键执行 E2E + 性能 + 渗透 + 生成综合报告
+bash scripts/e2e_run.sh
+```
+
+E2E 测试覆盖 API 接口矩阵（happy/errors/boundary/authz_boundary）、性能基线（P99<200ms/1000RPS）、渗透测试（7 类攻击 × N payload），所有 HTTP 交互通过 `RecordingClient` 抓包到 `logs/e2e_http.jsonl`，最终由 `scripts/e2e_analyze.py` 聚合生成 `logs/e2e_final_report.md`。详细说明详见 [E2E / 性能 / 渗透测试](./docs/DEVELOPMENT.md#e2e--性能--渗透测试)。
+
 ---
 
 ## 🗺 路线图

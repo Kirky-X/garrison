@@ -38,9 +38,12 @@ pub mod api_happy;
 pub mod auth_flow;
 pub mod error_scenarios;
 pub mod har_recorder;
+pub mod log_analyzer;
 pub mod middleware;
 pub mod mock;
 pub mod oauth2_flow;
+pub mod pentest;
+pub mod perf;
 pub mod permission_flow;
 pub mod remote;
 pub mod session_flow;
@@ -351,4 +354,79 @@ pub fn assert_check_login_denied(body: &serde_json::Value, context: &str) {
         context,
         body
     );
+}
+
+/// 初始化全局 BulwarkManager（`is_concurrent=false` 配置），返回 BackendEmbedded。
+///
+/// 与 `setup_backend()` 唯一差异：`config.is_concurrent = false`，使同账号新登录
+/// 踢出旧会话（`ReplacedLoginExitMode::OldDevice` 默认行为）。
+///
+/// 供 `pentest::session_hijack::pentest_session_hijack_concurrent_login_disabled` 使用
+/// （T046 需要验证 `is_concurrent=false` 时同账号多设备登录互踢）。
+/// `RemoteContext::spawn_child()` 走 `serve()` + `default_config()` 无法自定义此字段，
+/// 故提供 in-process 变体（spec 已预判此偏差）。
+pub async fn setup_backend_no_concurrent() -> BackendEmbedded {
+    BulwarkManager::reset_for_test();
+    let dao = make_dao().await;
+    let mut config = BulwarkConfig::default_config();
+    config.timeout = 3600;
+    config.active_timeout = -1;
+    config.throw_on_not_login = false;
+    config.is_concurrent = false;
+    let interface: Arc<dyn BulwarkInterface> = Arc::new(MockInterface);
+    BulwarkManager::init(dao, Arc::new(config), interface).unwrap();
+    BackendEmbedded::new()
+}
+
+/// 随机端口启动 E2E 测试服务器（`is_concurrent=false` 配置）。
+///
+/// 与 `start_e2e_server()` 行为一致，唯一差异：调用 `setup_backend_no_concurrent()`
+/// 构造 `is_concurrent=false` 的全局 BulwarkManager，使同账号多设备登录互踢。
+/// 供 T046 会话劫持测试使用。
+pub async fn start_e2e_server_no_concurrent(
+    rate_limit: u32,
+    api_key: &str,
+) -> (String, String, tokio::task::JoinHandle<()>) {
+    let backend: Arc<dyn AuthBackend> = Arc::new(setup_backend_no_concurrent().await);
+
+    let external_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let internal_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let external_port = external_listener.local_addr().unwrap().port();
+    let internal_port = internal_listener.local_addr().unwrap().port();
+
+    let external_url = format!("http://127.0.0.1:{}", external_port);
+    let internal_url = format!("http://127.0.0.1:{}", internal_port);
+
+    #[cfg(feature = "tenant-isolation")]
+    let server = BulwarkAuthServer::new(backend)
+        .with_external_port(external_port)
+        .with_internal_port(internal_port)
+        .with_rate_limit(rate_limit)
+        .with_internal_api_key(api_key)
+        .with_tenant_resolver(Some(Arc::new(HeaderTenantResolver)));
+    #[cfg(not(feature = "tenant-isolation"))]
+    let server = BulwarkAuthServer::new(backend)
+        .with_external_port(external_port)
+        .with_internal_port(internal_port)
+        .with_rate_limit(rate_limit)
+        .with_internal_api_key(api_key);
+
+    let external_router = server.external_router();
+    let internal_router = server.internal_router();
+
+    let handle = tokio::spawn(async move {
+        let (ext_res, int_res) = tokio::join!(
+            axum::serve(external_listener, external_router),
+            axum::serve(internal_listener, internal_router)
+        );
+        if let Err(e) = ext_res {
+            eprintln!("E2E no_concurrent 外网服务器异常: {}", e);
+        }
+        if let Err(e) = int_res {
+            eprintln!("E2E no_concurrent 内网服务器异常: {}", e);
+        }
+    });
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    (external_url, internal_url, handle)
 }

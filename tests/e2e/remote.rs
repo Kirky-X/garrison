@@ -123,7 +123,7 @@ impl RemoteContext {
         let (tx, rx) = mpsc::channel::<String>();
         std::thread::spawn(move || {
             let reader = BufReader::new(stderr);
-            for line in reader.lines().flatten() {
+            for line in reader.lines().map_while(Result::ok) {
                 if tx.send(line).is_err() {
                     break;
                 }

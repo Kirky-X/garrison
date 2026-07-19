@@ -16,7 +16,7 @@
 //! ```
 
 use bulwark::error::BulwarkError;
-use bulwark::protocol::oauth2::oidc::OidcHandler;
+use bulwark::protocol::oauth2::oidc::{OidcAudience, OidcHandler};
 
 /// 运行 OIDC 处理器示例。
 ///
@@ -50,7 +50,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("[校验] 校验成功，提取 claims:");
     println!("    iss     = {}", claims.iss);
     println!("    sub     = {}", claims.sub);
-    println!("    aud     = {}", claims.aud);
+    println!("    aud     = {:?}", claims.aud);
     println!("    login_id = {}", claims.login_id);
     println!("    nonce   = {}", claims.nonce);
     println!("    iat     = {}", claims.iat);
@@ -58,7 +58,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(claims.login_id, login_id);
     assert_eq!(claims.nonce, nonce);
     assert_eq!(claims.iss, "https://auth.example.com");
-    assert_eq!(claims.aud, "my-client-id");
+    assert_eq!(claims.aud, OidcAudience::Single("my-client-id".to_string()));
     assert!(claims.exp > claims.iat);
 
     // 4. 生成 OIDC discovery endpoint 元数据

@@ -154,9 +154,22 @@ async fn test_api_boundary_concurrent_refresh_same_token() {
         success_count
     );
 
-    // 其他应返回 4xx（旧 token 已被刷新失效）
-    // spec 接受"至少 1 个成功，其他返回 4xx"，但实际可能因竞态有多个成功
-    // 这里只断言"至少 1 个成功"，不强求其他必须是 4xx（竞态条件可能允许多次成功）
+    // T061: 补强 4xx 断言（R-e2e-error-edge-005）
+    // spec 要求：其他请求返回 4xx（401/409 之一），无 5xx，无 panic
+    // 注意：若实现存在竞态允许多个成功，此断言可能失败（揭示实现 bug）
+    let failed: Vec<_> = statuses.iter().filter(|r| r.status() != 200).collect();
+    assert!(
+        !failed.is_empty(),
+        "并发 refresh 至少 1 个应失败（旧 token 已被刷新失效），实际全部成功（可能存在竞态 bug）"
+    );
+    for f in &failed {
+        let s = f.status();
+        assert!(
+            s.is_client_error(),
+            "失败请求必须为 4xx（401/409），实际 status={}",
+            s
+        );
+    }
 }
 
 /// T027: 连续 refresh 50 次，断言全部 200，每次新 token 有效。

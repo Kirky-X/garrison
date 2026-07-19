@@ -22,6 +22,7 @@
 - [6. Git 工作流](#6-git-工作流)
 - [7. 调试技巧](#7-调试技巧)
 - [8. 常用命令清单](#8-常用命令清单)
+- [E2E / 性能 / 渗透测试](#e2e--性能--渗透测试)
 
 ---
 
@@ -493,3 +494,172 @@ cargo doc --no-deps --features full --open
 | `development` | 开发推荐组合（cache-memory + db-sqlite + web-axum） |
 
 > 常见问题排查详见 [troubleshooting.md](./TROUBLESHOOTING.md)。
+
+---
+
+## E2E / 性能 / 渗透测试
+
+Bulwark 在 `tests/e2e/` 下提供完整的端到端（E2E）测试矩阵，覆盖 API 接口测试、性能基线测试、渗透测试三大维度。所有 E2E 测试基于 `RecordingClient` 抓包 + `RemoteContext` 远程模式 + in-process 模式双轨架构，可重复、可观测、可分析。
+
+### 整体架构
+
+```mermaid
+flowchart TD
+    Start["bash scripts/e2e_run.sh"] --> Env["export env (API Key / Port / RateLimit)"]
+    Env --> Spawn["spawn auth_server_serve (background)"]
+    Spawn --> Health["curl health check (30 次重试)"]
+    Health -->|OK| E2E["cargo test --test e2e (in-process + remote + 4 类 API)"]
+    Health -->|Fail| Exit["exit 1"]
+    E2E --> Perf["cargo test --test e2e -- --ignored perf_"]
+    Perf --> Pentest["cargo test --test e2e pentest::"]
+    Pentest --> Analyze["python3 scripts/e2e_analyze.py"]
+    Analyze --> Report["logs/e2e_final_report.md"]
+    Report --> Done["✅ 全部完成"]
+```
+
+### 一键执行：`scripts/e2e_run.sh`
+
+`scripts/e2e_run.sh` 是 E2E 测试入口，自动完成：启动 `auth_server_serve` 后台进程 → 等待 health check 就绪 → 依次执行 E2E / 性能 / 渗透测试 → 聚合生成 Markdown 综合报告。
+
+```bash
+# 默认配置一键执行
+bash scripts/e2e_run.sh
+
+# 或自定义 env 覆盖默认值
+EXAMPLE_INTERNAL_API_KEY=my-key \
+BULWARK_EXTERNAL_PORT=9090 \
+BULWARK_INTERNAL_PORT=9091 \
+BULWARK_RATE_LIMIT=100000 \
+bash scripts/e2e_run.sh
+```
+
+> 脚本通过 `set -euo pipefail` 严格模式执行，任何子步骤失败都会立即退出并返回非 0 退出码。`trap cleanup EXIT INT TERM` 在退出时杀掉后台 `auth_server_serve` 进程，避免残留僵尸进程。
+
+### 环境变量
+
+| 变量名 | 默认值 | 说明 |
+|--------|--------|------|
+| `EXAMPLE_INTERNAL_API_KEY` | `e2e-test-key-12345` | 内网 API Key（必须设置，否则 `serve()` fail-closed 退出） |
+| `BULWARK_EXTERNAL_PORT` | `8080` | 外网端口（登录 / 刷新 / 登出端点） |
+| `BULWARK_INTERNAL_PORT` | `8081` | 内网端口（check-login / check-permission / check-role 端点，需 `x-api-key`） |
+| `BULWARK_RATE_LIMIT` | `100000` | 限速阈值（性能测试需 RPS≥1000/5000，必须远高于默认 100） |
+
+> 远程模式（CI 已运行 server 时）使用 `BULWARK_E2E_EXTERNAL_URL` / `BULWARK_E2E_INTERNAL_URL` / `BULWARK_E2E_API_KEY` 三个 env 直连，跳过 `spawn_child` 步骤。
+
+### 输出文件（`logs/`）
+
+| 文件 | 格式 | 写入者 | 内容 |
+|------|------|--------|------|
+| `logs/e2e_http.jsonl` | JSONL（每行 1 个 JSON） | `RecordingClient::send()` | 所有 HTTP 交互（请求/响应/耗时） |
+| `logs/perf.jsonl` | JSONL（每行 1 个 LoadReport） | `perf.rs::append_perf_report` | 性能基线测试报告（P50/P95/P99/RPS） |
+| `logs/pentest_report.json` | JSONL（每行 1 个 PentestFinding） | `pentest::write_finding` | 渗透测试发现（攻击类型/payload/严重级别） |
+| `logs/e2e_summary.json` | JSON | `log_analyzer::analyze_http_log` | HTTP 交互统计聚合（状态码分布/百分位/异常列表） |
+| `logs/e2e_final_report.md` | Markdown | `scripts/e2e_analyze.py` | 综合报告（4 节：HTTP 统计 / 性能基线 / 渗透矩阵 / 异常列表） |
+
+### 性能基线测试（`tests/e2e/perf.rs`）
+
+性能测试使用自实现的 `LoadRunner`（约 100 行 Rust，无外部依赖），覆盖 3 个端点：
+
+| 测试名 | Endpoint | 基线 P99 | 基线 RPS | 基线错误率 | 默认 ignore |
+|--------|----------|---------|---------|-----------|------------|
+| `perf_login_p99_under_200ms_1000rps` | `/api/v1/auth/login` | < 200ms | ≥ 1000 | < 0.1% | `#[ignore]` |
+| `perf_check_login_p99_under_50ms_5000rps` | `/api/v1/auth/check-login` | < 50ms | ≥ 5000 | < 0.1% | `#[ignore]` |
+| `perf_check_permission_p99_under_50ms_5000rps` | `/api/v1/auth/check-permission` | < 50ms | ≥ 5000 | < 0.1% | `#[ignore]` |
+
+#### 触发性能测试
+
+性能测试默认 `#[ignore]`（避免拖慢常规 CI），需显式 `--ignored` 触发：
+
+```bash
+# 单独跑性能测试（建议 release 模式）
+cargo test --test e2e --features "full testing" --release -- --ignored perf_ --test-threads=1 --nocapture
+
+# 或通过 e2e_run.sh 一键执行（debug 模式可能不达标，仅记录数据）
+bash scripts/e2e_run.sh
+```
+
+> **Debug vs Release 差异**：debug 模式下 P99/RPS 可能不达标（审计日志同步 stderr 写入 + 无优化 + 子进程开销）。性能基线建议在 `--release` 模式下验证。spec 已预判此偏差：性能测试失败时记录实际数值并分析瓶颈，但不阻塞任务完成。
+
+### 渗透测试 7 类覆盖（`tests/e2e/pentest/`）
+
+渗透测试覆盖 OWASP Top 10 主要攻击向量，7 类攻击 × N payload 矩阵：
+
+| 攻击类型 | 子模块 | Payload 数 | 说明 |
+|---------|--------|-----------|------|
+| SQL 注入 | `sql_injection.rs` | 8 | 布尔盲注 / 报错注入 / 数据破坏 / 命令执行 / 时间盲注 |
+| XSS 跨站脚本 | `xss.rs` | 10 | `<script>` / onerror / onload / `javascript:` 伪协议 / `data:` URI |
+| CSRF 跨站请求伪造 | `csrf.rs` | 2 | Origin/Referer 校验（API 模式天然免疫 Cookie CSRF） |
+| 认证绕过 | `auth_bypass.rs` | 10 | 空值 / `"null"` / `"admin"` / JWT alg:none / Bearer 混淆 |
+| 权限提升 | `privilege_escalation.rs` | 2 | 跨租户隔离 + 越权访问（`admin:*`） |
+| 会话劫持 | `session_hijack.rs` | 1 | 并发登录互踢（`is_concurrent=false`） |
+| 暴力破解 | `brute_force.rs` | 13 | 100 次同 login_id 锁定 + 100 字典 login_id 攻击 |
+
+每条攻击 payload 执行后调用 `pentest::write_finding` 记录 finding（含 `attack_type` / `payload` / `endpoint` / `status` / `bypassed` / `severity` / `recommendation`），即使断言通过（未发现漏洞）也写入 `logs/pentest_report.json` 便于事后审计与回归基线对比。
+
+#### 触发渗透测试
+
+```bash
+# 单独跑渗透测试
+cargo test --test e2e --features "full testing" pentest:: -- --nocapture --test-threads=1
+```
+
+### E2E 测试矩阵（`tests/e2e/api_*.rs`）
+
+API 接口测试覆盖 4 类边界：
+
+| 类别 | 文件 | 测试数 | 覆盖场景 |
+|------|------|--------|---------|
+| Happy path | `api_happy.rs` | 5 | login/logout/refresh/check-permission/check-role/switch-to/kickout |
+| Errors | `api_errors.rs` | 3 | 8 种无效 token + 6 种坏 body + oversized field |
+| Boundary | `api_boundary.rs` | 3 | login_id 长度边界 + 并发 refresh + 50 次 refresh 链 |
+| Authz boundary | `api_authz_boundary.rs` | 7 | 401 / kickout / 跨租户 / refresh 后旧 token / 角色不足 / disabled token / 匿名 token |
+
+### 日志分析与报告生成
+
+#### Rust 端：`tests/e2e/log_analyzer.rs`
+
+`analyze_http_log(input, output)` 逐行读取 `logs/e2e_http.jsonl`，聚合统计后写入 `logs/e2e_summary.json`：
+
+```rust
+pub fn analyze_http_log(input: &Path, output: &Path) -> std::io::Result<Summary>
+```
+
+`Summary` 字段：`total` / `status_distribution` / `avg_latency_ms` / `p95_latency_ms` / `p99_latency_ms` / `failed_requests` / `oversized_responses`。
+
+#### Python 端：`scripts/e2e_analyze.py`
+
+```bash
+# 默认扫描 logs/ 目录
+python3 scripts/e2e_analyze.py
+
+# 自定义日志目录
+python3 scripts/e2e_analyze.py --log-dir /path/to/logs
+```
+
+生成 `logs/e2e_final_report.md` 含 4 节：
+
+1. **HTTP 交互统计**：总请求数 / 状态码分布 / P50/P95/P99 / 平均延迟
+2. **性能基线对照表**：实际 P99/RPS/错误率 vs 目标基线，✅ 达标 / ❌ 不达标标记
+3. **渗透测试矩阵**：7 类攻击 × N payload 表格 + 详细 finding 列表（payload / endpoint / status / bypassed / severity / snippet）
+4. **异常请求列表**：5xx 请求 / 超时请求（≥5s）/ 响应体 >4KB 警告
+
+### 手动触发各类测试
+
+```bash
+# 1. 全量 E2E 测试（含 in-process + remote + 4 类 API + 渗透，不含 #[ignore] 性能）
+cargo test --test e2e --features "full testing" -- --nocapture
+
+# 2. 仅运行 log_analyzer 单元测试
+cargo test --test e2e --features "full testing" log_analyzer:: -- --nocapture
+
+# 3. 仅运行性能测试（#[ignore]）
+cargo test --test e2e --features "full testing" -- --ignored perf_ --test-threads=1 --nocapture
+
+# 4. 仅运行渗透测试
+cargo test --test e2e --features "full testing" pentest:: -- --nocapture --test-threads=1
+
+# 5. 仅生成 Markdown 综合报告（不跑测试，基于已有 logs/）
+python3 scripts/e2e_analyze.py --log-dir logs
+```
+
+> 更多 specmark 变更说明详见 `specmark/changes/e2e-pentest-observability/`。

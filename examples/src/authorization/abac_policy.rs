@@ -62,7 +62,7 @@ pub async fn run() -> BulwarkResult<()> {
     println!("=== Bulwark ABAC 策略示例 ===\n");
 
     // 1. 创建 AbacEngine
-    let engine = AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader))?;
+    let engine = AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader)).await?;
     println!("[1] AbacEngine 创建成功（schema: User / Resource / access 动作）\n");
 
     // 2. 临时策略求值：when { 1 == 1 } → Allow

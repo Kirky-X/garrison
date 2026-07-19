@@ -181,6 +181,25 @@ async fn test_authz_boundary_expired_token_after_refresh() {
     let body: serde_json::Value = resp.json().await.expect("login 响应非 JSON");
     let token1 = body["data"].as_str().expect("应有 token").to_string();
 
+    // T063: refresh 前 token1 check-login 应返回 data=true（R-e2e-authz-boundary-005）
+    let resp = client
+        .post(format!("{}/api/v1/auth/check-login", ctx.internal_url))
+        .header("x-api-key", &ctx.api_key)
+        .json(&json!({ "token": token1 }))
+        .send()
+        .await
+        .expect("refresh 前 check-login 请求失败");
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .expect("refresh 前 check-login 响应非 JSON");
+    assert_eq!(
+        body["data"], true,
+        "refresh 前 token1 check-login 应返回 data=true，body={:?}",
+        body
+    );
+
     // refresh(token1) → token2
     let resp = client
         .post(format!("{}/api/v1/auth/refresh", ctx.external_url))
@@ -190,7 +209,7 @@ async fn test_authz_boundary_expired_token_after_refresh() {
         .expect("refresh 请求失败");
     assert_eq!(resp.status(), 200);
     let body: serde_json::Value = resp.json().await.expect("refresh 响应非 JSON");
-    let _token2 = body["data"]
+    let token2 = body["data"]
         .as_str()
         .expect("refresh 应返回新 token")
         .to_string();
@@ -206,6 +225,25 @@ async fn test_authz_boundary_expired_token_after_refresh() {
     assert_eq!(resp.status(), 200);
     let body: serde_json::Value = resp.json().await.expect("check-login 响应非 JSON");
     assert_check_login_denied(&body, "refresh 后旧 token 应失效");
+
+    // T063: refresh 后 token2 check-login 应返回 data=true（R-e2e-authz-boundary-005）
+    let resp = client
+        .post(format!("{}/api/v1/auth/check-login", ctx.internal_url))
+        .header("x-api-key", &ctx.api_key)
+        .json(&json!({ "token": token2 }))
+        .send()
+        .await
+        .expect("refresh 后 token2 check-login 请求失败");
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .expect("refresh 后 token2 check-login 响应非 JSON");
+    assert_eq!(
+        body["data"], true,
+        "refresh 后 token2 check-login 应返回 data=true，body={:?}",
+        body
+    );
 }
 
 /// T030c: 角色不足拒绝。
@@ -336,6 +374,10 @@ async fn test_authz_boundary_disabled_token_rejected() {
 /// 测试用不存在 token（等价于匿名/未授权 token）调用 check-permission
 /// permission="admin:*"，断言 200 with error_code 或 403——等价于"匿名 token
 /// 越权访问受保护资源被拒绝"的安全语义。
+///
+/// T062: 按 spec R-e2e-authz-boundary-008 验收标准，测试需 `#[cfg(feature = "anonymous-session")]` 门控。
+/// `anonymous-session` 已在 `full` feature 中聚合（见 Cargo.toml），故 `--features full` 时本测试正常运行。
+#[cfg(feature = "anonymous-session")]
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn test_authz_boundary_anonymous_token_cannot_access_protected() {
