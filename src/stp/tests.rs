@@ -1463,7 +1463,6 @@ async fn revoke_token_destroys_session() {
 }
 
 /// revoke_token 注入 listener_manager 后广播 RevokeToken 事件
-/// 。
 #[tokio::test]
 async fn revoke_token_with_listener_manager_broadcasts_event() {
     let logic = make_logic(3600, 86400, false, "uuid", true, true);

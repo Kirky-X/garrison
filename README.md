@@ -1,6 +1,6 @@
 <!-- markdownlint-disable MD041 -->
 <p align="center">
-  <img src="https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=A%20modern%20minimalist%20shield%20logo%20for%20Bulwark%20authentication%20framework%2C%20geometric%20fortress%20wall%20motif%2C%20deep%20blue%20and%20steel%20gradient%2C%20flat%20design%2C%20white%20background%2C%20centered%20composition&image_size=square_hd" alt="Bulwark Logo" width="160" />
+  <img src="./docs/assets/logo.png" alt="Bulwark Logo" width="160" />
 </p>
 
 <h1 align="center">Bulwark</h1>

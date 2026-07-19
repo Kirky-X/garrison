@@ -139,7 +139,6 @@ pub trait SessionLogic: BulwarkCore {
     async fn kickout_by_token(&self, token: &str) -> BulwarkResult<()>;
 
     /// 主动吊销 token：销毁指定 token 的会话并广播 `RevokeToken` 事件
-    /// 。
     ///
     /// 与 [`logout`](Self::logout) 的区别：`logout` 从 task_local 读取当前 token
     /// （用户主动登出语义）；`revoke_token` 接收显式 token 参数（管理员/系统吊销语义）。
@@ -2420,7 +2419,6 @@ mod tests {
             dao.insert_direct("role:cache:2002", r#"["admin"]"#);
             dao.insert_direct("user:cache:2002", r#""user-info""#);
 
-            // 调用 logout_by_login_id
             logic
                 .logout_by_login_id("2002")
                 .await

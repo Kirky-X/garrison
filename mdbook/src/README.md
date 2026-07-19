@@ -1,3 +1,8 @@
+<!-- markdownlint-disable MD041 -->
+<p align="center">
+  <img src="./assets/logo.png" alt="Bulwark Logo" width="160" />
+</p>
+
 # Bulwark 简介
 
 Bulwark 是一个面向 Rust 生态的身份认证鉴权框架，目标是提供开箱即用的认证、授权、会话与协议层能力。

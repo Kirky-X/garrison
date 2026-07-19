@@ -280,7 +280,6 @@ fn apikey_info_serializes_with_namespace() {
 }
 
 /// R-001: 旧 JSON（无 namespace 字段）反序列化时 namespace = "default"
-/// 。
 #[test]
 fn apikey_info_old_json_deserializes_with_default_namespace() {
     // 旧格式 JSON：无 namespace 字段（v0.4.1 及之前生成的 key）
@@ -294,7 +293,6 @@ fn apikey_info_old_json_deserializes_with_default_namespace() {
 }
 
 /// R-002: generate_with_namespace 用新格式 `bulwark:apikey:<namespace>:<key>` 存储
-/// 。
 #[tokio::test]
 #[serial_test::serial]
 async fn generate_with_namespace_stores_new_format_key() {
@@ -348,7 +346,6 @@ async fn verify_compatible_with_old_key_format() {
 }
 
 /// R-003: list_by_namespace 返回指定 namespace 下未吊销的 ApiKeyInfo
-/// 。
 #[tokio::test]
 #[serial_test::serial]
 async fn list_by_namespace_returns_only_matching_namespace() {
@@ -379,7 +376,6 @@ async fn list_by_namespace_returns_only_matching_namespace() {
 }
 
 /// R-003: list_by_namespace 过滤已吊销的 key
-/// 。
 #[tokio::test]
 #[serial_test::serial]
 async fn list_by_namespace_filters_revoked_keys() {
@@ -401,7 +397,6 @@ async fn list_by_namespace_filters_revoked_keys() {
 }
 
 /// R-004: namespace 隔离——verify_with_namespace 严格匹配 namespace
-/// 。
 #[tokio::test]
 #[serial_test::serial]
 async fn verify_with_namespace_enforces_isolation() {
@@ -429,7 +424,6 @@ async fn verify_with_namespace_enforces_isolation() {
 }
 
 /// R-004: 普通 verify（不带 namespace）能找到任意 namespace 下的 key
-/// 。
 #[tokio::test]
 #[serial_test::serial]
 async fn verify_without_namespace_scans_all_namespaces() {
@@ -445,7 +439,6 @@ async fn verify_without_namespace_scans_all_namespaces() {
 }
 
 /// Constraints: namespace 验证——空字符串、过长、非法字符都应返回 InvalidParam
-/// 。
 #[tokio::test]
 async fn generate_with_namespace_validates_namespace() {
     let handler = make_handler();

@@ -180,7 +180,6 @@ impl BulwarkError {
     /// 返回 HTTP 响应分片 `(status_code, error_code, message, exception_code)`。
     ///
     /// 框架无关方法，axum / actix-web / warp 适配器均复用此方法以保证三框架行为一致性
-    /// 。
     ///
     /// # 返回
     /// - `status_code`: HTTP 状态码（401/403/500/502/400/501）。

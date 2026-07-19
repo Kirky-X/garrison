@@ -403,14 +403,12 @@ fn parse_digest_params(s: &str) -> Vec<(String, String)> {
     let mut chars = s.chars().peekable();
 
     while chars.peek().is_some() {
-        // 跳过空白与逗号分隔符
         while matches!(chars.peek(), Some(c) if c.is_whitespace() || *c == ',') {
             chars.next();
         }
         if chars.peek().is_none() {
             break;
         }
-        // 读取 key
         let mut key = String::new();
         while let Some(c) = chars.peek() {
             if c.is_whitespace() || *c == '=' {
@@ -418,23 +416,19 @@ fn parse_digest_params(s: &str) -> Vec<(String, String)> {
             }
             key.push(chars.next().unwrap());
         }
-        // 跳过空白
         while matches!(chars.peek(), Some(c) if c.is_whitespace()) {
             chars.next();
         }
-        // 期望 '='
         if chars.peek() != Some(&'=') {
             break;
         }
-        chars.next(); // 消费 '='
-                      // 跳过空白
+        chars.next();
         while matches!(chars.peek(), Some(c) if c.is_whitespace()) {
             chars.next();
         }
-        // 读取 value（带引号或不带引号）
         let mut value = String::new();
         if chars.peek() == Some(&'"') {
-            chars.next(); // 消费开引号
+            chars.next();
             while let Some(c) = chars.next() {
                 if c == '"' {
                     break;

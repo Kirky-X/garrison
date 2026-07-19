@@ -71,7 +71,6 @@ pub trait BulwarkDao: Send + Sync {
 
     /// 存储永久键（无 TTL）。
     ///
-    /// 。
     ///
     /// # 参数
     /// - `key`: 存储键。
@@ -86,7 +85,6 @@ pub trait BulwarkDao: Send + Sync {
 
     /// 查询键的剩余 TTL。
     ///
-    /// 。
     ///
     /// # 参数
     /// - `key`: 存储键。
@@ -132,7 +130,6 @@ pub trait BulwarkDao: Send + Sync {
 
     /// 按 glob pattern 扫描 key。
     ///
-    /// 。
     ///
     /// # 参数
     /// - `pattern`: glob 模式，支持 `*`（任意字符序列）与 `?`（单字符）。
@@ -167,7 +164,6 @@ pub trait BulwarkDao: Send + Sync {
 
     /// 重命名 key。
     ///
-    /// 。
     ///
     /// # 参数
     /// - `old_key`: 原 key（必须已存在）。

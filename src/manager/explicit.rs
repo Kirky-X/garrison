@@ -404,7 +404,6 @@ mod tests {
     #[serial]
     async fn manager_drop_does_not_affect_global_singleton() {
         BulwarkManager::reset_for_test();
-        // 初始化全局单例
         let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
         let config = Arc::new(make_config());
         let interface: Arc<dyn BulwarkInterface> = Arc::new(MockInterface::new());

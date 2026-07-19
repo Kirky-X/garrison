@@ -481,7 +481,6 @@ impl BulwarkDao for MockDao {
 /// 使用经典双指针算法（O(n+m) 时间复杂度）。
 ///
 /// 改为 `pub(crate)` 以供 `protocol::apikey` 模块的 `list_by_namespace` 复用
-/// 。
 pub(crate) fn glob_match(pattern: &str, text: &str) -> bool {
     let pattern: Vec<char> = pattern.chars().collect();
     let text: Vec<char> = text.chars().collect();

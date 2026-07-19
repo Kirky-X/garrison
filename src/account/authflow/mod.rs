@@ -78,7 +78,6 @@ pub enum AuthStep {
 }
 
 /// 认证条件 enum，用于 `AuthStep::Conditional` 的条件判断
-/// 。
 #[derive(Debug, Clone)]
 pub enum AuthCondition {
     /// 用户已注册特定凭证类型（参数为 credential_type）。

@@ -452,7 +452,6 @@ async fn broadcast_kickout_event() {
 // ========================================================================
 
 /// LoginFailure 事件携带 login_id 与 reason，派生 Debug/Clone/PartialEq
-/// 。
 #[test]
 #[serial]
 fn login_failure_event_carries_login_id_and_reason() {
@@ -477,7 +476,6 @@ fn login_failure_event_carries_login_id_and_reason() {
 }
 
 /// TokenRefresh 事件携带 login_id/old_token/new_token，派生 Debug/Clone/PartialEq
-/// 。
 #[test]
 #[serial]
 fn token_refresh_event_carries_tokens() {
@@ -507,7 +505,6 @@ fn token_refresh_event_carries_tokens() {
 }
 
 /// RevokeToken 事件携带 token，派生 Debug/Clone/PartialEq
-/// 。
 #[test]
 #[serial]
 fn revoke_token_event_carries_token() {
@@ -528,7 +525,6 @@ fn revoke_token_event_carries_token() {
 }
 
 /// SessionTimeout 事件携带 login_id/token，派生 Debug/Clone/PartialEq
-/// 。
 #[test]
 #[serial]
 fn session_timeout_event_carries_login_id_and_token() {
@@ -553,7 +549,6 @@ fn session_timeout_event_carries_login_id_and_token() {
 }
 
 /// AccountLocked 事件携带 login_id/reason，派生 Debug/Clone/PartialEq
-/// 。
 #[test]
 #[serial]
 fn account_locked_event_carries_login_id_and_reason() {
@@ -578,7 +573,6 @@ fn account_locked_event_carries_login_id_and_reason() {
 }
 
 /// FirewallBlock 事件携带 login_id/reason，派生 Debug/Clone/PartialEq
-/// 。
 #[test]
 #[serial]
 fn firewall_block_event_carries_login_id_and_reason() {
@@ -603,7 +597,6 @@ fn firewall_block_event_carries_login_id_and_reason() {
 }
 
 /// TokenRotate 事件携带 old_key/new_key，派生 Debug/Clone/PartialEq
-/// 。
 #[test]
 #[serial]
 fn token_rotate_event_carries_keys() {
@@ -628,7 +621,6 @@ fn token_rotate_event_carries_keys() {
 }
 
 /// TempCredentialConsumed 事件携带 key/value，派生 Debug/Clone/PartialEq
-/// 。
 #[test]
 #[serial]
 fn temp_credential_consumed_event_carries_key_and_value() {
