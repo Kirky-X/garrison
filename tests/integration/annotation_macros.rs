@@ -94,13 +94,22 @@ async fn mfa_handler() -> &'static str {
 /// ABAC 策略校验 handler（v0.7.x 新增，依据 spec annotation-macros R-anno-005）。
 /// 纯 ABAC 校验，不依赖 RBAC 权限表。
 /// resource 显式注入。
-#[check_abac(action = "access", resource = "Resource::\"default\"", abac = "1 == 1")]
+/// 表达式须通过 `validate_abac_expr`（含 principal/resource/action 之一，拒绝纯字面量）。
+#[check_abac(
+    action = "access",
+    resource = "Resource::\"default\"",
+    abac = "principal == principal"
+)]
 async fn abac_allow_handler() -> &'static str {
     "abac_ok"
 }
 
-/// ABAC 策略校验 handler（deny 场景，1 == 2 恒 false）。
-#[check_abac(action = "access", resource = "Resource::\"default\"", abac = "1 == 2")]
+/// ABAC 策略校验 handler（deny 场景，principal != principal 恒 false）。
+#[check_abac(
+    action = "access",
+    resource = "Resource::\"default\"",
+    abac = "principal != principal"
+)]
 async fn abac_deny_handler() -> &'static str {
     "abac_deny"
 }

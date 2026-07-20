@@ -94,12 +94,18 @@ impl SensitiveDataMasker {
     /// 遍历规则列表，找到第一个 field 名匹配的规则，按其 MaskType 脱敏。
     /// 无匹配规则时返回原值。
     ///
+    /// # 错误处理
+    ///
+    /// `mask_value` 始终返回 `String`（fail-closed 设计：Custom regex 无效时
+    /// 返回 `"***"` 而非错误）。因此本方法不会失败，保持 `String` 返回类型，
+    /// 不破坏外部调用方（如 `src/listener/audit.rs`）。
+    ///
     /// # 参数
     /// - `field`: 字段名。
     /// - `value`: 待脱敏的字符串。
     ///
     /// # 返回
-    /// 脱敏后的字符串。无匹配规则或非字符串类型时返回原值。
+    /// 脱敏后的字符串。无匹配规则时返回原值；Custom regex 无效时返回 `"***"`。
     pub fn mask_field(&self, field: &str, value: &str) -> String {
         match self.rules.iter().find(|(_, name)| *name == field) {
             Some((mask_type, _)) => self.mask_value(value, mask_type),
@@ -111,6 +117,11 @@ impl SensitiveDataMasker {
     ///
     /// 遍历 Object 字段，匹配规则中的 field 名后调用 `mask_value` 脱敏。
     /// 嵌套 Object 与数组中的 Object 均递归处理；非 Object 类型返回原值。
+    ///
+    /// # 错误处理
+    ///
+    /// `mask_value` 始终返回 `String`（fail-closed 设计：Custom regex 无效时
+    /// 返回 `"***"` 而非错误），因此本方法不会失败。
     ///
     /// # 参数
     /// - `value`: 待脱敏的 JSON Value。
@@ -534,5 +545,104 @@ mod tests {
                 "email": "a***@example.com"
             })
         );
+    }
+
+    // ========================================================================
+    // D6 测试：Custom 正则脱敏（regex feature）
+    // ========================================================================
+
+    /// D6-1: Custom 用 regex 替换 SSN 每个数字为 `***`。
+    /// "123-45-6789" → "*********-******-************"（每个数字替换为 `***`）。
+    #[test]
+    fn mask_custom_regex_replaces_digits_with_star() {
+        let masker = SensitiveDataMasker::new();
+        let result = masker.mask_value("123-45-6789", &MaskType::Custom(r"\d".to_string()));
+        assert_eq!(result, "*********-******-************");
+    }
+
+    /// D6-2: Custom 用 regex 替换 email 本地部分为 `***`。
+    /// `replace_all` 用 `***` 替换整个匹配（`^[^@]+` 匹配 "alice" → "***"）。
+    #[test]
+    fn mask_custom_regex_replaces_email_local_part() {
+        let masker = SensitiveDataMasker::new();
+        // 替换 @ 之前的所有字符为 `***`（整个匹配替换为 `***`）
+        let result = masker.mask_value(
+            "alice@example.com",
+            &MaskType::Custom(r"^[^@]+".to_string()),
+        );
+        assert_eq!(result, "***@example.com");
+    }
+
+    /// D6-3: Custom regex 不匹配时返回原值。
+    #[test]
+    fn mask_custom_regex_no_match_returns_original() {
+        let masker = SensitiveDataMasker::new();
+        let result = masker.mask_value("no-digits-here", &MaskType::Custom(r"\d".to_string()));
+        assert_eq!(result, "no-digits-here");
+    }
+
+    /// D6-4: Custom regex 空输入返回空字符串。
+    #[test]
+    fn mask_custom_regex_empty_input_returns_empty() {
+        let masker = SensitiveDataMasker::new();
+        let result = masker.mask_value("", &MaskType::Custom(r"\d".to_string()));
+        assert_eq!(result, "");
+    }
+
+    /// D6-5: Custom regex 空 pattern 在每个位置匹配。
+    /// 空 pattern 匹配每个字符间的位置，每个空匹配替换为 `***`。
+    /// "anything" 8 字符 → 9 个空位置 → "***a***n***y***t***h***i***n***g***"。
+    #[test]
+    fn mask_custom_regex_empty_pattern_returns_original() {
+        let masker = SensitiveDataMasker::new();
+        let result = masker.mask_value("anything", &MaskType::Custom("".to_string()));
+        assert_eq!(result, "***a***n***y***t***h***i***n***g***");
+    }
+
+    /// D6-6: Custom regex 无效 pattern 返回 `"***"` 作为安全 fallback。
+    /// 无效正则 `[` 不能编译，返回 `"***"`（fail-closed，避免泄露原值）+ error 日志。
+    #[test]
+    fn mask_custom_regex_invalid_pattern_returns_safe_fallback() {
+        let masker = SensitiveDataMasker::new();
+        let result = masker.mask_value("test", &MaskType::Custom(r"[".to_string()));
+        assert_eq!(result, "***");
+    }
+
+    /// D6-7: Custom regex 多处匹配全部替换。
+    /// "a1b2c3d4" → "a***b***c***d***"（每个数字替换为 `***`）。
+    #[test]
+    fn mask_custom_regex_replaces_all_matches() {
+        let masker = SensitiveDataMasker::new();
+        let result = masker.mask_value("a1b2c3d4", &MaskType::Custom(r"\d".to_string()));
+        assert_eq!(result, "a***b***c***d***");
+    }
+
+    /// D6-8: Custom regex 银行卡部分脱敏（所有数字替换为 `***`）。
+    /// "6222021234567890" → 16 位数字 → 48 个 `*`（每个数字替换为 `***`）。
+    #[test]
+    fn mask_custom_regex_bank_card_partial_mask() {
+        let masker = SensitiveDataMasker::new();
+        let result = masker.mask_value("6222021234567890", &MaskType::Custom(r"\d".to_string()));
+        assert_eq!(result, "*".repeat(48));
+    }
+
+    /// D6-10: mask_field Custom regex 错误时返回 `"***"`（fail-closed）。
+    /// 验证 `mask_field` 在 regex 无效时不 panic，不返回原值，返回安全 fallback。
+    #[test]
+    fn mask_field_custom_regex_error_returns_safe_fallback() {
+        let masker = SensitiveDataMasker::new().with_rule(MaskType::Custom("[".to_string()), "ssn");
+        // 无效 regex pattern，mask_field 应返回 "***"（fail-closed，不泄露原值）
+        let result = masker.mask_field("ssn", "123-45-6789");
+        assert_eq!(result, "***");
+    }
+
+    /// D6-11: mask_field Custom regex 正常工作时正确脱敏。
+    /// 验证 `mask_field` 在 regex 有效时通过 `mask_value` 脱敏。
+    #[test]
+    fn mask_field_custom_regex_valid_masks_correctly() {
+        let masker =
+            SensitiveDataMasker::new().with_rule(MaskType::Custom(r"\d".to_string()), "ssn");
+        let result = masker.mask_field("ssn", "123-45-6789");
+        assert_eq!(result, "*********-******-************");
     }
 }
