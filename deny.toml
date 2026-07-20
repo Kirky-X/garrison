@@ -28,7 +28,9 @@ ignore = [
 allow = [
     "MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception",
     "BSD-3-Clause", "BSD-2-Clause", "ISC",
-    "Unicode-3.0", "Unicode-DFS-2016",
+    "Unicode-3.0",
+    # Unicode-DFS-2016 已被 Unicode-3.0 替代，当前无依赖使用此许可证
+    # 若未来依赖升级后报 unlicensed，到时再加回来
     "Zlib", "CC0-1.0", "MPL-2.0",
     # limiteron non-optional 后，oxcache/core 透传引入：
     "BSL-1.0",                # xxhash-rust (via redis → oxcache/core)，OSI/FSF 认可

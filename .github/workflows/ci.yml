@@ -196,7 +196,8 @@ jobs:
       - name: Install cargo-audit
         uses: taiki-e/install-action@fd96cca080ea3d289441acc37c5a9b205082ddf7 # cargo-audit
       - name: Run cargo audit
-        run: cargo audit --ignore-source
+        # cargo-audit 0.22.2 无 --ignore-source 参数（该参数已移除）
+        run: cargo audit
 
   # === cargo-deny（许可证 / 漏洞 / 禁用源 / 重复依赖） ===
   # cargo-deny 需要 Cargo.lock；action v2.1.1 会自动生成
@@ -224,7 +225,11 @@ jobs:
         with:
           shared-key: ci-full-deps
       - name: Integration tests (full features)
-        run: cargo test --features "full" --test '*' --no-fail-fast
+        # 用 --tests 而非 --test '*'：--test '*' 会显式展开所有 [[test]] target，
+        # 遇到 required-features 不满足的（如 db_mysql_testcontainers 需要 db-mysql）会报错。
+        # --tests 自动跳过 required-features 不满足的 test target。
+        # db_mysql_testcontainers 需要 Docker + testcontainers 拉 MySQL 镜像，本地手动跑。
+        run: cargo test --features "full" --tests --no-fail-fast
 
   # === 覆盖率（仅 Linux） ===
   coverage:

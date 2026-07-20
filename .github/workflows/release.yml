@@ -84,7 +84,10 @@ jobs:
       - name: Lib tests
         run: cargo test --features full --lib
       - name: E2E tests
-        run: cargo test --features full --test '*' --no-fail-fast
+        # 用 --tests 而非 --test '*'：--test '*' 会显式展开所有 [[test]] target，
+        # 遇到 required-features 不满足的（如 db_mysql_testcontainers 需要 db-mysql）会报错。
+        # --tests 自动跳过 required-features 不满足的 test target。
+        run: cargo test --features full --tests --no-fail-fast
 
   security-check:
     name: Security Check (audit + deny)
@@ -98,7 +101,8 @@ jobs:
       - name: Install cargo-audit
         uses: taiki-e/install-action@fd96cca080ea3d289441acc37c5a9b205082ddf7 # cargo-audit
       - name: Run cargo audit
-        run: cargo audit --ignore-source
+        # cargo-audit 0.22.2 无 --ignore-source 参数（该参数已移除）
+        run: cargo audit
       - name: Cargo deny check (license/advisory/ban)
         uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:
