@@ -25,14 +25,11 @@ impl UserExtRepository for DbnexusUserExtRepository {
         user_id: &str,
     ) -> BulwarkResult<Vec<UserExtRow>> {
         let session = self.pool.get_session("admin").await.map_err(|e| {
-            BulwarkError::Dao(format!(
-                "app_user_ext find_by_user_id 获取 session 失败: {}",
-                e
-            ))
+            BulwarkError::Dao(format!("dao-app-user-ext-find-by-user-id-session::{}", e))
         })?;
         let conn = session.connection().map_err(|e| {
             BulwarkError::Dao(format!(
-                "app_user_ext find_by_user_id 获取 connection 失败: {}",
+                "dao-app-user-ext-find-by-user-id-connection::{}",
                 e
             ))
         })?;
@@ -53,13 +50,13 @@ impl UserExtRepository for DbnexusUserExtRepository {
     ) -> BulwarkResult<Option<UserExtRow>> {
         let session = self.pool.get_session("admin").await.map_err(|e| {
             BulwarkError::Dao(format!(
-                "app_user_ext find_by_user_and_key 获取 session 失败: {}",
+                "dao-app-user-ext-find-by-user-and-key-session::{}",
                 e
             ))
         })?;
         let conn = session.connection().map_err(|e| {
             BulwarkError::Dao(format!(
-                "app_user_ext find_by_user_and_key 获取 connection 失败: {}",
+                "dao-app-user-ext-find-by-user-and-key-connection::{}",
                 e
             ))
         })?;

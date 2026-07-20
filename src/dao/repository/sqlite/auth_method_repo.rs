@@ -21,16 +21,10 @@ impl DbnexusAuthMethodRepository {
 impl AuthMethodRepository for DbnexusAuthMethodRepository {
     async fn find_by_id(&self, tenant_id: i64, id: &str) -> BulwarkResult<Option<AuthMethodRow>> {
         let session = self.pool.get_session("admin").await.map_err(|e| {
-            BulwarkError::Dao(format!(
-                "app_auth_method find_by_id 获取 session 失败: {}",
-                e
-            ))
+            BulwarkError::Dao(format!("dao-app-auth-method-find-by-id-session::{}", e))
         })?;
         let conn = session.connection().map_err(|e| {
-            BulwarkError::Dao(format!(
-                "app_auth_method find_by_id 获取 connection 失败: {}",
-                e
-            ))
+            BulwarkError::Dao(format!("dao-app-auth-method-find-by-id-connection::{}", e))
         })?;
         let sql = "SELECT id, user_id, method_type, external_id, metadata, create_time, tenant_id \
                    FROM app_auth_method WHERE tenant_id = ? AND id = ?";
@@ -48,13 +42,13 @@ impl AuthMethodRepository for DbnexusAuthMethodRepository {
     ) -> BulwarkResult<Vec<AuthMethodRow>> {
         let session = self.pool.get_session("admin").await.map_err(|e| {
             BulwarkError::Dao(format!(
-                "app_auth_method find_by_user_id 获取 session 失败: {}",
+                "dao-app-auth-method-find-by-user-id-session::{}",
                 e
             ))
         })?;
         let conn = session.connection().map_err(|e| {
             BulwarkError::Dao(format!(
-                "app_auth_method find_by_user_id 获取 connection 失败: {}",
+                "dao-app-auth-method-find-by-user-id-connection::{}",
                 e
             ))
         })?;
@@ -74,10 +68,7 @@ impl AuthMethodRepository for DbnexusAuthMethodRepository {
                 BulwarkError::Dao(format!("dao-app-auth-method-create-session::{}", e))
             })?;
         let conn = session.connection().map_err(|e| {
-            BulwarkError::Dao(format!(
-                "app_auth_method create 获取 connection 失败: {}",
-                e
-            ))
+            BulwarkError::Dao(format!("dao-app-auth-method-create-connection::{}", e))
         })?;
         let sql = "INSERT INTO app_auth_method (id, user_id, method_type, external_id, metadata, tenant_id) \
                    VALUES (?, ?, ?, ?, ?, ?)";
@@ -105,10 +96,7 @@ impl AuthMethodRepository for DbnexusAuthMethodRepository {
                 BulwarkError::Dao(format!("dao-app-auth-method-delete-session::{}", e))
             })?;
         let conn = session.connection().map_err(|e| {
-            BulwarkError::Dao(format!(
-                "app_auth_method delete 获取 connection 失败: {}",
-                e
-            ))
+            BulwarkError::Dao(format!("dao-app-auth-method-delete-connection::{}", e))
         })?;
         let sql = "DELETE FROM app_auth_method WHERE tenant_id = ? AND id = ?";
         let stmt = make_statement(conn, sql, vec![v_i64(tenant_id), v_str(id)]);

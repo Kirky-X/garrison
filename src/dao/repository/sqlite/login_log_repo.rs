@@ -24,10 +24,7 @@ impl LoginLogRepository for DbnexusLoginLogRepository {
             BulwarkError::Dao(format!("dao-app-login-log-find-by-id-session::{}", e))
         })?;
         let conn = session.connection().map_err(|e| {
-            BulwarkError::Dao(format!(
-                "app_login_log find_by_id 获取 connection 失败: {}",
-                e
-            ))
+            BulwarkError::Dao(format!("dao-app-login-log-find-by-id-connection::{}", e))
         })?;
         let sql = "SELECT id, user_id, action, ip, device_id, success, fail_reason, create_time, tenant_id \
                    FROM app_login_log WHERE tenant_id = ? AND id = ?";
@@ -47,14 +44,11 @@ impl LoginLogRepository for DbnexusLoginLogRepository {
         limit: i64,
     ) -> BulwarkResult<Vec<LoginLogRow>> {
         let session = self.pool.get_session("admin").await.map_err(|e| {
-            BulwarkError::Dao(format!(
-                "app_login_log find_by_user_id 获取 session 失败: {}",
-                e
-            ))
+            BulwarkError::Dao(format!("dao-app-login-log-find-by-user-id-session::{}", e))
         })?;
         let conn = session.connection().map_err(|e| {
             BulwarkError::Dao(format!(
-                "app_login_log find_by_user_id 获取 connection 失败: {}",
+                "dao-app-login-log-find-by-user-id-connection::{}",
                 e
             ))
         })?;

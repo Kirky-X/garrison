@@ -25,14 +25,11 @@ impl UserRoleRepository for DbnexusUserRoleRepository {
         user_id: &str,
     ) -> BulwarkResult<Vec<UserRoleRow>> {
         let session = self.pool.get_session("admin").await.map_err(|e| {
-            BulwarkError::Dao(format!(
-                "app_user_role find_by_user_id 获取 session 失败: {}",
-                e
-            ))
+            BulwarkError::Dao(format!("dao-app-user-role-find-by-user-id-session::{}", e))
         })?;
         let conn = session.connection().map_err(|e| {
             BulwarkError::Dao(format!(
-                "app_user_role find_by_user_id 获取 connection 失败: {}",
+                "dao-app-user-role-find-by-user-id-connection::{}",
                 e
             ))
         })?;
@@ -51,14 +48,11 @@ impl UserRoleRepository for DbnexusUserRoleRepository {
         role_id: &str,
     ) -> BulwarkResult<Vec<UserRoleRow>> {
         let session = self.pool.get_session("admin").await.map_err(|e| {
-            BulwarkError::Dao(format!(
-                "app_user_role find_by_role_id 获取 session 失败: {}",
-                e
-            ))
+            BulwarkError::Dao(format!("dao-app-user-role-find-by-role-id-session::{}", e))
         })?;
         let conn = session.connection().map_err(|e| {
             BulwarkError::Dao(format!(
-                "app_user_role find_by_role_id 获取 connection 失败: {}",
+                "dao-app-user-role-find-by-role-id-connection::{}",
                 e
             ))
         })?;

@@ -1,6 +1,8 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
+#![doc(html_root_url = "https://docs.rs/bulwark/latest")]
+
 //! # Bulwark
 //!
 //! Bulwark 是一个面向 Rust 生态的一站式身份认证鉴权框架。

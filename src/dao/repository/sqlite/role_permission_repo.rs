@@ -26,13 +26,13 @@ impl RolePermissionRepository for DbnexusRolePermissionRepository {
     ) -> BulwarkResult<Vec<RolePermissionRow>> {
         let session = self.pool.get_session("admin").await.map_err(|e| {
             BulwarkError::Dao(format!(
-                "app_role_permission find_by_role_id 获取 session 失败: {}",
+                "dao-app-role-permission-find-by-role-id-session::{}",
                 e
             ))
         })?;
         let conn = session.connection().map_err(|e| {
             BulwarkError::Dao(format!(
-                "app_role_permission find_by_role_id 获取 connection 失败: {}",
+                "dao-app-role-permission-find-by-role-id-connection::{}",
                 e
             ))
         })?;
@@ -41,7 +41,7 @@ impl RolePermissionRepository for DbnexusRolePermissionRepository {
         let stmt = make_statement(conn, sql, vec![v_i64(tenant_id), v_str(role_id)]);
         let rows = conn.query_all_raw(stmt).await.map_err(|e| {
             BulwarkError::Dao(format!(
-                "app_role_permission find_by_role_id 查询失败: {}",
+                "dao-app-role-permission-find-by-role-id-query::{}",
                 e
             ))
         })?;
@@ -55,13 +55,13 @@ impl RolePermissionRepository for DbnexusRolePermissionRepository {
     ) -> BulwarkResult<Vec<RolePermissionRow>> {
         let session = self.pool.get_session("admin").await.map_err(|e| {
             BulwarkError::Dao(format!(
-                "app_role_permission find_by_permission_id 获取 session 失败: {}",
+                "dao-app-role-permission-find-by-permission-id-session::{}",
                 e
             ))
         })?;
         let conn = session.connection().map_err(|e| {
             BulwarkError::Dao(format!(
-                "app_role_permission find_by_permission_id 获取 connection 失败: {}",
+                "dao-app-role-permission-find-by-permission-id-connection::{}",
                 e
             ))
         })?;
@@ -70,7 +70,7 @@ impl RolePermissionRepository for DbnexusRolePermissionRepository {
         let stmt = make_statement(conn, sql, vec![v_i64(tenant_id), v_str(permission_id)]);
         let rows = conn.query_all_raw(stmt).await.map_err(|e| {
             BulwarkError::Dao(format!(
-                "app_role_permission find_by_permission_id 查询失败: {}",
+                "dao-app-role-permission-find-by-permission-id-query::{}",
                 e
             ))
         })?;
@@ -84,16 +84,10 @@ impl RolePermissionRepository for DbnexusRolePermissionRepository {
         permission_id: &str,
     ) -> BulwarkResult<()> {
         let session = self.pool.get_session("admin").await.map_err(|e| {
-            BulwarkError::Dao(format!(
-                "app_role_permission assign 获取 session 失败: {}",
-                e
-            ))
+            BulwarkError::Dao(format!("dao-app-role-permission-assign-session::{}", e))
         })?;
         let conn = session.connection().map_err(|e| {
-            BulwarkError::Dao(format!(
-                "app_role_permission assign 获取 connection 失败: {}",
-                e
-            ))
+            BulwarkError::Dao(format!("dao-app-role-permission-assign-connection::{}", e))
         })?;
         let sql = "INSERT INTO app_role_permission (role_id, permission_id, tenant_id) \
                    VALUES (?, ?, ?)";
@@ -115,16 +109,10 @@ impl RolePermissionRepository for DbnexusRolePermissionRepository {
         permission_id: &str,
     ) -> BulwarkResult<()> {
         let session = self.pool.get_session("admin").await.map_err(|e| {
-            BulwarkError::Dao(format!(
-                "app_role_permission revoke 获取 session 失败: {}",
-                e
-            ))
+            BulwarkError::Dao(format!("dao-app-role-permission-revoke-session::{}", e))
         })?;
         let conn = session.connection().map_err(|e| {
-            BulwarkError::Dao(format!(
-                "app_role_permission revoke 获取 connection 失败: {}",
-                e
-            ))
+            BulwarkError::Dao(format!("dao-app-role-permission-revoke-connection::{}", e))
         })?;
         let sql = "DELETE FROM app_role_permission \
                    WHERE tenant_id = ? AND role_id = ? AND permission_id = ?";
@@ -149,10 +137,7 @@ impl RolePermissionRepository for DbnexusRolePermissionRepository {
             BulwarkError::Dao(format!("dao-app-role-permission-list-session::{}", e))
         })?;
         let conn = session.connection().map_err(|e| {
-            BulwarkError::Dao(format!(
-                "app_role_permission list 获取 connection 失败: {}",
-                e
-            ))
+            BulwarkError::Dao(format!("dao-app-role-permission-list-connection::{}", e))
         })?;
         let sql = "SELECT role_id, permission_id, tenant_id \
                    FROM app_role_permission WHERE tenant_id = ? LIMIT ? OFFSET ?";
@@ -177,7 +162,7 @@ fn parse_role_permission_row(row: &QueryResult) -> BulwarkResult<RolePermissionR
         })?,
         permission_id: row.try_get("", "permission_id").map_err(|e| {
             BulwarkError::Dao(format!(
-                "app_role_permission 行解析失败 (permission_id): {}",
+                "dao-app-role-permission-row-parse-permission-id::{}",
                 e
             ))
         })?,

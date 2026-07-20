@@ -28,13 +28,13 @@ impl UserDeviceRepository for DbnexusUserDeviceRepository {
     ) -> BulwarkResult<String> {
         let session = self.pool.get_session("admin").await.map_err(|e| {
             BulwarkError::Dao(format!(
-                "app_user_device register_device 获取 session 失败: {}",
+                "dao-app-user-device-register-device-session::{}",
                 e
             ))
         })?;
         let conn = session.connection().map_err(|e| {
             BulwarkError::Dao(format!(
-                "app_user_device register_device 获取 connection 失败: {}",
+                "dao-app-user-device-register-device-connection::{}",
                 e
             ))
         })?;
@@ -114,14 +114,11 @@ impl UserDeviceRepository for DbnexusUserDeviceRepository {
 
     async fn block_device(&self, device_id: &str) -> BulwarkResult<()> {
         let session = self.pool.get_session("admin").await.map_err(|e| {
-            BulwarkError::Dao(format!(
-                "app_user_device block_device 获取 session 失败: {}",
-                e
-            ))
+            BulwarkError::Dao(format!("dao-app-user-device-block-device-session::{}", e))
         })?;
         let conn = session.connection().map_err(|e| {
             BulwarkError::Dao(format!(
-                "app_user_device block_device 获取 connection 失败: {}",
+                "dao-app-user-device-block-device-connection::{}",
                 e
             ))
         })?;
@@ -135,14 +132,11 @@ impl UserDeviceRepository for DbnexusUserDeviceRepository {
 
     async fn unblock_device(&self, device_id: &str) -> BulwarkResult<()> {
         let session = self.pool.get_session("admin").await.map_err(|e| {
-            BulwarkError::Dao(format!(
-                "app_user_device unblock_device 获取 session 失败: {}",
-                e
-            ))
+            BulwarkError::Dao(format!("dao-app-user-device-unblock-device-session::{}", e))
         })?;
         let conn = session.connection().map_err(|e| {
             BulwarkError::Dao(format!(
-                "app_user_device unblock_device 获取 connection 失败: {}",
+                "dao-app-user-device-unblock-device-connection::{}",
                 e
             ))
         })?;
@@ -214,7 +208,7 @@ fn parse_user_device_row(row: &QueryResult) -> BulwarkResult<UserDeviceRow> {
         })?,
         device_identifier: row.try_get("", "device_identifier").map_err(|e| {
             BulwarkError::Dao(format!(
-                "app_user_device 行解析失败 (device_identifier): {}",
+                "dao-app-user-device-row-parse-device-identifier::{}",
                 e
             ))
         })?,

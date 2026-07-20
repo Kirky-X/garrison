@@ -25,14 +25,11 @@ impl SessionRepository for DbnexusSessionRepository {
         session_id: &str,
     ) -> BulwarkResult<Option<SessionRow>> {
         let session = self.pool.get_session("admin").await.map_err(|e| {
-            BulwarkError::Dao(format!(
-                "app_session find_by_session_id 获取 session 失败: {}",
-                e
-            ))
+            BulwarkError::Dao(format!("dao-app-session-find-by-session-id-session::{}", e))
         })?;
         let conn = session.connection().map_err(|e| {
             BulwarkError::Dao(format!(
-                "app_session find_by_session_id 获取 connection 失败: {}",
+                "dao-app-session-find-by-session-id-connection::{}",
                 e
             ))
         })?;
@@ -53,16 +50,10 @@ impl SessionRepository for DbnexusSessionRepository {
         user_id: &str,
     ) -> BulwarkResult<Vec<SessionRow>> {
         let session = self.pool.get_session("admin").await.map_err(|e| {
-            BulwarkError::Dao(format!(
-                "app_session find_by_user_id 获取 session 失败: {}",
-                e
-            ))
+            BulwarkError::Dao(format!("dao-app-session-find-by-user-id-session::{}", e))
         })?;
         let conn = session.connection().map_err(|e| {
-            BulwarkError::Dao(format!(
-                "app_session find_by_user_id 获取 connection 失败: {}",
-                e
-            ))
+            BulwarkError::Dao(format!("dao-app-session-find-by-user-id-connection::{}", e))
         })?;
         let sql =
             "SELECT session_id, user_id, device_id, ip, user_agent, login_time, last_active, \
@@ -108,14 +99,11 @@ impl SessionRepository for DbnexusSessionRepository {
 
     async fn update_last_active(&self, tenant_id: i64, session_id: &str) -> BulwarkResult<()> {
         let session = self.pool.get_session("admin").await.map_err(|e| {
-            BulwarkError::Dao(format!(
-                "app_session update_last_active 获取 session 失败: {}",
-                e
-            ))
+            BulwarkError::Dao(format!("dao-app-session-update-last-active-session::{}", e))
         })?;
         let conn = session.connection().map_err(|e| {
             BulwarkError::Dao(format!(
-                "app_session update_last_active 获取 connection 失败: {}",
+                "dao-app-session-update-last-active-connection::{}",
                 e
             ))
         })?;

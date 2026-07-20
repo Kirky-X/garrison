@@ -21,16 +21,10 @@ impl DbnexusPermissionRepository {
 impl PermissionRepository for DbnexusPermissionRepository {
     async fn find_by_id(&self, id: &str) -> BulwarkResult<Option<PermissionRow>> {
         let session = self.pool.get_session("admin").await.map_err(|e| {
-            BulwarkError::Dao(format!(
-                "app_permission find_by_id 获取 session 失败: {}",
-                e
-            ))
+            BulwarkError::Dao(format!("dao-app-permission-find-by-id-session::{}", e))
         })?;
         let conn = session.connection().map_err(|e| {
-            BulwarkError::Dao(format!(
-                "app_permission find_by_id 获取 connection 失败: {}",
-                e
-            ))
+            BulwarkError::Dao(format!("dao-app-permission-find-by-id-connection::{}", e))
         })?;
         let sql = "SELECT id, code, name, resource_type, action, created_at, updated_at \
                    FROM app_permission WHERE id = ?";
@@ -43,16 +37,10 @@ impl PermissionRepository for DbnexusPermissionRepository {
 
     async fn find_by_code(&self, code: &str) -> BulwarkResult<Option<PermissionRow>> {
         let session = self.pool.get_session("admin").await.map_err(|e| {
-            BulwarkError::Dao(format!(
-                "app_permission find_by_code 获取 session 失败: {}",
-                e
-            ))
+            BulwarkError::Dao(format!("dao-app-permission-find-by-code-session::{}", e))
         })?;
         let conn = session.connection().map_err(|e| {
-            BulwarkError::Dao(format!(
-                "app_permission find_by_code 获取 connection 失败: {}",
-                e
-            ))
+            BulwarkError::Dao(format!("dao-app-permission-find-by-code-connection::{}", e))
         })?;
         let sql = "SELECT id, code, name, resource_type, action, created_at, updated_at \
                    FROM app_permission WHERE code = ?";

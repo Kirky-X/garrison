@@ -43,16 +43,10 @@ impl UserRepository for DbnexusUserRepository {
         username: &str,
     ) -> BulwarkResult<Option<UserRow>> {
         let session = self.pool.get_session("admin").await.map_err(|e| {
-            BulwarkError::Dao(format!(
-                "app_user find_by_username 获取 session 失败: {}",
-                e
-            ))
+            BulwarkError::Dao(format!("dao-app-user-find-by-username-session::{}", e))
         })?;
         let conn = session.connection().map_err(|e| {
-            BulwarkError::Dao(format!(
-                "app_user find_by_username 获取 connection 失败: {}",
-                e
-            ))
+            BulwarkError::Dao(format!("dao-app-user-find-by-username-connection::{}", e))
         })?;
         let sql = "SELECT id, username, password_hash, status, tenant_id, created_at, updated_at, last_login_at \
                    FROM app_user WHERE tenant_id = ? AND username = ?";

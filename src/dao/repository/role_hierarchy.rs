@@ -274,10 +274,7 @@ mod service {
                 BulwarkError::Dao(format!("dao-role-hierarchy-add-edge-session::{}", e))
             })?;
             let conn = session.connection().map_err(|e| {
-                BulwarkError::Dao(format!(
-                    "role_hierarchy add_edge 获取 connection 失败: {}",
-                    e
-                ))
+                BulwarkError::Dao(format!("dao-role-hierarchy-add-edge-connection::{}", e))
             })?;
             let stmt = Statement::from_sql_and_values(
                 DbBackend::Sqlite,
