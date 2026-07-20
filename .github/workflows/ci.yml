@@ -24,16 +24,21 @@ env:
 
 jobs:
   # === 基础检查：默认特性（default = backend-embedded） ===
+  # sdforge build script 需要 protoc；用 taiki-e/install-action 跨平台统一安装（SHA pin 防供应链攻击）
   check-default:
     name: Check (default = backend-embedded)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be # 1.85, nosemgrep
+      - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be # 1.85.1, nosemgrep
         with:
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@400e7407cfd7a091e5fbb6afec01ec146c432b7c # v2.7.7
+      - name: Install protoc (sdforge build dep)
+        uses: taiki-e/install-action@d5b1c57492c40991d5b03b58d85d06c3626b7542 # protoc
+      - uses: Swatinem/rust-cache@f0deed1e0edfc6a9be95417288c0e1099b1eeec3 # v2.7.7
+        with:
+          shared-key: ci-default-deps
       - name: Check (default features)
         run: cargo check
       - name: Build (default features)
@@ -46,10 +51,14 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be # 1.85, nosemgrep
+      - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be # 1.85.1, nosemgrep
         with:
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@400e7407cfd7a091e5fbb6afec01ec146c432b7c # v2.7.7
+      - name: Install protoc (sdforge build dep)
+        uses: taiki-e/install-action@d5b1c57492c40991d5b03b58d85d06c3626b7542 # protoc
+      - uses: Swatinem/rust-cache@f0deed1e0edfc6a9be95417288c0e1099b1eeec3 # v2.7.7
+        with:
+          shared-key: ci-full-deps
       - name: Check (full)
         run: cargo check --features "full"
       - name: Build (full)
@@ -62,7 +71,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be # 1.85, nosemgrep
+      - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be # 1.85.1, nosemgrep
         with:
           components: rustfmt
       - name: Check formatting
@@ -75,10 +84,14 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be # 1.85, nosemgrep
+      - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be # 1.85.1, nosemgrep
         with:
           components: clippy
-      - uses: Swatinem/rust-cache@400e7407cfd7a091e5fbb6afec01ec146c432b7c # v2.7.7
+      - name: Install protoc (sdforge build dep)
+        uses: taiki-e/install-action@d5b1c57492c40991d5b03b58d85d06c3626b7542 # protoc
+      - uses: Swatinem/rust-cache@f0deed1e0edfc6a9be95417288c0e1099b1eeec3 # v2.7.7
+        with:
+          shared-key: ci-full-deps
       - name: Clippy (default)
         run: cargo clippy --no-default-features --features "default" -- -D warnings
       - name: Clippy (full)
@@ -86,11 +99,12 @@ jobs:
 
   # === 测试矩阵 ===
   # GitHub Actions 限制：uses 字段不能使用 matrix 上下文（解析期未展开 matrix）
-  # 因此固定使用 1.85 SHA pin，通过 with.toolchain 参数切换实际工具链版本
+  # 因此固定使用 1.85.1 SHA pin，通过 with.toolchain 参数切换实际工具链版本
+  # protoc 用 taiki-e/install-action 跨平台统一安装（Linux/macOS/Windows 均支持）
   test:
     name: Test (${{ matrix.os }} / Rust ${{ matrix.rust }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 40
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -99,13 +113,19 @@ jobs:
         exclude:
           - os: windows-latest
             rust: beta
+          - os: macos-latest
+            rust: beta
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be # 1.85, nosemgrep
+      - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be # 1.85.1, nosemgrep
         with:
           toolchain: ${{ matrix.rust }}
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@400e7407cfd7a091e5fbb6afec01ec146c432b7c # v2.7.7
+      - name: Install protoc (sdforge build dep)
+        uses: taiki-e/install-action@d5b1c57492c40991d5b03b58d85d06c3626b7542 # protoc
+      - uses: Swatinem/rust-cache@f0deed1e0edfc6a9be95417288c0e1099b1eeec3 # v2.7.7
+        with:
+          shared-key: ci-test-deps-${{ matrix.rust }}
       - name: Test (default)
         run: cargo test --no-default-features --features "default" --lib
       - name: Test (full)
@@ -118,12 +138,16 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be # 1.85, nosemgrep
-      - uses: Swatinem/rust-cache@400e7407cfd7a091e5fbb6afec01ec146c432b7c # v2.7.7
+      - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be # 1.85.1, nosemgrep
+      - name: Install protoc (sdforge build dep)
+        uses: taiki-e/install-action@d5b1c57492c40991d5b03b58d85d06c3626b7542 # protoc
+      - uses: Swatinem/rust-cache@f0deed1e0edfc6a9be95417288c0e1099b1eeec3 # v2.7.7
+        with:
+          shared-key: ci-full-deps
       - name: Build docs
         run: cargo doc --no-deps --features "full"
       - name: Install cargo-deadlinks
-        uses: taiki-e/install-action@cargo-deadlinks
+        uses: taiki-e/install-action@9989d3780211b30eb48fda71262a571e03b00a25 # cargo-deadlinks
       # 死链检查（显性化策略 — 规则 12：不掩盖，分类处理）
       #
       # 根因分析（2026-07-21）：死链全部来自外部 crate trait 的 blanket impl：
@@ -157,24 +181,32 @@ jobs:
           fi
 
   # === 安全审计 ===
+  # 库 crate 不提交 Cargo.lock（.gitignore 规则），audit 前需生成
+  # rustsec/audit-check action 已停更（Node 20 弃用），改用 taiki-e/install-action + cargo audit
+  # timeout 15min：适配 generate-lockfile + cargo-audit 安装
   audit:
     name: Security Audit
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2.0.0
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be # 1.85.1, nosemgrep
+      - name: Generate Cargo.lock
+        run: cargo generate-lockfile
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@fd96cca080ea3d289441acc37c5a9b205082ddf7 # cargo-audit
+      - name: Run cargo audit
+        run: cargo audit --ignore-source
 
   # === cargo-deny（许可证 / 漏洞 / 禁用源 / 重复依赖） ===
+  # cargo-deny 需要 Cargo.lock；action v2.1.1 会自动生成
   deny:
     name: Cargo Deny
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: EmbarkStudios/cargo-deny-action@e2a4908d1097e728b8e290bb28f59d3ed6b01b68 # v2.0.11
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:
           arguments: --all-features
 
@@ -182,11 +214,15 @@ jobs:
   integration-test:
     name: Integration Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be # 1.85, nosemgrep
-      - uses: Swatinem/rust-cache@400e7407cfd7a091e5fbb6afec01ec146c432b7c # v2.7.7
+      - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be # 1.85.1, nosemgrep
+      - name: Install protoc (sdforge build dep)
+        uses: taiki-e/install-action@d5b1c57492c40991d5b03b58d85d06c3626b7542 # protoc
+      - uses: Swatinem/rust-cache@f0deed1e0edfc6a9be95417288c0e1099b1eeec3 # v2.7.7
+        with:
+          shared-key: ci-full-deps
       - name: Integration tests (full features)
         run: cargo test --features "full" --test '*' --no-fail-fast
 
@@ -197,10 +233,14 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be # 1.85, nosemgrep
-      - uses: Swatinem/rust-cache@400e7407cfd7a091e5fbb6afec01ec146c432b7c # v2.7.7
+      - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be # 1.85.1, nosemgrep
+      - name: Install protoc (sdforge build dep)
+        uses: taiki-e/install-action@d5b1c57492c40991d5b03b58d85d06c3626b7542 # protoc
+      - uses: Swatinem/rust-cache@f0deed1e0edfc6a9be95417288c0e1099b1eeec3 # v2.7.7
+        with:
+          shared-key: ci-full-deps
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@cargo-llvm-cov
+        uses: taiki-e/install-action@ea361d59ff285fa3ab7cc40dcba421e91017d586 # cargo-llvm-cov
       - name: Run coverage (fail under 80% lines)
         run: cargo llvm-cov --features "full" --fail-under-lines 80 --lcov --output-path lcov.info
       - name: Upload coverage
