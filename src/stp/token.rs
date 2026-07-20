@@ -417,7 +417,6 @@ mod tests {
 
     mod default_impl_coverage {
         use super::*;
-        use crate::core::token::Token as _;
         use crate::dao::BulwarkDao;
         use crate::session::BulwarkSession;
         use crate::stp::mock::{MockDao, MockFirewall};
@@ -473,7 +472,7 @@ mod tests {
             // A11: 用 SimpleTokenStyle 生成合法 HMAC token
             let style =
                 crate::core::token::SimpleTokenStyle::new(STP_TOKEN_SIMPLE_TEST_SECRET.to_string());
-            let token = style.generate("verifyuser", 3600).unwrap();
+            let token = crate::core::token::Token::generate(&style, "verifyuser", 3600).unwrap();
             let result = logic.verify_token(&token).await;
             assert!(
                 result.is_ok(),
