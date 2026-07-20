@@ -23,6 +23,7 @@ env:
   RUSTFLAGS: "-D warnings"
 
 jobs:
+  # === 基础检查：默认特性（default = backend-embedded） ===
   check-default:
     name: Check (default = backend-embedded)
     runs-on: ubuntu-latest
@@ -38,6 +39,23 @@ jobs:
       - name: Build (default features)
         run: cargo build
 
+  # === 全特性检查 ===
+  check-full:
+    name: Check (full features)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be # 1.85, nosemgrep
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@400e7407cfd7a091e5fbb6afec01ec146c432b7c # v2.7.7
+      - name: Check (full)
+        run: cargo check --features "full"
+      - name: Build (full)
+        run: cargo build --features "full"
+
+  # === 格式化检查 ===
   fmt:
     name: Rustfmt
     runs-on: ubuntu-latest
@@ -50,6 +68,25 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
+  # === Clippy ===
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be # 1.85, nosemgrep
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@400e7407cfd7a091e5fbb6afec01ec146c432b7c # v2.7.7
+      - name: Clippy (default)
+        run: cargo clippy --no-default-features --features "default" -- -D warnings
+      - name: Clippy (full)
+        run: cargo clippy --features "full" -- -D warnings
+
+  # === 测试矩阵 ===
+  # GitHub Actions 限制：uses 字段不能使用 matrix 上下文（解析期未展开 matrix）
+  # 因此固定使用 1.85 SHA pin，通过 with.toolchain 参数切换实际工具链版本
   test:
     name: Test (${{ matrix.os }} / Rust ${{ matrix.rust }})
     runs-on: ${{ matrix.os }}
@@ -67,8 +104,107 @@ jobs:
       - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be # 1.85, nosemgrep
         with:
           toolchain: ${{ matrix.rust }}
+          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@400e7407cfd7a091e5fbb6afec01ec146c432b7c # v2.7.7
       - name: Test (default)
         run: cargo test --no-default-features --features "default" --lib
       - name: Test (full)
         run: cargo test --features "full" --lib
+
+  # === 文档构建 ===
+  doc:
+    name: Documentation
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be # 1.85, nosemgrep
+      - uses: Swatinem/rust-cache@400e7407cfd7a091e5fbb6afec01ec146c432b7c # v2.7.7
+      - name: Build docs
+        run: cargo doc --no-deps --features "full"
+      - name: Install cargo-deadlinks
+        uses: taiki-e/install-action@cargo-deadlinks
+      # 死链检查（显性化策略 — 规则 12：不掩盖，分类处理）
+      #
+      # 根因分析（2026-07-21）：死链全部来自外部 crate trait 的 blanket impl：
+      #   - `Context` ← opentelemetry::FutureExt::with_context doc 中的 [`Context`] intra-doc link
+      #   - `dispatcher` ← tracing_subscriber::WithSubscriber doc 中的 [default subscriber] reference link
+      #   - `Response` ← warp::Reply::into_response doc 中的 [`Response`] intra-doc link
+      # rustdoc 在 `--no-deps` 模式下无法解析这些外部 intra-doc link，生成相对路径 → 死链。
+      # 切换 nightly + `--extern-html-root-url` 可修复，但项目用 stable Rust 1.85。
+      #
+      # 处理策略：
+      #   1. 过滤已知外部 crate 死链（Context/dispatcher/Response）— 不阻断 CI
+      #   2. 新死链（bulwark 自身 doc comment 问题）— 阻断 CI
+      # 这样移除 continue-on-error，让死链检查成为真实门禁，同时不掩盖已知外部问题。
+      - name: Check broken links
+        run: |
+          set -euo pipefail
+          OUTPUT=$(cargo deadlinks --dir target/doc/bulwark 2>&1 || true)
+          echo "$OUTPUT"
+          # 过滤已知外部 crate 死链（opentelemetry Context / tracing-subscriber dispatcher / warp Response）
+          # 精确匹配路径片段边界（/ 或 . 分隔），避免误过滤 TenantContext/BulwarkResponse 等自身类型
+          # - `config/Context does not exist` ← opentelemetry::FutureExt blanket impl
+          # - `config/dispatcher does not exist` ← tracing_subscriber::WithSubscriber blanket impl
+          # - `error/type.Response.html does not exist` ← warp::Reply::into_response blanket impl
+          NEW_DEADLINKS=$(echo "$OUTPUT" | grep "does not exist" | grep -vE "[/.](Context|dispatcher|Response)(\.html)? does not exist" || true)
+          if [ -n "$NEW_DEADLINKS" ]; then
+            echo "❌ Found new deadlinks (not from external crate trait impls):"
+            echo "$NEW_DEADLINKS"
+            exit 1
+          else
+            echo "✅ No new deadlinks. Known external-crate deadlinks (Context/dispatcher/Response) filtered."
+          fi
+
+  # === 安全审计 ===
+  audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  # === cargo-deny（许可证 / 漏洞 / 禁用源 / 重复依赖） ===
+  deny:
+    name: Cargo Deny
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: EmbarkStudios/cargo-deny-action@e2a4908d1097e728b8e290bb28f59d3ed6b01b68 # v2.0.11
+        with:
+          arguments: --all-features
+
+  # === 集成测试（tests/ 目录，仅 Linux + MSRV） ===
+  integration-test:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be # 1.85, nosemgrep
+      - uses: Swatinem/rust-cache@400e7407cfd7a091e5fbb6afec01ec146c432b7c # v2.7.7
+      - name: Integration tests (full features)
+        run: cargo test --features "full" --test '*' --no-fail-fast
+
+  # === 覆盖率（仅 Linux） ===
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be # 1.85, nosemgrep
+      - uses: Swatinem/rust-cache@400e7407cfd7a091e5fbb6afec01ec146c432b7c # v2.7.7
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+      - name: Run coverage (fail under 80% lines)
+        run: cargo llvm-cov --features "full" --fail-under-lines 80 --lcov --output-path lcov.info
+      - name: Upload coverage
+        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./lcov.info
