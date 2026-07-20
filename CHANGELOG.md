@@ -229,6 +229,25 @@
 
 详见 `docs/decisions/A-011-cargo-feature-reorganization.md`（待 0.8.0 创建）。
 
+### Fixed (0.7.1 CI/CD 修复批次)
+
+**触发**：v0.7.1 预发布 CI 全量失败，根因涉及 cargo-audit/cargo-deny 配置漂移、rustc 1.85.1 编译器 bug、sdforge `#[forge]` 宏 cfg 上下文错配。
+
+**修复内容**（6 个 commit）：
+
+- `d5759d9`..`b4d8ada` — ci.yml workflow 重建：恢复完整 CI 流水线 + 修复 protoc 缺失 / cargo-deny-action SHA pin / cargo-audit `--ignore-source` 参数已移除 / `--test '*'` 改用 `--tests` 避免 required-features 报错
+- `02a419b` — 删除冗余 audit job（cargo-deny 已覆盖漏洞检查）+ deny.toml 添加 RUSTSEC-2026-0173（proc-macro-error2 unmaintained）+ 移除 Unicode-DFS-2016（已被 Unicode-3.0 替代）+ sdforge_routes.rs 添加 `#![allow(dead_code)]` 抑制 lib 编译时 inventory 注册路由的 dead code 警告
+- `f26c707` — Token::generate 改用 UFCS 完整路径调用，绕过 rustc 1.85.1 对 `use Trait as _` 的 unused import 误报（1.96.0 已修复）
+- `6e1ba9a` — **CRITICAL** 修复 sdforge `#[forge]` 路由注册失效：`#[forge]` 宏生成的 `inventory::submit!(RouteRegistration::new(...))` 被 `#[cfg(feature = "http")]` 保护，此 cfg 在 bulwark 上下文求值（不是 sdforge）。bulwark 缺少 `http` feature → submit 调用被 cfg 剥离 → `sdforge::http::build()` 收集不到任何路由 → 所有 29 个 sdforge_routes 测试 HTTP 404（production 代码也受影响）。修复：在 `[features]` 添加 `http = []` 桥接 feature（cfg flag only），让 `auth-server-sdforge = ["http"]`。sdforge/http 已由依赖声明无条件启用，此 feature 仅作 bulwark 侧的 cfg 开关。
+
+**最终验证**：
+
+- `cargo test --features full --lib`：3787 passed, 0 failed, 5 ignored（之前 3755 passed / 32 failed）
+- `RUSTFLAGS="-D warnings" cargo clippy --features full --lib --tests`：0 warnings
+- `cargo fmt --check`：clean
+- `cargo deny check`：advisories ok, bans ok, licenses ok, sources ok
+- `cargo check --no-default-features --features default`：通过（无 sdforge 依赖回归）
+
 ## [0.7.0] - 2026-07-13
 
 ### 概述
