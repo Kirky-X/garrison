@@ -85,6 +85,11 @@ redis = { version = "1.2", optional = true, default-features = false, features =
 futures = { version = "0.3", default-features = false, features = ["std"] }
 inklog = { version = "0.1", default-features = false }
 limiteron = { version = "0.2", default-features = false, features = ["distributed"] }
+# sdforge 运行时：`features = ["http"]` 让 `sdforge::http::build()` / `RouteRegistration`
+# 始终可用（`server_impl.rs` 无条件调用 `sdforge::http::build()`）。
+# 但 `#[forge]` 宏生成的 `inventory::submit!` 被 `#[cfg(feature = "http")]` 保护，
+# 此 cfg 在 **bulwark 上下文** 求值——bulwark 必须暴露同名 `http` feature 才能让
+# 路由注册代码编译进来。详见 `[features]` 段的 `http` 桥接 feature。
 sdforge = { version = "0.4", default-features = false, features = ["http"] }
 trait-kit = { version = "0.3", default-features = false, features = ["async"] }
 cedar-policy = { version = "4.11", optional = true, default-features = false }
@@ -298,7 +303,15 @@ audit-inklog = []
 backend-kit = ["backend-embedded"]
 
 # === v0.7.0 sdforge 声明式路由 ===
-auth-server-sdforge = []
+# `http` feature 是 bulwark 与 sdforge 之间的桥接 feature（cfg flag only）：
+# `#[forge]` 宏生成的 `inventory::submit!(RouteRegistration::new(...))` 被
+# `#[cfg(feature = "http")]` 保护，此 cfg 在 **bulwark 上下文** 求值（不是 sdforge）。
+# 若 bulwark 不暴露 `http` feature，submit 调用会被 cfg 剥离，
+# `sdforge::http::build()` 收集不到任何路由 → 所有 POST 请求返回 404。
+# 命名约定：必须叫 `http`（sdforge 宏硬编码 `feature = "http"`），不可改名。
+# sdforge/http 由依赖声明 `features = ["http"]` 无条件启用，故此 feature 仅作 cfg 开关。
+http = []
+auth-server-sdforge = ["http"]
 
 # === 可观测性 ===
 listener = []
