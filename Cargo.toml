@@ -112,7 +112,7 @@ warp = { version = "0.4", default-features = false, features = ["test"] }
 rsa = "0.9"
 rand = "0.8"
 testcontainers = "0.27"
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.8", features = ["html_reports"] }
 # rcgen 用于 BackendRemote mTLS 测试中生成自签名证书
 rcgen = "0.14"
 # 集成测试需要直接发送 HTTP 请求到服务器，因此无条件引入 reqwest
