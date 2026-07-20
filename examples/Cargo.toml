@@ -33,7 +33,7 @@ actix-web = { version = "4", default-features = false, optional = true }
 # 直接被 web_warp_example 使用（warp 集成，test 供 warp::test 模块）
 warp = { version = "0.4", default-features = false, features = ["test"], optional = true }
 # 直接被 grpc_interceptor 使用（tonic Interceptor + MetadataMap）
-tonic = { version = "0.13", default-features = false, features = ["transport"], optional = true }
+tonic = { version = "0.14", default-features = false, features = ["transport"], optional = true }
 # 直接被 cache_redis 使用（RedisBackend L2 后端配置）
 oxcache = { version = "0.3", optional = true }
 # 直接被 v0_5_0_demo 使用（DbPool 类型签名，与 bulwark 同版本 0.4）
