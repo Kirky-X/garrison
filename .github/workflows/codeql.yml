@@ -26,6 +26,7 @@ jobs:
   analyze:
     name: Analyze
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       security-events: write
       actions: read
@@ -33,16 +34,16 @@ jobs:
     strategy:
       fail-fast: false
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       # 不传 languages → CodeQL 自动检测仓库语言
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3  # nosemgrep
+        uses: github/codeql-action/init@v3 # nosemgrep
 
       - name: Autobuild
-        uses: github/codeql-action/autobuild@v3  # nosemgrep
+        uses: github/codeql-action/autobuild@v3 # nosemgrep
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3  # nosemgrep
+        uses: github/codeql-action/analyze@v3 # nosemgrep
         with:
           category: "/language:autodetect"

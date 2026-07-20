@@ -460,7 +460,7 @@ async fn test_internal_kickout() {
     let resp = client
         .post(format!("{}/api/v1/auth/kickout", internal_url))
         .header("x-api-key", "test-key")
-        .json(&serde_json::json!({ "login_id": "user1" }))
+        .json(&serde_json::json!({ "login_id": "user1", "caller_login_id": "user1" }))
         .send()
         .await
         .unwrap();
@@ -558,7 +558,8 @@ async fn test_internal_switch_to() {
         .header("x-api-key", "test-key")
         .json(&serde_json::json!({
             "token": token,
-            "target_login_id": "user2"
+            "target_login_id": "user2",
+            "caller_login_id": "user1"
         }))
         .send()
         .await

@@ -7,13 +7,13 @@ on:
   push:
     branches: [main]
     paths:
-      - 'mdbook/**'
-      - '.github/workflows/docs.yml'
+      - "mdbook/**"
+      - ".github/workflows/docs.yml"
   pull_request:
     branches: [main]
     paths:
-      - 'mdbook/**'
-      - '.github/workflows/docs.yml'
+      - "mdbook/**"
+      - ".github/workflows/docs.yml"
   workflow_dispatch:
 
 permissions:
@@ -29,19 +29,20 @@ jobs:
   build:
     name: Build mdbook
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Install mdbook
-        uses: peaceiris/actions-mdbook@062dc9e3eab0bad35531417c6bb6c6a7a184764f  # v2
+        uses: peaceiris/actions-mdbook@062dc9e3eab0bad35531417c6bb6c6a7a184764f # v2
         with:
-          mdbook-version: '0.5.3'
+          mdbook-version: "0.5.3"
 
       - name: Build documentation
         run: mdbook build mdbook
 
       - name: Upload artifact
-        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa  # v3
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
         with:
           path: mdbook/book
 
@@ -50,10 +51,11 @@ jobs:
     needs: build
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e  # v4
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4

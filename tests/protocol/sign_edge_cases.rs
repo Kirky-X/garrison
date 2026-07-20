@@ -255,7 +255,12 @@ async fn missing_required_params_returns_error() {
     assert!(result_mismatch.is_err(), "signature 与参数不匹配应返回错误");
     match result_mismatch.err() {
         Some(BulwarkError::InvalidToken(msg)) => {
-            assert!(msg.contains("签名"), "错误消息应包含'签名': {}", msg);
+            // detail 层英文码（sign-mismatch）；翻译层中文在 response_parts_i18n，本测试直读 BulwarkError 原始 detail
+            assert!(
+                msg.contains("mismatch"),
+                "错误消息应包含 detail 码 'mismatch': {}",
+                msg
+            );
         },
         other => panic!("期望 InvalidToken 错误（签名不匹配），实际: {:?}", other),
     }
