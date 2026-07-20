@@ -38,12 +38,12 @@ jobs:
 
       # 不传 languages → CodeQL 自动检测仓库语言
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3 # nosemgrep
+        uses: github/codeql-action/init@v4.37.0 # nosemgrep
 
       - name: Autobuild
-        uses: github/codeql-action/autobuild@v3 # nosemgrep
+        uses: github/codeql-action/autobuild@v4.37.0 # nosemgrep
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3 # nosemgrep
+        uses: github/codeql-action/analyze@v4.37.0 # nosemgrep
         with:
           category: "/language:autodetect"
