@@ -18,6 +18,17 @@ const DEFAULT_NONCE_TTL_SECONDS: u64 = 300;
 /// 超过此长度时 validate_inner 直接返回 false（拒绝认证），不进入 parse_authorization
 /// 避免 O(n) 解析 + 多次 hash 计算被恶意输入放大。
 const MAX_AUTHORIZATION_HEADER_LEN: usize = 8 * 1024;
+/// DAO 错误日志采样间隔（vuln-0012 性能修复：防止 DAO 持续故障期间日志洪水）。
+///
+/// 每 `DAO_ERROR_LOG_INTERVAL` 次 DAO 错误只打一次 `warn!`，其余降级为 `debug!`。
+/// 100 是平衡可观测性与 I/O 开销的经验值（1000 QPS × 30s 故障 = 30000 次 → 300 条 warn）。
+const DAO_ERROR_LOG_INTERVAL: u64 = 100;
+/// DAO 错误日志采样计数器（进程级，跨所有 `HttpDigestAuth` 实例共享）。
+///
+/// **设计选型**：进程级共享（而非 per-instance）保证采样比例准确——若每个实例独立计数，
+/// 多实例部署时 warn 总量 = 实例数 × (错误数 / INTERVAL)，仍可能打满日志磁盘。
+/// 进程级共享确保无论多少实例，warn 总量 = 错误数 / INTERVAL。
+static DAO_ERROR_LOG_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 impl HttpDigestAuth {
     /// 创建新的 Digest 认证工具。
@@ -41,7 +52,8 @@ impl HttpDigestAuth {
     /// 注入 DAO 用于 nc 单调性校验（vuln-0008 修复，RFC 7616 §3.4.6）。
     ///
     /// 注入后 `validate` / `validate_with_body` 会通过 DAO 跟踪每个 nonce 的最后 nc 值，
-    /// 拒绝 nc 回退或重复（重放攻击）。未注入时跳过 nc 校验（向后兼容）。
+    /// 拒绝 nc 回退或重复（重放攻击）。未注入时跳过 nc 校验（向后兼容，仅依赖 nonce TTL 防护，
+    /// 300s 窗口内仍可重放——生产环境强烈建议注入 DAO）。
     ///
     /// # 参数
     /// - `dao`: 分布式 DAO 实现（Redis / dbnexus / MockDao 等）。
@@ -51,7 +63,21 @@ impl HttpDigestAuth {
     /// `validate` / `validate_with_body` 是 sync API，但 DAO 操作是 async。
     /// 注入 DAO 后，validate 内部使用 `tokio::task::block_in_place` + `Handle::block_on`
     /// 桥接 sync-to-async，**要求在 multi_thread tokio runtime 上下文中调用**。
-    /// 在无 runtime 或 current_thread runtime 下调用会跳过 nc 校验（fail-open）并记录 warn。
+    /// 在无 runtime 或 current_thread runtime 下调用会拒绝 nc 校验（fail-closed，
+    /// vuln-0012 修复：原 fail-open 允许重放，违背 RFC 7616 §3.4.6）并记录 warn。
+    ///
+    /// # 容量规划
+    ///
+    /// `block_in_place` 会把当前 tokio worker thread 转为 blocking thread。
+    /// 高频 digest auth 场景（如 API 网关）下，多个并发请求会同时占用 worker thread
+    /// 等 DAO I/O，可能耗尽默认 worker pool。建议通过 `tokio::runtime::Builder::worker_threads(n)`
+    /// 调优 worker 数量，或使用 `max_blocking_threads` 增加 blocking 线程上限。
+    ///
+    /// # 运维注意
+    ///
+    /// fail-closed 策略下，DAO 持续故障会导致所有 digest auth 请求被拒绝
+    /// （等同 digest auth 服务不可用）。建议部署 DAO 健康度监控 + 告警，
+    /// DAO 故障视为 P1 事件。生产环境必须使用高可用 DAO（Redis Sentinel/Cluster）。
     pub fn with_dao(mut self, dao: std::sync::Arc<dyn crate::dao::BulwarkDao>) -> Self {
         self.dao = Some(dao);
         self
@@ -139,10 +165,14 @@ impl HttpDigestAuth {
     /// 校验 nc（nonce count）单调性，拒绝重放攻击（vuln-0008，RFC 7616 §3.4.6）。
     ///
     /// 通过 DAO 跟踪每个 nonce 的最后接受的 nc 值，拒绝 nc 回退或重复。
-    /// - `dao` 为 None：跳过校验（向后兼容，返回 true）
+    /// - `dao` 为 None：跳过校验（返回 true，向后兼容）。
+    ///   **安全代价**：仅依赖 nonce TTL 防护（默认 300s），300s 窗口内可任意重放。
+    ///   生产环境强烈建议通过 `with_dao` 注入 DAO；仅单元测试 / 无重放风险场景可省略。
     /// - `dao` 为 Some：get `digest:nc:{nonce}` → 比较 → set 更新
-    /// - DAO 错误：fail-open（返回 true），nonce TTL 仍提供时间bounded 防护
+    /// - DAO 错误：fail-closed（返回 false，vuln-0012 修复：原 fail-open 允许重放，
+    ///   违背 RFC 7616 §3.4.6；nonce TTL 不足以防重放，仅时间 bounded）
     /// - nc 非法 hex 格式：返回 false（拒绝畸形请求）
+    /// - 无 runtime / current_thread runtime：fail-closed（返回 false）
     ///
     /// # Key 格式
     ///
@@ -154,7 +184,8 @@ impl HttpDigestAuth {
     /// `validate` / `validate_with_body` 是 sync API，但 DAO 操作是 async。
     /// 注入 DAO 后，本方法使用 `tokio::task::block_in_place` + `Handle::block_on`
     /// 桥接 sync-to-async，要求 multi_thread tokio runtime。
-    /// 无 runtime 时跳过 nc 校验（fail-open）并记录 warn。
+    /// 无 runtime / current_thread runtime 时 fail-closed（返回 false）并记录 warn
+    /// （vuln-0012 修复：原 fail-open 允许重放）。
     fn validate_nc(&self, nonce: &str, nc_hex: &str) -> bool {
         let dao = match &self.dao {
             Some(d) => d,
@@ -166,27 +197,33 @@ impl HttpDigestAuth {
             Err(_) => return false,
         };
         // 桥接 sync-to-async：要求 multi_thread tokio runtime。
-        // HIGH-1 修复：`Handle::try_current()` 对 multi_thread 和 current_thread runtime
+        // `Handle::try_current()` 对 multi_thread 和 current_thread runtime
         // 都返回 `Ok(handle)`，但 `block_in_place` 在 current_thread runtime 下会 panic
-        // （"Cannot block the current thread from within a runtime"），与 fail-open 文档承诺不符。
-        // 用 `runtime_flavor()` 区分 runtime 类型。
+        // （"Cannot block the current thread from within a runtime"）。
+        // vuln-0012 修复：原 fail-open 允许重放，改为 fail-closed（拒绝请求），
+        // 强制要求 multi_thread runtime 才能使用 DAO 注入的 nc 校验。
         match tokio::runtime::Handle::try_current() {
             Ok(handle) => {
                 if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::CurrentThread {
                     tracing::warn!(
-                        "validate_nc skipped: current_thread runtime does not support block_in_place"
+                        realm = %self.realm,
+                        "validate_nc rejected: current_thread runtime does not support block_in_place (fail-closed per vuln-0012)"
                     );
-                    return true; // fail-open
+                    return false; // fail-closed (vuln-0012)
                 }
+                let realm = self.realm.clone();
                 tokio::task::block_in_place(|| {
                     handle.block_on(async move {
-                        Self::validate_nc_async(dao, nonce, nc, self.nonce_ttl).await
+                        Self::validate_nc_async(dao, &realm, nonce, nc, self.nonce_ttl).await
                     })
                 })
             },
             Err(_) => {
-                tracing::warn!("validate_nc skipped: no tokio runtime available");
-                true
+                tracing::warn!(
+                    realm = %self.realm,
+                    "validate_nc rejected: no tokio runtime available (fail-closed per vuln-0012)"
+                );
+                false // fail-closed (vuln-0012)
             },
         }
     }
@@ -194,14 +231,15 @@ impl HttpDigestAuth {
     /// `validate_nc` 的 async 实现（通过 `block_in_place` + `block_on` 调用）。
     ///
     /// 通过 `dao.compare_and_update_if_greater` 原子地完成「读取当前 last_nc → 比较 → 写入新 nc」，
-    /// 消除 HIGH-2 的 TOCTOU 竞态（多个并发请求都读到相同的 last_nc 值，都通过 nc > last_nc 检查）。
+    /// 消除 TOCTOU 竞态（多个并发请求都读到相同的 last_nc 值，都通过 nc > last_nc 检查）。
     ///
     /// 逻辑：
     /// - `compare_and_update_if_greater` 返回 `Ok(true)`：nc > last_nc，已更新 → return true
     /// - `compare_and_update_if_greater` 返回 `Ok(false)`：nc <= last_nc，重放/回退 → return false
-    /// - DAO 错误 → fail-open（return true）+ warn，nonce TTL 仍提供时间bounded 防护
+    /// - DAO 错误 → fail-closed（return false）+ warn（vuln-0012 修复：原 fail-open 允许重放）
     async fn validate_nc_async(
         dao: &std::sync::Arc<dyn crate::dao::BulwarkDao>,
+        realm: &str,
         nonce: &str,
         nc: u64,
         ttl_seconds: u64,
@@ -213,12 +251,31 @@ impl HttpDigestAuth {
         {
             Ok(updated) => updated,
             Err(e) => {
-                // fail-open：DAO 错误时接受请求，nonce TTL 仍提供时间bounded 防护
-                tracing::warn!(
-                    "validate_nc: compare_and_update_if_greater failed, fail-open: {}",
-                    e
-                );
-                true
+                // fail-closed (vuln-0012)：DAO 错误时拒绝请求，强制要求 DAO 可用。
+                // nonce TTL 不足以防重放（300s 窗口内仍可重放），必须 fail-closed。
+                //
+                // 日志采样（vuln-0012 性能修复）：DAO 持续故障期间每次请求都会触发错误，
+                // 高 QPS 下会瞬间打满日志磁盘。每 DAO_ERROR_LOG_INTERVAL 次错误只 warn 一次，
+                // 其余降级为 debug!（仅含 count，不传 error 避免 Display 求值开销），
+                // warn 中含采样计数 + realm + error，可推算真实错误量并定位受影响实例。
+                let count =
+                    DAO_ERROR_LOG_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                if count % DAO_ERROR_LOG_INTERVAL == 0 {
+                    tracing::warn!(
+                        realm = realm,
+                        count = count + 1,
+                        error = %e,
+                        "validate_nc: DAO compare_and_update_if_greater failed, fail-closed (sampled 1/{})",
+                        DAO_ERROR_LOG_INTERVAL
+                    );
+                } else {
+                    tracing::debug!(
+                        realm = realm,
+                        count = count + 1,
+                        "validate_nc: DAO compare_and_update_if_greater failed, fail-closed (sampled, suppressed warn)"
+                    );
+                }
+                false
             },
         }
     }

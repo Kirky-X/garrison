@@ -270,14 +270,8 @@ impl PasswordRateLimiter {
     /// 改用本地 `fallback_counter` 执行 check，保证 DAO 宕机期间暴力破解保护不失效。
     /// 错误经 `tracing::warn` 记录后吞掉，避免单次 DAO 故障导致用户被错误锁定。
     ///
-    /// # Fail 策略说明（vuln-0007 vs vuln-0008）
-    ///
-    /// 本限速器采用 **fail-closed** 策略（DAO 错误时改用 DashMap fallback 计数），
-    /// 与 `HttpDigestAuth::validate_nc` 的 **fail-open** 策略不同。原因：
-    /// - 限速器是暴力破解防护的**最后一道防线**，必须 fail-closed 防止攻击者在 DAO
-    ///   宕机期间绕过限速
-    /// - nc 校验是 nonce 重放防护的**辅助层**，nonce TTL（默认 300s）已提供
-    ///   时间bounded 防护；fail-closed 会在 DAO 抖动时锁定所有用户，可用性损失过大
+    /// 限速器是暴力破解防护的**最后一道防线**，必须 fail-closed 防止攻击者在 DAO
+    /// 宕机期间绕过限速。
     pub async fn check(&self, username: &str) -> bool {
         let key = format!("rate_limit:pw:{}", username);
         match self.limiter.get_count(&key).await {
@@ -302,15 +296,8 @@ impl PasswordRateLimiter {
     /// # Fail-Closed 降级（vuln-0007 修复）
     ///
     /// DAO 错误时改用本地 `fallback_counter` 记录失败，保证 DAO 宕机期间失败计数仍生效。
-    ///
-    /// # Fail 策略说明（vuln-0007 vs vuln-0008）
-    ///
-    /// 本限速器采用 **fail-closed** 策略（DAO 错误时改用 DashMap fallback 计数），
-    /// 与 `HttpDigestAuth::validate_nc` 的 **fail-open** 策略不同。原因：
-    /// - 限速器是暴力破解防护的**最后一道防线**，必须 fail-closed 防止攻击者在 DAO
-    ///   宕机期间绕过限速
-    /// - nc 校验是 nonce 重放防护的**辅助层**，nonce TTL（默认 300s）已提供
-    ///   时间bounded 防护；fail-closed 会在 DAO 抖动时锁定所有用户，可用性损失过大
+    /// 限速器是暴力破解防护的**最后一道防线**，必须 fail-closed 防止攻击者在 DAO
+    /// 宕机期间绕过限速。
     pub async fn record_failure(&self, username: &str) {
         let key = format!("rate_limit:pw:{}", username);
         let ttl = StdDuration::from_secs(self.window_seconds);
@@ -454,7 +441,9 @@ impl PasswordRateLimiter {
 ///   `MockDao` 后端退化为 `incr` + 阈值判断（单进程原子）
 /// - **分布式语义**：DAO 由调用方注入，注入 Redis/dbnexus 等分布式 DAO 时多实例共享计数；
 ///   `MockDao` 仅进程内原子（单实例测试用）
-/// - **Fail-Open**：DAO 错误时返回 `true`（放行），避免单次故障导致全部 client 被锁
+/// - **Fail-Closed**：DAO 错误时降级到本地 `fallback_counter`（DashMap）继续限速，
+///   保证 DAO 宕机期间暴力破解保护不失效（vuln-0007 修复；vuln-0011 doc 修正：
+///   原文档误写为 "Fail-Open"，实际行为是 fail-closed）
 /// - **独立于 PasswordRateLimiter**：后者是失败计数器（账户锁定），
 ///   本结构是请求速率限制（QPS 限制），两者互补
 ///

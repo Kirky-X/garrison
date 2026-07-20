@@ -151,6 +151,37 @@
 - `cargo clippy --features "full" --lib --tests -- -D warnings`：0 warnings
 - 27 个文件修改（5 个新文件、22 个现有文件）
 
+### strix bulwark_0792 安全审查修复批次
+
+**触发**：strix 渗透测试报告 `strix_runs/bulwark_0792/` 中 3 个漏洞（1 HIGH + 2 MEDIUM）。
+
+**修复内容**：
+
+- **HIGH (vuln-0011, CVSS 6.5, DOC)**：`oauth2_server::TokenRateLimiter` doc 误写为 "Fail-Open"（实际行为是 fail-closed，由 vuln-0007 fallback_counter 提供）— 修正 doc 表述为 "Fail-Closed"，消除文档与代码行为不一致
+- **MEDIUM (vuln-0012, CVSS 6.5, CODE)**：`secure::httpdigest::HttpDigestAuth::validate_nc` 在 DAO 错误 / 无 tokio runtime / current_thread runtime 三条路径下 fail-open（返回 true 允许重放），违背 RFC 7616 §3.4.6 — 全部改为 fail-closed（返回 false 拒绝请求）；新增 no-runtime fail-closed 测试用例；应用日志采样（`DAO_ERROR_LOG_INTERVAL=100`）防止 DAO 持续故障期间日志洪水；补充 dao=None 路径安全代价说明、worker pool 容量规划、运维 P1 告警等文档
+- **vuln-0001 (FALSE POSITIVE)**：strix 报告 `JwtHandler::with_algorithm` 接受 `Algorithm::None` 导致签名绕过 — 经核查 `jsonwebtoken 10.0.0` 的 `Algorithm` enum 不存在 `None` variant（仅有 HS256/HS384/HS512/ES256/ES384/RS256/RS384/RS512/PS256/PS384/PS512/EdDSA），无修复必要
+
+**架构修复**（Rule 26 三维度审查发现）：
+
+- HIGH-1：strix 编号 vuln-0002/vuln-0003 与既有 SAML vuln-0002/vuln-0003 冲突 — strix 发现重编号为 vuln-0011/vuln-0012
+- MEDIUM-arch：移除 `oauth2_server::token::PasswordRateLimiter::check/record_failure` doc 中对 `HttpDigestAuth::validate_nc` 的跨层耦合引用（"Fail 策略说明"整段），每个模块只描述自身行为
+- MEDIUM-arch：移除 mod.rs 中 `dao` 字段的实现细节 doc（Key 格式、TTL 策略），改为指向 `auth::validate_nc` 文档（规则 25 接口隔离）
+- MEDIUM-perf：DAO 错误日志采样（每 100 次 warn 一次，其余降级 debug）
+- LOW-arch：明确 dao=None 路径安全代价（300s 窗口内可重放）+ 容量规划 + 运维注意
+- LOW-sec：补充 no-runtime fail-closed 测试用例
+
+**3 维度审查结果**：
+
+- tiangang SAST：0 CRITICAL + 0 HIGH = ✅ 通过
+- diting 架构：HIGH-1（vuln 编号冲突）+ 2 MEDIUM（跨层耦合 + 接口层泄露）+ 1 LOW，全部修复后通过
+- diting 性能：1 MEDIUM（日志洪水）已修复
+- kueiku bug 分析：无新增 bug
+
+**最终验证**：
+
+- `cargo test --features "secure-httpdigest oauth2-server"`：所有测试通过
+- `cargo clippy --features "secure-httpdigest oauth2-server" -- -D warnings`：0 warnings
+
 ### Changed (0.7.x Phase 1 - cargo feature 划分优化)
 
 本期为 **cargo feature 划分优化 Phase 1（保守，0.7.x 兼容）**，基于 kueiku 决策分析（方案 B 分层重构 + 渐进式迁移）实施。无破坏性变更，0.7.x 内向后兼容。

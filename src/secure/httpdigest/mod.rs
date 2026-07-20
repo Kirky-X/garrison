@@ -48,16 +48,9 @@ pub struct HttpDigestAuth {
     algorithm: DigestAlgorithm,
     /// nonce 有效期（秒），质询生成时嵌入时间戳，校验时检查是否过期。
     nonce_ttl: u64,
-    /// 可选 DAO，用于 nc 单调性校验（vuln-0008 修复，RFC 7616 §3.4.6）。
+    /// 可选 DAO，用于 nc 单调性校验（RFC 7616 §3.4.6）。
     ///
-    /// - `None`：跳过 nc 重放检测（向后兼容，仅依赖 nonce TTL 防重放）
-    /// - `Some(dao)`：在 `validate_inner` 中调用 `validate_nc`，通过 DAO 跟踪
-    ///   每个 nonce 的最后 nc 值，拒绝 nc 回退或重复（fail-open on DAO error）
-    ///
-    /// # Key 格式
-    ///
-    /// `digest:nc:{nonce}` — value 为最后接受的 nc 十进制字符串。
-    /// TTL 与 `nonce_ttl` 一致，nonce 过期后 nc 记录自动清理。
+    /// 行为细节（fail-closed 策略、Key 格式、TTL、容量规划）见 `auth::validate_nc`。
     dao: Option<std::sync::Arc<dyn crate::dao::BulwarkDao>>,
 }
 

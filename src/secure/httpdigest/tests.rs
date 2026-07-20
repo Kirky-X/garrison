@@ -989,16 +989,17 @@ async fn validate_nc_isolates_nonces_with_dao() {
 // vuln-0008 三维度审查修复验证测试
 // ========================================================================
 
-/// `validate_nc` 在 current_thread runtime 下 fail-open（HIGH-1 修复验证）。
+/// `validate_nc` 在 current_thread runtime 下 fail-closed（vuln-0012 修复验证）。
 ///
 /// 场景：注入 DAO，但在 current_thread tokio runtime 下调用 validate()。
-/// validate_nc 检测到 current_thread runtime 后应 fail-open（不调用 block_in_place，
+/// validate_nc 检测到 current_thread runtime 后应 fail-closed（不调用 block_in_place，
 /// 否则会 panic "Cannot block the current thread from within a runtime"），
-/// 相同 nc 重放仍被接受。
+/// 返回 false 拒绝请求，避免允许重放攻击。
 ///
+/// vuln-0012 修复：原 fail-open 允许重放，违背 RFC 7616 §3.4.6。
 /// 注意：使用 `#[tokio::test]`（不带 `flavor = "multi_thread"`）创建 current_thread runtime。
 #[tokio::test]
-async fn validate_nc_current_thread_runtime_fail_open() {
+async fn validate_nc_current_thread_runtime_fail_closed() {
     let dao: Arc<dyn crate::dao::BulwarkDao> = Arc::new(crate::dao::MockDao::new());
     let auth = HttpDigestAuth::new("test@realm", "MD5")
         .unwrap()
@@ -1020,28 +1021,28 @@ async fn validate_nc_current_thread_runtime_fail_open() {
         uri,
         &ha1,
     );
-    // 第一次：current_thread runtime 下 fail-open，应通过（不 panic）
+    // 第一次：current_thread runtime 下 fail-closed，应拒绝（不 panic，但拒绝重放风险）
     assert!(
-        auth.validate(&header, method, uri, &ha1),
-        "HIGH-1: current_thread runtime 下 validate_nc 应 fail-open，首次请求通过"
+        !auth.validate(&header, method, uri, &ha1),
+        "vuln-0012: current_thread runtime 下 validate_nc 应 fail-closed，首次请求拒绝"
     );
-    // 第二次相同 nc：仍 fail-open，应通过（不调用 DAO，无重放检测）
+    // 第二次相同 nc：仍 fail-closed，应拒绝
     assert!(
-        auth.validate(&header, method, uri, &ha1),
-        "HIGH-1: current_thread runtime 下相同 nc 重放仍通过（fail-open）"
+        !auth.validate(&header, method, uri, &ha1),
+        "vuln-0012: current_thread runtime 下相同 nc 重放仍拒绝（fail-closed）"
     );
 }
 
-/// 始终返回 DAO 错误的 mock DAO（参考 oauth2_server/token.rs 的 FailingDao 模式）。
+/// 始终返回 DAO 错误的 mock DAO。
 ///
-/// 用于触发 `validate_nc` 的 fail-open 路径（DAO 错误时接受请求）。
+/// 用于触发 `validate_nc` 的 fail-closed 路径（vuln-0012 修复：DAO 错误时拒绝请求）。
 struct FailingDao;
 
 #[async_trait::async_trait]
 impl crate::dao::BulwarkDao for FailingDao {
     async fn get(&self, key: &str) -> crate::error::BulwarkResult<Option<String>> {
         Err(crate::error::BulwarkError::Dao(format!(
-            "vuln-0008-failing-dao-get::{}",
+            "vuln-0012-failing-dao-get::{}",
             key
         )))
     }
@@ -1052,37 +1053,39 @@ impl crate::dao::BulwarkDao for FailingDao {
         _ttl_seconds: u64,
     ) -> crate::error::BulwarkResult<()> {
         Err(crate::error::BulwarkError::Dao(format!(
-            "vuln-0008-failing-dao-set::{}",
+            "vuln-0012-failing-dao-set::{}",
             key
         )))
     }
     async fn update(&self, key: &str, _value: &str) -> crate::error::BulwarkResult<()> {
         Err(crate::error::BulwarkError::Dao(format!(
-            "vuln-0008-failing-dao-update::{}",
+            "vuln-0012-failing-dao-update::{}",
             key
         )))
     }
     async fn expire(&self, key: &str, _seconds: u64) -> crate::error::BulwarkResult<()> {
         Err(crate::error::BulwarkError::Dao(format!(
-            "vuln-0008-failing-dao-expire::{}",
+            "vuln-0012-failing-dao-expire::{}",
             key
         )))
     }
     async fn delete(&self, key: &str) -> crate::error::BulwarkResult<()> {
         Err(crate::error::BulwarkError::Dao(format!(
-            "vuln-0008-failing-dao-delete::{}",
+            "vuln-0012-failing-dao-delete::{}",
             key
         )))
     }
 }
 
-/// `validate_nc` 在 DAO 错误时 fail-open（HIGH-2 修复验证）。
+/// `validate_nc` 在 DAO 错误时 fail-closed（vuln-0012 修复验证）。
 ///
 /// 场景：注入始终返回错误的 FailingDao，validate_nc 内部 compare_and_update_if_greater
-/// 调用 DAO 失败后应 fail-open（返回 true），相同 nc 重放仍被接受。
-/// nonce TTL 仍提供时间bounded 防护。
+/// 调用 DAO 失败后应 fail-closed（返回 false），拒绝请求防止重放攻击。
+///
+/// vuln-0012 修复：原 fail-open 允许重放（接受请求），违背 RFC 7616 §3.4.6。
+/// nonce TTL（300s）不足以防重放（窗口内仍可重放），必须 fail-closed。
 #[tokio::test(flavor = "multi_thread")]
-async fn validate_nc_dao_error_fail_open() {
+async fn validate_nc_dao_error_fail_closed() {
     let dao: Arc<dyn crate::dao::BulwarkDao> = Arc::new(FailingDao);
     let auth = HttpDigestAuth::new("test@realm", "MD5")
         .unwrap()
@@ -1104,15 +1107,58 @@ async fn validate_nc_dao_error_fail_open() {
         uri,
         &ha1,
     );
-    // DAO 错误时 fail-open，应通过
+    // DAO 错误时 fail-closed，应拒绝
     assert!(
-        auth.validate(&header, method, uri, &ha1),
-        "HIGH-2: DAO 错误时 validate_nc 应 fail-open（接受请求）"
+        !auth.validate(&header, method, uri, &ha1),
+        "vuln-0012: DAO 错误时 validate_nc 应 fail-closed（拒绝请求）"
     );
-    // 再次调用，DAO 仍错误，仍 fail-open（nonce TTL 提供时间bounded 防护）
+    // 再次调用，DAO 仍错误，仍 fail-closed（拒绝重放）
     assert!(
-        auth.validate(&header, method, uri, &ha1),
-        "HIGH-2: DAO 错误时相同 nc 重放仍通过（fail-open）"
+        !auth.validate(&header, method, uri, &ha1),
+        "vuln-0012: DAO 错误时相同 nc 重放仍拒绝（fail-closed）"
+    );
+}
+
+/// `validate_nc` 在无 tokio runtime 时 fail-closed（vuln-0012 修复验证，LOW-sec 补充）。
+///
+/// 场景：注入 DAO，但 `validate()` 在非 async 上下文中调用（无 tokio runtime）。
+/// `Handle::try_current()` 返回 `Err`，validate_nc 应 fail-closed（返回 false），
+/// 拒绝请求防止重放攻击，而不是 fail-open 允许重放。
+///
+/// vuln-0012 修复：原 fail-open 允许重放，违背 RFC 7616 §3.4.6。
+/// 注意：使用普通 `#[test]`（不引入 tokio runtime），与 `#[tokio::test]` 区分。
+#[test]
+fn validate_nc_no_runtime_fail_closed() {
+    let dao: Arc<dyn crate::dao::BulwarkDao> = Arc::new(crate::dao::MockDao::new());
+    let auth = HttpDigestAuth::new("test@realm", "MD5")
+        .unwrap()
+        .with_dao(dao);
+    let ha1 = auth.compute_ha1("admin", "secret");
+    let nonce = make_valid_nonce();
+    let nc = "00000001";
+    let cnonce = "0a4f113c";
+    let method = "GET";
+    let uri = "/resource";
+    let header = build_md5_auth_header(
+        &auth,
+        "admin",
+        "test@realm",
+        &nonce,
+        nc,
+        cnonce,
+        method,
+        uri,
+        &ha1,
+    );
+    // 无 tokio runtime 时 fail-closed，应拒绝（不 panic，但拒绝重放风险）
+    assert!(
+        !auth.validate(&header, method, uri, &ha1),
+        "vuln-0012: 无 tokio runtime 时 validate_nc 应 fail-closed，拒绝请求"
+    );
+    // 第二次相同 nc：仍 fail-closed，应拒绝
+    assert!(
+        !auth.validate(&header, method, uri, &ha1),
+        "vuln-0012: 无 tokio runtime 时相同 nc 重放仍拒绝（fail-closed）"
     );
 }
 
