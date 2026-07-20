@@ -29,6 +29,9 @@
 // #[forge] 宏生成的代码含 #[cfg(feature = "mcp")] / #[cfg(feature = "cli")] 等
 // bulwark 不具备的 feature cfg，属于外部宏展开的正常现象，抑制 check-cfg 警告。
 #![allow(unexpected_cfgs)]
+// sdforge #[forge] 宏通过 inventory 自动注册路由，lib 编译时不直接调用这些 handler。
+// 路由注册在 bin（auth_server）中通过 sdforge::http::build() 收集，lib 中为 dead code。
+#![allow(dead_code)]
 
 use crate::backend::types::{
     ApiResponse, CheckApiKeyRequest, CheckLoginRequest, CheckPermissionRequest, CheckRoleRequest,

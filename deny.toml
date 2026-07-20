@@ -18,9 +18,15 @@ yanked = "deny"
 # 依赖链：bulwark → moka → crossbeam-epoch（transitive，无法直接升级）。
 # 影响：仅在 null pointer 上调用 fmt::Display 时 panic（非 memory safety），无 patched 版本。
 # 参考: https://rustsec.org/advisories/RUSTSEC-2026-0204
+#
+# proc-macro-error2 2.0.1 有 RUSTSEC-2026-0173（unmaintained）。
+# 依赖链：transitive，proc-macro-error2 是 proc-macro-error 的 fork，两者都已 unmaintained。
+# 影响：unmaintained（非漏洞），无替代版本可用（下游依赖尚未迁移）。
+# 参考: https://rustsec.org/advisories/RUSTSEC-2026-0173
 ignore = [
     "RUSTSEC-2023-0071",
     "RUSTSEC-2026-0204",
+    "RUSTSEC-2026-0173",
 ]
 
 [licenses]

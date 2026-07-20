@@ -180,27 +180,10 @@ jobs:
             echo "✅ No new deadlinks. Known external-crate deadlinks (Context/dispatcher/Response) filtered."
           fi
 
-  # === 安全审计 ===
-  # 库 crate 不提交 Cargo.lock（.gitignore 规则），audit 前需生成
-  # rustsec/audit-check action 已停更（Node 20 弃用），改用 taiki-e/install-action + cargo audit
-  # timeout 15min：适配 generate-lockfile + cargo-audit 安装
-  audit:
-    name: Security Audit
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be # 1.85.1, nosemgrep
-      - name: Generate Cargo.lock
-        run: cargo generate-lockfile
-      - name: Install cargo-audit
-        uses: taiki-e/install-action@fd96cca080ea3d289441acc37c5a9b205082ddf7 # cargo-audit
-      - name: Run cargo audit
-        # cargo-audit 0.22.2 无 --ignore-source 参数（该参数已移除）
-        run: cargo audit
-
-  # === cargo-deny（许可证 / 漏洞 / 禁用源 / 重复依赖） ===
-  # cargo-deny 需要 Cargo.lock；action v2.1.1 会自动生成
+  # === cargo-deny（漏洞 / 许可证 / 禁用源 / 重复依赖） ===
+  # cargo-deny 已覆盖 cargo-audit 的漏洞检查功能，且配置统一在 deny.toml 管理。
+  # 删除独立 audit job，避免维护两份忽略列表（audit.toml + deny.toml）。
+  # cargo-deny-action 会自动生成 Cargo.lock（库 crate 不提交 Cargo.lock）
   deny:
     name: Cargo Deny
     runs-on: ubuntu-latest

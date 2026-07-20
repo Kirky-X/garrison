@@ -417,7 +417,7 @@ mod tests {
 
     mod default_impl_coverage {
         use super::*;
-        use crate::core::token::Token;
+        use crate::core::token::Token as _;
         use crate::dao::BulwarkDao;
         use crate::session::BulwarkSession;
         use crate::stp::mock::{MockDao, MockFirewall};
