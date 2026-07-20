@@ -5,7 +5,9 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
-## [Unreleased] - 2026-07-18
+## [Unreleased]
+
+## [0.7.1] - 2026-07-21
 
 ### 概述
 
@@ -78,7 +80,18 @@
 - 移除 [patch.crates-io] 本地路径覆盖（F1）
 - examples 中硬编码 API Key（F2, 8932f3e）— 改用 env var
 - 升级 opentelemetry 修复 CVE-2026-48504（F3, 7037764）
-- SMS 验证码范围排除 `000000`（F4, 87c62ba）
+- SMS 验证码范围排除 `000000`（F4, 87c62ba)
+
+### v0.7.1 发布前修复（2026-07-21）
+
+- **MEDIUM**: 修复 vuln-0011 TokenRateLimiter doc fail-open（544c92f）— 文档更正为 fail-closed
+- **MEDIUM**: 修复 vuln-0012 HttpDigestAuth validate_nc fail-open（544c92f）— 三路径返回 false + log sampling + realm 参数
+- **HIGH**: 修复 ABAC 集成测试 handler 使用纯字面量表达式（c4b9706）— `validate_abac_expr` 拒绝纯字面量，改用 `principal == principal` / `principal != principal`
+- **MEDIUM**: 修复 `SensitiveDataMasker::mask_value` 类型不一致（c4b9706）— `mask_value` / `mask_field` / `mask_json` 统一返回 `String`，Custom regex 编译失败时返回 `"***"` 作为安全 fallback（fail-closed，避免泄露原值）
+- **LOW**: 修复 sqlite repo session/connection phase 错误消息格式不统一（b1635ee）— 41 处 map_err 改为 kebab-case i18n 格式
+- **LOW**: 修复 ci.yml deadlinks 检查（b1635ee）— 移除 continue-on-error，添加正则过滤内部 deadlinks
+- **LOW**: 修复测试断言 i18n 化（f0622aa）— sign_edge_cases 测试从中文 "签名" 改为英文 "mismatch"
+- **LOW**: 修复 auth_server_integration.rs kickout/switch_to API 调用缺少 caller_login_id 字段（f0622aa）
 
 ### 审查验证（Convergence 阶段）
 
