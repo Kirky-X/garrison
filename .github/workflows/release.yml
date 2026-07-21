@@ -190,8 +190,11 @@ jobs:
           VERSION: ${{ steps.extract-version.outputs.version }}
         run: |
           # 提取 ## [VERSION] 到下一个 ## [ 之间的内容
-          BODY=$(awk -v ver="## \[${VERSION}\]" '
-            $0 ~ "^" ver " " {flag=1; next}
+          # 用 index() 字符串匹配替代 ~ 正则匹配：ver 中的 [0.7.3] 在正则中会被
+          # 误解析为字符类（匹配 0/./7/3 任一字符），导致无法匹配字面 [0.7.3]。
+          # index($0, ver " ") == 1 检查行首是否以 "## [VERSION] " 开头（字符串查找）。
+          BODY=$(awk -v ver="## [${VERSION}]" '
+            index($0, ver " ") == 1 {flag=1; next}
             /^## \[/ {if (flag) exit}
             flag {print}
           ' CHANGELOG.md)

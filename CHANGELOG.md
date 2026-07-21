@@ -27,10 +27,13 @@
 
 - **codeql.yml SHA 拼写错误**：上一会话 SHA pin 写成 38 字符（`fb4bfd79bfa826ce96c907ff8833835ba8aad0`，缺 `27`），导致 CodeQL workflow 5 秒即失败（`Unable to resolve action ... unable to find version`）。用 `gh api repos/github/codeql-action/git/refs/tags/v3 -q '.object.sha'` 验证正确 40 字符 SHA 为 `fb4bfd79bfa826ce96c90727ff8833835ba8aad0`，修正 3 处。教训：SHA pin 后必须验证字符数 = 40。
 - **ci.yml coverage job 装错工具**：根因是 `taiki-e/install-action` 的 `tool` 参数 default 值随 SHA 变化——v0.7.3 用的 SHA `ea361d59...` 的 `action.yml` default 是 `cargo-llvm-cov`（能装对），HEAD 改用 SHA `d5b1c574...` 的 default 是 `protoc`，导致 cargo-llvm-cov step 实际装了 protoc，CI 报 `error: no such command: llvm-cov`。修复：ci.yml + release.yml 共 14 处 install-action 调用全部显式传 `with: tool: <name>`，不依赖 SHA default，消除未来 SHA 升级静默改变工具安装行为的风险。
+- **README version 徽章 owner 错误**：`README.md` / `README_EN.md` 的 version badge URL owner 写成小写 `kirky/garrison`（实际 GitHub owner 是 `Kirky-X`），shields.io 返回 `version: repo not found`。修正为 `Kirky-X/garrison`，徽章正确显示 `version: v0.7.3`。
+- **release.yml CHANGELOG body 提取 awk 脚本 bug**：`version-consistency` job 的 "Extract CHANGELOG body" step 失败（`CHANGELOG.md 中未提取到 ## [0.7.3] 章节内容`），导致 v0.7.3 release workflow 全链路失败。根因：awk 脚本 `$0 ~ "^" ver " "` 用正则匹配，但 `ver="## \[0.7.3\]"` 中的 `[0.7.3]` 在 awk 正则中被解释为**字符类**（匹配 `0`/`.`/`7`/`3` 任一字符），而非字面 `[0.7.3]`，导致无法匹配 `## [0.7.3] - 2026-07-22` 行。修复：用 `index($0, ver " ") == 1` 字符串查找替代正则匹配，正确匹配字面方括号。本地验证提取到 `### Added` 章节内容。
 
 ### Docs
 
 - README.md/README_EN.md 语言切换链接从 badge 改为纯文本（`中文 | English`），避免 badge 加载失败时无法切换。
+- README.md/README_EN.md license badge 从静态 `shields.io/badge/license-Apache--2.0-green` 改为动态 `shields.io/github/license/Kirky-X/garrison`，从 LICENSE 文件自动读取 license 类型与颜色（规则 26 动态优先）。
 
 ## [0.7.3] - 2026-07-22
 
