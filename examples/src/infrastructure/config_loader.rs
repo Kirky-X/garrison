@@ -12,6 +12,7 @@
 
 use garrison::config::GarrisonConfig;
 use garrison::error::{GarrisonError, GarrisonResult};
+use std::io::Write as _;
 
 /// 运行配置加载示例。
 ///
@@ -49,11 +50,15 @@ throw_on_not_login = false
 cookie_secure = false
 cookie_same_site = "Lax"
 "#;
-    let temp_path = std::env::temp_dir().join("garrison_config_example.toml");
-    std::fs::write(&temp_path, toml_content)
+    let mut temp_file = tempfile::Builder::new()
+        .prefix("garrison_config_example")
+        .suffix(".toml")
+        .tempfile()
+        .map_err(|e| GarrisonError::Internal(format!("创建临时文件失败: {}", e)))?;
+    temp_file
+        .write_all(toml_content.as_bytes())
         .map_err(|e| GarrisonError::Internal(format!("写入临时文件失败: {}", e)))?;
-    let config = GarrisonConfig::load(Some(temp_path.to_str().unwrap()))?;
-    let _ = std::fs::remove_file(&temp_path);
+    let config = GarrisonConfig::load(temp_file.path().to_str())?;
     println!("[2] TOML 文件加载的配置:");
     println!("    token_name = {}", config.token_name);
     println!("    timeout = {} 秒", config.timeout);

@@ -43,6 +43,8 @@ dbnexus = { version = "0.4", default-features = false, optional = true }
 wiremock = "0.6"
 # 直接被 macro_annotations 使用（读取 axum Response body）
 http-body-util = "0.1"
+# 直接被 config_loader 使用（安全临时文件：唯一随机名 + drop 自动清理）
+tempfile = "3.27"
 # 直接被 observability_setup 使用（内联 JSON 日志初始化，与 garrison 的 metrics-prometheus feature 门控一致）
 tracing-subscriber = { version = "0.3", optional = true, features = ["fmt", "json", "env-filter"] }
 
