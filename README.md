@@ -1,9 +1,7 @@
 <!-- markdownlint-disable MD041 -->
 <p align="center">
-  <img src="./docs/assets/logo.png" alt="Garrison Logo" width="160" />
+  <img src="./docs/assets/logo.png" alt="Garrison Logo" width="360" />
 </p>
-
-<h1 align="center">Garrison</h1>
 
 <p align="center">
   <b>面向 Rust 生态的一站式身份认证鉴权框架</b><br/>
