@@ -4,6 +4,10 @@
 </p>
 
 <p align="center">
+  [![English](https://img.shields.io/badge/lang-English-blue.svg)](./README_EN.md)
+</p>
+
+<p align="center">
   <b>面向 Rust 生态的一站式身份认证鉴权框架</b><br/>
   <a href="#quick-start">🚀 快速开始</a> •
   <a href="#features">📖 特性</a> •
