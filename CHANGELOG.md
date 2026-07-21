@@ -7,13 +7,37 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- 修复 Windows CI 测试失败：confers 0.4.1 的 `FileSource` 在 `check_path_components()` 无条件拒绝 `Component::Prefix`（Windows 驱动器号 `C:`），导致 Windows 上所有绝对路径无法加载。新增 `TomlContentSource`（`src/config/source.rs`）通过 `parse_content` 公共 API 绕过路径验证，实现跨平台一致行为。
+- 拆分 `TomlContentSource` 到独立模块 `source.rs`（规则 25 mod/crate 接口隔离）。
+
+### Security
+
+- `GarrisonConfig::load` 新增 7 项安全防护：
+  1. 空路径拒绝（`is_empty()` 检查）
+  2. 路径遍历检测（拒绝 `..` / `Component::ParentDir`）
+  3. `File::open + file.metadata()` 复用 fd，消除 TOCTOU 和符号链接攻击窗口
+  4. `is_file()` 检查拒绝字符设备（`/dev/zero`）、FIFO、目录等特殊文件
+  5. 文件大小限制（10MB 上限，防 DoS）
+  6. `take(MAX+1)` I/O 层强制限制读取字节数（防 TOCTOU）
+  7. 错误消息仅含 `file_name()`，不泄露服务器文件系统结构
+- 新增 6 个安全集成测试覆盖以上防护（`tests.rs::load_rejects_*`）。
+
+### Changed
+
+- 同步 4 个 GitHub Actions workflow 的 `actions/checkout` v4.2.2 → v7.0.1（Node.js 24 兼容）、`Swatinem/rust-cache` v2.7.7 → v2.9.1。
+- 修正 `README.md` / `.env.example` / `docs/DEVELOPMENT.md` 中错误的 `ConfigLoader` 引用为实际 API `GarrisonConfig::load` / `confers`。
+- 修正 `docs/CONFIGURATION.md` 中 `replaced_login_exit_mode` / `overflow_logout_mode` / `audit_mask_mode` 枚举默认值大小写（`OldDevice` → `old_device` 等，与 `#[serde(rename_all = "snake_case")]` 一致）。
+- 修正 `README.md` 中 `token_name`（`garrison-token` → `garrison_token`）、`token_style`（`random-64` → `random_64`）、`is_share`（`true` → `false`）默认值与代码一致。
+
 ## [0.7.1] - 2026-07-21
 
 ### 概述
 
 本期为 **strix 安全审计修复批次**，整合 3 轮 strix 渗透测试（`garrison_21a6` / `garrison_371b` / `garrison_6704`）发现的 21 个安全漏洞修复，覆盖认证授权（A1–A11）、OAuth2/OIDC（B1–B10）、Web 安全（C1–C7）、密码学（D1–D6）、性能（E1–E4）与供应链（F1–F4）六大维度。21 个安全漏洞全部修复，CRITICAL 漏洞全部修复并通过 Convergence 阶段代码-文档一致性审查。
 
-> ⚠️ **破坏性变更**：crate 名称从 `bulwark` 重命名为 `garrison`。所有依赖 `bulwark = "0.7.x"` 的项目需将 Cargo.toml 改为 `garrison = "0.7.1"`，并将代码中 `use bulwark::*` 改为 `use garrison::*`。
+> ⚠️ **破坏性变更**：crate 名称从 `bulwark` 重命名为 `garrison`。所有依赖 `bulwark = "0.7.x"` 的项目需将 Cargo.toml 改为 `garrison = "0.7"`，并将代码中 `use bulwark::*` 改为 `use garrison::*`。
 
 ### Security
 

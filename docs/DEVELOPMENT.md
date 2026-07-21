@@ -148,7 +148,7 @@ garrison/
 │   │   ├── actix_adapter.rs  # actix-web 适配器（v0.4.2 新增）
 │   │   ├── warp_adapter.rs   # warp 适配器（v0.4.2 新增）
 │   │   └── tenant.rs         # 租户解析器（v0.5.0 新增）
-│   ├── config/mod.rs         # 配置系统（GarrisonConfig + ConfigLoader + remember_me）
+│   ├── config/mod.rs         # 配置系统（GarrisonConfig + confers + remember_me）
 │   ├── annotation/mod.rs     # 注解系统（含 CheckAccessToken/CheckClientToken）
 │   ├── router/mod.rs         # 路由权限（GarrisonRouter + group()）
 │   ├── strategy/             # 策略模式 + 注册表

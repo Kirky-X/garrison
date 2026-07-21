@@ -6,9 +6,12 @@
 //! 本文件从 `mod.rs` 迁移而来，遵循 mod-crate-hardening（规则 25）：
 //! `mod.rs` 仅保留 trait 定义、pub struct/enum、pub type alias、pub use、mod 声明。
 
+use super::source::TomlContentSource;
 use super::*;
 use crate::error::{GarrisonError, GarrisonResult};
-use confers::config::{ConfigBuilder, FileSource};
+use confers::config::ConfigBuilder;
+use std::io::Read;
+use std::path::Path;
 
 impl Default for TenantIsolationConfig {
     fn default() -> Self {
@@ -117,6 +120,20 @@ impl GarrisonConfig {
     ///
     /// # 错误
     /// - `GarrisonError::Config`：文件解析失败、环境变量非法或配置校验未通过。
+    ///
+    /// # Security
+    ///
+    /// `toml_path` 必须来自可信源（命令行参数 / 硬编码 / 受控环境变量），
+    /// 不可直接传入用户输入。本函数已实现以下 7 项防护：
+    /// 1. 空路径拒绝（`is_empty()` 检查）
+    /// 2. 路径遍历检测（拒绝 `..` / `Component::ParentDir`）
+    /// 3. `File::open + file.metadata()` 复用 fd，消除 TOCTOU 和符号链接攻击窗口
+    /// 4. 特殊文件拒绝（字符设备/FIFO/目录，通过 `is_file()`）
+    /// 5. 文件大小限制（10MB 上限，防 DoS）
+    /// 6. `take(MAX+1)` I/O 层强制限制读取字节数（防 TOCTOU）
+    /// 7. 错误消息仅含 `file_name()`，不泄露完整路径
+    ///
+    /// 但不对绝对路径做白名单限制，调用方需自行确保路径可信。
     pub fn load(toml_path: Option<&str>) -> GarrisonResult<Self> {
         #[cfg_attr(not(feature = "rate-limit-redis"), allow(unused_mut))]
         let mut env_values = collect_env_vars(ENV_PREFIX);
@@ -255,10 +272,81 @@ impl GarrisonConfig {
         }
 
         if let Some(path) = toml_path {
+            // 修复 Windows CI 失败：confers 0.4.1 的 FileSource 在 check_path_components()
+            // 无条件拒绝 Component::Prefix（Windows 驱动器号 C:），allow_absolute_paths()
+            // 仅放行 RootDir，无法放行带驱动器号的 Windows 绝对路径。改用 std::fs::read_to_string
+            // 读取文件内容，通过自定义 TomlContentSource 注入，绕过路径验证。
+            // 使用 confers 公共 API（parse_content + Source trait），跨平台一致行为。
+            //
+            // 安全防护（安全审查 HIGH-1/MEDIUM-1/MEDIUM-2 + 性能审查 MEDIUM-1）：
+            // 1. 空路径拒绝：避免 metadata 返回 ENOENT 时消息不明确
+            // 2. 路径遍历检测：拒绝 `..`（Component::ParentDir），防 `../../etc/passwd`。
+            //    不检查 `%2e`：fs API 不解码 URL，`%2e%2e` 是字面字符串，不会触发路径遍历。
+            // 3. File::open + file.metadata()：复用 fd，消除 TOCTOU 和符号链接攻击窗口
+            // 4. is_file() 检查：拒绝字符设备（/dev/zero）、FIFO、目录等特殊文件，防 DoS
+            // 5. 文件大小限制：10MB 上限，防 DoS（read_to_string 超大文件耗尽内存）
+            // 6. take(MAX+1) 限制：I/O 层强制读取字节数，双重保险
+            // 7. 错误消息仅含 file_name()：避免泄露服务器文件系统结构
+            if path.is_empty() {
+                return Err(GarrisonError::Config("配置文件路径不能为空".to_string()));
+            }
+            let path_ref = Path::new(path);
+            let display_name = || {
+                path_ref
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(path)
+            };
+            if path_ref
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir))
+            {
+                return Err(GarrisonError::Config(format!(
+                    "配置文件路径包含非法的父目录引用（..）：{}",
+                    display_name()
+                )));
+            }
+            let file = std::fs::File::open(path_ref).map_err(|e| {
+                GarrisonError::Config(format!("打开配置文件失败 [{}]：{}", display_name(), e))
+            })?;
+            let metadata = file.metadata().map_err(|e| {
+                GarrisonError::Config(format!(
+                    "读取配置文件元数据失败 [{}]：{}",
+                    display_name(),
+                    e
+                ))
+            })?;
+            if !metadata.is_file() {
+                return Err(GarrisonError::Config(format!(
+                    "配置文件路径不是普通文件 [{}]：{:?}",
+                    display_name(),
+                    metadata.file_type()
+                )));
+            }
+            const MAX_CONFIG_FILE_SIZE: u64 = 10 * 1024 * 1024; // 10MB
+            if metadata.len() > MAX_CONFIG_FILE_SIZE {
+                return Err(GarrisonError::Config(format!(
+                    "配置文件过大 [{}]：{} bytes，上限 {} bytes",
+                    display_name(),
+                    metadata.len(),
+                    MAX_CONFIG_FILE_SIZE
+                )));
+            }
+            // take(MAX+1) 在 I/O 层强制限制读取字节数，防止 TOCTOU（metadata 后文件被替换为超大文件）
+            let mut reader = std::io::BufReader::new(file).take(MAX_CONFIG_FILE_SIZE + 1);
+            let mut content = String::with_capacity(metadata.len() as usize);
+            reader.read_to_string(&mut content).map_err(|e| {
+                GarrisonError::Config(format!("读取配置文件失败 [{}]：{}", display_name(), e))
+            })?;
+            if content.len() > MAX_CONFIG_FILE_SIZE as usize {
+                return Err(GarrisonError::Config(format!(
+                    "配置文件实际大小超过上限 [{}]：{} bytes",
+                    display_name(),
+                    content.len()
+                )));
+            }
             builder = builder.source(Box::new(
-                FileSource::new(path)
-                    .allow_absolute_paths()
-                    .with_priority(10),
+                TomlContentSource::new(content, Some(path_ref.to_path_buf())).with_priority(10),
             ));
         }
 

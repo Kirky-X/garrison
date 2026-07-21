@@ -293,7 +293,7 @@ async fn main() -> GarrisonResult<()> {
 `GarrisonConfig` 支持三级配置源（优先级从高到低）：
 
 1. **环境变量**：`GARRISON_TIMEOUT` / `GARRISON_ACTIVE_TIMEOUT` / `GARRISON_TOKEN_NAME` 等
-2. **toml 配置文件**：`garrison.toml`（通过 `ConfigLoader::load_from_file` 加载）
+2. **toml 配置文件**：`garrison.toml`（通过 `GarrisonConfig::load(Some(path))` 加载）
 3. **代码默认值**：`GarrisonConfig::default_config()`
 
 核心配置项：
@@ -302,10 +302,10 @@ async fn main() -> GarrisonResult<()> {
 | --- | --- | --- |
 | `timeout` | `2592000`（30 天） | 会话超时秒数 |
 | `active_timeout` | `-1`（不启用） | 活跃超时秒数，-1 表示跟随 `timeout` |
-| `is_share` | `true` | 同账号多端共享会话 |
+| `is_share` | `false` | 同账号多端共享会话 |
 | `is_concurrent` | `true` | 允许同账号并发登录 |
-| `token_name` | `garrison-token` | Cookie / Header 名 |
-| `token_style` | `random-64` | Token 风格（`uuid` / `random-64` / `simple` / `jwt`） |
+| `token_name` | `garrison_token` | Cookie / Header 名 |
+| `token_style` | `random_64` | Token 风格（`uuid` / `random_64` / `simple` / `jwt`） |
 | `throw_on_not_login` | `true` | 未登录时抛异常而非返回 false |
 
 支持通过 `tokio::sync::watch` 实现配置热更新，详见 [docs/CONFIGURATION.md](./docs/CONFIGURATION.md)。

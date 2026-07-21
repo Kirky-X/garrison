@@ -591,5 +591,7 @@ pub struct GarrisonConfig {
 mod helpers;
 pub(crate) use helpers::{collect_env_vars, default_jwt_secret};
 
+mod source;
+
 #[cfg(test)]
 mod tests;

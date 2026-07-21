@@ -1600,3 +1600,86 @@ fn validate_rejects_zero_burst_threshold() {
         err
     );
 }
+
+// === 安全审查 M-1：load() 安全防护集成测试（规则 9） ===
+
+/// 验证 `load` 拒绝空路径（安全 LOW-1）。
+#[test]
+fn load_rejects_empty_path() {
+    let err = GarrisonConfig::load(Some("")).unwrap_err();
+    assert!(
+        matches!(err, GarrisonError::Config(ref m) if m.contains("不能为空")),
+        "空路径应被拒绝，实际: {:?}",
+        err
+    );
+}
+
+/// 验证 `load` 拒绝包含 `..` 的路径遍历路径（安全 HIGH-1/MEDIUM-3）。
+#[test]
+fn load_rejects_path_traversal() {
+    let err = GarrisonConfig::load(Some("../etc/passwd")).unwrap_err();
+    assert!(
+        matches!(err, GarrisonError::Config(ref m) if m.contains("父目录引用")),
+        "路径遍历 `..` 应被拒绝，实际: {:?}",
+        err
+    );
+}
+
+/// 验证 `load` 拒绝 URL 编码的路径遍历 `%2e%2e`（安全 MEDIUM-3）。
+///
+/// 注：fs API 不解码 URL，`%2e%2e` 是字面字符串，不会触发路径遍历，
+/// 此测试验证 `load` 不会因 `%2e%2e` 字面路径而误报或漏报。
+/// 预期行为：`%2e%2e` 不存在，File::open 返回 ENOENT。
+#[test]
+fn load_url_encoded_traversal_returns_enoent() {
+    let err = GarrisonConfig::load(Some("%2e%2e/etc/passwd")).unwrap_err();
+    // %2e%2e 是字面路径，文件不存在，应返回 Config 错误（打开失败）
+    assert!(
+        matches!(err, GarrisonError::Config(ref m) if m.contains("打开配置文件失败")),
+        "%2e%2e 字面路径应返回打开失败，实际: {:?}",
+        err
+    );
+}
+
+/// 验证 `load` 拒绝超大配置文件（安全 HIGH-1，10MB 上限）。
+#[test]
+fn load_rejects_oversized_config() {
+    let dir = tempfile::tempdir().expect("创建临时目录失败");
+    let path = dir.path().join("big.toml");
+    // 写入 11MB 数据（>10MB 上限），用注释避免 TOML 解析失败
+    let big_content = "# ".to_string() + &"x".repeat(11 * 1024 * 1024);
+    std::fs::write(&path, big_content.as_bytes()).expect("写入大文件失败");
+    let path_str = path.to_str().expect("路径转 str 失败");
+    let err = GarrisonConfig::load(Some(path_str)).unwrap_err();
+    assert!(
+        matches!(err, GarrisonError::Config(ref m) if m.contains("过大")),
+        "超大文件应被拒绝，实际: {:?}",
+        err
+    );
+}
+
+/// 验证 `load` 拒绝字符设备（安全 HIGH-1，is_file 检查）。
+#[cfg(unix)]
+#[test]
+fn load_rejects_special_file() {
+    // /dev/null 是字符设备，metadata.is_file() 返回 false
+    let err = GarrisonConfig::load(Some("/dev/null")).unwrap_err();
+    assert!(
+        matches!(err, GarrisonError::Config(ref m) if m.contains("不是普通文件")),
+        "字符设备应被拒绝，实际: {:?}",
+        err
+    );
+}
+
+/// 验证 `load` 拒绝目录（安全 HIGH-1，is_file 检查）。
+#[test]
+fn load_rejects_directory() {
+    let dir = tempfile::tempdir().expect("创建临时目录失败");
+    let path_str = dir.path().to_str().expect("路径转 str 失败");
+    let err = GarrisonConfig::load(Some(path_str)).unwrap_err();
+    assert!(
+        matches!(err, GarrisonError::Config(ref m) if m.contains("不是普通文件")),
+        "目录应被拒绝，实际: {:?}",
+        err
+    );
+}
