@@ -196,7 +196,7 @@ graph TD
 
 ```toml
 [dependencies]
-garrison = { version = "0.7.1", features = ["web-axum"] }
+garrison = { version = "0.7", features = ["web-axum"] }
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -204,7 +204,7 @@ tokio = { version = "1", features = ["full"] }
 
 ```toml
 [dependencies]
-garrison = { version = "0.7.1", features = ["full"] }
+garrison = { version = "0.7", features = ["full"] }
 ```
 
 ### 最小示例
