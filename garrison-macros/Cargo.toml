@@ -10,6 +10,7 @@ description = "Procedural macros for Garrison auth framework"
 license = "Apache-2.0"
 repository = "https://github.com/Kirky-X/garrison"
 documentation = "https://docs.rs/garrison-macros"
+publish = true
 
 [lib]
 proc-macro = true
