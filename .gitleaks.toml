@@ -1,0 +1,53 @@
+# Copyright (c) 2026 Kirky.X. All rights reserved.
+# See LICENSE for full license text.
+
+# gitleaks 配置 —— 收敛测试夹具/示例/文档中的假凭证噪声。
+# 用法：gitleaks detect --source . --config .gitleaks.toml
+# 格式参考：https://github.com/gitleaks/gitleaks#configuration
+#
+# 设计说明：
+# - useDefault=true 继承 gitleaks 内置规则集（generic-api-key / jwt / aws / gcp ...）。
+# - 下方 allowlist 仅排除“已核实为非真实凭证”的路径与提交，
+#   真实源码中的凭证泄漏仍会被检出（allowlist 是降噪，不是关闭检测）。
+
+title = "Bulwark gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "测试夹具 / 示例 / 文档 / 第三方参考源码 / 生成物中的假凭证降噪"
+
+# 路径正则（匹配文件路径）：这些位置的命中已逐条核实为测试/示例/文档假值。
+paths = [
+    # 单元测试与集成测试（含内联 tests 模块文件与 tests/ 目录）
+    '''(^|/)tests?\.rs$''',
+    '''(^|/)tests/''',
+    # 示例代码（演示用假 token/密钥）
+    '''(^|/)examples/''',
+    # 文档中的示例凭证
+    '''^README\.md$''',
+    '''(^|/)docs/''',
+    '''(^|/)mdbook/''',
+    # 第三方参考源码（Sa-Token/keycloak/cedar 等，非本项目代码）
+    '''(^|/)temp/''',
+    # 工具/生成物缓存（gitignored，非源码）
+    '''(^|/)\.codenexus/''',
+    '''(^|/)\.gitnexus/''',
+    '''(^|/)strix_runs/''',
+    '''(^|/)\.security-audit/''',
+    '''(^|/)target/''',
+    '''(^|/)\.venv/''',
+    '''(^|/)\.mimocode/''',
+]
+
+# 已核实为测试/文档假值的具体命中（正则匹配到的 secret 明文片段）。
+# 仅列出确认非真实的固定测试常量，避免误放行真实密钥。
+regexes = [
+    # 测试用固定 32 字节 HMAC 密钥（src/protocol/sign 测试夹具）
+    '''0123456789abcdef0123456789abcdef''',
+    # 测试断言中的固定 UUID 后缀 token（src/core/token 测试）
+    '''550e8400-e29b-41d4-a716-446655440000''',
+]
+
+# nosemgrep/nosecret 显式标注行的通用降噪由上方 paths 覆盖（测试/示例目录）。

@@ -28,6 +28,20 @@ repos:
       - id: check-executables-have-shebangs
       - id: debug-statements
 
+  # === 禁止提交 temp/ 第三方参考源码（防御级，阻断 git add -f 绕过 .gitignore） ===
+  - repo: local
+    hooks:
+      - id: forbid-temp-dir
+        name: forbid committing temp/ (第三方参考源码禁止入库)
+        entry: >-
+          bash -c 'staged=$(git diff --cached --name-only | grep "^temp/" || true);
+          if [ -n "$staged" ]; then
+          echo "❌ 禁止提交 temp/ 下的第三方参考源码："; echo "$staged";
+          echo "temp/ 已在 .gitignore 忽略；若确需入库请评审后调整 .gitignore 与本 hook。"; exit 1; fi'
+        language: system
+        pass_filenames: false
+        always_run: true
+
   # === Rust 格式化 ===
   - repo: https://github.com/doublify/pre-commit-rust
     rev: v1.0

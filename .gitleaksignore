@@ -1,0 +1,10 @@
+# gitleaks 指纹忽略清单（.gitleaksignore）
+# 格式：{commit}:{file}:{rule-id}:{startline}
+# 仅收录“已逐条核实为非真实凭证”的历史命中，surgical 精确忽略，
+# 不影响 src/ 中真实密钥的检出。核实记录见 .security-audit/SECURITY-ASSESSMENT.md (M-2)。
+#
+# oidc.rs:507/496 —— wiremock 模拟 OIDC token 端点的假 id_token（dummy JWT，sub=user123）
+800740ceaca95154ece58d07a423c4edfc7fefc4:src/protocol/sso/oidc.rs:generic-api-key:507
+04421207ad65120ef9b3925f76c1c18730831888:src/protocol/sso/oidc.rs:generic-api-key:496
+# totp.rs:138 —— RFC 6238 标准公开测试密钥 "12345678901234567890" 的 Base32 编码
+e395763cec4dcad25a26ef359512412862e11a57:src/account/credential/totp.rs:generic-api-key:138
