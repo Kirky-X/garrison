@@ -95,7 +95,7 @@ impl RemoteContext {
     ///
     /// 用 `pick_free_port()` 挑选 external/internal 端口，通过 env 注入子进程，
     /// 从 stderr 行 `[auth_server_serve] listening on external=0.0.0.0:PORT internal=0.0.0.0:PORT`
-    /// 解析端口。60s 超时 panic dump stderr（规则 12 失败显性化；60s 容纳首次
+    /// 解析端口。180s 超时 panic dump stderr（规则 12 失败显性化；180s 容纳首次
     /// `cargo run` 编译时间，预编译后通常 <1s）。
     ///
     /// # API Key（MEDIUM-3 / LOW-1）
@@ -138,8 +138,8 @@ impl RemoteContext {
             }
         });
 
-        // 60s 超时：cargo run 首次需编译，预编译后 <1s
-        let deadline = Instant::now() + Duration::from_secs(60);
+        // 180s 超时：cargo run 首次需编译（含 garrison + 全部 deps + examples），预编译后 <1s
+        let deadline = Instant::now() + Duration::from_secs(180);
         let mut external_url: Option<String> = None;
         let mut internal_url: Option<String> = None;
         let mut stderr_dump = String::new();
@@ -147,7 +147,7 @@ impl RemoteContext {
         loop {
             if Instant::now() >= deadline {
                 panic!(
-                    "auth_server_serve 60s 内未输出 listening 行，stderr dump:\n{}",
+                    "auth_server_serve 180s 内未输出 listening 行，stderr dump:\n{}",
                     stderr_dump
                 );
             }
