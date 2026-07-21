@@ -77,6 +77,14 @@ repos:
         files: 'Cargo\.(toml|lock)'
         pass_filenames: false
 
+  # === 密钥扫描（gitleaks，与 detect-private-key 互补） ===
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.21.2
+    hooks:
+      - id: gitleaks
+        # 使用仓库 .gitleaks.toml allowlist（测试/示例/文档/temp 降噪）
+        args: [--config, .gitleaks.toml]
+
   # === 拼写检查 ===
   - repo: https://github.com/codespell-project/codespell
     rev: v2.3.0
