@@ -22,6 +22,6 @@ proc-macro2 = "1"
 
 [dev-dependencies]
 trybuild = "1"
-garrison = { path = "..", version = "0.7.0", features = ["annotation-macros"] }
+garrison = { path = "..", features = ["annotation-macros"] }
 axum = { version = "0.8", default-features = false }
 tokio = { version = "1", features = ["rt", "rt-multi-thread"] }
