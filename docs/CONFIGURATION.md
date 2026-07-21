@@ -297,7 +297,7 @@ Garrison 通过 feature flag 在编译期裁剪，不同 feature 下需要的配
 ```toml
 [dependencies]
 garrison = {
-    version = "0.6",
+    version = "0.7",
     features = [
         "cache-memory",
         "cache-redis",

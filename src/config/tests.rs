@@ -1672,14 +1672,20 @@ fn load_rejects_special_file() {
 }
 
 /// 验证 `load` 拒绝目录（安全 HIGH-1，is_file 检查）。
+///
+/// 跨平台行为差异（规则 31 跨平台代码）：
+/// - Linux/macOS：`File::open(dir)` 成功，由 `metadata.is_file()` 返回 false 触发 "不是普通文件"
+/// - Windows：`File::open(dir)` 直接返回 `ERROR_ACCESS_DENIED`，触发 "打开配置文件失败"
+///
+/// 两种路径都达到了"目录被拒绝"的安全目标，测试应同时接受。
 #[test]
 fn load_rejects_directory() {
     let dir = tempfile::tempdir().expect("创建临时目录失败");
     let path_str = dir.path().to_str().expect("路径转 str 失败");
     let err = GarrisonConfig::load(Some(path_str)).unwrap_err();
     assert!(
-        matches!(err, GarrisonError::Config(ref m) if m.contains("不是普通文件")),
-        "目录应被拒绝，实际: {:?}",
+        matches!(err, GarrisonError::Config(ref m) if m.contains("不是普通文件") || m.contains("打开配置文件失败")),
+        "目录应被拒绝（Linux 走 is_file 检查 / Windows 走 File::open EACCES），实际: {:?}",
         err
     );
 }
