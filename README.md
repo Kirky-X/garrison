@@ -4,7 +4,7 @@
 </p>
 
 <p align="center">
-  [![English](https://img.shields.io/badge/lang-English-blue.svg)](./README_EN.md)
+  中文 | <a href="./README_EN.md">English</a>
 </p>
 
 <p align="center">

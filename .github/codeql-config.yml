@@ -1,0 +1,20 @@
+# Copyright (c) 2026 Kirky.X. All rights reserved.
+# See LICENSE for full license text.
+
+# CodeQL 扫描配置。
+# 排除测试代码路径：测试中的硬编码密码/nonce 是预期行为，非真实漏洞。
+# 对 src/ 下 #[cfg(test)] mod tests {} 内联测试块的误报通过 GitHub API dismiss 处理。
+
+name: "Garrison CodeQL Config"
+
+paths-ignore:
+  # 独立测试文件（tests/ 目录、**/tests.rs 内联测试文件）
+  - "**/tests/**"
+  - "**/tests.rs"
+  # 示例代码（examples/ 目录）
+  - "**/examples/**"
+  # 基准测试
+  - "**/benches/**"
+
+queries:
+  - uses: security-and-quality
