@@ -4,19 +4,19 @@
 # cargo-audit 配置（依据 spec protocol-jwt Known Risks 章节）
 #
 # RUSTSEC-2023-0071: rsa 0.9.10 Marvin Attack
-# 依赖链：bulwark → rsa（social-alipay feature）
+# 依赖链：garrison → rsa（social-alipay feature）
 # 影响范围：Marvin Attack 针对 RSA 解密（decryption）的时序侧信道攻击
-# 实际风险：bulwark 仅使用 RSA 签名（SigningKey/Signer），不使用解密功能，漏洞不可达
+# 实际风险：garrison 仅使用 RSA 签名（SigningKey/Signer），不使用解密功能，漏洞不可达
 # 官方状态：No patch available（截至 2026-07-13）
 # 处置策略：记录为已知/接受，等待上游修复或替换为 sad-rsa
 #
 # RUSTSEC-2026-0173: proc-macro-error2 v2.0.1 unmaintained
-# 依赖链：bulwark → dbnexus → dbnexus-macros/sea-bae → proc-macro-error2
+# 依赖链：garrison → dbnexus → dbnexus-macros/sea-bae → proc-macro-error2
 # 影响范围：仅编译期（proc-macro），无运行时风险
 # 处置策略：上游 sea-bae/dbnexus-macros 升级前无法消除，记录为已知/接受
 #
 # RUSTSEC-2026-0204: crossbeam-epoch 0.9.18 fmt::Display invalid pointer dereference
-# 依赖链：bulwark → moka → crossbeam-epoch
+# 依赖链：garrison → moka → crossbeam-epoch
 # 影响范围：仅在 null pointer 上调用 fmt::Display 时触发 panic（非 memory safety）
 # 处置策略：无 patched 版本（2026-07-06 发布），transitive 依赖无法直接升级，记录为已知/接受
 

@@ -3,11 +3,11 @@
 - **状态**：已采纳（v0.5.2）
 - **决策日期**：2026-07-08
 - **相关变更**：v0-5-2-architecture-refactor
-- **相关代码**：`src/dao/oxcache_impl.rs` `BulwarkDaoOxcache`
+- **相关代码**：`src/dao/oxcache_impl.rs` `GarrisonDaoOxcache`
 
 ## 背景
 
-`BulwarkDaoOxcache` 使用 oxcache 0.3（Cargo.lock 当前解析为 0.3.9）的 `_sync` API（`get_sync`/`set_with_ttl_sync`/`ttl_sync`/`expire_sync`/`delete_sync`/`exists_sync`）实现 `BulwarkDao` trait 的异步方法。这引发了"在 async 上下文中调用 sync API 是否合适"的疑问。
+`GarrisonDaoOxcache` 使用 oxcache 0.3（Cargo.lock 当前解析为 0.3.9）的 `_sync` API（`get_sync`/`set_with_ttl_sync`/`ttl_sync`/`expire_sync`/`delete_sync`/`exists_sync`）实现 `GarrisonDao` trait 的异步方法。这引发了"在 async 上下文中调用 sync API 是否合适"的疑问。
 
 ## 评估依据
 
@@ -30,7 +30,7 @@
 
 1. 对 in-memory backend，`_sync` 调用比 `spawn_blocking` 更快（<1μs vs 10-50μs）
 2. `_sync` API 由 oxcache 0.3 官方支持，通过 `sync_mode(true)` builder 选项启用
-3. `BulwarkDaoOxcache` 的所有操作均为 in-memory，无网络 I/O，不会阻塞 tokio worker 线程
+3. `GarrisonDaoOxcache` 的所有操作均为 in-memory，无网络 I/O，不会阻塞 tokio worker 线程
 
 ## 后续跟进条件
 
@@ -38,7 +38,7 @@
 
 - `_sync` API 在网络 I/O 场景下会阻塞 tokio worker 线程
 - 届时需将 `_sync` API 改为 async API（`get`/`set_with_ttl`/`ttl`/`expire`/`delete`）
-- 或在 `BulwarkDao` impl 内部使用 `spawn_blocking` 包装网络 I/O 调用
+- 或在 `GarrisonDao` impl 内部使用 `spawn_blocking` 包装网络 I/O 调用
 
 ## 验证
 

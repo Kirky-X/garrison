@@ -4,50 +4,50 @@
 //! i18n_usage 示例（i18n feature）。
 //!
 //! 演示异常消息国际化：
-//! 1. `BulwarkLocale` 枚举（`Zh` 默认 / `En`）
+//! 1. `GarrisonLocale` 枚举（`Zh` 默认 / `En`）
 //! 2. `current_locale()` 读取当前线程 locale
 //! 3. `set_locale(locale)` 返回 RAII `LocaleGuard`，drop 时自动恢复
-//! 4. `translate_error(&BulwarkError)` 依据当前 locale 翻译错误消息
+//! 4. `translate_error(&GarrisonError)` 依据当前 locale 翻译错误消息
 //! 5. 嵌套 `set_locale` 调用（栈式 scope）
 //!
 //! 运行方式：
 //! ```sh
-//! cargo run -p bulwark-examples --bin i18n_usage --features i18n
+//! cargo run -p garrison-examples --bin i18n_usage --features i18n
 //! ```
 
-use bulwark::error::BulwarkError;
-use bulwark::exception::BulwarkException;
-use bulwark::i18n::{current_locale, set_locale, translate_error, BulwarkLocale};
+use garrison::error::GarrisonError;
+use garrison::exception::GarrisonException;
+use garrison::i18n::{current_locale, set_locale, translate_error, GarrisonLocale};
 
 /// 返回一组覆盖主要变体的错误样本，用于演示翻译。
 ///
 /// 包含 `NotLogin` / `NotPermission` / `NotRole` / `InvalidToken` / `ExpiredToken` /
 /// `Dao` / `Internal` / `NotImplemented` / `Exception` 等。
-pub fn sample_errors() -> Vec<(&'static str, BulwarkError)> {
+pub fn sample_errors() -> Vec<(&'static str, GarrisonError)> {
     vec![
-        ("NotLogin", BulwarkError::NotLogin("请先登录".to_string())),
+        ("NotLogin", GarrisonError::NotLogin("请先登录".to_string())),
         (
             "NotPermission",
-            BulwarkError::NotPermission("user:delete".to_string()),
+            GarrisonError::NotPermission("user:delete".to_string()),
         ),
-        ("NotRole", BulwarkError::NotRole("superadmin".to_string())),
+        ("NotRole", GarrisonError::NotRole("superadmin".to_string())),
         (
             "InvalidToken",
-            BulwarkError::InvalidToken("签名不匹配".to_string()),
+            GarrisonError::InvalidToken("签名不匹配".to_string()),
         ),
         (
             "ExpiredToken",
-            BulwarkError::ExpiredToken("token 已过期".to_string()),
+            GarrisonError::ExpiredToken("token 已过期".to_string()),
         ),
-        ("Dao", BulwarkError::Dao("连接超时".to_string())),
-        ("Internal", BulwarkError::Internal("未知错误".to_string())),
+        ("Dao", GarrisonError::Dao("连接超时".to_string())),
+        ("Internal", GarrisonError::Internal("未知错误".to_string())),
         (
             "NotImplemented",
-            BulwarkError::NotImplemented("此功能尚未实现".to_string()),
+            GarrisonError::NotImplemented("此功能尚未实现".to_string()),
         ),
         (
             "Exception",
-            BulwarkError::Exception(BulwarkException::new(-1, "请先登录")),
+            GarrisonError::Exception(GarrisonException::new(-1, "请先登录")),
         ),
     ]
 }
@@ -60,13 +60,13 @@ pub fn sample_errors() -> Vec<(&'static str, BulwarkError)> {
 /// 3. 嵌套 locale scope
 /// 4. 所有错误变体的中英文翻译对照
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
-    println!("=== Bulwark i18n 国际化示例 ===\n");
+    println!("=== Garrison i18n 国际化示例 ===\n");
 
     // ----------------------------------------------------------------
     // 1. 默认 locale（Zh）
     // ----------------------------------------------------------------
     println!("[默认 locale] current_locale() = {:?}", current_locale());
-    assert_eq!(current_locale(), BulwarkLocale::Zh);
+    assert_eq!(current_locale(), GarrisonLocale::Zh);
     println!();
 
     // ----------------------------------------------------------------
@@ -74,14 +74,14 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     // ----------------------------------------------------------------
     println!("[set_locale] 切换到英文 + RAII guard:");
     {
-        let _guard = set_locale(BulwarkLocale::En);
+        let _guard = set_locale(GarrisonLocale::En);
         println!(
             "    set_locale(En) 后 current_locale() = {:?}",
             current_locale()
         );
-        assert_eq!(current_locale(), BulwarkLocale::En);
+        assert_eq!(current_locale(), GarrisonLocale::En);
 
-        let err = BulwarkError::NotLogin("please login first".to_string());
+        let err = GarrisonError::NotLogin("please login first".to_string());
         println!(
             "    translate_error(NotLogin) = \"{}\"",
             translate_error(&err)
@@ -92,7 +92,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         "    guard drop 后 current_locale() = {:?}",
         current_locale()
     );
-    assert_eq!(current_locale(), BulwarkLocale::Zh);
+    assert_eq!(current_locale(), GarrisonLocale::Zh);
     println!();
 
     // ----------------------------------------------------------------
@@ -100,24 +100,24 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     // ----------------------------------------------------------------
     println!("[嵌套] set_locale 支持栈式 scope:");
     {
-        let _g1 = set_locale(BulwarkLocale::En);
+        let _g1 = set_locale(GarrisonLocale::En);
         println!("    外层 set_locale(En) → {:?}", current_locale());
-        assert_eq!(current_locale(), BulwarkLocale::En);
+        assert_eq!(current_locale(), GarrisonLocale::En);
 
         {
-            let _g2 = set_locale(BulwarkLocale::Zh);
+            let _g2 = set_locale(GarrisonLocale::Zh);
             println!("    内层 set_locale(Zh) → {:?}", current_locale());
-            assert_eq!(current_locale(), BulwarkLocale::Zh);
+            assert_eq!(current_locale(), GarrisonLocale::Zh);
 
-            let err = BulwarkError::NotLogin("内层中文".to_string());
+            let err = GarrisonError::NotLogin("内层中文".to_string());
             println!("    内层 translate_error = \"{}\"", translate_error(&err));
         }
 
         println!("    内层 guard drop 后 → {:?}", current_locale());
-        assert_eq!(current_locale(), BulwarkLocale::En);
+        assert_eq!(current_locale(), GarrisonLocale::En);
     }
     println!("    外层 guard drop 后 → {:?}", current_locale());
-    assert_eq!(current_locale(), BulwarkLocale::Zh);
+    assert_eq!(current_locale(), GarrisonLocale::Zh);
     println!();
 
     // ----------------------------------------------------------------
@@ -127,14 +127,14 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let errors = sample_errors();
 
     println!("\n    [中文 locale (Zh)]:");
-    let _zh_guard = set_locale(BulwarkLocale::Zh);
+    let _zh_guard = set_locale(GarrisonLocale::Zh);
     for (name, err) in &errors {
         println!("    {:<16} → {}", name, translate_error(err));
     }
     drop(_zh_guard);
 
     println!("\n    [英文 locale (En)]:");
-    let _en_guard = set_locale(BulwarkLocale::En);
+    let _en_guard = set_locale(GarrisonLocale::En);
     for (name, err) in &errors {
         println!("    {:<16} → {}", name, translate_error(err));
     }
@@ -144,15 +144,15 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     // ----------------------------------------------------------------
     // 5. Display trait 集成（i18n feature 下 Display 委托 translate_error）
     // ----------------------------------------------------------------
-    println!("[Display 集成] BulwarkError::Display 依据 locale 切换:");
-    let err = BulwarkError::NotLogin("test".to_string());
+    println!("[Display 集成] GarrisonError::Display 依据 locale 切换:");
+    let err = GarrisonError::NotLogin("test".to_string());
 
-    let _zh = set_locale(BulwarkLocale::Zh);
+    let _zh = set_locale(GarrisonLocale::Zh);
     println!("    Zh locale: err = \"{}\"", err);
     assert_eq!(err.to_string(), "未登录: test");
 
     drop(_zh);
-    let _en = set_locale(BulwarkLocale::En);
+    let _en = set_locale(GarrisonLocale::En);
     println!("    En locale: err = \"{}\"", err);
     assert_eq!(err.to_string(), "Not logged in: test");
     drop(_en);

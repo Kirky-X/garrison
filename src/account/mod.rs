@@ -2,7 +2,7 @@
 //! See LICENSE for full license text.
 
 //! 账号安全引擎模块（吸收 keycloak 安全能力）。
-//! 本模块吸收 Keycloak 安全能力，提升 Bulwark 原生账号安全能力。
+//! 本模块吸收 Keycloak 安全能力，提升 Garrison 原生账号安全能力。
 //! 与 `secure/` 模块（密码学原语）互补：`secure/` 提供 TOTP/签名/Basic/Digest
 //! 等底层原语，`account/` 提供账号生命周期安全能力。
 //!
@@ -38,7 +38,7 @@ pub mod policy;
 
 /// 用户级双态账号锁定子模块（`account-lockout` feature）。
 ///
-/// 提供 `UserLockoutStrategy` 实现 `BulwarkFirewallStrategy` trait，
+/// 提供 `UserLockoutStrategy` 实现 `GarrisonFirewallStrategy` trait，
 /// 支持 temporary + permanent 双态锁定，与 `BruteForceStrategy`（IP 级）组合使用。
 #[cfg(feature = "account-lockout")]
 pub mod lockout;
@@ -58,8 +58,8 @@ pub mod metrics;
 
 /// 封禁库子模块，提供账号封禁/解封/查询能力。
 ///
-/// 提供 `DisableEntry` struct + `DisableRepository` trait（独立于 `BulwarkDao`，
-/// 通过持有 `Arc<dyn BulwarkDao>` 委托实现）。非 feature-gated，依赖核心 `BulwarkDao` trait。
+/// 提供 `DisableEntry` struct + `DisableRepository` trait（独立于 `GarrisonDao`，
+/// 通过持有 `Arc<dyn GarrisonDao>` 委托实现）。非 feature-gated，依赖核心 `GarrisonDao` trait。
 pub mod disable;
 
 #[cfg(test)]

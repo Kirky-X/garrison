@@ -9,10 +9,10 @@ use std::fmt;
 /// 统一管理所有事件 reason 字符串，避免硬编码。
 ///
 /// 目前覆盖以下事件变体的 reason 字段：
-/// - [`crate::listener::BulwarkEvent::LoginFailure`]（`InvalidCredentials` / `HashFormatError`）
-/// - [`crate::listener::BulwarkEvent::Kickout`]（`Kickout` / `Logout` 等）
-/// - [`crate::listener::BulwarkEvent::AccountLocked`]（`Locked`）
-/// - [`crate::listener::BulwarkEvent::FirewallBlock`]（`Revoked` / `Expired` 等）
+/// - [`crate::listener::GarrisonEvent::LoginFailure`]（`InvalidCredentials` / `HashFormatError`）
+/// - [`crate::listener::GarrisonEvent::Kickout`]（`Kickout` / `Logout` 等）
+/// - [`crate::listener::GarrisonEvent::AccountLocked`]（`Locked`）
+/// - [`crate::listener::GarrisonEvent::FirewallBlock`]（`Revoked` / `Expired` 等）
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EventReason {
     /// 无效凭证（v0.4.2 安全审计 A-014：user_not_found 与 wrong_password 统一）

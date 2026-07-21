@@ -3,11 +3,11 @@
 
 //! 异常场景 E2E 测试——限速 / 无效 token / 无 API Key / 路径过滤。
 //!
-//! 通过 HTTP 调用真实 BulwarkAuthServer + BackendEmbedded，
+//! 通过 HTTP 调用真实 GarrisonAuthServer + BackendEmbedded，
 //! 测试异常场景：限速 429、无 API Key 401、错误 API Key 401、外网访问内网路径 404、内网访问外网路径 404。
 
 use super::{make_client, start_e2e_server};
-use bulwark::backend::types::LoginParams;
+use garrison::backend::types::LoginParams;
 use serial_test::serial;
 
 /// 限速 2 req/s，第 3 个请求返回 429。

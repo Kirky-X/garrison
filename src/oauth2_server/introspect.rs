@@ -7,7 +7,7 @@
 //! 过期/无效 token 返回 active=false。仅内网端口 :8443 可访问。
 
 use crate::constants::TokenType;
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::error::{GarrisonError, GarrisonResult};
 use crate::oauth2_server::client::OAuth2ClientStore;
 use crate::oauth2_server::token::TokenHandler;
 use serde::{Deserialize, Serialize};
@@ -69,7 +69,7 @@ pub struct IntrospectResponse {
 }
 
 /// OAuth2 token 签发者标识（RFC 7662 §2.3 `iss` 字段值）。
-const OAUTH2_ISSUER: &str = "bulwark-oauth2-server";
+const OAUTH2_ISSUER: &str = "garrison-oauth2-server";
 
 impl IntrospectResponse {
     /// 创建 inactive 响应（token 无效或过期）。
@@ -107,16 +107,16 @@ impl IntrospectHandler {
     }
 
     /// 处理 introspect 请求。
-    pub async fn handle(&self, req: &IntrospectRequest) -> BulwarkResult<IntrospectResponse> {
+    pub async fn handle(&self, req: &IntrospectRequest) -> GarrisonResult<IntrospectResponse> {
         // 1. 客户端认证
         let client = self.store.get(&req.client_id).await?.ok_or_else(|| {
-            BulwarkError::OAuth2(format!(
+            GarrisonError::OAuth2(format!(
                 "oauth2-server-introspect-invalid-client::{}",
                 req.client_id
             ))
         })?;
         if !client.verify_secret(&req.client_secret)? {
-            return Err(BulwarkError::OAuth2(
+            return Err(GarrisonError::OAuth2(
                 "oauth2-server-introspect-invalid-client-secret".into(),
             ));
         }
@@ -231,7 +231,7 @@ mod tests {
         assert!(resp.nbf.is_some(), "nbf 必须有值");
         assert_eq!(resp.iat, resp.nbf, "OAuth2 token 签发即生效，nbf = iat");
         assert_eq!(resp.aud.as_deref(), Some("int-001"), "aud = client_id");
-        assert_eq!(resp.iss.as_deref(), Some("bulwark-oauth2-server"));
+        assert_eq!(resp.iss.as_deref(), Some("garrison-oauth2-server"));
         assert!(resp.jti.is_some(), "jti 必须有值");
         assert!(resp.username.is_none(), "client_credentials 无 username");
     }

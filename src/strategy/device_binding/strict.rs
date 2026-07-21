@@ -8,12 +8,12 @@
 //!   `device` 字段都不等于 `device_id`，则视为新设备
 //! - `require_secondary_auth`：直接返回 `Ok(true)`（调用方已通过 `is_new_device` 确认是新设备）
 //!
-//! 设计参考 [`crate::strategy::alert::IpChangeDetector`]：持有 `Arc<BulwarkSession>`，
+//! 设计参考 [`crate::strategy::alert::IpChangeDetector`]：持有 `Arc<GarrisonSession>`，
 //! 通过 `get_tokens_by_login_id` + `get_token_session` 遍历历史 session，
 //! 不依赖 `device` 模块（避免 feature gate 耦合）。
 
-use crate::error::BulwarkResult;
-use crate::session::BulwarkSession;
+use crate::error::GarrisonResult;
+use crate::session::GarrisonSession;
 use async_trait::async_trait;
 use std::sync::Arc;
 
@@ -21,7 +21,7 @@ use super::DeviceBindingPolicy;
 
 /// 严格设备绑定策略：新设备强制触发二级认证。
 ///
-/// 持有 [`BulwarkSession`] 引用，通过遍历历史 `TokenSession.device` 字段
+/// 持有 [`GarrisonSession`] 引用，通过遍历历史 `TokenSession.device` 字段
 /// 判断当前 `device_id` 是否为新设备。新设备时 `require_secondary_auth` 返回 `Ok(true)`，
 /// 阻断登录流程并要求二级认证；旧设备返回 `Ok(false)` 直接放行。
 ///
@@ -37,22 +37,22 @@ use super::DeviceBindingPolicy;
 /// 因此直接返回 `Ok(true)`。
 pub struct StrictBinding {
     /// 会话管理器引用，用于查询历史 session 的 device 字段。
-    session: Arc<BulwarkSession>,
+    session: Arc<GarrisonSession>,
 }
 
 impl StrictBinding {
     /// 创建 [`StrictBinding`] 实例。
     ///
     /// # 参数
-    /// - `session`: 会话管理器引用（`Arc<BulwarkSession>`）。
-    pub fn new(session: Arc<BulwarkSession>) -> Self {
+    /// - `session`: 会话管理器引用（`Arc<GarrisonSession>`）。
+    pub fn new(session: Arc<GarrisonSession>) -> Self {
         Self { session }
     }
 }
 
 #[async_trait]
 impl DeviceBindingPolicy for StrictBinding {
-    async fn is_new_device(&self, login_id: &str, device_id: &str) -> BulwarkResult<bool> {
+    async fn is_new_device(&self, login_id: &str, device_id: &str) -> GarrisonResult<bool> {
         super::policies::check_is_new_device(&self.session, login_id, device_id).await
     }
 
@@ -60,7 +60,7 @@ impl DeviceBindingPolicy for StrictBinding {
         &self,
         _login_id: &str,
         _device_id: &str,
-    ) -> BulwarkResult<bool> {
+    ) -> GarrisonResult<bool> {
         // 调用方已通过 is_new_device 确认是新设备，直接返回 true（强制二级认证）
         Ok(true)
     }
@@ -72,16 +72,16 @@ mod tests {
     use crate::dao::tests::MockDao;
     use crate::stp::LoginParams;
 
-    /// 辅助函数：创建带 MockDao 的 Arc<BulwarkSession>。
-    fn make_session() -> (Arc<MockDao>, Arc<BulwarkSession>) {
+    /// 辅助函数：创建带 MockDao 的 Arc<GarrisonSession>。
+    fn make_session() -> (Arc<MockDao>, Arc<GarrisonSession>) {
         let dao: Arc<MockDao> = Arc::new(MockDao::new());
-        let session = Arc::new(BulwarkSession::new(dao.clone(), 3600, 86400));
+        let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400));
         (dao, session)
     }
 
     /// 辅助函数：创建带指定 device 的 token session。
     async fn create_session_with_device(
-        session: &BulwarkSession,
+        session: &GarrisonSession,
         login_id: &str,
         token: &str,
         device: &str,

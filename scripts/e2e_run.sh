@@ -2,7 +2,7 @@
 # Copyright (c) 2026 Kirky.X. All rights reserved.
 # See LICENSE for full license text.
 
-# T053: Bulwark E2E 测试一键执行脚本。
+# T053: Garrison E2E 测试一键执行脚本。
 #
 # 流程：
 #   1. export 环境变量（API Key / 端口 / 限速）
@@ -39,9 +39,9 @@ if [ -z "${EXAMPLE_INTERNAL_API_KEY:-}" ]; then
     exit 1
 fi
 export EXAMPLE_INTERNAL_API_KEY
-export BULWARK_EXTERNAL_PORT="${BULWARK_EXTERNAL_PORT:-8080}"
-export BULWARK_INTERNAL_PORT="${BULWARK_INTERNAL_PORT:-8081}"
-export BULWARK_RATE_LIMIT="${BULWARK_RATE_LIMIT:-100000}"
+export GARRISON_EXTERNAL_PORT="${GARRISON_EXTERNAL_PORT:-8080}"
+export GARRISON_INTERNAL_PORT="${GARRISON_INTERNAL_PORT:-8081}"
+export GARRISON_RATE_LIMIT="${GARRISON_RATE_LIMIT:-100000}"
 
 # 工作目录锚定到脚本所在仓库根目录
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -54,7 +54,7 @@ mkdir -p logs
 # 2. 后台启动 auth_server_serve（stderr 重定向到日志文件，便于 health check 失败时 dump，MEDIUM-2 修复）
 echo "=== [1/6] 启动 auth_server_serve（background） ==="
 STDERR_LOG="${REPO_ROOT}/logs/auth_server_serve.stderr.log"
-cargo run -p bulwark-examples --bin auth_server_serve --features full 2>"${STDERR_LOG}" &
+cargo run -p garrison-examples --bin auth_server_serve --features full 2>"${STDERR_LOG}" &
 SERVER_PID=$!
 
 # 3. trap 退出时杀掉子进程（防止残留僵尸进程）
@@ -70,7 +70,7 @@ trap cleanup EXIT INT TERM
 # 4. health check 重试 30 次（每次 1s）
 # 改用 GET /api/v1/auth/health（internal 端点）替代 POST /login，避免副作用（LOW-8 修复）
 echo "=== [2/6] 等待 auth_server_serve 就绪（health check, 最多 30s） ==="
-INTERNAL_URL="http://127.0.0.1:${BULWARK_INTERNAL_PORT}"
+INTERNAL_URL="http://127.0.0.1:${GARRISON_INTERNAL_PORT}"
 HEALTH_OK=false
 for i in $(seq 1 30); do
     if curl --fail --silent --max-time 1 "${INTERNAL_URL}/api/v1/auth/health" \

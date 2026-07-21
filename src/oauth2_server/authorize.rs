@@ -17,8 +17,8 @@
 //! 8. 重定向到 redirect_uri?code=xxx&state=xxx
 
 use crate::constants::DaoKeyPrefix;
-use crate::dao::BulwarkDao;
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::dao::GarrisonDao;
+use crate::error::{GarrisonError, GarrisonResult};
 use crate::oauth2_server::client::OAuth2ClientStore;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
@@ -125,7 +125,7 @@ pub struct AuthorizationCode {
 /// Authorize handler，处理授权码流程。
 pub struct AuthorizeHandler {
     store: Arc<dyn OAuth2ClientStore>,
-    dao: Arc<dyn BulwarkDao>,
+    dao: Arc<dyn GarrisonDao>,
     login_url: String,
 }
 
@@ -138,7 +138,7 @@ impl AuthorizeHandler {
     /// - `login_url`：未登录时重定向的登录页面 URL
     pub fn new(
         store: Arc<dyn OAuth2ClientStore>,
-        dao: Arc<dyn BulwarkDao>,
+        dao: Arc<dyn GarrisonDao>,
         login_url: String,
     ) -> Self {
         Self {
@@ -162,10 +162,10 @@ impl AuthorizeHandler {
         &self,
         req: &AuthorizeRequest,
         user_id: Option<i64>,
-    ) -> BulwarkResult<AuthorizeResponse> {
+    ) -> GarrisonResult<AuthorizeResponse> {
         // 1. 校验 response_type
         if req.response_type != "code" {
-            return Err(BulwarkError::OAuth2(format!(
+            return Err(GarrisonError::OAuth2(format!(
                 "oauth2-server-authorize-unsupported-response-type::{}",
                 req.response_type
             )));
@@ -173,7 +173,7 @@ impl AuthorizeHandler {
 
         // 2. 校验 PKCE code_challenge_method
         if req.code_challenge_method != "S256" {
-            return Err(BulwarkError::OAuth2(format!(
+            return Err(GarrisonError::OAuth2(format!(
                 "oauth2-server-authorize-unsupported-code-challenge-method::{}",
                 req.code_challenge_method
             )));
@@ -181,20 +181,19 @@ impl AuthorizeHandler {
 
         // 3. 校验 code_challenge 非空
         if req.code_challenge.is_empty() {
-            return Err(BulwarkError::OAuth2(
+            return Err(GarrisonError::OAuth2(
                 "oauth2-server-authorize-code-challenge-empty".into(),
             ));
         }
 
         // 4. 校验 client_id
-        let client =
-            self.store.get(&req.client_id).await?.ok_or_else(|| {
-                BulwarkError::OAuth2(format!("invalid client_id: {}", req.client_id))
-            })?;
+        let client = self.store.get(&req.client_id).await?.ok_or_else(|| {
+            GarrisonError::OAuth2(format!("invalid client_id: {}", req.client_id))
+        })?;
 
         // 5. 校验 redirect_uri 白名单
         if !client.is_redirect_uri_allowed(&req.redirect_uri) {
-            return Err(BulwarkError::OAuth2(format!(
+            return Err(GarrisonError::OAuth2(format!(
                 "oauth2-server-authorize-redirect-uri-not-allowed::{}",
                 req.redirect_uri
             )));
@@ -245,7 +244,7 @@ impl AuthorizeHandler {
         // 9. 存储授权码（10 分钟 TTL）
         let key = DaoKeyPrefix::OAuth2AuthCode.build_key(&code);
         let json = serde_json::to_string(&auth_code).map_err(|e| {
-            BulwarkError::Internal(format!("oauth2-server-authorize-serialize::{}", e))
+            GarrisonError::Internal(format!("oauth2-server-authorize-serialize::{}", e))
         })?;
         self.dao.set(&key, &json, AUTH_CODE_TTL_SECONDS).await?;
 
@@ -267,7 +266,7 @@ impl AuthorizeHandler {
     /// # 返回
     /// - `Ok(Some(code))`：授权码有效，返回关联数据
     /// - `Ok(None)`：授权码不存在或已过期
-    pub async fn consume_code(&self, code: &str) -> BulwarkResult<Option<AuthorizationCode>> {
+    pub async fn consume_code(&self, code: &str) -> GarrisonResult<Option<AuthorizationCode>> {
         let key = DaoKeyPrefix::OAuth2AuthCode.build_key(code);
         let json = self.dao.get(&key).await?;
         match json {
@@ -275,7 +274,7 @@ impl AuthorizeHandler {
                 // 一次性使用：立即删除
                 self.dao.delete(&key).await?;
                 let auth_code: AuthorizationCode = serde_json::from_str(&json).map_err(|e| {
-                    BulwarkError::Internal(format!("oauth2-server-authorize-deserialize::{}", e))
+                    GarrisonError::Internal(format!("oauth2-server-authorize-deserialize::{}", e))
                 })?;
                 Ok(Some(auth_code))
             },
@@ -315,9 +314,9 @@ pub fn is_valid_code_verifier_len(code_verifier: &str) -> bool {
 /// 1. 校验 code_verifier 长度（43-128 字符）
 /// 2. 计算 SHA256(code_verifier) → BASE64URL
 /// 3. 与 code_challenge 比对
-pub fn verify_pkce(code_verifier: &str, code_challenge: &str) -> BulwarkResult<bool> {
+pub fn verify_pkce(code_verifier: &str, code_challenge: &str) -> GarrisonResult<bool> {
     if !is_valid_code_verifier_len(code_verifier) {
-        return Err(BulwarkError::OAuth2(format!(
+        return Err(GarrisonError::OAuth2(format!(
             "oauth2-server-authorize-code-verifier-invalid-length::{}",
             code_verifier.len()
         )));
@@ -398,14 +397,14 @@ mod tests {
     #[test]
     fn verify_pkce_rejects_short_verifier() {
         let err = verify_pkce("short", "challenge").unwrap_err();
-        assert!(matches!(err, BulwarkError::OAuth2(_)));
+        assert!(matches!(err, GarrisonError::OAuth2(_)));
     }
 
     #[test]
     fn verify_pkce_rejects_long_verifier() {
         let verifier = "a".repeat(129);
         let err = verify_pkce(&verifier, "challenge").unwrap_err();
-        assert!(matches!(err, BulwarkError::OAuth2(_)));
+        assert!(matches!(err, GarrisonError::OAuth2(_)));
     }
 
     #[test]
@@ -462,7 +461,7 @@ mod tests {
         let (handler, _) = make_handler();
         let req = make_request("no-such-client", "challenge");
         let err = handler.authorize(&req, Some(1)).await.unwrap_err();
-        assert!(matches!(err, BulwarkError::OAuth2(_)));
+        assert!(matches!(err, GarrisonError::OAuth2(_)));
     }
 
     #[tokio::test]
@@ -480,7 +479,7 @@ mod tests {
         req.redirect_uri = "https://evil.example.com/cb".into();
 
         let err = handler.authorize(&req, Some(1)).await.unwrap_err();
-        assert!(matches!(err, BulwarkError::OAuth2(_)));
+        assert!(matches!(err, GarrisonError::OAuth2(_)));
     }
 
     #[tokio::test]
@@ -498,7 +497,7 @@ mod tests {
         req.response_type = "token".into();
 
         let err = handler.authorize(&req, Some(1)).await.unwrap_err();
-        assert!(matches!(err, BulwarkError::OAuth2(_)));
+        assert!(matches!(err, GarrisonError::OAuth2(_)));
     }
 
     #[tokio::test]
@@ -516,7 +515,7 @@ mod tests {
         req.code_challenge_method = "plain".into();
 
         let err = handler.authorize(&req, Some(1)).await.unwrap_err();
-        assert!(matches!(err, BulwarkError::OAuth2(_)));
+        assert!(matches!(err, GarrisonError::OAuth2(_)));
     }
 
     #[tokio::test]
@@ -530,7 +529,7 @@ mod tests {
 
         let req = make_request("auth-006", "");
         let err = handler.authorize(&req, Some(1)).await.unwrap_err();
-        assert!(matches!(err, BulwarkError::OAuth2(_)));
+        assert!(matches!(err, GarrisonError::OAuth2(_)));
     }
 
     #[tokio::test]

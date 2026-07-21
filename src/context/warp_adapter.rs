@@ -3,8 +3,8 @@
 
 //! warp 适配器模块。
 //!
-//! 实现 `BulwarkContext` / `BulwarkRequest` / `BulwarkResponse` / `BulwarkStorage` trait，
-//! 将 Bulwark 鉴权逻辑与 warp 0.4 Web 框架解耦。
+//! 实现 `GarrisonContext` / `GarrisonRequest` / `GarrisonResponse` / `GarrisonStorage` trait，
+//! 将 Garrison 鉴权逻辑与 warp 0.4 Web 框架解耦。
 //!
 //! ## 设计
 //!
@@ -13,10 +13,10 @@
 //! - `WarpStorage` 用 `HashMap<String, String>`
 //! - `WarpContext` 组合 `WarpRequest + WarpResponse + WarpStorage`
 
-use crate::config::BulwarkConfig;
+use crate::config::GarrisonConfig;
 use crate::context::token_extract::{is_body_token_allowed_method, strip_bearer_prefix};
-use crate::context::{BulwarkContext, BulwarkRequest, BulwarkResponse, BulwarkStorage};
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::context::{GarrisonContext, GarrisonRequest, GarrisonResponse, GarrisonStorage};
+use crate::error::{GarrisonError, GarrisonResult};
 use std::collections::HashMap;
 use warp::http::header::{HeaderMap, HeaderName, HeaderValue};
 use warp::http::StatusCode;
@@ -87,19 +87,19 @@ impl WarpRequest {
     }
 }
 
-impl BulwarkRequest for WarpRequest {
-    fn path(&self) -> BulwarkResult<String> {
+impl GarrisonRequest for WarpRequest {
+    fn path(&self) -> GarrisonResult<String> {
         Ok(self.path.clone())
     }
 
-    fn method(&self) -> BulwarkResult<String> {
+    fn method(&self) -> GarrisonResult<String> {
         Ok(self.method.clone())
     }
 
-    fn header(&self, name: &str) -> BulwarkResult<Option<String>> {
-        let header_name: HeaderName = name
-            .parse()
-            .map_err(|e| BulwarkError::Context(format!("invalid header name '{}': {}", name, e)))?;
+    fn header(&self, name: &str) -> GarrisonResult<Option<String>> {
+        let header_name: HeaderName = name.parse().map_err(|e| {
+            GarrisonError::Context(format!("invalid header name '{}': {}", name, e))
+        })?;
         Ok(self
             .headers
             .get(header_name)
@@ -107,7 +107,7 @@ impl BulwarkRequest for WarpRequest {
             .map(|s| s.to_string()))
     }
 
-    fn cookie(&self, name: &str) -> BulwarkResult<Option<String>> {
+    fn cookie(&self, name: &str) -> GarrisonResult<Option<String>> {
         let cookie_header = self
             .headers
             .get("cookie")
@@ -129,7 +129,7 @@ impl BulwarkRequest for WarpRequest {
         Ok(None)
     }
 
-    fn get_token(&self, config: &BulwarkConfig) -> BulwarkResult<Option<String>> {
+    fn get_token(&self, config: &GarrisonConfig) -> GarrisonResult<Option<String>> {
         // 1. 从 header 提取（Authorization: Bearer <token> 或自定义 token_name header）
         if config.is_read_header {
             // 先尝试 Authorization: Bearer <token>（RFC 7235 大小写不敏感）
@@ -202,25 +202,25 @@ impl Default for WarpResponse {
     }
 }
 
-impl BulwarkResponse for WarpResponse {
-    fn set_status(&mut self, code: u16) -> BulwarkResult<()> {
+impl GarrisonResponse for WarpResponse {
+    fn set_status(&mut self, code: u16) -> GarrisonResult<()> {
         self.status = StatusCode::from_u16(code)
-            .map_err(|e| BulwarkError::Context(format!("invalid status code {}: {}", code, e)))?;
+            .map_err(|e| GarrisonError::Context(format!("invalid status code {}: {}", code, e)))?;
         Ok(())
     }
 
-    fn set_header(&mut self, name: &str, value: &str) -> BulwarkResult<()> {
-        let header_name: HeaderName = name
-            .parse()
-            .map_err(|e| BulwarkError::Context(format!("invalid header name '{}': {}", name, e)))?;
+    fn set_header(&mut self, name: &str, value: &str) -> GarrisonResult<()> {
+        let header_name: HeaderName = name.parse().map_err(|e| {
+            GarrisonError::Context(format!("invalid header name '{}': {}", name, e))
+        })?;
         let header_value = HeaderValue::from_str(value).map_err(|e| {
-            BulwarkError::Context(format!("invalid header value '{}': {}", value, e))
+            GarrisonError::Context(format!("invalid header value '{}': {}", value, e))
         })?;
         self.headers.insert(header_name, header_value);
         Ok(())
     }
 
-    fn set_cookie(&mut self, name: &str, value: &str) -> BulwarkResult<()> {
+    fn set_cookie(&mut self, name: &str, value: &str) -> GarrisonResult<()> {
         // 安全默认：HttpOnly; Secure; SameSite=Lax; Path=/
         let cookie_value = format!("{}={}; HttpOnly; Secure; SameSite=Lax; Path=/", name, value);
         self.set_header("Set-Cookie", &cookie_value)
@@ -230,8 +230,8 @@ impl BulwarkResponse for WarpResponse {
         &mut self,
         name: &str,
         value: &str,
-        config: &crate::config::BulwarkConfig,
-    ) -> BulwarkResult<()> {
+        config: &crate::config::GarrisonConfig,
+    ) -> GarrisonResult<()> {
         // 依据 config.cookie_secure / cookie_same_site 构建 Set-Cookie 头部
         let secure_flag = if config.cookie_secure { "Secure; " } else { "" };
         let cookie_value = format!(
@@ -266,17 +266,17 @@ impl Default for WarpStorage {
     }
 }
 
-impl BulwarkStorage for WarpStorage {
-    fn set(&mut self, key: &str, value: &str) -> BulwarkResult<()> {
+impl GarrisonStorage for WarpStorage {
+    fn set(&mut self, key: &str, value: &str) -> GarrisonResult<()> {
         self.map.insert(key.to_string(), value.to_string());
         Ok(())
     }
 
-    fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
+    fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
         Ok(self.map.get(key).cloned())
     }
 
-    fn delete(&mut self, key: &str) -> BulwarkResult<()> {
+    fn delete(&mut self, key: &str) -> GarrisonResult<()> {
         self.map.remove(key);
         Ok(())
     }
@@ -370,8 +370,8 @@ impl WarpContext {
     }
 }
 
-impl BulwarkContext for WarpContext {
-    fn request(&self) -> BulwarkResult<Box<dyn BulwarkRequest>> {
+impl GarrisonContext for WarpContext {
+    fn request(&self) -> GarrisonResult<Box<dyn GarrisonRequest>> {
         // WarpRequest 已 owned，直接克隆数据构造新实例（含 body_bytes）
         Ok(Box::new(WarpRequest::with_body(
             self.request_data.path.clone(),
@@ -432,9 +432,13 @@ mod tests {
     /// 验证 cookie() 解析 Cookie header（命中与未命中）。
     #[test]
     fn warp_request_cookie_returns_value() {
-        let req = make_warp_request("/", "GET", &[("Cookie", "bulwark_token=tok123; other=val")]);
+        let req = make_warp_request(
+            "/",
+            "GET",
+            &[("Cookie", "garrison_token=tok123; other=val")],
+        );
         assert_eq!(
-            req.cookie("bulwark_token").unwrap(),
+            req.cookie("garrison_token").unwrap(),
             Some("tok123".to_string())
         );
         assert_eq!(req.cookie("other").unwrap(), Some("val".to_string()));
@@ -463,7 +467,7 @@ mod tests {
         let result = req.header("invalid header");
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(matches!(err, BulwarkError::Context(_)));
+        assert!(matches!(err, GarrisonError::Context(_)));
         assert!(err.to_string().contains("invalid header name"));
     }
 
@@ -475,7 +479,7 @@ mod tests {
     #[test]
     fn warp_request_get_token_from_header() {
         let req = make_warp_request("/", "GET", &[("Authorization", "Bearer my_token_123")]);
-        let config = BulwarkConfig::default_config();
+        let config = GarrisonConfig::default_config();
         let token = req.get_token(&config).unwrap();
         assert_eq!(token, Some("my_token_123".to_string()));
     }
@@ -483,7 +487,7 @@ mod tests {
     /// 验证 Bearer 前缀大小写不敏感。
     #[test]
     fn warp_request_bearer_prefix_case_insensitive() {
-        let config = BulwarkConfig::default_config();
+        let config = GarrisonConfig::default_config();
         for prefix in &["Bearer", "bearer", "BEARER", "BeArEr"] {
             let auth_value = format!("{} tok_{}", prefix, prefix);
             let req = make_warp_request("/", "GET", &[("Authorization", auth_value.as_str())]);
@@ -500,8 +504,8 @@ mod tests {
     /// 验证从自定义 header 提取 token。
     #[test]
     fn warp_request_get_token_from_custom_header() {
-        let req = make_warp_request("/", "GET", &[("bulwark_token", "header_token_456")]);
-        let config = BulwarkConfig::default_config();
+        let req = make_warp_request("/", "GET", &[("garrison_token", "header_token_456")]);
+        let config = GarrisonConfig::default_config();
         let token = req.get_token(&config).unwrap();
         assert_eq!(token, Some("header_token_456".to_string()));
     }
@@ -509,8 +513,8 @@ mod tests {
     /// 验证从 cookie 提取 token。
     #[test]
     fn warp_request_get_token_from_cookie() {
-        let req = make_warp_request("/", "GET", &[("Cookie", "bulwark_token=cookie_token_789")]);
-        let config = BulwarkConfig::default_config();
+        let req = make_warp_request("/", "GET", &[("Cookie", "garrison_token=cookie_token_789")]);
+        let config = GarrisonConfig::default_config();
         let token = req.get_token(&config).unwrap();
         assert_eq!(token, Some("cookie_token_789".to_string()));
     }
@@ -523,10 +527,10 @@ mod tests {
             "GET",
             &[
                 ("Authorization", "Bearer header_token"),
-                ("Cookie", "bulwark_token=cookie_token"),
+                ("Cookie", "garrison_token=cookie_token"),
             ],
         );
-        let config = BulwarkConfig::default_config();
+        let config = GarrisonConfig::default_config();
         let token = req.get_token(&config).unwrap();
         assert_eq!(token, Some("header_token".to_string()));
     }
@@ -535,7 +539,7 @@ mod tests {
     #[test]
     fn warp_request_get_token_returns_none_when_missing() {
         let req = make_warp_request("/", "GET", &[]);
-        let config = BulwarkConfig::default_config();
+        let config = GarrisonConfig::default_config();
         let token = req.get_token(&config).unwrap();
         assert_eq!(token, None);
     }
@@ -544,7 +548,7 @@ mod tests {
     #[test]
     fn warp_request_get_token_skips_header_when_disabled() {
         let req = make_warp_request("/", "GET", &[("Authorization", "Bearer header_token")]);
-        let mut config = BulwarkConfig::default_config();
+        let mut config = GarrisonConfig::default_config();
         config.is_read_header = false;
         config.is_read_cookie = false;
         let token = req.get_token(&config).unwrap();
@@ -580,13 +584,13 @@ mod tests {
     #[test]
     fn warp_response_set_cookie_writes_header() {
         let mut resp = WarpResponse::new();
-        resp.set_cookie("bulwark_token", "cookie_value").unwrap();
+        resp.set_cookie("garrison_token", "cookie_value").unwrap();
         let set_cookie = resp
             .headers
             .get("Set-Cookie")
             .and_then(|v| v.to_str().ok())
             .unwrap();
-        assert!(set_cookie.contains("bulwark_token=cookie_value"));
+        assert!(set_cookie.contains("garrison_token=cookie_value"));
         assert!(set_cookie.contains("HttpOnly"));
         assert!(set_cookie.contains("Secure"));
         assert!(set_cookie.contains("SameSite=Lax"));
@@ -597,7 +601,7 @@ mod tests {
     #[test]
     fn warp_response_set_cookie_with_config_dev() {
         let mut resp = WarpResponse::new();
-        let mut config = BulwarkConfig::default_config();
+        let mut config = GarrisonConfig::default_config();
         config.cookie_secure = false;
         config.cookie_same_site = "Strict".to_string();
         resp.set_cookie_with_config("token", "v", &config).unwrap();
@@ -618,7 +622,7 @@ mod tests {
         let result = resp.set_status(1000);
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(matches!(err, BulwarkError::Context(_)));
+        assert!(matches!(err, GarrisonError::Context(_)));
         assert!(err.to_string().contains("invalid status code"));
     }
 
@@ -629,7 +633,7 @@ mod tests {
         let result = resp.set_header("X-Test", "bad\0value");
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(matches!(err, BulwarkError::Context(_)));
+        assert!(matches!(err, GarrisonError::Context(_)));
         assert!(err.to_string().contains("invalid header value"));
     }
 
@@ -639,7 +643,7 @@ mod tests {
         let mut resp = WarpResponse::new();
         let result = resp.set_header("invalid header", "value");
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), BulwarkError::Context(_)));
+        assert!(matches!(result.unwrap_err(), GarrisonError::Context(_)));
     }
 
     /// 验证 Default 实现等价于 new()。
@@ -698,7 +702,7 @@ mod tests {
     // WarpContext 测试
     // ========================================================================
 
-    /// 验证 BulwarkContext::request() 返回 Box<dyn BulwarkRequest>。
+    /// 验证 GarrisonContext::request() 返回 Box<dyn GarrisonRequest>。
     #[test]
     fn warp_context_request_returns_box() {
         let ctx = WarpContext::new(
@@ -708,7 +712,7 @@ mod tests {
         );
 
         let request = ctx.request().unwrap();
-        let config = BulwarkConfig::default_config();
+        let config = GarrisonConfig::default_config();
         let token = request.get_token(&config).unwrap();
         assert_eq!(token, Some("abc".to_string()));
     }
@@ -755,10 +759,10 @@ mod tests {
         let ctx = WarpContext::new(
             "/".to_string(),
             "GET".to_string(),
-            make_headers(&[("Cookie", "bulwark_token=cookie_tok")]),
+            make_headers(&[("Cookie", "garrison_token=cookie_tok")]),
         );
         let request = ctx.request().unwrap();
-        let mut config = BulwarkConfig::default_config();
+        let mut config = GarrisonConfig::default_config();
         config.is_read_header = false;
         config.is_read_cookie = true;
         let token = request.get_token(&config).unwrap();
@@ -798,9 +802,9 @@ mod tests {
             "/".to_string(),
             "POST".to_string(),
             make_headers(&[("Content-Type", "application/json")]),
-            br#"{"bulwark_token":"body_token_456"}"#.to_vec(),
+            br#"{"garrison_token":"body_token_456"}"#.to_vec(),
         );
-        let mut config = BulwarkConfig::default_config();
+        let mut config = GarrisonConfig::default_config();
         config.is_read_header = false;
         config.is_read_cookie = false;
         config.is_read_body = true;
@@ -813,7 +817,7 @@ mod tests {
     // ========================================================================
 
     /// 验证 `WarpContext::with_body()` 通过 `request()` 传递 `body_bytes`，
-    /// 使 `BulwarkRequest::get_token()` 能从 JSON body 提取 token。
+    /// 使 `GarrisonRequest::get_token()` 能从 JSON body 提取 token。
     ///
     /// 回归 HIGH-002：原 `WarpContext` 缺失 `body_bytes` 字段与 `with_body` 方法，
     /// `request()` 用 `WarpRequest::new()` 丢弃 body_bytes，导致 Context 层 body 读取功能不可用。
@@ -823,10 +827,10 @@ mod tests {
             "/".to_string(),
             "POST".to_string(),
             make_headers(&[("Content-Type", "application/json")]),
-            br#"{"bulwark_token":"ctx_body_token"}"#.to_vec(),
+            br#"{"garrison_token":"ctx_body_token"}"#.to_vec(),
         );
         let request = ctx.request().unwrap();
-        let mut config = BulwarkConfig::default_config();
+        let mut config = GarrisonConfig::default_config();
         config.is_read_header = false;
         config.is_read_cookie = false;
         config.is_read_body = true;
@@ -853,9 +857,9 @@ mod tests {
             "/".to_string(),
             "GET".to_string(),
             make_headers(&[("Content-Type", "application/json")]),
-            br#"{"bulwark_token":"body_token_should_be_skipped"}"#.to_vec(),
+            br#"{"garrison_token":"body_token_should_be_skipped"}"#.to_vec(),
         );
-        let mut config = BulwarkConfig::default_config();
+        let mut config = GarrisonConfig::default_config();
         config.is_read_header = false;
         config.is_read_cookie = false;
         config.is_read_body = true;
@@ -872,14 +876,14 @@ mod tests {
     #[test]
     fn c7_warp_request_post_put_patch_methods_allow_body_token() {
         for method in &["POST", "PUT", "PATCH"] {
-            let body_bytes = format!(r#"{{"bulwark_token":"tok_{}"}}"#, method).into_bytes();
+            let body_bytes = format!(r#"{{"garrison_token":"tok_{}"}}"#, method).into_bytes();
             let req = WarpRequest::with_body(
                 "/".to_string(),
                 method.to_string(),
                 make_headers(&[("Content-Type", "application/json")]),
                 body_bytes,
             );
-            let mut config = BulwarkConfig::default_config();
+            let mut config = GarrisonConfig::default_config();
             config.is_read_header = false;
             config.is_read_cookie = false;
             config.is_read_body = true;
@@ -902,10 +906,10 @@ mod tests {
             "/".to_string(),
             "GET".to_string(),
             make_headers(&[("Content-Type", "application/json")]),
-            br#"{"bulwark_token":"wrapper_skipped"}"#.to_vec(),
+            br#"{"garrison_token":"wrapper_skipped"}"#.to_vec(),
         );
         let request = ctx.request().unwrap();
-        let mut config = BulwarkConfig::default_config();
+        let mut config = GarrisonConfig::default_config();
         config.is_read_header = false;
         config.is_read_cookie = false;
         config.is_read_body = true;

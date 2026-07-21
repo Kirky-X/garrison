@@ -25,12 +25,12 @@
 //! ## 使用示例
 //!
 //! ```ignore
-//! use bulwark::dao::init_dbnexus;
-//! use bulwark::dao::repository::mysql::DbnexusMysqlUserRepository;
-//! use bulwark::dao::repository::{UserRepository, NewUser};
+//! use garrison::dao::init_dbnexus;
+//! use garrison::dao::repository::mysql::DbnexusMysqlUserRepository;
+//! use garrison::dao::repository::{UserRepository, NewUser};
 //!
-//! # async fn demo() -> bulwark::error::BulwarkResult<()> {
-//! let pool = init_dbnexus("mysql://root:root@localhost:3306/bulwark_test").await?;
+//! # async fn demo() -> garrison::error::GarrisonResult<()> {
+//! let pool = init_dbnexus("mysql://root:root@localhost:3306/garrison_test").await?;
 //! let repo = DbnexusMysqlUserRepository::new(pool);
 //! let user_id = repo.create(1, NewUser {
 //!     username: "alice".to_string(),

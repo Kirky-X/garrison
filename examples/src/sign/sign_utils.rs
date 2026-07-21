@@ -7,17 +7,17 @@
 //!
 //! 运行方式：
 //! ```sh
-//! cargo run -p bulwark-examples --bin sign_utils --features secure-sign
+//! cargo run -p garrison-examples --bin sign_utils --features secure-sign
 //! ```
 
-use bulwark::error::BulwarkResult;
-use bulwark::secure::sign::Signer;
+use garrison::error::GarrisonResult;
+use garrison::secure::sign::Signer;
 
 /// 运行签名工具示例。
 ///
 /// 演示 HMAC-SHA256 / HMAC-SHA512 签名、Base64 编解码互逆、密钥隔离。
-pub fn run() -> BulwarkResult<()> {
-    println!("=== Bulwark 签名工具示例 ===\n");
+pub fn run() -> GarrisonResult<()> {
+    println!("=== Garrison 签名工具示例 ===\n");
 
     let secret = b"my-hmac-secret";
     let data = b"POST /api/v1/users\n{\"name\":\"alice\"}";
@@ -55,7 +55,7 @@ pub fn run() -> BulwarkResult<()> {
     // ----------------------------------------------------------------
     // 3. Base64 编码与解码互逆
     // ----------------------------------------------------------------
-    let original = "Hello, Bulwark! 签名工具测试";
+    let original = "Hello, Garrison! 签名工具测试";
     let original_bytes = original.as_bytes();
     let encoded = Signer::base64_encode(original_bytes);
     let decoded = Signer::base64_decode(&encoded)?;

@@ -97,7 +97,7 @@ pub struct RefreshTokenRecord {
 #[cfg(feature = "db-sqlite")]
 mod service {
     use super::RefreshTokenRecord;
-    use crate::error::{BulwarkError, BulwarkResult};
+    use crate::error::{GarrisonError, GarrisonResult};
     use crate::protocol::jwt::JwtHandler;
     use dbnexus::DbPool;
     use sea_orm::{ConnectionTrait, DbBackend, Statement, Value};
@@ -121,10 +121,10 @@ mod service {
     ///
     /// # Rule 7 冲突暴露
     ///
-    /// tasks.md T058 原描述 `pub dao: Arc<dyn BulwarkDao>` 不够——
+    /// tasks.md T058 原描述 `pub dao: Arc<dyn GarrisonDao>` 不够——
     /// `rotate` 需查 SQL（DbPool）+ 签发 access token（JwtHandler）+ 读 key_version。
     /// 决策：struct 持有 `pool: DbPool` + `jwt_handler: Arc<JwtHandler>` + `key_version: Arc<RwLock<u32>>`，
-    /// 不持有 `dao`（BulwarkDao 是缓存层抽象，不支持 SQL 查询）。
+    /// 不持有 `dao`（GarrisonDao 是缓存层抽象，不支持 SQL 查询）。
     pub struct RefreshTokenRotation {
         /// SQLite 连接池（查 `refresh_tokens` 表）。
         pub pool: DbPool,
@@ -183,17 +183,17 @@ mod service {
         /// 7. 返回 `(new_access, new_refresh)`
         ///
         /// # 错误
-        /// - `BulwarkError::InvalidToken`: old_token 不存在或已 revoked
-        /// - `BulwarkError::Dao`: SQL 查询/INSERT/UPDATE 失败
-        /// - `BulwarkError::Internal`: JwtHandler 签发失败（由 sign 透传）
-        pub async fn rotate(&self, old_token: &str) -> BulwarkResult<(String, String)> {
+        /// - `GarrisonError::InvalidToken`: old_token 不存在或已 revoked
+        /// - `GarrisonError::Dao`: SQL 查询/INSERT/UPDATE 失败
+        /// - `GarrisonError::Internal`: JwtHandler 签发失败（由 sign 透传）
+        pub async fn rotate(&self, old_token: &str) -> GarrisonResult<(String, String)> {
             let old_hash = Self::sha256_hex(old_token);
 
             // reuse detection——若 old_hash 已 revoked，说明 token 被重用，
             // 吊销整个链（old_hash 及其所有子代）后返回 InvalidToken
             if self.detect_reuse(&old_hash).await? {
                 self.revoke_chain(&old_hash).await?;
-                return Err(BulwarkError::TokenRevoked(
+                return Err(GarrisonError::TokenRevoked(
                     "refresh token reuse detected, chain revoked".to_string(),
                 ));
             }
@@ -204,10 +204,10 @@ mod service {
                 .pool
                 .get_session("admin")
                 .await
-                .map_err(|e| BulwarkError::Dao(format!("jwt-refresh-get-session::{}", e)))?;
+                .map_err(|e| GarrisonError::Dao(format!("jwt-refresh-get-session::{}", e)))?;
             let conn = session
                 .connection()
-                .map_err(|e| BulwarkError::Dao(format!("jwt-refresh-get-conn::{}", e)))?;
+                .map_err(|e| GarrisonError::Dao(format!("jwt-refresh-get-conn::{}", e)))?;
 
             let select_stmt = Statement::from_sql_and_values(
                 DbBackend::Sqlite,
@@ -218,19 +218,19 @@ mod service {
             let row = conn
                 .query_one_raw(select_stmt)
                 .await
-                .map_err(|e| BulwarkError::Dao(format!("jwt-refresh-query::{}", e)))?
+                .map_err(|e| GarrisonError::Dao(format!("jwt-refresh-query::{}", e)))?
                 .ok_or_else(|| {
-                    BulwarkError::InvalidToken(
+                    GarrisonError::InvalidToken(
                         "refresh token not found or already consumed".to_string(),
                     )
                 })?;
 
             let login_id: String = row
                 .try_get("", "login_id")
-                .map_err(|e| BulwarkError::Dao(format!("jwt-refresh-query::{}", e)))?;
+                .map_err(|e| GarrisonError::Dao(format!("jwt-refresh-query::{}", e)))?;
             let tenant_id: i64 = row
                 .try_get("", "tenant_id")
-                .map_err(|e| BulwarkError::Dao(format!("jwt-refresh-query::{}", e)))?;
+                .map_err(|e| GarrisonError::Dao(format!("jwt-refresh-query::{}", e)))?;
             // T005: 读取 OAuth2 扩展字段（旧记录可能为 NULL，使用 ok().flatten() 容错）
             let client_id: Option<String> = row.try_get("", "client_id").ok().flatten();
             let scopes: Option<String> = row.try_get("", "scopes").ok().flatten();
@@ -283,7 +283,7 @@ mod service {
             );
             conn.execute_raw(insert_stmt)
                 .await
-                .map_err(|e| BulwarkError::Dao(format!("jwt-refresh-insert::{}", e)))?;
+                .map_err(|e| GarrisonError::Dao(format!("jwt-refresh-insert::{}", e)))?;
 
             // UPDATE old record revoked=1
             let update_stmt = Statement::from_sql_and_values(
@@ -293,7 +293,7 @@ mod service {
             );
             conn.execute_raw(update_stmt)
                 .await
-                .map_err(|e| BulwarkError::Dao(format!("jwt-refresh-update::{}", e)))?;
+                .map_err(|e| GarrisonError::Dao(format!("jwt-refresh-update::{}", e)))?;
 
             Ok((new_access, new_refresh))
         }
@@ -316,7 +316,7 @@ mod service {
         /// 原始 refresh_token 字符串（调用方需返回给客户端）
         ///
         /// # 错误
-        /// - `BulwarkError::Dao`: SQL INSERT 失败
+        /// - `GarrisonError::Dao`: SQL INSERT 失败
         pub async fn issue(
             &self,
             client_id: &str,
@@ -326,7 +326,7 @@ mod service {
             login_id: i64,
             tenant_id: i64,
             ttl_seconds: i64,
-        ) -> BulwarkResult<String> {
+        ) -> GarrisonResult<String> {
             let refresh_token = Uuid::new_v4().to_string();
             let token_hash = Self::sha256_hex(&refresh_token);
             let now = Self::now_unix();
@@ -345,10 +345,10 @@ mod service {
                 .pool
                 .get_session("admin")
                 .await
-                .map_err(|e| BulwarkError::Dao(format!("jwt-refresh-get-session::{}", e)))?;
+                .map_err(|e| GarrisonError::Dao(format!("jwt-refresh-get-session::{}", e)))?;
             let conn = session
                 .connection()
-                .map_err(|e| BulwarkError::Dao(format!("jwt-refresh-get-conn::{}", e)))?;
+                .map_err(|e| GarrisonError::Dao(format!("jwt-refresh-get-conn::{}", e)))?;
 
             let insert_stmt = Statement::from_sql_and_values(
                 DbBackend::Sqlite,
@@ -377,7 +377,7 @@ mod service {
             );
             conn.execute_raw(insert_stmt)
                 .await
-                .map_err(|e| BulwarkError::Dao(format!("jwt-refresh-insert::{}", e)))?;
+                .map_err(|e| GarrisonError::Dao(format!("jwt-refresh-insert::{}", e)))?;
 
             Ok(refresh_token)
         }
@@ -392,17 +392,17 @@ mod service {
         /// # 返回
         /// - `Ok(Some(record))`: token 有效且未 revoked
         /// - `Ok(None)`: token 不存在或已 revoked
-        /// - `Err(BulwarkError::Dao)`: SQL 查询失败
-        pub async fn validate(&self, token: &str) -> BulwarkResult<Option<RefreshTokenRecord>> {
+        /// - `Err(GarrisonError::Dao)`: SQL 查询失败
+        pub async fn validate(&self, token: &str) -> GarrisonResult<Option<RefreshTokenRecord>> {
             let token_hash = Self::sha256_hex(token);
             let session = self
                 .pool
                 .get_session("admin")
                 .await
-                .map_err(|e| BulwarkError::Dao(format!("jwt-refresh-get-session::{}", e)))?;
+                .map_err(|e| GarrisonError::Dao(format!("jwt-refresh-get-session::{}", e)))?;
             let conn = session
                 .connection()
-                .map_err(|e| BulwarkError::Dao(format!("jwt-refresh-get-conn::{}", e)))?;
+                .map_err(|e| GarrisonError::Dao(format!("jwt-refresh-get-conn::{}", e)))?;
 
             let stmt = Statement::from_sql_and_values(
                 DbBackend::Sqlite,
@@ -415,28 +415,28 @@ mod service {
             let row = conn
                 .query_one_raw(stmt)
                 .await
-                .map_err(|e| BulwarkError::Dao(format!("jwt-refresh-query::{}", e)))?;
+                .map_err(|e| GarrisonError::Dao(format!("jwt-refresh-query::{}", e)))?;
 
             match row {
                 Some(row) => {
                     let login_id: String = row
                         .try_get("", "login_id")
-                        .map_err(|e| BulwarkError::Dao(format!("jwt-refresh-query::{}", e)))?;
+                        .map_err(|e| GarrisonError::Dao(format!("jwt-refresh-query::{}", e)))?;
                     let tenant_id: i64 = row
                         .try_get("", "tenant_id")
-                        .map_err(|e| BulwarkError::Dao(format!("jwt-refresh-query::{}", e)))?;
+                        .map_err(|e| GarrisonError::Dao(format!("jwt-refresh-query::{}", e)))?;
                     let key_version: i64 = row
                         .try_get("", "key_version")
-                        .map_err(|e| BulwarkError::Dao(format!("jwt-refresh-query::{}", e)))?;
+                        .map_err(|e| GarrisonError::Dao(format!("jwt-refresh-query::{}", e)))?;
                     let expires_at: i64 = row
                         .try_get("", "expires_at")
-                        .map_err(|e| BulwarkError::Dao(format!("jwt-refresh-query::{}", e)))?;
+                        .map_err(|e| GarrisonError::Dao(format!("jwt-refresh-query::{}", e)))?;
                     let revoked: i64 = row
                         .try_get("", "revoked")
-                        .map_err(|e| BulwarkError::Dao(format!("jwt-refresh-query::{}", e)))?;
+                        .map_err(|e| GarrisonError::Dao(format!("jwt-refresh-query::{}", e)))?;
                     let created_at: i64 = row
                         .try_get("", "created_at")
-                        .map_err(|e| BulwarkError::Dao(format!("jwt-refresh-query::{}", e)))?;
+                        .map_err(|e| GarrisonError::Dao(format!("jwt-refresh-query::{}", e)))?;
                     let parent_token_hash: Option<String> =
                         row.try_get("", "parent_token_hash").ok().flatten();
                     let client_id: Option<String> = row.try_get("", "client_id").ok().flatten();
@@ -474,20 +474,20 @@ mod service {
         /// # 返回
         /// - `Ok(true)`: token 已 revoked（reuse 检测命中）
         /// - `Ok(false)`: token 未 revoked 或不存在
-        /// - `Err(BulwarkError::Dao)`: SQL 查询失败
+        /// - `Err(GarrisonError::Dao)`: SQL 查询失败
         ///
         /// # 语义
         /// 不存在与 revoked=0 同等对待（均返回 false）——
         /// 只有已 revoked 才视为 reuse。不存在视为"未签发"，由调用方决定如何处理。
-        pub async fn detect_reuse(&self, token_hash: &str) -> BulwarkResult<bool> {
+        pub async fn detect_reuse(&self, token_hash: &str) -> GarrisonResult<bool> {
             let session = self
                 .pool
                 .get_session("admin")
                 .await
-                .map_err(|e| BulwarkError::Dao(format!("jwt-refresh-get-session::{}", e)))?;
+                .map_err(|e| GarrisonError::Dao(format!("jwt-refresh-get-session::{}", e)))?;
             let conn = session
                 .connection()
-                .map_err(|e| BulwarkError::Dao(format!("jwt-refresh-get-conn::{}", e)))?;
+                .map_err(|e| GarrisonError::Dao(format!("jwt-refresh-get-conn::{}", e)))?;
 
             let stmt = Statement::from_sql_and_values(
                 DbBackend::Sqlite,
@@ -497,13 +497,13 @@ mod service {
             let row = conn
                 .query_one_raw(stmt)
                 .await
-                .map_err(|e| BulwarkError::Dao(format!("jwt-refresh-query::{}", e)))?;
+                .map_err(|e| GarrisonError::Dao(format!("jwt-refresh-query::{}", e)))?;
 
             // 不存在 → false（未签发，不算 reuse）；存在且 revoked=1 → true
             let revoked = match row {
                 Some(row) => row
                     .try_get::<i64>("", "revoked")
-                    .map_err(|e| BulwarkError::Dao(format!("jwt-refresh-query::{}", e)))?,
+                    .map_err(|e| GarrisonError::Dao(format!("jwt-refresh-query::{}", e)))?,
                 None => return Ok(false),
             };
             Ok(revoked == 1)
@@ -525,16 +525,16 @@ mod service {
         /// 4. 重复直到栈空
         ///
         /// # 错误
-        /// - `BulwarkError::Dao`: SQL 查询/UPDATE 失败
-        pub async fn revoke_chain(&self, token_hash: &str) -> BulwarkResult<()> {
+        /// - `GarrisonError::Dao`: SQL 查询/UPDATE 失败
+        pub async fn revoke_chain(&self, token_hash: &str) -> GarrisonResult<()> {
             let session = self
                 .pool
                 .get_session("admin")
                 .await
-                .map_err(|e| BulwarkError::Dao(format!("jwt-refresh-get-session::{}", e)))?;
+                .map_err(|e| GarrisonError::Dao(format!("jwt-refresh-get-session::{}", e)))?;
             let conn = session
                 .connection()
-                .map_err(|e| BulwarkError::Dao(format!("jwt-refresh-get-conn::{}", e)))?;
+                .map_err(|e| GarrisonError::Dao(format!("jwt-refresh-get-conn::{}", e)))?;
 
             let mut stack = vec![token_hash.to_string()];
             while let Some(hash) = stack.pop() {
@@ -546,7 +546,7 @@ mod service {
                 );
                 conn.execute_raw(update_stmt)
                     .await
-                    .map_err(|e| BulwarkError::Dao(format!("jwt-refresh-update::{}", e)))?;
+                    .map_err(|e| GarrisonError::Dao(format!("jwt-refresh-update::{}", e)))?;
 
                 // 查子代（parent_token_hash == hash）
                 let select_stmt = Statement::from_sql_and_values(
@@ -557,11 +557,11 @@ mod service {
                 let rows = conn
                     .query_all_raw(select_stmt)
                     .await
-                    .map_err(|e| BulwarkError::Dao(format!("jwt-refresh-select-child::{}", e)))?;
+                    .map_err(|e| GarrisonError::Dao(format!("jwt-refresh-select-child::{}", e)))?;
                 for row in rows {
                     let child_hash: String = row
                         .try_get("", "token_hash")
-                        .map_err(|e| BulwarkError::Dao(format!("jwt-refresh-query::{}", e)))?;
+                        .map_err(|e| GarrisonError::Dao(format!("jwt-refresh-query::{}", e)))?;
                     stack.push(child_hash);
                 }
             }
@@ -681,8 +681,8 @@ mod tests {
 #[cfg(all(test, feature = "protocol-jwt", feature = "db-sqlite"))]
 mod db_sqlite_tests {
     use super::RefreshTokenRotation;
-    use crate::dao::{init_dbnexus, BulwarkMigration};
-    use crate::error::BulwarkError;
+    use crate::dao::{init_dbnexus, GarrisonMigration};
+    use crate::error::GarrisonError;
     use crate::protocol::jwt::JwtHandler;
     use dbnexus::DbPool;
     use sea_orm::{ConnectionTrait, DbBackend, Statement, Value};
@@ -702,7 +702,7 @@ mod db_sqlite_tests {
         let pool = init_dbnexus("sqlite::memory:")
             .await
             .expect("init_dbnexus 应成功");
-        let migration = BulwarkMigration::with_base_dir(pool.clone(), project_migrations_dir());
+        let migration = GarrisonMigration::with_base_dir(pool.clone(), project_migrations_dir());
         let applied = migration.migrate_core().await.expect("migrate_core 应成功");
         assert!(applied >= 1, "migrate_core 应至少执行 1 个文件");
         pool
@@ -963,7 +963,7 @@ mod db_sqlite_tests {
     /// 流程：
     /// 1. 预先 INSERT t1 record（revoked=0）
     /// 2. `rotate("t1")` → 得到 t2（new_refresh），t1 revoked=1
-    /// 3. `rotate("t1")` again（重用 t1） → 应返回 `BulwarkError::InvalidToken`
+    /// 3. `rotate("t1")` again（重用 t1） → 应返回 `GarrisonError::InvalidToken`
     /// 4. 断言 t1 的 revoked=1（已 revoked）
     /// 5. 断言 t2 的 revoked=1（链被吊销）
     #[tokio::test(flavor = "multi_thread")]
@@ -988,7 +988,7 @@ mod db_sqlite_tests {
         // 第二次 rotate（重用 t1）：应返回 TokenRevoked（RFC 7009 Token Revocation）
         let result = rotation.rotate(t1_token).await;
         assert!(
-            matches!(result, Err(BulwarkError::TokenRevoked(_))),
+            matches!(result, Err(GarrisonError::TokenRevoked(_))),
             "重用已消费的 refresh token 应返回 TokenRevoked，实际: {:?}",
             result
         );

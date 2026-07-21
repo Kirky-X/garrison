@@ -6,7 +6,7 @@
 //! 对应 `SaTokenDao`，
 //! 通过 oxcache / dbnexus 提供多后端（缓存 / 关系型数据库）支持。
 
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::error::{GarrisonError, GarrisonResult};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -21,10 +21,10 @@ use std::time::Duration;
 /// - `expire` 重置键的过期时间
 /// - `set_permanent` 存储永久键（无 TTL，默认实现委托 `set(key, value, 0)`）
 /// - `get_timeout` 查询剩余 TTL（默认返回 `NotImplemented`，需后端重写）
-/// - `keys` 按 glob pattern 扫描 key（默认返回 `NotImplemented`；`MockDao` 已实现；`BulwarkDaoOxcache` 因 oxcache 0.3.3 限制待 oxcache 提供原生 iter API）
+/// - `keys` 按 glob pattern 扫描 key（默认返回 `NotImplemented`；`MockDao` 已实现；`GarrisonDaoOxcache` 因 oxcache 0.3.3 限制待 oxcache 提供原生 iter API）
 /// - `rename` 重命名 key（默认 get→set→delete 三步，非原子）
 #[async_trait]
-pub trait BulwarkDao: Send + Sync {
+pub trait GarrisonDao: Send + Sync {
     /// 获取指定键的值。
     ///
     /// # 参数
@@ -33,7 +33,7 @@ pub trait BulwarkDao: Send + Sync {
     /// # 返回
     /// - `Some(value)`: 键存在且未过期。
     /// - `None`: 键不存在或已过期。
-    async fn get(&self, key: &str) -> BulwarkResult<Option<String>>;
+    async fn get(&self, key: &str) -> GarrisonResult<Option<String>>;
 
     /// 设置键值对，附带 TTL。
     ///
@@ -41,7 +41,7 @@ pub trait BulwarkDao: Send + Sync {
     /// - `key`: 存储键。
     /// - `value`: 存储值。
     /// - `ttl_seconds`: 过期秒数（0 表示永久驻留；可被 `expire` 重置）。
-    async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> BulwarkResult<()>;
+    async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> GarrisonResult<()>;
 
     /// 更新键的值，保留原有 TTL（不重置过期时间）。
     ///
@@ -50,8 +50,8 @@ pub trait BulwarkDao: Send + Sync {
     /// - `value`: 新值。
     ///
     /// # 错误
-    /// - 若键不存在，返回 `BulwarkError::Dao`。
-    async fn update(&self, key: &str, value: &str) -> BulwarkResult<()>;
+    /// - 若键不存在，返回 `GarrisonError::Dao`。
+    async fn update(&self, key: &str, value: &str) -> GarrisonResult<()>;
 
     /// 设置（或重置）键的过期时间。
     ///
@@ -60,14 +60,14 @@ pub trait BulwarkDao: Send + Sync {
     /// - `seconds`: 过期秒数（0 表示永久驻留）。
     ///
     /// # 错误
-    /// - 若键不存在，返回 `BulwarkError::Dao`。
-    async fn expire(&self, key: &str, seconds: u64) -> BulwarkResult<()>;
+    /// - 若键不存在，返回 `GarrisonError::Dao`。
+    async fn expire(&self, key: &str, seconds: u64) -> GarrisonResult<()>;
 
     /// 删除指定键。
     ///
     /// # 参数
     /// - `key`: 存储键。
-    async fn delete(&self, key: &str) -> BulwarkResult<()>;
+    async fn delete(&self, key: &str) -> GarrisonResult<()>;
 
     /// 存储永久键（无 TTL）。
     ///
@@ -79,7 +79,7 @@ pub trait BulwarkDao: Send + Sync {
     /// # 默认实现
     /// 委托 `self.set(key, value, 0)`。
     /// 后端可重写以使用原生"无 TTL"API（如 oxcache `set_with_ttl_sync(None)`）。
-    async fn set_permanent(&self, key: &str, value: &str) -> BulwarkResult<()> {
+    async fn set_permanent(&self, key: &str, value: &str) -> GarrisonResult<()> {
         self.set(key, value, 0).await
     }
 
@@ -94,10 +94,10 @@ pub trait BulwarkDao: Send + Sync {
     /// - `Ok(None)`: 键不存在，或键存在但未设置 TTL（永久驻留）。
     ///
     /// # 默认实现
-    /// 返回 `BulwarkError::NotImplemented`（需后端原生 TTL 查询 API 支持）。
-    /// `BulwarkDaoOxcache` 与 `MockDao` 已重写。
-    async fn get_timeout(&self, _key: &str) -> BulwarkResult<Option<Duration>> {
-        Err(BulwarkError::NotImplemented(format!(
+    /// 返回 `GarrisonError::NotImplemented`（需后端原生 TTL 查询 API 支持）。
+    /// `GarrisonDaoOxcache` 与 `MockDao` 已重写。
+    async fn get_timeout(&self, _key: &str) -> GarrisonResult<Option<Duration>> {
+        Err(GarrisonError::NotImplemented(format!(
             "get_timeout 未实现：{} 后端不支持 TTL 查询",
             std::any::type_name::<Self>()
         )))
@@ -119,7 +119,7 @@ pub trait BulwarkDao: Send + Sync {
     /// 委托 `self.get(key)` + `self.get_timeout(key)` 两次调用（向后兼容）。
     /// 后端若支持原子获取 value + TTL（如 Redis pipeline / 内存 HashMap 单次 lookup），
     /// 应重写此方法以减少 DAO 往返。
-    async fn get_with_ttl(&self, key: &str) -> BulwarkResult<Option<(String, Option<Duration>)>> {
+    async fn get_with_ttl(&self, key: &str) -> GarrisonResult<Option<(String, Option<Duration>)>> {
         let value = self.get(key).await?;
         if value.is_none() {
             return Ok(None);
@@ -142,7 +142,7 @@ pub trait BulwarkDao: Send + Sync {
     ///
     /// # 已知限制（A-010 评估结论）
     ///
-    /// `BulwarkDaoOxcache` 当前不重写此方法（走默认 `NotImplemented`），原因：
+    /// `GarrisonDaoOxcache` 当前不重写此方法（走默认 `NotImplemented`），原因：
     /// - oxcache 0.3.3 的 `CacheReader`/`CacheBackend` trait 未暴露 iter/keys/scan API（2026-07-08 验证）
     /// - `Cache.backend` 字段为 `pub(crate)`，外部无法访问底层 `DashMap`
     /// - `CacheReader` trait 仅有 `get`/`exists`/`ttl`/`len`/`is_empty`/`capacity`/`stats`/`get_many`，无 iter/keys 方法
@@ -151,12 +151,12 @@ pub trait BulwarkDao: Send + Sync {
     ///
     /// **决策**：defer 到 oxcache 提供原生 iter API。业务方临时方案：自行维护 key 集合（参考 `ApiKeyHandler::list_by_namespace` 的 `MockDao` 测试）。
     ///
-    /// **业务影响**：`ApiKeyHandler::list_by_namespace` 在使用 `BulwarkDaoOxcache` 时返回 `NotImplemented`（生产可用性受限）。
+    /// **业务影响**：`ApiKeyHandler::list_by_namespace` 在使用 `GarrisonDaoOxcache` 时返回 `NotImplemented`（生产可用性受限）。
     ///
     /// # 默认实现
-    /// 返回 `BulwarkError::NotImplemented`。
-    async fn keys(&self, _pattern: &str) -> BulwarkResult<Vec<String>> {
-        Err(BulwarkError::NotImplemented(format!(
+    /// 返回 `GarrisonError::NotImplemented`。
+    async fn keys(&self, _pattern: &str) -> GarrisonResult<Vec<String>> {
+        Err(GarrisonError::NotImplemented(format!(
             "keys 未实现：{} 后端不支持 key scan（待 oxcache 提供原生 iter API）",
             std::any::type_name::<Self>()
         )))
@@ -170,7 +170,7 @@ pub trait BulwarkDao: Send + Sync {
     /// - `new_key`: 新 key。
     ///
     /// # 错误
-    /// - `BulwarkError::InvalidParam`: `old_key` 不存在。
+    /// - `GarrisonError::InvalidParam`: `old_key` 不存在。
     ///
     /// # 非原子性警告
     /// 默认实现为 `get → set_permanent → delete` 三步操作，存在竞态窗口：
@@ -180,12 +180,12 @@ pub trait BulwarkDao: Send + Sync {
     ///
     /// # TTL 保留
     /// 默认实现**不保留**原键 TTL（用 `set_permanent` 写入新键）。
-    /// 后端若需保留 TTL，应重写此方法（如 `BulwarkDaoOxcache` 用 `ttl_sync` + `set_with_ttl_sync`）。
-    async fn rename(&self, old_key: &str, new_key: &str) -> BulwarkResult<()> {
+    /// 后端若需保留 TTL，应重写此方法（如 `GarrisonDaoOxcache` 用 `ttl_sync` + `set_with_ttl_sync`）。
+    async fn rename(&self, old_key: &str, new_key: &str) -> GarrisonResult<()> {
         let value = self
             .get(old_key)
             .await?
-            .ok_or_else(|| BulwarkError::InvalidParam(format!("dao-key-missing::{}", old_key)))?;
+            .ok_or_else(|| GarrisonError::InvalidParam(format!("dao-key-missing::{}", old_key)))?;
         self.set_permanent(new_key, &value).await?;
         self.delete(old_key).await
     }
@@ -209,20 +209,20 @@ pub trait BulwarkDao: Send + Sync {
     ///
     /// # 已重写的实现
     /// - `MockDao`：`parking_lot::Mutex` 保护，进程内原子
-    /// - `BulwarkDaoOxcache`：`parking_lot::Mutex` 保护，进程内原子
+    /// - `GarrisonDaoOxcache`：`parking_lot::Mutex` 保护，进程内原子
     /// - `AloneCache`：委托内部 dao
     ///
     /// # 生产实现警告
     ///
     /// **生产部署必须重写此方法**，使用后端原子的 CAS / GETDEL / Lua 脚本：
-    /// - `BulwarkDaoOxcache`：已重写，用 `parking_lot::Mutex` 保护（进程内原子）
+    /// - `GarrisonDaoOxcache`：已重写，用 `parking_lot::Mutex` 保护（进程内原子）
     /// - `MockDao`：已重写，用 `parking_lot::Mutex` 保护（进程内原子）
     /// - Redis 后端：应重写为 `GETDEL` 原子命令或 Lua 脚本
     /// - dbnexus 后端：应重写为 SQL `DELETE ... RETURNING` 语句
     ///
     /// 使用默认实现（如 `MinimalDao`）在生产环境会导致 TOCTOU 竞态：
     /// 并发调用同一 key 时多个调用都可能返回 `Some`。
-    async fn get_and_delete(&self, key: &str) -> BulwarkResult<Option<String>> {
+    async fn get_and_delete(&self, key: &str) -> GarrisonResult<Option<String>> {
         let value = self.get(key).await?;
         if value.is_some() {
             self.delete(key).await?;
@@ -247,13 +247,13 @@ pub trait BulwarkDao: Send + Sync {
     /// 默认实现为 get → parse → update/set 三步操作，存在竞态风险。
     /// 后端若支持原子 incr（如 Redis INCR + EXPIRE），应重写此方法。
     /// `MockDao` 已重写为进程内原子（Mutex 保护）。
-    async fn incr(&self, key: &str, ttl_seconds: u64) -> BulwarkResult<u64> {
+    async fn incr(&self, key: &str, ttl_seconds: u64) -> GarrisonResult<u64> {
         let current = self.get(key).await?;
         match current {
             Some(v) => {
                 // Rule 12：parse 失败必须显式报错，禁止静默返回 0 导致计数器重置
                 let cur_val: u64 = v.parse().map_err(|_| {
-                    BulwarkError::Dao(format!("dao-incr-parse-u64::{}::{}", key, v))
+                    GarrisonError::Dao(format!("dao-incr-parse-u64::{}::{}", key, v))
                 })?;
                 let new_val = cur_val + 1;
                 self.update(key, &new_val.to_string()).await?;
@@ -284,7 +284,7 @@ pub trait BulwarkDao: Send + Sync {
     /// - `Ok(new_value)`: 递减后的新值（key 不存在/已过期/值为 0 时返回 0）。
     ///
     /// # 默认实现（返回 NotImplemented）
-    /// 默认实现返回 `BulwarkError::NotImplemented`（M2 修复，与
+    /// 默认实现返回 `GarrisonError::NotImplemented`（M2 修复，与
     /// `compare_and_update_if_greater` 对齐，消除 TOCTOU 竞态）：
     /// 原默认实现为 `get → parse → update/delete` 三步操作，存在 TOCTOU 竞态，
     /// 并发调用同一 key 时多个调用可能基于同一过时 get 值计算新值并覆盖写入，
@@ -294,13 +294,13 @@ pub trait BulwarkDao: Send + Sync {
     ///
     /// # 已重写的实现
     /// - `MockDao`：`parking_lot::Mutex` 保护，进程内原子
-    /// - `BulwarkDaoOxcache`：`atomic_lock` 保护，进程内原子
+    /// - `GarrisonDaoOxcache`：`atomic_lock` 保护，进程内原子
     /// - `AloneCache`：委托内部 dao（M1 修复，与 `compare_and_update_if_greater` 对称）
     ///
     /// # 生产实现警告
     ///
     /// **生产部署必须重写此方法**，使用后端原子的 DECR / Lua 脚本：
-    /// - `BulwarkDaoOxcache`：已重写，用 `atomic_lock` 保护（进程内原子）
+    /// - `GarrisonDaoOxcache`：已重写，用 `atomic_lock` 保护（进程内原子）
     /// - `MockDao`：已重写，用 `parking_lot::Mutex` 保护（进程内原子）
     /// - `AloneCache`：已重写，委托内部 dao（M1 修复）
     /// - Redis 后端：应重写为 `DECR` 原子命令（值为 0 时额外 `DEL`）
@@ -308,8 +308,8 @@ pub trait BulwarkDao: Send + Sync {
     ///
     /// 使用默认实现（如 `MinimalDao`）会返回 `NotImplemented` 错误，
     /// 强制调用方显式选择支持原子 decr 的后端，避免静默引入 TOCTOU 竞态。
-    async fn decr(&self, _key: &str) -> BulwarkResult<u64> {
-        Err(BulwarkError::NotImplemented(format!(
+    async fn decr(&self, _key: &str) -> GarrisonResult<u64> {
+        Err(GarrisonError::NotImplemented(format!(
             "decr 未实现：{} 后端不支持原子 decr（SMS 限速计数器回滚必须重写）",
             std::any::type_name::<Self>()
         )))
@@ -332,20 +332,20 @@ pub trait BulwarkDao: Send + Sync {
     /// - `Ok(false)`: new_value <= current_value，未更新。
     ///
     /// # 默认实现（返回 NotImplemented）
-    /// 默认实现返回 `BulwarkError::NotImplemented`（M2 修复，消除 TOCTOU 竞态）：
+    /// 默认实现返回 `GarrisonError::NotImplemented`（M2 修复，消除 TOCTOU 竞态）：
     /// 原默认实现为 get → parse → compare → set 四步操作，存在 TOCTOU 竞态，
     /// 在并发场景下多个调用可能同时读到旧值并各自执行 set，破坏 nc 单调性。
     /// 此方法用于 HTTP Digest nc 单调性校验等安全敏感场景，必须由后端用原子 CAS 实现。
     ///
     /// # 已重写的实现
     /// - `MockDao`：`parking_lot::Mutex` 保护，进程内原子
-    /// - `BulwarkDaoOxcache`：`atomic_lock` + oxcache set_with_ttl_sync 保护，进程内原子
+    /// - `GarrisonDaoOxcache`：`atomic_lock` + oxcache set_with_ttl_sync 保护，进程内原子
     /// - `AloneCache`：委托内部 dao
     ///
     /// # 生产实现警告
     ///
     /// **生产部署必须重写此方法**，使用后端原子的 CAS / Lua 脚本：
-    /// - `BulwarkDaoOxcache`：已重写，用 `atomic_lock` 保护（进程内原子）
+    /// - `GarrisonDaoOxcache`：已重写，用 `atomic_lock` 保护（进程内原子）
     /// - `MockDao`：已重写，用 `parking_lot::Mutex` 保护（进程内原子）
     /// - Redis 后端：应重写为 Lua 脚本（GET + COMPARE + SET 原子执行）
     /// - dbnexus 后端：应重写为 SQL `UPDATE ... WHERE ... RETURNING` 语句
@@ -357,8 +357,8 @@ pub trait BulwarkDao: Send + Sync {
         _key: &str,
         _new_value: u64,
         _ttl_seconds: u64,
-    ) -> BulwarkResult<bool> {
-        Err(BulwarkError::NotImplemented(format!(
+    ) -> GarrisonResult<bool> {
+        Err(GarrisonError::NotImplemented(format!(
             "compare_and_update_if_greater 未实现：{} 后端不支持原子 CAS（HTTP Digest nc 单调性校验必须重写）",
             std::any::type_name::<Self>()
         )))
@@ -379,7 +379,7 @@ pub trait BulwarkDao: Send + Sync {
     /// - `Ok(None)`: 绑定关系不存在（首次登录）。
     ///
     /// # 默认实现
-    /// 返回 `BulwarkError::NotImplemented`（BulwarkDao 是 KV 缓存抽象，不支持 SQL SELECT）。
+    /// 返回 `GarrisonError::NotImplemented`（GarrisonDao 是 KV 缓存抽象，不支持 SQL SELECT）。
     /// `SocialBindingService` 实际用 `DbPool` 查 SQL，不调用此方法。
     /// 此方法仅为满足 spec trait 契约，供未来纯 KV 后端实现重写。
     async fn find_social_binding(
@@ -387,8 +387,8 @@ pub trait BulwarkDao: Send + Sync {
         _tenant_id: i64,
         _provider: &str,
         _provider_user_id: &str,
-    ) -> BulwarkResult<Option<i64>> {
-        Err(BulwarkError::NotImplemented(format!(
+    ) -> GarrisonResult<Option<i64>> {
+        Err(GarrisonError::NotImplemented(format!(
             "find_social_binding 未实现：{} 后端不支持 SQL 查询（SocialBindingService 用 DbPool）",
             std::any::type_name::<Self>()
         )))
@@ -400,14 +400,14 @@ pub trait BulwarkDao: Send + Sync {
     ///
     /// # 参数
     /// - `tenant_id`: 租户 ID（0=默认租户）。
-    /// - `login_id`: Bulwark 内部用户 ID（INTEGER，由 `SocialBindingService::find_or_create` 生成）。
+    /// - `login_id`: Garrison 内部用户 ID（INTEGER，由 `SocialBindingService::find_or_create` 生成）。
     /// - `provider`: 社交平台标识（`"wechat"` / `"alipay"` / `"wechat_mini_app"`）。
     /// - `provider_user_id`: 第三方平台用户唯一 ID。
     /// - `union_id`: 跨应用统一 ID（微信 unionid，可空）。
     /// - `created_at`: 创建时间戳（Unix 秒）。
     ///
     /// # 默认实现
-    /// 返回 `BulwarkError::NotImplemented`（BulwarkDao 是 KV 缓存抽象，不支持 SQL INSERT）。
+    /// 返回 `GarrisonError::NotImplemented`（GarrisonDao 是 KV 缓存抽象，不支持 SQL INSERT）。
     /// `SocialBindingService` 实际用 `DbPool` 执行 INSERT，不调用此方法。
     /// 此方法仅为满足 spec trait 契约，供未来纯 KV 后端实现重写。
     async fn insert_social_binding(
@@ -418,8 +418,8 @@ pub trait BulwarkDao: Send + Sync {
         _provider_user_id: &str,
         _union_id: Option<&str>,
         _created_at: i64,
-    ) -> BulwarkResult<()> {
-        Err(BulwarkError::NotImplemented(format!(
+    ) -> GarrisonResult<()> {
+        Err(GarrisonError::NotImplemented(format!(
             "insert_social_binding 未实现：{} 后端不支持 SQL 插入（SocialBindingService 用 DbPool）",
             std::any::type_name::<Self>()
         )))
@@ -439,9 +439,9 @@ pub trait BulwarkDao: Send + Sync {
     /// - `Ok(Vec<String>)`: 脚本返回值（每个元素对应一个返回值）。
     ///
     /// # 默认实现
-    /// 返回 `BulwarkError::NotImplemented`（仅 Redis 后端支持 Lua 脚本）。
+    /// 返回 `GarrisonError::NotImplemented`（仅 Redis 后端支持 Lua 脚本）。
     /// `MockDao` 重写为内存模拟（识别 INCR + EXPIRE 模式，委托 `incr` 实现）。
-    /// `BulwarkDaoOxcache` 使用默认实现（oxcache 未暴露 Redis Lua API）。
+    /// `GarrisonDaoOxcache` 使用默认实现（oxcache 未暴露 Redis Lua API）。
     ///
     /// # 降级策略
     /// 调用方应在 `eval_lua` 返回 `NotImplemented` 时降级到非原子路径
@@ -451,8 +451,8 @@ pub trait BulwarkDao: Send + Sync {
         _script: &str,
         _keys: Vec<String>,
         _args: Vec<String>,
-    ) -> BulwarkResult<Vec<String>> {
-        Err(BulwarkError::NotImplemented(format!(
+    ) -> GarrisonResult<Vec<String>> {
+        Err(GarrisonError::NotImplemented(format!(
             "eval_lua 未实现：{} 后端不支持 Lua 脚本（仅 Redis 后端支持）",
             std::any::type_name::<Self>()
         )))
@@ -531,12 +531,12 @@ pub mod defaults;
 
 #[cfg(any(feature = "cache-memory", feature = "cache-redis"))]
 mod oxcache_impl {
-    use super::BulwarkDao;
+    use super::GarrisonDao;
     #[cfg(feature = "cache-redis")]
     use super::RedisConfig;
     #[cfg(feature = "tenant-isolation")]
     use crate::constants::DaoKeyPrefix;
-    use crate::error::{BulwarkError, BulwarkResult};
+    use crate::error::{GarrisonError, GarrisonResult};
     use async_trait::async_trait;
     use oxcache::Cache;
     use std::time::Duration;
@@ -603,7 +603,7 @@ mod oxcache_impl {
     /// oxcache 0.3 默认实现，包装 `oxcache::Cache<String, String>`。
     ///
     /// - L1（内存）+ L2（redis）由 oxcache 0.3 自动管理（oxcache 0.3 支持 per-entry TTL）。
-    /// - Bulwark 自身不实现任何缓存逻辑，全部委托给 oxcache。
+    /// - Garrison 自身不实现任何缓存逻辑，全部委托给 oxcache。
     /// - 启用 `sync_mode(true)` 后使用 `_sync` API，
     ///   要求调用方在 multi_thread tokio runtime 中执行。
     ///
@@ -622,7 +622,7 @@ mod oxcache_impl {
     /// 结论：对 in-memory backend，`_sync` 调用比 `spawn_blocking` 更快，保留现有实现。
     ///
     /// **后续跟进**：若未来引入 Redis/分布式 backend，需改用 async API（`_sync` 在网络 I/O 场景下会阻塞 tokio worker 线程）。
-    pub struct BulwarkDaoOxcache {
+    pub struct GarrisonDaoOxcache {
         cache: Cache<String, String>,
         /// 原子操作锁，仅用于 `get_and_delete` 的进程内原子性保护。
         /// 其他操作（get/set/delete 等）不持有此锁，不影响并发性能。
@@ -640,22 +640,22 @@ mod oxcache_impl {
         key_index: parking_lot::RwLock<std::collections::HashSet<String>>,
     }
 
-    impl BulwarkDaoOxcache {
+    impl GarrisonDaoOxcache {
         /// 创建默认的 oxcache DAO 实例。
         ///
         /// 启用 `sync_mode(true)` 以支持 `_sync` API。
         ///
         /// # 返回
-        /// 已初始化的 `BulwarkDaoOxcache` 实例（内部 `oxcache::Cache` 已就绪，sync_mode 启用）。
+        /// 已初始化的 `GarrisonDaoOxcache` 实例（内部 `oxcache::Cache` 已就绪，sync_mode 启用）。
         ///
         /// # 错误
-        /// - `BulwarkError::Dao`：oxcache 初始化失败（消息含 "oxcache 初始化失败"）。
-        pub async fn new() -> BulwarkResult<Self> {
+        /// - `GarrisonError::Dao`：oxcache 初始化失败（消息含 "oxcache 初始化失败"）。
+        pub async fn new() -> GarrisonResult<Self> {
             let cache = Cache::builder()
                 .sync_mode(true)
                 .build()
                 .await
-                .map_err(|e| BulwarkError::Dao(format!("dao-oxcache-init::{}", e)))?;
+                .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-init::{}", e)))?;
             Ok(Self {
                 cache,
                 atomic_lock: parking_lot::Mutex::new(()),
@@ -699,15 +699,15 @@ mod oxcache_impl {
     }
 
     #[async_trait]
-    impl BulwarkDao for BulwarkDaoOxcache {
-        async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
+    impl GarrisonDao for GarrisonDaoOxcache {
+        async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
             let actual_key = prefixed_key(key);
             self.cache
                 .get_sync(&actual_key)
-                .map_err(|e| BulwarkError::Dao(format!("dao-oxcache-get-sync::{}", e)))
+                .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-get-sync::{}", e)))
         }
 
-        async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> BulwarkResult<()> {
+        async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> GarrisonResult<()> {
             let actual_key = prefixed_key(key);
             let ttl = if ttl_seconds == 0 {
                 None
@@ -716,13 +716,13 @@ mod oxcache_impl {
             };
             self.cache
                 .set_with_ttl_sync(&actual_key, &value.to_string(), ttl)
-                .map_err(|e| BulwarkError::Dao(format!("dao-oxcache-set-with-ttl-sync::{}", e)))?;
+                .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-set-with-ttl-sync::{}", e)))?;
             #[cfg(feature = "anomalous-detector-dual")]
             self.key_index.write().insert(actual_key);
             Ok(())
         }
 
-        async fn update(&self, key: &str, value: &str) -> BulwarkResult<()> {
+        async fn update(&self, key: &str, value: &str) -> GarrisonResult<()> {
             // 通过 cache.ttl_sync() 读取剩余 TTL，用 set_with_ttl_sync 保留原 TTL（不重置过期时间）。
             // ttl_sync() 返回 None 表示永久驻留（set_with_ttl_sync 接受 None 表示无 TTL）。
             // 但 None 也可能表示键不存在，需要先检查键存在性。
@@ -730,22 +730,22 @@ mod oxcache_impl {
             if !self
                 .cache
                 .exists_sync(&actual_key)
-                .map_err(|e| BulwarkError::Dao(format!("dao-oxcache-exists-sync::{}", e)))?
+                .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-exists-sync::{}", e)))?
             {
-                return Err(BulwarkError::Dao(format!("dao-key-missing::{}", key)));
+                return Err(GarrisonError::Dao(format!("dao-key-missing::{}", key)));
             }
             let remaining_ttl = self
                 .cache
                 .ttl_sync(&actual_key)
-                .map_err(|e| BulwarkError::Dao(format!("dao-oxcache-ttl-sync::{}", e)))?;
+                .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-ttl-sync::{}", e)))?;
             self.cache
                 .set_with_ttl_sync(&actual_key, &value.to_string(), remaining_ttl)
                 .map_err(|e| {
-                    BulwarkError::Dao(format!("dao-oxcache-update-set-with-ttl-sync::{}", e))
+                    GarrisonError::Dao(format!("dao-oxcache-update-set-with-ttl-sync::{}", e))
                 })
         }
 
-        async fn expire(&self, key: &str, seconds: u64) -> BulwarkResult<()> {
+        async fn expire(&self, key: &str, seconds: u64) -> GarrisonResult<()> {
             // oxcache 0.3 的 Cache<K,V> 暴露了 expire_sync(key, ttl) 方法（原子更新 TTL，不触碰 value）。
             // expire_sync 返回 bool：true=更新成功，false=键不存在。
             // 注意：seconds=0 表示永久驻留，需要用 get_sync + set_with_ttl_sync(None) 实现
@@ -755,30 +755,30 @@ mod oxcache_impl {
                 let value = self
                     .cache
                     .get_sync(&actual_key)
-                    .map_err(|e| BulwarkError::Dao(format!("dao-oxcache-get-sync::{}", e)))?
-                    .ok_or_else(|| BulwarkError::Dao(format!("dao-key-missing::{}", key)))?;
+                    .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-get-sync::{}", e)))?
+                    .ok_or_else(|| GarrisonError::Dao(format!("dao-key-missing::{}", key)))?;
                 self.cache
                     .set_with_ttl_sync(&actual_key, &value, None)
                     .map_err(|e| {
-                        BulwarkError::Dao(format!("dao-oxcache-expire-set-with-ttl-sync::{}", e))
+                        GarrisonError::Dao(format!("dao-oxcache-expire-set-with-ttl-sync::{}", e))
                     })
             } else {
                 let updated = self
                     .cache
                     .expire_sync(&actual_key, Duration::from_secs(seconds))
-                    .map_err(|e| BulwarkError::Dao(format!("dao-oxcache-expire-sync::{}", e)))?;
+                    .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-expire-sync::{}", e)))?;
                 if !updated {
-                    return Err(BulwarkError::Dao(format!("dao-key-missing::{}", key)));
+                    return Err(GarrisonError::Dao(format!("dao-key-missing::{}", key)));
                 }
                 Ok(())
             }
         }
 
-        async fn delete(&self, key: &str) -> BulwarkResult<()> {
+        async fn delete(&self, key: &str) -> GarrisonResult<()> {
             let actual_key = prefixed_key(key);
             self.cache
                 .delete_sync(&actual_key)
-                .map_err(|e| BulwarkError::Dao(format!("dao-oxcache-delete-sync::{}", e)))?;
+                .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-delete-sync::{}", e)))?;
             #[cfg(feature = "anomalous-detector-dual")]
             self.key_index.write().remove(&actual_key);
             Ok(())
@@ -787,11 +787,11 @@ mod oxcache_impl {
         /// set_permanent 用 set_with_ttl_sync(None) 写入永久键。
         ///
         /// 重写默认实现以使用 oxcache 原生"无 TTL"API（避免 ttl=0 歧义）。
-        async fn set_permanent(&self, key: &str, value: &str) -> BulwarkResult<()> {
+        async fn set_permanent(&self, key: &str, value: &str) -> GarrisonResult<()> {
             let actual_key = prefixed_key(key);
             self.cache
                 .set_with_ttl_sync(&actual_key, &value.to_string(), None)
-                .map_err(|e| BulwarkError::Dao(format!("dao-oxcache-set-with-ttl-sync::{}", e)))?;
+                .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-set-with-ttl-sync::{}", e)))?;
             #[cfg(feature = "anomalous-detector-dual")]
             self.key_index.write().insert(actual_key);
             Ok(())
@@ -802,37 +802,37 @@ mod oxcache_impl {
         /// oxcache 0.3 的 `ttl_sync(key)` 返回 `Option<Duration>`：
         /// - `Some(remaining)`: 键存在且设置了 TTL
         /// - `None`: 键不存在，或键存在但未设置 TTL（永久驻留）
-        async fn get_timeout(&self, key: &str) -> BulwarkResult<Option<Duration>> {
+        async fn get_timeout(&self, key: &str) -> GarrisonResult<Option<Duration>> {
             let actual_key = prefixed_key(key);
             self.cache
                 .ttl_sync(&actual_key)
-                .map_err(|e| BulwarkError::Dao(format!("dao-oxcache-ttl-sync::{}", e)))
+                .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-ttl-sync::{}", e)))
         }
 
         /// rename 用 get → ttl_sync → set_with_ttl_sync → delete 四步。
         ///
         /// 重写默认实现以保留原键 TTL（用 `ttl_sync` 读取剩余 TTL，用 `set_with_ttl_sync` 写入）。
         /// 仍是**非原子**操作（oxcache 0.3.3 无原子 rename API，待 oxcache 提供原子 rename API）。
-        async fn rename(&self, old_key: &str, new_key: &str) -> BulwarkResult<()> {
+        async fn rename(&self, old_key: &str, new_key: &str) -> GarrisonResult<()> {
             let actual_old = prefixed_key(old_key);
             let actual_new = prefixed_key(new_key);
             let value = self
                 .cache
                 .get_sync(&actual_old)
-                .map_err(|e| BulwarkError::Dao(format!("dao-oxcache-get-sync::{}", e)))?
+                .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-get-sync::{}", e)))?
                 .ok_or_else(|| {
-                    BulwarkError::InvalidParam(format!("dao-key-missing::{}", old_key))
+                    GarrisonError::InvalidParam(format!("dao-key-missing::{}", old_key))
                 })?;
             let remaining_ttl = self
                 .cache
                 .ttl_sync(&actual_old)
-                .map_err(|e| BulwarkError::Dao(format!("dao-oxcache-ttl-sync::{}", e)))?;
+                .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-ttl-sync::{}", e)))?;
             self.cache
                 .set_with_ttl_sync(&actual_new, &value, remaining_ttl)
-                .map_err(|e| BulwarkError::Dao(format!("dao-oxcache-set-with-ttl-sync::{}", e)))?;
+                .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-set-with-ttl-sync::{}", e)))?;
             self.cache
                 .delete_sync(&actual_old)
-                .map_err(|e| BulwarkError::Dao(format!("dao-oxcache-delete-sync::{}", e)))
+                .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-delete-sync::{}", e)))
         }
 
         /// get_and_delete 用 `parking_lot::Mutex` 保护 get+delete。
@@ -840,17 +840,17 @@ mod oxcache_impl {
         /// 进程内原子：同一进程内并发调用同一 key 仅一个返回 `Some`。
         /// 跨进程限制：多进程共享 Redis L2 时，仍存在 TOCTOU 竞态
         /// （需 Redis Lua 脚本 `redis.call('GET',K[1]);redis.call('DEL',K[1])` 修复，待引入 Redis L2 后端）。
-        async fn get_and_delete(&self, key: &str) -> BulwarkResult<Option<String>> {
+        async fn get_and_delete(&self, key: &str) -> GarrisonResult<Option<String>> {
             let _guard = self.atomic_lock.lock();
             let actual_key = prefixed_key(key);
             let value = self
                 .cache
                 .get_sync(&actual_key)
-                .map_err(|e| BulwarkError::Dao(format!("dao-oxcache-get-sync::{}", e)))?;
+                .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-get-sync::{}", e)))?;
             if value.is_some() {
                 self.cache
                     .delete_sync(&actual_key)
-                    .map_err(|e| BulwarkError::Dao(format!("dao-oxcache-delete-sync::{}", e)))?;
+                    .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-delete-sync::{}", e)))?;
             }
             Ok(value)
         }
@@ -859,18 +859,18 @@ mod oxcache_impl {
         ///
         /// 在单个 lock() 作用域内完成 get → set_with_ttl_sync，保证进程内原子。
         /// key 已存在时通过 `ttl_sync` 读取剩余 TTL 并保留（不重置过期时间）。
-        async fn incr(&self, key: &str, ttl_seconds: u64) -> BulwarkResult<u64> {
+        async fn incr(&self, key: &str, ttl_seconds: u64) -> GarrisonResult<u64> {
             let _guard = self.atomic_lock.lock();
             let actual_key = prefixed_key(key);
             match self
                 .cache
                 .get_sync(&actual_key)
-                .map_err(|e| BulwarkError::Dao(format!("dao-oxcache-get-sync::{}", e)))?
+                .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-get-sync::{}", e)))?
             {
                 Some(v) => {
                     // Rule 12：parse 失败必须显式报错，禁止静默返回 0 导致计数器重置
                     let cur_val: u64 = v.parse().map_err(|_| {
-                        BulwarkError::Dao(format!(
+                        GarrisonError::Dao(format!(
                             "incr: 现存值非 u64，key={}, value={}",
                             actual_key, v
                         ))
@@ -879,11 +879,11 @@ mod oxcache_impl {
                     let remaining_ttl = self
                         .cache
                         .ttl_sync(&actual_key)
-                        .map_err(|e| BulwarkError::Dao(format!("dao-oxcache-ttl-sync::{}", e)))?;
+                        .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-ttl-sync::{}", e)))?;
                     self.cache
                         .set_with_ttl_sync(&actual_key, &new_val.to_string(), remaining_ttl)
                         .map_err(|e| {
-                            BulwarkError::Dao(format!("dao-oxcache-set-with-ttl-sync::{}", e))
+                            GarrisonError::Dao(format!("dao-oxcache-set-with-ttl-sync::{}", e))
                         })?;
                     Ok(new_val)
                 },
@@ -896,7 +896,7 @@ mod oxcache_impl {
                     self.cache
                         .set_with_ttl_sync(&actual_key, &"1".to_string(), ttl)
                         .map_err(|e| {
-                            BulwarkError::Dao(format!("dao-oxcache-set-with-ttl-sync::{}", e))
+                            GarrisonError::Dao(format!("dao-oxcache-set-with-ttl-sync::{}", e))
                         })?;
                     Ok(1)
                 },
@@ -917,20 +917,20 @@ mod oxcache_impl {
         /// 原 `SmsRateLimiter::decrement_counter` 用 `dao.get → parse → dao.update/delete`
         /// 三步组合，跨越 await 间隙允许其他 task 的 `incr` 插入，导致 update 基于过时 get 值
         /// 覆盖 incr 结果，产生"跨越式递减"（实际递减量大于 1）。
-        async fn decr(&self, key: &str) -> BulwarkResult<u64> {
+        async fn decr(&self, key: &str) -> GarrisonResult<u64> {
             let _guard = self.atomic_lock.lock();
             let actual_key = prefixed_key(key);
             let v = match self
                 .cache
                 .get_sync(&actual_key)
-                .map_err(|e| BulwarkError::Dao(format!("dao-oxcache-get-sync::{}", e)))?
+                .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-get-sync::{}", e)))?
             {
                 Some(v) => v,
                 None => return Ok(0),
             };
             // Rule 12：parse 失败必须显式报错（与 incr 一致，禁止静默返回 0）
             let cur_val: u64 = v.parse().map_err(|_| {
-                BulwarkError::Dao(format!(
+                GarrisonError::Dao(format!(
                     "decr: 现存值非 u64，key={}, value={}",
                     actual_key, v
                 ))
@@ -943,17 +943,17 @@ mod oxcache_impl {
                 // 递减到 0：删除 key（与 trait 默认实现 + MockDao::decr 一致）
                 self.cache
                     .delete_sync(&actual_key)
-                    .map_err(|e| BulwarkError::Dao(format!("dao-oxcache-delete-sync::{}", e)))?;
+                    .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-delete-sync::{}", e)))?;
             } else {
                 // 保留原 TTL（不重置窗口）：用 ttl_sync 读取剩余 TTL
                 let remaining_ttl = self
                     .cache
                     .ttl_sync(&actual_key)
-                    .map_err(|e| BulwarkError::Dao(format!("dao-oxcache-ttl-sync::{}", e)))?;
+                    .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-ttl-sync::{}", e)))?;
                 self.cache
                     .set_with_ttl_sync(&actual_key, &new_val.to_string(), remaining_ttl)
                     .map_err(|e| {
-                        BulwarkError::Dao(format!("dao-oxcache-set-with-ttl-sync::{}", e))
+                        GarrisonError::Dao(format!("dao-oxcache-set-with-ttl-sync::{}", e))
                     })?;
             }
             Ok(new_val)
@@ -972,7 +972,7 @@ mod oxcache_impl {
             key: &str,
             new_value: u64,
             ttl_seconds: u64,
-        ) -> BulwarkResult<bool> {
+        ) -> GarrisonResult<bool> {
             let _guard = self.atomic_lock.lock();
             let actual_key = prefixed_key(key);
             // M1 修复：parse 失败必须显式报错（与 incr 方法一致，Rule 12 错误显性化），
@@ -980,10 +980,10 @@ mod oxcache_impl {
             let current_val: u64 = match self
                 .cache
                 .get_sync(&actual_key)
-                .map_err(|e| BulwarkError::Dao(format!("dao-oxcache-get-sync::{}", e)))?
+                .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-get-sync::{}", e)))?
             {
                 Some(v) => v.parse::<u64>().map_err(|_| {
-                    BulwarkError::Dao(format!(
+                    GarrisonError::Dao(format!(
                         "dao-compare-and-update-parse-u64::{}::{}",
                         actual_key, v
                     ))
@@ -998,13 +998,13 @@ mod oxcache_impl {
                     let remaining = self
                         .cache
                         .ttl_sync(&actual_key)
-                        .map_err(|e| BulwarkError::Dao(format!("dao-oxcache-ttl-sync::{}", e)))?;
+                        .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-ttl-sync::{}", e)))?;
                     Some(remaining.unwrap_or_else(|| Duration::from_secs(ttl_seconds)))
                 };
                 self.cache
                     .set_with_ttl_sync(&actual_key, &new_value.to_string(), ttl)
                     .map_err(|e| {
-                        BulwarkError::Dao(format!("dao-oxcache-set-with-ttl-sync::{}", e))
+                        GarrisonError::Dao(format!("dao-oxcache-set-with-ttl-sync::{}", e))
                     })?;
                 #[cfg(feature = "anomalous-detector-dual")]
                 self.key_index.write().insert(actual_key);
@@ -1019,7 +1019,7 @@ mod oxcache_impl {
         /// 遍历 key_index，过滤匹配 pattern 的 key，同时惰性清理已过期的 key。
         /// pattern 支持 `*` 通配符（与 MockDao::keys 一致）。
         #[cfg(feature = "anomalous-detector-dual")]
-        async fn keys(&self, pattern: &str) -> BulwarkResult<Vec<String>> {
+        async fn keys(&self, pattern: &str) -> GarrisonResult<Vec<String>> {
             let actual_pattern = prefixed_key(pattern);
             let mut result = Vec::new();
             let mut expired_keys = Vec::new();
@@ -1055,24 +1055,24 @@ mod oxcache_impl {
 }
 
 #[cfg(any(feature = "cache-memory", feature = "cache-redis"))]
-pub use oxcache_impl::BulwarkDaoOxcache;
+pub use oxcache_impl::GarrisonDaoOxcache;
 
 // ============================================================================
 // dbnexus 实现（feature = "db-sqlite" 或 "db-postgres"）
 // ============================================================================
 //
-// `init_dbnexus` 和 `BulwarkMigration` 是 backend-agnostic 的——它们仅封装
+// `init_dbnexus` 和 `GarrisonMigration` 是 backend-agnostic 的——它们仅封装
 // `DbPool::new(url)` 和 `DbPool::run_migrations(dir)`，不关心底层是 SQLite 还是
 // PostgreSQL。后端由 dbnexus 的 feature flag（sqlite/postgres）控制。
 //
-// 注意：`BulwarkMigration::new()` 默认使用 `migrations/sqlite/` 路径，
+// 注意：`GarrisonMigration::new()` 默认使用 `migrations/sqlite/` 路径，
 // PostgreSQL 用户应使用 `with_base_dir` 指定 `migrations/postgres/` 路径。
 
 #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
 mod dbnexus_impl;
 
 #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
-pub use dbnexus_impl::{init_dbnexus, BulwarkMigration};
+pub use dbnexus_impl::{init_dbnexus, GarrisonMigration};
 
 // ============================================================================
 // Repository 层
@@ -1096,7 +1096,7 @@ pub mod alone_cache;
 pub mod warmup;
 
 // `MockDao` 在生产代码中也作为进程内原子 DAO 使用
-// （如 `PasswordRateLimiter` / `BulwarkFirewallCheckHookDefault` 的内存模式），
+// （如 `PasswordRateLimiter` / `GarrisonFirewallCheckHookDefault` 的内存模式），
 // 不再限制为 `cfg(test)`。
 mod mock;
 
@@ -1114,14 +1114,14 @@ pub mod tests {
     #[cfg(feature = "protocol-apikey")]
     pub(crate) use super::glob_match;
     pub use super::MockDao;
-    use crate::error::BulwarkError;
+    use crate::error::GarrisonError;
     use parking_lot::Mutex;
     use std::collections::HashMap;
     use std::sync::Arc;
     use std::time::Duration;
 
     // ------------------------------------------------------------------------
-    // BulwarkDaoOxcache keys() 测试（CRIT-001 修复验证）
+    // GarrisonDaoOxcache keys() 测试（CRIT-001 修复验证）
     // 仅在 anomalous-detector-dual + cache-memory/cache-redis 启用时编译
     // ------------------------------------------------------------------------
     #[cfg(all(
@@ -1134,7 +1134,7 @@ pub mod tests {
         /// 无 key 时 keys() 返回空 Vec。
         #[tokio::test(flavor = "multi_thread")]
         async fn test_oxcache_keys_empty() {
-            let dao = BulwarkDaoOxcache::new().await.unwrap();
+            let dao = GarrisonDaoOxcache::new().await.unwrap();
             let keys = dao.keys("anomalous:login:*").await.unwrap();
             assert!(keys.is_empty(), "无 key 时 keys() 应返回空 Vec");
         }
@@ -1142,7 +1142,7 @@ pub mod tests {
         /// set 3 个 key，keys("anomalous:login:*") 返回 2 个匹配的 key。
         #[tokio::test(flavor = "multi_thread")]
         async fn test_oxcache_keys_pattern_match() {
-            let dao = BulwarkDaoOxcache::new().await.unwrap();
+            let dao = GarrisonDaoOxcache::new().await.unwrap();
             dao.set("anomalous:login:1:1", "v1", 3600).await.unwrap();
             dao.set("anomalous:login:2:2", "v2", 3600).await.unwrap();
             dao.set("other:key", "v3", 3600).await.unwrap();
@@ -1162,7 +1162,7 @@ pub mod tests {
         /// TTL 过期后 keys() 返回空且 key_index 已惰性清理。
         #[tokio::test(flavor = "multi_thread")]
         async fn test_oxcache_keys_clears_expired() {
-            let dao = BulwarkDaoOxcache::new().await.unwrap();
+            let dao = GarrisonDaoOxcache::new().await.unwrap();
             dao.set("anomalous:login:1:1", "v1", 1).await.unwrap();
             // 等待 TTL 过期（1s + 1s 余量）
             tokio::time::sleep(Duration::from_secs(2)).await;
@@ -1179,7 +1179,7 @@ pub mod tests {
         /// delete 后 keys() 返回空。
         #[tokio::test(flavor = "multi_thread")]
         async fn test_oxcache_keys_after_delete() {
-            let dao = BulwarkDaoOxcache::new().await.unwrap();
+            let dao = GarrisonDaoOxcache::new().await.unwrap();
             dao.set("anomalous:login:1:1", "v1", 3600).await.unwrap();
             let keys = dao.keys("anomalous:login:*").await.unwrap();
             assert_eq!(keys.len(), 1, "set 后应有 1 个 key");
@@ -1190,7 +1190,7 @@ pub mod tests {
     }
 
     // ------------------------------------------------------------------------
-    // 契约测试：验证 BulwarkDao trait 行为契约（使用 MockDao）
+    // 契约测试：验证 GarrisonDao trait 行为契约（使用 MockDao）
     // 对应 dao-oxcache-basic spec 的 4 个 scenario
     // ------------------------------------------------------------------------
 
@@ -1259,7 +1259,7 @@ pub mod tests {
         let dao = MockDao::new();
         let result = dao.update("missing", "value").await;
         assert!(
-            matches!(result, Err(BulwarkError::Dao(_))),
+            matches!(result, Err(GarrisonError::Dao(_))),
             "update 不存在的键应返回 Dao 错误"
         );
     }
@@ -1283,7 +1283,7 @@ pub mod tests {
         let dao = MockDao::new();
         let result = dao.expire("missing", 3600).await;
         assert!(
-            matches!(result, Err(BulwarkError::Dao(_))),
+            matches!(result, Err(GarrisonError::Dao(_))),
             "expire 不存在的键应返回 Dao 错误"
         );
     }
@@ -1334,7 +1334,7 @@ pub mod tests {
     }
 
     // ------------------------------------------------------------------------
-    // 4 方法扩展测试（v0.4.2 spec dao-bulwark-dao）
+    // 4 方法扩展测试（v0.4.2 spec dao-garrison-dao）
     // ------------------------------------------------------------------------
 
     /// R-001: set_permanent 设置后 get 返回值。
@@ -1387,17 +1387,17 @@ pub mod tests {
         assert!(timeout.is_none(), "不存在的键应返回 None");
     }
 
-    /// R-003: keys("bulwark:apikey:*") 返回命名空间下所有 key。
+    /// R-003: keys("garrison:apikey:*") 返回命名空间下所有 key。
     #[tokio::test]
     async fn mock_keys_returns_namespace_matches() {
         let dao = MockDao::new();
-        dao.set("bulwark:apikey:abc123", "v1", 3600).await.unwrap();
-        dao.set("bulwark:apikey:def456", "v2", 3600).await.unwrap();
-        dao.set("bulwark:session:xyz", "v3", 3600).await.unwrap();
-        let keys = dao.keys("bulwark:apikey:*").await.unwrap();
+        dao.set("garrison:apikey:abc123", "v1", 3600).await.unwrap();
+        dao.set("garrison:apikey:def456", "v2", 3600).await.unwrap();
+        dao.set("garrison:session:xyz", "v3", 3600).await.unwrap();
+        let keys = dao.keys("garrison:apikey:*").await.unwrap();
         assert_eq!(keys.len(), 2, "应匹配 2 个 apikey");
-        assert!(keys.contains(&"bulwark:apikey:abc123".to_string()));
-        assert!(keys.contains(&"bulwark:apikey:def456".to_string()));
+        assert!(keys.contains(&"garrison:apikey:abc123".to_string()));
+        assert!(keys.contains(&"garrison:apikey:def456".to_string()));
     }
 
     /// R-003: keys("*") 返回所有 key。
@@ -1452,7 +1452,7 @@ pub mod tests {
         let dao = MockDao::new();
         let result = dao.rename("missing", "new").await;
         assert!(
-            matches!(result, Err(BulwarkError::InvalidParam(_))),
+            matches!(result, Err(GarrisonError::InvalidParam(_))),
             "rename 不存在的键应返回 InvalidParam，实际: {:?}",
             result
         );
@@ -1469,7 +1469,7 @@ pub mod tests {
         /// Scenario: set 与 get 配对。
         #[tokio::test(flavor = "multi_thread")]
         async fn oxcache_set_get_pair() {
-            let dao = BulwarkDaoOxcache::new().await.unwrap();
+            let dao = GarrisonDaoOxcache::new().await.unwrap();
             dao.set("oc_key1", "value1", 3600).await.unwrap();
             let got = dao.get("oc_key1").await.unwrap();
             assert_eq!(got, Some("value1".to_string()));
@@ -1478,7 +1478,7 @@ pub mod tests {
         /// Scenario: 过期自动删除。
         #[tokio::test(flavor = "multi_thread")]
         async fn oxcache_expire_auto_delete() {
-            let dao = BulwarkDaoOxcache::new().await.unwrap();
+            let dao = GarrisonDaoOxcache::new().await.unwrap();
             dao.set("oc_key2", "value1", 1).await.unwrap();
             tokio::time::sleep(Duration::from_secs(2)).await;
             let got = dao.get("oc_key2").await.unwrap();
@@ -1488,7 +1488,7 @@ pub mod tests {
         /// Scenario: delete 删除键。
         #[tokio::test(flavor = "multi_thread")]
         async fn oxcache_delete_removes_key() {
-            let dao = BulwarkDaoOxcache::new().await.unwrap();
+            let dao = GarrisonDaoOxcache::new().await.unwrap();
             dao.set("oc_key3", "value1", 3600).await.unwrap();
             dao.delete("oc_key3").await.unwrap();
             let got = dao.get("oc_key3").await.unwrap();
@@ -1498,7 +1498,7 @@ pub mod tests {
         /// 验证 oxcache update 更新值（仅验证值，TTL 保留见 ignore 测试）。
         #[tokio::test(flavor = "multi_thread")]
         async fn oxcache_update_changes_value() {
-            let dao = BulwarkDaoOxcache::new().await.unwrap();
+            let dao = GarrisonDaoOxcache::new().await.unwrap();
             dao.set("oc_key4", "value1", 3600).await.unwrap();
             dao.update("oc_key4", "value2").await.unwrap();
             let got = dao.get("oc_key4").await.unwrap();
@@ -1508,10 +1508,10 @@ pub mod tests {
         /// 验证 update 不存在的键返回错误。
         #[tokio::test(flavor = "multi_thread")]
         async fn oxcache_update_missing_key_errors() {
-            let dao = BulwarkDaoOxcache::new().await.unwrap();
+            let dao = GarrisonDaoOxcache::new().await.unwrap();
             let result = dao.update("oc_missing", "value").await;
             assert!(
-                matches!(result, Err(BulwarkError::Dao(_))),
+                matches!(result, Err(GarrisonError::Dao(_))),
                 "update 不存在的键应返回 Dao 错误"
             );
         }
@@ -1519,7 +1519,7 @@ pub mod tests {
         /// 验证 expire 重置过期时间。
         #[tokio::test(flavor = "multi_thread")]
         async fn oxcache_expire_resets_ttl() {
-            let dao = BulwarkDaoOxcache::new().await.unwrap();
+            let dao = GarrisonDaoOxcache::new().await.unwrap();
             dao.set("oc_key5", "value1", 1).await.unwrap();
             dao.expire("oc_key5", 3600).await.unwrap();
             tokio::time::sleep(Duration::from_secs(2)).await;
@@ -1527,10 +1527,10 @@ pub mod tests {
             assert_eq!(got, Some("value1".to_string()));
         }
 
-        /// 验证 BulwarkDaoOxcache::new() 直接构造（init_oxcache_dao 包装已移除）。
+        /// 验证 GarrisonDaoOxcache::new() 直接构造（init_oxcache_dao 包装已移除）。
         #[tokio::test(flavor = "multi_thread")]
         async fn oxcache_new_direct_construction() {
-            let dao = BulwarkDaoOxcache::new().await.unwrap();
+            let dao = GarrisonDaoOxcache::new().await.unwrap();
             dao.set("oc_init", "init_value", 60).await.unwrap();
             let got = dao.get("oc_init").await.unwrap();
             assert_eq!(got, Some("init_value".to_string()));
@@ -1540,10 +1540,10 @@ pub mod tests {
         ///
         /// oxcache 0.3 的 Cache<K,V> 暴露了 ttl() 方法，update 用 ttl() + set_with_ttl 保留原 TTL。
         ///
-        /// 参见：dao-oxcache-basic spec Requirement "BulwarkDao 抽象 trait" Scenario "update 更新值（保留 TTL）"
+        /// 参见：dao-oxcache-basic spec Requirement "GarrisonDao 抽象 trait" Scenario "update 更新值（保留 TTL）"
         #[tokio::test(flavor = "multi_thread")]
         async fn oxcache_update_preserves_ttl() {
-            let dao = BulwarkDaoOxcache::new().await.unwrap();
+            let dao = GarrisonDaoOxcache::new().await.unwrap();
             dao.set("oc_ttl", "value1", 2).await.unwrap();
             dao.update("oc_ttl", "value2").await.unwrap();
             // update 保留了原 TTL（2 秒），sleep 后应过期
@@ -1557,11 +1557,11 @@ pub mod tests {
 
         /// 验证 expire(key, 0) 将键设为永久驻留（不删除）。
         ///
-        /// 覆盖 BulwarkDaoOxcache::expire 的 `seconds == 0` 分支：
+        /// 覆盖 GarrisonDaoOxcache::expire 的 `seconds == 0` 分支：
         /// 通过 get + set_with_ttl(None) 实现 0=永久语义。
         #[tokio::test(flavor = "multi_thread")]
         async fn oxcache_expire_zero_seconds_makes_permanent() {
-            let dao = BulwarkDaoOxcache::new().await.unwrap();
+            let dao = GarrisonDaoOxcache::new().await.unwrap();
             // 设置短 TTL，键会在 1 秒后过期
             dao.set("oc_perm", "value1", 1).await.unwrap();
             // expire(0) 将键改为永久驻留
@@ -1579,28 +1579,28 @@ pub mod tests {
 
         /// 验证 expire(0) 对不存在的键返回 Dao 错误。
         ///
-        /// 覆盖 BulwarkDaoOxcache::expire 的 `seconds == 0` 分支中
-        /// `ok_or_else(|| BulwarkError::Dao(...))` 错误路径。
+        /// 覆盖 GarrisonDaoOxcache::expire 的 `seconds == 0` 分支中
+        /// `ok_or_else(|| GarrisonError::Dao(...))` 错误路径。
         #[tokio::test(flavor = "multi_thread")]
         async fn oxcache_expire_zero_seconds_missing_key_errors() {
-            let dao = BulwarkDaoOxcache::new().await.unwrap();
+            let dao = GarrisonDaoOxcache::new().await.unwrap();
             let result = dao.expire("oc_missing_perm", 0).await;
             assert!(
-                matches!(result, Err(BulwarkError::Dao(_))),
+                matches!(result, Err(GarrisonError::Dao(_))),
                 "expire(0) 不存在的键应返回 Dao 错误"
             );
         }
 
         /// 验证 expire 对不存在的键返回 Dao 错误（seconds > 0 分支）。
         ///
-        /// 覆盖 BulwarkDaoOxcache::expire 的 `else` 分支中
+        /// 覆盖 GarrisonDaoOxcache::expire 的 `else` 分支中
         /// `if !updated { return Err(...) }` 错误路径。
         #[tokio::test(flavor = "multi_thread")]
         async fn oxcache_expire_missing_key_errors() {
-            let dao = BulwarkDaoOxcache::new().await.unwrap();
+            let dao = GarrisonDaoOxcache::new().await.unwrap();
             let result = dao.expire("oc_missing_expire", 3600).await;
             assert!(
-                matches!(result, Err(BulwarkError::Dao(ref msg)) if msg.contains("dao-key-missing")),
+                matches!(result, Err(GarrisonError::Dao(ref msg)) if msg.contains("dao-key-missing")),
                 "expire 不存在的键应返回含 'dao-key-missing' 的 Dao 错误，实际: {:?}",
                 result
             );
@@ -1608,11 +1608,11 @@ pub mod tests {
 
         /// 验证 set(ttl=0) 写入永久驻留的键。
         ///
-        /// 覆盖 BulwarkDaoOxcache::set 的 `ttl_seconds == 0` 分支（ttl=None）：
+        /// 覆盖 GarrisonDaoOxcache::set 的 `ttl_seconds == 0` 分支（ttl=None）：
         /// 键应永久驻留，不会因短时间等待而过期。
         #[tokio::test(flavor = "multi_thread")]
         async fn oxcache_set_with_zero_ttl() {
-            let dao = BulwarkDaoOxcache::new().await.unwrap();
+            let dao = GarrisonDaoOxcache::new().await.unwrap();
             // set(ttl=0) 表示永久驻留
             dao.set("oc_zero_ttl", "permanent_value", 0).await.unwrap();
             // 等待 2 秒，验证键未过期
@@ -1631,10 +1631,10 @@ pub mod tests {
 
         /// R-001: set_permanent 写入永久键，短时间等待不过期。
         ///
-        /// 覆盖 BulwarkDaoOxcache::set_permanent 重写实现（用 set_with_ttl_sync(None)）。
+        /// 覆盖 GarrisonDaoOxcache::set_permanent 重写实现（用 set_with_ttl_sync(None)）。
         #[tokio::test(flavor = "multi_thread")]
         async fn oxcache_set_permanent_persists_without_ttl() {
-            let dao = BulwarkDaoOxcache::new().await.unwrap();
+            let dao = GarrisonDaoOxcache::new().await.unwrap();
             dao.set_permanent("oc_perm", "perm_value").await.unwrap();
             tokio::time::sleep(Duration::from_secs(2)).await;
             let got = dao.get("oc_perm").await.unwrap();
@@ -1647,10 +1647,10 @@ pub mod tests {
 
         /// R-002: get_timeout 永久键返回 None。
         ///
-        /// 覆盖 BulwarkDaoOxcache::get_timeout 重写实现（用 ttl_sync）。
+        /// 覆盖 GarrisonDaoOxcache::get_timeout 重写实现（用 ttl_sync）。
         #[tokio::test(flavor = "multi_thread")]
         async fn oxcache_get_timeout_returns_none_for_permanent_key() {
-            let dao = BulwarkDaoOxcache::new().await.unwrap();
+            let dao = GarrisonDaoOxcache::new().await.unwrap();
             dao.set_permanent("oc_perm_ttl", "v").await.unwrap();
             let timeout = dao.get_timeout("oc_perm_ttl").await.unwrap();
             assert!(timeout.is_none(), "永久键应返回 None");
@@ -1659,7 +1659,7 @@ pub mod tests {
         /// R-002: get_timeout TTL 键返回 Some(remaining)，剩余 ≤ 原 TTL。
         #[tokio::test(flavor = "multi_thread")]
         async fn oxcache_get_timeout_returns_some_for_ttl_key() {
-            let dao = BulwarkDaoOxcache::new().await.unwrap();
+            let dao = GarrisonDaoOxcache::new().await.unwrap();
             dao.set("oc_ttl_key", "v", 3600).await.unwrap();
             let timeout = dao.get_timeout("oc_ttl_key").await.unwrap();
             assert!(timeout.is_some(), "TTL 键应返回 Some");
@@ -1673,7 +1673,7 @@ pub mod tests {
         /// R-002: get_timeout 不存在的键返回 None。
         #[tokio::test(flavor = "multi_thread")]
         async fn oxcache_get_timeout_returns_none_for_missing_key() {
-            let dao = BulwarkDaoOxcache::new().await.unwrap();
+            let dao = GarrisonDaoOxcache::new().await.unwrap();
             let timeout = dao.get_timeout("oc_missing_ttl").await.unwrap();
             assert!(timeout.is_none(), "不存在的键应返回 None");
         }
@@ -1684,7 +1684,7 @@ pub mod tests {
         /// - 未启用 `anomalous-detector-dual`：keys() 返回 NotImplemented（oxcache 不支持原生 key scan）
         #[tokio::test(flavor = "multi_thread")]
         async fn oxcache_keys_behavior() {
-            let dao = BulwarkDaoOxcache::new().await.unwrap();
+            let dao = GarrisonDaoOxcache::new().await.unwrap();
             dao.set("oc_key1", "v1", 3600).await.unwrap();
             let result = dao.keys("oc_*").await;
             #[cfg(feature = "anomalous-detector-dual")]
@@ -1699,7 +1699,7 @@ pub mod tests {
             #[cfg(not(feature = "anomalous-detector-dual"))]
             {
                 assert!(
-                    matches!(result, Err(BulwarkError::NotImplemented(_))),
+                    matches!(result, Err(GarrisonError::NotImplemented(_))),
                     "未启用 anomalous-detector-dual 时 keys() 应返回 NotImplemented, 实际: {:?}",
                     result
                 );
@@ -1708,10 +1708,10 @@ pub mod tests {
 
         /// R-004: rename 重命名后 old 不存在，new 存在。
         ///
-        /// 覆盖 BulwarkDaoOxcache::rename 重写实现（用 get → ttl_sync → set_with_ttl_sync → delete）。
+        /// 覆盖 GarrisonDaoOxcache::rename 重写实现（用 get → ttl_sync → set_with_ttl_sync → delete）。
         #[tokio::test(flavor = "multi_thread")]
         async fn oxcache_rename_moves_key() {
-            let dao = BulwarkDaoOxcache::new().await.unwrap();
+            let dao = GarrisonDaoOxcache::new().await.unwrap();
             dao.set("oc_old", "value", 3600).await.unwrap();
             dao.rename("oc_old", "oc_new").await.unwrap();
             let old = dao.get("oc_old").await.unwrap();
@@ -1723,10 +1723,10 @@ pub mod tests {
         /// R-004: rename 不存在的 old_key 返回 InvalidParam。
         #[tokio::test(flavor = "multi_thread")]
         async fn oxcache_rename_missing_key_returns_invalid_param() {
-            let dao = BulwarkDaoOxcache::new().await.unwrap();
+            let dao = GarrisonDaoOxcache::new().await.unwrap();
             let result = dao.rename("oc_missing_old", "oc_new").await;
             assert!(
-                matches!(result, Err(BulwarkError::InvalidParam(_))),
+                matches!(result, Err(GarrisonError::InvalidParam(_))),
                 "rename 不存在的键应返回 InvalidParam，实际: {:?}",
                 result
             );
@@ -1734,11 +1734,11 @@ pub mod tests {
 
         /// R-004: rename 保留原键 TTL（重写实现的核心价值）。
         ///
-        /// 验证 BulwarkDaoOxcache::rename 用 ttl_sync + set_with_ttl_sync 保留 TTL，
+        /// 验证 GarrisonDaoOxcache::rename 用 ttl_sync + set_with_ttl_sync 保留 TTL，
         /// 而非默认实现的 set_permanent（丢失 TTL）。
         #[tokio::test(flavor = "multi_thread")]
         async fn oxcache_rename_preserves_ttl() {
-            let dao = BulwarkDaoOxcache::new().await.unwrap();
+            let dao = GarrisonDaoOxcache::new().await.unwrap();
             // 设置短 TTL（2 秒）
             dao.set("oc_short_ttl", "value", 2).await.unwrap();
             // rename 到新 key
@@ -1759,7 +1759,7 @@ pub mod tests {
         /// R-001: oxcache get_and_delete 返回值并删除 key。
         #[tokio::test(flavor = "multi_thread")]
         async fn oxcache_get_and_delete_returns_value_and_removes_key() {
-            let dao = BulwarkDaoOxcache::new().await.unwrap();
+            let dao = GarrisonDaoOxcache::new().await.unwrap();
             dao.set("oc_atomic", "value", 3600).await.unwrap();
             let got = dao.get_and_delete("oc_atomic").await.unwrap();
             assert_eq!(got, Some("value".to_string()));
@@ -1770,7 +1770,7 @@ pub mod tests {
         /// R-001: oxcache get_and_delete 不存在的 key 返回 None。
         #[tokio::test(flavor = "multi_thread")]
         async fn oxcache_get_and_delete_missing_returns_none() {
-            let dao = BulwarkDaoOxcache::new().await.unwrap();
+            let dao = GarrisonDaoOxcache::new().await.unwrap();
             let got = dao.get_and_delete("oc_missing").await.unwrap();
             assert!(got.is_none());
         }
@@ -1778,7 +1778,7 @@ pub mod tests {
         /// R-001: oxcache get_and_delete 并发原子性验证。
         #[tokio::test(flavor = "multi_thread")]
         async fn oxcache_get_and_delete_concurrent_only_one_succeeds() {
-            let dao = Arc::new(BulwarkDaoOxcache::new().await.unwrap());
+            let dao = Arc::new(GarrisonDaoOxcache::new().await.unwrap());
             dao.set("oc_concurrent", "value", 3600).await.unwrap();
 
             let mut handles = Vec::new();
@@ -1809,7 +1809,7 @@ pub mod tests {
         // --------------------------------------------------------------------
 
         /// R-tenant-isolation-003: tenant-isolation feature 启用且 TENANT 上下文存在时，
-        /// BulwarkDao 的 set/get 实际操作的 key 为 `tenant:{tid}:original_key`。
+        /// GarrisonDao 的 set/get 实际操作的 key 为 `tenant:{tid}:original_key`。
         ///
         /// 通过公共 API 验证（不直接探测内部存储 key，避免 get 自身再次 prepend 前缀）：
         /// 1. tenant 42 在 TENANT.scope 内 set("shared_key", "tenant_42_value")
@@ -1821,7 +1821,7 @@ pub mod tests {
         async fn dao_key_prefixed_with_tenant_when_isolation_enabled() {
             use crate::context::tenant::{TenantContext, TenantSource, TENANT};
 
-            let dao = BulwarkDaoOxcache::new().await.unwrap();
+            let dao = GarrisonDaoOxcache::new().await.unwrap();
 
             // tenant 42 写入
             let ctx_42 = TenantContext {
@@ -1888,7 +1888,7 @@ pub mod tests {
         #[cfg(feature = "tenant-isolation")]
         #[tokio::test(flavor = "multi_thread")]
         async fn dao_key_unchanged_when_tenant_context_absent() {
-            let dao = BulwarkDaoOxcache::new().await.unwrap();
+            let dao = GarrisonDaoOxcache::new().await.unwrap();
 
             // 不在 TENANT.scope 内，TENANT.try_get() 返回 Err，key 应保持原样
             dao.set("no_ctx_key", "value", 3600).await.unwrap();
@@ -1917,7 +1917,7 @@ pub mod tests {
         async fn dao_delete_uses_prefixed_key_in_tenant_context() {
             use crate::context::tenant::{TenantContext, TenantSource, TENANT};
 
-            let dao = BulwarkDaoOxcache::new().await.unwrap();
+            let dao = GarrisonDaoOxcache::new().await.unwrap();
             let ctx = TenantContext {
                 tenant_id: 42,
                 resolved_from: TenantSource::Header,
@@ -2119,19 +2119,19 @@ pub mod tests {
         let result = dao.decr("bad_counter").await;
         assert!(result.is_err(), "非数字值应返回 Dao 错误");
         match result.err().unwrap() {
-            BulwarkError::Dao(msg) => {
+            GarrisonError::Dao(msg) => {
                 assert!(
                     msg.contains("dao-decr-parse-u64"),
                     "错误消息应含 dao-decr-parse-u64，实际: {}",
                     msg
                 );
             },
-            other => panic!("期望 BulwarkError::Dao，实际: {:?}", other),
+            other => panic!("期望 GarrisonError::Dao，实际: {:?}", other),
         }
     }
 
     // ========================================================================
-    // 覆盖率补充：BulwarkDao trait 默认方法测试
+    // 覆盖率补充：GarrisonDao trait 默认方法测试
     // ========================================================================
 
     /// 最小化 DAO 实现，只实现 5 个必需方法，不重写任何默认方法。
@@ -2161,31 +2161,31 @@ pub mod tests {
     }
 
     #[async_trait]
-    impl BulwarkDao for MinimalDao {
-        async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
+    impl GarrisonDao for MinimalDao {
+        async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
             Ok(self.store.lock().get(key).cloned())
         }
 
-        async fn set(&self, key: &str, value: &str, _ttl_seconds: u64) -> BulwarkResult<()> {
+        async fn set(&self, key: &str, value: &str, _ttl_seconds: u64) -> GarrisonResult<()> {
             self.store.lock().insert(key.to_string(), value.to_string());
             Ok(())
         }
 
-        async fn update(&self, key: &str, value: &str) -> BulwarkResult<()> {
+        async fn update(&self, key: &str, value: &str) -> GarrisonResult<()> {
             match self.store.lock().get_mut(key) {
                 Some(existing) => {
                     *existing = value.to_string();
                     Ok(())
                 },
-                None => Err(BulwarkError::Dao(format!("dao-key-missing::{}", key))),
+                None => Err(GarrisonError::Dao(format!("dao-key-missing::{}", key))),
             }
         }
 
-        async fn expire(&self, _key: &str, _seconds: u64) -> BulwarkResult<()> {
+        async fn expire(&self, _key: &str, _seconds: u64) -> GarrisonResult<()> {
             Ok(()) // MinimalDao 不支持 TTL，no-op
         }
 
-        async fn delete(&self, key: &str) -> BulwarkResult<()> {
+        async fn delete(&self, key: &str) -> GarrisonResult<()> {
             self.store.lock().remove(key);
             Ok(())
         }
@@ -2208,7 +2208,7 @@ pub mod tests {
         let dao = MinimalDao::new();
         dao.set("key", "value", 3600).await.unwrap();
         let result = dao.get_timeout("key").await;
-        assert!(matches!(result, Err(BulwarkError::NotImplemented(_))));
+        assert!(matches!(result, Err(GarrisonError::NotImplemented(_))));
     }
 
     /// R-003: `keys` 默认实现返回 `NotImplemented`。
@@ -2217,7 +2217,7 @@ pub mod tests {
         let dao = MinimalDao::new();
         dao.set("key1", "v1", 0).await.unwrap();
         let result = dao.keys("*").await;
-        assert!(matches!(result, Err(BulwarkError::NotImplemented(_))));
+        assert!(matches!(result, Err(GarrisonError::NotImplemented(_))));
     }
 
     /// R-004: `rename` 默认实现执行 `get → set_permanent → delete` 三步操作。
@@ -2241,14 +2241,14 @@ pub mod tests {
     async fn default_rename_missing_key_returns_invalid_param() {
         let dao = MinimalDao::new();
         let result = dao.rename("nonexistent", "new_key").await;
-        assert!(matches!(result, Err(BulwarkError::InvalidParam(_))));
+        assert!(matches!(result, Err(GarrisonError::InvalidParam(_))));
     }
 
     // ========================================================================
     // 覆盖率补充：社交账号绑定关系默认实现
     // ========================================================================
 
-    /// `find_social_binding` 默认实现返回 `NotImplemented`（BulwarkDao 是 KV 缓存抽象，不支持 SQL）。
+    /// `find_social_binding` 默认实现返回 `NotImplemented`（GarrisonDao 是 KV 缓存抽象，不支持 SQL）。
     ///
     /// 覆盖 trait 默认实现（行 208-218）。
     #[tokio::test]
@@ -2256,7 +2256,7 @@ pub mod tests {
         let dao = MinimalDao::new();
         let result = dao.find_social_binding(0, "wechat", "wx_openid").await;
         assert!(
-            matches!(result, Err(BulwarkError::NotImplemented(ref msg)) if msg.contains("find_social_binding")),
+            matches!(result, Err(GarrisonError::NotImplemented(ref msg)) if msg.contains("find_social_binding")),
             "find_social_binding 默认实现应返回 NotImplemented，实际: {:?}",
             result
         );
@@ -2272,7 +2272,7 @@ pub mod tests {
             .insert_social_binding(0, 1001, "wechat", "wx_openid", None, 1700000000)
             .await;
         assert!(
-            matches!(result, Err(BulwarkError::NotImplemented(ref msg)) if msg.contains("insert_social_binding")),
+            matches!(result, Err(GarrisonError::NotImplemented(ref msg)) if msg.contains("insert_social_binding")),
             "insert_social_binding 默认实现应返回 NotImplemented，实际: {:?}",
             result
         );
@@ -2288,7 +2288,7 @@ pub mod tests {
         let dao = MinimalDao::new();
         let result = dao.compare_and_update_if_greater("key", 1, 60).await;
         assert!(
-            matches!(result, Err(BulwarkError::NotImplemented(ref msg)) if msg.contains("compare_and_update_if_greater")),
+            matches!(result, Err(GarrisonError::NotImplemented(ref msg)) if msg.contains("compare_and_update_if_greater")),
             "compare_and_update_if_greater 默认实现应返回 NotImplemented，实际: {:?}",
             result
         );
@@ -2312,7 +2312,7 @@ pub mod tests {
         dao.set("counter", "5", 60).await.unwrap();
         let result = dao.decr("counter").await;
         assert!(
-            matches!(result, Err(BulwarkError::NotImplemented(ref msg)) if msg.contains("decr") && msg.contains("原子 decr")),
+            matches!(result, Err(GarrisonError::NotImplemented(ref msg)) if msg.contains("decr") && msg.contains("原子 decr")),
             "decr 默认实现应返回 NotImplemented（含 '原子 decr' 提示），实际: {:?}",
             result
         );
@@ -2466,7 +2466,7 @@ pub mod tests {
     #[cfg(feature = "cache-redis")]
     #[tokio::test(flavor = "multi_thread")]
     async fn with_redis_config_stores_config() {
-        let dao = BulwarkDaoOxcache::new().await.unwrap();
+        let dao = GarrisonDaoOxcache::new().await.unwrap();
         assert!(
             dao.redis_config().is_none(),
             "新建实例的 redis_config 应为 None"
@@ -2502,7 +2502,7 @@ pub mod tests {
     #[cfg(feature = "cache-redis")]
     #[tokio::test(flavor = "multi_thread")]
     async fn without_redis_config_returns_none() {
-        let dao = BulwarkDaoOxcache::new().await.unwrap();
+        let dao = GarrisonDaoOxcache::new().await.unwrap();
         assert!(
             dao.redis_config().is_none(),
             "未调用 with_redis_config 时 redis_config 应为 None"
@@ -2510,7 +2510,7 @@ pub mod tests {
     }
 
     // ========================================================================
-    // 覆盖率补充：BulwarkDao trait 默认方法（incr / eval_lua）
+    // 覆盖率补充：GarrisonDao trait 默认方法（incr / eval_lua）
     // ========================================================================
 
     /// `incr` 默认实现初始化新键为 1。
@@ -2564,7 +2564,7 @@ pub mod tests {
             .eval_lua("return 1", vec!["k".to_string()], vec!["a".to_string()])
             .await;
         assert!(
-            matches!(result, Err(BulwarkError::NotImplemented(ref msg)) if msg.contains("eval_lua")),
+            matches!(result, Err(GarrisonError::NotImplemented(ref msg)) if msg.contains("eval_lua")),
             "eval_lua 默认实现应返回 NotImplemented，实际: {:?}",
             result
         );

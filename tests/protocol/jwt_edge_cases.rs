@@ -13,8 +13,8 @@
 
 #![cfg(feature = "protocol-jwt")]
 
-use bulwark::error::BulwarkError;
-use bulwark::protocol::jwt::{BulwarkJwtClaims, JwtHandler};
+use garrison::error::GarrisonError;
+use garrison::protocol::jwt::{GarrisonJwtClaims, JwtHandler};
 use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -82,7 +82,7 @@ async fn none_algorithm_injection_rejected() {
         forged_token
     );
     match result.err() {
-        Some(BulwarkError::InvalidToken(_)) => {},
+        Some(GarrisonError::InvalidToken(_)) => {},
         other => panic!("期望 InvalidToken 错误，实际: {:?}", other),
     }
 }
@@ -104,7 +104,7 @@ async fn iat_future_time_tolerates_clock_skew() {
 
     let now = now_ts();
     // 构造 iat 在未来 60 秒的 claims（模拟时钟偏差）
-    let claims = BulwarkJwtClaims {
+    let claims = GarrisonJwtClaims {
         sub: "1001".to_string(),
         iat: now + 60, // iat 在未来 60 秒
         exp: now + 3600,
@@ -152,7 +152,7 @@ async fn refresh_expired_token_returns_error() {
     let result = handler.refresh(&token, 3600);
     assert!(result.is_err(), "已过期 token 的 refresh 应失败");
     match result.err() {
-        Some(BulwarkError::ExpiredToken(_)) => {},
+        Some(GarrisonError::ExpiredToken(_)) => {},
         other => panic!("期望 ExpiredToken 错误，实际: {:?}", other),
     }
 }
@@ -161,7 +161,7 @@ async fn refresh_expired_token_returns_error() {
 ///
 /// 验证空 claims（`{}`）的 JWT 被拒绝。
 ///
-/// `JwtHandler::verify` 将 payload 反序列化为 `BulwarkJwtClaims`，
+/// `JwtHandler::verify` 将 payload 反序列化为 `GarrisonJwtClaims`，
 /// 该结构体的 `sub`、`iat`、`exp`、`login_id` 字段均为必填。
 /// 空 claims `{}` 缺少这些字段 → 反序列化失败 → 返回 `InvalidToken`。
 #[tokio::test]
@@ -179,7 +179,7 @@ async fn empty_claims_jwt_rejected() {
     let result = handler.verify(&token);
     assert!(result.is_err(), "空 claims 的 JWT 应被拒绝");
     match result.err() {
-        Some(BulwarkError::InvalidToken(_)) => {},
+        Some(GarrisonError::InvalidToken(_)) => {},
         other => panic!("期望 InvalidToken 错误，实际: {:?}", other),
     }
 }

@@ -12,7 +12,7 @@
     feature = "secure-confusable"
 ))]
 
-use bulwark_examples::security::secure_module;
+use garrison_examples::security::secure_module;
 
 #[tokio::test]
 async fn test_run_completes() {

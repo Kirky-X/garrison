@@ -5,8 +5,8 @@
 //!
 //! 提供设备会话管理与设备指纹生成。
 
-use crate::error::BulwarkResult;
-use crate::session::BulwarkSession;
+use crate::error::GarrisonResult;
+use crate::session::GarrisonSession;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
@@ -32,15 +32,15 @@ pub struct DeviceSession {
 
 /// 设备管理器，提供设备级会话查询与踢出。
 ///
-/// 持有 [`BulwarkSession`] 引用，通过 `login_token_map` 和 `TokenSession` 实现设备管理。
+/// 持有 [`GarrisonSession`] 引用，通过 `login_token_map` 和 `TokenSession` 实现设备管理。
 pub struct DeviceManager {
     /// 会话管理器引用。
-    session: Arc<BulwarkSession>,
+    session: Arc<GarrisonSession>,
 }
 
 impl DeviceManager {
     /// 创建设备管理器实例。
-    pub fn new(session: Arc<BulwarkSession>) -> Self {
+    pub fn new(session: Arc<GarrisonSession>) -> Self {
         Self { session }
     }
 
@@ -54,7 +54,7 @@ impl DeviceManager {
     ///
     /// # 返回
     /// `Vec<DeviceSession>`，无会话时返回空 Vec。
-    pub async fn list_devices(&self, login_id: &str) -> BulwarkResult<Vec<DeviceSession>> {
+    pub async fn list_devices(&self, login_id: &str) -> GarrisonResult<Vec<DeviceSession>> {
         let tokens = self.session.get_tokens_by_login_id(login_id);
         let mut devices = Vec::with_capacity(tokens.len());
         for token in tokens {
@@ -74,7 +74,7 @@ impl DeviceManager {
 
     /// 踢出指定设备的会话。
     ///
-    /// 委托 [`BulwarkSession::kickout_by_device`]，踢出指定 login_id 中
+    /// 委托 [`GarrisonSession::kickout_by_device`]，踢出指定 login_id 中
     /// `device` 字段匹配的所有 TokenSession。
     ///
     /// # 参数
@@ -82,8 +82,8 @@ impl DeviceManager {
     /// - `device`: 设备标识。
     ///
     /// # 错误
-    /// 透传 `BulwarkSession::kickout_by_device` 的错误。
-    pub async fn kickout_device(&self, login_id: &str, device: &str) -> BulwarkResult<()> {
+    /// 透传 `GarrisonSession::kickout_by_device` 的错误。
+    pub async fn kickout_device(&self, login_id: &str, device: &str) -> GarrisonResult<()> {
         self.session.kickout_by_device(login_id, device).await
     }
 }
@@ -375,11 +375,11 @@ mod tests {
     // list_devices
     // ------------------------------------------------------------------------
 
-    /// 辅助函数：创建带 MockDao 的 Arc<BulwarkSession>（供 DeviceManager 使用）。
-    fn make_device_session(timeout: u64, active_timeout: u64) -> Arc<BulwarkSession> {
+    /// 辅助函数：创建带 MockDao 的 Arc<GarrisonSession>（供 DeviceManager 使用）。
+    fn make_device_session(timeout: u64, active_timeout: u64) -> Arc<GarrisonSession> {
         use crate::dao::tests::MockDao;
-        let dao: Arc<dyn crate::dao::BulwarkDao> = Arc::new(MockDao::new());
-        Arc::new(BulwarkSession::new(dao, timeout, active_timeout))
+        let dao: Arc<dyn crate::dao::GarrisonDao> = Arc::new(MockDao::new());
+        Arc::new(GarrisonSession::new(dao, timeout, active_timeout))
     }
 
     /// 验证 list_devices 返回指定 login_id 的所有活跃设备会话。

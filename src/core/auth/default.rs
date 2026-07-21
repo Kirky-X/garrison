@@ -11,8 +11,8 @@ use chrono::Utc;
 use std::sync::Arc;
 
 use crate::core::token::Token;
-use crate::error::{BulwarkError, BulwarkResult};
-use crate::session::{BulwarkSession, TokenSession};
+use crate::error::{GarrisonError, GarrisonResult};
+use crate::session::{GarrisonSession, TokenSession};
 
 use super::*;
 
@@ -31,7 +31,7 @@ impl AuthLogicDefault {
     /// - `session`: 会话管理器。
     /// - `token_handler`: Token 生成与校验处理器。
     /// - `timeout`: 默认 token 有效期（秒）。
-    pub fn new(session: Arc<BulwarkSession>, token_handler: Arc<dyn Token>, timeout: i64) -> Self {
+    pub fn new(session: Arc<GarrisonSession>, token_handler: Arc<dyn Token>, timeout: i64) -> Self {
         Self {
             session,
             token_handler,
@@ -69,17 +69,17 @@ impl AuthLogicDefault {
     ///
     /// ```ignore
     /// use std::sync::Arc;
-    /// use bulwark::core::auth::{AuthLogicDefault, SwitchToGuard};
-    /// use bulwark::error::{BulwarkError, BulwarkResult};
+    /// use garrison::core::auth::{AuthLogicDefault, SwitchToGuard};
+    /// use garrison::error::{GarrisonError, GarrisonResult};
     ///
     /// struct AdminOnlyGuard;
     /// #[async_trait::async_trait]
     /// impl SwitchToGuard for AdminOnlyGuard {
-    ///     async fn check(&self, original: &str, target: &str) -> BulwarkResult<()> {
+    ///     async fn check(&self, original: &str, target: &str) -> GarrisonResult<()> {
     ///         if original.starts_with("admin:") {
     ///             Ok(())
     ///         } else {
-    ///             Err(BulwarkError::NotPermission(format!("{} 无权切换", original)))
+    ///             Err(GarrisonError::NotPermission(format!("{} 无权切换", original)))
     ///         }
     ///     }
     /// }
@@ -116,7 +116,7 @@ pub fn parse_remember_me_param(params: Option<&str>) -> bool {
 
 #[async_trait]
 impl AuthLogic for AuthLogicDefault {
-    async fn login(&self, id: &str, params: Option<&str>) -> BulwarkResult<String> {
+    async fn login(&self, id: &str, params: Option<&str>) -> GarrisonResult<String> {
         // R-session-lifecycle-005: 解析 remember_me 参数
         let remember_me = parse_remember_me_param(params);
         let effective_timeout = if remember_me && self.remember_me_enabled {
@@ -135,36 +135,36 @@ impl AuthLogic for AuthLogicDefault {
         Ok(token)
     }
 
-    async fn logout(&self, token: &str) -> BulwarkResult<()> {
+    async fn logout(&self, token: &str) -> GarrisonResult<()> {
         // 幂等处理：logout 不存在的 token 返回 Ok(())
         // session.logout 内部对不存在的 token 返回 Ok(())，直接委托
         self.session.logout(token).await
     }
 
-    async fn is_login(&self, token: &str) -> BulwarkResult<bool> {
+    async fn is_login(&self, token: &str) -> GarrisonResult<bool> {
         self.session.is_valid(token).await
     }
 
-    async fn get_login_id(&self, token: &str) -> BulwarkResult<Option<String>> {
+    async fn get_login_id(&self, token: &str) -> GarrisonResult<Option<String>> {
         match self.session.get_token_session(token).await? {
             Some(ts) => Ok(Some(ts.login_id)),
             None => Ok(None),
         }
     }
 
-    async fn verify_token(&self, token: &str) -> BulwarkResult<String> {
+    async fn verify_token(&self, token: &str) -> GarrisonResult<String> {
         match self.get_login_id(token).await? {
             Some(id) => Ok(id),
-            None => Err(BulwarkError::InvalidToken(
+            None => Err(GarrisonError::InvalidToken(
                 "core-auth-token-invalid-or-expired".to_string(),
             )),
         }
     }
 
-    async fn switch_to(&self, token: &str, target_login_id: &str) -> BulwarkResult<()> {
+    async fn switch_to(&self, token: &str, target_login_id: &str) -> GarrisonResult<()> {
         // 验证 target_login_id 非空
         if target_login_id.is_empty() {
-            return Err(BulwarkError::InvalidParam(
+            return Err(GarrisonError::InvalidParam(
                 "core-auth-target-login-id-empty".to_string(),
             ));
         }
@@ -175,7 +175,7 @@ impl AuthLogic for AuthLogicDefault {
             .get_token_session(token)
             .await?
             .ok_or_else(|| {
-                BulwarkError::NotLogin("core-auth-token-invalid-or-expired".to_string())
+                GarrisonError::NotLogin("core-auth-token-invalid-or-expired".to_string())
             })?;
 
         // A6: 校验目标 Account-Session 存在（纵深防御层）。
@@ -191,7 +191,7 @@ impl AuthLogic for AuthLogicDefault {
             .await?
             .is_none()
         {
-            return Err(BulwarkError::InvalidParam(format!(
+            return Err(GarrisonError::InvalidParam(format!(
                 "core-auth-target-login-id-not-found::{}",
                 target_login_id
             )));
@@ -256,7 +256,7 @@ impl AuthLogic for AuthLogicDefault {
         Ok(())
     }
 
-    async fn renew_to_equivalent(&self, token: &str) -> BulwarkResult<String> {
+    async fn renew_to_equivalent(&self, token: &str) -> GarrisonResult<String> {
         // 修复 CWE-362 TOCTOU 竞态：per-token 串行化整个 renew 流程
         //（fix-refresh-race-and-test-contracts / spec R-refresh-token-001）。
         //
@@ -268,7 +268,7 @@ impl AuthLogic for AuthLogicDefault {
         // 或全局锁（性能不可接受）。
         //
         // 锁类型：`tokio::sync::Mutex`（异步锁，保护 renew 流程可跨 `.await` 持有）。
-        // 数据结构：`DashMap`（分片锁，与 `BulwarkSession::login_locks` 一致，rule 11）。
+        // 数据结构：`DashMap`（分片锁，与 `GarrisonSession::login_locks` 一致，rule 11）。
         //
         // 内存清理：renew 流程结束（无论成功/失败）、锁释放后，用 `remove_if` 检查
         // `Arc::strong_count`，若 == 1（无其他等待者）则移除 entry，避免攻击者用大量
@@ -293,7 +293,7 @@ impl AuthLogic for AuthLogicDefault {
         // - inner async block 将所有 `?` 路径统一收敛到外层的 `drop(_renew_guard)` + `remove_if`
         // - 代价：多一次 `async { ... }.await` 的状态机包装（编译期完成，运行时零开销）
         // - 替代方案（已否决）：在每个 `?` 前手动清理 entry — 代码重复 4 次，易遗漏
-        let result: BulwarkResult<String> = async {
+        let result: GarrisonResult<String> = async {
             // A9: 调整顺序为"先创建新 token session，再失效旧 token"，消除续期窗口漏洞
             // （vuln-0003 / CWE-362 / CVSS 7.5）。
             //
@@ -327,7 +327,7 @@ impl AuthLogic for AuthLogicDefault {
                 .get_token_session_with_ttl(token)
                 .await?
                 .ok_or_else(|| {
-                    BulwarkError::NotLogin("core-auth-token-invalid-or-expired".to_string())
+                    GarrisonError::NotLogin("core-auth-token-invalid-or-expired".to_string())
                 })?;
             let ttl_secs = remaining_ttl.map(|d| d.as_secs()).unwrap_or(0);
 
@@ -373,7 +373,7 @@ impl AuthLogic for AuthLogicDefault {
                     new_token_prefix = %new_prefix,
                     "renew_to_equivalent 创建新 token session 失败，旧 token 仍有效（A9 无 DoS）"
                 );
-                return Err(BulwarkError::Internal(
+                return Err(GarrisonError::Internal(
                     "core-auth-token-renew-create-failed".to_string(),
                 ));
             }
@@ -404,7 +404,7 @@ impl AuthLogic for AuthLogicDefault {
                     );
                 }
                 // rule 12：失败显性化 — 旧 token 仍有效，用户可用旧 token 重试
-                return Err(BulwarkError::Internal(
+                return Err(GarrisonError::Internal(
                     "core-auth-token-renew-add-to-account-failed".to_string(),
                 ));
             }
@@ -425,7 +425,7 @@ impl AuthLogic for AuthLogicDefault {
             //    - 未注入 `AlertListenerManager` 时无法主动广播 `SecurityAlertEvent`，
             //      日志告警是兜底手段；注入了 alert_manager 的部署应额外调用
             //      `broadcast_alert` 触发告警链路（本层不持有 alert_manager 引用，
-            //      由调用方 `BulwarkLogicDefault` 在 renew 失败回调中转发）
+            //      由调用方 `GarrisonLogicDefault` 在 renew 失败回调中转发）
             if let Err(e) = self.session.logout(token).await {
                 let old_prefix = if token.len() >= 8 { &token[..8] } else { token };
                 tracing::error!(

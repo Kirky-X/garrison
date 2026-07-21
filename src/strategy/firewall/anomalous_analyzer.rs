@@ -16,9 +16,9 @@
 //!    - `geo_jump`：单个 login_id 不同 geo > 2（None 不计入）
 //!    - `device_mutation`：单个 login_id 不同 device > 3（None 不计入）
 
-use crate::dao::BulwarkDao;
-use crate::error::{BulwarkError, BulwarkResult};
-use crate::listener::{BulwarkEvent, BulwarkListenerManager};
+use crate::dao::GarrisonDao;
+use crate::error::{GarrisonError, GarrisonResult};
+use crate::listener::{GarrisonEvent, GarrisonListenerManager};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -89,19 +89,19 @@ impl AnomalousAnalyzerConfig {
     /// - `interval_secs` 为 0
     /// - `burst_threshold` 为 0
     /// - `max_scan` 为 0
-    pub fn validate(&self) -> BulwarkResult<()> {
+    pub fn validate(&self) -> GarrisonResult<()> {
         if self.interval_secs == 0 {
-            return Err(BulwarkError::Config(
+            return Err(GarrisonError::Config(
                 "strategy-interval-secs-zero".to_string(),
             ));
         }
         if self.burst_threshold == 0 {
-            return Err(BulwarkError::Config(
+            return Err(GarrisonError::Config(
                 "strategy-burst-threshold-zero".to_string(),
             ));
         }
         if self.max_scan == 0 {
-            return Err(BulwarkError::Config("strategy-max-scan-zero".to_string()));
+            return Err(GarrisonError::Config("strategy-max-scan-zero".to_string()));
         }
         Ok(())
     }
@@ -109,7 +109,7 @@ impl AnomalousAnalyzerConfig {
 
 /// 异常登录检测事件（spec R-006）。
 ///
-/// 在定时分析引擎检测到异常模式时生成，可转换为 `BulwarkEvent` 广播。
+/// 在定时分析引擎检测到异常模式时生成，可转换为 `GarrisonEvent` 广播。
 #[derive(Debug, Clone)]
 pub struct AnomalousLoginDetected {
     /// 登录主体标识。
@@ -122,9 +122,9 @@ pub struct AnomalousLoginDetected {
     pub timestamp: i64,
 }
 
-impl From<AnomalousLoginDetected> for BulwarkEvent {
+impl From<AnomalousLoginDetected> for GarrisonEvent {
     fn from(e: AnomalousLoginDetected) -> Self {
-        BulwarkEvent::AnomalousLoginDetected {
+        GarrisonEvent::AnomalousLoginDetected {
             login_id: e.login_id,
             reason: e.reason,
             detail: e.detail,
@@ -140,11 +140,11 @@ impl From<AnomalousLoginDetected> for BulwarkEvent {
 /// 调用方持有 `shutdown_tx` 以优雅停止。
 pub struct AnomalousLoginAnalyzer {
     /// DAO 抽象层（用于登录记录持久化与扫描）。
-    dao: Arc<dyn BulwarkDao>,
+    dao: Arc<dyn GarrisonDao>,
     /// 分析器配置。
     config: AnomalousAnalyzerConfig,
     /// 监听器管理器（可选，Some 时广播事件）。
-    listener_manager: Option<Arc<BulwarkListenerManager>>,
+    listener_manager: Option<Arc<GarrisonListenerManager>>,
     /// shutdown 信号接收端（调用方持有发送端）。
     shutdown_rx: watch::Receiver<bool>,
 }
@@ -158,10 +158,10 @@ impl AnomalousLoginAnalyzer {
     /// - `shutdown_rx`: shutdown 信号接收端（调用方持有 `shutdown_tx`）。
     /// - `listener_manager`: 监听器管理器（None 时不广播事件）。
     pub fn new(
-        dao: Arc<dyn BulwarkDao>,
+        dao: Arc<dyn GarrisonDao>,
         config: AnomalousAnalyzerConfig,
         shutdown_rx: watch::Receiver<bool>,
-        listener_manager: Option<Arc<BulwarkListenerManager>>,
+        listener_manager: Option<Arc<GarrisonListenerManager>>,
     ) -> Self {
         Self {
             dao,
@@ -185,20 +185,20 @@ impl AnomalousLoginAnalyzer {
     /// - `login_id` 为空 → `InvalidParam`
     /// - `login_id` 包含 `:` → `InvalidParam`（破坏 key 解析）
     /// - 序列化失败 → `Internal`
-    pub async fn record_login(&self, record: &AnomalousLoginRecord) -> BulwarkResult<()> {
+    pub async fn record_login(&self, record: &AnomalousLoginRecord) -> GarrisonResult<()> {
         if record.login_id.is_empty() {
-            return Err(BulwarkError::InvalidParam(
+            return Err(GarrisonError::InvalidParam(
                 "strategy-login-id-empty".to_string(),
             ));
         }
         if record.login_id.contains(':') {
-            return Err(BulwarkError::InvalidParam(
+            return Err(GarrisonError::InvalidParam(
                 "strategy-login-id-no-colon".to_string(),
             ));
         }
         let key = Self::make_storage_key(&record.login_id, record.timestamp);
         let value = serde_json::to_string(record)
-            .map_err(|e| BulwarkError::Internal(format!("strategy-anomalous-serialize::{}", e)))?;
+            .map_err(|e| GarrisonError::Internal(format!("strategy-anomalous-serialize::{}", e)))?;
         self.dao.set(&key, &value, RECORD_TTL_SECS).await
     }
 
@@ -218,7 +218,7 @@ impl AnomalousLoginAnalyzer {
     /// 执行一次分析扫描（使用当前时间戳）。
     ///
     /// 扫描时间窗口内的所有登录记录，返回检测到的异常事件列表。
-    pub async fn analyze(&self) -> BulwarkResult<Vec<AnomalousLoginDetected>> {
+    pub async fn analyze(&self) -> GarrisonResult<Vec<AnomalousLoginDetected>> {
         let now = chrono::Utc::now().timestamp();
         Self::analyze_once(&self.dao, &self.config, now).await
     }
@@ -238,10 +238,10 @@ impl AnomalousLoginAnalyzer {
     /// 记录扫描总耗时，超过 1s 时 `tracing::warn!`（Redis 后端 N+1 查询需优化为批量 mget）。
     /// oxcache 内存后端 get_sync <100ns，10000 次 get ~1ms，无需优化。
     async fn analyze_once(
-        dao: &Arc<dyn BulwarkDao>,
+        dao: &Arc<dyn GarrisonDao>,
         config: &AnomalousAnalyzerConfig,
         now: i64,
-    ) -> BulwarkResult<Vec<AnomalousLoginDetected>> {
+    ) -> GarrisonResult<Vec<AnomalousLoginDetected>> {
         let scan_start = std::time::Instant::now();
 
         let keys = dao.keys("anomalous:login:*").await?;
@@ -364,8 +364,8 @@ impl AnomalousLoginAnalyzer {
                             Ok(events) => {
                                 for event in events {
                                     if let Some(ref lm) = listener_manager {
-                                        let bulwark_event: BulwarkEvent = event.into();
-                                        lm.broadcast(&bulwark_event).await;
+                                        let garrison_event: GarrisonEvent = event.into();
+                                        lm.broadcast(&garrison_event).await;
                                     }
                                 }
                             },
@@ -388,7 +388,7 @@ impl AnomalousLoginAnalyzer {
     /// 优雅停止分析器任务（默认 5 秒超时，T008）。
     ///
     /// 发送 shutdown 信号后等待任务结束，超时则强制 abort。
-    /// 适用于异步上下文（BulwarkManager 的同步 Drop 仍用 `handle.abort()`）。
+    /// 适用于异步上下文（GarrisonManager 的同步 Drop 仍用 `handle.abort()`）。
     ///
     /// # 参数
     /// - `handle`: [`start`](Self::start) 返回的 `JoinHandle<()>`。
@@ -400,7 +400,7 @@ impl AnomalousLoginAnalyzer {
     pub async fn shutdown(
         handle: tokio::task::JoinHandle<()>,
         shutdown_tx: watch::Sender<bool>,
-    ) -> BulwarkResult<()> {
+    ) -> GarrisonResult<()> {
         Self::shutdown_with_timeout(handle, shutdown_tx, Duration::from_secs(5)).await
     }
 
@@ -422,19 +422,19 @@ impl AnomalousLoginAnalyzer {
         handle: tokio::task::JoinHandle<()>,
         shutdown_tx: watch::Sender<bool>,
         timeout: Duration,
-    ) -> BulwarkResult<()> {
+    ) -> GarrisonResult<()> {
         let _ = shutdown_tx.send(true);
         let abort_handle = handle.abort_handle();
         match tokio::time::timeout(timeout, handle).await {
             Ok(Ok(())) => Ok(()),
             Ok(Err(e)) if e.is_cancelled() => Ok(()),
-            Ok(Err(e)) => Err(BulwarkError::Internal(format!(
+            Ok(Err(e)) => Err(GarrisonError::Internal(format!(
                 "strategy-analyzer-panic::{}",
                 e
             ))),
             Err(_) => {
                 abort_handle.abort();
-                Err(BulwarkError::Internal(format!(
+                Err(GarrisonError::Internal(format!(
                     "strategy-analyzer-shutdown-timeout::{}",
                     timeout.as_millis()
                 )))
@@ -561,7 +561,7 @@ mod tests {
 
     #[tokio::test]
     async fn record_login_persists_record() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let (tx, rx) = watch::channel(false);
         let analyzer =
             AnomalousLoginAnalyzer::new(dao.clone(), AnomalousAnalyzerConfig::default(), rx, None);
@@ -588,7 +588,7 @@ mod tests {
 
     #[tokio::test]
     async fn record_login_empty_login_id_errors() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let (_tx, rx) = watch::channel(false);
         let analyzer =
             AnomalousLoginAnalyzer::new(dao, AnomalousAnalyzerConfig::default(), rx, None);
@@ -602,14 +602,14 @@ mod tests {
         };
         let result = analyzer.record_login(&record).await;
         assert!(
-            matches!(result, Err(BulwarkError::InvalidParam(_))),
+            matches!(result, Err(GarrisonError::InvalidParam(_))),
             "空 login_id 应返回 InvalidParam"
         );
     }
 
     #[tokio::test]
     async fn record_login_colon_in_login_id_errors() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let (_tx, rx) = watch::channel(false);
         let analyzer =
             AnomalousLoginAnalyzer::new(dao, AnomalousAnalyzerConfig::default(), rx, None);
@@ -623,7 +623,7 @@ mod tests {
         };
         let result = analyzer.record_login(&record).await;
         assert!(
-            matches!(result, Err(BulwarkError::InvalidParam(_))),
+            matches!(result, Err(GarrisonError::InvalidParam(_))),
             "包含 ':' 的 login_id 应返回 InvalidParam"
         );
     }
@@ -633,7 +633,7 @@ mod tests {
     /// keys() 应返回 3 个不同的 key（纳秒精度避免覆盖）。
     #[tokio::test]
     async fn record_login_same_second_no_overwrite() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let (_tx, rx) = watch::channel(false);
         let analyzer =
             AnomalousLoginAnalyzer::new(dao.clone(), AnomalousAnalyzerConfig::default(), rx, None);
@@ -667,7 +667,7 @@ mod tests {
     // ========================================================================
 
     /// 辅助函数：创建并插入登录记录到 DAO。
-    async fn insert_records(dao: &Arc<dyn BulwarkDao>, records: &[AnomalousLoginRecord]) {
+    async fn insert_records(dao: &Arc<dyn GarrisonDao>, records: &[AnomalousLoginRecord]) {
         for record in records {
             let key = format!("anomalous:login:{}:{}", record.login_id, record.timestamp);
             let value = serde_json::to_string(record).unwrap();
@@ -677,7 +677,7 @@ mod tests {
 
     #[tokio::test]
     async fn analyze_empty_returns_empty() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let config = AnomalousAnalyzerConfig::default();
         let events = AnomalousLoginAnalyzer::analyze_once(&dao, &config, 1700000000)
             .await
@@ -687,7 +687,7 @@ mod tests {
 
     #[tokio::test]
     async fn analyze_burst_below_threshold() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let now = 1700000000i64;
         let records: Vec<AnomalousLoginRecord> = (0..5)
             .map(|i| AnomalousLoginRecord {
@@ -716,7 +716,7 @@ mod tests {
 
     #[tokio::test]
     async fn analyze_burst_above_threshold() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let now = 1700000000i64;
         let records: Vec<AnomalousLoginRecord> = (0..6)
             .map(|i| AnomalousLoginRecord {
@@ -747,7 +747,7 @@ mod tests {
 
     #[tokio::test]
     async fn analyze_burst_event_fields() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let now = 1700000000i64;
         let records: Vec<AnomalousLoginRecord> = (0..10)
             .map(|i| AnomalousLoginRecord {
@@ -773,7 +773,7 @@ mod tests {
 
     #[tokio::test]
     async fn analyze_geo_jump_below_threshold() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let now = 1700000000i64;
         let records = vec![
             AnomalousLoginRecord {
@@ -807,7 +807,7 @@ mod tests {
 
     #[tokio::test]
     async fn analyze_geo_jump_above_threshold() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let now = 1700000000i64;
         let records = vec![
             AnomalousLoginRecord {
@@ -851,7 +851,7 @@ mod tests {
 
     #[tokio::test]
     async fn analyze_geo_jump_none_excluded() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let now = 1700000000i64;
         // 2 个有 geo + 10 个 None → distinct_geo = 2（== 阈值，不触发）
         let mut records = vec![
@@ -896,7 +896,7 @@ mod tests {
 
     #[tokio::test]
     async fn analyze_device_mutation_below_threshold() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let now = 1700000000i64;
         let records = vec![
             AnomalousLoginRecord {
@@ -941,7 +941,7 @@ mod tests {
 
     #[tokio::test]
     async fn analyze_device_mutation_above_threshold() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let now = 1700000000i64;
         let records = vec![
             AnomalousLoginRecord {
@@ -996,7 +996,7 @@ mod tests {
 
     #[tokio::test]
     async fn analyze_device_mutation_none_excluded() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let now = 1700000000i64;
         // 3 个有 device + 10 个 None → distinct_device = 3（== 阈值，不触发）
         let mut records = vec![
@@ -1056,7 +1056,7 @@ mod tests {
 
     #[tokio::test]
     async fn analyze_time_window_filter() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let now = 1700000000i64;
         // 窗口内的记录（6 条，触发 burst）
         let in_window: Vec<AnomalousLoginRecord> = (0..6)
@@ -1094,7 +1094,7 @@ mod tests {
 
     #[tokio::test]
     async fn analyze_max_scan_limit() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let now = 1700000000i64;
         // 插入 20 条记录
         let records: Vec<AnomalousLoginRecord> = (0..20)
@@ -1133,7 +1133,7 @@ mod tests {
 
     #[tokio::test]
     async fn analyze_deserialization_failure_skips() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let now = 1700000000i64;
         // 插入 6 条有效记录（触发 burst）
         let records: Vec<AnomalousLoginRecord> = (0..6)
@@ -1171,7 +1171,7 @@ mod tests {
 
     #[tokio::test]
     async fn analyze_multiple_users() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let now = 1700000000i64;
         // 用户 1001：6 条记录（触发 burst）
         let user_a: Vec<AnomalousLoginRecord> = (0..6)
@@ -1218,7 +1218,7 @@ mod tests {
 
     #[tokio::test]
     async fn start_shutdown_stops_task() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let (tx, rx) = watch::channel(false);
         let config = AnomalousAnalyzerConfig {
             interval_secs: 3600,
@@ -1237,20 +1237,20 @@ mod tests {
     }
 
     // ========================================================================
-    // From<AnomalousLoginDetected> for BulwarkEvent 测试
+    // From<AnomalousLoginDetected> for GarrisonEvent 测试
     // ========================================================================
 
     #[test]
-    fn from_anomalous_login_detected_to_bulwark_event() {
+    fn from_anomalous_login_detected_to_garrison_event() {
         let detected = AnomalousLoginDetected {
             login_id: "1001".to_string(),
             reason: "burst_login".to_string(),
             detail: serde_json::json!({"count": 10}),
             timestamp: 1700000000,
         };
-        let event: BulwarkEvent = detected.into();
+        let event: GarrisonEvent = detected.into();
         match event {
-            BulwarkEvent::AnomalousLoginDetected {
+            GarrisonEvent::AnomalousLoginDetected {
                 login_id,
                 reason,
                 detail,
@@ -1373,7 +1373,7 @@ mod tests {
     /// 验证任务在 1 秒内响应 shutdown 信号退出。
     #[tokio::test]
     async fn start_then_shutdown_normal_stop() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let (tx, rx) = watch::channel(false);
         let config = AnomalousAnalyzerConfig {
             interval_secs: 3600,

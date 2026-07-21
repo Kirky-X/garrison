@@ -24,7 +24,7 @@
 //! - PBKDF2/SCrypt（v0.5.0+ 按需）
 
 use super::{Credential, CredentialModel, CredentialType};
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::error::{GarrisonError, GarrisonResult};
 
 // argon2::password_hash::PasswordHasher / PasswordVerifier 与本模块自定义 PasswordHasher 同名，
 // 通过 `as _` 导入 trait 方法可用，但不引入名字，避免冲突。
@@ -50,7 +50,7 @@ pub trait PasswordHasher: Send + Sync {
     ///
     /// # 返回
     /// - `Ok(hash)`: 哈希字符串（含算法标识、盐、参数）。
-    fn hash(&self, password: &str) -> BulwarkResult<String>;
+    fn hash(&self, password: &str) -> GarrisonResult<String>;
 
     /// 校验明文密码与哈希是否匹配。
     ///
@@ -62,7 +62,7 @@ pub trait PasswordHasher: Send + Sync {
     /// - `Ok(true)`: 密码匹配。
     /// - `Ok(false)`: 密码不匹配。
     /// - `Err`: 哈希格式无效或校验失败。
-    fn verify(&self, password: &str, hash: &str) -> BulwarkResult<bool>;
+    fn verify(&self, password: &str, hash: &str) -> GarrisonResult<bool>;
 }
 
 // ============================================================================
@@ -114,7 +114,7 @@ impl Argon2Hasher {
 }
 
 impl PasswordHasher for Argon2Hasher {
-    fn hash(&self, password: &str) -> BulwarkResult<String> {
+    fn hash(&self, password: &str) -> GarrisonResult<String> {
         // P2.1: account-credential-zeroize feature 启用时，将 password 字节拷贝到
         // Zeroizing<Vec<u8>> wrapper；函数返回时 wrapper Drop 清零内部字节。
         // &str 是不可变借用，无法清零调用方持有的 String，故内部拷贝后清零。
@@ -128,17 +128,17 @@ impl PasswordHasher for Argon2Hasher {
         let salt = SaltString::generate(&mut OsRng);
         // H4: 显式预分配 32 字节输出缓冲区（与 argon2 默认一致，但显式化意图并锁定行为）
         let params = Params::new(self.m_cost, self.t_cost, self.p_cost, Some(32))
-            .map_err(|e| BulwarkError::InvalidParam(format!("account-argon2-param::{}", e)))?;
+            .map_err(|e| GarrisonError::InvalidParam(format!("account-argon2-param::{}", e)))?;
         let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
         let hash = argon2
             .hash_password(password_ref, &salt)
-            .map_err(|e| BulwarkError::Internal(format!("account-argon2-hash::{}", e)))?
+            .map_err(|e| GarrisonError::Internal(format!("account-argon2-hash::{}", e)))?
             .to_string();
         Ok(hash)
         // password_bytes drops here (if zeroize on); Zeroizing<Vec<u8>>::drop zeroes bytes
     }
 
-    fn verify(&self, password: &str, hash: &str) -> BulwarkResult<bool> {
+    fn verify(&self, password: &str, hash: &str) -> GarrisonResult<bool> {
         // P2.1: 同 hash，verify 后清零内部 password 字节副本
         #[cfg(feature = "account-credential-zeroize")]
         let password_bytes = zeroize::Zeroizing::new(password.as_bytes().to_vec());
@@ -148,13 +148,13 @@ impl PasswordHasher for Argon2Hasher {
         let password_ref: &[u8] = password.as_bytes();
 
         let parsed = PasswordHash::new(hash)
-            .map_err(|e| BulwarkError::InvalidParam(format!("account-argon2-format::{}", e)))?;
+            .map_err(|e| GarrisonError::InvalidParam(format!("account-argon2-format::{}", e)))?;
         // verify 时用默认 Argon2（参数从 hash 字符串解析）
         let argon2 = Argon2::default();
         match argon2.verify_password(password_ref, &parsed) {
             Ok(()) => Ok(true),
             Err(argon2::password_hash::Error::Password) => Ok(false),
-            Err(e) => Err(BulwarkError::Internal(format!(
+            Err(e) => Err(GarrisonError::Internal(format!(
                 "account-argon2-verify::{}",
                 e
             ))),
@@ -197,14 +197,14 @@ impl BcryptHasher {
 }
 
 impl PasswordHasher for BcryptHasher {
-    fn hash(&self, password: &str) -> BulwarkResult<String> {
+    fn hash(&self, password: &str) -> GarrisonResult<String> {
         bcrypt::hash(password, self.cost)
-            .map_err(|e| BulwarkError::Internal(format!("account-bcrypt-hash::{}", e)))
+            .map_err(|e| GarrisonError::Internal(format!("account-bcrypt-hash::{}", e)))
     }
 
-    fn verify(&self, password: &str, hash: &str) -> BulwarkResult<bool> {
+    fn verify(&self, password: &str, hash: &str) -> GarrisonResult<bool> {
         bcrypt::verify(password, hash)
-            .map_err(|e| BulwarkError::InvalidParam(format!("account-bcrypt-format::{}", e)))
+            .map_err(|e| GarrisonError::InvalidParam(format!("account-bcrypt-format::{}", e)))
     }
 }
 
@@ -216,7 +216,7 @@ impl PasswordHasher for BcryptHasher {
 ///
 /// - `$argon2id$` 前缀 → 委托 `Argon2Hasher`
 /// - `$2b$` / `$2a$` / `$2y$` 前缀 → 委托 `BcryptHasher`
-/// - 其他前缀 → 返回 `BulwarkError::InvalidParam`
+/// - 其他前缀 → 返回 `GarrisonError::InvalidParam`
 pub struct PasswordVerifier;
 
 impl PasswordVerifier {
@@ -229,14 +229,14 @@ impl PasswordVerifier {
     /// # 返回
     /// - `Ok(true)`: 密码匹配。
     /// - `Ok(false)`: 密码不匹配。
-    /// - `Err(BulwarkError::InvalidParam)`: 不支持的 hash 格式。
-    pub fn verify(password: &str, hash: &str) -> BulwarkResult<bool> {
+    /// - `Err(GarrisonError::InvalidParam)`: 不支持的 hash 格式。
+    pub fn verify(password: &str, hash: &str) -> GarrisonResult<bool> {
         if hash.starts_with("$argon2") {
             Argon2Hasher::default().verify(password, hash)
         } else if hash.starts_with("$2b$") || hash.starts_with("$2a$") || hash.starts_with("$2y$") {
             BcryptHasher::default().verify(password, hash)
         } else {
-            Err(BulwarkError::InvalidParam(format!(
+            Err(GarrisonError::InvalidParam(format!(
                 "account-password-unsupported-hash-format::{}",
                 &hash[..hash.len().min(10)]
             )))
@@ -256,8 +256,8 @@ impl PasswordVerifier {
 /// # 示例
 ///
 /// ```ignore
-/// use bulwark::account::credential::password::{Argon2Hasher, PasswordCredential, PasswordHasher};
-/// use bulwark::account::credential::CredentialModel;
+/// use garrison::account::credential::password::{Argon2Hasher, PasswordCredential, PasswordHasher};
+/// use garrison::account::credential::CredentialModel;
 /// use std::boxed::Box;
 ///
 /// let hasher = Argon2Hasher::default();
@@ -317,7 +317,7 @@ impl Credential for PasswordCredential {
         self.model.clone()
     }
 
-    async fn verify(&self, input: &str) -> BulwarkResult<bool> {
+    async fn verify(&self, input: &str) -> GarrisonResult<bool> {
         self.hasher.verify(input, &self.model.secret_data)
     }
 }
@@ -491,7 +491,7 @@ mod tests {
     fn password_verifier_unsupported_format_returns_invalid_param() {
         let result = PasswordVerifier::verify("password", "$unknown$hash");
         assert!(
-            matches!(result, Err(BulwarkError::InvalidParam(_))),
+            matches!(result, Err(GarrisonError::InvalidParam(_))),
             "不支持的 hash 格式应返回 InvalidParam，实际: {:?}",
             result
         );

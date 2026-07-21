@@ -27,7 +27,7 @@
 
 #![cfg(feature = "auth-server-sdforge")]
 // #[forge] 宏生成的代码含 #[cfg(feature = "mcp")] / #[cfg(feature = "cli")] 等
-// bulwark 不具备的 feature cfg，属于外部宏展开的正常现象，抑制 check-cfg 警告。
+// garrison 不具备的 feature cfg，属于外部宏展开的正常现象，抑制 check-cfg 警告。
 #![allow(unexpected_cfgs)]
 // sdforge #[forge] 宏通过 inventory 自动注册路由，lib 编译时不直接调用这些 handler。
 // 路由注册在 bin（auth_server）中通过 sdforge::http::build() 收集，lib 中为 dead code。
@@ -38,7 +38,7 @@ use crate::backend::types::{
     LoginRequest, LogoutRequest, RenewToEquivalentRequest,
 };
 use crate::backend::AuthBackend;
-use crate::error::BulwarkError;
+use crate::error::GarrisonError;
 use sdforge::forge;
 use sdforge::prelude::ApiError;
 use serde::{Deserialize, Serialize};
@@ -449,7 +449,7 @@ async fn kickout(
     )
     .await
     {
-        return Ok(to_api_response(Err(BulwarkError::NotPermission(
+        return Ok(to_api_response(Err(GarrisonError::NotPermission(
             "server-caller-not-owner-kickout".to_string(),
         ))));
     }
@@ -482,7 +482,7 @@ async fn switch_to(
             )
             .await
             {
-                return Ok(to_api_response(Err(BulwarkError::NotPermission(
+                return Ok(to_api_response(Err(GarrisonError::NotPermission(
                     "server-caller-not-owner-switch-to".to_string(),
                 ))));
             }
@@ -529,7 +529,7 @@ async fn health() -> Result<ApiResponse<&'static str>, ApiError> {
 /// /metrics 端点，暴露 Prometheus 格式指标。
 ///
 /// 调用 `prometheus::gather()` 收集 default registry 的所有指标
-/// （`BulwarkMetrics::new()` 注册的 `bulwark_*` 指标），
+/// （`GarrisonMetrics::new()` 注册的 `garrison_*` 指标），
 /// 用 `TextEncoder` 编码为 Prometheus 文本格式。
 ///
 /// # 设计权衡
@@ -537,7 +537,7 @@ async fn health() -> Result<ApiResponse<&'static str>, ApiError> {
 /// `#[forge]` 宏在非 streaming 模式下用 `Json(value).into_response()` 包装返回值，
 /// 响应 Content-Type 为 `application/json`，body 为 JSON 序列化的字符串
 /// （含转义换行符）。若需标准 Prometheus `text/plain` 抓取，应在
-/// `BulwarkAuthServer::external_router()` / `internal_router()` 中直接用 axum
+/// `GarrisonAuthServer::external_router()` / `internal_router()` 中直接用 axum
 /// 路由注册（绕过 `#[forge]` 宏）。本端点优先复用 `#[forge]` 声明式注册，
 /// 保持路由定义一致性。
 ///
@@ -567,7 +567,7 @@ async fn metrics() -> Result<String, ApiError> {
 mod tests {
     use super::*;
     use crate::backend::types::LoginParams;
-    use crate::error::BulwarkError;
+    use crate::error::GarrisonError;
     use async_trait::async_trait;
     use axum::body::Body;
     use axum::extract::Extension;
@@ -584,42 +584,48 @@ mod tests {
             &self,
             login_id: &str,
             _params: &LoginParams,
-        ) -> Result<String, BulwarkError> {
+        ) -> Result<String, GarrisonError> {
             Ok(format!("token-{}", login_id))
         }
-        async fn logout(&self, _token: &str) -> Result<(), BulwarkError> {
+        async fn logout(&self, _token: &str) -> Result<(), GarrisonError> {
             Ok(())
         }
-        async fn check_login(&self, token: &str) -> Result<bool, BulwarkError> {
+        async fn check_login(&self, token: &str) -> Result<bool, GarrisonError> {
             Ok(token.starts_with("valid-"))
         }
         async fn check_permission(
             &self,
             token: &str,
             permission: &str,
-        ) -> Result<(), BulwarkError> {
+        ) -> Result<(), GarrisonError> {
             if token.is_empty() {
-                return Err(BulwarkError::InvalidToken("server-token-empty".to_string()));
+                return Err(GarrisonError::InvalidToken(
+                    "server-token-empty".to_string(),
+                ));
             }
             if permission == "denied" {
-                return Err(BulwarkError::NotPermission(
+                return Err(GarrisonError::NotPermission(
                     "server-no-permission".to_string(),
                 ));
             }
             Ok(())
         }
-        async fn check_role(&self, _token: &str, _role: &str) -> Result<(), BulwarkError> {
+        async fn check_role(&self, _token: &str, _role: &str) -> Result<(), GarrisonError> {
             Ok(())
         }
-        async fn check_safe(&self, _token: &str) -> Result<bool, BulwarkError> {
+        async fn check_safe(&self, _token: &str) -> Result<bool, GarrisonError> {
             Ok(true)
         }
-        async fn check_disable(&self, _token: &str) -> Result<bool, BulwarkError> {
+        async fn check_disable(&self, _token: &str) -> Result<bool, GarrisonError> {
             Ok(false)
         }
-        async fn check_api_key(&self, api_key: &str, _namespace: &str) -> Result<(), BulwarkError> {
+        async fn check_api_key(
+            &self,
+            api_key: &str,
+            _namespace: &str,
+        ) -> Result<(), GarrisonError> {
             if api_key == "invalid" {
-                return Err(BulwarkError::InvalidToken(
+                return Err(GarrisonError::InvalidToken(
                     "server-apikey-invalid".to_string(),
                 ));
             }
@@ -628,7 +634,7 @@ mod tests {
         async fn get_token_info(
             &self,
             token: &str,
-        ) -> Result<crate::backend::types::TokenInfo, BulwarkError> {
+        ) -> Result<crate::backend::types::TokenInfo, GarrisonError> {
             Ok(crate::backend::types::TokenInfo {
                 token: token.to_string(),
                 created_at: 1000,
@@ -638,7 +644,7 @@ mod tests {
         async fn get_session(
             &self,
             token: &str,
-        ) -> Result<crate::backend::types::SessionData, BulwarkError> {
+        ) -> Result<crate::backend::types::SessionData, GarrisonError> {
             Ok(crate::backend::types::SessionData {
                 token: token.to_string(),
                 login_id: "mock-user".to_string(),
@@ -655,17 +661,17 @@ mod tests {
                 is_anon: false,
             })
         }
-        async fn kickout(&self, _login_id: &str) -> Result<(), BulwarkError> {
+        async fn kickout(&self, _login_id: &str) -> Result<(), GarrisonError> {
             Ok(())
         }
         async fn switch_to(
             &self,
             _token: &str,
             _target_login_id: &str,
-        ) -> Result<(), BulwarkError> {
+        ) -> Result<(), GarrisonError> {
             Ok(())
         }
-        async fn renew_to_equivalent(&self, token: &str) -> Result<String, BulwarkError> {
+        async fn renew_to_equivalent(&self, token: &str) -> Result<String, GarrisonError> {
             Ok(format!("renewed-{}", token))
         }
     }
@@ -1096,15 +1102,15 @@ mod tests {
     ///
     /// `#[forge]` 宏用 `Json(value).into_response()` 包装返回值，
     /// 响应 body 为 JSON 序列化的字符串（含转义换行符）。
-    /// 测试解析 JSON 字符串后验证包含 `bulwark_` 前缀指标。
+    /// 测试解析 JSON 字符串后验证包含 `garrison_` 前缀指标。
     #[cfg(feature = "metrics-prometheus")]
     #[tokio::test]
     #[serial_test::serial]
     async fn test_sdforge_metrics_returns_prometheus_format() {
-        use crate::observability::BulwarkMetrics;
+        use crate::observability::GarrisonMetrics;
 
-        // 注册 BulwarkMetrics 到 default registry（若已注册则跳过 AlreadyReg）
-        if let Ok(metrics) = BulwarkMetrics::register_to(prometheus::default_registry()) {
+        // 注册 GarrisonMetrics 到 default registry（若已注册则跳过 AlreadyReg）
+        if let Ok(metrics) = GarrisonMetrics::register_to(prometheus::default_registry()) {
             metrics.record_login(true);
             metrics.record_permission_query(true);
         }
@@ -1125,13 +1131,13 @@ mod tests {
         // #[forge] 宏用 Json(value) 包装返回值，响应是 JSON 字符串
         let body: String = serde_json::from_slice(&bytes).expect("响应应为 JSON 序列化的字符串");
         assert!(
-            body.contains("bulwark_login_total"),
-            "/metrics 应包含 bulwark_login_total 指标，实际: {}",
+            body.contains("garrison_login_total"),
+            "/metrics 应包含 garrison_login_total 指标，实际: {}",
             body
         );
     }
 
-    /// T005: /metrics 端点在未注册 BulwarkMetrics 时返回 200 + 空字符串。
+    /// T005: /metrics 端点在未注册 GarrisonMetrics 时返回 200 + 空字符串。
     ///
     /// 验证 default registry 为空时端点不 panic，返回空 Prometheus 文本。
     #[cfg(feature = "metrics-prometheus")]

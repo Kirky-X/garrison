@@ -5,7 +5,7 @@
 
 use super::{v_i64, v_opt_str, v_str, DbnexusSessionRepository};
 use crate::dao::repository::{make_statement, NewSession, SessionRepository, SessionRow};
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::error::{GarrisonError, GarrisonResult};
 use async_trait::async_trait;
 use dbnexus::DbPool;
 use sea_orm::{ConnectionTrait, QueryResult};
@@ -23,12 +23,12 @@ impl SessionRepository for DbnexusSessionRepository {
         &self,
         tenant_id: i64,
         session_id: &str,
-    ) -> BulwarkResult<Option<SessionRow>> {
+    ) -> GarrisonResult<Option<SessionRow>> {
         let session = self.pool.get_session("admin").await.map_err(|e| {
-            BulwarkError::Dao(format!("dao-app-session-find-by-session-id-session::{}", e))
+            GarrisonError::Dao(format!("dao-app-session-find-by-session-id-session::{}", e))
         })?;
         let conn = session.connection().map_err(|e| {
-            BulwarkError::Dao(format!(
+            GarrisonError::Dao(format!(
                 "dao-app-session-find-by-session-id-connection::{}",
                 e
             ))
@@ -39,7 +39,7 @@ impl SessionRepository for DbnexusSessionRepository {
                    FROM app_session WHERE tenant_id = ? AND session_id = ?";
         let stmt = make_statement(conn, sql, vec![v_i64(tenant_id), v_str(session_id)]);
         let row = conn.query_one_raw(stmt).await.map_err(|e| {
-            BulwarkError::Dao(format!("dao-app-session-find-by-session-id-query::{}", e))
+            GarrisonError::Dao(format!("dao-app-session-find-by-session-id-query::{}", e))
         })?;
         row.map(|r| parse_session_row(&r)).transpose()
     }
@@ -48,12 +48,12 @@ impl SessionRepository for DbnexusSessionRepository {
         &self,
         tenant_id: i64,
         user_id: &str,
-    ) -> BulwarkResult<Vec<SessionRow>> {
+    ) -> GarrisonResult<Vec<SessionRow>> {
         let session = self.pool.get_session("admin").await.map_err(|e| {
-            BulwarkError::Dao(format!("dao-app-session-find-by-user-id-session::{}", e))
+            GarrisonError::Dao(format!("dao-app-session-find-by-user-id-session::{}", e))
         })?;
         let conn = session.connection().map_err(|e| {
-            BulwarkError::Dao(format!("dao-app-session-find-by-user-id-connection::{}", e))
+            GarrisonError::Dao(format!("dao-app-session-find-by-user-id-connection::{}", e))
         })?;
         let sql =
             "SELECT session_id, user_id, device_id, ip, user_agent, login_time, last_active, \
@@ -61,20 +61,19 @@ impl SessionRepository for DbnexusSessionRepository {
                    FROM app_session WHERE tenant_id = ? AND user_id = ?";
         let stmt = make_statement(conn, sql, vec![v_i64(tenant_id), v_str(user_id)]);
         let rows = conn.query_all_raw(stmt).await.map_err(|e| {
-            BulwarkError::Dao(format!("dao-app-session-find-by-user-id-query::{}", e))
+            GarrisonError::Dao(format!("dao-app-session-find-by-user-id-query::{}", e))
         })?;
         rows.iter().map(parse_session_row).collect()
     }
 
-    async fn create(&self, tenant_id: i64, session: NewSession) -> BulwarkResult<String> {
-        let db_session = self
-            .pool
-            .get_session("admin")
-            .await
-            .map_err(|e| BulwarkError::Dao(format!("dao-app-session-create-session::{}", e)))?;
+    async fn create(&self, tenant_id: i64, session: NewSession) -> GarrisonResult<String> {
+        let db_session =
+            self.pool.get_session("admin").await.map_err(|e| {
+                GarrisonError::Dao(format!("dao-app-session-create-session::{}", e))
+            })?;
         let conn = db_session
             .connection()
-            .map_err(|e| BulwarkError::Dao(format!("dao-app-session-create-connection::{}", e)))?;
+            .map_err(|e| GarrisonError::Dao(format!("dao-app-session-create-connection::{}", e)))?;
         let sql = "INSERT INTO app_session \
                    (session_id, user_id, device_id, ip, user_agent, expire_time, tenant_id) \
                    VALUES (?, ?, ?, ?, ?, ?, ?)";
@@ -93,16 +92,16 @@ impl SessionRepository for DbnexusSessionRepository {
         );
         conn.execute_raw(stmt)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("dao-app-session-create-insert::{}", e)))?;
+            .map_err(|e| GarrisonError::Dao(format!("dao-app-session-create-insert::{}", e)))?;
         Ok(session.session_id)
     }
 
-    async fn update_last_active(&self, tenant_id: i64, session_id: &str) -> BulwarkResult<()> {
+    async fn update_last_active(&self, tenant_id: i64, session_id: &str) -> GarrisonResult<()> {
         let session = self.pool.get_session("admin").await.map_err(|e| {
-            BulwarkError::Dao(format!("dao-app-session-update-last-active-session::{}", e))
+            GarrisonError::Dao(format!("dao-app-session-update-last-active-session::{}", e))
         })?;
         let conn = session.connection().map_err(|e| {
-            BulwarkError::Dao(format!(
+            GarrisonError::Dao(format!(
                 "dao-app-session-update-last-active-connection::{}",
                 e
             ))
@@ -111,25 +110,24 @@ impl SessionRepository for DbnexusSessionRepository {
                    WHERE tenant_id = ? AND session_id = ?";
         let stmt = make_statement(conn, sql, vec![v_i64(tenant_id), v_str(session_id)]);
         conn.execute_raw(stmt).await.map_err(|e| {
-            BulwarkError::Dao(format!("dao-app-session-update-last-active-update::{}", e))
+            GarrisonError::Dao(format!("dao-app-session-update-last-active-update::{}", e))
         })?;
         Ok(())
     }
 
-    async fn delete(&self, tenant_id: i64, session_id: &str) -> BulwarkResult<()> {
-        let session = self
-            .pool
-            .get_session("admin")
-            .await
-            .map_err(|e| BulwarkError::Dao(format!("dao-app-session-delete-session::{}", e)))?;
+    async fn delete(&self, tenant_id: i64, session_id: &str) -> GarrisonResult<()> {
+        let session =
+            self.pool.get_session("admin").await.map_err(|e| {
+                GarrisonError::Dao(format!("dao-app-session-delete-session::{}", e))
+            })?;
         let conn = session
             .connection()
-            .map_err(|e| BulwarkError::Dao(format!("dao-app-session-delete-connection::{}", e)))?;
+            .map_err(|e| GarrisonError::Dao(format!("dao-app-session-delete-connection::{}", e)))?;
         let sql = "DELETE FROM app_session WHERE tenant_id = ? AND session_id = ?";
         let stmt = make_statement(conn, sql, vec![v_i64(tenant_id), v_str(session_id)]);
         conn.execute_raw(stmt)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("dao-app-session-delete-delete::{}", e)))?;
+            .map_err(|e| GarrisonError::Dao(format!("dao-app-session-delete-delete::{}", e)))?;
         Ok(())
     }
 
@@ -138,15 +136,15 @@ impl SessionRepository for DbnexusSessionRepository {
         tenant_id: i64,
         offset: i64,
         limit: i64,
-    ) -> BulwarkResult<Vec<SessionRow>> {
+    ) -> GarrisonResult<Vec<SessionRow>> {
         let session = self
             .pool
             .get_session("admin")
             .await
-            .map_err(|e| BulwarkError::Dao(format!("dao-app-session-list-session::{}", e)))?;
+            .map_err(|e| GarrisonError::Dao(format!("dao-app-session-list-session::{}", e)))?;
         let conn = session
             .connection()
-            .map_err(|e| BulwarkError::Dao(format!("dao-app-session-list-connection::{}", e)))?;
+            .map_err(|e| GarrisonError::Dao(format!("dao-app-session-list-connection::{}", e)))?;
         let sql =
             "SELECT session_id, user_id, device_id, ip, user_agent, login_time, last_active, \
                    expire_time, tenant_id \
@@ -159,40 +157,40 @@ impl SessionRepository for DbnexusSessionRepository {
         let rows = conn
             .query_all_raw(stmt)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("dao-app-session-list-query::{}", e)))?;
+            .map_err(|e| GarrisonError::Dao(format!("dao-app-session-list-query::{}", e)))?;
         rows.iter().map(parse_session_row).collect()
     }
 }
 
 /// 解析 app_session 行。
-fn parse_session_row(row: &QueryResult) -> BulwarkResult<SessionRow> {
+fn parse_session_row(row: &QueryResult) -> GarrisonResult<SessionRow> {
     Ok(SessionRow {
         session_id: row.try_get("", "session_id").map_err(|e| {
-            BulwarkError::Dao(format!("dao-app-session-row-parse-session-id::{}", e))
+            GarrisonError::Dao(format!("dao-app-session-row-parse-session-id::{}", e))
         })?,
         user_id: row
             .try_get("", "user_id")
-            .map_err(|e| BulwarkError::Dao(format!("dao-app-session-row-parse-user-id::{}", e)))?,
+            .map_err(|e| GarrisonError::Dao(format!("dao-app-session-row-parse-user-id::{}", e)))?,
         device_id: row.try_get("", "device_id").map_err(|e| {
-            BulwarkError::Dao(format!("dao-app-session-row-parse-device-id::{}", e))
+            GarrisonError::Dao(format!("dao-app-session-row-parse-device-id::{}", e))
         })?,
         ip: row
             .try_get("", "ip")
-            .map_err(|e| BulwarkError::Dao(format!("dao-app-session-row-parse-ip::{}", e)))?,
+            .map_err(|e| GarrisonError::Dao(format!("dao-app-session-row-parse-ip::{}", e)))?,
         user_agent: row.try_get("", "user_agent").map_err(|e| {
-            BulwarkError::Dao(format!("dao-app-session-row-parse-user-agent::{}", e))
+            GarrisonError::Dao(format!("dao-app-session-row-parse-user-agent::{}", e))
         })?,
         login_time: row.try_get("", "login_time").map_err(|e| {
-            BulwarkError::Dao(format!("dao-app-session-row-parse-login-time::{}", e))
+            GarrisonError::Dao(format!("dao-app-session-row-parse-login-time::{}", e))
         })?,
         last_active: row.try_get("", "last_active").map_err(|e| {
-            BulwarkError::Dao(format!("dao-app-session-row-parse-last-active::{}", e))
+            GarrisonError::Dao(format!("dao-app-session-row-parse-last-active::{}", e))
         })?,
         expire_time: row.try_get("", "expire_time").map_err(|e| {
-            BulwarkError::Dao(format!("dao-app-session-row-parse-expire-time::{}", e))
+            GarrisonError::Dao(format!("dao-app-session-row-parse-expire-time::{}", e))
         })?,
         tenant_id: row.try_get("", "tenant_id").map_err(|e| {
-            BulwarkError::Dao(format!("dao-app-session-row-parse-tenant-id::{}", e))
+            GarrisonError::Dao(format!("dao-app-session-row-parse-tenant-id::{}", e))
         })?,
     })
 }

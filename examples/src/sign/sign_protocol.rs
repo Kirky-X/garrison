@@ -7,13 +7,13 @@
 //!
 //! 运行方式：
 //! ```sh
-//! cargo run -p bulwark-examples --bin sign_protocol --features protocol-sign
+//! cargo run -p garrison-examples --bin sign_protocol --features protocol-sign
 //! ```
 
 use async_trait::async_trait;
-use bulwark::dao::BulwarkDao;
-use bulwark::error::{BulwarkError, BulwarkResult};
-use bulwark::protocol::sign::SignHandler;
+use garrison::dao::GarrisonDao;
+use garrison::error::{GarrisonError, GarrisonResult};
+use garrison::protocol::sign::SignHandler;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -36,12 +36,12 @@ impl MockDao {
 }
 
 #[async_trait]
-impl BulwarkDao for MockDao {
-    async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
+impl GarrisonDao for MockDao {
+    async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
         Ok(self.data.lock().await.get(key).cloned())
     }
 
-    async fn set(&self, key: &str, value: &str, _ttl_seconds: u64) -> BulwarkResult<()> {
+    async fn set(&self, key: &str, value: &str, _ttl_seconds: u64) -> GarrisonResult<()> {
         self.data
             .lock()
             .await
@@ -49,21 +49,21 @@ impl BulwarkDao for MockDao {
         Ok(())
     }
 
-    async fn update(&self, key: &str, value: &str) -> BulwarkResult<()> {
+    async fn update(&self, key: &str, value: &str) -> GarrisonResult<()> {
         let mut data = self.data.lock().await;
         if data.contains_key(key) {
             data.insert(key.to_string(), value.to_string());
             Ok(())
         } else {
-            Err(BulwarkError::Dao(format!("键不存在: {}", key)))
+            Err(GarrisonError::Dao(format!("键不存在: {}", key)))
         }
     }
 
-    async fn expire(&self, _key: &str, _seconds: u64) -> BulwarkResult<()> {
+    async fn expire(&self, _key: &str, _seconds: u64) -> GarrisonResult<()> {
         Ok(())
     }
 
-    async fn delete(&self, key: &str) -> BulwarkResult<()> {
+    async fn delete(&self, key: &str) -> GarrisonResult<()> {
         self.data.lock().await.remove(key);
         Ok(())
     }
@@ -81,16 +81,16 @@ fn now_ts() -> i64 {
 ///
 /// 演示 SignHandler 的 sign 生成签名、validate 校验签名（时间戳窗口 + nonce 防重放）、
 /// nonce 重放被拒绝、签名不匹配被拒绝、时间戳超出窗口被拒绝。
-pub async fn run() -> BulwarkResult<()> {
-    println!("=== Bulwark API 签名协议示例 ===\n");
+pub async fn run() -> GarrisonResult<()> {
+    println!("=== Garrison API 签名协议示例 ===\n");
 
     // ----------------------------------------------------------------
     // 1. 构建 SignHandler
     // ----------------------------------------------------------------
     // 签名算法：
     //   sign = base64(hmac_sha256(hkdf_key, "{method}\n{path}\n{timestamp}\n{nonce}\n{body_sha256}"))
-    //   其中 hkdf_key = HKDF-SHA256(app_secret, salt=app_key, info="bulwark-sign-v2")
-    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+    //   其中 hkdf_key = HKDF-SHA256(app_secret, salt=app_key, info="garrison-sign-v2")
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     // app_secret 最小 32 字节（256 位）
     let handler = SignHandler::new("app-001", "my-secret-key-with-at-least-32-bytes!", dao)?
         .with_timestamp_window(300); // 默认 300 秒时间戳窗口
@@ -139,7 +139,7 @@ pub async fn run() -> BulwarkResult<()> {
         .await;
     println!("[4] nonce 防重放:");
     match replay {
-        Err(BulwarkError::InvalidToken(msg)) => {
+        Err(GarrisonError::InvalidToken(msg)) => {
             println!("    第二次校验同一 nonce → Err(InvalidToken)");
             println!("    消息: {}\n", msg);
         },
@@ -173,7 +173,7 @@ pub async fn run() -> BulwarkResult<()> {
         .await;
     println!("[6] 时间戳超出窗口:");
     match expired {
-        Err(BulwarkError::ExpiredToken(msg)) => {
+        Err(GarrisonError::ExpiredToken(msg)) => {
             println!("    timestamp = {}（超出 ±300s 窗口）", old_ts);
             println!("    → Err(ExpiredToken): {}\n", msg);
         },

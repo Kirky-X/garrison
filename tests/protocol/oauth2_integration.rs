@@ -12,7 +12,7 @@
 
 #![cfg(feature = "protocol-oauth2")]
 
-use bulwark::protocol::oauth2::OAuth2Client;
+use garrison::protocol::oauth2::OAuth2Client;
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 

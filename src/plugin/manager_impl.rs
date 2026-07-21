@@ -1,15 +1,15 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! BulwarkPluginManager 实现块（从 mod.rs 迁移）。
+//! GarrisonPluginManager 实现块（从 mod.rs 迁移）。
 
 use super::*;
 
-impl BulwarkPluginManager {
+impl GarrisonPluginManager {
     /// 创建插件管理器并收集所有已注册插件。
     pub fn new() -> Self {
         use std::iter::Iterator;
-        let plugins: Vec<Arc<dyn BulwarkPlugin>> = inventory::iter::<BulwarkPluginEntry>()
+        let plugins: Vec<Arc<dyn GarrisonPlugin>> = inventory::iter::<GarrisonPluginEntry>()
             .map(|entry| (entry.factory)())
             .collect();
         for p in &plugins {
@@ -57,7 +57,7 @@ impl BulwarkPluginManager {
     }
 }
 
-impl Default for BulwarkPluginManager {
+impl Default for GarrisonPluginManager {
     fn default() -> Self {
         Self::new()
     }

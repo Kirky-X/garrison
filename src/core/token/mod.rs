@@ -9,7 +9,7 @@
 //!
 //! 支持 4 种风格：uuid / random_64 / simple / jwt。
 
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::error::{GarrisonError, GarrisonResult};
 use serde::{Deserialize, Serialize};
 
 /// Token 声明信息，承载 token 解析后的声明。
@@ -33,21 +33,21 @@ pub trait Token: Send + Sync {
     /// # 参数
     /// - `login_id`: 登录主体标识。
     /// - `timeout`: 有效期（秒）。
-    fn generate(&self, login_id: &str, timeout: i64) -> BulwarkResult<String>;
+    fn generate(&self, login_id: &str, timeout: i64) -> GarrisonResult<String>;
 
     /// 校验 token，返回关联的 login_id（如果 token 有效且可解析）。
     ///
     /// # 返回
     /// - `Ok(Some(login_id))`: token 有效且包含 login_id。
     /// - `Ok(None)`: token 无效或不包含 login_id（如 UUID 风格）。
-    fn verify(&self, token: &str) -> BulwarkResult<Option<String>>;
+    fn verify(&self, token: &str) -> GarrisonResult<Option<String>>;
 
     /// 解析 token 为 `TokenClaims`。
     ///
     /// # 返回
     /// - `Ok(TokenClaims)`: 解析成功。
-    /// - `Err(BulwarkError)`: 解析失败（token 风格不支持 parse / token 过期 / 格式错误）。
-    fn parse(&self, token: &str) -> BulwarkResult<TokenClaims>;
+    /// - `Err(GarrisonError)`: 解析失败（token 风格不支持 parse / token 过期 / 格式错误）。
+    fn parse(&self, token: &str) -> GarrisonResult<TokenClaims>;
 }
 
 // ====================================================================
@@ -137,7 +137,7 @@ mod style_impl;
 // TokenStyleFactory
 // ====================================================================
 
-/// Token 风格工厂，依据 `BulwarkConfig.token_style` 创建对应的 `Token` 实现。
+/// Token 风格工厂，依据 `GarrisonConfig.token_style` 创建对应的 `Token` 实现。
 pub struct TokenStyleFactory;
 
 #[cfg(test)]

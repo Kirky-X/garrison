@@ -3,19 +3,19 @@
 
 //! web_warp_example 示例测试（web-warp feature）。
 //!
-//! 验证 BulwarkRouter + into_filter 守卫行为 + check_login 函数式 Filter：
+//! 验证 GarrisonRouter + into_filter 守卫行为 + check_login 函数式 Filter：
 //! - 公开路径无需 token → 200
-//! - 受保护路径无 token → 401（BulwarkRejection）
+//! - 受保护路径无 token → 401（GarrisonRejection）
 //! - 受保护路径有 token → 200
 //! - CheckRole 路径有匹配角色 → 200
 //! - CheckPermission 路径有匹配权限 → 200
 //! - 直接测试 `check_login` Filter 函数
 //!
-//! 使用 `#[serial_test::serial]` 串行化，因为 `setup()` 修改全局 `BulwarkManager` 单例。
+//! 使用 `#[serial_test::serial]` 串行化，因为 `setup()` 修改全局 `GarrisonManager` 单例。
 
 #![cfg(feature = "web-warp")]
 
-use bulwark_examples::web::web_warp_example;
+use garrison_examples::web::web_warp_example;
 use serial_test::serial;
 use warp::http::StatusCode;
 use warp::Filter;
@@ -66,7 +66,7 @@ async fn test_guard_protection() {
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn test_check_login_filter_rejects_without_token() {
-    use bulwark::web_warp::check_login;
+    use garrison::web_warp::check_login;
 
     let (config, _token) = web_warp_example::setup().await;
 
@@ -88,7 +88,7 @@ async fn test_check_login_filter_rejects_without_token() {
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn test_check_login_filter_accepts_with_token() {
-    use bulwark::web_warp::check_login;
+    use garrison::web_warp::check_login;
 
     let (config, token) = web_warp_example::setup().await;
 
@@ -110,7 +110,7 @@ async fn test_check_login_filter_accepts_with_token() {
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn test_check_role_filter_accepts_with_role() {
-    use bulwark::web_warp::check_role;
+    use garrison::web_warp::check_role;
 
     let (config, token) = web_warp_example::setup().await;
 
@@ -132,7 +132,7 @@ async fn test_check_role_filter_accepts_with_role() {
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn test_check_permission_filter_accepts_with_permission() {
-    use bulwark::web_warp::check_permission;
+    use garrison::web_warp::check_permission;
 
     let (config, token) = web_warp_example::setup().await;
 
@@ -150,7 +150,7 @@ async fn test_check_permission_filter_accepts_with_permission() {
     assert_eq!(resp.status(), StatusCode::OK);
 }
 
-/// 测试 `handle_rejection`：将 BulwarkRejection 转换为 JSON 错误响应。
+/// 测试 `handle_rejection`：将 GarrisonRejection 转换为 JSON 错误响应。
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn test_handle_rejection_returns_json() {

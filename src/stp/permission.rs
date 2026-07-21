@@ -2,10 +2,10 @@
 //! See LICENSE for full license text.
 
 //! PermissionLogic trait — 权限与角色校验契约。
-//! 从 v0.5.2 起，从 `BulwarkLogic` 上帝 trait 拆分；本 trait 承接权限/角色校验 2 个方法。
+//! 从 v0.5.2 起，从 `GarrisonLogic` 上帝 trait 拆分；本 trait 承接权限/角色校验 2 个方法。
 //! super-trait 为 [`SessionLogic`]（权限校验需先通过 `get_login_id` 获取当前登录主体）。
 
-use super::BulwarkLogicDefault;
+use super::GarrisonLogicDefault;
 // tenant-isolation feature 启用时强制 fail-closed
 // feature 关闭时保留旧 current_tenant_id() 向后兼容行为，但 #[allow(deprecated)] 显式标注
 #[cfg(not(feature = "tenant-isolation"))]
@@ -14,9 +14,9 @@ use crate::context::tenant::current_tenant_id;
 #[cfg(feature = "tenant-isolation")]
 use crate::context::tenant::current_tenant_id_or_error;
 use crate::core::permission::AuthRequest;
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::error::{GarrisonError, GarrisonResult};
 #[cfg(feature = "listener")]
-use crate::listener::BulwarkEvent;
+use crate::listener::GarrisonEvent;
 use crate::stp::session::SessionLogic;
 use async_trait::async_trait;
 
@@ -33,9 +33,9 @@ use async_trait::async_trait;
 ///
 /// # 错误
 ///
-/// - 未登录且 `throw_on_not_login=true`：`BulwarkError::NotLogin`。
-/// - 未登录且 `throw_on_not_login=false`：降级为 `BulwarkError::NotPermission` / `NotRole`。
-/// - 未持有权限/角色：`BulwarkError::NotPermission` / `NotRole`。
+/// - 未登录且 `throw_on_not_login=true`：`GarrisonError::NotLogin`。
+/// - 未登录且 `throw_on_not_login=false`：降级为 `GarrisonError::NotPermission` / `NotRole`。
+/// - 未持有权限/角色：`GarrisonError::NotPermission` / `NotRole`。
 #[async_trait]
 pub trait PermissionLogic: SessionLogic {
     /// 校验权限：检查当前登录主体是否持有指定权限。
@@ -47,10 +47,10 @@ pub trait PermissionLogic: SessionLogic {
     /// 成功（持有权限）返回 `Ok(())`。
     ///
     /// # 错误
-    /// - 未登录且 `throw_on_not_login=true`：`BulwarkError::NotLogin`。
-    /// - 未登录且 `throw_on_not_login=false`：降级为 `BulwarkError::NotPermission`。
-    /// - 未持有权限：`BulwarkError::NotPermission`。
-    async fn check_permission(&self, permission: &str) -> BulwarkResult<()>;
+    /// - 未登录且 `throw_on_not_login=true`：`GarrisonError::NotLogin`。
+    /// - 未登录且 `throw_on_not_login=false`：降级为 `GarrisonError::NotPermission`。
+    /// - 未持有权限：`GarrisonError::NotPermission`。
+    async fn check_permission(&self, permission: &str) -> GarrisonResult<()>;
 
     /// 校验角色：检查当前登录主体是否持有指定角色。
     ///
@@ -61,10 +61,10 @@ pub trait PermissionLogic: SessionLogic {
     /// 成功（持有角色）返回 `Ok(())`。
     ///
     /// # 错误
-    /// - 未登录且 `throw_on_not_login=true`：`BulwarkError::NotLogin`。
-    /// - 未登录且 `throw_on_not_login=false`：降级为 `BulwarkError::NotRole`。
-    /// - 未持有角色：`BulwarkError::NotRole`。
-    async fn check_role(&self, role: &str) -> BulwarkResult<()>;
+    /// - 未登录且 `throw_on_not_login=true`：`GarrisonError::NotLogin`。
+    /// - 未登录且 `throw_on_not_login=false`：降级为 `GarrisonError::NotRole`。
+    /// - 未持有角色：`GarrisonError::NotRole`。
+    async fn check_role(&self, role: &str) -> GarrisonResult<()>;
 
     /// 检查当前登录主体是否持有指定权限。
     ///
@@ -79,17 +79,17 @@ pub trait PermissionLogic: SessionLogic {
     /// - `Ok(false)`: 当前会话未持有该权限或未登录。
     ///
     /// # 错误
-    /// - DAO 层错误等非权限性错误：透传 `BulwarkError`。
+    /// - DAO 层错误等非权限性错误：透传 `GarrisonError`。
     ///
     /// # 默认实现
     ///
     /// 包装 [`check_permission`](Self::check_permission)，将 `NotPermission` / `NotLogin`
     /// 映射为 `Ok(false)`，其余错误透传。业务方可覆写以直接查询权限列表（避免异常开销）。
-    async fn has_permission(&self, permission: &str) -> BulwarkResult<bool> {
+    async fn has_permission(&self, permission: &str) -> GarrisonResult<bool> {
         match self.check_permission(permission).await {
             Ok(()) => Ok(true),
-            Err(BulwarkError::NotPermission(_)) => Ok(false),
-            Err(BulwarkError::NotLogin(_)) => Ok(false),
+            Err(GarrisonError::NotPermission(_)) => Ok(false),
+            Err(GarrisonError::NotLogin(_)) => Ok(false),
             Err(e) => Err(e),
         }
     }
@@ -107,71 +107,71 @@ pub trait PermissionLogic: SessionLogic {
     /// - `Ok(false)`: 当前会话未持有该角色或未登录。
     ///
     /// # 错误
-    /// - DAO 层错误等非角色性错误：透传 `BulwarkError`。
+    /// - DAO 层错误等非角色性错误：透传 `GarrisonError`。
     ///
     /// # 默认实现
     ///
     /// 包装 [`check_role`](Self::check_role)，将 `NotRole` / `NotLogin`
     /// 映射为 `Ok(false)`，其余错误透传。业务方可覆写以直接查询角色列表（避免异常开销）。
-    async fn has_role(&self, role: &str) -> BulwarkResult<bool> {
+    async fn has_role(&self, role: &str) -> GarrisonResult<bool> {
         match self.check_role(role).await {
             Ok(()) => Ok(true),
-            Err(BulwarkError::NotRole(_)) => Ok(false),
-            Err(BulwarkError::NotLogin(_)) => Ok(false),
+            Err(GarrisonError::NotRole(_)) => Ok(false),
+            Err(GarrisonError::NotLogin(_)) => Ok(false),
             Err(e) => Err(e),
         }
     }
 
     /// 获取当前登录主体的权限列表。
     ///
-    /// 从当前会话上下文获取 login_id 后委托 `BulwarkPermissionStrategy` 查询权限数据。
+    /// 从当前会话上下文获取 login_id 后委托 `GarrisonPermissionStrategy` 查询权限数据。
     /// 未登录时返回 `Ok(vec![])`（非抛出异常），适用于 UI 渲染等无需强制登录的场景。
     ///
     /// # 返回
     /// - `Ok(permissions)`: 权限标识字符串列表（如 `["user:read", "user:write"]`），可为空。
     ///
     /// # 错误
-    /// - 数据源访问失败：透传 `BulwarkError`。
+    /// - 数据源访问失败：透传 `GarrisonError`。
     ///
     /// # 默认实现
     ///
-    /// 返回 `Err(NotImplemented)`；`BulwarkLogicDefault` 覆写为委托 `firewall.get_permission_list(login_id)`。
-    async fn get_permission_list(&self) -> BulwarkResult<Vec<String>> {
-        Err(BulwarkError::NotImplemented(
-            "get_permission_list 未实现（默认实现，需在 BulwarkLogicDefault 或业务实现中覆写）"
+    /// 返回 `Err(NotImplemented)`；`GarrisonLogicDefault` 覆写为委托 `firewall.get_permission_list(login_id)`。
+    async fn get_permission_list(&self) -> GarrisonResult<Vec<String>> {
+        Err(GarrisonError::NotImplemented(
+            "get_permission_list 未实现（默认实现，需在 GarrisonLogicDefault 或业务实现中覆写）"
                 .to_string(),
         ))
     }
 
     /// 获取当前登录主体的角色列表。
     ///
-    /// 从当前会话上下文获取 login_id 后委托 `BulwarkPermissionStrategy` 查询角色数据。
+    /// 从当前会话上下文获取 login_id 后委托 `GarrisonPermissionStrategy` 查询角色数据。
     /// 未登录时返回 `Ok(vec![])`。
     ///
     /// # 返回
     /// - `Ok(roles)`: 角色标识字符串列表（如 `["admin", "user"]`），可为空。
     ///
     /// # 错误
-    /// - 数据源访问失败：透传 `BulwarkError`。
+    /// - 数据源访问失败：透传 `GarrisonError`。
     ///
     /// # 默认实现
     ///
-    /// 返回 `Err(NotImplemented)`；`BulwarkLogicDefault` 覆写为委托 `firewall.get_role_list(login_id)`。
-    async fn get_role_list(&self) -> BulwarkResult<Vec<String>> {
-        Err(BulwarkError::NotImplemented(
-            "get_role_list 未实现（默认实现，需在 BulwarkLogicDefault 或业务实现中覆写）"
+    /// 返回 `Err(NotImplemented)`；`GarrisonLogicDefault` 覆写为委托 `firewall.get_role_list(login_id)`。
+    async fn get_role_list(&self) -> GarrisonResult<Vec<String>> {
+        Err(GarrisonError::NotImplemented(
+            "get_role_list 未实现（默认实现，需在 GarrisonLogicDefault 或业务实现中覆写）"
                 .to_string(),
         ))
     }
 }
 
 // ============================================================================
-// BulwarkLogicDefault impl
+// GarrisonLogicDefault impl
 // ============================================================================
 
 #[async_trait]
-impl PermissionLogic for BulwarkLogicDefault {
-    async fn check_permission(&self, permission: &str) -> BulwarkResult<()> {
+impl PermissionLogic for GarrisonLogicDefault {
+    async fn check_permission(&self, permission: &str) -> GarrisonResult<()> {
         // spec scenario "未登录抛出异常"：未登录时依据 throw_on_not_login 抛错
         let login_id = match self.get_login_id().await? {
             Some(id) => id,
@@ -182,10 +182,10 @@ impl PermissionLogic for BulwarkLogicDefault {
                     m.record_permission_query(false);
                 }
                 return if self.config.throw_on_not_login {
-                    Err(BulwarkError::NotLogin("stp-not-login::".to_string()))
+                    Err(GarrisonError::NotLogin("stp-not-login::".to_string()))
                 } else {
                     // throw_on_not_login=false：未登录视为无权限，抛 NotPermission
-                    Err(BulwarkError::NotPermission(permission.to_string()))
+                    Err(GarrisonError::NotPermission(permission.to_string()))
                 };
             },
         };
@@ -211,7 +211,7 @@ impl PermissionLogic for BulwarkLogicDefault {
             // 广播 PermissionCheck 事件（audit listener 据此写审计日志）
             #[cfg(feature = "listener")]
             if let Some(lm) = &self.listener_manager {
-                lm.broadcast(&BulwarkEvent::PermissionCheck {
+                lm.broadcast(&GarrisonEvent::PermissionCheck {
                     login_id,
                     permission: permission.to_string(),
                     request_context: None,
@@ -227,7 +227,7 @@ impl PermissionLogic for BulwarkLogicDefault {
             return if decision.allowed {
                 Ok(())
             } else {
-                Err(BulwarkError::NotPermission(permission.to_string()))
+                Err(GarrisonError::NotPermission(permission.to_string()))
             };
         }
 
@@ -251,11 +251,11 @@ impl PermissionLogic for BulwarkLogicDefault {
         if has_perm {
             Ok(())
         } else {
-            Err(BulwarkError::NotPermission(permission.to_string()))
+            Err(GarrisonError::NotPermission(permission.to_string()))
         }
     }
 
-    async fn check_role(&self, role: &str) -> BulwarkResult<()> {
+    async fn check_role(&self, role: &str) -> GarrisonResult<()> {
         // spec scenario "未登录抛出异常"：未登录时依据 throw_on_not_login 抛错
         let login_id = match self.get_login_id().await? {
             Some(id) => id,
@@ -266,14 +266,14 @@ impl PermissionLogic for BulwarkLogicDefault {
                     m.record_role_query(false);
                 }
                 return if self.config.throw_on_not_login {
-                    Err(BulwarkError::NotLogin("stp-not-login::".to_string()))
+                    Err(GarrisonError::NotLogin("stp-not-login::".to_string()))
                 } else {
                     // throw_on_not_login=false：未登录视为无角色，抛 NotRole
-                    Err(BulwarkError::NotRole(role.to_string()))
+                    Err(GarrisonError::NotRole(role.to_string()))
                 };
             },
         };
-        // 委托 BulwarkPermissionStrategy 做角色校验
+        // 委托 GarrisonPermissionStrategy 做角色校验
         let has_role = self.firewall.check_role(&login_id, role).await?;
         // emit metrics：角色查询结果
         #[cfg(feature = "metrics-prometheus")]
@@ -283,11 +283,11 @@ impl PermissionLogic for BulwarkLogicDefault {
         if has_role {
             Ok(())
         } else {
-            Err(BulwarkError::NotRole(role.to_string()))
+            Err(GarrisonError::NotRole(role.to_string()))
         }
     }
 
-    async fn get_permission_list(&self) -> BulwarkResult<Vec<String>> {
+    async fn get_permission_list(&self) -> GarrisonResult<Vec<String>> {
         // 未登录返回空列表（非抛出异常，适用于 UI 渲染等无需强制登录的场景）
         let login_id = match self.get_login_id().await? {
             Some(id) => id,
@@ -296,7 +296,7 @@ impl PermissionLogic for BulwarkLogicDefault {
         self.firewall.get_permission_list(&login_id).await
     }
 
-    async fn get_role_list(&self) -> BulwarkResult<Vec<String>> {
+    async fn get_role_list(&self) -> GarrisonResult<Vec<String>> {
         let login_id = match self.get_login_id().await? {
             Some(id) => id,
             None => return Ok(vec![]),
@@ -308,20 +308,20 @@ impl PermissionLogic for BulwarkLogicDefault {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::BulwarkConfig;
-    use crate::error::BulwarkResult;
-    use crate::stp::core::BulwarkCore;
+    use crate::config::GarrisonConfig;
+    use crate::error::GarrisonResult;
+    use crate::stp::core::GarrisonCore;
     use crate::stp::session::SessionLogic;
     use std::sync::Arc;
 
-    /// 最小 mock：实现 `BulwarkCore` + `SessionLogic`（9 必需方法）+ `PermissionLogic`（2 方法）。
+    /// 最小 mock：实现 `GarrisonCore` + `SessionLogic`（9 必需方法）+ `PermissionLogic`（2 方法）。
     struct MockPermission {
-        config: Arc<BulwarkConfig>,
+        config: Arc<GarrisonConfig>,
         has_permission: bool,
     }
 
-    impl BulwarkCore for MockPermission {
-        fn config(&self) -> Arc<BulwarkConfig> {
+    impl GarrisonCore for MockPermission {
+        fn config(&self) -> Arc<GarrisonConfig> {
             Arc::clone(&self.config)
         }
     }
@@ -332,47 +332,47 @@ mod tests {
             &self,
             _login_id: &str,
             _params: &crate::stp::LoginParams,
-        ) -> BulwarkResult<String> {
+        ) -> GarrisonResult<String> {
             Ok("mock-token".to_string())
         }
-        async fn login_with_token(&self, _login_id: &str, _token: &str) -> BulwarkResult<()> {
+        async fn login_with_token(&self, _login_id: &str, _token: &str) -> GarrisonResult<()> {
             Ok(())
         }
-        async fn logout(&self) -> BulwarkResult<()> {
+        async fn logout(&self) -> GarrisonResult<()> {
             Ok(())
         }
-        async fn logout_by_login_id(&self, _login_id: &str) -> BulwarkResult<()> {
+        async fn logout_by_login_id(&self, _login_id: &str) -> GarrisonResult<()> {
             Ok(())
         }
-        async fn kickout(&self, _login_id: &str) -> BulwarkResult<()> {
+        async fn kickout(&self, _login_id: &str) -> GarrisonResult<()> {
             Ok(())
         }
-        async fn kickout_by_token(&self, _token: &str) -> BulwarkResult<()> {
+        async fn kickout_by_token(&self, _token: &str) -> GarrisonResult<()> {
             Ok(())
         }
-        async fn revoke_token(&self, _token: &str) -> BulwarkResult<()> {
+        async fn revoke_token(&self, _token: &str) -> GarrisonResult<()> {
             Ok(())
         }
-        async fn check_login(&self) -> BulwarkResult<bool> {
+        async fn check_login(&self) -> GarrisonResult<bool> {
             Ok(true)
         }
-        async fn get_login_id(&self) -> BulwarkResult<Option<String>> {
+        async fn get_login_id(&self) -> GarrisonResult<Option<String>> {
             Ok(Some("42".to_string()))
         }
     }
 
     #[async_trait]
     impl PermissionLogic for MockPermission {
-        async fn check_permission(&self, _permission: &str) -> BulwarkResult<()> {
+        async fn check_permission(&self, _permission: &str) -> GarrisonResult<()> {
             if self.has_permission {
                 Ok(())
             } else {
-                Err(crate::error::BulwarkError::NotPermission(
+                Err(crate::error::GarrisonError::NotPermission(
                     "mock: not permission".to_string(),
                 ))
             }
         }
-        async fn check_role(&self, _role: &str) -> BulwarkResult<()> {
+        async fn check_role(&self, _role: &str) -> GarrisonResult<()> {
             Ok(())
         }
     }
@@ -380,7 +380,7 @@ mod tests {
     #[tokio::test]
     async fn check_permission_grants_when_has() {
         let mock = MockPermission {
-            config: Arc::new(BulwarkConfig::default()),
+            config: Arc::new(GarrisonConfig::default()),
             has_permission: true,
         };
         mock.check_permission("user:read").await.unwrap();
@@ -389,13 +389,13 @@ mod tests {
     #[tokio::test]
     async fn check_permission_denies_when_not_has() {
         let mock = MockPermission {
-            config: Arc::new(BulwarkConfig::default()),
+            config: Arc::new(GarrisonConfig::default()),
             has_permission: false,
         };
         let result = mock.check_permission("user:read").await;
         assert!(matches!(
             result,
-            Err(crate::error::BulwarkError::NotPermission(_))
+            Err(crate::error::GarrisonError::NotPermission(_))
         ));
     }
 
@@ -407,13 +407,13 @@ mod tests {
     ///
     /// `perm_result` / `role_result` 为预设返回值，覆盖 Ok / NotPermission / NotLogin / Dao 四类分支。
     struct MockPermissionHas {
-        config: Arc<BulwarkConfig>,
-        perm_result: BulwarkResult<()>,
-        role_result: BulwarkResult<()>,
+        config: Arc<GarrisonConfig>,
+        perm_result: GarrisonResult<()>,
+        role_result: GarrisonResult<()>,
     }
 
-    impl BulwarkCore for MockPermissionHas {
-        fn config(&self) -> Arc<BulwarkConfig> {
+    impl GarrisonCore for MockPermissionHas {
+        fn config(&self) -> Arc<GarrisonConfig> {
             Arc::clone(&self.config)
         }
     }
@@ -424,64 +424,64 @@ mod tests {
             &self,
             _login_id: &str,
             _params: &crate::stp::LoginParams,
-        ) -> BulwarkResult<String> {
+        ) -> GarrisonResult<String> {
             Ok("mock-token".to_string())
         }
-        async fn login_with_token(&self, _login_id: &str, _token: &str) -> BulwarkResult<()> {
+        async fn login_with_token(&self, _login_id: &str, _token: &str) -> GarrisonResult<()> {
             Ok(())
         }
-        async fn logout(&self) -> BulwarkResult<()> {
+        async fn logout(&self) -> GarrisonResult<()> {
             Ok(())
         }
-        async fn logout_by_login_id(&self, _login_id: &str) -> BulwarkResult<()> {
+        async fn logout_by_login_id(&self, _login_id: &str) -> GarrisonResult<()> {
             Ok(())
         }
-        async fn kickout(&self, _login_id: &str) -> BulwarkResult<()> {
+        async fn kickout(&self, _login_id: &str) -> GarrisonResult<()> {
             Ok(())
         }
-        async fn kickout_by_token(&self, _token: &str) -> BulwarkResult<()> {
+        async fn kickout_by_token(&self, _token: &str) -> GarrisonResult<()> {
             Ok(())
         }
-        async fn revoke_token(&self, _token: &str) -> BulwarkResult<()> {
+        async fn revoke_token(&self, _token: &str) -> GarrisonResult<()> {
             Ok(())
         }
-        async fn check_login(&self) -> BulwarkResult<bool> {
+        async fn check_login(&self) -> GarrisonResult<bool> {
             Ok(true)
         }
-        async fn get_login_id(&self) -> BulwarkResult<Option<String>> {
+        async fn get_login_id(&self) -> GarrisonResult<Option<String>> {
             Ok(Some("42".to_string()))
         }
     }
 
     #[async_trait]
     impl PermissionLogic for MockPermissionHas {
-        async fn check_permission(&self, _permission: &str) -> BulwarkResult<()> {
-            // 克隆预设结果（BulwarkError 不实现 Clone，用相同变体重建）
+        async fn check_permission(&self, _permission: &str) -> GarrisonResult<()> {
+            // 克隆预设结果（GarrisonError 不实现 Clone，用相同变体重建）
             match &self.perm_result {
                 Ok(()) => Ok(()),
-                Err(crate::error::BulwarkError::NotPermission(s)) => {
-                    Err(crate::error::BulwarkError::NotPermission(s.clone()))
+                Err(crate::error::GarrisonError::NotPermission(s)) => {
+                    Err(crate::error::GarrisonError::NotPermission(s.clone()))
                 },
-                Err(crate::error::BulwarkError::NotLogin(s)) => {
-                    Err(crate::error::BulwarkError::NotLogin(s.clone()))
+                Err(crate::error::GarrisonError::NotLogin(s)) => {
+                    Err(crate::error::GarrisonError::NotLogin(s.clone()))
                 },
-                Err(crate::error::BulwarkError::Dao(s)) => {
-                    Err(crate::error::BulwarkError::Dao(s.clone()))
+                Err(crate::error::GarrisonError::Dao(s)) => {
+                    Err(crate::error::GarrisonError::Dao(s.clone()))
                 },
                 Err(e) => panic!("MockPermissionHas 不支持此错误变体: {:?}", e),
             }
         }
-        async fn check_role(&self, _role: &str) -> BulwarkResult<()> {
+        async fn check_role(&self, _role: &str) -> GarrisonResult<()> {
             match &self.role_result {
                 Ok(()) => Ok(()),
-                Err(crate::error::BulwarkError::NotRole(s)) => {
-                    Err(crate::error::BulwarkError::NotRole(s.clone()))
+                Err(crate::error::GarrisonError::NotRole(s)) => {
+                    Err(crate::error::GarrisonError::NotRole(s.clone()))
                 },
-                Err(crate::error::BulwarkError::NotLogin(s)) => {
-                    Err(crate::error::BulwarkError::NotLogin(s.clone()))
+                Err(crate::error::GarrisonError::NotLogin(s)) => {
+                    Err(crate::error::GarrisonError::NotLogin(s.clone()))
                 },
-                Err(crate::error::BulwarkError::Dao(s)) => {
-                    Err(crate::error::BulwarkError::Dao(s.clone()))
+                Err(crate::error::GarrisonError::Dao(s)) => {
+                    Err(crate::error::GarrisonError::Dao(s.clone()))
                 },
                 Err(e) => panic!("MockPermissionHas 不支持此错误变体: {:?}", e),
             }
@@ -490,7 +490,7 @@ mod tests {
 
     fn ok_perm_mock() -> MockPermissionHas {
         MockPermissionHas {
-            config: Arc::new(BulwarkConfig::default()),
+            config: Arc::new(GarrisonConfig::default()),
             perm_result: Ok(()),
             role_result: Ok(()),
         }
@@ -507,7 +507,7 @@ mod tests {
     #[tokio::test]
     async fn has_permission_returns_false_when_not_permission() {
         let mut mock = ok_perm_mock();
-        mock.perm_result = Err(BulwarkError::NotPermission("user:read".to_string()));
+        mock.perm_result = Err(GarrisonError::NotPermission("user:read".to_string()));
         assert!(!mock.has_permission("user:read").await.unwrap());
     }
 
@@ -515,7 +515,7 @@ mod tests {
     #[tokio::test]
     async fn has_permission_returns_false_when_not_login() {
         let mut mock = ok_perm_mock();
-        mock.perm_result = Err(BulwarkError::NotLogin("未登录".to_string()));
+        mock.perm_result = Err(GarrisonError::NotLogin("未登录".to_string()));
         assert!(!mock.has_permission("user:read").await.unwrap());
     }
 
@@ -523,10 +523,10 @@ mod tests {
     #[tokio::test]
     async fn has_permission_propagates_dao_error() {
         let mut mock = ok_perm_mock();
-        mock.perm_result = Err(BulwarkError::Dao("连接失败".to_string()));
+        mock.perm_result = Err(GarrisonError::Dao("连接失败".to_string()));
         let result = mock.has_permission("user:read").await;
         assert!(
-            matches!(result, Err(BulwarkError::Dao(ref s)) if s.contains("连接失败")),
+            matches!(result, Err(GarrisonError::Dao(ref s)) if s.contains("连接失败")),
             "Dao 错误应透传，实际: {:?}",
             result
         );
@@ -543,7 +543,7 @@ mod tests {
     #[tokio::test]
     async fn has_role_returns_false_when_not_role() {
         let mut mock = ok_perm_mock();
-        mock.role_result = Err(BulwarkError::NotRole("admin".to_string()));
+        mock.role_result = Err(GarrisonError::NotRole("admin".to_string()));
         assert!(!mock.has_role("admin").await.unwrap());
     }
 
@@ -551,7 +551,7 @@ mod tests {
     #[tokio::test]
     async fn has_role_returns_false_when_not_login() {
         let mut mock = ok_perm_mock();
-        mock.role_result = Err(BulwarkError::NotLogin("未登录".to_string()));
+        mock.role_result = Err(GarrisonError::NotLogin("未登录".to_string()));
         assert!(!mock.has_role("admin").await.unwrap());
     }
 
@@ -559,10 +559,10 @@ mod tests {
     #[tokio::test]
     async fn has_role_propagates_dao_error() {
         let mut mock = ok_perm_mock();
-        mock.role_result = Err(BulwarkError::Dao("连接失败".to_string()));
+        mock.role_result = Err(GarrisonError::Dao("连接失败".to_string()));
         let result = mock.has_role("admin").await;
         assert!(
-            matches!(result, Err(BulwarkError::Dao(ref s)) if s.contains("连接失败")),
+            matches!(result, Err(GarrisonError::Dao(ref s)) if s.contains("连接失败")),
             "Dao 错误应透传，实际: {:?}",
             result
         );
@@ -572,7 +572,7 @@ mod tests {
     #[tokio::test]
     async fn has_permission_true_when_mock_field_true() {
         let mock = MockPermission {
-            config: Arc::new(BulwarkConfig::default()),
+            config: Arc::new(GarrisonConfig::default()),
             has_permission: true,
         };
         assert!(mock.has_permission("user:read").await.unwrap());
@@ -582,7 +582,7 @@ mod tests {
     #[tokio::test]
     async fn has_permission_false_when_mock_field_false() {
         let mock = MockPermission {
-            config: Arc::new(BulwarkConfig::default()),
+            config: Arc::new(GarrisonConfig::default()),
             has_permission: false,
         };
         assert!(!mock.has_permission("user:read").await.unwrap());
@@ -598,7 +598,7 @@ mod tests {
         let mock = ok_perm_mock();
         let result = mock.get_permission_list().await;
         assert!(
-            matches!(result, Err(BulwarkError::NotImplemented(ref s)) if s.contains("get_permission_list")),
+            matches!(result, Err(GarrisonError::NotImplemented(ref s)) if s.contains("get_permission_list")),
             "默认实现应返回 NotImplemented，实际: {:?}",
             result
         );
@@ -610,42 +610,42 @@ mod tests {
         let mock = ok_perm_mock();
         let result = mock.get_role_list().await;
         assert!(
-            matches!(result, Err(BulwarkError::NotImplemented(ref s)) if s.contains("get_role_list")),
+            matches!(result, Err(GarrisonError::NotImplemented(ref s)) if s.contains("get_role_list")),
             "默认实现应返回 NotImplemented，实际: {:?}",
             result
         );
     }
 
     // ========================================================================
-    // BulwarkLogicDefault impl 覆盖测试
+    // GarrisonLogicDefault impl 覆盖测试
     // 覆盖 check_permission/check_role 的 firewall 路径 + get_permission_list/get_role_list
     // ========================================================================
 
     mod default_impl_coverage {
         use super::*;
         use crate::context::tenant::with_default_tenant;
-        use crate::dao::BulwarkDao;
-        use crate::session::BulwarkSession;
+        use crate::dao::GarrisonDao;
+        use crate::session::GarrisonSession;
         use crate::stp::mock::{MockDao, MockFirewall};
         use crate::stp::with_current_token;
-        use crate::strategy::BulwarkPermissionStrategy;
+        use crate::strategy::GarrisonPermissionStrategy;
         use std::sync::Arc;
 
         fn make_logic(
             throw_on_not_login: bool,
             has_permission: bool,
             has_role: bool,
-        ) -> BulwarkLogicDefault {
-            let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
-            let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
-            let mut config = BulwarkConfig::default_config();
+        ) -> GarrisonLogicDefault {
+            let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+            let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = throw_on_not_login;
             config.token_style = "uuid".to_string();
-            let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
+            let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall {
                 has_permission,
                 has_role,
             });
-            BulwarkLogicDefault::new(session, Arc::new(config), firewall)
+            GarrisonLogicDefault::new(session, Arc::new(config), firewall)
         }
 
         // ----------------------------------------------------------------
@@ -658,7 +658,7 @@ mod tests {
             let logic = make_logic(true, true, true);
             let result = logic.check_permission("user:read").await;
             assert!(
-                matches!(result, Err(BulwarkError::NotLogin(_))),
+                matches!(result, Err(GarrisonError::NotLogin(_))),
                 "未登录 + throw=true 应返回 NotLogin，实际: {:?}",
                 result
             );
@@ -670,7 +670,7 @@ mod tests {
             let logic = make_logic(false, true, true);
             let result = logic.check_permission("user:read").await;
             assert!(
-                matches!(result, Err(BulwarkError::NotPermission(_))),
+                matches!(result, Err(GarrisonError::NotPermission(_))),
                 "未登录 + throw=false 应返回 NotPermission，实际: {:?}",
                 result
             );
@@ -712,7 +712,7 @@ mod tests {
             })
             .await;
             assert!(
-                matches!(result, Err(BulwarkError::NotPermission(_))),
+                matches!(result, Err(GarrisonError::NotPermission(_))),
                 "已登录 + has_permission=false 应返回 NotPermission，实际: {:?}",
                 result
             );
@@ -728,7 +728,7 @@ mod tests {
             let logic = make_logic(true, true, true);
             let result = logic.check_role("admin").await;
             assert!(
-                matches!(result, Err(BulwarkError::NotLogin(_))),
+                matches!(result, Err(GarrisonError::NotLogin(_))),
                 "未登录 + throw=true 应返回 NotLogin，实际: {:?}",
                 result
             );
@@ -740,7 +740,7 @@ mod tests {
             let logic = make_logic(false, true, true);
             let result = logic.check_role("admin").await;
             assert!(
-                matches!(result, Err(BulwarkError::NotRole(_))),
+                matches!(result, Err(GarrisonError::NotRole(_))),
                 "未登录 + throw=false 应返回 NotRole，实际: {:?}",
                 result
             );
@@ -776,7 +776,7 @@ mod tests {
                 .unwrap();
             let result = with_current_token(token, async { logic.check_role("admin").await }).await;
             assert!(
-                matches!(result, Err(BulwarkError::NotRole(_))),
+                matches!(result, Err(GarrisonError::NotRole(_))),
                 "已登录 + has_role=false 应返回 NotRole，实际: {:?}",
                 result
             );
@@ -830,7 +830,7 @@ mod tests {
         }
 
         // ----------------------------------------------------------------
-        // has_permission / has_role（通过 BulwarkLogicDefault）
+        // has_permission / has_role（通过 GarrisonLogicDefault）
         // ----------------------------------------------------------------
 
         /// 已登录 + has_permission=true → has_permission 返回 Ok(true)。
@@ -872,11 +872,11 @@ mod tests {
         use super::*;
         use crate::context::tenant::with_default_tenant;
         use crate::core::permission::{AuthRequest, Decision, DecisionReason, PermissionChecker};
-        use crate::dao::BulwarkDao;
-        use crate::session::BulwarkSession;
+        use crate::dao::GarrisonDao;
+        use crate::session::GarrisonSession;
         use crate::stp::mock::{MockDao, MockFirewall};
         use crate::stp::with_current_token;
-        use crate::strategy::BulwarkPermissionStrategy;
+        use crate::strategy::GarrisonPermissionStrategy;
         use async_trait::async_trait;
         use std::sync::Arc;
 
@@ -892,15 +892,15 @@ mod tests {
                 &self,
                 _login_id: &str,
                 _permission: &str,
-            ) -> BulwarkResult<bool> {
+            ) -> GarrisonResult<bool> {
                 Ok(self.allowed)
             }
-            async fn has_role(&self, _login_id: &str, _role: &str) -> BulwarkResult<bool> {
+            async fn has_role(&self, _login_id: &str, _role: &str) -> GarrisonResult<bool> {
                 Ok(self.allowed)
             }
-            async fn authorize(&self, _request: &AuthRequest) -> BulwarkResult<Decision> {
+            async fn authorize(&self, _request: &AuthRequest) -> GarrisonResult<Decision> {
                 if self.fail {
-                    return Err(BulwarkError::Dao("stp-dao-connect::".to_string()));
+                    return Err(GarrisonError::Dao("stp-dao-connect::".to_string()));
                 }
                 Ok(Decision {
                     allowed: self.allowed,
@@ -923,19 +923,19 @@ mod tests {
             }
         }
 
-        /// 构造带 permission_checker 的 BulwarkLogicDefault。
-        fn make_logic_with_checker(allowed: bool, fail: bool) -> BulwarkLogicDefault {
-            let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
-            let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
-            let mut config = BulwarkConfig::default_config();
+        /// 构造带 permission_checker 的 GarrisonLogicDefault。
+        fn make_logic_with_checker(allowed: bool, fail: bool) -> GarrisonLogicDefault {
+            let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+            let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = "uuid".to_string();
-            let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
+            let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall {
                 has_permission: true,
                 has_role: true,
             });
             let pc: Arc<dyn PermissionChecker> = Arc::new(MockPermissionChecker { allowed, fail });
-            BulwarkLogicDefault::new(session, Arc::new(config), firewall)
+            GarrisonLogicDefault::new(session, Arc::new(config), firewall)
                 .with_permission_checker(pc)
         }
 
@@ -975,7 +975,7 @@ mod tests {
             })
             .await;
             assert!(
-                matches!(result, Err(BulwarkError::NotPermission(_))),
+                matches!(result, Err(GarrisonError::NotPermission(_))),
                 "permission_checker allowed=false 应返回 NotPermission，实际: {:?}",
                 result
             );
@@ -996,7 +996,7 @@ mod tests {
             })
             .await;
             assert!(
-                matches!(result, Err(BulwarkError::Dao(ref s)) if s.contains("stp-dao-connect")),
+                matches!(result, Err(GarrisonError::Dao(ref s)) if s.contains("stp-dao-connect")),
                 "permission_checker authorize 错误应透传，实际: {:?}",
                 result
             );

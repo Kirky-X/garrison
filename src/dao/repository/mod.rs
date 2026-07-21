@@ -30,7 +30,7 @@
 //! | app_user_ext | [`UserExtRepository`] | 是 | 用户扩展字段表 |
 //! | app_user_device | [`UserDeviceRepository`] | 是 | 用户设备表（M2） |
 
-use crate::error::BulwarkResult;
+use crate::error::GarrisonResult;
 
 // ============================================================================
 // Row struct 定义
@@ -343,39 +343,39 @@ pub struct UserDeviceRow {
 #[async_trait::async_trait]
 pub trait UserRepository: Send + Sync {
     /// 按 ID 查询用户。
-    async fn find_by_id(&self, tenant_id: i64, id: &str) -> BulwarkResult<Option<UserRow>>;
+    async fn find_by_id(&self, tenant_id: i64, id: &str) -> GarrisonResult<Option<UserRow>>;
 
     /// 按 username 查询用户。
     async fn find_by_username(
         &self,
         tenant_id: i64,
         username: &str,
-    ) -> BulwarkResult<Option<UserRow>>;
+    ) -> GarrisonResult<Option<UserRow>>;
 
     /// 创建用户，返回新插入的 ID。
-    async fn create(&self, tenant_id: i64, user: NewUser) -> BulwarkResult<String>;
+    async fn create(&self, tenant_id: i64, user: NewUser) -> GarrisonResult<String>;
 
     /// 更新用户。
-    async fn update(&self, tenant_id: i64, id: &str, user: UpdateUser) -> BulwarkResult<()>;
+    async fn update(&self, tenant_id: i64, id: &str, user: UpdateUser) -> GarrisonResult<()>;
 
     /// 删除用户（幂等，不存在返回 Ok(())）。
-    async fn delete(&self, tenant_id: i64, id: &str) -> BulwarkResult<()>;
+    async fn delete(&self, tenant_id: i64, id: &str) -> GarrisonResult<()>;
 
     /// 分页查询用户。
-    async fn list(&self, tenant_id: i64, offset: i64, limit: i64) -> BulwarkResult<Vec<UserRow>>;
+    async fn list(&self, tenant_id: i64, offset: i64, limit: i64) -> GarrisonResult<Vec<UserRow>>;
 }
 
 /// 角色表 Repository trait。
 #[async_trait::async_trait]
 pub trait RoleRepository: Send + Sync {
     /// 按 ID 查询角色。
-    async fn find_by_id(&self, tenant_id: i64, id: &str) -> BulwarkResult<Option<RoleRow>>;
+    async fn find_by_id(&self, tenant_id: i64, id: &str) -> GarrisonResult<Option<RoleRow>>;
 
     /// 按 code 查询角色。
-    async fn find_by_code(&self, tenant_id: i64, code: &str) -> BulwarkResult<Option<RoleRow>>;
+    async fn find_by_code(&self, tenant_id: i64, code: &str) -> GarrisonResult<Option<RoleRow>>;
 
     /// 创建角色。
-    async fn create(&self, tenant_id: i64, role: NewRole) -> BulwarkResult<String>;
+    async fn create(&self, tenant_id: i64, role: NewRole) -> GarrisonResult<String>;
 
     /// 更新角色。
     async fn update(
@@ -385,26 +385,26 @@ pub trait RoleRepository: Send + Sync {
         code: Option<String>,
         name: Option<String>,
         description: Option<String>,
-    ) -> BulwarkResult<()>;
+    ) -> GarrisonResult<()>;
 
     /// 删除角色（幂等）。
-    async fn delete(&self, tenant_id: i64, id: &str) -> BulwarkResult<()>;
+    async fn delete(&self, tenant_id: i64, id: &str) -> GarrisonResult<()>;
 
     /// 分页查询角色。
-    async fn list(&self, tenant_id: i64, offset: i64, limit: i64) -> BulwarkResult<Vec<RoleRow>>;
+    async fn list(&self, tenant_id: i64, offset: i64, limit: i64) -> GarrisonResult<Vec<RoleRow>>;
 }
 
 /// 权限表 Repository trait（全局表，无 tenant_id）。
 #[async_trait::async_trait]
 pub trait PermissionRepository: Send + Sync {
     /// 按 ID 查询权限。
-    async fn find_by_id(&self, id: &str) -> BulwarkResult<Option<PermissionRow>>;
+    async fn find_by_id(&self, id: &str) -> GarrisonResult<Option<PermissionRow>>;
 
     /// 按 code 查询权限。
-    async fn find_by_code(&self, code: &str) -> BulwarkResult<Option<PermissionRow>>;
+    async fn find_by_code(&self, code: &str) -> GarrisonResult<Option<PermissionRow>>;
 
     /// 创建权限。
-    async fn create(&self, permission: NewPermission) -> BulwarkResult<String>;
+    async fn create(&self, permission: NewPermission) -> GarrisonResult<String>;
 
     /// 更新权限。
     async fn update(
@@ -413,13 +413,13 @@ pub trait PermissionRepository: Send + Sync {
         name: Option<String>,
         resource_type: Option<String>,
         action: Option<String>,
-    ) -> BulwarkResult<()>;
+    ) -> GarrisonResult<()>;
 
     /// 删除权限（幂等）。
-    async fn delete(&self, id: &str) -> BulwarkResult<()>;
+    async fn delete(&self, id: &str) -> GarrisonResult<()>;
 
     /// 分页查询权限。
-    async fn list(&self, offset: i64, limit: i64) -> BulwarkResult<Vec<PermissionRow>>;
+    async fn list(&self, offset: i64, limit: i64) -> GarrisonResult<Vec<PermissionRow>>;
 }
 
 /// 用户-角色关联 Repository trait。
@@ -430,14 +430,14 @@ pub trait UserRoleRepository: Send + Sync {
         &self,
         tenant_id: i64,
         user_id: &str,
-    ) -> BulwarkResult<Vec<UserRoleRow>>;
+    ) -> GarrisonResult<Vec<UserRoleRow>>;
 
     /// 查询角色的所有用户关联。
     async fn find_by_role_id(
         &self,
         tenant_id: i64,
         role_id: &str,
-    ) -> BulwarkResult<Vec<UserRoleRow>>;
+    ) -> GarrisonResult<Vec<UserRoleRow>>;
 
     /// 分配角色给用户。
     async fn assign(
@@ -446,10 +446,10 @@ pub trait UserRoleRepository: Send + Sync {
         user_id: &str,
         role_id: &str,
         scope: Option<String>,
-    ) -> BulwarkResult<()>;
+    ) -> GarrisonResult<()>;
 
     /// 撤销用户的角色（幂等）。
-    async fn revoke(&self, tenant_id: i64, user_id: &str, role_id: &str) -> BulwarkResult<()>;
+    async fn revoke(&self, tenant_id: i64, user_id: &str, role_id: &str) -> GarrisonResult<()>;
 
     /// 分页查询。
     async fn list(
@@ -457,7 +457,7 @@ pub trait UserRoleRepository: Send + Sync {
         tenant_id: i64,
         offset: i64,
         limit: i64,
-    ) -> BulwarkResult<Vec<UserRoleRow>>;
+    ) -> GarrisonResult<Vec<UserRoleRow>>;
 }
 
 /// 角色-权限关联 Repository trait。
@@ -468,22 +468,30 @@ pub trait RolePermissionRepository: Send + Sync {
         &self,
         tenant_id: i64,
         role_id: &str,
-    ) -> BulwarkResult<Vec<RolePermissionRow>>;
+    ) -> GarrisonResult<Vec<RolePermissionRow>>;
 
     /// 查询权限的所有角色关联。
     async fn find_by_permission_id(
         &self,
         tenant_id: i64,
         permission_id: &str,
-    ) -> BulwarkResult<Vec<RolePermissionRow>>;
+    ) -> GarrisonResult<Vec<RolePermissionRow>>;
 
     /// 分配权限给角色。
-    async fn assign(&self, tenant_id: i64, role_id: &str, permission_id: &str)
-        -> BulwarkResult<()>;
+    async fn assign(
+        &self,
+        tenant_id: i64,
+        role_id: &str,
+        permission_id: &str,
+    ) -> GarrisonResult<()>;
 
     /// 撤销角色的权限（幂等）。
-    async fn revoke(&self, tenant_id: i64, role_id: &str, permission_id: &str)
-        -> BulwarkResult<()>;
+    async fn revoke(
+        &self,
+        tenant_id: i64,
+        role_id: &str,
+        permission_id: &str,
+    ) -> GarrisonResult<()>;
 
     /// 分页查询。
     async fn list(
@@ -491,27 +499,27 @@ pub trait RolePermissionRepository: Send + Sync {
         tenant_id: i64,
         offset: i64,
         limit: i64,
-    ) -> BulwarkResult<Vec<RolePermissionRow>>;
+    ) -> GarrisonResult<Vec<RolePermissionRow>>;
 }
 
 /// 认证方式 Repository trait。
 #[async_trait::async_trait]
 pub trait AuthMethodRepository: Send + Sync {
     /// 按 ID 查询认证方式。
-    async fn find_by_id(&self, tenant_id: i64, id: &str) -> BulwarkResult<Option<AuthMethodRow>>;
+    async fn find_by_id(&self, tenant_id: i64, id: &str) -> GarrisonResult<Option<AuthMethodRow>>;
 
     /// 查询用户的所有认证方式。
     async fn find_by_user_id(
         &self,
         tenant_id: i64,
         user_id: &str,
-    ) -> BulwarkResult<Vec<AuthMethodRow>>;
+    ) -> GarrisonResult<Vec<AuthMethodRow>>;
 
     /// 创建认证方式。
-    async fn create(&self, tenant_id: i64, method: NewAuthMethod) -> BulwarkResult<String>;
+    async fn create(&self, tenant_id: i64, method: NewAuthMethod) -> GarrisonResult<String>;
 
     /// 删除认证方式（幂等）。
-    async fn delete(&self, tenant_id: i64, id: &str) -> BulwarkResult<()>;
+    async fn delete(&self, tenant_id: i64, id: &str) -> GarrisonResult<()>;
 
     /// 分页查询。
     async fn list(
@@ -519,7 +527,7 @@ pub trait AuthMethodRepository: Send + Sync {
         tenant_id: i64,
         offset: i64,
         limit: i64,
-    ) -> BulwarkResult<Vec<AuthMethodRow>>;
+    ) -> GarrisonResult<Vec<AuthMethodRow>>;
 }
 
 /// 会话 Repository trait。
@@ -530,34 +538,38 @@ pub trait SessionRepository: Send + Sync {
         &self,
         tenant_id: i64,
         session_id: &str,
-    ) -> BulwarkResult<Option<SessionRow>>;
+    ) -> GarrisonResult<Option<SessionRow>>;
 
     /// 查询用户的所有会话。
     async fn find_by_user_id(
         &self,
         tenant_id: i64,
         user_id: &str,
-    ) -> BulwarkResult<Vec<SessionRow>>;
+    ) -> GarrisonResult<Vec<SessionRow>>;
 
     /// 创建会话。
-    async fn create(&self, tenant_id: i64, session: NewSession) -> BulwarkResult<String>;
+    async fn create(&self, tenant_id: i64, session: NewSession) -> GarrisonResult<String>;
 
     /// 更新最后活跃时间。
-    async fn update_last_active(&self, tenant_id: i64, session_id: &str) -> BulwarkResult<()>;
+    async fn update_last_active(&self, tenant_id: i64, session_id: &str) -> GarrisonResult<()>;
 
     /// 删除会话（幂等）。
-    async fn delete(&self, tenant_id: i64, session_id: &str) -> BulwarkResult<()>;
+    async fn delete(&self, tenant_id: i64, session_id: &str) -> GarrisonResult<()>;
 
     /// 分页查询。
-    async fn list(&self, tenant_id: i64, offset: i64, limit: i64)
-        -> BulwarkResult<Vec<SessionRow>>;
+    async fn list(
+        &self,
+        tenant_id: i64,
+        offset: i64,
+        limit: i64,
+    ) -> GarrisonResult<Vec<SessionRow>>;
 }
 
 /// 登录日志 Repository trait。
 #[async_trait::async_trait]
 pub trait LoginLogRepository: Send + Sync {
     /// 按 ID 查询日志。
-    async fn find_by_id(&self, tenant_id: i64, id: &str) -> BulwarkResult<Option<LoginLogRow>>;
+    async fn find_by_id(&self, tenant_id: i64, id: &str) -> GarrisonResult<Option<LoginLogRow>>;
 
     /// 查询用户的登录日志（分页）。
     async fn find_by_user_id(
@@ -566,10 +578,10 @@ pub trait LoginLogRepository: Send + Sync {
         user_id: &str,
         offset: i64,
         limit: i64,
-    ) -> BulwarkResult<Vec<LoginLogRow>>;
+    ) -> GarrisonResult<Vec<LoginLogRow>>;
 
     /// 创建日志。
-    async fn create(&self, tenant_id: i64, log: NewLoginLog) -> BulwarkResult<String>;
+    async fn create(&self, tenant_id: i64, log: NewLoginLog) -> GarrisonResult<String>;
 
     /// 分页查询。
     async fn list(
@@ -577,7 +589,7 @@ pub trait LoginLogRepository: Send + Sync {
         tenant_id: i64,
         offset: i64,
         limit: i64,
-    ) -> BulwarkResult<Vec<LoginLogRow>>;
+    ) -> GarrisonResult<Vec<LoginLogRow>>;
 }
 
 /// 用户扩展字段 Repository trait。
@@ -588,7 +600,7 @@ pub trait UserExtRepository: Send + Sync {
         &self,
         tenant_id: i64,
         user_id: &str,
-    ) -> BulwarkResult<Vec<UserExtRow>>;
+    ) -> GarrisonResult<Vec<UserExtRow>>;
 
     /// 按 user_id + field_key 查询。
     async fn find_by_user_and_key(
@@ -596,7 +608,7 @@ pub trait UserExtRepository: Send + Sync {
         tenant_id: i64,
         user_id: &str,
         field_key: &str,
-    ) -> BulwarkResult<Option<UserExtRow>>;
+    ) -> GarrisonResult<Option<UserExtRow>>;
 
     /// 插入或更新扩展字段。
     async fn upsert(
@@ -606,14 +618,18 @@ pub trait UserExtRepository: Send + Sync {
         field_key: &str,
         field_value: Option<String>,
         field_type: &str,
-    ) -> BulwarkResult<()>;
+    ) -> GarrisonResult<()>;
 
     /// 删除扩展字段（幂等）。
-    async fn delete(&self, tenant_id: i64, user_id: &str, field_key: &str) -> BulwarkResult<()>;
+    async fn delete(&self, tenant_id: i64, user_id: &str, field_key: &str) -> GarrisonResult<()>;
 
     /// 分页查询。
-    async fn list(&self, tenant_id: i64, offset: i64, limit: i64)
-        -> BulwarkResult<Vec<UserExtRow>>;
+    async fn list(
+        &self,
+        tenant_id: i64,
+        offset: i64,
+        limit: i64,
+    ) -> GarrisonResult<Vec<UserExtRow>>;
 }
 
 /// 单用户最大设备数。
@@ -624,7 +640,7 @@ pub const MAX_DEVICES: usize = 5;
 /// 用户设备 Repository trait。
 ///
 /// 提供设备注册 / 阻断 / 查询能力，`register_device` 在设备数超过 [`MAX_DEVICES`] 时
-/// 返回 `BulwarkError::InvalidParam`。重复注册同一设备（相同 identifier）幂等返回已有 ID。
+/// 返回 `GarrisonError::InvalidParam`。重复注册同一设备（相同 identifier）幂等返回已有 ID。
 ///
 /// `login_id` 为 `&str`（与全局 login_id 类型一致）。
 #[async_trait::async_trait]
@@ -632,30 +648,30 @@ pub trait UserDeviceRepository: Send + Sync {
     /// 注册设备，返回设备 ID（UUID）。
     ///
     /// - 若 (tenant_id, login_id, identifier) 已存在，更新 last_seen_at 并返回已有 ID（幂等）。
-    /// - 若当前设备数 >= [`MAX_DEVICES`]，返回 `BulwarkError::InvalidParam`。
+    /// - 若当前设备数 >= [`MAX_DEVICES`]，返回 `GarrisonError::InvalidParam`。
     async fn register_device(
         &self,
         tenant_id: i64,
         login_id: &str,
         identifier: &str,
         ua: &str,
-    ) -> BulwarkResult<String>;
+    ) -> GarrisonResult<String>;
 
     /// 阻止设备（设置 is_blocked = 1）。
-    async fn block_device(&self, device_id: &str) -> BulwarkResult<()>;
+    async fn block_device(&self, device_id: &str) -> GarrisonResult<()>;
 
     /// 解除阻止（设置 is_blocked = 0）。
-    async fn unblock_device(&self, device_id: &str) -> BulwarkResult<()>;
+    async fn unblock_device(&self, device_id: &str) -> GarrisonResult<()>;
 
     /// 列出用户的所有设备（按 tenant_id + login_id 过滤）。
     async fn list_user_devices(
         &self,
         tenant_id: i64,
         login_id: &str,
-    ) -> BulwarkResult<Vec<UserDeviceRow>>;
+    ) -> GarrisonResult<Vec<UserDeviceRow>>;
 
     /// 统计用户设备数。
-    async fn count_user_devices(&self, tenant_id: i64, login_id: &str) -> BulwarkResult<usize>;
+    async fn count_user_devices(&self, tenant_id: i64, login_id: &str) -> GarrisonResult<usize>;
 }
 
 // ============================================================================
@@ -684,7 +700,7 @@ pub mod mysql;
 /// 角色层级子模块。
 ///
 /// always compiled（`RoleHierarchyRecord` 不依赖 db-sqlite）。
-/// `RoleHierarchyService` 在 T045-T050 扩展时依赖 `BulwarkDao` trait（always compiled）。
+/// `RoleHierarchyService` 在 T045-T050 扩展时依赖 `GarrisonDao` trait（always compiled）。
 pub mod role_hierarchy;
 
 // ============================================================================
@@ -703,7 +719,7 @@ pub mod role_hierarchy;
 ///
 /// ```
 /// use sea_orm::DbBackend;
-/// use bulwark::dao::repository::convert_placeholders;
+/// use garrison::dao::repository::convert_placeholders;
 ///
 /// let sql = "WHERE id = ? AND name = ?";
 /// assert_eq!(convert_placeholders(sql, DbBackend::Sqlite), "WHERE id = ? AND name = ?");
@@ -738,7 +754,7 @@ pub fn convert_placeholders(sql: &str, backend: sea_orm::DbBackend) -> String {
 /// # 示例
 ///
 /// ```ignore
-/// use bulwark::dao::repository::make_statement;
+/// use garrison::dao::repository::make_statement;
 /// use sea_orm::Value;
 ///
 /// // 实际使用时传入真实的 DatabaseConnection（Sqlite 或 Postgres 后端）

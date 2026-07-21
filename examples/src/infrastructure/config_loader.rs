@@ -1,30 +1,30 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! 配置加载示例：演示 BulwarkConfig 的多种创建方式与热更新。
+//! 配置加载示例：演示 GarrisonConfig 的多种创建方式与热更新。
 //!
 //! 对应模块：`src/config/mod.rs`（always on，无需 feature）。
 //!
 //! 运行方式：
 //! ```sh
-//! cargo run -p bulwark-examples --bin config_loader --features full
+//! cargo run -p garrison-examples --bin config_loader --features full
 //! ```
 
-use bulwark::config::BulwarkConfig;
-use bulwark::error::{BulwarkError, BulwarkResult};
+use garrison::config::GarrisonConfig;
+use garrison::error::{GarrisonError, GarrisonResult};
 
 /// 运行配置加载示例。
 ///
 /// 演示默认配置、TOML 文件加载、环境变量覆盖、热更新订阅与配置校验。
 ///
 /// 注意：本示例使用 `std::env::set_var` 设置环境变量，在多线程环境下需串行执行。
-pub async fn run() -> BulwarkResult<()> {
-    println!("=== Bulwark 配置加载示例 ===\n");
+pub async fn run() -> GarrisonResult<()> {
+    println!("=== Garrison 配置加载示例 ===\n");
 
     // ----------------------------------------------------------------
     // 1. 默认配置
     // ----------------------------------------------------------------
-    let config = BulwarkConfig::default_config();
+    let config = GarrisonConfig::default_config();
     println!("[1] 默认配置:");
     println!("    token_name = {}", config.token_name);
     println!("    timeout = {} 秒", config.timeout);
@@ -49,10 +49,10 @@ throw_on_not_login = false
 cookie_secure = false
 cookie_same_site = "Lax"
 "#;
-    let temp_path = std::env::temp_dir().join("bulwark_config_example.toml");
+    let temp_path = std::env::temp_dir().join("garrison_config_example.toml");
     std::fs::write(&temp_path, toml_content)
-        .map_err(|e| BulwarkError::Internal(format!("写入临时文件失败: {}", e)))?;
-    let config = BulwarkConfig::load(Some(temp_path.to_str().unwrap()))?;
+        .map_err(|e| GarrisonError::Internal(format!("写入临时文件失败: {}", e)))?;
+    let config = GarrisonConfig::load(Some(temp_path.to_str().unwrap()))?;
     let _ = std::fs::remove_file(&temp_path);
     println!("[2] TOML 文件加载的配置:");
     println!("    token_name = {}", config.token_name);
@@ -61,20 +61,20 @@ cookie_same_site = "Lax"
     println!();
 
     // ----------------------------------------------------------------
-    // 3. 环境变量覆盖（BULWARK_ 前缀自动覆盖）
+    // 3. 环境变量覆盖（GARRISON_ 前缀自动覆盖）
     // ----------------------------------------------------------------
     println!("[3] 环境变量覆盖演示:");
-    println!("    设置 BULWARK_TOKEN_NAME=custom_token");
-    std::env::set_var("BULWARK_TOKEN_NAME", "custom_token");
-    let config = BulwarkConfig::load(None)?;
+    println!("    设置 GARRISON_TOKEN_NAME=custom_token");
+    std::env::set_var("GARRISON_TOKEN_NAME", "custom_token");
+    let config = GarrisonConfig::load(None)?;
     println!("    覆盖后 token_name = {}", config.token_name);
-    std::env::remove_var("BULWARK_TOKEN_NAME");
+    std::env::remove_var("GARRISON_TOKEN_NAME");
     println!();
 
     // ----------------------------------------------------------------
     // 4. 订阅配置热更新
     // ----------------------------------------------------------------
-    let config = BulwarkConfig::default_config();
+    let config = GarrisonConfig::default_config();
     println!("[4] 配置热更新演示:");
     println!("    初始 timeout = {} 秒", config.timeout);
 
@@ -97,7 +97,7 @@ cookie_same_site = "Lax"
     // ----------------------------------------------------------------
     // 6. 配置校验
     // ----------------------------------------------------------------
-    let mut bad_config = BulwarkConfig::default_config();
+    let mut bad_config = GarrisonConfig::default_config();
     bad_config.token_style = "invalid_style".to_string();
     println!("[6] 配置校验演示:");
     match bad_config.validate() {
@@ -105,7 +105,7 @@ cookie_same_site = "Lax"
         Err(e) => println!("    校验失败（符合预期）: {}", e),
     }
 
-    let good_config = BulwarkConfig::default_config();
+    let good_config = GarrisonConfig::default_config();
     good_config.validate()?;
     println!("    合法配置校验通过");
 

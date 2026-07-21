@@ -1,6 +1,6 @@
 # Release 工作流
 
-本文档描述 Bulwark 项目的发布流程，遵循规则 18/19/21 + project_memory 安全/质量门禁要求。
+本文档描述 Garrison 项目的发布流程，遵循规则 18/19/21 + project_memory 安全/质量门禁要求。
 
 ## 发布流程图
 
@@ -28,7 +28,7 @@ flowchart TD
 - **Cargo.toml `[package].version` 字段**：`{Major}.{Minor}.{Patch}`（如 `0.7.1`）
 - **CHANGELOG.md**：每次发布新增 `## [{version}] - {YYYY-MM-DD}` 章节
 - **规则 29 例外**：Cargo.toml 的 `[dependencies]` 版本用 `x.x` 格式（无 patch 段），但 `[package].version` 仍用 `x.x.x`（与 crates.io / git tag 一致）
-- **Workspace 成员**：`bump-version` 子命令只更新主包 `Cargo.toml`。如需同步 `bulwark-macros` / `examples` 版本，需手动修改对应 `Cargo.toml`
+- **Workspace 成员**：`bump-version` 子命令只更新主包 `Cargo.toml`。如需同步 `garrison-macros` / `examples` 版本，需手动修改对应 `Cargo.toml`
 
 ## 发布前检查清单
 
@@ -141,13 +141,13 @@ tag push 会自动触发 `.github/workflows/release.yml`，包含 5 个阶段 8 
 verify-release job 自动执行双重验证：
 
 - GitHub Release：`gh release view v{version}`
-- crates.io：`curl https://crates.io/api/v1/crates/bulwark`（重试 6 次共 60 秒等待索引传播）
+- crates.io：`curl https://crates.io/api/v1/crates/garrison`（重试 6 次共 60 秒等待索引传播）
 
 也可手动验证：
 
 ```bash
 gh release view v0.7.1
-cargo search bulwark
+cargo search garrison
 ```
 
 ### 8. 完成

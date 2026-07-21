@@ -24,7 +24,7 @@
 //! - `actix_routes`：actix-web 框架的健康检查路由集成
 //! - `warp_routes`：warp 框架的健康检查路由集成
 
-use crate::error::BulwarkResult;
+use crate::error::GarrisonResult;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -41,7 +41,7 @@ pub enum HealthStatus {
 }
 
 /// 健康检查结果类型别名。
-pub type HealthResult<T> = BulwarkResult<T>;
+pub type HealthResult<T> = GarrisonResult<T>;
 
 /// 单项健康检查 trait。
 ///
@@ -88,9 +88,9 @@ pub struct HealthRegistry {
 // 内置健康检查器（类型声明；impl 在 checks.rs）
 // ============================================================================
 
-/// 配置健康检查器，验证 `BulwarkConfig` 已加载且通过 `validate()`。
+/// 配置健康检查器，验证 `GarrisonConfig` 已加载且通过 `validate()`。
 pub struct ConfigHealthCheck {
-    pub(crate) config: Arc<crate::config::BulwarkConfig>,
+    pub(crate) config: Arc<crate::config::GarrisonConfig>,
 }
 
 /// 缓存健康检查器（feature-gated），探测 oxcache 连通性。

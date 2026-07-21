@@ -1,11 +1,11 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! BulwarkAuthServer 端到端集成测试（T110/T111）。
+//! GarrisonAuthServer 端到端集成测试（T110/T111）。
 //!
 //! 测试流程：
 //! 1. 创建 MockAuthBackend（实现 AuthBackend trait）
-//! 2. 使用随机端口启动 BulwarkAuthServer
+//! 2. 使用随机端口启动 GarrisonAuthServer
 //! 3. 使用 reqwest::Client 调用 HTTP 端点
 //! 4. 验证响应
 //!
@@ -19,10 +19,10 @@
 #![cfg(feature = "auth-server")]
 
 use async_trait::async_trait;
-use bulwark::backend::types::{LoginParams, SessionData, TokenInfo};
-use bulwark::backend::AuthBackend;
-use bulwark::error::{BulwarkError, BulwarkResult};
-use bulwark::server::BulwarkAuthServer;
+use garrison::backend::types::{LoginParams, SessionData, TokenInfo};
+use garrison::backend::AuthBackend;
+use garrison::error::{GarrisonError, GarrisonResult};
+use garrison::server::GarrisonAuthServer;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -43,7 +43,7 @@ impl MockAuthBackend {
 
 #[async_trait]
 impl AuthBackend for MockAuthBackend {
-    async fn login(&self, login_id: &str, _params: &LoginParams) -> BulwarkResult<String> {
+    async fn login(&self, login_id: &str, _params: &LoginParams) -> GarrisonResult<String> {
         let token = format!("token-{}-{}", login_id, uuid_like());
         self.tokens
             .lock()
@@ -51,47 +51,47 @@ impl AuthBackend for MockAuthBackend {
         Ok(token)
     }
 
-    async fn logout(&self, token: &str) -> BulwarkResult<()> {
+    async fn logout(&self, token: &str) -> GarrisonResult<()> {
         self.tokens.lock().remove(token);
         Ok(())
     }
 
-    async fn check_login(&self, token: &str) -> BulwarkResult<bool> {
+    async fn check_login(&self, token: &str) -> GarrisonResult<bool> {
         Ok(self.tokens.lock().contains_key(token))
     }
 
-    async fn check_permission(&self, token: &str, _permission: &str) -> BulwarkResult<()> {
+    async fn check_permission(&self, token: &str, _permission: &str) -> GarrisonResult<()> {
         if !self.tokens.lock().contains_key(token) {
-            return Err(BulwarkError::InvalidToken("token 无效".to_string()));
+            return Err(GarrisonError::InvalidToken("token 无效".to_string()));
         }
         Ok(())
     }
 
-    async fn check_role(&self, token: &str, _role: &str) -> BulwarkResult<()> {
+    async fn check_role(&self, token: &str, _role: &str) -> GarrisonResult<()> {
         if !self.tokens.lock().contains_key(token) {
-            return Err(BulwarkError::InvalidToken("token 无效".to_string()));
+            return Err(GarrisonError::InvalidToken("token 无效".to_string()));
         }
         Ok(())
     }
 
-    async fn check_safe(&self, _token: &str) -> BulwarkResult<bool> {
+    async fn check_safe(&self, _token: &str) -> GarrisonResult<bool> {
         Ok(false)
     }
 
-    async fn check_disable(&self, _token: &str) -> BulwarkResult<bool> {
+    async fn check_disable(&self, _token: &str) -> GarrisonResult<bool> {
         Ok(false)
     }
 
-    async fn check_api_key(&self, api_key: &str, _namespace: &str) -> BulwarkResult<()> {
+    async fn check_api_key(&self, api_key: &str, _namespace: &str) -> GarrisonResult<()> {
         if api_key == "invalid" {
-            return Err(BulwarkError::InvalidToken("API Key 无效".to_string()));
+            return Err(GarrisonError::InvalidToken("API Key 无效".to_string()));
         }
         Ok(())
     }
 
-    async fn get_token_info(&self, token: &str) -> BulwarkResult<TokenInfo> {
+    async fn get_token_info(&self, token: &str) -> GarrisonResult<TokenInfo> {
         if !self.tokens.lock().contains_key(token) {
-            return Err(BulwarkError::InvalidToken("token 无效".to_string()));
+            return Err(GarrisonError::InvalidToken("token 无效".to_string()));
         }
         Ok(TokenInfo {
             token: token.to_string(),
@@ -100,13 +100,13 @@ impl AuthBackend for MockAuthBackend {
         })
     }
 
-    async fn get_session(&self, token: &str) -> BulwarkResult<SessionData> {
+    async fn get_session(&self, token: &str) -> GarrisonResult<SessionData> {
         let login_id = self
             .tokens
             .lock()
             .get(token)
             .cloned()
-            .ok_or_else(|| BulwarkError::InvalidToken("token 无效".to_string()))?;
+            .ok_or_else(|| GarrisonError::InvalidToken("token 无效".to_string()))?;
         Ok(SessionData {
             token: token.to_string(),
             login_id,
@@ -124,29 +124,29 @@ impl AuthBackend for MockAuthBackend {
         })
     }
 
-    async fn kickout(&self, login_id: &str) -> BulwarkResult<()> {
+    async fn kickout(&self, login_id: &str) -> GarrisonResult<()> {
         let mut tokens = self.tokens.lock();
         tokens.retain(|_, v| v != login_id);
         Ok(())
     }
 
-    async fn switch_to(&self, token: &str, target_login_id: &str) -> BulwarkResult<()> {
+    async fn switch_to(&self, token: &str, target_login_id: &str) -> GarrisonResult<()> {
         let mut tokens = self.tokens.lock();
         if let Some(v) = tokens.get_mut(token) {
             *v = target_login_id.to_string();
             Ok(())
         } else {
-            Err(BulwarkError::InvalidToken("token 无效".to_string()))
+            Err(GarrisonError::InvalidToken("token 无效".to_string()))
         }
     }
 
-    async fn renew_to_equivalent(&self, token: &str) -> BulwarkResult<String> {
+    async fn renew_to_equivalent(&self, token: &str) -> GarrisonResult<String> {
         let login_id = self
             .tokens
             .lock()
             .get(token)
             .cloned()
-            .ok_or_else(|| BulwarkError::InvalidToken("token 无效".to_string()))?;
+            .ok_or_else(|| GarrisonError::InvalidToken("token 无效".to_string()))?;
         let new_token = format!("token-{}-{}", login_id, uuid_like());
         let mut tokens = self.tokens.lock();
         tokens.remove(token);
@@ -183,7 +183,7 @@ async fn start_test_server(
     let external_url = format!("http://127.0.0.1:{}", external_port);
     let internal_url = format!("http://127.0.0.1:{}", internal_port);
 
-    let server = BulwarkAuthServer::new(backend)
+    let server = GarrisonAuthServer::new(backend)
         .with_external_port(external_port)
         .with_internal_port(internal_port)
         .with_rate_limit(rate_limit)

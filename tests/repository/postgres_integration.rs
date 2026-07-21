@@ -11,11 +11,11 @@
 //! 5. `postgres_permission_repository_crud`：PermissionRepository create/find/list
 //! 6. `postgres_user_device_repository_crud`：UserDeviceRepository register/block/unblock/list/count
 //!
-//! 运行前必须启动 Docker 容器 `bulwark-postgres-test`：
+//! 运行前必须启动 Docker 容器 `garrison-postgres-test`：
 //! ```sh
-//! docker run -d --name bulwark-postgres-test \
-//!   -e POSTGRES_USER=bulwark -e POSTGRES_PASSWORD=bulwark \
-//!   -e POSTGRES_DB=bulwark_test -p 5432:5432 postgres:16-alpine
+//! docker run -d --name garrison-postgres-test \
+//!   -e POSTGRES_USER=garrison -e POSTGRES_PASSWORD=garrison \
+//!   -e POSTGRES_DB=garrison_test -p 5432:5432 postgres:16-alpine
 //! ```
 //!
 //! 运行：`cargo test --features db-postgres --test postgres_repository_integration`
@@ -24,7 +24,7 @@
 
 #![cfg(feature = "db-postgres")]
 
-use bulwark::dao::{
+use garrison::dao::{
     init_dbnexus,
     repository::{
         postgres::{
@@ -34,13 +34,13 @@ use bulwark::dao::{
         NewPermission, NewRole, NewUser, PermissionRepository, RoleRepository, UpdateUser,
         UserDeviceRepository, UserRepository,
     },
-    BulwarkMigration,
+    GarrisonMigration,
 };
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 use serial_test::serial;
 use std::path::PathBuf;
 
-const POSTGRES_URL: &str = "postgres://bulwark:bulwark@localhost:5432/bulwark_test";
+const POSTGRES_URL: &str = "postgres://garrison:garrison@localhost:5432/garrison_test";
 const TENANT_A: i64 = 1;
 
 // ============================================================================
@@ -92,7 +92,7 @@ async fn setup_db() -> dbnexus::DbPool {
         .await
         .expect("init_dbnexus postgres 应成功");
     reset_database(&pool).await;
-    let migration = BulwarkMigration::with_base_dir(pool.clone(), project_migrations_dir());
+    let migration = GarrisonMigration::with_base_dir(pool.clone(), project_migrations_dir());
     let applied = migration.migrate_core().await.expect("migrate_core 应成功");
     assert!(
         applied >= 6,

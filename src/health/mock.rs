@@ -8,7 +8,7 @@
 //! 供 `health::tests` HealthRegistry 聚合测试复用。
 
 use super::{HealthCheck, HealthResult, HealthStatus};
-use crate::error::BulwarkError;
+use crate::error::GarrisonError;
 
 /// 始终返回 Healthy 的 HealthCheck mock。
 pub struct AlwaysHealthy;
@@ -38,7 +38,11 @@ impl HealthCheck for AlwaysUnhealthy {
         &self,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = HealthResult<HealthStatus>> + Send>>
     {
-        Box::pin(async { Err(BulwarkError::Internal("dependency unavailable".to_string())) })
+        Box::pin(async {
+            Err(GarrisonError::Internal(
+                "dependency unavailable".to_string(),
+            ))
+        })
     }
 }
 

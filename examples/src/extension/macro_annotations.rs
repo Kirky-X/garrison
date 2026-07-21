@@ -7,25 +7,25 @@
 //!
 //! 运行方式：
 //! ```sh
-//! cargo run -p bulwark-examples --bin macro_annotations --features "annotation-macros cache-memory web-axum"
+//! cargo run -p garrison-examples --bin macro_annotations --features "annotation-macros cache-memory web-axum"
 //! ```
 //!
-//! 宏会将原 async fn 重命名为 `__bulwark_inner_<name>`，生成同名 wrapper：
-//! - `#[check_login]` → `BulwarkUtil::check_login().await`，未登录返回 401
+//! 宏会将原 async fn 重命名为 `__garrison_inner_<name>`，生成同名 wrapper：
+//! - `#[check_login]` → `GarrisonUtil::check_login().await`，未登录返回 401
 //! - `#[check_permission("a", "b")]` → 依次校验 a + b（AND 语义），任一失败返回 403
 //! - `#[check_role("admin")]` → 校验角色，无角色返回 403
 //!
 //! **限制**：
 //! - 仅支持 async fn（同步 fn 计划 v0.5.0+ 支持）
 //! - 原 fn 返回类型需实现 `axum::response::IntoResponse`
-//! - 依赖 `BulwarkManager` 全局单例（需先 `BulwarkManager::init`）
+//! - 依赖 `GarrisonManager` 全局单例（需先 `GarrisonManager::init`）
 //! - task_local token 上下文由 `with_current_token` 或 axum middleware 设置
 
 use async_trait::async_trait;
 use axum::http::StatusCode;
-use bulwark::{
-    check_login, check_permission, check_role, BulwarkConfig, BulwarkDao, BulwarkError,
-    BulwarkInterface, BulwarkManager, BulwarkUtil,
+use garrison::{
+    check_login, check_permission, check_role, GarrisonConfig, GarrisonDao, GarrisonError,
+    GarrisonInterface, GarrisonManager, GarrisonUtil,
 };
 use http_body_util::BodyExt;
 use parking_lot::Mutex;
@@ -84,8 +84,8 @@ impl MockDao {
 }
 
 #[async_trait]
-impl BulwarkDao for MockDao {
-    async fn get(&self, key: &str) -> Result<Option<String>, BulwarkError> {
+impl GarrisonDao for MockDao {
+    async fn get(&self, key: &str) -> Result<Option<String>, GarrisonError> {
         let mut store = self.store.lock();
         match store.get(key) {
             Some((value, expire_at)) => {
@@ -101,7 +101,7 @@ impl BulwarkDao for MockDao {
         }
     }
 
-    async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> Result<(), BulwarkError> {
+    async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> Result<(), GarrisonError> {
         let expire_at = if ttl_seconds == 0 {
             None
         } else {
@@ -113,18 +113,18 @@ impl BulwarkDao for MockDao {
         Ok(())
     }
 
-    async fn update(&self, key: &str, value: &str) -> Result<(), BulwarkError> {
+    async fn update(&self, key: &str, value: &str) -> Result<(), GarrisonError> {
         let mut store = self.store.lock();
         match store.get_mut(key) {
             Some((existing, _)) => {
                 *existing = value.to_string();
                 Ok(())
             },
-            None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
+            None => Err(GarrisonError::Dao(format!("键不存在: {}", key))),
         }
     }
 
-    async fn expire(&self, key: &str, seconds: u64) -> Result<(), BulwarkError> {
+    async fn expire(&self, key: &str, seconds: u64) -> Result<(), GarrisonError> {
         let mut store = self.store.lock();
         match store.get_mut(key) {
             Some((_, expire_at)) => {
@@ -135,11 +135,11 @@ impl BulwarkDao for MockDao {
                 };
                 Ok(())
             },
-            None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
+            None => Err(GarrisonError::Dao(format!("键不存在: {}", key))),
         }
     }
 
-    async fn delete(&self, key: &str) -> Result<(), BulwarkError> {
+    async fn delete(&self, key: &str) -> Result<(), GarrisonError> {
         self.store.lock().remove(key);
         Ok(())
     }
@@ -176,12 +176,12 @@ impl MockInterface {
 }
 
 #[async_trait]
-impl BulwarkInterface for MockInterface {
-    async fn get_permission_list(&self, login_id: &str) -> Result<Vec<String>, BulwarkError> {
+impl GarrisonInterface for MockInterface {
+    async fn get_permission_list(&self, login_id: &str) -> Result<Vec<String>, GarrisonError> {
         Ok(self.permissions.get(login_id).cloned().unwrap_or_default())
     }
 
-    async fn get_role_list(&self, login_id: &str) -> Result<Vec<String>, BulwarkError> {
+    async fn get_role_list(&self, login_id: &str) -> Result<Vec<String>, GarrisonError> {
         Ok(self.roles.get(login_id).cloned().unwrap_or_default())
     }
 }
@@ -197,10 +197,10 @@ async fn read_body(response: axum::response::Response) -> String {
     String::from_utf8(bytes.to_vec()).expect("utf8 body")
 }
 
-/// 初始化 BulwarkManager（覆盖式更新，带权限/角色数据）。
+/// 初始化 GarrisonManager（覆盖式更新，带权限/角色数据）。
 fn init_manager(permissions: &[(&str, &[&str])], roles: &[(&str, &[&str])]) {
-    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
-    let mut config = BulwarkConfig::default_config();
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+    let mut config = GarrisonConfig::default_config();
     config.timeout = 3600;
     config.active_timeout = -1;
     config.throw_on_not_login = false; // loose 模式：未登录返回 Ok(false) → 401
@@ -212,31 +212,31 @@ fn init_manager(permissions: &[(&str, &[&str])], roles: &[(&str, &[&str])]) {
     for (id, roles) in roles {
         interface = interface.with_role(id, roles);
     }
-    let interface: Arc<dyn BulwarkInterface> = Arc::new(interface);
-    BulwarkManager::init(dao, config, interface).unwrap();
+    let interface: Arc<dyn GarrisonInterface> = Arc::new(interface);
+    GarrisonManager::init(dao, config, interface).unwrap();
 }
 
 /// 运行过程宏注解示例。
 ///
 /// 流程：
-/// 1. 初始化 BulwarkManager（带权限/角色数据）
+/// 1. 初始化 GarrisonManager（带权限/角色数据）
 /// 2. login(1001) 生成 token
 /// 3. 在 task_local 上下文中调用宏标注的 handler
 /// 4. 演示成功路径（已登录/已授权）与失败路径（未登录/无权限/无角色）
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    println!("=== Bulwark 过程宏注解示例 ===\n");
+    println!("=== Garrison 过程宏注解示例 ===\n");
 
     // 1. 初始化：用户 1001 持有 user:read + user:write 权限，admin 角色
     init_manager(
         &[("1001", &["user:read", "user:write"])],
         &[("1001", &["admin"])],
     );
-    println!("[1] BulwarkManager 初始化完成");
+    println!("[1] GarrisonManager 初始化完成");
     println!("    用户 1001 权限: [user:read, user:write]");
     println!("    用户 1001 角色: [admin]\n");
 
     // 2. 用户 1001 登录获取 token
-    let token = BulwarkUtil::login_simple("1001").await?;
+    let token = GarrisonUtil::login_simple("1001").await?;
     println!(
         "[2] 用户 1001 登录获取 token: {}...",
         &token[..std::cmp::min(20, token.len())]
@@ -245,7 +245,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // 3. #[check_login] 已登录 → 200
     println!("\n[3] #[check_login] 已登录 → 200");
     let response =
-        bulwark::stp::with_current_token(token.clone(), async { login_handler().await }).await;
+        garrison::stp::with_current_token(token.clone(), async { login_handler().await }).await;
     println!("    状态码: {}", response.status());
     println!("    body:   {}", read_body(response).await);
     assert_eq!(StatusCode::OK, axum::http::StatusCode::OK);
@@ -253,28 +253,28 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // 4. #[check_permission("user:read")] 持有权限 → 200
     println!("\n[4] #[check_permission(\"user:read\")] 持有权限 → 200");
     let response =
-        bulwark::stp::with_current_token(token.clone(), async { perm_handler().await }).await;
+        garrison::stp::with_current_token(token.clone(), async { perm_handler().await }).await;
     println!("    状态码: {}", response.status());
     println!("    body:   {}", read_body(response).await);
 
     // 5. #[check_permission("user:read", "user:write")] 多权限 AND → 200
     println!("\n[5] #[check_permission(\"user:read\", \"user:write\")] 多权限 AND → 200");
     let response =
-        bulwark::stp::with_current_token(token.clone(), async { perm_and_handler().await }).await;
+        garrison::stp::with_current_token(token.clone(), async { perm_and_handler().await }).await;
     println!("    状态码: {}", response.status());
     println!("    body:   {}", read_body(response).await);
 
     // 6. #[check_role("admin")] 持有角色 → 200
     println!("\n[6] #[check_role(\"admin\")] 持有角色 → 200");
     let response =
-        bulwark::stp::with_current_token(token.clone(), async { role_handler().await }).await;
+        garrison::stp::with_current_token(token.clone(), async { role_handler().await }).await;
     println!("    状态码: {}", response.status());
     println!("    body:   {}", read_body(response).await);
 
     // 7. #[check_role("admin", "superadmin")] 多角色 AND → 403（缺少 superadmin）
     println!("\n[7] #[check_role(\"admin\", \"superadmin\")] 多角色 AND → 403（缺 superadmin）");
     let response =
-        bulwark::stp::with_current_token(token.clone(), async { role_and_handler().await }).await;
+        garrison::stp::with_current_token(token.clone(), async { role_and_handler().await }).await;
     println!(
         "    状态码: {}（预期 403，因缺少 superadmin）",
         response.status()
@@ -283,7 +283,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // 8. 未登录（无效 token）→ 401
     println!("\n[8] 未登录（无效 token）→ 401");
-    let response = bulwark::stp::with_current_token("invalid-token".to_string(), async {
+    let response = garrison::stp::with_current_token("invalid-token".to_string(), async {
         login_handler().await
     })
     .await;
@@ -294,9 +294,9 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n[9] 无权限 → 403");
     // 初始化一个无权限的用户 2002
     init_manager(&[], &[("2002", &["admin"])]);
-    let token_2002 = BulwarkUtil::login_simple("2002").await?;
+    let token_2002 = GarrisonUtil::login_simple("2002").await?;
     let response =
-        bulwark::stp::with_current_token(token_2002, async { perm_handler().await }).await;
+        garrison::stp::with_current_token(token_2002, async { perm_handler().await }).await;
     println!(
         "    用户 2002 无 user:read 权限，状态码: {}（预期 403）",
         response.status()
@@ -312,8 +312,8 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("  #[check_role(\"admin\", \"superadmin\")]   → 同时持有 admin + superadmin（AND），否则 403");
     println!("\n使用方式：");
     println!("  1. 在 Cargo.toml 启用 annotation-macros feature");
-    println!("  2. use bulwark::{{check_login, check_permission, check_role}};");
+    println!("  2. use garrison::{{check_login, check_permission, check_role}};");
     println!("  3. 标注 async fn（返回类型需实现 axum::response::IntoResponse）");
-    println!("  4. 调用前确保 BulwarkManager::init + task_local token 已设置");
+    println!("  4. 调用前确保 GarrisonManager::init + task_local token 已设置");
     Ok(())
 }

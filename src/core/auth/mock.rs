@@ -7,8 +7,8 @@
 //! 提供 `MockDao`（基于 `tokio::sync::Mutex<HashMap>` + `Instant` 模拟 TTL），
 //! 供 `core::auth::tests` 登录/登出/会话测试复用。
 
-use crate::dao::BulwarkDao;
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::dao::GarrisonDao;
+use crate::error::{GarrisonError, GarrisonResult};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -29,8 +29,8 @@ impl MockDao {
 }
 
 #[async_trait]
-impl BulwarkDao for MockDao {
-    async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
+impl GarrisonDao for MockDao {
+    async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
         let mut store = self.store.lock().await;
         match store.get(key) {
             Some((value, expire_at)) => {
@@ -46,7 +46,7 @@ impl BulwarkDao for MockDao {
         }
     }
 
-    async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> BulwarkResult<()> {
+    async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> GarrisonResult<()> {
         let expire_at = if ttl_seconds == 0 {
             None
         } else {
@@ -59,18 +59,18 @@ impl BulwarkDao for MockDao {
         Ok(())
     }
 
-    async fn update(&self, key: &str, value: &str) -> BulwarkResult<()> {
+    async fn update(&self, key: &str, value: &str) -> GarrisonResult<()> {
         let mut store = self.store.lock().await;
         match store.get_mut(key) {
             Some((existing, _)) => {
                 *existing = value.to_string();
                 Ok(())
             },
-            None => Err(BulwarkError::Dao(format!("dao-key-not-found::{}", key))),
+            None => Err(GarrisonError::Dao(format!("dao-key-not-found::{}", key))),
         }
     }
 
-    async fn expire(&self, key: &str, seconds: u64) -> BulwarkResult<()> {
+    async fn expire(&self, key: &str, seconds: u64) -> GarrisonResult<()> {
         let mut store = self.store.lock().await;
         match store.get_mut(key) {
             Some((_, expire_at)) => {
@@ -81,11 +81,11 @@ impl BulwarkDao for MockDao {
                 };
                 Ok(())
             },
-            None => Err(BulwarkError::Dao(format!("dao-key-not-found::{}", key))),
+            None => Err(GarrisonError::Dao(format!("dao-key-not-found::{}", key))),
         }
     }
 
-    async fn delete(&self, key: &str) -> BulwarkResult<()> {
+    async fn delete(&self, key: &str) -> GarrisonResult<()> {
         self.store.lock().await.remove(key);
         Ok(())
     }
@@ -94,7 +94,7 @@ impl BulwarkDao for MockDao {
     ///
     /// - `Some(remaining)`: 键存在且设置了 TTL（expire_at - now）
     /// - `None`: 键不存在，或永久键（expire_at = None）
-    async fn get_timeout(&self, key: &str) -> BulwarkResult<Option<Duration>> {
+    async fn get_timeout(&self, key: &str) -> GarrisonResult<Option<Duration>> {
         let store = self.store.lock().await;
         match store.get(key) {
             Some((_, Some(deadline))) => {
@@ -113,7 +113,7 @@ impl BulwarkDao for MockDao {
     ///
     /// 单次 lookup + 锁获取，避免 `get` + `get_timeout` 两次锁获取。
     /// 用于 `renew_to_equivalent` 热路径性能优化。
-    async fn get_with_ttl(&self, key: &str) -> BulwarkResult<Option<(String, Option<Duration>)>> {
+    async fn get_with_ttl(&self, key: &str) -> GarrisonResult<Option<(String, Option<Duration>)>> {
         let mut store = self.store.lock().await;
         match store.get(key) {
             Some((value, expire_at)) => {

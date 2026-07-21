@@ -7,7 +7,7 @@
 
 #![cfg(feature = "secure-httpdigest")]
 
-use bulwark_examples::authentication::httpdigest_login;
+use garrison_examples::authentication::httpdigest_login;
 
 #[test]
 fn test_run_completes() {

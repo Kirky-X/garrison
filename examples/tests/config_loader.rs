@@ -8,7 +8,7 @@
 //! 注意：config_loader 使用 `std::env::set_var`，多测试并行会污染进程级环境变量，
 //! 必须用 #[serial] 保证串行执行。
 
-use bulwark_examples::infrastructure::config_loader;
+use garrison_examples::infrastructure::config_loader;
 use serial_test::serial;
 
 #[tokio::test]

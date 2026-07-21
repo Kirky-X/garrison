@@ -26,8 +26,8 @@
 //! `MathCaptchaProvider` 用 challenge_id 定位，不依赖上下文，是独立的验证码生成/验证组件。
 
 use crate::constants::DaoKeyPrefix;
-use crate::dao::BulwarkDao;
-use crate::error::BulwarkResult;
+use crate::dao::GarrisonDao;
+use crate::error::GarrisonResult;
 use rand::rngs::OsRng;
 use rand::Rng;
 use std::sync::Arc;
@@ -45,17 +45,17 @@ const DEFAULT_MAX_ATTEMPTS: u32 = 5;
 ///
 /// ```ignore
 /// use std::sync::Arc;
-/// use bulwark::dao::BulwarkDao;
-/// use bulwark::strategy::firewall::captcha_provider::MathCaptchaProvider;
+/// use garrison::dao::GarrisonDao;
+/// use garrison::strategy::firewall::captcha_provider::MathCaptchaProvider;
 ///
-/// let dao: Arc<dyn BulwarkDao> = /* oxcache 实现 */;
+/// let dao: Arc<dyn GarrisonDao> = /* oxcache 实现 */;
 /// let provider = MathCaptchaProvider::new(dao);          // TTL=300s, max_attempts=5
 /// let provider = MathCaptchaProvider::with_ttl(dao, 600); // TTL=600s
 /// let provider = MathCaptchaProvider::with_max_attempts(dao, 3); // max_attempts=3
 /// ```
 pub struct MathCaptchaProvider {
     /// DAO（用于存储 challenge 答案）。
-    dao: Arc<dyn BulwarkDao>,
+    dao: Arc<dyn GarrisonDao>,
     /// 答案在 DAO 中的存活时间（秒）。
     ttl: u64,
     /// 最大验证尝试次数，超过后 challenge 自动废弃（防暴力穷举）。
@@ -64,7 +64,7 @@ pub struct MathCaptchaProvider {
 
 impl MathCaptchaProvider {
     /// 创建数学验证码提供商，TTL 默认 300 秒，最大尝试次数 5。
-    pub fn new(dao: Arc<dyn BulwarkDao>) -> Self {
+    pub fn new(dao: Arc<dyn GarrisonDao>) -> Self {
         Self {
             dao,
             ttl: DEFAULT_TTL,
@@ -73,7 +73,7 @@ impl MathCaptchaProvider {
     }
 
     /// 创建数学验证码提供商，自定义 TTL。
-    pub fn with_ttl(dao: Arc<dyn BulwarkDao>, ttl: u64) -> Self {
+    pub fn with_ttl(dao: Arc<dyn GarrisonDao>, ttl: u64) -> Self {
         Self {
             dao,
             ttl,
@@ -82,7 +82,7 @@ impl MathCaptchaProvider {
     }
 
     /// 创建数学验证码提供商，自定义最大验证尝试次数。
-    pub fn with_max_attempts(dao: Arc<dyn BulwarkDao>, max_attempts: u32) -> Self {
+    pub fn with_max_attempts(dao: Arc<dyn GarrisonDao>, max_attempts: u32) -> Self {
         Self {
             dao,
             ttl: DEFAULT_TTL,
@@ -93,7 +93,7 @@ impl MathCaptchaProvider {
     /// 生成一道数学挑战题，返回 `(challenge_id, 题目字符串)`。
     ///
     /// 题目格式为 `"a op b = ?"`（如 `"3 + 5 = ?"`），答案存入 DAO 供 [`verify`](Self::verify) 比对。
-    pub async fn generate(&self) -> BulwarkResult<(String, String)> {
+    pub async fn generate(&self) -> GarrisonResult<(String, String)> {
         let mut rng = OsRng;
         let a: i32 = rng.gen_range(1..=20);
         let b: i32 = rng.gen_range(1..=20);
@@ -115,7 +115,7 @@ impl MathCaptchaProvider {
     /// - 匹配则删除 DAO key（一次性使用，防止复用）。
     /// - 不匹配时递增尝试计数器，超过 `max_attempts` 后删除 challenge key（防暴力穷举）。
     /// - challenge_id 不存在返回 `Ok(false)`。
-    pub async fn verify(&self, challenge_id: &str, answer: &str) -> BulwarkResult<bool> {
+    pub async fn verify(&self, challenge_id: &str, answer: &str) -> GarrisonResult<bool> {
         let key = format!("{}math:{}", DaoKeyPrefix::Captcha, challenge_id);
         let stored = self.dao.get(&key).await?;
         let stored = match stored {
@@ -168,7 +168,7 @@ mod tests {
     /// generate 返回非空 challenge_id 和非空题目。
     #[tokio::test]
     async fn generate_returns_nonempty_id_and_question() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let provider = MathCaptchaProvider::new(dao);
         let (id, question) = provider.generate().await.expect("generate 不应报错");
         assert!(!id.is_empty(), "challenge_id 不应为空");
@@ -178,7 +178,7 @@ mod tests {
     /// generate + verify 正确答案通过。
     #[tokio::test]
     async fn verify_correct_answer_passes() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let provider = MathCaptchaProvider::new(dao);
         let (id, question) = provider.generate().await.expect("generate 不应报错");
 
@@ -203,7 +203,7 @@ mod tests {
     /// generate + verify 错误答案返回 false。
     #[tokio::test]
     async fn verify_incorrect_answer_returns_false() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let provider = MathCaptchaProvider::new(dao);
         let (id, _question) = provider.generate().await.expect("generate 不应报错");
 
@@ -215,7 +215,7 @@ mod tests {
     /// verify 不存在的 challenge_id 返回 false。
     #[tokio::test]
     async fn verify_nonexistent_id_returns_false() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let provider = MathCaptchaProvider::new(dao);
 
         let ok = provider
@@ -228,7 +228,7 @@ mod tests {
     /// 验证通过后再次 verify 返回 false（一次性使用）。
     #[tokio::test]
     async fn verify_is_one_time_use() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let provider = MathCaptchaProvider::new(dao);
         let (id, question) = provider.generate().await.expect("generate 不应报错");
 
@@ -259,7 +259,7 @@ mod tests {
     /// generate 生成的题目格式正确（含运算符和 "= ?"）。
     #[tokio::test]
     async fn generate_produces_well_formed_question() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let provider = MathCaptchaProvider::new(dao);
 
         // 多次生成验证格式稳定性（随机性不应破坏格式）
@@ -296,7 +296,7 @@ mod tests {
     /// with_ttl 允许自定义 TTL。
     #[tokio::test]
     async fn with_ttl_sets_custom_ttl() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let provider = MathCaptchaProvider::with_ttl(dao, 1);
         let (id, _question) = provider.generate().await.expect("generate 不应报错");
 
@@ -311,7 +311,7 @@ mod tests {
     /// verify 对答案做 trim（容忍前后空白）。
     #[tokio::test]
     async fn verify_trims_whitespace() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let provider = MathCaptchaProvider::new(dao);
         let (id, question) = provider.generate().await.expect("generate 不应报错");
 
@@ -331,7 +331,7 @@ mod tests {
     /// 超过最大尝试次数后 challenge 自动废弃（防暴力穷举）。
     #[tokio::test]
     async fn verify_invalidates_after_max_attempts() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let provider = MathCaptchaProvider::with_max_attempts(dao, 3);
         let (id, _question) = provider.generate().await.expect("generate 不应报错");
 
@@ -349,7 +349,7 @@ mod tests {
     /// 默认最大尝试次数为 5。
     #[tokio::test]
     async fn default_max_attempts_is_5() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let provider = MathCaptchaProvider::new(dao);
         let (id, _question) = provider.generate().await.expect("generate 不应报错");
 
@@ -367,7 +367,7 @@ mod tests {
     /// 正确答案在未超过 max_attempts 时通过。
     #[tokio::test]
     async fn correct_answer_passes_before_max_attempts() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let provider = MathCaptchaProvider::with_max_attempts(dao, 3);
         let (id, question) = provider.generate().await.expect("generate 不应报错");
 

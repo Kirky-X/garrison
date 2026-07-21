@@ -12,9 +12,9 @@
 //! 匿名 Session 的 `login_id` 为空字符串 `""`，`is_anon` 为 `true`。
 //! 不参与 `login_token_map`（因为 login_id 为空）。
 
-use super::{BulwarkSession, TokenSession};
+use super::{GarrisonSession, TokenSession};
 use crate::constants::DaoKeyPrefix;
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::error::{GarrisonError, GarrisonResult};
 use chrono::Utc;
 use std::collections::HashMap;
 
@@ -28,14 +28,14 @@ fn anon_token_key(token: &str) -> String {
 /// 校验匿名 token 输入。
 ///
 /// 拒绝空字符串和超长 token（>128 字节），防止 DoS 和语义混淆。
-fn validate_anon_token(token: &str) -> BulwarkResult<()> {
+fn validate_anon_token(token: &str) -> GarrisonResult<()> {
     if token.is_empty() {
-        return Err(BulwarkError::InvalidParam(
+        return Err(GarrisonError::InvalidParam(
             "session-token-empty::".to_string(),
         ));
     }
     if token.len() > 128 {
-        return Err(BulwarkError::InvalidParam(
+        return Err(GarrisonError::InvalidParam(
             "session-token-too-long::".to_string(),
         ));
     }
@@ -48,19 +48,19 @@ fn validate_anon_token(token: &str) -> BulwarkResult<()> {
 /// 后续调用返回已存在的 Session。TTL 由 `anon_session_timeout` 控制。
 ///
 /// # 参数
-/// - `session`: BulwarkSession 引用。
+/// - `session`: GarrisonSession 引用。
 /// - `token`: token 字符串。
 ///
 /// # 返回
 /// 匿名 TokenSession。
 ///
 /// # 错误
-/// - 序列化/反序列化失败：`BulwarkError::Session`。
-/// - DAO 操作失败：透传 `BulwarkError`。
+/// - 序列化/反序列化失败：`GarrisonError::Session`。
+/// - DAO 操作失败：透传 `GarrisonError`。
 pub async fn get_anon_token_session(
-    session: &BulwarkSession,
+    session: &GarrisonSession,
     token: &str,
-) -> BulwarkResult<TokenSession> {
+) -> GarrisonResult<TokenSession> {
     validate_anon_token(token)?;
     let key = anon_token_key(token);
 
@@ -70,7 +70,7 @@ pub async fn get_anon_token_session(
             // 已存在则返回
             if let Some(json) = session.dao.get(&key).await? {
                 let ts: TokenSession = serde_json::from_str(&json).map_err(|e| {
-                    BulwarkError::Session(format!("session-sim-anon-deserialize::{}", e))
+                    GarrisonError::Session(format!("session-sim-anon-deserialize::{}", e))
                 })?;
                 return Ok(ts);
             }
@@ -92,8 +92,9 @@ pub async fn get_anon_token_session(
                 is_anon: true,
             };
 
-            let json = serde_json::to_string(&ts)
-                .map_err(|e| BulwarkError::Session(format!("session-sim-anon-serialize::{}", e)))?;
+            let json = serde_json::to_string(&ts).map_err(|e| {
+                GarrisonError::Session(format!("session-sim-anon-serialize::{}", e))
+            })?;
             session
                 .dao
                 .set(&key, &json, session.anon_session_timeout)
@@ -111,15 +112,15 @@ pub async fn get_anon_token_session(
 /// - 不存在 → `false`（登录 Session 或不存在的 token）
 ///
 /// # 参数
-/// - `session`: BulwarkSession 引用。
+/// - `session`: GarrisonSession 引用。
 /// - `token`: token 字符串。
 ///
 /// # 返回
 /// `true` 表示匿名 Session，`false` 表示非匿名。
 ///
 /// # 错误
-/// DAO 读取失败时透传 `BulwarkError`。
-pub async fn is_anon(session: &BulwarkSession, token: &str) -> BulwarkResult<bool> {
+/// DAO 读取失败时透传 `GarrisonError`。
+pub async fn is_anon(session: &GarrisonSession, token: &str) -> GarrisonResult<bool> {
     validate_anon_token(token)?;
     let key = anon_token_key(token);
     Ok(session.dao.get(&key).await?.is_some())
@@ -130,15 +131,15 @@ pub async fn is_anon(session: &BulwarkSession, token: &str) -> BulwarkResult<boo
 /// 删除 `token:session:anon:{token}` 键。不存在的 anon token 返回 `Ok(())`（幂等）。
 ///
 /// # 参数
-/// - `session`: BulwarkSession 引用。
+/// - `session`: GarrisonSession 引用。
 /// - `token`: token 字符串。
 ///
 /// # 返回
 /// 成功返回 `Ok(())`。
 ///
 /// # 错误
-/// DAO 删除失败时透传 `BulwarkError`。
-pub async fn logout_anon(session: &BulwarkSession, token: &str) -> BulwarkResult<()> {
+/// DAO 删除失败时透传 `GarrisonError`。
+pub async fn logout_anon(session: &GarrisonSession, token: &str) -> GarrisonResult<()> {
     validate_anon_token(token)?;
     let key = anon_token_key(token);
     session.dao.delete(&key).await
@@ -151,14 +152,14 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
-    /// 辅助函数：创建带 MockDao + 自定义 anon_session_timeout 的 BulwarkSession。
+    /// 辅助函数：创建带 MockDao + 自定义 anon_session_timeout 的 GarrisonSession。
     fn make_anon_session(
         timeout: u64,
         active_timeout: u64,
         anon_timeout: u64,
-    ) -> (Arc<MockDao>, BulwarkSession) {
+    ) -> (Arc<MockDao>, GarrisonSession) {
         let dao = Arc::new(MockDao::new());
-        let session = BulwarkSession::new(dao.clone(), timeout, active_timeout)
+        let session = GarrisonSession::new(dao.clone(), timeout, active_timeout)
             .with_anon_session_timeout(anon_timeout);
         (dao, session)
     }

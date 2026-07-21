@@ -4,7 +4,7 @@
 //! Keycloak OIDC RP 完整流程端到端集成测试。
 //!
 //! 使用 wiremock 模拟 Keycloak 的 discovery/JWKS/token endpoints，
-//! 验证 bulwark 作为 OIDC RP 的完整授权码流程：discover → exchange_code → verify_id_token。
+//! 验证 garrison 作为 OIDC RP 的完整授权码流程：discover → exchange_code → verify_id_token。
 //!
 //! 运行：
 //! ```bash
@@ -15,7 +15,7 @@
 mod keycloak_e2e {
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use base64::Engine;
-    use bulwark::{KeycloakConfig, KeycloakProvider};
+    use garrison::{KeycloakConfig, KeycloakProvider};
     use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
     use rand::rngs::OsRng;
     use rsa::pkcs1::EncodeRsaPrivateKey;
@@ -42,7 +42,7 @@ mod keycloak_e2e {
     /// 验证 Keycloak OIDC RP 完整流程：discover → exchange_code → verify_id_token。
     ///
     /// 使用 wiremock 模拟 Keycloak 的 discovery/JWKS/token endpoints，
-    /// 验证 bulwark 作为 OIDC RP 的完整授权码流程。
+    /// 验证 garrison 作为 OIDC RP 的完整授权码流程。
     ///
     /// 断言：
     /// 1. `discover()` 返回正确的 OIDC discovery metadata
@@ -107,7 +107,7 @@ mod keycloak_e2e {
         let claims = TestIdTokenClaims {
             iss: issuer.clone(),
             sub: sub.into(),
-            aud: "bulwark-rp".into(),
+            aud: "garrison-rp".into(),
             exp: now + 3600,
             iat: now,
             preferred_username: "testuser".into(),
@@ -141,7 +141,7 @@ mod keycloak_e2e {
 
         let config = KeycloakConfig {
             base_url: server.uri(),
-            client_id: "bulwark-rp".into(),
+            client_id: "garrison-rp".into(),
             client_secret: Some("client-secret-123".into()),
             redirect_uri: "https://app.example.com/cb".into(),
             expected_iss: server.uri(),

@@ -3,7 +3,7 @@
 
 //! 异地登录检测策略。
 //!
-//! `AnomalousLoginStrategy` 实现 [`BulwarkFirewallStrategy`] trait，
+//! `AnomalousLoginStrategy` 实现 [`GarrisonFirewallStrategy`] trait，
 //! 用 oxcache key `anom:user:{login_id}` 存储用户历史登录 IP 的地理坐标，
 //! 新登录 geo 与历史 geo 的 haversine 距离超阈值则拦截。
 //!
@@ -22,9 +22,9 @@
 //! - 测试用 `MockGeoLookup`（硬编码 IP → 坐标映射）
 
 use super::geo::{GeoCoord, GeoLookup};
-use crate::dao::BulwarkDao;
-use crate::error::{BulwarkError, BulwarkResult};
-use crate::strategy::firewall::{BulwarkFirewallStrategy, FirewallContext};
+use crate::dao::GarrisonDao;
+use crate::error::{GarrisonError, GarrisonResult};
+use crate::strategy::firewall::{FirewallContext, GarrisonFirewallStrategy};
 use async_trait::async_trait;
 use std::sync::Arc;
 
@@ -51,11 +51,11 @@ impl Default for AnomalousConfig {
 ///
 /// ```ignore
 /// use std::sync::Arc;
-/// use bulwark::dao::BulwarkDao;
-/// use bulwark::strategy::firewall::anomalous::{AnomalousConfig, AnomalousLoginStrategy};
-/// use bulwark::strategy::firewall::geo::GeoLookup;
+/// use garrison::dao::GarrisonDao;
+/// use garrison::strategy::firewall::anomalous::{AnomalousConfig, AnomalousLoginStrategy};
+/// use garrison::strategy::firewall::geo::GeoLookup;
 ///
-/// let dao: Arc<dyn BulwarkDao> = /* oxcache 实现 */;
+/// let dao: Arc<dyn GarrisonDao> = /* oxcache 实现 */;
 /// let geo: Arc<dyn GeoLookup> = /* maxminddb 实现或 mock */;
 /// let strategy = AnomalousLoginStrategy::new(AnomalousConfig::default(), dao, geo);
 /// ```
@@ -63,7 +63,7 @@ pub struct AnomalousLoginStrategy {
     /// 配置（距离阈值 km）。
     config: AnomalousConfig,
     /// DAO（oxcache 抽象，用于历史 geo 存储）。
-    dao: Arc<dyn BulwarkDao>,
+    dao: Arc<dyn GarrisonDao>,
     /// IP → geo 查询后端（maxminddb 或 mock）。
     geo_lookup: Arc<dyn GeoLookup>,
 }
@@ -77,7 +77,7 @@ impl AnomalousLoginStrategy {
     /// - `geo_lookup`: IP → geo 查询后端。
     pub fn new(
         config: AnomalousConfig,
-        dao: Arc<dyn BulwarkDao>,
+        dao: Arc<dyn GarrisonDao>,
         geo_lookup: Arc<dyn GeoLookup>,
     ) -> Self {
         Self {
@@ -90,7 +90,11 @@ impl AnomalousLoginStrategy {
     /// 更新历史坐标到当前位置（统一 None/Some 分支的 `set_permanent` 调用）。
     ///
     /// 提取此 helper 消除 `check` 中 None 分支与 Some 分支 else 子句的重复 `set_permanent` 调用。
-    async fn update_historic_coord(&self, key: &str, current_coord: GeoCoord) -> BulwarkResult<()> {
+    async fn update_historic_coord(
+        &self,
+        key: &str,
+        current_coord: GeoCoord,
+    ) -> GarrisonResult<()> {
         self.dao.set_permanent(key, &current_coord.to_csv()).await
     }
 }
@@ -114,10 +118,10 @@ fn haversine_km(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
 }
 
 #[async_trait]
-impl BulwarkFirewallStrategy for AnomalousLoginStrategy {
-    async fn check(&self, ctx: &FirewallContext) -> BulwarkResult<()> {
+impl GarrisonFirewallStrategy for AnomalousLoginStrategy {
+    async fn check(&self, ctx: &FirewallContext) -> GarrisonResult<()> {
         let login_id = ctx.login_id.as_ref().ok_or_else(|| {
-            BulwarkError::InvalidParam(
+            GarrisonError::InvalidParam(
                 "AnomalousLogin 需要 login_id 但 ctx.login_id 为 None".to_string(),
             )
         })?;
@@ -138,7 +142,7 @@ impl BulwarkFirewallStrategy for AnomalousLoginStrategy {
             },
             Some(csv) => {
                 let historic_coord = GeoCoord::from_csv(&csv).ok_or_else(|| {
-                    BulwarkError::Dao(format!(
+                    GarrisonError::Dao(format!(
                         "历史 geo 坐标解析失败（key={}, value={})",
                         key, csv
                     ))
@@ -150,7 +154,7 @@ impl BulwarkFirewallStrategy for AnomalousLoginStrategy {
                     current_coord.lon,
                 );
                 if distance > self.config.known_geo_threshold as f64 {
-                    Err(BulwarkError::FirewallBlocked(format!(
+                    Err(GarrisonError::FirewallBlocked(format!(
                         "anomalous: 用户 {} 从 {} 登录，距历史位置 {:.0}km 超阈值 {}km",
                         login_id, ctx.ip, distance, self.config.known_geo_threshold
                     )))
@@ -174,7 +178,7 @@ inventory::submit! {
 mod tests {
     use super::*;
     use crate::dao::tests::MockDao;
-    use crate::error::BulwarkError;
+    use crate::error::GarrisonError;
     use crate::strategy::firewall::GeoCoord;
     use std::collections::HashMap;
 
@@ -198,7 +202,7 @@ mod tests {
 
     #[async_trait]
     impl GeoLookup for MockGeoLookup {
-        async fn lookup(&self, ip: &str) -> BulwarkResult<Option<GeoCoord>> {
+        async fn lookup(&self, ip: &str) -> GarrisonResult<Option<GeoCoord>> {
             Ok(self.map.get(ip).copied())
         }
     }
@@ -221,7 +225,7 @@ mod tests {
     /// 验证异地登录检测：历史北京，新登录纽约，距离>500km，拦截
     #[tokio::test]
     async fn anomalous_blocks_cross_continent_login() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let geo: Arc<dyn GeoLookup> = Arc::new(
             MockGeoLookup::new()
                 .with("1.1.1.1", GeoCoord::new(39.9042, 116.4074)) // 北京
@@ -244,7 +248,7 @@ mod tests {
         // 第二次登录：北京→纽约，距离 > 500km，拦截
         let result = strategy.check(&ctx_second).await;
         assert!(
-            matches!(result, Err(BulwarkError::FirewallBlocked(_))),
+            matches!(result, Err(GarrisonError::FirewallBlocked(_))),
             "异地登录应返回 FirewallBlocked，实际: {:?}",
             result
         );
@@ -253,7 +257,7 @@ mod tests {
     /// 验证首次登录放行并写入历史 geo。
     #[tokio::test]
     async fn anomalous_first_login_passes_and_writes_geo() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let geo: Arc<dyn GeoLookup> =
             Arc::new(MockGeoLookup::new().with("1.1.1.1", GeoCoord::new(39.9042, 116.4074)));
         let config = AnomalousConfig {
@@ -277,7 +281,7 @@ mod tests {
     /// 验证同城登录（距离 < 阈值）放行。
     #[tokio::test]
     async fn anomalous_same_city_login_passes() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let geo: Arc<dyn GeoLookup> = Arc::new(
             MockGeoLookup::new()
                 .with("1.1.1.1", GeoCoord::new(39.9042, 116.4074))
@@ -303,7 +307,7 @@ mod tests {
     /// 验证 login_id=None 返回 InvalidParam（显性失败，Rule 12）。
     #[tokio::test]
     async fn anomalous_requires_login_id() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let geo: Arc<dyn GeoLookup> = Arc::new(MockGeoLookup::new());
         let config = AnomalousConfig {
             known_geo_threshold: 500,
@@ -313,7 +317,7 @@ mod tests {
 
         let result = strategy.check(&ctx).await;
         assert!(
-            matches!(result, Err(BulwarkError::InvalidParam(_))),
+            matches!(result, Err(GarrisonError::InvalidParam(_))),
             "login_id=None 应返回 InvalidParam，实际: {:?}",
             result
         );
@@ -325,7 +329,7 @@ mod tests {
     /// 分支的 `set_permanent` 调用，本测试确保重构后 None 分支仍精确写入当前坐标 csv。
     #[tokio::test]
     async fn check_updates_historic_coord_on_first_login() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let current_coord = GeoCoord::new(39.9042, 116.4074); // 北京
         let expected_csv = current_coord.to_csv();
         let geo: Arc<dyn GeoLookup> = Arc::new(MockGeoLookup::new().with("1.1.1.1", current_coord));

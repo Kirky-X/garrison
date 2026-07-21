@@ -5,7 +5,7 @@
 
 use super::mock::MockDao;
 use super::*;
-use crate::error::BulwarkError;
+use crate::error::GarrisonError;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// 测试用 app_secret（32 字节，满足最小长度要求）。
@@ -13,7 +13,7 @@ const TEST_APP_SECRET: &str = "test-secret-key-with-32-bytes!!!";
 
 /// 创建 SignHandler（使用 MockDao）。
 fn make_handler() -> SignHandler {
-    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     SignHandler::new("app-001", TEST_APP_SECRET, dao).unwrap()
 }
 
@@ -40,11 +40,11 @@ fn new_populates_fields() {
 /// app_key 为空返回 Config 错误（spec Scenario）。
 #[test]
 fn new_empty_app_key_returns_config_error() {
-    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     let result = SignHandler::new("", TEST_APP_SECRET, dao);
     assert!(result.is_err());
     match result.err() {
-        Some(BulwarkError::Config(_)) => {},
+        Some(GarrisonError::Config(_)) => {},
         other => panic!("期望 Config 错误，实际: {:?}", other),
     }
 }
@@ -52,11 +52,11 @@ fn new_empty_app_key_returns_config_error() {
 /// app_secret 短于 32 字节返回 Config 错误。
 #[test]
 fn new_short_app_secret_returns_config_error() {
-    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     let result = SignHandler::new("app-001", "short-secret", dao);
     assert!(result.is_err());
     match result.err() {
-        Some(BulwarkError::Config(msg)) => {
+        Some(GarrisonError::Config(msg)) => {
             assert!(
                 msg.starts_with("sign-app-secret-too-short::"),
                 "错误消息应使用 i18n key 形式: {}",
@@ -70,7 +70,7 @@ fn new_short_app_secret_returns_config_error() {
 /// app_secret 正好 32 字节通过校验。
 #[test]
 fn new_app_secret_exactly_32_bytes_passes() {
-    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     // 正好 32 字节
     let secret_32 = "0123456789abcdef0123456789abcdef";
     assert_eq!(secret_32.len(), 32);
@@ -128,8 +128,8 @@ fn sign_different_method_produces_different_signatures() {
 /// HKDF 派生确保不同 app_key 产生不同签名（域分隔）。
 #[test]
 fn sign_different_app_key_produces_different_signatures() {
-    let dao1: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
-    let dao2: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+    let dao1: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+    let dao2: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     let h1 = SignHandler::new("app-key-1", TEST_APP_SECRET, dao1).unwrap();
     let h2 = SignHandler::new("app-key-2", TEST_APP_SECRET, dao2).unwrap();
     let s1 = h1.sign("POST", "/api", 1700000000, "n", "body");
@@ -165,7 +165,7 @@ async fn validate_success_stores_nonce() {
         .validate("GET", "/api", ts, "nonce-store", "body", &sig)
         .await
         .unwrap();
-    let key = "bulwark:sign:nonce:nonce-store";
+    let key = "garrison:sign:nonce:nonce-store";
     let stored = dao.get(key).await.unwrap();
     assert!(stored.is_some());
 }
@@ -187,7 +187,7 @@ async fn validate_signature_mismatch_returns_error() {
         .await;
     assert!(result.is_err());
     match result.err() {
-        Some(BulwarkError::InvalidToken(_)) => {},
+        Some(GarrisonError::InvalidToken(_)) => {},
         other => panic!("期望 InvalidToken 错误，实际: {:?}", other),
     }
 }
@@ -203,7 +203,7 @@ async fn validate_expired_timestamp_returns_error() {
         .await;
     assert!(result.is_err());
     match result.err() {
-        Some(BulwarkError::ExpiredToken(_)) => {},
+        Some(GarrisonError::ExpiredToken(_)) => {},
         other => panic!("期望 ExpiredToken 错误，实际: {:?}", other),
     }
 }
@@ -219,7 +219,7 @@ async fn validate_future_timestamp_returns_error() {
         .await;
     assert!(result.is_err());
     match result.err() {
-        Some(BulwarkError::ExpiredToken(_)) => {},
+        Some(GarrisonError::ExpiredToken(_)) => {},
         other => panic!("期望 ExpiredToken 错误，实际: {:?}", other),
     }
 }
@@ -241,7 +241,7 @@ async fn validate_nonce_replay_rejected() {
         .await;
     assert!(second.is_err());
     match second.err() {
-        Some(BulwarkError::InvalidToken(_)) => {},
+        Some(GarrisonError::InvalidToken(_)) => {},
         other => panic!("期望 InvalidToken 错误，实际: {:?}", other),
     }
 }

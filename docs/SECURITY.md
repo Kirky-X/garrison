@@ -1,6 +1,6 @@
-# Bulwark 安全政策
+# Garrison 安全政策
 
-Bulwark 是一个面向 Rust 生态的身份认证鉴权框架，安全是项目的核心价值之一。本文档说明支持的版本范围、漏洞报告流程、响应承诺与安全配置建议。
+Garrison 是一个面向 Rust 生态的身份认证鉴权框架，安全是项目的核心价值之一。本文档说明支持的版本范围、漏洞报告流程、响应承诺与安全配置建议。
 
 > **协议与许可证**：项目以 Apache-2.0 协议开源。安全漏洞报告与披露遵循本文件描述的协调披露流程。
 > 部署安全加固详见 [deployment.md](./DEPLOYMENT.md)；配置项说明详见 [configuration.md](./CONFIGURATION.md)。
@@ -20,7 +20,7 @@ Bulwark 是一个面向 Rust 生态的身份认证鉴权框架，安全是项目
 
 ## 支持的版本
 
-Bulwark 仅对已发布版本提供安全修复，开发分支（`main`）不承诺向后移植补丁。
+Garrison 仅对已发布版本提供安全修复，开发分支（`main`）不承诺向后移植补丁。
 
 | 版本 | 支持状态 | 说明 |
 |------|---------|------|
@@ -43,17 +43,17 @@ Bulwark 仅对已发布版本提供安全修复，开发分支（`main`）不承
 请通过以下私密渠道报告：
 
 1. **首选 — 邮箱**：发送邮件至 <security@kirky.org>
-2. **次选 — GitHub Security Advisory**：通过 [GitHub Security Advisory](https://github.com/Kirky-X/bulwark/security/advisories/new) 提交（建议使用，支持加密通信与 CVE 申请）
+2. **次选 — GitHub Security Advisory**：通过 [GitHub Security Advisory](https://github.com/Kirky-X/garrison/security/advisories/new) 提交（建议使用，支持加密通信与 CVE 申请）
 
 ### 报告内容要求
 
 为便于快速评估与修复，请尽量在报告中包含：
 
 - **漏洞描述**：清晰说明漏洞类型与本质（如越权访问、令牌伪造、会话固定等）。
-- **受影响版本**：明确标注你测试时使用的 Bulwark 版本与启用的 feature 组合（如 `--features "full"` 或 `--features "production"`）。
+- **受影响版本**：明确标注你测试时使用的 Garrison 版本与启用的 feature 组合（如 `--features "full"` 或 `--features "production"`）。
 - **复现步骤**：
   - 最小可复现代码片段或测试用例。
-  - 相关配置（`bulwark.toml` 片段，注意隐去敏感信息如密钥）。
+  - 相关配置（`garrison.toml` 片段，注意隐去敏感信息如密钥）。
   - 运行环境（OS、Rust 版本、依赖版本）。
 - **影响范围评估**：
   - 攻击者可达成什么（如越权读取、伪造身份、DoS）。
@@ -78,7 +78,7 @@ Bulwark 仅对已发布版本提供安全修复，开发分支（`main`）不承
 
 ## 披露策略
 
-Bulwark 采用 **responsible disclosure（负责任披露）** 策略：
+Garrison 采用 **responsible disclosure（负责任披露）** 策略：
 
 1. **保密期**：漏洞报告后至修复发布前，双方对漏洞细节保密。
 2. **协调发布**：修复版本发布时，同步公开漏洞详情与 CVE（如适用）。
@@ -91,7 +91,7 @@ Bulwark 采用 **responsible disclosure（负责任披露）** 策略：
 
 ## 安全配置建议
 
-在生产环境部署 Bulwark 时，以下配置项**必须修改**或特别关注：
+在生产环境部署 Garrison 时，以下配置项**必须修改**或特别关注：
 
 ### 1. JWT 密钥（必改）
 
@@ -102,7 +102,7 @@ Bulwark 采用 **responsible disclosure（负责任披露）** 策略：
   openssl rand -base64 32
   ```
 
-- 通过 `BULWARK_JWT_SECRET` 环境变量注入，**不得硬编码到代码或配置文件**。
+- 通过 `GARRISON_JWT_SECRET` 环境变量注入，**不得硬编码到代码或配置文件**。
 - 禁止使用弱密钥（如 `secret`、`123456`、项目名等）。
 - 禁止在多个环境间复用同一密钥（开发/测试/生产必须独立）。
 
@@ -111,23 +111,23 @@ Bulwark 采用 **responsible disclosure（负责任披露）** 策略：
 - 生产环境**必须启用 `cache-redis`** 而非 `cache-memory`。
   - `cache-memory` 基于 oxcache 内存缓存，进程重启即丢失，多实例部署时无法共享会话状态。
   - `cache-redis` 通过 oxcache 接入 Redis，支持分布式部署与会话共享。
-- 通过 `BULWARK_REDIS_URL` 配置 Redis 连接，建议启用 TLS 与密码认证。
+- 通过 `GARRISON_REDIS_URL` 配置 Redis 连接，建议启用 TLS 与密码认证。
 
   ```env
-  BULWARK_REDIS_URL=rediss://:password@redis-host:6379/0
+  GARRISON_REDIS_URL=rediss://:password@redis-host:6379/0
   ```
 
 ### 3. 环境变量管理
 
-- `BULWARK_JWT_SECRET` 环境变量 **不得写入版本库**。
+- `GARRISON_JWT_SECRET` 环境变量 **不得写入版本库**。
   - ✅ 正确：通过环境变量注入、密钥管理服务（如 Vault、AWS Secrets Manager）或 `.env` 文件（且 `.env` 已被 `.gitignore` 排除）。
-  - ❌ 错误：在 `bulwark.toml` 或源码中明文写入 secret。
+  - ❌ 错误：在 `garrison.toml` 或源码中明文写入 secret。
 - 检查项：提交前确认 `git diff` 中无密钥泄露，CI 应配置 secret 扫描（如 git-secrets、trufflehog）。
 
 ### 4. TLS 终止
 
-- **HTTPS 必须由反向代理终止**（如 Nginx、Caddy、AWS ALB），Bulwark 本身不处理 TLS。
-- 确保反向代理与 Bulwark 之间为可信网络（同主机、内网或 Service Mesh mTLS）。
+- **HTTPS 必须由反向代理终止**（如 Nginx、Caddy、AWS ALB），Garrison 本身不处理 TLS。
+- 确保反向代理与 Garrison 之间为可信网络（同主机、内网或 Service Mesh mTLS）。
 - 反向代理应强制 HSTS、禁用旧版 TLS（≤ 1.1）。
 
 ### 5. 密钥轮换
@@ -151,7 +151,7 @@ Bulwark 采用 **responsible disclosure（负责任披露）** 策略：
 
 ## 已知安全考量
 
-以下为 Bulwark 当前已知的安全相关考量点，使用时请评估是否影响你的业务场景。
+以下为 Garrison 当前已知的安全相关考量点，使用时请评估是否影响你的业务场景。
 
 ### 1. HTTP Digest MD5 算法已不安全
 
@@ -186,4 +186,4 @@ Bulwark 采用 **responsible disclosure（负责任披露）** 策略：
 
 ---
 
-如对本文档有任何疑问或建议，请通过 [GitHub Discussions](https://github.com/Kirky-X/bulwark/discussions) 提出（非漏洞类）；安全漏洞请遵循 [报告漏洞](#报告漏洞) 流程私密提交。
+如对本文档有任何疑问或建议，请通过 [GitHub Discussions](https://github.com/Kirky-X/garrison/discussions) 提出（非漏洞类）；安全漏洞请遵循 [报告漏洞](#报告漏洞) 流程私密提交。

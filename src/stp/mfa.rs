@@ -2,13 +2,13 @@
 //! See LICENSE for full license text.
 
 //! MfaLogic trait — 二级认证（MFA）与账号禁用校验契约。
-//! 从 v0.5.2 起，从 `BulwarkLogic` 上帝 trait 拆分；本 trait 承接 MFA 校验与
+//! 从 v0.5.2 起，从 `GarrisonLogic` 上帝 trait 拆分；本 trait 承接 MFA 校验与
 //! 账号禁用检查 2 个方法。super-trait 为 [`SessionLogic`]
 //! （MFA 检查依赖当前登录状态）。
 
 use super::current_token;
-use super::BulwarkLogicDefault;
-use crate::error::{BulwarkError, BulwarkResult};
+use super::GarrisonLogicDefault;
+use crate::error::{GarrisonError, GarrisonResult};
 use crate::stp::session::SessionLogic;
 use async_trait::async_trait;
 
@@ -38,8 +38,8 @@ pub trait MfaLogic: SessionLogic {
     ///
     /// # 返回
     /// - `Ok(())`: 已通过二级认证或未启用 MFA。
-    /// - `Err(BulwarkError::NotSafe)`: 未通过二级认证（service 未开启或已过期）。
-    async fn check_safe(&self) -> BulwarkResult<()> {
+    /// - `Err(GarrisonError::NotSafe)`: 未通过二级认证（service 未开启或已过期）。
+    async fn check_safe(&self) -> GarrisonResult<()> {
         if !self.is_safe("default").await? {
             return Err(Self::not_safe("SAFE_EXPIRED"));
         }
@@ -48,14 +48,14 @@ pub trait MfaLogic: SessionLogic {
 
     /// 检查账号是否被禁用。
     ///
-    /// trait 默认实现返回 `Ok(())`（向后兼容 0.2.x）；`BulwarkLogicDefault` 自 v0.6.5 起覆写：
+    /// trait 默认实现返回 `Ok(())`（向后兼容 0.2.x）；`GarrisonLogicDefault` 自 v0.6.5 起覆写：
     /// 注入 `DisableRepository` 后，从当前 token 取 login_id 并查询封禁状态，被封禁则返回
     /// `DisableService` 错误。未注入 repository 或未登录时返回 `Ok(())`。
     ///
     /// # 返回
     /// - `Ok(())`: 账号未禁用 / 未注入 DisableRepository / 未登录。
-    /// - `Err(BulwarkError::DisableService)`: 账号已封禁（0.6.1 起推荐使用专用异常）。
-    async fn check_disable(&self) -> BulwarkResult<()> {
+    /// - `Err(GarrisonError::DisableService)`: 账号已封禁（0.6.1 起推荐使用专用异常）。
+    async fn check_disable(&self) -> GarrisonResult<()> {
         Ok(())
     }
 
@@ -74,8 +74,8 @@ pub trait MfaLogic: SessionLogic {
     ///
     /// # 默认实现
     /// 返回 `Ok(())`（no-op，向后兼容 0.6.4 之前）。
-    /// `safe-auth` feature 启用时由 `BulwarkLogicDefault` 覆写。
-    async fn open_safe(&self, _service: &str, _duration_secs: u64) -> BulwarkResult<()> {
+    /// `safe-auth` feature 启用时由 `GarrisonLogicDefault` 覆写。
+    async fn open_safe(&self, _service: &str, _duration_secs: u64) -> GarrisonResult<()> {
         Ok(())
     }
 
@@ -90,8 +90,8 @@ pub trait MfaLogic: SessionLogic {
     ///
     /// # 默认实现
     /// 返回 `Ok(true)`（始终安全，向后兼容 0.6.4 之前）。
-    /// `safe-auth` feature 启用时由 `BulwarkLogicDefault` 覆写。
-    async fn is_safe(&self, _service: &str) -> BulwarkResult<bool> {
+    /// `safe-auth` feature 启用时由 `GarrisonLogicDefault` 覆写。
+    async fn is_safe(&self, _service: &str) -> GarrisonResult<bool> {
         Ok(true)
     }
 
@@ -106,8 +106,8 @@ pub trait MfaLogic: SessionLogic {
     ///
     /// # 默认实现
     /// 返回 `Ok(())`（no-op，向后兼容 0.6.4 之前）。
-    /// `safe-auth` feature 启用时由 `BulwarkLogicDefault` 覆写。
-    async fn close_safe(&self, _service: &str) -> BulwarkResult<()> {
+    /// `safe-auth` feature 启用时由 `GarrisonLogicDefault` 覆写。
+    async fn close_safe(&self, _service: &str) -> GarrisonResult<()> {
         Ok(())
     }
 
@@ -116,7 +116,7 @@ pub trait MfaLogic: SessionLogic {
     /// 业务方在自定义 `check_disable` 实现中调用此关联函数抛出专用异常：
     ///
     /// ```ignore
-    /// async fn check_disable(&self) -> BulwarkResult<()> {
+    /// async fn check_disable(&self) -> GarrisonResult<()> {
     ///     if account_is_banned().await {
     ///         return Err(Self::disable_service("default", None));
     ///     }
@@ -130,8 +130,8 @@ pub trait MfaLogic: SessionLogic {
     fn disable_service(
         service: &str,
         until: Option<chrono::DateTime<chrono::Utc>>,
-    ) -> BulwarkError {
-        BulwarkError::DisableService {
+    ) -> GarrisonError {
+        GarrisonError::DisableService {
             service: service.to_string(),
             until,
         }
@@ -142,7 +142,7 @@ pub trait MfaLogic: SessionLogic {
     /// 业务方在自定义 `check_safe` 实现中调用此关联函数抛出专用异常：
     ///
     /// ```ignore
-    /// async fn check_safe(&self) -> BulwarkResult<()> {
+    /// async fn check_safe(&self) -> GarrisonResult<()> {
     ///     if !mfa_completed().await {
     ///         return Err(Self::not_safe("MFA_TOTP_REQUIRED"));
     ///     }
@@ -152,22 +152,22 @@ pub trait MfaLogic: SessionLogic {
     ///
     /// # 参数
     /// - `reason`: 未完成认证的原因标识（如 "MFA_TOTP_REQUIRED" / "WEBAUTHN_REQUIRED"）。
-    fn not_safe(reason: &str) -> BulwarkError {
-        BulwarkError::NotSafe {
+    fn not_safe(reason: &str) -> GarrisonError {
+        GarrisonError::NotSafe {
             reason: reason.to_string(),
         }
     }
 }
 
 // ============================================================================
-// BulwarkLogicDefault impl
+// GarrisonLogicDefault impl
 // ============================================================================
 
 #[async_trait]
-impl MfaLogic for BulwarkLogicDefault {
+impl MfaLogic for GarrisonLogicDefault {
     /// 检查二级认证（MFA）状态。
     ///
-    /// `BulwarkLogicDefault` 覆写实现（v0.6.5 T025）：
+    /// `GarrisonLogicDefault` 覆写实现（v0.6.5 T025）：
     /// 调用 `is_safe("default")` 检查 "default" service 的二级认证状态。
     ///
     /// # 为什么覆写 trait default？
@@ -175,7 +175,7 @@ impl MfaLogic for BulwarkLogicDefault {
     /// `async_trait` 宏将 trait default 方法编译为泛型代码，`self` 类型为 `&Self`（泛型）。
     /// 在泛型上下文中，编译器无法解析到 inherent method（safe.rs 中的 `is_safe`），
     /// 只能解析到 trait default `is_safe`（返回 `Ok(true)`）。
-    /// 在 impl 块中，`self` 是 `&BulwarkLogicDefault`（具体类型），编译器能解析到
+    /// 在 impl 块中，`self` 是 `&GarrisonLogicDefault`（具体类型），编译器能解析到
     /// inherent method（当 `safe-auth` feature 启用时）。
     ///
     /// # 行为
@@ -184,7 +184,7 @@ impl MfaLogic for BulwarkLogicDefault {
     ///   - `Ok(true)` → 返回 `Ok(())`
     ///   - `Ok(false)` → 返回 `Err(Self::not_safe("SAFE_EXPIRED"))`
     ///   - `Err(e)` → 透传错误
-    async fn check_safe(&self) -> BulwarkResult<()> {
+    async fn check_safe(&self) -> GarrisonResult<()> {
         if !self.is_safe("default").await? {
             return Err(Self::not_safe("SAFE_EXPIRED"));
         }
@@ -193,7 +193,7 @@ impl MfaLogic for BulwarkLogicDefault {
 
     /// 检查当前登录账号是否被封禁。
     ///
-    /// `BulwarkLogicDefault` 覆写实现（v0.6.5 T019）：
+    /// `GarrisonLogicDefault` 覆写实现（v0.6.5 T019）：
     /// 1. 无 `disable_repository` 注入 → 返回 `Ok(())`（向后兼容 0.6.4 之前）
     /// 2. 无当前 token（未登录）→ 返回 `Ok(())`
     /// 3. token 对应的 TokenSession 不存在 → 返回 `Ok(())`
@@ -202,9 +202,9 @@ impl MfaLogic for BulwarkLogicDefault {
     ///    `until` 来自 `get_disable_time`（None=永久封禁，Some=定时解封）
     ///
     /// # 错误
-    /// - `BulwarkError::DisableService`: 账号已封禁。
-    /// - DAO/反序列化失败：透传 `BulwarkError`。
-    async fn check_disable(&self) -> BulwarkResult<()> {
+    /// - `GarrisonError::DisableService`: 账号已封禁。
+    /// - DAO/反序列化失败：透传 `GarrisonError`。
+    async fn check_disable(&self) -> GarrisonResult<()> {
         // 无 disable_repository 时返回 Ok（向后兼容 0.6.4 之前）
         let repo = match &self.disable_repository {
             Some(r) => r,
@@ -232,20 +232,20 @@ impl MfaLogic for BulwarkLogicDefault {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::BulwarkConfig;
-    use crate::error::BulwarkResult;
-    use crate::stp::core::BulwarkCore;
+    use crate::config::GarrisonConfig;
+    use crate::error::GarrisonResult;
+    use crate::stp::core::GarrisonCore;
     use crate::stp::session::SessionLogic;
     use std::sync::Arc;
 
-    /// 最小 mock：实现 `BulwarkCore` + `SessionLogic`（9 必需方法）。
+    /// 最小 mock：实现 `GarrisonCore` + `SessionLogic`（9 必需方法）。
     /// `MfaLogic` 2 个方法均有默认实现，空 impl 即可获得全部默认行为。
     struct MockMfa {
-        config: Arc<BulwarkConfig>,
+        config: Arc<GarrisonConfig>,
     }
 
-    impl BulwarkCore for MockMfa {
-        fn config(&self) -> Arc<BulwarkConfig> {
+    impl GarrisonCore for MockMfa {
+        fn config(&self) -> Arc<GarrisonConfig> {
             Arc::clone(&self.config)
         }
     }
@@ -256,31 +256,31 @@ mod tests {
             &self,
             _login_id: &str,
             _params: &crate::stp::LoginParams,
-        ) -> BulwarkResult<String> {
+        ) -> GarrisonResult<String> {
             Ok("mock-token".to_string())
         }
-        async fn login_with_token(&self, _login_id: &str, _token: &str) -> BulwarkResult<()> {
+        async fn login_with_token(&self, _login_id: &str, _token: &str) -> GarrisonResult<()> {
             Ok(())
         }
-        async fn logout(&self) -> BulwarkResult<()> {
+        async fn logout(&self) -> GarrisonResult<()> {
             Ok(())
         }
-        async fn logout_by_login_id(&self, _login_id: &str) -> BulwarkResult<()> {
+        async fn logout_by_login_id(&self, _login_id: &str) -> GarrisonResult<()> {
             Ok(())
         }
-        async fn kickout(&self, _login_id: &str) -> BulwarkResult<()> {
+        async fn kickout(&self, _login_id: &str) -> GarrisonResult<()> {
             Ok(())
         }
-        async fn kickout_by_token(&self, _token: &str) -> BulwarkResult<()> {
+        async fn kickout_by_token(&self, _token: &str) -> GarrisonResult<()> {
             Ok(())
         }
-        async fn revoke_token(&self, _token: &str) -> BulwarkResult<()> {
+        async fn revoke_token(&self, _token: &str) -> GarrisonResult<()> {
             Ok(())
         }
-        async fn check_login(&self) -> BulwarkResult<bool> {
+        async fn check_login(&self) -> GarrisonResult<bool> {
             Ok(true)
         }
-        async fn get_login_id(&self) -> BulwarkResult<Option<String>> {
+        async fn get_login_id(&self) -> GarrisonResult<Option<String>> {
             Ok(Some("42".to_string()))
         }
     }
@@ -291,7 +291,7 @@ mod tests {
     #[tokio::test]
     async fn check_safe_default_ok() {
         let mock = MockMfa {
-            config: Arc::new(BulwarkConfig::default()),
+            config: Arc::new(GarrisonConfig::default()),
         };
         mock.check_safe().await.unwrap();
     }
@@ -299,7 +299,7 @@ mod tests {
     #[tokio::test]
     async fn check_disable_default_ok() {
         let mock = MockMfa {
-            config: Arc::new(BulwarkConfig::default()),
+            config: Arc::new(GarrisonConfig::default()),
         };
         mock.check_disable().await.unwrap();
     }
@@ -308,14 +308,14 @@ mod tests {
     // disable_service / not_safe 构造方法测试
     // ========================================================================
 
-    /// 验证 `disable_service` 构造正确的 `BulwarkError::DisableService` 变体。
+    /// 验证 `disable_service` 构造正确的 `GarrisonError::DisableService` 变体。
     ///
     /// 覆盖 spec R-error-005：service 字段正确传递，until=None 表示永久封禁。
     #[test]
     fn disable_service_constructs_correct_error() {
         let err = MockMfa::disable_service("default", None);
         match err {
-            BulwarkError::DisableService { service, until } => {
+            GarrisonError::DisableService { service, until } => {
                 assert_eq!(service, "default");
                 assert!(until.is_none(), "until=None 表示永久封禁");
             },
@@ -331,7 +331,7 @@ mod tests {
             .with_timezone(&chrono::Utc);
         let err = MockMfa::disable_service("oidc", Some(until));
         match err {
-            BulwarkError::DisableService { service, until: u } => {
+            GarrisonError::DisableService { service, until: u } => {
                 assert_eq!(service, "oidc");
                 assert!(u.is_some(), "until 应为 Some");
                 assert_eq!(u.unwrap().to_rfc3339(), "2026-12-31T23:59:59+00:00");
@@ -340,14 +340,14 @@ mod tests {
         }
     }
 
-    /// 验证 `not_safe` 构造正确的 `BulwarkError::NotSafe` 变体。
+    /// 验证 `not_safe` 构造正确的 `GarrisonError::NotSafe` 变体。
     ///
     /// 覆盖 spec R-error-005：reason 字段正确传递。
     #[test]
     fn not_safe_constructs_correct_error() {
         let err = MockMfa::not_safe("MFA_TOTP_REQUIRED");
         match err {
-            BulwarkError::NotSafe { reason } => {
+            GarrisonError::NotSafe { reason } => {
                 assert_eq!(reason, "MFA_TOTP_REQUIRED");
             },
             other => panic!("期望 NotSafe 变体，实际: {:?}", other),
@@ -377,7 +377,7 @@ mod tests {
     #[tokio::test]
     async fn open_safe_default_returns_ok() {
         let mock = MockMfa {
-            config: Arc::new(BulwarkConfig::default()),
+            config: Arc::new(GarrisonConfig::default()),
         };
         mock.open_safe("default", 3600).await.unwrap();
     }
@@ -388,7 +388,7 @@ mod tests {
     #[tokio::test]
     async fn close_safe_default_returns_ok() {
         let mock = MockMfa {
-            config: Arc::new(BulwarkConfig::default()),
+            config: Arc::new(GarrisonConfig::default()),
         };
         mock.close_safe("default").await.unwrap();
     }
@@ -403,7 +403,7 @@ mod tests {
     #[tokio::test]
     async fn t025_check_safe_backward_compat_without_safe_auth() {
         let mock = MockMfa {
-            config: Arc::new(BulwarkConfig::default()),
+            config: Arc::new(GarrisonConfig::default()),
         };
         mock.check_safe().await.unwrap();
     }
@@ -414,7 +414,7 @@ mod tests {
     #[tokio::test]
     async fn t025_check_safe_default_uses_is_safe_default() {
         let mock = MockMfa {
-            config: Arc::new(BulwarkConfig::default()),
+            config: Arc::new(GarrisonConfig::default()),
         };
         // is_safe 默认返回 Ok(true)
         assert!(
@@ -434,12 +434,12 @@ mod tests {
     ///
     /// `safe_result` 为 is_safe 预设返回值，覆盖 Ok(true)/Ok(false)/Err 三类分支。
     struct MockMfaSafe {
-        config: Arc<BulwarkConfig>,
-        safe_result: BulwarkResult<bool>,
+        config: Arc<GarrisonConfig>,
+        safe_result: GarrisonResult<bool>,
     }
 
-    impl BulwarkCore for MockMfaSafe {
-        fn config(&self) -> Arc<BulwarkConfig> {
+    impl GarrisonCore for MockMfaSafe {
+        fn config(&self) -> Arc<GarrisonConfig> {
             Arc::clone(&self.config)
         }
     }
@@ -450,31 +450,31 @@ mod tests {
             &self,
             _login_id: &str,
             _params: &crate::stp::LoginParams,
-        ) -> BulwarkResult<String> {
+        ) -> GarrisonResult<String> {
             Ok("mock-token".to_string())
         }
-        async fn login_with_token(&self, _login_id: &str, _token: &str) -> BulwarkResult<()> {
+        async fn login_with_token(&self, _login_id: &str, _token: &str) -> GarrisonResult<()> {
             Ok(())
         }
-        async fn logout(&self) -> BulwarkResult<()> {
+        async fn logout(&self) -> GarrisonResult<()> {
             Ok(())
         }
-        async fn logout_by_login_id(&self, _login_id: &str) -> BulwarkResult<()> {
+        async fn logout_by_login_id(&self, _login_id: &str) -> GarrisonResult<()> {
             Ok(())
         }
-        async fn kickout(&self, _login_id: &str) -> BulwarkResult<()> {
+        async fn kickout(&self, _login_id: &str) -> GarrisonResult<()> {
             Ok(())
         }
-        async fn kickout_by_token(&self, _token: &str) -> BulwarkResult<()> {
+        async fn kickout_by_token(&self, _token: &str) -> GarrisonResult<()> {
             Ok(())
         }
-        async fn revoke_token(&self, _token: &str) -> BulwarkResult<()> {
+        async fn revoke_token(&self, _token: &str) -> GarrisonResult<()> {
             Ok(())
         }
-        async fn check_login(&self) -> BulwarkResult<bool> {
+        async fn check_login(&self) -> GarrisonResult<bool> {
             Ok(true)
         }
-        async fn get_login_id(&self) -> BulwarkResult<Option<String>> {
+        async fn get_login_id(&self) -> GarrisonResult<Option<String>> {
             Ok(Some("42".to_string()))
         }
     }
@@ -482,11 +482,11 @@ mod tests {
     #[async_trait]
     impl MfaLogic for MockMfaSafe {
         // 覆写 is_safe 返回预设值，测试 check_safe trait default 各分支
-        async fn is_safe(&self, _service: &str) -> BulwarkResult<bool> {
+        async fn is_safe(&self, _service: &str) -> GarrisonResult<bool> {
             match &self.safe_result {
                 Ok(b) => Ok(*b),
-                Err(BulwarkError::Dao(s)) => Err(BulwarkError::Dao(s.clone())),
-                Err(BulwarkError::Internal(s)) => Err(BulwarkError::Internal(s.clone())),
+                Err(GarrisonError::Dao(s)) => Err(GarrisonError::Dao(s.clone())),
+                Err(GarrisonError::Internal(s)) => Err(GarrisonError::Internal(s.clone())),
                 Err(e) => panic!("MockMfaSafe 不支持此错误变体: {:?}", e),
             }
         }
@@ -498,12 +498,12 @@ mod tests {
     #[tokio::test]
     async fn check_safe_is_safe_false_returns_not_safe() {
         let mock = MockMfaSafe {
-            config: Arc::new(BulwarkConfig::default()),
+            config: Arc::new(GarrisonConfig::default()),
             safe_result: Ok(false),
         };
         let result = mock.check_safe().await;
         match result {
-            Err(BulwarkError::NotSafe { reason }) => {
+            Err(GarrisonError::NotSafe { reason }) => {
                 assert_eq!(
                     reason, "SAFE_EXPIRED",
                     "is_safe=false 时 check_safe 应返回 NotSafe(reason=\"SAFE_EXPIRED\")"
@@ -522,7 +522,7 @@ mod tests {
     #[tokio::test]
     async fn check_safe_is_safe_true_returns_ok() {
         let mock = MockMfaSafe {
-            config: Arc::new(BulwarkConfig::default()),
+            config: Arc::new(GarrisonConfig::default()),
             safe_result: Ok(true),
         };
         mock.check_safe().await.unwrap();
@@ -534,12 +534,12 @@ mod tests {
     #[tokio::test]
     async fn check_safe_is_safe_error_propagates() {
         let mock = MockMfaSafe {
-            config: Arc::new(BulwarkConfig::default()),
-            safe_result: Err(BulwarkError::Dao("数据源连接失败".to_string())),
+            config: Arc::new(GarrisonConfig::default()),
+            safe_result: Err(GarrisonError::Dao("数据源连接失败".to_string())),
         };
         let result = mock.check_safe().await;
         assert!(
-            matches!(result, Err(BulwarkError::Dao(ref s)) if s.contains("数据源连接失败")),
+            matches!(result, Err(GarrisonError::Dao(ref s)) if s.contains("数据源连接失败")),
             "is_safe 返回 Dao 错误时应透传，实际: {:?}",
             result
         );
@@ -551,12 +551,12 @@ mod tests {
     #[tokio::test]
     async fn check_safe_is_safe_internal_error_propagates() {
         let mock = MockMfaSafe {
-            config: Arc::new(BulwarkConfig::default()),
-            safe_result: Err(BulwarkError::Internal("内部错误".to_string())),
+            config: Arc::new(GarrisonConfig::default()),
+            safe_result: Err(GarrisonError::Internal("内部错误".to_string())),
         };
         let result = mock.check_safe().await;
         assert!(
-            matches!(result, Err(BulwarkError::Internal(ref s)) if s.contains("内部错误")),
+            matches!(result, Err(GarrisonError::Internal(ref s)) if s.contains("内部错误")),
             "is_safe 返回 Internal 错误时应透传，实际: {:?}",
             result
         );
@@ -577,19 +577,19 @@ mod tests {
     }
 
     // ========================================================================
-    // T019: DisableRepository 集成测试（BulwarkLogicDefault.check_disable）
+    // T019: DisableRepository 集成测试（GarrisonLogicDefault.check_disable）
     // ========================================================================
 
     mod t019_disable_integration {
         use super::*;
         use crate::account::disable::{DefaultDisableRepository, DisableRepository};
-        use crate::config::BulwarkConfig;
+        use crate::config::GarrisonConfig;
         use crate::dao::tests::MockDao;
-        use crate::dao::BulwarkDao;
-        use crate::session::BulwarkSession;
+        use crate::dao::GarrisonDao;
+        use crate::session::GarrisonSession;
         use crate::stp::with_current_token;
         use crate::stp::LoginParams;
-        use crate::strategy::BulwarkPermissionStrategy;
+        use crate::strategy::GarrisonPermissionStrategy;
         use async_trait::async_trait;
         use chrono::Utc;
         use std::sync::Arc;
@@ -601,35 +601,35 @@ mod tests {
         struct MockFirewall;
 
         #[async_trait]
-        impl BulwarkPermissionStrategy for MockFirewall {
-            async fn get_permission_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
+        impl GarrisonPermissionStrategy for MockFirewall {
+            async fn get_permission_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
                 Ok(vec![])
             }
-            async fn get_role_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
+            async fn get_role_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
                 Ok(vec![])
             }
             async fn check_permission(
                 &self,
                 _login_id: &str,
                 _permission: &str,
-            ) -> BulwarkResult<bool> {
+            ) -> GarrisonResult<bool> {
                 Ok(true)
             }
-            async fn check_role(&self, _login_id: &str, _role: &str) -> BulwarkResult<bool> {
+            async fn check_role(&self, _login_id: &str, _role: &str) -> GarrisonResult<bool> {
                 Ok(true)
             }
             async fn check_role_any(
                 &self,
                 _login_id: &str,
                 _roles: &[&str],
-            ) -> BulwarkResult<bool> {
+            ) -> GarrisonResult<bool> {
                 Ok(true)
             }
             async fn check_role_all(
                 &self,
                 _login_id: &str,
                 _roles: &[&str],
-            ) -> BulwarkResult<bool> {
+            ) -> GarrisonResult<bool> {
                 Ok(true)
             }
         }
@@ -638,37 +638,37 @@ mod tests {
         // 辅助函数
         // --------------------------------------------------------------------
 
-        /// 创建不带 disable_repository 的 BulwarkLogicDefault（向后兼容场景）。
-        fn make_logic_without_repo() -> BulwarkLogicDefault {
+        /// 创建不带 disable_repository 的 GarrisonLogicDefault（向后兼容场景）。
+        fn make_logic_without_repo() -> GarrisonLogicDefault {
             let dao: Arc<MockDao> = Arc::new(MockDao::new());
-            let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
-            let mut config = BulwarkConfig::default_config();
+            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+            let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = "uuid".to_string();
-            let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall);
-            BulwarkLogicDefault::new(session, Arc::new(config), firewall)
+            let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall);
+            GarrisonLogicDefault::new(session, Arc::new(config), firewall)
         }
 
-        /// 创建带 disable_repository 的 BulwarkLogicDefault，返回 (logic, repo) 便于测试。
+        /// 创建带 disable_repository 的 GarrisonLogicDefault，返回 (logic, repo) 便于测试。
         fn make_logic_with_repo() -> (
-            BulwarkLogicDefault,
+            GarrisonLogicDefault,
             Arc<DefaultDisableRepository>,
             Arc<MockDao>,
         ) {
             let dao = Arc::new(MockDao::new());
-            let session = Arc::new(BulwarkSession::new(
-                dao.clone() as Arc<dyn BulwarkDao>,
+            let session = Arc::new(GarrisonSession::new(
+                dao.clone() as Arc<dyn GarrisonDao>,
                 3600,
                 86400,
             ));
-            let mut config = BulwarkConfig::default_config();
+            let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = "uuid".to_string();
-            let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall);
+            let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall);
             let repo = Arc::new(DefaultDisableRepository::new(
-                dao.clone() as Arc<dyn BulwarkDao>
+                dao.clone() as Arc<dyn GarrisonDao>
             ));
-            let logic = BulwarkLogicDefault::new(session, Arc::new(config), firewall)
+            let logic = GarrisonLogicDefault::new(session, Arc::new(config), firewall)
                 .with_disable_repository(repo.clone() as Arc<dyn DisableRepository>);
             (logic, repo, dao)
         }
@@ -722,7 +722,7 @@ mod tests {
             let result = with_current_token(token, async { logic.check_disable().await }).await;
 
             match result {
-                Err(BulwarkError::DisableService { service, .. }) => {
+                Err(GarrisonError::DisableService { service, .. }) => {
                     assert_eq!(
                         service, "default",
                         "DisableService 错误的 service 字段应为 'default'"
@@ -747,7 +747,7 @@ mod tests {
             let result = with_current_token(token, async { logic.check_disable().await }).await;
 
             match result {
-                Err(BulwarkError::DisableService { service, until }) => {
+                Err(GarrisonError::DisableService { service, until }) => {
                     assert_eq!(service, "default");
                     assert!(
                         until.is_none(),
@@ -777,7 +777,7 @@ mod tests {
             let result = with_current_token(token, async { logic.check_disable().await }).await;
 
             match result {
-                Err(BulwarkError::DisableService { service, until: u }) => {
+                Err(GarrisonError::DisableService { service, until: u }) => {
                     assert_eq!(service, "default");
                     assert!(u.is_some(), "定时封禁 until 应为 Some");
                     assert_eq!(
@@ -833,22 +833,22 @@ mod tests {
     // T025: check_safe 默认实现集成测试（需要 safe-auth feature）
     // ========================================================================
 
-    /// T025 集成测试：验证 check_safe 默认实现与 BulwarkLogicDefault inherent method
+    /// T025 集成测试：验证 check_safe 默认实现与 GarrisonLogicDefault inherent method
     /// （open_safe / is_safe / close_safe）的交互。
     ///
     /// 仅在 `safe-auth` feature 启用时编译，因为测试需要 inherent method 支持。
     #[cfg(feature = "safe-auth")]
     mod t025_check_safe_integration {
         use super::*;
-        use crate::config::BulwarkConfig;
+        use crate::config::GarrisonConfig;
         use crate::dao::tests::MockDao;
-        use crate::dao::BulwarkDao;
-        use crate::error::BulwarkError;
-        use crate::session::BulwarkSession;
+        use crate::dao::GarrisonDao;
+        use crate::error::GarrisonError;
+        use crate::session::GarrisonSession;
         use crate::stp::session::SessionLogic;
         use crate::stp::with_current_token;
         use crate::stp::LoginParams;
-        use crate::strategy::BulwarkPermissionStrategy;
+        use crate::strategy::GarrisonPermissionStrategy;
         use async_trait::async_trait;
         use std::sync::Arc;
 
@@ -859,35 +859,35 @@ mod tests {
         struct MockFirewall;
 
         #[async_trait]
-        impl BulwarkPermissionStrategy for MockFirewall {
-            async fn get_permission_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
+        impl GarrisonPermissionStrategy for MockFirewall {
+            async fn get_permission_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
                 Ok(vec![])
             }
-            async fn get_role_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
+            async fn get_role_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
                 Ok(vec![])
             }
             async fn check_permission(
                 &self,
                 _login_id: &str,
                 _permission: &str,
-            ) -> BulwarkResult<bool> {
+            ) -> GarrisonResult<bool> {
                 Ok(true)
             }
-            async fn check_role(&self, _login_id: &str, _role: &str) -> BulwarkResult<bool> {
+            async fn check_role(&self, _login_id: &str, _role: &str) -> GarrisonResult<bool> {
                 Ok(true)
             }
             async fn check_role_any(
                 &self,
                 _login_id: &str,
                 _roles: &[&str],
-            ) -> BulwarkResult<bool> {
+            ) -> GarrisonResult<bool> {
                 Ok(true)
             }
             async fn check_role_all(
                 &self,
                 _login_id: &str,
                 _roles: &[&str],
-            ) -> BulwarkResult<bool> {
+            ) -> GarrisonResult<bool> {
                 Ok(true)
             }
         }
@@ -896,19 +896,19 @@ mod tests {
         // 辅助函数
         // ----------------------------------------------------------------
 
-        /// 创建 BulwarkLogicDefault 并返回 (logic, dao) 便于测试。
-        fn make_logic() -> (BulwarkLogicDefault, Arc<MockDao>) {
+        /// 创建 GarrisonLogicDefault 并返回 (logic, dao) 便于测试。
+        fn make_logic() -> (GarrisonLogicDefault, Arc<MockDao>) {
             let dao = Arc::new(MockDao::new());
-            let session = Arc::new(BulwarkSession::new(
-                dao.clone() as Arc<dyn BulwarkDao>,
+            let session = Arc::new(GarrisonSession::new(
+                dao.clone() as Arc<dyn GarrisonDao>,
                 3600,
                 86400,
             ));
-            let mut config = BulwarkConfig::default_config();
+            let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = "uuid".to_string();
-            let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall);
-            let logic = BulwarkLogicDefault::new(session, Arc::new(config), firewall);
+            let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall);
+            let logic = GarrisonLogicDefault::new(session, Arc::new(config), firewall);
             (logic, dao)
         }
 
@@ -957,7 +957,7 @@ mod tests {
                 with_current_token(token.clone(), async { logic.check_safe().await }).await;
 
             match result {
-                Err(BulwarkError::NotSafe { reason }) => {
+                Err(GarrisonError::NotSafe { reason }) => {
                     assert_eq!(
                         reason, "SAFE_EXPIRED",
                         "未 open_safe 时 check_safe 应返回 NotSafe(reason=\"SAFE_EXPIRED\")"
@@ -988,7 +988,7 @@ mod tests {
             .await;
 
             match result {
-                Err(BulwarkError::NotSafe { reason }) => {
+                Err(GarrisonError::NotSafe { reason }) => {
                     assert_eq!(
                         reason, "SAFE_EXPIRED",
                         "过期后 check_safe 应返回 NotSafe(reason=\"SAFE_EXPIRED\")"
@@ -1020,7 +1020,7 @@ mod tests {
             .await;
 
             match result {
-                Err(BulwarkError::NotSafe { reason }) => {
+                Err(GarrisonError::NotSafe { reason }) => {
                     assert_eq!(
                         reason, "SAFE_EXPIRED",
                         "close_safe 后 check_safe 应返回 NotSafe(reason=\"SAFE_EXPIRED\")"

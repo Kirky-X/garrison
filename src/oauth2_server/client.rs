@@ -9,12 +9,12 @@
 //!
 //! - `client_secret` 使用 Argon2id 哈希存储，不明文
 //! - `pkce_required` 始终为 `true`（R-oauth2-006 强制 PKCE）
-//! - `OAuth2ClientStore` 基于 `BulwarkDao`（key-value 存储），客户端配置序列化为 JSON
+//! - `OAuth2ClientStore` 基于 `GarrisonDao`（key-value 存储），客户端配置序列化为 JSON
 //! - `DaoKeyPrefix::OAuth2Client` 提供 key 前缀（`oauth2:client:`）
 
 use crate::constants::DaoKeyPrefix;
-use crate::dao::BulwarkDao;
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::dao::GarrisonDao;
+use crate::error::{GarrisonError, GarrisonResult};
 use argon2::{
     password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
     Algorithm, Argon2, Version,
@@ -52,20 +52,20 @@ impl GrantType {
 }
 
 impl std::str::FromStr for GrantType {
-    type Err = BulwarkError;
+    type Err = GarrisonError;
 
     /// 从字符串解析 grant_type（RFC 6749 §4）。
     ///
     /// 与项目内 `Annotation` / `DigestAlgorithm` 一致采用 `std::str::FromStr` trait，
     /// 调用方用 `"authorization_code".parse::<GrantType>()` 而非 inherent method，
     /// 避免遮蔽 std trait。
-    fn from_str(s: &str) -> BulwarkResult<Self> {
+    fn from_str(s: &str) -> GarrisonResult<Self> {
         match s {
             "authorization_code" => Ok(Self::AuthorizationCode),
             "refresh_token" => Ok(Self::RefreshToken),
             "client_credentials" => Ok(Self::ClientCredentials),
             "password" => Ok(Self::Password),
-            other => Err(BulwarkError::OAuth2(format!(
+            other => Err(GarrisonError::OAuth2(format!(
                 "unsupported_grant_type: {other}"
             ))),
         }
@@ -112,12 +112,12 @@ impl OAuth2Client {
         redirect_uris: Vec<String>,
         grant_types: Vec<GrantType>,
         scopes: Vec<String>,
-    ) -> BulwarkResult<Self> {
+    ) -> GarrisonResult<Self> {
         if client_id.is_empty() {
-            return Err(BulwarkError::InvalidParam("oauth2-client-id-empty".into()));
+            return Err(GarrisonError::InvalidParam("oauth2-client-id-empty".into()));
         }
         if client_secret.is_empty() {
-            return Err(BulwarkError::InvalidParam(
+            return Err(GarrisonError::InvalidParam(
                 "oauth2-client-secret-empty".into(),
             ));
         }
@@ -140,7 +140,7 @@ impl OAuth2Client {
     /// - `Ok(true)`：密钥匹配
     /// - `Ok(false)`：密钥不匹配
     /// - `Err`：哈希格式无效
-    pub fn verify_secret(&self, client_secret: &str) -> BulwarkResult<bool> {
+    pub fn verify_secret(&self, client_secret: &str) -> GarrisonResult<bool> {
         verify_secret(client_secret, &self.client_secret_hash)
     }
 
@@ -173,14 +173,14 @@ impl OAuth2Client {
     ///
     /// # 返回
     /// - `Ok(())`: 所有 scope 均允许（或 allowed_scopes 为空）
-    /// - `Err(BulwarkError::OAuth2)`: 存在不允许的 scope，错误消息含 `invalid_scope`
-    pub fn validate_scopes(&self, scopes: &[String]) -> BulwarkResult<()> {
+    /// - `Err(GarrisonError::OAuth2)`: 存在不允许的 scope，错误消息含 `invalid_scope`
+    pub fn validate_scopes(&self, scopes: &[String]) -> GarrisonResult<()> {
         if self.scopes.is_empty() {
             return Ok(());
         }
         for s in scopes {
             if !self.allows_scope(s) {
-                return Err(BulwarkError::OAuth2(format!(
+                return Err(GarrisonError::OAuth2(format!(
                     "oauth2-server-client-invalid-scope::{}",
                     s
                 )));
@@ -192,36 +192,36 @@ impl OAuth2Client {
 
 /// OAuth2 客户端存储 trait。
 ///
-/// 提供 CRUD 操作抽象，`DaoOAuth2ClientStore` 基于 `BulwarkDao` 实现。
+/// 提供 CRUD 操作抽象，`DaoOAuth2ClientStore` 基于 `GarrisonDao` 实现。
 #[async_trait]
 pub trait OAuth2ClientStore: Send + Sync {
     /// 创建客户端（若 client_id 已存在则返回错误）。
-    async fn create(&self, client: OAuth2Client) -> BulwarkResult<()>;
+    async fn create(&self, client: OAuth2Client) -> GarrisonResult<()>;
 
     /// 获取客户端配置。
-    async fn get(&self, client_id: &str) -> BulwarkResult<Option<OAuth2Client>>;
+    async fn get(&self, client_id: &str) -> GarrisonResult<Option<OAuth2Client>>;
 
     /// 更新客户端配置（必须已存在）。
-    async fn update(&self, client: OAuth2Client) -> BulwarkResult<()>;
+    async fn update(&self, client: OAuth2Client) -> GarrisonResult<()>;
 
     /// 删除客户端。
-    async fn delete(&self, client_id: &str) -> BulwarkResult<()>;
+    async fn delete(&self, client_id: &str) -> GarrisonResult<()>;
 
     /// 列出所有客户端（按 client_id 排序）。
-    async fn list(&self) -> BulwarkResult<Vec<OAuth2Client>>;
+    async fn list(&self) -> GarrisonResult<Vec<OAuth2Client>>;
 }
 
-/// 基于 `BulwarkDao` 的 `OAuth2ClientStore` 实现。
+/// 基于 `GarrisonDao` 的 `OAuth2ClientStore` 实现。
 ///
 /// 客户端配置序列化为 JSON 存储，key 格式：`oauth2:client:{client_id}`。
 /// 使用 `keys()` 扫描实现 `list()`。
 pub struct DaoOAuth2ClientStore {
-    dao: Arc<dyn BulwarkDao>,
+    dao: Arc<dyn GarrisonDao>,
 }
 
 impl DaoOAuth2ClientStore {
     /// 创建 store 实例。
-    pub fn new(dao: Arc<dyn BulwarkDao>) -> Self {
+    pub fn new(dao: Arc<dyn GarrisonDao>) -> Self {
         Self { dao }
     }
 
@@ -233,26 +233,26 @@ impl DaoOAuth2ClientStore {
 
 #[async_trait]
 impl OAuth2ClientStore for DaoOAuth2ClientStore {
-    async fn create(&self, client: OAuth2Client) -> BulwarkResult<()> {
+    async fn create(&self, client: OAuth2Client) -> GarrisonResult<()> {
         let key = Self::build_key(&client.client_id);
         if self.dao.get(&key).await?.is_some() {
-            return Err(BulwarkError::OAuth2(format!(
+            return Err(GarrisonError::OAuth2(format!(
                 "oauth2-server-client-exists::{}",
                 client.client_id
             )));
         }
         let json = serde_json::to_string(&client).map_err(|e| {
-            BulwarkError::Internal(format!("oauth2-server-client-serialize::{}", e))
+            GarrisonError::Internal(format!("oauth2-server-client-serialize::{}", e))
         })?;
         self.dao.set_permanent(&key, &json).await
     }
 
-    async fn get(&self, client_id: &str) -> BulwarkResult<Option<OAuth2Client>> {
+    async fn get(&self, client_id: &str) -> GarrisonResult<Option<OAuth2Client>> {
         let key = Self::build_key(client_id);
         match self.dao.get(&key).await? {
             Some(json) => {
                 let client: OAuth2Client = serde_json::from_str(&json).map_err(|e| {
-                    BulwarkError::Internal(format!("oauth2-server-client-deserialize::{}", e))
+                    GarrisonError::Internal(format!("oauth2-server-client-deserialize::{}", e))
                 })?;
                 Ok(Some(client))
             },
@@ -260,26 +260,26 @@ impl OAuth2ClientStore for DaoOAuth2ClientStore {
         }
     }
 
-    async fn update(&self, client: OAuth2Client) -> BulwarkResult<()> {
+    async fn update(&self, client: OAuth2Client) -> GarrisonResult<()> {
         let key = Self::build_key(&client.client_id);
         if self.dao.get(&key).await?.is_none() {
-            return Err(BulwarkError::OAuth2(format!(
+            return Err(GarrisonError::OAuth2(format!(
                 "oauth2-server-client-not-found::{}",
                 client.client_id
             )));
         }
         let json = serde_json::to_string(&client).map_err(|e| {
-            BulwarkError::Internal(format!("oauth2-server-client-serialize::{}", e))
+            GarrisonError::Internal(format!("oauth2-server-client-serialize::{}", e))
         })?;
         self.dao.update(&key, &json).await
     }
 
-    async fn delete(&self, client_id: &str) -> BulwarkResult<()> {
+    async fn delete(&self, client_id: &str) -> GarrisonResult<()> {
         let key = Self::build_key(client_id);
         self.dao.delete(&key).await
     }
 
-    async fn list(&self) -> BulwarkResult<Vec<OAuth2Client>> {
+    async fn list(&self) -> GarrisonResult<Vec<OAuth2Client>> {
         let pattern = format!("{}*", DaoKeyPrefix::OAuth2Client.as_str());
         let keys = self.dao.keys(&pattern).await?;
         let mut clients = Vec::with_capacity(keys.len());
@@ -287,7 +287,7 @@ impl OAuth2ClientStore for DaoOAuth2ClientStore {
             match self.dao.get(&key).await? {
                 Some(json) => {
                     let client: OAuth2Client = serde_json::from_str(&json).map_err(|e| {
-                        BulwarkError::Internal(format!("oauth2-server-client-deserialize::{}", e))
+                        GarrisonError::Internal(format!("oauth2-server-client-deserialize::{}", e))
                     })?;
                     clients.push(client);
                 },
@@ -307,7 +307,7 @@ impl OAuth2ClientStore for DaoOAuth2ClientStore {
 ///
 /// 与 `account::credential::Argon2Hasher` 独立（不同能力域，不引入 account-credential 依赖）。
 /// 参数：Argon2id, m=19456, t=2, p=1（与 Argon2Hasher 默认一致）。
-fn hash_secret(secret: &str) -> BulwarkResult<String> {
+fn hash_secret(secret: &str) -> GarrisonResult<String> {
     let salt = SaltString::generate(&mut OsRng);
     let argon2 = Argon2::new(
         Algorithm::Argon2id,
@@ -316,14 +316,14 @@ fn hash_secret(secret: &str) -> BulwarkResult<String> {
     );
     let hash = argon2
         .hash_password(secret.as_bytes(), &salt)
-        .map_err(|e| BulwarkError::Internal(format!("oauth2-server-client-hash::{}", e)))?;
+        .map_err(|e| GarrisonError::Internal(format!("oauth2-server-client-hash::{}", e)))?;
     Ok(hash.to_string())
 }
 
 /// 验证明文密钥与 Argon2id 哈希是否匹配。
-fn verify_secret(secret: &str, hash_str: &str) -> BulwarkResult<bool> {
+fn verify_secret(secret: &str, hash_str: &str) -> GarrisonResult<bool> {
     let parsed = PasswordHash::new(hash_str).map_err(|e| {
-        BulwarkError::InvalidParam(format!("oauth2-server-client-hash-format::{}", e))
+        GarrisonError::InvalidParam(format!("oauth2-server-client-hash-format::{}", e))
     })?;
     Ok(Argon2::default()
         .verify_password(secret.as_bytes(), &parsed)
@@ -379,7 +379,7 @@ mod tests {
     fn grant_type_from_str_rejects_unknown() {
         let err = "unknown_grant".parse::<GrantType>().unwrap_err();
         assert!(
-            matches!(err, BulwarkError::OAuth2(_)),
+            matches!(err, GarrisonError::OAuth2(_)),
             "未知 grant_type 应返回 OAuth2 错误"
         );
         assert!(
@@ -425,13 +425,13 @@ mod tests {
     #[test]
     fn new_client_rejects_empty_id() {
         let err = OAuth2Client::new("", "secret", vec![], vec![], vec![]).unwrap_err();
-        assert!(matches!(err, BulwarkError::InvalidParam(_)));
+        assert!(matches!(err, GarrisonError::InvalidParam(_)));
     }
 
     #[test]
     fn new_client_rejects_empty_secret() {
         let err = OAuth2Client::new("cid", "", vec![], vec![], vec![]).unwrap_err();
-        assert!(matches!(err, BulwarkError::InvalidParam(_)));
+        assert!(matches!(err, GarrisonError::InvalidParam(_)));
     }
 
     #[test]
@@ -451,7 +451,7 @@ mod tests {
     #[test]
     fn verify_secret_rejects_invalid_hash() {
         let err = verify_secret("secret", "not-a-valid-hash").unwrap_err();
-        assert!(matches!(err, BulwarkError::InvalidParam(_)));
+        assert!(matches!(err, GarrisonError::InvalidParam(_)));
     }
 
     // === redirect_uri 白名单测试 ===
@@ -571,7 +571,7 @@ mod tests {
         let client = make_test_client("dup-001");
         store.create(client.clone()).await.expect("首次创建");
         let err = store.create(client).await.unwrap_err();
-        assert!(matches!(err, BulwarkError::OAuth2(_)));
+        assert!(matches!(err, GarrisonError::OAuth2(_)));
     }
 
     #[tokio::test]
@@ -597,7 +597,7 @@ mod tests {
         let store = DaoOAuth2ClientStore::new(Arc::new(MockDao::new()));
         let client = make_test_client("no-exist");
         let err = store.update(client).await.unwrap_err();
-        assert!(matches!(err, BulwarkError::OAuth2(_)));
+        assert!(matches!(err, GarrisonError::OAuth2(_)));
     }
 
     #[tokio::test]

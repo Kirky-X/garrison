@@ -4,23 +4,23 @@
 //! web_warp_example 示例（web-warp feature）。
 //!
 //! 演示 warp 框架集成：
-//! 1. `BulwarkRouter`（warp 版本）+ `into_filter` 路由级守卫
-//! 2. `BulwarkRejection` rejection 处理 + `recover` 恢复
+//! 1. `GarrisonRouter`（warp 版本）+ `into_filter` 路由级守卫
+//! 2. `GarrisonRejection` rejection 处理 + `recover` 恢复
 //! 3. `check_login` / `check_role` / `check_permission` 函数式 Filter
 //!
 //! 运行方式：
 //! ```sh
-//! cargo run -p bulwark-examples --bin web_warp_example --features web-warp
+//! cargo run -p garrison-examples --bin web_warp_example --features web-warp
 //! ```
 
 use async_trait::async_trait;
-use bulwark::annotation::Annotation;
-use bulwark::config::BulwarkConfig;
-use bulwark::dao::BulwarkDao;
-use bulwark::error::{BulwarkError, BulwarkResult};
-use bulwark::manager::BulwarkManager;
-use bulwark::stp::{BulwarkInterface, BulwarkUtil};
-use bulwark::web_warp::{BulwarkRejection, BulwarkRouter};
+use garrison::annotation::Annotation;
+use garrison::config::GarrisonConfig;
+use garrison::dao::GarrisonDao;
+use garrison::error::{GarrisonError, GarrisonResult};
+use garrison::manager::GarrisonManager;
+use garrison::stp::{GarrisonInterface, GarrisonUtil};
+use garrison::web_warp::{GarrisonRejection, GarrisonRouter};
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -52,8 +52,8 @@ impl Default for InMemoryDao {
 }
 
 #[async_trait]
-impl BulwarkDao for InMemoryDao {
-    async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
+impl GarrisonDao for InMemoryDao {
+    async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
         let mut store = self.store.lock();
         match store.get(key) {
             Some((value, expire_at)) => {
@@ -69,7 +69,7 @@ impl BulwarkDao for InMemoryDao {
         }
     }
 
-    async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> BulwarkResult<()> {
+    async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> GarrisonResult<()> {
         let expire_at = if ttl_seconds == 0 {
             None
         } else {
@@ -81,18 +81,18 @@ impl BulwarkDao for InMemoryDao {
         Ok(())
     }
 
-    async fn update(&self, key: &str, value: &str) -> BulwarkResult<()> {
+    async fn update(&self, key: &str, value: &str) -> GarrisonResult<()> {
         let mut store = self.store.lock();
         match store.get_mut(key) {
             Some((existing, _)) => {
                 *existing = value.to_string();
                 Ok(())
             },
-            None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
+            None => Err(GarrisonError::Dao(format!("键不存在: {}", key))),
         }
     }
 
-    async fn expire(&self, key: &str, seconds: u64) -> BulwarkResult<()> {
+    async fn expire(&self, key: &str, seconds: u64) -> GarrisonResult<()> {
         let mut store = self.store.lock();
         match store.get_mut(key) {
             Some((_, expire_at)) => {
@@ -103,11 +103,11 @@ impl BulwarkDao for InMemoryDao {
                 };
                 Ok(())
             },
-            None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
+            None => Err(GarrisonError::Dao(format!("键不存在: {}", key))),
         }
     }
 
-    async fn delete(&self, key: &str) -> BulwarkResult<()> {
+    async fn delete(&self, key: &str) -> GarrisonResult<()> {
         self.store.lock().remove(key);
         Ok(())
     }
@@ -143,12 +143,12 @@ impl Default for MyInterface {
 }
 
 #[async_trait]
-impl BulwarkInterface for MyInterface {
-    async fn get_permission_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+impl GarrisonInterface for MyInterface {
+    async fn get_permission_list(&self, login_id: &str) -> GarrisonResult<Vec<String>> {
         Ok(self.permissions.get(login_id).cloned().unwrap_or_default())
     }
 
-    async fn get_role_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+    async fn get_role_list(&self, login_id: &str) -> GarrisonResult<Vec<String>> {
         Ok(self.roles.get(login_id).cloned().unwrap_or_default())
     }
 }
@@ -157,24 +157,26 @@ impl BulwarkInterface for MyInterface {
 // setup / build_routes / handle_rejection / run
 // ============================================================================
 
-/// 初始化全局 BulwarkManager（注入 InMemoryDao + MyInterface），并登录获取 token。
+/// 初始化全局 GarrisonManager（注入 InMemoryDao + MyInterface），并登录获取 token。
 ///
 /// 返回 `(config, token)`，config 用于构建 warp Filter，token 用于测试请求。
-pub async fn setup() -> (Arc<BulwarkConfig>, String) {
-    let dao: Arc<dyn BulwarkDao> = Arc::new(InMemoryDao::new());
-    let mut config = BulwarkConfig::default_config();
+pub async fn setup() -> (Arc<GarrisonConfig>, String) {
+    let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
+    let mut config = GarrisonConfig::default_config();
     config.timeout = 3600;
     config.active_timeout = -1;
     config.throw_on_not_login = false;
     let config = Arc::new(config);
-    let interface: Arc<dyn BulwarkInterface> = Arc::new(MyInterface::new());
-    BulwarkManager::init(dao, config.clone(), interface).expect("BulwarkManager 初始化失败");
+    let interface: Arc<dyn GarrisonInterface> = Arc::new(MyInterface::new());
+    GarrisonManager::init(dao, config.clone(), interface).expect("GarrisonManager 初始化失败");
 
-    let token = BulwarkUtil::login_simple("1001").await.expect("login 失败");
+    let token = GarrisonUtil::login_simple("1001")
+        .await
+        .expect("login 失败");
     (config, token)
 }
 
-/// 构建 warp 路由 Filter（使用 BulwarkRouter + into_filter 路由级守卫）。
+/// 构建 warp 路由 Filter（使用 GarrisonRouter + into_filter 路由级守卫）。
 ///
 /// 注册的路由规则：
 /// - `/api/protected` → `CheckLogin`
@@ -185,9 +187,9 @@ pub async fn setup() -> (Arc<BulwarkConfig>, String) {
 /// 守卫 Filter 检查请求路径是否匹配已注册规则，匹配则执行 interceptor 鉴权。
 /// 未注册路径直接放行（仍经过后续路由匹配）。
 pub fn build_routes(
-    config: Arc<BulwarkConfig>,
+    config: Arc<GarrisonConfig>,
 ) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
-    let guard = BulwarkRouter::new(config)
+    let guard = GarrisonRouter::new(config)
         .route_protected("/api/protected", Annotation::CheckLogin)
         .route_protected("/api/admin", Annotation::CheckRole("admin".to_string()))
         .route_protected(
@@ -223,13 +225,13 @@ pub fn build_routes(
         .map(|_, reply| reply)
 }
 
-/// rejection 恢复处理器：将 BulwarkRejection 转换为 JSON 错误响应。
+/// rejection 恢复处理器：将 GarrisonRejection 转换为 JSON 错误响应。
 ///
-/// 返回包含错误消息和正确状态码的 JSON 响应。非 BulwarkRejection 的 rejection 原样传递。
+/// 返回包含错误消息和正确状态码的 JSON 响应。非 GarrisonRejection 的 rejection 原样传递。
 pub async fn handle_rejection(
     err: warp::Rejection,
 ) -> Result<impl warp::reply::Reply, warp::Rejection> {
-    if let Some(rej) = err.find::<BulwarkRejection>() {
+    if let Some(rej) = err.find::<GarrisonRejection>() {
         let (status_code, _, _, _) = rej.0.response_parts();
         let status = warp::http::StatusCode::from_u16(status_code)
             .unwrap_or(warp::http::StatusCode::INTERNAL_SERVER_ERROR);
@@ -247,16 +249,16 @@ pub async fn handle_rejection(
 /// curl http://127.0.0.1:3002/public
 /// ```
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    println!("=== Bulwark warp 集成示例 ===\n");
+    println!("=== Garrison warp 集成示例 ===\n");
 
     let (config, token) = setup().await;
-    println!("[初始化] BulwarkManager 已就绪");
+    println!("[初始化] GarrisonManager 已就绪");
     println!("    账号 1001 角色: [admin]");
     println!("    账号 1001 权限: [data:read]");
     println!("    token: {}...", &token[..16.min(token.len())]);
     println!();
 
-    println!("[路由] BulwarkRouter + into_filter 守卫:");
+    println!("[路由] GarrisonRouter + into_filter 守卫:");
     println!("    GET /api/protected  → CheckLogin");
     println!("    GET /api/admin      → CheckRole(\"admin\")");
     println!("    GET /api/data       → CheckPermission(\"data:read\")");
@@ -267,7 +269,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("    warp::path(\"api\").and(check_login(config.clone())).map(|| \"ok\")");
     println!();
 
-    println!("[rejection] handle_rejection: BulwarkRejection → JSON 错误响应");
+    println!("[rejection] handle_rejection: GarrisonRejection → JSON 错误响应");
     println!();
 
     println!("[启动] warp::serve 监听 127.0.0.1:3002");

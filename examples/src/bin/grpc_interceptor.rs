@@ -5,7 +5,7 @@
 
 #[tokio::main]
 async fn main() {
-    bulwark_examples::web::grpc_interceptor::run()
+    garrison_examples::web::grpc_interceptor::run()
         .await
         .unwrap();
 }

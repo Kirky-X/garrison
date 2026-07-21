@@ -4,7 +4,7 @@
 //! SmsSender trait 的实现集合。
 
 #[cfg(test)]
-use super::{BulwarkResult, NoopSmsSender, SmsSender};
+use super::{GarrisonResult, NoopSmsSender, SmsSender};
 #[cfg(test)]
 use async_trait::async_trait;
 
@@ -12,7 +12,7 @@ use async_trait::async_trait;
 #[cfg(test)]
 #[async_trait]
 impl SmsSender for NoopSmsSender {
-    async fn send(&self, phone: &str, _code: &str) -> BulwarkResult<()> {
+    async fn send(&self, phone: &str, _code: &str) -> GarrisonResult<()> {
         tracing::debug!(phone = phone, "NoopSmsSender 发送验证码（code 已省略）");
         Ok(())
     }

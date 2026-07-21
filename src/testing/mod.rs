@@ -8,11 +8,11 @@
 //!
 //! # 启用方式
 //!
-//! 启用 `bulwark-testing` feature（依赖 `authorize-api`）：
+//! 启用 `garrison-testing` feature（依赖 `authorize-api`）：
 //!
 //! ```toml
 //! [dependencies]
-//! bulwark = { version = "0.5", features = ["bulwark-testing"] }
+//! garrison = { version = "0.5", features = ["garrison-testing"] }
 //! ```
 //!
 //! # JSON 格式
@@ -33,8 +33,8 @@
 //! # 使用示例
 //!
 //! ```ignore
-//! use bulwark::testing::JsonTestSuite;
-//! use bulwark::core::permission::Authorizer;
+//! use garrison::testing::JsonTestSuite;
+//! use garrison::core::permission::Authorizer;
 //!
 //! let json = std::fs::read_to_string("tests/rbac.json")?;
 //! let suite = JsonTestSuite::from_json(&json)?;

@@ -7,8 +7,8 @@
 //! 提供 `MockDao`（基于 `tokio::sync::Mutex<HashMap>` 模拟 DAO），
 //! 供 `protocol::sign::tests` 签名生成/校验测试复用。
 
-use crate::dao::BulwarkDao;
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::dao::GarrisonDao;
+use crate::error::{GarrisonError, GarrisonResult};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use tokio::sync::Mutex;
@@ -28,33 +28,33 @@ impl MockDao {
 }
 
 #[async_trait]
-impl BulwarkDao for MockDao {
-    async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
+impl GarrisonDao for MockDao {
+    async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
         let data = self.data.lock().await;
         Ok(data.get(key).cloned())
     }
 
-    async fn set(&self, key: &str, value: &str, _ttl_seconds: u64) -> BulwarkResult<()> {
+    async fn set(&self, key: &str, value: &str, _ttl_seconds: u64) -> GarrisonResult<()> {
         let mut data = self.data.lock().await;
         data.insert(key.to_string(), value.to_string());
         Ok(())
     }
 
-    async fn update(&self, key: &str, value: &str) -> BulwarkResult<()> {
+    async fn update(&self, key: &str, value: &str) -> GarrisonResult<()> {
         let mut data = self.data.lock().await;
         if data.contains_key(key) {
             data.insert(key.to_string(), value.to_string());
             Ok(())
         } else {
-            Err(BulwarkError::Dao(format!("dao-key-not-found::{}", key)))
+            Err(GarrisonError::Dao(format!("dao-key-not-found::{}", key)))
         }
     }
 
-    async fn expire(&self, _key: &str, _seconds: u64) -> BulwarkResult<()> {
+    async fn expire(&self, _key: &str, _seconds: u64) -> GarrisonResult<()> {
         Ok(())
     }
 
-    async fn delete(&self, key: &str) -> BulwarkResult<()> {
+    async fn delete(&self, key: &str) -> GarrisonResult<()> {
         let mut data = self.data.lock().await;
         data.remove(key);
         Ok(())
@@ -77,7 +77,7 @@ mod tests {
     async fn update_missing_key_returns_dao_error() {
         let dao = MockDao::new();
         let result = dao.update("missing", "v").await;
-        assert!(matches!(result, Err(BulwarkError::Dao(_))));
+        assert!(matches!(result, Err(GarrisonError::Dao(_))));
     }
 
     #[tokio::test]

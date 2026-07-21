@@ -3,7 +3,7 @@
 
 //! SSO 协议集成测试：跨子系统 ticket 签发 → 校验 → 销毁完整流程。
 //!
-//! 验证 `SsoClient` 在多个子系统间通过共享 `BulwarkDao` 实现 SSO 的能力：
+//! 验证 `SsoClient` 在多个子系统间通过共享 `GarrisonDao` 实现 SSO 的能力：
 //! 1. 子系统 A 签发 ticket，存入共享 DAO
 //! 2. 子系统 B 持有相同 DAO，校验 ticket 拿到 login_id
 //! 3. 一次性使用语义：第二次校验失败
@@ -15,9 +15,9 @@
 #![cfg(feature = "protocol-sso")]
 
 use async_trait::async_trait;
-use bulwark::dao::BulwarkDao;
-use bulwark::error::BulwarkError;
-use bulwark::protocol::sso::SsoClient;
+use garrison::dao::GarrisonDao;
+use garrison::error::GarrisonError;
+use garrison::protocol::sso::SsoClient;
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -40,8 +40,8 @@ impl MockDao {
 }
 
 #[async_trait]
-impl BulwarkDao for MockDao {
-    async fn get(&self, key: &str) -> Result<Option<String>, BulwarkError> {
+impl GarrisonDao for MockDao {
+    async fn get(&self, key: &str) -> Result<Option<String>, GarrisonError> {
         let mut store = self.store.lock();
         match store.get(key) {
             Some((value, expire_at)) => {
@@ -57,7 +57,7 @@ impl BulwarkDao for MockDao {
         }
     }
 
-    async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> Result<(), BulwarkError> {
+    async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> Result<(), GarrisonError> {
         let expire_at = if ttl_seconds == 0 {
             None
         } else {
@@ -69,18 +69,18 @@ impl BulwarkDao for MockDao {
         Ok(())
     }
 
-    async fn update(&self, key: &str, value: &str) -> Result<(), BulwarkError> {
+    async fn update(&self, key: &str, value: &str) -> Result<(), GarrisonError> {
         let mut store = self.store.lock();
         match store.get_mut(key) {
             Some((existing, _)) => {
                 *existing = value.to_string();
                 Ok(())
             },
-            None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
+            None => Err(GarrisonError::Dao(format!("键不存在: {}", key))),
         }
     }
 
-    async fn expire(&self, key: &str, seconds: u64) -> Result<(), BulwarkError> {
+    async fn expire(&self, key: &str, seconds: u64) -> Result<(), GarrisonError> {
         let mut store = self.store.lock();
         match store.get_mut(key) {
             Some((_, expire_at)) => {
@@ -91,11 +91,11 @@ impl BulwarkDao for MockDao {
                 };
                 Ok(())
             },
-            None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
+            None => Err(GarrisonError::Dao(format!("键不存在: {}", key))),
         }
     }
 
-    async fn delete(&self, key: &str) -> Result<(), BulwarkError> {
+    async fn delete(&self, key: &str) -> Result<(), GarrisonError> {
         self.store.lock().remove(key);
         Ok(())
     }
@@ -108,7 +108,7 @@ impl BulwarkDao for MockDao {
 /// 创建共享 DAO 的两个 SsoClient（模拟子系统 A 和 B）。
 fn make_two_clients() -> (SsoClient, SsoClient, Arc<MockDao>) {
     let dao = Arc::new(MockDao::new());
-    let dao_dyn: Arc<dyn BulwarkDao> = dao.clone();
+    let dao_dyn: Arc<dyn GarrisonDao> = dao.clone();
     let client_a = SsoClient::new(dao_dyn.clone(), "test-sso-secret-key");
     let client_b = SsoClient::new(dao_dyn, "test-sso-secret-key");
     (client_a, client_b, dao)
@@ -163,7 +163,7 @@ async fn ticket_is_one_time_use_across_subsystems() {
     let second = client_b.validate_ticket(&ticket, 2001).await;
     assert!(second.is_err(), "一次性使用：第二次校验应失败");
     match second.err() {
-        Some(BulwarkError::InvalidToken(_)) => {},
+        Some(GarrisonError::InvalidToken(_)) => {},
         other => panic!("期望 InvalidToken，实际: {:?}", other),
     }
 }
@@ -180,7 +180,7 @@ async fn ticket_client_id_isolation_across_subsystems() {
     let result = client_b.validate_ticket(&ticket, 9999).await;
     assert!(result.is_err(), "错误 client_id 应校验失败");
     match result.err() {
-        Some(BulwarkError::InvalidToken(_)) => {},
+        Some(GarrisonError::InvalidToken(_)) => {},
         other => panic!(
             "期望 InvalidToken 错误（M5 修复：client_id 不匹配），实际: {:?}",
             other
@@ -218,11 +218,11 @@ async fn destroy_nonexistent_ticket_is_idempotent() {
 /// ticket TTL 默认 60 秒（spec Scenario）。
 #[tokio::test]
 async fn ticket_has_default_ttl_60_seconds() {
-    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     let client = SsoClient::new(dao, "test-sso-secret-key");
     let ticket = client.issue_ticket("1001", 2001).await.unwrap();
     // 直接通过 DAO 验证 ticket 存在
-    let key = format!("bulwark:sso:ticket:{}", ticket);
+    let key = format!("garrison:sso:ticket:{}", ticket);
     let value = client
         .validate_ticket(&ticket, 2001)
         .await
@@ -235,7 +235,7 @@ async fn ticket_has_default_ttl_60_seconds() {
 /// with_ticket_ttl 自定义 TTL 跨子系统生效。
 #[tokio::test]
 async fn with_ticket_ttl_custom_ttl_across_subsystems() {
-    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     let client_a = SsoClient::new(dao.clone(), "test-sso-secret-key").with_ticket_ttl(120);
     let client_b = SsoClient::new(dao, "test-sso-secret-key").with_ticket_ttl(120);
 

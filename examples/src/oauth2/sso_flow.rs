@@ -5,17 +5,17 @@
 //!
 //! 运行方式：
 //! ```sh
-//! cargo run -p bulwark-examples --bin sso_flow --features protocol-sso
+//! cargo run -p garrison-examples --bin sso_flow --features protocol-sso
 //! ```
 //!
-//! 本示例内联一个最小化的内存 `BulwarkDao` 实现，用于演示 `SsoClient` 的完整流程。
-//! 生产环境应使用 `BulwarkDaoOxcache`（启用 `cache-memory` / `cache-redis`）或
+//! 本示例内联一个最小化的内存 `GarrisonDao` 实现，用于演示 `SsoClient` 的完整流程。
+//! 生产环境应使用 `GarrisonDaoOxcache`（启用 `cache-memory` / `cache-redis`）或
 //! `dbnexus` 实现（启用 `db-sqlite`）。
 
 use async_trait::async_trait;
-use bulwark::dao::BulwarkDao;
-use bulwark::error::{BulwarkError, BulwarkResult};
-use bulwark::protocol::sso::SsoClient;
+use garrison::dao::GarrisonDao;
+use garrison::error::{GarrisonError, GarrisonResult};
+use garrison::protocol::sso::SsoClient;
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -42,8 +42,8 @@ impl Default for InMemoryDao {
 }
 
 #[async_trait]
-impl BulwarkDao for InMemoryDao {
-    async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
+impl GarrisonDao for InMemoryDao {
+    async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
         let mut store = self.store.lock();
         match store.get(key) {
             Some((value, expire_at)) => {
@@ -59,7 +59,7 @@ impl BulwarkDao for InMemoryDao {
         }
     }
 
-    async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> BulwarkResult<()> {
+    async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> GarrisonResult<()> {
         let expire_at = if ttl_seconds == 0 {
             None
         } else {
@@ -71,18 +71,18 @@ impl BulwarkDao for InMemoryDao {
         Ok(())
     }
 
-    async fn update(&self, key: &str, value: &str) -> BulwarkResult<()> {
+    async fn update(&self, key: &str, value: &str) -> GarrisonResult<()> {
         let mut store = self.store.lock();
         match store.get_mut(key) {
             Some((existing, _)) => {
                 *existing = value.to_string();
                 Ok(())
             },
-            None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
+            None => Err(GarrisonError::Dao(format!("键不存在: {}", key))),
         }
     }
 
-    async fn expire(&self, key: &str, seconds: u64) -> BulwarkResult<()> {
+    async fn expire(&self, key: &str, seconds: u64) -> GarrisonResult<()> {
         let mut store = self.store.lock();
         match store.get_mut(key) {
             Some((_, expire_at)) => {
@@ -93,11 +93,11 @@ impl BulwarkDao for InMemoryDao {
                 };
                 Ok(())
             },
-            None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
+            None => Err(GarrisonError::Dao(format!("键不存在: {}", key))),
         }
     }
 
-    async fn delete(&self, key: &str) -> BulwarkResult<()> {
+    async fn delete(&self, key: &str) -> GarrisonResult<()> {
         self.store.lock().remove(key);
         Ok(())
     }
@@ -108,10 +108,10 @@ impl BulwarkDao for InMemoryDao {
 /// 演示 SsoClient 的 issue_ticket / validate_ticket / destroy_ticket 完整流程，
 /// 包括一次性语义、client_id 不匹配拒绝、幂等销毁。
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    println!("=== Bulwark SSO 单点登录示例 ===\n");
+    println!("=== Garrison SSO 单点登录示例 ===\n");
 
     // 1. 创建 SsoClient，注入 DAO（ticket TTL 默认 60 秒）
-    let dao: Arc<dyn BulwarkDao> = Arc::new(InMemoryDao::new());
+    let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
     let sso = SsoClient::new(dao, "test-sso-secret-key");
 
     // 2. 模拟子系统 A 已登录用户 1001，签发 SSO ticket 供子系统 B 登录

@@ -65,17 +65,17 @@ fn social_provider_enum_has_three_variants() {
 // ========================================================================
 
 /// T106 Green: 验证 `migrations/sqlite/core/005_social_bindings.sql`
-/// 被 `BulwarkMigration::migrate_core()` 加载后 `social_bindings` 表存在
+/// 被 `GarrisonMigration::migrate_core()` 加载后 `social_bindings` 表存在
 ///
 /// 测试模式与 `role_hierarchy_table_exists_after_migration` 一致：
 /// 1. `init_dbnexus("sqlite::memory:")` 创建内存 SQLite
-/// 2. `BulwarkMigration::with_base_dir` 指向项目根目录 `migrations/sqlite/`
+/// 2. `GarrisonMigration::with_base_dir` 指向项目根目录 `migrations/sqlite/`
 /// 3. `migrate_core()` 执行 `core/*.sql`（含 005_social_bindings.sql）
 /// 4. 查询 `sqlite_master` 验证 `social_bindings` 表存在
 #[cfg(feature = "db-sqlite")]
 #[tokio::test(flavor = "multi_thread")]
 async fn social_bindings_table_exists_after_migration() {
-    use crate::dao::{init_dbnexus, BulwarkMigration};
+    use crate::dao::{init_dbnexus, GarrisonMigration};
     use sea_orm::{ConnectionTrait, DbBackend, Statement};
     use std::path::PathBuf;
 
@@ -84,7 +84,7 @@ async fn social_bindings_table_exists_after_migration() {
         .expect("init_dbnexus 应成功");
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR 应可用");
     let base_dir = PathBuf::from(manifest_dir).join("migrations/sqlite");
-    let migration = BulwarkMigration::with_base_dir(pool, base_dir);
+    let migration = GarrisonMigration::with_base_dir(pool, base_dir);
     let applied = migration.migrate_core().await.expect("migrate_core 应成功");
     // 至少 5 个迁移文件（001_init + 002_role_hierarchy + 003_refresh_tokens
     // + 004_audit_logs + 005_social_bindings）
@@ -138,7 +138,7 @@ async fn social_bindings_table_exists_after_migration() {
 #[tokio::test(flavor = "multi_thread")]
 async fn social_binding_service_find_or_create_creates_new_binding() {
     use super::*;
-    use crate::dao::{tests::MockDao, BulwarkMigration};
+    use crate::dao::{tests::MockDao, GarrisonMigration};
     use dbnexus::{DbConfig, DbPool};
     use sea_orm::{ConnectionTrait, DbBackend, Statement, Value};
     use std::path::PathBuf;
@@ -158,12 +158,12 @@ async fn social_binding_service_find_or_create_creates_new_binding() {
         .expect("DbPool::with_config 应成功");
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR 应可用");
     let base_dir = PathBuf::from(manifest_dir).join("migrations/sqlite");
-    let migration = BulwarkMigration::with_base_dir(pool, base_dir);
+    let migration = GarrisonMigration::with_base_dir(pool, base_dir);
     migration.migrate_core().await.expect("migrate_core 应成功");
     let pool = migration.pool().clone();
 
     // 2. 构造 SocialBindingService（Decision Matrix 方案 A：pool + dao）
-    let dao: Arc<dyn crate::dao::BulwarkDao> = Arc::new(MockDao::new());
+    let dao: Arc<dyn crate::dao::GarrisonDao> = Arc::new(MockDao::new());
     let svc = SocialBindingService::new(pool.clone(), dao);
 
     // 3. 构造 SocialUserInfo（模拟微信登录返回）
@@ -246,8 +246,8 @@ async fn social_binding_service_find_or_create_creates_new_binding() {
 #[cfg(feature = "i18n")]
 #[test]
 fn loc_i18n_wechat_token_request_failed_zh() {
-    use crate::i18n::{set_locale, BulwarkLocale};
-    let _guard = set_locale(BulwarkLocale::Zh);
+    use crate::i18n::{set_locale, GarrisonLocale};
+    let _guard = set_locale(GarrisonLocale::Zh);
     let msg = crate::loc!(
         "wechat-token-request-failed",
         "wechat token request failed: conn refused".to_string(),
@@ -260,8 +260,8 @@ fn loc_i18n_wechat_token_request_failed_zh() {
 #[cfg(feature = "i18n")]
 #[test]
 fn loc_i18n_wechat_token_request_failed_en() {
-    use crate::i18n::{set_locale, BulwarkLocale};
-    let _guard = set_locale(BulwarkLocale::En);
+    use crate::i18n::{set_locale, GarrisonLocale};
+    let _guard = set_locale(GarrisonLocale::En);
     let msg = crate::loc!(
         "wechat-token-request-failed",
         "wechat token request failed: conn refused".to_string(),
@@ -274,8 +274,8 @@ fn loc_i18n_wechat_token_request_failed_en() {
 #[cfg(feature = "i18n")]
 #[test]
 fn loc_i18n_wechat_error_response_with_code_message_zh() {
-    use crate::i18n::{set_locale, BulwarkLocale};
-    let _guard = set_locale(BulwarkLocale::Zh);
+    use crate::i18n::{set_locale, GarrisonLocale};
+    let _guard = set_locale(GarrisonLocale::Zh);
     let msg = crate::loc!(
         "wechat-error-response",
         "wechat error 40029: invalid code".to_string(),
@@ -289,8 +289,8 @@ fn loc_i18n_wechat_error_response_with_code_message_zh() {
 #[cfg(feature = "i18n")]
 #[test]
 fn loc_i18n_alipay_rsa_key_parse_failed_zh() {
-    use crate::i18n::{set_locale, BulwarkLocale};
-    let _guard = set_locale(BulwarkLocale::Zh);
+    use crate::i18n::{set_locale, GarrisonLocale};
+    let _guard = set_locale(GarrisonLocale::Zh);
     let msg = crate::loc!(
         "alipay-rsa-key-parse-failed",
         "alipay rsa key parse failed: bad pem".to_string(),
@@ -303,8 +303,8 @@ fn loc_i18n_alipay_rsa_key_parse_failed_zh() {
 #[cfg(feature = "i18n")]
 #[test]
 fn loc_i18n_alipay_rsa_key_parse_failed_en() {
-    use crate::i18n::{set_locale, BulwarkLocale};
-    let _guard = set_locale(BulwarkLocale::En);
+    use crate::i18n::{set_locale, GarrisonLocale};
+    let _guard = set_locale(GarrisonLocale::En);
     let msg = crate::loc!(
         "alipay-rsa-key-parse-failed",
         "alipay rsa key parse failed: bad pem".to_string(),

@@ -1,7 +1,7 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-use bulwark::{
+use garrison::{
     check_access_token, check_api_key, check_client_token, check_login, check_permission,
     check_role, check_temp_token,
 };

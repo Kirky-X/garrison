@@ -22,15 +22,15 @@
 //!
 //! # Spec 与环境差异
 //!
-//! `RemoteContext::spawn_child()` 默认 `BULWARK_RATE_LIMIT=100`，性能测试需要
-//! RPS >= 1000/5000，必须提升上限。测试启动前显式 `set_var("BULWARK_RATE_LIMIT",
+//! `RemoteContext::spawn_child()` 默认 `GARRISON_RATE_LIMIT=100`，性能测试需要
+//! RPS >= 1000/5000，必须提升上限。测试启动前显式 `set_var("GARRISON_RATE_LIMIT",
 //! "100000")`，子进程通过 env 继承。`connect_env` 模式下 env 不影响已运行的
 //! server（由 CI 环境自行配置），但测试断言可能因 CI 环境配置不达标——
 //! spec 已预判此情况："如性能测试因环境（CPU/内存）不达标，记录实际数值
 //! 并分析瓶颈，但不阻塞任务完成。"
 
 use super::remote::RemoteContext;
-use bulwark::backend::types::LoginParams;
+use garrison::backend::types::LoginParams;
 use once_cell::sync::OnceCell;
 use parking_lot::Mutex;
 use serde_json::json;
@@ -95,7 +95,7 @@ fn append_perf_report(report: &LoadReport, test_name: &str, endpoint: &str) {
 
 /// 配置性能测试环境：设置高 rate_limit（spawn_child 模式下被子进程继承）。
 ///
-/// `RemoteContext::spawn_child()` 默认 `BULWARK_RATE_LIMIT=100`，性能测试需要
+/// `RemoteContext::spawn_child()` 默认 `GARRISON_RATE_LIMIT=100`，性能测试需要
 /// RPS >= 1000/5000，必须提升上限。设置后子进程通过 env 继承；`connect_env`
 /// 模式下 env 不影响已运行的 server（由 CI 环境自行配置）。
 ///
@@ -110,7 +110,7 @@ fn append_perf_report(report: &LoadReport, test_name: &str, endpoint: &str) {
 fn setup_perf_env() -> super::EnvGuard {
     // 复用 mod.rs 通用 EnvGuard（规则 8 先读再写：消除重复实现）。
     // Rust 2021 edition 中 set_var 是 safe；项目 edition = "2021"（见 Cargo.toml）。
-    super::EnvGuard::new("BULWARK_RATE_LIMIT", "100000")
+    super::EnvGuard::new("GARRISON_RATE_LIMIT", "100000")
 }
 
 /// 性能基线断言：release 模式 HARD panic，debug 模式 SOFT 警告。

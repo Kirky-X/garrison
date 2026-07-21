@@ -12,11 +12,11 @@
 //!
 //! `sign = base64(hmac_sha256(hkdf_key, "{method}\n{path}\n{timestamp}\n{nonce}\n{body_sha256}"))`
 //!
-//! 其中 `hkdf_key = HKDF-SHA256(app_secret, salt=app_key, info="bulwark-sign-v2")`。
+//! 其中 `hkdf_key = HKDF-SHA256(app_secret, salt=app_key, info="garrison-sign-v2")`。
 //!
 //! ## Key 命名空间
 //!
-//! 所有 sign nonce 存储在 `bulwark:sign:nonce:<nonce>` 命名空间下。
+//! 所有 sign nonce 存储在 `garrison:sign:nonce:<nonce>` 命名空间下。
 
 /// SignHandler 实现（构造/签名/校验/Drop 零化）。
 pub mod handler;
@@ -27,7 +27,7 @@ mod mock;
 #[cfg(test)]
 mod tests;
 
-use crate::dao::BulwarkDao;
+use crate::dao::GarrisonDao;
 use hmac::Hmac;
 use sha2::Sha256;
 use std::sync::Arc;
@@ -39,14 +39,14 @@ const DEFAULT_TIMESTAMP_WINDOW: i64 = 300;
 const MIN_APP_SECRET_LEN: usize = 32;
 
 /// HKDF info 上下文字符串（域分隔，防止同一密钥在不同用途间复用）。
-const HKDF_INFO: &[u8] = b"bulwark-sign-v2";
+const HKDF_INFO: &[u8] = b"garrison-sign-v2";
 
 /// HMAC-SHA256 类型别名。
 type HmacSha256 = Hmac<Sha256>;
 
 /// API 签名处理器。
 ///
-/// 持有 `app_key`、`app_secret` 与 `Arc<dyn BulwarkDao>`（用于 nonce 存储）。
+/// 持有 `app_key`、`app_secret` 与 `Arc<dyn GarrisonDao>`（用于 nonce 存储）。
 /// 实现 `Send + Sync`，可在多线程环境共享。
 ///
 /// `app_secret` 最小 32 字节，内部用 HKDF-SHA256 派生 HMAC 密钥。
@@ -61,7 +61,7 @@ pub struct SignHandler {
     #[cfg_attr(not(feature = "protocol-zeroize"), allow(dead_code))]
     app_secret: String,
     /// DAO 抽象层，用于 nonce 存储。
-    dao: Arc<dyn BulwarkDao>,
+    dao: Arc<dyn GarrisonDao>,
     /// 时间戳窗口（秒）。
     timestamp_window: i64,
     /// HKDF 派生密钥（构造时一次性计算，sign/validate 直接使用）。

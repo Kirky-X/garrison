@@ -21,10 +21,10 @@
 //!
 //! - phone 不能包含 ':'（防止 key 注入）
 //! - 验证码使用 `rand::rngs::OsRng` 密码学安全随机数生成器
-//! - 所有计数器通过 `BulwarkDao::incr` 原子递增
+//! - 所有计数器通过 `GarrisonDao::incr` 原子递增
 
-use crate::dao::BulwarkDao;
-use crate::error::BulwarkResult;
+use crate::dao::GarrisonDao;
+use crate::error::GarrisonResult;
 use async_trait::async_trait;
 use limiteron::limiters::DistributedLimiter;
 use std::sync::Arc;
@@ -40,7 +40,7 @@ mod tests;
 #[async_trait]
 pub trait SmsSender: Send + Sync {
     /// 发送短信验证码。
-    async fn send(&self, phone: &str, code: &str) -> BulwarkResult<()>;
+    async fn send(&self, phone: &str, code: &str) -> GarrisonResult<()>;
 }
 
 /// NoopSmsSender：仅日志不实际发送（用于测试）。
@@ -54,7 +54,7 @@ pub struct NoopSmsSender;
 /// `dao.get/update/delete` 实现回滚，且 `dao.update` 保留原 TTL 语义）。
 pub struct SmsRateLimiter {
     /// DAO（用于 decrement_counter 的回滚操作，保留原 TTL 语义）。
-    dao: Arc<dyn BulwarkDao>,
+    dao: Arc<dyn GarrisonDao>,
     /// 分布式限流器（limiteron DistributedLimiter 适配器，替换 dao.incr）。
     limiter: Arc<dyn DistributedLimiter>,
     hourly_limit: u32,
@@ -65,7 +65,7 @@ pub struct SmsRateLimiter {
 pub struct SmsVerificationService {
     rate_limiter: SmsRateLimiter,
     sender: Arc<dyn SmsSender>,
-    dao: Arc<dyn BulwarkDao>,
+    dao: Arc<dyn GarrisonDao>,
     max_verify_attempts: u32,
     unverified_threshold: u32,
 }

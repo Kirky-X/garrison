@@ -26,8 +26,8 @@
 //! | Token | `{base_url}/protocol/openid-connect/token` |
 //! | UserInfo | `{base_url}/protocol/openid-connect/userinfo` |
 
-use crate::dao::BulwarkDao;
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::dao::GarrisonDao;
+use crate::error::{GarrisonError, GarrisonResult};
 use crate::loc;
 use crate::protocol::oauth2::client::{build_safe_http_client, read_limited_bytes};
 use serde::{Deserialize, Serialize};
@@ -157,7 +157,7 @@ pub struct JwksResponse {
 
 /// JWKS 缓存 key 前缀（拼入 DAO key：`keycloak:jwks:{expected_iss}`）。
 ///
-/// 通过 [`BulwarkDao`] 抽象层委托 oxcache 管理 JWKS JSON + TTL，
+/// 通过 [`GarrisonDao`] 抽象层委托 oxcache 管理 JWKS JSON + TTL，
 /// 禁止手写内存缓存（用户铁律：所有缓存由 oxcache 接管）。
 const JWKS_CACHE_KEY_PREFIX: &str = "keycloak:jwks:";
 
@@ -187,7 +187,7 @@ pub struct RealmAccess {
 /// - `email`: 邮箱（可选，需 `email` scope）。
 /// - `realm_access`: realm 级别角色（[`RealmAccess`]）。
 /// - `resource_access`: client 级别角色映射（key 为 client_id，value 为 [`RealmAccess`]）。
-/// - `tenant_id`: Bulwark 多租户标识（可选，由 Keycloak mapper 注入）。
+/// - `tenant_id`: Garrison 多租户标识（可选，由 Keycloak mapper 注入）。
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct KeycloakClaims {
     /// 主体标识（Keycloak 用户 ID）。
@@ -240,11 +240,11 @@ pub struct KeycloakTokenSet {
 /// # 设计决策
 ///
 /// - `http: reqwest::Client` 复用连接池，`Send + Sync` 可在多线程共享。
-/// - JWKS 公钥缓存通过 [`BulwarkDao`]（oxcache 抽象层）管理，TTL 由 [`JWKS_CACHE_TTL`]
+/// - JWKS 公钥缓存通过 [`GarrisonDao`]（oxcache 抽象层）管理，TTL 由 [`JWKS_CACHE_TTL`]
 ///   控制，避免每次 `verify_id_token` 都拉取 JWKS endpoint。
 ///   **禁止手写内存缓存**（用户铁律：所有缓存由 oxcache 接管）。
 ///   调用方必须通过 [`with_dao`](Self::with_dao) 注入 DAO 实例，
-///   否则 `verify_id_token` 返回 [`BulwarkError::Config`] 错误。
+///   否则 `verify_id_token` 返回 [`GarrisonError::Config`] 错误。
 pub struct KeycloakProvider {
     /// RP 配置（base_url / client_id / client_secret / redirect_uri / expected_iss）。
     config: KeycloakConfig,
@@ -252,9 +252,9 @@ pub struct KeycloakProvider {
     http: reqwest::Client,
     /// DAO 抽象（通过 oxcache 管理 JWKS 缓存）。
     ///
-    /// `None` 时 `verify_id_token` 返回 [`BulwarkError::Config`] 错误。
+    /// `None` 时 `verify_id_token` 返回 [`GarrisonError::Config`] 错误。
     /// 调用方通过 [`with_dao`](Self::with_dao) 注入。
-    dao: Option<Arc<dyn BulwarkDao>>,
+    dao: Option<Arc<dyn GarrisonDao>>,
     /// PKCE code_verifier。
     ///
     /// 由 [`with_pkce`](Self::with_pkce) 设置；`Some` 时 `exchange_code` 改用 PKCE 鉴权
@@ -272,10 +272,10 @@ impl KeycloakProvider {
     ///
     /// # 错误
     ///
-    /// - `BulwarkError::Network`: `reqwest::Client` 构建失败。
-    pub fn new(config: KeycloakConfig) -> BulwarkResult<Self> {
+    /// - `GarrisonError::Network`: `reqwest::Client` 构建失败。
+    pub fn new(config: KeycloakConfig) -> GarrisonResult<Self> {
         let http = build_safe_http_client().map_err(|e| {
-            BulwarkError::Network(loc!(
+            GarrisonError::Network(loc!(
                 "keycloak-http-client-build-failed",
                 format!("Failed to build HTTP client: {}", e),
                 ("detail", &e.to_string())
@@ -289,24 +289,24 @@ impl KeycloakProvider {
         })
     }
 
-    /// 注入 [`BulwarkDao`] 实例以接管 JWKS 缓存。
+    /// 注入 [`GarrisonDao`] 实例以接管 JWKS 缓存。
     ///
     /// **必选调用**：`verify_id_token` 依赖 DAO 缓存 JWKS 公钥集合，
-    /// 未注入 DAO 时返回 [`BulwarkError::Config`] 错误。
+    /// 未注入 DAO 时返回 [`GarrisonError::Config`] 错误。
     ///
     /// JWKS 缓存 key 格式：`keycloak:jwks:{expected_iss}`，TTL 由 [`JWKS_CACHE_TTL`] 控制。
     ///
     /// # 参数
     ///
-    /// - `dao`: DAO 实例（通常为 `Arc<BulwarkDaoOxcache>` 或测试用 `Arc<MockDao>`）。
+    /// - `dao`: DAO 实例（通常为 `Arc<GarrisonDaoOxcache>` 或测试用 `Arc<MockDao>`）。
     ///
     /// # 示例
     ///
     /// ```ignore
     /// let provider = KeycloakProvider::new(config)?
-    ///     .with_dao(Arc::new(BulwarkDaoOxcache::new().await?));
+    ///     .with_dao(Arc::new(GarrisonDaoOxcache::new().await?));
     /// ```
-    pub fn with_dao(mut self, dao: Arc<dyn BulwarkDao>) -> Self {
+    pub fn with_dao(mut self, dao: Arc<dyn GarrisonDao>) -> Self {
         self.dao = Some(dao);
         self
     }
@@ -318,7 +318,7 @@ impl KeycloakProvider {
     /// - 跳过 `client_secret` 字段（即使已配置，PKCE 优先级更高）
     ///
     /// `client_secret=None` 的 public client 必须调用此方法，否则 `exchange_code`
-    /// 返回 [`BulwarkError::Config`] 错误。
+    /// 返回 [`GarrisonError::Config`] 错误。
     ///
     /// # 参数
     ///
@@ -328,9 +328,9 @@ impl KeycloakProvider {
     ///
     /// # 错误
     ///
-    /// - [`BulwarkError::InvalidParam`]: verifier 长度或字符集不合法（透传自
+    /// - [`GarrisonError::InvalidParam`]: verifier 长度或字符集不合法（透传自
     ///   [`OAuth2Client::generate_pkce_challenge`](crate::protocol::oauth2::OAuth2Client::generate_pkce_challenge)）。
-    pub fn with_pkce(mut self, verifier: &str) -> BulwarkResult<Self> {
+    pub fn with_pkce(mut self, verifier: &str) -> GarrisonResult<Self> {
         // 复用 OAuth2Client::generate_pkce_challenge 校验 verifier 长度 43-128 + 字符集
         //（RFC 7636 §4.1）。challenge 值本身不使用（授权服务器在 token endpoint 重新计算并比对
         // code_verifier 与授权请求中的 code_challenge）。
@@ -346,19 +346,19 @@ impl KeycloakProvider {
     ///
     /// # 错误
     ///
-    /// - `BulwarkError::Network`: HTTP 请求失败或非 2xx 状态码。
-    /// - `BulwarkError::Deserialize`: 响应体 JSON 无法解析为 `OidcDiscoveryMetadata`。
-    pub async fn discover(&self) -> BulwarkResult<OidcDiscoveryMetadata> {
+    /// - `GarrisonError::Network`: HTTP 请求失败或非 2xx 状态码。
+    /// - `GarrisonError::Deserialize`: 响应体 JSON 无法解析为 `OidcDiscoveryMetadata`。
+    pub async fn discover(&self) -> GarrisonResult<OidcDiscoveryMetadata> {
         let url = self.config.discovery_url();
         let resp = self.http.get(&url).send().await.map_err(|e| {
-            BulwarkError::Network(loc!(
+            GarrisonError::Network(loc!(
                 "keycloak-discovery-request-failed",
                 format!("discovery request failed: {}", e),
                 ("detail", &e.to_string())
             ))
         })?;
         if !resp.status().is_success() {
-            return Err(BulwarkError::Network(loc!(
+            return Err(GarrisonError::Network(loc!(
                 "keycloak-discovery-status-not-2xx",
                 format!("discovery response status not 2xx: {}", resp.status()),
                 ("detail", &resp.status().to_string())
@@ -366,14 +366,14 @@ impl KeycloakProvider {
         }
         // E2：限制响应体大小，防止恶意 IdP 通过超大 discovery JSON 触发 OOM
         let bytes = read_limited_bytes(resp).await.map_err(|e| {
-            BulwarkError::Network(loc!(
+            GarrisonError::Network(loc!(
                 "keycloak-discovery-body-read-failed",
                 format!("discovery body read failed: {}", e),
                 ("detail", &e.to_string())
             ))
         })?;
         serde_json::from_slice::<OidcDiscoveryMetadata>(&bytes).map_err(|e| {
-            BulwarkError::Network(loc!(
+            GarrisonError::Network(loc!(
                 "keycloak-discovery-response-parse-failed",
                 format!("discovery response parse failed: {}", e),
                 ("detail", &e.to_string())
@@ -396,27 +396,27 @@ impl KeycloakProvider {
     ///
     /// # 错误
     ///
-    /// - `BulwarkError::Config`: 未调用 [`with_dao`](Self::with_dao) 注入 DAO。
-    /// - `BulwarkError::Network`: HTTP 请求失败、非 2xx 状态码或 JSON 解析失败。
-    /// - `BulwarkError::Dao`: DAO 写入失败。
-    async fn fetch_jwks(&self) -> BulwarkResult<()> {
+    /// - `GarrisonError::Config`: 未调用 [`with_dao`](Self::with_dao) 注入 DAO。
+    /// - `GarrisonError::Network`: HTTP 请求失败、非 2xx 状态码或 JSON 解析失败。
+    /// - `GarrisonError::Dao`: DAO 写入失败。
+    async fn fetch_jwks(&self) -> GarrisonResult<()> {
         let dao = self.dao.as_ref().ok_or_else(|| {
-            BulwarkError::Config(loc!(
+            GarrisonError::Config(loc!(
                 "keycloak-dao-not-injected",
-                "KeycloakProvider DAO not injected, cannot cache JWKS (call with_dao to inject BulwarkDao)"
+                "KeycloakProvider DAO not injected, cannot cache JWKS (call with_dao to inject GarrisonDao)"
                     .to_string()
             ))
         })?;
         let url = self.config.jwks_url();
         let resp = self.http.get(&url).send().await.map_err(|e| {
-            BulwarkError::Network(loc!(
+            GarrisonError::Network(loc!(
                 "keycloak-jwks-request-failed",
                 format!("JWKS request failed: {}", e),
                 ("detail", &e.to_string())
             ))
         })?;
         if !resp.status().is_success() {
-            return Err(BulwarkError::Network(loc!(
+            return Err(GarrisonError::Network(loc!(
                 "keycloak-jwks-status-not-2xx",
                 format!("JWKS response status not 2xx: {}", resp.status()),
                 ("detail", &resp.status().to_string())
@@ -424,14 +424,14 @@ impl KeycloakProvider {
         }
         // E2：限制响应体大小，防止恶意 IdP 通过超大 JWKS JSON 触发 OOM
         let bytes = read_limited_bytes(resp).await.map_err(|e| {
-            BulwarkError::Network(loc!(
+            GarrisonError::Network(loc!(
                 "keycloak-jwks-body-read-failed",
                 format!("JWKS body read failed: {}", e),
                 ("detail", &e.to_string())
             ))
         })?;
         let jwks: JwksResponse = serde_json::from_slice(&bytes).map_err(|e| {
-            BulwarkError::Network(loc!(
+            GarrisonError::Network(loc!(
                 "keycloak-jwks-response-parse-failed",
                 format!("JWKS response parse failed: {}", e),
                 ("detail", &e.to_string())
@@ -439,7 +439,7 @@ impl KeycloakProvider {
         })?;
         // 序列化为 JSON 字符串存入 DAO（反序列化时按相同结构解析）
         let json = serde_json::to_string(&jwks).map_err(|e| {
-            BulwarkError::Internal(loc!(
+            GarrisonError::Internal(loc!(
                 "keycloak-jwks-serialize-failed",
                 format!("JWKS serialize failed: {}", e),
                 ("detail", &e.to_string())
@@ -464,32 +464,32 @@ impl KeycloakProvider {
     ///
     /// # 错误
     ///
-    /// - `BulwarkError::Config`: 未调用 [`with_dao`](Self::with_dao) 注入 DAO。
-    /// - `BulwarkError::InvalidToken`: JWT header 解析失败 / kid 缺失 / JWKS 无匹配公钥 /
+    /// - `GarrisonError::Config`: 未调用 [`with_dao`](Self::with_dao) 注入 DAO。
+    /// - `GarrisonError::InvalidToken`: JWT header 解析失败 / kid 缺失 / JWKS 无匹配公钥 /
     ///   签名验证失败 / claims 解析失败 / token 已过期 / aud 不匹配 / iss 不匹配 / nbf 未生效。
-    /// - `BulwarkError::Network`: JWKS 拉取失败。
-    /// - `BulwarkError::Dao`: DAO 读写失败。
-    pub async fn verify_id_token(&self, id_token: &str) -> BulwarkResult<KeycloakClaims> {
+    /// - `GarrisonError::Network`: JWKS 拉取失败。
+    /// - `GarrisonError::Dao`: DAO 读写失败。
+    pub async fn verify_id_token(&self, id_token: &str) -> GarrisonResult<KeycloakClaims> {
         use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
 
         let dao = self.dao.as_ref().ok_or_else(|| {
-            BulwarkError::Config(loc!(
+            GarrisonError::Config(loc!(
                 "keycloak-dao-not-injected",
-                "KeycloakProvider DAO not injected, cannot cache JWKS (call with_dao to inject BulwarkDao)"
+                "KeycloakProvider DAO not injected, cannot cache JWKS (call with_dao to inject GarrisonDao)"
                     .to_string()
             ))
         })?;
 
         // 1. 解析 JWT header，提取 kid
         let header = jsonwebtoken::decode_header(id_token).map_err(|e| {
-            BulwarkError::InvalidToken(loc!(
+            GarrisonError::InvalidToken(loc!(
                 "keycloak-id-token-header-parse-failed",
                 format!("id_token header parse failed: {}", e),
                 ("detail", &e.to_string())
             ))
         })?;
         let kid = header.kid.as_deref().ok_or_else(|| {
-            BulwarkError::InvalidToken(loc!(
+            GarrisonError::InvalidToken(loc!(
                 "keycloak-id-token-header-missing-kid",
                 "id_token header missing kid field".to_string()
             ))
@@ -507,13 +507,13 @@ impl KeycloakProvider {
                 // 缓存 miss / TTL 过期 / 反序列化失败：重新拉取并写入缓存
                 self.fetch_jwks().await?;
                 let json = dao.get(&cache_key).await?.ok_or_else(|| {
-                    BulwarkError::Internal(loc!(
+                    GarrisonError::Internal(loc!(
                         "keycloak-jwks-cache-miss-after-fetch",
                         "cache miss after fetch_jwks (DAO write anomaly)".to_string()
                     ))
                 })?;
                 serde_json::from_str(&json).map_err(|e| {
-                    BulwarkError::Internal(loc!(
+                    GarrisonError::Internal(loc!(
                         "keycloak-jwks-deserialize-failed",
                         format!("JWKS deserialize failed: {}", e),
                         ("detail", &e.to_string())
@@ -525,7 +525,7 @@ impl KeycloakProvider {
         // 3. 按 kid 匹配 JWKS 公钥
         let jwk = jwks.keys.iter().find(|k| k.kid == kid).cloned();
         let jwk = jwk.ok_or_else(|| {
-            BulwarkError::InvalidToken(loc!(
+            GarrisonError::InvalidToken(loc!(
                 "keycloak-jwks-key-not-found",
                 format!("JWKS key not found for kid={}", kid),
                 ("kid", kid)
@@ -534,7 +534,7 @@ impl KeycloakProvider {
 
         // 4. 构造 DecodingKey 并验签
         let decoding_key = DecodingKey::from_rsa_components(&jwk.n, &jwk.e).map_err(|e| {
-            BulwarkError::InvalidToken(loc!(
+            GarrisonError::InvalidToken(loc!(
                 "keycloak-rsa-public-key-build-failed",
                 format!("Failed to build RSA public key: {}", e),
                 ("detail", &e.to_string())
@@ -558,30 +558,30 @@ impl KeycloakProvider {
             decode::<KeycloakClaims>(id_token, &decoding_key, &validation).map_err(|e| {
                 let msg = e.to_string();
                 if msg.contains("ExpiredSignature") {
-                    BulwarkError::InvalidToken(loc!(
+                    GarrisonError::InvalidToken(loc!(
                         "keycloak-token-expired",
                         "token expired".to_string()
                     ))
                 } else if msg.contains("ImmatureSignature") {
                     // nbf 校验失败（token 尚未生效）
-                    BulwarkError::InvalidToken(loc!(
+                    GarrisonError::InvalidToken(loc!(
                         "keycloak-token-immature",
                         "token not yet valid (nbf)".to_string()
                     ))
                 } else if msg.contains("InvalidAudience") {
                     // aud 校验失败（audience 不匹配 client_id）
-                    BulwarkError::InvalidToken(loc!(
+                    GarrisonError::InvalidToken(loc!(
                         "keycloak-token-invalid-audience",
                         "invalid audience".to_string()
                     ))
                 } else if msg.contains("InvalidIssuer") {
                     // iss 校验失败（issuer 不匹配 expected_iss）
-                    BulwarkError::InvalidToken(loc!(
+                    GarrisonError::InvalidToken(loc!(
                         "keycloak-token-invalid-issuer",
                         "invalid issuer".to_string()
                     ))
                 } else {
-                    BulwarkError::InvalidToken(loc!(
+                    GarrisonError::InvalidToken(loc!(
                         "keycloak-id-token-verify-failed",
                         format!("id_token verify failed: {}", e),
                         ("detail", &e.to_string())
@@ -604,17 +604,17 @@ impl KeycloakProvider {
     /// - 鉴权字段：
     ///   - 调用过 [`with_pkce`](Self::with_pkce)：追加 `code_verifier`，跳过 `client_secret`
     ///   - 仅配置 `client_secret`：追加 `client_secret`
-    ///   - 两者均无：返回 [`BulwarkError::Config`]（public client 必须使用 PKCE）
+    ///   - 两者均无：返回 [`GarrisonError::Config`]（public client 必须使用 PKCE）
     ///
     /// # 错误
     ///
-    /// - `BulwarkError::Network`: HTTP 请求失败、非 2xx 状态码或 JSON 解析失败。
-    /// - `BulwarkError::InvalidParam`: `code` 为空。
-    /// - `BulwarkError::Config`: `client_secret=None` 且未调用 [`with_pkce`](Self::with_pkce)
+    /// - `GarrisonError::Network`: HTTP 请求失败、非 2xx 状态码或 JSON 解析失败。
+    /// - `GarrisonError::InvalidParam`: `code` 为空。
+    /// - `GarrisonError::Config`: `client_secret=None` 且未调用 [`with_pkce`](Self::with_pkce)
     ///   （public client 必须使用 PKCE 鉴权）。
-    pub async fn exchange_code(&self, code: &str) -> BulwarkResult<KeycloakTokenSet> {
+    pub async fn exchange_code(&self, code: &str) -> GarrisonResult<KeycloakTokenSet> {
         if code.is_empty() {
-            return Err(BulwarkError::InvalidParam(loc!(
+            return Err(GarrisonError::InvalidParam(loc!(
                 "keycloak-code-empty",
                 "code cannot be empty".to_string()
             )));
@@ -635,7 +635,7 @@ impl KeycloakProvider {
             (Some(verifier), _) => form.push(("code_verifier", verifier.as_str())),
             (None, Some(secret)) => form.push(("client_secret", secret.as_str())),
             (None, None) => {
-                return Err(BulwarkError::Config(loc!(
+                return Err(GarrisonError::Config(loc!(
                     "keycloak-public-client-requires-pkce",
                     "public client (client_secret=None) must call with_pkce to set PKCE verifier"
                         .to_string()
@@ -645,14 +645,14 @@ impl KeycloakProvider {
 
         let url = self.config.token_url();
         let resp = self.http.post(&url).form(&form).send().await.map_err(|e| {
-            BulwarkError::Network(loc!(
+            GarrisonError::Network(loc!(
                 "keycloak-exchange-code-request-failed",
                 format!("exchange_code request failed: {}", e),
                 ("detail", &e.to_string())
             ))
         })?;
         if !resp.status().is_success() {
-            return Err(BulwarkError::Network(loc!(
+            return Err(GarrisonError::Network(loc!(
                 "keycloak-exchange-code-status-not-2xx",
                 format!("exchange_code response status not 2xx: {}", resp.status()),
                 ("detail", &resp.status().to_string())
@@ -660,14 +660,14 @@ impl KeycloakProvider {
         }
         // E2：限制响应体大小，防止恶意 IdP 通过超大 token JSON 触发 OOM
         let bytes = read_limited_bytes(resp).await.map_err(|e| {
-            BulwarkError::Network(loc!(
+            GarrisonError::Network(loc!(
                 "keycloak-exchange-code-body-read-failed",
                 format!("exchange_code body read failed: {}", e),
                 ("detail", &e.to_string())
             ))
         })?;
         serde_json::from_slice::<KeycloakTokenSet>(&bytes).map_err(|e| {
-            BulwarkError::Network(loc!(
+            GarrisonError::Network(loc!(
                 "keycloak-exchange-code-response-parse-failed",
                 format!("exchange_code response parse failed: {}", e),
                 ("detail", &e.to_string())
@@ -699,7 +699,7 @@ mod tests {
     fn keycloak_config_constructs_with_base_url_client_id() {
         let config = KeycloakConfig {
             base_url: "https://kc.example.com:8443/realms/myrealm".into(),
-            client_id: "bulwark-rp".into(),
+            client_id: "garrison-rp".into(),
             client_secret: None,
             redirect_uri: "https://app.example.com/cb".into(),
             expected_iss: "https://kc.example.com:8443/realms/myrealm".into(),
@@ -709,7 +709,7 @@ mod tests {
             config.base_url,
             "https://kc.example.com:8443/realms/myrealm"
         );
-        assert_eq!(config.client_id, "bulwark-rp");
+        assert_eq!(config.client_id, "garrison-rp");
         assert!(config.client_secret.is_none());
         assert_eq!(config.redirect_uri, "https://app.example.com/cb");
 
@@ -764,7 +764,7 @@ mod tests {
 
         let config = KeycloakConfig {
             base_url: server.uri(),
-            client_id: "bulwark-rp".into(),
+            client_id: "garrison-rp".into(),
             client_secret: None,
             redirect_uri: "https://app.example.com/cb".into(),
             expected_iss: server.uri(),
@@ -855,8 +855,8 @@ mod tests {
         let claims = KeycloakTestClaims {
             sub: "user-123".into(),
             exp,
-            aud: serde_json::Value::String("bulwark-rp".to_string()), // aud = client_id
-            iss: issuer.clone(),                                      // iss = expected_iss
+            aud: serde_json::Value::String("garrison-rp".to_string()), // aud = client_id
+            iss: issuer.clone(),                                       // iss = expected_iss
             preferred_username: "alice".into(),
             email: "alice@example.com".into(),
             realm_access: serde_json::json!({ "roles": ["user", "admin"] }),
@@ -886,7 +886,7 @@ mod tests {
         // 5. 构造 KeycloakProvider 并调用 verify_id_token
         let config = KeycloakConfig {
             base_url: server.uri(),
-            client_id: "bulwark-rp".into(),
+            client_id: "garrison-rp".into(),
             client_secret: None,
             redirect_uri: "https://app.example.com/cb".into(),
             expected_iss: issuer,
@@ -929,7 +929,7 @@ mod tests {
         Mock::given(method("POST"))
             .and(path("/protocol/openid-connect/token"))
             .and(body_string(
-                "grant_type=authorization_code&code=auth_code_123&client_id=bulwark-rp&redirect_uri=https%3A%2F%2Fapp.example.com%2Fcb&client_secret=secret123",
+                "grant_type=authorization_code&code=auth_code_123&client_id=garrison-rp&redirect_uri=https%3A%2F%2Fapp.example.com%2Fcb&client_secret=secret123",
             ))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "access_token": "at-456",
@@ -943,7 +943,7 @@ mod tests {
 
         let config = KeycloakConfig {
             base_url: server.uri(),
-            client_id: "bulwark-rp".into(),
+            client_id: "garrison-rp".into(),
             client_secret: Some("secret123".into()),
             redirect_uri: "https://app.example.com/cb".into(),
             expected_iss: server.uri(),
@@ -974,7 +974,7 @@ mod tests {
     ///
     /// 1. 生成 RSA 密钥对，签发一个 `exp` 已过期的 ID Token（aud/iss 正确以隔离 exp 校验）
     /// 2. mock JWKS endpoint 返回公钥
-    /// 3. 调用 `verify_id_token`，断言返回 `BulwarkError::InvalidToken("token expired")`
+    /// 3. 调用 `verify_id_token`，断言返回 `GarrisonError::InvalidToken("token expired")`
     #[tokio::test]
     async fn keycloak_provider_rejects_expired_id_token() {
         use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -1026,8 +1026,8 @@ mod tests {
         let claims = ExpiredTestClaims {
             sub: "user-123".into(),
             exp,
-            aud: serde_json::Value::String("bulwark-rp".to_string()), // aud 正确
-            iss: issuer.clone(),                                      // iss 正确
+            aud: serde_json::Value::String("garrison-rp".to_string()), // aud 正确
+            iss: issuer.clone(),                                       // iss 正确
             realm_access: serde_json::json!({ "roles": ["user"] }),
             resource_access: serde_json::json!({
                 "account": { "roles": ["manage-account"] }
@@ -1054,7 +1054,7 @@ mod tests {
         //    关闭 i18n 时回退到 fallback 字面量，故用 contains 兼容两种构建）
         let config = KeycloakConfig {
             base_url: server.uri(),
-            client_id: "bulwark-rp".into(),
+            client_id: "garrison-rp".into(),
             client_secret: None,
             redirect_uri: "https://app.example.com/cb".into(),
             expected_iss: issuer,
@@ -1065,7 +1065,7 @@ mod tests {
         let result = provider.verify_id_token(&id_token).await;
 
         match result {
-            Err(crate::error::BulwarkError::InvalidToken(msg)) => {
+            Err(crate::error::GarrisonError::InvalidToken(msg)) => {
                 assert!(
                     msg.contains("expired") || msg.contains("过期"),
                     "过期 token 应返回过期相关消息，实际: {}",
@@ -1087,7 +1087,7 @@ mod tests {
     ///
     /// # 测试流程
     ///
-    /// 1. 生成 RSA 密钥对，签发 aud="wrong-audience"（不匹配 client_id="bulwark-rp"）的 JWT
+    /// 1. 生成 RSA 密钥对，签发 aud="wrong-audience"（不匹配 client_id="garrison-rp"）的 JWT
     /// 2. mock JWKS endpoint 返回公钥
     /// 3. 调用 `verify_id_token`，断言返回 `InvalidToken` 且消息含 "audience"
     #[tokio::test]
@@ -1163,7 +1163,7 @@ mod tests {
 
         let config = KeycloakConfig {
             base_url: server.uri(),
-            client_id: "bulwark-rp".into(),
+            client_id: "garrison-rp".into(),
             client_secret: None,
             redirect_uri: "https://app.example.com/cb".into(),
             expected_iss: issuer,
@@ -1174,7 +1174,7 @@ mod tests {
         let result = provider.verify_id_token(&id_token).await;
 
         match result {
-            Err(crate::error::BulwarkError::InvalidToken(msg)) => {
+            Err(crate::error::GarrisonError::InvalidToken(msg)) => {
                 assert!(
                     msg.contains("audience"),
                     "aud 不匹配应返回 audience 相关消息，实际: {}",
@@ -1243,8 +1243,8 @@ mod tests {
         let claims = WrongIssTestClaims {
             sub: "user-123".into(),
             exp,
-            aud: serde_json::Value::String("bulwark-rp".to_string()), // aud 正确
-            iss: "https://wrong-issuer.example.com".to_string(),      // 故意不匹配 expected_iss
+            aud: serde_json::Value::String("garrison-rp".to_string()), // aud 正确
+            iss: "https://wrong-issuer.example.com".to_string(),       // 故意不匹配 expected_iss
             realm_access: serde_json::json!({ "roles": ["user"] }),
             resource_access: serde_json::json!({
                 "account": { "roles": ["manage-account"] }
@@ -1268,7 +1268,7 @@ mod tests {
 
         let config = KeycloakConfig {
             base_url: server.uri(),
-            client_id: "bulwark-rp".into(),
+            client_id: "garrison-rp".into(),
             client_secret: None,
             redirect_uri: "https://app.example.com/cb".into(),
             expected_iss: issuer,
@@ -1279,7 +1279,7 @@ mod tests {
         let result = provider.verify_id_token(&id_token).await;
 
         match result {
-            Err(crate::error::BulwarkError::InvalidToken(msg)) => {
+            Err(crate::error::GarrisonError::InvalidToken(msg)) => {
                 assert!(
                     msg.contains("issuer"),
                     "iss 不匹配应返回 issuer 相关消息，实际: {}",
@@ -1293,12 +1293,12 @@ mod tests {
     /// 测试 3：`verify_id_token` 接受 aud 为数组形式（包含 client_id）的 id_token
     ///
     /// RFC 7519 §4.1.3 规定 aud 可以是 String 或 Vec<String>。
-    /// Keycloak 实际签发的 token 中 aud 常为数组（如 `["bulwark-rp", "account"]`）。
+    /// Keycloak 实际签发的 token 中 aud 常为数组（如 `["garrison-rp", "account"]`）。
     /// 本测试验证 `serde_json::Value` 反序列化 + `validate_aud` 能正确处理数组形式。
     ///
     /// # 测试流程
     ///
-    /// 1. 生成 RSA 密钥对，签发 aud=`["bulwark-rp", "account"]`（数组含 client_id）的 JWT
+    /// 1. 生成 RSA 密钥对，签发 aud=`["garrison-rp", "account"]`（数组含 client_id）的 JWT
     /// 2. mock JWKS endpoint 返回公钥
     /// 3. 调用 `verify_id_token`，断言返回 `Ok` 且 `sub` 正确
     #[tokio::test]
@@ -1349,8 +1349,8 @@ mod tests {
         let claims = AudArrayTestClaims {
             sub: "user-123".into(),
             exp,
-            // aud 为数组形式，包含 client_id "bulwark-rp" 和 "account"
-            aud: serde_json::json!(["bulwark-rp", "account"]),
+            // aud 为数组形式，包含 client_id "garrison-rp" 和 "account"
+            aud: serde_json::json!(["garrison-rp", "account"]),
             iss: issuer.clone(),
             realm_access: serde_json::json!({ "roles": ["user", "admin"] }),
             resource_access: serde_json::json!({
@@ -1375,7 +1375,7 @@ mod tests {
 
         let config = KeycloakConfig {
             base_url: server.uri(),
-            client_id: "bulwark-rp".into(),
+            client_id: "garrison-rp".into(),
             client_secret: None,
             redirect_uri: "https://app.example.com/cb".into(),
             expected_iss: issuer,
@@ -1429,7 +1429,7 @@ mod tests {
 
         let config = KeycloakConfig {
             base_url: server.uri(),
-            client_id: "bulwark-rp".into(),
+            client_id: "garrison-rp".into(),
             client_secret: None,
             redirect_uri: "https://app.example.com/cb".into(),
             expected_iss: server.uri(),
@@ -1474,7 +1474,7 @@ mod tests {
     fn keycloak_pkce_flow_fails_on_invalid_verifier() {
         let config = KeycloakConfig {
             base_url: "https://kc.example.com:8443/realms/myrealm".into(),
-            client_id: "bulwark-rp".into(),
+            client_id: "garrison-rp".into(),
             client_secret: None,
             redirect_uri: "https://app.example.com/cb".into(),
             expected_iss: "https://kc.example.com:8443/realms/myrealm".into(),
@@ -1485,7 +1485,7 @@ mod tests {
         let result = provider.with_pkce("short");
         assert!(result.is_err(), "无效 verifier 应返回错误");
         match result.err() {
-            Some(crate::error::BulwarkError::InvalidParam(msg)) => {
+            Some(crate::error::GarrisonError::InvalidParam(msg)) => {
                 assert!(
                     msg.contains("43") || msg.contains("长度"),
                     "错误消息应说明长度约束，实际: {}",
@@ -1528,7 +1528,7 @@ mod tests {
 
         let config = KeycloakConfig {
             base_url: server.uri(),
-            client_id: "bulwark-rp".into(),
+            client_id: "garrison-rp".into(),
             client_secret: None,
             redirect_uri: "https://app.example.com/cb".into(),
             expected_iss: server.uri(),
@@ -1538,7 +1538,7 @@ mod tests {
         let result = provider.exchange_code("auth_code_123").await;
         assert!(result.is_err(), "无 client_secret 且无 PKCE 应返回错误");
         match result.err() {
-            Some(crate::error::BulwarkError::Config(msg)) => {
+            Some(crate::error::GarrisonError::Config(msg)) => {
                 assert!(
                     msg.contains("with_pkce") || msg.contains("PKCE"),
                     "错误消息应提示调用 with_pkce，实际: {}",
@@ -1591,7 +1591,7 @@ mod tests {
 
         let config = KeycloakConfig {
             base_url: server.uri(),
-            client_id: "bulwark-rp".into(),
+            client_id: "garrison-rp".into(),
             client_secret: Some("secret123".into()),
             redirect_uri: "https://app.example.com/cb".into(),
             expected_iss: server.uri(),
@@ -1635,8 +1635,8 @@ mod tests {
     #[cfg(feature = "i18n")]
     #[test]
     fn loc_i18n_keycloak_token_expired_zh() {
-        use crate::i18n::{set_locale, BulwarkLocale};
-        let _guard = set_locale(BulwarkLocale::Zh);
+        use crate::i18n::{set_locale, GarrisonLocale};
+        let _guard = set_locale(GarrisonLocale::Zh);
         let msg = crate::loc!("keycloak-token-expired", "token expired".to_string());
         assert_eq!(msg, "token 已过期");
     }
@@ -1645,8 +1645,8 @@ mod tests {
     #[cfg(feature = "i18n")]
     #[test]
     fn loc_i18n_keycloak_token_expired_en() {
-        use crate::i18n::{set_locale, BulwarkLocale};
-        let _guard = set_locale(BulwarkLocale::En);
+        use crate::i18n::{set_locale, GarrisonLocale};
+        let _guard = set_locale(GarrisonLocale::En);
         let msg = crate::loc!("keycloak-token-expired", "token expired".to_string());
         assert_eq!(msg, "Token expired");
     }
@@ -1655,8 +1655,8 @@ mod tests {
     #[cfg(feature = "i18n")]
     #[test]
     fn loc_i18n_keycloak_jwks_key_not_found_with_kid_zh() {
-        use crate::i18n::{set_locale, BulwarkLocale};
-        let _guard = set_locale(BulwarkLocale::Zh);
+        use crate::i18n::{set_locale, GarrisonLocale};
+        let _guard = set_locale(GarrisonLocale::Zh);
         let msg = crate::loc!(
             "keycloak-jwks-key-not-found",
             "JWKS key not found for kid=abc123".to_string(),
@@ -1678,7 +1678,7 @@ mod tests {
     fn e1_keycloak_provider_new_uses_safe_http_client() {
         let config = KeycloakConfig {
             base_url: "https://kc.example.com:8443/realms/myrealm".into(),
-            client_id: "bulwark-rp".into(),
+            client_id: "garrison-rp".into(),
             client_secret: Some("secret".into()),
             redirect_uri: "https://app.example.com/cb".into(),
             expected_iss: "https://kc.example.com:8443/realms/myrealm".into(),
@@ -1714,7 +1714,7 @@ mod tests {
 
         let config = KeycloakConfig {
             base_url: server.uri(),
-            client_id: "bulwark-rp".into(),
+            client_id: "garrison-rp".into(),
             client_secret: Some("secret".into()),
             redirect_uri: "https://app.example.com/cb".into(),
             expected_iss: server.uri(),
@@ -1743,7 +1743,7 @@ mod tests {
 
         let config = KeycloakConfig {
             base_url: server.uri(),
-            client_id: "bulwark-rp".into(),
+            client_id: "garrison-rp".into(),
             client_secret: Some("secret".into()),
             redirect_uri: "https://app.example.com/cb".into(),
             expected_iss: server.uri(),

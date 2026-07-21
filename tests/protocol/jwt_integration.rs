@@ -3,23 +3,23 @@
 
 //! JWT 协议端到端集成测试：login → verify_token → refresh_token → check_login → logout。
 //!
-//! 验证 `BulwarkManager` + `BulwarkLogicDefault`（token_style=jwt）的完整 JWT 生命周期：
-//! 1. `BulwarkUtil::login` 生成 JWT 并写入会话
-//! 2. `BulwarkUtil::verify_token` 校验 JWT 并返回 login_id
-//! 3. `BulwarkUtil::refresh_token` 刷新 JWT
-//! 4. `BulwarkUtil::check_login`（task_local 上下文内）校验登录状态
-//! 5. `BulwarkUtil::logout` 销毁会话
+//! 验证 `GarrisonManager` + `GarrisonLogicDefault`（token_style=jwt）的完整 JWT 生命周期：
+//! 1. `GarrisonUtil::login` 生成 JWT 并写入会话
+//! 2. `GarrisonUtil::verify_token` 校验 JWT 并返回 login_id
+//! 3. `GarrisonUtil::refresh_token` 刷新 JWT
+//! 4. `GarrisonUtil::check_login`（task_local 上下文内）校验登录状态
+//! 5. `GarrisonUtil::logout` 销毁会话
 //!
 //! 依据 spec protocol-jwt + core-auth-api。
 
 #![cfg(feature = "protocol-jwt")]
 
 use async_trait::async_trait;
-use bulwark::config::BulwarkConfig;
-use bulwark::dao::BulwarkDao;
-use bulwark::error::{BulwarkError, BulwarkResult};
-use bulwark::manager::BulwarkManager;
-use bulwark::stp::{with_current_token, BulwarkInterface, BulwarkUtil};
+use garrison::config::GarrisonConfig;
+use garrison::dao::GarrisonDao;
+use garrison::error::{GarrisonError, GarrisonResult};
+use garrison::manager::GarrisonManager;
+use garrison::stp::{with_current_token, GarrisonInterface, GarrisonUtil};
 use parking_lot::Mutex;
 use serial_test::serial;
 use std::collections::HashMap;
@@ -43,8 +43,8 @@ impl MockDao {
 }
 
 #[async_trait]
-impl BulwarkDao for MockDao {
-    async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
+impl GarrisonDao for MockDao {
+    async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
         let mut store = self.store.lock();
         match store.get(key) {
             Some((value, expire_at)) => {
@@ -60,7 +60,7 @@ impl BulwarkDao for MockDao {
         }
     }
 
-    async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> BulwarkResult<()> {
+    async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> GarrisonResult<()> {
         let expire_at = if ttl_seconds == 0 {
             None
         } else {
@@ -72,18 +72,18 @@ impl BulwarkDao for MockDao {
         Ok(())
     }
 
-    async fn update(&self, key: &str, value: &str) -> BulwarkResult<()> {
+    async fn update(&self, key: &str, value: &str) -> GarrisonResult<()> {
         let mut store = self.store.lock();
         match store.get_mut(key) {
             Some((existing, _)) => {
                 *existing = value.to_string();
                 Ok(())
             },
-            None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
+            None => Err(GarrisonError::Dao(format!("键不存在: {}", key))),
         }
     }
 
-    async fn expire(&self, key: &str, seconds: u64) -> BulwarkResult<()> {
+    async fn expire(&self, key: &str, seconds: u64) -> GarrisonResult<()> {
         let mut store = self.store.lock();
         match store.get_mut(key) {
             Some((_, expire_at)) => {
@@ -94,11 +94,11 @@ impl BulwarkDao for MockDao {
                 };
                 Ok(())
             },
-            None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
+            None => Err(GarrisonError::Dao(format!("键不存在: {}", key))),
         }
     }
 
-    async fn delete(&self, key: &str) -> BulwarkResult<()> {
+    async fn delete(&self, key: &str) -> GarrisonResult<()> {
         self.store.lock().remove(key);
         Ok(())
     }
@@ -111,11 +111,11 @@ impl BulwarkDao for MockDao {
 struct MockInterface;
 
 #[async_trait]
-impl BulwarkInterface for MockInterface {
-    async fn get_permission_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
+impl GarrisonInterface for MockInterface {
+    async fn get_permission_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
         Ok(vec![])
     }
-    async fn get_role_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
+    async fn get_role_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
         Ok(vec![])
     }
 }
@@ -124,17 +124,17 @@ impl BulwarkInterface for MockInterface {
 // 辅助函数
 // ============================================================================
 
-/// 初始化 BulwarkManager（token_style=jwt，jwt_secret=test-secret）。
+/// 初始化 GarrisonManager（token_style=jwt，jwt_secret=test-secret）。
 fn init_jwt_manager() {
-    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
-    let mut config = BulwarkConfig::default_config();
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+    let mut config = GarrisonConfig::default_config();
     config.token_style = "jwt".to_string();
     config.jwt_secret = "test-secret-key".to_string().into();
     config.timeout = 3600;
     config.throw_on_not_login = false;
     let config = Arc::new(config);
-    let interface: Arc<dyn BulwarkInterface> = Arc::new(MockInterface);
-    BulwarkManager::init(dao, config, interface).unwrap();
+    let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface);
+    GarrisonManager::init(dao, config, interface).unwrap();
 }
 
 // ============================================================================
@@ -148,13 +148,13 @@ async fn jwt_end_to_end_login_verify_refresh_logout() {
     init_jwt_manager();
 
     // 1. 登录：生成 JWT token 并写入会话
-    let token = BulwarkUtil::login_simple("1001").await.unwrap();
+    let token = GarrisonUtil::login_simple("1001").await.unwrap();
     assert!(!token.is_empty(), "login 应返回非空 token");
     assert!(token.contains('.'), "JWT 应为三段式（含 .）：{}", token);
     println!("[登录] token={}", &token[..40.min(token.len())]);
 
     // 2. verify_token：校验 JWT 并返回 login_id
-    let login_id = BulwarkUtil::verify_token(&token).await.unwrap();
+    let login_id = GarrisonUtil::verify_token(&token).await.unwrap();
     assert_eq!(
         login_id,
         "1001".to_string(),
@@ -166,8 +166,8 @@ async fn jwt_end_to_end_login_verify_refresh_logout() {
     //    注意：JWT 内容由 (login_id, iat, exp, device, secret) 决定，
     //    若同一秒内签发，refresh 可能返回相同字符串（iat/exp 相同）。
     //    此处仅验证 refresh 产出的 token 仍可校验通过且 login_id 一致。
-    let new_token = BulwarkUtil::refresh_token(&token).await.unwrap();
-    let new_login_id = BulwarkUtil::verify_token(&new_token).await.unwrap();
+    let new_token = GarrisonUtil::refresh_token(&token).await.unwrap();
+    let new_login_id = GarrisonUtil::verify_token(&new_token).await.unwrap();
     assert_eq!(
         new_login_id,
         "1001".to_string(),
@@ -177,7 +177,7 @@ async fn jwt_end_to_end_login_verify_refresh_logout() {
 
     // 4. check_login：在 task_local 上下文内校验登录状态
     let logged_in = with_current_token(token.clone(), async {
-        BulwarkUtil::check_login().await.unwrap()
+        GarrisonUtil::check_login().await.unwrap()
     })
     .await;
     assert!(logged_in, "登录后 check_login 应返回 true");
@@ -185,14 +185,14 @@ async fn jwt_end_to_end_login_verify_refresh_logout() {
 
     // 5. logout：销毁会话
     with_current_token(token.clone(), async {
-        BulwarkUtil::logout().await.unwrap()
+        GarrisonUtil::logout().await.unwrap()
     })
     .await;
     println!("[登出] 会话已销毁");
 
     // 6. logout 后 check_login 应返回 false
     let logged_in_after = with_current_token(token.clone(), async {
-        BulwarkUtil::check_login().await.unwrap()
+        GarrisonUtil::check_login().await.unwrap()
     })
     .await;
     assert!(!logged_in_after, "logout 后 check_login 应返回 false");
@@ -205,7 +205,7 @@ async fn jwt_end_to_end_login_verify_refresh_logout() {
 async fn verify_token_rejects_invalid_jwt() {
     init_jwt_manager();
 
-    let result = BulwarkUtil::verify_token("not.a.valid.jwt").await;
+    let result = GarrisonUtil::verify_token("not.a.valid.jwt").await;
     assert!(result.is_err(), "无效 JWT 应校验失败");
     println!("[异常] 无效 JWT 被拒绝：{:?}", result.err());
 }
@@ -216,7 +216,7 @@ async fn verify_token_rejects_invalid_jwt() {
 async fn verify_token_rejects_empty_string() {
     init_jwt_manager();
 
-    let result = BulwarkUtil::verify_token("").await;
+    let result = GarrisonUtil::verify_token("").await;
     assert!(result.is_err(), "空 token 应校验失败");
 }
 
@@ -226,6 +226,6 @@ async fn verify_token_rejects_empty_string() {
 async fn refresh_token_rejects_invalid_token() {
     init_jwt_manager();
 
-    let result = BulwarkUtil::refresh_token("invalid-token").await;
+    let result = GarrisonUtil::refresh_token("invalid-token").await;
     assert!(result.is_err(), "无效 token 刷新应失败");
 }

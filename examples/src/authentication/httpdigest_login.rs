@@ -7,30 +7,30 @@
 //!
 //! 运行方式：
 //! ```sh
-//! cargo run -p bulwark-examples --bin httpdigest_login --features secure-httpdigest
+//! cargo run -p garrison-examples --bin httpdigest_login --features secure-httpdigest
 //! ```
 
-use bulwark::error::BulwarkResult;
-use bulwark::secure::httpdigest::HttpDigestAuth;
+use garrison::error::GarrisonResult;
+use garrison::secure::httpdigest::HttpDigestAuth;
 
 /// 运行 HTTP Digest 认证示例。
 ///
 /// 演示 HttpDigestAuth 构造、WWW-Authenticate 质询头生成、
 /// compute_ha1 预计算摘要、validate 校验客户端 Authorization header。
-pub fn run() -> BulwarkResult<()> {
-    println!("=== Bulwark HTTP Digest 认证示例 ===\n");
+pub fn run() -> GarrisonResult<()> {
+    println!("=== Garrison HTTP Digest 认证示例 ===\n");
 
     // ----------------------------------------------------------------
     // 1. 构造 Digest 认证工具并生成质询头
     // ----------------------------------------------------------------
     // 默认算法为 SHA256（更安全），qop 声明支持 auth 和 auth-int，
     // nonce 格式为 base64(timestamp:uuid)，validate 时校验时间戳防过期。
-    let auth = HttpDigestAuth::new("bulwark@realm", "SHA256")?;
+    let auth = HttpDigestAuth::new("garrison@realm", "SHA256")?;
     let challenge = auth.challenge();
     println!("[1] WWW-Authenticate 质询头:");
     println!("    {}\n", challenge);
     assert!(challenge.starts_with("Digest "));
-    assert!(challenge.contains(r#"realm="bulwark@realm""#));
+    assert!(challenge.contains(r#"realm="garrison@realm""#));
     assert!(challenge.contains(r#"qop="auth,auth-int""#));
     assert!(challenge.contains("algorithm=SHA256"));
 
@@ -42,7 +42,7 @@ pub fn run() -> BulwarkResult<()> {
     let ha1 = auth.compute_ha1(username, password);
     println!("[2] compute_ha1（预计算摘要，避免持有明文密码）:");
     println!("    username = {}", username);
-    println!("    realm    = bulwark@realm");
+    println!("    realm    = garrison@realm");
     println!("    HA1      = {}\n", ha1);
 
     // ----------------------------------------------------------------
@@ -51,7 +51,7 @@ pub fn run() -> BulwarkResult<()> {
     // 客户端从质询头提取 nonce（base64(timestamp:uuid) 格式），
     // 使用 HA1 + nonce + method + uri 计算 response。
     let nonce = extract_nonce_from_challenge(&challenge)
-        .ok_or_else(|| bulwark::error::BulwarkError::Internal("无法提取 nonce".into()))?;
+        .ok_or_else(|| garrison::error::GarrisonError::Internal("无法提取 nonce".into()))?;
     let nc = "00000001";
     let cnonce = "0a4f113c";
     let method = "GET";
@@ -72,7 +72,7 @@ pub fn run() -> BulwarkResult<()> {
 
     // 构造客户端 Authorization header
     let client_header = format!(
-        r#"Digest username="{}", realm="bulwark@realm", nonce="{}", uri="{}", response="{}", qop=auth, nc={}, cnonce="{}""#,
+        r#"Digest username="{}", realm="garrison@realm", nonce="{}", uri="{}", response="{}", qop=auth, nc={}, cnonce="{}""#,
         username, nonce, uri, resp_hex, nc, cnonce
     );
     println!("[3] 客户端构造的 Authorization header:");
@@ -100,7 +100,7 @@ pub fn run() -> BulwarkResult<()> {
     let ha1_int = auth_int.compute_ha1(username, password);
     let challenge_int = auth_int.challenge();
     let nonce_int = extract_nonce_from_challenge(&challenge_int)
-        .ok_or_else(|| bulwark::error::BulwarkError::Internal("无法提取 nonce".into()))?;
+        .ok_or_else(|| garrison::error::GarrisonError::Internal("无法提取 nonce".into()))?;
     let body = b"request-body-content";
     let method_int = "POST";
     let uri_int = "/api/data";

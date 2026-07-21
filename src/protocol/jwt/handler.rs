@@ -5,11 +5,11 @@
 //!
 //! 类型定义见 [`JwtHandler`](crate::protocol::jwt::JwtHandler)。
 
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::error::{GarrisonError, GarrisonResult};
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use super::{BulwarkJwtClaims, JwtHandler};
+use super::{GarrisonJwtClaims, JwtHandler};
 
 impl JwtHandler {
     /// 创建新的 JWT 处理器，默认采用 HS256 算法。
@@ -52,24 +52,24 @@ impl JwtHandler {
     ///
     /// # 返回
     /// - `Ok(String)`: JWT 字符串（三段 Base64URL 通过 `.` 连接）。
-    /// - `Err(BulwarkError::Config)`: 密钥为空或 timeout 为负。
-    /// - `Err(BulwarkError::Internal)`: 签发失败。
-    pub fn sign(&self, login_id: impl Into<String>, timeout: i64) -> BulwarkResult<String> {
+    /// - `Err(GarrisonError::Config)`: 密钥为空或 timeout 为负。
+    /// - `Err(GarrisonError::Internal)`: 签发失败。
+    pub fn sign(&self, login_id: impl Into<String>, timeout: i64) -> GarrisonResult<String> {
         let login_id: String = login_id.into();
         if self.secret.is_empty() {
-            return Err(BulwarkError::Config("jwt-secret-empty".to_string()));
+            return Err(GarrisonError::Config("jwt-secret-empty".to_string()));
         }
         if timeout < 0 {
-            return Err(BulwarkError::Config(format!(
+            return Err(GarrisonError::Config(format!(
                 "timeout 不能为负数: {}",
                 timeout
             )));
         }
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map_err(|e| BulwarkError::Internal(format!("system-clock-error::{}", e)))?
+            .map_err(|e| GarrisonError::Internal(format!("system-clock-error::{}", e)))?
             .as_secs() as i64;
-        let claims = BulwarkJwtClaims {
+        let claims = GarrisonJwtClaims {
             sub: login_id.clone(),
             iat: now,
             exp: now + timeout,
@@ -81,7 +81,7 @@ impl JwtHandler {
         let header = Header::new(self.algorithm);
         let key = EncodingKey::from_secret(self.secret.as_bytes());
         encode(&header, &claims, &key)
-            .map_err(|e| BulwarkError::Internal(format!("jwt-sign::{}", e)))
+            .map_err(|e| GarrisonError::Internal(format!("jwt-sign::{}", e)))
     }
 
     /// 校验 JWT 并返回 Claims。
@@ -90,13 +90,13 @@ impl JwtHandler {
     /// - `token`: JWT 字符串。
     ///
     /// # 返回
-    /// - `Ok(BulwarkJwtClaims)`: 校验成功。
-    /// - `Err(BulwarkError::Config)`: secret 为空。
-    /// - `Err(BulwarkError::ExpiredToken)`: token 已过期。
-    /// - `Err(BulwarkError::InvalidToken)`: 签名/格式/算法校验失败。
-    pub fn verify(&self, token: &str) -> BulwarkResult<BulwarkJwtClaims> {
+    /// - `Ok(GarrisonJwtClaims)`: 校验成功。
+    /// - `Err(GarrisonError::Config)`: secret 为空。
+    /// - `Err(GarrisonError::ExpiredToken)`: token 已过期。
+    /// - `Err(GarrisonError::InvalidToken)`: 签名/格式/算法校验失败。
+    pub fn verify(&self, token: &str) -> GarrisonResult<GarrisonJwtClaims> {
         if self.secret.is_empty() {
-            return Err(BulwarkError::Config("jwt-secret-empty".to_string()));
+            return Err(GarrisonError::Config("jwt-secret-empty".to_string()));
         }
         let key = DecodingKey::from_secret(self.secret.as_bytes());
         let mut validation = Validation::new(self.algorithm);
@@ -104,17 +104,17 @@ impl JwtHandler {
         validation.validate_nbf = true; // 拒绝 nbf 为未来的 token
                                         // leeway=0：不容忍时钟偏差，过期立即拒绝（安全框架默认严格）
         validation.leeway = 0;
-        decode::<BulwarkJwtClaims>(token, &key, &validation)
+        decode::<GarrisonJwtClaims>(token, &key, &validation)
             .map(|data| data.claims)
             .map_err(|e| {
                 let msg = e.to_string();
                 if msg.contains("ExpiredSignature") {
-                    BulwarkError::ExpiredToken(format!("jwt-expired::{}", e))
+                    GarrisonError::ExpiredToken(format!("jwt-expired::{}", e))
                 } else if msg.contains("ImmatureSignature") || msg.contains("nbf") {
                     // nbf 为未来时间 → ImmatureSignature
-                    BulwarkError::InvalidToken(format!("jwt-not-yet-valid::{}", e))
+                    GarrisonError::InvalidToken(format!("jwt-not-yet-valid::{}", e))
                 } else {
-                    BulwarkError::InvalidToken(format!("jwt-invalid::{}", e))
+                    GarrisonError::InvalidToken(format!("jwt-invalid::{}", e))
                 }
             })
     }
@@ -127,8 +127,8 @@ impl JwtHandler {
     ///
     /// # 返回
     /// - `Ok(String)`: 新 JWT 字符串。
-    /// - `Err(BulwarkError)`: 旧 token 校验失败或新 token 签发失败。
-    pub fn refresh(&self, token: &str, new_timeout: i64) -> BulwarkResult<String> {
+    /// - `Err(GarrisonError)`: 旧 token 校验失败或新 token 签发失败。
+    pub fn refresh(&self, token: &str, new_timeout: i64) -> GarrisonResult<String> {
         let claims = self.verify(token)?;
         self.sign(claims.login_id, new_timeout)
     }

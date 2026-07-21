@@ -1,7 +1,7 @@
 # Copyright (c) 2026 Kirky.X. All rights reserved.
 # See LICENSE for full license text.
 
-# Pre-commit hooks for Bulwark
+# Pre-commit hooks for Garrison
 # Usage: pip install pre-commit && pre-commit install
 repos:
   # === 通用检查 ===
@@ -44,13 +44,13 @@ repos:
         entry: cargo clippy --features full -- -D warnings
         language: system
         pass_filenames: false
-        files: '^src/|^bulwark-macros/src/|^Cargo.toml$'
+        files: '^src/|^garrison-macros/src/|^Cargo.toml$'
       - id: clippy-db-postgres
         name: clippy (db-postgres + production features)
         entry: cargo clippy --features production -- -D warnings
         language: system
         pass_filenames: false
-        files: '^src/|^bulwark-macros/src/|^Cargo.toml$'
+        files: '^src/|^garrison-macros/src/|^Cargo.toml$'
 
   # === cargo-deny（许可证 / 漏洞 / 禁用源 / 重复依赖） ===
   - repo: local
@@ -71,7 +71,7 @@ repos:
         exclude: '^(docs/archive|temp|vendor)/.*$'
         args: ['--ignore-words-list=crate,BU,aNULL', --check-filenames]
 
-  # === Markdown 检查（仅检查 Bulwark 文档，跳过 archive/temp） ===
+  # === Markdown 检查（仅检查 Garrison 文档，跳过 archive/temp） ===
   - repo: https://github.com/igorshubovych/markdownlint-cli
     rev: v0.42.0
     hooks:

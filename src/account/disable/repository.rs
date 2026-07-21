@@ -3,10 +3,10 @@
 
 //! 封禁库 trait 与持久化数据模型定义。
 //! 本模块定义接口契约（`DisableEntry` struct + `DisableRepository` trait）
-//! 与默认实现 `DefaultDisableRepository`（持有 `Arc<dyn BulwarkDao>` 委托持久化）。
+//! 与默认实现 `DefaultDisableRepository`（持有 `Arc<dyn GarrisonDao>` 委托持久化）。
 
-use crate::dao::BulwarkDao;
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::dao::GarrisonDao;
+use crate::error::{GarrisonError, GarrisonResult};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -31,7 +31,7 @@ pub struct DisableEntry {
 
 /// 封禁库 trait，提供账号封禁/解封/查询能力。
 ///
-/// 独立于 [`BulwarkDao`] trait，通过持有 `Arc<dyn BulwarkDao>` 委托实现。
+/// 独立于 [`GarrisonDao`] trait，通过持有 `Arc<dyn GarrisonDao>` 委托实现。
 /// key 格式：`disable:{service}:{login_id}`，value 为 [`DisableEntry`] 的 JSON 序列化。
 #[async_trait]
 pub trait DisableRepository: Send + Sync {
@@ -50,14 +50,14 @@ pub trait DisableRepository: Send + Sync {
         until: Option<DateTime<Utc>>,
         level: u32,
         duration_secs: u64,
-    ) -> BulwarkResult<()>;
+    ) -> GarrisonResult<()>;
 
     /// 解封指定 login_id 的指定 service。
     ///
     /// # 参数
     /// - `login_id`: 被解封的登录主体标识。
     /// - `service`: 封禁服务名称。
-    async fn untie_disable(&self, login_id: &str, service: &str) -> BulwarkResult<()>;
+    async fn untie_disable(&self, login_id: &str, service: &str) -> GarrisonResult<()>;
 
     /// 查询指定 login_id 的指定 service 是否被封禁。
     ///
@@ -68,7 +68,7 @@ pub trait DisableRepository: Send + Sync {
     /// # 返回
     /// - `Ok(true)`: 已封禁。
     /// - `Ok(false)`: 未封禁。
-    async fn is_disable(&self, login_id: &str, service: &str) -> BulwarkResult<bool>;
+    async fn is_disable(&self, login_id: &str, service: &str) -> GarrisonResult<bool>;
 
     /// 获取封禁到期时间。
     ///
@@ -83,7 +83,7 @@ pub trait DisableRepository: Send + Sync {
         &self,
         login_id: &str,
         service: &str,
-    ) -> BulwarkResult<Option<DateTime<Utc>>>;
+    ) -> GarrisonResult<Option<DateTime<Utc>>>;
 
     /// 获取封禁级别。
     ///
@@ -94,34 +94,35 @@ pub trait DisableRepository: Send + Sync {
     /// # 返回
     /// - `Ok(Some(level))`: 已封禁，level 为封禁级别（0=普通，1+=阶梯）。
     /// - `Ok(None)`: 未封禁。
-    async fn get_disable_level(&self, login_id: &str, service: &str) -> BulwarkResult<Option<u32>>;
+    async fn get_disable_level(&self, login_id: &str, service: &str)
+        -> GarrisonResult<Option<u32>>;
 }
 
 // ============================================================================
-// DefaultDisableRepository：基于 BulwarkDao 的默认实现
+// DefaultDisableRepository：基于 GarrisonDao 的默认实现
 // ============================================================================
 
-/// 默认封禁库实现，持有 `Arc<dyn BulwarkDao>` 委托持久化。
+/// 默认封禁库实现，持有 `Arc<dyn GarrisonDao>` 委托持久化。
 ///
 /// key 格式：`disable:{service}:{login_id}`（service 在前，便于按 service 前缀扫描）。
 /// value 为 [`DisableEntry`] 的 JSON 序列化。
 ///
 /// # 错误处理
 ///
-/// - 序列化 `DisableEntry` 失败 → `BulwarkError::Internal`
-/// - 反序列化 `DisableEntry` 失败 → `BulwarkError::Dao`
-/// - DAO 读写失败 → 透传底层 `BulwarkError::Dao`
+/// - 序列化 `DisableEntry` 失败 → `GarrisonError::Internal`
+/// - 反序列化 `DisableEntry` 失败 → `GarrisonError::Dao`
+/// - DAO 读写失败 → 透传底层 `GarrisonError::Dao`
 pub struct DefaultDisableRepository {
     /// DAO 实例，委托持久化封禁条目。
-    dao: Arc<dyn BulwarkDao>,
+    dao: Arc<dyn GarrisonDao>,
 }
 
 impl DefaultDisableRepository {
     /// 创建新的 `DefaultDisableRepository` 实例。
     ///
     /// # 参数
-    /// - `dao`: DAO 实例（`Arc<dyn BulwarkDao>`），用于读写封禁条目。
-    pub fn new(dao: Arc<dyn BulwarkDao>) -> Self {
+    /// - `dao`: DAO 实例（`Arc<dyn GarrisonDao>`），用于读写封禁条目。
+    pub fn new(dao: Arc<dyn GarrisonDao>) -> Self {
         Self { dao }
     }
 
@@ -130,16 +131,16 @@ impl DefaultDisableRepository {
     /// service 在前以便按 service 前缀扫描（如 `keys("disable:default:*")`）。
     ///
     /// # 错误
-    /// - `service` 或 `login_id` 含 `:` 时返回 `BulwarkError::Config`，避免 key 解析歧义。
-    fn disable_key(service: &str, login_id: &str) -> BulwarkResult<String> {
+    /// - `service` 或 `login_id` 含 `:` 时返回 `GarrisonError::Config`，避免 key 解析歧义。
+    fn disable_key(service: &str, login_id: &str) -> GarrisonResult<String> {
         if service.contains(':') {
-            return Err(BulwarkError::Config(format!(
+            return Err(GarrisonError::Config(format!(
                 "service 不能包含冒号（避免 key 注入）: {}",
                 service
             )));
         }
         if login_id.contains(':') {
-            return Err(BulwarkError::Config(format!(
+            return Err(GarrisonError::Config(format!(
                 "login_id 不能包含冒号（避免 key 注入）: {}",
                 login_id
             )));
@@ -157,7 +158,7 @@ impl DisableRepository for DefaultDisableRepository {
         until: Option<DateTime<Utc>>,
         level: u32,
         duration_secs: u64,
-    ) -> BulwarkResult<()> {
+    ) -> GarrisonResult<()> {
         let entry = DisableEntry {
             login_id: login_id.to_string(),
             service: service.to_string(),
@@ -166,7 +167,7 @@ impl DisableRepository for DefaultDisableRepository {
             created_at: Utc::now(),
         };
         let json = serde_json::to_string(&entry)
-            .map_err(|e| BulwarkError::Internal(format!("account-disable-serialize::{}", e)))?;
+            .map_err(|e| GarrisonError::Internal(format!("account-disable-serialize::{}", e)))?;
         let key = Self::disable_key(service, login_id)?;
         if duration_secs == 0 {
             self.dao.set_permanent(&key, &json).await
@@ -175,12 +176,12 @@ impl DisableRepository for DefaultDisableRepository {
         }
     }
 
-    async fn untie_disable(&self, login_id: &str, service: &str) -> BulwarkResult<()> {
+    async fn untie_disable(&self, login_id: &str, service: &str) -> GarrisonResult<()> {
         let key = Self::disable_key(service, login_id)?;
         self.dao.delete(&key).await
     }
 
-    async fn is_disable(&self, login_id: &str, service: &str) -> BulwarkResult<bool> {
+    async fn is_disable(&self, login_id: &str, service: &str) -> GarrisonResult<bool> {
         let key = Self::disable_key(service, login_id)?;
         match self.dao.get(&key).await? {
             Some(_) => Ok(true),
@@ -192,12 +193,12 @@ impl DisableRepository for DefaultDisableRepository {
         &self,
         login_id: &str,
         service: &str,
-    ) -> BulwarkResult<Option<DateTime<Utc>>> {
+    ) -> GarrisonResult<Option<DateTime<Utc>>> {
         let key = Self::disable_key(service, login_id)?;
         match self.dao.get(&key).await? {
             Some(json) => {
                 let entry: DisableEntry = serde_json::from_str(&json).map_err(|e| {
-                    BulwarkError::Dao(format!("account-disable-deserialize::{}", e))
+                    GarrisonError::Dao(format!("account-disable-deserialize::{}", e))
                 })?;
                 Ok(entry.until)
             },
@@ -205,12 +206,16 @@ impl DisableRepository for DefaultDisableRepository {
         }
     }
 
-    async fn get_disable_level(&self, login_id: &str, service: &str) -> BulwarkResult<Option<u32>> {
+    async fn get_disable_level(
+        &self,
+        login_id: &str,
+        service: &str,
+    ) -> GarrisonResult<Option<u32>> {
         let key = Self::disable_key(service, login_id)?;
         match self.dao.get(&key).await? {
             Some(json) => {
                 let entry: DisableEntry = serde_json::from_str(&json).map_err(|e| {
-                    BulwarkError::Dao(format!("account-disable-deserialize::{}", e))
+                    GarrisonError::Dao(format!("account-disable-deserialize::{}", e))
                 })?;
                 Ok(Some(entry.level))
             },
@@ -478,7 +483,7 @@ mod tests {
 
     /// 反序列化失败返回 Err：手动向 DAO 写入损坏 JSON，get_disable_time 返回 Err(Dao)。
     ///
-    /// 覆盖 `serde_json::from_str` 失败路径，验证错误被包装为 `BulwarkError::Dao`。
+    /// 覆盖 `serde_json::from_str` 失败路径，验证错误被包装为 `GarrisonError::Dao`。
     #[tokio::test]
     async fn t017_get_disable_time_returns_err_on_deserialize_failure() {
         let dao = Arc::new(MockDao::new());
@@ -488,8 +493,8 @@ mod tests {
         dao.set(key, "{invalid json}", 0).await.unwrap();
         let result = repo.get_disable_time("user-2006", "default").await;
         assert!(
-            matches!(result, Err(BulwarkError::Dao(ref msg)) if msg.contains("account-disable-deserialize")),
-            "损坏 JSON 应返回 Err(BulwarkError::Dao) 含 '反序列化 DisableEntry 失败'，实际: {:?}",
+            matches!(result, Err(GarrisonError::Dao(ref msg)) if msg.contains("account-disable-deserialize")),
+            "损坏 JSON 应返回 Err(GarrisonError::Dao) 含 '反序列化 DisableEntry 失败'，实际: {:?}",
             result
         );
     }

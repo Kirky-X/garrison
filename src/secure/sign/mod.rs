@@ -15,7 +15,7 @@
 /// ```
 /// #[cfg(feature = "secure-sign")]
 /// # {
-/// use bulwark::secure::sign::Signer;
+/// use garrison::secure::sign::Signer;
 /// let sig = Signer::hmac_sha256(b"secret", b"data");
 /// assert_eq!(sig.len(), 64);
 /// # }

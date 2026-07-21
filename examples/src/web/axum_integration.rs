@@ -3,24 +3,24 @@
 
 //! axum 集成示例：完整 Web 应用演示。
 //!
-//! 演示 Bulwark + axum 的注解系统集成的完整流程：
-//! 1. 实现 `BulwarkInterface` 提供权限 / 角色数据回调
-//! 2. 使用 oxcache DAO + 默认配置 + Interface 初始化 `BulwarkManager`
+//! 演示 Garrison + axum 的注解系统集成的完整流程：
+//! 1. 实现 `GarrisonInterface` 提供权限 / 角色数据回调
+//! 2. 使用 oxcache DAO + 默认配置 + Interface 初始化 `GarrisonManager`
 //! 3. 定义 `RoleName` / `PermissionName` marker struct（类型级参数）
-//! 4. 创建 axum app，使用 `BulwarkRouter` + `route_protected` 语法糖
+//! 4. 创建 axum app，使用 `GarrisonRouter` + `route_protected` 语法糖
 //! 5. 注册多个受保护路由（`Ignore` / `CheckLogin` / `CheckRole` / `CheckPermission`）
 //! 6. 启动 HTTP 服务器（绑定 `127.0.0.1:3000`）
 //!
 //! # 编译
 //!
 //! ```bash
-//! cargo build -p bulwark-examples --bin axum_integration --features "cache-memory,web-axum"
+//! cargo build -p garrison-examples --bin axum_integration --features "cache-memory,web-axum"
 //! ```
 //!
 //! # 运行
 //!
 //! ```bash
-//! cargo run -p bulwark-examples --bin axum_integration --features "cache-memory,web-axum"
+//! cargo run -p garrison-examples --bin axum_integration --features "cache-memory,web-axum"
 //! ```
 //!
 //! # 测试
@@ -50,11 +50,11 @@
 use async_trait::async_trait;
 use axum::response::Json;
 use axum::Router;
-use bulwark::annotation::{Annotation, PermissionName, RoleName};
-use bulwark::dao::{BulwarkDao, BulwarkDaoOxcache};
-use bulwark::error::{BulwarkError, BulwarkResult};
-use bulwark::prelude::*;
-use bulwark::stp::BulwarkInterface;
+use garrison::annotation::{Annotation, PermissionName, RoleName};
+use garrison::dao::{GarrisonDao, GarrisonDaoOxcache};
+use garrison::error::{GarrisonError, GarrisonResult};
+use garrison::prelude::*;
+use garrison::stp::GarrisonInterface;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
@@ -77,7 +77,7 @@ impl PermissionName for ReadPerm {
 }
 
 // ============================================================================
-// 2. 实现 BulwarkInterface（提供权限 / 角色数据回调）
+// 2. 实现 GarrisonInterface（提供权限 / 角色数据回调）
 // ============================================================================
 
 /// 业务方接口实现，返回指定 `login_id` 的权限 / 角色列表。
@@ -101,15 +101,15 @@ impl Default for MyInterface {
 }
 
 #[async_trait]
-impl BulwarkInterface for MyInterface {
-    async fn get_permission_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+impl GarrisonInterface for MyInterface {
+    async fn get_permission_list(&self, login_id: &str) -> GarrisonResult<Vec<String>> {
         match login_id {
             "1001" => Ok(vec!["data:read".to_string()]),
             _ => Ok(vec![]),
         }
     }
 
-    async fn get_role_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+    async fn get_role_list(&self, login_id: &str) -> GarrisonResult<Vec<String>> {
         match login_id {
             "1001" => Ok(vec!["admin".to_string()]),
             _ => Ok(vec![]),
@@ -149,39 +149,39 @@ pub async fn data_query_handler() -> Json<Value> {
 ///
 /// 完成以下工作：
 /// 1. 创建 oxcache DAO + 配置 + Interface
-/// 2. `BulwarkManager::init` 注入全局单例
-/// 3. `BulwarkUtil::login(1001)` 生成测试 token
-/// 4. `BulwarkRouter::new` 注册 4 个受保护路由（Ignore / CheckLogin / CheckRole / CheckPermission）
+/// 2. `GarrisonManager::init` 注入全局单例
+/// 3. `GarrisonUtil::login(1001)` 生成测试 token
+/// 4. `GarrisonRouter::new` 注册 4 个受保护路由（Ignore / CheckLogin / CheckRole / CheckPermission）
 ///
 /// # 返回
 /// `(router, token)`：router 可直接用于 `oneshot` 测试或 `axum::serve` 启动；
 /// token 为 login_id=1001 的有效 token（持有 admin 角色 + data:read 权限）。
 ///
 /// # 注意
-/// 调用此函数会覆盖全局 `BulwarkManager` 单例，因此在多测试并行场景需用
+/// 调用此函数会覆盖全局 `GarrisonManager` 单例，因此在多测试并行场景需用
 /// `#[serial_test::serial]` 保证串行执行。
-pub async fn setup() -> BulwarkResult<(Router, String)> {
+pub async fn setup() -> GarrisonResult<(Router, String)> {
     // --- 准备依赖：DAO + Config + Interface ---
-    let dao: Arc<dyn BulwarkDao> = Arc::new(BulwarkDaoOxcache::new().await?);
+    let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await?);
 
     // 全局配置：基于默认值调整，便于演示鉴权失败场景
-    let mut config = BulwarkConfig::default_config();
+    let mut config = GarrisonConfig::default_config();
     config.timeout = 3600;
     config.active_timeout = -1;
     config.throw_on_not_login = false;
     let config = Arc::new(config);
 
-    let interface: Arc<dyn BulwarkInterface> = Arc::new(MyInterface::new());
+    let interface: Arc<dyn GarrisonInterface> = Arc::new(MyInterface::new());
 
-    // --- 初始化全局 BulwarkManager ---
-    BulwarkManager::init(dao, config.clone(), interface)?;
+    // --- 初始化全局 GarrisonManager ---
+    GarrisonManager::init(dao, config.clone(), interface)?;
 
     // --- 模拟登录获取测试 token ---
-    let token = BulwarkUtil::login_simple("1001").await?;
+    let token = GarrisonUtil::login_simple("1001").await?;
     assert!(!token.is_empty(), "login 应返回非空 token");
 
-    // --- 创建 axum app，使用 BulwarkRouter + route_protected ---
-    let app = BulwarkRouter::new(config)
+    // --- 创建 axum app，使用 GarrisonRouter + route_protected ---
+    let app = GarrisonRouter::new(config)
         .route_protected("/api/public", public_handler, Annotation::Ignore)
         .route_protected("/api/user/info", user_info_handler, Annotation::CheckLogin)
         .route_protected(
@@ -207,15 +207,15 @@ pub async fn setup() -> BulwarkResult<(Router, String)> {
 ///
 /// 调用 [`setup`] 完成初始化与路由注册，随后绑定 `127.0.0.1:3000` 启动 HTTP 服务器。
 /// 服务器将一直运行直到 Ctrl+C 中断。
-pub async fn run() -> BulwarkResult<()> {
+pub async fn run() -> GarrisonResult<()> {
     let (app, token) = setup().await?;
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:3000")
         .await
-        .map_err(|e| BulwarkError::Internal(format!("绑定监听地址失败: {}", e)))?;
+        .map_err(|e| GarrisonError::Internal(format!("绑定监听地址失败: {}", e)))?;
 
     println!("======================================================");
-    println!("Bulwark axum 集成示例已启动: http://127.0.0.1:3000");
+    println!("Garrison axum 集成示例已启动: http://127.0.0.1:3000");
     println!("======================================================");
     println!();
     println!("测试 token（login_id=1001，持有 admin 角色 + data:read 权限）:");
@@ -247,7 +247,7 @@ pub async fn run() -> BulwarkResult<()> {
 
     axum::serve(listener, app)
         .await
-        .map_err(|e| BulwarkError::Internal(format!("服务器运行失败: {}", e)))?;
+        .map_err(|e| GarrisonError::Internal(format!("服务器运行失败: {}", e)))?;
 
     Ok(())
 }

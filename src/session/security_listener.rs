@@ -16,8 +16,8 @@
 //! IPv6 与无效 IP 格式不参与比较（返回 `None`，不阻断主流程）。
 
 use crate::constants::DaoKeyPrefix;
-use crate::dao::BulwarkDao;
-use crate::error::BulwarkResult;
+use crate::dao::GarrisonDao;
+use crate::error::GarrisonResult;
 use std::sync::Arc;
 
 /// IP 记录的默认 TTL（24 小时，单位：秒）。
@@ -25,13 +25,13 @@ const IP_RECORD_TTL: u64 = 86400;
 
 /// Session 安全监听器，用于检测 IP 变更以识别潜在的 Session 劫持。
 ///
-/// 通过 `BulwarkDao` 存储 token 登录时的初始 IP，后续访问时比较当前 IP
+/// 通过 `GarrisonDao` 存储 token 登录时的初始 IP，后续访问时比较当前 IP
 /// 与初始 IP 的网段（IPv4 /24），跨网段时返回告警信息并记录 `tracing::warn!`。
 ///
 /// # 使用
 ///
 /// ```ignore
-/// use bulwark::session::security_listener::SessionSecurityListener;
+/// use garrison::session::security_listener::SessionSecurityListener;
 /// use std::sync::Arc;
 ///
 /// let listener = SessionSecurityListener::new(dao);
@@ -42,7 +42,7 @@ const IP_RECORD_TTL: u64 = 86400;
 /// ```
 pub struct SessionSecurityListener {
     /// DAO 引用（oxcache / dbnexus）。
-    dao: Arc<dyn BulwarkDao>,
+    dao: Arc<dyn GarrisonDao>,
 }
 
 impl SessionSecurityListener {
@@ -53,7 +53,7 @@ impl SessionSecurityListener {
     ///
     /// # 返回
     /// 新建的 `SessionSecurityListener` 实例。
-    pub fn new(dao: Arc<dyn BulwarkDao>) -> Self {
+    pub fn new(dao: Arc<dyn GarrisonDao>) -> Self {
         Self { dao }
     }
 
@@ -73,13 +73,13 @@ impl SessionSecurityListener {
     /// - TTL: 86400 秒（24 小时）
     ///
     /// # 错误
-    /// - DAO 写入失败：透传 `BulwarkError`。
+    /// - DAO 写入失败：透传 `GarrisonError`。
     pub async fn record_login_ip(
         &self,
         token: &str,
         login_id: &str,
         ip: &str,
-    ) -> BulwarkResult<()> {
+    ) -> GarrisonResult<()> {
         let key = format!("{}ip:{}", DaoKeyPrefix::Session, token);
         self.dao.set(&key, ip, IP_RECORD_TTL).await?;
         tracing::info!(
@@ -108,12 +108,12 @@ impl SessionSecurityListener {
     /// - `Ok(Some(warning))`: 跨网段，warning 为告警消息。
     ///
     /// # 错误
-    /// - DAO 读取失败：透传 `BulwarkError`。
+    /// - DAO 读取失败：透传 `GarrisonError`。
     pub async fn check_ip_change(
         &self,
         token: &str,
         current_ip: &str,
-    ) -> BulwarkResult<Option<String>> {
+    ) -> GarrisonResult<Option<String>> {
         let key = format!("{}ip:{}", DaoKeyPrefix::Session, token);
         let recorded_ip = match self.dao.get(&key).await? {
             Some(ip) => ip,

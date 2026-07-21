@@ -11,7 +11,7 @@ fn make_checker() -> PermissionCheckerDefault {
     let interface = MockInterface::new()
         .with_perms("1001", vec!["user:read", "user:write"])
         .with_roles("1001", vec!["admin", "user"]);
-    let interface_arc: Arc<dyn BulwarkInterface> = Arc::new(interface);
+    let interface_arc: Arc<dyn GarrisonInterface> = Arc::new(interface);
     PermissionCheckerDefault::new(interface_arc)
 }
 
@@ -77,7 +77,7 @@ async fn check_permission_not_held_returns_error() {
     let result = checker.check_permission("1001", "user:delete").await;
     assert!(result.is_err());
     match result.err() {
-        Some(BulwarkError::NotPermission(_)) => {},
+        Some(GarrisonError::NotPermission(_)) => {},
         other => panic!("期望 NotPermission，实际: {:?}", other),
     }
 }
@@ -100,7 +100,7 @@ async fn check_role_not_held_returns_error() {
     let result = checker.check_role("1001", "superadmin").await;
     assert!(result.is_err());
     match result.err() {
-        Some(BulwarkError::NotRole(_)) => {},
+        Some(GarrisonError::NotRole(_)) => {},
         other => panic!("期望 NotRole，实际: {:?}", other),
     }
 }
@@ -203,7 +203,7 @@ async fn authorize_returns_error_for_empty_permission() {
     let result = PermissionChecker::authorize(&checker, &request).await;
     assert!(result.is_err());
     match result.err() {
-        Some(BulwarkError::InvalidParam(_)) => {},
+        Some(GarrisonError::InvalidParam(_)) => {},
         other => panic!("期望 InvalidParam，实际: {:?}", other),
     }
 }
@@ -244,7 +244,7 @@ async fn check_permission_deny_returns_not_permission_error() {
     let checker = make_checker();
     let result = checker.check_permission("1001", "user:delete").await;
     match result.err() {
-        Some(BulwarkError::NotPermission(msg)) => {
+        Some(GarrisonError::NotPermission(msg)) => {
             assert!(msg.contains("1001"), "错误消息应含 login_id");
             assert!(msg.contains("user:delete"), "错误消息应含 permission");
         },
@@ -258,7 +258,7 @@ async fn check_role_still_returns_not_role_when_unmatched() {
     let checker = make_checker();
     let result = checker.check_role("1001", "superadmin").await;
     match result.err() {
-        Some(BulwarkError::NotRole(_)) => {},
+        Some(GarrisonError::NotRole(_)) => {},
         other => panic!("期望 NotRole，实际: {:?}", other),
     }
 }
@@ -292,7 +292,7 @@ async fn authorize_decision_serializes_to_json() {
 #[tokio::test]
 async fn check_permission_normalizes_unicode() {
     let interface = MockInterface::new().with_perms("1001", vec!["user:\u{00e9}read"]);
-    let interface_arc: Arc<dyn BulwarkInterface> = Arc::new(interface);
+    let interface_arc: Arc<dyn GarrisonInterface> = Arc::new(interface);
     let checker = PermissionCheckerDefault::new(interface_arc);
 
     let nfd = "user:e\u{0301}read";
@@ -315,7 +315,7 @@ async fn check_permission_rejects_over_256_bytes() {
     let checker = make_checker();
     let result = checker.check_permission("1001", &long_perm).await;
     assert!(
-        matches!(result, Err(BulwarkError::InvalidParam(_))),
+        matches!(result, Err(GarrisonError::InvalidParam(_))),
         "超长 permission 应返回 InvalidParam，实际: {:?}",
         result
     );
@@ -331,7 +331,7 @@ async fn has_role_empty_string_returns_error() {
     let checker = make_checker();
     let result = checker.has_role("1001", "").await;
     assert!(
-        matches!(result, Err(BulwarkError::InvalidParam(ref msg)) if msg.contains("core-role-empty")),
+        matches!(result, Err(GarrisonError::InvalidParam(ref msg)) if msg.contains("core-role-empty")),
         "has_role 空字符串应返回 InvalidParam，实际: {:?}",
         result
     );
@@ -343,7 +343,7 @@ async fn check_role_deny_message_includes_login_id_and_role() {
     let checker = make_checker();
     let result = checker.check_role("1001", "superadmin").await;
     match result.err() {
-        Some(BulwarkError::NotRole(msg)) => {
+        Some(GarrisonError::NotRole(msg)) => {
             assert!(msg.contains("1001"), "错误消息应含 login_id，实际: {}", msg);
             assert!(
                 msg.contains("superadmin"),

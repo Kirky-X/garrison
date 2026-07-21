@@ -1,7 +1,7 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! Auth Server 示例：演示 BulwarkAuthServer 双端口配置与一键启动。
+//! Auth Server 示例：演示 GarrisonAuthServer 双端口配置与一键启动。
 //!
 //! 对应模块：`src/server/mod.rs`（`auth-server` feature 开启时可用）。
 //!
@@ -14,27 +14,27 @@
 //! 运行方式：
 //! ```sh
 //! # 演示模式（不启动服务）
-//! cargo run -p bulwark-examples --bin auth_server --features full
+//! cargo run -p garrison-examples --bin auth_server --features full
 //!
 //! # 服务模式（启动双端口，阻塞监听）
 //! EXAMPLE_INTERNAL_API_KEY=test \
-//! cargo run -p bulwark-examples --bin auth_server_serve --features full
+//! cargo run -p garrison-examples --bin auth_server_serve --features full
 //! ```
 
 use async_trait::async_trait;
-use bulwark::backend::{AuthBackend, BackendEmbedded};
-use bulwark::config::BulwarkConfig;
-use bulwark::context::tenant::HeaderTenantResolver;
-use bulwark::dao::{BulwarkDao, BulwarkDaoOxcache};
-use bulwark::error::BulwarkResult;
-use bulwark::manager::BulwarkManager;
-use bulwark::server::BulwarkAuthServer;
-use bulwark::stp::BulwarkInterface;
+use garrison::backend::{AuthBackend, BackendEmbedded};
+use garrison::config::GarrisonConfig;
+use garrison::context::tenant::HeaderTenantResolver;
+use garrison::dao::{GarrisonDao, GarrisonDaoOxcache};
+use garrison::error::GarrisonResult;
+use garrison::manager::GarrisonManager;
+use garrison::server::GarrisonAuthServer;
+use garrison::stp::GarrisonInterface;
 use std::sync::Arc;
 
-/// 简单的 BulwarkInterface 实现（空权限/空角色）。
+/// 简单的 GarrisonInterface 实现（空权限/空角色）。
 ///
-/// 用于 `auth_server_serve` bin 启动时初始化 BulwarkManager，
+/// 用于 `auth_server_serve` bin 启动时初始化 GarrisonManager，
 /// 不依赖 `testing` feature 中的 MockInterface（生产 bin 不应使用 test-only 代码）。
 ///
 /// 行为：所有 login_id 返回空权限列表 + 空角色列表，
@@ -43,30 +43,30 @@ use std::sync::Arc;
 struct SimpleInterface;
 
 #[async_trait]
-impl BulwarkInterface for SimpleInterface {
-    async fn get_permission_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
+impl GarrisonInterface for SimpleInterface {
+    async fn get_permission_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
         Ok(vec![])
     }
-    async fn get_role_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
+    async fn get_role_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
         Ok(vec![])
     }
 }
 
-/// 初始化全局 BulwarkManager（创建 BulwarkDaoOxcache + 默认 Config + SimpleInterface）。
+/// 初始化全局 GarrisonManager（创建 GarrisonDaoOxcache + 默认 Config + SimpleInterface）。
 ///
-/// 供 `run()` 和 `serve()` 共用，确保 BulwarkManager 全局单例正确初始化。
+/// 供 `run()` 和 `serve()` 共用，确保 GarrisonManager 全局单例正确初始化。
 ///
 /// # 失败处理
-/// - `BulwarkDaoOxcache::new()` 失败：返回底层错误（内存不足等）
-/// - `BulwarkManager::init()` 失败：返回 `AlreadyInitialized` 错误（单例已初始化）
+/// - `GarrisonDaoOxcache::new()` 失败：返回底层错误（内存不足等）
+/// - `GarrisonManager::init()` 失败：返回 `AlreadyInitialized` 错误（单例已初始化）
 ///
 /// # 返回
-/// `BackendEmbedded` 实例，委托 BulwarkManager 全局单例处理认证逻辑。
-pub async fn setup_bulwark_manager() -> BulwarkResult<BackendEmbedded> {
-    let dao: Arc<dyn BulwarkDao> = Arc::new(BulwarkDaoOxcache::new().await?);
-    let config = Arc::new(BulwarkConfig::default_config());
-    let interface: Arc<dyn BulwarkInterface> = Arc::new(SimpleInterface);
-    BulwarkManager::init(dao, config, interface)?;
+/// `BackendEmbedded` 实例，委托 GarrisonManager 全局单例处理认证逻辑。
+pub async fn setup_garrison_manager() -> GarrisonResult<BackendEmbedded> {
+    let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await?);
+    let config = Arc::new(GarrisonConfig::default_config());
+    let interface: Arc<dyn GarrisonInterface> = Arc::new(SimpleInterface);
+    GarrisonManager::init(dao, config, interface)?;
     Ok(BackendEmbedded::new())
 }
 
@@ -74,10 +74,10 @@ pub async fn setup_bulwark_manager() -> BulwarkResult<BackendEmbedded> {
 ///
 /// 演示：
 /// 1. 创建 BackendEmbedded（进程内认证后端）
-/// 2. 创建 BulwarkAuthServer 并配置端口、限速、API Key
+/// 2. 创建 GarrisonAuthServer 并配置端口、限速、API Key
 /// 3. 获取 external_router() 和 internal_router()（不调用 listen）
-pub async fn run() -> BulwarkResult<()> {
-    println!("=== Bulwark Auth Server 配置示例 ===\n");
+pub async fn run() -> GarrisonResult<()> {
+    println!("=== Garrison Auth Server 配置示例 ===\n");
 
     // 1. 创建 BackendEmbedded
     let backend: Arc<dyn AuthBackend> = Arc::new(BackendEmbedded::new());
@@ -92,13 +92,13 @@ pub async fn run() -> BulwarkResult<()> {
         "REPLACE_ME".to_string()
     });
 
-    // 3. 创建 BulwarkAuthServer 并配置
-    let server = BulwarkAuthServer::new(backend)
+    // 3. 创建 GarrisonAuthServer 并配置
+    let server = GarrisonAuthServer::new(backend)
         .with_external_port(8080)
         .with_internal_port(8081)
         .with_rate_limit(100)
         .with_internal_api_key(&internal_api_key);
-    println!("[2] BulwarkAuthServer 配置完成:");
+    println!("[2] GarrisonAuthServer 配置完成:");
     println!("    external_port = 8080（面向用户）");
     println!("    internal_port = 8081（服务间调用）");
     println!("    rate_limit    = 100 req/s per IP");
@@ -119,15 +119,15 @@ pub async fn run() -> BulwarkResult<()> {
     Ok(())
 }
 
-/// 启动 BulwarkAuthServer 双端口服务（阻塞）。
+/// 启动 GarrisonAuthServer 双端口服务（阻塞）。
 ///
 /// 从 env 读取配置：
-/// - `BULWARK_EXTERNAL_PORT`（默认 8080）：外网端口（login/logout/refresh）
-/// - `BULWARK_INTERNAL_PORT`（默认 8081）：内网端口（check-*/get-*/kickout）
+/// - `GARRISON_EXTERNAL_PORT`（默认 8080）：外网端口（login/logout/refresh）
+/// - `GARRISON_INTERNAL_PORT`（默认 8081）：内网端口（check-*/get-*/kickout）
 /// - `EXAMPLE_INTERNAL_API_KEY`（必填）：内网 API Key，缺失时 fail-closed 退出码 1
-/// - `BULWARK_RATE_LIMIT`（默认 100）：每 IP 限速阈值（req/s）
+/// - `GARRISON_RATE_LIMIT`（默认 100）：每 IP 限速阈值（req/s）
 ///
-/// 调用 `setup_bulwark_manager()` 初始化全局单例后，构造 `BulwarkAuthServer`
+/// 调用 `setup_garrison_manager()` 初始化全局单例后，构造 `GarrisonAuthServer`
 /// 并 `server.listen().await` 阻塞监听双端口。
 ///
 /// # stderr 输出格式
@@ -137,17 +137,17 @@ pub async fn run() -> BulwarkResult<()> {
 /// # Fail-closed 策略
 /// `EXAMPLE_INTERNAL_API_KEY` 缺失时立即 `std::process::exit(1)`，
 /// 避免使用默认/空 API Key 启动不安全服务。
-pub async fn serve() -> BulwarkResult<()> {
+pub async fn serve() -> GarrisonResult<()> {
     // 1. 从 env 读取配置（端口/限流使用默认值，API Key 必填）
-    let external_port: u16 = std::env::var("BULWARK_EXTERNAL_PORT")
+    let external_port: u16 = std::env::var("GARRISON_EXTERNAL_PORT")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(8080);
-    let internal_port: u16 = std::env::var("BULWARK_INTERNAL_PORT")
+    let internal_port: u16 = std::env::var("GARRISON_INTERNAL_PORT")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(8081);
-    let rate_limit: u32 = std::env::var("BULWARK_RATE_LIMIT")
+    let rate_limit: u32 = std::env::var("GARRISON_RATE_LIMIT")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(100);
@@ -159,23 +159,23 @@ pub async fn serve() -> BulwarkResult<()> {
         std::process::exit(1);
     });
 
-    // 2. 初始化 BulwarkManager 全局单例
-    let backend: Arc<dyn AuthBackend> = Arc::new(setup_bulwark_manager().await?);
+    // 2. 初始化 GarrisonManager 全局单例
+    let backend: Arc<dyn AuthBackend> = Arc::new(setup_garrison_manager().await?);
 
-    // 3. 构造 BulwarkAuthServer 并启动（端口 0.0.0.0:PORT，listen() 内部绑定）
+    // 3. 构造 GarrisonAuthServer 并启动（端口 0.0.0.0:PORT，listen() 内部绑定）
     // tenant-isolation feature 启用时注入 HeaderTenantResolver，使
     // tenant_resolution_middleware 解析 X-Tenant-Id header 进入 TENANT scope。
     // 与 tests/e2e/mod.rs::start_e2e_server 行为保持一致，确保 spawn_child 模式
     // 下跨租户隔离生效（T030 测试依赖此行为）。
     #[cfg(feature = "tenant-isolation")]
-    let server = BulwarkAuthServer::new(backend)
+    let server = GarrisonAuthServer::new(backend)
         .with_external_port(external_port)
         .with_internal_port(internal_port)
         .with_rate_limit(rate_limit)
         .with_internal_api_key(&internal_api_key)
         .with_tenant_resolver(Some(Arc::new(HeaderTenantResolver)));
     #[cfg(not(feature = "tenant-isolation"))]
-    let server = BulwarkAuthServer::new(backend)
+    let server = GarrisonAuthServer::new(backend)
         .with_external_port(external_port)
         .with_internal_port(internal_port)
         .with_rate_limit(rate_limit)

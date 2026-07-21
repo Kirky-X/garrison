@@ -129,7 +129,7 @@ pub struct DbnexusUserDeviceRepository {
 /// 共享测试辅助：初始化内存 SQLite + 执行迁移。
 #[cfg(all(test, feature = "db-sqlite"))]
 pub(crate) mod test_support {
-    use crate::dao::{init_dbnexus, BulwarkMigration};
+    use crate::dao::{init_dbnexus, GarrisonMigration};
     use dbnexus::DbPool;
     use std::path::PathBuf;
 
@@ -146,7 +146,7 @@ pub(crate) mod test_support {
         let pool = init_dbnexus("sqlite::memory:")
             .await
             .expect("init_dbnexus 应成功");
-        let migration = BulwarkMigration::with_base_dir(pool.clone(), project_migrations_dir());
+        let migration = GarrisonMigration::with_base_dir(pool.clone(), project_migrations_dir());
         let applied = migration.migrate_core().await.expect("migrate_core 应成功");
         assert!(applied >= 1, "migrate_core 应至少执行 1 个文件");
         pool
@@ -157,7 +157,7 @@ pub(crate) mod test_support {
 mod tests {
     use super::*;
     use crate::dao::repository::*;
-    use crate::dao::{init_dbnexus, BulwarkMigration};
+    use crate::dao::{init_dbnexus, GarrisonMigration};
     use std::path::PathBuf;
 
     /// 定位项目根目录的 migrations/sqlite/ 目录。
@@ -173,7 +173,7 @@ mod tests {
         let pool = init_dbnexus("sqlite::memory:")
             .await
             .expect("init_dbnexus 应成功");
-        let migration = BulwarkMigration::with_base_dir(pool.clone(), project_migrations_dir());
+        let migration = GarrisonMigration::with_base_dir(pool.clone(), project_migrations_dir());
         let applied = migration.migrate_core().await.expect("migrate_core 应成功");
         assert!(applied >= 1, "migrate_core 应至少执行 1 个文件");
         pool

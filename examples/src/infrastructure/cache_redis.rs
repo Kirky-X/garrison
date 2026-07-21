@@ -4,21 +4,21 @@
 //! cache_redis 示例（cache-redis feature）。
 //!
 //! 演示 Redis L2 后端配置：
-//! 1. `BulwarkDaoOxcache::new()` 默认 L1(内存) DAO（无需 Redis 连接）
+//! 1. `GarrisonDaoOxcache::new()` 默认 L1(内存) DAO（无需 Redis 连接）
 //! 2. `oxcache::backend::RedisBackend::builder()` Redis L2 后端配置
 //! 3. `oxcache::Cache::builder().backend_arc(...)` 组合 L1+L2 多级缓存
-//! 4. `BulwarkDao` trait 操作（get/set/update/expire/delete）
+//! 4. `GarrisonDao` trait 操作（get/set/update/expire/delete）
 //!
 //! 运行方式（需要 Redis 实例运行）：
 //! ```sh
 //! OXCACHE_ALLOW_INSECURE_REDIS=I_UNDERSTAND_THE_RISKS \
-//! cargo run -p bulwark-examples --bin cache_redis --features cache-redis
+//! cargo run -p garrison-examples --bin cache_redis --features cache-redis
 //! ```
 //!
 //! 注：Redis 连接需要 TLS（`rediss://`），开发环境可设置环境变量
 //! `OXCACHE_ALLOW_INSECURE_REDIS=I_UNDERSTAND_THE_RISKS` 允许非 TLS 连接。
 
-use bulwark::dao::{BulwarkDao, BulwarkDaoOxcache};
+use garrison::dao::{GarrisonDao, GarrisonDaoOxcache};
 use std::sync::Arc;
 
 /// 默认 Redis 连接字符串（开发环境）。
@@ -26,12 +26,12 @@ const DEFAULT_REDIS_URL: &str = "redis://127.0.0.1:6379";
 
 /// 创建默认的 L1(内存) DAO 实例（无需 Redis 连接）。
 ///
-/// `BulwarkDaoOxcache::new()` 内部使用 `oxcache::Cache::builder().sync_mode(true).build()`，
+/// `GarrisonDaoOxcache::new()` 内部使用 `oxcache::Cache::builder().sync_mode(true).build()`，
 /// 仅启用 L1 oxcache 内存缓存，适合开发/测试环境。
-pub async fn create_l1_dao() -> BulwarkDaoOxcache {
-    BulwarkDaoOxcache::new()
+pub async fn create_l1_dao() -> GarrisonDaoOxcache {
+    GarrisonDaoOxcache::new()
         .await
-        .expect("BulwarkDaoOxcache L1 初始化失败")
+        .expect("GarrisonDaoOxcache L1 初始化失败")
 }
 
 /// 构造 Redis L2 后端配置（不实际连接）。
@@ -56,7 +56,7 @@ pub async fn create_tiered_cache(
     Ok(cache)
 }
 
-/// 演示 BulwarkDao 操作（通过 L1 DAO，无需 Redis）。
+/// 演示 GarrisonDao 操作（通过 L1 DAO，无需 Redis）。
 ///
 /// 展示完整的 CRUD + TTL 流程：
 /// 1. set + get
@@ -64,7 +64,7 @@ pub async fn create_tiered_cache(
 /// 3. expire（更新 TTL）
 /// 4. delete
 pub async fn demo_dao_operations(
-    dao: &BulwarkDaoOxcache,
+    dao: &GarrisonDaoOxcache,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // set + get
     dao.set("user:1001", "alice", 3600).await?;
@@ -94,17 +94,17 @@ pub async fn demo_dao_operations(
 /// 2. 展示 Redis L2 后端配置（不实际连接）
 /// 3. 说明 L1+L2 多级缓存组合方式
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    println!("=== Bulwark cache-redis Redis L2 后端示例 ===\n");
+    println!("=== Garrison cache-redis Redis L2 后端示例 ===\n");
 
     // ----------------------------------------------------------------
     // 1. L1 DAO（无需 Redis）
     // ----------------------------------------------------------------
-    println!("[L1] BulwarkDaoOxcache::new()（L1 内存，无需 Redis）:");
+    println!("[L1] GarrisonDaoOxcache::new()（L1 内存，无需 Redis）:");
     let dao = create_l1_dao().await;
     println!("    创建 L1 DAO 实例成功");
     println!();
 
-    println!("[CRUD] 演示 BulwarkDao 操作:");
+    println!("[CRUD] 演示 GarrisonDao 操作:");
     demo_dao_operations(&dao).await?;
     println!("    set(\"user:1001\", \"alice\", 3600)     → Ok");
     println!("    get(\"user:1001\")                    → Some(\"alice\")");
@@ -144,7 +144,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("        .build().await?;");
     println!();
     println!("    限制：sync_mode(true) + backend_arc() 不兼容（oxcache 0.3）");
-    println!("    BulwarkDaoOxcache 使用 sync_mode，因此仅支持 L1 内存。");
+    println!("    GarrisonDaoOxcache 使用 sync_mode，因此仅支持 L1 内存。");
     println!("    如需 L2 Redis，需直接使用 oxcache async API。");
     println!();
 

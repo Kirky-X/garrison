@@ -7,7 +7,7 @@
 
 #![cfg(feature = "cache-memory")]
 
-use bulwark_examples::infrastructure::dao_operations;
+use garrison_examples::infrastructure::dao_operations;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_run_completes() {

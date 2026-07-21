@@ -1,13 +1,13 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! `QuotaStorage` 适配器，用 `BulwarkDao::incr` 实现配额消费。
+//! `QuotaStorage` 适配器，用 `GarrisonDao::incr` 实现配额消费。
 //!
 //! `consume` 通过循环 `dao.incr` 实现：cost=1 时单次 incr（进程内原子），
 //! cost>1 时多次 incr（非原子，中间可能被其他请求插入）。
 
-use crate::dao::BulwarkDao;
-use crate::error::BulwarkError;
+use crate::dao::GarrisonDao;
+use crate::error::GarrisonError;
 use async_trait::async_trait;
 use chrono::Utc;
 use limiteron::error::{ConsumeResult, StorageError};
@@ -28,26 +28,26 @@ fn quota_meta_key(user_id: &str, resource: &str) -> String {
     format!("{}:{}:{}:meta", QUOTA_KEY_PREFIX, user_id, resource)
 }
 
-/// `QuotaStorage` 适配器，用 `BulwarkDao::incr` 实现配额消费。
+/// `QuotaStorage` 适配器，用 `GarrisonDao::incr` 实现配额消费。
 ///
 /// `consume` 通过循环 `dao.incr` 实现：cost=1 时单次 incr（进程内原子），
 /// cost>1 时多次 incr（非原子，中间可能被其他请求插入）。
-pub struct BulwarkDaoQuotaStorage {
-    pub(super) dao: Arc<dyn BulwarkDao>,
+pub struct GarrisonDaoQuotaStorage {
+    pub(super) dao: Arc<dyn GarrisonDao>,
 }
 
-impl BulwarkDaoQuotaStorage {
+impl GarrisonDaoQuotaStorage {
     /// 创建适配器实例。
     ///
     /// # 参数
     /// - `dao`: 内部 DAO 实现。
-    pub fn new(dao: Arc<dyn BulwarkDao>) -> Self {
+    pub fn new(dao: Arc<dyn GarrisonDao>) -> Self {
         Self { dao }
     }
 }
 
 #[async_trait]
-impl QuotaStorage for BulwarkDaoQuotaStorage {
+impl QuotaStorage for GarrisonDaoQuotaStorage {
     async fn get_quota(
         &self,
         user_id: &str,
@@ -63,14 +63,14 @@ impl QuotaStorage for BulwarkDaoQuotaStorage {
             (Some(meta_str), Some(count_str)) => {
                 // M-3: parse 失败显性化 — 脏数据返回 Err（fail-fast）
                 let consumed: u64 = count_str.parse().map_err(|e| {
-                    map_to_storage_err(BulwarkError::Dao(format!(
+                    map_to_storage_err(GarrisonError::Dao(format!(
                         "limiteron-quota-count-parse-failed::{}::{}::{}",
                         count_key, count_str, e
                     )))
                 })?;
                 let parts: Vec<&str> = meta_str.split('|').collect();
                 if parts.len() != 4 {
-                    return Err(map_to_storage_err(BulwarkError::Dao(format!(
+                    return Err(map_to_storage_err(GarrisonError::Dao(format!(
                         "limiteron-quota-meta-format-error::{}::{}::{}",
                         meta_key,
                         meta_str,
@@ -78,33 +78,33 @@ impl QuotaStorage for BulwarkDaoQuotaStorage {
                     ))));
                 }
                 let limit: u64 = parts[1].parse().map_err(|e| {
-                    map_to_storage_err(BulwarkError::Dao(format!(
+                    map_to_storage_err(GarrisonError::Dao(format!(
                         "limiteron-quota-limit-parse-failed::{}::{}::{}",
                         meta_key, parts[1], e
                     )))
                 })?;
                 let window_start_ts: i64 = parts[2].parse().map_err(|e| {
-                    map_to_storage_err(BulwarkError::Dao(format!(
+                    map_to_storage_err(GarrisonError::Dao(format!(
                         "limiteron-quota-window-start-parse-failed::{}::{}::{}",
                         meta_key, parts[2], e
                     )))
                 })?;
                 let window_end_ts: i64 = parts[3].parse().map_err(|e| {
-                    map_to_storage_err(BulwarkError::Dao(format!(
+                    map_to_storage_err(GarrisonError::Dao(format!(
                         "limiteron-quota-window-end-parse-failed::{}::{}::{}",
                         meta_key, parts[3], e
                     )))
                 })?;
                 let window_start = chrono::DateTime::from_timestamp(window_start_ts, 0)
                     .ok_or_else(|| {
-                        map_to_storage_err(BulwarkError::Dao(format!(
+                        map_to_storage_err(GarrisonError::Dao(format!(
                             "limiteron-quota-window-start-datetime-failed::{}",
                             window_start_ts
                         )))
                     })?;
                 let window_end =
                     chrono::DateTime::from_timestamp(window_end_ts, 0).ok_or_else(|| {
-                        map_to_storage_err(BulwarkError::Dao(format!(
+                        map_to_storage_err(GarrisonError::Dao(format!(
                             "limiteron-quota-window-end-datetime-failed::{}",
                             window_end_ts
                         )))
@@ -198,15 +198,15 @@ mod tests {
     use super::*;
     use crate::dao::tests::MockDao;
 
-    fn make_dao() -> Arc<dyn BulwarkDao> {
+    fn make_dao() -> Arc<dyn GarrisonDao> {
         Arc::new(MockDao::new())
     }
 
-    // --- BulwarkDaoQuotaStorage 测试 ---
+    // --- GarrisonDaoQuotaStorage 测试 ---
 
     #[tokio::test]
     async fn quota_consume_within_limit() {
-        let quota = BulwarkDaoQuotaStorage::new(make_dao());
+        let quota = GarrisonDaoQuotaStorage::new(make_dao());
         let result = quota
             .consume("user1", "sms", 1, 5, Duration::from_secs(3600))
             .await
@@ -217,7 +217,7 @@ mod tests {
 
     #[tokio::test]
     async fn quota_consume_exceeds_limit() {
-        let quota = BulwarkDaoQuotaStorage::new(make_dao());
+        let quota = GarrisonDaoQuotaStorage::new(make_dao());
         // 消费 5 次，第 6 次超限
         for _ in 0..5 {
             let r = quota
@@ -236,7 +236,7 @@ mod tests {
 
     #[tokio::test]
     async fn quota_reset_clears_counters() {
-        let quota = BulwarkDaoQuotaStorage::new(make_dao());
+        let quota = GarrisonDaoQuotaStorage::new(make_dao());
         quota
             .consume("user3", "sms", 3, 10, Duration::from_secs(60))
             .await
@@ -255,7 +255,7 @@ mod tests {
     /// M-3: QuotaStorage::get_quota 遇到脏 count 数据时返回错误（fail-fast）。
     #[tokio::test]
     async fn m3_quota_get_quota_dirty_count_returns_err() {
-        let quota = BulwarkDaoQuotaStorage::new(make_dao());
+        let quota = GarrisonDaoQuotaStorage::new(make_dao());
         // 直接注入脏数据：count 是非数字字符串
         quota
             .dao
@@ -284,7 +284,7 @@ mod tests {
     /// M-3: QuotaStorage::get_quota 遇到脏 meta 数据时返回错误（fail-fast）。
     #[tokio::test]
     async fn m3_quota_get_quota_dirty_meta_returns_err() {
-        let quota = BulwarkDaoQuotaStorage::new(make_dao());
+        let quota = GarrisonDaoQuotaStorage::new(make_dao());
         quota
             .dao
             .set("limiteron:quota:user2:res:count", "1", 0)
@@ -333,7 +333,7 @@ mod tests {
     /// get_quota 在 consume 后返回正确的 QuotaInfo（round-trip）。
     #[tokio::test]
     async fn quota_get_quota_after_consume_returns_valid_info() {
-        let quota = BulwarkDaoQuotaStorage::new(make_dao());
+        let quota = GarrisonDaoQuotaStorage::new(make_dao());
         quota
             .consume("user_rt", "res", 1, 10, Duration::from_secs(3600))
             .await
@@ -348,7 +348,7 @@ mod tests {
     /// consume cost > 1 时正确递增计数。
     #[tokio::test]
     async fn quota_consume_cost_greater_than_one() {
-        let quota = BulwarkDaoQuotaStorage::new(make_dao());
+        let quota = GarrisonDaoQuotaStorage::new(make_dao());
         let result = quota
             .consume("user_cost", "res", 5, 10, Duration::from_secs(60))
             .await
@@ -365,7 +365,7 @@ mod tests {
     /// consume 在 limit=0 时 usage_percent 为 100%。
     #[tokio::test]
     async fn quota_consume_limit_zero_usage_100_percent() {
-        let quota = BulwarkDaoQuotaStorage::new(make_dao());
+        let quota = GarrisonDaoQuotaStorage::new(make_dao());
         let result = quota
             .consume("user_zero", "res", 1, 0, Duration::from_secs(60))
             .await
@@ -382,7 +382,7 @@ mod tests {
     /// consume 在使用率达到 80% 时触发 alert_triggered。
     #[tokio::test]
     async fn quota_consume_alert_triggered_at_80_percent() {
-        let quota = BulwarkDaoQuotaStorage::new(make_dao());
+        let quota = GarrisonDaoQuotaStorage::new(make_dao());
         // 消费 8 次（limit=10），usage=80%，应触发 alert
         let result = quota
             .consume("user_alert", "res", 8, 10, Duration::from_secs(60))
@@ -399,7 +399,7 @@ mod tests {
     /// consume 在使用率低于 80% 时不触发 alert。
     #[tokio::test]
     async fn quota_consume_no_alert_below_80_percent() {
-        let quota = BulwarkDaoQuotaStorage::new(make_dao());
+        let quota = GarrisonDaoQuotaStorage::new(make_dao());
         let result = quota
             .consume("user_noalert", "res", 7, 10, Duration::from_secs(60))
             .await
@@ -414,7 +414,7 @@ mod tests {
     /// get_quota meta 格式错误（段数不对）返回错误。
     #[tokio::test]
     async fn quota_get_quota_meta_wrong_parts_returns_err() {
-        let quota = BulwarkDaoQuotaStorage::new(make_dao());
+        let quota = GarrisonDaoQuotaStorage::new(make_dao());
         // 注入 count 正确但 meta 段数不对的数据
         quota
             .dao
@@ -440,7 +440,7 @@ mod tests {
     /// get_quota window_start_ts 无效时返回错误。
     #[tokio::test]
     async fn quota_get_quota_invalid_window_start_ts_returns_err() {
-        let quota = BulwarkDaoQuotaStorage::new(make_dao());
+        let quota = GarrisonDaoQuotaStorage::new(make_dao());
         quota
             .dao
             .set("limiteron:quota:user_ts:res:count", "1", 0)
@@ -459,7 +459,7 @@ mod tests {
     /// get_quota 仅 count 存在但 meta 缺失时返回 None。
     #[tokio::test]
     async fn quota_get_quota_count_without_meta_returns_none() {
-        let quota = BulwarkDaoQuotaStorage::new(make_dao());
+        let quota = GarrisonDaoQuotaStorage::new(make_dao());
         // 只有 count 没有 meta
         quota
             .dao

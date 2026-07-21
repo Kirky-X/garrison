@@ -16,13 +16,13 @@
 //! # 示例
 //!
 //! ```ignore
-//! use bulwark::secure::sanitize::sanitize_input;
+//! use garrison::secure::sanitize::sanitize_input;
 //!
 //! let cleaned = sanitize_input("  hello\0world  ", 100).unwrap();
 //! assert_eq!(cleaned, "helloworld");
 //! ```
 
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::error::{GarrisonError, GarrisonResult};
 
 /// 检测 Unicode 格式字符（Cf 类）和分隔符字符（Zl/Zp 类）。
 ///
@@ -68,7 +68,7 @@ fn is_unicode_format_or_separator(c: char) -> bool {
 ///
 /// # 返回
 /// - `Ok(String)`: 消毒后的字符串
-/// - `Err(BulwarkError::InvalidParam)`: 输入长度超过 `max_len`
+/// - `Err(GarrisonError::InvalidParam)`: 输入长度超过 `max_len`
 ///
 /// # 消毒规则
 /// 1. 移除 null 字节（`\0`）— 防止 C 字符串截断
@@ -80,7 +80,7 @@ fn is_unicode_format_or_separator(c: char) -> bool {
 /// # 示例
 ///
 /// ```ignore
-/// use bulwark::secure::sanitize::sanitize_input;
+/// use garrison::secure::sanitize::sanitize_input;
 ///
 /// // 移除 null 字节
 /// assert_eq!(sanitize_input("ab\0cd", 100).unwrap(), "abcd");
@@ -94,7 +94,7 @@ fn is_unicode_format_or_separator(c: char) -> bool {
 /// // 长度超限返回错误
 /// assert!(sanitize_input("hello world", 5).is_err());
 /// ```
-pub fn sanitize_input(input: &str, max_len: usize) -> BulwarkResult<String> {
+pub fn sanitize_input(input: &str, max_len: usize) -> GarrisonResult<String> {
     // 预分配容量（最坏情况：全部保留）
     let mut cleaned = String::with_capacity(input.len());
 
@@ -121,7 +121,7 @@ pub fn sanitize_input(input: &str, max_len: usize) -> BulwarkResult<String> {
     // 长度检查（按 char count）
     let char_count = trimmed.chars().count();
     if char_count > max_len {
-        return Err(BulwarkError::InvalidParam(format!(
+        return Err(GarrisonError::InvalidParam(format!(
             "输入长度 {} 超过最大限制 {}",
             char_count, max_len
         )));
@@ -260,7 +260,7 @@ mod tests {
     #[test]
     fn sanitize_len_exceeds_max_returns_error() {
         let result = sanitize_input("hello world", 5);
-        assert!(matches!(result, Err(BulwarkError::InvalidParam(_))));
+        assert!(matches!(result, Err(GarrisonError::InvalidParam(_))));
     }
 
     /// T235-11: 长度按 char count 计算（非字节），多字节字符正确处理。
@@ -282,7 +282,7 @@ mod tests {
     #[test]
     fn sanitize_max_len_zero_rejects_nonempty() {
         let result = sanitize_input("a", 0);
-        assert!(matches!(result, Err(BulwarkError::InvalidParam(_))));
+        assert!(matches!(result, Err(GarrisonError::InvalidParam(_))));
     }
 
     // ========================================================================
@@ -301,7 +301,7 @@ mod tests {
     #[test]
     fn sanitize_after_trim_exceeds_returns_error() {
         let result = sanitize_input("  hello world  ", 5);
-        assert!(matches!(result, Err(BulwarkError::InvalidParam(_))));
+        assert!(matches!(result, Err(GarrisonError::InvalidParam(_))));
     }
 
     /// T235-16: Unicode 控制字符 U+0085 (NEL) 被移除。

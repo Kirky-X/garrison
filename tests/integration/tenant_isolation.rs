@@ -4,7 +4,7 @@
 //! 多租户隔离 + 审计日志 + 决策溯源端到端集成测试。
 //!
 //! 验证租户 42 用户 1001 的权限校验全链路：
-//! `check_permission` → `authorize` → `Decision` → 广播 `BulwarkEvent` → `AuditLogListener` 写入。
+//! `check_permission` → `authorize` → `Decision` → 广播 `GarrisonEvent` → `AuditLogListener` 写入。
 //!
 //! 运行：
 //! ```bash
@@ -19,18 +19,18 @@
 ))]
 mod tenant_audit_decision_e2e {
     use async_trait::async_trait;
-    use bulwark::context::tenant::{TenantContext, TenantSource, TENANT};
-    use bulwark::core::permission::{
+    use garrison::context::tenant::{TenantContext, TenantSource, TENANT};
+    use garrison::core::permission::{
         AuthRequest, DecisionReason, PermissionChecker, PermissionCheckerDefault,
     };
-    use bulwark::dao::{BulwarkDao, BulwarkDaoOxcache};
-    use bulwark::error::BulwarkResult;
-    use bulwark::listener::audit::{AuditConfig, AuditQuery};
-    use bulwark::listener::{BulwarkListener, BulwarkListenerManager};
-    use bulwark::session::BulwarkSession;
-    use bulwark::stp::{with_current_token, BulwarkInterface, BulwarkLogicDefault, LoginParams};
-    use bulwark::AuditLogListener;
-    use bulwark::{PermissionLogic, SessionLogic};
+    use garrison::dao::{GarrisonDao, GarrisonDaoOxcache};
+    use garrison::error::GarrisonResult;
+    use garrison::listener::audit::{AuditConfig, AuditQuery};
+    use garrison::listener::{GarrisonListener, GarrisonListenerManager};
+    use garrison::session::GarrisonSession;
+    use garrison::stp::{with_current_token, GarrisonInterface, GarrisonLogicDefault, LoginParams};
+    use garrison::AuditLogListener;
+    use garrison::{PermissionLogic, SessionLogic};
     use serial_test::serial;
     use std::sync::Arc;
 
@@ -39,8 +39,8 @@ mod tenant_audit_decision_e2e {
     struct MockInterface;
 
     #[async_trait]
-    impl BulwarkInterface for MockInterface {
-        async fn get_permission_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+    impl GarrisonInterface for MockInterface {
+        async fn get_permission_list(&self, login_id: &str) -> GarrisonResult<Vec<String>> {
             if login_id == "1001" {
                 Ok(vec!["user:read".to_string()])
             } else {
@@ -48,7 +48,7 @@ mod tenant_audit_decision_e2e {
             }
         }
 
-        async fn get_role_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
+        async fn get_role_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
             Ok(vec![])
         }
     }
@@ -65,39 +65,39 @@ mod tenant_audit_decision_e2e {
     async fn tenant_isolation_with_audit_log_and_decision_trace_e2e() {
         let pool = setup_db().await;
 
-        let dao: Arc<dyn BulwarkDao> = Arc::new(
-            BulwarkDaoOxcache::new()
+        let dao: Arc<dyn GarrisonDao> = Arc::new(
+            GarrisonDaoOxcache::new()
                 .await
                 .expect("oxcache 初始化应成功"),
         );
-        let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
+        let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
 
-        let mut config = bulwark::config::BulwarkConfig::default_config();
+        let mut config = garrison::config::GarrisonConfig::default_config();
         config.token_style = "uuid".to_string();
         config.timeout = 3600;
         config.throw_on_not_login = true;
 
-        let interface: Arc<dyn BulwarkInterface> = Arc::new(MockInterface);
+        let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface);
         let pc: Arc<dyn PermissionChecker> =
             Arc::new(PermissionCheckerDefault::new(interface.clone()));
 
-        let firewall = Arc::new(bulwark::strategy::BulwarkPermissionStrategyDefault::new(
+        let firewall = Arc::new(garrison::strategy::GarrisonPermissionStrategyDefault::new(
             interface,
         ));
 
-        let lm = Arc::new(BulwarkListenerManager::new());
+        let lm = Arc::new(GarrisonListenerManager::new());
         let audit_config = AuditConfig {
             mask_fields: vec![],
             retain_days: 0,
             async_write: false,
             signing_key: None,
-            audit_mask_mode: bulwark::config::AuditMaskMode::default(),
+            audit_mask_mode: garrison::config::AuditMaskMode::default(),
         };
         let audit_listener = Arc::new(AuditLogListener::new(pool.clone(), audit_config));
-        lm.register(audit_listener.clone() as Arc<dyn BulwarkListener>);
+        lm.register(audit_listener.clone() as Arc<dyn GarrisonListener>);
 
         let logic = Arc::new(
-            BulwarkLogicDefault::new(session, Arc::new(config), firewall)
+            GarrisonLogicDefault::new(session, Arc::new(config), firewall)
                 .with_permission_checker(pc.clone())
                 .with_listener_manager(lm),
         );

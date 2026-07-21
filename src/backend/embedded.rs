@@ -3,22 +3,22 @@
 
 //! BackendEmbedded — 进程内认证后端实现。
 //!
-//! 委托全局 `BulwarkManager` 单例，通过 `with_current_token` 将显式 token 参数
-//! 转换为 task_local 上下文，适配 `BulwarkLogicDefault` 的子 trait 方法签名。
+//! 委托全局 `GarrisonManager` 单例，通过 `with_current_token` 将显式 token 参数
+//! 转换为 task_local 上下文，适配 `GarrisonLogicDefault` 的子 trait 方法签名。
 //!
 //! # 设计
 //!
-//! - **零字段 struct**：BulwarkManager 使用全局单例（`BULWARK_MANAGER`），
+//! - **零字段 struct**：GarrisonManager 使用全局单例（`GARRISON_MANAGER`），
 //!   BackendEmbedded 无需持有任何引用
 //! - **token 适配**：AuthBackend 方法接受显式 token 参数，
-//!   BulwarkLogicDefault 方法从 task_local `CURRENT_TOKEN` 获取 token，
+//!   GarrisonLogicDefault 方法从 task_local `CURRENT_TOKEN` 获取 token，
 //!   通过 `with_current_token` 桥接两种模式
-//! - **bool 适配**：`check_safe`/`check_disable` 在 BulwarkLogicDefault 中返回
+//! - **bool 适配**：`check_safe`/`check_disable` 在 GarrisonLogicDefault 中返回
 //!   `Result<()>`（Ok=通过，Err=未通过），AuthBackend 要求 `Result<bool>`，
 //!   适配时区分业务错误（NotSafe/DisableService）与系统错误
 
-use crate::error::{BulwarkError, BulwarkResult};
-use crate::manager::BulwarkManager;
+use crate::error::{GarrisonError, GarrisonResult};
+use crate::manager::GarrisonManager;
 use crate::stp::mfa::MfaLogic;
 use crate::stp::permission::PermissionLogic;
 use crate::stp::session::SessionLogic;
@@ -28,18 +28,18 @@ use async_trait::async_trait;
 use super::types::{LoginParams, SessionData, TokenInfo};
 use super::AuthBackend;
 
-/// 进程内认证后端，委托全局 BulwarkManager 单例。
+/// 进程内认证后端，委托全局 GarrisonManager 单例。
 ///
 /// 通过 `BackendEmbedded::new()` 构造，可作为 `Arc<dyn AuthBackend>` 使用。
-/// 所有方法通过 `BulwarkManager::logic()` 获取 `BulwarkLogicDefault`，
+/// 所有方法通过 `GarrisonManager::logic()` 获取 `GarrisonLogicDefault`，
 /// 再委托到对应的子 trait 方法。
 pub struct BackendEmbedded;
 
 impl BackendEmbedded {
     /// 创建 BackendEmbedded 实例。
     ///
-    /// BulwarkManager 必须已通过 `BulwarkManager::init()` 初始化，
-    /// 否则所有方法调用返回 `BulwarkError::Session`。
+    /// GarrisonManager 必须已通过 `GarrisonManager::init()` 初始化，
+    /// 否则所有方法调用返回 `GarrisonError::Session`。
     pub fn new() -> Self {
         Self
     }
@@ -54,25 +54,25 @@ impl Default for BackendEmbedded {
 #[async_trait]
 impl AuthBackend for BackendEmbedded {
     #[tracing::instrument(skip_all, fields(login_id = %login_id))]
-    async fn login(&self, login_id: &str, params: &LoginParams) -> BulwarkResult<String> {
-        let logic = BulwarkManager::logic()?;
+    async fn login(&self, login_id: &str, params: &LoginParams) -> GarrisonResult<String> {
+        let logic = GarrisonManager::logic()?;
         logic.login(login_id, params).await
     }
 
     #[tracing::instrument(skip_all)]
-    async fn logout(&self, token: &str) -> BulwarkResult<()> {
-        let logic = BulwarkManager::logic()?;
+    async fn logout(&self, token: &str) -> GarrisonResult<()> {
+        let logic = GarrisonManager::logic()?;
         with_current_token(token.to_string(), async { logic.logout().await }).await
     }
 
     #[tracing::instrument(skip_all)]
-    async fn check_login(&self, token: &str) -> BulwarkResult<bool> {
-        let logic = BulwarkManager::logic()?;
+    async fn check_login(&self, token: &str) -> GarrisonResult<bool> {
+        let logic = GarrisonManager::logic()?;
         with_current_token(token.to_string(), async { logic.check_login().await }).await
     }
 
-    async fn check_permission(&self, token: &str, permission: &str) -> BulwarkResult<()> {
-        let logic = BulwarkManager::logic()?;
+    async fn check_permission(&self, token: &str, permission: &str) -> GarrisonResult<()> {
+        let logic = GarrisonManager::logic()?;
         let perm = permission.to_string();
         with_current_token(token.to_string(), async move {
             logic.check_permission(&perm).await
@@ -80,8 +80,8 @@ impl AuthBackend for BackendEmbedded {
         .await
     }
 
-    async fn check_role(&self, token: &str, role: &str) -> BulwarkResult<()> {
-        let logic = BulwarkManager::logic()?;
+    async fn check_role(&self, token: &str, role: &str) -> GarrisonResult<()> {
+        let logic = GarrisonManager::logic()?;
         let role = role.to_string();
         with_current_token(
             token.to_string(),
@@ -90,32 +90,32 @@ impl AuthBackend for BackendEmbedded {
         .await
     }
 
-    async fn check_safe(&self, token: &str) -> BulwarkResult<bool> {
-        let logic = BulwarkManager::logic()?;
+    async fn check_safe(&self, token: &str) -> GarrisonResult<bool> {
+        let logic = GarrisonManager::logic()?;
         with_current_token(token.to_string(), async {
             match logic.check_safe().await {
                 Ok(()) => Ok(true),
-                Err(BulwarkError::NotSafe { .. }) => Ok(false),
+                Err(GarrisonError::NotSafe { .. }) => Ok(false),
                 Err(e) => Err(e),
             }
         })
         .await
     }
 
-    async fn check_disable(&self, token: &str) -> BulwarkResult<bool> {
-        let logic = BulwarkManager::logic()?;
+    async fn check_disable(&self, token: &str) -> GarrisonResult<bool> {
+        let logic = GarrisonManager::logic()?;
         with_current_token(token.to_string(), async {
             match logic.check_disable().await {
                 Ok(()) => Ok(false),
-                Err(BulwarkError::DisableService { .. }) => Ok(true),
+                Err(GarrisonError::DisableService { .. }) => Ok(true),
                 Err(e) => Err(e),
             }
         })
         .await
     }
 
-    async fn check_api_key(&self, api_key: &str, namespace: &str) -> BulwarkResult<()> {
-        let logic = BulwarkManager::logic()?;
+    async fn check_api_key(&self, api_key: &str, namespace: &str) -> GarrisonResult<()> {
+        let logic = GarrisonManager::logic()?;
         let ns = namespace.to_string();
         with_current_token(api_key.to_string(), async move {
             logic.check_api_key(&ns).await
@@ -123,14 +123,14 @@ impl AuthBackend for BackendEmbedded {
         .await
     }
 
-    async fn get_token_info(&self, token: &str) -> BulwarkResult<TokenInfo> {
-        let logic = BulwarkManager::logic()?;
+    async fn get_token_info(&self, token: &str) -> GarrisonResult<TokenInfo> {
+        let logic = GarrisonManager::logic()?;
         let ts = logic
             .session
             .get_token_session(token)
             .await?
             .ok_or_else(|| {
-                BulwarkError::InvalidToken("backend-token-invalid-or-expired".to_string())
+                GarrisonError::InvalidToken("backend-token-invalid-or-expired".to_string())
             })?;
         Ok(TokenInfo {
             token: ts.token,
@@ -139,35 +139,35 @@ impl AuthBackend for BackendEmbedded {
         })
     }
 
-    async fn get_session(&self, token: &str) -> BulwarkResult<SessionData> {
-        let logic = BulwarkManager::logic()?;
+    async fn get_session(&self, token: &str) -> GarrisonResult<SessionData> {
+        let logic = GarrisonManager::logic()?;
         logic
             .session
             .get_token_session(token)
             .await?
             .ok_or_else(|| {
-                BulwarkError::InvalidToken("backend-token-invalid-or-expired".to_string())
+                GarrisonError::InvalidToken("backend-token-invalid-or-expired".to_string())
             })
     }
 
-    async fn kickout(&self, login_id: &str) -> BulwarkResult<()> {
-        let logic = BulwarkManager::logic()?;
+    async fn kickout(&self, login_id: &str) -> GarrisonResult<()> {
+        let logic = GarrisonManager::logic()?;
         logic.kickout(login_id).await
     }
 
-    async fn switch_to(&self, token: &str, target_login_id: &str) -> BulwarkResult<()> {
-        let logic = BulwarkManager::logic()?;
+    async fn switch_to(&self, token: &str, target_login_id: &str) -> GarrisonResult<()> {
+        let logic = GarrisonManager::logic()?;
         let auth_logic = logic.auth_logic.as_ref().ok_or_else(|| {
-            BulwarkError::NotImplemented("backend-auth-logic-not-injected".to_string())
+            GarrisonError::NotImplemented("backend-auth-logic-not-injected".to_string())
         })?;
         auth_logic.switch_to(token, target_login_id).await
     }
 
     #[tracing::instrument(skip_all)]
-    async fn renew_to_equivalent(&self, token: &str) -> BulwarkResult<String> {
-        let logic = BulwarkManager::logic()?;
+    async fn renew_to_equivalent(&self, token: &str) -> GarrisonResult<String> {
+        let logic = GarrisonManager::logic()?;
         let auth_logic = logic.auth_logic.as_ref().ok_or_else(|| {
-            BulwarkError::NotImplemented("backend-auth-logic-not-injected-renew".to_string())
+            GarrisonError::NotImplemented("backend-auth-logic-not-injected-renew".to_string())
         })?;
         auth_logic.renew_to_equivalent(token).await
     }
@@ -176,23 +176,23 @@ impl AuthBackend for BackendEmbedded {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::BulwarkConfig;
-    use crate::dao::BulwarkDao;
+    use crate::config::GarrisonConfig;
+    use crate::dao::GarrisonDao;
     use crate::stp::mock::{MockDao, MockInterface};
-    use crate::stp::BulwarkInterface;
+    use crate::stp::GarrisonInterface;
     use serial_test::serial;
     use std::sync::Arc;
 
-    /// 初始化全局 BulwarkManager，返回 BackendEmbedded 实例。
+    /// 初始化全局 GarrisonManager，返回 BackendEmbedded 实例。
     fn setup_backend() -> BackendEmbedded {
-        BulwarkManager::reset_for_test();
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
-        let mut config = BulwarkConfig::default_config();
+        GarrisonManager::reset_for_test();
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+        let mut config = GarrisonConfig::default_config();
         config.timeout = 3600;
         config.active_timeout = -1;
         config.throw_on_not_login = false;
-        let interface: Arc<dyn BulwarkInterface> = Arc::new(MockInterface);
-        BulwarkManager::init(dao, Arc::new(config), interface).unwrap();
+        let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface);
+        GarrisonManager::init(dao, Arc::new(config), interface).unwrap();
         BackendEmbedded::new()
     }
 
@@ -275,7 +275,7 @@ mod tests {
         let result = backend.get_token_info("invalid").await;
         assert!(result.is_err());
         match result.unwrap_err() {
-            BulwarkError::InvalidToken(_) => {},
+            GarrisonError::InvalidToken(_) => {},
             e => panic!("期望 InvalidToken，实际: {:?}", e),
         }
     }
@@ -343,7 +343,7 @@ mod tests {
         let result = backend.switch_to(&token, "user2").await;
         assert!(result.is_err());
         match result.unwrap_err() {
-            BulwarkError::NotPermission(_) => {},
+            GarrisonError::NotPermission(_) => {},
             e => panic!("期望 NotPermission，实际: {:?}", e),
         }
     }

@@ -4,8 +4,8 @@
 //! SmsVerificationService 实现：发送/验证/异常检测三层抽象。
 
 use super::rate_limiter::validate_phone;
-use super::{BulwarkDao, BulwarkResult, SmsRateLimiter, SmsSender, SmsVerificationService};
-use crate::error::BulwarkError;
+use super::{GarrisonDao, GarrisonResult, SmsRateLimiter, SmsSender, SmsVerificationService};
+use crate::error::GarrisonError;
 use std::sync::Arc;
 
 impl SmsVerificationService {
@@ -13,7 +13,7 @@ impl SmsVerificationService {
     pub fn new(
         rate_limiter: SmsRateLimiter,
         sender: Arc<dyn SmsSender>,
-        dao: Arc<dyn BulwarkDao>,
+        dao: Arc<dyn GarrisonDao>,
         max_verify_attempts: u32,
         unverified_threshold: u32,
     ) -> Self {
@@ -27,13 +27,13 @@ impl SmsVerificationService {
     }
 
     /// 发送验证码。
-    pub async fn send_code(&self, phone: &str) -> BulwarkResult<()> {
+    pub async fn send_code(&self, phone: &str) -> GarrisonResult<()> {
         validate_phone(phone)?;
 
         // 检查通道是否已回收
         let recycled_key = format!("sms:recycled:{}", phone);
         if self.dao.get(&recycled_key).await?.is_some() {
-            return Err(BulwarkError::SmsChannelRecycled);
+            return Err(GarrisonError::SmsChannelRecycled);
         }
 
         // 限速检查
@@ -68,7 +68,7 @@ impl SmsVerificationService {
             }
             // 回收通道（TTL 24 小时）
             self.dao.set(&recycled_key, "1", 86400).await?;
-            return Err(BulwarkError::SmsChannelRecycled);
+            return Err(GarrisonError::SmsChannelRecycled);
         }
 
         // 发送验证码
@@ -88,12 +88,12 @@ impl SmsVerificationService {
     }
 
     /// 验证验证码。
-    pub async fn verify_code(&self, phone: &str, code: &str) -> BulwarkResult<()> {
+    pub async fn verify_code(&self, phone: &str, code: &str) -> GarrisonResult<()> {
         validate_phone(phone)?;
 
         let code_key = format!("sms:code:{}", phone);
         let stored = self.dao.get(&code_key).await?;
-        let stored = stored.ok_or(BulwarkError::SmsCodeNotFound)?;
+        let stored = stored.ok_or(GarrisonError::SmsCodeNotFound)?;
 
         if constant_time_eq(&stored, code) {
             // 验证成功：删除验证码 + 清零未验证计数 + 清零尝试次数
@@ -111,9 +111,9 @@ impl SmsVerificationService {
                 // 超过最大尝试次数，验证码失效
                 self.dao.delete(&code_key).await?;
                 self.dao.delete(&attempts_key).await?;
-                Err(BulwarkError::SmsVerifyMaxAttempts)
+                Err(GarrisonError::SmsVerifyMaxAttempts)
             } else {
-                Err(BulwarkError::InvalidParam(
+                Err(GarrisonError::InvalidParam(
                     "secure-sms-code-wrong::".to_string(),
                 ))
             }
@@ -126,7 +126,7 @@ impl SmsVerificationService {
 /// 范围 `100000..1000000` 保证：
 /// 1. 永远不生成 `000000`（弱验证码，易被暴力破解）
 /// 2. 所有结果均为 6 位数字（首位非零）
-pub(super) fn generate_code() -> BulwarkResult<String> {
+pub(super) fn generate_code() -> GarrisonResult<String> {
     use rand::rngs::OsRng;
     use rand::Rng;
     let code: u32 = OsRng.gen_range(100000..1000000);

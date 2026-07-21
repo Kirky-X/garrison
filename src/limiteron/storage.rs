@@ -1,11 +1,11 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! `Storage` 适配器，将 `BulwarkDao` 桥接到 limiteron `Storage` trait。
+//! `Storage` 适配器，将 `GarrisonDao` 桥接到 limiteron `Storage` trait。
 //!
 //! `set` 的 `ttl: None` 映射为 `dao.set(key, value, 0)`（永久驻留）。
 
-use crate::dao::BulwarkDao;
+use crate::dao::GarrisonDao;
 use async_trait::async_trait;
 use limiteron::error::StorageError;
 use limiteron::storage::Storage;
@@ -13,26 +13,26 @@ use std::sync::Arc;
 
 use super::errors::map_to_storage_err;
 
-/// `Storage` 适配器，将 `BulwarkDao` 桥接到 limiteron `Storage` trait。
+/// `Storage` 适配器，将 `GarrisonDao` 桥接到 limiteron `Storage` trait。
 ///
 /// `set` 的 `ttl: None` 映射为 `dao.set(key, value, 0)`（永久驻留）。
-pub struct BulwarkDaoStorage {
+pub struct GarrisonDaoStorage {
     /// 内部 DAO。
-    dao: Arc<dyn BulwarkDao>,
+    dao: Arc<dyn GarrisonDao>,
 }
 
-impl BulwarkDaoStorage {
+impl GarrisonDaoStorage {
     /// 创建适配器实例。
     ///
     /// # 参数
     /// - `dao`: 内部 DAO 实现。
-    pub fn new(dao: Arc<dyn BulwarkDao>) -> Self {
+    pub fn new(dao: Arc<dyn GarrisonDao>) -> Self {
         Self { dao }
     }
 }
 
 #[async_trait]
-impl Storage for BulwarkDaoStorage {
+impl Storage for GarrisonDaoStorage {
     async fn get(&self, key: &str) -> Result<Option<String>, StorageError> {
         self.dao.get(key).await.map_err(map_to_storage_err)
     }
@@ -55,15 +55,15 @@ mod tests {
     use super::*;
     use crate::dao::tests::MockDao;
 
-    fn make_dao() -> Arc<dyn BulwarkDao> {
+    fn make_dao() -> Arc<dyn GarrisonDao> {
         Arc::new(MockDao::new())
     }
 
-    // --- BulwarkDaoStorage 测试 ---
+    // --- GarrisonDaoStorage 测试 ---
 
     #[tokio::test]
     async fn storage_get_set_delete() {
-        let storage = BulwarkDaoStorage::new(make_dao());
+        let storage = GarrisonDaoStorage::new(make_dao());
 
         // 初始 get 返回 None
         assert!(storage.get("key1").await.unwrap().is_none());
@@ -82,7 +82,7 @@ mod tests {
 
     #[tokio::test]
     async fn storage_set_ttl_none_is_permanent() {
-        let storage = BulwarkDaoStorage::new(make_dao());
+        let storage = GarrisonDaoStorage::new(make_dao());
         storage.set("perm", "val", None).await.unwrap();
         assert_eq!(storage.get("perm").await.unwrap(), Some("val".to_string()));
     }

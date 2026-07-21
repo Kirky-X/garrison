@@ -6,7 +6,7 @@
 //! 撤销 access_token 或 refresh_token，token 失效后立即不可用。
 //! 无论 token 是否有效，始终返回成功（RFC 7009 §2.2 规定不暴露 token 有效性）。
 
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::error::{GarrisonError, GarrisonResult};
 use crate::oauth2_server::client::OAuth2ClientStore;
 use crate::oauth2_server::token::TokenHandler;
 use serde::Deserialize;
@@ -45,16 +45,16 @@ impl RevokeHandler {
     /// # 返回
     /// - `Ok(())`：撤销成功（无论 token 是否有效，RFC 7009 §2.2）
     /// - `Err`：客户端认证失败
-    pub async fn handle(&self, req: &RevokeRequest) -> BulwarkResult<()> {
+    pub async fn handle(&self, req: &RevokeRequest) -> GarrisonResult<()> {
         // 1. 客户端认证
         let client = self.store.get(&req.client_id).await?.ok_or_else(|| {
-            BulwarkError::OAuth2(format!(
+            GarrisonError::OAuth2(format!(
                 "oauth2-server-revoke-invalid-client::{}",
                 req.client_id
             ))
         })?;
         if !client.verify_secret(&req.client_secret)? {
-            return Err(BulwarkError::OAuth2(
+            return Err(GarrisonError::OAuth2(
                 "oauth2-server-revoke-invalid-client-secret".into(),
             ));
         }

@@ -4,7 +4,7 @@
 //! `Signer` 实现块，封装 HMAC-SHA256/SHA512、Base64、MD5 签名与编码方法。
 
 use super::Signer;
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::error::{GarrisonError, GarrisonResult};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::{Sha256, Sha512};
@@ -113,11 +113,11 @@ impl Signer {
     ///
     /// # 返回
     /// - `Ok(Vec<u8>)`: 解码后的字节。
-    /// - `Err(BulwarkError::Internal)`: 非法 Base64 字符串。
-    pub fn base64_decode(s: &str) -> BulwarkResult<Vec<u8>> {
+    /// - `Err(GarrisonError::Internal)`: 非法 Base64 字符串。
+    pub fn base64_decode(s: &str) -> GarrisonResult<Vec<u8>> {
         STANDARD
             .decode(s)
-            .map_err(|e| BulwarkError::Internal(format!("secure-base64-decode::{}", e)))
+            .map_err(|e| GarrisonError::Internal(format!("secure-base64-decode::{}", e)))
     }
 
     /// 计算 MD5 摘要，输出小写十六进制字符串。

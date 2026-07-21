@@ -1,16 +1,16 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! `BulwarkPermissionStrategyDefault` 的实现块。
+//! `GarrisonPermissionStrategyDefault` 的实现块。
 //!
 //! 从 `mod.rs` 迁移而出（规则 25：mod.rs 接口隔离）。
-//! 本模块持有构造器、builder 方法、`BulwarkPermissionStrategy` trait 实现，
+//! 本模块持有构造器、builder 方法、`GarrisonPermissionStrategy` trait 实现，
 //! 以及 `broadcast_firewall_block` 事件广播 helper。
 
 use crate::core::permission::PermissionChecker;
-use crate::dao::BulwarkDao;
-use crate::error::{BulwarkError, BulwarkResult};
-// BulwarkEvent 仅在 listener + firewall/oauth2 同时启用时需要（broadcast_firewall_block 内部使用）
+use crate::dao::GarrisonDao;
+use crate::error::{GarrisonError, GarrisonResult};
+// GarrisonEvent 仅在 listener + firewall/oauth2 同时启用时需要（broadcast_firewall_block 内部使用）
 #[cfg(all(
     feature = "listener",
     any(
@@ -22,11 +22,11 @@ use crate::error::{BulwarkError, BulwarkResult};
         feature = "oauth2-server"
     )
 ))]
-use crate::listener::BulwarkEvent;
+use crate::listener::GarrisonEvent;
 #[cfg(feature = "listener")]
-use crate::listener::BulwarkListenerManager;
-use crate::plugin::BulwarkPluginManager;
-use crate::stp::BulwarkInterface;
+use crate::listener::GarrisonListenerManager;
+use crate::plugin::GarrisonPluginManager;
+use crate::stp::GarrisonInterface;
 #[cfg(any(
     feature = "sms-rate-limit",
     feature = "firewall-ratelimit",
@@ -35,23 +35,23 @@ use crate::stp::BulwarkInterface;
     feature = "firewall",
     feature = "oauth2-server"
 ))]
-use crate::strategy::hooks::{BulwarkFirewallCheckHook, LoginContext};
+use crate::strategy::hooks::{GarrisonFirewallCheckHook, LoginContext};
 use async_trait::async_trait;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use super::{BulwarkPermissionStrategy, BulwarkPermissionStrategyDefault};
+use super::{GarrisonPermissionStrategy, GarrisonPermissionStrategyDefault};
 
-impl BulwarkPermissionStrategyDefault {
+impl GarrisonPermissionStrategyDefault {
     /// 创建默认实现实例。
     ///
     /// # 参数
     /// - `interface`: 权限/角色数据回调（业务方实现）。
     ///
     /// # 返回
-    /// 新建的 `BulwarkPermissionStrategyDefault` 实例（0.2.0 扩展字段均为 None/空，
+    /// 新建的 `GarrisonPermissionStrategyDefault` 实例（0.2.0 扩展字段均为 None/空，
     /// 行为与 0.1.0 完全一致）。
-    pub fn new(interface: Arc<dyn BulwarkInterface>) -> Self {
+    pub fn new(interface: Arc<dyn GarrisonInterface>) -> Self {
         Self {
             interface,
             permission_checker: None,
@@ -75,16 +75,16 @@ impl BulwarkPermissionStrategyDefault {
     /// 注入 `PermissionChecker`，启用委托校验。
     ///
     /// 注入后 `check_permission` 将委托 `PermissionChecker::has_permission`，
-    /// 而非直接调用 `BulwarkInterface::get_permission_list`。
+    /// 而非直接调用 `GarrisonInterface::get_permission_list`。
     pub fn with_permission_checker(mut self, pc: Arc<dyn PermissionChecker>) -> Self {
         self.permission_checker = Some(pc);
         self
     }
 
-    /// 注入 `BulwarkDao`，启用权限缓存。
+    /// 注入 `GarrisonDao`，启用权限缓存。
     ///
     /// 注入后 `check_permission` 会优先读取缓存，未命中时查询并回填。
-    pub fn with_dao(mut self, dao: Arc<dyn BulwarkDao>) -> Self {
+    pub fn with_dao(mut self, dao: Arc<dyn GarrisonDao>) -> Self {
         self.dao = Some(dao);
         self
     }
@@ -99,16 +99,16 @@ impl BulwarkPermissionStrategyDefault {
         self
     }
 
-    /// 注入 `BulwarkPluginManager`，启用插件钩子。
+    /// 注入 `GarrisonPluginManager`，启用插件钩子。
     ///
-    /// 注入后 `check_permission` 前后调用 `BulwarkPluginManager::on_permission_check`，
+    /// 注入后 `check_permission` 前后调用 `GarrisonPluginManager::on_permission_check`，
     /// 插件返回 Err 仅 `tracing::warn!` 不中断主流程。
-    pub fn with_plugin_manager(mut self, pm: Arc<BulwarkPluginManager>) -> Self {
+    pub fn with_plugin_manager(mut self, pm: Arc<GarrisonPluginManager>) -> Self {
         self.plugin_manager = Some(pm);
         self
     }
 
-    /// 注入 `BulwarkFirewallCheckHook`，启用登录前防火墙安全检查。
+    /// 注入 `GarrisonFirewallCheckHook`，启用登录前防火墙安全检查。
     ///
     /// 注入后 `check_login_hooks` 将按序调用 5 个 hook（登录频率 / 暴力破解 /
     /// 异地登录 / Token 复用 / 设备异常），任一返回 `Err` 阻断登录。
@@ -120,18 +120,18 @@ impl BulwarkPermissionStrategyDefault {
         feature = "firewall",
         feature = "oauth2-server"
     ))]
-    pub fn with_firewall_hook(mut self, hook: Arc<dyn BulwarkFirewallCheckHook>) -> Self {
+    pub fn with_firewall_hook(mut self, hook: Arc<dyn GarrisonFirewallCheckHook>) -> Self {
         self.firewall_hook = Some(hook);
         self
     }
 
-    /// 注入 `BulwarkListenerManager`，启用 FirewallBlock 事件广播
+    /// 注入 `GarrisonListenerManager`，启用 FirewallBlock 事件广播
     ///
     ///
-    /// 注入后 `check_login_hooks` 任一 hook 返回 `Err` 时广播 `BulwarkEvent::FirewallBlock`。
+    /// 注入后 `check_login_hooks` 任一 hook 返回 `Err` 时广播 `GarrisonEvent::FirewallBlock`。
     /// 未注入时为 no-op（向后兼容 0.4.1）。需启用 `listener` feature。
     #[cfg(feature = "listener")]
-    pub fn with_listener_manager(mut self, lm: Arc<BulwarkListenerManager>) -> Self {
+    pub fn with_listener_manager(mut self, lm: Arc<GarrisonListenerManager>) -> Self {
         self.listener_manager = Some(lm);
         self
     }
@@ -155,7 +155,7 @@ impl BulwarkPermissionStrategyDefault {
 
     /// 缓存权限校验结果。
     ///
-    /// 将校验结果写入 `BulwarkDao`，key 格式 `bulwark:perm:cache:<login_id>:<permission>`。
+    /// 将校验结果写入 `GarrisonDao`，key 格式 `garrison:perm:cache:<login_id>:<permission>`。
     ///
     /// # 参数
     /// - `login_id`: 登录主体标识。
@@ -167,16 +167,16 @@ impl BulwarkPermissionStrategyDefault {
     /// 成功返回 `Ok(())`；未注入 DAO 时为 no-op。
     ///
     /// # 错误
-    /// - DAO 写入失败：透传 `BulwarkError`。
+    /// - DAO 写入失败：透传 `GarrisonError`。
     pub async fn cache_permission(
         &self,
         login_id: &str,
         permission: &str,
         result: bool,
         ttl_seconds: u64,
-    ) -> BulwarkResult<()> {
+    ) -> GarrisonResult<()> {
         if let Some(dao) = &self.dao {
-            let key = format!("bulwark:perm:cache:{}:{}", login_id, permission);
+            let key = format!("garrison:perm:cache:{}:{}", login_id, permission);
             dao.set(&key, if result { "true" } else { "false" }, ttl_seconds)
                 .await?;
         }
@@ -194,14 +194,14 @@ impl BulwarkPermissionStrategyDefault {
     /// - `None`: 缓存未命中或未注入 DAO。
     ///
     /// # 错误
-    /// - DAO 读取失败：透传 `BulwarkError`。
+    /// - DAO 读取失败：透传 `GarrisonError`。
     pub async fn get_cached_permission(
         &self,
         login_id: &str,
         permission: &str,
-    ) -> BulwarkResult<Option<bool>> {
+    ) -> GarrisonResult<Option<bool>> {
         if let Some(dao) = &self.dao {
-            let key = format!("bulwark:perm:cache:{}:{}", login_id, permission);
+            let key = format!("garrison:perm:cache:{}:{}", login_id, permission);
             match dao.get(&key).await? {
                 Some(v) => Ok(Some(v == "true")),
                 None => Ok(None),
@@ -213,19 +213,19 @@ impl BulwarkPermissionStrategyDefault {
 }
 
 #[async_trait]
-impl BulwarkPermissionStrategy for BulwarkPermissionStrategyDefault {
-    async fn get_permission_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+impl GarrisonPermissionStrategy for GarrisonPermissionStrategyDefault {
+    async fn get_permission_list(&self, login_id: &str) -> GarrisonResult<Vec<String>> {
         self.interface.get_permission_list(login_id).await
     }
 
-    async fn get_role_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+    async fn get_role_list(&self, login_id: &str) -> GarrisonResult<Vec<String>> {
         self.interface.get_role_list(login_id).await
     }
 
-    async fn check_permission(&self, login_id: &str, permission: &str) -> BulwarkResult<bool> {
+    async fn check_permission(&self, login_id: &str, permission: &str) -> GarrisonResult<bool> {
         // spec scenario "权限为空字符串"：空字符串抛 InvalidParam
         if permission.is_empty() {
-            return Err(BulwarkError::InvalidParam(
+            return Err(GarrisonError::InvalidParam(
                 "strategy-perm-empty".to_string(),
             ));
         }
@@ -268,9 +268,9 @@ impl BulwarkPermissionStrategy for BulwarkPermissionStrategyDefault {
         Ok(result)
     }
 
-    async fn check_role(&self, login_id: &str, role: &str) -> BulwarkResult<bool> {
+    async fn check_role(&self, login_id: &str, role: &str) -> GarrisonResult<bool> {
         if role.is_empty() {
-            return Err(BulwarkError::InvalidParam(
+            return Err(GarrisonError::InvalidParam(
                 "strategy-role-empty".to_string(),
             ));
         }
@@ -284,7 +284,7 @@ impl BulwarkPermissionStrategy for BulwarkPermissionStrategyDefault {
         }
     }
 
-    async fn check_role_any(&self, login_id: &str, roles: &[&str]) -> BulwarkResult<bool> {
+    async fn check_role_any(&self, login_id: &str, roles: &[&str]) -> GarrisonResult<bool> {
         let user_roles = self.get_role_list(login_id).await?;
         // 层级角色展开
         if !self.role_hierarchy.is_empty() {
@@ -295,7 +295,7 @@ impl BulwarkPermissionStrategy for BulwarkPermissionStrategyDefault {
         }
     }
 
-    async fn check_role_all(&self, login_id: &str, roles: &[&str]) -> BulwarkResult<bool> {
+    async fn check_role_all(&self, login_id: &str, roles: &[&str]) -> GarrisonResult<bool> {
         let user_roles = self.get_role_list(login_id).await?;
         // 层级角色展开
         if !self.role_hierarchy.is_empty() {
@@ -312,7 +312,7 @@ impl BulwarkPermissionStrategy for BulwarkPermissionStrategyDefault {
     /// 未注入时为 no-op（向后兼容 0.2.x）。
     ///
     /// v0.4.2 扩展：任一 hook 返回 Err 时，若注入了 `listener_manager`，
-    /// 广播 `BulwarkEvent::FirewallBlock` 事件。
+    /// 广播 `GarrisonEvent::FirewallBlock` 事件。
     #[cfg(any(
         feature = "sms-rate-limit",
         feature = "firewall-ratelimit",
@@ -321,7 +321,7 @@ impl BulwarkPermissionStrategy for BulwarkPermissionStrategyDefault {
         feature = "firewall",
         feature = "oauth2-server"
     ))]
-    async fn check_login_hooks(&self, login_id: &str, ctx: &LoginContext) -> BulwarkResult<()> {
+    async fn check_login_hooks(&self, login_id: &str, ctx: &LoginContext) -> GarrisonResult<()> {
         let Some(hook) = &self.firewall_hook else {
             return Ok(());
         };
@@ -350,7 +350,7 @@ impl BulwarkPermissionStrategy for BulwarkPermissionStrategyDefault {
     }
 }
 
-impl BulwarkPermissionStrategyDefault {
+impl GarrisonPermissionStrategyDefault {
     /// 广播 FirewallBlock 事件。
     ///
     /// 仅在注入 `listener_manager` 且启用 `listener` feature 时广播，否则为 no-op。
@@ -365,10 +365,10 @@ impl BulwarkPermissionStrategyDefault {
         feature = "oauth2-server"
     ))]
     #[cfg_attr(not(feature = "listener"), allow(unused_variables))]
-    async fn broadcast_firewall_block(&self, login_id: &str, e: &BulwarkError) {
+    async fn broadcast_firewall_block(&self, login_id: &str, e: &GarrisonError) {
         #[cfg(feature = "listener")]
         if let Some(lm) = &self.listener_manager {
-            lm.broadcast(&BulwarkEvent::FirewallBlock {
+            lm.broadcast(&GarrisonEvent::FirewallBlock {
                 login_id: login_id.to_string(),
                 reason: e.to_string(),
                 request_context: None,

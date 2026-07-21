@@ -11,12 +11,12 @@
 //!
 //! 运行方式：
 //! ```sh
-//! cargo run -p bulwark-examples --bin scope_handler --features oauth2-scope-handler
+//! cargo run -p garrison-examples --bin scope_handler --features oauth2-scope-handler
 //! ```
 
-use bulwark::error::{BulwarkError, BulwarkResult};
-use bulwark::protocol::oauth2::scope::{ScopeHandler, ScopeRegistry};
-use bulwark::protocol::oauth2::OAuth2Client;
+use garrison::error::{GarrisonError, GarrisonResult};
+use garrison::protocol::oauth2::scope::{ScopeHandler, ScopeRegistry};
+use garrison::protocol::oauth2::OAuth2Client;
 use std::sync::Arc;
 
 /// 管理员 scope handler：根据 scope 名称与 login_id 决定是否允许。
@@ -27,7 +27,7 @@ use std::sync::Arc;
 struct AdminScopeHandler;
 
 impl ScopeHandler for AdminScopeHandler {
-    fn validate(&self, scope: &str, login_id: i64) -> BulwarkResult<bool> {
+    fn validate(&self, scope: &str, login_id: i64) -> GarrisonResult<bool> {
         match scope {
             "openid" | "profile" => Ok(true),
             "admin" => Ok(login_id > 1000),
@@ -41,7 +41,7 @@ impl ScopeHandler for AdminScopeHandler {
 /// 演示 ScopeRegistry 直接校验 + OAuth2Client 注入后 token 请求前的 scope 校验。
 /// 使用 wiremock MockServer mock token 端点，验证校验通过时 HTTP 请求被发送。
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    println!("=== Bulwark OAuth2 Scope Handler 示例 ===\n");
+    println!("=== Garrison OAuth2 Scope Handler 示例 ===\n");
 
     // ----------------------------------------------------------------
     // 1. 创建 ScopeRegistry 并注册 handler
@@ -72,7 +72,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // 未注册的 scope 返回 OAuth2 错误
     match registry.validate("unregistered", 0) {
-        Err(BulwarkError::OAuth2(msg)) => {
+        Err(GarrisonError::OAuth2(msg)) => {
             println!("    validate(\"unregistered\", 0) → Err（未注册）");
             assert!(msg.contains("not registered"));
         },
@@ -123,7 +123,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // 拒绝：admin scope 被 handler 拒绝（login_id=0 < 1000），不发送 HTTP
     match client.get_client_credentials_token(Some("admin")).await {
-        Err(BulwarkError::OAuth2(msg)) => {
+        Err(GarrisonError::OAuth2(msg)) => {
             println!("    get_client_credentials_token(\"admin\")  → Err（scope 被拒）");
             assert!(msg.contains("scope validation failed"));
         },
@@ -135,7 +135,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         .get_client_credentials_token(Some("unknown-scope"))
         .await
     {
-        Err(BulwarkError::OAuth2(msg)) => {
+        Err(GarrisonError::OAuth2(msg)) => {
             println!("    get_client_credentials_token(\"unknown\") → Err（未注册）");
             assert!(msg.contains("not registered"));
         },

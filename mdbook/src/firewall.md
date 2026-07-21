@@ -1,13 +1,13 @@
 # 防火墙安全钩子（0.3.0 新增）
 
-0.3.0 引入 `BulwarkFirewallCheckHook`，提供登录流程的可插拔安全检查，返回 `Err` 即阻断登录。
+0.3.0 引入 `GarrisonFirewallCheckHook`，提供登录流程的可插拔安全检查，返回 `Err` 即阻断登录。
 
 ## 设计要点
 
-- **`BulwarkFirewallCheckHook` trait**：5 个 async hook 方法，默认实现全 pass
+- **`GarrisonFirewallCheckHook` trait**：5 个 async hook 方法，默认实现全 pass
 - **`LoginContext`**：登录上下文（login_id + 可选 IP / 设备指纹 / 地理位置）
-- **`BulwarkFirewallCheckHookDefault`**：基于 `BulwarkDaoDistributedLimiter`（limiteron 适配器）的默认实现，5 项检测全部实现
-- **`with_firewall_hook` builder**：注入到 `BulwarkLogicDefault`
+- **`GarrisonFirewallCheckHookDefault`**：基于 `GarrisonDaoDistributedLimiter`（limiteron 适配器）的默认实现，5 项检测全部实现
+- **`with_firewall_hook` builder**：注入到 `GarrisonLogicDefault`
 - **Hook 在 login 流程中调用**：任一返回 `Err` 阻止登录
 
 ## 5 个检查项
@@ -22,16 +22,16 @@
 
 调用顺序：登录频率 → 暴力破解 → 异地登录 → Token 复用 → 设备异常。
 
-## BulwarkFirewallCheckHook trait
+## GarrisonFirewallCheckHook trait
 
 ```rust
 #[async_trait]
-pub trait BulwarkFirewallCheckHook: Send + Sync {
-    async fn check_login_frequency(&self, ctx: &LoginContext) -> BulwarkResult<()> { Ok(()) }
-    async fn check_brute_force(&self, ctx: &LoginContext) -> BulwarkResult<()> { Ok(()) }
-    async fn check_geo_anomaly(&self, ctx: &LoginContext) -> BulwarkResult<()> { Ok(()) }
-    async fn check_token_reuse(&self, ctx: &LoginContext) -> BulwarkResult<()> { Ok(()) }
-    async fn check_device_anomaly(&self, ctx: &LoginContext) -> BulwarkResult<()> { Ok(()) }
+pub trait GarrisonFirewallCheckHook: Send + Sync {
+    async fn check_login_frequency(&self, ctx: &LoginContext) -> GarrisonResult<()> { Ok(()) }
+    async fn check_brute_force(&self, ctx: &LoginContext) -> GarrisonResult<()> { Ok(()) }
+    async fn check_geo_anomaly(&self, ctx: &LoginContext) -> GarrisonResult<()> { Ok(()) }
+    async fn check_token_reuse(&self, ctx: &LoginContext) -> GarrisonResult<()> { Ok(()) }
+    async fn check_device_anomaly(&self, ctx: &LoginContext) -> GarrisonResult<()> { Ok(()) }
 }
 ```
 
@@ -50,12 +50,12 @@ let ctx = LoginContext::new(1001)
 
 ## 默认实现
 
-`BulwarkFirewallCheckHookDefault` 基于 `BulwarkDaoDistributedLimiter`（limiteron 适配器）实现，5 项检测全部覆盖：
+`GarrisonFirewallCheckHookDefault` 基于 `GarrisonDaoDistributedLimiter`（limiteron 适配器）实现，5 项检测全部覆盖：
 
 ```rust
-use bulwark::strategy::hooks::{BulwarkFirewallCheckHookDefault, BulwarkFirewallCheckHook, LoginContext};
+use garrison::strategy::hooks::{GarrisonFirewallCheckHookDefault, GarrisonFirewallCheckHook, LoginContext};
 
-let hook = BulwarkFirewallCheckHookDefault::new();
+let hook = GarrisonFirewallCheckHookDefault::new();
 let ctx = LoginContext::new("1001").with_ip("1.2.3.4");
 
 // 业务方在登录失败时调用 record_failure（async）
@@ -72,25 +72,25 @@ assert!(hook.check_login_frequency(&ctx).await.is_err());  // ≥10 次阻断
 
 ## 注入到逻辑层
 
-通过 `with_firewall_hook` builder 注入 `BulwarkLogicDefault`：
+通过 `with_firewall_hook` builder 注入 `GarrisonLogicDefault`：
 
 ```rust
-let logic = BulwarkLogicDefault::new(interface.clone())
-    .with_firewall_hook(Arc::new(BulwarkFirewallCheckHookDefault::new()));
+let logic = GarrisonLogicDefault::new(interface.clone())
+    .with_firewall_hook(Arc::new(GarrisonFirewallCheckHookDefault::new()));
 ```
 
 未注入时，login 流程跳过所有 hook（等同于全 pass）。
 
 ## 分布式模式
 
-`BulwarkFirewallCheckHookDefault` 提供 2 个 builder 方法切换后端：
+`GarrisonFirewallCheckHookDefault` 提供 2 个 builder 方法切换后端：
 
 - `new()`：内存模式（内部 `MockDao` 作为 limiteron 后端，开发/CI 场景）
-- `with_dao(dao)`：分布式模式（注入 `BulwarkDao`，oxcache/redis 作为 limiteron 后端，生产场景）
+- `with_dao(dao)`：分布式模式（注入 `GarrisonDao`，oxcache/redis 作为 limiteron 后端，生产场景）
 - `with_listener_manager(lm)`：注入监听器管理器（需 `listener` feature），`check_brute_force` 阻断时广播 `AccountLocked` 事件
 
 ```rust
-let hook = BulwarkFirewallCheckHookDefault::new()
+let hook = GarrisonFirewallCheckHookDefault::new()
     .with_dao(dao.clone())
     .with_listener_manager(lm);  // 需 listener feature
 ```
@@ -99,7 +99,7 @@ let hook = BulwarkFirewallCheckHookDefault::new()
 
 - **强约束**：与 [插件系统](./plugin-system.md) 不同，防火墙 hook 返回 `Err` **会阻断登录**
 - **分布式**：默认 `new()` 走 `MockDao`（进程内）；生产环境用 `with_dao` 切换到 oxcache/redis，跨实例计数
-- **错误类型**：阻断时返回 `BulwarkError::Session`（含阈值与计数信息）
+- **错误类型**：阻断时返回 `GarrisonError::Session`（含阈值与计数信息）
 
 ## 相关章节
 

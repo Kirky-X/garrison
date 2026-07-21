@@ -20,8 +20,8 @@
 //! `verify(input)` 解析此 JSON，构造 `TotpHandler`，用当前时间戳校验 `input`。
 
 use super::{Credential, CredentialModel, CredentialType};
-use crate::dao::BulwarkDao;
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::dao::GarrisonDao;
+use crate::error::{GarrisonError, GarrisonResult};
 use crate::secure::totp::TotpHandler;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -39,9 +39,9 @@ struct TotpSecretData {
 
 impl TotpSecretData {
     /// 从 `secret_data` JSON 字符串解析。
-    fn from_json(secret_data: &str) -> BulwarkResult<Self> {
+    fn from_json(secret_data: &str) -> GarrisonResult<Self> {
         serde_json::from_str(secret_data).map_err(|e| {
-            BulwarkError::InvalidParam(format!(
+            GarrisonError::InvalidParam(format!(
                 "TOTP secret_data 解析失败（期望 JSON {{secret, step, digits}}）: {}",
                 e
             ))
@@ -49,7 +49,7 @@ impl TotpSecretData {
     }
 
     /// 构造 `TotpHandler`。
-    fn to_handler(&self) -> BulwarkResult<TotpHandler> {
+    fn to_handler(&self) -> GarrisonResult<TotpHandler> {
         let secret_bytes = TotpHandler::secret_from_base32(&self.secret)?;
         TotpHandler::new(secret_bytes, self.step, self.digits)
     }
@@ -63,8 +63,8 @@ impl TotpSecretData {
 /// # 示例
 ///
 /// ```ignore
-/// use bulwark::account::credential::totp::TotpCredential;
-/// use bulwark::account::credential::CredentialModel;
+/// use garrison::account::credential::totp::TotpCredential;
+/// use garrison::account::credential::CredentialModel;
 ///
 /// let model = CredentialModel {
 ///     id: "cred-001".into(),
@@ -100,9 +100,9 @@ impl TotpCredential {
     /// 生成当前时间的 TOTP 验证码（便捷方法，委托 [`TotpHandler::generate`]）。
     ///
     /// # 错误
-    /// - `secret_data` JSON 解析失败：`BulwarkError::InvalidParam`
+    /// - `secret_data` JSON 解析失败：`GarrisonError::InvalidParam`
     /// - Base32 解码失败 / TotpHandler 构造失败：透传
-    pub fn generate_current(&self) -> BulwarkResult<String> {
+    pub fn generate_current(&self) -> GarrisonResult<String> {
         let data = TotpSecretData::from_json(&self.model.secret_data)?;
         let handler = data.to_handler()?;
         let now = chrono::Utc::now().timestamp();
@@ -127,8 +127,8 @@ impl TotpCredential {
         &self,
         input: &str,
         login_id: &str,
-        dao: &dyn BulwarkDao,
-    ) -> BulwarkResult<bool> {
+        dao: &dyn GarrisonDao,
+    ) -> GarrisonResult<bool> {
         let data = TotpSecretData::from_json(&self.model.secret_data)?;
         let handler = data.to_handler()?;
         let now = chrono::Utc::now().timestamp();
@@ -148,7 +148,7 @@ impl Credential for TotpCredential {
         self.model.clone()
     }
 
-    async fn verify(&self, input: &str) -> BulwarkResult<bool> {
+    async fn verify(&self, input: &str) -> GarrisonResult<bool> {
         let data = TotpSecretData::from_json(&self.model.secret_data)?;
         let handler = data.to_handler()?;
         let now = chrono::Utc::now().timestamp();

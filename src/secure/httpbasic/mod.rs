@@ -24,7 +24,7 @@ pub struct Credential {
 /// ```
 /// #[cfg(feature = "secure-httpbasic")]
 /// # {
-/// use bulwark::secure::httpbasic::HttpBasicAuth;
+/// use garrison::secure::httpbasic::HttpBasicAuth;
 /// let encoded = HttpBasicAuth::encode("alice", "secret");
 /// let cred = HttpBasicAuth::decode(&encoded).unwrap();
 /// assert_eq!(cred.user, "alice");

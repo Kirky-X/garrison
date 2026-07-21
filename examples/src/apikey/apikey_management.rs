@@ -7,13 +7,13 @@
 //!
 //! 运行方式：
 //! ```sh
-//! cargo run -p bulwark-examples --bin apikey_management --features protocol-apikey
+//! cargo run -p garrison-examples --bin apikey_management --features protocol-apikey
 //! ```
 
 use async_trait::async_trait;
-use bulwark::dao::BulwarkDao;
-use bulwark::error::{BulwarkError, BulwarkResult};
-use bulwark::protocol::apikey::ApiKeyHandler;
+use garrison::dao::GarrisonDao;
+use garrison::error::{GarrisonError, GarrisonResult};
+use garrison::protocol::apikey::ApiKeyHandler;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -35,12 +35,12 @@ impl MockDao {
 }
 
 #[async_trait]
-impl BulwarkDao for MockDao {
-    async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
+impl GarrisonDao for MockDao {
+    async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
         Ok(self.data.lock().await.get(key).cloned())
     }
 
-    async fn set(&self, key: &str, value: &str, _ttl_seconds: u64) -> BulwarkResult<()> {
+    async fn set(&self, key: &str, value: &str, _ttl_seconds: u64) -> GarrisonResult<()> {
         self.data
             .lock()
             .await
@@ -48,28 +48,28 @@ impl BulwarkDao for MockDao {
         Ok(())
     }
 
-    async fn update(&self, key: &str, value: &str) -> BulwarkResult<()> {
+    async fn update(&self, key: &str, value: &str) -> GarrisonResult<()> {
         let mut data = self.data.lock().await;
         if data.contains_key(key) {
             data.insert(key.to_string(), value.to_string());
             Ok(())
         } else {
-            Err(BulwarkError::Dao(format!("键不存在: {}", key)))
+            Err(GarrisonError::Dao(format!("键不存在: {}", key)))
         }
     }
 
-    async fn expire(&self, _key: &str, _seconds: u64) -> BulwarkResult<()> {
+    async fn expire(&self, _key: &str, _seconds: u64) -> GarrisonResult<()> {
         Ok(())
     }
 
-    async fn delete(&self, key: &str) -> BulwarkResult<()> {
+    async fn delete(&self, key: &str) -> GarrisonResult<()> {
         self.data.lock().await.remove(key);
         Ok(())
     }
 
     /// v0.4.2: keys 实现以支持 `ApiKeyHandler::verify` 扫描新格式 key
-    /// `bulwark:apikey:*:<key>`（依据 spec protocol-apikey-namespace）。
-    async fn keys(&self, pattern: &str) -> BulwarkResult<Vec<String>> {
+    /// `garrison:apikey:*:<key>`（依据 spec protocol-apikey-namespace）。
+    async fn keys(&self, pattern: &str) -> GarrisonResult<Vec<String>> {
         let data = self.data.lock().await;
         let mut result = Vec::new();
         for key in data.keys() {
@@ -118,14 +118,14 @@ fn glob_match(pattern: &str, text: &str) -> bool {
 /// 运行 API Key 管理示例。
 ///
 /// 演示 ApiKeyHandler 的 generate / verify / revoke / rotate 全生命周期。
-pub async fn run() -> BulwarkResult<()> {
-    println!("=== Bulwark API Key 管理示例 ===\n");
+pub async fn run() -> GarrisonResult<()> {
+    println!("=== Garrison API Key 管理示例 ===\n");
 
     // ----------------------------------------------------------------
     // 1. 构建 ApiKeyHandler
     // ----------------------------------------------------------------
-    // Key 存储命名空间：bulwark:apikey:<key>
-    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+    // Key 存储命名空间：garrison:apikey:<key>
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     let handler = ApiKeyHandler::new(dao);
     println!("[1] ApiKeyHandler 构建完成\n");
 

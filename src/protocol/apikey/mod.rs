@@ -10,14 +10,14 @@
 //!
 //! ## Key 命名空间
 //!
-//! v0.4.2 起，所有 API Key 存储格式由 `bulwark:apikey:<key>` 升级为
-//! `bulwark:apikey:<namespace>:<key>`，支持多租户/多场景隔离。
+//! v0.4.2 起，所有 API Key 存储格式由 `garrison:apikey:<key>` 升级为
+//! `garrison:apikey:<namespace>:<key>`，支持多租户/多场景隔离。
 //! `verify` 兼容旧格式（无 namespace）以保护历史 key 不失效。
 
-use crate::dao::BulwarkDao;
+use crate::dao::GarrisonDao;
 // listener_manager 注入（feature-gated）
 #[cfg(feature = "listener")]
-use crate::listener::BulwarkListenerManager;
+use crate::listener::GarrisonListenerManager;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -38,21 +38,21 @@ pub struct ApiKeyInfo {
     ///
     /// - 新生成 key 必带 namespace（默认 `"default"`）
     /// - 旧 JSON 数据（无 `namespace` 字段）反序列化时通过 `#[serde(default)]` 填充为 `"default"`
-    /// - 与 key 存储路径 `bulwark:apikey:<namespace>:<key>` 中的 namespace 严格一致
+    /// - 与 key 存储路径 `garrison:apikey:<namespace>:<key>` 中的 namespace 严格一致
     #[serde(default = "handler::default_namespace")]
     pub namespace: String,
 }
 
 /// API Key 处理器。
 ///
-/// 持有 `Arc<dyn BulwarkDao>` 用于 API Key 存储。
+/// 持有 `Arc<dyn GarrisonDao>` 用于 API Key 存储。
 /// 实现 `Send + Sync`，可在多线程环境共享。
 pub struct ApiKeyHandler {
     /// DAO 抽象层，用于 API Key 存储。
-    dao: Arc<dyn BulwarkDao>,
+    dao: Arc<dyn GarrisonDao>,
     /// 可选监听器管理器，注入后 rotate 广播 TokenRotate 事件
     #[cfg(feature = "listener")]
-    listener_manager: Option<Arc<BulwarkListenerManager>>,
+    listener_manager: Option<Arc<GarrisonListenerManager>>,
 }
 
 #[cfg(test)]

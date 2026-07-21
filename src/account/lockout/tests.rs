@@ -8,8 +8,8 @@
 use super::strategy::now_timestamp;
 use super::*;
 use crate::dao::tests::MockDao;
-use crate::error::BulwarkError;
-use crate::strategy::firewall::{BulwarkFirewallStrategy, FirewallContext, StrategyRegistration};
+use crate::error::GarrisonError;
+use crate::strategy::firewall::{FirewallContext, GarrisonFirewallStrategy, StrategyRegistration};
 use std::sync::Arc;
 
 /// 验证 UserLockoutConfig::default() 返回预期默认值
@@ -155,8 +155,8 @@ fn wait_strategy_linear_formula() {
 // ===== UserLockoutStrategy 测试 =====
 
 /// 辅助：创建默认配置的 UserLockoutStrategy + MockDao。
-fn make_strategy() -> (UserLockoutStrategy, Arc<dyn BulwarkDao>) {
-    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+fn make_strategy() -> (UserLockoutStrategy, Arc<dyn GarrisonDao>) {
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     let strategy = UserLockoutStrategy::new(UserLockoutConfig::default(), dao.clone());
     (strategy, dao)
 }
@@ -183,7 +183,7 @@ async fn record_failure_triggers_temporary_lock_at_threshold() {
     strategy.record_failure("user1").await.unwrap();
     let result = strategy.check(&ctx).await;
     assert!(
-        matches!(result, Err(BulwarkError::FirewallBlocked(_))),
+        matches!(result, Err(GarrisonError::FirewallBlocked(_))),
         "5 次失败应触发临时锁定，实际: {:?}",
         result
     );
@@ -199,7 +199,7 @@ async fn check_blocks_during_temporary_lockout() {
     let ctx = FirewallContext::new("1.1.1.1").with_login_id("user1");
     let result = strategy.check(&ctx).await;
     assert!(
-        matches!(result, Err(BulwarkError::FirewallBlocked(_))),
+        matches!(result, Err(GarrisonError::FirewallBlocked(_))),
         "临时锁定期内应拦截，实际: {:?}",
         result
     );
@@ -208,7 +208,7 @@ async fn check_blocks_during_temporary_lockout() {
 /// 验证永久锁定：超过 max_temporary_lockouts 后触发永久锁定。
 #[tokio::test]
 async fn permanent_lockout_after_max_temporary_lockouts() {
-    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     let config = UserLockoutConfig {
         max_failure_factor: 2,
         permanent_lockout: true,
@@ -229,7 +229,7 @@ async fn permanent_lockout_after_max_temporary_lockouts() {
     let ctx = FirewallContext::new("1.1.1.1").with_login_id("user1");
     let result = strategy.check(&ctx).await;
     assert!(
-        matches!(result, Err(BulwarkError::FirewallBlocked(ref msg)) if msg.contains("永久锁定")),
+        matches!(result, Err(GarrisonError::FirewallBlocked(ref msg)) if msg.contains("永久锁定")),
         "超过 max_temporary_lockouts 应永久锁定，实际: {:?}",
         result
     );
@@ -253,7 +253,7 @@ async fn unlock_clears_lockout_state() {
 /// （第 1 次 ≈ 60s，第 2 次 ≈ 120s）。
 #[tokio::test]
 async fn wait_strategy_multiple_record_failure_duration() {
-    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     let config = UserLockoutConfig {
         max_failure_factor: 1,
         permanent_lockout: false,
@@ -297,7 +297,7 @@ async fn wait_strategy_multiple_record_failure_duration() {
 /// （第 1 次 ≈ 30s，第 2 次 ≈ 60s）。
 #[tokio::test]
 async fn wait_strategy_linear_record_failure_duration() {
-    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     let config = UserLockoutConfig {
         max_failure_factor: 1,
         permanent_lockout: false,
@@ -362,7 +362,7 @@ async fn record_success_resets_failure_count() {
 /// 场景：失败 3 次后窗口过期，再失败应从 1 开始计数而非 4。
 #[tokio::test]
 async fn failure_window_resets_count_after_expiry() {
-    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     let config = UserLockoutConfig {
         max_failure_factor: 5,
         permanent_lockout: false,
@@ -420,7 +420,7 @@ async fn failure_window_accumulates_within_window() {
 /// 验证 locked_until 到期后 check 通过。
 #[tokio::test]
 async fn check_passes_after_temporary_lockout_expires() {
-    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     let config = UserLockoutConfig {
         max_failure_factor: 1,
         permanent_lockout: false,

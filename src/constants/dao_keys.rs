@@ -86,7 +86,7 @@ impl DaoKeyPrefix {
     ///
     /// # 示例
     /// ```
-    /// use bulwark::constants::DaoKeyPrefix;
+    /// use garrison::constants::DaoKeyPrefix;
     /// assert_eq!(DaoKeyPrefix::Session.build_key("abc"), "session:abc");
     /// ```
     pub fn build_key(&self, id: &str) -> String {

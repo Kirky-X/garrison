@@ -8,10 +8,10 @@
 //!
 //! ## 架构
 //!
-//! - `BulwarkContext`：上下文入口，提供 request/response/storage 访问
-//! - `BulwarkRequest`：HTTP 请求抽象（path/method/header/cookie/get_token）
-//! - `BulwarkResponse`：HTTP 响应抽象（set_status/set_header/set_cookie）
-//! - `BulwarkStorage`：请求级临时存储（set/get/delete，请求结束清理）
+//! - `GarrisonContext`：上下文入口，提供 request/response/storage 访问
+//! - `GarrisonRequest`：HTTP 请求抽象（path/method/header/cookie/get_token）
+//! - `GarrisonResponse`：HTTP 响应抽象（set_status/set_header/set_cookie）
+//! - `GarrisonStorage`：请求级临时存储（set/get/delete，请求结束清理）
 //!
 //! ## axum 适配器
 //!
@@ -34,7 +34,7 @@
 //! - `WarpResponse` 持有 `HeaderMap + StatusCode`
 //! - `WarpStorage` 用 `HashMap<String, String>`
 
-use crate::error::BulwarkResult;
+use crate::error::GarrisonResult;
 
 // ============================================================================
 // 多租户隔离上下文
@@ -59,7 +59,7 @@ pub use token_extract::{
 /// 当前请求的登录主体。
 ///
 /// 携带从 token 解析出的 `login_id`，由各 web 框架的 extractor
-/// （`web_actix::extractor::BulwarkPrincipal` / `web_warp::extractor::BulwarkPrincipal`）
+/// （`web_actix::extractor::GarrisonPrincipal` / `web_warp::extractor::GarrisonPrincipal`）
 /// 从 `Authorization: Bearer <token>` header 提取并填充。
 ///
 /// # 字段
@@ -69,14 +69,14 @@ pub use token_extract::{
 /// # 使用示例
 ///
 /// ```ignore
-/// use bulwark::context::BulwarkPrincipal;
+/// use garrison::context::GarrisonPrincipal;
 ///
-/// fn handler(principal: BulwarkPrincipal) -> String {
+/// fn handler(principal: GarrisonPrincipal) -> String {
 ///     format!("login_id = {}", principal.login_id)
 /// }
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BulwarkPrincipal {
+pub struct GarrisonPrincipal {
     /// 当前登录用户 ID（从 token-session 映射解析）。
     pub login_id: String,
 }
@@ -91,20 +91,20 @@ pub struct BulwarkPrincipal {
 /// 仅暴露 `request()` 方法获取请求对象。
 /// 响应数据写入由具体适配器（如 `AxumContext::raw_response_mut()` / `into_response()`）提供，
 /// 避免 trait 方法返回新实例破坏状态共享。
-pub trait BulwarkContext {
+pub trait GarrisonContext {
     /// 获取当前请求对象。
-    fn request(&self) -> BulwarkResult<Box<dyn BulwarkRequest>>;
+    fn request(&self) -> GarrisonResult<Box<dyn GarrisonRequest>>;
 }
 
 /// 请求抽象 trait，提供 HTTP 请求数据访问。
 ///
 /// 对应 `SaTokenRequest`。
-pub trait BulwarkRequest {
+pub trait GarrisonRequest {
     /// 获取请求路径。
-    fn path(&self) -> BulwarkResult<String>;
+    fn path(&self) -> GarrisonResult<String>;
 
     /// 获取请求方法（GET / POST 等）。
-    fn method(&self) -> BulwarkResult<String>;
+    fn method(&self) -> GarrisonResult<String>;
 
     /// 获取请求头。
     ///
@@ -114,7 +114,7 @@ pub trait BulwarkRequest {
     /// # 返回
     /// - `Some(value)`: 头部存在。
     /// - `None`: 头部不存在。
-    fn header(&self, name: &str) -> BulwarkResult<Option<String>>;
+    fn header(&self, name: &str) -> GarrisonResult<Option<String>>;
 
     /// 获取 Cookie 值。
     ///
@@ -124,11 +124,11 @@ pub trait BulwarkRequest {
     /// # 返回
     /// - `Some(value)`: Cookie 存在。
     /// - `None`: Cookie 不存在。
-    fn cookie(&self, name: &str) -> BulwarkResult<Option<String>>;
+    fn cookie(&self, name: &str) -> GarrisonResult<Option<String>>;
 
     /// 从请求中提取 Token。
     ///
-    /// 提取顺序依据 `BulwarkConfig`：
+    /// 提取顺序依据 `GarrisonConfig`：
     /// - 若 `is_read_header` 为 true，从 `Authorization: Bearer <token>` 或自定义 header 提取
     /// - 若 `is_read_cookie` 为 true，从 cookie `token_name` 提取
     /// - 返回第一个找到的 token，若都不存在返回 None
@@ -139,25 +139,25 @@ pub trait BulwarkRequest {
     /// # 返回
     /// - `Some(token)`: 成功提取的 Token 字符串（header 优先于 cookie）。
     /// - `None`: 未在 header 或 cookie 中找到 Token。
-    fn get_token(&self, config: &crate::config::BulwarkConfig) -> BulwarkResult<Option<String>>;
+    fn get_token(&self, config: &crate::config::GarrisonConfig) -> GarrisonResult<Option<String>>;
 }
 
 /// 响应抽象 trait，提供 HTTP 响应数据写入。
 ///
 /// 对应 `SaTokenResponse`。
-pub trait BulwarkResponse {
+pub trait GarrisonResponse {
     /// 设置响应状态码。
     ///
     /// # 参数
     /// - `code`: HTTP 状态码（如 401 未登录、403 无权限）。
-    fn set_status(&mut self, code: u16) -> BulwarkResult<()>;
+    fn set_status(&mut self, code: u16) -> GarrisonResult<()>;
 
     /// 设置响应头。
     ///
     /// # 参数
     /// - `name`: 头部字段名。
     /// - `value`: 头部字段值。
-    fn set_header(&mut self, name: &str, value: &str) -> BulwarkResult<()>;
+    fn set_header(&mut self, name: &str, value: &str) -> GarrisonResult<()>;
 
     /// 设置响应 Cookie（默认带 `HttpOnly; Secure; SameSite=Lax; Path=/` 安全属性）。
     ///
@@ -167,8 +167,12 @@ pub trait BulwarkResponse {
     /// # 参数
     /// - `name`: Cookie 名称。
     /// - `value`: Cookie 值。
-    fn set_cookie(&mut self, name: &str, value: &str) -> BulwarkResult<()> {
-        self.set_cookie_with_config(name, value, &crate::config::BulwarkConfig::default_config())
+    fn set_cookie(&mut self, name: &str, value: &str) -> GarrisonResult<()> {
+        self.set_cookie_with_config(
+            name,
+            value,
+            &crate::config::GarrisonConfig::default_config(),
+        )
     }
 
     /// 设置响应 Cookie。
@@ -181,8 +185,8 @@ pub trait BulwarkResponse {
         &mut self,
         name: &str,
         value: &str,
-        config: &crate::config::BulwarkConfig,
-    ) -> BulwarkResult<()>;
+        config: &crate::config::GarrisonConfig,
+    ) -> GarrisonResult<()>;
 
     /// 设置响应 Cookie（受 `frontend_separation` 控制）。
     ///
@@ -198,8 +202,8 @@ pub trait BulwarkResponse {
         &mut self,
         name: &str,
         value: &str,
-        config: &crate::config::BulwarkConfig,
-    ) -> BulwarkResult<()> {
+        config: &crate::config::GarrisonConfig,
+    ) -> GarrisonResult<()> {
         if config.frontend_separation {
             return Ok(());
         }
@@ -211,13 +215,13 @@ pub trait BulwarkResponse {
 ///
 /// 对应 `SaTokenStorage`，
 /// 用于在单次请求范围内传递数据（如 trace_id、用户上下文）。
-pub trait BulwarkStorage {
+pub trait GarrisonStorage {
     /// 存储键值对。
     ///
     /// # 参数
     /// - `key`: 存储键。
     /// - `value`: 存储值。
-    fn set(&mut self, key: &str, value: &str) -> BulwarkResult<()>;
+    fn set(&mut self, key: &str, value: &str) -> GarrisonResult<()>;
 
     /// 获取存储值。
     ///
@@ -227,13 +231,13 @@ pub trait BulwarkStorage {
     /// # 返回
     /// - `Some(value)`: 键存在。
     /// - `None`: 键不存在。
-    fn get(&self, key: &str) -> BulwarkResult<Option<String>>;
+    fn get(&self, key: &str) -> GarrisonResult<Option<String>>;
 
     /// 删除存储值。
     ///
     /// # 参数
     /// - `key`: 存储键。
-    fn delete(&mut self, key: &str) -> BulwarkResult<()>;
+    fn delete(&mut self, key: &str) -> GarrisonResult<()>;
 }
 
 // ============================================================================

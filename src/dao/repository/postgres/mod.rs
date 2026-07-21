@@ -32,12 +32,12 @@
 //! ## 使用示例
 //!
 //! ```ignore
-//! use bulwark::dao::init_dbnexus;
-//! use bulwark::dao::repository::postgres::DbnexusPostgresUserRepository;
-//! use bulwark::dao::repository::{UserRepository, NewUser};
+//! use garrison::dao::init_dbnexus;
+//! use garrison::dao::repository::postgres::DbnexusPostgresUserRepository;
+//! use garrison::dao::repository::{UserRepository, NewUser};
 //!
-//! # async fn demo() -> bulwark::error::BulwarkResult<()> {
-//! let pool = init_dbnexus("postgres://bulwark:bulwark@localhost:5432/bulwark_test").await?;
+//! # async fn demo() -> garrison::error::GarrisonResult<()> {
+//! let pool = init_dbnexus("postgres://garrison:garrison@localhost:5432/garrison_test").await?;
 //! let repo = DbnexusPostgresUserRepository::new(pool);
 //! let user_id = repo.create(1, NewUser {
 //!     username: "alice".to_string(),

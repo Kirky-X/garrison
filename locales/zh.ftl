@@ -1,4 +1,4 @@
-# Bulwark 异常消息中文翻译（默认语言）
+# Garrison 异常消息中文翻译（默认语言）
 # 依据 spec exception-i18n 与 PRD 0.3.0 异常消息国际化
 #
 # 结构化错误 detail 约定（见 src/i18n.rs::parse_keyed_detail）：
@@ -454,7 +454,7 @@ abac-cedar-policy-parse-id = Cedar 策略 {$arg0} 解析失败: {$arg1}
 abac-cedar-policy-add-id = Cedar 策略 {$arg0} 添加失败: {$arg1}
 abac-temp-cedar-policy-parse = 临时 Cedar 策略解析失败: {$arg0}
 abac-temp-cedar-policy-add = 临时 Cedar 策略添加失败: {$arg0}
-manager-not-init = BulwarkManager 未初始化
+manager-not-init = GarrisonManager 未初始化
 manager-timeout-overflow = timeout 溢出 u64: {$arg0}
 router-not-login = 未登录
 router-key-not-found = 键不存在: {$arg0}
@@ -599,7 +599,7 @@ apikey-expired-cannot-rotate = API Key 已过期, 无法轮换
 
 # --- keycloak 补全 ---
 keycloak-discovery-body-read-failed = discovery 响应体读取失败: {$detail}
-keycloak-dao-not-injected = KeycloakProvider 未注入 DAO, 无法缓存 JWKS (调用 with_dao 注入 BulwarkDao)
+keycloak-dao-not-injected = KeycloakProvider 未注入 DAO, 无法缓存 JWKS (调用 with_dao 注入 GarrisonDao)
 keycloak-jwks-body-read-failed = JWKS 响应体读取失败: {$detail}
 keycloak-jwks-serialize-failed = JWKS 序列化失败: {$detail}
 keycloak-jwks-cache-miss-after-fetch = fetch_jwks 后缓存仍为空 (DAO 写入异常)
@@ -646,9 +646,9 @@ account-backup-deserialize = backup_code secret_data 反序列化失败: {$arg0}
 # Stp 层错误（i18n 改造 - session.rs 硬编码中文迁移）
 # ============================================================================
 
-# --- SessionLogic trait 默认实现 + BulwarkLogicDefault impl ---
-stp-revoke-all-sessions-not-implemented = revoke_all_sessions 需 BulwarkLogicDefault 实现
-stp-get-active-sessions-not-implemented = get_active_sessions 需 BulwarkLogicDefault 实现
+# --- SessionLogic trait 默认实现 + GarrisonLogicDefault impl ---
+stp-revoke-all-sessions-not-implemented = revoke_all_sessions 需 GarrisonLogicDefault 实现
+stp-get-active-sessions-not-implemented = get_active_sessions 需 GarrisonLogicDefault 实现
 stp-login-by-token-feature-required = login_by_token 需启用 protocol-oauth2 或 protocol-sso feature
 stp-refresh-access-token-not-implemented-db = refresh_access_token 未实现：需启用 db-sqlite feature 并注入 RefreshTokenRotation
 stp-refresh-access-token-no-rotation = refresh_access_token 未注入 RefreshTokenRotation
@@ -678,7 +678,7 @@ stp-mock-check-login-detection-failed = mock check_login detection 失败
 # ============================================================================
 # response_parts 专用 message keys（不含 detail，用于 HTTP 响应体）
 # ============================================================================
-# 这些 key 用于 BulwarkError::response_parts_i18n() 方法，返回不含变体 detail
+# 这些 key 用于 GarrisonError::response_parts_i18n() 方法，返回不含变体 detail
 # 的通用描述，避免泄露敏感信息（与 response_parts() 的 &'static str 一一对应）。
 not-login-msg = 未登录
 not-permission-msg = 无权限

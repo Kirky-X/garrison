@@ -12,7 +12,7 @@
 //! 生产实现可用 maxminddb 读取 MaxMind GeoIP2 数据库（City.mmdb 含坐标，Country.mmdb 含国家码），
 //! 测试可用 mock 实现（避免依赖真实数据库文件）。
 
-use crate::error::BulwarkResult;
+use crate::error::GarrisonResult;
 use async_trait::async_trait;
 
 /// MaxMindDb 生产后端（由 `firewall-maxminddb` feature 启用）。
@@ -64,7 +64,7 @@ pub trait GeoLookup: Send + Sync {
     /// - `Ok(Some(coord))`: 查询成功，返回坐标。
     /// - `Ok(None)`: IP 无法定位（如私有 IP、数据库无记录）。
     /// - `Err(_)`: 查询失败（如数据库读取错误）。
-    async fn lookup(&self, ip: &str) -> BulwarkResult<Option<GeoCoord>>;
+    async fn lookup(&self, ip: &str) -> GarrisonResult<Option<GeoCoord>>;
 }
 
 /// IP → 国家码查询 trait（抽象 maxminddb 等后端）。
@@ -82,7 +82,7 @@ pub trait CountryLookup: Send + Sync {
     /// - `Ok(Some(country))`: 查询成功，返回国家码（如 `"CN"`）。
     /// - `Ok(None)`: IP 无法定位（如私有 IP、数据库无记录）。
     /// - `Err(_)`: 查询失败（如数据库读取错误）。
-    async fn lookup_country(&self, ip: &str) -> BulwarkResult<Option<String>>;
+    async fn lookup_country(&self, ip: &str) -> GarrisonResult<Option<String>>;
 }
 
 #[cfg(test)]

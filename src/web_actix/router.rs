@@ -3,29 +3,29 @@
 
 //! actix-web 路由规则构建器实现。
 //!
-//! 提供 `BulwarkRouter` 的构造、配置、规则注册与 middleware 生成方法，
+//! 提供 `GarrisonRouter` 的构造、配置、规则注册与 middleware 生成方法，
 //! 以及 `Default` 实现。struct 声明位于 `mod.rs`。
 
 use crate::annotation::Annotation;
-use crate::config::BulwarkConfig;
-use crate::router::{BulwarkInterceptor, DefaultBulwarkInterceptor};
+use crate::config::GarrisonConfig;
+use crate::router::{DefaultGarrisonInterceptor, GarrisonInterceptor};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use super::{BulwarkMiddleware, BulwarkRouter};
+use super::{GarrisonMiddleware, GarrisonRouter};
 
-impl BulwarkRouter {
-    /// 创建新的路由器实例，使用 `DefaultBulwarkInterceptor`。
-    pub fn new(config: Arc<BulwarkConfig>) -> Self {
+impl GarrisonRouter {
+    /// 创建新的路由器实例，使用 `DefaultGarrisonInterceptor`。
+    pub fn new(config: Arc<GarrisonConfig>) -> Self {
         Self {
             rules: HashMap::new(),
-            interceptor: Arc::new(DefaultBulwarkInterceptor),
+            interceptor: Arc::new(DefaultGarrisonInterceptor),
             config,
         }
     }
 
     /// 设置自定义拦截器。
-    pub fn with_interceptor<I: BulwarkInterceptor + 'static>(mut self, interceptor: I) -> Self {
+    pub fn with_interceptor<I: GarrisonInterceptor + 'static>(mut self, interceptor: I) -> Self {
         self.interceptor = Arc::new(interceptor);
         self
     }
@@ -40,8 +40,8 @@ impl BulwarkRouter {
     }
 
     /// 消费路由器，生成 actix-web middleware。
-    pub fn into_middleware(self) -> BulwarkMiddleware {
-        BulwarkMiddleware {
+    pub fn into_middleware(self) -> GarrisonMiddleware {
+        GarrisonMiddleware {
             rules: Arc::new(self.rules),
             interceptor: self.interceptor,
             config: self.config,
@@ -49,8 +49,8 @@ impl BulwarkRouter {
     }
 }
 
-impl Default for BulwarkRouter {
+impl Default for GarrisonRouter {
     fn default() -> Self {
-        Self::new(Arc::new(BulwarkConfig::default_config()))
+        Self::new(Arc::new(GarrisonConfig::default_config()))
     }
 }

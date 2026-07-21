@@ -13,9 +13,9 @@
 #![cfg(feature = "protocol-sign")]
 
 use async_trait::async_trait;
-use bulwark::dao::BulwarkDao;
-use bulwark::error::{BulwarkError, BulwarkResult};
-use bulwark::protocol::sign::SignHandler;
+use garrison::dao::GarrisonDao;
+use garrison::error::{GarrisonError, GarrisonResult};
+use garrison::protocol::sign::SignHandler;
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -38,8 +38,8 @@ impl MockDao {
 }
 
 #[async_trait]
-impl BulwarkDao for MockDao {
-    async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
+impl GarrisonDao for MockDao {
+    async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
         let mut store = self.store.lock();
         match store.get(key) {
             Some((value, expire_at)) => {
@@ -55,7 +55,7 @@ impl BulwarkDao for MockDao {
         }
     }
 
-    async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> BulwarkResult<()> {
+    async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> GarrisonResult<()> {
         let expire_at = if ttl_seconds == 0 {
             None
         } else {
@@ -67,18 +67,18 @@ impl BulwarkDao for MockDao {
         Ok(())
     }
 
-    async fn update(&self, key: &str, value: &str) -> BulwarkResult<()> {
+    async fn update(&self, key: &str, value: &str) -> GarrisonResult<()> {
         let mut store = self.store.lock();
         match store.get_mut(key) {
             Some((existing, _)) => {
                 *existing = value.to_string();
                 Ok(())
             },
-            None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
+            None => Err(GarrisonError::Dao(format!("键不存在: {}", key))),
         }
     }
 
-    async fn expire(&self, key: &str, seconds: u64) -> BulwarkResult<()> {
+    async fn expire(&self, key: &str, seconds: u64) -> GarrisonResult<()> {
         let mut store = self.store.lock();
         match store.get_mut(key) {
             Some((_, expire_at)) => {
@@ -89,11 +89,11 @@ impl BulwarkDao for MockDao {
                 };
                 Ok(())
             },
-            None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
+            None => Err(GarrisonError::Dao(format!("键不存在: {}", key))),
         }
     }
 
-    async fn delete(&self, key: &str) -> BulwarkResult<()> {
+    async fn delete(&self, key: &str) -> GarrisonResult<()> {
         self.store.lock().remove(key);
         Ok(())
     }
@@ -105,7 +105,7 @@ impl BulwarkDao for MockDao {
 
 /// 创建 SignHandler（使用 MockDao）。
 fn make_handler() -> SignHandler {
-    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     // app_secret 最小 32 字节
     SignHandler::new("app-001", "test-secret-key-with-32-bytes!!!", dao).unwrap()
 }
@@ -147,7 +147,7 @@ async fn nonce_replay_within_window_rejected() {
         .await;
     assert!(second.is_err(), "同一 nonce 重放应被拒绝");
     match second.err() {
-        Some(BulwarkError::InvalidToken(msg)) => {
+        Some(GarrisonError::InvalidToken(msg)) => {
             assert!(msg.contains("nonce"), "错误消息应包含 nonce: {}", msg);
         },
         other => panic!("期望 InvalidToken 错误，实际: {:?}", other),
@@ -180,7 +180,7 @@ async fn timestamp_drift_beyond_window_rejected() {
         .await;
     assert!(result_past.is_err(), "过去时间戳超出窗口应被拒绝");
     match result_past.err() {
-        Some(BulwarkError::ExpiredToken(_)) => {},
+        Some(GarrisonError::ExpiredToken(_)) => {},
         other => panic!("期望 ExpiredToken 错误（过去时间戳），实际: {:?}", other),
     }
 
@@ -199,7 +199,7 @@ async fn timestamp_drift_beyond_window_rejected() {
         .await;
     assert!(result_future.is_err(), "未来时间戳超出窗口应被拒绝");
     match result_future.err() {
-        Some(BulwarkError::ExpiredToken(_)) => {},
+        Some(GarrisonError::ExpiredToken(_)) => {},
         other => panic!("期望 ExpiredToken 错误（未来时间戳），实际: {:?}", other),
     }
 }
@@ -223,7 +223,7 @@ async fn missing_required_params_returns_error() {
         .await;
     assert!(result_empty_sig.is_err(), "空 signature 应返回错误");
     match result_empty_sig.err() {
-        Some(BulwarkError::InvalidToken(_)) => {},
+        Some(GarrisonError::InvalidToken(_)) => {},
         other => panic!("期望 InvalidToken 错误（空 signature），实际: {:?}", other),
     }
 
@@ -243,7 +243,7 @@ async fn missing_required_params_returns_error() {
         "无效 Base64 signature 应返回错误"
     );
     match result_invalid_sig.err() {
-        Some(BulwarkError::InvalidToken(_)) => {},
+        Some(GarrisonError::InvalidToken(_)) => {},
         other => panic!("期望 InvalidToken 错误（无效 Base64），实际: {:?}", other),
     }
 
@@ -254,8 +254,8 @@ async fn missing_required_params_returns_error() {
         .await;
     assert!(result_mismatch.is_err(), "signature 与参数不匹配应返回错误");
     match result_mismatch.err() {
-        Some(BulwarkError::InvalidToken(msg)) => {
-            // detail 层英文码（sign-mismatch）；翻译层中文在 response_parts_i18n，本测试直读 BulwarkError 原始 detail
+        Some(GarrisonError::InvalidToken(msg)) => {
+            // detail 层英文码（sign-mismatch）；翻译层中文在 response_parts_i18n，本测试直读 GarrisonError 原始 detail
             assert!(
                 msg.contains("mismatch"),
                 "错误消息应包含 detail 码 'mismatch': {}",

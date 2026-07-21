@@ -10,7 +10,7 @@
 //! `check_is_new_device` 由 `StrictBinding` 与
 //! `LooseBinding` 复用,通过 `super::policies::check_is_new_device` 路径直接访问。
 
-use crate::error::BulwarkResult;
+use crate::error::GarrisonResult;
 use async_trait::async_trait;
 
 use super::DeviceBindingPolicy;
@@ -29,10 +29,10 @@ use super::DeviceBindingPolicy;
 ///
 /// 无历史 session 时返回 `Ok(true)`（视为新设备）。
 pub(super) async fn check_is_new_device(
-    session: &crate::session::BulwarkSession,
+    session: &crate::session::GarrisonSession,
     login_id: &str,
     device_id: &str,
-) -> BulwarkResult<bool> {
+) -> GarrisonResult<bool> {
     // 空设备标识不视为新设备（避免无设备信息的登录被错误阻断）
     if device_id.is_empty() {
         return Ok(false);
@@ -65,7 +65,7 @@ pub struct Disabled;
 
 #[async_trait]
 impl DeviceBindingPolicy for Disabled {
-    async fn is_new_device(&self, _login_id: &str, _device_id: &str) -> BulwarkResult<bool> {
+    async fn is_new_device(&self, _login_id: &str, _device_id: &str) -> GarrisonResult<bool> {
         Ok(false)
     }
 
@@ -73,7 +73,7 @@ impl DeviceBindingPolicy for Disabled {
         &self,
         _login_id: &str,
         _device_id: &str,
-    ) -> BulwarkResult<bool> {
+    ) -> GarrisonResult<bool> {
         Ok(false)
     }
 }

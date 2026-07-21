@@ -1,36 +1,36 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! `BulwarkRouter` 实现：warp 路由规则构建器。
+//! `GarrisonRouter` 实现：warp 路由规则构建器。
 //!
-//! 承接 `mod.rs` 的 `BulwarkRouter` 结构体定义：
+//! 承接 `mod.rs` 的 `GarrisonRouter` 结构体定义：
 //! - `new` / `with_interceptor` / `route_protected`：构建器 API
 //! - `into_filter`：消费路由器生成 warp 守卫 Filter，按路径匹配执行 interceptor 鉴权
-//! - `Default`：使用 `DefaultBulwarkInterceptor` + 默认配置
+//! - `Default`：使用 `DefaultGarrisonInterceptor` + 默认配置
 
 use crate::annotation::Annotation;
-use crate::config::BulwarkConfig;
+use crate::config::GarrisonConfig;
 use crate::context::token_extract::extract_token_from_headers;
-use crate::error::BulwarkResult;
-use crate::router::{BulwarkInterceptor, DefaultBulwarkInterceptor};
+use crate::error::GarrisonResult;
+use crate::router::{DefaultGarrisonInterceptor, GarrisonInterceptor};
 use crate::stp::with_current_token;
 use std::collections::HashMap;
 use std::sync::Arc;
 use warp::http::HeaderMap;
 use warp::Filter;
 
-impl super::BulwarkRouter {
-    /// 创建新的路由器实例，使用 `DefaultBulwarkInterceptor`。
-    pub fn new(config: Arc<BulwarkConfig>) -> Self {
+impl super::GarrisonRouter {
+    /// 创建新的路由器实例，使用 `DefaultGarrisonInterceptor`。
+    pub fn new(config: Arc<GarrisonConfig>) -> Self {
         Self {
             rules: HashMap::new(),
-            interceptor: Arc::new(DefaultBulwarkInterceptor),
+            interceptor: Arc::new(DefaultGarrisonInterceptor),
             config,
         }
     }
 
     /// 设置自定义拦截器。
-    pub fn with_interceptor<I: BulwarkInterceptor + 'static>(mut self, interceptor: I) -> Self {
+    pub fn with_interceptor<I: GarrisonInterceptor + 'static>(mut self, interceptor: I) -> Self {
         self.interceptor = Arc::new(interceptor);
         self
     }
@@ -68,17 +68,17 @@ impl super::BulwarkRouter {
                         // Token 可选：与 actix-web middleware 对齐，
                         // Ignore 注解的 pre_handle 直接返回 Ok(())，不需要 token。
                         let token = extract_token_from_headers(&headers, &config)
-                            .map_err(|e| warp::reject::custom(super::BulwarkRejection(e)))?;
+                            .map_err(|e| warp::reject::custom(super::GarrisonRejection(e)))?;
 
                         let auth_check =
                             async { interceptor.pre_handle(&path_str, &annotation).await };
 
-                        let result: BulwarkResult<()> = match token {
+                        let result: GarrisonResult<()> = match token {
                             Some(t) => with_current_token(t, auth_check).await,
                             None => auth_check.await,
                         };
 
-                        result.map_err(|e| warp::reject::custom(super::BulwarkRejection(e)))?;
+                        result.map_err(|e| warp::reject::custom(super::GarrisonRejection(e)))?;
                     }
                     Ok::<(), warp::Rejection>(())
                 }
@@ -86,8 +86,8 @@ impl super::BulwarkRouter {
     }
 }
 
-impl Default for super::BulwarkRouter {
+impl Default for super::GarrisonRouter {
     fn default() -> Self {
-        Self::new(Arc::new(BulwarkConfig::default_config()))
+        Self::new(Arc::new(GarrisonConfig::default_config()))
     }
 }

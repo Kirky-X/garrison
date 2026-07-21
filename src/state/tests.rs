@@ -125,7 +125,7 @@ fn token_state_transition_to_invalid_returns_err() {
     let result = TokenState::Expired.transition_to(TokenState::Active);
     assert!(result.is_err());
     match result {
-        Err(BulwarkError::InvalidStateTransition { from, to }) => {
+        Err(GarrisonError::InvalidStateTransition { from, to }) => {
             assert_eq!(from, "Expired");
             assert_eq!(to, "Active");
         },
@@ -273,7 +273,7 @@ fn user_status_transition_to_invalid_returns_err() {
     let result = UserStatus::Deleted.transition_to(UserStatus::Active);
     assert!(result.is_err());
     match result {
-        Err(BulwarkError::InvalidStateTransition { from, to }) => {
+        Err(GarrisonError::InvalidStateTransition { from, to }) => {
             assert_eq!(from, "Deleted");
             assert_eq!(to, "Active");
         },

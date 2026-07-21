@@ -4,18 +4,18 @@
 //! `grpc` 模块的 inline tests。
 //!
 //! 从 `mod.rs` 迁移而出（规则 25：mod.rs 接口隔离）。
-//! 覆盖 `BulwarkGrpcInterceptor` 的 token 提取、`Interceptor::call` 行为、
+//! 覆盖 `GarrisonGrpcInterceptor` 的 token 提取、`Interceptor::call` 行为、
 //! Clone/Debug trait，以及 `health_service()` 健康检查服务。
 
 use super::*;
 use tonic::metadata::MetadataMap;
 use tonic::service::Interceptor;
 
-/// 测试 BulwarkGrpcInterceptor::new() 构造无 panic。
+/// 测试 GarrisonGrpcInterceptor::new() 构造无 panic。
 #[test]
 fn test_interceptor_new() {
-    let _interceptor = BulwarkGrpcInterceptor::new();
-    let _default: BulwarkGrpcInterceptor = Default::default();
+    let _interceptor = GarrisonGrpcInterceptor::new();
+    let _default: GarrisonGrpcInterceptor = Default::default();
 }
 
 /// 测试 extract_token 成功提取 "Bearer <token>" 格式的 token。
@@ -23,7 +23,7 @@ fn test_interceptor_new() {
 fn test_extract_token_bearer_success() {
     let mut metadata = MetadataMap::new();
     metadata.insert("authorization", "Bearer abc123".parse().unwrap());
-    let token = BulwarkGrpcInterceptor::extract_token(&metadata).unwrap();
+    let token = GarrisonGrpcInterceptor::extract_token(&metadata).unwrap();
     assert_eq!(token, "abc123");
 }
 
@@ -32,7 +32,7 @@ fn test_extract_token_bearer_success() {
 fn test_extract_token_bearer_lowercase() {
     let mut metadata = MetadataMap::new();
     metadata.insert("authorization", "bearer xyz789".parse().unwrap());
-    let token = BulwarkGrpcInterceptor::extract_token(&metadata).unwrap();
+    let token = GarrisonGrpcInterceptor::extract_token(&metadata).unwrap();
     assert_eq!(token, "xyz789");
 }
 
@@ -41,7 +41,7 @@ fn test_extract_token_bearer_lowercase() {
 fn test_extract_token_bearer_uppercase() {
     let mut metadata = MetadataMap::new();
     metadata.insert("authorization", "BEARER TOKEN123".parse().unwrap());
-    let token = BulwarkGrpcInterceptor::extract_token(&metadata).unwrap();
+    let token = GarrisonGrpcInterceptor::extract_token(&metadata).unwrap();
     assert_eq!(token, "TOKEN123");
 }
 
@@ -49,7 +49,7 @@ fn test_extract_token_bearer_uppercase() {
 #[test]
 fn test_extract_token_missing_metadata() {
     let metadata = MetadataMap::new();
-    let result = BulwarkGrpcInterceptor::extract_token(&metadata);
+    let result = GarrisonGrpcInterceptor::extract_token(&metadata);
     assert!(result.is_err());
     let status = result.unwrap_err();
     assert_eq!(status.code(), tonic::Code::Unauthenticated);
@@ -61,7 +61,7 @@ fn test_extract_token_missing_metadata() {
 fn test_extract_token_empty_after_bearer() {
     let mut metadata = MetadataMap::new();
     metadata.insert("authorization", "Bearer ".parse().unwrap());
-    let result = BulwarkGrpcInterceptor::extract_token(&metadata);
+    let result = GarrisonGrpcInterceptor::extract_token(&metadata);
     assert!(result.is_err());
     let status = result.unwrap_err();
     assert_eq!(status.code(), tonic::Code::Unauthenticated);
@@ -75,7 +75,7 @@ fn test_extract_token_empty_after_bearer() {
 fn test_extract_token_bare_token_rejected() {
     let mut metadata = MetadataMap::new();
     metadata.insert("authorization", "raw-token-12345".parse().unwrap());
-    let result = BulwarkGrpcInterceptor::extract_token(&metadata);
+    let result = GarrisonGrpcInterceptor::extract_token(&metadata);
     assert!(result.is_err(), "裸 token 应被拒绝");
     let status = result.unwrap_err();
     assert_eq!(status.code(), tonic::Code::Unauthenticated);
@@ -90,7 +90,7 @@ fn test_extract_token_bare_token_rejected() {
 fn test_extract_token_empty_value() {
     let mut metadata = MetadataMap::new();
     metadata.insert("authorization", "".parse().unwrap());
-    let result = BulwarkGrpcInterceptor::extract_token(&metadata);
+    let result = GarrisonGrpcInterceptor::extract_token(&metadata);
     assert!(result.is_err());
     assert_eq!(result.unwrap_err().code(), tonic::Code::Unauthenticated);
 }
@@ -98,7 +98,7 @@ fn test_extract_token_empty_value() {
 /// 测试 Interceptor::call() 在合法 token 时返回 Ok。
 #[test]
 fn test_interceptor_call_with_valid_token() {
-    let mut interceptor = BulwarkGrpcInterceptor::new();
+    let mut interceptor = GarrisonGrpcInterceptor::new();
     let mut request = tonic::Request::new(());
     request
         .metadata_mut()
@@ -110,7 +110,7 @@ fn test_interceptor_call_with_valid_token() {
 /// 测试 Interceptor::call() 在缺失 metadata 时返回 UNAUTHENTICATED。
 #[test]
 fn test_interceptor_call_missing_metadata() {
-    let mut interceptor = BulwarkGrpcInterceptor::new();
+    let mut interceptor = GarrisonGrpcInterceptor::new();
     let request = tonic::Request::new(());
     let result = interceptor.call(request);
     assert!(result.is_err());
@@ -120,7 +120,7 @@ fn test_interceptor_call_missing_metadata() {
 /// 测试 Clone trait（用于 tonic interceptor 复用）。
 #[test]
 fn test_interceptor_clone() {
-    let i1 = BulwarkGrpcInterceptor::new();
+    let i1 = GarrisonGrpcInterceptor::new();
     let _i2 = i1.clone();
     // 不 panic 即通过
 }
@@ -128,9 +128,9 @@ fn test_interceptor_clone() {
 /// 测试 Debug trait。
 #[test]
 fn test_interceptor_debug() {
-    let interceptor = BulwarkGrpcInterceptor::new();
+    let interceptor = GarrisonGrpcInterceptor::new();
     let debug_str = format!("{:?}", interceptor);
-    assert!(debug_str.contains("BulwarkGrpcInterceptor"));
+    assert!(debug_str.contains("GarrisonGrpcInterceptor"));
 }
 
 // ========================================================================

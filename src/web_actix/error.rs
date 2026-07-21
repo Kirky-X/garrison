@@ -7,11 +7,11 @@
 //! - `HeaderLookup for actix_web::http::header::HeaderMap`：桥接 actix HeaderMap 与
 //!   `extract_token_from_headers`，使 token 提取逻辑可同时接受 `http::HeaderMap`
 //!   和 `actix_web::http::header::HeaderMap` 两种类型。
-//! - `ResponseError for BulwarkError`：将 BulwarkError 映射为 actix-web HttpResponse，
+//! - `ResponseError for GarrisonError`：将 GarrisonError 映射为 actix-web HttpResponse，
 //!   复用 `response_parts()` 保证与 axum/warp 三框架响应一致。
 
 use crate::context::token_extract::HeaderLookup;
-use crate::error::BulwarkError;
+use crate::error::GarrisonError;
 use actix_web::http::StatusCode;
 use actix_web::{HttpResponse, ResponseError};
 
@@ -30,14 +30,14 @@ impl HeaderLookup for actix_web::http::header::HeaderMap {
 /// 实现 actix-web `ResponseError` trait，复用 `response_parts_i18n()` 保证三框架一致。
 ///
 /// 状态码与错误码映射与 axum `IntoResponse` 完全一致。
-impl ResponseError for BulwarkError {
+impl ResponseError for GarrisonError {
     fn status_code(&self) -> StatusCode {
         let (s, _, _, _) = self.response_parts();
         StatusCode::from_u16(s).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR)
     }
 
     fn error_response(&self) -> HttpResponse {
-        tracing::error!(error = ?self, "bulwark rejection");
+        tracing::error!(error = ?self, "garrison rejection");
         // 单次调用 response_parts_i18n() 获取所有字段（M2：消除冗余调用）
         let (s, error_code, message, ex_code) = self.response_parts_i18n();
         let status = StatusCode::from_u16(s).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);

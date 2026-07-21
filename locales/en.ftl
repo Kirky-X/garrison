@@ -1,4 +1,4 @@
-# Bulwark exception message English translations
+# Garrison exception message English translations
 # Per spec exception-i18n and PRD 0.3.0 internationalization
 #
 # Structured error detail convention (see src/i18n.rs::parse_keyed_detail):
@@ -454,7 +454,7 @@ abac-cedar-policy-parse-id = Cedar policy {$arg0} parse failed: {$arg1}
 abac-cedar-policy-add-id = Cedar policy {$arg0} add failed: {$arg1}
 abac-temp-cedar-policy-parse = temp Cedar policy parse failed: {$arg0}
 abac-temp-cedar-policy-add = temp Cedar policy add failed: {$arg0}
-manager-not-init = BulwarkManager not initialized
+manager-not-init = GarrisonManager not initialized
 manager-timeout-overflow = timeout overflowed u64: {$arg0}
 router-not-login = not logged in
 router-key-not-found = key not found: {$arg0}
@@ -599,7 +599,7 @@ apikey-expired-cannot-rotate = API Key expired, cannot rotate
 
 # --- keycloak completion ---
 keycloak-discovery-body-read-failed = discovery body read failed: {$detail}
-keycloak-dao-not-injected = KeycloakProvider DAO not injected, cannot cache JWKS (call with_dao to inject BulwarkDao)
+keycloak-dao-not-injected = KeycloakProvider DAO not injected, cannot cache JWKS (call with_dao to inject GarrisonDao)
 keycloak-jwks-body-read-failed = JWKS body read failed: {$detail}
 keycloak-jwks-serialize-failed = JWKS serialize failed: {$detail}
 keycloak-jwks-cache-miss-after-fetch = cache miss after fetch_jwks (DAO write anomaly)
@@ -646,9 +646,9 @@ account-backup-deserialize = backup_code secret_data deserialize failed: {$arg0}
 # Stp layer errors (i18n refactor - session.rs hardcoded Chinese migration)
 # ============================================================================
 
-# --- SessionLogic trait default impl + BulwarkLogicDefault impl ---
-stp-revoke-all-sessions-not-implemented = revoke_all_sessions requires BulwarkLogicDefault implementation
-stp-get-active-sessions-not-implemented = get_active_sessions requires BulwarkLogicDefault implementation
+# --- SessionLogic trait default impl + GarrisonLogicDefault impl ---
+stp-revoke-all-sessions-not-implemented = revoke_all_sessions requires GarrisonLogicDefault implementation
+stp-get-active-sessions-not-implemented = get_active_sessions requires GarrisonLogicDefault implementation
 stp-login-by-token-feature-required = login_by_token requires protocol-oauth2 or protocol-sso feature
 stp-refresh-access-token-not-implemented-db = refresh_access_token not implemented: requires db-sqlite feature and RefreshTokenRotation injection
 stp-refresh-access-token-no-rotation = refresh_access_token missing RefreshTokenRotation injection
@@ -678,7 +678,7 @@ stp-mock-check-login-detection-failed = mock check_login detection failed
 # ============================================================================
 # response_parts 专用 message keys（不含 detail，用于 HTTP 响应体）
 # ============================================================================
-# These keys are used by BulwarkError::response_parts_i18n() to return a
+# These keys are used by GarrisonError::response_parts_i18n() to return a
 # generic description without variant detail, avoiding sensitive info
 # leakage (one-to-one correspondence with response_parts() &'static str).
 not-login-msg = Not logged in

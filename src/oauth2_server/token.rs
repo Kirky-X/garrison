@@ -10,9 +10,9 @@
 //! - `password`：用户名密码验证 + token（需注入 PasswordVerifier）
 
 use crate::constants::{DaoKeyPrefix, TokenType};
-use crate::dao::{BulwarkDao, MockDao};
-use crate::error::{BulwarkError, BulwarkResult};
-use crate::limiteron::BulwarkDaoDistributedLimiter;
+use crate::dao::{GarrisonDao, MockDao};
+use crate::error::{GarrisonError, GarrisonResult};
+use crate::limiteron::GarrisonDaoDistributedLimiter;
 // 导入 DistributedLimiter trait 以使用 get_count / incr_with_ttl 方法
 use crate::oauth2_server::authorize::AuthorizeHandler;
 use crate::oauth2_server::client::{GrantType, OAuth2Client, OAuth2ClientStore};
@@ -158,7 +158,7 @@ pub trait PasswordVerifier: Send + Sync {
     /// - `Ok(Some(user_id))`：验证成功
     /// - `Ok(None)`：用户名或密码错误
     /// - `Err`：内部错误
-    async fn verify(&self, username: &str, password: &str) -> BulwarkResult<Option<i64>>;
+    async fn verify(&self, username: &str, password: &str) -> GarrisonResult<Option<i64>>;
 }
 
 /// Password grant 失败计数器 — 防 brute-force。
@@ -171,7 +171,7 @@ pub trait PasswordVerifier: Send + Sync {
 /// - **per-username 维度**：与 `crate::server::middleware::RateLimitState`（per-IP）不同 ——
 ///   防御多 IP 撞库同一账户的暴力破解
 /// - **滑动窗口**：`window_seconds` 内累计失败次数达 `max_attempts` 即锁定至窗口过期
-/// - **limiteron 委托**：通过 `BulwarkDaoDistributedLimiter` + `BulwarkDao` 实现原子计数 + TTL，
+/// - **limiteron 委托**：通过 `GarrisonDaoDistributedLimiter` + `GarrisonDao` 实现原子计数 + TTL，
 ///   不再手写 `Mutex<HashMap>` + 滑动窗口算法（limiteron 适配器统一抽象）
 /// - **分布式语义**：DAO 由调用方注入，注入 Redis/dbnexus 等分布式 DAO 时多实例共享计数；
 ///   `MockDao` 仅进程内原子（单实例测试用）
@@ -186,12 +186,12 @@ pub trait PasswordVerifier: Send + Sync {
 ///
 /// # Key 格式
 ///
-/// `rate_limit:pw:{username}` — 通过 `BulwarkDao::keys("rate_limit:pw:*")` 可扫描全部 entry。
+/// `rate_limit:pw:{username}` — 通过 `GarrisonDao::keys("rate_limit:pw:*")` 可扫描全部 entry。
 pub struct PasswordRateLimiter {
-    /// 限流器（基于 `BulwarkDaoDistributedLimiter`，DAO 由调用方注入）
-    limiter: BulwarkDaoDistributedLimiter,
+    /// 限流器（基于 `GarrisonDaoDistributedLimiter`，DAO 由调用方注入）
+    limiter: GarrisonDaoDistributedLimiter,
     /// 保留 DAO 引用以支持 `entry_count()` 测试辅助方法
-    dao: Arc<dyn BulwarkDao>,
+    dao: Arc<dyn GarrisonDao>,
     /// 窗口内允许的最大失败次数（达此值后锁定至窗口过期）
     max_attempts: u32,
     /// 滑动窗口时长（秒）
@@ -207,7 +207,7 @@ pub struct PasswordRateLimiter {
 impl PasswordRateLimiter {
     /// 创建失败计数器（仅单实例测试用）。
     ///
-    /// 内部创建 `MockDao` + `BulwarkDaoDistributedLimiter`，进程内原子计数。
+    /// 内部创建 `MockDao` + `GarrisonDaoDistributedLimiter`，进程内原子计数。
     ///
     /// # 警告
     ///
@@ -220,8 +220,8 @@ impl PasswordRateLimiter {
     /// - `max_attempts`：窗口内允许的最大失败次数（达此值后锁定至窗口过期）
     /// - `window_seconds`：滑动窗口时长（秒），窗口过期后计数自动重置
     pub fn new(max_attempts: u32, window_seconds: u64) -> Self {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
-        let limiter = BulwarkDaoDistributedLimiter::new(dao.clone());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+        let limiter = GarrisonDaoDistributedLimiter::new(dao.clone());
         Self {
             limiter,
             dao,
@@ -239,7 +239,7 @@ impl PasswordRateLimiter {
     ///
     /// # 推荐用法
     ///
-    /// - **生产部署**：注入 `BulwarkDaoOxcache`（Redis 后端）或 `BulwarkDaoDbnexus`（SQL 后端），
+    /// - **生产部署**：注入 `GarrisonDaoOxcache`（Redis 后端）或 `GarrisonDaoDbnexus`（SQL 后端），
     ///   多实例共享计数器
     /// - **集成测试**：注入共享的 `MockDao`，验证多 limiter 实例的计数隔离 / 共享行为
     ///
@@ -247,8 +247,8 @@ impl PasswordRateLimiter {
     /// - `max_attempts`：窗口内允许的最大失败次数（达此值后锁定至窗口过期）
     /// - `window_seconds`：滑动窗口时长（秒），窗口过期后计数自动重置
     /// - `dao`：分布式 DAO 实现（Redis / dbnexus / MockDao 等）
-    pub fn with_dao(max_attempts: u32, window_seconds: u64, dao: Arc<dyn BulwarkDao>) -> Self {
-        let limiter = BulwarkDaoDistributedLimiter::new(dao.clone());
+    pub fn with_dao(max_attempts: u32, window_seconds: u64, dao: Arc<dyn GarrisonDao>) -> Self {
+        let limiter = GarrisonDaoDistributedLimiter::new(dao.clone());
         Self {
             limiter,
             dao,
@@ -336,7 +336,7 @@ impl PasswordRateLimiter {
     ///
     /// # 注意
     ///
-    /// 部分后端（如 `BulwarkDaoOxcache`）未实现 `keys()`，DAO 部分会计为 0。
+    /// 部分后端（如 `GarrisonDaoOxcache`）未实现 `keys()`，DAO 部分会计为 0。
     /// `MockDao` 与 dbnexus 后端已实现。`fallback_counter` 部分始终可用（进程内 DashMap）。
     ///
     /// # L4 复杂度说明
@@ -436,7 +436,7 @@ impl PasswordRateLimiter {
 ///
 /// # 设计
 ///
-/// - **limiteron 委托**：通过 `BulwarkDaoDistributedLimiter` + `BulwarkDao` 实现原子计数 + TTL，
+/// - **limiteron 委托**：通过 `GarrisonDaoDistributedLimiter` + `GarrisonDao` 实现原子计数 + TTL，
 ///   `atomic_check_and_incr` 在 Redis 后端走 Lua 脚本原子 check-and-increment，
 ///   `MockDao` 后端退化为 `incr` + 阈值判断（单进程原子）
 /// - **分布式语义**：DAO 由调用方注入，注入 Redis/dbnexus 等分布式 DAO 时多实例共享计数；
@@ -461,8 +461,8 @@ impl PasswordRateLimiter {
 /// - `rate_limit:token:client:{client_id}` — per-client_id 计数
 /// - `rate_limit:token:user:{username}` — per-username 计数
 pub struct TokenRateLimiter {
-    /// 限流器（基于 `BulwarkDaoDistributedLimiter`，DAO 由调用方注入）
-    limiter: BulwarkDaoDistributedLimiter,
+    /// 限流器（基于 `GarrisonDaoDistributedLimiter`，DAO 由调用方注入）
+    limiter: GarrisonDaoDistributedLimiter,
     /// per-client_id 窗口内最大请求数
     client_max: u64,
     /// per-client_id 窗口时长（秒）
@@ -510,7 +510,7 @@ impl TokenRateLimiter {
         username_max: u64,
         username_window_secs: u64,
     ) -> Self {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         Self::with_dao_and_limits(
             client_max,
             client_window_secs,
@@ -527,7 +527,7 @@ impl TokenRateLimiter {
     ///
     /// # 推荐用法
     ///
-    /// - **生产部署**：注入 `BulwarkDaoOxcache`（Redis 后端）或 `BulwarkDaoDbnexus`（SQL 后端），
+    /// - **生产部署**：注入 `GarrisonDaoOxcache`（Redis 后端）或 `GarrisonDaoDbnexus`（SQL 后端），
     ///   多实例共享计数器
     /// - **集成测试**：注入共享的 `MockDao`，验证多 limiter 实例的计数隔离 / 共享行为
     ///
@@ -542,9 +542,9 @@ impl TokenRateLimiter {
         client_window_secs: u64,
         username_max: u64,
         username_window_secs: u64,
-        dao: Arc<dyn BulwarkDao>,
+        dao: Arc<dyn GarrisonDao>,
     ) -> Self {
-        let limiter = BulwarkDaoDistributedLimiter::new(dao);
+        let limiter = GarrisonDaoDistributedLimiter::new(dao);
         Self {
             limiter,
             // 至少 1，避免 max=0 导致所有请求被拒
@@ -729,7 +729,7 @@ fn evict_oldest_fallback_entries(
 /// 无 reuse detection，文档明确标注安全风险。
 pub struct TokenHandler {
     store: Arc<dyn OAuth2ClientStore>,
-    dao: Arc<dyn BulwarkDao>,
+    dao: Arc<dyn GarrisonDao>,
     authorize_handler: Arc<AuthorizeHandler>,
     password_verifier: Option<Arc<dyn PasswordVerifier>>,
     /// Password grant 失败计数器（防 brute-force）。
@@ -748,7 +748,7 @@ impl TokenHandler {
     /// 创建 handler。
     pub fn new(
         store: Arc<dyn OAuth2ClientStore>,
-        dao: Arc<dyn BulwarkDao>,
+        dao: Arc<dyn GarrisonDao>,
         authorize_handler: Arc<AuthorizeHandler>,
     ) -> Self {
         Self {
@@ -804,7 +804,7 @@ impl TokenHandler {
     }
 
     /// 处理 token 请求。
-    pub async fn handle(&self, req: &TokenRequest) -> BulwarkResult<TokenResponse> {
+    pub async fn handle(&self, req: &TokenRequest) -> GarrisonResult<TokenResponse> {
         self.handle_with_authorization(req, None).await
     }
 
@@ -824,7 +824,7 @@ impl TokenHandler {
         &self,
         req: &TokenRequest,
         authorization: Option<&str>,
-    ) -> BulwarkResult<TokenResponse> {
+    ) -> GarrisonResult<TokenResponse> {
         // 0. per-client_id 速率限制（在 client 认证前，防暴力枚举 client_secret）
         //
         // 从 Basic Auth 头或 body 提取 client_id 用于限速 —— 即使凭证错误也计入，
@@ -836,7 +836,7 @@ impl TokenHandler {
                 .map(|(id, _)| id)
                 .unwrap_or_else(|| req.client_id.clone());
             if !client_id.is_empty() && !limiter.check_client(&client_id).await {
-                return Err(BulwarkError::OAuth2(
+                return Err(GarrisonError::OAuth2(
                     "oauth2-server-token-rate-limited-client".into(),
                 ));
             }
@@ -870,7 +870,7 @@ impl TokenHandler {
         authorization: Option<&str>,
         body_client_id: &str,
         body_client_secret: &str,
-    ) -> BulwarkResult<OAuth2Client> {
+    ) -> GarrisonResult<OAuth2Client> {
         // 优先解析 Authorization: Basic 头（RFC 6749 §2.3.1）
         let (client_id, client_secret) = match authorization.and_then(parse_basic_auth) {
             Some((id, secret)) => (id, secret),
@@ -878,16 +878,16 @@ impl TokenHandler {
         };
 
         if client_id.is_empty() {
-            return Err(BulwarkError::OAuth2(
+            return Err(GarrisonError::OAuth2(
                 "oauth2-server-token-invalid-client-missing".into(),
             ));
         }
 
         let client = self.store.get(&client_id).await?.ok_or_else(|| {
-            BulwarkError::OAuth2(format!("oauth2-server-token-invalid-client::{}", client_id))
+            GarrisonError::OAuth2(format!("oauth2-server-token-invalid-client::{}", client_id))
         })?;
         if !client.verify_secret(&client_secret)? {
-            return Err(BulwarkError::OAuth2(
+            return Err(GarrisonError::OAuth2(
                 "oauth2-server-token-invalid-client-secret".into(),
             ));
         }
@@ -899,9 +899,9 @@ impl TokenHandler {
         &self,
         client: &OAuth2Client,
         req: &TokenRequest,
-    ) -> BulwarkResult<TokenResponse> {
+    ) -> GarrisonResult<TokenResponse> {
         if !client.allows_grant_type(&GrantType::AuthorizationCode) {
-            return Err(BulwarkError::OAuth2(
+            return Err(GarrisonError::OAuth2(
                 "oauth2-server-token-unauthorized-auth-code".into(),
             ));
         }
@@ -909,37 +909,37 @@ impl TokenHandler {
         let code = req
             .code
             .as_ref()
-            .ok_or_else(|| BulwarkError::OAuth2("invalid_request".into()))?;
+            .ok_or_else(|| GarrisonError::OAuth2("invalid_request".into()))?;
         let code_verifier = req
             .code_verifier
             .as_ref()
-            .ok_or_else(|| BulwarkError::OAuth2("invalid_request".into()))?;
+            .ok_or_else(|| GarrisonError::OAuth2("invalid_request".into()))?;
         let redirect_uri = req
             .redirect_uri
             .as_ref()
-            .ok_or_else(|| BulwarkError::OAuth2("invalid_request".into()))?;
+            .ok_or_else(|| GarrisonError::OAuth2("invalid_request".into()))?;
 
         // 消费授权码（一次性）
         let auth_code = self
             .authorize_handler
             .consume_code(code)
             .await?
-            .ok_or_else(|| BulwarkError::OAuth2("invalid_grant".into()))?;
+            .ok_or_else(|| GarrisonError::OAuth2("invalid_grant".into()))?;
 
         // 校验 client_id 一致性
         if auth_code.client_id != client.client_id {
-            return Err(BulwarkError::OAuth2("invalid_grant".into()));
+            return Err(GarrisonError::OAuth2("invalid_grant".into()));
         }
 
         // 校验 redirect_uri 一致性
         if auth_code.redirect_uri != *redirect_uri {
-            return Err(BulwarkError::OAuth2("invalid_grant".into()));
+            return Err(GarrisonError::OAuth2("invalid_grant".into()));
         }
 
         // PKCE 验证
         if !crate::oauth2_server::authorize::verify_pkce(code_verifier, &auth_code.code_challenge)?
         {
-            return Err(BulwarkError::OAuth2("invalid_grant".into()));
+            return Err(GarrisonError::OAuth2("invalid_grant".into()));
         }
 
         // 签发 token
@@ -975,9 +975,9 @@ impl TokenHandler {
         &self,
         client: &OAuth2Client,
         req: &TokenRequest,
-    ) -> BulwarkResult<TokenResponse> {
+    ) -> GarrisonResult<TokenResponse> {
         if !client.allows_grant_type(&GrantType::RefreshToken) {
-            return Err(BulwarkError::OAuth2(
+            return Err(GarrisonError::OAuth2(
                 "oauth2-server-token-unauthorized-refresh".into(),
             ));
         }
@@ -985,7 +985,7 @@ impl TokenHandler {
         let refresh_token = req
             .refresh_token
             .as_ref()
-            .ok_or_else(|| BulwarkError::OAuth2("invalid_request".into()))?;
+            .ok_or_else(|| GarrisonError::OAuth2("invalid_request".into()))?;
 
         // v0.7.1 统一路径：RefreshTokenRotation.rotate（reuse detection + hash chain）
         #[cfg(feature = "db-sqlite")]
@@ -996,19 +996,19 @@ impl TokenHandler {
                 // - not found → InvalidToken（映射为 OAuth2 invalid_grant）
                 let (new_access, new_refresh) = match rotation.rotate(refresh_token).await {
                     Ok(t) => t,
-                    Err(BulwarkError::InvalidToken(_)) => {
-                        return Err(BulwarkError::OAuth2("invalid_grant".into()));
+                    Err(GarrisonError::InvalidToken(_)) => {
+                        return Err(GarrisonError::OAuth2("invalid_grant".into()));
                     },
                     Err(e) => return Err(e),
                 };
                 // validate 新 token 获取 scopes + client_id 供响应
                 let record = rotation.validate(&new_refresh).await?.ok_or_else(|| {
-                    BulwarkError::Internal("oauth2-refresh-rotate-validate".into())
+                    GarrisonError::Internal("oauth2-refresh-rotate-validate".into())
                 })?;
                 // 校验 client_id 一致性
                 let record_client_id = record.client_id.as_deref().unwrap_or("");
                 if record_client_id != client.client_id {
-                    return Err(BulwarkError::OAuth2(
+                    return Err(GarrisonError::OAuth2(
                         "oauth2-server-token-invalid-grant-refresh-mismatch".into(),
                     ));
                 }
@@ -1043,14 +1043,14 @@ impl TokenHandler {
             .dao
             .get(&key)
             .await?
-            .ok_or_else(|| BulwarkError::OAuth2("invalid_grant".into()))?;
+            .ok_or_else(|| GarrisonError::OAuth2("invalid_grant".into()))?;
         let record: TokenRecord = serde_json::from_str(&json).map_err(|e| {
-            BulwarkError::Internal(format!("oauth2-server-token-deserialize::{}", e))
+            GarrisonError::Internal(format!("oauth2-server-token-deserialize::{}", e))
         })?;
 
         // 校验 client_id 一致性
         if record.client_id != client.client_id {
-            return Err(BulwarkError::OAuth2(
+            return Err(GarrisonError::OAuth2(
                 "oauth2-server-token-invalid-grant-refresh-mismatch".into(),
             ));
         }
@@ -1078,9 +1078,9 @@ impl TokenHandler {
         &self,
         client: &OAuth2Client,
         req: &TokenRequest,
-    ) -> BulwarkResult<TokenResponse> {
+    ) -> GarrisonResult<TokenResponse> {
         if !client.allows_grant_type(&GrantType::ClientCredentials) {
-            return Err(BulwarkError::OAuth2(
+            return Err(GarrisonError::OAuth2(
                 "oauth2-server-token-unauthorized-client-credentials".into(),
             ));
         }
@@ -1104,25 +1104,25 @@ impl TokenHandler {
         &self,
         client: &OAuth2Client,
         req: &TokenRequest,
-    ) -> BulwarkResult<TokenResponse> {
+    ) -> GarrisonResult<TokenResponse> {
         if !client.allows_grant_type(&GrantType::Password) {
-            return Err(BulwarkError::OAuth2(
+            return Err(GarrisonError::OAuth2(
                 "oauth2-server-token-unauthorized-password".into(),
             ));
         }
 
         let verifier = self.password_verifier.as_ref().ok_or_else(|| {
-            BulwarkError::OAuth2("oauth2-server-token-unauthorized-grant-no-verifier".into())
+            GarrisonError::OAuth2("oauth2-server-token-unauthorized-grant-no-verifier".into())
         })?;
 
         let username = req
             .username
             .as_ref()
-            .ok_or_else(|| BulwarkError::OAuth2("invalid_request".into()))?;
+            .ok_or_else(|| GarrisonError::OAuth2("invalid_request".into()))?;
         let password = req
             .password
             .as_ref()
-            .ok_or_else(|| BulwarkError::OAuth2("invalid_request".into()))?;
+            .ok_or_else(|| GarrisonError::OAuth2("invalid_request".into()))?;
 
         // per-username QPS 速率限制（在账户锁定检查前，防暴力撞库）
         //
@@ -1130,7 +1130,7 @@ impl TokenHandler {
         // 本结构限制窗口内请求 QPS，两者叠加形成纵深防御。
         if let Some(limiter) = &self.token_rate_limiter {
             if !limiter.check_username(username).await {
-                return Err(BulwarkError::OAuth2(
+                return Err(GarrisonError::OAuth2(
                     "oauth2-server-token-rate-limited-username".into(),
                 ));
             }
@@ -1139,7 +1139,7 @@ impl TokenHandler {
         // 验证密码前检查账户锁定状态（防 brute-force）
         if let Some(limiter) = &self.password_rate_limiter {
             if !limiter.check(username).await {
-                return Err(BulwarkError::OAuth2(
+                return Err(GarrisonError::OAuth2(
                     "oauth2-server-token-rate-limited-locked".into(),
                 ));
             }
@@ -1152,7 +1152,7 @@ impl TokenHandler {
                 if let Some(limiter) = &self.password_rate_limiter {
                     limiter.record_failure(username).await;
                 }
-                return Err(BulwarkError::OAuth2(
+                return Err(GarrisonError::OAuth2(
                     "oauth2-server-token-invalid-grant-credentials".into(),
                 ));
             },
@@ -1198,7 +1198,7 @@ impl TokenHandler {
         scopes: &[String],
         with_refresh: bool,
         username: Option<&str>,
-    ) -> BulwarkResult<TokenResponse> {
+    ) -> GarrisonResult<TokenResponse> {
         let access_token = generate_token();
         let now = Utc::now();
         let at_expires_at = now + Duration::seconds(ACCESS_TOKEN_TTL_SECONDS as i64);
@@ -1218,8 +1218,9 @@ impl TokenHandler {
         };
 
         let at_key = DaoKeyPrefix::OAuth2AccessToken.build_key(&access_token);
-        let at_json = serde_json::to_string(&at_record)
-            .map_err(|e| BulwarkError::Internal(format!("oauth2-server-token-serialize::{}", e)))?;
+        let at_json = serde_json::to_string(&at_record).map_err(|e| {
+            GarrisonError::Internal(format!("oauth2-server-token-serialize::{}", e))
+        })?;
         self.dao
             .set(&at_key, &at_json, ACCESS_TOKEN_TTL_SECONDS)
             .await?;
@@ -1284,7 +1285,7 @@ impl TokenHandler {
         scopes: &[String],
         username: Option<&str>,
         now: DateTime<Utc>,
-    ) -> BulwarkResult<Option<String>> {
+    ) -> GarrisonResult<Option<String>> {
         let rt = generate_token();
         let rt_expires_at = now + Duration::seconds(REFRESH_TOKEN_TTL_SECONDS as i64);
         let rt_jti = uuid::Uuid::new_v4().to_string();
@@ -1301,8 +1302,9 @@ impl TokenHandler {
         };
         #[allow(deprecated)]
         let rt_key = DaoKeyPrefix::OAuth2RefreshToken.build_key(&rt);
-        let rt_json = serde_json::to_string(&rt_record)
-            .map_err(|e| BulwarkError::Internal(format!("oauth2-server-token-serialize::{}", e)))?;
+        let rt_json = serde_json::to_string(&rt_record).map_err(|e| {
+            GarrisonError::Internal(format!("oauth2-server-token-serialize::{}", e))
+        })?;
         self.dao
             .set(&rt_key, &rt_json, REFRESH_TOKEN_TTL_SECONDS)
             .await?;
@@ -1310,13 +1312,16 @@ impl TokenHandler {
     }
 
     /// 查找 access_token 记录（供 introspect 端点使用）。
-    pub async fn get_access_token_record(&self, token: &str) -> BulwarkResult<Option<TokenRecord>> {
+    pub async fn get_access_token_record(
+        &self,
+        token: &str,
+    ) -> GarrisonResult<Option<TokenRecord>> {
         let key = DaoKeyPrefix::OAuth2AccessToken.build_key(token);
         let json = self.dao.get(&key).await?;
         match json {
             Some(json) => {
                 let record: TokenRecord = serde_json::from_str(&json).map_err(|e| {
-                    BulwarkError::Internal(format!("oauth2-server-token-deserialize::{}", e))
+                    GarrisonError::Internal(format!("oauth2-server-token-deserialize::{}", e))
                 })?;
                 Ok(Some(record))
             },
@@ -1325,7 +1330,7 @@ impl TokenHandler {
     }
 
     /// 撤销 token（供 revoke 端点使用）。
-    pub async fn revoke_token(&self, token: &str) -> BulwarkResult<()> {
+    pub async fn revoke_token(&self, token: &str) -> GarrisonResult<()> {
         // 尝试删除 access_token
         let at_key = DaoKeyPrefix::OAuth2AccessToken.build_key(token);
         self.dao.delete(&at_key).await?;
@@ -1355,7 +1360,7 @@ mod tests {
     struct TestPasswordVerifier;
     #[async_trait]
     impl PasswordVerifier for TestPasswordVerifier {
-        async fn verify(&self, username: &str, password: &str) -> BulwarkResult<Option<i64>> {
+        async fn verify(&self, username: &str, password: &str) -> GarrisonResult<Option<i64>> {
             if username == "alice" && password == "wonderland" {
                 Ok(Some(5001))
             } else {
@@ -2295,7 +2300,7 @@ mod tests {
     /// 计数器 key 存在 —— 证明 with_dao 没有像 `new()` 那样内部创建 MockDao。
     #[tokio::test]
     async fn password_rate_limiter_with_dao_uses_injected_dao() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let limiter = PasswordRateLimiter::with_dao(3, 300, dao.clone());
 
         // 注入的 DAO 初始无 entry
@@ -2327,7 +2332,7 @@ mod tests {
     /// 计数器 key 存在 —— 证明 with_dao_and_limits 没有内部创建 MockDao。
     #[tokio::test]
     async fn token_rate_limiter_with_dao_uses_injected_dao() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let limiter = TokenRateLimiter::with_dao_and_limits(10, 1, 5, 60, dao.clone());
 
         // 注入的 DAO 初始无 entry
@@ -2360,7 +2365,7 @@ mod tests {
     /// 验证 username 计数器相互独立 —— 这是分布式限速的前提（多实例共享 DAO 计数）。
     #[tokio::test]
     async fn password_rate_limiter_with_dao_isolates_usernames() {
-        let shared_dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let shared_dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
 
         // 模拟两个实例共享同一 DAO
         let limiter1 = PasswordRateLimiter::with_dao(2, 300, shared_dao.clone());
@@ -2388,40 +2393,40 @@ mod tests {
 
     // === vuln-0007: DAO 故障降级限速测试（fail-closed）===
 
-    /// 测试用 DAO — 所有方法均返回 `BulwarkError::Dao`，模拟 DAO 宕机。
+    /// 测试用 DAO — 所有方法均返回 `GarrisonError::Dao`，模拟 DAO 宕机。
     ///
     /// 用于触发 `PasswordRateLimiter` / `TokenRateLimiter` 的 fallback 路径，
     /// 验证降级限速器在 DAO 故障期间仍能阻止暴力破解。
     struct FailingDao;
 
     #[async_trait]
-    impl BulwarkDao for FailingDao {
-        async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
-            Err(BulwarkError::Dao(format!(
+    impl GarrisonDao for FailingDao {
+        async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
+            Err(GarrisonError::Dao(format!(
                 "vuln-0007-failing-dao-get::{}",
                 key
             )))
         }
-        async fn set(&self, key: &str, _value: &str, _ttl_seconds: u64) -> BulwarkResult<()> {
-            Err(BulwarkError::Dao(format!(
+        async fn set(&self, key: &str, _value: &str, _ttl_seconds: u64) -> GarrisonResult<()> {
+            Err(GarrisonError::Dao(format!(
                 "vuln-0007-failing-dao-set::{}",
                 key
             )))
         }
-        async fn update(&self, key: &str, _value: &str) -> BulwarkResult<()> {
-            Err(BulwarkError::Dao(format!(
+        async fn update(&self, key: &str, _value: &str) -> GarrisonResult<()> {
+            Err(GarrisonError::Dao(format!(
                 "vuln-0007-failing-dao-update::{}",
                 key
             )))
         }
-        async fn expire(&self, key: &str, _seconds: u64) -> BulwarkResult<()> {
-            Err(BulwarkError::Dao(format!(
+        async fn expire(&self, key: &str, _seconds: u64) -> GarrisonResult<()> {
+            Err(GarrisonError::Dao(format!(
                 "vuln-0007-failing-dao-expire::{}",
                 key
             )))
         }
-        async fn delete(&self, key: &str) -> BulwarkResult<()> {
-            Err(BulwarkError::Dao(format!(
+        async fn delete(&self, key: &str) -> GarrisonResult<()> {
+            Err(GarrisonError::Dao(format!(
                 "vuln-0007-failing-dao-delete::{}",
                 key
             )))
@@ -2434,7 +2439,7 @@ mod tests {
     /// 这是 vuln-0007 修复的核心验证：DAO 宕机期间暴力破解保护不失效。
     #[tokio::test]
     async fn password_rate_limiter_fallback_on_dao_error() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(FailingDao);
+        let dao: Arc<dyn GarrisonDao> = Arc::new(FailingDao);
         let limiter = PasswordRateLimiter::with_dao(3, 300, dao);
 
         // 前 2 次失败：check 返回 true（fallback 计数 1,2 < max_attempts=3）
@@ -2460,7 +2465,7 @@ mod tests {
     /// DAO 故障时 attacker 被锁定不影响 victim。
     #[tokio::test]
     async fn password_rate_limiter_fallback_isolates_usernames() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(FailingDao);
+        let dao: Arc<dyn GarrisonDao> = Arc::new(FailingDao);
         let limiter = PasswordRateLimiter::with_dao(2, 300, dao);
 
         // attacker 失败 3 次（超阈值 2，锁定）
@@ -2483,7 +2488,7 @@ mod tests {
     /// 验证成功后即使 DAO 故障，fallback 计数也被清理，避免残留锁定。
     #[tokio::test]
     async fn password_rate_limiter_fallback_reset_clears_counter() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(FailingDao);
+        let dao: Arc<dyn GarrisonDao> = Arc::new(FailingDao);
         let limiter = PasswordRateLimiter::with_dao(2, 300, dao);
 
         // 失败 2 次（达阈值，锁定）
@@ -2505,7 +2510,7 @@ mod tests {
     /// 前 N 次允许，第 N+1 次拒绝。
     #[tokio::test]
     async fn token_rate_limiter_fallback_check_client() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(FailingDao);
+        let dao: Arc<dyn GarrisonDao> = Arc::new(FailingDao);
         // client_max=3
         let limiter = TokenRateLimiter::with_dao_and_limits(3, 60, 100, 60, dao);
 
@@ -2528,7 +2533,7 @@ mod tests {
     /// `TokenRateLimiter::check_username` 在 DAO 故障时启用降级限速。
     #[tokio::test]
     async fn token_rate_limiter_fallback_check_username() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(FailingDao);
+        let dao: Arc<dyn GarrisonDao> = Arc::new(FailingDao);
         // username_max=2
         let limiter = TokenRateLimiter::with_dao_and_limits(100, 60, 2, 60, dao);
 
@@ -2550,7 +2555,7 @@ mod tests {
     /// `TokenRateLimiter` 降级限速器按 client_id / username 维度隔离。
     #[tokio::test]
     async fn token_rate_limiter_fallback_isolates_dimensions() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(FailingDao);
+        let dao: Arc<dyn GarrisonDao> = Arc::new(FailingDao);
         // client_max=1, username_max=1
         let limiter = TokenRateLimiter::with_dao_and_limits(1, 60, 1, 60, dao);
 
@@ -2585,7 +2590,7 @@ mod tests {
     /// 前 2 次失败返回 invalid_grant，第 3 次返回 rate_limited。
     #[tokio::test]
     async fn handle_password_fallback_locks_after_dao_failure() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(FailingDao);
+        let dao: Arc<dyn GarrisonDao> = Arc::new(FailingDao);
         let limiter = Arc::new(PasswordRateLimiter::with_dao(2, 300, dao));
         let (handler, _) = make_handler();
         let handler = handler.with_password_rate_limiter(limiter);
@@ -2635,7 +2640,7 @@ mod tests {
     /// 前 2 次成功，第 3 次被 rate_limited。
     #[tokio::test]
     async fn handle_with_authorization_fallback_rate_limited_client() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(FailingDao);
+        let dao: Arc<dyn GarrisonDao> = Arc::new(FailingDao);
         let limiter = Arc::new(TokenRateLimiter::with_dao_and_limits(2, 60, 100, 60, dao));
         let (handler, _) = make_handler();
         let handler = handler.with_token_rate_limiter(limiter);
@@ -2685,7 +2690,7 @@ mod tests {
     /// sleep 等待过期，check 触发清理，验证 fallback_counter.len() == 0。
     #[tokio::test]
     async fn password_rate_limiter_fallback_counter_expired_entry_cleaned_up() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(FailingDao);
+        let dao: Arc<dyn GarrisonDao> = Arc::new(FailingDao);
         // window=1 秒，便于测试过期清理
         let limiter = PasswordRateLimiter::with_dao(3, 1, dao);
 
@@ -2721,7 +2726,7 @@ mod tests {
     /// 验证过期后计数重置（不累加旧窗口计数）。
     #[tokio::test]
     async fn token_rate_limiter_fallback_counter_expired_entry_cleaned_up() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(FailingDao);
+        let dao: Arc<dyn GarrisonDao> = Arc::new(FailingDao);
         // client_window=1 秒，便于测试过期清理；client_max=3
         let limiter = TokenRateLimiter::with_dao_and_limits(3, 1, 100, 60, dao);
 
@@ -2776,7 +2781,7 @@ mod tests {
     /// 验证 entry_count 返回 fallback_counter 中的未过期 entry 数。
     #[tokio::test]
     async fn password_rate_limiter_entry_count_includes_fallback() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(FailingDao);
+        let dao: Arc<dyn GarrisonDao> = Arc::new(FailingDao);
         let limiter = PasswordRateLimiter::with_dao(3, 300, dao);
 
         // DAO 故障，entry_count 的 DAO 部分返回 0
@@ -2859,7 +2864,7 @@ mod tests {
     /// record_failure_fallback → 容量检查 → 清理），验证 fallback_counter.len() 减少。
     #[tokio::test]
     async fn password_rate_limiter_fallback_counter_capped_at_max() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(FailingDao);
+        let dao: Arc<dyn GarrisonDao> = Arc::new(FailingDao);
         let limiter = PasswordRateLimiter::with_dao(3, 300, dao);
 
         // 直接向 fallback_counter 插入 MAX_FALLBACK_ENTRIES 个 entry（模拟 DAO 长时间
@@ -2905,7 +2910,7 @@ mod tests {
     /// check_and_incr_fallback → 容量检查 → 清理），验证 fallback_counter.len() 减少。
     #[tokio::test]
     async fn token_rate_limiter_fallback_counter_capped_at_max() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(FailingDao);
+        let dao: Arc<dyn GarrisonDao> = Arc::new(FailingDao);
         // client_max 设大，避免触发限速拒绝（仅验证容量清理）
         let limiter = TokenRateLimiter::with_dao_and_limits(
             (MAX_FALLBACK_ENTRIES + 200) as u64,
@@ -3421,7 +3426,7 @@ mod tests {
 #[cfg(all(test, feature = "db-sqlite"))]
 mod refresh_rotation_tests {
     use super::*;
-    use crate::dao::{init_dbnexus, BulwarkMigration};
+    use crate::dao::{init_dbnexus, GarrisonMigration};
     use crate::oauth2_server::authorize::AuthorizeHandler;
     use crate::oauth2_server::client::{DaoOAuth2ClientStore, GrantType, OAuth2Client};
     use crate::protocol::jwt::refresh::RefreshTokenRotation;
@@ -3443,7 +3448,7 @@ mod refresh_rotation_tests {
         let pool = init_dbnexus("sqlite::memory:")
             .await
             .expect("init_dbnexus 应成功");
-        let migration = BulwarkMigration::with_base_dir(pool.clone(), project_migrations_dir());
+        let migration = GarrisonMigration::with_base_dir(pool.clone(), project_migrations_dir());
         migration.migrate_core().await.expect("migrate_core 应成功");
         pool
     }
@@ -3452,7 +3457,7 @@ mod refresh_rotation_tests {
     struct TestPasswordVerifier;
     #[async_trait]
     impl PasswordVerifier for TestPasswordVerifier {
-        async fn verify(&self, username: &str, password: &str) -> BulwarkResult<Option<i64>> {
+        async fn verify(&self, username: &str, password: &str) -> GarrisonResult<Option<i64>> {
             if username == "alice" && password == "wonderland" {
                 Ok(Some(5001))
             } else {
@@ -3691,7 +3696,7 @@ mod refresh_rotation_tests {
         // 第二次 refresh（重用）：应返回 TokenRevoked
         let result = handler.handle(&refresh_req).await;
         assert!(
-            matches!(&result, Err(BulwarkError::TokenRevoked(_))),
+            matches!(&result, Err(GarrisonError::TokenRevoked(_))),
             "重用已消费的 refresh token 应返回 TokenRevoked，实际: {:?}",
             result
         );
@@ -3833,7 +3838,7 @@ mod refresh_rotation_tests {
         // 4. 重用 token1 → TokenRevoked（reuse detection）
         let reuse_result = handler.handle(&refresh_req_1).await;
         assert!(
-            matches!(&reuse_result, Err(BulwarkError::TokenRevoked(_))),
+            matches!(&reuse_result, Err(GarrisonError::TokenRevoked(_))),
             "重用 token1 应返回 TokenRevoked，实际: {:?}",
             reuse_result
         );

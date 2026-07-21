@@ -3,7 +3,7 @@
 
 //! v0.5.0 综合演示：多租户隔离 + 审计日志 + 决策溯源 + Keycloak OIDC RP + 微信社交登录。
 //!
-//! 演示 Bulwark v0.5.0 的核心生产能力：
+//! 演示 Garrison v0.5.0 的核心生产能力：
 //! 1. 多租户上下文（TENANT task_local + prefixed_key）
 //! 2. 审计日志（AuditLogListener 写入 SQLite）
 //! 3. 决策溯源（PermissionChecker + DecisionReason）
@@ -12,7 +12,7 @@
 //!
 //! 运行方式：
 //! ```sh
-//! cargo run -p bulwark-examples --bin v0_5_0_demo --features "tenant-isolation audit-log decision-trace keycloak-oidc social-wechat db-sqlite cache-memory"
+//! cargo run -p garrison-examples --bin v0_5_0_demo --features "tenant-isolation audit-log decision-trace keycloak-oidc social-wechat db-sqlite cache-memory"
 //! ```
 //!
 //! 本示例使用内存 SQLite + oxcache 内存 DAO，无需外部依赖即可运行。
@@ -20,22 +20,24 @@
 // 占位值，生产环境必须从环境变量/KMS 加载
 
 use async_trait::async_trait;
-use bulwark::context::tenant::{TenantContext, TenantSource, TENANT};
-use bulwark::core::permission::{
+use dbnexus::DbPool;
+use garrison::context::tenant::{TenantContext, TenantSource, TENANT};
+use garrison::core::permission::{
     AuthRequest, DecisionReason, PermissionChecker, PermissionCheckerDefault,
 };
-use bulwark::dao::{init_dbnexus, BulwarkDao, BulwarkDaoOxcache, BulwarkMigration};
-use bulwark::error::BulwarkResult;
-use bulwark::listener::audit::{AuditConfig, AuditQuery};
-use bulwark::listener::{BulwarkListener, BulwarkListenerManager};
-use bulwark::session::BulwarkSession;
-use bulwark::stp::{
-    with_current_token, BulwarkInterface, BulwarkLogicDefault, LoginParams, PermissionLogic,
+use garrison::dao::{init_dbnexus, GarrisonDao, GarrisonDaoOxcache, GarrisonMigration};
+use garrison::error::GarrisonResult;
+use garrison::listener::audit::{AuditConfig, AuditQuery};
+use garrison::listener::{GarrisonListener, GarrisonListenerManager};
+use garrison::session::GarrisonSession;
+use garrison::stp::{
+    with_current_token, GarrisonInterface, GarrisonLogicDefault, LoginParams, PermissionLogic,
     SessionLogic,
 };
-use bulwark::strategy::BulwarkPermissionStrategyDefault;
-use bulwark::{AuditLogListener, BulwarkConfig, KeycloakConfig, KeycloakProvider, WechatProvider};
-use dbnexus::DbPool;
+use garrison::strategy::GarrisonPermissionStrategyDefault;
+use garrison::{
+    AuditLogListener, GarrisonConfig, KeycloakConfig, KeycloakProvider, WechatProvider,
+};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -46,8 +48,8 @@ type DemoResult<T> = Result<T, Box<dyn std::error::Error>>;
 struct DemoInterface;
 
 #[async_trait]
-impl BulwarkInterface for DemoInterface {
-    async fn get_permission_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+impl GarrisonInterface for DemoInterface {
+    async fn get_permission_list(&self, login_id: &str) -> GarrisonResult<Vec<String>> {
         if login_id == "1001" {
             Ok(vec!["user:read".to_string(), "user:write".to_string()])
         } else {
@@ -55,13 +57,13 @@ impl BulwarkInterface for DemoInterface {
         }
     }
 
-    async fn get_role_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
+    async fn get_role_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
         Ok(vec!["admin".to_string()])
     }
 }
 
-/// 初始化基础设施：SQLite in-memory + 迁移 + oxcache DAO + BulwarkSession。
-async fn init_infrastructure() -> DemoResult<(DbPool, Arc<dyn BulwarkDao>, Arc<BulwarkSession>)> {
+/// 初始化基础设施：SQLite in-memory + 迁移 + oxcache DAO + GarrisonSession。
+async fn init_infrastructure() -> DemoResult<(DbPool, Arc<dyn GarrisonDao>, Arc<GarrisonSession>)> {
     println!("[1] 初始化基础设施...");
 
     let pool = init_dbnexus("sqlite::memory:").await?;
@@ -69,12 +71,12 @@ async fn init_infrastructure() -> DemoResult<(DbPool, Arc<dyn BulwarkDao>, Arc<B
         .join("..")
         .join("migrations")
         .join("sqlite");
-    let migration = BulwarkMigration::with_base_dir(pool.clone(), migrations_dir);
+    let migration = GarrisonMigration::with_base_dir(pool.clone(), migrations_dir);
     migration.run_all().await?;
 
-    let dao: Arc<dyn BulwarkDao> = Arc::new(BulwarkDaoOxcache::new().await?);
-    // BulwarkSession::new 消费 dao，clone 一份返回给调用方
-    let session = Arc::new(BulwarkSession::new(dao.clone(), 3600, 86400));
+    let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await?);
+    // GarrisonSession::new 消费 dao，clone 一份返回给调用方
+    let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400));
     println!("    ✓ SQLite in-memory + oxcache DAO 已就绪");
 
     Ok((pool, dao, session))
@@ -83,53 +85,53 @@ async fn init_infrastructure() -> DemoResult<(DbPool, Arc<dyn BulwarkDao>, Arc<B
 /// 配置审计日志监听器：注册 AuditLogListener 到 ListenerManager。
 async fn setup_audit_listener(
     pool: DbPool,
-) -> DemoResult<(Arc<BulwarkListenerManager>, Arc<AuditLogListener>)> {
+) -> DemoResult<(Arc<GarrisonListenerManager>, Arc<AuditLogListener>)> {
     println!("[2] 配置审计日志监听器...");
 
-    let lm = Arc::new(BulwarkListenerManager::new());
+    let lm = Arc::new(GarrisonListenerManager::new());
     let audit_config = AuditConfig {
         mask_fields: vec!["token".to_string()],
         retain_days: 90,
         async_write: false,
         signing_key: None,
-        audit_mask_mode: bulwark::config::AuditMaskMode::default(),
+        audit_mask_mode: garrison::config::AuditMaskMode::default(),
     };
     let audit_listener = Arc::new(AuditLogListener::new(pool, audit_config));
-    lm.register(audit_listener.clone() as Arc<dyn BulwarkListener>);
+    lm.register(audit_listener.clone() as Arc<dyn GarrisonListener>);
     println!("    ✓ AuditLogListener 已注册（掩码字段: token, 保留天数: 90）");
 
     Ok((lm, audit_listener))
 }
 
-/// 构造 BulwarkLogicDefault：注入 PermissionChecker + ListenerManager。
+/// 构造 GarrisonLogicDefault：注入 PermissionChecker + ListenerManager。
 fn construct_logic(
-    session: Arc<BulwarkSession>,
-    interface: Arc<dyn BulwarkInterface>,
+    session: Arc<GarrisonSession>,
+    interface: Arc<dyn GarrisonInterface>,
     pc: Arc<dyn PermissionChecker>,
-    lm: Arc<BulwarkListenerManager>,
-) -> Arc<BulwarkLogicDefault> {
-    println!("[3] 构造 BulwarkLogicDefault（含决策溯源 + 审计日志）...");
+    lm: Arc<GarrisonListenerManager>,
+) -> Arc<GarrisonLogicDefault> {
+    println!("[3] 构造 GarrisonLogicDefault（含决策溯源 + 审计日志）...");
 
-    let firewall = Arc::new(BulwarkPermissionStrategyDefault::new(interface));
+    let firewall = Arc::new(GarrisonPermissionStrategyDefault::new(interface));
 
-    let mut config = BulwarkConfig::default_config();
+    let mut config = GarrisonConfig::default_config();
     config.token_style = "uuid".to_string();
     config.timeout = 3600;
     config.throw_on_not_login = true;
 
     let logic = Arc::new(
-        BulwarkLogicDefault::new(session, Arc::new(config), firewall)
+        GarrisonLogicDefault::new(session, Arc::new(config), firewall)
             .with_permission_checker(pc)
             .with_listener_manager(lm),
     );
-    println!("    ✓ BulwarkLogicDefault 已构造（PermissionChecker + ListenerManager 已注入）");
+    println!("    ✓ GarrisonLogicDefault 已构造（PermissionChecker + ListenerManager 已注入）");
 
     logic
 }
 
 /// 多租户隔离演示：在 TENANT(42) scope 内登录 + 权限校验 + 决策溯源。
 async fn demo_tenant_isolation(
-    logic: Arc<BulwarkLogicDefault>,
+    logic: Arc<GarrisonLogicDefault>,
     pc: Arc<dyn PermissionChecker>,
 ) -> DemoResult<()> {
     println!("[4] 多租户隔离演示（tenant_id=42, login_id=1001）...");
@@ -227,7 +229,7 @@ fn demo_keycloak_config() -> DemoResult<()> {
 
     let kc_config = KeycloakConfig {
         base_url: "https://kc.example.com:8443/realms/myrealm".into(),
-        client_id: "bulwark-rp".into(),
+        client_id: "garrison-rp".into(),
         client_secret: Some("client-secret-123".into()),
         redirect_uri: "https://app.example.com/cb".into(),
         expected_iss: "https://kc.example.com:8443/realms/myrealm".into(),
@@ -258,12 +260,12 @@ fn demo_wechat_config() -> DemoResult<()> {
 /// 仅做顺序编排：init → audit listener → logic → tenant demo → audit query →
 /// keycloak config → wechat config → 总结。每步打印步骤标题。
 pub async fn run() -> DemoResult<()> {
-    println!("=== Bulwark v0.5.0 生产能力综合演示 ===\n");
+    println!("=== Garrison v0.5.0 生产能力综合演示 ===\n");
 
     let (pool, _dao, session) = init_infrastructure().await?;
     let (lm, audit_listener) = setup_audit_listener(pool).await?;
 
-    let interface: Arc<dyn BulwarkInterface> = Arc::new(DemoInterface);
+    let interface: Arc<dyn GarrisonInterface> = Arc::new(DemoInterface);
     let pc: Arc<dyn PermissionChecker> = Arc::new(PermissionCheckerDefault::new(interface.clone()));
     let logic = construct_logic(session, interface, pc.clone(), lm);
 

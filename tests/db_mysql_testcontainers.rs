@@ -7,7 +7,7 @@
 //! `DbnexusMysqlXxxRepository` 在真实 MySQL 上的 CRUD 行为：
 //!
 //! 1. `mysql_dbpool_init`：验证 `init_dbnexus` 能初始化 MySQL 连接池
-//! 2. `mysql_auto_migrate`：验证 `BulwarkMigration::migrate_core()` 创建全部核心表
+//! 2. `mysql_auto_migrate`：验证 `GarrisonMigration::migrate_core()` 创建全部核心表
 //! 3. `mysql_user_repository_crud`：UserRepository create/find_by_username/update/delete
 //! 4. `mysql_role_repository_crud`：RoleRepository create/find_by_code/list/delete
 //! 5. `mysql_permission_repository_crud`：PermissionRepository create/find_by_code/list/delete
@@ -25,7 +25,7 @@
 
 #![cfg(feature = "db-mysql")]
 
-use bulwark::dao::{
+use garrison::dao::{
     init_dbnexus,
     repository::{
         mysql::{
@@ -40,7 +40,7 @@ use bulwark::dao::{
         RoleRepository, SessionRepository, UpdateUser, UserExtRepository, UserRepository,
         UserRoleRepository,
     },
-    BulwarkMigration,
+    GarrisonMigration,
 };
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 use serial_test::serial;
@@ -65,14 +65,14 @@ const TENANT_A: i64 = 1;
 /// MySQL 容器配置：
 /// - 镜像：mysql:8.0-oracle（Oracle 官方构建的 MySQL 8.0 镜像）
 /// - root 密码：root
-/// - 自动创建数据库：bulwark_test
+/// - 自动创建数据库：garrison_test
 /// - 端口映射：宿主机随机端口 → 容器 3306
 async fn setup_mysql_pool() -> (dbnexus::DbPool, ContainerAsync<GenericImage>) {
     let mysql_image = GenericImage::new("mysql", "8.0-oracle")
         .with_exposed_port(3306.tcp())
         .with_wait_for(WaitFor::message_on_either_std("ready for connections"))
         .with_env_var("MYSQL_ROOT_PASSWORD", "root")
-        .with_env_var("MYSQL_DATABASE", "bulwark_test");
+        .with_env_var("MYSQL_DATABASE", "garrison_test");
 
     let container = mysql_image.start().await.expect("MySQL 8.0 容器应成功启动");
 
@@ -81,7 +81,7 @@ async fn setup_mysql_pool() -> (dbnexus::DbPool, ContainerAsync<GenericImage>) {
         .await
         .expect("端口 3306 应被映射到宿主机");
 
-    let url = format!("mysql://root:root@127.0.0.1:{}/bulwark_test", port);
+    let url = format!("mysql://root:root@127.0.0.1:{}/garrison_test", port);
 
     // MySQL 容器就绪后仍需等待内部初始化完成，重试连接
     let pool = retry_init_dbnexus(&url).await;
@@ -130,7 +130,7 @@ fn project_migrations_dir() -> PathBuf {
 async fn setup_db_with_migrations() -> (dbnexus::DbPool, ContainerAsync<GenericImage>) {
     let (pool, container) = setup_mysql_pool().await;
 
-    let migration = BulwarkMigration::with_base_dir(pool.clone(), project_migrations_dir());
+    let migration = GarrisonMigration::with_base_dir(pool.clone(), project_migrations_dir());
     let applied = migration.migrate_core().await.expect("migrate_core 应成功");
     assert!(
         applied >= 6,
@@ -179,7 +179,7 @@ async fn mysql_auto_migrate() {
     let stmt = Statement::from_sql_and_values(
         DbBackend::MySql,
         "SELECT table_name AS table_name FROM information_schema.tables \
-         WHERE table_schema = 'bulwark_test' AND table_name LIKE 'app_%' ORDER BY table_name",
+         WHERE table_schema = 'garrison_test' AND table_name LIKE 'app_%' ORDER BY table_name",
         vec![],
     );
     let rows = conn
@@ -205,7 +205,7 @@ async fn mysql_auto_migrate() {
     for expected in &expected_tables {
         assert!(
             table_names.contains(&expected.to_string()),
-            "核心表 {} 应存在于 MySQL bulwark_test 数据库，实际表: {:?}",
+            "核心表 {} 应存在于 MySQL garrison_test 数据库，实际表: {:?}",
             expected,
             table_names
         );

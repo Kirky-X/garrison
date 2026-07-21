@@ -33,7 +33,7 @@ pub enum XssMode {
 /// # 示例
 ///
 /// ```ignore
-/// use bulwark::secure::xss::{XssMode, XssProtector};
+/// use garrison::secure::xss::{XssMode, XssProtector};
 ///
 /// let p = XssProtector::new(XssMode::EscapeAll);
 /// assert_eq!(p.sanitize("<script>alert(1)</script>"), "&lt;script&gt;alert(1)&lt;/script&gt;");

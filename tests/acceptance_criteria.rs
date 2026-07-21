@@ -31,10 +31,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use bulwark::error::{BulwarkError, BulwarkResult};
-use bulwark::session::BulwarkSession;
-use bulwark::stp::{with_current_token, BulwarkInterface, BulwarkUtil};
-use bulwark::{BulwarkConfig, BulwarkDao, BulwarkManager};
+use garrison::error::{GarrisonError, GarrisonResult};
+use garrison::session::GarrisonSession;
+use garrison::stp::{with_current_token, GarrisonInterface, GarrisonUtil};
+use garrison::{GarrisonConfig, GarrisonDao, GarrisonManager};
 
 // ============================================================================
 // TENANT scope helper（外部集成测试中 lib 的 with_default_tenant 不可见，
@@ -47,7 +47,7 @@ async fn with_default_tenant<F, R>(f: F) -> R
 where
     F: std::future::Future<Output = R>,
 {
-    use bulwark::{TenantContext, TenantSource, TENANT};
+    use garrison::{TenantContext, TenantSource, TENANT};
     let ctx = TenantContext {
         tenant_id: 0,
         resolved_from: TenantSource::Header,
@@ -80,8 +80,8 @@ impl MockDao {
 }
 
 #[async_trait]
-impl BulwarkDao for MockDao {
-    async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
+impl GarrisonDao for MockDao {
+    async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
         let mut store = self.store.lock();
         match store.get(key) {
             Some((value, expire_at)) => {
@@ -97,7 +97,7 @@ impl BulwarkDao for MockDao {
         }
     }
 
-    async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> BulwarkResult<()> {
+    async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> GarrisonResult<()> {
         let expire_at = if ttl_seconds == 0 {
             None
         } else {
@@ -109,18 +109,18 @@ impl BulwarkDao for MockDao {
         Ok(())
     }
 
-    async fn update(&self, key: &str, value: &str) -> BulwarkResult<()> {
+    async fn update(&self, key: &str, value: &str) -> GarrisonResult<()> {
         let mut store = self.store.lock();
         match store.get_mut(key) {
             Some((existing, _)) => {
                 *existing = value.to_string();
                 Ok(())
             },
-            None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
+            None => Err(GarrisonError::Dao(format!("键不存在: {}", key))),
         }
     }
 
-    async fn expire(&self, key: &str, seconds: u64) -> BulwarkResult<()> {
+    async fn expire(&self, key: &str, seconds: u64) -> GarrisonResult<()> {
         let mut store = self.store.lock();
         match store.get_mut(key) {
             Some((_, expire_at)) => {
@@ -131,17 +131,17 @@ impl BulwarkDao for MockDao {
                 };
                 Ok(())
             },
-            None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
+            None => Err(GarrisonError::Dao(format!("键不存在: {}", key))),
         }
     }
 
-    async fn delete(&self, key: &str) -> BulwarkResult<()> {
+    async fn delete(&self, key: &str) -> GarrisonResult<()> {
         self.store.lock().remove(key);
         Ok(())
     }
 
     /// 查询键的剩余 TTL（重写以支持 BW-AC-002 的 TTL 续期验证）。
-    async fn get_timeout(&self, key: &str) -> BulwarkResult<Option<Duration>> {
+    async fn get_timeout(&self, key: &str) -> GarrisonResult<Option<Duration>> {
         let store = self.store.lock();
         match store.get(key) {
             Some((_, Some(deadline))) => {
@@ -165,29 +165,29 @@ impl BulwarkDao for MockDao {
 struct FailingDao;
 
 #[async_trait]
-impl BulwarkDao for FailingDao {
-    async fn get(&self, _key: &str) -> BulwarkResult<Option<String>> {
-        Err(BulwarkError::Dao(
+impl GarrisonDao for FailingDao {
+    async fn get(&self, _key: &str) -> GarrisonResult<Option<String>> {
+        Err(GarrisonError::Dao(
             "simulated redis cluster failure".to_string(),
         ))
     }
-    async fn set(&self, _key: &str, _value: &str, _ttl_seconds: u64) -> BulwarkResult<()> {
-        Err(BulwarkError::Dao(
+    async fn set(&self, _key: &str, _value: &str, _ttl_seconds: u64) -> GarrisonResult<()> {
+        Err(GarrisonError::Dao(
             "simulated redis cluster failure".to_string(),
         ))
     }
-    async fn update(&self, _key: &str, _value: &str) -> BulwarkResult<()> {
-        Err(BulwarkError::Dao(
+    async fn update(&self, _key: &str, _value: &str) -> GarrisonResult<()> {
+        Err(GarrisonError::Dao(
             "simulated redis cluster failure".to_string(),
         ))
     }
-    async fn expire(&self, _key: &str, _seconds: u64) -> BulwarkResult<()> {
-        Err(BulwarkError::Dao(
+    async fn expire(&self, _key: &str, _seconds: u64) -> GarrisonResult<()> {
+        Err(GarrisonError::Dao(
             "simulated redis cluster failure".to_string(),
         ))
     }
-    async fn delete(&self, _key: &str) -> BulwarkResult<()> {
-        Err(BulwarkError::Dao(
+    async fn delete(&self, _key: &str) -> GarrisonResult<()> {
+        Err(GarrisonError::Dao(
             "simulated redis cluster failure".to_string(),
         ))
     }
@@ -203,50 +203,50 @@ struct MockInterface {
 }
 
 #[async_trait]
-impl BulwarkInterface for MockInterface {
-    async fn get_permission_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
+impl GarrisonInterface for MockInterface {
+    async fn get_permission_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
         Ok(self.permissions.clone())
     }
-    async fn get_role_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
+    async fn get_role_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
         Ok(self.roles.clone())
     }
 }
 
 // ============================================================================
-// 辅助函数：初始化全局 BulwarkManager
+// 辅助函数：初始化全局 GarrisonManager
 // ============================================================================
 
-/// 初始化全局 BulwarkManager，返回 MockDao 引用（用于验证 DAO 内部状态）。
+/// 初始化全局 GarrisonManager，返回 MockDao 引用（用于验证 DAO 内部状态）。
 ///
-/// 注意：`BulwarkManager::init` 是覆盖式更新（line 199 注释），允许重复 init，
+/// 注意：`GarrisonManager::init` 是覆盖式更新（line 199 注释），允许重复 init，
 /// 因此 integration tests 不需要 `reset_for_test()`（该函数仅 `#[cfg(test)]` 可见）。
 fn init_manager(permissions: Vec<String>, roles: Vec<String>) -> Arc<MockDao> {
     let dao = Arc::new(MockDao::new());
-    let mut config = BulwarkConfig::default_config();
+    let mut config = GarrisonConfig::default_config();
     config.timeout = 3600;
     config.active_timeout = -1;
     config.throw_on_not_login = true;
-    let interface: Arc<dyn BulwarkInterface> = Arc::new(MockInterface { permissions, roles });
-    BulwarkManager::init(
-        dao.clone() as Arc<dyn BulwarkDao>,
+    let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface { permissions, roles });
+    GarrisonManager::init(
+        dao.clone() as Arc<dyn GarrisonDao>,
         Arc::new(config),
         interface,
     )
-    .expect("BulwarkManager::init 应成功");
+    .expect("GarrisonManager::init 应成功");
     dao
 }
 
-/// 初始化全局 BulwarkManager 并注入 FailingDao（用于 BW-AC-008 故障降级测试）。
+/// 初始化全局 GarrisonManager 并注入 FailingDao（用于 BW-AC-008 故障降级测试）。
 fn init_manager_failing() {
-    let dao: Arc<dyn BulwarkDao> = Arc::new(FailingDao);
-    let mut config = BulwarkConfig::default_config();
+    let dao: Arc<dyn GarrisonDao> = Arc::new(FailingDao);
+    let mut config = GarrisonConfig::default_config();
     config.timeout = 3600;
     config.active_timeout = -1;
-    let interface: Arc<dyn BulwarkInterface> = Arc::new(MockInterface {
+    let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface {
         permissions: vec![],
         roles: vec![],
     });
-    BulwarkManager::init(dao, Arc::new(config), interface).expect("BulwarkManager::init 应成功");
+    GarrisonManager::init(dao, Arc::new(config), interface).expect("GarrisonManager::init 应成功");
 }
 
 // ============================================================================
@@ -259,14 +259,14 @@ fn init_manager_failing() {
 ///
 /// OIDC 登录流程需网络调用 Keycloak/OIDC provider，集成测试不依赖外部服务。
 /// 本测试验证 OIDC 登录的核心产出——会话创建（`account:session:{login_id}` +
-/// `token:session:{token}`），该逻辑由 `BulwarkSession::create` 实现，
+/// `token:session:{token}`），该逻辑由 `GarrisonSession::create` 实现，
 /// 所有登录方式（密码/OIDC/SSO）共享此路径。
 ///
 /// # Gherkin
 ///
 /// ```text
 /// Given: 用户未登录（全局管理器重置）
-/// When: 用户点击 OIDC 登录并完成认证（用 BulwarkUtil::login 模拟登录完成后的会话创建）
+/// When: 用户点击 OIDC 登录并完成认证（用 GarrisonUtil::login 模拟登录完成后的会话创建）
 /// Then:
 ///   - 系统创建新账号（Account-Session 存在）
 ///   - 返回有效 Access Token（Token-Session 存在）
@@ -278,7 +278,7 @@ async fn bw_ac_001_oidc_login_creates_account_and_token() {
     let dao = init_manager(vec![], vec![]);
 
     // When: 用户完成 OIDC 登录
-    let token = BulwarkUtil::login_simple("oidc-user-001")
+    let token = GarrisonUtil::login_simple("oidc-user-001")
         .await
         .expect("login 应成功");
     assert!(!token.is_empty(), "登录应返回非空 token");
@@ -314,7 +314,7 @@ async fn bw_ac_001_oidc_login_creates_account_and_token() {
 ///
 /// # 规则7 冲突
 ///
-/// spec 期望 TTL 续期 30min（1800 秒），但 `BulwarkSession::touch` 重置 TTL 为
+/// spec 期望 TTL 续期 30min（1800 秒），但 `GarrisonSession::touch` 重置 TTL 为
 /// `config.timeout`（默认 2592000 秒）。30min 续期策略需业务方在 config 中设置
 /// `timeout=1800` 或自定义 touch 逻辑。本测试验证 touch 操作重置 TTL 的行为
 /// （不验证具体 30min 值）。
@@ -331,8 +331,8 @@ async fn bw_ac_001_oidc_login_creates_account_and_token() {
 #[tokio::test]
 #[serial]
 async fn bw_ac_002_protected_api_renews_token_session_ttl() {
-    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
-    let session = BulwarkSession::new(dao.clone(), 3600, 86400);
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+    let session = GarrisonSession::new(dao.clone(), 3600, 86400);
 
     // Given: 用户已登录
     session
@@ -399,8 +399,8 @@ async fn bw_ac_002_protected_api_renews_token_session_ttl() {
 #[tokio::test]
 #[serial]
 async fn bw_ac_003_concurrent_login_kicks_earliest_session() {
-    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
-    let session = BulwarkSession::new(dao.clone(), 3600, 86400);
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+    let session = GarrisonSession::new(dao.clone(), 3600, 86400);
 
     // Given: 用户登录设备 A 和设备 B
     session
@@ -467,21 +467,21 @@ async fn bw_ac_003_concurrent_login_kicks_earliest_session() {
 /// Given: 用户拥有 "user" 角色但无 "admin" 角色
 /// When: 用户访问 #[check_role("admin")] 标注的接口
 /// Then:
-///   - 抛出 NotRoleException（对应 BulwarkError::NotRole）
+///   - 抛出 NotRoleException（对应 GarrisonError::NotRole）
 ///   - HTTP status = 403
 /// ```
 #[tokio::test]
 #[serial]
 async fn bw_ac_004_role_check_returns_403() {
     let _dao = init_manager(vec![], vec!["user".to_string()]);
-    let token = BulwarkUtil::login_simple("user-004")
+    let token = GarrisonUtil::login_simple("user-004")
         .await
         .expect("login 应成功");
 
-    let result = with_current_token(token, async { BulwarkUtil::check_role("admin").await }).await;
+    let result = with_current_token(token, async { GarrisonUtil::check_role("admin").await }).await;
 
     assert!(
-        matches!(result, Err(BulwarkError::NotRole(_))),
+        matches!(result, Err(GarrisonError::NotRole(_))),
         "期望 NotRole 错误，实际: {:?}",
         result
     );
@@ -504,7 +504,7 @@ async fn bw_ac_004_role_check_returns_403() {
 /// Given: 用户拥有 "order:read" 权限但无 "order:write"
 /// When: 用户访问 #[check_permission("order:write")] 标注的接口
 /// Then:
-///   - 抛出 NotPermissionException（对应 BulwarkError::NotPermission）
+///   - 抛出 NotPermissionException（对应 GarrisonError::NotPermission）
 ///   - HTTP status = 403
 /// ```
 #[tokio::test]
@@ -512,17 +512,17 @@ async fn bw_ac_004_role_check_returns_403() {
 async fn bw_ac_005_permission_check_returns_403() {
     with_default_tenant(async {
         let _dao = init_manager(vec!["order:read".to_string()], vec![]);
-        let token = BulwarkUtil::login_simple("user-005")
+        let token = GarrisonUtil::login_simple("user-005")
             .await
             .expect("login 应成功");
 
         let result = with_current_token(token, async {
-            BulwarkUtil::check_permission("order:write").await
+            GarrisonUtil::check_permission("order:write").await
         })
         .await;
 
         assert!(
-            matches!(result, Err(BulwarkError::NotPermission(_))),
+            matches!(result, Err(GarrisonError::NotPermission(_))),
             "期望 NotPermission 错误，实际: {:?}",
             result
         );
@@ -562,13 +562,13 @@ async fn bw_ac_006_oxcache_memory_backend_works() {
         );
 
         // When: 执行登录 → 鉴权 → 登出完整流程
-        let token = BulwarkUtil::login_simple("user-006")
+        let token = GarrisonUtil::login_simple("user-006")
             .await
             .expect("login 应成功");
 
         // 验证已登录
         let check_result =
-            with_current_token(token.clone(), async { BulwarkUtil::check_login().await }).await;
+            with_current_token(token.clone(), async { GarrisonUtil::check_login().await }).await;
         assert!(
             check_result.unwrap_or(false),
             "check_login 应返回 true（已登录）"
@@ -576,7 +576,7 @@ async fn bw_ac_006_oxcache_memory_backend_works() {
 
         // 验证权限检查（持有 bench:read）
         let has_perm = with_current_token(token.clone(), async {
-            BulwarkUtil::has_permission("bench:read").await
+            GarrisonUtil::has_permission("bench:read").await
         })
         .await
         .expect("has_permission 应成功");
@@ -584,14 +584,14 @@ async fn bw_ac_006_oxcache_memory_backend_works() {
 
         // 验证角色检查（持有 bench-user）
         let has_role = with_current_token(token.clone(), async {
-            BulwarkUtil::has_role("bench-user").await
+            GarrisonUtil::has_role("bench-user").await
         })
         .await
         .expect("has_role 应成功");
         assert!(has_role, "用户应持有 bench-user 角色");
 
         // 登出
-        with_current_token(token, async { BulwarkUtil::logout().await })
+        with_current_token(token, async { GarrisonUtil::logout().await })
             .await
             .expect("logout 应成功");
     })
@@ -737,7 +737,7 @@ async fn bw_ac_007_dbnexus_sqlite_backend_works() {
 /// Given: oxcache Redis Cluster 后端故障（mock DAO 返回 Err）
 /// When: 用户尝试登录
 /// Then:
-///   - DAO 错误显性传播（login 返回 Err(BulwarkError::Dao)）
+///   - DAO 错误显性传播（login 返回 Err(GarrisonError::Dao)）
 ///   - 错误不被吞掉或隐藏在默认值背后
 ///   - 触发告警（tracing::warn 日志，由 session.create 内部记录）
 /// ```
@@ -747,13 +747,13 @@ async fn bw_ac_008_oxcache_failure_degrades_to_jwt_stateless() {
     init_manager_failing();
 
     // When: 用户尝试登录（FailingDao 的 set 返回 Err）
-    let result = BulwarkUtil::login_simple("user-008").await;
+    let result = GarrisonUtil::login_simple("user-008").await;
 
     // Then: DAO 错误显性传播（规则12）
     assert!(result.is_err(), "DAO 故障时 login 应返回错误（不吞掉）");
     let err = result.unwrap_err();
     assert!(
-        matches!(err, BulwarkError::Dao(_)),
+        matches!(err, GarrisonError::Dao(_)),
         "期望 Dao 错误，实际: {:?}",
         err
     );
@@ -771,8 +771,8 @@ async fn bw_ac_008_oxcache_failure_degrades_to_jwt_stateless() {
 ///
 /// # 规则7 冲突
 ///
-/// 1. spec 期望 `BulwarkError::NotLogin`，但实际 `check_login` 在 token session
-///    不存在时返回 `BulwarkError::Session("未登录")`（HTTP 500 而非 401）。
+/// 1. spec 期望 `GarrisonError::NotLogin`，但实际 `check_login` 在 token session
+///    不存在时返回 `GarrisonError::Session("未登录")`（HTTP 500 而非 401）。
 ///    本测试接受 `Session` 或 `NotLogin` 错误。
 /// 2. spec 期望 "Token jti 在 oxcache 黑名单中（key 格式 token:blacklist:{jti}）"，
 ///    但 `logout()` 仅删除 Token-Session，不写入 jti 黑名单。
@@ -794,17 +794,17 @@ async fn bw_ac_009_logout_invalidates_token() {
     let dao = init_manager(vec![], vec![]);
 
     // Given: 用户登录
-    let token = BulwarkUtil::login_simple("user-009")
+    let token = GarrisonUtil::login_simple("user-009")
         .await
         .expect("login 应成功");
 
     // 验证已登录
     let logged_in =
-        with_current_token(token.clone(), async { BulwarkUtil::check_login().await }).await;
+        with_current_token(token.clone(), async { GarrisonUtil::check_login().await }).await;
     assert!(logged_in.unwrap_or(false), "logout 前应已登录");
 
     // When: 用户主动 logout
-    with_current_token(token.clone(), async { BulwarkUtil::logout().await })
+    with_current_token(token.clone(), async { GarrisonUtil::logout().await })
         .await
         .expect("logout 应成功");
 
@@ -814,7 +814,7 @@ async fn bw_ac_009_logout_invalidates_token() {
     assert!(token_session.is_none(), "logout 后 Token-Session 应已删除");
 
     // Then: check_login 返回错误（token 失效）
-    let check_result = with_current_token(token, async { BulwarkUtil::check_login().await }).await;
+    let check_result = with_current_token(token, async { GarrisonUtil::check_login().await }).await;
     assert!(
         check_result.is_err(),
         "logout 后 check_login 应返回错误（token 已失效）"
@@ -830,8 +830,8 @@ async fn bw_ac_009_logout_invalidates_token() {
 ///
 /// # 规则7 冲突
 ///
-/// spec 期望 `BulwarkError::DisableService`，但 `UserLockoutStrategy::check()`
-/// 返回 `BulwarkError::FirewallBlocked`。`DisableService` 需业务代码在捕获
+/// spec 期望 `GarrisonError::DisableService`，但 `UserLockoutStrategy::check()`
+/// 返回 `GarrisonError::FirewallBlocked`。`DisableService` 需业务代码在捕获
 /// `FirewallBlocked` 后手动构造（通过 `MfaLogic::disable_service`）。
 /// 本测试验证 LockoutState（5 次失败后锁定 30min）+ DisableService 错误构造。
 ///
@@ -849,9 +849,9 @@ async fn bw_ac_009_logout_invalidates_token() {
 #[serial]
 #[cfg(feature = "account-lockout")]
 async fn bw_ac_010_login_failure_locks_account() {
-    use bulwark::account::lockout::{UserLockoutConfig, UserLockoutStrategy, WaitStrategy};
+    use garrison::account::lockout::{UserLockoutConfig, UserLockoutStrategy, WaitStrategy};
 
-    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
 
     // 配置：5 次失败触发锁定，每次临时锁定 30min（Linear 策略 base=1800）
     let config = UserLockoutConfig {
@@ -879,7 +879,7 @@ async fn bw_ac_010_login_failure_locks_account() {
         .expect("DAO get 应成功")
         .expect("LockoutState 应存在");
 
-    let state: bulwark::account::lockout::LockoutState =
+    let state: garrison::account::lockout::LockoutState =
         serde_json::from_str(&lockout_json).expect("反序列化 LockoutState 应成功");
 
     assert_eq!(state.failure_count, 5, "失败次数应为 5");
@@ -902,14 +902,14 @@ async fn bw_ac_010_login_failure_locks_account() {
 
     // Then: 构造 DisableService 错误（业务代码在捕获 FirewallBlocked 后调用）
     let until = chrono::Utc::now() + chrono::Duration::minutes(30);
-    let disable_err = BulwarkError::DisableService {
+    let disable_err = GarrisonError::DisableService {
         service: "default".to_string(),
         until: Some(until),
     };
 
     // 验证错误变体与字段
     match &disable_err {
-        BulwarkError::DisableService { service, until } => {
+        GarrisonError::DisableService { service, until } => {
             assert_eq!(service, "default");
             assert!(until.is_some(), "until 应为 Some");
         },

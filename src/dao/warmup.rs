@@ -7,10 +7,10 @@
 //! 减少冷启动延迟。
 
 use crate::constants::DaoKeyPrefix;
-use crate::error::BulwarkResult;
+use crate::error::GarrisonResult;
 use std::sync::Arc;
 
-use crate::dao::BulwarkDao;
+use crate::dao::GarrisonDao;
 
 /// 预热统计。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,12 +26,12 @@ pub struct WarmupStats {
 /// 从 DAO 扫描 `role:*` 和 `tenant:*` 键，逐个 `get()` 触发缓存填充，
 /// 返回加载统计。预热是可选行为，由调用方显式调用 `warmup()`。
 pub struct CacheWarmupService {
-    dao: Arc<dyn BulwarkDao>,
+    dao: Arc<dyn GarrisonDao>,
 }
 
 impl CacheWarmupService {
     /// 创建预热服务实例。
-    pub fn new(dao: Arc<dyn BulwarkDao>) -> Self {
+    pub fn new(dao: Arc<dyn GarrisonDao>) -> Self {
         Self { dao }
     }
 
@@ -41,14 +41,14 @@ impl CacheWarmupService {
     /// 返回加载统计。空数据库返回零统计，不报错。
     ///
     /// 当 DAO 后端不支持 `keys()`（返回 `NotImplemented`，如生产环境
-    /// `BulwarkDaoOxcache`）时，记录 `warn` 日志并返回零统计，不传播错误。
-    pub async fn warmup(&self) -> BulwarkResult<WarmupStats> {
+    /// `GarrisonDaoOxcache`）时，记录 `warn` 日志并返回零统计，不传播错误。
+    pub async fn warmup(&self) -> GarrisonResult<WarmupStats> {
         let role_pattern = format!("{}*", DaoKeyPrefix::Role.as_str());
         let tenant_pattern = format!("{}*", DaoKeyPrefix::Tenant.as_str());
 
         let role_keys = match self.dao.keys(&role_pattern).await {
             Ok(keys) => keys,
-            Err(crate::error::BulwarkError::NotImplemented(_)) => {
+            Err(crate::error::GarrisonError::NotImplemented(_)) => {
                 tracing::warn!("DAO backend does not support keys(), cache warmup skipped");
                 return Ok(WarmupStats {
                     roles_loaded: 0,
@@ -59,7 +59,7 @@ impl CacheWarmupService {
         };
         let tenant_keys = match self.dao.keys(&tenant_pattern).await {
             Ok(keys) => keys,
-            Err(crate::error::BulwarkError::NotImplemented(_)) => {
+            Err(crate::error::GarrisonError::NotImplemented(_)) => {
                 tracing::warn!("DAO backend does not support keys(), cache warmup skipped");
                 return Ok(WarmupStats {
                     roles_loaded: 0,
@@ -176,28 +176,28 @@ mod tests {
     }
 
     #[async_trait::async_trait]
-    impl BulwarkDao for ExpiredKeyMockDao {
-        async fn get(&self, _key: &str) -> BulwarkResult<Option<String>> {
+    impl GarrisonDao for ExpiredKeyMockDao {
+        async fn get(&self, _key: &str) -> GarrisonResult<Option<String>> {
             Ok(None)
         }
 
-        async fn set(&self, _key: &str, _value: &str, _ttl_seconds: u64) -> BulwarkResult<()> {
+        async fn set(&self, _key: &str, _value: &str, _ttl_seconds: u64) -> GarrisonResult<()> {
             Ok(())
         }
 
-        async fn update(&self, _key: &str, _value: &str) -> BulwarkResult<()> {
+        async fn update(&self, _key: &str, _value: &str) -> GarrisonResult<()> {
             Ok(())
         }
 
-        async fn expire(&self, _key: &str, _seconds: u64) -> BulwarkResult<()> {
+        async fn expire(&self, _key: &str, _seconds: u64) -> GarrisonResult<()> {
             Ok(())
         }
 
-        async fn delete(&self, _key: &str) -> BulwarkResult<()> {
+        async fn delete(&self, _key: &str) -> GarrisonResult<()> {
             Ok(())
         }
 
-        async fn keys(&self, pattern: &str) -> BulwarkResult<Vec<String>> {
+        async fn keys(&self, pattern: &str) -> GarrisonResult<Vec<String>> {
             let prefix = pattern.trim_end_matches('*');
             Ok(self
                 .keys
@@ -208,7 +208,7 @@ mod tests {
         }
     }
 
-    /// 模拟不支持 keys() 的 DAO（如生产环境 BulwarkDaoOxcache）。
+    /// 模拟不支持 keys() 的 DAO（如生产环境 GarrisonDaoOxcache）。
     ///
     /// `keys()` 返回 `NotImplemented`，模拟 oxcache 后端无法扫描 key 的场景。
     /// warmup 应捕获此错误并返回零统计，而非传播错误。
@@ -221,29 +221,29 @@ mod tests {
     }
 
     #[async_trait::async_trait]
-    impl BulwarkDao for NoKeysDao {
-        async fn get(&self, _key: &str) -> BulwarkResult<Option<String>> {
+    impl GarrisonDao for NoKeysDao {
+        async fn get(&self, _key: &str) -> GarrisonResult<Option<String>> {
             Ok(None)
         }
 
-        async fn set(&self, _key: &str, _value: &str, _ttl_seconds: u64) -> BulwarkResult<()> {
+        async fn set(&self, _key: &str, _value: &str, _ttl_seconds: u64) -> GarrisonResult<()> {
             Ok(())
         }
 
-        async fn update(&self, _key: &str, _value: &str) -> BulwarkResult<()> {
+        async fn update(&self, _key: &str, _value: &str) -> GarrisonResult<()> {
             Ok(())
         }
 
-        async fn expire(&self, _key: &str, _seconds: u64) -> BulwarkResult<()> {
+        async fn expire(&self, _key: &str, _seconds: u64) -> GarrisonResult<()> {
             Ok(())
         }
 
-        async fn delete(&self, _key: &str) -> BulwarkResult<()> {
+        async fn delete(&self, _key: &str) -> GarrisonResult<()> {
             Ok(())
         }
 
-        async fn keys(&self, _pattern: &str) -> BulwarkResult<Vec<String>> {
-            Err(crate::error::BulwarkError::NotImplemented(
+        async fn keys(&self, _pattern: &str) -> GarrisonResult<Vec<String>> {
+            Err(crate::error::GarrisonError::NotImplemented(
                 "keys 未实现：NoKeysDao 后端不支持 key scan".to_string(),
             ))
         }
@@ -251,7 +251,7 @@ mod tests {
 
     /// warmup 在 DAO 不支持 keys() 时应返回零统计而非报错。
     ///
-    /// 模拟生产环境 BulwarkDaoOxcache（keys 返回 NotImplemented），
+    /// 模拟生产环境 GarrisonDaoOxcache（keys 返回 NotImplemented），
     /// warmup 应 warn 并返回 Ok(WarmupStats { 0, 0 })。
     #[tokio::test]
     async fn warmup_returns_zero_stats_when_keys_not_implemented() {
@@ -288,29 +288,29 @@ mod tests {
     }
 
     #[async_trait::async_trait]
-    impl BulwarkDao for ErrorKeysDao {
-        async fn get(&self, _key: &str) -> BulwarkResult<Option<String>> {
+    impl GarrisonDao for ErrorKeysDao {
+        async fn get(&self, _key: &str) -> GarrisonResult<Option<String>> {
             Ok(None)
         }
 
-        async fn set(&self, _key: &str, _value: &str, _ttl_seconds: u64) -> BulwarkResult<()> {
+        async fn set(&self, _key: &str, _value: &str, _ttl_seconds: u64) -> GarrisonResult<()> {
             Ok(())
         }
 
-        async fn update(&self, _key: &str, _value: &str) -> BulwarkResult<()> {
+        async fn update(&self, _key: &str, _value: &str) -> GarrisonResult<()> {
             Ok(())
         }
 
-        async fn expire(&self, _key: &str, _seconds: u64) -> BulwarkResult<()> {
+        async fn expire(&self, _key: &str, _seconds: u64) -> GarrisonResult<()> {
             Ok(())
         }
 
-        async fn delete(&self, _key: &str) -> BulwarkResult<()> {
+        async fn delete(&self, _key: &str) -> GarrisonResult<()> {
             Ok(())
         }
 
-        async fn keys(&self, _pattern: &str) -> BulwarkResult<Vec<String>> {
-            Err(crate::error::BulwarkError::Dao(
+        async fn keys(&self, _pattern: &str) -> GarrisonResult<Vec<String>> {
+            Err(crate::error::GarrisonError::Dao(
                 "模拟 keys() 数据库连接失败".to_string(),
             ))
         }
@@ -327,7 +327,7 @@ mod tests {
 
         assert!(result.is_err(), "非 NotImplemented 错误应传播");
         match result {
-            Err(crate::error::BulwarkError::Dao(msg)) => {
+            Err(crate::error::GarrisonError::Dao(msg)) => {
                 assert!(
                     msg.contains("模拟 keys() 数据库连接失败"),
                     "错误消息应包含原始错误描述，实际: {}",
@@ -354,30 +354,30 @@ mod tests {
     }
 
     #[async_trait::async_trait]
-    impl BulwarkDao for ErrorGetDao {
-        async fn get(&self, _key: &str) -> BulwarkResult<Option<String>> {
-            Err(crate::error::BulwarkError::Dao(
+    impl GarrisonDao for ErrorGetDao {
+        async fn get(&self, _key: &str) -> GarrisonResult<Option<String>> {
+            Err(crate::error::GarrisonError::Dao(
                 "模拟 get() 读取失败".to_string(),
             ))
         }
 
-        async fn set(&self, _key: &str, _value: &str, _ttl_seconds: u64) -> BulwarkResult<()> {
+        async fn set(&self, _key: &str, _value: &str, _ttl_seconds: u64) -> GarrisonResult<()> {
             Ok(())
         }
 
-        async fn update(&self, _key: &str, _value: &str) -> BulwarkResult<()> {
+        async fn update(&self, _key: &str, _value: &str) -> GarrisonResult<()> {
             Ok(())
         }
 
-        async fn expire(&self, _key: &str, _seconds: u64) -> BulwarkResult<()> {
+        async fn expire(&self, _key: &str, _seconds: u64) -> GarrisonResult<()> {
             Ok(())
         }
 
-        async fn delete(&self, _key: &str) -> BulwarkResult<()> {
+        async fn delete(&self, _key: &str) -> GarrisonResult<()> {
             Ok(())
         }
 
-        async fn keys(&self, pattern: &str) -> BulwarkResult<Vec<String>> {
+        async fn keys(&self, pattern: &str) -> GarrisonResult<Vec<String>> {
             let prefix = pattern.trim_end_matches('*');
             Ok(self
                 .keys
@@ -400,7 +400,7 @@ mod tests {
 
         assert!(result.is_err(), "get() 错误应传播");
         match result {
-            Err(crate::error::BulwarkError::Dao(msg)) => {
+            Err(crate::error::GarrisonError::Dao(msg)) => {
                 assert!(
                     msg.contains("模拟 get() 读取失败"),
                     "错误消息应包含 get() 错误描述，实际: {}",
@@ -426,8 +426,8 @@ mod tests {
     }
 
     #[async_trait::async_trait]
-    impl BulwarkDao for PartialNotImplDao {
-        async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
+    impl GarrisonDao for PartialNotImplDao {
+        async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
             // 返回 Some 模拟 key 存在
             if self.role_keys.contains(&key.to_string()) {
                 Ok(Some("value".to_string()))
@@ -436,23 +436,23 @@ mod tests {
             }
         }
 
-        async fn set(&self, _key: &str, _value: &str, _ttl_seconds: u64) -> BulwarkResult<()> {
+        async fn set(&self, _key: &str, _value: &str, _ttl_seconds: u64) -> GarrisonResult<()> {
             Ok(())
         }
 
-        async fn update(&self, _key: &str, _value: &str) -> BulwarkResult<()> {
+        async fn update(&self, _key: &str, _value: &str) -> GarrisonResult<()> {
             Ok(())
         }
 
-        async fn expire(&self, _key: &str, _seconds: u64) -> BulwarkResult<()> {
+        async fn expire(&self, _key: &str, _seconds: u64) -> GarrisonResult<()> {
             Ok(())
         }
 
-        async fn delete(&self, _key: &str) -> BulwarkResult<()> {
+        async fn delete(&self, _key: &str) -> GarrisonResult<()> {
             Ok(())
         }
 
-        async fn keys(&self, pattern: &str) -> BulwarkResult<Vec<String>> {
+        async fn keys(&self, pattern: &str) -> GarrisonResult<Vec<String>> {
             // role:* pattern 返回成功，tenant:* pattern 返回 NotImplemented
             if pattern.starts_with("role:") {
                 Ok(self
@@ -462,7 +462,7 @@ mod tests {
                     .cloned()
                     .collect())
             } else {
-                Err(crate::error::BulwarkError::NotImplemented(
+                Err(crate::error::GarrisonError::NotImplemented(
                     "tenant keys 不支持".to_string(),
                 ))
             }
@@ -628,8 +628,8 @@ mod tests {
     }
 
     #[async_trait::async_trait]
-    impl BulwarkDao for TenantErrorDao {
-        async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
+    impl GarrisonDao for TenantErrorDao {
+        async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
             if self.role_keys.contains(&key.to_string()) {
                 Ok(Some("value".to_string()))
             } else {
@@ -637,23 +637,23 @@ mod tests {
             }
         }
 
-        async fn set(&self, _key: &str, _value: &str, _ttl_seconds: u64) -> BulwarkResult<()> {
+        async fn set(&self, _key: &str, _value: &str, _ttl_seconds: u64) -> GarrisonResult<()> {
             Ok(())
         }
 
-        async fn update(&self, _key: &str, _value: &str) -> BulwarkResult<()> {
+        async fn update(&self, _key: &str, _value: &str) -> GarrisonResult<()> {
             Ok(())
         }
 
-        async fn expire(&self, _key: &str, _seconds: u64) -> BulwarkResult<()> {
+        async fn expire(&self, _key: &str, _seconds: u64) -> GarrisonResult<()> {
             Ok(())
         }
 
-        async fn delete(&self, _key: &str) -> BulwarkResult<()> {
+        async fn delete(&self, _key: &str) -> GarrisonResult<()> {
             Ok(())
         }
 
-        async fn keys(&self, pattern: &str) -> BulwarkResult<Vec<String>> {
+        async fn keys(&self, pattern: &str) -> GarrisonResult<Vec<String>> {
             if pattern.starts_with("role:") {
                 Ok(self
                     .role_keys
@@ -663,7 +663,7 @@ mod tests {
                     .collect())
             } else {
                 // tenant keys 返回非 NotImplemented 的 Dao 错误
-                Err(crate::error::BulwarkError::Dao(
+                Err(crate::error::GarrisonError::Dao(
                     "tenant keys() 数据库连接断开".to_string(),
                 ))
             }
@@ -685,7 +685,7 @@ mod tests {
 
         assert!(result.is_err(), "tenant keys 非 NotImplemented 错误应传播");
         match result {
-            Err(crate::error::BulwarkError::Dao(msg)) => {
+            Err(crate::error::GarrisonError::Dao(msg)) => {
                 assert!(
                     msg.contains("tenant keys() 数据库连接断开"),
                     "错误消息应包含 tenant keys 错误描述，实际: {}",

@@ -6,8 +6,8 @@
 //! # 架构
 //!
 //! - **L1（oxcache 内存缓存）**：进程内缓存（oxcache 0.3，sync_mode），per-entry TTL（默认 30s），命中时不查询 L2/L3
-//! - **L2（DAO 持久化缓存）**：通过 [`BulwarkDao`] set/get，TTL 较长（默认 300s），命中时回填 L1
-//! - **L3（interface 回调）**：通过 [`BulwarkPermissionStrategy`] 的 `get_permission_list` /
+//! - **L2（DAO 持久化缓存）**：通过 [`GarrisonDao`] set/get，TTL 较长（默认 300s），命中时回填 L1
+//! - **L3（interface 回调）**：通过 [`GarrisonPermissionStrategy`] 的 `get_permission_list` /
 //!   `get_role_list` / `get_user_info` 获取原始数据，命中时回填 L1 + L2
 //!
 //! # 缓存键
@@ -21,13 +21,13 @@
 //! [`UserCacheService::invalidate`] 同时清除 L1 和 L2 中指定 `login_id` 的三类缓存（权限/角色/用户），
 //! 用于登出、权限变更等场景。
 //!
-//! [`BulwarkDao`]: crate::dao::BulwarkDao
-//! [`BulwarkPermissionStrategy`]: crate::strategy::BulwarkPermissionStrategy
+//! [`GarrisonDao`]: crate::dao::GarrisonDao
+//! [`GarrisonPermissionStrategy`]: crate::strategy::GarrisonPermissionStrategy
 
 use crate::constants::DaoKeyPrefix;
-use crate::dao::BulwarkDao;
-use crate::error::{BulwarkError, BulwarkResult};
-use crate::strategy::BulwarkPermissionStrategy;
+use crate::dao::GarrisonDao;
+use crate::error::{GarrisonError, GarrisonResult};
+use crate::strategy::GarrisonPermissionStrategy;
 use dashmap::DashMap;
 use oxcache::Cache;
 use std::sync::Arc;
@@ -41,10 +41,10 @@ use tokio::sync::RwLock;
 pub struct UserCacheService {
     /// L1 内存缓存（oxcache::Cache，sync_mode，per-entry TTL 由 set_with_ttl_sync 设置）
     l1: Cache<String, String>,
-    /// L2 持久化缓存（通过 BulwarkDao 抽象，支持 oxcache / dbnexus 等后端）
-    dao: Arc<dyn BulwarkDao>,
-    /// L3 数据源（通过 BulwarkPermissionStrategy 回调获取原始数据）
-    interface: Arc<dyn BulwarkPermissionStrategy>,
+    /// L2 持久化缓存（通过 GarrisonDao 抽象，支持 oxcache / dbnexus 等后端）
+    dao: Arc<dyn GarrisonDao>,
+    /// L3 数据源（通过 GarrisonPermissionStrategy 回调获取原始数据）
+    interface: Arc<dyn GarrisonPermissionStrategy>,
     /// L1 缓存 TTL（秒），用于诊断与日志 + set_with_ttl_sync 的 per-entry TTL
     l1_ttl_secs: u64,
     /// L2 缓存 TTL（秒），写入 DAO 时使用
@@ -61,8 +61,8 @@ impl UserCacheService {
     /// 创建三层缓存服务实例。
     ///
     /// # 参数
-    /// - `dao`: L2 持久化缓存后端（`Arc<dyn BulwarkDao>`）。
-    /// - `interface`: L3 数据源（`Arc<dyn BulwarkPermissionStrategy>`）。
+    /// - `dao`: L2 持久化缓存后端（`Arc<dyn GarrisonDao>`）。
+    /// - `interface`: L3 数据源（`Arc<dyn GarrisonPermissionStrategy>`）。
     /// - `l1_ttl_secs`: L1 内存缓存 TTL（秒，必须 > 0），用于 `set_with_ttl_sync` 的 per-entry TTL。
     /// - `l2_ttl_secs`: L2 DAO 缓存 TTL（秒，必须 > 0）。
     /// - `l1_capacity`: L1 缓存最大容量（oxcache 0.3 使用默认 capacity，此参数保留向后兼容）。
@@ -71,14 +71,14 @@ impl UserCacheService {
     /// 已初始化的 `UserCacheService` 实例。
     ///
     /// # 错误
-    /// - `BulwarkError::Internal`：oxcache L1 初始化失败。
+    /// - `GarrisonError::Internal`：oxcache L1 初始化失败。
     pub fn new(
-        dao: Arc<dyn BulwarkDao>,
-        interface: Arc<dyn BulwarkPermissionStrategy>,
+        dao: Arc<dyn GarrisonDao>,
+        interface: Arc<dyn GarrisonPermissionStrategy>,
         l1_ttl_secs: u64,
         l2_ttl_secs: u64,
         l1_capacity: u64,
-    ) -> BulwarkResult<Self> {
+    ) -> GarrisonResult<Self> {
         let _ = l1_capacity; // oxcache 0.3 Cache::new() 使用默认 capacity（10000）
         let l1 = Cache::new();
         Ok(Self {
@@ -125,10 +125,10 @@ impl UserCacheService {
     /// - `login_id`: 登录主体标识。
     ///
     /// # 错误
-    /// - L2 DAO 查询失败：透传 `BulwarkError`。
-    /// - L3 interface 回调失败：透传 `BulwarkError`。
-    /// - 缓存反序列化失败：`BulwarkError::Internal`。
-    pub async fn get_permissions(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+    /// - L2 DAO 查询失败：透传 `GarrisonError`。
+    /// - L3 interface 回调失败：透传 `GarrisonError`。
+    /// - 缓存反序列化失败：`GarrisonError::Internal`。
+    pub async fn get_permissions(&self, login_id: &str) -> GarrisonResult<Vec<String>> {
         let key = DaoKeyPrefix::PermissionCache.build_key(login_id);
 
         // L1 check（无锁快路径）
@@ -136,10 +136,10 @@ impl UserCacheService {
             .l1
             .get(&key)
             .await
-            .map_err(|e| BulwarkError::Internal(format!("cache-l1-get::{}", e)))?
+            .map_err(|e| GarrisonError::Internal(format!("cache-l1-get::{}", e)))?
         {
             let perms: Vec<String> = serde_json::from_str(&cached)
-                .map_err(|e| BulwarkError::Internal(format!("cache-l1-perm-deser::{}", e)))?;
+                .map_err(|e| GarrisonError::Internal(format!("cache-l1-perm-deser::{}", e)))?;
             return Ok(perms);
         }
 
@@ -152,10 +152,10 @@ impl UserCacheService {
             .l1
             .get(&key)
             .await
-            .map_err(|e| BulwarkError::Internal(format!("cache-l1-get::{}", e)))?
+            .map_err(|e| GarrisonError::Internal(format!("cache-l1-get::{}", e)))?
         {
             let perms: Vec<String> = serde_json::from_str(&cached)
-                .map_err(|e| BulwarkError::Internal(format!("cache-l1-perm-deser::{}", e)))?;
+                .map_err(|e| GarrisonError::Internal(format!("cache-l1-perm-deser::{}", e)))?;
             return Ok(perms);
         }
 
@@ -165,16 +165,16 @@ impl UserCacheService {
             self.l1
                 .set_with_ttl(&key, &cached, Some(Duration::from_secs(self.l1_ttl_secs)))
                 .await
-                .map_err(|e| BulwarkError::Internal(format!("cache-l1-set::{}", e)))?;
+                .map_err(|e| GarrisonError::Internal(format!("cache-l1-set::{}", e)))?;
             let perms: Vec<String> = serde_json::from_str(&cached)
-                .map_err(|e| BulwarkError::Internal(format!("cache-l2-perm-deser::{}", e)))?;
+                .map_err(|e| GarrisonError::Internal(format!("cache-l2-perm-deser::{}", e)))?;
             return Ok(perms);
         }
 
         // L3 query
         let perms = self.interface.get_permission_list(login_id).await?;
         let serialized = serde_json::to_string(&perms)
-            .map_err(|e| BulwarkError::Internal(format!("cache-perm-serialize::{}", e)))?;
+            .map_err(|e| GarrisonError::Internal(format!("cache-perm-serialize::{}", e)))?;
         // Backfill L1 + L2
         self.l1
             .set_with_ttl(
@@ -183,7 +183,7 @@ impl UserCacheService {
                 Some(Duration::from_secs(self.l1_ttl_secs)),
             )
             .await
-            .map_err(|e| BulwarkError::Internal(format!("cache-l1-set::{}", e)))?;
+            .map_err(|e| GarrisonError::Internal(format!("cache-l1-set::{}", e)))?;
         self.dao.set(&key, &serialized, self.l2_ttl_secs).await?;
 
         Ok(perms)
@@ -202,10 +202,10 @@ impl UserCacheService {
     /// - `login_id`: 登录主体标识。
     ///
     /// # 错误
-    /// - L2 DAO 查询失败：透传 `BulwarkError`。
-    /// - L3 interface 回调失败：透传 `BulwarkError`。
-    /// - 缓存反序列化失败：`BulwarkError::Internal`。
-    pub async fn get_roles(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+    /// - L2 DAO 查询失败：透传 `GarrisonError`。
+    /// - L3 interface 回调失败：透传 `GarrisonError`。
+    /// - 缓存反序列化失败：`GarrisonError::Internal`。
+    pub async fn get_roles(&self, login_id: &str) -> GarrisonResult<Vec<String>> {
         let key = DaoKeyPrefix::RoleCache.build_key(login_id);
 
         // L1 check（无锁快路径）
@@ -213,10 +213,10 @@ impl UserCacheService {
             .l1
             .get(&key)
             .await
-            .map_err(|e| BulwarkError::Internal(format!("cache-l1-get::{}", e)))?
+            .map_err(|e| GarrisonError::Internal(format!("cache-l1-get::{}", e)))?
         {
             let roles: Vec<String> = serde_json::from_str(&cached)
-                .map_err(|e| BulwarkError::Internal(format!("cache-l1-role-deser::{}", e)))?;
+                .map_err(|e| GarrisonError::Internal(format!("cache-l1-role-deser::{}", e)))?;
             return Ok(roles);
         }
 
@@ -229,10 +229,10 @@ impl UserCacheService {
             .l1
             .get(&key)
             .await
-            .map_err(|e| BulwarkError::Internal(format!("cache-l1-get::{}", e)))?
+            .map_err(|e| GarrisonError::Internal(format!("cache-l1-get::{}", e)))?
         {
             let roles: Vec<String> = serde_json::from_str(&cached)
-                .map_err(|e| BulwarkError::Internal(format!("cache-l1-role-deser::{}", e)))?;
+                .map_err(|e| GarrisonError::Internal(format!("cache-l1-role-deser::{}", e)))?;
             return Ok(roles);
         }
 
@@ -242,16 +242,16 @@ impl UserCacheService {
             self.l1
                 .set_with_ttl(&key, &cached, Some(Duration::from_secs(self.l1_ttl_secs)))
                 .await
-                .map_err(|e| BulwarkError::Internal(format!("cache-l1-set::{}", e)))?;
+                .map_err(|e| GarrisonError::Internal(format!("cache-l1-set::{}", e)))?;
             let roles: Vec<String> = serde_json::from_str(&cached)
-                .map_err(|e| BulwarkError::Internal(format!("cache-l2-role-deser::{}", e)))?;
+                .map_err(|e| GarrisonError::Internal(format!("cache-l2-role-deser::{}", e)))?;
             return Ok(roles);
         }
 
         // L3 query
         let roles = self.interface.get_role_list(login_id).await?;
         let serialized = serde_json::to_string(&roles)
-            .map_err(|e| BulwarkError::Internal(format!("cache-role-serialize::{}", e)))?;
+            .map_err(|e| GarrisonError::Internal(format!("cache-role-serialize::{}", e)))?;
         // Backfill L1 + L2
         self.l1
             .set_with_ttl(
@@ -260,7 +260,7 @@ impl UserCacheService {
                 Some(Duration::from_secs(self.l1_ttl_secs)),
             )
             .await
-            .map_err(|e| BulwarkError::Internal(format!("cache-l1-set::{}", e)))?;
+            .map_err(|e| GarrisonError::Internal(format!("cache-l1-set::{}", e)))?;
         self.dao.set(&key, &serialized, self.l2_ttl_secs).await?;
 
         Ok(roles)
@@ -283,9 +283,9 @@ impl UserCacheService {
     /// - `Ok(None)`: 用户不存在或 interface 未实现 `get_user_info`。
     ///
     /// # 错误
-    /// - L2 DAO 查询失败：透传 `BulwarkError`。
-    /// - L3 interface 回调失败：透传 `BulwarkError`。
-    pub async fn get_user(&self, login_id: &str) -> BulwarkResult<Option<String>> {
+    /// - L2 DAO 查询失败：透传 `GarrisonError`。
+    /// - L3 interface 回调失败：透传 `GarrisonError`。
+    pub async fn get_user(&self, login_id: &str) -> GarrisonResult<Option<String>> {
         let key = DaoKeyPrefix::UserCache.build_key(login_id);
 
         // L1 check（无锁快路径）
@@ -293,7 +293,7 @@ impl UserCacheService {
             .l1
             .get(&key)
             .await
-            .map_err(|e| BulwarkError::Internal(format!("cache-l1-get::{}", e)))?
+            .map_err(|e| GarrisonError::Internal(format!("cache-l1-get::{}", e)))?
         {
             return Ok(Some(cached));
         }
@@ -307,7 +307,7 @@ impl UserCacheService {
             .l1
             .get(&key)
             .await
-            .map_err(|e| BulwarkError::Internal(format!("cache-l1-get::{}", e)))?
+            .map_err(|e| GarrisonError::Internal(format!("cache-l1-get::{}", e)))?
         {
             return Ok(Some(cached));
         }
@@ -318,7 +318,7 @@ impl UserCacheService {
             self.l1
                 .set_with_ttl(&key, &cached, Some(Duration::from_secs(self.l1_ttl_secs)))
                 .await
-                .map_err(|e| BulwarkError::Internal(format!("cache-l1-set::{}", e)))?;
+                .map_err(|e| GarrisonError::Internal(format!("cache-l1-set::{}", e)))?;
             return Ok(Some(cached));
         }
 
@@ -329,7 +329,7 @@ impl UserCacheService {
             self.l1
                 .set_with_ttl(&key, info, Some(Duration::from_secs(self.l1_ttl_secs)))
                 .await
-                .map_err(|e| BulwarkError::Internal(format!("cache-l1-set::{}", e)))?;
+                .map_err(|e| GarrisonError::Internal(format!("cache-l1-set::{}", e)))?;
             self.dao.set(&key, info, self.l2_ttl_secs).await?;
         }
         Ok(user_info)
@@ -344,8 +344,8 @@ impl UserCacheService {
     /// - `login_id`: 登录主体标识。
     ///
     /// # 错误
-    /// - L2 DAO 删除失败：透传 `BulwarkError`。
-    pub async fn invalidate(&self, login_id: &str) -> BulwarkResult<()> {
+    /// - L2 DAO 删除失败：透传 `GarrisonError`。
+    pub async fn invalidate(&self, login_id: &str) -> GarrisonResult<()> {
         let perm_key = DaoKeyPrefix::PermissionCache.build_key(login_id);
         let role_key = DaoKeyPrefix::RoleCache.build_key(login_id);
         let user_key = DaoKeyPrefix::UserCache.build_key(login_id);
@@ -358,15 +358,15 @@ impl UserCacheService {
         self.l1
             .delete(&perm_key)
             .await
-            .map_err(|e| BulwarkError::Internal(format!("cache-l1-delete::{}", e)))?;
+            .map_err(|e| GarrisonError::Internal(format!("cache-l1-delete::{}", e)))?;
         self.l1
             .delete(&role_key)
             .await
-            .map_err(|e| BulwarkError::Internal(format!("cache-l1-delete::{}", e)))?;
+            .map_err(|e| GarrisonError::Internal(format!("cache-l1-delete::{}", e)))?;
         self.l1
             .delete(&user_key)
             .await
-            .map_err(|e| BulwarkError::Internal(format!("cache-l1-delete::{}", e)))?;
+            .map_err(|e| GarrisonError::Internal(format!("cache-l1-delete::{}", e)))?;
 
         Ok(())
     }
@@ -375,8 +375,8 @@ impl UserCacheService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dao::BulwarkDao;
-    use crate::error::BulwarkResult;
+    use crate::dao::GarrisonDao;
+    use crate::error::GarrisonResult;
     use async_trait::async_trait;
     use parking_lot::Mutex;
     use std::collections::HashMap;
@@ -475,40 +475,40 @@ mod tests {
     }
 
     #[async_trait]
-    impl BulwarkDao for CountingMockDao {
-        async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
+    impl GarrisonDao for CountingMockDao {
+        async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
             self.get_count.fetch_add(1, Ordering::SeqCst);
             self.get_keys.lock().push(key.to_string());
             if self.fail_get.load(Ordering::SeqCst) {
-                return Err(BulwarkError::Dao("injected get error".to_string()));
+                return Err(GarrisonError::Dao("injected get error".to_string()));
             }
             Ok(self.store.lock().get(key).cloned())
         }
 
-        async fn set(&self, key: &str, value: &str, _ttl_seconds: u64) -> BulwarkResult<()> {
+        async fn set(&self, key: &str, value: &str, _ttl_seconds: u64) -> GarrisonResult<()> {
             self.set_count.fetch_add(1, Ordering::SeqCst);
             self.set_keys.lock().push(key.to_string());
             if self.fail_set.load(Ordering::SeqCst) {
-                return Err(BulwarkError::Dao("injected set error".to_string()));
+                return Err(GarrisonError::Dao("injected set error".to_string()));
             }
             self.store.lock().insert(key.to_string(), value.to_string());
             Ok(())
         }
 
-        async fn update(&self, key: &str, value: &str) -> BulwarkResult<()> {
+        async fn update(&self, key: &str, value: &str) -> GarrisonResult<()> {
             self.store.lock().insert(key.to_string(), value.to_string());
             Ok(())
         }
 
-        async fn expire(&self, _key: &str, _seconds: u64) -> BulwarkResult<()> {
+        async fn expire(&self, _key: &str, _seconds: u64) -> GarrisonResult<()> {
             Ok(())
         }
 
-        async fn delete(&self, key: &str) -> BulwarkResult<()> {
+        async fn delete(&self, key: &str) -> GarrisonResult<()> {
             self.delete_count.fetch_add(1, Ordering::SeqCst);
             self.delete_keys.lock().push(key.to_string());
             if self.fail_delete.load(Ordering::SeqCst) {
-                return Err(BulwarkError::Dao("injected delete error".to_string()));
+                return Err(GarrisonError::Dao("injected delete error".to_string()));
             }
             self.store.lock().remove(key);
             Ok(())
@@ -516,7 +516,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------------
-    // Mock Interface：实现 BulwarkPermissionStrategy，记录调用次数
+    // Mock Interface：实现 GarrisonPermissionStrategy，记录调用次数
     // ------------------------------------------------------------------------
 
     /// 测试用 Mock Interface，记录 get_permission_list / get_role_list / get_user_info 调用次数。
@@ -594,11 +594,11 @@ mod tests {
     }
 
     #[async_trait]
-    impl BulwarkPermissionStrategy for CountingMockInterface {
-        async fn get_permission_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+    impl GarrisonPermissionStrategy for CountingMockInterface {
+        async fn get_permission_list(&self, login_id: &str) -> GarrisonResult<Vec<String>> {
             self.perm_count.fetch_add(1, Ordering::SeqCst);
             if self.fail_perm.load(Ordering::SeqCst) {
-                return Err(BulwarkError::Internal("injected perm error".to_string()));
+                return Err(GarrisonError::Internal("injected perm error".to_string()));
             }
             Ok(self
                 .permissions
@@ -608,10 +608,10 @@ mod tests {
                 .unwrap_or_default())
         }
 
-        async fn get_role_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+        async fn get_role_list(&self, login_id: &str) -> GarrisonResult<Vec<String>> {
             self.role_count.fetch_add(1, Ordering::SeqCst);
             if self.fail_role.load(Ordering::SeqCst) {
-                return Err(BulwarkError::Internal("injected role error".to_string()));
+                return Err(GarrisonError::Internal("injected role error".to_string()));
             }
             Ok(self.roles.lock().get(login_id).cloned().unwrap_or_default())
         }
@@ -620,26 +620,26 @@ mod tests {
             &self,
             _login_id: &str,
             _permission: &str,
-        ) -> BulwarkResult<bool> {
+        ) -> GarrisonResult<bool> {
             Ok(false)
         }
 
-        async fn check_role(&self, _login_id: &str, _role: &str) -> BulwarkResult<bool> {
+        async fn check_role(&self, _login_id: &str, _role: &str) -> GarrisonResult<bool> {
             Ok(false)
         }
 
-        async fn check_role_any(&self, _login_id: &str, _roles: &[&str]) -> BulwarkResult<bool> {
+        async fn check_role_any(&self, _login_id: &str, _roles: &[&str]) -> GarrisonResult<bool> {
             Ok(false)
         }
 
-        async fn check_role_all(&self, _login_id: &str, _roles: &[&str]) -> BulwarkResult<bool> {
+        async fn check_role_all(&self, _login_id: &str, _roles: &[&str]) -> GarrisonResult<bool> {
             Ok(false)
         }
 
-        async fn get_user_info(&self, login_id: &str) -> BulwarkResult<Option<String>> {
+        async fn get_user_info(&self, login_id: &str) -> GarrisonResult<Option<String>> {
             self.user_count.fetch_add(1, Ordering::SeqCst);
             if self.fail_user.load(Ordering::SeqCst) {
-                return Err(BulwarkError::Internal("injected user error".to_string()));
+                return Err(GarrisonError::Internal("injected user error".to_string()));
             }
             Ok(self.user_info.lock().get(login_id).cloned().unwrap_or(None))
         }
@@ -661,8 +661,8 @@ mod tests {
         let dao = Arc::new(CountingMockDao::new());
         let interface = Arc::new(CountingMockInterface::new());
         let service = UserCacheService::new(
-            dao.clone() as Arc<dyn BulwarkDao>,
-            interface.clone() as Arc<dyn BulwarkPermissionStrategy>,
+            dao.clone() as Arc<dyn GarrisonDao>,
+            interface.clone() as Arc<dyn GarrisonPermissionStrategy>,
             l1_ttl_secs,
             l2_ttl_secs,
             10_000,
@@ -932,8 +932,8 @@ mod tests {
 
         let service = Arc::new(
             UserCacheService::new(
-                dao.clone() as Arc<dyn BulwarkDao>,
-                interface.clone() as Arc<dyn BulwarkPermissionStrategy>,
+                dao.clone() as Arc<dyn GarrisonDao>,
+                interface.clone() as Arc<dyn GarrisonPermissionStrategy>,
                 30,
                 300,
                 10_000,
@@ -975,7 +975,7 @@ mod tests {
 
     /// I1: 登出后缓存失效 — invalidate 后再次查询走 L3。
     ///
-    /// 注：logout 集成到 stp/session.rs 需修改 BulwarkManager::init，
+    /// 注：logout 集成到 stp/session.rs 需修改 GarrisonManager::init，
     /// 留到 Phase 6 统一接线。此处验证 invalidate 的行为。
     #[tokio::test]
     async fn logout_invalidates_cache() {
@@ -1077,7 +1077,7 @@ mod tests {
     /// 验证 three-tier-cache feature 启用时 default_config 包含正确的缓存配置默认值。
     #[test]
     fn default_config_includes_cache_settings() {
-        let config = crate::config::BulwarkConfig::default_config();
+        let config = crate::config::GarrisonConfig::default_config();
         assert_eq!(
             config.l1_cache_ttl_secs,
             crate::config::DEFAULT_L1_CACHE_TTL_SECS
@@ -1095,7 +1095,7 @@ mod tests {
     /// 验证 l1_cache_ttl_secs = 0 时 validate 返回 Err。
     #[test]
     fn validate_rejects_zero_l1_cache_ttl() {
-        let mut config = crate::config::BulwarkConfig::default_config();
+        let mut config = crate::config::GarrisonConfig::default_config();
         config.l1_cache_ttl_secs = 0;
         let result = config.validate();
         assert!(result.is_err(), "l1_cache_ttl_secs=0 应校验失败");
@@ -1104,7 +1104,7 @@ mod tests {
     /// 验证 l2_cache_ttl_secs = 0 时 validate 返回 Err。
     #[test]
     fn validate_rejects_zero_l2_cache_ttl() {
-        let mut config = crate::config::BulwarkConfig::default_config();
+        let mut config = crate::config::GarrisonConfig::default_config();
         config.l2_cache_ttl_secs = 0;
         let result = config.validate();
         assert!(result.is_err(), "l2_cache_ttl_secs=0 应校验失败");
@@ -1113,7 +1113,7 @@ mod tests {
     /// 验证 l1_cache_capacity = 0 时 validate 返回 Err。
     #[test]
     fn validate_rejects_zero_l1_cache_capacity() {
-        let mut config = crate::config::BulwarkConfig::default_config();
+        let mut config = crate::config::GarrisonConfig::default_config();
         config.l1_cache_capacity = 0;
         let result = config.validate();
         assert!(result.is_err(), "l1_cache_capacity=0 应校验失败");
@@ -1136,8 +1136,8 @@ mod tests {
 
         let service = Arc::new(
             UserCacheService::new(
-                dao.clone() as Arc<dyn BulwarkDao>,
-                interface.clone() as Arc<dyn BulwarkPermissionStrategy>,
+                dao.clone() as Arc<dyn GarrisonDao>,
+                interface.clone() as Arc<dyn GarrisonPermissionStrategy>,
                 30,
                 300,
                 10_000,
@@ -1185,8 +1185,8 @@ mod tests {
 
         let service = Arc::new(
             UserCacheService::new(
-                dao.clone() as Arc<dyn BulwarkDao>,
-                interface.clone() as Arc<dyn BulwarkPermissionStrategy>,
+                dao.clone() as Arc<dyn GarrisonDao>,
+                interface.clone() as Arc<dyn GarrisonPermissionStrategy>,
                 30,
                 300,
                 10_000,
@@ -1227,8 +1227,8 @@ mod tests {
 
         let service = Arc::new(
             UserCacheService::new(
-                dao.clone() as Arc<dyn BulwarkDao>,
-                interface.clone() as Arc<dyn BulwarkPermissionStrategy>,
+                dao.clone() as Arc<dyn GarrisonDao>,
+                interface.clone() as Arc<dyn GarrisonPermissionStrategy>,
                 30,
                 300,
                 10_000,
@@ -1263,8 +1263,8 @@ mod tests {
 
         let service = Arc::new(
             UserCacheService::new(
-                dao.clone() as Arc<dyn BulwarkDao>,
-                interface.clone() as Arc<dyn BulwarkPermissionStrategy>,
+                dao.clone() as Arc<dyn GarrisonDao>,
+                interface.clone() as Arc<dyn GarrisonPermissionStrategy>,
                 30,
                 300,
                 10_000,
@@ -1404,7 +1404,7 @@ mod tests {
     /// T22: L2 权限缓存反序列化失败返回 Internal 错误。
     ///
     /// 向 L2 注入非法 JSON 字符串，验证 get_permissions 返回
-    /// `BulwarkError::Internal` 且错误消息包含 "L2 权限缓存反序列化失败"。
+    /// `GarrisonError::Internal` 且错误消息包含 "L2 权限缓存反序列化失败"。
     #[tokio::test]
     async fn l2_corrupt_permission_cache_returns_internal_error() {
         let (dao, _interface, service) = make_default_service();
@@ -1415,14 +1415,14 @@ mod tests {
         let result = service.get_permissions("22001").await;
         assert!(result.is_err(), "L2 缓存损坏应返回 Err");
         match result {
-            Err(BulwarkError::Internal(msg)) => {
+            Err(GarrisonError::Internal(msg)) => {
                 assert!(
                     msg.contains("cache-l2-perm-deser"),
                     "错误消息应包含 'L2 权限缓存反序列化失败'，实际: {}",
                     msg
                 );
             },
-            Err(other) => panic!("期望 BulwarkError::Internal，实际: {:?}", other),
+            Err(other) => panic!("期望 GarrisonError::Internal，实际: {:?}", other),
             Ok(_) => panic!("期望 Err，实际 Ok"),
         }
     }
@@ -1437,14 +1437,14 @@ mod tests {
         let result = service.get_permissions("23001").await;
         assert!(result.is_err(), "L3 权限失败应返回 Err");
         match result {
-            Err(BulwarkError::Internal(msg)) => {
+            Err(GarrisonError::Internal(msg)) => {
                 assert!(
                     msg.contains("injected perm error"),
                     "应透传 L3 权限错误消息，实际: {}",
                     msg
                 );
             },
-            Err(other) => panic!("期望 BulwarkError::Internal，实际: {:?}", other),
+            Err(other) => panic!("期望 GarrisonError::Internal，实际: {:?}", other),
             Ok(_) => panic!("期望 Err，实际 Ok"),
         }
 
@@ -1453,14 +1453,14 @@ mod tests {
         let result = service.get_roles("23002").await;
         assert!(result.is_err(), "L3 角色失败应返回 Err");
         match result {
-            Err(BulwarkError::Internal(msg)) => {
+            Err(GarrisonError::Internal(msg)) => {
                 assert!(
                     msg.contains("injected role error"),
                     "应透传 L3 角色错误消息，实际: {}",
                     msg
                 );
             },
-            Err(other) => panic!("期望 BulwarkError::Internal，实际: {:?}", other),
+            Err(other) => panic!("期望 GarrisonError::Internal，实际: {:?}", other),
             Ok(_) => panic!("期望 Err，实际 Ok"),
         }
 
@@ -1469,14 +1469,14 @@ mod tests {
         let result = service.get_user("23003").await;
         assert!(result.is_err(), "L3 用户失败应返回 Err");
         match result {
-            Err(BulwarkError::Internal(msg)) => {
+            Err(GarrisonError::Internal(msg)) => {
                 assert!(
                     msg.contains("injected user error"),
                     "应透传 L3 用户错误消息，实际: {}",
                     msg
                 );
             },
-            Err(other) => panic!("期望 BulwarkError::Internal，实际: {:?}", other),
+            Err(other) => panic!("期望 GarrisonError::Internal，实际: {:?}", other),
             Ok(_) => panic!("期望 Err，实际 Ok"),
         }
     }
@@ -1492,14 +1492,14 @@ mod tests {
         let result = service.get_permissions("24001").await;
         assert!(result.is_err(), "L2 DAO get 失败应返回 Err");
         match result {
-            Err(BulwarkError::Dao(msg)) => {
+            Err(GarrisonError::Dao(msg)) => {
                 assert!(
                     msg.contains("injected get error"),
                     "应透传 DAO get 错误消息，实际: {}",
                     msg
                 );
             },
-            Err(other) => panic!("期望 BulwarkError::Dao，实际: {:?}", other),
+            Err(other) => panic!("期望 GarrisonError::Dao，实际: {:?}", other),
             Ok(_) => panic!("期望 Err，实际 Ok"),
         }
 
@@ -1512,14 +1512,14 @@ mod tests {
         let result = service2.get_permissions("24002").await;
         assert!(result.is_err(), "L2 DAO set 失败应返回 Err");
         match result {
-            Err(BulwarkError::Dao(msg)) => {
+            Err(GarrisonError::Dao(msg)) => {
                 assert!(
                     msg.contains("injected set error"),
                     "应透传 DAO set 错误消息，实际: {}",
                     msg
                 );
             },
-            Err(other) => panic!("期望 BulwarkError::Dao，实际: {:?}", other),
+            Err(other) => panic!("期望 GarrisonError::Dao，实际: {:?}", other),
             Ok(_) => panic!("期望 Err，实际 Ok"),
         }
     }
@@ -1534,14 +1534,14 @@ mod tests {
         let result = service.invalidate("25001").await;
         assert!(result.is_err(), "L2 delete 失败应返回 Err");
         match result {
-            Err(BulwarkError::Dao(msg)) => {
+            Err(GarrisonError::Dao(msg)) => {
                 assert!(
                     msg.contains("injected delete error"),
                     "应透传 DAO delete 错误消息，实际: {}",
                     msg
                 );
             },
-            Err(other) => panic!("期望 BulwarkError::Dao，实际: {:?}", other),
+            Err(other) => panic!("期望 GarrisonError::Dao，实际: {:?}", other),
             Ok(_) => panic!("期望 Err，实际 Ok"),
         }
 
@@ -1572,7 +1572,7 @@ mod tests {
     /// T27: L1 权限缓存反序列化失败返回 Internal 错误。
     ///
     /// 直接向 L1 oxcache 注入损坏的 JSON 字符串，
-    /// 验证 get_permissions 返回 BulwarkError::Internal 且消息包含
+    /// 验证 get_permissions 返回 GarrisonError::Internal 且消息包含
     /// "L1 权限缓存反序列化失败"。
     #[tokio::test]
     async fn l1_corrupt_permission_cache_returns_internal_error() {
@@ -1590,14 +1590,14 @@ mod tests {
         let result = service.get_permissions("27001").await;
         assert!(result.is_err(), "L1 缓存损坏应返回 Err");
         match result {
-            Err(BulwarkError::Internal(msg)) => {
+            Err(GarrisonError::Internal(msg)) => {
                 assert!(
                     msg.contains("cache-l1-perm-deser"),
                     "错误消息应包含 'L1 权限缓存反序列化失败'，实际: {}",
                     msg
                 );
             },
-            Err(other) => panic!("期望 BulwarkError::Internal，实际: {:?}", other),
+            Err(other) => panic!("期望 GarrisonError::Internal，实际: {:?}", other),
             Ok(_) => panic!("期望 Err，实际 Ok"),
         }
     }
@@ -1618,21 +1618,21 @@ mod tests {
         let result = service.get_roles("28001").await;
         assert!(result.is_err(), "L1 缓存损坏应返回 Err");
         match result {
-            Err(BulwarkError::Internal(msg)) => {
+            Err(GarrisonError::Internal(msg)) => {
                 assert!(
                     msg.contains("cache-l1-role-deser"),
                     "错误消息应包含 'L1 角色缓存反序列化失败'，实际: {}",
                     msg
                 );
             },
-            Err(other) => panic!("期望 BulwarkError::Internal，实际: {:?}", other),
+            Err(other) => panic!("期望 GarrisonError::Internal，实际: {:?}", other),
             Ok(_) => panic!("期望 Err，实际 Ok"),
         }
     }
 
     /// T29: L2 角色缓存反序列化失败返回 Internal 错误。
     ///
-    /// 向 L2 注入损坏 JSON，验证 get_roles 返回 BulwarkError::Internal
+    /// 向 L2 注入损坏 JSON，验证 get_roles 返回 GarrisonError::Internal
     /// 且消息包含 "L2 角色缓存反序列化失败"。
     #[tokio::test]
     async fn l2_corrupt_role_cache_returns_internal_error() {
@@ -1643,14 +1643,14 @@ mod tests {
         let result = service.get_roles("29001").await;
         assert!(result.is_err(), "L2 缓存损坏应返回 Err");
         match result {
-            Err(BulwarkError::Internal(msg)) => {
+            Err(GarrisonError::Internal(msg)) => {
                 assert!(
                     msg.contains("cache-l2-role-deser"),
                     "错误消息应包含 'L2 角色缓存反序列化失败'，实际: {}",
                     msg
                 );
             },
-            Err(other) => panic!("期望 BulwarkError::Internal，实际: {:?}", other),
+            Err(other) => panic!("期望 GarrisonError::Internal，实际: {:?}", other),
             Ok(_) => panic!("期望 Err，实际 Ok"),
         }
     }
@@ -1789,7 +1789,7 @@ mod tests {
 
     /// T37: L2 DAO get 失败时 get_roles 透传错误。
     ///
-    /// L1 miss → L2 get 失败 → 透传 BulwarkError::Dao。
+    /// L1 miss → L2 get 失败 → 透传 GarrisonError::Dao。
     #[tokio::test]
     async fn l2_dao_get_failure_propagates_error_for_get_roles() {
         let (dao, _interface, service) = make_default_service();
@@ -1798,14 +1798,14 @@ mod tests {
         let result = service.get_roles("37001").await;
         assert!(result.is_err(), "L2 DAO get 失败应返回 Err");
         match result {
-            Err(BulwarkError::Dao(msg)) => {
+            Err(GarrisonError::Dao(msg)) => {
                 assert!(
                     msg.contains("injected get error"),
                     "应透传 DAO get 错误消息，实际: {}",
                     msg
                 );
             },
-            Err(other) => panic!("期望 BulwarkError::Dao，实际: {:?}", other),
+            Err(other) => panic!("期望 GarrisonError::Dao，实际: {:?}", other),
             Ok(_) => panic!("期望 Err，实际 Ok"),
         }
     }
@@ -1819,14 +1819,14 @@ mod tests {
         let result = service.get_user("38001").await;
         assert!(result.is_err(), "L2 DAO get 失败应返回 Err");
         match result {
-            Err(BulwarkError::Dao(msg)) => {
+            Err(GarrisonError::Dao(msg)) => {
                 assert!(
                     msg.contains("injected get error"),
                     "应透传 DAO get 错误消息，实际: {}",
                     msg
                 );
             },
-            Err(other) => panic!("期望 BulwarkError::Dao，实际: {:?}", other),
+            Err(other) => panic!("期望 GarrisonError::Dao，实际: {:?}", other),
             Ok(_) => panic!("期望 Err，实际 Ok"),
         }
     }
@@ -1843,14 +1843,14 @@ mod tests {
         let result = service.get_roles("39001").await;
         assert!(result.is_err(), "L2 DAO set 失败应返回 Err");
         match result {
-            Err(BulwarkError::Dao(msg)) => {
+            Err(GarrisonError::Dao(msg)) => {
                 assert!(
                     msg.contains("injected set error"),
                     "应透传 DAO set 错误消息，实际: {}",
                     msg
                 );
             },
-            Err(other) => panic!("期望 BulwarkError::Dao，实际: {:?}", other),
+            Err(other) => panic!("期望 GarrisonError::Dao，实际: {:?}", other),
             Ok(_) => panic!("期望 Err，实际 Ok"),
         }
     }
@@ -1865,14 +1865,14 @@ mod tests {
         let result = service.get_user("40001").await;
         assert!(result.is_err(), "L2 DAO set 失败应返回 Err");
         match result {
-            Err(BulwarkError::Dao(msg)) => {
+            Err(GarrisonError::Dao(msg)) => {
                 assert!(
                     msg.contains("injected set error"),
                     "应透传 DAO set 错误消息，实际: {}",
                     msg
                 );
             },
-            Err(other) => panic!("期望 BulwarkError::Dao，实际: {:?}", other),
+            Err(other) => panic!("期望 GarrisonError::Dao，实际: {:?}", other),
             Ok(_) => panic!("期望 Err，实际 Ok"),
         }
     }
@@ -1928,14 +1928,14 @@ mod tests {
         let result = service.invalidate("42001").await;
         assert!(result.is_err(), "L2 delete 失败应返回 Err");
         match result {
-            Err(BulwarkError::Dao(msg)) => {
+            Err(GarrisonError::Dao(msg)) => {
                 assert!(
                     msg.contains("injected delete error"),
                     "应透传 DAO delete 错误消息，实际: {}",
                     msg
                 );
             },
-            Err(other) => panic!("期望 BulwarkError::Dao，实际: {:?}", other),
+            Err(other) => panic!("期望 GarrisonError::Dao，实际: {:?}", other),
             Ok(_) => panic!("期望 Err，实际 Ok"),
         }
 
@@ -2142,8 +2142,8 @@ mod tests {
         let dao = Arc::new(CountingMockDao::new());
         let interface = Arc::new(CountingMockInterface::new());
         let service = UserCacheService::new(
-            dao.clone() as Arc<dyn BulwarkDao>,
-            interface.clone() as Arc<dyn BulwarkPermissionStrategy>,
+            dao.clone() as Arc<dyn GarrisonDao>,
+            interface.clone() as Arc<dyn GarrisonPermissionStrategy>,
             30,
             300,
             0, // l1_capacity=0
@@ -2162,8 +2162,8 @@ mod tests {
         let dao = Arc::new(CountingMockDao::new());
         let interface = Arc::new(CountingMockInterface::new());
         let service = UserCacheService::new(
-            dao.clone() as Arc<dyn BulwarkDao>,
-            interface.clone() as Arc<dyn BulwarkPermissionStrategy>,
+            dao.clone() as Arc<dyn GarrisonDao>,
+            interface.clone() as Arc<dyn GarrisonPermissionStrategy>,
             120,
             3600,
             10_000,

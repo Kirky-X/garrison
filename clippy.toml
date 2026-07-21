@@ -1,7 +1,7 @@
 # Copyright (c) 2026 Kirky.X. All rights reserved.
 # See LICENSE for full license text.
 
-# Clippy configuration for Bulwark
+# Clippy configuration for Garrison
 msrv = "1.85"
 type-complexity-threshold = 250
 too-many-arguments-threshold = 8

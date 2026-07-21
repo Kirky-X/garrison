@@ -5,7 +5,7 @@
 
 use super::{read_bool, v_i64, v_opt_str, v_str, DbnexusUserDeviceRepository};
 use crate::dao::repository::{make_statement, UserDeviceRepository, UserDeviceRow, MAX_DEVICES};
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::error::{GarrisonError, GarrisonResult};
 use async_trait::async_trait;
 use dbnexus::DbPool;
 use sea_orm::{ConnectionTrait, QueryResult};
@@ -25,15 +25,15 @@ impl UserDeviceRepository for DbnexusUserDeviceRepository {
         login_id: &str,
         identifier: &str,
         ua: &str,
-    ) -> BulwarkResult<String> {
+    ) -> GarrisonResult<String> {
         let session = self.pool.get_session("admin").await.map_err(|e| {
-            BulwarkError::Dao(format!(
+            GarrisonError::Dao(format!(
                 "dao-app-user-device-register-device-session::{}",
                 e
             ))
         })?;
         let conn = session.connection().map_err(|e| {
-            BulwarkError::Dao(format!(
+            GarrisonError::Dao(format!(
                 "dao-app-user-device-register-device-connection::{}",
                 e
             ))
@@ -50,18 +50,18 @@ impl UserDeviceRepository for DbnexusUserDeviceRepository {
         let existing = conn
             .query_one_raw(stmt)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("dao-app-user-device-query-exists::{}", e)))?;
+            .map_err(|e| GarrisonError::Dao(format!("dao-app-user-device-query-exists::{}", e)))?;
 
         if let Some(row) = existing {
             let existing_id: String = row.try_get("", "id").map_err(|e| {
-                BulwarkError::Dao(format!("dao-app-user-device-parse-exists-id::{}", e))
+                GarrisonError::Dao(format!("dao-app-user-device-parse-exists-id::{}", e))
             })?;
             // 更新 last_seen_at（幂等注册视为一次活跃）
             let now = chrono::Utc::now().timestamp();
             let update_sql = "UPDATE app_user_device SET last_seen_at = ? WHERE id = ?";
             let stmt = make_statement(conn, update_sql, vec![v_i64(now), v_str(&existing_id)]);
             conn.execute_raw(stmt).await.map_err(|e| {
-                BulwarkError::Dao(format!("dao-app-user-device-update-last-seen-at::{}", e))
+                GarrisonError::Dao(format!("dao-app-user-device-update-last-seen-at::{}", e))
             })?;
             return Ok(existing_id);
         }
@@ -73,13 +73,13 @@ impl UserDeviceRepository for DbnexusUserDeviceRepository {
         let count_row = conn
             .query_one_raw(stmt)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("dao-app-user-device-count-query::{}", e)))?
-            .ok_or_else(|| BulwarkError::Dao("dao-app-user-device-count-empty".into()))?;
+            .map_err(|e| GarrisonError::Dao(format!("dao-app-user-device-count-query::{}", e)))?
+            .ok_or_else(|| GarrisonError::Dao("dao-app-user-device-count-empty".into()))?;
         let current_count: i64 = count_row
             .try_get("", "cnt")
-            .map_err(|e| BulwarkError::Dao(format!("dao-app-user-device-parse-count::{}", e)))?;
+            .map_err(|e| GarrisonError::Dao(format!("dao-app-user-device-parse-count::{}", e)))?;
         if (current_count as usize) >= MAX_DEVICES {
-            return Err(BulwarkError::InvalidParam(format!(
+            return Err(GarrisonError::InvalidParam(format!(
                 "用户 (tenant_id={}, login_id={}) 设备数已达上限 {}，无法注册新设备",
                 tenant_id, login_id, MAX_DEVICES
             )));
@@ -108,16 +108,16 @@ impl UserDeviceRepository for DbnexusUserDeviceRepository {
         );
         conn.execute_raw(stmt)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("dao-app-user-device-insert::{}", e)))?;
+            .map_err(|e| GarrisonError::Dao(format!("dao-app-user-device-insert::{}", e)))?;
         Ok(device_id)
     }
 
-    async fn block_device(&self, device_id: &str) -> BulwarkResult<()> {
+    async fn block_device(&self, device_id: &str) -> GarrisonResult<()> {
         let session = self.pool.get_session("admin").await.map_err(|e| {
-            BulwarkError::Dao(format!("dao-app-user-device-block-device-session::{}", e))
+            GarrisonError::Dao(format!("dao-app-user-device-block-device-session::{}", e))
         })?;
         let conn = session.connection().map_err(|e| {
-            BulwarkError::Dao(format!(
+            GarrisonError::Dao(format!(
                 "dao-app-user-device-block-device-connection::{}",
                 e
             ))
@@ -126,25 +126,25 @@ impl UserDeviceRepository for DbnexusUserDeviceRepository {
         let stmt = make_statement(conn, sql, vec![v_str(device_id)]);
         conn.execute_raw(stmt)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("dao-app-user-device-block-update::{}", e)))?;
+            .map_err(|e| GarrisonError::Dao(format!("dao-app-user-device-block-update::{}", e)))?;
         Ok(())
     }
 
-    async fn unblock_device(&self, device_id: &str) -> BulwarkResult<()> {
+    async fn unblock_device(&self, device_id: &str) -> GarrisonResult<()> {
         let session = self.pool.get_session("admin").await.map_err(|e| {
-            BulwarkError::Dao(format!("dao-app-user-device-unblock-device-session::{}", e))
+            GarrisonError::Dao(format!("dao-app-user-device-unblock-device-session::{}", e))
         })?;
         let conn = session.connection().map_err(|e| {
-            BulwarkError::Dao(format!(
+            GarrisonError::Dao(format!(
                 "dao-app-user-device-unblock-device-connection::{}",
                 e
             ))
         })?;
         let sql = "UPDATE app_user_device SET is_blocked = 0 WHERE id = ?";
         let stmt = make_statement(conn, sql, vec![v_str(device_id)]);
-        conn.execute_raw(stmt)
-            .await
-            .map_err(|e| BulwarkError::Dao(format!("dao-app-user-device-unblock-update::{}", e)))?;
+        conn.execute_raw(stmt).await.map_err(|e| {
+            GarrisonError::Dao(format!("dao-app-user-device-unblock-update::{}", e))
+        })?;
         Ok(())
     }
 
@@ -152,13 +152,13 @@ impl UserDeviceRepository for DbnexusUserDeviceRepository {
         &self,
         tenant_id: i64,
         login_id: &str,
-    ) -> BulwarkResult<Vec<UserDeviceRow>> {
+    ) -> GarrisonResult<Vec<UserDeviceRow>> {
         let session =
             self.pool.get_session("admin").await.map_err(|e| {
-                BulwarkError::Dao(format!("dao-app-user-device-list-session::{}", e))
+                GarrisonError::Dao(format!("dao-app-user-device-list-session::{}", e))
             })?;
         let conn = session.connection().map_err(|e| {
-            BulwarkError::Dao(format!("dao-app-user-device-list-connection::{}", e))
+            GarrisonError::Dao(format!("dao-app-user-device-list-connection::{}", e))
         })?;
         let sql = "SELECT id, tenant_id, login_id, device_identifier, device_name, user_agent, \
                   is_blocked, last_seen_at, created_at \
@@ -167,17 +167,17 @@ impl UserDeviceRepository for DbnexusUserDeviceRepository {
         let rows = conn
             .query_all_raw(stmt)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("dao-app-user-device-list-query::{}", e)))?;
+            .map_err(|e| GarrisonError::Dao(format!("dao-app-user-device-list-query::{}", e)))?;
         rows.iter().map(parse_user_device_row).collect()
     }
 
-    async fn count_user_devices(&self, tenant_id: i64, login_id: &str) -> BulwarkResult<usize> {
+    async fn count_user_devices(&self, tenant_id: i64, login_id: &str) -> GarrisonResult<usize> {
         let session =
             self.pool.get_session("admin").await.map_err(|e| {
-                BulwarkError::Dao(format!("dao-app-user-device-count-session::{}", e))
+                GarrisonError::Dao(format!("dao-app-user-device-count-session::{}", e))
             })?;
         let conn = session.connection().map_err(|e| {
-            BulwarkError::Dao(format!("dao-app-user-device-count-connection::{}", e))
+            GarrisonError::Dao(format!("dao-app-user-device-count-connection::{}", e))
         })?;
         let sql =
             "SELECT COUNT(*) AS cnt FROM app_user_device WHERE tenant_id = ? AND login_id = ?";
@@ -185,45 +185,45 @@ impl UserDeviceRepository for DbnexusUserDeviceRepository {
         let row = conn
             .query_one_raw(stmt)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("dao-app-user-device-count-query::{}", e)))?
-            .ok_or_else(|| BulwarkError::Dao("dao-app-user-device-count-empty".into()))?;
+            .map_err(|e| GarrisonError::Dao(format!("dao-app-user-device-count-query::{}", e)))?
+            .ok_or_else(|| GarrisonError::Dao("dao-app-user-device-count-empty".into()))?;
         let count: i64 = row
             .try_get("", "cnt")
-            .map_err(|e| BulwarkError::Dao(format!("dao-app-user-device-parse-count::{}", e)))?;
+            .map_err(|e| GarrisonError::Dao(format!("dao-app-user-device-parse-count::{}", e)))?;
         Ok(count as usize)
     }
 }
 
 /// 解析 app_user_device 行。
-fn parse_user_device_row(row: &QueryResult) -> BulwarkResult<UserDeviceRow> {
+fn parse_user_device_row(row: &QueryResult) -> GarrisonResult<UserDeviceRow> {
     Ok(UserDeviceRow {
         id: row
             .try_get("", "id")
-            .map_err(|e| BulwarkError::Dao(format!("dao-app-user-device-row-parse-id::{}", e)))?,
+            .map_err(|e| GarrisonError::Dao(format!("dao-app-user-device-row-parse-id::{}", e)))?,
         tenant_id: row.try_get("", "tenant_id").map_err(|e| {
-            BulwarkError::Dao(format!("dao-app-user-device-row-parse-tenant-id::{}", e))
+            GarrisonError::Dao(format!("dao-app-user-device-row-parse-tenant-id::{}", e))
         })?,
         login_id: row.try_get("", "login_id").map_err(|e| {
-            BulwarkError::Dao(format!("dao-app-user-device-row-parse-login-id::{}", e))
+            GarrisonError::Dao(format!("dao-app-user-device-row-parse-login-id::{}", e))
         })?,
         device_identifier: row.try_get("", "device_identifier").map_err(|e| {
-            BulwarkError::Dao(format!(
+            GarrisonError::Dao(format!(
                 "dao-app-user-device-row-parse-device-identifier::{}",
                 e
             ))
         })?,
         device_name: row.try_get("", "device_name").map_err(|e| {
-            BulwarkError::Dao(format!("dao-app-user-device-row-parse-device-name::{}", e))
+            GarrisonError::Dao(format!("dao-app-user-device-row-parse-device-name::{}", e))
         })?,
         user_agent: row.try_get("", "user_agent").map_err(|e| {
-            BulwarkError::Dao(format!("dao-app-user-device-row-parse-user-agent::{}", e))
+            GarrisonError::Dao(format!("dao-app-user-device-row-parse-user-agent::{}", e))
         })?,
         is_blocked: read_bool(row, "is_blocked"),
         last_seen_at: row.try_get("", "last_seen_at").map_err(|e| {
-            BulwarkError::Dao(format!("dao-app-user-device-row-parse-last-seen-at::{}", e))
+            GarrisonError::Dao(format!("dao-app-user-device-row-parse-last-seen-at::{}", e))
         })?,
         created_at: row.try_get("", "created_at").map_err(|e| {
-            BulwarkError::Dao(format!("dao-app-user-device-row-parse-created-at::{}", e))
+            GarrisonError::Dao(format!("dao-app-user-device-row-parse-created-at::{}", e))
         })?,
     })
 }
@@ -380,7 +380,7 @@ mod tests {
         assert!(result.is_err(), "超过 MAX_DEVICES 应返回错误");
         let err = result.unwrap_err();
         match err {
-            BulwarkError::InvalidParam(msg) => {
+            GarrisonError::InvalidParam(msg) => {
                 assert!(
                     msg.contains("MAX_DEVICES") || msg.contains("设备数已达上限"),
                     "错误信息应包含设备上限，实际: {}",

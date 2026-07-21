@@ -188,7 +188,7 @@ async fn broadcast_alert_invokes_all_listeners() {
     struct CountingListener;
     #[async_trait]
     impl AlertListener for CountingListener {
-        async fn on_alert(&self, _event: &SecurityAlertEvent) -> BulwarkResult<()> {
+        async fn on_alert(&self, _event: &SecurityAlertEvent) -> GarrisonResult<()> {
             CALLS.fetch_add(1, Ordering::SeqCst);
             Ok(())
         }
@@ -217,7 +217,7 @@ async fn broadcast_alert_listener_failure_does_not_interrupt() {
     struct OkListener;
     #[async_trait]
     impl AlertListener for OkListener {
-        async fn on_alert(&self, _event: &SecurityAlertEvent) -> BulwarkResult<()> {
+        async fn on_alert(&self, _event: &SecurityAlertEvent) -> GarrisonResult<()> {
             OK_CALLS.fetch_add(1, Ordering::SeqCst);
             Ok(())
         }
@@ -226,9 +226,9 @@ async fn broadcast_alert_listener_failure_does_not_interrupt() {
     struct ErrListener;
     #[async_trait]
     impl AlertListener for ErrListener {
-        async fn on_alert(&self, _event: &SecurityAlertEvent) -> BulwarkResult<()> {
+        async fn on_alert(&self, _event: &SecurityAlertEvent) -> GarrisonResult<()> {
             ERR_CALLS.fetch_add(1, Ordering::SeqCst);
-            Err(crate::error::BulwarkError::Internal(
+            Err(crate::error::GarrisonError::Internal(
                 "on_alert 失败".to_string(),
             ))
         }

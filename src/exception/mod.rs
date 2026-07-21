@@ -8,8 +8,8 @@
 
 use std::collections::HashMap;
 
-/// 重导出 `crate::error::BulwarkError`，便于从异常模块统一访问。
-pub use crate::error::BulwarkError;
+/// 重导出 `crate::error::GarrisonError`，便于从异常模块统一访问。
+pub use crate::error::GarrisonError;
 
 /// 未登录异常，表示请求缺少有效登录态。
 ///
@@ -25,13 +25,13 @@ pub struct NotLoginException {
 
 /// 携带上下文的业务可恢复异常（）。
 ///
-/// 与 `BulwarkError` enum 解耦，提供更丰富的异常上下文（token / login_id / extras）。
-/// 业务方可通过 `BulwarkException::new(code, msg).with_token(t).build()` 链式构造，
-/// 并通过 `Into<BulwarkError>` 转换为 `BulwarkError::Exception` 上抛。
+/// 与 `GarrisonError` enum 解耦，提供更丰富的异常上下文（token / login_id / extras）。
+/// 业务方可通过 `GarrisonException::new(code, msg).with_token(t).build()` 链式构造，
+/// 并通过 `Into<GarrisonError>` 转换为 `GarrisonError::Exception` 上抛。
 ///
 /// 对应 SaTokenException 的"携带上下文"语义。
 #[derive(Debug, Clone)]
-pub struct BulwarkException {
+pub struct GarrisonException {
     /// 业务错误码（如 -1 表示未登录）。
     pub code: i32,
 

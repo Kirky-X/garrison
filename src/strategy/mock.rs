@@ -7,8 +7,8 @@
 //! 提供 `MockCacheDao`（基于 `HashMap` 模拟权限缓存 DAO），
 //! 供 `strategy::tests` 权限缓存测试复用。
 
-use crate::dao::BulwarkDao;
-use crate::error::BulwarkResult;
+use crate::dao::GarrisonDao;
+use crate::error::GarrisonResult;
 use async_trait::async_trait;
 use parking_lot::Mutex;
 use std::collections::HashMap;
@@ -28,22 +28,22 @@ impl MockCacheDao {
 }
 
 #[async_trait]
-impl BulwarkDao for MockCacheDao {
-    async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
+impl GarrisonDao for MockCacheDao {
+    async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
         Ok(self.store.lock().get(key).cloned())
     }
-    async fn set(&self, key: &str, value: &str, _ttl_seconds: u64) -> BulwarkResult<()> {
+    async fn set(&self, key: &str, value: &str, _ttl_seconds: u64) -> GarrisonResult<()> {
         self.store.lock().insert(key.to_string(), value.to_string());
         Ok(())
     }
-    async fn update(&self, key: &str, value: &str) -> BulwarkResult<()> {
+    async fn update(&self, key: &str, value: &str) -> GarrisonResult<()> {
         self.store.lock().insert(key.to_string(), value.to_string());
         Ok(())
     }
-    async fn expire(&self, _key: &str, _seconds: u64) -> BulwarkResult<()> {
+    async fn expire(&self, _key: &str, _seconds: u64) -> GarrisonResult<()> {
         Ok(())
     }
-    async fn delete(&self, key: &str) -> BulwarkResult<()> {
+    async fn delete(&self, key: &str) -> GarrisonResult<()> {
         self.store.lock().remove(key);
         Ok(())
     }

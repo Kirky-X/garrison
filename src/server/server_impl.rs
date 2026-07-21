@@ -1,7 +1,7 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! `BulwarkAuthServer` 的实现下沉（builder 方法、路由构建、listen），
+//! `GarrisonAuthServer` 的实现下沉（builder 方法、路由构建、listen），
 //! 与 [`crate::server`] 中的类型定义（struct/config）分离，遵循 mod 接口隔离原则。
 
 #[cfg(feature = "tls")]
@@ -15,18 +15,18 @@ use super::oauth2_routes;
 #[cfg(feature = "tls")]
 use super::TlsConfig;
 use super::{api_key_auth_middleware, audit_log_middleware, rate_limit_middleware};
-use super::{middleware, AuthServerConfig, BulwarkAuthServer};
+use super::{middleware, AuthServerConfig, GarrisonAuthServer};
 use crate::backend::types::ApiResponse;
 use crate::backend::AuthBackend;
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::error::{GarrisonError, GarrisonResult};
 
-/// 将 `BulwarkResult<T>` 转换为 `ApiResponse<T>`。
+/// 将 `GarrisonResult<T>` 转换为 `ApiResponse<T>`。
 ///
 /// Ok → `ApiResponse::ok(data)`
 /// Err → `ApiResponse::err(error_code, message)`，error_code 来自 `response_parts_i18n()`
 ///
 /// `message` 字段通过 i18n 层翻译为当前 locale 文本，避免硬编码中文泄露到响应体。
-pub fn to_api_response<T>(result: Result<T, BulwarkError>) -> ApiResponse<T> {
+pub fn to_api_response<T>(result: Result<T, GarrisonError>) -> ApiResponse<T> {
     match result {
         Ok(data) => ApiResponse::ok(data),
         Err(e) => {
@@ -36,7 +36,7 @@ pub fn to_api_response<T>(result: Result<T, BulwarkError>) -> ApiResponse<T> {
     }
 }
 
-impl BulwarkAuthServer {
+impl GarrisonAuthServer {
     /// 创建 Auth Server 实例。
     ///
     /// # 参数
@@ -63,26 +63,26 @@ impl BulwarkAuthServer {
     /// - `kit`：已调用 `kit.build().await` 完成的 `AsyncKit<Ready>`
     ///
     /// # 错误
-    /// - `BulwarkError::Internal`：kit 中未注册/未构建 `BackendModule`
+    /// - `GarrisonError::Internal`：kit 中未注册/未构建 `BackendModule`
     ///
     /// # 示例
     ///
     /// ```ignore
     /// use trait_kit::kit::AsyncKit;
-    /// use bulwark::backend::BackendModule;
+    /// use garrison::backend::BackendModule;
     ///
     /// let mut kit = AsyncKit::new();
     /// kit.register::<BackendModule>().unwrap();
     /// let kit = kit.build().await.unwrap();
-    /// let server = BulwarkAuthServer::new_with_kit(kit).await.unwrap();
+    /// let server = GarrisonAuthServer::new_with_kit(kit).await.unwrap();
     /// ```
     #[cfg(feature = "backend-kit")]
     pub async fn new_with_kit(
         kit: trait_kit::kit::AsyncKit<trait_kit::kit::AsyncReady>,
-    ) -> BulwarkResult<Self> {
+    ) -> GarrisonResult<Self> {
         use crate::backend::BackendModule;
         let backend = kit.require::<BackendModule>().map_err(|e| {
-            BulwarkError::Internal(format!("kit require BackendModule failed: {}", e))
+            GarrisonError::Internal(format!("kit require BackendModule failed: {}", e))
         })?;
         Ok(Self::new(backend))
     }
@@ -143,10 +143,10 @@ impl BulwarkAuthServer {
     /// # 示例
     ///
     /// ```ignore
-    /// use bulwark::context::tenant::HeaderTenantResolver;
+    /// use garrison::context::tenant::HeaderTenantResolver;
     /// use std::sync::Arc;
     ///
-    /// let server = BulwarkAuthServer::new(backend)
+    /// let server = GarrisonAuthServer::new(backend)
     ///     .with_tenant_resolver(Some(Arc::new(HeaderTenantResolver)));
     /// ```
     #[cfg(feature = "tenant-isolation")]
@@ -179,8 +179,8 @@ impl BulwarkAuthServer {
     /// # 示例
     ///
     /// ```ignore
-    /// let server = BulwarkAuthServer::new(backend)
-    ///     .with_tls("/etc/bulwark/cert.pem", "/etc/bulwark/key.pem");
+    /// let server = GarrisonAuthServer::new(backend)
+    ///     .with_tls("/etc/garrison/cert.pem", "/etc/garrison/key.pem");
     /// server.listen().await?;
     /// ```
     #[cfg(feature = "tls")]
@@ -344,7 +344,7 @@ impl BulwarkAuthServer {
     ///
     /// 启用 `tls` feature 且调用 `with_tls()` 后，两个端口均使用
     /// `axum_server::bind_rustls` 替代 `axum::serve`，实现 HTTPS/TLS 终止。
-    pub async fn listen(self) -> BulwarkResult<()> {
+    pub async fn listen(self) -> GarrisonResult<()> {
         let external_addr = format!("0.0.0.0:{}", self.config.external_port);
         let internal_addr = format!("0.0.0.0:{}", self.config.internal_port);
 
@@ -359,7 +359,7 @@ impl BulwarkAuthServer {
         tracing::info!(
             external_port = self.config.external_port,
             internal_port = self.config.internal_port,
-            "BulwarkAuthServer starting"
+            "GarrisonAuthServer starting"
         );
 
         let mut external_handle = tokio::spawn(async move {
@@ -370,9 +370,9 @@ impl BulwarkAuthServer {
                     &tc.key_path,
                 )
                 .await
-                .map_err(|e| BulwarkError::Internal(format!("server-external-tls-load::{}", e)))?;
+                .map_err(|e| GarrisonError::Internal(format!("server-external-tls-load::{}", e)))?;
                 let addr: std::net::SocketAddr = external_addr.parse().map_err(|e| {
-                    BulwarkError::Internal(format!("server-external-addr-parse::{}", e))
+                    GarrisonError::Internal(format!("server-external-addr-parse::{}", e))
                 })?;
                 return axum_server::bind_rustls(addr, rustls_config)
                     .serve(
@@ -381,13 +381,13 @@ impl BulwarkAuthServer {
                     )
                     .await
                     .map_err(|e| {
-                        BulwarkError::Internal(format!("server-external-server-error::{}", e))
+                        GarrisonError::Internal(format!("server-external-server-error::{}", e))
                     });
             }
 
             let external_listener = tokio::net::TcpListener::bind(&external_addr)
                 .await
-                .map_err(|e| BulwarkError::Internal(format!("server-external-bind::{}", e)))?;
+                .map_err(|e| GarrisonError::Internal(format!("server-external-bind::{}", e)))?;
             if let Err(e) = axum::serve(
                 external_listener,
                 external_router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
@@ -395,7 +395,7 @@ impl BulwarkAuthServer {
             .await
             {
                 tracing::error!(error = %e, "external server error");
-                return Err(BulwarkError::Internal(format!(
+                return Err(GarrisonError::Internal(format!(
                     "server-external-server-error::{}",
                     e
                 )));
@@ -411,24 +411,24 @@ impl BulwarkAuthServer {
                     &tc.key_path,
                 )
                 .await
-                .map_err(|e| BulwarkError::Internal(format!("server-internal-tls-load::{}", e)))?;
+                .map_err(|e| GarrisonError::Internal(format!("server-internal-tls-load::{}", e)))?;
                 let addr: std::net::SocketAddr = internal_addr.parse().map_err(|e| {
-                    BulwarkError::Internal(format!("server-internal-addr-parse::{}", e))
+                    GarrisonError::Internal(format!("server-internal-addr-parse::{}", e))
                 })?;
                 return axum_server::bind_rustls(addr, rustls_config)
                     .serve(internal_router.into_make_service())
                     .await
                     .map_err(|e| {
-                        BulwarkError::Internal(format!("server-internal-server-error::{}", e))
+                        GarrisonError::Internal(format!("server-internal-server-error::{}", e))
                     });
             }
 
             let internal_listener = tokio::net::TcpListener::bind(&internal_addr)
                 .await
-                .map_err(|e| BulwarkError::Internal(format!("server-internal-bind::{}", e)))?;
+                .map_err(|e| GarrisonError::Internal(format!("server-internal-bind::{}", e)))?;
             if let Err(e) = axum::serve(internal_listener, internal_router).await {
                 tracing::error!(error = %e, "internal server error");
-                return Err(BulwarkError::Internal(format!(
+                return Err(GarrisonError::Internal(format!(
                     "server-internal-server-error::{}",
                     e
                 )));
@@ -440,11 +440,11 @@ impl BulwarkAuthServer {
         tokio::select! {
             res = &mut external_handle => {
                 internal_handle.abort();
-                res.map_err(|e| BulwarkError::Internal(format!("server-external-task-panic::{}", e)))?
+                res.map_err(|e| GarrisonError::Internal(format!("server-external-task-panic::{}", e)))?
             },
             res = &mut internal_handle => {
                 external_handle.abort();
-                res.map_err(|e| BulwarkError::Internal(format!("server-internal-task-panic::{}", e)))?
+                res.map_err(|e| GarrisonError::Internal(format!("server-internal-task-panic::{}", e)))?
             },
         }
     }

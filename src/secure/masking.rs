@@ -39,7 +39,7 @@ pub enum MaskType {
 /// # 示例
 ///
 /// ```ignore
-/// use bulwark::secure::masking::{MaskType, SensitiveDataMasker};
+/// use garrison::secure::masking::{MaskType, SensitiveDataMasker};
 /// use serde_json::json;
 ///
 /// let masker = SensitiveDataMasker::new()
@@ -236,8 +236,8 @@ fn mask_bank_card(value: &str) -> String {
 /// # 示例
 ///
 /// ```ignore
-/// use bulwark::secure::masking::MaskType;
-/// let masker = bulwark::secure::masking::SensitiveDataMasker::new();
+/// use garrison::secure::masking::MaskType;
+/// let masker = garrison::secure::masking::SensitiveDataMasker::new();
 /// // SSN 脱敏：123-45-6789 → ***-***-***（每个数字组替换为 ***，不论原长度）
 /// let result = masker.mask_value("123-45-6789", &MaskType::Custom(r"\d+".to_string()));
 /// assert_eq!(result, "***-***-***");

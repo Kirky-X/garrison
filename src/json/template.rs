@@ -1,13 +1,13 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! `BulwarkJsonTemplate` 实现：JSON 模板解析与 `${key}` 占位符替换。
+//! `GarrisonJsonTemplate` 实现：JSON 模板解析与 `${key}` 占位符替换。
 
-use crate::error::{BulwarkError, BulwarkResult};
-use crate::json::BulwarkJsonTemplate;
+use crate::error::{GarrisonError, GarrisonResult};
+use crate::json::GarrisonJsonTemplate;
 use std::collections::HashMap;
 
-impl BulwarkJsonTemplate {
+impl GarrisonJsonTemplate {
     /// 解析 JSON 字符串为模板。
     ///
     /// # 参数
@@ -15,10 +15,10 @@ impl BulwarkJsonTemplate {
     ///
     /// # 返回
     /// - `Ok(Self)`: 解析成功，struct 内部持有解析后的 `Value`。
-    /// - `Err(BulwarkError::Internal)`: JSON 解析失败，消息含解析错误信息。
-    pub fn new(template: &str) -> BulwarkResult<Self> {
+    /// - `Err(GarrisonError::Internal)`: JSON 解析失败，消息含解析错误信息。
+    pub fn new(template: &str) -> GarrisonResult<Self> {
         let value: serde_json::Value = serde_json::from_str(template)
-            .map_err(|e| BulwarkError::Internal(format!("json-template-parse::{}", e)))?;
+            .map_err(|e| GarrisonError::Internal(format!("json-template-parse::{}", e)))?;
         Ok(Self { value })
     }
 
@@ -29,11 +29,11 @@ impl BulwarkJsonTemplate {
     ///
     /// # 返回
     /// - `Ok(String)`: 渲染后的 JSON 字符串（可被 `serde_json::from_str` 再次解析）。
-    /// - `Err(BulwarkError::Internal)`: 序列化失败。
-    pub fn render(&self, params: &HashMap<String, String>) -> BulwarkResult<String> {
+    /// - `Err(GarrisonError::Internal)`: 序列化失败。
+    pub fn render(&self, params: &HashMap<String, String>) -> GarrisonResult<String> {
         let rendered = render_value(self.value.clone(), params);
         serde_json::to_string(&rendered)
-            .map_err(|e| BulwarkError::Internal(format!("json-serialize::{}", e)))
+            .map_err(|e| GarrisonError::Internal(format!("json-serialize::{}", e)))
     }
 
     /// 获取内部 `Value` 的引用（便于直接访问）。

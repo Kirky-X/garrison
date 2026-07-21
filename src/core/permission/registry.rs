@@ -36,7 +36,7 @@ use std::collections::HashMap;
 
 use parking_lot::RwLock;
 
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::error::{GarrisonError, GarrisonResult};
 
 /// 权限规格，描述单个权限的元数据（runtime struct）。
 ///
@@ -96,8 +96,8 @@ impl PermissionRegistry {
     /// 注册单个权限规格。
     ///
     /// # 错误
-    /// - `name` 为空 → `BulwarkError::InvalidParam`
-    /// - `name` 已注册 → `BulwarkError::InvalidParam`
+    /// - `name` 为空 → `GarrisonError::InvalidParam`
+    /// - `name` 已注册 → `GarrisonError::InvalidParam`
     ///
     /// # 安全检测（`secure-confusable` feature 启用时）
     ///
@@ -105,9 +105,9 @@ impl PermissionRegistry {
     /// permission name 中的 Unicode 同形异义字。发现可疑字符时通过 `tracing::warn` 上报
     /// 。**不阻止注册**——仅警告，符合"失败显性化但非阻塞"原则
     /// （Rule 12）。
-    pub fn register(&self, spec: PermissionSpec) -> BulwarkResult<()> {
+    pub fn register(&self, spec: PermissionSpec) -> GarrisonResult<()> {
         if spec.name.is_empty() {
-            return Err(BulwarkError::InvalidParam(
+            return Err(GarrisonError::InvalidParam(
                 "permission name 不能为空".to_string(),
             ));
         }
@@ -128,7 +128,7 @@ impl PermissionRegistry {
 
         let mut map = self.permissions.write();
         if map.contains_key(&spec.name) {
-            return Err(BulwarkError::InvalidParam(format!(
+            return Err(GarrisonError::InvalidParam(format!(
                 "permission 已注册: {}",
                 spec.name
             )));
@@ -140,12 +140,12 @@ impl PermissionRegistry {
     /// 校验权限是否已注册，返回其 `required_roles`。
     ///
     /// # 错误
-    /// - 权限未注册 → `BulwarkError::InvalidParam`
-    pub fn validate(&self, permission: &str) -> BulwarkResult<Vec<String>> {
+    /// - 权限未注册 → `GarrisonError::InvalidParam`
+    pub fn validate(&self, permission: &str) -> GarrisonResult<Vec<String>> {
         let map = self.permissions.read();
         match map.get(permission) {
             Some(spec) => Ok(spec.required_roles.clone()),
-            None => Err(BulwarkError::InvalidParam(format!(
+            None => Err(GarrisonError::InvalidParam(format!(
                 "权限未在注册表中注册: {}",
                 permission
             ))),
@@ -172,7 +172,7 @@ impl PermissionRegistry {
     ///
     /// # 错误
     /// 仅在 `PermissionRegistration` 字段冲突时返回错误（实际不应发生，因编译期静态注册）。
-    pub fn from_inventory() -> BulwarkResult<Self> {
+    pub fn from_inventory() -> GarrisonResult<Self> {
         let registry = Self::new();
         for reg in inventory::iter::<PermissionRegistration> {
             let required_roles: Vec<String> = if reg.required_roles.is_empty() {
@@ -264,7 +264,7 @@ mod tests {
         let result = registry.validate("nonexistent:perm");
         assert!(result.is_err(), "未注册权限应返回错误");
         match result.err() {
-            Some(BulwarkError::InvalidParam(_)) => {},
+            Some(GarrisonError::InvalidParam(_)) => {},
             other => panic!("期望 InvalidParam，实际: {:?}", other),
         }
     }
@@ -289,7 +289,7 @@ mod tests {
         let result = registry.register(spec);
         assert!(result.is_err(), "空 name 应返回错误");
         match result.err() {
-            Some(BulwarkError::InvalidParam(_)) => {},
+            Some(GarrisonError::InvalidParam(_)) => {},
             other => panic!("期望 InvalidParam，实际: {:?}", other),
         }
     }

@@ -11,7 +11,7 @@ use super::AbacEngine;
 // ============================================================================
 
 #[cfg(feature = "abac")]
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::error::{GarrisonError, GarrisonResult};
 
 #[cfg(feature = "abac")]
 use std::sync::{Arc, Mutex};
@@ -25,7 +25,7 @@ static CURRENT_ENGINE: Mutex<Option<Arc<AbacEngine>>> = Mutex::new(None);
 /// 初始化全局 AbacEngine。
 ///
 /// 必须在使用 `#[check_permission(permission = "...", abac = "...")]` 宏前调用一次。
-/// 重复调用返回 `BulwarkError::Config`。
+/// 重复调用返回 `GarrisonError::Config`。
 ///
 /// # 参数
 /// - `engine`: `AbacEngine` 实例（已加载 schema 和策略）
@@ -33,19 +33,19 @@ static CURRENT_ENGINE: Mutex<Option<Arc<AbacEngine>>> = Mutex::new(None);
 /// # 示例
 ///
 /// ```ignore
-/// use bulwark::abac::{AbacEngine, EmptyEntityLoader, init_abac_engine};
+/// use garrison::abac::{AbacEngine, EmptyEntityLoader, init_abac_engine};
 /// use std::sync::Arc;
 ///
 /// let engine = AbacEngine::new(schema_json, Arc::new(EmptyEntityLoader)).await.unwrap();
 /// init_abac_engine(engine).unwrap();
 /// ```
 #[cfg(feature = "abac")]
-pub fn init_abac_engine(engine: AbacEngine) -> BulwarkResult<()> {
+pub fn init_abac_engine(engine: AbacEngine) -> GarrisonResult<()> {
     let mut guard = CURRENT_ENGINE
         .lock()
-        .map_err(|_| BulwarkError::Config("CURRENT_ENGINE lock poisoned".into()))?;
+        .map_err(|_| GarrisonError::Config("CURRENT_ENGINE lock poisoned".into()))?;
     if guard.is_some() {
-        return Err(BulwarkError::Config(
+        return Err(GarrisonError::Config(
             "AbacEngine already initialized".into(),
         ));
     }
@@ -55,10 +55,10 @@ pub fn init_abac_engine(engine: AbacEngine) -> BulwarkResult<()> {
 
 /// 获取全局 AbacEngine 的 Arc 克隆。
 #[cfg(feature = "abac")]
-pub(crate) fn get_abac_engine() -> BulwarkResult<Option<Arc<AbacEngine>>> {
+pub(crate) fn get_abac_engine() -> GarrisonResult<Option<Arc<AbacEngine>>> {
     let guard = CURRENT_ENGINE
         .lock()
-        .map_err(|_| BulwarkError::Config("CURRENT_ENGINE lock poisoned".into()))?;
+        .map_err(|_| GarrisonError::Config("CURRENT_ENGINE lock poisoned".into()))?;
     Ok(guard.clone())
 }
 
@@ -98,40 +98,40 @@ const ABAC_EXPR_MAX_LEN: usize = 512;
 ///
 /// # 返回
 /// - `Ok(())`: 表达式通过校验
-/// - `Err(BulwarkError::InvalidParam)`: 表达式含恶意模式或为纯字面量
+/// - `Err(GarrisonError::InvalidParam)`: 表达式含恶意模式或为纯字面量
 ///
 /// # 安全考量
 ///
 /// 此校验为纵深防御层。即便攻击者绕过宏属性注入恶意 `abac_expr`，
 /// 本函数也会拒绝已知的策略注入 payload。Cedar 解析器仍会再次校验语法。
 #[cfg(feature = "abac")]
-pub fn validate_abac_expr(expr: &str) -> BulwarkResult<()> {
+pub fn validate_abac_expr(expr: &str) -> GarrisonResult<()> {
     let trimmed = expr.trim();
     if trimmed.is_empty() {
-        return Err(BulwarkError::InvalidParam("abac-expr-empty".to_string()));
+        return Err(GarrisonError::InvalidParam("abac-expr-empty".to_string()));
     }
     if expr.len() > ABAC_EXPR_MAX_LEN {
-        return Err(BulwarkError::InvalidParam(format!(
+        return Err(GarrisonError::InvalidParam(format!(
             "abac_expr 长度超过 {} 字符（DoS 防御）",
             ABAC_EXPR_MAX_LEN
         )));
     }
     // 拒绝策略终止符（闭合 when 块并注入新策略）
     if expr.contains("};") {
-        return Err(BulwarkError::InvalidParam(
+        return Err(GarrisonError::InvalidParam(
             "abac_expr 含非法字符 `};`（疑似策略注入）".to_string(),
         ));
     }
     // 拒绝显式 permit/forbid 策略声明
     if expr.contains("permit(") || expr.contains("forbid(") {
-        return Err(BulwarkError::InvalidParam(
+        return Err(GarrisonError::InvalidParam(
             "abac_expr 不允许声明 permit/forbid 策略".to_string(),
         ));
     }
     // 要求至少含 principal/resource/action 之一，拒绝纯字面量
     let lower = expr.to_lowercase();
     if !lower.contains("principal") && !lower.contains("resource") && !lower.contains("action") {
-        return Err(BulwarkError::InvalidParam(
+        return Err(GarrisonError::InvalidParam(
             "abac_expr 必须引用 principal/resource/action 之一（拒绝纯字面量）".to_string(),
         ));
     }
@@ -149,7 +149,7 @@ pub fn validate_abac_expr(expr: &str) -> BulwarkResult<()> {
 ///
 /// # 行为
 ///
-/// 1. 全局 AbacEngine 未初始化 → 返回 `Err(BulwarkError::Config(...))`（R-abac-001 fail-closed）
+/// 1. 全局 AbacEngine 未初始化 → 返回 `Err(GarrisonError::Config(...))`（R-abac-001 fail-closed）
 /// 2. 校验 `abac_expr` 防止 Cedar 策略注入（A3）
 /// 3. 获取当前 `login_id` 作为 principal，未登录 → 返回 `Err(NotLogin)`
 /// 4. 将 `abac_expr` 包装为 Cedar 策略：
@@ -165,31 +165,31 @@ pub fn validate_abac_expr(expr: &str) -> BulwarkResult<()> {
 /// - `abac_expr`: Cedar 条件表达式（如 "resource.user_id == principal.id"）
 ///
 /// # 错误
-/// - `BulwarkError::NotLogin`: 未登录（`get_login_id` 返回 None）
-/// - `BulwarkError::NotPermission`: ABAC 策略拒绝
-/// - `BulwarkError::InvalidParam`: abac_expr 含恶意模式或 Cedar 策略解析失败（含 resource 注入尝试）
-/// - 其他: 透传 `BulwarkManager` / AbacEngine 错误
+/// - `GarrisonError::NotLogin`: 未登录（`get_login_id` 返回 None）
+/// - `GarrisonError::NotPermission`: ABAC 策略拒绝
+/// - `GarrisonError::InvalidParam`: abac_expr 含恶意模式或 Cedar 策略解析失败（含 resource 注入尝试）
+/// - 其他: 透传 `GarrisonManager` / AbacEngine 错误
 #[cfg(feature = "abac")]
 pub async fn check_abac_with_policy(
     action: &str,
     resource: &str,
     abac_expr: &str,
-) -> BulwarkResult<()> {
+) -> GarrisonResult<()> {
     let engine = match get_abac_engine()? {
         Some(e) => e,
         None => {
-            return Err(BulwarkError::Config(
+            return Err(GarrisonError::Config(
                 "AbacEngine 未初始化，ABAC 校验失败（fail-closed）".into(),
             ))
         }, // R-abac-001: 未初始化 fail-closed
     };
     // A3: 校验 abac_expr 防止 Cedar 策略注入
     validate_abac_expr(abac_expr)?;
-    let login_id = crate::stp::BulwarkUtil::get_login_id().await?;
+    let login_id = crate::stp::GarrisonUtil::get_login_id().await?;
     let login_id = match login_id {
         Some(id) => id,
         None => {
-            return Err(BulwarkError::NotLogin(
+            return Err(GarrisonError::NotLogin(
                 "ABAC 校验时未获取到 login_id".to_string(),
             ))
         },
@@ -207,7 +207,7 @@ pub async fn check_abac_with_policy(
     if decision.allowed {
         Ok(())
     } else {
-        Err(BulwarkError::NotPermission(format!(
+        Err(GarrisonError::NotPermission(format!(
             "ABAC 策略拒绝: action={action}, resource={resource}, expr={abac_expr}"
         )))
     }
@@ -224,6 +224,6 @@ pub async fn check_abac_with_policy(
     _action: &str,
     _resource: &str,
     _abac_expr: &str,
-) -> crate::error::BulwarkResult<()> {
+) -> crate::error::GarrisonResult<()> {
     Ok(())
 }

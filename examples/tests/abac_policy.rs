@@ -7,7 +7,7 @@
 
 #![cfg(feature = "abac")]
 
-use bulwark_examples::authorization::abac_policy;
+use garrison_examples::authorization::abac_policy;
 
 #[tokio::test]
 async fn test_run_completes() {

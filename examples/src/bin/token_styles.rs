@@ -2,5 +2,5 @@
 //! See LICENSE for full license text.
 
 fn main() {
-    bulwark_examples::authorization::token_styles::run().unwrap();
+    garrison_examples::authorization::token_styles::run().unwrap();
 }

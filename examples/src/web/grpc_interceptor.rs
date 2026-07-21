@@ -4,23 +4,23 @@
 //! grpc_interceptor 示例（grpc feature）。
 //!
 //! 演示 tonic gRPC 框架集成：
-//! 1. `BulwarkGrpcInterceptor::new()` 创建拦截器
+//! 1. `GarrisonGrpcInterceptor::new()` 创建拦截器
 //! 2. `extract_token` 从 gRPC metadata 提取 Authorization Bearer token
 //! 3. `Interceptor::call()` 同步拦截器行为（仅提取 token，不执行 async 鉴权）
-//! 4. `with_current_token` + `BulwarkUtil::check_login()` 完整 async 鉴权模式
+//! 4. `with_current_token` + `GarrisonUtil::check_login()` 完整 async 鉴权模式
 //!
 //! 运行方式：
 //! ```sh
-//! cargo run -p bulwark-examples --bin grpc_interceptor --features grpc
+//! cargo run -p garrison-examples --bin grpc_interceptor --features grpc
 //! ```
 
 use async_trait::async_trait;
-use bulwark::config::BulwarkConfig;
-use bulwark::dao::BulwarkDao;
-use bulwark::error::{BulwarkError, BulwarkResult};
-use bulwark::grpc::BulwarkGrpcInterceptor;
-use bulwark::manager::BulwarkManager;
-use bulwark::stp::{with_current_token, BulwarkInterface, BulwarkUtil};
+use garrison::config::GarrisonConfig;
+use garrison::dao::GarrisonDao;
+use garrison::error::{GarrisonError, GarrisonResult};
+use garrison::grpc::GarrisonGrpcInterceptor;
+use garrison::manager::GarrisonManager;
+use garrison::stp::{with_current_token, GarrisonInterface, GarrisonUtil};
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -53,8 +53,8 @@ impl Default for InMemoryDao {
 }
 
 #[async_trait]
-impl BulwarkDao for InMemoryDao {
-    async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
+impl GarrisonDao for InMemoryDao {
+    async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
         let mut store = self.store.lock();
         match store.get(key) {
             Some((value, expire_at)) => {
@@ -70,7 +70,7 @@ impl BulwarkDao for InMemoryDao {
         }
     }
 
-    async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> BulwarkResult<()> {
+    async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> GarrisonResult<()> {
         let expire_at = if ttl_seconds == 0 {
             None
         } else {
@@ -82,18 +82,18 @@ impl BulwarkDao for InMemoryDao {
         Ok(())
     }
 
-    async fn update(&self, key: &str, value: &str) -> BulwarkResult<()> {
+    async fn update(&self, key: &str, value: &str) -> GarrisonResult<()> {
         let mut store = self.store.lock();
         match store.get_mut(key) {
             Some((existing, _)) => {
                 *existing = value.to_string();
                 Ok(())
             },
-            None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
+            None => Err(GarrisonError::Dao(format!("键不存在: {}", key))),
         }
     }
 
-    async fn expire(&self, key: &str, seconds: u64) -> BulwarkResult<()> {
+    async fn expire(&self, key: &str, seconds: u64) -> GarrisonResult<()> {
         let mut store = self.store.lock();
         match store.get_mut(key) {
             Some((_, expire_at)) => {
@@ -104,11 +104,11 @@ impl BulwarkDao for InMemoryDao {
                 };
                 Ok(())
             },
-            None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
+            None => Err(GarrisonError::Dao(format!("键不存在: {}", key))),
         }
     }
 
-    async fn delete(&self, key: &str) -> BulwarkResult<()> {
+    async fn delete(&self, key: &str) -> GarrisonResult<()> {
         self.store.lock().remove(key);
         Ok(())
     }
@@ -144,12 +144,12 @@ impl Default for MyInterface {
 }
 
 #[async_trait]
-impl BulwarkInterface for MyInterface {
-    async fn get_permission_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+impl GarrisonInterface for MyInterface {
+    async fn get_permission_list(&self, login_id: &str) -> GarrisonResult<Vec<String>> {
         Ok(self.permissions.get(login_id).cloned().unwrap_or_default())
     }
 
-    async fn get_role_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+    async fn get_role_list(&self, login_id: &str) -> GarrisonResult<Vec<String>> {
         Ok(self.roles.get(login_id).cloned().unwrap_or_default())
     }
 }
@@ -158,20 +158,22 @@ impl BulwarkInterface for MyInterface {
 // setup / 演示函数 / run
 // ============================================================================
 
-/// 初始化全局 BulwarkManager（注入 InMemoryDao + MyInterface），并登录获取 token。
+/// 初始化全局 GarrisonManager（注入 InMemoryDao + MyInterface），并登录获取 token。
 ///
 /// 返回 `(config, token)`，token 用于演示 gRPC metadata 注入。
-pub async fn setup() -> (Arc<BulwarkConfig>, String) {
-    let dao: Arc<dyn BulwarkDao> = Arc::new(InMemoryDao::new());
-    let mut config = BulwarkConfig::default_config();
+pub async fn setup() -> (Arc<GarrisonConfig>, String) {
+    let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
+    let mut config = GarrisonConfig::default_config();
     config.timeout = 3600;
     config.active_timeout = -1;
     config.throw_on_not_login = false;
     let config = Arc::new(config);
-    let interface: Arc<dyn BulwarkInterface> = Arc::new(MyInterface::new());
-    BulwarkManager::init(dao, config.clone(), interface).expect("BulwarkManager 初始化失败");
+    let interface: Arc<dyn GarrisonInterface> = Arc::new(MyInterface::new());
+    GarrisonManager::init(dao, config.clone(), interface).expect("GarrisonManager 初始化失败");
 
-    let token = BulwarkUtil::login_simple("1001").await.expect("login 失败");
+    let token = GarrisonUtil::login_simple("1001")
+        .await
+        .expect("login 失败");
     (config, token)
 }
 
@@ -192,19 +194,19 @@ pub fn build_metadata_with_token(token: &str) -> MetadataMap {
 /// 实际 tonic 应用中，此函数对应 service handler 内的逻辑：
 /// 1. 从请求 metadata 提取 token（通常在 Interceptor 中完成）
 /// 2. 用 `with_current_token` 设置 task_local 上下文
-/// 3. 调用 `BulwarkUtil::check_login()` 执行异步鉴权
+/// 3. 调用 `GarrisonUtil::check_login()` 执行异步鉴权
 ///
 /// # 参数
 /// - `token`: 从 metadata 提取的 token 字符串
 ///
 /// # 返回
 /// - `Ok(())`: 鉴权通过
-/// - `Err(BulwarkError)`: 鉴权失败（未登录 / token 无效等）
-pub async fn authenticate_request(token: String) -> BulwarkResult<()> {
+/// - `Err(GarrisonError)`: 鉴权失败（未登录 / token 无效等）
+pub async fn authenticate_request(token: String) -> GarrisonResult<()> {
     with_current_token(token, async {
-        let logged_in = BulwarkUtil::check_login().await?;
+        let logged_in = GarrisonUtil::check_login().await?;
         if !logged_in {
-            return Err(BulwarkError::NotLogin("未登录".to_string()));
+            return Err(GarrisonError::NotLogin("未登录".to_string()));
         }
         Ok(())
     })
@@ -214,28 +216,28 @@ pub async fn authenticate_request(token: String) -> BulwarkResult<()> {
 /// 运行 grpc_interceptor 示例。
 ///
 /// 演示完整的 gRPC 鉴权流程：
-/// 1. 创建 `BulwarkGrpcInterceptor`
+/// 1. 创建 `GarrisonGrpcInterceptor`
 /// 2. 从 metadata 提取 token
 /// 3. `Interceptor::call()` 同步拦截（仅提取 token）
 /// 4. `with_current_token` + `check_login` 完整 async 鉴权
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    println!("=== Bulwark gRPC Interceptor 示例 ===\n");
+    println!("=== Garrison gRPC Interceptor 示例 ===\n");
 
     // ----------------------------------------------------------------
-    // 1. 初始化 BulwarkManager
+    // 1. 初始化 GarrisonManager
     // ----------------------------------------------------------------
     let (_config, token) = setup().await;
-    println!("[初始化] BulwarkManager 已就绪");
+    println!("[初始化] GarrisonManager 已就绪");
     println!("    账号 1001 角色: [admin]");
     println!("    账号 1001 权限: [data:read]");
     println!("    token: {}...", &token[..16.min(token.len())]);
     println!();
 
     // ----------------------------------------------------------------
-    // 2. 创建 BulwarkGrpcInterceptor
+    // 2. 创建 GarrisonGrpcInterceptor
     // ----------------------------------------------------------------
-    println!("[Interceptor] BulwarkGrpcInterceptor::new():");
-    let interceptor = BulwarkGrpcInterceptor::new();
+    println!("[Interceptor] GarrisonGrpcInterceptor::new():");
+    let interceptor = GarrisonGrpcInterceptor::new();
     println!("    创建拦截器实例（Default + Clone + Debug）");
     let _cloned = interceptor.clone();
     println!("    clone() 成功（可在多个 tonic Server 间共享）");
@@ -248,7 +250,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("[extract_token] 从 gRPC metadata 提取 Authorization Bearer token:");
 
     let metadata = build_metadata_with_token(&token);
-    let extracted = BulwarkGrpcInterceptor::extract_token(&metadata)?;
+    let extracted = GarrisonGrpcInterceptor::extract_token(&metadata)?;
     println!(
         "    metadata[\"authorization\"] = \"Bearer {}...\"",
         &extracted[..16.min(extracted.len())]
@@ -265,7 +267,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // ----------------------------------------------------------------
     println!("[Interceptor::call] 同步拦截器行为（仅提取 token）:");
 
-    let mut interceptor = BulwarkGrpcInterceptor::new();
+    let mut interceptor = GarrisonGrpcInterceptor::new();
     let mut request = tonic::Request::new(());
     request.metadata_mut().insert(
         "authorization",
@@ -292,7 +294,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // ----------------------------------------------------------------
     // 5. with_current_token + check_login 完整 async 鉴权
     // ----------------------------------------------------------------
-    println!("[async 鉴权] with_current_token + BulwarkUtil::check_login():");
+    println!("[async 鉴权] with_current_token + GarrisonUtil::check_login():");
 
     // 合法 token → 鉴权通过
     let result = authenticate_request(token.clone()).await;
@@ -316,7 +318,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("[总结] 完整 gRPC 鉴权推荐模式:");
     println!("    1. tonic Interceptor 提取 token（同步，仅格式校验）");
     println!("    2. tonic service handler 内 with_current_token(token, async {{");
-    println!("         BulwarkUtil::check_login().await?");
+    println!("         GarrisonUtil::check_login().await?");
     println!("         // 业务逻辑...");
     println!("       }}).await");
     println!();

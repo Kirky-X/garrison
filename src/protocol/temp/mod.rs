@@ -10,28 +10,28 @@
 //!
 //! ## Key 命名空间
 //!
-//! 所有临时凭据存储在 `bulwark:temp:<prefix>:<random>` 命名空间下，
+//! 所有临时凭据存储在 `garrison:temp:<prefix>:<random>` 命名空间下，
 //! 与 session/sign/sso/apikey 模块隔离。`prefix` 用于区分业务场景
 //! （如 `invite`、`reset`、`verify`），不允许包含 `:` 以避免解析歧义。
 
-use crate::dao::BulwarkDao;
+use crate::dao::GarrisonDao;
 // listener_manager 注入（feature-gated）
 #[cfg(feature = "listener")]
-use crate::listener::BulwarkListenerManager;
+use crate::listener::GarrisonListenerManager;
 use std::sync::Arc;
 
 pub mod handler;
 
 /// 临时凭证处理器。
 ///
-/// 持有 `Arc<dyn BulwarkDao>` 用于临时凭据存储。
+/// 持有 `Arc<dyn GarrisonDao>` 用于临时凭据存储。
 /// 实现 `Send + Sync`，可在多线程环境共享。
 pub struct TempCredentialHandler {
     /// DAO 抽象层，用于临时凭据存储。
-    dao: Arc<dyn BulwarkDao>,
+    dao: Arc<dyn GarrisonDao>,
     /// 可选监听器管理器，注入后 consume 广播 TempCredentialConsumed 事件
     #[cfg(feature = "listener")]
-    listener_manager: Option<Arc<BulwarkListenerManager>>,
+    listener_manager: Option<Arc<GarrisonListenerManager>>,
 }
 
 #[cfg(test)]

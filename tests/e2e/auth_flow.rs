@@ -3,11 +3,11 @@
 
 //! 认证全流程 E2E 测试——login / logout / refresh。
 //!
-//! 通过 HTTP 调用真实 BulwarkAuthServer + BackendEmbedded，
+//! 通过 HTTP 调用真实 GarrisonAuthServer + BackendEmbedded，
 //! 测试认证核心场景：登录获取 token、登出失效 token、刷新获取新 token。
 
 use super::{http_login, make_client, start_e2e_server};
-use bulwark::backend::types::LoginParams;
+use garrison::backend::types::LoginParams;
 use serial_test::serial;
 
 /// 登录返回非空 token，且 token 可通过 check-login 校验。

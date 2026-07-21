@@ -5,7 +5,7 @@
 //!
 //! ## 三层架构
 //!
-//! - **Metrics**（`BulwarkMetrics`）：Prometheus 格式指标，覆盖登录成功率 / Token 验证延迟 /
+//! - **Metrics**（`GarrisonMetrics`）：Prometheus 格式指标，覆盖登录成功率 / Token 验证延迟 /
 //!   权限查询 QPS / 角色查询 QPS。启用 `metrics-prometheus` feature。
 //! - **Logs**（[`init_inklog_logging`](crate::observability::inklog::init_inklog_logging) /
 //!   [`init_inklog_logging_with_fallback`](crate::observability::inklog::init_inklog_logging_with_fallback)）：
@@ -16,11 +16,11 @@
 //!
 //! ## 集成点
 //!
-//! `BulwarkMetrics` 通过 `BulwarkLogicDefault::with_metrics` builder 注入，未注入时零开销。
+//! `GarrisonMetrics` 通过 `GarrisonLogicDefault::with_metrics` builder 注入，未注入时零开销。
 //!
 //! ## Feature 门控
 //!
-//! - `metrics-prometheus`：编译期包含 `BulwarkMetrics`，并为 inklog 降级路径提供 tracing-subscriber 依赖
+//! - `metrics-prometheus`：编译期包含 `GarrisonMetrics`，并为 inklog 降级路径提供 tracing-subscriber 依赖
 //! - `audit-inklog`：编译期包含 inklog 初始化与降级 API
 //! - `observability-otlp`：编译期包含 OTLP 导出器
 //! - 未启用任一 feature：模块仍可导入但所有 API 返回 `None` / no-op，保证向后兼容
@@ -30,20 +30,20 @@ pub use prometheus;
 
 /// Prometheus 指标集合，覆盖登录 / Token 验证 / 权限查询 / 角色查询。
 ///
-/// 通过 `BulwarkLogicDefault::with_metrics` builder 注入，未注入时所有 `*_metrics` 调用为
+/// 通过 `GarrisonLogicDefault::with_metrics` builder 注入，未注入时所有 `*_metrics` 调用为
 /// no-op（`Option::None` 短路）。
 ///
 /// # 指标清单
 ///
 /// | 指标名 | 类型 | 标签 | 说明 |
 /// |--------|------|------|------|
-/// | `bulwark_login_total` | Counter | `result=success\|failure` | 登录尝试次数 |
-/// | `bulwark_token_validation_duration_seconds` | Histogram | - | Token 验证延迟（秒） |
-/// | `bulwark_permission_query_total` | Counter | `result=allow\|deny` | 权限查询次数 |
-/// | `bulwark_role_query_total` | Counter | `result=allow\|deny` | 角色查询次数 |
+/// | `garrison_login_total` | Counter | `result=success\|failure` | 登录尝试次数 |
+/// | `garrison_token_validation_duration_seconds` | Histogram | - | Token 验证延迟（秒） |
+/// | `garrison_permission_query_total` | Counter | `result=allow\|deny` | 权限查询次数 |
+/// | `garrison_role_query_total` | Counter | `result=allow\|deny` | 角色查询次数 |
 #[cfg(feature = "metrics-prometheus")]
 #[derive(Clone)]
-pub struct BulwarkMetrics {
+pub struct GarrisonMetrics {
     /// 登录总数 Counter（标签：result=success|failure）
     pub(crate) login_total: prometheus::CounterVec,
     /// Token 验证延迟 Histogram（秒）
@@ -54,7 +54,7 @@ pub struct BulwarkMetrics {
     pub(crate) role_query_total: prometheus::CounterVec,
 }
 
-/// impl 块子模块（`BulwarkMetrics::new` / `register_to` / `record_*` 等）。
+/// impl 块子模块（`GarrisonMetrics::new` / `register_to` / `record_*` 等）。
 #[cfg(feature = "metrics-prometheus")]
 mod metrics_impl;
 
@@ -66,7 +66,7 @@ pub mod inklog;
 #[cfg(feature = "observability-otlp")]
 pub mod otlp;
 
-/// `BulwarkOtelError` 转换实现子模块。
+/// `GarrisonOtelError` 转换实现子模块。
 #[cfg(feature = "observability-otlp")]
 pub mod errors;
 
@@ -95,7 +95,7 @@ pub struct InklogInit {
 /// OpenTelemetry 初始化错误。
 #[cfg(feature = "observability-otlp")]
 #[derive(Debug, thiserror::Error)]
-pub enum BulwarkOtelError {
+pub enum GarrisonOtelError {
     /// OTLP exporter 构造失败
     #[error("OTLP exporter 构造失败: {0}")]
     Exporter(String),
@@ -106,10 +106,10 @@ pub enum BulwarkOtelError {
 
 /// 指标集合的 feature-gated 别名。
 ///
-/// - `metrics-prometheus` 启用：解析为 [`BulwarkMetrics`]
-/// - 未启用：不可用（调用方使用 `Option<Arc<BulwarkMetrics>>` 时仍可编译）
+/// - `metrics-prometheus` 启用：解析为 [`GarrisonMetrics`]
+/// - 未启用：不可用（调用方使用 `Option<Arc<GarrisonMetrics>>` 时仍可编译）
 #[cfg(not(feature = "metrics-prometheus"))]
-pub type BulwarkMetrics = ();
+pub type GarrisonMetrics = ();
 
 #[cfg(test)]
 mod tests;

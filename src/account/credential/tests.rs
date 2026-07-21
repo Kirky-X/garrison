@@ -552,15 +552,15 @@ async fn dao_repo_usable_as_trait_object() {
 // R-IDOR: IDOR 防护测试（vuln-0004 修复）
 //
 // 验证 CredentialRepository 的 find_by_user / update / delete 在 caller_login_id
-// 与目标凭证 owner 不一致时返回 BulwarkError::NotPermission（403 Forbidden）。
+// 与目标凭证 owner 不一致时返回 GarrisonError::NotPermission（403 Forbidden）。
 // 同时验证 update 不得改变 user_id 字段（防止凭证跨用户转移）。
 // 覆盖 MockCredentialRepository + DaoCredentialRepository 两个实现。
 // ========================================================================
 
 /// 辅助：断言 err 是 NotPermission（IDOR 拒绝）。
-fn assert_idor_denied(err: BulwarkError, ctx: &str) {
+fn assert_idor_denied(err: GarrisonError, ctx: &str) {
     assert!(
-        matches!(err, BulwarkError::NotPermission(_)),
+        matches!(err, GarrisonError::NotPermission(_)),
         "{} 应返回 NotPermission（IDOR 拒绝），实际: {:?}",
         ctx,
         err

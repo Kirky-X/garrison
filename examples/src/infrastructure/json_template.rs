@@ -1,17 +1,17 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! JSON 模板与序列化示例：演示 BulwarkJsonTemplate 占位符渲染 + BulwarkSerializer 类型化序列化。
+//! JSON 模板与序列化示例：演示 GarrisonJsonTemplate 占位符渲染 + GarrisonSerializer 类型化序列化。
 //!
 //! 对应模块：`src/json/mod.rs`（always on，无需 feature）。
 //!
 //! 运行方式：
 //! ```sh
-//! cargo run -p bulwark-examples --bin json_template --features full
+//! cargo run -p garrison-examples --bin json_template --features full
 //! ```
 
-use bulwark::error::BulwarkResult;
-use bulwark::json::{BulwarkJsonTemplate, BulwarkSerializer, BulwarkSerializerDefault};
+use garrison::error::GarrisonResult;
+use garrison::json::{GarrisonJsonTemplate, GarrisonSerializer, GarrisonSerializerDefault};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -31,15 +31,15 @@ pub struct UserInfo {
 
 /// 运行 JSON 模板与序列化示例。
 ///
-/// 演示 BulwarkJsonTemplate 占位符渲染与 BulwarkSerializerDefault 类型化序列化往返。
-pub fn run() -> BulwarkResult<()> {
-    println!("=== Bulwark JSON 模板与序列化示例 ===\n");
+/// 演示 GarrisonJsonTemplate 占位符渲染与 GarrisonSerializerDefault 类型化序列化往返。
+pub fn run() -> GarrisonResult<()> {
+    println!("=== Garrison JSON 模板与序列化示例 ===\n");
 
     // ----------------------------------------------------------------
-    // 1. BulwarkJsonTemplate：解析含占位符的 JSON 模板
+    // 1. GarrisonJsonTemplate：解析含占位符的 JSON 模板
     // ----------------------------------------------------------------
     let template_str = r#"{"code":0,"msg":"${msg}","data":{"token":"${token}","user":"${user}"}}"#;
-    let template = BulwarkJsonTemplate::new(template_str)?;
+    let template = GarrisonJsonTemplate::new(template_str)?;
     println!("[1] 模板解析成功");
     println!("    原始 value = {}", template.value());
 
@@ -63,7 +63,7 @@ pub fn run() -> BulwarkResult<()> {
     // ----------------------------------------------------------------
     // 2. 未提供的占位符保留原样
     // ----------------------------------------------------------------
-    let template2 = BulwarkJsonTemplate::new(r#"{"msg":"${missing}"}"#)?;
+    let template2 = GarrisonJsonTemplate::new(r#"{"msg":"${missing}"}"#)?;
     let empty_params = HashMap::new();
     let rendered2 = template2.render(&empty_params)?;
     println!("[2] 未提供的占位符保留原样:");
@@ -71,9 +71,9 @@ pub fn run() -> BulwarkResult<()> {
     assert!(rendered2.contains("${missing}"));
 
     // ----------------------------------------------------------------
-    // 3. BulwarkSerializerDefault：类型化序列化/反序列化往返
+    // 3. GarrisonSerializerDefault：类型化序列化/反序列化往返
     // ----------------------------------------------------------------
-    let serializer = BulwarkSerializerDefault;
+    let serializer = GarrisonSerializerDefault;
     let data = LoginResponse {
         code: 0,
         msg: "登录成功".to_string(),
@@ -84,7 +84,7 @@ pub fn run() -> BulwarkResult<()> {
     };
 
     let json = serializer.serialize(&data)?;
-    println!("[3] BulwarkSerializerDefault::serialize:");
+    println!("[3] GarrisonSerializerDefault::serialize:");
     println!("    JSON = {}", json);
 
     let deserialized: LoginResponse = serializer.deserialize(&json)?;

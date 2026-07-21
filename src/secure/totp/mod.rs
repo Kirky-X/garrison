@@ -16,7 +16,7 @@
 /// ```
 /// #[cfg(feature = "secure-totp")]
 /// # {
-/// use bulwark::secure::totp::TotpHandler;
+/// use garrison::secure::totp::TotpHandler;
 ///
 /// let secret = b"12345678901234567890".to_vec();
 /// let handler = TotpHandler::new(secret, 30, 6).unwrap();

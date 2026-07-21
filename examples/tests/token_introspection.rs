@@ -7,7 +7,7 @@
 
 #![cfg(feature = "protocol-oauth2")]
 
-use bulwark_examples::oauth2::token_introspection;
+use garrison_examples::oauth2::token_introspection;
 
 #[tokio::test]
 async fn test_run_completes() {

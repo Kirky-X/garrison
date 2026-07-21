@@ -7,13 +7,13 @@
 //! 通过 `inventory` crate 实现编译期监听器注册（替代 Java SPI）。
 //!
 //! 与 `plugin` 模块的区别：
-//! - `BulwarkPlugin`：主动钩子（在特定方法前后被调用，如 `on_login`）
-//! - `BulwarkListener`：被动订阅（订阅 `BulwarkEvent` 枚举的变体）
+//! - `GarrisonPlugin`：主动钩子（在特定方法前后被调用，如 `on_login`）
+//! - `GarrisonListener`：被动订阅（订阅 `GarrisonEvent` 枚举的变体）
 //!
 //! 此模块仅在启用 `listener` 特性时编译。
 //! 监听器失败仅记录 `tracing::warn!`，不中断主流程。
 
-use crate::error::BulwarkResult;
+use crate::error::GarrisonResult;
 use async_trait::async_trait;
 use parking_lot::RwLock;
 use std::sync::Arc;
@@ -26,7 +26,7 @@ pub mod audit;
 
 /// 请求上下文（T004 新增）。
 ///
-/// 携带与 HTTP 请求相关的客户端信息，由事件广播方注入到 `BulwarkEvent` 的
+/// 携带与 HTTP 请求相关的客户端信息，由事件广播方注入到 `GarrisonEvent` 的
 /// `request_context` 字段，供 `to_audit_entry` 提取 ip 与 user_agent 填充审计日志。
 ///
 /// # 字段
@@ -45,7 +45,7 @@ pub struct RequestContext {
 ///
 /// 派生 `Debug`、`Clone`、`PartialEq`，便于在监听器中复制、打印与比较。
 #[derive(Debug, Clone, PartialEq)]
-pub enum BulwarkEvent {
+pub enum GarrisonEvent {
     /// 登录成功事件。
     Login {
         /// 登录主体标识。
@@ -290,10 +290,10 @@ pub enum BulwarkEvent {
 /// 监听器 trait，提供事件订阅抽象。
 ///
 /// trait 绑定 `Send + Sync`，核心方法为 `on_event`，实现方按事件类型选择性处理。
-/// 与 `BulwarkPlugin` 的区别：plugin 是"主动钩子"（在特定方法前后被调用），
+/// 与 `GarrisonPlugin` 的区别：plugin 是"主动钩子"（在特定方法前后被调用），
 /// listener 是"被动订阅"（订阅事件类型）。
 #[async_trait]
-pub trait BulwarkListener: Send + Sync {
+pub trait GarrisonListener: Send + Sync {
     /// 事件处理方法。
     ///
     /// 实现方按事件类型选择性处理，默认空实现返回 `Ok(())`。
@@ -301,34 +301,34 @@ pub trait BulwarkListener: Send + Sync {
     ///
     /// v0.5.0 改为 async：支持 SQL-backed 监听器（如 AuditLogListener）
     /// 执行异步持久化操作。所有实现与调用方需 `.await`。
-    async fn on_event(&self, _event: &BulwarkEvent) -> BulwarkResult<()> {
+    async fn on_event(&self, _event: &GarrisonEvent) -> GarrisonResult<()> {
         Ok(())
     }
 }
 
-/// 监听器工厂函数指针，返回 `Arc<dyn BulwarkListener>`。
-pub type BulwarkListenerFactoryFn = fn() -> Arc<dyn BulwarkListener>;
+/// 监听器工厂函数指针，返回 `Arc<dyn GarrisonListener>`。
+pub type GarrisonListenerFactoryFn = fn() -> Arc<dyn GarrisonListener>;
 
 /// 监听器注册条目，用于 `inventory` 收集。
 ///
-/// 通过 `inventory::submit! { BulwarkListenerEntry { factory: my_listener_factory } }` 注册监听器，
-/// 运行期通过 `inventory::iter::<BulwarkListenerEntry>()` 遍历。
-pub struct BulwarkListenerEntry {
+/// 通过 `inventory::submit! { GarrisonListenerEntry { factory: my_listener_factory } }` 注册监听器，
+/// 运行期通过 `inventory::iter::<GarrisonListenerEntry>()` 遍历。
+pub struct GarrisonListenerEntry {
     /// 监听器工厂函数。
-    pub factory: BulwarkListenerFactoryFn,
+    pub factory: GarrisonListenerFactoryFn,
 }
 
 // 编译期监听器注册收集点
-inventory::collect!(BulwarkListenerEntry);
+inventory::collect!(GarrisonListenerEntry);
 
 /// 监听器管理器，收集并管理所有已注册监听器。
 ///
-/// 在 `BulwarkManager::init` 时通过 `inventory::iter` 收集所有已注册监听器。
+/// 在 `GarrisonManager::init` 时通过 `inventory::iter` 收集所有已注册监听器。
 /// `broadcast` 方法同步遍历所有监听器调用 `on_event`，
 /// 单个监听器失败时仅记录 `tracing::warn!` 日志，不中断广播。
-pub struct BulwarkListenerManager {
+pub struct GarrisonListenerManager {
     /// 已注册的监听器列表（`RwLock` 保护，支持运行时 `register` 追加）。
-    listeners: Arc<RwLock<Vec<Arc<dyn BulwarkListener>>>>,
+    listeners: Arc<RwLock<Vec<Arc<dyn GarrisonListener>>>>,
 }
 
 mod manager_impl;

@@ -1,7 +1,7 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! `NotLoginException` 与 `BulwarkException` 的 impl 块（从 mod.rs 迁移）。
+//! `NotLoginException` 与 `GarrisonException` 的 impl 块（从 mod.rs 迁移）。
 
 use super::*;
 
@@ -35,7 +35,7 @@ impl std::fmt::Display for NotLoginException {
 
 impl std::error::Error for NotLoginException {}
 
-impl BulwarkException {
+impl GarrisonException {
     /// 创建基础异常实例（Builder 入口）。
     ///
     /// # 参数
@@ -82,35 +82,35 @@ impl BulwarkException {
     }
 }
 
-impl From<BulwarkException> for BulwarkError {
-    /// 将 `BulwarkException` 转换为 `BulwarkError::Exception` 变体。
-    fn from(ex: BulwarkException) -> Self {
-        BulwarkError::Exception(ex)
+impl From<GarrisonException> for GarrisonError {
+    /// 将 `GarrisonException` 转换为 `GarrisonError::Exception` 变体。
+    fn from(ex: GarrisonException) -> Self {
+        GarrisonError::Exception(ex)
     }
 }
 
-impl From<BulwarkError> for BulwarkException {
-    /// 将 `BulwarkError` 转换为 `BulwarkException`。
+impl From<GarrisonError> for GarrisonException {
+    /// 将 `GarrisonError` 转换为 `GarrisonException`。
     ///
-    /// 仅 `Exception` 变体直接返回原始 `BulwarkException`，其他变体根据语义映射 code：
+    /// 仅 `Exception` 变体直接返回原始 `GarrisonException`，其他变体根据语义映射 code：
     /// - `NotLogin` / `InvalidToken` / `ExpiredToken` → code=-1（未登录）
     /// - `NotPermission` / `NotRole` / `FirewallBlocked` → code=-2（无权限/拦截，403 语义）
     /// - 其他 → code=500（业务异常）
-    fn from(err: BulwarkError) -> Self {
+    fn from(err: GarrisonError) -> Self {
         match err {
-            BulwarkError::Exception(ex) => ex,
-            BulwarkError::NotLogin(msg) => BulwarkException::new(-1, msg),
-            BulwarkError::InvalidToken(msg) => BulwarkException::new(-1, msg),
-            BulwarkError::ExpiredToken(msg) => BulwarkException::new(-1, msg),
-            BulwarkError::NotPermission(msg) => BulwarkException::new(-2, msg),
-            BulwarkError::NotRole(msg) => BulwarkException::new(-2, msg),
-            BulwarkError::FirewallBlocked(msg) => BulwarkException::new(-2, msg),
-            other => BulwarkException::new(500, other.to_string()),
+            GarrisonError::Exception(ex) => ex,
+            GarrisonError::NotLogin(msg) => GarrisonException::new(-1, msg),
+            GarrisonError::InvalidToken(msg) => GarrisonException::new(-1, msg),
+            GarrisonError::ExpiredToken(msg) => GarrisonException::new(-1, msg),
+            GarrisonError::NotPermission(msg) => GarrisonException::new(-2, msg),
+            GarrisonError::NotRole(msg) => GarrisonException::new(-2, msg),
+            GarrisonError::FirewallBlocked(msg) => GarrisonException::new(-2, msg),
+            other => GarrisonException::new(500, other.to_string()),
         }
     }
 }
 
-impl std::fmt::Display for BulwarkException {
+impl std::fmt::Display for GarrisonException {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "业务异常[{}]: {}", self.code, self.message)
     }
@@ -120,21 +120,21 @@ impl std::fmt::Display for BulwarkException {
 // IntoResponse 实现（cfg feature = "web-axum"）
 // ============================================================================
 
-/// 实现 `IntoResponse` 以便 `BulwarkException` 可直接作为 axum 响应返回。
+/// 实现 `IntoResponse` 以便 `GarrisonException` 可直接作为 axum 响应返回。
 ///
-/// 状态码映射规则（与 `BulwarkError::IntoResponse` 的 Exception 分支一致）：
+/// 状态码映射规则（与 `GarrisonError::IntoResponse` 的 Exception 分支一致）：
 /// - code = -1 → 401 Unauthorized
 /// - code = -2 → 403 Forbidden
 /// - 其他 → 500 Internal Server Error
 ///
 /// 响应体为 JSON，包含 `code`、`message` 与 `extras` 字段。
 #[cfg(feature = "web-axum")]
-impl axum::response::IntoResponse for BulwarkException {
+impl axum::response::IntoResponse for GarrisonException {
     fn into_response(self) -> axum::response::Response {
         use axum::http::StatusCode;
 
         // 完整异常记录到日志（不返回给客户端）
-        tracing::error!(exception = ?self, "bulwark exception");
+        tracing::error!(exception = ?self, "garrison exception");
 
         let status = match self.code {
             -1 => StatusCode::UNAUTHORIZED,

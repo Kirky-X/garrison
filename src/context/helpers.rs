@@ -7,7 +7,7 @@
 ///
 /// `frontend_separation=true` 时强制返回 `true`（必须从 Authorization Header 读取 Token），
 /// 忽略 `is_read_header` 配置。用于 Web 框架适配器的 token 提取逻辑。
-pub fn effective_is_read_header(config: &crate::config::BulwarkConfig) -> bool {
+pub fn effective_is_read_header(config: &crate::config::GarrisonConfig) -> bool {
     config.is_read_header || config.frontend_separation
 }
 
@@ -15,6 +15,6 @@ pub fn effective_is_read_header(config: &crate::config::BulwarkConfig) -> bool {
 ///
 /// `frontend_separation=true` 时强制返回 `false`（不读 Cookie），
 /// 忽略 `is_read_cookie` 配置。用于 Web 框架适配器的 token 提取逻辑。
-pub fn effective_is_read_cookie(config: &crate::config::BulwarkConfig) -> bool {
+pub fn effective_is_read_cookie(config: &crate::config::GarrisonConfig) -> bool {
     config.is_read_cookie && !config.frontend_separation
 }

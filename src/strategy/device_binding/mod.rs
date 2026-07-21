@@ -28,7 +28,7 @@ pub use loose::LooseBinding;
 pub use policies::Disabled;
 pub use strict::StrictBinding;
 
-use crate::error::BulwarkResult;
+use crate::error::GarrisonResult;
 use async_trait::async_trait;
 
 /// 设备绑定策略 trait,定义新设备检测与二级认证要求契约。
@@ -55,8 +55,8 @@ pub trait DeviceBindingPolicy: Send + Sync {
     /// # 返回
     /// - `Ok(true)`: 新设备(历史设备列表中不存在)。
     /// - `Ok(false)`: 已知设备。
-    /// - `Err`: 查询历史设备列表失败(如 DAO 异常),透传 `BulwarkError`。
-    async fn is_new_device(&self, login_id: &str, device_id: &str) -> BulwarkResult<bool>;
+    /// - `Err`: 查询历史设备列表失败(如 DAO 异常),透传 `GarrisonError`。
+    async fn is_new_device(&self, login_id: &str, device_id: &str) -> GarrisonResult<bool>;
 
     /// 判断新设备是否需要触发二级认证。
     ///
@@ -70,6 +70,7 @@ pub trait DeviceBindingPolicy: Send + Sync {
     /// # 返回
     /// - `Ok(true)`: 需要二级认证(如 strict 模式下新设备)。
     /// - `Ok(false)`: 不需要二级认证(loose 模式或已知设备)。
-    /// - `Err`: 查询失败,透传 `BulwarkError`。
-    async fn require_secondary_auth(&self, login_id: &str, device_id: &str) -> BulwarkResult<bool>;
+    /// - `Err`: 查询失败,透传 `GarrisonError`。
+    async fn require_secondary_auth(&self, login_id: &str, device_id: &str)
+        -> GarrisonResult<bool>;
 }

@@ -2,5 +2,5 @@
 //! See LICENSE for full license text.
 
 fn main() {
-    bulwark_examples::infrastructure::exception_handling::run().unwrap();
+    garrison_examples::infrastructure::exception_handling::run().unwrap();
 }

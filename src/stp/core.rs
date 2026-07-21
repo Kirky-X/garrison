@@ -1,9 +1,9 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! BulwarkCore base trait — 所有子 trait 的基础。
-use super::BulwarkLogicDefault;
-use crate::config::BulwarkConfig;
+//! GarrisonCore base trait — 所有子 trait 的基础。
+use super::GarrisonLogicDefault;
+use crate::config::GarrisonConfig;
 use std::sync::Arc;
 
 /// 核心 base trait，提供配置访问能力。
@@ -13,21 +13,21 @@ use std::sync::Arc;
 ///
 /// # 对象安全
 ///
-/// 本 trait 仅含同步方法 `config()`，对象安全，可作为 `dyn BulwarkCore` 使用。
-pub trait BulwarkCore: Send + Sync {
-    /// 获取当前 `BulwarkConfig` 引用（用于 token 提取、Cookie 配置等需要配置的场景）。
+/// 本 trait 仅含同步方法 `config()`，对象安全，可作为 `dyn GarrisonCore` 使用。
+pub trait GarrisonCore: Send + Sync {
+    /// 获取当前 `GarrisonConfig` 引用（用于 token 提取、Cookie 配置等需要配置的场景）。
     ///
     /// # 返回
     /// 全局配置的 `Arc` 引用。
-    fn config(&self) -> Arc<BulwarkConfig>;
+    fn config(&self) -> Arc<GarrisonConfig>;
 }
 
 // ============================================================================
-// BulwarkLogicDefault impl
+// GarrisonLogicDefault impl
 // ============================================================================
 
-impl BulwarkCore for BulwarkLogicDefault {
-    fn config(&self) -> Arc<BulwarkConfig> {
+impl GarrisonCore for GarrisonLogicDefault {
+    fn config(&self) -> Arc<GarrisonConfig> {
         Arc::clone(&self.config)
     }
 }
@@ -37,18 +37,18 @@ mod tests {
     use super::*;
 
     struct MockCore {
-        config: Arc<BulwarkConfig>,
+        config: Arc<GarrisonConfig>,
     }
 
-    impl BulwarkCore for MockCore {
-        fn config(&self) -> Arc<BulwarkConfig> {
+    impl GarrisonCore for MockCore {
+        fn config(&self) -> Arc<GarrisonConfig> {
             Arc::clone(&self.config)
         }
     }
 
     #[test]
-    fn bulwark_core_can_be_implemented() {
-        let config = Arc::new(BulwarkConfig::default());
+    fn garrison_core_can_be_implemented() {
+        let config = Arc::new(GarrisonConfig::default());
         let mock = MockCore {
             config: Arc::clone(&config),
         };

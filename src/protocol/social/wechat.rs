@@ -12,7 +12,7 @@
 //!
 //! 启用 `social-wechat` feature 时编译，依赖 `protocol-oauth2`（提供 reqwest HTTP client）。
 
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::error::{GarrisonError, GarrisonResult};
 use crate::loc;
 use crate::protocol::social::{SocialLoginProvider, SocialProvider, SocialUserInfo};
 use async_trait::async_trait;
@@ -34,8 +34,8 @@ const WECHAT_USERINFO_URL: &str = "https://api.weixin.qq.com/sns/userinfo";
 /// # 示例
 ///
 /// ```ignore
-/// use bulwark::protocol::social::wechat::WechatProvider;
-/// use bulwark::protocol::social::SocialLoginProvider;
+/// use garrison::protocol::social::wechat::WechatProvider;
+/// use garrison::protocol::social::SocialLoginProvider;
 ///
 /// let provider = WechatProvider::new("wx_appid", "wx_secret");
 /// let url = provider.get_authorization_url("state123", "https://example.com/cb").await?;
@@ -97,7 +97,7 @@ impl SocialLoginProvider for WechatProvider {
         &self,
         state: &str,
         redirect_uri: &str,
-    ) -> BulwarkResult<String> {
+    ) -> GarrisonResult<String> {
         Ok(format!(
             "{}?appid={}&redirect_uri={}&state={}",
             WECHAT_AUTH_URL,
@@ -111,7 +111,7 @@ impl SocialLoginProvider for WechatProvider {
     ///
     /// 调用微信 `sns/oauth2/access_token` 端点，用授权码换取 access_token + openid + unionid，
     /// 返回 `SocialUserInfo`（nickname/avatar 为 None，需调用 `get_user_info` 获取）。
-    async fn exchange_token(&self, code: &str, _state: &str) -> BulwarkResult<SocialUserInfo> {
+    async fn exchange_token(&self, code: &str, _state: &str) -> GarrisonResult<SocialUserInfo> {
         let resp = self
             .http
             .post(&self.token_url)
@@ -124,7 +124,7 @@ impl SocialLoginProvider for WechatProvider {
             .send()
             .await
             .map_err(|e| {
-                BulwarkError::Network(loc!(
+                GarrisonError::Network(loc!(
                     "wechat-token-request-failed",
                     format!("wechat token request failed: {}", e),
                     ("detail", &e.to_string())
@@ -132,7 +132,7 @@ impl SocialLoginProvider for WechatProvider {
             })?;
 
         if !resp.status().is_success() {
-            return Err(BulwarkError::Network(loc!(
+            return Err(GarrisonError::Network(loc!(
                 "wechat-token-request-failed",
                 format!("wechat token request failed: {}", resp.status()),
                 ("detail", &resp.status().to_string())
@@ -140,7 +140,7 @@ impl SocialLoginProvider for WechatProvider {
         }
 
         let raw: Value = resp.json().await.map_err(|e| {
-            BulwarkError::Network(loc!(
+            GarrisonError::Network(loc!(
                 "wechat-token-response-parse-failed",
                 format!("wechat token response parse failed: {}", e),
                 ("detail", &e.to_string())
@@ -154,7 +154,7 @@ impl SocialLoginProvider for WechatProvider {
                     .get("errmsg")
                     .and_then(|v| v.as_str())
                     .unwrap_or("unknown wechat error");
-                return Err(BulwarkError::Network(loc!(
+                return Err(GarrisonError::Network(loc!(
                     "wechat-error-response",
                     format!("wechat error {}: {}", errcode, errmsg),
                     ("code", &errcode.to_string()),
@@ -167,7 +167,7 @@ impl SocialLoginProvider for WechatProvider {
             .get("openid")
             .and_then(|v| v.as_str())
             .ok_or_else(|| {
-                BulwarkError::Network(loc!(
+                GarrisonError::Network(loc!(
                     "wechat-response-missing-openid",
                     "wechat response missing openid field".to_string()
                 ))
@@ -199,12 +199,12 @@ impl SocialLoginProvider for WechatProvider {
     ///   微信 userinfo 端点必须同时传入 access_token 和 openid，而 `SocialLoginProvider::get_user_info`
     ///   trait 签名只接受单参数，故采用复合格式编码两个字段。调用方应在 `exchange_token` 后保存
     ///   `SocialUserInfo.provider_user_id`（即 openid），调用时拼接为 `"access_token|openid"`。
-    ///   若不含 `|`，整个字符串作为 access_token、openid 为空字符串（微信会返回 errcode，最终映射为 `BulwarkError::Network`）。
+    ///   若不含 `|`，整个字符串作为 access_token、openid 为空字符串（微信会返回 errcode，最终映射为 `GarrisonError::Network`）。
     ///
     /// # 错误
     ///
-    /// - `BulwarkError::Network`: HTTP 请求失败、状态码非 2xx、JSON 解析失败、或微信返回 errcode != 0。
-    async fn get_user_info(&self, access_token: &str) -> BulwarkResult<SocialUserInfo> {
+    /// - `GarrisonError::Network`: HTTP 请求失败、状态码非 2xx、JSON 解析失败、或微信返回 errcode != 0。
+    async fn get_user_info(&self, access_token: &str) -> GarrisonResult<SocialUserInfo> {
         // 解析 "{access_token}|{openid}" 复合格式
         let (access_token_value, openid) = match access_token.split_once('|') {
             Some((tok, oid)) => (tok, oid),
@@ -218,7 +218,7 @@ impl SocialLoginProvider for WechatProvider {
             urlencoding::encode(openid),
         );
         let resp = self.http.get(&url).send().await.map_err(|e| {
-            BulwarkError::Network(loc!(
+            GarrisonError::Network(loc!(
                 "wechat-userinfo-request-failed",
                 format!("wechat userinfo request failed: {}", e),
                 ("detail", &e.to_string())
@@ -226,7 +226,7 @@ impl SocialLoginProvider for WechatProvider {
         })?;
 
         if !resp.status().is_success() {
-            return Err(BulwarkError::Network(loc!(
+            return Err(GarrisonError::Network(loc!(
                 "wechat-userinfo-request-failed",
                 format!("wechat userinfo request failed: {}", resp.status()),
                 ("detail", &resp.status().to_string())
@@ -234,7 +234,7 @@ impl SocialLoginProvider for WechatProvider {
         }
 
         let raw: Value = resp.json().await.map_err(|e| {
-            BulwarkError::Network(loc!(
+            GarrisonError::Network(loc!(
                 "wechat-userinfo-response-parse-failed",
                 format!("wechat userinfo response parse failed: {}", e),
                 ("detail", &e.to_string())
@@ -248,7 +248,7 @@ impl SocialLoginProvider for WechatProvider {
                     .get("errmsg")
                     .and_then(|v| v.as_str())
                     .unwrap_or("unknown wechat error");
-                return Err(BulwarkError::Network(loc!(
+                return Err(GarrisonError::Network(loc!(
                     "wechat-error-response",
                     format!("wechat error {}: {}", errcode, errmsg),
                     ("code", &errcode.to_string()),
@@ -261,7 +261,7 @@ impl SocialLoginProvider for WechatProvider {
             .get("openid")
             .and_then(|v| v.as_str())
             .ok_or_else(|| {
-                BulwarkError::Network(loc!(
+                GarrisonError::Network(loc!(
                     "wechat-userinfo-response-missing-openid",
                     "wechat userinfo response missing openid field".to_string()
                 ))
@@ -335,14 +335,14 @@ const WECHAT_MINI_APP_JSCODE2SESSION_URL: &str = "https://api.weixin.qq.com/sns/
 ///
 /// - `WechatProvider` 用于网站扫码登录（OAuth2 流程：授权页 → code → access_token → userinfo）
 /// - `WechatMiniAppProvider` 用于小程序登录（`wx.login()` → js_code → jscode2session → openid）
-/// - 小程序无 OAuth2 授权页 URL，`get_authorization_url` 返回 `BulwarkError::NotImplemented`
+/// - 小程序无 OAuth2 授权页 URL，`get_authorization_url` 返回 `GarrisonError::NotImplemented`
 /// - 小程序无独立 access_token，`exchange_token` 与 `get_user_info` 均调用 jscode2session
 ///
 /// # 示例
 ///
 /// ```ignore
-/// use bulwark::protocol::social::wechat::WechatMiniAppProvider;
-/// use bulwark::protocol::social::SocialLoginProvider;
+/// use garrison::protocol::social::wechat::WechatMiniAppProvider;
+/// use garrison::protocol::social::SocialLoginProvider;
 ///
 /// let provider = WechatMiniAppProvider::new("wx_appid", "wx_secret");
 /// let user_info = provider.get_user_info("js_code_from_wx_login").await?;
@@ -392,8 +392,8 @@ impl SocialLoginProvider for WechatMiniAppProvider {
         &self,
         _state: &str,
         _redirect_uri: &str,
-    ) -> BulwarkResult<String> {
-        Err(BulwarkError::NotImplemented(
+    ) -> GarrisonResult<String> {
+        Err(GarrisonError::NotImplemented(
             loc!(
                 "wechat-mini-app-get-authorization-url-not-supported",
                 "WechatMiniAppProvider 不支持 get_authorization_url（小程序用 wx.login() 直接获取 js_code）".to_string()
@@ -402,7 +402,7 @@ impl SocialLoginProvider for WechatMiniAppProvider {
     }
 
     /// 用 js_code 换取用户信息（与 `get_user_info` 等价，均调用 `jscode2session`）。
-    async fn exchange_token(&self, code: &str, _state: &str) -> BulwarkResult<SocialUserInfo> {
+    async fn exchange_token(&self, code: &str, _state: &str) -> GarrisonResult<SocialUserInfo> {
         self.get_user_info(code).await
     }
 
@@ -415,9 +415,9 @@ impl SocialLoginProvider for WechatMiniAppProvider {
     ///
     /// # 错误
     ///
-    /// - `BulwarkError::Network`: HTTP 请求失败、状态码非 2xx、JSON 解析失败、
+    /// - `GarrisonError::Network`: HTTP 请求失败、状态码非 2xx、JSON 解析失败、
     ///   或微信返回 `errcode != 0`、或响应缺少 `openid` 字段
-    async fn get_user_info(&self, access_token: &str) -> BulwarkResult<SocialUserInfo> {
+    async fn get_user_info(&self, access_token: &str) -> GarrisonResult<SocialUserInfo> {
         // access_token 参数位实际为小程序 wx.login() 返回的 js_code
         let js_code = access_token;
 
@@ -430,7 +430,7 @@ impl SocialLoginProvider for WechatMiniAppProvider {
         );
 
         let resp = self.http.get(&url).send().await.map_err(|e| {
-            BulwarkError::Network(loc!(
+            GarrisonError::Network(loc!(
                 "wechat-mini-app-jscode2session-request-failed",
                 format!("wechat mini-app jscode2session request failed: {}", e),
                 ("detail", &e.to_string())
@@ -438,7 +438,7 @@ impl SocialLoginProvider for WechatMiniAppProvider {
         })?;
 
         if !resp.status().is_success() {
-            return Err(BulwarkError::Network(loc!(
+            return Err(GarrisonError::Network(loc!(
                 "wechat-mini-app-jscode2session-request-failed",
                 format!(
                     "wechat mini-app jscode2session request failed: {}",
@@ -449,7 +449,7 @@ impl SocialLoginProvider for WechatMiniAppProvider {
         }
 
         let raw: Value = resp.json().await.map_err(|e| {
-            BulwarkError::Network(loc!(
+            GarrisonError::Network(loc!(
                 "wechat-mini-app-jscode2session-response-parse-failed",
                 format!(
                     "wechat mini-app jscode2session response parse failed: {}",
@@ -466,7 +466,7 @@ impl SocialLoginProvider for WechatMiniAppProvider {
                     .get("errmsg")
                     .and_then(|v| v.as_str())
                     .unwrap_or("unknown wechat error");
-                return Err(BulwarkError::Network(loc!(
+                return Err(GarrisonError::Network(loc!(
                     "wechat-mini-app-error-response",
                     format!("wechat mini-app error {}: {}", errcode, errmsg),
                     ("code", &errcode.to_string()),
@@ -479,7 +479,7 @@ impl SocialLoginProvider for WechatMiniAppProvider {
             .get("openid")
             .and_then(|v| v.as_str())
             .ok_or_else(|| {
-                BulwarkError::Network(loc!(
+                GarrisonError::Network(loc!(
                     "wechat-mini-app-jscode2session-response-missing-openid",
                     "wechat mini-app jscode2session response missing openid field".to_string()
                 ))
@@ -627,10 +627,10 @@ mod tests {
         assert_eq!(user_info.union_id.as_deref(), Some("union1"));
     }
 
-    /// 验证 `WechatProvider::get_user_info` 在 HTTP 错误时返回 `BulwarkError`（不 panic）
+    /// 验证 `WechatProvider::get_user_info` 在 HTTP 错误时返回 `GarrisonError`（不 panic）
     ///
     /// Red 阶段：`get_user_info` 未实现 → panic。
-    /// Green 阶段（T004）：实现后返回 `Err(BulwarkError::Network(_))`。
+    /// Green 阶段（T004）：实现后返回 `Err(GarrisonError::Network(_))`。
     #[tokio::test]
     async fn wechat_provider_get_user_info_returns_error_on_http_failure() {
         use wiremock::matchers::{method, path};
@@ -654,8 +654,8 @@ mod tests {
             result
         );
         match result {
-            Err(BulwarkError::Network(_)) => {},
-            Err(other) => panic!("期望 BulwarkError::Network，实际: {:?}", other),
+            Err(GarrisonError::Network(_)) => {},
+            Err(other) => panic!("期望 GarrisonError::Network，实际: {:?}", other),
             Ok(_) => unreachable!("HTTP 500 不应返回 Ok"),
         }
     }
@@ -703,10 +703,10 @@ mod tests {
     }
 
     /// 验证 `WechatMiniAppProvider::get_user_info` 在微信返回 `errcode=40029`
-    ///（无效 code）时返回 `BulwarkError`。
+    ///（无效 code）时返回 `GarrisonError`。
     ///
     /// Red 阶段：`get_user_info` 含 `todo!()` → panic。
-    /// Green 阶段（T089）：实现 errcode 检查后返回 `Err(BulwarkError::Network(_))`。
+    /// Green 阶段（T089）：实现 errcode 检查后返回 `Err(GarrisonError::Network(_))`。
     #[tokio::test]
     async fn wechat_mini_app_get_user_info_invalid_code() {
         use wiremock::matchers::{method, path};
@@ -735,10 +735,10 @@ mod tests {
     }
 
     /// 验证 `WechatMiniAppProvider::get_user_info` 在 HTTP 500 时返回
-    /// `BulwarkError::Network`。
+    /// `GarrisonError::Network`。
     ///
     /// Red 阶段：`get_user_info` 含 `todo!()` → panic。
-    /// Green 阶段（T089）：实现 HTTP 状态码检查后返回 `Err(BulwarkError::Network(_))`。
+    /// Green 阶段（T089）：实现 HTTP 状态码检查后返回 `Err(GarrisonError::Network(_))`。
     #[tokio::test]
     async fn wechat_mini_app_get_user_info_network_error() {
         use wiremock::matchers::{method, path};
@@ -762,17 +762,17 @@ mod tests {
             result
         );
         match result {
-            Err(BulwarkError::Network(_)) => {},
-            Err(other) => panic!("期望 BulwarkError::Network，实际: {:?}", other),
+            Err(GarrisonError::Network(_)) => {},
+            Err(other) => panic!("期望 GarrisonError::Network，实际: {:?}", other),
             Ok(_) => unreachable!("HTTP 500 不应返回 Ok"),
         }
     }
 
     /// 验证 `WechatMiniAppProvider::get_user_info` 在响应缺少 `openid` 字段时
-    /// 返回 `BulwarkError`。
+    /// 返回 `GarrisonError`。
     ///
     /// Red 阶段：`get_user_info` 含 `todo!()` → panic。
-    /// Green 阶段（T089）：实现 openid 缺失检查后返回 `Err(BulwarkError::Network(_))`。
+    /// Green 阶段（T089）：实现 openid 缺失检查后返回 `Err(GarrisonError::Network(_))`。
     #[tokio::test]
     async fn wechat_mini_app_get_user_info_missing_openid() {
         use wiremock::matchers::{method, path};
@@ -921,7 +921,7 @@ mod tests {
 
         assert!(result.is_err(), "errcode!=0 应返回 Err");
         match result {
-            Err(BulwarkError::Network(_)) => {},
+            Err(GarrisonError::Network(_)) => {},
             Err(other) => panic!("期望 Network 错误，实际: {:?}", other),
             Ok(_) => unreachable!("errcode!=0 不应返回 Ok"),
         }
@@ -949,7 +949,7 @@ mod tests {
 
         assert!(result.is_err(), "缺少 openid 应返回 Err");
         match result {
-            Err(BulwarkError::Network(_)) => {},
+            Err(GarrisonError::Network(_)) => {},
             Err(other) => panic!("期望 Network 错误，实际: {:?}", other),
             Ok(_) => unreachable!("缺少 openid 不应返回 Ok"),
         }
@@ -974,7 +974,7 @@ mod tests {
 
         assert!(result.is_err(), "HTTP 500 应返回 Err");
         match result {
-            Err(BulwarkError::Network(_)) => {},
+            Err(GarrisonError::Network(_)) => {},
             Err(other) => panic!("期望 Network 错误，实际: {:?}", other),
             Ok(_) => unreachable!("HTTP 500 不应返回 Ok"),
         }
@@ -1064,7 +1064,7 @@ mod tests {
 
         assert!(result.is_err(), "errcode!=0 应返回 Err");
         match result {
-            Err(BulwarkError::Network(_)) => {},
+            Err(GarrisonError::Network(_)) => {},
             Err(other) => panic!("期望 Network 错误，实际: {:?}", other),
             Ok(_) => unreachable!("errcode!=0 不应返回 Ok"),
         }
@@ -1092,7 +1092,7 @@ mod tests {
 
         assert!(result.is_err(), "缺少 openid 应返回 Err");
         match result {
-            Err(BulwarkError::Network(_)) => {},
+            Err(GarrisonError::Network(_)) => {},
             Err(other) => panic!("期望 Network 错误，实际: {:?}", other),
             Ok(_) => unreachable!("缺少 openid 不应返回 Ok"),
         }
@@ -1158,7 +1158,7 @@ mod tests {
         let provider = WechatMiniAppProvider::new("appid", "secret");
         let result = provider.get_authorization_url("state", "redirect").await;
         match result {
-            Err(BulwarkError::NotImplemented(_)) => {},
+            Err(GarrisonError::NotImplemented(_)) => {},
             Err(other) => panic!("期望 NotImplemented，实际: {:?}", other),
             Ok(_) => unreachable!("不应返回 Ok"),
         }

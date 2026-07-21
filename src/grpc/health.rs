@@ -27,7 +27,7 @@
 /// # 示例
 ///
 /// ```ignore
-/// use bulwark::grpc::health_service;
+/// use garrison::grpc::health_service;
 /// use tonic::transport::Server;
 ///
 /// let health = health_service().await;

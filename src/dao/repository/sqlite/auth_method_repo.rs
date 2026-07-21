@@ -5,7 +5,7 @@
 
 use super::{v_i64, v_opt_str, v_str, DbnexusAuthMethodRepository};
 use crate::dao::repository::{make_statement, AuthMethodRepository, AuthMethodRow, NewAuthMethod};
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::error::{GarrisonError, GarrisonResult};
 use async_trait::async_trait;
 use dbnexus::DbPool;
 use sea_orm::{ConnectionTrait, QueryResult};
@@ -19,18 +19,18 @@ impl DbnexusAuthMethodRepository {
 
 #[async_trait]
 impl AuthMethodRepository for DbnexusAuthMethodRepository {
-    async fn find_by_id(&self, tenant_id: i64, id: &str) -> BulwarkResult<Option<AuthMethodRow>> {
+    async fn find_by_id(&self, tenant_id: i64, id: &str) -> GarrisonResult<Option<AuthMethodRow>> {
         let session = self.pool.get_session("admin").await.map_err(|e| {
-            BulwarkError::Dao(format!("dao-app-auth-method-find-by-id-session::{}", e))
+            GarrisonError::Dao(format!("dao-app-auth-method-find-by-id-session::{}", e))
         })?;
         let conn = session.connection().map_err(|e| {
-            BulwarkError::Dao(format!("dao-app-auth-method-find-by-id-connection::{}", e))
+            GarrisonError::Dao(format!("dao-app-auth-method-find-by-id-connection::{}", e))
         })?;
         let sql = "SELECT id, user_id, method_type, external_id, metadata, create_time, tenant_id \
                    FROM app_auth_method WHERE tenant_id = ? AND id = ?";
         let stmt = make_statement(conn, sql, vec![v_i64(tenant_id), v_str(id)]);
         let row = conn.query_one_raw(stmt).await.map_err(|e| {
-            BulwarkError::Dao(format!("dao-app-auth-method-find-by-id-query::{}", e))
+            GarrisonError::Dao(format!("dao-app-auth-method-find-by-id-query::{}", e))
         })?;
         row.map(|r| parse_auth_method_row(&r)).transpose()
     }
@@ -39,15 +39,15 @@ impl AuthMethodRepository for DbnexusAuthMethodRepository {
         &self,
         tenant_id: i64,
         user_id: &str,
-    ) -> BulwarkResult<Vec<AuthMethodRow>> {
+    ) -> GarrisonResult<Vec<AuthMethodRow>> {
         let session = self.pool.get_session("admin").await.map_err(|e| {
-            BulwarkError::Dao(format!(
+            GarrisonError::Dao(format!(
                 "dao-app-auth-method-find-by-user-id-session::{}",
                 e
             ))
         })?;
         let conn = session.connection().map_err(|e| {
-            BulwarkError::Dao(format!(
+            GarrisonError::Dao(format!(
                 "dao-app-auth-method-find-by-user-id-connection::{}",
                 e
             ))
@@ -56,19 +56,18 @@ impl AuthMethodRepository for DbnexusAuthMethodRepository {
                    FROM app_auth_method WHERE tenant_id = ? AND user_id = ?";
         let stmt = make_statement(conn, sql, vec![v_i64(tenant_id), v_str(user_id)]);
         let rows = conn.query_all_raw(stmt).await.map_err(|e| {
-            BulwarkError::Dao(format!("dao-app-auth-method-find-by-user-id-query::{}", e))
+            GarrisonError::Dao(format!("dao-app-auth-method-find-by-user-id-query::{}", e))
         })?;
         rows.iter().map(parse_auth_method_row).collect()
     }
 
-    async fn create(&self, tenant_id: i64, method: NewAuthMethod) -> BulwarkResult<String> {
+    async fn create(&self, tenant_id: i64, method: NewAuthMethod) -> GarrisonResult<String> {
         let id = uuid::Uuid::new_v4().to_string();
-        let session =
-            self.pool.get_session("admin").await.map_err(|e| {
-                BulwarkError::Dao(format!("dao-app-auth-method-create-session::{}", e))
-            })?;
+        let session = self.pool.get_session("admin").await.map_err(|e| {
+            GarrisonError::Dao(format!("dao-app-auth-method-create-session::{}", e))
+        })?;
         let conn = session.connection().map_err(|e| {
-            BulwarkError::Dao(format!("dao-app-auth-method-create-connection::{}", e))
+            GarrisonError::Dao(format!("dao-app-auth-method-create-connection::{}", e))
         })?;
         let sql = "INSERT INTO app_auth_method (id, user_id, method_type, external_id, metadata, tenant_id) \
                    VALUES (?, ?, ?, ?, ?, ?)";
@@ -86,23 +85,22 @@ impl AuthMethodRepository for DbnexusAuthMethodRepository {
         );
         conn.execute_raw(stmt)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("dao-app-auth-method-create-insert::{}", e)))?;
+            .map_err(|e| GarrisonError::Dao(format!("dao-app-auth-method-create-insert::{}", e)))?;
         Ok(id)
     }
 
-    async fn delete(&self, tenant_id: i64, id: &str) -> BulwarkResult<()> {
-        let session =
-            self.pool.get_session("admin").await.map_err(|e| {
-                BulwarkError::Dao(format!("dao-app-auth-method-delete-session::{}", e))
-            })?;
+    async fn delete(&self, tenant_id: i64, id: &str) -> GarrisonResult<()> {
+        let session = self.pool.get_session("admin").await.map_err(|e| {
+            GarrisonError::Dao(format!("dao-app-auth-method-delete-session::{}", e))
+        })?;
         let conn = session.connection().map_err(|e| {
-            BulwarkError::Dao(format!("dao-app-auth-method-delete-connection::{}", e))
+            GarrisonError::Dao(format!("dao-app-auth-method-delete-connection::{}", e))
         })?;
         let sql = "DELETE FROM app_auth_method WHERE tenant_id = ? AND id = ?";
         let stmt = make_statement(conn, sql, vec![v_i64(tenant_id), v_str(id)]);
         conn.execute_raw(stmt)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("dao-app-auth-method-delete-delete::{}", e)))?;
+            .map_err(|e| GarrisonError::Dao(format!("dao-app-auth-method-delete-delete::{}", e)))?;
         Ok(())
     }
 
@@ -111,13 +109,13 @@ impl AuthMethodRepository for DbnexusAuthMethodRepository {
         tenant_id: i64,
         offset: i64,
         limit: i64,
-    ) -> BulwarkResult<Vec<AuthMethodRow>> {
+    ) -> GarrisonResult<Vec<AuthMethodRow>> {
         let session =
             self.pool.get_session("admin").await.map_err(|e| {
-                BulwarkError::Dao(format!("dao-app-auth-method-list-session::{}", e))
+                GarrisonError::Dao(format!("dao-app-auth-method-list-session::{}", e))
             })?;
         let conn = session.connection().map_err(|e| {
-            BulwarkError::Dao(format!("dao-app-auth-method-list-connection::{}", e))
+            GarrisonError::Dao(format!("dao-app-auth-method-list-connection::{}", e))
         })?;
         let sql = "SELECT id, user_id, method_type, external_id, metadata, create_time, tenant_id \
                    FROM app_auth_method WHERE tenant_id = ? LIMIT ? OFFSET ?";
@@ -129,34 +127,34 @@ impl AuthMethodRepository for DbnexusAuthMethodRepository {
         let rows = conn
             .query_all_raw(stmt)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("dao-app-auth-method-list-query::{}", e)))?;
+            .map_err(|e| GarrisonError::Dao(format!("dao-app-auth-method-list-query::{}", e)))?;
         rows.iter().map(parse_auth_method_row).collect()
     }
 }
 
 /// 解析 app_auth_method 行。
-fn parse_auth_method_row(row: &QueryResult) -> BulwarkResult<AuthMethodRow> {
+fn parse_auth_method_row(row: &QueryResult) -> GarrisonResult<AuthMethodRow> {
     Ok(AuthMethodRow {
         id: row
             .try_get("", "id")
-            .map_err(|e| BulwarkError::Dao(format!("dao-app-auth-method-row-parse-id::{}", e)))?,
+            .map_err(|e| GarrisonError::Dao(format!("dao-app-auth-method-row-parse-id::{}", e)))?,
         user_id: row.try_get("", "user_id").map_err(|e| {
-            BulwarkError::Dao(format!("dao-app-auth-method-row-parse-user-id::{}", e))
+            GarrisonError::Dao(format!("dao-app-auth-method-row-parse-user-id::{}", e))
         })?,
         method_type: row.try_get("", "method_type").map_err(|e| {
-            BulwarkError::Dao(format!("dao-app-auth-method-row-parse-method-type::{}", e))
+            GarrisonError::Dao(format!("dao-app-auth-method-row-parse-method-type::{}", e))
         })?,
         external_id: row.try_get("", "external_id").map_err(|e| {
-            BulwarkError::Dao(format!("dao-app-auth-method-row-parse-external-id::{}", e))
+            GarrisonError::Dao(format!("dao-app-auth-method-row-parse-external-id::{}", e))
         })?,
         metadata: row.try_get("", "metadata").map_err(|e| {
-            BulwarkError::Dao(format!("dao-app-auth-method-row-parse-metadata::{}", e))
+            GarrisonError::Dao(format!("dao-app-auth-method-row-parse-metadata::{}", e))
         })?,
         create_time: row.try_get("", "create_time").map_err(|e| {
-            BulwarkError::Dao(format!("dao-app-auth-method-row-parse-create-time::{}", e))
+            GarrisonError::Dao(format!("dao-app-auth-method-row-parse-create-time::{}", e))
         })?,
         tenant_id: row.try_get("", "tenant_id").map_err(|e| {
-            BulwarkError::Dao(format!("dao-app-auth-method-row-parse-tenant-id::{}", e))
+            GarrisonError::Dao(format!("dao-app-auth-method-row-parse-tenant-id::{}", e))
         })?,
     })
 }

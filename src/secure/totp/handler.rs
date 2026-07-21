@@ -3,8 +3,8 @@
 
 //! `TotpHandler` 实现。
 
-use crate::dao::BulwarkDao;
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::dao::GarrisonDao;
+use crate::error::{GarrisonError, GarrisonResult};
 use totp_rs::{Algorithm, TOTP};
 
 use super::TotpHandler;
@@ -21,8 +21,8 @@ impl TotpHandler {
     ///
     /// # 返回
     /// - `Ok(Self)`: 构造成功。
-    /// - `Err(BulwarkError::Internal)`: 密钥长度或位数不合法。
-    pub fn new(secret: Vec<u8>, step: u64, digits: u32) -> BulwarkResult<Self> {
+    /// - `Err(GarrisonError::Internal)`: 密钥长度或位数不合法。
+    pub fn new(secret: Vec<u8>, step: u64, digits: u32) -> GarrisonResult<Self> {
         let totp = TOTP::new(
             Algorithm::SHA1,
             digits as usize,
@@ -30,7 +30,7 @@ impl TotpHandler {
             step,
             secret,
         )
-        .map_err(|e| BulwarkError::Internal(format!("secure-totp-init::{}", e)))?;
+        .map_err(|e| GarrisonError::Internal(format!("secure-totp-init::{}", e)))?;
         Ok(Self { totp, step })
     }
 
@@ -72,15 +72,15 @@ impl TotpHandler {
     /// per-login_id 锁，无 TTL 且无容量上限，每个 login_id 创建一个永久条目，
     /// 导致无界内存增长（攻击者可用大量 login_id OOM）。
     ///
-    /// 新实现使用 [`BulwarkDao::incr`] 的原子性消除 TOCTOU 竞态：
-    /// - `incr` 在后端（`BulwarkDaoOxcache` 用 `parking_lot::Mutex`，`MockDao` 用
+    /// 新实现使用 [`GarrisonDao::incr`] 的原子性消除 TOCTOU 竞态：
+    /// - `incr` 在后端（`GarrisonDaoOxcache` 用 `parking_lot::Mutex`，`MockDao` 用
     ///   `parking_lot::Mutex`，Redis 后端用 `INCR` 命令）保证进程内原子
     /// - 首次调用返回 1（key 不存在 → 初始化为 "1"），后续调用返回 2+（递增）
     /// - `incr` 返回 1 时视为首次使用，返回 >1 时视为重放
     ///
     /// 此方案完全消除 per-login_id 锁，内存由 DAO 后端（oxcache）自管理：
     /// - replay_key 的 TTL = `step * 3`（覆盖 skew=1 的 3 个时间窗口）
-    /// - oxcache 后端的容量与淘汰策略由调用方通过 `BulwarkDaoOxcache::new()` 配置
+    /// - oxcache 后端的容量与淘汰策略由调用方通过 `GarrisonDaoOxcache::new()` 配置
     /// - 不再需要 `DashMap` / `once_cell` / `Arc<TokioMutex>` 等进程内状态
     ///
     /// # FMEA #7 TOCTOU 防护保留
@@ -105,8 +105,8 @@ impl TotpHandler {
         login_id: &str,
         code: &str,
         now: i64,
-        dao: &dyn BulwarkDao,
-    ) -> BulwarkResult<bool> {
+        dao: &dyn GarrisonDao,
+    ) -> GarrisonResult<bool> {
         if !self.totp.check(code, now as u64) {
             return Ok(false);
         }
@@ -128,9 +128,9 @@ impl TotpHandler {
     ///
     /// # 返回
     /// - `Ok(Vec<u8>)`: 解码成功。
-    /// - `Err(BulwarkError::Internal)`: Base32 解码失败。
-    pub fn secret_from_base32(s: &str) -> BulwarkResult<Vec<u8>> {
+    /// - `Err(GarrisonError::Internal)`: Base32 解码失败。
+    pub fn secret_from_base32(s: &str) -> GarrisonResult<Vec<u8>> {
         base32::decode(base32::Alphabet::Rfc4648 { padding: false }, s)
-            .ok_or_else(|| BulwarkError::Internal(format!("secure-base32-decode::{}", s)))
+            .ok_or_else(|| GarrisonError::Internal(format!("secure-base32-decode::{}", s)))
     }
 }

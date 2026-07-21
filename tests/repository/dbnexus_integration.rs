@@ -3,7 +3,7 @@
 
 //! dbnexus 集成测试。
 //!
-//! 端到端验证 Bulwark + dbnexus 0.2 + sea-orm 2.0 的协作：
+//! 端到端验证 Garrison + dbnexus 0.2 + sea-orm 2.0 的协作：
 //! - 用项目根目录的 migrations/sqlite/core/001_init.sql 执行真实迁移
 //! - 跨多表关联场景（用户-角色-权限 RBAC）
 //! - 扩展表 KV 操作（app_user_ext）
@@ -15,7 +15,7 @@
 
 #![cfg(feature = "db-sqlite")]
 
-use bulwark::dao::{init_dbnexus, BulwarkMigration};
+use garrison::dao::{init_dbnexus, GarrisonMigration};
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 use std::path::PathBuf;
 
@@ -81,7 +81,7 @@ async fn setup_db() -> dbnexus::DbPool {
     let pool = init_dbnexus("sqlite::memory:")
         .await
         .expect("init_dbnexus 应成功");
-    let migration = BulwarkMigration::with_base_dir(pool.clone(), project_migrations_dir());
+    let migration = GarrisonMigration::with_base_dir(pool.clone(), project_migrations_dir());
     let applied = migration.migrate_core().await.expect("migrate_core 应成功");
     assert!(
         applied >= 1,
@@ -96,7 +96,7 @@ async fn setup_db() -> dbnexus::DbPool {
 // ============================================================================
 
 /// Scenario: migrate_core 在项目真实迁移文件上创建全部表。
-/// WHEN BulwarkMigration::migrate_core() 执行 001_init.sql
+/// WHEN GarrisonMigration::migrate_core() 执行 001_init.sql
 /// THEN sqlite_master 中应包含 10 张表 + 全部索引
 #[tokio::test]
 async fn integration_migrate_creates_all_tables() {
@@ -599,7 +599,7 @@ async fn integration_migrate_idempotent() {
     let pool = init_dbnexus("sqlite::memory:")
         .await
         .expect("init_dbnexus 应成功");
-    let migration = BulwarkMigration::with_base_dir(pool.clone(), project_migrations_dir());
+    let migration = GarrisonMigration::with_base_dir(pool.clone(), project_migrations_dir());
 
     // 第一次执行：应执行 >= 4 个迁移文件（001_init / 002_role_hierarchy / 003_refresh_tokens / 004_audit_logs）
     let first = migration

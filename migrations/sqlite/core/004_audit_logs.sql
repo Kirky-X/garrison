@@ -6,7 +6,7 @@
 -- 数据库: SQLite
 -- 幂等性: CREATE TABLE 使用 IF NOT EXISTS
 --
--- 用途：存储 BulwarkEvent 持久化记录，支持字段掩码与按 tenant/event_type/时间范围查询。
+-- 用途：存储 GarrisonEvent 持久化记录，支持字段掩码与按 tenant/event_type/时间范围查询。
 -- AuditLogListener.on_event 将事件转换为 AuditEntry 并 INSERT 到此表。
 
 -- UP:

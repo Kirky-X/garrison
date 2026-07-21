@@ -7,18 +7,18 @@
 //!
 //! 运行方式：
 //! ```sh
-//! cargo run -p bulwark-examples --bin httpbasic_login --features secure-httpbasic
+//! cargo run -p garrison-examples --bin httpbasic_login --features secure-httpbasic
 //! ```
 
-use bulwark::error::BulwarkResult;
-use bulwark::secure::httpbasic::HttpBasicAuth;
+use garrison::error::GarrisonResult;
+use garrison::secure::httpbasic::HttpBasicAuth;
 
 /// 运行 HTTP Basic 认证示例。
 ///
 /// 演示 encode / decode / parse_authorization_header 以及中文特殊字符支持、
 /// 非 Basic 方案拒绝。
-pub fn run() -> BulwarkResult<()> {
-    println!("=== Bulwark HTTP Basic 认证示例 ===\n");
+pub fn run() -> GarrisonResult<()> {
+    println!("=== Garrison HTTP Basic 认证示例 ===\n");
 
     // ----------------------------------------------------------------
     // 1. encode：编码用户名密码为 Base64 凭证

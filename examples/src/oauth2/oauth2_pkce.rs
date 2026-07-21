@@ -10,18 +10,18 @@
 //!
 //! 运行方式：
 //! ```sh
-//! cargo run -p bulwark-examples --bin oauth2_pkce --features protocol-oauth2
+//! cargo run -p garrison-examples --bin oauth2_pkce --features protocol-oauth2
 //! ```
 //!
 //! 本示例仅展示客户端构造与 URL 生成，不实际发起 HTTP 请求。
 //! 端到端测试见 `tests/protocol_oauth2_integration.rs`（使用 wiremock mock server）。
 
-use bulwark::error::BulwarkError;
-use bulwark::protocol::oauth2::OAuth2Client;
+use garrison::error::GarrisonError;
+use garrison::protocol::oauth2::OAuth2Client;
 
 /// 运行 OAuth 2.1 PKCE 示例。
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    println!("=== Bulwark OAuth 2.1 PKCE 示例 ===\n");
+    println!("=== Garrison OAuth 2.1 PKCE 示例 ===\n");
 
     // 1. 构造 OAuth2Client
     let client = OAuth2Client::new(
@@ -98,7 +98,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let result = OAuth2Client::generate_pkce_challenge(short_verifier);
     assert!(result.is_err(), "长度不足 43 应失败");
     match result.unwrap_err() {
-        BulwarkError::InvalidParam(msg) => {
+        GarrisonError::InvalidParam(msg) => {
             println!("    generate_pkce_challenge(\"{}\") → Err", short_verifier);
             println!("    错误：{}", msg);
             println!("    ✓ 长度 < 43 正确拒绝");
@@ -112,7 +112,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let result = OAuth2Client::generate_pkce_challenge(invalid_chars);
     assert!(result.is_err(), "非法字符应失败");
     match result.unwrap_err() {
-        BulwarkError::InvalidParam(msg) => {
+        GarrisonError::InvalidParam(msg) => {
             println!("\n    generate_pkce_challenge(\"contains spaces...\") → Err");
             println!("    错误：{}", msg);
             println!("    ✓ 非法字符正确拒绝");

@@ -1,11 +1,11 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! 基础登录示例：演示 Bulwark 完整业务场景的最小可用登录流程。
+//! 基础登录示例：演示 Garrison 完整业务场景的最小可用登录流程。
 //!
 //! 流程：
 //! 1. 准备依赖（DAO + Config + Interface）
-//! 2. 初始化 BulwarkManager
+//! 2. 初始化 GarrisonManager
 //! 3. 执行登录（login）
 //! 4. 在 task_local 上下文中校验登录状态（check_login / get_login_id）
 //! 5. 执行权限校验（check_permission / check_role）
@@ -14,20 +14,20 @@
 //!
 //! 运行方式：
 //! ```sh
-//! cargo run -p bulwark-examples --bin basic_login --features "cache-memory,web-axum"
+//! cargo run -p garrison-examples --bin basic_login --features "cache-memory,web-axum"
 //! ```
 
 use async_trait::async_trait;
-use bulwark::dao::{BulwarkDao, BulwarkDaoOxcache};
-use bulwark::error::{BulwarkError, BulwarkResult};
-use bulwark::manager::BulwarkManager;
-use bulwark::prelude::*;
-use bulwark::stp::{with_current_token, BulwarkInterface, BulwarkUtil};
+use garrison::dao::{GarrisonDao, GarrisonDaoOxcache};
+use garrison::error::{GarrisonError, GarrisonResult};
+use garrison::manager::GarrisonManager;
+use garrison::prelude::*;
+use garrison::stp::{with_current_token, GarrisonInterface, GarrisonUtil};
 use std::collections::HashMap;
 use std::sync::Arc;
 
 // ============================================================================
-// 业务方实现 BulwarkInterface：提供权限/角色数据
+// 业务方实现 GarrisonInterface：提供权限/角色数据
 // ============================================================================
 
 /// 示例接口实现：基于内存 HashMap 存储 login_id → 权限/角色列表。
@@ -61,46 +61,46 @@ impl Default for MyInterface {
 }
 
 #[async_trait]
-impl BulwarkInterface for MyInterface {
-    async fn get_permission_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+impl GarrisonInterface for MyInterface {
+    async fn get_permission_list(&self, login_id: &str) -> GarrisonResult<Vec<String>> {
         Ok(self.permissions.get(login_id).cloned().unwrap_or_default())
     }
 
-    async fn get_role_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+    async fn get_role_list(&self, login_id: &str) -> GarrisonResult<Vec<String>> {
         Ok(self.roles.get(login_id).cloned().unwrap_or_default())
     }
 }
 
 /// 运行基础登录示例。
 ///
-/// 演示 BulwarkManager 初始化 → login → check_login / get_login_id →
+/// 演示 GarrisonManager 初始化 → login → check_login / get_login_id →
 /// check_permission / check_role → logout → 验证登出后校验失败的完整流程。
-pub async fn run() -> BulwarkResult<()> {
-    println!("=== Bulwark 基础登录示例 ===\n");
+pub async fn run() -> GarrisonResult<()> {
+    println!("=== Garrison 基础登录示例 ===\n");
 
     // ----------------------------------------------------------------
     // 1. 准备依赖：DAO + Config + Interface
     // ----------------------------------------------------------------
 
     // 使用 oxcache 内存后端（无需外部数据库，对应 cache-memory feature）
-    let dao: Arc<dyn BulwarkDao> = Arc::new(BulwarkDaoOxcache::new().await?);
+    let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await?);
 
     // 使用默认配置（timeout=30天，token_style=uuid，throw_on_not_login=true）
-    let config = Arc::new(BulwarkConfig::default_config());
+    let config = Arc::new(GarrisonConfig::default_config());
 
     // 业务方接口实现（提供权限/角色数据）
-    let interface: Arc<dyn BulwarkInterface> = Arc::new(MyInterface::new());
+    let interface: Arc<dyn GarrisonInterface> = Arc::new(MyInterface::new());
 
     // ----------------------------------------------------------------
-    // 2. 初始化 BulwarkManager（注入全局单例）
+    // 2. 初始化 GarrisonManager（注入全局单例）
     // ----------------------------------------------------------------
-    BulwarkManager::init(dao, config, interface)?;
-    println!("[1] BulwarkManager 初始化完成");
+    GarrisonManager::init(dao, config, interface)?;
+    println!("[1] GarrisonManager 初始化完成");
 
     // ----------------------------------------------------------------
     // 3. 执行登录：生成 token 并创建会话
     // ----------------------------------------------------------------
-    let token = BulwarkUtil::login_simple("1001").await?;
+    let token = GarrisonUtil::login_simple("1001").await?;
     println!("[2] 登录成功，login_id=1001");
     println!("    token={}\n", token);
     assert!(!token.is_empty(), "login 应返回非空 token");
@@ -111,28 +111,28 @@ pub async fn run() -> BulwarkResult<()> {
     // 注意：check_login / get_login_id / logout 等方法依赖 task_local 中的 token，
     // 实际应用中由 Web 中间件（如 axum middleware）设置；此处显式调用 with_current_token。
     let token_for_closure = token.clone();
-    let ctx_result: Result<(), BulwarkError> = with_current_token(token_for_closure, async {
+    let ctx_result: Result<(), GarrisonError> = with_current_token(token_for_closure, async {
         // 4. 校验登录状态
-        let logged_in = BulwarkUtil::check_login().await?;
+        let logged_in = GarrisonUtil::check_login().await?;
         println!("[3] check_login 返回: {}", logged_in);
         assert!(logged_in, "登录后 check_login 应返回 true");
 
-        let login_id = BulwarkUtil::get_login_id().await?;
+        let login_id = GarrisonUtil::get_login_id().await?;
         println!("[4] get_login_id 返回: {:?}", login_id);
         assert_eq!(login_id, Some("1001".to_string()));
 
         // 5. 权限/角色校验
-        BulwarkUtil::check_permission("user:read").await?;
+        GarrisonUtil::check_permission("user:read").await?;
         println!("[5] check_permission(\"user:read\") 通过");
 
-        BulwarkUtil::check_role("admin").await?;
+        GarrisonUtil::check_role("admin").await?;
         println!("[6] check_role(\"admin\") 通过\n");
 
         // 6. 执行登出
-        BulwarkUtil::logout().await?;
+        GarrisonUtil::logout().await?;
         println!("[7] logout 完成");
 
-        Ok::<(), BulwarkError>(())
+        Ok::<(), GarrisonError>(())
     })
     .await;
     ctx_result?;
@@ -142,12 +142,12 @@ pub async fn run() -> BulwarkResult<()> {
     // ----------------------------------------------------------------
     // 登出后再次 check_login：由于默认 throw_on_not_login=true，会返回 Session 错误。
     let result =
-        with_current_token(token.clone(), async { BulwarkUtil::check_login().await }).await;
+        with_current_token(token.clone(), async { GarrisonUtil::check_login().await }).await;
 
     match &result {
         Ok(false) => println!("[8] 登出后 check_login 返回 false（校验失败，符合预期）"),
         Ok(true) => {
-            return Err(BulwarkError::Session(
+            return Err(GarrisonError::Session(
                 "登出后 check_login 应返回 false 或错误".to_string(),
             ))
         },

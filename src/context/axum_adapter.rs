@@ -3,8 +3,8 @@
 
 //! axum 适配器模块。
 //!
-//! 实现 `BulwarkContext` / `BulwarkRequest` / `BulwarkResponse` / `BulwarkStorage` trait，
-//! 将 Bulwark 鉴权逻辑与 axum 0.7 Web 框架解耦。
+//! 实现 `GarrisonContext` / `GarrisonRequest` / `GarrisonResponse` / `GarrisonStorage` trait，
+//! 将 Garrison 鉴权逻辑与 axum 0.7 Web 框架解耦。
 //!
 //! ## 设计
 //!
@@ -12,10 +12,10 @@
 //! - `AxumResponse` 持有 `HeaderMap + StatusCode`，`to_response()` 转换为 axum Response
 //! - `AxumStorage` 用 `HashMap<String, String>`，请求结束自动清理
 
-use crate::config::BulwarkConfig;
+use crate::config::GarrisonConfig;
 use crate::context::token_extract::{is_body_token_allowed_method, strip_bearer_prefix};
-use crate::context::{BulwarkContext, BulwarkRequest, BulwarkResponse, BulwarkStorage};
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::context::{GarrisonContext, GarrisonRequest, GarrisonResponse, GarrisonStorage};
+use crate::error::{GarrisonError, GarrisonResult};
 use axum::body::Body;
 use axum::http::{HeaderMap, HeaderName, HeaderValue, Request, StatusCode};
 use std::collections::HashMap;
@@ -64,19 +64,19 @@ impl<'a> AxumRequest<'a> {
     }
 }
 
-impl<'a> BulwarkRequest for AxumRequest<'a> {
-    fn path(&self) -> BulwarkResult<String> {
+impl<'a> GarrisonRequest for AxumRequest<'a> {
+    fn path(&self) -> GarrisonResult<String> {
         Ok(self.request.uri().path().to_string())
     }
 
-    fn method(&self) -> BulwarkResult<String> {
+    fn method(&self) -> GarrisonResult<String> {
         Ok(self.request.method().as_str().to_string())
     }
 
-    fn header(&self, name: &str) -> BulwarkResult<Option<String>> {
-        let header_name: HeaderName = name
-            .parse()
-            .map_err(|e| BulwarkError::Context(format!("invalid header name '{}': {}", name, e)))?;
+    fn header(&self, name: &str) -> GarrisonResult<Option<String>> {
+        let header_name: HeaderName = name.parse().map_err(|e| {
+            GarrisonError::Context(format!("invalid header name '{}': {}", name, e))
+        })?;
         Ok(self
             .request
             .headers()
@@ -85,7 +85,7 @@ impl<'a> BulwarkRequest for AxumRequest<'a> {
             .map(|s| s.to_string()))
     }
 
-    fn cookie(&self, name: &str) -> BulwarkResult<Option<String>> {
+    fn cookie(&self, name: &str) -> GarrisonResult<Option<String>> {
         let cookie_header = self
             .request
             .headers()
@@ -108,7 +108,7 @@ impl<'a> BulwarkRequest for AxumRequest<'a> {
         Ok(None)
     }
 
-    fn get_token(&self, config: &BulwarkConfig) -> BulwarkResult<Option<String>> {
+    fn get_token(&self, config: &GarrisonConfig) -> GarrisonResult<Option<String>> {
         // 1. 从 header 提取（Authorization: Bearer <token> 或自定义 token_name header）
         if config.is_read_header {
             // 先尝试 Authorization: Bearer <token>（RFC 7235 大小写不敏感）
@@ -191,25 +191,25 @@ impl AxumResponse {
     }
 }
 
-impl BulwarkResponse for AxumResponse {
-    fn set_status(&mut self, code: u16) -> BulwarkResult<()> {
+impl GarrisonResponse for AxumResponse {
+    fn set_status(&mut self, code: u16) -> GarrisonResult<()> {
         self.status = StatusCode::from_u16(code)
-            .map_err(|e| BulwarkError::Context(format!("invalid status code {}: {}", code, e)))?;
+            .map_err(|e| GarrisonError::Context(format!("invalid status code {}: {}", code, e)))?;
         Ok(())
     }
 
-    fn set_header(&mut self, name: &str, value: &str) -> BulwarkResult<()> {
-        let header_name: HeaderName = name
-            .parse()
-            .map_err(|e| BulwarkError::Context(format!("invalid header name '{}': {}", name, e)))?;
+    fn set_header(&mut self, name: &str, value: &str) -> GarrisonResult<()> {
+        let header_name: HeaderName = name.parse().map_err(|e| {
+            GarrisonError::Context(format!("invalid header name '{}': {}", name, e))
+        })?;
         let header_value = HeaderValue::from_str(value).map_err(|e| {
-            BulwarkError::Context(format!("invalid header value '{}': {}", value, e))
+            GarrisonError::Context(format!("invalid header value '{}': {}", value, e))
         })?;
         self.headers.insert(header_name, header_value);
         Ok(())
     }
 
-    fn set_cookie(&mut self, name: &str, value: &str) -> BulwarkResult<()> {
+    fn set_cookie(&mut self, name: &str, value: &str) -> GarrisonResult<()> {
         // 安全默认：HttpOnly; Secure; SameSite=Lax; Path=/
         let cookie_value = format!("{}={}; HttpOnly; Secure; SameSite=Lax; Path=/", name, value);
         self.set_header("Set-Cookie", &cookie_value)
@@ -219,8 +219,8 @@ impl BulwarkResponse for AxumResponse {
         &mut self,
         name: &str,
         value: &str,
-        config: &crate::config::BulwarkConfig,
-    ) -> BulwarkResult<()> {
+        config: &crate::config::GarrisonConfig,
+    ) -> GarrisonResult<()> {
         // 依据 config.cookie_secure / cookie_same_site 构建 Set-Cookie 头部
         let secure_flag = if config.cookie_secure { "Secure; " } else { "" };
         let cookie_value = format!(
@@ -255,17 +255,17 @@ impl Default for AxumStorage {
     }
 }
 
-impl BulwarkStorage for AxumStorage {
-    fn set(&mut self, key: &str, value: &str) -> BulwarkResult<()> {
+impl GarrisonStorage for AxumStorage {
+    fn set(&mut self, key: &str, value: &str) -> GarrisonResult<()> {
         self.map.insert(key.to_string(), value.to_string());
         Ok(())
     }
 
-    fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
+    fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
         Ok(self.map.get(key).cloned())
     }
 
-    fn delete(&mut self, key: &str) -> BulwarkResult<()> {
+    fn delete(&mut self, key: &str) -> GarrisonResult<()> {
         self.map.remove(key);
         Ok(())
     }
@@ -348,8 +348,8 @@ impl<'a> AxumContext<'a> {
     }
 }
 
-impl<'a> BulwarkContext for AxumContext<'a> {
-    fn request(&self) -> BulwarkResult<Box<dyn BulwarkRequest>> {
+impl<'a> GarrisonContext for AxumContext<'a> {
+    fn request(&self) -> GarrisonResult<Box<dyn GarrisonRequest>> {
         // 注意：这里创建 AxumRequest 需要借用 self.request
         // 但 AxumRequest<'a> 的生命周期与 self 不同
         // 简化方案：直接克隆必要数据，避免生命周期问题
@@ -362,7 +362,7 @@ impl<'a> BulwarkContext for AxumContext<'a> {
 
 /// AxumRequest 包装器（绕过 Box<dyn> 的生命周期问题）。
 ///
-/// 由于 `Box<dyn BulwarkRequest>` 不能带生命周期参数，
+/// 由于 `Box<dyn GarrisonRequest>` 不能带生命周期参数，
 /// 这里用 Arc 或克隆必要数据。简化方案：直接持有 &Request 的原始指针（不安全），
 /// 或者改为克隆 HeaderMap。
 ///
@@ -387,20 +387,20 @@ impl AxumRequestWrapper {
     }
 }
 
-impl BulwarkRequest for AxumRequestWrapper {
-    fn path(&self) -> BulwarkResult<String> {
+impl GarrisonRequest for AxumRequestWrapper {
+    fn path(&self) -> GarrisonResult<String> {
         // uri 是完整 URI，提取 path 部分
         Ok(self.uri.split('?').next().unwrap_or(&self.uri).to_string())
     }
 
-    fn method(&self) -> BulwarkResult<String> {
+    fn method(&self) -> GarrisonResult<String> {
         Ok(self.method.clone())
     }
 
-    fn header(&self, name: &str) -> BulwarkResult<Option<String>> {
-        let header_name: HeaderName = name
-            .parse()
-            .map_err(|e| BulwarkError::Context(format!("invalid header name '{}': {}", name, e)))?;
+    fn header(&self, name: &str) -> GarrisonResult<Option<String>> {
+        let header_name: HeaderName = name.parse().map_err(|e| {
+            GarrisonError::Context(format!("invalid header name '{}': {}", name, e))
+        })?;
         Ok(self
             .headers
             .get(header_name)
@@ -408,7 +408,7 @@ impl BulwarkRequest for AxumRequestWrapper {
             .map(|s| s.to_string()))
     }
 
-    fn cookie(&self, name: &str) -> BulwarkResult<Option<String>> {
+    fn cookie(&self, name: &str) -> GarrisonResult<Option<String>> {
         let cookie_header = self
             .headers
             .get(axum::http::header::COOKIE)
@@ -429,7 +429,7 @@ impl BulwarkRequest for AxumRequestWrapper {
         Ok(None)
     }
 
-    fn get_token(&self, config: &BulwarkConfig) -> BulwarkResult<Option<String>> {
+    fn get_token(&self, config: &GarrisonConfig) -> GarrisonResult<Option<String>> {
         if config.is_read_header {
             if let Some(auth) = self.header("Authorization")? {
                 // RFC 7235：Bearer 大小写不敏感，与 AxumRequest::get_token 保持一致（T117 P1-2）。
@@ -483,12 +483,12 @@ impl BulwarkRequest for AxumRequestWrapper {
 /// # 参数
 /// - `body_bytes`: 预读的 body 字节。
 /// - `headers`: 请求头（用于检查 `Content-Type`）。
-/// - `token_name`: token 字段名（来自 `BulwarkConfig::token_name`）。
+/// - `token_name`: token 字段名（来自 `GarrisonConfig::token_name`）。
 fn extract_token_from_json_body(
     body_bytes: &[u8],
     headers: &HeaderMap,
     token_name: &str,
-) -> BulwarkResult<Option<String>> {
+) -> GarrisonResult<Option<String>> {
     if body_bytes.is_empty() {
         return Ok(None);
     }
@@ -575,10 +575,14 @@ mod tests {
     /// 验证 cookie() 解析 Cookie header。
     #[test]
     fn axum_request_cookie() {
-        let req = make_request("/", "GET", &[("Cookie", "bulwark_token=tok123; other=val")]);
+        let req = make_request(
+            "/",
+            "GET",
+            &[("Cookie", "garrison_token=tok123; other=val")],
+        );
         let axum_req = AxumRequest::new(&req);
         assert_eq!(
-            axum_req.cookie("bulwark_token").unwrap(),
+            axum_req.cookie("garrison_token").unwrap(),
             Some("tok123".to_string())
         );
         assert_eq!(axum_req.cookie("other").unwrap(), Some("val".to_string()));
@@ -586,7 +590,7 @@ mod tests {
     }
 
     // ========================================================================
-    // get_token 测试（spec context-abstraction Requirement: BulwarkRequest）
+    // get_token 测试（spec context-abstraction Requirement: GarrisonRequest）
     // ========================================================================
 
     /// 验证从 Authorization: Bearer 提取 token（spec Scenario: 从 header 提取 token）。
@@ -594,7 +598,7 @@ mod tests {
     fn get_token_from_bearer_header() {
         let req = make_request("/", "GET", &[("Authorization", "Bearer my_token_123")]);
         let axum_req = AxumRequest::new(&req);
-        let config = BulwarkConfig::default_config();
+        let config = GarrisonConfig::default_config();
         let token = axum_req.get_token(&config).unwrap();
         assert_eq!(token, Some("my_token_123".to_string()));
     }
@@ -605,7 +609,7 @@ mod tests {
     /// `bearer xxx` / `BEARER xxx` / `BeArEr xxx` 均应能提取 token。
     #[test]
     fn bearer_prefix_case_insensitive() {
-        let config = BulwarkConfig::default_config();
+        let config = GarrisonConfig::default_config();
         for prefix in &["Bearer", "bearer", "BEARER", "BeArEr"] {
             let auth_value = format!("{} tok_{}", prefix, prefix);
             let req = make_request("/", "GET", &[("Authorization", auth_value.as_str())]);
@@ -623,9 +627,9 @@ mod tests {
     /// 验证从自定义 header 提取 token。
     #[test]
     fn get_token_from_custom_header() {
-        let req = make_request("/", "GET", &[("bulwark_token", "header_token_456")]);
+        let req = make_request("/", "GET", &[("garrison_token", "header_token_456")]);
         let axum_req = AxumRequest::new(&req);
-        let config = BulwarkConfig::default_config();
+        let config = GarrisonConfig::default_config();
         let token = axum_req.get_token(&config).unwrap();
         assert_eq!(token, Some("header_token_456".to_string()));
     }
@@ -633,9 +637,9 @@ mod tests {
     /// 验证从 cookie 提取 token（spec Scenario: 从 cookie 提取 token）。
     #[test]
     fn get_token_from_cookie() {
-        let req = make_request("/", "GET", &[("Cookie", "bulwark_token=cookie_token_789")]);
+        let req = make_request("/", "GET", &[("Cookie", "garrison_token=cookie_token_789")]);
         let axum_req = AxumRequest::new(&req);
-        let config = BulwarkConfig::default_config();
+        let config = GarrisonConfig::default_config();
         let token = axum_req.get_token(&config).unwrap();
         assert_eq!(token, Some("cookie_token_789".to_string()));
     }
@@ -648,11 +652,11 @@ mod tests {
             "GET",
             &[
                 ("Authorization", "Bearer header_token"),
-                ("Cookie", "bulwark_token=cookie_token"),
+                ("Cookie", "garrison_token=cookie_token"),
             ],
         );
         let axum_req = AxumRequest::new(&req);
-        let config = BulwarkConfig::default_config();
+        let config = GarrisonConfig::default_config();
         let token = axum_req.get_token(&config).unwrap();
         assert_eq!(token, Some("header_token".to_string()));
     }
@@ -662,7 +666,7 @@ mod tests {
     fn get_token_returns_none_when_missing() {
         let req = make_request("/", "GET", &[]);
         let axum_req = AxumRequest::new(&req);
-        let config = BulwarkConfig::default_config();
+        let config = GarrisonConfig::default_config();
         let token = axum_req.get_token(&config).unwrap();
         assert_eq!(token, None);
     }
@@ -672,7 +676,7 @@ mod tests {
     fn get_token_skips_header_when_disabled() {
         let req = make_request("/", "GET", &[("Authorization", "Bearer header_token")]);
         let axum_req = AxumRequest::new(&req);
-        let mut config = BulwarkConfig::default_config();
+        let mut config = GarrisonConfig::default_config();
         config.is_read_header = false;
         config.is_read_cookie = false;
         let token = axum_req.get_token(&config).unwrap();
@@ -680,7 +684,7 @@ mod tests {
     }
 
     // ========================================================================
-    // AxumResponse 测试（spec context-abstraction Requirement: BulwarkResponse）
+    // AxumResponse 测试（spec context-abstraction Requirement: GarrisonResponse）
     // ========================================================================
 
     /// 验证 set_status 设置状态码（spec Scenario: 写入 401 状态码）。
@@ -708,13 +712,13 @@ mod tests {
     #[test]
     fn response_set_cookie() {
         let mut resp = AxumResponse::new();
-        resp.set_cookie("bulwark_token", "cookie_value").unwrap();
+        resp.set_cookie("garrison_token", "cookie_value").unwrap();
         let set_cookie = resp
             .headers
             .get("Set-Cookie")
             .and_then(|v| v.to_str().ok())
             .unwrap();
-        assert!(set_cookie.contains("bulwark_token=cookie_value"));
+        assert!(set_cookie.contains("garrison_token=cookie_value"));
         assert!(set_cookie.contains("HttpOnly"));
         assert!(set_cookie.contains("Secure"));
         assert!(set_cookie.contains("SameSite=Lax"));
@@ -725,7 +729,7 @@ mod tests {
     #[test]
     fn response_set_cookie_with_config_dev() {
         let mut resp = AxumResponse::new();
-        let mut config = BulwarkConfig::default_config();
+        let mut config = GarrisonConfig::default_config();
         config.cookie_secure = false;
         config.cookie_same_site = "Strict".to_string();
         resp.set_cookie_with_config("token", "v", &config).unwrap();
@@ -777,7 +781,7 @@ mod tests {
     }
 
     // ========================================================================
-    // AxumStorage 测试（spec context-abstraction Requirement: BulwarkStorage）
+    // AxumStorage 测试（spec context-abstraction Requirement: GarrisonStorage）
     // ========================================================================
 
     /// 验证 set/get 存储数据（spec Scenario: 存储请求数据）。
@@ -834,14 +838,14 @@ mod tests {
         assert_eq!(ctx.raw_request().uri().path(), "/api/test");
     }
 
-    /// 验证 BulwarkContext trait 实现。
+    /// 验证 GarrisonContext trait 实现。
     #[test]
     fn context_trait_impl() {
         let req = make_request("/", "GET", &[("Authorization", "Bearer abc")]);
         let ctx = AxumContext::new(&req);
 
         let request = ctx.request().unwrap();
-        let config = BulwarkConfig::default_config();
+        let config = GarrisonConfig::default_config();
         let token = request.get_token(&config).unwrap();
         assert_eq!(token, Some("abc".to_string()));
 
@@ -866,7 +870,7 @@ mod tests {
         let result = axum_req.header("invalid header");
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(matches!(err, BulwarkError::Context(_)));
+        assert!(matches!(err, GarrisonError::Context(_)));
         assert!(err.to_string().contains("invalid header name"));
     }
 
@@ -899,7 +903,7 @@ mod tests {
         let result = resp.set_status(1000);
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(matches!(err, BulwarkError::Context(_)));
+        assert!(matches!(err, GarrisonError::Context(_)));
         assert!(err.to_string().contains("invalid status code"));
     }
 
@@ -911,7 +915,7 @@ mod tests {
         let result = resp.set_header("X-Test", "bad\0value");
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(matches!(err, BulwarkError::Context(_)));
+        assert!(matches!(err, GarrisonError::Context(_)));
         assert!(err.to_string().contains("invalid header value"));
     }
 
@@ -978,7 +982,7 @@ mod tests {
         let result = request.header("bad name");
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(matches!(err, BulwarkError::Context(_)));
+        assert!(matches!(err, GarrisonError::Context(_)));
         assert!(err.to_string().contains("invalid header name"));
     }
 
@@ -1015,10 +1019,10 @@ mod tests {
     /// 验证 AxumContext::request() 返回的 wrapper 从 cookie 提取 token。
     #[test]
     fn axum_context_wrapper_get_token_from_cookie() {
-        let req = make_request("/", "GET", &[("Cookie", "bulwark_token=cookie_tok")]);
+        let req = make_request("/", "GET", &[("Cookie", "garrison_token=cookie_tok")]);
         let ctx = AxumContext::new(&req);
         let request = ctx.request().unwrap();
-        let mut config = BulwarkConfig::default_config();
+        let mut config = GarrisonConfig::default_config();
         // 关闭 header 读取，强制走 cookie 路径以覆盖 wrapper 的 cookie 分支
         config.is_read_header = false;
         config.is_read_cookie = true;
@@ -1032,7 +1036,7 @@ mod tests {
         let req = make_request("/", "GET", &[]);
         let ctx = AxumContext::new(&req);
         let request = ctx.request().unwrap();
-        let config = BulwarkConfig::default_config();
+        let config = GarrisonConfig::default_config();
         let token = request.get_token(&config).unwrap();
         assert_eq!(token, None);
     }
@@ -1042,7 +1046,7 @@ mod tests {
     /// 大小写敏感，与 AxumRequest::get_token（用 strip_bearer_prefix）不一致。
     #[test]
     fn axum_context_wrapper_bearer_case_insensitive() {
-        let config = BulwarkConfig::default_config();
+        let config = GarrisonConfig::default_config();
         for prefix in ["Bearer", "bearer", "BEARER", "BeArEr"] {
             let header_value = format!("{} my_token_123", prefix);
             let req = make_request("/", "GET", &[("Authorization", &header_value)]);
@@ -1111,7 +1115,7 @@ mod tests {
         );
         let ctx = AxumContext::with_body(&req, body_str.as_bytes().to_vec());
         let request = ctx.request().unwrap();
-        let mut config = BulwarkConfig::default_config();
+        let mut config = GarrisonConfig::default_config();
         config.is_read_body = true;
         config.token_name = "token".to_string();
         let token = request.get_token(&config).unwrap();
@@ -1140,7 +1144,7 @@ mod tests {
         );
         let ctx = AxumContext::with_body(&req, body_str.as_bytes().to_vec());
         let request = ctx.request().unwrap();
-        let mut config = BulwarkConfig::default_config();
+        let mut config = GarrisonConfig::default_config();
         config.is_read_body = true;
         config.token_name = "token".to_string();
         let token = request.get_token(&config).unwrap();
@@ -1161,7 +1165,7 @@ mod tests {
     /// 否则攻击者可通过 `<img src="...?token=...">` 注入恶意 token。
     #[test]
     fn c7_axum_request_get_method_skips_body_token() {
-        let body_str = r#"{"bulwark_token":"body_token_should_be_skipped"}"#;
+        let body_str = r#"{"garrison_token":"body_token_should_be_skipped"}"#;
         let req = make_request_with_body(
             "/",
             "GET",
@@ -1169,7 +1173,7 @@ mod tests {
             body_str,
         );
         let axum_req = AxumRequest::with_body(&req, body_str.as_bytes().to_vec());
-        let mut config = BulwarkConfig::default_config();
+        let mut config = GarrisonConfig::default_config();
         config.is_read_header = false;
         config.is_read_cookie = false;
         config.is_read_body = true;
@@ -1185,7 +1189,7 @@ mod tests {
     /// 直接测试 `AxumRequest::get_token`。POST 方法允许从 body 提取 token。
     #[test]
     fn c7_axum_request_post_method_allows_body_token() {
-        let body_str = r#"{"bulwark_token":"body_token_ok"}"#;
+        let body_str = r#"{"garrison_token":"body_token_ok"}"#;
         let req = make_request_with_body(
             "/",
             "POST",
@@ -1193,7 +1197,7 @@ mod tests {
             body_str,
         );
         let axum_req = AxumRequest::with_body(&req, body_str.as_bytes().to_vec());
-        let mut config = BulwarkConfig::default_config();
+        let mut config = GarrisonConfig::default_config();
         config.is_read_header = false;
         config.is_read_cookie = false;
         config.is_read_body = true;
@@ -1211,7 +1215,7 @@ mod tests {
     /// 确保 Wrapper 路径也正确应用 C7 method 限制。
     #[test]
     fn c7_axum_context_get_method_skips_body_token_via_wrapper() {
-        let body_str = r#"{"bulwark_token":"wrapper_skipped"}"#;
+        let body_str = r#"{"garrison_token":"wrapper_skipped"}"#;
         let req = make_request_with_body(
             "/",
             "GET",
@@ -1220,7 +1224,7 @@ mod tests {
         );
         let ctx = AxumContext::with_body(&req, body_str.as_bytes().to_vec());
         let request = ctx.request().unwrap();
-        let mut config = BulwarkConfig::default_config();
+        let mut config = GarrisonConfig::default_config();
         config.is_read_header = false;
         config.is_read_cookie = false;
         config.is_read_body = true;
@@ -1237,7 +1241,7 @@ mod tests {
     #[test]
     fn c7_axum_context_put_patch_methods_allow_body_token_via_wrapper() {
         for method in &["PUT", "PATCH"] {
-            let body_str = format!(r#"{{"bulwark_token":"tok_{}"}}"#, method);
+            let body_str = format!(r#"{{"garrison_token":"tok_{}"}}"#, method);
             let req = make_request_with_body(
                 "/",
                 method,
@@ -1246,7 +1250,7 @@ mod tests {
             );
             let ctx = AxumContext::with_body(&req, body_str.as_bytes().to_vec());
             let request = ctx.request().unwrap();
-            let mut config = BulwarkConfig::default_config();
+            let mut config = GarrisonConfig::default_config();
             config.is_read_header = false;
             config.is_read_cookie = false;
             config.is_read_body = true;

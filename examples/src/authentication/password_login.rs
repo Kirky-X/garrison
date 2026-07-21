@@ -3,27 +3,27 @@
 
 //! 密码登录示例（v0.4.2 新增，依据 spec secure-password + auth-password-login）。
 //!
-//! 演示 `Argon2Hasher` 哈希/校验 + `BulwarkLogicDefault::login_with_password` 端到端流程。
+//! 演示 `Argon2Hasher` 哈希/校验 + `GarrisonLogicDefault::login_with_password` 端到端流程。
 //!
 //! 运行方式：
 //! ```sh
-//! cargo run -p bulwark-examples --bin password_login --features "account-credential db-sqlite cache-memory"
+//! cargo run -p garrison-examples --bin password_login --features "account-credential db-sqlite cache-memory"
 //! ```
 //!
 //! 本示例使用内存 SQLite 数据库 + oxcache 内存 DAO，无需外部依赖即可运行。
 
 use async_trait::async_trait;
-use bulwark::account::credential::password::{Argon2Hasher, PasswordHasher};
-use bulwark::dao::{
+use garrison::account::credential::password::{Argon2Hasher, PasswordHasher};
+use garrison::dao::{
     init_dbnexus,
     repository::{sqlite::DbnexusUserRepository, NewUser, UserRepository},
-    BulwarkDaoOxcache, BulwarkMigration,
+    GarrisonDaoOxcache, GarrisonMigration,
 };
-use bulwark::error::{BulwarkError, BulwarkResult};
-use bulwark::session::BulwarkSession;
-use bulwark::stp::{BulwarkInterface, BulwarkLogicDefault, PasswordLogic};
-use bulwark::strategy::BulwarkPermissionStrategyDefault;
-use bulwark::BulwarkConfig;
+use garrison::error::{GarrisonError, GarrisonResult};
+use garrison::session::GarrisonSession;
+use garrison::stp::{GarrisonInterface, GarrisonLogicDefault, PasswordLogic};
+use garrison::strategy::GarrisonPermissionStrategyDefault;
+use garrison::GarrisonConfig;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -33,11 +33,11 @@ const TENANT: i64 = 0;
 struct NoopInterface;
 
 #[async_trait]
-impl BulwarkInterface for NoopInterface {
-    async fn get_permission_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
+impl GarrisonInterface for NoopInterface {
+    async fn get_permission_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
         Ok(vec![])
     }
-    async fn get_role_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
+    async fn get_role_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
         Ok(vec![])
     }
 }
@@ -47,19 +47,19 @@ impl BulwarkInterface for NoopInterface {
 /// 流程：
 /// 1. 初始化 SQLite + oxcache
 /// 2. 创建 Argon2Hasher 并预生成用户密码哈希
-/// 3. 注入 hasher + user_repository 到 BulwarkLogicDefault
+/// 3. 注入 hasher + user_repository 到 GarrisonLogicDefault
 /// 4. 调用 `login_with_password` 验证密码并签发 token
 /// 5. 演示错误路径（用户不存在 / 密码错误，统一返回 InvalidParam 防止用户枚举）
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    println!("=== Bulwark 密码登录示例 ===\n");
+    println!("=== Garrison 密码登录示例 ===\n");
 
     // 1. 初始化 SQLite + oxcache
     //    examples 为独立 workspace member，CWD 为 examples/，需指向工作区根的 migrations/
     let pool = init_dbnexus("sqlite::memory:").await?;
     let migration =
-        BulwarkMigration::with_base_dir(pool.clone(), PathBuf::from("../migrations/sqlite"));
+        GarrisonMigration::with_base_dir(pool.clone(), PathBuf::from("../migrations/sqlite"));
     migration.run_all().await?;
-    let dao = Arc::new(BulwarkDaoOxcache::new().await?);
+    let dao = Arc::new(GarrisonDaoOxcache::new().await?);
 
     // 2. 构造 hasher + user_repository
     let hasher: Arc<dyn PasswordHasher> = Arc::new(Argon2Hasher::default());
@@ -86,14 +86,14 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
     println!("[2] 用户已创建: login_id=1001, username=1001");
 
-    // 4. 构造 BulwarkLogicDefault，注入 hasher + user_repository
-    let config = Arc::new(BulwarkConfig::default_config());
+    // 4. 构造 GarrisonLogicDefault，注入 hasher + user_repository
+    let config = Arc::new(GarrisonConfig::default_config());
     let timeout = u64::try_from(config.timeout).unwrap_or(3600);
-    let session = Arc::new(BulwarkSession::new(dao, timeout, timeout));
-    let firewall = Arc::new(BulwarkPermissionStrategyDefault::new(Arc::new(
+    let session = Arc::new(GarrisonSession::new(dao, timeout, timeout));
+    let firewall = Arc::new(GarrisonPermissionStrategyDefault::new(Arc::new(
         NoopInterface,
     )));
-    let logic = BulwarkLogicDefault::new(session, config, firewall)
+    let logic = GarrisonLogicDefault::new(session, config, firewall)
         .with_password_hasher(hasher)
         .with_user_repository(user_repo);
 
@@ -110,7 +110,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let wrong = logic.login_with_password("1001", "wrong-password").await;
     assert!(wrong.is_err(), "错误密码应登录失败");
     match &wrong {
-        Err(BulwarkError::InvalidParam(msg)) if msg.contains("invalid password") => {
+        Err(GarrisonError::InvalidParam(msg)) if msg.contains("invalid password") => {
             println!("\n[4] 错误密码登录失败（预期）");
             println!("    error: InvalidParam(\"{}\")", msg);
             println!("    安全：用户不存在与密码错误返回相同错误，防止用户枚举");

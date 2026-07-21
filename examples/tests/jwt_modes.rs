@@ -7,7 +7,7 @@
 
 #![cfg(all(feature = "protocol-jwt", feature = "cache-memory"))]
 
-use bulwark_examples::authentication::jwt_modes;
+use garrison_examples::authentication::jwt_modes;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_run_completes() {

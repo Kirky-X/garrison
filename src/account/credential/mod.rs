@@ -35,8 +35,8 @@ pub mod totp;
 pub mod backup_code;
 
 use crate::constants::DaoKeyPrefix;
-use crate::dao::BulwarkDao;
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::dao::GarrisonDao;
+use crate::error::{GarrisonError, GarrisonResult};
 use async_trait::async_trait;
 use std::sync::Arc;
 
@@ -66,7 +66,7 @@ pub type CredentialType = &'static str;
 /// # 示例
 ///
 /// ```ignore
-/// use bulwark::account::credential::{Credential, CredentialModel};
+/// use garrison::account::credential::{Credential, CredentialModel};
 ///
 /// let cred: Box<dyn Credential> = /* PasswordCredential / TotpCredential */;
 /// let ok = cred.verify("user-input").await?;
@@ -88,7 +88,7 @@ pub trait Credential: Send + Sync {
     /// - `Ok(true)`: 校验通过
     /// - `Ok(false)`: 校验失败（凭证不匹配）
     /// - `Err(_)`: 校验过程出错（如哈希格式不支持、DAO 故障）
-    async fn verify(&self, input: &str) -> BulwarkResult<bool>;
+    async fn verify(&self, input: &str) -> GarrisonResult<bool>;
 }
 
 // ============================================================================
@@ -143,12 +143,12 @@ pub struct CredentialModel {
 /// 凭证存储抽象（DAO 层接口）。
 ///
 /// 5 方法 CRUD：`create` / `find_by_user` / `find_by_user_and_type` / `update` / `delete`。
-/// 由 `DaoCredentialRepository`（T006 实现）基于 `BulwarkDao` 实现，也可由业务方自定义实现。
+/// 由 `DaoCredentialRepository`（T006 实现）基于 `GarrisonDao` 实现，也可由业务方自定义实现。
 ///
 /// # IDOR 防护（vuln-0004 修复）
 ///
 /// `find_by_user` / `update` / `delete` 强制要求 `caller_login_id` 参数，由实现层验证
-/// `caller_login_id` 与目标凭证的 `user_id` 一致，否则返回 `BulwarkError::NotPermission`
+/// `caller_login_id` 与目标凭证的 `user_id` 一致，否则返回 `GarrisonError::NotPermission`
 /// （HTTP 403 Forbidden）。`update` 额外禁止修改 `user_id` 字段（防止凭证跨用户转移）。
 ///
 /// # DAO key 格式
@@ -158,7 +158,7 @@ pub struct CredentialModel {
 /// # 示例
 ///
 /// ```ignore
-/// use bulwark::account::credential::{CredentialModel, CredentialRepository};
+/// use garrison::account::credential::{CredentialModel, CredentialRepository};
 /// use std::sync::Arc;
 ///
 /// let repo: Arc<dyn CredentialRepository> = /* DaoCredentialRepository */;
@@ -170,23 +170,23 @@ pub trait CredentialRepository: Send + Sync {
     /// 创建凭证。
     ///
     /// # 错误
-    /// - 凭证 ID 已存在：`BulwarkError::InvalidParam`
-    /// - DAO 故障：透传 `BulwarkError::Dao`
-    async fn create(&self, credential: CredentialModel) -> BulwarkResult<()>;
+    /// - 凭证 ID 已存在：`GarrisonError::InvalidParam`
+    /// - DAO 故障：透传 `GarrisonError::Dao`
+    async fn create(&self, credential: CredentialModel) -> GarrisonResult<()>;
 
     /// 按 `user_id` 查询所有凭证（IDOR 防护：需 caller 身份校验）。
     ///
     /// 实现层必须验证 `caller_login_id == user_id`，否则返回
-    /// `BulwarkError::NotPermission`。返回顺序按 `priority` 升序（小值优先）。
+    /// `GarrisonError::NotPermission`。返回顺序按 `priority` 升序（小值优先）。
     ///
     /// # 错误
-    /// - `caller_login_id != user_id`：`BulwarkError::NotPermission`（403 Forbidden）
-    /// - DAO 故障：透传 `BulwarkError::Dao`
+    /// - `caller_login_id != user_id`：`GarrisonError::NotPermission`（403 Forbidden）
+    /// - DAO 故障：透传 `GarrisonError::Dao`
     async fn find_by_user(
         &self,
         caller_login_id: &str,
         user_id: &str,
-    ) -> BulwarkResult<Vec<CredentialModel>>;
+    ) -> GarrisonResult<Vec<CredentialModel>>;
 
     /// 按 `user_id` + `credential_type` 查询凭证。
     ///
@@ -202,39 +202,42 @@ pub trait CredentialRepository: Send + Sync {
         &self,
         user_id: &str,
         cred_type: &str,
-    ) -> BulwarkResult<Vec<CredentialModel>>;
+    ) -> GarrisonResult<Vec<CredentialModel>>;
 
     /// 更新凭证（覆盖写，IDOR 防护：需 caller 身份校验）。
     ///
     /// 实现层必须验证 `caller_login_id` 与既有凭证的 `user_id` 一致，
     /// 且新 `credential.user_id` 不得改变（防止凭证跨用户转移），
-    /// 否则返回 `BulwarkError::NotPermission`。
+    /// 否则返回 `GarrisonError::NotPermission`。
     ///
     /// # 错误
-    /// - 凭证 ID 不存在：`BulwarkError::InvalidParam`
-    /// - `caller_login_id != 既有凭证.user_id`：`BulwarkError::NotPermission`
-    /// - `credential.user_id != 既有凭证.user_id`：`BulwarkError::NotPermission`（禁止转移）
-    /// - DAO 故障：透传 `BulwarkError::Dao`
-    async fn update(&self, caller_login_id: &str, credential: CredentialModel)
-        -> BulwarkResult<()>;
+    /// - 凭证 ID 不存在：`GarrisonError::InvalidParam`
+    /// - `caller_login_id != 既有凭证.user_id`：`GarrisonError::NotPermission`
+    /// - `credential.user_id != 既有凭证.user_id`：`GarrisonError::NotPermission`（禁止转移）
+    /// - DAO 故障：透传 `GarrisonError::Dao`
+    async fn update(
+        &self,
+        caller_login_id: &str,
+        credential: CredentialModel,
+    ) -> GarrisonResult<()>;
 
     /// 删除凭证（IDOR 防护：需 caller 身份校验）。
     ///
     /// 实现层必须先定位凭证，验证 `caller_login_id` 与凭证的 `user_id` 一致，
-    /// 否则返回 `BulwarkError::NotPermission`。
+    /// 否则返回 `GarrisonError::NotPermission`。
     ///
     /// # 错误
-    /// - 凭证 ID 不存在：`BulwarkError::InvalidParam`
-    /// - `caller_login_id != 凭证.user_id`：`BulwarkError::NotPermission`（403 Forbidden）
-    /// - DAO 故障：透传 `BulwarkError::Dao`
-    async fn delete(&self, caller_login_id: &str, credential_id: &str) -> BulwarkResult<()>;
+    /// - 凭证 ID 不存在：`GarrisonError::InvalidParam`
+    /// - `caller_login_id != 凭证.user_id`：`GarrisonError::NotPermission`（403 Forbidden）
+    /// - DAO 故障：透传 `GarrisonError::Dao`
+    async fn delete(&self, caller_login_id: &str, credential_id: &str) -> GarrisonResult<()>;
 }
 
 // ============================================================================
-// DaoCredentialRepository（基于 BulwarkDao 的默认实现）
+// DaoCredentialRepository（基于 GarrisonDao 的默认实现）
 // ============================================================================
 
-/// 基于 `BulwarkDao` 的 `CredentialRepository` 默认实现。
+/// 基于 `GarrisonDao` 的 `CredentialRepository` 默认实现。
 ///
 /// 凭证以 JSON 序列化存入 DAO，key 格式严格为 `cred:{user_id}:{cred_id}`，
 /// 永久存储（无 TTL，使用 `set_permanent`）。
@@ -245,14 +248,14 @@ pub trait CredentialRepository: Send + Sync {
 ///
 /// # 已知限制
 ///
-/// - `find_by_user` / `find_by_user_and_type` / `delete` 依赖 `BulwarkDao::keys()`。
-///   `BulwarkDaoOxcache` 当前未实现 `keys()`（返回 `NotImplemented`，详见 A-010），
+/// - `find_by_user` / `find_by_user_and_type` / `delete` 依赖 `GarrisonDao::keys()`。
+///   `GarrisonDaoOxcache` 当前未实现 `keys()`（返回 `NotImplemented`，详见 A-010），
 ///   生产环境需使用支持 `keys()` 的 DAO 后端，或由业务方维护 key 索引。
 /// - `delete(caller_login_id, credential_id)` 通过扫描 `cred:*:{credential_id}` 定位
 ///   完整 key（`credential_id` 为 UUID v4 全局唯一，理论上仅匹配一个 key），
 ///   再反序列化校验 `user_id == caller_login_id` 后删除。
 pub struct DaoCredentialRepository {
-    dao: Arc<dyn BulwarkDao>,
+    dao: Arc<dyn GarrisonDao>,
 }
 
 mod repository_impl;

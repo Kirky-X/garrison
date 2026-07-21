@@ -2,7 +2,7 @@
 
 # 介绍
 
-- [Bulwark 简介](./README.md)
+- [Garrison 简介](./README.md)
 
 # 快速开始
 

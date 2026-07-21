@@ -9,8 +9,8 @@
 //! # 三层缓存架构
 //!
 //! - **L1（oxcache 内存缓存）**：进程内缓存（oxcache 0.3，sync_mode），per-entry TTL（默认 30s），命中时不查询 L2/L3
-//! - **L2（DAO 持久化缓存）**：通过 `BulwarkDao` set/get，TTL 较长（默认 300s），命中时回填 L1
-//! - **L3（interface 回调）**：通过 `BulwarkPermissionStrategy` 的 `get_permission_list` /
+//! - **L2（DAO 持久化缓存）**：通过 `GarrisonDao` set/get，TTL 较长（默认 300s），命中时回填 L1
+//! - **L3（interface 回调）**：通过 `GarrisonPermissionStrategy` 的 `get_permission_list` /
 //!   `get_role_list` / `get_user_info` 获取原始数据，命中时回填 L1 + L2
 //!
 //! [`UserCacheService`]: crate::cache::three_tier::UserCacheService

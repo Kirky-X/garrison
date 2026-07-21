@@ -8,7 +8,7 @@
 
 use crate::abac::EntityLoader;
 use crate::core::permission::{Decision, DecisionReason};
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::error::{GarrisonError, GarrisonResult};
 use cedar_policy::{Authorizer, Context, EntityUid, Policy, PolicyId, PolicySet, Request, Schema};
 use oxcache::traits::CacheKey;
 use oxcache::Cache;
@@ -87,20 +87,20 @@ impl AbacEngine {
     ///   支持基于属性的策略。
     ///
     /// # 错误
-    /// - schema JSON 解析失败：`BulwarkError::InvalidParam`
-    /// - oxcache 初始化失败：`BulwarkError::InvalidParam`
+    /// - schema JSON 解析失败：`GarrisonError::InvalidParam`
+    /// - oxcache 初始化失败：`GarrisonError::InvalidParam`
     pub async fn new(
         schema_json: &str,
         entity_loader: Arc<dyn EntityLoader>,
-    ) -> BulwarkResult<Self> {
+    ) -> GarrisonResult<Self> {
         let schema = Schema::from_json_str(schema_json)
-            .map_err(|e| BulwarkError::InvalidParam(format!("abac-cedar-schema-parse::{}", e)))?;
+            .map_err(|e| GarrisonError::InvalidParam(format!("abac-cedar-schema-parse::{}", e)))?;
         let cache = Cache::builder()
             .ttl(Duration::from_secs(DECISION_CACHE_TTL_SECS))
             .capacity(DECISION_CACHE_MAX_CAPACITY)
             .build()
             .await
-            .map_err(|e| BulwarkError::InvalidParam(format!("abac-decision-cache-init::{}", e)))?;
+            .map_err(|e| GarrisonError::InvalidParam(format!("abac-decision-cache-init::{}", e)))?;
         Ok(Self {
             authorizer: Authorizer::new(),
             policies: Arc::new(RwLock::new(PolicySet::new())),
@@ -123,16 +123,16 @@ impl AbacEngine {
     /// - `Decision::deny(...)`：Cedar 拒绝（默认拒绝或显式 forbid）
     ///
     /// # 错误
-    /// - EntityUid 解析失败：`BulwarkError::InvalidParam`
-    /// - Context 解析失败：`BulwarkError::InvalidParam`
-    /// - Request 构造失败：`BulwarkError::InvalidParam`
+    /// - EntityUid 解析失败：`GarrisonError::InvalidParam`
+    /// - Context 解析失败：`GarrisonError::InvalidParam`
+    /// - Request 构造失败：`GarrisonError::InvalidParam`
     pub async fn evaluate(
         &self,
         principal: &str,
         action: &str,
         resource: &str,
         context_json: Option<&str>,
-    ) -> BulwarkResult<Decision> {
+    ) -> GarrisonResult<Decision> {
         // 缓存查询：命中则直接返回（不调用 Cedar）
         let cache_key = DecisionKey(
             principal.to_string(),
@@ -141,7 +141,7 @@ impl AbacEngine {
         );
         if let Some(cached) =
             self.cache.get(&cache_key).await.map_err(|e| {
-                BulwarkError::InvalidParam(format!("abac-decision-cache-read::{}", e))
+                GarrisonError::InvalidParam(format!("abac-decision-cache-read::{}", e))
             })?
         {
             return Ok(cached);
@@ -150,16 +150,16 @@ impl AbacEngine {
         // 缓存未命中，调用 Cedar 求值
         let principal_uid: EntityUid = principal
             .parse()
-            .map_err(|e| BulwarkError::InvalidParam(format!("abac-principal-parse::{}", e)))?;
+            .map_err(|e| GarrisonError::InvalidParam(format!("abac-principal-parse::{}", e)))?;
         let action_uid: EntityUid = action
             .parse()
-            .map_err(|e| BulwarkError::InvalidParam(format!("abac-action-parse::{}", e)))?;
+            .map_err(|e| GarrisonError::InvalidParam(format!("abac-action-parse::{}", e)))?;
         let resource_uid: EntityUid = resource
             .parse()
-            .map_err(|e| BulwarkError::InvalidParam(format!("abac-resource-parse::{}", e)))?;
+            .map_err(|e| GarrisonError::InvalidParam(format!("abac-resource-parse::{}", e)))?;
         let context = match context_json {
             Some(json) => Context::from_json_str(json, Some((&self.schema, &action_uid)))
-                .map_err(|e| BulwarkError::InvalidParam(format!("abac-context-parse::{}", e)))?,
+                .map_err(|e| GarrisonError::InvalidParam(format!("abac-context-parse::{}", e)))?,
             None => Context::empty(),
         };
         let request = Request::new(
@@ -169,7 +169,7 @@ impl AbacEngine {
             context,
             Some(&self.schema),
         )
-        .map_err(|e| BulwarkError::InvalidParam(format!("abac-cedar-request-build::{}", e)))?;
+        .map_err(|e| GarrisonError::InvalidParam(format!("abac-cedar-request-build::{}", e)))?;
         let policies = self.policies.read().await;
         // 通过 EntityLoader 加载实体。若返回错误，通过 ? 传播，缓存不受污染（未到达 set）。
         let entities = self.entity_loader.load_entities().await?;
@@ -182,10 +182,9 @@ impl AbacEngine {
         };
 
         // 写入缓存（仅在求值成功后）
-        self.cache
-            .set(&cache_key, &decision)
-            .await
-            .map_err(|e| BulwarkError::InvalidParam(format!("abac-decision-cache-write::{}", e)))?;
+        self.cache.set(&cache_key, &decision).await.map_err(|e| {
+            GarrisonError::InvalidParam(format!("abac-decision-cache-write::{}", e))
+        })?;
 
         Ok(decision)
     }
@@ -197,20 +196,19 @@ impl AbacEngine {
     /// - `policy_src`：Cedar DSL 策略文本
     ///
     /// # 错误
-    /// - 策略语法错误：`BulwarkError::InvalidParam`
-    /// - 策略 ID 冲突：`BulwarkError::InvalidParam`
-    pub async fn load_policy(&self, policy_id: &str, policy_src: &str) -> BulwarkResult<()> {
+    /// - 策略语法错误：`GarrisonError::InvalidParam`
+    /// - 策略 ID 冲突：`GarrisonError::InvalidParam`
+    pub async fn load_policy(&self, policy_id: &str, policy_src: &str) -> GarrisonResult<()> {
         let policy = Policy::parse(Some(PolicyId::new(policy_id)), policy_src)
-            .map_err(|e| BulwarkError::InvalidParam(format!("abac-cedar-policy-parse::{}", e)))?;
+            .map_err(|e| GarrisonError::InvalidParam(format!("abac-cedar-policy-parse::{}", e)))?;
         let mut policies = self.policies.write().await;
         policies
             .add(policy)
-            .map_err(|e| BulwarkError::InvalidParam(format!("abac-cedar-policy-add::{}", e)))?;
+            .map_err(|e| GarrisonError::InvalidParam(format!("abac-cedar-policy-add::{}", e)))?;
         // 策略变更后清空决策缓存（新策略可能改变现有 key 的决策）
-        self.cache
-            .clear()
-            .await
-            .map_err(|e| BulwarkError::InvalidParam(format!("abac-decision-cache-clear::{}", e)))?;
+        self.cache.clear().await.map_err(|e| {
+            GarrisonError::InvalidParam(format!("abac-decision-cache-clear::{}", e))
+        })?;
         Ok(())
     }
 
@@ -220,18 +218,17 @@ impl AbacEngine {
     /// - `policy_id`：策略 ID
     ///
     /// # 错误
-    /// - 策略不存在：`BulwarkError::InvalidParam`
-    pub async fn unload_policy(&self, policy_id: &str) -> BulwarkResult<()> {
+    /// - 策略不存在：`GarrisonError::InvalidParam`
+    pub async fn unload_policy(&self, policy_id: &str) -> GarrisonResult<()> {
         let policy_id = PolicyId::new(policy_id);
         let mut policies = self.policies.write().await;
         policies
             .remove_static(policy_id)
-            .map_err(|e| BulwarkError::InvalidParam(format!("abac-cedar-policy-delete::{}", e)))?;
+            .map_err(|e| GarrisonError::InvalidParam(format!("abac-cedar-policy-delete::{}", e)))?;
         // 策略变更后清空决策缓存（移除策略可能改变现有 key 的决策）
-        self.cache
-            .clear()
-            .await
-            .map_err(|e| BulwarkError::InvalidParam(format!("abac-decision-cache-clear::{}", e)))?;
+        self.cache.clear().await.map_err(|e| {
+            GarrisonError::InvalidParam(format!("abac-decision-cache-clear::{}", e))
+        })?;
         Ok(())
     }
 
@@ -244,25 +241,24 @@ impl AbacEngine {
     /// - `policies`：策略 ID → 策略文本的映射
     ///
     /// # 错误
-    /// - 任一策略语法错误：`BulwarkError::InvalidParam`（不部分加载）
-    pub async fn reload_all(&self, policies: HashMap<String, String>) -> BulwarkResult<()> {
+    /// - 任一策略语法错误：`GarrisonError::InvalidParam`（不部分加载）
+    pub async fn reload_all(&self, policies: HashMap<String, String>) -> GarrisonResult<()> {
         let mut new_set = PolicySet::new();
         for (id, src) in &policies {
             let policy = Policy::parse(Some(PolicyId::new(id)), src).map_err(|e| {
-                BulwarkError::InvalidParam(format!("abac-cedar-policy-parse-id::{}::{}", id, e))
+                GarrisonError::InvalidParam(format!("abac-cedar-policy-parse-id::{}::{}", id, e))
             })?;
             new_set.add(policy).map_err(|e| {
-                BulwarkError::InvalidParam(format!("abac-cedar-policy-add-id::{}::{}", id, e))
+                GarrisonError::InvalidParam(format!("abac-cedar-policy-add-id::{}::{}", id, e))
             })?;
         }
         let mut guard = self.policies.write().await;
         *guard = new_set;
         // 策略集原子替换后清空决策缓存（新策略集可能改变现有 key 的决策）
         // 仅在替换成功后执行；任一策略解析失败时提前 return Err，不会到达此处
-        self.cache
-            .clear()
-            .await
-            .map_err(|e| BulwarkError::InvalidParam(format!("abac-decision-cache-clear::{}", e)))?;
+        self.cache.clear().await.map_err(|e| {
+            GarrisonError::InvalidParam(format!("abac-decision-cache-clear::{}", e))
+        })?;
         Ok(())
     }
 
@@ -281,8 +277,8 @@ impl AbacEngine {
     /// - `temp_policy_src`：临时 Cedar 策略文本
     ///
     /// # 错误
-    /// - EntityUid/Context/Request 解析失败：`BulwarkError::InvalidParam`
-    /// - 临时策略语法错误：`BulwarkError::InvalidParam`
+    /// - EntityUid/Context/Request 解析失败：`GarrisonError::InvalidParam`
+    /// - 临时策略语法错误：`GarrisonError::InvalidParam`
     pub async fn evaluate_with_temp_policy(
         &self,
         principal: &str,
@@ -290,19 +286,19 @@ impl AbacEngine {
         resource: &str,
         context_json: Option<&str>,
         temp_policy_src: &str,
-    ) -> BulwarkResult<Decision> {
+    ) -> GarrisonResult<Decision> {
         let principal_uid: EntityUid = principal
             .parse()
-            .map_err(|e| BulwarkError::InvalidParam(format!("abac-principal-parse::{}", e)))?;
+            .map_err(|e| GarrisonError::InvalidParam(format!("abac-principal-parse::{}", e)))?;
         let action_uid: EntityUid = action
             .parse()
-            .map_err(|e| BulwarkError::InvalidParam(format!("abac-action-parse::{}", e)))?;
+            .map_err(|e| GarrisonError::InvalidParam(format!("abac-action-parse::{}", e)))?;
         let resource_uid: EntityUid = resource
             .parse()
-            .map_err(|e| BulwarkError::InvalidParam(format!("abac-resource-parse::{}", e)))?;
+            .map_err(|e| GarrisonError::InvalidParam(format!("abac-resource-parse::{}", e)))?;
         let context = match context_json {
             Some(json) => Context::from_json_str(json, Some((&self.schema, &action_uid)))
-                .map_err(|e| BulwarkError::InvalidParam(format!("abac-context-parse::{}", e)))?,
+                .map_err(|e| GarrisonError::InvalidParam(format!("abac-context-parse::{}", e)))?,
             None => Context::empty(),
         };
         let request = Request::new(
@@ -312,13 +308,13 @@ impl AbacEngine {
             context,
             Some(&self.schema),
         )
-        .map_err(|e| BulwarkError::InvalidParam(format!("abac-cedar-request-build::{}", e)))?;
+        .map_err(|e| GarrisonError::InvalidParam(format!("abac-cedar-request-build::{}", e)))?;
         let temp_policy = Policy::parse(None, temp_policy_src).map_err(|e| {
-            BulwarkError::InvalidParam(format!("abac-temp-cedar-policy-parse::{}", e))
+            GarrisonError::InvalidParam(format!("abac-temp-cedar-policy-parse::{}", e))
         })?;
         let mut temp_set = PolicySet::new();
         temp_set.add(temp_policy).map_err(|e| {
-            BulwarkError::InvalidParam(format!("abac-temp-cedar-policy-add::{}", e))
+            GarrisonError::InvalidParam(format!("abac-temp-cedar-policy-add::{}", e))
         })?;
         // 通过 EntityLoader 加载实体；evaluate_with_temp_policy 不写入缓存，错误通过 ? 传播。
         let entities = self.entity_loader.load_entities().await?;
@@ -405,7 +401,7 @@ mod tests {
         let result = AbacEngine::new("not a valid json", Arc::new(EmptyEntityLoader)).await;
         assert!(result.is_err());
         assert!(
-            matches!(result, Err(BulwarkError::InvalidParam(_))),
+            matches!(result, Err(GarrisonError::InvalidParam(_))),
             "应为 InvalidParam"
         );
     }
@@ -496,7 +492,7 @@ mod tests {
             .await;
         assert!(result.is_err());
         assert!(
-            matches!(result, Err(BulwarkError::InvalidParam(_))),
+            matches!(result, Err(GarrisonError::InvalidParam(_))),
             "应为 InvalidParam"
         );
     }
@@ -606,7 +602,7 @@ mod tests {
             .await;
         assert!(result.is_err());
         assert!(
-            matches!(result, Err(BulwarkError::InvalidParam(_))),
+            matches!(result, Err(GarrisonError::InvalidParam(_))),
             "应为 InvalidParam"
         );
     }
@@ -806,7 +802,7 @@ mod tests {
             .await;
         assert!(result.is_err());
         assert!(
-            matches!(result, Err(BulwarkError::InvalidParam(_))),
+            matches!(result, Err(GarrisonError::InvalidParam(_))),
             "应为 InvalidParam"
         );
     }
@@ -1365,8 +1361,8 @@ mod tests {
 
         #[async_trait::async_trait]
         impl crate::abac::EntityLoader for ErrorEntityLoader {
-            async fn load_entities(&self) -> BulwarkResult<Entities> {
-                Err(BulwarkError::Config(
+            async fn load_entities(&self) -> GarrisonResult<Entities> {
+                Err(GarrisonError::Config(
                     "EntityLoader 故意返回错误（模拟数据源不可达）".into(),
                 ))
             }
@@ -1394,7 +1390,7 @@ mod tests {
             "EntityLoader 错误应通过 ? 传播，而非默认成功（规则 12：失败必须显性化）"
         );
         match result {
-            Err(BulwarkError::Config(msg)) => {
+            Err(GarrisonError::Config(msg)) => {
                 assert!(
                     msg.contains("EntityLoader"),
                     "错误消息应包含 'EntityLoader'，实际: {}",
@@ -1435,7 +1431,7 @@ mod tests {
             "evaluate_with_temp_policy 也应传播 EntityLoader 错误"
         );
         match temp_result {
-            Err(BulwarkError::Config(msg)) => {
+            Err(GarrisonError::Config(msg)) => {
                 assert!(
                     msg.contains("EntityLoader"),
                     "temp policy 错误消息应包含 'EntityLoader'，实际: {}",

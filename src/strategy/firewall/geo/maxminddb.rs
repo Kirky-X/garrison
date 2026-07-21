@@ -22,7 +22,7 @@
 //! `maxminddb::Reader<Vec<u8>>` 实现 `Send + Sync`，可安全跨线程共享。
 
 use super::{CountryLookup, GeoCoord, GeoLookup};
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::error::{GarrisonError, GarrisonResult};
 use async_trait::async_trait;
 use maxminddb::geoip2;
 use std::net::IpAddr;
@@ -39,7 +39,7 @@ use std::net::IpAddr;
 /// # 构造
 ///
 /// ```ignore
-/// use bulwark::strategy::firewall::geo::maxminddb::MaxMindDbGeoLookup;
+/// use garrison::strategy::firewall::geo::maxminddb::MaxMindDbGeoLookup;
 ///
 /// // 从文件打开
 /// let lookup = MaxMindDbGeoLookup::open("tests/data/GeoLite2-City-Test.mmdb")?;
@@ -66,10 +66,10 @@ impl MaxMindDbGeoLookup {
     /// - `path`: mmdb 文件路径（如 `GeoLite2-City.mmdb`）。
     ///
     /// # 错误
-    /// - `BulwarkError::Internal`: 文件不存在、格式错误或 IO 错误。
-    pub fn open(path: &str) -> BulwarkResult<Self> {
+    /// - `GarrisonError::Internal`: 文件不存在、格式错误或 IO 错误。
+    pub fn open(path: &str) -> GarrisonResult<Self> {
         let reader = maxminddb::Reader::open_readfile(path).map_err(|e| {
-            BulwarkError::Internal(format!("strategy-maxmind-open::{}::{}", path, e))
+            GarrisonError::Internal(format!("strategy-maxmind-open::{}::{}", path, e))
         })?;
         Ok(Self { reader })
     }
@@ -80,23 +80,23 @@ impl MaxMindDbGeoLookup {
     /// - `data`: mmdb 文件完整字节内容。
     ///
     /// # 错误
-    /// - `BulwarkError::Internal`: 数据格式错误。
-    pub fn from_bytes(data: Vec<u8>) -> BulwarkResult<Self> {
+    /// - `GarrisonError::Internal`: 数据格式错误。
+    pub fn from_bytes(data: Vec<u8>) -> GarrisonResult<Self> {
         let reader = maxminddb::Reader::from_source(data)
-            .map_err(|e| BulwarkError::Internal(format!("strategy-maxmind-from-bytes::{}", e)))?;
+            .map_err(|e| GarrisonError::Internal(format!("strategy-maxmind-from-bytes::{}", e)))?;
         Ok(Self { reader })
     }
 }
 
 #[async_trait]
 impl GeoLookup for MaxMindDbGeoLookup {
-    async fn lookup(&self, ip: &str) -> BulwarkResult<Option<GeoCoord>> {
+    async fn lookup(&self, ip: &str) -> GarrisonResult<Option<GeoCoord>> {
         let ip_addr: IpAddr = ip
             .parse()
-            .map_err(|_| BulwarkError::InvalidParam(format!("strategy-invalid-ip::{}", ip)))?;
+            .map_err(|_| GarrisonError::InvalidParam(format!("strategy-invalid-ip::{}", ip)))?;
 
         let result = self.reader.lookup(ip_addr).map_err(|e| {
-            BulwarkError::Internal(format!("strategy-maxmind-query::{}::{}", ip, e))
+            GarrisonError::Internal(format!("strategy-maxmind-query::{}::{}", ip, e))
         })?;
 
         match result.decode::<geoip2::City>() {
@@ -109,7 +109,7 @@ impl GeoLookup for MaxMindDbGeoLookup {
                 }
             },
             Ok(None) => Ok(None),
-            Err(e) => Err(BulwarkError::Internal(format!(
+            Err(e) => Err(GarrisonError::Internal(format!(
                 "MaxMindDb 解码 City 记录失败 (IP={}): {}",
                 ip, e
             ))),
@@ -129,7 +129,7 @@ impl GeoLookup for MaxMindDbGeoLookup {
 /// # 构造
 ///
 /// ```ignore
-/// use bulwark::strategy::firewall::geo::maxminddb::MaxMindDbCountryLookup;
+/// use garrison::strategy::firewall::geo::maxminddb::MaxMindDbCountryLookup;
 ///
 /// let lookup = MaxMindDbCountryLookup::open("tests/data/GeoLite2-Country-Test.mmdb")?;
 /// ```
@@ -152,10 +152,10 @@ impl MaxMindDbCountryLookup {
     /// - `path`: mmdb 文件路径（如 `GeoLite2-Country.mmdb`）。
     ///
     /// # 错误
-    /// - `BulwarkError::Internal`: 文件不存在、格式错误或 IO 错误。
-    pub fn open(path: &str) -> BulwarkResult<Self> {
+    /// - `GarrisonError::Internal`: 文件不存在、格式错误或 IO 错误。
+    pub fn open(path: &str) -> GarrisonResult<Self> {
         let reader = maxminddb::Reader::open_readfile(path).map_err(|e| {
-            BulwarkError::Internal(format!("strategy-maxmind-open::{}::{}", path, e))
+            GarrisonError::Internal(format!("strategy-maxmind-open::{}::{}", path, e))
         })?;
         Ok(Self { reader })
     }
@@ -166,23 +166,23 @@ impl MaxMindDbCountryLookup {
     /// - `data`: mmdb 文件完整字节内容。
     ///
     /// # 错误
-    /// - `BulwarkError::Internal`: 数据格式错误。
-    pub fn from_bytes(data: Vec<u8>) -> BulwarkResult<Self> {
+    /// - `GarrisonError::Internal`: 数据格式错误。
+    pub fn from_bytes(data: Vec<u8>) -> GarrisonResult<Self> {
         let reader = maxminddb::Reader::from_source(data)
-            .map_err(|e| BulwarkError::Internal(format!("strategy-maxmind-from-bytes::{}", e)))?;
+            .map_err(|e| GarrisonError::Internal(format!("strategy-maxmind-from-bytes::{}", e)))?;
         Ok(Self { reader })
     }
 }
 
 #[async_trait]
 impl CountryLookup for MaxMindDbCountryLookup {
-    async fn lookup_country(&self, ip: &str) -> BulwarkResult<Option<String>> {
+    async fn lookup_country(&self, ip: &str) -> GarrisonResult<Option<String>> {
         let ip_addr: IpAddr = ip
             .parse()
-            .map_err(|_| BulwarkError::InvalidParam(format!("strategy-invalid-ip::{}", ip)))?;
+            .map_err(|_| GarrisonError::InvalidParam(format!("strategy-invalid-ip::{}", ip)))?;
 
         let result = self.reader.lookup(ip_addr).map_err(|e| {
-            BulwarkError::Internal(format!("strategy-maxmind-query::{}::{}", ip, e))
+            GarrisonError::Internal(format!("strategy-maxmind-query::{}::{}", ip, e))
         })?;
 
         match result.decode::<geoip2::Country>() {
@@ -191,7 +191,7 @@ impl CountryLookup for MaxMindDbCountryLookup {
                 Ok(iso_code)
             },
             Ok(None) => Ok(None),
-            Err(e) => Err(BulwarkError::Internal(format!(
+            Err(e) => Err(GarrisonError::Internal(format!(
                 "MaxMindDb 解码 Country 记录失败 (IP={}): {}",
                 ip, e
             ))),
@@ -230,7 +230,7 @@ mod tests {
         assert!(result.is_err(), "打开不存在的文件应返回 Err");
         let err = result.unwrap_err();
         assert!(
-            matches!(err, BulwarkError::Internal(_)),
+            matches!(err, GarrisonError::Internal(_)),
             "错误类型应为 Internal，实际: {:?}",
             err
         );
@@ -290,7 +290,7 @@ mod tests {
         assert!(result.is_err(), "无效 IP 应返回 Err");
         let err = result.unwrap_err();
         assert!(
-            matches!(err, BulwarkError::InvalidParam(_)),
+            matches!(err, GarrisonError::InvalidParam(_)),
             "无效 IP 错误类型应为 InvalidParam，实际: {:?}",
             err
         );
@@ -364,7 +364,7 @@ mod tests {
         assert!(result.is_err(), "无效 IP 应返回 Err");
         let err = result.unwrap_err();
         assert!(
-            matches!(err, BulwarkError::InvalidParam(_)),
+            matches!(err, GarrisonError::InvalidParam(_)),
             "无效 IP 错误类型应为 InvalidParam，实际: {:?}",
             err
         );
@@ -379,7 +379,7 @@ mod tests {
     /// 81.2.69.142 → GB，白名单 ["CN"]，应拦截。
     #[tokio::test]
     async fn geoip_strategy_with_maxminddb() {
-        use crate::strategy::firewall::{BulwarkFirewallStrategy, FirewallContext};
+        use crate::strategy::firewall::{FirewallContext, GarrisonFirewallStrategy};
         use crate::strategy::firewall::{GeoIPConfig, GeoIPStrategy};
 
         let country_lookup: Arc<dyn CountryLookup> =
@@ -393,7 +393,7 @@ mod tests {
 
         let result = strategy.check(&ctx).await;
         assert!(
-            matches!(result, Err(BulwarkError::FirewallBlocked(_))),
+            matches!(result, Err(GarrisonError::FirewallBlocked(_))),
             "GB 不在白名单 [CN] 应拦截，实际: {:?}",
             result
         );
@@ -407,9 +407,9 @@ mod tests {
     async fn anomalous_strategy_with_maxminddb() {
         use crate::dao::tests::MockDao;
         use crate::strategy::firewall::{AnomalousConfig, AnomalousLoginStrategy};
-        use crate::strategy::firewall::{BulwarkFirewallStrategy, FirewallContext};
+        use crate::strategy::firewall::{FirewallContext, GarrisonFirewallStrategy};
 
-        let dao: Arc<dyn crate::dao::BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn crate::dao::GarrisonDao> = Arc::new(MockDao::new());
         let geo_lookup: Arc<dyn GeoLookup> =
             Arc::new(MaxMindDbGeoLookup::open(CITY_TEST_DB).expect("打开数据库失败"));
         let config = AnomalousConfig {

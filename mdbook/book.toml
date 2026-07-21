@@ -2,15 +2,15 @@
 # See LICENSE for full license text.
 
 [book]
-title = "Bulwark 身份认证鉴权框架"
-authors = ["Bulwark Contributors"]
+title = "Garrison 身份认证鉴权框架"
+authors = ["Garrison Contributors"]
 description = "面向 Rust 生态的一站式身份认证鉴权框架"
 language = "zh"
 src = "src"
 
 [output.html]
-git-repository-url = "https://github.com/bulwark-rs/bulwark"
-edit-url-template = "https://github.com/bulwark-rs/bulwark/edit/main/mdbook/src/{path}"
+git-repository-url = "https://github.com/garrison-rs/garrison"
+edit-url-template = "https://github.com/garrison-rs/garrison/edit/main/mdbook/src/{path}"
 default-theme = "light"
 preferred-dark-theme = "ayu"
 

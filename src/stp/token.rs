@@ -2,22 +2,22 @@
 //! See LICENSE for full license text.
 
 //! TokenLogic trait — Token 类型校验与刷新契约。
-//! 从 v0.5.2 起，从 `BulwarkLogic` 上帝 trait 拆分；本 trait 承接 token 类型校验、
+//! 从 v0.5.2 起，从 `GarrisonLogic` 上帝 trait 拆分；本 trait 承接 token 类型校验、
 //! 显式 token 验证、token 刷新 5 个方法。super-trait 为 [`SessionLogic`]
 //! （token 校验依赖会话状态，默认实现委托 [`check_login`](SessionLogic::check_login)）。
 //!
 //! # 返回类型迁移
 //!
-//! `verify_token()` 返回类型从 `BulwarkResult<i64>` 迁移为 `BulwarkResult<String>`
+//! `verify_token()` 返回类型从 `GarrisonResult<i64>` 迁移为 `GarrisonResult<String>`
 //! （v0.5.2 LoginId 迁移：删除 LoginId newtype，全栈使用 String/&str）。
 
-use super::BulwarkLogicDefault;
+use super::GarrisonLogicDefault;
 use crate::core::token::TokenStyleFactory;
-use crate::error::{BulwarkError, BulwarkResult};
-// BulwarkEvent 仅在 refresh_token（protocol-jwt feature）中使用，故 import 同时门控两个 feature
+use crate::error::{GarrisonError, GarrisonResult};
+// GarrisonEvent 仅在 refresh_token（protocol-jwt feature）中使用，故 import 同时门控两个 feature
 // 避免 listener 启用但 protocol-jwt 关闭时出现 unused import 警告
 #[cfg(all(feature = "listener", feature = "protocol-jwt"))]
-use crate::listener::BulwarkEvent;
+use crate::listener::GarrisonEvent;
 use crate::stp::session::SessionLogic;
 use async_trait::async_trait;
 
@@ -34,7 +34,7 @@ use async_trait::async_trait;
 ///   业务方可在子类 override 实现类型区分（如校验 token 是否为 access_token 类型）。
 /// - [`verify_token`](Self::verify_token) /
 ///   [`refresh_token`](Self::refresh_token)：默认返回 `NotImplemented`，
-///   由 `BulwarkLogicDefault` 的 impl 覆写为委托 `core-token::Token::verify` /
+///   由 `GarrisonLogicDefault` 的 impl 覆写为委托 `core-token::Token::verify` /
 ///   `JwtHandler::refresh`。
 #[async_trait]
 pub trait TokenLogic: SessionLogic {
@@ -47,13 +47,13 @@ pub trait TokenLogic: SessionLogic {
     /// - `Ok(())`: 当前会话 token 有效（已登录）。
     ///
     /// # 错误
-    /// - 未登录：`BulwarkError::NotLogin`。
-    async fn check_access_token(&self) -> BulwarkResult<()> {
+    /// - 未登录：`GarrisonError::NotLogin`。
+    async fn check_access_token(&self) -> GarrisonResult<()> {
         let valid = self.check_login().await?;
         if valid {
             Ok(())
         } else {
-            Err(BulwarkError::NotLogin(
+            Err(GarrisonError::NotLogin(
                 "stp-token-invalid-or-not-login::".to_string(),
             ))
         }
@@ -67,13 +67,13 @@ pub trait TokenLogic: SessionLogic {
     /// - `Ok(())`: 当前会话 token 有效（已登录）。
     ///
     /// # 错误
-    /// - 未登录：`BulwarkError::NotLogin`。
-    async fn check_client_token(&self) -> BulwarkResult<()> {
+    /// - 未登录：`GarrisonError::NotLogin`。
+    async fn check_client_token(&self) -> GarrisonResult<()> {
         let valid = self.check_login().await?;
         if valid {
             Ok(())
         } else {
-            Err(BulwarkError::NotLogin(
+            Err(GarrisonError::NotLogin(
                 "stp-token-invalid-or-not-login::".to_string(),
             ))
         }
@@ -87,13 +87,13 @@ pub trait TokenLogic: SessionLogic {
     /// - `Ok(())`: 当前会话 token 有效（已登录）。
     ///
     /// # 错误
-    /// - 未登录：`BulwarkError::NotLogin`。
-    async fn check_temp_token(&self) -> BulwarkResult<()> {
+    /// - 未登录：`GarrisonError::NotLogin`。
+    async fn check_temp_token(&self) -> GarrisonResult<()> {
         let valid = self.check_login().await?;
         if valid {
             Ok(())
         } else {
-            Err(BulwarkError::NotLogin(
+            Err(GarrisonError::NotLogin(
                 "stp-token-invalid-or-not-login::".to_string(),
             ))
         }
@@ -112,10 +112,10 @@ pub trait TokenLogic: SessionLogic {
     /// - `Ok(login_id)`: token 有效，返回关联的 `String`。
     ///
     /// # 错误
-    /// - `BulwarkError::InvalidToken`: token 无效或不包含 login_id。
-    /// - `BulwarkError::NotImplemented`: 默认实现未委托 Token trait。
-    async fn verify_token(&self, _token: &str) -> BulwarkResult<String> {
-        Err(BulwarkError::NotImplemented(
+    /// - `GarrisonError::InvalidToken`: token 无效或不包含 login_id。
+    /// - `GarrisonError::NotImplemented`: 默认实现未委托 Token trait。
+    async fn verify_token(&self, _token: &str) -> GarrisonResult<String> {
+        Err(GarrisonError::NotImplemented(
             "verify_token 需子类 override 委托 core-token::Token::verify".to_string(),
         ))
     }
@@ -131,42 +131,42 @@ pub trait TokenLogic: SessionLogic {
     /// - `Ok(new_token)`: 刷新后的新 token 字符串。
     ///
     /// # 错误
-    /// - `BulwarkError::NotImplemented`: 未启用 protocol-jwt feature。
-    /// - `BulwarkError::InvalidToken`: token 已过期或无效。
-    async fn refresh_token(&self, _token: &str) -> BulwarkResult<String> {
-        Err(BulwarkError::NotImplemented(
+    /// - `GarrisonError::NotImplemented`: 未启用 protocol-jwt feature。
+    /// - `GarrisonError::InvalidToken`: token 已过期或无效。
+    async fn refresh_token(&self, _token: &str) -> GarrisonResult<String> {
+        Err(GarrisonError::NotImplemented(
             "refresh_token 需启用 protocol-jwt feature".to_string(),
         ))
     }
 }
 
 // ============================================================================
-// BulwarkLogicDefault impl
+// GarrisonLogicDefault impl
 // ============================================================================
 
 #[async_trait]
-impl TokenLogic for BulwarkLogicDefault {
-    async fn verify_token(&self, token: &str) -> BulwarkResult<String> {
+impl TokenLogic for GarrisonLogicDefault {
+    async fn verify_token(&self, token: &str) -> GarrisonResult<String> {
         // 委托 core-token::Token::verify
         // spec: "不泄露 token 具体失效原因（统一 InvalidToken）"
         let token_handler =
             TokenStyleFactory::new(&self.config.token_style, self.config.jwt_secret.as_str())?;
         match token_handler.verify(token) {
             Ok(Some(login_id)) => Ok(login_id),
-            Ok(None) => Err(BulwarkError::InvalidToken(
+            Ok(None) => Err(GarrisonError::InvalidToken(
                 "stp-token-invalid-or-no-login-id::".to_string(),
             )),
-            Err(_) => Err(BulwarkError::InvalidToken(
+            Err(_) => Err(GarrisonError::InvalidToken(
                 "stp-token-invalid::".to_string(),
             )),
         }
     }
 
     #[cfg(feature = "protocol-jwt")]
-    async fn refresh_token(&self, token: &str) -> BulwarkResult<String> {
+    async fn refresh_token(&self, token: &str) -> GarrisonResult<String> {
         // 启用 protocol-jwt 时委托 JwtHandler::refresh
         if self.config.token_style != "jwt" {
-            return Err(BulwarkError::NotImplemented(
+            return Err(GarrisonError::NotImplemented(
                 "refresh_token 仅在 token_style=jwt 时可用".to_string(),
             ));
         }
@@ -181,7 +181,7 @@ impl TokenLogic for BulwarkLogicDefault {
         // 广播 TokenRefresh 事件（替换原 Login 事件）
         #[cfg(feature = "listener")]
         if let Some(lm) = &self.listener_manager {
-            lm.broadcast(&BulwarkEvent::TokenRefresh {
+            lm.broadcast(&GarrisonEvent::TokenRefresh {
                 login_id,
                 old_token: token.to_string(),
                 new_token: new_token.clone(),
@@ -196,21 +196,21 @@ impl TokenLogic for BulwarkLogicDefault {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::BulwarkConfig;
-    use crate::error::BulwarkResult;
-    use crate::stp::core::BulwarkCore;
+    use crate::config::GarrisonConfig;
+    use crate::error::GarrisonResult;
+    use crate::stp::core::GarrisonCore;
     use crate::stp::session::SessionLogic;
     use std::sync::Arc;
 
-    /// 最小 mock：实现 `BulwarkCore` + `SessionLogic`（9 必需方法）。
+    /// 最小 mock：实现 `GarrisonCore` + `SessionLogic`（9 必需方法）。
     /// `TokenLogic` 5 个方法均有默认实现，空 impl 即可获得全部默认行为。
     struct MockToken {
-        config: Arc<BulwarkConfig>,
+        config: Arc<GarrisonConfig>,
         logged_in: bool,
     }
 
-    impl BulwarkCore for MockToken {
-        fn config(&self) -> Arc<BulwarkConfig> {
+    impl GarrisonCore for MockToken {
+        fn config(&self) -> Arc<GarrisonConfig> {
             Arc::clone(&self.config)
         }
     }
@@ -221,31 +221,31 @@ mod tests {
             &self,
             _login_id: &str,
             _params: &crate::stp::LoginParams,
-        ) -> BulwarkResult<String> {
+        ) -> GarrisonResult<String> {
             Ok("mock-token".to_string())
         }
-        async fn login_with_token(&self, _login_id: &str, _token: &str) -> BulwarkResult<()> {
+        async fn login_with_token(&self, _login_id: &str, _token: &str) -> GarrisonResult<()> {
             Ok(())
         }
-        async fn logout(&self) -> BulwarkResult<()> {
+        async fn logout(&self) -> GarrisonResult<()> {
             Ok(())
         }
-        async fn logout_by_login_id(&self, _login_id: &str) -> BulwarkResult<()> {
+        async fn logout_by_login_id(&self, _login_id: &str) -> GarrisonResult<()> {
             Ok(())
         }
-        async fn kickout(&self, _login_id: &str) -> BulwarkResult<()> {
+        async fn kickout(&self, _login_id: &str) -> GarrisonResult<()> {
             Ok(())
         }
-        async fn kickout_by_token(&self, _token: &str) -> BulwarkResult<()> {
+        async fn kickout_by_token(&self, _token: &str) -> GarrisonResult<()> {
             Ok(())
         }
-        async fn revoke_token(&self, _token: &str) -> BulwarkResult<()> {
+        async fn revoke_token(&self, _token: &str) -> GarrisonResult<()> {
             Ok(())
         }
-        async fn check_login(&self) -> BulwarkResult<bool> {
+        async fn check_login(&self) -> GarrisonResult<bool> {
             Ok(self.logged_in)
         }
-        async fn get_login_id(&self) -> BulwarkResult<Option<String>> {
+        async fn get_login_id(&self) -> GarrisonResult<Option<String>> {
             if self.logged_in {
                 Ok(Some("42".to_string()))
             } else {
@@ -260,7 +260,7 @@ mod tests {
     #[tokio::test]
     async fn check_access_token_ok_when_logged_in() {
         let mock = MockToken {
-            config: Arc::new(BulwarkConfig::default()),
+            config: Arc::new(GarrisonConfig::default()),
             logged_in: true,
         };
         mock.check_access_token().await.unwrap();
@@ -269,11 +269,11 @@ mod tests {
     #[tokio::test]
     async fn check_access_token_denies_when_not_logged_in() {
         let mock = MockToken {
-            config: Arc::new(BulwarkConfig::default()),
+            config: Arc::new(GarrisonConfig::default()),
             logged_in: false,
         };
         let result = mock.check_access_token().await;
-        assert!(matches!(result, Err(BulwarkError::NotLogin(_))));
+        assert!(matches!(result, Err(GarrisonError::NotLogin(_))));
     }
 
     /// 验证 `check_client_token` 在已登录时返回 Ok(())。
@@ -282,7 +282,7 @@ mod tests {
     #[tokio::test]
     async fn check_client_token_ok_when_logged_in() {
         let mock = MockToken {
-            config: Arc::new(BulwarkConfig::default()),
+            config: Arc::new(GarrisonConfig::default()),
             logged_in: true,
         };
         mock.check_client_token().await.unwrap();
@@ -294,12 +294,12 @@ mod tests {
     #[tokio::test]
     async fn check_client_token_denies_when_not_logged_in() {
         let mock = MockToken {
-            config: Arc::new(BulwarkConfig::default()),
+            config: Arc::new(GarrisonConfig::default()),
             logged_in: false,
         };
         let result = mock.check_client_token().await;
         assert!(
-            matches!(result, Err(BulwarkError::NotLogin(ref msg)) if msg.contains("stp-token-invalid-or-not-login")),
+            matches!(result, Err(GarrisonError::NotLogin(ref msg)) if msg.contains("stp-token-invalid-or-not-login")),
             "未登录时应返回 NotLogin 包含 'client_token'，实际: {:?}",
             result
         );
@@ -311,7 +311,7 @@ mod tests {
     #[tokio::test]
     async fn check_temp_token_ok_when_logged_in() {
         let mock = MockToken {
-            config: Arc::new(BulwarkConfig::default()),
+            config: Arc::new(GarrisonConfig::default()),
             logged_in: true,
         };
         mock.check_temp_token().await.unwrap();
@@ -323,12 +323,12 @@ mod tests {
     #[tokio::test]
     async fn check_temp_token_denies_when_not_logged_in() {
         let mock = MockToken {
-            config: Arc::new(BulwarkConfig::default()),
+            config: Arc::new(GarrisonConfig::default()),
             logged_in: false,
         };
         let result = mock.check_temp_token().await;
         assert!(
-            matches!(result, Err(BulwarkError::NotLogin(ref msg)) if msg.contains("stp-token-invalid-or-not-login")),
+            matches!(result, Err(GarrisonError::NotLogin(ref msg)) if msg.contains("stp-token-invalid-or-not-login")),
             "未登录时应返回 NotLogin 包含 'temp_token'，实际: {:?}",
             result
         );
@@ -337,21 +337,21 @@ mod tests {
     #[tokio::test]
     async fn verify_token_default_returns_not_implemented() {
         let mock = MockToken {
-            config: Arc::new(BulwarkConfig::default()),
+            config: Arc::new(GarrisonConfig::default()),
             logged_in: true,
         };
         let result = mock.verify_token("some-token").await;
-        assert!(matches!(result, Err(BulwarkError::NotImplemented(_))));
+        assert!(matches!(result, Err(GarrisonError::NotImplemented(_))));
     }
 
     #[tokio::test]
     async fn refresh_token_default_returns_not_implemented() {
         let mock = MockToken {
-            config: Arc::new(BulwarkConfig::default()),
+            config: Arc::new(GarrisonConfig::default()),
             logged_in: true,
         };
         let result = mock.refresh_token("old").await;
-        assert!(matches!(result, Err(BulwarkError::NotImplemented(_))));
+        assert!(matches!(result, Err(GarrisonError::NotImplemented(_))));
     }
 
     // ========================================================================
@@ -362,7 +362,7 @@ mod tests {
     #[tokio::test]
     async fn mock_token_login_returns_token() {
         let mock = MockToken {
-            config: Arc::new(BulwarkConfig::default()),
+            config: Arc::new(GarrisonConfig::default()),
             logged_in: false,
         };
         let token = mock
@@ -377,7 +377,7 @@ mod tests {
     #[tokio::test]
     async fn mock_token_session_methods_return_ok() {
         let mock = MockToken {
-            config: Arc::new(BulwarkConfig::default()),
+            config: Arc::new(GarrisonConfig::default()),
             logged_in: true,
         };
         mock.login_with_token("alice", "tok").await.unwrap();
@@ -392,7 +392,7 @@ mod tests {
     #[tokio::test]
     async fn mock_token_config_returns_arc_clone() {
         let mock = MockToken {
-            config: Arc::new(BulwarkConfig::default()),
+            config: Arc::new(GarrisonConfig::default()),
             logged_in: true,
         };
         let c1 = mock.config();
@@ -404,7 +404,7 @@ mod tests {
     #[tokio::test]
     async fn mock_token_get_login_id_when_logged_in() {
         let mock = MockToken {
-            config: Arc::new(BulwarkConfig::default()),
+            config: Arc::new(GarrisonConfig::default()),
             logged_in: true,
         };
         let id = mock.get_login_id().await.unwrap();
@@ -412,15 +412,15 @@ mod tests {
     }
 
     // ========================================================================
-    // BulwarkLogicDefault impl 覆盖测试（verify_token / refresh_token）
+    // GarrisonLogicDefault impl 覆盖测试（verify_token / refresh_token）
     // ========================================================================
 
     mod default_impl_coverage {
         use super::*;
-        use crate::dao::BulwarkDao;
-        use crate::session::BulwarkSession;
+        use crate::dao::GarrisonDao;
+        use crate::session::GarrisonSession;
         use crate::stp::mock::{MockDao, MockFirewall};
-        use crate::strategy::BulwarkPermissionStrategy;
+        use crate::strategy::GarrisonPermissionStrategy;
         use std::sync::Arc;
 
         /// A11: simple 模式测试用的 HMAC 密钥（与 make_logic 中设置的 jwt_secret 一致）。
@@ -438,11 +438,11 @@ mod tests {
             }
         }
 
-        /// 构造 BulwarkLogicDefault，token_style 可配置。
-        fn make_logic(token_style: &str) -> BulwarkLogicDefault {
-            let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
-            let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
-            let mut config = BulwarkConfig::default_config();
+        /// 构造 GarrisonLogicDefault，token_style 可配置。
+        fn make_logic(token_style: &str) -> GarrisonLogicDefault {
+            let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+            let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = token_style.to_string();
             // A11: simple 模式下 verify_token 委托 core-token SimpleTokenStyle（需 HMAC），
@@ -450,16 +450,16 @@ mod tests {
             if token_style == "simple" {
                 config.jwt_secret = test_jwt_secret(STP_TOKEN_SIMPLE_TEST_SECRET);
             }
-            let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
+            let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall {
                 has_permission: true,
                 has_role: true,
             });
-            BulwarkLogicDefault::new(session, Arc::new(config), firewall)
+            GarrisonLogicDefault::new(session, Arc::new(config), firewall)
         }
 
         /// verify_token + simple token_style → 返回 login_id。
         ///
-        /// 覆盖 token.rs 第 147-159 行 BulwarkLogicDefault::verify_token 的
+        /// 覆盖 token.rs 第 147-159 行 GarrisonLogicDefault::verify_token 的
         /// `Ok(Some(login_id))` 分支。
         ///
         /// A11: SimpleTokenStyle 改为 HMAC-SHA256 签名格式 `<login_id>-<uuid>.<hmac>`，
@@ -494,7 +494,7 @@ mod tests {
             let logic = make_logic("uuid");
             let result = logic.verify_token("some-uuid-token").await;
             assert!(
-                matches!(result, Err(BulwarkError::InvalidToken(ref msg)) if msg.contains("stp-token-invalid-or-no-login-id")),
+                matches!(result, Err(GarrisonError::InvalidToken(ref msg)) if msg.contains("stp-token-invalid-or-no-login-id")),
                 "uuid token verify_token 应返回 InvalidToken 包含 '不包含 login_id'，实际: {:?}",
                 result
             );
@@ -512,7 +512,7 @@ mod tests {
             // 无连字符的 simple token：split_once('-') 返回 None → Ok(None) → InvalidToken
             let result = logic.verify_token("nodashtoken").await;
             assert!(
-                matches!(result, Err(BulwarkError::InvalidToken(_))),
+                matches!(result, Err(GarrisonError::InvalidToken(_))),
                 "无效 simple token 应返回 InvalidToken，实际: {:?}",
                 result
             );
@@ -524,17 +524,17 @@ mod tests {
         #[cfg(feature = "protocol-jwt")]
         #[tokio::test]
         async fn verify_token_jwt_style_returns_login_id() {
-            let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
-            let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
-            let mut config = BulwarkConfig::default_config();
+            let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+            let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = "jwt".to_string();
             config.jwt_secret = "verify-jwt-secret".to_string().into();
-            let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
+            let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall {
                 has_permission: true,
                 has_role: true,
             });
-            let logic = BulwarkLogicDefault::new(session, Arc::new(config), firewall);
+            let logic = GarrisonLogicDefault::new(session, Arc::new(config), firewall);
 
             // 签发 JWT token
             let handler = crate::protocol::jwt::JwtHandler::new("verify-jwt-secret");
@@ -559,21 +559,21 @@ mod tests {
         #[cfg(feature = "protocol-jwt")]
         #[tokio::test]
         async fn verify_token_invalid_jwt_returns_invalid_token() {
-            let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
-            let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
-            let mut config = BulwarkConfig::default_config();
+            let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+            let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = "jwt".to_string();
             config.jwt_secret = "verify-jwt-secret".to_string().into();
-            let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
+            let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall {
                 has_permission: true,
                 has_role: true,
             });
-            let logic = BulwarkLogicDefault::new(session, Arc::new(config), firewall);
+            let logic = GarrisonLogicDefault::new(session, Arc::new(config), firewall);
 
             let result = logic.verify_token("invalid.jwt.token").await;
             assert!(
-                matches!(result, Err(BulwarkError::InvalidToken(_))),
+                matches!(result, Err(GarrisonError::InvalidToken(_))),
                 "无效 JWT 应返回 InvalidToken，实际: {:?}",
                 result
             );
@@ -588,7 +588,7 @@ mod tests {
             let logic = make_logic("uuid");
             let result = logic.refresh_token("any-token").await;
             assert!(
-                matches!(result, Err(BulwarkError::NotImplemented(ref msg)) if msg.contains("jwt")),
+                matches!(result, Err(GarrisonError::NotImplemented(ref msg)) if msg.contains("jwt")),
                 "非 JWT token_style refresh_token 应返回 NotImplemented 包含 'jwt'，实际: {:?}",
                 result
             );
@@ -600,18 +600,18 @@ mod tests {
         #[cfg(feature = "protocol-jwt")]
         #[tokio::test]
         async fn refresh_token_jwt_valid_returns_new_token() {
-            let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
-            let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
-            let mut config = BulwarkConfig::default_config();
+            let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+            let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = "jwt".to_string();
             config.jwt_secret = "refresh-jwt-secret".to_string().into();
             config.timeout = 3600;
-            let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
+            let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall {
                 has_permission: true,
                 has_role: true,
             });
-            let logic = BulwarkLogicDefault::new(session, Arc::new(config), firewall);
+            let logic = GarrisonLogicDefault::new(session, Arc::new(config), firewall);
 
             // 签发 JWT token
             let handler = crate::protocol::jwt::JwtHandler::new("refresh-jwt-secret");
@@ -636,18 +636,18 @@ mod tests {
         #[cfg(feature = "protocol-jwt")]
         #[tokio::test]
         async fn refresh_token_invalid_jwt_returns_error() {
-            let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
-            let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
-            let mut config = BulwarkConfig::default_config();
+            let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+            let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = "jwt".to_string();
             config.jwt_secret = "refresh-jwt-secret".to_string().into();
             config.timeout = 3600;
-            let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
+            let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall {
                 has_permission: true,
                 has_role: true,
             });
-            let logic = BulwarkLogicDefault::new(session, Arc::new(config), firewall);
+            let logic = GarrisonLogicDefault::new(session, Arc::new(config), firewall);
 
             let result = logic.refresh_token("invalid.jwt.token").await;
             assert!(

@@ -1,15 +1,15 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! `DistributedLimiter` 适配器，用 `BulwarkDao::incr` 实现原子计数。
+//! `DistributedLimiter` 适配器，用 `GarrisonDao::incr` 实现原子计数。
 //!
 //! `incr(key, amount)` 通过循环 `dao.incr(key, 0)` amount 次实现。
 //! `incr_with_ttl(key, amount, ttl)` 通过循环 `dao.incr(key, ttl_secs)` amount 次实现。
 //! `atomic_check_and_incr` 优先调用 `dao.eval_lua` 执行 Lua 脚本（Redis 后端原子），
 //! 非 Redis 后端降级为 `incr` + 阈值判断。
 
-use crate::dao::BulwarkDao;
-use crate::error::BulwarkError;
+use crate::dao::GarrisonDao;
+use crate::error::GarrisonError;
 use async_trait::async_trait;
 use limiteron::error::LimiteronError;
 use limiteron::limiters::{DistributedLimiter, Limiter};
@@ -18,20 +18,20 @@ use std::time::Duration;
 
 use super::errors::map_to_limiter_err;
 
-/// `DistributedLimiter` 适配器，用 `BulwarkDao::incr` 实现原子计数。
+/// `DistributedLimiter` 适配器，用 `GarrisonDao::incr` 实现原子计数。
 ///
 /// `incr(key, amount)` 通过循环 `dao.incr(key, 0)` amount 次实现。
 /// `incr_with_ttl(key, amount, ttl)` 通过循环 `dao.incr(key, ttl_secs)` amount 次实现。
-pub struct BulwarkDaoDistributedLimiter {
-    pub(super) dao: Arc<dyn BulwarkDao>,
+pub struct GarrisonDaoDistributedLimiter {
+    pub(super) dao: Arc<dyn GarrisonDao>,
 }
 
-impl BulwarkDaoDistributedLimiter {
+impl GarrisonDaoDistributedLimiter {
     /// 创建适配器实例。
     ///
     /// # 参数
     /// - `dao`: 内部 DAO 实现。
-    pub fn new(dao: Arc<dyn BulwarkDao>) -> Self {
+    pub fn new(dao: Arc<dyn GarrisonDao>) -> Self {
         Self { dao }
     }
 
@@ -65,18 +65,18 @@ impl BulwarkDaoDistributedLimiter {
                 let count: u64 = values
                     .first()
                     .ok_or_else(|| {
-                        map_to_limiter_err(BulwarkError::Dao("limiter-eval-lua-empty".to_string()))
+                        map_to_limiter_err(GarrisonError::Dao("limiter-eval-lua-empty".to_string()))
                     })?
                     .parse()
                     .map_err(|e| {
-                        map_to_limiter_err(BulwarkError::Dao(format!(
+                        map_to_limiter_err(GarrisonError::Dao(format!(
                             "limiteron-eval-lua-parse-failed::{}",
                             e
                         )))
                     })?;
                 Ok(count <= threshold)
             },
-            Err(BulwarkError::NotImplemented(_)) => {
+            Err(GarrisonError::NotImplemented(_)) => {
                 // 降级：非 Redis 后端，用 incr + 阈值判断（进程内原子）
                 let count = self
                     .dao
@@ -91,7 +91,7 @@ impl BulwarkDaoDistributedLimiter {
 }
 
 #[async_trait]
-impl Limiter for BulwarkDaoDistributedLimiter {
+impl Limiter for GarrisonDaoDistributedLimiter {
     async fn allow(&self, cost: u64) -> Result<bool, LimiteronError> {
         // Limiter trait 的 allow 无 key 参数，用固定 key 计数
         // 真正的分布式限流通过 incr + get_count + 阈值判断实现
@@ -101,7 +101,7 @@ impl Limiter for BulwarkDaoDistributedLimiter {
 }
 
 #[async_trait]
-impl DistributedLimiter for BulwarkDaoDistributedLimiter {
+impl DistributedLimiter for GarrisonDaoDistributedLimiter {
     async fn incr(&self, key: &str, amount: u64) -> Result<u64, LimiteronError> {
         let mut count = 0u64;
         for _ in 0..amount {
@@ -139,7 +139,7 @@ impl DistributedLimiter for BulwarkDaoDistributedLimiter {
             None => Ok(0),
             // M-3: parse 失败显性化 — 脏数据返回错误而非静默用 0
             Some(val) => val.parse::<u64>().map_err(|e| {
-                map_to_limiter_err(BulwarkError::Dao(format!(
+                map_to_limiter_err(GarrisonError::Dao(format!(
                     "limiteron-get-count-parse-failed::{}::{}::{}",
                     key, val, e
                 )))
@@ -157,15 +157,15 @@ mod tests {
     use super::*;
     use crate::dao::tests::MockDao;
 
-    fn make_dao() -> Arc<dyn BulwarkDao> {
+    fn make_dao() -> Arc<dyn GarrisonDao> {
         Arc::new(MockDao::new())
     }
 
-    // --- BulwarkDaoDistributedLimiter 测试 ---
+    // --- GarrisonDaoDistributedLimiter 测试 ---
 
     #[tokio::test]
     async fn limiter_incr_and_get_count() {
-        let limiter = BulwarkDaoDistributedLimiter::new(make_dao());
+        let limiter = GarrisonDaoDistributedLimiter::new(make_dao());
 
         let count1 = limiter.incr("test:key", 1).await.unwrap();
         assert_eq!(count1, 1);
@@ -178,7 +178,7 @@ mod tests {
 
     #[tokio::test]
     async fn limiter_incr_with_ttl() {
-        let limiter = BulwarkDaoDistributedLimiter::new(make_dao());
+        let limiter = GarrisonDaoDistributedLimiter::new(make_dao());
         let count = limiter
             .incr_with_ttl("ttl:key", 1, Duration::from_secs(60))
             .await
@@ -189,7 +189,7 @@ mod tests {
 
     #[tokio::test]
     async fn limiter_reset() {
-        let limiter = BulwarkDaoDistributedLimiter::new(make_dao());
+        let limiter = GarrisonDaoDistributedLimiter::new(make_dao());
         limiter.incr("reset:key", 3).await.unwrap();
         assert_eq!(limiter.get_count("reset:key").await.unwrap(), 3);
 
@@ -199,7 +199,7 @@ mod tests {
 
     #[tokio::test]
     async fn limiter_get_count_nonexistent() {
-        let limiter = BulwarkDaoDistributedLimiter::new(make_dao());
+        let limiter = GarrisonDaoDistributedLimiter::new(make_dao());
         assert_eq!(limiter.get_count("noexist").await.unwrap(), 0);
     }
 
@@ -208,7 +208,7 @@ mod tests {
     /// M-3: DistributedLimiter::get_count 遇到脏数据时返回错误（非静默用 0）。
     #[tokio::test]
     async fn m3_limiter_get_count_dirty_data_returns_err() {
-        let limiter = BulwarkDaoDistributedLimiter::new(make_dao());
+        let limiter = GarrisonDaoDistributedLimiter::new(make_dao());
         limiter
             .dao
             .set("dirty-count-key", "not-a-number", 0)
@@ -230,7 +230,7 @@ mod tests {
 
     /// T010: 并发 100 次 atomic_check_and_incr（阈值 10）结果精确为 10 通过 + 90 拒绝。
     ///
-    /// 验证 BulwarkDaoDistributedLimiter::atomic_check_and_incr 通过 eval_lua 实现
+    /// 验证 GarrisonDaoDistributedLimiter::atomic_check_and_incr 通过 eval_lua 实现
     /// 原子 check-and-increment：100 个并发任务同时调用，仅前 10 个通过（count <= 10），
     /// 后 90 个被拒绝（count > 10）。
     #[tokio::test(flavor = "multi_thread")]
@@ -238,8 +238,8 @@ mod tests {
         use std::sync::atomic::{AtomicU64, Ordering};
 
         let dao = Arc::new(MockDao::new());
-        let limiter = Arc::new(BulwarkDaoDistributedLimiter::new(
-            dao as Arc<dyn BulwarkDao>,
+        let limiter = Arc::new(GarrisonDaoDistributedLimiter::new(
+            dao as Arc<dyn GarrisonDao>,
         ));
 
         let key = "rate_limit:t010:concurrent";
@@ -289,7 +289,7 @@ mod tests {
     #[tokio::test]
     async fn t010_atomic_check_and_incr_sequential_threshold() {
         let dao = Arc::new(MockDao::new());
-        let limiter = BulwarkDaoDistributedLimiter::new(dao as Arc<dyn BulwarkDao>);
+        let limiter = GarrisonDaoDistributedLimiter::new(dao as Arc<dyn GarrisonDao>);
 
         let key = "rate_limit:t010:seq";
         let threshold = 3u64;
@@ -317,7 +317,7 @@ mod tests {
             .unwrap());
     }
 
-    /// T010: eval_lua 默认实现返回 NotImplemented（BulwarkDaoOxcache 不支持 Lua）。
+    /// T010: eval_lua 默认实现返回 NotImplemented（GarrisonDaoOxcache 不支持 Lua）。
     ///
     /// 验证 trait 默认实现：未重写 eval_lua 的实现者调用时返回 NotImplemented。
     #[tokio::test]
@@ -333,7 +333,7 @@ mod tests {
             )
             .await;
         assert!(
-            matches!(result, Err(BulwarkError::NotImplemented(_))),
+            matches!(result, Err(GarrisonError::NotImplemented(_))),
             "eval_lua 默认实现应返回 NotImplemented，实际: {:?}",
             result
         );
@@ -344,7 +344,7 @@ mod tests {
     /// Limiter::allow 始终返回 Ok(true)（全局计数器递增但不拒绝）。
     #[tokio::test]
     async fn limiter_allow_returns_true() {
-        let limiter = BulwarkDaoDistributedLimiter::new(make_dao());
+        let limiter = GarrisonDaoDistributedLimiter::new(make_dao());
         let result = limiter.allow(3).await;
         assert!(result.is_ok(), "allow 应返回 Ok");
         assert!(result.unwrap(), "allow 应返回 true");
@@ -358,7 +358,7 @@ mod tests {
     /// incr amount=0 时返回当前 count（不递增）。
     #[tokio::test]
     async fn limiter_incr_zero_amount_returns_current_count() {
-        let limiter = BulwarkDaoDistributedLimiter::new(make_dao());
+        let limiter = GarrisonDaoDistributedLimiter::new(make_dao());
         // 先递增到 3
         limiter.incr("zero_key", 3).await.unwrap();
         // amount=0 应返回当前值 3
@@ -369,7 +369,7 @@ mod tests {
     /// incr_with_ttl amount=0 时返回当前 count。
     #[tokio::test]
     async fn limiter_incr_with_ttl_zero_amount_returns_current_count() {
-        let limiter = BulwarkDaoDistributedLimiter::new(make_dao());
+        let limiter = GarrisonDaoDistributedLimiter::new(make_dao());
         limiter
             .incr_with_ttl("ttl_zero_key", 2, Duration::from_secs(60))
             .await
@@ -387,7 +387,7 @@ mod tests {
     #[tokio::test]
     async fn atomic_check_and_incr_eval_lua_success_path() {
         let dao = Arc::new(MockDao::new());
-        let limiter = BulwarkDaoDistributedLimiter::new(dao as Arc<dyn BulwarkDao>);
+        let limiter = GarrisonDaoDistributedLimiter::new(dao as Arc<dyn GarrisonDao>);
 
         // 阈值 5，首次 INCR 返回 1 <= 5 → 允许
         let ok = limiter

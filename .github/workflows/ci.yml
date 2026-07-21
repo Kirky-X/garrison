@@ -159,15 +159,15 @@ jobs:
       #
       # 处理策略：
       #   1. 过滤已知外部 crate 死链（Context/dispatcher/Response）— 不阻断 CI
-      #   2. 新死链（bulwark 自身 doc comment 问题）— 阻断 CI
+      #   2. 新死链（garrison 自身 doc comment 问题）— 阻断 CI
       # 这样移除 continue-on-error，让死链检查成为真实门禁，同时不掩盖已知外部问题。
       - name: Check broken links
         run: |
           set -euo pipefail
-          OUTPUT=$(cargo deadlinks --dir target/doc/bulwark 2>&1 || true)
+          OUTPUT=$(cargo deadlinks --dir target/doc/garrison 2>&1 || true)
           echo "$OUTPUT"
           # 过滤已知外部 crate 死链（opentelemetry Context / tracing-subscriber dispatcher / warp Response）
-          # 精确匹配路径片段边界（/ 或 . 分隔），避免误过滤 TenantContext/BulwarkResponse 等自身类型
+          # 精确匹配路径片段边界（/ 或 . 分隔），避免误过滤 TenantContext/GarrisonResponse 等自身类型
           # - `config/Context does not exist` ← opentelemetry::FutureExt blanket impl
           # - `config/dispatcher does not exist` ← tracing_subscriber::WithSubscriber blanket impl
           # - `error/type.Response.html does not exist` ← warp::Reply::into_response blanket impl

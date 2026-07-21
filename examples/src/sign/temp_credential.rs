@@ -7,13 +7,13 @@
 //!
 //! 运行方式：
 //! ```sh
-//! cargo run -p bulwark-examples --bin temp_credential --features protocol-temp
+//! cargo run -p garrison-examples --bin temp_credential --features protocol-temp
 //! ```
 
 use async_trait::async_trait;
-use bulwark::dao::BulwarkDao;
-use bulwark::error::{BulwarkError, BulwarkResult};
-use bulwark::protocol::temp::TempCredentialHandler;
+use garrison::dao::GarrisonDao;
+use garrison::error::{GarrisonError, GarrisonResult};
+use garrison::protocol::temp::TempCredentialHandler;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -35,12 +35,12 @@ impl MockDao {
 }
 
 #[async_trait]
-impl BulwarkDao for MockDao {
-    async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
+impl GarrisonDao for MockDao {
+    async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
         Ok(self.data.lock().await.get(key).cloned())
     }
 
-    async fn set(&self, key: &str, value: &str, _ttl_seconds: u64) -> BulwarkResult<()> {
+    async fn set(&self, key: &str, value: &str, _ttl_seconds: u64) -> GarrisonResult<()> {
         self.data
             .lock()
             .await
@@ -48,21 +48,21 @@ impl BulwarkDao for MockDao {
         Ok(())
     }
 
-    async fn update(&self, key: &str, value: &str) -> BulwarkResult<()> {
+    async fn update(&self, key: &str, value: &str) -> GarrisonResult<()> {
         let mut data = self.data.lock().await;
         if data.contains_key(key) {
             data.insert(key.to_string(), value.to_string());
             Ok(())
         } else {
-            Err(BulwarkError::Dao(format!("键不存在: {}", key)))
+            Err(GarrisonError::Dao(format!("键不存在: {}", key)))
         }
     }
 
-    async fn expire(&self, _key: &str, _seconds: u64) -> BulwarkResult<()> {
+    async fn expire(&self, _key: &str, _seconds: u64) -> GarrisonResult<()> {
         Ok(())
     }
 
-    async fn delete(&self, key: &str) -> BulwarkResult<()> {
+    async fn delete(&self, key: &str) -> GarrisonResult<()> {
         self.data.lock().await.remove(key);
         Ok(())
     }
@@ -72,15 +72,15 @@ impl BulwarkDao for MockDao {
 ///
 /// 演示 TempCredentialHandler 的 issue / get / consume / revoke 与参数校验。
 /// 适用场景：邀请码、密码重置链接、邮箱验证码等短时一次性凭证。
-pub async fn run() -> BulwarkResult<()> {
-    println!("=== Bulwark 临时凭证示例 ===\n");
+pub async fn run() -> GarrisonResult<()> {
+    println!("=== Garrison 临时凭证示例 ===\n");
 
     // ----------------------------------------------------------------
     // 1. 构建 TempCredentialHandler
     // ----------------------------------------------------------------
-    // Key 命名空间：bulwark:temp:<prefix>:<random>
+    // Key 命名空间：garrison:temp:<prefix>:<random>
     // prefix 用于区分业务场景（如 invite / reset / verify），不可包含 ':'
-    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     let handler = TempCredentialHandler::new(dao);
     println!("[1] TempCredentialHandler 构建完成\n");
 
@@ -94,13 +94,13 @@ pub async fn run() -> BulwarkResult<()> {
     println!("    value  = \"user-id-1001\"");
     println!("    ttl    = 600s");
     println!("    key    = {}", invite_key);
-    assert!(invite_key.starts_with("bulwark:temp:invite:"));
-    println!("    ✓ 前缀匹配 bulwark:temp:invite:\n");
+    assert!(invite_key.starts_with("garrison:temp:invite:"));
+    println!("    ✓ 前缀匹配 garrison:temp:invite:\n");
 
     // 场景：生成密码重置链接凭证，TTL 300 秒
     let reset_key = handler.issue("reset", "reset-token-xyz", 300).await?;
     println!("    reset key = {}...", &reset_key[..24]);
-    assert!(reset_key.starts_with("bulwark:temp:reset:"));
+    assert!(reset_key.starts_with("garrison:temp:reset:"));
     println!("    ✓ 不同 prefix 产生不同命名空间\n");
 
     // ----------------------------------------------------------------
@@ -143,7 +143,7 @@ pub async fn run() -> BulwarkResult<()> {
 
     // 撤销不存在的凭据（幂等，返回 Ok）
     handler.revoke(&verify_key).await?;
-    handler.revoke("bulwark:temp:invite:nonexistent").await?;
+    handler.revoke("garrison:temp:invite:nonexistent").await?;
     println!("    撤销不存在的凭据 → Ok(())（幂等语义）✓\n");
 
     // ----------------------------------------------------------------

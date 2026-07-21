@@ -12,13 +12,13 @@
 //!
 //! 运行方式：
 //! ```sh
-//! cargo run -p bulwark-examples --bin alone_cache --features alone-cache
+//! cargo run -p garrison-examples --bin alone_cache --features alone-cache
 //! ```
 
 use async_trait::async_trait;
-use bulwark::dao::alone_cache::{AloneCache, AloneCacheManager};
-use bulwark::dao::BulwarkDao;
-use bulwark::error::{BulwarkError, BulwarkResult};
+use garrison::dao::alone_cache::{AloneCache, AloneCacheManager};
+use garrison::dao::GarrisonDao;
+use garrison::error::{GarrisonError, GarrisonResult};
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -48,8 +48,8 @@ impl Default for InMemoryDao {
 }
 
 #[async_trait]
-impl BulwarkDao for InMemoryDao {
-    async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
+impl GarrisonDao for InMemoryDao {
+    async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
         let mut store = self.store.lock();
         match store.get(key) {
             Some((value, expire_at)) => {
@@ -65,7 +65,7 @@ impl BulwarkDao for InMemoryDao {
         }
     }
 
-    async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> BulwarkResult<()> {
+    async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> GarrisonResult<()> {
         let expire_at = if ttl_seconds == 0 {
             None
         } else {
@@ -77,18 +77,18 @@ impl BulwarkDao for InMemoryDao {
         Ok(())
     }
 
-    async fn update(&self, key: &str, value: &str) -> BulwarkResult<()> {
+    async fn update(&self, key: &str, value: &str) -> GarrisonResult<()> {
         let mut store = self.store.lock();
         match store.get_mut(key) {
             Some((existing, _)) => {
                 *existing = value.to_string();
                 Ok(())
             },
-            None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
+            None => Err(GarrisonError::Dao(format!("键不存在: {}", key))),
         }
     }
 
-    async fn expire(&self, key: &str, seconds: u64) -> BulwarkResult<()> {
+    async fn expire(&self, key: &str, seconds: u64) -> GarrisonResult<()> {
         let mut store = self.store.lock();
         match store.get_mut(key) {
             Some((_, expire_at)) => {
@@ -99,11 +99,11 @@ impl BulwarkDao for InMemoryDao {
                 };
                 Ok(())
             },
-            None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
+            None => Err(GarrisonError::Dao(format!("键不存在: {}", key))),
         }
     }
 
-    async fn delete(&self, key: &str) -> BulwarkResult<()> {
+    async fn delete(&self, key: &str) -> GarrisonResult<()> {
         self.store.lock().remove(key);
         Ok(())
     }
@@ -113,12 +113,12 @@ impl BulwarkDao for InMemoryDao {
 ///
 /// 演示 AloneCache 装饰器的 key prefix 拼接 + AloneCacheManager 多 tenant 隔离。
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    println!("=== Bulwark AloneCache 多 Redis 实例隔离示例 ===\n");
+    println!("=== Garrison AloneCache 多 Redis 实例隔离示例 ===\n");
 
     // ----------------------------------------------------------------
     // 1. 创建 InMemoryDao 并包装为 AloneCache 装饰器
     // ----------------------------------------------------------------
-    let dao: Arc<dyn BulwarkDao> = Arc::new(InMemoryDao::new());
+    let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
     let cache = AloneCache::new(dao.clone(), "tenant-a:");
 
     println!("[配置] AloneCache::new(dao, \"tenant-a:\")");
@@ -158,8 +158,8 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let manager = AloneCacheManager::new();
     // tenant-a 使用独立的 dao（与上面区分）
-    let dao_a: Arc<dyn BulwarkDao> = Arc::new(InMemoryDao::new());
-    let dao_b: Arc<dyn BulwarkDao> = Arc::new(InMemoryDao::new());
+    let dao_a: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
+    let dao_b: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
 
     manager.register("tenant-a", AloneCache::new(dao_a.clone(), "tenant-a:"));
     manager.register("tenant-b", AloneCache::new(dao_b.clone(), "tenant-b:"));

@@ -3,7 +3,7 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 //!
-//! 本模块在 `safe-auth` feature 启用时，为 `BulwarkLogicDefault` 提供
+//! 本模块在 `safe-auth` feature 启用时，为 `GarrisonLogicDefault` 提供
 //! `open_safe` / `is_safe` / `close_safe` 的 inherent method 实现，
 //! 基于 `TokenSession.safe_services` 实现 service 级二级认证瞬态标记。
 //!
@@ -11,9 +11,9 @@
 //!
 //! 任务原计划在 safe.rs 中覆写 `MfaLogic` trait 的 `open_safe` 方法，
 //! 但 Rust（E0119）禁止同一类型对同一 trait 有多个 impl 块，
-//! 而 mfa.rs 已有 `impl MfaLogic for BulwarkLogicDefault`（覆写 `check_disable`）。
+//! 而 mfa.rs 已有 `impl MfaLogic for GarrisonLogicDefault`（覆写 `check_disable`）。
 //!
-//! 因此本模块采用 inherent method 模式：为 `BulwarkLogicDefault` 添加
+//! 因此本模块采用 inherent method 模式：为 `GarrisonLogicDefault` 添加
 //! `pub async fn open_safe` inherent method。Rust 方法解析规则保证 inherent method
 //! 优先于 trait default method，因此：
 //! - `safe-auth` 启用：`logic.open_safe(...)` 调用 inherent method（本模块实现）
@@ -21,15 +21,15 @@
 //!
 //! # 已知限制
 //!
-//! 通过 trait 引用调用（如 `<BulwarkLogicDefault as MfaLogic>::open_safe`）
+//! 通过 trait 引用调用（如 `<GarrisonLogicDefault as MfaLogic>::open_safe`）
 //! 会使用 trait default 而非 inherent method。当前所有调用方均通过
-//! `BulwarkLogicDefault` 实例直接调用，不受此限制影响。
+//! `GarrisonLogicDefault` 实例直接调用，不受此限制影响。
 
 use super::current_token;
-use super::BulwarkLogicDefault;
-use crate::error::{BulwarkError, BulwarkResult};
+use super::GarrisonLogicDefault;
+use crate::error::{GarrisonError, GarrisonResult};
 
-impl BulwarkLogicDefault {
+impl GarrisonLogicDefault {
     /// 开启指定 service 的二级认证。
     ///
     /// 在当前 TokenSession 的 safe_services 中记录 service → 过期时间戳。
@@ -39,12 +39,12 @@ impl BulwarkLogicDefault {
     /// 导致 lost update（CRIT-001）。
     ///
     /// # 错误
-    /// - `BulwarkError::Session`: 未设置 current_token（未登录）。
-    /// - `BulwarkError::InvalidToken`: token 对应的 TokenSession 不存在。
-    /// - DAO 读写失败：透传 BulwarkError。
-    pub async fn open_safe(&self, service: &str, duration_secs: u64) -> BulwarkResult<()> {
+    /// - `GarrisonError::Session`: 未设置 current_token（未登录）。
+    /// - `GarrisonError::InvalidToken`: token 对应的 TokenSession 不存在。
+    /// - DAO 读写失败：透传 GarrisonError。
+    pub async fn open_safe(&self, service: &str, duration_secs: u64) -> GarrisonResult<()> {
         if service.is_empty() {
-            return Err(BulwarkError::InvalidParam(
+            return Err(GarrisonError::InvalidParam(
                 "service 参数不能为空".to_string(),
             ));
         }
@@ -62,7 +62,10 @@ impl BulwarkLogicDefault {
                     .get_token_session(&token)
                     .await?
                     .ok_or_else(|| {
-                        BulwarkError::InvalidToken(format!("stp-token-not-found::{}", token_prefix))
+                        GarrisonError::InvalidToken(format!(
+                            "stp-token-not-found::{}",
+                            token_prefix
+                        ))
                     })?;
                 let now = chrono::Utc::now().timestamp();
                 let expire_at = now + duration_secs as i64;
@@ -82,9 +85,9 @@ impl BulwarkLogicDefault {
     /// # 设计
     /// 未登录或无 session 时返回 `Ok(false)` 而非 `Err`，因为 is_safe 是查询方法，
     /// "未认证" = "不安全" = `Ok(false)` 是合理的语义。只有 DAO 读写失败才返回 `Err`。
-    pub async fn is_safe(&self, service: &str) -> BulwarkResult<bool> {
+    pub async fn is_safe(&self, service: &str) -> GarrisonResult<bool> {
         if service.is_empty() {
-            return Err(BulwarkError::InvalidParam(
+            return Err(GarrisonError::InvalidParam(
                 "service 参数不能为空".to_string(),
             ));
         }
@@ -120,12 +123,12 @@ impl BulwarkLogicDefault {
     /// - `Err`: 未登录或 session 不存在。
     ///
     /// # 错误
-    /// - `BulwarkError::Session`: 未设置 current_token（未登录）。
-    /// - `BulwarkError::InvalidToken`: token 对应的 TokenSession 不存在。
-    /// - DAO 读写失败：透传 BulwarkError。
-    pub async fn close_safe(&self, service: &str) -> BulwarkResult<()> {
+    /// - `GarrisonError::Session`: 未设置 current_token（未登录）。
+    /// - `GarrisonError::InvalidToken`: token 对应的 TokenSession 不存在。
+    /// - DAO 读写失败：透传 GarrisonError。
+    pub async fn close_safe(&self, service: &str) -> GarrisonResult<()> {
         if service.is_empty() {
-            return Err(BulwarkError::InvalidParam(
+            return Err(GarrisonError::InvalidParam(
                 "service 参数不能为空".to_string(),
             ));
         }
@@ -143,7 +146,10 @@ impl BulwarkLogicDefault {
                     .get_token_session(&token)
                     .await?
                     .ok_or_else(|| {
-                        BulwarkError::InvalidToken(format!("stp-token-not-found::{}", token_prefix))
+                        GarrisonError::InvalidToken(format!(
+                            "stp-token-not-found::{}",
+                            token_prefix
+                        ))
                     })?;
                 ts.safe_services.remove(&service);
                 self.session.save_token_session(&token, &ts).await
@@ -155,15 +161,15 @@ impl BulwarkLogicDefault {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::BulwarkConfig;
+    use crate::config::GarrisonConfig;
     use crate::dao::tests::MockDao;
-    use crate::dao::BulwarkDao;
-    use crate::error::BulwarkError;
-    use crate::session::BulwarkSession;
+    use crate::dao::GarrisonDao;
+    use crate::error::GarrisonError;
+    use crate::session::GarrisonSession;
     use crate::stp::session::SessionLogic;
     use crate::stp::with_current_token;
     use crate::stp::LoginParams;
-    use crate::strategy::BulwarkPermissionStrategy;
+    use crate::strategy::GarrisonPermissionStrategy;
     use async_trait::async_trait;
     use std::sync::Arc;
 
@@ -174,27 +180,27 @@ mod tests {
     struct MockFirewall;
 
     #[async_trait]
-    impl BulwarkPermissionStrategy for MockFirewall {
-        async fn get_permission_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
+    impl GarrisonPermissionStrategy for MockFirewall {
+        async fn get_permission_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
             Ok(vec![])
         }
-        async fn get_role_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
+        async fn get_role_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
             Ok(vec![])
         }
         async fn check_permission(
             &self,
             _login_id: &str,
             _permission: &str,
-        ) -> BulwarkResult<bool> {
+        ) -> GarrisonResult<bool> {
             Ok(true)
         }
-        async fn check_role(&self, _login_id: &str, _role: &str) -> BulwarkResult<bool> {
+        async fn check_role(&self, _login_id: &str, _role: &str) -> GarrisonResult<bool> {
             Ok(true)
         }
-        async fn check_role_any(&self, _login_id: &str, _roles: &[&str]) -> BulwarkResult<bool> {
+        async fn check_role_any(&self, _login_id: &str, _roles: &[&str]) -> GarrisonResult<bool> {
             Ok(true)
         }
-        async fn check_role_all(&self, _login_id: &str, _roles: &[&str]) -> BulwarkResult<bool> {
+        async fn check_role_all(&self, _login_id: &str, _roles: &[&str]) -> GarrisonResult<bool> {
             Ok(true)
         }
     }
@@ -203,19 +209,19 @@ mod tests {
     // 辅助函数
     // --------------------------------------------------------------------
 
-    /// 创建 BulwarkLogicDefault 并返回 (logic, dao) 便于测试。
-    fn make_logic() -> (BulwarkLogicDefault, Arc<MockDao>) {
+    /// 创建 GarrisonLogicDefault 并返回 (logic, dao) 便于测试。
+    fn make_logic() -> (GarrisonLogicDefault, Arc<MockDao>) {
         let dao = Arc::new(MockDao::new());
-        let session = Arc::new(BulwarkSession::new(
-            dao.clone() as Arc<dyn BulwarkDao>,
+        let session = Arc::new(GarrisonSession::new(
+            dao.clone() as Arc<dyn GarrisonDao>,
             3600,
             86400,
         ));
-        let mut config = BulwarkConfig::default_config();
+        let mut config = GarrisonConfig::default_config();
         config.throw_on_not_login = false;
         config.token_style = "uuid".to_string();
-        let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall);
-        let logic = BulwarkLogicDefault::new(session, Arc::new(config), firewall);
+        let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall);
+        let logic = GarrisonLogicDefault::new(session, Arc::new(config), firewall);
         (logic, dao)
     }
 
@@ -421,14 +427,14 @@ mod tests {
         let result = logic.open_safe("default", 3600).await;
 
         match result {
-            Err(BulwarkError::Session(msg)) => {
+            Err(GarrisonError::Session(msg)) => {
                 assert!(
                     msg.contains("stp-context-not-set"),
                     "Session 错误消息应说明未设置 current_token，实际: {}",
                     msg
                 );
             },
-            other => panic!("期望 Err(BulwarkError::Session)，实际: {:?}", other),
+            other => panic!("期望 Err(GarrisonError::Session)，实际: {:?}", other),
         }
     }
 
@@ -450,7 +456,7 @@ mod tests {
         .await;
 
         match result {
-            Err(BulwarkError::InvalidToken(msg)) => {
+            Err(GarrisonError::InvalidToken(msg)) => {
                 // token 脱敏：错误消息只包含前 8 字符
                 let expected_prefix = if token.len() >= 8 {
                     &token[..8]
@@ -468,7 +474,7 @@ mod tests {
                     msg
                 );
             },
-            other => panic!("期望 Err(BulwarkError::InvalidToken)，实际: {:?}", other),
+            other => panic!("期望 Err(GarrisonError::InvalidToken)，实际: {:?}", other),
         }
     }
 
@@ -654,7 +660,7 @@ mod tests {
         let result = with_current_token(token, async { logic.is_safe("").await }).await;
 
         match result {
-            Err(BulwarkError::InvalidParam(msg)) => {
+            Err(GarrisonError::InvalidParam(msg)) => {
                 assert!(
                     msg.contains("service"),
                     "InvalidParam 错误消息应说明 service 参数问题，实际: {}",
@@ -823,7 +829,7 @@ mod tests {
         let result = with_current_token(token, async { logic.close_safe("").await }).await;
 
         match result {
-            Err(BulwarkError::InvalidParam(msg)) => {
+            Err(GarrisonError::InvalidParam(msg)) => {
                 assert!(
                     msg.contains("service"),
                     "InvalidParam 错误消息应说明 service 参数问题，实际: {}",
@@ -872,7 +878,7 @@ mod tests {
         .await;
     }
 
-    /// T026: safe-auth feature 禁用时，BulwarkLogicDefault 没有 open_safe inherent method，
+    /// T026: safe-auth feature 禁用时，GarrisonLogicDefault 没有 open_safe inherent method，
     /// 调用解析到 MfaLogic trait default（open_safe=Ok(()), is_safe=Ok(true), close_safe=Ok(())）。
     ///
     /// 注意：本测试位于 safe.rs（`#[cfg(feature = "safe-auth")]` 门控）内部，
@@ -950,8 +956,8 @@ mod tests {
     }
 
     #[async_trait]
-    impl BulwarkDao for SlowDao {
-        async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
+    impl GarrisonDao for SlowDao {
+        async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
             let result = self.inner.get(key).await;
             // 仅对 token:session:* key 插入延迟，放大 read-modify-write 窗口
             if key.starts_with("token:session:") {
@@ -959,28 +965,28 @@ mod tests {
             }
             result
         }
-        async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> BulwarkResult<()> {
+        async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> GarrisonResult<()> {
             self.inner.set(key, value, ttl_seconds).await
         }
-        async fn update(&self, key: &str, value: &str) -> BulwarkResult<()> {
+        async fn update(&self, key: &str, value: &str) -> GarrisonResult<()> {
             self.inner.update(key, value).await
         }
-        async fn expire(&self, key: &str, seconds: u64) -> BulwarkResult<()> {
+        async fn expire(&self, key: &str, seconds: u64) -> GarrisonResult<()> {
             self.inner.expire(key, seconds).await
         }
-        async fn delete(&self, key: &str) -> BulwarkResult<()> {
+        async fn delete(&self, key: &str) -> GarrisonResult<()> {
             self.inner.delete(key).await
         }
     }
 
-    /// 创建使用 SlowDao 的 BulwarkSession，放大 token session 读写延迟。
-    fn make_slow_session(delay: std::time::Duration) -> (Arc<MockDao>, Arc<BulwarkSession>) {
+    /// 创建使用 SlowDao 的 GarrisonSession，放大 token session 读写延迟。
+    fn make_slow_session(delay: std::time::Duration) -> (Arc<MockDao>, Arc<GarrisonSession>) {
         let inner = Arc::new(MockDao::new());
-        let dao: Arc<dyn BulwarkDao> = Arc::new(SlowDao {
+        let dao: Arc<dyn GarrisonDao> = Arc::new(SlowDao {
             inner: inner.clone(),
             delay,
         });
-        let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
+        let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
         (inner, session)
     }
 
@@ -989,16 +995,16 @@ mod tests {
     /// 直接调用 `with_token_session_lock` 包裹的 read-modify-write 序列，
     /// 等价于 `open_safe` 的核心逻辑，用于测试并发安全性。
     async fn simulate_open_safe(
-        session: &BulwarkSession,
+        session: &GarrisonSession,
         token: &str,
         service: &str,
         duration_secs: u64,
-    ) -> BulwarkResult<()> {
+    ) -> GarrisonResult<()> {
         let service = service.to_string();
         session
             .with_token_session_lock(token, async {
                 let mut ts = session.get_token_session(token).await?.ok_or_else(|| {
-                    BulwarkError::InvalidToken(format!("stp-token-not-found::{}", token))
+                    GarrisonError::InvalidToken(format!("stp-token-not-found::{}", token))
                 })?;
                 let now = chrono::Utc::now().timestamp();
                 let expire_at = now + duration_secs as i64;
@@ -1010,15 +1016,15 @@ mod tests {
 
     /// 模拟 close_safe 的 read-modify-write 操作（不依赖 task_local current_token）。
     async fn simulate_close_safe(
-        session: &BulwarkSession,
+        session: &GarrisonSession,
         token: &str,
         service: &str,
-    ) -> BulwarkResult<()> {
+    ) -> GarrisonResult<()> {
         let service = service.to_string();
         session
             .with_token_session_lock(token, async {
                 let mut ts = session.get_token_session(token).await?.ok_or_else(|| {
-                    BulwarkError::InvalidToken(format!("stp-token-not-found::{}", token))
+                    GarrisonError::InvalidToken(format!("stp-token-not-found::{}", token))
                 })?;
                 ts.safe_services.remove(&service);
                 session.save_token_session(token, &ts).await

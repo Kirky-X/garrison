@@ -2,5 +2,5 @@
 //! See LICENSE for full license text.
 
 fn main() {
-    bulwark_examples::extension::custom_plugin::run().unwrap();
+    garrison_examples::extension::custom_plugin::run().unwrap();
 }

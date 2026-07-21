@@ -29,7 +29,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::backend::AuthBackend;
-use crate::context::BulwarkPrincipal;
+use crate::context::GarrisonPrincipal;
 
 /// per-IP 限速桶条目 — 持有 limiteron 令牌桶 + 最后访问时间（用于 LRU 淘汰）。
 ///
@@ -347,10 +347,10 @@ pub async fn internal_path_filter(req: Request, next: Next) -> Response {
 }
 
 /// Principal 注入中间件 — 从 Authorization header 提取 Bearer token，
-/// 验证后注入 `BulwarkPrincipal` extension。
+/// 验证后注入 `GarrisonPrincipal` extension。
 ///
 /// 用于 OAuth2 外网路由，使 `/oauth2/authorize` 能检测用户登录状态：
-/// - 有效 token → 注入 `Extension(BulwarkPrincipal { login_id })`，authorize 走授权码签发路径
+/// - 有效 token → 注入 `Extension(GarrisonPrincipal { login_id })`，authorize 走授权码签发路径
 /// - 无 token / token 无效 → 不注入（principal 为 None），authorize 重定向到登录页
 ///
 /// 本中间件**不阻断请求**，仅做 best-effort 注入。
@@ -363,7 +363,7 @@ pub async fn principal_inject_middleware(mut req: Request, next: Next) -> Respon
             .and_then(|s| s.strip_prefix("Bearer "))
         {
             if let Ok(session) = backend.get_session(token).await {
-                req.extensions_mut().insert(BulwarkPrincipal {
+                req.extensions_mut().insert(GarrisonPrincipal {
                     login_id: session.login_id,
                 });
             }
@@ -719,8 +719,8 @@ mod tests {
         assert!(constant_time_eq("hello", "hello"));
         // 长 key（模拟真实 API key 长度）
         assert!(constant_time_eq(
-            "sk-bulwark-0123456789abcdef0123456789abcdef",
-            "sk-bulwark-0123456789abcdef0123456789abcdef"
+            "sk-garrison-0123456789abcdef0123456789abcdef",
+            "sk-garrison-0123456789abcdef0123456789abcdef"
         ));
         // 含特殊字符
         assert!(constant_time_eq("p@ssw0rd!#$%", "p@ssw0rd!#$%"));
@@ -739,13 +739,13 @@ mod tests {
         assert!(!constant_time_eq("a", "b"));
         // 长 key 全部不同
         assert!(!constant_time_eq(
-            "sk-bulwark-aaaaaaaaaaaaaaaaaaaaaaaa",
-            "sk-bulwark-bbbbbbbbbbbbbbbbbbbbbbbb"
+            "sk-garrison-aaaaaaaaaaaaaaaaaaaaaaaa",
+            "sk-garrison-bbbbbbbbbbbbbbbbbbbbbbbb"
         ));
         // 长 key 仅末字节不同（验证非常量时间提前返回）
         assert!(!constant_time_eq(
-            "sk-bulwark-0123456789abcdef0123456789abcdef",
-            "sk-bulwark-0123456789abcdef0123456789abcdeg"
+            "sk-garrison-0123456789abcdef0123456789abcdef",
+            "sk-garrison-0123456789abcdef0123456789abcdeg"
         ));
     }
 
@@ -921,42 +921,42 @@ mod tests {
             &self,
             _login_id: &str,
             _params: &crate::backend::types::LoginParams,
-        ) -> crate::error::BulwarkResult<String> {
+        ) -> crate::error::GarrisonResult<String> {
             Ok("valid-token".to_string())
         }
-        async fn logout(&self, _token: &str) -> crate::error::BulwarkResult<()> {
+        async fn logout(&self, _token: &str) -> crate::error::GarrisonResult<()> {
             Ok(())
         }
-        async fn check_login(&self, token: &str) -> crate::error::BulwarkResult<bool> {
+        async fn check_login(&self, token: &str) -> crate::error::GarrisonResult<bool> {
             Ok(token == "valid-token")
         }
         async fn check_permission(
             &self,
             _token: &str,
             _permission: &str,
-        ) -> crate::error::BulwarkResult<()> {
+        ) -> crate::error::GarrisonResult<()> {
             Ok(())
         }
-        async fn check_role(&self, _token: &str, _role: &str) -> crate::error::BulwarkResult<()> {
+        async fn check_role(&self, _token: &str, _role: &str) -> crate::error::GarrisonResult<()> {
             Ok(())
         }
-        async fn check_safe(&self, _token: &str) -> crate::error::BulwarkResult<bool> {
+        async fn check_safe(&self, _token: &str) -> crate::error::GarrisonResult<bool> {
             Ok(false)
         }
-        async fn check_disable(&self, _token: &str) -> crate::error::BulwarkResult<bool> {
+        async fn check_disable(&self, _token: &str) -> crate::error::GarrisonResult<bool> {
             Ok(false)
         }
         async fn check_api_key(
             &self,
             _api_key: &str,
             _namespace: &str,
-        ) -> crate::error::BulwarkResult<()> {
+        ) -> crate::error::GarrisonResult<()> {
             Ok(())
         }
         async fn get_token_info(
             &self,
             token: &str,
-        ) -> crate::error::BulwarkResult<crate::backend::types::TokenInfo> {
+        ) -> crate::error::GarrisonResult<crate::backend::types::TokenInfo> {
             Ok(crate::backend::types::TokenInfo {
                 token: token.to_string(),
                 created_at: 1000,
@@ -966,7 +966,7 @@ mod tests {
         async fn get_session(
             &self,
             token: &str,
-        ) -> crate::error::BulwarkResult<crate::backend::types::SessionData> {
+        ) -> crate::error::GarrisonResult<crate::backend::types::SessionData> {
             if token == "valid-token" {
                 Ok(crate::backend::types::SessionData {
                     token: token.to_string(),
@@ -984,22 +984,22 @@ mod tests {
                     is_anon: false,
                 })
             } else {
-                Err(crate::error::BulwarkError::InvalidToken(
+                Err(crate::error::GarrisonError::InvalidToken(
                     "token 无效".to_string(),
                 ))
             }
         }
-        async fn kickout(&self, _login_id: &str) -> crate::error::BulwarkResult<()> {
+        async fn kickout(&self, _login_id: &str) -> crate::error::GarrisonResult<()> {
             Ok(())
         }
         async fn switch_to(
             &self,
             _token: &str,
             _target_login_id: &str,
-        ) -> crate::error::BulwarkResult<()> {
+        ) -> crate::error::GarrisonResult<()> {
             Ok(())
         }
-        async fn renew_to_equivalent(&self, _token: &str) -> crate::error::BulwarkResult<String> {
+        async fn renew_to_equivalent(&self, _token: &str) -> crate::error::GarrisonResult<String> {
             Ok("new-token".to_string())
         }
     }
@@ -1048,7 +1048,7 @@ mod tests {
             .route(
                 "/principal",
                 get(
-                    |principal: axum::extract::Extension<BulwarkPrincipal>| async move {
+                    |principal: axum::extract::Extension<GarrisonPrincipal>| async move {
                         principal.0.login_id
                     },
                 ),

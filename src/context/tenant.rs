@@ -18,7 +18,7 @@ use async_trait::async_trait;
 use http::HeaderMap;
 use std::collections::HashMap;
 
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::error::{GarrisonError, GarrisonResult};
 
 /// 租户上下文来源标识。
 ///
@@ -78,7 +78,7 @@ pub use tenant_local::TENANT;
 
 /// 读取当前 task_local 中的 tenant_id（无上下文时返回 0）。
 ///
-/// 供 `BulwarkLogicDefault::check_permission`（构造 `AuthRequest`）和
+/// 供 `GarrisonLogicDefault::check_permission`（构造 `AuthRequest`）和
 /// `AuditLogListener::to_audit_entry`（填充审计日志 tenant_id）使用。
 /// 在未进入 `TENANT.scope` 时返回 0（向后兼容单租户场景）。
 ///
@@ -87,7 +87,7 @@ pub use tenant_local::TENANT;
 /// 无上下文时静默返回 0 会导致租户隔离被绕过——多租户环境下 `tenant_id=0`
 /// 可能命中默认租户的数据。新代码应使用：
 /// - [`current_tenant_id_strict`]：返回 `Option<i64>`，调用方显式处理 `None`
-/// - [`current_tenant_id_or_error`]：返回 `BulwarkResult<i64>`，无上下文时 `Err(Config)`
+/// - [`current_tenant_id_or_error`]：返回 `GarrisonResult<i64>`，无上下文时 `Err(Config)`
 ///
 /// 仅在 `tenant-isolation` feature 关闭的向后兼容场景下使用本函数，
 /// 并应在调用处用 `#[allow(deprecated)]` 显式标注保留原因。
@@ -121,13 +121,13 @@ pub fn current_tenant_id_strict() -> Option<i64> {
 /// 读取当前 task_local 中的 tenant_id（无上下文时返回 `Err(Config)`，fail-closed）。
 ///
 /// 与 [`current_tenant_id_strict`] 的差异：后者返回 `Option<i64>` 由调用方决定如何处理 `None`，
-/// 本函数直接返回 `BulwarkResult<i64>`，无上下文时返回 `Err(BulwarkError::Config)`，
+/// 本函数直接返回 `GarrisonResult<i64>`，无上下文时返回 `Err(GarrisonError::Config)`，
 /// 强制 fail-closed（Rule 12 失败显性化 + 安全框架默认拒绝）。
 ///
 /// # 返回
 ///
 /// - `Ok(tenant_id)`：当前在 `TENANT.scope` 内，返回上下文中的 `tenant_id`
-/// - `Err(BulwarkError::Config)`：未进入 `TENANT.scope`，租户隔离校验失败
+/// - `Err(GarrisonError::Config)`：未进入 `TENANT.scope`，租户隔离校验失败
 ///
 /// # 适用场景
 ///
@@ -136,9 +136,9 @@ pub fn current_tenant_id_strict() -> Option<i64> {
 ///
 /// 强制 fail-closed：无上下文时返回 Err，避免多租户环境下 `tenant_id=0`
 /// 命中默认租户数据、绕过租户隔离。
-pub fn current_tenant_id_or_error() -> BulwarkResult<i64> {
+pub fn current_tenant_id_or_error() -> GarrisonResult<i64> {
     current_tenant_id_strict()
-        .ok_or_else(|| BulwarkError::Config("ctx-tenant-context-missing".into()))
+        .ok_or_else(|| GarrisonError::Config("ctx-tenant-context-missing".into()))
 }
 
 /// 租户解析器 trait。
@@ -151,7 +151,7 @@ pub fn current_tenant_id_or_error() -> BulwarkResult<i64> {
 /// # 设计
 ///
 /// - 接受 `&HeaderMap`（`http::HeaderMap`，框架无关），actix/warp/axum 均基于 http crate
-/// - 失败时返回 `BulwarkError`，不静默默认 0（Rule 12 失败显性化）
+/// - 失败时返回 `GarrisonError`，不静默默认 0（Rule 12 失败显性化）
 #[async_trait]
 pub trait TenantResolver: Send + Sync {
     /// 从请求头解析租户上下文。
@@ -161,8 +161,8 @@ pub trait TenantResolver: Send + Sync {
     ///
     /// # 返回
     /// - `Ok(TenantContext)`: 解析成功
-    /// - `Err(BulwarkError)`: 解析失败（header 缺失/格式错误/JWT 验证失败等）
-    async fn resolve(&self, headers: &HeaderMap) -> BulwarkResult<TenantContext>;
+    /// - `Err(GarrisonError)`: 解析失败（header 缺失/格式错误/JWT 验证失败等）
+    async fn resolve(&self, headers: &HeaderMap) -> GarrisonResult<TenantContext>;
 }
 
 /// Header 租户解析器。
@@ -172,8 +172,8 @@ pub trait TenantResolver: Send + Sync {
 /// # 行为
 ///
 /// - header 存在且为合法 i64：返回 `TenantContext { tenant_id, resolved_from: Header }`
-/// - header 缺失：返回 `BulwarkError::Config("X-Tenant-Id header missing".into())`
-/// - header 格式非法（非 i64）：返回 `BulwarkError::Config`
+/// - header 缺失：返回 `GarrisonError::Config("X-Tenant-Id header missing".into())`
+/// - header 格式非法（非 i64）：返回 `GarrisonError::Config`
 ///
 /// # 设计
 ///
@@ -183,16 +183,16 @@ pub struct HeaderTenantResolver;
 
 #[async_trait]
 impl TenantResolver for HeaderTenantResolver {
-    async fn resolve(&self, headers: &HeaderMap) -> BulwarkResult<TenantContext> {
+    async fn resolve(&self, headers: &HeaderMap) -> GarrisonResult<TenantContext> {
         let value = headers
             .get("X-Tenant-Id")
-            .ok_or_else(|| BulwarkError::Config("X-Tenant-Id header missing".into()))?;
+            .ok_or_else(|| GarrisonError::Config("X-Tenant-Id header missing".into()))?;
         let raw = value
             .to_str()
-            .map_err(|e| BulwarkError::Config(format!("X-Tenant-Id not visible ASCII: {e}")))?;
+            .map_err(|e| GarrisonError::Config(format!("X-Tenant-Id not visible ASCII: {e}")))?;
         let tenant_id = raw
             .parse::<i64>()
-            .map_err(|e| BulwarkError::Config(format!("invalid X-Tenant-Id `{raw}`: {e}")))?;
+            .map_err(|e| GarrisonError::Config(format!("invalid X-Tenant-Id `{raw}`: {e}")))?;
         Ok(TenantContext {
             tenant_id,
             resolved_from: TenantSource::Header,
@@ -207,8 +207,8 @@ impl TenantResolver for HeaderTenantResolver {
 /// # 行为
 ///
 /// - Host 存在且 subdomain 在 mapping 中：返回 `TenantContext { resolved_from: Subdomain }`
-/// - Host 缺失：返回 `BulwarkError::Config("Host header missing")`
-/// - subdomain 未在 mapping 中：返回 `BulwarkError::Config("unknown subdomain")`
+/// - Host 缺失：返回 `GarrisonError::Config("Host header missing")`
+/// - subdomain 未在 mapping 中：返回 `GarrisonError::Config("unknown subdomain")`
 ///
 /// # 设计
 ///
@@ -222,25 +222,25 @@ pub struct SubdomainTenantResolver {
 
 #[async_trait]
 impl TenantResolver for SubdomainTenantResolver {
-    async fn resolve(&self, headers: &HeaderMap) -> BulwarkResult<TenantContext> {
+    async fn resolve(&self, headers: &HeaderMap) -> GarrisonResult<TenantContext> {
         let host = headers
             .get("Host")
-            .ok_or_else(|| BulwarkError::Config("Host header missing".into()))?
+            .ok_or_else(|| GarrisonError::Config("Host header missing".into()))?
             .to_str()
-            .map_err(|e| BulwarkError::Config(format!("Host not visible ASCII: {e}")))?;
+            .map_err(|e| GarrisonError::Config(format!("Host not visible ASCII: {e}")))?;
         // strip port: `tenant42.example.com:8080` → `tenant42.example.com`
         let hostname = host.split(':').next().unwrap_or(host);
         // extract first segment as subdomain
         let subdomain = hostname.split('.').next().unwrap_or(hostname);
         if subdomain.is_empty() {
-            return Err(BulwarkError::Config(format!(
+            return Err(GarrisonError::Config(format!(
                 "invalid Host `{host}`: empty subdomain"
             )));
         }
         let tenant_id = *self
             .mapping
             .get(subdomain)
-            .ok_or_else(|| BulwarkError::Config(format!("unknown subdomain `{subdomain}`")))?;
+            .ok_or_else(|| GarrisonError::Config(format!("unknown subdomain `{subdomain}`")))?;
         Ok(TenantContext {
             tenant_id,
             resolved_from: TenantSource::Subdomain,
@@ -256,10 +256,10 @@ impl TenantResolver for SubdomainTenantResolver {
 ///
 /// - Authorization header 存在且为 `Bearer <jwt>`（大小写不敏感，RFC 7235）：
 ///   验证 JWT 签名（HS256）+ exp + 解码 `tenant_id` claim
-/// - Authorization 缺失：返回 `BulwarkError::InvalidToken`
-/// - 非 Bearer scheme：返回 `BulwarkError::InvalidToken`
-/// - JWT 签名验证失败：返回 `BulwarkError::InvalidToken`
-/// - `tenant_id` claim 缺失：返回 `BulwarkError::InvalidToken`
+/// - Authorization 缺失：返回 `GarrisonError::InvalidToken`
+/// - 非 Bearer scheme：返回 `GarrisonError::InvalidToken`
+/// - JWT 签名验证失败：返回 `GarrisonError::InvalidToken`
+/// - `tenant_id` claim 缺失：返回 `GarrisonError::InvalidToken`
 ///
 /// # 设计
 ///
@@ -294,26 +294,26 @@ struct TenantClaims {
 #[cfg(feature = "protocol-jwt")]
 #[async_trait]
 impl TenantResolver for ClaimTenantResolver {
-    async fn resolve(&self, headers: &HeaderMap) -> BulwarkResult<TenantContext> {
+    async fn resolve(&self, headers: &HeaderMap) -> GarrisonResult<TenantContext> {
         use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
 
         let auth = headers
             .get("Authorization")
-            .ok_or_else(|| BulwarkError::InvalidToken("Authorization header missing".into()))?
+            .ok_or_else(|| GarrisonError::InvalidToken("Authorization header missing".into()))?
             .to_str()
             .map_err(|e| {
-                BulwarkError::InvalidToken(format!("Authorization not visible ASCII: {e}"))
+                GarrisonError::InvalidToken(format!("Authorization not visible ASCII: {e}"))
             })?;
         // 解析 `<scheme> <token>`，scheme 大小写不敏感（RFC 7235）
         let mut parts = auth.splitn(2, ' ');
         let scheme = parts
             .next()
-            .ok_or_else(|| BulwarkError::InvalidToken("empty Authorization header".into()))?;
+            .ok_or_else(|| GarrisonError::InvalidToken("empty Authorization header".into()))?;
         let jwt = parts.next().ok_or_else(|| {
-            BulwarkError::InvalidToken("missing token in Authorization header".into())
+            GarrisonError::InvalidToken("missing token in Authorization header".into())
         })?;
         if !scheme.eq_ignore_ascii_case("Bearer") {
-            return Err(BulwarkError::InvalidToken(format!(
+            return Err(GarrisonError::InvalidToken(format!(
                 "unsupported auth scheme `{scheme}` (expected Bearer)"
             )));
         }
@@ -323,7 +323,7 @@ impl TenantResolver for ClaimTenantResolver {
         validation.validate_exp = true;
         validation.leeway = 0;
         let data = decode::<TenantClaims>(jwt, &key, &validation)
-            .map_err(|e| BulwarkError::InvalidToken(format!("JWT verify failed: {e}")))?;
+            .map_err(|e| GarrisonError::InvalidToken(format!("JWT verify failed: {e}")))?;
         Ok(TenantContext {
             tenant_id: data.claims.tenant_id,
             resolved_from: TenantSource::Claim,
@@ -337,7 +337,7 @@ impl TenantResolver for ClaimTenantResolver {
 
 /// 测试专用：用默认 `TenantContext { tenant_id: 0, resolved_from: Header }` 包裹 future。
 ///
-/// `tenant-isolation` feature 启用时，`BulwarkLogicDefault::check_permission` 会调用
+/// `tenant-isolation` feature 启用时，`GarrisonLogicDefault::check_permission` 会调用
 /// `current_tenant_id_or_error()`（fail-closed）。permission 相关测试验证的是权限逻辑，
 /// 不是 tenant 隔离——tenant 隔离有专门测试（本模块 `tests`）。因此 permission 测试应
 /// 显式设置默认 TENANT scope 作为测试桩（Rule 9 测试必须有意义），而非修改生产代码
@@ -409,7 +409,7 @@ mod tests {
     async fn header_tenant_resolver_returns_config_error_when_header_missing() {
         let headers = http::HeaderMap::new();
         let result = HeaderTenantResolver.resolve(&headers).await;
-        assert!(matches!(result, Err(BulwarkError::Config(_))));
+        assert!(matches!(result, Err(GarrisonError::Config(_))));
     }
 
     /// R-tenant-isolation-002: HeaderTenantResolver 在 header 非法 i64 时返回 Config 错误。
@@ -418,7 +418,7 @@ mod tests {
         let mut headers = http::HeaderMap::new();
         headers.insert("X-Tenant-Id", "not-a-number".parse().unwrap());
         let result = HeaderTenantResolver.resolve(&headers).await;
-        assert!(matches!(result, Err(BulwarkError::Config(_))));
+        assert!(matches!(result, Err(GarrisonError::Config(_))));
     }
 
     /// R-tenant-isolation-001: TENANT.scope 进入租户上下文后 TENANT.get() 可取到 ctx.tenant_id。
@@ -485,7 +485,7 @@ mod tests {
             result.ok()
         );
         match result {
-            Err(BulwarkError::Config(msg)) => {
+            Err(GarrisonError::Config(msg)) => {
                 assert!(
                     msg.contains("ctx-tenant-context-missing") || msg.contains("租户隔离"),
                     "错误消息应含 'ctx-tenant-context-missing' 或 '租户隔离'，实际: {}",
@@ -590,7 +590,7 @@ mod tests {
             mapping: std::collections::HashMap::from([("tenant42".to_string(), 42)]),
         };
         let result = resolver.resolve(&headers).await;
-        assert!(matches!(result, Err(BulwarkError::Config(_))));
+        assert!(matches!(result, Err(GarrisonError::Config(_))));
     }
 
     /// R-tenant-isolation-002: SubdomainTenantResolver 在 Host 缺失时返回 Config 错误。
@@ -601,7 +601,7 @@ mod tests {
             mapping: std::collections::HashMap::new(),
         };
         let result = resolver.resolve(&headers).await;
-        assert!(matches!(result, Err(BulwarkError::Config(_))));
+        assert!(matches!(result, Err(GarrisonError::Config(_))));
     }
 
     /// R-tenant-isolation-002: SubdomainTenantResolver 处理带端口的 Host（如 tenant42.example.com:8080）。
@@ -665,7 +665,7 @@ mod tests {
         let headers = http::HeaderMap::new();
         let resolver = ClaimTenantResolver::new("secret".to_string());
         let result = resolver.resolve(&headers).await;
-        assert!(matches!(result, Err(BulwarkError::InvalidToken(_))));
+        assert!(matches!(result, Err(GarrisonError::InvalidToken(_))));
     }
 
     /// R-tenant-isolation-002: ClaimTenantResolver 在 JWT 签名验证失败时返回 InvalidToken。
@@ -696,7 +696,7 @@ mod tests {
         headers.insert("Authorization", format!("Bearer {jwt}").parse().unwrap());
         let resolver = ClaimTenantResolver::new(verifying_secret.to_string());
         let result = resolver.resolve(&headers).await;
-        assert!(matches!(result, Err(BulwarkError::InvalidToken(_))));
+        assert!(matches!(result, Err(GarrisonError::InvalidToken(_))));
     }
 
     /// R-tenant-isolation-002: ClaimTenantResolver 在 tenant_id claim 缺失时返回 InvalidToken。
@@ -723,7 +723,7 @@ mod tests {
         headers.insert("Authorization", format!("Bearer {jwt}").parse().unwrap());
         let resolver = ClaimTenantResolver::new(secret.to_string());
         let result = resolver.resolve(&headers).await;
-        assert!(matches!(result, Err(BulwarkError::InvalidToken(_))));
+        assert!(matches!(result, Err(GarrisonError::InvalidToken(_))));
     }
 
     /// R-tenant-isolation-002: ClaimTenantResolver 接受小写 bearer scheme（RFC 7235 大小写不敏感）。

@@ -8,14 +8,14 @@
 //!
 //! # 与 web-waf 的区分
 //!
-//! - `web-waf`（web 层）：`bulwark_waf_middleware`，返回 400 Bad Request
+//! - `web-waf`（web 层）：`garrison_waf_middleware`，返回 400 Bad Request
 //! - `firewall-waf`（strategy 层）：`waf_middleware`，返回 403 Forbidden
 //!
 //! # 使用
 //!
 //! ```ignore
-//! use bulwark::strategy::firewall::waf::WafHookChain;
-//! use bulwark::web::axum::waf::waf_middleware;
+//! use garrison::strategy::firewall::waf::WafHookChain;
+//! use garrison::web::axum::waf::waf_middleware;
 //! use std::sync::Arc;
 //! use axum::Router;
 //!
@@ -29,7 +29,7 @@
 //!     ));
 //! ```
 
-use crate::error::BulwarkError;
+use crate::error::GarrisonError;
 use crate::strategy::firewall::{WafContext, WafHookChain};
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -113,7 +113,7 @@ pub async fn waf_middleware(
 
     match chain.check(&ctx).await {
         Ok(()) => next.run(req).await,
-        Err(BulwarkError::FirewallBlocked(s)) => {
+        Err(GarrisonError::FirewallBlocked(s)) => {
             let (hook, reason) = parse_firewall_blocked(&s);
             let body = serde_json::json!({
                 "error": "firewall_blocked",

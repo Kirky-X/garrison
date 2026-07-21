@@ -2,5 +2,5 @@
 //! See LICENSE for full license text.
 
 fn main() {
-    bulwark_examples::sign::sign_utils::run().unwrap();
+    garrison_examples::sign::sign_utils::run().unwrap();
 }

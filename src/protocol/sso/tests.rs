@@ -5,11 +5,11 @@
 
 use super::mock::MockDao;
 use super::*;
-use crate::error::BulwarkError;
+use crate::error::GarrisonError;
 
 /// 创建 SsoClient 实例（使用 MockDao + 测试用 secret）。
 fn make_client() -> SsoClient {
-    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     SsoClient::new(dao, "test-sso-secret-key")
 }
 
@@ -67,7 +67,7 @@ async fn issue_ticket_uses_correct_key_prefix() {
     let dao = Arc::new(MockDao::new());
     let client = SsoClient::new(dao.clone(), "test-sso-secret-key");
     let ticket = client.issue_ticket("1001", 2001).await.unwrap();
-    let key = format!("bulwark:sso:ticket:{}", ticket);
+    let key = format!("garrison:sso:ticket:{}", ticket);
     let value = dao.get(&key).await.unwrap();
     assert!(value.is_some());
     let data: SsoTicketData = serde_json::from_str(&value.unwrap()).unwrap();
@@ -107,7 +107,7 @@ async fn validate_ticket_client_id_mismatch_returns_error() {
     let result = client.validate_ticket(&ticket, 9999).await;
     assert!(result.is_err());
     match result.err() {
-        Some(BulwarkError::InvalidToken(_)) => {},
+        Some(GarrisonError::InvalidToken(_)) => {},
         other => panic!("期望 InvalidToken 错误，实际: {:?}", other),
     }
 }
@@ -119,7 +119,7 @@ async fn validate_ticket_nonexistent_returns_error() {
     let result = client.validate_ticket("nonexistent-ticket", 2001).await;
     assert!(result.is_err());
     match result.err() {
-        Some(BulwarkError::InvalidToken(_)) => {},
+        Some(GarrisonError::InvalidToken(_)) => {},
         other => panic!("期望 InvalidToken 错误，实际: {:?}", other),
     }
 }
@@ -166,7 +166,7 @@ async fn destroy_ticket_nonexistent_returns_ok() {
 /// with_ticket_ttl 设置 TTL。
 #[test]
 fn with_ticket_ttl_sets_ttl() {
-    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     let client = SsoClient::new(dao, "test-sso-secret-key").with_ticket_ttl(120);
     assert_eq!(client.ticket_ttl_seconds, 120);
 }
@@ -215,7 +215,7 @@ async fn validate_ticket_concurrent_only_one_succeeds() {
                 assert_eq!(login_id, "1001");
                 success += 1;
             },
-            Err(BulwarkError::InvalidToken(_)) => invalid_token += 1,
+            Err(GarrisonError::InvalidToken(_)) => invalid_token += 1,
             Err(e) => panic!("期望 InvalidToken 或 Ok，实际: {:?}", e),
         }
     }
@@ -236,7 +236,7 @@ async fn validate_ticket_rejects_unsigned_ticket() {
     let fake_ticket = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
     let result = client.validate_ticket(fake_ticket, 2001).await;
     assert!(
-        matches!(result, Err(BulwarkError::InvalidToken(ref msg)) if msg.contains("sso-ticket-format-no-sig")),
+        matches!(result, Err(GarrisonError::InvalidToken(ref msg)) if msg.contains("sso-ticket-format-no-sig")),
         "无签名的 ticket 应被拒绝，实际: {:?}",
         result
     );
@@ -251,7 +251,7 @@ async fn validate_ticket_rejects_tampered_signature() {
     let tampered_ticket = format!("{}X", ticket);
     let result = client.validate_ticket(&tampered_ticket, 2001).await;
     assert!(
-        matches!(result, Err(BulwarkError::InvalidToken(ref msg)) if msg.contains("sso-ticket-sig-verify")),
+        matches!(result, Err(GarrisonError::InvalidToken(ref msg)) if msg.contains("sso-ticket-sig-verify")),
         "篡改签名的 ticket 应被拒绝，实际: {:?}",
         result
     );
@@ -260,14 +260,14 @@ async fn validate_ticket_rejects_tampered_signature() {
 /// M5: 使用不同 secret 签发的 ticket 应被另一个 client 拒绝。
 #[tokio::test]
 async fn validate_ticket_rejects_different_secret() {
-    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     let issuer = SsoClient::new(dao.clone(), "secret-a");
     let validator = SsoClient::new(dao, "secret-b");
 
     let ticket = issuer.issue_ticket("1001", 2001).await.unwrap();
     let result = validator.validate_ticket(&ticket, 2001).await;
     assert!(
-        matches!(result, Err(BulwarkError::InvalidToken(ref msg)) if msg.contains("sso-ticket-sig-verify")),
+        matches!(result, Err(GarrisonError::InvalidToken(ref msg)) if msg.contains("sso-ticket-sig-verify")),
         "不同 secret 签发的 ticket 应被拒绝，实际: {:?}",
         result
     );
@@ -277,6 +277,6 @@ async fn validate_ticket_rejects_different_secret() {
 #[test]
 #[should_panic(expected = "SSO secret 不能为空")]
 fn new_rejects_empty_secret() {
-    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     let _client = SsoClient::new(dao, "");
 }

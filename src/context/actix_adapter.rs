@@ -3,8 +3,8 @@
 
 //! actix-web 适配器模块。
 //!
-//! 实现 `BulwarkContext` / `BulwarkRequest` / `BulwarkResponse` / `BulwarkStorage` trait，
-//! 将 Bulwark 鉴权逻辑与 actix-web 4 Web 框架解耦。
+//! 实现 `GarrisonContext` / `GarrisonRequest` / `GarrisonResponse` / `GarrisonStorage` trait，
+//! 将 Garrison 鉴权逻辑与 actix-web 4 Web 框架解耦。
 //!
 //! ## 设计
 //!
@@ -13,10 +13,10 @@
 //! - `ActixStorage` 用 `HashMap<String, String>`
 //! - `ActixContext` 组合 `&HttpRequest + ActixResponse + ActixStorage`
 
-use crate::config::BulwarkConfig;
+use crate::config::GarrisonConfig;
 use crate::context::token_extract::{is_body_token_allowed_method, strip_bearer_prefix};
-use crate::context::{BulwarkContext, BulwarkRequest, BulwarkResponse, BulwarkStorage};
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::context::{GarrisonContext, GarrisonRequest, GarrisonResponse, GarrisonStorage};
+use crate::error::{GarrisonError, GarrisonResult};
 use actix_web::http::header::{HeaderMap, HeaderName, HeaderValue};
 use actix_web::http::StatusCode;
 use actix_web::HttpRequest;
@@ -68,19 +68,19 @@ impl<'a> ActixRequest<'a> {
     }
 }
 
-impl<'a> BulwarkRequest for ActixRequest<'a> {
-    fn path(&self) -> BulwarkResult<String> {
+impl<'a> GarrisonRequest for ActixRequest<'a> {
+    fn path(&self) -> GarrisonResult<String> {
         Ok(self.request.path().to_string())
     }
 
-    fn method(&self) -> BulwarkResult<String> {
+    fn method(&self) -> GarrisonResult<String> {
         Ok(self.request.method().as_str().to_string())
     }
 
-    fn header(&self, name: &str) -> BulwarkResult<Option<String>> {
-        let header_name: HeaderName = name
-            .parse()
-            .map_err(|e| BulwarkError::Context(format!("invalid header name '{}': {}", name, e)))?;
+    fn header(&self, name: &str) -> GarrisonResult<Option<String>> {
+        let header_name: HeaderName = name.parse().map_err(|e| {
+            GarrisonError::Context(format!("invalid header name '{}': {}", name, e))
+        })?;
         Ok(self
             .request
             .headers()
@@ -89,7 +89,7 @@ impl<'a> BulwarkRequest for ActixRequest<'a> {
             .map(|s| s.to_string()))
     }
 
-    fn cookie(&self, name: &str) -> BulwarkResult<Option<String>> {
+    fn cookie(&self, name: &str) -> GarrisonResult<Option<String>> {
         let cookie_header = self
             .request
             .headers()
@@ -112,7 +112,7 @@ impl<'a> BulwarkRequest for ActixRequest<'a> {
         Ok(None)
     }
 
-    fn get_token(&self, config: &BulwarkConfig) -> BulwarkResult<Option<String>> {
+    fn get_token(&self, config: &GarrisonConfig) -> GarrisonResult<Option<String>> {
         // 1. 从 header 提取（Authorization: Bearer <token> 或自定义 token_name header）
         if config.is_read_header {
             // 先尝试 Authorization: Bearer <token>（RFC 7235 大小写不敏感）
@@ -185,25 +185,25 @@ impl Default for ActixResponse {
     }
 }
 
-impl BulwarkResponse for ActixResponse {
-    fn set_status(&mut self, code: u16) -> BulwarkResult<()> {
+impl GarrisonResponse for ActixResponse {
+    fn set_status(&mut self, code: u16) -> GarrisonResult<()> {
         self.status = StatusCode::from_u16(code)
-            .map_err(|e| BulwarkError::Context(format!("invalid status code {}: {}", code, e)))?;
+            .map_err(|e| GarrisonError::Context(format!("invalid status code {}: {}", code, e)))?;
         Ok(())
     }
 
-    fn set_header(&mut self, name: &str, value: &str) -> BulwarkResult<()> {
-        let header_name: HeaderName = name
-            .parse()
-            .map_err(|e| BulwarkError::Context(format!("invalid header name '{}': {}", name, e)))?;
+    fn set_header(&mut self, name: &str, value: &str) -> GarrisonResult<()> {
+        let header_name: HeaderName = name.parse().map_err(|e| {
+            GarrisonError::Context(format!("invalid header name '{}': {}", name, e))
+        })?;
         let header_value = HeaderValue::from_str(value).map_err(|e| {
-            BulwarkError::Context(format!("invalid header value '{}': {}", value, e))
+            GarrisonError::Context(format!("invalid header value '{}': {}", value, e))
         })?;
         self.headers.insert(header_name, header_value);
         Ok(())
     }
 
-    fn set_cookie(&mut self, name: &str, value: &str) -> BulwarkResult<()> {
+    fn set_cookie(&mut self, name: &str, value: &str) -> GarrisonResult<()> {
         // 安全默认：HttpOnly; Secure; SameSite=Lax; Path=/
         let cookie_value = format!("{}={}; HttpOnly; Secure; SameSite=Lax; Path=/", name, value);
         self.set_header("Set-Cookie", &cookie_value)
@@ -213,8 +213,8 @@ impl BulwarkResponse for ActixResponse {
         &mut self,
         name: &str,
         value: &str,
-        config: &crate::config::BulwarkConfig,
-    ) -> BulwarkResult<()> {
+        config: &crate::config::GarrisonConfig,
+    ) -> GarrisonResult<()> {
         // 依据 config.cookie_secure / cookie_same_site 构建 Set-Cookie 头部
         let secure_flag = if config.cookie_secure { "Secure; " } else { "" };
         let cookie_value = format!(
@@ -249,17 +249,17 @@ impl Default for ActixStorage {
     }
 }
 
-impl BulwarkStorage for ActixStorage {
-    fn set(&mut self, key: &str, value: &str) -> BulwarkResult<()> {
+impl GarrisonStorage for ActixStorage {
+    fn set(&mut self, key: &str, value: &str) -> GarrisonResult<()> {
         self.map.insert(key.to_string(), value.to_string());
         Ok(())
     }
 
-    fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
+    fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
         Ok(self.map.get(key).cloned())
     }
 
-    fn delete(&mut self, key: &str) -> BulwarkResult<()> {
+    fn delete(&mut self, key: &str) -> GarrisonResult<()> {
         self.map.remove(key);
         Ok(())
     }
@@ -352,9 +352,9 @@ impl<'a> ActixContext<'a> {
     }
 }
 
-impl<'a> BulwarkContext for ActixContext<'a> {
-    fn request(&self) -> BulwarkResult<Box<dyn BulwarkRequest>> {
-        // 由于 Box<dyn BulwarkRequest> 不能带生命周期参数，
+impl<'a> GarrisonContext for ActixContext<'a> {
+    fn request(&self) -> GarrisonResult<Box<dyn GarrisonRequest>> {
+        // 由于 Box<dyn GarrisonRequest> 不能带生命周期参数，
         // 使用 ActixRequestWrapper 克隆必要数据（path / method / headers / body_bytes）
         Ok(Box::new(ActixRequestWrapper::with_body(
             self.request,
@@ -365,8 +365,8 @@ impl<'a> BulwarkContext for ActixContext<'a> {
 
 /// ActixRequest 包装器（绕过 Box<dyn> 的生命周期问题）。
 ///
-/// 由于 `Box<dyn BulwarkRequest>` 不能带生命周期参数，
-/// 这里克隆必要数据（path / method / headers）以实现 owned 的 `BulwarkRequest`。
+/// 由于 `Box<dyn GarrisonRequest>` 不能带生命周期参数，
+/// 这里克隆必要数据（path / method / headers）以实现 owned 的 `GarrisonRequest`。
 struct ActixRequestWrapper {
     path: String,
     method: String,
@@ -386,19 +386,19 @@ impl ActixRequestWrapper {
     }
 }
 
-impl BulwarkRequest for ActixRequestWrapper {
-    fn path(&self) -> BulwarkResult<String> {
+impl GarrisonRequest for ActixRequestWrapper {
+    fn path(&self) -> GarrisonResult<String> {
         Ok(self.path.clone())
     }
 
-    fn method(&self) -> BulwarkResult<String> {
+    fn method(&self) -> GarrisonResult<String> {
         Ok(self.method.clone())
     }
 
-    fn header(&self, name: &str) -> BulwarkResult<Option<String>> {
-        let header_name: HeaderName = name
-            .parse()
-            .map_err(|e| BulwarkError::Context(format!("invalid header name '{}': {}", name, e)))?;
+    fn header(&self, name: &str) -> GarrisonResult<Option<String>> {
+        let header_name: HeaderName = name.parse().map_err(|e| {
+            GarrisonError::Context(format!("invalid header name '{}': {}", name, e))
+        })?;
         Ok(self
             .headers
             .get(header_name)
@@ -406,7 +406,7 @@ impl BulwarkRequest for ActixRequestWrapper {
             .map(|s| s.to_string()))
     }
 
-    fn cookie(&self, name: &str) -> BulwarkResult<Option<String>> {
+    fn cookie(&self, name: &str) -> GarrisonResult<Option<String>> {
         let cookie_header = self
             .headers
             .get("cookie")
@@ -427,7 +427,7 @@ impl BulwarkRequest for ActixRequestWrapper {
         Ok(None)
     }
 
-    fn get_token(&self, config: &BulwarkConfig) -> BulwarkResult<Option<String>> {
+    fn get_token(&self, config: &GarrisonConfig) -> GarrisonResult<Option<String>> {
         if config.is_read_header {
             if let Some(auth) = self.header("Authorization")? {
                 if let Some(token) = strip_bearer_prefix(&auth) {
@@ -520,10 +520,14 @@ mod tests {
     /// 验证 cookie() 解析 Cookie header（命中与未命中）。
     #[test]
     fn actix_request_cookie_returns_value() {
-        let req = make_request("/", "GET", &[("Cookie", "bulwark_token=tok123; other=val")]);
+        let req = make_request(
+            "/",
+            "GET",
+            &[("Cookie", "garrison_token=tok123; other=val")],
+        );
         let actix_req = ActixRequest::new(&req);
         assert_eq!(
-            actix_req.cookie("bulwark_token").unwrap(),
+            actix_req.cookie("garrison_token").unwrap(),
             Some("tok123".to_string())
         );
         assert_eq!(actix_req.cookie("other").unwrap(), Some("val".to_string()));
@@ -555,7 +559,7 @@ mod tests {
         let result = actix_req.header("invalid header");
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(matches!(err, BulwarkError::Context(_)));
+        assert!(matches!(err, GarrisonError::Context(_)));
         assert!(err.to_string().contains("invalid header name"));
     }
 
@@ -568,7 +572,7 @@ mod tests {
     fn actix_request_get_token_from_header() {
         let req = make_request("/", "GET", &[("Authorization", "Bearer my_token_123")]);
         let actix_req = ActixRequest::new(&req);
-        let config = BulwarkConfig::default_config();
+        let config = GarrisonConfig::default_config();
         let token = actix_req.get_token(&config).unwrap();
         assert_eq!(token, Some("my_token_123".to_string()));
     }
@@ -576,7 +580,7 @@ mod tests {
     /// 验证 Bearer 前缀大小写不敏感。
     #[test]
     fn actix_request_bearer_prefix_case_insensitive() {
-        let config = BulwarkConfig::default_config();
+        let config = GarrisonConfig::default_config();
         for prefix in &["Bearer", "bearer", "BEARER", "BeArEr"] {
             let auth_value = format!("{} tok_{}", prefix, prefix);
             let req = make_request("/", "GET", &[("Authorization", auth_value.as_str())]);
@@ -594,9 +598,9 @@ mod tests {
     /// 验证从自定义 header 提取 token。
     #[test]
     fn actix_request_get_token_from_custom_header() {
-        let req = make_request("/", "GET", &[("bulwark_token", "header_token_456")]);
+        let req = make_request("/", "GET", &[("garrison_token", "header_token_456")]);
         let actix_req = ActixRequest::new(&req);
-        let config = BulwarkConfig::default_config();
+        let config = GarrisonConfig::default_config();
         let token = actix_req.get_token(&config).unwrap();
         assert_eq!(token, Some("header_token_456".to_string()));
     }
@@ -604,9 +608,9 @@ mod tests {
     /// 验证从 cookie 提取 token。
     #[test]
     fn actix_request_get_token_from_cookie() {
-        let req = make_request("/", "GET", &[("Cookie", "bulwark_token=cookie_token_789")]);
+        let req = make_request("/", "GET", &[("Cookie", "garrison_token=cookie_token_789")]);
         let actix_req = ActixRequest::new(&req);
-        let config = BulwarkConfig::default_config();
+        let config = GarrisonConfig::default_config();
         let token = actix_req.get_token(&config).unwrap();
         assert_eq!(token, Some("cookie_token_789".to_string()));
     }
@@ -619,11 +623,11 @@ mod tests {
             "GET",
             &[
                 ("Authorization", "Bearer header_token"),
-                ("Cookie", "bulwark_token=cookie_token"),
+                ("Cookie", "garrison_token=cookie_token"),
             ],
         );
         let actix_req = ActixRequest::new(&req);
-        let config = BulwarkConfig::default_config();
+        let config = GarrisonConfig::default_config();
         let token = actix_req.get_token(&config).unwrap();
         assert_eq!(token, Some("header_token".to_string()));
     }
@@ -633,7 +637,7 @@ mod tests {
     fn actix_request_get_token_returns_none_when_missing() {
         let req = make_request("/", "GET", &[]);
         let actix_req = ActixRequest::new(&req);
-        let config = BulwarkConfig::default_config();
+        let config = GarrisonConfig::default_config();
         let token = actix_req.get_token(&config).unwrap();
         assert_eq!(token, None);
     }
@@ -643,7 +647,7 @@ mod tests {
     fn actix_request_get_token_skips_header_when_disabled() {
         let req = make_request("/", "GET", &[("Authorization", "Bearer header_token")]);
         let actix_req = ActixRequest::new(&req);
-        let mut config = BulwarkConfig::default_config();
+        let mut config = GarrisonConfig::default_config();
         config.is_read_header = false;
         config.is_read_cookie = false;
         let token = actix_req.get_token(&config).unwrap();
@@ -679,13 +683,13 @@ mod tests {
     #[test]
     fn actix_response_set_cookie_writes_header() {
         let mut resp = ActixResponse::new();
-        resp.set_cookie("bulwark_token", "cookie_value").unwrap();
+        resp.set_cookie("garrison_token", "cookie_value").unwrap();
         let set_cookie = resp
             .headers
             .get("Set-Cookie")
             .and_then(|v| v.to_str().ok())
             .unwrap();
-        assert!(set_cookie.contains("bulwark_token=cookie_value"));
+        assert!(set_cookie.contains("garrison_token=cookie_value"));
         assert!(set_cookie.contains("HttpOnly"));
         assert!(set_cookie.contains("Secure"));
         assert!(set_cookie.contains("SameSite=Lax"));
@@ -696,7 +700,7 @@ mod tests {
     #[test]
     fn actix_response_set_cookie_with_config_dev() {
         let mut resp = ActixResponse::new();
-        let mut config = BulwarkConfig::default_config();
+        let mut config = GarrisonConfig::default_config();
         config.cookie_secure = false;
         config.cookie_same_site = "Strict".to_string();
         resp.set_cookie_with_config("token", "v", &config).unwrap();
@@ -717,7 +721,7 @@ mod tests {
         let result = resp.set_status(1000);
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(matches!(err, BulwarkError::Context(_)));
+        assert!(matches!(err, GarrisonError::Context(_)));
         assert!(err.to_string().contains("invalid status code"));
     }
 
@@ -728,7 +732,7 @@ mod tests {
         let result = resp.set_header("X-Test", "bad\0value");
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(matches!(err, BulwarkError::Context(_)));
+        assert!(matches!(err, GarrisonError::Context(_)));
         assert!(err.to_string().contains("invalid header value"));
     }
 
@@ -738,7 +742,7 @@ mod tests {
         let mut resp = ActixResponse::new();
         let result = resp.set_header("invalid header", "value");
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), BulwarkError::Context(_)));
+        assert!(matches!(result.unwrap_err(), GarrisonError::Context(_)));
     }
 
     /// 验证 Default 实现等价于 new()。
@@ -797,14 +801,14 @@ mod tests {
     // ActixContext 测试
     // ========================================================================
 
-    /// 验证 BulwarkContext::request() 返回 Box<dyn BulwarkRequest>。
+    /// 验证 GarrisonContext::request() 返回 Box<dyn GarrisonRequest>。
     #[test]
     fn actix_context_request_returns_box() {
         let req = make_request("/api/test", "GET", &[("Authorization", "Bearer abc")]);
         let ctx = ActixContext::new(&req);
 
         let request = ctx.request().unwrap();
-        let config = BulwarkConfig::default_config();
+        let config = GarrisonConfig::default_config();
         let token = request.get_token(&config).unwrap();
         assert_eq!(token, Some("abc".to_string()));
     }
@@ -843,10 +847,10 @@ mod tests {
     /// 验证 ActixContext::request() 返回的 wrapper 从 cookie 提取 token。
     #[test]
     fn actix_context_wrapper_get_token_from_cookie() {
-        let req = make_request("/", "GET", &[("Cookie", "bulwark_token=cookie_tok")]);
+        let req = make_request("/", "GET", &[("Cookie", "garrison_token=cookie_tok")]);
         let ctx = ActixContext::new(&req);
         let request = ctx.request().unwrap();
-        let mut config = BulwarkConfig::default_config();
+        let mut config = GarrisonConfig::default_config();
         config.is_read_header = false;
         config.is_read_cookie = true;
         let token = request.get_token(&config).unwrap();
@@ -894,8 +898,8 @@ mod tests {
     fn extract_token_from_body_when_is_read_body_true() {
         let req = make_request("/", "POST", &[("Content-Type", "application/json")]);
         let actix_req =
-            ActixRequest::with_body(&req, br#"{"bulwark_token":"body_token_123"}"#.to_vec());
-        let mut config = BulwarkConfig::default_config();
+            ActixRequest::with_body(&req, br#"{"garrison_token":"body_token_123"}"#.to_vec());
+        let mut config = GarrisonConfig::default_config();
         config.is_read_header = false;
         config.is_read_cookie = false;
         config.is_read_body = true;
@@ -908,16 +912,16 @@ mod tests {
     // ========================================================================
 
     /// 验证 `ActixContext::with_body()` 通过 `request()` 传递 `body_bytes`，
-    /// 使 `BulwarkRequest::get_token()` 能从 JSON body 提取 token。
+    /// 使 `GarrisonRequest::get_token()` 能从 JSON body 提取 token。
     ///
     /// 回归 HIGH-001：原 `ActixContext` 缺失 `body_bytes` 字段与 `with_body` 方法，
     /// `request()` 也不传递 body_bytes，导致 Context 层 body 读取功能不可用。
     #[test]
     fn actix_context_with_body_extracts_token_from_body() {
         let req = make_request("/", "POST", &[("Content-Type", "application/json")]);
-        let ctx = ActixContext::with_body(&req, br#"{"bulwark_token":"ctx_body_token"}"#.to_vec());
+        let ctx = ActixContext::with_body(&req, br#"{"garrison_token":"ctx_body_token"}"#.to_vec());
         let request = ctx.request().unwrap();
-        let mut config = BulwarkConfig::default_config();
+        let mut config = GarrisonConfig::default_config();
         config.is_read_header = false;
         config.is_read_cookie = false;
         config.is_read_body = true;
@@ -942,9 +946,9 @@ mod tests {
         let req = make_request("/", "GET", &[("Content-Type", "application/json")]);
         let actix_req = ActixRequest::with_body(
             &req,
-            br#"{"bulwark_token":"body_token_should_be_skipped"}"#.to_vec(),
+            br#"{"garrison_token":"body_token_should_be_skipped"}"#.to_vec(),
         );
-        let mut config = BulwarkConfig::default_config();
+        let mut config = GarrisonConfig::default_config();
         config.is_read_header = false;
         config.is_read_cookie = false;
         config.is_read_body = true;
@@ -962,8 +966,8 @@ mod tests {
     fn c7_actix_request_post_method_allows_body_token() {
         let req = make_request("/", "POST", &[("Content-Type", "application/json")]);
         let actix_req =
-            ActixRequest::with_body(&req, br#"{"bulwark_token":"body_token_ok"}"#.to_vec());
-        let mut config = BulwarkConfig::default_config();
+            ActixRequest::with_body(&req, br#"{"garrison_token":"body_token_ok"}"#.to_vec());
+        let mut config = GarrisonConfig::default_config();
         config.is_read_header = false;
         config.is_read_cookie = false;
         config.is_read_body = true;
@@ -982,9 +986,10 @@ mod tests {
     #[test]
     fn c7_actix_context_get_method_skips_body_token_via_wrapper() {
         let req = make_request("/", "GET", &[("Content-Type", "application/json")]);
-        let ctx = ActixContext::with_body(&req, br#"{"bulwark_token":"wrapper_skipped"}"#.to_vec());
+        let ctx =
+            ActixContext::with_body(&req, br#"{"garrison_token":"wrapper_skipped"}"#.to_vec());
         let request = ctx.request().unwrap();
-        let mut config = BulwarkConfig::default_config();
+        let mut config = GarrisonConfig::default_config();
         config.is_read_header = false;
         config.is_read_cookie = false;
         config.is_read_body = true;
@@ -1002,10 +1007,10 @@ mod tests {
     fn c7_actix_context_put_patch_methods_allow_body_token_via_wrapper() {
         for method in &["PUT", "PATCH"] {
             let req = make_request("/", method, &[("Content-Type", "application/json")]);
-            let body_bytes = format!(r#"{{"bulwark_token":"tok_{}"}}"#, method).into_bytes();
+            let body_bytes = format!(r#"{{"garrison_token":"tok_{}"}}"#, method).into_bytes();
             let ctx = ActixContext::with_body(&req, body_bytes);
             let request = ctx.request().unwrap();
-            let mut config = BulwarkConfig::default_config();
+            let mut config = GarrisonConfig::default_config();
             config.is_read_header = false;
             config.is_read_cookie = false;
             config.is_read_body = true;

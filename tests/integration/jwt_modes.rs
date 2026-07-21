@@ -3,7 +3,7 @@
 
 //! JWT 三模式集成测试（v0.4.2 新增，依据 spec protocol-jwt-modes）。
 //!
-//! 验证 `JwtHandler`（HS256/HS512 + refresh）+ `BulwarkLogicDefault` 三模式
+//! 验证 `JwtHandler`（HS256/HS512 + refresh）+ `GarrisonLogicDefault` 三模式
 //! （Stateless / Mixin / Simple）的端到端行为：
 //! 1. `JwtHandler` HS256/HS512 sign → verify roundtrip
 //! 2. `JwtHandler` refresh 产出新 token
@@ -17,49 +17,49 @@
 #![cfg(all(feature = "protocol-jwt", feature = "cache-memory"))]
 
 use async_trait::async_trait;
-use bulwark::dao::{BulwarkDao, BulwarkDaoOxcache};
-use bulwark::error::{BulwarkError, BulwarkResult};
-use bulwark::protocol::jwt::JwtHandler;
-use bulwark::session::BulwarkSession;
-use bulwark::stp::{
-    with_current_token, BulwarkInterface, BulwarkLogicDefault, JwtMode, LoginParams, SessionLogic,
+use garrison::dao::{GarrisonDao, GarrisonDaoOxcache};
+use garrison::error::{GarrisonError, GarrisonResult};
+use garrison::protocol::jwt::JwtHandler;
+use garrison::session::GarrisonSession;
+use garrison::stp::{
+    with_current_token, GarrisonInterface, GarrisonLogicDefault, JwtMode, LoginParams, SessionLogic,
 };
 use jsonwebtoken::Algorithm;
 use serial_test::serial;
 use std::sync::Arc;
 
 // ============================================================================
-// MockInterface：BulwarkPermissionStrategyDefault::new() 必需
+// MockInterface：GarrisonPermissionStrategyDefault::new() 必需
 // ============================================================================
 
 struct MockInterface;
 
 #[async_trait]
-impl BulwarkInterface for MockInterface {
-    async fn get_permission_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
+impl GarrisonInterface for MockInterface {
+    async fn get_permission_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
         Ok(vec![])
     }
-    async fn get_role_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
+    async fn get_role_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
         Ok(vec![])
     }
 }
 
 // ============================================================================
-// 辅助：构造带指定 JwtMode + token_style=jwt 的 BulwarkLogicDefault
+// 辅助：构造带指定 JwtMode + token_style=jwt 的 GarrisonLogicDefault
 // ============================================================================
 
-async fn make_logic_with_mode(mode: JwtMode) -> Arc<BulwarkLogicDefault> {
-    let dao: Arc<dyn BulwarkDao> = Arc::new(BulwarkDaoOxcache::new().await.unwrap());
-    let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
-    let mut config = bulwark::config::BulwarkConfig::default_config();
+async fn make_logic_with_mode(mode: JwtMode) -> Arc<GarrisonLogicDefault> {
+    let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await.unwrap());
+    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+    let mut config = garrison::config::GarrisonConfig::default_config();
     config.token_style = "jwt".to_string();
     config.jwt_secret = "jwt-modes-test-secret".to_string().into();
     config.timeout = 3600;
     config.throw_on_not_login = true;
-    let firewall: Arc<dyn bulwark::strategy::BulwarkPermissionStrategy> = Arc::new(
-        bulwark::strategy::BulwarkPermissionStrategyDefault::new(Arc::new(MockInterface)),
+    let firewall: Arc<dyn garrison::strategy::GarrisonPermissionStrategy> = Arc::new(
+        garrison::strategy::GarrisonPermissionStrategyDefault::new(Arc::new(MockInterface)),
     );
-    Arc::new(BulwarkLogicDefault::new(session, Arc::new(config), firewall).with_jwt_mode(mode))
+    Arc::new(GarrisonLogicDefault::new(session, Arc::new(config), firewall).with_jwt_mode(mode))
 }
 
 // ============================================================================
@@ -111,7 +111,7 @@ async fn cross_algorithm_verify_fails() {
     let result = hs512.verify(&token);
     assert!(result.is_err(), "HS256 token 不应被 HS512 handler 校验通过");
     match result.unwrap_err() {
-        BulwarkError::InvalidToken(_) => {},
+        GarrisonError::InvalidToken(_) => {},
         other => panic!("期望 InvalidToken，实际: {:?}", other),
     }
 }
@@ -145,7 +145,7 @@ async fn sign_rejects_empty_secret() {
     let result = handler.sign("1001", 3600);
     assert!(result.is_err());
     match result.unwrap_err() {
-        BulwarkError::Config(msg) => {
+        GarrisonError::Config(msg) => {
             assert!(
                 msg.contains("secret"),
                 "错误消息应提及 secret，实际: {}",
@@ -163,7 +163,7 @@ async fn sign_rejects_negative_timeout() {
     let result = handler.sign("1001", -1);
     assert!(result.is_err());
     match result.unwrap_err() {
-        BulwarkError::Config(msg) => {
+        GarrisonError::Config(msg) => {
             assert!(
                 msg.contains("timeout"),
                 "错误消息应提及 timeout，实际: {}",
@@ -260,17 +260,17 @@ async fn mixin_mode_fails_with_jwt_only_no_session() {
 #[serial]
 async fn simple_mode_passes_with_session_only() {
     // Simple 模式 token_style 可以是 uuid（不依赖 JWT）
-    let dao: Arc<dyn BulwarkDao> = Arc::new(BulwarkDaoOxcache::new().await.unwrap());
-    let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
-    let mut config = bulwark::config::BulwarkConfig::default_config();
+    let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await.unwrap());
+    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+    let mut config = garrison::config::GarrisonConfig::default_config();
     config.token_style = "uuid".to_string();
     config.timeout = 3600;
     config.throw_on_not_login = true;
-    let firewall: Arc<dyn bulwark::strategy::BulwarkPermissionStrategy> = Arc::new(
-        bulwark::strategy::BulwarkPermissionStrategyDefault::new(Arc::new(MockInterface)),
+    let firewall: Arc<dyn garrison::strategy::GarrisonPermissionStrategy> = Arc::new(
+        garrison::strategy::GarrisonPermissionStrategyDefault::new(Arc::new(MockInterface)),
     );
     let logic = Arc::new(
-        BulwarkLogicDefault::new(session, Arc::new(config), firewall)
+        GarrisonLogicDefault::new(session, Arc::new(config), firewall)
             .with_jwt_mode(JwtMode::Simple),
     );
 
@@ -291,17 +291,17 @@ async fn simple_mode_passes_with_session_only() {
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn simple_mode_fails_without_session() {
-    let dao: Arc<dyn BulwarkDao> = Arc::new(BulwarkDaoOxcache::new().await.unwrap());
-    let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
-    let mut config = bulwark::config::BulwarkConfig::default_config();
+    let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await.unwrap());
+    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+    let mut config = garrison::config::GarrisonConfig::default_config();
     config.token_style = "uuid".to_string();
     config.timeout = 3600;
     config.throw_on_not_login = true;
-    let firewall: Arc<dyn bulwark::strategy::BulwarkPermissionStrategy> = Arc::new(
-        bulwark::strategy::BulwarkPermissionStrategyDefault::new(Arc::new(MockInterface)),
+    let firewall: Arc<dyn garrison::strategy::GarrisonPermissionStrategy> = Arc::new(
+        garrison::strategy::GarrisonPermissionStrategyDefault::new(Arc::new(MockInterface)),
     );
     let logic = Arc::new(
-        BulwarkLogicDefault::new(session, Arc::new(config), firewall)
+        GarrisonLogicDefault::new(session, Arc::new(config), firewall)
             .with_jwt_mode(JwtMode::Simple),
     );
 

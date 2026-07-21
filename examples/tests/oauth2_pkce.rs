@@ -7,7 +7,7 @@
 
 #![cfg(feature = "protocol-oauth2")]
 
-use bulwark_examples::oauth2::oauth2_pkce;
+use garrison_examples::oauth2::oauth2_pkce;
 
 #[tokio::test]
 async fn test_run_completes() {

@@ -4,7 +4,7 @@
 //! `DigestAlgorithm` 实现块，封装算法名称、摘要计算与字符串解析。
 
 use super::DigestAlgorithm;
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::error::{GarrisonError, GarrisonResult};
 use std::str::FromStr;
 
 /// 将字节数组编码为小写 hex 字符串。
@@ -49,14 +49,14 @@ impl Default for DigestAlgorithm {
 }
 
 impl FromStr for DigestAlgorithm {
-    type Err = BulwarkError;
+    type Err = GarrisonError;
 
     /// 从字符串解析算法（大小写不敏感）。
-    fn from_str(s: &str) -> BulwarkResult<Self> {
+    fn from_str(s: &str) -> GarrisonResult<Self> {
         match s.to_ascii_uppercase().as_str() {
             "MD5" => Ok(Self::Md5),
             "SHA256" => Ok(Self::Sha256),
-            other => Err(BulwarkError::Internal(format!(
+            other => Err(GarrisonError::Internal(format!(
                 "不支持的 Digest 算法: {}，仅支持 MD5 / SHA256",
                 other
             ))),

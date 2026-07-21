@@ -31,8 +31,8 @@ pub async fn ready(registry: web::Data<Arc<HealthRegistry>>) -> HttpResponse {
 /// # 示例
 ///
 /// ```ignore
-/// use bulwark::health::actix_routes::configure_health_routes;
-/// use bulwark::health::HealthRegistry;
+/// use garrison::health::actix_routes::configure_health_routes;
+/// use garrison::health::HealthRegistry;
 /// use std::sync::Arc;
 ///
 /// let registry = Arc::new(HealthRegistry::new());

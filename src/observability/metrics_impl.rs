@@ -1,15 +1,15 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! BulwarkMetrics 实现块（从 mod.rs 迁移）。
+//! GarrisonMetrics 实现块（从 mod.rs 迁移）。
 
 #[cfg(feature = "metrics-prometheus")]
-use super::BulwarkMetrics;
+use super::GarrisonMetrics;
 #[cfg(feature = "metrics-prometheus")]
 use std::time::Duration;
 
 #[cfg(feature = "metrics-prometheus")]
-impl BulwarkMetrics {
+impl GarrisonMetrics {
     /// 创建新的指标集合，注册到默认 registry。
     ///
     /// # 错误
@@ -17,7 +17,7 @@ impl BulwarkMetrics {
     /// 注册到自定义 registry。
     pub fn new() -> Self {
         Self::register_to(prometheus::default_registry())
-            .expect("BulwarkMetrics 注册到 default registry 失败：可能已注册")
+            .expect("GarrisonMetrics 注册到 default registry 失败：可能已注册")
     }
 
     /// 创建并注册到指定 registry（用于自定义 registry 场景）。
@@ -27,28 +27,28 @@ impl BulwarkMetrics {
     pub fn register_to(registry: &prometheus::Registry) -> Result<Self, prometheus::Error> {
         let login_total = prometheus::CounterVec::new(
             prometheus::Opts::new(
-                "bulwark_login_total",
+                "garrison_login_total",
                 "Total number of login attempts (success|failure)",
             ),
             &["result"],
         )?;
         let token_validation_duration = prometheus::Histogram::with_opts(
             prometheus::HistogramOpts::new(
-                "bulwark_token_validation_duration_seconds",
+                "garrison_token_validation_duration_seconds",
                 "Token validation duration in seconds",
             )
             .buckets(vec![0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 5.0]),
         )?;
         let permission_query_total = prometheus::CounterVec::new(
             prometheus::Opts::new(
-                "bulwark_permission_query_total",
+                "garrison_permission_query_total",
                 "Total number of permission queries (allow|deny)",
             ),
             &["result"],
         )?;
         let role_query_total = prometheus::CounterVec::new(
             prometheus::Opts::new(
-                "bulwark_role_query_total",
+                "garrison_role_query_total",
                 "Total number of role queries (allow|deny)",
             ),
             &["result"],
@@ -110,27 +110,27 @@ impl BulwarkMetrics {
         use prometheus::Encoder;
         let mut buffer = Vec::new();
         let encoder = prometheus::TextEncoder::new();
-        // 收集 default registry（包含 BulwarkMetrics 注册的所有指标）
+        // 收集 default registry（包含 GarrisonMetrics 注册的所有指标）
         let metric_families = prometheus::gather();
         // Rule 12：编码失败显式记录 warn（不中断主流程，但禁止静默吞掉）
         if let Err(e) = encoder.encode(&metric_families, &mut buffer) {
-            tracing::warn!(error = %e, "BulwarkMetrics::gather prometheus encode failed");
+            tracing::warn!(error = %e, "GarrisonMetrics::gather prometheus encode failed");
         }
         String::from_utf8_lossy(&buffer).into_owned()
     }
 }
 
 #[cfg(feature = "metrics-prometheus")]
-impl Default for BulwarkMetrics {
+impl Default for GarrisonMetrics {
     fn default() -> Self {
         Self::new()
     }
 }
 
 #[cfg(feature = "metrics-prometheus")]
-impl std::fmt::Debug for BulwarkMetrics {
+impl std::fmt::Debug for GarrisonMetrics {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("BulwarkMetrics")
+        f.debug_struct("GarrisonMetrics")
             .field("login_total", &"CounterVec")
             .field("token_validation_duration", &"Histogram")
             .field("permission_query_total", &"CounterVec")

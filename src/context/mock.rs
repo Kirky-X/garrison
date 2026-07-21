@@ -4,14 +4,14 @@
 //! 上下文层测试 mock 实现。
 //!
 //! 本模块仅在 `cfg(test)` 下编译（通过 `mod.rs` 中的 `#[cfg(test)] mod mock;` 声明），
-//! 提供 `MockResponse`（模拟 `BulwarkResponse` trait），
+//! 提供 `MockResponse`（模拟 `GarrisonResponse` trait），
 //! 供 `context::tests` 默认方法行为测试复用。
 
-use crate::context::BulwarkResponse;
-use crate::error::BulwarkResult;
+use crate::context::GarrisonResponse;
+use crate::error::GarrisonResult;
 use std::collections::HashMap;
 
-/// Mock 响应实现，用于测试 BulwarkResponse trait 的默认方法。
+/// Mock 响应实现，用于测试 GarrisonResponse trait 的默认方法。
 pub struct MockResponse {
     /// cookie 存储（供测试断言直接访问）。
     pub cookies: HashMap<String, String>,
@@ -32,13 +32,13 @@ impl MockResponse {
     }
 }
 
-impl BulwarkResponse for MockResponse {
-    fn set_status(&mut self, code: u16) -> BulwarkResult<()> {
+impl GarrisonResponse for MockResponse {
+    fn set_status(&mut self, code: u16) -> GarrisonResult<()> {
         self.status = Some(code);
         Ok(())
     }
 
-    fn set_header(&mut self, name: &str, value: &str) -> BulwarkResult<()> {
+    fn set_header(&mut self, name: &str, value: &str) -> GarrisonResult<()> {
         self.headers.insert(name.to_string(), value.to_string());
         Ok(())
     }
@@ -47,8 +47,8 @@ impl BulwarkResponse for MockResponse {
         &mut self,
         name: &str,
         value: &str,
-        _config: &crate::config::BulwarkConfig,
-    ) -> BulwarkResult<()> {
+        _config: &crate::config::GarrisonConfig,
+    ) -> GarrisonResult<()> {
         self.cookies.insert(name.to_string(), value.to_string());
         Ok(())
     }

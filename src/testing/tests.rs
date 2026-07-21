@@ -8,14 +8,14 @@
 
 use super::*;
 use crate::core::permission::{AuthRequest, Authorizer, Decision, DecisionReason};
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::error::{GarrisonError, GarrisonResult};
 use async_trait::async_trait;
 use std::collections::{HashMap, HashSet};
 
 /// 测试用 MockAuthorizer，根据 `login_id` 预设返回 Decision 或 Error。
 ///
 /// - `decisions`：login_id -> Decision 映射，命中则返回对应 Decision
-/// - `errors`：login_id 集合，命中则返回 `BulwarkError::Internal`
+/// - `errors`：login_id 集合，命中则返回 `GarrisonError::Internal`
 struct MockAuthorizer {
     decisions: HashMap<String, Decision>,
     errors: HashSet<String>,
@@ -44,9 +44,9 @@ impl MockAuthorizer {
 
 #[async_trait]
 impl Authorizer for MockAuthorizer {
-    async fn authorize(&self, req: &AuthRequest) -> BulwarkResult<Decision> {
+    async fn authorize(&self, req: &AuthRequest) -> GarrisonResult<Decision> {
         if self.errors.contains(&req.login_id) {
-            return Err(BulwarkError::Internal(format!(
+            return Err(GarrisonError::Internal(format!(
                 "mock error for login_id={}",
                 req.login_id
             )));
@@ -91,7 +91,7 @@ async fn from_json_parses_valid_suite() {
     assert!(!suite.cases[1].expected.allowed);
 }
 
-/// T073-2: 非法 JSON（语法错误）返回 BulwarkError。
+/// T073-2: 非法 JSON（语法错误）返回 GarrisonError。
 #[test]
 fn from_json_rejects_invalid_json() {
     // 数组括号不匹配（`[}`），serde_json 会报语法错误
@@ -99,7 +99,7 @@ fn from_json_rejects_invalid_json() {
     let result = JsonTestSuite::from_json(invalid_json);
     assert!(result.is_err(), "syntactically invalid JSON should error");
     match result.err() {
-        Some(BulwarkError::InvalidParam(_)) => {},
+        Some(GarrisonError::InvalidParam(_)) => {},
         other => panic!("期望 InvalidParam，实际: {:?}", other),
     }
 }

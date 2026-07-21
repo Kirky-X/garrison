@@ -57,7 +57,7 @@ pub struct ConfusableWarning {
 /// # 示例
 ///
 /// ```ignore
-/// use bulwark::secure::confusable::check_confusable;
+/// use garrison::secure::confusable::check_confusable;
 ///
 /// // 纯 ASCII 字符串无警告
 /// assert!(check_confusable("user:read").is_empty());

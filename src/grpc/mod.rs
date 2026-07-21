@@ -5,9 +5,9 @@
 //!
 //! ## 设计
 //!
-//! - `BulwarkGrpcInterceptor`：实现 `tonic::Interceptor` trait
+//! - `GarrisonGrpcInterceptor`：实现 `tonic::Interceptor` trait
 //!   - 从 gRPC 请求 metadata 提取 `authorization: Bearer <token>` header
-//!   - 调用 `BulwarkUtil::check_login()` 鉴权
+//!   - 调用 `GarrisonUtil::check_login()` 鉴权
 //!   - 鉴权失败返回 `tonic::Status::UNAUTHENTICATED`（code = 16）
 //! - `health_service`：返回 `tonic_health::server::HealthServer<impl Health>`
 //!   - gRPC 标准健康检查协议（grpc.health.v1.Health）
@@ -16,7 +16,7 @@
 //! ## 使用示例
 //!
 //! ```ignore
-//! use bulwark::grpc::{BulwarkGrpcInterceptor, health_service};
+//! use garrison::grpc::{GarrisonGrpcInterceptor, health_service};
 //! use tonic::transport::Server;
 //!
 //! // 重要：interceptor 会拦截所有 service 请求（要求 Authorization Bearer token），
@@ -29,7 +29,7 @@
 //!     .await?;
 //!
 //! Server::builder()
-//!     .interceptor(BulwarkGrpcInterceptor::new())
+//!     .interceptor(GarrisonGrpcInterceptor::new())
 //!     .add_service(my_service)
 //!     .serve(app_addr)
 //!     .await?;
@@ -41,42 +41,42 @@
 
 /// gRPC 标准健康检查服务模块（`health_service()`）。
 pub mod health;
-/// gRPC 鉴权拦截器实现模块（`BulwarkGrpcInterceptor` impl 块）。
+/// gRPC 鉴权拦截器实现模块（`GarrisonGrpcInterceptor` impl 块）。
 pub mod interceptor;
 
 pub use health::health_service;
 
-/// Bulwark gRPC 鉴权拦截器。
+/// Garrison gRPC 鉴权拦截器。
 ///
 /// 实现 `tonic::Interceptor` trait，从 gRPC 请求 metadata 提取 Authorization Bearer token
-/// 并调用 `BulwarkUtil::check_login()` 鉴权。鉴权失败时返回 `Status::UNAUTHENTICATED`。
+/// 并调用 `GarrisonUtil::check_login()` 鉴权。鉴权失败时返回 `Status::UNAUTHENTICATED`。
 ///
 /// # 重要限制：仅提取 token，不执行 async 鉴权
 ///
-/// `tonic::Interceptor::call` 是**同步** trait，无法直接调用异步的 `BulwarkUtil::check_login()`。
+/// `tonic::Interceptor::call` 是**同步** trait，无法直接调用异步的 `GarrisonUtil::check_login()`。
 /// 本拦截器仅完成 token 提取与基本格式校验（非空、`Bearer ` 前缀正确），
 /// **不**执行实际的登录态/权限校验。
 ///
 /// 完整的 async 鉴权推荐方案：
-/// - 使用 `tonic` 的 `tower::Layer` middleware（async），在 layer 中调用 `BulwarkContext`
+/// - 使用 `tonic` 的 `tower::Layer` middleware（async），在 layer 中调用 `GarrisonContext`
 ///   执行 `check_login` 等异步 API；
 /// - 或在 tonic service handler 内通过 `task_local`（`with_current_token`）读取 token，
-///   显式调用 `BulwarkUtil::check_login()`。
+///   显式调用 `GarrisonUtil::check_login()`。
 ///
 /// # 使用
 ///
 /// ```ignore
-/// use bulwark::grpc::BulwarkGrpcInterceptor;
+/// use garrison::grpc::GarrisonGrpcInterceptor;
 /// use tonic::transport::Server;
 ///
 /// Server::builder()
-///     .interceptor(BulwarkGrpcInterceptor::new())
+///     .interceptor(GarrisonGrpcInterceptor::new())
 ///     .add_service(my_service)
 ///     .serve(addr)
 ///     .await?;
 /// ```
 #[derive(Debug, Default, Clone)]
-pub struct BulwarkGrpcInterceptor;
+pub struct GarrisonGrpcInterceptor;
 
 #[cfg(test)]
 mod tests;

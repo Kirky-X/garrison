@@ -3,8 +3,8 @@
 
 //! 异常检测器实现模块，提供 IP 变化检测与快速连续登录检测。
 
-use crate::error::BulwarkResult;
-use crate::session::BulwarkSession;
+use crate::error::GarrisonResult;
+use crate::session::GarrisonSession;
 use async_trait::async_trait;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -14,7 +14,7 @@ use super::{AnomalyDetector, AnomalyType, SecurityAlertEvent};
 /// IP 变化检测器，对比当前登录 IP 与历史最近 session 的 IP。
 ///
 /// 实现 `AnomalyDetector` trait，在 `check_on_login` 时：
-/// 1. 通过 `BulwarkSession::get_tokens_by_login_id` 获取该 login_id 的所有 token
+/// 1. 通过 `GarrisonSession::get_tokens_by_login_id` 获取该 login_id 的所有 token
 /// 2. 逐个获取 `TokenSession`，找到 `last_active_at` 最大的 session
 /// 3. 取其 IP 作为历史 IP，与当前登录 IP 对比
 /// 4. 不同则发出 `AnomalyLogin { anomaly_type: IpChanged }`
@@ -22,15 +22,15 @@ use super::{AnomalyDetector, AnomalyType, SecurityAlertEvent};
 /// `check_on_check_login` 因签名不含当前 IP 参数，无法检测 IP 变化，返回空 Vec。
 pub struct IpChangeDetector {
     /// 会话管理器引用，用于查询历史 session。
-    session: Arc<BulwarkSession>,
+    session: Arc<GarrisonSession>,
 }
 
 impl IpChangeDetector {
     /// 创建 `IpChangeDetector` 实例。
     ///
     /// # 参数
-    /// - `session`: 会话管理器引用（`Arc<BulwarkSession>`）。
-    pub fn new(session: Arc<BulwarkSession>) -> Self {
+    /// - `session`: 会话管理器引用（`Arc<GarrisonSession>`）。
+    pub fn new(session: Arc<GarrisonSession>) -> Self {
         Self { session }
     }
 }
@@ -42,7 +42,7 @@ impl AnomalyDetector for IpChangeDetector {
         login_id: &str,
         _device_id: &str,
         ip: Option<&str>,
-    ) -> BulwarkResult<Vec<SecurityAlertEvent>> {
+    ) -> GarrisonResult<Vec<SecurityAlertEvent>> {
         // 无当前 IP 不告警
         let current_ip = match ip {
             Some(ip) => ip,
@@ -88,7 +88,7 @@ impl AnomalyDetector for IpChangeDetector {
         &self,
         _login_id: &str,
         _token: &str,
-    ) -> BulwarkResult<Vec<SecurityAlertEvent>> {
+    ) -> GarrisonResult<Vec<SecurityAlertEvent>> {
         // check_on_check_login 签名不含当前 IP，无法检测 IP 变化
         Ok(Vec::new())
     }
@@ -97,7 +97,7 @@ impl AnomalyDetector for IpChangeDetector {
 /// 快速连续登录检测器，检查同一 login_id 的同时在线 token 数量是否超过阈值。
 ///
 /// 实现 `AnomalyDetector` trait，在 `check_on_login` 时：
-/// 1. 通过 `BulwarkSession::get_tokens_by_login_id` 获取该 login_id 的所有 token
+/// 1. 通过 `GarrisonSession::get_tokens_by_login_id` 获取该 login_id 的所有 token
 /// 2. 若 token 数量 >= 阈值，发出 `AnomalyLogin { anomaly_type: RapidSuccessiveLogin }`
 ///
 /// 默认阈值为 5，可通过 `with_threshold` 自定义。
@@ -110,7 +110,7 @@ impl AnomalyDetector for IpChangeDetector {
 /// 若需基于时间窗口的快速连续登录检测，应扩展此检测器或实现新的 `AnomalyDetector`。
 pub struct RapidSuccessiveDetector {
     /// 会话管理器引用，用于查询 token 列表。
-    session: Arc<BulwarkSession>,
+    session: Arc<GarrisonSession>,
     /// 触发告警的 token 数量阈值。
     threshold: usize,
 }
@@ -119,8 +119,8 @@ impl RapidSuccessiveDetector {
     /// 创建 `RapidSuccessiveDetector` 实例，默认阈值 5。
     ///
     /// # 参数
-    /// - `session`: 会话管理器引用（`Arc<BulwarkSession>`）。
-    pub fn new(session: Arc<BulwarkSession>) -> Self {
+    /// - `session`: 会话管理器引用（`Arc<GarrisonSession>`）。
+    pub fn new(session: Arc<GarrisonSession>) -> Self {
         Self {
             session,
             threshold: 5,
@@ -130,9 +130,9 @@ impl RapidSuccessiveDetector {
     /// 创建 `RapidSuccessiveDetector` 实例，自定义阈值。
     ///
     /// # 参数
-    /// - `session`: 会话管理器引用（`Arc<BulwarkSession>`）。
+    /// - `session`: 会话管理器引用（`Arc<GarrisonSession>`）。
     /// - `threshold`: 触发告警的 token 数量阈值。
-    pub fn with_threshold(session: Arc<BulwarkSession>, threshold: usize) -> Self {
+    pub fn with_threshold(session: Arc<GarrisonSession>, threshold: usize) -> Self {
         Self { session, threshold }
     }
 }
@@ -144,7 +144,7 @@ impl AnomalyDetector for RapidSuccessiveDetector {
         login_id: &str,
         _device_id: &str,
         _ip: Option<&str>,
-    ) -> BulwarkResult<Vec<SecurityAlertEvent>> {
+    ) -> GarrisonResult<Vec<SecurityAlertEvent>> {
         let tokens = self.session.get_tokens_by_login_id(login_id);
         let count = tokens.len();
 
@@ -164,7 +164,7 @@ impl AnomalyDetector for RapidSuccessiveDetector {
         &self,
         _login_id: &str,
         _token: &str,
-    ) -> BulwarkResult<Vec<SecurityAlertEvent>> {
+    ) -> GarrisonResult<Vec<SecurityAlertEvent>> {
         // 快速连续登录检测只在 login 时触发
         Ok(Vec::new())
     }
@@ -174,20 +174,20 @@ impl AnomalyDetector for RapidSuccessiveDetector {
 mod tests {
     use super::*;
     use crate::dao::tests::MockDao;
-    use crate::dao::BulwarkDao;
+    use crate::dao::GarrisonDao;
     use crate::session::TokenSession;
     use crate::stp::LoginParams;
 
-    /// 辅助函数：创建带 MockDao 的 BulwarkSession（Arc 包装）。
-    fn make_session() -> (Arc<MockDao>, Arc<BulwarkSession>) {
+    /// 辅助函数：创建带 MockDao 的 GarrisonSession（Arc 包装）。
+    fn make_session() -> (Arc<MockDao>, Arc<GarrisonSession>) {
         let dao: Arc<MockDao> = Arc::new(MockDao::new());
-        let session = Arc::new(BulwarkSession::new(dao.clone(), 3600, 86400));
+        let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400));
         (dao, session)
     }
 
     /// 辅助函数：创建带指定 IP 的 token session。
     async fn create_session_with_ip(
-        session: &BulwarkSession,
+        session: &GarrisonSession,
         login_id: &str,
         token: &str,
         ip: &str,
@@ -365,7 +365,7 @@ mod tests {
     // ========================================================================
 
     /// 辅助函数：为指定 login_id 创建 N 个 token session。
-    async fn create_n_tokens(session: &BulwarkSession, login_id: &str, count: usize) {
+    async fn create_n_tokens(session: &GarrisonSession, login_id: &str, count: usize) {
         for i in 0..count {
             let token = format!("T{}", i);
             session

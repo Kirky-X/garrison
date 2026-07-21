@@ -16,7 +16,7 @@
 //!
 //! - 规则为同步纯函数（无 IO/await），可在任意上下文调用
 //! - 引擎按 `ErrorMode` 执行：`FirstError` 短路，`AllErrors` 收集全部
-//! - 规则参数由构造器注入（v0.6.5 支持 `BulwarkConfig` 加载）
+//! - 规则参数由构造器注入（v0.6.5 支持 `GarrisonConfig` 加载）
 
 pub mod engine;
 mod error;
@@ -43,7 +43,7 @@ use std::sync::Arc;
 /// # 示例
 ///
 /// ```ignore
-/// use bulwark::account::policy::{PasswordPolicyRule, PolicyContext, PolicyError};
+/// use garrison::account::policy::{PasswordPolicyRule, PolicyContext, PolicyError};
 ///
 /// struct AlwaysPassRule;
 /// impl PasswordPolicyRule for AlwaysPassRule {
@@ -124,7 +124,7 @@ pub enum ErrorMode {
 /// # 示例
 ///
 /// ```ignore
-/// use bulwark::account::policy::{ErrorMode, PasswordPolicyEngine, PolicyContext};
+/// use garrison::account::policy::{ErrorMode, PasswordPolicyEngine, PolicyContext};
 /// // T008/T009 实现具体规则后注入
 /// let engine = PasswordPolicyEngine::new(Vec::new(), ErrorMode::FirstError);
 /// let ctx = PolicyContext {

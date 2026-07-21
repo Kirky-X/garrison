@@ -7,29 +7,29 @@
 //!
 //! ## 设计
 //!
-//! - `BulwarkLocale`：支持的语言枚举（默认 `Zh`，向后兼容 0.2.x 硬编码中文行为）
+//! - `GarrisonLocale`：支持的语言枚举（默认 `Zh`，向后兼容 0.2.x 硬编码中文行为）
 //! - thread_local 栈式 scope：`set_locale()` 返回 RAII guard，drop 时自动 pop
 //! - `OnceCell` 缓存 `FluentBundle`：首次访问时加载 .ftl 资源，后续零开销
-//! - `translate_error(&BulwarkError) -> String`：依据当前 locale 查询 fluent bundle
+//! - `translate_error(&GarrisonError) -> String`：依据当前 locale 查询 fluent bundle
 //!
 //! ## 使用示例
 //!
 //! ```ignore
-//! use bulwark::i18n::{set_locale, BulwarkLocale};
-//! use bulwark::error::BulwarkError;
+//! use garrison::i18n::{set_locale, GarrisonLocale};
+//! use garrison::error::GarrisonError;
 //!
 //! // 默认中文
-//! let err = BulwarkError::NotLogin("请先登录".to_string());
+//! let err = GarrisonError::NotLogin("请先登录".to_string());
 //! assert_eq!(err.to_string(), "未登录: 请先登录");
 //!
 //! // 切换英文
-//! let _guard = set_locale(BulwarkLocale::En);
+//! let _guard = set_locale(GarrisonLocale::En);
 //! assert_eq!(err.to_string(), "Not logged in: 请先登录");
 //!
 //! // guard drop 后自动恢复中文
 //! ```
 
-use crate::error::BulwarkError;
+use crate::error::GarrisonError;
 use fluent::concurrent::FluentBundle;
 use fluent::{FluentArgs, FluentResource};
 use once_cell::sync::OnceCell;
@@ -43,7 +43,7 @@ use unic_langid::LanguageIdentifier;
 /// # 示例
 ///
 /// ```ignore
-/// let err = BulwarkError::Network(loc!(
+/// let err = GarrisonError::Network(loc!(
 ///     "wechat-response-missing-openid",
 ///     "wechat response missing openid field".to_string()
 /// ));
@@ -59,7 +59,7 @@ macro_rules! loc {
 ///
 /// 默认 `Zh`（中文），向后兼容 0.2.x 硬编码中文行为。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum BulwarkLocale {
+pub enum GarrisonLocale {
     /// 中文（默认语言）。
     #[default]
     Zh,
@@ -67,12 +67,12 @@ pub enum BulwarkLocale {
     En,
 }
 
-impl BulwarkLocale {
+impl GarrisonLocale {
     /// 返回对应的 BCP-47 语言标签。
     fn as_lang_id(self) -> LanguageIdentifier {
         match self {
-            BulwarkLocale::Zh => "zh".parse().expect("valid language identifier"),
-            BulwarkLocale::En => "en".parse().expect("valid language identifier"),
+            GarrisonLocale::Zh => "zh".parse().expect("valid language identifier"),
+            GarrisonLocale::En => "en".parse().expect("valid language identifier"),
         }
     }
 }
@@ -82,13 +82,13 @@ impl BulwarkLocale {
 // ============================================================================
 
 thread_local! {
-    static CURRENT_LOCALE_STACK: RefCell<Vec<BulwarkLocale>> = const { RefCell::new(Vec::new()) };
+    static CURRENT_LOCALE_STACK: RefCell<Vec<GarrisonLocale>> = const { RefCell::new(Vec::new()) };
 }
 
 /// 获取当前 locale（线程本地）。
 ///
-/// 未调用 `set_locale()` 时返回默认 `BulwarkLocale::Zh`。
-pub fn current_locale() -> BulwarkLocale {
+/// 未调用 `set_locale()` 时返回默认 `GarrisonLocale::Zh`。
+pub fn current_locale() -> GarrisonLocale {
     CURRENT_LOCALE_STACK.with(|stack| stack.borrow().last().copied().unwrap_or_default())
 }
 
@@ -99,10 +99,10 @@ pub fn current_locale() -> BulwarkLocale {
 /// # 示例
 ///
 /// ```ignore
-/// let _guard = set_locale(BulwarkLocale::En);
+/// let _guard = set_locale(GarrisonLocale::En);
 /// // 此范围内 current_locale() == En
 /// ```
-pub fn set_locale(locale: BulwarkLocale) -> LocaleGuard {
+pub fn set_locale(locale: GarrisonLocale) -> LocaleGuard {
     CURRENT_LOCALE_STACK.with(|stack| stack.borrow_mut().push(locale));
     LocaleGuard { _priv: () }
 }
@@ -130,28 +130,28 @@ static ZH_BUNDLE: OnceCell<FluentBundle<FluentResource>> = OnceCell::new();
 static EN_BUNDLE: OnceCell<FluentBundle<FluentResource>> = OnceCell::new();
 
 /// 获取指定 locale 的 FluentBundle（懒加载，首次访问时构造）。
-fn get_bundle(locale: BulwarkLocale) -> &'static FluentBundle<FluentResource> {
+fn get_bundle(locale: GarrisonLocale) -> &'static FluentBundle<FluentResource> {
     match locale {
-        BulwarkLocale::Zh => ZH_BUNDLE.get_or_init(|| build_bundle(BulwarkLocale::Zh)),
-        BulwarkLocale::En => EN_BUNDLE.get_or_init(|| build_bundle(BulwarkLocale::En)),
+        GarrisonLocale::Zh => ZH_BUNDLE.get_or_init(|| build_bundle(GarrisonLocale::Zh)),
+        GarrisonLocale::En => EN_BUNDLE.get_or_init(|| build_bundle(GarrisonLocale::En)),
     }
 }
 
 /// 构造 FluentBundle（从 include_str! 加载 .ftl 资源）。
-fn build_bundle(locale: BulwarkLocale) -> FluentBundle<FluentResource> {
+fn build_bundle(locale: GarrisonLocale) -> FluentBundle<FluentResource> {
     let ftl = match locale {
-        BulwarkLocale::Zh => include_str!("../locales/zh.ftl"),
-        BulwarkLocale::En => include_str!("../locales/en.ftl"),
+        GarrisonLocale::Zh => include_str!("../locales/zh.ftl"),
+        GarrisonLocale::En => include_str!("../locales/en.ftl"),
     };
     let resource = FluentResource::try_new(ftl.to_string())
-        .expect("Bulwark .ftl 资源解析失败（编译期已固化，不应失败）");
+        .expect("Garrison .ftl 资源解析失败（编译期已固化，不应失败）");
     let lang_id = locale.as_lang_id();
     let mut bundle = FluentBundle::new_concurrent(vec![lang_id]);
     // 关闭 FSI/PDI 隔离标记（U+2068/U+2069），保持错误消息纯净
     bundle.set_use_isolating(false);
     bundle
         .add_resource(resource)
-        .expect("Bulwark .ftl 资源添加到 bundle 失败（资源键冲突不应发生）");
+        .expect("Garrison .ftl 资源添加到 bundle 失败（资源键冲突不应发生）");
     bundle
 }
 
@@ -159,11 +159,11 @@ fn build_bundle(locale: BulwarkLocale) -> FluentBundle<FluentResource> {
 // 错误翻译：依据当前 locale 查询 fluent bundle
 // ============================================================================
 
-/// 将 `BulwarkError` 翻译为当前 locale 的本地化字符串。
+/// 将 `GarrisonError` 翻译为当前 locale 的本地化字符串。
 ///
 /// 依据 `current_locale()` 选取 bundle，查询错误对应的 message key 与 args。
 /// 缺失 key 时回退到硬编码中文（与 0.2.x 行为一致）。
-pub fn translate_error(err: &BulwarkError) -> String {
+pub fn translate_error(err: &GarrisonError) -> String {
     let locale = current_locale();
     let bundle = get_bundle(locale);
     let (key, args) = error_to_key_args(err);
@@ -191,7 +191,7 @@ pub fn translate_error(err: &BulwarkError) -> String {
 
 /// 按 key + args 翻译为当前 locale 的本地化字符串。
 ///
-/// 与 [`translate_error`] 不同，本函数不依赖 `BulwarkError`，直接接收 message key 与
+/// 与 [`translate_error`] 不同，本函数不依赖 `GarrisonError`，直接接收 message key 与
 /// 参数列表，供 `loc!` 宏在社交登录 / Keycloak 等模块中按需翻译异常 detail。
 ///
 /// # 参数
@@ -234,7 +234,7 @@ pub fn translate_detail(key: &str, args: &[(&str, &str)]) -> String {
 
 /// 解析结构化错误 detail：`key::arg0::arg1`。
 ///
-/// 调用方在去语言化后，将 `BulwarkError` 的 `String` 字段写为
+/// 调用方在去语言化后，将 `GarrisonError` 的 `String` 字段写为
 /// `format!("some-key::{}", arg0)` 或 `format!("some-key::{}::{}", arg0, arg1)`，
 /// 本函数拆出 FTL message key 与位置化参数（键 `"arg0"`/`"arg1"` 对应 FTL 模板的 `{$arg0}`/`{$arg1}`，
 /// 因 Fluent 变量标识符必须以字母开头，`0`/`1` 数字前缀非法，故统一加 `arg` 前缀）。
@@ -286,44 +286,44 @@ fn string_detail(
 }
 
 /// 错误到 FTL message key + args 的映射。
-fn error_to_key_args(err: &BulwarkError) -> (&'static str, Vec<(&'static str, String)>) {
+fn error_to_key_args(err: &GarrisonError) -> (&'static str, Vec<(&'static str, String)>) {
     match err {
-        BulwarkError::NotLogin(s) => string_detail("not-login", s),
-        BulwarkError::NotPermission(s) => string_detail("not-permission", s),
-        BulwarkError::NotRole(s) => string_detail("not-role", s),
-        BulwarkError::InvalidToken(s) => string_detail("invalid-token", s),
-        BulwarkError::TokenRevoked(s) => string_detail("token-revoked", s),
-        BulwarkError::ExpiredToken(s) => string_detail("expired-token", s),
-        BulwarkError::Dao(s) => string_detail("dao", s),
-        BulwarkError::Config(s) => string_detail("config", s),
-        BulwarkError::Internal(s) => string_detail("internal", s),
-        BulwarkError::Session(s) => string_detail("session", s),
-        BulwarkError::Annotation(s) => string_detail("annotation", s),
-        BulwarkError::Context(s) => string_detail("context", s),
-        BulwarkError::OAuth2(s) => string_detail("oauth2", s),
-        BulwarkError::Network(s) => string_detail("network", s),
-        BulwarkError::InvalidParam(s) => string_detail("invalid-param", s),
-        BulwarkError::NotImplemented(s) => string_detail("not-implemented", s),
-        BulwarkError::FirewallBlocked(s) => string_detail("firewall-blocked", s),
-        BulwarkError::DisableService { service, until } => (
+        GarrisonError::NotLogin(s) => string_detail("not-login", s),
+        GarrisonError::NotPermission(s) => string_detail("not-permission", s),
+        GarrisonError::NotRole(s) => string_detail("not-role", s),
+        GarrisonError::InvalidToken(s) => string_detail("invalid-token", s),
+        GarrisonError::TokenRevoked(s) => string_detail("token-revoked", s),
+        GarrisonError::ExpiredToken(s) => string_detail("expired-token", s),
+        GarrisonError::Dao(s) => string_detail("dao", s),
+        GarrisonError::Config(s) => string_detail("config", s),
+        GarrisonError::Internal(s) => string_detail("internal", s),
+        GarrisonError::Session(s) => string_detail("session", s),
+        GarrisonError::Annotation(s) => string_detail("annotation", s),
+        GarrisonError::Context(s) => string_detail("context", s),
+        GarrisonError::OAuth2(s) => string_detail("oauth2", s),
+        GarrisonError::Network(s) => string_detail("network", s),
+        GarrisonError::InvalidParam(s) => string_detail("invalid-param", s),
+        GarrisonError::NotImplemented(s) => string_detail("not-implemented", s),
+        GarrisonError::FirewallBlocked(s) => string_detail("firewall-blocked", s),
+        GarrisonError::DisableService { service, until } => (
             "disable-service",
             vec![
                 ("service", service.clone()),
                 ("until", format!("{:?}", until)),
             ],
         ),
-        BulwarkError::NotSafe { reason } => ("not-safe", vec![("reason", reason.clone())]),
-        BulwarkError::InvalidStateTransition { from, to } => (
+        GarrisonError::NotSafe { reason } => ("not-safe", vec![("reason", reason.clone())]),
+        GarrisonError::InvalidStateTransition { from, to } => (
             "invalid-state-transition",
             vec![("from", from.clone()), ("to", to.clone())],
         ),
-        BulwarkError::SmsRateLimitExceeded { window } => {
+        GarrisonError::SmsRateLimitExceeded { window } => {
             ("sms-rate-limit-exceeded", vec![("window", window.clone())])
         },
-        BulwarkError::SmsVerifyMaxAttempts => ("sms-verify-max-attempts", vec![]),
-        BulwarkError::SmsCodeNotFound => ("sms-code-not-found", vec![]),
-        BulwarkError::SmsChannelRecycled => ("sms-channel-recycled", vec![]),
-        BulwarkError::Exception(ex) => (
+        GarrisonError::SmsVerifyMaxAttempts => ("sms-verify-max-attempts", vec![]),
+        GarrisonError::SmsCodeNotFound => ("sms-code-not-found", vec![]),
+        GarrisonError::SmsChannelRecycled => ("sms-channel-recycled", vec![]),
+        GarrisonError::Exception(ex) => (
             "exception",
             vec![
                 ("code", ex.code.to_string()),
@@ -334,39 +334,39 @@ fn error_to_key_args(err: &BulwarkError) -> (&'static str, Vec<(&'static str, St
 }
 
 /// 翻译失败时的硬编码中文回退（与 0.2.x Display 输出一致）。
-fn fallback_display(err: &BulwarkError) -> String {
+fn fallback_display(err: &GarrisonError) -> String {
     match err {
-        BulwarkError::NotLogin(s) => format!("未登录: {}", s),
-        BulwarkError::NotPermission(s) => format!("无权限: {}", s),
-        BulwarkError::NotRole(s) => format!("无角色: {}", s),
-        BulwarkError::InvalidToken(s) => format!("Token 无效: {}", s),
-        BulwarkError::TokenRevoked(s) => format!("Token 已吊销: {}", s),
-        BulwarkError::ExpiredToken(s) => format!("Token 已过期: {}", s),
-        BulwarkError::Dao(s) => format!("DAO 错误: {}", s),
-        BulwarkError::Config(s) => format!("配置错误: {}", s),
-        BulwarkError::Internal(s) => format!("内部错误: {}", s),
-        BulwarkError::Session(s) => format!("会话错误: {}", s),
-        BulwarkError::Annotation(s) => format!("注解错误: {}", s),
-        BulwarkError::Context(s) => format!("上下文错误: {}", s),
-        BulwarkError::OAuth2(s) => format!("OAuth2 错误: {}", s),
-        BulwarkError::Network(s) => format!("网络错误: {}", s),
-        BulwarkError::InvalidParam(s) => format!("参数无效: {}", s),
-        BulwarkError::NotImplemented(s) => format!("未实现: {}", s),
-        BulwarkError::FirewallBlocked(s) => format!("防火墙拦截: {}", s),
-        BulwarkError::DisableService { service, until } => {
+        GarrisonError::NotLogin(s) => format!("未登录: {}", s),
+        GarrisonError::NotPermission(s) => format!("无权限: {}", s),
+        GarrisonError::NotRole(s) => format!("无角色: {}", s),
+        GarrisonError::InvalidToken(s) => format!("Token 无效: {}", s),
+        GarrisonError::TokenRevoked(s) => format!("Token 已吊销: {}", s),
+        GarrisonError::ExpiredToken(s) => format!("Token 已过期: {}", s),
+        GarrisonError::Dao(s) => format!("DAO 错误: {}", s),
+        GarrisonError::Config(s) => format!("配置错误: {}", s),
+        GarrisonError::Internal(s) => format!("内部错误: {}", s),
+        GarrisonError::Session(s) => format!("会话错误: {}", s),
+        GarrisonError::Annotation(s) => format!("注解错误: {}", s),
+        GarrisonError::Context(s) => format!("上下文错误: {}", s),
+        GarrisonError::OAuth2(s) => format!("OAuth2 错误: {}", s),
+        GarrisonError::Network(s) => format!("网络错误: {}", s),
+        GarrisonError::InvalidParam(s) => format!("参数无效: {}", s),
+        GarrisonError::NotImplemented(s) => format!("未实现: {}", s),
+        GarrisonError::FirewallBlocked(s) => format!("防火墙拦截: {}", s),
+        GarrisonError::DisableService { service, until } => {
             format!("账号已被封禁：service={}, until={:?}", service, until)
         },
-        BulwarkError::NotSafe { reason } => format!("未完成二次认证：{}", reason),
-        BulwarkError::InvalidStateTransition { from, to } => {
+        GarrisonError::NotSafe { reason } => format!("未完成二次认证：{}", reason),
+        GarrisonError::InvalidStateTransition { from, to } => {
             format!("非法状态转换：{} -> {}", from, to)
         },
-        BulwarkError::SmsRateLimitExceeded { window } => {
+        GarrisonError::SmsRateLimitExceeded { window } => {
             format!("SMS 限速超出: {} 窗口", window)
         },
-        BulwarkError::SmsVerifyMaxAttempts => "SMS 验证码尝试次数超限".to_string(),
-        BulwarkError::SmsCodeNotFound => "SMS 验证码不存在".to_string(),
-        BulwarkError::SmsChannelRecycled => "SMS 通道已回收".to_string(),
-        BulwarkError::Exception(ex) => format!("业务异常[{}]: {}", ex.code, ex.message),
+        GarrisonError::SmsVerifyMaxAttempts => "SMS 验证码尝试次数超限".to_string(),
+        GarrisonError::SmsCodeNotFound => "SMS 验证码不存在".to_string(),
+        GarrisonError::SmsChannelRecycled => "SMS 通道已回收".to_string(),
+        GarrisonError::Exception(ex) => format!("业务异常[{}]: {}", ex.code, ex.message),
     }
 }
 
@@ -379,7 +379,7 @@ fn fallback_display(err: &BulwarkError) -> String {
 /// 仅在 `i18n-icu` feature 启用时编译，不影响现有翻译逻辑。
 #[cfg(feature = "i18n-icu")]
 pub mod icu_enhanced {
-    use crate::i18n::{current_locale, BulwarkLocale};
+    use crate::i18n::{current_locale, GarrisonLocale};
     use chrono::{Datelike, Timelike};
     use fixed_decimal::Decimal;
     use icu_datetime::fieldsets;
@@ -388,11 +388,11 @@ pub mod icu_enhanced {
     use icu_locale_core::{locale, Locale};
     use icu_plurals::{PluralCategory, PluralRules};
 
-    /// 将 `BulwarkLocale` 转为 ICU `Locale`。
-    fn to_icu_locale(l: BulwarkLocale) -> Locale {
+    /// 将 `GarrisonLocale` 转为 ICU `Locale`。
+    fn to_icu_locale(l: GarrisonLocale) -> Locale {
         match l {
-            BulwarkLocale::Zh => locale!("zh"),
-            BulwarkLocale::En => locale!("en"),
+            GarrisonLocale::Zh => locale!("zh"),
+            GarrisonLocale::En => locale!("en"),
         }
     }
 
@@ -441,25 +441,25 @@ pub mod icu_enhanced {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::error::BulwarkError;
-    use crate::exception::BulwarkException;
+    use crate::error::GarrisonError;
+    use crate::exception::GarrisonException;
 
     // ========================================================================
-    // BulwarkLocale 枚举测试
+    // GarrisonLocale 枚举测试
     // ========================================================================
 
     /// 默认 locale 应为中文。
     #[test]
     fn default_locale_is_zh() {
-        let locale = BulwarkLocale::default();
-        assert_eq!(locale, BulwarkLocale::Zh);
+        let locale = GarrisonLocale::default();
+        assert_eq!(locale, GarrisonLocale::Zh);
     }
 
     /// as_lang_id 返回正确的 LanguageIdentifier。
     #[test]
     fn as_lang_id_returns_correct_identifier() {
-        assert_eq!(BulwarkLocale::Zh.as_lang_id().to_string(), "zh");
-        assert_eq!(BulwarkLocale::En.as_lang_id().to_string(), "en");
+        assert_eq!(GarrisonLocale::Zh.as_lang_id().to_string(), "zh");
+        assert_eq!(GarrisonLocale::En.as_lang_id().to_string(), "en");
     }
 
     // ========================================================================
@@ -472,7 +472,7 @@ mod tests {
         // 注意：此测试依赖 thread_local 状态，可能受其他测试影响
         // 但因为使用栈式 scope，无 set_locale 调用时栈为空
         let locale = current_locale();
-        assert_eq!(locale, BulwarkLocale::Zh);
+        assert_eq!(locale, GarrisonLocale::Zh);
     }
 
     /// set_locale 后 current_locale 返回新值，drop 后恢复。
@@ -480,8 +480,8 @@ mod tests {
     fn set_locale_changes_current_and_restores_on_drop() {
         let original = current_locale();
         {
-            let _guard = set_locale(BulwarkLocale::En);
-            assert_eq!(current_locale(), BulwarkLocale::En);
+            let _guard = set_locale(GarrisonLocale::En);
+            assert_eq!(current_locale(), GarrisonLocale::En);
         }
         assert_eq!(current_locale(), original);
     }
@@ -491,13 +491,13 @@ mod tests {
     fn set_locale_supports_nesting() {
         let original = current_locale();
         {
-            let _g1 = set_locale(BulwarkLocale::En);
-            assert_eq!(current_locale(), BulwarkLocale::En);
+            let _g1 = set_locale(GarrisonLocale::En);
+            assert_eq!(current_locale(), GarrisonLocale::En);
             {
-                let _g2 = set_locale(BulwarkLocale::Zh);
-                assert_eq!(current_locale(), BulwarkLocale::Zh);
+                let _g2 = set_locale(GarrisonLocale::Zh);
+                assert_eq!(current_locale(), GarrisonLocale::Zh);
             }
-            assert_eq!(current_locale(), BulwarkLocale::En);
+            assert_eq!(current_locale(), GarrisonLocale::En);
         }
         assert_eq!(current_locale(), original);
     }
@@ -509,8 +509,8 @@ mod tests {
     /// 默认中文：NotLogin 翻译为中文消息。
     #[test]
     fn translate_error_zh_returns_chinese_message() {
-        let _guard = set_locale(BulwarkLocale::Zh);
-        let err = BulwarkError::NotLogin("请先登录".to_string());
+        let _guard = set_locale(GarrisonLocale::Zh);
+        let err = GarrisonError::NotLogin("请先登录".to_string());
         let translated = translate_error(&err);
         assert_eq!(translated, "未登录: 请先登录");
     }
@@ -518,8 +518,8 @@ mod tests {
     /// 英文 locale：NotLogin 翻译为英文消息。
     #[test]
     fn translate_error_en_returns_english_message() {
-        let _guard = set_locale(BulwarkLocale::En);
-        let err = BulwarkError::NotLogin("please login first".to_string());
+        let _guard = set_locale(GarrisonLocale::En);
+        let err = GarrisonError::NotLogin("please login first".to_string());
         let translated = translate_error(&err);
         assert_eq!(translated, "Not logged in: please login first");
     }
@@ -527,23 +527,23 @@ mod tests {
     /// 所有错误变体在中文 locale 下输出与硬编码一致。
     #[test]
     fn translate_error_zh_all_variants_match_hardcoded() {
-        let _guard = set_locale(BulwarkLocale::Zh);
+        let _guard = set_locale(GarrisonLocale::Zh);
         let cases = vec![
-            (BulwarkError::NotLogin("a".into()), "未登录: a"),
-            (BulwarkError::NotPermission("a".into()), "无权限: a"),
-            (BulwarkError::NotRole("a".into()), "无角色: a"),
-            (BulwarkError::InvalidToken("a".into()), "Token 无效: a"),
-            (BulwarkError::ExpiredToken("a".into()), "Token 已过期: a"),
-            (BulwarkError::Dao("a".into()), "DAO 错误: a"),
-            (BulwarkError::Config("a".into()), "配置错误: a"),
-            (BulwarkError::Internal("a".into()), "内部错误: a"),
-            (BulwarkError::Session("a".into()), "会话错误: a"),
-            (BulwarkError::Annotation("a".into()), "注解错误: a"),
-            (BulwarkError::Context("a".into()), "上下文错误: a"),
-            (BulwarkError::OAuth2("a".into()), "OAuth2 错误: a"),
-            (BulwarkError::Network("a".into()), "网络错误: a"),
-            (BulwarkError::InvalidParam("a".into()), "参数无效: a"),
-            (BulwarkError::NotImplemented("a".into()), "未实现: a"),
+            (GarrisonError::NotLogin("a".into()), "未登录: a"),
+            (GarrisonError::NotPermission("a".into()), "无权限: a"),
+            (GarrisonError::NotRole("a".into()), "无角色: a"),
+            (GarrisonError::InvalidToken("a".into()), "Token 无效: a"),
+            (GarrisonError::ExpiredToken("a".into()), "Token 已过期: a"),
+            (GarrisonError::Dao("a".into()), "DAO 错误: a"),
+            (GarrisonError::Config("a".into()), "配置错误: a"),
+            (GarrisonError::Internal("a".into()), "内部错误: a"),
+            (GarrisonError::Session("a".into()), "会话错误: a"),
+            (GarrisonError::Annotation("a".into()), "注解错误: a"),
+            (GarrisonError::Context("a".into()), "上下文错误: a"),
+            (GarrisonError::OAuth2("a".into()), "OAuth2 错误: a"),
+            (GarrisonError::Network("a".into()), "网络错误: a"),
+            (GarrisonError::InvalidParam("a".into()), "参数无效: a"),
+            (GarrisonError::NotImplemented("a".into()), "未实现: a"),
         ];
         for (err, expected) in cases {
             assert_eq!(translate_error(&err), expected, "mismatch for {:?}", err);
@@ -553,30 +553,30 @@ mod tests {
     /// 所有错误变体在英文 locale 下输出英文消息。
     #[test]
     fn translate_error_en_all_variants_english() {
-        let _guard = set_locale(BulwarkLocale::En);
+        let _guard = set_locale(GarrisonLocale::En);
         let cases = vec![
-            (BulwarkError::NotLogin("a".into()), "Not logged in: a"),
+            (GarrisonError::NotLogin("a".into()), "Not logged in: a"),
             (
-                BulwarkError::NotPermission("a".into()),
+                GarrisonError::NotPermission("a".into()),
                 "Permission denied: a",
             ),
-            (BulwarkError::NotRole("a".into()), "Role denied: a"),
-            (BulwarkError::InvalidToken("a".into()), "Invalid token: a"),
-            (BulwarkError::ExpiredToken("a".into()), "Token expired: a"),
-            (BulwarkError::Dao("a".into()), "DAO error: a"),
-            (BulwarkError::Config("a".into()), "Configuration error: a"),
-            (BulwarkError::Internal("a".into()), "Internal error: a"),
-            (BulwarkError::Session("a".into()), "Session error: a"),
-            (BulwarkError::Annotation("a".into()), "Annotation error: a"),
-            (BulwarkError::Context("a".into()), "Context error: a"),
-            (BulwarkError::OAuth2("a".into()), "OAuth2 error: a"),
-            (BulwarkError::Network("a".into()), "Network error: a"),
+            (GarrisonError::NotRole("a".into()), "Role denied: a"),
+            (GarrisonError::InvalidToken("a".into()), "Invalid token: a"),
+            (GarrisonError::ExpiredToken("a".into()), "Token expired: a"),
+            (GarrisonError::Dao("a".into()), "DAO error: a"),
+            (GarrisonError::Config("a".into()), "Configuration error: a"),
+            (GarrisonError::Internal("a".into()), "Internal error: a"),
+            (GarrisonError::Session("a".into()), "Session error: a"),
+            (GarrisonError::Annotation("a".into()), "Annotation error: a"),
+            (GarrisonError::Context("a".into()), "Context error: a"),
+            (GarrisonError::OAuth2("a".into()), "OAuth2 error: a"),
+            (GarrisonError::Network("a".into()), "Network error: a"),
             (
-                BulwarkError::InvalidParam("a".into()),
+                GarrisonError::InvalidParam("a".into()),
                 "Invalid parameter: a",
             ),
             (
-                BulwarkError::NotImplemented("a".into()),
+                GarrisonError::NotImplemented("a".into()),
                 "Not implemented: a",
             ),
         ];
@@ -588,16 +588,16 @@ mod tests {
     /// Exception 变体在中文 locale 下输出"业务异常[code]: message"。
     #[test]
     fn translate_error_zh_exception_variant() {
-        let _guard = set_locale(BulwarkLocale::Zh);
-        let err = BulwarkError::Exception(BulwarkException::new(-1, "请先登录"));
+        let _guard = set_locale(GarrisonLocale::Zh);
+        let err = GarrisonError::Exception(GarrisonException::new(-1, "请先登录"));
         assert_eq!(translate_error(&err), "业务异常[-1]: 请先登录");
     }
 
     /// Exception 变体在英文 locale 下输出"Business exception[code]: message"。
     #[test]
     fn translate_error_en_exception_variant() {
-        let _guard = set_locale(BulwarkLocale::En);
-        let err = BulwarkError::Exception(BulwarkException::new(-1, "please login"));
+        let _guard = set_locale(GarrisonLocale::En);
+        let err = GarrisonError::Exception(GarrisonException::new(-1, "please login"));
         assert_eq!(
             translate_error(&err),
             "Business exception[-1]: please login"
@@ -609,13 +609,13 @@ mod tests {
     fn locale_switch_is_isolated_per_scope() {
         let original = current_locale();
         {
-            let _g = set_locale(BulwarkLocale::En);
-            let err = BulwarkError::Dao("err".to_string());
+            let _g = set_locale(GarrisonLocale::En);
+            let err = GarrisonError::Dao("err".to_string());
             assert_eq!(translate_error(&err), "DAO error: err");
         }
         // 范围外恢复原 locale
-        let err = BulwarkError::Dao("err".to_string());
-        if original == BulwarkLocale::En {
+        let err = GarrisonError::Dao("err".to_string());
+        if original == GarrisonLocale::En {
             assert_eq!(translate_error(&err), "DAO error: err");
         } else {
             assert_eq!(translate_error(&err), "DAO 错误: err");
@@ -625,31 +625,31 @@ mod tests {
     /// fallback_display 与硬编码 0.2.x 输出一致。
     #[test]
     fn fallback_display_matches_hardcoded_chinese() {
-        let err = BulwarkError::NotLogin("测试".to_string());
+        let err = GarrisonError::NotLogin("测试".to_string());
         assert_eq!(fallback_display(&err), "未登录: 测试");
     }
 
     /// fallback_display 覆盖所有错误变体（确保每个 match arm 都有测试）。
     #[test]
     fn fallback_display_all_variants() {
-        let cases: Vec<(BulwarkError, &str)> = vec![
-            (BulwarkError::NotLogin("x".into()), "未登录: x"),
-            (BulwarkError::NotPermission("x".into()), "无权限: x"),
-            (BulwarkError::NotRole("x".into()), "无角色: x"),
-            (BulwarkError::InvalidToken("x".into()), "Token 无效: x"),
-            (BulwarkError::ExpiredToken("x".into()), "Token 已过期: x"),
-            (BulwarkError::Dao("x".into()), "DAO 错误: x"),
-            (BulwarkError::Config("x".into()), "配置错误: x"),
-            (BulwarkError::Internal("x".into()), "内部错误: x"),
-            (BulwarkError::Session("x".into()), "会话错误: x"),
-            (BulwarkError::Annotation("x".into()), "注解错误: x"),
-            (BulwarkError::Context("x".into()), "上下文错误: x"),
-            (BulwarkError::OAuth2("x".into()), "OAuth2 错误: x"),
-            (BulwarkError::Network("x".into()), "网络错误: x"),
-            (BulwarkError::InvalidParam("x".into()), "参数无效: x"),
-            (BulwarkError::NotImplemented("x".into()), "未实现: x"),
+        let cases: Vec<(GarrisonError, &str)> = vec![
+            (GarrisonError::NotLogin("x".into()), "未登录: x"),
+            (GarrisonError::NotPermission("x".into()), "无权限: x"),
+            (GarrisonError::NotRole("x".into()), "无角色: x"),
+            (GarrisonError::InvalidToken("x".into()), "Token 无效: x"),
+            (GarrisonError::ExpiredToken("x".into()), "Token 已过期: x"),
+            (GarrisonError::Dao("x".into()), "DAO 错误: x"),
+            (GarrisonError::Config("x".into()), "配置错误: x"),
+            (GarrisonError::Internal("x".into()), "内部错误: x"),
+            (GarrisonError::Session("x".into()), "会话错误: x"),
+            (GarrisonError::Annotation("x".into()), "注解错误: x"),
+            (GarrisonError::Context("x".into()), "上下文错误: x"),
+            (GarrisonError::OAuth2("x".into()), "OAuth2 错误: x"),
+            (GarrisonError::Network("x".into()), "网络错误: x"),
+            (GarrisonError::InvalidParam("x".into()), "参数无效: x"),
+            (GarrisonError::NotImplemented("x".into()), "未实现: x"),
             (
-                BulwarkError::Exception(BulwarkException::new(-1, "msg")),
+                GarrisonError::Exception(GarrisonException::new(-1, "msg")),
                 "业务异常[-1]: msg",
             ),
         ];
@@ -661,8 +661,8 @@ mod tests {
     /// get_bundle 返回的 bundle 可重复获取（OnceCell 缓存）。
     #[test]
     fn get_bundle_returns_cached_instance() {
-        let b1 = get_bundle(BulwarkLocale::Zh);
-        let b2 = get_bundle(BulwarkLocale::Zh);
+        let b1 = get_bundle(GarrisonLocale::Zh);
+        let b2 = get_bundle(GarrisonLocale::Zh);
         // 指针相等表示同一实例
         assert!(std::ptr::eq(b1, b2));
     }
@@ -674,7 +674,7 @@ mod tests {
     /// translate_detail 找到 key 时返回中文翻译。
     #[test]
     fn translate_detail_zh_returns_translated_message() {
-        let _guard = set_locale(BulwarkLocale::Zh);
+        let _guard = set_locale(GarrisonLocale::Zh);
         let msg = translate_detail("not-login", &[("detail", "请先登录")]);
         assert_eq!(msg, "未登录: 请先登录");
     }
@@ -682,7 +682,7 @@ mod tests {
     /// translate_detail 找到 key 时返回英文翻译。
     #[test]
     fn translate_detail_en_returns_translated_message() {
-        let _guard = set_locale(BulwarkLocale::En);
+        let _guard = set_locale(GarrisonLocale::En);
         let msg = translate_detail("not-login", &[("detail", "please login")]);
         assert_eq!(msg, "Not logged in: please login");
     }
@@ -690,7 +690,7 @@ mod tests {
     /// translate_detail 未找到 key 时返回 key 本身。
     #[test]
     fn translate_detail_missing_key_returns_key() {
-        let _guard = set_locale(BulwarkLocale::Zh);
+        let _guard = set_locale(GarrisonLocale::Zh);
         let msg = translate_detail("nonexistent-key-xyz", &[]);
         assert_eq!(msg, "nonexistent-key-xyz");
     }
@@ -698,7 +698,7 @@ mod tests {
     /// translate_detail 无参数时正常翻译。
     #[test]
     fn translate_detail_no_args_translates_successfully() {
-        let _guard = set_locale(BulwarkLocale::Zh);
+        let _guard = set_locale(GarrisonLocale::Zh);
         let msg = translate_detail("sms-verify-max-attempts", &[]);
         assert_eq!(msg, "SMS 验证码尝试次数超限");
     }
@@ -706,7 +706,7 @@ mod tests {
     /// translate_detail 多参数翻译（disable-service 含 service + until）。
     #[test]
     fn translate_detail_multiple_args_zh() {
-        let _guard = set_locale(BulwarkLocale::Zh);
+        let _guard = set_locale(GarrisonLocale::Zh);
         let msg = translate_detail(
             "disable-service",
             &[
@@ -721,7 +721,7 @@ mod tests {
     /// translate_detail 多参数翻译（英文）。
     #[test]
     fn translate_detail_multiple_args_en() {
-        let _guard = set_locale(BulwarkLocale::En);
+        let _guard = set_locale(GarrisonLocale::En);
         let msg = translate_detail(
             "invalid-state-transition",
             &[("from", "Active"), ("to", "Closed")],
@@ -736,8 +736,8 @@ mod tests {
     /// TokenRevoked 在中文 locale 下输出翻译消息。
     #[test]
     fn translate_error_zh_token_revoked() {
-        let _guard = set_locale(BulwarkLocale::Zh);
-        let err = BulwarkError::TokenRevoked("reuse detected".to_string());
+        let _guard = set_locale(GarrisonLocale::Zh);
+        let err = GarrisonError::TokenRevoked("reuse detected".to_string());
         let translated = translate_error(&err);
         // token-revoked key 不存在于 .ftl，走 fallback_display
         assert_eq!(translated, "Token 已吊销: reuse detected");
@@ -746,8 +746,8 @@ mod tests {
     /// TokenRevoked 在英文 locale 下输出翻译消息。
     #[test]
     fn translate_error_en_token_revoked() {
-        let _guard = set_locale(BulwarkLocale::En);
-        let err = BulwarkError::TokenRevoked("reuse detected".to_string());
+        let _guard = set_locale(GarrisonLocale::En);
+        let err = GarrisonError::TokenRevoked("reuse detected".to_string());
         let translated = translate_error(&err);
         // token-revoked key 不存在于 .ftl，走 fallback_display（中文硬编码）
         assert_eq!(translated, "Token 已吊销: reuse detected");
@@ -756,8 +756,8 @@ mod tests {
     /// FirewallBlocked 在中文 locale 下输出翻译消息。
     #[test]
     fn translate_error_zh_firewall_blocked() {
-        let _guard = set_locale(BulwarkLocale::Zh);
-        let err = BulwarkError::FirewallBlocked("black_path: /admin".to_string());
+        let _guard = set_locale(GarrisonLocale::Zh);
+        let err = GarrisonError::FirewallBlocked("black_path: /admin".to_string());
         let translated = translate_error(&err);
         // firewall-blocked key 不存在于 .ftl，走 fallback_display
         assert_eq!(translated, "防火墙拦截: black_path: /admin");
@@ -766,11 +766,11 @@ mod tests {
     /// DisableService 在中文 locale 下输出翻译消息。
     #[test]
     fn translate_error_zh_disable_service() {
-        let _guard = set_locale(BulwarkLocale::Zh);
+        let _guard = set_locale(GarrisonLocale::Zh);
         let until = chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
             .unwrap()
             .with_timezone(&chrono::Utc);
-        let err = BulwarkError::DisableService {
+        let err = GarrisonError::DisableService {
             service: "default".to_string(),
             until: Some(until),
         };
@@ -782,8 +782,8 @@ mod tests {
     /// DisableService 在英文 locale 下输出翻译消息。
     #[test]
     fn translate_error_en_disable_service() {
-        let _guard = set_locale(BulwarkLocale::En);
-        let err = BulwarkError::DisableService {
+        let _guard = set_locale(GarrisonLocale::En);
+        let err = GarrisonError::DisableService {
             service: "oidc".to_string(),
             until: None,
         };
@@ -795,8 +795,8 @@ mod tests {
     /// NotSafe 在中文 locale 下输出翻译消息。
     #[test]
     fn translate_error_zh_not_safe() {
-        let _guard = set_locale(BulwarkLocale::Zh);
-        let err = BulwarkError::NotSafe {
+        let _guard = set_locale(GarrisonLocale::Zh);
+        let err = GarrisonError::NotSafe {
             reason: "MFA_TOTP_REQUIRED".to_string(),
         };
         assert_eq!(translate_error(&err), "未完成二次认证：MFA_TOTP_REQUIRED");
@@ -805,8 +805,8 @@ mod tests {
     /// NotSafe 在英文 locale 下输出翻译消息。
     #[test]
     fn translate_error_en_not_safe() {
-        let _guard = set_locale(BulwarkLocale::En);
-        let err = BulwarkError::NotSafe {
+        let _guard = set_locale(GarrisonLocale::En);
+        let err = GarrisonError::NotSafe {
             reason: "WEBAUTHN_REQUIRED".to_string(),
         };
         assert_eq!(
@@ -818,8 +818,8 @@ mod tests {
     /// InvalidStateTransition 在中文 locale 下输出翻译消息。
     #[test]
     fn translate_error_zh_invalid_state_transition() {
-        let _guard = set_locale(BulwarkLocale::Zh);
-        let err = BulwarkError::InvalidStateTransition {
+        let _guard = set_locale(GarrisonLocale::Zh);
+        let err = GarrisonError::InvalidStateTransition {
             from: "Active".to_string(),
             to: "Closed".to_string(),
         };
@@ -829,8 +829,8 @@ mod tests {
     /// InvalidStateTransition 在英文 locale 下输出翻译消息。
     #[test]
     fn translate_error_en_invalid_state_transition() {
-        let _guard = set_locale(BulwarkLocale::En);
-        let err = BulwarkError::InvalidStateTransition {
+        let _guard = set_locale(GarrisonLocale::En);
+        let err = GarrisonError::InvalidStateTransition {
             from: "Pending".to_string(),
             to: "Active".to_string(),
         };
@@ -843,8 +843,8 @@ mod tests {
     /// SmsRateLimitExceeded 在中文 locale 下输出翻译消息。
     #[test]
     fn translate_error_zh_sms_rate_limit_exceeded() {
-        let _guard = set_locale(BulwarkLocale::Zh);
-        let err = BulwarkError::SmsRateLimitExceeded {
+        let _guard = set_locale(GarrisonLocale::Zh);
+        let err = GarrisonError::SmsRateLimitExceeded {
             window: "hourly".to_string(),
         };
         assert_eq!(translate_error(&err), "SMS 限速超出: hourly 窗口");
@@ -853,8 +853,8 @@ mod tests {
     /// SmsRateLimitExceeded 在英文 locale 下输出翻译消息。
     #[test]
     fn translate_error_en_sms_rate_limit_exceeded() {
-        let _guard = set_locale(BulwarkLocale::En);
-        let err = BulwarkError::SmsRateLimitExceeded {
+        let _guard = set_locale(GarrisonLocale::En);
+        let err = GarrisonError::SmsRateLimitExceeded {
             window: "daily".to_string(),
         };
         assert_eq!(
@@ -866,16 +866,16 @@ mod tests {
     /// SmsVerifyMaxAttempts 在中文 locale 下输出翻译消息。
     #[test]
     fn translate_error_zh_sms_verify_max_attempts() {
-        let _guard = set_locale(BulwarkLocale::Zh);
-        let err = BulwarkError::SmsVerifyMaxAttempts;
+        let _guard = set_locale(GarrisonLocale::Zh);
+        let err = GarrisonError::SmsVerifyMaxAttempts;
         assert_eq!(translate_error(&err), "SMS 验证码尝试次数超限");
     }
 
     /// SmsVerifyMaxAttempts 在英文 locale 下输出翻译消息。
     #[test]
     fn translate_error_en_sms_verify_max_attempts() {
-        let _guard = set_locale(BulwarkLocale::En);
-        let err = BulwarkError::SmsVerifyMaxAttempts;
+        let _guard = set_locale(GarrisonLocale::En);
+        let err = GarrisonError::SmsVerifyMaxAttempts;
         assert_eq!(
             translate_error(&err),
             "SMS verification max attempts exceeded"
@@ -885,32 +885,32 @@ mod tests {
     /// SmsCodeNotFound 在中文 locale 下输出翻译消息。
     #[test]
     fn translate_error_zh_sms_code_not_found() {
-        let _guard = set_locale(BulwarkLocale::Zh);
-        let err = BulwarkError::SmsCodeNotFound;
+        let _guard = set_locale(GarrisonLocale::Zh);
+        let err = GarrisonError::SmsCodeNotFound;
         assert_eq!(translate_error(&err), "SMS 验证码不存在");
     }
 
     /// SmsCodeNotFound 在英文 locale 下输出翻译消息。
     #[test]
     fn translate_error_en_sms_code_not_found() {
-        let _guard = set_locale(BulwarkLocale::En);
-        let err = BulwarkError::SmsCodeNotFound;
+        let _guard = set_locale(GarrisonLocale::En);
+        let err = GarrisonError::SmsCodeNotFound;
         assert_eq!(translate_error(&err), "SMS verification code not found");
     }
 
     /// SmsChannelRecycled 在中文 locale 下输出翻译消息。
     #[test]
     fn translate_error_zh_sms_channel_recycled() {
-        let _guard = set_locale(BulwarkLocale::Zh);
-        let err = BulwarkError::SmsChannelRecycled;
+        let _guard = set_locale(GarrisonLocale::Zh);
+        let err = GarrisonError::SmsChannelRecycled;
         assert_eq!(translate_error(&err), "SMS 通道已回收");
     }
 
     /// SmsChannelRecycled 在英文 locale 下输出翻译消息。
     #[test]
     fn translate_error_en_sms_channel_recycled() {
-        let _guard = set_locale(BulwarkLocale::En);
-        let err = BulwarkError::SmsChannelRecycled;
+        let _guard = set_locale(GarrisonLocale::En);
+        let err = GarrisonError::SmsChannelRecycled;
         assert_eq!(translate_error(&err), "SMS channel recycled");
     }
 
@@ -924,54 +924,54 @@ mod tests {
         let until = chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
             .unwrap()
             .with_timezone(&chrono::Utc);
-        let cases: Vec<(BulwarkError, String)> = vec![
+        let cases: Vec<(GarrisonError, String)> = vec![
             (
-                BulwarkError::TokenRevoked("x".into()),
+                GarrisonError::TokenRevoked("x".into()),
                 "Token 已吊销: x".to_string(),
             ),
             (
-                BulwarkError::FirewallBlocked("x".into()),
+                GarrisonError::FirewallBlocked("x".into()),
                 "防火墙拦截: x".to_string(),
             ),
             (
-                BulwarkError::DisableService {
+                GarrisonError::DisableService {
                     service: "default".into(),
                     until: Some(until),
                 },
                 format!("账号已被封禁：service=default, until={:?}", Some(until)),
             ),
             (
-                BulwarkError::DisableService {
+                GarrisonError::DisableService {
                     service: "oidc".into(),
                     until: None,
                 },
                 "账号已被封禁：service=oidc, until=None".to_string(),
             ),
             (
-                BulwarkError::NotSafe { reason: "r".into() },
+                GarrisonError::NotSafe { reason: "r".into() },
                 "未完成二次认证：r".to_string(),
             ),
             (
-                BulwarkError::InvalidStateTransition {
+                GarrisonError::InvalidStateTransition {
                     from: "A".into(),
                     to: "B".into(),
                 },
                 "非法状态转换：A -> B".to_string(),
             ),
             (
-                BulwarkError::SmsRateLimitExceeded { window: "w".into() },
+                GarrisonError::SmsRateLimitExceeded { window: "w".into() },
                 "SMS 限速超出: w 窗口".to_string(),
             ),
             (
-                BulwarkError::SmsVerifyMaxAttempts,
+                GarrisonError::SmsVerifyMaxAttempts,
                 "SMS 验证码尝试次数超限".to_string(),
             ),
             (
-                BulwarkError::SmsCodeNotFound,
+                GarrisonError::SmsCodeNotFound,
                 "SMS 验证码不存在".to_string(),
             ),
             (
-                BulwarkError::SmsChannelRecycled,
+                GarrisonError::SmsChannelRecycled,
                 "SMS 通道已回收".to_string(),
             ),
         ];
@@ -984,38 +984,38 @@ mod tests {
     #[test]
     fn error_to_key_args_all_variants() {
         let until = chrono::Utc::now();
-        let cases: Vec<BulwarkError> = vec![
-            BulwarkError::NotLogin("a".into()),
-            BulwarkError::NotPermission("a".into()),
-            BulwarkError::NotRole("a".into()),
-            BulwarkError::InvalidToken("a".into()),
-            BulwarkError::TokenRevoked("a".into()),
-            BulwarkError::ExpiredToken("a".into()),
-            BulwarkError::Dao("a".into()),
-            BulwarkError::Config("a".into()),
-            BulwarkError::Internal("a".into()),
-            BulwarkError::Session("a".into()),
-            BulwarkError::Annotation("a".into()),
-            BulwarkError::Context("a".into()),
-            BulwarkError::OAuth2("a".into()),
-            BulwarkError::Network("a".into()),
-            BulwarkError::InvalidParam("a".into()),
-            BulwarkError::NotImplemented("a".into()),
-            BulwarkError::FirewallBlocked("a".into()),
-            BulwarkError::DisableService {
+        let cases: Vec<GarrisonError> = vec![
+            GarrisonError::NotLogin("a".into()),
+            GarrisonError::NotPermission("a".into()),
+            GarrisonError::NotRole("a".into()),
+            GarrisonError::InvalidToken("a".into()),
+            GarrisonError::TokenRevoked("a".into()),
+            GarrisonError::ExpiredToken("a".into()),
+            GarrisonError::Dao("a".into()),
+            GarrisonError::Config("a".into()),
+            GarrisonError::Internal("a".into()),
+            GarrisonError::Session("a".into()),
+            GarrisonError::Annotation("a".into()),
+            GarrisonError::Context("a".into()),
+            GarrisonError::OAuth2("a".into()),
+            GarrisonError::Network("a".into()),
+            GarrisonError::InvalidParam("a".into()),
+            GarrisonError::NotImplemented("a".into()),
+            GarrisonError::FirewallBlocked("a".into()),
+            GarrisonError::DisableService {
                 service: "s".into(),
                 until: Some(until),
             },
-            BulwarkError::NotSafe { reason: "r".into() },
-            BulwarkError::InvalidStateTransition {
+            GarrisonError::NotSafe { reason: "r".into() },
+            GarrisonError::InvalidStateTransition {
                 from: "f".into(),
                 to: "t".into(),
             },
-            BulwarkError::SmsRateLimitExceeded { window: "w".into() },
-            BulwarkError::SmsVerifyMaxAttempts,
-            BulwarkError::SmsCodeNotFound,
-            BulwarkError::SmsChannelRecycled,
-            BulwarkError::Exception(BulwarkException::new(-1, "msg")),
+            GarrisonError::SmsRateLimitExceeded { window: "w".into() },
+            GarrisonError::SmsVerifyMaxAttempts,
+            GarrisonError::SmsCodeNotFound,
+            GarrisonError::SmsChannelRecycled,
+            GarrisonError::Exception(GarrisonException::new(-1, "msg")),
         ];
         for err in cases {
             // 仅验证不 panic 且返回非空 key
@@ -1027,8 +1027,8 @@ mod tests {
     /// get_bundle 对英文 locale 也返回缓存实例。
     #[test]
     fn get_bundle_en_returns_cached_instance() {
-        let b1 = get_bundle(BulwarkLocale::En);
-        let b2 = get_bundle(BulwarkLocale::En);
+        let b1 = get_bundle(GarrisonLocale::En);
+        let b2 = get_bundle(GarrisonLocale::En);
         assert!(std::ptr::eq(b1, b2), "英文 bundle 应为同一缓存实例");
     }
 
@@ -1039,7 +1039,7 @@ mod tests {
     /// translate_detail 对已知 key 返回翻译后的字符串。
     #[test]
     fn translate_detail_known_key_returns_translation() {
-        let _guard = set_locale(BulwarkLocale::En);
+        let _guard = set_locale(GarrisonLocale::En);
         let result = translate_detail("not-login", &[("detail", "test")]);
         assert!(result.contains("test"), "应包含参数值: {}", result);
     }
@@ -1047,7 +1047,7 @@ mod tests {
     /// translate_detail 对未知 key 返回 key 本身。
     #[test]
     fn translate_detail_unknown_key_returns_key() {
-        let _guard = set_locale(BulwarkLocale::En);
+        let _guard = set_locale(GarrisonLocale::En);
         let result = translate_detail("nonexistent-key-xyz", &[]);
         assert_eq!(result, "nonexistent-key-xyz");
     }
@@ -1055,7 +1055,7 @@ mod tests {
     /// translate_detail 对已知 key 但无参数也能正常翻译。
     #[test]
     fn translate_detail_known_key_no_args() {
-        let _guard = set_locale(BulwarkLocale::Zh);
+        let _guard = set_locale(GarrisonLocale::Zh);
         let result = translate_detail("sms-verify-max-attempts", &[]);
         assert!(!result.is_empty());
         assert_ne!(result, "sms-verify-max-attempts", "应返回翻译而非 key 本身");
@@ -1068,7 +1068,7 @@ mod tests {
     #[cfg(feature = "i18n-icu")]
     #[test]
     fn icu_plural_category_en_one() {
-        let _guard = set_locale(BulwarkLocale::En);
+        let _guard = set_locale(GarrisonLocale::En);
         let cat = icu_enhanced::plural_category(1);
         assert_eq!(cat, icu_plurals::PluralCategory::One);
     }
@@ -1076,7 +1076,7 @@ mod tests {
     #[cfg(feature = "i18n-icu")]
     #[test]
     fn icu_plural_category_en_other() {
-        let _guard = set_locale(BulwarkLocale::En);
+        let _guard = set_locale(GarrisonLocale::En);
         let cat = icu_enhanced::plural_category(2);
         assert_eq!(cat, icu_plurals::PluralCategory::Other);
     }
@@ -1084,7 +1084,7 @@ mod tests {
     #[cfg(feature = "i18n-icu")]
     #[test]
     fn icu_format_number_en() {
-        let _guard = set_locale(BulwarkLocale::En);
+        let _guard = set_locale(GarrisonLocale::En);
         let formatted = icu_enhanced::format_number_locale(1_000_000);
         assert!(formatted.contains("1"), "应包含数字 1: {}", formatted);
     }
@@ -1092,7 +1092,7 @@ mod tests {
     #[cfg(feature = "i18n-icu")]
     #[test]
     fn icu_format_datetime_en() {
-        let _guard = set_locale(BulwarkLocale::En);
+        let _guard = set_locale(GarrisonLocale::En);
         let dt = chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
             .unwrap()
             .with_timezone(&chrono::Utc);

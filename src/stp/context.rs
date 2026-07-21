@@ -2,8 +2,8 @@
 //! See LICENSE for full license text.
 
 //! task_local 上下文 — Token 续签结果传递 + CURRENT_TOKEN 跨 spawn 传播。
-use super::{BulwarkContext, CURRENT_TOKEN};
-use crate::error::{BulwarkError, BulwarkResult};
+use super::{GarrisonContext, CURRENT_TOKEN};
+use crate::error::{GarrisonError, GarrisonResult};
 use std::future::Future;
 use std::sync::{Arc, Mutex};
 
@@ -19,7 +19,7 @@ tokio::task_local! {
     /// ```text
     /// Request → middleware sets scope(None)
     ///        → handler calls check_login → check_and_renew writes Some(token)
-    ///        → middleware reads current_renewed_token() → writes X-Bulwark-Renewed-Token
+    ///        → middleware reads current_renewed_token() → writes X-Garrison-Renewed-Token
     /// Response sent
     /// ```
     pub static CURRENT_RENEWED_TOKEN: Arc<Mutex<Option<String>>>;
@@ -31,7 +31,7 @@ tokio::task_local! {
 /// ```ignore
 /// let result = with_renewed_token_scope(async { handler(req).await }).await;
 /// if let Some(new_token) = current_renewed_token() {
-///     response.headers_mut().insert("X-Bulwark-Renewed-Token", new_token.parse().unwrap());
+///     response.headers_mut().insert("X-Garrison-Renewed-Token", new_token.parse().unwrap());
 /// }
 /// ```
 pub async fn with_renewed_token_scope<R>(f: impl std::future::Future<Output = R>) -> R {
@@ -79,17 +79,17 @@ pub fn clear_renewed_token() {
 }
 
 // ============================================================================
-// BulwarkContext：task_local CURRENT_TOKEN 跨 spawn 传播
+// GarrisonContext：task_local CURRENT_TOKEN 跨 spawn 传播
 // ============================================================================
 //
-// `BulwarkContext` 结构体定义位于 `super::mod`，本节仅承载 impl 块。
+// `GarrisonContext` 结构体定义位于 `super::mod`，本节仅承载 impl 块。
 // tokio `task_local!` 不会自动传播到 `tokio::spawn` 子任务，
-// `BulwarkContext` 通过 capture/within 模式手动传播 `CURRENT_TOKEN`。
+// `GarrisonContext` 通过 capture/within 模式手动传播 `CURRENT_TOKEN`。
 
-impl BulwarkContext {
+impl GarrisonContext {
     /// 捕获当前 task_local 上下文（`CURRENT_TOKEN`）。
     ///
-    /// 在父任务中调用，返回的 `BulwarkContext` 可移动到子任务中。
+    /// 在父任务中调用，返回的 `GarrisonContext` 可移动到子任务中。
     /// 未设置 `CURRENT_TOKEN` 时返回 `token: None` 的上下文。
     pub fn capture() -> Self {
         Self {
@@ -122,7 +122,7 @@ impl BulwarkContext {
 ///
 /// 在 axum middleware 中调用：
 /// ```ignore
-/// bulwark::stp::with_current_token(token, async { handler(req).await }).await
+/// garrison::stp::with_current_token(token, async { handler(req).await }).await
 /// ```
 pub async fn with_current_token<R>(token: String, f: impl Future<Output = R>) -> R {
     CURRENT_TOKEN.scope(token, f).await
@@ -131,13 +131,13 @@ pub async fn with_current_token<R>(token: String, f: impl Future<Output = R>) ->
 /// 获取当前请求的 token（从 task_local 读取）。
 ///
 /// # 错误
-/// - 若未在 `with_current_token` 作用域内调用，返回 `BulwarkError::Session`。
+/// - 若未在 `with_current_token` 作用域内调用，返回 `GarrisonError::Session`。
 #[allow(clippy::map_clone)]
-pub fn current_token() -> BulwarkResult<String> {
+pub fn current_token() -> GarrisonResult<String> {
     CURRENT_TOKEN
         .try_get()
         .map(|t| t.clone())
-        .map_err(|_| BulwarkError::Session("stp-context-not-set::".to_string()))
+        .map_err(|_| GarrisonError::Session("stp-context-not-set::".to_string()))
 }
 
 #[cfg(test)]

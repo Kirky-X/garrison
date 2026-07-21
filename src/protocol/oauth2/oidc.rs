@@ -17,7 +17,7 @@
 //! - id_token 使用 `jsonwebtoken` crate 直接签发（复用 `JwtHandler` 的密钥/算法模式，但 claims 不同）
 //! - 默认 HS256 算法（与 `JwtHandler` 一致）
 
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::error::{GarrisonError, GarrisonResult};
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -65,7 +65,7 @@ impl OidcAudience {
 
 /// OIDC id_token 的 claims 载荷。
 ///
-/// 包含标准 OIDC claims（iss/sub/aud/exp/iat/nonce）+ Bulwark 内部字段（login_id）。
+/// 包含标准 OIDC claims（iss/sub/aud/exp/iat/nonce）+ Garrison 内部字段（login_id）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OidcClaims {
     /// 签发者标识（issuer），通常为 OIDC Provider 的 URL。
@@ -78,7 +78,7 @@ pub struct OidcClaims {
     pub iat: i64,
     /// 过期时间（Unix 秒）。
     pub exp: i64,
-    /// Bulwark 登录标识（字符串形式，与 sub 一致）。
+    /// Garrison 登录标识（字符串形式，与 sub 一致）。
     pub login_id: String,
     /// nonce（防重放，客户端在授权请求中提供，id_token 中回传）。
     pub nonce: String,
@@ -107,15 +107,15 @@ impl OidcHandler {
     /// - `secret`: JWT 签名密钥，不可为空。
     ///
     /// # 错误
-    /// - `BulwarkError::Config`: secret 为空。
+    /// - `GarrisonError::Config`: secret 为空。
     pub fn new(
         issuer: impl Into<String>,
         audience: impl Into<String>,
         secret: impl Into<String>,
-    ) -> BulwarkResult<Self> {
+    ) -> GarrisonResult<Self> {
         let secret = secret.into();
         if secret.is_empty() {
-            return Err(BulwarkError::Config(
+            return Err(GarrisonError::Config(
                 "oauth2-client-secret-empty".to_string(),
             ));
         }
@@ -141,14 +141,14 @@ impl OidcHandler {
     ///
     /// 非对称算法需通过 `EncodingKey::from_rsa_pem` 等接口加载密钥，
     /// 当前 `OidcHandler` 仅持有 `secret: String`，不支持非对称密钥（M4 修复）。
-    fn require_hmac_algorithm(&self) -> BulwarkResult<()> {
+    fn require_hmac_algorithm(&self) -> GarrisonResult<()> {
         if matches!(
             self.algorithm,
             Algorithm::HS256 | Algorithm::HS384 | Algorithm::HS512
         ) {
             Ok(())
         } else {
-            Err(BulwarkError::Config(format!(
+            Err(GarrisonError::Config(format!(
                 "OidcHandler 仅支持 HS256/HS384/HS512 算法，当前算法不支持: {:?}",
                 self.algorithm
             )))
@@ -158,7 +158,7 @@ impl OidcHandler {
     /// 签发 OIDC id_token。
     ///
     /// **算法限制**：当前仅支持 HMAC 系列算法（HS256/HS384/HS512）。
-    /// 非对称算法（RS*/ES*/PS*）会返回 `BulwarkError::Config`，因为
+    /// 非对称算法（RS*/ES*/PS*）会返回 `GarrisonError::Config`，因为
     /// `EncodingKey::from_secret` 仅接受对称密钥。JWKS + 非对称算法支持待 0.5.0+。
     ///
     /// # 参数
@@ -169,18 +169,18 @@ impl OidcHandler {
     ///
     /// # 返回
     /// - `Ok(String)`: JWT 格式的 id_token。
-    /// - `Err(BulwarkError::Config)`: timeout 为负，或当前算法为非对称算法。
-    /// - `Err(BulwarkError::Internal)`: 签发失败。
+    /// - `Err(GarrisonError::Config)`: timeout 为负，或当前算法为非对称算法。
+    /// - `Err(GarrisonError::Internal)`: 签发失败。
     pub fn sign_id_token(
         &self,
         login_id: impl Into<String>,
         nonce: &str,
         _scope: &str,
         timeout: i64,
-    ) -> BulwarkResult<String> {
+    ) -> GarrisonResult<String> {
         let login_id: String = login_id.into();
         if timeout < 0 {
-            return Err(BulwarkError::Config(format!(
+            return Err(GarrisonError::Config(format!(
                 "timeout 不能为负数: {}",
                 timeout
             )));
@@ -189,7 +189,7 @@ impl OidcHandler {
         self.require_hmac_algorithm()?;
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map_err(|e| BulwarkError::Internal(format!("system-clock-error::{}", e)))?
+            .map_err(|e| GarrisonError::Internal(format!("system-clock-error::{}", e)))?
             .as_secs() as i64;
         let claims = OidcClaims {
             iss: self.issuer.clone(),
@@ -204,13 +204,13 @@ impl OidcHandler {
         let header = Header::new(self.algorithm);
         let key = EncodingKey::from_secret(self.secret.as_bytes());
         encode(&header, &claims, &key)
-            .map_err(|e| BulwarkError::Internal(format!("jwt-sign::{}", e)))
+            .map_err(|e| GarrisonError::Internal(format!("jwt-sign::{}", e)))
     }
 
     /// 验证 OIDC id_token。
     ///
     /// **算法限制**：当前仅支持 HMAC 系列算法（HS256/HS384/HS512）。
-    /// 非对称算法（RS*/ES*/PS*）会返回 `BulwarkError::Config`，因为
+    /// 非对称算法（RS*/ES*/PS*）会返回 `GarrisonError::Config`，因为
     /// `DecodingKey::from_secret` 仅接受对称密钥。JWKS + 非对称算法支持待 0.5.0+。
     ///
     /// # 参数
@@ -219,15 +219,15 @@ impl OidcHandler {
     ///
     /// # 返回
     /// - `Ok(OidcClaims)`: 校验成功，返回 claims。
-    /// - `Err(BulwarkError::Config)`: 当前算法为非对称算法。
-    /// - `Err(BulwarkError::OAuth2)`: nonce 不匹配。
-    /// - `Err(BulwarkError::ExpiredToken)`: id_token 已过期。
-    /// - `Err(BulwarkError::InvalidToken)`: 签名/格式/iss/aud 校验失败。
+    /// - `Err(GarrisonError::Config)`: 当前算法为非对称算法。
+    /// - `Err(GarrisonError::OAuth2)`: nonce 不匹配。
+    /// - `Err(GarrisonError::ExpiredToken)`: id_token 已过期。
+    /// - `Err(GarrisonError::InvalidToken)`: 签名/格式/iss/aud 校验失败。
     pub fn verify_id_token(
         &self,
         id_token: &str,
         expected_nonce: &str,
-    ) -> BulwarkResult<OidcClaims> {
+    ) -> GarrisonResult<OidcClaims> {
         // M4 修复：提前校验算法，避免 from_secret 在非对称算法下产生模糊错误
         self.require_hmac_algorithm()?;
         let key = DecodingKey::from_secret(self.secret.as_bytes());
@@ -241,18 +241,18 @@ impl OidcHandler {
             let msg = e.to_string();
             if msg.contains("ExpiredSignature") {
                 // L6 修复：错误消息不含 token 内容，仅含 jsonwebtoken 错误类别
-                BulwarkError::ExpiredToken(format!("jwt-expired::{}", e))
+                GarrisonError::ExpiredToken(format!("jwt-expired::{}", e))
             } else {
                 // L6 修复：错误消息不含 token 内容/密钥，仅含 jsonwebtoken 错误类别
                 //（如 "InvalidSignature" / "InvalidToken"）
-                BulwarkError::InvalidToken(format!("jwt-invalid::{}", e))
+                GarrisonError::InvalidToken(format!("jwt-invalid::{}", e))
             }
         })?;
         let claims = decoded.claims;
         // OIDC 规范要求校验 iss 和 aud
         // L6 修复：错误消息不含 claims.iss 实际值（虽 iss 通常公开，但 fail-closed 不泄露任何 token claim）
         if claims.iss != self.issuer {
-            return Err(BulwarkError::InvalidToken(
+            return Err(GarrisonError::InvalidToken(
                 "OIDC iss 不匹配: token 中的 issuer 与期望不符".to_string(),
             ));
         }
@@ -260,7 +260,7 @@ impl OidcHandler {
         // 校验 `aud` 是否包含本客户端的 `client_id`，与 `sso/oidc.rs` 行为对齐。
         // L6 修复：错误消息不含 claims.aud 实际值（虽 aud 通常公开，但 fail-closed 不泄露任何 token claim）
         if !claims.aud.contains(&self.audience) {
-            return Err(BulwarkError::InvalidToken(
+            return Err(GarrisonError::InvalidToken(
                 "OIDC aud 不匹配: token 中的 audience 不包含本客户端 client_id".to_string(),
             ));
         }
@@ -268,7 +268,7 @@ impl OidcHandler {
         // 避免 nonce 长度/前缀差异导致的 timing side-channel 泄漏 nonce 信息。
         // subtle 的 ct_eq 在长度不等时返回 0（不提前 return），全程常量时间。
         if !bool::from(claims.nonce.as_bytes().ct_eq(expected_nonce.as_bytes())) {
-            return Err(BulwarkError::OAuth2("nonce mismatch".to_string()));
+            return Err(GarrisonError::OAuth2("nonce mismatch".to_string()));
         }
         Ok(claims)
     }
@@ -341,7 +341,7 @@ mod tests {
         let result = OidcHandler::new("issuer", "aud", "");
         assert!(result.is_err());
         match result.err() {
-            Some(BulwarkError::Config(_)) => {},
+            Some(GarrisonError::Config(_)) => {},
             other => panic!("期望 Config 错误，实际: {:?}", other),
         }
     }
@@ -399,7 +399,7 @@ mod tests {
         let result = handler.verify_id_token(&token, "wrong-nonce");
         assert!(result.is_err());
         match result.err() {
-            Some(BulwarkError::OAuth2(msg)) => assert!(msg.contains("nonce mismatch")),
+            Some(GarrisonError::OAuth2(msg)) => assert!(msg.contains("nonce mismatch")),
             other => panic!("期望 OAuth2 错误，实际: {:?}", other),
         }
     }
@@ -425,7 +425,7 @@ mod tests {
         let result = handler.sign_id_token("1001", "nonce", "openid", -1);
         assert!(result.is_err());
         match result.err() {
-            Some(BulwarkError::Config(_)) => {},
+            Some(GarrisonError::Config(_)) => {},
             other => panic!("期望 Config 错误，实际: {:?}", other),
         }
     }
@@ -442,7 +442,7 @@ mod tests {
         let result = handler.verify_id_token(&tampered, "nonce");
         assert!(result.is_err());
         match result.err() {
-            Some(BulwarkError::InvalidToken(_)) => {},
+            Some(GarrisonError::InvalidToken(_)) => {},
             other => panic!("期望 InvalidToken 错误（签名校验失败），实际: {:?}", other),
         }
     }
@@ -454,7 +454,7 @@ mod tests {
         let result = handler.sign_id_token("1001", "nonce", "openid", 3600);
         assert!(result.is_err());
         match result.err() {
-            Some(BulwarkError::Config(msg)) => assert!(
+            Some(GarrisonError::Config(msg)) => assert!(
                 msg.contains("HS256") && msg.contains("RS256"),
                 "错误消息应包含 HS256 与 RS256，实际: {}",
                 msg
@@ -475,7 +475,7 @@ mod tests {
         let result = verifier.verify_id_token(&token, "nonce");
         assert!(result.is_err());
         match result.err() {
-            Some(BulwarkError::Config(_)) => {},
+            Some(GarrisonError::Config(_)) => {},
             other => panic!("期望 Config 错误，实际: {:?}", other),
         }
     }
@@ -491,7 +491,7 @@ mod tests {
         let result = verifier.verify_id_token(&token, "nonce");
         assert!(result.is_err());
         match result.err() {
-            Some(BulwarkError::InvalidToken(msg)) => assert!(msg.contains("iss")),
+            Some(GarrisonError::InvalidToken(msg)) => assert!(msg.contains("iss")),
             other => panic!("期望 InvalidToken 错误，实际: {:?}", other),
         }
     }
@@ -570,7 +570,7 @@ mod tests {
         let result = handler.verify_id_token(&token, "nonce");
         assert!(result.is_err());
         match result.err() {
-            Some(BulwarkError::ExpiredToken(_)) => {},
+            Some(GarrisonError::ExpiredToken(_)) => {},
             other => panic!("期望 ExpiredToken 错误，实际: {:?}", other),
         }
     }
@@ -588,7 +588,7 @@ mod tests {
         let result = verifier.verify_id_token(&token, "nonce");
         assert!(result.is_err());
         match result.err() {
-            Some(BulwarkError::InvalidToken(msg)) => assert!(msg.contains("aud")),
+            Some(GarrisonError::InvalidToken(msg)) => assert!(msg.contains("aud")),
             other => panic!("期望 InvalidToken (aud) 错误，实际: {:?}", other),
         }
     }
@@ -723,7 +723,7 @@ mod tests {
         let result = handler.verify_id_token(&token, "nonce-xyz");
         assert!(result.is_err(), "aud 不包含 client_id 时应校验失败");
         match result.err() {
-            Some(BulwarkError::InvalidToken(msg)) => {
+            Some(GarrisonError::InvalidToken(msg)) => {
                 assert!(msg.contains("aud"), "错误消息应包含 aud，实际: {}", msg)
             },
             other => panic!("期望 InvalidToken (aud 不匹配) 错误，实际: {:?}", other),

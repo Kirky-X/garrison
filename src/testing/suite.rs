@@ -6,7 +6,7 @@
 //! 从 `mod.rs` 迁移以遵守 Rule 25（mod.rs 接口隔离）。
 
 use crate::core::permission::{Authorizer, Decision, DecisionReason};
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::error::{GarrisonError, GarrisonResult};
 
 use super::{JsonTestSuite, TestFailure, TestReport};
 
@@ -15,11 +15,11 @@ impl JsonTestSuite {
     ///
     /// # 错误
     ///
-    /// - JSON 语法错误：返回 [`BulwarkError::InvalidParam`]
-    /// - 缺失必填字段（`name` / `cases` / `request` / `expected`）：返回 [`BulwarkError::InvalidParam`]
-    pub fn from_json(json: &str) -> BulwarkResult<Self> {
+    /// - JSON 语法错误：返回 [`GarrisonError::InvalidParam`]
+    /// - 缺失必填字段（`name` / `cases` / `request` / `expected`）：返回 [`GarrisonError::InvalidParam`]
+    pub fn from_json(json: &str) -> GarrisonResult<Self> {
         serde_json::from_str::<Self>(json)
-            .map_err(|e| BulwarkError::InvalidParam(format!("JSON parse error: {}", e)))
+            .map_err(|e| GarrisonError::InvalidParam(format!("JSON parse error: {}", e)))
     }
 
     /// 运行测试套件，对每个用例调用 [`Authorizer::authorize`] 并比较决策。
@@ -37,7 +37,7 @@ impl JsonTestSuite {
     /// # 参数
     ///
     /// - `authorizer`: 实现 [`Authorizer`] trait 的授权器
-    pub async fn run(&self, authorizer: &dyn Authorizer) -> BulwarkResult<TestReport> {
+    pub async fn run(&self, authorizer: &dyn Authorizer) -> GarrisonResult<TestReport> {
         let total = self.cases.len();
         let mut passed = 0usize;
         let mut failures = Vec::new();

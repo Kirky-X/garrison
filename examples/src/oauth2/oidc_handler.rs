@@ -12,18 +12,18 @@
 //!
 //! 运行方式：
 //! ```sh
-//! cargo run -p bulwark-examples --bin oidc_handler --features protocol-oidc
+//! cargo run -p garrison-examples --bin oidc_handler --features protocol-oidc
 //! ```
 
-use bulwark::error::BulwarkError;
-use bulwark::protocol::oauth2::oidc::{OidcAudience, OidcHandler};
+use garrison::error::GarrisonError;
+use garrison::protocol::oauth2::oidc::{OidcAudience, OidcHandler};
 
 /// 运行 OIDC 处理器示例。
 ///
 /// 演示 OidcHandler 的 sign_id_token / verify_id_token / discovery_metadata 完整流程，
 /// 包括 nonce 不匹配时返回 OAuth2 错误的场景。
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
-    println!("=== Bulwark OIDC 处理器示例 ===\n");
+    println!("=== Garrison OIDC 处理器示例 ===\n");
 
     // 1. 创建 OidcHandler（issuer / audience / secret）
     // 注意：此处 secret 为示例硬编码值，仅用于演示。
@@ -84,7 +84,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     // 5. nonce 不匹配时校验失败（防重放保护）
     println!("[校验] nonce 不匹配场景（防重放保护）:");
     match handler.verify_id_token(&id_token, "wrong-nonce") {
-        Err(BulwarkError::OAuth2(msg)) => {
+        Err(GarrisonError::OAuth2(msg)) => {
             println!("    校验失败（预期）: {}", msg);
             assert!(msg.contains("nonce mismatch"));
         },

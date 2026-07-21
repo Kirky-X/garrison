@@ -6,12 +6,12 @@
 use super::service::constant_time_eq;
 use super::*;
 use crate::dao::tests::MockDao;
-use crate::error::BulwarkError;
+use crate::error::GarrisonError;
 use std::sync::Arc;
 
 /// 构造测试用 SmsVerificationService（默认配置）。
 fn make_service() -> SmsVerificationService {
-    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     let rate_limiter = SmsRateLimiter::new(dao.clone(), 5, 10);
     let sender: Arc<dyn SmsSender> = Arc::new(NoopSmsSender);
     SmsVerificationService::new(rate_limiter, sender, dao, 3, 100)
@@ -41,7 +41,7 @@ async fn hourly_limit_blocks_6th() {
     }
     let result = service.send_code("13800138001").await;
     assert!(
-        matches!(result, Err(BulwarkError::SmsRateLimitExceeded { ref window }) if window == "hourly"),
+        matches!(result, Err(GarrisonError::SmsRateLimitExceeded { ref window }) if window == "hourly"),
         "第 6 次应被小时限速拦截，实际: {:?}",
         result
     );
@@ -52,7 +52,7 @@ async fn hourly_limit_blocks_6th() {
 /// 通过手动递增小时窗口计数器绕过小时限速，验证天窗口独立拦截。
 #[tokio::test]
 async fn daily_limit_blocks_11th() {
-    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     let service = SmsVerificationService::new(
         SmsRateLimiter::new(dao.clone(), 100, 10),
         Arc::new(NoopSmsSender),
@@ -65,7 +65,7 @@ async fn daily_limit_blocks_11th() {
     }
     let result = service.send_code("13800138002").await;
     assert!(
-        matches!(result, Err(BulwarkError::SmsRateLimitExceeded { ref window }) if window == "daily"),
+        matches!(result, Err(GarrisonError::SmsRateLimitExceeded { ref window }) if window == "daily"),
         "第 11 次应被天限速拦截，实际: {:?}",
         result
     );
@@ -80,14 +80,14 @@ async fn verify_max_attempts_after_3_failures() {
     for _ in 0..3 {
         let r = service.verify_code("13800138003", "000000").await;
         assert!(
-            matches!(r, Err(BulwarkError::InvalidParam(_))),
+            matches!(r, Err(GarrisonError::InvalidParam(_))),
             "前 3 次错误应返回 InvalidParam"
         );
     }
     // 第 4 次应返回 SmsVerifyMaxAttempts
     let result = service.verify_code("13800138003", "000000").await;
     assert!(
-        matches!(result, Err(BulwarkError::SmsVerifyMaxAttempts)),
+        matches!(result, Err(GarrisonError::SmsVerifyMaxAttempts)),
         "第 4 次应返回 SmsVerifyMaxAttempts，实际: {:?}",
         result
     );
@@ -96,14 +96,14 @@ async fn verify_max_attempts_after_3_failures() {
 /// 测试 5：正确验证码验证通过（验证后验证码被删除）。
 #[tokio::test]
 async fn correct_code_verifies_and_deletes() {
-    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     // 用自定义 sender 捕获验证码
     struct CapturingSender {
         code: parking_lot::Mutex<Option<String>>,
     }
     #[async_trait]
     impl SmsSender for CapturingSender {
-        async fn send(&self, _phone: &str, code: &str) -> BulwarkResult<()> {
+        async fn send(&self, _phone: &str, code: &str) -> GarrisonResult<()> {
             *self.code.lock() = Some(code.to_string());
             Ok(())
         }
@@ -131,7 +131,7 @@ async fn correct_code_verifies_and_deletes() {
 /// 测试 6：错误验证码计数增加。
 #[tokio::test]
 async fn wrong_code_increments_attempts() {
-    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     let service = SmsVerificationService::new(
         SmsRateLimiter::new(dao.clone(), 5, 10),
         Arc::new(NoopSmsSender),
@@ -162,7 +162,7 @@ async fn missing_code_returns_not_found() {
     let service = make_service();
     let result = service.verify_code("13800138006", "123456").await;
     assert!(
-        matches!(result, Err(BulwarkError::SmsCodeNotFound)),
+        matches!(result, Err(GarrisonError::SmsCodeNotFound)),
         "不存在的验证码应返回 SmsCodeNotFound，实际: {:?}",
         result
     );
@@ -171,7 +171,7 @@ async fn missing_code_returns_not_found() {
 /// 测试 8：限速 key 格式验证（sms:rate:{phone}:hour:{bucket}）。
 #[tokio::test]
 async fn rate_key_format_hour() {
-    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     let service = SmsVerificationService::new(
         SmsRateLimiter::new(dao.clone(), 5, 10),
         Arc::new(NoopSmsSender),
@@ -191,7 +191,7 @@ async fn rate_key_format_hour() {
 /// 测试 9：验证码 key 格式验证（sms:code:{phone}）。
 #[tokio::test]
 async fn code_key_format() {
-    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     let service = SmsVerificationService::new(
         SmsRateLimiter::new(dao.clone(), 5, 10),
         Arc::new(NoopSmsSender),
@@ -207,7 +207,7 @@ async fn code_key_format() {
 /// 测试 10：并发发送不超限（用 MockDao 的原子 incr 保证）。
 #[tokio::test(flavor = "multi_thread")]
 async fn concurrent_send_does_not_exceed_limit() {
-    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     let service = Arc::new(SmsVerificationService::new(
         SmsRateLimiter::new(dao.clone(), 5, 10),
         Arc::new(NoopSmsSender),
@@ -227,7 +227,7 @@ async fn concurrent_send_does_not_exceed_limit() {
     for handle in handles {
         match handle.await.unwrap() {
             Ok(()) => success += 1,
-            Err(BulwarkError::SmsRateLimitExceeded { .. }) => rate_limited += 1,
+            Err(GarrisonError::SmsRateLimitExceeded { .. }) => rate_limited += 1,
             Err(e) => panic!("不应返回其他错误: {:?}", e),
         }
     }
@@ -246,7 +246,7 @@ async fn noop_sms_sender_does_not_error() {
 /// 测试 12：异常发送检测（连续未验证 3 次后回收通道）。
 #[tokio::test]
 async fn unverified_threshold_recycles_channel() {
-    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     // unverified_threshold = 3：第 4 次未验证发送应触发回收
     let service = SmsVerificationService::new(
         SmsRateLimiter::new(dao.clone(), 100, 100),
@@ -263,14 +263,14 @@ async fn unverified_threshold_recycles_channel() {
     // 第 4 次发送应触发通道回收
     let result = service.send_code("13800138011").await;
     assert!(
-        matches!(result, Err(BulwarkError::SmsChannelRecycled)),
+        matches!(result, Err(GarrisonError::SmsChannelRecycled)),
         "第 4 次发送应触发 SmsChannelRecycled，实际: {:?}",
         result
     );
     // 通道已回收，后续发送直接被拒
     let result = service.send_code("13800138011").await;
     assert!(
-        matches!(result, Err(BulwarkError::SmsChannelRecycled)),
+        matches!(result, Err(GarrisonError::SmsChannelRecycled)),
         "通道回收后应继续返回 SmsChannelRecycled"
     );
 }

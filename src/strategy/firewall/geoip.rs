@@ -3,7 +3,7 @@
 
 //! GeoIP 地理位置拦截策略。
 //!
-//! `GeoIPStrategy` 实现 [`BulwarkFirewallStrategy`](crate::strategy::firewall::BulwarkFirewallStrategy) trait，
+//! `GeoIPStrategy` 实现 [`GarrisonFirewallStrategy`](crate::strategy::firewall::GarrisonFirewallStrategy) trait，
 //! 用 [`CountryLookup`](crate::strategy::firewall::geo::CountryLookup) trait 抽象 IP → 国家码查询，
 //! 对照 `allowed_countries`（白名单）/ `blocked_countries`（黑名单）做拦截决策。
 //!
@@ -19,8 +19,8 @@
 //! - `GeoIPStrategy` 用 [`CountryLookup`](crate::strategy::firewall::geo::CountryLookup)（IP → 国家码）做 allow/block 匹配
 
 use super::geo::CountryLookup;
-use crate::error::{BulwarkError, BulwarkResult};
-use crate::strategy::firewall::{BulwarkFirewallStrategy, FirewallContext};
+use crate::error::{GarrisonError, GarrisonResult};
+use crate::strategy::firewall::{FirewallContext, GarrisonFirewallStrategy};
 use async_trait::async_trait;
 use std::sync::Arc;
 
@@ -47,8 +47,8 @@ pub struct GeoIPConfig {
 ///
 /// ```ignore
 /// use std::sync::Arc;
-/// use bulwark::strategy::firewall::geo::CountryLookup;
-/// use bulwark::strategy::firewall::geoip::{GeoIPConfig, GeoIPStrategy};
+/// use garrison::strategy::firewall::geo::CountryLookup;
+/// use garrison::strategy::firewall::geoip::{GeoIPConfig, GeoIPStrategy};
 ///
 /// let country_lookup: Arc<dyn CountryLookup> = /* MaxMindDbCountryLookup 或 mock */;
 /// let config = GeoIPConfig { allowed_countries: vec!["CN".into()], blocked_countries: vec![] };
@@ -81,19 +81,19 @@ impl GeoIPStrategy {
 }
 
 #[async_trait]
-impl BulwarkFirewallStrategy for GeoIPStrategy {
-    async fn check(&self, ctx: &FirewallContext) -> BulwarkResult<()> {
+impl GarrisonFirewallStrategy for GeoIPStrategy {
+    async fn check(&self, ctx: &FirewallContext) -> GarrisonResult<()> {
         let country = self.country_lookup.lookup_country(&ctx.ip).await?;
 
         if !self.config.allowed_countries.is_empty() {
             // 白名单模式：仅允许列表内国家，其他（含无法定位）拦截
             match country.as_deref() {
                 Some(c) if Self::is_in_list(c, &self.config.allowed_countries) => Ok(()),
-                Some(c) => Err(BulwarkError::FirewallBlocked(format!(
+                Some(c) => Err(GarrisonError::FirewallBlocked(format!(
                     "geoip: IP {} 国家码 {} 不在白名单 {:?}",
                     ctx.ip, c, self.config.allowed_countries
                 ))),
-                None => Err(BulwarkError::FirewallBlocked(format!(
+                None => Err(GarrisonError::FirewallBlocked(format!(
                     "geoip: IP {} 无法定位国家，不在白名单 {:?} 内",
                     ctx.ip, self.config.allowed_countries
                 ))),
@@ -102,7 +102,7 @@ impl BulwarkFirewallStrategy for GeoIPStrategy {
             // 黑名单模式：拦截列表内国家，其他放行
             match country.as_deref() {
                 Some(c) if Self::is_in_list(c, &self.config.blocked_countries) => {
-                    Err(BulwarkError::FirewallBlocked(format!(
+                    Err(GarrisonError::FirewallBlocked(format!(
                         "geoip: IP {} 国家码 {} 在黑名单 {:?} 内",
                         ctx.ip, c, self.config.blocked_countries
                     )))
@@ -149,7 +149,7 @@ mod tests {
 
     #[async_trait]
     impl CountryLookup for MockCountryLookup {
-        async fn lookup_country(&self, ip: &str) -> BulwarkResult<Option<String>> {
+        async fn lookup_country(&self, ip: &str) -> GarrisonResult<Option<String>> {
             Ok(self.map.get(ip).cloned())
         }
     }
@@ -168,7 +168,7 @@ mod tests {
 
         let result = strategy.check(&ctx).await;
         assert!(
-            matches!(result, Err(BulwarkError::FirewallBlocked(_))),
+            matches!(result, Err(GarrisonError::FirewallBlocked(_))),
             "US 不在白名单 [CN] 应拦截，实际: {:?}",
             result
         );
@@ -188,7 +188,7 @@ mod tests {
 
         let result = strategy.check(&ctx).await;
         assert!(
-            matches!(result, Err(BulwarkError::FirewallBlocked(_))),
+            matches!(result, Err(GarrisonError::FirewallBlocked(_))),
             "XX 在黑名单 [XX] 应拦截，实际: {:?}",
             result
         );
@@ -281,7 +281,7 @@ mod tests {
 
         let result = strategy.check(&ctx).await;
         assert!(
-            matches!(result, Err(BulwarkError::FirewallBlocked(_))),
+            matches!(result, Err(GarrisonError::FirewallBlocked(_))),
             "白名单模式下无法定位的 IP 应拦截，实际: {:?}",
             result
         );

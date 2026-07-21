@@ -8,25 +8,25 @@
 //!
 //! ## 权限策略
 //!
-//! - `BulwarkPermissionStrategy` trait：定义权限/角色校验的可插拔契约
-//! - `BulwarkPermissionStrategyDefault`：默认实现，持有 `BulwarkInterface` 回调获取权限/角色数据，
+//! - `GarrisonPermissionStrategy` trait：定义权限/角色校验的可插拔契约
+//! - `GarrisonPermissionStrategyDefault`：默认实现，持有 `GarrisonInterface` 回调获取权限/角色数据，
 //!   做字符串匹配校验
 //!
 //! ## 数据来源（依据用户决策：方案 B）
 //!
-//! 权限/角色数据由业务方实现 `BulwarkInterface` 回调提供（不委托 dbnexus
-//! `PermissionProvider` trait，因其 API 模型与 Bulwark 不匹配）。
+//! 权限/角色数据由业务方实现 `GarrisonInterface` 回调提供（不委托 dbnexus
+//! `PermissionProvider` trait，因其 API 模型与 Garrison 不匹配）。
 
 use crate::core::permission::PermissionChecker;
-use crate::dao::BulwarkDao;
-use crate::error::BulwarkResult;
+use crate::dao::GarrisonDao;
+use crate::error::GarrisonResult;
 // listener_manager 字段类型（feature-gated）
 #[cfg(feature = "listener")]
-use crate::listener::BulwarkListenerManager;
-use crate::plugin::BulwarkPluginManager;
-use crate::stp::BulwarkInterface;
+use crate::listener::GarrisonListenerManager;
+use crate::plugin::GarrisonPluginManager;
+use crate::stp::GarrisonInterface;
 // hooks 模块依赖 limiteron，仅在 limiteron 启用时编译（匹配 lib.rs 的 limiteron cfg）
-// BulwarkFirewallCheckHook / LoginContext 用于 struct 字段与 trait 方法签名
+// GarrisonFirewallCheckHook / LoginContext 用于 struct 字段与 trait 方法签名
 #[cfg(any(
     feature = "sms-rate-limit",
     feature = "firewall-ratelimit",
@@ -35,7 +35,7 @@ use crate::stp::BulwarkInterface;
     feature = "firewall",
     feature = "oauth2-server"
 ))]
-use crate::strategy::hooks::{BulwarkFirewallCheckHook, LoginContext};
+use crate::strategy::hooks::{GarrisonFirewallCheckHook, LoginContext};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -64,7 +64,7 @@ pub mod rate_limiter_backend;
 /// 策略注册表模块。
 pub mod registry;
 
-/// `BulwarkPermissionStrategyDefault` 的实现块（规则 25：mod.rs 接口隔离）。
+/// `GarrisonPermissionStrategyDefault` 的实现块（规则 25：mod.rs 接口隔离）。
 mod default;
 
 // Re-export 核心 trait 与类型以便外部使用
@@ -77,11 +77,11 @@ mod default;
     feature = "oauth2-server"
 ))]
 pub use hooks::{
-    BulwarkFirewallCheckHookDefault, LoginContext as FirewallLoginContext, BRUTE_FORCE_THRESHOLD,
+    GarrisonFirewallCheckHookDefault, LoginContext as FirewallLoginContext, BRUTE_FORCE_THRESHOLD,
     BRUTE_FORCE_WINDOW, LOGIN_FREQUENCY_THRESHOLD, LOGIN_FREQUENCY_WINDOW,
 };
 // Re-export 策略注册表的 6 个 trait + 默认实现 + Strategy 注册表
-// 注意：新 FirewallStrategy 与现有 BulwarkPermissionStrategy 名称不同，可直接 re-export 共存
+// 注意：新 FirewallStrategy 与现有 GarrisonPermissionStrategy 名称不同，可直接 re-export 共存
 pub use registry::{
     DefaultFirewallStrategy, DefaultLoginHandler, DefaultLogoutHandler, DefaultPermissionHandler,
     DefaultSessionCreator, DefaultTokenGenerator, FirewallStrategy, LoginHandler, LogoutHandler,
@@ -89,7 +89,7 @@ pub use registry::{
 };
 
 // ============================================================================
-// BulwarkPermissionStrategy trait：可插拔权限策略
+// GarrisonPermissionStrategy trait：可插拔权限策略
 // ============================================================================
 
 /// 权限策略 trait，定义权限/角色校验的可插拔契约。
@@ -99,10 +99,10 @@ pub use registry::{
 ///
 /// # 默认实现
 ///
-/// `BulwarkPermissionStrategyDefault` 持有 `BulwarkInterface` 回调，
+/// `GarrisonPermissionStrategyDefault` 持有 `GarrisonInterface` 回调，
 /// 调用 `get_permission_list` / `get_role_list` 获取数据后做字符串匹配。
 #[async_trait]
-pub trait BulwarkPermissionStrategy: Send + Sync {
+pub trait GarrisonPermissionStrategy: Send + Sync {
     /// 获取主体的权限列表。
     ///
     /// # 参数
@@ -112,8 +112,8 @@ pub trait BulwarkPermissionStrategy: Send + Sync {
     /// 权限标识字符串列表（如 `["user:read", "user:write"]`）。
     ///
     /// # 错误
-    /// - 数据回调失败：透传 `BulwarkError`。
-    async fn get_permission_list(&self, login_id: &str) -> BulwarkResult<Vec<String>>;
+    /// - 数据回调失败：透传 `GarrisonError`。
+    async fn get_permission_list(&self, login_id: &str) -> GarrisonResult<Vec<String>>;
 
     /// 获取主体的角色列表。
     ///
@@ -124,8 +124,8 @@ pub trait BulwarkPermissionStrategy: Send + Sync {
     /// 角色标识字符串列表（如 `["admin", "user"]`）。
     ///
     /// # 错误
-    /// - 数据回调失败：透传 `BulwarkError`。
-    async fn get_role_list(&self, login_id: &str) -> BulwarkResult<Vec<String>>;
+    /// - 数据回调失败：透传 `GarrisonError`。
+    async fn get_role_list(&self, login_id: &str) -> GarrisonResult<Vec<String>>;
 
     /// 校验权限：检查主体是否持有指定权限。
     ///
@@ -137,7 +137,7 @@ pub trait BulwarkPermissionStrategy: Send + Sync {
     /// - `Ok(true)`: 主体持有该权限。
     /// - `Ok(false)`: 主体未持有该权限。
     /// - `Err`: 查询失败或权限字符串非法（如空字符串）。
-    async fn check_permission(&self, login_id: &str, permission: &str) -> BulwarkResult<bool>;
+    async fn check_permission(&self, login_id: &str, permission: &str) -> GarrisonResult<bool>;
 
     /// 校验角色：检查主体是否持有指定角色。
     ///
@@ -150,8 +150,8 @@ pub trait BulwarkPermissionStrategy: Send + Sync {
     /// - `Ok(false)`: 主体未持有该角色。
     ///
     /// # 错误
-    /// - 数据回调失败：透传 `BulwarkError`。
-    async fn check_role(&self, login_id: &str, role: &str) -> BulwarkResult<bool>;
+    /// - 数据回调失败：透传 `GarrisonError`。
+    async fn check_role(&self, login_id: &str, role: &str) -> GarrisonResult<bool>;
 
     /// 校验角色（任一匹配）：主体持有 `roles` 中任意一个即通过。
     ///
@@ -165,8 +165,8 @@ pub trait BulwarkPermissionStrategy: Send + Sync {
     /// - `Ok(false)`: 主体不持有 `roles` 中任何角色。
     ///
     /// # 错误
-    /// - 数据回调失败：透传 `BulwarkError`。
-    async fn check_role_any(&self, login_id: &str, roles: &[&str]) -> BulwarkResult<bool>;
+    /// - 数据回调失败：透传 `GarrisonError`。
+    async fn check_role_any(&self, login_id: &str, roles: &[&str]) -> GarrisonResult<bool>;
 
     /// 校验角色（全部匹配）：主体需持有 `roles` 中所有角色。
     ///
@@ -180,8 +180,8 @@ pub trait BulwarkPermissionStrategy: Send + Sync {
     /// - `Ok(false)`: 主体仅持有部分或未持有任何角色。
     ///
     /// # 错误
-    /// - 数据回调失败：透传 `BulwarkError`。
-    async fn check_role_all(&self, login_id: &str, roles: &[&str]) -> BulwarkResult<bool>;
+    /// - 数据回调失败：透传 `GarrisonError`。
+    async fn check_role_all(&self, login_id: &str, roles: &[&str]) -> GarrisonResult<bool>;
 
     /// 获取用户基本信息（用于缓存）。
     ///
@@ -202,15 +202,15 @@ pub trait BulwarkPermissionStrategy: Send + Sync {
     /// - `Ok(None)`: 用户不存在或未实现此方法。
     ///
     /// # 错误
-    /// - 数据回调失败：透传 `BulwarkError`。
-    async fn get_user_info(&self, _login_id: &str) -> BulwarkResult<Option<String>> {
+    /// - 数据回调失败：透传 `GarrisonError`。
+    async fn get_user_info(&self, _login_id: &str) -> GarrisonResult<Option<String>> {
         Ok(None)
     }
 
     /// 登录前防火墙安全钩子检查。
     ///
-    /// 默认实现为 no-op（向后兼容 0.2.x）。`BulwarkPermissionStrategyDefault` 在注入
-    /// `BulwarkFirewallCheckHook` 后按序调用 5 个 hook，任一 Err 阻断登录。
+    /// 默认实现为 no-op（向后兼容 0.2.x）。`GarrisonPermissionStrategyDefault` 在注入
+    /// `GarrisonFirewallCheckHook` 后按序调用 5 个 hook，任一 Err 阻断登录。
     ///
     /// # 参数
     /// - `login_id`: 登录主体标识。
@@ -218,7 +218,7 @@ pub trait BulwarkPermissionStrategy: Send + Sync {
     ///
     /// # 返回
     /// - `Ok(())`: 所有 hook 通过，允许登录。
-    /// - `Err`: 任一 hook 阻断，返回 `BulwarkError::Session`。
+    /// - `Err`: 任一 hook 阻断，返回 `GarrisonError::Session`。
     #[cfg(any(
         feature = "sms-rate-limit",
         feature = "firewall-ratelimit",
@@ -227,25 +227,25 @@ pub trait BulwarkPermissionStrategy: Send + Sync {
         feature = "firewall",
         feature = "oauth2-server"
     ))]
-    async fn check_login_hooks(&self, _login_id: &str, _ctx: &LoginContext) -> BulwarkResult<()> {
+    async fn check_login_hooks(&self, _login_id: &str, _ctx: &LoginContext) -> GarrisonResult<()> {
         Ok(())
     }
 }
 
 // ============================================================================
-// BulwarkPermissionStrategyDefault：默认实现（委托 BulwarkInterface 回调）
+// GarrisonPermissionStrategyDefault：默认实现（委托 GarrisonInterface 回调）
 // ============================================================================
 
-/// `BulwarkPermissionStrategy` 的默认实现，持有 `BulwarkInterface` 回调获取权限/角色数据。
+/// `GarrisonPermissionStrategy` 的默认实现，持有 `GarrisonInterface` 回调获取权限/角色数据。
 ///
 /// 对应 `StpInterface` 回调模式：
 /// 框架不假定权限/角色数据来源（数据库 / YAML / 内存等），
-/// 由业务方实现 `BulwarkInterface` 提供数据，本结构做字符串匹配校验。
+/// 由业务方实现 `GarrisonInterface` 提供数据，本结构做字符串匹配校验。
 ///
 /// # 数据来源
 ///
-/// 权限/角色数据由 `BulwarkInterface` 回调提供（依据用户决策方案 B），
-/// 不委托 dbnexus `PermissionProvider` trait（因其 API 模型与 Bulwark 不匹配）。
+/// 权限/角色数据由 `GarrisonInterface` 回调提供（依据用户决策方案 B），
+/// 不委托 dbnexus `PermissionProvider` trait（因其 API 模型与 Garrison 不匹配）。
 ///
 /// # 0.2.0 扩展
 ///
@@ -253,17 +253,17 @@ pub trait BulwarkPermissionStrategy: Send + Sync {
 /// - `dao`：注入后启用权限缓存（`cache_permission` / `get_cached_permission`）
 /// - `role_hierarchy`：角色层级映射（如 `"admin" → ["user"]`），空时保持 默认行为
 /// - `plugin_manager`：注入后 `check_permission` 前后触发插件钩子（Err 仅 warn 不中断）
-pub struct BulwarkPermissionStrategyDefault {
+pub struct GarrisonPermissionStrategyDefault {
     /// 权限/角色数据回调。
-    interface: Arc<dyn BulwarkInterface>,
+    interface: Arc<dyn GarrisonInterface>,
     /// 可选 PermissionChecker，注入后 check_permission 委托到它。
     permission_checker: Option<Arc<dyn PermissionChecker>>,
     /// 可选 DAO，用于权限缓存。
-    dao: Option<Arc<dyn BulwarkDao>>,
+    dao: Option<Arc<dyn GarrisonDao>>,
     /// 角色层级映射（如 "admin" → ["user"]），空时保持 默认行为。
     role_hierarchy: HashMap<String, Vec<String>>,
     /// 可选插件管理器，注入后 check_permission 前后触发钩子。
-    plugin_manager: Option<Arc<BulwarkPluginManager>>,
+    plugin_manager: Option<Arc<GarrisonPluginManager>>,
     /// 可选防火墙安全钩子，注入后 login 前按序调用 5 个 hook。
     #[cfg(any(
         feature = "sms-rate-limit",
@@ -273,10 +273,10 @@ pub struct BulwarkPermissionStrategyDefault {
         feature = "firewall",
         feature = "oauth2-server"
     ))]
-    firewall_hook: Option<Arc<dyn BulwarkFirewallCheckHook>>,
+    firewall_hook: Option<Arc<dyn GarrisonFirewallCheckHook>>,
     /// 可选监听器管理器，注入后 check_login_hooks 阻断时广播 FirewallBlock 事件
     #[cfg(feature = "listener")]
-    listener_manager: Option<Arc<BulwarkListenerManager>>,
+    listener_manager: Option<Arc<GarrisonListenerManager>>,
 }
 
 #[cfg(test)]

@@ -8,7 +8,7 @@
 //!
 //! # 设计原则
 //!
-//! - **复用优先**（Rule 8）：LoginParams / TokenInfo / TokenSession 已存在于 bulwark，
+//! - **复用优先**（Rule 8）：LoginParams / TokenInfo / TokenSession 已存在于 garrison，
 //!   通过类型别名或 re-export 复用，不创建重复定义
 //! - **序列化兼容**：所有 HTTP 请求/响应结构体派生 `Serialize` + `Deserialize`，
 //!   确保 BackendRemote 与 Auth Server 之间的 JSON 通信兼容

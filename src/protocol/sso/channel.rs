@@ -8,7 +8,7 @@
 //! 仅在 `cache-redis` + `protocol-sso-server` feature 同时启用时编译。
 
 use super::server::SsoChannel;
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::error::{GarrisonError, GarrisonResult};
 use async_trait::async_trait;
 use futures::StreamExt;
 use std::panic::AssertUnwindSafe;
@@ -49,14 +49,14 @@ impl RedisPubSubSsoChannel {
 
 #[async_trait]
 impl SsoChannel for RedisPubSubSsoChannel {
-    async fn push(&self, topic: &str, message: &str) -> BulwarkResult<()> {
+    async fn push(&self, topic: &str, message: &str) -> GarrisonResult<()> {
         let mut conn = self.connection_manager.clone();
         redis::cmd("PUBLISH")
             .arg(topic)
             .arg(message)
             .query_async::<i64>(&mut conn)
             .await
-            .map_err(|e| BulwarkError::Internal(format!("sso-redis-publish::{}", e)))?;
+            .map_err(|e| GarrisonError::Internal(format!("sso-redis-publish::{}", e)))?;
         Ok(())
     }
 
@@ -64,7 +64,7 @@ impl SsoChannel for RedisPubSubSsoChannel {
         &self,
         topic: &str,
         handler: Box<dyn Fn(String) + Send + Sync>,
-    ) -> BulwarkResult<()> {
+    ) -> GarrisonResult<()> {
         let topic = topic.to_string();
         let client = self.client.clone();
         let handler = Arc::new(handler);

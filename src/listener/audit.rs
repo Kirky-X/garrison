@@ -3,13 +3,13 @@
 
 //! 审计日志模块。
 //!
-//! 提供 `AuditLogListener` 实现，将 `BulwarkEvent` 持久化到 `audit_logs` 表，
+//! 提供 `AuditLogListener` 实现，将 `GarrisonEvent` 持久化到 `audit_logs` 表，
 //! 支持字段掩码（如 password）与异步写入。
 //!
 //! ## 核心抽象
 //!
 //! - [`AuditConfig`](crate::listener::audit::AuditConfig)：审计日志配置（掩码字段 + 保留天数 + 异步写入开关）
-//! - `AuditLogListener`：实现 `BulwarkListener`，将事件转换为 `AuditEntry` 持久化（T071-T078 实现）
+//! - `AuditLogListener`：实现 `GarrisonListener`，将事件转换为 `AuditEntry` 持久化（T071-T078 实现）
 //! - `AuditEntry`：`audit_logs` 表行结构（T071-T072 实现）
 //! - `AuditQuery`：审计日志查询条件（T079-T080 实现）
 //!
@@ -32,7 +32,7 @@
 
 use crate::config::AuditMaskMode;
 #[cfg(feature = "db-sqlite")]
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::error::{GarrisonError, GarrisonResult};
 
 // ============================================================================
 // AuditConfig 定义（T068 Green）
@@ -60,7 +60,7 @@ pub struct AuditConfig {
     ///
     /// `Some(key)` 时 `export_csv`/`export_json` 为每行附加 `signature` 字段，
     /// 构成链式签名（第 N 行签名依赖第 N-1 行签名 + 当前行内容）。
-    /// `None` 时 `export_csv`/`export_json` 返回 `BulwarkError::Config`。
+    /// `None` 时 `export_csv`/`export_json` 返回 `GarrisonError::Config`。
     pub signing_key: Option<String>,
     /// 审计脱敏模式（T012）。默认 `Partial`。
     ///
@@ -74,15 +74,15 @@ pub struct AuditConfig {
 // ============================================================================
 //
 // Rule 7 冲突暴露：
-// - tasks.md T072 说 `pub struct AuditLogListener { pub dao: Arc<dyn BulwarkDao>, .. }`
-//   并在 BulwarkDao trait 新增 `async fn insert_audit_log`
-// - 但 BulwarkDao 是 cache 抽象（4 实现：Oxcache/MockDao/MinimalDao/AloneCache，
+// - tasks.md T072 说 `pub struct AuditLogListener { pub dao: Arc<dyn GarrisonDao>, .. }`
+//   并在 GarrisonDao trait 新增 `async fn insert_audit_log`
+// - 但 GarrisonDao 是 cache 抽象（4 实现：Oxcache/MockDao/MinimalDao/AloneCache，
 //   均不支持 SQL INSERT），强行加 insert_audit_log 会破坏单一职责
 // - Rule 11（惯例优先）：遵循 RefreshTokenRotation 先例（H4 T057），
-//   AuditLogListener 持 `pool: DbPool` 直连 SQL，不污染 BulwarkDao trait
+//   AuditLogListener 持 `pool: DbPool` 直连 SQL，不污染 GarrisonDao trait
 
 #[cfg(feature = "db-sqlite")]
-use super::{BulwarkEvent, BulwarkListener};
+use super::{GarrisonEvent, GarrisonListener};
 #[cfg(feature = "db-sqlite")]
 use async_trait::async_trait;
 #[cfg(feature = "db-sqlite")]
@@ -118,77 +118,77 @@ fn json_metadata(pairs: &[(&str, &str)]) -> String {
     serde_json::Value::Object(map).to_string()
 }
 
-/// 从 `BulwarkEvent` 提取 `request_context` 引用（T004 辅助函数）。
+/// 从 `GarrisonEvent` 提取 `request_context` 引用（T004 辅助函数）。
 ///
 /// 遍历所有变体，返回 `Option<&RequestContext>`。
 /// `None` 表示事件未携带请求上下文（向后兼容）。
 #[cfg(feature = "db-sqlite")]
-fn extract_request_context(event: &BulwarkEvent) -> Option<&super::RequestContext> {
+fn extract_request_context(event: &GarrisonEvent) -> Option<&super::RequestContext> {
     match event {
-        BulwarkEvent::Login {
+        GarrisonEvent::Login {
             request_context, ..
         }
-        | BulwarkEvent::Logout {
+        | GarrisonEvent::Logout {
             request_context, ..
         }
-        | BulwarkEvent::Kickout {
+        | GarrisonEvent::Kickout {
             request_context, ..
         }
-        | BulwarkEvent::PermissionCheck {
+        | GarrisonEvent::PermissionCheck {
             request_context, ..
         }
-        | BulwarkEvent::RoleCheck {
+        | GarrisonEvent::RoleCheck {
             request_context, ..
         }
-        | BulwarkEvent::TokenExpired {
+        | GarrisonEvent::TokenExpired {
             request_context, ..
         }
-        | BulwarkEvent::LoginFailure {
+        | GarrisonEvent::LoginFailure {
             request_context, ..
         }
-        | BulwarkEvent::TokenRefresh {
+        | GarrisonEvent::TokenRefresh {
             request_context, ..
         }
-        | BulwarkEvent::RevokeToken {
+        | GarrisonEvent::RevokeToken {
             request_context, ..
         }
-        | BulwarkEvent::SessionTimeout {
+        | GarrisonEvent::SessionTimeout {
             request_context, ..
         }
-        | BulwarkEvent::AccountLocked {
+        | GarrisonEvent::AccountLocked {
             request_context, ..
         }
-        | BulwarkEvent::FirewallBlock {
+        | GarrisonEvent::FirewallBlock {
             request_context, ..
         }
-        | BulwarkEvent::TokenRotate {
+        | GarrisonEvent::TokenRotate {
             request_context, ..
         }
-        | BulwarkEvent::TempCredentialConsumed {
+        | GarrisonEvent::TempCredentialConsumed {
             request_context, ..
         }
-        | BulwarkEvent::SocialLogin {
+        | GarrisonEvent::SocialLogin {
             request_context, ..
         }
-        | BulwarkEvent::TenantSwitch {
+        | GarrisonEvent::TenantSwitch {
             request_context, ..
         }
-        | BulwarkEvent::DeviceBlock {
+        | GarrisonEvent::DeviceBlock {
             request_context, ..
         }
-        | BulwarkEvent::DeviceUnblock {
+        | GarrisonEvent::DeviceUnblock {
             request_context, ..
         }
-        | BulwarkEvent::ConfigReload {
+        | GarrisonEvent::ConfigReload {
             request_context, ..
         }
-        | BulwarkEvent::Replaced {
+        | GarrisonEvent::Replaced {
             request_context, ..
         } => request_context.as_ref(),
         // anomalous-detector-dual feature 关闭时，无 AnomalousLoginDetected 变体，
         // 上述 match 已穷尽所有变体，此分支不可达。
         #[cfg(feature = "anomalous-detector-dual")]
-        BulwarkEvent::AnomalousLoginDetected {
+        GarrisonEvent::AnomalousLoginDetected {
             request_context, ..
         } => request_context.as_ref(),
     }
@@ -213,7 +213,7 @@ fn default_audit_masker() -> SensitiveDataMasker {
 /// `audit_logs` 表行结构（T072 Green）。
 ///
 /// 对应 `migrations/sqlite/core/004_audit_logs.sql` 的表定义，
-/// 由 `AuditLogListener::to_audit_entry` 从 `BulwarkEvent` 转换而来。
+/// 由 `AuditLogListener::to_audit_entry` 从 `GarrisonEvent` 转换而来。
 ///
 /// # 字段
 ///
@@ -263,8 +263,8 @@ pub struct AuditEntry {
 ///
 /// # 设计（Rule 7 override，依据 T072 先例）
 ///
-/// spec R-audit-log-007 原文说 `BulwarkDao::query_audit_logs`，
-/// 但 BulwarkDao 是 cache 抽象（get/set/delete），不支持 SQL SELECT；
+/// spec R-audit-log-007 原文说 `GarrisonDao::query_audit_logs`，
+/// 但 GarrisonDao 是 cache 抽象（get/set/delete），不支持 SQL SELECT；
 /// 强行加 `query_audit_logs` 会破坏单一职责（与 T072 insert 同冲突）。
 /// Rule 11（惯例优先）：遵循 T072 先例，`query_audit_logs` 作为
 /// `AuditLogListener` 的方法，持 `pool: DbPool` 直连 SQL。
@@ -283,12 +283,12 @@ pub struct AuditQuery {
 
 /// 审计日志监听器（T072 Green）。
 ///
-/// 实现 `BulwarkListener`，将 `BulwarkEvent` 转换为 `AuditEntry` 并 INSERT 到 `audit_logs` 表。
+/// 实现 `GarrisonListener`，将 `GarrisonEvent` 转换为 `AuditEntry` 并 INSERT 到 `audit_logs` 表。
 ///
 /// # 设计（Rule 7 override，依据 RefreshTokenRotation 先例）
 ///
-/// 持 `pool: DbPool` 直连 SQL，而非 `dao: Arc<dyn BulwarkDao>`。
-/// 原因：BulwarkDao 是 cache 抽象（get/set/delete），不支持 SQL INSERT；
+/// 持 `pool: DbPool` 直连 SQL，而非 `dao: Arc<dyn GarrisonDao>`。
+/// 原因：GarrisonDao 是 cache 抽象（get/set/delete），不支持 SQL INSERT；
 /// 强行加 `insert_audit_log` 会破坏单一职责。
 #[cfg(feature = "db-sqlite")]
 pub struct AuditLogListener {
@@ -305,7 +305,7 @@ impl AuditLogListener {
         Self { pool, config }
     }
 
-    /// 将 `BulwarkEvent` 转换为 `AuditEntry`（全 19 变体穷尽 match）。
+    /// 将 `GarrisonEvent` 转换为 `AuditEntry`（全 19 变体穷尽 match）。
     ///
     /// spec R-audit-log-006 要求：`match` 无 `_ =>` 兜底，新增变体时编译错误提醒补实现。
     ///
@@ -313,7 +313,7 @@ impl AuditLogListener {
     /// `event_type` 使用变体名 snake_case（如 `LoginFailure` → `"login_failure"`）。
     ///
     /// 转换后对 `metadata` 调用 `mask_metadata` 进行字段掩码。
-    fn to_audit_entry(&self, event: &BulwarkEvent) -> BulwarkResult<AuditEntry> {
+    fn to_audit_entry(&self, event: &GarrisonEvent) -> GarrisonResult<AuditEntry> {
         let now = Utc::now().timestamp();
         // 从 TENANT task_local 读取当前租户 ID
         // - tenant-isolation feature 关闭：current_tenant_id() 无上下文时返回 0（向后兼容）
@@ -324,7 +324,7 @@ impl AuditLogListener {
         #[cfg(feature = "tenant-isolation")]
         let tenant_id = crate::context::tenant::current_tenant_id_or_error()?;
         let mut entry = match event {
-            BulwarkEvent::Login {
+            GarrisonEvent::Login {
                 login_id,
                 token,
                 device,
@@ -340,7 +340,7 @@ impl AuditLogListener {
                 success: true,
                 created_at: now,
             },
-            BulwarkEvent::Logout {
+            GarrisonEvent::Logout {
                 login_id, token, ..
             } => AuditEntry {
                 tenant_id,
@@ -353,7 +353,7 @@ impl AuditLogListener {
                 success: true,
                 created_at: now,
             },
-            BulwarkEvent::Kickout {
+            GarrisonEvent::Kickout {
                 login_id,
                 token,
                 reason,
@@ -369,7 +369,7 @@ impl AuditLogListener {
                 success: false,
                 created_at: now,
             },
-            BulwarkEvent::PermissionCheck {
+            GarrisonEvent::PermissionCheck {
                 login_id,
                 permission,
                 ..
@@ -384,7 +384,7 @@ impl AuditLogListener {
                 success: false,
                 created_at: now,
             },
-            BulwarkEvent::RoleCheck { login_id, role, .. } => AuditEntry {
+            GarrisonEvent::RoleCheck { login_id, role, .. } => AuditEntry {
                 tenant_id,
                 event_type: "role_check".to_string(),
                 login_id: Some(login_id.clone()),
@@ -395,7 +395,7 @@ impl AuditLogListener {
                 success: false,
                 created_at: now,
             },
-            BulwarkEvent::TokenExpired { token, .. } => AuditEntry {
+            GarrisonEvent::TokenExpired { token, .. } => AuditEntry {
                 tenant_id,
                 event_type: "token_expired".to_string(),
                 login_id: None,
@@ -406,7 +406,7 @@ impl AuditLogListener {
                 success: false,
                 created_at: now,
             },
-            BulwarkEvent::LoginFailure {
+            GarrisonEvent::LoginFailure {
                 login_id, reason, ..
             } => AuditEntry {
                 tenant_id,
@@ -419,7 +419,7 @@ impl AuditLogListener {
                 success: false,
                 created_at: now,
             },
-            BulwarkEvent::TokenRefresh {
+            GarrisonEvent::TokenRefresh {
                 login_id,
                 old_token,
                 new_token,
@@ -435,7 +435,7 @@ impl AuditLogListener {
                 success: true,
                 created_at: now,
             },
-            BulwarkEvent::RevokeToken { token, .. } => AuditEntry {
+            GarrisonEvent::RevokeToken { token, .. } => AuditEntry {
                 tenant_id,
                 event_type: "revoke_token".to_string(),
                 login_id: None,
@@ -446,7 +446,7 @@ impl AuditLogListener {
                 success: true,
                 created_at: now,
             },
-            BulwarkEvent::SessionTimeout {
+            GarrisonEvent::SessionTimeout {
                 login_id, token, ..
             } => AuditEntry {
                 tenant_id,
@@ -459,7 +459,7 @@ impl AuditLogListener {
                 success: false,
                 created_at: now,
             },
-            BulwarkEvent::AccountLocked {
+            GarrisonEvent::AccountLocked {
                 login_id, reason, ..
             } => AuditEntry {
                 tenant_id,
@@ -472,7 +472,7 @@ impl AuditLogListener {
                 success: false,
                 created_at: now,
             },
-            BulwarkEvent::FirewallBlock {
+            GarrisonEvent::FirewallBlock {
                 login_id, reason, ..
             } => AuditEntry {
                 tenant_id,
@@ -485,7 +485,7 @@ impl AuditLogListener {
                 success: false,
                 created_at: now,
             },
-            BulwarkEvent::TokenRotate {
+            GarrisonEvent::TokenRotate {
                 old_key, new_key, ..
             } => AuditEntry {
                 tenant_id,
@@ -498,7 +498,7 @@ impl AuditLogListener {
                 success: true,
                 created_at: now,
             },
-            BulwarkEvent::TempCredentialConsumed { key, value, .. } => AuditEntry {
+            GarrisonEvent::TempCredentialConsumed { key, value, .. } => AuditEntry {
                 tenant_id,
                 event_type: "temp_credential_consumed".to_string(),
                 login_id: None,
@@ -509,7 +509,7 @@ impl AuditLogListener {
                 success: true,
                 created_at: now,
             },
-            BulwarkEvent::SocialLogin {
+            GarrisonEvent::SocialLogin {
                 provider,
                 user_id,
                 login_id,
@@ -528,7 +528,7 @@ impl AuditLogListener {
                 success: true,
                 created_at: now,
             },
-            BulwarkEvent::TenantSwitch {
+            GarrisonEvent::TenantSwitch {
                 login_id,
                 from_tenant,
                 to_tenant,
@@ -547,7 +547,7 @@ impl AuditLogListener {
                 success: true,
                 created_at: now,
             },
-            BulwarkEvent::DeviceBlock {
+            GarrisonEvent::DeviceBlock {
                 login_id, device, ..
             } => AuditEntry {
                 tenant_id,
@@ -560,7 +560,7 @@ impl AuditLogListener {
                 success: false,
                 created_at: now,
             },
-            BulwarkEvent::DeviceUnblock {
+            GarrisonEvent::DeviceUnblock {
                 login_id, device, ..
             } => AuditEntry {
                 tenant_id,
@@ -573,7 +573,7 @@ impl AuditLogListener {
                 success: true,
                 created_at: now,
             },
-            BulwarkEvent::ConfigReload { config_version, .. } => AuditEntry {
+            GarrisonEvent::ConfigReload { config_version, .. } => AuditEntry {
                 tenant_id,
                 event_type: "config_reload".to_string(),
                 login_id: None,
@@ -602,7 +602,7 @@ impl AuditLogListener {
         };
         // 覆盖 anomalous-detector-dual feature 的 AnomalousLoginDetected 变体
         #[cfg(feature = "anomalous-detector-dual")]
-        if let BulwarkEvent::AnomalousLoginDetected {
+        if let GarrisonEvent::AnomalousLoginDetected {
             login_id,
             reason,
             detail,
@@ -647,7 +647,7 @@ impl AuditLogListener {
     /// # 示例
     ///
     /// ```ignore
-    /// use bulwark::listener::audit::{AuditConfig, AuditLogListener};
+    /// use garrison::listener::audit::{AuditConfig, AuditLogListener};
     /// let config = AuditConfig {
     ///     mask_fields: vec!["password".to_string()],
     ///     retain_days: 0,
@@ -738,15 +738,15 @@ impl AuditLogListener {
     }
 
     /// INSERT `AuditEntry` 到 `audit_logs` 表。
-    async fn insert(&self, entry: &AuditEntry) -> BulwarkResult<()> {
+    async fn insert(&self, entry: &AuditEntry) -> GarrisonResult<()> {
         let session = self
             .pool
             .get_session("admin")
             .await
-            .map_err(|e| BulwarkError::Dao(format!("listener-get-session::{}", e)))?;
+            .map_err(|e| GarrisonError::Dao(format!("listener-get-session::{}", e)))?;
         let conn = session
             .connection()
-            .map_err(|e| BulwarkError::Dao(format!("listener-connection::{}", e)))?;
+            .map_err(|e| GarrisonError::Dao(format!("listener-connection::{}", e)))?;
 
         let stmt = Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -765,7 +765,7 @@ impl AuditLogListener {
         );
         conn.execute_raw(stmt)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("listener-audit-insert::{}", e)))?;
+            .map_err(|e| GarrisonError::Dao(format!("listener-audit-insert::{}", e)))?;
         Ok(())
     }
 
@@ -777,18 +777,18 @@ impl AuditLogListener {
     ///
     /// # 设计（Rule 7 override，依据 T072 先例）
     ///
-    /// spec R-audit-log-007 原文说 `BulwarkDao::query_audit_logs`，
-    /// 但 BulwarkDao 是 cache 抽象，不支持 SQL SELECT。
+    /// spec R-audit-log-007 原文说 `GarrisonDao::query_audit_logs`，
+    /// 但 GarrisonDao 是 cache 抽象，不支持 SQL SELECT。
     /// 遵循 T072 insert 先例，此方法作为 `AuditLogListener` 的方法，持 `pool: DbPool` 直连 SQL。
-    pub async fn query_audit_logs(&self, query: AuditQuery) -> BulwarkResult<Vec<AuditEntry>> {
+    pub async fn query_audit_logs(&self, query: AuditQuery) -> GarrisonResult<Vec<AuditEntry>> {
         let session = self
             .pool
             .get_session("admin")
             .await
-            .map_err(|e| BulwarkError::Dao(format!("listener-get-session::{}", e)))?;
+            .map_err(|e| GarrisonError::Dao(format!("listener-get-session::{}", e)))?;
         let conn = session
             .connection()
-            .map_err(|e| BulwarkError::Dao(format!("listener-connection::{}", e)))?;
+            .map_err(|e| GarrisonError::Dao(format!("listener-connection::{}", e)))?;
 
         // 动态拼 SQL WHERE 子句（参数化防注入）
         let mut sql = String::from(
@@ -817,37 +817,37 @@ impl AuditLogListener {
         let rows = conn
             .query_all_raw(stmt)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("listener-audit-select::{}", e)))?;
+            .map_err(|e| GarrisonError::Dao(format!("listener-audit-select::{}", e)))?;
 
         rows.iter()
             .map(|row| {
                 let tenant_id: i64 = row.try_get("", "tenant_id").map_err(|e| {
-                    BulwarkError::Dao(format!("listener-audit-parse-tenant-id::{}", e))
+                    GarrisonError::Dao(format!("listener-audit-parse-tenant-id::{}", e))
                 })?;
                 let event_type: String = row.try_get("", "event_type").map_err(|e| {
-                    BulwarkError::Dao(format!("listener-audit-parse-event-type::{}", e))
+                    GarrisonError::Dao(format!("listener-audit-parse-event-type::{}", e))
                 })?;
                 let login_id: Option<String> = row.try_get("", "login_id").map_err(|e| {
-                    BulwarkError::Dao(format!("listener-audit-parse-login-id::{}", e))
+                    GarrisonError::Dao(format!("listener-audit-parse-login-id::{}", e))
                 })?;
-                let token: Option<String> = row
-                    .try_get("", "token")
-                    .map_err(|e| BulwarkError::Dao(format!("listener-audit-parse-token::{}", e)))?;
+                let token: Option<String> = row.try_get("", "token").map_err(|e| {
+                    GarrisonError::Dao(format!("listener-audit-parse-token::{}", e))
+                })?;
                 let ip: Option<String> = row
                     .try_get("", "ip")
-                    .map_err(|e| BulwarkError::Dao(format!("listener-audit-parse-ip::{}", e)))?;
+                    .map_err(|e| GarrisonError::Dao(format!("listener-audit-parse-ip::{}", e)))?;
                 let user_agent: Option<String> = row.try_get("", "user_agent").map_err(|e| {
-                    BulwarkError::Dao(format!("listener-audit-parse-user-agent::{}", e))
+                    GarrisonError::Dao(format!("listener-audit-parse-user-agent::{}", e))
                 })?;
                 let metadata: Option<String> = row.try_get("", "metadata").map_err(|e| {
-                    BulwarkError::Dao(format!("listener-audit-parse-metadata::{}", e))
+                    GarrisonError::Dao(format!("listener-audit-parse-metadata::{}", e))
                 })?;
                 // success 存储为 INTEGER（0/1），读为 i64 后转 bool
                 let success_int: i64 = row.try_get("", "success").map_err(|e| {
-                    BulwarkError::Dao(format!("listener-audit-parse-success::{}", e))
+                    GarrisonError::Dao(format!("listener-audit-parse-success::{}", e))
                 })?;
                 let created_at: i64 = row.try_get("", "created_at").map_err(|e| {
-                    BulwarkError::Dao(format!("listener-audit-parse-created-at::{}", e))
+                    GarrisonError::Dao(format!("listener-audit-parse-created-at::{}", e))
                 })?;
                 Ok(AuditEntry {
                     tenant_id,
@@ -880,9 +880,9 @@ impl AuditLogListener {
     ///
     /// - 空 `entries`：返回仅含 header 的 CSV 字符串
     /// - 非空：返回含 header + 数据行的 CSV 字符串
-    /// - `config.signing_key` 为 `None`：返回 `BulwarkError::Config`
+    /// - `config.signing_key` 为 `None`：返回 `GarrisonError::Config`
     #[cfg(feature = "audit-log")]
-    pub fn export_csv(&self, entries: &[AuditEntry]) -> BulwarkResult<String> {
+    pub fn export_csv(&self, entries: &[AuditEntry]) -> GarrisonResult<String> {
         let signatures = self.compute_signature_chain(entries)?;
         let mut csv = String::from("timestamp,login_id,tenant_id,event_type,signature");
         for (entry, sig) in entries.iter().zip(signatures.iter()) {
@@ -909,9 +909,9 @@ impl AuditLogListener {
     ///
     /// - 空 `entries`：返回 `"[]"`
     /// - 非空：返回 JSON 数组字符串
-    /// - `config.signing_key` 为 `None`：返回 `BulwarkError::Config`
+    /// - `config.signing_key` 为 `None`：返回 `GarrisonError::Config`
     #[cfg(feature = "audit-log")]
-    pub fn export_json(&self, entries: &[AuditEntry]) -> BulwarkResult<String> {
+    pub fn export_json(&self, entries: &[AuditEntry]) -> GarrisonResult<String> {
         let signatures = self.compute_signature_chain(entries)?;
         if entries.is_empty() {
             return Ok("[]".to_string());
@@ -930,7 +930,7 @@ impl AuditLogListener {
             })
             .collect();
         serde_json::to_string(&arr)
-            .map_err(|e| BulwarkError::Config(format!("listener-json-serialize::{}", e)))
+            .map_err(|e| GarrisonError::Config(format!("listener-json-serialize::{}", e)))
     }
 
     /// 验证 HMAC-SHA256 签名链（D4 新增）。
@@ -953,7 +953,7 @@ impl AuditLogListener {
         &self,
         entries: &[AuditEntry],
         signatures: &[String],
-    ) -> BulwarkResult<bool> {
+    ) -> GarrisonResult<bool> {
         if entries.len() != signatures.len() {
             return Ok(false);
         }
@@ -967,10 +967,10 @@ impl AuditLogListener {
     /// - `prev_signature` 初始为空字符串，之后为上一行的 signature
     /// - `row_content` = `timestamp,login_id,tenant_id,event_type`
     #[cfg(feature = "audit-log")]
-    fn compute_signature_chain(&self, entries: &[AuditEntry]) -> BulwarkResult<Vec<String>> {
+    fn compute_signature_chain(&self, entries: &[AuditEntry]) -> GarrisonResult<Vec<String>> {
         let key =
             self.config.signing_key.as_ref().ok_or_else(|| {
-                BulwarkError::Config("listener-signing-key-not-config".to_string())
+                GarrisonError::Config("listener-signing-key-not-config".to_string())
             })?;
         let mut prev_sig = String::new();
         let mut signatures = Vec::with_capacity(entries.len());
@@ -990,10 +990,10 @@ impl AuditLogListener {
 
     /// 计算 HMAC-SHA256 并返回 hex 编码字符串（D4 内部辅助方法）。
     #[cfg(feature = "audit-log")]
-    fn hmac_sha256_hex(&self, key: &str, input: &[u8]) -> BulwarkResult<String> {
+    fn hmac_sha256_hex(&self, key: &str, input: &[u8]) -> GarrisonResult<String> {
         type HmacSha256 = Hmac<Sha256>;
         let mut mac = HmacSha256::new_from_slice(key.as_bytes())
-            .map_err(|e| BulwarkError::Config(format!("listener-hmac-key-invalid::{}", e)))?;
+            .map_err(|e| GarrisonError::Config(format!("listener-hmac-key-invalid::{}", e)))?;
         mac.update(input);
         let bytes = mac.finalize().into_bytes();
         Ok(bytes.iter().map(|b| format!("{:02x}", b)).collect())
@@ -1002,12 +1002,12 @@ impl AuditLogListener {
 
 #[cfg(feature = "db-sqlite")]
 #[async_trait]
-impl BulwarkListener for AuditLogListener {
+impl GarrisonListener for AuditLogListener {
     /// 事件处理：转换 + INSERT，失败时 `tracing::warn` 不传播错误。
     ///
     /// "失败时 `tracing::warn` 不传播错误"——
     /// 监听器失败不中断主流程。
-    async fn on_event(&self, event: &BulwarkEvent) -> BulwarkResult<()> {
+    async fn on_event(&self, event: &GarrisonEvent) -> GarrisonResult<()> {
         match self.to_audit_entry(event) {
             Ok(entry) => {
                 if self.config.async_write {
@@ -1095,8 +1095,8 @@ mod tests {
 #[cfg(all(test, feature = "audit-log", feature = "db-sqlite"))]
 mod db_sqlite_tests {
     use super::{AuditConfig, AuditEntry, AuditLogListener, AuditMaskMode, AuditQuery};
-    use crate::dao::{init_dbnexus, BulwarkMigration};
-    use crate::listener::{BulwarkEvent, BulwarkListener, RequestContext};
+    use crate::dao::{init_dbnexus, GarrisonMigration};
+    use crate::listener::{GarrisonEvent, GarrisonListener, RequestContext};
     use dbnexus::DbPool;
     use sea_orm::{ConnectionTrait, DbBackend, Statement, Value};
     use std::path::PathBuf;
@@ -1114,7 +1114,7 @@ mod db_sqlite_tests {
         let pool = init_dbnexus("sqlite::memory:")
             .await
             .expect("init_dbnexus 应成功");
-        let migration = BulwarkMigration::with_base_dir(pool.clone(), project_migrations_dir());
+        let migration = GarrisonMigration::with_base_dir(pool.clone(), project_migrations_dir());
         let applied = migration.migrate_core().await.expect("migrate_core 应成功");
         assert!(applied >= 1, "migrate_core 应至少执行 1 个文件");
         pool
@@ -1123,7 +1123,7 @@ mod db_sqlite_tests {
     /// 在 `TENANT` task_local 上下文中执行测试体（`tenant-isolation` feature 启用时）。
     ///
     /// `to_audit_entry` 在 `tenant-isolation` 启用时调用 `current_tenant_id_strict()`，
-    /// 无 `TENANT.scope` 时返回 `None` → `BulwarkError::Config`（Rule 12 失败显性化）。
+    /// 无 `TENANT.scope` 时返回 `None` → `GarrisonError::Config`（Rule 12 失败显性化）。
     /// 本 helper 补齐 scope，让测试在正确上下文中运行。
     #[cfg(feature = "tenant-isolation")]
     async fn run_with_tenant_scope<F, Fut, T>(f: F) -> T
@@ -1185,15 +1185,15 @@ mod db_sqlite_tests {
     // T071-AuditLogListener 持久化事件
     // ========================================================================
 
-    /// T071 Red: AuditLogListener 接收 `BulwarkEvent::Login` 后持久化到 `audit_logs` 表。
+    /// T071 Red: AuditLogListener 接收 `GarrisonEvent::Login` 后持久化到 `audit_logs` 表。
     ///
-    /// 构造 `BulwarkEvent::Login { login_id: "1".to_string(), token: "tok".into(), device: None }`，
+    /// 构造 `GarrisonEvent::Login { login_id: "1".to_string(), token: "tok".into(), device: None }`，
     /// 调用 `AuditLogListener.on_event(&event).await`，
     /// 断言 `audit_logs` 表新增一行 `event_type="login"` 且 `login_id=1`。
     ///
     /// Rule 7 冲突暴露（在 T072 Green 注释中详述）：
-    /// - tasks.md T072 说 `pub struct AuditLogListener { pub dao: Arc<dyn BulwarkDao>, .. }`
-    /// - 但 BulwarkDao 是 cache 抽象（4 实现：Oxcache/MockDao/MinimalDao/AloneCache，均不支持 SQL INSERT）
+    /// - tasks.md T072 说 `pub struct AuditLogListener { pub dao: Arc<dyn GarrisonDao>, .. }`
+    /// - 但 GarrisonDao 是 cache 抽象（4 实现：Oxcache/MockDao/MinimalDao/AloneCache，均不支持 SQL INSERT）
     /// - Rule 11（惯例优先）：遵循 RefreshTokenRotation 先例，AuditLogListener 持 `pool: DbPool` 直连 SQL
     #[tokio::test(flavor = "multi_thread")]
     async fn audit_log_listener_persists_login_event() {
@@ -1203,7 +1203,7 @@ mod db_sqlite_tests {
     async fn audit_log_listener_persists_login_event_inner() {
         let pool = setup_db().await;
 
-        // 构造 AuditLogListener（Rule 7 override：pool: DbPool 直连，非 dao: Arc<dyn BulwarkDao>）
+        // 构造 AuditLogListener（Rule 7 override：pool: DbPool 直连，非 dao: Arc<dyn GarrisonDao>）
         let config = AuditConfig {
             mask_fields: vec![],
             retain_days: 0,
@@ -1214,7 +1214,7 @@ mod db_sqlite_tests {
         let listener = AuditLogListener::new(pool.clone(), config);
 
         // 构造 Login 事件
-        let event = BulwarkEvent::Login {
+        let event = GarrisonEvent::Login {
             login_id: "1".to_string(),
             token: "tok".to_string(),
             device: None,
@@ -1255,7 +1255,7 @@ mod db_sqlite_tests {
     ///
     /// Rule 7 冲突暴露：
     /// - tasks.md T073 说"调用 `on_event`，断言 `audit_logs` 表中该行 metadata 字段 password 值为 ***"
-    /// - 但 `BulwarkEvent::Login { login_id, token, device }` 无 password 字段，
+    /// - 但 `GarrisonEvent::Login { login_id, token, device }` 无 password 字段，
     ///   `to_audit_entry` 产生的 metadata 仅含 `{"device":"..."}`，无法产生含 password 的 metadata
     /// - 强行让 Login 事件携带 password 违反安全原则（密码不应记录到审计日志）
     /// - 解决方案：测试 `pub fn mask_metadata(&self, metadata: &str) -> String` 公开方法
@@ -1316,9 +1316,9 @@ mod db_sqlite_tests {
         let listener = AuditLogListener::new(pool.clone(), config);
 
         // 14 个 spec 必需变体（R-audit-log-005）
-        let events: Vec<(BulwarkEvent, &str)> = vec![
+        let events: Vec<(GarrisonEvent, &str)> = vec![
             (
-                BulwarkEvent::Login {
+                GarrisonEvent::Login {
                     login_id: "1".to_string(),
                     token: "t".into(),
                     device: None,
@@ -1327,7 +1327,7 @@ mod db_sqlite_tests {
                 "login",
             ),
             (
-                BulwarkEvent::Logout {
+                GarrisonEvent::Logout {
                     login_id: "1".to_string(),
                     token: "t".into(),
                     request_context: None,
@@ -1335,7 +1335,7 @@ mod db_sqlite_tests {
                 "logout",
             ),
             (
-                BulwarkEvent::Kickout {
+                GarrisonEvent::Kickout {
                     login_id: "1".to_string(),
                     token: "t".into(),
                     reason: "r".into(),
@@ -1344,7 +1344,7 @@ mod db_sqlite_tests {
                 "kickout",
             ),
             (
-                BulwarkEvent::LoginFailure {
+                GarrisonEvent::LoginFailure {
                     login_id: "1".to_string(),
                     reason: "r".into(),
                     request_context: None,
@@ -1352,14 +1352,14 @@ mod db_sqlite_tests {
                 "login_failure",
             ),
             (
-                BulwarkEvent::RevokeToken {
+                GarrisonEvent::RevokeToken {
                     token: "t".into(),
                     request_context: None,
                 },
                 "revoke_token",
             ),
             (
-                BulwarkEvent::PermissionCheck {
+                GarrisonEvent::PermissionCheck {
                     login_id: "1".to_string(),
                     permission: "p".into(),
                     request_context: None,
@@ -1367,7 +1367,7 @@ mod db_sqlite_tests {
                 "permission_check",
             ),
             (
-                BulwarkEvent::RoleCheck {
+                GarrisonEvent::RoleCheck {
                     login_id: "1".to_string(),
                     role: "r".into(),
                     request_context: None,
@@ -1375,7 +1375,7 @@ mod db_sqlite_tests {
                 "role_check",
             ),
             (
-                BulwarkEvent::TokenRefresh {
+                GarrisonEvent::TokenRefresh {
                     login_id: "1".to_string(),
                     old_token: "t1".into(),
                     new_token: "t2".into(),
@@ -1384,7 +1384,7 @@ mod db_sqlite_tests {
                 "token_refresh",
             ),
             (
-                BulwarkEvent::TokenRotate {
+                GarrisonEvent::TokenRotate {
                     old_key: "k1".into(),
                     new_key: "k2".into(),
                     request_context: None,
@@ -1392,7 +1392,7 @@ mod db_sqlite_tests {
                 "token_rotate",
             ),
             (
-                BulwarkEvent::SocialLogin {
+                GarrisonEvent::SocialLogin {
                     provider: "wechat".into(),
                     user_id: "u".into(),
                     login_id: Some("1".to_string()),
@@ -1401,7 +1401,7 @@ mod db_sqlite_tests {
                 "social_login",
             ),
             (
-                BulwarkEvent::TenantSwitch {
+                GarrisonEvent::TenantSwitch {
                     login_id: "1".to_string(),
                     from_tenant: 100,
                     to_tenant: 200,
@@ -1410,7 +1410,7 @@ mod db_sqlite_tests {
                 "tenant_switch",
             ),
             (
-                BulwarkEvent::DeviceBlock {
+                GarrisonEvent::DeviceBlock {
                     login_id: "1".to_string(),
                     device: "d".into(),
                     request_context: None,
@@ -1418,7 +1418,7 @@ mod db_sqlite_tests {
                 "device_block",
             ),
             (
-                BulwarkEvent::DeviceUnblock {
+                GarrisonEvent::DeviceUnblock {
                     login_id: "1".to_string(),
                     device: "d".into(),
                     request_context: None,
@@ -1426,7 +1426,7 @@ mod db_sqlite_tests {
                 "device_unblock",
             ),
             (
-                BulwarkEvent::ConfigReload {
+                GarrisonEvent::ConfigReload {
                     config_version: 1,
                     request_context: None,
                 },
@@ -1639,7 +1639,7 @@ mod db_sqlite_tests {
     /// 并填充到返回的 `AuditEntry.tenant_id`。
     ///
     /// 在 `TENANT.scope(TenantContext { tenant_id: 42, .. }, async { ... })` 内
-    /// 调用 `to_audit_entry(&BulwarkEvent::Login { ... })`，断言返回的 `AuditEntry.tenant_id == 42`。
+    /// 调用 `to_audit_entry(&GarrisonEvent::Login { ... })`，断言返回的 `AuditEntry.tenant_id == 42`。
     ///
     /// 此测试作为 T002 重构（移除 post-match 覆盖、match arm 直接用 tenant_id）的保护网：
     /// - 在改代码前应通过（因为现有 L445-446 post-match 覆盖 `entry.tenant_id = tenant_id` 正确）
@@ -1658,7 +1658,7 @@ mod db_sqlite_tests {
         };
         let listener = AuditLogListener::new(pool, config);
 
-        let event = BulwarkEvent::Login {
+        let event = GarrisonEvent::Login {
             login_id: "1".to_string(),
             token: "tok".to_string(),
             device: None,
@@ -2008,7 +2008,7 @@ mod db_sqlite_tests {
     /// T004 Red: 当 `request_context` 携带 ip 与 user_agent 时，
     /// `to_audit_entry` 应将其提取到返回的 `AuditEntry.ip` 与 `AuditEntry.user_agent`。
     ///
-    /// 构造 `BulwarkEvent::Login` 携带 `request_context: Some(RequestContext {
+    /// 构造 `GarrisonEvent::Login` 携带 `request_context: Some(RequestContext {
     ///     ip: Some("192.168.1.1"), user_agent: Some("Mozilla/5.0")
     /// })`，调用 `to_audit_entry`，断言 `entry.ip` 与 `entry.user_agent` 与输入一致。
     #[tokio::test(flavor = "multi_thread")]
@@ -2028,7 +2028,7 @@ mod db_sqlite_tests {
         };
         let listener = AuditLogListener::new(pool, config);
 
-        let event = BulwarkEvent::Login {
+        let event = GarrisonEvent::Login {
             login_id: "1".to_string(),
             token: "tok".to_string(),
             device: None,
@@ -2056,7 +2056,7 @@ mod db_sqlite_tests {
     /// T004 Red: 当 `request_context` 为 `None` 时，
     /// `to_audit_entry` 返回的 `AuditEntry.ip` 与 `AuditEntry.user_agent` 应为 `None`。
     ///
-    /// 构造 `BulwarkEvent::Login` 携带 `request_context: None`，
+    /// 构造 `GarrisonEvent::Login` 携带 `request_context: None`，
     /// 调用 `to_audit_entry`，断言 `entry.ip` 与 `entry.user_agent` 均为 `None`。
     #[tokio::test(flavor = "multi_thread")]
     async fn audit_entry_request_context_none_yields_none_ip_ua() {
@@ -2074,7 +2074,7 @@ mod db_sqlite_tests {
         };
         let listener = AuditLogListener::new(pool, config);
 
-        let event = BulwarkEvent::Login {
+        let event = GarrisonEvent::Login {
             login_id: "1".to_string(),
             token: "tok".to_string(),
             device: None,
@@ -2112,7 +2112,7 @@ mod db_sqlite_tests {
         let listener = AuditLogListener::new(pool, config);
 
         // 使用 Logout 变体验证 extract_request_context 覆盖多个变体
-        let event = BulwarkEvent::Logout {
+        let event = GarrisonEvent::Logout {
             login_id: "1".to_string(),
             token: "tok".to_string(),
             request_context: Some(RequestContext {

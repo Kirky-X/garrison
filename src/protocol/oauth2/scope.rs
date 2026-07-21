@@ -17,10 +17,10 @@
 //!   handler 实现可按需通过其他上下文（如 username / client_id）查询真实 login_id。
 //!   这是 spec 与 OAuth2 客户端实际语义之间的妥协（Rule 7 已暴露冲突）。
 //! - `ScopeRegistry` 用 `parking_lot::RwLock` 保护 `HashMap<String, Arc<dyn ScopeHandler>>`，
-//!   与 `BulwarkPluginManager` / `BulwarkListenerManager` 的 `Vec<Arc<dyn T>>` 模式一致（Arc 而非 Box，
+//!   与 `GarrisonPluginManager` / `GarrisonListenerManager` 的 `Vec<Arc<dyn T>>` 模式一致（Arc 而非 Box，
 //!   因为 handler 可能被多处共享；RwLock 因为支持运行时 register/unregister）。
 
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::error::{GarrisonError, GarrisonResult};
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -34,8 +34,8 @@ pub trait ScopeHandler: Send + Sync {
     /// # 返回
     /// - `Ok(true)`: 允许该 scope。
     /// - `Ok(false)`: 拒绝该 scope（不发送 HTTP 请求）。
-    /// - `Err(BulwarkError)`: 校验过程出错（向上传播，Fail Loud）。
-    fn validate(&self, scope: &str, login_id: i64) -> BulwarkResult<bool>;
+    /// - `Err(GarrisonError)`: 校验过程出错（向上传播，Fail Loud）。
+    fn validate(&self, scope: &str, login_id: i64) -> GarrisonResult<bool>;
 }
 
 /// Scope 注册表，支持运行时动态注册/查询/移除 scope handler。
@@ -74,13 +74,13 @@ impl ScopeRegistry {
     ///
     /// # 返回
     /// - `Ok(true/false)`: 委托 handler 返回结果。
-    /// - `Err(BulwarkError::OAuth2)`: scope 未注册。
-    /// - `Err(BulwarkError)`: handler 内部错误向上传播。
-    pub fn validate(&self, scope: &str, login_id: i64) -> BulwarkResult<bool> {
+    /// - `Err(GarrisonError::OAuth2)`: scope 未注册。
+    /// - `Err(GarrisonError)`: handler 内部错误向上传播。
+    pub fn validate(&self, scope: &str, login_id: i64) -> GarrisonResult<bool> {
         let map = self.handlers.read();
         match map.get(scope) {
             Some(handler) => handler.validate(scope, login_id),
-            None => Err(BulwarkError::OAuth2(format!(
+            None => Err(GarrisonError::OAuth2(format!(
                 "scope handler not registered: {}",
                 scope
             ))),
@@ -114,7 +114,7 @@ mod tests {
     }
 
     impl ScopeHandler for StubHandler {
-        fn validate(&self, _scope: &str, _login_id: i64) -> BulwarkResult<bool> {
+        fn validate(&self, _scope: &str, _login_id: i64) -> GarrisonResult<bool> {
             Ok(self.allowed)
         }
     }
@@ -123,8 +123,8 @@ mod tests {
     struct ErrHandler;
 
     impl ScopeHandler for ErrHandler {
-        fn validate(&self, scope: &str, _login_id: i64) -> BulwarkResult<bool> {
-            Err(BulwarkError::Internal(format!(
+        fn validate(&self, scope: &str, _login_id: i64) -> GarrisonResult<bool> {
+            Err(GarrisonError::Internal(format!(
                 "handler error for scope: {}",
                 scope
             )))
@@ -138,7 +138,7 @@ mod tests {
     }
 
     impl ScopeHandler for RecordingHandler {
-        fn validate(&self, scope: &str, login_id: i64) -> BulwarkResult<bool> {
+        fn validate(&self, scope: &str, login_id: i64) -> GarrisonResult<bool> {
             *self.last_scope.write() = Some(scope.to_string());
             *self.last_login_id.write() = Some(login_id);
             Ok(true)
@@ -174,7 +174,7 @@ mod tests {
         let result = registry.validate("unregistered_scope", 1001);
         assert!(result.is_err());
         match result.err() {
-            Some(BulwarkError::OAuth2(msg)) => {
+            Some(GarrisonError::OAuth2(msg)) => {
                 assert!(msg.contains("scope handler not registered: unregistered_scope"))
             },
             other => panic!("期望 OAuth2 错误，实际: {:?}", other),
@@ -189,7 +189,7 @@ mod tests {
         let result = registry.validate("error_scope", 1001);
         assert!(result.is_err());
         match result.err() {
-            Some(BulwarkError::Internal(msg)) => {
+            Some(GarrisonError::Internal(msg)) => {
                 assert!(msg.contains("handler error for scope: error_scope"))
             },
             other => panic!("期望 Internal 错误，实际: {:?}", other),

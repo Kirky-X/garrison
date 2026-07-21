@@ -2,7 +2,7 @@
 //! See LICENSE for full license text.
 
 use super::*;
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::error::{GarrisonError, GarrisonResult};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use tokio::sync::Mutex;
@@ -21,33 +21,33 @@ impl MockDao {
 }
 
 #[async_trait]
-impl BulwarkDao for MockDao {
-    async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
+impl GarrisonDao for MockDao {
+    async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
         let data = self.data.lock().await;
         Ok(data.get(key).cloned())
     }
 
-    async fn set(&self, key: &str, value: &str, _ttl_seconds: u64) -> BulwarkResult<()> {
+    async fn set(&self, key: &str, value: &str, _ttl_seconds: u64) -> GarrisonResult<()> {
         let mut data = self.data.lock().await;
         data.insert(key.to_string(), value.to_string());
         Ok(())
     }
 
-    async fn update(&self, key: &str, value: &str) -> BulwarkResult<()> {
+    async fn update(&self, key: &str, value: &str) -> GarrisonResult<()> {
         let mut data = self.data.lock().await;
         if data.contains_key(key) {
             data.insert(key.to_string(), value.to_string());
             Ok(())
         } else {
-            Err(BulwarkError::Dao(format!("dao-key-not-found::{}", key)))
+            Err(GarrisonError::Dao(format!("dao-key-not-found::{}", key)))
         }
     }
 
-    async fn expire(&self, _key: &str, _seconds: u64) -> BulwarkResult<()> {
+    async fn expire(&self, _key: &str, _seconds: u64) -> GarrisonResult<()> {
         Ok(())
     }
 
-    async fn delete(&self, key: &str) -> BulwarkResult<()> {
+    async fn delete(&self, key: &str) -> GarrisonResult<()> {
         let mut data = self.data.lock().await;
         data.remove(key);
         Ok(())
@@ -57,8 +57,8 @@ impl BulwarkDao for MockDao {
     ///
     /// 在同一把 `tokio::sync::Mutex` 锁内完成 get + remove，
     /// 保证并发调用同一 key 时仅一个返回 Some（进程内原子）。
-    /// 与 `BulwarkDaoOxcache` / 生产 `MockDao` 的 `parking_lot::Mutex` 实现等价。
-    async fn get_and_delete(&self, key: &str) -> BulwarkResult<Option<String>> {
+    /// 与 `GarrisonDaoOxcache` / 生产 `MockDao` 的 `parking_lot::Mutex` 实现等价。
+    async fn get_and_delete(&self, key: &str) -> GarrisonResult<Option<String>> {
         let mut data = self.data.lock().await;
         let value = data.get(key).cloned();
         if value.is_some() {
@@ -70,7 +70,7 @@ impl BulwarkDao for MockDao {
 
 /// 创建 handler（使用 MockDao）。
 fn make_handler() -> TempCredentialHandler {
-    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     TempCredentialHandler::new(dao)
 }
 
@@ -93,7 +93,7 @@ fn new_creates_handler() {
 async fn issue_returns_key_with_correct_prefix() {
     let handler = make_handler();
     let key = handler.issue("invite", "payload-data", 600).await.unwrap();
-    assert!(key.starts_with("bulwark:temp:invite:"));
+    assert!(key.starts_with("garrison:temp:invite:"));
 }
 
 /// 复用同一 handler 多次签发返回不同 key（spec Scenario）。
@@ -111,8 +111,8 @@ async fn issue_different_prefix_different_namespace() {
     let handler = make_handler();
     let k1 = handler.issue("invite", "v1", 60).await.unwrap();
     let k2 = handler.issue("reset", "v2", 60).await.unwrap();
-    assert!(k1.starts_with("bulwark:temp:invite:"));
-    assert!(k2.starts_with("bulwark:temp:reset:"));
+    assert!(k1.starts_with("garrison:temp:invite:"));
+    assert!(k2.starts_with("garrison:temp:reset:"));
 }
 
 /// ttl_seconds <= 0 返回错误（spec Scenario）。
@@ -122,7 +122,7 @@ async fn issue_zero_ttl_returns_error() {
     let result = handler.issue("invite", "data", 0).await;
     assert!(result.is_err());
     match result.err() {
-        Some(BulwarkError::InvalidParam(_)) => {},
+        Some(GarrisonError::InvalidParam(_)) => {},
         other => panic!("期望 InvalidParam 错误，实际: {:?}", other),
     }
 }
@@ -134,7 +134,7 @@ async fn issue_prefix_with_colon_returns_error() {
     let result = handler.issue("inv:ite", "data", 60).await;
     assert!(result.is_err());
     match result.err() {
-        Some(BulwarkError::InvalidParam(_)) => {},
+        Some(GarrisonError::InvalidParam(_)) => {},
         other => panic!("期望 InvalidParam 错误，实际: {:?}", other),
     }
 }
@@ -169,7 +169,7 @@ async fn get_returns_value_without_deleting() {
 async fn get_nonexistent_returns_none() {
     let handler = make_handler();
     let result = handler
-        .get("bulwark:temp:invite:nonexistent")
+        .get("garrison:temp:invite:nonexistent")
         .await
         .unwrap();
     assert_eq!(result, None);
@@ -195,7 +195,7 @@ async fn revoke_existing_returns_ok() {
 #[tokio::test]
 async fn revoke_nonexistent_returns_ok() {
     let handler = make_handler();
-    let result = handler.revoke("bulwark:temp:invite:nonexistent").await;
+    let result = handler.revoke("garrison:temp:invite:nonexistent").await;
     assert!(result.is_ok());
 }
 
@@ -231,7 +231,7 @@ async fn consume_twice_returns_none_second_time() {
 async fn consume_nonexistent_returns_none() {
     let handler = make_handler();
     let value = handler
-        .consume("bulwark:temp:invite:nonexistent")
+        .consume("garrison:temp:invite:nonexistent")
         .await
         .unwrap();
     assert_eq!(value, None);
@@ -261,7 +261,7 @@ async fn consume_after_revoke_returns_none() {
 /// 与 `dao::tests::oxcache_get_and_delete_concurrent_only_one_succeeds`。
 #[tokio::test(flavor = "multi_thread")]
 async fn consume_concurrent_only_one_succeeds() {
-    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     let handler = Arc::new(TempCredentialHandler::new(dao));
     let key = handler
         .issue("invite", "concurrent-value", 60)
@@ -318,16 +318,16 @@ async fn consume_atomic_still_one_time_use() {
 async fn temp_namespace_isolated() {
     let dao = Arc::new(MockDao::new());
     // 模拟同时存在 temp key 与 apikey key
-    dao.set("bulwark:temp:invite:abc", "temp-value", 60)
+    dao.set("garrison:temp:invite:abc", "temp-value", 60)
         .await
         .unwrap();
-    dao.set("bulwark:apikey:abc", "apikey-value", 60)
+    dao.set("garrison:apikey:abc", "apikey-value", 60)
         .await
         .unwrap();
     let handler = TempCredentialHandler::new(dao.clone());
     // consume temp key 不影响 apikey key
-    let value = handler.consume("bulwark:temp:invite:abc").await.unwrap();
+    let value = handler.consume("garrison:temp:invite:abc").await.unwrap();
     assert_eq!(value, Some("temp-value".to_string()));
-    let apikey_value = dao.get("bulwark:apikey:abc").await.unwrap();
+    let apikey_value = dao.get("garrison:apikey:abc").await.unwrap();
     assert_eq!(apikey_value, Some("apikey-value".to_string()));
 }

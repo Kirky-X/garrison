@@ -10,7 +10,7 @@ use super::CacheHealthCheck;
 #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
 use super::DbHealthCheck;
 use super::{ConfigHealthCheck, HealthCheck, HealthResult, HealthStatus};
-use crate::config::BulwarkConfig;
+use crate::config::GarrisonConfig;
 use std::sync::Arc;
 
 // ============================================================================
@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 impl ConfigHealthCheck {
     /// 创建配置健康检查器。
-    pub fn new(config: Arc<BulwarkConfig>) -> Self {
+    pub fn new(config: Arc<GarrisonConfig>) -> Self {
         Self { config }
     }
 }
@@ -72,7 +72,7 @@ impl HealthCheck for CacheHealthCheck {
     {
         Box::pin(async {
             // oxcache 是内存缓存，进程存活即缓存可用。
-            // 对于 cache-redis，实际 Redis 连通性检查需要 BulwarkManager 已初始化。
+            // 对于 cache-redis，实际 Redis 连通性检查需要 GarrisonManager 已初始化。
             // 此处返回 Healthy 作为默认；业务方可注册自定义 CacheHealthCheck 替换。
             Ok(HealthStatus::Healthy)
         })
@@ -110,7 +110,7 @@ impl HealthCheck for DbHealthCheck {
     {
         Box::pin(async {
             // SQLite 是嵌入式数据库，进程存活即数据库可用。
-            // PostgreSQL/MySQL 需要实际连接检查，但 BulwarkDao 抽象层不暴露 ping 方法。
+            // PostgreSQL/MySQL 需要实际连接检查，但 GarrisonDao 抽象层不暴露 ping 方法。
             // 此处返回 Healthy 作为默认；业务方可注册自定义 DbHealthCheck 替换。
             Ok(HealthStatus::Healthy)
         })

@@ -41,8 +41,8 @@ use crate::account::credential::PasswordVerifier;
 /// # 示例
 ///
 /// ```ignore
-/// use bulwark::account::policy::rules::LengthRule;
-/// use bulwark::account::policy::{PasswordPolicyRule, PolicyContext};
+/// use garrison::account::policy::rules::LengthRule;
+/// use garrison::account::policy::{PasswordPolicyRule, PolicyContext};
 ///
 /// let rule = LengthRule::new(8, 128);
 /// let ctx = PolicyContext { /* ... */ };
@@ -211,8 +211,8 @@ impl PasswordPolicyRule for ComplexityRule {
 /// # 示例
 ///
 /// ```ignore
-/// use bulwark::account::policy::rules::HistoryRule;
-/// use bulwark::account::policy::{PasswordPolicyRule, PolicyContext};
+/// use garrison::account::policy::rules::HistoryRule;
+/// use garrison::account::policy::{PasswordPolicyRule, PolicyContext};
 ///
 /// let rule = HistoryRule::new(5);
 /// let ctx = PolicyContext { password_history: vec!["$argon2id$...".into()], /* ... */ };
@@ -248,7 +248,7 @@ impl PasswordPolicyRule for HistoryRule {
             .len()
             .saturating_sub(self.count as usize);
         for hash in &ctx.password_history[start..] {
-            // PasswordVerifier::verify 返回 BulwarkResult<bool>:
+            // PasswordVerifier::verify 返回 GarrisonResult<bool>:
             // - Ok(true): 密码匹配历史 hash → 规则失败
             // - Ok(false): 不匹配 → 继续检查下一条
             // - Err(_): hash 格式无效 → 跳过（不阻塞密码修改）
@@ -680,8 +680,8 @@ impl PasswordPolicyRule for NotEmailRule {
 /// # 示例
 ///
 /// ```ignore
-/// use bulwark::account::policy::rules::RegexRule;
-/// use bulwark::account::policy::{PasswordPolicyRule, PolicyContext};
+/// use garrison::account::policy::rules::RegexRule;
+/// use garrison::account::policy::{PasswordPolicyRule, PolicyContext};
 ///
 /// // 禁止包含空格的密码
 /// let rule = RegexRule::new(regex::Regex::new(r"\s").unwrap(), "密码不能包含空格".into());
@@ -752,8 +752,8 @@ impl PasswordPolicyRule for RegexRule {
 /// # 示例
 ///
 /// ```ignore
-/// use bulwark::account::policy::rules::NistComplianceRule;
-/// use bulwark::account::policy::{PasswordPolicyRule, PolicyContext};
+/// use garrison::account::policy::rules::NistComplianceRule;
+/// use garrison::account::policy::{PasswordPolicyRule, PolicyContext};
 ///
 /// let rule = NistComplianceRule::new(8);  // NIST 推荐最小长度
 /// let ctx = PolicyContext { /* ... */ };
@@ -775,7 +775,7 @@ impl NistComplianceRule {
     /// # 示例
     ///
     /// ```ignore
-    /// use bulwark::account::policy::rules::NistComplianceRule;
+    /// use garrison::account::policy::rules::NistComplianceRule;
     ///
     /// let rule = NistComplianceRule::new(8);  // NIST 推荐
     /// let rule = NistComplianceRule::new(12); // 更严格策略

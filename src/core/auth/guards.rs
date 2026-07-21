@@ -11,12 +11,12 @@ use async_trait::async_trait;
 #[allow(deprecated)]
 use super::AllowAllSwitchToGuard;
 use super::{DenyAllSwitchToGuard, SwitchToGuard};
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::error::{GarrisonError, GarrisonResult};
 
 #[async_trait]
 impl SwitchToGuard for DenyAllSwitchToGuard {
-    async fn check(&self, _original: &str, _target: &str) -> BulwarkResult<()> {
-        Err(BulwarkError::NotPermission(
+    async fn check(&self, _original: &str, _target: &str) -> GarrisonResult<()> {
+        Err(GarrisonError::NotPermission(
             "switch_to 被拒绝：未配置 SwitchToGuard，默认 deny-all".to_string(),
         ))
     }
@@ -26,7 +26,7 @@ impl SwitchToGuard for DenyAllSwitchToGuard {
 #[allow(deprecated)]
 #[async_trait]
 impl SwitchToGuard for AllowAllSwitchToGuard {
-    async fn check(&self, _original: &str, _target: &str) -> BulwarkResult<()> {
+    async fn check(&self, _original: &str, _target: &str) -> GarrisonResult<()> {
         Ok(())
     }
 }

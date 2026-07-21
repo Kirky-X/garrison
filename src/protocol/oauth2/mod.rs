@@ -53,7 +53,7 @@ pub mod client;
 /// OAuth2 客户端 re-export。
 ///
 /// 通过 `pub use` 将 `client::OAuth2Client` 暴露在 `protocol::oauth2` 命名空间根，
-/// 供外部以 `bulwark::protocol::oauth2::OAuth2Client` 直接使用。
+/// 供外部以 `garrison::protocol::oauth2::OAuth2Client` 直接使用。
 pub use client::OAuth2Client;
 
 /// OAuth2 令牌响应。

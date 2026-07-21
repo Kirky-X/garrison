@@ -1,7 +1,7 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! `BanStorage` 适配器，用 `BulwarkDao` KV 存储封禁记录。
+//! `BanStorage` 适配器，用 `GarrisonDao` KV 存储封禁记录。
 //!
 //! # 存储格式
 //! - 封禁记录：`limiteron:ban:{type}:{value}` → `expires_at_ts|ban_times|is_manual|reason`
@@ -9,10 +9,10 @@
 //! - 封禁历史：`limiteron:ban:history:{type}:{value}` → `ban_times|last_banned_at_ts`
 //!
 //! # 限制
-//! `list_bans` 和 `cleanup_expired_bans` 无法实现（BulwarkDao 无 iter API），
+//! `list_bans` 和 `cleanup_expired_bans` 无法实现（GarrisonDao 无 iter API），
 //! `is_banned` 在查询时检查过期时间（过期返回 None）。
 
-use crate::dao::BulwarkDao;
+use crate::dao::GarrisonDao;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use limiteron::error::StorageError;
@@ -104,7 +104,7 @@ fn record_duration_from_ban(_target: &BanTarget, ban_times: u32) -> Duration {
     Duration::from_secs((ban_times as u64).saturating_mul(300))
 }
 
-/// `BanStorage` 适配器，用 `BulwarkDao` KV 存储封禁记录。
+/// `BanStorage` 适配器，用 `GarrisonDao` KV 存储封禁记录。
 ///
 /// # 存储格式
 /// - 封禁记录：`limiteron:ban:{type}:{value}` → `expires_at_ts|ban_times|is_manual|reason`
@@ -112,24 +112,24 @@ fn record_duration_from_ban(_target: &BanTarget, ban_times: u32) -> Duration {
 /// - 封禁历史：`limiteron:ban:history:{type}:{value}` → `ban_times|last_banned_at_ts`
 ///
 /// # 限制
-/// `list_bans` 和 `cleanup_expired_bans` 无法实现（BulwarkDao 无 iter API），
+/// `list_bans` 和 `cleanup_expired_bans` 无法实现（GarrisonDao 无 iter API），
 /// `is_banned` 在查询时检查过期时间（过期返回 None）。
-pub struct BulwarkDaoBanStorage {
-    pub(super) dao: Arc<dyn BulwarkDao>,
+pub struct GarrisonDaoBanStorage {
+    pub(super) dao: Arc<dyn GarrisonDao>,
 }
 
-impl BulwarkDaoBanStorage {
+impl GarrisonDaoBanStorage {
     /// 创建适配器实例。
     ///
     /// # 参数
     /// - `dao`: 内部 DAO 实现。
-    pub fn new(dao: Arc<dyn BulwarkDao>) -> Self {
+    pub fn new(dao: Arc<dyn GarrisonDao>) -> Self {
         Self { dao }
     }
 }
 
 #[async_trait]
-impl BanStorage for BulwarkDaoBanStorage {
+impl BanStorage for GarrisonDaoBanStorage {
     async fn is_banned(&self, target: &BanTarget) -> Result<Option<BanRecord>, StorageError> {
         let key = ban_record_key(target);
         match self.dao.get(&key).await.map_err(map_to_storage_err)? {
@@ -247,7 +247,7 @@ impl BanStorage for BulwarkDaoBanStorage {
     }
 
     async fn cleanup_expired_bans(&self) -> Result<u64, StorageError> {
-        // BulwarkDao 无 iter API，无法扫描过期 key
+        // GarrisonDao 无 iter API，无法扫描过期 key
         // 封禁记录设置 TTL，过期自动删除；is_banned 查询时检查过期时间
         Ok(0)
     }
@@ -258,7 +258,7 @@ impl BanStorage for BulwarkDaoBanStorage {
         _offset: u64,
         _limit: u64,
     ) -> Result<Vec<BanRecord>, StorageError> {
-        // BulwarkDao 无 iter API，无法列出所有 key
+        // GarrisonDao 无 iter API，无法列出所有 key
         Ok(Vec::new())
     }
 
@@ -272,15 +272,15 @@ mod tests {
     use super::*;
     use crate::dao::tests::MockDao;
 
-    fn make_dao() -> Arc<dyn BulwarkDao> {
+    fn make_dao() -> Arc<dyn GarrisonDao> {
         Arc::new(MockDao::new())
     }
 
-    // --- BulwarkDaoBanStorage 测试 ---
+    // --- GarrisonDaoBanStorage 测试 ---
 
     #[tokio::test]
     async fn ban_save_and_is_banned() {
-        let storage = BulwarkDaoBanStorage::new(make_dao());
+        let storage = GarrisonDaoBanStorage::new(make_dao());
         let target = BanTarget::Ip("192.168.1.1".to_string());
 
         // 未封禁
@@ -306,7 +306,7 @@ mod tests {
 
     #[tokio::test]
     async fn ban_expired_returns_none() {
-        let storage = BulwarkDaoBanStorage::new(make_dao());
+        let storage = GarrisonDaoBanStorage::new(make_dao());
         let target = BanTarget::Ip("10.0.0.1".to_string());
 
         let record = BanRecord {
@@ -329,7 +329,7 @@ mod tests {
 
     #[tokio::test]
     async fn ban_increment_and_get_times() {
-        let storage = BulwarkDaoBanStorage::new(make_dao());
+        let storage = GarrisonDaoBanStorage::new(make_dao());
         let target = BanTarget::UserId("user123".to_string());
 
         assert_eq!(storage.get_ban_times(&target).await.unwrap(), 0);
@@ -345,7 +345,7 @@ mod tests {
 
     #[tokio::test]
     async fn ban_remove() {
-        let storage = BulwarkDaoBanStorage::new(make_dao());
+        let storage = GarrisonDaoBanStorage::new(make_dao());
         let target = BanTarget::Ip("172.16.0.1".to_string());
 
         let record = BanRecord {
@@ -367,7 +367,7 @@ mod tests {
 
     #[tokio::test]
     async fn ban_get_history() {
-        let storage = BulwarkDaoBanStorage::new(make_dao());
+        let storage = GarrisonDaoBanStorage::new(make_dao());
         let target = BanTarget::Mac("AA:BB:CC:DD:EE:FF".to_string());
 
         let record = BanRecord {
@@ -388,21 +388,21 @@ mod tests {
 
     #[tokio::test]
     async fn ban_list_bans_returns_empty() {
-        let storage = BulwarkDaoBanStorage::new(make_dao());
+        let storage = GarrisonDaoBanStorage::new(make_dao());
         let bans = storage.list_bans(true, 0, 10).await.unwrap();
         assert!(
             bans.is_empty(),
-            "list_bans 应返回空 Vec（BulwarkDao 无 iter API）"
+            "list_bans 应返回空 Vec（GarrisonDao 无 iter API）"
         );
     }
 
     #[tokio::test]
     async fn ban_cleanup_returns_zero() {
-        let storage = BulwarkDaoBanStorage::new(make_dao());
+        let storage = GarrisonDaoBanStorage::new(make_dao());
         let count = storage.cleanup_expired_bans().await.unwrap();
         assert_eq!(
             count, 0,
-            "cleanup_expired_bans 应返回 0（BulwarkDao 无 iter API）"
+            "cleanup_expired_bans 应返回 0（GarrisonDao 无 iter API）"
         );
     }
 
@@ -411,7 +411,7 @@ mod tests {
     /// M-3: BanStorage::get_ban_times 遇到脏数据时返回错误（非静默用 0）。
     #[tokio::test]
     async fn m3_ban_get_ban_times_dirty_data_returns_err() {
-        let storage = BulwarkDaoBanStorage::new(make_dao());
+        let storage = GarrisonDaoBanStorage::new(make_dao());
         let target = BanTarget::Ip("1.2.3.4".to_string());
         // 直接注入脏数据
         let key = ban_times_key(&target);
@@ -429,7 +429,7 @@ mod tests {
     /// M-3: BanStorage::get_history 遇到脏数据时返回错误（fail-fast）。
     #[tokio::test]
     async fn m3_ban_get_history_dirty_data_returns_err() {
-        let storage = BulwarkDaoBanStorage::new(make_dao());
+        let storage = GarrisonDaoBanStorage::new(make_dao());
         let target = BanTarget::Ip("5.6.7.8".to_string());
         let key = ban_history_key(&target);
         // ban_times 字段是非数字
@@ -544,7 +544,7 @@ mod tests {
     /// get_history 段数不对时返回错误。
     #[tokio::test]
     async fn ban_get_history_wrong_parts_returns_err() {
-        let storage = BulwarkDaoBanStorage::new(make_dao());
+        let storage = GarrisonDaoBanStorage::new(make_dao());
         let target = BanTarget::Ip("9.9.9.9".to_string());
         let key = ban_history_key(&target);
         // 只有 1 段（应为 2 段）
@@ -562,7 +562,7 @@ mod tests {
     /// get_history last_banned_at_ts 不是数字时返回错误。
     #[tokio::test]
     async fn ban_get_history_non_numeric_ts_returns_err() {
-        let storage = BulwarkDaoBanStorage::new(make_dao());
+        let storage = GarrisonDaoBanStorage::new(make_dao());
         let target = BanTarget::Ip("8.8.8.8".to_string());
         let key = ban_history_key(&target);
         // ban_times 正确，但 last_banned_at_ts 不是数字
@@ -574,7 +574,7 @@ mod tests {
     /// get_history ban_times 不是数字时返回错误。
     #[tokio::test]
     async fn ban_get_history_non_numeric_ban_times_returns_err() {
-        let storage = BulwarkDaoBanStorage::new(make_dao());
+        let storage = GarrisonDaoBanStorage::new(make_dao());
         let target = BanTarget::Mac("AA:BB".to_string());
         let key = ban_history_key(&target);
         storage.dao.set(&key, "not_num|1000", 0).await.unwrap();

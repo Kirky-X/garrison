@@ -3,11 +3,11 @@
 
 //! 密码登录端到端集成测试（v0.4.2 新增，依据 spec secure-password + auth-password-login）。
 //!
-//! 验证 `Argon2Hasher` / `BcryptHasher` / `PasswordVerifier` + `BulwarkLogicDefault::login_with_password`
+//! 验证 `Argon2Hasher` / `BcryptHasher` / `PasswordVerifier` + `GarrisonLogicDefault::login_with_password`
 //! 的完整链路：
 //! 1. `PasswordHasher::hash` → `PasswordHasher::verify` roundtrip
 //! 2. `PasswordVerifier::verify` 自动识别算法
-//! 3. `BulwarkLogicDefault::with_password_hasher` + `with_user_repository` 注入
+//! 3. `GarrisonLogicDefault::with_password_hasher` + `with_user_repository` 注入
 //! 4. `login_with_password` 成功路径（用户存在 + 密码匹配 → 签发 token）
 //! 5. `login_with_password` 失败路径（用户不存在 / 密码错误 / 未配置 hasher/repository）
 //! 6. listener 广播 LoginFailure 事件（user_not_found / wrong_password）
@@ -21,18 +21,18 @@
 ))]
 
 use async_trait::async_trait;
-use bulwark::account::credential::password::{
+use garrison::account::credential::password::{
     Argon2Hasher, BcryptHasher, PasswordHasher, PasswordVerifier,
 };
-use bulwark::dao::{
+use garrison::dao::{
     init_dbnexus,
     repository::{sqlite::DbnexusUserRepository, NewUser, UserRepository},
-    BulwarkDao, BulwarkDaoOxcache, BulwarkMigration,
+    GarrisonDao, GarrisonDaoOxcache, GarrisonMigration,
 };
-use bulwark::error::{BulwarkError, BulwarkResult};
-use bulwark::listener::{BulwarkEvent, BulwarkListener, BulwarkListenerManager};
-use bulwark::session::BulwarkSession;
-use bulwark::stp::{BulwarkInterface, BulwarkLogicDefault, PasswordLogic};
+use garrison::error::{GarrisonError, GarrisonResult};
+use garrison::listener::{GarrisonEvent, GarrisonListener, GarrisonListenerManager};
+use garrison::session::GarrisonSession;
+use garrison::stp::{GarrisonInterface, GarrisonLogicDefault, PasswordLogic};
 use serial_test::serial;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -41,17 +41,17 @@ use std::sync::Arc;
 const TENANT: i64 = 0;
 
 // ============================================================================
-// MockInterface：BulwarkPermissionStrategyDefault::new() 必需
+// MockInterface：GarrisonPermissionStrategyDefault::new() 必需
 // ============================================================================
 
 struct MockInterface;
 
 #[async_trait]
-impl BulwarkInterface for MockInterface {
-    async fn get_permission_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
+impl GarrisonInterface for MockInterface {
+    async fn get_permission_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
         Ok(vec![])
     }
-    async fn get_role_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
+    async fn get_role_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
         Ok(vec![])
     }
 }
@@ -75,9 +75,9 @@ fn reset_listener_counters() {
 struct PasswordLoginListener;
 
 #[async_trait]
-impl BulwarkListener for PasswordLoginListener {
-    async fn on_event(&self, event: &BulwarkEvent) -> BulwarkResult<()> {
-        if let BulwarkEvent::LoginFailure {
+impl GarrisonListener for PasswordLoginListener {
+    async fn on_event(&self, event: &GarrisonEvent) -> GarrisonResult<()> {
+        if let GarrisonEvent::LoginFailure {
             login_id, reason, ..
         } = event
         {
@@ -94,12 +94,12 @@ impl BulwarkListener for PasswordLoginListener {
     }
 }
 
-fn password_login_listener_factory() -> Arc<dyn BulwarkListener> {
+fn password_login_listener_factory() -> Arc<dyn GarrisonListener> {
     Arc::new(PasswordLoginListener)
 }
 
 inventory::submit! {
-    bulwark::listener::BulwarkListenerEntry { factory: password_login_listener_factory }
+    garrison::listener::GarrisonListenerEntry { factory: password_login_listener_factory }
 }
 
 // ============================================================================
@@ -117,7 +117,7 @@ async fn setup_db() -> dbnexus::DbPool {
     let pool = init_dbnexus("sqlite::memory:")
         .await
         .expect("init_dbnexus 应成功");
-    let migration = BulwarkMigration::with_base_dir(pool.clone(), project_migrations_dir());
+    let migration = GarrisonMigration::with_base_dir(pool.clone(), project_migrations_dir());
     let applied = migration.migrate_core().await.expect("migrate_core 应成功");
     assert!(applied >= 1, "migrate_core 应至少执行 1 个文件");
     pool
@@ -227,8 +227,8 @@ async fn password_verifier_auto_detects_algorithm() {
 // 2. login_with_password 端到端集成（真实 SQLite + Argon2 + UserRepository）
 // ============================================================================
 
-/// 构造 BulwarkLogicDefault 实例，注入 Argon2Hasher + DbnexusUserRepository + ListenerManager。
-async fn make_logic_with_password() -> Arc<BulwarkLogicDefault> {
+/// 构造 GarrisonLogicDefault 实例，注入 Argon2Hasher + DbnexusUserRepository + ListenerManager。
+async fn make_logic_with_password() -> Arc<GarrisonLogicDefault> {
     let pool = setup_db().await;
     let user_repo = Arc::new(DbnexusUserRepository::new(pool.clone()));
 
@@ -246,21 +246,21 @@ async fn make_logic_with_password() -> Arc<BulwarkLogicDefault> {
         .expect("预置用户应成功");
 
     // 构造 oxcache DAO
-    let dao: Arc<dyn BulwarkDao> = Arc::new(BulwarkDaoOxcache::new().await.unwrap());
-    let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
-    let mut config = bulwark::config::BulwarkConfig::default_config();
+    let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await.unwrap());
+    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+    let mut config = garrison::config::GarrisonConfig::default_config();
     config.token_style = "uuid".to_string();
     config.timeout = 3600;
     config.throw_on_not_login = true;
-    let firewall: Arc<dyn bulwark::strategy::BulwarkPermissionStrategy> = Arc::new(
-        bulwark::strategy::BulwarkPermissionStrategyDefault::new(Arc::new(MockInterface)),
+    let firewall: Arc<dyn garrison::strategy::GarrisonPermissionStrategy> = Arc::new(
+        garrison::strategy::GarrisonPermissionStrategyDefault::new(Arc::new(MockInterface)),
     );
 
-    // BulwarkListenerManager::new() 自动收集 inventory 注册的 listener
-    let lm = Arc::new(BulwarkListenerManager::new());
+    // GarrisonListenerManager::new() 自动收集 inventory 注册的 listener
+    let lm = Arc::new(GarrisonListenerManager::new());
 
     Arc::new(
-        BulwarkLogicDefault::new(session, Arc::new(config), firewall)
+        GarrisonLogicDefault::new(session, Arc::new(config), firewall)
             .with_password_hasher(Arc::new(hasher))
             .with_user_repository(user_repo)
             .with_listener_manager(lm),
@@ -294,7 +294,7 @@ async fn login_with_password_user_not_found() {
     let result = logic.login_with_password("9999", "secret").await;
     assert!(result.is_err(), "用户不存在应返回错误");
     match result.unwrap_err() {
-        BulwarkError::InvalidParam(msg) => {
+        GarrisonError::InvalidParam(msg) => {
             assert_eq!(
                 msg, "invalid password",
                 "用户不存在应统一返回 'invalid password'，不泄露真实原因"
@@ -321,7 +321,7 @@ async fn login_with_password_wrong_password() {
     let result = logic.login_with_password("1001", "wrong-password").await;
     assert!(result.is_err(), "密码错误应返回错误");
     match result.unwrap_err() {
-        BulwarkError::InvalidParam(msg) => {
+        GarrisonError::InvalidParam(msg) => {
             assert_eq!(
                 msg, "invalid password",
                 "密码错误应统一返回 'invalid password'"
@@ -342,15 +342,15 @@ async fn login_with_password_wrong_password() {
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn login_with_password_fails_without_hasher() {
-    let dao: Arc<dyn BulwarkDao> = Arc::new(BulwarkDaoOxcache::new().await.unwrap());
-    let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
-    let mut config = bulwark::config::BulwarkConfig::default_config();
+    let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await.unwrap());
+    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+    let mut config = garrison::config::GarrisonConfig::default_config();
     config.token_style = "uuid".to_string();
     config.timeout = 3600;
-    let firewall: Arc<dyn bulwark::strategy::BulwarkPermissionStrategy> = Arc::new(
-        bulwark::strategy::BulwarkPermissionStrategyDefault::new(Arc::new(MockInterface)),
+    let firewall: Arc<dyn garrison::strategy::GarrisonPermissionStrategy> = Arc::new(
+        garrison::strategy::GarrisonPermissionStrategyDefault::new(Arc::new(MockInterface)),
     );
-    let logic_no_hasher = Arc::new(BulwarkLogicDefault::new(
+    let logic_no_hasher = Arc::new(GarrisonLogicDefault::new(
         session,
         Arc::new(config),
         firewall,
@@ -359,7 +359,7 @@ async fn login_with_password_fails_without_hasher() {
     let result = logic_no_hasher.login_with_password("1001", "secret").await;
     assert!(result.is_err(), "未配置 hasher 应返回错误");
     match result.unwrap_err() {
-        BulwarkError::Config(msg) => {
+        GarrisonError::Config(msg) => {
             assert!(
                 msg.contains("password hasher not configured"),
                 "错误消息应包含 'password hasher not configured'，实际: {}",
@@ -374,23 +374,23 @@ async fn login_with_password_fails_without_hasher() {
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn login_with_password_fails_without_user_repository() {
-    let dao: Arc<dyn BulwarkDao> = Arc::new(BulwarkDaoOxcache::new().await.unwrap());
-    let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
-    let mut config = bulwark::config::BulwarkConfig::default_config();
+    let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await.unwrap());
+    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+    let mut config = garrison::config::GarrisonConfig::default_config();
     config.token_style = "uuid".to_string();
     config.timeout = 3600;
-    let firewall: Arc<dyn bulwark::strategy::BulwarkPermissionStrategy> = Arc::new(
-        bulwark::strategy::BulwarkPermissionStrategyDefault::new(Arc::new(MockInterface)),
+    let firewall: Arc<dyn garrison::strategy::GarrisonPermissionStrategy> = Arc::new(
+        garrison::strategy::GarrisonPermissionStrategyDefault::new(Arc::new(MockInterface)),
     );
     let logic_no_repo = Arc::new(
-        BulwarkLogicDefault::new(session, Arc::new(config), firewall)
+        GarrisonLogicDefault::new(session, Arc::new(config), firewall)
             .with_password_hasher(Arc::new(Argon2Hasher::new())),
     );
 
     let result = logic_no_repo.login_with_password("1001", "secret").await;
     assert!(result.is_err(), "未配置 user_repository 应返回错误");
     match result.unwrap_err() {
-        BulwarkError::Config(msg) => {
+        GarrisonError::Config(msg) => {
             assert!(
                 msg.contains("user repository not configured"),
                 "错误消息应包含 'user repository not configured'，实际: {}",
@@ -402,13 +402,13 @@ async fn login_with_password_fails_without_user_repository() {
 }
 
 // ============================================================================
-// 3. 备注：BulwarkUtil::login_with_password 通过 BulwarkManager 注入的集成测试
+// 3. 备注：GarrisonUtil::login_with_password 通过 GarrisonManager 注入的集成测试
 // ============================================================================
 
-// 注：BulwarkManager::init_with_factory_selector 当前为 pub(crate) 可见性，
+// 注：GarrisonManager::init_with_factory_selector 当前为 pub(crate) 可见性，
 // 集成测试无法注入自定义 factory 来预置 password_hasher + user_repository。
 // 此场景由 src/stp/mod.rs 的单元测试 login_with_password_succeeds（行 2785+）覆盖，
-// 该测试通过 BulwarkLogicDefault::new(...).with_password_hasher(...).with_user_repository(...)
+// 该测试通过 GarrisonLogicDefault::new(...).with_password_hasher(...).with_user_repository(...)
 // 直接构造 logic 实例验证。
 //
 // 后续 v0.5.0+ 可暴露 init_with_factory_selector 为 pub，支持集成测试自定义 factory。

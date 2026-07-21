@@ -34,7 +34,7 @@ impl SocialBindingService {
     /// # 参数
     /// - `pool`: SQLite 连接池（用于查 `social_bindings` 表）
     /// - `dao`: 缓存层抽象（保留扩展点，当前未使用）
-    pub fn new(pool: dbnexus::DbPool, dao: std::sync::Arc<dyn crate::dao::BulwarkDao>) -> Self {
+    pub fn new(pool: dbnexus::DbPool, dao: std::sync::Arc<dyn crate::dao::GarrisonDao>) -> Self {
         Self { pool, dao }
     }
 
@@ -63,22 +63,22 @@ impl SocialBindingService {
     /// - `Ok(login_id)`: 已有或新建的 login_id（String，UUID）
     ///
     /// # 错误
-    /// - `BulwarkError::Dao`: SQL 查询/插入失败
+    /// - `GarrisonError::Dao`: SQL 查询/插入失败
     pub async fn find_or_create(
         &self,
         user: &SocialUserInfo,
         tenant_id: i64,
-    ) -> crate::error::BulwarkResult<String> {
+    ) -> crate::error::GarrisonResult<String> {
         use sea_orm::{ConnectionTrait, DbBackend, Statement, Value};
 
         let provider_str = provider_to_str(&user.provider);
 
         // 1. 查询已有绑定
         let session = self.pool.get_session("admin").await.map_err(|e| {
-            crate::error::BulwarkError::Dao(format!("dao-social-binding-get-session::{}", e))
+            crate::error::GarrisonError::Dao(format!("dao-social-binding-get-session::{}", e))
         })?;
         let conn = session.connection().map_err(|e| {
-            crate::error::BulwarkError::Dao(format!("dao-social-binding-get-conn::{}", e))
+            crate::error::GarrisonError::Dao(format!("dao-social-binding-get-conn::{}", e))
         })?;
 
         let stmt = Statement::from_sql_and_values(
@@ -92,13 +92,13 @@ impl SocialBindingService {
             ],
         );
         let rows = conn.query_all_raw(stmt).await.map_err(|e| {
-            crate::error::BulwarkError::Dao(format!("dao-social-binding-query::{}", e))
+            crate::error::GarrisonError::Dao(format!("dao-social-binding-query::{}", e))
         })?;
 
         // 2. 命中 → 返回已有 login_id
         if let Some(row) = rows.into_iter().next() {
             let login_id: String = row.try_get::<String>("", "login_id").map_err(|e| {
-                crate::error::BulwarkError::Dao(format!("dao-social-binding-login-id-read::{}", e))
+                crate::error::GarrisonError::Dao(format!("dao-social-binding-login-id-read::{}", e))
             })?;
             return Ok(login_id);
         }
@@ -135,7 +135,7 @@ impl SocialBindingService {
                 // INSERT 成功
             },
             Ok(result) => {
-                return Err(crate::error::BulwarkError::Dao(format!(
+                return Err(crate::error::GarrisonError::Dao(format!(
                     "dao-social-binding-insert-select::{}",
                     result.rows_affected()
                 )));
@@ -148,7 +148,7 @@ impl SocialBindingService {
                 {
                     // 并发冲突，忽略错误，下面 SELECT 返回已有 login_id
                 } else {
-                    return Err(crate::error::BulwarkError::Dao(format!(
+                    return Err(crate::error::GarrisonError::Dao(format!(
                         "dao-social-binding-insert-select::{}",
                         e
                     )));
@@ -168,13 +168,13 @@ impl SocialBindingService {
             ],
         );
         let rows = conn.query_all_raw(stmt).await.map_err(|e| {
-            crate::error::BulwarkError::Dao(format!("dao-social-binding-insert-select::{}", e))
+            crate::error::GarrisonError::Dao(format!("dao-social-binding-insert-select::{}", e))
         })?;
         let row = rows.into_iter().next().ok_or_else(|| {
-            crate::error::BulwarkError::Dao("dao-social-binding-insert-select".into())
+            crate::error::GarrisonError::Dao("dao-social-binding-insert-select".into())
         })?;
         let login_id: String = row.try_get::<String>("", "login_id").map_err(|e| {
-            crate::error::BulwarkError::Dao(format!("dao-social-binding-login-id-read::{}", e))
+            crate::error::GarrisonError::Dao(format!("dao-social-binding-login-id-read::{}", e))
         })?;
 
         Ok(login_id)

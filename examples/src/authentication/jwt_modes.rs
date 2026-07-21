@@ -10,49 +10,49 @@
 //!
 //! 运行方式：
 //! ```sh
-//! cargo run -p bulwark-examples --bin jwt_modes --features "protocol-jwt cache-memory"
+//! cargo run -p garrison-examples --bin jwt_modes --features "protocol-jwt cache-memory"
 //! ```
 
 use async_trait::async_trait;
-use bulwark::dao::{BulwarkDao, BulwarkDaoOxcache};
-use bulwark::error::{BulwarkError, BulwarkResult};
-use bulwark::session::BulwarkSession;
-use bulwark::stp::{BulwarkInterface, BulwarkLogicDefault, JwtMode, LoginParams};
-use bulwark::strategy::BulwarkPermissionStrategyDefault;
-use bulwark::{BulwarkConfig, SessionLogic};
+use garrison::dao::{GarrisonDao, GarrisonDaoOxcache};
+use garrison::error::{GarrisonError, GarrisonResult};
+use garrison::session::GarrisonSession;
+use garrison::stp::{GarrisonInterface, GarrisonLogicDefault, JwtMode, LoginParams};
+use garrison::strategy::GarrisonPermissionStrategyDefault;
+use garrison::{GarrisonConfig, SessionLogic};
 use std::sync::Arc;
 
 struct NoopInterface;
 
 #[async_trait]
-impl BulwarkInterface for NoopInterface {
-    async fn get_permission_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
+impl GarrisonInterface for NoopInterface {
+    async fn get_permission_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
         Ok(vec![])
     }
-    async fn get_role_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
+    async fn get_role_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
         Ok(vec![])
     }
 }
 
 /// 构造指定 JwtMode 的 logic 实例。
-async fn make_logic_with_mode(mode: JwtMode) -> Arc<BulwarkLogicDefault> {
-    let dao: Arc<dyn BulwarkDao> = Arc::new(BulwarkDaoOxcache::new().await.unwrap());
-    let mut config = BulwarkConfig::default_config();
+async fn make_logic_with_mode(mode: JwtMode) -> Arc<GarrisonLogicDefault> {
+    let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await.unwrap());
+    let mut config = GarrisonConfig::default_config();
     config.token_style = "jwt".to_string();
     config.jwt_secret = "jwt-modes-demo-secret".to_string().into();
     config.timeout = 3600;
     config.throw_on_not_login = true;
     let timeout = u64::try_from(config.timeout).unwrap_or(3600);
-    let session = Arc::new(BulwarkSession::new(dao, timeout, timeout));
-    let firewall = Arc::new(BulwarkPermissionStrategyDefault::new(Arc::new(
+    let session = Arc::new(GarrisonSession::new(dao, timeout, timeout));
+    let firewall = Arc::new(GarrisonPermissionStrategyDefault::new(Arc::new(
         NoopInterface,
     )));
-    Arc::new(BulwarkLogicDefault::new(session, Arc::new(config), firewall).with_jwt_mode(mode))
+    Arc::new(GarrisonLogicDefault::new(session, Arc::new(config), firewall).with_jwt_mode(mode))
 }
 
 /// 运行 JWT 三模式示例。
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    println!("=== Bulwark JWT 三模式示例 ===\n");
+    println!("=== Garrison JWT 三模式示例 ===\n");
 
     // 1. Mixin 模式（默认推荐）
     println!("[1] Mixin 模式（JWT verify + session 二级校验，默认推荐）");
@@ -83,7 +83,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // 4. 演示 JWT 签发后可被 JwtHandler 独立校验
     println!("[4] JWT 独立校验（使用 protocol::jwt::JwtHandler）");
-    use bulwark::protocol::jwt::JwtHandler;
+    use garrison::protocol::jwt::JwtHandler;
     let handler = JwtHandler::new("jwt-modes-demo-secret");
     let claims = handler.verify(&token)?;
     println!(
@@ -99,7 +99,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let result = wrong_handler.verify(&token);
     assert!(result.is_err(), "错误密钥应校验失败");
     match result.unwrap_err() {
-        BulwarkError::InvalidToken(_) => {
+        GarrisonError::InvalidToken(_) => {
             println!("    error: InvalidToken（签名不匹配）");
             println!("    ✓ 错误密钥正确返回 InvalidToken");
         },

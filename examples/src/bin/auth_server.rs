@@ -3,7 +3,7 @@
 
 #[tokio::main]
 async fn main() {
-    bulwark_examples::infrastructure::auth_server::run()
+    garrison_examples::infrastructure::auth_server::run()
         .await
         .unwrap();
 }

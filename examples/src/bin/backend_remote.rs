@@ -3,7 +3,7 @@
 
 #[tokio::main]
 async fn main() {
-    bulwark_examples::infrastructure::backend_remote::run()
+    garrison_examples::infrastructure::backend_remote::run()
         .await
         .unwrap();
 }

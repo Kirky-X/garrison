@@ -13,15 +13,15 @@
 //!
 //! # 策略实现（T012）
 //!
-//! T012 的 `UserLockoutStrategy` + `BulwarkFirewallStrategy` trait 实现位于 `strategy` 子模块。
+//! T012 的 `UserLockoutStrategy` + `GarrisonFirewallStrategy` trait 实现位于 `strategy` 子模块。
 
-use crate::dao::BulwarkDao;
+use crate::dao::GarrisonDao;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 /// 锁定状态存储抽象子模块。
 ///
-/// v0.6.0 的 `UserLockoutStrategy` 直接通过 `BulwarkDao` 持久化 `LockoutState`，
+/// v0.6.0 的 `UserLockoutStrategy` 直接通过 `GarrisonDao` 持久化 `LockoutState`，
 /// 本子模块预留给未来版本的专用存储后端实现（Redis TTL / SQL 持久化 / 分布式锁定）。
 pub mod storage;
 
@@ -90,7 +90,7 @@ pub struct LockoutState {
 
 /// 用户级双态锁定策略。
 ///
-/// 实现 [`BulwarkFirewallStrategy`](crate::strategy::firewall::BulwarkFirewallStrategy) trait，
+/// 实现 [`GarrisonFirewallStrategy`](crate::strategy::firewall::GarrisonFirewallStrategy) trait，
 /// 与 `BruteForceStrategy`（IP 级）组合使用。
 /// 通过 `lockout:{user_id}` key 在 DAO 中持久化 [`LockoutState`]。
 ///
@@ -100,17 +100,17 @@ pub struct LockoutState {
 ///
 /// ```ignore
 /// use std::sync::Arc;
-/// use bulwark::account::lockout::{UserLockoutConfig, UserLockoutStrategy};
-/// use bulwark::dao::BulwarkDao;
+/// use garrison::account::lockout::{UserLockoutConfig, UserLockoutStrategy};
+/// use garrison::dao::GarrisonDao;
 ///
-/// let dao: Arc<dyn BulwarkDao> = /* oxcache 实现 */;
+/// let dao: Arc<dyn GarrisonDao> = /* oxcache 实现 */;
 /// let strategy = UserLockoutStrategy::new(UserLockoutConfig::default(), dao);
 /// ```
 pub struct UserLockoutStrategy {
     /// 配置（阈值 + 等待策略 + 窗口）。
     pub(super) config: UserLockoutConfig,
     /// DAO（oxcache 抽象，用于持久化 LockoutState）。
-    pub(super) dao: Arc<dyn BulwarkDao>,
+    pub(super) dao: Arc<dyn GarrisonDao>,
     /// 账号安全指标（可选，注入后触发锁定时调用 `record_lockout`）。
     #[cfg(feature = "metrics-prometheus")]
     pub(super) metrics: Option<Arc<crate::account::metrics::AccountMetrics>>,

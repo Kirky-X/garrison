@@ -1,8 +1,8 @@
 # 常见问题排查
 
-本文件汇总 Bulwark 项目开发与部署中常见的问题、原因与解决方案，以 Q&A 格式组织。
+本文件汇总 Garrison 项目开发与部署中常见的问题、原因与解决方案，以 Q&A 格式组织。
 
-- 仓库：<https://github.com/Kirky-X/bulwark>
+- 仓库：<https://github.com/Kirky-X/garrison>
 - License：Apache-2.0
 - MSRV：Rust 1.85+
 
@@ -135,9 +135,9 @@ cargo clippy --features full --lib --tests -- -D warnings
 
 ## 2. 运行时问题
 
-### Q2.1 调用 Bulwark API 时 panic：`BulwarkManager not initialized`
+### Q2.1 调用 Garrison API 时 panic：`GarrisonManager not initialized`
 
-**原因**：未在服务启动时调用 `BulwarkManager::init()`。
+**原因**：未在服务启动时调用 `GarrisonManager::init()`。
 
 **解决**：在服务初始化阶段（建立数据库连接后、监听端口前）调用初始化：
 
@@ -146,14 +146,14 @@ cargo clippy --features full --lib --tests -- -D warnings
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 1. 建立数据库连接
     // 2. 执行迁移
-    // 3. 初始化 BulwarkManager（必须在所有 API 调用前，同步 API）
-    let config = Arc::new(BulwarkConfig::default_config());
-    BulwarkManager::init(dao, config, interface)?;
+    // 3. 初始化 GarrisonManager（必须在所有 API 调用前，同步 API）
+    let config = Arc::new(GarrisonConfig::default_config());
+    GarrisonManager::init(dao, config, interface)?;
 
     // 4. 启动 axum 服务
     let app = Router::new()
         .route("/protected", get(protected_handler))
-        .layer(BulwarkLayer::new());
+        .layer(GarrisonLayer::new());
     axum::serve(listener, app).await?;
     Ok(())
 }
@@ -165,20 +165,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 **现象**：用户已通过 `login` 登录，但后续请求中 `check_login()` 始终返回 `false`。
 
-**原因**：Bulwark 通过 task_local 上下文读取当前请求的 token。若 axum middleware 未正确提取并设置 token 到 task_local，则上下文为空。
+**原因**：Garrison 通过 task_local 上下文读取当前请求的 token。若 axum middleware 未正确提取并设置 token 到 task_local，则上下文为空。
 
-**解决**：确保路由通过 `BulwarkRouter` 构建（自动应用 token 提取 middleware）：
+**解决**：确保路由通过 `GarrisonRouter` 构建（自动应用 token 提取 middleware）：
 
 ```rust
-use bulwark::router::BulwarkRouter;
+use garrison::router::GarrisonRouter;
 use std::sync::Arc;
 
-let app = BulwarkRouter::new(Arc::new(config))
+let app = GarrisonRouter::new(Arc::new(config))
     .route("/protected", get(protected_handler))
-    .build();   // build() 自动应用 bulwark_middleware，从请求头提取 token 并写入 task_local
+    .build();   // build() 自动应用 garrison_middleware，从请求头提取 token 并写入 task_local
 ```
 
-`BulwarkRouter::build()` 内部通过 `from_fn_with_state(state, bulwark_middleware)` 应用中间件，从 `bulwark_token` 请求头（或 Cookie）提取 token，解析会话，并写入 task_local 上下文，后续 `check_login()` 即可正确读取。
+`GarrisonRouter::build()` 内部通过 `from_fn_with_state(state, garrison_middleware)` 应用中间件，从 `garrison_token` 请求头（或 Cookie）提取 token，解析会话，并写入 task_local 上下文，后续 `check_login()` 即可正确读取。
 
 ---
 
@@ -190,13 +190,13 @@ let app = BulwarkRouter::new(Arc::new(config))
 
 **解决**：
 
-1. 检查环境变量 `BULWARK_TIMEOUT`（单位为秒）：
+1. 检查环境变量 `GARRISON_TIMEOUT`（单位为秒）：
 
    ```bash
-   echo $BULWARK_TIMEOUT   # 30 天 = 2592000
+   echo $GARRISON_TIMEOUT   # 30 天 = 2592000
    ```
 
-2. 检查 `bulwark.toml` 中 `timeout` 字段单位（秒）。
+2. 检查 `garrison.toml` 中 `timeout` 字段单位（秒）。
 
 3. 默认值参考：
 
@@ -211,16 +211,16 @@ let app = BulwarkRouter::new(Arc::new(config))
 
 **现象**：已登录用户调用 `check_permission("user:read")` 始终返回 `false`。
 
-**原因**：`BulwarkInterface` trait 的 `get_permission_list` 实现返回空列表，或数据源中该用户未被授予该权限。
+**原因**：`GarrisonInterface` trait 的 `get_permission_list` 实现返回空列表，或数据源中该用户未被授予该权限。
 
 **解决**：
 
-1. 检查 `BulwarkInterface` 实现是否正确查询权限数据源：
+1. 检查 `GarrisonInterface` 实现是否正确查询权限数据源：
 
    ```rust
    #[async_trait]
-   impl BulwarkInterface for MyInterface {
-       async fn get_permission_list(&self, user_id: &str) -> BulwarkResult<Vec<String>> {
+   impl GarrisonInterface for MyInterface {
+       async fn get_permission_list(&self, user_id: &str) -> GarrisonResult<Vec<String>> {
            // 确认此处实际查询数据库而非返回空 Vec
            self.db.query_permissions(user_id).await
        }
@@ -232,7 +232,7 @@ let app = BulwarkRouter::new(Arc::new(config))
 3. 启用调试日志查看实际返回的权限列表：
 
    ```bash
-   RUST_LOG=bulwark::core::permission=debug ./your-server
+   RUST_LOG=garrison::core::permission=debug ./your-server
    ```
 
 ---
@@ -243,7 +243,7 @@ let app = BulwarkRouter::new(Arc::new(config))
 
 **现象**：单独运行某个测试通过，但 `cargo test` 全量运行时该测试间歇性失败。
 
-**原因**：测试修改了全局单例（如 `BulwarkManager`）或环境变量（`std::env::set_var`），多线程并发执行时互相污染。
+**原因**：测试修改了全局单例（如 `GarrisonManager`）或环境变量（`std::env::set_var`），多线程并发执行时互相污染。
 
 **解决**：为修改全局状态的测试添加 `#[serial_test::serial]` 注解，强制串行执行：
 
@@ -253,22 +253,22 @@ use serial_test::serial;
 #[tokio::test]
 #[serial]
 async fn test_init_manager() {
-    BulwarkManager::reset_for_test();
+    GarrisonManager::reset_for_test();
     // init 为同步 API，注入 dao / config / interface 三参数
-    BulwarkManager::init(dao, config, interface).unwrap();  // 修改全局单例
-    assert!(BulwarkManager::is_initialized());
+    GarrisonManager::init(dao, config, interface).unwrap();  // 修改全局单例
+    assert!(GarrisonManager::is_initialized());
 }
 
 #[test]
 #[serial]
 fn test_env_var_override() {
-    std::env::set_var("BULWARK_TIMEOUT", "3600");
+    std::env::set_var("GARRISON_TIMEOUT", "3600");
     // ...
-    std::env::remove_var("BULWARK_TIMEOUT");
+    std::env::remove_var("GARRISON_TIMEOUT");
 }
 ```
 
-> **经验法则**：只要测试中调用 `BulwarkManager::init()`、`std::env::set_var()`、或修改 `once_cell` 全局变量，就必须加 `#[serial]`。
+> **经验法则**：只要测试中调用 `GarrisonManager::init()`、`std::env::set_var()`、或修改 `once_cell` 全局变量，就必须加 `#[serial]`。
 
 ---
 
@@ -328,7 +328,7 @@ fn test_env_var_override() {
 
 ### Q4.1 环境变量不生效
 
-**现象**：设置了 `BULWARK_TIMEOUT` 环境变量，但配置未生效。
+**现象**：设置了 `GARRISON_TIMEOUT` 环境变量，但配置未生效。
 
 **原因**：环境变量未被正确加载，或优先级低于预期。
 
@@ -337,20 +337,20 @@ fn test_env_var_override() {
 1. 确认环境变量已设置且在进程启动前生效：
 
    ```bash
-   echo $BULWARK_TIMEOUT
+   echo $GARRISON_TIMEOUT
    ```
 
-2. 确认变量名前缀正确（`BULWARK_`），如 `BULWARK_TOKEN_STYLE` 而非 `TOKEN_STYLE`。
-3. 若使用 `.env` 文件，确认应用使用了 `dotenvy` 之类的 crate 加载 `.env`（Bulwark 只读取进程环境变量，不主动加载 `.env` 文件）。
+2. 确认变量名前缀正确（`GARRISON_`），如 `GARRISON_TOKEN_STYLE` 而非 `TOKEN_STYLE`。
+3. 若使用 `.env` 文件，确认应用使用了 `dotenvy` 之类的 crate 加载 `.env`（Garrison 只读取进程环境变量，不主动加载 `.env` 文件）。
 4. 确认布尔值格式正确（支持 `true`/`false`/`1`/`0`/`yes`/`no`/`on`/`off`）。
 
 ---
 
 ### Q4.2 toml 配置文件解析错误
 
-**现象**：启动时报 `BulwarkError::Config: toml parse error`。
+**现象**：启动时报 `GarrisonError::Config: toml parse error`。
 
-**原因**：`bulwark.toml` 语法错误，如字段名拼写错误、类型不匹配。
+**原因**：`garrison.toml` 语法错误，如字段名拼写错误、类型不匹配。
 
 **解决**：
 
@@ -358,12 +358,12 @@ fn test_env_var_override() {
 
    ```toml
    # 正确
-   token_name = "bulwark_token"
+   token_name = "garrison_token"
    token_style = "uuid"
    timeout = 2592000
 
    # 错误（字段名用连字符）
-   # token-name = "bulwark_token"
+   # token-name = "garrison_token"
    ```
 
 2. 检查 `token_style` 是否为合法值（`uuid` / `random_64` / `simple` / `jwt`，注意下划线）。
@@ -383,13 +383,13 @@ fn test_env_var_override() {
 1. 确认配置实例通过 `default_config()` 创建（自动附加 watcher）：
 
    ```rust
-   let config = BulwarkConfig::default_config(); // 已附加 watcher
+   let config = GarrisonConfig::default_config(); // 已附加 watcher
    ```
 
 2. 若通过反序列化创建，需手动调用 `with_watcher()`：
 
    ```rust
-   let config: BulwarkConfig = toml::from_str(&toml_str)?;
+   let config: GarrisonConfig = toml::from_str(&toml_str)?;
    let config = config.with_watcher(); // 手动附加 watcher
    ```
 
@@ -403,11 +403,11 @@ fn test_env_var_override() {
 
 ### 5.1 GitHub Issues
 
-提交 Bug 报告或功能请求：<https://github.com/Kirky-X/bulwark/issues>
+提交 Bug 报告或功能请求：<https://github.com/Kirky-X/garrison/issues>
 
 提交 Issue 时请附带：
 
-- Bulwark 版本（`bulwark = "0.x"`）
+- Garrison 版本（`garrison = "0.x"`）
 - 启用的 feature 列表
 - Rust 版本（`rustc --version`）
 - 操作系统与架构
@@ -415,4 +415,4 @@ fn test_env_var_override() {
 
 ### 5.2 GitHub Discussions
 
-进行使用咨询、架构讨论、最佳实践交流：<https://github.com/Kirky-X/bulwark/discussions>
+进行使用咨询、架构讨论、最佳实践交流：<https://github.com/Kirky-X/garrison/discussions>

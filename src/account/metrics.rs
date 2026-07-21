@@ -9,10 +9,10 @@
 //!
 //! | 指标名 | 类型 | 标签 | 说明 |
 //! |--------|------|------|------|
-//! | `bulwark_credential_verify_duration_seconds` | Histogram | `credential_type` | 凭证验证耗时 |
-//! | `bulwark_policy_validate_duration_seconds` | Histogram | `rule_name` | 密码策略校验耗时 |
-//! | `bulwark_lockout_triggered_total` | Counter | `lockout_type=temporary\|permanent` | 锁定触发次数 |
-//! | `bulwark_authflow_execute_duration_seconds` | Histogram | `flow_name` | 认证流程执行耗时 |
+//! | `garrison_credential_verify_duration_seconds` | Histogram | `credential_type` | 凭证验证耗时 |
+//! | `garrison_policy_validate_duration_seconds` | Histogram | `rule_name` | 密码策略校验耗时 |
+//! | `garrison_lockout_triggered_total` | Counter | `lockout_type=temporary\|permanent` | 锁定触发次数 |
+//! | `garrison_authflow_execute_duration_seconds` | Histogram | `flow_name` | 认证流程执行耗时 |
 //!
 //! # 集成点
 //!
@@ -23,7 +23,7 @@
 //!
 //! # Feature 门控
 //!
-//! 与 [`crate::observability::BulwarkMetrics`] 一致：未启用 `metrics-prometheus` 时
+//! 与 [`crate::observability::GarrisonMetrics`] 一致：未启用 `metrics-prometheus` 时
 //! `AccountMetrics` 为 `()` 别名，调用方使用 `Option<Arc<AccountMetrics>>` 仍可编译。
 
 #[cfg(feature = "metrics-prometheus")]
@@ -35,14 +35,14 @@ use std::time::Duration;
 
 /// 账号安全能力 Prometheus 指标集合。
 ///
-/// 模式与 [`crate::observability::BulwarkMetrics`] 一致：4 个指标注册到指定 registry，
+/// 模式与 [`crate::observability::GarrisonMetrics`] 一致：4 个指标注册到指定 registry，
 /// 通过 `with_metrics` builder 注入到 `UserLockoutStrategy` / `PasswordPolicyEngine`，
 /// 或作为 `AuthExecutor::execute_with_metrics` 的参数传入（保持 R-008 五字段约束）。
 ///
 /// # 使用示例
 ///
 /// ```ignore
-/// use bulwark::account::metrics::AccountMetrics;
+/// use garrison::account::metrics::AccountMetrics;
 /// use std::sync::Arc;
 /// use std::time::Duration;
 ///
@@ -50,7 +50,7 @@ use std::time::Duration;
 /// metrics.observe_credential_verify("password", Duration::from_millis(5));
 /// metrics.record_lockout(true);
 /// let output = metrics.gather();
-/// assert!(output.contains("bulwark_credential_verify_duration_seconds"));
+/// assert!(output.contains("garrison_credential_verify_duration_seconds"));
 /// ```
 #[cfg(feature = "metrics-prometheus")]
 #[derive(Clone)]
@@ -82,12 +82,12 @@ impl AccountMetrics {
     /// # 错误
     /// - 指标已注册：返回 `Err(prometheus::Error::AlreadyReg)`。
     pub fn register_to(registry: &prometheus::Registry) -> Result<Self, prometheus::Error> {
-        // Histogram buckets 与 BulwarkMetrics 一致
+        // Histogram buckets 与 GarrisonMetrics 一致
         let buckets = vec![0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 5.0];
 
         let credential_verify_duration = prometheus::HistogramVec::new(
             prometheus::HistogramOpts::new(
-                "bulwark_credential_verify_duration_seconds",
+                "garrison_credential_verify_duration_seconds",
                 "Credential verify duration in seconds",
             )
             .buckets(buckets.clone()),
@@ -95,7 +95,7 @@ impl AccountMetrics {
         )?;
         let policy_validate_duration = prometheus::HistogramVec::new(
             prometheus::HistogramOpts::new(
-                "bulwark_policy_validate_duration_seconds",
+                "garrison_policy_validate_duration_seconds",
                 "Password policy rule validate duration in seconds",
             )
             .buckets(buckets.clone()),
@@ -103,14 +103,14 @@ impl AccountMetrics {
         )?;
         let lockout_triggered_total = prometheus::CounterVec::new(
             prometheus::Opts::new(
-                "bulwark_lockout_triggered_total",
+                "garrison_lockout_triggered_total",
                 "Total number of lockout triggered (temporary|permanent)",
             ),
             &["lockout_type"],
         )?;
         let authflow_execute_duration = prometheus::HistogramVec::new(
             prometheus::HistogramOpts::new(
-                "bulwark_authflow_execute_duration_seconds",
+                "garrison_authflow_execute_duration_seconds",
                 "Authentication flow execute duration in seconds",
             )
             .buckets(buckets),
@@ -250,22 +250,22 @@ mod tests {
             .encode_to_string(&registry.gather())
             .expect("encode 失败");
         assert!(
-            gathered.contains("bulwark_credential_verify_duration_seconds"),
+            gathered.contains("garrison_credential_verify_duration_seconds"),
             "missing credential_verify_duration: {}",
             gathered
         );
         assert!(
-            gathered.contains("bulwark_policy_validate_duration_seconds"),
+            gathered.contains("garrison_policy_validate_duration_seconds"),
             "missing policy_validate_duration: {}",
             gathered
         );
         assert!(
-            gathered.contains("bulwark_lockout_triggered_total"),
+            gathered.contains("garrison_lockout_triggered_total"),
             "missing lockout_triggered_total: {}",
             gathered
         );
         assert!(
-            gathered.contains("bulwark_authflow_execute_duration_seconds"),
+            gathered.contains("garrison_authflow_execute_duration_seconds"),
             "missing authflow_execute_duration: {}",
             gathered
         );
@@ -285,7 +285,7 @@ mod tests {
             .encode_to_string(&registry.gather())
             .unwrap();
         assert!(
-            output.contains("bulwark_credential_verify_duration_seconds"),
+            output.contains("garrison_credential_verify_duration_seconds"),
             "missing metric name: {}",
             output
         );
@@ -302,7 +302,7 @@ mod tests {
         // password 标签应观测 2 次
         assert!(
             output.contains(
-                "bulwark_credential_verify_duration_seconds_count{credential_type=\"password\"} 2"
+                "garrison_credential_verify_duration_seconds_count{credential_type=\"password\"} 2"
             ),
             "password count should be 2: {}",
             output
@@ -322,7 +322,7 @@ mod tests {
             .encode_to_string(&registry.gather())
             .unwrap();
         assert!(
-            output.contains("bulwark_policy_validate_duration_seconds"),
+            output.contains("garrison_policy_validate_duration_seconds"),
             "missing metric name: {}",
             output
         );
@@ -337,8 +337,9 @@ mod tests {
             output
         );
         assert!(
-            output
-                .contains("bulwark_policy_validate_duration_seconds_count{rule_name=\"length\"} 1"),
+            output.contains(
+                "garrison_policy_validate_duration_seconds_count{rule_name=\"length\"} 1"
+            ),
             "length count should be 1: {}",
             output
         );
@@ -358,7 +359,7 @@ mod tests {
             .encode_to_string(&registry.gather())
             .unwrap();
         assert!(
-            output.contains("bulwark_lockout_triggered_total"),
+            output.contains("garrison_lockout_triggered_total"),
             "missing metric name: {}",
             output
         );
@@ -373,12 +374,12 @@ mod tests {
             output
         );
         assert!(
-            output.contains("bulwark_lockout_triggered_total{lockout_type=\"temporary\"} 2"),
+            output.contains("garrison_lockout_triggered_total{lockout_type=\"temporary\"} 2"),
             "temporary count should be 2: {}",
             output
         );
         assert!(
-            output.contains("bulwark_lockout_triggered_total{lockout_type=\"permanent\"} 1"),
+            output.contains("garrison_lockout_triggered_total{lockout_type=\"permanent\"} 1"),
             "permanent count should be 1: {}",
             output
         );
@@ -397,7 +398,7 @@ mod tests {
             .encode_to_string(&registry.gather())
             .unwrap();
         assert!(
-            output.contains("bulwark_authflow_execute_duration_seconds"),
+            output.contains("garrison_authflow_execute_duration_seconds"),
             "missing metric name: {}",
             output
         );
@@ -412,8 +413,9 @@ mod tests {
             output
         );
         assert!(
-            output
-                .contains("bulwark_authflow_execute_duration_seconds_count{flow_name=\"login\"} 1"),
+            output.contains(
+                "garrison_authflow_execute_duration_seconds_count{flow_name=\"login\"} 1"
+            ),
             "login count should be 1: {}",
             output
         );
@@ -448,7 +450,7 @@ mod tests {
             .encode_to_string(&registry.gather())
             .unwrap();
         assert!(
-            output.contains("bulwark_lockout_triggered_total{lockout_type=\"temporary\"} 2"),
+            output.contains("garrison_lockout_triggered_total{lockout_type=\"temporary\"} 2"),
             "clone 应共享底层 Counter: {}",
             output
         );

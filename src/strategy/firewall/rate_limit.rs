@@ -3,7 +3,7 @@
 
 //! 速率限制策略。
 //!
-//! `RateLimitStrategy` 实现 [`BulwarkFirewallStrategy`] trait，
+//! `RateLimitStrategy` 实现 [`GarrisonFirewallStrategy`] trait，
 //! 用 oxcache key `rl:{scope}:{id}` 存储请求时间戳列表（逗号分隔），
 //! 滑动窗口过滤过期时间戳后判断是否超阈值。
 //!
@@ -23,9 +23,9 @@
 //!
 //! # 原子性保证（vuln-0009 修复）
 //!
-//! `check` 方法优先调用 `BulwarkDao::eval_lua` 执行原子 read-filter-check-write
+//! `check` 方法优先调用 `GarrisonDao::eval_lua` 执行原子 read-filter-check-write
 //! （Lua 脚本由 Redis 后端原子执行，`crate::dao::tests::MockDao` 也模拟此模式）。
-//! 当后端不支持 Lua（返回 `BulwarkError::NotImplemented`，如 `BulwarkDaoOxcache`）时，
+//! 当后端不支持 Lua（返回 `GarrisonError::NotImplemented`，如 `GarrisonDaoOxcache`）时，
 //! 降级到 `atomic_lock`（`parking_lot::Mutex`）保护的非原子路径，仅保证**进程内原子**。
 //!
 //! ## 跨进程限制
@@ -42,10 +42,10 @@
 //! 无法满足滑动窗口语义（每次请求需过滤已过期的时间戳）。
 //! 滑动窗口的过滤操作本质上是 read-modify-write，需要 Lua 脚本或锁保护。
 
-use crate::dao::BulwarkDao;
-use crate::error::{BulwarkError, BulwarkResult};
-use crate::limiteron::BulwarkDaoStorage;
-use crate::strategy::firewall::{BulwarkFirewallStrategy, CaptchaChallenge, FirewallContext};
+use crate::dao::GarrisonDao;
+use crate::error::{GarrisonError, GarrisonResult};
+use crate::limiteron::GarrisonDaoStorage;
+use crate::strategy::firewall::{CaptchaChallenge, FirewallContext, GarrisonFirewallStrategy};
 use async_trait::async_trait;
 use limiteron::storage::Storage;
 use std::sync::Arc;
@@ -127,10 +127,10 @@ impl Default for RateLimitConfig {
 ///
 /// ```ignore
 /// use std::sync::Arc;
-/// use bulwark::dao::BulwarkDao;
-/// use bulwark::strategy::firewall::rate_limit::{RateLimitConfig, RateLimitScope, RateLimitStrategy};
+/// use garrison::dao::GarrisonDao;
+/// use garrison::strategy::firewall::rate_limit::{RateLimitConfig, RateLimitScope, RateLimitStrategy};
 ///
-/// let dao: Arc<dyn BulwarkDao> = /* oxcache 实现 */;
+/// let dao: Arc<dyn GarrisonDao> = /* oxcache 实现 */;
 /// let config = RateLimitConfig {
 ///     max_requests: 10,
 ///     window_seconds: 1,
@@ -146,7 +146,7 @@ pub struct RateLimitStrategy {
     storage: Arc<dyn Storage>,
     /// DAO 引用（vuln-0009 修复）：用于调用 `eval_lua` 执行原子滑动窗口。
     /// 与 `storage` 指向同一底层 DAO，仅用于 `eval_lua` 路径。
-    dao: Arc<dyn BulwarkDao>,
+    dao: Arc<dyn GarrisonDao>,
     /// 进程内原子锁（vuln-0009 修复降级路径）：保护 `eval_lua` 不可用时的
     /// read-modify-write。仅进程内原子，跨进程仍存在 TOCTOU（见模块文档）。
     atomic_lock: Mutex<()>,
@@ -155,13 +155,13 @@ pub struct RateLimitStrategy {
 impl RateLimitStrategy {
     /// 创建速率限制策略实例。
     ///
-    /// 内部创建 [`BulwarkDaoStorage`] 适配器，将 `dao` 桥接到 limiteron `Storage` trait。
+    /// 内部创建 [`GarrisonDaoStorage`] 适配器，将 `dao` 桥接到 limiteron `Storage` trait。
     ///
     /// # 参数
     /// - `config`: 配置（阈值 + 窗口 + 作用域 + 动态阈值上限）。
     /// - `dao`: DAO（oxcache 抽象，用于时间戳列表存储）。
-    pub fn new(config: RateLimitConfig, dao: Arc<dyn BulwarkDao>) -> Self {
-        let storage = Arc::new(BulwarkDaoStorage::new(dao.clone()));
+    pub fn new(config: RateLimitConfig, dao: Arc<dyn GarrisonDao>) -> Self {
+        let storage = Arc::new(GarrisonDaoStorage::new(dao.clone()));
         Self {
             config,
             storage,
@@ -182,14 +182,14 @@ impl RateLimitStrategy {
         &self,
         ctx: &FirewallContext,
         answer: &str,
-    ) -> BulwarkResult<()> {
+    ) -> GarrisonResult<()> {
         let (key, _) = self.build_key(ctx)?;
         // key 形如 `rl:ip:{ip}`，答案 key 复用前缀并追加 `:answer`
         let answer_key = format!("{}:answer", key);
         self.storage
             .set(&answer_key, answer, Some(self.config.window_seconds))
             .await
-            .map_err(|e| BulwarkError::Dao(format!("strategy-limiter-storage::{}", e)))
+            .map_err(|e| GarrisonError::Dao(format!("strategy-limiter-storage::{}", e)))
     }
 
     /// 返回当前生效的速率阈值。
@@ -197,7 +197,7 @@ impl RateLimitStrategy {
     /// - `dynamic_threshold=None` 时恒返回 `max_requests`。
     /// - `dynamic_threshold=Some(_)` 时返回 DAO 中持久化的当前阈值
     ///   （区间 `[max_requests, dynamic_threshold]`），缺省回退到 `max_requests`。
-    pub async fn current_threshold(&self, ctx: &FirewallContext) -> BulwarkResult<usize> {
+    pub async fn current_threshold(&self, ctx: &FirewallContext) -> GarrisonResult<usize> {
         let max = self.config.max_requests as usize;
         let Some(upper) = self.config.dynamic_threshold else {
             return Ok(max);
@@ -208,7 +208,7 @@ impl RateLimitStrategy {
             .storage
             .get(&threshold_key)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("strategy-limiter-storage::{}", e)))?;
+            .map_err(|e| GarrisonError::Dao(format!("strategy-limiter-storage::{}", e)))?;
         let raw: usize = stored
             .as_deref()
             .and_then(|s| s.parse().ok())
@@ -239,7 +239,7 @@ impl RateLimitStrategy {
         &self,
         ctx: &FirewallContext,
         traffic_count: usize,
-    ) -> BulwarkResult<usize> {
+    ) -> GarrisonResult<usize> {
         let max = self.config.max_requests as usize;
         let Some(upper) = self.config.dynamic_threshold else {
             return Ok(max);
@@ -271,7 +271,7 @@ impl RateLimitStrategy {
                 Some(self.config.window_seconds),
             )
             .await
-            .map_err(|e| BulwarkError::Dao(format!("strategy-limiter-storage::{}", e)))?;
+            .map_err(|e| GarrisonError::Dao(format!("strategy-limiter-storage::{}", e)))?;
 
         Ok(new_threshold)
     }
@@ -281,18 +281,18 @@ impl RateLimitStrategy {
     /// # 错误
     /// - `scope=User` 且 `ctx.login_id` 为 None → `InvalidParam`（显性失败，Rule 12）
     /// - `scope=Tenant` 且 `ctx.tenant_id` 为 None → `InvalidParam`
-    fn build_key(&self, ctx: &FirewallContext) -> BulwarkResult<(String, String)> {
+    fn build_key(&self, ctx: &FirewallContext) -> GarrisonResult<(String, String)> {
         match self.config.scope {
             RateLimitScope::Ip => Ok((format!("rl:ip:{}", ctx.ip), ctx.ip.clone())),
             RateLimitScope::User => match &ctx.login_id {
                 Some(id) => Ok((format!("rl:user:{}", id), id.clone())),
-                None => Err(BulwarkError::InvalidParam(
+                None => Err(GarrisonError::InvalidParam(
                     "RateLimit scope=User 但 ctx.login_id 为 None".to_string(),
                 )),
             },
             RateLimitScope::Tenant => match ctx.tenant_id {
                 Some(id) => Ok((format!("rl:tenant:{}", id), id.to_string())),
-                None => Err(BulwarkError::InvalidParam(
+                None => Err(GarrisonError::InvalidParam(
                     "RateLimit scope=Tenant 但 ctx.tenant_id 为 None".to_string(),
                 )),
             },
@@ -301,12 +301,12 @@ impl RateLimitStrategy {
 }
 
 #[async_trait]
-impl BulwarkFirewallStrategy for RateLimitStrategy {
-    async fn check(&self, ctx: &FirewallContext) -> BulwarkResult<()> {
+impl GarrisonFirewallStrategy for RateLimitStrategy {
+    async fn check(&self, ctx: &FirewallContext) -> GarrisonResult<()> {
         let (key, scope_id) = self.build_key(ctx)?;
         let now_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map_err(|e| BulwarkError::Dao(format!("strategy-system-time::{}", e)))?
+            .map_err(|e| GarrisonError::Dao(format!("strategy-system-time::{}", e)))?
             .as_millis() as u64;
         let window_start = now_ms.saturating_sub(self.config.window_seconds * 1000);
 
@@ -336,14 +336,14 @@ impl BulwarkFirewallStrategy for RateLimitStrategy {
                 if allowed {
                     return Ok(());
                 }
-                return Err(BulwarkError::FirewallBlocked(format!(
+                return Err(GarrisonError::FirewallBlocked(format!(
                     "strategy-firewall-ratelimit-blocked::{}::{}::lua::{}",
                     scope_id,
                     format!("{:?}", self.config.scope).to_lowercase(),
                     threshold
                 )));
             },
-            Err(BulwarkError::NotImplemented(_)) => {
+            Err(GarrisonError::NotImplemented(_)) => {
                 // 后端不支持 Lua：降级到 atomic_lock 保护的非原子路径（进程内原子）
                 tracing::debug!(
                     "rate_limit: eval_lua unavailable, falling back to atomic_lock path (in-process atomic only)"
@@ -353,7 +353,7 @@ impl BulwarkFirewallStrategy for RateLimitStrategy {
             },
             Err(e) => {
                 // 其他错误（Dao / InvalidParam）显性抛出（Rule 12）
-                Err(BulwarkError::Dao(format!(
+                Err(GarrisonError::Dao(format!(
                     "strategy-limiter-eval-lua::{}",
                     e
                 )))
@@ -377,7 +377,7 @@ impl RateLimitStrategy {
         now_ms: u64,
         window_start: u64,
         threshold: usize,
-    ) -> BulwarkResult<()> {
+    ) -> GarrisonResult<()> {
         // 进程内原子锁：保护 read-modify-write
         // tokio::sync::Mutex 可跨 await 持有（parking_lot::Mutex 不可跨 await）。
         let _guard = self.atomic_lock.lock().await;
@@ -387,7 +387,7 @@ impl RateLimitStrategy {
             .storage
             .get(key)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("strategy-limiter-storage::{}", e)))?;
+            .map_err(|e| GarrisonError::Dao(format!("strategy-limiter-storage::{}", e)))?;
         // M-3: parse 失败时 warn 记录脏数据，不静默丢弃
         let mut timestamps: Vec<u64> = stored
             .as_deref()
@@ -408,7 +408,7 @@ impl RateLimitStrategy {
 
         // 剩余数量 >= 当前阈值 → 拦截
         if timestamps.len() >= threshold {
-            return Err(BulwarkError::FirewallBlocked(format!(
+            return Err(GarrisonError::FirewallBlocked(format!(
                 "strategy-firewall-ratelimit-blocked::{}::{}::{}::{}",
                 scope_id,
                 format!("{:?}", self.config.scope).to_lowercase(),
@@ -427,18 +427,18 @@ impl RateLimitStrategy {
         self.storage
             .set(key, &serialized, Some(self.config.window_seconds))
             .await
-            .map_err(|e| BulwarkError::Dao(format!("strategy-limiter-storage::{}", e)))?;
+            .map_err(|e| GarrisonError::Dao(format!("strategy-limiter-storage::{}", e)))?;
         Ok(())
     }
 }
 
 #[async_trait]
 impl CaptchaChallenge for RateLimitStrategy {
-    async fn should_challenge(&self, ctx: &FirewallContext) -> BulwarkResult<bool> {
+    async fn should_challenge(&self, ctx: &FirewallContext) -> GarrisonResult<bool> {
         let (key, _) = self.build_key(ctx)?;
         let now_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map_err(|e| BulwarkError::Dao(format!("strategy-system-time::{}", e)))?
+            .map_err(|e| GarrisonError::Dao(format!("strategy-system-time::{}", e)))?
             .as_millis() as u64;
         let window_start = now_ms.saturating_sub(self.config.window_seconds * 1000);
 
@@ -447,7 +447,7 @@ impl CaptchaChallenge for RateLimitStrategy {
             .storage
             .get(&key)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("strategy-limiter-storage::{}", e)))?;
+            .map_err(|e| GarrisonError::Dao(format!("strategy-limiter-storage::{}", e)))?;
         let count: usize = stored
             .as_deref()
             .unwrap_or("")
@@ -463,20 +463,20 @@ impl CaptchaChallenge for RateLimitStrategy {
         Ok(count.saturating_mul(5) >= threshold.saturating_mul(4))
     }
 
-    async fn verify_challenge(&self, ctx: &FirewallContext, answer: &str) -> BulwarkResult<bool> {
+    async fn verify_challenge(&self, ctx: &FirewallContext, answer: &str) -> GarrisonResult<bool> {
         let (key, _) = self.build_key(ctx)?;
         let answer_key = format!("{}:answer", key);
         let stored = self
             .storage
             .get(&answer_key)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("strategy-limiter-storage::{}", e)))?;
+            .map_err(|e| GarrisonError::Dao(format!("strategy-limiter-storage::{}", e)))?;
         let matched = stored.as_deref() == Some(answer);
         if matched {
             self.storage
                 .delete(&answer_key)
                 .await
-                .map_err(|e| BulwarkError::Dao(format!("strategy-limiter-storage::{}", e)))?;
+                .map_err(|e| GarrisonError::Dao(format!("strategy-limiter-storage::{}", e)))?;
         }
         Ok(matched)
     }
@@ -492,13 +492,13 @@ inventory::submit! {
 mod tests {
     use super::*;
     use crate::dao::tests::MockDao;
-    use crate::error::BulwarkError;
+    use crate::error::GarrisonError;
 
     /// 验证速率限制：max_requests=10, window_seconds=1 时，
     /// 1 秒内前 10 次返回 Ok，第 11 次返回 FirewallBlocked
     #[tokio::test]
     async fn ratelimit_blocks_after_max_requests() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let config = RateLimitConfig {
             max_requests: 10,
             window_seconds: 1,
@@ -516,7 +516,7 @@ mod tests {
         // 第 11 次被拦截
         let result = strategy.check(&ctx).await;
         assert!(
-            matches!(result, Err(BulwarkError::FirewallBlocked(_))),
+            matches!(result, Err(GarrisonError::FirewallBlocked(_))),
             "第 11 次应返回 FirewallBlocked，实际: {:?}",
             result
         );
@@ -525,7 +525,7 @@ mod tests {
     /// 验证 scope=User 时按 login_id 计数，不同用户互不影响。
     #[tokio::test]
     async fn ratelimit_scope_user_isolates_by_login_id() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let config = RateLimitConfig {
             max_requests: 2,
             window_seconds: 60,
@@ -543,7 +543,7 @@ mod tests {
         // 用户 A 第 3 次应被拦截
         assert!(matches!(
             strategy.check(&ctx_a).await,
-            Err(BulwarkError::FirewallBlocked(_))
+            Err(GarrisonError::FirewallBlocked(_))
         ));
         // 用户 B 仍有额度
         assert!(strategy.check(&ctx_b).await.is_ok());
@@ -552,7 +552,7 @@ mod tests {
     /// 验证 scope=User 且 login_id=None 时返回 InvalidParam（显性失败，Rule 12）。
     #[tokio::test]
     async fn ratelimit_scope_user_without_login_id_fails() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let config = RateLimitConfig {
             max_requests: 10,
             window_seconds: 60,
@@ -564,7 +564,7 @@ mod tests {
 
         let result = strategy.check(&ctx).await;
         assert!(
-            matches!(result, Err(BulwarkError::InvalidParam(_))),
+            matches!(result, Err(GarrisonError::InvalidParam(_))),
             "scope=User 且 login_id=None 应返回 InvalidParam，实际: {:?}",
             result
         );
@@ -579,7 +579,7 @@ mod tests {
     /// max_requests=10，调用 check 8 次后到达 80%，应触发挑战。
     #[tokio::test]
     async fn captcha_challenge_should_trigger_when_rate_limit_near() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let config = RateLimitConfig {
             max_requests: 10,
             window_seconds: 60,
@@ -606,7 +606,7 @@ mod tests {
     /// max_requests=10，仅 1 次请求（10%），不应触发挑战。
     #[tokio::test]
     async fn captcha_challenge_should_not_trigger_when_below_threshold() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let config = RateLimitConfig {
             max_requests: 10,
             window_seconds: 60,
@@ -629,7 +629,7 @@ mod tests {
     /// T096-3: 正确答案通过 verify_challenge 验证。
     #[tokio::test]
     async fn captcha_challenge_verify_correct_answer() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let config = RateLimitConfig::default();
         let strategy = RateLimitStrategy::new(config, dao);
         let ctx = FirewallContext::new("192.168.1.1");
@@ -651,7 +651,7 @@ mod tests {
     /// T096-4: 错误答案验证失败。
     #[tokio::test]
     async fn captcha_challenge_verify_incorrect_answer() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let config = RateLimitConfig::default();
         let strategy = RateLimitStrategy::new(config, dao);
         let ctx = FirewallContext::new("192.168.1.1");
@@ -672,7 +672,7 @@ mod tests {
     /// C-6: 验证码验证通过后立即删除，防止复用。
     #[tokio::test]
     async fn captcha_challenge_verify_deletes_answer_after_success() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let config = RateLimitConfig::default();
         let strategy = RateLimitStrategy::new(config, dao);
         let ctx = FirewallContext::new("192.168.1.1");
@@ -706,7 +706,7 @@ mod tests {
     /// 初始阈值 10，传入 traffic_count >= 80% 应上调，封顶 20。
     #[tokio::test]
     async fn dynamic_threshold_increases_when_traffic_high() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let config = RateLimitConfig {
             max_requests: 10,
             window_seconds: 60,
@@ -759,7 +759,7 @@ mod tests {
     /// 先用高流量把阈值推到高位，再用低流量下调，下限 max_requests。
     #[tokio::test]
     async fn dynamic_threshold_decreases_when_traffic_low() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let config = RateLimitConfig {
             max_requests: 10,
             window_seconds: 60,
@@ -827,7 +827,7 @@ mod tests {
     /// 修复后 check 应使用 current_threshold=20，第 11 次仍通过。
     #[tokio::test]
     async fn check_uses_dynamic_threshold_not_max_requests() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let config = RateLimitConfig {
             max_requests: 10,
             window_seconds: 60,
@@ -878,7 +878,7 @@ mod tests {
         // 第 21 次应被拦截（timestamps.len()=20 >= threshold=20）
         let result = strategy.check(&ctx).await;
         assert!(
-            matches!(result, Err(BulwarkError::FirewallBlocked(_))),
+            matches!(result, Err(GarrisonError::FirewallBlocked(_))),
             "动态阈值=20 时第 21 次 check 应被拦截，实际: {:?}",
             result
         );
@@ -899,7 +899,7 @@ mod tests {
     /// MockDao 支持 eval_lua 滑动窗口模式（识别 `rate_limit_sliding_window` 标记）。
     #[tokio::test(flavor = "multi_thread")]
     async fn check_concurrent_only_max_requests_allowed_lua_path() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let config = RateLimitConfig {
             max_requests: 5,
             window_seconds: 60,
@@ -921,7 +921,7 @@ mod tests {
         for handle in handles {
             match handle.await.expect("tokio task panicked") {
                 Ok(()) => allowed += 1,
-                Err(BulwarkError::FirewallBlocked(_)) => blocked += 1,
+                Err(GarrisonError::FirewallBlocked(_)) => blocked += 1,
                 Err(e) => {
                     panic!("check 不应返回非 FirewallBlocked 错误: {:?}", e);
                 },
@@ -945,7 +945,7 @@ mod tests {
     async fn check_concurrent_only_max_requests_allowed_fallback_path() {
         use crate::dao::tests::MinimalDao;
 
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MinimalDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MinimalDao::new());
         let config = RateLimitConfig {
             max_requests: 5,
             window_seconds: 60,
@@ -967,7 +967,7 @@ mod tests {
         for handle in handles {
             match handle.await.expect("tokio task panicked") {
                 Ok(()) => allowed += 1,
-                Err(BulwarkError::FirewallBlocked(_)) => blocked += 1,
+                Err(GarrisonError::FirewallBlocked(_)) => blocked += 1,
                 Err(e) => {
                     panic!("check 不应返回非 FirewallBlocked 错误: {:?}", e);
                 },
@@ -987,7 +987,7 @@ mod tests {
     /// 确保 eval_lua 路径不破坏既有串行语义。
     #[tokio::test]
     async fn check_lua_path_preserves_serial_semantics() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let config = RateLimitConfig {
             max_requests: 3,
             window_seconds: 60,
@@ -1002,7 +1002,7 @@ mod tests {
         assert!(strategy.check(&ctx).await.is_ok(), "第 3 次 check 应通过");
         let result = strategy.check(&ctx).await;
         assert!(
-            matches!(result, Err(BulwarkError::FirewallBlocked(_))),
+            matches!(result, Err(GarrisonError::FirewallBlocked(_))),
             "第 4 次 check 应被拦截，实际: {:?}",
             result
         );

@@ -1,7 +1,7 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! DAO 操作示例：演示 BulwarkDaoOxcache CRUD 与 BulwarkMigration 数据库迁移。
+//! DAO 操作示例：演示 GarrisonDaoOxcache CRUD 与 GarrisonMigration 数据库迁移。
 //!
 //! 流程：
 //! 1. 创建 oxcache DAO 实例（内存缓存后端）
@@ -11,34 +11,34 @@
 //! 5. expire 重置过期时间
 //! 6. delete 显式删除
 //! 7. zero TTL 永久驻留
-//! 8. BulwarkMigration 数据库迁移（feature = "db-sqlite"）
+//! 8. GarrisonMigration 数据库迁移（feature = "db-sqlite"）
 //!
 //! 运行方式：
 //! ```sh
-//! cargo run -p bulwark-examples --bin dao_operations --features "cache-memory,db-sqlite"
+//! cargo run -p garrison-examples --bin dao_operations --features "cache-memory,db-sqlite"
 //! ```
 
-use bulwark::dao::{BulwarkDao, BulwarkDaoOxcache};
-use bulwark::error::BulwarkResult;
+use garrison::dao::{GarrisonDao, GarrisonDaoOxcache};
+use garrison::error::GarrisonResult;
 use std::time::Duration;
 
 #[cfg(feature = "db-sqlite")]
-use bulwark::dao::{init_dbnexus, BulwarkMigration};
+use garrison::dao::{init_dbnexus, GarrisonMigration};
 #[cfg(feature = "db-sqlite")]
 use std::path::PathBuf;
 
 /// 运行 DAO 操作示例。
 ///
-/// 演示 BulwarkDaoOxcache 的 set / get / update / expire / delete / TTL 过期，
-/// 以及 db-sqlite feature 下的 BulwarkMigration 数据库迁移。
-pub async fn run() -> BulwarkResult<()> {
-    println!("=== Bulwark DAO 操作示例 ===\n");
+/// 演示 GarrisonDaoOxcache 的 set / get / update / expire / delete / TTL 过期，
+/// 以及 db-sqlite feature 下的 GarrisonMigration 数据库迁移。
+pub async fn run() -> GarrisonResult<()> {
+    println!("=== Garrison DAO 操作示例 ===\n");
 
     // ----------------------------------------------------------------
     // 1. 创建 oxcache DAO
     // ----------------------------------------------------------------
-    let dao = BulwarkDaoOxcache::new().await?;
-    println!("[1] BulwarkDaoOxcache 创建完成（sync_mode 启用）\n");
+    let dao = GarrisonDaoOxcache::new().await?;
+    println!("[1] GarrisonDaoOxcache 创建完成（sync_mode 启用）\n");
 
     // ----------------------------------------------------------------
     // 2. set + get 配对
@@ -122,16 +122,16 @@ pub async fn run() -> BulwarkResult<()> {
     println!();
 
     // ----------------------------------------------------------------
-    // 8. BulwarkMigration 数据库迁移（feature = "db-sqlite"）
+    // 8. GarrisonMigration 数据库迁移（feature = "db-sqlite"）
     // ----------------------------------------------------------------
     #[cfg(feature = "db-sqlite")]
     {
-        println!("[8] BulwarkMigration 数据库迁移:");
+        println!("[8] GarrisonMigration 数据库迁移:");
         let db_url = "sqlite::memory:";
         let pool = init_dbnexus(db_url).await?;
         // examples 为独立 workspace member，CWD 为 examples/，需指向工作区根的 migrations/
         let migration =
-            BulwarkMigration::with_base_dir(pool, PathBuf::from("../migrations/sqlite"));
+            GarrisonMigration::with_base_dir(pool, PathBuf::from("../migrations/sqlite"));
         let count = migration.run_all().await?;
         println!("    run_all() 完成，执行了 {} 条迁移", count);
         assert!(count > 0, "应至少执行一条迁移");
@@ -140,7 +140,7 @@ pub async fn run() -> BulwarkResult<()> {
 
     #[cfg(not(feature = "db-sqlite"))]
     {
-        println!("[8] BulwarkMigration 示例跳过（需启用 db-sqlite feature）\n");
+        println!("[8] GarrisonMigration 示例跳过（需启用 db-sqlite feature）\n");
     }
 
     println!("=== 示例执行完成 ===");

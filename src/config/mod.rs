@@ -1,7 +1,7 @@
 //! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! 配置模块，提供 BulwarkConfig 全局配置。
+//! 配置模块，提供 GarrisonConfig 全局配置。
 //!
 //! 对应 `SaTokenConfig`，
 //! 定义 Token 名称、超时、持久化等配置项。
@@ -11,14 +11,14 @@
 //! 由 [confers](https://docs.rs/confers) 库接管，优先级：环境变量 > toml 文件 > 代码默认值。
 //!
 //! 1. **代码默认值**：通过 `ConfigBuilder::default()` 设置
-//! 2. **toml 文件**：通过 `BulwarkConfig::load(Some(path))` 加载
-//! 3. **环境变量**：`BULWARK_` 前缀自动覆盖
+//! 2. **toml 文件**：通过 `GarrisonConfig::load(Some(path))` 加载
+//! 3. **环境变量**：`GARRISON_` 前缀自动覆盖
 //!
 //! ## 热更新
 //!
 //! 通过 `tokio::sync::watch` 通道广播配置变更：
-//! - `BulwarkConfig::watch()` 返回 `watch::Receiver<BulwarkConfig>`
-//! - `BulwarkConfig::update(f)` 闭包式修改配置并广播
+//! - `GarrisonConfig::watch()` 返回 `watch::Receiver<GarrisonConfig>`
+//! - `GarrisonConfig::update(f)` 闭包式修改配置并广播
 
 #[cfg(feature = "rate-limit-redis")]
 use crate::strategy::rate_limiter_backend::RateLimitBackend;
@@ -43,7 +43,7 @@ pub const TOKEN_STYLES: &[&str] = &["uuid", "random_64", "simple", "jwt"];
 pub const COOKIE_SAME_SITE_VALUES: &[&str] = &["Lax", "Strict", "None"];
 
 /// 默认 Token 名称（对应 HTTP Header / Cookie 字段名）。
-pub const DEFAULT_TOKEN_NAME: &str = "bulwark_token";
+pub const DEFAULT_TOKEN_NAME: &str = "garrison_token";
 
 /// 默认 Token 超时秒数（30 天）。
 pub const DEFAULT_TIMEOUT: i64 = 2_592_000;
@@ -147,8 +147,8 @@ pub const DEFAULT_ANOMALOUS_ANALYZER_INTERVAL_SECS: u64 = 3600;
 /// 仅当 `anomalous-detector-dual` feature 启用时生效。
 pub const DEFAULT_ANOMALOUS_BURST_THRESHOLD: u32 = 5;
 
-/// 环境变量前缀（BULWARK_）。
-pub const ENV_PREFIX: &str = "BULWARK_";
+/// 环境变量前缀（GARRISON_）。
+pub const ENV_PREFIX: &str = "GARRISON_";
 
 // ============================================================================
 // 并发登录控制枚举
@@ -271,7 +271,7 @@ pub type JwtSecret = String;
 ///
 /// | 字段 | 类型 | 默认值 | 说明 |
 /// |------|------|--------|------|
-/// | `token_name` | String | "bulwark_token" | Token 名称（HTTP Header/Cookie 字段名） |
+/// | `token_name` | String | "garrison_token" | Token 名称（HTTP Header/Cookie 字段名） |
 /// | `timeout` | i64 | 2592000（30 天） | Token 超时秒数（必须 > 0） |
 /// | `active_timeout` | i64 | -1 | 活动超时检测（-1 表示不启用） |
 /// | `is_read_cookie` | bool | true | 是否从 Cookie 读取 Token |
@@ -291,7 +291,7 @@ pub type JwtSecret = String;
 /// 通过 `watch()` 订阅变更，通过 `update()` 修改配置：
 ///
 /// ```ignore
-/// let config = BulwarkConfig::default_config();
+/// let config = GarrisonConfig::default_config();
 /// let mut rx = config.watch().unwrap();
 /// config.update(|c| c.timeout = 3600).unwrap();
 /// let new_config = rx.borrow_and_update();
@@ -299,7 +299,7 @@ pub type JwtSecret = String;
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
-pub struct BulwarkConfig {
+pub struct GarrisonConfig {
     /// Token 名称（对应 HTTP Header / Cookie 字段名）。
     pub token_name: String,
 
@@ -389,7 +389,7 @@ pub struct BulwarkConfig {
     /// token map 清理间隔秒数（默认 300 = 5 分钟）。
     ///
     /// `<= 0` 表示禁用后台清理 task（与 T028 `spawn_cleanup_task` 的 `interval_secs <= 0` 行为一致）。
-    /// 由 `BulwarkManager::init` 读取后传给 `spawn_cleanup_task`。
+    /// 由 `GarrisonManager::init` 读取后传给 `spawn_cleanup_task`。
     pub token_map_cleanup_interval_secs: i64,
 
     /// L1 缓存（oxcache 内存层）TTL 秒数（默认 30）。
@@ -453,7 +453,7 @@ pub struct BulwarkConfig {
     /// - `loose`：新设备登录仅告警不阻断（由 `LooseBinding` 处理）
     /// - `disabled`：不启用设备绑定（默认，向后兼容）
     ///
-    /// 配置字段始终存在（非 feature-gated），策略注入由 `BulwarkManager::init` 根据
+    /// 配置字段始终存在（非 feature-gated），策略注入由 `GarrisonManager::init` 根据
     /// 此字段值决定（属于 T020 集成范畴）。
     pub device_binding_mode: String,
 
@@ -487,21 +487,21 @@ pub struct BulwarkConfig {
     /// WAF 请求内容校验配置段。
     ///
     /// 默认 `enabled: false`（向后兼容）。启用后需配合 `web-waf` Cargo feature
-    /// + `bulwark_waf_middleware` 才能生效。
+    /// + `garrison_waf_middleware` 才能生效。
     #[cfg(feature = "web-waf")]
     pub waf_config: WafConfig,
 
     /// CORS 跨域资源共享配置段。
     ///
     /// 默认 `allowed_origins` 为空（向后兼容，不注入 CORS 头）。
-    /// 启用后需配合 `web-cors` Cargo feature + `bulwark_cors_middleware` 才能生效。
+    /// 启用后需配合 `web-cors` Cargo feature + `garrison_cors_middleware` 才能生效。
     #[cfg(feature = "web-cors")]
     pub cors_config: CorsConfig,
 
     /// CSRF 跨站请求伪造防护配置段。
     ///
     /// 默认 `enabled: true`（secure-by-default）。启用后需配合 `web-csrf` Cargo feature
-    /// + `bulwark_csrf_middleware` 才能生效。
+    /// + `garrison_csrf_middleware` 才能生效。
     #[cfg(feature = "web-csrf")]
     pub csrf_config: CsrfConfig,
 
@@ -585,7 +585,7 @@ pub struct BulwarkConfig {
 
     /// 配置变更广播通道（serde 跳过，反序列化后通过 `with_watcher` 重建）。
     #[serde(skip)]
-    watcher: Option<watch::Sender<BulwarkConfig>>,
+    watcher: Option<watch::Sender<GarrisonConfig>>,
 }
 
 mod helpers;

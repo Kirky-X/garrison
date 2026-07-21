@@ -13,20 +13,20 @@
 //! - [`WafContext`](crate::strategy::firewall::waf::WafContext)：请求内容快照（path / method / host / headers / params），借用引用零拷贝。
 //! - [`WafVerdict`](crate::strategy::firewall::waf::WafVerdict)：校验结果（Allow / Deny { reason, hook }）。
 //! - [`WafHook`](crate::strategy::firewall::waf::WafHook) trait：每种校验规则实现一个 Hook，返回 `WafVerdict`。
-//! - [`WafHookChain`](crate::strategy::firewall::waf::WafHookChain)：按注册顺序执行 Hook，任一 Deny 则短路返回 `BulwarkError::FirewallBlocked`。
+//! - [`WafHookChain`](crate::strategy::firewall::waf::WafHookChain)：按注册顺序执行 Hook，任一 Deny 则短路返回 `GarrisonError::FirewallBlocked`。
 //!
 //! # 与 web-waf 的区分
 //!
-//! - `web-waf`（web 层）：`WafRule` trait + `WafConfig`，返回 `BulwarkError::Config`（400）。
+//! - `web-waf`（web 层）：`WafRule` trait + `WafConfig`，返回 `GarrisonError::Config`（400）。
 //! - `firewall-waf`（strategy 层）：`WafHook` trait + `WafHookChain`，返回 `FirewallBlocked`（403）。
 //!
 //! # 错误适配
 //!
-//! 现有 `BulwarkError::FirewallBlocked(String)` 为单字段变体，
+//! 现有 `GarrisonError::FirewallBlocked(String)` 为单字段变体，
 //! WAF Hook 链将 hook 名与 reason 编码为 `format!("[{}] {}", hook, reason)`。
 
-use crate::config::BulwarkConfig;
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::config::GarrisonConfig;
+use crate::error::{GarrisonError, GarrisonResult};
 use async_trait::async_trait;
 use std::collections::HashSet;
 
@@ -95,8 +95,8 @@ impl WafHookChain {
     /// `AllowAndSkip` 则短路返回 `Ok(())` 跳过后续 Hook。
     ///
     /// Deny 时将 hook 名与 reason 编码为 `format!("[{}] {}", hook, reason)`，
-    /// 复用现有 `BulwarkError::FirewallBlocked(String)` 变体。
-    pub async fn check(&self, ctx: &WafContext<'_>) -> BulwarkResult<()> {
+    /// 复用现有 `GarrisonError::FirewallBlocked(String)` 变体。
+    pub async fn check(&self, ctx: &WafContext<'_>) -> GarrisonResult<()> {
         for hook in &self.hooks {
             match hook.check(ctx).await {
                 WafVerdict::Allow => continue,
@@ -106,7 +106,7 @@ impl WafHookChain {
                 },
                 WafVerdict::Deny { reason, hook: name } => {
                     tracing::warn!(hook = name, reason = %reason, "WAF blocked request");
-                    return Err(BulwarkError::FirewallBlocked(format!(
+                    return Err(GarrisonError::FirewallBlocked(format!(
                         "[{}] {}",
                         name, reason
                     )));
@@ -120,7 +120,7 @@ impl WafHookChain {
     ///
     /// `waf_enabled_hooks` 为空时注册所有可用 Hook。
     /// 每个 Hook 仅在其对应配置非空时注册。
-    pub fn from_config(config: &BulwarkConfig) -> Self {
+    pub fn from_config(config: &GarrisonConfig) -> Self {
         let mut chain = Self::new();
 
         let enabled: HashSet<&str> = config
@@ -443,7 +443,7 @@ mod tests {
     /// 验证空配置不注册任何 Hook。
     #[tokio::test]
     async fn from_config_empty_registers_none() {
-        let mut config = BulwarkConfig::default_config();
+        let mut config = GarrisonConfig::default_config();
         config.waf_enabled_hooks = Vec::new();
         config.waf_white_paths = Vec::new();
         config.waf_black_paths = Vec::new();
@@ -460,7 +460,7 @@ mod tests {
     /// 验证全量 Hook 注册（空 enabled_hooks = 全部启用）。
     #[tokio::test]
     async fn from_config_all_enabled_registers_all_hooks() {
-        let mut config = BulwarkConfig::default_config();
+        let mut config = GarrisonConfig::default_config();
         config.waf_enabled_hooks = Vec::new();
         config.waf_white_paths = vec!["/api".to_string()];
         config.waf_black_paths = vec!["/admin".to_string()];
@@ -489,7 +489,7 @@ mod tests {
     /// 验证选择性启用 Hook（仅 danger_char + host）。
     #[tokio::test]
     async fn from_config_selective_hooks() {
-        let mut config = BulwarkConfig::default_config();
+        let mut config = GarrisonConfig::default_config();
         config.waf_enabled_hooks = vec!["danger_char".to_string(), "host".to_string()];
         config.waf_allowed_hosts = vec!["example.com".to_string()];
 
@@ -523,7 +523,7 @@ mod tests {
     /// 验证 banned_char + dir_traversal 接线正确。
     #[tokio::test]
     async fn from_config_banned_char_and_dir_traversal() {
-        let mut config = BulwarkConfig::default_config();
+        let mut config = GarrisonConfig::default_config();
         config.waf_enabled_hooks = vec!["banned_char".to_string(), "dir_traversal".to_string()];
 
         let chain = WafHookChain::from_config(&config);

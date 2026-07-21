@@ -24,14 +24,14 @@
 //!
 //! ## 存储委托
 //!
-//! 会话数据通过 `BulwarkDao` 持久化（oxcache / dbnexus），不自行实现缓存逻辑。
+//! 会话数据通过 `GarrisonDao` 持久化（oxcache / dbnexus），不自行实现缓存逻辑。
 
 /// Session 安全监听器（IP 变更检测）。
 pub mod security_listener;
 
 /// Re-export SessionSecurityListener（Rule 25：mod.rs 暴露接口）。
 ///
-/// 通过 `bulwark::session::SessionSecurityListener` 直接访问，无需 `security_listener::` 前缀。
+/// 通过 `garrison::session::SessionSecurityListener` 直接访问，无需 `security_listener::` 前缀。
 pub use security_listener::SessionSecurityListener;
 
 /// 设备管理模块（需要 sha2，由多个协议/安全 feature 启用）。
@@ -48,8 +48,8 @@ pub mod device;
 
 /// Re-export 设备管理类型（与 `device` 模块 feature gate 一致）。
 ///
-/// 启用任一启用 `device` 模块的 feature 后，可通过 `bulwark::session::DeviceManager`
-/// / `bulwark::session::DeviceSession` 直接访问，无需 `device::` 前缀。
+/// 启用任一启用 `device` 模块的 feature 后，可通过 `garrison::session::DeviceManager`
+/// / `garrison::session::DeviceSession` 直接访问，无需 `device::` 前缀。
 #[cfg(any(
     feature = "protocol-jwt",
     feature = "account-credential",
@@ -74,8 +74,8 @@ pub mod search;
 pub use search::SearchSortType;
 
 use crate::constants::DaoKeyPrefix;
-use crate::dao::BulwarkDao;
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::dao::GarrisonDao;
+use crate::error::{GarrisonError, GarrisonResult};
 use async_trait::async_trait;
 use chrono::Utc;
 use dashmap::DashMap;
@@ -182,8 +182,8 @@ pub struct TokenSession {
 /// # 使用
 ///
 /// ```ignore
-/// use bulwark::session::SessionExpiryListener;
-/// use bulwark::error::BulwarkResult;
+/// use garrison::session::SessionExpiryListener;
+/// use garrison::error::GarrisonResult;
 /// use async_trait::async_trait;
 /// use std::sync::Arc;
 ///
@@ -191,13 +191,13 @@ pub struct TokenSession {
 ///
 /// #[async_trait]
 /// impl SessionExpiryListener for AuditListener {
-///     async fn on_session_expired(&self, login_id: &str, token: &str) -> BulwarkResult<()> {
+///     async fn on_session_expired(&self, login_id: &str, token: &str) -> GarrisonResult<()> {
 ///         tracing::info!(login_id, token, "session expired");
 ///         Ok(())
 ///     }
 /// }
 ///
-/// let mut session = bulwark::session::BulwarkSession::new(dao, 3600, 86400);
+/// let mut session = garrison::session::GarrisonSession::new(dao, 3600, 86400);
 /// session.add_expiry_listener(Arc::new(AuditListener));
 /// ```
 #[async_trait]
@@ -211,10 +211,10 @@ pub trait SessionExpiryListener: Send + Sync {
     /// # 返回
     /// - `Ok(())`: 回调成功。
     /// - `Err`: 回调失败，调用方记录 `tracing::warn!` 但不中断主流程或后续 listener。
-    async fn on_session_expired(&self, login_id: &str, token: &str) -> BulwarkResult<()>;
+    async fn on_session_expired(&self, login_id: &str, token: &str) -> GarrisonResult<()>;
 }
 
-/// 会话管理器，封装 `BulwarkDao` 提供双模会话操作。
+/// 会话管理器，封装 `GarrisonDao` 提供双模会话操作。
 ///
 /// 对应 `SaSession` 管理逻辑，
 /// 持有 DAO 引用与超时配置，提供会话 CRUD / 过期检查 / 续期 / 登出。
@@ -223,9 +223,9 @@ pub trait SessionExpiryListener: Send + Sync {
 ///
 /// - `account:session:{login_id}` → `AccountSession`（JSON）
 /// - `token:session:{token}` → `TokenSession`（JSON）
-pub struct BulwarkSession {
+pub struct GarrisonSession {
     /// DAO 引用（oxcache / dbnexus 实现）。
-    dao: Arc<dyn BulwarkDao>,
+    dao: Arc<dyn GarrisonDao>,
     /// token 级超时（秒）。
     timeout: u64,
     /// Account-Session 级 activity 超时（秒）。
@@ -240,7 +240,7 @@ pub struct BulwarkSession {
     ///
     /// # 清理策略（架构审查 MEDIUM-1 显式标注）
     ///
-    /// **不清理**：entry 一旦创建即永久驻留 DashMap，直到 `BulwarkSession` 实例销毁。
+    /// **不清理**：entry 一旦创建即永久驻留 DashMap，直到 `GarrisonSession` 实例销毁。
     /// 原因：login_id 是有限业务实体（用户/服务账号），总量可控且可预估；
     /// 长期驻留可避免高频登录用户的锁 entry 反复创建/销毁开销。
     ///
@@ -279,10 +279,10 @@ pub struct BulwarkSession {
     login_token_map: DashMap<String, Vec<String>>,
     /// 监听器管理器。
     ///
-    /// 注入后 `kickout_by_device` 会广播 `BulwarkEvent::Kickout` 事件。
+    /// 注入后 `kickout_by_device` 会广播 `GarrisonEvent::Kickout` 事件。
     /// 未注入时 `kickout_by_device` 仍正常执行踢出，仅跳过事件广播。
     #[cfg(feature = "listener")]
-    listener_manager: Option<Arc<crate::listener::BulwarkListenerManager>>,
+    listener_manager: Option<Arc<crate::listener::GarrisonListenerManager>>,
     /// 会话过期监听器列表。
     ///
     /// 按 FIFO 顺序调用。listener 失败时记录 `tracing::warn!` 但不中断后续 listener。
@@ -317,10 +317,10 @@ mod tests {
     use async_trait::async_trait;
     use std::time::Duration;
 
-    /// 辅助函数：创建带 MockDao 的 BulwarkSession。
-    fn make_session(timeout: u64, active_timeout: u64) -> (Arc<MockDao>, BulwarkSession) {
+    /// 辅助函数：创建带 MockDao 的 GarrisonSession。
+    fn make_session(timeout: u64, active_timeout: u64) -> (Arc<MockDao>, GarrisonSession) {
         let dao = Arc::new(MockDao::new());
-        let session = BulwarkSession::new(dao.clone(), timeout, active_timeout);
+        let session = GarrisonSession::new(dao.clone(), timeout, active_timeout);
         (dao, session)
     }
 
@@ -348,19 +348,19 @@ mod tests {
         assert_eq!(as_.tokens[0].token, "T1");
     }
 
-    /// 验证 BulwarkDao 直接读取 key 格式正确。
+    /// 验证 GarrisonDao 直接读取 key 格式正确。
     #[tokio::test]
     async fn dao_key_format_matches_spec() {
         let (dao, session) = make_session(3600, 86400);
         session.create("1001", "T1").await.unwrap();
 
-        // spec: BulwarkDao::get("account:session:1001") 返回 Account-Session 数据
+        // spec: GarrisonDao::get("account:session:1001") 返回 Account-Session 数据
         let account_json = dao.get("account:session:1001").await.unwrap();
         assert!(account_json.is_some());
         let account: AccountSession = serde_json::from_str(&account_json.unwrap()).unwrap();
         assert_eq!(account.login_id, "1001");
 
-        // spec: BulwarkDao::get("token:session:T1") 返回 Token-Session 数据
+        // spec: GarrisonDao::get("token:session:T1") 返回 Token-Session 数据
         let token_json = dao.get("token:session:T1").await.unwrap();
         assert!(token_json.is_some());
         let ts: TokenSession = serde_json::from_str(&token_json.unwrap()).unwrap();
@@ -436,7 +436,7 @@ mod tests {
         let (_dao, session) = make_session(3600, 86400);
         let result = session.set("nonexistent", "ip", "1.2.3.4").await;
         assert!(
-            matches!(result, Err(BulwarkError::InvalidToken(_))),
+            matches!(result, Err(GarrisonError::InvalidToken(_))),
             "set 不存在的 token 应返回 InvalidToken"
         );
     }
@@ -541,7 +541,7 @@ mod tests {
         let (_dao, session) = make_session(3600, 86400);
         let result = session.renew("nonexistent").await;
         assert!(
-            matches!(result, Err(BulwarkError::InvalidToken(_))),
+            matches!(result, Err(GarrisonError::InvalidToken(_))),
             "renew 不存在的 token 应返回 InvalidToken"
         );
     }
@@ -602,7 +602,7 @@ mod tests {
             .unwrap();
         let result = session.get_token_session("corrupt").await;
         assert!(
-            matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("session-sim-token-deserialize")),
+            matches!(result, Err(GarrisonError::Session(ref msg)) if msg.contains("session-sim-token-deserialize")),
             "非法 JSON 应返回 'session-sim-token-deserialize' 错误，实际: {:?}",
             result
         );
@@ -620,7 +620,7 @@ mod tests {
             .unwrap();
         let result = session.get_account_session("2001").await;
         assert!(
-            matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("session-sim-account-deserialize")),
+            matches!(result, Err(GarrisonError::Session(ref msg)) if msg.contains("session-sim-account-deserialize")),
             "非法 JSON 应返回 'session-sim-account-deserialize' 错误，实际: {:?}",
             result
         );
@@ -628,13 +628,13 @@ mod tests {
 
     /// 验证 touch 不存在的 token 返回 InvalidToken 错误。
     ///
-    /// 覆盖 `touch` 方法中 `ok_or_else(|| BulwarkError::InvalidToken(...))` 错误路径。
+    /// 覆盖 `touch` 方法中 `ok_or_else(|| GarrisonError::InvalidToken(...))` 错误路径。
     #[tokio::test]
     async fn touch_nonexistent_token_errors() {
         let (_dao, session) = make_session(3600, 86400);
         let result = session.touch("nonexistent").await;
         assert!(
-            matches!(result, Err(BulwarkError::InvalidToken(_))),
+            matches!(result, Err(GarrisonError::InvalidToken(_))),
             "touch 不存在的 token 应返回 InvalidToken 错误"
         );
     }
@@ -750,7 +750,7 @@ mod tests {
         let (_dao, session) = make_session(3600, 86400);
         session.create("1001", "T1").await.unwrap();
 
-        let temp_key = "bulwark:temp:order:abc123";
+        let temp_key = "garrison:temp:order:abc123";
         session.link_temp_credential("T1", temp_key).await.unwrap();
         let stored = session.get_temp_credential("T1").await.unwrap();
         assert_eq!(stored, Some(temp_key.to_string()));
@@ -786,7 +786,7 @@ mod tests {
 
         let r1 = session.link_sso_ticket("nonexistent", "ticket").await;
         assert!(
-            matches!(r1, Err(BulwarkError::InvalidToken(_))),
+            matches!(r1, Err(GarrisonError::InvalidToken(_))),
             "link_sso_ticket 不存在的 token 应返回 InvalidToken"
         );
 
@@ -794,7 +794,7 @@ mod tests {
             .link_oauth2_token("nonexistent", "access-token")
             .await;
         assert!(
-            matches!(r2, Err(BulwarkError::InvalidToken(_))),
+            matches!(r2, Err(GarrisonError::InvalidToken(_))),
             "link_oauth2_token 不存在的 token 应返回 InvalidToken"
         );
 
@@ -802,7 +802,7 @@ mod tests {
             .link_temp_credential("nonexistent", "temp-key")
             .await;
         assert!(
-            matches!(r3, Err(BulwarkError::InvalidToken(_))),
+            matches!(r3, Err(GarrisonError::InvalidToken(_))),
             "link_temp_credential 不存在的 token 应返回 InvalidToken"
         );
     }
@@ -818,7 +818,7 @@ mod tests {
         session.create("1001", "T1").await.unwrap();
 
         // 在 dao 中预置 SSO ticket
-        let sso_key = "bulwark:sso:ticket:ticket-abc-123";
+        let sso_key = "garrison:sso:ticket:ticket-abc-123";
         dao.set(sso_key, r#"{"login_id":1001,"client_id":1}"#, 60)
             .await
             .unwrap();
@@ -849,7 +849,7 @@ mod tests {
         session.create("1001", "T1").await.unwrap();
 
         // 在 dao 中预置一个不相关的 SSO ticket
-        let unrelated_sso_key = "bulwark:sso:ticket:other-ticket";
+        let unrelated_sso_key = "garrison:sso:ticket:other-ticket";
         dao.set(unrelated_sso_key, r#"{"login_id":2002,"client_id":2}"#, 60)
             .await
             .unwrap();
@@ -875,7 +875,7 @@ mod tests {
         session.create("1001", "T1").await.unwrap();
 
         // 在 dao 中预置临时凭证
-        let temp_key = "bulwark:temp:order:abc123";
+        let temp_key = "garrison:temp:order:abc123";
         dao.set(temp_key, "secret-value", 300).await.unwrap();
         // 关联临时凭证到 token
         session.link_temp_credential("T1", temp_key).await.unwrap();
@@ -894,7 +894,7 @@ mod tests {
         session.create("1001", "T1").await.unwrap();
 
         // 在 dao 中预置临时凭证
-        let temp_key = "bulwark:temp:order:abc123";
+        let temp_key = "garrison:temp:order:abc123";
         dao.set(temp_key, "secret-value", 300).await.unwrap();
         session.link_temp_credential("T1", temp_key).await.unwrap();
 
@@ -924,7 +924,7 @@ mod tests {
     // String-form login_id 接入测试
     // ------------------------------------------------------------------------
 
-    /// 验证 `BulwarkSession::create` 接受 String 形式 login_id。
+    /// 验证 `GarrisonSession::create` 接受 String 形式 login_id。
     #[tokio::test]
     async fn create_accepts_login_id_numeric() {
         let (_dao, session) = make_session(3600, 86400);
@@ -933,7 +933,7 @@ mod tests {
         assert_eq!(ts.login_id, "1001");
     }
 
-    /// 验证 `BulwarkSession::get_account_session` 接受 String 形式 login_id。
+    /// 验证 `GarrisonSession::get_account_session` 接受 String 形式 login_id。
     #[tokio::test]
     async fn get_account_session_accepts_login_id_numeric() {
         let (_dao, session) = make_session(3600, 86400);
@@ -942,7 +942,7 @@ mod tests {
         assert_eq!(as_.login_id, "1001");
     }
 
-    /// 验证 `BulwarkSession::logout_by_login_id` 接受 String 形式 login_id。
+    /// 验证 `GarrisonSession::logout_by_login_id` 接受 String 形式 login_id。
     #[tokio::test]
     async fn logout_by_login_id_accepts_login_id_numeric() {
         let (_dao, session) = make_session(3600, 86400);
@@ -974,7 +974,7 @@ mod tests {
         let (_dao, session) = make_session(3600, 86400);
         let result = session.set_device("nonexistent", "web").await;
         assert!(
-            matches!(result, Err(BulwarkError::InvalidToken(_))),
+            matches!(result, Err(GarrisonError::InvalidToken(_))),
             "set_device 不存在的 token 应返回 InvalidToken"
         );
     }
@@ -1099,7 +1099,7 @@ mod tests {
     #[cfg(feature = "listener")]
     #[tokio::test]
     async fn kickout_by_device_broadcasts_kickout_events() {
-        use crate::listener::{BulwarkEvent, BulwarkListener, BulwarkListenerManager};
+        use crate::listener::{GarrisonEvent, GarrisonListener, GarrisonListenerManager};
         use async_trait::async_trait;
         use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -1111,18 +1111,18 @@ mod tests {
             count: AtomicUsize,
         }
         #[async_trait]
-        impl BulwarkListener for KickoutCounter {
-            async fn on_event(&self, event: &BulwarkEvent) -> BulwarkResult<()> {
-                if matches!(event, BulwarkEvent::Kickout { .. }) {
+        impl GarrisonListener for KickoutCounter {
+            async fn on_event(&self, event: &GarrisonEvent) -> GarrisonResult<()> {
+                if matches!(event, GarrisonEvent::Kickout { .. }) {
                     self.count.fetch_add(1, Ordering::SeqCst);
                 }
                 Ok(())
             }
         }
 
-        let mgr = Arc::new(BulwarkListenerManager::new());
+        let mgr = Arc::new(GarrisonListenerManager::new());
         // 注入自定义监听器（直接 push 到 listeners，需要扩展 API）
-        // 由于 BulwarkListenerManager 通过 inventory 收集，测试中无法直接注入
+        // 由于 GarrisonListenerManager 通过 inventory 收集，测试中无法直接注入
         // 改为验证 with_listener_manager 链式构造成功，且 kickout 不报错
         let (_dao, session) = make_session(3600, 86400);
         let session = session.with_listener_manager(mgr);
@@ -1141,10 +1141,10 @@ mod tests {
     #[cfg(feature = "listener")]
     #[test]
     fn with_listener_manager_sets_field() {
-        use crate::listener::BulwarkListenerManager;
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
-        let mgr = Arc::new(BulwarkListenerManager::new());
-        let session = BulwarkSession::new(dao, 3600, 86400).with_listener_manager(mgr);
+        use crate::listener::GarrisonListenerManager;
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+        let mgr = Arc::new(GarrisonListenerManager::new());
+        let session = GarrisonSession::new(dao, 3600, 86400).with_listener_manager(mgr);
         assert!(session.listener_manager.is_some());
     }
 
@@ -1161,22 +1161,22 @@ mod tests {
     }
 
     #[async_trait]
-    impl BulwarkDao for FailingDeleteDao {
-        async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
+    impl GarrisonDao for FailingDeleteDao {
+        async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
             self.inner.get(key).await
         }
-        async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> BulwarkResult<()> {
+        async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> GarrisonResult<()> {
             self.inner.set(key, value, ttl_seconds).await
         }
-        async fn update(&self, key: &str, value: &str) -> BulwarkResult<()> {
+        async fn update(&self, key: &str, value: &str) -> GarrisonResult<()> {
             self.inner.update(key, value).await
         }
-        async fn expire(&self, key: &str, seconds: u64) -> BulwarkResult<()> {
+        async fn expire(&self, key: &str, seconds: u64) -> GarrisonResult<()> {
             self.inner.expire(key, seconds).await
         }
-        async fn delete(&self, key: &str) -> BulwarkResult<()> {
+        async fn delete(&self, key: &str) -> GarrisonResult<()> {
             if key == self.fail_delete_key {
-                return Err(BulwarkError::Dao("session-mock-delete-failed".to_string()));
+                return Err(GarrisonError::Dao("session-mock-delete-failed".to_string()));
             }
             self.inner.delete(key).await
         }
@@ -1189,11 +1189,11 @@ mod tests {
     #[tokio::test]
     async fn logout_sso_ticket_delete_failure_logs_warn_without_failing() {
         let inner = Arc::new(MockDao::new());
-        let dao: Arc<dyn BulwarkDao> = Arc::new(FailingDeleteDao {
+        let dao: Arc<dyn GarrisonDao> = Arc::new(FailingDeleteDao {
             inner: inner.clone(),
-            fail_delete_key: "bulwark:sso:ticket:ticket-fail".to_string(),
+            fail_delete_key: "garrison:sso:ticket:ticket-fail".to_string(),
         });
-        let session = BulwarkSession::new(dao, 3600, 86400);
+        let session = GarrisonSession::new(dao, 3600, 86400);
 
         // login 并关联 SSO ticket
         session.create("1001", "T1").await.unwrap();
@@ -1419,8 +1419,8 @@ mod tests {
     }
 
     #[async_trait]
-    impl BulwarkDao for SlowDao {
-        async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
+    impl GarrisonDao for SlowDao {
+        async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
             let result = self.inner.get(key).await;
             // 仅对 account:session:* key 插入延迟，放大 read-modify-write 窗口
             if key.starts_with("account:session:") {
@@ -1428,16 +1428,16 @@ mod tests {
             }
             result
         }
-        async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> BulwarkResult<()> {
+        async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> GarrisonResult<()> {
             self.inner.set(key, value, ttl_seconds).await
         }
-        async fn update(&self, key: &str, value: &str) -> BulwarkResult<()> {
+        async fn update(&self, key: &str, value: &str) -> GarrisonResult<()> {
             self.inner.update(key, value).await
         }
-        async fn expire(&self, key: &str, seconds: u64) -> BulwarkResult<()> {
+        async fn expire(&self, key: &str, seconds: u64) -> GarrisonResult<()> {
             self.inner.expire(key, seconds).await
         }
-        async fn delete(&self, key: &str) -> BulwarkResult<()> {
+        async fn delete(&self, key: &str) -> GarrisonResult<()> {
             self.inner.delete(key).await
         }
     }
@@ -1451,11 +1451,11 @@ mod tests {
     #[serial_test::serial]
     async fn concurrent_login_same_user_creates_consistent_session() {
         let inner = Arc::new(MockDao::new());
-        let dao: Arc<dyn BulwarkDao> = Arc::new(SlowDao {
+        let dao: Arc<dyn GarrisonDao> = Arc::new(SlowDao {
             inner: inner.clone(),
             delay: Duration::from_millis(50),
         });
-        let session = BulwarkSession::new(dao, 3600, 86400);
+        let session = GarrisonSession::new(dao, 3600, 86400);
 
         // 并发执行两次 create 同一 login_id（用 tokio::join! 确保并发）
         let (r1, r2) = tokio::join!(session.create("1001", "T1"), session.create("1001", "T2"),);
@@ -1810,23 +1810,23 @@ mod tests {
     }
 
     #[async_trait]
-    impl BulwarkDao for FailingGetDao {
-        async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
+    impl GarrisonDao for FailingGetDao {
+        async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
             if key == self.fail_get_key {
-                return Err(BulwarkError::Dao("session-mock-read-failed".to_string()));
+                return Err(GarrisonError::Dao("session-mock-read-failed".to_string()));
             }
             self.inner.get(key).await
         }
-        async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> BulwarkResult<()> {
+        async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> GarrisonResult<()> {
             self.inner.set(key, value, ttl_seconds).await
         }
-        async fn update(&self, key: &str, value: &str) -> BulwarkResult<()> {
+        async fn update(&self, key: &str, value: &str) -> GarrisonResult<()> {
             self.inner.update(key, value).await
         }
-        async fn expire(&self, key: &str, seconds: u64) -> BulwarkResult<()> {
+        async fn expire(&self, key: &str, seconds: u64) -> GarrisonResult<()> {
             self.inner.expire(key, seconds).await
         }
-        async fn delete(&self, key: &str) -> BulwarkResult<()> {
+        async fn delete(&self, key: &str) -> GarrisonResult<()> {
             self.inner.delete(key).await
         }
     }
@@ -1843,23 +1843,23 @@ mod tests {
 
     #[cfg(feature = "login-token-map-persistence")]
     #[async_trait]
-    impl BulwarkDao for FailingUpdateDao {
-        async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
+    impl GarrisonDao for FailingUpdateDao {
+        async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
             self.inner.get(key).await
         }
-        async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> BulwarkResult<()> {
+        async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> GarrisonResult<()> {
             self.inner.set(key, value, ttl_seconds).await
         }
-        async fn update(&self, key: &str, value: &str) -> BulwarkResult<()> {
+        async fn update(&self, key: &str, value: &str) -> GarrisonResult<()> {
             if key == self.fail_update_key {
-                return Err(BulwarkError::Dao("session-mock-update-failed".to_string()));
+                return Err(GarrisonError::Dao("session-mock-update-failed".to_string()));
             }
             self.inner.update(key, value).await
         }
-        async fn expire(&self, key: &str, seconds: u64) -> BulwarkResult<()> {
+        async fn expire(&self, key: &str, seconds: u64) -> GarrisonResult<()> {
             self.inner.expire(key, seconds).await
         }
-        async fn delete(&self, key: &str) -> BulwarkResult<()> {
+        async fn delete(&self, key: &str) -> GarrisonResult<()> {
             self.inner.delete(key).await
         }
     }
@@ -1871,11 +1871,11 @@ mod tests {
     #[tokio::test]
     async fn cleanup_expired_tokens_dao_failure_skips_token_without_aborting() {
         let inner = Arc::new(MockDao::new());
-        let dao: Arc<dyn BulwarkDao> = Arc::new(FailingGetDao {
+        let dao: Arc<dyn GarrisonDao> = Arc::new(FailingGetDao {
             inner: inner.clone(),
             fail_get_key: token_key("T2"),
         });
-        let session = BulwarkSession::new(dao, 3600, 86400);
+        let session = GarrisonSession::new(dao, 3600, 86400);
 
         // 创建 3 个 token：T1（有效）、T2（DAO get 会失败）、T3（将注销）
         session.create("1001", "T1").await.unwrap();
@@ -1968,7 +1968,7 @@ mod tests {
             "set_active_timeout 对不存在的 token 应返回 Err"
         );
         assert!(
-            matches!(result, Err(BulwarkError::InvalidToken(_))),
+            matches!(result, Err(GarrisonError::InvalidToken(_))),
             "set_active_timeout 对不存在的 token 应返回 InvalidToken 错误，实际: {:?}",
             result
         );
@@ -1984,7 +1984,7 @@ mod tests {
         session.create("1001", "T1").await.unwrap();
         let result = session.set_active_timeout("T1", 0).await;
         assert!(
-            matches!(result, Err(BulwarkError::InvalidParam(_))),
+            matches!(result, Err(GarrisonError::InvalidParam(_))),
             "timeout_secs=0 应返回 InvalidParam，实际: {:?}",
             result
         );
@@ -2154,11 +2154,11 @@ mod tests {
     #[tokio::test]
     async fn add_login_token_persistent_dao_failure_skips_memory_write() {
         let inner = Arc::new(MockDao::new());
-        let dao: Arc<dyn BulwarkDao> = Arc::new(FailingUpdateDao {
+        let dao: Arc<dyn GarrisonDao> = Arc::new(FailingUpdateDao {
             inner: inner.clone(),
             fail_update_key: account_key("user1"),
         });
-        let session = BulwarkSession::new(dao, 3600, 86400);
+        let session = GarrisonSession::new(dao, 3600, 86400);
 
         // 先创建 AccountSession（create 用 set，不受 FailingUpdateDao 影响）
         session.create("user1", "T1").await.unwrap();

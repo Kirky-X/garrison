@@ -49,7 +49,7 @@ pub mod social;
 
 /// 按 locale 翻译异常 detail。i18n 基础层已无条件编译，始终优先查 FTL 翻译。
 ///
-/// 供社交登录（wechat/alipay）与 Keycloak 等模块在构造 `BulwarkError` detail 字符串时
+/// 供社交登录（wechat/alipay）与 Keycloak 等模块在构造 `GarrisonError` detail 字符串时
 /// 使用，实现中英文切换。宏定义位于 crate 根（`crate::loc`），此处 re-export 以兼容
 /// 既有 `crate::protocol::loc` 调用。
 ///
@@ -62,18 +62,18 @@ pub mod social;
 /// # 示例
 ///
 /// ```ignore
-/// use crate::error::BulwarkError;
+/// use crate::error::GarrisonError;
 /// use crate::protocol::loc;
 ///
 /// // 带参数
-/// let err = BulwarkError::Network(loc!(
+/// let err = GarrisonError::Network(loc!(
 ///     "wechat-token-request-failed",
 ///     format!("wechat token request failed: {}", e),
 ///     ("detail", &e.to_string())
 /// ));
 ///
 /// // 不带参数
-/// let err = BulwarkError::Network(loc!(
+/// let err = GarrisonError::Network(loc!(
 ///     "wechat-response-missing-openid",
 ///     "wechat response missing openid field".to_string()
 /// ));

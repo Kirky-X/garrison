@@ -1,11 +1,11 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! 防火墙策略示例：演示 BulwarkPermissionStrategy trait 与自定义策略实现。
+//! 防火墙策略示例：演示 GarrisonPermissionStrategy trait 与自定义策略实现。
 //!
 //! 流程：
-//! 1. 实现 BulwarkPermissionStrategy trait（自定义权限/角色来源）
-//! 2. 创建 BulwarkPermissionStrategyDefault（基于 BulwarkInterface）
+//! 1. 实现 GarrisonPermissionStrategy trait（自定义权限/角色来源）
+//! 2. 创建 GarrisonPermissionStrategyDefault（基于 GarrisonInterface）
 //! 3. check_permission 权限校验
 //! 4. check_role 角色校验
 //! 5. check_role_any 任一角色匹配
@@ -14,16 +14,16 @@
 //!
 //! 运行方式：
 //! ```sh
-//! cargo run -p bulwark-examples --bin strategy_firewall --features "cache-memory,web-axum"
+//! cargo run -p garrison-examples --bin strategy_firewall --features "cache-memory,web-axum"
 //! ```
 
 use async_trait::async_trait;
-use bulwark::dao::{BulwarkDao, BulwarkDaoOxcache};
-use bulwark::error::{BulwarkError, BulwarkResult};
-use bulwark::manager::BulwarkManager;
-use bulwark::prelude::*;
-use bulwark::stp::BulwarkInterface;
-use bulwark::strategy::{BulwarkPermissionStrategy, BulwarkPermissionStrategyDefault};
+use garrison::dao::{GarrisonDao, GarrisonDaoOxcache};
+use garrison::error::{GarrisonError, GarrisonResult};
+use garrison::manager::GarrisonManager;
+use garrison::prelude::*;
+use garrison::stp::GarrisonInterface;
+use garrison::strategy::{GarrisonPermissionStrategy, GarrisonPermissionStrategyDefault};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -31,7 +31,7 @@ use std::sync::Arc;
 // 自定义防火墙策略：基于内存 HashMap 直接提供权限/角色数据
 // ============================================================================
 
-/// 示例自定义策略：绕过 BulwarkInterface，直接从 HashMap 读取权限/角色。
+/// 示例自定义策略：绕过 GarrisonInterface，直接从 HashMap 读取权限/角色。
 pub struct CustomFirewall {
     permissions: HashMap<String, Vec<String>>,
     roles: HashMap<String, Vec<String>>,
@@ -69,47 +69,47 @@ impl Default for CustomFirewall {
 }
 
 #[async_trait]
-impl BulwarkPermissionStrategy for CustomFirewall {
-    async fn get_permission_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+impl GarrisonPermissionStrategy for CustomFirewall {
+    async fn get_permission_list(&self, login_id: &str) -> GarrisonResult<Vec<String>> {
         Ok(self.permissions.get(login_id).cloned().unwrap_or_default())
     }
 
-    async fn get_role_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+    async fn get_role_list(&self, login_id: &str) -> GarrisonResult<Vec<String>> {
         Ok(self.roles.get(login_id).cloned().unwrap_or_default())
     }
 
-    async fn check_permission(&self, login_id: &str, permission: &str) -> BulwarkResult<bool> {
+    async fn check_permission(&self, login_id: &str, permission: &str) -> GarrisonResult<bool> {
         if permission.is_empty() {
-            return Err(BulwarkError::InvalidToken("权限不能为空".to_string()));
+            return Err(GarrisonError::InvalidToken("权限不能为空".to_string()));
         }
         let perms = self.get_permission_list(login_id).await?;
         Ok(perms.iter().any(|p| p == permission))
     }
 
-    async fn check_role(&self, login_id: &str, role: &str) -> BulwarkResult<bool> {
+    async fn check_role(&self, login_id: &str, role: &str) -> GarrisonResult<bool> {
         if role.is_empty() {
-            return Err(BulwarkError::InvalidToken("角色不能为空".to_string()));
+            return Err(GarrisonError::InvalidToken("角色不能为空".to_string()));
         }
         let roles = self.get_role_list(login_id).await?;
         Ok(roles.iter().any(|r| r == role))
     }
 
-    async fn check_role_any(&self, login_id: &str, roles: &[&str]) -> BulwarkResult<bool> {
+    async fn check_role_any(&self, login_id: &str, roles: &[&str]) -> GarrisonResult<bool> {
         let user_roles = self.get_role_list(login_id).await?;
         Ok(roles.iter().any(|r| user_roles.iter().any(|ur| ur == r)))
     }
 
-    async fn check_role_all(&self, login_id: &str, roles: &[&str]) -> BulwarkResult<bool> {
+    async fn check_role_all(&self, login_id: &str, roles: &[&str]) -> GarrisonResult<bool> {
         let user_roles = self.get_role_list(login_id).await?;
         Ok(roles.iter().all(|r| user_roles.iter().any(|ur| ur == r)))
     }
 }
 
 // ============================================================================
-// BulwarkInterface 实现（用于 BulwarkPermissionStrategyDefault）
+// GarrisonInterface 实现（用于 GarrisonPermissionStrategyDefault）
 // ============================================================================
 
-/// 示例 BulwarkInterface 实现，仅提供 login_id=1001 的权限/角色。
+/// 示例 GarrisonInterface 实现，仅提供 login_id=1001 的权限/角色。
 pub struct MyInterface {
     permissions: HashMap<String, Vec<String>>,
     roles: HashMap<String, Vec<String>>,
@@ -138,23 +138,23 @@ impl Default for MyInterface {
 }
 
 #[async_trait]
-impl BulwarkInterface for MyInterface {
-    async fn get_permission_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+impl GarrisonInterface for MyInterface {
+    async fn get_permission_list(&self, login_id: &str) -> GarrisonResult<Vec<String>> {
         Ok(self.permissions.get(login_id).cloned().unwrap_or_default())
     }
 
-    async fn get_role_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+    async fn get_role_list(&self, login_id: &str) -> GarrisonResult<Vec<String>> {
         Ok(self.roles.get(login_id).cloned().unwrap_or_default())
     }
 }
 
 /// 运行防火墙策略示例。
 ///
-/// 演示 CustomFirewall 自定义策略与 BulwarkPermissionStrategyDefault 的
+/// 演示 CustomFirewall 自定义策略与 GarrisonPermissionStrategyDefault 的
 /// check_permission / check_role / check_role_any / check_role_all 校验，
-/// 以及空字符串 Fail Loud 行为，最后集成到 BulwarkManager。
-pub async fn run() -> BulwarkResult<()> {
-    println!("=== Bulwark 防火墙策略示例 ===\n");
+/// 以及空字符串 Fail Loud 行为，最后集成到 GarrisonManager。
+pub async fn run() -> GarrisonResult<()> {
+    println!("=== Garrison 防火墙策略示例 ===\n");
 
     // ----------------------------------------------------------------
     // 1. 自定义策略直接使用
@@ -176,11 +176,11 @@ pub async fn run() -> BulwarkResult<()> {
     println!();
 
     // ----------------------------------------------------------------
-    // 2. BulwarkPermissionStrategyDefault（基于 BulwarkInterface）
+    // 2. GarrisonPermissionStrategyDefault（基于 GarrisonInterface）
     // ----------------------------------------------------------------
     let interface = Arc::new(MyInterface::new());
-    let default_fw = BulwarkPermissionStrategyDefault::new(interface);
-    println!("[2] BulwarkPermissionStrategyDefault:");
+    let default_fw = GarrisonPermissionStrategyDefault::new(interface);
+    println!("[2] GarrisonPermissionStrategyDefault:");
 
     let perms = default_fw.get_permission_list("1001").await?;
     println!("    get_permission_list(1001) = {:?}", perms);
@@ -255,15 +255,15 @@ pub async fn run() -> BulwarkResult<()> {
     println!();
 
     // ----------------------------------------------------------------
-    // 6. 集成到 BulwarkManager（完整业务场景）
+    // 6. 集成到 GarrisonManager（完整业务场景）
     // ----------------------------------------------------------------
-    println!("[6] 集成到 BulwarkManager:");
-    let dao: Arc<dyn BulwarkDao> = Arc::new(BulwarkDaoOxcache::new().await?);
-    let config = Arc::new(BulwarkConfig::default_config());
-    let interface: Arc<dyn BulwarkInterface> = Arc::new(MyInterface::new());
-    BulwarkManager::init(dao, config, interface)?;
-    println!("    BulwarkManager 初始化完成（使用 BulwarkPermissionStrategyDefault）");
-    println!("    可通过 BulwarkUtil::check_permission/check_role 调用");
+    println!("[6] 集成到 GarrisonManager:");
+    let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await?);
+    let config = Arc::new(GarrisonConfig::default_config());
+    let interface: Arc<dyn GarrisonInterface> = Arc::new(MyInterface::new());
+    GarrisonManager::init(dao, config, interface)?;
+    println!("    GarrisonManager 初始化完成（使用 GarrisonPermissionStrategyDefault）");
+    println!("    可通过 GarrisonUtil::check_permission/check_role 调用");
 
     println!("\n=== 示例执行完成 ===");
     Ok(())

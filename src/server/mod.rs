@@ -1,7 +1,7 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! BulwarkAuthServer — 将 AuthBackend 方法暴露为 HTTP 端点的 axum 服务器。
+//! GarrisonAuthServer — 将 AuthBackend 方法暴露为 HTTP 端点的 axum 服务器。
 //!
 //! # 双端口架构
 //!
@@ -16,12 +16,12 @@
 //! # 使用
 //!
 //! ```ignore
-//! use bulwark::backend::BackendEmbedded;
-//! use bulwark::server::BulwarkAuthServer;
+//! use garrison::backend::BackendEmbedded;
+//! use garrison::server::GarrisonAuthServer;
 //! use std::sync::Arc;
 //!
-//! let backend: Arc<dyn bulwark::backend::AuthBackend> = Arc::new(BackendEmbedded::new());
-//! let server = BulwarkAuthServer::new(backend)
+//! let backend: Arc<dyn garrison::backend::AuthBackend> = Arc::new(BackendEmbedded::new());
+//! let server = GarrisonAuthServer::new(backend)
 //!     .with_external_port(8080)
 //!     .with_internal_port(8081)
 //!     .with_internal_api_key("secret-api-key")
@@ -73,7 +73,7 @@ pub struct AuthServerConfig {
 
 /// TLS 配置（证书 + 私钥文件路径）。
 ///
-/// 通过 [`BulwarkAuthServer::with_tls`] 设置，启用后 `listen()` 使用
+/// 通过 [`GarrisonAuthServer::with_tls`] 设置，启用后 `listen()` 使用
 /// `axum_server::bind_rustls` 替代 `axum::serve`，实现 HTTPS/TLS 终止。
 ///
 /// # Feature 门控
@@ -88,10 +88,10 @@ pub struct TlsConfig {
     pub key_path: PathBuf,
 }
 
-/// BulwarkAuthServer — 双端口 axum 认证服务器。
+/// GarrisonAuthServer — 双端口 axum 认证服务器。
 ///
 /// 通过 builder 方法配置端口、限速、API Key，最终调用 `listen()` 启动。
-pub struct BulwarkAuthServer {
+pub struct GarrisonAuthServer {
     backend: Arc<dyn AuthBackend>,
     config: AuthServerConfig,
     /// 租户解析器（feature = "tenant-isolation"）。

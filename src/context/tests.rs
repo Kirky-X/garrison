@@ -19,7 +19,7 @@ fn set_cookie_default_delegates_to_set_cookie_with_config() {
 #[test]
 fn set_cookie_default_uses_default_config() {
     let mut resp = MockResponse::new();
-    // set_cookie 默认方法应使用 BulwarkConfig::default_config()
+    // set_cookie 默认方法应使用 GarrisonConfig::default_config()
     // MockResponse 的 set_cookie_with_config 忽略 config，仅验证调用链
     let result = resp.set_cookie("token", "xyz");
     assert!(result.is_ok());
@@ -43,7 +43,7 @@ fn mock_response_set_status_and_header() {
 /// 验证 frontend_separation=true 时 effective_is_read_header 强制返回 true。
 #[test]
 fn t011_effective_is_read_header_frontend_separation_forces_true() {
-    let mut config = crate::config::BulwarkConfig::default_config();
+    let mut config = crate::config::GarrisonConfig::default_config();
     config.is_read_header = false;
     config.frontend_separation = true;
     assert!(effective_is_read_header(&config));
@@ -52,7 +52,7 @@ fn t011_effective_is_read_header_frontend_separation_forces_true() {
 /// 验证 frontend_separation=false 时 effective_is_read_header 遵循原配置。
 #[test]
 fn t011_effective_is_read_header_no_separation_respects_config() {
-    let mut config = crate::config::BulwarkConfig::default_config();
+    let mut config = crate::config::GarrisonConfig::default_config();
     config.is_read_header = false;
     config.frontend_separation = false;
     assert!(!effective_is_read_header(&config));
@@ -61,7 +61,7 @@ fn t011_effective_is_read_header_no_separation_respects_config() {
 /// 验证 frontend_separation=true 时 effective_is_read_cookie 强制返回 false。
 #[test]
 fn t011_effective_is_read_cookie_frontend_separation_forces_false() {
-    let mut config = crate::config::BulwarkConfig::default_config();
+    let mut config = crate::config::GarrisonConfig::default_config();
     config.is_read_cookie = true;
     config.frontend_separation = true;
     assert!(!effective_is_read_cookie(&config));
@@ -70,7 +70,7 @@ fn t011_effective_is_read_cookie_frontend_separation_forces_false() {
 /// 验证 frontend_separation=false 时 effective_is_read_cookie 遵循原配置。
 #[test]
 fn t011_effective_is_read_cookie_no_separation_respects_config() {
-    let mut config = crate::config::BulwarkConfig::default_config();
+    let mut config = crate::config::GarrisonConfig::default_config();
     config.is_read_cookie = true;
     config.frontend_separation = false;
     assert!(effective_is_read_cookie(&config));
@@ -80,7 +80,7 @@ fn t011_effective_is_read_cookie_no_separation_respects_config() {
 #[test]
 fn t011_set_cookie_with_frontend_check_separation_skips_cookie() {
     let mut resp = MockResponse::new();
-    let mut config = crate::config::BulwarkConfig::default_config();
+    let mut config = crate::config::GarrisonConfig::default_config();
     config.frontend_separation = true;
     let result = resp.set_cookie_with_frontend_check("session", "abc123", &config);
     assert!(result.is_ok());
@@ -91,7 +91,7 @@ fn t011_set_cookie_with_frontend_check_separation_skips_cookie() {
 #[test]
 fn t011_set_cookie_with_frontend_check_no_separation_sets_cookie() {
     let mut resp = MockResponse::new();
-    let mut config = crate::config::BulwarkConfig::default_config();
+    let mut config = crate::config::GarrisonConfig::default_config();
     config.frontend_separation = false;
     let result = resp.set_cookie_with_frontend_check("session", "abc123", &config);
     assert!(result.is_ok());

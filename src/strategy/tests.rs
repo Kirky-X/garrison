@@ -6,12 +6,12 @@
 //! 从 `mod.rs` 迁移而出（规则 25：mod.rs 接口隔离）。
 //! 覆盖权限校验、角色层级、权限缓存、插件钩子、防火墙安全钩子等场景。
 //!
-//! 注意：引用 `BulwarkFirewallCheckHook` / `LoginContext` 的测试需 cfg 门控
+//! 注意：引用 `GarrisonFirewallCheckHook` / `LoginContext` 的测试需 cfg 门控
 //! （依赖 limiteron / firewall-* / oauth2-server feature）。
 
 use super::mock::MockCacheDao;
 use super::*;
-use crate::error::BulwarkError;
+use crate::error::GarrisonError;
 #[cfg(any(
     feature = "sms-rate-limit",
     feature = "firewall-ratelimit",
@@ -21,15 +21,15 @@ use crate::error::BulwarkError;
     feature = "oauth2-server"
 ))]
 use crate::strategy::hooks::{
-    BulwarkFirewallCheckHook, BulwarkFirewallCheckHookDefault, LoginContext,
+    GarrisonFirewallCheckHook, GarrisonFirewallCheckHookDefault, LoginContext,
 };
 use std::collections::HashMap;
 
 // ------------------------------------------------------------------------
-// MockInterface：模拟业务方实现 BulwarkInterface 回调
+// MockInterface：模拟业务方实现 GarrisonInterface 回调
 // ------------------------------------------------------------------------
 
-/// 测试用 BulwarkInterface mock，基于 HashMap 存储 login_id → 权限/角色列表。
+/// 测试用 GarrisonInterface mock，基于 HashMap 存储 login_id → 权限/角色列表。
 struct MockInterface {
     permissions: HashMap<String, Vec<String>>,
     roles: HashMap<String, Vec<String>>,
@@ -61,19 +61,19 @@ impl MockInterface {
 }
 
 #[async_trait]
-impl BulwarkInterface for MockInterface {
-    async fn get_permission_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+impl GarrisonInterface for MockInterface {
+    async fn get_permission_list(&self, login_id: &str) -> GarrisonResult<Vec<String>> {
         Ok(self.permissions.get(login_id).cloned().unwrap_or_default())
     }
 
-    async fn get_role_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+    async fn get_role_list(&self, login_id: &str) -> GarrisonResult<Vec<String>> {
         Ok(self.roles.get(login_id).cloned().unwrap_or_default())
     }
 }
 
-/// 辅助函数：创建 BulwarkPermissionStrategyDefault 实例。
-fn make_firewall(interface: MockInterface) -> BulwarkPermissionStrategyDefault {
-    BulwarkPermissionStrategyDefault::new(Arc::new(interface))
+/// 辅助函数：创建 GarrisonPermissionStrategyDefault 实例。
+fn make_firewall(interface: MockInterface) -> GarrisonPermissionStrategyDefault {
+    GarrisonPermissionStrategyDefault::new(Arc::new(interface))
 }
 
 // ------------------------------------------------------------------------
@@ -114,7 +114,7 @@ async fn check_permission_empty_string_errors() {
 
     let result = fw.check_permission("1001", "").await;
     assert!(
-        matches!(result, Err(BulwarkError::InvalidParam(_))),
+        matches!(result, Err(GarrisonError::InvalidParam(_))),
         "空权限字符串应抛 InvalidParam"
     );
 }
@@ -172,7 +172,7 @@ async fn check_role_empty_string_errors() {
 
     let result = fw.check_role("1001", "").await;
     assert!(
-        matches!(result, Err(BulwarkError::InvalidParam(_))),
+        matches!(result, Err(GarrisonError::InvalidParam(_))),
         "空角色字符串应抛 InvalidParam"
     );
 }
@@ -254,7 +254,7 @@ async fn check_role_all_empty_roles_returns_true() {
 // get_permission_list / get_role_list 回调委托验证
 // ------------------------------------------------------------------------
 
-/// 验证 get_permission_list 委托 BulwarkInterface 回调。
+/// 验证 get_permission_list 委托 GarrisonInterface 回调。
 #[tokio::test]
 async fn get_permission_list_delegates_to_interface() {
     let mut iface = MockInterface::new();
@@ -265,7 +265,7 @@ async fn get_permission_list_delegates_to_interface() {
     assert_eq!(perms, vec!["user:read", "user:write"]);
 }
 
-/// 验证 get_role_list 委托 BulwarkInterface 回调。
+/// 验证 get_role_list 委托 GarrisonInterface 回调。
 #[tokio::test]
 async fn get_role_list_delegates_to_interface() {
     let mut iface = MockInterface::new();
@@ -297,16 +297,16 @@ struct MockPermissionChecker {
 
 #[async_trait]
 impl PermissionChecker for MockPermissionChecker {
-    async fn has_permission(&self, _login_id: &str, _permission: &str) -> BulwarkResult<bool> {
+    async fn has_permission(&self, _login_id: &str, _permission: &str) -> GarrisonResult<bool> {
         Ok(self.perm_result)
     }
-    async fn has_role(&self, _login_id: &str, _role: &str) -> BulwarkResult<bool> {
+    async fn has_role(&self, _login_id: &str, _role: &str) -> GarrisonResult<bool> {
         Ok(false)
     }
-    async fn check_permission(&self, _login_id: &str, _permission: &str) -> BulwarkResult<()> {
+    async fn check_permission(&self, _login_id: &str, _permission: &str) -> GarrisonResult<()> {
         Ok(())
     }
-    async fn check_role(&self, _login_id: &str, _role: &str) -> BulwarkResult<()> {
+    async fn check_role(&self, _login_id: &str, _role: &str) -> GarrisonResult<()> {
         Ok(())
     }
     async fn has_any_permission(&self, _login_id: &str, _perms: &[&str]) -> bool {
@@ -322,7 +322,7 @@ impl PermissionChecker for MockPermissionChecker {
 async fn check_permission_delegates_to_permission_checker() {
     let iface = MockInterface::new();
     let pc = Arc::new(MockPermissionChecker { perm_result: true });
-    let fw = BulwarkPermissionStrategyDefault::new(Arc::new(iface)).with_permission_checker(pc);
+    let fw = GarrisonPermissionStrategyDefault::new(Arc::new(iface)).with_permission_checker(pc);
 
     // PermissionChecker 返回 true，即使 interface 中无权限记录
     assert!(
@@ -336,7 +336,7 @@ async fn check_permission_delegates_to_permission_checker() {
 async fn check_permission_delegates_returns_false() {
     let iface = MockInterface::new();
     let pc = Arc::new(MockPermissionChecker { perm_result: false });
-    let fw = BulwarkPermissionStrategyDefault::new(Arc::new(iface)).with_permission_checker(pc);
+    let fw = GarrisonPermissionStrategyDefault::new(Arc::new(iface)).with_permission_checker(pc);
 
     assert!(
         !fw.check_permission("1001", "user:read").await.unwrap(),
@@ -349,7 +349,7 @@ async fn check_permission_delegates_returns_false() {
 async fn check_permission_without_checker_falls_back_to_interface() {
     let mut iface = MockInterface::new();
     iface.set_permissions("1001", &["user:read"]);
-    let fw = BulwarkPermissionStrategyDefault::new(Arc::new(iface));
+    let fw = GarrisonPermissionStrategyDefault::new(Arc::new(iface));
 
     assert!(
         fw.check_permission("1001", "user:read").await.unwrap(),
@@ -365,8 +365,8 @@ async fn check_permission_without_checker_falls_back_to_interface() {
 fn make_firewall_with_hierarchy(
     interface: MockInterface,
     hierarchy: HashMap<String, Vec<String>>,
-) -> BulwarkPermissionStrategyDefault {
-    BulwarkPermissionStrategyDefault::new(Arc::new(interface)).with_role_hierarchy(hierarchy)
+) -> GarrisonPermissionStrategyDefault {
+    GarrisonPermissionStrategyDefault::new(Arc::new(interface)).with_role_hierarchy(hierarchy)
 }
 
 /// 验证层级角色：admin 隐含持有 user。
@@ -453,9 +453,9 @@ async fn check_role_any_all_with_hierarchy() {
 async fn check_permission_triggers_plugin_hook() {
     let mut iface = MockInterface::new();
     iface.set_permissions("1001", &["user:read"]);
-    // BulwarkPluginManager::new() 收集所有 inventory 注册的插件
-    let pm = Arc::new(BulwarkPluginManager::new());
-    let fw = BulwarkPermissionStrategyDefault::new(Arc::new(iface)).with_plugin_manager(pm);
+    // GarrisonPluginManager::new() 收集所有 inventory 注册的插件
+    let pm = Arc::new(GarrisonPluginManager::new());
+    let fw = GarrisonPermissionStrategyDefault::new(Arc::new(iface)).with_plugin_manager(pm);
 
     // 插件钩子不应中断主流程，校验结果应正常返回
     assert!(
@@ -473,8 +473,8 @@ async fn check_permission_plugin_failure_does_not_interrupt() {
     iface.set_permissions("1001", &["user:read"]);
     // PluginManager 包含 ErrPlugin（on_permission_check 返回 Err），
     // 但主流程不应被中断
-    let pm = Arc::new(BulwarkPluginManager::new());
-    let fw = BulwarkPermissionStrategyDefault::new(Arc::new(iface)).with_plugin_manager(pm);
+    let pm = Arc::new(GarrisonPluginManager::new());
+    let fw = GarrisonPermissionStrategyDefault::new(Arc::new(iface)).with_plugin_manager(pm);
 
     assert!(
         fw.check_permission("1001", "user:read").await.unwrap(),
@@ -491,7 +491,7 @@ async fn check_permission_plugin_failure_does_not_interrupt() {
 async fn cache_permission_writes_and_reads_back() {
     let dao = Arc::new(MockCacheDao::new());
     let iface = MockInterface::new();
-    let fw = BulwarkPermissionStrategyDefault::new(Arc::new(iface)).with_dao(dao.clone());
+    let fw = GarrisonPermissionStrategyDefault::new(Arc::new(iface)).with_dao(dao.clone());
 
     fw.cache_permission("1001", "user:read", true, 300)
         .await
@@ -501,7 +501,7 @@ async fn cache_permission_writes_and_reads_back() {
     assert_eq!(cached, Some(true), "缓存应命中并返回 true");
 
     // 验证 key 格式
-    let key = "bulwark:perm:cache:1001:user:read";
+    let key = "garrison:perm:cache:1001:user:read";
     assert_eq!(
         dao.get(key).await.unwrap(),
         Some("true".to_string()),
@@ -515,7 +515,7 @@ async fn cache_permission_writes_and_reads_back() {
 async fn get_cached_permission_miss_returns_none() {
     let dao = Arc::new(MockCacheDao::new());
     let iface = MockInterface::new();
-    let fw = BulwarkPermissionStrategyDefault::new(Arc::new(iface)).with_dao(dao);
+    let fw = GarrisonPermissionStrategyDefault::new(Arc::new(iface)).with_dao(dao);
 
     let cached = fw
         .get_cached_permission("1001", "user:delete")
@@ -529,7 +529,7 @@ async fn get_cached_permission_miss_returns_none() {
 async fn cache_permission_overwrite() {
     let dao = Arc::new(MockCacheDao::new());
     let iface = MockInterface::new();
-    let fw = BulwarkPermissionStrategyDefault::new(Arc::new(iface)).with_dao(dao);
+    let fw = GarrisonPermissionStrategyDefault::new(Arc::new(iface)).with_dao(dao);
 
     // 第一次缓存 true
     fw.cache_permission("1001", "user:read", true, 300)
@@ -558,7 +558,7 @@ async fn check_permission_uses_cache_short_circuit() {
     let mut iface = MockInterface::new();
     // interface 中无 user:read 权限
     iface.set_permissions("1001", &[]);
-    let fw = BulwarkPermissionStrategyDefault::new(Arc::new(iface)).with_dao(dao.clone());
+    let fw = GarrisonPermissionStrategyDefault::new(Arc::new(iface)).with_dao(dao.clone());
 
     // 预先写入缓存 true（与 interface 实际权限矛盾）
     fw.cache_permission("1001", "user:read", true, 300)
@@ -610,8 +610,8 @@ async fn check_login_hooks_noop_without_hook() {
 #[tokio::test]
 async fn check_login_hooks_passes_with_hook() {
     let iface = MockInterface::new();
-    let hook = Arc::new(BulwarkFirewallCheckHookDefault::new());
-    let fw = BulwarkPermissionStrategyDefault::new(Arc::new(iface)).with_firewall_hook(hook);
+    let hook = Arc::new(GarrisonFirewallCheckHookDefault::new());
+    let fw = GarrisonPermissionStrategyDefault::new(Arc::new(iface)).with_firewall_hook(hook);
     let ctx = LoginContext::new("1001");
 
     // hook 计数器为空，所有检查应通过
@@ -633,9 +633,9 @@ async fn check_login_hooks_passes_with_hook() {
 #[tokio::test]
 async fn check_login_hooks_blocks_on_frequency_exceeded() {
     let iface = MockInterface::new();
-    let hook = Arc::new(BulwarkFirewallCheckHookDefault::new());
+    let hook = Arc::new(GarrisonFirewallCheckHookDefault::new());
     let fw =
-        BulwarkPermissionStrategyDefault::new(Arc::new(iface)).with_firewall_hook(hook.clone());
+        GarrisonPermissionStrategyDefault::new(Arc::new(iface)).with_firewall_hook(hook.clone());
     let ctx = LoginContext::new("1001").with_ip("1.2.3.4");
 
     // 记录 10 次失败（达到阈值）
@@ -647,7 +647,7 @@ async fn check_login_hooks_blocks_on_frequency_exceeded() {
     let result = fw.check_login_hooks("1001", &ctx).await;
     assert!(result.is_err(), "登录频率超限时应被 check_login_hooks 阻断");
     assert!(
-        matches!(result.unwrap_err(), BulwarkError::Session(_)),
+        matches!(result.unwrap_err(), GarrisonError::Session(_)),
         "阻断错误应为 Session 类型"
     );
 }
@@ -664,9 +664,9 @@ async fn check_login_hooks_blocks_on_frequency_exceeded() {
 #[tokio::test]
 async fn check_login_hooks_blocks_on_brute_force_exceeded() {
     let iface = MockInterface::new();
-    let hook = Arc::new(BulwarkFirewallCheckHookDefault::new());
+    let hook = Arc::new(GarrisonFirewallCheckHookDefault::new());
     let fw =
-        BulwarkPermissionStrategyDefault::new(Arc::new(iface)).with_firewall_hook(hook.clone());
+        GarrisonPermissionStrategyDefault::new(Arc::new(iface)).with_firewall_hook(hook.clone());
     let ctx = LoginContext::new("1001"); // 无 IP，仅触发暴力破解检测
 
     // 记录 5 次失败（达到阈值）
@@ -691,9 +691,9 @@ async fn check_login_hooks_blocks_on_brute_force_exceeded() {
 #[tokio::test]
 async fn with_firewall_hook_injects_hook() {
     let iface = MockInterface::new();
-    let hook = Arc::new(BulwarkFirewallCheckHookDefault::new());
+    let hook = Arc::new(GarrisonFirewallCheckHookDefault::new());
     let fw =
-        BulwarkPermissionStrategyDefault::new(Arc::new(iface)).with_firewall_hook(hook.clone());
+        GarrisonPermissionStrategyDefault::new(Arc::new(iface)).with_firewall_hook(hook.clone());
 
     // 注入后，记录失败并触发检测应能阻断
     let ctx = LoginContext::new("1001").with_ip("9.9.9.9");
@@ -725,24 +725,24 @@ async fn check_login_hooks_calls_in_order() {
     }
 
     #[async_trait]
-    impl BulwarkFirewallCheckHook for OrderTrackingHook {
-        async fn check_login_frequency(&self, _ctx: &LoginContext) -> BulwarkResult<()> {
+    impl GarrisonFirewallCheckHook for OrderTrackingHook {
+        async fn check_login_frequency(&self, _ctx: &LoginContext) -> GarrisonResult<()> {
             self.order.fetch_add(1, Ordering::SeqCst);
             Ok(())
         }
-        async fn check_brute_force(&self, _ctx: &LoginContext) -> BulwarkResult<()> {
+        async fn check_brute_force(&self, _ctx: &LoginContext) -> GarrisonResult<()> {
             self.order.fetch_add(2, Ordering::SeqCst);
             Ok(())
         }
-        async fn check_geo_anomaly(&self, _ctx: &LoginContext) -> BulwarkResult<()> {
+        async fn check_geo_anomaly(&self, _ctx: &LoginContext) -> GarrisonResult<()> {
             self.order.fetch_add(4, Ordering::SeqCst);
             Ok(())
         }
-        async fn check_token_reuse(&self, _ctx: &LoginContext) -> BulwarkResult<()> {
+        async fn check_token_reuse(&self, _ctx: &LoginContext) -> GarrisonResult<()> {
             self.order.fetch_add(8, Ordering::SeqCst);
             Ok(())
         }
-        async fn check_device_anomaly(&self, _ctx: &LoginContext) -> BulwarkResult<()> {
+        async fn check_device_anomaly(&self, _ctx: &LoginContext) -> GarrisonResult<()> {
             self.order.fetch_add(16, Ordering::SeqCst);
             Ok(())
         }
@@ -753,7 +753,7 @@ async fn check_login_hooks_calls_in_order() {
         order: order.clone(),
     });
     let iface = MockInterface::new();
-    let fw = BulwarkPermissionStrategyDefault::new(Arc::new(iface)).with_firewall_hook(hook);
+    let fw = GarrisonPermissionStrategyDefault::new(Arc::new(iface)).with_firewall_hook(hook);
     let ctx = LoginContext::new("1001");
 
     fw.check_login_hooks("1001", &ctx).await.unwrap();
@@ -780,24 +780,24 @@ async fn check_login_hooks_short_circuits_on_err() {
     }
 
     #[async_trait]
-    impl BulwarkFirewallCheckHook for ShortCircuitHook {
-        async fn check_login_frequency(&self, _ctx: &LoginContext) -> BulwarkResult<()> {
+    impl GarrisonFirewallCheckHook for ShortCircuitHook {
+        async fn check_login_frequency(&self, _ctx: &LoginContext) -> GarrisonResult<()> {
             self.called.fetch_add(1, Ordering::SeqCst);
-            Err(BulwarkError::Session("frequency blocked".to_string()))
+            Err(GarrisonError::Session("frequency blocked".to_string()))
         }
-        async fn check_brute_force(&self, _ctx: &LoginContext) -> BulwarkResult<()> {
+        async fn check_brute_force(&self, _ctx: &LoginContext) -> GarrisonResult<()> {
             self.called.fetch_add(2, Ordering::SeqCst);
             Ok(())
         }
-        async fn check_geo_anomaly(&self, _ctx: &LoginContext) -> BulwarkResult<()> {
+        async fn check_geo_anomaly(&self, _ctx: &LoginContext) -> GarrisonResult<()> {
             self.called.fetch_add(4, Ordering::SeqCst);
             Ok(())
         }
-        async fn check_token_reuse(&self, _ctx: &LoginContext) -> BulwarkResult<()> {
+        async fn check_token_reuse(&self, _ctx: &LoginContext) -> GarrisonResult<()> {
             self.called.fetch_add(8, Ordering::SeqCst);
             Ok(())
         }
-        async fn check_device_anomaly(&self, _ctx: &LoginContext) -> BulwarkResult<()> {
+        async fn check_device_anomaly(&self, _ctx: &LoginContext) -> GarrisonResult<()> {
             self.called.fetch_add(16, Ordering::SeqCst);
             Ok(())
         }
@@ -808,7 +808,7 @@ async fn check_login_hooks_short_circuits_on_err() {
         called: called.clone(),
     });
     let iface = MockInterface::new();
-    let fw = BulwarkPermissionStrategyDefault::new(Arc::new(iface)).with_firewall_hook(hook);
+    let fw = GarrisonPermissionStrategyDefault::new(Arc::new(iface)).with_firewall_hook(hook);
     let ctx = LoginContext::new("1001");
 
     let result = fw.check_login_hooks("1001", &ctx).await;
@@ -832,9 +832,9 @@ async fn check_login_hooks_short_circuits_on_err() {
 #[cfg(feature = "listener")]
 #[test]
 fn with_listener_manager_sets_field() {
-    use crate::listener::BulwarkListenerManager;
-    let lm = Arc::new(BulwarkListenerManager::new());
-    let fw = BulwarkPermissionStrategyDefault::new(Arc::new(MockInterface::new()))
+    use crate::listener::GarrisonListenerManager;
+    let lm = Arc::new(GarrisonListenerManager::new());
+    let fw = GarrisonPermissionStrategyDefault::new(Arc::new(MockInterface::new()))
         .with_listener_manager(lm);
     assert!(
         fw.listener_manager.is_some(),
@@ -852,27 +852,27 @@ async fn check_permission_cache_write_failure_warns_but_returns_result() {
     /// 所有写操作都失败的 DAO
     struct FailingDao;
     #[async_trait]
-    impl crate::dao::BulwarkDao for FailingDao {
-        async fn get(&self, _key: &str) -> BulwarkResult<Option<String>> {
+    impl crate::dao::GarrisonDao for FailingDao {
+        async fn get(&self, _key: &str) -> GarrisonResult<Option<String>> {
             Ok(None)
         }
-        async fn set(&self, _key: &str, _value: &str, _ttl: u64) -> BulwarkResult<()> {
-            Err(BulwarkError::Dao("simulated set failure".to_string()))
+        async fn set(&self, _key: &str, _value: &str, _ttl: u64) -> GarrisonResult<()> {
+            Err(GarrisonError::Dao("simulated set failure".to_string()))
         }
-        async fn update(&self, _key: &str, _value: &str) -> BulwarkResult<()> {
-            Err(BulwarkError::Dao("simulated update failure".to_string()))
+        async fn update(&self, _key: &str, _value: &str) -> GarrisonResult<()> {
+            Err(GarrisonError::Dao("simulated update failure".to_string()))
         }
-        async fn expire(&self, _key: &str, _seconds: u64) -> BulwarkResult<()> {
-            Err(BulwarkError::Dao("simulated expire failure".to_string()))
+        async fn expire(&self, _key: &str, _seconds: u64) -> GarrisonResult<()> {
+            Err(GarrisonError::Dao("simulated expire failure".to_string()))
         }
-        async fn delete(&self, _key: &str) -> BulwarkResult<()> {
+        async fn delete(&self, _key: &str) -> GarrisonResult<()> {
             Ok(())
         }
     }
 
     let mut iface = MockInterface::new();
     iface.set_permissions("1001", &["user:read"]);
-    let fw = BulwarkPermissionStrategyDefault::new(Arc::new(iface)).with_dao(Arc::new(FailingDao));
+    let fw = GarrisonPermissionStrategyDefault::new(Arc::new(iface)).with_dao(Arc::new(FailingDao));
     // 缓存写入失败但 check_permission 仍应返回 true（持有权限）
     let result = fw.check_permission("1001", "user:read").await;
     assert!(
@@ -890,8 +890,8 @@ async fn check_permission_cache_write_failure_warns_but_returns_result() {
 ///
 /// 覆盖行 467-468（第 3 个 hook 失败）+ 490, 492（broadcast_firewall_block）。
 ///
-/// 注意：此测试同时引用 `BulwarkFirewallCheckHook` / `LoginContext`（依赖 firewall/oauth2
-/// feature）和 `BulwarkListenerManager`（依赖 listener feature），需双重 cfg 门控。
+/// 注意：此测试同时引用 `GarrisonFirewallCheckHook` / `LoginContext`（依赖 firewall/oauth2
+/// feature）和 `GarrisonListenerManager`（依赖 listener feature），需双重 cfg 门控。
 /// 之前仅 `#[cfg(feature = "listener")]` 导致 listener + 无 firewall 时编译失败。
 #[cfg(all(
     feature = "listener",
@@ -906,32 +906,32 @@ async fn check_permission_cache_write_failure_warns_but_returns_result() {
 ))]
 #[tokio::test]
 async fn check_login_hooks_geo_anomaly_failure_broadcasts_firewall_block() {
-    use crate::listener::BulwarkListenerManager;
+    use crate::listener::GarrisonListenerManager;
     let iface = MockInterface::new();
-    let lm = Arc::new(BulwarkListenerManager::new());
+    let lm = Arc::new(GarrisonListenerManager::new());
 
     struct GeoFailHook;
     #[async_trait]
-    impl crate::strategy::BulwarkFirewallCheckHook for GeoFailHook {
-        async fn check_login_frequency(&self, _ctx: &LoginContext) -> BulwarkResult<()> {
+    impl crate::strategy::GarrisonFirewallCheckHook for GeoFailHook {
+        async fn check_login_frequency(&self, _ctx: &LoginContext) -> GarrisonResult<()> {
             Ok(())
         }
-        async fn check_brute_force(&self, _ctx: &LoginContext) -> BulwarkResult<()> {
+        async fn check_brute_force(&self, _ctx: &LoginContext) -> GarrisonResult<()> {
             Ok(())
         }
-        async fn check_geo_anomaly(&self, _ctx: &LoginContext) -> BulwarkResult<()> {
-            Err(BulwarkError::Session("geo blocked".to_string()))
+        async fn check_geo_anomaly(&self, _ctx: &LoginContext) -> GarrisonResult<()> {
+            Err(GarrisonError::Session("geo blocked".to_string()))
         }
     }
 
-    let fw = BulwarkPermissionStrategyDefault::new(Arc::new(iface))
+    let fw = GarrisonPermissionStrategyDefault::new(Arc::new(iface))
         .with_firewall_hook(Arc::new(GeoFailHook))
         .with_listener_manager(lm);
     let ctx = LoginContext::new("1001");
     let result = fw.check_login_hooks("1001", &ctx).await;
     assert!(result.is_err(), "geo_anomaly 失败应阻断");
     assert!(
-        matches!(result.unwrap_err(), BulwarkError::Session(_)),
+        matches!(result.unwrap_err(), GarrisonError::Session(_)),
         "应返回 Session 错误"
     );
 }
@@ -954,28 +954,28 @@ async fn check_login_hooks_geo_anomaly_failure_broadcasts_firewall_block() {
 ))]
 #[tokio::test]
 async fn check_login_hooks_token_reuse_failure_broadcasts() {
-    use crate::listener::BulwarkListenerManager;
+    use crate::listener::GarrisonListenerManager;
     let iface = MockInterface::new();
-    let lm = Arc::new(BulwarkListenerManager::new());
+    let lm = Arc::new(GarrisonListenerManager::new());
 
     struct TokenReuseFailHook;
     #[async_trait]
-    impl crate::strategy::BulwarkFirewallCheckHook for TokenReuseFailHook {
-        async fn check_login_frequency(&self, _ctx: &LoginContext) -> BulwarkResult<()> {
+    impl crate::strategy::GarrisonFirewallCheckHook for TokenReuseFailHook {
+        async fn check_login_frequency(&self, _ctx: &LoginContext) -> GarrisonResult<()> {
             Ok(())
         }
-        async fn check_brute_force(&self, _ctx: &LoginContext) -> BulwarkResult<()> {
+        async fn check_brute_force(&self, _ctx: &LoginContext) -> GarrisonResult<()> {
             Ok(())
         }
-        async fn check_geo_anomaly(&self, _ctx: &LoginContext) -> BulwarkResult<()> {
+        async fn check_geo_anomaly(&self, _ctx: &LoginContext) -> GarrisonResult<()> {
             Ok(())
         }
-        async fn check_token_reuse(&self, _ctx: &LoginContext) -> BulwarkResult<()> {
-            Err(BulwarkError::Session("token reuse blocked".to_string()))
+        async fn check_token_reuse(&self, _ctx: &LoginContext) -> GarrisonResult<()> {
+            Err(GarrisonError::Session("token reuse blocked".to_string()))
         }
     }
 
-    let fw = BulwarkPermissionStrategyDefault::new(Arc::new(iface))
+    let fw = GarrisonPermissionStrategyDefault::new(Arc::new(iface))
         .with_firewall_hook(Arc::new(TokenReuseFailHook))
         .with_listener_manager(lm);
     let ctx = LoginContext::new("1001");
@@ -1001,31 +1001,31 @@ async fn check_login_hooks_token_reuse_failure_broadcasts() {
 ))]
 #[tokio::test]
 async fn check_login_hooks_device_anomaly_failure_broadcasts() {
-    use crate::listener::BulwarkListenerManager;
+    use crate::listener::GarrisonListenerManager;
     let iface = MockInterface::new();
-    let lm = Arc::new(BulwarkListenerManager::new());
+    let lm = Arc::new(GarrisonListenerManager::new());
 
     struct DeviceFailHook;
     #[async_trait]
-    impl crate::strategy::BulwarkFirewallCheckHook for DeviceFailHook {
-        async fn check_login_frequency(&self, _ctx: &LoginContext) -> BulwarkResult<()> {
+    impl crate::strategy::GarrisonFirewallCheckHook for DeviceFailHook {
+        async fn check_login_frequency(&self, _ctx: &LoginContext) -> GarrisonResult<()> {
             Ok(())
         }
-        async fn check_brute_force(&self, _ctx: &LoginContext) -> BulwarkResult<()> {
+        async fn check_brute_force(&self, _ctx: &LoginContext) -> GarrisonResult<()> {
             Ok(())
         }
-        async fn check_geo_anomaly(&self, _ctx: &LoginContext) -> BulwarkResult<()> {
+        async fn check_geo_anomaly(&self, _ctx: &LoginContext) -> GarrisonResult<()> {
             Ok(())
         }
-        async fn check_token_reuse(&self, _ctx: &LoginContext) -> BulwarkResult<()> {
+        async fn check_token_reuse(&self, _ctx: &LoginContext) -> GarrisonResult<()> {
             Ok(())
         }
-        async fn check_device_anomaly(&self, _ctx: &LoginContext) -> BulwarkResult<()> {
-            Err(BulwarkError::Session("device anomaly blocked".to_string()))
+        async fn check_device_anomaly(&self, _ctx: &LoginContext) -> GarrisonResult<()> {
+            Err(GarrisonError::Session("device anomaly blocked".to_string()))
         }
     }
 
-    let fw = BulwarkPermissionStrategyDefault::new(Arc::new(iface))
+    let fw = GarrisonPermissionStrategyDefault::new(Arc::new(iface))
         .with_firewall_hook(Arc::new(DeviceFailHook))
         .with_listener_manager(lm);
     let ctx = LoginContext::new("1001");

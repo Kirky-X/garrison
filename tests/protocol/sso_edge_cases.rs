@@ -13,9 +13,9 @@
 #![cfg(feature = "protocol-sso")]
 
 use async_trait::async_trait;
-use bulwark::dao::BulwarkDao;
-use bulwark::error::{BulwarkError, BulwarkResult};
-use bulwark::protocol::sso::SsoClient;
+use garrison::dao::GarrisonDao;
+use garrison::error::{GarrisonError, GarrisonResult};
+use garrison::protocol::sso::SsoClient;
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -38,8 +38,8 @@ impl MockDao {
 }
 
 #[async_trait]
-impl BulwarkDao for MockDao {
-    async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
+impl GarrisonDao for MockDao {
+    async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
         let mut store = self.store.lock();
         match store.get(key) {
             Some((value, expire_at)) => {
@@ -55,7 +55,7 @@ impl BulwarkDao for MockDao {
         }
     }
 
-    async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> BulwarkResult<()> {
+    async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> GarrisonResult<()> {
         let expire_at = if ttl_seconds == 0 {
             None
         } else {
@@ -67,18 +67,18 @@ impl BulwarkDao for MockDao {
         Ok(())
     }
 
-    async fn update(&self, key: &str, value: &str) -> BulwarkResult<()> {
+    async fn update(&self, key: &str, value: &str) -> GarrisonResult<()> {
         let mut store = self.store.lock();
         match store.get_mut(key) {
             Some((existing, _)) => {
                 *existing = value.to_string();
                 Ok(())
             },
-            None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
+            None => Err(GarrisonError::Dao(format!("键不存在: {}", key))),
         }
     }
 
-    async fn expire(&self, key: &str, seconds: u64) -> BulwarkResult<()> {
+    async fn expire(&self, key: &str, seconds: u64) -> GarrisonResult<()> {
         let mut store = self.store.lock();
         match store.get_mut(key) {
             Some((_, expire_at)) => {
@@ -89,11 +89,11 @@ impl BulwarkDao for MockDao {
                 };
                 Ok(())
             },
-            None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
+            None => Err(GarrisonError::Dao(format!("键不存在: {}", key))),
         }
     }
 
-    async fn delete(&self, key: &str) -> BulwarkResult<()> {
+    async fn delete(&self, key: &str) -> GarrisonResult<()> {
         self.store.lock().remove(key);
         Ok(())
     }
@@ -105,7 +105,7 @@ impl BulwarkDao for MockDao {
 
 /// 创建 SsoClient（使用 MockDao）。
 fn make_client() -> SsoClient {
-    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     SsoClient::new(dao, "test-sso-secret-key")
 }
 
@@ -130,7 +130,7 @@ async fn ticket_invalid_format_returns_error() {
     let result = client.validate_ticket("short", 2001).await;
     assert!(result.is_err(), "无效格式的 ticket 应返回错误");
     match result.err() {
-        Some(BulwarkError::InvalidToken(_)) => {},
+        Some(GarrisonError::InvalidToken(_)) => {},
         other => panic!("期望 InvalidToken 错误，实际: {:?}", other),
     }
 
@@ -140,7 +140,7 @@ async fn ticket_invalid_format_returns_error() {
         .await;
     assert!(result.is_err(), "含非 hex 字符的 ticket 应返回错误");
     match result.err() {
-        Some(BulwarkError::InvalidToken(_)) => {},
+        Some(GarrisonError::InvalidToken(_)) => {},
         other => panic!("期望 InvalidToken 错误，实际: {:?}", other),
     }
 }
@@ -165,7 +165,7 @@ async fn center_id_mapping_not_found_returns_error() {
     let result = client.validate_ticket(&ticket, 9999).await;
     assert!(result.is_err(), "未注册的 client_id 应返回错误");
     match result.err() {
-        Some(BulwarkError::InvalidToken(_)) => {},
+        Some(GarrisonError::InvalidToken(_)) => {},
         other => panic!(
             "期望 InvalidToken 错误（client_id 不匹配），实际: {:?}",
             other
@@ -182,7 +182,7 @@ async fn center_id_mapping_not_found_returns_error() {
 /// 其余因 ticket 已删除而失败。
 #[tokio::test]
 async fn concurrent_ticket_validation_only_one_succeeds() {
-    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     // 使用 Arc<SsoClient> 以便在多个并发任务间共享
     let client = Arc::new(SsoClient::new(dao, "test-sso-secret-key"));
 
@@ -190,7 +190,7 @@ async fn concurrent_ticket_validation_only_one_succeeds() {
     let ticket = client.issue_ticket("1001", 2001).await.unwrap();
 
     // 并发校验同一 ticket：3 个任务同时执行
-    // 通过 Arc<SsoClient> 共享客户端实例（内部 Arc<dyn BulwarkDao> 共享 DAO）
+    // 通过 Arc<SsoClient> 共享客户端实例（内部 Arc<dyn GarrisonDao> 共享 DAO）
     let c1 = client.clone();
     let c2 = client.clone();
     let c3 = client.clone();
@@ -223,7 +223,7 @@ async fn concurrent_ticket_validation_only_one_succeeds() {
     for r in &results {
         if r.is_err() {
             match r.as_ref().err() {
-                Some(BulwarkError::InvalidToken(_)) => {},
+                Some(GarrisonError::InvalidToken(_)) => {},
                 other => panic!("期望 InvalidToken 错误，实际: {:?}", other),
             }
         }

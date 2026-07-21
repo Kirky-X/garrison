@@ -2,5 +2,5 @@
 //! See LICENSE for full license text.
 
 fn main() {
-    bulwark_examples::oauth2::oidc_handler::run().unwrap();
+    garrison_examples::oauth2::oidc_handler::run().unwrap();
 }

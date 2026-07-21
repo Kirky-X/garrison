@@ -7,7 +7,7 @@
 //! 提供 `MockSocialProvider`（实现 `SocialLoginProvider` trait 的单元结构体），
 //! 供 `protocol::social::tests` 验证 trait 契约测试复用。
 
-use crate::error::BulwarkResult;
+use crate::error::GarrisonResult;
 use crate::protocol::social::{SocialLoginProvider, SocialProvider, SocialUserInfo};
 use async_trait::async_trait;
 
@@ -20,11 +20,11 @@ impl SocialLoginProvider for MockSocialProvider {
         &self,
         _state: &str,
         _redirect_uri: &str,
-    ) -> BulwarkResult<String> {
+    ) -> GarrisonResult<String> {
         Ok("https://example.com/auth".into())
     }
 
-    async fn exchange_token(&self, _code: &str, _state: &str) -> BulwarkResult<SocialUserInfo> {
+    async fn exchange_token(&self, _code: &str, _state: &str) -> GarrisonResult<SocialUserInfo> {
         Ok(SocialUserInfo {
             provider: SocialProvider::Wechat,
             provider_user_id: "mock_openid".into(),
@@ -35,7 +35,7 @@ impl SocialLoginProvider for MockSocialProvider {
         })
     }
 
-    async fn get_user_info(&self, _access_token: &str) -> BulwarkResult<SocialUserInfo> {
+    async fn get_user_info(&self, _access_token: &str) -> GarrisonResult<SocialUserInfo> {
         Ok(SocialUserInfo {
             provider: SocialProvider::Wechat,
             provider_user_id: "mock_openid".into(),

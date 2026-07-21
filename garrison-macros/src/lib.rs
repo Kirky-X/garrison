@@ -1,7 +1,7 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! Bulwark 过程宏 crate，提供鉴权注解属性宏。
+//! Garrison 过程宏 crate，提供鉴权注解属性宏。
 //!
 //! 依据 spec `annotation-macros`，提供 9 个 `#[proc_macro_attribute]`：
 //!
@@ -21,7 +21,7 @@
 //! |--------|--------|--------|------|
 //! | 登录认证 | `#[check_login]` / `#[check_access_token]` / `#[check_client_token]` / `#[check_temp_token]` | — | check_login 校验登录状态；token 类型宏校验 token 类型粒度 |
 //! | 权限认证 | `#[check_permission]` / `#[check_role]` | — | RBAC，AND 语义 |
-//! | Session 会话 | — | `#[check_session]`? | 手动调用 BulwarkUtil 会话 API |
+//! | Session 会话 | — | `#[check_session]`? | 手动调用 GarrisonUtil 会话 API |
 //! | OAuth2 | — | `#[check_oauth2]`? | 通过 OAuth2Client + `login_by_token` 建立 |
 //! | 单点登录 (SSO) | — | `#[check_sso]`? | SsoClient ticket 协议层处理 |
 //! | JWT | — | — | 协议层 JwtHandler sign/verify，非注解校验型 |
@@ -31,21 +31,21 @@
 //! | ABAC 策略校验 | `#[check_abac]` | — | v0.7.x 新增，纯 ABAC 校验（无 RBAC 前置） |
 //! | Basic 认证 | — | — | 协议层 Extractor（secure::httpbasic） |
 //! | Digest 认证 | — | — | 协议层 Extractor（secure::httpdigest） |
-//! | 路由拦截鉴权 | — | — | Web 框架适配（BulwarkRouter + middleware），非校验型 |
+//! | 路由拦截鉴权 | — | — | Web 框架适配（GarrisonRouter + middleware），非校验型 |
 //! | 插件化扩展 | — | — | 编译期插件注册（inventory），非校验型 |
 //!
 //! # 限制
 //!
 //! - 支持 `async fn` 和 `sync fn`（sync fn 调用 `check_*_sync()` 阻塞版本）
 //! - 仅支持 axum handler（原返回类型需实现 `axum::response::IntoResponse`）
-//! - 宏展开依赖 `BulwarkUtil` 全局单例（需先 `BulwarkManager::init`）
+//! - 宏展开依赖 `GarrisonUtil` 全局单例（需先 `GarrisonManager::init`）
 //! - sync fn wrapper 需在 tokio multi_thread runtime 上下文内调用（`block_in_place` 要求）
 //!
 //! # 展开结构
 //!
-//! 宏将原 fn（async 或 sync）重命名为内部函数 `__bulwark_inner_<name>`，
+//! 宏将原 fn（async 或 sync）重命名为内部函数 `__garrison_inner_<name>`，
 //! 并生成同名的 wrapper 函数（返回 `axum::response::Response`），
-//! 在 wrapper body 前插入 `BulwarkUtil::check_*()` 调用。
+//! 在 wrapper body 前插入 `GarrisonUtil::check_*()` 调用。
 //! async fn 生成 async wrapper + `.await` 调用；sync fn 生成非 async wrapper + `_sync()` 调用：
 //!
 //! ```ignore
@@ -54,12 +54,12 @@
 //! async fn handler() -> &'static str { "ok" }
 //!
 //! // 展开（async）
-//! async fn __bulwark_inner_handler() -> &'static str { "ok" }
+//! async fn __garrison_inner_handler() -> &'static str { "ok" }
 //!
 //! async fn handler() -> axum::response::Response {
 //!     // check_login().await ...
 //!     ::axum::response::IntoResponse::into_response(
-//!         __bulwark_inner_handler().await
+//!         __garrison_inner_handler().await
 //!     )
 //! }
 //!
@@ -68,12 +68,12 @@
 //! fn sync_handler() -> &'static str { "ok" }
 //!
 //! // 展开（sync）
-//! fn __bulwark_inner_sync_handler() -> &'static str { "ok" }
+//! fn __garrison_inner_sync_handler() -> &'static str { "ok" }
 //!
 //! fn sync_handler() -> axum::response::Response {
 //!     // check_login_sync() ...
 //!     ::axum::response::IntoResponse::into_response(
-//!         __bulwark_inner_sync_handler()
+//!         __garrison_inner_sync_handler()
 //!     )
 //! }
 //! ```
@@ -95,7 +95,7 @@ use syn::{
 /// 登录校验属性宏。
 ///
 /// 标注在 async fn 或 sync fn 上，编译期生成 wrapper 在 fn body 前插入
-/// `BulwarkUtil::check_login()`（async）或 `check_login_sync()`（sync）调用。未登录请求返回 401。
+/// `GarrisonUtil::check_login()`（async）或 `check_login_sync()`（sync）调用。未登录请求返回 401。
 ///
 /// # 限制
 ///
@@ -105,7 +105,7 @@ use syn::{
 /// # 示例
 ///
 /// ```ignore
-/// use bulwark::check_login;
+/// use garrison::check_login;
 /// use axum::response::IntoResponse;
 ///
 /// #[check_login]
@@ -127,7 +127,7 @@ pub fn check_login(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// 权限校验属性宏。
 ///
 /// 标注在 async fn 或 sync fn 上，编译期生成 wrapper 在 fn body 前插入
-/// `BulwarkUtil::check_permission("perm")`（async）或 `check_permission_sync("perm")`（sync）调用。无权限请求返回 403。
+/// `GarrisonUtil::check_permission("perm")`（async）或 `check_permission_sync("perm")`（sync）调用。无权限请求返回 403。
 ///
 /// # 两种参数形式
 ///
@@ -143,9 +143,9 @@ pub fn check_login(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// - `resource`（可选）：Cedar resource EntityUid 字符串（默认 `Resource::"default"`）
 /// - `abac`（可选）：Cedar 条件表达式，RBAC 通过后自动调用 ABAC 求值
 ///
-/// `abac` 参数存在时，RBAC 通过后调用 `bulwark::abac::check_abac_with_policy(permission, resource, abac_expr)`。
+/// `abac` 参数存在时，RBAC 通过后调用 `garrison::abac::check_abac_with_policy(permission, resource, abac_expr)`。
 /// resource 由 `resource` 属性注入（默认 `Resource::"default"`）。
-/// ABAC 拒绝时返回 `BulwarkError::NotPermission`。`abac` feature 关闭时 ABAC 调用为 no-op。
+/// ABAC 拒绝时返回 `GarrisonError::NotPermission`。`abac` feature 关闭时 ABAC 调用为 no-op。
 ///
 /// # 限制
 ///
@@ -157,7 +157,7 @@ pub fn check_login(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// # 示例
 ///
 /// ```ignore
-/// use bulwark::check_permission;
+/// use garrison::check_permission;
 /// use axum::response::IntoResponse;
 ///
 /// // 位置参数（仅 RBAC）
@@ -215,7 +215,7 @@ pub fn check_permission(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// 角色校验属性宏。
 ///
 /// 标注在 async fn 或 sync fn 上，编译期生成 wrapper 在 fn body 前插入
-/// `BulwarkUtil::check_role("role")`（async）或 `check_role_sync("role")`（sync）调用。无角色请求返回 403。
+/// `GarrisonUtil::check_role("role")`（async）或 `check_role_sync("role")`（sync）调用。无角色请求返回 403。
 ///
 /// 支持多个角色参数（AND 语义：必须持有全部角色）。
 ///
@@ -227,7 +227,7 @@ pub fn check_permission(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// # 示例
 ///
 /// ```ignore
-/// use bulwark::check_role;
+/// use garrison::check_role;
 /// use axum::response::IntoResponse;
 ///
 /// #[check_role("admin")]
@@ -255,7 +255,7 @@ pub fn check_role(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// access_token 类型校验属性宏（0.5.0 新增，依据 spec annotation-macros P2）。
 ///
 /// 标注在 async fn 或 sync fn 上，编译期生成 wrapper 在 fn body 前插入
-/// `BulwarkUtil::check_access_token()`（async）或 `check_access_token_sync()`（sync）调用。未登录请求返回 401。
+/// `GarrisonUtil::check_access_token()`（async）或 `check_access_token_sync()`（sync）调用。未登录请求返回 401。
 ///
 /// # 限制
 ///
@@ -265,7 +265,7 @@ pub fn check_role(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// # 示例
 ///
 /// ```ignore
-/// use bulwark::check_access_token;
+/// use garrison::check_access_token;
 /// use axum::response::IntoResponse;
 ///
 /// #[check_access_token]
@@ -280,7 +280,7 @@ pub fn check_access_token(_attr: TokenStream, item: TokenStream) -> TokenStream 
 /// client_token 类型校验属性宏（0.5.0 新增，依据 spec annotation-macros P2）。
 ///
 /// 标注在 async fn 或 sync fn 上，编译期生成 wrapper 在 fn body 前插入
-/// `BulwarkUtil::check_client_token()`（async）或 `check_client_token_sync()`（sync）调用。未登录请求返回 401。
+/// `GarrisonUtil::check_client_token()`（async）或 `check_client_token_sync()`（sync）调用。未登录请求返回 401。
 #[proc_macro_attribute]
 pub fn check_client_token(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let item_fn = parse_macro_input!(item as ItemFn);
@@ -290,7 +290,7 @@ pub fn check_client_token(_attr: TokenStream, item: TokenStream) -> TokenStream 
 /// temp_token 类型校验属性宏（0.5.0 新增，依据 spec annotation-macros P2）。
 ///
 /// 标注在 async fn 或 sync fn 上，编译期生成 wrapper 在 fn body 前插入
-/// `BulwarkUtil::check_temp_token()`（async）或 `check_temp_token_sync()`（sync）调用。未登录请求返回 401。
+/// `GarrisonUtil::check_temp_token()`（async）或 `check_temp_token_sync()`（sync）调用。未登录请求返回 401。
 #[proc_macro_attribute]
 pub fn check_temp_token(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let item_fn = parse_macro_input!(item as ItemFn);
@@ -300,7 +300,7 @@ pub fn check_temp_token(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// API Key 校验属性宏（0.6.1 新增，依据 spec annotation-check-api-key R-anno-003）。
 ///
 /// 标注在 async fn 或 sync fn 上，编译期生成 wrapper 在 fn body 前插入
-/// `BulwarkUtil::check_api_key(namespace)`（async）或 `check_api_key_sync(namespace)`（sync）调用。校验失败返回 401/403。
+/// `GarrisonUtil::check_api_key(namespace)`（async）或 `check_api_key_sync(namespace)`（sync）调用。校验失败返回 401/403。
 ///
 /// # 参数
 ///
@@ -320,7 +320,7 @@ pub fn check_temp_token(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// # 示例
 ///
 /// ```ignore
-/// use bulwark::check_api_key;
+/// use garrison::check_api_key;
 /// use axum::response::IntoResponse;
 ///
 /// #[check_api_key]
@@ -342,7 +342,7 @@ pub fn check_api_key(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// MFA 二级认证校验属性宏（v0.7.x 新增，依据 spec annotation-macros R-anno-004）。
 ///
 /// 标注在 async fn 或 sync fn 上，编译期生成 wrapper 在 fn body 前插入
-/// `BulwarkUtil::check_safe()`（async）或 `check_safe_sync()`（sync）调用。未通过二级认证返回 403。
+/// `GarrisonUtil::check_safe()`（async）或 `check_safe_sync()`（sync）调用。未通过二级认证返回 403。
 ///
 /// # 限制
 ///
@@ -353,7 +353,7 @@ pub fn check_api_key(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// # 示例
 ///
 /// ```ignore
-/// use bulwark::check_mfa;
+/// use garrison::check_mfa;
 /// use axum::response::IntoResponse;
 ///
 /// #[check_mfa]
@@ -371,7 +371,7 @@ pub fn check_mfa(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// ABAC 策略校验属性宏（v0.7.x 新增，依据 spec annotation-macros R-anno-005）。
 ///
 /// 标注在 async fn 或 sync fn 上，编译期生成 wrapper 在 fn body 前插入
-/// `bulwark::abac::check_abac_with_policy(action, resource, abac_expr)` 调用。ABAC 策略拒绝返回 403。
+/// `garrison::abac::check_abac_with_policy(action, resource, abac_expr)` 调用。ABAC 策略拒绝返回 403。
 ///
 /// 纯 ABAC 校验，不依赖 RBAC 权限表。与 `#[check_permission(permission=, resource=, abac=)]` 区别：
 /// 后者先做 RBAC 校验，本宏直接做 ABAC 校验。
@@ -396,7 +396,7 @@ pub fn check_mfa(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// # 示例
 ///
 /// ```ignore
-/// use bulwark::check_abac;
+/// use garrison::check_abac;
 /// use axum::response::IntoResponse;
 ///
 /// // 显式 resource
@@ -575,22 +575,22 @@ impl Parse for CheckAbacAttr {
     }
 }
 
-/// 展开 `#[check_api_key]`：在 fn body 前插入 `BulwarkUtil::check_api_key(namespace)` 调用。
+/// 展开 `#[check_api_key]`：在 fn body 前插入 `GarrisonUtil::check_api_key(namespace)` 调用。
 ///
-/// `check_api_key(namespace)` 返回 `BulwarkResult<()>`：
+/// `check_api_key(namespace)` 返回 `GarrisonResult<()>`：
 /// - `Ok(())`：API Key 有效，继续执行 fn body
 /// - `Err(e)`：校验失败（InvalidToken / ExpiredToken / NotLogin），返回错误对应的 Response
 fn expand_check_api_key(namespace: &str, item_fn: ItemFn) -> TokenStream {
     let asyncness = detect_asyncness(&item_fn);
     let checks = match asyncness {
         Asyncness::Async => quote! {
-            if let ::std::result::Result::Err(__bulwark_err) = ::bulwark::BulwarkUtil::check_api_key(#namespace).await {
-                return ::axum::response::IntoResponse::into_response(__bulwark_err);
+            if let ::std::result::Result::Err(__garrison_err) = ::garrison::GarrisonUtil::check_api_key(#namespace).await {
+                return ::axum::response::IntoResponse::into_response(__garrison_err);
             }
         },
         Asyncness::Sync => quote! {
-            if let ::std::result::Result::Err(__bulwark_err) = ::bulwark::BulwarkUtil::check_api_key_sync(#namespace) {
-                return ::axum::response::IntoResponse::into_response(__bulwark_err);
+            if let ::std::result::Result::Err(__garrison_err) = ::garrison::GarrisonUtil::check_api_key_sync(#namespace) {
+                return ::axum::response::IntoResponse::into_response(__garrison_err);
             }
         },
     };
@@ -612,9 +612,9 @@ fn detect_asyncness(item_fn: &ItemFn) -> Asyncness {
     }
 }
 
-/// 展开 `#[check_login]`：在 fn body 前插入 `BulwarkUtil::check_login()` 调用。
+/// 展开 `#[check_login]`：在 fn body 前插入 `GarrisonUtil::check_login()` 调用。
 ///
-/// `check_login()` 返回 `BulwarkResult<bool>`：
+/// `check_login()` 返回 `GarrisonResult<bool>`：
 /// - `Ok(true)`：已登录，继续执行 fn body
 /// - `Ok(false)`：未登录（`throw_on_not_login=false`），返回 401
 /// - `Err(e)`：错误（如 Manager 未初始化，或 `throw_on_not_login=true` 时未登录），
@@ -623,28 +623,28 @@ fn expand_check_login(item_fn: ItemFn) -> TokenStream {
     let asyncness = detect_asyncness(&item_fn);
     let checks = match asyncness {
         Asyncness::Async => quote! {
-            match ::bulwark::BulwarkUtil::check_login().await {
+            match ::garrison::GarrisonUtil::check_login().await {
                 ::std::result::Result::Ok(true) => {},
                 ::std::result::Result::Ok(false) => {
                     return ::axum::response::IntoResponse::into_response(
-                        ::bulwark::BulwarkError::NotLogin("未登录（check_login 返回 false）".to_string())
+                        ::garrison::GarrisonError::NotLogin("未登录（check_login 返回 false）".to_string())
                     );
                 }
-                ::std::result::Result::Err(__bulwark_err) => {
-                    return ::axum::response::IntoResponse::into_response(__bulwark_err);
+                ::std::result::Result::Err(__garrison_err) => {
+                    return ::axum::response::IntoResponse::into_response(__garrison_err);
                 }
             }
         },
         Asyncness::Sync => quote! {
-            match ::bulwark::BulwarkUtil::check_login_sync() {
+            match ::garrison::GarrisonUtil::check_login_sync() {
                 ::std::result::Result::Ok(true) => {},
                 ::std::result::Result::Ok(false) => {
                     return ::axum::response::IntoResponse::into_response(
-                        ::bulwark::BulwarkError::NotLogin("未登录（check_login 返回 false）".to_string())
+                        ::garrison::GarrisonError::NotLogin("未登录（check_login 返回 false）".to_string())
                     );
                 }
-                ::std::result::Result::Err(__bulwark_err) => {
-                    return ::axum::response::IntoResponse::into_response(__bulwark_err);
+                ::std::result::Result::Err(__garrison_err) => {
+                    return ::axum::response::IntoResponse::into_response(__garrison_err);
                 }
             }
         },
@@ -653,23 +653,23 @@ fn expand_check_login(item_fn: ItemFn) -> TokenStream {
 }
 
 /// 展开 `#[check_access_token]` / `#[check_client_token]` / `#[check_temp_token]`：
-/// 在 fn body 前插入 `BulwarkUtil::<method>()` 调用（无参数，返回 `BulwarkResult<()>`）。
+/// 在 fn body 前插入 `GarrisonUtil::<method>()` 调用（无参数，返回 `GarrisonResult<()>`）。
 ///
-/// 与 `expand_check_login` 区别：后者返回 `BulwarkResult<bool>`，需要处理 `Ok(false)` 路径；
-/// 本函数处理 `BulwarkResult<()>`，仅 `Err` 路径需转发。
+/// 与 `expand_check_login` 区别：后者返回 `GarrisonResult<bool>`，需要处理 `Ok(false)` 路径；
+/// 本函数处理 `GarrisonResult<()>`，仅 `Err` 路径需转发。
 fn expand_check_no_args(method: &str, item_fn: ItemFn) -> TokenStream {
     let asyncness = detect_asyncness(&item_fn);
     let method_ident = format_ident!("{}", method);
     let sync_method_ident = format_ident!("{}_sync", method);
     let checks = match asyncness {
         Asyncness::Async => quote! {
-            if let ::std::result::Result::Err(__bulwark_err) = ::bulwark::BulwarkUtil::#method_ident().await {
-                return ::axum::response::IntoResponse::into_response(__bulwark_err);
+            if let ::std::result::Result::Err(__garrison_err) = ::garrison::GarrisonUtil::#method_ident().await {
+                return ::axum::response::IntoResponse::into_response(__garrison_err);
             }
         },
         Asyncness::Sync => quote! {
-            if let ::std::result::Result::Err(__bulwark_err) = ::bulwark::BulwarkUtil::#sync_method_ident() {
-                return ::axum::response::IntoResponse::into_response(__bulwark_err);
+            if let ::std::result::Result::Err(__garrison_err) = ::garrison::GarrisonUtil::#sync_method_ident() {
+                return ::axum::response::IntoResponse::into_response(__garrison_err);
             }
         },
     };
@@ -686,13 +686,13 @@ fn expand_check_with_args(method: &str, args: &[String], item_fn: ItemFn) -> Tok
         .iter()
         .map(|arg| match asyncness {
             Asyncness::Async => quote! {
-                if let Err(__bulwark_err) = ::bulwark::BulwarkUtil::#method_ident(#arg).await {
-                    return ::axum::response::IntoResponse::into_response(__bulwark_err);
+                if let Err(__garrison_err) = ::garrison::GarrisonUtil::#method_ident(#arg).await {
+                    return ::axum::response::IntoResponse::into_response(__garrison_err);
                 }
             },
             Asyncness::Sync => quote! {
-                if let Err(__bulwark_err) = ::bulwark::BulwarkUtil::#sync_method_ident(#arg) {
-                    return ::axum::response::IntoResponse::into_response(__bulwark_err);
+                if let Err(__garrison_err) = ::garrison::GarrisonUtil::#sync_method_ident(#arg) {
+                    return ::axum::response::IntoResponse::into_response(__garrison_err);
                 }
             },
         })
@@ -704,14 +704,14 @@ fn expand_check_with_args(method: &str, args: &[String], item_fn: ItemFn) -> Tok
 /// 展开 `#[check_permission]` 命名参数形式（RBAC + 可选 ABAC）。
 ///
 /// 生成两段检查代码：
-/// 1. RBAC 检查（始终）：`BulwarkUtil::check_permission(permission)` / `check_permission_sync(permission)`
-/// 2. ABAC 检查（`abac` 参数存在时）：`bulwark::abac::check_abac_with_policy(permission, resource, expr)`
+/// 1. RBAC 检查（始终）：`GarrisonUtil::check_permission(permission)` / `check_permission_sync(permission)`
+/// 2. ABAC 检查（`abac` 参数存在时）：`garrison::abac::check_abac_with_policy(permission, resource, expr)`
 ///
 /// ABAC 检查在 RBAC 通过后执行，AND 语义：任一失败立即 return 错误响应。
 /// resource 参数由宏属性注入，避免硬编码。
 ///
 /// sync fn 的 ABAC 检查通过 `block_in_place` + `block_on` 包装 async 调用，
-/// 与 `BulwarkUtil::check_permission_sync` 的同步包装模式一致。
+/// 与 `GarrisonUtil::check_permission_sync` 的同步包装模式一致。
 fn expand_check_permission_named(
     permission: &str,
     resource: &str,
@@ -723,17 +723,17 @@ fn expand_check_permission_named(
     // RBAC 检查（始终生成）
     let rbac_check = match asyncness {
         Asyncness::Async => quote! {
-            if let ::std::result::Result::Err(__bulwark_err) =
-                ::bulwark::BulwarkUtil::check_permission(#permission).await
+            if let ::std::result::Result::Err(__garrison_err) =
+                ::garrison::GarrisonUtil::check_permission(#permission).await
             {
-                return ::axum::response::IntoResponse::into_response(__bulwark_err);
+                return ::axum::response::IntoResponse::into_response(__garrison_err);
             }
         },
         Asyncness::Sync => quote! {
-            if let ::std::result::Result::Err(__bulwark_err) =
-                ::bulwark::BulwarkUtil::check_permission_sync(#permission)
+            if let ::std::result::Result::Err(__garrison_err) =
+                ::garrison::GarrisonUtil::check_permission_sync(#permission)
             {
-                return ::axum::response::IntoResponse::into_response(__bulwark_err);
+                return ::axum::response::IntoResponse::into_response(__garrison_err);
             }
         },
     };
@@ -743,29 +743,29 @@ fn expand_check_permission_named(
     let abac_check = match abac {
         Some(expr) => match asyncness {
             Asyncness::Async => quote! {
-                if let ::std::result::Result::Err(__bulwark_err) =
-                    ::bulwark::abac::check_abac_with_policy(#permission, #resource, #expr).await
+                if let ::std::result::Result::Err(__garrison_err) =
+                    ::garrison::abac::check_abac_with_policy(#permission, #resource, #expr).await
                 {
-                    return ::axum::response::IntoResponse::into_response(__bulwark_err);
+                    return ::axum::response::IntoResponse::into_response(__garrison_err);
                 }
             },
             Asyncness::Sync => quote! {
                 {
-                    let __bulwark_perm = #permission.to_string();
-                    let __bulwark_resource = #resource.to_string();
-                    let __bulwark_abac = #expr.to_string();
-                    if let ::std::result::Result::Err(__bulwark_err) =
+                    let __garrison_perm = #permission.to_string();
+                    let __garrison_resource = #resource.to_string();
+                    let __garrison_abac = #expr.to_string();
+                    if let ::std::result::Result::Err(__garrison_err) =
                         ::tokio::task::block_in_place(||
                             ::tokio::runtime::Handle::current().block_on(
-                                ::bulwark::abac::check_abac_with_policy(
-                                    &__bulwark_perm,
-                                    &__bulwark_resource,
-                                    &__bulwark_abac,
+                                ::garrison::abac::check_abac_with_policy(
+                                    &__garrison_perm,
+                                    &__garrison_resource,
+                                    &__garrison_abac,
                                 )
                             )
                         )
                     {
-                        return ::axum::response::IntoResponse::into_response(__bulwark_err);
+                        return ::axum::response::IntoResponse::into_response(__garrison_err);
                     }
                 }
             },
@@ -782,7 +782,7 @@ fn expand_check_permission_named(
 
 /// 展开 `#[check_abac]`：纯 ABAC 校验（无 RBAC 前置）。
 ///
-/// 生成 wrapper 在 fn body 前插入 `::bulwark::abac::check_abac_with_policy(action, resource, expr)` 调用。
+/// 生成 wrapper 在 fn body 前插入 `::garrison::abac::check_abac_with_policy(action, resource, expr)` 调用。
 /// async fn 直接 `.await`；sync fn 通过 `block_in_place` + `Handle::current().block_on()` 包装。
 /// resource 参数由宏属性注入，避免硬编码。
 ///
@@ -797,29 +797,29 @@ fn expand_check_abac(
 
     let checks = match asyncness {
         Asyncness::Async => quote! {
-            if let ::std::result::Result::Err(__bulwark_err) =
-                ::bulwark::abac::check_abac_with_policy(#action, #resource, #abac_expr).await
+            if let ::std::result::Result::Err(__garrison_err) =
+                ::garrison::abac::check_abac_with_policy(#action, #resource, #abac_expr).await
             {
-                return ::axum::response::IntoResponse::into_response(__bulwark_err);
+                return ::axum::response::IntoResponse::into_response(__garrison_err);
             }
         },
         Asyncness::Sync => quote! {
             {
-                let __bulwark_action = #action.to_string();
-                let __bulwark_resource = #resource.to_string();
-                let __bulwark_abac = #abac_expr.to_string();
-                if let ::std::result::Result::Err(__bulwark_err) =
+                let __garrison_action = #action.to_string();
+                let __garrison_resource = #resource.to_string();
+                let __garrison_abac = #abac_expr.to_string();
+                if let ::std::result::Result::Err(__garrison_err) =
                     ::tokio::task::block_in_place(||
                         ::tokio::runtime::Handle::current().block_on(
-                            ::bulwark::abac::check_abac_with_policy(
-                                &__bulwark_action,
-                                &__bulwark_resource,
-                                &__bulwark_abac,
+                            ::garrison::abac::check_abac_with_policy(
+                                &__garrison_action,
+                                &__garrison_resource,
+                                &__garrison_abac,
                             )
                         )
                     )
                 {
-                    return ::axum::response::IntoResponse::into_response(__bulwark_err);
+                    return ::axum::response::IntoResponse::into_response(__garrison_err);
                 }
             }
         },
@@ -836,7 +836,7 @@ fn expand_check_abac(
 /// async fn：wrapper/inner 均为 async，inner 调用带 `.await`
 /// sync fn：wrapper/inner 均非 async，inner 调用无 `.await`（checks 也由 expand_* 生成 sync 版本）
 ///
-/// 参数转发使用 fresh idents（`__bulwark_arg_N`），避免 pattern-vs-expression 问题。
+/// 参数转发使用 fresh idents（`__garrison_arg_N`），避免 pattern-vs-expression 问题。
 fn expand_wrapper(
     item_fn: &ItemFn,
     checks: proc_macro2::TokenStream,
@@ -845,7 +845,7 @@ fn expand_wrapper(
     let vis = &item_fn.vis;
     let sig = &item_fn.sig;
     let original_name = &sig.ident;
-    let inner_name = format_ident!("__bulwark_inner_{}", original_name);
+    let inner_name = format_ident!("__garrison_inner_{}", original_name);
     let block = &item_fn.block;
     let attrs = &item_fn.attrs;
 
@@ -856,7 +856,7 @@ fn expand_wrapper(
         .enumerate()
         .map(|(i, arg)| match arg {
             FnArg::Typed(pat_type) => {
-                let id = format_ident!("__bulwark_arg_{}", i);
+                let id = format_ident!("__garrison_arg_{}", i);
                 let ty = &pat_type.ty;
                 let arg_attrs = &pat_type.attrs;
                 syn::parse_quote! { #(#arg_attrs)* #id: #ty }
@@ -871,7 +871,7 @@ fn expand_wrapper(
         .enumerate()
         .map(|(i, arg)| match arg {
             FnArg::Typed(_) => {
-                let id = format_ident!("__bulwark_arg_{}", i);
+                let id = format_ident!("__garrison_arg_{}", i);
                 quote! { #id }
             },
             FnArg::Receiver(_) => quote! { self },

@@ -9,21 +9,21 @@ use serial_test::serial;
 use std::sync::atomic::Ordering;
 
 // ========================================================================
-// BulwarkEvent 枚举测试
+// GarrisonEvent 枚举测试
 // ========================================================================
 
 /// Login 事件携带 login_id、token 与 device（spec Scenario）。
 #[test]
 #[serial]
 fn login_event_carries_login_id_token_device() {
-    let event = BulwarkEvent::Login {
+    let event = GarrisonEvent::Login {
         login_id: "1001".to_string(),
         token: "T1".to_string(),
         device: Some("web".to_string()),
         request_context: None,
     };
     match event {
-        BulwarkEvent::Login {
+        GarrisonEvent::Login {
             login_id,
             token,
             device,
@@ -41,13 +41,13 @@ fn login_event_carries_login_id_token_device() {
 #[test]
 #[serial]
 fn logout_event_carries_login_id_and_token() {
-    let event = BulwarkEvent::Logout {
+    let event = GarrisonEvent::Logout {
         login_id: "1001".to_string(),
         token: "T1".to_string(),
         request_context: None,
     };
     match event {
-        BulwarkEvent::Logout {
+        GarrisonEvent::Logout {
             login_id, token, ..
         } => {
             assert_eq!(login_id, "1001".to_string());
@@ -61,14 +61,14 @@ fn logout_event_carries_login_id_and_token() {
 #[test]
 #[serial]
 fn kickout_event_carries_reason() {
-    let event = BulwarkEvent::Kickout {
+    let event = GarrisonEvent::Kickout {
         login_id: "1001".to_string(),
         token: "T1".to_string(),
         reason: "管理员强制下线".to_string(),
         request_context: None,
     };
     match event {
-        BulwarkEvent::Kickout {
+        GarrisonEvent::Kickout {
             login_id,
             token,
             reason,
@@ -86,13 +86,13 @@ fn kickout_event_carries_reason() {
 #[test]
 #[serial]
 fn permission_check_event_carries_permission() {
-    let event = BulwarkEvent::PermissionCheck {
+    let event = GarrisonEvent::PermissionCheck {
         login_id: "1001".to_string(),
         permission: "user:delete".to_string(),
         request_context: None,
     };
     match event {
-        BulwarkEvent::PermissionCheck {
+        GarrisonEvent::PermissionCheck {
             login_id,
             permission,
             ..
@@ -108,13 +108,13 @@ fn permission_check_event_carries_permission() {
 #[test]
 #[serial]
 fn role_check_event_carries_role() {
-    let event = BulwarkEvent::RoleCheck {
+    let event = GarrisonEvent::RoleCheck {
         login_id: "1001".to_string(),
         role: "admin".to_string(),
         request_context: None,
     };
     match event {
-        BulwarkEvent::RoleCheck { login_id, role, .. } => {
+        GarrisonEvent::RoleCheck { login_id, role, .. } => {
             assert_eq!(login_id, "1001".to_string());
             assert_eq!(role, "admin");
         },
@@ -126,23 +126,23 @@ fn role_check_event_carries_role() {
 #[test]
 #[serial]
 fn token_expired_event_carries_token() {
-    let event = BulwarkEvent::TokenExpired {
+    let event = GarrisonEvent::TokenExpired {
         token: "T1".to_string(),
         request_context: None,
     };
     match event {
-        BulwarkEvent::TokenExpired { token, .. } => {
+        GarrisonEvent::TokenExpired { token, .. } => {
             assert_eq!(token, "T1");
         },
         _ => panic!("期望 TokenExpired 事件"),
     }
 }
 
-/// BulwarkEvent 派生 Debug 与 Clone（spec Requirement）。
+/// GarrisonEvent 派生 Debug 与 Clone（spec Requirement）。
 #[test]
 #[serial]
 fn event_derives_debug_and_clone() {
-    let event = BulwarkEvent::Login {
+    let event = GarrisonEvent::Login {
         login_id: "1001".to_string(),
         token: "T1".to_string(),
         device: None,
@@ -151,7 +151,7 @@ fn event_derives_debug_and_clone() {
     // Clone
     let cloned = event.clone();
     match cloned {
-        BulwarkEvent::Login { login_id, .. } => assert_eq!(login_id, "1001".to_string()),
+        GarrisonEvent::Login { login_id, .. } => assert_eq!(login_id, "1001".to_string()),
         _ => panic!("clone 后应为 Login"),
     }
     // Debug
@@ -160,10 +160,10 @@ fn event_derives_debug_and_clone() {
 }
 
 // ========================================================================
-// T075-BulwarkEvent 14 变体（spec R-audit-log-005）
+// T075-GarrisonEvent 14 变体（spec R-audit-log-005）
 // ========================================================================
 
-/// T075 Red: 验证 `BulwarkEvent` 含 spec R-audit-log-005 要求的 14 个变体。
+/// T075 Red: 验证 `GarrisonEvent` 含 spec R-audit-log-005 要求的 14 个变体。
 ///
 /// spec 要求变体：`Login`/`Logout`/`Kickout`/`LoginFailure`/`RevokeToken`/
 /// `PermissionCheck`/`RoleCheck`/`TokenRefresh`/`TokenRotate`/`SocialLogin`/
@@ -177,125 +177,125 @@ fn event_derives_debug_and_clone() {
 /// - 最终变体数 19（spec 14 + 现有独有 5）
 #[test]
 #[serial]
-fn bulwark_event_includes_14_variants() {
+fn garrison_event_includes_14_variants() {
     // 1. Login
-    let e = BulwarkEvent::Login {
+    let e = GarrisonEvent::Login {
         login_id: "1".to_string(),
         token: "t".into(),
         device: None,
         request_context: None,
     };
-    assert!(matches!(e, BulwarkEvent::Login { .. }));
+    assert!(matches!(e, GarrisonEvent::Login { .. }));
 
     // 2. Logout
-    let e = BulwarkEvent::Logout {
+    let e = GarrisonEvent::Logout {
         login_id: "1".to_string(),
         token: "t".into(),
         request_context: None,
     };
-    assert!(matches!(e, BulwarkEvent::Logout { .. }));
+    assert!(matches!(e, GarrisonEvent::Logout { .. }));
 
     // 3. Kickout
-    let e = BulwarkEvent::Kickout {
+    let e = GarrisonEvent::Kickout {
         login_id: "1".to_string(),
         token: "t".into(),
         reason: "r".into(),
         request_context: None,
     };
-    assert!(matches!(e, BulwarkEvent::Kickout { .. }));
+    assert!(matches!(e, GarrisonEvent::Kickout { .. }));
 
     // 4. LoginFailure
-    let e = BulwarkEvent::LoginFailure {
+    let e = GarrisonEvent::LoginFailure {
         login_id: "1".to_string(),
         reason: "r".into(),
         request_context: None,
     };
-    assert!(matches!(e, BulwarkEvent::LoginFailure { .. }));
+    assert!(matches!(e, GarrisonEvent::LoginFailure { .. }));
 
     // 5. RevokeToken（原 TokenRevoke 重命名）
-    let e = BulwarkEvent::RevokeToken {
+    let e = GarrisonEvent::RevokeToken {
         token: "t".into(),
         request_context: None,
     };
-    assert!(matches!(e, BulwarkEvent::RevokeToken { .. }));
+    assert!(matches!(e, GarrisonEvent::RevokeToken { .. }));
 
     // 6. PermissionCheck（原 PermissionDenied 重命名）
-    let e = BulwarkEvent::PermissionCheck {
+    let e = GarrisonEvent::PermissionCheck {
         login_id: "1".to_string(),
         permission: "p".into(),
         request_context: None,
     };
-    assert!(matches!(e, BulwarkEvent::PermissionCheck { .. }));
+    assert!(matches!(e, GarrisonEvent::PermissionCheck { .. }));
 
     // 7. RoleCheck（原 RoleDenied 重命名）
-    let e = BulwarkEvent::RoleCheck {
+    let e = GarrisonEvent::RoleCheck {
         login_id: "1".to_string(),
         role: "r".into(),
         request_context: None,
     };
-    assert!(matches!(e, BulwarkEvent::RoleCheck { .. }));
+    assert!(matches!(e, GarrisonEvent::RoleCheck { .. }));
 
     // 8. TokenRefresh（保留现有字段）
-    let e = BulwarkEvent::TokenRefresh {
+    let e = GarrisonEvent::TokenRefresh {
         login_id: "1".to_string(),
         old_token: "t1".into(),
         new_token: "t2".into(),
         request_context: None,
     };
-    assert!(matches!(e, BulwarkEvent::TokenRefresh { .. }));
+    assert!(matches!(e, GarrisonEvent::TokenRefresh { .. }));
 
     // 9. TokenRotate（原 ApiKeyRotate 重命名）
-    let e = BulwarkEvent::TokenRotate {
+    let e = GarrisonEvent::TokenRotate {
         old_key: "k1".into(),
         new_key: "k2".into(),
         request_context: None,
     };
-    assert!(matches!(e, BulwarkEvent::TokenRotate { .. }));
+    assert!(matches!(e, GarrisonEvent::TokenRotate { .. }));
 
     // 10. SocialLogin（新增）
-    let e = BulwarkEvent::SocialLogin {
+    let e = GarrisonEvent::SocialLogin {
         provider: "wechat".into(),
         user_id: "u".into(),
         login_id: Some("1".to_string()),
         request_context: None,
     };
-    assert!(matches!(e, BulwarkEvent::SocialLogin { .. }));
+    assert!(matches!(e, GarrisonEvent::SocialLogin { .. }));
 
     // 11. TenantSwitch（新增）
-    let e = BulwarkEvent::TenantSwitch {
+    let e = GarrisonEvent::TenantSwitch {
         login_id: "1".to_string(),
         from_tenant: 100,
         to_tenant: 200,
         request_context: None,
     };
-    assert!(matches!(e, BulwarkEvent::TenantSwitch { .. }));
+    assert!(matches!(e, GarrisonEvent::TenantSwitch { .. }));
 
     // 12. DeviceBlock（新增）
-    let e = BulwarkEvent::DeviceBlock {
+    let e = GarrisonEvent::DeviceBlock {
         login_id: "1".to_string(),
         device: "d".into(),
         request_context: None,
     };
-    assert!(matches!(e, BulwarkEvent::DeviceBlock { .. }));
+    assert!(matches!(e, GarrisonEvent::DeviceBlock { .. }));
 
     // 13. DeviceUnblock（新增）
-    let e = BulwarkEvent::DeviceUnblock {
+    let e = GarrisonEvent::DeviceUnblock {
         login_id: "1".to_string(),
         device: "d".into(),
         request_context: None,
     };
-    assert!(matches!(e, BulwarkEvent::DeviceUnblock { .. }));
+    assert!(matches!(e, GarrisonEvent::DeviceUnblock { .. }));
 
     // 14. ConfigReload（新增）
-    let e = BulwarkEvent::ConfigReload {
+    let e = GarrisonEvent::ConfigReload {
         config_version: 1,
         request_context: None,
     };
-    assert!(matches!(e, BulwarkEvent::ConfigReload { .. }));
+    assert!(matches!(e, GarrisonEvent::ConfigReload { .. }));
 }
 
 // ========================================================================
-// BulwarkListener trait 测试
+// GarrisonListener trait 测试
 // ========================================================================
 
 /// 默认 on_event 返回 Ok(())（spec Scenario：监听器需实现 on_event 方法）。
@@ -304,9 +304,9 @@ fn bulwark_event_includes_14_variants() {
 async fn default_on_event_returns_ok() {
     struct EmptyListener;
     #[async_trait]
-    impl BulwarkListener for EmptyListener {}
+    impl GarrisonListener for EmptyListener {}
     let listener = EmptyListener;
-    let event = BulwarkEvent::Login {
+    let event = GarrisonEvent::Login {
         login_id: "1".to_string(),
         token: "t".to_string(),
         device: None,
@@ -316,14 +316,14 @@ async fn default_on_event_returns_ok() {
 }
 
 // ========================================================================
-// BulwarkListenerManager 测试
+// GarrisonListenerManager 测试
 // ========================================================================
 
 /// manager 收集所有已注册监听器（spec Scenario）。
 #[test]
 #[serial]
 fn manager_collects_registered_listeners() {
-    let manager = BulwarkListenerManager::new();
+    let manager = GarrisonListenerManager::new();
     // 至少 2 个监听器（OkListener + ErrListener）
     assert!(manager.count() >= 2);
 }
@@ -333,8 +333,8 @@ fn manager_collects_registered_listeners() {
 #[serial]
 async fn broadcast_invokes_all_listeners() {
     reset_counters();
-    let manager = BulwarkListenerManager::new();
-    let event = BulwarkEvent::Login {
+    let manager = GarrisonListenerManager::new();
+    let event = GarrisonEvent::Login {
         login_id: "1001".to_string(),
         token: "T1".to_string(),
         device: Some("web".to_string()),
@@ -350,8 +350,8 @@ async fn broadcast_invokes_all_listeners() {
 #[serial]
 async fn broadcast_listener_failure_does_not_interrupt() {
     reset_counters();
-    let manager = BulwarkListenerManager::new();
-    let event = BulwarkEvent::Logout {
+    let manager = GarrisonListenerManager::new();
+    let event = GarrisonEvent::Logout {
         login_id: "1001".to_string(),
         token: "T1".to_string(),
         request_context: None,
@@ -365,15 +365,15 @@ async fn broadcast_listener_failure_does_not_interrupt() {
 #[test]
 #[serial]
 fn default_equals_new() {
-    let m1 = BulwarkListenerManager::new();
-    let m2 = BulwarkListenerManager::default();
+    let m1 = GarrisonListenerManager::new();
+    let m2 = GarrisonListenerManager::default();
     assert_eq!(m1.count(), m2.count());
 }
 
 /// 验证 new() 在 tracing subscriber 已初始化时正确求值 info! 宏参数。
 ///
-/// 覆盖 BulwarkListenerManager::new() 中 `tracing::info!` 宏的参数求值路径
-/// （line 117: `std::any::type_name::<Arc<dyn BulwarkListener>>()`）。
+/// 覆盖 GarrisonListenerManager::new() 中 `tracing::info!` 宏的参数求值路径
+/// （line 117: `std::any::type_name::<Arc<dyn GarrisonListener>>()`）。
 /// tracing::info! 在无 subscriber 时短路不求值参数，需确保 subscriber 已设置。
 #[test]
 #[serial]
@@ -383,7 +383,7 @@ fn manager_new_with_tracing_subscriber() {
     {
         let _ = tracing_subscriber::fmt().try_init();
     }
-    let manager = BulwarkListenerManager::new();
+    let manager = GarrisonListenerManager::new();
     assert!(manager.count() >= 2);
 }
 
@@ -392,8 +392,8 @@ fn manager_new_with_tracing_subscriber() {
 #[serial]
 async fn broadcast_permission_check_event() {
     reset_counters();
-    let manager = BulwarkListenerManager::new();
-    let event = BulwarkEvent::PermissionCheck {
+    let manager = GarrisonListenerManager::new();
+    let event = GarrisonEvent::PermissionCheck {
         login_id: "1001".to_string(),
         permission: "user:delete".to_string(),
         request_context: None,
@@ -407,8 +407,8 @@ async fn broadcast_permission_check_event() {
 #[serial]
 async fn broadcast_role_check_event() {
     reset_counters();
-    let manager = BulwarkListenerManager::new();
-    let event = BulwarkEvent::RoleCheck {
+    let manager = GarrisonListenerManager::new();
+    let event = GarrisonEvent::RoleCheck {
         login_id: "1001".to_string(),
         role: "admin".to_string(),
         request_context: None,
@@ -422,8 +422,8 @@ async fn broadcast_role_check_event() {
 #[serial]
 async fn broadcast_token_expired_event() {
     reset_counters();
-    let manager = BulwarkListenerManager::new();
-    let event = BulwarkEvent::TokenExpired {
+    let manager = GarrisonListenerManager::new();
+    let event = GarrisonEvent::TokenExpired {
         token: "expired-token".to_string(),
         request_context: None,
     };
@@ -436,8 +436,8 @@ async fn broadcast_token_expired_event() {
 #[serial]
 async fn broadcast_kickout_event() {
     reset_counters();
-    let manager = BulwarkListenerManager::new();
-    let event = BulwarkEvent::Kickout {
+    let manager = GarrisonListenerManager::new();
+    let event = GarrisonEvent::Kickout {
         login_id: "1001".to_string(),
         token: "t1".to_string(),
         reason: "强制下线".to_string(),
@@ -455,13 +455,13 @@ async fn broadcast_kickout_event() {
 #[test]
 #[serial]
 fn login_failure_event_carries_login_id_and_reason() {
-    let event = BulwarkEvent::LoginFailure {
+    let event = GarrisonEvent::LoginFailure {
         login_id: "1001".to_string(),
         reason: "wrong_password".to_string(),
         request_context: None,
     };
     match event.clone() {
-        BulwarkEvent::LoginFailure {
+        GarrisonEvent::LoginFailure {
             login_id, reason, ..
         } => {
             assert_eq!(login_id, "1001".to_string());
@@ -479,14 +479,14 @@ fn login_failure_event_carries_login_id_and_reason() {
 #[test]
 #[serial]
 fn token_refresh_event_carries_tokens() {
-    let event = BulwarkEvent::TokenRefresh {
+    let event = GarrisonEvent::TokenRefresh {
         login_id: "1001".to_string(),
         old_token: "old-tok".to_string(),
         new_token: "new-tok".to_string(),
         request_context: None,
     };
     match event.clone() {
-        BulwarkEvent::TokenRefresh {
+        GarrisonEvent::TokenRefresh {
             login_id,
             old_token,
             new_token,
@@ -508,12 +508,12 @@ fn token_refresh_event_carries_tokens() {
 #[test]
 #[serial]
 fn revoke_token_event_carries_token() {
-    let event = BulwarkEvent::RevokeToken {
+    let event = GarrisonEvent::RevokeToken {
         token: "revoke-tok".to_string(),
         request_context: None,
     };
     match event.clone() {
-        BulwarkEvent::RevokeToken { token, .. } => {
+        GarrisonEvent::RevokeToken { token, .. } => {
             assert_eq!(token, "revoke-tok");
         },
         _ => panic!("期望 RevokeToken 事件"),
@@ -528,13 +528,13 @@ fn revoke_token_event_carries_token() {
 #[test]
 #[serial]
 fn session_timeout_event_carries_login_id_and_token() {
-    let event = BulwarkEvent::SessionTimeout {
+    let event = GarrisonEvent::SessionTimeout {
         login_id: "1001".to_string(),
         token: "expired-tok".to_string(),
         request_context: None,
     };
     match event.clone() {
-        BulwarkEvent::SessionTimeout {
+        GarrisonEvent::SessionTimeout {
             login_id, token, ..
         } => {
             assert_eq!(login_id, "1001".to_string());
@@ -552,13 +552,13 @@ fn session_timeout_event_carries_login_id_and_token() {
 #[test]
 #[serial]
 fn account_locked_event_carries_login_id_and_reason() {
-    let event = BulwarkEvent::AccountLocked {
+    let event = GarrisonEvent::AccountLocked {
         login_id: "1001".to_string(),
         reason: "brute_force".to_string(),
         request_context: None,
     };
     match event.clone() {
-        BulwarkEvent::AccountLocked {
+        GarrisonEvent::AccountLocked {
             login_id, reason, ..
         } => {
             assert_eq!(login_id, "1001".to_string());
@@ -576,13 +576,13 @@ fn account_locked_event_carries_login_id_and_reason() {
 #[test]
 #[serial]
 fn firewall_block_event_carries_login_id_and_reason() {
-    let event = BulwarkEvent::FirewallBlock {
+    let event = GarrisonEvent::FirewallBlock {
         login_id: "1001".to_string(),
         reason: "frequency_exceeded".to_string(),
         request_context: None,
     };
     match event.clone() {
-        BulwarkEvent::FirewallBlock {
+        GarrisonEvent::FirewallBlock {
             login_id, reason, ..
         } => {
             assert_eq!(login_id, "1001".to_string());
@@ -600,13 +600,13 @@ fn firewall_block_event_carries_login_id_and_reason() {
 #[test]
 #[serial]
 fn token_rotate_event_carries_keys() {
-    let event = BulwarkEvent::TokenRotate {
+    let event = GarrisonEvent::TokenRotate {
         old_key: "old-key".to_string(),
         new_key: "new-key".to_string(),
         request_context: None,
     };
     match event.clone() {
-        BulwarkEvent::TokenRotate {
+        GarrisonEvent::TokenRotate {
             old_key, new_key, ..
         } => {
             assert_eq!(old_key, "old-key");
@@ -624,13 +624,13 @@ fn token_rotate_event_carries_keys() {
 #[test]
 #[serial]
 fn temp_credential_consumed_event_carries_key_and_value() {
-    let event = BulwarkEvent::TempCredentialConsumed {
+    let event = GarrisonEvent::TempCredentialConsumed {
         key: "invite-key".to_string(),
         value: "payload".to_string(),
         request_context: None,
     };
     match event.clone() {
-        BulwarkEvent::TempCredentialConsumed { key, value, .. } => {
+        GarrisonEvent::TempCredentialConsumed { key, value, .. } => {
             assert_eq!(key, "invite-key");
             assert_eq!(value, "payload");
         },

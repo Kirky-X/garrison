@@ -4,7 +4,7 @@
 //! 会话管理示例：演示 Account-Session 与 Token-Session 双模会话。
 //!
 //! 流程：
-//! 1. 创建 BulwarkSession（基于 oxcache DAO）
+//! 1. 创建 GarrisonSession（基于 oxcache DAO）
 //! 2. 创建会话（login）→ Token-Session + Account-Session 双模记录
 //! 3. 查询 Token-Session（get_token_session）
 //! 4. 查询 Account-Session（get_account_session）
@@ -17,28 +17,28 @@
 //!
 //! 运行方式：
 //! ```sh
-//! cargo run -p bulwark-examples --bin session_management --features cache-memory
+//! cargo run -p garrison-examples --bin session_management --features cache-memory
 //! ```
 
-use bulwark::dao::{BulwarkDao, BulwarkDaoOxcache};
-use bulwark::error::BulwarkResult;
-use bulwark::session::BulwarkSession;
+use garrison::dao::{GarrisonDao, GarrisonDaoOxcache};
+use garrison::error::GarrisonResult;
+use garrison::session::GarrisonSession;
 use std::sync::Arc;
 
 /// 运行会话管理示例。
 ///
-/// 演示 BulwarkSession 的 create / get_token_session / get_account_session /
+/// 演示 GarrisonSession 的 create / get_token_session / get_account_session /
 /// renew / touch / set / get / is_valid / logout / logout_by_login_id。
-pub async fn run() -> BulwarkResult<()> {
-    println!("=== Bulwark 会话管理示例 ===\n");
+pub async fn run() -> GarrisonResult<()> {
+    println!("=== Garrison 会话管理示例 ===\n");
 
     // ----------------------------------------------------------------
-    // 1. 创建 BulwarkSession
+    // 1. 创建 GarrisonSession
     // ----------------------------------------------------------------
-    let dao: Arc<dyn BulwarkDao> = Arc::new(BulwarkDaoOxcache::new().await?);
+    let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await?);
     // timeout=3600 秒（1小时），active_timeout=86400 秒（1天）
-    let session = BulwarkSession::new(dao, 3600, 86400);
-    println!("[1] BulwarkSession 创建完成 (timeout=3600s, active_timeout=86400s)\n");
+    let session = GarrisonSession::new(dao, 3600, 86400);
+    println!("[1] GarrisonSession 创建完成 (timeout=3600s, active_timeout=86400s)\n");
 
     // ----------------------------------------------------------------
     // 2. 创建会话（login）

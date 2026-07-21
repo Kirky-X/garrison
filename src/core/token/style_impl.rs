@@ -14,17 +14,17 @@ use uuid::Uuid;
 // ====================================================================
 
 impl Token for UuidTokenStyle {
-    fn generate(&self, _login_id: &str, _timeout: i64) -> BulwarkResult<String> {
+    fn generate(&self, _login_id: &str, _timeout: i64) -> GarrisonResult<String> {
         Ok(Uuid::new_v4().to_string())
     }
 
-    fn verify(&self, _token: &str) -> BulwarkResult<Option<String>> {
+    fn verify(&self, _token: &str) -> GarrisonResult<Option<String>> {
         // UUID 无 payload，无法提取 login_id
         Ok(None)
     }
 
-    fn parse(&self, _token: &str) -> BulwarkResult<TokenClaims> {
-        Err(BulwarkError::Internal(
+    fn parse(&self, _token: &str) -> GarrisonResult<TokenClaims> {
+        Err(GarrisonError::Internal(
             "UUID token 风格不支持 parse（无 payload）".to_string(),
         ))
     }
@@ -35,19 +35,19 @@ impl Token for UuidTokenStyle {
 // ====================================================================
 
 impl Token for Random64TokenStyle {
-    fn generate(&self, _login_id: &str, _timeout: i64) -> BulwarkResult<String> {
+    fn generate(&self, _login_id: &str, _timeout: i64) -> GarrisonResult<String> {
         // 拼接两个 UUID v4 的 simple 表示（各 32 hex 字符 = 64 字符）
         let token = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
         Ok(token)
     }
 
-    fn verify(&self, _token: &str) -> BulwarkResult<Option<String>> {
+    fn verify(&self, _token: &str) -> GarrisonResult<Option<String>> {
         // 随机 hex 无 payload，无法提取 login_id
         Ok(None)
     }
 
-    fn parse(&self, _token: &str) -> BulwarkResult<TokenClaims> {
-        Err(BulwarkError::Internal(
+    fn parse(&self, _token: &str) -> GarrisonResult<TokenClaims> {
+        Err(GarrisonError::Internal(
             "random_64 token 风格不支持 parse（无 payload）".to_string(),
         ))
     }
@@ -62,14 +62,14 @@ impl SimpleTokenStyle {
     /// 计算 HMAC-SHA256 并返回 URL-safe Base64 编码。
     ///
     /// 输入为 `login_id|uuid`（管道分隔），输出为 Base64 编码的 HMAC（43 字符，无 padding）。
-    fn compute_hmac(&self, login_id: &str, uuid_part: &str) -> BulwarkResult<String> {
+    fn compute_hmac(&self, login_id: &str, uuid_part: &str) -> GarrisonResult<String> {
         use hmac::{Hmac, KeyInit, Mac};
         use sha2::Sha256;
 
         type HmacSha256 = Hmac<Sha256>;
         let message = format!("{}|{}", login_id, uuid_part);
         let mut mac = HmacSha256::new_from_slice(self.secret.as_bytes())
-            .map_err(|e| BulwarkError::Config(format!("core-hmac-key-invalid::{}", e)))?;
+            .map_err(|e| GarrisonError::Config(format!("core-hmac-key-invalid::{}", e)))?;
         mac.update(message.as_bytes());
         // URL-safe Base64 无 padding（43 字符），适合放入 token
         Ok(Self::base64_url_no_pad(&mac.finalize().into_bytes()))
@@ -101,10 +101,10 @@ impl SimpleTokenStyle {
 
 #[cfg(feature = "secure-simple-token")]
 impl Token for SimpleTokenStyle {
-    fn generate(&self, login_id: &str, _timeout: i64) -> BulwarkResult<String> {
+    fn generate(&self, login_id: &str, _timeout: i64) -> GarrisonResult<String> {
         // A11: fail-closed — 空密钥拒绝生成 token
         if self.secret.is_empty() {
-            return Err(BulwarkError::Config(
+            return Err(GarrisonError::Config(
                 "SimpleTokenStyle secret 不能为空（A11 fail-closed）".to_string(),
             ));
         }
@@ -116,7 +116,7 @@ impl Token for SimpleTokenStyle {
         Ok(format!("{}\x1f{}.{}", login_id, uuid_str, hmac))
     }
 
-    fn verify(&self, token: &str) -> BulwarkResult<Option<String>> {
+    fn verify(&self, token: &str) -> GarrisonResult<Option<String>> {
         use subtle::ConstantTimeEq;
 
         // A11: fail-closed — 空密钥拒绝验证（所有 token 视为无效）
@@ -151,23 +151,23 @@ impl Token for SimpleTokenStyle {
         }
     }
 
-    fn parse(&self, token: &str) -> BulwarkResult<TokenClaims> {
+    fn parse(&self, token: &str) -> GarrisonResult<TokenClaims> {
         // A11: fail-closed — 空密钥拒绝解析
         if self.secret.is_empty() {
-            return Err(BulwarkError::Config(
+            return Err(GarrisonError::Config(
                 "SimpleTokenStyle secret 不能为空（A11 fail-closed）".to_string(),
             ));
         }
         // 格式：<login_id>\x1f<uuid>.<hmac>（\x1f = ASCII Unit Separator，见 H2）
-        let (body, hmac_part) = token
-            .rsplit_once('.')
-            .ok_or_else(|| BulwarkError::Internal("core-simple-token-no-hmac-sep::".to_string()))?;
+        let (body, hmac_part) = token.rsplit_once('.').ok_or_else(|| {
+            GarrisonError::Internal("core-simple-token-no-hmac-sep::".to_string())
+        })?;
         let (id_str, uuid_part) = body
             .split_once('\x1f')
-            .ok_or_else(|| BulwarkError::Internal("core-simple-token-no-sep::".to_string()))?;
+            .ok_or_else(|| GarrisonError::Internal("core-simple-token-no-sep::".to_string()))?;
         // 校验 UUID 部分
         if Uuid::parse_str(uuid_part).is_err() {
-            return Err(BulwarkError::Internal(
+            return Err(GarrisonError::Internal(
                 "Simple token 格式错误：UUID 部分无效".to_string(),
             ));
         }
@@ -176,7 +176,7 @@ impl Token for SimpleTokenStyle {
         let expected_hmac = self.compute_hmac(id_str, uuid_part)?;
         let ct_result = expected_hmac.as_bytes().ct_eq(hmac_part.as_bytes());
         if !bool::from(ct_result) {
-            return Err(BulwarkError::InvalidToken(
+            return Err(GarrisonError::InvalidToken(
                 "Simple token HMAC 校验失败".to_string(),
             ));
         }
@@ -191,20 +191,20 @@ impl Token for SimpleTokenStyle {
 
 #[cfg(not(feature = "secure-simple-token"))]
 impl Token for SimpleTokenStyle {
-    fn generate(&self, _login_id: &str, _timeout: i64) -> BulwarkResult<String> {
+    fn generate(&self, _login_id: &str, _timeout: i64) -> GarrisonResult<String> {
         // A11 fail-closed：未启用 secure-simple-token feature 时拒绝生成 token
-        Err(BulwarkError::Config(
+        Err(GarrisonError::Config(
             "SimpleTokenStyle 需启用 secure-simple-token feature（A11 安全修复）".to_string(),
         ))
     }
 
-    fn verify(&self, _token: &str) -> BulwarkResult<Option<String>> {
+    fn verify(&self, _token: &str) -> GarrisonResult<Option<String>> {
         // A11 fail-closed：未启用 feature 时所有 token 视为无效
         Ok(None)
     }
 
-    fn parse(&self, _token: &str) -> BulwarkResult<TokenClaims> {
-        Err(BulwarkError::Config(
+    fn parse(&self, _token: &str) -> GarrisonResult<TokenClaims> {
+        Err(GarrisonError::Config(
             "SimpleTokenStyle 需启用 secure-simple-token feature（A11 安全修复）".to_string(),
         ))
     }
@@ -229,18 +229,18 @@ impl JwtTokenStyle {
 
 #[cfg(feature = "protocol-jwt")]
 impl Token for JwtTokenStyle {
-    fn generate(&self, login_id: &str, timeout: i64) -> BulwarkResult<String> {
+    fn generate(&self, login_id: &str, timeout: i64) -> GarrisonResult<String> {
         self.handler.sign(login_id, timeout)
     }
 
-    fn verify(&self, token: &str) -> BulwarkResult<Option<String>> {
+    fn verify(&self, token: &str) -> GarrisonResult<Option<String>> {
         match self.handler.verify(token) {
             Ok(claims) => Ok(Some(claims.login_id)),
             Err(_) => Ok(None),
         }
     }
 
-    fn parse(&self, token: &str) -> BulwarkResult<TokenClaims> {
+    fn parse(&self, token: &str) -> GarrisonResult<TokenClaims> {
         let claims = self.handler.verify(token)?;
         Ok(TokenClaims {
             login_id: claims.login_id,
@@ -263,9 +263,9 @@ impl TokenStyleFactory {
     ///
     /// # 返回
     /// - `Ok(Box<dyn Token>)`: 创建成功。
-    /// - `Err(BulwarkError::Config)`: 未知风格，消息含 "unknown token_style"。
+    /// - `Err(GarrisonError::Config)`: 未知风格，消息含 "unknown token_style"。
     #[allow(clippy::new_ret_no_self)]
-    pub fn new(style: &str, secret: &str) -> BulwarkResult<Box<dyn Token>> {
+    pub fn new(style: &str, secret: &str) -> GarrisonResult<Box<dyn Token>> {
         match style {
             "uuid" => Ok(Box::new(UuidTokenStyle)),
             "random_64" => Ok(Box::new(Random64TokenStyle)),
@@ -276,11 +276,11 @@ impl TokenStyleFactory {
             #[cfg(not(feature = "protocol-jwt"))]
             "jwt" => {
                 let _ = secret; // 避免 unused 警告（jwt 风格需 protocol-jwt feature）
-                Err(BulwarkError::Config(
+                Err(GarrisonError::Config(
                     "unknown token_style: jwt（需启用 protocol-jwt feature）".to_string(),
                 ))
             },
-            other => Err(BulwarkError::Config(format!(
+            other => Err(GarrisonError::Config(format!(
                 "unknown token_style: {}",
                 other
             ))),

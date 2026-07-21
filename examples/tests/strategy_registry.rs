@@ -7,7 +7,7 @@
 
 #![cfg(feature = "cache-memory")]
 
-use bulwark_examples::authorization::strategy_registry;
+use garrison_examples::authorization::strategy_registry;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_run_completes() {

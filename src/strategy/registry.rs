@@ -19,17 +19,17 @@
 //!
 //! [`Strategy`] struct 持有 6 个 `Arc<dyn Trait>`，
 //! 提供 `register_*`/`get_*`/`remove_*` 方法。
-//! 默认实现委托 [`BulwarkLogicDefault`](crate::stp::BulwarkLogicDefault)。
+//! 默认实现委托 [`GarrisonLogicDefault`](crate::stp::GarrisonLogicDefault)。
 //!
 //! ## 偏差说明
 //!
 //! - `login_id` 使用 `&str` 而非 `LoginId` newtype，遵循子 trait（`SessionLogic` / `PermissionLogic`）现有惯例
 //!   （依据规则 11：惯例优先于新颖）
-//! - [`FirewallStrategy`] 与现有 [`BulwarkPermissionStrategy`](crate::strategy::BulwarkPermissionStrategy)
+//! - [`FirewallStrategy`] 与现有 [`GarrisonPermissionStrategy`](crate::strategy::GarrisonPermissionStrategy)
 //!   trait 共存，两者名称不同，不冲突
 
-use crate::error::BulwarkResult;
-use crate::stp::{BulwarkLogicDefault, LoginParams, PermissionLogic, SessionLogic, TokenLogic};
+use crate::error::GarrisonResult;
+use crate::stp::{GarrisonLogicDefault, LoginParams, PermissionLogic, SessionLogic, TokenLogic};
 // LoginContext 来自 hooks 模块，依赖 limiteron（匹配 lib.rs 的 limiteron cfg）
 #[cfg(any(
     feature = "sms-rate-limit",
@@ -64,7 +64,7 @@ pub trait LoginHandler: Send + Sync {
     ///
     /// # 返回
     /// 生成的 token 字符串。
-    async fn handle_login(&self, login_id: &str) -> BulwarkResult<String>;
+    async fn handle_login(&self, login_id: &str) -> GarrisonResult<String>;
 }
 
 /// 登出策略 trait，定义登出行为的可插拔契约。
@@ -76,10 +76,10 @@ pub trait LoginHandler: Send + Sync {
 #[async_trait]
 pub trait LogoutHandler: Send + Sync {
     /// 执行登出：从 task_local 获取当前 token 并销毁。
-    async fn handle_logout(&self) -> BulwarkResult<()>;
+    async fn handle_logout(&self) -> GarrisonResult<()>;
 
     /// 按账号登出：销毁指定 login_id 的所有会话。
-    async fn handle_logout_by_login_id(&self, login_id: &str) -> BulwarkResult<()>;
+    async fn handle_logout_by_login_id(&self, login_id: &str) -> GarrisonResult<()>;
 }
 
 /// 权限校验策略 trait，定义权限/角色校验的可插拔契约。
@@ -91,10 +91,10 @@ pub trait LogoutHandler: Send + Sync {
 #[async_trait]
 pub trait PermissionHandler: Send + Sync {
     /// 校验权限：检查当前主体是否持有指定权限。
-    async fn handle_check_permission(&self, permission: &str) -> BulwarkResult<()>;
+    async fn handle_check_permission(&self, permission: &str) -> GarrisonResult<()>;
 
     /// 校验角色：检查当前主体是否持有指定角色。
-    async fn handle_check_role(&self, role: &str) -> BulwarkResult<()>;
+    async fn handle_check_role(&self, role: &str) -> GarrisonResult<()>;
 }
 
 /// Token 生成策略 trait，定义 token 生成与刷新的可插拔契约。
@@ -108,10 +108,10 @@ pub trait TokenGenerator: Send + Sync {
     /// 生成 token。
     ///
     /// 默认实现委托 [`SessionLogic::login`]，会同时创建会话。
-    async fn generate_token(&self, login_id: &str) -> BulwarkResult<String>;
+    async fn generate_token(&self, login_id: &str) -> GarrisonResult<String>;
 
     /// 刷新 token。
-    async fn refresh_token(&self, token: &str) -> BulwarkResult<String>;
+    async fn refresh_token(&self, token: &str) -> GarrisonResult<String>;
 }
 
 /// 会话创建策略 trait，定义会话创建与登录检查的可插拔契约。
@@ -123,23 +123,23 @@ pub trait TokenGenerator: Send + Sync {
 #[async_trait]
 pub trait SessionCreator: Send + Sync {
     /// 创建会话：用指定 token 为 login_id 建立会话。
-    async fn create_session(&self, login_id: &str, token: &str) -> BulwarkResult<()>;
+    async fn create_session(&self, login_id: &str, token: &str) -> GarrisonResult<()>;
 
     /// 检查登录状态。
-    async fn check_login(&self) -> BulwarkResult<bool>;
+    async fn check_login(&self) -> GarrisonResult<bool>;
 }
 
 /// 防火墙策略 trait，定义登录前安全检查的可插拔契约。
 ///
-/// 与现有 [`BulwarkPermissionStrategy`](crate::strategy::BulwarkPermissionStrategy) trait 共存
+/// 与现有 [`GarrisonPermissionStrategy`](crate::strategy::GarrisonPermissionStrategy) trait 共存
 /// ，两者名称不同，职责不同：
-/// - `BulwarkPermissionStrategy`：权限/角色数据查询与校验
+/// - `GarrisonPermissionStrategy`：权限/角色数据查询与校验
 /// - `FirewallStrategy`（本 trait）：登录前防火墙钩子检查
 ///
 /// # 默认实现
 ///
 /// [`DefaultFirewallStrategy`] 返回 `Ok(())`（no-op，向后兼容），
-/// 因 [`BulwarkLogicDefault`] 无 `check_login_hooks` 方法。
+/// 因 [`GarrisonLogicDefault`] 无 `check_login_hooks` 方法。
 #[async_trait]
 pub trait FirewallStrategy: Send + Sync {
     /// 登录前防火墙安全检查。
@@ -151,28 +151,28 @@ pub trait FirewallStrategy: Send + Sync {
         feature = "firewall",
         feature = "oauth2-server"
     ))]
-    async fn check_login_hooks(&self, login_id: &str, ctx: &LoginContext) -> BulwarkResult<()>;
+    async fn check_login_hooks(&self, login_id: &str, ctx: &LoginContext) -> GarrisonResult<()>;
 }
 
 // ============================================================================
-// 默认实现：委托 BulwarkLogicDefault
+// 默认实现：委托 GarrisonLogicDefault
 // ============================================================================
 
 /// `LoginHandler` 的默认实现，委托 [`SessionLogic::login`]。
 pub struct DefaultLoginHandler {
-    logic: Arc<BulwarkLogicDefault>,
+    logic: Arc<GarrisonLogicDefault>,
 }
 
 impl DefaultLoginHandler {
     /// 创建默认登录策略实例。
-    pub fn new(logic: Arc<BulwarkLogicDefault>) -> Self {
+    pub fn new(logic: Arc<GarrisonLogicDefault>) -> Self {
         Self { logic }
     }
 }
 
 #[async_trait]
 impl LoginHandler for DefaultLoginHandler {
-    async fn handle_login(&self, login_id: &str) -> BulwarkResult<String> {
+    async fn handle_login(&self, login_id: &str) -> GarrisonResult<String> {
         self.logic.login(login_id, &LoginParams::default()).await
     }
 }
@@ -180,23 +180,23 @@ impl LoginHandler for DefaultLoginHandler {
 /// `LogoutHandler` 的默认实现，委托 [`SessionLogic::logout`] /
 /// [`SessionLogic::logout_by_login_id`]。
 pub struct DefaultLogoutHandler {
-    logic: Arc<BulwarkLogicDefault>,
+    logic: Arc<GarrisonLogicDefault>,
 }
 
 impl DefaultLogoutHandler {
     /// 创建默认登出策略实例。
-    pub fn new(logic: Arc<BulwarkLogicDefault>) -> Self {
+    pub fn new(logic: Arc<GarrisonLogicDefault>) -> Self {
         Self { logic }
     }
 }
 
 #[async_trait]
 impl LogoutHandler for DefaultLogoutHandler {
-    async fn handle_logout(&self) -> BulwarkResult<()> {
+    async fn handle_logout(&self) -> GarrisonResult<()> {
         self.logic.logout().await
     }
 
-    async fn handle_logout_by_login_id(&self, login_id: &str) -> BulwarkResult<()> {
+    async fn handle_logout_by_login_id(&self, login_id: &str) -> GarrisonResult<()> {
         self.logic.logout_by_login_id(login_id).await
     }
 }
@@ -204,23 +204,23 @@ impl LogoutHandler for DefaultLogoutHandler {
 /// `PermissionHandler` 的默认实现，委托 [`PermissionLogic::check_permission`] /
 /// [`PermissionLogic::check_role`]。
 pub struct DefaultPermissionHandler {
-    logic: Arc<BulwarkLogicDefault>,
+    logic: Arc<GarrisonLogicDefault>,
 }
 
 impl DefaultPermissionHandler {
     /// 创建默认权限校验策略实例。
-    pub fn new(logic: Arc<BulwarkLogicDefault>) -> Self {
+    pub fn new(logic: Arc<GarrisonLogicDefault>) -> Self {
         Self { logic }
     }
 }
 
 #[async_trait]
 impl PermissionHandler for DefaultPermissionHandler {
-    async fn handle_check_permission(&self, permission: &str) -> BulwarkResult<()> {
+    async fn handle_check_permission(&self, permission: &str) -> GarrisonResult<()> {
         self.logic.check_permission(permission).await
     }
 
-    async fn handle_check_role(&self, role: &str) -> BulwarkResult<()> {
+    async fn handle_check_role(&self, role: &str) -> GarrisonResult<()> {
         self.logic.check_role(role).await
     }
 }
@@ -228,23 +228,23 @@ impl PermissionHandler for DefaultPermissionHandler {
 /// `TokenGenerator` 的默认实现，委托 [`SessionLogic::login`]（生成）
 /// 与 [`TokenLogic::refresh_token`]（刷新）。
 pub struct DefaultTokenGenerator {
-    logic: Arc<BulwarkLogicDefault>,
+    logic: Arc<GarrisonLogicDefault>,
 }
 
 impl DefaultTokenGenerator {
     /// 创建默认 token 生成策略实例。
-    pub fn new(logic: Arc<BulwarkLogicDefault>) -> Self {
+    pub fn new(logic: Arc<GarrisonLogicDefault>) -> Self {
         Self { logic }
     }
 }
 
 #[async_trait]
 impl TokenGenerator for DefaultTokenGenerator {
-    async fn generate_token(&self, login_id: &str) -> BulwarkResult<String> {
+    async fn generate_token(&self, login_id: &str) -> GarrisonResult<String> {
         self.logic.login(login_id, &LoginParams::default()).await
     }
 
-    async fn refresh_token(&self, token: &str) -> BulwarkResult<String> {
+    async fn refresh_token(&self, token: &str) -> GarrisonResult<String> {
         self.logic.refresh_token(token).await
     }
 }
@@ -252,31 +252,31 @@ impl TokenGenerator for DefaultTokenGenerator {
 /// `SessionCreator` 的默认实现，委托 [`SessionLogic::login_with_token`] /
 /// [`SessionLogic::check_login`]。
 pub struct DefaultSessionCreator {
-    logic: Arc<BulwarkLogicDefault>,
+    logic: Arc<GarrisonLogicDefault>,
 }
 
 impl DefaultSessionCreator {
     /// 创建默认会话创建策略实例。
-    pub fn new(logic: Arc<BulwarkLogicDefault>) -> Self {
+    pub fn new(logic: Arc<GarrisonLogicDefault>) -> Self {
         Self { logic }
     }
 }
 
 #[async_trait]
 impl SessionCreator for DefaultSessionCreator {
-    async fn create_session(&self, login_id: &str, token: &str) -> BulwarkResult<()> {
+    async fn create_session(&self, login_id: &str, token: &str) -> GarrisonResult<()> {
         self.logic.login_with_token(login_id, token).await
     }
 
-    async fn check_login(&self) -> BulwarkResult<bool> {
+    async fn check_login(&self) -> GarrisonResult<bool> {
         self.logic.check_login().await
     }
 }
 
 /// `FirewallStrategy` 的默认实现，返回 `Ok(())`（no-op）。
 ///
-/// [`BulwarkLogicDefault`] 无 `check_login_hooks` 方法，
-/// 默认 no-op 与现有 [`crate::strategy::BulwarkPermissionStrategy`] trait 的
+/// [`GarrisonLogicDefault`] 无 `check_login_hooks` 方法，
+/// 默认 no-op 与现有 [`crate::strategy::GarrisonPermissionStrategy`] trait 的
 /// `check_login_hooks` 默认行为一致。
 pub struct DefaultFirewallStrategy;
 
@@ -285,7 +285,7 @@ impl DefaultFirewallStrategy {
     ///
     /// 接受 `logic` 参数以与其他 Default*Handler 保持构造签名一致，
     /// 但 `check_login_hooks` 为 no-op，不存储 logic。
-    pub fn new(_logic: Arc<BulwarkLogicDefault>) -> Self {
+    pub fn new(_logic: Arc<GarrisonLogicDefault>) -> Self {
         Self
     }
 }
@@ -300,7 +300,7 @@ impl FirewallStrategy for DefaultFirewallStrategy {
         feature = "firewall",
         feature = "oauth2-server"
     ))]
-    async fn check_login_hooks(&self, _login_id: &str, _ctx: &LoginContext) -> BulwarkResult<()> {
+    async fn check_login_hooks(&self, _login_id: &str, _ctx: &LoginContext) -> GarrisonResult<()> {
         Ok(())
     }
 }
@@ -312,29 +312,29 @@ impl FirewallStrategy for DefaultFirewallStrategy {
 /// 策略注册表，持有 6 个可插拔策略的 `Arc<dyn Trait>`。
 ///
 /// 提供 `register_*`/`get_*`/`remove_*` 方法用于运行时替换、查询、恢复策略。
-/// 默认策略委托 [`BulwarkLogicDefault`]，通过 [`Strategy::new`] 构造。
+/// 默认策略委托 [`GarrisonLogicDefault`]，通过 [`Strategy::new`] 构造。
 ///
 /// # 线程安全
 ///
 /// `Strategy` 本身通过 `&self` 提供 `get_*` 方法，通过 `&mut self` 提供 `register_*`/
-/// `remove_*` 方法。在 [`BulwarkManager`](crate::manager::BulwarkManager) 中以
+/// `remove_*` 方法。在 [`GarrisonManager`](crate::manager::GarrisonManager) 中以
 /// `Arc<RwLock<Strategy>>` 形式持有，保证线程安全。
 ///
 /// # 示例
 ///
 /// ```ignore
 /// use std::sync::Arc;
-/// use bulwark::strategy::{Strategy, LoginHandler};
-/// use bulwark::BulwarkManager;
+/// use garrison::strategy::{Strategy, LoginHandler};
+/// use garrison::GarrisonManager;
 ///
 /// // 获取 strategy 引用
-/// let strategy = BulwarkManager::strategy().unwrap();
+/// let strategy = GarrisonManager::strategy().unwrap();
 ///
 /// // 运行时替换登录策略
 /// struct MyLoginHandler;
 /// #[async_trait::async_trait]
 /// impl LoginHandler for MyLoginHandler {
-///     async fn handle_login(&self, login_id: &str) -> bulwark::BulwarkResult<String> {
+///     async fn handle_login(&self, login_id: &str) -> garrison::GarrisonResult<String> {
 ///         Ok(format!("custom-token-{}", login_id))
 ///     }
 /// }
@@ -371,14 +371,14 @@ pub struct Strategy {
 }
 
 impl Strategy {
-    /// 创建策略注册表，6 个策略均初始化为委托 `BulwarkLogicDefault` 的默认实现。
+    /// 创建策略注册表，6 个策略均初始化为委托 `GarrisonLogicDefault` 的默认实现。
     ///
     /// # 参数
-    /// - `logic`: `BulwarkLogicDefault` 引用，默认策略委托其方法。
+    /// - `logic`: `GarrisonLogicDefault` 引用，默认策略委托其方法。
     ///
     /// # 返回
     /// 新建的 `Strategy` 实例，6 个策略与默认策略均为默认实现。
-    pub fn new(logic: Arc<BulwarkLogicDefault>) -> Self {
+    pub fn new(logic: Arc<GarrisonLogicDefault>) -> Self {
         let login_handler: Arc<dyn LoginHandler> =
             Arc::new(DefaultLoginHandler::new(logic.clone()));
         let logout_handler: Arc<dyn LogoutHandler> =
@@ -525,12 +525,12 @@ impl Strategy {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::BulwarkConfig;
+    use crate::config::GarrisonConfig;
     use crate::dao::tests::MockDao;
-    use crate::dao::BulwarkDao;
-    use crate::session::BulwarkSession;
-    use crate::stp::{BulwarkInterface, BulwarkLogicDefault};
-    use crate::strategy::BulwarkPermissionStrategyDefault;
+    use crate::dao::GarrisonDao;
+    use crate::session::GarrisonSession;
+    use crate::stp::{GarrisonInterface, GarrisonLogicDefault};
+    use crate::strategy::GarrisonPermissionStrategyDefault;
     use async_trait::async_trait;
     use serial_test::serial;
     use std::collections::HashMap;
@@ -554,26 +554,26 @@ mod tests {
     }
 
     #[async_trait]
-    impl BulwarkInterface for MockInterface {
-        async fn get_permission_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+    impl GarrisonInterface for MockInterface {
+        async fn get_permission_list(&self, login_id: &str) -> GarrisonResult<Vec<String>> {
             Ok(self.permissions.get(login_id).cloned().unwrap_or_default())
         }
 
-        async fn get_role_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+        async fn get_role_list(&self, login_id: &str) -> GarrisonResult<Vec<String>> {
             Ok(self.roles.get(login_id).cloned().unwrap_or_default())
         }
     }
 
-    /// 构造测试用 `Arc<BulwarkLogicDefault>`。
-    fn make_logic() -> Arc<BulwarkLogicDefault> {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
-        let config = Arc::new(BulwarkConfig::default_config());
-        let interface: Arc<dyn BulwarkInterface> = Arc::new(MockInterface::new());
+    /// 构造测试用 `Arc<GarrisonLogicDefault>`。
+    fn make_logic() -> Arc<GarrisonLogicDefault> {
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+        let config = Arc::new(GarrisonConfig::default_config());
+        let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface::new());
         let timeout = u64::try_from(config.timeout).unwrap_or(3600);
-        let session = Arc::new(BulwarkSession::new(dao, timeout, timeout));
-        let firewall: Arc<dyn crate::strategy::BulwarkPermissionStrategy> =
-            Arc::new(BulwarkPermissionStrategyDefault::new(interface));
-        Arc::new(BulwarkLogicDefault::new(session, config, firewall))
+        let session = Arc::new(GarrisonSession::new(dao, timeout, timeout));
+        let firewall: Arc<dyn crate::strategy::GarrisonPermissionStrategy> =
+            Arc::new(GarrisonPermissionStrategyDefault::new(interface));
+        Arc::new(GarrisonLogicDefault::new(session, config, firewall))
     }
 
     // ========================================================================
@@ -586,7 +586,7 @@ mod tests {
         struct MyLoginHandler;
         #[async_trait]
         impl LoginHandler for MyLoginHandler {
-            async fn handle_login(&self, login_id: &str) -> BulwarkResult<String> {
+            async fn handle_login(&self, login_id: &str) -> GarrisonResult<String> {
                 Ok(format!("token-{}", login_id))
             }
         }
@@ -600,10 +600,10 @@ mod tests {
         struct MyLogoutHandler;
         #[async_trait]
         impl LogoutHandler for MyLogoutHandler {
-            async fn handle_logout(&self) -> BulwarkResult<()> {
+            async fn handle_logout(&self) -> GarrisonResult<()> {
                 Ok(())
             }
-            async fn handle_logout_by_login_id(&self, _login_id: &str) -> BulwarkResult<()> {
+            async fn handle_logout_by_login_id(&self, _login_id: &str) -> GarrisonResult<()> {
                 Ok(())
             }
         }
@@ -618,10 +618,10 @@ mod tests {
         struct MyPermissionHandler;
         #[async_trait]
         impl PermissionHandler for MyPermissionHandler {
-            async fn handle_check_permission(&self, _permission: &str) -> BulwarkResult<()> {
+            async fn handle_check_permission(&self, _permission: &str) -> GarrisonResult<()> {
                 Ok(())
             }
-            async fn handle_check_role(&self, _role: &str) -> BulwarkResult<()> {
+            async fn handle_check_role(&self, _role: &str) -> GarrisonResult<()> {
                 Ok(())
             }
         }
@@ -636,10 +636,10 @@ mod tests {
         struct MyTokenGenerator;
         #[async_trait]
         impl TokenGenerator for MyTokenGenerator {
-            async fn generate_token(&self, login_id: &str) -> BulwarkResult<String> {
+            async fn generate_token(&self, login_id: &str) -> GarrisonResult<String> {
                 Ok(format!("gen-{}", login_id))
             }
-            async fn refresh_token(&self, token: &str) -> BulwarkResult<String> {
+            async fn refresh_token(&self, token: &str) -> GarrisonResult<String> {
                 Ok(format!("refreshed-{}", token))
             }
         }
@@ -654,10 +654,10 @@ mod tests {
         struct MySessionCreator;
         #[async_trait]
         impl SessionCreator for MySessionCreator {
-            async fn create_session(&self, _login_id: &str, _token: &str) -> BulwarkResult<()> {
+            async fn create_session(&self, _login_id: &str, _token: &str) -> GarrisonResult<()> {
                 Ok(())
             }
-            async fn check_login(&self) -> BulwarkResult<bool> {
+            async fn check_login(&self) -> GarrisonResult<bool> {
                 Ok(true)
             }
         }
@@ -684,7 +684,7 @@ mod tests {
                 &self,
                 _login_id: &str,
                 _ctx: &LoginContext,
-            ) -> BulwarkResult<()> {
+            ) -> GarrisonResult<()> {
                 Ok(())
             }
         }
@@ -733,7 +733,7 @@ mod tests {
         struct CustomLoginHandler;
         #[async_trait]
         impl LoginHandler for CustomLoginHandler {
-            async fn handle_login(&self, login_id: &str) -> BulwarkResult<String> {
+            async fn handle_login(&self, login_id: &str) -> GarrisonResult<String> {
                 Ok(format!("custom-{}", login_id))
             }
         }
@@ -754,7 +754,7 @@ mod tests {
         }
         #[async_trait]
         impl LoginHandler for TrackingLoginHandler {
-            async fn handle_login(&self, login_id: &str) -> BulwarkResult<String> {
+            async fn handle_login(&self, login_id: &str) -> GarrisonResult<String> {
                 Ok(format!("{}-{}", self.id, login_id))
             }
         }
@@ -781,7 +781,7 @@ mod tests {
         struct CustomLoginHandler;
         #[async_trait]
         impl LoginHandler for CustomLoginHandler {
-            async fn handle_login(&self, login_id: &str) -> BulwarkResult<String> {
+            async fn handle_login(&self, login_id: &str) -> GarrisonResult<String> {
                 Ok(format!("custom-{}", login_id))
             }
         }
@@ -823,7 +823,7 @@ mod tests {
         struct CustomLogin;
         #[async_trait]
         impl LoginHandler for CustomLogin {
-            async fn handle_login(&self, id: &str) -> BulwarkResult<String> {
+            async fn handle_login(&self, id: &str) -> GarrisonResult<String> {
                 Ok(format!("c-{}", id))
             }
         }
@@ -844,7 +844,7 @@ mod tests {
         struct CustomLoginHandler;
         #[async_trait]
         impl LoginHandler for CustomLoginHandler {
-            async fn handle_login(&self, login_id: &str) -> BulwarkResult<String> {
+            async fn handle_login(&self, login_id: &str) -> GarrisonResult<String> {
                 Ok(format!("custom-{}", login_id))
             }
         }
@@ -878,7 +878,7 @@ mod tests {
         struct CustomLoginHandler;
         #[async_trait]
         impl LoginHandler for CustomLoginHandler {
-            async fn handle_login(&self, login_id: &str) -> BulwarkResult<String> {
+            async fn handle_login(&self, login_id: &str) -> GarrisonResult<String> {
                 Ok(format!("v1-{}", login_id))
             }
         }
@@ -892,7 +892,7 @@ mod tests {
         struct AnotherLoginHandler;
         #[async_trait]
         impl LoginHandler for AnotherLoginHandler {
-            async fn handle_login(&self, login_id: &str) -> BulwarkResult<String> {
+            async fn handle_login(&self, login_id: &str) -> GarrisonResult<String> {
                 Ok(format!("v2-{}", login_id))
             }
         }

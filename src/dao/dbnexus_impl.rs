@@ -6,12 +6,12 @@
 //! 对应 二级持久化层（DB），
 //! 通过 dbnexus 0.2 提供 SQLite/PostgreSQL/MySQL 连接池、Session、迁移能力。
 //!
-//! Bulwark 不定义 `BulwarkDb` trait，直接复用 `dbnexus::DbPool`：
+//! Garrison 不定义 `GarrisonDb` trait，直接复用 `dbnexus::DbPool`：
 //! - dbnexus 本身就是 DB 适配库，通过特性切换后端
 //! - `init_dbnexus(url)` 返回 `dbnexus::DbPool`，业务代码直接调用其方法
-//! - `BulwarkMigration` 包装 `DbPool::run_migrations`，按 spec 分层管理迁移脚本
+//! - `GarrisonMigration` 包装 `DbPool::run_migrations`，按 spec 分层管理迁移脚本
 
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::error::{GarrisonError, GarrisonResult};
 use dbnexus::DbPool;
 use std::path::{Path, PathBuf};
 
@@ -26,16 +26,16 @@ use std::path::{Path, PathBuf};
 ///
 /// # 示例
 /// ```ignore
-/// use bulwark::dao::init_dbnexus;
+/// use garrison::dao::init_dbnexus;
 /// let pool = init_dbnexus("sqlite::memory:").await?;
 /// ```
-pub async fn init_dbnexus(url: &str) -> BulwarkResult<DbPool> {
+pub async fn init_dbnexus(url: &str) -> GarrisonResult<DbPool> {
     DbPool::new(url)
         .await
-        .map_err(|e| BulwarkError::Dao(format!("dao-dbnexus-init::{}", e)))
+        .map_err(|e| GarrisonError::Dao(format!("dao-dbnexus-init::{}", e)))
 }
 
-/// Bulwark schema 迁移管理器。
+/// Garrison schema 迁移管理器。
 ///
 /// 包装 `dbnexus::DbPool::run_migrations`，按 extensible-schema spec 分层管理：
 /// - `migrate_core`: 执行 `migrations/sqlite/core/*.sql`（8 张核心表 + app_user_ext）
@@ -53,12 +53,12 @@ pub async fn init_dbnexus(url: &str) -> BulwarkResult<DbPool> {
 /// - `core/`: 1–999（核心表迁移，随版本发布）
 /// - `extensions/`: 1000+（用户自定义扩展，从 1000 开始避免冲突）
 /// - `tenant/`: 2000+（多租户特定表，从 2000 开始）
-pub struct BulwarkMigration {
+pub struct GarrisonMigration {
     pool: DbPool,
     base_dir: PathBuf,
 }
 
-impl BulwarkMigration {
+impl GarrisonMigration {
     /// 创建迁移管理器，使用默认 `migrations/sqlite/` 基目录。
     pub fn new(pool: DbPool) -> Self {
         Self::with_base_dir(pool, PathBuf::from("migrations/sqlite"))
@@ -77,28 +77,28 @@ impl BulwarkMigration {
     /// 执行核心表迁移（`{base_dir}/core/*.sql`）。
     ///
     /// 对应 extensible-schema spec：8 张核心表 + app_user_ext。
-    pub async fn migrate_core(&self) -> BulwarkResult<u32> {
+    pub async fn migrate_core(&self) -> GarrisonResult<u32> {
         self.run_dir(&self.base_dir.join("core")).await
     }
 
     /// 执行扩展表迁移（`{base_dir}/extensions/*.sql`）。
     ///
     /// 对应 extensible-schema spec：用户自定义扩展表（如表名以 `app_` 前缀）。
-    pub async fn migrate_extensions(&self) -> BulwarkResult<u32> {
+    pub async fn migrate_extensions(&self) -> GarrisonResult<u32> {
         self.run_dir(&self.base_dir.join("extensions")).await
     }
 
     /// 执行多租户表迁移（`{base_dir}/tenant/*.sql`）。
     ///
     /// 对应 extensible-schema spec：多租户特定表。
-    pub async fn migrate_tenant(&self) -> BulwarkResult<u32> {
+    pub async fn migrate_tenant(&self) -> GarrisonResult<u32> {
         self.run_dir(&self.base_dir.join("tenant")).await
     }
 
     /// 一次性按 core→extensions→tenant 顺序执行所有迁移。
     ///
     /// 任一阶段失败立即返回错误（不继续后续阶段）。
-    pub async fn run_all(&self) -> BulwarkResult<u32> {
+    pub async fn run_all(&self) -> GarrisonResult<u32> {
         let mut total = 0;
         total += self.migrate_core().await?;
         total += self.migrate_extensions().await?;
@@ -109,9 +109,9 @@ impl BulwarkMigration {
     /// 执行指定目录的迁移文件。
     ///
     /// 不存在的目录返回 0（不报错，符合 dbnexus scan_migrations 行为）。
-    async fn run_dir(&self, dir: &Path) -> BulwarkResult<u32> {
+    async fn run_dir(&self, dir: &Path) -> GarrisonResult<u32> {
         self.pool.run_migrations(dir).await.map_err(|e| {
-            BulwarkError::Dao(format!("dao-dbnexus-migrate::{}::{}", dir.display(), e))
+            GarrisonError::Dao(format!("dao-dbnexus-migrate::{}::{}", dir.display(), e))
         })
     }
 }
@@ -141,14 +141,14 @@ mod tests {
     async fn init_dbnexus_invalid_url_errors() {
         let result = init_dbnexus("not-a-valid-url").await;
         assert!(
-            matches!(result, Err(BulwarkError::Dao(_))),
+            matches!(result, Err(GarrisonError::Dao(_))),
             "无效 URL 应返回 Dao 错误，实际: {:?}",
             result.map(|_| ())
         );
     }
 
     // ========================================================================
-    // BulwarkMigration 测试（使用临时目录 + sqlite::memory:）
+    // GarrisonMigration 测试（使用临时目录 + sqlite::memory:）
     // ========================================================================
 
     /// 验证 migrate_core 在空目录上返回 0。
@@ -157,7 +157,7 @@ mod tests {
         let pool = init_dbnexus("sqlite::memory:").await.unwrap();
         let tmp = tempfile::tempdir().unwrap();
         // 不创建 core/ 目录，run_dir 应返回 0
-        let migration = BulwarkMigration::with_base_dir(pool, tmp.path().to_path_buf());
+        let migration = GarrisonMigration::with_base_dir(pool, tmp.path().to_path_buf());
         let result = migration.migrate_core().await;
         assert!(result.is_ok(), "空目录迁移应成功: {:?}", result.err());
         assert_eq!(result.unwrap(), 0);
@@ -176,7 +176,7 @@ mod tests {
         )
         .unwrap();
 
-        let migration = BulwarkMigration::with_base_dir(pool, tmp.path().to_path_buf());
+        let migration = GarrisonMigration::with_base_dir(pool, tmp.path().to_path_buf());
         let applied = migration.migrate_core().await.unwrap();
         assert_eq!(applied, 1, "应执行 1 个迁移文件");
 
@@ -224,16 +224,16 @@ mod tests {
         )
         .unwrap();
 
-        let migration = BulwarkMigration::with_base_dir(pool, base.to_path_buf());
+        let migration = GarrisonMigration::with_base_dir(pool, base.to_path_buf());
         let total = migration.run_all().await.unwrap();
         assert_eq!(total, 3, "run_all 应执行 3 个迁移文件");
     }
 
-    /// 验证 BulwarkMigration::new 使用默认 base_dir。
+    /// 验证 GarrisonMigration::new 使用默认 base_dir。
     #[tokio::test]
     async fn new_uses_default_base_dir() {
         let pool = init_dbnexus("sqlite::memory:").await.unwrap();
-        let migration = BulwarkMigration::new(pool);
+        let migration = GarrisonMigration::new(pool);
         assert_eq!(migration.base_dir, PathBuf::from("migrations/sqlite"));
     }
 
@@ -384,7 +384,7 @@ mod tests {
     // ========================================================================
 
     /// Scenario: migrate_core 创建 8 张核心表 + app_user_ext。
-    /// WHEN BulwarkMigration::migrate_core() 执行 001_init.sql
+    /// WHEN GarrisonMigration::migrate_core() 执行 001_init.sql
     /// THEN sqlite_master 中应包含 10 张表：
     ///   app_user / app_role / app_permission / app_user_role / app_role_permission
     ///   / app_auth_method / app_session / app_login_log / app_user_ext / app_user_device
@@ -396,7 +396,7 @@ mod tests {
         let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR 应可用");
         let base_dir = PathBuf::from(manifest_dir).join("migrations/sqlite");
 
-        let migration = BulwarkMigration::with_base_dir(pool, base_dir);
+        let migration = GarrisonMigration::with_base_dir(pool, base_dir);
         let applied = migration.migrate_core().await.expect("migrate_core 应成功");
         // 001_init.sql + 002_role_hierarchy.sql + 003_refresh_tokens.sql + 004_audit_logs.sql = 4 个文件
         assert!(
@@ -458,7 +458,7 @@ mod tests {
         let base_dir = PathBuf::from(manifest_dir).join("migrations/sqlite");
 
         let pool = init_dbnexus("sqlite::memory:").await.unwrap();
-        let migration = BulwarkMigration::with_base_dir(pool, base_dir);
+        let migration = GarrisonMigration::with_base_dir(pool, base_dir);
 
         // 第一次：应用迁移（001-006 共 6 个文件）
         let first = migration
@@ -498,7 +498,7 @@ mod tests {
         let base_dir = PathBuf::from(manifest_dir).join("migrations/sqlite");
 
         let pool = init_dbnexus("sqlite::memory:").await.unwrap();
-        let migration = BulwarkMigration::with_base_dir(pool, base_dir);
+        let migration = GarrisonMigration::with_base_dir(pool, base_dir);
         migration.migrate_core().await.expect("migrate 应成功");
 
         let pool = migration.pool();

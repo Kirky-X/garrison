@@ -2,14 +2,14 @@
 # See LICENSE for full license text.
 
 [package]
-name = "bulwark-macros"
+name = "garrison-macros"
 version = "0.5.1"
 edition = "2021"
 rust-version = "1.85"
-description = "Procedural macros for Bulwark auth framework"
+description = "Procedural macros for Garrison auth framework"
 license = "Apache-2.0"
-repository = "https://github.com/Kirky-X/bulwark"
-documentation = "https://docs.rs/bulwark-macros"
+repository = "https://github.com/Kirky-X/garrison"
+documentation = "https://docs.rs/garrison-macros"
 
 [lib]
 proc-macro = true
@@ -21,6 +21,6 @@ proc-macro2 = "1"
 
 [dev-dependencies]
 trybuild = "1"
-bulwark = { path = "..", version = "0.7.0", features = ["annotation-macros"] }
+garrison = { path = "..", version = "0.7.0", features = ["annotation-macros"] }
 axum = { version = "0.8", default-features = false }
 tokio = { version = "1", features = ["rt", "rt-multi-thread"] }

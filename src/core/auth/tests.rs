@@ -4,15 +4,15 @@
 use super::mock::MockDao;
 use super::*;
 use crate::core::token::UuidTokenStyle;
-use crate::dao::BulwarkDao;
+use crate::dao::GarrisonDao;
 use async_trait::async_trait;
 use std::time::Duration;
 
 /// 辅助函数：创建 AuthLogicDefault 实例（使用 UuidTokenStyle + MockDao）。
 /// 默认使用 DenyAllSwitchToGuard（L4 安全默认）。
 fn make_auth_logic(timeout: u64, active_timeout: u64) -> AuthLogicDefault {
-    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
-    let session = Arc::new(BulwarkSession::new(dao, timeout, active_timeout));
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+    let session = Arc::new(GarrisonSession::new(dao, timeout, active_timeout));
     let token_handler: Arc<dyn Token> = Arc::new(UuidTokenStyle);
     AuthLogicDefault::new(session, token_handler, timeout as i64)
 }
@@ -152,7 +152,7 @@ async fn verify_token_invalid_returns_error() {
     let result = auth.verify_token("invalid-token").await;
     assert!(result.is_err());
     match result.err() {
-        Some(BulwarkError::InvalidToken(_)) => {},
+        Some(GarrisonError::InvalidToken(_)) => {},
         other => panic!("期望 InvalidToken，实际: {:?}", other),
     }
 }
@@ -208,7 +208,7 @@ async fn switch_to_invalid_token_returns_not_login() {
     let auth = make_auth_logic_allow_switch(3600, 86400);
     let result = auth.switch_to("invalid-token", "2002").await;
     assert!(
-        matches!(result, Err(BulwarkError::NotLogin(_))),
+        matches!(result, Err(GarrisonError::NotLogin(_))),
         "无效 token 应返回 NotLogin，实际: {:?}",
         result
     );
@@ -221,7 +221,7 @@ async fn switch_to_empty_target_returns_invalid_param() {
     let token = auth.login("1001", None).await.unwrap();
     let result = auth.switch_to(&token, "").await;
     assert!(
-        matches!(result, Err(BulwarkError::InvalidParam(_))),
+        matches!(result, Err(GarrisonError::InvalidParam(_))),
         "空 target_login_id 应返回 InvalidParam，实际: {:?}",
         result
     );
@@ -385,26 +385,26 @@ async fn switch_to_default_impl_returns_not_implemented() {
     struct NoSwitchAuth;
     #[async_trait]
     impl AuthLogic for NoSwitchAuth {
-        async fn login(&self, _id: &str, _params: Option<&str>) -> BulwarkResult<String> {
+        async fn login(&self, _id: &str, _params: Option<&str>) -> GarrisonResult<String> {
             Ok("token".to_string())
         }
-        async fn logout(&self, _token: &str) -> BulwarkResult<()> {
+        async fn logout(&self, _token: &str) -> GarrisonResult<()> {
             Ok(())
         }
-        async fn is_login(&self, _token: &str) -> BulwarkResult<bool> {
+        async fn is_login(&self, _token: &str) -> GarrisonResult<bool> {
             Ok(true)
         }
-        async fn get_login_id(&self, _token: &str) -> BulwarkResult<Option<String>> {
+        async fn get_login_id(&self, _token: &str) -> GarrisonResult<Option<String>> {
             Ok(Some("id".to_string()))
         }
-        async fn verify_token(&self, _token: &str) -> BulwarkResult<String> {
+        async fn verify_token(&self, _token: &str) -> GarrisonResult<String> {
             Ok("id".to_string())
         }
     }
     let auth = NoSwitchAuth;
     let result = auth.switch_to("token", "target").await;
     assert!(
-        matches!(result, Err(BulwarkError::NotImplemented(_))),
+        matches!(result, Err(GarrisonError::NotImplemented(_))),
         "默认实现应返回 NotImplemented，实际: {:?}",
         result
     );
@@ -423,7 +423,7 @@ async fn switch_to_default_guard_denies_all_switches() {
     let _ = auth.login("2002", None).await.unwrap();
     let result = auth.switch_to(&token, "2002").await;
     assert!(
-        matches!(result, Err(BulwarkError::NotPermission(ref msg)) if msg.contains("deny-all")),
+        matches!(result, Err(GarrisonError::NotPermission(ref msg)) if msg.contains("deny-all")),
         "默认 guard 应拒绝切换并返回 NotPermission，实际: {:?}",
         result
     );
@@ -440,9 +440,9 @@ async fn switch_to_custom_guard_denies_preserves_session() {
     struct DenyTargetGuard;
     #[async_trait]
     impl SwitchToGuard for DenyTargetGuard {
-        async fn check(&self, _original: &str, target: &str) -> BulwarkResult<()> {
+        async fn check(&self, _original: &str, target: &str) -> GarrisonResult<()> {
             if target == "admin" {
-                return Err(BulwarkError::NotPermission(format!(
+                return Err(GarrisonError::NotPermission(format!(
                     "禁止切换到管理员身份: {}",
                     target
                 )));
@@ -460,7 +460,7 @@ async fn switch_to_custom_guard_denies_preserves_session() {
     // 切换到 admin 应被拒绝
     let result = auth.switch_to(&token, "admin").await;
     assert!(
-        matches!(result, Err(BulwarkError::NotPermission(ref msg)) if msg.contains("禁止切换")),
+        matches!(result, Err(GarrisonError::NotPermission(ref msg)) if msg.contains("禁止切换")),
         "切换到 admin 应被拒绝，实际: {:?}",
         result
     );
@@ -493,7 +493,7 @@ async fn switch_to_nonexistent_target_returns_invalid_param() {
     // 不创建 "ghost-user" 的 Account-Session
     let result = auth.switch_to(&token, "ghost-user").await;
     assert!(
-        matches!(result, Err(BulwarkError::InvalidParam(ref msg)) if msg.contains("core-auth-target-login-id-not-found")),
+        matches!(result, Err(GarrisonError::InvalidParam(ref msg)) if msg.contains("core-auth-target-login-id-not-found")),
         "切换到不存在的 target 应返回 InvalidParam，实际: {:?}",
         result
     );
@@ -514,7 +514,7 @@ async fn switch_to_target_check_precedes_guard() {
     // 不创建 "ghost" 的 Account-Session
     let result = auth.switch_to(&token, "ghost").await;
     assert!(
-        matches!(result, Err(BulwarkError::InvalidParam(_))),
+        matches!(result, Err(GarrisonError::InvalidParam(_))),
         "target 不存在时应先返回 InvalidParam（而非 guard 的 NotPermission），实际: {:?}",
         result
     );
@@ -605,7 +605,7 @@ async fn renew_to_equivalent_invalid_token_returns_not_login() {
     let auth = make_auth_logic(3600, 86400);
     let result = auth.renew_to_equivalent("invalid-token").await;
     assert!(
-        matches!(result, Err(BulwarkError::NotLogin(_))),
+        matches!(result, Err(GarrisonError::NotLogin(_))),
         "无效 token 应返回 NotLogin，实际: {:?}",
         result
     );
@@ -615,8 +615,8 @@ async fn renew_to_equivalent_invalid_token_returns_not_login() {
 #[tokio::test]
 async fn renew_to_equivalent_preserves_remaining_ttl() {
     // 手动构建 auth + dao，以便直接操作 DAO 的 TTL
-    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
-    let session = Arc::new(BulwarkSession::new(dao.clone(), 3600, 86400));
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+    let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400));
     let token_handler: Arc<dyn Token> = Arc::new(UuidTokenStyle);
     let auth = AuthLogicDefault::new(session, token_handler, 3600);
 
@@ -652,26 +652,26 @@ async fn renew_to_equivalent_default_impl_returns_not_implemented() {
     struct NoRenewAuth;
     #[async_trait]
     impl AuthLogic for NoRenewAuth {
-        async fn login(&self, _id: &str, _params: Option<&str>) -> BulwarkResult<String> {
+        async fn login(&self, _id: &str, _params: Option<&str>) -> GarrisonResult<String> {
             Ok("token".to_string())
         }
-        async fn logout(&self, _token: &str) -> BulwarkResult<()> {
+        async fn logout(&self, _token: &str) -> GarrisonResult<()> {
             Ok(())
         }
-        async fn is_login(&self, _token: &str) -> BulwarkResult<bool> {
+        async fn is_login(&self, _token: &str) -> GarrisonResult<bool> {
             Ok(true)
         }
-        async fn get_login_id(&self, _token: &str) -> BulwarkResult<Option<String>> {
+        async fn get_login_id(&self, _token: &str) -> GarrisonResult<Option<String>> {
             Ok(Some("id".to_string()))
         }
-        async fn verify_token(&self, _token: &str) -> BulwarkResult<String> {
+        async fn verify_token(&self, _token: &str) -> GarrisonResult<String> {
             Ok("id".to_string())
         }
     }
     let auth = NoRenewAuth;
     let result = auth.renew_to_equivalent("token").await;
     assert!(
-        matches!(result, Err(BulwarkError::NotImplemented(_))),
+        matches!(result, Err(GarrisonError::NotImplemented(_))),
         "默认实现应返回 NotImplemented，实际: {:?}",
         result
     );
@@ -749,12 +749,12 @@ impl OrderTrackingDao {
 }
 
 #[async_trait]
-impl BulwarkDao for OrderTrackingDao {
-    async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
+impl GarrisonDao for OrderTrackingDao {
+    async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
         self.inner.get(key).await
     }
 
-    async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> BulwarkResult<()> {
+    async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> GarrisonResult<()> {
         // 若正在追踪且 key 是 token:session:*（非 old_token），
         // 标记新 token 已创建。
         {
@@ -769,15 +769,15 @@ impl BulwarkDao for OrderTrackingDao {
         self.inner.set(key, value, ttl_seconds).await
     }
 
-    async fn update(&self, key: &str, value: &str) -> BulwarkResult<()> {
+    async fn update(&self, key: &str, value: &str) -> GarrisonResult<()> {
         self.inner.update(key, value).await
     }
 
-    async fn expire(&self, key: &str, seconds: u64) -> BulwarkResult<()> {
+    async fn expire(&self, key: &str, seconds: u64) -> GarrisonResult<()> {
         self.inner.expire(key, seconds).await
     }
 
-    async fn delete(&self, key: &str) -> BulwarkResult<()> {
+    async fn delete(&self, key: &str) -> GarrisonResult<()> {
         // 标记旧 token 已被 delete；同时检测 DoS gap 违规
         // （delete(old) 在 set(new) 之前 = DoS gap）
         {
@@ -793,7 +793,7 @@ impl BulwarkDao for OrderTrackingDao {
         self.inner.delete(key).await
     }
 
-    async fn get_timeout(&self, key: &str) -> BulwarkResult<Option<Duration>> {
+    async fn get_timeout(&self, key: &str) -> GarrisonResult<Option<Duration>> {
         self.inner.get_timeout(key).await
     }
 }
@@ -805,8 +805,8 @@ impl BulwarkDao for OrderTrackingDao {
 #[tokio::test]
 async fn a9_renew_to_equivalent_creates_new_before_deleting_old() {
     let tracking_dao = Arc::new(OrderTrackingDao::new());
-    let session = Arc::new(BulwarkSession::new(
-        tracking_dao.clone() as Arc<dyn BulwarkDao>,
+    let session = Arc::new(GarrisonSession::new(
+        tracking_dao.clone() as Arc<dyn GarrisonDao>,
         3600,
         86400,
     ));
@@ -847,8 +847,8 @@ async fn a9_renew_to_equivalent_creates_new_before_deleting_old() {
 #[tokio::test]
 async fn a9_renew_to_equivalent_old_token_valid_until_new_created() {
     let tracking_dao = Arc::new(OrderTrackingDao::new());
-    let session = Arc::new(BulwarkSession::new(
-        tracking_dao.clone() as Arc<dyn BulwarkDao>,
+    let session = Arc::new(GarrisonSession::new(
+        tracking_dao.clone() as Arc<dyn GarrisonDao>,
         3600,
         86400,
     ));
@@ -894,8 +894,8 @@ fn make_auth_logic_with_remember_me(
     rm_enabled: bool,
     rm_timeout: i64,
 ) -> AuthLogicDefault {
-    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
-    let session = Arc::new(BulwarkSession::new(dao, timeout, active_timeout));
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+    let session = Arc::new(GarrisonSession::new(dao, timeout, active_timeout));
     let token_handler: Arc<dyn Token> = Arc::new(UuidTokenStyle);
     AuthLogicDefault::new(session, token_handler, timeout as i64)
         .with_remember_me(rm_enabled, rm_timeout)

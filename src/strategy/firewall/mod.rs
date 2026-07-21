@@ -5,7 +5,7 @@
 //!
 //! ## 设计
 //!
-//! - [`BulwarkFirewallStrategy`](crate::strategy::firewall::BulwarkFirewallStrategy) trait：定义 `check(&self, ctx: &FirewallContext) -> BulwarkResult<()>` 契约
+//! - [`GarrisonFirewallStrategy`](crate::strategy::firewall::GarrisonFirewallStrategy) trait：定义 `check(&self, ctx: &FirewallContext) -> GarrisonResult<()>` 契约
 //! - [`FirewallContext`](crate::strategy::firewall::FirewallContext)：携带 IP / login_id / tenant_id 供策略决策
 //! - [`StrategyRegistration`](crate::strategy::firewall::StrategyRegistration)：inventory 注册项，5 个 strategy 通过 `inventory::submit!` 注册
 //!
@@ -21,11 +21,11 @@
 //!
 //! ## 与现有 trait 的区分
 //!
-//! - [`BulwarkPermissionStrategy`](crate::strategy::BulwarkPermissionStrategy)（v0.3.0）：权限/角色校验
+//! - [`GarrisonPermissionStrategy`](crate::strategy::GarrisonPermissionStrategy)（v0.3.0）：权限/角色校验
 //! - [`FirewallStrategy`](crate::strategy::registry::FirewallStrategy)（v0.4.2）：登录前钩子检查
-//! - [`BulwarkFirewallStrategy`](crate::strategy::firewall::BulwarkFirewallStrategy)（v0.5.0，本 trait）：IP 级防火墙拦截
+//! - [`GarrisonFirewallStrategy`](crate::strategy::firewall::GarrisonFirewallStrategy)（v0.5.0，本 trait）：IP 级防火墙拦截
 
-use crate::error::BulwarkResult;
+use crate::error::GarrisonResult;
 use async_trait::async_trait;
 
 /// 异地登录检测策略。
@@ -105,7 +105,7 @@ pub use waf_hooks::{BlackPathHook, DangerCharacterHook};
 /// # 构造
 ///
 /// ```ignore
-/// use bulwark::strategy::firewall::FirewallContext;
+/// use garrison::strategy::firewall::FirewallContext;
 ///
 /// let ctx = FirewallContext::new("192.168.1.1")
 ///     .with_login_id("1001")
@@ -124,7 +124,7 @@ pub struct FirewallContext {
 mod context_impl;
 
 // ============================================================================
-// BulwarkFirewallStrategy trait：IP 级防火墙策略契约
+// GarrisonFirewallStrategy trait：IP 级防火墙策略契约
 // ============================================================================
 
 /// IP 级防火墙策略 trait，定义请求级安全检查的可插拔契约。
@@ -139,15 +139,15 @@ mod context_impl;
 /// # 返回
 ///
 /// - `Ok(())`：检查通过，允许请求。
-/// - `Err(BulwarkError::FirewallBlocked)`：检查未通过，拦截请求。
+/// - `Err(GarrisonError::FirewallBlocked)`：检查未通过，拦截请求。
 /// - `Err(other)`：内部错误（如 DAO 故障）。
 #[async_trait]
-pub trait BulwarkFirewallStrategy: Send + Sync {
+pub trait GarrisonFirewallStrategy: Send + Sync {
     /// 执行防火墙安全检查。
     ///
     /// # 参数
     /// - `ctx`: 防火墙上下文（IP / login_id / tenant_id）。
-    async fn check(&self, ctx: &FirewallContext) -> BulwarkResult<()>;
+    async fn check(&self, ctx: &FirewallContext) -> GarrisonResult<()>;
 }
 
 // ============================================================================
@@ -159,9 +159,9 @@ pub trait BulwarkFirewallStrategy: Send + Sync {
 /// 实现方（如 [`RateLimitStrategy`])
 /// 根据自身状态决定何时触发挑战，并在 `verify_challenge` 中验证用户提交的答案。
 ///
-/// # 与 [`BulwarkFirewallStrategy`] 的区分
+/// # 与 [`GarrisonFirewallStrategy`] 的区分
 ///
-/// - `BulwarkFirewallStrategy::check`：硬拦截，直接返回 `FirewallBlocked`。
+/// - `GarrisonFirewallStrategy::check`：硬拦截，直接返回 `FirewallBlocked`。
 /// - `CaptchaChallenge::should_challenge`：软挑战，返回 true 时调用方应弹出验证码，
 ///   用户通过 `verify_challenge` 后才允许后续请求。
 ///
@@ -181,7 +181,7 @@ pub trait CaptchaChallenge: Send + Sync {
     /// - `Ok(true)`: 应触发挑战（如请求计数接近阈值）。
     /// - `Ok(false)`: 无需挑战。
     /// - `Err(_)`: 内部错误（如 DAO 故障）。
-    async fn should_challenge(&self, ctx: &FirewallContext) -> BulwarkResult<bool>;
+    async fn should_challenge(&self, ctx: &FirewallContext) -> GarrisonResult<bool>;
 
     /// 验证用户提交的验证码答案。
     ///
@@ -193,7 +193,7 @@ pub trait CaptchaChallenge: Send + Sync {
     /// - `Ok(true)`: 答案正确，挑战通过。
     /// - `Ok(false)`: 答案错误或未设置期望答案，挑战失败。
     /// - `Err(_)`: 内部错误（如 DAO 故障）。
-    async fn verify_challenge(&self, ctx: &FirewallContext, answer: &str) -> BulwarkResult<bool>;
+    async fn verify_challenge(&self, ctx: &FirewallContext, answer: &str) -> GarrisonResult<bool>;
 }
 
 // ============================================================================

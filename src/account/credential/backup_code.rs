@@ -20,8 +20,8 @@
 
 use super::{Credential, CredentialModel, CredentialType};
 use crate::constants::DaoKeyPrefix;
-use crate::dao::BulwarkDao;
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::dao::GarrisonDao;
+use crate::error::{GarrisonError, GarrisonResult};
 use async_trait::async_trait;
 use rand::rngs::OsRng;
 use rand::RngCore;
@@ -43,9 +43,9 @@ struct BackupCodeSecretData {
 
 impl BackupCodeSecretData {
     /// 从 `secret_data` JSON 字符串解析。
-    fn from_json(secret_data: &str) -> BulwarkResult<Self> {
+    fn from_json(secret_data: &str) -> GarrisonResult<Self> {
         serde_json::from_str(secret_data)
-            .map_err(|e| BulwarkError::InvalidParam(format!("account-backup-deserialize::{}", e)))
+            .map_err(|e| GarrisonError::InvalidParam(format!("account-backup-deserialize::{}", e)))
     }
 }
 
@@ -81,7 +81,7 @@ fn format_code(base32_str: &str) -> String {
 /// # 示例
 ///
 /// ```ignore
-/// use bulwark::account::credential::backup_code::BackupCodeCredential;
+/// use garrison::account::credential::backup_code::BackupCodeCredential;
 ///
 /// let (cred, codes) = BackupCodeCredential::generate("alice")?;
 /// // 将 cred.to_model() 持久化到 DAO 后，可用 verify_and_consume 校验
@@ -115,7 +115,7 @@ impl BackupCodeCredential {
     /// # 返回
     /// - `Ok((credential, codes))`: 凭证 + 10 个明文备份码列表。
     /// - `Err(_)`: 序列化失败。
-    pub fn generate(login_id: &str) -> BulwarkResult<(BackupCodeCredential, Vec<String>)> {
+    pub fn generate(login_id: &str) -> GarrisonResult<(BackupCodeCredential, Vec<String>)> {
         let mut codes = Vec::with_capacity(CODE_COUNT);
         let mut hashes = Vec::with_capacity(CODE_COUNT);
         for _ in 0..CODE_COUNT {
@@ -128,7 +128,7 @@ impl BackupCodeCredential {
             hashes.push(sha256_hex(&normalized));
         }
         let secret_data = serde_json::to_string(&BackupCodeSecretData { codes: hashes })
-            .map_err(|e| BulwarkError::Internal(format!("account-backup-serialize::{}", e)))?;
+            .map_err(|e| GarrisonError::Internal(format!("account-backup-serialize::{}", e)))?;
         let model = CredentialModel {
             id: uuid::Uuid::new_v4().to_string(),
             user_id: login_id.to_string(),
@@ -159,8 +159,8 @@ impl BackupCodeCredential {
     pub async fn verify_and_consume(
         &self,
         input: &str,
-        dao: &dyn BulwarkDao,
-    ) -> BulwarkResult<bool> {
+        dao: &dyn GarrisonDao,
+    ) -> GarrisonResult<bool> {
         let key = format!(
             "{}{}:{}",
             DaoKeyPrefix::Cred,
@@ -170,24 +170,24 @@ impl BackupCodeCredential {
         let json = match dao.get(&key).await? {
             Some(j) => j,
             None => {
-                return Err(BulwarkError::InvalidParam(format!(
+                return Err(GarrisonError::InvalidParam(format!(
                     "backup_code credential not found in DAO: {}",
                     key
                 )))
             },
         };
         let model: CredentialModel = serde_json::from_str(&json)
-            .map_err(|e| BulwarkError::Internal(format!("account-cred-deserialize::{}", e)))?;
+            .map_err(|e| GarrisonError::Internal(format!("account-cred-deserialize::{}", e)))?;
         let mut data = BackupCodeSecretData::from_json(&model.secret_data)?;
         let input_hash = sha256_hex(&normalize(input));
         if let Some(idx) = data.codes.iter().position(|h| *h == input_hash) {
             data.codes.remove(idx);
             let new_secret = serde_json::to_string(&data)
-                .map_err(|e| BulwarkError::Internal(format!("account-backup-serialize::{}", e)))?;
+                .map_err(|e| GarrisonError::Internal(format!("account-backup-serialize::{}", e)))?;
             let mut updated_model = model.clone();
             updated_model.secret_data = new_secret;
             let updated_json = serde_json::to_string(&updated_model)
-                .map_err(|e| BulwarkError::Internal(format!("account-cred-serialize::{}", e)))?;
+                .map_err(|e| GarrisonError::Internal(format!("account-cred-serialize::{}", e)))?;
             dao.set_permanent(&key, &updated_json).await?;
             Ok(true)
         } else {
@@ -206,7 +206,7 @@ impl Credential for BackupCodeCredential {
         self.model.clone()
     }
 
-    async fn verify(&self, input: &str) -> BulwarkResult<bool> {
+    async fn verify(&self, input: &str) -> GarrisonResult<bool> {
         let data = BackupCodeSecretData::from_json(&self.model.secret_data)?;
         let input_hash = sha256_hex(&normalize(input));
         Ok(data.codes.contains(&input_hash))

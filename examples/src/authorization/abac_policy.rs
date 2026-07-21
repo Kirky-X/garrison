@@ -7,15 +7,15 @@
 //!
 //! 运行方式：
 //! ```sh
-//! cargo run -p bulwark-examples --bin abac_policy --features full
+//! cargo run -p garrison-examples --bin abac_policy --features full
 //! ```
 //!
 //! 注意：`check_abac_with_policy` 是宏入口，需要全局引擎初始化 + 登录上下文。
 //! 本示例直接使用 `AbacEngine::evaluate_with_temp_policy` 演示核心求值逻辑，
-//! 避免引入 BulwarkManager 全局状态依赖。
+//! 避免引入 GarrisonManager 全局状态依赖。
 
-use bulwark::abac::{AbacEngine, EmptyEntityLoader};
-use bulwark::error::BulwarkResult;
+use garrison::abac::{AbacEngine, EmptyEntityLoader};
+use garrison::error::GarrisonResult;
 use std::sync::Arc;
 
 /// Cedar schema JSON：定义 User / Resource 实体类型和 access 动作。
@@ -58,8 +58,8 @@ const SCHEMA_JSON: &str = r#"{
 /// 3. 使用临时策略求值：条件 `1 == 2` → Deny
 /// 4. 加载共享 permit 策略后求值 → Allow
 /// 5. 卸载策略后求值 → Deny
-pub async fn run() -> BulwarkResult<()> {
-    println!("=== Bulwark ABAC 策略示例 ===\n");
+pub async fn run() -> GarrisonResult<()> {
+    println!("=== Garrison ABAC 策略示例 ===\n");
 
     // 1. 创建 AbacEngine
     let engine = AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader)).await?;

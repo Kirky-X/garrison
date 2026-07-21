@@ -1,6 +1,6 @@
 # 版本路线图
 
-本页描述 Bulwark（Rust 认证授权框架）的版本演进规划。
+本页描述 Garrison（Rust 认证授权框架）的版本演进规划。
 
 > 变更管理通过 specmark 工作流进行：explore → propose → apply → archive。
 > 完整路线图详见 [../../docs/ROADMAP.md](../../docs/ROADMAP.md)。
@@ -17,7 +17,7 @@
 | 0.4.2 | ✅ 已完成 | 2026-07-05 | gap closure（dao 扩展 / strategy-registry / jwt-modes / oauth-2-1 / token-introspection / apikey-namespace 等 18 项） |
 | 0.5.0 | ✅ 已完成 | 2026-07-06 | 生产刚需版（多租户 / 社交登录 / 审计日志 / Token Rotation / 安全防护 / 角色层级 / 决策溯源 / Keycloak OIDC RP / PostgreSQL / actix+warp 完整适配） |
 | 0.5.1 | ✅ 已合入 | 2026-07-07 | 工程优化版（RBAC 实体 / UserDevice / 权限注册表 / 请求对象 API / miette 富错误 / 显式 Manager API / confusable string 检测，功能直接合入 0.5.2+ 发布） |
-| 0.5.2 | ✅ 已完成 | 2026-07-08 | 架构重构版（BulwarkLogic trait 拆分 / LoginId newtype 删除 / oxcache _sync 评估 / keys 性能 / stp 模块拆分） |
+| 0.5.2 | ✅ 已完成 | 2026-07-08 | 架构重构版（GarrisonLogic trait 拆分 / LoginId newtype 删除 / oxcache _sync 评估 / keys 性能 / stp 模块拆分） |
 | 0.5.3 | ✅ 已完成 | 2026-07-09 | 功能补全版（oxcache 升级 / stp 完整拆分 / MySQL 后端 / Firewall MaxMindDb 生产后端） |
 | 0.6.0 | ✅ 已完成 | 2026-07-09 | 账号安全引擎版（account/ 模块 + Credential SPI + PasswordPolicyEngine + UserLockoutStrategy + AuthenticationFlow DSL + i18n 社交登录异常 + AccountMetrics） |
 | 0.6.1 | ✅ 已完成 | 2026-07-10 | gap-closure-remaining（remember_me / Redis 部署模式 / switch_to / Token 置换 / OAuth2 注解 / group() / SessionExpiryListener / SAML 2.0 / OIDC RP / Redis pub/sub SsoChannel — 11 项全部补齐） |
@@ -27,15 +27,15 @@
 
 ## v0.1.0 核心基础设施（已完成）
 
-- ✅ 错误类型体系（`BulwarkError`）
+- ✅ 错误类型体系（`GarrisonError`）
 - ✅ 配置系统（三级配置源 + `tokio::sync::watch` 热更新）
-- ✅ 上下文抽象（`BulwarkContext` + axum adapter + task_local）
-- ✅ DAO 抽象（`BulwarkDao` trait + oxcache + dbnexus）
+- ✅ 上下文抽象（`GarrisonContext` + axum adapter + task_local）
+- ✅ DAO 抽象（`GarrisonDao` trait + oxcache + dbnexus）
 - ✅ 双模会话管理（Account-Session + Token-Session）
-- ✅ 核心 API（`BulwarkLogic` + `BulwarkUtil`）
-- ✅ 权限校验策略（`BulwarkPermissionStrategy`）
-- ✅ 全局管理器（`BulwarkManager` + inventory 编译期注册）
-- ✅ axum 集成（extractor + `BulwarkRouter` + Interceptor）
+- ✅ 核心 API（`GarrisonLogic` + `GarrisonUtil`）
+- ✅ 权限校验策略（`GarrisonPermissionStrategy`）
+- ✅ 全局管理器（`GarrisonManager` + inventory 编译期注册）
+- ✅ axum 集成（extractor + `GarrisonRouter` + Interceptor）
 
 **里程碑**：完成"能跑起来"的最小闭环，基于 UUID/Random64 Token 的登录、会话、权限校验与 axum 集成。
 
@@ -43,15 +43,15 @@
 
 - ✅ 协议层：JWT / OAuth2 / SSO / Sign / APIKey / Temp
 - ✅ 安全模块：TOTP（RFC 6238）/ HMAC 签名 / HTTP Basic / HTTP Digest
-- ✅ 核心扩展：`Token` trait + `AuthLogic` + `PermissionChecker` + `BulwarkPlugin` + `BulwarkListener`
+- ✅ 核心扩展：`Token` trait + `AuthLogic` + `PermissionChecker` + `GarrisonPlugin` + `GarrisonListener`
 - ✅ 新增配置字段：`jwt_algorithm` / `sign_window_seconds` / `sso_ticket_ttl_seconds`
 
 **里程碑**：覆盖 13 个特性域的大部分协议与安全子域，从"可用"走向"完整"。
 
 ## v0.2.1 稳定性优化（已完成）
 
-- ✅ auto-wire gap 修复：`BulwarkManager::init` 自动注入 PluginManager / ListenerManager / AuthLogic / PermissionChecker
-- ✅ `BulwarkLogicDefault` 新增 4 个 builder 方法
+- ✅ auto-wire gap 修复：`GarrisonManager::init` 自动注入 PluginManager / ListenerManager / AuthLogic / PermissionChecker
+- ✅ `GarrisonLogicDefault` 新增 4 个 builder 方法
 - ✅ 协议层边界场景测试（6 模块 20 测试）
 - ✅ examples 工程化重组（workspace member + 独立测试）
 
@@ -87,7 +87,7 @@
 - ✅ Keycloak OIDC RP（`keycloak-oidc`）：discovery + JWKS 验签 + ID Token 验证
 - ✅ PostgreSQL 后端：dbnexus 0.3+ 集成
 - ✅ actix-web / warp 完整 Extractor 适配
-- ✅ SSO TOCTU 原子化：`validate_ticket` 改用 `BulwarkDao::get_and_delete`
+- ✅ SSO TOCTU 原子化：`validate_ticket` 改用 `GarrisonDao::get_and_delete`
 - ✅ 注解系统：`@CheckPermission` / `@CheckRole` 过程宏
 
 **里程碑**：从"协议完整"走向"生产可用"。
@@ -95,7 +95,7 @@
 ## v0.5.1~v0.5.3 工程优化与功能补全（已完成）
 
 - ✅ **0.5.1**：RBAC 实体 / UserDevice / 权限注册表 / 请求对象 API / miette 富错误 / JSON 测试 / 显式 Manager API / confusable string 检测（合入 0.5.2+ 发布）
-- ✅ **0.5.2**：`BulwarkLogic` 上帝 trait 拆分为 6 个子 trait（BulwarkCore / SessionLogic / PermissionLogic / TokenLogic / MfaLogic / PasswordLogic），删除 `BulwarkLogic` 与 `LoginId` newtype，stp 模块拆分
+- ✅ **0.5.2**：`GarrisonLogic` 上帝 trait 拆分为 6 个子 trait（GarrisonCore / SessionLogic / PermissionLogic / TokenLogic / MfaLogic / PasswordLogic），删除 `GarrisonLogic` 与 `LoginId` newtype，stp 模块拆分
 - ✅ **0.5.3**：oxcache 升级到 0.3.3 + stp 完整拆分 + MySQL 后端 + Firewall MaxMindDb 生产后端
 
 ## v0.6.0 / v0.6.1 账号安全引擎（已完成）
@@ -134,9 +134,9 @@
 
 ## 设计原则
 
-- **库优先**：Bulwark 是库而非框架，业务方保持控制权
+- **库优先**：Garrison 是库而非框架，业务方保持控制权
 - **feature 门控**：核心 always on，协议/安全/适配按需启用
-- **trait 抽象**：双抽象层 + `BulwarkDao` 屏蔽后端差异
+- **trait 抽象**：双抽象层 + `GarrisonDao` 屏蔽后端差异
 - **编译期注册**：`inventory` 实现 zero-cost 插件与 factory 注册
 - **向后兼容**：新增能力通过 feature 开关，未启用时 no-op
 

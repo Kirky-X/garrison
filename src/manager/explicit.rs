@@ -3,72 +3,72 @@
 
 //! 显式 Manager API。
 //!
-//! 提供不依赖全局单例的 [`Manager`] struct，通过 `new(logic)` 显式注入 [`BulwarkLogicDefault`]，
+//! 提供不依赖全局单例的 [`Manager`] struct，通过 `new(logic)` 显式注入 [`GarrisonLogicDefault`]，
 //! 便于测试隔离与多实例场景。
 //!
-//! # 与 [`BulwarkManager`](crate::manager::BulwarkManager) 的区别
+//! # 与 [`GarrisonManager`](crate::manager::GarrisonManager) 的区别
 //!
-//! | 维度 | `BulwarkManager` | `Manager` |
+//! | 维度 | `GarrisonManager` | `Manager` |
 //! |:---|:---|:---|
 //! | 依赖注入 | 全局单例，`init()` 静态注入 | 实例化，`new(logic)` 构造注入 |
 //! | 生命周期 | 进程级，`Lazy` 懒加载 | 实例级，Drop 时释放 `Arc` |
-//! | API 风格 | 静态方法（`BulwarkUtil::login`） | 实例方法（`manager.authorize`） |
+//! | API 风格 | 静态方法（`GarrisonUtil::login`） | 实例方法（`manager.authorize`） |
 //! | 适用场景 | 生产单例（向后兼容） | 测试隔离 / 多实例 / 显式 DI |
 //!
 //! # `PermissionLogic` trait 与 `Manager` API 的差异
 //!
 //! `PermissionLogic` trait 的 `check_permission` 签名为
-//! `(&self, permission: &str) -> BulwarkResult<()>`（基于 task_local token 上下文获取 login_id），
-//! 而 `Manager::check_permission` 要求 `(&self, login_id: &str, permission: &str) -> BulwarkResult<bool>`。
+//! `(&self, permission: &str) -> GarrisonResult<()>`（基于 task_local token 上下文获取 login_id），
+//! 而 `Manager::check_permission` 要求 `(&self, login_id: &str, permission: &str) -> GarrisonResult<bool>`。
 //!
-//! 两者无法直接匹配，且 `PermissionLogic` trait 不暴露内部 `BulwarkInterface` / `firewall`。
+//! 两者无法直接匹配，且 `PermissionLogic` trait 不暴露内部 `GarrisonInterface` / `firewall`。
 //! 本模块采用**委托策略**：`Manager` 内部调用 `PermissionLogic::check_permission(permission)`，
 //! 将 `Ok(())` 映射为 `true`、`Err(NotPermission)` 映射为 `false`，其他错误透传。
-//! `login_id` 参数保留以匹配 API 契约（与 `BulwarkUtil` 同样基于 task_local 鉴权上下文）。
+//! `login_id` 参数保留以匹配 API 契约（与 `GarrisonUtil` 同样基于 task_local 鉴权上下文）。
 
 use std::sync::Arc;
 
 use crate::core::permission::{AuthRequest, Decision, DecisionReason};
-use crate::error::{BulwarkError, BulwarkResult};
-use crate::stp::{BulwarkLogicDefault, PermissionLogic};
+use crate::error::{GarrisonError, GarrisonResult};
+use crate::stp::{GarrisonLogicDefault, PermissionLogic};
 
 /// 显式依赖注入入口。
 ///
-/// 与 [`BulwarkManager`](crate::manager::BulwarkManager) 的区别：
-/// - `BulwarkManager`：全局单例，通过 `init()` 初始化，静态 API
-/// - `Manager`：实例化注入，构造时传入 `Arc<BulwarkLogicDefault>`，便于测试与多实例
+/// 与 [`GarrisonManager`](crate::manager::GarrisonManager) 的区别：
+/// - `GarrisonManager`：全局单例，通过 `init()` 初始化，静态 API
+/// - `Manager`：实例化注入，构造时传入 `Arc<GarrisonLogicDefault>`，便于测试与多实例
 ///
 /// # 生命周期独立
 ///
-/// `Manager` 持有 `Arc<BulwarkLogicDefault>` 的引用计数副本，Drop 时仅减少引用计数，
-/// 不影响 `BulwarkManager` 全局单例（两者共享同一 `BulwarkLogicDefault` 实例时互不干扰）。
+/// `Manager` 持有 `Arc<GarrisonLogicDefault>` 的引用计数副本，Drop 时仅减少引用计数，
+/// 不影响 `GarrisonManager` 全局单例（两者共享同一 `GarrisonLogicDefault` 实例时互不干扰）。
 ///
 /// # 鉴权上下文
 ///
 /// `authorize` / `check_permission` 委托 [`PermissionLogic::check_permission`]，
-/// 该方法基于 task_local token 上下文获取当前 `login_id`（与 `BulwarkUtil` 一致）。
+/// 该方法基于 task_local token 上下文获取当前 `login_id`（与 `GarrisonUtil` 一致）。
 /// 调用前需通过 web 中间件或 [`with_current_token`](crate::stp::with_current_token) 设置 task_local。
 pub struct Manager {
-    logic: Arc<BulwarkLogicDefault>,
+    logic: Arc<GarrisonLogicDefault>,
 }
 
 impl Manager {
-    /// 创建 Manager 实例，注入 `BulwarkLogicDefault` 实现。
+    /// 创建 Manager 实例，注入 `GarrisonLogicDefault` 实现。
     ///
     /// # 参数
-    /// - `logic`: `BulwarkLogicDefault` 实现的 `Arc` 引用（可与 `BulwarkManager::logic()` 共享同一实例）。
+    /// - `logic`: `GarrisonLogicDefault` 实现的 `Arc` 引用（可与 `GarrisonManager::logic()` 共享同一实例）。
     ///
     /// # 示例
     ///
     /// ```ignore
     /// use std::sync::Arc;
-    /// use bulwark::manager::explicit::Manager;
-    /// use bulwark::prelude::*;
+    /// use garrison::manager::explicit::Manager;
+    /// use garrison::prelude::*;
     ///
-    /// let logic = BulwarkManager::logic().unwrap();
+    /// let logic = GarrisonManager::logic().unwrap();
     /// let manager = Manager::new(logic);
     /// ```
-    pub fn new(logic: Arc<BulwarkLogicDefault>) -> Self {
+    pub fn new(logic: Arc<GarrisonLogicDefault>) -> Self {
         Self { logic }
     }
 
@@ -86,15 +86,15 @@ impl Manager {
     ///
     /// # 鉴权上下文
     ///
-    /// 实际 `login_id` 由 task_local token 上下文决定（与 `BulwarkUtil` 一致），
+    /// 实际 `login_id` 由 task_local token 上下文决定（与 `GarrisonUtil` 一致），
     /// `req.login_id` 保留在 API 契约中用于未来扩展（如直接 login_id 鉴权路径）。
     ///
     /// # 错误
     ///
-    /// - 未登录且 `throw_on_not_login=true`：透传 `BulwarkError::NotLogin`。
-    /// - DAO 故障等：透传对应 `BulwarkError`。
+    /// - 未登录且 `throw_on_not_login=true`：透传 `GarrisonError::NotLogin`。
+    /// - DAO 故障等：透传对应 `GarrisonError`。
     /// - "未持有权限"不是错误，返回 `Ok(Decision { allowed: false, .. })`。
-    pub async fn authorize(&self, req: &AuthRequest) -> BulwarkResult<Decision> {
+    pub async fn authorize(&self, req: &AuthRequest) -> GarrisonResult<Decision> {
         // trace_id 非空 UUID v7（时间有序）
         let trace_id = Some(uuid::Uuid::now_v7().to_string());
         match self.logic.check_permission(&req.action).await {
@@ -102,7 +102,7 @@ impl Manager {
                 trace_id,
                 ..Decision::allow()
             }),
-            Err(BulwarkError::NotPermission(_)) => Ok(Decision {
+            Err(GarrisonError::NotPermission(_)) => Ok(Decision {
                 trace_id,
                 ..Decision::deny(DecisionReason::NoMatchingPermission)
             }),
@@ -119,7 +119,7 @@ impl Manager {
     ///
     /// # 鉴权上下文
     ///
-    /// 实际 `login_id` 由 task_local token 上下文决定（与 `BulwarkUtil` 一致）。
+    /// 实际 `login_id` 由 task_local token 上下文决定（与 `GarrisonUtil` 一致）。
     /// `login_id` 参数保留以匹配 API 契约，便于未来支持直接 login_id 鉴权。
     ///
     /// # 参数
@@ -130,11 +130,11 @@ impl Manager {
     /// - `Ok(true)`: 持有权限。
     /// - `Ok(false)`: 未持有权限。
     /// - `Err(_)`: 鉴权过程出错（未登录 / DAO 故障等）。
-    pub async fn check_permission(&self, login_id: &str, permission: &str) -> BulwarkResult<bool> {
+    pub async fn check_permission(&self, login_id: &str, permission: &str) -> GarrisonResult<bool> {
         let _ = login_id;
         match self.logic.check_permission(permission).await {
             Ok(()) => Ok(true),
-            Err(BulwarkError::NotPermission(_)) => Ok(false),
+            Err(GarrisonError::NotPermission(_)) => Ok(false),
             Err(e) => Err(e),
         }
     }
@@ -143,17 +143,17 @@ impl Manager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::BulwarkConfig;
+    use crate::config::GarrisonConfig;
     use crate::context::tenant::with_default_tenant;
     use crate::dao::tests::MockDao;
-    use crate::dao::BulwarkDao;
-    use crate::manager::BulwarkManager;
-    use crate::session::BulwarkSession;
+    use crate::dao::GarrisonDao;
+    use crate::manager::GarrisonManager;
+    use crate::session::GarrisonSession;
     use crate::stp::{
-        with_current_token, BulwarkInterface, BulwarkLogicDefault, BulwarkUtil, LoginParams,
+        with_current_token, GarrisonInterface, GarrisonLogicDefault, GarrisonUtil, LoginParams,
         SessionLogic,
     };
-    use crate::strategy::{BulwarkPermissionStrategy, BulwarkPermissionStrategyDefault};
+    use crate::strategy::{GarrisonPermissionStrategy, GarrisonPermissionStrategyDefault};
     use async_trait::async_trait;
     use serial_test::serial;
     use std::collections::HashMap;
@@ -190,12 +190,12 @@ mod tests {
     }
 
     #[async_trait]
-    impl BulwarkInterface for MockInterface {
-        async fn get_permission_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+    impl GarrisonInterface for MockInterface {
+        async fn get_permission_list(&self, login_id: &str) -> GarrisonResult<Vec<String>> {
             Ok(self.permissions.get(login_id).cloned().unwrap_or_default())
         }
 
-        async fn get_role_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+        async fn get_role_list(&self, login_id: &str) -> GarrisonResult<Vec<String>> {
             Ok(self.roles.get(login_id).cloned().unwrap_or_default())
         }
     }
@@ -205,23 +205,23 @@ mod tests {
     // ------------------------------------------------------------------------
 
     /// 创建默认测试配置（timeout=3600，throw_on_not_login=false 便于断言）。
-    fn make_config() -> BulwarkConfig {
-        let mut config = BulwarkConfig::default_config();
+    fn make_config() -> GarrisonConfig {
+        let mut config = GarrisonConfig::default_config();
         config.timeout = 3600;
         config.active_timeout = -1;
         config.throw_on_not_login = false;
         config
     }
 
-    /// 构造独立的 `BulwarkLogicDefault`（不依赖全局单例），注入 MockDao + MockInterface。
-    fn make_logic(interface: Arc<dyn BulwarkInterface>) -> Arc<BulwarkLogicDefault> {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+    /// 构造独立的 `GarrisonLogicDefault`（不依赖全局单例），注入 MockDao + MockInterface。
+    fn make_logic(interface: Arc<dyn GarrisonInterface>) -> Arc<GarrisonLogicDefault> {
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let config = Arc::new(make_config());
         let timeout = u64::try_from(config.timeout).unwrap();
-        let session = Arc::new(BulwarkSession::new(dao, timeout, timeout));
-        let firewall: Arc<dyn BulwarkPermissionStrategy> =
-            Arc::new(BulwarkPermissionStrategyDefault::new(interface));
-        Arc::new(BulwarkLogicDefault::new(session, config, firewall))
+        let session = Arc::new(GarrisonSession::new(dao, timeout, timeout));
+        let firewall: Arc<dyn GarrisonPermissionStrategy> =
+            Arc::new(GarrisonPermissionStrategyDefault::new(interface));
+        Arc::new(GarrisonLogicDefault::new(session, config, firewall))
     }
 
     /// 在 task_local 上下文中执行 future（设置当前 token）。
@@ -238,7 +238,7 @@ mod tests {
     /// 验证 Manager 持有 logic 的 Arc 副本，不消耗原始 Arc。
     #[tokio::test]
     async fn manager_new_construction_succeeds() {
-        let interface: Arc<dyn BulwarkInterface> = Arc::new(MockInterface::new());
+        let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface::new());
         let logic = make_logic(interface);
         let strong_count_before = Arc::strong_count(&logic);
 
@@ -268,7 +268,7 @@ mod tests {
     /// 已登录 + 持有权限场景下返回 `Ok(Decision)`。
     #[tokio::test]
     async fn manager_authorize_returns_decision() {
-        let interface: Arc<dyn BulwarkInterface> =
+        let interface: Arc<dyn GarrisonInterface> =
             Arc::new(MockInterface::new().with_permission("1001", &["user:read"]));
         let logic = make_logic(interface);
         let manager = Manager::new(Arc::clone(&logic));
@@ -293,7 +293,7 @@ mod tests {
     /// T078-3: 持有权限时 `authorize` 返回 `Decision { allowed: true, reason: ExplicitAllow }`。
     #[tokio::test]
     async fn manager_authorize_with_allowed_returns_true() {
-        let interface: Arc<dyn BulwarkInterface> =
+        let interface: Arc<dyn GarrisonInterface> =
             Arc::new(MockInterface::new().with_permission("1001", &["user:read"]));
         let logic = make_logic(interface);
         let manager = Manager::new(Arc::clone(&logic));
@@ -320,7 +320,7 @@ mod tests {
     /// T078-4: 未持有权限时 `authorize` 返回 `Decision { allowed: false, reason: NoMatchingPermission }`。
     #[tokio::test]
     async fn manager_authorize_with_denied_returns_false() {
-        let interface: Arc<dyn BulwarkInterface> =
+        let interface: Arc<dyn GarrisonInterface> =
             Arc::new(MockInterface::new().with_permission("1001", &["user:read"]));
         let logic = make_logic(interface);
         let manager = Manager::new(Arc::clone(&logic));
@@ -350,7 +350,7 @@ mod tests {
     /// 验证委托语义：Manager 内部调用 logic.check_permission，返回值映射正确。
     #[tokio::test]
     async fn manager_check_permission_delegates_to_logic() {
-        let interface: Arc<dyn BulwarkInterface> =
+        let interface: Arc<dyn GarrisonInterface> =
             Arc::new(MockInterface::new().with_permission("1001", &["user:read"]));
         let logic = make_logic(interface);
         let manager = Manager::new(Arc::clone(&logic));
@@ -383,7 +383,7 @@ mod tests {
         })
         .await;
         assert!(
-            matches!(logic_denied, Err(BulwarkError::NotPermission(_))),
+            matches!(logic_denied, Err(GarrisonError::NotPermission(_))),
             "logic 未持有应 Err(NotPermission)"
         );
         assert!(
@@ -396,22 +396,22 @@ mod tests {
     // 测试 6：Manager Drop 不影响全局单例
     // ------------------------------------------------------------------------
 
-    /// T078-6: Manager Drop 后 `BulwarkManager` 全局单例状态不受影响（独立生命周期）。
+    /// T078-6: Manager Drop 后 `GarrisonManager` 全局单例状态不受影响（独立生命周期）。
     ///
-    /// 验证 Manager 与 BulwarkManager 共享同一 logic 实例时，Drop Manager
+    /// 验证 Manager 与 GarrisonManager 共享同一 logic 实例时，Drop Manager
     /// 不破坏全局单例（引用计数正确，is_initialized 仍为 true）。
     #[tokio::test]
     #[serial]
     async fn manager_drop_does_not_affect_global_singleton() {
-        BulwarkManager::reset_for_test();
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        GarrisonManager::reset_for_test();
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let config = Arc::new(make_config());
-        let interface: Arc<dyn BulwarkInterface> = Arc::new(MockInterface::new());
-        BulwarkManager::init(dao, config, interface).unwrap();
-        assert!(BulwarkManager::is_initialized());
+        let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface::new());
+        GarrisonManager::init(dao, config, interface).unwrap();
+        assert!(GarrisonManager::is_initialized());
 
         // 从全局单例获取 logic，构造 Manager
-        let logic = BulwarkManager::logic().unwrap();
+        let logic = GarrisonManager::logic().unwrap();
         let strong_count_before = Arc::strong_count(&logic);
         {
             let _manager = Manager::new(Arc::clone(&logic));
@@ -430,13 +430,13 @@ mod tests {
 
         // 全局单例状态未受影响
         assert!(
-            BulwarkManager::is_initialized(),
+            GarrisonManager::is_initialized(),
             "Drop Manager 后全局单例应仍初始化"
         );
         // 全局单例仍可正常 login
-        let token = BulwarkUtil::login_simple("2002").await.unwrap();
+        let token = GarrisonUtil::login_simple("2002").await.unwrap();
         assert!(!token.is_empty(), "全局单例 login 仍应正常工作");
 
-        BulwarkManager::reset_for_test();
+        GarrisonManager::reset_for_test();
     }
 }

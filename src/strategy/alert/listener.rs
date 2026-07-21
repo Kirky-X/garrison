@@ -3,8 +3,8 @@
 
 //! 告警监听器实现模块，提供基于 `tracing` 的默认告警监听器与基于 DAO 的审计日志监听器。
 
-use crate::dao::BulwarkDao;
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::dao::GarrisonDao;
+use crate::error::{GarrisonError, GarrisonResult};
 use async_trait::async_trait;
 use std::sync::Arc;
 
@@ -29,7 +29,7 @@ impl TracingAlertListener {
 
 #[async_trait]
 impl AlertListener for TracingAlertListener {
-    async fn on_alert(&self, event: &SecurityAlertEvent) -> BulwarkResult<()> {
+    async fn on_alert(&self, event: &SecurityAlertEvent) -> GarrisonResult<()> {
         match event {
             SecurityAlertEvent::AnomalyLogin {
                 login_id,
@@ -100,7 +100,7 @@ impl AlertListener for TracingAlertListener {
 
 /// 审计日志告警监听器，将告警事件持久化到 DAO。
 ///
-/// 将 `SecurityAlertEvent` 序列化为 JSON 写入 `BulwarkDao`，
+/// 将 `SecurityAlertEvent` 序列化为 JSON 写入 `GarrisonDao`，
 /// key 格式 `audit:alert:{trace_id_or_uuid}`。
 /// 用于安全告警的持久化审计追踪。
 ///
@@ -112,7 +112,7 @@ impl AlertListener for TracingAlertListener {
 /// 这确保了审计日志的持久化失败不会被完全静默吞掉，同时不阻断其他监听器的执行。
 pub struct AuditAlertListener {
     /// DAO 实例，用于持久化审计日志条目。
-    dao: Arc<dyn BulwarkDao>,
+    dao: Arc<dyn GarrisonDao>,
     /// 审计日志 TTL（秒），默认 86400（24 小时）。
     ttl_seconds: u64,
 }
@@ -121,8 +121,8 @@ impl AuditAlertListener {
     /// 创建新的 `AuditAlertListener`，TTL 默认 86400 秒（24 小时）。
     ///
     /// # 参数
-    /// - `dao`: DAO 实例（`Arc<dyn BulwarkDao>`），用于写入审计日志。
-    pub fn new(dao: Arc<dyn BulwarkDao>) -> Self {
+    /// - `dao`: DAO 实例（`Arc<dyn GarrisonDao>`），用于写入审计日志。
+    pub fn new(dao: Arc<dyn GarrisonDao>) -> Self {
         Self {
             dao,
             ttl_seconds: 86_400,
@@ -132,16 +132,16 @@ impl AuditAlertListener {
     /// 创建新的 `AuditAlertListener`，指定自定义 TTL。
     ///
     /// # 参数
-    /// - `dao`: DAO 实例（`Arc<dyn BulwarkDao>`）。
+    /// - `dao`: DAO 实例（`Arc<dyn GarrisonDao>`）。
     /// - `ttl_seconds`: 审计日志存活秒数（0 表示永久驻留）。
-    pub fn with_ttl(dao: Arc<dyn BulwarkDao>, ttl_seconds: u64) -> Self {
+    pub fn with_ttl(dao: Arc<dyn GarrisonDao>, ttl_seconds: u64) -> Self {
         Self { dao, ttl_seconds }
     }
 }
 
 #[async_trait]
 impl AlertListener for AuditAlertListener {
-    async fn on_alert(&self, event: &SecurityAlertEvent) -> BulwarkResult<()> {
+    async fn on_alert(&self, event: &SecurityAlertEvent) -> GarrisonResult<()> {
         // AnomalyLogin 变体使用事件自带的 trace_id 作为 identifier，
         // 其他变体生成新的 UUID 作为 identifier。
         let identifier = match event {
@@ -150,7 +150,7 @@ impl AlertListener for AuditAlertListener {
         };
         let key = format!("audit:alert:{}", identifier);
         let json = serde_json::to_string(event)
-            .map_err(|e| BulwarkError::Internal(format!("strategy-alert-serialize::{}", e)))?;
+            .map_err(|e| GarrisonError::Internal(format!("strategy-alert-serialize::{}", e)))?;
         self.dao.set(&key, &json, self.ttl_seconds).await
     }
 }
@@ -236,7 +236,7 @@ mod tests {
     /// `new()` 返回 `AuditAlertListener` 实例。
     #[test]
     fn audit_alert_listener_new_returns_instance() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(crate::dao::tests::MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(crate::dao::tests::MockDao::new());
         let _listener = AuditAlertListener::new(dao);
         // 构造成功即通过（无公共字段可直接断言）
     }

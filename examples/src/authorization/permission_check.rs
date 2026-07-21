@@ -7,18 +7,18 @@
 //!
 //! 运行方式：
 //! ```sh
-//! cargo run -p bulwark-examples --bin permission_check --features full
+//! cargo run -p garrison-examples --bin permission_check --features full
 //! ```
 
 use async_trait::async_trait;
-use bulwark::core::permission::{PermissionChecker, PermissionCheckerDefault};
-use bulwark::error::{BulwarkError, BulwarkResult};
-use bulwark::stp::BulwarkInterface;
+use garrison::core::permission::{PermissionChecker, PermissionCheckerDefault};
+use garrison::error::{GarrisonError, GarrisonResult};
+use garrison::stp::GarrisonInterface;
 use std::collections::HashMap;
 use std::sync::Arc;
 
 // ============================================================================
-// 业务方实现 BulwarkInterface：提供 login_id → 权限/角色列表
+// 业务方实现 GarrisonInterface：提供 login_id → 权限/角色列表
 // ============================================================================
 
 /// 示例接口实现：基于内存 HashMap 存储 login_id 的权限与角色。
@@ -55,12 +55,12 @@ impl Default for MyInterface {
 }
 
 #[async_trait]
-impl BulwarkInterface for MyInterface {
-    async fn get_permission_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+impl GarrisonInterface for MyInterface {
+    async fn get_permission_list(&self, login_id: &str) -> GarrisonResult<Vec<String>> {
         Ok(self.permissions.get(login_id).cloned().unwrap_or_default())
     }
 
-    async fn get_role_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+    async fn get_role_list(&self, login_id: &str) -> GarrisonResult<Vec<String>> {
         Ok(self.roles.get(login_id).cloned().unwrap_or_default())
     }
 }
@@ -69,13 +69,13 @@ impl BulwarkInterface for MyInterface {
 ///
 /// 演示 PermissionCheckerDefault 的 has_permission / has_role / check_permission / check_role
 /// 以及 has_any_permission / has_all_permissions 批量校验。
-pub async fn run() -> BulwarkResult<()> {
-    println!("=== Bulwark 权限校验示例 ===\n");
+pub async fn run() -> GarrisonResult<()> {
+    println!("=== Garrison 权限校验示例 ===\n");
 
     // ----------------------------------------------------------------
-    // 1. 构建 PermissionCheckerDefault（注入 BulwarkInterface）
+    // 1. 构建 PermissionCheckerDefault（注入 GarrisonInterface）
     // ----------------------------------------------------------------
-    let interface: Arc<dyn BulwarkInterface> = Arc::new(MyInterface::new());
+    let interface: Arc<dyn GarrisonInterface> = Arc::new(MyInterface::new());
     let checker = PermissionCheckerDefault::new(interface);
     println!("[1] PermissionCheckerDefault 构建完成");
     println!("    账号 1001 权限: [user:read, user:write]");
@@ -113,7 +113,7 @@ pub async fn run() -> BulwarkResult<()> {
     // 未持有权限 → Err(NotPermission)
     let denied = checker.check_permission("1001", "user:delete").await;
     match denied {
-        Err(BulwarkError::NotPermission(msg)) => {
+        Err(GarrisonError::NotPermission(msg)) => {
             println!("    check_permission(\"user:delete\") → Err(NotPermission)");
             println!("        消息: {}", msg);
         },
@@ -123,7 +123,7 @@ pub async fn run() -> BulwarkResult<()> {
     // 未持有角色 → Err(NotRole)
     let denied_role = checker.check_role("1001", "superadmin").await;
     match denied_role {
-        Err(BulwarkError::NotRole(msg)) => {
+        Err(GarrisonError::NotRole(msg)) => {
             println!("    check_role(\"superadmin\")       → Err(NotRole)");
             println!("        消息: {}\n", msg);
         },

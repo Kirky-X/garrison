@@ -263,7 +263,7 @@ async fn test_recording_client_writes_jsonl() {
         .post(format!("{}/api/v1/auth/login", external_url))
         .json(&serde_json::json!({
             "login_id": "user1",
-            "params": bulwark::backend::types::LoginParams::default()
+            "params": garrison::backend::types::LoginParams::default()
         }))
         .send()
         .await

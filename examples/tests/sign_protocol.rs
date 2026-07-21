@@ -7,7 +7,7 @@
 
 #![cfg(feature = "protocol-sign")]
 
-use bulwark_examples::sign::sign_protocol;
+use garrison_examples::sign::sign_protocol;
 
 #[tokio::test]
 async fn test_run_completes() {

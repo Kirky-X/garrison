@@ -1,6 +1,6 @@
 # 入门指南
 
-本页介绍如何在项目中引入 Bulwark，配置 feature flags，并运行最小登录示例。
+本页介绍如何在项目中引入 Garrison，配置 feature flags，并运行最小登录示例。
 
 ## 运行环境要求
 
@@ -10,11 +10,11 @@
 
 ## Cargo.toml 依赖配置
 
-Bulwark 默认不启用任何 feature，需按需选择：
+Garrison 默认不启用任何 feature，需按需选择：
 
 ```toml
 [dependencies]
-bulwark = { version = "0.7", features = ["web-axum", "cache-memory", "db-sqlite"] }
+garrison = { version = "0.7", features = ["web-axum", "cache-memory", "db-sqlite"] }
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -39,33 +39,33 @@ tokio = { version = "1", features = ["full"] }
 
 ```rust
 use std::sync::Arc;
-use bulwark::prelude::*;
-use bulwark::dao::{init_dbnexus, BulwarkMigration};
-use bulwark::stp::LoginParams;
+use garrison::prelude::*;
+use garrison::dao::{init_dbnexus, GarrisonMigration};
+use garrison::stp::LoginParams;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 1. 数据库迁移（幂等，首次启动建表）
     let pool = init_dbnexus("sqlite::memory:").await?;
-    BulwarkMigration::new(pool).run_all().await?;
+    GarrisonMigration::new(pool).run_all().await?;
 
-    // 2. 准备依赖（业务方实现 BulwarkDao / BulwarkInterface）
-    let dao: Arc<dyn BulwarkDao> = /* oxcache / dbnexus 实现 */;
-    let config = Arc::new(BulwarkConfig::default_config());
-    let interface: Arc<dyn BulwarkInterface> = Arc::new(MyInterface);
+    // 2. 准备依赖（业务方实现 GarrisonDao / GarrisonInterface）
+    let dao: Arc<dyn GarrisonDao> = /* oxcache / dbnexus 实现 */;
+    let config = Arc::new(GarrisonConfig::default_config());
+    let interface: Arc<dyn GarrisonInterface> = Arc::new(MyInterface);
 
     // 3. 初始化全局管理器（同步函数，覆盖式注入 dao / config / interface）
-    //    必须在所有 BulwarkUtil 静态方法调用前完成
-    BulwarkManager::init(dao, config, interface)?;
+    //    必须在所有 GarrisonUtil 静态方法调用前完成
+    GarrisonManager::init(dao, config, interface)?;
 
     // 4. 执行登录：生成 token 并写入会话
     //    注意：login / check_login 依赖 task_local 上下文中的当前 token，
     //    通常由 web 中间件（如 axum middleware）设置。
     let params = LoginParams::default();
-    let token = BulwarkUtil::login(1001, &params).await?;
+    let token = GarrisonUtil::login(1001, &params).await?;
 
     // 5. 校验登录状态
-    let logged_in = BulwarkUtil::check_login().await?;
+    let logged_in = GarrisonUtil::check_login().await?;
     assert!(logged_in);
     Ok(())
 }
@@ -73,9 +73,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## 关键约束
 
-- `BulwarkManager::init` 是同步函数（非 async），必须在所有 `BulwarkUtil` API 调用前完成，否则返回未初始化错误。
-- `login` / `check_login` 依赖 `task_local` 中的当前 token，需通过 web 中间件（如 `BulwarkLayer`）注入。
-- 首次启动需调用 `BulwarkMigration::new(pool).run_all()` 完成数据库建表（幂等）。
+- `GarrisonManager::init` 是同步函数（非 async），必须在所有 `GarrisonUtil` API 调用前完成，否则返回未初始化错误。
+- `login` / `check_login` 依赖 `task_local` 中的当前 token，需通过 web 中间件（如 `GarrisonLayer`）注入。
+- 首次启动需调用 `GarrisonMigration::new(pool).run_all()` 完成数据库建表（幂等）。
 
 ## 下一步
 

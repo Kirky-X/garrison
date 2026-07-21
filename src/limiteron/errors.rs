@@ -3,19 +3,19 @@
 
 //! limiteron 适配器的错误映射工具。
 //!
-//! 将 `BulwarkError` 桥接到 limiteron 的 `StorageError` / `LimiteronError`，
+//! 将 `GarrisonError` 桥接到 limiteron 的 `StorageError` / `LimiteronError`，
 //! 供 storage / quota / distributed / ban 子模块共用。
 
-use crate::error::BulwarkError;
+use crate::error::GarrisonError;
 use limiteron::error::{LimiteronError, StorageError};
 
-/// 将 `BulwarkError` 映射为 `StorageError`。
-pub(super) fn map_to_storage_err(e: BulwarkError) -> StorageError {
+/// 将 `GarrisonError` 映射为 `StorageError`。
+pub(super) fn map_to_storage_err(e: GarrisonError) -> StorageError {
     StorageError::QueryError(format!("{}", e))
 }
 
-/// 将 `BulwarkError` 映射为 `LimiteronError`。
-pub(super) fn map_to_limiter_err(e: BulwarkError) -> LimiteronError {
+/// 将 `GarrisonError` 映射为 `LimiteronError`。
+pub(super) fn map_to_limiter_err(e: GarrisonError) -> LimiteronError {
     LimiteronError::StorageError(StorageError::QueryError(format!("{}", e)))
 }
 
@@ -26,12 +26,12 @@ mod tests {
     /// map_to_storage_err 和 map_to_limiter_err 正确映射错误。
     #[test]
     fn error_mapping_functions_correct() {
-        let err1 = BulwarkError::Dao("test error".to_string());
+        let err1 = GarrisonError::Dao("test error".to_string());
         let storage_err = map_to_storage_err(err1);
         let storage_msg = format!("{}", storage_err);
         assert!(storage_msg.contains("test error"));
 
-        let err2 = BulwarkError::Dao("test error".to_string());
+        let err2 = GarrisonError::Dao("test error".to_string());
         let limiter_err = map_to_limiter_err(err2);
         let limiter_msg = format!("{}", limiter_err);
         assert!(limiter_msg.contains("test error"));

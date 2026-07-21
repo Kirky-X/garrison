@@ -18,9 +18,9 @@
 #![cfg(feature = "protocol-apikey")]
 
 use async_trait::async_trait;
-use bulwark::dao::BulwarkDao;
-use bulwark::error::{BulwarkError, BulwarkResult};
-use bulwark::protocol::apikey::ApiKeyHandler;
+use garrison::dao::GarrisonDao;
+use garrison::error::{GarrisonError, GarrisonResult};
+use garrison::protocol::apikey::ApiKeyHandler;
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -42,32 +42,32 @@ impl MockDao {
 }
 
 #[async_trait]
-impl BulwarkDao for MockDao {
-    async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
+impl GarrisonDao for MockDao {
+    async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
         Ok(self.store.lock().get(key).cloned())
     }
 
-    async fn set(&self, key: &str, value: &str, _ttl_seconds: u64) -> BulwarkResult<()> {
+    async fn set(&self, key: &str, value: &str, _ttl_seconds: u64) -> GarrisonResult<()> {
         self.store.lock().insert(key.to_string(), value.to_string());
         Ok(())
     }
 
-    async fn update(&self, key: &str, value: &str) -> BulwarkResult<()> {
+    async fn update(&self, key: &str, value: &str) -> GarrisonResult<()> {
         let mut store = self.store.lock();
         match store.get_mut(key) {
             Some(existing) => {
                 *existing = value.to_string();
                 Ok(())
             },
-            None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
+            None => Err(GarrisonError::Dao(format!("键不存在: {}", key))),
         }
     }
 
-    async fn expire(&self, _key: &str, _seconds: u64) -> BulwarkResult<()> {
+    async fn expire(&self, _key: &str, _seconds: u64) -> GarrisonResult<()> {
         Ok(())
     }
 
-    async fn delete(&self, key: &str) -> BulwarkResult<()> {
+    async fn delete(&self, key: &str) -> GarrisonResult<()> {
         self.store.lock().remove(key);
         Ok(())
     }
@@ -75,8 +75,8 @@ impl BulwarkDao for MockDao {
     /// 简单 glob 匹配：支持 `*`（任意字符序列）和 `?`（单字符）。
     ///
     /// 复制自 `src/dao/mod.rs::tests::glob_match`（pub(crate) 限定，集成测试无法访问）。
-    /// 用于支持 `ApiKeyHandler::verify` 扫描新格式 key `bulwark:apikey:*:<key>`。
-    async fn keys(&self, pattern: &str) -> BulwarkResult<Vec<String>> {
+    /// 用于支持 `ApiKeyHandler::verify` 扫描新格式 key `garrison:apikey:*:<key>`。
+    async fn keys(&self, pattern: &str) -> GarrisonResult<Vec<String>> {
         let store = self.store.lock();
         let mut result = Vec::new();
         for key in store.keys() {
@@ -125,7 +125,7 @@ fn glob_match(pattern: &str, text: &str) -> bool {
 
 /// 创建 ApiKeyHandler（使用 MockDao）。
 fn make_handler() -> ApiKeyHandler {
-    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     ApiKeyHandler::new(dao)
 }
 
@@ -137,7 +137,7 @@ fn make_handler() -> ApiKeyHandler {
 ///
 /// 验证 APIKey 的命名空间隔离：namespace A 的 key 不能访问 namespace B。
 ///
-/// ApiKey 模块未实现独立的 namespace 字段（key 存储为 `bulwark:apikey:<key>`，
+/// ApiKey 模块未实现独立的 namespace 字段（key 存储为 `garrison:apikey:<key>`，
 /// 无 namespace 前缀）。隔离通过 `ApiKeyInfo.login_id` 实现：业务方在 verify 后
 /// 检查返回的 `login_id` 是否属于当前命名空间。
 ///
@@ -225,7 +225,7 @@ async fn expired_apikey_validation_fails() {
     let result = handler.verify(&key).await;
     assert!(result.is_err(), "已过期的 APIKey 校验应失败");
     match result.err() {
-        Some(BulwarkError::ExpiredToken(_)) => {},
+        Some(GarrisonError::ExpiredToken(_)) => {},
         other => panic!("期望 ExpiredToken 错误，实际: {:?}", other),
     }
 }
@@ -247,7 +247,7 @@ async fn invalid_format_apikey_returns_error() {
     let result = handler.verify("short").await;
     assert!(result.is_err(), "无效格式的 APIKey 应返回错误");
     match result.err() {
-        Some(BulwarkError::InvalidToken(_)) => {},
+        Some(GarrisonError::InvalidToken(_)) => {},
         other => panic!("期望 InvalidToken 错误，实际: {:?}", other),
     }
 
@@ -257,7 +257,7 @@ async fn invalid_format_apikey_returns_error() {
         .await;
     assert!(result.is_err(), "含非 hex 字符的 APIKey 应返回错误");
     match result.err() {
-        Some(BulwarkError::InvalidToken(_)) => {},
+        Some(GarrisonError::InvalidToken(_)) => {},
         other => panic!("期望 InvalidToken 错误，实际: {:?}", other),
     }
 
@@ -265,7 +265,7 @@ async fn invalid_format_apikey_returns_error() {
     let result = handler.verify("").await;
     assert!(result.is_err(), "空字符串 APIKey 应返回错误");
     match result.err() {
-        Some(BulwarkError::InvalidToken(_)) => {},
+        Some(GarrisonError::InvalidToken(_)) => {},
         other => panic!("期望 InvalidToken 错误，实际: {:?}", other),
     }
 }

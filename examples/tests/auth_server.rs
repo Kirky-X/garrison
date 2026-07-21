@@ -7,7 +7,7 @@
 
 #![cfg(feature = "auth-server")]
 
-use bulwark_examples::infrastructure::auth_server;
+use garrison_examples::infrastructure::auth_server;
 
 #[tokio::test]
 async fn test_run_completes() {

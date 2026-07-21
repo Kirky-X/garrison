@@ -1,24 +1,24 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! BulwarkLogicDefault 实现块（从 mod.rs 迁移）。
+//! GarrisonLogicDefault 实现块（从 mod.rs 迁移）。
 
 use super::*;
 
-impl BulwarkLogicDefault {
+impl GarrisonLogicDefault {
     /// 创建默认实现实例。
     ///
     /// # 参数
     /// - `session`: 会话管理器。
     /// - `config`: 全局配置。
-    /// - `firewall`: 权限策略（默认 `BulwarkPermissionStrategyDefault`，持有 `BulwarkInterface` 回调）。
+    /// - `firewall`: 权限策略（默认 `GarrisonPermissionStrategyDefault`，持有 `GarrisonInterface` 回调）。
     ///
     /// # 返回
-    /// 新建的 `BulwarkLogicDefault` 实例。
+    /// 新建的 `GarrisonLogicDefault` 实例。
     pub fn new(
-        session: Arc<BulwarkSession>,
-        config: Arc<BulwarkConfig>,
-        firewall: Arc<dyn BulwarkPermissionStrategy>,
+        session: Arc<GarrisonSession>,
+        config: Arc<GarrisonConfig>,
+        firewall: Arc<dyn GarrisonPermissionStrategy>,
     ) -> Self {
         Self {
             session,
@@ -56,16 +56,16 @@ impl BulwarkLogicDefault {
     /// 注入插件管理器（builder 模式，返回 Self 便于链式调用）。
     ///
     /// 注入后 `login` / `logout` 将触发 `on_login` / `on_logout` 钩子。
-    pub fn with_plugin_manager(mut self, pm: Arc<BulwarkPluginManager>) -> Self {
+    pub fn with_plugin_manager(mut self, pm: Arc<GarrisonPluginManager>) -> Self {
         self.plugin_manager = Some(pm);
         self
     }
 
     /// 注入监听器管理器（builder 模式，需启用 `listener` feature）。
     ///
-    /// 注入后 `login` / `logout` / `kickout` 将广播 `BulwarkEvent` 事件。
+    /// 注入后 `login` / `logout` / `kickout` 将广播 `GarrisonEvent` 事件。
     #[cfg(feature = "listener")]
-    pub fn with_listener_manager(mut self, lm: Arc<BulwarkListenerManager>) -> Self {
+    pub fn with_listener_manager(mut self, lm: Arc<GarrisonListenerManager>) -> Self {
         self.listener_manager = Some(lm);
         self
     }
@@ -93,7 +93,7 @@ impl BulwarkLogicDefault {
     /// 注入后 `login` / `check_login` / `check_permission` / `check_role` 将自动 emit
     /// Prometheus 指标。未注入时所有指标调用为 no-op。
     #[cfg(feature = "metrics-prometheus")]
-    pub fn with_metrics(mut self, metrics: Arc<crate::observability::BulwarkMetrics>) -> Self {
+    pub fn with_metrics(mut self, metrics: Arc<crate::observability::GarrisonMetrics>) -> Self {
         self.metrics = Some(metrics);
         self
     }
@@ -101,7 +101,7 @@ impl BulwarkLogicDefault {
     /// 注入密码哈希器（builder 模式，需启用 `account-credential` + `db-sqlite` feature）。
     ///
     /// 注入后 `login_with_password` 委托此 `PasswordHasher::verify` 校验密码哈希。
-    /// 未注入时 `login_with_password` 返回 `BulwarkError::Config("password hasher not configured")`。
+    /// 未注入时 `login_with_password` 返回 `GarrisonError::Config("password hasher not configured")`。
     #[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
     pub fn with_password_hasher(
         mut self,
@@ -114,7 +114,7 @@ impl BulwarkLogicDefault {
     /// 注入用户 Repository（builder 模式，需启用 `account-credential` + `db-sqlite` feature）。
     ///
     /// 注入后 `login_with_password` 委托此 `UserRepository::find_by_username` 查询用户。
-    /// 未注入时 `login_with_password` 返回 `BulwarkError::Config("user repository not configured")`。
+    /// 未注入时 `login_with_password` 返回 `GarrisonError::Config("user repository not configured")`。
     #[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
     pub fn with_user_repository(
         mut self,
@@ -133,7 +133,7 @@ impl BulwarkLogicDefault {
     ///
     /// # 示例
     /// ```ignore
-    /// let logic = BulwarkLogicDefault::new(session, config, firewall)
+    /// let logic = GarrisonLogicDefault::new(session, config, firewall)
     ///     .with_login_type("admin");
     /// ```
     pub fn with_login_type(mut self, login_type: &str) -> Self {
@@ -158,7 +158,7 @@ impl BulwarkLogicDefault {
     ///
     /// # 示例
     /// ```ignore
-    /// let logic = BulwarkLogicDefault::new(session, config, firewall)
+    /// let logic = GarrisonLogicDefault::new(session, config, firewall)
     ///     .with_jwt_mode(JwtMode::Stateless);
     /// ```
     pub fn with_jwt_mode(mut self, mode: JwtMode) -> Self {
@@ -178,7 +178,7 @@ impl BulwarkLogicDefault {
     /// 注入 Refresh Token 轮换器（builder 模式，需启用 `protocol-jwt` + `db-sqlite` feature）。
     ///
     /// 注入后 `refresh_access_token` 委托 `RefreshTokenRotation::rotate` 实现轮换。
-    /// 未注入时 `refresh_access_token` 返回 `BulwarkError::NotImplemented`。
+    /// 未注入时 `refresh_access_token` 返回 `GarrisonError::NotImplemented`。
     #[cfg(all(feature = "protocol-jwt", feature = "db-sqlite"))]
     pub fn with_refresh_token_rotation(
         mut self,
@@ -235,7 +235,7 @@ impl BulwarkLogicDefault {
     ///
     /// 注入后 `check_disable` 从 task_local 获取当前 token → 查询 TokenSession 取 login_id →
     /// 调用 `DisableRepository::is_disable(login_id, "default")`，被封禁则返回
-    /// `BulwarkError::DisableService`（携带 `until` 解封时间）。
+    /// `GarrisonError::DisableService`（携带 `until` 解封时间）。
     ///
     /// 未注入时 `check_disable` 返回 `Ok(())`（向后兼容 0.6.4 之前行为）。
     pub fn with_disable_repository(
@@ -267,23 +267,23 @@ impl BulwarkLogicDefault {
     ///
     /// # 返回
     /// - `Ok(())`: API Key 有效（存在、未吊销、未过期、namespace 匹配）。
-    /// - `Err(BulwarkError::NotLogin)`: 未设置当前请求上下文（无 API Key 提供）。
-    /// - `Err(BulwarkError::InvalidToken)`: API Key 不存在或已吊销。
-    /// - `Err(BulwarkError::ExpiredToken)`: API Key 已过期。
-    /// - `Err(BulwarkError::InvalidParam)`: namespace 非法。
+    /// - `Err(GarrisonError::NotLogin)`: 未设置当前请求上下文（无 API Key 提供）。
+    /// - `Err(GarrisonError::InvalidToken)`: API Key 不存在或已吊销。
+    /// - `Err(GarrisonError::ExpiredToken)`: API Key 已过期。
+    /// - `Err(GarrisonError::InvalidParam)`: namespace 非法。
     ///
     /// # 兼容性
     ///
     /// `protocol-apikey` feature 关闭时，本方法返回 `Ok(())`（兼容 0.6.0 未启用 API Key 场景）。
     #[cfg(feature = "protocol-apikey")]
-    pub async fn check_api_key(&self, namespace: &str) -> BulwarkResult<()> {
+    pub async fn check_api_key(&self, namespace: &str) -> GarrisonResult<()> {
         // 无 token 上下文 = 请求未携带 API Key，返回 NotLogin（映射 401）
         // 与 check_login 不同：check_api_key 返回 Result<()> 而非 Result<bool>，
         // 无法用 Ok(false) 表达"未通过"，必须返回错误。
         let key = match current_token() {
             Ok(t) => t,
             Err(_) => {
-                return Err(BulwarkError::NotLogin("stp-no-api-key::".to_string()));
+                return Err(GarrisonError::NotLogin("stp-no-api-key::".to_string()));
             },
         };
         let handler = crate::protocol::apikey::ApiKeyHandler::new(self.session.dao().clone());
@@ -295,7 +295,7 @@ impl BulwarkLogicDefault {
     ///
     /// 返回 `Ok(())`（兼容 0.6.0 未启用 API Key 场景）。
     #[cfg(not(feature = "protocol-apikey"))]
-    pub async fn check_api_key(&self, _namespace: &str) -> BulwarkResult<()> {
+    pub async fn check_api_key(&self, _namespace: &str) -> GarrisonResult<()> {
         Ok(())
     }
 }

@@ -4,7 +4,7 @@
 //! observability 模块测试（从 mod.rs 迁移，Rule 25 合规）。
 
 // ============================================================================
-// BulwarkMetrics 测试（feature = "metrics-prometheus"）
+// GarrisonMetrics 测试（feature = "metrics-prometheus"）
 // ============================================================================
 
 #[cfg(all(test, feature = "metrics-prometheus"))]
@@ -13,12 +13,12 @@ mod tests_metrics {
     use serial_test::serial;
     use std::time::Duration;
 
-    /// 测试 BulwarkMetrics 创建并注册到自定义 registry 成功。
+    /// 测试 GarrisonMetrics 创建并注册到自定义 registry 成功。
     #[test]
     #[serial]
     fn test_metrics_new_with_custom_registry() {
         let registry = prometheus::Registry::new();
-        let metrics = BulwarkMetrics::register_to(&registry).expect("注册到自定义 registry 失败");
+        let metrics = GarrisonMetrics::register_to(&registry).expect("注册到自定义 registry 失败");
         // 先记录一次值，确保 CounterVec 在 gather 输出中可见（prometheus 行为：未观测的 CounterVec 不输出）
         metrics.record_login(true);
         metrics.observe_token_validation(Duration::from_millis(1));
@@ -29,22 +29,22 @@ mod tests_metrics {
             .encode_to_string(&registry.gather())
             .expect("encode 失败");
         assert!(
-            gathered.contains("bulwark_login_total"),
+            gathered.contains("garrison_login_total"),
             "missing login_total: {}",
             gathered
         );
         assert!(
-            gathered.contains("bulwark_token_validation_duration_seconds"),
+            gathered.contains("garrison_token_validation_duration_seconds"),
             "missing token_validation: {}",
             gathered
         );
         assert!(
-            gathered.contains("bulwark_permission_query_total"),
+            gathered.contains("garrison_permission_query_total"),
             "missing permission_query: {}",
             gathered
         );
         assert!(
-            gathered.contains("bulwark_role_query_total"),
+            gathered.contains("garrison_role_query_total"),
             "missing role_query: {}",
             gathered
         );
@@ -55,14 +55,14 @@ mod tests_metrics {
     #[serial]
     fn test_record_login_success() {
         let registry = prometheus::Registry::new();
-        let metrics = BulwarkMetrics::register_to(&registry).expect("注册失败");
+        let metrics = GarrisonMetrics::register_to(&registry).expect("注册失败");
         metrics.record_login(true);
         metrics.record_login(true);
         let output = prometheus::TextEncoder::new()
             .encode_to_string(&registry.gather())
             .expect("encode 失败");
         // Counter 应为 2
-        assert!(output.contains("bulwark_login_total{result=\"success\"} 2"));
+        assert!(output.contains("garrison_login_total{result=\"success\"} 2"));
     }
 
     /// 测试 record_login(success=false) 递增 failure 标签。
@@ -70,12 +70,12 @@ mod tests_metrics {
     #[serial]
     fn test_record_login_failure() {
         let registry = prometheus::Registry::new();
-        let metrics = BulwarkMetrics::register_to(&registry).expect("注册失败");
+        let metrics = GarrisonMetrics::register_to(&registry).expect("注册失败");
         metrics.record_login(false);
         let output = prometheus::TextEncoder::new()
             .encode_to_string(&registry.gather())
             .expect("encode 失败");
-        assert!(output.contains("bulwark_login_total{result=\"failure\"} 1"));
+        assert!(output.contains("garrison_login_total{result=\"failure\"} 1"));
     }
 
     /// 测试 observe_token_validation 记录延迟。
@@ -83,14 +83,14 @@ mod tests_metrics {
     #[serial]
     fn test_observe_token_validation_duration() {
         let registry = prometheus::Registry::new();
-        let metrics = BulwarkMetrics::register_to(&registry).expect("注册失败");
+        let metrics = GarrisonMetrics::register_to(&registry).expect("注册失败");
         metrics.observe_token_validation(Duration::from_millis(5));
         metrics.observe_token_validation(Duration::from_millis(50));
         let output = prometheus::TextEncoder::new()
             .encode_to_string(&registry.gather())
             .expect("encode 失败");
         // Histogram 应有 _count 和 _sum
-        assert!(output.contains("bulwark_token_validation_duration_seconds_count 2"));
+        assert!(output.contains("garrison_token_validation_duration_seconds_count 2"));
     }
 
     /// 测试 record_permission_query(allowed=true/false) 分别递增 allow/deny 标签。
@@ -98,15 +98,15 @@ mod tests_metrics {
     #[serial]
     fn test_record_permission_query() {
         let registry = prometheus::Registry::new();
-        let metrics = BulwarkMetrics::register_to(&registry).expect("注册失败");
+        let metrics = GarrisonMetrics::register_to(&registry).expect("注册失败");
         metrics.record_permission_query(true);
         metrics.record_permission_query(true);
         metrics.record_permission_query(false);
         let output = prometheus::TextEncoder::new()
             .encode_to_string(&registry.gather())
             .expect("encode 失败");
-        assert!(output.contains("bulwark_permission_query_total{result=\"allow\"} 2"));
-        assert!(output.contains("bulwark_permission_query_total{result=\"deny\"} 1"));
+        assert!(output.contains("garrison_permission_query_total{result=\"allow\"} 2"));
+        assert!(output.contains("garrison_permission_query_total{result=\"deny\"} 1"));
     }
 
     /// 测试 record_role_query(allowed=true/false) 分别递增 allow/deny 标签。
@@ -114,15 +114,15 @@ mod tests_metrics {
     #[serial]
     fn test_record_role_query() {
         let registry = prometheus::Registry::new();
-        let metrics = BulwarkMetrics::register_to(&registry).expect("注册失败");
+        let metrics = GarrisonMetrics::register_to(&registry).expect("注册失败");
         metrics.record_role_query(true);
         metrics.record_role_query(false);
         metrics.record_role_query(false);
         let output = prometheus::TextEncoder::new()
             .encode_to_string(&registry.gather())
             .expect("encode 失败");
-        assert!(output.contains("bulwark_role_query_total{result=\"allow\"} 1"));
-        assert!(output.contains("bulwark_role_query_total{result=\"deny\"} 2"));
+        assert!(output.contains("garrison_role_query_total{result=\"allow\"} 1"));
+        assert!(output.contains("garrison_role_query_total{result=\"deny\"} 2"));
     }
 
     /// 测试 gather() 返回 Prometheus 文本格式字符串（不 panic）。
@@ -130,7 +130,7 @@ mod tests_metrics {
     #[serial]
     fn test_gather_returns_text_format() {
         let registry = prometheus::Registry::new();
-        let metrics = BulwarkMetrics::register_to(&registry).expect("注册失败");
+        let metrics = GarrisonMetrics::register_to(&registry).expect("注册失败");
         metrics.record_login(true);
         metrics.record_permission_query(true);
         // gather() 内部使用 default registry；此处仅验证不 panic 且返回 String
@@ -145,7 +145,7 @@ mod tests_metrics {
     #[serial]
     fn test_default_impl_via_register_to() {
         let registry = prometheus::Registry::new();
-        let _m1 = BulwarkMetrics::register_to(&registry).expect("注册失败");
+        let _m1 = GarrisonMetrics::register_to(&registry).expect("注册失败");
         // 验证 register_to 路径可构造实例（Default 在 default registry 已注册时会 panic，故不直接调用）
     }
 
@@ -154,8 +154,8 @@ mod tests_metrics {
     #[serial]
     fn test_duplicate_register_returns_error() {
         let registry = prometheus::Registry::new();
-        let _m1 = BulwarkMetrics::register_to(&registry).expect("首次注册失败");
-        let result = BulwarkMetrics::register_to(&registry);
+        let _m1 = GarrisonMetrics::register_to(&registry).expect("首次注册失败");
+        let result = GarrisonMetrics::register_to(&registry);
         assert!(result.is_err(), "重复注册应返回错误");
         match result {
             Err(prometheus::Error::AlreadyReg) => {},
@@ -164,12 +164,12 @@ mod tests_metrics {
         }
     }
 
-    /// 测试 Clone trait（用于 Arc<BulwarkMetrics> 在多线程共享场景）。
+    /// 测试 Clone trait（用于 Arc<GarrisonMetrics> 在多线程共享场景）。
     #[test]
     #[serial]
     fn test_metrics_clone() {
         let registry = prometheus::Registry::new();
-        let m1 = BulwarkMetrics::register_to(&registry).expect("注册失败");
+        let m1 = GarrisonMetrics::register_to(&registry).expect("注册失败");
         let m2 = m1.clone();
         m1.record_login(true);
         m2.record_login(true);
@@ -177,7 +177,7 @@ mod tests_metrics {
         let output = prometheus::TextEncoder::new()
             .encode_to_string(&registry.gather())
             .expect("encode 失败");
-        assert!(output.contains("bulwark_login_total{result=\"success\"} 2"));
+        assert!(output.contains("garrison_login_total{result=\"success\"} 2"));
     }
 
     /// 测试 Debug trait 实现输出字段名与类型名。
@@ -185,9 +185,9 @@ mod tests_metrics {
     #[serial]
     fn test_metrics_debug_impl() {
         let registry = prometheus::Registry::new();
-        let metrics = BulwarkMetrics::register_to(&registry).expect("注册失败");
+        let metrics = GarrisonMetrics::register_to(&registry).expect("注册失败");
         let debug_str = format!("{:?}", metrics);
-        assert!(debug_str.contains("BulwarkMetrics"));
+        assert!(debug_str.contains("GarrisonMetrics"));
         assert!(debug_str.contains("CounterVec"));
         assert!(debug_str.contains("Histogram"));
     }
@@ -199,7 +199,7 @@ mod tests_metrics {
     #[serial]
     fn test_default_impl_creates_instance() {
         // Default::default() 等价于 new()，注册到 default registry
-        let metrics = BulwarkMetrics::default();
+        let metrics = GarrisonMetrics::default();
         // 验证实例可用
         metrics.record_login(true);
         metrics.record_permission_query(false);
@@ -214,7 +214,7 @@ mod tests_metrics {
         // new() 已由 Default 测试覆盖（Default 调用 new()），
         // 此处仅验证 register_to 路径不 panic
         let registry = prometheus::Registry::new();
-        let _metrics = BulwarkMetrics::register_to(&registry).expect("注册失败");
+        let _metrics = GarrisonMetrics::register_to(&registry).expect("注册失败");
     }
 
     // ========================================================================
@@ -226,12 +226,12 @@ mod tests_metrics {
     #[serial]
     fn test_observe_token_validation_zero_duration() {
         let registry = prometheus::Registry::new();
-        let metrics = BulwarkMetrics::register_to(&registry).expect("注册失败");
+        let metrics = GarrisonMetrics::register_to(&registry).expect("注册失败");
         metrics.observe_token_validation(Duration::from_millis(0));
         let output = prometheus::TextEncoder::new()
             .encode_to_string(&registry.gather())
             .expect("encode 失败");
-        assert!(output.contains("bulwark_token_validation_duration_seconds_count 1"));
+        assert!(output.contains("garrison_token_validation_duration_seconds_count 1"));
     }
 
     /// 测试所有 record/observe 操作在同一个实例上组合调用不冲突。
@@ -239,7 +239,7 @@ mod tests_metrics {
     #[serial]
     fn test_all_record_operations_on_single_instance() {
         let registry = prometheus::Registry::new();
-        let metrics = BulwarkMetrics::register_to(&registry).expect("注册失败");
+        let metrics = GarrisonMetrics::register_to(&registry).expect("注册失败");
         metrics.record_login(true);
         metrics.record_login(false);
         metrics.observe_token_validation(Duration::from_millis(10));
@@ -250,12 +250,12 @@ mod tests_metrics {
         let output = prometheus::TextEncoder::new()
             .encode_to_string(&registry.gather())
             .expect("encode 失败");
-        assert!(output.contains("bulwark_login_total{result=\"success\"} 1"));
-        assert!(output.contains("bulwark_login_total{result=\"failure\"} 1"));
-        assert!(output.contains("bulwark_permission_query_total{result=\"allow\"} 1"));
-        assert!(output.contains("bulwark_permission_query_total{result=\"deny\"} 1"));
-        assert!(output.contains("bulwark_role_query_total{result=\"allow\"} 1"));
-        assert!(output.contains("bulwark_role_query_total{result=\"deny\"} 1"));
+        assert!(output.contains("garrison_login_total{result=\"success\"} 1"));
+        assert!(output.contains("garrison_login_total{result=\"failure\"} 1"));
+        assert!(output.contains("garrison_permission_query_total{result=\"allow\"} 1"));
+        assert!(output.contains("garrison_permission_query_total{result=\"deny\"} 1"));
+        assert!(output.contains("garrison_role_query_total{result=\"allow\"} 1"));
+        assert!(output.contains("garrison_role_query_total{result=\"deny\"} 1"));
     }
 
     /// 测试 gather() 在记录操作后返回包含所有指标名的非空字符串。
@@ -264,7 +264,7 @@ mod tests_metrics {
     #[serial]
     fn test_gather_returns_non_empty_after_operations() {
         let registry = prometheus::Registry::new();
-        let metrics = BulwarkMetrics::register_to(&registry).expect("注册失败");
+        let metrics = GarrisonMetrics::register_to(&registry).expect("注册失败");
         metrics.record_login(true);
         metrics.observe_token_validation(Duration::from_millis(5));
         metrics.record_permission_query(true);
@@ -275,31 +275,31 @@ mod tests_metrics {
             .expect("encode 失败");
         assert!(!output.is_empty(), "gather() 不应返回空字符串");
         assert!(
-            output.contains("bulwark_login_total"),
+            output.contains("garrison_login_total"),
             "gather 应含 login_total"
         );
         assert!(
-            output.contains("bulwark_token_validation_duration_seconds"),
+            output.contains("garrison_token_validation_duration_seconds"),
             "gather 应含 token_validation"
         );
         assert!(
-            output.contains("bulwark_permission_query_total"),
+            output.contains("garrison_permission_query_total"),
             "gather 应含 permission_query"
         );
         assert!(
-            output.contains("bulwark_role_query_total"),
+            output.contains("garrison_role_query_total"),
             "gather 应含 role_query"
         );
     }
 
-    /// 测试两个独立 registry 上的 BulwarkMetrics 实例互不干扰。
+    /// 测试两个独立 registry 上的 GarrisonMetrics 实例互不干扰。
     #[test]
     #[serial]
     fn test_two_registries_independent() {
         let registry1 = prometheus::Registry::new();
         let registry2 = prometheus::Registry::new();
-        let m1 = BulwarkMetrics::register_to(&registry1).expect("注册失败");
-        let m2 = BulwarkMetrics::register_to(&registry2).expect("注册失败");
+        let m1 = GarrisonMetrics::register_to(&registry1).expect("注册失败");
+        let m2 = GarrisonMetrics::register_to(&registry2).expect("注册失败");
         m1.record_login(true);
         m2.record_login(false);
         let out1 = prometheus::TextEncoder::new()
@@ -308,9 +308,9 @@ mod tests_metrics {
         let out2 = prometheus::TextEncoder::new()
             .encode_to_string(&registry2.gather())
             .expect("encode 失败");
-        assert!(out1.contains("bulwark_login_total{result=\"success\"} 1"));
+        assert!(out1.contains("garrison_login_total{result=\"success\"} 1"));
         assert!(!out1.contains("result=\"failure\""));
-        assert!(out2.contains("bulwark_login_total{result=\"failure\"} 1"));
+        assert!(out2.contains("garrison_login_total{result=\"failure\"} 1"));
         assert!(!out2.contains("result=\"success\""));
     }
 
@@ -319,15 +319,15 @@ mod tests_metrics {
     #[serial]
     fn test_record_login_success_and_failure_on_same_instance() {
         let registry = prometheus::Registry::new();
-        let metrics = BulwarkMetrics::register_to(&registry).expect("注册失败");
+        let metrics = GarrisonMetrics::register_to(&registry).expect("注册失败");
         metrics.record_login(true);
         metrics.record_login(true);
         metrics.record_login(false);
         let output = prometheus::TextEncoder::new()
             .encode_to_string(&registry.gather())
             .expect("encode 失败");
-        assert!(output.contains("bulwark_login_total{result=\"success\"} 2"));
-        assert!(output.contains("bulwark_login_total{result=\"failure\"} 1"));
+        assert!(output.contains("garrison_login_total{result=\"success\"} 2"));
+        assert!(output.contains("garrison_login_total{result=\"failure\"} 1"));
     }
 
     /// 测试 observe_token_validation 多次观测后 count 和 sum 正确。
@@ -335,14 +335,14 @@ mod tests_metrics {
     #[serial]
     fn test_observe_token_validation_multiple_values_count_and_sum() {
         let registry = prometheus::Registry::new();
-        let metrics = BulwarkMetrics::register_to(&registry).expect("注册失败");
+        let metrics = GarrisonMetrics::register_to(&registry).expect("注册失败");
         metrics.observe_token_validation(Duration::from_millis(100));
         metrics.observe_token_validation(Duration::from_millis(200));
         metrics.observe_token_validation(Duration::from_millis(300));
         let output = prometheus::TextEncoder::new()
             .encode_to_string(&registry.gather())
             .expect("encode 失败");
-        assert!(output.contains("bulwark_token_validation_duration_seconds_count 3"));
+        assert!(output.contains("garrison_token_validation_duration_seconds_count 3"));
     }
 
     /// 测试 record_permission_query 先 allow 再 deny，两个标签值均正确。
@@ -350,7 +350,7 @@ mod tests_metrics {
     #[serial]
     fn test_record_permission_query_allow_and_deny_on_same_instance() {
         let registry = prometheus::Registry::new();
-        let metrics = BulwarkMetrics::register_to(&registry).expect("注册失败");
+        let metrics = GarrisonMetrics::register_to(&registry).expect("注册失败");
         metrics.record_permission_query(true);
         metrics.record_permission_query(true);
         metrics.record_permission_query(true);
@@ -359,8 +359,8 @@ mod tests_metrics {
         let output = prometheus::TextEncoder::new()
             .encode_to_string(&registry.gather())
             .expect("encode 失败");
-        assert!(output.contains("bulwark_permission_query_total{result=\"allow\"} 3"));
-        assert!(output.contains("bulwark_permission_query_total{result=\"deny\"} 2"));
+        assert!(output.contains("garrison_permission_query_total{result=\"allow\"} 3"));
+        assert!(output.contains("garrison_permission_query_total{result=\"deny\"} 2"));
     }
 
     /// 测试 record_role_query 先 allow 再 deny，两个标签值均正确。
@@ -368,7 +368,7 @@ mod tests_metrics {
     #[serial]
     fn test_record_role_query_allow_and_deny_on_same_instance() {
         let registry = prometheus::Registry::new();
-        let metrics = BulwarkMetrics::register_to(&registry).expect("注册失败");
+        let metrics = GarrisonMetrics::register_to(&registry).expect("注册失败");
         metrics.record_role_query(false);
         metrics.record_role_query(false);
         metrics.record_role_query(false);
@@ -376,8 +376,8 @@ mod tests_metrics {
         let output = prometheus::TextEncoder::new()
             .encode_to_string(&registry.gather())
             .expect("encode 失败");
-        assert!(output.contains("bulwark_role_query_total{result=\"allow\"} 1"));
-        assert!(output.contains("bulwark_role_query_total{result=\"deny\"} 3"));
+        assert!(output.contains("garrison_role_query_total{result=\"allow\"} 1"));
+        assert!(output.contains("garrison_role_query_total{result=\"deny\"} 3"));
     }
 }
 
@@ -405,28 +405,28 @@ mod tests_otlp {
         );
     }
 
-    /// 测试 BulwarkOtelError 的 Display 实现。
+    /// 测试 GarrisonOtelError 的 Display 实现。
     #[test]
     fn test_otel_error_display() {
-        let err1 = BulwarkOtelError::Exporter("exporter 失败".to_string());
+        let err1 = GarrisonOtelError::Exporter("exporter 失败".to_string());
         assert!(format!("{}", err1).contains("exporter 失败"));
         assert!(format!("{}", err1).contains("OTLP exporter"));
 
-        let err2 = BulwarkOtelError::Provider("provider 失败".to_string());
+        let err2 = GarrisonOtelError::Provider("provider 失败".to_string());
         assert!(format!("{}", err2).contains("provider 失败"));
         assert!(format!("{}", err2).contains("Tracer provider"));
     }
 
-    /// 测试 BulwarkOtelError 的 Debug 实现。
-    /// derive(Debug) 仅输出变体名（如 Exporter("test")），不包含枚举名 BulwarkOtelError。
+    /// 测试 GarrisonOtelError 的 Debug 实现。
+    /// derive(Debug) 仅输出变体名（如 Exporter("test")），不包含枚举名 GarrisonOtelError。
     #[test]
     fn test_otel_error_debug() {
-        let err = BulwarkOtelError::Exporter("test".to_string());
+        let err = GarrisonOtelError::Exporter("test".to_string());
         let debug_str = format!("{:?}", err);
         assert!(debug_str.contains("Exporter"));
         assert!(debug_str.contains("test"));
 
-        let err2 = BulwarkOtelError::Provider("prov".to_string());
+        let err2 = GarrisonOtelError::Provider("prov".to_string());
         let debug_str2 = format!("{:?}", err2);
         assert!(debug_str2.contains("Provider"));
         assert!(debug_str2.contains("prov"));
@@ -441,10 +441,10 @@ mod tests_otlp {
 mod tests_no_feature {
     use super::super::*;
 
-    /// 未启用 metrics-prometheus 时 BulwarkMetrics 为 unit type 别名。
+    /// 未启用 metrics-prometheus 时 GarrisonMetrics 为 unit type 别名。
     #[test]
     fn test_no_feature_metrics_is_unit() {
-        let _: BulwarkMetrics = ();
+        let _: GarrisonMetrics = ();
     }
 }
 

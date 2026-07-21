@@ -20,7 +20,7 @@
 //! [`SsoServerResolver`] trait 作为 [`AuthExecutor::execute_with_full`] 的参数
 //! （非 struct 字段），保持 5 字段不变。
 //!
-//! resolver trait 方法返回 `BulwarkResult<String>`（login_id），由实现方在内部委托
+//! resolver trait 方法返回 `GarrisonResult<String>`（login_id），由实现方在内部委托
 //! `protocol::social::SocialLoginProvider::exchange_token` /
 //! `protocol::sso::server::SsoServer::validate_ticket`。这样 `executor.rs` 不直接
 //! 依赖 `protocol` 模块，避免 feature gate 链穿透 `account-authflow` feature。
@@ -37,9 +37,9 @@ use super::{AuthCondition, AuthContext, AuthResult, AuthStep, AuthenticationFlow
 use crate::account::credential::{Credential, CredentialModel, CredentialRepository};
 use crate::account::lockout::UserLockoutStrategy;
 use crate::account::policy::PasswordPolicyEngine;
-use crate::error::BulwarkResult;
-use crate::stp::{BulwarkLogicDefault, LoginParams, MfaLogic, SessionLogic};
-use crate::strategy::firewall::{BulwarkFirewallStrategy, FirewallContext};
+use crate::error::GarrisonResult;
+use crate::stp::{GarrisonLogicDefault, LoginParams, MfaLogic, SessionLogic};
+use crate::strategy::firewall::{FirewallContext, GarrisonFirewallStrategy};
 use async_trait::async_trait;
 use std::future::Future;
 use std::pin::Pin;
@@ -67,14 +67,14 @@ const MAX_FLOW_DEPTH: usize = 10;
 /// # 示例
 ///
 /// ```ignore
-/// use bulwark::account::authflow::executor::CredentialBuilder;
-/// use bulwark::account::credential::{CredentialModel, Credential, password::Argon2Hasher};
-/// use bulwark::account::credential::password::PasswordCredential;
-/// use bulwark::error::BulwarkResult;
+/// use garrison::account::authflow::executor::CredentialBuilder;
+/// use garrison::account::credential::{CredentialModel, Credential, password::Argon2Hasher};
+/// use garrison::account::credential::password::PasswordCredential;
+/// use garrison::error::GarrisonResult;
 ///
 /// struct PasswordCredentialBuilder;
 /// impl CredentialBuilder for PasswordCredentialBuilder {
-///     fn build(&self, model: CredentialModel) -> BulwarkResult<Box<dyn Credential>> {
+///     fn build(&self, model: CredentialModel) -> GarrisonResult<Box<dyn Credential>> {
 ///         let hasher = Box::new(Argon2Hasher::new());
 ///         Ok(Box::new(PasswordCredential::new(model, hasher)))
 ///     }
@@ -84,9 +84,9 @@ pub trait CredentialBuilder: Send + Sync {
     /// 将 [`CredentialModel`] 构造为 `Box<dyn Credential>`。
     ///
     /// # 错误
-    /// - 凭证类型不支持：`BulwarkError::InvalidParam`
-    /// - 哈希器初始化失败：透传 `BulwarkError`
-    fn build(&self, model: CredentialModel) -> BulwarkResult<Box<dyn Credential>>;
+    /// - 凭证类型不支持：`GarrisonError::InvalidParam`
+    /// - 哈希器初始化失败：透传 `GarrisonError`
+    fn build(&self, model: CredentialModel) -> GarrisonResult<Box<dyn Credential>>;
 }
 
 // ============================================================================
@@ -116,7 +116,7 @@ pub trait CredentialBuilder: Send + Sync {
 /// # 返回
 ///
 /// - `Ok(login_id)`: 社交用户标识（`SocialUserInfo.provider_user_id`）
-/// - `Err(BulwarkError::InvalidParam)`: provider 未注册
+/// - `Err(GarrisonError::InvalidParam)`: provider 未注册
 /// - `Err(_)`: provider 调用失败 / 网络错误 / 授权码无效
 ///
 /// # 示例
@@ -124,19 +124,19 @@ pub trait CredentialBuilder: Send + Sync {
 /// ```ignore
 /// use std::collections::HashMap;
 /// use std::sync::Arc;
-/// use bulwark::account::authflow::executor::SocialProviderResolver;
-/// use bulwark::error::{BulwarkError, BulwarkResult};
+/// use garrison::account::authflow::executor::SocialProviderResolver;
+/// use garrison::error::{GarrisonError, GarrisonResult};
 ///
 /// struct Registry {
-///     providers: HashMap<String, Arc<dyn bulwark::protocol::social::SocialLoginProvider>>,
+///     providers: HashMap<String, Arc<dyn garrison::protocol::social::SocialLoginProvider>>,
 /// }
 ///
 /// #[async_trait::async_trait]
 /// impl SocialProviderResolver for Registry {
 ///     async fn resolve_login_id(&self, provider: &str, code: &str, state: &str)
-///         -> BulwarkResult<String> {
+///         -> GarrisonResult<String> {
 ///         let p = self.providers.get(provider)
-///             .ok_or_else(|| BulwarkError::InvalidParam(format!("unknown: {}", provider)))?;
+///             .ok_or_else(|| GarrisonError::InvalidParam(format!("unknown: {}", provider)))?;
 ///         let user = p.exchange_token(code, state).await?;
 ///         Ok(user.provider_user_id)
 ///     }
@@ -150,7 +150,7 @@ pub trait SocialProviderResolver: Send + Sync {
         provider: &str,
         code: &str,
         state: &str,
-    ) -> BulwarkResult<String>;
+    ) -> GarrisonResult<String>;
 }
 
 /// SSO Server 解析 trait（T017）。
@@ -175,8 +175,8 @@ pub trait SocialProviderResolver: Send + Sync {
 /// # 返回
 ///
 /// - `Ok(login_id)`: ticket 对应的登录主体标识
-/// - `Err(BulwarkError::InvalidParam)`: server 未注册
-/// - `Err(BulwarkError::InvalidToken)`: ticket 无效 / 已过期 / client_id 不匹配
+/// - `Err(GarrisonError::InvalidParam)`: server 未注册
+/// - `Err(GarrisonError::InvalidToken)`: ticket 无效 / 已过期 / client_id 不匹配
 #[async_trait]
 pub trait SsoServerResolver: Send + Sync {
     /// 验证 ticket 并返回 login_id（内部委托 `SsoServer::validate_ticket`）。
@@ -185,7 +185,7 @@ pub trait SsoServerResolver: Send + Sync {
         server_id: &str,
         ticket: &str,
         client_id: i64,
-    ) -> BulwarkResult<String>;
+    ) -> GarrisonResult<String>;
 }
 
 // ============================================================================
@@ -201,7 +201,7 @@ pub trait SsoServerResolver: Send + Sync {
 ///
 /// | 字段 | 类型 | 说明 |
 /// |:---|:---|:---|
-/// | `logic` | `Arc<BulwarkLogicDefault>` | 核心认证逻辑（SessionLogic + MfaLogic） |
+/// | `logic` | `Arc<GarrisonLogicDefault>` | 核心认证逻辑（SessionLogic + MfaLogic） |
 /// | `credential_repo` | `Arc<dyn CredentialRepository>` | 凭证存储抽象 |
 /// | `policy_engine` | `Option<Arc<PasswordPolicyEngine>>` | 密码策略引擎（可选，用于 RequiredAction） |
 /// | `lockout` | `Option<Arc<UserLockoutStrategy>>` | 用户级锁定策略（可选） |
@@ -217,8 +217,8 @@ pub trait SsoServerResolver: Send + Sync {
 ///
 /// ```ignore
 /// use std::sync::Arc;
-/// use bulwark::account::authflow::executor::AuthExecutor;
-/// use bulwark::account::authflow::registry::FlowRegistry;
+/// use garrison::account::authflow::executor::AuthExecutor;
+/// use garrison::account::authflow::registry::FlowRegistry;
 ///
 /// let executor = AuthExecutor::new(
 ///     logic,
@@ -231,7 +231,7 @@ pub trait SsoServerResolver: Send + Sync {
 /// ```
 pub struct AuthExecutor {
     /// 核心认证逻辑（SessionLogic::login / MfaLogic::check_safe）。
-    logic: Arc<BulwarkLogicDefault>,
+    logic: Arc<GarrisonLogicDefault>,
     /// 凭证存储抽象（查询用户凭证）。
     credential_repo: Arc<dyn CredentialRepository>,
     /// 密码策略引擎（可选，v0.6.0 未在 execute 中使用，预留给 RequiredAction 步骤）。
@@ -268,7 +268,7 @@ impl AuthExecutor {
     /// 创建认证执行器实例。
     ///
     /// # 参数
-    /// - `logic`: 核心认证逻辑（`Arc<BulwarkLogicDefault>`）。
+    /// - `logic`: 核心认证逻辑（`Arc<GarrisonLogicDefault>`）。
     /// - `credential_repo`: 凭证存储抽象。
     /// - `policy_engine`: 密码策略引擎（可选，`None` 时 RequiredAction 步骤返回 Failed）。
     /// - `lockout`: 用户级锁定策略（可选，`None` 时跳过锁定检查）。
@@ -277,7 +277,7 @@ impl AuthExecutor {
     /// # 返回
     /// 新建的 `AuthExecutor` 实例。
     pub fn new(
-        logic: Arc<BulwarkLogicDefault>,
+        logic: Arc<GarrisonLogicDefault>,
         credential_repo: Arc<dyn CredentialRepository>,
         policy_engine: Option<Arc<PasswordPolicyEngine>>,
         lockout: Option<Arc<UserLockoutStrategy>>,
@@ -325,7 +325,7 @@ impl AuthExecutor {
         &self,
         flow: &AuthenticationFlow,
         ctx: &mut AuthContext,
-    ) -> BulwarkResult<AuthResult> {
+    ) -> GarrisonResult<AuthResult> {
         self.execute_inner(flow, ctx, None, None, None, None, 0)
             .await
     }
@@ -347,7 +347,7 @@ impl AuthExecutor {
         flow: &AuthenticationFlow,
         ctx: &mut AuthContext,
         builder: &dyn CredentialBuilder,
-    ) -> BulwarkResult<AuthResult> {
+    ) -> GarrisonResult<AuthResult> {
         self.execute_inner(flow, ctx, Some(builder), None, None, None, 0)
             .await
     }
@@ -379,7 +379,7 @@ impl AuthExecutor {
         builder: &dyn CredentialBuilder,
         social_resolver: &dyn SocialProviderResolver,
         sso_resolver: &dyn SsoServerResolver,
-    ) -> BulwarkResult<AuthResult> {
+    ) -> GarrisonResult<AuthResult> {
         self.execute_inner(
             flow,
             ctx,
@@ -416,7 +416,7 @@ impl AuthExecutor {
         ctx: &mut AuthContext,
         builder: &dyn CredentialBuilder,
         metrics: &crate::account::metrics::AccountMetrics,
-    ) -> BulwarkResult<AuthResult> {
+    ) -> GarrisonResult<AuthResult> {
         self.execute_inner(flow, ctx, Some(builder), None, None, Some(metrics), 0)
             .await
     }
@@ -436,7 +436,7 @@ impl AuthExecutor {
         sso_resolver: Option<&dyn SsoServerResolver>,
         metrics: Option<&crate::account::metrics::AccountMetrics>,
         depth: usize,
-    ) -> BulwarkResult<AuthResult> {
+    ) -> GarrisonResult<AuthResult> {
         #[cfg(feature = "metrics-prometheus")]
         let flow_start = std::time::Instant::now();
         #[cfg(feature = "metrics-prometheus")]
@@ -456,7 +456,7 @@ impl AuthExecutor {
         }
 
         let mut token: Option<String> = None;
-        let mut early_result: Option<BulwarkResult<AuthResult>> = None;
+        let mut early_result: Option<GarrisonResult<AuthResult>> = None;
 
         for (index, step) in flow.steps.iter().enumerate() {
             let outcome = self
@@ -544,7 +544,7 @@ impl AuthExecutor {
         sso_resolver: Option<&'a dyn SsoServerResolver>,
         metrics: Option<&'a crate::account::metrics::AccountMetrics>,
         depth: usize,
-    ) -> Pin<Box<dyn Future<Output = BulwarkResult<StepOutcome>> + Send + 'a>> {
+    ) -> Pin<Box<dyn Future<Output = GarrisonResult<StepOutcome>> + Send + 'a>> {
         Box::pin(async move {
             match step {
                 AuthStep::Login { credential_type } => {
@@ -620,7 +620,7 @@ impl AuthExecutor {
         ctx: &mut AuthContext,
         builder: Option<&dyn CredentialBuilder>,
         metrics: Option<&crate::account::metrics::AccountMetrics>,
-    ) -> BulwarkResult<StepOutcome> {
+    ) -> GarrisonResult<StepOutcome> {
         // 未启用 metrics-prometheus 时显式忽略 metrics 参数（避免 unused_variables warning）
         #[cfg(not(feature = "metrics-prometheus"))]
         let _ = metrics;
@@ -701,7 +701,7 @@ impl AuthExecutor {
         ctx: &mut AuthContext,
         builder: Option<&dyn CredentialBuilder>,
         metrics: Option<&crate::account::metrics::AccountMetrics>,
-    ) -> BulwarkResult<StepOutcome> {
+    ) -> GarrisonResult<StepOutcome> {
         // 未启用 metrics-prometheus 时显式忽略 metrics 参数（避免 unused_variables warning）
         #[cfg(not(feature = "metrics-prometheus"))]
         let _ = metrics;
@@ -784,7 +784,7 @@ impl AuthExecutor {
         sso_resolver: Option<&dyn SsoServerResolver>,
         metrics: Option<&crate::account::metrics::AccountMetrics>,
         depth: usize,
-    ) -> BulwarkResult<StepOutcome> {
+    ) -> GarrisonResult<StepOutcome> {
         // 递归深度检查：防止循环引用导致栈溢出
         if depth >= MAX_FLOW_DEPTH {
             return Ok(StepOutcome::Failed(format!(
@@ -847,7 +847,7 @@ impl AuthExecutor {
         provider: &str,
         ctx: &mut AuthContext,
         social_resolver: Option<&dyn SocialProviderResolver>,
-    ) -> BulwarkResult<StepOutcome> {
+    ) -> GarrisonResult<StepOutcome> {
         let resolver = match social_resolver {
             Some(r) => r,
             None => {
@@ -907,7 +907,7 @@ impl AuthExecutor {
         server_id: &str,
         ctx: &mut AuthContext,
         sso_resolver: Option<&dyn SsoServerResolver>,
-    ) -> BulwarkResult<StepOutcome> {
+    ) -> GarrisonResult<StepOutcome> {
         let resolver = match sso_resolver {
             Some(r) => r,
             None => {
@@ -957,7 +957,7 @@ impl AuthExecutor {
         &self,
         condition: &AuthCondition,
         ctx: &AuthContext,
-    ) -> BulwarkResult<bool> {
+    ) -> GarrisonResult<bool> {
         match condition {
             AuthCondition::HasCredential(cred_type) => {
                 if let Some(user_id) = &ctx.user_id {
@@ -1011,13 +1011,13 @@ mod tests {
     use super::*;
     use crate::account::authflow::FlowBuilder;
     use crate::account::credential::CredentialType;
-    use crate::config::BulwarkConfig;
+    use crate::config::GarrisonConfig;
     use crate::dao::tests::MockDao;
-    use crate::dao::BulwarkDao;
-    use crate::error::BulwarkError;
-    use crate::session::BulwarkSession;
-    use crate::stp::BulwarkInterface;
-    use crate::strategy::BulwarkPermissionStrategyDefault;
+    use crate::dao::GarrisonDao;
+    use crate::error::GarrisonError;
+    use crate::session::GarrisonSession;
+    use crate::stp::GarrisonInterface;
+    use crate::strategy::GarrisonPermissionStrategyDefault;
     use std::collections::HashMap;
 
     // ------------------------------------------------------------------------
@@ -1048,7 +1048,7 @@ mod tests {
             }
         }
 
-        async fn verify(&self, _input: &str) -> BulwarkResult<bool> {
+        async fn verify(&self, _input: &str) -> GarrisonResult<bool> {
             Ok(self.verify_result)
         }
     }
@@ -1060,7 +1060,7 @@ mod tests {
     }
 
     impl CredentialBuilder for MockCredentialBuilder {
-        fn build(&self, model: CredentialModel) -> BulwarkResult<Box<dyn Credential>> {
+        fn build(&self, model: CredentialModel) -> GarrisonResult<Box<dyn Credential>> {
             let verify_result = match model.credential_type.as_str() {
                 "password" => self.password_verify_result,
                 "totp" => self.totp_verify_result,
@@ -1078,10 +1078,10 @@ mod tests {
 
     #[async_trait]
     impl CredentialRepository for MockCredentialRepository {
-        async fn create(&self, credential: CredentialModel) -> BulwarkResult<()> {
+        async fn create(&self, credential: CredentialModel) -> GarrisonResult<()> {
             let mut store = self.store.lock().unwrap();
             if store.contains_key(&credential.id) {
-                return Err(BulwarkError::InvalidParam(format!(
+                return Err(GarrisonError::InvalidParam(format!(
                     "credential already exists: {}",
                     credential.id
                 )));
@@ -1094,10 +1094,10 @@ mod tests {
             &self,
             caller_login_id: &str,
             user_id: &str,
-        ) -> BulwarkResult<Vec<CredentialModel>> {
+        ) -> GarrisonResult<Vec<CredentialModel>> {
             // IDOR 防护（vuln-0004）：caller 必须是自己
             if caller_login_id != user_id {
-                return Err(BulwarkError::NotPermission(format!(
+                return Err(GarrisonError::NotPermission(format!(
                     "caller {} cannot query credentials of {}",
                     caller_login_id, user_id
                 )));
@@ -1116,7 +1116,7 @@ mod tests {
             &self,
             user_id: &str,
             cred_type: &str,
-        ) -> BulwarkResult<Vec<CredentialModel>> {
+        ) -> GarrisonResult<Vec<CredentialModel>> {
             // 安全语义：调用方应在认证上下文中使用，user_id 即为会话主体。
             let all = self.find_by_user(user_id, user_id).await?;
             Ok(all
@@ -1129,12 +1129,12 @@ mod tests {
             &self,
             caller_login_id: &str,
             credential: CredentialModel,
-        ) -> BulwarkResult<()> {
+        ) -> GarrisonResult<()> {
             let mut store = self.store.lock().unwrap();
             let existing = match store.get(&credential.id) {
                 Some(m) => m.clone(),
                 None => {
-                    return Err(BulwarkError::InvalidParam(format!(
+                    return Err(GarrisonError::InvalidParam(format!(
                         "credential not found: {}",
                         credential.id
                     )));
@@ -1142,14 +1142,14 @@ mod tests {
             };
             // IDOR 防护 1：caller 必须是凭证原 owner
             if existing.user_id != caller_login_id {
-                return Err(BulwarkError::NotPermission(format!(
+                return Err(GarrisonError::NotPermission(format!(
                     "caller {} cannot update credential {} owned by {}",
                     caller_login_id, credential.id, existing.user_id
                 )));
             }
             // IDOR 防护 2：禁止通过 update 改变 user_id
             if credential.user_id != existing.user_id {
-                return Err(BulwarkError::NotPermission(format!(
+                return Err(GarrisonError::NotPermission(format!(
                     "cannot transfer credential {} from user {} to {}",
                     credential.id, existing.user_id, credential.user_id
                 )));
@@ -1158,12 +1158,12 @@ mod tests {
             Ok(())
         }
 
-        async fn delete(&self, caller_login_id: &str, credential_id: &str) -> BulwarkResult<()> {
+        async fn delete(&self, caller_login_id: &str, credential_id: &str) -> GarrisonResult<()> {
             let mut store = self.store.lock().unwrap();
             let existing = match store.get(credential_id) {
                 Some(m) => m.clone(),
                 None => {
-                    return Err(BulwarkError::InvalidParam(format!(
+                    return Err(GarrisonError::InvalidParam(format!(
                         "credential not found: {}",
                         credential_id
                     )));
@@ -1171,7 +1171,7 @@ mod tests {
             };
             // IDOR 防护：caller 必须是凭证 owner
             if existing.user_id != caller_login_id {
-                return Err(BulwarkError::NotPermission(format!(
+                return Err(GarrisonError::NotPermission(format!(
                     "caller {} cannot delete credential {} owned by {}",
                     caller_login_id, credential_id, existing.user_id
                 )));
@@ -1181,16 +1181,16 @@ mod tests {
         }
     }
 
-    /// Mock BulwarkInterface（空权限/角色数据）。
+    /// Mock GarrisonInterface（空权限/角色数据）。
     struct MockInterface;
 
     #[async_trait]
-    impl BulwarkInterface for MockInterface {
-        async fn get_permission_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
+    impl GarrisonInterface for MockInterface {
+        async fn get_permission_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
             Ok(Vec::new())
         }
 
-        async fn get_role_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
+        async fn get_role_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
             Ok(Vec::new())
         }
     }
@@ -1199,16 +1199,16 @@ mod tests {
     // 辅助函数
     // ------------------------------------------------------------------------
 
-    /// 构造测试用 `Arc<BulwarkLogicDefault>`。
-    fn make_logic() -> Arc<BulwarkLogicDefault> {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
-        let config = Arc::new(BulwarkConfig::default_config());
-        let interface: Arc<dyn BulwarkInterface> = Arc::new(MockInterface);
+    /// 构造测试用 `Arc<GarrisonLogicDefault>`。
+    fn make_logic() -> Arc<GarrisonLogicDefault> {
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+        let config = Arc::new(GarrisonConfig::default_config());
+        let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface);
         let timeout = u64::try_from(config.timeout).unwrap_or(3600);
-        let session = Arc::new(BulwarkSession::new(dao, timeout, timeout));
-        let firewall: Arc<dyn crate::strategy::BulwarkPermissionStrategy> =
-            Arc::new(BulwarkPermissionStrategyDefault::new(interface));
-        Arc::new(BulwarkLogicDefault::new(session, config, firewall))
+        let session = Arc::new(GarrisonSession::new(dao, timeout, timeout));
+        let firewall: Arc<dyn crate::strategy::GarrisonPermissionStrategy> =
+            Arc::new(GarrisonPermissionStrategyDefault::new(interface));
+        Arc::new(GarrisonLogicDefault::new(session, config, firewall))
     }
 
     /// 构造测试用 AuthExecutor。
@@ -1674,7 +1674,7 @@ mod tests {
     /// R-009: Login 步骤前检查锁定 — 用户被锁定 → Failed。
     #[tokio::test]
     async fn lockout_blocks_login() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let lockout = Arc::new(UserLockoutStrategy::new(
             crate::account::lockout::UserLockoutConfig {
                 max_failure_factor: 2,
@@ -2196,7 +2196,7 @@ mod tests {
         // 场景 1: 注入 policy_engine + lockout → 访问器返回 Some
         let repo: Arc<dyn CredentialRepository> = Arc::new(MockCredentialRepository::default());
         let policy = Arc::new(PasswordPolicyEngine::new(vec![], ErrorMode::FirstError));
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let lockout = Arc::new(UserLockoutStrategy::new(
             crate::account::lockout::UserLockoutConfig {
                 max_failure_factor: 5,
@@ -2246,7 +2246,7 @@ mod tests {
     /// 使用 RequiredAction 作为 if_step（不走 Login 的 lockout 检查，避免与条件判断耦合）。
     #[tokio::test]
     async fn conditional_is_locked_true_executes_if_step() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let lockout = Arc::new(UserLockoutStrategy::new(
             crate::account::lockout::UserLockoutConfig {
                 max_failure_factor: 2,
@@ -2389,7 +2389,7 @@ mod tests {
     /// 若 record_success 未调用，count=3 → 已锁定，第 4 次会返回 Failed。
     #[tokio::test]
     async fn login_with_lockout_success_resets_failure_count() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let lockout = Arc::new(UserLockoutStrategy::new(
             crate::account::lockout::UserLockoutConfig {
                 max_failure_factor: 2,
@@ -2466,7 +2466,7 @@ mod tests {
     /// 验证：max_failure_factor=1 时，1 次失败 login 后第 2 次 login 被 lockout.check 拦截。
     #[tokio::test]
     async fn login_with_lockout_failure_triggers_lockout() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let lockout = Arc::new(UserLockoutStrategy::new(
             crate::account::lockout::UserLockoutConfig {
                 max_failure_factor: 1,
@@ -2700,7 +2700,7 @@ mod tests {
     /// 覆盖 evaluate_condition 的 IsLocked 分支中 user_id=None 的路径。
     #[tokio::test]
     async fn conditional_is_locked_without_user_id_returns_false() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let lockout = Arc::new(UserLockoutStrategy::new(
             crate::account::lockout::UserLockoutConfig {
                 max_failure_factor: 2,
@@ -3164,12 +3164,12 @@ mod tests {
             .encode_to_string(&registry.gather())
             .unwrap();
         assert!(
-            gathered.contains("bulwark_authflow_execute_duration_seconds"),
+            gathered.contains("garrison_authflow_execute_duration_seconds"),
             "应记录 authflow_execute_duration: {}",
             gathered
         );
         assert!(
-            gathered.contains("bulwark_credential_verify_duration_seconds"),
+            gathered.contains("garrison_credential_verify_duration_seconds"),
             "应记录 credential_verify_duration: {}",
             gathered
         );
@@ -3208,7 +3208,7 @@ mod tests {
             .encode_to_string(&registry.gather())
             .unwrap();
         assert!(
-            gathered.contains("bulwark_credential_verify_duration_seconds"),
+            gathered.contains("garrison_credential_verify_duration_seconds"),
             "应记录 credential_verify_duration: {}",
             gathered
         );
@@ -3249,7 +3249,7 @@ mod tests {
             .encode_to_string(&registry.gather())
             .unwrap();
         assert!(
-            gathered.contains("bulwark_authflow_execute_duration_seconds"),
+            gathered.contains("garrison_authflow_execute_duration_seconds"),
             "空流程也应记录 authflow_execute_duration: {}",
             gathered
         );
@@ -3268,7 +3268,7 @@ mod tests {
     #[cfg(all(feature = "social-wechat", feature = "protocol-sso-server"))]
     mod t017 {
         use super::*;
-        use crate::error::BulwarkError;
+        use crate::error::GarrisonError;
         use crate::protocol::social::{
             SocialLoginProvider, SocialProvider as SocialProviderEnum, SocialUserInfo,
         };
@@ -3307,7 +3307,7 @@ mod tests {
                 &self,
                 _state: &str,
                 _redirect_uri: &str,
-            ) -> BulwarkResult<String> {
+            ) -> GarrisonResult<String> {
                 Ok("https://example.com/auth".to_string())
             }
 
@@ -3315,10 +3315,10 @@ mod tests {
                 &self,
                 _code: &str,
                 _state: &str,
-            ) -> BulwarkResult<SocialUserInfo> {
+            ) -> GarrisonResult<SocialUserInfo> {
                 self.exchange_count.fetch_add(1, Ordering::SeqCst);
                 if self.fail_exchange {
-                    return Err(BulwarkError::Internal(
+                    return Err(GarrisonError::Internal(
                         "mock exchange_token 失败".to_string(),
                     ));
                 }
@@ -3332,7 +3332,7 @@ mod tests {
                 })
             }
 
-            async fn get_user_info(&self, _access_token: &str) -> BulwarkResult<SocialUserInfo> {
+            async fn get_user_info(&self, _access_token: &str) -> GarrisonResult<SocialUserInfo> {
                 Ok(SocialUserInfo {
                     provider: SocialProviderEnum::Wechat,
                     provider_user_id: self.provider_user_id.clone(),
@@ -3368,9 +3368,9 @@ mod tests {
                 provider: &str,
                 code: &str,
                 state: &str,
-            ) -> BulwarkResult<String> {
+            ) -> GarrisonResult<String> {
                 let p = self.providers.get(provider).ok_or_else(|| {
-                    BulwarkError::InvalidParam(format!("unknown social provider: {}", provider))
+                    GarrisonError::InvalidParam(format!("unknown social provider: {}", provider))
                 })?;
                 let user_info = p.exchange_token(code, state).await?;
                 Ok(user_info.provider_user_id)
@@ -3412,7 +3412,7 @@ mod tests {
                 &self,
                 _login_id: &str,
                 _client_id: i64,
-            ) -> BulwarkResult<String> {
+            ) -> GarrisonResult<String> {
                 Ok("mock-ticket".to_string())
             }
 
@@ -3420,21 +3420,21 @@ mod tests {
                 &self,
                 _ticket: &str,
                 _client_id: i64,
-            ) -> BulwarkResult<String> {
+            ) -> GarrisonResult<String> {
                 self.validate_count.fetch_add(1, Ordering::SeqCst);
                 if self.fail_validate {
-                    return Err(BulwarkError::InvalidToken(
+                    return Err(GarrisonError::InvalidToken(
                         "mock validate_ticket 失败".to_string(),
                     ));
                 }
                 Ok(self.login_id.clone())
             }
 
-            async fn destroy_ticket(&self, _ticket: &str) -> BulwarkResult<()> {
+            async fn destroy_ticket(&self, _ticket: &str) -> GarrisonResult<()> {
                 Ok(())
             }
 
-            async fn push_message(&self, _login_id: &str, _message: &str) -> BulwarkResult<()> {
+            async fn push_message(&self, _login_id: &str, _message: &str) -> GarrisonResult<()> {
                 Ok(())
             }
         }
@@ -3463,9 +3463,9 @@ mod tests {
                 server_id: &str,
                 ticket: &str,
                 client_id: i64,
-            ) -> BulwarkResult<String> {
+            ) -> GarrisonResult<String> {
                 let s = self.servers.get(server_id).ok_or_else(|| {
-                    BulwarkError::InvalidParam(format!("unknown sso server: {}", server_id))
+                    GarrisonError::InvalidParam(format!("unknown sso server: {}", server_id))
                 })?;
                 s.validate_ticket(ticket, client_id).await
             }

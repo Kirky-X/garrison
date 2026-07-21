@@ -13,8 +13,8 @@
 
 #![cfg(feature = "protocol-oauth2")]
 
-use bulwark::error::BulwarkError;
-use bulwark::protocol::oauth2::OAuth2Client;
+use garrison::error::GarrisonError;
+use garrison::protocol::oauth2::OAuth2Client;
 use wiremock::matchers::{body_string_contains, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -42,7 +42,7 @@ fn client_for(server: &MockServer) -> OAuth2Client {
 ///
 /// OAuth2 模块按设计决策（见 oauth2/mod.rs 文档："仅实现三种授权流程，不实现 Refresh Token"）
 /// 未提供 `refresh_token` 方法。此测试用 `exchange_code` + 无效 code 验证等价的错误返回边界：
-/// 当授权服务器返回 4xx 错误时，客户端应返回 `BulwarkError::OAuth2`。
+/// 当授权服务器返回 4xx 错误时，客户端应返回 `GarrisonError::OAuth2`。
 #[tokio::test]
 #[allow(deprecated)]
 async fn refresh_token_invalid_returns_error() {
@@ -63,7 +63,7 @@ async fn refresh_token_invalid_returns_error() {
         .await;
     assert!(result.is_err(), "无效/过期的 code 应返回错误");
     match result.err() {
-        Some(BulwarkError::OAuth2(_)) => {},
+        Some(GarrisonError::OAuth2(_)) => {},
         other => panic!("期望 OAuth2 错误，实际: {:?}", other),
     }
 }
@@ -180,7 +180,7 @@ async fn authorization_code_replay_rejected() {
     let second = client.exchange_code(code, "state").await;
     assert!(second.is_err(), "重放同一 code 应被拒绝");
     match second.err() {
-        Some(BulwarkError::OAuth2(msg)) => {
+        Some(GarrisonError::OAuth2(msg)) => {
             assert!(
                 msg.contains("400") || msg.contains("invalid_grant"),
                 "错误消息应包含 HTTP 状态码或错误码: {}",

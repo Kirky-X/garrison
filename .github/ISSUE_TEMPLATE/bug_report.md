@@ -1,6 +1,6 @@
 ---
 name: Bug 报告
-about: 报告 Bulwark 框架的 Bug
+about: 报告 Garrison 框架的 Bug
 title: "[BUG] "
 labels: bug, triage
 assignees: ''
@@ -26,7 +26,7 @@ assignees: ''
 
 ## 环境
 
-- Bulwark 版本：
+- Garrison 版本：
 - Rust 版本（`rustc --version`）：
 - 操作系统：
 - 启用的 features：

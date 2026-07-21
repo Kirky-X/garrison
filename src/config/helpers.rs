@@ -17,10 +17,10 @@ pub(crate) fn default_jwt_secret() -> JwtSecret {
     }
 }
 
-/// 收集 `BULWARK_` 前缀的环境变量，转换为 confers MemorySource 所需的 `HashMap`。
+/// 收集 `GARRISON_` 前缀的环境变量，转换为 confers MemorySource 所需的 `HashMap`。
 ///
 /// Key 映射规则（与 confers `EnvSource::with_prefix(prefix).separator("__")` 一致）：
-/// 1. 剥离前缀（如 `BULWARK_`）
+/// 1. 剥离前缀（如 `GARRISON_`）
 /// 2. 转小写
 /// 3. `__` → `.`（支持嵌套路径，如 `tenant_isolation.enabled`）
 ///

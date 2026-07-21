@@ -1,7 +1,7 @@
 # Copyright (c) 2026 Kirky.X. All rights reserved.
 # See LICENSE for full license text.
 
-# Rust formatting configuration for Bulwark
+# Rust formatting configuration for Garrison
 # 仅使用 stable channel 支持的选项；unstable 选项需 nightly，CI 用 stable 会报警告。
 edition = "2021"
 max_width = 100

@@ -17,7 +17,7 @@
 //! - 状态机事件触发（推迟到 v0.7.0）
 //! - 状态持久化到 dbnexus（推迟到 v0.7.0）
 
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::error::{GarrisonError, GarrisonResult};
 
 // ============================================================================
 // TokenState（FRD §4.3）

@@ -152,7 +152,7 @@ cmd_bump_version() {
 # 顺序与 RELEASING.md 流程图一致：fmt → SAST → test → doc → clippy → version
 # ==============================================================================
 cmd_precheck() {
-    info "=== Bulwark Release 预检查 ==="
+    info "=== Garrison Release 预检查 ==="
     echo
 
     local failures=0
@@ -268,7 +268,7 @@ main() {
         bump-version)   cmd_bump_version "$@" ;;
         ""|-h|--help|help)
             cat <<EOF
-Bulwark Release 工作流本地预检查脚本
+Garrison Release 工作流本地预检查脚本
 
 用法:
   $0 precheck                  完整预检查（所有检查项）

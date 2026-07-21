@@ -3,13 +3,13 @@
 
 //! OAuth2 全流程 E2E 测试——client_credentials grant / introspect / revoke。
 //!
-//! 通过 HTTP 调用真实 BulwarkAuthServer + BackendEmbedded + OAuth2State，
+//! 通过 HTTP 调用真实 GarrisonAuthServer + BackendEmbedded + OAuth2State，
 //! 测试 OAuth2 完整流程：注册客户端、签发 token、内省 token、撤销 token。
 
 use super::{
     default_tenant_headers, make_client, register_oauth2_client, start_e2e_server_with_oauth2,
 };
-use bulwark::oauth2_server::client::{GrantType, OAuth2Client};
+use garrison::oauth2_server::client::{GrantType, OAuth2Client};
 use serial_test::serial;
 
 /// 创建不跟随重定向的 reqwest 客户端。
@@ -241,7 +241,7 @@ async fn test_e2e_oauth2_authorize_redirects_to_login_when_not_logged_in() {
 ///
 /// 通过 `/api/v1/auth/login` 获取 token，携带 `Authorization: Bearer <token>` header
 /// 调用 authorize 端点。`principal_inject_middleware` 从 header 提取 token、验证后
-/// 注入 `BulwarkPrincipal` extension，authorize handler 走授权码签发路径。
+/// 注入 `GarrisonPrincipal` extension，authorize handler 走授权码签发路径。
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn test_e2e_oauth2_authorize_redirects_with_code_when_logged_in() {

@@ -6,7 +6,7 @@
 
 ```toml
 [dependencies]
-bulwark = { version = "0.7", features = ["observability-otlp"] }
+garrison = { version = "0.7", features = ["observability-otlp"] }
 ```
 
 `observability-otlp` 独立门控以隔离重依赖（opentelemetry / opentelemetry_sdk / opentelemetry-otlp / tracing-subscriber）：
@@ -20,17 +20,17 @@ bulwark = { version = "0.7", features = ["observability-otlp"] }
 初始化 OTLP 导出，将 tracer provider 注册到全局：
 
 ```rust
-use bulwark::observability::init_otlp_tracing;
+use garrison::observability::init_otlp_tracing;
 
 // endpoint 为 OTLP gRPC 接收端（如 Jaeger / Tempo / OTel Collector）
 init_otlp_tracing("http://localhost:4317")?;
-// 后续 tracing::info_span!("bulwark.login") 会自动导出到 OTLP endpoint
+// 后续 tracing::info_span!("garrison.login") 会自动导出到 OTLP endpoint
 ```
 
 行为要点：
 
 - 使用 `SpanExporter::builder().with_tonic().with_endpoint(...)` 构造 OTLP gRPC exporter
-- `Resource` 标注 `service.name = "bulwark"`
+- `Resource` 标注 `service.name = "garrison"`
 - 通过 `SdkTracerProvider::builder().with_batch_exporter(...)` 批量导出
 - `opentelemetry::global::set_tracer_provider(provider)` 全局注册
 
@@ -39,11 +39,11 @@ init_otlp_tracing("http://localhost:4317")?;
 trace context 经 OpenTelemetry 自身的 `Context` 传播（task_local），通过全局 tracer provider 导出 OTLP span：
 
 - 业务方在 web 中间件 / handler 内通过 `tracing::info_span!` / `tracing::Span` 创建 span，自动关联到当前 trace
-- 通过 `BulwarkContext` 在异步任务间传播上下文
-- `BulwarkUtil::login` 等方法内的 `tracing::Span` 自动关联到当前 trace
+- 通过 `GarrisonContext` 在异步任务间传播上下文
+- `GarrisonUtil::login` 等方法内的 `tracing::Span` 自动关联到当前 trace
 - 子 span 继承父 span 的 trace_id，形成完整调用链
 
-> **注意**：当前 `BulwarkRouter` 中间件仅从 HTTP header 提取 token（用于鉴权），不提取 W3C `traceparent`。
+> **注意**：当前 `GarrisonRouter` 中间件仅从 HTTP header 提取 token（用于鉴权），不提取 W3C `traceparent`。
 > 跨进程 trace context 注入 / 提取需业务方在 web 中间件层自行配置 OTel propagator（如 `opentelemetry-http` / `opentelemetry-text-map-propagator`）。
 
 ## 与 JSON 日志协同
@@ -51,19 +51,19 @@ trace context 经 OpenTelemetry 自身的 `Context` 传播（task_local），通
 `observability-otlp` 聚合了 `tracing-subscriber`，可与 JSON 日志共用同一 span 上下文：
 
 ```rust
-use bulwark::observability::init_otlp_tracing;
+use garrison::observability::init_otlp_tracing;
 
 tracing_subscriber::fmt().json().try_init().ok();  // JSON 日志
 init_otlp_tracing("http://otel-collector:4317")?; // OTLP 追踪
 // 两者共享 span，日志与追踪可按 trace_id 关联
 ```
 
-## BulwarkOtelError
+## GarrisonOtelError
 
-初始化失败返回 `BulwarkOtelError`：
+初始化失败返回 `GarrisonOtelError`：
 
 ```rust
-pub enum BulwarkOtelError {
+pub enum GarrisonOtelError {
     Exporter(String),  // OTLP exporter 构造失败
     Provider(String),  // Tracer provider 设置失败
 }

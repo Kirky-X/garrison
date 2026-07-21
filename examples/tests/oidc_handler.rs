@@ -7,7 +7,7 @@
 
 #![cfg(feature = "protocol-oidc")]
 
-use bulwark_examples::oauth2::oidc_handler;
+use garrison_examples::oauth2::oidc_handler;
 
 #[test]
 fn test_run_completes() {

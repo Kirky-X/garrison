@@ -7,7 +7,7 @@
 
 #![cfg(feature = "protocol-apikey")]
 
-use bulwark_examples::apikey::apikey_management;
+use garrison_examples::apikey::apikey_management;
 
 #[tokio::test]
 async fn test_run_completes() {

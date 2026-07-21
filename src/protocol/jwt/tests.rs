@@ -1,19 +1,19 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! JwtHandler 与 BulwarkJwtClaims 单元测试。
+//! JwtHandler 与 GarrisonJwtClaims 单元测试。
 
 use super::*;
-use crate::error::BulwarkError;
+use crate::error::GarrisonError;
 
 // ============================================================================
-// BulwarkJwtClaims 测试
+// GarrisonJwtClaims 测试
 // ============================================================================
 
-/// BulwarkJwtClaims 完整字段序列化（spec Scenario）。
+/// GarrisonJwtClaims 完整字段序列化（spec Scenario）。
 #[test]
 fn claims_serializes_full_fields() {
-    let claims = BulwarkJwtClaims {
+    let claims = GarrisonJwtClaims {
         sub: "1001".to_string(),
         iat: 1700000000,
         exp: 1700003600,
@@ -32,10 +32,10 @@ fn claims_serializes_full_fields() {
     assert!(json.contains("\"nbf\":1700000000"));
 }
 
-/// BulwarkJwtClaims device 字段为 None 时序列化为 null（spec Scenario）。
+/// GarrisonJwtClaims device 字段为 None 时序列化为 null（spec Scenario）。
 #[test]
 fn claims_device_none_serializes_as_null() {
-    let claims = BulwarkJwtClaims {
+    let claims = GarrisonJwtClaims {
         sub: "1001".to_string(),
         iat: 1700000000,
         exp: 1700003600,
@@ -55,7 +55,7 @@ fn claims_device_none_serializes_as_null() {
 /// jti=None 时序列化结果不含 jti 字段（向后兼容旧 token）。
 #[test]
 fn claims_jti_none_skipped_in_json() {
-    let claims = BulwarkJwtClaims {
+    let claims = GarrisonJwtClaims {
         sub: "1001".to_string(),
         iat: 1700000000,
         exp: 1700003600,
@@ -89,17 +89,17 @@ fn sign_generates_unique_jti() {
 fn claims_without_jti_deserializes() {
     let json =
         r#"{"sub":"1001","iat":1700000000,"exp":1700003600,"login_id":"1001","device":"web"}"#;
-    let claims: BulwarkJwtClaims = serde_json::from_str(json).unwrap();
+    let claims: GarrisonJwtClaims = serde_json::from_str(json).unwrap();
     assert_eq!(claims.sub, "1001");
     assert_eq!(claims.jti, None, "旧 token 无 jti 字段时应反序列化为 None");
 }
 
-/// BulwarkJwtClaims 可反序列化。
+/// GarrisonJwtClaims 可反序列化。
 #[test]
 fn claims_deserializes() {
     let json =
         r#"{"sub":"1001","iat":1700000000,"exp":1700003600,"login_id":"1001","device":"web"}"#;
-    let claims: BulwarkJwtClaims = serde_json::from_str(json).unwrap();
+    let claims: GarrisonJwtClaims = serde_json::from_str(json).unwrap();
     assert_eq!(claims.sub, "1001");
     assert_eq!(claims.iat, 1700000000);
     assert_eq!(claims.exp, 1700003600);
@@ -157,7 +157,7 @@ fn sign_rejects_empty_secret() {
     let result = handler.sign("1001", 3600);
     assert!(result.is_err());
     match result.err() {
-        Some(BulwarkError::Config(msg)) => assert!(msg.contains("secret")),
+        Some(GarrisonError::Config(msg)) => assert!(msg.contains("secret")),
         other => panic!("期望 Config 错误，实际: {:?}", other),
     }
 }
@@ -169,7 +169,7 @@ fn sign_rejects_negative_timeout() {
     let result = handler.sign("1001", -1);
     assert!(result.is_err());
     match result.err() {
-        Some(BulwarkError::Config(msg)) => assert!(msg.contains("timeout")),
+        Some(GarrisonError::Config(msg)) => assert!(msg.contains("timeout")),
         other => panic!("期望 Config 错误，实际: {:?}", other),
     }
 }
@@ -232,7 +232,7 @@ fn verify_expired_token_returns_expired_error() {
     let result = handler.verify(&token);
     assert!(result.is_err());
     match result.err() {
-        Some(BulwarkError::ExpiredToken(_)) => {},
+        Some(GarrisonError::ExpiredToken(_)) => {},
         other => panic!("期望 ExpiredToken，实际: {:?}", other),
     }
 }
@@ -260,7 +260,7 @@ fn verify_future_nbf_returns_invalid_token() {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs() as i64;
-    let claims = BulwarkJwtClaims {
+    let claims = GarrisonJwtClaims {
         sub: "1001".to_string(),
         iat: now,
         exp: now + 3600,
@@ -276,7 +276,7 @@ fn verify_future_nbf_returns_invalid_token() {
     let result = handler.verify(&token);
     assert!(result.is_err(), "未来 nbf 应被拒绝: {:?}", result.ok());
     match result.err() {
-        Some(BulwarkError::InvalidToken(msg)) => {
+        Some(GarrisonError::InvalidToken(msg)) => {
             assert!(
                 msg.contains("nbf") || msg.contains("ImmatureSignature") || msg.contains("未生效"),
                 "错误消息应包含 nbf/ImmatureSignature/未生效，实际: {}",
@@ -307,7 +307,7 @@ fn verify_past_nbf_returns_ok() {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs() as i64;
-    let claims = BulwarkJwtClaims {
+    let claims = GarrisonJwtClaims {
         sub: "1001".to_string(),
         iat: now - 10,
         exp: now + 3600,
@@ -379,7 +379,7 @@ fn refresh_invalid_token_fails() {
 /// JwtClaims 类型别名兼容 0.1.0 代码。
 #[test]
 fn jwt_claims_alias_works() {
-    let claims: JwtClaims = BulwarkJwtClaims {
+    let claims: JwtClaims = GarrisonJwtClaims {
         sub: "1".to_string(),
         iat: 0,
         exp: 0,

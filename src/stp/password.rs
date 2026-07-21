@@ -2,7 +2,7 @@
 //! See LICENSE for full license text.
 
 //! PasswordLogic trait — 密码登录契约。
-//! 从 v0.5.2 起，从 `BulwarkLogic` 上帝 trait 拆分；本 trait 承接密码登录 1 个方法。
+//! 从 v0.5.2 起，从 `GarrisonLogic` 上帝 trait 拆分；本 trait 承接密码登录 1 个方法。
 //! super-trait 为 [`SessionLogic`]（密码校验通过后调用
 //! [`login`](SessionLogic::login) 签发 token）。
 //!
@@ -10,7 +10,7 @@
 //!
 //! `login_id` 参数从 `i64` 迁移为 `&str`（字符串形式，对象安全）。
 
-use super::BulwarkLogicDefault;
+use super::GarrisonLogicDefault;
 #[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
 use super::LoginParams;
 #[cfg(all(
@@ -19,13 +19,13 @@ use super::LoginParams;
     feature = "db-sqlite"
 ))]
 use crate::constants::EventReason;
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::error::{GarrisonError, GarrisonResult};
 #[cfg(all(
     feature = "listener",
     feature = "account-credential",
     feature = "db-sqlite"
 ))]
-use crate::listener::BulwarkEvent;
+use crate::listener::GarrisonEvent;
 use crate::stp::session::SessionLogic;
 use async_trait::async_trait;
 
@@ -35,7 +35,7 @@ use async_trait::async_trait;
 ///
 /// [`login_with_password`](Self::login_with_password) 默认返回 `NotImplemented`
 /// （未启用 `account-credential` + `db-sqlite` feature）。
-/// 由 `BulwarkLogicDefault` 的 impl 覆写为：
+/// 由 `GarrisonLogicDefault` 的 impl 覆写为：
 /// 1) `UserRepository::find_by_username` 查询用户
 /// 2) `PasswordHasher::verify` 校验密码
 /// 3) 调用 [`SessionLogic::login`] 签发 token
@@ -57,47 +57,51 @@ pub trait PasswordLogic: SessionLogic {
     /// - `Ok(token)`: 密码校验通过，返回新签发的 token 字符串。
     ///
     /// # 错误
-    /// - 未启用 `account-credential` + `db-sqlite` feature：`BulwarkError::NotImplemented`。
-    /// - 未注入 `password_hasher`：`BulwarkError::Config("password hasher not configured")`。
-    /// - 未注入 `user_repository`：`BulwarkError::Config("user repository not configured")`。
-    /// - 用户不存在 / 密码错误：`BulwarkError::InvalidParam("invalid password")`
+    /// - 未启用 `account-credential` + `db-sqlite` feature：`GarrisonError::NotImplemented`。
+    /// - 未注入 `password_hasher`：`GarrisonError::Config("password hasher not configured")`。
+    /// - 未注入 `user_repository`：`GarrisonError::Config("user repository not configured")`。
+    /// - 用户不存在 / 密码错误：`GarrisonError::InvalidParam("invalid password")`
     ///   （不泄露具体原因，防止用户枚举）。
-    /// - 哈希格式不支持：`BulwarkError::InvalidParam("unsupported hash format")`。
-    /// - DAO 查询失败：透传 `BulwarkError::Dao`。
-    async fn login_with_password(&self, _login_id: &str, _password: &str) -> BulwarkResult<String> {
-        Err(BulwarkError::NotImplemented(
+    /// - 哈希格式不支持：`GarrisonError::InvalidParam("unsupported hash format")`。
+    /// - DAO 查询失败：透传 `GarrisonError::Dao`。
+    async fn login_with_password(
+        &self,
+        _login_id: &str,
+        _password: &str,
+    ) -> GarrisonResult<String> {
+        Err(GarrisonError::NotImplemented(
             "login_with_password 未实现：需启用 account-credential + db-sqlite feature".to_string(),
         ))
     }
 }
 
 // ============================================================================
-// BulwarkLogicDefault impl
+// GarrisonLogicDefault impl
 // ============================================================================
 
 #[async_trait]
-impl PasswordLogic for BulwarkLogicDefault {
+impl PasswordLogic for GarrisonLogicDefault {
     /// 密码登录实现：校验密码后调用 [`login`](Self::login) 签发 token。
     ///
     /// R-002：1) UserRepository 查询 2) PasswordHasher 校验 3) login 签发。
     /// 安全约束：用户不存在与密码错误统一返回 `InvalidParam("invalid password")`，真实原因记录在 tracing 日志。
     #[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
-    async fn login_with_password(&self, login_id: &str, password: &str) -> BulwarkResult<String> {
+    async fn login_with_password(&self, login_id: &str, password: &str) -> GarrisonResult<String> {
         let hasher = self
             .password_hasher
             .as_ref()
-            .ok_or_else(|| BulwarkError::Config("password hasher not configured".to_string()))?;
+            .ok_or_else(|| GarrisonError::Config("password hasher not configured".to_string()))?;
         let repo = self
             .user_repository
             .as_ref()
-            .ok_or_else(|| BulwarkError::Config("user repository not configured".to_string()))?;
+            .ok_or_else(|| GarrisonError::Config("user repository not configured".to_string()))?;
 
         // 1. 查询用户（login_id 转字符串作为 username 查询）
         let username = login_id.to_string();
         let user = repo
             .find_by_username(0, &username)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("stp-dao-find-by-id::{}", e)))?;
+            .map_err(|e| GarrisonError::Dao(format!("stp-dao-find-by-id::{}", e)))?;
 
         let user = match user {
             Some(u) => u,
@@ -112,14 +116,14 @@ impl PasswordLogic for BulwarkLogicDefault {
                 // 广播 LoginFailure 事件
                 #[cfg(feature = "listener")]
                 if let Some(lm) = &self.listener_manager {
-                    lm.broadcast(&BulwarkEvent::LoginFailure {
+                    lm.broadcast(&GarrisonEvent::LoginFailure {
                         login_id: login_id.to_string(),
                         reason: EventReason::InvalidCredentials.to_string(),
                         request_context: None,
                     })
                     .await;
                 }
-                return Err(BulwarkError::InvalidParam("invalid password".to_string()));
+                return Err(GarrisonError::InvalidParam("invalid password".to_string()));
             },
         };
 
@@ -131,7 +135,7 @@ impl PasswordLogic for BulwarkLogicDefault {
                 error = %e,
                 "login_with_password 密码哈希格式不支持"
             );
-            BulwarkError::InvalidParam("unsupported hash format".to_string())
+            GarrisonError::InvalidParam("unsupported hash format".to_string())
         })?;
 
         if !verified {
@@ -145,14 +149,14 @@ impl PasswordLogic for BulwarkLogicDefault {
             // 广播 LoginFailure 事件
             #[cfg(feature = "listener")]
             if let Some(lm) = &self.listener_manager {
-                lm.broadcast(&BulwarkEvent::LoginFailure {
+                lm.broadcast(&GarrisonEvent::LoginFailure {
                     login_id: login_id.to_string(),
                     reason: EventReason::InvalidCredentials.to_string(),
                     request_context: None,
                 })
                 .await;
             }
-            return Err(BulwarkError::InvalidParam("invalid password".to_string()));
+            return Err(GarrisonError::InvalidParam("invalid password".to_string()));
         }
 
         // 3. 调用 login 签发 token（触发 plugin/listener auto-wire）
@@ -163,20 +167,20 @@ impl PasswordLogic for BulwarkLogicDefault {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::BulwarkConfig;
-    use crate::error::BulwarkResult;
-    use crate::stp::core::BulwarkCore;
+    use crate::config::GarrisonConfig;
+    use crate::error::GarrisonResult;
+    use crate::stp::core::GarrisonCore;
     use crate::stp::session::SessionLogic;
     use std::sync::Arc;
 
-    /// 最小 mock：实现 `BulwarkCore` + `SessionLogic`（9 必需方法）。
+    /// 最小 mock：实现 `GarrisonCore` + `SessionLogic`（9 必需方法）。
     /// `PasswordLogic` 1 个方法有默认实现，空 impl 即可获得默认行为。
     struct MockPassword {
-        config: Arc<BulwarkConfig>,
+        config: Arc<GarrisonConfig>,
     }
 
-    impl BulwarkCore for MockPassword {
-        fn config(&self) -> Arc<BulwarkConfig> {
+    impl GarrisonCore for MockPassword {
+        fn config(&self) -> Arc<GarrisonConfig> {
             Arc::clone(&self.config)
         }
     }
@@ -187,31 +191,31 @@ mod tests {
             &self,
             _login_id: &str,
             _params: &crate::stp::LoginParams,
-        ) -> BulwarkResult<String> {
+        ) -> GarrisonResult<String> {
             Ok("mock-token".to_string())
         }
-        async fn login_with_token(&self, _login_id: &str, _token: &str) -> BulwarkResult<()> {
+        async fn login_with_token(&self, _login_id: &str, _token: &str) -> GarrisonResult<()> {
             Ok(())
         }
-        async fn logout(&self) -> BulwarkResult<()> {
+        async fn logout(&self) -> GarrisonResult<()> {
             Ok(())
         }
-        async fn logout_by_login_id(&self, _login_id: &str) -> BulwarkResult<()> {
+        async fn logout_by_login_id(&self, _login_id: &str) -> GarrisonResult<()> {
             Ok(())
         }
-        async fn kickout(&self, _login_id: &str) -> BulwarkResult<()> {
+        async fn kickout(&self, _login_id: &str) -> GarrisonResult<()> {
             Ok(())
         }
-        async fn kickout_by_token(&self, _token: &str) -> BulwarkResult<()> {
+        async fn kickout_by_token(&self, _token: &str) -> GarrisonResult<()> {
             Ok(())
         }
-        async fn revoke_token(&self, _token: &str) -> BulwarkResult<()> {
+        async fn revoke_token(&self, _token: &str) -> GarrisonResult<()> {
             Ok(())
         }
-        async fn check_login(&self) -> BulwarkResult<bool> {
+        async fn check_login(&self) -> GarrisonResult<bool> {
             Ok(true)
         }
-        async fn get_login_id(&self) -> BulwarkResult<Option<String>> {
+        async fn get_login_id(&self) -> GarrisonResult<Option<String>> {
             Ok(Some("42".to_string()))
         }
     }
@@ -222,11 +226,11 @@ mod tests {
     #[tokio::test]
     async fn login_with_password_default_returns_not_implemented() {
         let mock = MockPassword {
-            config: Arc::new(BulwarkConfig::default()),
+            config: Arc::new(GarrisonConfig::default()),
         };
         let id = "alice";
         let result = mock.login_with_password(id, "secret").await;
-        assert!(matches!(result, Err(BulwarkError::NotImplemented(_))));
+        assert!(matches!(result, Err(GarrisonError::NotImplemented(_))));
     }
 
     // ========================================================================
@@ -237,7 +241,7 @@ mod tests {
     #[tokio::test]
     async fn mock_password_login_returns_token() {
         let mock = MockPassword {
-            config: Arc::new(BulwarkConfig::default()),
+            config: Arc::new(GarrisonConfig::default()),
         };
         let token = mock
             .login("alice", &crate::stp::LoginParams::default())
@@ -251,7 +255,7 @@ mod tests {
     #[tokio::test]
     async fn mock_password_session_methods_return_ok() {
         let mock = MockPassword {
-            config: Arc::new(BulwarkConfig::default()),
+            config: Arc::new(GarrisonConfig::default()),
         };
         mock.login_with_token("alice", "tok").await.unwrap();
         mock.logout().await.unwrap();
@@ -265,7 +269,7 @@ mod tests {
     #[tokio::test]
     async fn mock_password_check_login_and_get_login_id() {
         let mock = MockPassword {
-            config: Arc::new(BulwarkConfig::default()),
+            config: Arc::new(GarrisonConfig::default()),
         };
         assert!(mock.check_login().await.unwrap());
         let id = mock.get_login_id().await.unwrap();
@@ -276,7 +280,7 @@ mod tests {
     #[tokio::test]
     async fn mock_password_config_returns_arc_clone() {
         let mock = MockPassword {
-            config: Arc::new(BulwarkConfig::default()),
+            config: Arc::new(GarrisonConfig::default()),
         };
         let c1 = mock.config();
         let c2 = mock.config();
@@ -284,7 +288,7 @@ mod tests {
     }
 
     // ========================================================================
-    // BulwarkLogicDefault impl 覆盖测试（cfg-gated: account-credential + db-sqlite）
+    // GarrisonLogicDefault impl 覆盖测试（cfg-gated: account-credential + db-sqlite）
     // 覆盖 hasher/repo 未注入 + listener_manager 广播 LoginFailure 路径
     // ========================================================================
 
@@ -292,20 +296,20 @@ mod tests {
     mod default_impl_coverage {
         use super::*;
         use crate::account::credential::{Argon2Hasher, PasswordHasher};
-        use crate::config::BulwarkConfig;
+        use crate::config::GarrisonConfig;
         use crate::dao::repository::{NewUser, UpdateUser, UserRepository, UserRow};
-        use crate::dao::BulwarkDao;
-        use crate::listener::{BulwarkEvent, BulwarkListener, BulwarkListenerManager};
-        use crate::session::BulwarkSession;
+        use crate::dao::GarrisonDao;
+        use crate::listener::{GarrisonEvent, GarrisonListener, GarrisonListenerManager};
+        use crate::session::GarrisonSession;
         use crate::stp::mock::{MockDao, MockFirewall, MockUserRepository};
-        use crate::strategy::BulwarkPermissionStrategy;
+        use crate::strategy::GarrisonPermissionStrategy;
         use async_trait::async_trait;
         use parking_lot::Mutex;
         use std::sync::Arc;
 
-        /// 记录事件监听器，捕获广播的 BulwarkEvent 用于断言。
+        /// 记录事件监听器，捕获广播的 GarrisonEvent 用于断言。
         struct RecordingListener {
-            events: Mutex<Vec<BulwarkEvent>>,
+            events: Mutex<Vec<GarrisonEvent>>,
         }
 
         impl RecordingListener {
@@ -315,14 +319,14 @@ mod tests {
                 }
             }
 
-            fn captured(&self) -> Vec<BulwarkEvent> {
+            fn captured(&self) -> Vec<GarrisonEvent> {
                 self.events.lock().clone()
             }
         }
 
         #[async_trait]
-        impl BulwarkListener for RecordingListener {
-            async fn on_event(&self, event: &BulwarkEvent) -> crate::error::BulwarkResult<()> {
+        impl GarrisonListener for RecordingListener {
+            async fn on_event(&self, event: &GarrisonEvent) -> crate::error::GarrisonResult<()> {
                 self.events.lock().push(event.clone());
                 Ok(())
             }
@@ -341,18 +345,18 @@ mod tests {
             }
         }
 
-        /// 构造 BulwarkLogicDefault（不注入 hasher/repo，测试 Config 错误路径）。
-        fn make_logic_without_creds() -> BulwarkLogicDefault {
-            let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
-            let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
-            let mut config = BulwarkConfig::default_config();
+        /// 构造 GarrisonLogicDefault（不注入 hasher/repo，测试 Config 错误路径）。
+        fn make_logic_without_creds() -> GarrisonLogicDefault {
+            let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+            let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = "uuid".to_string();
-            let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
+            let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall {
                 has_permission: true,
                 has_role: true,
             });
-            BulwarkLogicDefault::new(session, Arc::new(config), firewall)
+            GarrisonLogicDefault::new(session, Arc::new(config), firewall)
         }
 
         /// 未注入 password_hasher 时返回 Config("password hasher not configured")。
@@ -367,7 +371,7 @@ mod tests {
 
             let result = logic.login_with_password("alice", "any").await;
             assert!(
-                matches!(result, Err(BulwarkError::Config(ref msg)) if msg == "password hasher not configured"),
+                matches!(result, Err(GarrisonError::Config(ref msg)) if msg == "password hasher not configured"),
                 "未注入 hasher 应返回 Config(\"password hasher not configured\")，实际: {:?}",
                 result
             );
@@ -385,7 +389,7 @@ mod tests {
 
             let result = logic.login_with_password("alice", "any").await;
             assert!(
-                matches!(result, Err(BulwarkError::Config(ref msg)) if msg == "user repository not configured"),
+                matches!(result, Err(GarrisonError::Config(ref msg)) if msg == "user repository not configured"),
                 "未注入 repo 应返回 Config(\"user repository not configured\")，实际: {:?}",
                 result
             );
@@ -401,8 +405,8 @@ mod tests {
             let hasher: Arc<dyn PasswordHasher> = Arc::new(Argon2Hasher::default());
             let repo: Arc<dyn UserRepository> = Arc::new(MockUserRepository::new()); // 空仓库
             let recorder = Arc::new(RecordingListener::new());
-            let lm = Arc::new(BulwarkListenerManager::new());
-            lm.register(recorder.clone() as Arc<dyn BulwarkListener>);
+            let lm = Arc::new(GarrisonListenerManager::new());
+            lm.register(recorder.clone() as Arc<dyn GarrisonListener>);
 
             let logic = logic
                 .with_password_hasher(hasher)
@@ -411,7 +415,7 @@ mod tests {
 
             let result = logic.login_with_password("missing-user", "any").await;
             assert!(
-                matches!(result, Err(BulwarkError::InvalidParam(ref msg)) if msg == "invalid password"),
+                matches!(result, Err(GarrisonError::InvalidParam(ref msg)) if msg == "invalid password"),
                 "用户不存在应返回 InvalidParam(\"invalid password\")，实际: {:?}",
                 result
             );
@@ -420,7 +424,7 @@ mod tests {
             let events = recorder.captured();
             let failure_count = events
                 .iter()
-                .filter(|e| matches!(e, BulwarkEvent::LoginFailure { .. }))
+                .filter(|e| matches!(e, GarrisonEvent::LoginFailure { .. }))
                 .count();
             assert_eq!(
                 failure_count, 1,
@@ -428,7 +432,7 @@ mod tests {
                 failure_count
             );
             // 验证事件 reason 为 "invalid_credentials"（防用户枚举）
-            if let Some(BulwarkEvent::LoginFailure {
+            if let Some(GarrisonEvent::LoginFailure {
                 login_id, reason, ..
             }) = events.first()
             {
@@ -454,8 +458,8 @@ mod tests {
             mock_repo.insert(make_user_row("1001", &hash));
             let repo: Arc<dyn UserRepository> = Arc::new(mock_repo);
             let recorder = Arc::new(RecordingListener::new());
-            let lm = Arc::new(BulwarkListenerManager::new());
-            lm.register(recorder.clone() as Arc<dyn BulwarkListener>);
+            let lm = Arc::new(GarrisonListenerManager::new());
+            lm.register(recorder.clone() as Arc<dyn GarrisonListener>);
 
             let logic = logic
                 .with_password_hasher(hasher)
@@ -464,14 +468,14 @@ mod tests {
 
             let result = logic.login_with_password("1001", "wrong-password").await;
             assert!(
-                matches!(result, Err(BulwarkError::InvalidParam(ref msg)) if msg == "invalid password"),
+                matches!(result, Err(GarrisonError::InvalidParam(ref msg)) if msg == "invalid password"),
                 "错误密码应返回 InvalidParam(\"invalid password\")，实际: {:?}",
                 result
             );
 
             // 验证广播了 LoginFailure 事件，reason 为 "invalid_credentials"
             let events = recorder.captured();
-            if let Some(BulwarkEvent::LoginFailure {
+            if let Some(GarrisonEvent::LoginFailure {
                 login_id, reason, ..
             }) = events.first()
             {
@@ -504,7 +508,7 @@ mod tests {
 
             let result = logic.login_with_password("1002", "any-password").await;
             assert!(
-                matches!(result, Err(BulwarkError::InvalidParam(ref msg)) if msg == "unsupported hash format"),
+                matches!(result, Err(GarrisonError::InvalidParam(ref msg)) if msg == "unsupported hash format"),
                 "哈希格式不支持应返回 InvalidParam(\"unsupported hash format\")，实际: {:?}",
                 result
             );
@@ -539,7 +543,7 @@ mod tests {
         /// 模拟 UserRepository 查询失败的 mock。
         ///
         /// `find_by_username` 始终返回 Dao 错误，用于测试 password.rs 第 100 行
-        /// `map_err(|e| BulwarkError::Dao(...))` 错误传播路径。
+        /// `map_err(|e| GarrisonError::Dao(...))` 错误传播路径。
         struct ErrorUserRepository;
 
         #[async_trait]
@@ -548,22 +552,22 @@ mod tests {
                 &self,
                 _tenant_id: i64,
                 _id: &str,
-            ) -> BulwarkResult<Option<UserRow>> {
-                Err(BulwarkError::Dao("find_by_id 模拟失败".to_string()))
+            ) -> GarrisonResult<Option<UserRow>> {
+                Err(GarrisonError::Dao("find_by_id 模拟失败".to_string()))
             }
 
             async fn find_by_username(
                 &self,
                 _tenant_id: i64,
                 _username: &str,
-            ) -> BulwarkResult<Option<UserRow>> {
-                Err(BulwarkError::Dao(
+            ) -> GarrisonResult<Option<UserRow>> {
+                Err(GarrisonError::Dao(
                     "find_by_username 模拟连接断开".to_string(),
                 ))
             }
 
-            async fn create(&self, _tenant_id: i64, _user: NewUser) -> BulwarkResult<String> {
-                Err(BulwarkError::Dao("create 模拟失败".to_string()))
+            async fn create(&self, _tenant_id: i64, _user: NewUser) -> GarrisonResult<String> {
+                Err(GarrisonError::Dao("create 模拟失败".to_string()))
             }
 
             async fn update(
@@ -571,12 +575,12 @@ mod tests {
                 _tenant_id: i64,
                 _id: &str,
                 _user: UpdateUser,
-            ) -> BulwarkResult<()> {
-                Err(BulwarkError::Dao("update 模拟失败".to_string()))
+            ) -> GarrisonResult<()> {
+                Err(GarrisonError::Dao("update 模拟失败".to_string()))
             }
 
-            async fn delete(&self, _tenant_id: i64, _id: &str) -> BulwarkResult<()> {
-                Err(BulwarkError::Dao("delete 模拟失败".to_string()))
+            async fn delete(&self, _tenant_id: i64, _id: &str) -> GarrisonResult<()> {
+                Err(GarrisonError::Dao("delete 模拟失败".to_string()))
             }
 
             async fn list(
@@ -584,14 +588,14 @@ mod tests {
                 _tenant_id: i64,
                 _offset: i64,
                 _limit: i64,
-            ) -> BulwarkResult<Vec<UserRow>> {
-                Err(BulwarkError::Dao("list 模拟失败".to_string()))
+            ) -> GarrisonResult<Vec<UserRow>> {
+                Err(GarrisonError::Dao("list 模拟失败".to_string()))
             }
         }
 
         /// login_with_password 在 UserRepository 查询失败时传播 Dao 错误。
         ///
-        /// 覆盖 password.rs 第 100 行 `map_err(|e| BulwarkError::Dao(...))` 错误传播路径。
+        /// 覆盖 password.rs 第 100 行 `map_err(|e| GarrisonError::Dao(...))` 错误传播路径。
         #[tokio::test]
         async fn login_with_password_repo_query_error_propagates_dao_error() {
             let logic = make_logic_without_creds();
@@ -609,7 +613,7 @@ mod tests {
                 result
             );
             match result {
-                Err(BulwarkError::Dao(msg)) => {
+                Err(GarrisonError::Dao(msg)) => {
                     assert!(
                         msg.contains("stp-dao-find-by-id"),
                         "错误消息应包含 'login_with_password 查询用户失败'，实际: {}",

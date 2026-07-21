@@ -272,7 +272,7 @@ fn a11_simple_style_empty_secret_generate_errors() {
     let style = SimpleTokenStyle::default(); // secret = ""
     let result = style.generate("user", 3600);
     assert!(
-        matches!(result, Err(BulwarkError::Config(_))),
+        matches!(result, Err(GarrisonError::Config(_))),
         "A11: 空 secret 应返回 Config 错误（fail-closed），实际: {:?}",
         result
     );
@@ -319,7 +319,7 @@ fn a11_simple_style_parse_rejects_forged_hmac() {
     let forged = "admin\x1f550e8400-e29b-41d4-a716-446655440000.fake-hmac";
     let result = style.parse(forged);
     assert!(
-        matches!(result, Err(BulwarkError::InvalidToken(_))),
+        matches!(result, Err(GarrisonError::InvalidToken(_))),
         "A11: HMAC 不匹配的 token parse 应返回 InvalidToken，实际: {:?}",
         result
     );
@@ -410,7 +410,7 @@ fn a11_simple_style_without_feature_generate_errors() {
     let style = SimpleTokenStyle::new("secret".to_string());
     let result = style.generate("user", 3600);
     assert!(
-        matches!(result, Err(BulwarkError::Config(_))),
+        matches!(result, Err(GarrisonError::Config(_))),
         "A11: 未启用 secure-simple-token feature 时 generate 应返回 Config 错误"
     );
 }
@@ -452,7 +452,7 @@ fn factory_creates_simple_style() {
     let token = TokenStyleFactory::new("simple", "factory-secret").unwrap();
     let result = token.generate("42", 60);
     assert!(
-        matches!(result, Err(BulwarkError::Config(_))),
+        matches!(result, Err(GarrisonError::Config(_))),
         "A11: 未启用 feature 时 generate 应返回 Config 错误"
     );
 }
@@ -463,7 +463,7 @@ fn factory_rejects_unknown_style() {
     let result = TokenStyleFactory::new("unknown", "secret");
     assert!(result.is_err());
     match result.err() {
-        Some(BulwarkError::Config(msg)) => assert!(msg.contains("unknown token_style")),
+        Some(GarrisonError::Config(msg)) => assert!(msg.contains("unknown token_style")),
         other => panic!("期望 Config 错误，实际: {:?}", other),
     }
 }
@@ -495,7 +495,7 @@ fn random64_style_parse_errors() {
     let result = style.parse("any-token");
     assert!(result.is_err());
     match result.err() {
-        Some(BulwarkError::Internal(msg)) => {
+        Some(GarrisonError::Internal(msg)) => {
             assert!(msg.contains("random_64"), "应提示 random_64 不支持 parse")
         },
         other => panic!("期望 Internal 错误，实际: {:?}", other),

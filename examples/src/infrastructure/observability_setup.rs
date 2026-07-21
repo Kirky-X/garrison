@@ -4,7 +4,7 @@
 //! observability_setup 示例（metrics-prometheus + observability-otlp feature）。
 //!
 //! 演示可观测性三层栈配置：
-//! 1. `BulwarkMetrics::new()` / `register_to(&registry)` Prometheus 指标注册
+//! 1. `GarrisonMetrics::new()` / `register_to(&registry)` Prometheus 指标注册
 //! 2. `record_login` / `observe_token_validation` / `record_permission_query` / `record_role_query` 指标记录
 //! 3. `gather()` 收集 Prometheus 文本格式输出
 //! 4. `tracing_subscriber` JSON 日志初始化（幂等）
@@ -12,19 +12,22 @@
 //!
 //! 运行方式：
 //! ```sh
-//! cargo run -p bulwark-examples --bin observability_setup --features "metrics-prometheus observability-otlp"
+//! cargo run -p garrison-examples --bin observability_setup --features "metrics-prometheus observability-otlp"
 //! ```
 
-use bulwark::observability::BulwarkMetrics;
+use garrison::observability::GarrisonMetrics;
 use std::time::Duration;
 
-/// 创建 BulwarkMetrics 实例并注册到自定义 registry（避免污染 default registry）。
+/// 创建 GarrisonMetrics 实例并注册到自定义 registry（避免污染 default registry）。
 ///
-/// 生产环境可直接用 `BulwarkMetrics::new()` 注册到 default registry，
+/// 生产环境可直接用 `GarrisonMetrics::new()` 注册到 default registry，
 /// 但测试/示例中推荐使用 `register_to` 避免多次注册导致 panic。
-pub fn create_metrics() -> (BulwarkMetrics, bulwark::observability::prometheus::Registry) {
-    let registry = bulwark::observability::prometheus::Registry::new();
-    let metrics = BulwarkMetrics::register_to(&registry).expect("BulwarkMetrics 注册失败");
+pub fn create_metrics() -> (
+    GarrisonMetrics,
+    garrison::observability::prometheus::Registry,
+) {
+    let registry = garrison::observability::prometheus::Registry::new();
+    let metrics = GarrisonMetrics::register_to(&registry).expect("GarrisonMetrics 注册失败");
     (metrics, registry)
 }
 
@@ -36,7 +39,7 @@ pub fn create_metrics() -> (BulwarkMetrics, bulwark::observability::prometheus::
 /// 3. 权限查询通过 → record_permission_query(true)
 /// 4. 角色查询通过 → record_role_query(true)
 /// 5. 登录失败 → record_login(false)
-pub fn record_sample_metrics(metrics: &BulwarkMetrics) {
+pub fn record_sample_metrics(metrics: &GarrisonMetrics) {
     metrics.record_login(true);
     metrics.observe_token_validation(Duration::from_millis(5));
     metrics.record_permission_query(true);
@@ -51,10 +54,10 @@ pub fn record_sample_metrics(metrics: &BulwarkMetrics) {
 /// 收集指标为 Prometheus 文本格式（用于 `/metrics` 端点）。
 ///
 /// 使用自定义 registry 收集，避免 default registry 的干扰。
-pub fn gather_metrics(registry: &bulwark::observability::prometheus::Registry) -> String {
-    use bulwark::observability::prometheus::Encoder;
+pub fn gather_metrics(registry: &garrison::observability::prometheus::Registry) -> String {
+    use garrison::observability::prometheus::Encoder;
     let mut buffer = Vec::new();
-    let encoder = bulwark::observability::prometheus::TextEncoder::new();
+    let encoder = garrison::observability::prometheus::TextEncoder::new();
     encoder.encode(&registry.gather(), &mut buffer).ok();
     String::from_utf8_lossy(&buffer).into_owned()
 }
@@ -62,19 +65,19 @@ pub fn gather_metrics(registry: &bulwark::observability::prometheus::Registry) -
 /// 运行 observability_setup 示例。
 ///
 /// 演示完整的可观测性配置流程：
-/// 1. 创建 BulwarkMetrics 并记录样本指标
+/// 1. 创建 GarrisonMetrics 并记录样本指标
 /// 2. 收集 Prometheus 文本输出
 /// 3. 初始化 JSON 日志
 /// 4. 初始化 OTLP 追踪（需提供 endpoint）
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
-    println!("=== Bulwark 可观测性配置示例 ===\n");
+    println!("=== Garrison 可观测性配置示例 ===\n");
 
     // ----------------------------------------------------------------
-    // 1. BulwarkMetrics 创建 + 指标记录
+    // 1. GarrisonMetrics 创建 + 指标记录
     // ----------------------------------------------------------------
-    println!("[Metrics] BulwarkMetrics::register_to(&registry):");
+    println!("[Metrics] GarrisonMetrics::register_to(&registry):");
     let (metrics, registry) = create_metrics();
-    println!("    创建 BulwarkMetrics 实例（注册到自定义 registry）");
+    println!("    创建 GarrisonMetrics 实例（注册到自定义 registry）");
     println!();
 
     println!("[记录] 模拟认证流程指标:");
@@ -102,19 +105,19 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // 验证关键指标存在
     assert!(
-        output.contains("bulwark_login_total"),
+        output.contains("garrison_login_total"),
         "应包含 login_total 指标"
     );
     assert!(
-        output.contains("bulwark_token_validation_duration_seconds"),
+        output.contains("garrison_token_validation_duration_seconds"),
         "应包含 token_validation 指标"
     );
     assert!(
-        output.contains("bulwark_permission_query_total"),
+        output.contains("garrison_permission_query_total"),
         "应包含 permission_query 指标"
     );
     assert!(
-        output.contains("bulwark_role_query_total"),
+        output.contains("garrison_role_query_total"),
         "应包含 role_query 指标"
     );
     println!("    验证：四个指标均已在输出中 ✓");
@@ -139,7 +142,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!();
     println!("    生产用法:");
     println!("        init_otlp_tracing(\"http://localhost:4317\")?;");
-    println!("        // 后续 tracing::info_span!(\"bulwark.login\") 会自动导出到 OTLP");
+    println!("        // 后续 tracing::info_span!(\"garrison.login\") 会自动导出到 OTLP");
     println!();
 
     println!("=== 示例完成 ===");

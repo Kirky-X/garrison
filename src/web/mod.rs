@@ -11,8 +11,8 @@
 //! 此外，本模块提供前后端分离模式（`frontend_separation`）的 CORS 头部应用函数，
 //! 供 Web 框架适配器在响应阶段调用。
 
-use crate::context::BulwarkResponse;
-use crate::error::BulwarkResult;
+use crate::context::GarrisonResponse;
+use crate::error::GarrisonResult;
 
 /// 前后端分离模式 CORS `Allow-Origin` 头部名。
 pub const CORS_ALLOW_ORIGIN: &str = "Access-Control-Allow-Origin";
@@ -56,12 +56,12 @@ pub mod axum;
 ///
 /// # 参数
 ///
-/// - `response`: 响应对象，需实现 [`BulwarkResponse`] trait。
+/// - `response`: 响应对象，需实现 [`GarrisonResponse`] trait。
 /// - `config`: 全局配置，读取 `frontend_separation` 字段。
-pub fn apply_frontend_separation_cors<R: BulwarkResponse>(
+pub fn apply_frontend_separation_cors<R: GarrisonResponse>(
     response: &mut R,
-    config: &crate::config::BulwarkConfig,
-) -> BulwarkResult<()> {
+    config: &crate::config::GarrisonConfig,
+) -> GarrisonResult<()> {
     if config.frontend_separation {
         response.set_header(CORS_ALLOW_ORIGIN, DEFAULT_CORS_ALLOW_ORIGIN)?;
         response.set_header(CORS_ALLOW_HEADERS, DEFAULT_CORS_ALLOW_HEADERS)?;
@@ -88,12 +88,12 @@ mod tests {
         }
     }
 
-    impl BulwarkResponse for WebMockResponse {
-        fn set_status(&mut self, _code: u16) -> BulwarkResult<()> {
+    impl GarrisonResponse for WebMockResponse {
+        fn set_status(&mut self, _code: u16) -> GarrisonResult<()> {
             Ok(())
         }
 
-        fn set_header(&mut self, name: &str, value: &str) -> BulwarkResult<()> {
+        fn set_header(&mut self, name: &str, value: &str) -> GarrisonResult<()> {
             self.headers.insert(name.to_string(), value.to_string());
             Ok(())
         }
@@ -102,8 +102,8 @@ mod tests {
             &mut self,
             _name: &str,
             _value: &str,
-            _config: &crate::config::BulwarkConfig,
-        ) -> BulwarkResult<()> {
+            _config: &crate::config::GarrisonConfig,
+        ) -> GarrisonResult<()> {
             Ok(())
         }
     }
@@ -112,7 +112,7 @@ mod tests {
     #[test]
     fn t011_apply_cors_separation_adds_headers() {
         let mut resp = WebMockResponse::new();
-        let mut config = crate::config::BulwarkConfig::default_config();
+        let mut config = crate::config::GarrisonConfig::default_config();
         config.frontend_separation = true;
         let result = apply_frontend_separation_cors(&mut resp, &config);
         assert!(result.is_ok());
@@ -134,7 +134,7 @@ mod tests {
     #[test]
     fn t011_apply_cors_no_separation_no_headers() {
         let mut resp = WebMockResponse::new();
-        let mut config = crate::config::BulwarkConfig::default_config();
+        let mut config = crate::config::GarrisonConfig::default_config();
         config.frontend_separation = false;
         let result = apply_frontend_separation_cors(&mut resp, &config);
         assert!(result.is_ok());

@@ -5,7 +5,7 @@
 
 use super::{read_bool, v_bool, v_i64, v_opt_str, v_str, DbnexusLoginLogRepository};
 use crate::dao::repository::{make_statement, LoginLogRepository, LoginLogRow, NewLoginLog};
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::error::{GarrisonError, GarrisonResult};
 use async_trait::async_trait;
 use dbnexus::DbPool;
 use sea_orm::{ConnectionTrait, QueryResult};
@@ -19,20 +19,19 @@ impl DbnexusLoginLogRepository {
 
 #[async_trait]
 impl LoginLogRepository for DbnexusLoginLogRepository {
-    async fn find_by_id(&self, tenant_id: i64, id: &str) -> BulwarkResult<Option<LoginLogRow>> {
+    async fn find_by_id(&self, tenant_id: i64, id: &str) -> GarrisonResult<Option<LoginLogRow>> {
         let session = self.pool.get_session("admin").await.map_err(|e| {
-            BulwarkError::Dao(format!("dao-app-login-log-find-by-id-session::{}", e))
+            GarrisonError::Dao(format!("dao-app-login-log-find-by-id-session::{}", e))
         })?;
         let conn = session.connection().map_err(|e| {
-            BulwarkError::Dao(format!("dao-app-login-log-find-by-id-connection::{}", e))
+            GarrisonError::Dao(format!("dao-app-login-log-find-by-id-connection::{}", e))
         })?;
         let sql = "SELECT id, user_id, action, ip, device_id, success, fail_reason, create_time, tenant_id \
                    FROM app_login_log WHERE tenant_id = ? AND id = ?";
         let stmt = make_statement(conn, sql, vec![v_i64(tenant_id), v_str(id)]);
-        let row = conn
-            .query_one_raw(stmt)
-            .await
-            .map_err(|e| BulwarkError::Dao(format!("dao-app-login-log-find-by-id-query::{}", e)))?;
+        let row = conn.query_one_raw(stmt).await.map_err(|e| {
+            GarrisonError::Dao(format!("dao-app-login-log-find-by-id-query::{}", e))
+        })?;
         row.map(|r| parse_login_log_row(&r)).transpose()
     }
 
@@ -42,12 +41,12 @@ impl LoginLogRepository for DbnexusLoginLogRepository {
         user_id: &str,
         offset: i64,
         limit: i64,
-    ) -> BulwarkResult<Vec<LoginLogRow>> {
+    ) -> GarrisonResult<Vec<LoginLogRow>> {
         let session = self.pool.get_session("admin").await.map_err(|e| {
-            BulwarkError::Dao(format!("dao-app-login-log-find-by-user-id-session::{}", e))
+            GarrisonError::Dao(format!("dao-app-login-log-find-by-user-id-session::{}", e))
         })?;
         let conn = session.connection().map_err(|e| {
-            BulwarkError::Dao(format!(
+            GarrisonError::Dao(format!(
                 "dao-app-login-log-find-by-user-id-connection::{}",
                 e
             ))
@@ -66,19 +65,19 @@ impl LoginLogRepository for DbnexusLoginLogRepository {
             ],
         );
         let rows = conn.query_all_raw(stmt).await.map_err(|e| {
-            BulwarkError::Dao(format!("dao-app-login-log-find-by-user-id-query::{}", e))
+            GarrisonError::Dao(format!("dao-app-login-log-find-by-user-id-query::{}", e))
         })?;
         rows.iter().map(parse_login_log_row).collect()
     }
 
-    async fn create(&self, tenant_id: i64, log: NewLoginLog) -> BulwarkResult<String> {
+    async fn create(&self, tenant_id: i64, log: NewLoginLog) -> GarrisonResult<String> {
         let id = uuid::Uuid::new_v4().to_string();
         let session =
             self.pool.get_session("admin").await.map_err(|e| {
-                BulwarkError::Dao(format!("dao-app-login-log-create-session::{}", e))
+                GarrisonError::Dao(format!("dao-app-login-log-create-session::{}", e))
             })?;
         let conn = session.connection().map_err(|e| {
-            BulwarkError::Dao(format!("dao-app-login-log-create-connection::{}", e))
+            GarrisonError::Dao(format!("dao-app-login-log-create-connection::{}", e))
         })?;
         let sql = "INSERT INTO app_login_log \
                    (id, user_id, action, ip, device_id, success, fail_reason, tenant_id) \
@@ -99,7 +98,7 @@ impl LoginLogRepository for DbnexusLoginLogRepository {
         );
         conn.execute_raw(stmt)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("dao-app-login-log-create-insert::{}", e)))?;
+            .map_err(|e| GarrisonError::Dao(format!("dao-app-login-log-create-insert::{}", e)))?;
         Ok(id)
     }
 
@@ -108,15 +107,14 @@ impl LoginLogRepository for DbnexusLoginLogRepository {
         tenant_id: i64,
         offset: i64,
         limit: i64,
-    ) -> BulwarkResult<Vec<LoginLogRow>> {
-        let session = self
-            .pool
-            .get_session("admin")
-            .await
-            .map_err(|e| BulwarkError::Dao(format!("dao-app-login-log-list-session::{}", e)))?;
+    ) -> GarrisonResult<Vec<LoginLogRow>> {
+        let session =
+            self.pool.get_session("admin").await.map_err(|e| {
+                GarrisonError::Dao(format!("dao-app-login-log-list-session::{}", e))
+            })?;
         let conn = session
             .connection()
-            .map_err(|e| BulwarkError::Dao(format!("dao-app-login-log-list-connection::{}", e)))?;
+            .map_err(|e| GarrisonError::Dao(format!("dao-app-login-log-list-connection::{}", e)))?;
         let sql = "SELECT id, user_id, action, ip, device_id, success, fail_reason, create_time, tenant_id \
                    FROM app_login_log WHERE tenant_id = ? ORDER BY create_time DESC LIMIT ? OFFSET ?";
         let stmt = make_statement(
@@ -127,38 +125,38 @@ impl LoginLogRepository for DbnexusLoginLogRepository {
         let rows = conn
             .query_all_raw(stmt)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("dao-app-login-log-list-query::{}", e)))?;
+            .map_err(|e| GarrisonError::Dao(format!("dao-app-login-log-list-query::{}", e)))?;
         rows.iter().map(parse_login_log_row).collect()
     }
 }
 
 /// 解析 app_login_log 行。
-fn parse_login_log_row(row: &QueryResult) -> BulwarkResult<LoginLogRow> {
+fn parse_login_log_row(row: &QueryResult) -> GarrisonResult<LoginLogRow> {
     Ok(LoginLogRow {
         id: row
             .try_get("", "id")
-            .map_err(|e| BulwarkError::Dao(format!("dao-app-login-log-row-parse-id::{}", e)))?,
+            .map_err(|e| GarrisonError::Dao(format!("dao-app-login-log-row-parse-id::{}", e)))?,
         user_id: row.try_get("", "user_id").map_err(|e| {
-            BulwarkError::Dao(format!("dao-app-login-log-row-parse-user-id::{}", e))
+            GarrisonError::Dao(format!("dao-app-login-log-row-parse-user-id::{}", e))
         })?,
-        action: row
-            .try_get("", "action")
-            .map_err(|e| BulwarkError::Dao(format!("dao-app-login-log-row-parse-action::{}", e)))?,
+        action: row.try_get("", "action").map_err(|e| {
+            GarrisonError::Dao(format!("dao-app-login-log-row-parse-action::{}", e))
+        })?,
         ip: row
             .try_get("", "ip")
-            .map_err(|e| BulwarkError::Dao(format!("dao-app-login-log-row-parse-ip::{}", e)))?,
+            .map_err(|e| GarrisonError::Dao(format!("dao-app-login-log-row-parse-ip::{}", e)))?,
         device_id: row.try_get("", "device_id").map_err(|e| {
-            BulwarkError::Dao(format!("dao-app-login-log-row-parse-device-id::{}", e))
+            GarrisonError::Dao(format!("dao-app-login-log-row-parse-device-id::{}", e))
         })?,
         success: read_bool(row, "success"),
         fail_reason: row.try_get("", "fail_reason").map_err(|e| {
-            BulwarkError::Dao(format!("dao-app-login-log-row-parse-fail-reason::{}", e))
+            GarrisonError::Dao(format!("dao-app-login-log-row-parse-fail-reason::{}", e))
         })?,
         create_time: row.try_get("", "create_time").map_err(|e| {
-            BulwarkError::Dao(format!("dao-app-login-log-row-parse-create-time::{}", e))
+            GarrisonError::Dao(format!("dao-app-login-log-row-parse-create-time::{}", e))
         })?,
         tenant_id: row.try_get("", "tenant_id").map_err(|e| {
-            BulwarkError::Dao(format!("dao-app-login-log-row-parse-tenant-id::{}", e))
+            GarrisonError::Dao(format!("dao-app-login-log-row-parse-tenant-id::{}", e))
         })?,
     })
 }
@@ -370,7 +368,7 @@ mod tests {
         let result = repo.find_by_id(1, "nonexistent").await;
         assert!(result.is_err(), "表删除后 find_by_id 应返回错误");
         match result {
-            Err(BulwarkError::Dao(msg)) => {
+            Err(GarrisonError::Dao(msg)) => {
                 assert!(
                     msg.contains("dao-app-login-log-find-by-id-query"),
                     "错误消息应包含 'find_by_id 查询失败'，实际: {}",
@@ -401,7 +399,7 @@ mod tests {
         let result = repo.find_by_user_id(1, "user-1", 0, 10).await;
         assert!(result.is_err(), "表删除后 find_by_user_id 应返回错误");
         match result {
-            Err(BulwarkError::Dao(msg)) => {
+            Err(GarrisonError::Dao(msg)) => {
                 assert!(
                     msg.contains("dao-app-login-log-find-by-user-id-query"),
                     "错误消息应包含 'find_by_user_id 查询失败'，实际: {}",
@@ -444,7 +442,7 @@ mod tests {
             .await;
         assert!(result.is_err(), "表删除后 create 应返回错误");
         match result {
-            Err(BulwarkError::Dao(msg)) => {
+            Err(GarrisonError::Dao(msg)) => {
                 assert!(
                     msg.contains("dao-app-login-log-create-insert"),
                     "错误消息应包含 'create 插入失败'，实际: {}",
@@ -475,7 +473,7 @@ mod tests {
         let result = repo.list(1, 0, 10).await;
         assert!(result.is_err(), "表删除后 list 应返回错误");
         match result {
-            Err(BulwarkError::Dao(msg)) => {
+            Err(GarrisonError::Dao(msg)) => {
                 assert!(
                     msg.contains("dao-app-login-log-list-query"),
                     "错误消息应包含 'list 查询失败'，实际: {}",
@@ -533,7 +531,7 @@ mod tests {
             result
         );
         match result {
-            Err(BulwarkError::Dao(msg)) => {
+            Err(GarrisonError::Dao(msg)) => {
                 // 应包含 action 字段解析失败的描述
                 assert!(
                     msg.contains("dao-app-login-log-row-parse-action"),

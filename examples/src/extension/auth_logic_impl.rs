@@ -7,15 +7,15 @@
 //!
 //! 运行方式：
 //! ```sh
-//! cargo run -p bulwark-examples --bin auth_logic_impl --features full
+//! cargo run -p garrison-examples --bin auth_logic_impl --features full
 //! ```
 
 use async_trait::async_trait;
-use bulwark::core::auth::{AuthLogic, AuthLogicDefault};
-use bulwark::core::token::{Token, UuidTokenStyle};
-use bulwark::dao::BulwarkDao;
-use bulwark::error::{BulwarkError, BulwarkResult};
-use bulwark::session::BulwarkSession;
+use garrison::core::auth::{AuthLogic, AuthLogicDefault};
+use garrison::core::token::{Token, UuidTokenStyle};
+use garrison::dao::GarrisonDao;
+use garrison::error::{GarrisonError, GarrisonResult};
+use garrison::session::GarrisonSession;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -26,8 +26,8 @@ use tokio::sync::Mutex;
 
 /// 内存 HashMap 实现的 DAO，用于示例演示。
 ///
-/// 生产环境应使用 `BulwarkDaoOxcache`（cache-memory feature）或
-/// `BulwarkDaoDbnexus`（db-sqlite feature）。
+/// 生产环境应使用 `GarrisonDaoOxcache`（cache-memory feature）或
+/// `GarrisonDaoDbnexus`（db-sqlite feature）。
 pub struct MockDao {
     data: Mutex<HashMap<String, String>>,
 }
@@ -48,12 +48,12 @@ impl Default for MockDao {
 }
 
 #[async_trait]
-impl BulwarkDao for MockDao {
-    async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
+impl GarrisonDao for MockDao {
+    async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
         Ok(self.data.lock().await.get(key).cloned())
     }
 
-    async fn set(&self, key: &str, value: &str, _ttl_seconds: u64) -> BulwarkResult<()> {
+    async fn set(&self, key: &str, value: &str, _ttl_seconds: u64) -> GarrisonResult<()> {
         self.data
             .lock()
             .await
@@ -61,21 +61,21 @@ impl BulwarkDao for MockDao {
         Ok(())
     }
 
-    async fn update(&self, key: &str, value: &str) -> BulwarkResult<()> {
+    async fn update(&self, key: &str, value: &str) -> GarrisonResult<()> {
         let mut data = self.data.lock().await;
         if data.contains_key(key) {
             data.insert(key.to_string(), value.to_string());
             Ok(())
         } else {
-            Err(BulwarkError::Dao(format!("键不存在: {}", key)))
+            Err(GarrisonError::Dao(format!("键不存在: {}", key)))
         }
     }
 
-    async fn expire(&self, _key: &str, _seconds: u64) -> BulwarkResult<()> {
+    async fn expire(&self, _key: &str, _seconds: u64) -> GarrisonResult<()> {
         Ok(())
     }
 
-    async fn delete(&self, key: &str) -> BulwarkResult<()> {
+    async fn delete(&self, key: &str) -> GarrisonResult<()> {
         self.data.lock().await.remove(key);
         Ok(())
     }
@@ -85,16 +85,16 @@ impl BulwarkDao for MockDao {
 ///
 /// 演示 AuthLogicDefault 的 login / is_login / get_login_id / verify_token / logout，
 /// 以及 logout 的幂等语义。
-pub async fn run() -> BulwarkResult<()> {
-    println!("=== Bulwark 认证逻辑示例 ===\n");
+pub async fn run() -> GarrisonResult<()> {
+    println!("=== Garrison 认证逻辑示例 ===\n");
 
     // ----------------------------------------------------------------
     // 1. 构建 AuthLogicDefault（注入 Session + Token 处理器）
     // ----------------------------------------------------------------
     // 注意：AuthLogicDefault 不依赖 task_local 上下文，所有方法以 token 为入参，
     // 便于 protocol-jwt 等协议层模块干净复用。
-    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
-    let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
     let token_handler: Arc<dyn Token> = Arc::new(UuidTokenStyle);
     let auth = AuthLogicDefault::new(session, token_handler, 3600);
     println!("[1] AuthLogicDefault 构建完成（timeout=3600s, active_timeout=86400s）\n");

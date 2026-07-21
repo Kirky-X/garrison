@@ -1,8 +1,8 @@
-# Bulwark 贡献指南
+# Garrison 贡献指南
 
-首先，感谢你对 Bulwark 项目的关注与支持！本文档将引导你完成从环境搭建到提交 Pull Request 的完整贡献流程。
+首先，感谢你对 Garrison 项目的关注与支持！本文档将引导你完成从环境搭建到提交 Pull Request 的完整贡献流程。
 
-Bulwark 是一个面向 Rust 生态的身份认证鉴权框架。项目采用 TDD（测试驱动开发）工作流，对代码质量有严格要求：3841+ 个测试通过（3776 lib + 65 E2E）+ doc-tests、95%+ 覆盖率、clippy 零警告、所有 public API 均带 `///` 文档注释。
+Garrison 是一个面向 Rust 生态的身份认证鉴权框架。项目采用 TDD（测试驱动开发）工作流，对代码质量有严格要求：3841+ 个测试通过（3776 lib + 65 E2E）+ doc-tests、95%+ 覆盖率、clippy 零警告、所有 public API 均带 `///` 文档注释。
 
 > 相关文档：[开发规范](./DEVELOPMENT.md) | [架构设计](./ARCHITECTURE.md) | [配置指南](./CONFIGURATION.md)
 
@@ -25,24 +25,24 @@ Bulwark 是一个面向 Rust 生态的身份认证鉴权框架。项目采用 TD
 
 ### 1. Fork 与 Clone 仓库
 
-1. 在 GitHub 上 Fork [Kirky-X/bulwark](https://github.com/Kirky-X/bulwark) 到你的个人账户。
+1. 在 GitHub 上 Fork [Kirky-X/garrison](https://github.com/Kirky-X/garrison) 到你的个人账户。
 2. Clone 你 Fork 的仓库到本地：
 
    ```bash
-   git clone https://github.com/<你的用户名>/bulwark.git
-   cd bulwark
+   git clone https://github.com/<你的用户名>/garrison.git
+   cd garrison
    ```
 
 3. 添加上游远程仓库以保持同步：
 
    ```bash
-   git remote add upstream https://github.com/Kirky-X/bulwark.git
+   git remote add upstream https://github.com/Kirky-X/garrison.git
    git fetch upstream
    ```
 
 ### 2. 安装 Rust 工具链
 
-Bulwark 的 MSRV（Minimum Supported Rust Version）为 **Rust 1.85+**。部分依赖（如 `inventory 0.3`）要求 `edition2024`，需 Rust 1.85+。项目根目录已包含 `rust-toolchain.toml`，执行任何 `cargo` 命令时 rustup 会自动安装对应版本。
+Garrison 的 MSRV（Minimum Supported Rust Version）为 **Rust 1.85+**。部分依赖（如 `inventory 0.3`）要求 `edition2024`，需 Rust 1.85+。项目根目录已包含 `rust-toolchain.toml`，执行任何 `cargo` 命令时 rustup 会自动安装对应版本。
 
 如需手动安装/升级：
 
@@ -54,7 +54,7 @@ rustup show  # 验证 toolchain 已就绪
 
 ### 3. 克隆本地依赖（可选）
 
-Bulwark 的核心依赖 `oxcache 0.3` 与 `dbnexus 0.4` 均已发布到 crates.io，**无需额外克隆本地依赖**。正常执行 `cargo build` 即可自动拉取。
+Garrison 的核心依赖 `oxcache 0.3` 与 `dbnexus 0.4` 均已发布到 crates.io，**无需额外克隆本地依赖**。正常执行 `cargo build` 即可自动拉取。
 
 > 若需对 `oxcache` / `dbnexus` 上游做本地修改验证，可自行 `git clone` 对应仓库并改用 `path` 依赖，但不要将 `path` 配置提交到 PR。
 
@@ -92,7 +92,7 @@ cargo test --features full
 
 ## 代码规范
 
-Bulwark 遵循严格的代码质量标准，所有提交必须通过以下检查。
+Garrison 遵循严格的代码质量标准，所有提交必须通过以下检查。
 
 ### clippy 零警告
 
@@ -131,7 +131,7 @@ cargo doc --no-deps --features full
 
 ### 全局单例测试串行化
 
-修改全局 `BulwarkManager` 单例（位于 `once_cell::sync::Lazy`）的测试必须标注 `#[serial_test::serial]`，避免并发污染：
+修改全局 `GarrisonManager` 单例（位于 `once_cell::sync::Lazy`）的测试必须标注 `#[serial_test::serial]`，避免并发污染：
 
 ```rust
 #[cfg(test)]
@@ -168,7 +168,7 @@ mod tests {
 
 ## 提交规范
 
-Bulwark 采用 [Conventional Commits](https://www.conventionalcommits.org/zh-hans/v1.0.0/) 规范，提交信息格式：
+Garrison 采用 [Conventional Commits](https://www.conventionalcommits.org/zh-hans/v1.0.0/) 规范，提交信息格式：
 
 ```text
 <type>(<scope>): <subject>
@@ -272,7 +272,7 @@ cargo doc --no-deps --features full
 ### 4. 创建 Pull Request
 
 1. 推送分支到你的 Fork：`git push origin feat/your-feature`
-2. 在 GitHub 上向 `Kirky-X/bulwark:main` 发起 Pull Request。
+2. 在 GitHub 上向 `Kirky-X/garrison:main` 发起 Pull Request。
 3. 填写 PR 模板，包含：
    - **变更说明**：本次 PR 做了什么、为什么。
    - **关联 Issue**：如 `Closes #42`。
@@ -284,7 +284,7 @@ cargo doc --no-deps --features full
 
 ## 测试覆盖率要求
 
-Bulwark 要求测试覆盖率 **≥ 95%**（当前 95%+）。新增代码不得使总覆盖率下降。
+Garrison 要求测试覆盖率 **≥ 95%**（当前 95%+）。新增代码不得使总覆盖率下降。
 
 使用 `cargo-tarpaulin` 生成覆盖率报告：
 
@@ -308,11 +308,11 @@ cargo tarpaulin --features "default,db-sqlite" --lib --out Lcov
 
 ## 联系方式
 
-- **GitHub Issues**：[https://github.com/Kirky-X/bulwark/issues](https://github.com/Kirky-X/bulwark/issues) — 用于 bug 报告与功能请求。
-- **GitHub Discussions**：[https://github.com/Kirky-X/bulwark/discussions](https://github.com/Kirky-X/bulwark/discussions) — 用于设计讨论、使用疑问与想法交流。
+- **GitHub Issues**：[https://github.com/Kirky-X/garrison/issues](https://github.com/Kirky-X/garrison/issues) — 用于 bug 报告与功能请求。
+- **GitHub Discussions**：[https://github.com/Kirky-X/garrison/discussions](https://github.com/Kirky-X/garrison/discussions) — 用于设计讨论、使用疑问与想法交流。
 
 如遇安全问题，请勿在公开渠道讨论，参阅 [SECURITY.md](./SECURITY.md)。
 
 ---
 
-再次感谢你的贡献！愿 Bulwark 因你而更稳健。
+再次感谢你的贡献！愿 Garrison 因你而更稳健。

@@ -4,26 +4,26 @@
 //! web_actix_example 示例（web-actix feature）。
 //!
 //! 演示 actix-web 框架集成：
-//! 1. `BulwarkRouter`（actix-web 版本）注册受保护路由
-//! 2. `BulwarkMiddleware` 自动提取 token 并执行鉴权
+//! 1. `GarrisonRouter`（actix-web 版本）注册受保护路由
+//! 2. `GarrisonMiddleware` 自动提取 token 并执行鉴权
 //! 3. `with_interceptor` 自定义拦截器（LoggingInterceptor）
 //! 4. 注解 `CheckLogin` / `CheckRole` / `CheckPermission` 的路由级鉴权
 //!
 //! 运行方式：
 //! ```sh
-//! cargo run -p bulwark-examples --bin web_actix_example --features web-actix
+//! cargo run -p garrison-examples --bin web_actix_example --features web-actix
 //! ```
 
 use actix_web::HttpServer;
 use async_trait::async_trait;
-use bulwark::annotation::Annotation;
-use bulwark::config::BulwarkConfig;
-use bulwark::dao::BulwarkDao;
-use bulwark::error::{BulwarkError, BulwarkResult};
-use bulwark::manager::BulwarkManager;
-use bulwark::router::BulwarkInterceptor;
-use bulwark::stp::{BulwarkInterface, BulwarkUtil};
-use bulwark::web_actix::{BulwarkMiddleware, BulwarkRouter};
+use garrison::annotation::Annotation;
+use garrison::config::GarrisonConfig;
+use garrison::dao::GarrisonDao;
+use garrison::error::{GarrisonError, GarrisonResult};
+use garrison::manager::GarrisonManager;
+use garrison::router::GarrisonInterceptor;
+use garrison::stp::{GarrisonInterface, GarrisonUtil};
+use garrison::web_actix::{GarrisonMiddleware, GarrisonRouter};
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -54,8 +54,8 @@ impl Default for InMemoryDao {
 }
 
 #[async_trait]
-impl BulwarkDao for InMemoryDao {
-    async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
+impl GarrisonDao for InMemoryDao {
+    async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
         let mut store = self.store.lock();
         match store.get(key) {
             Some((value, expire_at)) => {
@@ -71,7 +71,7 @@ impl BulwarkDao for InMemoryDao {
         }
     }
 
-    async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> BulwarkResult<()> {
+    async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> GarrisonResult<()> {
         let expire_at = if ttl_seconds == 0 {
             None
         } else {
@@ -83,18 +83,18 @@ impl BulwarkDao for InMemoryDao {
         Ok(())
     }
 
-    async fn update(&self, key: &str, value: &str) -> BulwarkResult<()> {
+    async fn update(&self, key: &str, value: &str) -> GarrisonResult<()> {
         let mut store = self.store.lock();
         match store.get_mut(key) {
             Some((existing, _)) => {
                 *existing = value.to_string();
                 Ok(())
             },
-            None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
+            None => Err(GarrisonError::Dao(format!("键不存在: {}", key))),
         }
     }
 
-    async fn expire(&self, key: &str, seconds: u64) -> BulwarkResult<()> {
+    async fn expire(&self, key: &str, seconds: u64) -> GarrisonResult<()> {
         let mut store = self.store.lock();
         match store.get_mut(key) {
             Some((_, expire_at)) => {
@@ -105,11 +105,11 @@ impl BulwarkDao for InMemoryDao {
                 };
                 Ok(())
             },
-            None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
+            None => Err(GarrisonError::Dao(format!("键不存在: {}", key))),
         }
     }
 
-    async fn delete(&self, key: &str) -> BulwarkResult<()> {
+    async fn delete(&self, key: &str) -> GarrisonResult<()> {
         self.store.lock().remove(key);
         Ok(())
     }
@@ -145,12 +145,12 @@ impl Default for MyInterface {
 }
 
 #[async_trait]
-impl BulwarkInterface for MyInterface {
-    async fn get_permission_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+impl GarrisonInterface for MyInterface {
+    async fn get_permission_list(&self, login_id: &str) -> GarrisonResult<Vec<String>> {
         Ok(self.permissions.get(login_id).cloned().unwrap_or_default())
     }
 
-    async fn get_role_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+    async fn get_role_list(&self, login_id: &str) -> GarrisonResult<Vec<String>> {
         Ok(self.roles.get(login_id).cloned().unwrap_or_default())
     }
 }
@@ -159,29 +159,29 @@ impl BulwarkInterface for MyInterface {
 // LoggingInterceptor（自定义拦截器，演示 with_interceptor）
 // ============================================================================
 
-/// 自定义拦截器：打印鉴权日志，然后委托给 BulwarkUtil 执行实际鉴权。
+/// 自定义拦截器：打印鉴权日志，然后委托给 GarrisonUtil 执行实际鉴权。
 ///
-/// 演示 `BulwarkRouter::with_interceptor` 用法，生产环境可实现更复杂逻辑
+/// 演示 `GarrisonRouter::with_interceptor` 用法，生产环境可实现更复杂逻辑
 /// （如审计日志、指标收集、多租户路由等）。
 struct LoggingInterceptor;
 
 #[async_trait]
-impl BulwarkInterceptor for LoggingInterceptor {
-    async fn pre_handle(&self, path: &str, annotation: &Annotation) -> BulwarkResult<()> {
+impl GarrisonInterceptor for LoggingInterceptor {
+    async fn pre_handle(&self, path: &str, annotation: &Annotation) -> GarrisonResult<()> {
         println!(
             "[LoggingInterceptor] path={}, annotation={:?}",
             path, annotation
         );
         match annotation {
             Annotation::CheckLogin => {
-                let logged_in = BulwarkUtil::check_login().await?;
+                let logged_in = GarrisonUtil::check_login().await?;
                 if !logged_in {
-                    return Err(BulwarkError::NotLogin("未登录".to_string()));
+                    return Err(GarrisonError::NotLogin("未登录".to_string()));
                 }
                 Ok(())
             },
-            Annotation::CheckRole(role) => BulwarkUtil::check_role(role).await,
-            Annotation::CheckPermission(perm) => BulwarkUtil::check_permission(perm).await,
+            Annotation::CheckRole(role) => GarrisonUtil::check_role(role).await,
+            Annotation::CheckPermission(perm) => GarrisonUtil::check_permission(perm).await,
             Annotation::Ignore => Ok(()),
             _ => Ok(()),
         }
@@ -192,32 +192,34 @@ impl BulwarkInterceptor for LoggingInterceptor {
 // setup / create_middleware / run
 // ============================================================================
 
-/// 初始化全局 BulwarkManager（注入 InMemoryDao + MyInterface），并登录获取 token。
+/// 初始化全局 GarrisonManager（注入 InMemoryDao + MyInterface），并登录获取 token。
 ///
 /// 返回 `(config, token)`，config 用于构建 App 的 app_data，token 用于测试请求。
-pub async fn setup() -> (Arc<BulwarkConfig>, String) {
-    let dao: Arc<dyn BulwarkDao> = Arc::new(InMemoryDao::new());
-    let mut config = BulwarkConfig::default_config();
+pub async fn setup() -> (Arc<GarrisonConfig>, String) {
+    let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
+    let mut config = GarrisonConfig::default_config();
     config.timeout = 3600;
     config.active_timeout = -1;
     config.throw_on_not_login = false;
     let config = Arc::new(config);
-    let interface: Arc<dyn BulwarkInterface> = Arc::new(MyInterface::new());
-    BulwarkManager::init(dao, config.clone(), interface).expect("BulwarkManager 初始化失败");
+    let interface: Arc<dyn GarrisonInterface> = Arc::new(MyInterface::new());
+    GarrisonManager::init(dao, config.clone(), interface).expect("GarrisonManager 初始化失败");
 
-    let token = BulwarkUtil::login_simple("1001").await.expect("login 失败");
+    let token = GarrisonUtil::login_simple("1001")
+        .await
+        .expect("login 失败");
     (config, token)
 }
 
-/// 创建 BulwarkMiddleware（注册路由规则 + 自定义拦截器）。
+/// 创建 GarrisonMiddleware（注册路由规则 + 自定义拦截器）。
 ///
 /// 注册的路由规则：
 /// - `/api/protected` → `CheckLogin`
 /// - `/api/admin` → `CheckRole("admin")`
 /// - `/api/data` → `CheckPermission("data:read")`
 /// - `/public` → `Ignore`（无鉴权）
-pub fn create_middleware(config: Arc<BulwarkConfig>) -> BulwarkMiddleware {
-    BulwarkRouter::new(config)
+pub fn create_middleware(config: Arc<GarrisonConfig>) -> GarrisonMiddleware {
+    GarrisonRouter::new(config)
         .with_interceptor(LoggingInterceptor)
         .route_protected("/api/protected", Annotation::CheckLogin)
         .route_protected("/api/admin", Annotation::CheckRole("admin".to_string()))
@@ -237,10 +239,10 @@ pub fn create_middleware(config: Arc<BulwarkConfig>) -> BulwarkMiddleware {
 /// curl http://127.0.0.1:3001/public
 /// ```
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    println!("=== Bulwark actix-web 集成示例 ===\n");
+    println!("=== Garrison actix-web 集成示例 ===\n");
 
     let (config, token) = setup().await;
-    println!("[初始化] BulwarkManager 已就绪");
+    println!("[初始化] GarrisonManager 已就绪");
     println!("    账号 1001 角色: [admin]");
     println!("    账号 1001 权限: [data:read]");
     println!("    token: {}...", &token[..16.min(token.len())]);
@@ -253,7 +255,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("    GET /public         → Ignore（无鉴权）");
     println!();
 
-    println!("[拦截器] LoggingInterceptor: 打印鉴权日志后委托 BulwarkUtil");
+    println!("[拦截器] LoggingInterceptor: 打印鉴权日志后委托 GarrisonUtil");
     println!();
 
     println!("[启动] HttpServer 监听 127.0.0.1:3001");

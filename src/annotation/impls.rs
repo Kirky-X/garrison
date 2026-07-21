@@ -4,7 +4,7 @@
 //! `Annotation` / `AnnotationMode` 的 Display / FromStr / 内联方法实现。
 
 use super::{Annotation, AnnotationMode};
-use crate::error::BulwarkError;
+use crate::error::GarrisonError;
 
 impl std::fmt::Display for AnnotationMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -48,7 +48,7 @@ impl std::fmt::Display for Annotation {
 }
 
 impl std::str::FromStr for Annotation {
-    type Err = BulwarkError;
+    type Err = GarrisonError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
@@ -64,7 +64,7 @@ impl std::str::FromStr for Annotation {
             "CheckSign" => Ok(Annotation::CheckSign),
             "CheckAccessToken" => Ok(Annotation::CheckAccessToken),
             "CheckClientToken" => Ok(Annotation::CheckClientToken),
-            _ => Err(BulwarkError::InvalidParam(format!(
+            _ => Err(GarrisonError::InvalidParam(format!(
                 "无法从字符串解析注解（含数据变体需显式构造）: {}",
                 s
             ))),

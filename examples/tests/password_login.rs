@@ -11,7 +11,7 @@
     feature = "cache-memory"
 ))]
 
-use bulwark_examples::authentication::password_login;
+use garrison_examples::authentication::password_login;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_run_completes() {

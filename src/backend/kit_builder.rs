@@ -3,7 +3,7 @@
 
 //! trait-kit AsyncKit 构建器集成（feature = "backend-kit"）。
 //!
-//! 用 typestate DI 构建 `BulwarkAuthServer` 初始化路径。
+//! 用 typestate DI 构建 `GarrisonAuthServer` 初始化路径。
 //! `BackendModule` 实现 `AsyncAutoBuilder`，`Capability = Arc<dyn AuthBackend>`。
 
 #![cfg(feature = "backend-kit")]
@@ -15,7 +15,7 @@ use std::sync::Arc;
 use trait_kit::core::{AsyncAutoBuilder, ModuleMeta};
 use trait_kit::kit::AsyncKit;
 
-/// trait-kit 错误类型（包装 BulwarkError）。
+/// trait-kit 错误类型（包装 GarrisonError）。
 #[derive(Debug, thiserror::Error)]
 pub enum BackendKitError {
     /// 后端构建失败。
@@ -116,7 +116,7 @@ mod tests {
         kit.register::<BackendModule>().expect("register failed");
         let kit = kit.build().await.expect("build failed");
         let backend: Arc<dyn AuthBackend> = kit.require::<BackendModule>().expect("require failed");
-        // 验证 trait object 可调用（check_login 会因未初始化 BulwarkManager 返回错误，
+        // 验证 trait object 可调用（check_login 会因未初始化 GarrisonManager 返回错误，
         // 但这证明了 Arc<dyn AuthBackend> 已成功构建且可分发）
         let _ = backend.check_login("any-token").await;
     }

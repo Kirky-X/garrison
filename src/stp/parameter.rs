@@ -11,16 +11,16 @@
 //! - `ParameterQuery` trait：定义 `with_login_id` / `with_device` / `with_token` /
 //!   `check_permission` / `check_role` 链式 API（check_* 为 async）
 //! - `ParameterQueryBuilder`：默认实现，持有 `Option<String>` login_id / `Option<String>`
-//!   device / `Option<String>` token 上下文，委托 `BulwarkUtil` 静态方法执行校验
+//!   device / `Option<String>` token 上下文，委托 `GarrisonUtil` 静态方法执行校验
 //!
 //! ## v0.5.2 迁移
 //!
 //! `login_id` 由 `i64` 迁移至 `String`（与全局 login_id 迁移一致）：
 //! - `with_login_id` 接收 `String`（builder 持有所有权，避免每次校验克隆）
-//! - 校验路径透传 `&str` 给 `BulwarkUtil::login`
+//! - 校验路径透传 `&str` 给 `GarrisonUtil::login`
 
-use crate::error::{BulwarkError, BulwarkResult};
-use crate::stp::{with_current_token, BulwarkUtil};
+use crate::error::{GarrisonError, GarrisonResult};
+use crate::stp::{with_current_token, GarrisonUtil};
 use async_trait::async_trait;
 
 /// 参数化查询 trait，提供链式参数化校验 API。
@@ -35,9 +35,9 @@ use async_trait::async_trait;
 /// # 示例
 ///
 /// ```ignore
-/// use bulwark::stp::parameter::{ParameterQuery, ParameterQueryBuilder};
+/// use garrison::stp::parameter::{ParameterQuery, ParameterQueryBuilder};
 ///
-/// # async fn example() -> bulwark::error::BulwarkResult<()> {
+/// # async fn example() -> garrison::error::GarrisonResult<()> {
 /// ParameterQueryBuilder::new()
 ///     .with_login_id("1001".to_string())
 ///     .with_device("dev1")
@@ -59,21 +59,21 @@ pub trait ParameterQuery: Send + Sync {
 
     /// 校验权限（async）。
     ///
-    /// 使用 builder 上下文中的 login_id 或 token 委托 `BulwarkUtil::check_permission` 校验。
+    /// 使用 builder 上下文中的 login_id 或 token 委托 `GarrisonUtil::check_permission` 校验。
     ///
     /// # 错误
-    /// - 未设置 login_id 且未设置 token：`BulwarkError::Internal`。
-    /// - 校验失败：透传 `BulwarkError::NotPermission` 等。
-    async fn check_permission(&self, perm: &str) -> BulwarkResult<()>;
+    /// - 未设置 login_id 且未设置 token：`GarrisonError::Internal`。
+    /// - 校验失败：透传 `GarrisonError::NotPermission` 等。
+    async fn check_permission(&self, perm: &str) -> GarrisonResult<()>;
 
     /// 校验角色（async）。
     ///
-    /// 使用 builder 上下文中的 login_id 或 token 委托 `BulwarkUtil::check_role` 校验。
+    /// 使用 builder 上下文中的 login_id 或 token 委托 `GarrisonUtil::check_role` 校验。
     ///
     /// # 错误
-    /// - 未设置 login_id 且未设置 token：`BulwarkError::Internal`。
-    /// - 校验失败：透传 `BulwarkError::NotRole` 等。
-    async fn check_role(&self, role: &str) -> BulwarkResult<()>;
+    /// - 未设置 login_id 且未设置 token：`GarrisonError::Internal`。
+    /// - 校验失败：透传 `GarrisonError::NotRole` 等。
+    async fn check_role(&self, role: &str) -> GarrisonResult<()>;
 }
 
 /// `ParameterQuery` 的默认实现，持有 login_id / device / token 上下文。
@@ -82,7 +82,7 @@ pub struct ParameterQueryBuilder {
     login_id: Option<String>,
     /// 设备标识（仅存储，不参与校验逻辑，预留扩展）。
     device: Option<String>,
-    /// Token（设置时通过 task_local 委托 BulwarkUtil 校验，优先级高于 login_id）。
+    /// Token（设置时通过 task_local 委托 GarrisonUtil 校验，优先级高于 login_id）。
     token: Option<String>,
 }
 
@@ -99,39 +99,39 @@ impl ParameterQueryBuilder {
     /// 公共 check 流程：根据 token / login_id 上下文执行校验（M7 提取，消除重复代码）。
     ///
     /// - token 优先于 login_id
-    /// - token 路径：直接 `with_current_token` 包装后委托 `BulwarkUtil::check_*`
+    /// - token 路径：直接 `with_current_token` 包装后委托 `GarrisonUtil::check_*`
     /// - login_id 路径：临时 `login()` 获取 token 后校验，最后 `kickout_by_token` 清理
     /// - 清理失败被忽略（不影响校验结果，但会通过 tracing 输出，符合 fail-soft 语义）
-    async fn check_common(&self, value: &str, kind: CheckKind) -> BulwarkResult<()> {
+    async fn check_common(&self, value: &str, kind: CheckKind) -> GarrisonResult<()> {
         if let Some(token) = &self.token {
-            // Token 已设置：包装 task_local 调用 BulwarkUtil::check_*
+            // Token 已设置：包装 task_local 调用 GarrisonUtil::check_*
             let token = token.clone();
             let value = value.to_string();
             with_current_token(token, async move {
                 match kind {
-                    CheckKind::Permission => BulwarkUtil::check_permission(&value).await,
-                    CheckKind::Role => BulwarkUtil::check_role(&value).await,
+                    CheckKind::Permission => GarrisonUtil::check_permission(&value).await,
+                    CheckKind::Role => GarrisonUtil::check_role(&value).await,
                 }
             })
             .await
         } else if let Some(login_id) = &self.login_id {
-            // Login_id 已设置：创建临时会话获取 token，再委托 BulwarkUtil::check_* 校验
-            // login_id 为 String，BulwarkUtil::login 接收 &str
-            let token = BulwarkUtil::login_simple(login_id).await?;
+            // Login_id 已设置：创建临时会话获取 token，再委托 GarrisonUtil::check_* 校验
+            // login_id 为 String，GarrisonUtil::login 接收 &str
+            let token = GarrisonUtil::login_simple(login_id).await?;
             let value = value.to_string();
             let token_for_cleanup = token.clone();
             let result = with_current_token(token, async move {
                 match kind {
-                    CheckKind::Permission => BulwarkUtil::check_permission(&value).await,
-                    CheckKind::Role => BulwarkUtil::check_role(&value).await,
+                    CheckKind::Permission => GarrisonUtil::check_permission(&value).await,
+                    CheckKind::Role => GarrisonUtil::check_role(&value).await,
                 }
             })
             .await;
             // 清理临时会话（忽略清理失败，不影响校验结果）
-            let _ = BulwarkUtil::kickout_by_token(&token_for_cleanup).await;
+            let _ = GarrisonUtil::kickout_by_token(&token_for_cleanup).await;
             result
         } else {
-            Err(BulwarkError::Internal(
+            Err(GarrisonError::Internal(
                 "login_id not set in ParameterQuery context".to_string(),
             ))
         }
@@ -167,11 +167,11 @@ impl ParameterQuery for ParameterQueryBuilder {
         self
     }
 
-    async fn check_permission(&self, perm: &str) -> BulwarkResult<()> {
+    async fn check_permission(&self, perm: &str) -> GarrisonResult<()> {
         self.check_common(perm, CheckKind::Permission).await
     }
 
-    async fn check_role(&self, role: &str) -> BulwarkResult<()> {
+    async fn check_role(&self, role: &str) -> GarrisonResult<()> {
         self.check_common(role, CheckKind::Role).await
     }
 }
@@ -179,11 +179,11 @@ impl ParameterQuery for ParameterQueryBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::BulwarkConfig;
+    use crate::config::GarrisonConfig;
     use crate::context::tenant::with_default_tenant;
-    use crate::dao::BulwarkDao;
-    use crate::manager::BulwarkManager;
-    use crate::stp::BulwarkInterface;
+    use crate::dao::GarrisonDao;
+    use crate::manager::GarrisonManager;
+    use crate::stp::GarrisonInterface;
     use async_trait::async_trait;
     use parking_lot::Mutex;
     use serial_test::serial;
@@ -208,8 +208,8 @@ mod tests {
     }
 
     #[async_trait]
-    impl BulwarkDao for MockDao {
-        async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
+    impl GarrisonDao for MockDao {
+        async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
             let mut store = self.store.lock();
             match store.get(key) {
                 Some((value, expire_at)) => {
@@ -225,7 +225,7 @@ mod tests {
             }
         }
 
-        async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> BulwarkResult<()> {
+        async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> GarrisonResult<()> {
             let expire_at = if ttl_seconds == 0 {
                 None
             } else {
@@ -237,18 +237,18 @@ mod tests {
             Ok(())
         }
 
-        async fn update(&self, key: &str, value: &str) -> BulwarkResult<()> {
+        async fn update(&self, key: &str, value: &str) -> GarrisonResult<()> {
             let mut store = self.store.lock();
             match store.get_mut(key) {
                 Some((existing, _)) => {
                     *existing = value.to_string();
                     Ok(())
                 },
-                None => Err(BulwarkError::Dao(format!("dao-key-not-found::{}", key))),
+                None => Err(GarrisonError::Dao(format!("dao-key-not-found::{}", key))),
             }
         }
 
-        async fn expire(&self, key: &str, seconds: u64) -> BulwarkResult<()> {
+        async fn expire(&self, key: &str, seconds: u64) -> GarrisonResult<()> {
             let mut store = self.store.lock();
             match store.get_mut(key) {
                 Some((_, expire_at)) => {
@@ -259,11 +259,11 @@ mod tests {
                     };
                     Ok(())
                 },
-                None => Err(BulwarkError::Dao(format!("dao-key-not-found::{}", key))),
+                None => Err(GarrisonError::Dao(format!("dao-key-not-found::{}", key))),
             }
         }
 
-        async fn delete(&self, key: &str) -> BulwarkResult<()> {
+        async fn delete(&self, key: &str) -> GarrisonResult<()> {
             self.store.lock().remove(key);
             Ok(())
         }
@@ -279,31 +279,31 @@ mod tests {
     }
 
     #[async_trait]
-    impl BulwarkInterface for MockInterfaceWithPerms {
-        async fn get_permission_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+    impl GarrisonInterface for MockInterfaceWithPerms {
+        async fn get_permission_list(&self, login_id: &str) -> GarrisonResult<Vec<String>> {
             Ok(self.permissions.get(login_id).cloned().unwrap_or_default())
         }
 
-        async fn get_role_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+        async fn get_role_list(&self, login_id: &str) -> GarrisonResult<Vec<String>> {
             Ok(self.roles.get(login_id).cloned().unwrap_or_default())
         }
     }
 
-    /// 初始化全局 BulwarkManager，注入可配置权限/角色数据的 MockInterface。
+    /// 初始化全局 GarrisonManager，注入可配置权限/角色数据的 MockInterface。
     fn init_manager_with_perms(
         throw_on_not_login: bool,
         permissions: HashMap<String, Vec<String>>,
         roles: HashMap<String, Vec<String>>,
     ) {
-        BulwarkManager::reset_for_test();
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
-        let mut config = BulwarkConfig::default_config();
+        GarrisonManager::reset_for_test();
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+        let mut config = GarrisonConfig::default_config();
         config.timeout = 3600;
         config.active_timeout = -1;
         config.throw_on_not_login = throw_on_not_login;
-        let interface: Arc<dyn BulwarkInterface> =
+        let interface: Arc<dyn GarrisonInterface> =
             Arc::new(MockInterfaceWithPerms { permissions, roles });
-        BulwarkManager::init(dao, Arc::new(config), interface).unwrap();
+        GarrisonManager::init(dao, Arc::new(config), interface).unwrap();
     }
 
     // ------------------------------------------------------------------------
@@ -368,11 +368,11 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn check_permission_without_context_returns_internal() {
-        BulwarkManager::reset_for_test();
+        GarrisonManager::reset_for_test();
         let builder = ParameterQueryBuilder::new();
         let result = builder.check_permission("user:create").await;
         assert!(
-            matches!(result, Err(BulwarkError::Internal(ref msg)) if msg.contains("login_id not set")),
+            matches!(result, Err(GarrisonError::Internal(ref msg)) if msg.contains("login_id not set")),
             "未设置上下文时应返回 Internal 错误，实际: {:?}",
             result
         );
@@ -396,7 +396,7 @@ mod tests {
         .await;
         assert!(result.is_ok(), "持有权限时应返回 Ok，实际: {:?}", result);
 
-        BulwarkManager::reset_for_test();
+        GarrisonManager::reset_for_test();
     }
 
     /// spec Scenario: check_permission 使用上下文（未持有权限）。
@@ -415,12 +415,12 @@ mod tests {
         })
         .await;
         assert!(
-            matches!(result, Err(BulwarkError::NotPermission(ref perm)) if perm == "user:delete"),
+            matches!(result, Err(GarrisonError::NotPermission(ref perm)) if perm == "user:delete"),
             "未持有权限应返回 NotPermission，实际: {:?}",
             result
         );
 
-        BulwarkManager::reset_for_test();
+        GarrisonManager::reset_for_test();
     }
 
     /// spec Scenario: 设置 token 后使用 token 上下文（持有权限）。
@@ -433,7 +433,7 @@ mod tests {
         init_manager_with_perms(false, perms, HashMap::new());
 
         // 先 login 获取有效 token
-        let token = BulwarkUtil::login_simple("1001").await.unwrap();
+        let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
         let result = with_default_tenant(async {
             ParameterQueryBuilder::new()
@@ -448,7 +448,7 @@ mod tests {
             result
         );
 
-        BulwarkManager::reset_for_test();
+        GarrisonManager::reset_for_test();
     }
 
     /// spec Scenario: 设置 token 后使用 token 上下文（未持有权限）。
@@ -459,7 +459,7 @@ mod tests {
         let perms: HashMap<String, Vec<String>> = HashMap::new();
         init_manager_with_perms(false, perms, HashMap::new());
 
-        let token = BulwarkUtil::login_simple("1001").await.unwrap();
+        let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
         let result = with_default_tenant(async {
             ParameterQueryBuilder::new()
@@ -469,12 +469,12 @@ mod tests {
         })
         .await;
         assert!(
-            matches!(result, Err(BulwarkError::NotPermission(_))),
+            matches!(result, Err(GarrisonError::NotPermission(_))),
             "token 上下文未持有权限应返回 NotPermission，实际: {:?}",
             result
         );
 
-        BulwarkManager::reset_for_test();
+        GarrisonManager::reset_for_test();
     }
 
     // ------------------------------------------------------------------------
@@ -485,11 +485,11 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn check_role_without_context_returns_internal() {
-        BulwarkManager::reset_for_test();
+        GarrisonManager::reset_for_test();
         let builder = ParameterQueryBuilder::new();
         let result = builder.check_role("admin").await;
         assert!(
-            matches!(result, Err(BulwarkError::Internal(ref msg)) if msg.contains("login_id not set")),
+            matches!(result, Err(GarrisonError::Internal(ref msg)) if msg.contains("login_id not set")),
             "未设置上下文时 check_role 应返回 Internal 错误，实际: {:?}",
             result
         );
@@ -509,7 +509,7 @@ mod tests {
             .await;
         assert!(result.is_ok(), "持有角色应返回 Ok，实际: {:?}", result);
 
-        BulwarkManager::reset_for_test();
+        GarrisonManager::reset_for_test();
     }
 
     /// spec Scenario: check_role 使用上下文（未持有角色）。
@@ -524,12 +524,12 @@ mod tests {
             .check_role("superadmin")
             .await;
         assert!(
-            matches!(result, Err(BulwarkError::NotRole(ref role)) if role == "superadmin"),
+            matches!(result, Err(GarrisonError::NotRole(ref role)) if role == "superadmin"),
             "未持有角色应返回 NotRole，实际: {:?}",
             result
         );
 
-        BulwarkManager::reset_for_test();
+        GarrisonManager::reset_for_test();
     }
 
     /// spec Scenario: 设置 token 后 check_role 使用 token 解析的 login_id 校验。
@@ -540,7 +540,7 @@ mod tests {
         roles.insert("1001".to_string(), vec!["admin".to_string()]);
         init_manager_with_perms(false, HashMap::new(), roles);
 
-        let token = BulwarkUtil::login_simple("1001").await.unwrap();
+        let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
         let result = ParameterQueryBuilder::new()
             .with_token(&token)
@@ -552,7 +552,7 @@ mod tests {
             result
         );
 
-        BulwarkManager::reset_for_test();
+        GarrisonManager::reset_for_test();
     }
 
     /// spec Scenario: 设置 token 后 check_role 未持有角色返回 NotRole。
@@ -562,19 +562,19 @@ mod tests {
         let roles: HashMap<String, Vec<String>> = HashMap::new();
         init_manager_with_perms(false, HashMap::new(), roles);
 
-        let token = BulwarkUtil::login_simple("1001").await.unwrap();
+        let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
         let result = ParameterQueryBuilder::new()
             .with_token(&token)
             .check_role("superadmin")
             .await;
         assert!(
-            matches!(result, Err(BulwarkError::NotRole(_))),
+            matches!(result, Err(GarrisonError::NotRole(_))),
             "token 上下文未持有角色应返回 NotRole，实际: {:?}",
             result
         );
 
-        BulwarkManager::reset_for_test();
+        GarrisonManager::reset_for_test();
     }
 
     // ------------------------------------------------------------------------
@@ -603,7 +603,7 @@ mod tests {
             result
         );
 
-        BulwarkManager::reset_for_test();
+        GarrisonManager::reset_for_test();
     }
 
     /// 验证 ParameterQueryBuilder 实现 Default trait。

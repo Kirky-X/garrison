@@ -3,18 +3,18 @@
 
 //! web_actix_example 示例测试（web-actix feature）。
 //!
-//! 验证 BulwarkMiddleware + LoggingInterceptor 的鉴权行为：
+//! 验证 GarrisonMiddleware + LoggingInterceptor 的鉴权行为：
 //! - 公开路径无需 token → 200
 //! - 受保护路径无 token → 401
 //! - 受保护路径有 token → 200
 //! - CheckRole 路径有匹配角色 → 200
 //! - CheckPermission 路径有匹配权限 → 200
 //!
-//! 使用 `#[serial_test::serial]` 串行化，因为 `setup()` 修改全局 `BulwarkManager` 单例。
+//! 使用 `#[serial_test::serial]` 串行化，因为 `setup()` 修改全局 `GarrisonManager` 单例。
 
 #![cfg(feature = "web-actix")]
 
-use bulwark_examples::web::web_actix_example;
+use garrison_examples::web::web_actix_example;
 use serial_test::serial;
 
 #[tokio::test(flavor = "multi_thread")]

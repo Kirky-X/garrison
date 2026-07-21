@@ -355,7 +355,7 @@ def build_report(log_dir: Path) -> tuple[str, int]:
     pentest_entries = read_jsonl(pentest_path)
 
     header = [
-        "# Bulwark E2E 测试综合报告",
+        "# Garrison E2E 测试综合报告",
         "",
         f"- 日志目录: `{log_dir}`",
         f"- HTTP 交互日志: `{http_path}` "
@@ -385,7 +385,7 @@ def build_report(log_dir: Path) -> tuple[str, int]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Bulwark E2E 测试日志聚合分析器（生成 logs/e2e_final_report.md）"
+        description="Garrison E2E 测试日志聚合分析器（生成 logs/e2e_final_report.md）"
     )
     parser.add_argument(
         "--log-dir",

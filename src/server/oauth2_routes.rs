@@ -3,7 +3,7 @@
 
 //! OAuth2 HTTP 端点路由（feature = "oauth2-server"）。
 //!
-//! 将 OAuth2 handler 暴露为 HTTP 端点，集成到 BulwarkAuthServer。
+//! 将 OAuth2 handler 暴露为 HTTP 端点，集成到 GarrisonAuthServer。
 //! 与 sdforge_routes.rs（AuthBackend 路由）互补，使用 axum Router::merge 集成。
 //!
 //! # 端点
@@ -22,8 +22,8 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde_json::json;
 
-use crate::context::BulwarkPrincipal;
-use crate::dao::BulwarkDao;
+use crate::context::GarrisonPrincipal;
+use crate::dao::GarrisonDao;
 use crate::oauth2_server::authorize::{AuthorizeHandler, AuthorizeRequest, AuthorizeResponse};
 use crate::oauth2_server::client::OAuth2ClientStore;
 use crate::oauth2_server::introspect::{IntrospectHandler, IntrospectRequest};
@@ -48,7 +48,7 @@ impl OAuth2State {
     /// 创建 OAuth2State，内部构造 4 个 handler。
     pub fn new(
         store: Arc<dyn OAuth2ClientStore>,
-        dao: Arc<dyn BulwarkDao>,
+        dao: Arc<dyn GarrisonDao>,
         login_url: String,
     ) -> Self {
         let authorize_handler =
@@ -90,9 +90,9 @@ pub fn oauth2_internal_router(state: Arc<OAuth2State>) -> Router {
 async fn authorize_endpoint(
     State(state): State<Arc<OAuth2State>>,
     Query(req): Query<AuthorizeRequest>,
-    principal: Option<Extension<BulwarkPrincipal>>,
+    principal: Option<Extension<GarrisonPrincipal>>,
 ) -> Response {
-    // 从 BulwarkPrincipal Extension 提取 user_id（无 principal 或 login_id 解析失败 → None → LoginRequired）
+    // 从 GarrisonPrincipal Extension 提取 user_id（无 principal 或 login_id 解析失败 → None → LoginRequired）
     let user_id: Option<i64> = principal.and_then(|ext| ext.0.login_id.parse::<i64>().ok());
     match state.authorize_handler.authorize(&req, user_id).await {
         Ok(AuthorizeResponse::Redirect { location }) => {
@@ -145,7 +145,7 @@ async fn token_endpoint(
             let (_, error_code, message, _) = e.response_parts_i18n();
             // 速率限制错误返回 429 Too Many Requests（RFC 6585 §4）
             //
-            // `BulwarkError::OAuth2(_)` 的 error_code 统一为 "OAUTH2_ERROR"，
+            // `GarrisonError::OAuth2(_)` 的 error_code 统一为 "OAUTH2_ERROR"，
             // 需通过错误消息中的 i18n key 前缀 "oauth2-server-token-rate-limited"
             // 标识区分（与 token handler 中 `PasswordRateLimiter` / `TokenRateLimiter`
             // 的错误格式一致，迁移至 i18n key 后下划线变为连字符）。
@@ -206,7 +206,7 @@ async fn introspect_endpoint(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dao::{BulwarkDao, MockDao};
+    use crate::dao::{GarrisonDao, MockDao};
     use crate::oauth2_server::client::{
         DaoOAuth2ClientStore, GrantType, OAuth2Client, OAuth2ClientStore,
     };
@@ -217,7 +217,7 @@ mod tests {
 
     /// 创建测试用 OAuth2State + store（用于注册客户端）。
     fn make_state() -> (Arc<OAuth2State>, Arc<dyn OAuth2ClientStore>) {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let store: Arc<dyn OAuth2ClientStore> = Arc::new(DaoOAuth2ClientStore::new(dao.clone()));
         let state = Arc::new(OAuth2State::new(
             store.clone(),
@@ -367,7 +367,7 @@ mod tests {
         );
     }
 
-    /// T003: 有 BulwarkPrincipal（Extension）时 authorize 端点返回 Redirect 含 code。
+    /// T003: 有 GarrisonPrincipal（Extension）时 authorize 端点返回 Redirect 含 code。
     /// principal.login_id = "1001" → user_id = Some(1001) → 授权成功 → Redirect。
     #[tokio::test]
     async fn test_authorize_endpoint_returns_redirect_with_code_when_principal_present() {
@@ -376,7 +376,7 @@ mod tests {
             .create(make_test_client("auth-principal"))
             .await
             .unwrap();
-        let app = oauth2_external_router(state).layer(Extension(BulwarkPrincipal {
+        let app = oauth2_external_router(state).layer(Extension(GarrisonPrincipal {
             login_id: "1001".to_string(),
         }));
         let uri = "/oauth2/authorize?response_type=code&client_id=auth-principal&redirect_uri=https://app.example.com/cb&code_challenge=test-challenge&code_challenge_method=S256";
@@ -403,7 +403,7 @@ mod tests {
         );
     }
 
-    /// T003: 无 BulwarkPrincipal（Extension 缺失）时 authorize 端点返回 LoginRequired。
+    /// T003: 无 GarrisonPrincipal（Extension 缺失）时 authorize 端点返回 LoginRequired。
     #[tokio::test]
     async fn test_authorize_endpoint_returns_login_required_when_no_principal() {
         let (state, store) = make_state();
@@ -595,7 +595,7 @@ mod tests {
     async fn test_token_endpoint_returns_429_on_rate_limit_exceeded() {
         use crate::oauth2_server::token::TokenRateLimiter;
 
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let store: Arc<dyn OAuth2ClientStore> = Arc::new(DaoOAuth2ClientStore::new(dao.clone()));
         let authorize_handler = Arc::new(AuthorizeHandler::new(
             store.clone(),

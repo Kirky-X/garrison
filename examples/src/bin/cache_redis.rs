@@ -5,7 +5,7 @@
 
 #[tokio::main]
 async fn main() {
-    bulwark_examples::infrastructure::cache_redis::run()
+    garrison_examples::infrastructure::cache_redis::run()
         .await
         .unwrap();
 }

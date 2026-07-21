@@ -13,7 +13,7 @@
 
 #![cfg(feature = "db-sqlite")]
 
-use bulwark::dao::{
+use garrison::dao::{
     init_dbnexus,
     repository::{
         sqlite::{
@@ -27,7 +27,7 @@ use bulwark::dao::{
         UserRoleRepository,
     },
 };
-use bulwark::error::BulwarkError;
+use garrison::error::GarrisonError;
 
 const TENANT: i64 = 1;
 
@@ -39,9 +39,9 @@ async fn setup_unmigrated_db() -> dbnexus::DbPool {
         .expect("init_dbnexus 应成功（即使不迁移）")
 }
 
-fn assert_dao_error<T>(result: bulwark::error::BulwarkResult<T>, method_name: &str) {
+fn assert_dao_error<T>(result: garrison::error::GarrisonResult<T>, method_name: &str) {
     match result {
-        Err(BulwarkError::Dao(msg)) => {
+        Err(GarrisonError::Dao(msg)) => {
             assert!(
                 msg.contains(method_name),
                 "错误信息应包含方法/表名 '{}'，实际: {}",
@@ -49,7 +49,7 @@ fn assert_dao_error<T>(result: bulwark::error::BulwarkResult<T>, method_name: &s
                 msg
             );
         },
-        Err(other) => panic!("期望 BulwarkError::Dao，实际: {:?}", other),
+        Err(other) => panic!("期望 GarrisonError::Dao，实际: {:?}", other),
         Ok(_) => panic!("期望 Err，实际 Ok（DB 未迁移应失败）"),
     }
 }

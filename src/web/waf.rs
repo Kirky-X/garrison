@@ -3,7 +3,7 @@
 
 //! WAF 请求内容校验模块。
 //!
-//! 提供 [`WafRule`](crate::web::waf::WafRule) trait 与 5 个内置规则，通过 `bulwark_waf_middleware` 集成到 axum 路由。
+//! 提供 [`WafRule`](crate::web::waf::WafRule) trait 与 5 个内置规则，通过 `garrison_waf_middleware` 集成到 axum 路由。
 //!
 //! # 内置规则
 //!
@@ -15,9 +15,9 @@
 //!
 //! # 配置
 //!
-//! 通过 [`WafConfig`](crate::web::waf::WafConfig) 控制是否启用 WAF 校验及各规则参数，集成到 [`crate::config::BulwarkConfig`]。
+//! 通过 [`WafConfig`](crate::web::waf::WafConfig) 控制是否启用 WAF 校验及各规则参数，集成到 [`crate::config::GarrisonConfig`]。
 
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::error::{GarrisonError, GarrisonResult};
 use axum::extract::State;
 use axum::http::HeaderMap;
 use serde::{Deserialize, Serialize};
@@ -40,21 +40,21 @@ pub struct WafContext {
 
 /// WAF 规则 trait，定义请求校验契约。
 ///
-/// 实现者返回 `Ok(())` 放行请求，`Err(BulwarkError)` 拒绝请求。
+/// 实现者返回 `Ok(())` 放行请求，`Err(GarrisonError)` 拒绝请求。
 ///
 /// # 示例
 ///
 /// ```ignore
-/// use bulwark::web::waf::{WafRule, WafContext};
-/// use bulwark::BulwarkResult;
+/// use garrison::web::waf::{WafRule, WafContext};
+/// use garrison::GarrisonResult;
 ///
 /// struct CustomRule;
 ///
 /// #[async_trait::async_trait]
 /// impl WafRule for CustomRule {
-///     async fn check(&self, ctx: &WafContext) -> BulwarkResult<()> {
+///     async fn check(&self, ctx: &WafContext) -> GarrisonResult<()> {
 ///         if ctx.path.contains("forbidden") {
-///             Err(bulwark::BulwarkError::Config("forbidden path".into()))
+///             Err(garrison::GarrisonError::Config("forbidden path".into()))
 ///         } else {
 ///             Ok(())
 ///         }
@@ -64,7 +64,7 @@ pub struct WafContext {
 #[async_trait::async_trait]
 pub trait WafRule: Send + Sync {
     /// 校验请求，返回 `Ok(())` 放行，`Err` 拒绝。
-    async fn check(&self, ctx: &WafContext) -> BulwarkResult<()>;
+    async fn check(&self, ctx: &WafContext) -> GarrisonResult<()>;
 }
 
 /// WAF 配置。
@@ -158,7 +158,7 @@ impl Default for WafConfig {
 pub struct DangerousCharacter;
 
 /// 内部辅助：对单个输入（path 或 query）执行危险字符检测。
-fn check_dangerous_chars_in(input: &str, source: &str) -> BulwarkResult<()> {
+fn check_dangerous_chars_in(input: &str, source: &str) -> GarrisonResult<()> {
     let lower = input.to_lowercase();
     // (pattern, is_percent_encoded, description)
     const PATTERNS: &[(&str, bool, &str)] = &[
@@ -178,7 +178,7 @@ fn check_dangerous_chars_in(input: &str, source: &str) -> BulwarkResult<()> {
             input.contains(pattern)
         };
         if found {
-            return Err(BulwarkError::Config(format!(
+            return Err(GarrisonError::Config(format!(
                 "WAF violation: {}包含危险字符 {}",
                 source, desc
             )));
@@ -189,7 +189,7 @@ fn check_dangerous_chars_in(input: &str, source: &str) -> BulwarkResult<()> {
 
 #[async_trait::async_trait]
 impl WafRule for DangerousCharacter {
-    async fn check(&self, ctx: &WafContext) -> BulwarkResult<()> {
+    async fn check(&self, ctx: &WafContext) -> GarrisonResult<()> {
         // C2: 同时检查 path 与 query，防止 query 参数绕过
         check_dangerous_chars_in(&ctx.path, "路径")?;
         check_dangerous_chars_in(&ctx.query, "query 参数")?;
@@ -210,13 +210,13 @@ impl WafRule for DangerousCharacter {
 pub struct DirectoryTraversal;
 
 /// 内部辅助：对单个输入（path 或 query）执行目录遍历检测。
-fn check_directory_traversal_in(input: &str, source: &str) -> BulwarkResult<()> {
+fn check_directory_traversal_in(input: &str, source: &str) -> GarrisonResult<()> {
     let lower = input.to_lowercase();
     const LITERAL_PATTERNS: &[&str] = &["./", "../"];
     const ENCODED_PATTERNS: &[&str] = &["..%2f", "..%5c"];
     for &pattern in LITERAL_PATTERNS {
         if input.contains(pattern) {
-            return Err(BulwarkError::Config(format!(
+            return Err(GarrisonError::Config(format!(
                 "WAF violation: {}包含目录遍历模式 {}",
                 source, pattern
             )));
@@ -224,7 +224,7 @@ fn check_directory_traversal_in(input: &str, source: &str) -> BulwarkResult<()> 
     }
     for &pattern in ENCODED_PATTERNS {
         if lower.contains(pattern) {
-            return Err(BulwarkError::Config(format!(
+            return Err(GarrisonError::Config(format!(
                 "WAF violation: {}包含目录遍历模式 {}",
                 source, pattern
             )));
@@ -235,7 +235,7 @@ fn check_directory_traversal_in(input: &str, source: &str) -> BulwarkResult<()> 
 
 #[async_trait::async_trait]
 impl WafRule for DirectoryTraversal {
-    async fn check(&self, ctx: &WafContext) -> BulwarkResult<()> {
+    async fn check(&self, ctx: &WafContext) -> GarrisonResult<()> {
         // C2: 同时检查 path 与 query，防止 query 参数绕过
         check_directory_traversal_in(&ctx.path, "路径")?;
         check_directory_traversal_in(&ctx.query, "query 参数")?;
@@ -258,14 +258,14 @@ pub struct PathWhitelist {
 
 #[async_trait::async_trait]
 impl WafRule for PathWhitelist {
-    async fn check(&self, ctx: &WafContext) -> BulwarkResult<()> {
+    async fn check(&self, ctx: &WafContext) -> GarrisonResult<()> {
         if self.prefixes.is_empty() {
             return Ok(());
         }
         if self.prefixes.iter().any(|p| ctx.path.starts_with(p)) {
             Ok(())
         } else {
-            Err(BulwarkError::Config(format!(
+            Err(GarrisonError::Config(format!(
                 "WAF violation: 路径 {} 不在白名单中",
                 ctx.path
             )))
@@ -284,12 +284,12 @@ pub struct PathBlacklist {
 
 #[async_trait::async_trait]
 impl WafRule for PathBlacklist {
-    async fn check(&self, ctx: &WafContext) -> BulwarkResult<()> {
+    async fn check(&self, ctx: &WafContext) -> GarrisonResult<()> {
         if self.prefixes.is_empty() {
             return Ok(());
         }
         if self.prefixes.iter().any(|p| ctx.path.starts_with(p)) {
-            Err(BulwarkError::Config(format!(
+            Err(GarrisonError::Config(format!(
                 "WAF violation: 路径 {} 命中黑名单",
                 ctx.path
             )))
@@ -314,14 +314,14 @@ pub struct HttpMethodWhitelist {
 
 #[async_trait::async_trait]
 impl WafRule for HttpMethodWhitelist {
-    async fn check(&self, ctx: &WafContext) -> BulwarkResult<()> {
+    async fn check(&self, ctx: &WafContext) -> GarrisonResult<()> {
         if self.methods.is_empty() {
             return Ok(());
         }
         if self.methods.iter().any(|m| m == &ctx.method) {
             Ok(())
         } else {
-            Err(BulwarkError::Config(format!(
+            Err(GarrisonError::Config(format!(
                 "WAF violation: HTTP 方法 {} 不在允许列表中",
                 ctx.method
             )))
@@ -330,7 +330,7 @@ impl WafRule for HttpMethodWhitelist {
 }
 
 // ============================================================================
-// T006: bulwark_waf_middleware
+// T006: garrison_waf_middleware
 // ============================================================================
 
 /// WAF 请求校验中间件（T006）。
@@ -353,7 +353,7 @@ impl WafRule for HttpMethodWhitelist {
 /// # 使用
 ///
 /// ```ignore
-/// use bulwark::web::waf::{bulwark_waf_middleware, WafConfig};
+/// use garrison::web::waf::{garrison_waf_middleware, WafConfig};
 /// use std::sync::Arc;
 /// use axum::Router;
 ///
@@ -362,10 +362,10 @@ impl WafRule for HttpMethodWhitelist {
 ///     .route("/api", axum::routing::get(|| async { "ok" }))
 ///     .layer(axum::middleware::from_fn_with_state(
 ///         Arc::new(config),
-///         bulwark_waf_middleware,
+///         garrison_waf_middleware,
 ///     ));
 /// ```
-pub async fn bulwark_waf_middleware(
+pub async fn garrison_waf_middleware(
     State(config): State<std::sync::Arc<WafConfig>>,
     req: axum::extract::Request,
     next: axum::middleware::Next,
@@ -466,7 +466,7 @@ mod tests {
             .route("/admin/test", get(|| async { "ok" }))
             .layer(axum::middleware::from_fn_with_state(
                 Arc::new(config),
-                bulwark_waf_middleware,
+                garrison_waf_middleware,
             ))
     }
 
@@ -731,7 +731,7 @@ mod tests {
     }
 
     // ========================================================================
-    // T006: bulwark_waf_middleware 集成测试（6 个）
+    // T006: garrison_waf_middleware 集成测试（6 个）
     // ========================================================================
 
     #[tokio::test]
@@ -849,9 +849,9 @@ mod tests {
 
     #[async_trait::async_trait]
     impl WafRule for BlockSubstrRule {
-        async fn check(&self, ctx: &WafContext) -> BulwarkResult<()> {
+        async fn check(&self, ctx: &WafContext) -> GarrisonResult<()> {
             if ctx.path.contains(&self.blocked) {
-                Err(BulwarkError::Config(format!(
+                Err(GarrisonError::Config(format!(
                     "WAF violation: 自定义规则拦截 {}",
                     self.blocked
                 )))

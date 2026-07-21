@@ -1,7 +1,7 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! Bulwark Benchmark Suite
+//! Garrison Benchmark Suite
 //! 依据 spec benchmark-framework（E-006），覆盖 4 个基准场景：
 //!
 //! | Bench | FRD 来源 | 目标 P99 |
@@ -34,8 +34,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use bulwark::prelude::*;
-use bulwark::stp::{with_current_token, LoginParams};
+use garrison::prelude::*;
+use garrison::stp::{with_current_token, LoginParams};
 
 // ============================================================================
 // MockDao: HashMap + Instant 模拟 TTL（复用 stp/tests.rs 的 mock 模式）
@@ -54,8 +54,8 @@ impl MockDao {
 }
 
 #[async_trait]
-impl BulwarkDao for MockDao {
-    async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
+impl GarrisonDao for MockDao {
+    async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
         let mut store = self.store.lock();
         match store.get(key) {
             Some((value, expire_at)) => {
@@ -71,7 +71,7 @@ impl BulwarkDao for MockDao {
         }
     }
 
-    async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> BulwarkResult<()> {
+    async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> GarrisonResult<()> {
         let expire_at = if ttl_seconds == 0 {
             None
         } else {
@@ -83,18 +83,18 @@ impl BulwarkDao for MockDao {
         Ok(())
     }
 
-    async fn update(&self, key: &str, value: &str) -> BulwarkResult<()> {
+    async fn update(&self, key: &str, value: &str) -> GarrisonResult<()> {
         let mut store = self.store.lock();
         match store.get_mut(key) {
             Some((existing, _)) => {
                 *existing = value.to_string();
                 Ok(())
             },
-            None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
+            None => Err(GarrisonError::Dao(format!("键不存在: {}", key))),
         }
     }
 
-    async fn expire(&self, key: &str, seconds: u64) -> BulwarkResult<()> {
+    async fn expire(&self, key: &str, seconds: u64) -> GarrisonResult<()> {
         let mut store = self.store.lock();
         match store.get_mut(key) {
             Some((_, expire_at)) => {
@@ -105,18 +105,18 @@ impl BulwarkDao for MockDao {
                 };
                 Ok(())
             },
-            None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
+            None => Err(GarrisonError::Dao(format!("键不存在: {}", key))),
         }
     }
 
-    async fn delete(&self, key: &str) -> BulwarkResult<()> {
+    async fn delete(&self, key: &str) -> GarrisonResult<()> {
         self.store.lock().remove(key);
         Ok(())
     }
 }
 
 // ============================================================================
-// MockFirewall: 模拟 BulwarkPermissionStrategy（权限检查返回 true）
+// MockFirewall: 模拟 GarrisonPermissionStrategy（权限检查返回 true）
 // ============================================================================
 
 struct MockFirewall {
@@ -125,46 +125,46 @@ struct MockFirewall {
 }
 
 #[async_trait]
-impl BulwarkPermissionStrategy for MockFirewall {
-    async fn get_permission_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
+impl GarrisonPermissionStrategy for MockFirewall {
+    async fn get_permission_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
         Ok(vec!["bench:read".to_string(), "bench:write".to_string()])
     }
 
-    async fn get_role_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
+    async fn get_role_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
         Ok(vec!["bench-user".to_string()])
     }
 
-    async fn check_permission(&self, _login_id: &str, _permission: &str) -> BulwarkResult<bool> {
+    async fn check_permission(&self, _login_id: &str, _permission: &str) -> GarrisonResult<bool> {
         Ok(self.has_permission)
     }
 
-    async fn check_role(&self, _login_id: &str, _role: &str) -> BulwarkResult<bool> {
+    async fn check_role(&self, _login_id: &str, _role: &str) -> GarrisonResult<bool> {
         Ok(self.has_role)
     }
 
-    async fn check_role_any(&self, _login_id: &str, _roles: &[&str]) -> BulwarkResult<bool> {
+    async fn check_role_any(&self, _login_id: &str, _roles: &[&str]) -> GarrisonResult<bool> {
         Ok(self.has_role)
     }
 
-    async fn check_role_all(&self, _login_id: &str, _roles: &[&str]) -> BulwarkResult<bool> {
+    async fn check_role_all(&self, _login_id: &str, _roles: &[&str]) -> GarrisonResult<bool> {
         Ok(self.has_role)
     }
 }
 
 // ============================================================================
-// 辅助函数：创建 BulwarkLogicDefault 实例
+// 辅助函数：创建 GarrisonLogicDefault 实例
 // ============================================================================
 
-/// 创建 BulwarkLogicDefault 实例（使用 MockDao + MockFirewall，不依赖真实 dbnexus / redis）。
-fn make_logic() -> BulwarkLogicDefault {
-    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
-    let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
-    let config = Arc::new(BulwarkConfig::default_config());
-    let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
+/// 创建 GarrisonLogicDefault 实例（使用 MockDao + MockFirewall，不依赖真实 dbnexus / redis）。
+fn make_logic() -> GarrisonLogicDefault {
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+    let config = Arc::new(GarrisonConfig::default_config());
+    let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall {
         has_permission: true,
         has_role: true,
     });
-    BulwarkLogicDefault::new(session, config, firewall)
+    GarrisonLogicDefault::new(session, config, firewall)
 }
 
 // ============================================================================
@@ -175,7 +175,7 @@ fn make_logic() -> BulwarkLogicDefault {
 ///
 /// 依据 FRD §7.1 BLK-001：5000 TPS 并发登录，P99 ≤ 500ms。
 ///
-/// 流程：`BulwarkLogicDefault::login("bench-user", &LoginParams::default())` 完整调用
+/// 流程：`GarrisonLogicDefault::login("bench-user", &LoginParams::default())` 完整调用
 /// （生成 token + 创建 Token-Session + 创建 Account-Session）。
 fn bench_login_flow(c: &mut Criterion) {
     let rt = tokio::runtime::Runtime::new().unwrap();
@@ -302,19 +302,19 @@ fn bench_permission_check(c: &mut Criterion) {
 /// 1. **Caffeine 不存在**：spec R-bench-005 要求验证 "Memory → Caffeine" 切换，
 ///    但 Rust 生态无 Caffeine（oxcache 内存后端），故适配为
 ///    memory / redis 两后端
-/// 2. **无 runtime backend 字段**：spec 要求修改 `BulwarkConfig.oxcache.backend`
-///    字段验证切换，但 `BulwarkConfig` 无此字段（后端选择通过 Cargo feature
-///    编译期决定），故通过不同 `BulwarkDao` 实现验证 DAO 抽象层
+/// 2. **无 runtime backend 字段**：spec 要求修改 `GarrisonConfig.oxcache.backend`
+///    字段验证切换，但 `GarrisonConfig` 无此字段（后端选择通过 Cargo feature
+///    编译期决定），故通过不同 `GarrisonDao` 实现验证 DAO 抽象层
 ///
 /// # 验证方式
 ///
-/// 使用不同 `MockDao` 实例（模拟不同后端），同一 `BulwarkLogicDefault` 代码
+/// 使用不同 `MockDao` 实例（模拟不同后端），同一 `GarrisonLogicDefault` 代码
 /// 无修改即可运行，证明 DAO 抽象层的后端切换开销 = 0。
 ///
 /// - `memory`：HashMap 后端（模拟 oxcache 内存 L1）
 /// - `redis_mock`：另一个 HashMap 实例（模拟 redis L2）
 ///
-/// 运行时 skip：设置环境变量 `BULWARK_SKIP_REDIS_BENCH=1` 可跳过 redis 相关子 bench
+/// 运行时 skip：设置环境变量 `GARRISON_SKIP_REDIS_BENCH=1` 可跳过 redis 相关子 bench
 /// （依据 spec R-bench-005 Constraints），便于在无 Redis 环境下快速运行 benchmark。
 fn bench_oxcache_backend_switch(c: &mut Criterion) {
     let rt = tokio::runtime::Runtime::new().unwrap();
@@ -339,10 +339,10 @@ fn bench_oxcache_backend_switch(c: &mut Criterion) {
 
     // redis_mock 后端（使用另一个 MockDao 实例，模拟不同后端）
     //
-    // 运行时 skip：当 `BULWARK_SKIP_REDIS_BENCH=1` 时跳过 redis 相关子 bench，
+    // 运行时 skip：当 `GARRISON_SKIP_REDIS_BENCH=1` 时跳过 redis 相关子 bench，
     // 便于在无 Redis 环境下快速运行 benchmark（依据 spec R-bench-005 Constraints）。
     // 未来引入真实 redis bench 时，此检查将跳过所有 redis 依赖场景。
-    let skip_redis = std::env::var("BULWARK_SKIP_REDIS_BENCH")
+    let skip_redis = std::env::var("GARRISON_SKIP_REDIS_BENCH")
         .map(|v| v == "1")
         .unwrap_or(false);
 
@@ -363,7 +363,7 @@ fn bench_oxcache_backend_switch(c: &mut Criterion) {
             },
         );
     } else {
-        println!("[skip] BULWARK_SKIP_REDIS_BENCH=1，跳过 redis_mock 子 bench");
+        println!("[skip] GARRISON_SKIP_REDIS_BENCH=1，跳过 redis_mock 子 bench");
     }
 
     group.finish();

@@ -12,7 +12,7 @@
 //!
 //! # 端口分配策略
 //!
-//! `spawn_child` 不使用 `BULWARK_EXTERNAL_PORT=0`（serve() 打印配置端口而非
+//! `spawn_child` 不使用 `GARRISON_EXTERNAL_PORT=0`（serve() 打印配置端口而非
 //! 实际绑定端口，port=0 时打印 0 导致测试无法连接），改为先用
 //! `pick_free_port()` 挑选空闲端口再注入 env，stderr 行的端口即为实际端口。
 
@@ -53,16 +53,16 @@ impl RemoteContext {
     /// 从 env 读取已运行的 auth_server_serve 连接信息。
     ///
     /// Env 变量：
-    /// - `BULWARK_E2E_EXTERNAL_URL`：外网 URL（如 `http://127.0.0.1:8080`）
-    /// - `BULWARK_E2E_INTERNAL_URL`：内网 URL
-    /// - `BULWARK_E2E_API_KEY`：内网 API Key
+    /// - `GARRISON_E2E_EXTERNAL_URL`：外网 URL（如 `http://127.0.0.1:8080`）
+    /// - `GARRISON_E2E_INTERNAL_URL`：内网 URL
+    /// - `GARRISON_E2E_API_KEY`：内网 API Key
     ///
     /// 缺失任一返回 `None`。三者齐全时对 internal 端口 `/api/v1/auth/health`
     /// 做 3 次 health check（100ms 间隔），任一成功返回 `Some`，全部失败返回 `None`。
     pub async fn connect_env() -> Option<Self> {
-        let external_url = std::env::var("BULWARK_E2E_EXTERNAL_URL").ok()?;
-        let internal_url = std::env::var("BULWARK_E2E_INTERNAL_URL").ok()?;
-        let api_key = std::env::var("BULWARK_E2E_API_KEY").ok()?;
+        let external_url = std::env::var("GARRISON_E2E_EXTERNAL_URL").ok()?;
+        let internal_url = std::env::var("GARRISON_E2E_INTERNAL_URL").ok()?;
+        let api_key = std::env::var("GARRISON_E2E_API_KEY").ok()?;
 
         let client = reqwest::Client::builder()
             .default_headers(default_tenant_headers())
@@ -114,15 +114,15 @@ impl RemoteContext {
             .args([
                 "run",
                 "-p",
-                "bulwark-examples",
+                "garrison-examples",
                 "--bin",
                 "auth_server_serve",
                 "--features",
                 "full",
             ])
             .env("EXAMPLE_INTERNAL_API_KEY", &api_key)
-            .env("BULWARK_EXTERNAL_PORT", external_port.to_string())
-            .env("BULWARK_INTERNAL_PORT", internal_port.to_string())
+            .env("GARRISON_EXTERNAL_PORT", external_port.to_string())
+            .env("GARRISON_INTERNAL_PORT", internal_port.to_string())
             .stderr(Stdio::piped())
             .spawn()
             .expect("spawn auth_server_serve 失败");
@@ -210,7 +210,7 @@ impl RemoteContext {
 ///
 /// 行格式：`[auth_server_serve] listening on external=0.0.0.0:PORT internal=0.0.0.0:PORT`
 ///
-/// 用简单字符串解析替代 regex（regex 是 bulwark 可选 dep，测试二进制无法直接引用）。
+/// 用简单字符串解析替代 regex（regex 是 garrison 可选 dep，测试二进制无法直接引用）。
 fn parse_port(line: &str, key: &str) -> Option<u16> {
     let prefix = format!("{}=0.0.0.0:", key);
     let start = line.find(&prefix)? + prefix.len();
@@ -247,7 +247,7 @@ async fn test_remote_context_setup_connects_to_server() {
         .post(format!("{}/api/v1/auth/login", ctx.external_url))
         .json(&serde_json::json!({
             "login_id": "test_remote",
-            "params": bulwark::backend::types::LoginParams::default()
+            "params": garrison::backend::types::LoginParams::default()
         }))
         .send()
         .await

@@ -7,7 +7,7 @@
 
 #![cfg(feature = "protocol-sso")]
 
-use bulwark_examples::oauth2::sso_flow;
+use garrison_examples::oauth2::sso_flow;
 
 #[tokio::test]
 async fn test_run_completes() {

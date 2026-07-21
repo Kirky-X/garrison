@@ -10,17 +10,17 @@
 //!
 //! 运行方式：
 //! ```sh
-//! cargo run -p bulwark-examples --bin token_introspection --features protocol-oauth2
+//! cargo run -p garrison-examples --bin token_introspection --features protocol-oauth2
 //! ```
 //!
 //! 本示例展示客户端构造与 URL 推导，不实际发起 HTTP 请求。
 //! 端到端测试见 `tests/protocol_oauth2_integration.rs`。
 
-use bulwark::protocol::oauth2::{OAuth2Client, TokenIntrospectionResponse};
+use garrison::protocol::oauth2::{OAuth2Client, TokenIntrospectionResponse};
 
 /// 运行 Token Introspection 示例。
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    println!("=== Bulwark Token Introspection (RFC 7662) 示例 ===\n");
+    println!("=== Garrison Token Introspection (RFC 7662) 示例 ===\n");
 
     // 1. 构造 OAuth2Client，显式设置 introspect_url
     let _client = OAuth2Client::new(

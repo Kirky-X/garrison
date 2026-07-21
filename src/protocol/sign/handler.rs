@@ -5,8 +5,8 @@
 //!
 //! 类型定义见 [`SignHandler`](crate::protocol::sign::SignHandler)。
 
-use crate::dao::BulwarkDao;
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::dao::GarrisonDao;
+use crate::error::{GarrisonError, GarrisonResult};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use hkdf::Hkdf;
 use hmac::{KeyInit, Mac};
@@ -25,20 +25,20 @@ impl SignHandler {
     /// - `dao`: DAO 抽象层实例。
     ///
     /// # 错误
-    /// - `BulwarkError::Config`: app_key 为空或 app_secret 短于 32 字节。
+    /// - `GarrisonError::Config`: app_key 为空或 app_secret 短于 32 字节。
     pub fn new(
         app_key: impl Into<String>,
         app_secret: impl Into<String>,
-        dao: Arc<dyn BulwarkDao>,
-    ) -> BulwarkResult<Self> {
+        dao: Arc<dyn GarrisonDao>,
+    ) -> GarrisonResult<Self> {
         let app_key = app_key.into();
         let app_secret = app_secret.into();
         if app_key.is_empty() {
-            return Err(BulwarkError::Config("sign-app-key-empty".to_string()));
+            return Err(GarrisonError::Config("sign-app-key-empty".to_string()));
         }
         // 强制 app_secret 最小 32 字节（256 位）
         if app_secret.len() < MIN_APP_SECRET_LEN {
-            return Err(BulwarkError::Config(format!(
+            return Err(GarrisonError::Config(format!(
                 "sign-app-secret-too-short::{}::{}",
                 app_secret.len(),
                 MIN_APP_SECRET_LEN
@@ -80,7 +80,7 @@ impl SignHandler {
     /// HKDF 提供域分隔，防止同一密钥在不同用途间复用导致跨协议攻击。
     /// - IKM = app_secret
     /// - salt = app_key（域分隔）
-    /// - info = "bulwark-sign-v2"（版本化上下文）
+    /// - info = "garrison-sign-v2"（版本化上下文）
     /// - 输出 = 32 字节（HMAC-SHA256 密钥长度）
     ///
     /// 性能优化：派生密钥在构造时一次性计算并缓存到 `self.derived_key`，
@@ -101,7 +101,7 @@ impl SignHandler {
     /// 签名算法：
     /// `base64(hmac_sha256(hkdf_key, "{method}\n{path}\n{timestamp}\n{nonce}\n{body_sha256}"))`
     ///
-    /// 其中 `hkdf_key = HKDF-SHA256(app_secret, salt=app_key, info="bulwark-sign-v2")`。
+    /// 其中 `hkdf_key = HKDF-SHA256(app_secret, salt=app_key, info="garrison-sign-v2")`。
     ///
     /// 性能优化：使用构造时缓存的 `derived_key`，避免每次签名重复 HKDF 计算。
     pub fn sign(
@@ -137,8 +137,8 @@ impl SignHandler {
     ///
     /// # 返回
     /// - `Ok(())`: 校验通过。
-    /// - `Err(BulwarkError::ExpiredToken)`: 时间戳超出窗口。
-    /// - `Err(BulwarkError::InvalidToken)`: nonce 重放或签名不匹配。
+    /// - `Err(GarrisonError::ExpiredToken)`: 时间戳超出窗口。
+    /// - `Err(GarrisonError::InvalidToken)`: nonce 重放或签名不匹配。
     pub async fn validate(
         &self,
         method: &str,
@@ -147,22 +147,22 @@ impl SignHandler {
         nonce: &str,
         body_sha256: &str,
         signature: &str,
-    ) -> BulwarkResult<()> {
+    ) -> GarrisonResult<()> {
         // (1) 时间戳窗口校验
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
-            .map_err(|e| BulwarkError::Internal(format!("sign-clock::{}", e)))?;
+            .map_err(|e| GarrisonError::Internal(format!("sign-clock::{}", e)))?;
         if (now - timestamp).abs() > self.timestamp_window {
-            return Err(BulwarkError::ExpiredToken(
+            return Err(GarrisonError::ExpiredToken(
                 "sign-timestamp-window".to_string(),
             ));
         }
 
         // (2) nonce 防重放检查
-        let nonce_key = format!("bulwark:sign:nonce:{}", nonce);
+        let nonce_key = format!("garrison:sign:nonce:{}", nonce);
         if self.dao.get(&nonce_key).await?.is_some() {
-            return Err(BulwarkError::InvalidToken("sign-nonce-replay".to_string()));
+            return Err(GarrisonError::InvalidToken("sign-nonce-replay".to_string()));
         }
 
         // (3) 重新计算签名并常量时间比较（使用 HKDF 派生密钥）
@@ -177,12 +177,12 @@ impl SignHandler {
         // 将传入的 signature（Base64）解码为字节
         let signature_bytes = STANDARD
             .decode(signature)
-            .map_err(|e| BulwarkError::InvalidToken(format!("sign-base64-decode::{}", e)))?;
+            .map_err(|e| GarrisonError::InvalidToken(format!("sign-base64-decode::{}", e)))?;
         // 使用 verify_slice 进行常量时间比较
         match mac.verify_slice(&signature_bytes) {
             Ok(_) => {},
             Err(_) => {
-                return Err(BulwarkError::InvalidToken("sign-mismatch".to_string()));
+                return Err(GarrisonError::InvalidToken("sign-mismatch".to_string()));
             },
         }
 

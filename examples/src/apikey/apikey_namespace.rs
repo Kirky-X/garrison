@@ -10,13 +10,13 @@
 //!
 //! 运行方式：
 //! ```sh
-//! cargo run -p bulwark-examples --bin apikey_namespace --features "protocol-apikey cache-memory"
+//! cargo run -p garrison-examples --bin apikey_namespace --features "protocol-apikey cache-memory"
 //! ```
 
 use async_trait::async_trait;
-use bulwark::dao::BulwarkDao;
-use bulwark::error::{BulwarkError, BulwarkResult};
-use bulwark::protocol::apikey::ApiKeyHandler;
+use garrison::dao::GarrisonDao;
+use garrison::error::{GarrisonError, GarrisonResult};
+use garrison::protocol::apikey::ApiKeyHandler;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -35,12 +35,12 @@ impl InMemoryDao {
 }
 
 #[async_trait]
-impl BulwarkDao for InMemoryDao {
-    async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
+impl GarrisonDao for InMemoryDao {
+    async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
         Ok(self.data.lock().await.get(key).cloned())
     }
 
-    async fn set(&self, key: &str, value: &str, _ttl_seconds: u64) -> BulwarkResult<()> {
+    async fn set(&self, key: &str, value: &str, _ttl_seconds: u64) -> GarrisonResult<()> {
         self.data
             .lock()
             .await
@@ -48,27 +48,27 @@ impl BulwarkDao for InMemoryDao {
         Ok(())
     }
 
-    async fn update(&self, key: &str, value: &str) -> BulwarkResult<()> {
+    async fn update(&self, key: &str, value: &str) -> GarrisonResult<()> {
         let mut data = self.data.lock().await;
         if data.contains_key(key) {
             data.insert(key.to_string(), value.to_string());
             Ok(())
         } else {
-            Err(BulwarkError::Dao(format!("键不存在: {}", key)))
+            Err(GarrisonError::Dao(format!("键不存在: {}", key)))
         }
     }
 
-    async fn expire(&self, _key: &str, _seconds: u64) -> BulwarkResult<()> {
+    async fn expire(&self, _key: &str, _seconds: u64) -> GarrisonResult<()> {
         Ok(())
     }
 
-    async fn delete(&self, key: &str) -> BulwarkResult<()> {
+    async fn delete(&self, key: &str) -> GarrisonResult<()> {
         self.data.lock().await.remove(key);
         Ok(())
     }
 
-    /// 支持 namespace 扫描（pattern 为 glob，如 `bulwark:apikey:tenant-A:*`）。
-    async fn keys(&self, pattern: &str) -> BulwarkResult<Vec<String>> {
+    /// 支持 namespace 扫描（pattern 为 glob，如 `garrison:apikey:tenant-A:*`）。
+    async fn keys(&self, pattern: &str) -> GarrisonResult<Vec<String>> {
         let data = self.data.lock().await;
         let mut result = Vec::new();
         for key in data.keys() {
@@ -113,9 +113,9 @@ fn glob_match(pattern: &str, text: &str) -> bool {
 
 /// 运行 API Key 多租户命名空间示例。
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    println!("=== Bulwark API Key 多租户命名空间示例 ===\n");
+    println!("=== Garrison API Key 多租户命名空间示例 ===\n");
 
-    let dao: Arc<dyn BulwarkDao> = Arc::new(InMemoryDao::new());
+    let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
     let handler = ApiKeyHandler::new(dao);
 
     // 1. 在 tenant-A namespace 下生成两个 key
@@ -153,7 +153,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let cross = handler.verify_with_namespace(&key_a1, "tenant-B").await;
     assert!(cross.is_err(), "跨 namespace 校验应失败");
     match cross.unwrap_err() {
-        BulwarkError::InvalidToken(msg) => {
+        GarrisonError::InvalidToken(msg) => {
             println!("    verify(key_a1, tenant-B) → Err(InvalidToken)");
             println!("    错误：{}", msg);
             println!("    ✓ tenant-A 的 key 不能在 tenant-B 中使用");

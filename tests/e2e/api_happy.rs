@@ -23,7 +23,7 @@
 use super::assert_check_login_denied;
 use super::make_recording_client;
 use super::remote::RemoteContext;
-use bulwark::backend::types::LoginParams;
+use garrison::backend::types::LoginParams;
 use serde_json::json;
 use serial_test::serial;
 

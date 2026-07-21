@@ -3,16 +3,16 @@
 
 //! AloneCache 模块：多 Redis 实例隔离装饰器。
 //!
-//! 通过 `AloneCache` 装饰 `BulwarkDao`，为所有 key 自动添加 prefix，
+//! 通过 `AloneCache` 装饰 `GarrisonDao`，为所有 key 自动添加 prefix，
 //! 实现权限缓存与业务缓存的物理隔离（同一 Redis 实例中不同 prefix 互不干扰）。
 //!
 //! `AloneCacheManager` 管理多个 `AloneCache` 实例，每个实例可注入不同的
-//! `BulwarkDao`（支持多 Redis 实例路由）。
+//! `GarrisonDao`（支持多 Redis 实例路由）。
 //!
 //! alone-cache 模块。
 
-use crate::dao::BulwarkDao;
-use crate::error::BulwarkResult;
+use crate::dao::GarrisonDao;
+use crate::error::GarrisonResult;
 use async_trait::async_trait;
 use parking_lot::RwLock;
 use std::collections::HashMap;
@@ -20,18 +20,18 @@ use std::sync::Arc;
 
 /// AloneCache 装饰器，为所有 key 自动添加 prefix。
 ///
-/// 实现 `BulwarkDao` trait 时，每方法入口先 `format!("{}{}", key_prefix, key)`
+/// 实现 `GarrisonDao` trait 时，每方法入口先 `format!("{}{}", key_prefix, key)`
 /// 拼接 prefix 后委托内部 dao，确保权限缓存与业务缓存的 key 空间物理隔离。
 ///
 /// # 示例
 /// ```ignore
-/// use bulwark::dao::alone_cache::AloneCache;
+/// use garrison::dao::alone_cache::AloneCache;
 /// use std::sync::Arc;
 /// // AloneCache::new(dao, "perm:") 后 set("user:1001", ...) 内部 dao 收到 set("perm:user:1001", ...)
 /// ```
 pub struct AloneCache {
     /// 内部委托的 dao 实例。
-    inner: Arc<dyn BulwarkDao>,
+    inner: Arc<dyn GarrisonDao>,
     /// 自动拼接的 key 前缀（如 "perm:" / "biz:"）。
     key_prefix: String,
 }
@@ -40,9 +40,9 @@ impl AloneCache {
     /// 创建 AloneCache 装饰器。
     ///
     /// # 参数
-    /// - `dao`: 内部委托的 `BulwarkDao` 实例（通常是 oxcache / dbnexus 后端）。
+    /// - `dao`: 内部委托的 `GarrisonDao` 实例（通常是 oxcache / dbnexus 后端）。
     /// - `key_prefix`: 自动拼接的 key 前缀（如 "perm:" / "biz:"）。
-    pub fn new(dao: Arc<dyn BulwarkDao>, key_prefix: &str) -> Self {
+    pub fn new(dao: Arc<dyn GarrisonDao>, key_prefix: &str) -> Self {
         Self {
             inner: dao,
             key_prefix: key_prefix.to_string(),
@@ -56,30 +56,30 @@ impl AloneCache {
 }
 
 #[async_trait]
-impl BulwarkDao for AloneCache {
-    async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
+impl GarrisonDao for AloneCache {
+    async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
         self.inner.get(&self.prefixed_key(key)).await
     }
 
-    async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> BulwarkResult<()> {
+    async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> GarrisonResult<()> {
         self.inner
             .set(&self.prefixed_key(key), value, ttl_seconds)
             .await
     }
 
-    async fn update(&self, key: &str, value: &str) -> BulwarkResult<()> {
+    async fn update(&self, key: &str, value: &str) -> GarrisonResult<()> {
         self.inner.update(&self.prefixed_key(key), value).await
     }
 
-    async fn expire(&self, key: &str, seconds: u64) -> BulwarkResult<()> {
+    async fn expire(&self, key: &str, seconds: u64) -> GarrisonResult<()> {
         self.inner.expire(&self.prefixed_key(key), seconds).await
     }
 
-    async fn delete(&self, key: &str) -> BulwarkResult<()> {
+    async fn delete(&self, key: &str) -> GarrisonResult<()> {
         self.inner.delete(&self.prefixed_key(key)).await
     }
 
-    async fn get_and_delete(&self, key: &str) -> BulwarkResult<Option<String>> {
+    async fn get_and_delete(&self, key: &str) -> GarrisonResult<Option<String>> {
         self.inner.get_and_delete(&self.prefixed_key(key)).await
     }
 
@@ -92,7 +92,7 @@ impl BulwarkDao for AloneCache {
         key: &str,
         new_value: u64,
         ttl_seconds: u64,
-    ) -> BulwarkResult<bool> {
+    ) -> GarrisonResult<bool> {
         self.inner
             .compare_and_update_if_greater(&self.prefixed_key(key), new_value, ttl_seconds)
             .await
@@ -107,7 +107,7 @@ impl BulwarkDao for AloneCache {
     /// 修复前：AloneCache 走默认实现（get → parse → update/delete 三步组合），
     /// 在并发场景下存在 TOCTOU 竞态，SMS 限速器等通过 AloneCache 部署的场景
     /// 仍会触发 flaky test。
-    async fn decr(&self, key: &str) -> BulwarkResult<u64> {
+    async fn decr(&self, key: &str) -> GarrisonResult<u64> {
         self.inner.decr(&self.prefixed_key(key)).await
     }
 }
@@ -253,7 +253,7 @@ mod tests {
 
     /// Scenario: AloneCache 透明委托返回值与 MockDao 直接调用一致。
     ///
-    /// 覆盖 spec alone-cache Requirement "AloneCache 与既有 BulwarkDao 行为一致" Scenario "AloneCache 透明委托"。
+    /// 覆盖 spec alone-cache Requirement "AloneCache 与既有 GarrisonDao 行为一致" Scenario "AloneCache 透明委托"。
     #[tokio::test]
     async fn alone_cache_transparent_delegation() {
         let mock = Arc::new(MockDao::new());
@@ -383,7 +383,7 @@ mod tests {
 
     /// Scenario: AloneCache::decr 透明委托内部 dao（M1 修复，消除 TOCTOU 竞态）。
     ///
-    /// 覆盖 spec alone-cache Requirement "AloneCache 与既有 BulwarkDao 行为一致"
+    /// 覆盖 spec alone-cache Requirement "AloneCache 与既有 GarrisonDao 行为一致"
     /// Scenario "AloneCache 透明委托"（扩展到 decr 方法）。
     ///
     /// M1 修复前：AloneCache 走默认实现（get → parse → update/delete 三步组合），

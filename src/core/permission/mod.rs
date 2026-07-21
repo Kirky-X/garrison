@@ -16,8 +16,8 @@ use async_trait::async_trait;
 use std::sync::Arc;
 use unicode_normalization::UnicodeNormalization;
 
-use crate::error::{BulwarkError, BulwarkResult};
-use crate::stp::BulwarkInterface;
+use crate::error::{GarrisonError, GarrisonResult};
+use crate::stp::GarrisonInterface;
 
 pub use decision::{AuthRequest, Decision, DecisionReason};
 
@@ -56,11 +56,11 @@ pub trait PermissionChecker: Send + Sync {
     /// # 返回
     /// - `Ok(true)`: 持有权限。
     /// - `Ok(false)`: 未持有权限。
-    /// - `Err(BulwarkError::InvalidParam)`: 权限字符串为空。
-    async fn has_permission(&self, login_id: &str, permission: &str) -> BulwarkResult<bool>;
+    /// - `Err(GarrisonError::InvalidParam)`: 权限字符串为空。
+    async fn has_permission(&self, login_id: &str, permission: &str) -> GarrisonResult<bool>;
 
     /// 校验主体是否持有指定角色。
-    async fn has_role(&self, login_id: &str, role: &str) -> BulwarkResult<bool>;
+    async fn has_role(&self, login_id: &str, role: &str) -> GarrisonResult<bool>;
 
     /// 鉴权决策：基于 [`AuthRequest`] 返回完整 [`Decision`]。
     ///
@@ -74,9 +74,9 @@ pub trait PermissionChecker: Send + Sync {
     ///
     /// # 错误
     ///
-    /// 校验过程本身出错（如 DAO 故障、参数无效）返回 `Err(BulwarkError)`；
+    /// 校验过程本身出错（如 DAO 故障、参数无效）返回 `Err(GarrisonError)`；
     /// "未持有权限"不是错误，返回 `Ok(Decision { allowed: false, .. })`。
-    async fn authorize(&self, request: &AuthRequest) -> BulwarkResult<Decision> {
+    async fn authorize(&self, request: &AuthRequest) -> GarrisonResult<Decision> {
         // D5（v0.5.1）：decision-trace feature 启用时自动生成 UUID v7 作为 trace_id
         // （时间有序，便于跨服务追踪与日志关联）；不启用时为 None，避免性能开销。
         #[cfg(feature = "decision-trace")]
@@ -109,28 +109,28 @@ pub trait PermissionChecker: Send + Sync {
         Ok(decision)
     }
 
-    /// 断言权限：被拒绝时返回 `Err(BulwarkError::NotPermission)`。
+    /// 断言权限：被拒绝时返回 `Err(GarrisonError::NotPermission)`。
     ///
     /// 0.5.0 默认实现委托 [`authorize`](Self::authorize)，保持向后兼容。
-    async fn check_permission(&self, login_id: &str, permission: &str) -> BulwarkResult<()> {
+    async fn check_permission(&self, login_id: &str, permission: &str) -> GarrisonResult<()> {
         let request = AuthRequest::new(login_id, permission);
         let decision = self.authorize(&request).await?;
         if decision.allowed {
             Ok(())
         } else {
-            Err(BulwarkError::NotPermission(format!(
+            Err(GarrisonError::NotPermission(format!(
                 "账号 {} 未持有权限: {}",
                 login_id, permission
             )))
         }
     }
 
-    /// 断言角色：被拒绝时返回 `Err(BulwarkError::NotRole)`。
-    async fn check_role(&self, login_id: &str, role: &str) -> BulwarkResult<()> {
+    /// 断言角色：被拒绝时返回 `Err(GarrisonError::NotRole)`。
+    async fn check_role(&self, login_id: &str, role: &str) -> GarrisonResult<()> {
         if self.has_role(login_id, role).await? {
             Ok(())
         } else {
-            Err(BulwarkError::NotRole(format!(
+            Err(GarrisonError::NotRole(format!(
                 "账号 {} 未持有角色: {}",
                 login_id, role
             )))
@@ -148,14 +148,14 @@ pub trait PermissionChecker: Send + Sync {
     async fn has_all_permissions(&self, login_id: &str, perms: &[&str]) -> bool;
 }
 
-/// `PermissionChecker` 的默认实现，委托 `BulwarkInterface` 获取权限/角色数据后做字符串匹配。
+/// `PermissionChecker` 的默认实现，委托 `GarrisonInterface` 获取权限/角色数据后做字符串匹配。
 ///
-/// 与 `BulwarkPermissionStrategy` 的职责区分：
+/// 与 `GarrisonPermissionStrategy` 的职责区分：
 /// - `PermissionCheckerDefault`：纯数据查询（返回 bool/Err，无副作用）
-/// - `BulwarkPermissionStrategy`：编排（校验 + 抛异常 + 事件广播）
+/// - `GarrisonPermissionStrategy`：编排（校验 + 抛异常 + 事件广播）
 pub struct PermissionCheckerDefault {
     /// 业务接口（提供 get_permission_list / get_role_list）。
-    interface: Arc<dyn BulwarkInterface>,
+    interface: Arc<dyn GarrisonInterface>,
 }
 
 /// `PermissionCheckerDefault` 实现块（从 mod.rs 迁移，遵循规则 25 mod.rs 接口隔离）。

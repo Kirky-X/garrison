@@ -3,7 +3,7 @@
 
 //! 会话管理 E2E 测试——get-token-info / get-session / kickout / switch-to / renew。
 //!
-//! 通过 HTTP 调用真实 BulwarkAuthServer + BackendEmbedded，
+//! 通过 HTTP 调用真实 GarrisonAuthServer + BackendEmbedded，
 //! 测试会话生命周期：查询 token 信息、查询 session、踢出、切换、续期。
 
 use super::{http_login, make_client, start_e2e_server};

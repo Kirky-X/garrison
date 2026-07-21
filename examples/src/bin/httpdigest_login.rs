@@ -2,5 +2,5 @@
 //! See LICENSE for full license text.
 
 fn main() {
-    bulwark_examples::authentication::httpdigest_login::run().unwrap();
+    garrison_examples::authentication::httpdigest_login::run().unwrap();
 }

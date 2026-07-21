@@ -3,9 +3,9 @@
 
 use super::mock::make_client;
 use super::*;
-use crate::error::BulwarkError;
+use crate::error::GarrisonError;
 #[cfg(feature = "oauth2-scope-handler")]
-use crate::BulwarkResult;
+use crate::GarrisonResult;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -35,7 +35,7 @@ fn new_empty_client_id_returns_config_error() {
     let result = OAuth2Client::new("", "secret", "redirect", "auth", "token");
     assert!(result.is_err());
     match result.err() {
-        Some(BulwarkError::Config(_)) => {},
+        Some(GarrisonError::Config(_)) => {},
         other => panic!("期望 Config 错误，实际: {:?}", other),
     }
 }
@@ -58,7 +58,7 @@ fn redirect_uri_rejects_http_in_production() {
     // http://evil.com 应拒绝（明文 HTTP 回调到公网域名）
     let result = OAuth2Client::new("cid", "sec", "http://evil.com/cb", "auth_url", "token_url");
     assert!(
-        matches!(result, Err(BulwarkError::InvalidParam(_))),
+        matches!(result, Err(GarrisonError::InvalidParam(_))),
         "http://evil.com 回调应被拒绝，实际 err: {:?}",
         result.err()
     );
@@ -223,7 +223,7 @@ async fn exchange_code_invalid_code_returns_oauth2_error() {
     let result = client.exchange_code("invalid-code", "state").await;
     assert!(result.is_err());
     match result.err() {
-        Some(BulwarkError::OAuth2(_)) => {},
+        Some(GarrisonError::OAuth2(_)) => {},
         other => panic!("期望 OAuth2 错误，实际: {:?}", other),
     }
 }
@@ -291,7 +291,7 @@ async fn client_credentials_wrong_secret_returns_oauth2_error() {
     let result = client.get_client_credentials_token(None).await;
     assert!(result.is_err());
     match result.err() {
-        Some(BulwarkError::OAuth2(_)) => {},
+        Some(GarrisonError::OAuth2(_)) => {},
         other => panic!("期望 OAuth2 错误，实际: {:?}", other),
     }
 }
@@ -339,7 +339,7 @@ async fn password_token_wrong_credentials_returns_oauth2_error() {
     let result = client.get_password_token("alice", "wrong-pwd", None).await;
     assert!(result.is_err());
     match result.err() {
-        Some(BulwarkError::OAuth2(_)) => {},
+        Some(GarrisonError::OAuth2(_)) => {},
         other => panic!("期望 OAuth2 错误，实际: {:?}", other),
     }
 }
@@ -352,7 +352,7 @@ async fn password_token_empty_username_returns_invalid_param() {
     let result = client.get_password_token("", "pwd", None).await;
     assert!(result.is_err());
     match result.err() {
-        Some(BulwarkError::InvalidParam(_)) => {},
+        Some(GarrisonError::InvalidParam(_)) => {},
         other => panic!("期望 InvalidParam 错误，实际: {:?}", other),
     }
 }
@@ -432,7 +432,7 @@ async fn refresh_access_token_error_response() {
         .await;
     assert!(result.is_err());
     match result.err() {
-        Some(BulwarkError::OAuth2(msg)) => {
+        Some(GarrisonError::OAuth2(msg)) => {
             assert!(msg.contains("400"), "错误消息应包含 HTTP 状态码 400");
         },
         other => panic!("期望 OAuth2 错误，实际: {:?}", other),
@@ -447,7 +447,7 @@ async fn refresh_access_token_empty_token_returns_invalid_param() {
     let result = client.refresh_access_token("", None).await;
     assert!(result.is_err());
     match result.err() {
-        Some(BulwarkError::InvalidParam(_)) => {},
+        Some(GarrisonError::InvalidParam(_)) => {},
         other => panic!("期望 InvalidParam 错误，实际: {:?}", other),
     }
 }
@@ -477,7 +477,7 @@ fn pkce_challenge_short_verifier_returns_error() {
     let result = OAuth2Client::generate_pkce_challenge(&verifier);
     assert!(result.is_err(), "42 字符的 verifier 应返回错误");
     match result.err() {
-        Some(BulwarkError::InvalidParam(_)) => {},
+        Some(GarrisonError::InvalidParam(_)) => {},
         other => panic!("期望 InvalidParam 错误，实际: {:?}", other),
     }
 }
@@ -489,7 +489,7 @@ fn pkce_challenge_long_verifier_returns_error() {
     let result = OAuth2Client::generate_pkce_challenge(&verifier);
     assert!(result.is_err(), "129 字符的 verifier 应返回错误");
     match result.err() {
-        Some(BulwarkError::InvalidParam(_)) => {},
+        Some(GarrisonError::InvalidParam(_)) => {},
         other => panic!("期望 InvalidParam 错误，实际: {:?}", other),
     }
 }
@@ -513,7 +513,7 @@ fn pkce_challenge_invalid_chars_returns_error() {
             verifier
         );
         match result.err() {
-            Some(BulwarkError::InvalidParam(_)) => {},
+            Some(GarrisonError::InvalidParam(_)) => {},
             other => panic!("期望 InvalidParam 错误，实际: {:?}", other),
         }
     }
@@ -621,7 +621,7 @@ async fn exchange_code_with_pkce_state_mismatch_returns_error() {
     assert!(result.is_err(), "state 不匹配应返回错误");
     let err = result.err().unwrap();
     assert!(
-        matches!(err, BulwarkError::OAuth2(_)),
+        matches!(err, GarrisonError::OAuth2(_)),
         "应返回 OAuth2 错误，实际: {:?}",
         err
     );
@@ -660,7 +660,7 @@ struct StubScopeHandler {
 
 #[cfg(feature = "oauth2-scope-handler")]
 impl scope::ScopeHandler for StubScopeHandler {
-    fn validate(&self, _scope: &str, _login_id: i64) -> BulwarkResult<bool> {
+    fn validate(&self, _scope: &str, _login_id: i64) -> GarrisonResult<bool> {
         Ok(self.allowed)
     }
 }
@@ -711,7 +711,7 @@ async fn scope_registry_rejects_scope_returns_oauth2_error() {
         .await;
     assert!(result.is_err());
     match result.err() {
-        Some(BulwarkError::OAuth2(msg)) => {
+        Some(GarrisonError::OAuth2(msg)) => {
             assert!(msg.contains("scope validation failed: admin"))
         },
         other => panic!("期望 OAuth2 错误，实际: {:?}", other),
@@ -749,12 +749,12 @@ async fn scope_registry_allows_scope_proceeds_to_http() {
 #[tokio::test]
 #[cfg(feature = "oauth2-scope-handler")]
 async fn scope_handler_error_propagates_without_http() {
-    use crate::error::BulwarkError;
+    use crate::error::GarrisonError;
 
     struct ErrScopeHandler;
     impl scope::ScopeHandler for ErrScopeHandler {
-        fn validate(&self, _scope: &str, _login_id: i64) -> BulwarkResult<bool> {
-            Err(BulwarkError::Internal("handler failure".to_string()))
+        fn validate(&self, _scope: &str, _login_id: i64) -> GarrisonResult<bool> {
+            Err(GarrisonError::Internal("handler failure".to_string()))
         }
     }
 
@@ -766,7 +766,7 @@ async fn scope_handler_error_propagates_without_http() {
     let result = client.refresh_access_token("rtok", Some("bad")).await;
     assert!(result.is_err());
     match result.err() {
-        Some(BulwarkError::Internal(msg)) => assert!(msg.contains("handler failure")),
+        Some(GarrisonError::Internal(msg)) => assert!(msg.contains("handler failure")),
         other => panic!("期望 Internal 错误，实际: {:?}", other),
     }
 }
@@ -785,7 +785,7 @@ async fn unregistered_scope_returns_oauth2_error_without_http() {
         .await;
     assert!(result.is_err());
     match result.err() {
-        Some(BulwarkError::OAuth2(msg)) => {
+        Some(GarrisonError::OAuth2(msg)) => {
             assert!(msg.contains("scope handler not registered: unregistered"))
         },
         other => panic!("期望 OAuth2 错误，实际: {:?}", other),
@@ -883,7 +883,7 @@ async fn introspect_token_server_error_returns_oauth2_error() {
     let result = client.introspect_token("any-token").await;
     assert!(result.is_err());
     match result.err() {
-        Some(BulwarkError::OAuth2(msg)) => {
+        Some(GarrisonError::OAuth2(msg)) => {
             assert!(msg.contains("500"), "错误消息应包含状态码 500: {}", msg);
         },
         other => panic!("期望 OAuth2 错误，实际: {:?}", other),
@@ -908,7 +908,7 @@ async fn introspect_token_network_error_returns_network_error() {
     let result = client.introspect_token("any-token").await;
     assert!(result.is_err());
     match result.err() {
-        Some(BulwarkError::Network(_)) => {},
+        Some(GarrisonError::Network(_)) => {},
         other => panic!("期望 Network 错误，实际: {:?}", other),
     }
 }

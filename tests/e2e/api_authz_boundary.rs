@@ -19,14 +19,14 @@
 //!   token 验证 check-login 返回 data=false。
 //! - **T030e**：spec 期望 "启用 anonymous-session feature，获取匿名 token"。
 //!   server 未暴露 anonymous-session 的 HTTP 端点（`get_anon_token_session` 仅在
-//!   `BulwarkSession` 内存层）。测试用不存在 token 调用 check-permission
+//!   `GarrisonSession` 内存层）。测试用不存在 token 调用 check-permission
 //!   permission="admin:*"，断言 `error_code="NOT_PERMISSION"`——等价于"匿名 token
 //!   越权访问受保护资源被拒绝"的安全语义。
 
 use super::assert_check_login_denied;
 use super::make_recording_client;
 use super::remote::RemoteContext;
-use bulwark::backend::types::LoginParams;
+use garrison::backend::types::LoginParams;
 use serde_json::json;
 use serial_test::serial;
 
@@ -369,7 +369,7 @@ async fn test_authz_boundary_disabled_token_rejected() {
 ///
 /// spec 描述 "启用 anonymous-session feature，获取匿名 token 后调用 check-permission
 /// permission='admin:*'"。server 未暴露 anonymous-session 的 HTTP 端点
-/// （`get_anon_token_session` 仅在 BulwarkSession 内存层）。
+/// （`get_anon_token_session` 仅在 GarrisonSession 内存层）。
 ///
 /// 测试用不存在 token（等价于匿名/未授权 token）调用 check-permission
 /// permission="admin:*"，断言 200 with error_code 或 403——等价于"匿名 token

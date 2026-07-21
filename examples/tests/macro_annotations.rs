@@ -12,7 +12,7 @@
     feature = "web-axum"
 ))]
 
-use bulwark_examples::extension::macro_annotations;
+use garrison_examples::extension::macro_annotations;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_run_completes() {

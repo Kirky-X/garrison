@@ -6,7 +6,7 @@
 
 ```toml
 [dependencies]
-bulwark = { version = "0.7", features = ["metrics-prometheus"] }
+garrison = { version = "0.7", features = ["metrics-prometheus"] }
 ```
 
 `metrics-prometheus` 启用 `prometheus` + `tracing-subscriber`（聚合了 JSON 日志能力）。
@@ -15,22 +15,22 @@ bulwark = { version = "0.7", features = ["metrics-prometheus"] }
 
 | 指标名 | 类型 | 标签 | 说明 |
 |:---|:---|:---|:---|
-| `bulwark_login_total` | Counter | `result=success\|failure` | 登录尝试次数 |
-| `bulwark_token_validation_duration_seconds` | Histogram | - | Token 验证延迟（秒） |
-| `bulwark_permission_query_total` | Counter | `result=allow\|deny` | 权限查询次数 |
-| `bulwark_role_query_total` | Counter | `result=allow\|deny` | 角色查询次数 |
+| `garrison_login_total` | Counter | `result=success\|failure` | 登录尝试次数 |
+| `garrison_token_validation_duration_seconds` | Histogram | - | Token 验证延迟（秒） |
+| `garrison_permission_query_total` | Counter | `result=allow\|deny` | 权限查询次数 |
+| `garrison_role_query_total` | Counter | `result=allow\|deny` | 角色查询次数 |
 
 Token 验证延迟 Histogram 的桶为 `0.001 / 0.005 / 0.01 / 0.05 / 0.1 / 0.5 / 1.0 / 5.0` 秒。
 
-## BulwarkMetrics
+## GarrisonMetrics
 
-`BulwarkMetrics` 持有上述指标集合，通过 `BulwarkLogicDefault::with_metrics` builder 注入：
+`GarrisonMetrics` 持有上述指标集合，通过 `GarrisonLogicDefault::with_metrics` builder 注入：
 
 ```rust
-use bulwark::observability::BulwarkMetrics;
+use garrison::observability::GarrisonMetrics;
 use std::sync::Arc;
 
-let metrics = Arc::new(BulwarkMetrics::new());
+let metrics = Arc::new(GarrisonMetrics::new());
 metrics.record_login(true);                                  // 记录登录成功
 metrics.observe_token_validation(std::time::Duration::from_millis(5));
 metrics.record_permission_query(true);                       // 权限允许
@@ -38,12 +38,12 @@ metrics.record_role_query(false);                            // 角色拒绝
 
 // 收集为 Prometheus 文本格式，供 /metrics 端点抓取
 let output = metrics.gather();
-assert!(output.contains("bulwark_login_total"));
+assert!(output.contains("garrison_login_total"));
 ```
 
 ## 注入与零开销
 
-- 通过 `BulwarkLogicDefault::with_metrics(metrics)` 注入
+- 通过 `GarrisonLogicDefault::with_metrics(metrics)` 注入
 - 未注入时所有 `*_metrics` 调用为 no-op（`Option::None` 短路），零开销
 - 指标在 `login` / `check_login` / `check_permission` / `check_role` 方法内 emit
 
@@ -54,7 +54,7 @@ assert!(output.contains("bulwark_login_total"));
 ```rust
 use prometheus::Registry;
 let registry = Registry::new();
-let metrics = BulwarkMetrics::register_to(&registry)?;
+let metrics = GarrisonMetrics::register_to(&registry)?;
 ```
 
 ## 暴露 /metrics 端点
@@ -74,4 +74,4 @@ let app = Router::new().route("/metrics", get(metrics_handler));
 
 ## 未启用 feature 的兼容性
 
-未启用 `metrics-prometheus` 时，`BulwarkMetrics` 解析为 `()`（type alias），`Option<Arc<BulwarkMetrics>>` 仍可编译，调用方代码无需条件编译。
+未启用 `metrics-prometheus` 时，`GarrisonMetrics` 解析为 `()`（type alias），`Option<Arc<GarrisonMetrics>>` 仍可编译，调用方代码无需条件编译。

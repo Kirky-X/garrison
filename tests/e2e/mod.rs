@@ -3,10 +3,10 @@
 
 //! E2E 测试公共辅助模块。
 //!
-//! 提供 BulwarkAuthServer + BackendEmbedded 全栈测试基础：
-//! - `setup_backend()`：初始化全局 BulwarkManager（BulwarkDaoOxcache + MockInterface），返回 BackendEmbedded
+//! 提供 GarrisonAuthServer + BackendEmbedded 全栈测试基础：
+//! - `setup_backend()`：初始化全局 GarrisonManager（GarrisonDaoOxcache + MockInterface），返回 BackendEmbedded
 //! - `setup_backend_with_dao()`：同上但返回共享 DAO（供 OAuth2State 使用）
-//! - `start_e2e_server()`：随机端口启动 BulwarkAuthServer，返回 (external_url, internal_url, handle)
+//! - `start_e2e_server()`：随机端口启动 GarrisonAuthServer，返回 (external_url, internal_url, handle)
 //! - `start_e2e_server_with_oauth2()`：含 OAuth2 端点
 //!
 //! # 租户隔离
@@ -16,7 +16,7 @@
 //! 默认携带 `X-Tenant-Id: 0` header，使 `current_tenant_id_or_error()` 在
 //! `check_permission` / `check_role` / 审计日志等场景能正确读取租户上下文。
 //!
-//! 所有 E2E 测试使用 `#[serial_test::serial]` 保证 BulwarkManager 全局单例安全。
+//! 所有 E2E 测试使用 `#[serial_test::serial]` 保证 GarrisonManager 全局单例安全。
 //!
 //! # 已知 LOW 级重构建议（规则 26 审查遗留，未实施）
 //!
@@ -53,14 +53,14 @@
 
 #![allow(dead_code)]
 
-use bulwark::backend::{AuthBackend, BackendEmbedded};
-use bulwark::config::BulwarkConfig;
-use bulwark::context::tenant::HeaderTenantResolver;
-use bulwark::dao::{BulwarkDao, BulwarkDaoOxcache};
-use bulwark::manager::BulwarkManager;
-use bulwark::oauth2_server::client::DaoOAuth2ClientStore;
-use bulwark::server::BulwarkAuthServer;
-use bulwark::stp::BulwarkInterface;
+use garrison::backend::{AuthBackend, BackendEmbedded};
+use garrison::config::GarrisonConfig;
+use garrison::context::tenant::HeaderTenantResolver;
+use garrison::dao::{GarrisonDao, GarrisonDaoOxcache};
+use garrison::manager::GarrisonManager;
+use garrison::oauth2_server::client::DaoOAuth2ClientStore;
+use garrison::server::GarrisonAuthServer;
+use garrison::stp::GarrisonInterface;
 use once_cell::sync::OnceCell;
 use std::sync::Arc;
 
@@ -83,43 +83,43 @@ pub mod session_flow;
 
 /// E2E 测试用的空权限/空角色 mock 接口实现。
 ///
-/// `BulwarkInterface` trait 实现位于 [`mock`] 子模块（规则 25 接口隔离）。
+/// `GarrisonInterface` trait 实现位于 [`mock`] 子模块（规则 25 接口隔离）。
 pub(super) struct MockInterface;
 
-/// 创建 BulwarkDaoOxcache 实例（真实 oxcache 实现，非 Mock）。
-async fn make_dao() -> Arc<dyn BulwarkDao> {
-    Arc::new(BulwarkDaoOxcache::new().await.unwrap())
+/// 创建 GarrisonDaoOxcache 实例（真实 oxcache 实现，非 Mock）。
+async fn make_dao() -> Arc<dyn GarrisonDao> {
+    Arc::new(GarrisonDaoOxcache::new().await.unwrap())
 }
 
-/// 初始化全局 BulwarkManager 并返回 BackendEmbedded 实例。
+/// 初始化全局 GarrisonManager 并返回 BackendEmbedded 实例。
 ///
-/// 每次调用先 `reset_for_test()` 清空全局状态，再用 BulwarkDaoOxcache + MockInterface 重新 init。
-/// 返回的 BackendEmbedded 委托 BulwarkManager 全局单例，测试真实 auth 逻辑链路。
+/// 每次调用先 `reset_for_test()` 清空全局状态，再用 GarrisonDaoOxcache + MockInterface 重新 init。
+/// 返回的 BackendEmbedded 委托 GarrisonManager 全局单例，测试真实 auth 逻辑链路。
 pub async fn setup_backend() -> BackendEmbedded {
-    BulwarkManager::reset_for_test();
+    GarrisonManager::reset_for_test();
     let dao = make_dao().await;
-    let mut config = BulwarkConfig::default_config();
+    let mut config = GarrisonConfig::default_config();
     config.timeout = 3600;
     config.active_timeout = -1;
     config.throw_on_not_login = false;
-    let interface: Arc<dyn BulwarkInterface> = Arc::new(MockInterface);
-    BulwarkManager::init(dao, Arc::new(config), interface).unwrap();
+    let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface);
+    GarrisonManager::init(dao, Arc::new(config), interface).unwrap();
     BackendEmbedded::new()
 }
 
-/// 初始化 BulwarkManager 并返回共享的 DAO（用于 OAuth2State）。
+/// 初始化 GarrisonManager 并返回共享的 DAO（用于 OAuth2State）。
 ///
-/// OAuth2 E2E 测试需要 DaoOAuth2ClientStore 与 BulwarkManager 共享同一 DAO，
+/// OAuth2 E2E 测试需要 DaoOAuth2ClientStore 与 GarrisonManager 共享同一 DAO，
 /// 此函数返回 dao 引用供 OAuth2State 构造使用。
-pub async fn setup_backend_with_dao() -> (BackendEmbedded, Arc<dyn BulwarkDao>) {
-    BulwarkManager::reset_for_test();
+pub async fn setup_backend_with_dao() -> (BackendEmbedded, Arc<dyn GarrisonDao>) {
+    GarrisonManager::reset_for_test();
     let dao = make_dao().await;
-    let mut config = BulwarkConfig::default_config();
+    let mut config = GarrisonConfig::default_config();
     config.timeout = 3600;
     config.active_timeout = -1;
     config.throw_on_not_login = false;
-    let interface: Arc<dyn BulwarkInterface> = Arc::new(MockInterface);
-    BulwarkManager::init(dao.clone(), Arc::new(config), interface).unwrap();
+    let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface);
+    GarrisonManager::init(dao.clone(), Arc::new(config), interface).unwrap();
     (BackendEmbedded::new(), dao)
 }
 
@@ -138,7 +138,7 @@ pub async fn start_e2e_server(
 /// 随机端口启动 E2E 测试服务器（含 OAuth2 端点）。
 ///
 /// 返回 (external_url, internal_url, JoinHandle, OAuth2ClientStore)。
-/// OAuth2State 使用 DaoOAuth2ClientStore + 共享 BulwarkDaoOxcache。
+/// OAuth2State 使用 DaoOAuth2ClientStore + 共享 GarrisonDaoOxcache。
 pub async fn start_e2e_server_with_oauth2(
     rate_limit: u32,
     api_key: &str,
@@ -146,14 +146,14 @@ pub async fn start_e2e_server_with_oauth2(
     String,
     String,
     tokio::task::JoinHandle<()>,
-    Arc<dyn bulwark::oauth2_server::client::OAuth2ClientStore>,
+    Arc<dyn garrison::oauth2_server::client::OAuth2ClientStore>,
 ) {
     let (backend, dao) = setup_backend_with_dao().await;
     let backend: Arc<dyn AuthBackend> = Arc::new(backend);
 
-    let store: Arc<dyn bulwark::oauth2_server::client::OAuth2ClientStore> =
+    let store: Arc<dyn garrison::oauth2_server::client::OAuth2ClientStore> =
         Arc::new(DaoOAuth2ClientStore::new(dao.clone()));
-    let oauth2_state = Arc::new(bulwark::server::oauth2_routes::OAuth2State::new(
+    let oauth2_state = Arc::new(garrison::server::oauth2_routes::OAuth2State::new(
         store.clone(),
         dao,
         "http://localhost/login".to_string(),
@@ -179,7 +179,7 @@ async fn spawn_server(
     backend: Arc<dyn AuthBackend>,
     rate_limit: u32,
     api_key: &str,
-    oauth2_state: Option<Arc<bulwark::server::oauth2_routes::OAuth2State>>,
+    oauth2_state: Option<Arc<garrison::server::oauth2_routes::OAuth2State>>,
     log_prefix: &str,
 ) -> (String, String, tokio::task::JoinHandle<()>) {
     let external_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -191,7 +191,7 @@ async fn spawn_server(
     let internal_url = format!("http://127.0.0.1:{}", internal_port);
 
     // 通用 builder 链：所有三个 start_e2e_server* 共享（MEDIUM-6）
-    let server = BulwarkAuthServer::new(backend)
+    let server = GarrisonAuthServer::new(backend)
         .with_external_port(external_port)
         .with_internal_port(internal_port)
         .with_rate_limit(rate_limit)
@@ -241,7 +241,7 @@ async fn spawn_server(
 /// # 用法
 ///
 /// ```ignore
-/// let _guard = EnvGuard::new("BULWARK_RATE_LIMIT", "10");
+/// let _guard = EnvGuard::new("GARRISON_RATE_LIMIT", "10");
 /// // 测试逻辑...
 /// // _guard 离开作用域时 Drop 自动还原 env
 /// ```
@@ -310,7 +310,7 @@ pub async fn http_login(client: &reqwest::Client, external_url: &str, login_id: 
         .post(format!("{}/api/v1/auth/login", external_url))
         .json(&serde_json::json!({
             "login_id": login_id,
-            "params": bulwark::backend::types::LoginParams::default()
+            "params": garrison::backend::types::LoginParams::default()
         }))
         .send()
         .await
@@ -334,10 +334,10 @@ pub async fn http_login(client: &reqwest::Client, external_url: &str, login_id: 
 /// # 失败处理
 /// `store.create` 失败时 panic 并透传完整错误信息（规则 12 失败显性化）。
 pub async fn register_oauth2_client(
-    store: &dyn bulwark::oauth2_server::client::OAuth2ClientStore,
-    client: bulwark::oauth2_server::client::OAuth2Client,
+    store: &dyn garrison::oauth2_server::client::OAuth2ClientStore,
+    client: garrison::oauth2_server::client::OAuth2Client,
 ) {
-    bulwark::context::tenant::with_default_tenant(async {
+    garrison::context::tenant::with_default_tenant(async {
         if let Err(e) = store.create(client).await {
             panic!("register_oauth2_client failed: {e:?}");
         }
@@ -388,7 +388,7 @@ pub fn make_recording_client(test_name: &str) -> har_recorder::RecordingClient {
 ///
 /// # Spec 与实际行为差异（spawn_child 模式）
 ///
-/// `examples/auth_server.rs::serve()` 使用 `BulwarkConfig::default_config()`，
+/// `examples/auth_server.rs::serve()` 使用 `GarrisonConfig::default_config()`，
 /// `throw_on_not_login` 默认为 `true`。`start_e2e_server()` 的 in-process 模式
 /// 显式设置 `throw_on_not_login=false`，二者行为不同：
 ///
@@ -431,7 +431,7 @@ pub fn assert_check_login_denied(body: &serde_json::Value, context: &str) {
     );
 }
 
-/// 初始化全局 BulwarkManager（`is_concurrent=false` 配置），返回 BackendEmbedded。
+/// 初始化全局 GarrisonManager（`is_concurrent=false` 配置），返回 BackendEmbedded。
 ///
 /// 与 `setup_backend()` 唯一差异：`config.is_concurrent = false`，使同账号新登录
 /// 踢出旧会话（`ReplacedLoginExitMode::OldDevice` 默认行为）。
@@ -441,22 +441,22 @@ pub fn assert_check_login_denied(body: &serde_json::Value, context: &str) {
 /// `RemoteContext::spawn_child()` 走 `serve()` + `default_config()` 无法自定义此字段，
 /// 故提供 in-process 变体（spec 已预判此偏差）。
 pub async fn setup_backend_no_concurrent() -> BackendEmbedded {
-    BulwarkManager::reset_for_test();
+    GarrisonManager::reset_for_test();
     let dao = make_dao().await;
-    let mut config = BulwarkConfig::default_config();
+    let mut config = GarrisonConfig::default_config();
     config.timeout = 3600;
     config.active_timeout = -1;
     config.throw_on_not_login = false;
     config.is_concurrent = false;
-    let interface: Arc<dyn BulwarkInterface> = Arc::new(MockInterface);
-    BulwarkManager::init(dao, Arc::new(config), interface).unwrap();
+    let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface);
+    GarrisonManager::init(dao, Arc::new(config), interface).unwrap();
     BackendEmbedded::new()
 }
 
 /// 随机端口启动 E2E 测试服务器（`is_concurrent=false` 配置）。
 ///
 /// 与 `start_e2e_server()` 行为一致，唯一差异：调用 `setup_backend_no_concurrent()`
-/// 构造 `is_concurrent=false` 的全局 BulwarkManager，使同账号多设备登录互踢。
+/// 构造 `is_concurrent=false` 的全局 GarrisonManager，使同账号多设备登录互踢。
 /// 供 T046 会话劫持测试使用。
 pub async fn start_e2e_server_no_concurrent(
     rate_limit: u32,

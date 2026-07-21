@@ -3,7 +3,7 @@
 
 //! 中间件 E2E 测试——audit_log / health / metrics。
 //!
-//! 通过 HTTP 调用真实 BulwarkAuthServer + BackendEmbedded，
+//! 通过 HTTP 调用真实 GarrisonAuthServer + BackendEmbedded，
 //! 测试中间件行为：审计日志不影响正常请求、health 端点、metrics 端点。
 
 use super::{http_login, make_client, start_e2e_server};
@@ -70,7 +70,7 @@ async fn test_e2e_metrics_endpoint_with_prometheus() {
     let body: String = resp.json().await.unwrap();
     // 可能没有指标注册，但端点不应 panic
     assert!(
-        body.contains("bulwark_") || body.is_empty(),
-        "metrics 应包含 bulwark_ 前缀或为空"
+        body.contains("garrison_") || body.is_empty(),
+        "metrics 应包含 garrison_ 前缀或为空"
     );
 }

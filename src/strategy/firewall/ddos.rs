@@ -3,8 +3,8 @@
 
 //! DDoS 防护策略。
 //!
-//! `DDoSStrategy` 实现 [`BulwarkFirewallStrategy`] trait，
-//! 用 limiteron 的 `BulwarkDaoDistributedLimiter::atomic_check_and_incr` 实现
+//! `DDoSStrategy` 实现 [`GarrisonFirewallStrategy`] trait，
+//! 用 limiteron 的 `GarrisonDaoDistributedLimiter::atomic_check_and_incr` 实现
 //! 全局 + 单 IP 双重限流（fixed window counter 语义，禁止手写 token bucket）。
 //!
 //! # 算法（Fixed Window Counter，委托 limiteron）
@@ -23,13 +23,13 @@
 //!
 //! # 原子性保证
 //!
-//! `BulwarkDaoDistributedLimiter::atomic_check_and_incr` 在 Redis 后端用 Lua 脚本
+//! `GarrisonDaoDistributedLimiter::atomic_check_and_incr` 在 Redis 后端用 Lua 脚本
 //! （INCR + EXPIRE 原子），在非 Redis 后端降级到 `dao.incr`（进程内 Mutex 原子）。
 
-use crate::dao::BulwarkDao;
-use crate::error::{BulwarkError, BulwarkResult};
-use crate::limiteron::BulwarkDaoDistributedLimiter;
-use crate::strategy::firewall::{BulwarkFirewallStrategy, FirewallContext};
+use crate::dao::GarrisonDao;
+use crate::error::{GarrisonError, GarrisonResult};
+use crate::limiteron::GarrisonDaoDistributedLimiter;
+use crate::strategy::firewall::{FirewallContext, GarrisonFirewallStrategy};
 use async_trait::async_trait;
 use std::sync::Arc;
 use std::time::Duration;
@@ -64,16 +64,16 @@ impl Default for DDoSConfig {
     }
 }
 
-/// DDoS 防护策略，委托 limiteron 的 `BulwarkDaoDistributedLimiter` 实现。
+/// DDoS 防护策略，委托 limiteron 的 `GarrisonDaoDistributedLimiter` 实现。
 ///
 /// # 构造
 ///
 /// ```ignore
 /// use std::sync::Arc;
-/// use bulwark::dao::BulwarkDao;
-/// use bulwark::strategy::firewall::ddos::{DDoSConfig, DDoSStrategy};
+/// use garrison::dao::GarrisonDao;
+/// use garrison::strategy::firewall::ddos::{DDoSConfig, DDoSStrategy};
 ///
-/// let dao: Arc<dyn BulwarkDao> = /* oxcache 实现 */;
+/// let dao: Arc<dyn GarrisonDao> = /* oxcache 实现 */;
 /// let config = DDoSConfig { global_rps: 100, per_ip_rps: 10, burst: 20 };
 /// let strategy = DDoSStrategy::new(config, dao);
 /// ```
@@ -81,7 +81,7 @@ pub struct DDoSStrategy {
     /// 配置（单 IP rps + 全局 burst）。
     config: DDoSConfig,
     /// limiteron 适配器（提供原子 check-and-increment）。
-    limiter: BulwarkDaoDistributedLimiter,
+    limiter: GarrisonDaoDistributedLimiter,
 }
 
 impl DDoSStrategy {
@@ -90,17 +90,17 @@ impl DDoSStrategy {
     /// # 参数
     /// - `config`: 配置（单 IP rps + 全局 burst）。
     /// - `dao`: DAO（oxcache 抽象，桥接到 limiteron 适配器）。
-    pub fn new(config: DDoSConfig, dao: Arc<dyn BulwarkDao>) -> Self {
+    pub fn new(config: DDoSConfig, dao: Arc<dyn GarrisonDao>) -> Self {
         Self {
             config,
-            limiter: BulwarkDaoDistributedLimiter::new(dao),
+            limiter: GarrisonDaoDistributedLimiter::new(dao),
         }
     }
 }
 
 #[async_trait]
-impl BulwarkFirewallStrategy for DDoSStrategy {
-    async fn check(&self, ctx: &FirewallContext) -> BulwarkResult<()> {
+impl GarrisonFirewallStrategy for DDoSStrategy {
+    async fn check(&self, ctx: &FirewallContext) -> GarrisonResult<()> {
         // 窗口 TTL：1 秒（fixed window counter 语义）
         const WINDOW_TTL: Duration = Duration::from_secs(1);
 
@@ -109,9 +109,9 @@ impl BulwarkFirewallStrategy for DDoSStrategy {
             .limiter
             .atomic_check_and_incr("ddos:global", self.config.burst as u64, WINDOW_TTL)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("strategy-ddos-global::{}", e)))?;
+            .map_err(|e| GarrisonError::Dao(format!("strategy-ddos-global::{}", e)))?;
         if !global_ok {
-            return Err(BulwarkError::FirewallBlocked(format!(
+            return Err(GarrisonError::FirewallBlocked(format!(
                 "strategy-ddos-global-blocked::{}",
                 self.config.burst
             )));
@@ -123,9 +123,9 @@ impl BulwarkFirewallStrategy for DDoSStrategy {
             .limiter
             .atomic_check_and_incr(&ip_key, self.config.per_ip_rps as u64, WINDOW_TTL)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("strategy-ddos-ip::{}::{}", ctx.ip, e)))?;
+            .map_err(|e| GarrisonError::Dao(format!("strategy-ddos-ip::{}::{}", ctx.ip, e)))?;
         if !ip_ok {
-            return Err(BulwarkError::FirewallBlocked(format!(
+            return Err(GarrisonError::FirewallBlocked(format!(
                 "strategy-ddos-ip-blocked::{}::{}",
                 ctx.ip, self.config.per_ip_rps
             )));
@@ -145,14 +145,14 @@ inventory::submit! {
 mod tests {
     use super::*;
     use crate::dao::tests::MockDao;
-    use crate::error::BulwarkError;
+    use crate::error::GarrisonError;
 
     /// 验证全局 burst 限制：burst=3 时，1 秒窗口内前 3 次放行，第 4 次被拦截。
     ///
     /// 配置 per_ip_rps=1000 放宽单 IP 限制，确保拦截来自全局桶。
     #[tokio::test]
     async fn ddos_global_burst_limit() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let config = DDoSConfig {
             global_rps: 100,
             per_ip_rps: 1000, // per_ip 放宽，只测全局
@@ -169,7 +169,7 @@ mod tests {
         // 第 4 次被拦截（全局桶计数 4 > 3，窗口未过期）
         let result = strategy.check(&ctx).await;
         assert!(
-            matches!(result, Err(BulwarkError::FirewallBlocked(_))),
+            matches!(result, Err(GarrisonError::FirewallBlocked(_))),
             "第 4 次应返回 FirewallBlocked，实际: {:?}",
             result
         );
@@ -180,7 +180,7 @@ mod tests {
     /// 配置 burst=1000 放宽全局限制，确保拦截来自单 IP 桶。
     #[tokio::test]
     async fn ddos_per_ip_isolation() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let config = DDoSConfig {
             global_rps: 100,
             per_ip_rps: 2,
@@ -203,7 +203,7 @@ mod tests {
         // IP A 第 3 次被 per_ip_a 拦截（计数 3 > 2）
         let result = strategy.check(&ctx_a).await;
         assert!(
-            matches!(result, Err(BulwarkError::FirewallBlocked(_))),
+            matches!(result, Err(GarrisonError::FirewallBlocked(_))),
             "IP A 第 3 次应被 per_ip 拦截，实际: {:?}",
             result
         );
@@ -218,7 +218,7 @@ mod tests {
     /// 第 4 次重新计数（count=1 <= 2）通过。
     #[tokio::test]
     async fn ddos_window_reset_after_ttl() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let config = DDoSConfig {
             global_rps: 100,
             per_ip_rps: 1000, // 放宽 per_ip，只测全局窗口重置
@@ -234,7 +234,7 @@ mod tests {
         // 第 3 次被拦截（count=3 > 2，窗口未过期）
         assert!(matches!(
             strategy.check(&ctx).await,
-            Err(BulwarkError::FirewallBlocked(_))
+            Err(GarrisonError::FirewallBlocked(_))
         ));
 
         // 等待窗口 TTL 过期（1s 窗口 + 0.1s 余量）
@@ -253,7 +253,7 @@ mod tests {
     /// 同一 IP 第 2 次应被单 IP 桶拦截，而全局桶仍允许。
     #[tokio::test]
     async fn ddos_dual_limit_per_ip_triggered_first() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let config = DDoSConfig {
             global_rps: 100,
             per_ip_rps: 1,
@@ -268,27 +268,27 @@ mod tests {
         // 第 2 次：全局 count=2 <= 10 通过，但 per_ip count=2 > 1 拦截
         let result = strategy.check(&ctx).await;
         assert!(
-            matches!(result, Err(BulwarkError::FirewallBlocked(_))),
+            matches!(result, Err(GarrisonError::FirewallBlocked(_))),
             "第 2 次应被 per_ip 拦截（per_ip_rps=1），实际: {:?}",
             result
         );
         // 验证错误消息包含 IP 信息（区分 per_ip 拦截 vs 全局拦截）
-        if let Err(BulwarkError::FirewallBlocked(msg)) = result {
+        if let Err(GarrisonError::FirewallBlocked(msg)) = result {
             assert!(msg.contains("10.0.0.1"), "错误消息应包含 IP，实际: {}", msg);
         }
     }
 
-    /// 验证错误传播：limiteron 错误映射为 BulwarkError::Dao。
+    /// 验证错误传播：limiteron 错误映射为 GarrisonError::Dao。
     ///
     /// 通过注入脏数据（非数字 count）触发 parse 失败，验证错误被正确包装。
     #[tokio::test]
-    async fn ddos_limiter_error_maps_to_bulwark_error() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+    async fn ddos_limiter_error_maps_to_garrison_error() {
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         // 注入脏数据：ddos:global 的 count 是非数字字符串
         // MockDao::eval_lua 识别 INCR+EXPIRE 后调用 incr，incr 内部 parse 失败时 unwrap_or(0)
-        // 但 BulwarkDaoDistributedLimiter::atomic_check_and_incr 的降级路径会调用 dao.incr
+        // 但 GarrisonDaoDistributedLimiter::atomic_check_and_incr 的降级路径会调用 dao.incr
         // （MockDao 的 eval_lua 不会走 NotImplemented 分支，而是模拟 INCR+EXPIRE）
-        // 因此此测试主要验证：当 limiter 返回 Err 时，DDoSStrategy::check 返回 BulwarkError::Dao
+        // 因此此测试主要验证：当 limiter 返回 Err 时，DDoSStrategy::check 返回 GarrisonError::Dao
         dao.set("ddos:global", "not-a-number", 60).await.unwrap();
 
         let config = DDoSConfig::default();

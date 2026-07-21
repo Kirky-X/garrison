@@ -3,7 +3,7 @@
 
 #[tokio::main]
 async fn main() {
-    bulwark_examples::authorization::abac_policy::run()
+    garrison_examples::authorization::abac_policy::run()
         .await
         .unwrap();
 }

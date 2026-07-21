@@ -5,7 +5,7 @@
 //!
 //! 验证 run() 完整执行（内部已包含 login/logout 断言）。
 
-use bulwark_examples::extension::auth_logic_impl;
+use garrison_examples::extension::auth_logic_impl;
 
 #[tokio::test]
 async fn test_run_completes() {

@@ -3,7 +3,7 @@
 
 //! 暴力破解防护策略。
 //!
-//! `BruteForceStrategy` 实现 [`BulwarkFirewallStrategy`] trait，
+//! `BruteForceStrategy` 实现 [`GarrisonFirewallStrategy`] trait，
 //! 用 limiteron `BanStorage`（封禁记录）+ `DistributedLimiter`（原子计数）实现。
 //!
 //! # 算法
@@ -20,10 +20,10 @@
 //! - **count key**：保持 `bf:{ip}:count` 格式（通过 `DistributedLimiter` 原子递增）
 
 use crate::constants::DaoKeyPrefix;
-use crate::dao::BulwarkDao;
-use crate::error::{BulwarkError, BulwarkResult};
-use crate::limiteron::{BulwarkDaoBanStorage, BulwarkDaoDistributedLimiter};
-use crate::strategy::firewall::{BulwarkFirewallStrategy, FirewallContext};
+use crate::dao::GarrisonDao;
+use crate::error::{GarrisonError, GarrisonResult};
+use crate::limiteron::{GarrisonDaoBanStorage, GarrisonDaoDistributedLimiter};
+use crate::strategy::firewall::{FirewallContext, GarrisonFirewallStrategy};
 use async_trait::async_trait;
 use chrono::Utc;
 use limiteron::limiters::DistributedLimiter;
@@ -60,10 +60,10 @@ impl Default for BruteForceConfig {
 ///
 /// ```ignore
 /// use std::sync::Arc;
-/// use bulwark::dao::BulwarkDao;
-/// use bulwark::strategy::firewall::brute_force::{BruteForceConfig, BruteForceStrategy};
+/// use garrison::dao::GarrisonDao;
+/// use garrison::strategy::firewall::brute_force::{BruteForceConfig, BruteForceStrategy};
 ///
-/// let dao: Arc<dyn BulwarkDao> = /* oxcache 实现 */;
+/// let dao: Arc<dyn GarrisonDao> = /* oxcache 实现 */;
 /// let strategy = BruteForceStrategy::new(BruteForceConfig::default(), dao);
 /// ```
 pub struct BruteForceStrategy {
@@ -78,15 +78,15 @@ pub struct BruteForceStrategy {
 impl BruteForceStrategy {
     /// 创建暴力破解防护策略实例。
     ///
-    /// 内部创建 [`BulwarkDaoBanStorage`] + [`BulwarkDaoDistributedLimiter`] 适配器，
+    /// 内部创建 [`GarrisonDaoBanStorage`] + [`GarrisonDaoDistributedLimiter`] 适配器，
     /// 将 `dao` 桥接到 limiteron trait。
     ///
     /// # 参数
     /// - `config`: 配置（阈值 + 窗口 + 锁定时长）。
     /// - `dao`: DAO（oxcache 抽象，用于计数与锁定）。
-    pub fn new(config: BruteForceConfig, dao: Arc<dyn BulwarkDao>) -> Self {
-        let ban_storage = Arc::new(BulwarkDaoBanStorage::new(dao.clone()));
-        let limiter = Arc::new(BulwarkDaoDistributedLimiter::new(dao));
+    pub fn new(config: BruteForceConfig, dao: Arc<dyn GarrisonDao>) -> Self {
+        let ban_storage = Arc::new(GarrisonDaoBanStorage::new(dao.clone()));
+        let limiter = Arc::new(GarrisonDaoDistributedLimiter::new(dao));
         Self {
             config,
             ban_storage,
@@ -96,8 +96,8 @@ impl BruteForceStrategy {
 }
 
 #[async_trait]
-impl BulwarkFirewallStrategy for BruteForceStrategy {
-    async fn check(&self, ctx: &FirewallContext) -> BulwarkResult<()> {
+impl GarrisonFirewallStrategy for BruteForceStrategy {
+    async fn check(&self, ctx: &FirewallContext) -> GarrisonResult<()> {
         let target = BanTarget::Ip(ctx.ip.clone());
         let count_key = format!("{}{}:count", DaoKeyPrefix::BruteForce, ctx.ip);
 
@@ -106,10 +106,10 @@ impl BulwarkFirewallStrategy for BruteForceStrategy {
             .ban_storage
             .is_banned(&target)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("strategy-ban-is-banned::{}", e)))?
+            .map_err(|e| GarrisonError::Dao(format!("strategy-ban-is-banned::{}", e)))?
             .is_some()
         {
-            return Err(BulwarkError::FirewallBlocked(format!(
+            return Err(GarrisonError::FirewallBlocked(format!(
                 "strategy-firewall-bruteforce-locked::{}",
                 ctx.ip
             )));
@@ -124,7 +124,7 @@ impl BulwarkFirewallStrategy for BruteForceStrategy {
                 Duration::from_secs(self.config.window_seconds),
             )
             .await
-            .map_err(|e| BulwarkError::Dao(format!("strategy-incr-ttl::{}", e)))?;
+            .map_err(|e| GarrisonError::Dao(format!("strategy-incr-ttl::{}", e)))?;
 
         if new_count > self.config.max_attempts as u64 {
             // 3. 超阈值：封禁 IP（BanStorage.save）
@@ -143,8 +143,8 @@ impl BulwarkFirewallStrategy for BruteForceStrategy {
             self.ban_storage
                 .save(&record)
                 .await
-                .map_err(|e| BulwarkError::Dao(format!("strategy-ban-save::{}", e)))?;
-            Err(BulwarkError::FirewallBlocked(format!(
+                .map_err(|e| GarrisonError::Dao(format!("strategy-ban-save::{}", e)))?;
+            Err(GarrisonError::FirewallBlocked(format!(
                 "strategy-firewall-bruteforce-blocked::{}::{}::{}",
                 ctx.ip, new_count, self.config.max_attempts
             )))
@@ -164,12 +164,12 @@ inventory::submit! {
 mod tests {
     use super::*;
     use crate::dao::tests::MockDao;
-    use crate::error::BulwarkError;
+    use crate::error::GarrisonError;
 
     /// 验证暴力破解防护：max_attempts=5 时，连续 5 次通过，第 6 次被拦截。
     #[tokio::test]
     async fn bruteforce_blocks_after_max_attempts() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let config = BruteForceConfig {
             max_attempts: 5,
             window_seconds: 60,
@@ -186,7 +186,7 @@ mod tests {
         // 第 6 次被拦截
         let result = strategy.check(&ctx).await;
         assert!(
-            matches!(result, Err(BulwarkError::FirewallBlocked(_))),
+            matches!(result, Err(GarrisonError::FirewallBlocked(_))),
             "第 6 次应返回 FirewallBlocked，实际: {:?}",
             result
         );
@@ -198,7 +198,7 @@ mod tests {
     /// `is_banned` 拦截。
     #[tokio::test]
     async fn bruteforce_lock_persists_after_trigger() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let config = BruteForceConfig {
             max_attempts: 3,
             window_seconds: 60,
@@ -216,7 +216,7 @@ mod tests {
         for i in 1..=5 {
             let result = strategy.check(&ctx).await;
             assert!(
-                matches!(result, Err(BulwarkError::FirewallBlocked(_))),
+                matches!(result, Err(GarrisonError::FirewallBlocked(_))),
                 "锁定后第 {} 次请求应被拦截",
                 i
             );
@@ -226,7 +226,7 @@ mod tests {
     /// 验证不同 IP 的计数互不干扰（key 隔离正确性）。
     #[tokio::test]
     async fn bruteforce_counts_isolated_per_ip() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let config = BruteForceConfig {
             max_attempts: 3,
             window_seconds: 60,

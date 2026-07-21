@@ -1,17 +1,17 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! 自定义插件示例：演示 BulwarkPlugin trait 与 BulwarkPluginManager 生命周期钩子。
+//! 自定义插件示例：演示 GarrisonPlugin trait 与 GarrisonPluginManager 生命周期钩子。
 //!
 //! 对应模块：`src/plugin/mod.rs`（always on，无需 feature）。
 //!
 //! 运行方式：
 //! ```sh
-//! cargo run -p bulwark-examples --bin custom_plugin --features full
+//! cargo run -p garrison-examples --bin custom_plugin --features full
 //! ```
 
-use bulwark::error::BulwarkResult;
-use bulwark::plugin::{BulwarkPlugin, BulwarkPluginEntry, BulwarkPluginManager};
+use garrison::error::GarrisonResult;
+use garrison::plugin::{GarrisonPlugin, GarrisonPluginEntry, GarrisonPluginManager};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
@@ -27,12 +27,12 @@ static PERM_CHECK_CALLS: AtomicUsize = AtomicUsize::new(0);
 /// 审计插件：记录登录/登出/权限校验事件（观测不干预）。
 struct AuditPlugin;
 
-impl BulwarkPlugin for AuditPlugin {
+impl GarrisonPlugin for AuditPlugin {
     fn name(&self) -> &str {
         "audit-plugin"
     }
 
-    fn on_login(&self, login_id: &str, token: &str) -> BulwarkResult<()> {
+    fn on_login(&self, login_id: &str, token: &str) -> GarrisonResult<()> {
         LOGIN_CALLS.fetch_add(1, Ordering::SeqCst);
         println!(
             "    [AuditPlugin] on_login: login_id={}, token={}...",
@@ -42,7 +42,7 @@ impl BulwarkPlugin for AuditPlugin {
         Ok(())
     }
 
-    fn on_logout(&self, login_id: &str, token: &str) -> BulwarkResult<()> {
+    fn on_logout(&self, login_id: &str, token: &str) -> GarrisonResult<()> {
         LOGOUT_CALLS.fetch_add(1, Ordering::SeqCst);
         println!(
             "    [AuditPlugin] on_logout: login_id={}, token={}...",
@@ -52,7 +52,7 @@ impl BulwarkPlugin for AuditPlugin {
         Ok(())
     }
 
-    fn on_permission_check(&self, login_id: &str, permission: &str) -> BulwarkResult<()> {
+    fn on_permission_check(&self, login_id: &str, permission: &str) -> GarrisonResult<()> {
         PERM_CHECK_CALLS.fetch_add(1, Ordering::SeqCst);
         println!(
             "    [AuditPlugin] on_permission_check: login_id={}, permission={}",
@@ -65,60 +65,60 @@ impl BulwarkPlugin for AuditPlugin {
 /// 失败插件：所有钩子返回 Err（验证主流程不被中断）。
 struct FailingPlugin;
 
-impl BulwarkPlugin for FailingPlugin {
+impl GarrisonPlugin for FailingPlugin {
     fn name(&self) -> &str {
         "failing-plugin"
     }
 
-    fn on_login(&self, _login_id: &str, _token: &str) -> BulwarkResult<()> {
-        Err(bulwark::error::BulwarkError::Internal(
+    fn on_login(&self, _login_id: &str, _token: &str) -> GarrisonResult<()> {
+        Err(garrison::error::GarrisonError::Internal(
             "FailingPlugin on_login 故意失败".to_string(),
         ))
     }
 
-    fn on_logout(&self, _login_id: &str, _token: &str) -> BulwarkResult<()> {
-        Err(bulwark::error::BulwarkError::Internal(
+    fn on_logout(&self, _login_id: &str, _token: &str) -> GarrisonResult<()> {
+        Err(garrison::error::GarrisonError::Internal(
             "FailingPlugin on_logout 故意失败".to_string(),
         ))
     }
 
-    fn on_permission_check(&self, _login_id: &str, _permission: &str) -> BulwarkResult<()> {
-        Err(bulwark::error::BulwarkError::Internal(
+    fn on_permission_check(&self, _login_id: &str, _permission: &str) -> GarrisonResult<()> {
+        Err(garrison::error::GarrisonError::Internal(
             "FailingPlugin on_permission_check 故意失败".to_string(),
         ))
     }
 }
 
 /// 工厂函数：返回 AuditPlugin 实例。
-fn audit_plugin_factory() -> Arc<dyn BulwarkPlugin> {
+fn audit_plugin_factory() -> Arc<dyn GarrisonPlugin> {
     Arc::new(AuditPlugin)
 }
 
 /// 工厂函数：返回 FailingPlugin 实例。
-fn failing_plugin_factory() -> Arc<dyn BulwarkPlugin> {
+fn failing_plugin_factory() -> Arc<dyn GarrisonPlugin> {
     Arc::new(FailingPlugin)
 }
 
 // 编译期注册插件（替代 Java SPI）
 inventory::submit! {
-    BulwarkPluginEntry { factory: audit_plugin_factory }
+    GarrisonPluginEntry { factory: audit_plugin_factory }
 }
 inventory::submit! {
-    BulwarkPluginEntry { factory: failing_plugin_factory }
+    GarrisonPluginEntry { factory: failing_plugin_factory }
 }
 
 /// 运行自定义插件示例。
 ///
-/// 演示 BulwarkPlugin trait 实现、inventory 编译期注册、
-/// BulwarkPluginManager 收集与调用钩子、单个插件失败不中断主流程。
-pub fn run() -> BulwarkResult<()> {
-    println!("=== Bulwark 自定义插件示例 ===\n");
+/// 演示 GarrisonPlugin trait 实现、inventory 编译期注册、
+/// GarrisonPluginManager 收集与调用钩子、单个插件失败不中断主流程。
+pub fn run() -> GarrisonResult<()> {
+    println!("=== Garrison 自定义插件示例 ===\n");
 
     // ----------------------------------------------------------------
-    // 1. BulwarkPluginManager 收集所有已注册插件
+    // 1. GarrisonPluginManager 收集所有已注册插件
     // ----------------------------------------------------------------
-    let manager = BulwarkPluginManager::new();
-    println!("[1] BulwarkPluginManager::new()");
+    let manager = GarrisonPluginManager::new();
+    println!("[1] GarrisonPluginManager::new()");
     println!("    已注册插件数量 = {}", manager.count());
     assert!(manager.count() >= 2); // AuditPlugin + FailingPlugin
     println!();
@@ -177,8 +177,8 @@ pub fn run() -> BulwarkResult<()> {
     // ----------------------------------------------------------------
     // 6. Default trait 等价于 new()
     // ----------------------------------------------------------------
-    let m1 = BulwarkPluginManager::new();
-    let m2 = BulwarkPluginManager::default();
+    let m1 = GarrisonPluginManager::new();
+    let m2 = GarrisonPluginManager::default();
     assert_eq!(m1.count(), m2.count());
     println!(
         "[6] Default::default() 等价于 new()：count={} ✓\n",

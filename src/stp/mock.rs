@@ -8,10 +8,10 @@
 //! `MockUserRepository` / `MockInterfaceWithLoginType` 等 mock，
 //! 供 `stp::tests` 集成测试复用。
 
-use super::BulwarkInterface;
-use crate::dao::BulwarkDao;
-use crate::error::{BulwarkError, BulwarkResult};
-use crate::strategy::BulwarkPermissionStrategy;
+use super::GarrisonInterface;
+use crate::dao::GarrisonDao;
+use crate::error::{GarrisonError, GarrisonResult};
+use crate::strategy::GarrisonPermissionStrategy;
 use async_trait::async_trait;
 use parking_lot::Mutex;
 use std::collections::HashMap;
@@ -37,8 +37,8 @@ impl MockDao {
 }
 
 #[async_trait]
-impl BulwarkDao for MockDao {
-    async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
+impl GarrisonDao for MockDao {
+    async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
         let mut store = self.store.lock();
         match store.get(key) {
             Some((value, expire_at)) => {
@@ -54,7 +54,7 @@ impl BulwarkDao for MockDao {
         }
     }
 
-    async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> BulwarkResult<()> {
+    async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> GarrisonResult<()> {
         let expire_at = if ttl_seconds == 0 {
             None
         } else {
@@ -66,18 +66,18 @@ impl BulwarkDao for MockDao {
         Ok(())
     }
 
-    async fn update(&self, key: &str, value: &str) -> BulwarkResult<()> {
+    async fn update(&self, key: &str, value: &str) -> GarrisonResult<()> {
         let mut store = self.store.lock();
         match store.get_mut(key) {
             Some((existing, _)) => {
                 *existing = value.to_string();
                 Ok(())
             },
-            None => Err(BulwarkError::Dao(format!("dao-key-not-found::{}", key))),
+            None => Err(GarrisonError::Dao(format!("dao-key-not-found::{}", key))),
         }
     }
 
-    async fn expire(&self, key: &str, seconds: u64) -> BulwarkResult<()> {
+    async fn expire(&self, key: &str, seconds: u64) -> GarrisonResult<()> {
         let mut store = self.store.lock();
         match store.get_mut(key) {
             Some((_, expire_at)) => {
@@ -88,16 +88,16 @@ impl BulwarkDao for MockDao {
                 };
                 Ok(())
             },
-            None => Err(BulwarkError::Dao(format!("dao-key-not-found::{}", key))),
+            None => Err(GarrisonError::Dao(format!("dao-key-not-found::{}", key))),
         }
     }
 
-    async fn delete(&self, key: &str) -> BulwarkResult<()> {
+    async fn delete(&self, key: &str) -> GarrisonResult<()> {
         self.store.lock().remove(key);
         Ok(())
     }
 
-    async fn get_timeout(&self, key: &str) -> BulwarkResult<Option<Duration>> {
+    async fn get_timeout(&self, key: &str) -> GarrisonResult<Option<Duration>> {
         let store = self.store.lock();
         match store.get(key) {
             Some((_, Some(deadline))) => {
@@ -114,49 +114,49 @@ impl BulwarkDao for MockDao {
 }
 
 // ------------------------------------------------------------------------
-// MockFirewall：模拟 BulwarkPermissionStrategy，控制权限/角色校验返回值
+// MockFirewall：模拟 GarrisonPermissionStrategy，控制权限/角色校验返回值
 // ------------------------------------------------------------------------
 
-/// 测试用 BulwarkPermissionStrategy mock，可控制 check_permission/check_role 返回值。
+/// 测试用 GarrisonPermissionStrategy mock，可控制 check_permission/check_role 返回值。
 pub struct MockFirewall {
     pub has_permission: bool,
     pub has_role: bool,
 }
 
 #[async_trait]
-impl BulwarkPermissionStrategy for MockFirewall {
-    async fn get_permission_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
+impl GarrisonPermissionStrategy for MockFirewall {
+    async fn get_permission_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
         Ok(vec![])
     }
-    async fn get_role_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
+    async fn get_role_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
         Ok(vec![])
     }
-    async fn check_permission(&self, _login_id: &str, _permission: &str) -> BulwarkResult<bool> {
+    async fn check_permission(&self, _login_id: &str, _permission: &str) -> GarrisonResult<bool> {
         Ok(self.has_permission)
     }
-    async fn check_role(&self, _login_id: &str, _role: &str) -> BulwarkResult<bool> {
+    async fn check_role(&self, _login_id: &str, _role: &str) -> GarrisonResult<bool> {
         Ok(self.has_role)
     }
-    async fn check_role_any(&self, _login_id: &str, _roles: &[&str]) -> BulwarkResult<bool> {
+    async fn check_role_any(&self, _login_id: &str, _roles: &[&str]) -> GarrisonResult<bool> {
         Ok(self.has_role)
     }
-    async fn check_role_all(&self, _login_id: &str, _roles: &[&str]) -> BulwarkResult<bool> {
+    async fn check_role_all(&self, _login_id: &str, _roles: &[&str]) -> GarrisonResult<bool> {
         Ok(self.has_role)
     }
 }
 
 // ------------------------------------------------------------------------
-// MockInterface：用于 BulwarkUtil 全局管理器测试
+// MockInterface：用于 GarrisonUtil 全局管理器测试
 // ------------------------------------------------------------------------
 
 pub struct MockInterface;
 
 #[async_trait]
-impl BulwarkInterface for MockInterface {
-    async fn get_permission_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
+impl GarrisonInterface for MockInterface {
+    async fn get_permission_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
         Ok(vec![])
     }
-    async fn get_role_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
+    async fn get_role_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
         Ok(vec![])
     }
 }
@@ -168,11 +168,11 @@ pub struct MockInterfaceWithPerms {
 }
 
 #[async_trait]
-impl BulwarkInterface for MockInterfaceWithPerms {
-    async fn get_permission_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
+impl GarrisonInterface for MockInterfaceWithPerms {
+    async fn get_permission_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
         Ok(self.permissions.clone())
     }
-    async fn get_role_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
+    async fn get_role_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
         Ok(self.roles.clone())
     }
 }
@@ -202,25 +202,25 @@ impl MockUserRepository {
 #[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
 #[async_trait]
 impl UserRepository for MockUserRepository {
-    async fn find_by_id(&self, _tenant_id: i64, id: &str) -> BulwarkResult<Option<UserRow>> {
+    async fn find_by_id(&self, _tenant_id: i64, id: &str) -> GarrisonResult<Option<UserRow>> {
         Ok(self.users.lock().values().find(|u| u.id == id).cloned())
     }
     async fn find_by_username(
         &self,
         _tenant_id: i64,
         username: &str,
-    ) -> BulwarkResult<Option<UserRow>> {
+    ) -> GarrisonResult<Option<UserRow>> {
         Ok(self.users.lock().get(username).cloned())
     }
-    async fn create(&self, _tenant_id: i64, _user: NewUser) -> BulwarkResult<String> {
-        Err(BulwarkError::Internal(
+    async fn create(&self, _tenant_id: i64, _user: NewUser) -> GarrisonResult<String> {
+        Err(GarrisonError::Internal(
             "MockUserRepository::create not implemented".to_string(),
         ))
     }
-    async fn update(&self, _tenant_id: i64, _id: &str, _user: UpdateUser) -> BulwarkResult<()> {
+    async fn update(&self, _tenant_id: i64, _id: &str, _user: UpdateUser) -> GarrisonResult<()> {
         Ok(())
     }
-    async fn delete(&self, _tenant_id: i64, _id: &str) -> BulwarkResult<()> {
+    async fn delete(&self, _tenant_id: i64, _id: &str) -> GarrisonResult<()> {
         Ok(())
     }
     async fn list(
@@ -228,27 +228,27 @@ impl UserRepository for MockUserRepository {
         _tenant_id: i64,
         _offset: i64,
         _limit: i64,
-    ) -> BulwarkResult<Vec<UserRow>> {
+    ) -> GarrisonResult<Vec<UserRow>> {
         Ok(vec![])
     }
 }
 
 // ------------------------------------------------------------------------
-// MockInterfaceWithLoginType：支持 login_type 隔离的 BulwarkInterface mock
+// MockInterfaceWithLoginType：支持 login_type 隔离的 GarrisonInterface mock
 // ------------------------------------------------------------------------
 
-/// 测试用 BulwarkInterface mock，支持 login_type 隔离（override 新方法）。
+/// 测试用 GarrisonInterface mock，支持 login_type 隔离（override 新方法）。
 pub struct MockInterfaceWithLoginType {
     pub perms: HashMap<String, Vec<String>>,
     pub roles: HashMap<String, Vec<String>>,
 }
 
 #[async_trait]
-impl BulwarkInterface for MockInterfaceWithLoginType {
-    async fn get_permission_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
+impl GarrisonInterface for MockInterfaceWithLoginType {
+    async fn get_permission_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
         Ok(self.perms.get("default").cloned().unwrap_or_default())
     }
-    async fn get_role_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
+    async fn get_role_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
         Ok(self.roles.get("default").cloned().unwrap_or_default())
     }
     // override 新方法以支持多账号隔离
@@ -256,14 +256,14 @@ impl BulwarkInterface for MockInterfaceWithLoginType {
         &self,
         _login_id: &str,
         login_type: &str,
-    ) -> BulwarkResult<Vec<String>> {
+    ) -> GarrisonResult<Vec<String>> {
         Ok(self.perms.get(login_type).cloned().unwrap_or_default())
     }
     async fn get_role_list_with_type(
         &self,
         _login_id: &str,
         login_type: &str,
-    ) -> BulwarkResult<Vec<String>> {
+    ) -> GarrisonResult<Vec<String>> {
         Ok(self.roles.get(login_type).cloned().unwrap_or_default())
     }
 }
@@ -313,7 +313,7 @@ mod tests {
         let dao = MockDao::new();
         let result = dao.update("missing", "v").await;
         assert!(
-            matches!(result, Err(BulwarkError::Dao(ref msg)) if msg.contains("missing")),
+            matches!(result, Err(GarrisonError::Dao(ref msg)) if msg.contains("missing")),
             "update 不存在的 key 应返回 Dao 错误包含 key 名，实际: {:?}",
             result
         );
@@ -325,7 +325,7 @@ mod tests {
         let dao = MockDao::new();
         let result = dao.expire("missing", 60).await;
         assert!(
-            matches!(result, Err(BulwarkError::Dao(_))),
+            matches!(result, Err(GarrisonError::Dao(_))),
             "expire 不存在的 key 应返回 Dao 错误，实际: {:?}",
             result
         );
@@ -669,7 +669,7 @@ mod tests {
             };
             let result = repo.create(0, new_user).await;
             assert!(
-                matches!(result, Err(BulwarkError::Internal(ref msg)) if msg.contains("create not implemented")),
+                matches!(result, Err(GarrisonError::Internal(ref msg)) if msg.contains("create not implemented")),
                 "create 应返回 Internal 错误包含 'create not implemented'，实际: {:?}",
                 result
             );

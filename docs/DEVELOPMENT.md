@@ -1,8 +1,8 @@
 # 开发规范
 
-本文件描述 Bulwark 项目的开发环境搭建、项目结构、TDD 工作流、代码规范与调试技巧。所有贡献者在提交代码前必须阅读本文档。
+本文件描述 Garrison 项目的开发环境搭建、项目结构、TDD 工作流、代码规范与调试技巧。所有贡献者在提交代码前必须阅读本文档。
 
-- 仓库：<https://github.com/Kirky-X/bulwark>
+- 仓库：<https://github.com/Kirky-X/garrison>
 - License：Apache-2.0
 - 作者：Kirky.X
 - MSRV：Rust 1.85+
@@ -30,7 +30,7 @@
 
 ### 1.1 Rust 工具链
 
-Bulwark 最低支持 Rust 1.85（部分依赖如 `inventory 0.3` 要求 `edition2024`，需 Rust 1.85+）。推荐使用 rustup 安装 stable 工具链：
+Garrison 最低支持 Rust 1.85（部分依赖如 `inventory 0.3` 要求 `edition2024`，需 Rust 1.85+）。推荐使用 rustup 安装 stable 工具链：
 
 ```bash
 # 安装 rustup（若尚未安装）
@@ -62,12 +62,12 @@ pkg-config --exists openssl && echo "openssl OK"
 
 ### 1.3 克隆仓库与本地依赖
 
-Bulwark 使用 crates.io 发布的 `oxcache 0.3`（支持 per-entry TTL + `ttl_sync()` 查询）与 `dbnexus 0.4`（SQLite / PostgreSQL / MySQL 多后端），无需额外克隆本地依赖：
+Garrison 使用 crates.io 发布的 `oxcache 0.3`（支持 per-entry TTL + `ttl_sync()` 查询）与 `dbnexus 0.4`（SQLite / PostgreSQL / MySQL 多后端），无需额外克隆本地依赖：
 
 ```bash
-# 1. 克隆 Bulwark
-git clone https://github.com/Kirky-X/bulwark.git
-cd bulwark
+# 1. 克隆 Garrison
+git clone https://github.com/Kirky-X/garrison.git
+cd garrison
 
 # 2. 验证编译（启用全部 feature）
 cargo build --features full
@@ -94,7 +94,7 @@ cargo fmt --all -- --check
 ## 2. 项目结构说明
 
 ```text
-bulwark/
+garrison/
 ├── src/                      # 源码
 │   ├── core/                 # 核心层：token / permission / auth
 │   │   ├── token/mod.rs
@@ -102,17 +102,17 @@ bulwark/
 │   │   └── auth/mod.rs
 │   ├── stp/                  # StpUtil 风格门面（v0.5.3 拆分为多文件）
 │   │   ├── mod.rs            # re-exports
-│   │   ├── core.rs           # BulwarkCore trait
+│   │   ├── core.rs           # GarrisonCore trait
 │   │   ├── session.rs        # SessionLogic trait
 │   │   ├── permission.rs     # PermissionLogic trait
 │   │   ├── token.rs          # TokenLogic trait
 │   │   ├── mfa.rs            # MfaLogic trait
 │   │   ├── password.rs       # PasswordLogic trait
-│   │   ├── interface.rs      # BulwarkInterface trait
-│   │   ├── util.rs           # BulwarkUtil 静态门面
+│   │   ├── interface.rs      # GarrisonInterface trait
+│   │   ├── util.rs           # GarrisonUtil 静态门面
 │   │   ├── parameter.rs      # ParameterQuery
 │   │   └── tests.rs          # 集成测试
-│   ├── session/mod.rs        # 会话管理（BulwarkSession + SessionExpiryListener）
+│   ├── session/mod.rs        # 会话管理（GarrisonSession + SessionExpiryListener）
 │   ├── account/              # 账号安全引擎（v0.6.0 新增）
 │   │   ├── credential/       # Credential SPI + PasswordCredential + TotpCredential
 │   │   ├── policy/           # PasswordPolicyEngine + 12+ 规则
@@ -138,9 +138,9 @@ bulwark/
 │   │   ├── httpbasic/mod.rs
 │   │   └── httpdigest/mod.rs
 │   ├── dao/                  # 数据访问层
-│   │   ├── mod.rs            # BulwarkDao trait + RedisDeploymentMode + RedisConfig
+│   │   ├── mod.rs            # GarrisonDao trait + RedisDeploymentMode + RedisConfig
 │   │   ├── oxcache_impl.rs   # oxcache 实现
-│   │   ├── dbnexus_impl.rs   # dbnexus 初始化 + BulwarkMigration
+│   │   ├── dbnexus_impl.rs   # dbnexus 初始化 + GarrisonMigration
 │   │   └── repository/       # Repository 层（9 trait + Sqlite/Mysql/Postgres Repository）
 │   ├── context/              # 请求上下文抽象
 │   │   ├── mod.rs
@@ -148,22 +148,22 @@ bulwark/
 │   │   ├── actix_adapter.rs  # actix-web 适配器（v0.4.2 新增）
 │   │   ├── warp_adapter.rs   # warp 适配器（v0.4.2 新增）
 │   │   └── tenant.rs         # 租户解析器（v0.5.0 新增）
-│   ├── config/mod.rs         # 配置系统（BulwarkConfig + ConfigLoader + remember_me）
+│   ├── config/mod.rs         # 配置系统（GarrisonConfig + ConfigLoader + remember_me）
 │   ├── annotation/mod.rs     # 注解系统（含 CheckAccessToken/CheckClientToken）
-│   ├── router/mod.rs         # 路由权限（BulwarkRouter + group()）
+│   ├── router/mod.rs         # 路由权限（GarrisonRouter + group()）
 │   ├── strategy/             # 策略模式 + 注册表
 │   │   ├── mod.rs
 │   │   └── registry.rs       # Strategy 注册表（6 个策略 trait）
 │   ├── exception/mod.rs      # 异常系统
 │   ├── listener/mod.rs       # 事件监听（feature 门控，15 个事件变体）
 │   ├── plugin/mod.rs         # 插件系统
-│   ├── manager/mod.rs        # BulwarkManager 全局管理器
+│   ├── manager/mod.rs        # GarrisonManager 全局管理器
 │   ├── json/mod.rs           # JSON 模板
 │   ├── i18n.rs               # 国际化（fluent-rs）
 │   ├── error.rs              # 错误类型定义
 │   ├── prelude.rs            # 预导出
 │   ├── bin/                  # 二进制入口
-│   │   └── auth_server.rs    # BulwarkAuthServer 独立运行入口（v0.7.0 新增，需 auth-server feature）
+│   │   └── auth_server.rs    # GarrisonAuthServer 独立运行入口（v0.7.0 新增，需 auth-server feature）
 │   └── lib.rs                # crate 入口
 ├── tests/                    # 集成测试
 ├── examples/                 # 示例代码（独立 workspace member）
@@ -172,7 +172,7 @@ bulwark/
 │   ├── mysql/core/           # MySQL 兼容迁移（v0.5.3 新增）
 │   └── postgres/core/        # PostgreSQL 迁移（v0.7.0 新增）
 ├── benches/                  # 基准测试（criterion）
-├── bulwark-macros/           # 过程宏 crate（#[check_login] 等）
+├── garrison-macros/           # 过程宏 crate（#[check_login] 等）
 ├── locales/                  # i18n 资源文件（zh.ftl / en.ftl）
 ├── docs/                     # 文档
 ├── Cargo.toml
@@ -186,7 +186,7 @@ bulwark/
 | 层 | 目录 | 职责 |
 |----|------|------|
 | 核心层 | `src/core/` | token 生成校验、权限校验、登录鉴权 |
-| 门面层 | `src/stp/` | `BulwarkLogic` trait + `BulwarkUtil` 静态门面 |
+| 门面层 | `src/stp/` | `GarrisonLogic` trait + `GarrisonUtil` 静态门面 |
 | 协议层 | `src/protocol/` | OAuth2 / SSO / JWT / 签名 / API Key / 临时凭证 |
 | 安全层 | `src/secure/` | TOTP / 签名 / HTTP Basic / HTTP Digest |
 | 辅助层 | `src/dao/` `src/context/` `src/config/` 等 | 数据访问、上下文、配置、注解、路由、异常 |
@@ -195,7 +195,7 @@ bulwark/
 
 ## 3. TDD 工作流
 
-Bulwark 强制采用测试驱动开发（TDD）。每个任务必须严格按以下 5 步执行，不得跳步：
+Garrison 强制采用测试驱动开发（TDD）。每个任务必须严格按以下 5 步执行，不得跳步：
 
 ### 3.1 五步流程
 
@@ -215,7 +215,7 @@ Bulwark 强制采用测试驱动开发（TDD）。每个任务必须严格按以
 ```rust
 // 步骤 1：定义接口
 /// 校验当前会话是否已登录。
-pub async fn check_login() -> BulwarkResult<bool>;
+pub async fn check_login() -> GarrisonResult<bool>;
 
 // 步骤 2：编写测试
 #[cfg(test)]
@@ -239,7 +239,7 @@ mod tests {
 }
 
 // 步骤 3：实现
-pub async fn check_login() -> BulwarkResult<bool> {
+pub async fn check_login() -> GarrisonResult<bool> {
     // 最小实现使测试通过
 }
 ```
@@ -250,7 +250,7 @@ pub async fn check_login() -> BulwarkResult<bool> {
 
 ### 4.1 测试串行化（#[serial_test::serial]）
 
-修改全局单例（如 `BulwarkManager`）或环境变量（`std::env::set_var`）的测试必须标注 `#[serial_test::serial]`，避免多线程并发污染：
+修改全局单例（如 `GarrisonManager`）或环境变量（`std::env::set_var`）的测试必须标注 `#[serial_test::serial]`，避免多线程并发污染：
 
 ```rust
 #[cfg(test)]
@@ -261,21 +261,21 @@ mod tests {
     #[serial]
     async fn test_manager_init() {
         // 修改全局单例，必须串行
-        BulwarkManager::init(dao, config, interface).unwrap();
-        assert!(BulwarkManager::is_initialized());
+        GarrisonManager::init(dao, config, interface).unwrap();
+        assert!(GarrisonManager::is_initialized());
     }
 
     #[test]
     #[serial]
     fn test_env_var_override() {
-        std::env::set_var("BULWARK_TIMEOUT", "3600");
+        std::env::set_var("GARRISON_TIMEOUT", "3600");
         // ...
-        std::env::remove_var("BULWARK_TIMEOUT");
+        std::env::remove_var("GARRISON_TIMEOUT");
     }
 }
 ```
 
-> **经验法则**：只要测试中调用 `BulwarkManager::init()`、`std::env::set_var()`、或修改 `once_cell` 全局变量，就必须加 `#[serial]`。
+> **经验法则**：只要测试中调用 `GarrisonManager::init()`、`std::env::set_var()`、或修改 `once_cell` 全局变量，就必须加 `#[serial]`。
 
 ### 4.2 测试命名规范
 
@@ -294,7 +294,7 @@ fn env_overrides_toml() { ... }
 
 ### 4.3 覆盖率要求
 
-Bulwark 要求测试覆盖率 **≥ 95%**（当前 95%+）：
+Garrison 要求测试覆盖率 **≥ 95%**（当前 95%+）：
 
 | 模块类型 | 覆盖率要求 |
 |---------|----------|
@@ -315,7 +315,7 @@ Bulwark 要求测试覆盖率 **≥ 95%**（当前 95%+）：
 | 类型 | 风格 | 示例 |
 |------|------|------|
 | 函数 / 变量 | `snake_case` | `check_login`、`user_id` |
-| 类型 / Struct / Enum / Trait | `CamelCase` | `BulwarkManager`、`BulwarkLogic` |
+| 类型 / Struct / Enum / Trait | `CamelCase` | `GarrisonManager`、`GarrisonLogic` |
 | 常量 / 静态变量 | `SCREAMING_SNAKE_CASE` | `DEFAULT_TIMEOUT`、`TOKEN_HEADER` |
 
 ### 5.2 文档注释
@@ -330,15 +330,15 @@ Bulwark 要求测试覆盖率 **≥ 95%**（当前 95%+）：
 /// # 返回
 /// - `Ok(true)`：已登录且会话未过期
 /// - `Ok(false)`：未登录或会话已失效（当 `throw_on_not_login = false` 时）
-/// - `Err(BulwarkError::NotLogin)`：未登录且 `throw_on_not_login = true` 时抛出
-pub async fn check_login() -> BulwarkResult<bool> {
+/// - `Err(GarrisonError::NotLogin)`：未登录且 `throw_on_not_login = true` 时抛出
+pub async fn check_login() -> GarrisonResult<bool> {
     // ...
 }
 ```
 
 ### 5.3 错误处理
 
-- 所有可能失败的操作返回 `BulwarkResult<T>`（即 `Result<T, BulwarkError>`）
+- 所有可能失败的操作返回 `GarrisonResult<T>`（即 `Result<T, GarrisonError>`）
 - **禁止**在非测试代码中使用 `unwrap()` / `expect()`
 - 使用 `?` 运算符传播错误
 - 自定义错误类型实现 `thiserror::Error`
@@ -349,8 +349,8 @@ trait 方法使用 `async_trait::async_trait` 宏声明：
 
 ```rust
 #[async_trait]
-pub trait BulwarkLogic: Send + Sync {
-    async fn get_permission_list(&self, user_id: &str) -> BulwarkResult<Vec<String>>;
+pub trait GarrisonLogic: Send + Sync {
+    async fn get_permission_list(&self, user_id: &str) -> GarrisonResult<Vec<String>>;
 }
 ```
 
@@ -438,14 +438,14 @@ cargo clippy --features full --lib --tests
 通过 `RUST_LOG` 环境变量控制日志级别：
 
 ```bash
-# 仅 Bulwark 模块 debug 级别
-RUST_LOG=bulwark=debug ./your-server
+# 仅 Garrison 模块 debug 级别
+RUST_LOG=garrison=debug ./your-server
 
-# 全局 debug + Bulwark trace
-RUST_LOG=debug,bulwark=trace ./your-server
+# 全局 debug + Garrison trace
+RUST_LOG=debug,garrison=trace ./your-server
 
 # 仅特定模块
-RUST_LOG=bulwark::core::auth=trace,bulwark::session=debug ./your-server
+RUST_LOG=garrison::core::auth=trace,garrison::session=debug ./your-server
 ```
 
 ### 7.4 打印完整堆栈
@@ -504,7 +504,7 @@ cargo doc --no-deps --features full --open
 
 ## E2E / 性能 / 渗透测试
 
-Bulwark 在 `tests/e2e/` 下提供完整的端到端（E2E）测试矩阵，覆盖 API 接口测试、性能基线测试、渗透测试三大维度。所有 E2E 测试基于 `RecordingClient` 抓包 + `RemoteContext` 远程模式 + in-process 模式双轨架构，可重复、可观测、可分析。
+Garrison 在 `tests/e2e/` 下提供完整的端到端（E2E）测试矩阵，覆盖 API 接口测试、性能基线测试、渗透测试三大维度。所有 E2E 测试基于 `RecordingClient` 抓包 + `RemoteContext` 远程模式 + in-process 模式双轨架构，可重复、可观测、可分析。
 
 ### 整体架构
 
@@ -532,9 +532,9 @@ bash scripts/e2e_run.sh
 
 # 或自定义 env 覆盖默认值
 EXAMPLE_INTERNAL_API_KEY=my-key \
-BULWARK_EXTERNAL_PORT=9090 \
-BULWARK_INTERNAL_PORT=9091 \
-BULWARK_RATE_LIMIT=100000 \
+GARRISON_EXTERNAL_PORT=9090 \
+GARRISON_INTERNAL_PORT=9091 \
+GARRISON_RATE_LIMIT=100000 \
 bash scripts/e2e_run.sh
 ```
 
@@ -545,11 +545,11 @@ bash scripts/e2e_run.sh
 | 变量名 | 默认值 | 说明 |
 |--------|--------|------|
 | `EXAMPLE_INTERNAL_API_KEY` | `e2e-test-key-12345` | 内网 API Key（必须设置，否则 `serve()` fail-closed 退出） |
-| `BULWARK_EXTERNAL_PORT` | `8080` | 外网端口（登录 / 刷新 / 登出端点） |
-| `BULWARK_INTERNAL_PORT` | `8081` | 内网端口（check-login / check-permission / check-role 端点，需 `x-api-key`） |
-| `BULWARK_RATE_LIMIT` | `100000` | 限速阈值（性能测试需 RPS≥1000/5000，必须远高于默认 100） |
+| `GARRISON_EXTERNAL_PORT` | `8080` | 外网端口（登录 / 刷新 / 登出端点） |
+| `GARRISON_INTERNAL_PORT` | `8081` | 内网端口（check-login / check-permission / check-role 端点，需 `x-api-key`） |
+| `GARRISON_RATE_LIMIT` | `100000` | 限速阈值（性能测试需 RPS≥1000/5000，必须远高于默认 100） |
 
-> 远程模式（CI 已运行 server 时）使用 `BULWARK_E2E_EXTERNAL_URL` / `BULWARK_E2E_INTERNAL_URL` / `BULWARK_E2E_API_KEY` 三个 env 直连，跳过 `spawn_child` 步骤。
+> 远程模式（CI 已运行 server 时）使用 `GARRISON_E2E_EXTERNAL_URL` / `GARRISON_E2E_INTERNAL_URL` / `GARRISON_E2E_API_KEY` 三个 env 直连，跳过 `spawn_child` 步骤。
 
 ### 输出文件（`logs/`）
 

@@ -4,13 +4,13 @@
 //! 单点登录 (SSO) 协议模块，提供 ticket 签发/校验/销毁能力。
 //!
 //! 对应 SSO 单点登录支持，
-//! 通过 `BulwarkDao` 存储 ticket（TTL 60 秒，一次性使用）。
+//! 通过 `GarrisonDao` 存储 ticket（TTL 60 秒，一次性使用）。
 //!
 //! 仅在启用 `protocol-sso` 特性时编译。
 //!
 //! ## Key 命名空间
 //!
-//! 所有 SSO 票据存储在 `bulwark:sso:ticket:<ticket>` 命名空间下，
+//! 所有 SSO 票据存储在 `garrison:sso:ticket:<ticket>` 命名空间下，
 //! 与 session/sign/apikey/temp 模块隔离。
 
 // SSO Server 独立抽象模块。
@@ -30,7 +30,7 @@ pub mod oidc;
 
 /// Re-export OIDC 核心类型（Rule 25：mod.rs 暴露接口）。
 ///
-/// 通过 `bulwark::protocol::sso::OidcProvider` / `DefaultOidcProvider`
+/// 通过 `garrison::protocol::sso::OidcProvider` / `DefaultOidcProvider`
 /// / `OidcDiscoveryConfig` / `OidcUserInfo` 直接访问，无需 `oidc::` 前缀。
 pub use oidc::{DefaultOidcProvider, OidcDiscoveryConfig, OidcProvider, OidcUserInfo};
 
@@ -39,7 +39,7 @@ pub use oidc::{DefaultOidcProvider, OidcDiscoveryConfig, OidcProvider, OidcUserI
 #[cfg(all(feature = "cache-redis", feature = "protocol-sso-server"))]
 pub mod channel;
 
-use crate::dao::BulwarkDao;
+use crate::dao::GarrisonDao;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -63,7 +63,7 @@ pub(crate) struct SsoTicketData {
 
 /// SSO 客户端，提供 ticket 签发/校验/销毁。
 ///
-/// 持有 `Arc<dyn BulwarkDao>` 用于票据存储，TTL 默认 60 秒。
+/// 持有 `Arc<dyn GarrisonDao>` 用于票据存储，TTL 默认 60 秒。
 /// 实现 `Send + Sync`，可在多线程环境共享。
 ///
 /// # Ticket 签名（依据安全审计 M5）
@@ -73,7 +73,7 @@ pub(crate) struct SsoTicketData {
 /// secret 由 `new(dao, secret)` 必传，禁止空 secret。
 pub struct SsoClient {
     /// DAO 抽象层，用于票据存储。
-    dao: Arc<dyn BulwarkDao>,
+    dao: Arc<dyn GarrisonDao>,
     /// 票据 TTL（秒）。
     ticket_ttl_seconds: u64,
     /// HMAC 签名密钥（M5 修复：所有 ticket 必须签名）。

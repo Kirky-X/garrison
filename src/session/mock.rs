@@ -8,7 +8,7 @@
 //! 供 `session::tests` 过期监听器测试复用。
 
 use super::SessionExpiryListener;
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::error::{GarrisonError, GarrisonResult};
 use async_trait::async_trait;
 use std::sync::{Arc, Mutex};
 
@@ -41,13 +41,15 @@ impl MockExpiryListener {
 
 #[async_trait]
 impl SessionExpiryListener for MockExpiryListener {
-    async fn on_session_expired(&self, login_id: &str, token: &str) -> BulwarkResult<()> {
+    async fn on_session_expired(&self, login_id: &str, token: &str) -> GarrisonResult<()> {
         self.calls
             .lock()
             .unwrap()
             .push((login_id.to_string(), token.to_string()));
         if self.fail {
-            return Err(BulwarkError::Session("session-mock-callback::".to_string()));
+            return Err(GarrisonError::Session(
+                "session-mock-callback::".to_string(),
+            ));
         }
         Ok(())
     }

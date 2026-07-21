@@ -14,7 +14,7 @@
 //! `EntityLoader::load_entities` 在每次 `evaluate` 时调用。缓存不主动失效，
 //! 由调用方保证 `EntityLoader` 返回稳定实体集合（如 `StaticEntityLoader`）。
 
-use crate::error::BulwarkResult;
+use crate::error::GarrisonResult;
 use async_trait::async_trait;
 use cedar_policy::Entities;
 
@@ -32,7 +32,7 @@ pub struct EmptyEntityLoader;
 
 #[async_trait]
 impl EntityLoader for EmptyEntityLoader {
-    async fn load_entities(&self) -> BulwarkResult<Entities> {
+    async fn load_entities(&self) -> GarrisonResult<Entities> {
         Ok(Entities::empty())
     }
 }
@@ -67,7 +67,7 @@ impl StaticEntityLoader {
 
 #[async_trait]
 impl EntityLoader for StaticEntityLoader {
-    async fn load_entities(&self) -> BulwarkResult<Entities> {
+    async fn load_entities(&self) -> GarrisonResult<Entities> {
         Ok(self.entities.clone())
     }
 }

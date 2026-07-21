@@ -61,13 +61,13 @@ fn builder_chain_works() {
 }
 
 // ========================================================================
-// BulwarkException 测试
+// GarrisonException 测试
 // ========================================================================
 
-/// 验证 `BulwarkException::new` 创建实例并设置可选字段为默认值。
+/// 验证 `GarrisonException::new` 创建实例并设置可选字段为默认值。
 #[test]
-fn bulwark_exception_new_creates_with_defaults() {
-    let ex = BulwarkException::new(-1, "请先登录");
+fn garrison_exception_new_creates_with_defaults() {
+    let ex = GarrisonException::new(-1, "请先登录");
     assert_eq!(ex.code, -1);
     assert_eq!(ex.message, "请先登录");
     assert_eq!(ex.login_type, 0);
@@ -76,18 +76,18 @@ fn bulwark_exception_new_creates_with_defaults() {
     assert!(ex.extras.is_empty());
 }
 
-/// 验证 `BulwarkException::new` 接受 String 类型消息。
+/// 验证 `GarrisonException::new` 接受 String 类型消息。
 #[test]
-fn bulwark_exception_new_accepts_string() {
+fn garrison_exception_new_accepts_string() {
     let msg = String::from("会话已过期");
-    let ex = BulwarkException::new(-1, msg);
+    let ex = GarrisonException::new(-1, msg);
     assert_eq!(ex.message, "会话已过期");
 }
 
-/// 验证 `BulwarkException` 派生 `Clone`。
+/// 验证 `GarrisonException` 派生 `Clone`。
 #[test]
-fn bulwark_exception_clone_preserves_fields() {
-    let mut ex = BulwarkException::new(-1, "请先登录");
+fn garrison_exception_clone_preserves_fields() {
+    let mut ex = GarrisonException::new(-1, "请先登录");
     ex.token_value = Some("T1".to_string());
     ex.login_id = Some(1001);
     let cloned = ex.clone();
@@ -97,44 +97,44 @@ fn bulwark_exception_clone_preserves_fields() {
     assert_eq!(cloned.login_id, Some(1001));
 }
 
-/// 验证 `BulwarkException` 派生 `Debug`。
+/// 验证 `GarrisonException` 派生 `Debug`。
 #[test]
-fn bulwark_exception_debug_format_works() {
-    let ex = BulwarkException::new(-1, "请先登录");
+fn garrison_exception_debug_format_works() {
+    let ex = GarrisonException::new(-1, "请先登录");
     let debug = format!("{:?}", ex);
-    assert!(debug.contains("BulwarkException"));
+    assert!(debug.contains("GarrisonException"));
     assert!(debug.contains("-1"));
     assert!(debug.contains("请先登录"));
 }
 
-/// 验证 `BulwarkException` 的 `Display` 输出格式。
+/// 验证 `GarrisonException` 的 `Display` 输出格式。
 #[test]
-fn bulwark_exception_display_format() {
-    let ex = BulwarkException::new(-1, "请先登录");
+fn garrison_exception_display_format() {
+    let ex = GarrisonException::new(-1, "请先登录");
     assert_eq!(format!("{}", ex), "业务异常[-1]: 请先登录");
 }
 
-/// 验证 `BulwarkException` 通过 `From` 转换为 `BulwarkError::Exception`。
+/// 验证 `GarrisonException` 通过 `From` 转换为 `GarrisonError::Exception`。
 #[test]
-fn bulwark_exception_into_bulwark_error() {
-    let ex = BulwarkException::new(-1, "请先登录");
-    let err: BulwarkError = ex.into();
-    assert!(matches!(err, BulwarkError::Exception(_)));
-    if let BulwarkError::Exception(e) = err {
+fn garrison_exception_into_garrison_error() {
+    let ex = GarrisonException::new(-1, "请先登录");
+    let err: GarrisonError = ex.into();
+    assert!(matches!(err, GarrisonError::Exception(_)));
+    if let GarrisonError::Exception(e) = err {
         assert_eq!(e.code, -1);
         assert_eq!(e.message, "请先登录");
     }
 }
 
-/// 验证既有 `BulwarkError` 变体不受 `Exception` 新增影响。
+/// 验证既有 `GarrisonError` 变体不受 `Exception` 新增影响。
 #[test]
-fn existing_bulwark_error_variants_unaffected() {
-    let err = BulwarkError::NotLogin("请先登录".to_string());
+fn existing_garrison_error_variants_unaffected() {
+    let err = GarrisonError::NotLogin("请先登录".to_string());
     assert_eq!(err.to_string(), "未登录: 请先登录");
     // 确保新增 Exception 变体不破坏既有 match
-    let errors: [BulwarkError; 2] = [
-        BulwarkError::NotLogin("a".into()),
-        BulwarkError::Exception(BulwarkException::new(-1, "b")),
+    let errors: [GarrisonError; 2] = [
+        GarrisonError::NotLogin("a".into()),
+        GarrisonError::Exception(GarrisonException::new(-1, "b")),
     ];
     assert_eq!(errors.len(), 2);
 }
@@ -146,7 +146,7 @@ fn existing_bulwark_error_variants_unaffected() {
 /// 验证 Builder 链式构造带上下文的异常。
 #[test]
 fn builder_chain_with_all_setters() {
-    let ex = BulwarkException::new(-1, "请先登录")
+    let ex = GarrisonException::new(-1, "请先登录")
         .with_token("T1")
         .with_login_id(1001)
         .with_login_type(1)
@@ -166,7 +166,7 @@ fn builder_accepts_string_args() {
     let token = String::from("T2");
     let key = String::from("ip");
     let val = String::from("127.0.0.1");
-    let ex = BulwarkException::new(-1, "msg")
+    let ex = GarrisonException::new(-1, "msg")
         .with_token(token)
         .with_extra(key, val)
         .build();
@@ -175,81 +175,81 @@ fn builder_accepts_string_args() {
 }
 
 // ========================================================================
-// From<BulwarkError> for BulwarkException 测试
+// From<GarrisonError> for GarrisonException 测试
 // ========================================================================
 
-/// 验证 `From<BulwarkError>` 对 Exception 变体直接返回原始 BulwarkException。
+/// 验证 `From<GarrisonError>` 对 Exception 变体直接返回原始 GarrisonException。
 #[test]
-fn from_bulwark_error_exception_variant() {
-    let original = BulwarkException::new(-1, "请先登录")
+fn from_garrison_error_exception_variant() {
+    let original = GarrisonException::new(-1, "请先登录")
         .with_token("T1")
         .with_login_id(1001)
         .build();
-    let err = BulwarkError::Exception(original.clone());
-    let converted: BulwarkException = err.into();
+    let err = GarrisonError::Exception(original.clone());
+    let converted: GarrisonException = err.into();
     assert_eq!(converted.code, -1);
     assert_eq!(converted.message, "请先登录");
     assert_eq!(converted.token_value, Some("T1".to_string()));
     assert_eq!(converted.login_id, Some(1001));
 }
 
-/// 验证 `From<BulwarkError>` 对非 Exception 变体根据语义映射 code。
+/// 验证 `From<GarrisonError>` 对非 Exception 变体根据语义映射 code。
 #[test]
-fn from_bulwark_error_other_variants_map_code() {
+fn from_garrison_error_other_variants_map_code() {
     // NotLogin → code=-1
-    let ex: BulwarkException = BulwarkError::NotLogin("请先登录".to_string()).into();
+    let ex: GarrisonException = GarrisonError::NotLogin("请先登录".to_string()).into();
     assert_eq!(ex.code, -1);
     assert_eq!(ex.message, "请先登录");
     // InvalidToken → code=-1
-    let ex: BulwarkException = BulwarkError::InvalidToken("bad token".to_string()).into();
+    let ex: GarrisonException = GarrisonError::InvalidToken("bad token".to_string()).into();
     assert_eq!(ex.code, -1);
     // ExpiredToken → code=-1
-    let ex: BulwarkException = BulwarkError::ExpiredToken("expired".to_string()).into();
+    let ex: GarrisonException = GarrisonError::ExpiredToken("expired".to_string()).into();
     assert_eq!(ex.code, -1);
     // NotPermission → code=-2
-    let ex: BulwarkException = BulwarkError::NotPermission("无权限".to_string()).into();
+    let ex: GarrisonException = GarrisonError::NotPermission("无权限".to_string()).into();
     assert_eq!(ex.code, -2);
     // NotRole → code=-2
-    let ex: BulwarkException = BulwarkError::NotRole("无角色".to_string()).into();
+    let ex: GarrisonException = GarrisonError::NotRole("无角色".to_string()).into();
     assert_eq!(ex.code, -2);
     // 其他 → code=500
-    let ex: BulwarkException = BulwarkError::Dao("db down".to_string()).into();
+    let ex: GarrisonException = GarrisonError::Dao("db down".to_string()).into();
     assert_eq!(ex.code, 500);
 }
 
 // ========================================================================
-// IntoResponse for BulwarkException 测试
+// IntoResponse for GarrisonException 测试
 // ========================================================================
 
-/// 验证 code=-1 的 BulwarkException 映射为 401 Unauthorized（独立 IntoResponse 实现）。
+/// 验证 code=-1 的 GarrisonException 映射为 401 Unauthorized（独立 IntoResponse 实现）。
 #[cfg(feature = "web-axum")]
 #[test]
-fn bulwark_exception_into_response_401() {
+fn garrison_exception_into_response_401() {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
-    let ex = BulwarkException::new(-1, "请先登录").build();
+    let ex = GarrisonException::new(-1, "请先登录").build();
     let response = ex.into_response();
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
 
-/// 验证 code=-2 的 BulwarkException 映射为 403 Forbidden（独立 IntoResponse 实现）。
+/// 验证 code=-2 的 GarrisonException 映射为 403 Forbidden（独立 IntoResponse 实现）。
 #[cfg(feature = "web-axum")]
 #[test]
-fn bulwark_exception_into_response_403() {
+fn garrison_exception_into_response_403() {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
-    let ex = BulwarkException::new(-2, "无权限").build();
+    let ex = GarrisonException::new(-2, "无权限").build();
     let response = ex.into_response();
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
 }
 
-/// 验证其他 code 的 BulwarkException 映射为 500 Internal Server Error（独立 IntoResponse 实现）。
+/// 验证其他 code 的 GarrisonException 映射为 500 Internal Server Error（独立 IntoResponse 实现）。
 #[cfg(feature = "web-axum")]
 #[test]
-fn bulwark_exception_into_response_500() {
+fn garrison_exception_into_response_500() {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
-    let ex = BulwarkException::new(500, "业务异常").build();
+    let ex = GarrisonException::new(500, "业务异常").build();
     let response = ex.into_response();
     assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
 }

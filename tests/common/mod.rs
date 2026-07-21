@@ -8,8 +8,8 @@
 
 #![allow(dead_code)]
 
-use bulwark::dao::{init_dbnexus, BulwarkMigration};
 use dbnexus::DbPool;
+use garrison::dao::{init_dbnexus, GarrisonMigration};
 use std::path::PathBuf;
 
 /// 返回项目 migrations/sqlite 目录的绝对路径。
@@ -25,7 +25,7 @@ pub async fn setup_db() -> DbPool {
     let pool = init_dbnexus("sqlite::memory:")
         .await
         .expect("init_dbnexus 应成功");
-    let migration = BulwarkMigration::with_base_dir(pool.clone(), project_migrations_dir());
+    let migration = GarrisonMigration::with_base_dir(pool.clone(), project_migrations_dir());
     let applied = migration.migrate_core().await.expect("migrate_core 应成功");
     assert!(applied >= 1, "migrate_core 应至少执行 1 个文件");
     pool

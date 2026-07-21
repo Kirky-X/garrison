@@ -752,7 +752,7 @@ fn hex_encode_known_bytes() {
 /// 场景：注入 DAO，首次请求 nc=00000001 应通过。
 #[tokio::test(flavor = "multi_thread")]
 async fn validate_nc_first_use_accepted_with_dao() {
-    let dao: Arc<dyn crate::dao::BulwarkDao> = Arc::new(crate::dao::MockDao::new());
+    let dao: Arc<dyn crate::dao::GarrisonDao> = Arc::new(crate::dao::MockDao::new());
     let auth = HttpDigestAuth::new("test@realm", "MD5")
         .unwrap()
         .with_dao(dao);
@@ -784,7 +784,7 @@ async fn validate_nc_first_use_accepted_with_dao() {
 /// 场景：注入 DAO，第一次 nc=00000001 通过，第二次相同 nc=00000001 应被拒绝。
 #[tokio::test(flavor = "multi_thread")]
 async fn validate_nc_replay_rejected_with_dao() {
-    let dao: Arc<dyn crate::dao::BulwarkDao> = Arc::new(crate::dao::MockDao::new());
+    let dao: Arc<dyn crate::dao::GarrisonDao> = Arc::new(crate::dao::MockDao::new());
     let auth = HttpDigestAuth::new("test@realm", "MD5")
         .unwrap()
         .with_dao(dao);
@@ -822,7 +822,7 @@ async fn validate_nc_replay_rejected_with_dao() {
 /// 场景：注入 DAO，第一次 nc=00000003 通过，第二次 nc=00000002 应被拒绝（nc 回退）。
 #[tokio::test(flavor = "multi_thread")]
 async fn validate_nc_decrease_rejected_with_dao() {
-    let dao: Arc<dyn crate::dao::BulwarkDao> = Arc::new(crate::dao::MockDao::new());
+    let dao: Arc<dyn crate::dao::GarrisonDao> = Arc::new(crate::dao::MockDao::new());
     let auth = HttpDigestAuth::new("test@realm", "MD5")
         .unwrap()
         .with_dao(dao);
@@ -870,7 +870,7 @@ async fn validate_nc_decrease_rejected_with_dao() {
 /// 场景：注入 DAO，nc=1→2→3 连续递增，每次都应通过。
 #[tokio::test(flavor = "multi_thread")]
 async fn validate_nc_increasing_accepted_with_dao() {
-    let dao: Arc<dyn crate::dao::BulwarkDao> = Arc::new(crate::dao::MockDao::new());
+    let dao: Arc<dyn crate::dao::GarrisonDao> = Arc::new(crate::dao::MockDao::new());
     let auth = HttpDigestAuth::new("test@realm", "MD5")
         .unwrap()
         .with_dao(dao);
@@ -940,7 +940,7 @@ async fn validate_nc_skipped_without_dao() {
 /// 场景：注入 DAO，nonce-A nc=1 通过，nonce-B nc=1 也应通过（不同 nonce 独立计数）。
 #[tokio::test(flavor = "multi_thread")]
 async fn validate_nc_isolates_nonces_with_dao() {
-    let dao: Arc<dyn crate::dao::BulwarkDao> = Arc::new(crate::dao::MockDao::new());
+    let dao: Arc<dyn crate::dao::GarrisonDao> = Arc::new(crate::dao::MockDao::new());
     let auth = HttpDigestAuth::new("test@realm", "MD5")
         .unwrap()
         .with_dao(dao);
@@ -1000,7 +1000,7 @@ async fn validate_nc_isolates_nonces_with_dao() {
 /// 注意：使用 `#[tokio::test]`（不带 `flavor = "multi_thread"`）创建 current_thread runtime。
 #[tokio::test]
 async fn validate_nc_current_thread_runtime_fail_closed() {
-    let dao: Arc<dyn crate::dao::BulwarkDao> = Arc::new(crate::dao::MockDao::new());
+    let dao: Arc<dyn crate::dao::GarrisonDao> = Arc::new(crate::dao::MockDao::new());
     let auth = HttpDigestAuth::new("test@realm", "MD5")
         .unwrap()
         .with_dao(dao);
@@ -1039,9 +1039,9 @@ async fn validate_nc_current_thread_runtime_fail_closed() {
 struct FailingDao;
 
 #[async_trait::async_trait]
-impl crate::dao::BulwarkDao for FailingDao {
-    async fn get(&self, key: &str) -> crate::error::BulwarkResult<Option<String>> {
-        Err(crate::error::BulwarkError::Dao(format!(
+impl crate::dao::GarrisonDao for FailingDao {
+    async fn get(&self, key: &str) -> crate::error::GarrisonResult<Option<String>> {
+        Err(crate::error::GarrisonError::Dao(format!(
             "vuln-0012-failing-dao-get::{}",
             key
         )))
@@ -1051,26 +1051,26 @@ impl crate::dao::BulwarkDao for FailingDao {
         key: &str,
         _value: &str,
         _ttl_seconds: u64,
-    ) -> crate::error::BulwarkResult<()> {
-        Err(crate::error::BulwarkError::Dao(format!(
+    ) -> crate::error::GarrisonResult<()> {
+        Err(crate::error::GarrisonError::Dao(format!(
             "vuln-0012-failing-dao-set::{}",
             key
         )))
     }
-    async fn update(&self, key: &str, _value: &str) -> crate::error::BulwarkResult<()> {
-        Err(crate::error::BulwarkError::Dao(format!(
+    async fn update(&self, key: &str, _value: &str) -> crate::error::GarrisonResult<()> {
+        Err(crate::error::GarrisonError::Dao(format!(
             "vuln-0012-failing-dao-update::{}",
             key
         )))
     }
-    async fn expire(&self, key: &str, _seconds: u64) -> crate::error::BulwarkResult<()> {
-        Err(crate::error::BulwarkError::Dao(format!(
+    async fn expire(&self, key: &str, _seconds: u64) -> crate::error::GarrisonResult<()> {
+        Err(crate::error::GarrisonError::Dao(format!(
             "vuln-0012-failing-dao-expire::{}",
             key
         )))
     }
-    async fn delete(&self, key: &str) -> crate::error::BulwarkResult<()> {
-        Err(crate::error::BulwarkError::Dao(format!(
+    async fn delete(&self, key: &str) -> crate::error::GarrisonResult<()> {
+        Err(crate::error::GarrisonError::Dao(format!(
             "vuln-0012-failing-dao-delete::{}",
             key
         )))
@@ -1086,7 +1086,7 @@ impl crate::dao::BulwarkDao for FailingDao {
 /// nonce TTL（300s）不足以防重放（窗口内仍可重放），必须 fail-closed。
 #[tokio::test(flavor = "multi_thread")]
 async fn validate_nc_dao_error_fail_closed() {
-    let dao: Arc<dyn crate::dao::BulwarkDao> = Arc::new(FailingDao);
+    let dao: Arc<dyn crate::dao::GarrisonDao> = Arc::new(FailingDao);
     let auth = HttpDigestAuth::new("test@realm", "MD5")
         .unwrap()
         .with_dao(dao);
@@ -1129,7 +1129,7 @@ async fn validate_nc_dao_error_fail_closed() {
 /// 注意：使用普通 `#[test]`（不引入 tokio runtime），与 `#[tokio::test]` 区分。
 #[test]
 fn validate_nc_no_runtime_fail_closed() {
-    let dao: Arc<dyn crate::dao::BulwarkDao> = Arc::new(crate::dao::MockDao::new());
+    let dao: Arc<dyn crate::dao::GarrisonDao> = Arc::new(crate::dao::MockDao::new());
     let auth = HttpDigestAuth::new("test@realm", "MD5")
         .unwrap()
         .with_dao(dao);
@@ -1168,7 +1168,7 @@ fn validate_nc_no_runtime_fail_closed() {
 /// validate_nc 返回 false（拒绝畸形请求，不是 fail-open）。
 #[tokio::test(flavor = "multi_thread")]
 async fn validate_nc_malformed_hex_rejected() {
-    let dao: Arc<dyn crate::dao::BulwarkDao> = Arc::new(crate::dao::MockDao::new());
+    let dao: Arc<dyn crate::dao::GarrisonDao> = Arc::new(crate::dao::MockDao::new());
     let auth = HttpDigestAuth::new("test@realm", "MD5")
         .unwrap()
         .with_dao(dao);

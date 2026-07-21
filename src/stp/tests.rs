@@ -11,8 +11,8 @@ use super::*;
 use crate::config::{OverflowLogoutMode, ReplacedLoginExitMode};
 use crate::context::tenant::with_default_tenant;
 use crate::core::token::Token;
-use crate::dao::BulwarkDao;
-use crate::manager::BulwarkManager;
+use crate::dao::GarrisonDao;
+use crate::manager::GarrisonManager;
 use async_trait::async_trait;
 #[cfg(feature = "listener")]
 use parking_lot::Mutex;
@@ -20,7 +20,7 @@ use serial_test::serial;
 use std::collections::HashMap;
 use std::time::Duration;
 
-/// 辅助函数：创建 BulwarkLogicDefault 实例（throw_on_not_login + firewall 返回值可配置）。
+/// 辅助函数：创建 GarrisonLogicDefault 实例（throw_on_not_login + firewall 返回值可配置）。
 fn make_logic(
     timeout: u64,
     active_timeout: u64,
@@ -28,10 +28,10 @@ fn make_logic(
     token_style: &str,
     has_permission: bool,
     has_role: bool,
-) -> BulwarkLogicDefault {
-    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
-    let session = Arc::new(BulwarkSession::new(dao, timeout, active_timeout));
-    let mut config = BulwarkConfig::default_config();
+) -> GarrisonLogicDefault {
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+    let session = Arc::new(GarrisonSession::new(dao, timeout, active_timeout));
+    let mut config = GarrisonConfig::default_config();
     config.throw_on_not_login = throw_on_not_login;
     config.token_style = token_style.to_string();
     // A11: simple 模式下 verify_token 委托 core-token SimpleTokenStyle（需 HMAC），
@@ -39,11 +39,11 @@ fn make_logic(
     if token_style == "simple" {
         config.jwt_secret = test_jwt_secret(STP_SIMPLE_TEST_SECRET);
     }
-    let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
+    let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall {
         has_permission,
         has_role,
     });
-    BulwarkLogicDefault::new(session, Arc::new(config), firewall)
+    GarrisonLogicDefault::new(session, Arc::new(config), firewall)
 }
 
 /// A11: simple 模式测试用的 HMAC 密钥（与 make_logic 中设置的 jwt_secret 一致）。
@@ -65,7 +65,7 @@ fn test_jwt_secret(secret: &str) -> crate::config::JwtSecret {
     }
 }
 
-/// 辅助函数：创建 BulwarkLogicDefault 实例并返回 dao 引用（用于测试中操作 dao 内部状态）。
+/// 辅助函数：创建 GarrisonLogicDefault 实例并返回 dao 引用（用于测试中操作 dao 内部状态）。
 fn make_logic_with_dao(
     timeout: u64,
     active_timeout: u64,
@@ -73,25 +73,25 @@ fn make_logic_with_dao(
     token_style: &str,
     has_permission: bool,
     has_role: bool,
-) -> (Arc<MockDao>, BulwarkLogicDefault) {
+) -> (Arc<MockDao>, GarrisonLogicDefault) {
     let dao = Arc::new(MockDao::new());
-    let session = Arc::new(BulwarkSession::new(
-        dao.clone() as Arc<dyn BulwarkDao>,
+    let session = Arc::new(GarrisonSession::new(
+        dao.clone() as Arc<dyn GarrisonDao>,
         timeout,
         active_timeout,
     ));
-    let mut config = BulwarkConfig::default_config();
+    let mut config = GarrisonConfig::default_config();
     config.throw_on_not_login = throw_on_not_login;
     config.token_style = token_style.to_string();
     // A11: simple 模式下同步设置非空 jwt_secret（与 make_logic 一致）
     if token_style == "simple" {
         config.jwt_secret = test_jwt_secret(STP_SIMPLE_TEST_SECRET);
     }
-    let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
+    let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall {
         has_permission,
         has_role,
     });
-    let logic = BulwarkLogicDefault::new(session, Arc::new(config), firewall);
+    let logic = GarrisonLogicDefault::new(session, Arc::new(config), firewall);
     (dao, logic)
 }
 
@@ -100,33 +100,33 @@ async fn with_token<R>(token: &str, f: impl std::future::Future<Output = R>) -> 
     with_current_token(token.to_string(), f).await
 }
 
-/// 初始化全局 BulwarkManager（用于 BulwarkUtil 静态方法测试）。
+/// 初始化全局 GarrisonManager（用于 GarrisonUtil 静态方法测试）。
 fn init_global_manager(throw_on_not_login: bool) {
-    BulwarkManager::reset_for_test();
-    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
-    let mut config = BulwarkConfig::default_config();
+    GarrisonManager::reset_for_test();
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+    let mut config = GarrisonConfig::default_config();
     config.timeout = 3600;
     config.active_timeout = -1;
     config.throw_on_not_login = throw_on_not_login;
-    let interface: Arc<dyn BulwarkInterface> = Arc::new(MockInterface);
-    BulwarkManager::init(dao, Arc::new(config), interface).unwrap();
+    let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface);
+    GarrisonManager::init(dao, Arc::new(config), interface).unwrap();
 }
 
-/// 初始化全局 BulwarkManager 并返回 MockDao 引用（用于 API Key 测试等需共享 DAO 的场景）。
+/// 初始化全局 GarrisonManager 并返回 MockDao 引用（用于 API Key 测试等需共享 DAO 的场景）。
 ///
-/// 返回的 `Arc<MockDao>` 与 BulwarkManager 内部 session 持有同一 DAO 实例，
+/// 返回的 `Arc<MockDao>` 与 GarrisonManager 内部 session 持有同一 DAO 实例，
 /// 测试可用它构造 `ApiKeyHandler` 生成/校验 API Key。
 #[cfg(feature = "protocol-apikey")]
 fn init_global_manager_with_dao(throw_on_not_login: bool) -> Arc<MockDao> {
-    BulwarkManager::reset_for_test();
+    GarrisonManager::reset_for_test();
     let dao = Arc::new(MockDao::new());
-    let mut config = BulwarkConfig::default_config();
+    let mut config = GarrisonConfig::default_config();
     config.timeout = 3600;
     config.active_timeout = -1;
     config.throw_on_not_login = throw_on_not_login;
-    let interface: Arc<dyn BulwarkInterface> = Arc::new(MockInterface);
-    BulwarkManager::init(
-        dao.clone() as Arc<dyn BulwarkDao>,
+    let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface);
+    GarrisonManager::init(
+        dao.clone() as Arc<dyn GarrisonDao>,
         Arc::new(config),
         interface,
     )
@@ -134,21 +134,21 @@ fn init_global_manager_with_dao(throw_on_not_login: bool) -> Arc<MockDao> {
     dao
 }
 
-/// 初始化全局 BulwarkManager 并注入预设权限/角色列表（用于 has_permission/has_role 返回 true 的测试）。
+/// 初始化全局 GarrisonManager 并注入预设权限/角色列表（用于 has_permission/has_role 返回 true 的测试）。
 fn init_global_manager_with_perms(
     throw_on_not_login: bool,
     permissions: Vec<String>,
     roles: Vec<String>,
 ) {
-    BulwarkManager::reset_for_test();
-    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
-    let mut config = BulwarkConfig::default_config();
+    GarrisonManager::reset_for_test();
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+    let mut config = GarrisonConfig::default_config();
     config.timeout = 3600;
     config.active_timeout = -1;
     config.throw_on_not_login = throw_on_not_login;
-    let interface: Arc<dyn BulwarkInterface> =
+    let interface: Arc<dyn GarrisonInterface> =
         Arc::new(MockInterfaceWithPerms { permissions, roles });
-    BulwarkManager::init(dao, Arc::new(config), interface).unwrap();
+    GarrisonManager::init(dao, Arc::new(config), interface).unwrap();
 }
 
 // ------------------------------------------------------------------------
@@ -208,13 +208,13 @@ async fn login_with_simple_style() {
 
 /// 验证未知 token_style 时 login 返回 Err。
 ///
-/// 覆盖 `generate_token` 的 `other =>` 分支，断言返回 `BulwarkError::Config`。
+/// 覆盖 `generate_token` 的 `other =>` 分支，断言返回 `GarrisonError::Config`。
 #[tokio::test]
 async fn create_token_unknown_style_errors() {
     let logic = make_logic(3600, 86400, false, "unknown_style", true, true);
     let result = logic.login("1001", &LoginParams::default()).await;
     assert!(
-        matches!(result, Err(BulwarkError::Config(ref msg)) if msg.contains("stp-unknown-token-style")),
+        matches!(result, Err(GarrisonError::Config(ref msg)) if msg.contains("stp-unknown-token-style")),
         "未知 token_style 应返回含 'stp-unknown-token-style' 的 Config 错误，实际: {:?}",
         result
     );
@@ -382,7 +382,7 @@ async fn check_login_throws_when_throw_on_not_login() {
     let logic = make_logic(3600, 86400, true, "uuid", true, true);
     let result = logic.check_login().await;
     assert!(
-        matches!(result, Err(BulwarkError::Session(_))),
+        matches!(result, Err(GarrisonError::Session(_))),
         "throw_on_not_login=true 且未登录应抛 Session 错误"
     );
 }
@@ -510,7 +510,7 @@ async fn get_login_id_returns_none_for_invalid_token() {
 fn current_token_errors_when_not_set() {
     let result = current_token();
     assert!(
-        matches!(result, Err(BulwarkError::Session(_))),
+        matches!(result, Err(GarrisonError::Session(_))),
         "未设置 task_local 时 current_token 应抛错"
     );
 }
@@ -526,24 +526,24 @@ async fn current_token_returns_value_in_scope() {
 }
 
 // ------------------------------------------------------------------------
-// BulwarkContext：task_local 跨 spawn 传播测试
+// GarrisonContext：task_local 跨 spawn 传播测试
 // ------------------------------------------------------------------------
 
-/// 验证 BulwarkContext 跨 `tokio::spawn` 传播 task_local（`current_token`）。
+/// 验证 GarrisonContext 跨 `tokio::spawn` 传播 task_local（`current_token`）。
 ///
 /// tokio `task_local!` 不会自动传播到 `tokio::spawn` 子任务。
-/// `BulwarkContext::capture()` + `within()` 提供手动传播机制。
+/// `GarrisonContext::capture()` + `within()` 提供手动传播机制。
 ///
 /// 测试逻辑：
 /// 1. 父 task 设置 `current_token` = "parent-task-token"
-/// 2. `BulwarkContext::capture()` 捕获上下文
+/// 2. `GarrisonContext::capture()` 捕获上下文
 /// 3. `tokio::spawn` 子任务，在子任务内 `ctx.within()` 恢复上下文
 /// 4. 子任务内 `current_token()` 应返回父 task 设置的 token
 #[tokio::test(flavor = "multi_thread")]
 async fn task_local_propagates_across_spawn() {
     // 1. 在父 task 设置 current_token 并捕获上下文
     let ctx = with_current_token("parent-task-token".to_string(), async {
-        BulwarkContext::capture()
+        GarrisonContext::capture()
     })
     .await;
 
@@ -563,18 +563,18 @@ async fn task_local_propagates_across_spawn() {
     let result = handle.await.expect("子任务 panic");
     assert!(
         result,
-        "子任务内 current_token() 应返回父 task 设置的 token（通过 BulwarkContext 传播）"
+        "子任务内 current_token() 应返回父 task 设置的 token（通过 GarrisonContext 传播）"
     );
 }
 
-/// 验证 BulwarkContext::capture() 在未设置 token 时返回 None 上下文。
+/// 验证 GarrisonContext::capture() 在未设置 token 时返回 None 上下文。
 ///
 /// 在未设置 `current_token` 的 task 中 capture，`within()` 内
 /// `current_token()` 应失败（返回 Err）。
 #[tokio::test(flavor = "multi_thread")]
-async fn bulwark_context_capture_without_token_propagates_none() {
+async fn garrison_context_capture_without_token_propagates_none() {
     // 在未设置 current_token 的 task 中 capture
-    let ctx = BulwarkContext::capture();
+    let ctx = GarrisonContext::capture();
 
     let handle = tokio::spawn(async move { ctx.within(async { current_token().is_ok() }).await });
 
@@ -613,7 +613,7 @@ async fn check_permission_not_held_throws_not_permission() {
     )
     .await;
     assert!(
-        matches!(result, Err(BulwarkError::NotPermission(_))),
+        matches!(result, Err(GarrisonError::NotPermission(_))),
         "未持有权限应抛 NotPermission"
     );
 }
@@ -625,7 +625,7 @@ async fn check_permission_not_login_throws_when_throw_on_not_login() {
     // 不调用 login，直接 check_permission（无 task_local token）
     let result = logic.check_permission("user:read").await;
     assert!(
-        matches!(result, Err(BulwarkError::NotLogin(_))),
+        matches!(result, Err(GarrisonError::NotLogin(_))),
         "未登录且 throw_on_not_login=true 应抛 NotLogin"
     );
 }
@@ -637,7 +637,7 @@ async fn check_permission_not_login_throws_not_permission_when_silent() {
     // 不调用 login，直接 check_permission（无 task_local token）
     let result = logic.check_permission("user:read").await;
     assert!(
-        matches!(result, Err(BulwarkError::NotPermission(_))),
+        matches!(result, Err(GarrisonError::NotPermission(_))),
         "未登录且 throw_on_not_login=false 应抛 NotPermission（降级）"
     );
 }
@@ -662,7 +662,7 @@ async fn check_role_not_held_throws_not_role() {
     let token = logic.login("1001", &LoginParams::default()).await.unwrap();
     let result = with_token(&token, logic.check_role("admin")).await;
     assert!(
-        matches!(result, Err(BulwarkError::NotRole(_))),
+        matches!(result, Err(GarrisonError::NotRole(_))),
         "未持有角色应抛 NotRole"
     );
 }
@@ -674,7 +674,7 @@ async fn check_role_not_login_throws_when_throw_on_not_login() {
     // 不调用 login，直接 check_role（无 task_local token）
     let result = logic.check_role("admin").await;
     assert!(
-        matches!(result, Err(BulwarkError::NotLogin(_))),
+        matches!(result, Err(GarrisonError::NotLogin(_))),
         "未登录且 throw_on_not_login=true 应抛 NotLogin"
     );
 }
@@ -686,145 +686,145 @@ async fn check_role_not_login_throws_not_role_when_silent() {
     // 不调用 login，直接 check_role（无 task_local token）
     let result = logic.check_role("admin").await;
     assert!(
-        matches!(result, Err(BulwarkError::NotRole(_))),
+        matches!(result, Err(GarrisonError::NotRole(_))),
         "未登录且 throw_on_not_login=false 应抛 NotRole（降级）"
     );
 }
 
 // ------------------------------------------------------------------------
-// BulwarkUtil 未初始化错误测试（spec Scenario: 未初始化抛错）
+// GarrisonUtil 未初始化错误测试（spec Scenario: 未初始化抛错）
 // ------------------------------------------------------------------------
 
-/// 未初始化时 BulwarkUtil::logout 返回 Session 错误。
+/// 未初始化时 GarrisonUtil::logout 返回 Session 错误。
 #[tokio::test]
 #[serial]
 async fn util_logout_fails_when_not_initialized() {
-    BulwarkManager::reset_for_test();
-    let result = BulwarkUtil::logout().await;
+    GarrisonManager::reset_for_test();
+    let result = GarrisonUtil::logout().await;
     assert!(
-        matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
+        matches!(result, Err(GarrisonError::Session(ref msg)) if msg.contains("manager-not-init")),
         "未初始化时 logout 应返回 Session 错误"
     );
 }
 
-/// 未初始化时 BulwarkUtil::logout_by_login_id 返回 Session 错误。
+/// 未初始化时 GarrisonUtil::logout_by_login_id 返回 Session 错误。
 #[tokio::test]
 #[serial]
 async fn util_logout_by_login_id_fails_when_not_initialized() {
-    BulwarkManager::reset_for_test();
-    let result = BulwarkUtil::logout_by_login_id("1001").await;
+    GarrisonManager::reset_for_test();
+    let result = GarrisonUtil::logout_by_login_id("1001").await;
     assert!(
-        matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
+        matches!(result, Err(GarrisonError::Session(ref msg)) if msg.contains("manager-not-init")),
         "未初始化时 logout_by_login_id 应返回 Session 错误"
     );
 }
 
-/// 未初始化时 BulwarkUtil::kickout 返回 Session 错误。
+/// 未初始化时 GarrisonUtil::kickout 返回 Session 错误。
 #[tokio::test]
 #[serial]
 async fn util_kickout_fails_when_not_initialized() {
-    BulwarkManager::reset_for_test();
-    let result = BulwarkUtil::kickout("1001").await;
+    GarrisonManager::reset_for_test();
+    let result = GarrisonUtil::kickout("1001").await;
     assert!(
-        matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
+        matches!(result, Err(GarrisonError::Session(ref msg)) if msg.contains("manager-not-init")),
         "未初始化时 kickout 应返回 Session 错误"
     );
 }
 
-/// 未初始化时 BulwarkUtil::kickout_by_token 返回 Session 错误。
+/// 未初始化时 GarrisonUtil::kickout_by_token 返回 Session 错误。
 #[tokio::test]
 #[serial]
 async fn util_kickout_by_token_fails_when_not_initialized() {
-    BulwarkManager::reset_for_test();
-    let result = BulwarkUtil::kickout_by_token("some-token").await;
+    GarrisonManager::reset_for_test();
+    let result = GarrisonUtil::kickout_by_token("some-token").await;
     assert!(
-        matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
+        matches!(result, Err(GarrisonError::Session(ref msg)) if msg.contains("manager-not-init")),
         "未初始化时 kickout_by_token 应返回 Session 错误"
     );
 }
 
-/// 未初始化时 BulwarkUtil::check_login 返回 Session 错误。
+/// 未初始化时 GarrisonUtil::check_login 返回 Session 错误。
 #[tokio::test]
 #[serial]
 async fn util_check_login_fails_when_not_initialized() {
-    BulwarkManager::reset_for_test();
-    let result = BulwarkUtil::check_login().await;
+    GarrisonManager::reset_for_test();
+    let result = GarrisonUtil::check_login().await;
     assert!(
-        matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
+        matches!(result, Err(GarrisonError::Session(ref msg)) if msg.contains("manager-not-init")),
         "未初始化时 check_login 应返回 Session 错误"
     );
 }
 
-/// 未初始化时 BulwarkUtil::get_login_id 返回 Session 错误。
+/// 未初始化时 GarrisonUtil::get_login_id 返回 Session 错误。
 #[tokio::test]
 #[serial]
 async fn util_get_login_id_fails_when_not_initialized() {
-    BulwarkManager::reset_for_test();
-    let result = BulwarkUtil::get_login_id().await;
+    GarrisonManager::reset_for_test();
+    let result = GarrisonUtil::get_login_id().await;
     assert!(
-        matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
+        matches!(result, Err(GarrisonError::Session(ref msg)) if msg.contains("manager-not-init")),
         "未初始化时 get_login_id 应返回 Session 错误"
     );
 }
 
-/// 未初始化时 BulwarkUtil::check_permission 返回 Session 错误。
+/// 未初始化时 GarrisonUtil::check_permission 返回 Session 错误。
 #[tokio::test]
 #[serial]
 async fn util_check_permission_fails_when_not_initialized() {
-    BulwarkManager::reset_for_test();
-    let result = BulwarkUtil::check_permission("user:read").await;
+    GarrisonManager::reset_for_test();
+    let result = GarrisonUtil::check_permission("user:read").await;
     assert!(
-        matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
+        matches!(result, Err(GarrisonError::Session(ref msg)) if msg.contains("manager-not-init")),
         "未初始化时 check_permission 应返回 Session 错误"
     );
 }
 
-/// 未初始化时 BulwarkUtil::check_role 返回 Session 错误。
+/// 未初始化时 GarrisonUtil::check_role 返回 Session 错误。
 #[tokio::test]
 #[serial]
 async fn util_check_role_fails_when_not_initialized() {
-    BulwarkManager::reset_for_test();
-    let result = BulwarkUtil::check_role("admin").await;
+    GarrisonManager::reset_for_test();
+    let result = GarrisonUtil::check_role("admin").await;
     assert!(
-        matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
+        matches!(result, Err(GarrisonError::Session(ref msg)) if msg.contains("manager-not-init")),
         "未初始化时 check_role 应返回 Session 错误"
     );
 }
 
-/// 未初始化时 BulwarkUtil::check_safe 返回 Session 错误（）。
+/// 未初始化时 GarrisonUtil::check_safe 返回 Session 错误（）。
 #[tokio::test]
 #[serial]
 async fn util_check_safe_fails_when_not_initialized() {
-    BulwarkManager::reset_for_test();
-    let result = BulwarkUtil::check_safe().await;
+    GarrisonManager::reset_for_test();
+    let result = GarrisonUtil::check_safe().await;
     assert!(
-        matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
+        matches!(result, Err(GarrisonError::Session(ref msg)) if msg.contains("manager-not-init")),
         "未初始化时 check_safe 应返回 Session 错误"
     );
 }
 
-/// 未初始化时 BulwarkUtil::check_disable 返回 Session 错误（）。
+/// 未初始化时 GarrisonUtil::check_disable 返回 Session 错误（）。
 #[tokio::test]
 #[serial]
 async fn util_check_disable_fails_when_not_initialized() {
-    BulwarkManager::reset_for_test();
-    let result = BulwarkUtil::check_disable().await;
+    GarrisonManager::reset_for_test();
+    let result = GarrisonUtil::check_disable().await;
     assert!(
-        matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
+        matches!(result, Err(GarrisonError::Session(ref msg)) if msg.contains("manager-not-init")),
         "未初始化时 check_disable 应返回 Session 错误"
     );
 }
 
 // ------------------------------------------------------------------------
-// BulwarkUtil::has_permission / has_role 测试
+// GarrisonUtil::has_permission / has_role 测试
 // ------------------------------------------------------------------------
 
 /// has_permission 空字符串返回 InvalidParam（校验在 logic() 之前，不依赖全局状态）。
 #[tokio::test]
 async fn util_has_permission_empty_string_returns_invalid_param() {
-    let result = BulwarkUtil::has_permission("").await;
+    let result = GarrisonUtil::has_permission("").await;
     assert!(
-        matches!(result, Err(BulwarkError::InvalidParam(ref s)) if s.contains("permission")),
+        matches!(result, Err(GarrisonError::InvalidParam(ref s)) if s.contains("permission")),
         "空 permission 应返回 InvalidParam，实际: {:?}",
         result
     );
@@ -833,34 +833,34 @@ async fn util_has_permission_empty_string_returns_invalid_param() {
 /// has_role 空字符串返回 InvalidParam。
 #[tokio::test]
 async fn util_has_role_empty_string_returns_invalid_param() {
-    let result = BulwarkUtil::has_role("").await;
+    let result = GarrisonUtil::has_role("").await;
     assert!(
-        matches!(result, Err(BulwarkError::InvalidParam(ref s)) if s.contains("role")),
+        matches!(result, Err(GarrisonError::InvalidParam(ref s)) if s.contains("role")),
         "空 role 应返回 InvalidParam，实际: {:?}",
         result
     );
 }
 
-/// 未初始化时 BulwarkUtil::has_permission 返回 Session 错误。
+/// 未初始化时 GarrisonUtil::has_permission 返回 Session 错误。
 #[tokio::test]
 #[serial]
 async fn util_has_permission_fails_when_not_initialized() {
-    BulwarkManager::reset_for_test();
-    let result = BulwarkUtil::has_permission("user:read").await;
+    GarrisonManager::reset_for_test();
+    let result = GarrisonUtil::has_permission("user:read").await;
     assert!(
-        matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
+        matches!(result, Err(GarrisonError::Session(ref msg)) if msg.contains("manager-not-init")),
         "未初始化时 has_permission 应返回 Session 错误"
     );
 }
 
-/// 未初始化时 BulwarkUtil::has_role 返回 Session 错误。
+/// 未初始化时 GarrisonUtil::has_role 返回 Session 错误。
 #[tokio::test]
 #[serial]
 async fn util_has_role_fails_when_not_initialized() {
-    BulwarkManager::reset_for_test();
-    let result = BulwarkUtil::has_role("admin").await;
+    GarrisonManager::reset_for_test();
+    let result = GarrisonUtil::has_role("admin").await;
     assert!(
-        matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
+        matches!(result, Err(GarrisonError::Session(ref msg)) if msg.contains("manager-not-init")),
         "未初始化时 has_role 应返回 Session 错误"
     );
 }
@@ -874,10 +874,10 @@ async fn util_has_permission_returns_true_when_granted() {
         vec!["user:read".to_string()],
         vec!["admin".to_string()],
     );
-    let token = BulwarkUtil::login_simple("1001").await.unwrap();
+    let token = GarrisonUtil::login_simple("1001").await.unwrap();
     let result = with_token(
         &token,
-        with_default_tenant(BulwarkUtil::has_permission("user:read")),
+        with_default_tenant(GarrisonUtil::has_permission("user:read")),
     )
     .await;
     assert!(result.unwrap(), "持有权限应返回 true");
@@ -888,10 +888,10 @@ async fn util_has_permission_returns_true_when_granted() {
 #[serial]
 async fn util_has_permission_returns_false_when_not_granted() {
     init_global_manager_with_perms(false, vec![], vec![]);
-    let token = BulwarkUtil::login_simple("1001").await.unwrap();
+    let token = GarrisonUtil::login_simple("1001").await.unwrap();
     let result = with_token(
         &token,
-        with_default_tenant(BulwarkUtil::has_permission("user:read")),
+        with_default_tenant(GarrisonUtil::has_permission("user:read")),
     )
     .await;
     assert!(!result.unwrap(), "未持有权限应返回 false");
@@ -903,7 +903,7 @@ async fn util_has_permission_returns_false_when_not_granted() {
 async fn util_has_permission_returns_false_when_not_logged_in() {
     init_global_manager(false);
     // 不调用 login，直接 has_permission（无 task_local token）
-    let result = BulwarkUtil::has_permission("user:read").await;
+    let result = GarrisonUtil::has_permission("user:read").await;
     assert!(!result.unwrap(), "未登录应返回 false");
 }
 
@@ -916,8 +916,8 @@ async fn util_has_role_returns_true_when_granted() {
         vec!["user:read".to_string()],
         vec!["admin".to_string()],
     );
-    let token = BulwarkUtil::login_simple("1001").await.unwrap();
-    let result = with_token(&token, BulwarkUtil::has_role("admin")).await;
+    let token = GarrisonUtil::login_simple("1001").await.unwrap();
+    let result = with_token(&token, GarrisonUtil::has_role("admin")).await;
     assert!(result.unwrap(), "持有角色应返回 true");
 }
 
@@ -926,8 +926,8 @@ async fn util_has_role_returns_true_when_granted() {
 #[serial]
 async fn util_has_role_returns_false_when_not_granted() {
     init_global_manager_with_perms(false, vec![], vec![]);
-    let token = BulwarkUtil::login_simple("1001").await.unwrap();
-    let result = with_token(&token, BulwarkUtil::has_role("admin")).await;
+    let token = GarrisonUtil::login_simple("1001").await.unwrap();
+    let result = with_token(&token, GarrisonUtil::has_role("admin")).await;
     assert!(!result.unwrap(), "未持有角色应返回 false");
 }
 
@@ -936,34 +936,34 @@ async fn util_has_role_returns_false_when_not_granted() {
 #[serial]
 async fn util_has_role_returns_false_when_not_logged_in() {
     init_global_manager(false);
-    let result = BulwarkUtil::has_role("admin").await;
+    let result = GarrisonUtil::has_role("admin").await;
     assert!(!result.unwrap(), "未登录应返回 false");
 }
 
 // ------------------------------------------------------------------------
-// BulwarkUtil::get_permission_list / get_role_list 测试
+// GarrisonUtil::get_permission_list / get_role_list 测试
 // ------------------------------------------------------------------------
 
-/// 未初始化时 BulwarkUtil::get_permission_list 返回 Session 错误。
+/// 未初始化时 GarrisonUtil::get_permission_list 返回 Session 错误。
 #[tokio::test]
 #[serial]
 async fn util_get_permission_list_fails_when_not_initialized() {
-    BulwarkManager::reset_for_test();
-    let result = BulwarkUtil::get_permission_list().await;
+    GarrisonManager::reset_for_test();
+    let result = GarrisonUtil::get_permission_list().await;
     assert!(
-        matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
+        matches!(result, Err(GarrisonError::Session(ref msg)) if msg.contains("manager-not-init")),
         "未初始化时 get_permission_list 应返回 Session 错误"
     );
 }
 
-/// 未初始化时 BulwarkUtil::get_role_list 返回 Session 错误。
+/// 未初始化时 GarrisonUtil::get_role_list 返回 Session 错误。
 #[tokio::test]
 #[serial]
 async fn util_get_role_list_fails_when_not_initialized() {
-    BulwarkManager::reset_for_test();
-    let result = BulwarkUtil::get_role_list().await;
+    GarrisonManager::reset_for_test();
+    let result = GarrisonUtil::get_role_list().await;
     assert!(
-        matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
+        matches!(result, Err(GarrisonError::Session(ref msg)) if msg.contains("manager-not-init")),
         "未初始化时 get_role_list 应返回 Session 错误"
     );
 }
@@ -977,8 +977,8 @@ async fn util_get_permission_list_returns_permissions_when_granted() {
         vec!["user:read".to_string(), "user:write".to_string()],
         vec!["admin".to_string()],
     );
-    let token = BulwarkUtil::login_simple("1001").await.unwrap();
-    let result = with_token(&token, BulwarkUtil::get_permission_list()).await;
+    let token = GarrisonUtil::login_simple("1001").await.unwrap();
+    let result = with_token(&token, GarrisonUtil::get_permission_list()).await;
     let perms = result.unwrap();
     assert_eq!(perms.len(), 2, "应返回 2 个权限");
     assert!(perms.contains(&"user:read".to_string()), "应包含 user:read");
@@ -993,8 +993,8 @@ async fn util_get_permission_list_returns_permissions_when_granted() {
 #[serial]
 async fn util_get_permission_list_returns_empty_when_no_permissions() {
     init_global_manager_with_perms(false, vec![], vec![]);
-    let token = BulwarkUtil::login_simple("1001").await.unwrap();
-    let result = with_token(&token, BulwarkUtil::get_permission_list()).await;
+    let token = GarrisonUtil::login_simple("1001").await.unwrap();
+    let result = with_token(&token, GarrisonUtil::get_permission_list()).await;
     assert!(result.unwrap().is_empty(), "无权限时应返回空 vec");
 }
 
@@ -1003,7 +1003,7 @@ async fn util_get_permission_list_returns_empty_when_no_permissions() {
 #[serial]
 async fn util_get_permission_list_returns_empty_when_not_logged_in() {
     init_global_manager(false);
-    let result = BulwarkUtil::get_permission_list().await;
+    let result = GarrisonUtil::get_permission_list().await;
     assert!(result.unwrap().is_empty(), "未登录应返回空 vec");
 }
 
@@ -1016,8 +1016,8 @@ async fn util_get_role_list_returns_roles_when_granted() {
         vec!["user:read".to_string()],
         vec!["admin".to_string(), "user".to_string()],
     );
-    let token = BulwarkUtil::login_simple("1001").await.unwrap();
-    let result = with_token(&token, BulwarkUtil::get_role_list()).await;
+    let token = GarrisonUtil::login_simple("1001").await.unwrap();
+    let result = with_token(&token, GarrisonUtil::get_role_list()).await;
     let roles = result.unwrap();
     assert_eq!(roles.len(), 2, "应返回 2 个角色");
     assert!(roles.contains(&"admin".to_string()), "应包含 admin");
@@ -1029,8 +1029,8 @@ async fn util_get_role_list_returns_roles_when_granted() {
 #[serial]
 async fn util_get_role_list_returns_empty_when_no_roles() {
     init_global_manager_with_perms(false, vec![], vec![]);
-    let token = BulwarkUtil::login_simple("1001").await.unwrap();
-    let result = with_token(&token, BulwarkUtil::get_role_list()).await;
+    let token = GarrisonUtil::login_simple("1001").await.unwrap();
+    let result = with_token(&token, GarrisonUtil::get_role_list()).await;
     assert!(result.unwrap().is_empty(), "无角色时应返回空 vec");
 }
 
@@ -1039,75 +1039,75 @@ async fn util_get_role_list_returns_empty_when_no_roles() {
 #[serial]
 async fn util_get_role_list_returns_empty_when_not_logged_in() {
     init_global_manager(false);
-    let result = BulwarkUtil::get_role_list().await;
+    let result = GarrisonUtil::get_role_list().await;
     assert!(result.unwrap().is_empty(), "未登录应返回空 vec");
 }
 
 // ------------------------------------------------------------------------
-// BulwarkUtil 成功路径测试（覆盖未测试的静态方法）
+// GarrisonUtil 成功路径测试（覆盖未测试的静态方法）
 // ------------------------------------------------------------------------
 
-/// BulwarkUtil::logout_by_login_id 成功销毁指定账号的所有会话。
+/// GarrisonUtil::logout_by_login_id 成功销毁指定账号的所有会话。
 #[tokio::test]
 #[serial]
 async fn util_logout_by_login_id_succeeds() {
     init_global_manager(false);
-    let token = BulwarkUtil::login_simple("1001").await.unwrap();
+    let token = GarrisonUtil::login_simple("1001").await.unwrap();
     assert!(!token.is_empty());
 
-    BulwarkUtil::logout_by_login_id("1001").await.unwrap();
+    GarrisonUtil::logout_by_login_id("1001").await.unwrap();
 
     // logout 后 check_login 应返回 false
-    let valid = with_token(&token, async { BulwarkUtil::check_login().await })
+    let valid = with_token(&token, async { GarrisonUtil::check_login().await })
         .await
         .unwrap();
     assert!(!valid, "logout_by_login_id 后 check_login 应返回 false");
 
-    BulwarkManager::reset_for_test();
+    GarrisonManager::reset_for_test();
 }
 
-/// BulwarkUtil::kickout 成功踢出指定账号。
+/// GarrisonUtil::kickout 成功踢出指定账号。
 #[tokio::test]
 #[serial]
 async fn util_kickout_succeeds() {
     init_global_manager(false);
-    let token = BulwarkUtil::login_simple("1001").await.unwrap();
+    let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
-    BulwarkUtil::kickout("1001").await.unwrap();
+    GarrisonUtil::kickout("1001").await.unwrap();
 
-    let valid = with_token(&token, async { BulwarkUtil::check_login().await })
+    let valid = with_token(&token, async { GarrisonUtil::check_login().await })
         .await
         .unwrap();
     assert!(!valid, "kickout 后 check_login 应返回 false");
 
-    BulwarkManager::reset_for_test();
+    GarrisonManager::reset_for_test();
 }
 
-/// BulwarkUtil::kickout_by_token 成功踢出指定 token。
+/// GarrisonUtil::kickout_by_token 成功踢出指定 token。
 #[tokio::test]
 #[serial]
 async fn util_kickout_by_token_succeeds() {
     init_global_manager(false);
-    let token = BulwarkUtil::login_simple("1001").await.unwrap();
+    let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
-    BulwarkUtil::kickout_by_token(&token).await.unwrap();
+    GarrisonUtil::kickout_by_token(&token).await.unwrap();
 
-    let valid = with_token(&token, async { BulwarkUtil::check_login().await })
+    let valid = with_token(&token, async { GarrisonUtil::check_login().await })
         .await
         .unwrap();
     assert!(!valid, "kickout_by_token 后 check_login 应返回 false");
 
-    BulwarkManager::reset_for_test();
+    GarrisonManager::reset_for_test();
 }
 
-/// BulwarkUtil::get_login_id 返回当前登录 ID。
+/// GarrisonUtil::get_login_id 返回当前登录 ID。
 #[tokio::test]
 #[serial]
 async fn util_get_login_id_returns_current_id() {
     init_global_manager(false);
-    let token = BulwarkUtil::login_simple("1001").await.unwrap();
+    let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
-    let login_id = with_token(&token, async { BulwarkUtil::get_login_id().await })
+    let login_id = with_token(&token, async { GarrisonUtil::get_login_id().await })
         .await
         .unwrap();
     assert_eq!(
@@ -1116,10 +1116,10 @@ async fn util_get_login_id_returns_current_id() {
         "get_login_id 应返回当前 login_id"
     );
 
-    BulwarkManager::reset_for_test();
+    GarrisonManager::reset_for_test();
 }
 
-/// BulwarkUtil::check_safe 默认行为随 `safe-auth` feature 变化。
+/// GarrisonUtil::check_safe 默认行为随 `safe-auth` feature 变化。
 ///
 /// - 未启用 `safe-auth`：`is_safe` trait default 返回 `Ok(true)`，`check_safe` 返回 `Ok(())`。
 /// - 启用 `safe-auth`：`is_safe` inherent method 查询 `safe_services`，
@@ -1128,14 +1128,14 @@ async fn util_get_login_id_returns_current_id() {
 #[serial]
 async fn util_check_safe_returns_ok_by_default() {
     init_global_manager(false);
-    let _ = BulwarkUtil::login_simple("1001").await.unwrap();
+    let _ = GarrisonUtil::login_simple("1001").await.unwrap();
 
-    let result = BulwarkUtil::check_safe().await;
+    let result = GarrisonUtil::check_safe().await;
 
     #[cfg(feature = "safe-auth")]
     {
         assert!(
-            matches!(result, Err(BulwarkError::NotSafe { .. })),
+            matches!(result, Err(GarrisonError::NotSafe { .. })),
             "启用 safe-auth 时未 open_safe，check_safe 应返回 Err(NotSafe)，实际: {:?}",
             result
         );
@@ -1149,34 +1149,34 @@ async fn util_check_safe_returns_ok_by_default() {
         );
     }
 
-    BulwarkManager::reset_for_test();
+    GarrisonManager::reset_for_test();
 }
 
-/// BulwarkUtil::check_disable 默认实现返回 Ok。
+/// GarrisonUtil::check_disable 默认实现返回 Ok。
 ///
-/// 默认 `BulwarkLogicDefault` 未实现禁用账号库，`check_disable` 返回 `Ok(())`。
+/// 默认 `GarrisonLogicDefault` 未实现禁用账号库，`check_disable` 返回 `Ok(())`。
 #[tokio::test]
 #[serial]
 async fn util_check_disable_returns_ok_by_default() {
     init_global_manager(false);
-    let _ = BulwarkUtil::login_simple("1001").await.unwrap();
+    let _ = GarrisonUtil::login_simple("1001").await.unwrap();
 
     // 默认实现（未覆写 check_disable）应返回 Ok
-    let result = BulwarkUtil::check_disable().await;
+    let result = GarrisonUtil::check_disable().await;
     assert!(
         result.is_ok(),
         "默认 check_disable 应返回 Ok，实际: {:?}",
         result
     );
 
-    BulwarkManager::reset_for_test();
+    GarrisonManager::reset_for_test();
 }
 
 // ------------------------------------------------------------------------
 // API 测试：login_by_token / verify_token / refresh_token
 // ------------------------------------------------------------------------
 
-/// BulwarkLogicDefault::login_by_token 对 uuid style token 返回 InvalidToken（0.2.1 auto-wire 修复）。
+/// GarrisonLogicDefault::login_by_token 对 uuid style token 返回 InvalidToken（0.2.1 auto-wire 修复）。
 ///
 /// 0.2.1 起login_by_token 被 override：优先委托 auth_logic，否则使用 verify_token。
 /// uuid token 不包含 login_id，verify_token 返回 InvalidToken。
@@ -1185,20 +1185,20 @@ async fn login_by_token_uuid_style_returns_invalid_token() {
     let logic = make_logic(3600, 86400, false, "uuid", true, true);
     let result = logic.login_by_token("any-token").await;
     assert!(
-        matches!(result, Err(BulwarkError::InvalidToken(_))),
+        matches!(result, Err(GarrisonError::InvalidToken(_))),
         "uuid style login_by_token 应返回 InvalidToken，实际: {:?}",
         result
     );
 }
 
-/// BulwarkUtil::login_by_token 未初始化时返回 Session 错误。
+/// GarrisonUtil::login_by_token 未初始化时返回 Session 错误。
 #[tokio::test]
 #[serial]
 async fn util_login_by_token_fails_when_not_initialized() {
-    BulwarkManager::reset_for_test();
-    let result = BulwarkUtil::login_by_token("any-token").await;
+    GarrisonManager::reset_for_test();
+    let result = GarrisonUtil::login_by_token("any-token").await;
     assert!(
-        matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
+        matches!(result, Err(GarrisonError::Session(ref msg)) if msg.contains("manager-not-init")),
         "未初始化时 login_by_token 应返回 Session 错误"
     );
 }
@@ -1227,7 +1227,7 @@ async fn verify_token_uuid_style_returns_invalid_token() {
     let token = logic.login("1001", &LoginParams::default()).await.unwrap();
     let result = logic.verify_token(&token).await;
     assert!(
-        matches!(result, Err(BulwarkError::InvalidToken(_))),
+        matches!(result, Err(GarrisonError::InvalidToken(_))),
         "uuid style verify_token 应返回 InvalidToken，实际: {:?}",
         result
     );
@@ -1241,7 +1241,7 @@ async fn verify_token_invalid_returns_error() {
     let logic = make_logic(3600, 86400, false, "simple", true, true);
     let result = logic.verify_token("nodash").await;
     assert!(
-        matches!(result, Err(BulwarkError::InvalidToken(_))),
+        matches!(result, Err(GarrisonError::InvalidToken(_))),
         "无效 token 应返回 InvalidToken，实际: {:?}",
         result
     );
@@ -1266,14 +1266,14 @@ async fn verify_token_malformed_returns_invalid_token() {
     assert_eq!(result.unwrap(), "abc");
 }
 
-/// BulwarkUtil::verify_token 未初始化时返回 Session 错误。
+/// GarrisonUtil::verify_token 未初始化时返回 Session 错误。
 #[tokio::test]
 #[serial]
 async fn util_verify_token_fails_when_not_initialized() {
-    BulwarkManager::reset_for_test();
-    let result = BulwarkUtil::verify_token("any-token").await;
+    GarrisonManager::reset_for_test();
+    let result = GarrisonUtil::verify_token("any-token").await;
     assert!(
-        matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
+        matches!(result, Err(GarrisonError::Session(ref msg)) if msg.contains("manager-not-init")),
         "未初始化时 verify_token 应返回 Session 错误"
     );
 }
@@ -1284,25 +1284,25 @@ async fn refresh_token_default_returns_not_implemented() {
     let logic = make_logic(3600, 86400, false, "uuid", true, true);
     let result = logic.refresh_token("any-token").await;
     assert!(
-        matches!(result, Err(BulwarkError::NotImplemented(_))),
+        matches!(result, Err(GarrisonError::NotImplemented(_))),
         "default refresh_token 应返回 NotImplemented，实际: {:?}",
         result
     );
 }
 
-/// BulwarkUtil::refresh_token 未初始化时返回 Session 错误。
+/// GarrisonUtil::refresh_token 未初始化时返回 Session 错误。
 #[tokio::test]
 #[serial]
 async fn util_refresh_token_fails_when_not_initialized() {
-    BulwarkManager::reset_for_test();
-    let result = BulwarkUtil::refresh_token("any-token").await;
+    GarrisonManager::reset_for_test();
+    let result = GarrisonUtil::refresh_token("any-token").await;
     assert!(
-        matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
+        matches!(result, Err(GarrisonError::Session(ref msg)) if msg.contains("manager-not-init")),
         "未初始化时 refresh_token 应返回 Session 错误"
     );
 }
 
-/// BulwarkUtil::verify_token 端到端：simple style token → 返回 login_id。
+/// GarrisonUtil::verify_token 端到端：simple style token → 返回 login_id。
 ///
 /// A11: core-token SimpleTokenStyle 改为 HMAC-SHA256 签名格式，
 /// 需用 SimpleTokenStyle::new(secret).generate 生成合法 token（secret 与 config.jwt_secret 一致）。
@@ -1310,45 +1310,45 @@ async fn util_refresh_token_fails_when_not_initialized() {
 #[tokio::test]
 #[serial]
 async fn util_verify_token_returns_login_id() {
-    BulwarkManager::reset_for_test();
-    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
-    let mut config = BulwarkConfig::default_config();
+    GarrisonManager::reset_for_test();
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+    let mut config = GarrisonConfig::default_config();
     config.timeout = 3600;
     config.active_timeout = -1;
     config.token_style = "simple".to_string();
     // A11: 设置非空 jwt_secret，与 SimpleTokenStyle 生成 token 用的 secret 一致
     config.jwt_secret = test_jwt_secret(STP_SIMPLE_TEST_SECRET);
-    let interface: Arc<dyn BulwarkInterface> = Arc::new(MockInterface);
-    BulwarkManager::init(dao, Arc::new(config), interface).unwrap();
+    let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface);
+    GarrisonManager::init(dao, Arc::new(config), interface).unwrap();
 
     // A11: 用 SimpleTokenStyle 生成合法 HMAC token
     let style = crate::core::token::SimpleTokenStyle::new(STP_SIMPLE_TEST_SECRET.to_string());
     let token = style.generate("1001", 3600).unwrap();
-    let login_id = BulwarkUtil::verify_token(&token).await.unwrap();
+    let login_id = GarrisonUtil::verify_token(&token).await.unwrap();
     assert_eq!(login_id, "1001".to_string());
 
-    BulwarkManager::reset_for_test();
+    GarrisonManager::reset_for_test();
 }
 
-/// BulwarkUtil::refresh_token 端到端：未启用 protocol-jwt → NotImplemented。
+/// GarrisonUtil::refresh_token 端到端：未启用 protocol-jwt → NotImplemented。
 #[tokio::test]
 #[serial]
 async fn util_refresh_token_returns_not_implemented_without_jwt() {
-    BulwarkManager::reset_for_test();
-    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
-    let mut config = BulwarkConfig::default_config();
+    GarrisonManager::reset_for_test();
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+    let mut config = GarrisonConfig::default_config();
     config.timeout = 3600;
     config.active_timeout = -1;
-    let interface: Arc<dyn BulwarkInterface> = Arc::new(MockInterface);
-    BulwarkManager::init(dao, Arc::new(config), interface).unwrap();
+    let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface);
+    GarrisonManager::init(dao, Arc::new(config), interface).unwrap();
 
-    let result = BulwarkUtil::refresh_token("any-token").await;
+    let result = GarrisonUtil::refresh_token("any-token").await;
     assert!(
-        matches!(result, Err(BulwarkError::NotImplemented(_))),
+        matches!(result, Err(GarrisonError::NotImplemented(_))),
         "未启用 protocol-jwt 时 refresh_token 应返回 NotImplemented"
     );
 
-    BulwarkManager::reset_for_test();
+    GarrisonManager::reset_for_test();
 }
 
 // ------------------------------------------------------------------------
@@ -1360,9 +1360,9 @@ async fn util_refresh_token_returns_not_implemented_without_jwt() {
 async fn builder_methods_return_self_for_chaining() {
     let logic = make_logic(3600, 86400, false, "uuid", true, true);
     // 链式调用所有 builder 方法，验证返回 Self
-    let pm = Arc::new(BulwarkPluginManager::new());
+    let pm = Arc::new(GarrisonPluginManager::new());
     #[cfg(feature = "listener")]
-    let lm = Arc::new(BulwarkListenerManager::new());
+    let lm = Arc::new(GarrisonListenerManager::new());
     #[cfg(feature = "listener")]
     let _logic = logic.with_plugin_manager(pm).with_listener_manager(lm);
     #[cfg(not(feature = "listener"))]
@@ -1377,7 +1377,7 @@ async fn builder_methods_return_self_for_chaining() {
 #[tokio::test]
 async fn login_with_plugin_manager_triggers_on_login() {
     let logic = make_logic(3600, 86400, false, "uuid", true, true);
-    let pm = Arc::new(BulwarkPluginManager::new());
+    let pm = Arc::new(GarrisonPluginManager::new());
     let logic = logic.with_plugin_manager(pm);
     // login 应成功，plugin on_login 作为副作用被调用（失败仅 warn 不中断）
     let token = logic.login("1001", &LoginParams::default()).await.unwrap();
@@ -1390,7 +1390,7 @@ async fn login_with_listener_manager_broadcasts_login_event() {
     let logic = make_logic(3600, 86400, false, "uuid", true, true);
     #[cfg(feature = "listener")]
     {
-        let lm = Arc::new(BulwarkListenerManager::new());
+        let lm = Arc::new(GarrisonListenerManager::new());
         let logic = logic.with_listener_manager(lm);
         let token = logic.login("1001", &LoginParams::default()).await.unwrap();
         assert!(!token.is_empty());
@@ -1405,10 +1405,10 @@ async fn login_with_listener_manager_broadcasts_login_event() {
 #[tokio::test]
 async fn logout_with_managers_triggers_hooks() {
     let logic = make_logic(3600, 86400, false, "uuid", true, true);
-    let pm = Arc::new(BulwarkPluginManager::new());
+    let pm = Arc::new(GarrisonPluginManager::new());
     let logic = logic.with_plugin_manager(pm);
     #[cfg(feature = "listener")]
-    let logic = logic.with_listener_manager(Arc::new(BulwarkListenerManager::new()));
+    let logic = logic.with_listener_manager(Arc::new(GarrisonListenerManager::new()));
 
     // 先 login 获取 token
     let token = logic.login("2002", &LoginParams::default()).await.unwrap();
@@ -1424,7 +1424,7 @@ async fn kickout_with_listener_manager_broadcasts_event() {
     let logic = make_logic(3600, 86400, false, "uuid", true, true);
     #[cfg(feature = "listener")]
     {
-        let lm = Arc::new(BulwarkListenerManager::new());
+        let lm = Arc::new(GarrisonListenerManager::new());
         let logic = logic.with_listener_manager(lm);
         // kickout 应成功，Kickout 事件作为副作用被广播
         logic.kickout("3003").await.unwrap();
@@ -1468,7 +1468,7 @@ async fn revoke_token_with_listener_manager_broadcasts_event() {
     let logic = make_logic(3600, 86400, false, "uuid", true, true);
     #[cfg(feature = "listener")]
     {
-        let lm = Arc::new(BulwarkListenerManager::new());
+        let lm = Arc::new(GarrisonListenerManager::new());
         let logic = logic.with_listener_manager(lm);
         let token = logic.login("4005", &LoginParams::default()).await.unwrap();
         // revoke 应成功，RevokeToken 事件作为副作用被广播
@@ -1531,8 +1531,8 @@ async fn login_by_token_with_auth_logic_delegates_to_auth() {
     use crate::core::auth::{AuthLogic, AuthLogicDefault};
     use crate::core::token::{Token, UuidTokenStyle};
 
-    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
-    let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
     let token_handler: Arc<dyn Token> = Arc::new(UuidTokenStyle);
     let auth_logic: Arc<dyn AuthLogic> =
         Arc::new(AuthLogicDefault::new(session.clone(), token_handler, 3600));
@@ -1564,7 +1564,7 @@ async fn refresh_token_non_jwt_style_returns_not_implemented() {
     let logic = make_logic(3600, 86400, false, "uuid", true, true);
     let result = logic.refresh_token("any-token").await;
     assert!(
-        matches!(result, Err(BulwarkError::NotImplemented(ref msg)) if msg.contains("token_style=jwt")),
+        matches!(result, Err(GarrisonError::NotImplemented(ref msg)) if msg.contains("token_style=jwt")),
         "非 jwt style 的 refresh_token 应返回 NotImplemented，实际: {:?}",
         result
     );
@@ -1590,23 +1590,23 @@ async fn refresh_token_invalid_jwt_returns_error() {
 #[tokio::test]
 async fn refresh_token_valid_jwt_returns_new_token() {
     // 构造 logic：token_style=jwt，使用明确 secret
-    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
-    let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
-    let mut config = BulwarkConfig::default_config();
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+    let mut config = GarrisonConfig::default_config();
     config.token_style = "jwt".to_string();
     config.jwt_secret = "refresh-test-secret".to_string().into();
     config.timeout = 3600;
-    let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
+    let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall {
         has_permission: true,
         has_role: true,
     });
-    let logic = BulwarkLogicDefault::new(session, Arc::new(config), firewall);
+    let logic = GarrisonLogicDefault::new(session, Arc::new(config), firewall);
 
     // 注入 plugin_manager + listener_manager 验证 auto-wire 不中断
-    let pm = Arc::new(BulwarkPluginManager::new());
+    let pm = Arc::new(GarrisonPluginManager::new());
     let logic = logic.with_plugin_manager(pm);
     #[cfg(feature = "listener")]
-    let logic = logic.with_listener_manager(Arc::new(BulwarkListenerManager::new()));
+    let logic = logic.with_listener_manager(Arc::new(GarrisonListenerManager::new()));
 
     // 先生成一个有效 JWT token
     let handler = crate::protocol::jwt::JwtHandler::new("refresh-test-secret");
@@ -1626,62 +1626,62 @@ async fn refresh_token_valid_jwt_returns_new_token() {
 // ------------------------------------------------------------------------
 
 /// 最小化子 trait mock，仅用于测试 trait default 方法。
-/// 所有必需方法返回 `BulwarkError::NotImplemented`（Rule 12 失败显性化，不 panic），
+/// 所有必需方法返回 `GarrisonError::NotImplemented`（Rule 12 失败显性化，不 panic），
 /// 仅保留 default 方法（login_by_token/verify_token/refresh_token）。
 struct MinimalLogic {
-    config: Arc<BulwarkConfig>,
+    config: Arc<GarrisonConfig>,
 }
 
-impl BulwarkCore for MinimalLogic {
-    fn config(&self) -> Arc<BulwarkConfig> {
+impl GarrisonCore for MinimalLogic {
+    fn config(&self) -> Arc<GarrisonConfig> {
         Arc::clone(&self.config)
     }
 }
 
 #[async_trait]
 impl SessionLogic for MinimalLogic {
-    async fn login(&self, _: &str, _params: &LoginParams) -> BulwarkResult<String> {
-        Err(BulwarkError::NotImplemented(
+    async fn login(&self, _: &str, _params: &LoginParams) -> GarrisonResult<String> {
+        Err(GarrisonError::NotImplemented(
             "mock implementation, not for production".to_string(),
         ))
     }
-    async fn login_with_token(&self, _: &str, _: &str) -> BulwarkResult<()> {
-        Err(BulwarkError::NotImplemented(
+    async fn login_with_token(&self, _: &str, _: &str) -> GarrisonResult<()> {
+        Err(GarrisonError::NotImplemented(
             "mock implementation, not for production".to_string(),
         ))
     }
-    async fn logout(&self) -> BulwarkResult<()> {
-        Err(BulwarkError::NotImplemented(
+    async fn logout(&self) -> GarrisonResult<()> {
+        Err(GarrisonError::NotImplemented(
             "mock implementation, not for production".to_string(),
         ))
     }
-    async fn logout_by_login_id(&self, _: &str) -> BulwarkResult<()> {
-        Err(BulwarkError::NotImplemented(
+    async fn logout_by_login_id(&self, _: &str) -> GarrisonResult<()> {
+        Err(GarrisonError::NotImplemented(
             "mock implementation, not for production".to_string(),
         ))
     }
-    async fn kickout(&self, _: &str) -> BulwarkResult<()> {
-        Err(BulwarkError::NotImplemented(
+    async fn kickout(&self, _: &str) -> GarrisonResult<()> {
+        Err(GarrisonError::NotImplemented(
             "mock implementation, not for production".to_string(),
         ))
     }
-    async fn kickout_by_token(&self, _: &str) -> BulwarkResult<()> {
-        Err(BulwarkError::NotImplemented(
+    async fn kickout_by_token(&self, _: &str) -> GarrisonResult<()> {
+        Err(GarrisonError::NotImplemented(
             "mock implementation, not for production".to_string(),
         ))
     }
-    async fn revoke_token(&self, _: &str) -> BulwarkResult<()> {
-        Err(BulwarkError::NotImplemented(
+    async fn revoke_token(&self, _: &str) -> GarrisonResult<()> {
+        Err(GarrisonError::NotImplemented(
             "mock implementation, not for production".to_string(),
         ))
     }
-    async fn check_login(&self) -> BulwarkResult<bool> {
-        Err(BulwarkError::NotImplemented(
+    async fn check_login(&self) -> GarrisonResult<bool> {
+        Err(GarrisonError::NotImplemented(
             "mock implementation, not for production".to_string(),
         ))
     }
-    async fn get_login_id(&self) -> BulwarkResult<Option<String>> {
-        Err(BulwarkError::NotImplemented(
+    async fn get_login_id(&self) -> GarrisonResult<Option<String>> {
+        Err(GarrisonError::NotImplemented(
             "mock implementation, not for production".to_string(),
         ))
     }
@@ -1689,13 +1689,13 @@ impl SessionLogic for MinimalLogic {
 
 #[async_trait]
 impl PermissionLogic for MinimalLogic {
-    async fn check_permission(&self, _: &str) -> BulwarkResult<()> {
-        Err(BulwarkError::NotImplemented(
+    async fn check_permission(&self, _: &str) -> GarrisonResult<()> {
+        Err(GarrisonError::NotImplemented(
             "mock implementation, not for production".to_string(),
         ))
     }
-    async fn check_role(&self, _: &str) -> BulwarkResult<()> {
-        Err(BulwarkError::NotImplemented(
+    async fn check_role(&self, _: &str) -> GarrisonResult<()> {
+        Err(GarrisonError::NotImplemented(
             "mock implementation, not for production".to_string(),
         ))
     }
@@ -1714,11 +1714,11 @@ impl PasswordLogic for MinimalLogic {}
 #[tokio::test]
 async fn trait_default_login_by_token_returns_not_implemented() {
     let logic = MinimalLogic {
-        config: Arc::new(BulwarkConfig::default_config()),
+        config: Arc::new(GarrisonConfig::default_config()),
     };
     let result = logic.login_by_token("any-token").await;
     assert!(
-        matches!(result, Err(BulwarkError::NotImplemented(ref msg)) if msg.contains("stp-login-by-token-feature-required")),
+        matches!(result, Err(GarrisonError::NotImplemented(ref msg)) if msg.contains("stp-login-by-token-feature-required")),
         "trait default login_by_token 应返回 NotImplemented，实际: {:?}",
         result
     );
@@ -1728,11 +1728,11 @@ async fn trait_default_login_by_token_returns_not_implemented() {
 #[tokio::test]
 async fn trait_default_verify_token_returns_not_implemented() {
     let logic = MinimalLogic {
-        config: Arc::new(BulwarkConfig::default_config()),
+        config: Arc::new(GarrisonConfig::default_config()),
     };
     let result = logic.verify_token("any-token").await;
     assert!(
-        matches!(result, Err(BulwarkError::NotImplemented(ref msg)) if msg.contains("override")),
+        matches!(result, Err(GarrisonError::NotImplemented(ref msg)) if msg.contains("override")),
         "trait default verify_token 应返回 NotImplemented，实际: {:?}",
         result
     );
@@ -1742,11 +1742,11 @@ async fn trait_default_verify_token_returns_not_implemented() {
 #[tokio::test]
 async fn trait_default_refresh_token_returns_not_implemented() {
     let logic = MinimalLogic {
-        config: Arc::new(BulwarkConfig::default_config()),
+        config: Arc::new(GarrisonConfig::default_config()),
     };
     let result = logic.refresh_token("any-token").await;
     assert!(
-        matches!(result, Err(BulwarkError::NotImplemented(ref msg)) if msg.contains("protocol-jwt")),
+        matches!(result, Err(GarrisonError::NotImplemented(ref msg)) if msg.contains("protocol-jwt")),
         "trait default refresh_token 应返回 NotImplemented，实际: {:?}",
         result
     );
@@ -1761,14 +1761,14 @@ async fn trait_default_refresh_token_returns_not_implemented() {
 #[tokio::test]
 async fn minimal_logic_returns_not_implemented() {
     let logic = MinimalLogic {
-        config: Arc::new(BulwarkConfig::default_config()),
+        config: Arc::new(GarrisonConfig::default_config()),
     };
 
     // 1. login
     assert!(
         matches!(
             logic.login("1", &LoginParams::default()).await,
-            Err(BulwarkError::NotImplemented(_))
+            Err(GarrisonError::NotImplemented(_))
         ),
         "MinimalLogic::login 应返回 NotImplemented（mock 不应 panic）"
     );
@@ -1776,20 +1776,20 @@ async fn minimal_logic_returns_not_implemented() {
     assert!(
         matches!(
             logic.login_with_token("1", "t").await,
-            Err(BulwarkError::NotImplemented(_))
+            Err(GarrisonError::NotImplemented(_))
         ),
         "MinimalLogic::login_with_token 应返回 NotImplemented"
     );
     // 3. logout
     assert!(
-        matches!(logic.logout().await, Err(BulwarkError::NotImplemented(_))),
+        matches!(logic.logout().await, Err(GarrisonError::NotImplemented(_))),
         "MinimalLogic::logout 应返回 NotImplemented"
     );
     // 4. logout_by_login_id
     assert!(
         matches!(
             logic.logout_by_login_id("1").await,
-            Err(BulwarkError::NotImplemented(_))
+            Err(GarrisonError::NotImplemented(_))
         ),
         "MinimalLogic::logout_by_login_id 应返回 NotImplemented"
     );
@@ -1797,7 +1797,7 @@ async fn minimal_logic_returns_not_implemented() {
     assert!(
         matches!(
             logic.kickout("1").await,
-            Err(BulwarkError::NotImplemented(_))
+            Err(GarrisonError::NotImplemented(_))
         ),
         "MinimalLogic::kickout 应返回 NotImplemented"
     );
@@ -1805,7 +1805,7 @@ async fn minimal_logic_returns_not_implemented() {
     assert!(
         matches!(
             logic.kickout_by_token("t").await,
-            Err(BulwarkError::NotImplemented(_))
+            Err(GarrisonError::NotImplemented(_))
         ),
         "MinimalLogic::kickout_by_token 应返回 NotImplemented"
     );
@@ -1813,7 +1813,7 @@ async fn minimal_logic_returns_not_implemented() {
     assert!(
         matches!(
             logic.revoke_token("t").await,
-            Err(BulwarkError::NotImplemented(_))
+            Err(GarrisonError::NotImplemented(_))
         ),
         "MinimalLogic::revoke_token 应返回 NotImplemented"
     );
@@ -1821,7 +1821,7 @@ async fn minimal_logic_returns_not_implemented() {
     assert!(
         matches!(
             logic.check_login().await,
-            Err(BulwarkError::NotImplemented(_))
+            Err(GarrisonError::NotImplemented(_))
         ),
         "MinimalLogic::check_login 应返回 NotImplemented"
     );
@@ -1829,7 +1829,7 @@ async fn minimal_logic_returns_not_implemented() {
     assert!(
         matches!(
             logic.get_login_id().await,
-            Err(BulwarkError::NotImplemented(_))
+            Err(GarrisonError::NotImplemented(_))
         ),
         "MinimalLogic::get_login_id 应返回 NotImplemented"
     );
@@ -1837,7 +1837,7 @@ async fn minimal_logic_returns_not_implemented() {
     assert!(
         matches!(
             logic.check_permission("p").await,
-            Err(BulwarkError::NotImplemented(_))
+            Err(GarrisonError::NotImplemented(_))
         ),
         "MinimalLogic::check_permission 应返回 NotImplemented"
     );
@@ -1845,7 +1845,7 @@ async fn minimal_logic_returns_not_implemented() {
     assert!(
         matches!(
             logic.check_role("r").await,
-            Err(BulwarkError::NotImplemented(_))
+            Err(GarrisonError::NotImplemented(_))
         ),
         "MinimalLogic::check_role 应返回 NotImplemented"
     );
@@ -1862,10 +1862,10 @@ async fn minimal_logic_returns_not_implemented() {
 #[tokio::test]
 async fn login_by_token_with_managers_triggers_hooks() {
     let logic = make_logic(3600, 86400, false, "simple", true, true);
-    let pm = Arc::new(BulwarkPluginManager::new());
+    let pm = Arc::new(GarrisonPluginManager::new());
     let logic = logic.with_plugin_manager(pm);
     #[cfg(feature = "listener")]
-    let logic = logic.with_listener_manager(Arc::new(BulwarkListenerManager::new()));
+    let logic = logic.with_listener_manager(Arc::new(GarrisonListenerManager::new()));
 
     // A11: 用 SimpleTokenStyle 生成合法 HMAC token（secret 与 make_logic 中 jwt_secret 一致）
     let style = crate::core::token::SimpleTokenStyle::new(STP_SIMPLE_TEST_SECRET.to_string());
@@ -1949,7 +1949,7 @@ async fn login_with_password_wrong_password_returns_invalid_param() {
 
     let result = logic.login_with_password("1001", "wrong-password").await;
     assert!(
-        matches!(result, Err(BulwarkError::InvalidParam(ref msg)) if msg == "invalid password"),
+        matches!(result, Err(GarrisonError::InvalidParam(ref msg)) if msg == "invalid password"),
         "错误密码应返回 InvalidParam(\"invalid password\")，实际: {:?}",
         result
     );
@@ -1976,7 +1976,7 @@ async fn login_with_password_user_not_found_returns_invalid_param() {
 
     let result = logic.login_with_password("9999", "any-password").await;
     assert!(
-        matches!(result, Err(BulwarkError::InvalidParam(ref msg)) if msg == "invalid password"),
+        matches!(result, Err(GarrisonError::InvalidParam(ref msg)) if msg == "invalid password"),
         "用户不存在应返回 InvalidParam(\"invalid password\")（不泄露 NotLogin），实际: {:?}",
         result
     );
@@ -2002,7 +2002,7 @@ async fn login_with_password_unsupported_hash_format_returns_invalid_param() {
 
     let result = logic.login_with_password("1001", "any-password").await;
     assert!(
-        matches!(result, Err(BulwarkError::InvalidParam(ref msg)) if msg == "unsupported hash format"),
+        matches!(result, Err(GarrisonError::InvalidParam(ref msg)) if msg == "unsupported hash format"),
         "不支持的哈希格式应返回 InvalidParam(\"unsupported hash format\")，实际: {:?}",
         result
     );
@@ -2012,13 +2012,13 @@ async fn login_with_password_unsupported_hash_format_returns_invalid_param() {
 // 0.3.0 TG1: metrics 集成测试
 // ------------------------------------------------------------------------
 
-/// with_metrics builder 注入 BulwarkMetrics 后 login 触发 record_login(success)。
+/// with_metrics builder 注入 GarrisonMetrics 后 login 触发 record_login(success)。
 #[cfg(feature = "metrics-prometheus")]
 #[tokio::test]
 async fn login_with_metrics_records_success() {
     let logic = make_logic(3600, 86400, false, "uuid", false, false);
     let registry = prometheus::Registry::new();
-    let metrics = Arc::new(crate::observability::BulwarkMetrics::register_to(&registry).unwrap());
+    let metrics = Arc::new(crate::observability::GarrisonMetrics::register_to(&registry).unwrap());
     let logic = logic.with_metrics(metrics.clone());
 
     let _token = logic.login("1001", &LoginParams::default()).await.unwrap();
@@ -2028,7 +2028,7 @@ async fn login_with_metrics_records_success() {
         .encode_to_string(&registry.gather())
         .unwrap();
     assert!(
-        output.contains("bulwark_login_total{result=\"success\"} 1"),
+        output.contains("garrison_login_total{result=\"success\"} 1"),
         "expected success counter=1, got: {}",
         output
     );
@@ -2040,7 +2040,7 @@ async fn login_with_metrics_records_success() {
 async fn check_permission_with_metrics_records_query() {
     let logic = make_logic(3600, 86400, true, "uuid", false, false);
     let registry = prometheus::Registry::new();
-    let metrics = Arc::new(crate::observability::BulwarkMetrics::register_to(&registry).unwrap());
+    let metrics = Arc::new(crate::observability::GarrisonMetrics::register_to(&registry).unwrap());
     let logic = logic.with_metrics(metrics.clone());
 
     let token = logic.login("1001", &LoginParams::default()).await.unwrap();
@@ -2057,7 +2057,7 @@ async fn check_permission_with_metrics_records_query() {
         .encode_to_string(&registry.gather())
         .unwrap();
     assert!(
-        output.contains("bulwark_permission_query_total{result=\"deny\"} 1"),
+        output.contains("garrison_permission_query_total{result=\"deny\"} 1"),
         "expected deny counter=1, got: {}",
         output
     );
@@ -2080,7 +2080,7 @@ async fn login_without_metrics_does_not_panic() {
 /// R-001: 新方法 get_permission_list_with_type 默认委托旧方法。
 ///
 /// 偏差说明：spec R-001 要求"旧方法委托新方法"，实际实现为"新方法默认委托旧方法"
-/// 以保持向后兼容（28 个现有 BulwarkInterface 实现者无需修改）。
+/// 以保持向后兼容（28 个现有 GarrisonInterface 实现者无需修改）。
 /// MockInterface 旧方法返回空 Vec，新方法默认委托旧方法应返回相同结果。
 #[tokio::test]
 #[serial]
@@ -2177,7 +2177,7 @@ async fn with_login_type_builder_sets_login_type() {
 #[tokio::test]
 #[serial]
 async fn with_login_type_chains_with_other_builders() {
-    let pm = Arc::new(BulwarkPluginManager::new());
+    let pm = Arc::new(GarrisonPluginManager::new());
     let logic = make_logic(3600, 86400, false, "uuid", true, true)
         .with_plugin_manager(pm)
         .with_login_type("merchant");
@@ -2239,18 +2239,18 @@ async fn with_jwt_mode_builder_sets_mode() {
 #[serial]
 async fn check_login_stateless_only_jwt_verify() {
     // 构造 logic：jwt_mode=Stateless + token_style=jwt + 明确 secret
-    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
-    let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
-    let mut config = BulwarkConfig::default_config();
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+    let mut config = GarrisonConfig::default_config();
     config.token_style = "jwt".to_string();
     config.jwt_secret = "stateless-test-secret".to_string().into();
     config.throw_on_not_login = true;
-    let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
+    let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall {
         has_permission: true,
         has_role: true,
     });
     let logic = Arc::new(
-        BulwarkLogicDefault::new(session, Arc::new(config), firewall)
+        GarrisonLogicDefault::new(session, Arc::new(config), firewall)
             .with_jwt_mode(JwtMode::Stateless),
     );
 
@@ -2277,18 +2277,19 @@ async fn check_login_stateless_only_jwt_verify() {
 #[serial]
 async fn check_login_mixin_jwt_and_session() {
     // 构造 logic：jwt_mode=Mixin（默认）+ token_style=jwt + 明确 secret
-    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
-    let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
-    let mut config = BulwarkConfig::default_config();
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+    let mut config = GarrisonConfig::default_config();
     config.token_style = "jwt".to_string();
     config.jwt_secret = "mixin-test-secret".to_string().into();
     config.throw_on_not_login = true;
-    let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
+    let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall {
         has_permission: true,
         has_role: true,
     });
     let logic = Arc::new(
-        BulwarkLogicDefault::new(session, Arc::new(config), firewall).with_jwt_mode(JwtMode::Mixin),
+        GarrisonLogicDefault::new(session, Arc::new(config), firewall)
+            .with_jwt_mode(JwtMode::Mixin),
     );
 
     // login 创建 session + 签发 JWT token
@@ -2333,11 +2334,11 @@ async fn check_login_simple_only_session() {
 #[tokio::test]
 async fn trait_default_login_with_password_returns_not_implemented() {
     let logic = MinimalLogic {
-        config: Arc::new(BulwarkConfig::default_config()),
+        config: Arc::new(GarrisonConfig::default_config()),
     };
     let result = logic.login_with_password("1001", "any-password").await;
     assert!(
-        matches!(result, Err(BulwarkError::NotImplemented(ref msg)) if msg.contains("account-credential")),
+        matches!(result, Err(GarrisonError::NotImplemented(ref msg)) if msg.contains("account-credential")),
         "trait default login_with_password 应返回 NotImplemented（需 account-credential + db-sqlite），实际: {:?}",
         result
     );
@@ -2361,7 +2362,7 @@ async fn check_login_mixin_broadcasts_session_timeout_when_account_missing() {
 
     // 注入 listener_manager（Mixin 模式为默认）
     #[cfg(feature = "listener")]
-    let logic = logic.with_listener_manager(Arc::new(BulwarkListenerManager::new()));
+    let logic = logic.with_listener_manager(Arc::new(GarrisonListenerManager::new()));
 
     // check_login 应返回 false（不 panic，listener 广播作为副作用执行）
     with_current_token(token, async {
@@ -2385,7 +2386,7 @@ async fn check_login_simple_broadcasts_session_timeout_when_account_missing() {
 
     // 注入 listener_manager
     #[cfg(feature = "listener")]
-    let logic = logic.with_listener_manager(Arc::new(BulwarkListenerManager::new()));
+    let logic = logic.with_listener_manager(Arc::new(GarrisonListenerManager::new()));
 
     with_current_token(token, async {
         let valid = logic.check_login().await.unwrap();
@@ -2401,21 +2402,21 @@ async fn check_login_simple_broadcasts_session_timeout_when_account_missing() {
 #[tokio::test]
 #[serial]
 async fn check_permission_not_logged_in_emits_deny_metric() {
-    use crate::observability::BulwarkMetrics;
+    use crate::observability::GarrisonMetrics;
     let registry = prometheus::Registry::new();
-    let metrics = Arc::new(BulwarkMetrics::register_to(&registry).expect("注册失败"));
+    let metrics = Arc::new(GarrisonMetrics::register_to(&registry).expect("注册失败"));
     let logic = make_logic(3600, 86400, false, "uuid", true, true).with_metrics(metrics);
 
     // 未登录状态下 check_permission（throw_on_not_login=false → 返回 NotPermission）
     let result = logic.check_permission("user:read").await;
-    assert!(matches!(result, Err(BulwarkError::NotPermission(_))));
+    assert!(matches!(result, Err(GarrisonError::NotPermission(_))));
 
     // 验证 metrics 记录了 deny
     let output = prometheus::TextEncoder::new()
         .encode_to_string(&registry.gather())
         .expect("encode 失败");
     assert!(
-        output.contains("bulwark_permission_query_total{result=\"deny\"}"),
+        output.contains("garrison_permission_query_total{result=\"deny\"}"),
         "未登录 check_permission 应 emit deny metric，实际: {}",
         output
     );
@@ -2429,25 +2430,25 @@ async fn check_permission_not_logged_in_emits_deny_metric() {
 #[serial]
 async fn check_permission_with_checker_emits_metric() {
     use crate::core::permission::PermissionCheckerDefault;
-    use crate::observability::BulwarkMetrics;
+    use crate::observability::GarrisonMetrics;
 
     /// 本测试专用 mock，账号 1001 持有 user:read 权限。
     struct MockInterfaceWithPerms;
     #[async_trait]
-    impl BulwarkInterface for MockInterfaceWithPerms {
-        async fn get_permission_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
+    impl GarrisonInterface for MockInterfaceWithPerms {
+        async fn get_permission_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
             Ok(vec!["user:read".to_string()])
         }
-        async fn get_role_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
+        async fn get_role_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
             Ok(vec![])
         }
     }
 
     let registry = prometheus::Registry::new();
-    let metrics = Arc::new(BulwarkMetrics::register_to(&registry).expect("注册失败"));
+    let metrics = Arc::new(GarrisonMetrics::register_to(&registry).expect("注册失败"));
 
     // 使用 PermissionCheckerDefault（账号 1001 持有 user:read）
-    let interface: Arc<dyn BulwarkInterface> = Arc::new(MockInterfaceWithPerms);
+    let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterfaceWithPerms);
     let checker = Arc::new(PermissionCheckerDefault::new(interface));
 
     let logic = make_logic(3600, 86400, false, "uuid", true, true)
@@ -2469,7 +2470,7 @@ async fn check_permission_with_checker_emits_metric() {
         .encode_to_string(&registry.gather())
         .expect("encode 失败");
     assert!(
-        output.contains("bulwark_permission_query_total{result=\"allow\"}"),
+        output.contains("garrison_permission_query_total{result=\"allow\"}"),
         "持有权限应 emit allow metric，实际: {}",
         output
     );
@@ -2482,20 +2483,20 @@ async fn check_permission_with_checker_emits_metric() {
 #[tokio::test]
 #[serial]
 async fn check_role_not_logged_in_emits_deny_metric() {
-    use crate::observability::BulwarkMetrics;
+    use crate::observability::GarrisonMetrics;
     let registry = prometheus::Registry::new();
-    let metrics = Arc::new(BulwarkMetrics::register_to(&registry).expect("注册失败"));
+    let metrics = Arc::new(GarrisonMetrics::register_to(&registry).expect("注册失败"));
     let logic = make_logic(3600, 86400, false, "uuid", true, true).with_metrics(metrics);
 
     // 未登录状态下 check_role
     let result = logic.check_role("admin").await;
-    assert!(matches!(result, Err(BulwarkError::NotRole(_))));
+    assert!(matches!(result, Err(GarrisonError::NotRole(_))));
 
     let output = prometheus::TextEncoder::new()
         .encode_to_string(&registry.gather())
         .expect("encode 失败");
     assert!(
-        output.contains("bulwark_role_query_total{result=\"deny\"}"),
+        output.contains("garrison_role_query_total{result=\"deny\"}"),
         "未登录 check_role 应 emit deny metric，实际: {}",
         output
     );
@@ -2508,9 +2509,9 @@ async fn check_role_not_logged_in_emits_deny_metric() {
 #[tokio::test]
 #[serial]
 async fn check_role_logged_in_emits_metric() {
-    use crate::observability::BulwarkMetrics;
+    use crate::observability::GarrisonMetrics;
     let registry = prometheus::Registry::new();
-    let metrics = Arc::new(BulwarkMetrics::register_to(&registry).expect("注册失败"));
+    let metrics = Arc::new(GarrisonMetrics::register_to(&registry).expect("注册失败"));
     let logic = make_logic(3600, 86400, false, "uuid", true, true).with_metrics(metrics);
 
     let token = logic.login("1001", &LoginParams::default()).await.unwrap();
@@ -2525,43 +2526,43 @@ async fn check_role_logged_in_emits_metric() {
         .encode_to_string(&registry.gather())
         .expect("encode 失败");
     assert!(
-        output.contains("bulwark_role_query_total{result=\"allow\"}"),
+        output.contains("garrison_role_query_total{result=\"allow\"}"),
         "持有角色应 emit allow metric，实际: {}",
         output
     );
 }
 
-/// BulwarkUtil::revoke_token 全局函数成功销毁会话。
+/// GarrisonUtil::revoke_token 全局函数成功销毁会话。
 ///
-/// 覆盖行 1381-1384（revoke_token 全局函数委托 BulwarkManager::logic()）。
+/// 覆盖行 1381-1384（revoke_token 全局函数委托 GarrisonManager::logic()）。
 #[tokio::test]
 #[serial]
 async fn util_revoke_token_destroys_session() {
     init_global_manager(false);
-    let token = BulwarkUtil::login_simple("1001").await.unwrap();
+    let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     // revoke_token 应成功
-    BulwarkUtil::revoke_token(&token).await.unwrap();
+    GarrisonUtil::revoke_token(&token).await.unwrap();
 
     // 验证 token session 已销毁
-    let valid = with_token(&token, async { BulwarkUtil::check_login().await })
+    let valid = with_token(&token, async { GarrisonUtil::check_login().await })
         .await
         .unwrap();
     assert!(!valid, "revoke_token 后 check_login 应返回 false");
 }
 
-/// BulwarkUtil::login_by_token 全局函数在初始化后不返回 Session 错误。
+/// GarrisonUtil::login_by_token 全局函数在初始化后不返回 Session 错误。
 ///
-/// 覆盖行 1565-1566（login_by_token 全局函数委托 BulwarkManager::logic()）。
+/// 覆盖行 1565-1566（login_by_token 全局函数委托 GarrisonManager::logic()）。
 /// uuid style token 无法 verify → 返回 InvalidToken（而非 Session "未初始化"）。
 #[tokio::test]
 #[serial]
 async fn util_login_by_token_delegates_to_logic_after_init() {
     init_global_manager(false);
     // uuid style token → verify_token 返回 InvalidToken
-    let result = BulwarkUtil::login_by_token("any-token").await;
+    let result = GarrisonUtil::login_by_token("any-token").await;
     assert!(
-        !matches!(result, Err(BulwarkError::Session(ref msg)) if msg.contains("manager-not-init")),
+        !matches!(result, Err(GarrisonError::Session(ref msg)) if msg.contains("manager-not-init")),
         "初始化后 login_by_token 不应返回 '未初始化' Session 错误，实际: {:?}",
         result
     );
@@ -2577,7 +2578,7 @@ async fn check_access_token_not_logged_in_returns_not_login() {
     let logic = make_logic(3600, 86400, false, "uuid", true, true);
     let result = logic.check_access_token().await;
     assert!(
-        matches!(result, Err(BulwarkError::NotLogin(_))),
+        matches!(result, Err(GarrisonError::NotLogin(_))),
         "未登录时 check_access_token 应返回 NotLogin，实际: {:?}",
         result
     );
@@ -2589,7 +2590,7 @@ async fn check_client_token_not_logged_in_returns_not_login() {
     let logic = make_logic(3600, 86400, false, "uuid", true, true);
     let result = logic.check_client_token().await;
     assert!(
-        matches!(result, Err(BulwarkError::NotLogin(_))),
+        matches!(result, Err(GarrisonError::NotLogin(_))),
         "未登录时 check_client_token 应返回 NotLogin，实际: {:?}",
         result
     );
@@ -2601,53 +2602,53 @@ async fn check_temp_token_not_logged_in_returns_not_login() {
     let logic = make_logic(3600, 86400, false, "uuid", true, true);
     let result = logic.check_temp_token().await;
     assert!(
-        matches!(result, Err(BulwarkError::NotLogin(_))),
+        matches!(result, Err(GarrisonError::NotLogin(_))),
         "未登录时 check_temp_token 应返回 NotLogin，实际: {:?}",
         result
     );
 }
 
-/// BulwarkUtil::check_access_token 全局函数委托到 logic（覆盖行 1484-1487）。
+/// GarrisonUtil::check_access_token 全局函数委托到 logic（覆盖行 1484-1487）。
 #[tokio::test]
 #[serial]
 async fn util_check_access_token_delegates_to_logic() {
     init_global_manager(false);
-    let result = BulwarkUtil::check_access_token().await;
+    let result = GarrisonUtil::check_access_token().await;
     assert!(result.is_err());
 }
 
-/// BulwarkUtil::check_client_token 全局函数委托到 logic（覆盖行 1500-1503）。
+/// GarrisonUtil::check_client_token 全局函数委托到 logic（覆盖行 1500-1503）。
 #[tokio::test]
 #[serial]
 async fn util_check_client_token_delegates_to_logic() {
     init_global_manager(false);
-    let result = BulwarkUtil::check_client_token().await;
+    let result = GarrisonUtil::check_client_token().await;
     assert!(result.is_err());
 }
 
-/// BulwarkUtil::check_temp_token 全局函数委托到 logic（覆盖行 1516-1519）。
+/// GarrisonUtil::check_temp_token 全局函数委托到 logic（覆盖行 1516-1519）。
 #[tokio::test]
 #[serial]
 async fn util_check_temp_token_delegates_to_logic() {
     init_global_manager(false);
-    let result = BulwarkUtil::check_temp_token().await;
+    let result = GarrisonUtil::check_temp_token().await;
     assert!(result.is_err());
 }
 
 // ============================================================================
-// BulwarkUtil 同步方法（check_*_sync）测试
+// GarrisonUtil 同步方法（check_*_sync）测试
 // ============================================================================
 //
 // 测试约束：
 // - `#[tokio::test(flavor = "multi_thread")]`：`block_in_place` 要求 multi_thread runtime
-// - `#[serial]`：修改全局 BulwarkManager 单例
+// - `#[serial]`：修改全局 GarrisonManager 单例
 // - `check_*_sync` 内部 `block_in_place + Handle::current().block_on` 在同 task 内安全
 // ============================================================================
 
 /// 验证 `check_login_sync` 在 multi_thread runtime 内正确委托 async `check_login`。
 ///
 /// 测试逻辑：
-/// 1. 初始化 BulwarkManager（mock DAO）
+/// 1. 初始化 GarrisonManager（mock DAO）
 /// 2. login 一个用户获取 token
 /// 3. 在 `current_token` task_local 作用域内调用 `check_login_sync()`
 /// 4. 验证返回 `Ok(true)`（已登录）
@@ -2660,10 +2661,10 @@ async fn util_check_temp_token_delegates_to_logic() {
 #[serial]
 async fn sync_check_login_works_in_runtime() {
     init_global_manager(false);
-    let token = BulwarkUtil::login_simple("1001").await.unwrap();
+    let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     with_current_token(token, async {
-        let result = BulwarkUtil::check_login_sync();
+        let result = GarrisonUtil::check_login_sync();
         assert!(
             result.is_ok(),
             "check_login_sync 应返回 Ok，实际: {:?}",
@@ -2673,7 +2674,7 @@ async fn sync_check_login_works_in_runtime() {
     })
     .await;
 
-    BulwarkManager::reset_for_test();
+    GarrisonManager::reset_for_test();
 }
 
 /// 验证 `check_login_sync` 未登录时返回 Ok(false)（throw_on_not_login=false）。
@@ -2682,7 +2683,7 @@ async fn sync_check_login_works_in_runtime() {
 async fn sync_check_login_returns_false_when_not_logged_in() {
     init_global_manager(false);
     // 未设置 task_local，check_login_sync 应返回 Ok(false)
-    let result = BulwarkUtil::check_login_sync();
+    let result = GarrisonUtil::check_login_sync();
     assert!(
         result.is_ok(),
         "check_login_sync 应返回 Ok，实际: {:?}",
@@ -2693,7 +2694,7 @@ async fn sync_check_login_returns_false_when_not_logged_in() {
         "未登录时 check_login_sync 应返回 Ok(false)"
     );
 
-    BulwarkManager::reset_for_test();
+    GarrisonManager::reset_for_test();
 }
 
 /// 验证 `check_permission_sync` 已登录 + 持有权限时返回 Ok(())。
@@ -2705,11 +2706,11 @@ async fn sync_check_permission_held_returns_ok() {
         vec!["user:read".to_string()],
         vec!["admin".to_string()],
     );
-    let token = BulwarkUtil::login_simple("1001").await.unwrap();
+    let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     with_current_token(token, async {
         with_default_tenant(async {
-            let result = BulwarkUtil::check_permission_sync("user:read");
+            let result = GarrisonUtil::check_permission_sync("user:read");
             assert!(
                 result.is_ok(),
                 "持有权限时 check_permission_sync 应返回 Ok，实际: {:?}",
@@ -2720,7 +2721,7 @@ async fn sync_check_permission_held_returns_ok() {
     })
     .await;
 
-    BulwarkManager::reset_for_test();
+    GarrisonManager::reset_for_test();
 }
 
 /// 验证 `check_role_sync` 已登录 + 持有角色时返回 Ok(())。
@@ -2732,10 +2733,10 @@ async fn sync_check_role_held_returns_ok() {
         vec!["user:read".to_string()],
         vec!["admin".to_string()],
     );
-    let token = BulwarkUtil::login_simple("1001").await.unwrap();
+    let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     with_current_token(token, async {
-        let result = BulwarkUtil::check_role_sync("admin");
+        let result = GarrisonUtil::check_role_sync("admin");
         assert!(
             result.is_ok(),
             "持有角色时 check_role_sync 应返回 Ok，实际: {:?}",
@@ -2744,7 +2745,7 @@ async fn sync_check_role_held_returns_ok() {
     })
     .await;
 
-    BulwarkManager::reset_for_test();
+    GarrisonManager::reset_for_test();
 }
 
 /// 验证 `check_access_token_sync` 已登录时返回 Ok(())。
@@ -2752,10 +2753,10 @@ async fn sync_check_role_held_returns_ok() {
 #[serial]
 async fn sync_check_access_token_returns_ok_when_logged_in() {
     init_global_manager(false);
-    let token = BulwarkUtil::login_simple("1001").await.unwrap();
+    let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     with_current_token(token, async {
-        let result = BulwarkUtil::check_access_token_sync();
+        let result = GarrisonUtil::check_access_token_sync();
         assert!(
             result.is_ok(),
             "已登录时 check_access_token_sync 应返回 Ok，实际: {:?}",
@@ -2764,7 +2765,7 @@ async fn sync_check_access_token_returns_ok_when_logged_in() {
     })
     .await;
 
-    BulwarkManager::reset_for_test();
+    GarrisonManager::reset_for_test();
 }
 
 /// 验证 `check_client_token_sync` 已登录时返回 Ok(())。
@@ -2772,10 +2773,10 @@ async fn sync_check_access_token_returns_ok_when_logged_in() {
 #[serial]
 async fn sync_check_client_token_returns_ok_when_logged_in() {
     init_global_manager(false);
-    let token = BulwarkUtil::login_simple("1001").await.unwrap();
+    let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     with_current_token(token, async {
-        let result = BulwarkUtil::check_client_token_sync();
+        let result = GarrisonUtil::check_client_token_sync();
         assert!(
             result.is_ok(),
             "已登录时 check_client_token_sync 应返回 Ok，实际: {:?}",
@@ -2784,7 +2785,7 @@ async fn sync_check_client_token_returns_ok_when_logged_in() {
     })
     .await;
 
-    BulwarkManager::reset_for_test();
+    GarrisonManager::reset_for_test();
 }
 
 /// 验证 `check_temp_token_sync` 已登录时返回 Ok(())。
@@ -2792,10 +2793,10 @@ async fn sync_check_client_token_returns_ok_when_logged_in() {
 #[serial]
 async fn sync_check_temp_token_returns_ok_when_logged_in() {
     init_global_manager(false);
-    let token = BulwarkUtil::login_simple("1001").await.unwrap();
+    let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     with_current_token(token, async {
-        let result = BulwarkUtil::check_temp_token_sync();
+        let result = GarrisonUtil::check_temp_token_sync();
         assert!(
             result.is_ok(),
             "已登录时 check_temp_token_sync 应返回 Ok，实际: {:?}",
@@ -2804,28 +2805,28 @@ async fn sync_check_temp_token_returns_ok_when_logged_in() {
     })
     .await;
 
-    BulwarkManager::reset_for_test();
+    GarrisonManager::reset_for_test();
 }
 
 /// 验证 `check_api_key_sync` 未设置 token 上下文时返回 Err。
 ///
 /// 注意：`protocol-apikey` feature 关闭时 `check_api_key` 返回 Ok(())，
-/// 但未设置 token 上下文时 `BulwarkLogicDefault::check_api_key` 在
+/// 但未设置 token 上下文时 `GarrisonLogicDefault::check_api_key` 在
 /// `protocol-apikey` 启用时返回 NotLogin。本测试只验证方法不 panic
 /// 且返回 Result（具体错误类型依赖 feature 配置）。
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn sync_check_api_key_executes_without_panic() {
     init_global_manager(false);
-    let token = BulwarkUtil::login_simple("1001").await.unwrap();
+    let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     with_current_token(token, async {
         // 调用 check_api_key_sync 不应 panic（具体返回值依赖 protocol-apikey feature）
-        let _ = BulwarkUtil::check_api_key_sync("default");
+        let _ = GarrisonUtil::check_api_key_sync("default");
     })
     .await;
 
-    BulwarkManager::reset_for_test();
+    GarrisonManager::reset_for_test();
 }
 
 // ============================================================================
@@ -2838,19 +2839,19 @@ async fn sync_check_api_key_executes_without_panic() {
 /// 使用 MockClock 替代 `tokio::time::sleep` 消除 flaky 测试（T007）。
 #[tokio::test]
 async fn hover_timeout_evicts_inactive_session() {
-    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
-    let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
-    let mut config = BulwarkConfig::default_config();
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+    let mut config = GarrisonConfig::default_config();
     config.token_style = "uuid".to_string();
     config.session_hover_timeout = 1;
     config.throw_on_not_login = false;
-    let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
+    let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall {
         has_permission: true,
         has_role: true,
     });
     let mock_clock = Arc::new(MockClock::new(chrono::Utc::now()));
     let logic = Arc::new(
-        BulwarkLogicDefault::new(session, Arc::new(config), firewall)
+        GarrisonLogicDefault::new(session, Arc::new(config), firewall)
             .with_clock(mock_clock.clone()),
     );
 
@@ -2875,16 +2876,16 @@ async fn hover_timeout_evicts_inactive_session() {
 /// R-hover-004: `session_hover_timeout=10`（10秒），login 后立即 check_login 返回 true。
 #[tokio::test]
 async fn hover_timeout_active_session_not_evicted() {
-    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
-    let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
-    let mut config = BulwarkConfig::default_config();
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+    let mut config = GarrisonConfig::default_config();
     config.token_style = "uuid".to_string();
     config.session_hover_timeout = 10;
-    let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
+    let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall {
         has_permission: true,
         has_role: true,
     });
-    let logic = Arc::new(BulwarkLogicDefault::new(
+    let logic = Arc::new(GarrisonLogicDefault::new(
         session,
         Arc::new(config),
         firewall,
@@ -2909,17 +2910,17 @@ async fn hover_timeout_active_session_not_evicted() {
 /// R-hover-001: 默认配置 `session_hover_timeout=-1`，login 后 check_login 返回 true（不受悬停影响）。
 #[tokio::test]
 async fn hover_timeout_disabled_by_default() {
-    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
-    let session = Arc::new(BulwarkSession::new(dao, 3600, 86400));
-    let mut config = BulwarkConfig::default_config();
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+    let mut config = GarrisonConfig::default_config();
     config.token_style = "uuid".to_string();
     // session_hover_timeout 保持默认 -1
     assert_eq!(config.session_hover_timeout, -1);
-    let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
+    let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall {
         has_permission: true,
         has_role: true,
     });
-    let logic = Arc::new(BulwarkLogicDefault::new(
+    let logic = Arc::new(GarrisonLogicDefault::new(
         session,
         Arc::new(config),
         firewall,
@@ -2943,7 +2944,7 @@ async fn hover_timeout_disabled_by_default() {
 }
 
 // ============================================================================
-// BulwarkUtil::check_api_key 测试
+// GarrisonUtil::check_api_key 测试
 // ============================================================================
 
 #[cfg(feature = "protocol-apikey")]
@@ -2956,16 +2957,16 @@ mod check_api_key_tests {
     #[serial]
     async fn check_api_key_valid_key_correct_namespace_succeeds() {
         let dao = init_global_manager_with_dao(false);
-        let handler = ApiKeyHandler::new(dao.clone() as Arc<dyn BulwarkDao>);
+        let handler = ApiKeyHandler::new(dao.clone() as Arc<dyn GarrisonDao>);
         let key = handler
             .generate_with_namespace("user1", "ns1", vec![], 3600)
             .await
             .unwrap();
 
-        let result = with_token(&key, BulwarkUtil::check_api_key("ns1")).await;
+        let result = with_token(&key, GarrisonUtil::check_api_key("ns1")).await;
         assert!(result.is_ok(), "有效 key + 正确 namespace 应通过校验");
 
-        BulwarkManager::reset_for_test();
+        GarrisonManager::reset_for_test();
     }
 
     /// 无效 API Key（不存在）→ Err(InvalidToken)。
@@ -2976,16 +2977,16 @@ mod check_api_key_tests {
 
         let result = with_token(
             "nonexistent-key-12345",
-            BulwarkUtil::check_api_key("default"),
+            GarrisonUtil::check_api_key("default"),
         )
         .await;
         assert!(
-            matches!(result, Err(BulwarkError::InvalidToken(_))),
+            matches!(result, Err(GarrisonError::InvalidToken(_))),
             "不存在的 key 应返回 InvalidToken，实际: {:?}",
             result
         );
 
-        BulwarkManager::reset_for_test();
+        GarrisonManager::reset_for_test();
     }
 
     /// 未设置 current_token 上下文 → Err(NotLogin)。
@@ -2995,19 +2996,19 @@ mod check_api_key_tests {
         init_global_manager_with_dao(false);
 
         // 不调用 with_token，直接调用 check_api_key
-        let result = BulwarkUtil::check_api_key("default").await;
+        let result = GarrisonUtil::check_api_key("default").await;
         assert!(
             result.is_err(),
             "未设置 token 上下文应返回错误，实际: {:?}",
             result
         );
         assert!(
-            matches!(result, Err(BulwarkError::NotLogin(_))),
+            matches!(result, Err(GarrisonError::NotLogin(_))),
             "未设置 token 上下文应返回 NotLogin（映射 401），实际: {:?}",
             result
         );
 
-        BulwarkManager::reset_for_test();
+        GarrisonManager::reset_for_test();
     }
 
     /// namespace 隔离：ns1 的 key 不能在 ns2 校验通过。
@@ -3015,29 +3016,29 @@ mod check_api_key_tests {
     #[serial]
     async fn check_api_key_namespace_isolation() {
         let dao = init_global_manager_with_dao(false);
-        let handler = ApiKeyHandler::new(dao.clone() as Arc<dyn BulwarkDao>);
+        let handler = ApiKeyHandler::new(dao.clone() as Arc<dyn GarrisonDao>);
         let key_ns1 = handler
             .generate_with_namespace("user1", "ns1", vec![], 3600)
             .await
             .unwrap();
 
         // ns1 的 key 在 ns1 校验通过
-        let result_ns1 = with_token(&key_ns1, BulwarkUtil::check_api_key("ns1")).await;
+        let result_ns1 = with_token(&key_ns1, GarrisonUtil::check_api_key("ns1")).await;
         assert!(result_ns1.is_ok(), "ns1 key + ns1 namespace 应通过");
 
         // ns1 的 key 在 ns2 校验失败（namespace 不匹配）
-        let result_ns2 = with_token(&key_ns1, BulwarkUtil::check_api_key("ns2")).await;
+        let result_ns2 = with_token(&key_ns1, GarrisonUtil::check_api_key("ns2")).await;
         assert!(
             result_ns2.is_err(),
             "ns1 key + ns2 namespace 应失败（namespace 隔离）"
         );
         assert!(
-            matches!(result_ns2, Err(BulwarkError::InvalidToken(_))),
+            matches!(result_ns2, Err(GarrisonError::InvalidToken(_))),
             "namespace 不匹配应返回 InvalidToken，实际: {:?}",
             result_ns2
         );
 
-        BulwarkManager::reset_for_test();
+        GarrisonManager::reset_for_test();
     }
 
     /// 默认命名空间：generate（不带 namespace）生成的 key 可在 "default" 校验通过。
@@ -3045,29 +3046,29 @@ mod check_api_key_tests {
     #[serial]
     async fn check_api_key_default_namespace() {
         let dao = init_global_manager_with_dao(false);
-        let handler = ApiKeyHandler::new(dao.clone() as Arc<dyn BulwarkDao>);
+        let handler = ApiKeyHandler::new(dao.clone() as Arc<dyn GarrisonDao>);
         let key = handler.generate("user1", vec![], 3600).await.unwrap();
 
-        let result = with_token(&key, BulwarkUtil::check_api_key("default")).await;
+        let result = with_token(&key, GarrisonUtil::check_api_key("default")).await;
         assert!(result.is_ok(), "默认命名空间生成的 key 应在 default 通过");
 
-        BulwarkManager::reset_for_test();
+        GarrisonManager::reset_for_test();
     }
 
-    /// BulwarkManager 未初始化 → Err(Session)。
+    /// GarrisonManager 未初始化 → Err(Session)。
     #[tokio::test]
     #[serial]
     async fn check_api_key_manager_not_initialized_fails() {
-        BulwarkManager::reset_for_test();
+        GarrisonManager::reset_for_test();
 
-        let result = with_token("some-key", BulwarkUtil::check_api_key("default")).await;
+        let result = with_token("some-key", GarrisonUtil::check_api_key("default")).await;
         assert!(
             result.is_err(),
             "Manager 未初始化应返回错误，实际: {:?}",
             result
         );
 
-        BulwarkManager::reset_for_test();
+        GarrisonManager::reset_for_test();
     }
 }
 
@@ -3079,17 +3080,17 @@ use super::context::{current_renewed_token, with_renewed_token_scope};
 use crate::core::auth::AuthLogicDefault;
 use crate::core::token::UuidTokenStyle;
 
-/// 辅助函数：创建 BulwarkLogicDefault 实例并注入 auth_logic（用于 check_and_renew 测试）。
+/// 辅助函数：创建 GarrisonLogicDefault 实例并注入 auth_logic（用于 check_and_renew 测试）。
 /// 返回 MockDao 引用以便测试中操作 TTL。
 fn make_logic_with_auth(
     timeout: u64,
     active_timeout: u64,
     token_style: &str,
     auto_renewal_threshold: i64,
-) -> (Arc<MockDao>, BulwarkLogicDefault) {
+) -> (Arc<MockDao>, GarrisonLogicDefault) {
     let dao = Arc::new(MockDao::new());
-    let session = Arc::new(BulwarkSession::new(
-        dao.clone() as Arc<dyn BulwarkDao>,
+    let session = Arc::new(GarrisonSession::new(
+        dao.clone() as Arc<dyn GarrisonDao>,
         timeout,
         active_timeout,
     ));
@@ -3099,16 +3100,16 @@ fn make_logic_with_auth(
         token_handler,
         timeout as i64,
     ));
-    let mut config = BulwarkConfig::default_config();
+    let mut config = GarrisonConfig::default_config();
     config.timeout = timeout as i64;
     config.token_style = token_style.to_string();
     config.auto_renewal_threshold = auto_renewal_threshold;
-    let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
+    let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall {
         has_permission: true,
         has_role: true,
     });
     let logic =
-        BulwarkLogicDefault::new(session, Arc::new(config), firewall).with_auth_logic(auth_logic);
+        GarrisonLogicDefault::new(session, Arc::new(config), firewall).with_auth_logic(auth_logic);
     (dao, logic)
 }
 
@@ -3165,21 +3166,21 @@ async fn check_and_renew_renews_non_jwt_when_threshold_reached() {
 #[tokio::test]
 async fn check_and_renew_renews_jwt_when_threshold_reached() {
     let dao: Arc<MockDao> = Arc::new(MockDao::new());
-    let session = Arc::new(BulwarkSession::new(
-        dao.clone() as Arc<dyn BulwarkDao>,
+    let session = Arc::new(GarrisonSession::new(
+        dao.clone() as Arc<dyn GarrisonDao>,
         10,
         86400,
     ));
-    let mut config = BulwarkConfig::default_config();
+    let mut config = GarrisonConfig::default_config();
     config.timeout = 10;
     config.token_style = "jwt".to_string();
     config.jwt_secret = "test-secret".to_string().into();
     config.auto_renewal_threshold = 90;
-    let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
+    let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall {
         has_permission: true,
         has_role: true,
     });
-    let logic = BulwarkLogicDefault::new(session, Arc::new(config), firewall);
+    let logic = GarrisonLogicDefault::new(session, Arc::new(config), firewall);
 
     let token = logic
         .login("user-004", &LoginParams::default())
@@ -3355,7 +3356,7 @@ async fn login_new_device_mode_rejects_new_login() {
         .login("new-device-user-001", &LoginParams::default())
         .await;
     assert!(
-        matches!(result, Err(BulwarkError::NotLogin(ref msg)) if msg.contains("stp-new-device-login-rejected-not-allowed")),
+        matches!(result, Err(GarrisonError::NotLogin(ref msg)) if msg.contains("stp-new-device-login-rejected-not-allowed")),
         "NewDevice 模式下已有旧会话时应返回 NotLogin 错误，实际: {:?}",
         result
     );
@@ -3598,20 +3599,20 @@ async fn login_with_max_login_count_evicts_oldest_session() {
 
 /// 测试用录音监听器：捕获广播事件供测试断言。
 ///
-/// 仅在 `listener` feature 启用时编译。通过 `Arc<Mutex<Vec<BulwarkEvent>>>` 存储
+/// 仅在 `listener` feature 启用时编译。通过 `Arc<Mutex<Vec<GarrisonEvent>>>` 存储
 /// 收到的事件，测试结束后读取断言事件类型与字段。
 #[cfg(feature = "listener")]
 struct RecordingListener {
-    events: Arc<Mutex<Vec<crate::listener::BulwarkEvent>>>,
+    events: Arc<Mutex<Vec<crate::listener::GarrisonEvent>>>,
 }
 
 #[cfg(feature = "listener")]
 #[async_trait]
-impl crate::listener::BulwarkListener for RecordingListener {
+impl crate::listener::GarrisonListener for RecordingListener {
     async fn on_event(
         &self,
-        event: &crate::listener::BulwarkEvent,
-    ) -> crate::error::BulwarkResult<()> {
+        event: &crate::listener::GarrisonEvent,
+    ) -> crate::error::GarrisonResult<()> {
         self.events.lock().push(event.clone());
         Ok(())
     }
@@ -3626,11 +3627,11 @@ async fn enforce_max_login_count_overflow_logout_mode_logout() {
     Arc::make_mut(&mut logic.config).overflow_logout_mode = OverflowLogoutMode::Logout;
 
     #[cfg(feature = "listener")]
-    let captured_events: Arc<Mutex<Vec<crate::listener::BulwarkEvent>>> =
+    let captured_events: Arc<Mutex<Vec<crate::listener::GarrisonEvent>>> =
         Arc::new(Mutex::new(Vec::new()));
     #[cfg(feature = "listener")]
     {
-        let lm = Arc::new(BulwarkListenerManager::new());
+        let lm = Arc::new(GarrisonListenerManager::new());
         lm.register(Arc::new(RecordingListener {
             events: captured_events.clone(),
         }));
@@ -3659,7 +3660,7 @@ async fn enforce_max_login_count_overflow_logout_mode_logout() {
         // 验证广播了 Logout 事件（至少 1 个，含被踢出 token）
         let events = captured_events.lock();
         let has_logout = events.iter().any(|e| match e {
-            crate::listener::BulwarkEvent::Logout { token, .. } => token == &t1,
+            crate::listener::GarrisonEvent::Logout { token, .. } => token == &t1,
             _ => false,
         });
         assert!(
@@ -3703,11 +3704,11 @@ async fn enforce_max_login_count_overflow_logout_mode_kickout() {
     Arc::make_mut(&mut logic.config).overflow_logout_mode = OverflowLogoutMode::Kickout;
 
     #[cfg(feature = "listener")]
-    let captured_events: Arc<Mutex<Vec<crate::listener::BulwarkEvent>>> =
+    let captured_events: Arc<Mutex<Vec<crate::listener::GarrisonEvent>>> =
         Arc::new(Mutex::new(Vec::new()));
     #[cfg(feature = "listener")]
     {
-        let lm = Arc::new(BulwarkListenerManager::new());
+        let lm = Arc::new(GarrisonListenerManager::new());
         lm.register(Arc::new(RecordingListener {
             events: captured_events.clone(),
         }));
@@ -3736,7 +3737,7 @@ async fn enforce_max_login_count_overflow_logout_mode_kickout() {
         // 验证广播了 Kickout 事件（含被踢出 token 和正确 reason）
         let events = captured_events.lock();
         let has_kickout = events.iter().any(|e| match e {
-            crate::listener::BulwarkEvent::Kickout { token, reason, .. } => {
+            crate::listener::GarrisonEvent::Kickout { token, reason, .. } => {
                 token == &t1 && reason == "超过最大登录数限制"
             },
             _ => false,
@@ -3782,11 +3783,11 @@ async fn enforce_max_login_count_overflow_logout_mode_replaced() {
     Arc::make_mut(&mut logic.config).overflow_logout_mode = OverflowLogoutMode::Replaced;
 
     #[cfg(feature = "listener")]
-    let captured_events: Arc<Mutex<Vec<crate::listener::BulwarkEvent>>> =
+    let captured_events: Arc<Mutex<Vec<crate::listener::GarrisonEvent>>> =
         Arc::new(Mutex::new(Vec::new()));
     #[cfg(feature = "listener")]
     {
-        let lm = Arc::new(BulwarkListenerManager::new());
+        let lm = Arc::new(GarrisonListenerManager::new());
         lm.register(Arc::new(RecordingListener {
             events: captured_events.clone(),
         }));
@@ -3815,7 +3816,7 @@ async fn enforce_max_login_count_overflow_logout_mode_replaced() {
         // 验证广播了 Replaced 事件（含被顶替的 login_id/token/reason）
         let events = captured_events.lock();
         let has_replaced = events.iter().any(|e| match e {
-            crate::listener::BulwarkEvent::Replaced {
+            crate::listener::GarrisonEvent::Replaced {
                 login_id,
                 token,
                 reason,
@@ -3861,7 +3862,7 @@ async fn enforce_max_login_count_overflow_logout_mode_replaced() {
 
 // v0.6.3 D3 T014: refresh_access_token 默认实现返回 NotImplemented
 
-/// `refresh_access_token` 默认实现应返回 `BulwarkError::NotImplemented`。
+/// `refresh_access_token` 默认实现应返回 `GarrisonError::NotImplemented`。
 ///
 /// T014 仅添加 trait 方法签名 + 默认实现；T015 会注入 `RefreshTokenRotation` 实现实际轮换。
 #[tokio::test]
@@ -3869,7 +3870,7 @@ async fn session_logic_refresh_default_returns_not_implemented() {
     let logic = make_logic(3600, 86400, false, "uuid", true, true);
     let result = logic.refresh_access_token("some-refresh-token").await;
     assert!(
-        matches!(result, Err(BulwarkError::NotImplemented(_))),
+        matches!(result, Err(GarrisonError::NotImplemented(_))),
         "默认 refresh_access_token 应返回 NotImplemented，实际: {:?}",
         result
     );
@@ -3888,7 +3889,7 @@ async fn refresh_access_token_returns_not_implemented_when_not_injected() {
     // 未注入 refresh_token_rotation
     let result = logic.refresh_access_token("some-refresh-token").await;
     assert!(
-        matches!(result, Err(BulwarkError::NotImplemented(_))),
+        matches!(result, Err(GarrisonError::NotImplemented(_))),
         "未注入 RefreshTokenRotation 时应返回 NotImplemented，实际: {:?}",
         result
     );
@@ -3904,7 +3905,7 @@ async fn refresh_access_token_returns_not_implemented_without_db_sqlite() {
     let logic = make_logic(3600, 86400, false, "uuid", true, true);
     let result = logic.refresh_access_token("some-refresh-token").await;
     assert!(
-        matches!(result, Err(BulwarkError::NotImplemented(_))),
+        matches!(result, Err(GarrisonError::NotImplemented(_))),
         "未启用 db-sqlite feature 时应返回 NotImplemented，实际: {:?}",
         result
     );
@@ -4036,31 +4037,31 @@ async fn login_rolls_back_session_when_enforce_fails() {
     }
 
     #[async_trait]
-    impl BulwarkDao for FailInjectionDao {
-        async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
+    impl GarrisonDao for FailInjectionDao {
+        async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
             if key.starts_with("account:session:") {
                 let n = self.call_count.fetch_add(1, Ordering::SeqCst) + 1;
                 if n == self.fail_on_nth.load(Ordering::SeqCst) {
-                    return Err(BulwarkError::Dao(
+                    return Err(GarrisonError::Dao(
                         "injected failure for HIGH-002 test".to_string(),
                     ));
                 }
             }
             self.inner.get(key).await
         }
-        async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> BulwarkResult<()> {
+        async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> GarrisonResult<()> {
             self.inner.set(key, value, ttl_seconds).await
         }
-        async fn update(&self, key: &str, value: &str) -> BulwarkResult<()> {
+        async fn update(&self, key: &str, value: &str) -> GarrisonResult<()> {
             self.inner.update(key, value).await
         }
-        async fn expire(&self, key: &str, seconds: u64) -> BulwarkResult<()> {
+        async fn expire(&self, key: &str, seconds: u64) -> GarrisonResult<()> {
             self.inner.expire(key, seconds).await
         }
-        async fn delete(&self, key: &str) -> BulwarkResult<()> {
+        async fn delete(&self, key: &str) -> GarrisonResult<()> {
             self.inner.delete(key).await
         }
-        async fn get_timeout(&self, key: &str) -> BulwarkResult<Option<Duration>> {
+        async fn get_timeout(&self, key: &str) -> GarrisonResult<Option<Duration>> {
             self.inner.get_timeout(key).await
         }
     }
@@ -4071,20 +4072,20 @@ async fn login_rolls_back_session_when_enforce_fails() {
         fail_on_nth: AtomicU32::new(3), // 第 3 次 account:session: get = enforce 调用
         call_count: AtomicU32::new(0),
     });
-    let session = Arc::new(BulwarkSession::new(
-        fail_dao.clone() as Arc<dyn BulwarkDao>,
+    let session = Arc::new(GarrisonSession::new(
+        fail_dao.clone() as Arc<dyn GarrisonDao>,
         3600,
         86400,
     ));
-    let mut config = BulwarkConfig::default_config();
+    let mut config = GarrisonConfig::default_config();
     config.token_style = "uuid".to_string();
     config.is_concurrent = true;
     config.max_login_count = 1; // 限制最多 1 个会话
-    let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(MockFirewall {
+    let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall {
         has_permission: true,
         has_role: true,
     });
-    let logic = BulwarkLogicDefault::new(session, Arc::new(config), firewall);
+    let logic = GarrisonLogicDefault::new(session, Arc::new(config), firewall);
 
     // 首次登录 — 成功（count=1 <= max=1，enforce 不触发）
     let t1 = logic

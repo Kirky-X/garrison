@@ -12,7 +12,7 @@
 //!
 //! 启用 `social-alipay` feature 时编译，依赖 `protocol-oauth2`（提供 reqwest HTTP client）。
 
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::error::{GarrisonError, GarrisonResult};
 use crate::loc;
 use crate::protocol::social::{SocialLoginProvider, SocialProvider, SocialUserInfo};
 use async_trait::async_trait;
@@ -43,8 +43,8 @@ const ALIPAY_GATEWAY_URL: &str = "https://openapi.alipay.com/gateway.do";
 /// # 示例
 ///
 /// ```ignore
-/// use bulwark::protocol::social::alipay::AlipayProvider;
-/// use bulwark::protocol::social::SocialLoginProvider;
+/// use garrison::protocol::social::alipay::AlipayProvider;
+/// use garrison::protocol::social::SocialLoginProvider;
 ///
 /// let provider = AlipayProvider::new("app_id", "private_key_pem");
 /// let url = provider.get_authorization_url("state", "https://example.com/cb").await?;
@@ -107,8 +107,8 @@ impl AlipayProvider {
     ///
     /// # 返回
     /// - `Ok(String)`: base64 编码的签名值
-    /// - `Err(BulwarkError::Config)`: RSA 私钥解析失败或签名失败
-    fn sign_request(&self, params: &[(String, String)]) -> BulwarkResult<String> {
+    /// - `Err(GarrisonError::Config)`: RSA 私钥解析失败或签名失败
+    fn sign_request(&self, params: &[(String, String)]) -> GarrisonResult<String> {
         // 1. 按 key ASCII 升序排序（克隆避免修改原 slice）
         let mut sorted = params.to_vec();
         sorted.sort_by(|a, b| a.0.cmp(&b.0));
@@ -122,7 +122,7 @@ impl AlipayProvider {
 
         // 3. 解析 RSA 私钥 PEM（PKCS#1 格式）
         let private_key = RsaPrivateKey::from_pkcs1_pem(&self.private_key_pem).map_err(|e| {
-            BulwarkError::Config(loc!(
+            GarrisonError::Config(loc!(
                 "alipay-rsa-key-parse-failed",
                 format!("alipay rsa key parse failed: {}", e),
                 ("detail", &e.to_string())
@@ -147,7 +147,7 @@ impl SocialLoginProvider for AlipayProvider {
         &self,
         state: &str,
         redirect_uri: &str,
-    ) -> BulwarkResult<String> {
+    ) -> GarrisonResult<String> {
         Ok(format!(
             "{}?app_id={}&redirect_uri={}&state={}",
             ALIPAY_AUTH_URL,
@@ -168,7 +168,7 @@ impl SocialLoginProvider for AlipayProvider {
     /// 3. POST 到支付宝网关（form-encoded body）
     /// 4. 解析响应 JSON，检查 error_response
     /// 5. 提取 user_id 返回 SocialUserInfo
-    async fn exchange_token(&self, code: &str, _state: &str) -> BulwarkResult<SocialUserInfo> {
+    async fn exchange_token(&self, code: &str, _state: &str) -> GarrisonResult<SocialUserInfo> {
         let timestamp = chrono::Utc::now()
             .with_timezone(&chrono::FixedOffset::east_opt(8 * 3600).expect("8*3600 valid"))
             .format("%Y-%m-%d %H:%M:%S")
@@ -201,7 +201,7 @@ impl SocialLoginProvider for AlipayProvider {
             .send()
             .await
             .map_err(|e| {
-                BulwarkError::Network(loc!(
+                GarrisonError::Network(loc!(
                     "alipay-token-request-failed",
                     format!("alipay token request failed: {}", e),
                     ("detail", &e.to_string())
@@ -209,7 +209,7 @@ impl SocialLoginProvider for AlipayProvider {
             })?;
 
         if !resp.status().is_success() {
-            return Err(BulwarkError::Network(loc!(
+            return Err(GarrisonError::Network(loc!(
                 "alipay-token-request-failed",
                 format!("alipay token request failed: {}", resp.status()),
                 ("detail", &resp.status().to_string())
@@ -217,7 +217,7 @@ impl SocialLoginProvider for AlipayProvider {
         }
 
         let raw: Value = resp.json().await.map_err(|e| {
-            BulwarkError::Network(loc!(
+            GarrisonError::Network(loc!(
                 "alipay-token-response-parse-failed",
                 format!("alipay token response parse failed: {}", e),
                 ("detail", &e.to_string())
@@ -234,7 +234,7 @@ impl SocialLoginProvider for AlipayProvider {
                 .get("msg")
                 .and_then(|v| v.as_str())
                 .unwrap_or("unknown error");
-            return Err(BulwarkError::Network(loc!(
+            return Err(GarrisonError::Network(loc!(
                 "alipay-error-response",
                 format!("alipay error {}: {}", code, msg),
                 ("code", code),
@@ -248,7 +248,7 @@ impl SocialLoginProvider for AlipayProvider {
             .and_then(|v| v.get("user_id"))
             .and_then(|v| v.as_str())
             .ok_or_else(|| {
-                BulwarkError::Network(loc!(
+                GarrisonError::Network(loc!(
                     "alipay-response-missing-user-id",
                     "alipay response missing user_id field".to_string()
                 ))
@@ -274,7 +274,7 @@ impl SocialLoginProvider for AlipayProvider {
     /// 2. 用 RSA2 签名
     /// 3. POST 到支付宝网关
     /// 4. 解析 `alipay_user_info_share_response` 中的 user_id/nick/avatar
-    async fn get_user_info(&self, access_token: &str) -> BulwarkResult<SocialUserInfo> {
+    async fn get_user_info(&self, access_token: &str) -> GarrisonResult<SocialUserInfo> {
         let timestamp = chrono::Utc::now()
             .with_timezone(&chrono::FixedOffset::east_opt(8 * 3600).expect("8*3600 valid"))
             .format("%Y-%m-%d %H:%M:%S")
@@ -302,7 +302,7 @@ impl SocialLoginProvider for AlipayProvider {
             .send()
             .await
             .map_err(|e| {
-                BulwarkError::Network(loc!(
+                GarrisonError::Network(loc!(
                     "alipay-user-info-request-failed",
                     format!("alipay user_info request failed: {}", e),
                     ("detail", &e.to_string())
@@ -310,7 +310,7 @@ impl SocialLoginProvider for AlipayProvider {
             })?;
 
         if !resp.status().is_success() {
-            return Err(BulwarkError::Network(loc!(
+            return Err(GarrisonError::Network(loc!(
                 "alipay-user-info-request-failed",
                 format!("alipay user_info request failed: {}", resp.status()),
                 ("detail", &resp.status().to_string())
@@ -318,7 +318,7 @@ impl SocialLoginProvider for AlipayProvider {
         }
 
         let raw: Value = resp.json().await.map_err(|e| {
-            BulwarkError::Network(loc!(
+            GarrisonError::Network(loc!(
                 "alipay-user-info-response-parse-failed",
                 format!("alipay user_info response parse failed: {}", e),
                 ("detail", &e.to_string())
@@ -335,7 +335,7 @@ impl SocialLoginProvider for AlipayProvider {
                 .get("msg")
                 .and_then(|v| v.as_str())
                 .unwrap_or("unknown error");
-            return Err(BulwarkError::Network(loc!(
+            return Err(GarrisonError::Network(loc!(
                 "alipay-error-response",
                 format!("alipay error {}: {}", code, msg),
                 ("code", code),
@@ -344,7 +344,7 @@ impl SocialLoginProvider for AlipayProvider {
         }
 
         let resp_obj = raw.get("alipay_user_info_share_response").ok_or_else(|| {
-            BulwarkError::Network(loc!(
+            GarrisonError::Network(loc!(
                 "alipay-response-missing-user-info-share-response",
                 "alipay response missing alipay_user_info_share_response field".to_string()
             ))
@@ -354,7 +354,7 @@ impl SocialLoginProvider for AlipayProvider {
             .get("user_id")
             .and_then(|v| v.as_str())
             .ok_or_else(|| {
-                BulwarkError::Network(loc!(
+                GarrisonError::Network(loc!(
                     "alipay-response-missing-user-id",
                     "alipay response missing user_id field".to_string()
                 ))
@@ -487,7 +487,7 @@ mod tests {
     /// 而非 panic（Rule 12 失败显性化）。
     ///
     /// Red 阶段：`exchange_token` 为 `todo!()` → panic（不满足 Rule 12）。
-    /// Green 阶段（T007）：签名时解析 PEM 失败 → 返回 `BulwarkError::Config`。
+    /// Green 阶段（T007）：签名时解析 PEM 失败 → 返回 `GarrisonError::Config`。
     #[tokio::test]
     async fn alipay_provider_exchange_token_returns_error_on_invalid_signature() {
         let provider = AlipayProvider::new("app_id", "invalid_pem");
@@ -496,7 +496,7 @@ mod tests {
         assert!(result.is_err(), "无效私钥应返回 Err，实际: {:?}", result);
         let err = result.unwrap_err();
         match err {
-            BulwarkError::Config(msg) => {
+            GarrisonError::Config(msg) => {
                 assert!(
                     msg.contains("rsa key parse failed")
                         || msg.contains("RSA 私钥解析失败")
@@ -505,7 +505,7 @@ mod tests {
                     msg
                 );
             },
-            other => panic!("应为 BulwarkError::Config，实际: {:?}", other),
+            other => panic!("应为 GarrisonError::Config，实际: {:?}", other),
         }
     }
 
@@ -673,7 +673,7 @@ mod tests {
         let result = provider.sign_request(&params);
         assert!(result.is_err(), "无效 PEM 应返回 Err");
         match result {
-            Err(BulwarkError::Config(_)) => {},
+            Err(GarrisonError::Config(_)) => {},
             Err(other) => panic!("期望 Config 错误，实际: {:?}", other),
             Ok(_) => unreachable!("无效 PEM 不应返回 Ok"),
         }
@@ -760,7 +760,7 @@ mod tests {
 
         assert!(result.is_err(), "HTTP 500 应返回 Err");
         match result {
-            Err(BulwarkError::Network(_)) => {},
+            Err(GarrisonError::Network(_)) => {},
             Err(other) => panic!("期望 Network 错误，实际: {:?}", other),
             Ok(_) => unreachable!("HTTP 500 不应返回 Ok"),
         }
@@ -788,7 +788,7 @@ mod tests {
 
         assert!(result.is_err(), "error_response 应返回 Err");
         match result {
-            Err(BulwarkError::Network(_)) => {},
+            Err(GarrisonError::Network(_)) => {},
             Err(other) => panic!("期望 Network 错误，实际: {:?}", other),
             Ok(_) => unreachable!("error_response 不应返回 Ok"),
         }
@@ -816,7 +816,7 @@ mod tests {
 
         assert!(result.is_err(), "缺少 user_id 应返回 Err");
         match result {
-            Err(BulwarkError::Network(_)) => {},
+            Err(GarrisonError::Network(_)) => {},
             Err(other) => panic!("期望 Network 错误，实际: {:?}", other),
             Ok(_) => unreachable!("缺少 user_id 不应返回 Ok"),
         }
@@ -863,7 +863,7 @@ mod tests {
 
         assert!(result.is_err(), "HTTP 500 应返回 Err");
         match result {
-            Err(BulwarkError::Network(_)) => {},
+            Err(GarrisonError::Network(_)) => {},
             Err(other) => panic!("期望 Network 错误，实际: {:?}", other),
             Ok(_) => unreachable!("HTTP 500 不应返回 Ok"),
         }
@@ -891,7 +891,7 @@ mod tests {
 
         assert!(result.is_err(), "error_response 应返回 Err");
         match result {
-            Err(BulwarkError::Network(_)) => {},
+            Err(GarrisonError::Network(_)) => {},
             Err(other) => panic!("期望 Network 错误，实际: {:?}", other),
             Ok(_) => unreachable!("error_response 不应返回 Ok"),
         }
@@ -916,7 +916,7 @@ mod tests {
 
         assert!(result.is_err(), "缺少 user_info_share_response 应返回 Err");
         match result {
-            Err(BulwarkError::Network(_)) => {},
+            Err(GarrisonError::Network(_)) => {},
             Err(other) => panic!("期望 Network 错误，实际: {:?}", other),
             Ok(_) => unreachable!("缺少 response object 不应返回 Ok"),
         }
@@ -944,7 +944,7 @@ mod tests {
 
         assert!(result.is_err(), "缺少 user_id 应返回 Err");
         match result {
-            Err(BulwarkError::Network(_)) => {},
+            Err(GarrisonError::Network(_)) => {},
             Err(other) => panic!("期望 Network 错误，实际: {:?}", other),
             Ok(_) => unreachable!("缺少 user_id 不应返回 Ok"),
         }

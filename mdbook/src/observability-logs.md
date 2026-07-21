@@ -8,9 +8,9 @@
 
 ```toml
 [dependencies]
-bulwark = { version = "0.7", features = ["tracing-log"] }
+garrison = { version = "0.7", features = ["tracing-log"] }
 # 或包含在 production 聚合 feature 中：
-# bulwark = { version = "0.7", features = ["production"] }
+# garrison = { version = "0.7", features = ["production"] }
 ```
 
 - `tracing-log`：启用 `tracing/log` feature，桥接 `log` crate 的日志到 `tracing`
@@ -26,7 +26,7 @@ bulwark = { version = "0.7", features = ["tracing-log"] }
 inklog 提供多输出 / 轮转 / 脱敏 / 健康监控等增强能力，初始化失败时自动降级到 `tracing_subscriber` JSON：
 
 ```rust
-use bulwark::observability::init_inklog_logging_with_fallback;
+use garrison::observability::init_inklog_logging_with_fallback;
 
 // 在 async main 早期调用
 let logger = init_inklog_logging_with_fallback().await;
@@ -67,7 +67,7 @@ tracing_subscriber::fmt()
 {
   "timestamp": "2026-07-01T12:34:56.789Z",
   "level": "INFO",
-  "target": "bulwark::stp",
+  "target": "garrison::stp",
   "fields": {
     "message": "用户登录成功",
     "login_id": 1001
@@ -87,7 +87,7 @@ tracing_subscriber::fmt()
 {
   "timestamp": "2026-07-01T12:35:01.123Z",
   "level": "ERROR",
-  "target": "bulwark::core::auth",
+  "target": "garrison::core::auth",
   "fields": {
     "message": "Token 验证失败",
     "error": "expired token"
@@ -103,9 +103,9 @@ tracing_subscriber::fmt()
 use tracing::{info, warn, error, instrument};
 
 #[instrument(fields(login_id = %login_id))]
-async fn login(login_id: i64) -> BulwarkResult<String> {
+async fn login(login_id: i64) -> GarrisonResult<String> {
     info!("开始登录流程");
-    let token = BulwarkUtil::login(login_id).await?;
+    let token = GarrisonUtil::login(login_id).await?;
     info!(token = %token, "登录成功");
     Ok(token)
 }
@@ -117,8 +117,8 @@ async fn login(login_id: i64) -> BulwarkResult<String> {
 
 ```bash
 RUST_LOG=info              # 全局 info
-RUST_LOG=bulwark=debug     # bulwark 模块 debug，其余 info
-RUST_LOG=bulwark::core=trace,info  # 细粒度
+RUST_LOG=garrison=debug     # garrison 模块 debug，其余 info
+RUST_LOG=garrison::core=trace,info  # 细粒度
 ```
 
 ## 与 OpenTelemetry 协同

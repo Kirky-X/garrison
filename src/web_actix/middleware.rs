@@ -3,7 +3,7 @@
 
 //! actix-web middleware 实现：Transform + Service trait 实现。
 //!
-//! `BulwarkMiddleware` 作为 actix-web middleware 装饰器，在请求到达 handler 前
+//! `GarrisonMiddleware` 作为 actix-web middleware 装饰器，在请求到达 handler 前
 //! 执行鉴权（pre_handle），失败则直接构造错误响应。struct 声明位于 `mod.rs`。
 //!
 //! ## 历史 BUG #8（已修复）
@@ -13,7 +13,7 @@
 //! 才 `inner.call(req)`，失败则 `req.into_response(resp)`（无需 clone HttpRequest）。
 
 use crate::context::token_extract::extract_token_from_headers;
-use crate::error::BulwarkError;
+use crate::error::GarrisonError;
 use crate::stp::with_current_token;
 use actix_web::body::{BoxBody, EitherBody};
 use actix_web::dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform};
@@ -22,9 +22,9 @@ use std::future::{ready, Ready};
 use std::pin::Pin;
 use std::rc::Rc;
 
-use super::{BulwarkMiddleware, BulwarkMiddlewareService};
+use super::{GarrisonMiddleware, GarrisonMiddlewareService};
 
-impl<S, B> Transform<S, ServiceRequest> for BulwarkMiddleware
+impl<S, B> Transform<S, ServiceRequest> for GarrisonMiddleware
 where
     S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = actix_web::Error> + 'static,
     S::Future: 'static,
@@ -32,12 +32,12 @@ where
 {
     type Response = ServiceResponse<EitherBody<B, BoxBody>>;
     type Error = actix_web::Error;
-    type Transform = BulwarkMiddlewareService<S>;
+    type Transform = GarrisonMiddlewareService<S>;
     type InitError = ();
     type Future = Ready<Result<Self::Transform, Self::InitError>>;
 
     fn new_transform(&self, service: S) -> Self::Future {
-        ready(Ok(BulwarkMiddlewareService {
+        ready(Ok(GarrisonMiddlewareService {
             inner: Rc::new(service),
             rules: self.rules.clone(),
             interceptor: self.interceptor.clone(),
@@ -46,7 +46,7 @@ where
     }
 }
 
-impl<S, B> Service<ServiceRequest> for BulwarkMiddlewareService<S>
+impl<S, B> Service<ServiceRequest> for GarrisonMiddlewareService<S>
 where
     S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = actix_web::Error> + 'static,
     S::Future: 'static,
@@ -75,7 +75,7 @@ where
                 if let Some(annotation) = rule_annotation {
                     interceptor.pre_handle(&path, &annotation).await?;
                 }
-                Ok::<_, BulwarkError>(())
+                Ok::<_, GarrisonError>(())
             };
 
             let auth_result = match token {
@@ -91,7 +91,7 @@ where
                 },
                 Err(e) => {
                     // 鉴权失败，req 未被 move，直接构造错误响应（不执行 handler）
-                    tracing::error!(error = ?e, "bulwark middleware rejection");
+                    tracing::error!(error = ?e, "garrison middleware rejection");
                     let resp = e.error_response();
                     Ok(req.into_response(resp).map_into_right_body())
                 },

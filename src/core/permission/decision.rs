@@ -10,8 +10,8 @@
 //!
 //! # 设计
 //!
-//! `Decision` 的 `errors` 字段为 `Vec<String>` 而非 `Vec<BulwarkError>`：
-//! - `BulwarkError` / `BulwarkException` 未 derive `Serialize`，给它们加 derive 会触碰大量现有代码（违反外科手术式修改原则）
+//! `Decision` 的 `errors` 字段为 `Vec<String>` 而非 `Vec<GarrisonError>`：
+//! - `GarrisonError` / `GarrisonException` 未 derive `Serialize`，给它们加 derive 会触碰大量现有代码（违反外科手术式修改原则）
 //! - 决策溯源场景只需可读错误消息（用于 trace 输出），不需要错误类型枚举
 //! - 存储时调用 `err.to_string()` 转为字符串
 
@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 /// # 序列化
 ///
 /// 同时 derive `Serialize` 与 `Deserialize`，使 [`Decision`] 可在
-/// `bulwark-testing` feature 下从 JSON 反序列化（声明式测试套件用）。
+/// `garrison-testing` feature 下从 JSON 反序列化（声明式测试套件用）。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum DecisionReason {
@@ -61,9 +61,9 @@ pub enum DecisionReason {
 /// # 序列化
 ///
 /// `Decision` 实现 `Serialize`，可序列化为 JSON 用于审计日志和 trace 输出。
-/// `errors` 字段为 `Vec<String>`（错误消息），不是 `Vec<BulwarkError>`（错误类型）。
+/// `errors` 字段为 `Vec<String>`（错误消息），不是 `Vec<GarrisonError>`（错误类型）。
 ///
-/// `bulwark-testing` feature 启用时同时实现 `Deserialize`，使声明式测试套件
+/// `garrison-testing` feature 启用时同时实现 `Deserialize`，使声明式测试套件
 /// 可从 JSON 文件反序列化期望决策（`JsonTestCase::expected`）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Decision {
@@ -144,7 +144,7 @@ impl Decision {
 ///
 /// # 序列化
 ///
-/// `bulwark-testing` feature 启用时同时 derive `Serialize` 与 `Deserialize`，
+/// `garrison-testing` feature 启用时同时 derive `Serialize` 与 `Deserialize`，
 /// 使声明式测试套件（`JsonTestCase`）可双向转换。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthRequest {
@@ -176,7 +176,7 @@ impl AuthRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::error::BulwarkResult;
+    use crate::error::GarrisonResult;
 
     /// Decision 序列化为 JSON 含所有必需字段。
     ///
@@ -298,12 +298,12 @@ mod tests {
         }
     }
 
-    /// T013 补充：BulwarkResult<Decision> 可用于 authorize 返回类型。
+    /// T013 补充：GarrisonResult<Decision> 可用于 authorize 返回类型。
     #[test]
-    fn bulwark_result_decision_compiles() {
-        let ok: BulwarkResult<Decision> = Ok(Decision::allow());
+    fn garrison_result_decision_compiles() {
+        let ok: GarrisonResult<Decision> = Ok(Decision::allow());
         assert!(ok.is_ok());
-        let err: BulwarkResult<Decision> = Err(crate::error::BulwarkError::NotLogin("x".into()));
+        let err: GarrisonResult<Decision> = Err(crate::error::GarrisonError::NotLogin("x".into()));
         assert!(err.is_err());
     }
 
@@ -317,26 +317,26 @@ mod tests {
     mod trace_id_tests {
         use super::AuthRequest;
         use crate::core::permission::{PermissionChecker, PermissionCheckerDefault};
-        use crate::error::BulwarkResult;
-        use crate::stp::BulwarkInterface;
+        use crate::error::GarrisonResult;
+        use crate::stp::GarrisonInterface;
         use async_trait::async_trait;
         use std::collections::HashMap;
         use std::sync::Arc;
         use std::time::Duration;
         use uuid::Uuid;
 
-        /// 最小化 mock BulwarkInterface：仅返回固定权限列表。
+        /// 最小化 mock GarrisonInterface：仅返回固定权限列表。
         struct MockInterface {
             permissions: HashMap<String, Vec<String>>,
         }
 
         #[async_trait]
-        impl BulwarkInterface for MockInterface {
-            async fn get_permission_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+        impl GarrisonInterface for MockInterface {
+            async fn get_permission_list(&self, login_id: &str) -> GarrisonResult<Vec<String>> {
                 Ok(self.permissions.get(login_id).cloned().unwrap_or_default())
             }
 
-            async fn get_role_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
+            async fn get_role_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
                 Ok(Vec::new())
             }
         }
@@ -346,7 +346,7 @@ mod tests {
             let mut perms = HashMap::new();
             perms.insert("1001".to_string(), vec!["user:read".to_string()]);
             let interface = MockInterface { permissions: perms };
-            let interface_arc: Arc<dyn BulwarkInterface> = Arc::new(interface);
+            let interface_arc: Arc<dyn GarrisonInterface> = Arc::new(interface);
             PermissionCheckerDefault::new(interface_arc)
         }
 

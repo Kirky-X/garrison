@@ -23,7 +23,7 @@ pub mod listener;
 pub use detector::{IpChangeDetector, RapidSuccessiveDetector};
 pub use listener::{AuditAlertListener, TracingAlertListener};
 
-use crate::error::BulwarkResult;
+use crate::error::GarrisonResult;
 use async_trait::async_trait;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
@@ -107,7 +107,7 @@ pub trait AlertListener: Send + Sync {
     /// 告警事件处理方法。
     ///
     /// 实现方按事件类型选择性处理，默认空实现返回 `Ok(())`。
-    async fn on_alert(&self, _event: &SecurityAlertEvent) -> BulwarkResult<()> {
+    async fn on_alert(&self, _event: &SecurityAlertEvent) -> GarrisonResult<()> {
         Ok(())
     }
 }
@@ -132,7 +132,7 @@ pub trait AnomalyDetector: Send + Sync {
         login_id: &str,
         device_id: &str,
         ip: Option<&str>,
-    ) -> BulwarkResult<Vec<SecurityAlertEvent>>;
+    ) -> GarrisonResult<Vec<SecurityAlertEvent>>;
 
     /// check_login 时检测异常。
     ///
@@ -146,7 +146,7 @@ pub trait AnomalyDetector: Send + Sync {
         &self,
         login_id: &str,
         token: &str,
-    ) -> BulwarkResult<Vec<SecurityAlertEvent>>;
+    ) -> GarrisonResult<Vec<SecurityAlertEvent>>;
 }
 
 /// 告警监听器管理器，收集并管理所有已注册的告警监听器。

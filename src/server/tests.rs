@@ -3,9 +3,9 @@
 
 use super::*;
 use crate::backend::types::LoginParams;
-use crate::error::BulwarkError;
-use crate::BulwarkDao;
-use crate::BulwarkResult;
+use crate::error::GarrisonError;
+use crate::GarrisonDao;
+use crate::GarrisonResult;
 use async_trait::async_trait;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -17,38 +17,41 @@ struct MockAuthBackend;
 
 #[async_trait]
 impl AuthBackend for MockAuthBackend {
-    async fn login(&self, login_id: &str, _params: &LoginParams) -> BulwarkResult<String> {
+    async fn login(&self, login_id: &str, _params: &LoginParams) -> GarrisonResult<String> {
         Ok(format!("token-{}", login_id))
     }
-    async fn logout(&self, _token: &str) -> BulwarkResult<()> {
+    async fn logout(&self, _token: &str) -> GarrisonResult<()> {
         Ok(())
     }
-    async fn check_login(&self, token: &str) -> BulwarkResult<bool> {
+    async fn check_login(&self, token: &str) -> GarrisonResult<bool> {
         Ok(token.starts_with("token-"))
     }
-    async fn check_permission(&self, _token: &str, _permission: &str) -> BulwarkResult<()> {
+    async fn check_permission(&self, _token: &str, _permission: &str) -> GarrisonResult<()> {
         Ok(())
     }
-    async fn check_role(&self, _token: &str, _role: &str) -> BulwarkResult<()> {
+    async fn check_role(&self, _token: &str, _role: &str) -> GarrisonResult<()> {
         Ok(())
     }
-    async fn check_safe(&self, _token: &str) -> BulwarkResult<bool> {
+    async fn check_safe(&self, _token: &str) -> GarrisonResult<bool> {
         Ok(false)
     }
-    async fn check_disable(&self, _token: &str) -> BulwarkResult<bool> {
+    async fn check_disable(&self, _token: &str) -> GarrisonResult<bool> {
         Ok(false)
     }
-    async fn check_api_key(&self, _api_key: &str, _namespace: &str) -> BulwarkResult<()> {
+    async fn check_api_key(&self, _api_key: &str, _namespace: &str) -> GarrisonResult<()> {
         Ok(())
     }
-    async fn get_token_info(&self, token: &str) -> BulwarkResult<crate::backend::types::TokenInfo> {
+    async fn get_token_info(
+        &self,
+        token: &str,
+    ) -> GarrisonResult<crate::backend::types::TokenInfo> {
         Ok(crate::backend::types::TokenInfo {
             token: token.to_string(),
             created_at: 1000,
             last_active_at: 2000,
         })
     }
-    async fn get_session(&self, token: &str) -> BulwarkResult<crate::backend::types::SessionData> {
+    async fn get_session(&self, token: &str) -> GarrisonResult<crate::backend::types::SessionData> {
         Ok(crate::backend::types::SessionData {
             token: token.to_string(),
             login_id: "mock-user".to_string(),
@@ -65,20 +68,20 @@ impl AuthBackend for MockAuthBackend {
             is_anon: false,
         })
     }
-    async fn kickout(&self, _login_id: &str) -> BulwarkResult<()> {
+    async fn kickout(&self, _login_id: &str) -> GarrisonResult<()> {
         Ok(())
     }
-    async fn switch_to(&self, _token: &str, _target_login_id: &str) -> BulwarkResult<()> {
+    async fn switch_to(&self, _token: &str, _target_login_id: &str) -> GarrisonResult<()> {
         Ok(())
     }
-    async fn renew_to_equivalent(&self, token: &str) -> BulwarkResult<String> {
+    async fn renew_to_equivalent(&self, token: &str) -> GarrisonResult<String> {
         Ok(format!("renewed-{}", token))
     }
 }
 
-fn make_server() -> BulwarkAuthServer {
+fn make_server() -> GarrisonAuthServer {
     let backend: Arc<dyn AuthBackend> = Arc::new(MockAuthBackend);
-    BulwarkAuthServer::new(backend)
+    GarrisonAuthServer::new(backend)
         .with_internal_api_key("test-api-key")
         .with_rate_limit(100)
 }
@@ -150,7 +153,7 @@ async fn test_internal_router_rejects_missing_api_key() {
 #[tokio::test]
 async fn test_external_router_rate_limit() {
     let backend: Arc<dyn AuthBackend> = Arc::new(MockAuthBackend);
-    let server = BulwarkAuthServer::new(backend)
+    let server = GarrisonAuthServer::new(backend)
         .with_internal_api_key("test-api-key")
         .with_rate_limit(2);
     let app = server.external_router();
@@ -194,7 +197,7 @@ async fn test_external_router_rate_limit() {
 #[tokio::test]
 async fn test_builder_methods() {
     let backend: Arc<dyn AuthBackend> = Arc::new(MockAuthBackend);
-    let server = BulwarkAuthServer::new(backend)
+    let server = GarrisonAuthServer::new(backend)
         .with_external_port(9000)
         .with_internal_port(9001)
         .with_rate_limit(50)
@@ -209,7 +212,7 @@ async fn test_builder_methods() {
 #[tokio::test]
 async fn test_default_config() {
     let backend: Arc<dyn AuthBackend> = Arc::new(MockAuthBackend);
-    let server = BulwarkAuthServer::new(backend);
+    let server = GarrisonAuthServer::new(backend);
     assert_eq!(server.config.external_port, 8080);
     assert_eq!(server.config.internal_port, 8081);
     assert_eq!(server.config.external_rate_limit_per_ip, 100);
@@ -230,7 +233,7 @@ async fn test_new_with_kit_builds_server() {
     kit.register::<BackendModule>()
         .expect("register BackendModule failed");
     let kit = kit.build().await.expect("kit build failed");
-    let server = BulwarkAuthServer::new_with_kit(kit)
+    let server = GarrisonAuthServer::new_with_kit(kit)
         .await
         .expect("new_with_kit failed");
     // 验证 server 用默认配置创建
@@ -246,7 +249,7 @@ async fn test_new_with_kit_missing_module_fails() {
 
     let kit = AsyncKit::new();
     let kit = kit.build().await.expect("empty build should succeed");
-    let result = BulwarkAuthServer::new_with_kit(kit).await;
+    let result = GarrisonAuthServer::new_with_kit(kit).await;
     assert!(
         result.is_err(),
         "new_with_kit 应在 kit 未注册 BackendModule 时返回错误"
@@ -260,7 +263,7 @@ async fn test_new_with_kit_missing_module_fails() {
 #[tokio::test]
 async fn test_with_tls_sets_config() {
     let backend: Arc<dyn AuthBackend> = Arc::new(MockAuthBackend);
-    let server = BulwarkAuthServer::new(backend).with_tls("/path/to/cert.pem", "/path/to/key.pem");
+    let server = GarrisonAuthServer::new(backend).with_tls("/path/to/cert.pem", "/path/to/key.pem");
 
     let tls_config = server
         .tls_config
@@ -281,7 +284,7 @@ async fn test_with_tls_sets_config() {
 #[tokio::test]
 async fn test_without_tls_config_is_none() {
     let backend: Arc<dyn AuthBackend> = Arc::new(MockAuthBackend);
-    let server = BulwarkAuthServer::new(backend);
+    let server = GarrisonAuthServer::new(backend);
     assert!(
         server.tls_config.is_none(),
         "未调用 with_tls 时 tls_config 必须为 None"
@@ -293,7 +296,7 @@ async fn test_without_tls_config_is_none() {
 #[tokio::test]
 async fn test_with_tls_chainable() {
     let backend: Arc<dyn AuthBackend> = Arc::new(MockAuthBackend);
-    let server = BulwarkAuthServer::new(backend)
+    let server = GarrisonAuthServer::new(backend)
         .with_external_port(9000)
         .with_internal_port(9001)
         .with_rate_limit(50)
@@ -314,7 +317,7 @@ async fn test_with_tls_chainable() {
 /// 测试 to_api_response 在 Ok 时返回包含数据的成功响应。
 #[test]
 fn test_to_api_response_ok() {
-    let result: Result<i32, BulwarkError> = Ok(42);
+    let result: Result<i32, GarrisonError> = Ok(42);
     let resp = to_api_response(result);
     assert_eq!(resp.data, Some(42));
     assert!(resp.error_code.is_none());
@@ -324,7 +327,7 @@ fn test_to_api_response_ok() {
 /// 测试 to_api_response 在 Err 时返回包含错误码和消息的失败响应。
 #[test]
 fn test_to_api_response_err() {
-    let result: Result<i32, BulwarkError> = Err(BulwarkError::Internal("test error".to_string()));
+    let result: Result<i32, GarrisonError> = Err(GarrisonError::Internal("test error".to_string()));
     let resp = to_api_response(result);
     assert!(resp.data.is_none());
     assert_eq!(resp.error_code.as_deref(), Some("INTERNAL_ERROR"));
@@ -434,7 +437,7 @@ async fn test_listen_returns_error_when_external_port_in_use() {
         .port();
 
     let backend: Arc<dyn AuthBackend> = Arc::new(MockAuthBackend);
-    let server = BulwarkAuthServer::new(backend)
+    let server = GarrisonAuthServer::new(backend)
         .with_external_port(external_port)
         .with_internal_port(0); // 内网用随机端口
 
@@ -458,7 +461,7 @@ async fn test_listen_returns_error_when_internal_port_in_use() {
         .port();
 
     let backend: Arc<dyn AuthBackend> = Arc::new(MockAuthBackend);
-    let server = BulwarkAuthServer::new(backend)
+    let server = GarrisonAuthServer::new(backend)
         .with_external_port(0) // 外网用随机端口
         .with_internal_port(internal_port);
 
@@ -473,7 +476,7 @@ async fn test_listen_returns_error_when_internal_port_in_use() {
 #[tokio::test]
 async fn test_listen_starts_and_runs() {
     let backend: Arc<dyn AuthBackend> = Arc::new(MockAuthBackend);
-    let server = BulwarkAuthServer::new(backend)
+    let server = GarrisonAuthServer::new(backend)
         .with_external_port(0)
         .with_internal_port(0);
 
@@ -494,7 +497,7 @@ async fn test_listen_starts_and_runs() {
 #[tokio::test]
 async fn test_listen_tls_returns_error_when_cert_not_found() {
     let backend: Arc<dyn AuthBackend> = Arc::new(MockAuthBackend);
-    let server = BulwarkAuthServer::new(backend)
+    let server = GarrisonAuthServer::new(backend)
         .with_external_port(0)
         .with_internal_port(0)
         .with_tls("/nonexistent/cert.pem", "/nonexistent/key.pem");
@@ -504,14 +507,14 @@ async fn test_listen_tls_returns_error_when_cert_not_found() {
 }
 
 // ========================================================================
-// to_api_response 补充测试（覆盖更多 BulwarkError 变体）
+// to_api_response 补充测试（覆盖更多 GarrisonError 变体）
 // ========================================================================
 
 /// 测试 to_api_response 处理 NotLogin 错误（401 + NOT_LOGIN）。
 #[test]
 fn test_to_api_response_with_not_login_error() {
-    let result: Result<i32, BulwarkError> =
-        Err(BulwarkError::NotLogin("not logged in".to_string()));
+    let result: Result<i32, GarrisonError> =
+        Err(GarrisonError::NotLogin("not logged in".to_string()));
     let resp = to_api_response(result);
     assert!(resp.data.is_none());
     assert_eq!(resp.error_code.as_deref(), Some("NOT_LOGIN"));
@@ -521,8 +524,8 @@ fn test_to_api_response_with_not_login_error() {
 /// 测试 to_api_response 处理 Dao 错误（500 + DAO_ERROR）。
 #[test]
 fn test_to_api_response_with_dao_error() {
-    let result: Result<i32, BulwarkError> =
-        Err(BulwarkError::Dao("db connection failed".to_string()));
+    let result: Result<i32, GarrisonError> =
+        Err(GarrisonError::Dao("db connection failed".to_string()));
     let resp = to_api_response(result);
     assert!(resp.data.is_none());
     assert_eq!(resp.error_code.as_deref(), Some("DAO_ERROR"));
@@ -532,8 +535,8 @@ fn test_to_api_response_with_dao_error() {
 /// 测试 to_api_response 处理 InvalidParam 错误（400 + INVALID_PARAM）。
 #[test]
 fn test_to_api_response_with_invalid_param_error() {
-    let result: Result<i32, BulwarkError> =
-        Err(BulwarkError::InvalidParam("missing field".to_string()));
+    let result: Result<i32, GarrisonError> =
+        Err(GarrisonError::InvalidParam("missing field".to_string()));
     let resp = to_api_response(result);
     assert!(resp.data.is_none());
     assert_eq!(resp.error_code.as_deref(), Some("INVALID_PARAM"));
@@ -543,8 +546,8 @@ fn test_to_api_response_with_invalid_param_error() {
 /// 测试 to_api_response 处理 NotPermission 错误（403 + NOT_PERMISSION）。
 #[test]
 fn test_to_api_response_with_not_permission_error() {
-    let result: Result<i32, BulwarkError> =
-        Err(BulwarkError::NotPermission("admin:read".to_string()));
+    let result: Result<i32, GarrisonError> =
+        Err(GarrisonError::NotPermission("admin:read".to_string()));
     let resp = to_api_response(result);
     assert!(resp.data.is_none());
     assert_eq!(resp.error_code.as_deref(), Some("NOT_PERMISSION"));
@@ -554,8 +557,8 @@ fn test_to_api_response_with_not_permission_error() {
 /// 测试 to_api_response 处理 ExpiredToken 错误（401 + EXPIRED_TOKEN）。
 #[test]
 fn test_to_api_response_with_expired_token_error() {
-    let result: Result<i32, BulwarkError> =
-        Err(BulwarkError::ExpiredToken("token-abc".to_string()));
+    let result: Result<i32, GarrisonError> =
+        Err(GarrisonError::ExpiredToken("token-abc".to_string()));
     let resp = to_api_response(result);
     assert!(resp.data.is_none());
     assert_eq!(resp.error_code.as_deref(), Some("EXPIRED_TOKEN"));
@@ -563,13 +566,13 @@ fn test_to_api_response_with_expired_token_error() {
 }
 
 // ========================================================================
-// to_api_response 补充测试（覆盖剩余 BulwarkError 变体）
+// to_api_response 补充测试（覆盖剩余 GarrisonError 变体）
 // ========================================================================
 
 /// 测试 to_api_response 处理 NotRole 错误（403 + NOT_ROLE）。
 #[test]
 fn test_to_api_response_with_not_role_error() {
-    let result: Result<i32, BulwarkError> = Err(BulwarkError::NotRole("admin".to_string()));
+    let result: Result<i32, GarrisonError> = Err(GarrisonError::NotRole("admin".to_string()));
     let resp = to_api_response(result);
     assert!(resp.data.is_none());
     assert_eq!(resp.error_code.as_deref(), Some("NOT_ROLE"));
@@ -579,8 +582,8 @@ fn test_to_api_response_with_not_role_error() {
 /// 测试 to_api_response 处理 InvalidToken 错误（401 + INVALID_TOKEN）。
 #[test]
 fn test_to_api_response_with_invalid_token_error() {
-    let result: Result<i32, BulwarkError> =
-        Err(BulwarkError::InvalidToken("bad-format".to_string()));
+    let result: Result<i32, GarrisonError> =
+        Err(GarrisonError::InvalidToken("bad-format".to_string()));
     let resp = to_api_response(result);
     assert!(resp.data.is_none());
     assert_eq!(resp.error_code.as_deref(), Some("INVALID_TOKEN"));
@@ -590,8 +593,8 @@ fn test_to_api_response_with_invalid_token_error() {
 /// 测试 to_api_response 处理 TokenRevoked 错误（401 + TOKEN_REVOKED）。
 #[test]
 fn test_to_api_response_with_token_revoked_error() {
-    let result: Result<i32, BulwarkError> =
-        Err(BulwarkError::TokenRevoked("revoked-token".to_string()));
+    let result: Result<i32, GarrisonError> =
+        Err(GarrisonError::TokenRevoked("revoked-token".to_string()));
     let resp = to_api_response(result);
     assert!(resp.data.is_none());
     assert_eq!(resp.error_code.as_deref(), Some("TOKEN_REVOKED"));
@@ -601,7 +604,8 @@ fn test_to_api_response_with_token_revoked_error() {
 /// 测试 to_api_response 处理 Config 错误（500 + CONFIG_ERROR）。
 #[test]
 fn test_to_api_response_with_config_error() {
-    let result: Result<i32, BulwarkError> = Err(BulwarkError::Config("invalid config".to_string()));
+    let result: Result<i32, GarrisonError> =
+        Err(GarrisonError::Config("invalid config".to_string()));
     let resp = to_api_response(result);
     assert!(resp.data.is_none());
     assert_eq!(resp.error_code.as_deref(), Some("CONFIG_ERROR"));
@@ -611,8 +615,8 @@ fn test_to_api_response_with_config_error() {
 /// 测试 to_api_response 处理 Session 错误（500 + SESSION_ERROR）。
 #[test]
 fn test_to_api_response_with_session_error() {
-    let result: Result<i32, BulwarkError> =
-        Err(BulwarkError::Session("session expired".to_string()));
+    let result: Result<i32, GarrisonError> =
+        Err(GarrisonError::Session("session expired".to_string()));
     let resp = to_api_response(result);
     assert!(resp.data.is_none());
     assert_eq!(resp.error_code.as_deref(), Some("SESSION_ERROR"));
@@ -622,7 +626,7 @@ fn test_to_api_response_with_session_error() {
 /// 测试 to_api_response 处理 Network 错误（502 + NETWORK_ERROR）。
 #[test]
 fn test_to_api_response_with_network_error() {
-    let result: Result<i32, BulwarkError> = Err(BulwarkError::Network("timeout".to_string()));
+    let result: Result<i32, GarrisonError> = Err(GarrisonError::Network("timeout".to_string()));
     let resp = to_api_response(result);
     assert!(resp.data.is_none());
     assert_eq!(resp.error_code.as_deref(), Some("NETWORK_ERROR"));
@@ -632,8 +636,8 @@ fn test_to_api_response_with_network_error() {
 /// 测试 to_api_response 处理 NotImplemented 错误（501 + NOT_IMPLEMENTED）。
 #[test]
 fn test_to_api_response_with_not_implemented_error() {
-    let result: Result<i32, BulwarkError> =
-        Err(BulwarkError::NotImplemented("not yet".to_string()));
+    let result: Result<i32, GarrisonError> =
+        Err(GarrisonError::NotImplemented("not yet".to_string()));
     let resp = to_api_response(result);
     assert!(resp.data.is_none());
     assert_eq!(resp.error_code.as_deref(), Some("NOT_IMPLEMENTED"));
@@ -643,8 +647,8 @@ fn test_to_api_response_with_not_implemented_error() {
 /// 测试 to_api_response 处理 FirewallBlocked 错误（403 + FIREWALL_BLOCKED）。
 #[test]
 fn test_to_api_response_with_firewall_blocked_error() {
-    let result: Result<i32, BulwarkError> =
-        Err(BulwarkError::FirewallBlocked("bruteforce".to_string()));
+    let result: Result<i32, GarrisonError> =
+        Err(GarrisonError::FirewallBlocked("bruteforce".to_string()));
     let resp = to_api_response(result);
     assert!(resp.data.is_none());
     assert_eq!(resp.error_code.as_deref(), Some("FIREWALL_BLOCKED"));
@@ -654,7 +658,7 @@ fn test_to_api_response_with_firewall_blocked_error() {
 /// 测试 to_api_response 处理 DisableService 错误（403 + DISABLE_SERVICE）。
 #[test]
 fn test_to_api_response_with_disable_service_error() {
-    let result: Result<i32, BulwarkError> = Err(BulwarkError::DisableService {
+    let result: Result<i32, GarrisonError> = Err(GarrisonError::DisableService {
         service: "default".to_string(),
         until: None,
     });
@@ -667,7 +671,7 @@ fn test_to_api_response_with_disable_service_error() {
 /// 测试 to_api_response 处理 NotSafe 错误（400 + NOT_SAFE）。
 #[test]
 fn test_to_api_response_with_not_safe_error() {
-    let result: Result<i32, BulwarkError> = Err(BulwarkError::NotSafe {
+    let result: Result<i32, GarrisonError> = Err(GarrisonError::NotSafe {
         reason: "MFA_REQUIRED".to_string(),
     });
     let resp = to_api_response(result);
@@ -679,7 +683,7 @@ fn test_to_api_response_with_not_safe_error() {
 /// 测试 to_api_response 处理 SmsRateLimitExceeded 错误（429 + SMS_RATE_LIMIT_EXCEEDED）。
 #[test]
 fn test_to_api_response_with_sms_rate_limit_exceeded_error() {
-    let result: Result<i32, BulwarkError> = Err(BulwarkError::SmsRateLimitExceeded {
+    let result: Result<i32, GarrisonError> = Err(GarrisonError::SmsRateLimitExceeded {
         window: "hourly".to_string(),
     });
     let resp = to_api_response(result);
@@ -691,7 +695,7 @@ fn test_to_api_response_with_sms_rate_limit_exceeded_error() {
 /// 测试 to_api_response 处理 SmsVerifyMaxAttempts 错误（400 + SMS_VERIFY_MAX_ATTEMPTS）。
 #[test]
 fn test_to_api_response_with_sms_verify_max_attempts_error() {
-    let result: Result<i32, BulwarkError> = Err(BulwarkError::SmsVerifyMaxAttempts);
+    let result: Result<i32, GarrisonError> = Err(GarrisonError::SmsVerifyMaxAttempts);
     let resp = to_api_response(result);
     assert!(resp.data.is_none());
     assert_eq!(resp.error_code.as_deref(), Some("SMS_VERIFY_MAX_ATTEMPTS"));
@@ -701,7 +705,7 @@ fn test_to_api_response_with_sms_verify_max_attempts_error() {
 /// 测试 to_api_response 处理 SmsCodeNotFound 错误（400 + SMS_CODE_NOT_FOUND）。
 #[test]
 fn test_to_api_response_with_sms_code_not_found_error() {
-    let result: Result<i32, BulwarkError> = Err(BulwarkError::SmsCodeNotFound);
+    let result: Result<i32, GarrisonError> = Err(GarrisonError::SmsCodeNotFound);
     let resp = to_api_response(result);
     assert!(resp.data.is_none());
     assert_eq!(resp.error_code.as_deref(), Some("SMS_CODE_NOT_FOUND"));
@@ -711,7 +715,7 @@ fn test_to_api_response_with_sms_code_not_found_error() {
 /// 测试 to_api_response 处理 SmsChannelRecycled 错误（403 + SMS_CHANNEL_RECYCLED）。
 #[test]
 fn test_to_api_response_with_sms_channel_recycled_error() {
-    let result: Result<i32, BulwarkError> = Err(BulwarkError::SmsChannelRecycled);
+    let result: Result<i32, GarrisonError> = Err(GarrisonError::SmsChannelRecycled);
     let resp = to_api_response(result);
     assert!(resp.data.is_none());
     assert_eq!(resp.error_code.as_deref(), Some("SMS_CHANNEL_RECYCLED"));
@@ -721,8 +725,8 @@ fn test_to_api_response_with_sms_channel_recycled_error() {
 /// 测试 to_api_response 处理 Exception(code=-1) 错误（401 + NOT_LOGIN + exception_code）。
 #[test]
 fn test_to_api_response_with_exception_not_login() {
-    use crate::exception::BulwarkException;
-    let result: Result<i32, BulwarkError> = Err(BulwarkError::Exception(BulwarkException::new(
+    use crate::exception::GarrisonException;
+    let result: Result<i32, GarrisonError> = Err(GarrisonError::Exception(GarrisonException::new(
         -1,
         "请先登录",
     )));
@@ -735,9 +739,11 @@ fn test_to_api_response_with_exception_not_login() {
 /// 测试 to_api_response 处理 Exception(code=-2) 错误（403 + NOT_PERMISSION + exception_code）。
 #[test]
 fn test_to_api_response_with_exception_not_permission() {
-    use crate::exception::BulwarkException;
-    let result: Result<i32, BulwarkError> =
-        Err(BulwarkError::Exception(BulwarkException::new(-2, "无权限")));
+    use crate::exception::GarrisonException;
+    let result: Result<i32, GarrisonError> = Err(GarrisonError::Exception(GarrisonException::new(
+        -2,
+        "无权限",
+    )));
     let resp = to_api_response(result);
     assert!(resp.data.is_none());
     assert_eq!(resp.error_code.as_deref(), Some("NOT_PERMISSION"));
@@ -747,8 +753,8 @@ fn test_to_api_response_with_exception_not_permission() {
 /// 测试 to_api_response 处理 Exception(其他 code) 错误（500 + EXCEPTION + exception_code）。
 #[test]
 fn test_to_api_response_with_exception_other_code() {
-    use crate::exception::BulwarkException;
-    let result: Result<i32, BulwarkError> = Err(BulwarkError::Exception(BulwarkException::new(
+    use crate::exception::GarrisonException;
+    let result: Result<i32, GarrisonError> = Err(GarrisonError::Exception(GarrisonException::new(
         1001,
         "业务异常",
     )));
@@ -768,7 +774,7 @@ fn test_to_api_response_with_exception_other_code() {
 #[tokio::test]
 async fn test_rate_limit_zero_rejects_all_requests() {
     let backend: Arc<dyn AuthBackend> = Arc::new(MockAuthBackend);
-    let server = BulwarkAuthServer::new(backend)
+    let server = GarrisonAuthServer::new(backend)
         .with_internal_api_key("test-api-key")
         .with_rate_limit(0);
     let app = server.external_router();
@@ -801,7 +807,7 @@ async fn test_rate_limit_zero_rejects_all_requests() {
 #[tokio::test]
 async fn test_empty_internal_api_key_rejects_all() {
     let backend: Arc<dyn AuthBackend> = Arc::new(MockAuthBackend);
-    let server = BulwarkAuthServer::new(backend)
+    let server = GarrisonAuthServer::new(backend)
         .with_internal_api_key("")
         .with_rate_limit(100);
     let app = server.internal_router();
@@ -827,26 +833,26 @@ async fn test_empty_internal_api_key_rejects_all() {
 // OAuth2 路由集成测试（feature = "oauth2-server"）
 // ========================================================================
 
-/// 简化 Mock DAO，仅实现 BulwarkDao 的 5 个必需方法。
+/// 简化 Mock DAO，仅实现 GarrisonDao 的 5 个必需方法。
 #[cfg(feature = "oauth2-server")]
 struct SimpleMockDao;
 
 #[cfg(feature = "oauth2-server")]
 #[async_trait]
-impl BulwarkDao for SimpleMockDao {
-    async fn get(&self, _key: &str) -> BulwarkResult<Option<String>> {
+impl GarrisonDao for SimpleMockDao {
+    async fn get(&self, _key: &str) -> GarrisonResult<Option<String>> {
         Ok(None)
     }
-    async fn set(&self, _key: &str, _value: &str, _ttl_seconds: u64) -> BulwarkResult<()> {
+    async fn set(&self, _key: &str, _value: &str, _ttl_seconds: u64) -> GarrisonResult<()> {
         Ok(())
     }
-    async fn update(&self, _key: &str, _value: &str) -> BulwarkResult<()> {
+    async fn update(&self, _key: &str, _value: &str) -> GarrisonResult<()> {
         Ok(())
     }
-    async fn expire(&self, _key: &str, _seconds: u64) -> BulwarkResult<()> {
+    async fn expire(&self, _key: &str, _seconds: u64) -> GarrisonResult<()> {
         Ok(())
     }
-    async fn delete(&self, _key: &str) -> BulwarkResult<()> {
+    async fn delete(&self, _key: &str) -> GarrisonResult<()> {
         Ok(())
     }
 }
@@ -861,25 +867,25 @@ impl crate::oauth2_server::client::OAuth2ClientStore for SimpleMockClientStore {
     async fn create(
         &self,
         _client: crate::oauth2_server::client::OAuth2Client,
-    ) -> BulwarkResult<()> {
+    ) -> GarrisonResult<()> {
         Ok(())
     }
     async fn get(
         &self,
         _client_id: &str,
-    ) -> BulwarkResult<Option<crate::oauth2_server::client::OAuth2Client>> {
+    ) -> GarrisonResult<Option<crate::oauth2_server::client::OAuth2Client>> {
         Ok(None)
     }
     async fn update(
         &self,
         _client: crate::oauth2_server::client::OAuth2Client,
-    ) -> BulwarkResult<()> {
+    ) -> GarrisonResult<()> {
         Ok(())
     }
-    async fn delete(&self, _client_id: &str) -> BulwarkResult<()> {
+    async fn delete(&self, _client_id: &str) -> GarrisonResult<()> {
         Ok(())
     }
-    async fn list(&self) -> BulwarkResult<Vec<crate::oauth2_server::client::OAuth2Client>> {
+    async fn list(&self) -> GarrisonResult<Vec<crate::oauth2_server::client::OAuth2Client>> {
         Ok(Vec::new())
     }
 }
@@ -890,7 +896,7 @@ impl crate::oauth2_server::client::OAuth2ClientStore for SimpleMockClientStore {
 #[cfg(feature = "oauth2-server")]
 #[tokio::test]
 async fn test_external_router_includes_oauth2_routes_when_set() {
-    let dao: Arc<dyn BulwarkDao> = Arc::new(SimpleMockDao);
+    let dao: Arc<dyn GarrisonDao> = Arc::new(SimpleMockDao);
     let store: Arc<dyn crate::oauth2_server::client::OAuth2ClientStore> =
         Arc::new(SimpleMockClientStore);
     let oauth2_state = Arc::new(oauth2_routes::OAuth2State::new(
@@ -900,7 +906,7 @@ async fn test_external_router_includes_oauth2_routes_when_set() {
     ));
 
     let backend: Arc<dyn AuthBackend> = Arc::new(MockAuthBackend);
-    let server = BulwarkAuthServer::new(backend)
+    let server = GarrisonAuthServer::new(backend)
         .with_internal_api_key("test-api-key")
         .with_rate_limit(100)
         .with_oauth2(oauth2_state);
@@ -930,7 +936,7 @@ async fn test_external_router_includes_oauth2_routes_when_set() {
 #[cfg(feature = "oauth2-server")]
 #[tokio::test]
 async fn test_internal_router_includes_oauth2_routes_when_set() {
-    let dao: Arc<dyn BulwarkDao> = Arc::new(SimpleMockDao);
+    let dao: Arc<dyn GarrisonDao> = Arc::new(SimpleMockDao);
     let store: Arc<dyn crate::oauth2_server::client::OAuth2ClientStore> =
         Arc::new(SimpleMockClientStore);
     let oauth2_state = Arc::new(oauth2_routes::OAuth2State::new(
@@ -940,7 +946,7 @@ async fn test_internal_router_includes_oauth2_routes_when_set() {
     ));
 
     let backend: Arc<dyn AuthBackend> = Arc::new(MockAuthBackend);
-    let server = BulwarkAuthServer::new(backend)
+    let server = GarrisonAuthServer::new(backend)
         .with_internal_api_key("test-api-key")
         .with_rate_limit(100)
         .with_oauth2(oauth2_state);
@@ -1018,7 +1024,7 @@ async fn test_internal_router_excludes_oauth2_routes_when_not_set() {
 #[cfg(feature = "oauth2-server")]
 #[tokio::test]
 async fn test_with_oauth2_chainable() {
-    let dao: Arc<dyn BulwarkDao> = Arc::new(SimpleMockDao);
+    let dao: Arc<dyn GarrisonDao> = Arc::new(SimpleMockDao);
     let store: Arc<dyn crate::oauth2_server::client::OAuth2ClientStore> =
         Arc::new(SimpleMockClientStore);
     let oauth2_state = Arc::new(oauth2_routes::OAuth2State::new(
@@ -1028,7 +1034,7 @@ async fn test_with_oauth2_chainable() {
     ));
 
     let backend: Arc<dyn AuthBackend> = Arc::new(MockAuthBackend);
-    let server = BulwarkAuthServer::new(backend)
+    let server = GarrisonAuthServer::new(backend)
         .with_external_port(9000)
         .with_internal_port(9001)
         .with_rate_limit(50)
@@ -1053,7 +1059,7 @@ async fn test_with_oauth2_chainable() {
 #[tokio::test]
 async fn test_with_rate_limit_large_value() {
     let backend: Arc<dyn AuthBackend> = Arc::new(MockAuthBackend);
-    let server = BulwarkAuthServer::new(backend)
+    let server = GarrisonAuthServer::new(backend)
         .with_internal_api_key("test-api-key")
         .with_rate_limit(u32::MAX);
     assert_eq!(server.config.external_rate_limit_per_ip, u32::MAX);
@@ -1065,10 +1071,10 @@ async fn test_with_internal_api_key_accepts_str_and_string() {
     let backend: Arc<dyn AuthBackend> = Arc::new(MockAuthBackend);
 
     // &str
-    let server1 = BulwarkAuthServer::new(backend.clone()).with_internal_api_key("str-key");
+    let server1 = GarrisonAuthServer::new(backend.clone()).with_internal_api_key("str-key");
     assert_eq!(server1.config.internal_api_key, "str-key");
 
     // String
-    let server2 = BulwarkAuthServer::new(backend).with_internal_api_key("string-key".to_string());
+    let server2 = GarrisonAuthServer::new(backend).with_internal_api_key("string-key".to_string());
     assert_eq!(server2.config.internal_api_key, "string-key");
 }

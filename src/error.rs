@@ -5,10 +5,10 @@
 //!
 //! SaTokenException 异常体系，提供框架统一的错误类型与 Result 别名。
 
-use crate::exception::BulwarkException;
+use crate::exception::GarrisonException;
 use thiserror::Error;
 
-/// Bulwark 框架统一错误类型。
+/// Garrison 框架统一错误类型。
 ///
 /// 涵盖登录、权限、Token、DAO、配置等各层错误场景。
 ///
@@ -17,7 +17,7 @@ use thiserror::Error;
 /// - 未启用 `i18n` feature：硬编码中文（与 0.2.x 行为一致）
 /// - 启用 `i18n` feature：依据线程本地 locale 切换中英文（详见 [`crate::i18n`]）
 #[derive(Debug, Error)]
-pub enum BulwarkError {
+pub enum GarrisonError {
     /// 未登录异常（对应 NotLoginException）。
     NotLogin(String),
 
@@ -53,11 +53,11 @@ pub enum BulwarkError {
     /// 注解错误（对应注解校验失败、组合冲突等场景）。
     Annotation(String),
 
-    /// 上下文错误（对应 BulwarkContext / Request / Response / Storage 异常）。
+    /// 上下文错误（对应 GarrisonContext / Request / Response / Storage 异常）。
     Context(String),
 
     /// 业务异常（携带上下文的可恢复异常）。
-    Exception(BulwarkException),
+    Exception(GarrisonException),
 
     /// OAuth2 协议错误。
     OAuth2(String),
@@ -131,20 +131,20 @@ pub enum BulwarkError {
 // Display 实现：始终委托 i18n 层翻译（未匹配 key 时回退中文，向后兼容 0.2.x）
 // ============================================================================
 
-impl std::fmt::Display for BulwarkError {
+impl std::fmt::Display for GarrisonError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&crate::i18n::translate_error(self))
     }
 }
 
-/// Bulwark 框架统一 Result 类型别名。
-pub type BulwarkResult<T> = Result<T, BulwarkError>;
+/// Garrison 框架统一 Result 类型别名。
+pub type GarrisonResult<T> = Result<T, GarrisonError>;
 
 // ============================================================================
 // response_parts：框架无关的响应分片
 // ============================================================================
 
-impl BulwarkError {
+impl GarrisonError {
     // ========================================================================
     // BW-ERR 错误码常量
     // ========================================================================
@@ -159,7 +159,7 @@ impl BulwarkError {
 
     /// BW-ERR-010：账号被封禁（FRD §3.4）。
     ///
-    /// 对应 `BulwarkError::DisableService`，HTTP 403 Forbidden。
+    /// 对应 `GarrisonError::DisableService`，HTTP 403 Forbidden。
     pub const BW_ERR_010: u32 = 403003;
 
     /// BW-ERR-011：多账号体系冲突（FRD §3.4）。
@@ -169,12 +169,12 @@ impl BulwarkError {
 
     /// BW-ERR-012：第三方登录失败（FRD §3.4）。
     ///
-    /// 对应 `BulwarkError::NotSafe`（第三方登录回退），HTTP 400 Bad Request。
+    /// 对应 `GarrisonError::NotSafe`（第三方登录回退），HTTP 400 Bad Request。
     pub const BW_ERR_012: u32 = 400001;
 
     /// BW-ERR-013：Token 已吊销（RFC 7009 Token Revocation）。
     ///
-    /// 对应 `BulwarkError::TokenRevoked`，HTTP 401 Unauthorized。
+    /// 对应 `GarrisonError::TokenRevoked`，HTTP 401 Unauthorized。
     pub const BW_ERR_013: u32 = 401005;
 
     /// 返回 HTTP 响应分片 `(status_code, error_code, message, exception_code)`。
@@ -208,107 +208,107 @@ impl BulwarkError {
     /// - `ex_code`: 仅 `Exception` 变体返回 `Some(code)`
     fn parts_and_msg_key(&self) -> (u16, &'static str, &'static str, &'static str, Option<i32>) {
         match self {
-            BulwarkError::NotLogin(_) => (401, "NOT_LOGIN", "not-login-msg", "未登录", None),
-            BulwarkError::InvalidToken(_) => (
+            GarrisonError::NotLogin(_) => (401, "NOT_LOGIN", "not-login-msg", "未登录", None),
+            GarrisonError::InvalidToken(_) => (
                 401,
                 "INVALID_TOKEN",
                 "invalid-token-msg",
                 "Token 无效",
                 None,
             ),
-            BulwarkError::TokenRevoked(_) => (
+            GarrisonError::TokenRevoked(_) => (
                 401,
                 "TOKEN_REVOKED",
                 "token-revoked-msg",
                 "Token 已吊销",
                 None,
             ),
-            BulwarkError::ExpiredToken(_) => (
+            GarrisonError::ExpiredToken(_) => (
                 401,
                 "EXPIRED_TOKEN",
                 "expired-token-msg",
                 "Token 已过期",
                 None,
             ),
-            BulwarkError::NotPermission(_) => {
+            GarrisonError::NotPermission(_) => {
                 (403, "NOT_PERMISSION", "not-permission-msg", "无权限", None)
             },
-            BulwarkError::NotRole(_) => (403, "NOT_ROLE", "not-role-msg", "无角色", None),
-            BulwarkError::Dao(_) => (500, "DAO_ERROR", "dao-msg", "数据访问错误", None),
-            BulwarkError::Config(_) => (500, "CONFIG_ERROR", "config-msg", "配置错误", None),
-            BulwarkError::Internal(_) => (500, "INTERNAL_ERROR", "internal-msg", "内部错误", None),
-            BulwarkError::Session(_) => (500, "SESSION_ERROR", "session-msg", "会话错误", None),
-            BulwarkError::Annotation(_) => {
+            GarrisonError::NotRole(_) => (403, "NOT_ROLE", "not-role-msg", "无角色", None),
+            GarrisonError::Dao(_) => (500, "DAO_ERROR", "dao-msg", "数据访问错误", None),
+            GarrisonError::Config(_) => (500, "CONFIG_ERROR", "config-msg", "配置错误", None),
+            GarrisonError::Internal(_) => (500, "INTERNAL_ERROR", "internal-msg", "内部错误", None),
+            GarrisonError::Session(_) => (500, "SESSION_ERROR", "session-msg", "会话错误", None),
+            GarrisonError::Annotation(_) => {
                 (500, "ANNOTATION_ERROR", "annotation-msg", "注解错误", None)
             },
-            BulwarkError::Context(_) => (500, "CONTEXT_ERROR", "context-msg", "上下文错误", None),
-            BulwarkError::OAuth2(_) => (500, "OAUTH2_ERROR", "oauth2-msg", "OAuth2 错误", None),
-            BulwarkError::Network(_) => (502, "NETWORK_ERROR", "network-msg", "网络错误", None),
-            BulwarkError::InvalidParam(_) => {
+            GarrisonError::Context(_) => (500, "CONTEXT_ERROR", "context-msg", "上下文错误", None),
+            GarrisonError::OAuth2(_) => (500, "OAUTH2_ERROR", "oauth2-msg", "OAuth2 错误", None),
+            GarrisonError::Network(_) => (502, "NETWORK_ERROR", "network-msg", "网络错误", None),
+            GarrisonError::InvalidParam(_) => {
                 (400, "INVALID_PARAM", "invalid-param-msg", "参数无效", None)
             },
-            BulwarkError::NotImplemented(_) => (
+            GarrisonError::NotImplemented(_) => (
                 501,
                 "NOT_IMPLEMENTED",
                 "not-implemented-msg",
                 "未实现",
                 None,
             ),
-            BulwarkError::FirewallBlocked(_) => (
+            GarrisonError::FirewallBlocked(_) => (
                 403,
                 "FIREWALL_BLOCKED",
                 "firewall-blocked-msg",
                 "防火墙拦截",
                 None,
             ),
-            BulwarkError::DisableService { .. } => (
+            GarrisonError::DisableService { .. } => (
                 403,
                 "DISABLE_SERVICE",
                 "disable-service-msg",
                 "账号已被封禁",
                 None,
             ),
-            BulwarkError::NotSafe { .. } => {
+            GarrisonError::NotSafe { .. } => {
                 (400, "NOT_SAFE", "not-safe-msg", "未完成二次认证", None)
             },
-            BulwarkError::InvalidStateTransition { .. } => (
+            GarrisonError::InvalidStateTransition { .. } => (
                 500,
                 "INVALID_STATE_TRANSITION",
                 "invalid-state-transition-msg",
                 "非法状态转换",
                 None,
             ),
-            BulwarkError::SmsRateLimitExceeded { .. } => (
+            GarrisonError::SmsRateLimitExceeded { .. } => (
                 429,
                 "SMS_RATE_LIMIT_EXCEEDED",
                 "sms-rate-limit-exceeded-msg",
                 "短信发送频繁",
                 None,
             ),
-            BulwarkError::SmsVerifyMaxAttempts => (
+            GarrisonError::SmsVerifyMaxAttempts => (
                 400,
                 "SMS_VERIFY_MAX_ATTEMPTS",
                 "sms-verify-max-attempts-msg",
                 "验证码尝试次数超限",
                 None,
             ),
-            BulwarkError::SmsCodeNotFound => (
+            GarrisonError::SmsCodeNotFound => (
                 400,
                 "SMS_CODE_NOT_FOUND",
                 "sms-code-not-found-msg",
                 "验证码不存在或已过期",
                 None,
             ),
-            BulwarkError::SmsChannelRecycled => (
+            GarrisonError::SmsChannelRecycled => (
                 403,
                 "SMS_CHANNEL_RECYCLED",
                 "sms-channel-recycled-msg",
                 "短信通道已回收",
                 None,
             ),
-            // Exception 依据 BulwarkException.code 字段映射状态码
+            // Exception 依据 GarrisonException.code 字段映射状态码
             // code = -1 → 未登录 → 401；code = -2 → 无权限 → 403；其他 → 500
-            BulwarkError::Exception(ex) => match ex.code {
+            GarrisonError::Exception(ex) => match ex.code {
                 -1 => (
                     401,
                     "NOT_LOGIN",
@@ -395,7 +395,7 @@ impl BulwarkError {
 // IntoResponse 实现（cfg feature = "web-axum"）
 // ============================================================================
 
-/// 实现 `IntoResponse` 以便 extractor 的 `Rejection = BulwarkError` 可直接作为 axum 响应返回。
+/// 实现 `IntoResponse` 以便 extractor 的 `Rejection = GarrisonError` 可直接作为 axum 响应返回。
 ///
 /// 状态码映射：
 /// - `NotLogin` / `InvalidToken` / `ExpiredToken` → 401 Unauthorized
@@ -407,12 +407,12 @@ impl BulwarkError {
 /// 响应体仅暴露结构化错误码 + 通用消息（不泄漏内部错误细节）；
 /// 完整错误通过 `tracing::error!` 记录到日志。
 #[cfg(feature = "web-axum")]
-impl axum::response::IntoResponse for BulwarkError {
+impl axum::response::IntoResponse for GarrisonError {
     fn into_response(self) -> axum::response::Response {
         use axum::http::StatusCode;
 
         // 完整错误记录到日志（不返回给客户端）
-        tracing::error!(error = ?self, "bulwark rejection");
+        tracing::error!(error = ?self, "garrison rejection");
 
         // 单次调用 response_parts_i18n() 获取所有字段（M2+LOW-002：消除冗余调用），
         // 复用 response_parts_i18n() 保证三框架行为一致（L1：更新注释）。
@@ -461,45 +461,45 @@ impl axum::response::IntoResponse for BulwarkError {
 // miette 仅作为 `Diagnostic` trait 实现，提供 `code` / `severity` / `labels` 富上下文。
 // 默认关闭，启用方式：`--features miette`。
 //
-// [借鉴 miette] miette 推荐使用 dotted kebab-case 形式作为错误代码（如 `bulwark.not_login`），
+// [借鉴 miette] miette 推荐使用 dotted kebab-case 形式作为错误代码（如 `garrison.not_login`），
 // 与 `response_parts()` 返回的 UPPER_SNAKE_CASE error_code（如 `NOT_LOGIN`）解耦：
 // - `response_parts().error_code` → 面向 HTTP 响应体（与 既有惯例一致）
 // - `Diagnostic::code()` → 面向开发者诊断终端（miette 渲染惯例）
 #[cfg(feature = "miette")]
-impl miette::Diagnostic for BulwarkError {
+impl miette::Diagnostic for GarrisonError {
     /// 返回稳定的错误代码标识符（dotted kebab-case，miette 渲染惯例）。
     ///
-    /// 形如 `bulwark.not_login` / `bulwark.config` / `bulwark.firewall_blocked`。
+    /// 形如 `garrison.not_login` / `garrison.config` / `garrison.firewall_blocked`。
     /// 与 `response_parts().1` 返回的 UPPER_SNAKE_CASE error_code 解耦：
     /// - `response_parts` 的 error_code → 面向 HTTP 响应体（与 既有惯例一致）
     /// - `Diagnostic::code()` → 面向开发者诊断终端（miette 渲染惯例）
     fn code(&self) -> Option<Box<dyn std::fmt::Display + '_>> {
         let code_str: &'static str = match self {
-            BulwarkError::NotLogin(_) => "bulwark.not_login",
-            BulwarkError::NotPermission(_) => "bulwark.not_permission",
-            BulwarkError::NotRole(_) => "bulwark.not_role",
-            BulwarkError::InvalidToken(_) => "bulwark.invalid_token",
-            BulwarkError::TokenRevoked(_) => "bulwark.token_revoked",
-            BulwarkError::ExpiredToken(_) => "bulwark.expired_token",
-            BulwarkError::Dao(_) => "bulwark.dao",
-            BulwarkError::Config(_) => "bulwark.config",
-            BulwarkError::Internal(_) => "bulwark.internal",
-            BulwarkError::Session(_) => "bulwark.session",
-            BulwarkError::Annotation(_) => "bulwark.annotation",
-            BulwarkError::Context(_) => "bulwark.context",
-            BulwarkError::Exception(_) => "bulwark.exception",
-            BulwarkError::OAuth2(_) => "bulwark.oauth2",
-            BulwarkError::Network(_) => "bulwark.network",
-            BulwarkError::InvalidParam(_) => "bulwark.invalid_param",
-            BulwarkError::NotImplemented(_) => "bulwark.not_implemented",
-            BulwarkError::FirewallBlocked(_) => "bulwark.firewall_blocked",
-            BulwarkError::DisableService { .. } => "bulwark.disable_service",
-            BulwarkError::NotSafe { .. } => "bulwark.not_safe",
-            BulwarkError::InvalidStateTransition { .. } => "bulwark.invalid_state_transition",
-            BulwarkError::SmsRateLimitExceeded { .. } => "bulwark.sms_rate_limit_exceeded",
-            BulwarkError::SmsVerifyMaxAttempts => "bulwark.sms_verify_max_attempts",
-            BulwarkError::SmsCodeNotFound => "bulwark.sms_code_not_found",
-            BulwarkError::SmsChannelRecycled => "bulwark.sms_channel_recycled",
+            GarrisonError::NotLogin(_) => "garrison.not_login",
+            GarrisonError::NotPermission(_) => "garrison.not_permission",
+            GarrisonError::NotRole(_) => "garrison.not_role",
+            GarrisonError::InvalidToken(_) => "garrison.invalid_token",
+            GarrisonError::TokenRevoked(_) => "garrison.token_revoked",
+            GarrisonError::ExpiredToken(_) => "garrison.expired_token",
+            GarrisonError::Dao(_) => "garrison.dao",
+            GarrisonError::Config(_) => "garrison.config",
+            GarrisonError::Internal(_) => "garrison.internal",
+            GarrisonError::Session(_) => "garrison.session",
+            GarrisonError::Annotation(_) => "garrison.annotation",
+            GarrisonError::Context(_) => "garrison.context",
+            GarrisonError::Exception(_) => "garrison.exception",
+            GarrisonError::OAuth2(_) => "garrison.oauth2",
+            GarrisonError::Network(_) => "garrison.network",
+            GarrisonError::InvalidParam(_) => "garrison.invalid_param",
+            GarrisonError::NotImplemented(_) => "garrison.not_implemented",
+            GarrisonError::FirewallBlocked(_) => "garrison.firewall_blocked",
+            GarrisonError::DisableService { .. } => "garrison.disable_service",
+            GarrisonError::NotSafe { .. } => "garrison.not_safe",
+            GarrisonError::InvalidStateTransition { .. } => "garrison.invalid_state_transition",
+            GarrisonError::SmsRateLimitExceeded { .. } => "garrison.sms_rate_limit_exceeded",
+            GarrisonError::SmsVerifyMaxAttempts => "garrison.sms_verify_max_attempts",
+            GarrisonError::SmsCodeNotFound => "garrison.sms_code_not_found",
+            GarrisonError::SmsChannelRecycled => "garrison.sms_channel_recycled",
         };
         Some(Box::new(code_str))
     }
@@ -507,14 +507,14 @@ impl miette::Diagnostic for BulwarkError {
     /// 返回错误严重级别。
     ///
     /// 当前所有变体均返回 `Severity::Error`（无 Warning/Advice 级别）。
-    /// 设计依据：BulwarkError 表示框架级错误，需触发调用方错误处理路径。
+    /// 设计依据：GarrisonError 表示框架级错误，需触发调用方错误处理路径。
     fn severity(&self) -> Option<miette::Severity> {
         Some(miette::Severity::Error)
     }
 
     /// 返回源码 span 标签（用于 IDE/CLI 高亮定位）。
     ///
-    /// `BulwarkError` 变体仅携带 `String` 消息或 `BulwarkException` 结构体（无源码位置信息），
+    /// `GarrisonError` 变体仅携带 `String` 消息或 `GarrisonException` 结构体（无源码位置信息），
     /// 返回 `None`。未来若引入带 span 的错误变体（如注解解析失败），可在此分支返回 label。
     fn labels(&self) -> Option<Box<dyn Iterator<Item = miette::LabeledSpan> + '_>> {
         None
@@ -528,129 +528,129 @@ mod tests {
     /// 验证 Session 变体的 Display 输出包含原始消息。
     #[test]
     fn session_variant_display_includes_message() {
-        let err = BulwarkError::Session("会话已过期".to_string());
+        let err = GarrisonError::Session("会话已过期".to_string());
         assert_eq!(err.to_string(), "会话错误: 会话已过期");
     }
 
     /// 验证 Annotation 变体的 Display 输出包含原始消息。
     #[test]
     fn annotation_variant_display_includes_message() {
-        let err = BulwarkError::Annotation("注解校验失败".to_string());
+        let err = GarrisonError::Annotation("注解校验失败".to_string());
         assert_eq!(err.to_string(), "注解错误: 注解校验失败");
     }
 
     /// 验证 Context 变体的 Display 输出包含原始消息。
     #[test]
     fn context_variant_display_includes_message() {
-        let err = BulwarkError::Context("上下文缺失".to_string());
+        let err = GarrisonError::Context("上下文缺失".to_string());
         assert_eq!(err.to_string(), "上下文错误: 上下文缺失");
     }
 
-    /// 验证新增变体可通过 BulwarkResult 传播。
+    /// 验证新增变体可通过 GarrisonResult 传播。
     #[test]
     fn new_variants_propagate_via_result() {
-        fn fallible() -> BulwarkResult<()> {
-            Err(BulwarkError::Session("测试".to_string()))
+        fn fallible() -> GarrisonResult<()> {
+            Err(GarrisonError::Session("测试".to_string()))
         }
         let result = fallible();
-        assert!(matches!(result, Err(BulwarkError::Session(_))));
+        assert!(matches!(result, Err(GarrisonError::Session(_))));
     }
 
     /// 验证新增变体与已有变体共存于同一枚举。
     #[test]
     fn new_variants_coexist_with_existing() {
         let errors = [
-            BulwarkError::NotLogin("a".to_string()),
-            BulwarkError::Session("b".to_string()),
-            BulwarkError::Annotation("c".to_string()),
-            BulwarkError::Context("d".to_string()),
+            GarrisonError::NotLogin("a".to_string()),
+            GarrisonError::Session("b".to_string()),
+            GarrisonError::Annotation("c".to_string()),
+            GarrisonError::Context("d".to_string()),
         ];
         assert_eq!(errors.len(), 4);
     }
 
     // ========================================================================
-    // BulwarkResult 类型别名与 IntoResponse 实现测试
+    // GarrisonResult 类型别名与 IntoResponse 实现测试
     // ========================================================================
 
-    /// 验证 `BulwarkResult` 类型别名可用于返回 Ok 值。
+    /// 验证 `GarrisonResult` 类型别名可用于返回 Ok 值。
     ///
-    /// 覆盖 `pub type BulwarkResult<T> = Result<T, BulwarkError>;` 的使用。
+    /// 覆盖 `pub type GarrisonResult<T> = Result<T, GarrisonError>;` 的使用。
     #[test]
-    fn bulwark_result_ok_carries_value() {
-        fn ok_fn() -> BulwarkResult<i32> {
+    fn garrison_result_ok_carries_value() {
+        fn ok_fn() -> GarrisonResult<i32> {
             Ok(42)
         }
         assert_eq!(ok_fn().unwrap(), 42);
     }
 
-    /// 验证 `BulwarkResult` 类型别名可用于返回 Err 值，且 `?` 可透传错误。
+    /// 验证 `GarrisonResult` 类型别名可用于返回 Err 值，且 `?` 可透传错误。
     ///
-    /// 覆盖 `pub type BulwarkResult<T> = Result<T, BulwarkError>;` 在错误传播路径中的使用。
+    /// 覆盖 `pub type GarrisonResult<T> = Result<T, GarrisonError>;` 在错误传播路径中的使用。
     #[test]
-    fn bulwark_result_err_propagates_via_question_mark() {
-        fn inner() -> BulwarkResult<()> {
-            Err(BulwarkError::Dao("db down".to_string()))
+    fn garrison_result_err_propagates_via_question_mark() {
+        fn inner() -> GarrisonResult<()> {
+            Err(GarrisonError::Dao("db down".to_string()))
         }
-        fn outer() -> BulwarkResult<()> {
+        fn outer() -> GarrisonResult<()> {
             inner()?;
             Ok(())
         }
-        assert!(matches!(outer(), Err(BulwarkError::Dao(_))));
+        assert!(matches!(outer(), Err(GarrisonError::Dao(_))));
     }
 
     /// 验证 Dao 变体的 Display 输出包含原始消息。
     #[test]
     fn dao_variant_display_includes_message() {
-        let err = BulwarkError::Dao("连接失败".to_string());
+        let err = GarrisonError::Dao("连接失败".to_string());
         assert_eq!(err.to_string(), "DAO 错误: 连接失败");
     }
 
     /// 验证 Config 变体的 Display 输出包含原始消息。
     #[test]
     fn config_variant_display_includes_message() {
-        let err = BulwarkError::Config("配置非法".to_string());
+        let err = GarrisonError::Config("配置非法".to_string());
         assert_eq!(err.to_string(), "配置错误: 配置非法");
     }
 
     /// 验证 InvalidToken 变体的 Display 输出包含原始消息。
     #[test]
     fn invalid_token_variant_display_includes_message() {
-        let err = BulwarkError::InvalidToken("格式错误".to_string());
+        let err = GarrisonError::InvalidToken("格式错误".to_string());
         assert_eq!(err.to_string(), "Token 无效: 格式错误");
     }
 
     /// 验证 ExpiredToken 变体的 Display 输出包含原始消息。
     #[test]
     fn expired_token_variant_display_includes_message() {
-        let err = BulwarkError::ExpiredToken("已过期".to_string());
+        let err = GarrisonError::ExpiredToken("已过期".to_string());
         assert_eq!(err.to_string(), "Token 已过期: 已过期");
     }
 
     /// 验证 NotPermission 变体的 Display 输出包含原始消息。
     #[test]
     fn not_permission_variant_display_includes_message() {
-        let err = BulwarkError::NotPermission("无权限".to_string());
+        let err = GarrisonError::NotPermission("无权限".to_string());
         assert_eq!(err.to_string(), "无权限: 无权限");
     }
 
     /// 验证 NotRole 变体的 Display 输出包含原始消息。
     #[test]
     fn not_role_variant_display_includes_message() {
-        let err = BulwarkError::NotRole("无角色".to_string());
+        let err = GarrisonError::NotRole("无角色".to_string());
         assert_eq!(err.to_string(), "无角色: 无角色");
     }
 
     /// 验证 NotLogin 变体的 Display 输出包含原始消息。
     #[test]
     fn not_login_variant_display_includes_message() {
-        let err = BulwarkError::NotLogin("请先登录".to_string());
+        let err = GarrisonError::NotLogin("请先登录".to_string());
         assert_eq!(err.to_string(), "未登录: 请先登录");
     }
 
     /// 验证 Internal 变体的 Display 输出包含原始消息。
     #[test]
     fn internal_variant_display_includes_message() {
-        let err = BulwarkError::Internal("内部错误".to_string());
+        let err = GarrisonError::Internal("内部错误".to_string());
         assert_eq!(err.to_string(), "内部错误: 内部错误");
     }
 
@@ -660,52 +660,52 @@ mod tests {
 
     /// 验证 Dao 错误映射为 500 Internal Server Error。
     ///
-    /// 覆盖 `IntoResponse for BulwarkError` 的 `_ =>` 分支（Dao 变体）。
+    /// 覆盖 `IntoResponse for GarrisonError` 的 `_ =>` 分支（Dao 变体）。
     #[cfg(feature = "web-axum")]
     #[test]
     fn dao_error_returns_500() {
         use axum::http::StatusCode;
         use axum::response::IntoResponse;
-        let err = BulwarkError::Dao("db down".to_string());
+        let err = GarrisonError::Dao("db down".to_string());
         let response = err.into_response();
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 
     /// 验证 Config 错误映射为 500 Internal Server Error。
     ///
-    /// 覆盖 `IntoResponse for BulwarkError` 的 `_ =>` 分支（Config 变体）。
+    /// 覆盖 `IntoResponse for GarrisonError` 的 `_ =>` 分支（Config 变体）。
     #[cfg(feature = "web-axum")]
     #[test]
     fn config_error_returns_500() {
         use axum::http::StatusCode;
         use axum::response::IntoResponse;
-        let err = BulwarkError::Config("invalid".to_string());
+        let err = GarrisonError::Config("invalid".to_string());
         let response = err.into_response();
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 
     /// 验证 Annotation 错误映射为 500 Internal Server Error。
     ///
-    /// 覆盖 `IntoResponse for BulwarkError` 的 `_ =>` 分支（Annotation 变体）。
+    /// 覆盖 `IntoResponse for GarrisonError` 的 `_ =>` 分支（Annotation 变体）。
     #[cfg(feature = "web-axum")]
     #[test]
     fn annotation_error_returns_500() {
         use axum::http::StatusCode;
         use axum::response::IntoResponse;
-        let err = BulwarkError::Annotation("conflict".to_string());
+        let err = GarrisonError::Annotation("conflict".to_string());
         let response = err.into_response();
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 
     /// 验证 Context 错误映射为 500 Internal Server Error。
     ///
-    /// 覆盖 `IntoResponse for BulwarkError` 的 `_ =>` 分支（Context 变体）。
+    /// 覆盖 `IntoResponse for GarrisonError` 的 `_ =>` 分支（Context 变体）。
     #[cfg(feature = "web-axum")]
     #[test]
     fn context_error_returns_500() {
         use axum::http::StatusCode;
         use axum::response::IntoResponse;
-        let err = BulwarkError::Context("missing".to_string());
+        let err = GarrisonError::Context("missing".to_string());
         let response = err.into_response();
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
@@ -720,7 +720,7 @@ mod tests {
     fn not_login_error_returns_401() {
         use axum::http::StatusCode;
         use axum::response::IntoResponse;
-        let err = BulwarkError::NotLogin("请先登录".to_string());
+        let err = GarrisonError::NotLogin("请先登录".to_string());
         let response = err.into_response();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
@@ -731,7 +731,7 @@ mod tests {
     fn not_permission_error_returns_403() {
         use axum::http::StatusCode;
         use axum::response::IntoResponse;
-        let err = BulwarkError::NotPermission("无权限".to_string());
+        let err = GarrisonError::NotPermission("无权限".to_string());
         let response = err.into_response();
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
@@ -742,7 +742,7 @@ mod tests {
     fn invalid_token_returns_401() {
         use axum::http::StatusCode;
         use axum::response::IntoResponse;
-        let err = BulwarkError::InvalidToken("格式错误".to_string());
+        let err = GarrisonError::InvalidToken("格式错误".to_string());
         let response = err.into_response();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
@@ -753,7 +753,7 @@ mod tests {
     fn expired_token_returns_401() {
         use axum::http::StatusCode;
         use axum::response::IntoResponse;
-        let err = BulwarkError::ExpiredToken("已过期".to_string());
+        let err = GarrisonError::ExpiredToken("已过期".to_string());
         let response = err.into_response();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
@@ -764,7 +764,7 @@ mod tests {
     fn not_role_returns_403() {
         use axum::http::StatusCode;
         use axum::response::IntoResponse;
-        let err = BulwarkError::NotRole("无角色".to_string());
+        let err = GarrisonError::NotRole("无角色".to_string());
         let response = err.into_response();
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
@@ -773,11 +773,11 @@ mod tests {
     // Exception 变体测试
     // ========================================================================
 
-    /// 验证 Exception 变体的 Display 输出（委托给 BulwarkException::Display）。
+    /// 验证 Exception 变体的 Display 输出（委托给 GarrisonException::Display）。
     #[test]
     fn exception_variant_display_includes_code_and_message() {
-        use crate::exception::BulwarkException;
-        let err = BulwarkError::Exception(BulwarkException::new(-1, "请先登录"));
+        use crate::exception::GarrisonException;
+        let err = GarrisonError::Exception(GarrisonException::new(-1, "请先登录"));
         assert_eq!(err.to_string(), "业务异常[-1]: 请先登录");
     }
 
@@ -785,10 +785,10 @@ mod tests {
     #[cfg(feature = "web-axum")]
     #[test]
     fn exception_not_login_returns_401() {
-        use crate::exception::BulwarkException;
+        use crate::exception::GarrisonException;
         use axum::http::StatusCode;
         use axum::response::IntoResponse;
-        let err = BulwarkError::Exception(BulwarkException::new(-1, "请先登录"));
+        let err = GarrisonError::Exception(GarrisonException::new(-1, "请先登录"));
         let response = err.into_response();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
@@ -797,10 +797,10 @@ mod tests {
     #[cfg(feature = "web-axum")]
     #[test]
     fn exception_not_permission_returns_403() {
-        use crate::exception::BulwarkException;
+        use crate::exception::GarrisonException;
         use axum::http::StatusCode;
         use axum::response::IntoResponse;
-        let err = BulwarkError::Exception(BulwarkException::new(-2, "无权限"));
+        let err = GarrisonError::Exception(GarrisonException::new(-2, "无权限"));
         let response = err.into_response();
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
@@ -809,10 +809,10 @@ mod tests {
     #[cfg(feature = "web-axum")]
     #[test]
     fn exception_other_code_returns_500() {
-        use crate::exception::BulwarkException;
+        use crate::exception::GarrisonException;
         use axum::http::StatusCode;
         use axum::response::IntoResponse;
-        let err = BulwarkError::Exception(BulwarkException::new(500, "业务异常"));
+        let err = GarrisonError::Exception(GarrisonException::new(500, "业务异常"));
         let response = err.into_response();
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
@@ -827,7 +827,7 @@ mod tests {
     fn internal_error_returns_500() {
         use axum::http::StatusCode;
         use axum::response::IntoResponse;
-        let err = BulwarkError::Internal("内部错误".to_string());
+        let err = GarrisonError::Internal("内部错误".to_string());
         let response = err.into_response();
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
@@ -838,7 +838,7 @@ mod tests {
     fn session_error_returns_500() {
         use axum::http::StatusCode;
         use axum::response::IntoResponse;
-        let err = BulwarkError::Session("会话过期".to_string());
+        let err = GarrisonError::Session("会话过期".to_string());
         let response = err.into_response();
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
@@ -849,7 +849,7 @@ mod tests {
     fn oauth2_error_returns_500() {
         use axum::http::StatusCode;
         use axum::response::IntoResponse;
-        let err = BulwarkError::OAuth2("授权失败".to_string());
+        let err = GarrisonError::OAuth2("授权失败".to_string());
         let response = err.into_response();
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
@@ -860,7 +860,7 @@ mod tests {
     fn network_error_returns_502() {
         use axum::http::StatusCode;
         use axum::response::IntoResponse;
-        let err = BulwarkError::Network("连接超时".to_string());
+        let err = GarrisonError::Network("连接超时".to_string());
         let response = err.into_response();
         assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
     }
@@ -871,7 +871,7 @@ mod tests {
     fn invalid_param_returns_400() {
         use axum::http::StatusCode;
         use axum::response::IntoResponse;
-        let err = BulwarkError::InvalidParam("参数缺失".to_string());
+        let err = GarrisonError::InvalidParam("参数缺失".to_string());
         let response = err.into_response();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
@@ -882,7 +882,7 @@ mod tests {
     fn not_implemented_returns_501() {
         use axum::http::StatusCode;
         use axum::response::IntoResponse;
-        let err = BulwarkError::NotImplemented("功能未实现".to_string());
+        let err = GarrisonError::NotImplemented("功能未实现".to_string());
         let response = err.into_response();
         assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
     }
@@ -890,28 +890,28 @@ mod tests {
     /// 验证 OAuth2 变体的 Display 输出包含原始消息。
     #[test]
     fn oauth2_variant_display_includes_message() {
-        let err = BulwarkError::OAuth2("授权码无效".to_string());
+        let err = GarrisonError::OAuth2("授权码无效".to_string());
         assert_eq!(err.to_string(), "OAuth2 错误: 授权码无效");
     }
 
     /// 验证 Network 变体的 Display 输出包含原始消息。
     #[test]
     fn network_variant_display_includes_message() {
-        let err = BulwarkError::Network("DNS 解析失败".to_string());
+        let err = GarrisonError::Network("DNS 解析失败".to_string());
         assert_eq!(err.to_string(), "网络错误: DNS 解析失败");
     }
 
     /// 验证 InvalidParam 变体的 Display 输出包含原始消息。
     #[test]
     fn invalid_param_variant_display_includes_message() {
-        let err = BulwarkError::InvalidParam("client_id 为空".to_string());
+        let err = GarrisonError::InvalidParam("client_id 为空".to_string());
         assert_eq!(err.to_string(), "参数无效: client_id 为空");
     }
 
     /// 验证 NotImplemented 变体的 Display 输出包含原始消息。
     #[test]
     fn not_implemented_variant_display_includes_message() {
-        let err = BulwarkError::NotImplemented("refresh_token 未实现".to_string());
+        let err = GarrisonError::NotImplemented("refresh_token 未实现".to_string());
         assert_eq!(err.to_string(), "未实现: refresh_token 未实现");
     }
 
@@ -924,7 +924,7 @@ mod tests {
     /// 覆盖行 163-164（to_json_body 中的 json! 宏构造）。
     #[test]
     fn to_json_body_returns_error_code_and_message() {
-        let err = BulwarkError::NotLogin("token missing".to_string());
+        let err = GarrisonError::NotLogin("token missing".to_string());
         let body = err.to_json_body();
         assert_eq!(body["error_code"], "NOT_LOGIN");
         assert_eq!(body["message"], "未登录");
@@ -937,7 +937,7 @@ mod tests {
     /// 覆盖行 166-168（Exception 变体的 code 字段写入）。
     #[test]
     fn to_json_body_includes_code_for_exception_variant() {
-        let err = BulwarkError::Exception(crate::exception::BulwarkException {
+        let err = GarrisonError::Exception(crate::exception::GarrisonException {
             code: 1001,
             message: "自定义业务异常".to_string(),
             login_type: 1,
@@ -954,22 +954,22 @@ mod tests {
     #[test]
     fn response_parts_returns_correct_status_and_code() {
         // NotLogin → 401
-        let (status, code, _, _) = BulwarkError::NotLogin("".to_string()).response_parts();
+        let (status, code, _, _) = GarrisonError::NotLogin("".to_string()).response_parts();
         assert_eq!(status, 401);
         assert_eq!(code, "NOT_LOGIN");
 
         // NotPermission → 403
-        let (status, code, _, _) = BulwarkError::NotPermission("".to_string()).response_parts();
+        let (status, code, _, _) = GarrisonError::NotPermission("".to_string()).response_parts();
         assert_eq!(status, 403);
         assert_eq!(code, "NOT_PERMISSION");
 
         // Dao → 500
-        let (status, code, _, _) = BulwarkError::Dao("".to_string()).response_parts();
+        let (status, code, _, _) = GarrisonError::Dao("".to_string()).response_parts();
         assert_eq!(status, 500);
         assert_eq!(code, "DAO_ERROR");
 
         // NotImplemented → 501
-        let (status, code, _, _) = BulwarkError::NotImplemented("".to_string()).response_parts();
+        let (status, code, _, _) = GarrisonError::NotImplemented("".to_string()).response_parts();
         assert_eq!(status, 501);
         assert_eq!(code, "NOT_IMPLEMENTED");
     }
@@ -980,7 +980,7 @@ mod tests {
 
     /// 验证响应体大小被限制在 4KB 以内。
     ///
-    /// 构造超长 error message 的 BulwarkError，断言 response body <= 4096 字节且仍是合法 JSON。
+    /// 构造超长 error message 的 GarrisonError，断言 response body <= 4096 字节且仍是合法 JSON。
     /// 防御性测试：当前架构下 message 字段是固定字符串（不泄露变体 String 内容），
     /// body 永远 < 4KB；此测试保护未来架构变化不会导致响应体过大。
     #[cfg(feature = "web-axum")]
@@ -991,7 +991,7 @@ mod tests {
 
         // 构造超长 error message（10KB）
         let long_msg = "x".repeat(10 * 1024);
-        let err = BulwarkError::InvalidParam(long_msg);
+        let err = GarrisonError::InvalidParam(long_msg);
         let response = err.into_response();
         let bytes = response
             .into_body()
@@ -1030,23 +1030,26 @@ mod tests {
     fn diagnostic_code_returns_stable_identifier() {
         use miette::Diagnostic;
 
-        let cases: [(BulwarkError, &str); 5] = [
-            (BulwarkError::NotLogin("x".to_string()), "bulwark.not_login"),
+        let cases: [(GarrisonError, &str); 5] = [
             (
-                BulwarkError::NotPermission("x".to_string()),
-                "bulwark.not_permission",
+                GarrisonError::NotLogin("x".to_string()),
+                "garrison.not_login",
             ),
             (
-                BulwarkError::FirewallBlocked("x".to_string()),
-                "bulwark.firewall_blocked",
+                GarrisonError::NotPermission("x".to_string()),
+                "garrison.not_permission",
             ),
             (
-                BulwarkError::NotImplemented("x".to_string()),
-                "bulwark.not_implemented",
+                GarrisonError::FirewallBlocked("x".to_string()),
+                "garrison.firewall_blocked",
             ),
             (
-                BulwarkError::Exception(crate::exception::BulwarkException::new(500, "x")),
-                "bulwark.exception",
+                GarrisonError::NotImplemented("x".to_string()),
+                "garrison.not_implemented",
+            ),
+            (
+                GarrisonError::Exception(crate::exception::GarrisonException::new(500, "x")),
+                "garrison.exception",
             ),
         ];
         for (err, expected) in cases {
@@ -1068,40 +1071,40 @@ mod tests {
         use miette::{Diagnostic, Severity};
 
         let errors = [
-            BulwarkError::NotLogin(String::new()),
-            BulwarkError::NotPermission(String::new()),
-            BulwarkError::NotRole(String::new()),
-            BulwarkError::InvalidToken(String::new()),
-            BulwarkError::ExpiredToken(String::new()),
-            BulwarkError::Dao(String::new()),
-            BulwarkError::Config(String::new()),
-            BulwarkError::Internal(String::new()),
-            BulwarkError::Session(String::new()),
-            BulwarkError::Annotation(String::new()),
-            BulwarkError::Context(String::new()),
-            BulwarkError::Exception(crate::exception::BulwarkException::new(500, "")),
-            BulwarkError::OAuth2(String::new()),
-            BulwarkError::Network(String::new()),
-            BulwarkError::InvalidParam(String::new()),
-            BulwarkError::NotImplemented(String::new()),
-            BulwarkError::FirewallBlocked(String::new()),
-            BulwarkError::DisableService {
+            GarrisonError::NotLogin(String::new()),
+            GarrisonError::NotPermission(String::new()),
+            GarrisonError::NotRole(String::new()),
+            GarrisonError::InvalidToken(String::new()),
+            GarrisonError::ExpiredToken(String::new()),
+            GarrisonError::Dao(String::new()),
+            GarrisonError::Config(String::new()),
+            GarrisonError::Internal(String::new()),
+            GarrisonError::Session(String::new()),
+            GarrisonError::Annotation(String::new()),
+            GarrisonError::Context(String::new()),
+            GarrisonError::Exception(crate::exception::GarrisonException::new(500, "")),
+            GarrisonError::OAuth2(String::new()),
+            GarrisonError::Network(String::new()),
+            GarrisonError::InvalidParam(String::new()),
+            GarrisonError::NotImplemented(String::new()),
+            GarrisonError::FirewallBlocked(String::new()),
+            GarrisonError::DisableService {
                 service: String::new(),
                 until: None,
             },
-            BulwarkError::NotSafe {
+            GarrisonError::NotSafe {
                 reason: String::new(),
             },
-            BulwarkError::InvalidStateTransition {
+            GarrisonError::InvalidStateTransition {
                 from: String::new(),
                 to: String::new(),
             },
-            BulwarkError::SmsRateLimitExceeded {
+            GarrisonError::SmsRateLimitExceeded {
                 window: String::new(),
             },
-            BulwarkError::SmsVerifyMaxAttempts,
-            BulwarkError::SmsCodeNotFound,
-            BulwarkError::SmsChannelRecycled,
+            GarrisonError::SmsVerifyMaxAttempts,
+            GarrisonError::SmsCodeNotFound,
+            GarrisonError::SmsChannelRecycled,
         ];
         for err in errors {
             let sev = err.severity().expect("severity() 应返回 Some");
@@ -1111,18 +1114,18 @@ mod tests {
 
     /// 验证 String 携带型变体的 `labels()` 返回 `None`（无源码位置信息）。
     ///
-    /// `BulwarkError` 的 String 变体仅携带消息字符串，不携带源码 span。
+    /// `GarrisonError` 的 String 变体仅携带消息字符串，不携带源码 span。
     #[cfg(feature = "miette")]
     #[test]
     fn diagnostic_labels_returns_none_for_string_variants() {
         use miette::Diagnostic;
 
-        let cases: [BulwarkError; 5] = [
-            BulwarkError::NotLogin("x".to_string()),
-            BulwarkError::Dao("x".to_string()),
-            BulwarkError::Config("x".to_string()),
-            BulwarkError::OAuth2("x".to_string()),
-            BulwarkError::FirewallBlocked("x".to_string()),
+        let cases: [GarrisonError; 5] = [
+            GarrisonError::NotLogin("x".to_string()),
+            GarrisonError::Dao("x".to_string()),
+            GarrisonError::Config("x".to_string()),
+            GarrisonError::OAuth2("x".to_string()),
+            GarrisonError::FirewallBlocked("x".to_string()),
         ];
         for err in cases {
             assert!(err.labels().is_none(), "{:?} 的 labels() 应返回 None", err);
@@ -1132,17 +1135,17 @@ mod tests {
     /// 验证 `miette::Report::new(error)` 可构造，且 Debug 渲染输出包含错误代码。
     ///
     /// 验收 spec R-error-001 的"source chain 渲染"要求：miette::Report 接受任何
-    /// `Diagnostic + Send + Sync + 'static`，BulwarkError 通过 thiserror::Error derive
+    /// `Diagnostic + Send + Sync + 'static`，GarrisonError 通过 thiserror::Error derive
     /// 满足 `std::error::Error`，本测试验证集成可达。
     #[cfg(feature = "miette")]
     #[test]
     fn diagnostic_can_be_rendered_with_miette_handler() {
-        let err = BulwarkError::NotLogin("test message".to_string());
+        let err = GarrisonError::NotLogin("test message".to_string());
         let report = miette::Report::new(err);
         let rendered = format!("{:?}", report);
         assert!(
-            rendered.contains("bulwark.not_login"),
-            "miette::Report 的 Debug 渲染应包含错误代码 bulwark.not_login，实际: {}",
+            rendered.contains("garrison.not_login"),
+            "miette::Report 的 Debug 渲染应包含错误代码 garrison.not_login，实际: {}",
             rendered
         );
     }
@@ -1156,7 +1159,7 @@ mod tests {
     /// 覆盖 Display impl 的 FirewallBlocked 分支（i18n 启用时走 fallback_display）。
     #[test]
     fn firewall_blocked_variant_display_includes_message() {
-        let err = BulwarkError::FirewallBlocked("IP 1.2.3.4 被拦截".to_string());
+        let err = GarrisonError::FirewallBlocked("IP 1.2.3.4 被拦截".to_string());
         assert_eq!(err.to_string(), "防火墙拦截: IP 1.2.3.4 被拦截");
     }
 
@@ -1166,7 +1169,7 @@ mod tests {
     #[test]
     fn firewall_blocked_response_parts_returns_403() {
         let (status, error_code, message, ex_code) =
-            BulwarkError::FirewallBlocked("bruteforce".to_string()).response_parts();
+            GarrisonError::FirewallBlocked("bruteforce".to_string()).response_parts();
         assert_eq!(status, 403, "FirewallBlocked 应映射为 403 Forbidden");
         assert_eq!(error_code, "FIREWALL_BLOCKED");
         assert_eq!(message, "防火墙拦截");
@@ -1176,7 +1179,7 @@ mod tests {
     /// 验证 FirewallBlocked 变体的 to_json_body 返回正确 JSON（无 code 字段）。
     #[test]
     fn firewall_blocked_to_json_body_returns_correct_json() {
-        let err = BulwarkError::FirewallBlocked("ratelimit".to_string());
+        let err = GarrisonError::FirewallBlocked("ratelimit".to_string());
         let body = err.to_json_body();
         assert_eq!(body["error_code"], "FIREWALL_BLOCKED");
         assert_eq!(body["message"], "防火墙拦截");
@@ -1192,7 +1195,7 @@ mod tests {
     fn firewall_blocked_error_returns_403() {
         use axum::http::StatusCode;
         use axum::response::IntoResponse;
-        let err = BulwarkError::FirewallBlocked("ddos".to_string());
+        let err = GarrisonError::FirewallBlocked("ddos".to_string());
         let response = err.into_response();
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
@@ -1207,7 +1210,7 @@ mod tests {
     /// 覆盖 spec R-error-001：Display 输出 `"账号已被封禁：service={service}, until={until:?}"`。
     #[test]
     fn disable_service_display_includes_service_and_until() {
-        let err = BulwarkError::DisableService {
+        let err = GarrisonError::DisableService {
             service: "default".to_string(),
             until: None,
         };
@@ -1217,7 +1220,7 @@ mod tests {
         let until = chrono::DateTime::parse_from_rfc3339("2026-12-31T23:59:59Z")
             .unwrap()
             .with_timezone(&chrono::Utc);
-        let err_with_until = BulwarkError::DisableService {
+        let err_with_until = GarrisonError::DisableService {
             service: "oidc".to_string(),
             until: Some(until),
         };
@@ -1239,7 +1242,7 @@ mod tests {
     /// 覆盖 spec R-error-001：HTTP status = 403，error_code 字符串 = "DISABLE_SERVICE"。
     #[test]
     fn disable_service_response_parts_returns_403() {
-        let err = BulwarkError::DisableService {
+        let err = GarrisonError::DisableService {
             service: "default".to_string(),
             until: None,
         };
@@ -1255,7 +1258,7 @@ mod tests {
     /// 覆盖 spec R-error-001 约束：to_json_body 的 message 字段为通用描述，不含 service 值。
     #[test]
     fn disable_service_to_json_body_does_not_leak_service() {
-        let err = BulwarkError::DisableService {
+        let err = GarrisonError::DisableService {
             service: "sensitive-service-name".to_string(),
             until: None,
         };
@@ -1275,7 +1278,7 @@ mod tests {
     /// 覆盖 spec R-error-002：Display 输出 `"未完成二次认证：{reason}"`。
     #[test]
     fn not_safe_display_includes_reason() {
-        let err = BulwarkError::NotSafe {
+        let err = GarrisonError::NotSafe {
             reason: "MFA_TOTP_REQUIRED".to_string(),
         };
         assert_eq!(err.to_string(), "未完成二次认证：MFA_TOTP_REQUIRED");
@@ -1286,7 +1289,7 @@ mod tests {
     /// 覆盖 spec R-error-002：HTTP status = 400，error_code = "NOT_SAFE"。
     #[test]
     fn not_safe_response_parts_returns_400() {
-        let err = BulwarkError::NotSafe {
+        let err = GarrisonError::NotSafe {
             reason: "WEBAUTHN_REQUIRED".to_string(),
         };
         let (status, error_code, message, ex_code) = err.response_parts();
@@ -1299,7 +1302,7 @@ mod tests {
     /// 验证 NotSafe 变体不泄露敏感信息（reason 字段不暴露到响应体）。
     #[test]
     fn not_safe_to_json_body_does_not_leak_reason() {
-        let err = BulwarkError::NotSafe {
+        let err = GarrisonError::NotSafe {
             reason: "internal-mfa-secret-leak".to_string(),
         };
         let body = err.to_json_body();
@@ -1317,7 +1320,7 @@ mod tests {
     /// 覆盖 spec R-error-003：Display 输出 `"非法状态转换：{from} -> {to}"`。
     #[test]
     fn invalid_state_transition_display_includes_from_and_to() {
-        let err = BulwarkError::InvalidStateTransition {
+        let err = GarrisonError::InvalidStateTransition {
             from: "Expired".to_string(),
             to: "Active".to_string(),
         };
@@ -1329,7 +1332,7 @@ mod tests {
     /// 覆盖 spec R-error-003：HTTP status = 500（内部状态错误）。
     #[test]
     fn invalid_state_transition_response_parts_returns_500() {
-        let err = BulwarkError::InvalidStateTransition {
+        let err = GarrisonError::InvalidStateTransition {
             from: "Deleted".to_string(),
             to: "Active".to_string(),
         };
@@ -1346,7 +1349,7 @@ mod tests {
     /// 验证 InvalidStateTransition 变体不泄露内部状态名到响应体。
     #[test]
     fn invalid_state_transition_to_json_body_does_not_leak_states() {
-        let err = BulwarkError::InvalidStateTransition {
+        let err = GarrisonError::InvalidStateTransition {
             from: "InternalStateA".to_string(),
             to: "InternalStateB".to_string(),
         };
@@ -1371,24 +1374,24 @@ mod tests {
     /// 验证 BW_ERR_009 常量值为 409001（并发登录冲突，FRD §3.4）。
     #[test]
     fn bw_err_009_constant_value() {
-        assert_eq!(BulwarkError::BW_ERR_009, 409001);
+        assert_eq!(GarrisonError::BW_ERR_009, 409001);
     }
 
     /// 验证 BW_ERR_010 常量值为 403003（账号被封禁，FRD §3.4）。
     #[test]
     fn bw_err_010_constant_value() {
-        assert_eq!(BulwarkError::BW_ERR_010, 403003);
+        assert_eq!(GarrisonError::BW_ERR_010, 403003);
     }
 
     /// 验证 BW_ERR_011 常量值为 401004（多账号体系冲突，FRD §3.4）。
     #[test]
     fn bw_err_011_constant_value() {
-        assert_eq!(BulwarkError::BW_ERR_011, 401004);
+        assert_eq!(GarrisonError::BW_ERR_011, 401004);
     }
 
     /// 验证 BW_ERR_012 常量值为 400001（第三方登录失败，FRD §3.4）。
     #[test]
     fn bw_err_012_constant_value() {
-        assert_eq!(BulwarkError::BW_ERR_012, 400001);
+        assert_eq!(GarrisonError::BW_ERR_012, 400001);
     }
 }

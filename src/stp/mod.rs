@@ -4,13 +4,13 @@
 //! Stp 模块，提供核心认证逻辑与工具入口。
 //!
 //! 对应 `StpLogic` / `StpInterface` / `StpUtil` 三件套，
-//! Bulwark 中统一使用 `Bulwark*` 前缀。
+//! Garrison 中统一使用 `Garrison*` 前缀。
 //!
 //! ## 核心设计
 //!
 //! - 5 个子 trait（`SessionLogic`/`PermissionLogic`/`TokenLogic`/`MfaLogic`/`PasswordLogic`）：
-//!   v0.5.2 拆分原 `BulwarkLogic` 上帝 trait，按职责域分离，super-trait 为 `BulwarkCore`
-//! - `BulwarkLogicDefault`：默认实现，组合 `BulwarkSession` + `BulwarkConfig`，实现全部 5 个子 trait
+//!   v0.5.2 拆分原 `GarrisonLogic` 上帝 trait，按职责域分离，super-trait 为 `GarrisonCore`
+//! - `GarrisonLogicDefault`：默认实现，组合 `GarrisonSession` + `GarrisonConfig`，实现全部 5 个子 trait
 //! - `tokio::task_local`：存储当前请求的 token（类似 `SaHolder`，但适配 async）
 //!
 //! ## task_local 上下文
@@ -18,19 +18,19 @@
 //! 在 axum middleware 中调用 `with_current_token(token, async { handler }).await` 设置作用域，
 //! stp 核心 API（logout/check_login/get_login_id）从 `current_token()` 读取。
 
-use crate::config::BulwarkConfig;
+use crate::config::GarrisonConfig;
 use crate::core::auth::AuthLogic;
 use crate::core::permission::PermissionChecker;
-// `BulwarkError`/`BulwarkResult` 供 `default_impl.rs` 和 `tests.rs` 通过 `use super::*` glob 使用。
-// `BulwarkError` 仅在 `protocol-apikey` feature 下被 `default_impl.rs` 直接使用，
+// `GarrisonError`/`GarrisonResult` 供 `default_impl.rs` 和 `tests.rs` 通过 `use super::*` glob 使用。
+// `GarrisonError` 仅在 `protocol-apikey` feature 下被 `default_impl.rs` 直接使用，
 // 但 `tests.rs` 在所有 feature 配置下通过 glob 引用，故不可 cfg-gate。
 #[allow(unused_imports)]
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::error::{GarrisonError, GarrisonResult};
 #[cfg(feature = "listener")]
-use crate::listener::BulwarkListenerManager;
-use crate::plugin::BulwarkPluginManager;
-use crate::session::BulwarkSession;
-use crate::strategy::BulwarkPermissionStrategy;
+use crate::listener::GarrisonListenerManager;
+use crate::plugin::GarrisonPluginManager;
+use crate::session::GarrisonSession;
+use crate::strategy::GarrisonPermissionStrategy;
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use parking_lot::RwLock;
@@ -42,8 +42,8 @@ use tokio::sync::Mutex as TokioMutex;
 #[cfg(feature = "parameter-query")]
 pub mod parameter;
 
-// 原 BulwarkLogic 上帝 trait 拆分为 6 个细粒度子 trait
-// （BulwarkCore 基座 + 5 个职责域 trait），按职责域分离。
+// 原 GarrisonLogic 上帝 trait 拆分为 6 个细粒度子 trait
+// （GarrisonCore 基座 + 5 个职责域 trait），按职责域分离。
 pub mod clock;
 pub mod context;
 pub mod core;
@@ -60,8 +60,8 @@ pub mod util;
 
 // 子 trait re-exports（供 crate::stp::SessionLogic 等路径访问）
 pub use self::context::{current_token, with_current_token};
-pub use self::core::BulwarkCore;
-pub use self::interface::BulwarkInterface;
+pub use self::core::GarrisonCore;
+pub use self::interface::GarrisonInterface;
 pub use self::mfa::MfaLogic;
 pub use self::password::PasswordLogic;
 pub use self::permission::PermissionLogic;
@@ -69,7 +69,7 @@ pub use self::session::SessionLogic;
 pub use self::token::TokenLogic;
 #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
 pub use self::util::init_backend;
-pub use self::util::{BulwarkUtil, JwtMode};
+pub use self::util::{GarrisonUtil, JwtMode};
 
 /// 登录参数（v0.6.3 新增）。
 ///
@@ -87,7 +87,7 @@ pub use self::util::{BulwarkUtil, JwtMode};
 /// # 用法
 ///
 /// ```ignore
-/// use bulwark::stp::LoginParams;
+/// use garrison::stp::LoginParams;
 ///
 /// // 默认参数（所有字段为 None/false）
 /// let token = logic.login("user-1", &LoginParams::default()).await?;
@@ -119,8 +119,8 @@ pub struct LoginParams {
     pub require_mfa: bool,
 }
 
-// 原 `BulwarkLogic` 上帝 trait（21 个方法）已彻底删除。
-// Manager / Strategy / Factory 等持有方改为具体类型 `Arc<BulwarkLogicDefault>`，
+// 原 `GarrisonLogic` 上帝 trait（21 个方法）已彻底删除。
+// Manager / Strategy / Factory 等持有方改为具体类型 `Arc<GarrisonLogicDefault>`，
 // 方法调用通过子 trait（SessionLogic/PermissionLogic/TokenLogic/MfaLogic/PasswordLogic）解析。
 
 // ============================================================================
@@ -136,14 +136,14 @@ tokio::task_local! {
 // 此处通过 re-export 保持外部调用路径 `crate::stp::with_current_token` 不变。
 
 // ============================================================================
-// BulwarkContext：task_local 上下文传播工具（跨 spawn 传播 CURRENT_TOKEN）
+// GarrisonContext：task_local 上下文传播工具（跨 spawn 传播 CURRENT_TOKEN）
 // ============================================================================
 
 /// task_local 上下文快照，用于跨 `tokio::spawn` 传播 `CURRENT_TOKEN`。
 ///
 /// tokio `task_local!` 不会自动传播到 `tokio::spawn` 子任务中，
 /// 导致子任务内 `current_token()` / `check_login()` 失败。
-/// `BulwarkContext` 通过 capture/within 模式手动传播上下文。
+/// `GarrisonContext` 通过 capture/within 模式手动传播上下文。
 ///
 /// # 设计说明（RAII vs scope-based）
 ///
@@ -156,11 +156,11 @@ tokio::task_local! {
 /// # 示例
 ///
 /// ```ignore
-/// use bulwark::stp::{BulwarkContext, current_token, with_current_token};
+/// use garrison::stp::{GarrisonContext, current_token, with_current_token};
 ///
 /// // 在当前 task 设置 token 并捕获上下文
 /// let ctx = with_current_token("my-token".to_string(), async {
-///     BulwarkContext::capture()
+///     GarrisonContext::capture()
 /// }).await;
 ///
 /// // spawn 子任务，在子任务内恢复上下文
@@ -172,7 +172,7 @@ tokio::task_local! {
 /// });
 /// handle.await.unwrap();
 /// ```
-pub struct BulwarkContext {
+pub struct GarrisonContext {
     token: Option<String>,
 }
 
@@ -203,30 +203,30 @@ pub struct MockClock {
 }
 
 // ============================================================================
-// BulwarkLogicDefault：默认实现
+// GarrisonLogicDefault：默认实现
 // ============================================================================
 
 /// 默认实现，实现全部 5 个子 trait（SessionLogic/PermissionLogic/TokenLogic/MfaLogic/PasswordLogic）。
 ///
 /// 对应 `StpLogic` 默认实现（design.md Decision 8）。
-pub struct BulwarkLogicDefault {
+pub struct GarrisonLogicDefault {
     /// 会话管理器（pub(crate) 供测试验证）。
-    pub(crate) session: Arc<BulwarkSession>,
-    config: Arc<BulwarkConfig>,
+    pub(crate) session: Arc<GarrisonSession>,
+    config: Arc<GarrisonConfig>,
     /// 权限策略（pub(crate) 供测试验证）。
-    pub(crate) firewall: Arc<dyn BulwarkPermissionStrategy>,
+    pub(crate) firewall: Arc<dyn GarrisonPermissionStrategy>,
     /// 插件管理器（可选，注入后 login/logout 触发插件钩子）。
-    plugin_manager: Option<Arc<BulwarkPluginManager>>,
+    plugin_manager: Option<Arc<GarrisonPluginManager>>,
     /// 监听器管理器（可选，注入后 login/logout/kickout 广播事件）。
     #[cfg(feature = "listener")]
-    listener_manager: Option<Arc<BulwarkListenerManager>>,
+    listener_manager: Option<Arc<GarrisonListenerManager>>,
     /// 认证逻辑（可选，注入后 login_by_token 优先委托此实现）。
     pub(crate) auth_logic: Option<Arc<dyn AuthLogic>>,
     /// 权限校验器（可选，注入后 check_permission/check_role 可委托此实现）。
     permission_checker: Option<Arc<dyn PermissionChecker>>,
     /// Prometheus 指标采集器（可选，注入后 login/check_login/check_permission/check_role emit 指标）。
     #[cfg(feature = "metrics-prometheus")]
-    metrics: Option<Arc<crate::observability::BulwarkMetrics>>,
+    metrics: Option<Arc<crate::observability::GarrisonMetrics>>,
     /// 密码哈希器（可选，注入后 login_with_password 委托此实现校验密码）。
     #[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
     password_hasher: Option<Arc<dyn crate::account::credential::password::PasswordHasher>>,
@@ -250,7 +250,7 @@ pub struct BulwarkLogicDefault {
     refresh_token_rotation: Option<crate::protocol::jwt::refresh::RefreshTokenRotation>,
     /// per-login_id 续签锁（HIGH-001 修复）。
     ///
-    /// 独立于 `BulwarkSession::login_locks`，避免 `check_and_renew` 持有
+    /// 独立于 `GarrisonSession::login_locks`，避免 `check_and_renew` 持有
     /// `login_locks` 后调用 `renew_to_equivalent`（内部 `logout` 再次获取
     /// `login_locks`）导致死锁。续签锁仅序列化并发 `check_and_renew` 调用。
     renewal_locks: DashMap<String, Arc<TokioMutex<()>>>,

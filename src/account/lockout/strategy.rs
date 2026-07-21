@@ -4,15 +4,15 @@
 //! 用户级双态锁定策略实现（T012）。
 //!
 //! 本文件包含 `UserLockoutStrategy` 的 impl 块、
-//! [`BulwarkFirewallStrategy`](crate::strategy::firewall::BulwarkFirewallStrategy) trait 实现，
+//! [`GarrisonFirewallStrategy`](crate::strategy::firewall::GarrisonFirewallStrategy) trait 实现，
 //! 以及辅助函数 `now_timestamp` / `calculate_lock_seconds`。
 //!
 //! 接口定义（struct 字段、enum）保留在 [`super`](crate::account::lockout) 模块。
 
 use crate::constants::DaoKeyPrefix;
-use crate::dao::BulwarkDao;
-use crate::error::{BulwarkError, BulwarkResult};
-use crate::strategy::firewall::{BulwarkFirewallStrategy, FirewallContext, StrategyRegistration};
+use crate::dao::GarrisonDao;
+use crate::error::{GarrisonError, GarrisonResult};
+use crate::strategy::firewall::{FirewallContext, GarrisonFirewallStrategy, StrategyRegistration};
 use async_trait::async_trait;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -62,7 +62,7 @@ fn calculate_lock_seconds(strategy: &WaitStrategy, n: u32) -> u64 {
 
 impl UserLockoutStrategy {
     /// 创建用户级锁定策略实例。
-    pub fn new(config: UserLockoutConfig, dao: Arc<dyn BulwarkDao>) -> Self {
+    pub fn new(config: UserLockoutConfig, dao: Arc<dyn GarrisonDao>) -> Self {
         Self {
             config,
             dao,
@@ -82,20 +82,24 @@ impl UserLockoutStrategy {
     }
 
     /// 读取用户锁定状态（不存在则返回默认空状态）。
-    pub(super) async fn get_state(&self, user_id: &str) -> BulwarkResult<LockoutState> {
+    pub(super) async fn get_state(&self, user_id: &str) -> GarrisonResult<LockoutState> {
         let key = DaoKeyPrefix::Lockout.build_key(user_id);
         match self.dao.get(&key).await? {
             Some(json) => serde_json::from_str(&json)
-                .map_err(|e| BulwarkError::Dao(format!("account-lockout-deserialize::{}", e))),
+                .map_err(|e| GarrisonError::Dao(format!("account-lockout-deserialize::{}", e))),
             None => Ok(LockoutState::default()),
         }
     }
 
     /// 持久化用户锁定状态（TTL=0 永久存储，锁定状态不应自动过期）。
-    pub(super) async fn set_state(&self, user_id: &str, state: &LockoutState) -> BulwarkResult<()> {
+    pub(super) async fn set_state(
+        &self,
+        user_id: &str,
+        state: &LockoutState,
+    ) -> GarrisonResult<()> {
         let key = DaoKeyPrefix::Lockout.build_key(user_id);
         let json = serde_json::to_string(state)
-            .map_err(|e| BulwarkError::Dao(format!("account-lockout-serialize::{}", e)))?;
+            .map_err(|e| GarrisonError::Dao(format!("account-lockout-serialize::{}", e)))?;
         self.dao.set(&key, &json, 0).await
     }
 
@@ -104,7 +108,7 @@ impl UserLockoutStrategy {
     /// 逻辑：
     /// 1. 检查 failure_window_seconds 窗口是否过期 → 过期则重置 failure_count
     /// 2. failure_count += 1 → 达阈值触发锁定 → 临时/永久锁定 → 持久化
-    pub async fn record_failure(&self, user_id: &str) -> BulwarkResult<()> {
+    pub async fn record_failure(&self, user_id: &str) -> GarrisonResult<()> {
         let mut state = self.get_state(user_id).await?;
         let now = now_timestamp();
 
@@ -158,7 +162,7 @@ impl UserLockoutStrategy {
     /// 记录登录成功，重置失败计数。
     ///
     /// 仅重置 failure_count 和 first_failure_at，不修改 temporary_lockout_count/permanent_locked/locked_until。
-    pub async fn record_success(&self, user_id: &str) -> BulwarkResult<()> {
+    pub async fn record_success(&self, user_id: &str) -> GarrisonResult<()> {
         let mut state = self.get_state(user_id).await?;
         state.failure_count = 0;
         state.first_failure_at = None;
@@ -166,15 +170,15 @@ impl UserLockoutStrategy {
     }
 
     /// 手动解锁，彻底清空锁定状态。
-    pub async fn unlock(&self, user_id: &str) -> BulwarkResult<()> {
+    pub async fn unlock(&self, user_id: &str) -> GarrisonResult<()> {
         let state = LockoutState::default();
         self.set_state(user_id, &state).await
     }
 }
 
 #[async_trait]
-impl BulwarkFirewallStrategy for UserLockoutStrategy {
-    async fn check(&self, ctx: &FirewallContext) -> BulwarkResult<()> {
+impl GarrisonFirewallStrategy for UserLockoutStrategy {
+    async fn check(&self, ctx: &FirewallContext) -> GarrisonResult<()> {
         // (1) login_id 为 None 时跳过用户级检查
         let user_id = match &ctx.login_id {
             Some(id) => id.as_str(),
@@ -186,7 +190,7 @@ impl BulwarkFirewallStrategy for UserLockoutStrategy {
 
         // (3) 永久锁定 → 拦截
         if state.permanent_locked {
-            return Err(BulwarkError::FirewallBlocked(format!(
+            return Err(GarrisonError::FirewallBlocked(format!(
                 "user-lockout: 用户 {} 已被永久锁定",
                 user_id
             )));
@@ -195,7 +199,7 @@ impl BulwarkFirewallStrategy for UserLockoutStrategy {
         // (4) 临时锁定期内 → 拦截
         let now = now_timestamp();
         if state.locked_until > now {
-            return Err(BulwarkError::FirewallBlocked(format!(
+            return Err(GarrisonError::FirewallBlocked(format!(
                 "user-lockout: 用户 {} 已被临时锁定，直到 {}",
                 user_id, state.locked_until
             )));

@@ -12,8 +12,8 @@
 //! - `search_session_id`: 按 login_id 搜索 Account-Session。
 //! - `search_token_session_id`: 按 TokenSession.login_id 搜索 token（排除匿名 Session）。
 
-use super::{AccountSession, BulwarkSession, TokenSession};
-use crate::error::{BulwarkError, BulwarkResult};
+use super::{AccountSession, GarrisonSession, TokenSession};
+use crate::error::{GarrisonError, GarrisonResult};
 use serde::{Deserialize, Serialize};
 
 /// 搜索排序类型。
@@ -69,7 +69,7 @@ fn sort_entries(entries: &mut [(String, i64, i64)], sort_type: SearchSortType) {
 /// 搜索 token 值包含 `keyword` 的登录 Session（排除匿名 Session）。空 `keyword` 匹配所有。
 ///
 /// # 参数
-/// - `session`: BulwarkSession 引用。
+/// - `session`: GarrisonSession 引用。
 /// - `keyword`: 搜索关键字（空字符串匹配所有）。
 /// - `start`: 分页偏移量（0-based，超出范围返回空 Vec）。
 /// - `size`: 返回数量上限（0 返回空 Vec）。
@@ -85,25 +85,25 @@ fn sort_entries(entries: &mut [(String, i64, i64)], sort_type: SearchSortType) {
 /// 生产环境大规模部署时应通过反向索引替代全量扫描。
 ///
 /// # 错误
-/// - `keyword` 长度超过 `MAX_KEYWORD_LEN`：`BulwarkError::InvalidParam`。
-/// - `size` 超过 `MAX_SIZE`：`BulwarkError::InvalidParam`。
-/// - DAO 操作失败：透传 `BulwarkError`。
+/// - `keyword` 长度超过 `MAX_KEYWORD_LEN`：`GarrisonError::InvalidParam`。
+/// - `size` 超过 `MAX_SIZE`：`GarrisonError::InvalidParam`。
+/// - DAO 操作失败：透传 `GarrisonError`。
 pub async fn search_token_value(
-    session: &BulwarkSession,
+    session: &GarrisonSession,
     keyword: &str,
     start: usize,
     size: usize,
     sort_type: SearchSortType,
-) -> BulwarkResult<Vec<String>> {
+) -> GarrisonResult<Vec<String>> {
     if keyword.len() > MAX_KEYWORD_LEN {
-        return Err(BulwarkError::InvalidParam(format!(
+        return Err(GarrisonError::InvalidParam(format!(
             "keyword 长度超限：{} > {}",
             keyword.len(),
             MAX_KEYWORD_LEN
         )));
     }
     if size > MAX_SIZE {
-        return Err(BulwarkError::InvalidParam(format!(
+        return Err(GarrisonError::InvalidParam(format!(
             "size 超限：{} > {}",
             size, MAX_SIZE
         )));
@@ -180,7 +180,7 @@ pub async fn search_token_value(
 /// 搜索 login_id 包含 `keyword` 的 Account-Session。空 `keyword` 匹配所有。
 ///
 /// # 参数
-/// - `session`: BulwarkSession 引用。
+/// - `session`: GarrisonSession 引用。
 /// - `keyword`: 搜索关键字（空字符串匹配所有）。
 /// - `start`: 分页偏移量（0-based，超出范围返回空 Vec）。
 /// - `size`: 返回数量上限（0 返回空 Vec）。
@@ -196,25 +196,25 @@ pub async fn search_token_value(
 /// 生产环境大规模部署时应通过反向索引替代全量扫描。
 ///
 /// # 错误
-/// - `keyword` 长度超过 `MAX_KEYWORD_LEN`：`BulwarkError::InvalidParam`。
-/// - `size` 超过 `MAX_SIZE`：`BulwarkError::InvalidParam`。
-/// - DAO 操作失败：透传 `BulwarkError`。
+/// - `keyword` 长度超过 `MAX_KEYWORD_LEN`：`GarrisonError::InvalidParam`。
+/// - `size` 超过 `MAX_SIZE`：`GarrisonError::InvalidParam`。
+/// - DAO 操作失败：透传 `GarrisonError`。
 pub async fn search_session_id(
-    session: &BulwarkSession,
+    session: &GarrisonSession,
     keyword: &str,
     start: usize,
     size: usize,
     sort_type: SearchSortType,
-) -> BulwarkResult<Vec<String>> {
+) -> GarrisonResult<Vec<String>> {
     if keyword.len() > MAX_KEYWORD_LEN {
-        return Err(BulwarkError::InvalidParam(format!(
+        return Err(GarrisonError::InvalidParam(format!(
             "keyword 长度超限：{} > {}",
             keyword.len(),
             MAX_KEYWORD_LEN
         )));
     }
     if size > MAX_SIZE {
-        return Err(BulwarkError::InvalidParam(format!(
+        return Err(GarrisonError::InvalidParam(format!(
             "size 超限：{} > {}",
             size, MAX_SIZE
         )));
@@ -292,7 +292,7 @@ pub async fn search_session_id(
 /// 空 `keyword` 匹配所有。
 ///
 /// # 参数
-/// - `session`: BulwarkSession 引用。
+/// - `session`: GarrisonSession 引用。
 /// - `keyword`: 搜索关键字（空字符串匹配所有）。
 /// - `start`: 分页偏移量（0-based，超出范围返回空 Vec）。
 /// - `size`: 返回数量上限（0 返回空 Vec）。
@@ -308,25 +308,25 @@ pub async fn search_session_id(
 /// 生产环境大规模部署时应通过反向索引替代全量扫描。
 ///
 /// # 错误
-/// - `keyword` 长度超过 `MAX_KEYWORD_LEN`：`BulwarkError::InvalidParam`。
-/// - `size` 超过 `MAX_SIZE`：`BulwarkError::InvalidParam`。
-/// - DAO 操作失败：透传 `BulwarkError`。
+/// - `keyword` 长度超过 `MAX_KEYWORD_LEN`：`GarrisonError::InvalidParam`。
+/// - `size` 超过 `MAX_SIZE`：`GarrisonError::InvalidParam`。
+/// - DAO 操作失败：透传 `GarrisonError`。
 pub async fn search_token_session_id(
-    session: &BulwarkSession,
+    session: &GarrisonSession,
     keyword: &str,
     start: usize,
     size: usize,
     sort_type: SearchSortType,
-) -> BulwarkResult<Vec<String>> {
+) -> GarrisonResult<Vec<String>> {
     if keyword.len() > MAX_KEYWORD_LEN {
-        return Err(BulwarkError::InvalidParam(format!(
+        return Err(GarrisonError::InvalidParam(format!(
             "keyword 长度超限：{} > {}",
             keyword.len(),
             MAX_KEYWORD_LEN
         )));
     }
     if size > MAX_SIZE {
-        return Err(BulwarkError::InvalidParam(format!(
+        return Err(GarrisonError::InvalidParam(format!(
             "size 超限：{} > {}",
             size, MAX_SIZE
         )));
@@ -402,14 +402,14 @@ pub async fn search_token_session_id(
 mod tests {
     use super::*;
     use crate::dao::tests::MockDao;
-    use crate::dao::BulwarkDao;
+    use crate::dao::GarrisonDao;
     use std::collections::HashMap;
     use std::sync::Arc;
 
-    /// 辅助函数：创建带 MockDao 的 BulwarkSession。
-    fn make_session(timeout: u64, active_timeout: u64) -> (Arc<MockDao>, BulwarkSession) {
+    /// 辅助函数：创建带 MockDao 的 GarrisonSession。
+    fn make_session(timeout: u64, active_timeout: u64) -> (Arc<MockDao>, GarrisonSession) {
         let dao = Arc::new(MockDao::new());
-        let session = BulwarkSession::new(dao.clone(), timeout, active_timeout);
+        let session = GarrisonSession::new(dao.clone(), timeout, active_timeout);
         (dao, session)
     }
 
@@ -706,7 +706,7 @@ mod tests {
             .await;
         assert!(result.is_err(), "超长 keyword 应返回错误");
         match result {
-            Err(BulwarkError::InvalidParam(msg)) => {
+            Err(GarrisonError::InvalidParam(msg)) => {
                 assert!(
                     msg.contains("keyword 长度超限"),
                     "错误消息应包含 'keyword 长度超限'，实际: {}",
@@ -727,7 +727,7 @@ mod tests {
             .await;
         assert!(result.is_err(), "超大 size 应返回错误");
         match result {
-            Err(BulwarkError::InvalidParam(msg)) => {
+            Err(GarrisonError::InvalidParam(msg)) => {
                 assert!(
                     msg.contains("size 超限"),
                     "错误消息应包含 'size 超限'，实际: {}",
@@ -748,7 +748,7 @@ mod tests {
             .search_session_id(&long_keyword, 0, 10, SearchSortType::CreatedAsc)
             .await;
         assert!(result.is_err());
-        assert!(matches!(result, Err(BulwarkError::InvalidParam(_))));
+        assert!(matches!(result, Err(GarrisonError::InvalidParam(_))));
     }
 
     /// search_session_id size 超大时返回 InvalidParam。
@@ -759,7 +759,7 @@ mod tests {
             .search_session_id("", 0, MAX_SIZE + 1, SearchSortType::CreatedAsc)
             .await;
         assert!(result.is_err());
-        assert!(matches!(result, Err(BulwarkError::InvalidParam(_))));
+        assert!(matches!(result, Err(GarrisonError::InvalidParam(_))));
     }
 
     /// search_token_session_id keyword 超长时返回 InvalidParam。
@@ -771,7 +771,7 @@ mod tests {
             .search_token_session_id(&long_keyword, 0, 10, SearchSortType::CreatedAsc)
             .await;
         assert!(result.is_err());
-        assert!(matches!(result, Err(BulwarkError::InvalidParam(_))));
+        assert!(matches!(result, Err(GarrisonError::InvalidParam(_))));
     }
 
     /// search_token_session_id size 超大时返回 InvalidParam。
@@ -782,7 +782,7 @@ mod tests {
             .search_token_session_id("", 0, MAX_SIZE + 1, SearchSortType::CreatedAsc)
             .await;
         assert!(result.is_err());
-        assert!(matches!(result, Err(BulwarkError::InvalidParam(_))));
+        assert!(matches!(result, Err(GarrisonError::InvalidParam(_))));
     }
 
     // ========================================================================
@@ -931,28 +931,28 @@ mod tests {
     }
 
     #[async_trait::async_trait]
-    impl crate::dao::BulwarkDao for LargeKeyDao {
-        async fn get(&self, _key: &str) -> BulwarkResult<Option<String>> {
+    impl crate::dao::GarrisonDao for LargeKeyDao {
+        async fn get(&self, _key: &str) -> GarrisonResult<Option<String>> {
             Ok(None) // 返回 None，所有 key 被跳过
         }
 
-        async fn set(&self, _key: &str, _value: &str, _ttl_seconds: u64) -> BulwarkResult<()> {
+        async fn set(&self, _key: &str, _value: &str, _ttl_seconds: u64) -> GarrisonResult<()> {
             Ok(())
         }
 
-        async fn update(&self, _key: &str, _value: &str) -> BulwarkResult<()> {
+        async fn update(&self, _key: &str, _value: &str) -> GarrisonResult<()> {
             Ok(())
         }
 
-        async fn expire(&self, _key: &str, _seconds: u64) -> BulwarkResult<()> {
+        async fn expire(&self, _key: &str, _seconds: u64) -> GarrisonResult<()> {
             Ok(())
         }
 
-        async fn delete(&self, _key: &str) -> BulwarkResult<()> {
+        async fn delete(&self, _key: &str) -> GarrisonResult<()> {
             Ok(())
         }
 
-        async fn keys(&self, pattern: &str) -> BulwarkResult<Vec<String>> {
+        async fn keys(&self, pattern: &str) -> GarrisonResult<Vec<String>> {
             // 根据 pattern 前缀生成对应数量的 key
             let prefix = pattern.trim_end_matches('*');
             let keys: Vec<String> = (0..self.key_count)
@@ -968,7 +968,7 @@ mod tests {
     #[tokio::test]
     async fn search_truncates_keys_exceeding_max_scan() {
         let dao = Arc::new(LargeKeyDao::new(MAX_SCAN + 100));
-        let session = BulwarkSession::new(dao, 3600, 86400);
+        let session = GarrisonSession::new(dao, 3600, 86400);
 
         // 搜索应成功完成（截断后所有 key 的 get() 返回 None，结果为空）
         let result = session
@@ -982,7 +982,7 @@ mod tests {
     #[tokio::test]
     async fn search_max_scan_boundary_not_truncated() {
         let dao = Arc::new(LargeKeyDao::new(MAX_SCAN));
-        let session = BulwarkSession::new(dao, 3600, 86400);
+        let session = GarrisonSession::new(dao, 3600, 86400);
 
         let result = session
             .search_token_value("", 0, 100, SearchSortType::CreatedAsc)

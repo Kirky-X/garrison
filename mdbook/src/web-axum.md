@@ -1,12 +1,12 @@
 # axum 适配
 
-axum 是 Bulwark 的首选 Web 框架适配（0.1.0 起支持），通过 `web-axum` feature 启用。
+axum 是 Garrison 的首选 Web 框架适配（0.1.0 起支持），通过 `web-axum` feature 启用。
 
 ## Feature 与依赖
 
 ```toml
 [dependencies]
-bulwark = { version = "0.7", features = ["web-axum"] }
+garrison = { version = "0.7", features = ["web-axum"] }
 ```
 
 `web-axum` 启用 `axum`（`tokio` + `http1` feature），不引入 default features 以减少依赖。
@@ -15,17 +15,17 @@ bulwark = { version = "0.7", features = ["web-axum"] }
 
 | 组件 | 作用 |
 |:---|:---|
-| `BulwarkRouter` | 路由构建器，注册受保护路由并应用 `BulwarkLayer` |
-| `BulwarkLayer` | 中间件，从 header/cookie 提取 token 并设置 task_local 上下文 |
-| `impl IntoResponse for BulwarkError` | 错误自动转为 HTTP 响应（统一 `response_parts()`） |
+| `GarrisonRouter` | 路由构建器，注册受保护路由并应用 `GarrisonLayer` |
+| `GarrisonLayer` | 中间件，从 header/cookie 提取 token 并设置 task_local 上下文 |
+| `impl IntoResponse for GarrisonError` | 错误自动转为 HTTP 响应（统一 `response_parts()`） |
 | `CheckLogin` / `CheckRole` / `CheckPermission` | extractor，从请求 parts 校验（对应 `@SaCheckLogin` 等） |
 
 ## 路由与中间件示例
 
 ```rust
 use std::sync::Arc;
-use bulwark::prelude::*;
-use bulwark::annotation::{CheckPermission, PermissionName};
+use garrison::prelude::*;
+use garrison::annotation::{CheckPermission, PermissionName};
 use axum::Router;
 
 async fn profile() -> &'static str { "ok" }
@@ -36,14 +36,14 @@ impl PermissionName for UserCreatePerm {
 }
 
 async fn create_user(
-    _p: CheckPermission<UserCreatePerm>,  // 校验权限（失败返回 BulwarkError）
+    _p: CheckPermission<UserCreatePerm>,  // 校验权限（失败返回 GarrisonError）
 ) -> &'static str { "created" }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    BulwarkManager::init(dao, config, interface)?;
+    GarrisonManager::init(dao, config, interface)?;
 
-    let router = BulwarkRouter::new(Arc::new(BulwarkConfig::default_config()))
+    let router = GarrisonRouter::new(Arc::new(GarrisonConfig::default_config()))
         .route_protected("/api/profile", profile, Annotation::CheckLogin)
         .route_protected(
             "/api/user/create",
@@ -62,10 +62,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Extractor 用法
 
-extractor 在 handler 参数中声明即触发校验，失败返回 `BulwarkError`（由 `IntoResponse` 转为 HTTP 响应）：
+extractor 在 handler 参数中声明即触发校验，失败返回 `GarrisonError`（由 `IntoResponse` 转为 HTTP 响应）：
 
 ```rust
-use bulwark::annotation::{CheckLogin, CheckRole, CheckPermission, RoleName, PermissionName};
+use garrison::annotation::{CheckLogin, CheckRole, CheckPermission, RoleName, PermissionName};
 
 struct AdminRole;
 impl RoleName for AdminRole {
@@ -88,7 +88,7 @@ async fn handler(
 
 ## 错误响应
 
-`BulwarkError` 实现 `IntoResponse`，自动映射为合适的 HTTP 状态码：
+`GarrisonError` 实现 `IntoResponse`，自动映射为合适的 HTTP 状态码：
 
 | 错误类型 | HTTP 状态 |
 |:---|:---|
@@ -99,6 +99,6 @@ async fn handler(
 
 ## 关键说明
 
-- `BulwarkLayer` 负责设置 task_local 上下文，`BulwarkUtil` 静态方法依赖此上下文
-- 未注册 `BulwarkLayer` 的路由调用 `BulwarkUtil` 会因 task_local 缺失失败
-- 当前已知限制：`route_protected` 仅支持 GET 方法（其他 HTTP 方法请直接使用 `axum::Router::route` 注册并通过 `Annotation` 在 `BulwarkRouter` 中同步规则）
+- `GarrisonLayer` 负责设置 task_local 上下文，`GarrisonUtil` 静态方法依赖此上下文
+- 未注册 `GarrisonLayer` 的路由调用 `GarrisonUtil` 会因 task_local 缺失失败
+- 当前已知限制：`route_protected` 仅支持 GET 方法（其他 HTTP 方法请直接使用 `axum::Router::route` 注册并通过 `Annotation` 在 `GarrisonRouter` 中同步规则）

@@ -9,7 +9,7 @@
 //!
 //! # 实现层（T016-T018）
 //!
-//! T016-T018 将实现 `DefaultDisableRepository`，持有 `Arc<dyn BulwarkDao>` 委托实现。
+//! T016-T018 将实现 `DefaultDisableRepository`，持有 `Arc<dyn GarrisonDao>` 委托实现。
 
 pub mod repository;
 

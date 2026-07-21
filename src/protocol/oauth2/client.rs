@@ -9,7 +9,7 @@
 //!
 //! 仅在启用 `protocol-oauth2` 特性时编译。
 
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::error::{GarrisonError, GarrisonResult};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use percent_encoding::{utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
@@ -43,18 +43,18 @@ pub(crate) const HTTP_READ_TIMEOUT: Duration = Duration::from_secs(30);
 /// 三处 `reqwest::Client::builder().build()` 统一委托此函数，确保超时配置不漏配。
 ///
 /// # 错误
-/// - `BulwarkError::Network`: reqwest builder 失败（如 TLS 后端不可用）。
-pub(crate) fn build_safe_http_client() -> BulwarkResult<reqwest::Client> {
+/// - `GarrisonError::Network`: reqwest builder 失败（如 TLS 后端不可用）。
+pub(crate) fn build_safe_http_client() -> GarrisonResult<reqwest::Client> {
     reqwest::Client::builder()
         .connect_timeout(HTTP_CONNECT_TIMEOUT)
         .read_timeout(HTTP_READ_TIMEOUT)
         .build()
-        .map_err(|e| BulwarkError::Network(format!("oauth2-http-client-build::{}", e)))
+        .map_err(|e| GarrisonError::Network(format!("oauth2-http-client-build::{}", e)))
 }
 
 /// HTTP 响应体大小上限（E2）：4 MiB。
 ///
-/// 超出此上限的响应体直接返回 `BulwarkError::Network`，防止恶意 IdP 通过超大 JSON
+/// 超出此上限的响应体直接返回 `GarrisonError::Network`，防止恶意 IdP 通过超大 JSON
 /// 触发 OOM 或反序列化放大攻击。4 MiB 足以容纳标准 JWT/JWKS/userinfo 响应
 /// （典型 JWKS < 10 KiB，userinfo < 4 KiB）。
 pub(crate) const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
@@ -65,21 +65,21 @@ pub(crate) const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
 /// 替代 `resp.bytes()` / `resp.json()` / `resp.text()` 的无界读取。
 ///
 /// # 错误
-/// - `BulwarkError::Network`: 响应体超过 `MAX_BODY_BYTES` 或底层读取失败。
-pub(crate) async fn read_limited_bytes(resp: reqwest::Response) -> BulwarkResult<Vec<u8>> {
+/// - `GarrisonError::Network`: 响应体超过 `MAX_BODY_BYTES` 或底层读取失败。
+pub(crate) async fn read_limited_bytes(resp: reqwest::Response) -> GarrisonResult<Vec<u8>> {
     let mut buf: Vec<u8> = Vec::new();
     let mut resp = resp;
     while let Some(chunk) = resp
         .chunk()
         .await
-        .map_err(|e| BulwarkError::Network(format!("oauth2-body-read::{}", e)))?
+        .map_err(|e| GarrisonError::Network(format!("oauth2-body-read::{}", e)))?
     {
         let new_len = buf
             .len()
             .checked_add(chunk.len())
-            .ok_or_else(|| BulwarkError::Network("oauth2-body-overflow".to_string()))?;
+            .ok_or_else(|| GarrisonError::Network("oauth2-body-overflow".to_string()))?;
         if new_len > MAX_BODY_BYTES {
-            return Err(BulwarkError::Network(format!(
+            return Err(GarrisonError::Network(format!(
                 "响应体超过 {} 字节上限（E2）",
                 MAX_BODY_BYTES
             )));
@@ -101,9 +101,9 @@ pub(crate) async fn read_limited_bytes(resp: reqwest::Response) -> BulwarkResult
 /// 是为了：(1) 与 `protocol::sso::oidc` 的本地副本保持 API 对称；
 /// (2) 后续若需读取错误响应体（如 Keycloak 错误 JSON 解析）可直接复用。
 #[allow(dead_code)]
-pub(crate) async fn read_limited_text(resp: reqwest::Response) -> BulwarkResult<String> {
+pub(crate) async fn read_limited_text(resp: reqwest::Response) -> GarrisonResult<String> {
     let bytes = read_limited_bytes(resp).await?;
-    String::from_utf8(bytes).map_err(|e| BulwarkError::Network(format!("oauth2-body-utf8::{}", e)))
+    String::from_utf8(bytes).map_err(|e| GarrisonError::Network(format!("oauth2-body-utf8::{}", e)))
 }
 
 /// URL 编码字符集。
@@ -163,19 +163,19 @@ impl OAuth2Client {
     /// - `token_url`: 令牌端点 URL。
     ///
     /// # 错误
-    /// - `BulwarkError::Config`: client_id 为空。
-    /// - `BulwarkError::InvalidParam`: redirect_uri 非 https 且非 localhost/127.0.0.1（spec P2.3）。
-    /// - `BulwarkError::Network`: reqwest::Client 构建失败。
+    /// - `GarrisonError::Config`: client_id 为空。
+    /// - `GarrisonError::InvalidParam`: redirect_uri 非 https 且非 localhost/127.0.0.1（spec P2.3）。
+    /// - `GarrisonError::Network`: reqwest::Client 构建失败。
     pub fn new(
         client_id: impl Into<String>,
         client_secret: impl Into<String>,
         redirect_uri: impl Into<String>,
         auth_url: impl Into<String>,
         token_url: impl Into<String>,
-    ) -> BulwarkResult<Self> {
+    ) -> GarrisonResult<Self> {
         let client_id = client_id.into();
         if client_id.is_empty() {
-            return Err(BulwarkError::Config("oauth2-client-id-empty".to_string()));
+            return Err(GarrisonError::Config("oauth2-client-id-empty".to_string()));
         }
         let redirect_uri = redirect_uri.into();
         Self::validate_redirect_uri(&redirect_uri)?;
@@ -218,11 +218,11 @@ impl OAuth2Client {
     /// - `redirect_uri`: 回调地址字符串。
     ///
     /// # 错误
-    /// - `BulwarkError::InvalidParam`: redirect_uri 无 `://`、scheme 非 https/http、
+    /// - `GarrisonError::InvalidParam`: redirect_uri 无 `://`、scheme 非 https/http、
     ///   或 http 但 host 非 localhost/127.0.0.1。
-    fn validate_redirect_uri(redirect_uri: &str) -> BulwarkResult<()> {
+    fn validate_redirect_uri(redirect_uri: &str) -> GarrisonResult<()> {
         let Some(scheme_end) = redirect_uri.find("://") else {
-            return Err(BulwarkError::InvalidParam(format!(
+            return Err(GarrisonError::InvalidParam(format!(
                 "redirect_uri must be https or localhost, got: {}",
                 redirect_uri
             )));
@@ -243,7 +243,7 @@ impl OAuth2Client {
             }
         }
 
-        Err(BulwarkError::InvalidParam(format!(
+        Err(GarrisonError::InvalidParam(format!(
             "redirect_uri must be https or localhost, got: {}",
             redirect_uri
         )))
@@ -297,11 +297,11 @@ impl OAuth2Client {
     /// 此处传入 `login_id = 0` 占位，handler 实现可按需通过其他上下文查询真实 login_id。
     /// 详见 `scope` 模块文档说明。
     #[cfg(feature = "oauth2-scope-handler")]
-    async fn validate_scope(&self, scope: Option<&str>) -> BulwarkResult<()> {
+    async fn validate_scope(&self, scope: Option<&str>) -> GarrisonResult<()> {
         if let (Some(registry), Some(s)) = (&self.scope_registry, scope) {
             let allowed = registry.validate(s, 0)?;
             if !allowed {
-                return Err(BulwarkError::OAuth2(format!(
+                return Err(GarrisonError::OAuth2(format!(
                     "scope validation failed: {}",
                     s
                 )));
@@ -333,21 +333,21 @@ impl OAuth2Client {
     /// - `code_verifier`: 43-128 字符，仅包含 `[A-Z]/[a-z]/[0-9]/-./_/~`
     ///
     /// # 错误
-    /// - `BulwarkError::InvalidParam`: 长度不在 43-128 范围内或含非法字符。
+    /// - `GarrisonError::InvalidParam`: 长度不在 43-128 范围内或含非法字符。
     ///
     /// # 示例
     /// RFC 7636 Appendix B 测试向量：
     /// ```
-    /// # use bulwark::protocol::oauth2::OAuth2Client;
+    /// # use garrison::protocol::oauth2::OAuth2Client;
     /// let challenge = OAuth2Client::generate_pkce_challenge(
     ///     "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
     /// ).unwrap();
     /// assert_eq!(challenge, "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM");
     /// ```
-    pub fn generate_pkce_challenge(code_verifier: &str) -> BulwarkResult<String> {
+    pub fn generate_pkce_challenge(code_verifier: &str) -> GarrisonResult<String> {
         // 1. 验证长度 43-128（RFC 7636 §4.1）
         if code_verifier.len() < 43 || code_verifier.len() > 128 {
-            return Err(BulwarkError::InvalidParam(format!(
+            return Err(GarrisonError::InvalidParam(format!(
                 "code_verifier 长度必须在 43-128 之间，当前 {}",
                 code_verifier.len()
             )));
@@ -357,7 +357,7 @@ impl OAuth2Client {
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.' || c == '_' || c == '~')
         {
-            return Err(BulwarkError::InvalidParam(
+            return Err(GarrisonError::InvalidParam(
                 "code_verifier 仅允许 [A-Z]/[a-z]/[0-9]/-/./_/~ 字符".to_string(),
             ));
         }
@@ -397,12 +397,12 @@ impl OAuth2Client {
     /// `(authorization_url, code_challenge)` 元组。`code_challenge` 供调用方与后续 token 交换时关联使用。
     ///
     /// # 错误
-    /// - `BulwarkError::InvalidParam`: `code_verifier` 不合法（透传自 `generate_pkce_challenge`）。
+    /// - `GarrisonError::InvalidParam`: `code_verifier` 不合法（透传自 `generate_pkce_challenge`）。
     pub fn get_auth_url_with_pkce(
         &self,
         state: &str,
         code_verifier: &str,
-    ) -> BulwarkResult<(String, String)> {
+    ) -> GarrisonResult<(String, String)> {
         let code_challenge = Self::generate_pkce_challenge(code_verifier)?;
         let url = format!(
             "{}?response_type=code&client_id={}&redirect_uri={}&state={}&code_challenge={}&code_challenge_method=S256",
@@ -423,7 +423,7 @@ impl OAuth2Client {
     /// # 弃用
     /// OAuth 2.1 要求所有 Authorization Code 流程使用 PKCE。请改用 [`exchange_code_with_pkce`](Self::exchange_code_with_pkce)。
     #[deprecated(note = "use exchange_code_with_pkce for OAuth 2.1 compliance")]
-    pub async fn exchange_code(&self, code: &str, _state: &str) -> BulwarkResult<TokenResponse> {
+    pub async fn exchange_code(&self, code: &str, _state: &str) -> GarrisonResult<TokenResponse> {
         let params = [
             ("grant_type", "authorization_code"),
             ("code", code),
@@ -442,7 +442,7 @@ impl OAuth2Client {
     /// # CSRF 防护（state 校验）
     ///
     /// 调用方传入 `expected_state`（构造授权 URL 时生成的 state）和 `actual_state`（回调 URL 中
-    /// 授权服务器返回的 state），方法内部自动比对。若不匹配则返回 `BulwarkError::OAuth2`，
+    /// 授权服务器返回的 state），方法内部自动比对。若不匹配则返回 `GarrisonError::OAuth2`，
     /// 阻断 CSRF 攻击。
     ///
     /// # 参数
@@ -452,20 +452,20 @@ impl OAuth2Client {
     /// - `code_verifier`: PKCE code_verifier（需与构造授权 URL 时传入的 verifier 一致）。
     ///
     /// # 错误
-    /// - `BulwarkError::OAuth2`: `expected_state` 与 `actual_state` 不匹配（CSRF 攻击防护）。
-    /// - `BulwarkError::InvalidParam`: `code_verifier` 不合法（客户端预校验，透传自 `generate_pkce_challenge`）。
-    /// - `BulwarkError::OAuth2`: token 端点返回非 2xx 或 JSON 解析失败。
-    /// - `BulwarkError::Network`: reqwest 请求失败。
+    /// - `GarrisonError::OAuth2`: `expected_state` 与 `actual_state` 不匹配（CSRF 攻击防护）。
+    /// - `GarrisonError::InvalidParam`: `code_verifier` 不合法（客户端预校验，透传自 `generate_pkce_challenge`）。
+    /// - `GarrisonError::OAuth2`: token 端点返回非 2xx 或 JSON 解析失败。
+    /// - `GarrisonError::Network`: reqwest 请求失败。
     pub async fn exchange_code_with_pkce(
         &self,
         code: &str,
         expected_state: &str,
         actual_state: &str,
         code_verifier: &str,
-    ) -> BulwarkResult<TokenResponse> {
+    ) -> GarrisonResult<TokenResponse> {
         // CSRF 防护：校验 state 参数
         if expected_state != actual_state {
-            return Err(BulwarkError::OAuth2(
+            return Err(GarrisonError::OAuth2(
                 "state 参数不匹配，可能遭受 CSRF 攻击".to_string(),
             ));
         }
@@ -488,7 +488,7 @@ impl OAuth2Client {
     pub async fn get_client_credentials_token(
         &self,
         scope: Option<&str>,
-    ) -> BulwarkResult<TokenResponse> {
+    ) -> GarrisonResult<TokenResponse> {
         #[cfg(feature = "oauth2-scope-handler")]
         self.validate_scope(scope).await?;
         let mut params: Vec<(&str, &str)> = vec![
@@ -508,15 +508,15 @@ impl OAuth2Client {
     /// `client_id`、`client_secret`，可选 `scope`。
     ///
     /// # 错误
-    /// - `BulwarkError::InvalidParam`: username 为空。
+    /// - `GarrisonError::InvalidParam`: username 为空。
     pub async fn get_password_token(
         &self,
         username: &str,
         password: &str,
         scope: Option<&str>,
-    ) -> BulwarkResult<TokenResponse> {
+    ) -> GarrisonResult<TokenResponse> {
         if username.is_empty() {
-            return Err(BulwarkError::InvalidParam(
+            return Err(GarrisonError::InvalidParam(
                 "oauth2-username-empty".to_string(),
             ));
         }
@@ -545,16 +545,16 @@ impl OAuth2Client {
     /// - `scope`: 可选，请求的 scope（可不同于原始授权范围）。
     ///
     /// # 错误
-    /// - `BulwarkError::InvalidParam`: refresh_token 为空。
-    /// - `BulwarkError::OAuth2`: token_endpoint 返回非 2xx 或 JSON 解析失败。
-    /// - `BulwarkError::Network`: reqwest 请求失败（DNS/连接超时等）。
+    /// - `GarrisonError::InvalidParam`: refresh_token 为空。
+    /// - `GarrisonError::OAuth2`: token_endpoint 返回非 2xx 或 JSON 解析失败。
+    /// - `GarrisonError::Network`: reqwest 请求失败（DNS/连接超时等）。
     pub async fn refresh_access_token(
         &self,
         refresh_token: &str,
         scope: Option<&str>,
-    ) -> BulwarkResult<TokenResponse> {
+    ) -> GarrisonResult<TokenResponse> {
         if refresh_token.is_empty() {
-            return Err(BulwarkError::InvalidParam(
+            return Err(GarrisonError::InvalidParam(
                 "refresh_token 不可为空".to_string(),
             ));
         }
@@ -573,20 +573,20 @@ impl OAuth2Client {
     }
 
     /// 内部方法：POST 请求 token 端点并解析响应。
-    async fn post_token_request(&self, params: &[(&str, &str)]) -> BulwarkResult<TokenResponse> {
+    async fn post_token_request(&self, params: &[(&str, &str)]) -> GarrisonResult<TokenResponse> {
         let resp = self
             .http
             .post(&self.token_url)
             .form(params)
             .send()
             .await
-            .map_err(|e| BulwarkError::Network(format!("oauth2-token-endpoint::{}", e)))?;
+            .map_err(|e| GarrisonError::Network(format!("oauth2-token-endpoint::{}", e)))?;
 
         let status = resp.status();
         if !status.is_success() {
             // H1 安全加固：错误消息只记录 HTTP status + url，不包含响应体或请求参数
             // （响应体可能被恶意服务器回显请求参数，导致 client_secret / code_verifier 泄露）
-            return Err(BulwarkError::OAuth2(format!(
+            return Err(GarrisonError::OAuth2(format!(
                 "token endpoint returned {} for {}",
                 status.as_u16(),
                 self.token_url
@@ -595,9 +595,9 @@ impl OAuth2Client {
 
         let token_bytes = read_limited_bytes(resp)
             .await
-            .map_err(|e| BulwarkError::OAuth2(format!("oauth2-token-body-read::{}", e)))?;
+            .map_err(|e| GarrisonError::OAuth2(format!("oauth2-token-body-read::{}", e)))?;
         let token: TokenResponse = serde_json::from_slice(&token_bytes)
-            .map_err(|e| BulwarkError::OAuth2(format!("oauth2-token-body-parse::{}", e)))?;
+            .map_err(|e| GarrisonError::OAuth2(format!("oauth2-token-body-parse::{}", e)))?;
         Ok(token)
     }
 
@@ -617,9 +617,12 @@ impl OAuth2Client {
     /// `TokenIntrospectionResponse`，其中 `active` 字段表示 token 是否有效。
     ///
     /// # 错误
-    /// - `BulwarkError::OAuth2`: 服务器返回非 2xx 或 JSON 解析失败。
-    /// - `BulwarkError::Network`: reqwest 请求失败（DNS/连接超时/服务器不可达等）。
-    pub async fn introspect_token(&self, token: &str) -> BulwarkResult<TokenIntrospectionResponse> {
+    /// - `GarrisonError::OAuth2`: 服务器返回非 2xx 或 JSON 解析失败。
+    /// - `GarrisonError::Network`: reqwest 请求失败（DNS/连接超时/服务器不可达等）。
+    pub async fn introspect_token(
+        &self,
+        token: &str,
+    ) -> GarrisonResult<TokenIntrospectionResponse> {
         let url = self.introspect_url();
         let params = [
             ("token", token),
@@ -632,14 +635,14 @@ impl OAuth2Client {
             .form(&params)
             .send()
             .await
-            .map_err(|e| BulwarkError::Network(format!("oauth2-introspect-endpoint::{}", e)))?;
+            .map_err(|e| GarrisonError::Network(format!("oauth2-introspect-endpoint::{}", e)))?;
 
         let status = resp.status();
         if !status.is_success() {
             // H1 安全加固：错误消息只记录 HTTP status + url，不包含响应体或请求参数
             // （与 post_token_request 同类修复：响应体可能被恶意服务器回显请求参数，
             //   导致 client_secret 泄露到日志/上层调用方）
-            return Err(BulwarkError::OAuth2(format!(
+            return Err(GarrisonError::OAuth2(format!(
                 "introspect endpoint returned {} for {}",
                 status.as_u16(),
                 url
@@ -648,9 +651,9 @@ impl OAuth2Client {
 
         let introspect_bytes = read_limited_bytes(resp)
             .await
-            .map_err(|e| BulwarkError::OAuth2(format!("oauth2-introspect-body-read::{}", e)))?;
+            .map_err(|e| GarrisonError::OAuth2(format!("oauth2-introspect-body-read::{}", e)))?;
         let response: TokenIntrospectionResponse = serde_json::from_slice(&introspect_bytes)
-            .map_err(|e| BulwarkError::OAuth2(format!("oauth2-introspect-body-parse::{}", e)))?;
+            .map_err(|e| GarrisonError::OAuth2(format!("oauth2-introspect-body-parse::{}", e)))?;
         Ok(response)
     }
 

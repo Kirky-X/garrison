@@ -4,14 +4,14 @@
 //! 限流后端配置 enum。
 //!
 //! v0.7 起，所有限速实现统一由 [`limiteron`] 接管：
-//! - 内存限流 → [`crate::limiteron::BulwarkDaoDistributedLimiter`]
-//! - 分布式限流 → [`crate::limiteron::BulwarkDaoDistributedLimiter::atomic_check_and_incr`]
-//! - 配额限流 → [`crate::limiteron::BulwarkDaoQuotaStorage`]
-//! - 封禁记录 → [`crate::limiteron::BulwarkDaoBanStorage`]
+//! - 内存限流 → [`crate::limiteron::GarrisonDaoDistributedLimiter`]
+//! - 分布式限流 → [`crate::limiteron::GarrisonDaoDistributedLimiter::atomic_check_and_incr`]
+//! - 配额限流 → [`crate::limiteron::GarrisonDaoQuotaStorage`]
+//! - 封禁记录 → [`crate::limiteron::GarrisonDaoBanStorage`]
 //!
-//! 本模块仅保留 `RateLimitBackend` 配置 enum，用于 `BulwarkConfig`
-//! 表达限流后端选择（向后兼容 v0.6 配置）。运行时由 `BulwarkDaoDistributedLimiter`
-//! 根据 `BulwarkDao` 后端（MockDao/SQLite/Redis 等）自动选择原子或降级实现。
+//! 本模块仅保留 `RateLimitBackend` 配置 enum，用于 `GarrisonConfig`
+//! 表达限流后端选择（向后兼容 v0.6 配置）。运行时由 `GarrisonDaoDistributedLimiter`
+//! 根据 `GarrisonDao` 后端（MockDao/SQLite/Redis 等）自动选择原子或降级实现。
 
 use serde::{Deserialize, Serialize};
 
@@ -19,22 +19,22 @@ use serde::{Deserialize, Serialize};
 // RateLimitBackend enum：配置项，选择限流后端
 // ============================================================================
 
-/// 限流后端选择枚举，用于 `BulwarkConfig` 配置。
+/// 限流后端选择枚举，用于 `GarrisonConfig` 配置。
 ///
 /// 默认 `Memory`（向后兼容）。启用 `rate-limit-redis` feature 后可选 `Redis`。
 ///
 /// # v0.7 行为
 ///
-/// 实际限流逻辑统一委托 [`crate::limiteron::BulwarkDaoDistributedLimiter`]，
+/// 实际限流逻辑统一委托 [`crate::limiteron::GarrisonDaoDistributedLimiter`]，
 /// 此 enum 仅作为配置占位与可观测性标记，不再驱动具体实现切换（limiteron
-/// 通过 `BulwarkDao` 后端透明支持 Redis 原子操作）。
+/// 通过 `GarrisonDao` 后端透明支持 Redis 原子操作）。
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum RateLimitBackend {
-    /// 内存限流（基于 BulwarkDaoDistributedLimiter + MockDao/SQLite）。
+    /// 内存限流（基于 GarrisonDaoDistributedLimiter + MockDao/SQLite）。
     #[default]
     Memory,
-    /// Redis 限流（基于 BulwarkDaoDistributedLimiter + Redis 后端，走 eval_lua 原子脚本）。
+    /// Redis 限流（基于 GarrisonDaoDistributedLimiter + Redis 后端，走 eval_lua 原子脚本）。
     Redis {
         /// Redis 连接 URL（如 `redis://127.0.0.1:6379/0`）。
         redis_url: String,

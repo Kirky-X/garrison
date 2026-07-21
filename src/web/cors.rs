@@ -3,7 +3,7 @@
 
 //! CORS 跨域资源共享中间件模块。
 //!
-//! 提供 [`CorsConfig`](crate::web::cors::CorsConfig) 配置与 [`bulwark_cors_middleware`](crate::web::cors::bulwark_cors_middleware) axum 中间件，
+//! 提供 [`CorsConfig`](crate::web::cors::CorsConfig) 配置与 [`garrison_cors_middleware`](crate::web::cors::garrison_cors_middleware) axum 中间件，
 //! 支持 CORS 预检（OPTIONS）与实际请求的响应头注入。
 //!
 //! # 行为
@@ -16,9 +16,9 @@
 //!
 //! # 配置
 //!
-//! 通过 [`CorsConfig`](crate::web::cors::CorsConfig) 控制允许的源、方法、headers 等，集成到 [`crate::config::BulwarkConfig`]。
+//! 通过 [`CorsConfig`](crate::web::cors::CorsConfig) 控制允许的源、方法、headers 等，集成到 [`crate::config::GarrisonConfig`]。
 
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::error::{GarrisonError, GarrisonResult};
 use axum::extract::State;
 use axum::http::{HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
@@ -91,10 +91,10 @@ impl CorsConfig {
     ///
     /// # 错误
     ///
-    /// - `BulwarkError::Config`：credentials 与通配符 origin 冲突。
-    pub fn validate(&self) -> BulwarkResult<()> {
+    /// - `GarrisonError::Config`：credentials 与通配符 origin 冲突。
+    pub fn validate(&self) -> GarrisonResult<()> {
         if self.allow_credentials && self.allowed_origins.iter().any(|o| o == "*") {
-            return Err(BulwarkError::Config(
+            return Err(GarrisonError::Config(
                 "CORS 配置冲突：allow_credentials=true 时不允许 allowed_origins 包含通配符 \"*\""
                     .to_string(),
             ));
@@ -168,7 +168,7 @@ fn join_headers(items: &[String]) -> HeaderValue {
 /// # 使用
 ///
 /// ```ignore
-/// use bulwark::web::cors::{bulwark_cors_middleware, CorsConfig};
+/// use garrison::web::cors::{garrison_cors_middleware, CorsConfig};
 /// use std::sync::Arc;
 /// use axum::Router;
 ///
@@ -180,10 +180,10 @@ fn join_headers(items: &[String]) -> HeaderValue {
 ///     .route("/api", axum::routing::get(|| async { "ok" }))
 ///     .layer(axum::middleware::from_fn_with_state(
 ///         Arc::new(config),
-///         bulwark_cors_middleware,
+///         garrison_cors_middleware,
 ///     ));
 /// ```
-pub async fn bulwark_cors_middleware(
+pub async fn garrison_cors_middleware(
     State(config): State<std::sync::Arc<CorsConfig>>,
     req: axum::extract::Request,
     next: axum::middleware::Next,
@@ -308,10 +308,10 @@ pub async fn bulwark_cors_middleware(
 /// # 使用
 ///
 /// ```ignore
-/// use bulwark::web::cors::compose_security_stack;
-/// use bulwark::web::waf::WafConfig;
-/// use bulwark::web::csrf::CsrfConfig;
-/// use bulwark::web::cors::CorsConfig;
+/// use garrison::web::cors::compose_security_stack;
+/// use garrison::web::waf::WafConfig;
+/// use garrison::web::csrf::CsrfConfig;
+/// use garrison::web::cors::CorsConfig;
 /// use std::sync::Arc;
 /// use axum::Router;
 ///
@@ -337,15 +337,15 @@ pub fn compose_security_stack(
     router
         .layer(axum::middleware::from_fn_with_state(
             cors_config,
-            bulwark_cors_middleware,
+            garrison_cors_middleware,
         ))
         .layer(axum::middleware::from_fn_with_state(
             csrf_config,
-            crate::web::csrf::bulwark_csrf_middleware,
+            crate::web::csrf::garrison_csrf_middleware,
         ))
         .layer(axum::middleware::from_fn_with_state(
             waf_config,
-            crate::web::waf::bulwark_waf_middleware,
+            crate::web::waf::garrison_waf_middleware,
         ))
 }
 
@@ -368,7 +368,7 @@ mod tests {
             .route("/api/test", get(|| async { "ok" }))
             .layer(axum::middleware::from_fn_with_state(
                 Arc::new(config),
-                bulwark_cors_middleware,
+                garrison_cors_middleware,
             ))
     }
 
@@ -1063,7 +1063,7 @@ mod tests {
                 .uri("/api/test")
                 .header("host", "example.com")
                 .header("origin", "https://example.com")
-                .header("cookie", format!("bulwark_csrf_token={}", token))
+                .header("cookie", format!("garrison_csrf_token={}", token))
                 .header("X-CSRF-Token", &token)
                 .body(Body::empty())
                 .unwrap();

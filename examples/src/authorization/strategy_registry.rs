@@ -4,7 +4,7 @@
 //! Strategy 注册表示例（v0.4.2 新增，依据 spec strategy-registry）。
 //!
 //! 演示 `Strategy` 注册表的运行时可插拔策略替换：
-//! - `Strategy::new(logic)` 构造（6 个默认策略委托 BulwarkLogic）
+//! - `Strategy::new(logic)` 构造（6 个默认策略委托 GarrisonLogic）
 //! - `register_*` 替换策略
 //! - `getter` 查询当前策略
 //! - `remove_*` 恢复默认策略
@@ -12,18 +12,18 @@
 //!
 //! 运行方式：
 //! ```sh
-//! cargo run -p bulwark-examples --bin strategy_registry --features cache-memory
+//! cargo run -p garrison-examples --bin strategy_registry --features cache-memory
 //! ```
 
 use async_trait::async_trait;
-use bulwark::config::BulwarkConfig;
-use bulwark::dao::{BulwarkDao, BulwarkDaoOxcache};
-use bulwark::error::BulwarkResult;
-use bulwark::session::BulwarkSession;
-use bulwark::stp::{BulwarkInterface, BulwarkLogicDefault};
-use bulwark::strategy::FirewallLoginContext;
-use bulwark::strategy::{
-    BulwarkPermissionStrategyDefault, FirewallStrategy, LoginHandler, LogoutHandler, Strategy,
+use garrison::config::GarrisonConfig;
+use garrison::dao::{GarrisonDao, GarrisonDaoOxcache};
+use garrison::error::GarrisonResult;
+use garrison::session::GarrisonSession;
+use garrison::stp::{GarrisonInterface, GarrisonLogicDefault};
+use garrison::strategy::FirewallLoginContext;
+use garrison::strategy::{
+    FirewallStrategy, GarrisonPermissionStrategyDefault, LoginHandler, LogoutHandler, Strategy,
     TokenGenerator,
 };
 use std::sync::Arc;
@@ -31,23 +31,23 @@ use std::sync::Arc;
 struct NoopInterface;
 
 #[async_trait]
-impl BulwarkInterface for NoopInterface {
-    async fn get_permission_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
+impl GarrisonInterface for NoopInterface {
+    async fn get_permission_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
         Ok(vec![])
     }
-    async fn get_role_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
+    async fn get_role_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
         Ok(vec![])
     }
 }
 
-async fn make_logic() -> Arc<BulwarkLogicDefault> {
-    let dao: Arc<dyn BulwarkDao> = Arc::new(BulwarkDaoOxcache::new().await.unwrap());
-    let config = Arc::new(BulwarkConfig::default_config());
-    let interface: Arc<dyn BulwarkInterface> = Arc::new(NoopInterface);
+async fn make_logic() -> Arc<GarrisonLogicDefault> {
+    let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await.unwrap());
+    let config = Arc::new(GarrisonConfig::default_config());
+    let interface: Arc<dyn GarrisonInterface> = Arc::new(NoopInterface);
     let timeout = u64::try_from(config.timeout).unwrap_or(3600);
-    let session = Arc::new(BulwarkSession::new(dao, timeout, timeout));
-    let firewall = Arc::new(BulwarkPermissionStrategyDefault::new(interface));
-    Arc::new(BulwarkLogicDefault::new(session, config, firewall))
+    let session = Arc::new(GarrisonSession::new(dao, timeout, timeout));
+    let firewall = Arc::new(GarrisonPermissionStrategyDefault::new(interface));
+    Arc::new(GarrisonLogicDefault::new(session, config, firewall))
 }
 
 // ============================================================================
@@ -59,7 +59,7 @@ struct CustomLoginHandler;
 
 #[async_trait]
 impl LoginHandler for CustomLoginHandler {
-    async fn handle_login(&self, login_id: &str) -> BulwarkResult<String> {
+    async fn handle_login(&self, login_id: &str) -> GarrisonResult<String> {
         Ok(format!("custom-login-token-{}", login_id))
     }
 }
@@ -69,10 +69,10 @@ struct UuidTokenGenerator;
 
 #[async_trait]
 impl TokenGenerator for UuidTokenGenerator {
-    async fn generate_token(&self, _login_id: &str) -> BulwarkResult<String> {
+    async fn generate_token(&self, _login_id: &str) -> GarrisonResult<String> {
         Ok(format!("uuid-{}-{}", chrono_timestamp(), _login_id))
     }
-    async fn refresh_token(&self, token: &str) -> BulwarkResult<String> {
+    async fn refresh_token(&self, token: &str) -> GarrisonResult<String> {
         Ok(format!("refreshed-{}", token))
     }
 }
@@ -90,11 +90,11 @@ struct LoggingLogoutHandler;
 
 #[async_trait]
 impl LogoutHandler for LoggingLogoutHandler {
-    async fn handle_logout(&self) -> BulwarkResult<()> {
+    async fn handle_logout(&self) -> GarrisonResult<()> {
         println!("    [LoggingLogoutHandler] 用户登出");
         Ok(())
     }
-    async fn handle_logout_by_login_id(&self, login_id: &str) -> BulwarkResult<()> {
+    async fn handle_logout_by_login_id(&self, login_id: &str) -> GarrisonResult<()> {
         println!("    [LoggingLogoutHandler] 用户 {} 登出", login_id);
         Ok(())
     }
@@ -109,7 +109,7 @@ impl FirewallStrategy for AlwaysPassFirewall {
         &self,
         _login_id: &str,
         _ctx: &FirewallLoginContext,
-    ) -> BulwarkResult<()> {
+    ) -> GarrisonResult<()> {
         // 实际生产应实现真实的防火墙规则
         Ok(())
     }
@@ -117,9 +117,9 @@ impl FirewallStrategy for AlwaysPassFirewall {
 
 /// 运行 Strategy 注册表示例。
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    println!("=== Bulwark Strategy 注册表示例 ===\n");
+    println!("=== Garrison Strategy 注册表示例 ===\n");
 
-    // 1. 构造 Strategy（6 个默认策略委托 BulwarkLogicDefault）
+    // 1. 构造 Strategy（6 个默认策略委托 GarrisonLogicDefault）
     let logic = make_logic().await;
     let mut strategy = Strategy::new(logic);
     println!("[1] Strategy::new(logic) 构造完成");

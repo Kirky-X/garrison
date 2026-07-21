@@ -22,9 +22,9 @@
 //!
 //! # 配置
 //!
-//! 通过 [`CsrfConfig`](crate::web::csrf::CsrfConfig) 控制，集成到 [`crate::config::BulwarkConfig`]。
+//! 通过 [`CsrfConfig`](crate::web::csrf::CsrfConfig) 控制，集成到 [`crate::config::GarrisonConfig`]。
 
-use crate::error::BulwarkResult;
+use crate::error::GarrisonResult;
 use axum::extract::State;
 use axum::http::{HeaderMap, HeaderValue};
 use serde::{Deserialize, Serialize};
@@ -36,7 +36,7 @@ use serde::{Deserialize, Serialize};
 /// # 默认值
 ///
 /// - `enabled`: `true`（默认启用，secure-by-default）
-/// - `cookie_name`: `"bulwark_csrf_token"`
+/// - `cookie_name`: `"garrison_csrf_token"`
 /// - `header_name`: `"X-CSRF-Token"`
 /// - `excluded_paths`: 空列表
 /// - `protected_methods`: `["POST", "PUT", "PATCH", "DELETE"]`
@@ -64,7 +64,7 @@ pub struct CsrfConfig {
     pub excluded_paths: Vec<String>,
     /// 受保护方法列表（大小写不敏感）。
     pub protected_methods: Vec<String>,
-    /// 是否在 Cookie 中设置 Secure 标志（默认 `true`，与 BulwarkConfig 一致）。
+    /// 是否在 Cookie 中设置 Secure 标志（默认 `true`，与 GarrisonConfig 一致）。
     pub cookie_secure: bool,
     /// CSRF Cookie 的 Domain 属性（C3 修复）。
     ///
@@ -84,7 +84,7 @@ impl Default for CsrfConfig {
         Self {
             // secure-by-default，默认启用 CSRF 防护
             enabled: true,
-            cookie_name: "bulwark_csrf_token".to_string(),
+            cookie_name: "garrison_csrf_token".to_string(),
             header_name: "X-CSRF-Token".to_string(),
             excluded_paths: Vec::new(),
             protected_methods: vec![
@@ -112,7 +112,7 @@ impl Default for CsrfConfig {
 /// # 返回
 ///
 /// Base64 编码的 token 字符串。
-pub fn generate_csrf_token() -> BulwarkResult<String> {
+pub fn generate_csrf_token() -> GarrisonResult<String> {
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use base64::Engine;
     use rand::rngs::OsRng;
@@ -167,7 +167,7 @@ pub fn validate_csrf_token(header_token: &str, cookie_token: &str) -> bool {
 }
 
 // ============================================================================
-// T013: bulwark_csrf_middleware
+// T013: garrison_csrf_middleware
 // ============================================================================
 
 /// 从请求 headers 中提取指定名称的 Cookie 值。
@@ -278,7 +278,7 @@ fn validate_same_origin(headers: &HeaderMap) -> bool {
 /// # 使用
 ///
 /// ```ignore
-/// use bulwark::web::csrf::{bulwark_csrf_middleware, CsrfConfig};
+/// use garrison::web::csrf::{garrison_csrf_middleware, CsrfConfig};
 /// use std::sync::Arc;
 /// use axum::Router;
 ///
@@ -287,10 +287,10 @@ fn validate_same_origin(headers: &HeaderMap) -> bool {
 ///     .route("/api", axum::routing::get(|| async { "ok" }))
 ///     .layer(axum::middleware::from_fn_with_state(
 ///         Arc::new(config),
-///         bulwark_csrf_middleware,
+///         garrison_csrf_middleware,
 ///     ));
 /// ```
-pub async fn bulwark_csrf_middleware(
+pub async fn garrison_csrf_middleware(
     State(config): State<std::sync::Arc<CsrfConfig>>,
     req: axum::extract::Request,
     next: axum::middleware::Next,
@@ -381,7 +381,7 @@ mod tests {
             )
             .layer(axum::middleware::from_fn_with_state(
                 Arc::new(config),
-                bulwark_csrf_middleware,
+                garrison_csrf_middleware,
             ))
     }
 
@@ -404,7 +404,7 @@ mod tests {
             .uri(path)
             .header("host", "example.com")
             .header("origin", "https://example.com")
-            .header("cookie", format!("bulwark_csrf_token={}", cookie_token))
+            .header("cookie", format!("garrison_csrf_token={}", cookie_token))
             .header("X-CSRF-Token", header_token)
             .body(Body::empty())
             .unwrap()
@@ -493,7 +493,7 @@ mod tests {
     fn csrf_config_default_values() {
         let config = CsrfConfig::default();
         assert!(config.enabled, "VULN-0006: 默认应启用 CSRF 防护");
-        assert_eq!(config.cookie_name, "bulwark_csrf_token");
+        assert_eq!(config.cookie_name, "garrison_csrf_token");
         assert_eq!(config.header_name, "X-CSRF-Token");
         assert!(config.excluded_paths.is_empty());
         assert_eq!(
@@ -574,7 +574,7 @@ mod tests {
     }
 
     // ========================================================================
-    // T013: bulwark_csrf_middleware 集成测试（12 个）
+    // T013: garrison_csrf_middleware 集成测试（12 个）
     // ========================================================================
 
     #[tokio::test]
@@ -589,7 +589,7 @@ mod tests {
         let set_cookie = resp.headers().get("set-cookie").expect("应设置 Set-Cookie");
         let cookie_str = set_cookie.to_str().unwrap();
         assert!(
-            cookie_str.starts_with("bulwark_csrf_token="),
+            cookie_str.starts_with("garrison_csrf_token="),
             "Set-Cookie 应以 cookie_name 开头"
         );
         assert!(cookie_str.contains("HttpOnly"));
@@ -612,7 +612,7 @@ mod tests {
             .oneshot(make_request_with_cookie(
                 "GET",
                 "/api/test",
-                "bulwark_csrf_token=existing_token_value",
+                "garrison_csrf_token=existing_token_value",
             ))
             .await
             .unwrap();
@@ -800,7 +800,7 @@ mod tests {
             .uri("/api/test")
             .header("host", "example.com")
             .header("origin", "https://evil.com")
-            .header("cookie", format!("bulwark_csrf_token={}", token))
+            .header("cookie", format!("garrison_csrf_token={}", token))
             .header("X-CSRF-Token", &token)
             .body(Body::empty())
             .unwrap();
@@ -827,7 +827,7 @@ mod tests {
             .uri("/api/test")
             .header("host", "example.com")
             .header("origin", "https://example.com")
-            .header("cookie", format!("bulwark_csrf_token={}", token))
+            .header("cookie", format!("garrison_csrf_token={}", token))
             .header("X-CSRF-Token", &token)
             .body(Body::empty())
             .unwrap();
@@ -846,7 +846,7 @@ mod tests {
     /// build_set_cookie 不传 cookie_domain 时不应包含 Domain 属性。
     #[test]
     fn build_set_cookie_without_domain() {
-        let cookie = build_set_cookie("bulwark_csrf_token", "abc123", true, None);
+        let cookie = build_set_cookie("garrison_csrf_token", "abc123", true, None);
         assert!(
             !cookie.contains("Domain="),
             "C3: cookie_domain=None 时不应包含 Domain 属性，实际: {}",
@@ -861,7 +861,7 @@ mod tests {
     /// build_set_cookie 传 Some(domain) 时应包含 `; Domain=<domain>`。
     #[test]
     fn build_set_cookie_with_domain() {
-        let cookie = build_set_cookie("bulwark_csrf_token", "abc123", true, Some("example.com"));
+        let cookie = build_set_cookie("garrison_csrf_token", "abc123", true, Some("example.com"));
         assert!(
             cookie.contains("; Domain=example.com"),
             "C3: cookie_domain=Some(\"example.com\") 时应包含 `; Domain=example.com`，实际: {}",
@@ -876,7 +876,7 @@ mod tests {
     /// build_set_cookie 传 Some("") 时应忽略空 Domain（不输出 Domain 属性）。
     #[test]
     fn build_set_cookie_with_empty_domain_ignored() {
-        let cookie = build_set_cookie("bulwark_csrf_token", "abc123", true, Some(""));
+        let cookie = build_set_cookie("garrison_csrf_token", "abc123", true, Some(""));
         assert!(
             !cookie.contains("Domain="),
             "C3: 空字符串 Domain 应被忽略，实际: {}",
@@ -966,7 +966,7 @@ mod tests {
             .oneshot(make_request_with_cookie(
                 "GET",
                 "/api/test",
-                "bulwark_csrf_token=existing",
+                "garrison_csrf_token=existing",
             ))
             .await
             .unwrap();

@@ -6,7 +6,7 @@ warp 适配在 0.3.0 新增，采用 Filter 组合模型，通过 `web-warp` fea
 
 ```toml
 [dependencies]
-bulwark = { version = "0.7", features = ["web-warp"] }
+garrison = { version = "0.7", features = ["web-warp"] }
 warp = "0.4"
 ```
 
@@ -16,10 +16,10 @@ warp = "0.4"
 
 | 组件 | 作用 |
 |:---|:---|
-| `BulwarkRouter` | 路由构建器，注册受保护路由规则 |
-| `impl Reply for BulwarkError` | 错误自动转为 HTTP 响应（复用统一 `response_parts()`） |
-| `BulwarkRejection(BulwarkError)` | 实现 `warp::reject::Reject`，用于 Filter 鉴权拒绝 |
-| `check_login(config)` / `check_role(config, role)` / `check_permission(config, perm)` | Filter 函数，校验失败返回 `BulwarkRejection` |
+| `GarrisonRouter` | 路由构建器，注册受保护路由规则 |
+| `impl Reply for GarrisonError` | 错误自动转为 HTTP 响应（复用统一 `response_parts()`） |
+| `GarrisonRejection(GarrisonError)` | 实现 `warp::reject::Reject`，用于 Filter 鉴权拒绝 |
+| `check_login(config)` / `check_role(config, role)` / `check_permission(config, perm)` | Filter 函数，校验失败返回 `GarrisonRejection` |
 
 ## Filter 鉴权示例
 
@@ -27,17 +27,17 @@ warp 采用 Filter 组合模型，鉴权作为 Filter 在路由链中应用：
 
 ```rust
 use std::sync::Arc;
-use bulwark::web_warp::{check_login, check_permission};
-use bulwark::config::BulwarkConfig;
+use garrison::web_warp::{check_login, check_permission};
+use garrison::config::GarrisonConfig;
 use warp::Filter;
 
 async fn profile() -> &'static str { "ok" }
 
 #[tokio::main]
 async fn main() {
-    BulwarkManager::init(dao, config, interface).ok();
+    GarrisonManager::init(dao, config, interface).ok();
 
-    let config = Arc::new(BulwarkConfig::default_config());
+    let config = Arc::new(GarrisonConfig::default_config());
 
     // 受保护路由：先 check_login Filter，再处理
     let profile_route = warp::path!("api" / "profile")
@@ -57,30 +57,30 @@ async fn main() {
 
 | Filter | 签名 | 行为 |
 |:---|:---|:---|
-| `check_login(config)` | `Filter<Extract = ((),), Error = warp::Rejection>` | 校验已登录，失败 reject 为 `BulwarkRejection` |
+| `check_login(config)` | `Filter<Extract = ((),), Error = warp::Rejection>` | 校验已登录，失败 reject 为 `GarrisonRejection` |
 | `check_role(config, role)` | 同上 | 校验角色，失败 reject |
 | `check_permission(config, perm)` | 同上 | 校验权限，失败 reject |
 
-> **注**：三个 Filter 函数均需传入 `Arc<BulwarkConfig>`（决定从 header / cookie 提取 token 的策略）；
-> 失败时通过 `warp::reject::custom(BulwarkRejection(e))` 包装为 `warp::Rejection`，需在 `recover()` 中统一转响应。
+> **注**：三个 Filter 函数均需传入 `Arc<GarrisonConfig>`（决定从 header / cookie 提取 token 的策略）；
+> 失败时通过 `warp::reject::custom(GarrisonRejection(e))` 包装为 `warp::Rejection`，需在 `recover()` 中统一转响应。
 
-Filter 在 `and()` 链中组合，通过即继续下游 handler，失败则短路返回 `BulwarkRejection`。
+Filter 在 `and()` 链中组合，通过即继续下游 handler，失败则短路返回 `GarrisonRejection`。
 
 ## 错误响应
 
 ```rust
-use bulwark::web_warp::BulwarkRejection;
+use garrison::web_warp::GarrisonRejection;
 
-// 全局 reject 处理：将 BulwarkRejection 转为 HTTP 响应
+// 全局 reject 处理：将 GarrisonRejection 转为 HTTP 响应
 let routes = routes.recover(|rejection: warp::reject::Rejection| async move {
-    if let Some(e) = rejection.find::<BulwarkRejection>() {
-        return Ok::<_, warp::Reply>(e.0.clone()); // impl Reply for BulwarkError
+    if let Some(e) = rejection.find::<GarrisonRejection>() {
+        return Ok::<_, warp::Reply>(e.0.clone()); // impl Reply for GarrisonError
     }
     Err(rejection)
 });
 ```
 
-`BulwarkError` 实现 `Reply`，`response_parts()` 与 axum/actix 共用同一逻辑，保证三框架错误格式一致：
+`GarrisonError` 实现 `Reply`，`response_parts()` 与 axum/actix 共用同一逻辑，保证三框架错误格式一致：
 
 - `NotLogin` / `InvalidToken` / `ExpiredToken` → 401
 - `NotPermission` / `NotRole` → 403
@@ -94,10 +94,10 @@ let routes = routes.recover(|rejection: warp::reject::Rejection| async move {
 |:---|:---|:---|:---|
 | 错误响应 | `IntoResponse` | `ResponseError` | `Reply` + `Reject` |
 | 鉴权 | extractor | `FromRequest` | Filter 函数 |
-| 中间件 | `BulwarkLayer` | `BulwarkMiddleware` | Filter 组合 |
+| 中间件 | `GarrisonLayer` | `GarrisonMiddleware` | Filter 组合 |
 
 ## 注意事项
 
 - warp 无显式中间件概念，鉴权通过 Filter `and()` 组合实现
-- `BulwarkRejection` 包装 `BulwarkError`，需在 `recover()` 中统一转响应
-- task_local 上下文由 `check_*` Filter 内部设置，未经过 Filter 的路由无法使用 `BulwarkUtil`
+- `GarrisonRejection` 包装 `GarrisonError`，需在 `recover()` 中统一转响应
+- task_local 上下文由 `check_*` Filter 内部设置，未经过 Filter 的路由无法使用 `GarrisonUtil`

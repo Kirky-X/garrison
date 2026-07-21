@@ -1,21 +1,21 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! BulwarkListenerManager 实现块（从 mod.rs 迁移）。
+//! GarrisonListenerManager 实现块（从 mod.rs 迁移）。
 
 use super::*;
 
-impl BulwarkListenerManager {
+impl GarrisonListenerManager {
     /// 创建监听器管理器并收集所有已注册监听器。
     pub fn new() -> Self {
         use std::iter::Iterator;
-        let listeners: Vec<Arc<dyn BulwarkListener>> = inventory::iter::<BulwarkListenerEntry>()
+        let listeners: Vec<Arc<dyn GarrisonListener>> = inventory::iter::<GarrisonListenerEntry>()
             .map(|entry| (entry.factory)())
             .collect();
         for l in &listeners {
             tracing::info!(
                 "已加载监听器: {}",
-                std::any::type_name::<Arc<dyn BulwarkListener>>()
+                std::any::type_name::<Arc<dyn GarrisonListener>>()
             );
             let _ = l; // 避免 unused 警告
         }
@@ -28,7 +28,7 @@ impl BulwarkListenerManager {
     ///
     /// 补充 `inventory` 编译期注册机制的不足：`AuditLogListener` 等需要运行时参数
     /// （如 `DbPool`）的监听器无法通过无参工厂函数注册，需通过此方法在初始化后追加。
-    pub fn register(&self, listener: Arc<dyn BulwarkListener>) {
+    pub fn register(&self, listener: Arc<dyn GarrisonListener>) {
         self.listeners.write().push(listener);
     }
 
@@ -43,7 +43,7 @@ impl BulwarkListenerManager {
     /// 不中断广播，最终返回 `Ok(())`。
     ///
     /// v0.5.0 改为 async：`on_event` 改为 async 后，broadcast 需 `.await`。
-    pub async fn broadcast(&self, event: &BulwarkEvent) {
+    pub async fn broadcast(&self, event: &GarrisonEvent) {
         let listeners = self.listeners.read().clone();
         for listener in &listeners {
             if let Err(e) = listener.on_event(event).await {
@@ -53,7 +53,7 @@ impl BulwarkListenerManager {
     }
 }
 
-impl Default for BulwarkListenerManager {
+impl Default for GarrisonListenerManager {
     fn default() -> Self {
         Self::new()
     }

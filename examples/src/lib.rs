@@ -1,7 +1,7 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! Bulwark 官方示例集库模块。
+//! Garrison 官方示例集库模块。
 //!
 //! 每个 bin 的核心逻辑提取为 `pub fn run()`（或 `pub async fn run()`），
 //! 由 `src/bin/<name>.rs` 作为 thin wrapper 调用，并由 `tests/<name>.rs` 进行测试。
@@ -21,7 +21,7 @@
 //! # 运行示例
 //!
 //! ```sh
-//! cargo run -p bulwark-examples --bin <name> --features full
+//! cargo run -p garrison-examples --bin <name> --features full
 //! ```
 
 pub mod apikey;

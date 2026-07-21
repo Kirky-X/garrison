@@ -1,6 +1,6 @@
 ---
 name: 功能建议
-about: 建议为 Bulwark 框架添加新功能
+about: 建议为 Garrison 框架添加新功能
 title: "[FEAT] "
 labels: enhancement, triage
 assignees: ''

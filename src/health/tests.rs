@@ -7,7 +7,7 @@
 
 use super::mock::{AlwaysDegraded, AlwaysHealthy, AlwaysUnhealthy};
 use super::*;
-use crate::config::BulwarkConfig;
+use crate::config::GarrisonConfig;
 use std::sync::Arc;
 
 // ============================================================================
@@ -111,7 +111,7 @@ async fn registry_unhealthy_overrides_degraded() {
 
 #[tokio::test]
 async fn config_health_check_returns_healthy_for_valid_config() {
-    let config = Arc::new(BulwarkConfig::default_config());
+    let config = Arc::new(GarrisonConfig::default_config());
     let checker = ConfigHealthCheck::new(config);
     assert_eq!(checker.name(), "config");
     let result = checker.check().await.unwrap();
@@ -120,7 +120,7 @@ async fn config_health_check_returns_healthy_for_valid_config() {
 
 #[tokio::test]
 async fn config_health_check_returns_unhealthy_for_invalid_config() {
-    let mut config = BulwarkConfig::default_config();
+    let mut config = GarrisonConfig::default_config();
     config.timeout = -1; // 非法值
     let checker = ConfigHealthCheck::new(Arc::new(config));
     let result = checker.check().await;

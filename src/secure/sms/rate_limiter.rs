@@ -6,9 +6,9 @@
 //! 使用 limiteron `DistributedLimiter` trait 实现原子计数，保留 `dao` 用于
 //! `decrement_counter`（limiteron 无 decrement 方法）。
 
-use super::{BulwarkDao, BulwarkResult, SmsRateLimiter};
-use crate::error::BulwarkError;
-use crate::limiteron::BulwarkDaoDistributedLimiter;
+use super::{GarrisonDao, GarrisonResult, SmsRateLimiter};
+use crate::error::GarrisonError;
+use crate::limiteron::GarrisonDaoDistributedLimiter;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -16,24 +16,24 @@ use std::time::Duration;
 ///
 /// spec 约束：phone 不能含 ':'（防止 key 结构破坏）。
 /// 额外校验：非空、无控制字符、长度 <= 20（防止超大 key 消耗内存）。
-pub(super) fn validate_phone(phone: &str) -> BulwarkResult<()> {
+pub(super) fn validate_phone(phone: &str) -> GarrisonResult<()> {
     if phone.is_empty() {
-        return Err(BulwarkError::InvalidParam(
+        return Err(GarrisonError::InvalidParam(
             "secure-phone-empty::".to_string(),
         ));
     }
     if phone.contains(':') {
-        return Err(BulwarkError::InvalidParam(
+        return Err(GarrisonError::InvalidParam(
             "secure-phone-no-colon".to_string(),
         ));
     }
     if phone.chars().any(|c| c.is_control()) {
-        return Err(BulwarkError::InvalidParam(
+        return Err(GarrisonError::InvalidParam(
             "secure-phone-no-control-char".to_string(),
         ));
     }
     if phone.len() > 20 {
-        return Err(BulwarkError::InvalidParam(
+        return Err(GarrisonError::InvalidParam(
             "secure-phone-too-long".to_string(),
         ));
     }
@@ -43,10 +43,10 @@ pub(super) fn validate_phone(phone: &str) -> BulwarkResult<()> {
 impl SmsRateLimiter {
     /// 创建限速器实例。
     ///
-    /// 内部创建 [`BulwarkDaoDistributedLimiter`] 适配器，将 `dao` 桥接到
+    /// 内部创建 [`GarrisonDaoDistributedLimiter`] 适配器，将 `dao` 桥接到
     /// limiteron `DistributedLimiter` trait，用于原子 `incr_with_ttl`。
-    pub fn new(dao: Arc<dyn BulwarkDao>, hourly_limit: u32, daily_limit: u32) -> Self {
-        let limiter = Arc::new(BulwarkDaoDistributedLimiter::new(dao.clone()));
+    pub fn new(dao: Arc<dyn GarrisonDao>, hourly_limit: u32, daily_limit: u32) -> Self {
+        let limiter = Arc::new(GarrisonDaoDistributedLimiter::new(dao.clone()));
         Self {
             dao,
             limiter,
@@ -57,7 +57,7 @@ impl SmsRateLimiter {
 
     /// 递减计数器（委托 `dao.decr` 原子操作）。
     ///
-    /// 委托 [`BulwarkDao::decr`] 在单次 DAO 调用内完成 get → parse → update/delete，
+    /// 委托 [`GarrisonDao::decr`] 在单次 DAO 调用内完成 get → parse → update/delete，
     /// 消除原三步组合的 TOCTOU 竞态（fix-refresh-race-and-test-contracts / T014）。
     ///
     /// 语义（与 `dao.decr` 一致）：
@@ -66,21 +66,21 @@ impl SmsRateLimiter {
     /// - cur_val > 0：递减 1；new_val == 0 时删除 key；new_val > 0 时保留原 TTL
     ///
     /// # 错误
-    /// - `BulwarkError::Dao`：dao.decr 内部 parse 失败（非数字值）
-    /// - 其他 `BulwarkError`：dao.decr 内部 get/update/delete 错误
-    pub(super) async fn decrement_counter(dao: &dyn BulwarkDao, key: &str) -> BulwarkResult<()> {
+    /// - `GarrisonError::Dao`：dao.decr 内部 parse 失败（非数字值）
+    /// - 其他 `GarrisonError`：dao.decr 内部 get/update/delete 错误
+    pub(super) async fn decrement_counter(dao: &dyn GarrisonDao, key: &str) -> GarrisonResult<()> {
         dao.decr(key).await.map(|_| ())
     }
 
     /// 检查并递增限速计数器。
     ///
     /// 超限时回滚已递增的计数器，避免拒绝的请求消耗配额。
-    pub async fn check_and_increment(&self, phone: &str) -> BulwarkResult<()> {
+    pub async fn check_and_increment(&self, phone: &str) -> GarrisonResult<()> {
         validate_phone(phone)?;
 
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|e| BulwarkError::Internal(format!("secure-system-time::{}", e)))?;
+            .map_err(|e| GarrisonError::Internal(format!("secure-system-time::{}", e)))?;
         let hour_bucket = now.as_secs() / 3600;
         let date = chrono::Utc::now().format("%Y-%m-%d").to_string();
 
@@ -90,13 +90,13 @@ impl SmsRateLimiter {
             .limiter
             .incr_with_ttl(&hour_key, 1, Duration::from_secs(3600))
             .await
-            .map_err(|e| BulwarkError::Internal(format!("secure-limiter-incr::{}", e)))?;
+            .map_err(|e| GarrisonError::Internal(format!("secure-limiter-incr::{}", e)))?;
         if hour_count > self.hourly_limit as u64 {
             // 超限，回滚 incr
             if let Err(e) = Self::decrement_counter(&*self.dao, &hour_key).await {
                 tracing::warn!(error = %e, key = %hour_key, "rollback hourly window counter failed");
             }
-            return Err(BulwarkError::SmsRateLimitExceeded {
+            return Err(GarrisonError::SmsRateLimitExceeded {
                 window: "hourly".to_string(),
             });
         }
@@ -107,7 +107,7 @@ impl SmsRateLimiter {
             .limiter
             .incr_with_ttl(&day_key, 1, Duration::from_secs(86400))
             .await
-            .map_err(|e| BulwarkError::Internal(format!("secure-limiter-incr::{}", e)))?;
+            .map_err(|e| GarrisonError::Internal(format!("secure-limiter-incr::{}", e)))?;
         if day_count > self.daily_limit as u64 {
             // 超限，回滚 day 和 hour
             if let Err(e) = Self::decrement_counter(&*self.dao, &day_key).await {
@@ -116,7 +116,7 @@ impl SmsRateLimiter {
             if let Err(e) = Self::decrement_counter(&*self.dao, &hour_key).await {
                 tracing::warn!(error = %e, key = %hour_key, "rollback hourly window counter failed");
             }
-            return Err(BulwarkError::SmsRateLimitExceeded {
+            return Err(GarrisonError::SmsRateLimitExceeded {
                 window: "daily".to_string(),
             });
         }
@@ -125,12 +125,12 @@ impl SmsRateLimiter {
     }
 
     /// 回滚限速计数器（发送失败时调用）。
-    pub async fn rollback(&self, phone: &str) -> BulwarkResult<()> {
+    pub async fn rollback(&self, phone: &str) -> GarrisonResult<()> {
         validate_phone(phone)?;
 
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|e| BulwarkError::Internal(format!("secure-system-time::{}", e)))?;
+            .map_err(|e| GarrisonError::Internal(format!("secure-system-time::{}", e)))?;
         let hour_bucket = now.as_secs() / 3600;
         let date = chrono::Utc::now().format("%Y-%m-%d").to_string();
 

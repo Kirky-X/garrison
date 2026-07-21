@@ -4,39 +4,39 @@
 //! actix-web 框架适配模块。
 //!
 //! 对应 actix-web 适配器，
-//! 提供 BulwarkRouter + FromRequest extractor + BulwarkMiddleware 完整集成。
+//! 提供 GarrisonRouter + FromRequest extractor + GarrisonMiddleware 完整集成。
 //!
 //! ## 模块拆分（Rule 25 接口隔离）
 //!
-//! - `mod.rs`：pub struct 声明（BulwarkRouter/BulwarkMiddleware/BulwarkMiddlewareService/
+//! - `mod.rs`：pub struct 声明（GarrisonRouter/GarrisonMiddleware/GarrisonMiddlewareService/
 //!   RouteRule/CheckLogin/CheckRole/CheckPermission）+ pub mod 声明 + pub use re-export
-//! - `error.rs`：`HeaderLookup for HeaderMap` + `ResponseError for BulwarkError` 实现
-//! - `router.rs`：`BulwarkRouter` 方法 + `Default` 实现
-//! - `middleware.rs`：`Transform` + `Service` trait 实现（BulwarkMiddleware/BulwarkMiddlewareService）
-//! - `extractor.rs`：`FromRequest` extractor 实现（BulwarkPrincipal/CheckLogin/CheckRole/
+//! - `error.rs`：`HeaderLookup for HeaderMap` + `ResponseError for GarrisonError` 实现
+//! - `router.rs`：`GarrisonRouter` 方法 + `Default` 实现
+//! - `middleware.rs`：`Transform` + `Service` trait 实现（GarrisonMiddleware/GarrisonMiddlewareService）
+//! - `extractor.rs`：`FromRequest` extractor 实现（GarrisonPrincipal/CheckLogin/CheckRole/
 //!   CheckPermission/TenantContext）
 //! - `mock.rs`：测试 mock（MockDao + MockInterface）
 //! - `tests.rs`：集成测试
 //!
 //! ## 设计
 //!
-//! - `BulwarkRouter`：路由规则构建器，`route_protected` 注册路径 + 注解映射
-//! - `BulwarkMiddleware`：actix-web middleware（Transform + Service），请求前调用 interceptor
+//! - `GarrisonRouter`：路由规则构建器，`route_protected` 注册路径 + 注解映射
+//! - `GarrisonMiddleware`：actix-web middleware（Transform + Service），请求前调用 interceptor
 //! - `CheckLogin` / `CheckRole` / `CheckPermission`：FromRequest extractors，per-handler 鉴权
-//! - `ResponseError for BulwarkError`：错误响应，复用 `response_parts()` 保证三框架一致
+//! - `ResponseError for GarrisonError`：错误响应，复用 `response_parts()` 保证三框架一致
 //!
 //! ## 使用示例
 //!
 //! ```ignore
-//! use bulwark::prelude::*;
-//! use bulwark::web_actix::{BulwarkRouter, CheckLogin};
+//! use garrison::prelude::*;
+//! use garrison::web_actix::{GarrisonRouter, CheckLogin};
 //! use actix_web::{App, HttpServer, web};
 //!
 //! async fn protected_handler(_auth: CheckLogin) -> &'static str {
 //!     "authenticated"
 //! }
 //!
-//! let router = BulwarkRouter::new(std::sync::Arc::new(BulwarkConfig::default_config()))
+//! let router = GarrisonRouter::new(std::sync::Arc::new(GarrisonConfig::default_config()))
 //!     .route_protected("/api/user", Annotation::CheckLogin);
 //!
 //! App::new()
@@ -45,8 +45,8 @@
 //! ```
 
 use crate::annotation::Annotation;
-use crate::config::BulwarkConfig;
-use crate::router::BulwarkInterceptor;
+use crate::config::GarrisonConfig;
+use crate::router::GarrisonInterceptor;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -57,7 +57,7 @@ pub mod middleware;
 pub mod router;
 
 /// 登录主体 extractor（从 Authorization: Bearer `<token>` 解析 login_id）。
-pub use extractor::BulwarkPrincipal;
+pub use extractor::GarrisonPrincipal;
 
 // ============================================================================
 // 路由规则 + 路由器 struct 声明（impl 见 router.rs）
@@ -74,34 +74,34 @@ pub struct RouteRule {
 
 /// actix-web 路由器，收集鉴权路由规则并生成 middleware。
 ///
-/// 对应 axum 版 `BulwarkRouter`，API 对齐。
-pub struct BulwarkRouter {
+/// 对应 axum 版 `GarrisonRouter`，API 对齐。
+pub struct GarrisonRouter {
     rules: HashMap<String, Annotation>,
-    interceptor: Arc<dyn BulwarkInterceptor>,
-    config: Arc<BulwarkConfig>,
+    interceptor: Arc<dyn GarrisonInterceptor>,
+    config: Arc<GarrisonConfig>,
 }
 
 // ============================================================================
-// BulwarkMiddleware struct 声明（impl Transform/Service 见 middleware.rs）
+// GarrisonMiddleware struct 声明（impl Transform/Service 见 middleware.rs）
 // ============================================================================
 
 /// actix-web middleware，提取 token + 调用 interceptor + 设置 task_local。
-pub struct BulwarkMiddleware {
+pub struct GarrisonMiddleware {
     rules: Arc<HashMap<String, Annotation>>,
-    interceptor: Arc<dyn BulwarkInterceptor>,
-    config: Arc<BulwarkConfig>,
+    interceptor: Arc<dyn GarrisonInterceptor>,
+    config: Arc<GarrisonConfig>,
 }
 
 /// middleware service（Transform 生成的中间层）。
-pub struct BulwarkMiddlewareService<S> {
+pub struct GarrisonMiddlewareService<S> {
     /// 内部 service（Rc 包装以便在 async block 中 clone，无需 S: Clone）
     pub inner: Rc<S>,
     /// 路由规则
     pub rules: Arc<HashMap<String, Annotation>>,
     /// 拦截器
-    pub interceptor: Arc<dyn BulwarkInterceptor>,
+    pub interceptor: Arc<dyn GarrisonInterceptor>,
     /// 配置
-    pub config: Arc<BulwarkConfig>,
+    pub config: Arc<GarrisonConfig>,
 }
 
 // ============================================================================

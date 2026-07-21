@@ -1,13 +1,13 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! `BulwarkConfig` 与 `TenantIsolationConfig` 的实现块。
+//! `GarrisonConfig` 与 `TenantIsolationConfig` 的实现块。
 //!
 //! 本文件从 `mod.rs` 迁移而来，遵循 mod-crate-hardening（规则 25）：
 //! `mod.rs` 仅保留 trait 定义、pub struct/enum、pub type alias、pub use、mod 声明。
 
 use super::*;
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::error::{GarrisonError, GarrisonResult};
 use confers::config::{ConfigBuilder, FileSource};
 
 impl Default for TenantIsolationConfig {
@@ -19,7 +19,7 @@ impl Default for TenantIsolationConfig {
     }
 }
 
-impl BulwarkConfig {
+impl GarrisonConfig {
     /// 创建符合 spec 的默认配置实例。
     ///
     /// Scenario: 代码默认值生效：
@@ -113,15 +113,15 @@ impl BulwarkConfig {
     /// - `toml_path`: toml 配置文件路径。`None` 时仅使用默认值 + 环境变量。
     ///
     /// # 返回
-    /// 合并后的 `BulwarkConfig`（已附加 watcher 并通过 `validate()`）。
+    /// 合并后的 `GarrisonConfig`（已附加 watcher 并通过 `validate()`）。
     ///
     /// # 错误
-    /// - `BulwarkError::Config`：文件解析失败、环境变量非法或配置校验未通过。
-    pub fn load(toml_path: Option<&str>) -> BulwarkResult<Self> {
+    /// - `GarrisonError::Config`：文件解析失败、环境变量非法或配置校验未通过。
+    pub fn load(toml_path: Option<&str>) -> GarrisonResult<Self> {
         #[cfg_attr(not(feature = "rate-limit-redis"), allow(unused_mut))]
         let mut env_values = collect_env_vars(ENV_PREFIX);
 
-        // `BULWARK_RATE_LIMIT_BACKEND=redis` 会被 confers 通用收集（key "rate_limit_backend"
+        // `GARRISON_RATE_LIMIT_BACKEND=redis` 会被 confers 通用收集（key "rate_limit_backend"
         // 匹配顶层字段），但 "redis" 无法反序列化为 `Redis { redis_url }`（缺子字段），
         // 会导致 build 失败。故从 confers memory source 中移除，由下方显式逻辑处理。
         #[cfg(feature = "rate-limit-redis")]
@@ -268,7 +268,7 @@ impl BulwarkConfig {
 
         let config = builder
             .build()
-            .map_err(|e| BulwarkError::Config(format!("confers build error: {}", e)))?;
+            .map_err(|e| GarrisonError::Config(format!("confers build error: {}", e)))?;
 
         #[cfg_attr(
             not(any(
@@ -285,7 +285,7 @@ impl BulwarkConfig {
         // 由显式逻辑覆盖，优先级最高。
         #[cfg(feature = "web-cors")]
         {
-            if let Ok(val) = std::env::var("BULWARK_CORS_ALLOWED_ORIGINS") {
+            if let Ok(val) = std::env::var("GARRISON_CORS_ALLOWED_ORIGINS") {
                 config.cors_config.allowed_origins = val
                     .split(',')
                     .map(|s| s.trim().to_string())
@@ -295,28 +295,28 @@ impl BulwarkConfig {
         }
         #[cfg(feature = "web-csrf")]
         {
-            if let Ok(val) = std::env::var("BULWARK_CSRF_ENABLED") {
+            if let Ok(val) = std::env::var("GARRISON_CSRF_ENABLED") {
                 config.csrf_config.enabled = val.eq_ignore_ascii_case("true");
             }
         }
         #[cfg(feature = "rate-limit-redis")]
         {
-            if let Ok(val) = std::env::var("BULWARK_RATE_LIMIT_BACKEND") {
+            if let Ok(val) = std::env::var("GARRISON_RATE_LIMIT_BACKEND") {
                 match val.to_lowercase().as_str() {
                     "memory" => config.rate_limit_backend = RateLimitBackend::Memory,
                     "redis" => {
-                        let redis_url = std::env::var("BULWARK_REDIS_URL").unwrap_or_default();
+                        let redis_url = std::env::var("GARRISON_REDIS_URL").unwrap_or_default();
                         config.rate_limit_backend = RateLimitBackend::Redis { redis_url };
                     },
                     _ => {
-                        return Err(BulwarkError::Config(format!(
-                            "BULWARK_RATE_LIMIT_BACKEND 不支持的值 '{}'，仅支持 'memory' 或 'redis'",
+                        return Err(GarrisonError::Config(format!(
+                            "GARRISON_RATE_LIMIT_BACKEND 不支持的值 '{}'，仅支持 'memory' 或 'redis'",
                             val
                         )));
                     },
                 }
             }
-            if let Ok(val) = std::env::var("BULWARK_REDIS_URL") {
+            if let Ok(val) = std::env::var("GARRISON_REDIS_URL") {
                 if let RateLimitBackend::Redis { redis_url } = &mut config.rate_limit_backend {
                     *redis_url = val;
                 }
@@ -329,7 +329,7 @@ impl BulwarkConfig {
 
     /// 为配置实例附加 watcher（创建 watch channel）。
     ///
-    /// 反序列化后的 `BulwarkConfig` 没有 watcher，调用此方法启用 `watch()` 与 `update()`。
+    /// 反序列化后的 `GarrisonConfig` 没有 watcher，调用此方法启用 `watch()` 与 `update()`。
     pub fn with_watcher(mut self) -> Self {
         if self.watcher.is_none() {
             let (tx, _rx) = watch::channel(self.clone_for_watcher());
@@ -355,38 +355,40 @@ impl BulwarkConfig {
     /// 校验通过返回 `Ok(())`。
     ///
     /// # 错误
-    /// - `BulwarkError::Config`：`token_style` 非法（消息含 "unknown token_style"）。
-    /// - `BulwarkError::Config`：`timeout` 非正（消息 "timeout must be positive"）。
-    /// - `BulwarkError::Config`：`token_style=jwt` 但 `jwt_secret` 为空。
-    pub fn validate(&self) -> BulwarkResult<()> {
+    /// - `GarrisonError::Config`：`token_style` 非法（消息含 "unknown token_style"）。
+    /// - `GarrisonError::Config`：`timeout` 非正（消息 "timeout must be positive"）。
+    /// - `GarrisonError::Config`：`token_style=jwt` 但 `jwt_secret` 为空。
+    pub fn validate(&self) -> GarrisonResult<()> {
         if !TOKEN_STYLES.contains(&self.token_style.as_str()) {
-            return Err(BulwarkError::Config(format!(
+            return Err(GarrisonError::Config(format!(
                 "unknown token_style: {}",
                 self.token_style
             )));
         }
         if self.timeout <= 0 {
-            return Err(BulwarkError::Config("timeout must be positive".to_string()));
+            return Err(GarrisonError::Config(
+                "timeout must be positive".to_string(),
+            ));
         }
         if !COOKIE_SAME_SITE_VALUES.contains(&self.cookie_same_site.as_str()) {
-            return Err(BulwarkError::Config(format!(
+            return Err(GarrisonError::Config(format!(
                 "unknown cookie_same_site: {} (expected Lax/Strict/None)",
                 self.cookie_same_site
             )));
         }
         if self.token_style == "jwt" && self.jwt_secret.is_empty() {
-            return Err(BulwarkError::Config(
+            return Err(GarrisonError::Config(
                 "jwt_secret 不能为空（当 token_style=jwt 时）".to_string(),
             ));
         }
         if self.remember_me_enabled && self.remember_me_timeout <= self.timeout {
-            return Err(BulwarkError::Config(format!(
+            return Err(GarrisonError::Config(format!(
                 "remember_me_timeout ({}) must be greater than timeout ({}) when remember_me_enabled is true",
                 self.remember_me_timeout, self.timeout
             )));
         }
         if !self.remember_me_enabled && self.remember_me_timeout <= 0 {
-            return Err(BulwarkError::Config(format!(
+            return Err(GarrisonError::Config(format!(
                 "remember_me_timeout must be positive, got: {}",
                 self.remember_me_timeout
             )));
@@ -397,42 +399,42 @@ impl BulwarkConfig {
             );
         }
         if self.auto_renewal_threshold != -1 && !(0..=100).contains(&self.auto_renewal_threshold) {
-            return Err(BulwarkError::Config(format!(
+            return Err(GarrisonError::Config(format!(
                 "auto_renewal_threshold must be -1 or 0-100, got: {}",
                 self.auto_renewal_threshold
             )));
         }
         if self.is_share && !self.is_concurrent {
-            return Err(BulwarkError::Config(
+            return Err(GarrisonError::Config(
                 "is_share=true requires is_concurrent=true".to_string(),
             ));
         }
         if !DEVICE_BINDING_MODES.contains(&self.device_binding_mode.as_str()) {
-            return Err(BulwarkError::Config(format!(
+            return Err(GarrisonError::Config(format!(
                 "unknown device_binding_mode: {} (expected strict/loose/disabled)",
                 self.device_binding_mode
             )));
         }
         #[cfg(feature = "anonymous-session")]
         if self.anon_session_timeout == 0 {
-            return Err(BulwarkError::Config(
+            return Err(GarrisonError::Config(
                 "anon_session_timeout 必须 > 0".to_string(),
             ));
         }
         #[cfg(feature = "three-tier-cache")]
         {
             if self.l1_cache_ttl_secs == 0 {
-                return Err(BulwarkError::Config(
+                return Err(GarrisonError::Config(
                     "l1_cache_ttl_secs 必须 > 0".to_string(),
                 ));
             }
             if self.l2_cache_ttl_secs == 0 {
-                return Err(BulwarkError::Config(
+                return Err(GarrisonError::Config(
                     "l2_cache_ttl_secs 必须 > 0".to_string(),
                 ));
             }
             if self.l1_cache_capacity == 0 {
-                return Err(BulwarkError::Config(
+                return Err(GarrisonError::Config(
                     "l1_cache_capacity 必须 > 0".to_string(),
                 ));
             }
@@ -441,7 +443,7 @@ impl BulwarkConfig {
         {
             if let RateLimitBackend::Redis { redis_url } = &self.rate_limit_backend {
                 if redis_url.is_empty() {
-                    return Err(BulwarkError::Config(
+                    return Err(GarrisonError::Config(
                         "rate_limit_backend=Redis 时 redis_url 不能为空".to_string(),
                     ));
                 }
@@ -451,7 +453,7 @@ impl BulwarkConfig {
         {
             for method in &self.waf_allowed_methods {
                 if method != &method.to_uppercase() {
-                    return Err(BulwarkError::Config(format!(
+                    return Err(GarrisonError::Config(format!(
                         "waf_allowed_methods 中的方法必须为大写，实际: {}",
                         method
                     )));
@@ -461,22 +463,22 @@ impl BulwarkConfig {
         #[cfg(feature = "sms-rate-limit")]
         {
             if self.sms_hourly_limit == 0 {
-                return Err(BulwarkError::Config(
+                return Err(GarrisonError::Config(
                     "sms_hourly_limit 必须大于 0".to_string(),
                 ));
             }
             if self.sms_daily_limit < self.sms_hourly_limit {
-                return Err(BulwarkError::Config(
+                return Err(GarrisonError::Config(
                     "sms_daily_limit 必须 >= sms_hourly_limit".to_string(),
                 ));
             }
             if self.sms_verify_max_attempts == 0 {
-                return Err(BulwarkError::Config(
+                return Err(GarrisonError::Config(
                     "sms_verify_max_attempts 必须大于 0".to_string(),
                 ));
             }
             if self.sms_unverified_threshold == 0 {
-                return Err(BulwarkError::Config(
+                return Err(GarrisonError::Config(
                     "sms_unverified_threshold 必须大于 0".to_string(),
                 ));
             }
@@ -484,12 +486,12 @@ impl BulwarkConfig {
         #[cfg(feature = "anomalous-detector-dual")]
         {
             if self.anomalous_analyzer_interval_secs < 60 {
-                return Err(BulwarkError::Config(
+                return Err(GarrisonError::Config(
                     "anomalous_analyzer_interval_secs 必须 >= 60".to_string(),
                 ));
             }
             if self.anomalous_analyzer_burst_threshold == 0 {
-                return Err(BulwarkError::Config(
+                return Err(GarrisonError::Config(
                     "anomalous_analyzer_burst_threshold 必须大于 0".to_string(),
                 ));
             }
@@ -499,13 +501,13 @@ impl BulwarkConfig {
 
     /// 订阅配置变更。
     ///
-    /// 返回 `watch::Receiver<BulwarkConfig>`，调用 `rx.borrow_and_update()` 获取最新配置。
+    /// 返回 `watch::Receiver<GarrisonConfig>`，调用 `rx.borrow_and_update()` 获取最新配置。
     /// 若实例未调用 `with_watcher()`，返回 `None`。
     ///
     /// # 返回
     /// - `Some(receiver)`：成功订阅配置变更通道，后续可通过 receiver 接收 `update()` 广播的新配置。
     /// - `None`：实例未通过 `with_watcher()` 启用 watcher。
-    pub fn watch(&self) -> Option<watch::Receiver<BulwarkConfig>> {
+    pub fn watch(&self) -> Option<watch::Receiver<GarrisonConfig>> {
         self.watcher.as_ref().map(|tx| tx.subscribe())
     }
 
@@ -516,14 +518,14 @@ impl BulwarkConfig {
     /// ```
     ///
     /// # 参数
-    /// - `f`: 接收 `&mut BulwarkConfig` 的闭包，在闭包内修改字段值。
+    /// - `f`: 接收 `&mut GarrisonConfig` 的闭包，在闭包内修改字段值。
     ///
     /// # 返回
     /// 更新并广播成功返回 `Ok(())`；若实例未启用 watcher，亦返回 `Ok(())`（no-op）。
     ///
     /// # 错误
-    /// - `BulwarkError::Config`：闭包修改后的配置未通过 `validate()`（如非法 `token_style` 或非正 `timeout`）。
-    /// - `BulwarkError::Config`：watcher 已关闭（消息 "config watcher closed"）。
+    /// - `GarrisonError::Config`：闭包修改后的配置未通过 `validate()`（如非法 `token_style` 或非正 `timeout`）。
+    /// - `GarrisonError::Config`：watcher 已关闭（消息 "config watcher closed"）。
     ///
     /// # 行为
     /// 1. 从 watcher 读取当前配置
@@ -532,7 +534,7 @@ impl BulwarkConfig {
     /// 4. 广播新配置给所有订阅者
     ///
     /// 若实例未调用 `with_watcher()`，此方法为 no-op。
-    pub fn update<F: FnOnce(&mut BulwarkConfig)>(&self, f: F) -> BulwarkResult<()> {
+    pub fn update<F: FnOnce(&mut GarrisonConfig)>(&self, f: F) -> GarrisonResult<()> {
         let Some(sender) = &self.watcher else {
             return Ok(());
         };
@@ -541,12 +543,12 @@ impl BulwarkConfig {
         new_config.validate()?;
         sender
             .send(new_config)
-            .map_err(|_| BulwarkError::Config("config watcher closed".to_string()))?;
+            .map_err(|_| GarrisonError::Config("config watcher closed".to_string()))?;
         Ok(())
     }
 }
 
-impl Default for BulwarkConfig {
+impl Default for GarrisonConfig {
     fn default() -> Self {
         Self::default_config()
     }

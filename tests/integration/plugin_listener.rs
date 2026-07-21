@@ -3,29 +3,29 @@
 
 //! Plugin / Listener 集成测试：编译期注册 → 钩子调用 → 事件广播。
 //!
-//! 验证 `BulwarkPluginManager` 与 `BulwarkListenerManager` 的端到端行为：
+//! 验证 `GarrisonPluginManager` 与 `GarrisonListenerManager` 的端到端行为：
 //! 1. 通过 `inventory::submit!` 注册测试 plugin / listener
-//! 2. `BulwarkPluginManager::new()` / `BulwarkListenerManager::new()` 收集已注册条目
+//! 2. `GarrisonPluginManager::new()` / `GarrisonListenerManager::new()` 收集已注册条目
 //! 3. `on_login` / `on_logout` / `on_permission_check` 钩子被调用
 //! 4. `broadcast` 将事件分发到所有 listener
 //! 5. 单个 plugin/listener 失败不中断主流程（仅 tracing::warn!）
 //!
 //! ## auto-wire 集成（0.2.1 修复）
 //!
-//! 0.2.1 起 `BulwarkManager::init` 自动注入 `BulwarkPluginManager` / `BulwarkListenerManager`
-//! 到 `BulwarkLogicDefault`，`BulwarkUtil::login` 会自动触发 `on_login` 钩子与 `Login` 事件。
+//! 0.2.1 起 `GarrisonManager::init` 自动注入 `GarrisonPluginManager` / `GarrisonListenerManager`
+//! 到 `GarrisonLogicDefault`，`GarrisonUtil::login` 会自动触发 `on_login` 钩子与 `Login` 事件。
 //! 本文件包含两组测试：
 //! 1. 扩展点本身行为（直接调用 plugin/listener 方法）
-//! 2. auto-wire 端到端（通过 `BulwarkManager::init` + `BulwarkUtil::login` 验证自动触发）
+//! 2. auto-wire 端到端（通过 `GarrisonManager::init` + `GarrisonUtil::login` 验证自动触发）
 //!
 //! 依据 spec plugin-system + listener-system。
 
 #![cfg(feature = "listener")]
 
 use async_trait::async_trait;
-use bulwark::error::BulwarkResult;
-use bulwark::listener::{BulwarkEvent, BulwarkListener, BulwarkListenerManager};
-use bulwark::plugin::{BulwarkPlugin, BulwarkPluginManager};
+use garrison::error::GarrisonResult;
+use garrison::listener::{GarrisonEvent, GarrisonListener, GarrisonListenerManager};
+use garrison::plugin::{GarrisonPlugin, GarrisonPluginManager};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
@@ -39,30 +39,30 @@ static PLUGIN_PERM_CHECK_CALLS: AtomicUsize = AtomicUsize::new(0);
 
 struct CountingPlugin;
 
-impl BulwarkPlugin for CountingPlugin {
+impl GarrisonPlugin for CountingPlugin {
     fn name(&self) -> &str {
         "counting-plugin"
     }
-    fn on_login(&self, _login_id: &str, _token: &str) -> BulwarkResult<()> {
+    fn on_login(&self, _login_id: &str, _token: &str) -> GarrisonResult<()> {
         PLUGIN_LOGIN_CALLS.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
-    fn on_logout(&self, _login_id: &str, _token: &str) -> BulwarkResult<()> {
+    fn on_logout(&self, _login_id: &str, _token: &str) -> GarrisonResult<()> {
         PLUGIN_LOGOUT_CALLS.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
-    fn on_permission_check(&self, _login_id: &str, _permission: &str) -> BulwarkResult<()> {
+    fn on_permission_check(&self, _login_id: &str, _permission: &str) -> GarrisonResult<()> {
         PLUGIN_PERM_CHECK_CALLS.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
 }
 
-fn counting_plugin_factory() -> Arc<dyn BulwarkPlugin> {
+fn counting_plugin_factory() -> Arc<dyn GarrisonPlugin> {
     Arc::new(CountingPlugin)
 }
 
 inventory::submit! {
-    bulwark::plugin::BulwarkPluginEntry { factory: counting_plugin_factory }
+    garrison::plugin::GarrisonPluginEntry { factory: counting_plugin_factory }
 }
 
 // ============================================================================
@@ -76,16 +76,16 @@ static LISTENER_PERM_CHECK_EVENTS: AtomicUsize = AtomicUsize::new(0);
 struct CountingListener;
 
 #[async_trait]
-impl BulwarkListener for CountingListener {
-    async fn on_event(&self, event: &BulwarkEvent) -> BulwarkResult<()> {
+impl GarrisonListener for CountingListener {
+    async fn on_event(&self, event: &GarrisonEvent) -> GarrisonResult<()> {
         match event {
-            BulwarkEvent::Login { .. } => {
+            GarrisonEvent::Login { .. } => {
                 LISTENER_LOGIN_EVENTS.fetch_add(1, Ordering::SeqCst);
             },
-            BulwarkEvent::Logout { .. } => {
+            GarrisonEvent::Logout { .. } => {
                 LISTENER_LOGOUT_EVENTS.fetch_add(1, Ordering::SeqCst);
             },
-            BulwarkEvent::PermissionCheck { .. } => {
+            GarrisonEvent::PermissionCheck { .. } => {
                 LISTENER_PERM_CHECK_EVENTS.fetch_add(1, Ordering::SeqCst);
             },
             _ => {},
@@ -94,12 +94,12 @@ impl BulwarkListener for CountingListener {
     }
 }
 
-fn counting_listener_factory() -> Arc<dyn BulwarkListener> {
+fn counting_listener_factory() -> Arc<dyn GarrisonListener> {
     Arc::new(CountingListener)
 }
 
 inventory::submit! {
-    bulwark::listener::BulwarkListenerEntry { factory: counting_listener_factory }
+    garrison::listener::GarrisonListenerEntry { factory: counting_listener_factory }
 }
 
 // ============================================================================
@@ -119,10 +119,10 @@ fn reset_counters() {
 // Plugin 集成测试
 // ============================================================================
 
-/// BulwarkPluginManager 收集 inventory 注册的插件（spec Scenario）。
+/// GarrisonPluginManager 收集 inventory 注册的插件（spec Scenario）。
 #[test]
 fn plugin_manager_collects_registered_plugins() {
-    let manager = BulwarkPluginManager::new();
+    let manager = GarrisonPluginManager::new();
     assert!(
         manager.count() >= 1,
         "应至少收集到 1 个测试插件（CountingPlugin）"
@@ -134,7 +134,7 @@ fn plugin_manager_collects_registered_plugins() {
 #[serial_test::serial]
 fn plugin_on_login_invoked() {
     reset_counters();
-    let manager = BulwarkPluginManager::new();
+    let manager = GarrisonPluginManager::new();
     manager.on_login("1001", "token-xyz");
     assert!(
         PLUGIN_LOGIN_CALLS.load(Ordering::SeqCst) >= 1,
@@ -147,7 +147,7 @@ fn plugin_on_login_invoked() {
 #[serial_test::serial]
 fn plugin_on_logout_invoked() {
     reset_counters();
-    let manager = BulwarkPluginManager::new();
+    let manager = GarrisonPluginManager::new();
     manager.on_logout("1001", "token-xyz");
     assert!(
         PLUGIN_LOGOUT_CALLS.load(Ordering::SeqCst) >= 1,
@@ -160,7 +160,7 @@ fn plugin_on_logout_invoked() {
 #[serial_test::serial]
 fn plugin_on_permission_check_invoked() {
     reset_counters();
-    let manager = BulwarkPluginManager::new();
+    let manager = GarrisonPluginManager::new();
     manager.on_permission_check("1001", "user:read");
     assert!(
         PLUGIN_PERM_CHECK_CALLS.load(Ordering::SeqCst) >= 1,
@@ -173,7 +173,7 @@ fn plugin_on_permission_check_invoked() {
 #[serial_test::serial]
 fn plugin_multiple_calls_accumulate() {
     reset_counters();
-    let manager = BulwarkPluginManager::new();
+    let manager = GarrisonPluginManager::new();
     for _ in 0..5 {
         manager.on_login("1001", "t");
     }
@@ -187,10 +187,10 @@ fn plugin_multiple_calls_accumulate() {
 // Listener 集成测试
 // ============================================================================
 
-/// BulwarkListenerManager 收集 inventory 注册的 listener（spec Scenario）。
+/// GarrisonListenerManager 收集 inventory 注册的 listener（spec Scenario）。
 #[test]
 fn listener_manager_collects_registered_listeners() {
-    let manager = BulwarkListenerManager::new();
+    let manager = GarrisonListenerManager::new();
     assert!(
         manager.count() >= 1,
         "应至少收集到 1 个测试 listener（CountingListener）"
@@ -202,9 +202,9 @@ fn listener_manager_collects_registered_listeners() {
 #[serial_test::serial]
 async fn listener_receives_login_event() {
     reset_counters();
-    let manager = BulwarkListenerManager::new();
+    let manager = GarrisonListenerManager::new();
     manager
-        .broadcast(&BulwarkEvent::Login {
+        .broadcast(&GarrisonEvent::Login {
             login_id: "1001".to_string(),
             token: "T1".to_string(),
             device: Some("web".to_string()),
@@ -222,9 +222,9 @@ async fn listener_receives_login_event() {
 #[serial_test::serial]
 async fn listener_receives_logout_event() {
     reset_counters();
-    let manager = BulwarkListenerManager::new();
+    let manager = GarrisonListenerManager::new();
     manager
-        .broadcast(&BulwarkEvent::Logout {
+        .broadcast(&GarrisonEvent::Logout {
             login_id: "1001".to_string(),
             token: "T1".to_string(),
             request_context: None,
@@ -241,9 +241,9 @@ async fn listener_receives_logout_event() {
 #[serial_test::serial]
 async fn listener_receives_permission_check_event() {
     reset_counters();
-    let manager = BulwarkListenerManager::new();
+    let manager = GarrisonListenerManager::new();
     manager
-        .broadcast(&BulwarkEvent::PermissionCheck {
+        .broadcast(&GarrisonEvent::PermissionCheck {
             login_id: "1001".to_string(),
             permission: "user:delete".to_string(),
             request_context: None,
@@ -260,10 +260,10 @@ async fn listener_receives_permission_check_event() {
 #[serial_test::serial]
 async fn listener_multiple_broadcasts_accumulate() {
     reset_counters();
-    let manager = BulwarkListenerManager::new();
+    let manager = GarrisonListenerManager::new();
     for _ in 0..3 {
         manager
-            .broadcast(&BulwarkEvent::Login {
+            .broadcast(&GarrisonEvent::Login {
                 login_id: "1".to_string(),
                 token: "t".to_string(),
                 device: None,
@@ -288,13 +288,13 @@ async fn listener_multiple_broadcasts_accumulate() {
 async fn full_lifecycle_plugin_and_listener_cooperate() {
     reset_counters();
 
-    let plugin_manager = BulwarkPluginManager::new();
-    let listener_manager = BulwarkListenerManager::new();
+    let plugin_manager = GarrisonPluginManager::new();
+    let listener_manager = GarrisonListenerManager::new();
 
     // 1. 模拟登录：先调用 plugin on_login，再广播 Login 事件
     plugin_manager.on_login("1001", "T1");
     listener_manager
-        .broadcast(&BulwarkEvent::Login {
+        .broadcast(&GarrisonEvent::Login {
             login_id: "1001".to_string(),
             token: "T1".to_string(),
             device: Some("web".to_string()),
@@ -308,7 +308,7 @@ async fn full_lifecycle_plugin_and_listener_cooperate() {
     // 3. 模拟登出：调用 plugin on_logout + 广播 Logout 事件
     plugin_manager.on_logout("1001", "T1");
     listener_manager
-        .broadcast(&BulwarkEvent::Logout {
+        .broadcast(&GarrisonEvent::Logout {
             login_id: "1001".to_string(),
             token: "T1".to_string(),
             request_context: None,
@@ -343,13 +343,13 @@ async fn full_lifecycle_plugin_and_listener_cooperate() {
 #[serial_test::serial]
 async fn permission_check_event_only_goes_to_listener() {
     reset_counters();
-    let plugin_manager = BulwarkPluginManager::new();
-    let listener_manager = BulwarkListenerManager::new();
+    let plugin_manager = GarrisonPluginManager::new();
+    let listener_manager = GarrisonListenerManager::new();
 
     // 权限校验被拒时：plugin 收到 on_permission_check，listener 收到 PermissionCheck
     plugin_manager.on_permission_check("1001", "user:delete");
     listener_manager
-        .broadcast(&BulwarkEvent::PermissionCheck {
+        .broadcast(&GarrisonEvent::PermissionCheck {
             login_id: "1001".to_string(),
             permission: "user:delete".to_string(),
             request_context: None,
@@ -362,15 +362,15 @@ async fn permission_check_event_only_goes_to_listener() {
 
 // ============================================================================
 // auto-wire 集成测试（0.2.1 新增）
-// 验证 BulwarkManager::init 自动注入 plugin/listener 后，
-// BulwarkUtil::login 会自动触发 on_login 钩子与 Login 事件。
+// 验证 GarrisonManager::init 自动注入 plugin/listener 后，
+// GarrisonUtil::login 会自动触发 on_login 钩子与 Login 事件。
 // ============================================================================
 
 /// 辅助 MockDao（复用 manager 测试的 HashMap 模式，适配 async）。
 mod auto_wire_helpers {
     use async_trait::async_trait;
-    use bulwark::dao::BulwarkDao;
-    use bulwark::error::{BulwarkError, BulwarkResult};
+    use garrison::dao::GarrisonDao;
+    use garrison::error::{GarrisonError, GarrisonResult};
     use std::collections::HashMap;
     use std::time::{Duration, Instant};
     use tokio::sync::Mutex;
@@ -388,8 +388,8 @@ mod auto_wire_helpers {
     }
 
     #[async_trait]
-    impl BulwarkDao for MockDao {
-        async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
+    impl GarrisonDao for MockDao {
+        async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
             let mut store = self.store.lock().await;
             match store.get(key) {
                 Some((value, expire_at)) => {
@@ -405,7 +405,7 @@ mod auto_wire_helpers {
             }
         }
 
-        async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> BulwarkResult<()> {
+        async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> GarrisonResult<()> {
             let expire_at = if ttl_seconds == 0 {
                 None
             } else {
@@ -418,18 +418,18 @@ mod auto_wire_helpers {
             Ok(())
         }
 
-        async fn update(&self, key: &str, value: &str) -> BulwarkResult<()> {
+        async fn update(&self, key: &str, value: &str) -> GarrisonResult<()> {
             let mut store = self.store.lock().await;
             match store.get_mut(key) {
                 Some((existing, _)) => {
                     *existing = value.to_string();
                     Ok(())
                 },
-                None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
+                None => Err(GarrisonError::Dao(format!("键不存在: {}", key))),
             }
         }
 
-        async fn expire(&self, key: &str, seconds: u64) -> BulwarkResult<()> {
+        async fn expire(&self, key: &str, seconds: u64) -> GarrisonResult<()> {
             let mut store = self.store.lock().await;
             match store.get_mut(key) {
                 Some((_, expire_at)) => {
@@ -440,138 +440,138 @@ mod auto_wire_helpers {
                     };
                     Ok(())
                 },
-                None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
+                None => Err(GarrisonError::Dao(format!("键不存在: {}", key))),
             }
         }
 
-        async fn delete(&self, key: &str) -> BulwarkResult<()> {
+        async fn delete(&self, key: &str) -> GarrisonResult<()> {
             self.store.lock().await.remove(key);
             Ok(())
         }
     }
 }
 
-/// auto-wire: `BulwarkManager::init` + `BulwarkUtil::login` 自动触发 plugin on_login 钩子。
+/// auto-wire: `GarrisonManager::init` + `GarrisonUtil::login` 自动触发 plugin on_login 钩子。
 ///
 /// 验证 0.2.1 修复：init 阶段注入 PluginManager 后，
-/// `BulwarkUtil::login(1001)` 会自动调用编译期注册的 CountingPlugin.on_login。
+/// `GarrisonUtil::login(1001)` 会自动调用编译期注册的 CountingPlugin.on_login。
 #[tokio::test]
 #[serial_test::serial]
 async fn auto_wire_login_triggers_plugin_on_login() {
     use auto_wire_helpers::MockDao;
-    use bulwark::config::BulwarkConfig;
-    use bulwark::manager::BulwarkManager;
-    use bulwark::stp::{BulwarkInterface, BulwarkUtil};
+    use garrison::config::GarrisonConfig;
+    use garrison::manager::GarrisonManager;
+    use garrison::stp::{GarrisonInterface, GarrisonUtil};
 
-    // 测试用 BulwarkInterface（空权限/角色数据）
+    // 测试用 GarrisonInterface（空权限/角色数据）
     struct EmptyInterface;
     #[async_trait::async_trait]
-    impl BulwarkInterface for EmptyInterface {
-        async fn get_permission_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
+    impl GarrisonInterface for EmptyInterface {
+        async fn get_permission_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
             Ok(vec![])
         }
-        async fn get_role_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
+        async fn get_role_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
             Ok(vec![])
         }
     }
 
     reset_counters();
 
-    let dao: Arc<dyn bulwark::dao::BulwarkDao> = Arc::new(MockDao::new());
-    let config = Arc::new(BulwarkConfig::default_config());
-    let interface: Arc<dyn BulwarkInterface> = Arc::new(EmptyInterface);
+    let dao: Arc<dyn garrison::dao::GarrisonDao> = Arc::new(MockDao::new());
+    let config = Arc::new(GarrisonConfig::default_config());
+    let interface: Arc<dyn GarrisonInterface> = Arc::new(EmptyInterface);
 
-    // init 自动构造 PluginManager 并注入到 BulwarkLogicDefault（覆盖式更新全局单例）
-    BulwarkManager::init(dao, config, interface).unwrap();
+    // init 自动构造 PluginManager 并注入到 GarrisonLogicDefault（覆盖式更新全局单例）
+    GarrisonManager::init(dao, config, interface).unwrap();
 
     // login 应自动触发 CountingPlugin.on_login（编译期通过 inventory 注册）
-    let token = BulwarkUtil::login_simple("1001").await.unwrap();
+    let token = GarrisonUtil::login_simple("1001").await.unwrap();
     assert!(!token.is_empty());
 
     // 验证 plugin on_login 被触发
     let calls = PLUGIN_LOGIN_CALLS.load(Ordering::SeqCst);
     assert!(
         calls >= 1,
-        "auto-wire: BulwarkUtil::login 应触发 plugin on_login，实际调用次数: {}",
+        "auto-wire: GarrisonUtil::login 应触发 plugin on_login，实际调用次数: {}",
         calls
     );
 }
 
-/// auto-wire: `BulwarkManager::init` + `BulwarkUtil::login` 自动广播 Login 事件到 listener。
+/// auto-wire: `GarrisonManager::init` + `GarrisonUtil::login` 自动广播 Login 事件到 listener。
 #[tokio::test]
 #[serial_test::serial]
 async fn auto_wire_login_broadcasts_listener_login_event() {
     use auto_wire_helpers::MockDao;
-    use bulwark::config::BulwarkConfig;
-    use bulwark::manager::BulwarkManager;
-    use bulwark::stp::{BulwarkInterface, BulwarkUtil};
+    use garrison::config::GarrisonConfig;
+    use garrison::manager::GarrisonManager;
+    use garrison::stp::{GarrisonInterface, GarrisonUtil};
 
     struct EmptyInterface;
     #[async_trait::async_trait]
-    impl BulwarkInterface for EmptyInterface {
-        async fn get_permission_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
+    impl GarrisonInterface for EmptyInterface {
+        async fn get_permission_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
             Ok(vec![])
         }
-        async fn get_role_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
+        async fn get_role_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
             Ok(vec![])
         }
     }
 
     reset_counters();
 
-    let dao: Arc<dyn bulwark::dao::BulwarkDao> = Arc::new(MockDao::new());
-    let config = Arc::new(BulwarkConfig::default_config());
-    let interface: Arc<dyn BulwarkInterface> = Arc::new(EmptyInterface);
+    let dao: Arc<dyn garrison::dao::GarrisonDao> = Arc::new(MockDao::new());
+    let config = Arc::new(GarrisonConfig::default_config());
+    let interface: Arc<dyn GarrisonInterface> = Arc::new(EmptyInterface);
 
-    BulwarkManager::init(dao, config, interface).unwrap();
+    GarrisonManager::init(dao, config, interface).unwrap();
 
-    let token = BulwarkUtil::login_simple("2002").await.unwrap();
+    let token = GarrisonUtil::login_simple("2002").await.unwrap();
     assert!(!token.is_empty());
 
     // 验证 listener Login 事件被广播
     let events = LISTENER_LOGIN_EVENTS.load(Ordering::SeqCst);
     assert!(
         events >= 1,
-        "auto-wire: BulwarkUtil::login 应广播 Login 事件，实际事件数: {}",
+        "auto-wire: GarrisonUtil::login 应广播 Login 事件，实际事件数: {}",
         events
     );
 }
 
-/// auto-wire: `BulwarkManager::init` + `with_current_token` + `BulwarkUtil::logout` 自动触发 on_logout + Logout 事件。
+/// auto-wire: `GarrisonManager::init` + `with_current_token` + `GarrisonUtil::logout` 自动触发 on_logout + Logout 事件。
 #[tokio::test]
 #[serial_test::serial]
 async fn auto_wire_logout_triggers_hooks() {
     use auto_wire_helpers::MockDao;
-    use bulwark::config::BulwarkConfig;
-    use bulwark::manager::BulwarkManager;
-    use bulwark::stp::{BulwarkInterface, BulwarkUtil};
+    use garrison::config::GarrisonConfig;
+    use garrison::manager::GarrisonManager;
+    use garrison::stp::{GarrisonInterface, GarrisonUtil};
 
     struct EmptyInterface;
     #[async_trait::async_trait]
-    impl BulwarkInterface for EmptyInterface {
-        async fn get_permission_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
+    impl GarrisonInterface for EmptyInterface {
+        async fn get_permission_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
             Ok(vec![])
         }
-        async fn get_role_list(&self, _login_id: &str) -> BulwarkResult<Vec<String>> {
+        async fn get_role_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
             Ok(vec![])
         }
     }
 
     reset_counters();
 
-    let dao: Arc<dyn bulwark::dao::BulwarkDao> = Arc::new(MockDao::new());
-    let config = Arc::new(BulwarkConfig::default_config());
-    let interface: Arc<dyn BulwarkInterface> = Arc::new(EmptyInterface);
+    let dao: Arc<dyn garrison::dao::GarrisonDao> = Arc::new(MockDao::new());
+    let config = Arc::new(GarrisonConfig::default_config());
+    let interface: Arc<dyn GarrisonInterface> = Arc::new(EmptyInterface);
 
-    BulwarkManager::init(dao, config, interface).unwrap();
+    GarrisonManager::init(dao, config, interface).unwrap();
 
     // login（触发 on_login + Login 事件）
-    let token = BulwarkUtil::login_simple("3003").await.unwrap();
+    let token = GarrisonUtil::login_simple("3003").await.unwrap();
 
     // logout（需在 with_current_token 上下文中执行）
     let login_before = PLUGIN_LOGIN_CALLS.load(Ordering::SeqCst);
-    bulwark::stp::with_current_token(token, async {
-        BulwarkUtil::logout().await.unwrap();
+    garrison::stp::with_current_token(token, async {
+        GarrisonUtil::logout().await.unwrap();
     })
     .await;
 
@@ -579,7 +579,7 @@ async fn auto_wire_logout_triggers_hooks() {
     let logout_calls = PLUGIN_LOGOUT_CALLS.load(Ordering::SeqCst);
     assert!(
         logout_calls >= 1,
-        "auto-wire: BulwarkUtil::logout 应触发 plugin on_logout，实际调用次数: {}",
+        "auto-wire: GarrisonUtil::logout 应触发 plugin on_logout，实际调用次数: {}",
         logout_calls
     );
     // login 钩子也应至少触发一次（login 阶段）
@@ -589,7 +589,7 @@ async fn auto_wire_logout_triggers_hooks() {
     let logout_events = LISTENER_LOGOUT_EVENTS.load(Ordering::SeqCst);
     assert!(
         logout_events >= 1,
-        "auto-wire: BulwarkUtil::logout 应广播 Logout 事件，实际事件数: {}",
+        "auto-wire: GarrisonUtil::logout 应广播 Logout 事件，实际事件数: {}",
         logout_events
     );
 }

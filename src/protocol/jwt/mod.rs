@@ -20,12 +20,12 @@ mod tests;
 use jsonwebtoken::Algorithm;
 use serde::{Deserialize, Serialize};
 
-/// Bulwark JWT Claims 载荷。
+/// Garrison JWT Claims 载荷。
 ///
 /// 字段兼容 0.1.0 `JwtClaims`，0.2.0 扩展 `login_id` 与 `device` 字段，
 /// v0.6.3 扩展 `jti`（RFC 7519 §4.1.7）保证同一秒内签发的 token 唯一。
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BulwarkJwtClaims {
+pub struct GarrisonJwtClaims {
     /// 主体标识（与 login_id 字符串一致）。
     pub sub: String,
 
@@ -35,7 +35,7 @@ pub struct BulwarkJwtClaims {
     /// 过期时间（Unix 秒）。
     pub exp: i64,
 
-    /// Bulwark 登录标识（字符串形式，与 sub 一致）。
+    /// Garrison 登录标识（字符串形式，与 sub 一致）。
     pub login_id: String,
 
     /// 可选设备标识。
@@ -58,7 +58,7 @@ pub struct BulwarkJwtClaims {
 }
 
 /// 0.1.0 兼容别名。
-pub type JwtClaims = BulwarkJwtClaims;
+pub type JwtClaims = GarrisonJwtClaims;
 
 /// JWT 处理器，封装密钥与签名算法以供复用。
 ///

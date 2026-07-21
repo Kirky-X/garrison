@@ -45,12 +45,12 @@ impl TokenState {
     ///
     /// # 返回
     /// - `Ok(target)`: 转换合法。
-    /// - `Err(BulwarkError::InvalidStateTransition { from, to })`: 转换非法。
+    /// - `Err(GarrisonError::InvalidStateTransition { from, to })`: 转换非法。
     ///
     /// # 示例
     ///
     /// ```
-    /// use bulwark::state::TokenState;
+    /// use garrison::state::TokenState;
     ///
     /// let active = TokenState::Issued.transition_to(TokenState::Active).unwrap();
     /// assert_eq!(active, TokenState::Active);
@@ -59,11 +59,11 @@ impl TokenState {
     /// let err = TokenState::Expired.transition_to(TokenState::Active).unwrap_err();
     /// assert!(err.to_string().contains("非法状态转换"));
     /// ```
-    pub fn transition_to(self, target: TokenState) -> BulwarkResult<TokenState> {
+    pub fn transition_to(self, target: TokenState) -> GarrisonResult<TokenState> {
         if self.can_transition_to(target) {
             Ok(target)
         } else {
-            Err(BulwarkError::InvalidStateTransition {
+            Err(GarrisonError::InvalidStateTransition {
                 from: format!("{:?}", self),
                 to: format!("{:?}", target),
             })
@@ -129,12 +129,12 @@ impl UserStatus {
     ///
     /// # 返回
     /// - `Ok(target)`: 转换合法。
-    /// - `Err(BulwarkError::InvalidStateTransition { from, to })`: 转换非法。
+    /// - `Err(GarrisonError::InvalidStateTransition { from, to })`: 转换非法。
     ///
     /// # 示例
     ///
     /// ```
-    /// use bulwark::state::UserStatus;
+    /// use garrison::state::UserStatus;
     ///
     /// let active = UserStatus::Pending.transition_to(UserStatus::Active).unwrap();
     /// assert_eq!(active, UserStatus::Active);
@@ -143,11 +143,11 @@ impl UserStatus {
     /// let err = UserStatus::Deleted.transition_to(UserStatus::Active).unwrap_err();
     /// assert!(err.to_string().contains("非法状态转换"));
     /// ```
-    pub fn transition_to(self, target: UserStatus) -> BulwarkResult<UserStatus> {
+    pub fn transition_to(self, target: UserStatus) -> GarrisonResult<UserStatus> {
         if self.can_transition_to(target) {
             Ok(target)
         } else {
-            Err(BulwarkError::InvalidStateTransition {
+            Err(GarrisonError::InvalidStateTransition {
                 from: format!("{:?}", self),
                 to: format!("{:?}", target),
             })

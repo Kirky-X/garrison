@@ -3,5 +3,7 @@
 
 #[tokio::main]
 async fn main() {
-    bulwark_examples::web::context_request::run().await.unwrap();
+    garrison_examples::web::context_request::run()
+        .await
+        .unwrap();
 }

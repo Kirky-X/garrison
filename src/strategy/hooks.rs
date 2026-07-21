@@ -7,9 +7,9 @@
 //!
 //! ## 设计
 //!
-//! - `BulwarkFirewallCheckHook` trait：5 个 async hook 方法 + default impl 全 pass
+//! - `GarrisonFirewallCheckHook` trait：5 个 async hook 方法 + default impl 全 pass
 //! - `LoginContext`：登录上下文（login_id + 可选 IP / 设备指纹 / 地理位置）
-//! - `BulwarkFirewallCheckHookDefault`：基于内存计数器 + 时间窗口的默认实现
+//! - `GarrisonFirewallCheckHookDefault`：基于内存计数器 + 时间窗口的默认实现
 //!
 //! ## 5 个检查项
 //!
@@ -22,12 +22,12 @@
 //! | 设备异常 | 未知设备指纹登录 | 阻断登录（0.3.0 简化：需设备库，无数据则 pass） |
 
 use crate::constants::DaoKeyPrefix;
-use crate::dao::{BulwarkDao, MockDao};
-use crate::error::{BulwarkError, BulwarkResult};
-use crate::limiteron::BulwarkDaoDistributedLimiter;
+use crate::dao::{GarrisonDao, MockDao};
+use crate::error::{GarrisonError, GarrisonResult};
+use crate::limiteron::GarrisonDaoDistributedLimiter;
 // listener_manager 注入（feature-gated）
 #[cfg(feature = "listener")]
-use crate::listener::{BulwarkEvent, BulwarkListenerManager};
+use crate::listener::{GarrisonEvent, GarrisonListenerManager};
 use async_trait::async_trait;
 use limiteron::limiters::DistributedLimiter;
 use std::sync::Arc;
@@ -79,7 +79,7 @@ impl LoginContext {
 }
 
 // ============================================================================
-// BulwarkFirewallCheckHook trait：5 个 async hook + default impl 全 pass
+// GarrisonFirewallCheckHook trait：5 个 async hook + default impl 全 pass
 // ============================================================================
 
 /// 防火墙安全钩子 trait，定义登录流程的 5 个可插拔安全检查。
@@ -95,12 +95,12 @@ impl LoginContext {
 /// 4. `check_token_reuse` — Token 复用检测
 /// 5. `check_device_anomaly` — 设备异常检测
 #[async_trait]
-pub trait BulwarkFirewallCheckHook: Send + Sync {
+pub trait GarrisonFirewallCheckHook: Send + Sync {
     /// 登录频率检测：同 IP 1h 内 ≥ 10 次失败则阻断。
     ///
     /// # 默认实现
     /// 直接返回 `Ok(())`（无检测）。
-    async fn check_login_frequency(&self, _ctx: &LoginContext) -> BulwarkResult<()> {
+    async fn check_login_frequency(&self, _ctx: &LoginContext) -> GarrisonResult<()> {
         Ok(())
     }
 
@@ -108,7 +108,7 @@ pub trait BulwarkFirewallCheckHook: Send + Sync {
     ///
     /// # 默认实现
     /// 直接返回 `Ok(())`（无检测）。
-    async fn check_brute_force(&self, _ctx: &LoginContext) -> BulwarkResult<()> {
+    async fn check_brute_force(&self, _ctx: &LoginContext) -> GarrisonResult<()> {
         Ok(())
     }
 
@@ -116,7 +116,7 @@ pub trait BulwarkFirewallCheckHook: Send + Sync {
     ///
     /// # 默认实现
     /// 直接返回 `Ok(())`（无 geo 数据时 pass）。
-    async fn check_geo_anomaly(&self, _ctx: &LoginContext) -> BulwarkResult<()> {
+    async fn check_geo_anomaly(&self, _ctx: &LoginContext) -> GarrisonResult<()> {
         Ok(())
     }
 
@@ -124,7 +124,7 @@ pub trait BulwarkFirewallCheckHook: Send + Sync {
     ///
     /// # 默认实现
     /// 直接返回 `Ok(())`（无黑名单数据时 pass）。
-    async fn check_token_reuse(&self, _ctx: &LoginContext) -> BulwarkResult<()> {
+    async fn check_token_reuse(&self, _ctx: &LoginContext) -> GarrisonResult<()> {
         Ok(())
     }
 
@@ -132,13 +132,13 @@ pub trait BulwarkFirewallCheckHook: Send + Sync {
     ///
     /// # 默认实现
     /// 直接返回 `Ok(())`（无设备库时 pass）。
-    async fn check_device_anomaly(&self, _ctx: &LoginContext) -> BulwarkResult<()> {
+    async fn check_device_anomaly(&self, _ctx: &LoginContext) -> GarrisonResult<()> {
         Ok(())
     }
 }
 
 // ============================================================================
-// BulwarkFirewallCheckHookDefault：基于 limiteron 的统一计数器实现
+// GarrisonFirewallCheckHookDefault：基于 limiteron 的统一计数器实现
 // ============================================================================
 
 /// 登录频率检测阈值：同 IP 1h 内 ≥ 10 次失败。
@@ -156,23 +156,23 @@ const FW_IP_KEY_PREFIX: &str = "fw:ip:";
 /// 账号维度失败计数器 key 前缀。
 const FW_ACCT_KEY_PREFIX: &str = "fw:acct:";
 
-/// `BulwarkFirewallCheckHook` 的默认实现，统一基于 `BulwarkDaoDistributedLimiter` 计数器。
+/// `GarrisonFirewallCheckHook` 的默认实现，统一基于 `GarrisonDaoDistributedLimiter` 计数器。
 ///
 /// # 设计
 ///
-/// - **统一计数器抽象**：通过 `BulwarkDaoDistributedLimiter`（limiteron 适配器）实现原子计数 + TTL，
+/// - **统一计数器抽象**：通过 `GarrisonDaoDistributedLimiter`（limiteron 适配器）实现原子计数 + TTL，
 ///   不再手写 `Mutex<HashMap>` + 时间窗口算法（违规 8 修复：禁止手写限流实现）
 /// - **内存模式**（`new()`）：内部创建 `MockDao` 作为 limiteron 后端，
 ///   进程内原子计数（开发/CI 场景，与原内存模式语义一致）
-/// - **分布式模式**（`with_dao(dao)`）：用注入的 `BulwarkDao`（oxcache/redis）作为 limiteron 后端，
+/// - **分布式模式**（`with_dao(dao)`）：用注入的 `GarrisonDao`（oxcache/redis）作为 limiteron 后端，
 ///   实现跨实例计数（生产场景，满足 ADD §7.6 分布式存储要求）
 /// - **TTL 自动重置**：窗口过期由 `MockDao` / oxcache 的 TTL 语义保证
 ///   （首次 `incr` 后过期会重新初始化），无需手动时间窗口判断
 ///
 /// # 5 项检测
 ///
-/// - 同 IP 1h 内 ≥ 10 次失败 → 阻断（`BulwarkError::Session`）
-/// - 同账号 1h 内 ≥ 5 次失败 → 阻断（`BulwarkError::Session`）
+/// - 同 IP 1h 内 ≥ 10 次失败 → 阻断（`GarrisonError::Session`）
+/// - 同账号 1h 内 ≥ 5 次失败 → 阻断（`GarrisonError::Session`）
 /// - 异地登录：与上次记录的 geo 不符 → 阻断（读 `fw:geo:{login_id}`）
 /// - Token 复用：`token:blacklist:{login_id}` 存在 → 阻断
 /// - 设备异常：`ctx.device_fingerprint` 不在已知设备列表 → 阻断（读 `fw:device:{login_id}`）
@@ -189,27 +189,27 @@ const FW_ACCT_KEY_PREFIX: &str = "fw:acct:";
 ///
 /// # 线程安全
 ///
-/// `BulwarkDaoDistributedLimiter` 与底层 `BulwarkDao` 实现均线程安全（`Send + Sync`），
+/// `GarrisonDaoDistributedLimiter` 与底层 `GarrisonDao` 实现均线程安全（`Send + Sync`），
 /// 通过 `Arc` 共享。
-pub struct BulwarkFirewallCheckHookDefault {
-    /// 限流器（基于 `BulwarkDaoDistributedLimiter`，原子计数 + TTL）。
+pub struct GarrisonFirewallCheckHookDefault {
+    /// 限流器（基于 `GarrisonDaoDistributedLimiter`，原子计数 + TTL）。
     /// 内部 dao 为 `MockDao`（`new()` 模式）或外部注入的 dao（`with_dao` 模式）。
-    limiter: BulwarkDaoDistributedLimiter,
+    limiter: GarrisonDaoDistributedLimiter,
     /// 保留 DAO 引用以支持 geo/token/device anomaly 检查（KV 读取，非计数器操作）。
-    /// 与 `limiter` 内部 dao 共享同一 `Arc<dyn BulwarkDao>`，确保数据一致。
-    dao: Arc<dyn BulwarkDao>,
+    /// 与 `limiter` 内部 dao 共享同一 `Arc<dyn GarrisonDao>`，确保数据一致。
+    dao: Arc<dyn GarrisonDao>,
     /// 可选监听器管理器，注入后 check_brute_force 阻断时广播 AccountLocked 事件。
     #[cfg(feature = "listener")]
-    listener_manager: Option<Arc<BulwarkListenerManager>>,
+    listener_manager: Option<Arc<GarrisonListenerManager>>,
 }
 
-impl BulwarkFirewallCheckHookDefault {
+impl GarrisonFirewallCheckHookDefault {
     /// 创建默认实现实例（内存模式，内部用 `MockDao` 作为 limiteron 后端）。
     ///
     /// 向后兼容：与原 `new()` 语义一致（进程内计数），但内部委托 limiteron 而非手写 HashMap。
     pub fn new() -> Self {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
-        let limiter = BulwarkDaoDistributedLimiter::new(dao.clone());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+        let limiter = GarrisonDaoDistributedLimiter::new(dao.clone());
         Self {
             limiter,
             dao,
@@ -223,18 +223,18 @@ impl BulwarkFirewallCheckHookDefault {
     /// 启用后 `record_failure` / 各 `check_*` 方法将走 DAO 路径（oxcache/redis），
     /// 内部 `limiter` 与 `dao` 字段均替换为注入的 DAO，确保计数器与 KV 检查共享同一后端。
     /// 满足 ADD §7.6 分布式存储要求。
-    pub fn with_dao(mut self, dao: Arc<dyn BulwarkDao>) -> Self {
-        self.limiter = BulwarkDaoDistributedLimiter::new(dao.clone());
+    pub fn with_dao(mut self, dao: Arc<dyn GarrisonDao>) -> Self {
+        self.limiter = GarrisonDaoDistributedLimiter::new(dao.clone());
         self.dao = dao;
         self
     }
 
-    /// 注入 `BulwarkListenerManager`，启用 AccountLocked 事件广播。
+    /// 注入 `GarrisonListenerManager`，启用 AccountLocked 事件广播。
     ///
-    /// 注入后 `check_brute_force` 阻断时广播 `BulwarkEvent::AccountLocked`。
+    /// 注入后 `check_brute_force` 阻断时广播 `GarrisonEvent::AccountLocked`。
     /// 未注入时为 no-op（向后兼容 0.4.1）。需启用 `listener` feature。
     #[cfg(feature = "listener")]
-    pub fn with_listener_manager(mut self, lm: Arc<BulwarkListenerManager>) -> Self {
+    pub fn with_listener_manager(mut self, lm: Arc<GarrisonListenerManager>) -> Self {
         self.listener_manager = Some(lm);
         self
     }
@@ -249,7 +249,7 @@ impl BulwarkFirewallCheckHookDefault {
     ///
     /// # 错误
     /// 任一 `limiteron` 操作失败均向上传播（Fail Loud，不静默吞错）。
-    pub async fn record_failure(&self, ctx: &LoginContext) -> BulwarkResult<()> {
+    pub async fn record_failure(&self, ctx: &LoginContext) -> GarrisonResult<()> {
         if let Some(ip) = &ctx.ip {
             let key = format!("{}{}", FW_IP_KEY_PREFIX, ip);
             self.limiter
@@ -269,7 +269,7 @@ impl BulwarkFirewallCheckHookDefault {
     ///
     /// 通过 `dao.keys("fw:ip:*")` 与 `dao.keys("fw:acct:*")` 扫描所有计数器 key，
     /// 逐个 `dao.delete`。生产环境慎用（大规模 key 扫描可能影响 DAO 性能）。
-    pub async fn reset(&self) -> BulwarkResult<()> {
+    pub async fn reset(&self) -> GarrisonResult<()> {
         let ip_keys = self.dao.keys(&format!("{}*", FW_IP_KEY_PREFIX)).await?;
         let acct_keys = self.dao.keys(&format!("{}*", FW_ACCT_KEY_PREFIX)).await?;
         for k in ip_keys.iter().chain(acct_keys.iter()) {
@@ -309,28 +309,28 @@ impl BulwarkFirewallCheckHookDefault {
     }
 }
 
-/// 将 `LimiteronError` 映射为 `BulwarkError`。
+/// 将 `LimiteronError` 映射为 `GarrisonError`。
 ///
-/// limiteron 适配器返回的错误统一包装为 `BulwarkError::Dao`，
+/// limiteron 适配器返回的错误统一包装为 `GarrisonError::Dao`，
 /// 表示底层 DAO 操作失败。
-fn map_limiteron_err(e: limiteron::error::LimiteronError) -> BulwarkError {
-    BulwarkError::Dao(format!("strategy-limiteron-op::{}", e))
+fn map_limiteron_err(e: limiteron::error::LimiteronError) -> GarrisonError {
+    GarrisonError::Dao(format!("strategy-limiteron-op::{}", e))
 }
 
-impl Default for BulwarkFirewallCheckHookDefault {
+impl Default for GarrisonFirewallCheckHookDefault {
     fn default() -> Self {
         Self::new()
     }
 }
 
 #[async_trait]
-impl BulwarkFirewallCheckHook for BulwarkFirewallCheckHookDefault {
+impl GarrisonFirewallCheckHook for GarrisonFirewallCheckHookDefault {
     /// 登录频率检测：同 IP 1h 内 ≥ 10 次失败则阻断。
     ///
     /// 通过 `limiteron::get_count` 查询 `fw:ip:{ip}` 计数器，
     /// ≥ `LOGIN_FREQUENCY_THRESHOLD` 则阻断（Fail Loud：limiteron 错误向上传播）。
     /// 无 IP 信息时直接返回 Ok。
-    async fn check_login_frequency(&self, ctx: &LoginContext) -> BulwarkResult<()> {
+    async fn check_login_frequency(&self, ctx: &LoginContext) -> GarrisonResult<()> {
         let Some(ip) = &ctx.ip else {
             return Ok(()); // 无 IP 信息时不检测
         };
@@ -341,7 +341,7 @@ impl BulwarkFirewallCheckHook for BulwarkFirewallCheckHookDefault {
             .await
             .map_err(map_limiteron_err)?;
         if count >= LOGIN_FREQUENCY_THRESHOLD as u64 {
-            return Err(BulwarkError::Session(format!(
+            return Err(GarrisonError::Session(format!(
                 "登录频率超限：IP {} 在 1h 内失败 {} 次（阈值 {}）",
                 ip, count, LOGIN_FREQUENCY_THRESHOLD
             )));
@@ -354,8 +354,8 @@ impl BulwarkFirewallCheckHook for BulwarkFirewallCheckHookDefault {
     /// 通过 `limiteron::get_count` 查询 `fw:acct:{login_id}` 计数器，
     /// ≥ `BRUTE_FORCE_THRESHOLD` 则阻断（Fail Loud：limiteron 错误向上传播）。
     ///
-    /// v0.4.2 扩展：阻断时若注入了 `listener_manager`，广播 `BulwarkEvent::AccountLocked`。
-    async fn check_brute_force(&self, ctx: &LoginContext) -> BulwarkResult<()> {
+    /// v0.4.2 扩展：阻断时若注入了 `listener_manager`，广播 `GarrisonEvent::AccountLocked`。
+    async fn check_brute_force(&self, ctx: &LoginContext) -> GarrisonResult<()> {
         let key = format!("{}{}", FW_ACCT_KEY_PREFIX, ctx.login_id);
         let count = self
             .limiter
@@ -366,14 +366,14 @@ impl BulwarkFirewallCheckHook for BulwarkFirewallCheckHookDefault {
             // 广播 AccountLocked 事件
             #[cfg(feature = "listener")]
             if let Some(lm) = &self.listener_manager {
-                lm.broadcast(&BulwarkEvent::AccountLocked {
+                lm.broadcast(&GarrisonEvent::AccountLocked {
                     login_id: ctx.login_id.clone(),
                     reason: format!("brute_force: {} failures in 1h", count),
                     request_context: None,
                 })
                 .await;
             }
-            return Err(BulwarkError::Session(format!(
+            return Err(GarrisonError::Session(format!(
                 "账号锁定：login_id={} 在 1h 内失败 {} 次（阈值 {}）",
                 ctx.login_id, count, BRUTE_FORCE_THRESHOLD
             )));
@@ -386,13 +386,13 @@ impl BulwarkFirewallCheckHook for BulwarkFirewallCheckHookDefault {
     /// 通过 `dao.get("fw:geo:{login_id}")` 读取上次记录的地理位置，与 `ctx.geo` 对比，
     /// 不同则阻断（Fail Loud：DAO 错误向上传播）。
     /// 无 geo 记录（首次登录）或 `ctx.geo` 为 None 时通过。
-    async fn check_geo_anomaly(&self, ctx: &LoginContext) -> BulwarkResult<()> {
+    async fn check_geo_anomaly(&self, ctx: &LoginContext) -> GarrisonResult<()> {
         let Some(ctx_geo) = &ctx.geo else {
             return Ok(()); // 上下文无 geo 信息，无法对比
         };
         let key = format!("fw:geo:{}", ctx.login_id);
         match self.dao.get(&key).await? {
-            Some(stored_geo) if stored_geo != *ctx_geo => Err(BulwarkError::Session(format!(
+            Some(stored_geo) if stored_geo != *ctx_geo => Err(GarrisonError::Session(format!(
                 "异地登录检测：login_id={} 上次地理位置 {} 与本次 {} 不符",
                 ctx.login_id, stored_geo, ctx_geo
             ))),
@@ -404,10 +404,10 @@ impl BulwarkFirewallCheckHook for BulwarkFirewallCheckHookDefault {
     ///
     /// 通过 `dao.get("{Token}:blacklist:{login_id}")` 检查 token 黑名单是否存在，
     /// 存在则阻断（Fail Loud：DAO 错误向上传播）。
-    async fn check_token_reuse(&self, ctx: &LoginContext) -> BulwarkResult<()> {
+    async fn check_token_reuse(&self, ctx: &LoginContext) -> GarrisonResult<()> {
         let key = format!("{}blacklist:{}", DaoKeyPrefix::Token, ctx.login_id);
         if self.dao.get(&key).await?.is_some() {
-            return Err(BulwarkError::Session(format!(
+            return Err(GarrisonError::Session(format!(
                 "Token 复用检测：login_id={} 的 Token 已被列入黑名单",
                 ctx.login_id
             )));
@@ -420,7 +420,7 @@ impl BulwarkFirewallCheckHook for BulwarkFirewallCheckHookDefault {
     /// 通过 `dao.get("fw:device:{login_id}")` 读取已知设备列表（逗号分隔），
     /// `ctx.device_fingerprint` 不在列表中则阻断（Fail Loud：DAO 错误向上传播）。
     /// 无设备记录（首次登录）或 `ctx.device_fingerprint` 为 None 时通过。
-    async fn check_device_anomaly(&self, ctx: &LoginContext) -> BulwarkResult<()> {
+    async fn check_device_anomaly(&self, ctx: &LoginContext) -> GarrisonResult<()> {
         let Some(fp) = &ctx.device_fingerprint else {
             return Ok(()); // 上下文无设备指纹，无法对比
         };
@@ -429,7 +429,7 @@ impl BulwarkFirewallCheckHook for BulwarkFirewallCheckHookDefault {
             Some(known_list) => {
                 let known: Vec<&str> = known_list.split(',').map(|s| s.trim()).collect();
                 if !known.contains(&fp.as_str()) {
-                    return Err(BulwarkError::Session(format!(
+                    return Err(GarrisonError::Session(format!(
                         "设备异常检测：login_id={} 的设备指纹 {} 不在已知设备列表",
                         ctx.login_id, fp
                     )));
@@ -473,7 +473,7 @@ mod tests {
     }
 
     // ========================================================================
-    // BulwarkFirewallCheckHook trait default impl 测试
+    // GarrisonFirewallCheckHook trait default impl 测试
     // ========================================================================
 
     /// 默认 trait impl 所有 hook 返回 Ok。
@@ -481,7 +481,7 @@ mod tests {
     async fn default_hook_impl_all_pass() {
         struct NoOpHook;
         #[async_trait]
-        impl BulwarkFirewallCheckHook for NoOpHook {}
+        impl GarrisonFirewallCheckHook for NoOpHook {}
         let hook = NoOpHook;
         let ctx = LoginContext::new("1001");
         assert!(hook.check_login_frequency(&ctx).await.is_ok());
@@ -492,13 +492,13 @@ mod tests {
     }
 
     // ========================================================================
-    // BulwarkFirewallCheckHookDefault 测试
+    // GarrisonFirewallCheckHookDefault 测试
     // ========================================================================
 
     /// 无 IP 时 check_login_frequency 返回 Ok。
     #[tokio::test]
     async fn check_login_frequency_passes_without_ip() {
-        let hook = BulwarkFirewallCheckHookDefault::new();
+        let hook = GarrisonFirewallCheckHookDefault::new();
         let ctx = LoginContext::new("1001"); // 无 IP
         assert!(hook.check_login_frequency(&ctx).await.is_ok());
     }
@@ -506,7 +506,7 @@ mod tests {
     /// IP 失败次数 < 阈值时 check_login_frequency 返回 Ok。
     #[tokio::test]
     async fn check_login_frequency_passes_below_threshold() {
-        let hook = BulwarkFirewallCheckHookDefault::new();
+        let hook = GarrisonFirewallCheckHookDefault::new();
         let ctx = LoginContext::new("1001").with_ip("1.2.3.4");
         // 记录 9 次失败（阈值 10）
         for _ in 0..9 {
@@ -519,7 +519,7 @@ mod tests {
     /// IP 失败次数 ≥ 阈值时 check_login_frequency 返回 Err。
     #[tokio::test]
     async fn check_login_frequency_blocks_at_threshold() {
-        let hook = BulwarkFirewallCheckHookDefault::new();
+        let hook = GarrisonFirewallCheckHookDefault::new();
         let ctx = LoginContext::new("1001").with_ip("1.2.3.4");
         // 记录 10 次失败
         for _ in 0..10 {
@@ -529,13 +529,13 @@ mod tests {
         let result = hook.check_login_frequency(&ctx).await;
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(matches!(err, BulwarkError::Session(_)));
+        assert!(matches!(err, GarrisonError::Session(_)));
     }
 
     /// 账号失败次数 < 阈值时 check_brute_force 返回 Ok。
     #[tokio::test]
     async fn check_brute_force_passes_below_threshold() {
-        let hook = BulwarkFirewallCheckHookDefault::new();
+        let hook = GarrisonFirewallCheckHookDefault::new();
         let ctx = LoginContext::new("1001");
         for _ in 0..4 {
             hook.record_failure(&ctx).await.unwrap();
@@ -547,7 +547,7 @@ mod tests {
     /// 账号失败次数 ≥ 阈值时 check_brute_force 返回 Err。
     #[tokio::test]
     async fn check_brute_force_blocks_at_threshold() {
-        let hook = BulwarkFirewallCheckHookDefault::new();
+        let hook = GarrisonFirewallCheckHookDefault::new();
         let ctx = LoginContext::new("1001");
         for _ in 0..5 {
             hook.record_failure(&ctx).await.unwrap();
@@ -555,13 +555,13 @@ mod tests {
         assert_eq!(hook.account_failure_count("1001").await, 5);
         let result = hook.check_brute_force(&ctx).await;
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), BulwarkError::Session(_)));
+        assert!(matches!(result.unwrap_err(), GarrisonError::Session(_)));
     }
 
     /// reset 清空所有计数器。
     #[tokio::test]
     async fn reset_clears_all_counters() {
-        let hook = BulwarkFirewallCheckHookDefault::new();
+        let hook = GarrisonFirewallCheckHookDefault::new();
         let ctx = LoginContext::new("1001").with_ip("1.2.3.4");
         hook.record_failure(&ctx).await.unwrap();
         hook.record_failure(&ctx).await.unwrap();
@@ -575,7 +575,7 @@ mod tests {
     /// 不同 IP 的计数器相互独立。
     #[tokio::test]
     async fn ip_counters_are_independent() {
-        let hook = BulwarkFirewallCheckHookDefault::new();
+        let hook = GarrisonFirewallCheckHookDefault::new();
         let ctx1 = LoginContext::new("1001").with_ip("1.1.1.1");
         let ctx2 = LoginContext::new("1002").with_ip("2.2.2.2");
         hook.record_failure(&ctx1).await.unwrap();
@@ -588,7 +588,7 @@ mod tests {
     /// 不同账号的计数器相互独立。
     #[tokio::test]
     async fn account_counters_are_independent() {
-        let hook = BulwarkFirewallCheckHookDefault::new();
+        let hook = GarrisonFirewallCheckHookDefault::new();
         let ctx1 = LoginContext::new("1001");
         let ctx2 = LoginContext::new("1002");
         hook.record_failure(&ctx1).await.unwrap();
@@ -602,7 +602,7 @@ mod tests {
     /// geo_anomaly / token_reuse / device_anomaly 默认 pass（内存模式）。
     #[tokio::test]
     async fn other_hooks_pass_by_default() {
-        let hook = BulwarkFirewallCheckHookDefault::new();
+        let hook = GarrisonFirewallCheckHookDefault::new();
         let ctx = LoginContext::new("1001").with_geo("Shanghai");
         assert!(hook.check_geo_anomaly(&ctx).await.is_ok());
         assert!(hook.check_token_reuse(&ctx).await.is_ok());
@@ -612,7 +612,7 @@ mod tests {
     /// record_failure 同时递增 IP 与账号计数器。
     #[tokio::test]
     async fn record_failure_increments_both_counters() {
-        let hook = BulwarkFirewallCheckHookDefault::new();
+        let hook = GarrisonFirewallCheckHookDefault::new();
         let ctx = LoginContext::new("1001").with_ip("1.2.3.4");
         hook.record_failure(&ctx).await.unwrap();
         assert_eq!(hook.ip_failure_count("1.2.3.4").await, 1);
@@ -622,8 +622,8 @@ mod tests {
     /// Default::default() 等价于 new()。
     #[test]
     fn default_equals_new() {
-        let _hook1 = BulwarkFirewallCheckHookDefault::new();
-        let _hook2 = BulwarkFirewallCheckHookDefault::default();
+        let _hook1 = GarrisonFirewallCheckHookDefault::new();
+        let _hook2 = GarrisonFirewallCheckHookDefault::default();
         // 仅验证可创建，内部状态相同（均为空计数器）
     }
 
@@ -632,13 +632,13 @@ mod tests {
     // ========================================================================
 
     use crate::dao::tests::MockDao;
-    use crate::dao::BulwarkDao;
+    use crate::dao::GarrisonDao;
     use std::sync::Arc;
 
     /// 辅助：构造 DAO 模式 hook。
-    fn make_dao_hook() -> (BulwarkFirewallCheckHookDefault, Arc<MockDao>) {
+    fn make_dao_hook() -> (GarrisonFirewallCheckHookDefault, Arc<MockDao>) {
         let dao = Arc::new(MockDao::new());
-        let hook = BulwarkFirewallCheckHookDefault::new().with_dao(dao.clone());
+        let hook = GarrisonFirewallCheckHookDefault::new().with_dao(dao.clone());
         (hook, dao)
     }
 
@@ -646,13 +646,13 @@ mod tests {
     ///
     /// 对应修复 #5：计数器基于 DAO（oxcache/redis）而非内存 Mutex。
     ///
-    /// v0.7.2 语义变化：内存模式与 DAO 模式统一使用 `BulwarkDaoDistributedLimiter`，
+    /// v0.7.2 语义变化：内存模式与 DAO 模式统一使用 `GarrisonDaoDistributedLimiter`，
     /// `with_dao` 仅替换后端 DAO（从 `MockDao` 切换为注入的 DAO），
     /// `ip_failure_count` / `account_failure_count` 始终从当前后端读取。
     #[tokio::test]
     async fn with_dao_creates_distributed_mode() {
         let dao = Arc::new(MockDao::new());
-        let hook = BulwarkFirewallCheckHookDefault::new().with_dao(dao.clone());
+        let hook = GarrisonFirewallCheckHookDefault::new().with_dao(dao.clone());
         // 验证可创建，且 record_failure 走注入的 DAO 路径
         let ctx = LoginContext::new("1001").with_ip("9.9.9.9");
         hook.record_failure(&ctx).await.unwrap();
@@ -699,7 +699,7 @@ mod tests {
         }
         let result = hook.check_login_frequency(&ctx).await;
         assert!(result.is_err(), "DAO 模式下 IP 失败 ≥ 阈值应阻断");
-        assert!(matches!(result.unwrap_err(), BulwarkError::Session(_)));
+        assert!(matches!(result.unwrap_err(), GarrisonError::Session(_)));
     }
 
     /// DAO 模式下暴力破解超阈值（≥5）阻断。
@@ -714,7 +714,7 @@ mod tests {
         }
         let result = hook.check_brute_force(&ctx).await;
         assert!(result.is_err(), "DAO 模式下账号失败 ≥ 阈值应阻断");
-        assert!(matches!(result.unwrap_err(), BulwarkError::Session(_)));
+        assert!(matches!(result.unwrap_err(), GarrisonError::Session(_)));
     }
 
     /// DAO 模式下 token 黑名单存在则阻断。
@@ -730,7 +730,7 @@ mod tests {
         let ctx = LoginContext::new("1001");
         let result = hook.check_token_reuse(&ctx).await;
         assert!(result.is_err(), "Token 在黑名单中应阻断");
-        assert!(matches!(result.unwrap_err(), BulwarkError::Session(_)));
+        assert!(matches!(result.unwrap_err(), GarrisonError::Session(_)));
     }
 
     /// DAO 模式下无黑名单时 check_token_reuse 通过。
@@ -758,7 +758,7 @@ mod tests {
         let ctx = LoginContext::new("1001").with_geo("Shanghai");
         let result = hook.check_geo_anomaly(&ctx).await;
         assert!(result.is_err(), "异地登录应阻断");
-        assert!(matches!(result.unwrap_err(), BulwarkError::Session(_)));
+        assert!(matches!(result.unwrap_err(), GarrisonError::Session(_)));
     }
 
     /// DAO 模式下无 geo 记录时 check_geo_anomaly 通过（首次登录）。
@@ -788,7 +788,7 @@ mod tests {
         let ctx = LoginContext::new("1001").with_device("dev-unknown");
         let result = hook.check_device_anomaly(&ctx).await;
         assert!(result.is_err(), "未知设备应阻断");
-        assert!(matches!(result.unwrap_err(), BulwarkError::Session(_)));
+        assert!(matches!(result.unwrap_err(), GarrisonError::Session(_)));
     }
 
     /// DAO 模式下无设备记录时 check_device_anomaly 通过（首次登录）。
@@ -814,9 +814,9 @@ mod tests {
     #[cfg(feature = "listener")]
     #[test]
     fn with_listener_manager_sets_field() {
-        use crate::listener::BulwarkListenerManager;
-        let lm = Arc::new(BulwarkListenerManager::new());
-        let hook = BulwarkFirewallCheckHookDefault::new().with_listener_manager(lm);
+        use crate::listener::GarrisonListenerManager;
+        let lm = Arc::new(GarrisonListenerManager::new());
+        let hook = GarrisonFirewallCheckHookDefault::new().with_listener_manager(lm);
         assert!(
             hook.listener_manager.is_some(),
             "with_listener_manager 后 listener_manager 应为 Some"
@@ -830,7 +830,7 @@ mod tests {
     /// 避免真实等待 `LOGIN_FREQUENCY_WINDOW`（1 小时）。
     #[tokio::test]
     async fn record_failure_resets_ip_count_when_window_expired() {
-        let hook = BulwarkFirewallCheckHookDefault::new();
+        let hook = GarrisonFirewallCheckHookDefault::new();
         let ctx = LoginContext::new("1001").with_ip("10.0.0.1");
         // 第一次失败
         hook.record_failure(&ctx).await.unwrap();
@@ -853,7 +853,7 @@ mod tests {
     /// 此测试通过 `hook.dao.delete(key)` 模拟 TTL 过期。
     #[tokio::test]
     async fn record_failure_resets_account_count_when_window_expired() {
-        let hook = BulwarkFirewallCheckHookDefault::new();
+        let hook = GarrisonFirewallCheckHookDefault::new();
         let ctx = LoginContext::new("1001");
         // 第一次失败
         hook.record_failure(&ctx).await.unwrap();
@@ -873,14 +873,14 @@ mod tests {
     /// DAO 模式下脏计数器数据导致 `check_brute_force` 返回 Err（Fail Loud）。
     ///
     /// v0.7.2 语义：limiteron `get_count` 在 parse 失败时返回 `Err`（M-3: fail-fast），
-    /// `check_brute_force` 将其映射为 `BulwarkError::Dao` 向上传播，
+    /// `check_brute_force` 将其映射为 `GarrisonError::Dao` 向上传播，
     /// 不再静默用 0（避免脏数据导致阈值检测失效）。
     #[tokio::test]
     async fn check_brute_force_returns_err_on_dirty_count() {
         let dao = Arc::new(MockDao::new());
         // 写入非数字字符串到 fw:acct:1001
         dao.set("fw:acct:1001", "not-a-number", 3600).await.unwrap();
-        let hook = BulwarkFirewallCheckHookDefault::new().with_dao(dao);
+        let hook = GarrisonFirewallCheckHookDefault::new().with_dao(dao);
         let ctx = LoginContext::new("1001");
         // check_brute_force 读取非数字计数器应返回 Err（Fail Loud）
         let result = hook.check_brute_force(&ctx).await;
@@ -891,8 +891,8 @@ mod tests {
         );
         let err = result.unwrap_err();
         assert!(
-            matches!(err, BulwarkError::Dao(_)),
-            "应为 BulwarkError::Dao 错误，实际: {:?}",
+            matches!(err, GarrisonError::Dao(_)),
+            "应为 GarrisonError::Dao 错误，实际: {:?}",
             err
         );
     }
@@ -905,7 +905,7 @@ mod tests {
         let dao = Arc::new(MockDao::new());
         // 写入 9 次失败（阈值 10）
         dao.set("fw:ip:1.2.3.4", "9", 3600).await.unwrap();
-        let hook = BulwarkFirewallCheckHookDefault::new().with_dao(dao);
+        let hook = GarrisonFirewallCheckHookDefault::new().with_dao(dao);
         let ctx = LoginContext::new("1001").with_ip("1.2.3.4");
         let result = hook.check_login_frequency(&ctx).await;
         assert!(result.is_ok(), "9 次失败 < 阈值 10，应通过");
@@ -919,7 +919,7 @@ mod tests {
         let dao = Arc::new(MockDao::new());
         // 写入 4 次失败（阈值 5）
         dao.set("fw:acct:1001", "4", 3600).await.unwrap();
-        let hook = BulwarkFirewallCheckHookDefault::new().with_dao(dao);
+        let hook = GarrisonFirewallCheckHookDefault::new().with_dao(dao);
         let ctx = LoginContext::new("1001");
         let result = hook.check_brute_force(&ctx).await;
         assert!(result.is_ok(), "4 次失败 < 阈值 5，应通过");
@@ -936,8 +936,8 @@ mod tests {
         // 直接验证：超阈值时返回 Err 即可（broadcast 是副作用）
         let dao = Arc::new(MockDao::new());
         dao.set("fw:acct:1001", "5", 3600).await.unwrap();
-        let lm = Arc::new(BulwarkListenerManager::new());
-        let hook = BulwarkFirewallCheckHookDefault::new()
+        let lm = Arc::new(GarrisonListenerManager::new());
+        let hook = GarrisonFirewallCheckHookDefault::new()
             .with_dao(dao)
             .with_listener_manager(lm);
         let ctx = LoginContext::new("1001");
@@ -954,9 +954,9 @@ mod tests {
     #[cfg(feature = "listener")]
     #[tokio::test]
     async fn check_brute_force_in_memory_mode_broadcasts_account_locked() {
-        use crate::listener::BulwarkListenerManager;
-        let lm = Arc::new(BulwarkListenerManager::new());
-        let hook = BulwarkFirewallCheckHookDefault::new().with_listener_manager(lm);
+        use crate::listener::GarrisonListenerManager;
+        let lm = Arc::new(GarrisonListenerManager::new());
+        let hook = GarrisonFirewallCheckHookDefault::new().with_listener_manager(lm);
         let ctx = LoginContext::new("1001");
         // 记录 5 次失败（阈值 5）
         for _ in 0..5 {
@@ -971,7 +971,7 @@ mod tests {
     /// 覆盖行 444（无 ctx_geo 早期返回 Ok）。
     #[tokio::test]
     async fn check_geo_anomaly_in_memory_mode_passes_without_ctx_geo() {
-        let hook = BulwarkFirewallCheckHookDefault::new();
+        let hook = GarrisonFirewallCheckHookDefault::new();
         // 无 DAO + 无 geo
         let ctx = LoginContext::new("1001");
         let result = hook.check_geo_anomaly(&ctx).await;
@@ -983,7 +983,7 @@ mod tests {
     /// 覆盖行 488（无 device_fingerprint 早期返回 Ok）。
     #[tokio::test]
     async fn check_device_anomaly_in_memory_mode_passes_without_fingerprint() {
-        let hook = BulwarkFirewallCheckHookDefault::new();
+        let hook = GarrisonFirewallCheckHookDefault::new();
         // 无 DAO + 无 device_fingerprint
         let ctx = LoginContext::new("1001");
         let result = hook.check_device_anomaly(&ctx).await;

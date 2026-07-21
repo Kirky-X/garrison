@@ -7,23 +7,23 @@ use super::*;
 
 impl PermissionCheckerDefault {
     /// 创建新的 `PermissionCheckerDefault` 实例。
-    pub fn new(interface: Arc<dyn BulwarkInterface>) -> Self {
+    pub fn new(interface: Arc<dyn GarrisonInterface>) -> Self {
         Self { interface }
     }
 }
 
 #[async_trait]
 impl PermissionChecker for PermissionCheckerDefault {
-    async fn has_permission(&self, login_id: &str, permission: &str) -> BulwarkResult<bool> {
+    async fn has_permission(&self, login_id: &str, permission: &str) -> GarrisonResult<bool> {
         // P2.4: NFC 规范化 permission 字符串，防止 Unicode 同形异义字攻击
         // （NFD 与 NFC 形式视觉相同但字节不同，规范化后统一比较）
         let normalized = permission.nfc().collect::<String>();
         if normalized.is_empty() {
-            return Err(BulwarkError::InvalidParam("core-perm-empty::".to_string()));
+            return Err(GarrisonError::InvalidParam("core-perm-empty::".to_string()));
         }
         // P2.4: 长度校验（>256 字节返回 InvalidParam），防止 DoS
         if normalized.len() > 256 {
-            return Err(BulwarkError::InvalidParam(format!(
+            return Err(GarrisonError::InvalidParam(format!(
                 "permission too long: {} bytes (max 256)",
                 normalized.len()
             )));
@@ -32,9 +32,9 @@ impl PermissionChecker for PermissionCheckerDefault {
         Ok(perms.iter().any(|p| p == &normalized))
     }
 
-    async fn has_role(&self, login_id: &str, role: &str) -> BulwarkResult<bool> {
+    async fn has_role(&self, login_id: &str, role: &str) -> GarrisonResult<bool> {
         if role.is_empty() {
-            return Err(BulwarkError::InvalidParam("core-role-empty::".to_string()));
+            return Err(GarrisonError::InvalidParam("core-role-empty::".to_string()));
         }
         let roles = self.interface.get_role_list(login_id).await?;
         Ok(roles.iter().any(|r| r == role))

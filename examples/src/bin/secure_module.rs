@@ -3,7 +3,7 @@
 
 #[tokio::main]
 async fn main() {
-    bulwark_examples::security::secure_module::run()
+    garrison_examples::security::secure_module::run()
         .await
         .unwrap();
 }

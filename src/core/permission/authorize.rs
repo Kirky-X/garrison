@@ -7,7 +7,7 @@
 //!
 //! # 与 [`PermissionChecker`] 的区别
 //!
-//! - [`PermissionChecker`] 依赖 [`BulwarkInterface`](crate::stp::BulwarkInterface)，是内部 trait，绑定具体数据源
+//! - [`PermissionChecker`] 依赖 [`GarrisonInterface`](crate::stp::GarrisonInterface)，是内部 trait，绑定具体数据源
 //! - [`Authorizer`] 是公开 API，不假设具体实现，可由任何授权引擎实现
 //! - 通过 blanket impl 自动为所有 [`PermissionChecker`] 提供 [`Authorizer`] 实现
 //!
@@ -20,7 +20,7 @@
 
 use async_trait::async_trait;
 
-use crate::error::BulwarkResult;
+use crate::error::GarrisonResult;
 
 use super::decision::{AuthRequest, Decision};
 use super::PermissionChecker;
@@ -33,7 +33,7 @@ use super::PermissionChecker;
 /// # 与 [`PermissionChecker`] 的关系
 ///
 /// [`PermissionChecker`] 已有 `authorize` 方法，但它是内部 trait（依赖
-/// [`BulwarkInterface`](crate::stp::BulwarkInterface)）。`Authorizer` 的角色是
+/// [`GarrisonInterface`](crate::stp::GarrisonInterface)）。`Authorizer` 的角色是
 /// **显式公开 API**：任何授权引擎可实现此 trait，无需依赖具体数据源。
 ///
 /// 通过 blanket impl，所有 [`PermissionChecker`] 自动实现 `Authorizer`，
@@ -46,7 +46,7 @@ use super::PermissionChecker;
 /// # 使用示例
 ///
 /// ```ignore
-/// use bulwark::prelude::*;
+/// use garrison::prelude::*;
 /// use std::sync::Arc;
 ///
 /// // 任何 PermissionChecker 自动实现 Authorizer
@@ -62,9 +62,9 @@ pub trait Authorizer: Send + Sync {
     ///
     /// # 错误
     ///
-    /// 校验过程本身出错（如 DAO 故障、参数无效）返回 `Err(BulwarkError)`；
+    /// 校验过程本身出错（如 DAO 故障、参数无效）返回 `Err(GarrisonError)`；
     /// "未持有权限"不是错误，返回 `Ok(Decision { allowed: false, .. })`。
-    async fn authorize(&self, req: &AuthRequest) -> BulwarkResult<Decision>;
+    async fn authorize(&self, req: &AuthRequest) -> GarrisonResult<Decision>;
 }
 
 /// Blanket impl：任何 [`PermissionChecker`] 自动实现 [`Authorizer`]。
@@ -81,7 +81,7 @@ pub trait Authorizer: Send + Sync {
 /// [`PermissionChecker::authorize`]: crate::core::permission::PermissionChecker::authorize
 #[async_trait]
 impl<T: PermissionChecker> Authorizer for T {
-    async fn authorize(&self, req: &AuthRequest) -> BulwarkResult<Decision> {
+    async fn authorize(&self, req: &AuthRequest) -> GarrisonResult<Decision> {
         PermissionChecker::authorize(self, req).await
     }
 }
@@ -92,8 +92,8 @@ mod tests {
     use crate::core::permission::{
         AuthRequest, Decision, DecisionReason, PermissionChecker, PermissionCheckerDefault,
     };
-    use crate::error::{BulwarkError, BulwarkResult};
-    use crate::stp::BulwarkInterface;
+    use crate::error::{GarrisonError, GarrisonResult};
+    use crate::stp::GarrisonInterface;
     use async_trait::async_trait;
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
@@ -107,7 +107,7 @@ mod tests {
 
     /// 测试用 MockAuthorizer，返回固定 Decision 或 Error，并捕获传入的 AuthRequest。
     ///
-    /// 用于在隔离环境下测试 `Authorizer` trait 契约（不依赖 BulwarkLogicDefault）。
+    /// 用于在隔离环境下测试 `Authorizer` trait 契约（不依赖 GarrisonLogicDefault）。
     struct MockAuthorizer {
         outcome: MockOutcome,
         captured: Mutex<Option<AuthRequest>>,
@@ -129,16 +129,16 @@ mod tests {
 
     #[async_trait]
     impl Authorizer for MockAuthorizer {
-        async fn authorize(&self, req: &AuthRequest) -> BulwarkResult<Decision> {
+        async fn authorize(&self, req: &AuthRequest) -> GarrisonResult<Decision> {
             *self.captured.lock().unwrap() = Some(req.clone());
             match &self.outcome {
                 MockOutcome::Allow => Ok(Decision::allow()),
                 MockOutcome::DenyNoMatch => {
                     Ok(Decision::deny(DecisionReason::NoMatchingPermission))
                 },
-                MockOutcome::InvalidParam => {
-                    Err(BulwarkError::InvalidParam("mock invalid param".to_string()))
-                },
+                MockOutcome::InvalidParam => Err(GarrisonError::InvalidParam(
+                    "mock invalid param".to_string(),
+                )),
             }
         }
     }
@@ -175,7 +175,7 @@ mod tests {
         let result = authorizer.authorize(&req).await;
         assert!(result.is_err());
         match result.err() {
-            Some(BulwarkError::InvalidParam(_)) => {},
+            Some(GarrisonError::InvalidParam(_)) => {},
             other => panic!("期望 InvalidParam，实际: {:?}", other),
         }
     }
@@ -247,7 +247,7 @@ mod tests {
     #[tokio::test]
     async fn authorizer_blanket_impl_works_with_permission_checker() {
         let interface = MockInterface::new().with_perms("1001", vec!["user:read"]);
-        let interface_arc: Arc<dyn BulwarkInterface> = Arc::new(interface);
+        let interface_arc: Arc<dyn GarrisonInterface> = Arc::new(interface);
         let checker = PermissionCheckerDefault::new(interface_arc);
 
         let req = AuthRequest::new("1001", "user:read");
@@ -283,10 +283,10 @@ mod tests {
     }
 
     // ========================================================================
-    // 测试用 MockInterface（BulwarkInterface 实现，用于 blanket impl 测试）
+    // 测试用 MockInterface（GarrisonInterface 实现，用于 blanket impl 测试）
     // ========================================================================
 
-    /// 测试用 mock BulwarkInterface（仅提供 permission/role 数据，供 PermissionCheckerDefault 使用）。
+    /// 测试用 mock GarrisonInterface（仅提供 permission/role 数据，供 PermissionCheckerDefault 使用）。
     struct MockInterface {
         permissions: HashMap<String, Vec<String>>,
         #[allow(
@@ -314,12 +314,12 @@ mod tests {
     }
 
     #[async_trait]
-    impl BulwarkInterface for MockInterface {
-        async fn get_permission_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+    impl GarrisonInterface for MockInterface {
+        async fn get_permission_list(&self, login_id: &str) -> GarrisonResult<Vec<String>> {
             Ok(self.permissions.get(login_id).cloned().unwrap_or_default())
         }
 
-        async fn get_role_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+        async fn get_role_list(&self, login_id: &str) -> GarrisonResult<Vec<String>> {
             Ok(self.roles.get(login_id).cloned().unwrap_or_default())
         }
     }

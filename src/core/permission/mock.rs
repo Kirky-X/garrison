@@ -4,15 +4,15 @@
 //! 权限校验层测试 mock 实现。
 //!
 //! 本模块仅在 `cfg(test)` 下编译（通过 `mod.rs` 中的 `#[cfg(test)] mod mock;` 声明），
-//! 提供 `MockInterface`（基于 `HashMap` 模拟 `BulwarkInterface`），
+//! 提供 `MockInterface`（基于 `HashMap` 模拟 `GarrisonInterface`），
 //! 供 `core::permission::tests` 权限/角色校验测试复用。
 
-use crate::error::BulwarkResult;
-use crate::stp::BulwarkInterface;
+use crate::error::GarrisonResult;
+use crate::stp::GarrisonInterface;
 use async_trait::async_trait;
 use std::collections::HashMap;
 
-/// 测试用 mock BulwarkInterface。
+/// 测试用 mock GarrisonInterface。
 pub struct MockInterface {
     permissions: HashMap<String, Vec<String>>,
     roles: HashMap<String, Vec<String>>,
@@ -47,12 +47,12 @@ impl MockInterface {
 }
 
 #[async_trait]
-impl BulwarkInterface for MockInterface {
-    async fn get_permission_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+impl GarrisonInterface for MockInterface {
+    async fn get_permission_list(&self, login_id: &str) -> GarrisonResult<Vec<String>> {
         Ok(self.permissions.get(login_id).cloned().unwrap_or_default())
     }
 
-    async fn get_role_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+    async fn get_role_list(&self, login_id: &str) -> GarrisonResult<Vec<String>> {
         Ok(self.roles.get(login_id).cloned().unwrap_or_default())
     }
 }

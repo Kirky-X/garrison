@@ -10,9 +10,9 @@
 //! - **reqwest::Client**：支持 TLS/mTLS 配置，连接池复用
 //! - **统一 API 包装**：`ApiResponse<T>` 包装所有响应，成功时 `data` 有值，失败时 `error_code` + `message`
 //! - **X-API-Key 头**：每个请求携带 API Key 用于服务间认证
-//! - **错误映射**：网络错误 → `BulwarkError::Network`，API 错误 → 根据 `error_code` 映射
+//! - **错误映射**：网络错误 → `GarrisonError::Network`，API 错误 → 根据 `error_code` 映射
 
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::error::{GarrisonError, GarrisonResult};
 use async_trait::async_trait;
 use std::time::Duration;
 
@@ -59,11 +59,11 @@ impl BackendRemote {
         base_url: impl Into<String>,
         api_key: impl Into<String>,
         timeout: Duration,
-    ) -> BulwarkResult<Self> {
+    ) -> GarrisonResult<Self> {
         let client = reqwest::Client::builder()
             .timeout(timeout)
             .build()
-            .map_err(|e| BulwarkError::Network(format!("backend-http-client-build::{}", e)))?;
+            .map_err(|e| GarrisonError::Network(format!("backend-http-client-build::{}", e)))?;
         Ok(Self {
             client,
             base_url: base_url.into(),
@@ -78,7 +78,7 @@ impl BackendRemote {
     /// - 网络错误映射
     /// - HTTP 状态码检查
     /// - 响应反序列化
-    async fn post<Req, T>(&self, path: &str, req: &Req) -> BulwarkResult<ApiResponse<T>>
+    async fn post<Req, T>(&self, path: &str, req: &Req) -> GarrisonResult<ApiResponse<T>>
     where
         Req: serde::Serialize,
         T: serde::de::DeserializeOwned,
@@ -91,12 +91,12 @@ impl BackendRemote {
             .json(req)
             .send()
             .await
-            .map_err(|e| BulwarkError::Network(format!("backend-http-request::{}", e)))?;
+            .map_err(|e| GarrisonError::Network(format!("backend-http-request::{}", e)))?;
 
         let status = resp.status();
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
-            return Err(BulwarkError::Network(format!(
+            return Err(GarrisonError::Network(format!(
                 "HTTP {}: {}",
                 status.as_u16(),
                 body
@@ -105,13 +105,13 @@ impl BackendRemote {
 
         resp.json::<ApiResponse<T>>()
             .await
-            .map_err(|e| BulwarkError::Network(format!("backend-response-deser::{}", e)))
+            .map_err(|e| GarrisonError::Network(format!("backend-response-deser::{}", e)))
     }
 
     /// 发送 POST 请求，解析 `ApiResponse<T>` 并提取 `data`。
     ///
     /// 用于返回有数据的方法（login → String, check_login → bool 等）。
-    async fn post_and_extract<Req, T>(&self, path: &str, req: &Req) -> BulwarkResult<T>
+    async fn post_and_extract<Req, T>(&self, path: &str, req: &Req) -> GarrisonResult<T>
     where
         Req: serde::Serialize,
         T: serde::de::DeserializeOwned,
@@ -119,7 +119,7 @@ impl BackendRemote {
         let api_resp = self.post::<Req, T>(path, req).await?;
         api_resp
             .into_result()
-            .map_err(|(code, _msg)| BulwarkError::Network(format!("backend-api-error::{}", code)))
+            .map_err(|(code, _msg)| GarrisonError::Network(format!("backend-api-error::{}", code)))
     }
 
     /// 发送 POST 请求，检查 `error_code` 判断成功/失败（无 data 提取）。
@@ -127,13 +127,13 @@ impl BackendRemote {
     /// 用于返回 `()` 的方法（logout, check_permission, check_role 等）。
     /// `ApiResponse<()>` 的 `data` 字段在 JSON 中为 `null`，无法通过 `into_result` 区分成功/失败，
     /// 因此直接检查 `error_code` 是否存在。
-    async fn post_unit<Req>(&self, path: &str, req: &Req) -> BulwarkResult<()>
+    async fn post_unit<Req>(&self, path: &str, req: &Req) -> GarrisonResult<()>
     where
         Req: serde::Serialize,
     {
         let api_resp = self.post::<Req, ()>(path, req).await?;
         if let Some(code) = api_resp.error_code {
-            return Err(BulwarkError::Network(format!(
+            return Err(GarrisonError::Network(format!(
                 "backend-api-error::{}",
                 code
             )));
@@ -144,7 +144,7 @@ impl BackendRemote {
 
 #[async_trait]
 impl AuthBackend for BackendRemote {
-    async fn login(&self, login_id: &str, params: &LoginParams) -> BulwarkResult<String> {
+    async fn login(&self, login_id: &str, params: &LoginParams) -> GarrisonResult<String> {
         let req = LoginRequest {
             login_id: login_id.to_string(),
             params: params.clone(),
@@ -152,14 +152,14 @@ impl AuthBackend for BackendRemote {
         self.post_and_extract("/api/v1/auth/login", &req).await
     }
 
-    async fn logout(&self, token: &str) -> BulwarkResult<()> {
+    async fn logout(&self, token: &str) -> GarrisonResult<()> {
         let req = LogoutRequest {
             token: token.to_string(),
         };
         self.post_unit("/api/v1/auth/logout", &req).await
     }
 
-    async fn check_login(&self, token: &str) -> BulwarkResult<bool> {
+    async fn check_login(&self, token: &str) -> GarrisonResult<bool> {
         let req = CheckLoginRequest {
             token: token.to_string(),
         };
@@ -167,7 +167,7 @@ impl AuthBackend for BackendRemote {
             .await
     }
 
-    async fn check_permission(&self, token: &str, permission: &str) -> BulwarkResult<()> {
+    async fn check_permission(&self, token: &str, permission: &str) -> GarrisonResult<()> {
         let req = CheckPermissionRequest {
             token: token.to_string(),
             permission: permission.to_string(),
@@ -175,7 +175,7 @@ impl AuthBackend for BackendRemote {
         self.post_unit("/api/v1/auth/check-permission", &req).await
     }
 
-    async fn check_role(&self, token: &str, role: &str) -> BulwarkResult<()> {
+    async fn check_role(&self, token: &str, role: &str) -> GarrisonResult<()> {
         let req = CheckRoleRequest {
             token: token.to_string(),
             role: role.to_string(),
@@ -183,14 +183,14 @@ impl AuthBackend for BackendRemote {
         self.post_unit("/api/v1/auth/check-role", &req).await
     }
 
-    async fn check_safe(&self, token: &str) -> BulwarkResult<bool> {
+    async fn check_safe(&self, token: &str) -> GarrisonResult<bool> {
         let req = CheckLoginRequest {
             token: token.to_string(),
         };
         self.post_and_extract("/api/v1/auth/check-safe", &req).await
     }
 
-    async fn check_disable(&self, token: &str) -> BulwarkResult<bool> {
+    async fn check_disable(&self, token: &str) -> GarrisonResult<bool> {
         let req = CheckLoginRequest {
             token: token.to_string(),
         };
@@ -198,7 +198,7 @@ impl AuthBackend for BackendRemote {
             .await
     }
 
-    async fn check_api_key(&self, api_key: &str, namespace: &str) -> BulwarkResult<()> {
+    async fn check_api_key(&self, api_key: &str, namespace: &str) -> GarrisonResult<()> {
         let req = CheckApiKeyRequest {
             api_key: api_key.to_string(),
             namespace: namespace.to_string(),
@@ -206,7 +206,7 @@ impl AuthBackend for BackendRemote {
         self.post_unit("/api/v1/auth/check-api-key", &req).await
     }
 
-    async fn get_token_info(&self, token: &str) -> BulwarkResult<TokenInfo> {
+    async fn get_token_info(&self, token: &str) -> GarrisonResult<TokenInfo> {
         let req = CheckLoginRequest {
             token: token.to_string(),
         };
@@ -214,7 +214,7 @@ impl AuthBackend for BackendRemote {
             .await
     }
 
-    async fn get_session(&self, token: &str) -> BulwarkResult<SessionData> {
+    async fn get_session(&self, token: &str) -> GarrisonResult<SessionData> {
         let req = CheckLoginRequest {
             token: token.to_string(),
         };
@@ -222,14 +222,14 @@ impl AuthBackend for BackendRemote {
             .await
     }
 
-    async fn kickout(&self, login_id: &str) -> BulwarkResult<()> {
+    async fn kickout(&self, login_id: &str) -> GarrisonResult<()> {
         let req = KickoutRequest {
             login_id: login_id.to_string(),
         };
         self.post_unit("/api/v1/auth/kickout", &req).await
     }
 
-    async fn switch_to(&self, token: &str, target_login_id: &str) -> BulwarkResult<()> {
+    async fn switch_to(&self, token: &str, target_login_id: &str) -> GarrisonResult<()> {
         let req = SwitchToRequest {
             token: token.to_string(),
             target_login_id: target_login_id.to_string(),
@@ -237,7 +237,7 @@ impl AuthBackend for BackendRemote {
         self.post_unit("/api/v1/auth/switch-to", &req).await
     }
 
-    async fn renew_to_equivalent(&self, token: &str) -> BulwarkResult<String> {
+    async fn renew_to_equivalent(&self, token: &str) -> GarrisonResult<String> {
         let req = RenewToEquivalentRequest {
             token: token.to_string(),
         };
@@ -251,7 +251,7 @@ impl AuthBackend for BackendRemote {
 /// # 示例
 ///
 /// ```ignore
-/// use bulwark::backend::BackendRemoteBuilder;
+/// use garrison::backend::BackendRemoteBuilder;
 /// use std::time::Duration;
 ///
 /// let remote = BackendRemoteBuilder::new("https://auth:8443", "api-key")
@@ -301,13 +301,13 @@ impl BackendRemoteBuilder {
     }
 
     /// 构建 BackendRemote 实例。
-    pub fn build(self) -> BulwarkResult<BackendRemote> {
+    pub fn build(self) -> GarrisonResult<BackendRemote> {
         let mut builder = reqwest::Client::builder().timeout(self.timeout);
 
         // 加载 CA 证书（用于自签名服务器）
         if let Some(ca_pem) = self.ca_cert {
             let cert = reqwest::Certificate::from_pem(&ca_pem)
-                .map_err(|e| BulwarkError::Network(format!("backend-ca-load::{}", e)))?;
+                .map_err(|e| GarrisonError::Network(format!("backend-ca-load::{}", e)))?;
             builder = builder.add_root_certificate(cert);
         }
 
@@ -317,13 +317,13 @@ impl BackendRemoteBuilder {
             let mut combined = cert_pem;
             combined.extend_from_slice(&key_pem);
             let identity = reqwest::Identity::from_pem(&combined)
-                .map_err(|e| BulwarkError::Network(format!("backend-client-cert-load::{}", e)))?;
+                .map_err(|e| GarrisonError::Network(format!("backend-client-cert-load::{}", e)))?;
             builder = builder.identity(identity);
         }
 
         let client = builder
             .build()
-            .map_err(|e| BulwarkError::Network(format!("backend-http-client-build::{}", e)))?;
+            .map_err(|e| GarrisonError::Network(format!("backend-http-client-build::{}", e)))?;
 
         Ok(BackendRemote {
             client,
@@ -629,7 +629,7 @@ mod tests {
         let result = remote.check_login("token").await;
         assert!(result.is_err());
         match result.unwrap_err() {
-            BulwarkError::Network(_) => {},
+            GarrisonError::Network(_) => {},
             e => panic!("期望 Network 错误，实际: {:?}", e),
         }
     }
@@ -646,7 +646,7 @@ mod tests {
         let result = remote.check_login("token").await;
         assert!(result.is_err());
         match result.unwrap_err() {
-            BulwarkError::Network(_) => {},
+            GarrisonError::Network(_) => {},
             e => panic!("期望 Network 错误，实际: {:?}", e),
         }
     }

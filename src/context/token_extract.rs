@@ -11,7 +11,7 @@
 //! ## 设计
 //!
 //! - `strip_bearer_prefix`：大小写不敏感地剥离 `Bearer ` 前缀（RFC 7235）
-//! - `extract_token_from_headers`：依据 `BulwarkConfig` 从 `http::HeaderMap` 提取 token
+//! - `extract_token_from_headers`：依据 `GarrisonConfig` 从 `http::HeaderMap` 提取 token
 //!   （Authorization: Bearer → 自定义 token_name header → cookie）
 //!
 //! `http` crate 是必需依赖（Cargo.toml L43），故本模块无需 feature gate。
@@ -19,8 +19,8 @@
 //! 可直接传入本模块函数。`actix_web::http::header::HeaderMap` 是 `actix_http::header::HeaderMap`
 //! （独立类型，非 `http::HeaderMap` 的 re-export），通过 [`HeaderLookup`] trait 适配。
 
-use crate::config::BulwarkConfig;
-use crate::error::BulwarkError;
+use crate::config::GarrisonConfig;
+use crate::error::GarrisonError;
 use http::HeaderMap;
 
 // ============================================================================
@@ -30,7 +30,7 @@ use http::HeaderMap;
 /// Header 查找抽象 trait，用于 `extract_token_from_headers` 泛型约束。
 ///
 /// **为什么需要这个 trait**：`http::HeaderMap`（v1.x）和 `actix_http::header::HeaderMap`
-/// 是两个不同的类型。actix-web 4.x 依赖 `http` v0.2，而 bulwark 依赖 `http` v1.x，
+/// 是两个不同的类型。actix-web 4.x 依赖 `http` v0.2，而 garrison 依赖 `http` v1.x，
 /// 两者的 `HeaderName` / `HeaderValue` 也是不同类型。本 trait 用纯字符串接口
 /// (`&str` → `Option<&str>`) 彻底规避版本冲突，使 `extract_token_from_headers`
 /// 可同时接受两种 HeaderMap。
@@ -116,8 +116,8 @@ pub fn is_body_token_allowed_method(method: &str) -> bool {
 /// - `config`: 全局配置，决定从 header 还是 cookie 提取。
 pub fn extract_token_from_headers<H: HeaderLookup>(
     headers: &H,
-    config: &BulwarkConfig,
-) -> Result<Option<String>, BulwarkError> {
+    config: &GarrisonConfig,
+) -> Result<Option<String>, GarrisonError> {
     if config.is_read_header {
         // 1. Authorization: Bearer <token>
         if let Some(auth) = headers.get_header("authorization") {
@@ -233,7 +233,7 @@ mod tests {
             header::AUTHORIZATION,
             HeaderValue::from_static("Bearer my_token_123"),
         );
-        let config = BulwarkConfig::default_config();
+        let config = GarrisonConfig::default_config();
         let token = extract_token_from_headers(&headers, &config).unwrap();
         assert_eq!(token, Some("my_token_123".to_string()));
     }
@@ -241,7 +241,7 @@ mod tests {
     /// Bearer 前缀大小写不敏感（RFC 7235）。
     #[test]
     fn extract_token_bearer_case_insensitive() {
-        let config = BulwarkConfig::default_config();
+        let config = GarrisonConfig::default_config();
         for prefix in &["Bearer", "bearer", "BEARER", "BeArEr"] {
             let mut headers = HeaderMap::new();
             headers.insert(
@@ -263,10 +263,10 @@ mod tests {
     fn extract_token_from_custom_token_name_header() {
         let mut headers = HeaderMap::new();
         headers.insert(
-            "bulwark_token",
+            "garrison_token",
             HeaderValue::from_static("custom_header_tok"),
         );
-        let config = BulwarkConfig::default_config();
+        let config = GarrisonConfig::default_config();
         let token = extract_token_from_headers(&headers, &config).unwrap();
         assert_eq!(token, Some("custom_header_tok".to_string()));
     }
@@ -277,9 +277,9 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             header::COOKIE,
-            HeaderValue::from_static("bulwark_token=cookie_tok_456"),
+            HeaderValue::from_static("garrison_token=cookie_tok_456"),
         );
-        let config = BulwarkConfig::default_config();
+        let config = GarrisonConfig::default_config();
         let token = extract_token_from_headers(&headers, &config).unwrap();
         assert_eq!(token, Some("cookie_tok_456".to_string()));
     }
@@ -288,7 +288,7 @@ mod tests {
     #[test]
     fn extract_token_returns_none_when_missing() {
         let headers = HeaderMap::new();
-        let config = BulwarkConfig::default_config();
+        let config = GarrisonConfig::default_config();
         let token = extract_token_from_headers(&headers, &config).unwrap();
         assert_eq!(token, None);
     }
@@ -303,9 +303,9 @@ mod tests {
         );
         headers.insert(
             header::COOKIE,
-            HeaderValue::from_static("bulwark_token=cookie_tok"),
+            HeaderValue::from_static("garrison_token=cookie_tok"),
         );
-        let config = BulwarkConfig::default_config();
+        let config = GarrisonConfig::default_config();
         let token = extract_token_from_headers(&headers, &config).unwrap();
         assert_eq!(token, Some("header_tok".to_string()));
     }
@@ -315,14 +315,14 @@ mod tests {
     fn extract_token_custom_header_priority_over_cookie() {
         let mut headers = HeaderMap::new();
         headers.insert(
-            "bulwark_token",
+            "garrison_token",
             HeaderValue::from_static("custom_header_tok"),
         );
         headers.insert(
             header::COOKIE,
-            HeaderValue::from_static("bulwark_token=cookie_tok"),
+            HeaderValue::from_static("garrison_token=cookie_tok"),
         );
-        let config = BulwarkConfig::default_config();
+        let config = GarrisonConfig::default_config();
         let token = extract_token_from_headers(&headers, &config).unwrap();
         assert_eq!(token, Some("custom_header_tok".to_string()));
     }
@@ -337,9 +337,9 @@ mod tests {
         );
         headers.insert(
             header::COOKIE,
-            HeaderValue::from_static("bulwark_token=cookie_tok"),
+            HeaderValue::from_static("garrison_token=cookie_tok"),
         );
-        let mut config = BulwarkConfig::default_config();
+        let mut config = GarrisonConfig::default_config();
         config.is_read_header = false;
         // header 关闭，应走 cookie 路径
         let token = extract_token_from_headers(&headers, &config).unwrap();
@@ -356,9 +356,9 @@ mod tests {
         );
         headers.insert(
             header::COOKIE,
-            HeaderValue::from_static("bulwark_token=cookie_tok"),
+            HeaderValue::from_static("garrison_token=cookie_tok"),
         );
-        let mut config = BulwarkConfig::default_config();
+        let mut config = GarrisonConfig::default_config();
         config.is_read_cookie = false;
         // cookie 关闭，应走 header 路径
         let token = extract_token_from_headers(&headers, &config).unwrap();
@@ -375,9 +375,9 @@ mod tests {
         );
         headers.insert(
             header::COOKIE,
-            HeaderValue::from_static("bulwark_token=cookie_tok"),
+            HeaderValue::from_static("garrison_token=cookie_tok"),
         );
-        let mut config = BulwarkConfig::default_config();
+        let mut config = GarrisonConfig::default_config();
         config.is_read_header = false;
         config.is_read_cookie = false;
         let token = extract_token_from_headers(&headers, &config).unwrap();
@@ -390,9 +390,9 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             header::COOKIE,
-            HeaderValue::from_static("session=abc; bulwark_token=target_tok; other=val"),
+            HeaderValue::from_static("session=abc; garrison_token=target_tok; other=val"),
         );
-        let config = BulwarkConfig::default_config();
+        let config = GarrisonConfig::default_config();
         let token = extract_token_from_headers(&headers, &config).unwrap();
         assert_eq!(token, Some("target_tok".to_string()));
     }
@@ -407,9 +407,9 @@ mod tests {
         );
         headers.insert(
             header::COOKIE,
-            HeaderValue::from_static("bulwark_token=cookie_tok"),
+            HeaderValue::from_static("garrison_token=cookie_tok"),
         );
-        let config = BulwarkConfig::default_config();
+        let config = GarrisonConfig::default_config();
         // Authorization 无 Bearer 前缀，应回退到 cookie
         let token = extract_token_from_headers(&headers, &config).unwrap();
         assert_eq!(token, Some("cookie_tok".to_string()));

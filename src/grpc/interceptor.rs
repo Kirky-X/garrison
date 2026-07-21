@@ -4,24 +4,24 @@
 //! gRPC 鉴权拦截器实现。
 //!
 //! 从 `mod.rs` 迁移而出（规则 25：mod.rs 接口隔离）。
-//! 包含 `BulwarkGrpcInterceptor` 的构造、token 提取方法
+//! 包含 `GarrisonGrpcInterceptor` 的构造、token 提取方法
 //! 与 `tonic::Interceptor` trait 实现。
 //!
 //! ## 重要限制：仅校验 token 格式，不执行 async 鉴权
 //!
-//! `tonic::Interceptor::call` 是**同步** trait，无法直接调用异步的 `BulwarkUtil::check_login()`。
+//! `tonic::Interceptor::call` 是**同步** trait，无法直接调用异步的 `GarrisonUtil::check_login()`。
 //! 本拦截器仅完成 token 提取与基本格式校验（非空、`Bearer ` 前缀正确），
 //! **不**执行实际的登录态/权限校验。
 //!
-//! 实际的 async 鉴权应在 tonic service handler 内通过 `BulwarkContext`
-//! 显式调用 `BulwarkUtil::check_login()` 完成，或使用 `tower::Layer` middleware。
+//! 实际的 async 鉴权应在 tonic service handler 内通过 `GarrisonContext`
+//! 显式调用 `GarrisonUtil::check_login()` 完成，或使用 `tower::Layer` middleware。
 
 use tonic::service::Interceptor;
 use tonic::Status;
 
-use super::BulwarkGrpcInterceptor;
+use super::GarrisonGrpcInterceptor;
 
-impl BulwarkGrpcInterceptor {
+impl GarrisonGrpcInterceptor {
     /// 创建新的 gRPC 鉴权拦截器实例。
     ///
     /// 拦截器无状态，可在多个 tonic Server 间共享（实现 `Clone`）。
@@ -66,11 +66,11 @@ impl BulwarkGrpcInterceptor {
     }
 }
 
-impl Interceptor for BulwarkGrpcInterceptor {
+impl Interceptor for GarrisonGrpcInterceptor {
     #[allow(clippy::result_large_err)]
     fn call(&mut self, request: tonic::Request<()>) -> Result<tonic::Request<()>, Status> {
         // 仅校验 Authorization metadata 格式（Bearer 前缀 + 非空 token）
-        // 实际登录态/权限校验须在 tonic service handler 内通过 BulwarkContext 异步完成
+        // 实际登录态/权限校验须在 tonic service handler 内通过 GarrisonContext 异步完成
         let _token = Self::extract_token(request.metadata())?;
         Ok(request)
     }

@@ -14,14 +14,14 @@
 //!   未启用 feature 时返回 `NotImplemented`
 //!
 //! 与 `protocol::oauth2::oidc::OidcHandler` 的区别：
-//! - `OidcHandler`：Bulwark 作为 IdP 签发/验证 id_token
-//! - `OidcProvider` trait：Bulwark 作为 RP 与外部 IdP 交互
+//! - `OidcHandler`：Garrison 作为 IdP 签发/验证 id_token
+//! - `OidcProvider` trait：Garrison 作为 RP 与外部 IdP 交互
 //!
 //! 仅在启用 `protocol-sso` 特性时编译。`protocol-jwt` 特性启用后 `exchange_code`
 //! 在返回前自动调用 `validate_id_token`，未启用时保持向后兼容行为。
 
-use crate::dao::BulwarkDao;
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::dao::GarrisonDao;
+use crate::error::{GarrisonError, GarrisonResult};
 use async_trait::async_trait;
 use percent_encoding::{utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
 use serde::{Deserialize, Serialize};
@@ -43,31 +43,31 @@ const HTTP_READ_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
 
 /// 构造带超时配置的 `reqwest::Client`（E1 修复，protocol-sso 本地副本）。
-fn build_safe_http_client() -> BulwarkResult<reqwest::Client> {
+fn build_safe_http_client() -> GarrisonResult<reqwest::Client> {
     reqwest::Client::builder()
         .connect_timeout(HTTP_CONNECT_TIMEOUT)
         .read_timeout(HTTP_READ_TIMEOUT)
         .build()
-        .map_err(|e| BulwarkError::Network(format!("sso-oidc-http-client-build::{}", e)))
+        .map_err(|e| GarrisonError::Network(format!("sso-oidc-http-client-build::{}", e)))
 }
 
 /// 读取响应体并强制大小上限（E2 修复，protocol-sso 本地副本）。
 ///
 /// 使用 `resp.chunk()` 流式累积，超过 [`MAX_BODY_BYTES`] 立即中断返回 Err。
-async fn read_limited_bytes(resp: reqwest::Response) -> BulwarkResult<Vec<u8>> {
+async fn read_limited_bytes(resp: reqwest::Response) -> GarrisonResult<Vec<u8>> {
     let mut buf: Vec<u8> = Vec::new();
     let mut resp = resp;
     while let Some(chunk) = resp
         .chunk()
         .await
-        .map_err(|e| BulwarkError::Network(format!("sso-oidc-body-read::{}", e)))?
+        .map_err(|e| GarrisonError::Network(format!("sso-oidc-body-read::{}", e)))?
     {
         let new_len = buf
             .len()
             .checked_add(chunk.len())
-            .ok_or_else(|| BulwarkError::Network("sso-oidc-body-overflow".to_string()))?;
+            .ok_or_else(|| GarrisonError::Network("sso-oidc-body-overflow".to_string()))?;
         if new_len > MAX_BODY_BYTES {
-            return Err(BulwarkError::Network(format!(
+            return Err(GarrisonError::Network(format!(
                 "sso-oidc-body-exceeds-limit::{}",
                 MAX_BODY_BYTES
             )));
@@ -78,10 +78,10 @@ async fn read_limited_bytes(resp: reqwest::Response) -> BulwarkResult<Vec<u8>> {
 }
 
 /// 读取响应体为 UTF-8 字符串，强制大小上限（E2 修复，protocol-sso 本地副本）。
-async fn read_limited_text(resp: reqwest::Response) -> BulwarkResult<String> {
+async fn read_limited_text(resp: reqwest::Response) -> GarrisonResult<String> {
     let bytes = read_limited_bytes(resp).await?;
     String::from_utf8(bytes)
-        .map_err(|e| BulwarkError::Network(format!("sso-oidc-body-utf8::{}", e)))
+        .map_err(|e| GarrisonError::Network(format!("sso-oidc-body-utf8::{}", e)))
 }
 
 /// JWKS 公钥缓存 TTL。
@@ -99,14 +99,14 @@ const OIDC_STATE_TTL: Duration = Duration::from_secs(600);
 
 /// JWKS 缓存 key 前缀（拼入 DAO key：`oidc:jwks:{issuer}`）。
 ///
-/// 通过 [`BulwarkDao`] 抽象层委托 oxcache 管理 JWKS JSON + TTL，
+/// 通过 [`GarrisonDao`] 抽象层委托 oxcache 管理 JWKS JSON + TTL，
 /// 禁止手写内存缓存（用户铁律：所有缓存由 oxcache 接管）。
 #[cfg(feature = "protocol-jwt")]
 const JWKS_CACHE_KEY_PREFIX: &str = "oidc:jwks:";
 
 /// OIDC state 缓存 key 前缀（拼入 DAO key：`oidc:state:{state}`）。
 ///
-/// 通过 [`BulwarkDao`] 抽象层委托 oxcache 管理 state 注册/消费/TTL，
+/// 通过 [`GarrisonDao`] 抽象层委托 oxcache 管理 state 注册/消费/TTL，
 /// 替代手写 `Mutex<HashMap<String, Instant>>`。
 /// oxcache 自动管理 TTL 过期与容量上限，无需 LRU 淘汰逻辑。
 const OIDC_STATE_KEY_PREFIX: &str = "oidc:state:";
@@ -184,7 +184,7 @@ pub trait OidcProvider: Send + Sync {
         redirect_uri: &str,
         state: &str,
         scopes: &[&str],
-    ) -> BulwarkResult<String>;
+    ) -> GarrisonResult<String>;
 
     /// 交换授权码获取 id_token。
     ///
@@ -198,13 +198,13 @@ pub trait OidcProvider: Send + Sync {
     /// id_token 字符串（JWT 格式）。
     ///
     /// # 错误
-    /// - `BulwarkError::InvalidParam`: state 未注册、不匹配或已过期（CSRF 防护）。
+    /// - `GarrisonError::InvalidParam`: state 未注册、不匹配或已过期（CSRF 防护）。
     async fn exchange_code(
         &self,
         code: &str,
         redirect_uri: &str,
         state: &str,
-    ) -> BulwarkResult<String>;
+    ) -> GarrisonResult<String>;
 
     /// 获取用户信息。
     ///
@@ -213,7 +213,7 @@ pub trait OidcProvider: Send + Sync {
     ///
     /// # 返回
     /// `OidcUserInfo` 结构。
-    async fn get_user_info(&self, access_token: &str) -> BulwarkResult<OidcUserInfo>;
+    async fn get_user_info(&self, access_token: &str) -> GarrisonResult<OidcUserInfo>;
 
     /// 验证 id_token。
     ///
@@ -222,8 +222,8 @@ pub trait OidcProvider: Send + Sync {
     ///
     /// # 返回
     /// - `Ok(true)`: 验证通过。
-    /// - `Err(BulwarkError::NotImplemented)`: JWT 验证尚未实现。
-    async fn validate_id_token(&self, id_token: &str) -> BulwarkResult<bool>;
+    /// - `Err(GarrisonError::NotImplemented)`: JWT 验证尚未实现。
+    async fn validate_id_token(&self, id_token: &str) -> GarrisonResult<bool>;
 }
 
 // ============================================================================
@@ -266,11 +266,11 @@ struct JwksResponse {
 ///
 /// # 缓存行为
 ///
-/// JWKS 公钥缓存与 state 注册表均通过 [`BulwarkDao`]（oxcache 抽象层）管理，
+/// JWKS 公钥缓存与 state 注册表均通过 [`GarrisonDao`]（oxcache 抽象层）管理，
 /// **禁止手写内存缓存**（用户铁律：所有缓存由 oxcache 接管）。
 /// 调用方必须通过 [`with_dao`](Self::with_dao) 注入 DAO 实例，
 /// 否则 `get_authorization_url` / `exchange_code` / `validate_id_token` 返回
-/// [`BulwarkError::Config`] 错误。
+/// [`GarrisonError::Config`] 错误。
 pub struct DefaultOidcProvider {
     /// Discovery 配置（含 endpoints）。
     config: OidcDiscoveryConfig,
@@ -283,8 +283,8 @@ pub struct DefaultOidcProvider {
     /// DAO 抽象（通过 oxcache 管理 JWKS 缓存 + state 注册表）。
     ///
     /// `None` 时 `get_authorization_url` / `exchange_code` / `validate_id_token`
-    /// 返回 [`BulwarkError::Config`] 错误。调用方通过 [`with_dao`](Self::with_dao) 注入。
-    dao: Option<Arc<dyn BulwarkDao>>,
+    /// 返回 [`GarrisonError::Config`] 错误。调用方通过 [`with_dao`](Self::with_dao) 注入。
+    dao: Option<Arc<dyn GarrisonDao>>,
     /// state TTL（默认 `OIDC_STATE_TTL`，可通过 `with_state_ttl` 自定义）。
     ///
     /// 通过 `dao.set("oidc:state:{state}", "1", state_ttl.as_secs())` 写入 DAO，
@@ -305,7 +305,7 @@ impl DefaultOidcProvider {
     /// 调用方负责提供 `OidcDiscoveryConfig`（含 endpoints），provider 不自动获取 discovery 文档。
     ///
     /// **注意**：返回的实例未注入 DAO，`get_authorization_url` / `exchange_code` /
-    /// `validate_id_token` 会返回 [`BulwarkError::Config`] 错误。
+    /// `validate_id_token` 会返回 [`GarrisonError::Config`] 错误。
     /// 必须调用 [`with_dao`](Self::with_dao) 注入 DAO 实例后才能正常工作。
     ///
     /// # 参数
@@ -314,12 +314,12 @@ impl DefaultOidcProvider {
     /// - `client_secret`: 客户端密钥。
     ///
     /// # 错误
-    /// - `BulwarkError::Network`: `reqwest::Client` 构建失败（E1：含超时配置）。
+    /// - `GarrisonError::Network`: `reqwest::Client` 构建失败（E1：含超时配置）。
     pub fn new(
         config: OidcDiscoveryConfig,
         client_id: &str,
         client_secret: &str,
-    ) -> BulwarkResult<Self> {
+    ) -> GarrisonResult<Self> {
         // E1：使用 build_safe_http_client 注入 connect_timeout=10s / read_timeout=30s，
         // 防止恶意或慢速 IdP 拖垮服务端连接池（slowloris 类攻击）。
         let http_client = build_safe_http_client()?;
@@ -335,10 +335,10 @@ impl DefaultOidcProvider {
         })
     }
 
-    /// 注入 [`BulwarkDao`] 实例以接管 JWKS 缓存与 state 注册表。
+    /// 注入 [`GarrisonDao`] 实例以接管 JWKS 缓存与 state 注册表。
     ///
     /// **必选调用**：`get_authorization_url` / `exchange_code` / `validate_id_token`
-    /// 依赖 DAO 管理缓存与 state，未注入 DAO 时返回 [`BulwarkError::Config`] 错误。
+    /// 依赖 DAO 管理缓存与 state，未注入 DAO 时返回 [`GarrisonError::Config`] 错误。
     ///
     /// - JWKS 缓存 key：`oidc:jwks:{issuer}`，TTL 由 `JWKS_CACHE_TTL` 控制。
     /// - state 缓存 key：`oidc:state:{state}`，TTL 由 `OIDC_STATE_TTL` 或
@@ -346,15 +346,15 @@ impl DefaultOidcProvider {
     ///
     /// # 参数
     ///
-    /// - `dao`: DAO 实例（通常为 `Arc<BulwarkDaoOxcache>` 或测试用 `Arc<MockDao>`）。
+    /// - `dao`: DAO 实例（通常为 `Arc<GarrisonDaoOxcache>` 或测试用 `Arc<MockDao>`）。
     ///
     /// # 示例
     ///
     /// ```ignore
     /// let provider = DefaultOidcProvider::new(config, "cid", "secret")
-    ///     .with_dao(Arc::new(BulwarkDaoOxcache::new().await?));
+    ///     .with_dao(Arc::new(GarrisonDaoOxcache::new().await?));
     /// ```
-    pub fn with_dao(mut self, dao: Arc<dyn BulwarkDao>) -> Self {
+    pub fn with_dao(mut self, dao: Arc<dyn GarrisonDao>) -> Self {
         self.dao = Some(dao);
         self
     }
@@ -407,9 +407,9 @@ impl DefaultOidcProvider {
     ///
     /// `get_authorization_url` 调用此方法将 state 写入 DAO：
     /// `dao.set("oidc:state:{state}", "1", state_ttl.as_secs())`
-    async fn register_state(&self, state: &str) -> BulwarkResult<()> {
+    async fn register_state(&self, state: &str) -> GarrisonResult<()> {
         let dao = self.dao.as_ref().ok_or_else(|| {
-            BulwarkError::Config("sso-oidc-dao-missing-register-state".to_string())
+            GarrisonError::Config("sso-oidc-dao-missing-register-state".to_string())
         })?;
         let key = Self::state_cache_key(state);
         dao.set(&key, "1", self.state_ttl.as_secs()).await
@@ -423,17 +423,17 @@ impl DefaultOidcProvider {
     ///
     /// # 返回
     /// - `Ok(())`: state 有效
-    /// - `Err(BulwarkError::InvalidParam)`: state 未注册 / 不匹配 / 已过期
-    /// - `Err(BulwarkError::Config)`: 未注入 DAO
-    async fn validate_and_consume_state(&self, state: &str) -> BulwarkResult<()> {
+    /// - `Err(GarrisonError::InvalidParam)`: state 未注册 / 不匹配 / 已过期
+    /// - `Err(GarrisonError::Config)`: 未注入 DAO
+    async fn validate_and_consume_state(&self, state: &str) -> GarrisonResult<()> {
         let dao = self.dao.as_ref().ok_or_else(|| {
-            BulwarkError::Config("sso-oidc-dao-missing-validate-state".to_string())
+            GarrisonError::Config("sso-oidc-dao-missing-validate-state".to_string())
         })?;
         let key = Self::state_cache_key(state);
         let value = dao.get_and_delete(&key).await?;
         match value {
             Some(_) => Ok(()),
-            None => Err(BulwarkError::InvalidParam(format!(
+            None => Err(GarrisonError::InvalidParam(format!(
                 "sso-oidc-state-mismatch-or-expired::{}",
                 self.state_ttl.as_secs()
             ))),
@@ -448,27 +448,27 @@ impl DefaultOidcProvider {
     ///
     /// # 错误
     ///
-    /// - `BulwarkError::Config`: 未调用 [`with_dao`](Self::with_dao) 注入 DAO。
-    /// - `BulwarkError::Internal`: HTTP 请求失败、非 2xx 状态码、JSON 解析失败或 DAO 写入失败。
+    /// - `GarrisonError::Config`: 未调用 [`with_dao`](Self::with_dao) 注入 DAO。
+    /// - `GarrisonError::Internal`: HTTP 请求失败、非 2xx 状态码、JSON 解析失败或 DAO 写入失败。
     #[cfg(feature = "protocol-jwt")]
-    async fn fetch_jwks(&self) -> BulwarkResult<()> {
+    async fn fetch_jwks(&self) -> GarrisonResult<()> {
         let dao = self
             .dao
             .as_ref()
-            .ok_or_else(|| BulwarkError::Config("sso-oidc-dao-missing-cache-jwks".to_string()))?;
+            .ok_or_else(|| GarrisonError::Config("sso-oidc-dao-missing-cache-jwks".to_string()))?;
 
         let resp = self
             .http_client
             .get(&self.config.jwks_uri)
             .send()
             .await
-            .map_err(|e| BulwarkError::Internal(format!("sso-oidc-jwks-request::{}", e)))?;
+            .map_err(|e| GarrisonError::Internal(format!("sso-oidc-jwks-request::{}", e)))?;
 
         if !resp.status().is_success() {
             let status = resp.status();
             // E2：错误响应体也限大小（4 MiB），防止恶意 IdP 通过错误响应触发 OOM
             let body = read_limited_text(resp).await.unwrap_or_default();
-            return Err(BulwarkError::Internal(format!(
+            return Err(GarrisonError::Internal(format!(
                 "sso-oidc-jwks-status-error::{}::{}",
                 status, body
             )));
@@ -477,13 +477,13 @@ impl DefaultOidcProvider {
         // E2：限制响应体大小（4 MiB），防止恶意 IdP 通过超大 JWKS JSON 触发 OOM
         let bytes = read_limited_bytes(resp)
             .await
-            .map_err(|e| BulwarkError::Internal(format!("sso-oidc-jwks-body-read::{}", e)))?;
+            .map_err(|e| GarrisonError::Internal(format!("sso-oidc-jwks-body-read::{}", e)))?;
         let jwks: JwksResponse = serde_json::from_slice(&bytes)
-            .map_err(|e| BulwarkError::Internal(format!("sso-oidc-jwks-parse::{}", e)))?;
+            .map_err(|e| GarrisonError::Internal(format!("sso-oidc-jwks-parse::{}", e)))?;
 
         // 序列化为 JSON 字符串存入 DAO（反序列化时按相同结构解析）
         let json = serde_json::to_string(&jwks)
-            .map_err(|e| BulwarkError::Internal(format!("sso-oidc-jwks-serialize::{}", e)))?;
+            .map_err(|e| GarrisonError::Internal(format!("sso-oidc-jwks-serialize::{}", e)))?;
         let cache_key = self.jwks_cache_key();
         dao.set(&cache_key, &json, JWKS_CACHE_TTL.as_secs()).await?;
         Ok(())
@@ -505,12 +505,12 @@ impl DefaultOidcProvider {
     ///
     /// # 错误
     ///
-    /// - `BulwarkError::Config`: 未调用 [`with_dao`](Self::with_dao) 注入 DAO。
-    /// - `BulwarkError::InvalidToken`: JWT header 解析失败 / kid 缺失 / JWKS 无匹配公钥 /
+    /// - `GarrisonError::Config`: 未调用 [`with_dao`](Self::with_dao) 注入 DAO。
+    /// - `GarrisonError::InvalidToken`: JWT header 解析失败 / kid 缺失 / JWKS 无匹配公钥 /
     ///   签名验证失败 / claims 解析失败 / token 已过期 / iss 不匹配 / aud 不匹配。
-    /// - `BulwarkError::Internal`: JWKS 拉取失败 / DAO 读写失败 / 反序列化失败。
+    /// - `GarrisonError::Internal`: JWKS 拉取失败 / DAO 读写失败 / 反序列化失败。
     #[cfg(feature = "protocol-jwt")]
-    async fn validate_id_token_impl(&self, id_token: &str) -> BulwarkResult<bool> {
+    async fn validate_id_token_impl(&self, id_token: &str) -> GarrisonResult<bool> {
         use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
 
         /// id_token 的 aud claim 类型（H3 修复：支持 String 或 Vec<String>）。
@@ -547,14 +547,14 @@ impl DefaultOidcProvider {
         let dao = self
             .dao
             .as_ref()
-            .ok_or_else(|| BulwarkError::Config("sso-oidc-dao-missing-cache-jwks".to_string()))?;
+            .ok_or_else(|| GarrisonError::Config("sso-oidc-dao-missing-cache-jwks".to_string()))?;
 
         // 1. 解析 JWT header，提取 kid
         let header = jsonwebtoken::decode_header(id_token).map_err(|e| {
-            BulwarkError::InvalidToken(format!("sso-oidc-id-token-header-parse::{}", e))
+            GarrisonError::InvalidToken(format!("sso-oidc-id-token-header-parse::{}", e))
         })?;
         let kid = header.kid.as_deref().ok_or_else(|| {
-            BulwarkError::InvalidToken("sso-oidc-id-token-header-missing-kid".to_string())
+            GarrisonError::InvalidToken("sso-oidc-id-token-header-missing-kid".to_string())
         })?;
 
         // 2. 从 DAO 读取 JWKS 缓存；缓存 miss 或反序列化失败（缓存损坏）时重新拉取。
@@ -582,12 +582,12 @@ impl DefaultOidcProvider {
                         // 仍未命中：真正发起 JWKS 拉取并写入缓存
                         self.fetch_jwks().await?;
                         let json = dao.get(&cache_key).await?.ok_or_else(|| {
-                            BulwarkError::Internal(
+                            GarrisonError::Internal(
                                 "sso-oidc-jwks-cache-empty-after-fetch".to_string(),
                             )
                         })?;
                         serde_json::from_str(&json).map_err(|e| {
-                            BulwarkError::Internal(format!("sso-oidc-jwks-parse::{}", e))
+                            GarrisonError::Internal(format!("sso-oidc-jwks-parse::{}", e))
                         })?
                     },
                 }
@@ -597,12 +597,12 @@ impl DefaultOidcProvider {
         // 3. 按 kid 匹配 JWKS 公钥
         let jwk = jwks.keys.iter().find(|k| k.kid == kid).cloned();
         let jwk = jwk.ok_or_else(|| {
-            BulwarkError::InvalidToken(format!("sso-oidc-jwks-key-not-found::{}", kid))
+            GarrisonError::InvalidToken(format!("sso-oidc-jwks-key-not-found::{}", kid))
         })?;
 
         // 4. 构造 DecodingKey 并验签
         let decoding_key = DecodingKey::from_rsa_components(&jwk.n, &jwk.e)
-            .map_err(|e| BulwarkError::InvalidToken(format!("sso-oidc-rsa-build::{}", e)))?;
+            .map_err(|e| GarrisonError::InvalidToken(format!("sso-oidc-rsa-build::{}", e)))?;
         let mut validation = Validation::new(Algorithm::RS256);
         validation.validate_exp = true;
         validation.leeway = 0;
@@ -614,15 +614,15 @@ impl DefaultOidcProvider {
             decode::<IdTokenClaims>(id_token, &decoding_key, &validation).map_err(|e| {
                 let msg = e.to_string();
                 if msg.contains("ExpiredSignature") {
-                    BulwarkError::InvalidToken("sso-oidc-id-token-expired".to_string())
+                    GarrisonError::InvalidToken("sso-oidc-id-token-expired".to_string())
                 } else {
-                    BulwarkError::InvalidToken(format!("sso-oidc-id-token-verify::{}", e))
+                    GarrisonError::InvalidToken(format!("sso-oidc-id-token-verify::{}", e))
                 }
             })?;
 
         // 5. 校验 iss（必须匹配 config.issuer）
         if token_data.claims.iss != self.config.issuer {
-            return Err(BulwarkError::InvalidToken(format!(
+            return Err(GarrisonError::InvalidToken(format!(
                 "sso-oidc-id-token-invalid::{}::{}",
                 self.config.issuer, token_data.claims.iss
             )));
@@ -630,7 +630,7 @@ impl DefaultOidcProvider {
 
         // 6. 校验 aud（必须包含 client_id，支持 String 或数组形式，见 H3）
         if !token_data.claims.aud.contains(&self.client_id) {
-            return Err(BulwarkError::InvalidToken(format!(
+            return Err(GarrisonError::InvalidToken(format!(
                 "sso-oidc-id-token-invalid::{}::{:?}",
                 self.client_id, token_data.claims.aud
             )));
@@ -647,7 +647,7 @@ impl OidcProvider for DefaultOidcProvider {
         redirect_uri: &str,
         state: &str,
         scopes: &[&str],
-    ) -> BulwarkResult<String> {
+    ) -> GarrisonResult<String> {
         // 注册 state 供 exchange_code 校验（CSRF 防护）。
         // TTL 过期由 oxcache 自动管理（set 时传入 TTL），无需 cleanup_expired_states。
         self.register_state(state).await?;
@@ -669,7 +669,7 @@ impl OidcProvider for DefaultOidcProvider {
         code: &str,
         redirect_uri: &str,
         state: &str,
-    ) -> BulwarkResult<String> {
+    ) -> GarrisonResult<String> {
         // 校验 state 是否已注册且未过期（CSRF 防护）
         // 校验通过后立即消费 state（one-time use，防止重放）
         self.validate_and_consume_state(state).await?;
@@ -688,13 +688,13 @@ impl OidcProvider for DefaultOidcProvider {
             .form(&params)
             .send()
             .await
-            .map_err(|e| BulwarkError::Internal(format!("sso-oidc-token-exchange::{}", e)))?;
+            .map_err(|e| GarrisonError::Internal(format!("sso-oidc-token-exchange::{}", e)))?;
 
         if !resp.status().is_success() {
             let status = resp.status();
             // E2：错误响应体也限大小（4 MiB），防止恶意 IdP 通过错误响应触发 OOM
             let body = read_limited_text(resp).await.unwrap_or_default();
-            return Err(BulwarkError::Internal(format!(
+            return Err(GarrisonError::Internal(format!(
                 "sso-oidc-token-status-error::{}::{}",
                 status, body
             )));
@@ -703,13 +703,13 @@ impl OidcProvider for DefaultOidcProvider {
         // E2：限制响应体大小（4 MiB），防止恶意 IdP 通过超大 token JSON 触发 OOM
         let bytes = read_limited_bytes(resp)
             .await
-            .map_err(|e| BulwarkError::Internal(format!("sso-oidc-token-body-read::{}", e)))?;
+            .map_err(|e| GarrisonError::Internal(format!("sso-oidc-token-body-read::{}", e)))?;
         let token_response: TokenResponse = serde_json::from_slice(&bytes)
-            .map_err(|e| BulwarkError::Internal(format!("sso-oidc-token-parse::{}", e)))?;
+            .map_err(|e| GarrisonError::Internal(format!("sso-oidc-token-parse::{}", e)))?;
 
         let id_token = token_response
             .id_token
-            .ok_or_else(|| BulwarkError::Internal("sso-oidc-missing-id-token".to_string()))?;
+            .ok_or_else(|| GarrisonError::Internal("sso-oidc-missing-id-token".to_string()))?;
 
         // 启用 protocol-jwt 时在返回前验证 id_token 签名 + iss/aud/exp。
         // 未启用 protocol-jwt 时保持向后兼容行为（不验签，直接返回 id_token）。
@@ -721,20 +721,20 @@ impl OidcProvider for DefaultOidcProvider {
         Ok(id_token)
     }
 
-    async fn get_user_info(&self, access_token: &str) -> BulwarkResult<OidcUserInfo> {
+    async fn get_user_info(&self, access_token: &str) -> GarrisonResult<OidcUserInfo> {
         let resp = self
             .http_client
             .get(&self.config.userinfo_endpoint)
             .bearer_auth(access_token)
             .send()
             .await
-            .map_err(|e| BulwarkError::Internal(format!("sso-oidc-userinfo-request::{}", e)))?;
+            .map_err(|e| GarrisonError::Internal(format!("sso-oidc-userinfo-request::{}", e)))?;
 
         if !resp.status().is_success() {
             let status = resp.status();
             // E2：错误响应体也限大小（4 MiB），防止恶意 IdP 通过错误响应触发 OOM
             let body = read_limited_text(resp).await.unwrap_or_default();
-            return Err(BulwarkError::Internal(format!(
+            return Err(GarrisonError::Internal(format!(
                 "sso-oidc-userinfo-status-error::{}::{}",
                 status, body
             )));
@@ -743,12 +743,12 @@ impl OidcProvider for DefaultOidcProvider {
         // E2：限制响应体大小（4 MiB），防止恶意 IdP 通过超大 userinfo JSON 触发 OOM
         let bytes = read_limited_bytes(resp)
             .await
-            .map_err(|e| BulwarkError::Internal(format!("sso-oidc-userinfo-body-read::{}", e)))?;
+            .map_err(|e| GarrisonError::Internal(format!("sso-oidc-userinfo-body-read::{}", e)))?;
         serde_json::from_slice::<OidcUserInfo>(&bytes)
-            .map_err(|e| BulwarkError::Internal(format!("sso-oidc-userinfo-parse::{}", e)))
+            .map_err(|e| GarrisonError::Internal(format!("sso-oidc-userinfo-parse::{}", e)))
     }
 
-    async fn validate_id_token(&self, id_token: &str) -> BulwarkResult<bool> {
+    async fn validate_id_token(&self, id_token: &str) -> GarrisonResult<bool> {
         // 启用 protocol-jwt 时执行 JWKS 验签 + iss/aud/exp 校验。
         // 未启用 protocol-jwt 时返回 NotImplemented（保持向后兼容）。
         #[cfg(feature = "protocol-jwt")]
@@ -758,7 +758,7 @@ impl OidcProvider for DefaultOidcProvider {
         #[cfg(not(feature = "protocol-jwt"))]
         {
             let _ = id_token;
-            Err(BulwarkError::NotImplemented(
+            Err(GarrisonError::NotImplemented(
                 "sso-oidc-validate-not-implemented".to_string(),
             ))
         }
@@ -985,7 +985,7 @@ mod tests {
         let result = provider.validate_id_token("fake.jwt.token").await;
         assert!(result.is_err());
         match result.err() {
-            Some(BulwarkError::NotImplemented(_)) => {},
+            Some(GarrisonError::NotImplemented(_)) => {},
             other => panic!("期望 NotImplemented 错误，实际: {:?}", other),
         }
     }
@@ -1447,7 +1447,7 @@ mod tests {
         let result = provider.validate_id_token(&id_token).await;
         assert!(result.is_err(), "无效签名应返回错误");
         match result.err() {
-            Some(BulwarkError::InvalidToken(msg)) => {
+            Some(GarrisonError::InvalidToken(msg)) => {
                 assert!(
                     msg.contains("sso-oidc-id-token-verify"),
                     "无效签名应返回验签失败消息，实际: {}",
@@ -1484,7 +1484,7 @@ mod tests {
         let result = provider.validate_id_token(&id_token).await;
         assert!(result.is_err(), "过期 token 应返回错误");
         match result.err() {
-            Some(BulwarkError::InvalidToken(msg)) => {
+            Some(GarrisonError::InvalidToken(msg)) => {
                 assert!(
                     msg.contains("过期") || msg.contains("expired"),
                     "过期 token 应返回过期相关消息，实际: {}",
@@ -1521,7 +1521,7 @@ mod tests {
         let result = provider.validate_id_token(&id_token).await;
         assert!(result.is_err(), "iss 不匹配应返回错误");
         match result.err() {
-            Some(BulwarkError::InvalidToken(msg)) => {
+            Some(GarrisonError::InvalidToken(msg)) => {
                 assert!(
                     msg.contains("iss"),
                     "iss 不匹配应返回 iss 相关消息，实际: {}",
@@ -1558,7 +1558,7 @@ mod tests {
         let result = provider.validate_id_token(&id_token).await;
         assert!(result.is_err(), "aud 不匹配应返回错误");
         match result.err() {
-            Some(BulwarkError::InvalidToken(msg)) => {
+            Some(GarrisonError::InvalidToken(msg)) => {
                 assert!(
                     msg.contains("sso-oidc-id-token-invalid"),
                     "aud 不匹配应返回 aud 相关消息，实际: {}",
@@ -1630,7 +1630,7 @@ mod tests {
         let result = provider.validate_id_token(&id_token).await;
         assert!(result.is_err(), "aud 数组不含 client_id 时应返回错误");
         match result.err() {
-            Some(BulwarkError::InvalidToken(msg)) => {
+            Some(GarrisonError::InvalidToken(msg)) => {
                 assert!(
                     msg.contains("sso-oidc-id-token-invalid"),
                     "aud 不匹配应返回 aud 相关消息，实际: {}",
@@ -1720,7 +1720,7 @@ mod tests {
             "exchange_code 应在 validate_id_token 失败时返回错误"
         );
         match result.err() {
-            Some(BulwarkError::InvalidToken(msg)) => {
+            Some(GarrisonError::InvalidToken(msg)) => {
                 assert!(
                     msg.contains("sso-oidc-id-token-verify"),
                     "exchange_code 应传递验签失败错误，实际: {}",
@@ -1774,7 +1774,7 @@ mod tests {
             .await;
         assert!(result.is_err(), "未注册的 state 应被拒绝");
         match result.err() {
-            Some(BulwarkError::InvalidParam(msg)) => {
+            Some(GarrisonError::InvalidParam(msg)) => {
                 assert!(msg.contains("state"), "错误消息应提及 state，实际: {}", msg);
             },
             other => panic!("期望 InvalidParam 错误，实际: {:?}", other),
@@ -1824,7 +1824,7 @@ mod tests {
             .await;
         assert!(result.is_err(), "不匹配的 state 应被拒绝");
         match result.err() {
-            Some(BulwarkError::InvalidParam(_)) => {},
+            Some(GarrisonError::InvalidParam(_)) => {},
             other => panic!("期望 InvalidParam 错误，实际: {:?}", other),
         }
     }
@@ -1895,14 +1895,14 @@ mod tests {
             .await;
         assert!(second.is_err(), "重用 state 应被拒绝（one-time use）");
         match second.err() {
-            Some(BulwarkError::InvalidParam(_)) => {},
+            Some(GarrisonError::InvalidParam(_)) => {},
             other => panic!("期望 InvalidParam 错误，实际: {:?}", other),
         }
     }
 
     ///  state 过期后应被拒绝。
     ///
-    /// 使用极短 TTL（1 秒，受 BulwarkDao::set 的 ttl_seconds: u64 精度限制），
+    /// 使用极短 TTL（1 秒，受 GarrisonDao::set 的 ttl_seconds: u64 精度限制），
     /// 注册后等待过期，再调用 exchange_code 应失败。
     /// oxcache 自动管理 TTL 过期，Provider 层不负责清理。
     #[tokio::test]
@@ -1931,7 +1931,7 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        // 使用 1 秒 TTL（BulwarkDao::set 的 ttl_seconds: u64 最小粒度为秒）
+        // 使用 1 秒 TTL（GarrisonDao::set 的 ttl_seconds: u64 最小粒度为秒）
         let provider = DefaultOidcProvider::new(config, "cid", "cs")
             .unwrap()
             .with_dao(Arc::new(MockDao::new()))
@@ -1947,7 +1947,7 @@ mod tests {
             .await;
         assert!(result.is_err(), "过期的 state 应被拒绝");
         match result.err() {
-            Some(BulwarkError::InvalidParam(msg)) => {
+            Some(GarrisonError::InvalidParam(msg)) => {
                 assert!(
                     msg.contains("sso-oidc-state-mismatch-or-expired"),
                     "错误消息应提及过期，实际: {}",
@@ -2140,7 +2140,7 @@ mod tests {
         let result = read_limited_bytes(resp).await;
         assert!(result.is_err(), "超大响应应返回错误");
         match result.err() {
-            Some(BulwarkError::Network(msg)) => {
+            Some(GarrisonError::Network(msg)) => {
                 assert!(
                     msg.contains("sso-oidc-body-exceeds-limit")
                         || msg.contains("sso-oidc-body-overflow"),

@@ -14,9 +14,9 @@
 
 #[cfg(all(feature = "protocol-jwt", feature = "db-sqlite"))]
 mod refresh_token_e2e {
-    use bulwark::protocol::jwt::JwtHandler;
-    use bulwark::{BulwarkError, RefreshTokenRotation};
     use dbnexus::DbPool;
+    use garrison::protocol::jwt::JwtHandler;
+    use garrison::{GarrisonError, RefreshTokenRotation};
     use sea_orm::{ConnectionTrait, DbBackend, Statement, Value};
     use std::sync::{Arc, RwLock};
 
@@ -84,7 +84,7 @@ mod refresh_token_e2e {
     /// 断言：
     /// 1. 首次 rotate 返回新 access + 新 refresh token
     /// 2. 首次 rotate 后旧 token revoked=1
-    /// 3. 重用旧 token 触发 BulwarkError::InvalidToken
+    /// 3. 重用旧 token 触发 GarrisonError::InvalidToken
     /// 4. 重用检测后整条链（t1 + t2）revoked=1
     #[tokio::test(flavor = "multi_thread")]
     async fn refresh_token_rotation_reuse_detection_e2e() {
@@ -140,7 +140,7 @@ mod refresh_token_e2e {
     /// 1. 预先插入一个 revoked=1 的 refresh token（模拟已被撤销的 token）
     /// 2. 调用 `rotate(old_token)` → `detect_reuse` 发现 revoked=1 → 撤销链后返回 `TokenRevoked`
     ///
-    /// 断言：返回 `Err(BulwarkError::TokenRevoked)`，错误信息包含 "reuse" 或 "revoked"。
+    /// 断言：返回 `Err(GarrisonError::TokenRevoked)`，错误信息包含 "reuse" 或 "revoked"。
     #[tokio::test(flavor = "multi_thread")]
     async fn refresh_access_token_with_revoked_token_returns_error() {
         let pool = setup_db().await;
@@ -158,7 +158,7 @@ mod refresh_token_e2e {
         // 3. 调用 rotate 直接验证行为（透传 TokenRevoked）
         let result = rotation.rotate(old_token).await;
         assert!(
-            matches!(result, Err(BulwarkError::TokenRevoked(ref msg)) if msg.contains("reuse") || msg.contains("revoked")),
+            matches!(result, Err(GarrisonError::TokenRevoked(ref msg)) if msg.contains("reuse") || msg.contains("revoked")),
             "已撤销 token 应返回 TokenRevoked 错误，实际: {:?}",
             result
         );

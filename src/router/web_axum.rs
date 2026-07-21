@@ -1,20 +1,20 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! `BulwarkRouter`：axum Web 框架适配的路由器，包装 `axum::Router` 并管理鉴权路由规则。
+//! `GarrisonRouter`：axum Web 框架适配的路由器，包装 `axum::Router` 并管理鉴权路由规则。
 //!
-//! 通过 `route_protected` 注册路由 + 注解，`build` 时应用 `bulwark_middleware`：
+//! 通过 `route_protected` 注册路由 + 注解，`build` 时应用 `garrison_middleware`：
 //! 提取 token → `with_current_token` 设置 task_local → 调用 `interceptor.pre_handle`
 //! → 执行 handler。
 
-use super::{BulwarkInterceptor, DefaultBulwarkInterceptor};
+use super::{DefaultGarrisonInterceptor, GarrisonInterceptor};
 use crate::annotation::Annotation;
-use crate::config::BulwarkConfig;
+use crate::config::GarrisonConfig;
 use crate::context::axum_adapter::AxumRequest;
 #[cfg(feature = "tenant-isolation")]
 use crate::context::tenant::TenantResolver;
-use crate::context::BulwarkRequest;
-use crate::error::BulwarkError;
+use crate::context::GarrisonRequest;
+use crate::error::GarrisonError;
 use crate::stp::context::{clear_renewed_token, get_renewed_token, with_renewed_token_scope};
 use crate::stp::with_current_token;
 use axum::body::Body;
@@ -40,8 +40,8 @@ struct RouteRule {
 #[derive(Clone)]
 struct MiddlewareState {
     rules: Arc<Vec<RouteRule>>,
-    interceptor: Arc<dyn BulwarkInterceptor>,
-    config: Arc<BulwarkConfig>,
+    interceptor: Arc<dyn GarrisonInterceptor>,
+    config: Arc<GarrisonConfig>,
 }
 
 /// 路由器，包装 `axum::Router` 并管理鉴权路由规则。
@@ -51,11 +51,11 @@ struct MiddlewareState {
 /// # 使用
 ///
 /// ```ignore
-/// use bulwark::prelude::*;
-/// use bulwark::annotation::Annotation;
+/// use garrison::prelude::*;
+/// use garrison::annotation::Annotation;
 /// use std::sync::Arc;
 ///
-/// let router = BulwarkRouter::new(Arc::new(BulwarkConfig::default_config()))
+/// let router = GarrisonRouter::new(Arc::new(GarrisonConfig::default_config()))
 ///     .route_protected("/api/user", || async { "user ok" }, Annotation::CheckLogin)
 ///     .route_protected(
 ///         "/api/admin",
@@ -64,29 +64,29 @@ struct MiddlewareState {
 ///     )
 ///     .build();
 /// ```
-pub struct BulwarkRouter {
+pub struct GarrisonRouter {
     inner: Router,
     rules: Vec<RouteRule>,
-    interceptor: Arc<dyn BulwarkInterceptor>,
-    config: Arc<BulwarkConfig>,
+    interceptor: Arc<dyn GarrisonInterceptor>,
+    config: Arc<GarrisonConfig>,
 }
 
-impl BulwarkRouter {
-    /// 创建新的路由器实例，使用 `DefaultBulwarkInterceptor`。
+impl GarrisonRouter {
+    /// 创建新的路由器实例，使用 `DefaultGarrisonInterceptor`。
     ///
     /// # 参数
     /// - `config`: 全局配置（用于 middleware 提取 token）。
-    pub fn new(config: Arc<BulwarkConfig>) -> Self {
+    pub fn new(config: Arc<GarrisonConfig>) -> Self {
         Self {
             inner: Router::new(),
             rules: Vec::new(),
-            interceptor: Arc::new(DefaultBulwarkInterceptor),
+            interceptor: Arc::new(DefaultGarrisonInterceptor),
             config,
         }
     }
 
     /// 设置自定义拦截器。
-    pub fn with_interceptor<I: BulwarkInterceptor + 'static>(mut self, interceptor: I) -> Self {
+    pub fn with_interceptor<I: GarrisonInterceptor + 'static>(mut self, interceptor: I) -> Self {
         self.interceptor = Arc::new(interceptor);
         self
     }
@@ -116,7 +116,7 @@ impl BulwarkRouter {
     /// - `prefix`: 路由前缀（如 `/api/v1`），必须非空，以 `/` 开头。
     ///   尾部 `/` 自动 trim（`/api/v1/` → `/api/v1`）。
     /// - `annotation`: 组级公共注解。`Annotation::Ignore` 时组内所有路由跳过注解校验。
-    /// - `f`: 闭包，接收子 `BulwarkRouter`，返回注册完路由后的 `BulwarkRouter`。
+    /// - `f`: 闭包，接收子 `GarrisonRouter`，返回注册完路由后的 `GarrisonRouter`。
     ///
     /// # Panics
     /// `prefix` 为空字符串时 panic。
@@ -129,7 +129,7 @@ impl BulwarkRouter {
     /// ```
     pub fn group<F>(self, prefix: &str, annotation: Annotation, f: F) -> Self
     where
-        F: FnOnce(BulwarkRouter) -> BulwarkRouter,
+        F: FnOnce(GarrisonRouter) -> GarrisonRouter,
     {
         assert!(!prefix.is_empty(), "prefix must not be empty");
 
@@ -137,7 +137,7 @@ impl BulwarkRouter {
         let trimmed = prefix.trim_end_matches('/');
 
         // 创建子 router，继承父 router 的 interceptor 和 config
-        let child = BulwarkRouter {
+        let child = GarrisonRouter {
             inner: Router::new(),
             rules: Vec::new(),
             interceptor: self.interceptor.clone(),
@@ -174,7 +174,7 @@ impl BulwarkRouter {
         parent
     }
 
-    /// 构建最终的 axum Router，应用 BulwarkLayer middleware。
+    /// 构建最终的 axum Router，应用 GarrisonLayer middleware。
     ///
     /// middleware 流程：提取 token → `with_current_token` 设置 task_local →
     /// 调用 `interceptor.pre_handle(path, annotation)` → 执行 handler。
@@ -185,24 +185,24 @@ impl BulwarkRouter {
             config: self.config,
         };
         self.inner
-            .layer(from_fn_with_state(state, bulwark_middleware))
+            .layer(from_fn_with_state(state, garrison_middleware))
     }
 }
 
-/// 实现 `Default`：使用 `BulwarkConfig::default_config()` 创建路由器，拦截器为 `DefaultBulwarkInterceptor`。
-impl Default for BulwarkRouter {
+/// 实现 `Default`：使用 `GarrisonConfig::default_config()` 创建路由器，拦截器为 `DefaultGarrisonInterceptor`。
+impl Default for GarrisonRouter {
     fn default() -> Self {
-        Self::new(Arc::new(BulwarkConfig::default_config()))
+        Self::new(Arc::new(GarrisonConfig::default_config()))
     }
 }
 
-/// Bulwark middleware：提取 token → 设置 task_local → 调用 interceptor.pre_handle → 执行 handler。
+/// Garrison middleware：提取 token → 设置 task_local → 调用 interceptor.pre_handle → 执行 handler。
 ///
-/// 对未匹配任何规则的路径，跳过 `pre_handle` 直接放行（仍设置 task_local 以便 handler 调用 BulwarkUtil）。
+/// 对未匹配任何规则的路径，跳过 `pre_handle` 直接放行（仍设置 task_local 以便 handler 调用 GarrisonUtil）。
 ///
 /// 请求结束后，若 `CURRENT_RENEWED_TOKEN` 有值（check_login 自动续签触发），
 /// 根据 `is_write_header` / `is_write_cookie` 配置将续签 Token 写入响应。
-async fn bulwark_middleware(
+async fn garrison_middleware(
     State(state): State<MiddlewareState>,
     req: Request<Body>,
     next: Next,
@@ -222,7 +222,7 @@ async fn bulwark_middleware(
                 .pre_handle(&path, &rule.annotation)
                 .await?;
         }
-        Ok::<_, BulwarkError>(next.run(req).await)
+        Ok::<_, GarrisonError>(next.run(req).await)
     };
 
     let config = state.config.clone();
@@ -287,7 +287,7 @@ async fn bulwark_middleware(
 /// # 使用
 ///
 /// ```ignore
-/// use bulwark::context::tenant::{HeaderTenantResolver, TenantResolver};
+/// use garrison::context::tenant::{HeaderTenantResolver, TenantResolver};
 /// use std::sync::Arc;
 /// use axum::Router;
 ///
@@ -296,7 +296,7 @@ async fn bulwark_middleware(
 ///     .route("/api", axum::routing::get(handler))
 ///     .layer(axum::middleware::from_fn_with_state(
 ///         resolver,
-///         bulwark::router::tenant_resolution_middleware,
+///         garrison::router::tenant_resolution_middleware,
 ///     ));
 /// ```
 #[cfg(feature = "tenant-isolation")]

@@ -18,7 +18,7 @@ async fn check_abac_with_policy_no_engine_returns_ok() {
         result.ok()
     );
     match result {
-        Err(crate::error::BulwarkError::Config(msg)) => {
+        Err(crate::error::GarrisonError::Config(msg)) => {
             assert!(
                 msg.contains("AbacEngine 未初始化") || msg.contains("fail-closed"),
                 "错误消息应含 'AbacEngine 未初始化' 或 'fail-closed'，实际: {}",
@@ -116,7 +116,7 @@ async fn init_abac_engine_duplicate_returns_config_error() {
     let result = init_abac_engine(engine2);
     assert!(result.is_err());
     match result {
-        Err(crate::error::BulwarkError::Config(msg)) => {
+        Err(crate::error::GarrisonError::Config(msg)) => {
             assert!(
                 msg.contains("already initialized"),
                 "错误消息应包含 'already initialized'，实际: {}",
@@ -165,7 +165,7 @@ async fn check_abac_with_policy_no_engine_various_actions() {
     let result3 = check_abac_with_policy("", r#"Resource::"default""#, "").await;
     assert!(result3.is_err());
     // 验证错误类型为 Config
-    if let Err(crate::error::BulwarkError::Config(_)) = result1 {
+    if let Err(crate::error::GarrisonError::Config(_)) = result1 {
         // OK
     } else {
         panic!("期望 Config 错误，实际: {:?}", result1);
@@ -210,18 +210,18 @@ const EVAL_SCHEMA_JSON: &str = r#"{
         }
     }"#;
 
-/// 初始化 BulwarkManager（空权限/角色，用于 get_login_id 上下文）。
+/// 初始化 GarrisonManager（空权限/角色，用于 get_login_id 上下文）。
 fn init_manager_for_abac() {
-    use crate::dao::BulwarkDao;
-    use crate::manager::BulwarkManager;
-    use crate::stp::BulwarkInterface;
-    let dao: Arc<dyn BulwarkDao> = Arc::new(crate::dao::tests::MockDao::new());
-    let mut config = crate::config::BulwarkConfig::default_config();
+    use crate::dao::GarrisonDao;
+    use crate::manager::GarrisonManager;
+    use crate::stp::GarrisonInterface;
+    let dao: Arc<dyn GarrisonDao> = Arc::new(crate::dao::tests::MockDao::new());
+    let mut config = crate::config::GarrisonConfig::default_config();
     config.timeout = 3600;
     config.active_timeout = -1;
     config.throw_on_not_login = false;
-    let interface: Arc<dyn BulwarkInterface> = Arc::new(crate::stp::mock::MockInterface);
-    BulwarkManager::init(dao, Arc::new(config), interface).unwrap();
+    let interface: Arc<dyn GarrisonInterface> = Arc::new(crate::stp::mock::MockInterface);
+    GarrisonManager::init(dao, Arc::new(config), interface).unwrap();
 }
 
 /// 引擎已初始化且用户已登录时，abac_expr "1 == 1" 求值 Allow → 返回 Ok。
@@ -230,9 +230,9 @@ fn init_manager_for_abac() {
 #[tokio::test]
 #[serial_test::serial]
 async fn check_abac_with_policy_engine_initialized_allow() {
-    use crate::stp::{with_current_token, BulwarkUtil};
+    use crate::stp::{with_current_token, GarrisonUtil};
     reset_abac_for_test();
-    crate::manager::BulwarkManager::reset_for_test();
+    crate::manager::GarrisonManager::reset_for_test();
     init_manager_for_abac();
 
     // 初始化 ABAC 引擎
@@ -242,7 +242,7 @@ async fn check_abac_with_policy_engine_initialized_allow() {
     init_abac_engine(engine).expect("init_abac_engine 应成功");
 
     // 登录获取 token
-    let token = BulwarkUtil::login_simple("1001")
+    let token = GarrisonUtil::login_simple("1001")
         .await
         .expect("login 应成功");
 
@@ -258,7 +258,7 @@ async fn check_abac_with_policy_engine_initialized_allow() {
     );
 
     reset_abac_for_test();
-    crate::manager::BulwarkManager::reset_for_test();
+    crate::manager::GarrisonManager::reset_for_test();
 }
 
 /// 引擎已初始化且用户已登录时，abac_expr "principal != principal" 求值 Deny → 返回 Err(NotPermission)。
@@ -267,9 +267,9 @@ async fn check_abac_with_policy_engine_initialized_allow() {
 #[tokio::test]
 #[serial_test::serial]
 async fn check_abac_with_policy_engine_initialized_deny() {
-    use crate::stp::{with_current_token, BulwarkUtil};
+    use crate::stp::{with_current_token, GarrisonUtil};
     reset_abac_for_test();
-    crate::manager::BulwarkManager::reset_for_test();
+    crate::manager::GarrisonManager::reset_for_test();
     init_manager_for_abac();
 
     let engine = AbacEngine::new(EVAL_SCHEMA_JSON, Arc::new(EmptyEntityLoader))
@@ -277,7 +277,7 @@ async fn check_abac_with_policy_engine_initialized_deny() {
         .expect("schema valid");
     init_abac_engine(engine).expect("init_abac_engine 应成功");
 
-    let token = BulwarkUtil::login_simple("1001")
+    let token = GarrisonUtil::login_simple("1001")
         .await
         .expect("login 应成功");
 
@@ -287,7 +287,7 @@ async fn check_abac_with_policy_engine_initialized_deny() {
     .await;
     assert!(result.is_err(), "principal != principal 应 Deny");
     match result {
-        Err(crate::error::BulwarkError::NotPermission(msg)) => {
+        Err(crate::error::GarrisonError::NotPermission(msg)) => {
             assert!(
                 msg.contains("ABAC 策略拒绝"),
                 "错误消息应包含 'ABAC 策略拒绝'，实际: {}",
@@ -299,7 +299,7 @@ async fn check_abac_with_policy_engine_initialized_deny() {
     }
 
     reset_abac_for_test();
-    crate::manager::BulwarkManager::reset_for_test();
+    crate::manager::GarrisonManager::reset_for_test();
 }
 
 /// 引擎已初始化但未登录时（无 token 上下文）→ 返回 Err(NotLogin)。
@@ -309,7 +309,7 @@ async fn check_abac_with_policy_engine_initialized_deny() {
 #[serial_test::serial]
 async fn check_abac_with_policy_not_logged_in_returns_not_login() {
     reset_abac_for_test();
-    crate::manager::BulwarkManager::reset_for_test();
+    crate::manager::GarrisonManager::reset_for_test();
     init_manager_for_abac();
 
     let engine = AbacEngine::new(EVAL_SCHEMA_JSON, Arc::new(EmptyEntityLoader))
@@ -323,7 +323,7 @@ async fn check_abac_with_policy_not_logged_in_returns_not_login() {
         check_abac_with_policy("access", r#"Resource::"default""#, "principal == principal").await;
     assert!(result.is_err(), "未登录应返回错误");
     match result {
-        Err(crate::error::BulwarkError::NotLogin(msg)) => {
+        Err(crate::error::GarrisonError::NotLogin(msg)) => {
             assert!(
                 msg.contains("未获取到 login_id"),
                 "错误消息应包含 '未获取到 login_id'，实际: {}",
@@ -335,7 +335,7 @@ async fn check_abac_with_policy_not_logged_in_returns_not_login() {
     }
 
     reset_abac_for_test();
-    crate::manager::BulwarkManager::reset_for_test();
+    crate::manager::GarrisonManager::reset_for_test();
 }
 
 // ========================================================================
@@ -352,9 +352,9 @@ async fn check_abac_with_policy_not_logged_in_returns_not_login() {
 #[tokio::test]
 #[serial_test::serial]
 async fn check_abac_with_policy_rejects_resource_injection() {
-    use crate::stp::{with_current_token, BulwarkUtil};
+    use crate::stp::{with_current_token, GarrisonUtil};
     reset_abac_for_test();
-    crate::manager::BulwarkManager::reset_for_test();
+    crate::manager::GarrisonManager::reset_for_test();
     init_manager_for_abac();
 
     let engine = AbacEngine::new(EVAL_SCHEMA_JSON, Arc::new(EmptyEntityLoader))
@@ -362,7 +362,7 @@ async fn check_abac_with_policy_rejects_resource_injection() {
         .expect("schema valid");
     init_abac_engine(engine).expect("init_abac_engine 应成功");
 
-    let token = BulwarkUtil::login_simple("1001")
+    let token = GarrisonUtil::login_simple("1001")
         .await
         .expect("login 应成功");
 
@@ -380,7 +380,7 @@ async fn check_abac_with_policy_rejects_resource_injection() {
     );
     // 错误类型应为 InvalidParam（Cedar EntityUid 解析失败）
     match result {
-        Err(crate::error::BulwarkError::InvalidParam(msg)) => {
+        Err(crate::error::GarrisonError::InvalidParam(msg)) => {
             assert!(
                 msg.contains("abac-resource-parse"),
                 "错误消息应含 '解析失败'，实际: {}",
@@ -392,7 +392,7 @@ async fn check_abac_with_policy_rejects_resource_injection() {
     }
 
     reset_abac_for_test();
-    crate::manager::BulwarkManager::reset_for_test();
+    crate::manager::GarrisonManager::reset_for_test();
 }
 
 /// 合法 resource 参数（如 `Resource::"order"`）应正常通过 Cedar 解析。
@@ -401,9 +401,9 @@ async fn check_abac_with_policy_rejects_resource_injection() {
 #[tokio::test]
 #[serial_test::serial]
 async fn check_abac_with_policy_accepts_legitimate_resource() {
-    use crate::stp::{with_current_token, BulwarkUtil};
+    use crate::stp::{with_current_token, GarrisonUtil};
     reset_abac_for_test();
-    crate::manager::BulwarkManager::reset_for_test();
+    crate::manager::GarrisonManager::reset_for_test();
     init_manager_for_abac();
 
     let engine = AbacEngine::new(EVAL_SCHEMA_JSON, Arc::new(EmptyEntityLoader))
@@ -411,7 +411,7 @@ async fn check_abac_with_policy_accepts_legitimate_resource() {
         .expect("schema valid");
     init_abac_engine(engine).expect("init_abac_engine 应成功");
 
-    let token = BulwarkUtil::login_simple("1001")
+    let token = GarrisonUtil::login_simple("1001")
         .await
         .expect("login 应成功");
 
@@ -423,7 +423,7 @@ async fn check_abac_with_policy_accepts_legitimate_resource() {
     assert!(result.is_ok(), "合法 resource 应 Allow: {:?}", result.err());
 
     reset_abac_for_test();
-    crate::manager::BulwarkManager::reset_for_test();
+    crate::manager::GarrisonManager::reset_for_test();
 }
 
 // ========================================================================

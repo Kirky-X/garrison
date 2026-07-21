@@ -20,7 +20,7 @@
 
 #![cfg(feature = "db-sqlite")]
 
-use bulwark::dao::{
+use garrison::dao::{
     init_dbnexus,
     repository::{
         sqlite::{
@@ -34,7 +34,7 @@ use bulwark::dao::{
         RoleRepository, SessionRepository, UpdateUser, UserDeviceRepository, UserExtRepository,
         UserRepository, UserRoleRepository, MAX_DEVICES,
     },
-    BulwarkMigration,
+    GarrisonMigration,
 };
 use std::path::PathBuf;
 
@@ -56,7 +56,7 @@ async fn setup_db() -> dbnexus::DbPool {
     let pool = init_dbnexus("sqlite::memory:")
         .await
         .expect("init_dbnexus 应成功");
-    let migration = BulwarkMigration::with_base_dir(pool.clone(), project_migrations_dir());
+    let migration = GarrisonMigration::with_base_dir(pool.clone(), project_migrations_dir());
     let applied = migration.migrate_core().await.expect("migrate_core 应成功");
     assert!(applied >= 1, "migrate_core 应至少执行 1 个文件");
     pool
@@ -884,7 +884,7 @@ async fn register_device_rejects_when_max_exceeded() {
         .register_device(TENANT_A, "2002", "fp-overflow", UA_CHROME_WIN)
         .await;
     assert!(
-        matches!(result, Err(bulwark::error::BulwarkError::InvalidParam(_))),
+        matches!(result, Err(garrison::error::GarrisonError::InvalidParam(_))),
         "超过 MAX_DEVICES 应返回 InvalidParam，实际: {:?}",
         result
     );

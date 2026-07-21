@@ -7,14 +7,14 @@
 //!
 //! 运行方式：
 //! ```sh
-//! cargo run -p bulwark-examples --bin backend_remote --features full
+//! cargo run -p garrison-examples --bin backend_remote --features full
 //! ```
 //!
 //! 注意：本示例不会真正连接服务器（无 Auth Server 运行），
 //! 所有 API 调用会返回 Network 错误，示例演示构造方式和预期行为。
 
-use bulwark::backend::{AuthBackend, BackendRemote, LoginParams};
-use bulwark::error::{BulwarkError, BulwarkResult};
+use garrison::backend::{AuthBackend, BackendRemote, LoginParams};
+use garrison::error::{GarrisonError, GarrisonResult};
 use std::time::Duration;
 
 /// 运行远程后端示例。
@@ -23,8 +23,8 @@ use std::time::Duration;
 /// 1. 使用 `BackendRemote::new` 构造内网客户端
 /// 2. 使用 `BackendRemoteBuilder` 构造带超时的外网客户端
 /// 3. 尝试 login / check_login / logout（预期失败，无服务器运行）
-pub async fn run() -> BulwarkResult<()> {
-    println!("=== Bulwark 远程后端示例 ===\n");
+pub async fn run() -> GarrisonResult<()> {
+    println!("=== Garrison 远程后端示例 ===\n");
 
     // 1. 从环境变量读取 API Key（禁止硬编码，防止泄漏）
     let internal_api_key = std::env::var("EXAMPLE_INTERNAL_API_KEY").unwrap_or_else(|_| {
@@ -75,7 +75,7 @@ pub async fn run() -> BulwarkResult<()> {
     println!("[3] login(\"user1001\") 结果:");
     match &login_result {
         Ok(token) => println!("    token = {}（意外成功：服务器在运行？）\n", token),
-        Err(BulwarkError::Network(msg)) => {
+        Err(GarrisonError::Network(msg)) => {
             println!("    Network 错误（预期，无服务器运行）");
             println!("    详情: {}\n", msg);
         },
@@ -87,7 +87,7 @@ pub async fn run() -> BulwarkResult<()> {
     println!("[4] check_login(\"some-token\") 结果:");
     match &check_result {
         Ok(logged_in) => println!("    logged_in = {}（意外成功）\n", logged_in),
-        Err(BulwarkError::Network(msg)) => {
+        Err(GarrisonError::Network(msg)) => {
             println!("    Network 错误（预期，无服务器运行）");
             println!("    详情: {}\n", msg);
         },
@@ -99,7 +99,7 @@ pub async fn run() -> BulwarkResult<()> {
     println!("[5] logout(\"some-token\") 结果:");
     match &logout_result {
         Ok(()) => println!("    Ok(())（意外成功）\n"),
-        Err(BulwarkError::Network(msg)) => {
+        Err(GarrisonError::Network(msg)) => {
             println!("    Network 错误（预期，无服务器运行）");
             println!("    详情: {}\n", msg);
         },
@@ -111,7 +111,7 @@ pub async fn run() -> BulwarkResult<()> {
     println!("[6] 外网客户端 login(\"user2002\") 结果:");
     match &ext_login {
         Ok(token) => println!("    token = {}（意外成功）\n", token),
-        Err(BulwarkError::Network(msg)) => {
+        Err(GarrisonError::Network(msg)) => {
             println!("    Network 错误（预期，无服务器运行）");
             println!("    详情: {}\n", msg);
         },

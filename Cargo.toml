@@ -1,24 +1,24 @@
 [package]
-name = "bulwark"
+name = "garrison"
 version = "0.7.1"
 edition = "2021"
 rust-version = "1.85"  # MSRV: 部分 deps（如 inventory 0.3）要求 edition2024 → Rust 1.85+
 authors = ["Kirky.X"]
 license = "Apache-2.0"
-description = "Bulwark - 面向 Rust 生态的一站式身份认证鉴权框架"
-homepage = "https://github.com/Kirky-X/bulwark"
-repository = "https://github.com/Kirky-X/bulwark"
-documentation = "https://docs.rs/bulwark"
+description = "Garrison - 面向 Rust 生态的一站式身份认证鉴权框架"
+homepage = "https://github.com/Kirky-X/garrison"
+repository = "https://github.com/Kirky-X/garrison"
+documentation = "https://docs.rs/garrison"
 readme = "README.md"
 keywords = ["auth", "authentication", "authorization", "jwt", "rbac"]
 categories = ["authentication", "web-programming"]
 
 [workspace]
-members = [".", "examples", "bulwark-macros"]
+members = [".", "examples", "garrison-macros"]
 resolver = "2"
 
 [lib]
-name = "bulwark"
+name = "garrison"
 path = "src/lib.rs"
 
 [dependencies]
@@ -74,7 +74,7 @@ tonic-health = { version = "0.14", optional = true, default-features = false }
 fluent = { version = "0.17", default-features = false }
 unic-langid = { version = "0.9", default-features = false }
 miette = { version = "7", optional = true, default-features = false }
-bulwark-macros = { path = "bulwark-macros", version = "0.5", optional = true }
+garrison-macros = { path = "garrison-macros", version = "0.5", optional = true }
 # rsa 0.9 内部依赖 sha2 0.10，与项目 sha2 0.11 不兼容，故用 `rsa::pkcs1v15::SigningKey` + `rsa::sha2::Sha256`（sha2 0.10 re-export）
 rsa = { version = "0.9", optional = true, default-features = false, features = ["sha2", "pem"] }
 unicode-security = { version = "0.1", optional = true, default-features = false }
@@ -88,7 +88,7 @@ limiteron = { version = "0.2", default-features = false, features = ["distribute
 # sdforge 运行时：`features = ["http"]` 让 `sdforge::http::build()` / `RouteRegistration`
 # 始终可用（`server_impl.rs` 无条件调用 `sdforge::http::build()`）。
 # 但 `#[forge]` 宏生成的 `inventory::submit!` 被 `#[cfg(feature = "http")]` 保护，
-# 此 cfg 在 **bulwark 上下文** 求值——bulwark 必须暴露同名 `http` feature 才能让
+# 此 cfg 在 **garrison 上下文** 求值——garrison 必须暴露同名 `http` feature 才能让
 # 路由注册代码编译进来。详见 `[features]` 段的 `http` 桥接 feature。
 sdforge = { version = "0.4", default-features = false, features = ["http"] }
 trait-kit = { version = "0.3", default-features = false, features = ["async"] }
@@ -230,7 +230,7 @@ web-csrf = ["web-axum", "dep:rand", "dep:base64", "dep:subtle"]
 
 # === 过程宏注解（#[check_login]/#[check_permission]/#[check_role]） ===
 # 依赖 web-axum（宏生成的 wrapper 返回 axum::response::Response）
-annotation-macros = ["dep:bulwark-macros", "web-axum"]
+annotation-macros = ["dep:garrison-macros", "web-axum"]
 
 # === 扩展 ===
 alone-cache = []
@@ -240,7 +240,7 @@ parameter-query = []
 audit-log = ["listener", "dep:sha2", "hmac", "secure-masking"]
 
 # === 安全防护套件 ===
-# v0.7.2：统一使用 limiteron BulwarkDaoDistributedLimiter，禁止手写限流实现。
+# v0.7.2：统一使用 limiteron GarrisonDaoDistributedLimiter，禁止手写限流实现。
 firewall = []
 firewall-bruteforce = ["firewall"]
 firewall-ratelimit = ["firewall", "dep:rand"]
@@ -303,10 +303,10 @@ audit-inklog = []
 backend-kit = ["backend-embedded"]
 
 # === v0.7.0 sdforge 声明式路由 ===
-# `http` feature 是 bulwark 与 sdforge 之间的桥接 feature（cfg flag only）：
+# `http` feature 是 garrison 与 sdforge 之间的桥接 feature（cfg flag only）：
 # `#[forge]` 宏生成的 `inventory::submit!(RouteRegistration::new(...))` 被
-# `#[cfg(feature = "http")]` 保护，此 cfg 在 **bulwark 上下文** 求值（不是 sdforge）。
-# 若 bulwark 不暴露 `http` feature，submit 调用会被 cfg 剥离，
+# `#[cfg(feature = "http")]` 保护，此 cfg 在 **garrison 上下文** 求值（不是 sdforge）。
+# 若 garrison 不暴露 `http` feature，submit 调用会被 cfg 剥离，
 # `sdforge::http::build()` 收集不到任何路由 → 所有 POST 请求返回 404。
 # 命名约定：必须叫 `http`（sdforge 宏硬编码 `feature = "http"`），不可改名。
 # sdforge/http 由依赖声明 `features = ["http"]` 无条件启用，故此 feature 仅作 cfg 开关。
@@ -328,9 +328,9 @@ i18n-icu = [
     "dep:icu_plurals", "dep:icu_datetime", "dep:icu_decimal",
     "dep:icu_locale_core", "dep:icu_calendar", "dep:icu_time", "dep:fixed_decimal",
 ]
-# 启用后 BulwarkError 实现 miette::Diagnostic trait（保留 thiserror::Error derive）
+# 启用后 GarrisonError 实现 miette::Diagnostic trait（保留 thiserror::Error derive）
 miette = ["dep:miette"]
-bulwark-testing = ["authorize-api"]
+garrison-testing = ["authorize-api"]
 testing = []
 
 # === 聚合特性 ===
@@ -420,13 +420,13 @@ required-features = ["auth-server"]
 
 # === 基准测试目标 ===
 [[bench]]
-name = "bulwark_benchmark"
-path = "benches/bulwark_benchmark.rs"
+name = "garrison_benchmark"
+path = "benches/garrison_benchmark.rs"
 harness = false
 
 # === Lint 配置 ===
-# sdforge #[forge] 宏在 bulwark 中展开时生成 #[cfg(feature = "mcp")] /
+# sdforge #[forge] 宏在 garrison 中展开时生成 #[cfg(feature = "mcp")] /
 # #[cfg(feature = "cli")] / #[cfg(feature = "openapi")] 等代码，
-# bulwark 不具备这些 feature，允许 unexpected_cfgs 以避免 check-cfg 警告。
+# garrison 不具备这些 feature，允许 unexpected_cfgs 以避免 check-cfg 警告。
 [lints.rust]
 unexpected_cfgs = { level = "allow" }

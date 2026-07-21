@@ -16,7 +16,7 @@
 //! `protocol::oauth2` 提供通用 OAuth2 客户端（Authorization Code / Client Credentials / Password），
 //! 本模块针对社交平台特化（微信/支付宝的自定义 API 签名、用户信息格式）。
 
-use crate::error::BulwarkResult;
+use crate::error::GarrisonResult;
 use async_trait::async_trait;
 use serde_json::Value;
 
@@ -89,11 +89,11 @@ pub mod alipay;
 ///
 /// struct 同时持有：
 /// - `pool: DbPool`：执行 SQL 查询/插入（`social_bindings` 表）
-/// - `dao: Arc<dyn BulwarkDao>`：缓存层抽象（保留扩展点，当前未使用）
+/// - `dao: Arc<dyn GarrisonDao>`：缓存层抽象（保留扩展点，当前未使用）
 ///
-/// 与 `RoleHierarchyService` 模式一致：BulwarkDao 是 KV 缓存抽象，
+/// 与 `RoleHierarchyService` 模式一致：GarrisonDao 是 KV 缓存抽象，
 /// 不支持 SQL SELECT/INSERT，故 `find_or_create` 实际用 `pool` 查 SQL。
-/// `BulwarkDao` trait 的 `find_social_binding` / `insert_social_binding`
+/// `GarrisonDao` trait 的 `find_social_binding` / `insert_social_binding`
 /// 默认方法返回 `NotImplemented`，仅为满足 spec trait 契约。
 ///
 /// # 表结构
@@ -117,7 +117,7 @@ pub struct SocialBindingService {
     /// SQLite 连接池（查 `social_bindings` 表）。
     pub pool: dbnexus::DbPool,
     /// 缓存层抽象（保留扩展点，当前未使用）。
-    pub dao: std::sync::Arc<dyn crate::dao::BulwarkDao>,
+    pub dao: std::sync::Arc<dyn crate::dao::GarrisonDao>,
 }
 
 /// `SocialBindingService` 实现模块（feature = "db-sqlite"）。
@@ -149,8 +149,11 @@ pub trait SocialLoginProvider: Send + Sync {
     /// # 参数
     /// - `state`: OAuth2 state 参数（CSRF 防护，调用方生成随机串并缓存校验）
     /// - `redirect_uri`: 授权回调 URL（需在第三方平台配置白名单）
-    async fn get_authorization_url(&self, state: &str, redirect_uri: &str)
-        -> BulwarkResult<String>;
+    async fn get_authorization_url(
+        &self,
+        state: &str,
+        redirect_uri: &str,
+    ) -> GarrisonResult<String>;
 
     /// 用授权码换取用户信息。
     ///
@@ -159,7 +162,7 @@ pub trait SocialLoginProvider: Send + Sync {
     /// # 参数
     /// - `code`: 授权码（第三方平台回调时附在 query 参数）
     /// - `state`: OAuth2 state 参数（校验一致性，防 CSRF）
-    async fn exchange_token(&self, code: &str, state: &str) -> BulwarkResult<SocialUserInfo>;
+    async fn exchange_token(&self, code: &str, state: &str) -> GarrisonResult<SocialUserInfo>;
 
     /// 用 access_token 获取用户信息。
     ///
@@ -167,7 +170,7 @@ pub trait SocialLoginProvider: Send + Sync {
     ///
     /// # 参数
     /// - `access_token`: 第三方平台访问令牌
-    async fn get_user_info(&self, access_token: &str) -> BulwarkResult<SocialUserInfo>;
+    async fn get_user_info(&self, access_token: &str) -> GarrisonResult<SocialUserInfo>;
 }
 
 #[cfg(test)]

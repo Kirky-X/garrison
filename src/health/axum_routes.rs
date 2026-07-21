@@ -38,8 +38,8 @@ pub async fn ready(
 /// # 示例
 ///
 /// ```ignore
-/// use bulwark::health::axum_routes::health_routes;
-/// use bulwark::health::HealthRegistry;
+/// use garrison::health::axum_routes::health_routes;
+/// use garrison::health::HealthRegistry;
 /// use std::sync::Arc;
 ///
 /// let registry = Arc::new(HealthRegistry::new());

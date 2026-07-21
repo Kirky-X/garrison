@@ -322,7 +322,7 @@ jobs:
           # crates.io 索引传播通常 30-60 秒，重试 6 次（共 60 秒）
           PUBLISHED=""
           for i in 1 2 3 4 5 6; do
-            PUBLISHED=$(curl -sS "https://crates.io/api/v1/crates/bulwark" | grep -o "\"newest_version\":\"[^\"]*\"" | head -1)
+            PUBLISHED=$(curl -sS "https://crates.io/api/v1/crates/garrison" | grep -o "\"newest_version\":\"[^\"]*\"" | head -1)
             if echo "$PUBLISHED" | grep -q "\"$VERSION\""; then
               echo "crates.io 已发布 v${VERSION} ✓"
               exit 0

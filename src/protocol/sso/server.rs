@@ -3,14 +3,14 @@
 
 //! SSO Server 独立抽象模块。
 //!
-//! 与 `SsoClient`（客户端）解耦，通过共享 `BulwarkDao` 间接通信。
+//! 与 `SsoClient`（客户端）解耦，通过共享 `GarrisonDao` 间接通信。
 //! 提供 `SsoServer` trait / `CenterIdConverter` trait / `SsoChannel` trait，
 //! 以及 `DefaultSsoServer` / `IdentityCenterIdConverter` / `NoopSsoChannel` 默认实现。
 //!
 //! 仅在启用 `protocol-sso-server` 特性时编译。
 
-use crate::dao::BulwarkDao;
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::dao::GarrisonDao;
+use crate::error::{GarrisonError, GarrisonResult};
 use async_trait::async_trait;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -29,7 +29,7 @@ const DEFAULT_TICKET_TTL: u64 = 60;
 
 /// SSO 服务端抽象 trait。
 ///
-/// 与 `SsoClient`（客户端）解耦，通过共享 `BulwarkDao` 间接通信。
+/// 与 `SsoClient`（客户端）解耦，通过共享 `GarrisonDao` 间接通信。
 /// ticket 一次性使用，校验成功后立即销毁。
 #[async_trait]
 pub trait SsoServer: Send + Sync {
@@ -41,7 +41,7 @@ pub trait SsoServer: Send + Sync {
     ///
     /// # 返回
     /// 64 字符的 ticket 字符串。
-    async fn issue_ticket(&self, login_id: &str, client_id: i64) -> BulwarkResult<String>;
+    async fn issue_ticket(&self, login_id: &str, client_id: i64) -> GarrisonResult<String>;
 
     /// 校验 SSO ticket（一次性使用，校验成功后立即销毁）。
     ///
@@ -51,21 +51,21 @@ pub trait SsoServer: Send + Sync {
     ///
     /// # 返回
     /// - `Ok(login_id)`: 校验成功（经 `CenterIdConverter::to_login_id` 转换回原始 login_id）。
-    /// - `Err(BulwarkError::InvalidToken)`: 票据不存在、已过期或 client_id 不匹配。
+    /// - `Err(GarrisonError::InvalidToken)`: 票据不存在、已过期或 client_id 不匹配。
     ///
     /// # 原子性保证（）
     ///
-    /// 与 `SsoClient::validate_ticket` 相同，使用 `BulwarkDao::get_and_delete` 原子操作。
+    /// 与 `SsoClient::validate_ticket` 相同，使用 `GarrisonDao::get_and_delete` 原子操作。
     /// R-002。
-    async fn validate_ticket(&self, ticket: &str, client_id: i64) -> BulwarkResult<String>;
+    async fn validate_ticket(&self, ticket: &str, client_id: i64) -> GarrisonResult<String>;
 
     /// 销毁 SSO ticket（幂等，即使票据不存在也返回 `Ok(())`）。
-    async fn destroy_ticket(&self, ticket: &str) -> BulwarkResult<()>;
+    async fn destroy_ticket(&self, ticket: &str) -> GarrisonResult<()>;
 
     /// 推送 SSO 消息到指定 login_id。
     ///
     /// 若未注入 `SsoChannel`，则 noop 返回 `Ok(())`。
-    async fn push_message(&self, login_id: &str, message: &str) -> BulwarkResult<()>;
+    async fn push_message(&self, login_id: &str, message: &str) -> GarrisonResult<()>;
 }
 
 /// 中心 ID 转换器 trait。
@@ -85,7 +85,7 @@ pub trait CenterIdConverter: Send + Sync {
 #[async_trait]
 pub trait SsoChannel: Send + Sync {
     /// 推送消息到指定 topic。
-    async fn push(&self, topic: &str, message: &str) -> BulwarkResult<()>;
+    async fn push(&self, topic: &str, message: &str) -> GarrisonResult<()>;
 
     /// 订阅指定 topic 的消息。
     ///
@@ -96,7 +96,7 @@ pub trait SsoChannel: Send + Sync {
         &self,
         topic: &str,
         handler: Box<dyn Fn(String) + Send + Sync>,
-    ) -> BulwarkResult<()>;
+    ) -> GarrisonResult<()>;
 }
 
 // ============================================================================
@@ -125,7 +125,7 @@ pub struct NoopSsoChannel;
 
 #[async_trait]
 impl SsoChannel for NoopSsoChannel {
-    async fn push(&self, _topic: &str, _message: &str) -> BulwarkResult<()> {
+    async fn push(&self, _topic: &str, _message: &str) -> GarrisonResult<()> {
         Ok(())
     }
 
@@ -133,19 +133,19 @@ impl SsoChannel for NoopSsoChannel {
         &self,
         _topic: &str,
         _handler: Box<dyn Fn(String) + Send + Sync>,
-    ) -> BulwarkResult<()> {
+    ) -> GarrisonResult<()> {
         Ok(())
     }
 }
 
 /// 默认 `SsoServer` 实现。
 ///
-/// 持有 `Arc<dyn BulwarkDao>` 用于票据存储，
+/// 持有 `Arc<dyn GarrisonDao>` 用于票据存储，
 /// `Option<Arc<dyn SsoChannel>>` 用于消息推送（未注入时 noop），
 /// `Arc<dyn CenterIdConverter>` 用于 login_id <-> center_id 转换。
 pub struct DefaultSsoServer {
     /// DAO 抽象层，用于票据存储。
-    dao: Arc<dyn BulwarkDao>,
+    dao: Arc<dyn GarrisonDao>,
     /// 票据 TTL（秒）。
     ticket_ttl_seconds: u64,
     /// 消息推送通道（可选，未注入时 noop）。
@@ -167,7 +167,7 @@ impl DefaultSsoServer {
     /// # 参数
     /// - `dao`: DAO 抽象层实例。
     /// - `secret`: HMAC 签名密钥（与 SsoClient 必须一致，禁止空字符串）。
-    pub fn new(dao: Arc<dyn BulwarkDao>, secret: impl Into<String>) -> Self {
+    pub fn new(dao: Arc<dyn GarrisonDao>, secret: impl Into<String>) -> Self {
         let secret: String = secret.into();
         assert!(
             !secret.is_empty(),
@@ -203,7 +203,7 @@ impl DefaultSsoServer {
 
 #[async_trait]
 impl SsoServer for DefaultSsoServer {
-    async fn issue_ticket(&self, login_id: &str, client_id: i64) -> BulwarkResult<String> {
+    async fn issue_ticket(&self, login_id: &str, client_id: i64) -> GarrisonResult<String> {
         // 委托 CenterIdConverter 将 login_id 转换为 center_id 后存储
         let center_id = self.converter.to_center_id(login_id);
         // 拼接两个 UUID v4 simple（各 32 hex = 64 字符），与 SsoClient 格式一致
@@ -216,17 +216,17 @@ impl SsoServer for DefaultSsoServer {
             client_id,
         };
         let value = serde_json::to_string(&data)
-            .map_err(|e| BulwarkError::Internal(format!("sso-ticket-serialize::{}", e)))?;
-        let key = format!("bulwark:sso:ticket:{}", ticket);
+            .map_err(|e| GarrisonError::Internal(format!("sso-ticket-serialize::{}", e)))?;
+        let key = format!("garrison:sso:ticket:{}", ticket);
         self.dao.set(&key, &value, self.ticket_ttl_seconds).await?;
         Ok(ticket)
     }
 
-    async fn validate_ticket(&self, ticket: &str, client_id: i64) -> BulwarkResult<String> {
+    async fn validate_ticket(&self, ticket: &str, client_id: i64) -> GarrisonResult<String> {
         // M5 修复：先验签，防止 DAO 攻破后伪造 ticket
         let _random_part = verify_ticket_signature(&self.secret, ticket)?;
 
-        let key = format!("bulwark:sso:ticket:{}", ticket);
+        let key = format!("garrison:sso:ticket:{}", ticket);
         // 步骤 1: 非原子 get，用于校验 client_id（不删除票据）
         // 与 SsoClient::validate_ticket 行为对齐：client_id 不匹配时不消费票据，
         // 允许正确 client_id 后续重试（用户友好优先于防爆破）。
@@ -234,14 +234,14 @@ impl SsoServer for DefaultSsoServer {
             .dao
             .get(&key)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("sso-ticket-read::{}", e)))?;
+            .map_err(|e| GarrisonError::Dao(format!("sso-ticket-read::{}", e)))?;
         let value = value.ok_or_else(|| {
-            BulwarkError::InvalidToken("sso-ticket-missing-or-expired".to_string())
+            GarrisonError::InvalidToken("sso-ticket-missing-or-expired".to_string())
         })?;
         let data: SsoTicketData = serde_json::from_str(&value)
-            .map_err(|e| BulwarkError::Internal(format!("sso-ticket-deserialize::{}", e)))?;
+            .map_err(|e| GarrisonError::Internal(format!("sso-ticket-deserialize::{}", e)))?;
         if data.client_id != client_id {
-            return Err(BulwarkError::InvalidToken(format!(
+            return Err(GarrisonError::InvalidToken(format!(
                 "sso-ticket-client-id-mismatch::{}::{}",
                 data.client_id, client_id
             )));
@@ -251,9 +251,9 @@ impl SsoServer for DefaultSsoServer {
             .dao
             .get_and_delete(&key)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("sso-ticket-atomic-consume::{}", e)))?;
+            .map_err(|e| GarrisonError::Dao(format!("sso-ticket-atomic-consume::{}", e)))?;
         if consumed.is_none() {
-            return Err(BulwarkError::InvalidToken(
+            return Err(GarrisonError::InvalidToken(
                 "sso-ticket-consumed-by-concurrent".to_string(),
             ));
         }
@@ -262,12 +262,12 @@ impl SsoServer for DefaultSsoServer {
         Ok(login_id)
     }
 
-    async fn destroy_ticket(&self, ticket: &str) -> BulwarkResult<()> {
-        let key = format!("bulwark:sso:ticket:{}", ticket);
+    async fn destroy_ticket(&self, ticket: &str) -> GarrisonResult<()> {
+        let key = format!("garrison:sso:ticket:{}", ticket);
         self.dao.delete(&key).await
     }
 
-    async fn push_message(&self, login_id: &str, message: &str) -> BulwarkResult<()> {
+    async fn push_message(&self, login_id: &str, message: &str) -> GarrisonResult<()> {
         if let Some(channel) = &self.channel {
             let topic = format!("sso:user:{}", login_id);
             channel.push(&topic, message).await?;
@@ -299,7 +299,7 @@ mod tests {
     /// 构造 DefaultSsoServer，持有 dao（spec Scenario）。
     #[test]
     fn new_creates_server_with_dao() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let _server = DefaultSsoServer::new(dao, "test-sso-secret-key");
         // 构造成功即验证（dao 通过类型系统保证非空）
     }
@@ -307,7 +307,7 @@ mod tests {
     /// with_ticket_ttl / with_channel / with_converter 链式构造。
     #[test]
     fn builder_chain_sets_fields() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let server = DefaultSsoServer::new(dao, "test-sso-secret-key")
             .with_ticket_ttl(120)
             .with_channel(Arc::new(NoopSsoChannel))
@@ -381,7 +381,7 @@ mod tests {
     /// issue_ticket + validate_ticket 往返（一次性使用，spec Scenario）。
     #[tokio::test]
     async fn issue_and_validate_ticket_roundtrip() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let server = DefaultSsoServer::new(dao, "test-sso-secret-key");
         let ticket = server.issue_ticket("1001", 2001).await.unwrap();
         let login_id = server.validate_ticket(&ticket, 2001).await.unwrap();
@@ -391,7 +391,7 @@ mod tests {
     /// issue_ticket 返回 64 字符（与 SsoClient 格式一致）。
     #[tokio::test]
     async fn issue_ticket_returns_64_chars() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let server = DefaultSsoServer::new(dao, "test-sso-secret-key");
         let ticket = server.issue_ticket("1001", 2001).await.unwrap();
         // 新格式：{64_hex_random}.{hmac_b64}，长度不再固定为 64
@@ -404,7 +404,7 @@ mod tests {
     /// validate_ticket 一次性使用：第二次校验失败（spec Scenario）。
     #[tokio::test]
     async fn validate_ticket_one_time_use_second_fails() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let server = DefaultSsoServer::new(dao, "test-sso-secret-key");
         let ticket = server.issue_ticket("1001", 2001).await.unwrap();
         let first = server.validate_ticket(&ticket, 2001).await;
@@ -416,13 +416,13 @@ mod tests {
     /// validate_ticket client_id 不匹配返回 InvalidToken 错误（M5 修复）。
     #[tokio::test]
     async fn validate_ticket_client_id_mismatch_returns_error() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let server = DefaultSsoServer::new(dao, "test-sso-secret-key");
         let ticket = server.issue_ticket("1001", 2001).await.unwrap();
         let result = server.validate_ticket(&ticket, 9999).await;
         assert!(result.is_err());
         match result.err() {
-            Some(BulwarkError::InvalidToken(_)) => {},
+            Some(GarrisonError::InvalidToken(_)) => {},
             other => panic!("期望 InvalidToken 错误，实际: {:?}", other),
         }
     }
@@ -430,12 +430,12 @@ mod tests {
     /// validate_ticket 不存在返回 InvalidToken 错误。
     #[tokio::test]
     async fn validate_ticket_nonexistent_returns_error() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let server = DefaultSsoServer::new(dao, "test-sso-secret-key");
         let result = server.validate_ticket("nonexistent-ticket", 2001).await;
         assert!(result.is_err());
         match result.err() {
-            Some(BulwarkError::InvalidToken(_)) => {},
+            Some(GarrisonError::InvalidToken(_)) => {},
             other => panic!("期望 InvalidToken 错误，实际: {:?}", other),
         }
     }
@@ -447,7 +447,7 @@ mod tests {
     /// destroy_ticket 幂等：销毁不存在的票据返回 Ok（spec Scenario）。
     #[tokio::test]
     async fn destroy_ticket_idempotent() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let server = DefaultSsoServer::new(dao, "test-sso-secret-key");
         // 销毁不存在的票据
         let result = server.destroy_ticket("nonexistent-ticket").await;
@@ -479,7 +479,7 @@ mod tests {
                     .to_string()
             }
         }
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let server = DefaultSsoServer::new(dao, "test-sso-secret-key")
             .with_converter(Arc::new(OffsetConverter));
         let ticket = server.issue_ticket("1001", 2001).await.unwrap();
@@ -495,7 +495,7 @@ mod tests {
     /// push_message 未注入 channel 时返回 Ok（noop）。
     #[tokio::test]
     async fn push_message_noop_when_no_channel() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let server = DefaultSsoServer::new(dao, "test-sso-secret-key");
         let result = server.push_message("1001", "hello").await;
         assert!(result.is_ok());
@@ -510,7 +510,7 @@ mod tests {
         }
         #[async_trait]
         impl SsoChannel for CountingChannel {
-            async fn push(&self, _topic: &str, _message: &str) -> BulwarkResult<()> {
+            async fn push(&self, _topic: &str, _message: &str) -> GarrisonResult<()> {
                 self.count.fetch_add(1, Ordering::SeqCst);
                 Ok(())
             }
@@ -518,11 +518,11 @@ mod tests {
                 &self,
                 _topic: &str,
                 _handler: Box<dyn Fn(String) + Send + Sync>,
-            ) -> BulwarkResult<()> {
+            ) -> GarrisonResult<()> {
                 Ok(())
             }
         }
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let channel = Arc::new(CountingChannel {
             count: AtomicUsize::new(0),
         });
@@ -534,13 +534,13 @@ mod tests {
     }
 
     // ========================================================================
-    // SsoServer 与 SsoClient 通过共享 BulwarkDao 间接通信（spec Scenario）
+    // SsoServer 与 SsoClient 通过共享 GarrisonDao 间接通信（spec Scenario）
     // ========================================================================
 
     /// SsoServer 签发的 ticket 可被 SsoClient 校验（共享 DAO，spec Scenario）。
     #[tokio::test]
     async fn server_and_client_communicate_via_shared_dao() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         // SsoServer 签发 ticket
         let server = DefaultSsoServer::new(dao.clone(), "test-sso-secret-key");
         let ticket = server.issue_ticket("1001", 2001).await.unwrap();
@@ -553,7 +553,7 @@ mod tests {
     /// SsoClient 签发的 ticket 可被 SsoServer 校验（共享 DAO，反向）。
     #[tokio::test]
     async fn client_and_server_communicate_via_shared_dao() {
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         // SsoClient 签发 ticket
         let client = SsoClient::new(dao.clone(), "test-sso-secret-key");
         let ticket = client.issue_ticket("1001", 2001).await.unwrap();

@@ -5,7 +5,7 @@
 //!
 //! 运行方式：
 //! ```sh
-//! cargo run -p bulwark-examples --bin oauth2_flow --features protocol-oauth2
+//! cargo run -p garrison-examples --bin oauth2_flow --features protocol-oauth2
 //! ```
 //!
 //! 本示例演示：
@@ -18,7 +18,7 @@
 //! `refresh_access_token` 会发起真实 HTTP 请求，本示例不实际调用以避免依赖外部服务；
 //! 如需端到端测试参见 `tests/protocol_oauth2_integration.rs`（使用 wiremock mock server）。
 
-use bulwark::protocol::oauth2::OAuth2Client;
+use garrison::protocol::oauth2::OAuth2Client;
 
 /// 运行 OAuth2 流程示例。
 ///
@@ -26,7 +26,7 @@ use bulwark::protocol::oauth2::OAuth2Client;
 /// 不实际发起 HTTP 请求（避免依赖外部授权服务器）。
 #[allow(deprecated)]
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    println!("=== Bulwark OAuth2 Authorization Code 流程示例 ===\n");
+    println!("=== Garrison OAuth2 Authorization Code 流程示例 ===\n");
 
     // 1. 构造 OAuth2Client（参数来自你在授权服务器的应用注册）
     let client = OAuth2Client::new(
@@ -80,7 +80,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!();
     println!("    // refresh_token 为空时返回 InvalidParam 错误（Fail Loud）:");
     println!("    //   client.refresh_access_token(\"\", None).await");
-    println!("    //   → Err(BulwarkError::InvalidParam(\"refresh_token 不可为空\"))");
+    println!("    //   → Err(GarrisonError::InvalidParam(\"refresh_token 不可为空\"))");
     println!("\n[说明] refresh_access_token 需真实 token 端点，本示例不实际调用。");
     println!(
         "       端到端测试见 src/protocol/oauth2/mod.rs 的 refresh_access_token_success 测试。"

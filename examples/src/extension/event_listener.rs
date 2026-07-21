@@ -1,19 +1,19 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! 事件监听器示例：演示 BulwarkListener trait 与 BulwarkListenerManager。
+//! 事件监听器示例：演示 GarrisonListener trait 与 GarrisonListenerManager。
 //!
 //! 对应模块：`src/listener/mod.rs`（feature: listener）。
 //!
 //! 运行方式：
 //! ```sh
-//! cargo run -p bulwark-examples --bin event_listener --features listener
+//! cargo run -p garrison-examples --bin event_listener --features listener
 //! ```
 
 use async_trait::async_trait;
-use bulwark::error::BulwarkResult;
-use bulwark::listener::{
-    BulwarkEvent, BulwarkListener, BulwarkListenerEntry, BulwarkListenerManager,
+use garrison::error::GarrisonResult;
+use garrison::listener::{
+    GarrisonEvent, GarrisonListener, GarrisonListenerEntry, GarrisonListenerManager,
 };
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -29,11 +29,11 @@ static EVENT_CALLS: AtomicUsize = AtomicUsize::new(0);
 struct AuditListener;
 
 #[async_trait]
-impl BulwarkListener for AuditListener {
-    async fn on_event(&self, event: &BulwarkEvent) -> BulwarkResult<()> {
+impl GarrisonListener for AuditListener {
+    async fn on_event(&self, event: &GarrisonEvent) -> GarrisonResult<()> {
         EVENT_CALLS.fetch_add(1, Ordering::SeqCst);
         match event {
-            BulwarkEvent::Login {
+            GarrisonEvent::Login {
                 login_id,
                 token,
                 device,
@@ -46,7 +46,7 @@ impl BulwarkListener for AuditListener {
                     device
                 );
             },
-            BulwarkEvent::Logout {
+            GarrisonEvent::Logout {
                 login_id, token, ..
             } => {
                 println!(
@@ -55,7 +55,7 @@ impl BulwarkListener for AuditListener {
                     &token[..8.min(token.len())]
                 );
             },
-            BulwarkEvent::PermissionCheck {
+            GarrisonEvent::PermissionCheck {
                 login_id,
                 permission,
                 ..
@@ -65,7 +65,7 @@ impl BulwarkListener for AuditListener {
                     login_id, permission
                 );
             },
-            BulwarkEvent::TokenExpired { token, .. } => {
+            GarrisonEvent::TokenExpired { token, .. } => {
                 println!(
                     "    [AuditListener] TokenExpired: token={}...",
                     &token[..8.min(token.len())]
@@ -83,44 +83,44 @@ impl BulwarkListener for AuditListener {
 struct FailingListener;
 
 #[async_trait]
-impl BulwarkListener for FailingListener {
-    async fn on_event(&self, _event: &BulwarkEvent) -> BulwarkResult<()> {
-        Err(bulwark::error::BulwarkError::Internal(
+impl GarrisonListener for FailingListener {
+    async fn on_event(&self, _event: &GarrisonEvent) -> GarrisonResult<()> {
+        Err(garrison::error::GarrisonError::Internal(
             "FailingListener 故意失败".to_string(),
         ))
     }
 }
 
 /// 工厂函数：返回 AuditListener 实例。
-fn audit_listener_factory() -> Arc<dyn BulwarkListener> {
+fn audit_listener_factory() -> Arc<dyn GarrisonListener> {
     Arc::new(AuditListener)
 }
 
 /// 工厂函数：返回 FailingListener 实例。
-fn failing_listener_factory() -> Arc<dyn BulwarkListener> {
+fn failing_listener_factory() -> Arc<dyn GarrisonListener> {
     Arc::new(FailingListener)
 }
 
 // 编译期注册监听器（替代 Java SPI）
 inventory::submit! {
-    BulwarkListenerEntry { factory: audit_listener_factory }
+    GarrisonListenerEntry { factory: audit_listener_factory }
 }
 inventory::submit! {
-    BulwarkListenerEntry { factory: failing_listener_factory }
+    GarrisonListenerEntry { factory: failing_listener_factory }
 }
 
 /// 运行事件监听器示例。
 ///
-/// 演示 BulwarkListener trait 实现、inventory 编译期注册、
-/// BulwarkListenerManager 收集并广播事件、单个监听器失败不中断广播。
-pub async fn run() -> BulwarkResult<()> {
-    println!("=== Bulwark 事件监听器示例 ===\n");
+/// 演示 GarrisonListener trait 实现、inventory 编译期注册、
+/// GarrisonListenerManager 收集并广播事件、单个监听器失败不中断广播。
+pub async fn run() -> GarrisonResult<()> {
+    println!("=== Garrison 事件监听器示例 ===\n");
 
     // ----------------------------------------------------------------
-    // 1. BulwarkListenerManager 收集所有已注册监听器
+    // 1. GarrisonListenerManager 收集所有已注册监听器
     // ----------------------------------------------------------------
-    let manager = BulwarkListenerManager::new();
-    println!("[1] BulwarkListenerManager::new()");
+    let manager = GarrisonListenerManager::new();
+    println!("[1] GarrisonListenerManager::new()");
     println!("    已注册监听器数量 = {}", manager.count());
     assert!(manager.count() >= 2); // AuditListener + FailingListener
     println!();
@@ -129,7 +129,7 @@ pub async fn run() -> BulwarkResult<()> {
     // 2. 广播 Login 事件
     // ----------------------------------------------------------------
     println!("[2] broadcast(Login):");
-    let login_event = BulwarkEvent::Login {
+    let login_event = GarrisonEvent::Login {
         login_id: "1001".to_string(),
         token: "T1-uuid-token-abcd".to_string(),
         device: Some("web".to_string()),
@@ -150,21 +150,21 @@ pub async fn run() -> BulwarkResult<()> {
     // ----------------------------------------------------------------
     println!("[3] 广播多种事件类型:");
 
-    let logout_event = BulwarkEvent::Logout {
+    let logout_event = GarrisonEvent::Logout {
         login_id: "1001".to_string(),
         token: "T1-uuid-token-abcd".to_string(),
         request_context: None,
     };
     manager.broadcast(&logout_event).await;
 
-    let denied_event = BulwarkEvent::PermissionCheck {
+    let denied_event = GarrisonEvent::PermissionCheck {
         login_id: "1001".to_string(),
         permission: "user:delete".to_string(),
         request_context: None,
     };
     manager.broadcast(&denied_event).await;
 
-    let expired_event = BulwarkEvent::TokenExpired {
+    let expired_event = GarrisonEvent::TokenExpired {
         token: "T1-uuid-token-abcd".to_string(),
         request_context: None,
     };
@@ -180,10 +180,10 @@ pub async fn run() -> BulwarkResult<()> {
     println!("    ✓ 每个事件都触发了 AuditListener.on_event\n");
 
     // ----------------------------------------------------------------
-    // 5. BulwarkEvent 派生 Debug + Clone
+    // 5. GarrisonEvent 派生 Debug + Clone
     // ----------------------------------------------------------------
-    println!("[5] BulwarkEvent 派生 Debug + Clone:");
-    let event = BulwarkEvent::Kickout {
+    println!("[5] GarrisonEvent 派生 Debug + Clone:");
+    let event = GarrisonEvent::Kickout {
         login_id: "2002".to_string(),
         token: "T2-token".to_string(),
         reason: "管理员强制下线".to_string(),
@@ -194,7 +194,7 @@ pub async fn run() -> BulwarkResult<()> {
     println!("    Debug = {}", debug_str);
     println!(
         "    Clone 后匹配 Kickout: {}",
-        matches!(cloned, BulwarkEvent::Kickout { .. })
+        matches!(cloned, GarrisonEvent::Kickout { .. })
     );
     println!();
 

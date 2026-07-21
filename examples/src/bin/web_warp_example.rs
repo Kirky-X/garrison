@@ -5,7 +5,7 @@
 
 #[tokio::main]
 async fn main() {
-    bulwark_examples::web::web_warp_example::run()
+    garrison_examples::web::web_warp_example::run()
         .await
         .unwrap();
 }

@@ -7,8 +7,8 @@
 //! # 示例
 //!
 //! ```ignore
-//! use bulwark::account::authflow::builder::FlowBuilder;
-//! use bulwark::account::authflow::{AuthenticationFlow, AuthCondition, AuthStep};
+//! use garrison::account::authflow::builder::FlowBuilder;
+//! use garrison::account::authflow::{AuthenticationFlow, AuthCondition, AuthStep};
 //!
 //! let flow: AuthenticationFlow = FlowBuilder::new("default-password-flow")
 //!     .login("password")
@@ -34,8 +34,8 @@ use super::{AuthCondition, AuthStep, AuthenticationFlow};
 /// # 示例
 ///
 /// ```
-/// use bulwark::account::authflow::builder::FlowBuilder;
-/// use bulwark::account::authflow::AuthenticationFlow;
+/// use garrison::account::authflow::builder::FlowBuilder;
+/// use garrison::account::authflow::AuthenticationFlow;
 ///
 /// let flow: AuthenticationFlow = FlowBuilder::new("test")
 ///     .login("password")

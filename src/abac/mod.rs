@@ -30,7 +30,7 @@ mod engine;
 mod loader;
 
 #[cfg(feature = "abac")]
-use crate::error::BulwarkResult;
+use crate::error::GarrisonResult;
 
 #[cfg(feature = "abac")]
 pub use engine::AbacEngine;
@@ -59,7 +59,7 @@ pub use loader::{EmptyEntityLoader, StaticEntityLoader};
 /// ```ignore
 /// #[async_trait::async_trait]
 /// impl EntityLoader for MyDbEntityLoader {
-///     async fn load_entities(&self) -> BulwarkResult<cedar_policy::Entities> {
+///     async fn load_entities(&self) -> GarrisonResult<cedar_policy::Entities> {
 ///         // 从数据库查询实体并构造 Entities
 ///         todo!()
 ///     }
@@ -78,8 +78,8 @@ pub trait EntityLoader: Send + Sync {
     ///
     /// # 错误
     ///
-    /// - 实体加载失败（数据源不可达、解析错误等）：返回 `BulwarkError`
-    async fn load_entities(&self) -> BulwarkResult<cedar_policy::Entities>;
+    /// - 实体加载失败（数据源不可达、解析错误等）：返回 `GarrisonError`
+    async fn load_entities(&self) -> GarrisonResult<cedar_policy::Entities>;
 }
 
 mod init;

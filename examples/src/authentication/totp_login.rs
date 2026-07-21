@@ -5,7 +5,7 @@
 //!
 //! 运行方式：
 //! ```sh
-//! cargo run -p bulwark-examples --bin totp_login --features secure-totp
+//! cargo run -p garrison-examples --bin totp_login --features secure-totp
 //! ```
 //!
 //! 本示例演示二步验证流程：
@@ -15,15 +15,15 @@
 //!
 //! RFC 6238 默认 SHA1 算法，兼容 Google Authenticator / Microsoft Authenticator 等。
 
-use bulwark::error::BulwarkResult;
-use bulwark::secure::totp::TotpHandler;
+use garrison::error::GarrisonResult;
+use garrison::secure::totp::TotpHandler;
 
 /// 运行 TOTP 二次验证示例。
 ///
 /// 演示 TotpHandler 的 generate 生成验证码、validate 校验、
 /// ±1 时间窗口偏差容忍、错误验证码被拒、Base32 密钥解码。
-pub fn run() -> BulwarkResult<()> {
-    println!("=== Bulwark TOTP 二次验证示例 ===\n");
+pub fn run() -> GarrisonResult<()> {
+    println!("=== Garrison TOTP 二次验证示例 ===\n");
 
     // 1. 用户密钥（20 字节，RFC 6238 推荐长度）
     //    生产环境每个用户应有独立密钥，存于安全位置（加密存储）

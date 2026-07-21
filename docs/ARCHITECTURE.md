@@ -1,6 +1,6 @@
-# Bulwark 架构设计文档
+# Garrison 架构设计文档
 
-> Bulwark 是面向 Rust 生态的身份认证鉴权框架。
+> Garrison 是面向 Rust 生态的身份认证鉴权框架。
 >
 > - 版本：0.7.0（微服务架构 + ABAC/Cedar + OAuth2 Server + 架构加固 + 依赖优化：backend-remote / Auth Server / ABAC 引擎 / OAuth2 Server 4 端点 / secure-sanitize / 错误类型统一 / mod.rs 加固）
 > - 运行时：tokio 1.x
@@ -14,25 +14,25 @@
 
 ## 一、架构概览
 
-Bulwark 采用 **双抽象层 + 全局单例** 架构，核心设计目标：
+Garrison 采用 **双抽象层 + 全局单例** 架构，核心设计目标：
 
 1. 业务代码只面向 trait 编程，存储后端可平滑替换；
-2. 启动时一次性注入依赖，运行期零状态调用，业务代码通过 `BulwarkManager` 静态 API 即可使用。
+2. 启动时一次性注入依赖，运行期零状态调用，业务代码通过 `GarrisonManager` 静态 API 即可使用。
 
 ### 1.1 双抽象层
 
-- **DAO 抽象层**：`BulwarkDao` trait 屏蔽存储后端差异，底层由 `dbnexus`（数据库）+ `oxcache`（缓存）实现，切换 SQLite / PostgreSQL / MySQL 时上层无需改动。
+- **DAO 抽象层**：`GarrisonDao` trait 屏蔽存储后端差异，底层由 `dbnexus`（数据库）+ `oxcache`（缓存）实现，切换 SQLite / PostgreSQL / MySQL 时上层无需改动。
 - **缓存抽象层**：`oxcache` 0.3 提供 L1（oxcache 内存层）+ L2（redis 分布式）两级缓存，支持 per-entry TTL 精细化过期控制，对上层呈现统一 `get / set / remove` 语义。
 
 ### 1.2 全局单例
 
-- `BulwarkManager` 通过 `parking_lot::RwLock` 持有 `Arc<BulwarkLogicDefault>`（v0.5.2 起 `BulwarkLogic` trait 拆分为 `BulwarkCore` base trait + 5 个子 trait：`SessionLogic` / `PermissionLogic` / `TokenLogic` / `MfaLogic` / `PasswordLogic`），启动时调用 `BulwarkManager::init()` 一次性注入 dao / config / interface。
-- `BulwarkLogicFactoryEntry` 通过 `inventory::submit!` 在编译期注册，运行时由 `inventory::iter` 选取默认实现。
-- `BulwarkUtil` 暴露静态方法（`login` / `check_login` / `logout` 等），内部全部委托 `BULWARK_MANAGER` 单例，业务侧零状态调用。
+- `GarrisonManager` 通过 `parking_lot::RwLock` 持有 `Arc<GarrisonLogicDefault>`（v0.5.2 起 `GarrisonLogic` trait 拆分为 `GarrisonCore` base trait + 5 个子 trait：`SessionLogic` / `PermissionLogic` / `TokenLogic` / `MfaLogic` / `PasswordLogic`），启动时调用 `GarrisonManager::init()` 一次性注入 dao / config / interface。
+- `GarrisonLogicFactoryEntry` 通过 `inventory::submit!` 在编译期注册，运行时由 `inventory::iter` 选取默认实现。
+- `GarrisonUtil` 暴露静态方法（`login` / `check_login` / `logout` 等），内部全部委托 `GARRISON_MANAGER` 单例，业务侧零状态调用。
 
 ### 1.3 双模会话
 
-Bulwark 同时维护两种会话维度：
+Garrison 同时维护两种会话维度：
 
 - **Account-Session**：以 `login_id` 为 key，存储账号级长生命周期数据（角色、权限、用户画像）。
 - **Token-Session**：以 `token` 为 key，存储该次登录的临时数据（设备、登录时间、临时授权）。
@@ -43,21 +43,21 @@ Bulwark 同时维护两种会话维度：
 
 ## 二、模块划分
 
-Bulwark 分为四层模块，由 feature flag 控制编译裁剪：
+Garrison 分为四层模块，由 feature flag 控制编译裁剪：
 
 ```mermaid
 graph TB
     subgraph CoreLayer["核心模块（always on）"]
         core[core<br/>token / permission / auth]
-        stp[stp<br/>BulwarkLogic / BulwarkUtil]
-        session[session<br/>BulwarkSession]
-        config[config<br/>BulwarkConfig]
+        stp[stp<br/>GarrisonLogic / GarrisonUtil]
+        session[session<br/>GarrisonSession]
+        config[config<br/>GarrisonConfig]
         context[context<br/>task_local 上下文]
-        dao[dao<br/>BulwarkDao trait]
-        strategy[strategy<br/>BulwarkPermissionStrategy]
-        manager[manager<br/>BulwarkManager 单例]
+        dao[dao<br/>GarrisonDao trait]
+        strategy[strategy<br/>GarrisonPermissionStrategy]
+        manager[manager<br/>GarrisonManager 单例]
         annotation[annotation<br/>注解枚举]
-        router[router<br/>BulwarkRouter]
+        router[router<br/>GarrisonRouter]
         json[json<br/>JSON 模板]
         exception[exception<br/>异常类型]
         plugin[plugin<br/>插件 trait]
@@ -108,18 +108,18 @@ graph TB
 | 模块 | 职责 |
 |------|------|
 | `core/` | 核心层：`core/token`（Token 生成校验）、`core/permission`（权限校验）、`core/auth`（登录鉴权） |
-| `stp/` | `BulwarkLogic` trait + `BulwarkInterface` trait + `BulwarkUtil` 静态门面 |
-| `session/` | `BulwarkSession` 会话模型（Account + Token 双模） |
-| `config/` | `BulwarkConfig` 全局配置 + `ConfigLoader` trait + 热更新 |
-| `context/` | `BulwarkContext` 请求上下文抽象 + axum 适配器 + task_local |
-| `dao/` | `BulwarkDao` trait + dbnexus 实现 |
-| `strategy/` | `BulwarkPermissionStrategy` 权限策略 |
-| `manager/` | `BulwarkManager` 全局单例 + inventory 编译期注册 |
+| `stp/` | `GarrisonLogic` trait + `GarrisonInterface` trait + `GarrisonUtil` 静态门面 |
+| `session/` | `GarrisonSession` 会话模型（Account + Token 双模） |
+| `config/` | `GarrisonConfig` 全局配置 + `ConfigLoader` trait + 热更新 |
+| `context/` | `GarrisonContext` 请求上下文抽象 + axum 适配器 + task_local |
+| `dao/` | `GarrisonDao` trait + dbnexus 实现 |
+| `strategy/` | `GarrisonPermissionStrategy` 权限策略 |
+| `manager/` | `GarrisonManager` 全局单例 + inventory 编译期注册 |
 | `annotation/` | 鉴权注解枚举 |
-| `router/` | `BulwarkRouter` + Interceptor 路由拦截 |
+| `router/` | `GarrisonRouter` + Interceptor 路由拦截 |
 | `json/` | JSON 模板与序列化抽象 |
 | `exception/` | 框架异常类型 |
-| `plugin/` | `BulwarkPlugin` trait 与编译期注册 |
+| `plugin/` | `GarrisonPlugin` trait 与编译期注册 |
 
 ### 2.2 协议层（feature 门控，默认关闭）
 
@@ -142,7 +142,7 @@ graph TB
 
 | 模块 | Feature | 说明 |
 |------|---------|------|
-| `dao/alone_cache` | `alone-cache` | `AloneCache` 装饰器（实现 BulwarkDao，key_prefix 隔离）+ `AloneCacheManager`（多实例管理） |
+| `dao/alone_cache` | `alone-cache` | `AloneCache` 装饰器（实现 GarrisonDao，key_prefix 隔离）+ `AloneCacheManager`（多实例管理） |
 | `stp/parameter` | `parameter-query` | `ParameterQuery` trait + `ParameterQueryBuilder`（链式 with_login_id/with_device/with_token + async check_permission/check_role） |
 
 ### 2.4 安全层（feature 门控，默认关闭）
@@ -158,26 +158,26 @@ graph TB
 
 ## 三、关键 trait 关系图
 
-Bulwark 的核心抽象通过 trait 解耦，业务方实现 trait 即可接入：
+Garrison 的核心抽象通过 trait 解耦，业务方实现 trait 即可接入：
 
 ```mermaid
 graph LR
-    BC[BulwarkCore<br/>base trait]
+    BC[GarrisonCore<br/>base trait]
     SL[SessionLogic<br/>会话逻辑 trait]
     PL[PermissionLogic<br/>权限逻辑 trait]
     TL[TokenLogic<br/>Token 逻辑 trait]
     ML[MfaLogic<br/>MFA 逻辑 trait]
     PWL[PasswordLogic<br/>密码逻辑 trait]
-    BI[BulwarkInterface<br/>业务数据源 trait]
-    BD[BulwarkDao<br/>持久化抽象 trait]
-    BS[BulwarkSession<br/>会话模型]
-    BCtx[BulwarkContext<br/>请求上下文 trait]
-    BFS[BulwarkPermissionStrategy<br/>权限策略 trait]
-    BM[BulwarkManager<br/>全局单例]
-    BU[BulwarkUtil<br/>静态门面]
+    BI[GarrisonInterface<br/>业务数据源 trait]
+    BD[GarrisonDao<br/>持久化抽象 trait]
+    BS[GarrisonSession<br/>会话模型]
+    BCtx[GarrisonContext<br/>请求上下文 trait]
+    BFS[GarrisonPermissionStrategy<br/>权限策略 trait]
+    BM[GarrisonManager<br/>全局单例]
+    BU[GarrisonUtil<br/>静态门面]
 
     BU --> BM
-    BM --> BLD[BulwarkLogicDefault<br/>聚合实现]
+    BM --> BLD[GarrisonLogicDefault<br/>聚合实现]
     BLD --> BC
     SL --> BC
     PL --> SL
@@ -197,16 +197,16 @@ graph LR
 
 | trait | 职责 | 默认实现 |
 |-------|------|---------|
-| `BulwarkCore` | base trait（1 方法） | `BulwarkLogicDefault` |
-| `SessionLogic` | 会话逻辑：登录、登出、校验、kickout（13 方法，继承 BulwarkCore） | `BulwarkLogicDefault` |
-| `PermissionLogic` | 权限逻辑：check_permission / check_role / has_permission / has_role / get_permission_list / get_role_list（6 方法，继承 SessionLogic） | `BulwarkLogicDefault` |
-| `TokenLogic` | Token 逻辑：check_access_token / check_client_token / check_temp_token / verify_token / refresh_token（5 方法，继承 SessionLogic） | `BulwarkLogicDefault` |
-| `MfaLogic` | MFA 逻辑：二级认证与账号禁用校验（5 async 方法 + 2 关联函数，继承 SessionLogic） | `BulwarkLogicDefault` |
-| `PasswordLogic` | 密码逻辑：login_with_password（1 方法，继承 SessionLogic） | `BulwarkLogicDefault` |
-| `BulwarkInterface` | 业务数据源接入点：查询用户权限、角色等 | 业务方必须实现 |
-| `BulwarkDao` | 持久化抽象：session CRUD、token 映射 + `RedisDeploymentMode` 配置 | dbnexus + oxcache 实现 |
-| `BulwarkContext` | 请求上下文：读取当前 token、请求头、Cookie | axum adapter 实现 |
-| `BulwarkPermissionStrategy` | 权限策略：`check_permission` 判定 | 框架提供默认实现 |
+| `GarrisonCore` | base trait（1 方法） | `GarrisonLogicDefault` |
+| `SessionLogic` | 会话逻辑：登录、登出、校验、kickout（13 方法，继承 GarrisonCore） | `GarrisonLogicDefault` |
+| `PermissionLogic` | 权限逻辑：check_permission / check_role / has_permission / has_role / get_permission_list / get_role_list（6 方法，继承 SessionLogic） | `GarrisonLogicDefault` |
+| `TokenLogic` | Token 逻辑：check_access_token / check_client_token / check_temp_token / verify_token / refresh_token（5 方法，继承 SessionLogic） | `GarrisonLogicDefault` |
+| `MfaLogic` | MFA 逻辑：二级认证与账号禁用校验（5 async 方法 + 2 关联函数，继承 SessionLogic） | `GarrisonLogicDefault` |
+| `PasswordLogic` | 密码逻辑：login_with_password（1 方法，继承 SessionLogic） | `GarrisonLogicDefault` |
+| `GarrisonInterface` | 业务数据源接入点：查询用户权限、角色等 | 业务方必须实现 |
+| `GarrisonDao` | 持久化抽象：session CRUD、token 映射 + `RedisDeploymentMode` 配置 | dbnexus + oxcache 实现 |
+| `GarrisonContext` | 请求上下文：读取当前 token、请求头、Cookie | axum adapter 实现 |
+| `GarrisonPermissionStrategy` | 权限策略：`check_permission` 判定 | 框架提供默认实现 |
 | `SessionExpiryListener` | 会话过期回调：会话过期时触发异步回调（0.6.0 新增） | 框架提供默认实现 |
 
 > 所有 trait 采用 **trait + Default 模式**：框架提供默认实现，业务方可覆盖。任何组件都可被替换为自定义实现，框架默认实现仅在未被覆盖时生效。
@@ -222,18 +222,18 @@ sequenceDiagram
     participant C as Client
     participant AX as axum middleware
     participant TL as task_local CURRENT_TOKEN
-    participant BU as BulwarkUtil
-    participant BM as BulwarkManager
-    participant BL as BulwarkLogic
-    participant BS as BulwarkSession
-    participant BD as BulwarkDao
+    participant BU as GarrisonUtil
+    participant BM as GarrisonManager
+    participant BL as GarrisonLogic
+    participant BS as GarrisonSession
+    participant BD as GarrisonDao
     participant OC as oxcache (L1 内存 + L2 redis)
     participant DB as dbnexus (SQLite / PostgreSQL / MySQL)
 
-    C->>AX: HTTP 请求 (Header/Cookie: bulwark_token)
+    C->>AX: HTTP 请求 (Header/Cookie: garrison_token)
     AX->>TL: 提取 token, CURRENT_TOKEN.scope(token, fut)
-    AX->>BU: BulwarkUtil::check_login()
-    BU->>BM: 委托 BULWARK_MANAGER.logic()
+    AX->>BU: GarrisonUtil::check_login()
+    BU->>BM: 委托 GARRISON_MANAGER.logic()
     BM->>BL: logic.check_login()
     BL->>TL: current_token() 读取 token
     TL-->>BL: Some(token)
@@ -256,7 +256,7 @@ sequenceDiagram
         BU-->>AX: 通过
         AX-->>C: 200 业务响应
     else 校验失败
-        BL-->>BM: Err(BulwarkError::NotLogin)
+        BL-->>BM: Err(GarrisonError::NotLogin)
         BM-->>BU: Err
         BU-->>AX: Err 抛出
         AX-->>C: 401 / 异常 JSON
@@ -273,19 +273,19 @@ sequenceDiagram
 
 **方案**：
 
-- 使用 `inventory::submit!` 宏在编译期把 `BulwarkLogicFactoryEntry` 注册到全局 link list。
-- `BulwarkManager::init()` 启动时遍历 `inventory::iter::<BulwarkLogicFactoryEntry>()`，按 `name` 选定默认实现。
+- 使用 `inventory::submit!` 宏在编译期把 `GarrisonLogicFactoryEntry` 注册到全局 link list。
+- `GarrisonManager::init()` 启动时遍历 `inventory::iter::<GarrisonLogicFactoryEntry>()`，按 `name` 选定默认实现。
 - 优点：**无反射、无运行时开销、跨 crate 注册**，与 feature flag 配合实现按需启用。
 
 ### 2. 为什么用 task_local 上下文？
 
-**问题**：async 请求级 token 在 `Arc<dyn BulwarkLogic>` 中无法通过参数传递（trait 方法签名固定），若用 thread_local 则跨 `.await` 不安全。
+**问题**：async 请求级 token 在 `Arc<dyn GarrisonLogic>` 中无法通过参数传递（trait 方法签名固定），若用 thread_local 则跨 `.await` 不安全。
 
 **方案**：
 
 - `context` 模块定义 `CURRENT_TOKEN: tokio::task_local`。
 - axum middleware 在请求入口提取 token 后 `CURRENT_TOKEN.scope(token, fut)` 设置。
-- `BulwarkUtil::current_token()` 通过 `CURRENT_TOKEN.get()` 取值，自动落到当前请求作用域。
+- `GarrisonUtil::current_token()` 通过 `CURRENT_TOKEN.get()` 取值，自动落到当前请求作用域。
 - 优点：无锁、无穿透、跨 `.await` 安全。
 
 ### 3. 为什么用 trait + Default 模式？
@@ -294,8 +294,8 @@ sequenceDiagram
 
 **方案**：
 
-- 所有核心抽象（`BulwarkLogic` / `BulwarkDao` / `BulwarkContext` / `BulwarkPermissionStrategy` / `BulwarkListener`）均以 trait 定义。
-- 框架提供默认实现，业务方实现 trait 后通过 `BulwarkManager::init()` 注入即可覆盖。
+- 所有核心抽象（`GarrisonLogic` / `GarrisonDao` / `GarrisonContext` / `GarrisonPermissionStrategy` / `GarrisonListener`）均以 trait 定义。
+- 框架提供默认实现，业务方实现 trait 后通过 `GarrisonManager::init()` 注入即可覆盖。
 - 优点：扩展点清晰，符合 Rust 的零成本抽象哲学。
 
 ### 4. 为什么用双抽象层（DAO + 缓存）？
@@ -304,9 +304,9 @@ sequenceDiagram
 
 **方案**：
 
-- `BulwarkDao` trait 定义统一接口（`get_session` / `set_session` / `delete_token` 等），底层由 dbnexus + oxcache 实现。
+- `GarrisonDao` trait 定义统一接口（`get_session` / `set_session` / `delete_token` 等），底层由 dbnexus + oxcache 实现。
 - `oxcache` 作为缓存抽象，L1 为 oxcache 内存层 LRU，L2 为 redis 分布式，per-entry TTL 精细控制。
-- 切换存储后端时仅替换 `BulwarkLogicFactoryEntry` 的实现，**上层零改动**。
+- 切换存储后端时仅替换 `GarrisonLogicFactoryEntry` 的实现，**上层零改动**。
 
 ### 5. 为什么用 feature 门控？
 
@@ -322,42 +322,42 @@ sequenceDiagram
 
 ## 六、扩展点
 
-### 1. 自定义 BulwarkDao 实现
+### 1. 自定义 GarrisonDao 实现
 
 替换存储后端（如 PostgreSQL / MongoDB / 自研存储）：
 
 ```rust
 #[async_trait]
-impl BulwarkDao for MyDao {
-    async fn get_session(&self, key: &str) -> BulwarkResult<Option<SessionData>> {
+impl GarrisonDao for MyDao {
+    async fn get_session(&self, key: &str) -> GarrisonResult<Option<SessionData>> {
         // 自定义查询逻辑
     }
     // ...
 }
 ```
 
-通过 `BulwarkManager::init()` 注入即可，上层业务代码零改动。
+通过 `GarrisonManager::init()` 注入即可，上层业务代码零改动。
 
-### 2. 自定义 BulwarkLogicFactoryEntry
+### 2. 自定义 GarrisonLogicFactoryEntry
 
 替换核心逻辑（如自定义 token 生成规则、自定义登录策略）：
 
 ```rust
 inventory::submit! {
-    BulwarkLogicFactoryEntry {
+    GarrisonLogicFactoryEntry {
         name: "my-logic",
-        factory: || Arc::new(MyLogic) as Arc<BulwarkLogicDefault>,
+        factory: || Arc::new(MyLogic) as Arc<GarrisonLogicDefault>,
     }
 }
 ```
 
-### 3. 自定义 BulwarkPermissionStrategy
+### 3. 自定义 GarrisonPermissionStrategy
 
 替换权限策略（如基于 ABAC、基于外部策略引擎）：
 
 ```rust
 #[async_trait]
-impl BulwarkPermissionStrategy for MyStrategy {
+impl GarrisonPermissionStrategy for MyStrategy {
     async fn check_permission(&self, login_id: &str, permission: &str) -> bool {
         // 自定义权限判定
     }

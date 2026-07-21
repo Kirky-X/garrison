@@ -17,7 +17,7 @@
 //!
 //! ## SAML 签名验证未实现（fail-closed）
 //!
-//! 当前 `DefaultSamlProvider::validate_assertion` 返回 `BulwarkError::NotImplemented`，
+//! 当前 `DefaultSamlProvider::validate_assertion` 返回 `GarrisonError::NotImplemented`，
 //! **不执行任何 XML 签名验证**。出于安全考虑（fail-closed 原则），`parse_response`
 //! 在检测到未验证的 Assertion 时会将其剥离（`response.assertion = None`），
 //! 并通过 `tracing::warn!` 记录告警。这意味着：
@@ -47,7 +47,7 @@
 //! - **fail-closed 剥离**：未验证的 Assertion 一律剥离，不会泄漏给调用方。
 
 use crate::constants::DaoKeyPrefix;
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::error::{GarrisonError, GarrisonResult};
 use async_trait::async_trait;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -142,7 +142,7 @@ pub trait SamlProvider: Send + Sync {
         sp_entity_id: &str,
         acs_url: &str,
         idp_sso_endpoint: &str,
-    ) -> BulwarkResult<SamlRequest>;
+    ) -> GarrisonResult<SamlRequest>;
 
     /// 解析 SAML Response XML。
     ///
@@ -153,7 +153,7 @@ pub trait SamlProvider: Send + Sync {
     ///
     /// # 返回
     /// 解析后的 `SamlResponse` 结构。
-    async fn parse_response(&self, response_xml: &str) -> BulwarkResult<SamlResponse>;
+    async fn parse_response(&self, response_xml: &str) -> GarrisonResult<SamlResponse>;
 
     /// 验证 SAML Assertion 签名。
     ///
@@ -162,8 +162,8 @@ pub trait SamlProvider: Send + Sync {
     ///
     /// # 返回
     /// - `Ok(true)`: 签名验证通过。
-    /// - `Err(BulwarkError::NotImplemented)`: 签名验证尚未实现。
-    async fn validate_assertion(&self, assertion: &SamlAssertion) -> BulwarkResult<bool>;
+    /// - `Err(GarrisonError::NotImplemented)`: 签名验证尚未实现。
+    async fn validate_assertion(&self, assertion: &SamlAssertion) -> GarrisonResult<bool>;
 }
 
 // ============================================================================
@@ -180,7 +180,7 @@ pub trait SamlProvider: Send + Sync {
 /// 通过 [`DefaultSamlProvider::with_expected_destination`] /
 /// [`DefaultSamlProvider::with_expected_audience`] 配置预期值后，
 /// [`SamlProvider::parse_response`] 会在解析后强制校验：
-/// - 不匹配返回 [`BulwarkError::InvalidParam`]（fail-loud，禁止静默放行）
+/// - 不匹配返回 [`GarrisonError::InvalidParam`]（fail-loud，禁止静默放行）
 /// - 未配置则 `tracing::warn!` 告警（开发环境兼容）
 pub struct DefaultSamlProvider {
     /// 预期 Destination（SP 的 ACS URL）。None = 跳过验证（仅告警）。
@@ -198,7 +198,7 @@ impl DefaultSamlProvider {
     ///
     /// # 返回
     /// 可用的 `DefaultSamlProvider` 实例。
-    pub fn new() -> BulwarkResult<Self> {
+    pub fn new() -> GarrisonResult<Self> {
         Ok(Self {
             expected_destination: None,
             expected_audience: None,
@@ -235,7 +235,7 @@ impl SamlProvider for DefaultSamlProvider {
         sp_entity_id: &str,
         acs_url: &str,
         idp_sso_endpoint: &str,
-    ) -> BulwarkResult<SamlRequest> {
+    ) -> GarrisonResult<SamlRequest> {
         Ok(SamlRequest {
             id: Uuid::new_v4().to_string(),
             issue_instant: Utc::now().to_rfc3339(),
@@ -246,7 +246,7 @@ impl SamlProvider for DefaultSamlProvider {
         })
     }
 
-    async fn parse_response(&self, response_xml: &str) -> BulwarkResult<SamlResponse> {
+    async fn parse_response(&self, response_xml: &str) -> GarrisonResult<SamlResponse> {
         let mut response = parse_saml_response_xml(response_xml)?;
 
         // vuln-0002 修复：Destination 验证（fail-loud）
@@ -265,7 +265,7 @@ impl SamlProvider for DefaultSamlProvider {
                     tracing::warn!("SAML Assertion signature verification failed, stripped");
                     response.assertion = None;
                 },
-                Err(BulwarkError::NotImplemented(_)) => {
+                Err(GarrisonError::NotImplemented(_)) => {
                     tracing::warn!("SAML signature verification not implemented, Assertion stripped (fail-closed)");
                     response.assertion = None;
                 },
@@ -275,8 +275,8 @@ impl SamlProvider for DefaultSamlProvider {
         Ok(response)
     }
 
-    async fn validate_assertion(&self, _assertion: &SamlAssertion) -> BulwarkResult<bool> {
-        Err(BulwarkError::NotImplemented(
+    async fn validate_assertion(&self, _assertion: &SamlAssertion) -> GarrisonResult<bool> {
+        Err(GarrisonError::NotImplemented(
             "sso-saml-signature-not-implemented".to_string(),
         ))
     }
@@ -288,13 +288,13 @@ impl SamlProvider for DefaultSamlProvider {
 
 /// 校验 SAML Response 的 Destination 是否匹配预期值（vuln-0002）。
 ///
-/// - `expected = Some(exp)`: 严格匹配，不匹配返回 [`BulwarkError::InvalidParam`]（fail-loud）
+/// - `expected = Some(exp)`: 严格匹配，不匹配返回 [`GarrisonError::InvalidParam`]（fail-loud）
 /// - `expected = None`: `tracing::warn!` 告警（开发环境兼容，生产环境应配置）
-fn validate_destination(actual: &str, expected: Option<&str>) -> BulwarkResult<()> {
+fn validate_destination(actual: &str, expected: Option<&str>) -> GarrisonResult<()> {
     match expected {
         Some(exp) if !exp.is_empty() => {
             if actual != exp {
-                return Err(BulwarkError::InvalidParam(format!(
+                return Err(GarrisonError::InvalidParam(format!(
                     "sso-saml-destination-mismatch::expected={}::actual={}",
                     exp, actual
                 )));
@@ -315,13 +315,13 @@ fn validate_destination(actual: &str, expected: Option<&str>) -> BulwarkResult<(
 
 /// 校验 SAML Assertion 的 Audience 是否匹配预期值（vuln-0002）。
 ///
-/// - `expected = Some(exp)`: 严格匹配，不匹配返回 [`BulwarkError::InvalidParam`]（fail-loud）
+/// - `expected = Some(exp)`: 严格匹配，不匹配返回 [`GarrisonError::InvalidParam`]（fail-loud）
 /// - `expected = None`: `tracing::warn!` 告警（开发环境兼容，生产环境应配置）
-fn validate_audience(actual: &str, expected: Option<&str>) -> BulwarkResult<()> {
+fn validate_audience(actual: &str, expected: Option<&str>) -> GarrisonResult<()> {
     match expected {
         Some(exp) if !exp.is_empty() => {
             if actual != exp {
-                return Err(BulwarkError::InvalidParam(format!(
+                return Err(GarrisonError::InvalidParam(format!(
                     "sso-saml-audience-mismatch::expected={}::actual={}",
                     exp, actual
                 )));
@@ -350,7 +350,7 @@ fn validate_audience(actual: &str, expected: Option<&str>) -> BulwarkResult<()> 
 ///
 /// vuln-0001 修复：解析时同步记录 `<Assertion>` 元素的原始 XML 字节范围，
 /// 填充到 [`SamlAssertion::raw_xml`]，供 [`XmlSecSamlProvider`] 执行 XML 签名验证。
-fn parse_saml_response_xml(xml: &str) -> BulwarkResult<SamlResponse> {
+fn parse_saml_response_xml(xml: &str) -> GarrisonResult<SamlResponse> {
     use quick_xml::events::Event;
     use quick_xml::reader::Reader;
 
@@ -389,7 +389,12 @@ fn parse_saml_response_xml(xml: &str) -> BulwarkResult<SamlResponse> {
         // buffer_position() 在 read 之前返回上一事件结束位置 = 当前事件起始位置
         let pos_before = reader.buffer_position();
         match reader.read_event_into(&mut buf) {
-            Err(e) => return Err(BulwarkError::Internal(format!("sso-saml-xml-parse::{}", e))),
+            Err(e) => {
+                return Err(GarrisonError::Internal(format!(
+                    "sso-saml-xml-parse::{}",
+                    e
+                )))
+            },
             Ok(Event::Eof) => break,
 
             // Start 元素：设置状态标志 + 提取属性
@@ -580,10 +585,10 @@ fn parse_saml_response_xml(xml: &str) -> BulwarkResult<SamlResponse> {
         if !assertion.not_on_or_after.is_empty() {
             let expiry =
                 chrono::DateTime::parse_from_rfc3339(&assertion.not_on_or_after).map_err(|e| {
-                    BulwarkError::InvalidToken(format!("sso-saml-not-on-or-after-parse::{}", e))
+                    GarrisonError::InvalidToken(format!("sso-saml-not-on-or-after-parse::{}", e))
                 })?;
             if Utc::now().timestamp() >= expiry.timestamp() {
-                return Err(BulwarkError::InvalidToken(format!(
+                return Err(GarrisonError::InvalidToken(format!(
                     "sso-saml-assertion-expired::{}",
                     assertion.not_on_or_after
                 )));
@@ -624,7 +629,7 @@ fn parse_saml_response_xml(xml: &str) -> BulwarkResult<SamlResponse> {
 /// 2. `get_and_delete` 返回 `None` → 首次消费，计算 TTL 后 `set` 标记已消费，返回 `Ok(true)`
 ///
 /// **原子性边界**：
-/// - `get_and_delete` 在 `MockDao` / `BulwarkDaoOxcache` 中由 `parking_lot::Mutex` 保护，进程内原子
+/// - `get_and_delete` 在 `MockDao` / `GarrisonDaoOxcache` 中由 `parking_lot::Mutex` 保护，进程内原子
 /// - 跨进程（Redis L2）需后端重写 `get_and_delete` 为 `GETDEL` 或 Lua 脚本
 /// - `get_and_delete` 后的 `set` 非原子，但即使两个并发请求同时到达，
 ///   `get_and_delete` 保证仅一个返回 `None`（首次消费），另一个返回 `Some`（重放拒绝）
@@ -635,8 +640,8 @@ fn parse_saml_response_xml(xml: &str) -> BulwarkResult<SamlResponse> {
 pub async fn check_assertion_replay(
     assertion_id: &str,
     not_on_or_after: &str,
-    dao: &dyn crate::dao::BulwarkDao,
-) -> BulwarkResult<bool> {
+    dao: &dyn crate::dao::GarrisonDao,
+) -> GarrisonResult<bool> {
     if assertion_id.is_empty() {
         return Ok(true);
     }
@@ -655,7 +660,7 @@ pub async fn check_assertion_replay(
         300
     } else {
         let expiry = chrono::DateTime::parse_from_rfc3339(not_on_or_after).map_err(|e| {
-            BulwarkError::InvalidToken(format!("sso-saml-not-on-or-after-parse::{}", e))
+            GarrisonError::InvalidToken(format!("sso-saml-not-on-or-after-parse::{}", e))
         })?;
         let remaining = expiry.timestamp().saturating_sub(Utc::now().timestamp());
         if remaining > 0 {
@@ -835,7 +840,7 @@ fn extract_signature_xml(assertion_xml: &str) -> Option<String> {
 /// - `Ok(false)`: 签名缺失 / 算法不在白名单 / 签名不匹配
 /// - `Err(_)`: 公钥解析失败 / base64 解码失败 / 内部错误
 #[cfg(feature = "secure-saml")]
-fn verify_saml_signature(assertion_xml: &str, idp_public_key_pem: &str) -> BulwarkResult<bool> {
+fn verify_saml_signature(assertion_xml: &str, idp_public_key_pem: &str) -> GarrisonResult<bool> {
     use rsa::pkcs1::DecodeRsaPublicKey;
     use rsa::pkcs8::DecodePublicKey;
 
@@ -893,7 +898,7 @@ fn verify_saml_signature(assertion_xml: &str, idp_public_key_pem: &str) -> Bulwa
     let signature_value = base64::engine::general_purpose::STANDARD
         .decode(&signature_value_b64)
         .map_err(|e| {
-            BulwarkError::InvalidParam(format!("sso-saml-signature-value-decode::{}", e))
+            GarrisonError::InvalidParam(format!("sso-saml-signature-value-decode::{}", e))
         })?;
 
     // 4. 提取 <ds:SignedInfo> 原始 XML（C14N 限制：直接使用原始 XML）
@@ -916,7 +921,7 @@ fn verify_saml_signature(assertion_xml: &str, idp_public_key_pem: &str) -> Bulwa
         Err(e1) => match rsa::RsaPublicKey::from_pkcs1_pem(idp_public_key_pem) {
             Ok(k) => k,
             Err(e2) => {
-                return Err(BulwarkError::InvalidParam(format!(
+                return Err(GarrisonError::InvalidParam(format!(
                     "sso-saml-idp-public-key-parse-failed::pkcs8_err={}::pkcs1_err={}",
                     e1, e2
                 )));
@@ -928,7 +933,7 @@ fn verify_saml_signature(assertion_xml: &str, idp_public_key_pem: &str) -> Bulwa
     // rsa 0.9 的 pkcs1v15::Signature 实现 TryFrom<&[u8]>，长度不符返回 error
     use std::convert::TryFrom;
     let signature = Signature::try_from(signature_value.as_slice()).map_err(|e| {
-        BulwarkError::InvalidParam(format!("sso-saml-signature-bytes-decode::{}", e))
+        GarrisonError::InvalidParam(format!("sso-saml-signature-bytes-decode::{}", e))
     })?;
 
     let verifying_key = VerifyingKey::<Sha256>::new(public_key);
@@ -983,8 +988,8 @@ impl XmlSecSamlProvider {
     ///
     /// # 返回
     /// - `Ok(Self)`: 创建成功
-    /// - `Err(BulwarkError::InvalidParam)`: 公钥 PEM 格式无效
-    pub fn new(idp_public_key_pem: String) -> BulwarkResult<Self> {
+    /// - `Err(GarrisonError::InvalidParam)`: 公钥 PEM 格式无效
+    pub fn new(idp_public_key_pem: String) -> GarrisonResult<Self> {
         // 预解析公钥，fail-fast 避免每次 validate_assertion 才报错
         let _ = parse_rsa_public_key(&idp_public_key_pem)?;
         Ok(Self {
@@ -1009,7 +1014,7 @@ impl XmlSecSamlProvider {
 
 /// 解析 RSA 公钥 PEM（PKCS#8 优先，回退 PKCS#1）。供 `XmlSecSamlProvider::new` fail-fast 校验。
 #[cfg(feature = "secure-saml")]
-fn parse_rsa_public_key(pem: &str) -> BulwarkResult<rsa::RsaPublicKey> {
+fn parse_rsa_public_key(pem: &str) -> GarrisonResult<rsa::RsaPublicKey> {
     use rsa::pkcs1::DecodeRsaPublicKey;
     use rsa::pkcs8::DecodePublicKey;
 
@@ -1018,7 +1023,7 @@ fn parse_rsa_public_key(pem: &str) -> BulwarkResult<rsa::RsaPublicKey> {
         Ok(k) => Ok(k),
         Err(e1) => match rsa::RsaPublicKey::from_pkcs1_pem(pem) {
             Ok(k) => Ok(k),
-            Err(e2) => Err(BulwarkError::InvalidParam(format!(
+            Err(e2) => Err(GarrisonError::InvalidParam(format!(
                 "sso-saml-idp-public-key-parse-failed::pkcs8_err={}::pkcs1_err={}",
                 e1, e2
             ))),
@@ -1034,7 +1039,7 @@ impl SamlProvider for XmlSecSamlProvider {
         sp_entity_id: &str,
         acs_url: &str,
         idp_sso_endpoint: &str,
-    ) -> BulwarkResult<SamlRequest> {
+    ) -> GarrisonResult<SamlRequest> {
         Ok(SamlRequest {
             id: Uuid::new_v4().to_string(),
             issue_instant: Utc::now().to_rfc3339(),
@@ -1044,7 +1049,7 @@ impl SamlProvider for XmlSecSamlProvider {
         })
     }
 
-    async fn parse_response(&self, response_xml: &str) -> BulwarkResult<SamlResponse> {
+    async fn parse_response(&self, response_xml: &str) -> GarrisonResult<SamlResponse> {
         let mut response = parse_saml_response_xml(response_xml)?;
 
         // vuln-0002: Destination 验证（fail-loud）
@@ -1069,9 +1074,9 @@ impl SamlProvider for XmlSecSamlProvider {
         Ok(response)
     }
 
-    async fn validate_assertion(&self, assertion: &SamlAssertion) -> BulwarkResult<bool> {
+    async fn validate_assertion(&self, assertion: &SamlAssertion) -> GarrisonResult<bool> {
         let raw_xml = assertion.raw_xml.as_ref().ok_or_else(|| {
-            BulwarkError::InvalidParam(
+            GarrisonError::InvalidParam(
                 "sso-saml-missing-raw-xml-for-signature-verification".to_string(),
             )
         })?;
@@ -1336,7 +1341,7 @@ mod tests {
         let provider = DefaultSamlProvider::new().unwrap();
         let result = provider.parse_response(xml).await;
         assert!(
-            matches!(result, Err(BulwarkError::InvalidToken(_))),
+            matches!(result, Err(GarrisonError::InvalidToken(_))),
             "过期 Assertion 应返回 InvalidToken，实际: {:?}",
             result
         );
@@ -1397,7 +1402,7 @@ mod tests {
         let result = provider.validate_assertion(&assertion).await;
         assert!(result.is_err());
         match result.err() {
-            Some(BulwarkError::NotImplemented(_)) => {},
+            Some(GarrisonError::NotImplemented(_)) => {},
             other => panic!("期望 NotImplemented 错误，实际: {:?}", other),
         }
     }
@@ -1638,7 +1643,7 @@ mod tests {
             .with_expected_destination("https://sp.example.com/acs".to_string());
         let result = provider.parse_response(&xml).await;
         assert!(
-            matches!(result, Err(BulwarkError::InvalidParam(_))),
+            matches!(result, Err(GarrisonError::InvalidParam(_))),
             "Destination 不匹配应返回 InvalidParam（fail-loud），实际: {:?}",
             result
         );
@@ -1682,7 +1687,7 @@ mod tests {
             .with_expected_audience("https://sp.example.com".to_string());
         let result = provider.parse_response(&xml).await;
         assert!(
-            matches!(result, Err(BulwarkError::InvalidParam(_))),
+            matches!(result, Err(GarrisonError::InvalidParam(_))),
             "Audience 不匹配应返回 InvalidParam（fail-loud），实际: {:?}",
             result
         );
@@ -1696,7 +1701,7 @@ mod tests {
         // Destination 不匹配
         assert!(matches!(
             validate_destination("https://evil/acs", Some("https://sp/acs")),
-            Err(BulwarkError::InvalidParam(_))
+            Err(GarrisonError::InvalidParam(_))
         ));
         // Destination 未配置（None）→ Ok + warn
         assert!(validate_destination("https://sp/acs", None).is_ok());
@@ -1708,7 +1713,7 @@ mod tests {
         // Audience 不匹配
         assert!(matches!(
             validate_audience("https://evil", Some("https://sp")),
-            Err(BulwarkError::InvalidParam(_))
+            Err(GarrisonError::InvalidParam(_))
         ));
         // Audience 未配置（None）→ Ok + warn
         assert!(validate_audience("https://sp", None).is_ok());
@@ -1897,7 +1902,7 @@ mod tests {
                 result
             );
             assert!(
-                matches!(result, Err(BulwarkError::InvalidParam(_))),
+                matches!(result, Err(GarrisonError::InvalidParam(_))),
                 "应为 InvalidParam 错误"
             );
         }
@@ -1915,7 +1920,7 @@ mod tests {
     /// - 至少一个任务被拒绝（Ok(false)）—— 证明 get_and_delete 原子生效
     ///
     /// **注意**：完整 TOCTOU 修复需要 `set_nx`（SET if Not eXists）原语，
-    /// 当前 BulwarkDao trait 未提供。本测试验证 `get_and_delete` 提供的
+    /// 当前 GarrisonDao trait 未提供。本测试验证 `get_and_delete` 提供的
     /// 进程内原子性（MockDao 由 parking_lot::Mutex 保护）。
     #[tokio::test]
     async fn check_assertion_replay_concurrent_atomic_get_and_delete() {

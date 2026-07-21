@@ -1,11 +1,11 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-#![doc(html_root_url = "https://docs.rs/bulwark/latest")]
+#![doc(html_root_url = "https://docs.rs/garrison/latest")]
 
-//! # Bulwark
+//! # Garrison
 //!
-//! Bulwark 是一个面向 Rust 生态的一站式身份认证鉴权框架。
+//! Garrison 是一个面向 Rust 生态的一站式身份认证鉴权框架。
 //!
 //! ## 快速开始
 //!
@@ -13,29 +13,29 @@
 //!
 //! ```ignore
 //! use std::sync::Arc;
-//! use bulwark::prelude::*;
+//! use garrison::prelude::*;
 //!
-//! // 1. 准备依赖（业务方实现 BulwarkDao / BulwarkInterface）
-//! let dao: Arc<dyn BulwarkDao> = /* oxcache / dbnexus 实现 */;
-//! let config = Arc::new(BulwarkConfig::default_config());
-//! let interface: Arc<dyn BulwarkInterface> = Arc::new(MyInterface);
+//! // 1. 准备依赖（业务方实现 GarrisonDao / GarrisonInterface）
+//! let dao: Arc<dyn GarrisonDao> = /* oxcache / dbnexus 实现 */;
+//! let config = Arc::new(GarrisonConfig::default_config());
+//! let interface: Arc<dyn GarrisonInterface> = Arc::new(MyInterface);
 //!
 //! // 2. 初始化全局管理器（覆盖式注入 dao / config / interface）
-//! BulwarkManager::init(dao, config, interface).unwrap();
+//! GarrisonManager::init(dao, config, interface).unwrap();
 //!
 //! // 3. 执行登录：生成 token 并写入会话
 //! //    注意：login / check_login 依赖 task_local 上下文中的当前 token，
 //! //    通常由 web 中间件（如 axum middleware）设置。
-//! let token = BulwarkUtil::login(1001).await.unwrap();
+//! let token = GarrisonUtil::login(1001).await.unwrap();
 //!
 //! // 4. 校验登录状态
-//! let logged_in = BulwarkUtil::check_login().await.unwrap();
+//! let logged_in = GarrisonUtil::check_login().await.unwrap();
 //! assert!(logged_in);
 //! ```
 //!
 //! ## 特性
 //!
-//! Bulwark 通过 Cargo feature flags 控制各能力域的编译：
+//! Garrison 通过 Cargo feature flags 控制各能力域的编译：
 //!
 //! | 类别 | Feature | 说明 |
 //! |:---|:---|:---|
@@ -56,9 +56,9 @@
 //!   - [`core::token`]：`Token` trait + `TokenStyleFactory`（uuid / random_64 / simple / jwt 四种风格）
 //!   - [`core::auth`]：`AuthLogic` trait + `DefaultAuthLogic`（login_by_token / verify_token / refresh_token）
 //!   - [`core::permission`]：`PermissionChecker` trait + `DefaultPermissionChecker`
-//!   - [`plugin`]：`BulwarkPlugin` trait + `inventory` 编译期注册 + `BulwarkPluginManager`（on_login / on_logout / on_permission_check 钩子）
-//!   - [`strategy`]：`BulwarkPermissionStrategyDefault` 扩展 `with_permission_checker` / `with_role_hierarchy` / `with_plugin_manager` / `with_dao`（权限缓存）
-//!   - [`session`]：`BulwarkSession` 扩展 SSO / OAuth2 / 临时凭证关联（`link_sso_ticket` / `link_oauth2_token` / `link_temp_credential`）
+//!   - [`plugin`]：`GarrisonPlugin` trait + `inventory` 编译期注册 + `GarrisonPluginManager`（on_login / on_logout / on_permission_check 钩子）
+//!   - [`strategy`]：`GarrisonPermissionStrategyDefault` 扩展 `with_permission_checker` / `with_role_hierarchy` / `with_plugin_manager` / `with_dao`（权限缓存）
+//!   - [`session`]：`GarrisonSession` 扩展 SSO / OAuth2 / 临时凭证关联（`link_sso_ticket` / `link_oauth2_token` / `link_temp_credential`）
 //! - **协议层**（特性门控）
 //!   - `protocol::jwt`：`JwtHandler`（sign / verify / refresh，HS256/HS512）
 //!   - `protocol::oauth2`：`OAuth2Client`（Authorization Code / Client Credentials / Password 三种流程）
@@ -71,11 +71,11 @@
 //!   - `secure::sign`：`SignVerifier` trait
 //!   - `secure::httpbasic` / `secure::httpdigest`：HTTP Basic / Digest 认证
 //! - **可观测性**
-//!   - `listener`：`BulwarkEvent` + `Listener` trait + `BulwarkListenerManager`（Login / Logout / PermissionCheck / Kickout 事件）
+//!   - `listener`：`GarrisonEvent` + `Listener` trait + `GarrisonListenerManager`（Login / Logout / PermissionCheck / Kickout 事件）
 //!
 //! ## 特性域
 //!
-//! Bulwark 采用 13 个特性域设计：
+//! Garrison 采用 13 个特性域设计：
 //!
 //! - **登录认证** - 基于 Token 的会话管理
 //! - **权限认证** - RBAC 权限模型
@@ -93,16 +93,16 @@
 //!
 //! ## 架构
 //!
-//! Bulwark 采用双抽象层 + 全局单例的架构：
+//! Garrison 采用双抽象层 + 全局单例的架构：
 //!
 //! - **双抽象层**
-//!   - `dbnexus`：数据库抽象层（SQLite / PostgreSQL / MySQL），由 [`BulwarkDao`] trait 屏蔽后端差异
+//!   - `dbnexus`：数据库抽象层（SQLite / PostgreSQL / MySQL），由 [`GarrisonDao`] trait 屏蔽后端差异
 //!   - `oxcache`：缓存抽象层（L1 内存 + L2 redis），承载 Token-Session 与 Account-Session
-//! - **BulwarkManager 单例模式**
-//!   - [`BulwarkManager`] 持有全局 `Arc<BulwarkLogicDefault>`（基于 `parking_lot::RwLock`，支持覆盖式 `init`）
-//!   - 业务方启动时调用 [`BulwarkManager::init`] 注入 dao / config / interface 依赖
-//!   - `BulwarkLogicFactory` 通过 `inventory::submit!` 在编译期注册，运行时由 `inventory::iter` 选取
-//!   - [`BulwarkUtil::login`] / [`BulwarkUtil::check_login`] 等静态方法委托到全局单例
+//! - **GarrisonManager 单例模式**
+//!   - [`GarrisonManager`] 持有全局 `Arc<GarrisonLogicDefault>`（基于 `parking_lot::RwLock`，支持覆盖式 `init`）
+//!   - 业务方启动时调用 [`GarrisonManager::init`] 注入 dao / config / interface 依赖
+//!   - `GarrisonLogicFactory` 通过 `inventory::submit!` 在编译期注册，运行时由 `inventory::iter` 选取
+//!   - [`GarrisonUtil::login`] / [`GarrisonUtil::check_login`] 等静态方法委托到全局单例
 //!
 //! ## 双抽象层
 //!
@@ -113,14 +113,14 @@
 //!
 //! ```toml
 //! [dependencies]
-//! bulwark = { version = "0.7", features = ["web-axum", "protocol-jwt"] }
+//! garrison = { version = "0.7", features = ["web-axum", "protocol-jwt"] }
 //! ```
 //!
 //! ```rust
-//! use bulwark::prelude::*;
+//! use garrison::prelude::*;
 //!
 //! // 通过 prelude 引入核心类型
-//! // let _config: BulwarkConfig = BulwarkConfig::default();
+//! // let _config: GarrisonConfig = GarrisonConfig::default();
 //! ```
 
 #![cfg_attr(docsrs, feature(doc_cfg))]
@@ -136,7 +136,7 @@ pub mod constants;
 /// 核心模块，包含认证、权限、Token 的核心抽象。
 pub mod core;
 
-/// Stp 模块，提供 BulwarkLogicDefault / BulwarkInterface / BulwarkUtil + 5 个子 trait。
+/// Stp 模块，提供 GarrisonLogicDefault / GarrisonInterface / GarrisonUtil + 5 个子 trait。
 pub mod stp;
 
 /// 注解模块，定义鉴权注解枚举。
@@ -148,13 +148,13 @@ pub mod router;
 /// DAO 模块，定义持久化数据访问抽象层。
 pub mod dao;
 
-/// limiteron 适配器模块，将 BulwarkDao 桥接到 limiteron Storage/QuotaStorage/BanStorage/DistributedLimiter trait。
+/// limiteron 适配器模块，将 GarrisonDao 桥接到 limiteron Storage/QuotaStorage/BanStorage/DistributedLimiter trait。
 ///
 /// 启用 `sms-rate-limit` / `firewall-ratelimit` / `firewall-bruteforce` / `firewall-ddos` /
 /// `firewall` / `oauth2-server` feature 时编译。
 ///
 /// v0.7.2：`firewall` 和 `oauth2-server` 传递启用 `dep:limiteron`，
-/// 因 `BulwarkFirewallCheckHookDefault` / `PasswordRateLimiter` 统一使用 limiteron（禁止手写限流实现）。
+/// 因 `GarrisonFirewallCheckHookDefault` / `PasswordRateLimiter` 统一使用 limiteron（禁止手写限流实现）。
 #[cfg(any(
     feature = "sms-rate-limit",
     feature = "firewall-ratelimit",
@@ -168,7 +168,7 @@ pub mod limiteron;
 /// 策略模块，提供鉴权策略与防火墙策略。
 pub mod strategy;
 
-/// 会话模块，提供 BulwarkSession 会话模型。
+/// 会话模块，提供 GarrisonSession 会话模型。
 pub mod session;
 
 /// 缓存模块，提供三层缓存架构（L1 oxcache 内存 + L2 DAO + L3 interface）。
@@ -186,7 +186,7 @@ pub mod cache;
 /// 严格遵循 FRD §4.2 / §4.3，不集成到现有 Session / User 模块（推迟到 v0.7.0）。
 pub mod state;
 
-/// 配置模块，提供 BulwarkConfig 全局配置。
+/// 配置模块，提供 GarrisonConfig 全局配置。
 pub mod config;
 
 /// 健康检查模块，提供 liveness/readiness 探针与依赖项健康检测。
@@ -227,13 +227,13 @@ pub mod grpc;
 
 /// 国际化模块，提供异常消息中英文切换（fluent-rs）。
 ///
-/// 默认 `Zh`（中文，向后兼容 0.2.x 硬编码行为），通过 `set_locale(BulwarkLocale::En)`
+/// 默认 `Zh`（中文，向后兼容 0.2.x 硬编码行为），通过 `set_locale(GarrisonLocale::En)`
 /// 切换至英文。
 pub mod i18n;
 
 /// 声明式 JSON 测试套件模块。
 ///
-/// 启用 `bulwark-testing` feature 时编译。提供 [`JsonTestSuite`] / [`JsonTestCase`] /
+/// 启用 `garrison-testing` feature 时编译。提供 [`JsonTestSuite`] / [`JsonTestCase`] /
 /// [`TestReport`] 类型，支持从 JSON 文件加载测试用例并运行 [`Authorizer`] trait。
 ///
 /// 依赖 `authorize-api` feature（提供 [`Authorizer`] trait 与 [`AuthRequest`] / [`Decision`]）。
@@ -244,20 +244,20 @@ pub mod i18n;
 /// [`Authorizer`]: crate::core::permission::Authorizer
 /// [`AuthRequest`]: crate::core::permission::AuthRequest
 /// [`Decision`]: crate::core::permission::Decision
-#[cfg(feature = "bulwark-testing")]
+#[cfg(feature = "garrison-testing")]
 pub mod testing;
 
 /// actix-web 框架适配模块。
 ///
-/// 启用 `web-actix` feature 时编译。提供 BulwarkRouter + FromRequest extractor +
-/// BulwarkMiddleware 完整集成，与 axum 适配对齐。
+/// 启用 `web-actix` feature 时编译。提供 GarrisonRouter + FromRequest extractor +
+/// GarrisonMiddleware 完整集成，与 axum 适配对齐。
 #[cfg(feature = "web-actix")]
 pub mod web_actix;
 
 /// warp 框架适配模块。
 ///
-/// 启用 `web-warp` feature 时编译。提供 BulwarkRouter + Filter extractor +
-/// BulwarkRejection 完整集成，与 axum/actix-web 适配对齐。
+/// 启用 `web-warp` feature 时编译。提供 GarrisonRouter + Filter extractor +
+/// GarrisonRejection 完整集成，与 axum/actix-web 适配对齐。
 #[cfg(feature = "web-warp")]
 pub mod web_warp;
 
@@ -325,7 +325,7 @@ pub mod protocol;
 /// 认证后端抽象模块，提供 AuthBackend trait + BackendEmbedded + BackendRemote。
 ///
 /// 启用 `backend-embedded` 或 `backend-remote` feature 时编译。
-/// - `backend-embedded`：进程内认证，委托 BulwarkManager（zero-break 兼容）
+/// - `backend-embedded`：进程内认证，委托 GarrisonManager（zero-break 兼容）
 /// - `backend-remote`：HTTP 客户端，连接远程 Auth Server
 #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
 pub mod backend;
@@ -342,7 +342,7 @@ pub mod backend;
 /// ABAC 作为 RBAC 的增量校验层，不替换 RBAC。RBAC 通过后再检查 ABAC。
 pub mod abac;
 
-/// Auth Server 模块，提供 BulwarkAuthServer（双端口 axum 服务器）。
+/// Auth Server 模块，提供 GarrisonAuthServer（双端口 axum 服务器）。
 ///
 /// 启用 `auth-server` feature 时编译。
 /// 将 AuthBackend 方法暴露为 HTTP 端点：
@@ -371,15 +371,15 @@ pub mod prelude;
 /// 错误类型定义模块。
 pub mod error;
 
-// Re-export prelude 以便 `use bulwark::prelude::*;` 可用
+// Re-export prelude 以便 `use garrison::prelude::*;` 可用
 pub use prelude::*;
 
 // ============================================================================
 // 多租户隔离类型 re-export
 // ============================================================================
 //
-// 业务方可通过 `use bulwark::{TenantContext, TenantResolver, ...}` 直接使用，
-// 无需写完整路径 `bulwark::context::tenant::TenantContext`。
+// 业务方可通过 `use garrison::{TenantContext, TenantResolver, ...}` 直接使用，
+// 无需写完整路径 `garrison::context::tenant::TenantContext`。
 //
 // `ClaimTenantResolver` 需 `protocol-jwt` feature（依赖 jsonwebtoken 解码 JWT claim）。
 
@@ -394,14 +394,14 @@ pub use context::tenant::{
 pub use context::tenant::ClaimTenantResolver;
 
 /// 登录主体（携带 login_id，由 web 框架 extractor 填充）。
-pub use context::BulwarkPrincipal;
+pub use context::GarrisonPrincipal;
 
 // ============================================================================
 // 状态机类型 re-export
 // ============================================================================
 //
-// 业务方可通过 `use bulwark::{TokenState, UserStatus}` 直接使用，
-// 无需写完整路径 `bulwark::state::TokenState`。
+// 业务方可通过 `use garrison::{TokenState, UserStatus}` 直接使用，
+// 无需写完整路径 `garrison::state::TokenState`。
 //
 // 注：spec R-state-007 提及 `Mode` re-export，但 state-machine.md 未在 state 模块定义 Mode
 // （AnnotationMode 位于 annotation 模块），故仅 re-export TokenState / UserStatus（规则7）。
@@ -419,8 +419,8 @@ pub use state::UserStatus;
 // `RoleHierarchyRecord` 为 always compiled（无 feature gate）。
 // `RoleHierarchyService` 需 `db-sqlite` feature（依赖 DbPool 查 SQL）。
 //
-// 业务方可通过 `use bulwark::{RoleHierarchyRecord, RoleHierarchyService}` 直接使用，
-// 无需写完整路径 `bulwark::dao::repository::role_hierarchy::RoleHierarchyService`。
+// 业务方可通过 `use garrison::{RoleHierarchyRecord, RoleHierarchyService}` 直接使用，
+// 无需写完整路径 `garrison::dao::repository::role_hierarchy::RoleHierarchyService`。
 
 /// 角色层级表行结构（child_role → parent_role + tenant_id）。
 pub use dao::repository::role_hierarchy::RoleHierarchyRecord;
@@ -433,8 +433,8 @@ pub use dao::repository::role_hierarchy::RoleHierarchyService;
 // Dbnexus Repository re-export
 // ============================================================================
 //
-// 业务方可通过 `use bulwark::{DbnexusUserRepository, ...}` 直接使用，
-// 无需写完整路径 `bulwark::dao::repository::sqlite::DbnexusUserRepository`。
+// 业务方可通过 `use garrison::{DbnexusUserRepository, ...}` 直接使用，
+// 无需写完整路径 `garrison::dao::repository::sqlite::DbnexusUserRepository`。
 //
 // 需 `db-sqlite` 或 `db-postgres` feature（运行时占位符转换支持两种后端）。
 
@@ -481,8 +481,8 @@ pub use dao::repository::sqlite::DbnexusUserExtRepository;
 // `RefreshTokenRecord` 需 `protocol-jwt` feature（hash chain 行结构）。
 // `RefreshTokenRotation` 需 `protocol-jwt` + `db-sqlite` feature（依赖 DbPool 查 SQL）。
 //
-// 业务方可通过 `use bulwark::{RefreshTokenRecord, RefreshTokenRotation}` 直接使用，
-// 无需写完整路径 `bulwark::protocol::jwt::refresh::RefreshTokenRotation`。
+// 业务方可通过 `use garrison::{RefreshTokenRecord, RefreshTokenRotation}` 直接使用，
+// 无需写完整路径 `garrison::protocol::jwt::refresh::RefreshTokenRotation`。
 
 /// RefreshToken 表行结构（hash chain：token_hash + parent_token_hash）。
 #[cfg(feature = "protocol-jwt")]
@@ -496,8 +496,8 @@ pub use protocol::jwt::refresh::RefreshTokenRotation;
 // 审计日志
 // ============================================================================
 //
-// 业务方可通过 `use bulwark::{AuditLogListener, AuditConfig, AuditEntry, AuditQuery}` 直接使用，
-// 无需写完整路径 `bulwark::listener::audit::AuditLogListener`。
+// 业务方可通过 `use garrison::{AuditLogListener, AuditConfig, AuditEntry, AuditQuery}` 直接使用，
+// 无需写完整路径 `garrison::listener::audit::AuditLogListener`。
 //
 // `AuditConfig` 需 `audit-log` feature（纯配置结构，无 SQL 依赖）。
 // `AuditEntry` / `AuditQuery` / `AuditLogListener` 需 `audit-log` + `db-sqlite` feature
@@ -515,7 +515,7 @@ pub use listener::audit::AuditEntry;
 #[cfg(all(feature = "audit-log", feature = "db-sqlite"))]
 pub use listener::audit::AuditQuery;
 
-/// 审计日志监听器（实现 `BulwarkListener`，持久化 `BulwarkEvent` 到 `audit_logs` 表）。
+/// 审计日志监听器（实现 `GarrisonListener`，持久化 `GarrisonEvent` 到 `audit_logs` 表）。
 #[cfg(all(feature = "audit-log", feature = "db-sqlite"))]
 pub use listener::audit::AuditLogListener;
 
@@ -523,8 +523,8 @@ pub use listener::audit::AuditLogListener;
 // 社交登录
 // ============================================================================
 //
-// 业务方可通过 `use bulwark::{SocialLoginProvider, SocialUserInfo, ...}` 直接使用，
-// 无需写完整路径 `bulwark::protocol::social::SocialLoginProvider`。
+// 业务方可通过 `use garrison::{SocialLoginProvider, SocialUserInfo, ...}` 直接使用，
+// 无需写完整路径 `garrison::protocol::social::SocialLoginProvider`。
 //
 // - `SocialLoginProvider` / `SocialUserInfo` / `SocialProvider`：公共 trait/结构，无 feature 依赖
 // - `WechatProvider`：需 `social-wechat` feature（微信扫码登录）
@@ -566,8 +566,8 @@ pub use protocol::social::SocialBindingService;
 // Keycloak OIDC RP
 // ============================================================================
 //
-// 业务方可通过 `use bulwark::{KeycloakConfig, KeycloakProvider, ...}` 直接使用，
-// 无需写完整路径 `bulwark::protocol::oauth2::keycloak::KeycloakConfig`。
+// 业务方可通过 `use garrison::{KeycloakConfig, KeycloakProvider, ...}` 直接使用，
+// 无需写完整路径 `garrison::protocol::oauth2::keycloak::KeycloakConfig`。
 //
 // 全部类型需 `keycloak-oidc` feature（依赖 `protocol-oidc` → `protocol-jwt` + `protocol-oauth2`）。
 
@@ -595,8 +595,8 @@ pub use protocol::oauth2::keycloak::RealmAccess;
 // 安全防护套件
 // ============================================================================
 //
-// 业务方可通过 `use bulwark::{BulwarkFirewallStrategy, FirewallContext, ...}` 直接使用，
-// 无需写完整路径 `bulwark::strategy::firewall::BulwarkFirewallStrategy`。
+// 业务方可通过 `use garrison::{GarrisonFirewallStrategy, FirewallContext, ...}` 直接使用，
+// 无需写完整路径 `garrison::strategy::firewall::GarrisonFirewallStrategy`。
 //
 // - `firewall` feature：基础 trait + Context + StrategyRegistration（inventory 注册）
 // - `firewall-bruteforce` / `firewall-ratelimit` / `firewall-anomalous` / `firewall-ddos` / `firewall-geoip`：
@@ -605,7 +605,7 @@ pub use protocol::oauth2::keycloak::RealmAccess;
 
 /// 防火墙策略 trait（IP 级安全检查契约）。
 #[cfg(feature = "firewall")]
-pub use strategy::firewall::BulwarkFirewallStrategy;
+pub use strategy::firewall::GarrisonFirewallStrategy;
 
 /// 防火墙上下文（IP / login_id / tenant_id）。
 #[cfg(feature = "firewall")]
@@ -645,19 +645,19 @@ pub use strategy::firewall::{CountryLookup, GeoCoord, GeoLookup};
 
 /// 过程宏注解模块（feature = "annotation-macros"）。
 ///
-/// 启用 `annotation-macros` feature 时，re-export `bulwark-macros` crate 的 7 个
+/// 启用 `annotation-macros` feature 时，re-export `garrison-macros` crate 的 7 个
 /// `#[proc_macro_attribute]`：
 /// - `#[check_login]` / `#[check_permission]` / `#[check_role]`（0.4.2）
 /// - `#[check_access_token]` / `#[check_client_token]` / `#[check_temp_token]`（0.5.0 P2）
 /// - `#[check_api_key]`
 ///
-/// 宏将 async fn 包装为 wrapper，在 body 前插入 `BulwarkUtil::check_*()` 调用，
+/// 宏将 async fn 包装为 wrapper，在 body 前插入 `GarrisonUtil::check_*()` 调用，
 /// 失败时返回 `axum::response::Response`（401/403）。
 ///
 /// # 示例
 ///
 /// ```ignore
-/// use bulwark::check_login;
+/// use garrison::check_login;
 /// use axum::response::IntoResponse;
 ///
 /// #[check_login]
@@ -666,7 +666,7 @@ pub use strategy::firewall::{CountryLookup, GeoCoord, GeoLookup};
 /// }
 /// ```
 #[cfg(feature = "annotation-macros")]
-pub use bulwark_macros::{
+pub use garrison_macros::{
     check_abac, check_access_token, check_api_key, check_client_token, check_login, check_mfa,
     check_permission, check_role, check_temp_token,
 };

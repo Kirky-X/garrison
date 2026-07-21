@@ -7,7 +7,7 @@
 //! 通过全局 tracer provider 导出 OTLP span。
 
 #[cfg(feature = "observability-otlp")]
-use super::BulwarkOtelError;
+use super::GarrisonOtelError;
 
 /// 初始化 OpenTelemetry OTLP gRPC 追踪导出。
 ///
@@ -24,13 +24,13 @@ use super::BulwarkOtelError;
 /// # 使用示例
 ///
 /// ```ignore
-/// use bulwark::observability::init_otlp_tracing;
+/// use garrison::observability::init_otlp_tracing;
 ///
 /// init_otlp_tracing("http://localhost:4317").expect("OTLP 初始化失败");
-/// // 后续 tracing::info_span!("bulwark.login") 会自动导出到 OTLP endpoint
+/// // 后续 tracing::info_span!("garrison.login") 会自动导出到 OTLP endpoint
 /// ```
 #[cfg(feature = "observability-otlp")]
-pub fn init_otlp_tracing(endpoint: &str) -> Result<(), BulwarkOtelError> {
+pub fn init_otlp_tracing(endpoint: &str) -> Result<(), GarrisonOtelError> {
     use opentelemetry_otlp::{SpanExporter, WithExportConfig};
     use opentelemetry_sdk::Resource;
 
@@ -39,7 +39,7 @@ pub fn init_otlp_tracing(endpoint: &str) -> Result<(), BulwarkOtelError> {
         .with_endpoint(endpoint)
         .build()?;
 
-    let resource = Resource::builder().with_service_name("bulwark").build();
+    let resource = Resource::builder().with_service_name("garrison").build();
 
     let provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
         .with_batch_exporter(exporter)

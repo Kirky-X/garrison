@@ -19,8 +19,8 @@
 //! 调用方（`session.rs` login 流程）仅在 `is_new_device == true` 时才调用此方法，
 //! 因此直接执行告警广播并返回 `Ok(false)`。
 
-use crate::error::BulwarkResult;
-use crate::session::BulwarkSession;
+use crate::error::GarrisonResult;
+use crate::session::GarrisonSession;
 use crate::strategy::alert::{AlertListenerManager, SecurityAlertEvent};
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -29,7 +29,7 @@ use super::DeviceBindingPolicy;
 
 /// 宽松设备绑定策略：新设备仅告警不阻断。
 ///
-/// 持有 [`BulwarkSession`] 引用与可选的 [`AlertListenerManager`]。新设备时
+/// 持有 [`GarrisonSession`] 引用与可选的 [`AlertListenerManager`]。新设备时
 /// `require_secondary_auth` 仍返回 `Ok(false)`（不触发二级认证），但会通过
 /// `AlertListenerManager` 广播 [`SecurityAlertEvent::NewDeviceLogin`] 事件。
 ///
@@ -39,7 +39,7 @@ use super::DeviceBindingPolicy;
 /// `is_new_device` 仍正常检测），适用于未启用告警系统的部署。
 pub struct LooseBinding {
     /// 会话管理器引用，用于查询历史 session 的 device 字段。
-    session: Arc<BulwarkSession>,
+    session: Arc<GarrisonSession>,
     /// 可选的告警监听器管理器，`None` 时跳过广播。
     alert_manager: Option<Arc<AlertListenerManager>>,
 }
@@ -48,8 +48,8 @@ impl LooseBinding {
     /// 创建 [`LooseBinding`] 实例（无告警管理器）。
     ///
     /// # 参数
-    /// - `session`: 会话管理器引用（`Arc<BulwarkSession>`）。
-    pub fn new(session: Arc<BulwarkSession>) -> Self {
+    /// - `session`: 会话管理器引用（`Arc<GarrisonSession>`）。
+    pub fn new(session: Arc<GarrisonSession>) -> Self {
         Self {
             session,
             alert_manager: None,
@@ -62,7 +62,7 @@ impl LooseBinding {
     /// - `session`: 会话管理器引用。
     /// - `alert_manager`: 告警监听器管理器，新设备时通过它广播 `NewDeviceLogin` 事件。
     pub fn with_alert_manager(
-        session: Arc<BulwarkSession>,
+        session: Arc<GarrisonSession>,
         alert_manager: Arc<AlertListenerManager>,
     ) -> Self {
         Self {
@@ -74,11 +74,15 @@ impl LooseBinding {
 
 #[async_trait]
 impl DeviceBindingPolicy for LooseBinding {
-    async fn is_new_device(&self, login_id: &str, device_id: &str) -> BulwarkResult<bool> {
+    async fn is_new_device(&self, login_id: &str, device_id: &str) -> GarrisonResult<bool> {
         super::policies::check_is_new_device(&self.session, login_id, device_id).await
     }
 
-    async fn require_secondary_auth(&self, login_id: &str, device_id: &str) -> BulwarkResult<bool> {
+    async fn require_secondary_auth(
+        &self,
+        login_id: &str,
+        device_id: &str,
+    ) -> GarrisonResult<bool> {
         // HIGH-001 修复：调用方已通过 is_new_device 确认是新设备，不再重复 DAO 查询。
         // 直接广播 NewDeviceLogin 事件（若注入了 alert_manager），然后返回 false（不阻断）。
         if let Some(mgr) = &self.alert_manager {
@@ -97,22 +101,22 @@ impl DeviceBindingPolicy for LooseBinding {
 mod tests {
     use super::*;
     use crate::dao::tests::MockDao;
-    use crate::error::BulwarkResult;
+    use crate::error::GarrisonResult;
     use crate::stp::LoginParams;
     use crate::strategy::alert::AlertListener;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;
 
-    /// 辅助函数：创建带 MockDao 的 Arc<BulwarkSession>。
-    fn make_session() -> (Arc<MockDao>, Arc<BulwarkSession>) {
+    /// 辅助函数：创建带 MockDao 的 Arc<GarrisonSession>。
+    fn make_session() -> (Arc<MockDao>, Arc<GarrisonSession>) {
         let dao: Arc<MockDao> = Arc::new(MockDao::new());
-        let session = Arc::new(BulwarkSession::new(dao.clone(), 3600, 86400));
+        let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400));
         (dao, session)
     }
 
     /// 辅助函数：创建带指定 device 的 token session。
     async fn create_session_with_device(
-        session: &BulwarkSession,
+        session: &GarrisonSession,
         login_id: &str,
         token: &str,
         device: &str,
@@ -152,7 +156,7 @@ mod tests {
 
     #[async_trait]
     impl AlertListener for CountingListener {
-        async fn on_alert(&self, event: &SecurityAlertEvent) -> BulwarkResult<()> {
+        async fn on_alert(&self, event: &SecurityAlertEvent) -> GarrisonResult<()> {
             self.count.fetch_add(1, Ordering::SeqCst);
             *self.last_event.lock().unwrap() = Some(event.clone());
             Ok(())

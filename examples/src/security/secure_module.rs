@@ -7,22 +7,22 @@
 //!
 //! 运行方式：
 //! ```sh
-//! cargo run -p bulwark-examples --bin secure_module --features full
+//! cargo run -p garrison-examples --bin secure_module --features full
 //! ```
 
-use bulwark::error::BulwarkResult;
+use garrison::error::GarrisonResult;
 
 #[cfg(feature = "secure-masking")]
-use bulwark::secure::masking::{MaskType, SensitiveDataMasker};
+use garrison::secure::masking::{MaskType, SensitiveDataMasker};
 
 #[cfg(feature = "secure-xss")]
-use bulwark::secure::xss::{XssMode, XssProtector};
+use garrison::secure::xss::{XssMode, XssProtector};
 
 #[cfg(feature = "secure-sanitize")]
-use bulwark::secure::sanitize::sanitize_input;
+use garrison::secure::sanitize::sanitize_input;
 
 #[cfg(feature = "secure-confusable")]
-use bulwark::secure::confusable::check_confusable;
+use garrison::secure::confusable::check_confusable;
 
 /// 运行安全模块示例。
 ///
@@ -31,8 +31,8 @@ use bulwark::secure::confusable::check_confusable;
 /// 2. XssProtector：全量转义 + 白名单过滤
 /// 3. sanitize_input：移除 null 字节 / 控制字符 / trim / 长度限制
 /// 4. check_confusable：检测 Unicode 同形异义字
-pub async fn run() -> BulwarkResult<()> {
-    println!("=== Bulwark 安全模块示例 ===\n");
+pub async fn run() -> GarrisonResult<()> {
+    println!("=== Garrison 安全模块示例 ===\n");
 
     // 1. 敏感数据脱敏
     #[cfg(feature = "secure-masking")]

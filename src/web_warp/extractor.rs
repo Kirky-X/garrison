@@ -3,45 +3,45 @@
 
 //! warp 框架 Extractor 适配器。
 //!
-//! 提供 `bulwark_principal` Filter：从 `Authorization: Bearer <token>` header
-//! 解析当前登录用户 ID，返回 `BulwarkPrincipal` 供 handler 链使用。
+//! 提供 `garrison_principal` Filter：从 `Authorization: Bearer <token>` header
+//! 解析当前登录用户 ID，返回 `GarrisonPrincipal` 供 handler 链使用。
 //!
 //! ## 设计
 //!
 //! - 与现有 `check_login` / `check_role` / `check_permission` Filter 互补：
-//!   现有 Filter 仅执行鉴权（返回 `()`），`bulwark_principal` 携带
+//!   现有 Filter 仅执行鉴权（返回 `()`），`garrison_principal` 携带
 //!   `login_id` 字段供 handler 直接读取当前用户身份。
-//! - `BulwarkPrincipal` 类型定义在 [`crate::context`] 模块，与 actix extractor 共享。
+//! - `GarrisonPrincipal` 类型定义在 [`crate::context`] 模块，与 actix extractor 共享。
 //!
 //! ## 使用示例
 //!
 //! ```ignore
-//! use bulwark::web_warp::bulwark_principal;
+//! use garrison::web_warp::garrison_principal;
 //! use std::sync::Arc;
-//! use bulwark::config::BulwarkConfig;
+//! use garrison::config::GarrisonConfig;
 //!
-//! let config = Arc::new(BulwarkConfig::default_config());
+//! let config = Arc::new(GarrisonConfig::default_config());
 //! let routes = warp::path("api")
-//!     .and(bulwark_principal(config))
+//!     .and(garrison_principal(config))
 //!     .map(|principal| format!("login_id = {}", principal.login_id));
 //! ```
 
-use crate::config::BulwarkConfig;
+use crate::config::GarrisonConfig;
 use crate::context::token_extract::extract_token_from_headers;
-use crate::context::BulwarkPrincipal;
-use crate::error::BulwarkError;
-use crate::stp::BulwarkUtil;
+use crate::context::GarrisonPrincipal;
+use crate::error::GarrisonError;
+use crate::stp::GarrisonUtil;
 use std::sync::Arc;
 use warp::http::HeaderMap;
 use warp::Filter;
 
 // ============================================================================
-// bulwark_principal Filter：提取 login_id
+// garrison_principal Filter：提取 login_id
 // ============================================================================
 
-/// `bulwark_principal` Filter：从请求 header 提取 token 并解析 `login_id`。
+/// `garrison_principal` Filter：从请求 header 提取 token 并解析 `login_id`。
 ///
-/// 返回 [`Filter`]，Extract 类型为 `(BulwarkPrincipal,)`，Error 类型为 `warp::Rejection`。
+/// 返回 [`Filter`]，Extract 类型为 `(GarrisonPrincipal,)`，Error 类型为 `warp::Rejection`。
 ///
 /// # 参数
 ///
@@ -49,33 +49,33 @@ use warp::Filter;
 ///
 /// # 错误
 ///
-/// - `BulwarkRejection(BulwarkError::NotLogin)`: 未提供 token 或 token 无效。
-pub fn bulwark_principal(
-    config: Arc<BulwarkConfig>,
-) -> impl Filter<Extract = (BulwarkPrincipal,), Error = warp::Rejection> + Clone {
+/// - `GarrisonRejection(GarrisonError::NotLogin)`: 未提供 token 或 token 无效。
+pub fn garrison_principal(
+    config: Arc<GarrisonConfig>,
+) -> impl Filter<Extract = (GarrisonPrincipal,), Error = warp::Rejection> + Clone {
     warp::any()
         .and(warp::header::headers_cloned())
         .and_then(move |headers: HeaderMap| {
             let config = config.clone();
             async move {
                 let token = extract_token_from_headers(&headers, &config)
-                    .map_err(|e| warp::reject::custom(super::BulwarkRejection(e)))?
+                    .map_err(|e| warp::reject::custom(super::GarrisonRejection(e)))?
                     .ok_or_else(|| {
-                        warp::reject::custom(super::BulwarkRejection(BulwarkError::NotLogin(
+                        warp::reject::custom(super::GarrisonRejection(GarrisonError::NotLogin(
                             "未提供 token".to_string(),
                         )))
                     })?;
 
-                let login_id = BulwarkUtil::get_login_id_by_token(&token)
+                let login_id = GarrisonUtil::get_login_id_by_token(&token)
                     .await
-                    .map_err(|e| warp::reject::custom(super::BulwarkRejection(e)))?
+                    .map_err(|e| warp::reject::custom(super::GarrisonRejection(e)))?
                     .ok_or_else(|| {
-                        warp::reject::custom(super::BulwarkRejection(BulwarkError::NotLogin(
+                        warp::reject::custom(super::GarrisonRejection(GarrisonError::NotLogin(
                             "token 无效或会话不存在".to_string(),
                         )))
                     })?;
 
-                Ok::<BulwarkPrincipal, warp::Rejection>(BulwarkPrincipal { login_id })
+                Ok::<GarrisonPrincipal, warp::Rejection>(GarrisonPrincipal { login_id })
             }
         })
 }
@@ -90,7 +90,7 @@ pub fn bulwark_principal(
 ///
 /// # 错误
 ///
-/// - `BulwarkRejection(BulwarkError::Config)`: `X-Tenant-Id` header 缺失或非合法 i64。
+/// - `GarrisonRejection(GarrisonError::Config)`: `X-Tenant-Id` header 缺失或非合法 i64。
 #[cfg(feature = "tenant-isolation")]
 pub fn tenant_context(
 ) -> impl Filter<Extract = (crate::context::tenant::TenantContext,), Error = warp::Rejection> + Clone
@@ -102,13 +102,13 @@ pub fn tenant_context(
                 .get("x-tenant-id")
                 .and_then(|v| v.to_str().ok())
                 .ok_or_else(|| {
-                    warp::reject::custom(super::BulwarkRejection(BulwarkError::Config(
+                    warp::reject::custom(super::GarrisonRejection(GarrisonError::Config(
                         "X-Tenant-Id header missing".into(),
                     )))
                 })?;
 
             let tenant_id: i64 = raw.parse().map_err(|_| {
-                warp::reject::custom(super::BulwarkRejection(BulwarkError::Config(format!(
+                warp::reject::custom(super::GarrisonRejection(GarrisonError::Config(format!(
                     "X-Tenant-Id 不是合法的 i64: {}",
                     raw
                 ))))
@@ -127,13 +127,13 @@ pub fn tenant_context(
 mod tests {
     use super::super::mock::{MockDao, MockInterface};
     use super::*;
-    use crate::dao::BulwarkDao;
-    use crate::manager::BulwarkManager;
-    use crate::stp::{BulwarkInterface, BulwarkUtil};
+    use crate::dao::GarrisonDao;
+    use crate::manager::GarrisonManager;
+    use crate::stp::{GarrisonInterface, GarrisonUtil};
     use serial_test::serial;
 
-    fn make_config() -> BulwarkConfig {
-        let mut config = BulwarkConfig::default_config();
+    fn make_config() -> GarrisonConfig {
+        let mut config = GarrisonConfig::default_config();
         config.timeout = 3600;
         config.active_timeout = -1;
         config.throw_on_not_login = false;
@@ -141,52 +141,52 @@ mod tests {
     }
 
     fn init_manager() {
-        BulwarkManager::reset_for_test();
-        let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+        GarrisonManager::reset_for_test();
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let config = Arc::new(make_config());
-        let interface: Arc<dyn BulwarkInterface> = Arc::new(MockInterface::new());
-        BulwarkManager::init(dao, config, interface).unwrap();
+        let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface::new());
+        GarrisonManager::init(dao, config, interface).unwrap();
     }
 
     // ----------------------------------------------------------------
-    // bulwark_principal Filter 测试
+    // garrison_principal Filter 测试
     // ----------------------------------------------------------------
 
-    /// 验证 `bulwark_principal` Filter 从 `Authorization: Bearer <token>`
+    /// 验证 `garrison_principal` Filter 从 `Authorization: Bearer <token>`
     /// header 解析出 `login_id`。
     ///
     /// 覆盖 spec web-adapters D12 Requirement: warp extractor 从 token 解析 login_id。
     #[tokio::test]
     #[serial]
-    async fn bulwark_principal_extracted_from_warp_request() {
+    async fn garrison_principal_extracted_from_warp_request() {
         init_manager();
         let login_id = "2002";
-        let token = BulwarkUtil::login_simple(login_id).await.unwrap();
+        let token = GarrisonUtil::login_simple(login_id).await.unwrap();
 
         let config = Arc::new(make_config());
-        let filter = bulwark_principal(config);
+        let filter = garrison_principal(config);
 
         let principal = warp::test::request()
             .header("Authorization", format!("Bearer {}", token))
             .filter(&filter)
             .await
-            .expect("bulwark_principal filter 应成功提取 BulwarkPrincipal");
+            .expect("garrison_principal filter 应成功提取 GarrisonPrincipal");
 
         assert_eq!(principal.login_id, login_id);
 
-        BulwarkManager::reset_for_test();
+        GarrisonManager::reset_for_test();
     }
 
-    /// 验证 `bulwark_principal` Filter 在无 token 时返回 Rejection。
+    /// 验证 `garrison_principal` Filter 在无 token 时返回 Rejection。
     ///
     /// 覆盖 spec web-adapters D12 Requirement: extractor 在无 token 时拒绝请求。
     #[tokio::test]
     #[serial]
-    async fn bulwark_principal_returns_rejection_without_token() {
+    async fn garrison_principal_returns_rejection_without_token() {
         init_manager();
 
         let config = Arc::new(make_config());
-        let filter = bulwark_principal(config);
+        let filter = garrison_principal(config);
 
         let result = warp::test::request().filter(&filter).await;
         assert!(
@@ -195,19 +195,19 @@ mod tests {
             result
         );
 
-        BulwarkManager::reset_for_test();
+        GarrisonManager::reset_for_test();
     }
 
-    /// 验证 `bulwark_principal` Filter 在无效 token 时返回 Rejection。
+    /// 验证 `garrison_principal` Filter 在无效 token 时返回 Rejection。
     ///
     /// 覆盖 spec web-adapters D12 Requirement: extractor 在 token 无效时拒绝请求。
     #[tokio::test]
     #[serial]
-    async fn bulwark_principal_returns_rejection_with_invalid_token() {
+    async fn garrison_principal_returns_rejection_with_invalid_token() {
         init_manager();
 
         let config = Arc::new(make_config());
-        let filter = bulwark_principal(config);
+        let filter = garrison_principal(config);
 
         let result = warp::test::request()
             .header("Authorization", "Bearer invalid_token_xyz")
@@ -219,7 +219,7 @@ mod tests {
             result
         );
 
-        BulwarkManager::reset_for_test();
+        GarrisonManager::reset_for_test();
     }
 }
 

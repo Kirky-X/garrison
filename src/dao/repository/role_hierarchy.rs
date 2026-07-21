@@ -53,8 +53,8 @@ pub struct RoleHierarchyRecord {
 mod service {
     use super::RoleHierarchyRecord;
     use crate::constants::DaoKeyPrefix;
-    use crate::dao::BulwarkDao;
-    use crate::error::{BulwarkError, BulwarkResult};
+    use crate::dao::GarrisonDao;
+    use crate::error::{GarrisonError, GarrisonResult};
     use dbnexus::DbPool;
     use sea_orm::{ConnectionTrait, DbBackend, Statement, Value};
     use std::collections::{HashMap, HashSet};
@@ -74,14 +74,14 @@ mod service {
     ///
     /// # Rule 7 冲突暴露
     ///
-    /// tasks.md T046 原描述 `pub dao: Arc<dyn BulwarkDao>` 不够——
-    /// `compute_closure` 需查 SQL，BulwarkDao trait 是缓存层抽象不支持 SQL 查询。
-    /// 决策：struct 同时持有 `pool: DbPool`（查 SQL）+ `dao: Arc<dyn BulwarkDao>`（查缓存）。
+    /// tasks.md T046 原描述 `pub dao: Arc<dyn GarrisonDao>` 不够——
+    /// `compute_closure` 需查 SQL，GarrisonDao trait 是缓存层抽象不支持 SQL 查询。
+    /// 决策：struct 同时持有 `pool: DbPool`（查 SQL）+ `dao: Arc<dyn GarrisonDao>`（查缓存）。
     pub struct RoleHierarchyService {
         /// SQLite 连接池（查 `role_hierarchy` 表）。
         pub pool: DbPool,
         /// 缓存层抽象（T047+ 用于 oxcache 缓存闭包结果）。
-        pub dao: Arc<dyn BulwarkDao>,
+        pub dao: Arc<dyn GarrisonDao>,
     }
 
     impl RoleHierarchyService {
@@ -90,22 +90,24 @@ mod service {
         /// # 参数
         /// - `pool`: SQLite 连接池（用于查 `role_hierarchy` 表）
         /// - `dao`: 缓存层抽象（T047+ 用于 oxcache 缓存闭包结果）
-        pub fn new(pool: DbPool, dao: Arc<dyn BulwarkDao>) -> Self {
+        pub fn new(pool: DbPool, dao: Arc<dyn GarrisonDao>) -> Self {
             Self { pool, dao }
         }
 
         /// 查询指定租户的所有 role_hierarchy 记录。
         ///
         /// 返回 `Vec<RoleHierarchyRecord>`（child_role → parent_role 边集合）。
-        async fn query_all_edges(&self, tenant_id: i64) -> BulwarkResult<Vec<RoleHierarchyRecord>> {
-            let session = self
-                .pool
-                .get_session("admin")
-                .await
-                .map_err(|e| BulwarkError::Dao(format!("dao-role-hierarchy-session::{}", e)))?;
+        async fn query_all_edges(
+            &self,
+            tenant_id: i64,
+        ) -> GarrisonResult<Vec<RoleHierarchyRecord>> {
+            let session =
+                self.pool.get_session("admin").await.map_err(|e| {
+                    GarrisonError::Dao(format!("dao-role-hierarchy-session::{}", e))
+                })?;
             let conn = session
                 .connection()
-                .map_err(|e| BulwarkError::Dao(format!("dao-role-hierarchy-connection::{}", e)))?;
+                .map_err(|e| GarrisonError::Dao(format!("dao-role-hierarchy-connection::{}", e)))?;
             let stmt = Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "SELECT child_role, parent_role FROM role_hierarchy WHERE tenant_id = ?",
@@ -114,17 +116,17 @@ mod service {
             let rows = conn
                 .query_all_raw(stmt)
                 .await
-                .map_err(|e| BulwarkError::Dao(format!("dao-role-hierarchy-query::{}", e)))?;
+                .map_err(|e| GarrisonError::Dao(format!("dao-role-hierarchy-query::{}", e)))?;
             let records = rows
                 .into_iter()
                 .map(|row| {
                     let child_role = row
                         .try_get::<String>("", "child_role")
-                        .map_err(|e| BulwarkError::Dao(format!("dao-child-role-read::{}", e)))?;
+                        .map_err(|e| GarrisonError::Dao(format!("dao-child-role-read::{}", e)))?;
                     let parent_role = row
                         .try_get::<String>("", "parent_role")
-                        .map_err(|e| BulwarkError::Dao(format!("dao-parent-role-read::{}", e)))?;
-                    Ok::<_, BulwarkError>(RoleHierarchyRecord {
+                        .map_err(|e| GarrisonError::Dao(format!("dao-parent-role-read::{}", e)))?;
+                    Ok::<_, GarrisonError>(RoleHierarchyRecord {
                         child_role,
                         parent_role,
                         tenant_id,
@@ -151,11 +153,11 @@ mod service {
         /// 3. 返回闭包表
         ///
         /// # 错误
-        /// - `BulwarkError::Dao`：SQL 查询失败。
+        /// - `GarrisonError::Dao`：SQL 查询失败。
         pub async fn compute_closure(
             &self,
             tenant_id: i64,
-        ) -> BulwarkResult<HashMap<String, HashSet<String>>> {
+        ) -> GarrisonResult<HashMap<String, HashSet<String>>> {
             let edges = self.query_all_edges(tenant_id).await?;
 
             // 构建 child → parents 邻接表
@@ -224,12 +226,12 @@ mod service {
         /// `role` 的所有祖先集合（不含 `role` 自身）。若 `role` 不在闭包中，返回空集合。
         ///
         /// # 错误
-        /// - `BulwarkError::Dao`：SQL 查询或缓存读写失败。
+        /// - `GarrisonError::Dao`：SQL 查询或缓存读写失败。
         pub async fn get_ancestors(
             &self,
             role: &str,
             tenant_id: i64,
-        ) -> BulwarkResult<HashSet<String>> {
+        ) -> GarrisonResult<HashSet<String>> {
             let cache_key = format!("{}{}:role_closure", DaoKeyPrefix::Tenant, tenant_id);
 
             // 先查 oxcache
@@ -245,7 +247,7 @@ mod service {
             // 未命中或反序列化失败：重新计算并缓存
             let closure = self.compute_closure(tenant_id).await?;
             let json = serde_json::to_string(&closure)
-                .map_err(|e| BulwarkError::Dao(format!("dao-role-closure-serialize::{}", e)))?;
+                .map_err(|e| GarrisonError::Dao(format!("dao-role-closure-serialize::{}", e)))?;
             self.dao.set(&cache_key, &json, 3600).await?;
 
             Ok(closure.get(role).cloned().unwrap_or_default())
@@ -263,18 +265,18 @@ mod service {
         /// - `tenant_id`: 租户 ID
         ///
         /// # 错误
-        /// - `BulwarkError::Dao`：SQL 执行或缓存删除失败。
+        /// - `GarrisonError::Dao`：SQL 执行或缓存删除失败。
         pub async fn add_edge(
             &self,
             child: &str,
             parent: &str,
             tenant_id: i64,
-        ) -> BulwarkResult<()> {
+        ) -> GarrisonResult<()> {
             let session = self.pool.get_session("admin").await.map_err(|e| {
-                BulwarkError::Dao(format!("dao-role-hierarchy-add-edge-session::{}", e))
+                GarrisonError::Dao(format!("dao-role-hierarchy-add-edge-session::{}", e))
             })?;
             let conn = session.connection().map_err(|e| {
-                BulwarkError::Dao(format!("dao-role-hierarchy-add-edge-connection::{}", e))
+                GarrisonError::Dao(format!("dao-role-hierarchy-add-edge-connection::{}", e))
             })?;
             let stmt = Statement::from_sql_and_values(
                 DbBackend::Sqlite,
@@ -286,7 +288,7 @@ mod service {
                 ],
             );
             conn.execute_raw(stmt).await.map_err(|e| {
-                BulwarkError::Dao(format!("dao-role-hierarchy-add-edge-insert::{}", e))
+                GarrisonError::Dao(format!("dao-role-hierarchy-add-edge-insert::{}", e))
             })?;
 
             self.invalidate_cache(tenant_id).await
@@ -301,8 +303,8 @@ mod service {
         /// - `tenant_id`: 租户 ID
         ///
         /// # 错误
-        /// - `BulwarkError::Dao`：缓存删除失败。
-        pub async fn invalidate_cache(&self, tenant_id: i64) -> BulwarkResult<()> {
+        /// - `GarrisonError::Dao`：缓存删除失败。
+        pub async fn invalidate_cache(&self, tenant_id: i64) -> GarrisonResult<()> {
             let cache_key = format!("{}{}:role_closure", DaoKeyPrefix::Tenant, tenant_id);
             self.dao.delete(&cache_key).await
         }
@@ -320,12 +322,12 @@ mod service {
         /// `role` 的所有后代集合（不含 `role` 自身）。若 `role` 无后代，返回空集合。
         ///
         /// # 错误
-        /// - `BulwarkError::Dao`：SQL 查询失败。
+        /// - `GarrisonError::Dao`：SQL 查询失败。
         pub async fn get_descendants(
             &self,
             role: &str,
             tenant_id: i64,
-        ) -> BulwarkResult<HashSet<String>> {
+        ) -> GarrisonResult<HashSet<String>> {
             let edges = self.query_all_edges(tenant_id).await?;
 
             // 构建 parent → children 邻接表（反向）
@@ -438,7 +440,7 @@ mod tests {
 #[cfg(all(test, feature = "db-sqlite"))]
 mod db_sqlite_tests {
     use super::*;
-    use crate::dao::{init_dbnexus, BulwarkDao, BulwarkMigration};
+    use crate::dao::{init_dbnexus, GarrisonDao, GarrisonMigration};
     use dbnexus::DbPool;
     use sea_orm::{ConnectionTrait, DbBackend, Statement, Value};
     use std::path::PathBuf;
@@ -457,14 +459,14 @@ mod db_sqlite_tests {
         let pool = init_dbnexus("sqlite::memory:")
             .await
             .expect("init_dbnexus 应成功");
-        let migration = BulwarkMigration::with_base_dir(pool.clone(), project_migrations_dir());
+        let migration = GarrisonMigration::with_base_dir(pool.clone(), project_migrations_dir());
         let applied = migration.migrate_core().await.expect("migrate_core 应成功");
         assert!(applied >= 1, "migrate_core 应至少执行 1 个文件");
         pool
     }
 
-    /// 构造 MockDao 作为 BulwarkDao 实现（T047+ 用于 oxcache 缓存测试）。
-    fn mock_dao() -> Arc<dyn BulwarkDao> {
+    /// 构造 MockDao 作为 GarrisonDao 实现（T047+ 用于 oxcache 缓存测试）。
+    fn mock_dao() -> Arc<dyn GarrisonDao> {
         Arc::new(crate::dao::tests::MockDao::new())
     }
 

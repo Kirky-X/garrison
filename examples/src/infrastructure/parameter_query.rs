@@ -4,25 +4,25 @@
 //! ParameterQuery 参数化查询示例（依据 spec parameter-query，0.4.0 新增）。
 //!
 //! 演示 `ParameterQueryBuilder` 链式 API：
-//! 1. 初始化 `BulwarkManager`（参考 permission_check.rs 的初始化模式）
+//! 1. 初始化 `GarrisonManager`（参考 permission_check.rs 的初始化模式）
 //! 2. `ParameterQueryBuilder::new().with_login_id(1001).check_permission("user:create").await`
 //! 3. 演示 token 上下文：先 login 获取 token，再 `with_token(&token).check_role("admin").await`
 //! 4. 展示未设置上下文时返回 Internal 错误
 //!
 //! 运行方式：
 //! ```sh
-//! cargo run -p bulwark-examples --bin parameter_query --features parameter-query
+//! cargo run -p garrison-examples --bin parameter_query --features parameter-query
 //! ```
 //!
-//! 注意：测试需要 `#[serial_test::serial]`（修改全局 `BulwarkManager` 单例）。
+//! 注意：测试需要 `#[serial_test::serial]`（修改全局 `GarrisonManager` 单例）。
 
 use async_trait::async_trait;
-use bulwark::config::BulwarkConfig;
-use bulwark::dao::BulwarkDao;
-use bulwark::error::{BulwarkError, BulwarkResult};
-use bulwark::manager::BulwarkManager;
-use bulwark::stp::parameter::{ParameterQuery, ParameterQueryBuilder};
-use bulwark::stp::{BulwarkInterface, BulwarkUtil};
+use garrison::config::GarrisonConfig;
+use garrison::dao::GarrisonDao;
+use garrison::error::{GarrisonError, GarrisonResult};
+use garrison::manager::GarrisonManager;
+use garrison::stp::parameter::{ParameterQuery, ParameterQueryBuilder};
+use garrison::stp::{GarrisonInterface, GarrisonUtil};
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -49,8 +49,8 @@ impl Default for InMemoryDao {
 }
 
 #[async_trait]
-impl BulwarkDao for InMemoryDao {
-    async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
+impl GarrisonDao for InMemoryDao {
+    async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
         let mut store = self.store.lock();
         match store.get(key) {
             Some((value, expire_at)) => {
@@ -66,7 +66,7 @@ impl BulwarkDao for InMemoryDao {
         }
     }
 
-    async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> BulwarkResult<()> {
+    async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> GarrisonResult<()> {
         let expire_at = if ttl_seconds == 0 {
             None
         } else {
@@ -78,18 +78,18 @@ impl BulwarkDao for InMemoryDao {
         Ok(())
     }
 
-    async fn update(&self, key: &str, value: &str) -> BulwarkResult<()> {
+    async fn update(&self, key: &str, value: &str) -> GarrisonResult<()> {
         let mut store = self.store.lock();
         match store.get_mut(key) {
             Some((existing, _)) => {
                 *existing = value.to_string();
                 Ok(())
             },
-            None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
+            None => Err(GarrisonError::Dao(format!("键不存在: {}", key))),
         }
     }
 
-    async fn expire(&self, key: &str, seconds: u64) -> BulwarkResult<()> {
+    async fn expire(&self, key: &str, seconds: u64) -> GarrisonResult<()> {
         let mut store = self.store.lock();
         match store.get_mut(key) {
             Some((_, expire_at)) => {
@@ -100,11 +100,11 @@ impl BulwarkDao for InMemoryDao {
                 };
                 Ok(())
             },
-            None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
+            None => Err(GarrisonError::Dao(format!("键不存在: {}", key))),
         }
     }
 
-    async fn delete(&self, key: &str) -> BulwarkResult<()> {
+    async fn delete(&self, key: &str) -> GarrisonResult<()> {
         self.store.lock().remove(key);
         Ok(())
     }
@@ -140,27 +140,27 @@ impl Default for MyInterface {
 }
 
 #[async_trait]
-impl BulwarkInterface for MyInterface {
-    async fn get_permission_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+impl GarrisonInterface for MyInterface {
+    async fn get_permission_list(&self, login_id: &str) -> GarrisonResult<Vec<String>> {
         Ok(self.permissions.get(login_id).cloned().unwrap_or_default())
     }
 
-    async fn get_role_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+    async fn get_role_list(&self, login_id: &str) -> GarrisonResult<Vec<String>> {
         Ok(self.roles.get(login_id).cloned().unwrap_or_default())
     }
 }
 
-/// 初始化全局 BulwarkManager（注入 InMemoryDao + MyInterface）。
+/// 初始化全局 GarrisonManager（注入 InMemoryDao + MyInterface）。
 ///
-/// `BulwarkManager::init` 为覆盖式更新（允许重复 init），无需先 reset。
+/// `GarrisonManager::init` 为覆盖式更新（允许重复 init），无需先 reset。
 fn init_manager() {
-    let dao: Arc<dyn BulwarkDao> = Arc::new(InMemoryDao::new());
-    let mut config = BulwarkConfig::default_config();
+    let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
+    let mut config = GarrisonConfig::default_config();
     config.timeout = 3600;
     config.active_timeout = -1;
     config.throw_on_not_login = false;
-    let interface: Arc<dyn BulwarkInterface> = Arc::new(MyInterface::new());
-    BulwarkManager::init(dao, Arc::new(config), interface).expect("BulwarkManager 初始化失败");
+    let interface: Arc<dyn GarrisonInterface> = Arc::new(MyInterface::new());
+    GarrisonManager::init(dao, Arc::new(config), interface).expect("GarrisonManager 初始化失败");
 }
 
 /// 运行 ParameterQuery 示例。
@@ -168,13 +168,13 @@ fn init_manager() {
 /// 演示 ParameterQueryBuilder 的 with_login_id / with_token / check_permission / check_role 链式 API，
 /// 包括未设置上下文时返回 Internal 错误的场景。
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    println!("=== Bulwark ParameterQuery 参数化查询示例 ===\n");
+    println!("=== Garrison ParameterQuery 参数化查询示例 ===\n");
 
     // ----------------------------------------------------------------
-    // 1. 初始化 BulwarkManager
+    // 1. 初始化 GarrisonManager
     // ----------------------------------------------------------------
     init_manager();
-    println!("[初始化] BulwarkManager 已就绪");
+    println!("[初始化] GarrisonManager 已就绪");
     println!("    账号 1001 权限: [user:create, user:read]");
     println!("    账号 1001 角色: [admin, user]\n");
 
@@ -195,7 +195,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         .check_permission("user:delete")
         .await;
     match denied {
-        Err(BulwarkError::NotPermission(perm)) => {
+        Err(GarrisonError::NotPermission(perm)) => {
             println!(
                 "    with_login_id(1001).check_permission(\"user:delete\")  → Err(NotPermission(\"{}\"))",
                 perm
@@ -209,9 +209,9 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // 3. with_token + check_role（先 login 获取 token）
     // ----------------------------------------------------------------
     println!("[token 上下文] check_role:");
-    let token = BulwarkUtil::login_simple("1001").await?;
+    let token = GarrisonUtil::login_simple("1001").await?;
     println!(
-        "    BulwarkUtil::login(1001) → token={}",
+        "    GarrisonUtil::login(1001) → token={}",
         &token[..16.min(token.len())]
     );
 
@@ -228,7 +228,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         .check_role("superadmin")
         .await;
     match denied_role {
-        Err(BulwarkError::NotRole(role)) => {
+        Err(GarrisonError::NotRole(role)) => {
             println!(
                 "    with_token(&token).check_role(\"superadmin\") → Err(NotRole(\"{}\"))",
                 role
@@ -246,7 +246,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         .check_permission("user:read")
         .await;
     match result {
-        Err(BulwarkError::Internal(msg)) => {
+        Err(GarrisonError::Internal(msg)) => {
             println!(
                 "    check_permission(\"user:read\") → Err(Internal(\"{}\"))",
                 msg
@@ -258,7 +258,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let result = ParameterQueryBuilder::new().check_role("admin").await;
     match result {
-        Err(BulwarkError::Internal(msg)) => {
+        Err(GarrisonError::Internal(msg)) => {
             println!(
                 "    check_role(\"admin\")         → Err(Internal(\"{}\"))",
                 msg

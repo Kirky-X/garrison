@@ -3,7 +3,7 @@
 
 //! 权限/角色/MFA E2E 测试——check-permission / check-role / check-safe / check-disable。
 //!
-//! 通过 HTTP 调用真实 BulwarkAuthServer + BackendEmbedded，
+//! 通过 HTTP 调用真实 GarrisonAuthServer + BackendEmbedded，
 //! 测试权限校验全场景：有效/无效 token、角色校验、二级认证状态、封禁状态。
 
 use super::{http_login, make_client, start_e2e_server};

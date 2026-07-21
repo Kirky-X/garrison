@@ -11,8 +11,8 @@
 
 use super::SsoClient;
 use super::SsoTicketData;
-use crate::dao::BulwarkDao;
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::dao::GarrisonDao;
+use crate::error::{GarrisonError, GarrisonResult};
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine;
 use hmac::{Hmac, KeyInit, Mac};
@@ -29,9 +29,9 @@ const DEFAULT_TICKET_TTL: u64 = 60;
 /// 计算 ticket 随机部分的 HMAC-SHA256 签名（M5 修复，供 SsoClient / DefaultSsoServer 共用）。
 ///
 /// 签名输入为 `random_part`，输出为 base64 编码的 HMAC-SHA256。
-pub(crate) fn sign_ticket(secret: &str, random_part: &str) -> BulwarkResult<String> {
+pub(crate) fn sign_ticket(secret: &str, random_part: &str) -> GarrisonResult<String> {
     let mut mac = HmacSha256::new_from_slice(secret.as_bytes())
-        .map_err(|e| BulwarkError::Internal(format!("sso-ticket-hmac-init::{}", e)))?;
+        .map_err(|e| GarrisonError::Internal(format!("sso-ticket-hmac-init::{}", e)))?;
     mac.update(random_part.as_bytes());
     Ok(BASE64_STANDARD.encode(mac.finalize().into_bytes()))
 }
@@ -39,20 +39,20 @@ pub(crate) fn sign_ticket(secret: &str, random_part: &str) -> BulwarkResult<Stri
 /// 验证 ticket 的 HMAC 签名（M5 修复，供 SsoClient / DefaultSsoServer 共用）。
 ///
 /// 返回 `Ok(random_part)` 验证通过，`Err` 表示签名无效或格式错误。
-pub(crate) fn verify_ticket_signature(secret: &str, ticket: &str) -> BulwarkResult<String> {
+pub(crate) fn verify_ticket_signature(secret: &str, ticket: &str) -> GarrisonResult<String> {
     let (random_part, sig_b64) = ticket
         .split_once('.')
-        .ok_or_else(|| BulwarkError::InvalidToken("sso-ticket-format-no-sig".to_string()))?;
+        .ok_or_else(|| GarrisonError::InvalidToken("sso-ticket-format-no-sig".to_string()))?;
     // 常量时间比较：解码 base64 签名后用 mac.verify_slice 验证（与 sign/handler.rs 一致）
     let mut mac = HmacSha256::new_from_slice(secret.as_bytes())
-        .map_err(|e| BulwarkError::Internal(format!("sso-ticket-hmac-init::{}", e)))?;
+        .map_err(|e| GarrisonError::Internal(format!("sso-ticket-hmac-init::{}", e)))?;
     mac.update(random_part.as_bytes());
     // 签名解码或验证失败均统一返回 "签名验证失败"，避免向调用方泄露失败原因（防侧信道）
     let sig_bytes = BASE64_STANDARD
         .decode(sig_b64)
-        .map_err(|_| BulwarkError::InvalidToken("sso-ticket-sig-verify".to_string()))?;
+        .map_err(|_| GarrisonError::InvalidToken("sso-ticket-sig-verify".to_string()))?;
     mac.verify_slice(&sig_bytes)
-        .map_err(|_| BulwarkError::InvalidToken("sso-ticket-sig-verify".to_string()))?;
+        .map_err(|_| GarrisonError::InvalidToken("sso-ticket-sig-verify".to_string()))?;
     Ok(random_part.to_string())
 }
 
@@ -64,8 +64,8 @@ impl SsoClient {
     /// - `secret`: HMAC 签名密钥（用于 ticket 防伪造，禁止空字符串）。
     ///
     /// # 错误
-    /// - `secret` 为空时返回 `BulwarkError::InvalidParam`。
-    pub fn new(dao: Arc<dyn BulwarkDao>, secret: impl Into<String>) -> Self {
+    /// - `secret` 为空时返回 `GarrisonError::InvalidParam`。
+    pub fn new(dao: Arc<dyn GarrisonDao>, secret: impl Into<String>) -> Self {
         let secret: String = secret.into();
         assert!(
             !secret.is_empty(),
@@ -85,19 +85,19 @@ impl SsoClient {
     }
 
     /// 计算 ticket 随机部分的 HMAC 签名（委托到模块级 `sign_ticket`）。
-    fn sign_ticket(&self, random_part: &str) -> BulwarkResult<String> {
+    fn sign_ticket(&self, random_part: &str) -> GarrisonResult<String> {
         sign_ticket(&self.secret, random_part)
     }
 
     /// 验证 ticket 的 HMAC 签名（委托到模块级 `verify_ticket_signature`）。
-    fn verify_ticket_signature(&self, ticket: &str) -> BulwarkResult<String> {
+    fn verify_ticket_signature(&self, ticket: &str) -> GarrisonResult<String> {
         verify_ticket_signature(&self.secret, ticket)
     }
 
     /// 签发 SSO ticket。
     ///
     /// 生成 `{64_hex_random}.{hmac_b64}` 格式的签名 ticket，
-    /// 存储到 `bulwark:sso:ticket:<ticket>`，value 为 JSON `{login_id, client_id}`，
+    /// 存储到 `garrison:sso:ticket:<ticket>`，value 为 JSON `{login_id, client_id}`，
     /// TTL 为 60 秒（可配置）。
     ///
     /// # 参数
@@ -110,7 +110,7 @@ impl SsoClient {
         &self,
         login_id: impl Into<String>,
         client_id: i64,
-    ) -> BulwarkResult<String> {
+    ) -> GarrisonResult<String> {
         let login_id: String = login_id.into();
         // 拼接两个 UUID v4 simple（各 32 hex = 64 字符）
         let random_part = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
@@ -121,8 +121,8 @@ impl SsoClient {
             client_id,
         };
         let value = serde_json::to_string(&data)
-            .map_err(|e| BulwarkError::Internal(format!("sso-ticket-serialize::{}", e)))?;
-        let key = format!("bulwark:sso:ticket:{}", ticket);
+            .map_err(|e| GarrisonError::Internal(format!("sso-ticket-serialize::{}", e)))?;
+        let key = format!("garrison:sso:ticket:{}", ticket);
         self.dao.set(&key, &value, self.ticket_ttl_seconds).await?;
         Ok(ticket)
     }
@@ -140,7 +140,7 @@ impl SsoClient {
     ///
     /// # 返回
     /// - `Ok(login_id)`: 校验成功。
-    /// - `Err(BulwarkError::InvalidToken)`: 签名无效、票据不存在、已过期、client_id 不匹配、或被并发消费。
+    /// - `Err(GarrisonError::InvalidToken)`: 签名无效、票据不存在、已过期、client_id 不匹配、或被并发消费。
     ///
     /// # client_id 不匹配时不消费票据
     ///
@@ -149,28 +149,28 @@ impl SsoClient {
     ///
     /// # 原子性保证（）
     ///
-    /// `client_id` 校验通过后使用 `BulwarkDao::get_and_delete` 原子消费票据，
+    /// `client_id` 校验通过后使用 `GarrisonDao::get_and_delete` 原子消费票据，
     /// 消除 TOCTOU 竞态。并发调用同一 ticket（同 client_id）仅一个返回 `Ok`，
     /// 其他返回 `InvalidToken`（"已被并发消费"）。
-    pub async fn validate_ticket(&self, ticket: &str, client_id: i64) -> BulwarkResult<String> {
+    pub async fn validate_ticket(&self, ticket: &str, client_id: i64) -> GarrisonResult<String> {
         // M5 修复：先验签，防止 DAO 攻破后伪造 ticket
         let _random_part = self.verify_ticket_signature(ticket)?;
 
-        let key = format!("bulwark:sso:ticket:{}", ticket);
+        let key = format!("garrison:sso:ticket:{}", ticket);
         // 步骤 1: 非原子 get，用于校验 client_id（不删除票据）
         let value = self
             .dao
             .get(&key)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("sso-ticket-read::{}", e)))?;
+            .map_err(|e| GarrisonError::Dao(format!("sso-ticket-read::{}", e)))?;
         let value = value.ok_or_else(|| {
-            BulwarkError::InvalidToken("sso-ticket-missing-or-expired".to_string())
+            GarrisonError::InvalidToken("sso-ticket-missing-or-expired".to_string())
         })?;
         let data: SsoTicketData = serde_json::from_str(&value)
-            .map_err(|e| BulwarkError::Internal(format!("sso-ticket-deserialize::{}", e)))?;
+            .map_err(|e| GarrisonError::Internal(format!("sso-ticket-deserialize::{}", e)))?;
         if data.client_id != client_id {
             // client_id 不匹配：不消费票据，允许正确 client_id 后续重试
-            return Err(BulwarkError::InvalidToken(format!(
+            return Err(GarrisonError::InvalidToken(format!(
                 "sso-ticket-client-id-mismatch::{}::{}",
                 data.client_id, client_id
             )));
@@ -181,9 +181,9 @@ impl SsoClient {
             .dao
             .get_and_delete(&key)
             .await
-            .map_err(|e| BulwarkError::Dao(format!("sso-ticket-atomic-consume::{}", e)))?;
+            .map_err(|e| GarrisonError::Dao(format!("sso-ticket-atomic-consume::{}", e)))?;
         if consumed.is_none() {
-            return Err(BulwarkError::InvalidToken(
+            return Err(GarrisonError::InvalidToken(
                 "sso-ticket-consumed-by-concurrent".to_string(),
             ));
         }
@@ -193,8 +193,8 @@ impl SsoClient {
     /// 销毁 SSO ticket。
     ///
     /// 从 dao 中删除指定票据。即使票据不存在也返回 `Ok(())`（幂等）。
-    pub async fn destroy_ticket(&self, ticket: &str) -> BulwarkResult<()> {
-        let key = format!("bulwark:sso:ticket:{}", ticket);
+    pub async fn destroy_ticket(&self, ticket: &str) -> GarrisonResult<()> {
+        let key = format!("garrison:sso:ticket:{}", ticket);
         self.dao.delete(&key).await
     }
 }

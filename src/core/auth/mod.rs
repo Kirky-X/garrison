@@ -5,7 +5,7 @@
 //!
 //! 登录认证核心逻辑，对应 `StpLogic.login / logout` 方法。
 //!
-//! 0.2.0 将 API 改为 token-as-input，与 0.1.0 的 `BulwarkLogic`（依赖 task_local 上下文）解耦，
+//! 0.2.0 将 API 改为 token-as-input，与 0.1.0 的 `GarrisonLogic`（依赖 task_local 上下文）解耦，
 //! 便于 `protocol-jwt` 等协议层模块干净复用。
 
 use async_trait::async_trait;
@@ -13,8 +13,8 @@ use dashmap::DashMap;
 use std::sync::Arc;
 
 use crate::core::token::Token;
-use crate::error::{BulwarkError, BulwarkResult};
-use crate::session::BulwarkSession;
+use crate::error::{GarrisonError, GarrisonResult};
+use crate::session::GarrisonSession;
 
 /// 身份切换权限校验 trait（L4 修复，依据安全审计 L4）。
 ///
@@ -45,18 +45,18 @@ use crate::session::BulwarkSession;
 ///
 /// ```ignore
 /// use std::sync::Arc;
-/// use bulwark::core::auth::{AuthLogicDefault, SwitchToGuard};
-/// use bulwark::error::BulwarkResult;
+/// use garrison::core::auth::{AuthLogicDefault, SwitchToGuard};
+/// use garrison::error::GarrisonResult;
 ///
 /// // 仅允许 admin 切换
 /// struct AdminOnlyGuard;
 /// #[async_trait::async_trait]
 /// impl SwitchToGuard for AdminOnlyGuard {
-///     async fn check(&self, original: &str, target: &str) -> BulwarkResult<()> {
+///     async fn check(&self, original: &str, target: &str) -> GarrisonResult<()> {
 ///         if original.starts_with("admin:") {
 ///             Ok(())
 ///         } else {
-///             Err(bulwark::error::BulwarkError::NotPermission(
+///             Err(garrison::error::GarrisonError::NotPermission(
 ///                 format!("{} 无权切换到 {}", original, target)
 ///             ))
 ///         }
@@ -72,8 +72,8 @@ pub trait SwitchToGuard: Send + Sync {
     ///
     /// # 返回
     /// - `Ok(())`: 允许切换。
-    /// - `Err(BulwarkError::NotPermission)`: 权限不足，拒绝切换。
-    async fn check(&self, original_login_id: &str, target_login_id: &str) -> BulwarkResult<()>;
+    /// - `Err(GarrisonError::NotPermission)`: 权限不足，拒绝切换。
+    async fn check(&self, original_login_id: &str, target_login_id: &str) -> GarrisonResult<()>;
 }
 
 /// 拒绝所有切换的默认 guard（L4 修复，fail-closed 安全默认）。
@@ -93,7 +93,7 @@ pub struct DenyAllSwitchToGuard;
 /// 若必须使用（如遗留测试），需在调用处加 `#[allow(deprecated)]` 抑制警告，例如：
 ///
 /// ```ignore
-/// # use bulwark::core::auth::AllowAllSwitchToGuard;
+/// # use garrison::core::auth::AllowAllSwitchToGuard;
 /// # use std::sync::Arc;
 /// # #[allow(deprecated)]
 /// let _guard = Arc::new(AllowAllSwitchToGuard);
@@ -108,7 +108,7 @@ pub struct AllowAllSwitchToGuard;
 /// 认证逻辑 trait，定义以 token 为入参的认证抽象。
 ///
 /// 所有方法 MUST 使用 `async_trait` 标注，trait 绑定 `Send + Sync`。
-/// 与 0.1.0 的 `BulwarkLogic` 解耦：不读取 `tokio::task_local`，所有方法显式接收 `token: &str`。
+/// 与 0.1.0 的 `GarrisonLogic` 解耦：不读取 `tokio::task_local`，所有方法显式接收 `token: &str`。
 #[async_trait]
 pub trait AuthLogic: Send + Sync {
     /// 执行登录操作，生成 token 并建立会话。
@@ -119,22 +119,22 @@ pub trait AuthLogic: Send + Sync {
     ///
     /// # 返回
     /// - `Ok(String)`: 非空 token 字符串。
-    async fn login(&self, id: &str, params: Option<&str>) -> BulwarkResult<String>;
+    async fn login(&self, id: &str, params: Option<&str>) -> GarrisonResult<String>;
 
     /// 执行登出操作，销毁指定 token 对应的会话。
     ///
     /// 幂等处理：不存在的 token 返回 `Ok(())`。
-    async fn logout(&self, token: &str) -> BulwarkResult<()>;
+    async fn logout(&self, token: &str) -> GarrisonResult<()>;
 
     /// 检查 token 是否存在且未过期。
-    async fn is_login(&self, token: &str) -> BulwarkResult<bool>;
+    async fn is_login(&self, token: &str) -> GarrisonResult<bool>;
 
     /// 获取 token 关联的登录主体标识。
     ///
     /// # 返回
     /// - `Ok(Some(id))`: token 有效且关联登录 ID。
     /// - `Ok(None)`: token 无效或已过期。
-    async fn get_login_id(&self, token: &str) -> BulwarkResult<Option<String>>;
+    async fn get_login_id(&self, token: &str) -> GarrisonResult<Option<String>>;
 
     /// 校验 token 有效性并返回关联的 login_id。
     ///
@@ -142,8 +142,8 @@ pub trait AuthLogic: Send + Sync {
     ///
     /// # 返回
     /// - `Ok(id)`: token 有效，返回关联 login_id。
-    /// - `Err(BulwarkError::InvalidToken)`: token 无效或已过期。
-    async fn verify_token(&self, token: &str) -> BulwarkResult<String>;
+    /// - `Err(GarrisonError::InvalidToken)`: token 无效或已过期。
+    async fn verify_token(&self, token: &str) -> GarrisonResult<String>;
 
     /// 身份切换：在当前会话中切换到另一个 login_id。
     ///
@@ -155,13 +155,13 @@ pub trait AuthLogic: Send + Sync {
     /// - `target_login_id`: 要切换到的目标登录主体标识。
     ///
     /// # 错误
-    /// - `BulwarkError::NotLogin`: token 无效或已过期。
-    /// - `BulwarkError::InvalidParam`: `target_login_id` 为空字符串。
+    /// - `GarrisonError::NotLogin`: token 无效或已过期。
+    /// - `GarrisonError::InvalidParam`: `target_login_id` 为空字符串。
     ///
     /// # 默认实现
-    /// 返回 `BulwarkError::NotImplemented`，由 `AuthLogicDefault` 覆盖。
-    async fn switch_to(&self, _token: &str, _target_login_id: &str) -> BulwarkResult<()> {
-        Err(BulwarkError::NotImplemented(format!(
+    /// 返回 `GarrisonError::NotImplemented`，由 `AuthLogicDefault` 覆盖。
+    async fn switch_to(&self, _token: &str, _target_login_id: &str) -> GarrisonResult<()> {
+        Err(GarrisonError::NotImplemented(format!(
             "switch_to 未实现: {} 不支持身份切换",
             std::any::type_name::<Self>()
         )))
@@ -179,24 +179,24 @@ pub trait AuthLogic: Send + Sync {
     /// - `Ok(new_token)`: 新生成的等价 token。
     ///
     /// # 错误
-    /// - `BulwarkError::NotLogin`: token 无效或已过期。
+    /// - `GarrisonError::NotLogin`: token 无效或已过期。
     ///
     /// # 默认实现
-    /// 返回 `BulwarkError::NotImplemented`，由 `AuthLogicDefault` 覆盖。
-    async fn renew_to_equivalent(&self, _token: &str) -> BulwarkResult<String> {
-        Err(BulwarkError::NotImplemented(format!(
+    /// 返回 `GarrisonError::NotImplemented`，由 `AuthLogicDefault` 覆盖。
+    async fn renew_to_equivalent(&self, _token: &str) -> GarrisonResult<String> {
+        Err(GarrisonError::NotImplemented(format!(
             "renew_to_equivalent 未实现: {} 不支持 token 置换",
             std::any::type_name::<Self>()
         )))
     }
 }
 
-/// `AuthLogic` 的默认实现，委托 `BulwarkSession`（会话管理）与 `core-token::Token`（token 生成与校验）。
+/// `AuthLogic` 的默认实现，委托 `GarrisonSession`（会话管理）与 `core-token::Token`（token 生成与校验）。
 ///
 /// 协议层模块无需自行实现会话存储逻辑，直接复用此默认实现。
 pub struct AuthLogicDefault {
     /// 会话管理器。
-    session: Arc<BulwarkSession>,
+    session: Arc<GarrisonSession>,
     /// Token 生成与校验处理器。
     token_handler: Arc<dyn Token>,
     /// 默认 token 有效期（秒）。
@@ -212,7 +212,7 @@ pub struct AuthLogicDefault {
     ///
     /// key: token 字符串；value: `Arc<tokio::sync::Mutex<()>>`（异步锁，可跨 `.await` 持有）。
     ///
-    /// 数据结构选择：`DashMap`（分片锁，与 `BulwarkSession::login_locks` /
+    /// 数据结构选择：`DashMap`（分片锁，与 `GarrisonSession::login_locks` /
     /// `token_session_locks` 一致）。相比 `parking_lot::Mutex<HashMap>`：
     /// - 并发性更好（分片锁 vs 单锁序列化）
     /// - API 更简洁（`entry().or_insert_with()` 无需外层锁包裹）

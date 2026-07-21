@@ -1,13 +1,13 @@
-# A-010: `BulwarkDao::keys()` 性能评估结论
+# A-010: `GarrisonDao::keys()` 性能评估结论
 
 - **状态**：已被后续实现推翻（v0.5.2 defer → v0.6.7 采纳 key_index 方案）
 - **决策日期**：2026-07-08（v0.5.2 评估）/ 2026-07-14（v0.6.7 修订实现）
 - **相关变更**：v0-5-2-architecture-refactor / v0.6.7-waf-safe-defaults-cache-sms-anomalous
-- **相关代码**：`src/dao/oxcache_impl.rs` `BulwarkDaoOxcache::keys()` / `src/dao/mod.rs` `BulwarkDao::keys()` 默认实现
+- **相关代码**：`src/dao/oxcache_impl.rs` `GarrisonDaoOxcache::keys()` / `src/dao/mod.rs` `GarrisonDao::keys()` 默认实现
 
 ## 背景
 
-`BulwarkDao::keys(pattern)` 方法用于按 glob pattern 扫描 key（如 `ApiKeyHandler::list_by_namespace` 需要 `keys("bulwark:apikey:<namespace>:*")`）。默认实现返回 `BulwarkError::NotImplemented`，`MockDao` 已实现。
+`GarrisonDao::keys(pattern)` 方法用于按 glob pattern 扫描 key（如 `ApiKeyHandler::list_by_namespace` 需要 `keys("garrison:apikey:<namespace>:*")`）。默认实现返回 `GarrisonError::NotImplemented`，`MockDao` 已实现。
 
 ## 评估依据
 
@@ -21,7 +21,7 @@
 
 ### 维护独立 key 索引的权衡（v0.6.7 已采纳）
 
-在 `BulwarkDaoOxcache` 内部维护 `parking_lot::RwLock<std::collections::HashSet<String>>` 作为 key 索引。
+在 `GarrisonDaoOxcache` 内部维护 `parking_lot::RwLock<std::collections::HashSet<String>>` 作为 key 索引。
 
 - **优点**：立即实现 `keys()` 功能，支持 glob pattern 匹配
 - **缺点**：
@@ -48,7 +48,7 @@
 
 ### v0.6.7 修订决策（当前生效）
 
-**采纳 key_index 方案**，在 `BulwarkDaoOxcache` 内部维护 `parking_lot::RwLock<HashSet<String>>` 实现 `keys()`。
+**采纳 key_index 方案**，在 `GarrisonDaoOxcache` 内部维护 `parking_lot::RwLock<HashSet<String>>` 实现 `keys()`。
 
 理由：
 
@@ -59,7 +59,7 @@
 
 ## 实现
 
-`BulwarkDaoOxcache::keys()` 实现（`src/dao/oxcache_impl.rs`）：
+`GarrisonDaoOxcache::keys()` 实现（`src/dao/oxcache_impl.rs`）：
 
 1. `set` / `set_permanent` 时 `key_index.write().insert(actual_key)`
 2. `delete` 时 `key_index.write().remove(&actual_key)`
@@ -72,11 +72,11 @@
 **oxcache 提供原生 iter API 后**：
 
 - 升级 oxcache 依赖
-- 在 `BulwarkDaoOxcache` 中重写 `keys()` 方法，委托给 oxcache iter API
+- 在 `GarrisonDaoOxcache` 中重写 `keys()` 方法，委托给 oxcache iter API
 - 移除 `key_index` 字段及其维护逻辑
 
 ## 验证
 
-- `cargo test --features full --lib` 通过（含 `keys()` 默认 `NotImplemented` 测试 + `BulwarkDaoOxcache::keys()` 实现测试）
+- `cargo test --features full --lib` 通过（含 `keys()` 默认 `NotImplemented` 测试 + `GarrisonDaoOxcache::keys()` 实现测试）
 - `MockDao::keys()` 测试验证 glob pattern 匹配逻辑正确
-- `BulwarkDaoOxcache::keys()` 测试验证 key_index 维护 + 惰性清理逻辑正确
+- `GarrisonDaoOxcache::keys()` 测试验证 key_index 维护 + 惰性清理逻辑正确

@@ -12,14 +12,14 @@
 //!
 //! 运行方式：
 //! ```sh
-//! cargo run -p bulwark-examples --bin sso_server --features protocol-sso-server
+//! cargo run -p garrison-examples --bin sso_server --features protocol-sso-server
 //! ```
 
 use async_trait::async_trait;
-use bulwark::dao::BulwarkDao;
-use bulwark::error::{BulwarkError, BulwarkResult};
-use bulwark::protocol::sso::server::{CenterIdConverter, DefaultSsoServer, SsoChannel, SsoServer};
-use bulwark::protocol::sso::SsoClient;
+use garrison::dao::GarrisonDao;
+use garrison::error::{GarrisonError, GarrisonResult};
+use garrison::protocol::sso::server::{CenterIdConverter, DefaultSsoServer, SsoChannel, SsoServer};
+use garrison::protocol::sso::SsoClient;
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -47,8 +47,8 @@ impl Default for InMemoryDao {
 }
 
 #[async_trait]
-impl BulwarkDao for InMemoryDao {
-    async fn get(&self, key: &str) -> BulwarkResult<Option<String>> {
+impl GarrisonDao for InMemoryDao {
+    async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
         let mut store = self.store.lock();
         match store.get(key) {
             Some((value, expire_at)) => {
@@ -64,7 +64,7 @@ impl BulwarkDao for InMemoryDao {
         }
     }
 
-    async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> BulwarkResult<()> {
+    async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> GarrisonResult<()> {
         let expire_at = if ttl_seconds == 0 {
             None
         } else {
@@ -76,18 +76,18 @@ impl BulwarkDao for InMemoryDao {
         Ok(())
     }
 
-    async fn update(&self, key: &str, value: &str) -> BulwarkResult<()> {
+    async fn update(&self, key: &str, value: &str) -> GarrisonResult<()> {
         let mut store = self.store.lock();
         match store.get_mut(key) {
             Some((existing, _)) => {
                 *existing = value.to_string();
                 Ok(())
             },
-            None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
+            None => Err(GarrisonError::Dao(format!("键不存在: {}", key))),
         }
     }
 
-    async fn expire(&self, key: &str, seconds: u64) -> BulwarkResult<()> {
+    async fn expire(&self, key: &str, seconds: u64) -> GarrisonResult<()> {
         let mut store = self.store.lock();
         match store.get_mut(key) {
             Some((_, expire_at)) => {
@@ -98,11 +98,11 @@ impl BulwarkDao for InMemoryDao {
                 };
                 Ok(())
             },
-            None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
+            None => Err(GarrisonError::Dao(format!("键不存在: {}", key))),
         }
     }
 
-    async fn delete(&self, key: &str) -> BulwarkResult<()> {
+    async fn delete(&self, key: &str) -> GarrisonResult<()> {
         self.store.lock().remove(key);
         Ok(())
     }
@@ -131,7 +131,7 @@ struct CountingChannel {
 
 #[async_trait]
 impl SsoChannel for CountingChannel {
-    async fn push(&self, _topic: &str, _message: &str) -> BulwarkResult<()> {
+    async fn push(&self, _topic: &str, _message: &str) -> GarrisonResult<()> {
         self.count.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
@@ -140,7 +140,7 @@ impl SsoChannel for CountingChannel {
         &self,
         _topic: &str,
         _handler: Box<dyn Fn(String) + Send + Sync>,
-    ) -> BulwarkResult<()> {
+    ) -> GarrisonResult<()> {
         Ok(())
     }
 }
@@ -151,12 +151,12 @@ impl SsoChannel for CountingChannel {
 /// 包括 CenterIdConverter 双向转换、SsoServer 与 SsoClient 共享 DAO 通信、
 /// 自定义 SsoChannel 消息推送计数。
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    println!("=== Bulwark SSO Server 示例 ===\n");
+    println!("=== Garrison SSO Server 示例 ===\n");
 
     // ----------------------------------------------------------------
     // 1. 创建 DefaultSsoServer（注入 DAO + TTL + 自定义 converter + channel）
     // ----------------------------------------------------------------
-    let dao: Arc<dyn BulwarkDao> = Arc::new(InMemoryDao::new());
+    let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
     let channel = Arc::new(CountingChannel {
         count: AtomicUsize::new(0),
     });

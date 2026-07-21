@@ -9,7 +9,7 @@ use serial_test::serial;
 use std::sync::atomic::Ordering;
 
 // ========================================================================
-// BulwarkPlugin trait 测试
+// GarrisonPlugin trait 测试
 // ========================================================================
 
 /// 默认实现返回 Ok(())（spec Scenario：生命周期钩子有默认空实现）。
@@ -17,7 +17,7 @@ use std::sync::atomic::Ordering;
 #[serial]
 fn default_hooks_return_ok() {
     struct EmptyPlugin;
-    impl BulwarkPlugin for EmptyPlugin {
+    impl GarrisonPlugin for EmptyPlugin {
         fn name(&self) -> &str {
             "empty"
         }
@@ -37,14 +37,14 @@ fn name_must_be_provided() {
 }
 
 // ========================================================================
-// BulwarkPluginManager 测试
+// GarrisonPluginManager 测试
 // ========================================================================
 
 /// manager 收集所有已注册插件（spec Scenario）。
 #[test]
 #[serial]
 fn manager_collects_registered_plugins() {
-    let manager = BulwarkPluginManager::new();
+    let manager = GarrisonPluginManager::new();
     // 至少 2 个插件（OkPlugin + ErrPlugin）
     assert!(manager.count() >= 2);
 }
@@ -54,7 +54,7 @@ fn manager_collects_registered_plugins() {
 #[serial]
 fn on_login_invokes_all_plugins() {
     reset_counters();
-    let manager = BulwarkPluginManager::new();
+    let manager = GarrisonPluginManager::new();
     manager.on_login("1001", "T1");
     // OkPlugin 的 on_login 应被调用至少 1 次
     assert!(LOGIN_CALLS.load(Ordering::SeqCst) >= 1);
@@ -65,7 +65,7 @@ fn on_login_invokes_all_plugins() {
 #[serial]
 fn on_logout_invokes_all_plugins() {
     reset_counters();
-    let manager = BulwarkPluginManager::new();
+    let manager = GarrisonPluginManager::new();
     manager.on_logout("1001", "T1");
     assert!(LOGOUT_CALLS.load(Ordering::SeqCst) >= 1);
 }
@@ -75,7 +75,7 @@ fn on_logout_invokes_all_plugins() {
 #[serial]
 fn on_permission_check_invokes_all_plugins() {
     reset_counters();
-    let manager = BulwarkPluginManager::new();
+    let manager = GarrisonPluginManager::new();
     manager.on_permission_check("1001", "user:read");
     assert!(PERM_CHECK_CALLS.load(Ordering::SeqCst) >= 1);
 }
@@ -85,7 +85,7 @@ fn on_permission_check_invokes_all_plugins() {
 #[serial]
 fn plugin_failure_does_not_interrupt() {
     reset_counters();
-    let manager = BulwarkPluginManager::new();
+    let manager = GarrisonPluginManager::new();
     // ErrPlugin 的 on_login 返回 Err，但 OkPlugin 的 on_login 仍应被调用
     manager.on_login("1001", "T1");
     // OkPlugin 的计数器应 >= 1（证明 ErrPlugin 的失败没有中断）
@@ -96,7 +96,7 @@ fn plugin_failure_does_not_interrupt() {
 #[test]
 #[serial]
 fn default_equals_new() {
-    let m1 = BulwarkPluginManager::new();
-    let m2 = BulwarkPluginManager::default();
+    let m1 = GarrisonPluginManager::new();
+    let m2 = GarrisonPluginManager::default();
     assert_eq!(m1.count(), m2.count());
 }

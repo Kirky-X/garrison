@@ -7,12 +7,12 @@
 //! 提供 `MockInterface`（基于 `HashMap` 模拟权限/角色数据回调），
 //! 供 `manager::tests` 初始化与鉴权测试复用。
 
-use crate::error::BulwarkResult;
-use crate::stp::BulwarkInterface;
+use crate::error::GarrisonResult;
+use crate::stp::GarrisonInterface;
 use async_trait::async_trait;
 use std::collections::HashMap;
 
-/// 测试用 BulwarkInterface mock，基于 HashMap 存储 login_id → 权限/角色列表。
+/// 测试用 GarrisonInterface mock，基于 HashMap 存储 login_id → 权限/角色列表。
 pub struct MockInterface {
     permissions: HashMap<String, Vec<String>>,
     roles: HashMap<String, Vec<String>>,
@@ -47,12 +47,12 @@ impl MockInterface {
 }
 
 #[async_trait]
-impl BulwarkInterface for MockInterface {
-    async fn get_permission_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+impl GarrisonInterface for MockInterface {
+    async fn get_permission_list(&self, login_id: &str) -> GarrisonResult<Vec<String>> {
         Ok(self.permissions.get(login_id).cloned().unwrap_or_default())
     }
 
-    async fn get_role_list(&self, login_id: &str) -> BulwarkResult<Vec<String>> {
+    async fn get_role_list(&self, login_id: &str) -> GarrisonResult<Vec<String>> {
         Ok(self.roles.get(login_id).cloned().unwrap_or_default())
     }
 }

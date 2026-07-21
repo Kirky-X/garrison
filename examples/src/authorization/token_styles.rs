@@ -7,20 +7,20 @@
 //!
 //! 运行方式：
 //! ```sh
-//! cargo run -p bulwark-examples --bin token_styles --features full
+//! cargo run -p garrison-examples --bin token_styles --features full
 //! ```
 
-use bulwark::core::token::{
+use garrison::core::token::{
     Random64TokenStyle, SimpleTokenStyle, Token, TokenStyleFactory, UuidTokenStyle,
 };
-use bulwark::error::BulwarkResult;
+use garrison::error::GarrisonResult;
 
 /// 运行 Token 风格示例。
 ///
 /// 演示 UUID v4 / Random64 / Simple 三种 token 风格的生成与校验，
 /// 以及 TokenStyleFactory 按字符串创建对应风格。
-pub fn run() -> BulwarkResult<()> {
-    println!("=== Bulwark Token 风格示例 ===\n");
+pub fn run() -> GarrisonResult<()> {
+    println!("=== Garrison Token 风格示例 ===\n");
 
     // ----------------------------------------------------------------
     // 1. UUID v4 风格：标准 36 字符 UUID（无 payload，verify 返回 None）

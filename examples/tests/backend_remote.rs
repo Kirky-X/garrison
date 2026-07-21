@@ -7,7 +7,7 @@
 
 #![cfg(feature = "backend-remote")]
 
-use bulwark_examples::infrastructure::backend_remote;
+use garrison_examples::infrastructure::backend_remote;
 
 #[tokio::test]
 async fn test_run_completes() {

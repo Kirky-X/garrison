@@ -4,7 +4,7 @@
 //! `TotpHandler` 单元测试。
 
 use super::TotpHandler;
-use crate::dao::BulwarkDao;
+use crate::dao::GarrisonDao;
 
 /// RFC 6238 测试密钥（20 字节 ASCII）。
 const TEST_SECRET: &[u8] = b"12345678901234567890";
@@ -297,7 +297,7 @@ async fn validate_and_consume_concurrent_no_double_accept() {
 }
 
 // ========================================================================
-// E3 修复验证：DashMap → BulwarkDao::incr 原子操作
+// E3 修复验证：DashMap → GarrisonDao::incr 原子操作
 // ========================================================================
 
 /// E3: 验证 handler.rs 源码不再使用 DashMap / once_cell / TOTP_LOCKS 无界 static。

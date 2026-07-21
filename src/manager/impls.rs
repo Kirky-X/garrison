@@ -1,37 +1,37 @@
 //! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! `BulwarkManager` 的实现块（含 `Drop` impl）与 factory selector 辅助函数。
+//! `GarrisonManager` 的实现块（含 `Drop` impl）与 factory selector 辅助函数。
 //!
 //! 本文件从 `mod.rs` 迁移而来，遵循 mod-crate-hardening（规则 25）：
 //! `mod.rs` 仅保留 trait 定义、pub struct/enum、pub type alias、pub use、mod 声明。
 
 use crate::account::disable::{DefaultDisableRepository, DisableRepository};
-use crate::config::BulwarkConfig;
+use crate::config::GarrisonConfig;
 use crate::core::auth::{AuthLogic, AuthLogicDefault};
 use crate::core::permission::{PermissionChecker, PermissionCheckerDefault};
 use crate::core::token::TokenStyleFactory;
-use crate::dao::BulwarkDao;
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::dao::GarrisonDao;
+use crate::error::{GarrisonError, GarrisonResult};
 #[cfg(feature = "listener")]
-use crate::listener::BulwarkListenerManager;
-use crate::plugin::BulwarkPluginManager;
-use crate::session::BulwarkSession;
+use crate::listener::GarrisonListenerManager;
+use crate::plugin::GarrisonPluginManager;
+use crate::session::GarrisonSession;
 use crate::stp::util::spawn_cleanup_task;
-use crate::stp::{BulwarkInterface, BulwarkLogicDefault};
+use crate::stp::{GarrisonInterface, GarrisonLogicDefault};
 #[cfg(feature = "anomalous-detector-dual")]
 use crate::strategy::firewall::{AnomalousAnalyzerConfig, AnomalousLoginAnalyzer};
-use crate::strategy::{BulwarkPermissionStrategy, BulwarkPermissionStrategyDefault, Strategy};
+use crate::strategy::{GarrisonPermissionStrategy, GarrisonPermissionStrategyDefault, Strategy};
 use parking_lot::RwLock;
 use std::sync::Arc;
 #[cfg(feature = "anomalous-detector-dual")]
 use tokio::sync::watch;
 
-use super::factory::{BulwarkLogicFactoryContext, BulwarkLogicFactoryEntry};
-use super::{BulwarkManager, BULWARK_MANAGER};
+use super::factory::{GarrisonLogicFactoryContext, GarrisonLogicFactoryEntry};
+use super::{GarrisonManager, GARRISON_MANAGER};
 
-impl BulwarkManager {
-    /// 创建空的管理器实例（仅用于 BULWARK_MANAGER 单例初始化）。
+impl GarrisonManager {
+    /// 创建空的管理器实例（仅用于 GARRISON_MANAGER 单例初始化）。
     pub(super) fn new() -> Self {
         Self {
             logic: RwLock::new(None),
@@ -44,7 +44,7 @@ impl BulwarkManager {
         }
     }
 
-    /// 初始化全局管理器：注入 dao/config/interface 依赖，构造默认 `BulwarkLogicDefault` 实例。
+    /// 初始化全局管理器：注入 dao/config/interface 依赖，构造默认 `GarrisonLogicDefault` 实例。
     ///
     /// # 参数
     /// - `dao`: DAO 引用（oxcache / dbnexus）
@@ -53,57 +53,57 @@ impl BulwarkManager {
     ///
     /// # 行为
     /// 1. 校验配置合法性
-    /// 2. 构造 `BulwarkSession::new(dao, timeout, active_timeout)`
-    /// 3. 构造 `BulwarkPermissionStrategyDefault::new(interface)`
-    /// 4. 通过 `inventory::iter::<BulwarkLogicFactoryEntry>()` 找到注册的 factory
-    /// 5. 调用 `factory.build(session, config, firewall)` 生成 `Arc<BulwarkLogicDefault>`
-    /// 6. 若无 factory 注册，使用默认 `BulwarkLogicFactoryDefault` 构造 `BulwarkLogicDefault`
+    /// 2. 构造 `GarrisonSession::new(dao, timeout, active_timeout)`
+    /// 3. 构造 `GarrisonPermissionStrategyDefault::new(interface)`
+    /// 4. 通过 `inventory::iter::<GarrisonLogicFactoryEntry>()` 找到注册的 factory
+    /// 5. 调用 `factory.build(session, config, firewall)` 生成 `Arc<GarrisonLogicDefault>`
+    /// 6. 若无 factory 注册，使用默认 `GarrisonLogicFactoryDefault` 构造 `GarrisonLogicDefault`
     /// 7. 覆盖式更新全局单例（允许重复 init，便于测试）
     ///
     /// # 返回
     /// 成功返回 `Ok(())`。
     ///
     /// # 错误
-    /// - 配置非法（timeout ≤ 0 等）：`BulwarkError::Config`
-    /// - timeout/active_timeout 溢出 u64：`BulwarkError::Config`
-    /// - factory 构造失败：透传 factory 返回的 `BulwarkError`
+    /// - 配置非法（timeout ≤ 0 等）：`GarrisonError::Config`
+    /// - timeout/active_timeout 溢出 u64：`GarrisonError::Config`
+    /// - factory 构造失败：透传 factory 返回的 `GarrisonError`
     pub fn init(
-        dao: Arc<dyn BulwarkDao>,
-        config: Arc<BulwarkConfig>,
-        interface: Arc<dyn BulwarkInterface>,
-    ) -> BulwarkResult<()> {
+        dao: Arc<dyn GarrisonDao>,
+        config: Arc<GarrisonConfig>,
+        interface: Arc<dyn GarrisonInterface>,
+    ) -> GarrisonResult<()> {
         Self::init_with_factory_selector(dao, config, interface, default_factory_selector)
     }
 
     /// 内部初始化方法，允许注入自定义 factory selector（便于测试 mock factory）。
     pub(super) fn init_with_factory_selector(
-        dao: Arc<dyn BulwarkDao>,
-        config: Arc<BulwarkConfig>,
-        interface: Arc<dyn BulwarkInterface>,
-        factory_selector: fn() -> Option<&'static BulwarkLogicFactoryEntry>,
-    ) -> BulwarkResult<()> {
+        dao: Arc<dyn GarrisonDao>,
+        config: Arc<GarrisonConfig>,
+        interface: Arc<dyn GarrisonInterface>,
+        factory_selector: fn() -> Option<&'static GarrisonLogicFactoryEntry>,
+    ) -> GarrisonResult<()> {
         // 1. 校验配置
         config.validate()?;
 
         // 2. 构造 session（处理 active_timeout = -1 的兜底语义）
         let timeout = u64::try_from(config.timeout).map_err(|_| {
-            BulwarkError::Config(format!("manager-timeout-overflow::{}", config.timeout))
+            GarrisonError::Config(format!("manager-timeout-overflow::{}", config.timeout))
         })?;
         let active_timeout = if config.active_timeout < 0 {
             // -1 表示不启用 activity 超时，使用 timeout 兜底（保留 既有语义）
             timeout
         } else {
             u64::try_from(config.active_timeout).map_err(|_| {
-                BulwarkError::Config(format!(
+                GarrisonError::Config(format!(
                     "manager-active-timeout-overflow::{}",
                     config.active_timeout
                 ))
             })?
         };
-        let session = Arc::new(BulwarkSession::new(dao.clone(), timeout, active_timeout));
+        let session = Arc::new(GarrisonSession::new(dao.clone(), timeout, active_timeout));
 
         // T030: 先 abort 旧 cleanup task 再 spawn 新 task，避免短暂重叠窗口
-        if let Some(old) = BULWARK_MANAGER.cleanup_task_handle.write().take() {
+        if let Some(old) = GARRISON_MANAGER.cleanup_task_handle.write().take() {
             old.abort();
         }
 
@@ -116,10 +116,10 @@ impl BulwarkManager {
         let permission_checker: Arc<dyn PermissionChecker> =
             Arc::new(PermissionCheckerDefault::new(interface.clone()));
         // 3.2 PluginManager（通过 inventory 收集编译期注册的插件）
-        let plugin_manager = Arc::new(BulwarkPluginManager::new());
+        let plugin_manager = Arc::new(GarrisonPluginManager::new());
         // 3.3 ListenerManager（通过 inventory 收集编译期注册的监听器，需 listener feature）
         #[cfg(feature = "listener")]
-        let listener_manager = Arc::new(BulwarkListenerManager::new());
+        let listener_manager = Arc::new(GarrisonListenerManager::new());
         // 3.4 AuthLogic（委托 session + token_handler 实现登录/校验）
         //     token_handler 由 TokenStyleFactory 依据 config.token_style 创建
         let token_handler: Arc<dyn crate::core::token::Token> = Arc::from(TokenStyleFactory::new(
@@ -133,8 +133,8 @@ impl BulwarkManager {
         ));
 
         // 4. 构造 firewall，注入 permission_checker + plugin_manager
-        let firewall: Arc<dyn BulwarkPermissionStrategy> = Arc::new(
-            BulwarkPermissionStrategyDefault::new(interface)
+        let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(
+            GarrisonPermissionStrategyDefault::new(interface)
                 .with_permission_checker(permission_checker.clone())
                 .with_plugin_manager(plugin_manager.clone()),
         );
@@ -145,7 +145,7 @@ impl BulwarkManager {
 
         // 5. 构造 factory context（持有 5 个 manager 引用）
         #[cfg(feature = "listener")]
-        let factory_ctx = BulwarkLogicFactoryContext {
+        let factory_ctx = GarrisonLogicFactoryContext {
             plugin_manager: Some(plugin_manager.clone()),
             listener_manager: Some(listener_manager.clone()),
             auth_logic: Some(auth_logic.clone()),
@@ -153,7 +153,7 @@ impl BulwarkManager {
             disable_repository: Some(disable_repo.clone()),
         };
         #[cfg(not(feature = "listener"))]
-        let factory_ctx = BulwarkLogicFactoryContext {
+        let factory_ctx = GarrisonLogicFactoryContext {
             plugin_manager: Some(plugin_manager.clone()),
             auth_logic: Some(auth_logic.clone()),
             permission_checker: Some(permission_checker.clone()),
@@ -184,16 +184,16 @@ impl BulwarkManager {
             config.l2_cache_ttl_secs,
             config.l1_cache_capacity,
         )?);
-        let logic: Arc<BulwarkLogicDefault> = match factory_selector() {
+        let logic: Arc<GarrisonLogicDefault> = match factory_selector() {
             Some(entry) => (entry.factory)(session, config, firewall, &factory_ctx)?,
             None => {
-                // 兜底路径：直接通过 builder 链构造 BulwarkLogicDefault
+                // 兜底路径：直接通过 builder 链构造 GarrisonLogicDefault
                 // `mut` 仅在 `listener`/`three-tier-cache` feature 启用时需要（下方 cfg 块会 reassign）
                 #[cfg_attr(
                     not(any(feature = "listener", feature = "three-tier-cache")),
                     allow(unused_mut)
                 )]
-                let mut builder = BulwarkLogicDefault::new(session, config, firewall)
+                let mut builder = GarrisonLogicDefault::new(session, config, firewall)
                     .with_plugin_manager(plugin_manager)
                     .with_auth_logic(auth_logic)
                     .with_permission_checker(permission_checker)
@@ -213,21 +213,21 @@ impl BulwarkManager {
         // 7. 覆盖式更新全局单例（允许重复 init，便于测试）
         // 同时构造 Strategy 注册表
         let strategy = Arc::new(RwLock::new(Strategy::new(logic.clone())));
-        *BULWARK_MANAGER.logic.write() = Some(logic);
-        *BULWARK_MANAGER.strategy.write() = Some(strategy);
+        *GARRISON_MANAGER.logic.write() = Some(logic);
+        *GARRISON_MANAGER.strategy.write() = Some(strategy);
 
         // T030: 保存新 cleanup task handle（旧 task 已在上方 abort）
-        *BULWARK_MANAGER.cleanup_task_handle.write() = cleanup_handle;
+        *GARRISON_MANAGER.cleanup_task_handle.write() = cleanup_handle;
 
         // T023: 启动异常登录分析器 task（anomalous-detector-dual feature）
         #[cfg(feature = "anomalous-detector-dual")]
         {
             // 先 abort 旧 analyzer task
-            if let Some(old) = BULWARK_MANAGER.anomalous_analyzer_handle.write().take() {
+            if let Some(old) = GARRISON_MANAGER.anomalous_analyzer_handle.write().take() {
                 old.abort();
             }
             // 清空旧 shutdown_tx（drop 后 shutdown_rx.changed() 返回 Err，task 退出）
-            BULWARK_MANAGER
+            GARRISON_MANAGER
                 .anomalous_analyzer_shutdown_tx
                 .write()
                 .take();
@@ -235,7 +235,7 @@ impl BulwarkManager {
             // 创建 shutdown channel
             let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
-            // 从 BulwarkConfig 构造 analyzer config
+            // 从 GarrisonConfig 构造 analyzer config
             let analyzer_config = AnomalousAnalyzerConfig {
                 interval_secs: analyzer_interval_secs,
                 burst_threshold: analyzer_burst_threshold,
@@ -252,26 +252,26 @@ impl BulwarkManager {
             let analyzer_handle = analyzer.start();
 
             // 保存 handle 和 shutdown_tx
-            *BULWARK_MANAGER.anomalous_analyzer_handle.write() = Some(analyzer_handle);
-            *BULWARK_MANAGER.anomalous_analyzer_shutdown_tx.write() = Some(shutdown_tx);
+            *GARRISON_MANAGER.anomalous_analyzer_handle.write() = Some(analyzer_handle);
+            *GARRISON_MANAGER.anomalous_analyzer_shutdown_tx.write() = Some(shutdown_tx);
         }
 
         Ok(())
     }
 
-    /// 获取全局 `BulwarkLogicDefault` 引用。
+    /// 获取全局 `GarrisonLogicDefault` 引用。
     ///
     /// # 返回
-    /// 已初始化时返回 `Arc<BulwarkLogicDefault>`。
+    /// 已初始化时返回 `Arc<GarrisonLogicDefault>`。
     ///
     /// # 错误
-    /// - 若未初始化，返回 `BulwarkError::Session("BulwarkManager 未初始化")`。
-    pub fn logic() -> BulwarkResult<Arc<BulwarkLogicDefault>> {
-        BULWARK_MANAGER
+    /// - 若未初始化，返回 `GarrisonError::Session("GarrisonManager 未初始化")`。
+    pub fn logic() -> GarrisonResult<Arc<GarrisonLogicDefault>> {
+        GARRISON_MANAGER
             .logic
             .read()
             .clone()
-            .ok_or_else(|| BulwarkError::Session("manager-not-init".to_string()))
+            .ok_or_else(|| GarrisonError::Session("manager-not-init".to_string()))
     }
 
     /// 获取全局 `Strategy` 注册表引用。
@@ -283,18 +283,18 @@ impl BulwarkManager {
     /// 已初始化时返回 `Arc<RwLock<Strategy>>`。
     ///
     /// # 错误
-    /// - 若未初始化，返回 `BulwarkError::Session("BulwarkManager 未初始化")`。
-    pub fn strategy() -> BulwarkResult<Arc<RwLock<Strategy>>> {
-        BULWARK_MANAGER
+    /// - 若未初始化，返回 `GarrisonError::Session("GarrisonManager 未初始化")`。
+    pub fn strategy() -> GarrisonResult<Arc<RwLock<Strategy>>> {
+        GARRISON_MANAGER
             .strategy
             .read()
             .clone()
-            .ok_or_else(|| BulwarkError::Session("manager-not-init".to_string()))
+            .ok_or_else(|| GarrisonError::Session("manager-not-init".to_string()))
     }
 
     /// 获取全局 `DisableRepository` 引用（v0.6.5 T020）。
     ///
-    /// `init` 时自动创建 `DefaultDisableRepository` 并注入到 `BulwarkLogicDefault`，
+    /// `init` 时自动创建 `DefaultDisableRepository` 并注入到 `GarrisonLogicDefault`，
     /// 此方法从 logic 中读取封禁库实例，供业务方调用 `disable` / `untie_disable` /
     /// `is_disable` / `get_disable_time` / `get_disable_level`。
     ///
@@ -304,9 +304,9 @@ impl BulwarkManager {
     ///
     /// # 示例
     /// ```ignore
-    /// use bulwark::prelude::*;
+    /// use garrison::prelude::*;
     ///
-    /// if let Some(repo) = BulwarkManager::disable_repository() {
+    /// if let Some(repo) = GarrisonManager::disable_repository() {
     ///     repo.disable("user-1", "default", None, 0, 0).await.unwrap();
     /// }
     /// ```
@@ -326,47 +326,47 @@ impl BulwarkManager {
     ///
     /// # 返回
     /// 成功返回 `Ok(())`。
-    pub fn with_strategy(strategy: Arc<RwLock<Strategy>>) -> BulwarkResult<()> {
-        *BULWARK_MANAGER.strategy.write() = Some(strategy);
+    pub fn with_strategy(strategy: Arc<RwLock<Strategy>>) -> GarrisonResult<()> {
+        *GARRISON_MANAGER.strategy.write() = Some(strategy);
         Ok(())
     }
 
     /// 检查管理器是否已初始化。
     ///
     /// # 返回
-    /// - `true`: 已调用 `init` 且全局单例持有 `BulwarkLogicDefault`。
+    /// - `true`: 已调用 `init` 且全局单例持有 `GarrisonLogicDefault`。
     /// - `false`: 未初始化或已 `reset_for_test`。
     pub fn is_initialized() -> bool {
-        BULWARK_MANAGER.logic.read().is_some()
+        GARRISON_MANAGER.logic.read().is_some()
     }
 
     /// 重置管理器（仅供测试用，业务代码不应调用）。
     ///
-    /// 清空全局 `BulwarkLogicDefault` 与 `Strategy` 引用，
-    /// 使后续 `BulwarkUtil::login(id)` 等返回未初始化错误。
+    /// 清空全局 `GarrisonLogicDefault` 与 `Strategy` 引用，
+    /// 使后续 `GarrisonUtil::login(id)` 等返回未初始化错误。
     #[cfg(any(test, feature = "testing"))]
     pub fn reset_for_test() {
         // T030: abort cleanup task 避免测试间残留后台线程
-        if let Some(handle) = BULWARK_MANAGER.cleanup_task_handle.write().take() {
+        if let Some(handle) = GARRISON_MANAGER.cleanup_task_handle.write().take() {
             handle.abort();
         }
         // T023: abort anomalous analyzer task + 清空 shutdown_tx
         #[cfg(feature = "anomalous-detector-dual")]
         {
-            if let Some(handle) = BULWARK_MANAGER.anomalous_analyzer_handle.write().take() {
+            if let Some(handle) = GARRISON_MANAGER.anomalous_analyzer_handle.write().take() {
                 handle.abort();
             }
-            BULWARK_MANAGER
+            GARRISON_MANAGER
                 .anomalous_analyzer_shutdown_tx
                 .write()
                 .take();
         }
-        *BULWARK_MANAGER.logic.write() = None;
-        *BULWARK_MANAGER.strategy.write() = None;
+        *GARRISON_MANAGER.logic.write() = None;
+        *GARRISON_MANAGER.strategy.write() = None;
     }
 }
 
-impl Drop for BulwarkManager {
+impl Drop for GarrisonManager {
     fn drop(&mut self) {
         // T030: manager drop 时 abort cleanup task，避免后台线程残留
         if let Some(handle) = self.cleanup_task_handle.write().take() {
@@ -383,10 +383,10 @@ impl Drop for BulwarkManager {
     }
 }
 
-/// 默认 factory selector：从 inventory 中找到第一个注册的 `BulwarkLogicFactoryEntry`。
+/// 默认 factory selector：从 inventory 中找到第一个注册的 `GarrisonLogicFactoryEntry`。
 ///
-/// 若无 entry 注册，返回 `None`，由 `init()` 兜底使用 `BulwarkLogicDefault`。
-fn default_factory_selector() -> Option<&'static BulwarkLogicFactoryEntry> {
+/// 若无 entry 注册，返回 `None`，由 `init()` 兜底使用 `GarrisonLogicDefault`。
+fn default_factory_selector() -> Option<&'static GarrisonLogicFactoryEntry> {
     use std::iter::Iterator;
-    inventory::iter::<BulwarkLogicFactoryEntry>().next()
+    inventory::iter::<GarrisonLogicFactoryEntry>().next()
 }

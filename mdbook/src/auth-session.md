@@ -1,35 +1,35 @@
 # 登录认证与会话
 
-Bulwark 提供基于 Token 的会话管理，核心 API 集中在 `BulwarkUtil` 静态方法。
+Garrison 提供基于 Token 的会话管理，核心 API 集中在 `GarrisonUtil` 静态方法。
 
 ## 核心 API
 
 ```rust
-use bulwark::prelude::*;
-use bulwark::stp::LoginParams;
+use garrison::prelude::*;
+use garrison::stp::LoginParams;
 
 // 登录：为 login_id 生成 token 并写入会话，返回 token 字符串
 // 完整签名接收 LoginParams（device / ip / user_agent / remember_me / require_mfa）
-let token = BulwarkUtil::login(1001, &LoginParams::default()).await?;
+let token = GarrisonUtil::login(1001, &LoginParams::default()).await?;
 
 // 便捷登录：使用默认 LoginParams（向后兼容 0.6.2 前的单参数 login）
-let token = BulwarkUtil::login_simple(1001).await?;
+let token = GarrisonUtil::login_simple(1001).await?;
 
 // 校验登录状态：依赖 task_local 中的当前 token（由 web 中间件设置）
-let logged_in = BulwarkUtil::check_login().await?;  // 返回 bool
+let logged_in = GarrisonUtil::check_login().await?;  // 返回 bool
 
 // 登出：销毁当前 token 对应的会话
-BulwarkUtil::logout().await?;
+GarrisonUtil::logout().await?;
 
 // 获取当前登录 login_id
-let login_id = BulwarkUtil::get_login_id().await?;
+let login_id = GarrisonUtil::get_login_id().await?;
 ```
 
-`check_login` 行为受 `throw_on_not_login` 配置影响：`true`（默认）未登录抛出 `BulwarkError::NotLogin`；`false` 则返回 `false`。
+`check_login` 行为受 `throw_on_not_login` 配置影响：`true`（默认）未登录抛出 `GarrisonError::NotLogin`；`false` 则返回 `false`。
 
 ## 双向映射：Token-Session + Account-Session
 
-Bulwark 维护两个方向的会话映射，承载于 oxcache：
+Garrison 维护两个方向的会话映射，承载于 oxcache：
 
 | 映射 | key → value | 用途 |
 |:---|:---|:---|
@@ -62,7 +62,7 @@ Bulwark 维护两个方向的会话映射，承载于 oxcache：
 
 ## 会话续期
 
-访问会话（如 `check_login`）会刷新 Token-Session 的 TTL（滑动过期），实现"活跃续期"。具体续期策略由 `BulwarkLogicDefault` 编排，可通过 `BulwarkInterface` 自定义。
+访问会话（如 `check_login`）会刷新 Token-Session 的 TTL（滑动过期），实现"活跃续期"。具体续期策略由 `GarrisonLogicDefault` 编排，可通过 `GarrisonInterface` 自定义。
 
 ## 多端登录与踢人
 

@@ -3,12 +3,12 @@
 
 use super::mock::MockDao;
 use super::*;
-use crate::error::BulwarkError;
+use crate::error::GarrisonError;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// 创建 ApiKeyHandler（使用 MockDao）。
 fn make_handler() -> ApiKeyHandler {
-    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     ApiKeyHandler::new(dao)
 }
 
@@ -58,7 +58,7 @@ async fn generate_zero_timeout_returns_error() {
 /// key 前缀正确（spec Scenario）。
 ///
 /// generate 默认 namespace="default"，存储格式变为
-/// `bulwark:apikey:default:<key>`。
+/// `garrison:apikey:default:<key>`。
 #[tokio::test]
 async fn generate_uses_correct_key_prefix() {
     let dao = Arc::new(MockDao::new());
@@ -67,7 +67,7 @@ async fn generate_uses_correct_key_prefix() {
         .generate("1001", vec!["read".into()], 3600)
         .await
         .unwrap();
-    let dao_key = format!("bulwark:apikey:default:{}", key);
+    let dao_key = format!("garrison:apikey:default:{}", key);
     let value = dao.get(&dao_key).await.unwrap();
     assert!(value.is_some());
     let info: ApiKeyInfo = serde_json::from_str(&value.unwrap()).unwrap();
@@ -102,7 +102,7 @@ async fn verify_nonexistent_returns_error() {
     let result = handler.verify("nonexistent-key").await;
     assert!(result.is_err());
     match result.err() {
-        Some(BulwarkError::InvalidToken(_)) => {},
+        Some(GarrisonError::InvalidToken(_)) => {},
         other => panic!("期望 InvalidToken 错误，实际: {:?}", other),
     }
 }
@@ -116,7 +116,7 @@ async fn verify_revoked_returns_error() {
     let result = handler.verify(&key).await;
     assert!(result.is_err());
     match result.err() {
-        Some(BulwarkError::InvalidToken(_)) => {},
+        Some(GarrisonError::InvalidToken(_)) => {},
         other => panic!("期望 InvalidToken 错误，实际: {:?}", other),
     }
 }
@@ -132,7 +132,7 @@ async fn verify_expired_returns_error() {
     let result = handler.verify(&key).await;
     assert!(result.is_err());
     match result.err() {
-        Some(BulwarkError::ExpiredToken(_)) => {},
+        Some(GarrisonError::ExpiredToken(_)) => {},
         other => panic!("期望 ExpiredToken 错误，实际: {:?}", other),
     }
 }
@@ -160,7 +160,7 @@ async fn revoke_nonexistent_returns_error() {
     let result = handler.revoke("nonexistent-key").await;
     assert!(result.is_err());
     match result.err() {
-        Some(BulwarkError::InvalidToken(_)) => {},
+        Some(GarrisonError::InvalidToken(_)) => {},
         other => panic!("期望 InvalidToken 错误，实际: {:?}", other),
     }
 }
@@ -226,7 +226,10 @@ async fn generate_negative_timeout_returns_error() {
     let handler = make_handler();
     let result = handler.generate("1001", vec![], -1).await;
     assert!(result.is_err());
-    assert!(matches!(result.unwrap_err(), BulwarkError::InvalidParam(_)));
+    assert!(matches!(
+        result.unwrap_err(),
+        GarrisonError::InvalidParam(_)
+    ));
 }
 
 /// 验证 revoke 后 rotate 返回错误（old_key 已吊销）。
@@ -292,7 +295,7 @@ fn apikey_info_old_json_deserializes_with_default_namespace() {
     assert_eq!(info.login_id, "1");
 }
 
-/// R-002: generate_with_namespace 用新格式 `bulwark:apikey:<namespace>:<key>` 存储
+/// R-002: generate_with_namespace 用新格式 `garrison:apikey:<namespace>:<key>` 存储
 #[tokio::test]
 #[serial_test::serial]
 async fn generate_with_namespace_stores_new_format_key() {
@@ -302,22 +305,22 @@ async fn generate_with_namespace_stores_new_format_key() {
         .generate_with_namespace("1001", "internal", vec!["read".into()], 3600)
         .await
         .unwrap();
-    // 新格式：bulwark:apikey:internal:<key>
-    let dao_key = format!("bulwark:apikey:internal:{}", key);
+    // 新格式：garrison:apikey:internal:<key>
+    let dao_key = format!("garrison:apikey:internal:{}", key);
     let value = dao.get(&dao_key).await.unwrap();
     assert!(value.is_some(), "新格式 key 应存在: {}", dao_key);
     let info: ApiKeyInfo = serde_json::from_str(&value.unwrap()).unwrap();
     assert_eq!(info.namespace, "internal");
     assert_eq!(info.login_id, "1001");
     // 旧格式不应存在
-    let old_key = format!("bulwark:apikey:{}", key);
+    let old_key = format!("garrison:apikey:{}", key);
     let old_value = dao.get(&old_key).await.unwrap();
     assert!(old_value.is_none(), "旧格式 key 不应存在");
 }
 
 /// R-002: verify 兼容旧格式 key（无 namespace）。
 ///
-/// 手动写入旧格式 `bulwark:apikey:<key>`，verify 应能查到。
+/// 手动写入旧格式 `garrison:apikey:<key>`，verify 应能查到。
 #[tokio::test]
 #[serial_test::serial]
 async fn verify_compatible_with_old_key_format() {
@@ -325,7 +328,7 @@ async fn verify_compatible_with_old_key_format() {
     let handler = ApiKeyHandler::new(dao.clone());
     // 模拟旧格式 key（v0.4.1 及之前生成的）
     let old_key = "deadbeef".repeat(8); // 64 hex chars
-    let old_dao_key = format!("bulwark:apikey:{}", old_key);
+    let old_dao_key = format!("garrison:apikey:{}", old_key);
     let info = ApiKeyInfo {
         login_id: "2002".to_string(),
         scopes: vec!["legacy".into()],
@@ -417,7 +420,7 @@ async fn verify_with_namespace_enforces_isolation() {
     // 用错误 namespace 校验应失败（key 不存在该 namespace 下）
     let wrong = handler.verify_with_namespace(&key, "partner").await;
     assert!(
-        matches!(wrong, Err(BulwarkError::InvalidToken(_))),
+        matches!(wrong, Err(GarrisonError::InvalidToken(_))),
         "跨 namespace 校验应返回 InvalidToken，实际: {:?}",
         wrong
     );
@@ -445,7 +448,7 @@ async fn generate_with_namespace_validates_namespace() {
     // 空字符串
     let r = handler.generate_with_namespace("1", "", vec![], 3600).await;
     assert!(
-        matches!(r, Err(BulwarkError::InvalidParam(_))),
+        matches!(r, Err(GarrisonError::InvalidParam(_))),
         "空 namespace 应报错"
     );
     // 过长（65 字符）
@@ -454,7 +457,7 @@ async fn generate_with_namespace_validates_namespace() {
         .generate_with_namespace("1", &long_ns, vec![], 3600)
         .await;
     assert!(
-        matches!(r, Err(BulwarkError::InvalidParam(_))),
+        matches!(r, Err(GarrisonError::InvalidParam(_))),
         "65 字符 namespace 应报错"
     );
     // 非法字符（含空格）
@@ -462,7 +465,7 @@ async fn generate_with_namespace_validates_namespace() {
         .generate_with_namespace("1", "has space", vec![], 3600)
         .await;
     assert!(
-        matches!(r, Err(BulwarkError::InvalidParam(_))),
+        matches!(r, Err(GarrisonError::InvalidParam(_))),
         "含空格 namespace 应报错"
     );
     // 合法字符边界：64 字符、含 _ -
@@ -489,7 +492,7 @@ async fn verify_with_namespace_returns_error_when_namespace_mismatch() {
     let dao = Arc::new(MockDao::new());
     let handler = ApiKeyHandler::new(dao.clone());
     let key = "deadbeef".repeat(8); // 64 hex chars
-    let dao_key = format!("bulwark:apikey:internal:{}", key);
+    let dao_key = format!("garrison:apikey:internal:{}", key);
     // 写入 namespace 不一致的 ApiKeyInfo（dao_key 用 internal，JSON 中 namespace=other）
     let info = ApiKeyInfo {
         login_id: "1001".to_string(),
@@ -507,7 +510,7 @@ async fn verify_with_namespace_returns_error_when_namespace_mismatch() {
     // verify_with_namespace 应返回 InvalidToken（namespace 不匹配）
     let result = handler.verify_with_namespace(&key, "internal").await;
     assert!(
-        matches!(result, Err(BulwarkError::InvalidToken(ref msg)) if msg.starts_with("apikey-namespace-mismatch::")),
+        matches!(result, Err(GarrisonError::InvalidToken(ref msg)) if msg.starts_with("apikey-namespace-mismatch::")),
         "namespace 不匹配应返回 InvalidToken，实际: {:?}",
         result
     );
@@ -521,11 +524,11 @@ async fn verify_returns_internal_error_when_json_invalid() {
     let dao = Arc::new(MockDao::new());
     let handler = ApiKeyHandler::new(dao.clone());
     let key = "deadbeef".repeat(8);
-    let dao_key = format!("bulwark:apikey:{}", key);
+    let dao_key = format!("garrison:apikey:{}", key);
     dao.set(&dao_key, "invalid-json", 3600).await.unwrap();
     let result = handler.verify(&key).await;
     assert!(
-        matches!(result, Err(BulwarkError::Internal(ref msg)) if msg.contains("apikey-deserialize")),
+        matches!(result, Err(GarrisonError::Internal(ref msg)) if msg.contains("apikey-deserialize")),
         "无效 JSON 应返回 Internal 错误，实际: {:?}",
         result
     );
@@ -539,11 +542,11 @@ async fn revoke_returns_internal_error_when_json_invalid() {
     let dao = Arc::new(MockDao::new());
     let handler = ApiKeyHandler::new(dao.clone());
     let key = "deadbeef".repeat(8);
-    let dao_key = format!("bulwark:apikey:{}", key);
+    let dao_key = format!("garrison:apikey:{}", key);
     dao.set(&dao_key, "invalid-json", 3600).await.unwrap();
     let result = handler.revoke(&key).await;
     assert!(
-        matches!(result, Err(BulwarkError::Internal(ref msg)) if msg.contains("apikey-deserialize")),
+        matches!(result, Err(GarrisonError::Internal(ref msg)) if msg.contains("apikey-deserialize")),
         "无效 JSON 应返回 Internal 错误，实际: {:?}",
         result
     );
@@ -560,19 +563,19 @@ fn e4_idx_key_for_returns_correct_format() {
     let idx_key = super::handler::idx_key_for(&key);
     assert_eq!(
         idx_key,
-        format!("bulwark:apikey:idx:{}", key),
-        "E4: 索引 key 格式应为 bulwark:apikey:idx:<key>"
+        format!("garrison:apikey:idx:{}", key),
+        "E4: 索引 key 格式应为 garrison:apikey:idx:<key>"
     );
 }
 
-/// E4: 验证 handler.rs 源码不再使用 `keys("bulwark:apikey:*:<key>")` 全表扫描。
+/// E4: 验证 handler.rs 源码不再使用 `keys("garrison:apikey:*:<key>")` 全表扫描。
 ///
 /// 通过 `include_str!` 读取源文件并检查 `verify` / `revoke` 不再使用
-/// `bulwark:apikey:*:` 通配符模式（旧 verify/revoke 的 O(N) 扫描路径）。
+/// `garrison:apikey:*:` 通配符模式（旧 verify/revoke 的 O(N) 扫描路径）。
 ///
-/// `list_by_namespace` 仍合法使用 `keys("bulwark:apikey:<namespace>:*")`（用于
+/// `list_by_namespace` 仍合法使用 `keys("garrison:apikey:<namespace>:*")`（用于
 /// 列举指定 namespace 下所有 key，非单点查询），其模式为
-/// `bulwark:apikey:<namespace>:*`（通配符在末尾），不在禁用范围。
+/// `garrison:apikey:<namespace>:*`（通配符在末尾），不在禁用范围。
 #[test]
 fn e4_source_verify_revoke_have_no_keys_scan() {
     let source = include_str!("handler.rs");
@@ -585,12 +588,12 @@ fn e4_source_verify_revoke_have_no_keys_scan() {
         })
         .collect::<Vec<_>>()
         .join("\n");
-    // 检查代码中不再出现 `bulwark:apikey:*:` 模式（旧 verify/revoke 的 O(N) 扫描路径）。
-    // 注意：`list_by_namespace` 使用 `bulwark:apikey:<namespace>:*`（通配符在末尾），
+    // 检查代码中不再出现 `garrison:apikey:*:` 模式（旧 verify/revoke 的 O(N) 扫描路径）。
+    // 注意：`list_by_namespace` 使用 `garrison:apikey:<namespace>:*`（通配符在末尾），
     // 不匹配此模式，因此不受影响。
     assert!(
-        !code_only.contains("\"bulwark:apikey:*:"),
-        "E4: handler.rs 代码不应再使用 bulwark:apikey:*: 通配符扫描模式（verify/revoke 旧路径）"
+        !code_only.contains("\"garrison:apikey:*:"),
+        "E4: handler.rs 代码不应再使用 garrison:apikey:*: 通配符扫描模式（verify/revoke 旧路径）"
     );
     // 检查代码中存在反向索引查询
     assert!(
@@ -598,15 +601,15 @@ fn e4_source_verify_revoke_have_no_keys_scan() {
         "E4: handler.rs 代码应使用 idx_key_for 构造反向索引 key"
     );
     assert!(
-        code_only.contains("bulwark:apikey:idx:"),
-        "E4: handler.rs 代码应包含 bulwark:apikey:idx: 索引 key 前缀"
+        code_only.contains("garrison:apikey:idx:"),
+        "E4: handler.rs 代码应包含 garrison:apikey:idx: 索引 key 前缀"
     );
 }
 
 /// E4: 验证 `generate_with_namespace` 同步写入反向索引。
 ///
-/// 生成 key 后，`bulwark:apikey:idx:<key>` 应存在，value 为 dao_key
-/// （`bulwark:apikey:<namespace>:<key>`）。
+/// 生成 key 后，`garrison:apikey:idx:<key>` 应存在，value 为 dao_key
+/// （`garrison:apikey:<namespace>:<key>`）。
 #[tokio::test]
 #[serial_test::serial]
 async fn e4_generate_with_namespace_writes_reverse_index() {
@@ -617,18 +620,18 @@ async fn e4_generate_with_namespace_writes_reverse_index() {
         .await
         .unwrap();
 
-    let idx_key = format!("bulwark:apikey:idx:{}", key);
+    let idx_key = format!("garrison:apikey:idx:{}", key);
     let idx_value = dao.get(&idx_key).await.unwrap();
     assert!(
         idx_value.is_some(),
-        "E4: 反向索引 bulwark:apikey:idx:<key> 应存在"
+        "E4: 反向索引 garrison:apikey:idx:<key> 应存在"
     );
 
-    let expected_dao_key = format!("bulwark:apikey:internal:{}", key);
+    let expected_dao_key = format!("garrison:apikey:internal:{}", key);
     assert_eq!(
         idx_value.unwrap(),
         expected_dao_key,
-        "E4: 索引 value 应为 dao_key（bulwark:apikey:<namespace>:<key>）"
+        "E4: 索引 value 应为 dao_key（garrison:apikey:<namespace>:<key>）"
     );
 }
 
@@ -640,15 +643,15 @@ async fn e4_generate_writes_reverse_index_default_namespace() {
     let handler = ApiKeyHandler::new(dao.clone());
     let key = handler.generate("1001", vec![], 3600).await.unwrap();
 
-    let idx_key = format!("bulwark:apikey:idx:{}", key);
+    let idx_key = format!("garrison:apikey:idx:{}", key);
     let idx_value = dao.get(&idx_key).await.unwrap();
     assert!(idx_value.is_some(), "E4: 默认 generate 也应写入反向索引");
 
-    let expected_dao_key = format!("bulwark:apikey:default:{}", key);
+    let expected_dao_key = format!("garrison:apikey:default:{}", key);
     assert_eq!(
         idx_value.unwrap(),
         expected_dao_key,
-        "E4: 默认 namespace 的索引 value 应为 bulwark:apikey:default:<key>"
+        "E4: 默认 namespace 的索引 value 应为 garrison:apikey:default:<key>"
     );
 }
 
@@ -663,7 +666,7 @@ async fn e4_verify_uses_reverse_index() {
 
     // 预填充一些干扰 key（模拟生产环境中大量 key 共存的场景）
     for i in 0..50 {
-        let noise_key = format!("bulwark:apikey:noise:{}:{}", i, "a".repeat(64));
+        let noise_key = format!("garrison:apikey:noise:{}:{}", i, "a".repeat(64));
         dao.set(&noise_key, "noise", 3600).await.unwrap();
     }
 
@@ -692,12 +695,12 @@ async fn e4_revoke_uses_reverse_index() {
     // verify 应失败（已吊销）
     let result = handler.verify(&key).await;
     assert!(
-        matches!(result, Err(BulwarkError::InvalidToken(_))),
+        matches!(result, Err(GarrisonError::InvalidToken(_))),
         "E4: revoke 后 verify 应返回 InvalidToken"
     );
 }
 
-/// E4: 验证 `verify` 在无反向索引时回退到旧格式 `bulwark:apikey:<key>`。
+/// E4: 验证 `verify` 在无反向索引时回退到旧格式 `garrison:apikey:<key>`。
 ///
 /// 手动写入旧格式 key（不写索引），verify 应能通过回退路径找到。
 #[tokio::test]
@@ -706,7 +709,7 @@ async fn e4_verify_falls_back_to_legacy_format() {
     let dao = Arc::new(MockDao::new());
     let handler = ApiKeyHandler::new(dao.clone());
     let key = "deadbeef".repeat(8); // 64 hex chars
-    let old_dao_key = format!("bulwark:apikey:{}", key);
+    let old_dao_key = format!("garrison:apikey:{}", key);
     let info = ApiKeyInfo {
         login_id: "legacy-user".to_string(),
         scopes: vec!["legacy".into()],
@@ -725,7 +728,7 @@ async fn e4_verify_falls_back_to_legacy_format() {
     let verified = handler.verify(&key).await.unwrap();
     assert_eq!(
         verified.login_id, "legacy-user",
-        "E4: 无索引时应回退到旧格式 bulwark:apikey:<key>"
+        "E4: 无索引时应回退到旧格式 garrison:apikey:<key>"
     );
 }
 
@@ -736,7 +739,7 @@ async fn e4_revoke_falls_back_to_legacy_format() {
     let dao = Arc::new(MockDao::new());
     let handler = ApiKeyHandler::new(dao.clone());
     let key = "cafebeef".repeat(8);
-    let old_dao_key = format!("bulwark:apikey:{}", key);
+    let old_dao_key = format!("garrison:apikey:{}", key);
     let info = ApiKeyInfo {
         login_id: "legacy-revoke".to_string(),
         scopes: vec![],
@@ -755,7 +758,7 @@ async fn e4_revoke_falls_back_to_legacy_format() {
     handler.revoke(&key).await.unwrap();
     let result = handler.verify(&key).await;
     assert!(
-        matches!(result, Err(BulwarkError::InvalidToken(_))),
+        matches!(result, Err(GarrisonError::InvalidToken(_))),
         "E4: revoke 旧格式 key 后 verify 应失败"
     );
 }
@@ -775,8 +778,8 @@ async fn e4_index_has_same_ttl_as_key() {
         .await
         .unwrap();
 
-    let dao_key = format!("bulwark:apikey:internal:{}", key);
-    let idx_key = format!("bulwark:apikey:idx:{}", key);
+    let dao_key = format!("garrison:apikey:internal:{}", key);
+    let idx_key = format!("garrison:apikey:idx:{}", key);
 
     let key_ttl = dao.get_timeout(&dao_key).await.unwrap();
     let idx_ttl = dao.get_timeout(&idx_key).await.unwrap();
@@ -835,7 +838,7 @@ async fn e4_rotate_writes_index_for_new_key() {
     assert_eq!(info.login_id, "1001");
 
     // new_key 的反向索引应存在
-    let new_idx_key = format!("bulwark:apikey:idx:{}", new_key);
+    let new_idx_key = format!("garrison:apikey:idx:{}", new_key);
     let idx_value = dao.get(&new_idx_key).await.unwrap();
     assert!(idx_value.is_some(), "E4: rotate 后新 key 的反向索引应存在");
 }
@@ -862,14 +865,14 @@ async fn e4_multiple_namespaces_all_indexed() {
 
     // 三个 key 的反向索引都应存在
     for (key, ns) in &[(&k1, "internal"), (&k2, "partner"), (&k3, "default")] {
-        let idx_key = format!("bulwark:apikey:idx:{}", key);
+        let idx_key = format!("garrison:apikey:idx:{}", key);
         let idx_value = dao.get(&idx_key).await.unwrap();
         assert!(
             idx_value.is_some(),
             "E4: namespace={} 的 key 反向索引应存在",
             ns
         );
-        let expected_dao_key = format!("bulwark:apikey:{}:{}", ns, key);
+        let expected_dao_key = format!("garrison:apikey:{}:{}", ns, key);
         assert_eq!(
             idx_value.unwrap(),
             expected_dao_key,
@@ -891,7 +894,7 @@ async fn e4_verify_nonexistent_key_returns_invalid_token() {
     let handler = make_handler();
     let result = handler.verify("nonexistent-key-12345").await;
     assert!(
-        matches!(result, Err(BulwarkError::InvalidToken(_))),
+        matches!(result, Err(GarrisonError::InvalidToken(_))),
         "E4: 不存在的 key 应返回 InvalidToken（无扫描），实际: {:?}",
         result
     );
@@ -903,7 +906,7 @@ async fn e4_revoke_nonexistent_key_returns_invalid_token() {
     let handler = make_handler();
     let result = handler.revoke("nonexistent-key-67890").await;
     assert!(
-        matches!(result, Err(BulwarkError::InvalidToken(_))),
+        matches!(result, Err(GarrisonError::InvalidToken(_))),
         "E4: 不存在的 key 应返回 InvalidToken（无扫描），实际: {:?}",
         result
     );
@@ -924,13 +927,13 @@ async fn e4_verify_falls_through_when_dao_key_deleted() {
         .unwrap();
 
     // 手动删除主 key（保留索引）
-    let dao_key = format!("bulwark:apikey:internal:{}", key);
+    let dao_key = format!("garrison:apikey:internal:{}", key);
     dao.delete(&dao_key).await.unwrap();
 
     // verify 应回退到 legacy，最终返回 InvalidToken
     let result = handler.verify(&key).await;
     assert!(
-        matches!(result, Err(BulwarkError::InvalidToken(_))),
+        matches!(result, Err(GarrisonError::InvalidToken(_))),
         "E4: 索引存在但主 key 已删除时应返回 InvalidToken，实际: {:?}",
         result
     );

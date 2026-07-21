@@ -4,7 +4,7 @@
 //! actix-web Extractor 适配器。
 //!
 //! 集中提供 actix-web `FromRequest` extractor 实现：
-//! - `BulwarkPrincipal`：从 `Authorization: Bearer <token>` header 解析当前登录用户 ID，
+//! - `GarrisonPrincipal`：从 `Authorization: Bearer <token>` header 解析当前登录用户 ID，
 //!   携带 `login_id` 字段供 handler 直接读取。
 //! - `CheckLogin` / `CheckRole` / `CheckPermission`：per-handler 鉴权 extractor，
 //!   仅执行鉴权（返回 unit-like struct），struct 声明位于 `mod.rs`。
@@ -12,57 +12,60 @@
 //!
 //! ## 设计
 //!
-//! - `BulwarkPrincipal` 与 `CheckLogin`/`CheckRole`/`CheckPermission` 互补：
+//! - `GarrisonPrincipal` 与 `CheckLogin`/`CheckRole`/`CheckPermission` 互补：
 //!   前者携带身份信息，后者仅做鉴权校验。
-//! - 与 `BulwarkContext` trait（请求/响应/存储上下文抽象层）解耦：trait 名字保持不变，
-//!   extractor 使用不同名称 `BulwarkPrincipal` 避免命名冲突（Rule 7 决策）。
+//! - 与 `GarrisonContext` trait（请求/响应/存储上下文抽象层）解耦：trait 名字保持不变，
+//!   extractor 使用不同名称 `GarrisonPrincipal` 避免命名冲突（Rule 7 决策）。
 //!
 //! ## 使用示例
 //!
 //! ```ignore
-//! use bulwark::web_actix::BulwarkPrincipal;
+//! use garrison::web_actix::GarrisonPrincipal;
 //!
-//! async fn handler(principal: BulwarkPrincipal) -> String {
+//! async fn handler(principal: GarrisonPrincipal) -> String {
 //!     format!("login_id = {}", principal.login_id)
 //! }
 //! ```
 
 // ============================================================================
-// BulwarkPrincipal：携带 login_id 的 extractor
+// GarrisonPrincipal：携带 login_id 的 extractor
 // ============================================================================
 
 use crate::context::token_extract::extract_token_from_headers;
 
-pub use crate::context::BulwarkPrincipal;
+pub use crate::context::GarrisonPrincipal;
 
 /// 实现 `FromRequest`：从 `Authorization: Bearer <token>` header 提取 token，
-/// 调用 `BulwarkUtil::get_login_id_by_token` 解析关联的 `login_id`。
+/// 调用 `GarrisonUtil::get_login_id_by_token` 解析关联的 `login_id`。
 ///
 /// # 错误
 ///
-/// - `BulwarkError::NotLogin`: 未提供 token 或 token 无效。
-impl actix_web::FromRequest for BulwarkPrincipal {
-    type Error = crate::error::BulwarkError;
+/// - `GarrisonError::NotLogin`: 未提供 token 或 token 无效。
+impl actix_web::FromRequest for GarrisonPrincipal {
+    type Error = crate::error::GarrisonError;
     type Future = std::pin::Pin<Box<dyn std::future::Future<Output = Result<Self, Self::Error>>>>;
 
     fn from_request(req: &actix_web::HttpRequest, _: &mut actix_web::dev::Payload) -> Self::Future {
         let headers = req.headers().clone();
         let config = req
-            .app_data::<actix_web::web::Data<std::sync::Arc<crate::config::BulwarkConfig>>>()
+            .app_data::<actix_web::web::Data<std::sync::Arc<crate::config::GarrisonConfig>>>()
             .map(|d| d.get_ref().clone())
-            .unwrap_or_else(|| std::sync::Arc::new(crate::config::BulwarkConfig::default_config()));
+            .unwrap_or_else(
+                || std::sync::Arc::new(crate::config::GarrisonConfig::default_config()),
+            );
 
         Box::pin(async move {
-            let token = extract_token_from_headers(&headers, &config)?
-                .ok_or_else(|| crate::error::BulwarkError::NotLogin("web-not-login".to_string()))?;
+            let token = extract_token_from_headers(&headers, &config)?.ok_or_else(|| {
+                crate::error::GarrisonError::NotLogin("web-not-login".to_string())
+            })?;
 
-            let login_id = crate::stp::BulwarkUtil::get_login_id_by_token(&token)
+            let login_id = crate::stp::GarrisonUtil::get_login_id_by_token(&token)
                 .await?
                 .ok_or_else(|| {
-                    crate::error::BulwarkError::NotLogin("web-token-invalid".to_string())
+                    crate::error::GarrisonError::NotLogin("web-token-invalid".to_string())
                 })?;
 
-            Ok(BulwarkPrincipal { login_id })
+            Ok(GarrisonPrincipal { login_id })
         })
     }
 }
@@ -71,8 +74,8 @@ impl actix_web::FromRequest for BulwarkPrincipal {
 // CheckLogin / CheckRole / CheckPermission extractors（per-handler 鉴权）
 // ============================================================================
 //
-// 这三个 extractor 与上方 `BulwarkPrincipal` 互补：
-// - `BulwarkPrincipal` 携带 login_id 供 handler 读取
+// 这三个 extractor 与上方 `GarrisonPrincipal` 互补：
+// - `GarrisonPrincipal` 携带 login_id 供 handler 读取
 // - `CheckLogin` / `CheckRole` / `CheckPermission` 仅执行鉴权，返回 unit-like struct
 //
 // struct 声明位于 `mod.rs`，此处仅提供 `FromRequest` 实现。
@@ -84,25 +87,28 @@ impl actix_web::FromRequest for BulwarkPrincipal {
 /// async fn handler(_auth: CheckLogin) -> &'static str { "ok" }
 /// ```
 impl actix_web::FromRequest for super::CheckLogin {
-    type Error = crate::error::BulwarkError;
+    type Error = crate::error::GarrisonError;
     type Future = std::pin::Pin<Box<dyn std::future::Future<Output = Result<Self, Self::Error>>>>;
 
     fn from_request(req: &actix_web::HttpRequest, _: &mut actix_web::dev::Payload) -> Self::Future {
         let headers = req.headers().clone();
         let config = req
-            .app_data::<actix_web::web::Data<std::sync::Arc<crate::config::BulwarkConfig>>>()
+            .app_data::<actix_web::web::Data<std::sync::Arc<crate::config::GarrisonConfig>>>()
             .map(|d| d.get_ref().clone())
-            .unwrap_or_else(|| std::sync::Arc::new(crate::config::BulwarkConfig::default_config()));
+            .unwrap_or_else(
+                || std::sync::Arc::new(crate::config::GarrisonConfig::default_config()),
+            );
 
         Box::pin(async move {
-            let token = extract_token_from_headers(&headers, &config)?
-                .ok_or_else(|| crate::error::BulwarkError::NotLogin("web-not-login".to_string()))?;
+            let token = extract_token_from_headers(&headers, &config)?.ok_or_else(|| {
+                crate::error::GarrisonError::NotLogin("web-not-login".to_string())
+            })?;
 
-            let result: crate::error::BulwarkResult<()> =
+            let result: crate::error::GarrisonResult<()> =
                 crate::stp::with_current_token(token, async {
-                    let logged_in = crate::stp::BulwarkUtil::check_login().await?;
+                    let logged_in = crate::stp::GarrisonUtil::check_login().await?;
                     if !logged_in {
-                        return Err(crate::error::BulwarkError::NotLogin(
+                        return Err(crate::error::GarrisonError::NotLogin(
                             "web-not-login".to_string(),
                         ));
                     }
@@ -117,20 +123,22 @@ impl actix_web::FromRequest for super::CheckLogin {
 
 /// CheckRole extractor：验证用户持有指定角色。
 impl actix_web::FromRequest for super::CheckRole {
-    type Error = crate::error::BulwarkError;
+    type Error = crate::error::GarrisonError;
     type Future = std::pin::Pin<Box<dyn std::future::Future<Output = Result<Self, Self::Error>>>>;
 
     fn from_request(req: &actix_web::HttpRequest, _: &mut actix_web::dev::Payload) -> Self::Future {
         let headers = req.headers().clone();
         let config = req
-            .app_data::<actix_web::web::Data<std::sync::Arc<crate::config::BulwarkConfig>>>()
+            .app_data::<actix_web::web::Data<std::sync::Arc<crate::config::GarrisonConfig>>>()
             .map(|d| d.get_ref().clone())
-            .unwrap_or_else(|| std::sync::Arc::new(crate::config::BulwarkConfig::default_config()));
+            .unwrap_or_else(
+                || std::sync::Arc::new(crate::config::GarrisonConfig::default_config()),
+            );
 
-        // 角色从 header X-Bulwark-Role 或 query param role 获取
+        // 角色从 header X-Garrison-Role 或 query param role 获取
         let role = req
             .headers()
-            .get("x-bulwark-role")
+            .get("x-garrison-role")
             .and_then(|v| v.to_str().ok())
             .map(|s| s.to_string())
             .or_else(|| {
@@ -148,12 +156,13 @@ impl actix_web::FromRequest for super::CheckRole {
             .unwrap_or_default();
 
         Box::pin(async move {
-            let token = extract_token_from_headers(&headers, &config)?
-                .ok_or_else(|| crate::error::BulwarkError::NotLogin("web-not-login".to_string()))?;
+            let token = extract_token_from_headers(&headers, &config)?.ok_or_else(|| {
+                crate::error::GarrisonError::NotLogin("web-not-login".to_string())
+            })?;
 
-            let result: crate::error::BulwarkResult<()> =
+            let result: crate::error::GarrisonResult<()> =
                 crate::stp::with_current_token(token, async {
-                    crate::stp::BulwarkUtil::check_role(&role).await
+                    crate::stp::GarrisonUtil::check_role(&role).await
                 })
                 .await;
 
@@ -164,20 +173,22 @@ impl actix_web::FromRequest for super::CheckRole {
 
 /// CheckPermission extractor：验证用户持有指定权限。
 impl actix_web::FromRequest for super::CheckPermission {
-    type Error = crate::error::BulwarkError;
+    type Error = crate::error::GarrisonError;
     type Future = std::pin::Pin<Box<dyn std::future::Future<Output = Result<Self, Self::Error>>>>;
 
     fn from_request(req: &actix_web::HttpRequest, _: &mut actix_web::dev::Payload) -> Self::Future {
         let headers = req.headers().clone();
         let config = req
-            .app_data::<actix_web::web::Data<std::sync::Arc<crate::config::BulwarkConfig>>>()
+            .app_data::<actix_web::web::Data<std::sync::Arc<crate::config::GarrisonConfig>>>()
             .map(|d| d.get_ref().clone())
-            .unwrap_or_else(|| std::sync::Arc::new(crate::config::BulwarkConfig::default_config()));
+            .unwrap_or_else(
+                || std::sync::Arc::new(crate::config::GarrisonConfig::default_config()),
+            );
 
-        // 权限从 header X-Bulwark-Permission 或 query param permission 获取
+        // 权限从 header X-Garrison-Permission 或 query param permission 获取
         let permission = req
             .headers()
-            .get("x-bulwark-permission")
+            .get("x-garrison-permission")
             .and_then(|v| v.to_str().ok())
             .map(|s| s.to_string())
             .or_else(|| {
@@ -195,12 +206,13 @@ impl actix_web::FromRequest for super::CheckPermission {
             .unwrap_or_default();
 
         Box::pin(async move {
-            let token = extract_token_from_headers(&headers, &config)?
-                .ok_or_else(|| crate::error::BulwarkError::NotLogin("web-not-login".to_string()))?;
+            let token = extract_token_from_headers(&headers, &config)?.ok_or_else(|| {
+                crate::error::GarrisonError::NotLogin("web-not-login".to_string())
+            })?;
 
-            let result: crate::error::BulwarkResult<()> =
+            let result: crate::error::GarrisonResult<()> =
                 crate::stp::with_current_token(token, async {
-                    crate::stp::BulwarkUtil::check_permission(&permission).await
+                    crate::stp::GarrisonUtil::check_permission(&permission).await
                 })
                 .await;
 
@@ -215,7 +227,7 @@ impl actix_web::FromRequest for super::CheckPermission {
 
 #[cfg(feature = "tenant-isolation")]
 impl actix_web::FromRequest for crate::context::tenant::TenantContext {
-    type Error = crate::error::BulwarkError;
+    type Error = crate::error::GarrisonError;
     type Future = std::pin::Pin<Box<dyn std::future::Future<Output = Result<Self, Self::Error>>>>;
 
     fn from_request(req: &actix_web::HttpRequest, _: &mut actix_web::dev::Payload) -> Self::Future {
@@ -225,11 +237,11 @@ impl actix_web::FromRequest for crate::context::tenant::TenantContext {
                 .get("x-tenant-id")
                 .and_then(|v| v.to_str().ok())
                 .ok_or_else(|| {
-                    crate::error::BulwarkError::Config("X-Tenant-Id header missing".into())
+                    crate::error::GarrisonError::Config("X-Tenant-Id header missing".into())
                 })?;
 
             let tenant_id: i64 = raw.parse().map_err(|_| {
-                crate::error::BulwarkError::Config(format!("ctx-tenant-id-invalid::{}", raw))
+                crate::error::GarrisonError::Config(format!("ctx-tenant-id-invalid::{}", raw))
             })?;
 
             Ok(crate::context::tenant::TenantContext {
@@ -244,15 +256,15 @@ impl actix_web::FromRequest for crate::context::tenant::TenantContext {
 mod tests {
     use super::super::mock::{MockDao, MockInterface};
     use super::*;
-    use crate::dao::BulwarkDao;
-    use crate::manager::BulwarkManager;
-    use crate::stp::{BulwarkInterface, BulwarkUtil};
+    use crate::dao::GarrisonDao;
+    use crate::manager::GarrisonManager;
+    use crate::stp::{GarrisonInterface, GarrisonUtil};
     use actix_web::test;
     use actix_web::FromRequest;
     use serial_test::serial;
 
-    fn make_config() -> crate::config::BulwarkConfig {
-        let mut config = crate::config::BulwarkConfig::default_config();
+    fn make_config() -> crate::config::GarrisonConfig {
+        let mut config = crate::config::GarrisonConfig::default_config();
         config.timeout = 3600;
         config.active_timeout = -1;
         config.throw_on_not_login = false;
@@ -260,28 +272,28 @@ mod tests {
     }
 
     fn init_manager() {
-        BulwarkManager::reset_for_test();
-        let dao: std::sync::Arc<dyn BulwarkDao> = std::sync::Arc::new(MockDao::new());
+        GarrisonManager::reset_for_test();
+        let dao: std::sync::Arc<dyn GarrisonDao> = std::sync::Arc::new(MockDao::new());
         let config = std::sync::Arc::new(make_config());
-        let interface: std::sync::Arc<dyn BulwarkInterface> =
+        let interface: std::sync::Arc<dyn GarrisonInterface> =
             std::sync::Arc::new(MockInterface::new());
-        BulwarkManager::init(dao, config, interface).unwrap();
+        GarrisonManager::init(dao, config, interface).unwrap();
     }
 
     // ----------------------------------------------------------------
-    // BulwarkPrincipal extractor 测试
+    // GarrisonPrincipal extractor 测试
     // ----------------------------------------------------------------
 
-    /// 验证 `BulwarkPrincipal::from_request` 从 `Authorization: Bearer <token>`
+    /// 验证 `GarrisonPrincipal::from_request` 从 `Authorization: Bearer <token>`
     /// header 解析出 `login_id`。
     ///
     /// 覆盖 spec web-adapters D12 Requirement: actix extractor 从 token 解析 login_id。
     #[tokio::test]
     #[serial]
-    async fn bulwark_principal_extracted_from_actix_request() {
+    async fn garrison_principal_extracted_from_actix_request() {
         init_manager();
         let login_id = "1001";
-        let token = BulwarkUtil::login_simple(login_id).await.unwrap();
+        let token = GarrisonUtil::login_simple(login_id).await.unwrap();
 
         let req = test::TestRequest::get()
             .uri("/api/test")
@@ -289,42 +301,42 @@ mod tests {
             .to_http_request();
         let mut payload = actix_web::dev::Payload::None;
 
-        let principal = BulwarkPrincipal::from_request(&req, &mut payload)
+        let principal = GarrisonPrincipal::from_request(&req, &mut payload)
             .await
-            .expect("BulwarkPrincipal::from_request 应成功解析 token");
+            .expect("GarrisonPrincipal::from_request 应成功解析 token");
 
         assert_eq!(principal.login_id, login_id);
 
-        BulwarkManager::reset_for_test();
+        GarrisonManager::reset_for_test();
     }
 
-    /// 验证 `BulwarkPrincipal::from_request` 在无 token 时返回 `NotLogin` 错误。
+    /// 验证 `GarrisonPrincipal::from_request` 在无 token 时返回 `NotLogin` 错误。
     ///
     /// 覆盖 spec web-adapters D12 Requirement: extractor 在无 token 时拒绝请求。
     #[tokio::test]
     #[serial]
-    async fn bulwark_principal_returns_err_without_token() {
+    async fn garrison_principal_returns_err_without_token() {
         init_manager();
 
         let req = test::TestRequest::get().uri("/api/test").to_http_request();
         let mut payload = actix_web::dev::Payload::None;
 
-        let result = BulwarkPrincipal::from_request(&req, &mut payload).await;
+        let result = GarrisonPrincipal::from_request(&req, &mut payload).await;
         assert!(
             result.is_err(),
             "无 token 时 from_request 应返回 Err，实际 = {:?}",
             result
         );
 
-        BulwarkManager::reset_for_test();
+        GarrisonManager::reset_for_test();
     }
 
-    /// 验证 `BulwarkPrincipal::from_request` 在无效 token 时返回错误。
+    /// 验证 `GarrisonPrincipal::from_request` 在无效 token 时返回错误。
     ///
     /// 覆盖 spec web-adapters D12 Requirement: extractor 在 token 无效时拒绝请求。
     #[tokio::test]
     #[serial]
-    async fn bulwark_principal_returns_err_with_invalid_token() {
+    async fn garrison_principal_returns_err_with_invalid_token() {
         init_manager();
 
         let req = test::TestRequest::get()
@@ -333,14 +345,14 @@ mod tests {
             .to_http_request();
         let mut payload = actix_web::dev::Payload::None;
 
-        let result = BulwarkPrincipal::from_request(&req, &mut payload).await;
+        let result = GarrisonPrincipal::from_request(&req, &mut payload).await;
         assert!(
             result.is_err(),
             "无效 token 时 from_request 应返回 Err，实际 = {:?}",
             result
         );
 
-        BulwarkManager::reset_for_test();
+        GarrisonManager::reset_for_test();
     }
 }
 

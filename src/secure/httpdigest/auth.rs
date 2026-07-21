@@ -4,7 +4,7 @@
 //! `HttpDigestAuth` 实现块，封装 RFC 7616 质询生成与响应校验。
 
 use super::{DigestAlgorithm, HttpDigestAuth};
-use crate::error::{BulwarkError, BulwarkResult};
+use crate::error::{GarrisonError, GarrisonResult};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use std::time::{SystemTime, UNIX_EPOCH};
 use subtle::ConstantTimeEq;
@@ -39,8 +39,8 @@ impl HttpDigestAuth {
     ///
     /// # 返回
     /// - `Ok(Self)`: 构造成功。
-    /// - `Err(BulwarkError::Internal)`: 不支持的算法。
-    pub fn new(realm: &str, algorithm: &str) -> BulwarkResult<Self> {
+    /// - `Err(GarrisonError::Internal)`: 不支持的算法。
+    pub fn new(realm: &str, algorithm: &str) -> GarrisonResult<Self> {
         Ok(Self {
             realm: realm.to_string(),
             algorithm: algorithm.parse()?,
@@ -78,7 +78,7 @@ impl HttpDigestAuth {
     /// fail-closed 策略下，DAO 持续故障会导致所有 digest auth 请求被拒绝
     /// （等同 digest auth 服务不可用）。建议部署 DAO 健康度监控 + 告警，
     /// DAO 故障视为 P1 事件。生产环境必须使用高可用 DAO（Redis Sentinel/Cluster）。
-    pub fn with_dao(mut self, dao: std::sync::Arc<dyn crate::dao::BulwarkDao>) -> Self {
+    pub fn with_dao(mut self, dao: std::sync::Arc<dyn crate::dao::GarrisonDao>) -> Self {
         self.dao = Some(dao);
         self
     }
@@ -238,7 +238,7 @@ impl HttpDigestAuth {
     /// - `compare_and_update_if_greater` 返回 `Ok(false)`：nc <= last_nc，重放/回退 → return false
     /// - DAO 错误 → fail-closed（return false）+ warn（vuln-0012 修复：原 fail-open 允许重放）
     async fn validate_nc_async(
-        dao: &std::sync::Arc<dyn crate::dao::BulwarkDao>,
+        dao: &std::sync::Arc<dyn crate::dao::GarrisonDao>,
         realm: &str,
         nonce: &str,
         nc: u64,
@@ -391,14 +391,14 @@ impl HttpDigestAuth {
     }
 
     /// 解析 Authorization header 为 DigestResponse。
-    fn parse_authorization(&self, header: &str) -> BulwarkResult<DigestResponse> {
+    fn parse_authorization(&self, header: &str) -> GarrisonResult<DigestResponse> {
         let header = header.trim();
         let (scheme, params) = header
             .split_once(char::is_whitespace)
-            .ok_or_else(|| BulwarkError::Internal("secure-http-digest-no-params::".to_string()))?;
+            .ok_or_else(|| GarrisonError::Internal("secure-http-digest-no-params::".to_string()))?;
 
         if !scheme.eq_ignore_ascii_case("digest") {
-            return Err(BulwarkError::Internal(format!(
+            return Err(GarrisonError::Internal(format!(
                 "secure-httpdigest-unsupported-scheme::{}",
                 scheme
             )));
@@ -425,17 +425,17 @@ impl HttpDigestAuth {
 
         Ok(DigestResponse {
             nonce: nonce.ok_or_else(|| {
-                BulwarkError::Internal("secure-http-digest-missing-nonce::".to_string())
+                GarrisonError::Internal("secure-http-digest-missing-nonce::".to_string())
             })?,
             response: response.ok_or_else(|| {
-                BulwarkError::Internal("secure-http-digest-missing-response::".to_string())
+                GarrisonError::Internal("secure-http-digest-missing-response::".to_string())
             })?,
             qop,
             nc: nc.ok_or_else(|| {
-                BulwarkError::Internal("secure-http-digest-missing-nc::".to_string())
+                GarrisonError::Internal("secure-http-digest-missing-nc::".to_string())
             })?,
             cnonce: cnonce.ok_or_else(|| {
-                BulwarkError::Internal("secure-http-digest-missing-cnonce::".to_string())
+                GarrisonError::Internal("secure-http-digest-missing-cnonce::".to_string())
             })?,
         })
     }

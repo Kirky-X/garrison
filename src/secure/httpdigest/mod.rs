@@ -34,7 +34,7 @@ pub mod algorithm;
 /// ```
 /// #[cfg(feature = "secure-httpdigest")]
 /// # {
-/// use bulwark::secure::httpdigest::HttpDigestAuth;
+/// use garrison::secure::httpdigest::HttpDigestAuth;
 ///
 /// let auth = HttpDigestAuth::new("test@realm", "MD5").unwrap();
 /// let challenge = auth.challenge();
@@ -51,7 +51,7 @@ pub struct HttpDigestAuth {
     /// 可选 DAO，用于 nc 单调性校验（RFC 7616 §3.4.6）。
     ///
     /// 行为细节（fail-closed 策略、Key 格式、TTL、容量规划）见 `auth::validate_nc`。
-    dao: Option<std::sync::Arc<dyn crate::dao::BulwarkDao>>,
+    dao: Option<std::sync::Arc<dyn crate::dao::GarrisonDao>>,
 }
 
 /// `HttpDigestAuth` 实现块（质询生成与响应校验）。
