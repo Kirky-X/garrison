@@ -147,7 +147,7 @@ jobs:
       - name: Build docs
         run: cargo doc --no-deps --features "full"
       - name: Install cargo-deadlinks
-        uses: taiki-e/install-action@9989d3780211b30eb48fda71262a571e03b00a25 # cargo-deadlinks
+        uses: taiki-e/install-action@d5b1c57492c40991d5b03b58d85d06c3626b7542 # cargo-deadlinks
       # 死链检查（显性化策略 — 规则 12：不掩盖，分类处理）
       #
       # 根因分析（2026-07-21）：死链全部来自外部 crate trait 的 blanket impl：
@@ -228,7 +228,7 @@ jobs:
         with:
           shared-key: ci-full-deps
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@ea361d59ff285fa3ab7cc40dcba421e91017d586 # cargo-llvm-cov
+        uses: taiki-e/install-action@d5b1c57492c40991d5b03b58d85d06c3626b7542 # cargo-llvm-cov
       - name: Run coverage (fail under 80% lines)
         run: cargo llvm-cov --features "full" --fail-under-lines 80 --lcov --output-path lcov.info
       - name: Upload coverage
