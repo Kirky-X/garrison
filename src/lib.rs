@@ -645,11 +645,13 @@ pub use strategy::firewall::{CountryLookup, GeoCoord, GeoLookup};
 
 /// 过程宏注解模块（feature = "annotation-macros"）。
 ///
-/// 启用 `annotation-macros` feature 时，re-export `garrison-macros` crate 的 7 个
+/// 启用 `annotation-macros` feature 时，re-export `garrison-macros` crate 的 10 个
 /// `#[proc_macro_attribute]`：
 /// - `#[check_login]` / `#[check_permission]` / `#[check_role]`（0.4.2）
 /// - `#[check_access_token]` / `#[check_client_token]` / `#[check_temp_token]`（0.5.0 P2）
-/// - `#[check_api_key]`
+/// - `#[check_api_key]`（0.6.1）
+/// - `#[check_mfa]` / `#[check_abac]`（v0.7.x）
+/// - `#[check_disable]`（v0.7.3）
 ///
 /// 宏将 async fn 包装为 wrapper，在 body 前插入 `GarrisonUtil::check_*()` 调用，
 /// 失败时返回 `axum::response::Response`（401/403）。
@@ -667,6 +669,6 @@ pub use strategy::firewall::{CountryLookup, GeoCoord, GeoLookup};
 /// ```
 #[cfg(feature = "annotation-macros")]
 pub use garrison_macros::{
-    check_abac, check_access_token, check_api_key, check_client_token, check_login, check_mfa,
-    check_permission, check_role, check_temp_token,
+    check_abac, check_access_token, check_api_key, check_client_token, check_disable, check_login,
+    check_mfa, check_permission, check_role, check_temp_token,
 };

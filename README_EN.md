@@ -126,7 +126,7 @@ The framework uses a **dual-abstraction-layer + global singleton** architecture:
 | ActixContext Adapter | ✅ v0.4.2 | actix-web 4 4-piece set (ActixContext/Request/Response/Storage) |
 | WarpContext Adapter | ✅ v0.4.2 | warp 0.4 4-piece set (WarpContext/Request/Response/Storage) |
 | Strategy Registry | ✅ v0.4.2 | 6 strategy traits + `Strategy` registry + Manager integration |
-| Proc Macro Annotations | ✅ v0.4.2 | `#[check_login]`/`#[check_permission]`/`#[check_role]` attribute macros |
+| Proc Macro Annotations | ✅ v0.4.2 | 10 attribute macros: `#[check_login]` / `#[check_permission]` / `#[check_role]` / `#[check_access_token]` / `#[check_client_token]` / `#[check_temp_token]` / `#[check_api_key]` / `#[check_mfa]` / `#[check_abac]` / `#[check_disable]` |
 | OAuth 2.1 PKCE | ✅ v0.4.2 | RFC 7636 S256 method, legacy methods deprecated |
 | Token Introspection | ✅ v0.4.2 | RFC 7662 remote token status query |
 | Multi-Tenant Isolation | ✅ v0.5.0 | `tenant_id` field + `task_local!` TenantContext + Repository mandatory filtering |
@@ -387,7 +387,7 @@ Hot-reload is supported via `tokio::sync::watch`. See [docs/CONFIGURATION.md](./
 | `observability-otlp` | ❌ | 0.3.0 | OpenTelemetry OTLP distributed tracing |
 | `audit-inklog` | ❌ | 0.7.0 | inklog structured audit logging |
 | `grpc` | ❌ | 0.3.0 | gRPC auth interceptor (tonic::Interceptor) |
-| `annotation-macros` | ❌ | 0.4.2 | `#[check_login]`/`#[check_permission]`/`#[check_role]` proc macros |
+| `annotation-macros` | ❌ | 0.4.2 | 10 attribute macros: `#[check_login]` / `#[check_permission]` / `#[check_role]` / `#[check_access_token]` / `#[check_client_token]` / `#[check_temp_token]` / `#[check_api_key]` / `#[check_mfa]` / `#[check_abac]` / `#[check_disable]` |
 | `tenant-isolation` | ❌ | 0.5.0 | Multi-tenant logical isolation |
 | `social-wechat` | ❌ | 0.5.0 | WeChat QR social login |
 | `social-alipay` | ❌ | 0.5.0 | Alipay social login |
@@ -536,6 +536,8 @@ performance baselines (P99<200ms/1000RPS), and penetration testing
 - [x] **v0.7.1** (2026-07-21) Security fixes + architecture hardening: 21 security
   fixes (secure-simple-token, SimpleTokenStyle anti-forgery, OIDC aud array
   compatibility, switch_to account session cleanup, corrupt-JSON resilience, etc.)
+- [x] **v0.7.2** (2026-07-21) Cross-platform fixes + security hardening: Windows confers path validation fix + gitleaks integration + GarrisonConfig::load 7 security protections
+- [x] **v0.7.3** (2026-07-22) Macro expansion + version sync: new `#[check_disable]` macro + garrison-macros version synced to 0.7.3 + documentation consistency fixes
 - [ ] **v1.0.0** Stable release: API freeze + performance benchmarks + production
   case studies
 

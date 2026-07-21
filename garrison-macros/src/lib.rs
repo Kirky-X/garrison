@@ -3,7 +3,7 @@
 
 //! Garrison 过程宏 crate，提供鉴权注解属性宏。
 //!
-//! 依据 spec `annotation-macros`，提供 9 个 `#[proc_macro_attribute]`：
+//! 依据 spec `annotation-macros`，提供 10 个 `#[proc_macro_attribute]`：
 //!
 //! - [`macro@check_login`]：登录校验，未登录返回 401
 //! - [`macro@check_permission`]：权限校验（AND 语义），无权限返回 403
@@ -12,10 +12,11 @@
 //! - [`macro@check_api_key`]：API Key 校验（0.6.1 新增，依据 spec annotation-check-api-key R-anno-003）
 //! - [`macro@check_mfa`]：MFA 二级认证校验（v0.7.x 新增，依据 spec annotation-macros R-anno-004）
 //! - [`macro@check_abac`]：ABAC 策略校验（v0.7.x 新增，依据 spec annotation-macros R-anno-005）
+//! - [`macro@check_disable`]：账号禁用状态校验（v0.7.3 新增，依据 spec annotation-macros R-anno-006）
 //!
 //! # 覆盖矩阵
 //!
-//! 9 个宏对 13 个特性域（见 `src/lib.rs` 特性域段落）的覆盖情况：
+//! 10 个宏对 13 个特性域（见 `src/lib.rs` 特性域段落）的覆盖情况：
 //!
 //! | 特性域 | 已有宏 | 缺失宏 | 备注 |
 //! |--------|--------|--------|------|
@@ -29,6 +30,7 @@
 //! | API 接口鉴权 | `#[check_api_key]` | — | 支持 namespace 参数 |
 //! | TOTP 动态验证码 | `#[check_mfa]` | — | v0.7.x 新增，封装 check_safe 二级认证校验 |
 //! | ABAC 策略校验 | `#[check_abac]` | — | v0.7.x 新增，纯 ABAC 校验（无 RBAC 前置） |
+//! | 账号禁用状态 | `#[check_disable]` | — | v0.7.3 新增，封装 check_disable 禁用账号校验 |
 //! | Basic 认证 | — | — | 协议层 Extractor（secure::httpbasic） |
 //! | Digest 认证 | — | — | 协议层 Extractor（secure::httpdigest） |
 //! | 路由拦截鉴权 | — | — | Web 框架适配（GarrisonRouter + middleware），非校验型 |
@@ -366,6 +368,39 @@ pub fn check_api_key(attr: TokenStream, item: TokenStream) -> TokenStream {
 pub fn check_mfa(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let item_fn = parse_macro_input!(item as ItemFn);
     expand_check_no_args("check_safe", item_fn)
+}
+
+/// 账号禁用状态校验属性宏（v0.7.3 新增，依据 spec annotation-macros R-anno-006）。
+///
+/// 标注在 async fn 或 sync fn 上，编译期生成 wrapper 在 fn body 前插入
+/// `GarrisonUtil::check_disable()`（async）或 `check_disable_sync()`（sync）调用。
+/// 账号已禁用时返回 `GarrisonError::DisableService`（对应 403）。
+///
+/// 典型场景：敏感操作前校验账号是否被管理员禁用（如违规账号限制关键接口访问）。
+/// 与 `#[check_login]` 区别：后者校验登录状态，本宏校验账号是否被显式禁用。
+///
+/// # 限制
+///
+/// - 支持 `async fn` 和 `sync fn`（sync fn 需在 tokio multi_thread runtime 内调用）
+/// - 仅支持 axum handler（原返回类型需实现 `axum::response::IntoResponse`）
+/// - 无参数
+///
+/// # 示例
+///
+/// ```ignore
+/// use garrison::check_disable;
+/// use axum::response::IntoResponse;
+///
+/// #[check_disable]
+/// async fn handler() -> impl IntoResponse { "ok" }
+///
+/// #[check_disable]
+/// fn sync_handler() -> impl IntoResponse { "ok" }
+/// ```
+#[proc_macro_attribute]
+pub fn check_disable(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    let item_fn = parse_macro_input!(item as ItemFn);
+    expand_check_no_args("check_disable", item_fn)
 }
 
 /// ABAC 策略校验属性宏（v0.7.x 新增，依据 spec annotation-macros R-anno-005）。

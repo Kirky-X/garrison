@@ -837,6 +837,21 @@ impl GarrisonUtil {
         task::block_in_place(|| Handle::current().block_on(Self::check_safe()))
     }
 
+    /// 同步版 [`check_disable`](Self::check_disable)。
+    ///
+    /// 在当前 tokio runtime 上阻塞执行 async `check_disable`。
+    ///
+    /// # 返回
+    /// - `Ok(())`: 账号未禁用。
+    ///
+    /// # 错误
+    /// - `GarrisonManager` 未初始化：`GarrisonError::Session`。
+    /// - 账号已禁用：`GarrisonError::DisableService`。
+    /// - 不在 tokio multi_thread runtime 上下文：panic。
+    pub fn check_disable_sync() -> GarrisonResult<()> {
+        task::block_in_place(|| Handle::current().block_on(Self::check_disable()))
+    }
+
     /// 获取当前 `GarrisonConfig` 引用（用于 extractor / middleware 等需要配置的场景）。
     ///
     /// # 返回

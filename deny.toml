@@ -47,6 +47,9 @@ confidence-threshold = 0.8
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
+# 允许 workspace 内 path 依赖无版本约束（如 garrison-macros dev-dep `garrison = { path = ".." }`）
+# 仅对 path 协议生效，registry 依赖仍受 wildcards = "deny" 约束
+allow-wildcard-paths = true
 
 [sources]
 unknown-registry = "deny"

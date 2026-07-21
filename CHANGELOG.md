@@ -7,6 +7,25 @@
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-07-22
+
+### Added
+
+- 新增 `#[check_disable]` 过程宏（garrison-macros R-anno-006）— 封装 `GarrisonUtil::check_disable()` / `check_disable_sync()` 调用，标注在 axum handler 上自动校验账号是否被禁用。典型场景：敏感操作前校验违规账号是否被管理员禁用。
+- 新增 `GarrisonUtil::check_disable_sync()` 同步版本 — 为 `#[check_disable]` 宏的 sync fn 路径提供阻塞调用支持，与 `check_safe_sync()` 模式一致（`block_in_place` + `Handle::current().block_on()`）。
+
+### Changed
+
+- garrison-macros 版本从 0.5.1 同步至 0.7.3 — 与主 crate 版本号对齐，避免版本号歧义。
+- garrison 主 crate 版本 0.7.2 → 0.7.3。
+- garrison Cargo.toml 中 `garrison-macros` 依赖版本约束从 `"0.5"` 更新为 `"0.7"`。
+
+### Docs
+
+- 修复 `src/lib.rs` 过程宏注解模块文档漂移：re-export 宏数量从"7 个"更正为"10 个"，补充 `#[check_mfa]` / `#[check_abac]` / `#[check_disable]` 版本注释。
+- 更新 `garrison-macros/src/lib.rs` 模块文档：宏数量从 9 更新为 10，覆盖矩阵新增"账号禁用状态"行。
+- 扩展 `garrison-macros/tests/ui/` UI 测试：sync_fn_pass.rs 和 async_fn_pass.rs 补全 `#[check_mfa]` / `#[check_disable]` / `#[check_abac]` 测试用例，覆盖全部 10 个宏。
+
 ## [0.7.2] - 2026-07-21
 
 ### Fixed
