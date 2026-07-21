@@ -226,10 +226,21 @@ jobs:
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           shared-key: release-full-deps
-      - name: Publish to crates.io
+      # 发布顺序：先 garrison-macros 后 garrison（workspace 依赖顺序）
+      # garrison 依赖 garrison-macros "0.7"（optional，annotation-macros feature），
+      # crates.io 必须先有 garrison-macros 0.7.x，否则 cargo publish --package garrison
+      # 会因依赖版本约束无法解析而失败。
+      - name: Publish garrison-macros to crates.io
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: cargo publish
+        run: cargo publish --package garrison-macros
+      # 等待 crates.io 索引传播（通常几秒，保险起见 sleep 15s 避免 garrison publish 找不到依赖）
+      - name: Wait for crates.io index propagation
+        run: sleep 15
+      - name: Publish garrison to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish --package garrison
 
   # ============================================================================
   # 阶段 4：创建 GitHub Release（依赖 crates.io 发布成功，避免半发布不一致）

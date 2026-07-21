@@ -29,6 +29,7 @@
 - **ci.yml coverage job 装错工具**：根因是 `taiki-e/install-action` 的 `tool` 参数 default 值随 SHA 变化——v0.7.3 用的 SHA `ea361d59...` 的 `action.yml` default 是 `cargo-llvm-cov`（能装对），HEAD 改用 SHA `d5b1c574...` 的 default 是 `protoc`，导致 cargo-llvm-cov step 实际装了 protoc，CI 报 `error: no such command: llvm-cov`。修复：ci.yml + release.yml 共 14 处 install-action 调用全部显式传 `with: tool: <name>`，不依赖 SHA default，消除未来 SHA 升级静默改变工具安装行为的风险。
 - **README version 徽章 owner 错误**：`README.md` / `README_EN.md` 的 version badge URL owner 写成小写 `kirky/garrison`（实际 GitHub owner 是 `Kirky-X`），shields.io 返回 `version: repo not found`。修正为 `Kirky-X/garrison`，徽章正确显示 `version: v0.7.3`。
 - **release.yml CHANGELOG body 提取 awk 脚本 bug**：`version-consistency` job 的 "Extract CHANGELOG body" step 失败（`CHANGELOG.md 中未提取到 ## [0.7.3] 章节内容`），导致 v0.7.3 release workflow 全链路失败。根因：awk 脚本 `$0 ~ "^" ver " "` 用正则匹配，但 `ver="## \[0.7.3\]"` 中的 `[0.7.3]` 在 awk 正则中被解释为**字符类**（匹配 `0`/`.`/`7`/`3` 任一字符），而非字面 `[0.7.3]`，导致无法匹配 `## [0.7.3] - 2026-07-22` 行。修复：用 `index($0, ver " ") == 1` 字符串查找替代正则匹配，正确匹配字面方括号。本地验证提取到 `### Added` 章节内容。
+- **release.yml publish 顺序 bug**：`publish-crates-io` job 只跑 `cargo publish`（主 crate），但 garrison 依赖 `garrison-macros = "0.7"`（optional），crates.io 上只有 `garrison-macros = "0.5.1"`，导致 `cargo publish` garrison 会因依赖版本约束无法解析而失败。修复：先 `cargo publish --package garrison-macros`，等待 15s 索引传播，再 `cargo publish --package garrison`，遵循 workspace 依赖顺序。
 
 ### Docs
 
