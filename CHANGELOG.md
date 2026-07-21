@@ -11,6 +11,7 @@
 
 - **CodeQL 误报清理**：新增 `.github/codeql-config.yml` 配置 `paths-ignore` 排除测试文件路径（`tests/**`, `**/tests.rs`, `examples/**`, `benches/**`），避免测试代码中的硬编码密码/nonce 触发 `rust/hard-coded-cryptographic-value` 误报。通过 GitHub API 批量 dismiss 82 个历史误报（全部位于 `#[cfg(test)] mod tests {}` 内联测试块或独立测试文件）。
 - **codeql-action SHA pin**：`codeql.yml` 中 3 处 `github/codeql-action/*@v3` 改为 SHA pin `@fb4bfd79bfa826ce96c90727ff8833835ba8aad0`（40 字符，通过 `gh api repos/github/codeql-action/git/refs/tags/v3 -q '.object.sha'` 验证），与 ci.yml/docs.yml 的 SHA pin 策略一致，防供应链攻击（参考 2026-03 Trivy action tag 被恶意替换事件）。
+- **禁用 CodeQL `rust/unused-variable` 规则**：CodeQL 对 Rust 宏（`tracing::warn!`/`tracing::error!`/`tracing::info!`）内部的变量使用追踪不完整，系统性误报 `let Err(e) = ... { tracing::error!(error = %e, ...) }` 模式中的 `e` 未使用。在 `.github/codeql-config.yml` 添加 `query-filters` 禁用该规则，并批量 dismiss 13 个误报 alerts（编号 83-95，分布在 src/stp/util.rs、src/stp/session.rs、src/server/server_impl.rs、src/protocol/sso/channel.rs、src/listener/audit.rs、src/core/auth/default.rs）。本地 `cargo clippy` 的 `unused_variables` lint 能正确穿透宏展开识别变量使用，CI 已强制 `-D warnings`，覆盖更准确，不降低安全水平。
 
 ### Changed
 

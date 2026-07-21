@@ -4,6 +4,11 @@
 # CodeQL 扫描配置。
 # 排除测试代码路径：测试中的硬编码密码/nonce 是预期行为，非真实漏洞。
 # 对 src/ 下 #[cfg(test)] mod tests {} 内联测试块的误报通过 GitHub API dismiss 处理。
+#
+# 禁用 rust/unused-variable 规则：CodeQL 对 Rust 宏（tracing::warn!/error!/info!）
+# 内部的变量使用追踪不完整，会误报 `let Err(e) = ... { tracing::warn!("{}", e) }`
+# 模式中的 e 未使用。本地 cargo clippy 的 unused_variables lint 能正确识别宏内使用
+# （rustc 数据流分析穿透宏展开），且 CI 已强制 -D warnings，覆盖更准确，不降低安全水平。
 
 name: "Garrison CodeQL Config"
 
@@ -18,3 +23,10 @@ paths-ignore:
 
 queries:
   - uses: security-and-quality
+
+query-filters:
+  # 禁用 rust/unused-variable：CodeQL 对 tracing 宏内变量使用识别有系统性缺陷，
+  # 反复误报 `let Err(e) = ... { tracing::error!(error = %e, ...) }` 模式。
+  # clippy unused_variables lint 已在 CI 强制启用（-D warnings），覆盖更准确。
+  - exclude:
+      id: rust/unused-variable
