@@ -7,6 +7,8 @@
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-07-21
+
 ### Fixed
 
 - 修复 Windows CI 测试失败：confers 0.4.1 的 `FileSource` 在 `check_path_components()` 无条件拒绝 `Component::Prefix`（Windows 驱动器号 `C:`），导致 Windows 上所有绝对路径无法加载。新增 `TomlContentSource`（`src/config/source.rs`）通过 `parse_content` 公共 API 绕过路径验证，实现跨平台一致行为。
@@ -23,6 +25,9 @@
   6. `take(MAX+1)` I/O 层强制限制读取字节数（防 TOCTOU）
   7. 错误消息仅含 `file_name()`，不泄露服务器文件系统结构
 - 新增 6 个安全集成测试覆盖以上防护（`tests.rs::load_rejects_*`）。
+- 新增 gitleaks 密钥扫描集成（`.gitleaks.toml` + `.pre-commit-config.yaml` gitleaks hook）— 与 `detect-private-key` 互补，覆盖 git history 扫描。
+- 新增 pre-commit `forbid-temp-dir` hook — 阻断 temp/ 第三方参考源码被 git add -f 绕过 .gitignore 入库。
+- 示例代码 `examples/src/infrastructure/config_loader.rs` 使用 `tempfile` crate 替代 `std::env::temp_dir()` 固定路径，消除符号链接/抢占攻击窗口。
 
 ### Changed
 
@@ -30,6 +35,11 @@
 - 修正 `README.md` / `.env.example` / `docs/DEVELOPMENT.md` 中错误的 `ConfigLoader` 引用为实际 API `GarrisonConfig::load` / `confers`。
 - 修正 `docs/CONFIGURATION.md` 中 `replaced_login_exit_mode` / `overflow_logout_mode` / `audit_mask_mode` 枚举默认值大小写（`OldDevice` → `old_device` 等，与 `#[serde(rename_all = "snake_case")]` 一致）。
 - 修正 `README.md` 中 `token_name`（`garrison-token` → `garrison_token`）、`token_style`（`random-64` → `random_64`）、`is_share`（`true` → `false`）默认值与代码一致。
+
+### Docs
+
+- 新增 `README_EN.md` 英文版（511 行，与中文版结构一致）— README.md 顶部添加双向语言切换徽章。
+- `.security-audit/` 目录加入 `.gitignore`。
 
 ## [0.7.1] - 2026-07-21
 

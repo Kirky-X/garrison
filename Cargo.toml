@@ -1,6 +1,6 @@
 [package]
 name = "garrison"
-version = "0.7.1"
+version = "0.7.2"
 edition = "2021"
 rust-version = "1.85"  # MSRV: 部分 deps（如 inventory 0.3）要求 edition2024 → Rust 1.85+
 authors = ["Kirky.X"]
