@@ -41,14 +41,14 @@ jobs:
       # （测试代码中的硬编码密码/nonce 是预期行为，非真实漏洞）
       # codeql-action 用 SHA pin 防供应链攻击（与 ci.yml/docs.yml 策略一致）
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@fb4bfd79bfa826ce96c907ff8833835ba8aad0 # v3, nosemgrep
+        uses: github/codeql-action/init@fb4bfd79bfa826ce96c90727ff8833835ba8aad0 # v3, nosemgrep
         with:
           config-file: .github/codeql-config.yml
 
       - name: Autobuild
-        uses: github/codeql-action/autobuild@fb4bfd79bfa826ce96c907ff8833835ba8aad0 # v3, nosemgrep
+        uses: github/codeql-action/autobuild@fb4bfd79bfa826ce96c90727ff8833835ba8aad0 # v3, nosemgrep
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@fb4bfd79bfa826ce96c907ff8833835ba8aad0 # v3, nosemgrep
+        uses: github/codeql-action/analyze@fb4bfd79bfa826ce96c90727ff8833835ba8aad0 # v3, nosemgrep
         with:
           category: "/language:autodetect"
