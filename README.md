@@ -21,7 +21,7 @@
   <img src="https://img.shields.io/github/license/Kirky-X/garrison?label=license" alt="license" />
   <img src="https://img.shields.io/badge/MSRV-1.85+-orange" alt="msrv" />
   <img src="https://img.shields.io/badge/coverage-95%25%2B-brightgreen" alt="coverage" />
-  <img src="https://img.shields.io/badge/tests-3852%2B%20passed-success" alt="tests" />
+  <img src="https://img.shields.io/badge/tests-4116%2B%20passed-success" alt="tests" />
   <img src="https://img.shields.io/badge/clippy-zero%20warnings-success" alt="clippy" />
 </p>
 
@@ -79,7 +79,7 @@
 | 🔧 **可插拔扩展** | trait + Default 实现模式，替换任意组件（DAO / 策略 / 逻辑）无需改业务 |
 | 🎯 **Feature 门控** | 40+ 个特性域独立 feature flag，按需编译减小体积 |
 | 📊 **高可观测** | `tracing` 日志 + `listener` 事件订阅 + `prometheus` 指标（可选） |
-| 🧪 **高覆盖** | 3852+ 个测试通过（3787 lib + 65 E2E），95%+ 行覆盖率，clippy 零警告 |
+| 🧪 **高覆盖** | 4116+ 个测试通过（4051 lib + 65 E2E），95%+ 行覆盖率，clippy 零警告 |
 | 🌐 **Web 框架适配** | axum/actix/warp 三框架注解式 extractor（`CheckLogin` / `CheckRole` / `CheckPermission` + 过程宏） |
 
 ### 特性域覆盖（0.4.0~0.6.0 协议层与生产能力补齐）

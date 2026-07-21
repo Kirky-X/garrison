@@ -9,8 +9,8 @@ language = "zh"
 src = "src"
 
 [output.html]
-git-repository-url = "https://github.com/garrison-rs/garrison"
-edit-url-template = "https://github.com/garrison-rs/garrison/edit/main/mdbook/src/{path}"
+git-repository-url = "https://github.com/Kirky-X/garrison"
+edit-url-template = "https://github.com/Kirky-X/garrison/edit/main/mdbook/src/{path}"
 default-theme = "light"
 preferred-dark-theme = "ayu"
 

@@ -21,7 +21,7 @@
   <img src="https://img.shields.io/github/license/Kirky-X/garrison?label=license" alt="license" />
   <img src="https://img.shields.io/badge/MSRV-1.85+-orange" alt="msrv" />
   <img src="https://img.shields.io/badge/coverage-95%25%2B-brightgreen" alt="coverage" />
-  <img src="https://img.shields.io/badge/tests-3852%2B%20passed-success" alt="tests" />
+  <img src="https://img.shields.io/badge/tests-4116%2B%20passed-success" alt="tests" />
   <img src="https://img.shields.io/badge/clippy-zero%20warnings-success" alt="clippy" />
 </p>
 
@@ -87,7 +87,7 @@ The framework uses a **dual-abstraction-layer + global singleton** architecture:
 | 🔧 **Pluggable Extensions** | trait + Default pattern — replace any component (DAO / Strategy / Logic) without touching business code |
 | 🎯 **Feature Gating** | 40+ feature domains with independent flags — compile only what you need |
 | 📊 **High Observability** | `tracing` logging + `listener` event subscriptions + `prometheus` metrics (optional) |
-| 🧪 **High Coverage** | 3852+ tests passing (3787 lib + 65 E2E), 95%+ line coverage, clippy zero warnings |
+| 🧪 **High Coverage** | 4116+ tests passing (4051 lib + 65 E2E), 95%+ line coverage, clippy zero warnings |
 | 🌐 **Web Framework Adapters** | axum/actix/warp annotation-style extractors (`CheckLogin` / `CheckRole` / `CheckPermission` + proc macros) |
 
 ### Feature Domain Coverage (v0.4.0–v0.6.0 Protocol Layer & Production Capabilities)
