@@ -816,7 +816,7 @@ impl GarrisonLogicDefault {
     /// 按 `last_active_at` 升序排序（最旧排前面），踢出最早的 (count - max) 个 token。
     /// `max=0` 时不做任何操作（0 表示不限制，由调用方判断）。
     ///
-    /// 踢出后根据 [`OverflowLogoutMode`] 广播对应事件：
+    /// 踢出后根据 [`crate::config::OverflowLogoutMode`] 广播对应事件：
     /// - `Logout`：广播 `GarrisonEvent::Logout`（默认，向后兼容）
     /// - `Kickout`：广播 `GarrisonEvent::Kickout`（reason: "超过最大登录数限制"）
     /// - `Replaced`：广播 `GarrisonEvent::RevokeToken`

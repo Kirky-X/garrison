@@ -3,11 +3,11 @@
 
 //! 限流后端配置 enum。
 //!
-//! v0.7 起，所有限速实现统一由 [`limiteron`] 接管：
-//! - 内存限流 → [`crate::limiteron::GarrisonDaoDistributedLimiter`]
-//! - 分布式限流 → [`crate::limiteron::GarrisonDaoDistributedLimiter::atomic_check_and_incr`]
-//! - 配额限流 → [`crate::limiteron::GarrisonDaoQuotaStorage`]
-//! - 封禁记录 → [`crate::limiteron::GarrisonDaoBanStorage`]
+//! v0.7 起，所有限速实现统一由 `limiteron` 接管：
+//! - 内存限流 → `crate::limiteron::GarrisonDaoDistributedLimiter`
+//! - 分布式限流 → `crate::limiteron::GarrisonDaoDistributedLimiter::atomic_check_and_incr`
+//! - 配额限流 → `crate::limiteron::GarrisonDaoQuotaStorage`
+//! - 封禁记录 → `crate::limiteron::GarrisonDaoBanStorage`
 //!
 //! 本模块仅保留 `RateLimitBackend` 配置 enum，用于 `GarrisonConfig`
 //! 表达限流后端选择（向后兼容 v0.6 配置）。运行时由 `GarrisonDaoDistributedLimiter`
@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// # v0.7 行为
 ///
-/// 实际限流逻辑统一委托 [`crate::limiteron::GarrisonDaoDistributedLimiter`]，
+/// 实际限流逻辑统一委托 `crate::limiteron::GarrisonDaoDistributedLimiter`，
 /// 此 enum 仅作为配置占位与可观测性标记，不再驱动具体实现切换（limiteron
 /// 通过 `GarrisonDao` 后端透明支持 Redis 原子操作）。
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

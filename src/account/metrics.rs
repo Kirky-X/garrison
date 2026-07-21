@@ -23,7 +23,7 @@
 //!
 //! # Feature 门控
 //!
-//! 与 [`crate::observability::GarrisonMetrics`] 一致：未启用 `metrics-prometheus` 时
+//! 与 `crate::observability::GarrisonMetrics` 一致：未启用 `metrics-prometheus` 时
 //! `AccountMetrics` 为 `()` 别名，调用方使用 `Option<Arc<AccountMetrics>>` 仍可编译。
 
 #[cfg(feature = "metrics-prometheus")]
@@ -35,7 +35,7 @@ use std::time::Duration;
 
 /// 账号安全能力 Prometheus 指标集合。
 ///
-/// 模式与 [`crate::observability::GarrisonMetrics`] 一致：4 个指标注册到指定 registry，
+/// 模式与 `crate::observability::GarrisonMetrics` 一致：4 个指标注册到指定 registry，
 /// 通过 `with_metrics` builder 注入到 `UserLockoutStrategy` / `PasswordPolicyEngine`，
 /// 或作为 `AuthExecutor::execute_with_metrics` 的参数传入（保持 R-008 五字段约束）。
 ///
@@ -224,7 +224,7 @@ impl std::fmt::Debug for AccountMetrics {
 
 /// 指标集合的 feature-gated 别名。
 ///
-/// - `metrics-prometheus` 启用：解析为 [`AccountMetrics`](struct@AccountMetrics)
+/// - `metrics-prometheus` 启用：解析为 [`AccountMetrics`]
 /// - 未启用：解析为 `()` unit type，调用方使用 `Option<Arc<AccountMetrics>>` 仍可编译
 #[cfg(not(feature = "metrics-prometheus"))]
 pub type AccountMetrics = ();
