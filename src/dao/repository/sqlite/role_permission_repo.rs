@@ -4,6 +4,7 @@
 //! DbnexusRolePermissionRepository 实现（app_role_permission 表）。
 
 use super::{v_i64, v_str, DbnexusRolePermissionRepository};
+use crate::dao::dao_session;
 use crate::dao::repository::{make_statement, RolePermissionRepository, RolePermissionRow};
 use crate::error::{GarrisonError, GarrisonResult};
 use async_trait::async_trait;
@@ -24,18 +25,12 @@ impl RolePermissionRepository for DbnexusRolePermissionRepository {
         tenant_id: i64,
         role_id: &str,
     ) -> GarrisonResult<Vec<RolePermissionRow>> {
-        let session = self.pool.get_session("admin").await.map_err(|e| {
-            GarrisonError::Dao(format!(
-                "dao-app-role-permission-find-by-role-id-session::{}",
-                e
-            ))
-        })?;
-        let conn = session.connection().map_err(|e| {
-            GarrisonError::Dao(format!(
-                "dao-app-role-permission-find-by-role-id-connection::{}",
-                e
-            ))
-        })?;
+        dao_session!(
+            self.pool,
+            "dao-app-role-permission-find-by-role-id",
+            session,
+            conn
+        );
         let sql = "SELECT role_id, permission_id, tenant_id \
                    FROM app_role_permission WHERE tenant_id = ? AND role_id = ?";
         let stmt = make_statement(conn, sql, vec![v_i64(tenant_id), v_str(role_id)]);
@@ -53,18 +48,12 @@ impl RolePermissionRepository for DbnexusRolePermissionRepository {
         tenant_id: i64,
         permission_id: &str,
     ) -> GarrisonResult<Vec<RolePermissionRow>> {
-        let session = self.pool.get_session("admin").await.map_err(|e| {
-            GarrisonError::Dao(format!(
-                "dao-app-role-permission-find-by-permission-id-session::{}",
-                e
-            ))
-        })?;
-        let conn = session.connection().map_err(|e| {
-            GarrisonError::Dao(format!(
-                "dao-app-role-permission-find-by-permission-id-connection::{}",
-                e
-            ))
-        })?;
+        dao_session!(
+            self.pool,
+            "dao-app-role-permission-find-by-permission-id",
+            session,
+            conn
+        );
         let sql = "SELECT role_id, permission_id, tenant_id \
                    FROM app_role_permission WHERE tenant_id = ? AND permission_id = ?";
         let stmt = make_statement(conn, sql, vec![v_i64(tenant_id), v_str(permission_id)]);
@@ -83,12 +72,7 @@ impl RolePermissionRepository for DbnexusRolePermissionRepository {
         role_id: &str,
         permission_id: &str,
     ) -> GarrisonResult<()> {
-        let session = self.pool.get_session("admin").await.map_err(|e| {
-            GarrisonError::Dao(format!("dao-app-role-permission-assign-session::{}", e))
-        })?;
-        let conn = session.connection().map_err(|e| {
-            GarrisonError::Dao(format!("dao-app-role-permission-assign-connection::{}", e))
-        })?;
+        dao_session!(self.pool, "dao-app-role-permission-assign", session, conn);
         let sql = "INSERT INTO app_role_permission (role_id, permission_id, tenant_id) \
                    VALUES (?, ?, ?)";
         let stmt = make_statement(
@@ -108,12 +92,7 @@ impl RolePermissionRepository for DbnexusRolePermissionRepository {
         role_id: &str,
         permission_id: &str,
     ) -> GarrisonResult<()> {
-        let session = self.pool.get_session("admin").await.map_err(|e| {
-            GarrisonError::Dao(format!("dao-app-role-permission-revoke-session::{}", e))
-        })?;
-        let conn = session.connection().map_err(|e| {
-            GarrisonError::Dao(format!("dao-app-role-permission-revoke-connection::{}", e))
-        })?;
+        dao_session!(self.pool, "dao-app-role-permission-revoke", session, conn);
         let sql = "DELETE FROM app_role_permission \
                    WHERE tenant_id = ? AND role_id = ? AND permission_id = ?";
         let stmt = make_statement(
@@ -133,12 +112,7 @@ impl RolePermissionRepository for DbnexusRolePermissionRepository {
         offset: i64,
         limit: i64,
     ) -> GarrisonResult<Vec<RolePermissionRow>> {
-        let session = self.pool.get_session("admin").await.map_err(|e| {
-            GarrisonError::Dao(format!("dao-app-role-permission-list-session::{}", e))
-        })?;
-        let conn = session.connection().map_err(|e| {
-            GarrisonError::Dao(format!("dao-app-role-permission-list-connection::{}", e))
-        })?;
+        dao_session!(self.pool, "dao-app-role-permission-list", session, conn);
         let sql = "SELECT role_id, permission_id, tenant_id \
                    FROM app_role_permission WHERE tenant_id = ? LIMIT ? OFFSET ?";
         let stmt = make_statement(

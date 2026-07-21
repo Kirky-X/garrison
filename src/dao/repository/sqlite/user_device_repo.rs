@@ -4,6 +4,7 @@
 //! DbnexusUserDeviceRepository 实现（app_user_device 表）。
 
 use super::{read_bool, v_i64, v_opt_str, v_str, DbnexusUserDeviceRepository};
+use crate::dao::dao_session;
 use crate::dao::repository::{make_statement, UserDeviceRepository, UserDeviceRow, MAX_DEVICES};
 use crate::error::{GarrisonError, GarrisonResult};
 use async_trait::async_trait;
@@ -26,18 +27,12 @@ impl UserDeviceRepository for DbnexusUserDeviceRepository {
         identifier: &str,
         ua: &str,
     ) -> GarrisonResult<String> {
-        let session = self.pool.get_session("admin").await.map_err(|e| {
-            GarrisonError::Dao(format!(
-                "dao-app-user-device-register-device-session::{}",
-                e
-            ))
-        })?;
-        let conn = session.connection().map_err(|e| {
-            GarrisonError::Dao(format!(
-                "dao-app-user-device-register-device-connection::{}",
-                e
-            ))
-        })?;
+        dao_session!(
+            self.pool,
+            "dao-app-user-device-register-device",
+            session,
+            conn
+        );
 
         // 1. 检查是否已存在（幂等：相同 tenant_id + login_id + identifier 返回已有 ID）
         let find_sql = "SELECT id FROM app_user_device \
@@ -113,15 +108,7 @@ impl UserDeviceRepository for DbnexusUserDeviceRepository {
     }
 
     async fn block_device(&self, device_id: &str) -> GarrisonResult<()> {
-        let session = self.pool.get_session("admin").await.map_err(|e| {
-            GarrisonError::Dao(format!("dao-app-user-device-block-device-session::{}", e))
-        })?;
-        let conn = session.connection().map_err(|e| {
-            GarrisonError::Dao(format!(
-                "dao-app-user-device-block-device-connection::{}",
-                e
-            ))
-        })?;
+        dao_session!(self.pool, "dao-app-user-device-block-device", session, conn);
         let sql = "UPDATE app_user_device SET is_blocked = 1 WHERE id = ?";
         let stmt = make_statement(conn, sql, vec![v_str(device_id)]);
         conn.execute_raw(stmt)
@@ -131,15 +118,12 @@ impl UserDeviceRepository for DbnexusUserDeviceRepository {
     }
 
     async fn unblock_device(&self, device_id: &str) -> GarrisonResult<()> {
-        let session = self.pool.get_session("admin").await.map_err(|e| {
-            GarrisonError::Dao(format!("dao-app-user-device-unblock-device-session::{}", e))
-        })?;
-        let conn = session.connection().map_err(|e| {
-            GarrisonError::Dao(format!(
-                "dao-app-user-device-unblock-device-connection::{}",
-                e
-            ))
-        })?;
+        dao_session!(
+            self.pool,
+            "dao-app-user-device-unblock-device",
+            session,
+            conn
+        );
         let sql = "UPDATE app_user_device SET is_blocked = 0 WHERE id = ?";
         let stmt = make_statement(conn, sql, vec![v_str(device_id)]);
         conn.execute_raw(stmt).await.map_err(|e| {
@@ -153,13 +137,7 @@ impl UserDeviceRepository for DbnexusUserDeviceRepository {
         tenant_id: i64,
         login_id: &str,
     ) -> GarrisonResult<Vec<UserDeviceRow>> {
-        let session =
-            self.pool.get_session("admin").await.map_err(|e| {
-                GarrisonError::Dao(format!("dao-app-user-device-list-session::{}", e))
-            })?;
-        let conn = session.connection().map_err(|e| {
-            GarrisonError::Dao(format!("dao-app-user-device-list-connection::{}", e))
-        })?;
+        dao_session!(self.pool, "dao-app-user-device-list", session, conn);
         let sql = "SELECT id, tenant_id, login_id, device_identifier, device_name, user_agent, \
                   is_blocked, last_seen_at, created_at \
                   FROM app_user_device WHERE tenant_id = ? AND login_id = ?";
@@ -172,13 +150,7 @@ impl UserDeviceRepository for DbnexusUserDeviceRepository {
     }
 
     async fn count_user_devices(&self, tenant_id: i64, login_id: &str) -> GarrisonResult<usize> {
-        let session =
-            self.pool.get_session("admin").await.map_err(|e| {
-                GarrisonError::Dao(format!("dao-app-user-device-count-session::{}", e))
-            })?;
-        let conn = session.connection().map_err(|e| {
-            GarrisonError::Dao(format!("dao-app-user-device-count-connection::{}", e))
-        })?;
+        dao_session!(self.pool, "dao-app-user-device-count", session, conn);
         let sql =
             "SELECT COUNT(*) AS cnt FROM app_user_device WHERE tenant_id = ? AND login_id = ?";
         let stmt = make_statement(conn, sql, vec![v_i64(tenant_id), v_str(login_id)]);

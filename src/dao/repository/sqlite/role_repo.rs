@@ -4,6 +4,7 @@
 //! DbnexusRoleRepository 实现（app_role 表）。
 
 use super::{read_bool, v_bool, v_i64, v_opt_str, v_str, DbnexusRoleRepository};
+use crate::dao::dao_session;
 use crate::dao::repository::{make_statement, NewRole, RoleRepository, RoleRow};
 use crate::error::{GarrisonError, GarrisonResult};
 use async_trait::async_trait;
@@ -20,13 +21,7 @@ impl DbnexusRoleRepository {
 #[async_trait]
 impl RoleRepository for DbnexusRoleRepository {
     async fn find_by_id(&self, tenant_id: i64, id: &str) -> GarrisonResult<Option<RoleRow>> {
-        let session =
-            self.pool.get_session("admin").await.map_err(|e| {
-                GarrisonError::Dao(format!("dao-app-role-find-by-id-session::{}", e))
-            })?;
-        let conn = session.connection().map_err(|e| {
-            GarrisonError::Dao(format!("dao-app-role-find-by-id-connection::{}", e))
-        })?;
+        dao_session!(self.pool, "dao-app-role-find-by-id", session, conn);
         let sql =
             "SELECT id, code, name, description, tenant_id, is_system, created_at, updated_at \
                    FROM app_role WHERE tenant_id = ? AND id = ?";
@@ -39,13 +34,7 @@ impl RoleRepository for DbnexusRoleRepository {
     }
 
     async fn find_by_code(&self, tenant_id: i64, code: &str) -> GarrisonResult<Option<RoleRow>> {
-        let session =
-            self.pool.get_session("admin").await.map_err(|e| {
-                GarrisonError::Dao(format!("dao-app-role-find-by-code-session::{}", e))
-            })?;
-        let conn = session.connection().map_err(|e| {
-            GarrisonError::Dao(format!("dao-app-role-find-by-code-connection::{}", e))
-        })?;
+        dao_session!(self.pool, "dao-app-role-find-by-code", session, conn);
         let sql =
             "SELECT id, code, name, description, tenant_id, is_system, created_at, updated_at \
                    FROM app_role WHERE tenant_id = ? AND code = ?";
@@ -59,14 +48,7 @@ impl RoleRepository for DbnexusRoleRepository {
 
     async fn create(&self, tenant_id: i64, role: NewRole) -> GarrisonResult<String> {
         let id = uuid::Uuid::new_v4().to_string();
-        let session = self
-            .pool
-            .get_session("admin")
-            .await
-            .map_err(|e| GarrisonError::Dao(format!("dao-app-role-create-session::{}", e)))?;
-        let conn = session
-            .connection()
-            .map_err(|e| GarrisonError::Dao(format!("dao-app-role-create-connection::{}", e)))?;
+        dao_session!(self.pool, "dao-app-role-create", session, conn);
         let sql = "INSERT INTO app_role (id, code, name, description, tenant_id, is_system) \
                    VALUES (?, ?, ?, ?, ?, ?)";
         let stmt = make_statement(
@@ -118,14 +100,7 @@ impl RoleRepository for DbnexusRoleRepository {
             "UPDATE app_role SET {} WHERE tenant_id = ? AND id = ?",
             sets.join(", ")
         );
-        let session = self
-            .pool
-            .get_session("admin")
-            .await
-            .map_err(|e| GarrisonError::Dao(format!("dao-app-role-update-session::{}", e)))?;
-        let conn = session
-            .connection()
-            .map_err(|e| GarrisonError::Dao(format!("dao-app-role-update-connection::{}", e)))?;
+        dao_session!(self.pool, "dao-app-role-update", session, conn);
         let stmt = make_statement(conn, &sql, params);
         conn.execute_raw(stmt)
             .await
@@ -134,14 +109,7 @@ impl RoleRepository for DbnexusRoleRepository {
     }
 
     async fn delete(&self, tenant_id: i64, id: &str) -> GarrisonResult<()> {
-        let session = self
-            .pool
-            .get_session("admin")
-            .await
-            .map_err(|e| GarrisonError::Dao(format!("dao-app-role-delete-session::{}", e)))?;
-        let conn = session
-            .connection()
-            .map_err(|e| GarrisonError::Dao(format!("dao-app-role-delete-connection::{}", e)))?;
+        dao_session!(self.pool, "dao-app-role-delete", session, conn);
         let sql = "DELETE FROM app_role WHERE tenant_id = ? AND id = ?";
         let stmt = make_statement(conn, sql, vec![v_i64(tenant_id), v_str(id)]);
         conn.execute_raw(stmt)
@@ -151,14 +119,7 @@ impl RoleRepository for DbnexusRoleRepository {
     }
 
     async fn list(&self, tenant_id: i64, offset: i64, limit: i64) -> GarrisonResult<Vec<RoleRow>> {
-        let session = self
-            .pool
-            .get_session("admin")
-            .await
-            .map_err(|e| GarrisonError::Dao(format!("dao-app-role-list-session::{}", e)))?;
-        let conn = session
-            .connection()
-            .map_err(|e| GarrisonError::Dao(format!("dao-app-role-list-connection::{}", e)))?;
+        dao_session!(self.pool, "dao-app-role-list", session, conn);
         let sql =
             "SELECT id, code, name, description, tenant_id, is_system, created_at, updated_at \
                    FROM app_role WHERE tenant_id = ? LIMIT ? OFFSET ?";

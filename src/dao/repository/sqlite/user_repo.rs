@@ -4,6 +4,7 @@
 //! DbnexusUserRepository 实现（app_user 表）。
 
 use super::{v_i64, v_str, DbnexusUserRepository};
+use crate::dao::dao_session;
 use crate::dao::repository::{make_statement, NewUser, UpdateUser, UserRepository, UserRow};
 use crate::error::{GarrisonError, GarrisonResult};
 use async_trait::async_trait;
@@ -20,13 +21,7 @@ impl DbnexusUserRepository {
 #[async_trait]
 impl UserRepository for DbnexusUserRepository {
     async fn find_by_id(&self, tenant_id: i64, id: &str) -> GarrisonResult<Option<UserRow>> {
-        let session =
-            self.pool.get_session("admin").await.map_err(|e| {
-                GarrisonError::Dao(format!("dao-app-user-find-by-id-session::{}", e))
-            })?;
-        let conn = session.connection().map_err(|e| {
-            GarrisonError::Dao(format!("dao-app-user-find-by-id-connection::{}", e))
-        })?;
+        dao_session!(self.pool, "dao-app-user-find-by-id", session, conn);
         let sql = "SELECT id, username, password_hash, status, tenant_id, created_at, updated_at, last_login_at \
                    FROM app_user WHERE tenant_id = ? AND id = ?";
         let stmt = make_statement(conn, sql, vec![v_i64(tenant_id), v_str(id)]);
@@ -42,12 +37,7 @@ impl UserRepository for DbnexusUserRepository {
         tenant_id: i64,
         username: &str,
     ) -> GarrisonResult<Option<UserRow>> {
-        let session = self.pool.get_session("admin").await.map_err(|e| {
-            GarrisonError::Dao(format!("dao-app-user-find-by-username-session::{}", e))
-        })?;
-        let conn = session.connection().map_err(|e| {
-            GarrisonError::Dao(format!("dao-app-user-find-by-username-connection::{}", e))
-        })?;
+        dao_session!(self.pool, "dao-app-user-find-by-username", session, conn);
         let sql = "SELECT id, username, password_hash, status, tenant_id, created_at, updated_at, last_login_at \
                    FROM app_user WHERE tenant_id = ? AND username = ?";
         let stmt = make_statement(conn, sql, vec![v_i64(tenant_id), v_str(username)]);
@@ -59,14 +49,7 @@ impl UserRepository for DbnexusUserRepository {
 
     async fn create(&self, tenant_id: i64, user: NewUser) -> GarrisonResult<String> {
         let id = uuid::Uuid::new_v4().to_string();
-        let session = self
-            .pool
-            .get_session("admin")
-            .await
-            .map_err(|e| GarrisonError::Dao(format!("dao-app-user-create-session::{}", e)))?;
-        let conn = session
-            .connection()
-            .map_err(|e| GarrisonError::Dao(format!("dao-app-user-create-connection::{}", e)))?;
+        dao_session!(self.pool, "dao-app-user-create", session, conn);
         let sql = "INSERT INTO app_user (id, username, password_hash, status, tenant_id) \
                    VALUES (?, ?, ?, ?, ?)";
         let stmt = make_statement(
@@ -114,14 +97,7 @@ impl UserRepository for DbnexusUserRepository {
             "UPDATE app_user SET {} WHERE tenant_id = ? AND id = ?",
             sets.join(", ")
         );
-        let session = self
-            .pool
-            .get_session("admin")
-            .await
-            .map_err(|e| GarrisonError::Dao(format!("dao-app-user-update-session::{}", e)))?;
-        let conn = session
-            .connection()
-            .map_err(|e| GarrisonError::Dao(format!("dao-app-user-update-connection::{}", e)))?;
+        dao_session!(self.pool, "dao-app-user-update", session, conn);
         let stmt = make_statement(conn, &sql, params);
         conn.execute_raw(stmt)
             .await
@@ -130,14 +106,7 @@ impl UserRepository for DbnexusUserRepository {
     }
 
     async fn delete(&self, tenant_id: i64, id: &str) -> GarrisonResult<()> {
-        let session = self
-            .pool
-            .get_session("admin")
-            .await
-            .map_err(|e| GarrisonError::Dao(format!("dao-app-user-delete-session::{}", e)))?;
-        let conn = session
-            .connection()
-            .map_err(|e| GarrisonError::Dao(format!("dao-app-user-delete-connection::{}", e)))?;
+        dao_session!(self.pool, "dao-app-user-delete", session, conn);
         let sql = "DELETE FROM app_user WHERE tenant_id = ? AND id = ?";
         let stmt = make_statement(conn, sql, vec![v_i64(tenant_id), v_str(id)]);
         conn.execute_raw(stmt)
@@ -147,14 +116,7 @@ impl UserRepository for DbnexusUserRepository {
     }
 
     async fn list(&self, tenant_id: i64, offset: i64, limit: i64) -> GarrisonResult<Vec<UserRow>> {
-        let session = self
-            .pool
-            .get_session("admin")
-            .await
-            .map_err(|e| GarrisonError::Dao(format!("dao-app-user-list-session::{}", e)))?;
-        let conn = session
-            .connection()
-            .map_err(|e| GarrisonError::Dao(format!("dao-app-user-list-connection::{}", e)))?;
+        dao_session!(self.pool, "dao-app-user-list", session, conn);
         let sql = "SELECT id, username, password_hash, status, tenant_id, created_at, updated_at, last_login_at \
                    FROM app_user WHERE tenant_id = ? LIMIT ? OFFSET ?";
         let stmt = make_statement(

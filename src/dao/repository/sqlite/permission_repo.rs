@@ -4,6 +4,7 @@
 //! DbnexusPermissionRepository 实现（app_permission 表，全局表无 tenant_id）。
 
 use super::{v_i64, v_opt_str, v_str, DbnexusPermissionRepository};
+use crate::dao::dao_session;
 use crate::dao::repository::{make_statement, NewPermission, PermissionRepository, PermissionRow};
 use crate::error::{GarrisonError, GarrisonResult};
 use async_trait::async_trait;
@@ -20,12 +21,7 @@ impl DbnexusPermissionRepository {
 #[async_trait]
 impl PermissionRepository for DbnexusPermissionRepository {
     async fn find_by_id(&self, id: &str) -> GarrisonResult<Option<PermissionRow>> {
-        let session = self.pool.get_session("admin").await.map_err(|e| {
-            GarrisonError::Dao(format!("dao-app-permission-find-by-id-session::{}", e))
-        })?;
-        let conn = session.connection().map_err(|e| {
-            GarrisonError::Dao(format!("dao-app-permission-find-by-id-connection::{}", e))
-        })?;
+        dao_session!(self.pool, "dao-app-permission-find-by-id", session, conn);
         let sql = "SELECT id, code, name, resource_type, action, created_at, updated_at \
                    FROM app_permission WHERE id = ?";
         let stmt = make_statement(conn, sql, vec![v_str(id)]);
@@ -36,12 +32,7 @@ impl PermissionRepository for DbnexusPermissionRepository {
     }
 
     async fn find_by_code(&self, code: &str) -> GarrisonResult<Option<PermissionRow>> {
-        let session = self.pool.get_session("admin").await.map_err(|e| {
-            GarrisonError::Dao(format!("dao-app-permission-find-by-code-session::{}", e))
-        })?;
-        let conn = session.connection().map_err(|e| {
-            GarrisonError::Dao(format!("dao-app-permission-find-by-code-connection::{}", e))
-        })?;
+        dao_session!(self.pool, "dao-app-permission-find-by-code", session, conn);
         let sql = "SELECT id, code, name, resource_type, action, created_at, updated_at \
                    FROM app_permission WHERE code = ?";
         let stmt = make_statement(conn, sql, vec![v_str(code)]);
@@ -53,13 +44,7 @@ impl PermissionRepository for DbnexusPermissionRepository {
 
     async fn create(&self, permission: NewPermission) -> GarrisonResult<String> {
         let id = uuid::Uuid::new_v4().to_string();
-        let session =
-            self.pool.get_session("admin").await.map_err(|e| {
-                GarrisonError::Dao(format!("dao-app-permission-create-session::{}", e))
-            })?;
-        let conn = session.connection().map_err(|e| {
-            GarrisonError::Dao(format!("dao-app-permission-create-connection::{}", e))
-        })?;
+        dao_session!(self.pool, "dao-app-permission-create", session, conn);
         let sql = "INSERT INTO app_permission (id, code, name, resource_type, action) \
                    VALUES (?, ?, ?, ?, ?)";
         let stmt = make_statement(
@@ -105,13 +90,7 @@ impl PermissionRepository for DbnexusPermissionRepository {
         }
         params.push(v_str(id));
         let sql = format!("UPDATE app_permission SET {} WHERE id = ?", sets.join(", "));
-        let session =
-            self.pool.get_session("admin").await.map_err(|e| {
-                GarrisonError::Dao(format!("dao-app-permission-update-session::{}", e))
-            })?;
-        let conn = session.connection().map_err(|e| {
-            GarrisonError::Dao(format!("dao-app-permission-update-connection::{}", e))
-        })?;
+        dao_session!(self.pool, "dao-app-permission-update", session, conn);
         let stmt = make_statement(conn, &sql, params);
         conn.execute_raw(stmt)
             .await
@@ -120,13 +99,7 @@ impl PermissionRepository for DbnexusPermissionRepository {
     }
 
     async fn delete(&self, id: &str) -> GarrisonResult<()> {
-        let session =
-            self.pool.get_session("admin").await.map_err(|e| {
-                GarrisonError::Dao(format!("dao-app-permission-delete-session::{}", e))
-            })?;
-        let conn = session.connection().map_err(|e| {
-            GarrisonError::Dao(format!("dao-app-permission-delete-connection::{}", e))
-        })?;
+        dao_session!(self.pool, "dao-app-permission-delete", session, conn);
         let sql = "DELETE FROM app_permission WHERE id = ?";
         let stmt = make_statement(conn, sql, vec![v_str(id)]);
         conn.execute_raw(stmt)
@@ -136,13 +109,7 @@ impl PermissionRepository for DbnexusPermissionRepository {
     }
 
     async fn list(&self, offset: i64, limit: i64) -> GarrisonResult<Vec<PermissionRow>> {
-        let session =
-            self.pool.get_session("admin").await.map_err(|e| {
-                GarrisonError::Dao(format!("dao-app-permission-list-session::{}", e))
-            })?;
-        let conn = session.connection().map_err(|e| {
-            GarrisonError::Dao(format!("dao-app-permission-list-connection::{}", e))
-        })?;
+        dao_session!(self.pool, "dao-app-permission-list", session, conn);
         let sql = "SELECT id, code, name, resource_type, action, created_at, updated_at \
                    FROM app_permission LIMIT ? OFFSET ?";
         let stmt = make_statement(conn, sql, vec![v_i64(limit), v_i64(offset)]);

@@ -4,6 +4,7 @@
 //! DbnexusAuthMethodRepository 实现（app_auth_method 表）。
 
 use super::{v_i64, v_opt_str, v_str, DbnexusAuthMethodRepository};
+use crate::dao::dao_session;
 use crate::dao::repository::{make_statement, AuthMethodRepository, AuthMethodRow, NewAuthMethod};
 use crate::error::{GarrisonError, GarrisonResult};
 use async_trait::async_trait;
@@ -20,12 +21,7 @@ impl DbnexusAuthMethodRepository {
 #[async_trait]
 impl AuthMethodRepository for DbnexusAuthMethodRepository {
     async fn find_by_id(&self, tenant_id: i64, id: &str) -> GarrisonResult<Option<AuthMethodRow>> {
-        let session = self.pool.get_session("admin").await.map_err(|e| {
-            GarrisonError::Dao(format!("dao-app-auth-method-find-by-id-session::{}", e))
-        })?;
-        let conn = session.connection().map_err(|e| {
-            GarrisonError::Dao(format!("dao-app-auth-method-find-by-id-connection::{}", e))
-        })?;
+        dao_session!(self.pool, "dao-app-auth-method-find-by-id", session, conn);
         let sql = "SELECT id, user_id, method_type, external_id, metadata, create_time, tenant_id \
                    FROM app_auth_method WHERE tenant_id = ? AND id = ?";
         let stmt = make_statement(conn, sql, vec![v_i64(tenant_id), v_str(id)]);
@@ -40,18 +36,12 @@ impl AuthMethodRepository for DbnexusAuthMethodRepository {
         tenant_id: i64,
         user_id: &str,
     ) -> GarrisonResult<Vec<AuthMethodRow>> {
-        let session = self.pool.get_session("admin").await.map_err(|e| {
-            GarrisonError::Dao(format!(
-                "dao-app-auth-method-find-by-user-id-session::{}",
-                e
-            ))
-        })?;
-        let conn = session.connection().map_err(|e| {
-            GarrisonError::Dao(format!(
-                "dao-app-auth-method-find-by-user-id-connection::{}",
-                e
-            ))
-        })?;
+        dao_session!(
+            self.pool,
+            "dao-app-auth-method-find-by-user-id",
+            session,
+            conn
+        );
         let sql = "SELECT id, user_id, method_type, external_id, metadata, create_time, tenant_id \
                    FROM app_auth_method WHERE tenant_id = ? AND user_id = ?";
         let stmt = make_statement(conn, sql, vec![v_i64(tenant_id), v_str(user_id)]);
@@ -63,12 +53,7 @@ impl AuthMethodRepository for DbnexusAuthMethodRepository {
 
     async fn create(&self, tenant_id: i64, method: NewAuthMethod) -> GarrisonResult<String> {
         let id = uuid::Uuid::new_v4().to_string();
-        let session = self.pool.get_session("admin").await.map_err(|e| {
-            GarrisonError::Dao(format!("dao-app-auth-method-create-session::{}", e))
-        })?;
-        let conn = session.connection().map_err(|e| {
-            GarrisonError::Dao(format!("dao-app-auth-method-create-connection::{}", e))
-        })?;
+        dao_session!(self.pool, "dao-app-auth-method-create", session, conn);
         let sql = "INSERT INTO app_auth_method (id, user_id, method_type, external_id, metadata, tenant_id) \
                    VALUES (?, ?, ?, ?, ?, ?)";
         let stmt = make_statement(
@@ -90,12 +75,7 @@ impl AuthMethodRepository for DbnexusAuthMethodRepository {
     }
 
     async fn delete(&self, tenant_id: i64, id: &str) -> GarrisonResult<()> {
-        let session = self.pool.get_session("admin").await.map_err(|e| {
-            GarrisonError::Dao(format!("dao-app-auth-method-delete-session::{}", e))
-        })?;
-        let conn = session.connection().map_err(|e| {
-            GarrisonError::Dao(format!("dao-app-auth-method-delete-connection::{}", e))
-        })?;
+        dao_session!(self.pool, "dao-app-auth-method-delete", session, conn);
         let sql = "DELETE FROM app_auth_method WHERE tenant_id = ? AND id = ?";
         let stmt = make_statement(conn, sql, vec![v_i64(tenant_id), v_str(id)]);
         conn.execute_raw(stmt)
@@ -110,13 +90,7 @@ impl AuthMethodRepository for DbnexusAuthMethodRepository {
         offset: i64,
         limit: i64,
     ) -> GarrisonResult<Vec<AuthMethodRow>> {
-        let session =
-            self.pool.get_session("admin").await.map_err(|e| {
-                GarrisonError::Dao(format!("dao-app-auth-method-list-session::{}", e))
-            })?;
-        let conn = session.connection().map_err(|e| {
-            GarrisonError::Dao(format!("dao-app-auth-method-list-connection::{}", e))
-        })?;
+        dao_session!(self.pool, "dao-app-auth-method-list", session, conn);
         let sql = "SELECT id, user_id, method_type, external_id, metadata, create_time, tenant_id \
                    FROM app_auth_method WHERE tenant_id = ? LIMIT ? OFFSET ?";
         let stmt = make_statement(

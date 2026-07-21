@@ -4,6 +4,7 @@
 //! DbnexusSessionRepository 实现（app_session 表）。
 
 use super::{v_i64, v_opt_str, v_str, DbnexusSessionRepository};
+use crate::dao::dao_session;
 use crate::dao::repository::{make_statement, NewSession, SessionRepository, SessionRow};
 use crate::error::{GarrisonError, GarrisonResult};
 use async_trait::async_trait;
@@ -24,15 +25,12 @@ impl SessionRepository for DbnexusSessionRepository {
         tenant_id: i64,
         session_id: &str,
     ) -> GarrisonResult<Option<SessionRow>> {
-        let session = self.pool.get_session("admin").await.map_err(|e| {
-            GarrisonError::Dao(format!("dao-app-session-find-by-session-id-session::{}", e))
-        })?;
-        let conn = session.connection().map_err(|e| {
-            GarrisonError::Dao(format!(
-                "dao-app-session-find-by-session-id-connection::{}",
-                e
-            ))
-        })?;
+        dao_session!(
+            self.pool,
+            "dao-app-session-find-by-session-id",
+            session,
+            conn
+        );
         let sql =
             "SELECT session_id, user_id, device_id, ip, user_agent, login_time, last_active, \
                    expire_time, tenant_id \
@@ -49,12 +47,7 @@ impl SessionRepository for DbnexusSessionRepository {
         tenant_id: i64,
         user_id: &str,
     ) -> GarrisonResult<Vec<SessionRow>> {
-        let session = self.pool.get_session("admin").await.map_err(|e| {
-            GarrisonError::Dao(format!("dao-app-session-find-by-user-id-session::{}", e))
-        })?;
-        let conn = session.connection().map_err(|e| {
-            GarrisonError::Dao(format!("dao-app-session-find-by-user-id-connection::{}", e))
-        })?;
+        dao_session!(self.pool, "dao-app-session-find-by-user-id", session, conn);
         let sql =
             "SELECT session_id, user_id, device_id, ip, user_agent, login_time, last_active, \
                    expire_time, tenant_id \
@@ -67,13 +60,7 @@ impl SessionRepository for DbnexusSessionRepository {
     }
 
     async fn create(&self, tenant_id: i64, session: NewSession) -> GarrisonResult<String> {
-        let db_session =
-            self.pool.get_session("admin").await.map_err(|e| {
-                GarrisonError::Dao(format!("dao-app-session-create-session::{}", e))
-            })?;
-        let conn = db_session
-            .connection()
-            .map_err(|e| GarrisonError::Dao(format!("dao-app-session-create-connection::{}", e)))?;
+        dao_session!(self.pool, "dao-app-session-create", db_session, conn);
         let sql = "INSERT INTO app_session \
                    (session_id, user_id, device_id, ip, user_agent, expire_time, tenant_id) \
                    VALUES (?, ?, ?, ?, ?, ?, ?)";
@@ -97,15 +84,12 @@ impl SessionRepository for DbnexusSessionRepository {
     }
 
     async fn update_last_active(&self, tenant_id: i64, session_id: &str) -> GarrisonResult<()> {
-        let session = self.pool.get_session("admin").await.map_err(|e| {
-            GarrisonError::Dao(format!("dao-app-session-update-last-active-session::{}", e))
-        })?;
-        let conn = session.connection().map_err(|e| {
-            GarrisonError::Dao(format!(
-                "dao-app-session-update-last-active-connection::{}",
-                e
-            ))
-        })?;
+        dao_session!(
+            self.pool,
+            "dao-app-session-update-last-active",
+            session,
+            conn
+        );
         let sql = "UPDATE app_session SET last_active = CURRENT_TIMESTAMP \
                    WHERE tenant_id = ? AND session_id = ?";
         let stmt = make_statement(conn, sql, vec![v_i64(tenant_id), v_str(session_id)]);
@@ -116,13 +100,7 @@ impl SessionRepository for DbnexusSessionRepository {
     }
 
     async fn delete(&self, tenant_id: i64, session_id: &str) -> GarrisonResult<()> {
-        let session =
-            self.pool.get_session("admin").await.map_err(|e| {
-                GarrisonError::Dao(format!("dao-app-session-delete-session::{}", e))
-            })?;
-        let conn = session
-            .connection()
-            .map_err(|e| GarrisonError::Dao(format!("dao-app-session-delete-connection::{}", e)))?;
+        dao_session!(self.pool, "dao-app-session-delete", session, conn);
         let sql = "DELETE FROM app_session WHERE tenant_id = ? AND session_id = ?";
         let stmt = make_statement(conn, sql, vec![v_i64(tenant_id), v_str(session_id)]);
         conn.execute_raw(stmt)
@@ -137,14 +115,7 @@ impl SessionRepository for DbnexusSessionRepository {
         offset: i64,
         limit: i64,
     ) -> GarrisonResult<Vec<SessionRow>> {
-        let session = self
-            .pool
-            .get_session("admin")
-            .await
-            .map_err(|e| GarrisonError::Dao(format!("dao-app-session-list-session::{}", e)))?;
-        let conn = session
-            .connection()
-            .map_err(|e| GarrisonError::Dao(format!("dao-app-session-list-connection::{}", e)))?;
+        dao_session!(self.pool, "dao-app-session-list", session, conn);
         let sql =
             "SELECT session_id, user_id, device_id, ip, user_agent, login_time, last_active, \
                    expire_time, tenant_id \

@@ -13,6 +13,7 @@
 
 - 新增 `#[check_disable]` 过程宏（garrison-macros R-anno-006）— 封装 `GarrisonUtil::check_disable()` / `check_disable_sync()` 调用，标注在 axum handler 上自动校验账号是否被禁用。典型场景：敏感操作前校验违规账号是否被管理员禁用。
 - 新增 `GarrisonUtil::check_disable_sync()` 同步版本 — 为 `#[check_disable]` 宏的 sync fn 路径提供阻塞调用支持，与 `check_safe_sync()` 模式一致（`block_in_place` + `Handle::current().block_on()`）。
+- 新增 `dao_session!` 内部 macro_rules! 宏（src/dao/macros.rs）— 消除 10 个 SQLite Repository 中重复的 `pool.get_session("admin") + session.connection() + map_err` 样板（每处 7-9 行），迁移 53 处调用点，净节省约 350 行代码。宏展开为两条 `let` 语句，由调用方提供 `$session` / `$conn` ident 绕开 macro_rules! hygiene 约束。
 
 ### Changed
 

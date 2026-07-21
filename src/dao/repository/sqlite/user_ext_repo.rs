@@ -4,6 +4,7 @@
 //! DbnexusUserExtRepository 实现（app_user_ext 表）。
 
 use super::{v_i64, v_opt_str, v_str, DbnexusUserExtRepository};
+use crate::dao::dao_session;
 use crate::dao::repository::{make_statement, UserExtRepository, UserExtRow};
 use crate::error::{GarrisonError, GarrisonResult};
 use async_trait::async_trait;
@@ -24,15 +25,7 @@ impl UserExtRepository for DbnexusUserExtRepository {
         tenant_id: i64,
         user_id: &str,
     ) -> GarrisonResult<Vec<UserExtRow>> {
-        let session = self.pool.get_session("admin").await.map_err(|e| {
-            GarrisonError::Dao(format!("dao-app-user-ext-find-by-user-id-session::{}", e))
-        })?;
-        let conn = session.connection().map_err(|e| {
-            GarrisonError::Dao(format!(
-                "dao-app-user-ext-find-by-user-id-connection::{}",
-                e
-            ))
-        })?;
+        dao_session!(self.pool, "dao-app-user-ext-find-by-user-id", session, conn);
         let sql = "SELECT id, user_id, field_key, field_value, field_type, created_at, updated_at, tenant_id \
                    FROM app_user_ext WHERE tenant_id = ? AND user_id = ?";
         let stmt = make_statement(conn, sql, vec![v_i64(tenant_id), v_str(user_id)]);
@@ -48,18 +41,12 @@ impl UserExtRepository for DbnexusUserExtRepository {
         user_id: &str,
         field_key: &str,
     ) -> GarrisonResult<Option<UserExtRow>> {
-        let session = self.pool.get_session("admin").await.map_err(|e| {
-            GarrisonError::Dao(format!(
-                "dao-app-user-ext-find-by-user-and-key-session::{}",
-                e
-            ))
-        })?;
-        let conn = session.connection().map_err(|e| {
-            GarrisonError::Dao(format!(
-                "dao-app-user-ext-find-by-user-and-key-connection::{}",
-                e
-            ))
-        })?;
+        dao_session!(
+            self.pool,
+            "dao-app-user-ext-find-by-user-and-key",
+            session,
+            conn
+        );
         let sql = "SELECT id, user_id, field_key, field_value, field_type, created_at, updated_at, tenant_id \
                    FROM app_user_ext WHERE tenant_id = ? AND user_id = ? AND field_key = ?";
         let stmt = make_statement(
@@ -84,13 +71,7 @@ impl UserExtRepository for DbnexusUserExtRepository {
         field_value: Option<String>,
         field_type: &str,
     ) -> GarrisonResult<()> {
-        let session =
-            self.pool.get_session("admin").await.map_err(|e| {
-                GarrisonError::Dao(format!("dao-app-user-ext-upsert-session::{}", e))
-            })?;
-        let conn = session.connection().map_err(|e| {
-            GarrisonError::Dao(format!("dao-app-user-ext-upsert-connection::{}", e))
-        })?;
+        dao_session!(self.pool, "dao-app-user-ext-upsert", session, conn);
         // UPSERT，依赖 UK(user_id, field_key)。
         // 插入时生成新 UUID；冲突时更新 field_value/field_type/updated_at（保留原 id/created_at）。
         // SQLite/Postgres 使用 ON CONFLICT ... DO UPDATE SET ... = excluded.field；
@@ -130,13 +111,7 @@ impl UserExtRepository for DbnexusUserExtRepository {
     }
 
     async fn delete(&self, tenant_id: i64, user_id: &str, field_key: &str) -> GarrisonResult<()> {
-        let session =
-            self.pool.get_session("admin").await.map_err(|e| {
-                GarrisonError::Dao(format!("dao-app-user-ext-delete-session::{}", e))
-            })?;
-        let conn = session.connection().map_err(|e| {
-            GarrisonError::Dao(format!("dao-app-user-ext-delete-connection::{}", e))
-        })?;
+        dao_session!(self.pool, "dao-app-user-ext-delete", session, conn);
         let sql = "DELETE FROM app_user_ext \
                    WHERE tenant_id = ? AND user_id = ? AND field_key = ?";
         let stmt = make_statement(
@@ -156,14 +131,7 @@ impl UserExtRepository for DbnexusUserExtRepository {
         offset: i64,
         limit: i64,
     ) -> GarrisonResult<Vec<UserExtRow>> {
-        let session = self
-            .pool
-            .get_session("admin")
-            .await
-            .map_err(|e| GarrisonError::Dao(format!("dao-app-user-ext-list-session::{}", e)))?;
-        let conn = session
-            .connection()
-            .map_err(|e| GarrisonError::Dao(format!("dao-app-user-ext-list-connection::{}", e)))?;
+        dao_session!(self.pool, "dao-app-user-ext-list", session, conn);
         let sql = "SELECT id, user_id, field_key, field_value, field_type, created_at, updated_at, tenant_id \
                    FROM app_user_ext WHERE tenant_id = ? LIMIT ? OFFSET ?";
         let stmt = make_statement(

@@ -11,6 +11,11 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
+#[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
+mod macros;
+#[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
+pub(crate) use macros::dao_session;
+
 /// DAO 抽象层 trait，定义 Token 与会话的持久化操作。
 ///
 /// 对应 `SaTokenDao`，提供 get / set / update / delete / expire 五元操作

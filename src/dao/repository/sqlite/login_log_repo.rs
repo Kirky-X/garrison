@@ -4,6 +4,7 @@
 //! DbnexusLoginLogRepository 实现（app_login_log 表）。
 
 use super::{read_bool, v_bool, v_i64, v_opt_str, v_str, DbnexusLoginLogRepository};
+use crate::dao::dao_session;
 use crate::dao::repository::{make_statement, LoginLogRepository, LoginLogRow, NewLoginLog};
 use crate::error::{GarrisonError, GarrisonResult};
 use async_trait::async_trait;
@@ -20,12 +21,7 @@ impl DbnexusLoginLogRepository {
 #[async_trait]
 impl LoginLogRepository for DbnexusLoginLogRepository {
     async fn find_by_id(&self, tenant_id: i64, id: &str) -> GarrisonResult<Option<LoginLogRow>> {
-        let session = self.pool.get_session("admin").await.map_err(|e| {
-            GarrisonError::Dao(format!("dao-app-login-log-find-by-id-session::{}", e))
-        })?;
-        let conn = session.connection().map_err(|e| {
-            GarrisonError::Dao(format!("dao-app-login-log-find-by-id-connection::{}", e))
-        })?;
+        dao_session!(self.pool, "dao-app-login-log-find-by-id", session, conn);
         let sql = "SELECT id, user_id, action, ip, device_id, success, fail_reason, create_time, tenant_id \
                    FROM app_login_log WHERE tenant_id = ? AND id = ?";
         let stmt = make_statement(conn, sql, vec![v_i64(tenant_id), v_str(id)]);
@@ -42,15 +38,12 @@ impl LoginLogRepository for DbnexusLoginLogRepository {
         offset: i64,
         limit: i64,
     ) -> GarrisonResult<Vec<LoginLogRow>> {
-        let session = self.pool.get_session("admin").await.map_err(|e| {
-            GarrisonError::Dao(format!("dao-app-login-log-find-by-user-id-session::{}", e))
-        })?;
-        let conn = session.connection().map_err(|e| {
-            GarrisonError::Dao(format!(
-                "dao-app-login-log-find-by-user-id-connection::{}",
-                e
-            ))
-        })?;
+        dao_session!(
+            self.pool,
+            "dao-app-login-log-find-by-user-id",
+            session,
+            conn
+        );
         let sql = "SELECT id, user_id, action, ip, device_id, success, fail_reason, create_time, tenant_id \
                    FROM app_login_log WHERE tenant_id = ? AND user_id = ? \
                    ORDER BY create_time DESC LIMIT ? OFFSET ?";
@@ -72,13 +65,7 @@ impl LoginLogRepository for DbnexusLoginLogRepository {
 
     async fn create(&self, tenant_id: i64, log: NewLoginLog) -> GarrisonResult<String> {
         let id = uuid::Uuid::new_v4().to_string();
-        let session =
-            self.pool.get_session("admin").await.map_err(|e| {
-                GarrisonError::Dao(format!("dao-app-login-log-create-session::{}", e))
-            })?;
-        let conn = session.connection().map_err(|e| {
-            GarrisonError::Dao(format!("dao-app-login-log-create-connection::{}", e))
-        })?;
+        dao_session!(self.pool, "dao-app-login-log-create", session, conn);
         let sql = "INSERT INTO app_login_log \
                    (id, user_id, action, ip, device_id, success, fail_reason, tenant_id) \
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
@@ -108,13 +95,7 @@ impl LoginLogRepository for DbnexusLoginLogRepository {
         offset: i64,
         limit: i64,
     ) -> GarrisonResult<Vec<LoginLogRow>> {
-        let session =
-            self.pool.get_session("admin").await.map_err(|e| {
-                GarrisonError::Dao(format!("dao-app-login-log-list-session::{}", e))
-            })?;
-        let conn = session
-            .connection()
-            .map_err(|e| GarrisonError::Dao(format!("dao-app-login-log-list-connection::{}", e)))?;
+        dao_session!(self.pool, "dao-app-login-log-list", session, conn);
         let sql = "SELECT id, user_id, action, ip, device_id, success, fail_reason, create_time, tenant_id \
                    FROM app_login_log WHERE tenant_id = ? ORDER BY create_time DESC LIMIT ? OFFSET ?";
         let stmt = make_statement(

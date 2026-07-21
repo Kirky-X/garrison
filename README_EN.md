@@ -537,7 +537,7 @@ performance baselines (P99<200ms/1000RPS), and penetration testing
   fixes (secure-simple-token, SimpleTokenStyle anti-forgery, OIDC aud array
   compatibility, switch_to account session cleanup, corrupt-JSON resilience, etc.)
 - [x] **v0.7.2** (2026-07-21) Cross-platform fixes + security hardening: Windows confers path validation fix + gitleaks integration + GarrisonConfig::load 7 security protections
-- [x] **v0.7.3** (2026-07-22) Macro expansion + version sync: new `#[check_disable]` macro + garrison-macros version synced to 0.7.3 + documentation consistency fixes
+- [x] **v0.7.3** (2026-07-22) Macro expansion + version sync: new `#[check_disable]` macro + garrison-macros version synced to 0.7.3 + new `dao_session!` internal macro_rules! macro eliminating DAO-layer boilerplate (53 call sites, ~350 lines saved) + documentation consistency fixes
 - [ ] **v1.0.0** Stable release: API freeze + performance benchmarks + production
   case studies
 
