@@ -7,6 +7,25 @@
 
 ## [Unreleased]
 
+### Security
+
+- **CodeQL 误报清理**：新增 `.github/codeql-config.yml` 配置 `paths-ignore` 排除测试文件路径（`tests/**`, `**/tests.rs`, `examples/**`, `benches/**`），避免测试代码中的硬编码密码/nonce 触发 `rust/hard-coded-cryptographic-value` 误报。通过 GitHub API 批量 dismiss 82 个历史误报（全部位于 `#[cfg(test)] mod tests {}` 内联测试块或独立测试文件）。
+- **codeql-action SHA pin**：`codeql.yml` 中 3 处 `github/codeql-action/*@v3` 改为 SHA pin `@fb4bfd79bfa826ce96c907ff8833835ba8aad0`，与 ci.yml/docs.yml 的 SHA pin 策略一致，防供应链攻击（参考 2026-03 Trivy action tag 被恶意替换事件）。
+
+### Changed
+
+- **CI/CD 依赖升级**（关闭 5 个 dependabot PR #19-#23，改动手动应用到本地避免冲突）：
+  - `Swatinem/rust-cache` v2.9.1 SHA 升级至正式发布 commit（含哈希计算回归修复），ci.yml + release.yml 共 12 处同步。
+  - `codecov/codecov-action` v4.6.0 → v7.0.0。
+  - `taiki-e/install-action` SHA 统一（cargo-deadlinks + cargo-llvm-cov 与 protoc 共用同一 commit）。
+  - `peaceiris/actions-mdbook` v2 SHA 升级。
+  - `actions/upload-pages-artifact` v3 → v5.0.0，新增 `include-hidden-files: true` 参数保留 `.nojekyll` 文件（避免 GitHub Pages 走 Jekyll 处理破坏静态资源）。
+- **coverage job 缓存键独立**：从 `ci-full-deps` 改为 `ci-coverage-deps`，避免 cargo-llvm-cov 插桩产物污染其他 job 的缓存。
+
+### Docs
+
+- README.md/README_EN.md 语言切换链接从 badge 改为纯文本（`中文 | English`），避免 badge 加载失败时无法切换。
+
 ## [0.7.3] - 2026-07-22
 
 ### Added
