@@ -30,6 +30,7 @@
 - **README version 徽章 owner 错误**：`README.md` / `README_EN.md` 的 version badge URL owner 写成小写 `kirky/garrison`（实际 GitHub owner 是 `Kirky-X`），shields.io 返回 `version: repo not found`。修正为 `Kirky-X/garrison`，徽章正确显示 `version: v0.7.3`。
 - **release.yml CHANGELOG body 提取 awk 脚本 bug**：`version-consistency` job 的 "Extract CHANGELOG body" step 失败（`CHANGELOG.md 中未提取到 ## [0.7.3] 章节内容`），导致 v0.7.3 release workflow 全链路失败。根因：awk 脚本 `$0 ~ "^" ver " "` 用正则匹配，但 `ver="## \[0.7.3\]"` 中的 `[0.7.3]` 在 awk 正则中被解释为**字符类**（匹配 `0`/`.`/`7`/`3` 任一字符），而非字面 `[0.7.3]`，导致无法匹配 `## [0.7.3] - 2026-07-22` 行。修复：用 `index($0, ver " ") == 1` 字符串查找替代正则匹配，正确匹配字面方括号。本地验证提取到 `### Added` 章节内容。
 - **release.yml publish 顺序 bug**：`publish-crates-io` job 只跑 `cargo publish`（主 crate），但 garrison 依赖 `garrison-macros = "0.7"`（optional），crates.io 上只有 `garrison-macros = "0.5.1"`，导致 `cargo publish` garrison 会因依赖版本约束无法解析而失败。修复：先 `cargo publish --package garrison-macros`，等待 15s 索引传播，再 `cargo publish --package garrison`，遵循 workspace 依赖顺序。
+- **release.yml verify-release curl User-Agent bug**：`verify-release` job 的 "Verify crates.io publish" step 用 `curl -sS "https://crates.io/api/v1/crates/garrison"` 查询 crates.io API，6 次重试全返回空响应，verify-release 误判为发布失败。根因：crates.io API 反爬虫策略拒绝 User-Agent 包含 "curl" 的请求（curl 默认 UA = `curl/x.x.x`）。修复：curl 命令加 `-H "User-Agent: garrison-release-verify"` header。本地验证修复后成功返回 `"newest_version":"0.7.3"`。注：crate 实际已成功发布，此 bug 仅影响验证脚本，不影响发布本身。
 
 ### Docs
 
