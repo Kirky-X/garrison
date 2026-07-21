@@ -10,17 +10,22 @@
 ### Security
 
 - **CodeQL 误报清理**：新增 `.github/codeql-config.yml` 配置 `paths-ignore` 排除测试文件路径（`tests/**`, `**/tests.rs`, `examples/**`, `benches/**`），避免测试代码中的硬编码密码/nonce 触发 `rust/hard-coded-cryptographic-value` 误报。通过 GitHub API 批量 dismiss 82 个历史误报（全部位于 `#[cfg(test)] mod tests {}` 内联测试块或独立测试文件）。
-- **codeql-action SHA pin**：`codeql.yml` 中 3 处 `github/codeql-action/*@v3` 改为 SHA pin `@fb4bfd79bfa826ce96c907ff8833835ba8aad0`，与 ci.yml/docs.yml 的 SHA pin 策略一致，防供应链攻击（参考 2026-03 Trivy action tag 被恶意替换事件）。
+- **codeql-action SHA pin**：`codeql.yml` 中 3 处 `github/codeql-action/*@v3` 改为 SHA pin `@fb4bfd79bfa826ce96c90727ff8833835ba8aad0`（40 字符，通过 `gh api repos/github/codeql-action/git/refs/tags/v3 -q '.object.sha'` 验证），与 ci.yml/docs.yml 的 SHA pin 策略一致，防供应链攻击（参考 2026-03 Trivy action tag 被恶意替换事件）。
 
 ### Changed
 
 - **CI/CD 依赖升级**（关闭 5 个 dependabot PR #19-#23，改动手动应用到本地避免冲突）：
   - `Swatinem/rust-cache` v2.9.1 SHA 升级至正式发布 commit（含哈希计算回归修复），ci.yml + release.yml 共 12 处同步。
   - `codecov/codecov-action` v4.6.0 → v7.0.0。
-  - `taiki-e/install-action` SHA 统一（cargo-deadlinks + cargo-llvm-cov 与 protoc 共用同一 commit）。
+  - `taiki-e/install-action` SHA 统一为 `d5b1c57492c40991d5b03b58d85d06c3626b7542`（cargo-deadlinks / cargo-llvm-cov / protoc 共用同一 commit），所有 14 处调用显式传 `with: tool: <name>`，不依赖 SHA 对应的 `action.yml` default 值（default 随工具发布动态变化，是 CI 失败根因之一，详见下方 Fixed 章节）。
   - `peaceiris/actions-mdbook` v2 SHA 升级。
   - `actions/upload-pages-artifact` v3 → v5.0.0，新增 `include-hidden-files: true` 参数保留 `.nojekyll` 文件（避免 GitHub Pages 走 Jekyll 处理破坏静态资源）。
 - **coverage job 缓存键独立**：从 `ci-full-deps` 改为 `ci-coverage-deps`，避免 cargo-llvm-cov 插桩产物污染其他 job 的缓存。
+
+### Fixed
+
+- **codeql.yml SHA 拼写错误**：上一会话 SHA pin 写成 38 字符（`fb4bfd79bfa826ce96c907ff8833835ba8aad0`，缺 `27`），导致 CodeQL workflow 5 秒即失败（`Unable to resolve action ... unable to find version`）。用 `gh api repos/github/codeql-action/git/refs/tags/v3 -q '.object.sha'` 验证正确 40 字符 SHA 为 `fb4bfd79bfa826ce96c90727ff8833835ba8aad0`，修正 3 处。教训：SHA pin 后必须验证字符数 = 40。
+- **ci.yml coverage job 装错工具**：根因是 `taiki-e/install-action` 的 `tool` 参数 default 值随 SHA 变化——v0.7.3 用的 SHA `ea361d59...` 的 `action.yml` default 是 `cargo-llvm-cov`（能装对），HEAD 改用 SHA `d5b1c574...` 的 default 是 `protoc`，导致 cargo-llvm-cov step 实际装了 protoc，CI 报 `error: no such command: llvm-cov`。修复：ci.yml + release.yml 共 14 处 install-action 调用全部显式传 `with: tool: <name>`，不依赖 SHA default，消除未来 SHA 升级静默改变工具安装行为的风险。
 
 ### Docs
 
