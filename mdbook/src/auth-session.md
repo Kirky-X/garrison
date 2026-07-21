@@ -21,8 +21,8 @@ let logged_in = GarrisonUtil::check_login().await?;  // 返回 bool
 // 登出：销毁当前 token 对应的会话
 GarrisonUtil::logout().await?;
 
-// 获取当前登录 login_id
-let login_id = GarrisonUtil::get_login_id().await?;
+// 获取当前登录 login_id（返回 Option<String>，未登录时取决于 throw_on_not_login）
+let login_id: Option<String> = GarrisonUtil::get_login_id().await?;
 ```
 
 `check_login` 行为受 `throw_on_not_login` 配置影响：`true`（默认）未登录抛出 `GarrisonError::NotLogin`；`false` 则返回 `false`。

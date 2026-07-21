@@ -15,8 +15,8 @@ garrison = { version = "0.7", features = ["web-axum"] }
 
 | 组件 | 作用 |
 |:---|:---|
-| `GarrisonRouter` | 路由构建器，注册受保护路由并应用 `GarrisonLayer` |
-| `GarrisonLayer` | 中间件，从 header/cookie 提取 token 并设置 task_local 上下文 |
+| `GarrisonRouter` | 路由构建器，注册受保护路由并应用中件间（`garrison_middleware`） |
+| `garrison_middleware` | 中间件函数，从 header/cookie 提取 token 并设置 task_local 上下文 |
 | `impl IntoResponse for GarrisonError` | 错误自动转为 HTTP 响应（统一 `response_parts()`） |
 | `CheckLogin` / `CheckRole` / `CheckPermission` | extractor，从请求 parts 校验（对应 `@SaCheckLogin` 等） |
 
@@ -99,6 +99,6 @@ async fn handler(
 
 ## 关键说明
 
-- `GarrisonLayer` 负责设置 task_local 上下文，`GarrisonUtil` 静态方法依赖此上下文
-- 未注册 `GarrisonLayer` 的路由调用 `GarrisonUtil` 会因 task_local 缺失失败
+- `GarrisonRouter::build()` 内置的 `garrison_middleware` 负责设置 task_local 上下文，`GarrisonUtil` 静态方法依赖此上下文
+- 未注册中间件的路由调用 `GarrisonUtil` 会因 task_local 缺失失败
 - 当前已知限制：`route_protected` 仅支持 GET 方法（其他 HTTP 方法请直接使用 `axum::Router::route` 注册并通过 `Annotation` 在 `GarrisonRouter` 中同步规则）

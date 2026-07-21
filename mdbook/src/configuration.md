@@ -28,17 +28,30 @@ let config = GarrisonConfig::load(None)?;
 | `token_name` | String | `garrison_token` | Token 名称（HTTP Header / Cookie 字段名） |
 | `timeout` | i64 | `2592000`（30 天） | Token 超时秒数（必须 > 0） |
 | `active_timeout` | i64 | `-1` | 活动超时检测（-1 表示不启用） |
+| `is_share` | bool | `false` | 同账号多端是否共享会话 |
+| `is_concurrent` | bool | `true` | 是否允许并发登录 |
 | `is_read_cookie` | bool | `true` | 是否从 Cookie 读取 Token |
 | `is_read_header` | bool | `true` | 是否从 Header 读取 Token |
+| `is_read_body` | bool | `false` | 是否从请求体读取 Token |
 | `is_write_header` | bool | `true` | 是否在登录后写入 Header |
+| `is_write_cookie` | bool | `false` | 是否在续签后将新 Token 写入 Cookie |
 | `token_style` | String | `uuid` | Token 风格（`uuid` / `random_64` / `simple` / `jwt`） |
 | `throw_on_not_login` | bool | `true` | 未登录时是否抛出异常（false 则返回 false） |
 | `cookie_secure` | bool | `true` | Cookie 是否标记 `Secure`（仅 HTTPS） |
 | `cookie_same_site` | String | `Lax` | Cookie SameSite 策略（`Lax` / `Strict` / `None`） |
+| `frontend_separation` | bool | `false` | 是否启用前后端分离模式 |
 | `jwt_algorithm` | String | `HS256` | JWT 签名算法（`HS256` / `HS512`） |
 | `jwt_secret` | String | 空 | JWT 签名密钥（使用 JWT 时必须配置非空） |
 | `sign_window_seconds` | i64 | `300` | 签名校验时间窗口秒数（防重放） |
 | `sso_ticket_ttl_seconds` | u64 | `60` | SSO ticket TTL 秒数 |
+| `remember_me_enabled` | bool | `false` | 是否启用 remember-me 扩展会话超时 |
+| `remember_me_timeout` | i64 | `7776000`（90 天） | remember-me 会话超时秒数 |
+| `max_login_count` | u32 | `0` | 最大登录数量（0 不限制） |
+| `device_binding_mode` | String | `disabled` | 设备绑定模式（`strict` / `loose` / `disabled`） |
+| `auto_renewal_threshold` | i64 | `-1` | 自动续签阈值百分比（-1 不启用） |
+| `session_hover_timeout` | i64 | `-1` | 会话悬停超时秒数（-1 不启用） |
+
+> 完整配置项列表（含 feature-gated 配置）详见 [docs/CONFIGURATION.md](../docs/CONFIGURATION.md)。
 
 ## 环境变量覆盖
 
@@ -49,16 +62,30 @@ let config = GarrisonConfig::load(None)?;
 | `GARRISON_TOKEN_NAME` | `custom_token` | 覆盖 token_name |
 | `GARRISON_TIMEOUT` | `3600` | 覆盖 timeout |
 | `GARRISON_ACTIVE_TIMEOUT` | `-1` | 覆盖 active_timeout |
+| `GARRISON_IS_SHARE` | `true` | 覆盖 is_share |
+| `GARRISON_IS_CONCURRENT` | `true` | 覆盖 is_concurrent |
 | `GARRISON_IS_READ_COOKIE` | `false` | 覆盖布尔字段（仅支持 true/false，大小写不敏感） |
 | `GARRISON_IS_READ_HEADER` | `true` | 覆盖 is_read_header |
 | `GARRISON_IS_WRITE_HEADER` | `true` | 覆盖 is_write_header |
+| `GARRISON_IS_READ_BODY` | `false` | 覆盖 is_read_body |
+| `GARRISON_IS_WRITE_COOKIE` | `false` | 覆盖 is_write_cookie |
 | `GARRISON_TOKEN_STYLE` | `jwt` | 覆盖 token_style |
 | `GARRISON_THROW_ON_NOT_LOGIN` | `false` | 覆盖 throw_on_not_login |
 | `GARRISON_COOKIE_SECURE` | `true` | 覆盖 cookie_secure |
 | `GARRISON_COOKIE_SAME_SITE` | `Strict` | 覆盖 cookie_same_site |
+| `GARRISON_FRONTEND_SEPARATION` | `true` | 覆盖 frontend_separation |
 | `GARRISON_JWT_ALGORITHM` | `HS512` | 覆盖 jwt_algorithm |
+| `GARRISON_JWT_SECRET` | `your-secret` | 覆盖 jwt_secret |
 | `GARRISON_SIGN_WINDOW_SECONDS` | `600` | 覆盖 sign_window_seconds |
 | `GARRISON_SSO_TICKET_TTL_SECONDS` | `120` | 覆盖 sso_ticket_ttl_seconds |
+| `GARRISON_REMEMBER_ME_ENABLED` | `true` | 覆盖 remember_me_enabled |
+| `GARRISON_REMEMBER_ME_TIMEOUT` | `7776000` | 覆盖 remember_me_timeout |
+| `GARRISON_MAX_LOGIN_COUNT` | `5` | 覆盖 max_login_count |
+| `GARRISON_DEVICE_BINDING_MODE` | `strict` | 覆盖 device_binding_mode |
+| `GARRISON_AUTO_RENEWAL_THRESHOLD` | `80` | 覆盖 auto_renewal_threshold |
+| `GARRISON_SESSION_HOVER_TIMEOUT` | `600` | 覆盖 session_hover_timeout |
+| `GARRISON_TENANT_ISOLATION__ENABLED` | `true` | 覆盖 tenant_isolation.enabled |
+| `GARRISON_TENANT_ISOLATION__RESOLVER` | `header` | 覆盖 tenant_isolation.resolver |
 
 布尔值仅支持 `true` / `false`（大小写不敏感）。整数按 `i64`/`u64` 解析；其他值视为字符串。非法数值或非合法枚举值会返回 `GarrisonError::Config`。
 

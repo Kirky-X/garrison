@@ -31,11 +31,11 @@ let roles = GarrisonUtil::get_role_list().await?;
 ```rust
 #[async_trait]
 impl GarrisonInterface for MyInterface {
-    async fn get_permission_list(&self, login_id: i64) -> GarrisonResult<Vec<String>> {
+    async fn get_permission_list(&self, login_id: &str) -> GarrisonResult<Vec<String>> {
         // 从业务数据库查询用户权限码
         Ok(db.query_permissions(login_id).await?)
     }
-    async fn get_role_list(&self, login_id: i64) -> GarrisonResult<Vec<String>> {
+    async fn get_role_list(&self, login_id: &str) -> GarrisonResult<Vec<String>> {
         Ok(db.query_roles(login_id).await?)
     }
 }

@@ -1,7 +1,7 @@
 # 协议层（JWT / OAuth2 / SSO / Sign / APIKey / Temp / OIDC / ScopeHandler / SsoServer）
 
 协议层通过 feature 门控，提供主流鉴权协议的签发与校验能力。0.4.0 补齐了 0.2.0 遗留的协议层 gap，
-新增 OIDC / ScopeHandler / SsoServer 三项协议能力，以及 AloneCache / ParameterQuery 两项扩展能力。
+新增 OIDC / ScopeHandler / SsoServer 三项协议能力。
 
 ## 模块总览
 
@@ -16,8 +16,7 @@
 | OIDC | `protocol::oauth2::oidc` | `protocol-oidc` | `OidcHandler`（sign_id_token / verify_id_token / discovery） | 0.4.0 |
 | ScopeHandler | `protocol::oauth2::scope` | `oauth2-scope-handler` | `ScopeHandler` trait + `ScopeRegistry` | 0.4.0 |
 | SsoServer | `protocol::sso::server` | `protocol-sso-server` | `SsoServer` trait + `DefaultSsoServer` + `CenterIdConverter` | 0.4.0 |
-| AloneCache | `dao::alone_cache` | `alone-cache` | `AloneCache` 装饰器 + `AloneCacheManager` | 0.4.0 |
-| ParameterQuery | `stp::parameter` | `parameter-query` | `ParameterQuery` trait + `ParameterQueryBuilder` | 0.4.0 |
+<!-- AloneCache 和 ParameterQuery 属于扩展层而非协议层，详见 architecture.md 扩展层章节 -->
 
 ## JWT（HS256 / HS512）
 
@@ -179,6 +178,8 @@ let login_id = server.validate_ticket(&ticket, 2001).await?;
 - `revoke(token)` 主动吊销
 - `consume(token)` 一次性消费（使用后失效）
 - `GarrisonSession::link_temp_credential` 关联会话
+
+> 以下 AloneCache 和 ParameterQuery 属于 **扩展层**（非协议层），详见 [架构文档](./architecture.md) 扩展层章节。
 
 ## AloneCache（0.4.0 新增，gap #6）
 

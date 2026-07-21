@@ -49,7 +49,7 @@ Garrison 分为四层模块，由 feature flag 控制编译裁剪：
 graph TB
     subgraph CoreLayer["核心模块（always on）"]
         core[core<br/>token / permission / auth]
-        stp[stp<br/>GarrisonLogic / GarrisonUtil]
+        stp[stp<br/>GarrisonCore + 5 个子 trait / GarrisonUtil]
         session[session<br/>GarrisonSession]
         config[config<br/>GarrisonConfig]
         context[context<br/>task_local 上下文]
@@ -61,6 +61,14 @@ graph TB
         json[json<br/>JSON 模板]
         exception[exception<br/>异常类型]
         plugin[plugin<br/>插件 trait]
+        account[account<br/>凭证 / 密码策略 / 锁定 / 认证流]
+        listener[listener<br/>事件监听器]
+        error[error<br/>GarrisonError]
+        health[health<br/>健康检查]
+        state[state<br/>运行时状态]
+        i18n[i18n<br/>国际化基础层]
+        constants[constants<br/>常量定义]
+        prelude[prelude<br/>预导入]
     end
 
     subgraph ProtocolLayer["协议层（feature 门控）"]
@@ -85,15 +93,41 @@ graph TB
         secure-sign[secure-sign]
         httpbasic[secure-httpbasic]
         httpdigest[secure-httpdigest]
+        sms[sms-rate-limit]
+        confusable[secure-confusable]
+        masking[secure-masking]
+        sanitize[secure-sanitize]
+        xss[secure-xss]
     end
 
     subgraph InfraLayer["基础设施"]
         oxcache[oxcache 0.3<br/>L1 内存 + L2 redis]
         dbnexus[dbnexus 0.4<br/>SQLite / PostgreSQL / MySQL + auto-migrate]
+        sdforge[sdforge 0.4<br/>声明式路由]
+        trait-kit[trait-kit 0.3<br/>typestate DI]
+    end
+
+    subgraph ServerLayer["服务器层（feature 门控）"]
+        auth-server[auth-server<br/>独立认证服务器]
+        oauth2-server[oauth2-server<br/>OAuth2 授权服务器]
+        grpc[grpc<br/>gRPC 拦截器]
+        backend-remote[backend-remote<br/>远程后端]
+    end
+
+    subgraph WebLayer["Web 安全层（feature 门控）"]
+        web-axum[web-axum<br/>axum 适配]
+        web-actix[web-actix<br/>actix-web 适配]
+        web-warp[web-warp<br/>warp 适配]
+        waf[web-waf<br/>WAF]
+        cors[web-cors<br/>CORS]
+        csrf[web-csrf<br/>CSRF]
     end
 
     subgraph Observable["可观测性（feature 门控）"]
-        listener[listener<br/>事件监听]
+        listener-events[listener<br/>事件监听]
+        metrics[metrics-prometheus<br/>Prometheus 指标]
+        tracing[tracing-log<br/>结构化日志]
+        otlp[observability-otlp<br/>OTLP 分布式追踪]
     end
 
     CoreLayer --> InfraLayer
@@ -101,6 +135,9 @@ graph TB
     ExtensionLayer --> CoreLayer
     SecureLayer --> CoreLayer
     Observable --> CoreLayer
+    ServerLayer --> CoreLayer
+    ServerLayer --> InfraLayer
+    WebLayer --> CoreLayer
 ```
 
 ### 2.1 核心模块（always on，无 feature flag）
@@ -108,9 +145,9 @@ graph TB
 | 模块 | 职责 |
 |------|------|
 | `core/` | 核心层：`core/token`（Token 生成校验）、`core/permission`（权限校验）、`core/auth`（登录鉴权） |
-| `stp/` | `GarrisonLogic` trait + `GarrisonInterface` trait + `GarrisonUtil` 静态门面 |
+| `stp/` | `GarrisonCore` + 5 个子 trait（`SessionLogic` / `PermissionLogic` / `TokenLogic` / `MfaLogic` / `PasswordLogic`）+ `GarrisonInterface` trait + `GarrisonUtil` 静态门面 |
 | `session/` | `GarrisonSession` 会话模型（Account + Token 双模） |
-| `config/` | `GarrisonConfig` 全局配置 + `ConfigLoader` trait + 热更新 |
+| `config/` | `GarrisonConfig` 全局配置 + 热更新 |
 | `context/` | `GarrisonContext` 请求上下文抽象 + axum 适配器 + task_local |
 | `dao/` | `GarrisonDao` trait + dbnexus 实现 |
 | `strategy/` | `GarrisonPermissionStrategy` 权限策略 |
@@ -153,6 +190,11 @@ graph TB
 | `secure/sign` | `secure-sign` | HMAC 签名工具 |
 | `secure/httpbasic` | `secure-httpbasic` | HTTP Basic 认证 |
 | `secure/httpdigest` | `secure-httpdigest` | HTTP Digest 认证 |
+| `secure/sms` | `sms-rate-limit` | SMS 验证码限速 |
+| `secure/confusable` | `secure-confusable` | Unicode 同形异义字检测 |
+| `secure/masking` | `secure-masking` | 敏感数据脱敏（regex 真实脱敏） |
+| `secure/sanitize` | `secure-sanitize` | 通用输入消毒 |
+| `secure/xss` | `secure-xss` | XSS 防护 |
 
 ---
 
@@ -224,7 +266,7 @@ sequenceDiagram
     participant TL as task_local CURRENT_TOKEN
     participant BU as GarrisonUtil
     participant BM as GarrisonManager
-    participant BL as GarrisonLogic
+    participant BL as GarrisonLogicDefault
     participant BS as GarrisonSession
     participant BD as GarrisonDao
     participant OC as oxcache (L1 内存 + L2 redis)
@@ -294,7 +336,7 @@ sequenceDiagram
 
 **方案**：
 
-- 所有核心抽象（`GarrisonLogic` / `GarrisonDao` / `GarrisonContext` / `GarrisonPermissionStrategy` / `GarrisonListener`）均以 trait 定义。
+- 所有核心抽象（`GarrisonCore` + 5 个子 trait / `GarrisonDao` / `GarrisonContext` / `GarrisonPermissionStrategy` / `GarrisonListener`）均以 trait 定义。
 - 框架提供默认实现，业务方实现 trait 后通过 `GarrisonManager::init()` 注入即可覆盖。
 - 优点：扩展点清晰，符合 Rust 的零成本抽象哲学。
 

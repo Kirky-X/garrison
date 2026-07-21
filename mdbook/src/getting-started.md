@@ -42,6 +42,19 @@ use std::sync::Arc;
 use garrison::prelude::*;
 use garrison::dao::{init_dbnexus, GarrisonMigration};
 use garrison::stp::LoginParams;
+use async_trait::async_trait;
+
+// 业务方实现 GarrisonInterface（提供权限/角色数据）
+struct MyInterface;
+#[async_trait]
+impl GarrisonInterface for MyInterface {
+    async fn get_permission_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
+        Ok(vec!["user:read".into(), "user:write".into()])
+    }
+    async fn get_role_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
+        Ok(vec!["user".into()])
+    }
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -58,15 +71,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     //    必须在所有 GarrisonUtil 静态方法调用前完成
     GarrisonManager::init(dao, config, interface)?;
 
-    // 4. 执行登录：生成 token 并写入会话
-    //    注意：login / check_login 依赖 task_local 上下文中的当前 token，
-    //    通常由 web 中间件（如 axum middleware）设置。
-    let params = LoginParams::default();
-    let token = GarrisonUtil::login(1001, &params).await?;
+    // 4. 在 task_local 上下文中执行登录
+    //    login / check_login 依赖 task_local 中的当前 token
+    let token = garrison::stp::with_current_token(
+        String::new(),
+        GarrisonUtil::login("1001", &LoginParams::default()),
+    ).await?;
 
     // 5. 校验登录状态
-    let logged_in = GarrisonUtil::check_login().await?;
+    let logged_in = garrison::stp::with_current_token(
+        token.clone(),
+        GarrisonUtil::check_login(),
+    ).await?;
     assert!(logged_in);
+
+    // 6. 登出
+    garrison::stp::with_current_token(
+        token.clone(),
+        GarrisonUtil::logout(),
+    ).await?;
+
     Ok(())
 }
 ```
@@ -74,7 +98,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ## 关键约束
 
 - `GarrisonManager::init` 是同步函数（非 async），必须在所有 `GarrisonUtil` API 调用前完成，否则返回未初始化错误。
-- `login` / `check_login` 依赖 `task_local` 中的当前 token，需通过 web 中间件（如 `GarrisonLayer`）注入。
+- `login` / `check_login` 依赖 `task_local` 中的当前 token，需通过 web 中间件（如 `garrison_middleware`）或在测试中通过 `with_current_token()` 包装注入。
 - 首次启动需调用 `GarrisonMigration::new(pool).run_all()` 完成数据库建表（幂等）。
 
 ## 下一步
