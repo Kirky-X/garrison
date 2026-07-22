@@ -15,6 +15,15 @@ use crate::error::{GarrisonError, GarrisonResult};
 use dbnexus::DbPool;
 use std::path::{Path, PathBuf};
 
+/// 编译时嵌入的 postgres 迁移文件目录。
+///
+/// 用 `include_dir::include_dir!` 宏在编译期将 `migrations/postgres/` 目录树
+/// 完整嵌入二进制产物。启用 `embedded-migrations` feature 时可用，
+/// 配合 [`GarrisonMigration::run_embedded_postgres`] 供 crates.io 消费者
+/// 在运行时无需访问 garrison 源码目录即可执行 postgres schema 迁移。
+#[cfg(feature = "embedded-migrations")]
+static POSTGRES_MIGRATIONS: include_dir::Dir<'_> = include_dir::include_dir!("migrations/postgres");
+
 /// 初始化 dbnexus 连接池（最常用入口）。
 ///
 /// 对应 tasks.md 3.4：封装 dbnexus 初始化逻辑。
@@ -106,6 +115,40 @@ impl GarrisonMigration {
         Ok(total)
     }
 
+    /// 执行嵌入的 postgres 迁移文件（不需文件系统访问）。
+    ///
+    /// 将编译时 `include_dir!` 嵌入的 `migrations/postgres/` 目录内容
+    /// 写到 `tempfile::tempdir()` 临时目录，再调用 `DbPool::run_migrations`
+    /// 执行迁移。完全复用 dbnexus 的迁移历史记录、版本过滤、事务逻辑。
+    ///
+    /// 适用于 crates.io 消费者：运行时无需访问 garrison crate 源码目录
+    /// （如 sinnan 作为 crates.io 依赖消费 garrison 时，工作目录没有
+    /// `migrations/postgres/` 子目录）。
+    ///
+    /// # Errors
+    ///
+    /// 返回 [`GarrisonError::Dao`] 的场景：
+    /// - 临时目录创建失败
+    /// - 嵌入文件写入失败
+    /// - dbnexus 迁移执行失败（SQL 语法错误、版本冲突等）
+    #[cfg(feature = "embedded-migrations")]
+    pub async fn run_embedded_postgres(&self) -> GarrisonResult<u32> {
+        let temp_dir = tempfile::tempdir()
+            .map_err(|e| GarrisonError::Dao(format!("embedded-migrations-tempdir::{e}")))?;
+
+        // 将嵌入的 postgres 迁移文件写到临时目录
+        copy_embedded_dir(&POSTGRES_MIGRATIONS, temp_dir.path())
+            .map_err(|e| GarrisonError::Dao(format!("embedded-migrations-write::{e}")))?;
+
+        // 复用 dbnexus run_migrations 从临时目录执行迁移
+        self.pool
+            .run_migrations(temp_dir.path())
+            .await
+            .map_err(|e| {
+                GarrisonError::Dao(format!("dao-dbnexus-migrate-embedded-postgres::{}", e))
+            })
+    }
+
     /// 执行指定目录的迁移文件。
     ///
     /// 不存在的目录返回 0（不报错，符合 dbnexus scan_migrations 行为）。
@@ -114,6 +157,47 @@ impl GarrisonMigration {
             GarrisonError::Dao(format!("dao-dbnexus-migrate::{}::{}", dir.display(), e))
         })
     }
+}
+
+/// 递归复制 `include_dir::Dir` 到文件系统目标目录。
+///
+/// 供 [`GarrisonMigration::run_embedded_postgres`] 使用：将编译时嵌入的
+/// `migrations/postgres/` 目录树（含 `core/` 等子目录）展开到临时目录，
+/// 以便复用 `DbPool::run_migrations` 从文件系统读取迁移文件。
+///
+/// 注意：`include_dir::DirEntry::File::path()` 返回相对于**根嵌入目录**的路径
+/// （如 `core/001_init.sql`），递归处理子目录时必须只取 `file_name()`，
+/// 否则会重复创建 `core/core/` 嵌套目录。
+///
+/// # Errors
+///
+/// 返回 `std::io::Error` 的场景：
+/// - 创建目录失败（权限不足、路径无效等）
+/// - 写入文件失败（磁盘满、路径无效等）
+#[cfg(feature = "embedded-migrations")]
+fn copy_embedded_dir(dir: &include_dir::Dir, dest: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dest)?;
+    for entry in dir.entries() {
+        match entry {
+            include_dir::DirEntry::Dir(sub_dir) => {
+                let sub_dest = dest.join(sub_dir.path().file_name().unwrap_or_else(|| {
+                    panic!("embedded migration subdirectory must have valid name")
+                }));
+                copy_embedded_dir(sub_dir, &sub_dest)?;
+            },
+            include_dir::DirEntry::File(file) => {
+                // file.path() 返回相对于根的路径（如 "core/001_init.sql"），
+                // 递归到子目录时只取 file_name 避免 core/core/ 嵌套
+                let file_name = file
+                    .path()
+                    .file_name()
+                    .expect("embedded migration file must have valid name");
+                let file_dest = dest.join(file_name);
+                std::fs::write(&file_dest, file.contents())?;
+            },
+        }
+    }
+    Ok(())
 }
 
 #[cfg(all(test, feature = "db-sqlite"))]
@@ -527,5 +611,133 @@ mod tests {
         )
         .await;
         assert_eq!(status, "active", "status 应为 active");
+    }
+}
+
+/// 嵌入式 postgres 迁移测试模块。
+///
+/// 独立于 `tests` 模块（`#[cfg(all(test, feature = "db-sqlite"))]`），
+/// 因为 embedded-migrations 由 `db-postgres` 透传启用，
+/// 验证标准 `cargo test --features db-postgres` 不一定启用 `db-sqlite`。
+/// 两个模块各自独立门控，避免 feature cfg 冲突（规则 4：不混合两种模式）。
+#[cfg(all(test, feature = "embedded-migrations"))]
+mod embedded_migrations_tests {
+    use super::*;
+
+    // ========================================================================
+    // 单元测试（不需数据库，验证 include_dir! 嵌入与文件写入逻辑）
+    // ========================================================================
+
+    /// 验证 POSTGRES_MIGRATIONS 嵌入了 6 个 postgres core SQL 文件。
+    ///
+    /// Scenario: 编译时 include_dir!("migrations/postgres") 嵌入成功。
+    /// WHEN POSTGRES_MIGRATIONS.get_dir("core")
+    /// THEN core 目录存在且包含 6 个 .sql 文件（001_init ~ 006_user_devices）
+    #[test]
+    fn embedded_postgres_migrations_contain_6_core_files() {
+        let core_dir = POSTGRES_MIGRATIONS
+            .get_dir("core")
+            .expect("migrations/postgres/core 必须被嵌入");
+        let sql_files: Vec<_> = core_dir
+            .files()
+            .filter(|f| f.path().extension().map_or(false, |ext| ext == "sql"))
+            .collect();
+        assert_eq!(
+            sql_files.len(),
+            6,
+            "postgres core 迁移必须有 6 个 SQL 文件，实际: {sql_files:?}"
+        );
+        // 验证文件名边界（按版本号约定）
+        let names: Vec<String> = sql_files
+            .iter()
+            .filter_map(|f| {
+                f.path()
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .map(String::from)
+            })
+            .collect();
+        assert!(
+            names.iter().any(|n| n.starts_with("001_")),
+            "必须包含 001_init.sql，实际: {names:?}"
+        );
+        assert!(
+            names.iter().any(|n| n.starts_with("006_")),
+            "必须包含 006_user_devices.sql，实际: {names:?}"
+        );
+    }
+
+    /// 验证 copy_embedded_dir 将嵌入目录正确写入临时目录。
+    ///
+    /// Scenario: 递归复制 include_dir::Dir 到文件系统。
+    /// WHEN copy_embedded_dir(&POSTGRES_MIGRATIONS, tempdir)
+    /// THEN tempdir/core/ 包含 6 个 .sql 文件，内容与嵌入文件一致
+    #[test]
+    fn copy_embedded_dir_writes_files_to_tempdir() {
+        let temp_dir = tempfile::tempdir().expect("创建临时目录应成功");
+        copy_embedded_dir(&POSTGRES_MIGRATIONS, temp_dir.path()).expect("复制嵌入目录应成功");
+
+        let core_dir = temp_dir.path().join("core");
+        assert!(core_dir.exists(), "core 子目录必须被创建");
+
+        let entries: Vec<_> = std::fs::read_dir(&core_dir)
+            .expect("读取 core 目录应成功")
+            .collect();
+        assert_eq!(entries.len(), 6, "core 目录必须包含 6 个 SQL 文件");
+
+        // 验证文件内容非空（写入的是真实 SQL，不是空字节）
+        for entry in entries {
+            let entry = entry.expect("读取目录项应成功");
+            let path = entry.path();
+            let content = std::fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("读取 {} 应成功: {e}", path.display()));
+            assert!(
+                !content.trim().is_empty(),
+                "文件 {} 内容不应为空",
+                path.display()
+            );
+        }
+    }
+
+    /// 验证 copy_embedded_dir 是幂等的——重复写入同一目录不报错且文件数不变。
+    ///
+    /// Scenario: 多次复制同一嵌入目录到同一目标。
+    /// WHEN copy_embedded_dir → copy_embedded_dir（再次）
+    /// THEN 第二次成功，core 目录仍为 6 个文件（覆盖写入）
+    #[test]
+    fn copy_embedded_dir_is_idempotent() {
+        let temp_dir = tempfile::tempdir().expect("创建临时目录应成功");
+        copy_embedded_dir(&POSTGRES_MIGRATIONS, temp_dir.path()).expect("第一次复制应成功");
+        copy_embedded_dir(&POSTGRES_MIGRATIONS, temp_dir.path()).expect("第二次复制应成功");
+
+        let core_dir = temp_dir.path().join("core");
+        let count = std::fs::read_dir(&core_dir)
+            .expect("读取 core 目录应成功")
+            .count();
+        assert_eq!(count, 6, "重复写入后仍应为 6 个文件");
+    }
+
+    // ========================================================================
+    // 集成测试（需要 postgres DATABASE_URL，用 #[ignore] 标记）
+    // ========================================================================
+
+    /// Scenario: run_embedded_postgres 在真实 postgres 上执行迁移。
+    /// WHEN GarrisonMigration::run_embedded_postgres()
+    /// THEN 返回值 > 0（至少一个迁移被应用），且 dbnexus_migrations 表有记录
+    #[tokio::test]
+    #[ignore = "requires postgres DATABASE_URL (set SINNAN_TEST_DATABASE_URL to run)"]
+    async fn run_embedded_postgres_creates_tables() {
+        let db_url = std::env::var("DATABASE_URL")
+            .or_else(|_| std::env::var("SINNAN_TEST_DATABASE_URL"))
+            .expect("DATABASE_URL 或 SINNAN_TEST_DATABASE_URL 必须设置才能运行此测试");
+        let pool = init_dbnexus(&db_url)
+            .await
+            .expect("init_dbnexus 应成功（数据库可达）");
+        let migration = GarrisonMigration::new(pool);
+        let count = migration
+            .run_embedded_postgres()
+            .await
+            .expect("run_embedded_postgres 应成功");
+        assert!(count > 0, "至少应应用一个迁移，实际: {count}");
     }
 }

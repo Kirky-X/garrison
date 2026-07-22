@@ -102,11 +102,18 @@ icu_time = { version = "2.2", optional = true, default-features = false, feature
 fixed_decimal = { version = "0.7", optional = true, default-features = false }
 percent-encoding = { version = "2.3", optional = true, default-features = false }
 hkdf = { version = "0.13", optional = true, default-features = false }
+# 嵌入式迁移文件（embedded-migrations feature）：编译时用 include_dir! 嵌入 postgres 迁移 SQL，
+# 供 crates.io 消费者在运行时无需访问 garrison 源码目录即可执行迁移。
+include_dir = { version = "0.7", optional = true }
+tempfile = { version = "3.27", optional = true }
 
 [dev-dependencies]
 toml = "1.0"
 tokio-test = "0.4"
 mockall = "0.15"
+# tempfile 同时存在于 [dependencies]（optional，由 embedded-migrations feature 启用，供生产代码使用）
+# 与 [dev-dependencies]（测试代码无条件可用，如 db-sqlite 下的 tempdir 测试）。
+# Cargo 允许同名 crate 同时出现在两处，dev-dep 在测试构建时优先生效。
 tempfile = "3.27"
 # serial_test 用于串行化依赖 std::env::set_var 的测试，避免多线程并发污染环境变量
 serial_test = "3"
@@ -173,8 +180,12 @@ db-base = [
 ]
 # db-sqlite 启用 sqlite embedded 驱动
 db-sqlite = ["db-base", "dbnexus/sqlite"]
-db-postgres = ["db-base", "dbnexus/postgres"]
+db-postgres = ["db-base", "dbnexus/postgres", "embedded-migrations"]
 db-mysql = ["db-base", "dbnexus/mysql"]
+
+# 嵌入式迁移文件：编译时用 include_dir! 嵌入 postgres 迁移 SQL，
+# 供 crates.io 消费者在运行时无需访问 garrison 源码目录即可执行迁移。
+embedded-migrations = ["dep:include_dir", "dep:tempfile"]
 
 # === 协议层插件 ===
 protocol-oauth2 = ["dep:reqwest", "dep:sha2", "dep:base64", "dep:percent-encoding"]
