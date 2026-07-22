@@ -125,28 +125,47 @@ impl GarrisonMigration {
     /// （如 sinnan 作为 crates.io 依赖消费 garrison 时，工作目录没有
     /// `migrations/postgres/` 子目录）。
     ///
+    /// # 子目录遍历
+    ///
+    /// dbnexus `scan_migrations` 只扫描指定目录顶层的 `.sql` 文件，**不递归子目录**。
+    /// garrison postgres 迁移按 `core/`/`extensions/`/`tenant/` 分层组织
+    /// （版本号全局唯一，参见 [`GarrisonMigration`] 文档），`copy_embedded_dir`
+    /// 会保留子目录结构（如 `temp_dir/core/001_init.sql`）。
+    /// 因此本方法遍历 `temp_dir` 的所有子目录，对每个子目录独立调用
+    /// [`GarrisonMigration::run_dir`]，累积应用迁移数。未来新增 `extensions/`
+    /// 或 `tenant/` 子目录时无需修改本方法。
+    ///
     /// # Errors
     ///
     /// 返回 [`GarrisonError::Dao`] 的场景：
     /// - 临时目录创建失败
     /// - 嵌入文件写入失败
+    /// - 临时目录读取失败（权限不足、路径无效等）
     /// - dbnexus 迁移执行失败（SQL 语法错误、版本冲突等）
     #[cfg(feature = "embedded-migrations")]
     pub async fn run_embedded_postgres(&self) -> GarrisonResult<u32> {
         let temp_dir = tempfile::tempdir()
             .map_err(|e| GarrisonError::Dao(format!("embedded-migrations-tempdir::{e}")))?;
 
-        // 将嵌入的 postgres 迁移文件写到临时目录
+        // 将嵌入的 postgres 迁移文件写到临时目录（保留 core/ 等子目录结构）
         copy_embedded_dir(&POSTGRES_MIGRATIONS, temp_dir.path())
             .map_err(|e| GarrisonError::Dao(format!("embedded-migrations-write::{e}")))?;
 
-        // 复用 dbnexus run_migrations 从临时目录执行迁移
-        self.pool
-            .run_migrations(temp_dir.path())
-            .await
-            .map_err(|e| {
-                GarrisonError::Dao(format!("dao-dbnexus-migrate-embedded-postgres::{}", e))
-            })
+        // dbnexus scan_migrations 不递归子目录，需遍历 temp_dir 的子目录逐个执行。
+        // garrison postgres 迁移按 core/extensions/tenant 分层（版本号全局唯一），
+        // 对每个子目录独立调用 run_dir，累积应用迁移数。
+        let mut total = 0;
+        let entries = std::fs::read_dir(temp_dir.path())
+            .map_err(|e| GarrisonError::Dao(format!("embedded-migrations-readdir::{e}")))?;
+        for entry in entries {
+            let entry = entry
+                .map_err(|e| GarrisonError::Dao(format!("embedded-migrations-direntry::{e}")))?;
+            let path = entry.path();
+            if path.is_dir() {
+                total += self.run_dir(&path).await?;
+            }
+        }
+        Ok(total)
     }
 
     /// 执行指定目录的迁移文件。
