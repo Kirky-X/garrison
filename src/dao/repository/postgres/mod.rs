@@ -18,7 +18,7 @@
 //!   `TEXT`→`TEXT` 保持以兼容 `try_get::<String>`）。Repository 代码零重复复用 sqlite 模块
 //!   （该模块通过 `make_statement` 已是 backend-agnostic）。
 //!
-//! ## 6 个 Repository
+//! ## 10 个 Repository
 //!
 //! | 类型别名 | 原 SQLite 类型 | trait |
 //! |:---|:---|:---|
@@ -27,6 +27,10 @@
 //! | `DbnexusPostgresPermissionRepository` | `DbnexusPermissionRepository` | [`PermissionRepository`](crate::dao::repository::PermissionRepository) |
 //! | `DbnexusPostgresUserRoleRepository` | `DbnexusUserRoleRepository` | [`UserRoleRepository`](crate::dao::repository::UserRoleRepository) |
 //! | `DbnexusPostgresRolePermissionRepository` | `DbnexusRolePermissionRepository` | [`RolePermissionRepository`](crate::dao::repository::RolePermissionRepository) |
+//! | `DbnexusPostgresAuthMethodRepository` | `DbnexusAuthMethodRepository` | [`AuthMethodRepository`](crate::dao::repository::AuthMethodRepository) |
+//! | `DbnexusPostgresSessionRepository` | `DbnexusSessionRepository` | [`SessionRepository`](crate::dao::repository::SessionRepository) |
+//! | `DbnexusPostgresLoginLogRepository` | `DbnexusLoginLogRepository` | [`LoginLogRepository`](crate::dao::repository::LoginLogRepository) |
+//! | `DbnexusPostgresUserExtRepository` | `DbnexusUserExtRepository` | [`UserExtRepository`](crate::dao::repository::UserExtRepository) |
 //! | `DbnexusPostgresUserDeviceRepository` | `DbnexusUserDeviceRepository` | [`UserDeviceRepository`](crate::dao::repository::UserDeviceRepository) |
 //!
 //! ## 使用示例
@@ -53,10 +57,14 @@
 // 自动转换占位符（SQLite ? / PostgreSQL $1,$2），因此同一份代码两种后端通用。
 // 此处仅以 Postgres 命名空间 re-export，避免代码重复（Rule 8：不重复造轮子）。
 pub use crate::dao::repository::sqlite::{
+    DbnexusAuthMethodRepository as DbnexusPostgresAuthMethodRepository,
+    DbnexusLoginLogRepository as DbnexusPostgresLoginLogRepository,
     DbnexusPermissionRepository as DbnexusPostgresPermissionRepository,
     DbnexusRolePermissionRepository as DbnexusPostgresRolePermissionRepository,
     DbnexusRoleRepository as DbnexusPostgresRoleRepository,
+    DbnexusSessionRepository as DbnexusPostgresSessionRepository,
     DbnexusUserDeviceRepository as DbnexusPostgresUserDeviceRepository,
+    DbnexusUserExtRepository as DbnexusPostgresUserExtRepository,
     DbnexusUserRepository as DbnexusPostgresUserRepository,
     DbnexusUserRoleRepository as DbnexusPostgresUserRoleRepository,
 };
