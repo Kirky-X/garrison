@@ -733,13 +733,36 @@ pub fn convert_placeholders(sql: &str, backend: sea_orm::DbBackend) -> String {
     }
     let mut result = String::with_capacity(sql.len() + 16);
     let mut n = 0u32;
-    for c in sql.chars() {
-        if c == '?' {
-            n += 1;
-            result.push('$');
-            result.push_str(&n.to_string());
-        } else {
-            result.push(c);
+    // in_string 状态机：跳过单引号字符串字面量内的 `?`，避免参数序号错位。
+    // `''` 在 SQL 标准中是字符串内转义单引号（一个字面 `'`），保持 in_string=true。
+    let mut in_string = false;
+    let mut chars = sql.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\'' if in_string => {
+                // 在字符串内遇 `'`，look-ahead 判断是否为 `''` 转义
+                if chars.peek() == Some(&'\'') {
+                    // `''` 转义：保留两个 `'`，仍在字符串内
+                    result.push('\'');
+                    result.push('\'');
+                    chars.next();
+                } else {
+                    // 字符串字面量结束
+                    result.push('\'');
+                    in_string = false;
+                }
+            },
+            '\'' => {
+                // 进入字符串字面量
+                result.push('\'');
+                in_string = true;
+            },
+            '?' if !in_string => {
+                n += 1;
+                result.push('$');
+                result.push_str(&n.to_string());
+            },
+            c => result.push(c),
         }
     }
     result
@@ -1153,6 +1176,56 @@ mod tests {
         let sql = "VALUES (?, ?, ?, ?, ?)";
         let result = convert_placeholders(sql, DbBackend::Postgres);
         assert_eq!(result, "VALUES ($1, $2, $3, $4, $5)");
+    }
+
+    /// T001：Postgres 后端跳过单引号字符串字面量内的 `?`，引号外仍替换为 `$n`。
+    ///
+    /// 场景：SQL 注释/字面量中的 `?`（如 `note = '?'`）不应被当作占位符替换，
+    /// 否则参数序号错位导致后续 `$n` 与绑定参数不匹配。
+    #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
+    #[test]
+    fn convert_placeholders_skips_question_mark_inside_string_literal() {
+        use sea_orm::DbBackend;
+        let sql = "SELECT * FROM t WHERE note = '?' AND id = ?";
+        let result = convert_placeholders(sql, DbBackend::Postgres);
+        assert_eq!(
+            result, "SELECT * FROM t WHERE note = '?' AND id = $1",
+            "引号内 ? 不应替换，引号外 ? 应替换为 $1"
+        );
+    }
+
+    /// T002：Postgres 后端处理连续 `''` 转义单引号后仍正确替换占位符。
+    ///
+    /// 场景：SQL 字面量 `''` 表示一个字面单引号字符（不结束字符串），
+    /// 因此 `'' AS empty` 之后 `?` 仍在字符串外，应被替换为 `$1`。
+    #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
+    #[test]
+    fn convert_placeholders_handles_escaped_single_quote() {
+        use sea_orm::DbBackend;
+        let sql = "SELECT '' AS empty, ? AS v";
+        let result = convert_placeholders(sql, DbBackend::Postgres);
+        assert_eq!(
+            result, "SELECT '' AS empty, $1 AS v",
+            "连续 '' 转义单引号后 ? 仍应替换为 $1"
+        );
+    }
+
+    /// T002-supplement：覆盖 SQL 字符串字面量内的 `''` 转义分支（L743-L748）。
+    ///
+    /// 场景：SQL 标准中字符串字面量内的 `''` 表示一个字面单引号字符
+    /// （不结束字符串），如 `'a''b'` 表示字符串 `a'b`。状态机应保持
+    /// `in_string=true`，使转义后的 `?` 在字符串外被替换为 `$1`。
+    /// T002 仅覆盖独立 `''`（空字符串字面量），未触发字符串内转义分支。
+    #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
+    #[test]
+    fn convert_placeholders_handles_escaped_quote_inside_string_literal() {
+        use sea_orm::DbBackend;
+        let sql = "SELECT 'a''b' AS s, ? AS v";
+        let result = convert_placeholders(sql, DbBackend::Postgres);
+        assert_eq!(
+            result, "SELECT 'a''b' AS s, $1 AS v",
+            "字符串字面量内 '' 转义分支：状态机应保持 in_string=true，转义后 ? 应替换为 $1"
+        );
     }
 
     // ========================================================================
