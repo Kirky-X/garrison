@@ -89,7 +89,7 @@ repos:
 
   # === 拼写检查 ===
   - repo: https://github.com/codespell-project/codespell
-    rev: v2.3.0
+    rev: v2.4.3
     hooks:
       - id: codespell
         exclude: '^(docs/archive|temp|vendor)/.*$'
