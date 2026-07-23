@@ -102,6 +102,27 @@ impl UserCacheService {
             .clone()
     }
 
+    /// 获取 per-key singleflight write lock 并执行 future（缓存击穿防御 + CWE-770 清理）。
+    ///
+    /// 与 [`crate::session::GarrisonSession::with_token_session_lock`] 范式对称：
+    /// lock + guard + `f.await` + 清理内聚于 helper，调用方传 closure。
+    ///
+    /// 清理逻辑：先 drop guard 再 drop lock（Arc clone），使 strong_count 减到 1
+    ///（只剩 DashMap 中的 entry），再 `remove_if` 移除；防止高基数 key 长期运行导致 OOM。
+    async fn with_singleflight_lock<F, R>(&self, key: &str, f: F) -> R
+    where
+        F: std::future::Future<Output = R>,
+    {
+        let lock = self.singleflight_lock(key);
+        let _guard = lock.write().await;
+        let result = f.await;
+        drop(_guard);
+        drop(lock);
+        self.singleflight_locks
+            .remove_if(key, |_, l| Arc::strong_count(l) == 1);
+        result
+    }
+
     /// 返回 L1 缓存 TTL（秒）。
     pub fn l1_ttl_secs(&self) -> u64 {
         self.l1_ttl_secs
@@ -143,50 +164,50 @@ impl UserCacheService {
             return Ok(perms);
         }
 
-        // Singleflight: per-key write lock，防止并发重复加载（缓存击穿）
-        let lock = self.singleflight_lock(&key);
-        let _guard = lock.write().await;
+        // Singleflight: per-key write lock + 加载后自动清理（CWE-770 防御，对齐 with_token_session_lock 范式）
+        self.with_singleflight_lock(&key, async {
+            // Double-check L1（在等待 write lock 期间，可能已被其他任务加载并回填 L1）
+            if let Some(cached) = self
+                .l1
+                .get(&key)
+                .await
+                .map_err(|e| GarrisonError::Internal(format!("cache-l1-get::{}", e)))?
+            {
+                let perms: Vec<String> = serde_json::from_str(&cached)
+                    .map_err(|e| GarrisonError::Internal(format!("cache-l1-perm-deser::{}", e)))?;
+                return Ok(perms);
+            }
 
-        // Double-check L1（在等待 write lock 期间，可能已被其他任务加载并回填 L1）
-        if let Some(cached) = self
-            .l1
-            .get(&key)
-            .await
-            .map_err(|e| GarrisonError::Internal(format!("cache-l1-get::{}", e)))?
-        {
-            let perms: Vec<String> = serde_json::from_str(&cached)
-                .map_err(|e| GarrisonError::Internal(format!("cache-l1-perm-deser::{}", e)))?;
-            return Ok(perms);
-        }
+            // L2 check
+            if let Some(cached) = self.dao.get(&key).await? {
+                // Backfill L1
+                self.l1
+                    .set_with_ttl(&key, &cached, Some(Duration::from_secs(self.l1_ttl_secs)))
+                    .await
+                    .map_err(|e| GarrisonError::Internal(format!("cache-l1-set::{}", e)))?;
+                let perms: Vec<String> = serde_json::from_str(&cached)
+                    .map_err(|e| GarrisonError::Internal(format!("cache-l2-perm-deser::{}", e)))?;
+                return Ok(perms);
+            }
 
-        // L2 check
-        if let Some(cached) = self.dao.get(&key).await? {
-            // Backfill L1
+            // L3 query
+            let perms = self.interface.get_permission_list(login_id).await?;
+            let serialized = serde_json::to_string(&perms)
+                .map_err(|e| GarrisonError::Internal(format!("cache-perm-serialize::{}", e)))?;
+            // Backfill L1 + L2
             self.l1
-                .set_with_ttl(&key, &cached, Some(Duration::from_secs(self.l1_ttl_secs)))
+                .set_with_ttl(
+                    &key,
+                    &serialized,
+                    Some(Duration::from_secs(self.l1_ttl_secs)),
+                )
                 .await
                 .map_err(|e| GarrisonError::Internal(format!("cache-l1-set::{}", e)))?;
-            let perms: Vec<String> = serde_json::from_str(&cached)
-                .map_err(|e| GarrisonError::Internal(format!("cache-l2-perm-deser::{}", e)))?;
-            return Ok(perms);
-        }
+            self.dao.set(&key, &serialized, self.l2_ttl_secs).await?;
 
-        // L3 query
-        let perms = self.interface.get_permission_list(login_id).await?;
-        let serialized = serde_json::to_string(&perms)
-            .map_err(|e| GarrisonError::Internal(format!("cache-perm-serialize::{}", e)))?;
-        // Backfill L1 + L2
-        self.l1
-            .set_with_ttl(
-                &key,
-                &serialized,
-                Some(Duration::from_secs(self.l1_ttl_secs)),
-            )
-            .await
-            .map_err(|e| GarrisonError::Internal(format!("cache-l1-set::{}", e)))?;
-        self.dao.set(&key, &serialized, self.l2_ttl_secs).await?;
-
-        Ok(perms)
+            Ok(perms)
+        })
+        .await
     }
 
     /// 获取主体的角色列表（三层缓存查询）。
@@ -220,50 +241,50 @@ impl UserCacheService {
             return Ok(roles);
         }
 
-        // Singleflight: per-key write lock，防止并发重复加载（缓存击穿）
-        let lock = self.singleflight_lock(&key);
-        let _guard = lock.write().await;
+        // Singleflight: per-key write lock + 加载后自动清理（CWE-770 防御，对齐 with_token_session_lock 范式）
+        self.with_singleflight_lock(&key, async {
+            // Double-check L1
+            if let Some(cached) = self
+                .l1
+                .get(&key)
+                .await
+                .map_err(|e| GarrisonError::Internal(format!("cache-l1-get::{}", e)))?
+            {
+                let roles: Vec<String> = serde_json::from_str(&cached)
+                    .map_err(|e| GarrisonError::Internal(format!("cache-l1-role-deser::{}", e)))?;
+                return Ok(roles);
+            }
 
-        // Double-check L1
-        if let Some(cached) = self
-            .l1
-            .get(&key)
-            .await
-            .map_err(|e| GarrisonError::Internal(format!("cache-l1-get::{}", e)))?
-        {
-            let roles: Vec<String> = serde_json::from_str(&cached)
-                .map_err(|e| GarrisonError::Internal(format!("cache-l1-role-deser::{}", e)))?;
-            return Ok(roles);
-        }
+            // L2 check
+            if let Some(cached) = self.dao.get(&key).await? {
+                // Backfill L1
+                self.l1
+                    .set_with_ttl(&key, &cached, Some(Duration::from_secs(self.l1_ttl_secs)))
+                    .await
+                    .map_err(|e| GarrisonError::Internal(format!("cache-l1-set::{}", e)))?;
+                let roles: Vec<String> = serde_json::from_str(&cached)
+                    .map_err(|e| GarrisonError::Internal(format!("cache-l2-role-deser::{}", e)))?;
+                return Ok(roles);
+            }
 
-        // L2 check
-        if let Some(cached) = self.dao.get(&key).await? {
-            // Backfill L1
+            // L3 query
+            let roles = self.interface.get_role_list(login_id).await?;
+            let serialized = serde_json::to_string(&roles)
+                .map_err(|e| GarrisonError::Internal(format!("cache-role-serialize::{}", e)))?;
+            // Backfill L1 + L2
             self.l1
-                .set_with_ttl(&key, &cached, Some(Duration::from_secs(self.l1_ttl_secs)))
+                .set_with_ttl(
+                    &key,
+                    &serialized,
+                    Some(Duration::from_secs(self.l1_ttl_secs)),
+                )
                 .await
                 .map_err(|e| GarrisonError::Internal(format!("cache-l1-set::{}", e)))?;
-            let roles: Vec<String> = serde_json::from_str(&cached)
-                .map_err(|e| GarrisonError::Internal(format!("cache-l2-role-deser::{}", e)))?;
-            return Ok(roles);
-        }
+            self.dao.set(&key, &serialized, self.l2_ttl_secs).await?;
 
-        // L3 query
-        let roles = self.interface.get_role_list(login_id).await?;
-        let serialized = serde_json::to_string(&roles)
-            .map_err(|e| GarrisonError::Internal(format!("cache-role-serialize::{}", e)))?;
-        // Backfill L1 + L2
-        self.l1
-            .set_with_ttl(
-                &key,
-                &serialized,
-                Some(Duration::from_secs(self.l1_ttl_secs)),
-            )
-            .await
-            .map_err(|e| GarrisonError::Internal(format!("cache-l1-set::{}", e)))?;
-        self.dao.set(&key, &serialized, self.l2_ttl_secs).await?;
-
-        Ok(roles)
+            Ok(roles)
+        })
+        .await
     }
 
     /// 获取用户基本信息（三层缓存查询）。
@@ -298,41 +319,41 @@ impl UserCacheService {
             return Ok(Some(cached));
         }
 
-        // Singleflight: per-key write lock，防止并发重复加载（缓存击穿）
-        let lock = self.singleflight_lock(&key);
-        let _guard = lock.write().await;
-
-        // Double-check L1
-        if let Some(cached) = self
-            .l1
-            .get(&key)
-            .await
-            .map_err(|e| GarrisonError::Internal(format!("cache-l1-get::{}", e)))?
-        {
-            return Ok(Some(cached));
-        }
-
-        // L2 check
-        if let Some(cached) = self.dao.get(&key).await? {
-            // Backfill L1
-            self.l1
-                .set_with_ttl(&key, &cached, Some(Duration::from_secs(self.l1_ttl_secs)))
+        // Singleflight: per-key write lock + 加载后自动清理（CWE-770 防御，对齐 with_token_session_lock 范式）
+        self.with_singleflight_lock(&key, async {
+            // Double-check L1
+            if let Some(cached) = self
+                .l1
+                .get(&key)
                 .await
-                .map_err(|e| GarrisonError::Internal(format!("cache-l1-set::{}", e)))?;
-            return Ok(Some(cached));
-        }
+                .map_err(|e| GarrisonError::Internal(format!("cache-l1-get::{}", e)))?
+            {
+                return Ok(Some(cached));
+            }
 
-        // L3 query
-        let user_info = self.interface.get_user_info(login_id).await?;
-        if let Some(ref info) = user_info {
-            // Backfill L1 + L2 (only when Some, None is not cached)
-            self.l1
-                .set_with_ttl(&key, info, Some(Duration::from_secs(self.l1_ttl_secs)))
-                .await
-                .map_err(|e| GarrisonError::Internal(format!("cache-l1-set::{}", e)))?;
-            self.dao.set(&key, info, self.l2_ttl_secs).await?;
-        }
-        Ok(user_info)
+            // L2 check
+            if let Some(cached) = self.dao.get(&key).await? {
+                // Backfill L1
+                self.l1
+                    .set_with_ttl(&key, &cached, Some(Duration::from_secs(self.l1_ttl_secs)))
+                    .await
+                    .map_err(|e| GarrisonError::Internal(format!("cache-l1-set::{}", e)))?;
+                return Ok(Some(cached));
+            }
+
+            // L3 query
+            let user_info = self.interface.get_user_info(login_id).await?;
+            if let Some(ref info) = user_info {
+                // Backfill L1 + L2 (only when Some, None is not cached)
+                self.l1
+                    .set_with_ttl(&key, info, Some(Duration::from_secs(self.l1_ttl_secs)))
+                    .await
+                    .map_err(|e| GarrisonError::Internal(format!("cache-l1-set::{}", e)))?;
+                self.dao.set(&key, info, self.l2_ttl_secs).await?;
+            }
+            Ok(user_info)
+        })
+        .await
     }
 
     /// 失效指定主体的所有缓存（权限/角色/用户）。
@@ -2129,6 +2150,51 @@ mod tests {
         assert!(
             !Arc::ptr_eq(&lock1, &lock3),
             "不同 key 的 singleflight_lock 应返回不同 Arc<RwLock>"
+        );
+    }
+
+    /// T51: singleflight 加载完成后清理无等待者的 lock entry（CWE-770 防御）。
+    ///
+    /// 验证 get_permissions 触发 singleflight 加载后，`singleflight_locks` 中
+    /// 对应 key 的 entry 被清理（无残留），防止高基数 key 长期运行导致 OOM。
+    /// 复用 token_session_locks 的清理范式（session/impl.rs L185-204）：
+    /// `Arc::strong_count == 1` 时 `remove_if` 移除。
+    #[tokio::test]
+    async fn singleflight_lock_removed_after_load() {
+        let (_dao, interface, service) = make_default_service();
+        interface.set_permissions("sf-001", vec!["perm:a".to_string()]);
+
+        // 触发 singleflight 加载（L1+L2 miss → L3 query → 回填）
+        let _ = service.get_permissions("sf-001").await.unwrap();
+
+        // 加载完成后，singleflight_locks 应不含该 key
+        let expected_key = DaoKeyPrefix::PermissionCache.build_key("sf-001");
+        assert!(
+            !service.singleflight_locks.contains_key(&expected_key),
+            "singleflight_locks 应在加载完成后清理无等待者的 entry（CWE-770），实际仍含 key: {expected_key}"
+        );
+    }
+
+    /// T52: 并发加载同一 key 后 singleflight_locks 仍清理（多等待者场景）。
+    ///
+    /// 验证并发场景下，所有等待者释放 lock 后 entry 被清理。
+    #[tokio::test]
+    async fn singleflight_lock_removed_after_concurrent_load() {
+        let (_dao, interface, service) = make_default_service();
+        interface.set_permissions("sf-002", vec!["perm:b".to_string()]);
+
+        // 并发触发同一 key 的加载（service.get_permissions 接受 &self，可多次借用）
+        let r1 = service.get_permissions("sf-002");
+        let r2 = service.get_permissions("sf-002");
+        let (r1, r2) = tokio::join!(r1, r2);
+        let _ = r1.unwrap();
+        let _ = r2.unwrap();
+
+        // 并发加载完成后，singleflight_locks 应不含该 key
+        let expected_key = DaoKeyPrefix::PermissionCache.build_key("sf-002");
+        assert!(
+            !service.singleflight_locks.contains_key(&expected_key),
+            "并发加载完成后 singleflight_locks 应清理 entry（CWE-770），实际仍含 key: {expected_key}"
         );
     }
 
