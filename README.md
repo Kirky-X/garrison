@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/github/v/release/Kirky-X/garrison?include_prereleases&label=version" alt="version" />
+  <img src="https://img.shields.io/crates/v/garrison?label=version" alt="version" />
   <img src="https://img.shields.io/github/license/Kirky-X/garrison?label=license" alt="license" />
   <img src="https://img.shields.io/badge/MSRV-1.85+-orange" alt="msrv" />
   <img src="https://img.shields.io/badge/coverage-95%25%2B-brightgreen" alt="coverage" />
