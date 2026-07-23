@@ -7,6 +7,8 @@
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-07-24
+
 ### Security
 
 - **常量时间比较公共原语**（CWE-208 防御）：
@@ -61,6 +63,15 @@
 - **编造联系信息清理**：全量扫描发现 3 处编造/错误内容并修复：(1) `docs/SECURITY.md:45` 安全联系邮箱 `security@kirky.org` 为编造，修正为用户确认的 `Kirky-X@outlook.com`；(2) `mdbook/book.toml:12-13` 仓库 URL owner 写成 `garrison-rs/garrison`（其他文件均用 `Kirky-X/garrison`），修正为 `Kirky-X/garrison`；(3) `README.md`/`README_EN.md` 测试徽章 `tests-3852+ passed` 过时（0.7.2 时期数字），更新为 `tests-4116+ passed`（0.7.3 发布时实际测试数 4116 = 4051 lib + 65 E2E）。
 - **.env.example 与代码默认值不一致**：0.7.2 修正 README.md 默认值时漏改 `.env.example`，导致 3 处不一致：`GARRISON_TOKEN_NAME=garrison-token`（代码默认 `garrison_token`，连字符→下划线）、`GARRISON_TOKEN_STYLE=random-64`（代码默认 `uuid`，且 `random-64` 应为 `random_64`）、`GARRISON_IS_SHARE=true`（代码默认 `false`）。已对齐到代码默认值。
 - **.env.example 缺失 auth_server 必需环境变量**：`src/bin/auth_server.rs` 启动时硬性依赖 `GARRISON_INTERNAL_API_KEY`（fail-closed，未配置 `process::exit(1)`），以及可选的 `GARRISON_EXTERNAL_PORT`/`GARRISON_INTERNAL_PORT`/`GARRISON_RATE_LIMIT`，但 `.env.example` 未文档化。已补充 auth_server 配置段落 + Web 安全配置段落（`GARRISON_CORS_ALLOWED_ORIGINS`/`GARRISON_CSRF_ENABLED`/`GARRISON_RATE_LIMIT_BACKEND`，feature 门控注释）。
+- **发布前审查修复（v0.8.0 release gate，安全 SAST + 代码审查门禁）**：
+  - **MEDIUM-1 lost-revoke（`protocol-apikey`）**：`maybe_touch_last_used` 原用 `verify` 进入时的旧 `info` 整 JSON 覆盖写，并发 `revoke` 后会把 `revoked=true` 回退为 false（已吊销 key 复活，认证核心语义缺陷）。改为写回前 **re-read 最新值**，发现 `revoked` 即放弃更新；新增回归测试 `maybe_touch_does_not_resurrect_revoked_key`。残留 micro-race 窗口（`GarrisonDao` trait 无 CAS/字段级更新，架构上限）靠 60s 节流 + revoke 优先收敛，doc comment 已标注权衡。
+  - **LOW-1 常量时间比较统一**：删除 `protocol-apikey` 本地 `constant_time_eq` 副本，`decode_and_check` 改用公共 `crate::secure::ct_eq::constant_time_eq`；`protocol-apikey` feature 由 `dep:subtle` 改为 `secure-ct-eq`（消除第 3 处重复实现，规则 7）。
+  - **LOW-3 `sha256_hex` 分配**：`format!` 逐字节 String 分配改为 `write!` 写预分配 buffer。
+  - **LOW-4 `update_last_used` 对称**：与 `verify` 一致，对已吊销/过期 key 返回 `InvalidToken`/`ExpiredToken`，不再写入使用时间；新增回归测试 `update_last_used_rejects_revoked_key`。
+  - **LOW-5 `rotate` 并发**：doc comment 标注 `rotate` 非原子（verify→revoke→generate 跨 await），调用方应在入口加分布式锁，库层不内置锁（低频管理操作）。
+  - **LOW-2 `three_tier.rs` 测试标号**：backfill 组 T51/T52 doc 标号与 singleflight 组重复，改为 T55/T56。
+  - **LOW-6 `007` 迁移注释**：sqlite/postgres/mysql 三方言头部注释原称"003 已含字段、跳过此迁移"，与实际不符（003 不含 OAuth2 字段），修正为"新旧安装都必须执行 007"。
+  - **LOW-7 audit 长度前置**：确认 `verify_signature_chain` 对非 64 字符 signature 提前判 false 是 CWE-400（CPU DoS）与 CWE-208（时序）的合理权衡，注释已充分，不改逻辑。
 
 ### Docs
 
@@ -333,15 +344,15 @@
 
 0.8.0 将执行 cargo feature 重新划分 Phase 2（方案 B 分层重构），包含以下破坏性变更（旧名作为 alias 保留至 0.9.0）：
 
-| 0.7.x 旧名 | 0.8.0 新名 | 理由 |
-|-----------|-----------|------|
-| `rate-limit-redis` | `firewall-ratelimit-redis` | 依赖 firewall-ratelimit，应统一命名空间 |
-| `anomalous-detector-dual` | `firewall-anomalous-detector` | 依赖 firewall，应统一命名空间 |
-| `secure-simple-token` | `auth-server-simple-token` | auth-server 专用，不应位于 secure-* 命名空间 |
-| `oauth2-scope-handler` | `protocol-oauth2-scope-handler` | 应统一 protocol-* 命名空间 |
-| `audit-log` | `audit-log-listener` | 与 `audit-inklog` 区分（事件监听 vs 日志管理） |
-| `all-defaults` | （删除） | 与 `development` 重复 |
-| `firewall-maxminddb` | （合并入 `firewall-geoip`） | 前者仅是后者生产后端 |
+| 0.7.x 旧名                | 0.8.0 新名                      | 理由                                           |
+| ------------------------- | ------------------------------- | ---------------------------------------------- |
+| `rate-limit-redis`        | `firewall-ratelimit-redis`      | 依赖 firewall-ratelimit，应统一命名空间        |
+| `anomalous-detector-dual` | `firewall-anomalous-detector`   | 依赖 firewall，应统一命名空间                  |
+| `secure-simple-token`     | `auth-server-simple-token`      | auth-server 专用，不应位于 secure-* 命名空间   |
+| `oauth2-scope-handler`    | `protocol-oauth2-scope-handler` | 应统一 protocol-* 命名空间                     |
+| `audit-log`               | `audit-log-listener`            | 与 `audit-inklog` 区分（事件监听 vs 日志管理） |
+| `all-defaults`            | （删除）                        | 与 `development` 重复                          |
+| `firewall-maxminddb`      | （合并入 `firewall-geoip`）     | 前者仅是后者生产后端                           |
 
 详见 `docs/decisions/A-011-cargo-feature-reorganization.md`（待 0.8.0 创建）。
 
@@ -1764,21 +1775,21 @@ Garrison 0.2.0 在 0.1.0 核心基础设施上补全了 13 个占位特性域，
 
 ### 特性域
 
-| 特性域 | 状态 | 说明 |
-|--------|------|------|
-| 登录认证 | ✅ 完成 | 基于 Token 的会话管理 |
-| 权限认证 | ✅ 完成 | RBAC 权限模型 + PermissionChecker |
-| Session 会话 | ✅ 完成 | 双模会话 + SSO/temp 关联 |
-| 路由拦截鉴权 | ✅ 完成 | axum Web 框架适配 |
-| 插件化扩展 | ✅ 完成 | GarrisonPlugin + inventory 注册 |
-| OAuth2 | ✅ 完成 | 三种授权模式 |
-| 单点登录 (SSO) | ✅ 完成 | ticket 模型 + 跨子系统 |
-| JWT | ✅ 完成 | HS256/HS512 + refresh |
-| 微服务网关鉴权 | ✅ 完成 | API 签名认证 |
-| API 接口鉴权 | ✅ 完成 | API Key 认证 |
-| TOTP 动态验证码 | ✅ 完成 | RFC 6238 |
-| Basic 认证 | ✅ 完成 | RFC 7617 |
-| Digest 认证 | ✅ 完成 | RFC 7616 |
+| 特性域          | 状态    | 说明                              |
+| --------------- | ------- | --------------------------------- |
+| 登录认证        | ✅ 完成 | 基于 Token 的会话管理             |
+| 权限认证        | ✅ 完成 | RBAC 权限模型 + PermissionChecker |
+| Session 会话    | ✅ 完成 | 双模会话 + SSO/temp 关联          |
+| 路由拦截鉴权    | ✅ 完成 | axum Web 框架适配                 |
+| 插件化扩展      | ✅ 完成 | GarrisonPlugin + inventory 注册   |
+| OAuth2          | ✅ 完成 | 三种授权模式                      |
+| 单点登录 (SSO)  | ✅ 完成 | ticket 模型 + 跨子系统            |
+| JWT             | ✅ 完成 | HS256/HS512 + refresh             |
+| 微服务网关鉴权  | ✅ 完成 | API 签名认证                      |
+| API 接口鉴权    | ✅ 完成 | API Key 认证                      |
+| TOTP 动态验证码 | ✅ 完成 | RFC 6238                          |
+| Basic 认证      | ✅ 完成 | RFC 7617                          |
+| Digest 认证     | ✅ 完成 | RFC 7616                          |
 
 ### 已知限制
 
@@ -1859,21 +1870,21 @@ axum Web 框架集成等核心能力。
 
 ### 特性域
 
-| 特性域 | 状态 | 说明 |
-|--------|------|------|
-| 登录认证 | ✅ 完成 | 基于 Token 的会话管理 |
-| 权限认证 | ✅ 完成 | RBAC 权限模型 |
-| Session 会话 | ✅ 完成 | 双模会话生命周期管理 |
-| 路由拦截鉴权 | ✅ 完成 | axum Web 框架适配 |
-| 插件化扩展 | 🚧 占位 | 0.2.0+ 实现 |
-| OAuth2 | 🚧 占位 | 0.2.0+ 实现 |
-| 单点登录 (SSO) | 🚧 占位 | 0.2.0+ 实现 |
-| JWT | 🚧 占位 | 0.2.0+ 实现 |
-| 微服务网关鉴权 | 🚧 占位 | 0.2.0+ 实现 |
-| API 接口鉴权 | 🚧 占位 | 0.2.0+ 实现 |
-| TOTP 动态验证码 | 🚧 占位 | 0.2.0+ 实现 |
-| Basic 认证 | 🚧 占位 | 0.2.0+ 实现 |
-| Digest 认证 | 🚧 占位 | 0.2.0+ 实现 |
+| 特性域          | 状态    | 说明                  |
+| --------------- | ------- | --------------------- |
+| 登录认证        | ✅ 完成 | 基于 Token 的会话管理 |
+| 权限认证        | ✅ 完成 | RBAC 权限模型         |
+| Session 会话    | ✅ 完成 | 双模会话生命周期管理  |
+| 路由拦截鉴权    | ✅ 完成 | axum Web 框架适配     |
+| 插件化扩展      | 🚧 占位 | 0.2.0+ 实现           |
+| OAuth2          | 🚧 占位 | 0.2.0+ 实现           |
+| 单点登录 (SSO)  | 🚧 占位 | 0.2.0+ 实现           |
+| JWT             | 🚧 占位 | 0.2.0+ 实现           |
+| 微服务网关鉴权  | 🚧 占位 | 0.2.0+ 实现           |
+| API 接口鉴权    | 🚧 占位 | 0.2.0+ 实现           |
+| TOTP 动态验证码 | 🚧 占位 | 0.2.0+ 实现           |
+| Basic 认证      | 🚧 占位 | 0.2.0+ 实现           |
+| Digest 认证     | 🚧 占位 | 0.2.0+ 实现           |
 
 ### 技术栈
 
@@ -1885,26 +1896,26 @@ axum Web 框架集成等核心能力。
 
 ### 特性门控
 
-| 特性 | 默认 | 说明 |
-|------|------|------|
-| `cache-memory` | ✅ | 内存缓存后端（oxcache） |
-| `cache-redis` | ✅ | Redis 缓存后端（oxcache） |
-| `db-sqlite` | ✅ | SQLite 数据库后端（dbnexus） |
-| `web-axum` | ✅ | axum Web 框架适配 |
-| `protocol-jwt` | ❌ | JWT 支持 |
-| `protocol-oauth2` | ❌ | OAuth2 支持 |
-| `protocol-sso` | ❌ | SSO 支持 |
-| `protocol-sign` | ❌ | 签名认证 |
-| `protocol-apikey` | ❌ | API Key 认证 |
-| `secure-totp` | ❌ | TOTP 动态验证码 |
-| `secure-sign` | ❌ | 安全签名 |
-| `secure-httpbasic` | ❌ | HTTP Basic 认证 |
-| `secure-httpdigest` | ❌ | HTTP Digest 认证 |
-| `listener` | ❌ | 事件监听器 |
-| `metrics-prometheus` | ❌ | Prometheus 指标 |
-| `full` | ❌ | 聚合所有特性 |
-| `production` | ❌ | 生产环境推荐特性组合 |
-| `development` | ❌ | 开发环境特性组合 |
+| 特性                 | 默认 | 说明                         |
+| -------------------- | ---- | ---------------------------- |
+| `cache-memory`       | ✅   | 内存缓存后端（oxcache）      |
+| `cache-redis`        | ✅   | Redis 缓存后端（oxcache）    |
+| `db-sqlite`          | ✅   | SQLite 数据库后端（dbnexus） |
+| `web-axum`           | ✅   | axum Web 框架适配            |
+| `protocol-jwt`       | ❌   | JWT 支持                     |
+| `protocol-oauth2`    | ❌   | OAuth2 支持                  |
+| `protocol-sso`       | ❌   | SSO 支持                     |
+| `protocol-sign`      | ❌   | 签名认证                     |
+| `protocol-apikey`    | ❌   | API Key 认证                 |
+| `secure-totp`        | ❌   | TOTP 动态验证码              |
+| `secure-sign`        | ❌   | 安全签名                     |
+| `secure-httpbasic`   | ❌   | HTTP Basic 认证              |
+| `secure-httpdigest`  | ❌   | HTTP Digest 认证             |
+| `listener`           | ❌   | 事件监听器                   |
+| `metrics-prometheus` | ❌   | Prometheus 指标              |
+| `full`               | ❌   | 聚合所有特性                 |
+| `production`         | ❌   | 生产环境推荐特性组合         |
+| `development`        | ❌   | 开发环境特性组合             |
 
 ### 测试覆盖率
 

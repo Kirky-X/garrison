@@ -178,7 +178,7 @@ A: 推荐使用聚合 feature `production`，它包含以下子特性：
 
 ```toml
 [dependencies]
-garrison = { version = "0.7", features = ["production"] }
+garrison = { version = "0.8", features = ["production"] }
 ```
 
 `production` 等价于（参见 `Cargo.toml` 中的 `production` 聚合特性）：

@@ -79,77 +79,77 @@ The framework uses a **dual-abstraction-layer + global singleton** architecture:
 
 ## ✨ Features
 
-| Feature | Description |
-| --- | --- |
-| ⚡ **Zero Runtime Overhead** | Compile-time `inventory::submit!` factory registration — no reflection, no dynamic loading |
-| 🔒 **Full Auth Chain** | Login → Permission Check → Session Management → Route Interception, out of the box |
-| 📦 **Multi-Backend Abstraction** | `GarrisonDao` + `oxcache` + `dbnexus` — switch storage backends with zero business code changes |
-| 🔧 **Pluggable Extensions** | trait + Default pattern — replace any component (DAO / Strategy / Logic) without touching business code |
-| 🎯 **Feature Gating** | 40+ feature domains with independent flags — compile only what you need |
-| 📊 **High Observability** | `tracing` logging + `listener` event subscriptions + `prometheus` metrics (optional) |
-| 🧪 **High Coverage** | 4116+ tests passing (4051 lib + 65 E2E), 95%+ line coverage, clippy zero warnings |
-| 🌐 **Web Framework Adapters** | axum/actix/warp annotation-style extractors (`CheckLogin` / `CheckRole` / `CheckPermission` + proc macros) |
+| Feature                          | Description                                                                                                |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| ⚡ **Zero Runtime Overhead**     | Compile-time `inventory::submit!` factory registration — no reflection, no dynamic loading                 |
+| 🔒 **Full Auth Chain**           | Login → Permission Check → Session Management → Route Interception, out of the box                         |
+| 📦 **Multi-Backend Abstraction** | `GarrisonDao` + `oxcache` + `dbnexus` — switch storage backends with zero business code changes            |
+| 🔧 **Pluggable Extensions**      | trait + Default pattern — replace any component (DAO / Strategy / Logic) without touching business code    |
+| 🎯 **Feature Gating**            | 40+ feature domains with independent flags — compile only what you need                                    |
+| 📊 **High Observability**        | `tracing` logging + `listener` event subscriptions + `prometheus` metrics (optional)                       |
+| 🧪 **High Coverage**             | 4116+ tests passing (4051 lib + 65 E2E), 95%+ line coverage, clippy zero warnings                          |
+| 🌐 **Web Framework Adapters**    | axum/actix/warp annotation-style extractors (`CheckLogin` / `CheckRole` / `CheckPermission` + proc macros) |
 
 ### Feature Domain Coverage (v0.4.0–v0.6.0 Protocol Layer & Production Capabilities)
 
-| Domain | Status | Description |
-|--------|--------|-------------|
-| Login Auth | ✅ v0.1.0 | Token-based session management |
-| Permission Auth | ✅ v0.1.0 | RBAC permission model |
-| Session Management | ✅ v0.1.0 | Dual-mode session lifecycle (Account + Token) |
-| Route Interception | ✅ v0.1.0 | axum Web framework adapter |
-| JWT | ✅ v0.2.0 | JSON Web Token issuance & validation (HS256/HS512 + refresh) |
-| OAuth2 | ✅ v0.2.0 | Auth code / Client credentials / Password + v0.4.0 RefreshToken |
-| SSO | ✅ v0.2.0 | Ticket-based single sign-on (one-time, 60s TTL) |
-| Microservice Gateway | ✅ v0.2.0 | API signing + nonce anti-replay |
-| API Key Auth | ✅ v0.2.0 | API Key generation / verification / revocation / rotation |
-| Temporary Credentials | ✅ v0.2.0 | Short-lived token + issue/get/revoke/consume |
-| TOTP | ✅ v0.2.0 | RFC 6238 two-factor auth |
-| Basic Auth | ✅ v0.2.0 | HTTP Basic Auth (RFC 7617) |
-| Digest Auth | ✅ v0.2.0 | HTTP Digest Auth (RFC 7616) |
-| Plugin System | ✅ v0.2.0 | `GarrisonPlugin` trait + inventory registration |
-| Event Listeners | ✅ v0.2.0 / v0.4.2 extended | `GarrisonListener` trait + 15 event variants (9 added in v0.4.2) |
-| OIDC | ✅ v0.4.0 | id_token issuance/validation + discovery + triple anti-replay |
-| OAuth2 Scope Handler | ✅ v0.4.0 | `ScopeHandler` trait + `ScopeRegistry` |
-| SSO Server Abstraction | ✅ v0.4.0 | `SsoServer` trait + `CenterIdConverter` + `SsoChannel` |
-| AloneCache Multi-Instance | ✅ v0.4.0 | `AloneCache` decorator + `AloneCacheManager` |
-| ParameterQuery | ✅ v0.4.0 | `ParameterQuery` trait + Builder + async check_permission/check_role |
-| ~~LoginId newtype~~ | ❌ v0.5.2 removed | ~~`LoginId` enum (Numeric/String)~~ Full stack migrated to `String`/`&str` |
-| Repository Layer | ✅ v0.4.2 | 9 Repository traits + SqliteRepository (tenant_id isolation) |
-| Password Hashing | ✅ v0.4.2 | `PasswordHasher` trait + Argon2/Bcrypt + auto-detection |
-| Password Login | ✅ v0.4.2 | `login_with_password` integrating Repository + PasswordHasher |
-| Multi-Account login_type | ✅ v0.4.2 | `get_permission_list_with_type` / `get_role_list_with_type` |
-| JWT Three Modes | ✅ v0.4.2 | `JwtMode` Stateless/Mixin/Simple |
-| API Key namespace | ✅ v0.4.2 | `garrison:apikey:<namespace>:<key>` multi-tenant isolation |
-| SSO TOCTOU Fix | ✅ v0.4.2 | `GarrisonDao::get_and_delete` atomic consumption |
-| kickout_by_device | ✅ v0.4.2 | Per-device session kickout |
-| ActixContext Adapter | ✅ v0.4.2 | actix-web 4 4-piece set (ActixContext/Request/Response/Storage) |
-| WarpContext Adapter | ✅ v0.4.2 | warp 0.4 4-piece set (WarpContext/Request/Response/Storage) |
-| Strategy Registry | ✅ v0.4.2 | 6 strategy traits + `Strategy` registry + Manager integration |
-| Proc Macro Annotations | ✅ v0.4.2 | 10 attribute macros: `#[check_login]` / `#[check_permission]` / `#[check_role]` / `#[check_access_token]` / `#[check_client_token]` / `#[check_temp_token]` / `#[check_api_key]` / `#[check_mfa]` / `#[check_abac]` / `#[check_disable]` |
-| OAuth 2.1 PKCE | ✅ v0.4.2 | RFC 7636 S256 method, legacy methods deprecated |
-| Token Introspection | ✅ v0.4.2 | RFC 7662 remote token status query |
-| Multi-Tenant Isolation | ✅ v0.5.0 | `tenant_id` field + `task_local!` TenantContext + Repository mandatory filtering |
-| Social Login | ✅ v0.5.0 | WeChat QR / Alipay Provider + SocialBinding table |
-| Audit Logging | ✅ v0.5.0 | `audit_logs` table + 14 listener event subscriptions + auto-masking |
-| RefreshToken Rotation | ✅ v0.5.0 | SHA-256 hash chain + parentTokenHash + reuse detection |
-| Security Suite | ✅ v0.5.0 | 5 FirewallStrategy + MaxMindDb production backend |
-| Role Hierarchy | ✅ v0.5.0 | `role_hierarchy` table + TC precomputation + permission union cached at login |
-| Decision Tracing | ✅ v0.5.0 | `Decision{allowed, reason, errors}` + `authorize()` API |
-| Keycloak OIDC RP | ✅ v0.5.0 | `KeycloakProvider` discovery + JWKS verification |
-| PostgreSQL Backend | ✅ v0.5.0 | `db-postgres` feature + backend-agnostic SQL |
-| MySQL Backend | ✅ v0.5.3 | `db-mysql` feature + testcontainers integration tests |
-| Account Security Engine | ✅ v0.6.0 | `account/` module + Credential SPI + PasswordPolicyEngine + UserLockoutStrategy + AuthenticationFlow DSL |
-| remember-me Extended Timeout | ✅ v0.6.1 | `remember_me_enabled` / `remember_me_timeout` config + login parameter |
-| Redis Deployment Mode | ✅ v0.6.1 | `RedisDeploymentMode` enum (Single/Sentinel/Cluster/MasterSlave) |
-| Identity Switch (switch_to) | ✅ v0.6.1 | `switch_to(login_id)` session identity switching |
-| Token Renew (renew_to_equivalent) | ✅ v0.6.1 | Equivalent token renewal (preserves session state) |
-| OAuth2 Annotations | ✅ v0.6.1 | `Annotation::CheckAccessToken` / `CheckClientToken` |
-| Route Grouping group() | ✅ v0.6.1 | `GarrisonRouter::group(prefix, annotation, f)` |
-| Session Expiry Callback | ✅ v0.6.1 | `SessionExpiryListener` trait + `add_expiry_listener` |
-| SAML 2.0 Skeleton | ✅ v0.6.1 | `SamlProvider` trait + `DefaultSamlProvider` (quick-xml parsing) |
-| OIDC RP Skeleton | ✅ v0.6.1 | `OidcProvider` trait + `DefaultOidcProvider` (discovery + token exchange) |
-| Redis pub/sub SsoChannel | ✅ v0.6.1 | `RedisPubSubSsoChannel` (PUBLISH/SUBSCRIBE cross-instance communication) |
+| Domain                            | Status                      | Description                                                                                                                                                                                                                              |
+| --------------------------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Login Auth                        | ✅ v0.1.0                   | Token-based session management                                                                                                                                                                                                           |
+| Permission Auth                   | ✅ v0.1.0                   | RBAC permission model                                                                                                                                                                                                                    |
+| Session Management                | ✅ v0.1.0                   | Dual-mode session lifecycle (Account + Token)                                                                                                                                                                                            |
+| Route Interception                | ✅ v0.1.0                   | axum Web framework adapter                                                                                                                                                                                                               |
+| JWT                               | ✅ v0.2.0                   | JSON Web Token issuance & validation (HS256/HS512 + refresh)                                                                                                                                                                             |
+| OAuth2                            | ✅ v0.2.0                   | Auth code / Client credentials / Password + v0.4.0 RefreshToken                                                                                                                                                                          |
+| SSO                               | ✅ v0.2.0                   | Ticket-based single sign-on (one-time, 60s TTL)                                                                                                                                                                                          |
+| Microservice Gateway              | ✅ v0.2.0                   | API signing + nonce anti-replay                                                                                                                                                                                                          |
+| API Key Auth                      | ✅ v0.2.0                   | API Key generation / verification / revocation / rotation                                                                                                                                                                                |
+| Temporary Credentials             | ✅ v0.2.0                   | Short-lived token + issue/get/revoke/consume                                                                                                                                                                                             |
+| TOTP                              | ✅ v0.2.0                   | RFC 6238 two-factor auth                                                                                                                                                                                                                 |
+| Basic Auth                        | ✅ v0.2.0                   | HTTP Basic Auth (RFC 7617)                                                                                                                                                                                                               |
+| Digest Auth                       | ✅ v0.2.0                   | HTTP Digest Auth (RFC 7616)                                                                                                                                                                                                              |
+| Plugin System                     | ✅ v0.2.0                   | `GarrisonPlugin` trait + inventory registration                                                                                                                                                                                          |
+| Event Listeners                   | ✅ v0.2.0 / v0.4.2 extended | `GarrisonListener` trait + 15 event variants (9 added in v0.4.2)                                                                                                                                                                         |
+| OIDC                              | ✅ v0.4.0                   | id_token issuance/validation + discovery + triple anti-replay                                                                                                                                                                            |
+| OAuth2 Scope Handler              | ✅ v0.4.0                   | `ScopeHandler` trait + `ScopeRegistry`                                                                                                                                                                                                   |
+| SSO Server Abstraction            | ✅ v0.4.0                   | `SsoServer` trait + `CenterIdConverter` + `SsoChannel`                                                                                                                                                                                   |
+| AloneCache Multi-Instance         | ✅ v0.4.0                   | `AloneCache` decorator + `AloneCacheManager`                                                                                                                                                                                             |
+| ParameterQuery                    | ✅ v0.4.0                   | `ParameterQuery` trait + Builder + async check_permission/check_role                                                                                                                                                                     |
+| ~~LoginId newtype~~               | ❌ v0.5.2 removed           | ~~`LoginId` enum (Numeric/String)~~ Full stack migrated to `String`/`&str`                                                                                                                                                               |
+| Repository Layer                  | ✅ v0.4.2                   | 9 Repository traits + SqliteRepository (tenant_id isolation)                                                                                                                                                                             |
+| Password Hashing                  | ✅ v0.4.2                   | `PasswordHasher` trait + Argon2/Bcrypt + auto-detection                                                                                                                                                                                  |
+| Password Login                    | ✅ v0.4.2                   | `login_with_password` integrating Repository + PasswordHasher                                                                                                                                                                            |
+| Multi-Account login_type          | ✅ v0.4.2                   | `get_permission_list_with_type` / `get_role_list_with_type`                                                                                                                                                                              |
+| JWT Three Modes                   | ✅ v0.4.2                   | `JwtMode` Stateless/Mixin/Simple                                                                                                                                                                                                         |
+| API Key namespace                 | ✅ v0.4.2                   | `garrison:apikey:<namespace>:<key>` multi-tenant isolation                                                                                                                                                                               |
+| SSO TOCTOU Fix                    | ✅ v0.4.2                   | `GarrisonDao::get_and_delete` atomic consumption                                                                                                                                                                                         |
+| kickout_by_device                 | ✅ v0.4.2                   | Per-device session kickout                                                                                                                                                                                                               |
+| ActixContext Adapter              | ✅ v0.4.2                   | actix-web 4 4-piece set (ActixContext/Request/Response/Storage)                                                                                                                                                                          |
+| WarpContext Adapter               | ✅ v0.4.2                   | warp 0.4 4-piece set (WarpContext/Request/Response/Storage)                                                                                                                                                                              |
+| Strategy Registry                 | ✅ v0.4.2                   | 6 strategy traits + `Strategy` registry + Manager integration                                                                                                                                                                            |
+| Proc Macro Annotations            | ✅ v0.4.2                   | 10 attribute macros: `#[check_login]` / `#[check_permission]` / `#[check_role]` / `#[check_access_token]` / `#[check_client_token]` / `#[check_temp_token]` / `#[check_api_key]` / `#[check_mfa]` / `#[check_abac]` / `#[check_disable]` |
+| OAuth 2.1 PKCE                    | ✅ v0.4.2                   | RFC 7636 S256 method, legacy methods deprecated                                                                                                                                                                                          |
+| Token Introspection               | ✅ v0.4.2                   | RFC 7662 remote token status query                                                                                                                                                                                                       |
+| Multi-Tenant Isolation            | ✅ v0.5.0                   | `tenant_id` field + `task_local!` TenantContext + Repository mandatory filtering                                                                                                                                                         |
+| Social Login                      | ✅ v0.5.0                   | WeChat QR / Alipay Provider + SocialBinding table                                                                                                                                                                                        |
+| Audit Logging                     | ✅ v0.5.0                   | `audit_logs` table + 14 listener event subscriptions + auto-masking                                                                                                                                                                      |
+| RefreshToken Rotation             | ✅ v0.5.0                   | SHA-256 hash chain + parentTokenHash + reuse detection                                                                                                                                                                                   |
+| Security Suite                    | ✅ v0.5.0                   | 5 FirewallStrategy + MaxMindDb production backend                                                                                                                                                                                        |
+| Role Hierarchy                    | ✅ v0.5.0                   | `role_hierarchy` table + TC precomputation + permission union cached at login                                                                                                                                                            |
+| Decision Tracing                  | ✅ v0.5.0                   | `Decision{allowed, reason, errors}` + `authorize()` API                                                                                                                                                                                  |
+| Keycloak OIDC RP                  | ✅ v0.5.0                   | `KeycloakProvider` discovery + JWKS verification                                                                                                                                                                                         |
+| PostgreSQL Backend                | ✅ v0.5.0                   | `db-postgres` feature + backend-agnostic SQL                                                                                                                                                                                             |
+| MySQL Backend                     | ✅ v0.5.3                   | `db-mysql` feature + testcontainers integration tests                                                                                                                                                                                    |
+| Account Security Engine           | ✅ v0.6.0                   | `account/` module + Credential SPI + PasswordPolicyEngine + UserLockoutStrategy + AuthenticationFlow DSL                                                                                                                                 |
+| remember-me Extended Timeout      | ✅ v0.6.1                   | `remember_me_enabled` / `remember_me_timeout` config + login parameter                                                                                                                                                                   |
+| Redis Deployment Mode             | ✅ v0.6.1                   | `RedisDeploymentMode` enum (Single/Sentinel/Cluster/MasterSlave)                                                                                                                                                                         |
+| Identity Switch (switch_to)       | ✅ v0.6.1                   | `switch_to(login_id)` session identity switching                                                                                                                                                                                         |
+| Token Renew (renew_to_equivalent) | ✅ v0.6.1                   | Equivalent token renewal (preserves session state)                                                                                                                                                                                       |
+| OAuth2 Annotations                | ✅ v0.6.1                   | `Annotation::CheckAccessToken` / `CheckClientToken`                                                                                                                                                                                      |
+| Route Grouping group()            | ✅ v0.6.1                   | `GarrisonRouter::group(prefix, annotation, f)`                                                                                                                                                                                           |
+| Session Expiry Callback           | ✅ v0.6.1                   | `SessionExpiryListener` trait + `add_expiry_listener`                                                                                                                                                                                    |
+| SAML 2.0 Skeleton                 | ✅ v0.6.1                   | `SamlProvider` trait + `DefaultSamlProvider` (quick-xml parsing)                                                                                                                                                                         |
+| OIDC RP Skeleton                  | ✅ v0.6.1                   | `OidcProvider` trait + `DefaultOidcProvider` (discovery + token exchange)                                                                                                                                                                |
+| Redis pub/sub SsoChannel          | ✅ v0.6.1                   | `RedisPubSubSsoChannel` (PUBLISH/SUBSCRIBE cross-instance communication)                                                                                                                                                                 |
 
 ---
 
@@ -193,12 +193,12 @@ Full architecture design at [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md).
 
 ### Prerequisites
 
-| Dependency | Version | Description |
-| --- | --- | --- |
-| Rust | >= 1.85 | Toolchain (some deps require edition2024) |
-| cargo | Ships with Rust | Package manager |
-| libssl-dev | System package | Required for `cargo tarpaulin` coverage tool |
-| pkg-config | System package | Required for `cargo tarpaulin` coverage tool |
+| Dependency | Version         | Description                                  |
+| ---------- | --------------- | -------------------------------------------- |
+| Rust       | >= 1.85         | Toolchain (some deps require edition2024)    |
+| cargo      | Ships with Rust | Package manager                              |
+| libssl-dev | System package  | Required for `cargo tarpaulin` coverage tool |
+| pkg-config | System package  | Required for `cargo tarpaulin` coverage tool |
 
 > Note: No additional runtime system dependencies — `oxcache` and `dbnexus` are pure Rust.
 
@@ -208,7 +208,7 @@ Add the following to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-garrison = { version = "0.7", features = ["web-axum"] }
+garrison = { version = "0.8", features = ["web-axum"] }
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -216,7 +216,7 @@ To enable all protocol and security modules:
 
 ```toml
 [dependencies]
-garrison = { version = "0.7", features = ["full"] }
+garrison = { version = "0.8", features = ["full"] }
 ```
 
 ### Minimal Example
@@ -318,15 +318,15 @@ covering:
 
 Core configuration fields:
 
-| Field | Default | Description |
-| --- | --- | --- |
-| `timeout` | `2592000` (30 days) | Session timeout in seconds |
-| `active_timeout` | `-1` (disabled) | Active timeout in seconds, -1 follows `timeout` |
-| `is_share` | `false` | Share session across multiple devices for the same account |
-| `is_concurrent` | `true` | Allow concurrent logins for the same account |
-| `token_name` | `garrison_token` | Cookie / Header name |
-| `token_style` | `random_64` | Token style (`uuid` / `random_64` / `simple` / `jwt`) |
-| `throw_on_not_login` | `true` | Throw exception on not-logged-in instead of returning false |
+| Field                | Default             | Description                                                 |
+| -------------------- | ------------------- | ----------------------------------------------------------- |
+| `timeout`            | `2592000` (30 days) | Session timeout in seconds                                  |
+| `active_timeout`     | `-1` (disabled)     | Active timeout in seconds, -1 follows `timeout`             |
+| `is_share`           | `false`             | Share session across multiple devices for the same account  |
+| `is_concurrent`      | `true`              | Allow concurrent logins for the same account                |
+| `token_name`         | `garrison_token`    | Cookie / Header name                                        |
+| `token_style`        | `random_64`         | Token style (`uuid` / `random_64` / `simple` / `jwt`)       |
+| `throw_on_not_login` | `true`              | Throw exception on not-logged-in instead of returning false |
 
 Hot-reload is supported via `tokio::sync::watch`. See [docs/CONFIGURATION.md](./docs/CONFIGURATION.md).
 
@@ -334,95 +334,95 @@ Hot-reload is supported via `tokio::sync::watch`. See [docs/CONFIGURATION.md](./
 
 ## 🎛 Feature Flags
 
-| Feature | Default | Since | Description |
-| --- | :---: | :---: | --- |
-| `backend-embedded` | ✅ | 0.7.0 | Embedded backend mode (in-process auth, delegates to GarrisonManager) |
-| `backend-remote` | ❌ | 0.7.0 | Remote backend adapter (auth via HTTP to remote Auth Server) |
-| `backend-kit` | ❌ | 0.7.0 | trait-kit typestate DI construction |
-| `auth-server` | ❌ | 0.7.0 | Standalone auth server (sdforge declarative routing + TLS) |
-| `abac` | ❌ | 0.7.0 | Cedar DSL-based attribute-based access control engine |
-| `oauth2-server` | ❌ | 0.7.0 | Full OAuth2 Server 4 endpoints (authorize/token/revoke/introspect) |
-| `cache-memory` | ❌ | 0.1.0 | In-memory cache backend (oxcache L1) |
-| `cache-redis` | ❌ | 0.1.0 | Redis cache backend (oxcache L2) |
-| `db-sqlite` | ❌ | 0.1.0 | SQLite database backend (dbnexus + auto-migrate) |
-| `db-postgres` | ❌ | 0.5.0 | PostgreSQL backend |
-| `db-mysql` | ❌ | 0.5.3 | MySQL backend |
-| `web-axum` | ❌ | 0.1.0 | axum Web framework adapter |
-| `web-actix` | ❌ | 0.4.2 | actix-web framework adapter |
-| `web-warp` | ❌ | 0.4.2 | warp framework adapter |
-| `web-waf` | ❌ | 0.6.4 | WAF-level web firewall middleware |
-| `web-cors` | ❌ | 0.6.4 | CORS middleware |
-| `web-csrf` | ❌ | 0.6.4 | CSRF protection middleware |
-| `protocol-jwt` | ❌ | 0.2.0 | JWT issuance & validation (HS256/HS512 + refresh) |
-| `protocol-oauth2` | ❌ | 0.2.0 | OAuth2 four modes (incl. RefreshToken) |
-| `protocol-sso` | ❌ | 0.2.0 | SSO single sign-on ticket |
-| `protocol-sign` | ❌ | 0.2.0 | API signing + nonce anti-replay |
-| `protocol-apikey` | ❌ | 0.2.0 | API Key auth |
-| `protocol-temp` | ❌ | 0.2.0 | Temporary credentials |
-| `protocol-oidc` | ❌ | 0.4.0 | OIDC id_token issuance/validation + discovery |
-| `protocol-zeroize` | ❌ | 0.4.2 | Protocol-layer key zeroization (zero secret fields on Drop) |
-| `oauth2-scope-handler` | ❌ | 0.4.0 | OAuth2 ScopeHandler registry |
-| `protocol-sso-server` | ❌ | 0.4.0 | SSO Server abstraction + CenterIdConverter |
-| `secure-saml` | ❌ | 0.5.0 | SAML 2.0 skeleton (rsa signature verification) |
-| `alone-cache` | ❌ | 0.4.0 | AloneCache multi-Redis instance isolation decorator |
-| `parameter-query` | ❌ | 0.4.0 | ParameterQuery + Builder |
-| `secure-totp` | ❌ | 0.2.0 | TOTP (RFC 6238) |
-| `secure-sign` | ❌ | 0.2.0 | HMAC-SHA256/SHA512 utilities |
-| `secure-httpbasic` | ❌ | 0.2.0 | HTTP Basic Auth (RFC 7617) |
-| `secure-httpdigest` | ❌ | 0.2.0 | HTTP Digest Auth (RFC 7616) |
-| `secure-confusable` | ❌ | 0.5.1 | Unicode confusable character detection |
-| `secure-masking` | ❌ | 0.6.2 | Sensitive data masking (regex real masking) |
-| `secure-xss` | ❌ | 0.6.2 | XSS protection |
-| `secure-sanitize` | ❌ | 0.6.2 | General input sanitization |
-| `secure-simple-token` | ❌ | 0.7.1 | SimpleTokenStyle HMAC-SHA256 signing |
-| `sms-rate-limit` | ❌ | 0.6.2 | SMS verification code rate limiting |
-| `account-credential` | ❌ | 0.6.0 | Credential model SPI (Argon2/Bcrypt) |
-| `account-credential-zeroize` | ❌ | 0.6.0 | Credential model zeroize extension |
-| `account-policy` | ❌ | 0.6.0 | Password policy engine |
-| `account-lockout` | ❌ | 0.6.0 | User lockout strategy |
-| `account-authflow` | ❌ | 0.6.0 | AuthenticationFlow DSL |
-| `listener` | ❌ | 0.2.0 | Event listeners (15 event variants, extended in v0.4.2) |
-| `tracing-log` | ❌ | 0.1.0 | tracing log bridge |
-| `metrics-prometheus` | ❌ | 0.3.0 | Prometheus metrics |
-| `observability-otlp` | ❌ | 0.3.0 | OpenTelemetry OTLP distributed tracing |
-| `audit-inklog` | ❌ | 0.7.0 | inklog structured audit logging |
-| `grpc` | ❌ | 0.3.0 | gRPC auth interceptor (tonic::Interceptor) |
-| `annotation-macros` | ❌ | 0.4.2 | 10 attribute macros: `#[check_login]` / `#[check_permission]` / `#[check_role]` / `#[check_access_token]` / `#[check_client_token]` / `#[check_temp_token]` / `#[check_api_key]` / `#[check_mfa]` / `#[check_abac]` / `#[check_disable]` |
-| `tenant-isolation` | ❌ | 0.5.0 | Multi-tenant logical isolation |
-| `social-wechat` | ❌ | 0.5.0 | WeChat QR social login |
-| `social-alipay` | ❌ | 0.5.0 | Alipay social login |
-| `audit-log` | ❌ | 0.5.0 | Audit log persistence |
-| `firewall` | ❌ | 0.5.0 | Security protection base trait |
-| `firewall-bruteforce` | ❌ | 0.5.0 | Brute-force protection strategy |
-| `firewall-ratelimit` | ❌ | 0.5.0 | Rate limiting strategy |
-| `rate-limit-redis` | ❌ | 0.6.4 | Redis rate limiting backend |
-| `firewall-anomalous` | ❌ | 0.5.0 | Anomalous login detection |
-| `firewall-geoip` | ❌ | 0.5.0 | GeoIP strategy |
-| `firewall-ddos` | ❌ | 0.5.0 | DDoS protection strategy |
-| `firewall-waf` | ❌ | 0.6.4 | WAF-level firewall |
-| `firewall-maxminddb` | ❌ | 0.5.3 | MaxMindDb production backend |
-| `anomalous-detector-dual` | ❌ | 0.6.2 | Dual-engine anomalous login detection |
-| `keycloak-oidc` | ❌ | 0.5.0 | Keycloak OIDC RP integration |
-| `decision-trace` | ❌ | 0.4.2 | Decision tracing |
-| `authorize-api` | ❌ | 0.5.1 | Request-object-based authorization API |
-| `manager-explicit` | ❌ | 0.5.1 | Explicit Manager API |
-| `permission-registry` | ❌ | 0.5.1 | Permission registry |
-| `safe-defaults` | ❌ | 0.6.7 | Forbid-first semantics (safe-defaults) |
-| `security-alert` | ❌ | 0.6.5 | Security alert system |
-| `device-binding` | ❌ | 0.6.5 | Device binding |
-| `safe-auth` | ❌ | 0.6.5 | Second-factor auth transient flag |
-| `dynamic-active-timeout` | ❌ | 0.6.2 | Dynamic active timeout |
-| `three-tier-cache` | ❌ | 0.6.7 | Three-tier cache architecture |
-| `login-token-map-persistence` | ❌ | 0.6.6 | login_token_map persistence |
-| `anonymous-session` | ❌ | 0.6.6 | Anonymous session |
-| `session-search` | ❌ | 0.6.6 | Session search |
-| `tls` | ❌ | 0.7.0 | HTTPS/TLS termination (axum-server rustls) |
-| `miette` | ❌ | 0.5.1 | Rich error reporting with miette |
-| `i18n` | ❌ | 0.3.0 | Internationalization base layer (fluent-rs) |
-| `i18n-icu` | ❌ | 0.3.0 | ICU4X enhancement (plural + date + number localization) |
-| `full` | ❌ | — | Aggregate all features |
-| `production` | ❌ | — | Recommended production combination |
-| `development` | ❌ | — | Development combination |
+| Feature                       | Default | Since | Description                                                                                                                                                                                                                              |
+| ----------------------------- | :-----: | :---: | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `backend-embedded`            |   ✅    | 0.7.0 | Embedded backend mode (in-process auth, delegates to GarrisonManager)                                                                                                                                                                    |
+| `backend-remote`              |   ❌    | 0.7.0 | Remote backend adapter (auth via HTTP to remote Auth Server)                                                                                                                                                                             |
+| `backend-kit`                 |   ❌    | 0.7.0 | trait-kit typestate DI construction                                                                                                                                                                                                      |
+| `auth-server`                 |   ❌    | 0.7.0 | Standalone auth server (sdforge declarative routing + TLS)                                                                                                                                                                               |
+| `abac`                        |   ❌    | 0.7.0 | Cedar DSL-based attribute-based access control engine                                                                                                                                                                                    |
+| `oauth2-server`               |   ❌    | 0.7.0 | Full OAuth2 Server 4 endpoints (authorize/token/revoke/introspect)                                                                                                                                                                       |
+| `cache-memory`                |   ❌    | 0.1.0 | In-memory cache backend (oxcache L1)                                                                                                                                                                                                     |
+| `cache-redis`                 |   ❌    | 0.1.0 | Redis cache backend (oxcache L2)                                                                                                                                                                                                         |
+| `db-sqlite`                   |   ❌    | 0.1.0 | SQLite database backend (dbnexus + auto-migrate)                                                                                                                                                                                         |
+| `db-postgres`                 |   ❌    | 0.5.0 | PostgreSQL backend                                                                                                                                                                                                                       |
+| `db-mysql`                    |   ❌    | 0.5.3 | MySQL backend                                                                                                                                                                                                                            |
+| `web-axum`                    |   ❌    | 0.1.0 | axum Web framework adapter                                                                                                                                                                                                               |
+| `web-actix`                   |   ❌    | 0.4.2 | actix-web framework adapter                                                                                                                                                                                                              |
+| `web-warp`                    |   ❌    | 0.4.2 | warp framework adapter                                                                                                                                                                                                                   |
+| `web-waf`                     |   ❌    | 0.6.4 | WAF-level web firewall middleware                                                                                                                                                                                                        |
+| `web-cors`                    |   ❌    | 0.6.4 | CORS middleware                                                                                                                                                                                                                          |
+| `web-csrf`                    |   ❌    | 0.6.4 | CSRF protection middleware                                                                                                                                                                                                               |
+| `protocol-jwt`                |   ❌    | 0.2.0 | JWT issuance & validation (HS256/HS512 + refresh)                                                                                                                                                                                        |
+| `protocol-oauth2`             |   ❌    | 0.2.0 | OAuth2 four modes (incl. RefreshToken)                                                                                                                                                                                                   |
+| `protocol-sso`                |   ❌    | 0.2.0 | SSO single sign-on ticket                                                                                                                                                                                                                |
+| `protocol-sign`               |   ❌    | 0.2.0 | API signing + nonce anti-replay                                                                                                                                                                                                          |
+| `protocol-apikey`             |   ❌    | 0.2.0 | API Key auth                                                                                                                                                                                                                             |
+| `protocol-temp`               |   ❌    | 0.2.0 | Temporary credentials                                                                                                                                                                                                                    |
+| `protocol-oidc`               |   ❌    | 0.4.0 | OIDC id_token issuance/validation + discovery                                                                                                                                                                                            |
+| `protocol-zeroize`            |   ❌    | 0.4.2 | Protocol-layer key zeroization (zero secret fields on Drop)                                                                                                                                                                              |
+| `oauth2-scope-handler`        |   ❌    | 0.4.0 | OAuth2 ScopeHandler registry                                                                                                                                                                                                             |
+| `protocol-sso-server`         |   ❌    | 0.4.0 | SSO Server abstraction + CenterIdConverter                                                                                                                                                                                               |
+| `secure-saml`                 |   ❌    | 0.5.0 | SAML 2.0 skeleton (rsa signature verification)                                                                                                                                                                                           |
+| `alone-cache`                 |   ❌    | 0.4.0 | AloneCache multi-Redis instance isolation decorator                                                                                                                                                                                      |
+| `parameter-query`             |   ❌    | 0.4.0 | ParameterQuery + Builder                                                                                                                                                                                                                 |
+| `secure-totp`                 |   ❌    | 0.2.0 | TOTP (RFC 6238)                                                                                                                                                                                                                          |
+| `secure-sign`                 |   ❌    | 0.2.0 | HMAC-SHA256/SHA512 utilities                                                                                                                                                                                                             |
+| `secure-httpbasic`            |   ❌    | 0.2.0 | HTTP Basic Auth (RFC 7617)                                                                                                                                                                                                               |
+| `secure-httpdigest`           |   ❌    | 0.2.0 | HTTP Digest Auth (RFC 7616)                                                                                                                                                                                                              |
+| `secure-confusable`           |   ❌    | 0.5.1 | Unicode confusable character detection                                                                                                                                                                                                   |
+| `secure-masking`              |   ❌    | 0.6.2 | Sensitive data masking (regex real masking)                                                                                                                                                                                              |
+| `secure-xss`                  |   ❌    | 0.6.2 | XSS protection                                                                                                                                                                                                                           |
+| `secure-sanitize`             |   ❌    | 0.6.2 | General input sanitization                                                                                                                                                                                                               |
+| `secure-simple-token`         |   ❌    | 0.7.1 | SimpleTokenStyle HMAC-SHA256 signing                                                                                                                                                                                                     |
+| `sms-rate-limit`              |   ❌    | 0.6.2 | SMS verification code rate limiting                                                                                                                                                                                                      |
+| `account-credential`          |   ❌    | 0.6.0 | Credential model SPI (Argon2/Bcrypt)                                                                                                                                                                                                     |
+| `account-credential-zeroize`  |   ❌    | 0.6.0 | Credential model zeroize extension                                                                                                                                                                                                       |
+| `account-policy`              |   ❌    | 0.6.0 | Password policy engine                                                                                                                                                                                                                   |
+| `account-lockout`             |   ❌    | 0.6.0 | User lockout strategy                                                                                                                                                                                                                    |
+| `account-authflow`            |   ❌    | 0.6.0 | AuthenticationFlow DSL                                                                                                                                                                                                                   |
+| `listener`                    |   ❌    | 0.2.0 | Event listeners (15 event variants, extended in v0.4.2)                                                                                                                                                                                  |
+| `tracing-log`                 |   ❌    | 0.1.0 | tracing log bridge                                                                                                                                                                                                                       |
+| `metrics-prometheus`          |   ❌    | 0.3.0 | Prometheus metrics                                                                                                                                                                                                                       |
+| `observability-otlp`          |   ❌    | 0.3.0 | OpenTelemetry OTLP distributed tracing                                                                                                                                                                                                   |
+| `audit-inklog`                |   ❌    | 0.7.0 | inklog structured audit logging                                                                                                                                                                                                          |
+| `grpc`                        |   ❌    | 0.3.0 | gRPC auth interceptor (tonic::Interceptor)                                                                                                                                                                                               |
+| `annotation-macros`           |   ❌    | 0.4.2 | 10 attribute macros: `#[check_login]` / `#[check_permission]` / `#[check_role]` / `#[check_access_token]` / `#[check_client_token]` / `#[check_temp_token]` / `#[check_api_key]` / `#[check_mfa]` / `#[check_abac]` / `#[check_disable]` |
+| `tenant-isolation`            |   ❌    | 0.5.0 | Multi-tenant logical isolation                                                                                                                                                                                                           |
+| `social-wechat`               |   ❌    | 0.5.0 | WeChat QR social login                                                                                                                                                                                                                   |
+| `social-alipay`               |   ❌    | 0.5.0 | Alipay social login                                                                                                                                                                                                                      |
+| `audit-log`                   |   ❌    | 0.5.0 | Audit log persistence                                                                                                                                                                                                                    |
+| `firewall`                    |   ❌    | 0.5.0 | Security protection base trait                                                                                                                                                                                                           |
+| `firewall-bruteforce`         |   ❌    | 0.5.0 | Brute-force protection strategy                                                                                                                                                                                                          |
+| `firewall-ratelimit`          |   ❌    | 0.5.0 | Rate limiting strategy                                                                                                                                                                                                                   |
+| `rate-limit-redis`            |   ❌    | 0.6.4 | Redis rate limiting backend                                                                                                                                                                                                              |
+| `firewall-anomalous`          |   ❌    | 0.5.0 | Anomalous login detection                                                                                                                                                                                                                |
+| `firewall-geoip`              |   ❌    | 0.5.0 | GeoIP strategy                                                                                                                                                                                                                           |
+| `firewall-ddos`               |   ❌    | 0.5.0 | DDoS protection strategy                                                                                                                                                                                                                 |
+| `firewall-waf`                |   ❌    | 0.6.4 | WAF-level firewall                                                                                                                                                                                                                       |
+| `firewall-maxminddb`          |   ❌    | 0.5.3 | MaxMindDb production backend                                                                                                                                                                                                             |
+| `anomalous-detector-dual`     |   ❌    | 0.6.2 | Dual-engine anomalous login detection                                                                                                                                                                                                    |
+| `keycloak-oidc`               |   ❌    | 0.5.0 | Keycloak OIDC RP integration                                                                                                                                                                                                             |
+| `decision-trace`              |   ❌    | 0.4.2 | Decision tracing                                                                                                                                                                                                                         |
+| `authorize-api`               |   ❌    | 0.5.1 | Request-object-based authorization API                                                                                                                                                                                                   |
+| `manager-explicit`            |   ❌    | 0.5.1 | Explicit Manager API                                                                                                                                                                                                                     |
+| `permission-registry`         |   ❌    | 0.5.1 | Permission registry                                                                                                                                                                                                                      |
+| `safe-defaults`               |   ❌    | 0.6.7 | Forbid-first semantics (safe-defaults)                                                                                                                                                                                                   |
+| `security-alert`              |   ❌    | 0.6.5 | Security alert system                                                                                                                                                                                                                    |
+| `device-binding`              |   ❌    | 0.6.5 | Device binding                                                                                                                                                                                                                           |
+| `safe-auth`                   |   ❌    | 0.6.5 | Second-factor auth transient flag                                                                                                                                                                                                        |
+| `dynamic-active-timeout`      |   ❌    | 0.6.2 | Dynamic active timeout                                                                                                                                                                                                                   |
+| `three-tier-cache`            |   ❌    | 0.6.7 | Three-tier cache architecture                                                                                                                                                                                                            |
+| `login-token-map-persistence` |   ❌    | 0.6.6 | login_token_map persistence                                                                                                                                                                                                              |
+| `anonymous-session`           |   ❌    | 0.6.6 | Anonymous session                                                                                                                                                                                                                        |
+| `session-search`              |   ❌    | 0.6.6 | Session search                                                                                                                                                                                                                           |
+| `tls`                         |   ❌    | 0.7.0 | HTTPS/TLS termination (axum-server rustls)                                                                                                                                                                                               |
+| `miette`                      |   ❌    | 0.5.1 | Rich error reporting with miette                                                                                                                                                                                                         |
+| `i18n`                        |   ❌    | 0.3.0 | Internationalization base layer (fluent-rs)                                                                                                                                                                                              |
+| `i18n-icu`                    |   ❌    | 0.3.0 | ICU4X enhancement (plural + date + number localization)                                                                                                                                                                                  |
+| `full`                        |   ❌    |   —   | Aggregate all features                                                                                                                                                                                                                   |
+| `production`                  |   ❌    |   —   | Recommended production combination                                                                                                                                                                                                       |
+| `development`                 |   ❌    |   —   | Development combination                                                                                                                                                                                                                  |
 
 ---
 
@@ -509,37 +509,38 @@ performance baselines (P99<200ms/1000RPS), and penetration testing
 ## 🗺 Roadmap
 
 - [x] **v0.1.0** (2026-06-30) Core infrastructure: login auth + permission check +
-  dual-mode session + axum integration
+      dual-mode session + axum integration
 - [x] **v0.2.0** (2026-07-01) Protocol & security layer: JWT / OAuth2 / SSO / Sign /
-  API Key / TOTP / Basic / Digest + plugin system + event listeners
+      API Key / TOTP / Basic / Digest + plugin system + event listeners
 - [x] **v0.2.1** (2026-07-01) auto-wire fix + protocol boundary tests + examples
-  engineering reorganization
+      engineering reorganization
 - [x] **v0.3.0** Ecosystem & observability: OpenTelemetry OTLP + gRPC interceptor +
-  i18n + metrics-prometheus
+      i18n + metrics-prometheus
 - [x] **v0.4.0** (2026-07-02) v0.2.0 protocol layer gap closure: OIDC / ScopeHandler /
-  SsoServer / AloneCache / ParameterQuery
+      SsoServer / AloneCache / ParameterQuery
 - [x] **v0.4.2** (2026-07-05) Gap closure: dao extension / strategy-registry /
-  jwt-modes / oauth-2-1 / token-introspection / apikey-namespace / sso-toctou /
-  password-login / annotation macros
+      jwt-modes / oauth-2-1 / token-introspection / apikey-namespace / sso-toctou /
+      password-login / annotation macros
 - [x] **v0.5.0** (2026-07-06) Production essentials: multi-tenant / social login /
-  audit log / Token Rotation / security suite / role hierarchy / decision tracing /
-  Keycloak OIDC RP / PostgreSQL
+      audit log / Token Rotation / security suite / role hierarchy / decision tracing /
+      Keycloak OIDC RP / PostgreSQL
 - [x] **v0.5.2** (2026-07-08) Architecture refactor: `GarrisonLogic` trait split into
-  6 sub-traits + LoginId migration to String
+      6 sub-traits + LoginId migration to String
 - [x] **v0.5.3** (2026-07-09) Feature completion: oxcache upgrade / stp full split /
-  MySQL backend / Firewall MaxMindDb
+      MySQL backend / Firewall MaxMindDb
 - [x] **v0.6.0** (2026-07-09) Account security engine: `account/` module + Credential
-  SPI + PasswordPolicyEngine + AuthenticationFlow DSL + remember-me / Redis deployment /
-  switch_to / SAML 2.0 / OIDC RP / Redis pub/sub SsoChannel
+      SPI + PasswordPolicyEngine + AuthenticationFlow DSL + remember-me / Redis deployment /
+      switch_to / SAML 2.0 / OIDC RP / Redis pub/sub SsoChannel
 - [x] **v0.7.0** (2026-07-17) Microservice architecture + ABAC/Cedar + OAuth2 Server:
-  backend-remote / Auth Server / ABAC engine / OAuth2 Server 4 endpoints
+      backend-remote / Auth Server / ABAC engine / OAuth2 Server 4 endpoints
 - [x] **v0.7.1** (2026-07-21) Security fixes + architecture hardening: 21 security
-  fixes (secure-simple-token, SimpleTokenStyle anti-forgery, OIDC aud array
-  compatibility, switch_to account session cleanup, corrupt-JSON resilience, etc.)
+      fixes (secure-simple-token, SimpleTokenStyle anti-forgery, OIDC aud array
+      compatibility, switch_to account session cleanup, corrupt-JSON resilience, etc.)
 - [x] **v0.7.2** (2026-07-21) Cross-platform fixes + security hardening: Windows confers path validation fix + gitleaks integration + GarrisonConfig::load 7 security protections
 - [x] **v0.7.3** (2026-07-22) Macro expansion + version sync: new `#[check_disable]` macro + garrison-macros version synced to 0.7.3 + new `dao_session!` internal macro_rules! macro eliminating DAO-layer boilerplate (53 call sites, ~350 lines saved) + documentation consistency fixes
+- [x] **v0.8.0** (2026-07-24) Security hardening + pre-release audit fixes: API Key security regression fixes (CWE-916 hashed storage / CWE-307 IP rate-limit / IDOR multi-tenant / legacy fail-closed) + jwt_secret weak-key rejection + constant-time-compare primitive (secure-ct-eq) + CSPRNG unified OsRng + singleflight lock cleanup (CWE-770) + SQL placeholder state machine + pre-release audit fixes (lost-revoke TOCTOU, ct_eq unification, update_last_used symmetry, sha256_hex optimization, rotate concurrency docs, etc.)
 - [ ] **v1.0.0** Stable release: API freeze + performance benchmarks + production
-  case studies
+      case studies
 
 Full roadmap at [docs/ROADMAP.md](./docs/ROADMAP.md).
 

@@ -2244,7 +2244,7 @@ mod tests {
     // 补充测试：L3 返回空 Vec 的回填验证（get_user 对应 None）
     // ------------------------------------------------------------------------
 
-    /// T51: get_permissions L3 返回空 Vec 时仍回填 L1+L2（与 None 语义不同）。
+    /// T55: get_permissions L3 返回空 Vec 时仍回填 L1+L2（与 None 语义不同）。
     #[tokio::test]
     async fn get_permissions_l3_empty_vec_backfills_both_layers() {
         let (dao, interface, service) = make_default_service();
@@ -2264,7 +2264,7 @@ mod tests {
         assert_eq!(interface.perm_count(), 1, "L1 回填后不应再查询 L3");
     }
 
-    /// T52: get_roles L3 返回空 Vec 时仍回填 L1+L2。
+    /// T56: get_roles L3 返回空 Vec 时仍回填 L1+L2。
     #[tokio::test]
     async fn get_roles_l3_empty_vec_backfills_both_layers() {
         let (dao, interface, service) = make_default_service();

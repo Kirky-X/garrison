@@ -6,7 +6,7 @@
 
 ```toml
 [dependencies]
-garrison = { version = "0.7", features = ["observability-otlp"] }
+garrison = { version = "0.8", features = ["observability-otlp"] }
 ```
 
 `observability-otlp` 独立门控以隔离重依赖（opentelemetry / opentelemetry_sdk / opentelemetry-otlp / tracing-subscriber）：

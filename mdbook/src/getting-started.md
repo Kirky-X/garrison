@@ -14,7 +14,7 @@ Garrison 默认不启用任何 feature，需按需选择：
 
 ```toml
 [dependencies]
-garrison = { version = "0.7", features = ["web-axum", "cache-memory", "db-sqlite"] }
+garrison = { version = "0.8", features = ["web-axum", "cache-memory", "db-sqlite"] }
 tokio = { version = "1", features = ["full"] }
 ```
 

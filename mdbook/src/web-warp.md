@@ -6,7 +6,7 @@ warp 适配在 0.3.0 新增，采用 Filter 组合模型，通过 `web-warp` fea
 
 ```toml
 [dependencies]
-garrison = { version = "0.7", features = ["web-warp"] }
+garrison = { version = "0.8", features = ["web-warp"] }
 warp = "0.4"
 ```
 

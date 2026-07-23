@@ -8,9 +8,9 @@
 
 ```toml
 [dependencies]
-garrison = { version = "0.7", features = ["tracing-log"] }
+garrison = { version = "0.8", features = ["tracing-log"] }
 # 或包含在 production 聚合 feature 中：
-# garrison = { version = "0.7", features = ["production"] }
+# garrison = { version = "0.8", features = ["production"] }
 ```
 
 - `tracing-log`：启用 `tracing/log` feature，桥接 `log` crate 的日志到 `tracing`

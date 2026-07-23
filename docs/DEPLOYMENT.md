@@ -115,16 +115,16 @@ Garrison 提供三种聚合 feature 与自定义 feature 组合：
 ```toml
 # 生产环境（推荐）
 [dependencies]
-garrison = { version = "0.7", features = ["production"] }
+garrison = { version = "0.8", features = ["production"] }
 
 # 开发环境
 [dependencies]
-garrison = { version = "0.7", features = ["development"] }
+garrison = { version = "0.8", features = ["development"] }
 
 # 自定义组合（按需启用）
 [dependencies]
 garrison = {
-    version = "0.7",
+    version = "0.8",
     default-features = false,
     features = [
         "cache-redis",      # 生产环境使用 Redis
@@ -214,7 +214,7 @@ Garrison 通过 `oxcache` 0.3（crates.io）提供两级缓存：
 
 ```toml
 [dependencies]
-garrison = { version = "0.7", features = ["cache-memory"] }
+garrison = { version = "0.8", features = ["cache-memory"] }
 ```
 
 - 使用 oxcache 内存缓存
@@ -225,7 +225,7 @@ garrison = { version = "0.7", features = ["cache-memory"] }
 
 ```toml
 [dependencies]
-garrison = { version = "0.7", features = ["cache-redis"] }
+garrison = { version = "0.8", features = ["cache-redis"] }
 ```
 
 通过 `GARRISON_REDIS_URL` 配置 Redis 连接：
@@ -543,7 +543,7 @@ cargo test --features full
 
 ```toml
 [dependencies]
-garrison = { version = "0.7", features = ["production", "protocol-jwt", "secure-totp"] }
+garrison = { version = "0.8", features = ["production", "protocol-jwt", "secure-totp"] }
 ```
 
 新增 feature 不会影响现有功能，按需启用即可。

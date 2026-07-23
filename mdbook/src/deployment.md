@@ -21,7 +21,7 @@ Garrison 是库（crate），不产出二进制。业务方将其作为依赖集
 
 ```toml
 [dependencies]
-garrison = { version = "0.7", features = ["production"] }
+garrison = { version = "0.8", features = ["production"] }
 ```
 
 `production` 等价于：

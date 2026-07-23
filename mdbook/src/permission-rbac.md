@@ -77,7 +77,7 @@ let strategy = GarrisonPermissionStrategyDefault::new(interface.clone())
 
 ```toml
 [dependencies]
-garrison = { version = "0.7", features = ["abac"] }
+garrison = { version = "0.8", features = ["abac"] }
 ```
 
 核心类型：

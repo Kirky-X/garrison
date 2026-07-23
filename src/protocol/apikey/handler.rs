@@ -35,28 +35,16 @@ pub(crate) fn default_namespace() -> String {
 /// 用于将 `key_secret` 哈希后存储（CWE-916 修复）：明文 secret 永不落库。
 fn sha256_hex(input: &str) -> String {
     use sha2::{Digest, Sha256};
+    use std::fmt::Write;
     let mut hasher = Sha256::new();
     hasher.update(input.as_bytes());
     let digest = hasher.finalize();
     let mut out = String::with_capacity(64);
     for byte in digest {
-        out.push_str(&format!("{:02x}", byte));
+        // LOW-3：write! 写入预分配 buffer，替代 format! 每字节一次 String 分配
+        let _ = write!(out, "{:02x}", byte);
     }
     out
-}
-
-/// 常量时间比较两个字符串是否相等（防时序侧信道）。
-///
-/// 仅比较等长输入（`secret_hash` 恒为 64 字符 sha256 hex）；长度不等直接返回 false
-/// （长度信息对固定长度哈希无泄露价值）。
-fn constant_time_eq(a: &str, b: &str) -> bool {
-    use subtle::ConstantTimeEq;
-    let ab = a.as_bytes();
-    let bb = b.as_bytes();
-    if ab.len() != bb.len() {
-        return false;
-    }
-    ab.ct_eq(bb).into()
 }
 
 /// E4: 构造 API Key 反向索引的存储 key。
@@ -425,7 +413,10 @@ impl ApiKeyHandler {
             let provided = secret
                 .ok_or_else(|| GarrisonError::InvalidToken("apikey-secret-missing".to_string()))?;
             let computed = sha256_hex(provided);
-            if !constant_time_eq(&computed, &info.secret_hash) {
+            if !crate::secure::ct_eq::constant_time_eq(
+                computed.as_bytes(),
+                info.secret_hash.as_bytes(),
+            ) {
                 return Err(GarrisonError::InvalidToken(
                     "apikey-secret-mismatch".to_string(),
                 ));
@@ -450,6 +441,14 @@ impl ApiKeyHandler {
     ///
     /// 写回失败**不影响校验结果**（元数据更新失败不应拒绝有效 key，availability 优先），
     /// 但会以 `warn` 级别记录，避免静默吞掉（Rule 12）。
+    ///
+    /// # lost-revoke 防护（MEDIUM-1）
+    ///
+    /// 不复用 `verify` 进入时读到的 `info`（可能已过期于并发 `revoke`），而是 **re-read
+    /// 最新值**；若发现 `revoked == true` 则放弃写回，避免整 JSON 覆盖把已吊销状态回退
+    /// 为 false。残留：re-read 与 `update` 之间仍有 micro-race 窗口，但 60s 节流 + revoke
+    /// 优先 + revoked 前置检查将概率与影响降到可接受（`GarrisonDao` trait 无 CAS/字段级
+    /// 更新，此为架构上限；如需强一致，调用方应在 rotate/revoke 入口加互斥）。
     async fn maybe_touch_last_used(&self, dao_key: &str, info: &ApiKeyInfo) {
         if !self.track_last_used {
             return;
@@ -464,7 +463,26 @@ impl ApiKeyHandler {
         if !stale {
             return;
         }
-        let mut updated = info.clone();
+        // MEDIUM-1：re-read 最新值，绝不用 verify 进入时的旧 info 覆盖写
+        let current = match self.dao.get(dao_key).await {
+            Ok(Some(v)) => v,
+            Ok(None) => return, // key 已删，放弃更新
+            Err(e) => {
+                tracing::warn!(dao_key = %dao_key, error = %e, "apikey last_used_at re-read 失败（不影响校验）");
+                return;
+            },
+        };
+        let mut updated: ApiKeyInfo = match serde_json::from_str(&current) {
+            Ok(i) => i,
+            Err(e) => {
+                tracing::warn!(error = %e, "apikey last_used_at 反序列化失败（不影响校验）");
+                return;
+            },
+        };
+        if updated.revoked {
+            // 已被并发吊销，绝不回退 revoked 状态（lost-revoke 防护核心）
+            return;
+        }
         updated.last_used_at = Some(now);
         match serde_json::to_string(&updated) {
             Ok(v) => {
@@ -564,12 +582,21 @@ impl ApiKeyHandler {
     /// 供调用方在校验之外的场景（如异步审计）主动记录使用时间。
     ///
     /// # 错误
-    /// - `GarrisonError::InvalidToken`: key 不存在。
+    /// - `GarrisonError::InvalidToken`: key 不存在或已吊销。
+    /// - `GarrisonError::ExpiredToken`: key 已过期。
     pub async fn update_last_used(&self, key: &str) -> GarrisonResult<()> {
         let (dao_key, value, _secret) = self.lookup(key).await?;
         let mut info: ApiKeyInfo = serde_json::from_str(&value)
             .map_err(|e| GarrisonError::Internal(format!("apikey-deserialize::{}", e)))?;
-        info.last_used_at = Some(current_ts()?);
+        // LOW-4：与 verify 对称，不对已吊销/过期的失效 key 写入使用时间
+        if info.revoked {
+            return Err(GarrisonError::InvalidToken("apikey-revoked".to_string()));
+        }
+        let now = current_ts()?;
+        if info.expire_at <= now {
+            return Err(GarrisonError::ExpiredToken("apikey-expired".to_string()));
+        }
+        info.last_used_at = Some(now);
         let new_value = serde_json::to_string(&info)
             .map_err(|e| GarrisonError::Internal(format!("apikey-serialize::{}", e)))?;
         self.dao.update(&dao_key, &new_value).await
@@ -581,6 +608,13 @@ impl ApiKeyHandler {
     /// （保留 login_id/scopes/owner_id/rate_limit/剩余 TTL）；(4) 返回新 key（双段格式）。
     ///
     /// v0.4.2 扩展：成功时若注入了 `listener_manager`，广播 `GarrisonEvent::TokenRotate`
+    ///
+    /// # 并发警告（LOW-5）
+    ///
+    /// `rotate` 非原子（verify → revoke → generate 跨 await）。并发 rotate 同一 old_key
+    /// 会各自成功并生成不同新 key（old_key 被吊销一次）。调用方应在 rotate 入口加
+    /// 分布式锁/互斥，避免重复轮换。库层不内置锁（rotate 属低频管理操作，加全局锁
+    /// 反而引入竞争与死锁面）。
     ///
     /// # 错误
     /// - `GarrisonError::InvalidToken`: old_key 不存在或已吊销。
@@ -629,4 +663,65 @@ fn current_ts() -> GarrisonResult<i64> {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .map_err(|e| GarrisonError::Internal(format!("apikey-clock::{}", e)))
+}
+
+#[cfg(test)]
+mod lost_revoke_tests {
+    use super::super::mock::MockDao;
+    use super::{ApiKeyHandler, ApiKeyInfo};
+    use crate::dao::GarrisonDao;
+    use crate::error::GarrisonError;
+    use std::sync::Arc;
+
+    /// MEDIUM-1 回归：并发 revoke 后，`maybe_touch_last_used` 用 verify 进入时的旧快照
+    /// 写回时，必须 re-read 发现 `revoked` 并放弃，不得把已吊销状态回退（lost-revoke）。
+    ///
+    /// 修复前实现（`info.clone()` 整 JSON 覆盖）会让此断言失败：旧快照 revoked=false
+    /// 覆盖了并发 revoke 写入的 revoked=true，导致已吊销 key 复活。
+    #[tokio::test]
+    async fn maybe_touch_does_not_resurrect_revoked_key() {
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+        let handler = ApiKeyHandler::new(dao.clone()).with_last_used_tracking(true);
+
+        let token = handler
+            .generate("user1", vec!["read".to_string()], 3600)
+            .await
+            .unwrap();
+        let (key_id, _) = token.split_once('.').unwrap();
+        let dao_key = format!("garrison:apikey:default:{}", key_id);
+        handler.revoke(&token).await.unwrap(); // DAO 中 revoked=true
+
+        // 旧快照：取当前真实值后强制 revoked=false / last_used_at=None，
+        // 模拟 verify 进入时读到的过期视图（last_used_at=None → stale，触发写回路径）
+        let mut stale: ApiKeyInfo =
+            serde_json::from_str(&dao.get(&dao_key).await.unwrap().unwrap()).unwrap();
+        stale.revoked = false;
+        stale.last_used_at = None;
+
+        // 用旧快照调 maybe_touch，模拟 verify → revoke → touch 的并发交错
+        handler.maybe_touch_last_used(&dao_key, &stale).await;
+
+        let after: ApiKeyInfo =
+            serde_json::from_str(&dao.get(&dao_key).await.unwrap().unwrap()).unwrap();
+        assert!(
+            after.revoked,
+            "maybe_touch_last_used 不得复活已吊销的 key（lost-revoke）"
+        );
+    }
+
+    /// LOW-4：`update_last_used` 对已吊销 key 返回 `InvalidToken`（与 verify 对称）。
+    #[tokio::test]
+    async fn update_last_used_rejects_revoked_key() {
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+        let handler = ApiKeyHandler::new(dao).with_last_used_tracking(true);
+        let token = handler.generate("user1", vec![], 3600).await.unwrap();
+        handler.revoke(&token).await.unwrap();
+
+        let err = handler.update_last_used(&token).await.unwrap_err();
+        assert!(
+            matches!(err, GarrisonError::InvalidToken(_)),
+            "revoked key 的 update_last_used 应返回 InvalidToken，got: {:?}",
+            err
+        );
+    }
 }

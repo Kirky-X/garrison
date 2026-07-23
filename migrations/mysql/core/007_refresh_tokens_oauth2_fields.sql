@@ -7,8 +7,9 @@
 -- 幂等性: MySQL 8.0 不支持 ALTER TABLE ADD COLUMN IF NOT EXISTS，
 --         重复执行会报错。dbnexus_migrations 历史表保证只执行一次（与 003 一致）。
 --
--- 用途：为已应用 003_refresh_tokens.sql 的旧 MySQL 数据库添加 OAuth2 扩展字段。
--- 新安装的数据库由 003_refresh_tokens.sql 直接创建含新字段的表，跳过此迁移。
+-- 用途：为 refresh_tokens 表添加 OAuth2 扩展字段。
+-- 注意：003_refresh_tokens.sql 创建的是不含 OAuth2 字段的基础表，新旧安装都
+--       必须执行本迁移（007）补齐 client_id/scopes/username/user_id 字段。
 --
 -- 新字段：
 --   client_id VARCHAR(255) -- OAuth2 客户端 ID（JWT 模块不使用，与 login_id VARCHAR(36) 对齐但放宽长度）

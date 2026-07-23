@@ -1,6 +1,6 @@
 [package]
 name = "garrison"
-version = "0.7.3"
+version = "0.8.0"
 edition = "2021"
 rust-version = "1.85"  # MSRV: 部分 deps（如 inventory 0.3）要求 edition2024 → Rust 1.85+
 authors = ["Kirky.X"]
@@ -74,7 +74,7 @@ tonic-health = { version = "0.14", optional = true, default-features = false }
 fluent = { version = "0.17", default-features = false }
 unic-langid = { version = "0.9", default-features = false }
 miette = { version = "7", optional = true, default-features = false }
-garrison-macros = { path = "garrison-macros", version = "0.7", optional = true }
+garrison-macros = { path = "garrison-macros", version = "0.8", optional = true }
 # rsa 0.9 内部依赖 sha2 0.10，与项目 sha2 0.11 不兼容，故用 `rsa::pkcs1v15::SigningKey` + `rsa::sha2::Sha256`（sha2 0.10 re-export）
 rsa = { version = "0.9", optional = true, default-features = false, features = ["sha2", "pem"] }
 unicode-security = { version = "0.1", optional = true, default-features = false }
@@ -193,9 +193,9 @@ protocol-sso = ["dep:reqwest", "dep:quick-xml", "dep:sha2", "hmac", "dep:base64"
 protocol-jwt = ["jsonwebtoken", "dep:sha2"]
 protocol-sign = ["dep:sha2", "hmac", "dep:base64", "dep:hkdf"]
 # protocol-apikey：API Key 生成/校验/吊销/轮换。
-# dep:sha2 + dep:subtle：secret 以 sha256 哈希存储（CWE-916 修复）+ subtle 常量时间比较。
+# dep:sha2 + secure-ct-eq：secret 以 sha256 哈希存储（CWE-916 修复）+ 复用公共常量时间比较原语（消除本地副本，规则 7）。
 # dao-key-index：启用 GarrisonDaoOxcache::keys() 生产实现，使 list_by_namespace 可用。
-protocol-apikey = ["dep:sha2", "dep:subtle", "dao-key-index"]
+protocol-apikey = ["dep:sha2", "secure-ct-eq", "dao-key-index"]
 protocol-temp = []
 # protocol-zeroize：协议层密钥零化（Drop 时清零 secret 字段，防止内存残留）
 protocol-zeroize = ["zeroize"]

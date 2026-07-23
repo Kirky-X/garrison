@@ -6,8 +6,9 @@
 -- 数据库: PostgreSQL
 -- 幂等性: ALTER TABLE ADD COLUMN IF NOT EXISTS + CREATE INDEX IF NOT EXISTS（PG 原生支持）
 --
--- 用途：为已应用 003_refresh_tokens.sql 的旧 PostgreSQL 数据库添加 OAuth2 扩展字段。
--- 新安装的数据库由 003_refresh_tokens.sql 直接创建含新字段的表，跳过此迁移。
+-- 用途：为 refresh_tokens 表添加 OAuth2 扩展字段。
+-- 注意：003_refresh_tokens.sql 创建的是不含 OAuth2 字段的基础表，新旧安装都
+--       必须执行本迁移（007）补齐 client_id/scopes/username/user_id 字段。
 --
 -- 新字段：
 --   client_id TEXT    -- OAuth2 客户端 ID（JWT 模块不使用）

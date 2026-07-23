@@ -6,7 +6,7 @@ actix-web 适配在 0.3.0 新增，与 axum 适配对齐，通过 `web-actix` fe
 
 ```toml
 [dependencies]
-garrison = { version = "0.7", features = ["web-actix"] }
+garrison = { version = "0.8", features = ["web-actix"] }
 actix-web = "4"
 ```
 

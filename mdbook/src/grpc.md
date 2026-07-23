@@ -6,7 +6,7 @@
 
 ```toml
 [dependencies]
-garrison = { version = "0.7", features = ["grpc"] }
+garrison = { version = "0.8", features = ["grpc"] }
 tonic = "0.14"
 ```
 
