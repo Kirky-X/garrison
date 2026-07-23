@@ -3,7 +3,7 @@
 
 //! 常量时间比较原语（CWE-208 防御）。
 //!
-//! 提供 [`constant_time_eq`] 函数，基于 `subtle::ConstantTimeEq` 实现字节级常量时间比较，
+//! 提供 `constant_time_eq` 函数，基于 `subtle::ConstantTimeEq` 实现字节级常量时间比较，
 //! 防止逐元素短路比较引入的时序侧信道（攻击者可能通过响应时间逐字节推断密钥）。
 //!
 //! # 适用场景

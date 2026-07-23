@@ -126,7 +126,7 @@ pub mod sanitize;
 
 /// 常量时间比较原语子模块（CWE-208 防御）。
 ///
-/// 提供 [`constant_time_eq`](ct_eq::constant_time_eq) 函数，基于 `subtle::ConstantTimeEq`
+/// 提供 `crate::secure::ct_eq::constant_time_eq` 函数，基于 `subtle::ConstantTimeEq`
 /// 实现字节级常量时间比较，防止时序侧信道。供 `audit-log` / `oauth2-server` 等需要
 /// 常量时间比较的 feature 复用，避免在各模块重复实现（规则 7 先读再写）。
 #[cfg(feature = "secure-ct-eq")]

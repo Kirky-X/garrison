@@ -17,11 +17,11 @@
 //!
 //! v0.7.x 起，API Key 采用 `key_id.key_secret` 双段格式（各 32 hex，`.` 分隔）：
 //! - `key_id`：公开标识，作为存储 key 后缀（`garrison:apikey:<ns>:<key_id>`），可安全记录到日志用于审计。
-//! - `key_secret`：机密部分，**永不落库**；仅存储 `sha256(key_secret)` 到 [`ApiKeyInfo::secret_hash`]，
+//! - `key_secret`：机密部分，**永不落库**；仅存储 `sha256(key_secret)` 到 `ApiKeyInfo::secret_hash`，
 //!   校验时用常量时间比较（`subtle::ConstantTimeEq`）。数据库/KV 泄露也无法还原 secret。
 //!
 //! `verify` 拒绝旧格式（v0.4.1 无 namespace 单 token、v0.4.2 带 namespace 单 token）：
-//! 旧 key 的 [`ApiKeyInfo::secret_hash`] 为空，被 `decode_and_check` fail-closed 拒绝
+//! 旧 key 的 `ApiKeyInfo::secret_hash` 为空，被 `decode_and_check` fail-closed 拒绝
 //! （返回 `apikey-legacy-secret-required`），强制迁移到 v0.7.x 双段格式（W8，CWE-916 强化）。
 
 use crate::dao::GarrisonDao;

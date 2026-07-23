@@ -163,7 +163,7 @@ impl ApiKeyHandler {
     /// 启用 `last_used_at` 追踪（opt-in，#7-b）。
     ///
     /// 启用后 `verify` / `verify_with_namespace` 成功时节流更新 `last_used_at`
-    /// （距上次记录超过 [`LAST_USED_UPDATE_THROTTLE_SECS`] 秒才写回，避免写放大）。
+    /// （距上次记录超过 `LAST_USED_UPDATE_THROTTLE_SECS` 秒才写回，避免写放大）。
     /// 默认关闭以保持 `verify` 只读语义。
     pub fn with_last_used_tracking(mut self, enabled: bool) -> Self {
         self.track_last_used = enabled;
