@@ -32,13 +32,19 @@ impl GarrisonSession {
         }
     }
 
-    /// 获取 DAO 引用（pub(crate) 供 GarrisonLogicDefault 构造 ApiKeyHandler 等需要 DAO 的协议处理器复用）。
+    /// 获取 DAO 引用（`pub(crate)` 供 `GarrisonLogicDefault` 构造 `ApiKeyHandler`、
+    /// `health::checks` 执行依赖探测等需要 DAO 的内部模块复用）。
     ///
-    /// `GarrisonLogicDefault::check_api_key` 通过此访问器获取 DAO，
-    /// 构造 `ApiKeyHandler` 实例进行 API Key 校验。
-    ///
-    /// 仅在 `protocol-apikey` feature 启用时编译（避免 feature 关闭时的 dead_code 警告）。
-    #[cfg(feature = "protocol-apikey")]
+    /// # 调用方
+    /// - `GarrisonLogicDefault::check_api_key`（`protocol-apikey` feature）
+    /// - `health::checks::DbHealthCheck` / `CacheHealthCheck`（`db-postgres` / `db-mysql` /
+    ///   `cache-redis` feature 启用时）
+    #[cfg(any(
+        feature = "protocol-apikey",
+        feature = "db-postgres",
+        feature = "db-mysql",
+        feature = "cache-redis"
+    ))]
     pub(crate) fn dao(&self) -> &Arc<dyn GarrisonDao> {
         &self.dao
     }

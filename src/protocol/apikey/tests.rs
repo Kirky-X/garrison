@@ -333,37 +333,6 @@ async fn generate_with_namespace_stores_new_format_key() {
     assert!(old_value.is_none(), "旧格式 key 不应存在");
 }
 
-/// R-002: verify 兼容旧格式 key（无 namespace）。
-///
-/// 手动写入旧格式 `garrison:apikey:<key>`，verify 应能查到。
-#[tokio::test]
-#[serial_test::serial]
-async fn verify_compatible_with_old_key_format() {
-    let dao = Arc::new(MockDao::new());
-    let handler = ApiKeyHandler::new(dao.clone());
-    // 模拟旧格式 key（v0.4.1 及之前生成的）
-    let old_key = "deadbeef".repeat(8); // 64 hex chars
-    let old_dao_key = format!("garrison:apikey:{}", old_key);
-    let info = ApiKeyInfo {
-        login_id: "2002".to_string(),
-        scopes: vec!["legacy".into()],
-        expire_at: SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64
-            + 3600,
-        revoked: false,
-        namespace: "default".to_string(),
-        ..Default::default()
-    };
-    let value = serde_json::to_string(&info).unwrap();
-    dao.set(&old_dao_key, &value, 3600).await.unwrap();
-    // verify 应能找到（先查旧格式命中）
-    let verified = handler.verify(&old_key).await.unwrap();
-    assert_eq!(verified.login_id, "2002");
-    assert_eq!(verified.scopes, vec!["legacy".to_string()]);
-}
-
 /// R-003: list_by_namespace 返回指定 namespace 下未吊销的 ApiKeyInfo
 #[tokio::test]
 #[serial_test::serial]
@@ -541,29 +510,28 @@ fn public_key_ref_never_exposes_secret() {
 /// 验证 verify_with_namespace 在 JSON namespace 与请求 namespace 不匹配时返回 InvalidToken。
 ///
 /// 覆盖 verify_with_namespace 中 namespace 二次校验失败分支。
+///
+/// 使用 `generate_with_namespace` 生成合法 key（带 secret_hash），再篡改存储的
+/// JSON namespace 字段模拟存储错位 / 跨 namespace 攻击。
 #[tokio::test]
 #[serial_test::serial]
 async fn verify_with_namespace_returns_error_when_namespace_mismatch() {
     let dao = Arc::new(MockDao::new());
     let handler = ApiKeyHandler::new(dao.clone());
-    let key = "deadbeef".repeat(8); // 64 hex chars
-    let dao_key = format!("garrison:apikey:internal:{}", key);
-    // 写入 namespace 不一致的 ApiKeyInfo（dao_key 用 internal，JSON 中 namespace=other）
-    let info = ApiKeyInfo {
-        login_id: "1001".to_string(),
-        scopes: vec![],
-        expire_at: SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64
-            + 3600,
-        revoked: false,
-        namespace: "other".to_string(),
-        ..Default::default()
-    };
-    let value = serde_json::to_string(&info).unwrap();
-    dao.set(&dao_key, &value, 3600).await.unwrap();
-    // verify_with_namespace 应返回 InvalidToken（namespace 不匹配）
+    // 1. 在 "internal" namespace 下生成合法 key（带 secret_hash）
+    let key = handler
+        .generate_with_namespace("1001", "internal", vec![], 3600)
+        .await
+        .unwrap();
+    let key_id = key_id_of(&key);
+    let dao_key = format!("garrison:apikey:internal:{}", key_id);
+    // 2. 读取存储的 ApiKeyInfo，篡改 namespace 为 "other"（模拟存储错位）
+    let value = dao.get(&dao_key).await.unwrap().unwrap();
+    let mut info: ApiKeyInfo = serde_json::from_str(&value).unwrap();
+    info.namespace = "other".to_string();
+    let tampered_value = serde_json::to_string(&info).unwrap();
+    dao.set(&dao_key, &tampered_value, 3600).await.unwrap();
+    // 3. verify_with_namespace 应返回 InvalidToken（namespace 不匹配）
     let result = handler.verify_with_namespace(&key, "internal").await;
     assert!(
         matches!(result, Err(GarrisonError::InvalidToken(ref msg)) if msg.starts_with("apikey-namespace-mismatch::")),
@@ -586,6 +554,41 @@ async fn verify_returns_internal_error_when_json_invalid() {
     assert!(
         matches!(result, Err(GarrisonError::Internal(ref msg)) if msg.contains("apikey-deserialize")),
         "无效 JSON 应返回 Internal 错误，实际: {:?}",
+        result
+    );
+}
+
+/// D7-T018: 拒绝空 `secret_hash` 的 legacy key（fail-closed，CWE-916 强化）。
+///
+/// 构造 `secret_hash` 为空的 ApiKeyInfo（模拟 v0.4.1 legacy 格式），handler
+/// 应返回 `InvalidToken` 且错误消息含 `apikey-legacy-secret-required`。
+/// 不提供兼容开关（遵循"禁止向后兼容"规则），legacy key 必须迁移到 v0.7.x 新格式。
+#[tokio::test]
+#[serial_test::serial]
+async fn decode_and_check_rejects_empty_secret_hash() {
+    let dao = Arc::new(MockDao::new());
+    let handler = ApiKeyHandler::new(dao.clone());
+    let key = "deadbeef".repeat(8);
+    let dao_key = format!("garrison:apikey:{}", key);
+    let info = ApiKeyInfo {
+        login_id: "legacy-default".to_string(),
+        scopes: vec![],
+        expire_at: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64
+            + 3600,
+        revoked: false,
+        namespace: "default".to_string(),
+        ..Default::default() // secret_hash 为空（legacy v0.4.1）
+    };
+    let value = serde_json::to_string(&info).unwrap();
+    dao.set(&dao_key, &value, 3600).await.unwrap();
+
+    let result = handler.verify(&key).await;
+    assert!(
+        matches!(result, Err(GarrisonError::InvalidToken(ref msg)) if msg.contains("apikey-legacy-secret-required")),
+        "handler 应拒绝空 secret_hash 的 legacy key（fail-closed），实际: {:?}",
         result
     );
 }
@@ -753,39 +756,6 @@ async fn e4_revoke_uses_reverse_index() {
     assert!(
         matches!(result, Err(GarrisonError::InvalidToken(_))),
         "E4: revoke 后 verify 应返回 InvalidToken"
-    );
-}
-
-/// E4: 验证 `verify` 在无反向索引时回退到旧格式 `garrison:apikey:<key>`。
-///
-/// 手动写入旧格式 key（不写索引），verify 应能通过回退路径找到。
-#[tokio::test]
-#[serial_test::serial]
-async fn e4_verify_falls_back_to_legacy_format() {
-    let dao = Arc::new(MockDao::new());
-    let handler = ApiKeyHandler::new(dao.clone());
-    let key = "deadbeef".repeat(8); // 64 hex chars
-    let old_dao_key = format!("garrison:apikey:{}", key);
-    let info = ApiKeyInfo {
-        login_id: "legacy-user".to_string(),
-        scopes: vec!["legacy".into()],
-        expire_at: SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64
-            + 3600,
-        revoked: false,
-        namespace: "default".to_string(),
-        ..Default::default()
-    };
-    let value = serde_json::to_string(&info).unwrap();
-    dao.set(&old_dao_key, &value, 3600).await.unwrap();
-    // 不写入反向索引
-
-    let verified = handler.verify(&key).await.unwrap();
-    assert_eq!(
-        verified.login_id, "legacy-user",
-        "E4: 无索引时应回退到旧格式 garrison:apikey:<key>"
     );
 }
 

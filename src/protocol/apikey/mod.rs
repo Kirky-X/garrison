@@ -20,8 +20,9 @@
 //! - `key_secret`：机密部分，**永不落库**；仅存储 `sha256(key_secret)` 到 [`ApiKeyInfo::secret_hash`]，
 //!   校验时用常量时间比较（`subtle::ConstantTimeEq`）。数据库/KV 泄露也无法还原 secret。
 //!
-//! `verify` 兼容旧格式（v0.4.1 无 namespace 单 token、v0.4.2 带 namespace 单 token）以保护历史 key 不失效：
-//! 旧 key 的 [`ApiKeyInfo::secret_hash`] 为空，按"存在性"校验（不做 secret 比较），随其 TTL 自然过期淘汰。
+//! `verify` 拒绝旧格式（v0.4.1 无 namespace 单 token、v0.4.2 带 namespace 单 token）：
+//! 旧 key 的 [`ApiKeyInfo::secret_hash`] 为空，被 `decode_and_check` fail-closed 拒绝
+//! （返回 `apikey-legacy-secret-required`），强制迁移到 v0.7.x 双段格式（W8，CWE-916 强化）。
 
 use crate::dao::GarrisonDao;
 // listener_manager 注入（feature-gated）
@@ -53,13 +54,15 @@ pub struct ApiKeyInfo {
     /// 公开 key 标识（32 hex）。
     ///
     /// 作为存储 key 后缀，可安全记录到日志用于审计。
-    /// 旧 JSON（无此字段）反序列化为空串，走"存在性"校验兼容路径。
+    /// 旧 JSON（无此字段）反序列化为空串，仅作为 legacy key 查找路径的标识，
+    /// 最终仍被 `decode_and_check` fail-closed 拒绝（见 W8）。
     #[serde(default)]
     pub key_id: String,
     /// `sha256(key_secret)` 的 hex 编码（64 字符）。
     ///
     /// **不存储明文 secret**（CWE-916 修复）。校验时用常量时间比较。
-    /// 旧 JSON（无此字段）反序列化为空串，此时按"存在性"校验（不做 secret 比较）。
+    /// 旧 JSON（无此字段）反序列化为空串，此时 fail-closed 拒绝（返回
+    /// `apikey-legacy-secret-required`），不做 secret 比较也不按存在性放行。
     #[serde(default)]
     pub secret_hash: String,
     /// 归属主体标识（IDOR 防护，#3）。

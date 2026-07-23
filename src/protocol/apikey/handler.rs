@@ -312,11 +312,12 @@ impl ApiKeyHandler {
 
     /// 校验 API Key。
     ///
-    /// 校验逻辑（哈希 + 向后兼容三级回退）：
+    /// 校验逻辑（哈希 + 三级回退查找，最终都经 `decode_and_check` fail-closed 校验）：
     /// 1. **双段格式**：`token = key_id.key_secret` → O(1) 查 idx(`key_id`) → dao_key →
     ///    常量时间比较 `sha256(key_secret)` 与存储的 `secret_hash`。
-    /// 2. **legacy v0.4.2**：单 token → 查 idx(`token`) → dao_key（`secret_hash` 空，按存在性校验）。
-    /// 3. **legacy v0.4.1**：单 token → 查旧格式 `garrison:apikey:<token>`（按存在性校验）。
+    /// 2. **legacy v0.4.2**：单 token → 查 idx(`token`) → dao_key（`secret_hash` 空，被
+    ///    `decode_and_check` fail-closed 拒绝，返回 `apikey-legacy-secret-required`）。
+    /// 3. **legacy v0.4.1**：单 token → 查旧格式 `garrison:apikey:<token>`（同上，fail-closed 拒绝）。
     ///
     /// # 错误
     /// - `GarrisonError::InvalidToken`: key 不存在、secret 不匹配或已吊销。
@@ -377,7 +378,7 @@ impl ApiKeyHandler {
     /// 内部：三级回退查找，返回 `(dao_key, value, provided_secret)`。
     ///
     /// `provided_secret` 为 `Some` 表示双段 token 提供了 secret（需哈希比较）；
-    /// `None` 表示 legacy 单 token（按存在性校验）。
+    /// `None` 表示 legacy 单 token（最终被 `decode_and_check` fail-closed 拒绝，W8）。
     async fn lookup(&self, key: &str) -> GarrisonResult<(String, String, Option<String>)> {
         // 1. 双段格式：key_id.key_secret
         if let Some((key_id, key_secret)) = key.split_once('.') {
@@ -406,7 +407,9 @@ impl ApiKeyHandler {
     /// 解码 ApiKeyInfo 并校验 revoked / expire / secret（verify 内部复用）。
     ///
     /// - `secret_hash` 非空（新格式）：必须提供 `secret` 且常量时间比较通过。
-    /// - `secret_hash` 空（legacy）：跳过 secret 比较，按存在性校验。
+    /// - `secret_hash` 空（legacy v0.4.1）：一律返回 `InvalidToken`
+    ///   （`apikey-legacy-secret-required`），fail-closed 强制迁移到带 `secret_hash`
+    ///   的新格式（W8，CWE-916 强化，消除"按存在性校验"弱点）。
     fn decode_and_check(&self, value: &str, secret: Option<&str>) -> GarrisonResult<ApiKeyInfo> {
         let info: ApiKeyInfo = serde_json::from_str(value)
             .map_err(|e| GarrisonError::Internal(format!("apikey-deserialize::{}", e)))?;
@@ -427,6 +430,18 @@ impl ApiKeyHandler {
                     "apikey-secret-mismatch".to_string(),
                 ));
             }
+        } else {
+            // W8：空 secret_hash 的 legacy key fail-closed，强制迁移到带 secret_hash 的新格式。
+            // 不提供 opt-in 兼容开关（遵循"禁止向后兼容"规则）。
+            tracing::warn!(
+                "apikey legacy empty-secret-hash rejected (login_id={}, namespace={}); \
+                 migrate to v0.7.x dual-segment key format",
+                info.login_id,
+                info.namespace
+            );
+            return Err(GarrisonError::InvalidToken(
+                "apikey-legacy-secret-required".to_string(),
+            ));
         }
         Ok(info)
     }

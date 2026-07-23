@@ -11,6 +11,45 @@ use crate::config::GarrisonConfig;
 use std::sync::Arc;
 
 // ============================================================================
+// 测试 fixture：HangDao（探测路径超时测试共享）
+// ============================================================================
+
+/// Hang DAO：`get` 调用时 sleep 10s（远超 `HEALTH_PROBE_TIMEOUT` 的 2s），
+/// 模拟数据库/Redis 后端网络不可达。
+///
+/// 其他方法返回 `Ok` 以保证 `GarrisonManager::init` 不触发非预期错误路径。
+///
+/// 仅在探测路径（db-postgres / db-mysql / cache-redis）feature 启用时编译。
+#[cfg(any(feature = "db-postgres", feature = "db-mysql", feature = "cache-redis"))]
+struct HangDao;
+
+#[cfg(any(feature = "db-postgres", feature = "db-mysql", feature = "cache-redis"))]
+#[async_trait::async_trait]
+impl crate::dao::GarrisonDao for HangDao {
+    async fn get(&self, _key: &str) -> crate::error::GarrisonResult<Option<String>> {
+        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+        Ok(None)
+    }
+    async fn set(
+        &self,
+        _key: &str,
+        _value: &str,
+        _ttl_seconds: u64,
+    ) -> crate::error::GarrisonResult<()> {
+        Ok(())
+    }
+    async fn update(&self, _key: &str, _value: &str) -> crate::error::GarrisonResult<()> {
+        Ok(())
+    }
+    async fn expire(&self, _key: &str, _seconds: u64) -> crate::error::GarrisonResult<()> {
+        Ok(())
+    }
+    async fn delete(&self, _key: &str) -> crate::error::GarrisonResult<()> {
+        Ok(())
+    }
+}
+
+// ============================================================================
 // HealthStatus 测试
 // ============================================================================
 
@@ -131,7 +170,13 @@ async fn config_health_check_returns_unhealthy_for_invalid_config() {
 // CacheHealthCheck 测试（feature-gated）
 // ============================================================================
 
-#[cfg(any(feature = "cache-memory", feature = "cache-redis"))]
+/// 快路径下（仅 `cache-memory`，未启用 `cache-redis`）：进程存活即 Healthy。
+///
+/// `cache-memory` 后端为 oxcache 内存缓存，无网络 I/O，无需探测。
+/// 此测试仅在快路径下编译；探测路径（`cache-redis` 启用）下行为不同，
+/// 由 `cache_health_check_returns_unhealthy_on_probe_timeout`（超时）和
+/// `cache_health_check_unhealthy_when_manager_uninitialized`（manager 未初始化）覆盖。
+#[cfg(all(feature = "cache-memory", not(feature = "cache-redis")))]
 #[tokio::test]
 async fn cache_health_check_returns_healthy() {
     let checker = CacheHealthCheck::new();
@@ -144,13 +189,191 @@ async fn cache_health_check_returns_healthy() {
 // DbHealthCheck 测试（feature-gated）
 // ============================================================================
 
-#[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
+/// 快路径下（仅 `db-sqlite`，未启用 `db-postgres`/`db-mysql`）：进程存活即 Healthy。
+///
+/// SQLite 嵌入式数据库无独立服务进程，进程存活即数据库可用，无需探测。
+/// 此测试仅在快路径下编译；探测路径（`db-postgres`/`db-mysql` 启用）下行为不同，
+/// 由 `db_health_check_unhealthy_when_manager_uninitialized`（manager 未初始化）和
+/// `db_health_check_returns_unhealthy_on_probe_timeout`（超时）覆盖。
+#[cfg(all(
+    feature = "db-sqlite",
+    not(any(feature = "db-postgres", feature = "db-mysql"))
+))]
 #[tokio::test]
 async fn db_health_check_returns_healthy() {
     let checker = DbHealthCheck::new();
     assert_eq!(checker.name(), "database");
     let result = checker.check().await.unwrap();
     assert_eq!(result, HealthStatus::Healthy);
+}
+
+// ============================================================================
+// D4 — 健康检查真实探测 + 超时 测试（W3，探测路径专属）
+// ============================================================================
+
+/// 探测路径下，`GarrisonManager` 未初始化时 `DbHealthCheck` 返回 `Unhealthy`。
+///
+/// 仅在启用 `db-postgres` 或 `db-mysql`（探测路径）时编译。
+/// `db-sqlite-only`（快路径）下不适用，因 SQLite 嵌入式数据库进程存活即 Healthy，
+/// 不依赖 `GarrisonManager` 初始化。
+///
+/// # 验证点
+/// - 未 init manager 时，`DbHealthCheck::check` 必须返回 `Ok(Unhealthy)`（而非误报 `Healthy`）
+/// - 返回 `Ok` 而非 `Err`，避免 `HealthRegistry` 把错误统一转为 "check failed" 通用消息
+#[cfg(any(feature = "db-postgres", feature = "db-mysql"))]
+#[tokio::test]
+#[serial_test::serial]
+async fn db_health_check_unhealthy_when_manager_uninitialized() {
+    // 确保 manager 未初始化（reset 任何前序测试残留状态）
+    crate::manager::GarrisonManager::reset_for_test();
+    assert!(
+        !crate::manager::GarrisonManager::is_initialized(),
+        "测试前置：manager 必须未初始化"
+    );
+
+    let checker = DbHealthCheck::new();
+    let status = checker.check().await.expect("check 应返回 Ok 而非 Err");
+    assert_eq!(
+        status,
+        HealthStatus::Unhealthy,
+        "manager 未初始化时 DbHealthCheck 应返回 Unhealthy（而非误报 Healthy）"
+    );
+}
+
+/// 探测路径下，`dao.get` hang 时 `CacheHealthCheck` 在 `HEALTH_PROBE_TIMEOUT`（2s）内返回 `Unhealthy`。
+///
+/// 仅在启用 `cache-redis`（探测路径）时编译。
+/// `cache-memory-only`（快路径）下不适用，因 oxcache 内存后端进程存活即 Healthy。
+///
+/// # 验证点
+/// - `dao.get` 长时间不返回时，`CacheHealthCheck::check` 必须在 2s 超时后返回 `Ok(Unhealthy)`
+/// - 整体耗时应在 `HEALTH_PROBE_TIMEOUT`（2s）附近，而非等到 dao 返回（10s）
+#[cfg(feature = "cache-redis")]
+#[tokio::test]
+#[serial_test::serial]
+async fn cache_health_check_returns_unhealthy_on_probe_timeout() {
+    use crate::dao::GarrisonDao;
+    use crate::manager::GarrisonManager;
+    use crate::stp::GarrisonInterface;
+    use std::time::{Duration, Instant};
+
+    GarrisonManager::reset_for_test();
+    let dao: Arc<dyn GarrisonDao> = Arc::new(HangDao);
+    let config = Arc::new(GarrisonConfig::default_config());
+    let interface: Arc<dyn GarrisonInterface> = Arc::new(crate::stp::mock::MockInterface);
+    GarrisonManager::init(dao, config, interface)
+        .expect("init with HangDao 应成功（init 不调用 dao.get）");
+    assert!(
+        GarrisonManager::is_initialized(),
+        "测试前置：manager 必须已初始化"
+    );
+
+    let checker = CacheHealthCheck::new();
+    let start = Instant::now();
+    let status = checker
+        .check()
+        .await
+        .expect("check 应返回 Ok 而非 Err（超时映射为 Unhealthy，不是 Err）");
+    let elapsed = start.elapsed();
+
+    assert_eq!(
+        status,
+        HealthStatus::Unhealthy,
+        "dao hang 时 CacheHealthCheck 应在 HEALTH_PROBE_TIMEOUT 内返回 Unhealthy"
+    );
+    assert!(
+        elapsed < Duration::from_secs(5),
+        "应在 HEALTH_PROBE_TIMEOUT（2s）附近返回，实际耗时: {:?}",
+        elapsed
+    );
+
+    GarrisonManager::reset_for_test();
+}
+
+/// 探测路径下，`GarrisonManager` 未初始化时 `CacheHealthCheck` 返回 `Unhealthy`。
+///
+/// 仅在启用 `cache-redis`（探测路径）时编译。
+/// `cache-memory-only`（快路径）下不适用，因 oxcache 内存后端进程存活即 Healthy，
+/// 不依赖 `GarrisonManager` 初始化。
+///
+/// # 对称性
+/// 与 `db_health_check_unhealthy_when_manager_uninitialized` 对称，覆盖 CacheHealthCheck
+/// 的 manager 未初始化边界场景，避免未来修改 CacheHealthCheck 时未测试路径 silent regression。
+///
+/// # 验证点
+/// - 未 init manager 时，`CacheHealthCheck::check` 必须返回 `Ok(Unhealthy)`（而非误报 `Healthy`）
+/// - 返回 `Ok` 而非 `Err`，避免 `HealthRegistry` 把错误统一转为 "check failed" 通用消息
+#[cfg(feature = "cache-redis")]
+#[tokio::test]
+#[serial_test::serial]
+async fn cache_health_check_unhealthy_when_manager_uninitialized() {
+    crate::manager::GarrisonManager::reset_for_test();
+    assert!(
+        !crate::manager::GarrisonManager::is_initialized(),
+        "测试前置：manager 必须未初始化"
+    );
+
+    let checker = CacheHealthCheck::new();
+    let status = checker.check().await.expect("check 应返回 Ok 而非 Err");
+    assert_eq!(
+        status,
+        HealthStatus::Unhealthy,
+        "manager 未初始化时 CacheHealthCheck 应返回 Unhealthy（而非误报 Healthy）"
+    );
+}
+
+/// 探测路径下，`dao.get` hang 时 `DbHealthCheck` 在 `HEALTH_PROBE_TIMEOUT`（2s）内返回 `Unhealthy`。
+///
+/// 仅在启用 `db-postgres` 或 `db-mysql`（探测路径）时编译。
+/// `db-sqlite-only`（快路径）下不适用，因 SQLite 嵌入式数据库进程存活即 Healthy。
+///
+/// # 对称性
+/// 与 `cache_health_check_returns_unhealthy_on_probe_timeout` 对称，覆盖 DbHealthCheck
+/// 的探测超时边界场景，避免未来修改 DbHealthCheck 时未测试路径 silent regression。
+///
+/// # 验证点
+/// - `dao.get` 长时间不返回时，`DbHealthCheck::check` 必须在 2s 超时后返回 `Ok(Unhealthy)`
+/// - 整体耗时应在 `HEALTH_PROBE_TIMEOUT`（2s）附近，而非等到 dao 返回（10s）
+#[cfg(any(feature = "db-postgres", feature = "db-mysql"))]
+#[tokio::test]
+#[serial_test::serial]
+async fn db_health_check_returns_unhealthy_on_probe_timeout() {
+    use crate::dao::GarrisonDao;
+    use crate::manager::GarrisonManager;
+    use crate::stp::GarrisonInterface;
+    use std::time::{Duration, Instant};
+
+    GarrisonManager::reset_for_test();
+    let dao: Arc<dyn GarrisonDao> = Arc::new(HangDao);
+    let config = Arc::new(GarrisonConfig::default_config());
+    let interface: Arc<dyn GarrisonInterface> = Arc::new(crate::stp::mock::MockInterface);
+    GarrisonManager::init(dao, config, interface)
+        .expect("init with HangDao 应成功（init 不调用 dao.get）");
+    assert!(
+        GarrisonManager::is_initialized(),
+        "测试前置：manager 必须已初始化"
+    );
+
+    let checker = DbHealthCheck::new();
+    let start = Instant::now();
+    let status = checker
+        .check()
+        .await
+        .expect("check 应返回 Ok 而非 Err（超时映射为 Unhealthy，不是 Err）");
+    let elapsed = start.elapsed();
+
+    assert_eq!(
+        status,
+        HealthStatus::Unhealthy,
+        "dao hang 时 DbHealthCheck 应在 HEALTH_PROBE_TIMEOUT 内返回 Unhealthy"
+    );
+    assert!(
+        elapsed < Duration::from_secs(5),
+        "应在 HEALTH_PROBE_TIMEOUT（2s）附近返回，实际耗时: {:?}",
+        elapsed
+    );
+
+    GarrisonManager::reset_for_test();
 }
 
 // ============================================================================
