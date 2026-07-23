@@ -247,6 +247,15 @@ impl SamlProvider for DefaultSamlProvider {
     }
 
     async fn parse_response(&self, response_xml: &str) -> GarrisonResult<SamlResponse> {
+        // LOW-2: SAML response 大小上限（防超大 payload 内存 DoS，真实 SAML Response 极少超 64KB）
+        const SAML_RESPONSE_MAX_SIZE: usize = 64 * 1024;
+        if response_xml.len() > SAML_RESPONSE_MAX_SIZE {
+            return Err(GarrisonError::InvalidParam(format!(
+                "saml-response-too-large::{}::{}",
+                response_xml.len(),
+                SAML_RESPONSE_MAX_SIZE
+            )));
+        }
         let mut response = parse_saml_response_xml(response_xml)?;
 
         // vuln-0002 修复：Destination 验证（fail-loud）
@@ -1050,6 +1059,15 @@ impl SamlProvider for XmlSecSamlProvider {
     }
 
     async fn parse_response(&self, response_xml: &str) -> GarrisonResult<SamlResponse> {
+        // LOW-2: SAML response 大小上限（防超大 payload 内存 DoS，真实 SAML Response 极少超 64KB）
+        const SAML_RESPONSE_MAX_SIZE: usize = 64 * 1024;
+        if response_xml.len() > SAML_RESPONSE_MAX_SIZE {
+            return Err(GarrisonError::InvalidParam(format!(
+                "saml-response-too-large::{}::{}",
+                response_xml.len(),
+                SAML_RESPONSE_MAX_SIZE
+            )));
+        }
         let mut response = parse_saml_response_xml(response_xml)?;
 
         // vuln-0002: Destination 验证（fail-loud）

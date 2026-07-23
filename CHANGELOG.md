@@ -7,6 +7,18 @@
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-07-24
+
+### Security
+
+- **审计日志 token 泄漏修复（CWE-532，Qoder 方法论数据流审查发现）**：
+  - **HIGH-1**：`AuditLogListener::to_audit_entry` 在 match 后统一截断 `token` 列（前 8 字符 + "…"，对齐 `apikey::public_key_ref`）。此前 Login/Logout/Kickout/TokenExpired/RevokeToken/SessionTimeout 6 类事件把 live session token 原样落 `audit_logs.token`，攻击者获得 audit_logs 只读权限（SQL 注入副产品/备份泄漏/replica）即可在 exp 内重放冒充会话。
+  - **HIGH-2**：`TokenRefresh` 的 `old_token`/`new_token` 通过新增 `BUILTIN_MASK_FIELDS` 内置黑名单在 `mask_metadata` 统一屏蔽为 `***`（不再依赖 operator 配置 `mask_fields`）。
+  - **MEDIUM-1**：`TempCredentialConsumed` 的凭据 `value` 不再落审计 metadata，改为仅记 `value_len`（防下游未消费时凭据重放）。
+  - **LOW-1**：新增 `BUILTIN_MASK_FIELDS`（password/password_hash/secret/client_secret/token/old_token/new_token/refresh_token/access_token/id_token/old_key/new_key）+ `effective_mask_fields`（operator mask_fields ∪ 内置）。`mask_metadata` 不再因 `mask_fields` 为空而跳过——安全默认：内置黑名单兜底。
+  - **LOW-2**：两个 SAML provider（`DefaultSamlProvider`/`XmlSecSamlProvider`）的 `parse_response` 加 64KB 输入大小上限（防超大 payload 内存 DoS；quick_xml 本身无 XXE/billion-laughs）。
+  - 修复策略：写入层（`to_audit_entry`）统一兜底，不依赖各 broadcast 站点自觉，防御纵深。
+
 ## [0.8.0] - 2026-07-24
 
 ### Security

@@ -105,6 +105,37 @@ use crate::secure::masking::{MaskType, SensitiveDataMasker};
 /// 接受 `&[(&str, &str)]` 键值对，序列化为 JSON 对象字符串。
 /// 字符串值自动转义（由 `serde_json` 处理）。
 #[cfg(feature = "db-sqlite")]
+/// 审计层 token 截断（CWE-532 防御）：取前 8 字符 + "…"，对齐 `apikey::public_key_ref`。
+///
+/// live session token 不得原样落 `audit_logs.token` 列——审计层只需可识别的公开引用，
+/// 完整 token 落库后，攻击者获得 audit_logs 只读权限（SQL 注入副产品/备份泄漏/replica）
+/// 即可在 exp 内重放冒充会话。
+fn mask_audit_token(token: &str) -> String {
+    let prefix: String = token.chars().take(8).collect();
+    format!("{}\u{2026}", prefix)
+}
+
+/// metadata 字段脱敏内置黑名单（LOW-1 兜底）。
+///
+/// 即使 operator 未配置 `AuditConfig.mask_fields`，metadata 中这些敏感字段名也替换为
+/// `"***"`（安全默认：黑名单未列即放行是危险的）。与 operator mask_fields 取并集。
+/// 注：`old_token`/`new_token` 在此兜底为 `***`（HIGH-2）；`token` 列由 `mask_audit_token`
+/// 截断（HIGH-1，保留可识别前缀，不走 metadata）。
+const BUILTIN_MASK_FIELDS: &[&str] = &[
+    "password",
+    "password_hash",
+    "secret",
+    "client_secret",
+    "token",
+    "old_token",
+    "new_token",
+    "refresh_token",
+    "access_token",
+    "id_token",
+    "old_key",
+    "new_key",
+];
+
 fn json_metadata(pairs: &[(&str, &str)]) -> String {
     let map: serde_json::Map<String, serde_json::Value> = pairs
         .iter()
@@ -498,16 +529,20 @@ impl AuditLogListener {
                 success: true,
                 created_at: now,
             },
-            GarrisonEvent::TempCredentialConsumed { key, value, .. } => AuditEntry {
-                tenant_id,
-                event_type: "temp_credential_consumed".to_string(),
-                login_id: None,
-                token: None,
-                ip: None,
-                user_agent: None,
-                metadata: Some(json_metadata(&[("key", key), ("value", value)])),
-                success: true,
-                created_at: now,
+            GarrisonEvent::TempCredentialConsumed { key, value, .. } => {
+                // MEDIUM-1 (CWE-532): 凭据 value 不落审计，仅记长度（防下游未消费时重放）
+                let value_len = value.len().to_string();
+                AuditEntry {
+                    tenant_id,
+                    event_type: "temp_credential_consumed".to_string(),
+                    login_id: None,
+                    token: None,
+                    ip: None,
+                    user_agent: None,
+                    metadata: Some(json_metadata(&[("key", key), ("value_len", &value_len)])),
+                    success: true,
+                    created_at: now,
+                }
             },
             GarrisonEvent::SocialLogin {
                 provider,
@@ -628,7 +663,9 @@ impl AuditLogListener {
                 created_at: now,
             };
         }
-        // 对 metadata 进行字段掩码（如 password → ***）
+        // HIGH-1 (CWE-532): token 列截断（前 8 字符 + "…"），live session token 不得原样落审计
+        entry.token = entry.token.take().map(mask_audit_token);
+        // 对 metadata 进行字段掩码（如 password → ***），含 BUILTIN 黑名单兜底（HIGH-2/LOW-1）
         entry.metadata = entry.metadata.map(|m| self.mask_metadata(&m));
         // T004: 从 event.request_context 提取 ip/user_agent 填充 audit entry
         // 统一在 match 之后处理，避免每个 arm 重复提取逻辑
@@ -660,8 +697,15 @@ impl AuditLogListener {
     /// // let masked = listener.mask_metadata(r#"{"password":"secret"}"#);
     /// // assert_eq!(masked, r#"{"password":"***"}"#);
     /// ```
+    /// 返回生效的脱敏字段：operator `mask_fields` ∪ 内置黑名单（LOW-1 兜底）。
+    fn effective_mask_fields(&self) -> Vec<&str> {
+        let mut fields: Vec<&str> = self.config.mask_fields.iter().map(|s| s.as_str()).collect();
+        fields.extend_from_slice(BUILTIN_MASK_FIELDS);
+        fields
+    }
+
     pub fn mask_metadata(&self, metadata: &str) -> String {
-        if self.config.mask_fields.is_empty() || metadata.is_empty() {
+        if metadata.is_empty() {
             return metadata.to_string();
         }
         let mut value: serde_json::Value = match serde_json::from_str(metadata) {
@@ -688,9 +732,12 @@ impl AuditLogListener {
     /// 递归脱敏 JSON 值中的敏感字段（包括嵌套对象）。
     fn mask_value_recursive(&self, value: &mut serde_json::Value) {
         if let Some(obj) = value.as_object_mut() {
-            for field in &self.config.mask_fields {
+            for field in self.effective_mask_fields() {
                 if obj.contains_key(field) {
-                    obj.insert(field.clone(), serde_json::Value::String("***".to_string()));
+                    obj.insert(
+                        field.to_string(),
+                        serde_json::Value::String("***".to_string()),
+                    );
                 }
             }
             // 递归处理嵌套对象
@@ -714,7 +761,7 @@ impl AuditLogListener {
     fn mask_value_partial(&self, value: &mut serde_json::Value) {
         let masker = default_audit_masker();
         if let Some(obj) = value.as_object_mut() {
-            for field in &self.config.mask_fields {
+            for field in self.effective_mask_fields() {
                 if let Some(serde_json::Value::String(s)) = obj.get_mut(field) {
                     let masked = masker.mask_field(field, s);
                     if masked == *s {
