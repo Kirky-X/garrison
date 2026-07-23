@@ -140,9 +140,16 @@ pub async fn run() -> GarrisonResult<()> {
     println!("    scopes   = [read, write]");
     println!("    timeout  = 3600s");
     println!("    key      = {}", key);
-    println!("    长度      = {} 字符（64 hex）\n", key.len());
-    assert_eq!(key.len(), 64);
-    assert!(key.chars().all(|c| c.is_ascii_hexdigit()));
+    println!(
+        "    长度      = {} 字符（key_id.key_secret 双段，各 32 hex）\n",
+        key.len()
+    );
+    // 双段格式：key_id.key_secret（各 32 hex，`.` 分隔）
+    let (key_id, key_secret) = key.split_once('.').expect("应为双段格式");
+    assert_eq!(key_id.len(), 32);
+    assert_eq!(key_secret.len(), 32);
+    assert!(key_id.chars().all(|c| c.is_ascii_hexdigit()));
+    assert!(key_secret.chars().all(|c| c.is_ascii_hexdigit()));
 
     // ----------------------------------------------------------------
     // 3. verify 校验 Key
@@ -186,7 +193,10 @@ pub async fn run() -> GarrisonResult<()> {
     let new_key = handler.rotate(&key2).await?;
     println!("    新 key = {}...", &new_key[..16]);
     assert_ne!(key2, new_key);
-    assert_eq!(new_key.len(), 64);
+    assert!(
+        new_key.contains('.'),
+        "新 key 应为 key_id.key_secret 双段格式"
+    );
 
     // 旧 key 已被吊销
     let old_result = handler.verify(&key2).await;

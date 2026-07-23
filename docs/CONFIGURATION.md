@@ -285,7 +285,7 @@ Garrison 通过 feature flag 在编译期裁剪，不同 feature 下需要的配
 | `protocol-oauth2` | 关 | 需配套 oauth2 client 配置 |
 | `protocol-sso` | 关 | `sso_ticket_ttl_seconds` |
 | `protocol-sign` | 关 | `sign_window_seconds` |
-| `protocol-apikey` | 关 | 由 ApiKey dao 管理 |
+| `protocol-apikey` | 关 | 由 ApiKey dao 管理；自动启用 `dao-key-index`（使 `list_by_namespace` 生产可用）；secret 以 sha256 哈希存储；生产建议配 `cache-redis`（AOF），可选 `firewall-bruteforce` 启用 IP 级失败限速 |
 | `protocol-temp` | 关 | 临时 token TTL 由调用方指定 |
 | `secure-totp` | 关 | TOTP secret 由用户绑定关系存储 |
 | `secure-sign` | 关 | 复用 `sign_window_seconds` |

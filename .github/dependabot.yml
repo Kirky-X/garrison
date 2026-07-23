@@ -25,10 +25,15 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    open-pull-requests-limit: 5
     labels: ["dependencies", "ci"]
     reviewers: ["kirky"]
     cooldown:
       default-days: 7
+    # 将 CI action 更新合并为单个 PR，减少分支满天（避免每个 action 各开一个分支/PR）
+    groups:
+      github-actions:
+        patterns: ["*"]
 
   # pre-commit hooks
   - package-ecosystem: "pre-commit"

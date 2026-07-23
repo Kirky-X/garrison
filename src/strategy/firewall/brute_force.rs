@@ -93,6 +93,65 @@ impl BruteForceStrategy {
             limiter,
         }
     }
+
+    /// 检查目标 IP 是否已被封禁（只读，不计数）。
+    ///
+    /// 用于认证路径在校验**前**短路：已封禁的 IP 直接拒绝，避免继续消耗校验资源。
+    /// 与 [`check`](GarrisonFirewallStrategy::check) 不同，本方法**不递增计数**，
+    /// 适合"仅在失败时计数"的场景（如 API Key 校验，成功请求不应计入失败限速）。
+    ///
+    /// # 返回
+    /// - `Ok(true)`: 该 IP 处于封禁期内。
+    /// - `Ok(false)`: 未封禁。
+    pub async fn is_blocked(&self, ctx: &FirewallContext) -> GarrisonResult<bool> {
+        let target = BanTarget::Ip(ctx.ip.clone());
+        Ok(self
+            .ban_storage
+            .is_banned(&target)
+            .await
+            .map_err(|e| GarrisonError::Dao(format!("strategy-ban-is-banned::{}", e)))?
+            .is_some())
+    }
+
+    /// 记录一次认证失败：原子递增计数，超阈值则封禁该 IP（CWE-307）。
+    ///
+    /// 用于认证路径在校验**失败**时调用（成功路径不调用，实现"仅失败计数"）。
+    /// 计数窗口过期后自动重置；达到 `max_attempts` 后封禁 `lock_seconds` 秒。
+    ///
+    /// # 返回
+    /// - `Ok(())`: 已记录（未必触发封禁）。
+    pub async fn record_failure(&self, ctx: &FirewallContext) -> GarrisonResult<()> {
+        let target = BanTarget::Ip(ctx.ip.clone());
+        let count_key = format!("{}{}:count", DaoKeyPrefix::BruteForce, ctx.ip);
+        let new_count = self
+            .limiter
+            .incr_with_ttl(
+                &count_key,
+                1,
+                Duration::from_secs(self.config.window_seconds),
+            )
+            .await
+            .map_err(|e| GarrisonError::Dao(format!("strategy-incr-ttl::{}", e)))?;
+        if new_count > self.config.max_attempts as u64 {
+            let record = BanRecord {
+                target: target.clone(),
+                ban_times: 1,
+                duration: Duration::from_secs(self.config.lock_seconds),
+                banned_at: Utc::now(),
+                expires_at: Utc::now() + chrono::Duration::seconds(self.config.lock_seconds as i64),
+                is_manual: false,
+                reason: format!(
+                    "strategy-firewall-bruteforce-reason::{}::{}",
+                    new_count, self.config.max_attempts
+                ),
+            };
+            self.ban_storage
+                .save(&record)
+                .await
+                .map_err(|e| GarrisonError::Dao(format!("strategy-ban-save::{}", e)))?;
+        }
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -245,6 +304,52 @@ mod tests {
         assert!(
             strategy.check(&ctx_b).await.is_ok(),
             "不同 IP 的计数不应互相影响"
+        );
+    }
+
+    /// #4: is_blocked 不计数——重复调用不会触发封禁（区别于 check）。
+    #[tokio::test]
+    async fn is_blocked_does_not_count() {
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+        let config = BruteForceConfig {
+            max_attempts: 3,
+            window_seconds: 60,
+            lock_seconds: 300,
+        };
+        let strategy = BruteForceStrategy::new(config, dao);
+        let ctx = FirewallContext::new("10.1.1.1");
+
+        // 大量 is_blocked 调用都应返回 false（不计数、不封禁）
+        for _ in 0..10 {
+            assert!(
+                !strategy.is_blocked(&ctx).await.unwrap(),
+                "未失败前不应封禁"
+            );
+        }
+    }
+
+    /// #4: record_failure 达阈值后 is_blocked 返回 true（仅失败计数模型）。
+    #[tokio::test]
+    async fn record_failure_bans_after_threshold_then_is_blocked() {
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+        let config = BruteForceConfig {
+            max_attempts: 3,
+            window_seconds: 60,
+            lock_seconds: 300,
+        };
+        let strategy = BruteForceStrategy::new(config, dao);
+        let ctx = FirewallContext::new("10.2.2.2");
+
+        // 前 3 次失败：未超阈值，尚未封禁
+        for _ in 0..3 {
+            strategy.record_failure(&ctx).await.unwrap();
+            assert!(!strategy.is_blocked(&ctx).await.unwrap());
+        }
+        // 第 4 次失败：超阈值 → 封禁
+        strategy.record_failure(&ctx).await.unwrap();
+        assert!(
+            strategy.is_blocked(&ctx).await.unwrap(),
+            "超过 max_attempts 次失败后应被封禁"
         );
     }
 }

@@ -140,6 +140,38 @@ pub fn current_token() -> GarrisonResult<String> {
         .map_err(|_| GarrisonError::Session("stp-context-not-set::".to_string()))
 }
 
+// ============================================================================
+// CURRENT_IP task_local 上下文 API（IP 级失败限速，CWE-307）
+// ============================================================================
+
+tokio::task_local! {
+    /// 当前请求的客户端 IP，由 Web 框架 middleware 通过 [`with_current_ip`] 设置。
+    ///
+    /// 供 `check_api_key` 等认证路径在校验失败时按 IP 计入暴力破解防护
+    /// （[`crate::strategy::firewall::BruteForceStrategy`]）。middleware 应使用
+    /// `extract_client_ip`（含 trusted_proxies 防 X-Forwarded-For 伪造）提取。
+    pub static CURRENT_IP: String;
+}
+
+/// 设置当前请求的客户端 IP 作用域。
+///
+/// 在 Web 框架 middleware 中调用（与 [`with_current_token`] 同处注入）：
+/// ```ignore
+/// let ip = extract_client_ip(&req, &trusted_proxies);
+/// garrison::stp::with_current_ip(ip, async { handler(req).await }).await
+/// ```
+pub async fn with_current_ip<R>(ip: String, f: impl Future<Output = R>) -> R {
+    CURRENT_IP.scope(ip, f).await
+}
+
+/// 获取当前请求的客户端 IP（从 task_local 读取）。
+///
+/// 未在 [`with_current_ip`] 作用域内调用时返回 `None`（IP 级限速降级为不启用，fail-open）。
+#[allow(clippy::map_clone)]
+pub fn current_ip() -> Option<String> {
+    CURRENT_IP.try_get().ok().map(|ip| ip.clone())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

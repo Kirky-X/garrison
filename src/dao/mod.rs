@@ -26,7 +26,7 @@ pub(crate) use macros::dao_session;
 /// - `expire` 重置键的过期时间
 /// - `set_permanent` 存储永久键（无 TTL，默认实现委托 `set(key, value, 0)`）
 /// - `get_timeout` 查询剩余 TTL（默认返回 `NotImplemented`，需后端重写）
-/// - `keys` 按 glob pattern 扫描 key（默认返回 `NotImplemented`；`MockDao` 已实现；`GarrisonDaoOxcache` 因 oxcache 0.3.3 限制待 oxcache 提供原生 iter API）
+/// - `keys` 按 glob pattern 扫描 key（默认返回 `NotImplemented`；`MockDao` 已实现；`GarrisonDaoOxcache` 在 `dao-key-index` feature 启用时通过维护 key 索引实现，由 `protocol-apikey` / `anomalous-detector-dual` 传递启用）
 /// - `rename` 重命名 key（默认 get→set→delete 三步，非原子）
 #[async_trait]
 pub trait GarrisonDao: Send + Sync {
@@ -147,16 +147,17 @@ pub trait GarrisonDao: Send + Sync {
     ///
     /// # 已知限制（A-010 评估结论）
     ///
-    /// `GarrisonDaoOxcache` 当前不重写此方法（走默认 `NotImplemented`），原因：
+    /// `GarrisonDaoOxcache` 在 `dao-key-index` feature 关闭时走默认 `NotImplemented`，原因：
     /// - oxcache 0.3.3 的 `CacheReader`/`CacheBackend` trait 未暴露 iter/keys/scan API（2026-07-08 验证）
     /// - `Cache.backend` 字段为 `pub(crate)`，外部无法访问底层 `DashMap`
     /// - `CacheReader` trait 仅有 `get`/`exists`/`ttl`/`len`/`is_empty`/`capacity`/`stats`/`get_many`，无 iter/keys 方法
-    /// - 维护独立 key 索引（如 `DashMap<String, ()>`）会增加内存开销 + 一致性复杂度（set/delete 需同步索引）
-    /// - oxcache 上游路线图有 iter API 计划（0.3.3 仍未实现，crates.io 最新无更高版本）
     ///
-    /// **决策**：defer 到 oxcache 提供原生 iter API。业务方临时方案：自行维护 key 集合（参考 `ApiKeyHandler::list_by_namespace` 的 `MockDao` 测试）。
+    /// **业务方案**：启用 `dao-key-index` feature（`protocol-apikey` / `anomalous-detector-dual` 自动传递），
+    /// `GarrisonDaoOxcache` 会维护独立 key 索引（`RwLock<HashSet<String>>`），set/delete 同步索引，
+    /// `keys()` 遍历索引并惰性清理过期项。代价是每次 set/delete 需同步索引（内存 + 一致性开销），
+    /// 仅在需要 `keys()` 的场景启用。
     ///
-    /// **业务影响**：`ApiKeyHandler::list_by_namespace` 在使用 `GarrisonDaoOxcache` 时返回 `NotImplemented`（生产可用性受限）。
+    /// **业务影响**：`ApiKeyHandler::list_by_namespace` 需 `dao-key-index`（由 `protocol-apikey` 传递）才可用。
     ///
     /// # 默认实现
     /// 返回 `GarrisonError::NotImplemented`。
@@ -574,7 +575,7 @@ mod oxcache_impl {
     ///
     /// 用于 `keys()` 方法过滤匹配 pattern 的 key。
     /// pattern 如 `"anomalous:login:*"` 匹配 `"anomalous:login:1001:1234567890"`。
-    #[cfg(feature = "anomalous-detector-dual")]
+    #[cfg(feature = "dao-key-index")]
     fn matches_pattern(key: &str, pattern: &str) -> bool {
         if pattern == "*" {
             return true;
@@ -590,7 +591,7 @@ mod oxcache_impl {
     /// `prefixed_key` 在 `tenant-isolation` 启用且有 TENANT 上下文时
     /// 返回 `format!("tenant:{id}:{key}")`，否则原样返回。
     /// 本函数逆向该操作：去除 `"tenant:{id}:"` 前缀，或原样返回。
-    #[cfg(feature = "anomalous-detector-dual")]
+    #[cfg(feature = "dao-key-index")]
     fn strip_prefix(prefixed: &str) -> String {
         #[cfg(feature = "tenant-isolation")]
         {
@@ -639,9 +640,9 @@ mod oxcache_impl {
         #[cfg(feature = "cache-redis")]
         redis_config: Option<RedisConfig>,
         /// key 索引，用于实现 `keys()` 方法（oxcache 0.3.3 无原生 keys/iter API）。
-        /// 仅在 `anomalous-detector-dual` feature 启用时维护，避免影响其他场景的内存开销。
+        /// 仅在 `dao-key-index` feature 启用时维护（由 protocol-apikey / anomalous-detector-dual 传递），避免影响其他场景的内存开销。
         /// TTL 过期的 key 会在 `keys()` 调用时惰性清理。
-        #[cfg(feature = "anomalous-detector-dual")]
+        #[cfg(feature = "dao-key-index")]
         key_index: parking_lot::RwLock<std::collections::HashSet<String>>,
     }
 
@@ -666,7 +667,7 @@ mod oxcache_impl {
                 atomic_lock: parking_lot::Mutex::new(()),
                 #[cfg(feature = "cache-redis")]
                 redis_config: None,
-                #[cfg(feature = "anomalous-detector-dual")]
+                #[cfg(feature = "dao-key-index")]
                 key_index: parking_lot::RwLock::new(std::collections::HashSet::new()),
             })
         }
@@ -722,7 +723,7 @@ mod oxcache_impl {
             self.cache
                 .set_with_ttl_sync(&actual_key, &value.to_string(), ttl)
                 .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-set-with-ttl-sync::{}", e)))?;
-            #[cfg(feature = "anomalous-detector-dual")]
+            #[cfg(feature = "dao-key-index")]
             self.key_index.write().insert(actual_key);
             Ok(())
         }
@@ -784,7 +785,7 @@ mod oxcache_impl {
             self.cache
                 .delete_sync(&actual_key)
                 .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-delete-sync::{}", e)))?;
-            #[cfg(feature = "anomalous-detector-dual")]
+            #[cfg(feature = "dao-key-index")]
             self.key_index.write().remove(&actual_key);
             Ok(())
         }
@@ -797,7 +798,7 @@ mod oxcache_impl {
             self.cache
                 .set_with_ttl_sync(&actual_key, &value.to_string(), None)
                 .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-set-with-ttl-sync::{}", e)))?;
-            #[cfg(feature = "anomalous-detector-dual")]
+            #[cfg(feature = "dao-key-index")]
             self.key_index.write().insert(actual_key);
             Ok(())
         }
@@ -1011,7 +1012,7 @@ mod oxcache_impl {
                     .map_err(|e| {
                         GarrisonError::Dao(format!("dao-oxcache-set-with-ttl-sync::{}", e))
                     })?;
-                #[cfg(feature = "anomalous-detector-dual")]
+                #[cfg(feature = "dao-key-index")]
                 self.key_index.write().insert(actual_key);
                 Ok(true)
             } else {
@@ -1023,7 +1024,7 @@ mod oxcache_impl {
         ///
         /// 遍历 key_index，过滤匹配 pattern 的 key，同时惰性清理已过期的 key。
         /// pattern 支持 `*` 通配符（与 MockDao::keys 一致）。
-        #[cfg(feature = "anomalous-detector-dual")]
+        #[cfg(feature = "dao-key-index")]
         async fn keys(&self, pattern: &str) -> GarrisonResult<Vec<String>> {
             let actual_pattern = prefixed_key(pattern);
             let mut result = Vec::new();
@@ -1127,10 +1128,11 @@ pub mod tests {
 
     // ------------------------------------------------------------------------
     // GarrisonDaoOxcache keys() 测试（CRIT-001 修复验证）
-    // 仅在 anomalous-detector-dual + cache-memory/cache-redis 启用时编译
+    // 仅在 dao-key-index（由 protocol-apikey / anomalous-detector-dual 传递）
+    // + cache-memory/cache-redis 启用时编译
     // ------------------------------------------------------------------------
     #[cfg(all(
-        feature = "anomalous-detector-dual",
+        feature = "dao-key-index",
         any(feature = "cache-memory", feature = "cache-redis")
     ))]
     mod oxcache_keys_tests {
@@ -1191,6 +1193,36 @@ pub mod tests {
             dao.delete("anomalous:login:1:1").await.unwrap();
             let keys = dao.keys("anomalous:login:*").await.unwrap();
             assert!(keys.is_empty(), "delete 后 keys() 应返回空 Vec");
+        }
+
+        /// #7-a 端到端：`ApiKeyHandler::list_by_namespace` 在真实 oxcache DAO 下可用
+        /// （验证 dao-key-index gate 泛化后生产可用，而非 NotImplemented）。
+        #[cfg(feature = "protocol-apikey")]
+        #[tokio::test(flavor = "multi_thread")]
+        async fn test_oxcache_apikey_list_by_namespace() {
+            use crate::protocol::apikey::ApiKeyHandler;
+            let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await.unwrap());
+            let handler = ApiKeyHandler::new(dao);
+            handler
+                .generate_with_namespace("1001", "internal", vec!["read".into()], 3600)
+                .await
+                .unwrap();
+            handler
+                .generate_with_namespace("1002", "internal", vec!["write".into()], 3600)
+                .await
+                .unwrap();
+            // 不同 namespace 的 key 不应被列出
+            handler
+                .generate_with_namespace("2001", "partner", vec!["admin".into()], 3600)
+                .await
+                .unwrap();
+            let listed = handler.list_by_namespace("internal").await.unwrap();
+            assert_eq!(
+                listed.len(),
+                2,
+                "internal namespace 下应列出 2 个 key（非 NotImplemented）"
+            );
+            assert!(listed.iter().all(|i| i.namespace == "internal"));
         }
     }
 
@@ -1685,27 +1717,27 @@ pub mod tests {
 
         /// R-003: keys 行为取决于 feature gate。
         ///
-        /// - 启用 `anomalous-detector-dual`：keys() 通过 key_index 返回匹配的 key 列表
-        /// - 未启用 `anomalous-detector-dual`：keys() 返回 NotImplemented（oxcache 不支持原生 key scan）
+        /// - 启用 `dao-key-index`（protocol-apikey / anomalous-detector-dual 传递）：keys() 通过 key_index 返回匹配的 key 列表
+        /// - 未启用 `dao-key-index`：keys() 返回 NotImplemented（oxcache 不支持原生 key scan）
         #[tokio::test(flavor = "multi_thread")]
         async fn oxcache_keys_behavior() {
             let dao = GarrisonDaoOxcache::new().await.unwrap();
             dao.set("oc_key1", "v1", 3600).await.unwrap();
             let result = dao.keys("oc_*").await;
-            #[cfg(feature = "anomalous-detector-dual")]
+            #[cfg(feature = "dao-key-index")]
             {
-                let keys = result.expect("anomalous-detector-dual 启用时 keys() 应返回 key 列表");
+                let keys = result.expect("dao-key-index 启用时 keys() 应返回 key 列表");
                 assert!(
                     keys.iter().any(|k| k.contains("oc_key1")),
                     "keys 应包含 oc_key1, 实际: {:?}",
                     keys
                 );
             }
-            #[cfg(not(feature = "anomalous-detector-dual"))]
+            #[cfg(not(feature = "dao-key-index"))]
             {
                 assert!(
                     matches!(result, Err(GarrisonError::NotImplemented(_))),
-                    "未启用 anomalous-detector-dual 时 keys() 应返回 NotImplemented, 实际: {:?}",
+                    "未启用 dao-key-index 时 keys() 应返回 NotImplemented, 实际: {:?}",
                     result
                 );
             }

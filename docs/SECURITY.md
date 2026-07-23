@@ -147,6 +147,19 @@ Garrison 采用 **responsible disclosure（负责任披露）** 策略：
 - 通过 RBAC 配置时，仅授予完成业务所需的最低权限，避免通配权限（如 `*`）。
 - 启用 `listener` 与 `tracing-log` feature，记录认证/授权关键事件，便于事后追溯。
 
+### 8. API Key 安全（`protocol-apikey`）
+
+Garrison 的 API Key（`protocol-apikey`）采用以下安全设计：
+
+- **凭证格式**：`key_id.key_secret` 双段（各 32 hex，`.` 分隔）。`key_id` 为公开标识，可安全记录到日志用于审计；`key_secret` 为机密部分，仅在生成时返回一次。
+- **哈希存储（CWE-916）**：`key_secret` **永不落库**，仅存储其 `sha256` 哈希，校验时用常量时间比较（`subtle::ConstantTimeEq`）。KV/数据库泄露也无法还原 secret。
+  - 说明：API Key 为高熵随机值（244-bit），采用确定性 SHA-256 而非 Argon2，以保持 O(1) 查询并避免每请求慢哈希开销；此选择的前提是生成期锁定的高熵不变量。
+- **IP 级失败限速（CWE-307）**：同时启用 `firewall-bruteforce` 并在 Web middleware 通过 `with_current_ip` 注入客户端 IP 后，`check_api_key` 会在校验失败时按 IP 计入暴力破解防护（仅失败计数，成功零写入），超阈值封禁。IP 应使用 `extract_client_ip`（含 trusted_proxies 防 X-Forwarded-For 伪造）提取。
+- **多租户隔离（IDOR）**：`verify_with_namespace` 强制校验 key 归属的 namespace，namespace A 的 key 无法在 namespace B 通过；启用 `tenant-isolation` 后 DAO 层按租户自动加 key 前缀，提供物理隔离。`ApiKeyInfo.owner_id` 记录归属主体（默认等于 `login_id`）供审计。
+- **持久化**：API Key 存储于 DAO 后端。生产环境**必须启用 `cache-redis`** 而非 `cache-memory`（后者进程重启即丢失全部 key）；Redis 建议启用 AOF（`appendfsync everysec`），不要仅依赖 RDB 快照，以免崩溃丢失最近的生成/吊销操作。如需 ACID 与外键约束级持久化，参见 `docs/decisions/` 中的 DB-of-record 评估。
+- **密钥管理**：支持 `last_used_at` 使用追踪（`with_last_used_tracking(true)` 启用，节流写入）、`get_keys_older_than` 陈旧 key 识别（轮换策略）、每 key `rate_limit`，以及 `with_allowed_scopes` 生成期 scope 白名单校验。
+- **向后兼容**：旧格式单 token（v0.4.1/v0.4.2，无 `secret_hash`）仍可校验（按存在性），随其 TTL 自然过期淘汰，建议尽快轮换为新双段格式。
+
 ---
 
 ## 已知安全考量

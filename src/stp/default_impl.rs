@@ -287,6 +287,40 @@ impl GarrisonLogicDefault {
             },
         };
         let handler = crate::protocol::apikey::ApiKeyHandler::new(self.session.dao().clone());
+
+        // #4 (CWE-307): IP 级认证失败限速。
+        // 仅在 firewall-bruteforce 启用且存在客户端 IP 上下文时生效（fail-open 兼容）：
+        // 校验前检查是否已封禁（短路）；仅在校验失败时计入失败次数（成功路径零写入）。
+        #[cfg(feature = "firewall-bruteforce")]
+        if let Some(ip) = crate::stp::current_ip() {
+            use crate::strategy::firewall::brute_force::{BruteForceConfig, BruteForceStrategy};
+            use crate::strategy::firewall::FirewallContext;
+            let strategy =
+                BruteForceStrategy::new(BruteForceConfig::default(), self.session.dao().clone());
+            let fw_ctx = FirewallContext::new(&ip);
+            if strategy.is_blocked(&fw_ctx).await? {
+                return Err(GarrisonError::FirewallBlocked(format!(
+                    "stp-apikey-ip-blocked::{}",
+                    ip
+                )));
+            }
+            return match handler.verify_with_namespace(&key, namespace).await {
+                Ok(_) => Ok(()),
+                Err(e) => {
+                    // 记录失败（超阈值则封禁）；record_failure 自身失败（如 DAO 瞬时故障）
+                    // 不得覆盖原始认证错误 e——否则会把 401/403 误报为 500 并丢失原因。
+                    if let Err(record_err) = strategy.record_failure(&fw_ctx).await {
+                        tracing::warn!(
+                            ip = %ip,
+                            error = %record_err,
+                            "brute force record_failure 失败（不影响认证结果，仍返回原始认证错误）"
+                        );
+                    }
+                    Err(e)
+                },
+            };
+        }
+
         handler.verify_with_namespace(&key, namespace).await?;
         Ok(())
     }

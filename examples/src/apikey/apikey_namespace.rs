@@ -128,7 +128,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         .generate_with_namespace("1002", "tenant-A", vec!["write".into()], 3600)
         .await?;
     println!("    key_a2: {}...", &key_a2[..16]);
-    assert_eq!(key_a1.len(), 64);
+    assert!(key_a1.contains('.'), "key 应为 key_id.key_secret 双段格式");
     assert_ne!(key_a1, key_a2);
 
     // 2. 在 tenant-B namespace 下生成一个 key

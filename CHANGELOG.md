@@ -9,6 +9,13 @@
 
 ### Security
 
+- **API Key 安全退化修复（nebulaid → garrison 迁移，详见 `docs/decisions/A-011`）**：
+  - **CWE-916 明文存储修复**：API Key 改为 `key_id.key_secret` 双段格式（各 32 hex），`key_secret` 永不落库，仅存储 `sha256` 哈希，校验用 `subtle::ConstantTimeEq` 常量时间比较。`protocol-apikey` feature 新增 `dep:sha2` + `dep:subtle` 依赖。
+  - **CWE-307 IP 级失败限速**：新增 `CURRENT_IP` task_local（`with_current_ip`/`current_ip`）；`BruteForceStrategy` 新增 `is_blocked`（只读不计数）与 `record_failure`（仅失败计数、超阈值封禁）；`check_api_key` 在 `firewall-bruteforce` 启用且有 IP 上下文时校验失败按 IP 计入暴力破解防护（成功零写入，无 IP 时 fail-open）。
+  - **IDOR 多租户隔离**：`ApiKeyInfo` 新增 `owner_id`（默认等于 `login_id`）；`verify_with_namespace` 强制 namespace 归属校验；配合 `tenant-isolation` DAO 层前缀物理隔离。
+  - **凭证/权限/密钥管理增强**：新增 `ApiKeyScope` 枚举 + `with_allowed_scopes` 生成期 scope 白名单校验；`with_last_used_tracking` 节流记录 `last_used_at`；`get_keys_older_than` 陈旧 key 识别；`generate_with_options` 支持显式 `owner_id`/`rate_limit`。
+  - **`keys()` 生产可用**：`GarrisonDaoOxcache` 的 key 索引机制从 `anomalous-detector-dual` gate 泛化为独立内部 feature `dao-key-index`（由 `protocol-apikey`/`anomalous-detector-dual` 传递），使 `list_by_namespace` 不再返回 `NotImplemented`。
+  - **向后兼容**：旧格式单 token（v0.4.1/v0.4.2，无 `secret_hash`）仍按存在性校验，随 TTL 自然过期。
 - **CodeQL 误报清理**：新增 `.github/codeql-config.yml` 配置 `paths-ignore` 排除测试文件路径（`tests/**`, `**/tests.rs`, `examples/**`, `benches/**`），避免测试代码中的硬编码密码/nonce 触发 `rust/hard-coded-cryptographic-value` 误报。通过 GitHub API 批量 dismiss 82 个历史误报（全部位于 `#[cfg(test)] mod tests {}` 内联测试块或独立测试文件）。
 - **codeql-action SHA pin**：`codeql.yml` 中 3 处 `github/codeql-action/*@v3` 改为 SHA pin `@fb4bfd79bfa826ce96c90727ff8833835ba8aad0`（40 字符，通过 `gh api repos/github/codeql-action/git/refs/tags/v3 -q '.object.sha'` 验证），与 ci.yml/docs.yml 的 SHA pin 策略一致，防供应链攻击（参考 2026-03 Trivy action tag 被恶意替换事件）。
 - **禁用 CodeQL `rust/unused-variable` 规则**：CodeQL 对 Rust 宏（`tracing::warn!`/`tracing::error!`/`tracing::info!`）内部的变量使用追踪不完整，系统性误报 `let Err(e) = ... { tracing::error!(error = %e, ...) }` 模式中的 `e` 未使用。在 `.github/codeql-config.yml` 添加 `query-filters` 禁用该规则，并批量 dismiss 13 个误报 alerts（编号 83-95，分布在 src/stp/util.rs、src/stp/session.rs、src/server/server_impl.rs、src/protocol/sso/channel.rs、src/listener/audit.rs、src/core/auth/default.rs）。本地 `cargo clippy` 的 `unused_variables` lint 能正确穿透宏展开识别变量使用，CI 已强制 `-D warnings`，覆盖更准确，不降低安全水平。

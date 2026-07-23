@@ -59,7 +59,7 @@ pub mod token;
 pub mod util;
 
 // 子 trait re-exports（供 crate::stp::SessionLogic 等路径访问）
-pub use self::context::{current_token, with_current_token};
+pub use self::context::{current_ip, current_token, with_current_ip, with_current_token};
 pub use self::core::GarrisonCore;
 pub use self::interface::GarrisonInterface;
 pub use self::mfa::MfaLogic;
