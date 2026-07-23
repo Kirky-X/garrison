@@ -1345,7 +1345,11 @@ impl TokenHandler {
 /// 生成 token（32 字节随机数 → BASE64URL 编码）。
 fn generate_token() -> String {
     let mut bytes = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut bytes);
+    // OsRng 每次直接读 OS CSPRNG（系统调用），无用户态 DRBG 缓冲，
+    // 相比 thread_rng 性能略低（~100-300ns vs ~10-30ns/调用），但消除 reseed 状态机攻击面。
+    // token 生成非高频路径（每次用户登录/refresh 一次），安全优先于性能。
+    // 与项目其余模块（src/web/csrf.rs / src/account/credential/password.rs 等）规范一致。
+    rand::rngs::OsRng.fill_bytes(&mut bytes);
     URL_SAFE_NO_PAD.encode(bytes)
 }
 

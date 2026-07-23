@@ -958,7 +958,21 @@ impl AuditLogListener {
             return Ok(false);
         }
         let computed = self.compute_signature_chain(entries)?;
-        Ok(computed == signatures)
+        // 逐条常量时间比对签名，防止逐元素短路比较引入的时序侧信道
+        // （攻击者同时控制 entries 与 signatures 时可能逐字节推断 HMAC，CWE-208/CWE-347）。
+        // 循环遍历所有签名对，不因任一条不匹配而提前返回。
+        // 长度校验：HMAC-SHA256 hex 编码固定 64 字节，异常长度直接判失败，
+        // 防止外部传入超长 signature 触发常量时间循环被放大成 CPU DoS（CWE-400）。
+        const HMAC_SHA256_HEX_LEN: usize = 64;
+        let mut all_eq = true;
+        for (c, s) in computed.iter().zip(signatures.iter()) {
+            if s.len() != HMAC_SHA256_HEX_LEN {
+                all_eq = false;
+                continue;
+            }
+            all_eq &= crate::secure::ct_eq::constant_time_eq(c.as_bytes(), s.as_bytes());
+        }
+        Ok(all_eq)
     }
 
     /// 计算 HMAC-SHA256 签名链（D4 内部辅助方法）。
@@ -1041,7 +1055,7 @@ impl GarrisonListener for AuditLogListener {
 ///
 /// 启用 `i18n-icu` 时用 ICU4X 格式化当前 locale 的日期时间；未启用时回退到 Unix 时间戳，
 /// 保持零额外依赖成本。
-#[cfg(feature = "i18n-icu")]
+#[cfg(all(feature = "i18n-icu", feature = "db-sqlite"))]
 fn audit_log_written(entry: &AuditEntry) {
     use crate::i18n::icu_enhanced::format_datetime_locale;
     let dt = chrono::DateTime::from_timestamp(entry.created_at, 0).unwrap_or_else(chrono::Utc::now);
@@ -1053,7 +1067,7 @@ fn audit_log_written(entry: &AuditEntry) {
     );
 }
 
-#[cfg(not(feature = "i18n-icu"))]
+#[cfg(all(not(feature = "i18n-icu"), feature = "db-sqlite"))]
 fn audit_log_written(entry: &AuditEntry) {
     tracing::info!(
         "审计日志已写入: event_type={}, login_id={:?}, created_at={}",

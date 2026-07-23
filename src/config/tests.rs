@@ -179,7 +179,8 @@ fn validate_accepts_all_legal_token_styles() {
         let mut config = GarrisonConfig::default_config();
         config.token_style = style.to_string();
         if *style == "jwt" {
-            config.jwt_secret = "test-secret".to_string().into();
+            // ≥32 字节，满足 HS256 jwt_secret 最小长度校验
+            config.jwt_secret = "test-secret-0123456789abcdefghij".to_string().into();
         }
         assert!(
             config.validate().is_ok(),
@@ -217,6 +218,132 @@ fn validate_rejects_empty_jwt_secret_when_token_style_is_jwt() {
         Err(other) => panic!("期望 GarrisonError::Config，实际: {:?}", other),
         Ok(_) => panic!("token_style=jwt 且 jwt_secret 为空时应返回 Err"),
     }
+}
+
+/// 验证 token_style=jwt 且 jwt_secret 短于 32 字节（HS256）时校验失败。
+///
+/// 弱密钥易被离线爆破，validate() 应拒绝（CWE-326 防御）。
+#[test]
+fn validate_rejects_short_jwt_secret_hs256() {
+    let mut config = GarrisonConfig::default_config();
+    config.token_style = "jwt".to_string();
+    config.jwt_algorithm = "HS256".to_string();
+    config.jwt_secret = "short-secret".to_string().into(); // 12 字节 < 32
+    match config.validate() {
+        Err(GarrisonError::Config(msg)) => {
+            assert!(
+                msg.contains("jwt_secret") && msg.contains("≥"),
+                "实际: {}",
+                msg
+            );
+        },
+        other => panic!("HS256 短密钥应被拒绝，实际: {:?}", other),
+    }
+}
+
+/// 验证 HS512 算法下 jwt_secret 短于 64 字节时校验失败（即使已满足 HS256 的 32 字节）。
+#[test]
+fn validate_rejects_short_jwt_secret_hs512() {
+    let mut config = GarrisonConfig::default_config();
+    config.token_style = "jwt".to_string();
+    config.jwt_algorithm = "HS512".to_string();
+    // 50 字节：满足 HS256(32) 和 HS384(48) 但不满足 HS512（需 ≥64）
+    config.jwt_secret = "x".repeat(50).into();
+    match config.validate() {
+        Err(GarrisonError::Config(msg)) => {
+            assert!(
+                msg.contains("HS512") && msg.contains("≥64"),
+                "HS512 短密钥错误消息应包含算法与最小长度，实际: {}",
+                msg
+            );
+        },
+        other => panic!("HS512 50 字节密钥应被拒绝，实际: {:?}", other),
+    }
+}
+
+/// 验证 HS384 算法下 jwt_secret 短于 48 字节时校验失败（即使已满足 HS256 的 32 字节）。
+#[test]
+fn validate_rejects_short_jwt_secret_hs384() {
+    let mut config = GarrisonConfig::default_config();
+    config.token_style = "jwt".to_string();
+    config.jwt_algorithm = "HS384".to_string();
+    // 40 字节：满足 HS256(32) 但不满足 HS384（需 ≥48）
+    config.jwt_secret = "x".repeat(40).into();
+    match config.validate() {
+        Err(GarrisonError::Config(msg)) => {
+            assert!(
+                msg.contains("HS384") && msg.contains("≥48"),
+                "HS384 短密钥错误消息应包含算法与最小长度，实际: {}",
+                msg
+            );
+        },
+        other => panic!("HS384 40 字节密钥应被拒绝，实际: {:?}", other),
+    }
+}
+
+/// 验证 jwt_algorithm 不在白名单内时校验失败（防拼写错误静默走 32 字节分支）。
+#[test]
+fn validate_rejects_unknown_jwt_algorithm() {
+    let mut config = GarrisonConfig::default_config();
+    config.token_style = "jwt".to_string();
+    config.jwt_algorithm = "HS1024".to_string(); // 拼写错误 / 不支持
+    config.jwt_secret = "x".repeat(32).into(); // 32 字节（满足 HS256 但算法白名单校验在前）
+    match config.validate() {
+        Err(GarrisonError::Config(msg)) => {
+            assert!(
+                msg.contains("HS1024") && msg.contains("HS256/HS384/HS512"),
+                "未知算法错误消息应包含输入值与白名单，实际: {}",
+                msg
+            );
+        },
+        other => panic!("未知 jwt_algorithm 应被拒绝，实际: {:?}", other),
+    }
+}
+
+/// 验证非 jwt 风格（如 simple）允许短 jwt_secret：
+///
+/// jwt_secret 在 simple 风格下被复用为 HMAC 密钥，不是可离线爆破的 JWT 签名，
+/// 长度校验仅限定在 token_style=jwt，避免误伤其他风格。
+/// 注意：simple 风格下短密钥会触发 tracing::warn 提示强化，但 validate() 仍 Ok。
+#[test]
+fn validate_allows_short_secret_for_non_jwt_style() {
+    let mut config = GarrisonConfig::default_config();
+    config.token_style = "simple".to_string();
+    config.jwt_secret = "weak".to_string().into(); // 4 字节，simple 风格不受长度校验
+    assert!(
+        config.validate().is_ok(),
+        "非 jwt 风格不应触发 JWT 密钥长度校验"
+    );
+}
+
+/// 验证 ≥32 字节的 jwt_secret 在 HS256 下通过校验。
+#[test]
+fn validate_accepts_strong_jwt_secret_hs256() {
+    let mut config = GarrisonConfig::default_config();
+    config.token_style = "jwt".to_string();
+    config.jwt_algorithm = "HS256".to_string();
+    config.jwt_secret = "x".repeat(32).into(); // 恰好 32 字节边界
+    assert!(config.validate().is_ok(), "32 字节密钥应通过 HS256 校验");
+}
+
+/// 验证 HS384 算法下 ≥48 字节 jwt_secret 通过校验。
+#[test]
+fn validate_accepts_strong_jwt_secret_hs384() {
+    let mut config = GarrisonConfig::default_config();
+    config.token_style = "jwt".to_string();
+    config.jwt_algorithm = "HS384".to_string();
+    config.jwt_secret = "x".repeat(48).into(); // 恰好 48 字节边界
+    assert!(config.validate().is_ok(), "48 字节密钥应通过 HS384 校验");
+}
+
+/// 验证 HS512 算法下 ≥64 字节 jwt_secret 通过校验。
+#[test]
+fn validate_accepts_strong_jwt_secret_hs512() {
+    let mut config = GarrisonConfig::default_config();
+    config.token_style = "jwt".to_string();
+    config.jwt_algorithm = "HS512".to_string();
+    config.jwt_secret = "x".repeat(64).into(); // 恰好 64 字节边界
+    assert!(config.validate().is_ok(), "64 字节密钥应通过 HS512 校验");
 }
 
 // ========================================================================
@@ -376,7 +503,7 @@ token_style = "jwt"
 timeout = 1800
 is_read_cookie = false
 throw_on_not_login = false
-jwt_secret = "test-secret"
+jwt_secret = "test-secret-0123456789abcdefghij"
 "#,
     );
     let config = GarrisonConfig::load(Some(temp.path().to_str().unwrap())).unwrap();
@@ -428,7 +555,7 @@ fn env_overrides_toml() {
 
     let temp = write_temp_toml(
         r#"timeout = 1800
-jwt_secret = "test-secret""#,
+jwt_secret = "test-secret-0123456789abcdefghij""#,
     );
     let config = GarrisonConfig::load(Some(temp.path().to_str().unwrap())).unwrap();
 
@@ -505,7 +632,7 @@ fn update_modifies_multiple_fields() {
         .update(|c| {
             c.timeout = 7200;
             c.token_style = "jwt".to_string();
-            c.jwt_secret = "test-secret".to_string().into();
+            c.jwt_secret = "test-secret-0123456789abcdefghij".to_string().into();
             c.throw_on_not_login = false;
         })
         .unwrap();

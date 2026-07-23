@@ -295,6 +295,7 @@ pub mod listener;
     feature = "secure-masking",
     feature = "secure-xss",
     feature = "secure-sanitize",
+    feature = "secure-ct-eq",
     feature = "sms-rate-limit",
 ))]
 pub mod secure;

@@ -9,6 +9,18 @@
 
 ### Security
 
+- **常量时间比较公共原语**（CWE-208 防御）：
+  - 新增 `secure-ct-eq` feature 与 `src/secure/ct_eq.rs` 模块，提供 `pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool`，基于 `subtle::ConstantTimeEq`。
+  - `audit-log` / `oauth2-server` 改为依赖 `secure-ct-eq`（不再各自 `dep:subtle`），消除 `src/listener/audit.rs::constant_time_eq_bytes` 与 `src/oauth2_server/authorize.rs::constant_time_eq_str` 两处重复实现（规则 7 先读再写）。
+  - `AuditLogListener::verify_signature_chain` 改用公共 `constant_time_eq`，并加 HMAC-SHA256 hex 长度校验（64 字节，防超长 signature 触发 CPU DoS，CWE-400）。
+  - `verify_pkce` 改用公共 `constant_time_eq`，并加 S256 `code_challenge` 长度校验（43 字符，防超长输入 DoS）。
+- **`jwt_secret` 弱密钥拒绝**（CWE-326 防御，**破坏性变更**）：
+  - `token_style=jwt` 时强制长度校验：HS256 ≥32 字节、HS384 ≥48 字节、HS512 ≥64 字节（RFC 7518 §3.2）。
+  - `jwt_algorithm` 加白名单校验（仅 HS256/HS384/HS512），防拼写错误静默走 32 字节分支。
+  - `token_style=simple` 下短 jwt_secret 不强制 reject（避免误伤存量配置），但 `tracing::warn` 提示强化。
+  - **升级影响**：原有短 jwt_secret 配置（如 `"test-secret"` 11 字节）启动会失败，需更新到 ≥32 字节。
+- **CSPRNG 统一**：`oauth2_server::authorize::generate_authorization_code` 与 `oauth2_server::token::generate_token` 从 `rand::thread_rng()` 改为 `rand::rngs::OsRng`，与项目其余模块规范一致（消除 reseed 状态机攻击面）。
+- **audit_log_written feature-gating 修复**：`src/listener/audit.rs` 的 `audit_log_written` 两个版本（i18n-icu / 非 i18n-icu）原仅 gate 于 `i18n-icu`，但使用 `AuditEntry` 类型（需 `db-sqlite`），导致启用 `audit-log` 不启用 `db-sqlite` 时编译失败。补齐 `db-sqlite` 门。
 - **API Key 安全退化修复（nebulaid → garrison 迁移，详见 `docs/decisions/A-011`）**：
   - **CWE-916 明文存储修复**：API Key 改为 `key_id.key_secret` 双段格式（各 32 hex），`key_secret` 永不落库，仅存储 `sha256` 哈希，校验用 `subtle::ConstantTimeEq` 常量时间比较。`protocol-apikey` feature 新增 `dep:sha2` + `dep:subtle` 依赖。
   - **CWE-307 IP 级失败限速**：新增 `CURRENT_IP` task_local（`with_current_ip`/`current_ip`）；`BruteForceStrategy` 新增 `is_blocked`（只读不计数）与 `record_failure`（仅失败计数、超阈值封禁）；`check_api_key` 在 `firewall-bruteforce` 启用且有 IP 上下文时校验失败按 IP 计入暴力破解防护（成功零写入，无 IP 时 fail-open）。
@@ -22,6 +34,7 @@
 
 ### Changed
 
+- `audit-log` / `oauth2-server` feature 的 `dep:subtle` 改为依赖 `secure-ct-eq`，subtle 仍由 `secure-ct-eq` 唯一引入。
 - **CI/CD 依赖升级**（关闭 5 个 dependabot PR #19-#23，改动手动应用到本地避免冲突）：
   - `Swatinem/rust-cache` v2.9.1 SHA 升级至正式发布 commit（含哈希计算回归修复），ci.yml + release.yml 共 12 处同步。
   - `codecov/codecov-action` v4.6.0 → v7.0.0。

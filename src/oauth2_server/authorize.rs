@@ -36,6 +36,12 @@ const CODE_VERIFIER_MIN_LEN: usize = 43;
 /// code_verifier 最大长度（RFC 7636 §4.1）。
 const CODE_VERIFIER_MAX_LEN: usize = 128;
 
+/// S256 code_challenge 固定长度（BASE64URL_NO_PAD(SHA256(32B)) = 43 字符，RFC 7636 §4.2）。
+///
+/// 用于在 `verify_pkce` 入口校验 `code_challenge` 长度，防止外部传入超长字符串
+/// 触发常量时间循环被放大成 CPU DoS（CWE-400）。
+const S256_CHALLENGE_LEN: usize = 43;
+
 /// URL 查询参数值编码集。
 ///
 /// 编码控制字符 + 保留字符 + 不安全字符，防止参数注入和 URL 解析歧义。
@@ -290,7 +296,11 @@ impl AuthorizeHandler {
 /// 生成授权码（32 字节随机数 → BASE64URL 编码）。
 fn generate_authorization_code() -> String {
     let mut bytes = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut bytes);
+    // OsRng 每次直接读 OS CSPRNG（系统调用），无用户态 DRBG 缓冲，
+    // 相比 thread_rng 性能略低（~100-300ns vs ~10-30ns/调用），但消除 reseed 状态机攻击面。
+    // 授权码生成非高频路径（每次用户授权一次），安全优先于性能。
+    // 与项目其余模块（src/web/csrf.rs / src/account/credential/password.rs 等）规范一致。
+    rand::rngs::OsRng.fill_bytes(&mut bytes);
     URL_SAFE_NO_PAD.encode(bytes)
 }
 
@@ -312,8 +322,9 @@ pub fn is_valid_code_verifier_len(code_verifier: &str) -> bool {
 /// 校验 code_verifier 与 code_challenge 是否匹配（S256 方法）。
 ///
 /// 1. 校验 code_verifier 长度（43-128 字符）
-/// 2. 计算 SHA256(code_verifier) → BASE64URL
-/// 3. 与 code_challenge 比对
+/// 2. 校验 code_challenge 长度（S256 固定 43 字符，防止 DoS）
+/// 3. 计算 SHA256(code_verifier) → BASE64URL
+/// 4. 与 code_challenge 常量时间比对（CWE-208 防御）
 pub fn verify_pkce(code_verifier: &str, code_challenge: &str) -> GarrisonResult<bool> {
     if !is_valid_code_verifier_len(code_verifier) {
         return Err(GarrisonError::OAuth2(format!(
@@ -321,8 +332,17 @@ pub fn verify_pkce(code_verifier: &str, code_challenge: &str) -> GarrisonResult<
             code_verifier.len()
         )));
     }
+    // 长度校验：S256 challenge = BASE64URL_NO_PAD(SHA256) 固定 43 字符。
+    // 异常长度直接判失败（Ok(false)），避免进入常量时间循环被超长输入放大成 CPU DoS。
+    if code_challenge.len() != S256_CHALLENGE_LEN {
+        return Ok(false);
+    }
     let computed = generate_code_challenge(code_verifier);
-    Ok(computed == code_challenge)
+    // 纵深防御：常量时间比较，与代码库其余签名比较保持一致（CWE-208）。
+    Ok(crate::secure::ct_eq::constant_time_eq(
+        computed.as_bytes(),
+        code_challenge.as_bytes(),
+    ))
 }
 
 #[cfg(test)]

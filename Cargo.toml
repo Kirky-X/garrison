@@ -251,7 +251,13 @@ alone-cache = []
 parameter-query = []
 
 # === 审计日志 ===
-audit-log = ["listener", "dep:sha2", "hmac", "secure-masking"]
+audit-log = ["listener", "dep:sha2", "hmac", "secure-masking", "secure-ct-eq"]
+
+# === 常量时间比较原语（CWE-208 防御）===
+# 提供 `secure::ct_eq::constant_time_eq` 公共函数，基于 subtle::ConstantTimeEq。
+# 所有需要常量时间比较的 feature（如 audit-log / oauth2-server）应依赖此 feature，
+# 避免在各模块重复实现（规则 7 先读再写、规则 5 简洁优先）。
+secure-ct-eq = ["dep:subtle"]
 
 # === 安全防护套件 ===
 # v0.7.2：统一使用 limiteron GarrisonDaoDistributedLimiter，禁止手写限流实现。
@@ -311,7 +317,7 @@ secure-simple-token = ["dep:sha2", "hmac", "dep:subtle"]
 auth-server = ["web-axum", "backend-embedded", "auth-server-sdforge", "dep:subtle", "secure-simple-token"]
 abac = ["dep:cedar-policy", "cache-memory"]
 # db-sqlite 下的 RefreshTokenRotation 依赖 protocol::jwt，因此传递启用 protocol-jwt。
-oauth2-server = ["protocol-oauth2", "dep:reqwest", "dep:argon2", "dep:rand", "dep:percent-encoding", "protocol-jwt"]
+oauth2-server = ["protocol-oauth2", "dep:reqwest", "dep:argon2", "dep:rand", "dep:percent-encoding", "protocol-jwt", "secure-ct-eq"]
 
 # === v0.7.0 inklog 结构化审计日志 ===
 audit-inklog = []

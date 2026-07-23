@@ -464,10 +464,44 @@ impl GarrisonConfig {
                 self.cookie_same_site
             )));
         }
-        if self.token_style == "jwt" && self.jwt_secret.is_empty() {
-            return Err(GarrisonError::Config(
-                "jwt_secret 不能为空（当 token_style=jwt 时）".to_string(),
-            ));
+        // jwt_secret 强度校验（仅当 token_style=jwt，即密钥用于 JWT 签名时）：
+        // 防止弱密钥被离线爆破。HS256 需 ≥32 字节、HS384 需 ≥48 字节、HS512 需 ≥64 字节
+        // （RFC 7518 §3.2）。jwt_algorithm 必须在白名单内，否则 reject（防拼写错误静默走 32 字节分支）。
+        // 注意：jwt_secret 在 simple 风格下被复用为 HMAC 密钥、在 refresh 轮换时也走 jwt 分支，
+        // 但仅 token_style=jwt 会用它做可离线爆破的 JWT 签名，故长度校验限定在此分支，
+        // 避免误伤 simple 等其他风格。simple 风格下的弱密钥在下面单独 warn。
+        if self.token_style == "jwt" {
+            let secret_len = self.jwt_secret.as_str().len();
+            if secret_len == 0 {
+                return Err(GarrisonError::Config(
+                    "jwt_secret 不能为空（当 token_style=jwt 时）".to_string(),
+                ));
+            }
+            let min_len = match self.jwt_algorithm.as_str() {
+                "HS256" => 32,
+                "HS384" => 48,
+                "HS512" => 64,
+                other => {
+                    return Err(GarrisonError::Config(format!(
+                        "不支持的 jwt_algorithm: {}（仅支持 HS256/HS384/HS512）",
+                        other
+                    )))
+                },
+            };
+            if secret_len < min_len {
+                return Err(GarrisonError::Config(format!(
+                    "jwt_secret 长度不足：{} 算法要求 ≥{} 字节，实际 {} 字节",
+                    self.jwt_algorithm, min_len, secret_len
+                )));
+            }
+        } else if self.token_style == "simple" && self.jwt_secret.as_str().len() < 32 {
+            // simple 风格下 jwt_secret 被复用为 HMAC 密钥，攻击者拿到一条 HMAC 输出
+            // 即可离线爆破短密钥。不强制 reject（避免误伤存量配置），但 warn 提示强化。
+            tracing::warn!(
+                "jwt_secret 长度 {} < 32 字节，token_style={} 不强制校验，但建议强化以防 HMAC 爆破",
+                self.jwt_secret.as_str().len(),
+                self.token_style
+            );
         }
         if self.remember_me_enabled && self.remember_me_timeout <= self.timeout {
             return Err(GarrisonError::Config(format!(

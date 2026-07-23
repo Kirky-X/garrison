@@ -124,12 +124,13 @@ impl GarrisonInterface for MockInterface {
 // 辅助函数
 // ============================================================================
 
-/// 初始化 GarrisonManager（token_style=jwt，jwt_secret=test-secret）。
+/// 初始化 GarrisonManager（token_style=jwt，jwt_secret ≥ 32 字节）。
 fn init_jwt_manager() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     let mut config = GarrisonConfig::default_config();
     config.token_style = "jwt".to_string();
-    config.jwt_secret = "test-secret-key".to_string().into();
+    // ≥32 字节，满足 HS256 jwt_secret 最小长度校验
+    config.jwt_secret = "test-secret-key-0123456789abcdef".to_string().into();
     config.timeout = 3600;
     config.throw_on_not_login = false;
     let config = Arc::new(config);
