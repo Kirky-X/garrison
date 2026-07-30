@@ -671,5 +671,6 @@ pub use strategy::firewall::{CountryLookup, GeoCoord, GeoLookup};
 #[cfg(feature = "annotation-macros")]
 pub use garrison_macros::{
     check_abac, check_access_token, check_api_key, check_client_token, check_disable, check_login,
-    check_mfa, check_permission, check_role, check_temp_token,
+    check_login_forge, check_mfa, check_permission, check_permission_forge, check_role,
+    check_role_forge, check_temp_token,
 };

@@ -455,6 +455,139 @@ pub fn check_abac(attr: TokenStream, item: TokenStream) -> TokenStream {
 }
 
 // ============================================================================
+// forge 兼容变体（v0.8.2 新增）
+// ============================================================================
+//
+// 与 sdforge `#[forge]` 宏共存的变体。不生成 wrapper 函数，直接在原函数体开头
+// 插入校验代码，保留原返回类型（`Result<T, E: From<GarrisonError>>`）。
+//
+// # 展开顺序
+//
+// `#[check_*_forge]` 必须置于 `#[forge]` 上方，使其先展开（修改函数体）；
+// `#[forge]` 后展开时会保留修改后的函数体（仅清理参数上的 `#[state]`/`#[param]`
+// 属性，不动函数体），并生成路由注册代码。
+//
+// # 错误转换
+//
+// 校验失败返回 `Err(::std::convert::Into::into(garrison_err))`，
+// 要求调用方错误类型实现 `From<GarrisonError>`。
+//
+// # 示例
+//
+// ```ignore
+// #[check_permission_forge("admin")]
+// #[forge(name = "handler", path = "/admin/data", method = "GET")]
+// async fn handler() -> Result<Json<Data>, ErrorResponse> {
+//     // body
+// }
+// ```
+
+/// 登录校验属性宏（forge 兼容变体）。
+///
+/// 与 [`macro@check_login`] 区别：不生成 wrapper，直接在原函数体开头插入校验代码，
+/// 校验失败返回 `Err(garrison_err.into())`。与 `#[forge]` 宏兼容。
+///
+/// # 限制
+///
+/// - 仅支持 async fn（`#[forge]` 宏要求 async handler）
+/// - 调用方错误类型必须实现 `From<GarrisonError>`
+///
+/// # 示例
+///
+/// ```ignore
+/// use garrison::check_login_forge;
+///
+/// #[check_login_forge]
+/// #[forge(name = "handler", path = "/data", method = "GET")]
+/// async fn handler() -> Result<Json<Data>, ErrorResponse> {
+///     // body
+/// }
+/// ```
+#[proc_macro_attribute]
+pub fn check_login_forge(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    let item_fn = parse_macro_input!(item as ItemFn);
+    expand_check_login_forge(item_fn).into()
+}
+
+/// 权限校验属性宏（forge 兼容变体）。
+///
+/// 与 [`macro@check_permission`] 区别：不生成 wrapper，直接在原函数体开头插入校验代码，
+/// 校验失败返回 `Err(garrison_err.into())`。与 `#[forge]` 宏兼容。
+///
+/// 支持位置参数形式：`#[check_permission_forge("admin")]`（AND 语义，必须持有全部权限）。
+///
+/// # 限制
+///
+/// - 仅支持 async fn（`#[forge]` 宏要求 async handler）
+/// - 调用方错误类型必须实现 `From<GarrisonError>`
+/// - 至少一个权限参数
+///
+/// # 示例
+///
+/// ```ignore
+/// use garrison::check_permission_forge;
+///
+/// #[check_permission_forge("admin")]
+/// #[forge(name = "handler", path = "/admin/data", method = "GET")]
+/// async fn handler() -> Result<Json<Data>, ErrorResponse> {
+///     // body
+/// }
+/// ```
+#[proc_macro_attribute]
+pub fn check_permission_forge(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let args = parse_macro_input!(attr with Punctuated::<LitStr, Token![,]>::parse_terminated);
+    let perms: Vec<String> = args.iter().map(|s| s.value()).collect();
+    if perms.is_empty() {
+        return syn::Error::new(
+            Span::call_site(),
+            "#[check_permission_forge] 需要至少一个权限参数，例如 #[check_permission_forge(\"admin\")]",
+        )
+        .to_compile_error()
+        .into();
+    }
+    let item_fn = parse_macro_input!(item as ItemFn);
+    expand_check_with_args_forge("check_permission", &perms, item_fn).into()
+}
+
+/// 角色校验属性宏（forge 兼容变体）。
+///
+/// 与 [`macro@check_role`] 区别：不生成 wrapper，直接在原函数体开头插入校验代码，
+/// 校验失败返回 `Err(garrison_err.into())`。与 `#[forge]` 宏兼容。
+///
+/// # 限制
+///
+/// - 仅支持 async fn（`#[forge]` 宏要求 async handler）
+/// - 调用方错误类型必须实现 `From<GarrisonError>`
+/// - 至少一个角色参数
+///
+/// # 示例
+///
+/// ```ignore
+/// use garrison::check_role_forge;
+///
+/// #[check_role_forge("admin")]
+/// #[forge(name = "handler", path = "/admin/data", method = "GET")]
+/// async fn handler() -> Result<Json<Data>, ErrorResponse> {
+///     // body
+/// }
+/// ```
+#[proc_macro_attribute]
+pub fn check_role_forge(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let args = parse_macro_input!(attr with Punctuated::<LitStr, Token![,]>::parse_terminated);
+    let roles: Vec<String> = args.iter().map(|s| s.value()).collect();
+    if roles.is_empty() {
+        return syn::Error::new(
+            Span::call_site(),
+            "#[check_role_forge] 需要至少一个角色参数，例如 #[check_role_forge(\"admin\")]",
+        )
+        .to_compile_error()
+        .into();
+    }
+    let item_fn = parse_macro_input!(item as ItemFn);
+    expand_check_with_args_forge("check_role", &roles, item_fn).into()
+}
+
+// ============================================================================
 // 内部展开逻辑
 // ============================================================================
 
@@ -942,6 +1075,103 @@ fn expand_wrapper(
     expanded.into()
 }
 
+// ============================================================================
+// forge 兼容变体展开逻辑
+// ============================================================================
+
+/// 展开 `#[check_login_forge]`：在原函数体开头插入 `GarrisonUtil::check_login()` 校验。
+///
+/// forge 兼容变体：不生成 wrapper，直接修改原函数体。校验失败返回
+/// `Err(::std::convert::Into::into(garrison_err))`，
+/// 要求调用方错误类型实现 `From<GarrisonError>`。
+///
+/// 仅支持 async fn（`#[forge]` 宏要求 async handler），sync fn 标注会产生编译错误
+/// （`.await` 在非 async 函数中非法），符合设计预期。
+fn expand_check_login_forge(item_fn: ItemFn) -> proc_macro2::TokenStream {
+    let checks = quote! {
+        match ::garrison::GarrisonUtil::check_login().await {
+            ::std::result::Result::Ok(true) => {},
+            ::std::result::Result::Ok(false) => {
+                return ::std::result::Result::Err(::std::convert::Into::into(
+                    ::garrison::GarrisonError::NotLogin("未登录（check_login 返回 false）".to_string())
+                ));
+            }
+            ::std::result::Result::Err(__garrison_err) => {
+                return ::std::result::Result::Err(::std::convert::Into::into(__garrison_err));
+            }
+        }
+    };
+    expand_forge_inline(&item_fn, checks)
+}
+
+/// 展开 `#[check_permission_forge]` / `#[check_role_forge]`：
+/// 在原函数体开头插入多次调用（AND 语义）。
+///
+/// forge 兼容变体：不生成 wrapper，直接修改原函数体。校验失败返回
+/// `Err(::std::convert::Into::into(garrison_err))`。
+fn expand_check_with_args_forge(
+    method: &str,
+    args: &[String],
+    item_fn: ItemFn,
+) -> proc_macro2::TokenStream {
+    let method_ident = format_ident!("{}", method);
+    // 每个参数生成一次调用，AND 语义：任一失败立即 return Err
+    let calls: Vec<proc_macro2::TokenStream> = args
+        .iter()
+        .map(|arg| {
+            quote! {
+                if let ::std::result::Result::Err(__garrison_err) =
+                    ::garrison::GarrisonUtil::#method_ident(#arg).await
+                {
+                    return ::std::result::Result::Err(::std::convert::Into::into(__garrison_err));
+                }
+            }
+        })
+        .collect();
+    let checks = quote! { #(#calls)* };
+    expand_forge_inline(&item_fn, checks)
+}
+
+/// forge 兼容变体展开核心：直接在原函数体开头插入校验代码，不生成 wrapper。
+///
+/// 与 [`expand_wrapper`] 区别：
+/// - [`expand_wrapper`]：生成 wrapper 函数（返回 `Response`），与 `#[forge]` 宏不兼容
+/// - `expand_forge_inline`：修改原函数体（保留原返回类型），与 `#[forge]` 宏兼容
+///
+/// 展开后函数体结构：
+/// ```ignore
+/// async fn handler(...) -> Result<T, E: From<GarrisonError>> {
+///     // #checks
+///     if let Err(e) = GarrisonUtil::check_permission(...).await {
+///         return Err(e.into());
+///     }
+///     // #block（原函数体作为内层块，其值作为函数返回值）
+///     {
+///         // original body
+///     }
+/// }
+/// ```
+///
+/// 原函数体作为内层块表达式，其值作为整个函数体的返回值，语义保持不变。
+fn expand_forge_inline(
+    item_fn: &ItemFn,
+    checks: proc_macro2::TokenStream,
+) -> proc_macro2::TokenStream {
+    let vis = &item_fn.vis;
+    let sig = &item_fn.sig;
+    let attrs = &item_fn.attrs;
+    let block = &item_fn.block;
+
+    let expanded = quote! {
+        #(#attrs)*
+        #vis #sig {
+            #checks
+            #block
+        }
+    };
+    expanded
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -957,5 +1187,113 @@ mod tests {
     fn detect_asyncness_returns_sync_for_sync_fn() {
         let item_fn: ItemFn = parse_quote! { fn handler() {} };
         assert_eq!(detect_asyncness(&item_fn), Asyncness::Sync);
+    }
+
+    // ---- forge 兼容变体测试 ----
+
+    /// `expand_check_permission_forge` 展开后函数名不变（不生成 wrapper）
+    #[test]
+    fn check_permission_forge_preserves_function_name() {
+        let item_fn: ItemFn =
+            parse_quote! { async fn list_feedback() -> Result<i32, MyError> { Ok(42) } };
+        let tokens =
+            expand_check_with_args_forge("check_permission", &["admin".to_string()], item_fn);
+        let ts: proc_macro2::TokenStream = tokens.into();
+        let code = ts.to_string();
+        // 不应生成 __garrison_inner_ 前缀的内部函数
+        assert!(
+            !code.contains("__garrison_inner_"),
+            "forge 变体不应生成 wrapper/inner 函数"
+        );
+        // 应保留原函数名
+        assert!(code.contains("list_feedback"));
+    }
+
+    /// `expand_check_permission_forge` 展开后函数体包含 check_permission 调用
+    #[test]
+    fn check_permission_forge_inserts_check_call() {
+        let item_fn: ItemFn =
+            parse_quote! { async fn handler() -> Result<i32, MyError> { Ok(42) } };
+        let tokens =
+            expand_check_with_args_forge("check_permission", &["admin".to_string()], item_fn);
+        let ts: proc_macro2::TokenStream = tokens.into();
+        let code = ts.to_string();
+        // 应包含 GarrisonUtil::check_permission 调用
+        assert!(
+            code.contains("check_permission"),
+            "应插入 check_permission 调用"
+        );
+        assert!(code.contains("admin"), "应包含权限参数");
+        // 应包含 await（async handler）；proc_macro2 to_string 在 . 后插空格 → ". await"
+        assert!(code.contains("await"), "应包含 await 调用");
+    }
+
+    /// `expand_check_permission_forge` 展开后保留原返回类型（不改为 Response）
+    #[test]
+    fn check_permission_forge_preserves_return_type() {
+        let item_fn: ItemFn =
+            parse_quote! { async fn handler() -> Result<i32, MyError> { Ok(42) } };
+        let tokens =
+            expand_check_with_args_forge("check_permission", &["admin".to_string()], item_fn);
+        let ts: proc_macro2::TokenStream = tokens.into();
+        let code = ts.to_string();
+        // 应保留 Result<i32, MyError> 返回类型，不应改为 Response
+        assert!(code.contains("Result"), "应保留 Result 返回类型");
+        assert!(
+            !code.contains("-> :: axum :: response :: Response"),
+            "不应将返回类型改为 axum::response::Response"
+        );
+    }
+
+    /// `expand_check_login_forge` 展开后插入 check_login 三路 match
+    #[test]
+    fn check_login_forge_inserts_three_way_match() {
+        let item_fn: ItemFn =
+            parse_quote! { async fn handler() -> Result<i32, MyError> { Ok(42) } };
+        let tokens = expand_check_login_forge(item_fn);
+        let ts: proc_macro2::TokenStream = tokens.into();
+        let code = ts.to_string();
+        // 应包含 check_login 调用
+        assert!(code.contains("check_login"), "应插入 check_login 调用");
+        // 应包含 Ok(true) / Ok(false) / Err 三路 match
+        assert!(code.contains("Ok (true)"), "应处理 Ok(true) 分支");
+        assert!(code.contains("Ok (false)"), "应处理 Ok(false) 分支");
+    }
+
+    /// `expand_check_role_forge` 支持多角色参数（AND 语义）
+    #[test]
+    fn check_role_forge_supports_multiple_roles() {
+        let item_fn: ItemFn =
+            parse_quote! { async fn handler() -> Result<i32, MyError> { Ok(42) } };
+        let tokens = expand_check_with_args_forge(
+            "check_role",
+            &["admin".to_string(), "moderator".to_string()],
+            item_fn,
+        );
+        let ts: proc_macro2::TokenStream = tokens.into();
+        let code = ts.to_string();
+        // 应包含两次 check_role 调用（AND 语义）
+        let count = code.matches("check_role").count();
+        assert!(
+            count >= 2,
+            "应包含至少两次 check_role 调用（AND 语义），实际: {}",
+            count
+        );
+        assert!(code.contains("admin"));
+        assert!(code.contains("moderator"));
+    }
+
+    /// `expand_forge_inline` 保留原函数属性（如 #[cfg]）
+    #[test]
+    fn forge_inline_preserves_attributes() {
+        let item_fn: ItemFn = parse_quote! {
+            #[cfg(feature = "test")]
+            async fn handler() -> Result<i32, MyError> { Ok(42) }
+        };
+        let checks = quote! { /* checks placeholder */ };
+        let tokens = expand_forge_inline(&item_fn, checks);
+        let ts: proc_macro2::TokenStream = tokens.into();
+        let code = ts.to_string();
+        assert!(code.contains("cfg"), "应保留 #[cfg] 属性");
     }
 }
