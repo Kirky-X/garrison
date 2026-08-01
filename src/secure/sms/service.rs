@@ -8,6 +8,13 @@ use super::{GarrisonDao, GarrisonResult, SmsRateLimiter, SmsSender, SmsVerificat
 use crate::error::GarrisonError;
 use std::sync::Arc;
 
+/// 错误码：SMS 验证码错误。
+///
+/// `SmsVerificationService::verify_code` 在验证码不匹配时返回
+/// `InvalidParam(ERR_SMS_CODE_WRONG)`（带 `::` 后缀）。
+/// 消费方用此常量做 `starts_with` 匹配，避免硬编码字符串契约（架构 HIGH-002 修复）。
+pub const ERR_SMS_CODE_WRONG: &str = "secure-sms-code-wrong";
+
 impl SmsVerificationService {
     /// 创建验证码服务实例。
     pub fn new(
@@ -113,9 +120,9 @@ impl SmsVerificationService {
                 self.dao.delete(&attempts_key).await?;
                 Err(GarrisonError::SmsVerifyMaxAttempts)
             } else {
-                Err(GarrisonError::InvalidParam(
-                    "secure-sms-code-wrong::".to_string(),
-                ))
+                Err(GarrisonError::InvalidParam(format!(
+                    "{ERR_SMS_CODE_WRONG}::"
+                )))
             }
         }
     }

@@ -302,6 +302,7 @@ fn error_to_key_args(err: &GarrisonError) -> (&'static str, Vec<(&'static str, S
         GarrisonError::Context(s) => string_detail("context", s),
         GarrisonError::OAuth2(s) => string_detail("oauth2", s),
         GarrisonError::Network(s) => string_detail("network", s),
+        GarrisonError::InvalidResponse(s) => string_detail("invalid-response", s),
         GarrisonError::InvalidParam(s) => string_detail("invalid-param", s),
         GarrisonError::NotImplemented(s) => string_detail("not-implemented", s),
         GarrisonError::FirewallBlocked(s) => string_detail("firewall-blocked", s),
@@ -350,6 +351,7 @@ fn fallback_display(err: &GarrisonError) -> String {
         GarrisonError::Context(s) => format!("上下文错误: {}", s),
         GarrisonError::OAuth2(s) => format!("OAuth2 错误: {}", s),
         GarrisonError::Network(s) => format!("网络错误: {}", s),
+        GarrisonError::InvalidResponse(s) => format!("上游响应无效: {}", s),
         GarrisonError::InvalidParam(s) => format!("参数无效: {}", s),
         GarrisonError::NotImplemented(s) => format!("未实现: {}", s),
         GarrisonError::FirewallBlocked(s) => format!("防火墙拦截: {}", s),
@@ -999,6 +1001,7 @@ mod tests {
             GarrisonError::Context("a".into()),
             GarrisonError::OAuth2("a".into()),
             GarrisonError::Network("a".into()),
+            GarrisonError::InvalidResponse("a".into()),
             GarrisonError::InvalidParam("a".into()),
             GarrisonError::NotImplemented("a".into()),
             GarrisonError::FirewallBlocked("a".into()),
@@ -1022,6 +1025,36 @@ mod tests {
             let (key, _args) = error_to_key_args(&err);
             assert!(!key.is_empty(), "key 不应为空: {:?}", err);
         }
+    }
+
+    // ========================================================================
+    // InvalidResponse 变体 i18n 测试（H6：上游响应解析失败专用错误类型）
+    // ========================================================================
+
+    /// InvalidResponse 在中文 locale 下输出翻译消息。
+    #[test]
+    fn translate_error_zh_invalid_response() {
+        let _guard = set_locale(GarrisonLocale::Zh);
+        let err = GarrisonError::InvalidResponse("JSON 解析失败".to_string());
+        assert_eq!(translate_error(&err), "上游响应无效: JSON 解析失败");
+    }
+
+    /// InvalidResponse 在英文 locale 下输出翻译消息。
+    #[test]
+    fn translate_error_en_invalid_response() {
+        let _guard = set_locale(GarrisonLocale::En);
+        let err = GarrisonError::InvalidResponse("missing access_token field".to_string());
+        assert_eq!(
+            translate_error(&err),
+            "Invalid upstream response: missing access_token field"
+        );
+    }
+
+    /// InvalidResponse 在 fallback_display 下输出硬编码中文。
+    #[test]
+    fn fallback_display_invalid_response() {
+        let err = GarrisonError::InvalidResponse("parse error".into());
+        assert_eq!(fallback_display(&err), "上游响应无效: parse error");
     }
 
     /// get_bundle 对英文 locale 也返回缓存实例。

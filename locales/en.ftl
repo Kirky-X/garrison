@@ -19,6 +19,7 @@ annotation = Annotation error: {$detail}
 context = Context error: {$detail}
 oauth2 = OAuth2 error: {$detail}
 network = Network error: {$detail}
+invalid-response = Invalid upstream response: {$detail}
 invalid-param = Invalid parameter: {$detail}
 not-implemented = Not implemented: {$detail}
 exception = Business exception[{$code}]: {$detail}
@@ -83,6 +84,17 @@ keycloak-public-client-requires-pkce = Public client (client_secret=None) must c
 keycloak-exchange-code-request-failed = exchange_code request failed: {$detail}
 keycloak-exchange-code-status-not-2xx = exchange_code response status not 2xx: {$detail}
 keycloak-exchange-code-response-parse-failed = exchange_code response parse failed: {$detail}
+
+# --- Huawei Account Kit (huawei, sinnan custom provider) ---
+huawei-token-request-failed = Huawei token request failed: {$detail}
+huawei-token-response-parse-failed = Huawei token response parse failed: {$detail}
+huawei-error-response = Huawei error response: {$detail}
+huawei-token-response-missing-access-token = Huawei token response missing access_token field
+huawei-get-user-info-failed-after-token-exchange = Huawei get_user_info failed after token exchange (code consumed, please re-authorize): {$detail}
+huawei-userinfo-request-failed = Huawei userinfo request failed: {$detail}
+huawei-userinfo-response-parse-failed = Huawei userinfo response parse failed: {$detail}
+huawei-userinfo-business-error = Huawei userinfo business error: {$detail}
+huawei-userinfo-response-missing-openID = Huawei userinfo response missing openID field
 
 # ============================================================================
 # DAO errors (i18n refactor)

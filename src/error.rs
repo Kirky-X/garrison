@@ -65,6 +65,14 @@ pub enum GarrisonError {
     /// 网络错误。
     Network(String),
 
+    /// 上游响应无效错误。
+    ///
+    /// HTTP/OAuth2 上游返回了响应，但响应体无法解析（JSON 格式错误、必填字段缺失、
+    /// 响应结构不符合预期）。区别于 [`Network`](Self::Network)（网络层失败）与
+    /// [`OAuth2`](Self::OAuth2)（OAuth2 协议层错误），本变体专指"响应内容解析失败"。
+    /// HTTP 502 Bad Gateway（上游响应问题）。
+    InvalidResponse(String),
+
     /// 参数无效错误。
     InvalidParam(String),
 
@@ -244,6 +252,13 @@ impl GarrisonError {
             GarrisonError::Context(_) => (500, "CONTEXT_ERROR", "context-msg", "上下文错误", None),
             GarrisonError::OAuth2(_) => (500, "OAUTH2_ERROR", "oauth2-msg", "OAuth2 错误", None),
             GarrisonError::Network(_) => (502, "NETWORK_ERROR", "network-msg", "网络错误", None),
+            GarrisonError::InvalidResponse(_) => (
+                502,
+                "INVALID_RESPONSE",
+                "invalid-response-msg",
+                "上游响应无效",
+                None,
+            ),
             GarrisonError::InvalidParam(_) => {
                 (400, "INVALID_PARAM", "invalid-param-msg", "参数无效", None)
             },
@@ -490,6 +505,7 @@ impl miette::Diagnostic for GarrisonError {
             GarrisonError::Exception(_) => "garrison.exception",
             GarrisonError::OAuth2(_) => "garrison.oauth2",
             GarrisonError::Network(_) => "garrison.network",
+            GarrisonError::InvalidResponse(_) => "garrison.invalid_response",
             GarrisonError::InvalidParam(_) => "garrison.invalid_param",
             GarrisonError::NotImplemented(_) => "garrison.not_implemented",
             GarrisonError::FirewallBlocked(_) => "garrison.firewall_blocked",
@@ -916,6 +932,71 @@ mod tests {
     }
 
     // ========================================================================
+    // InvalidResponse 变体测试（H6：上游响应解析失败专用错误类型）
+    // ========================================================================
+
+    /// 验证 InvalidResponse 变体的 Display 输出包含原始消息（中文 locale）。
+    ///
+    /// 覆盖 spec H6：InvalidResponse 在中文 locale 下输出 "上游响应无效: {detail}"。
+    #[test]
+    fn invalid_response_variant_display_includes_message() {
+        let err = GarrisonError::InvalidResponse("JSON 解析失败".to_string());
+        assert_eq!(err.to_string(), "上游响应无效: JSON 解析失败");
+    }
+
+    /// 验证 InvalidResponse 变体的 response_parts 返回 502 + INVALID_RESPONSE。
+    ///
+    /// 覆盖 spec H6：HTTP status = 502 Bad Gateway（上游响应问题），
+    /// error_code = "INVALID_RESPONSE"。
+    #[test]
+    fn invalid_response_response_parts_returns_502() {
+        let (status, error_code, message, ex_code) =
+            GarrisonError::InvalidResponse("missing access_token field".to_string())
+                .response_parts();
+        assert_eq!(
+            status, 502,
+            "InvalidResponse 应映射为 502 Bad Gateway（上游响应问题）"
+        );
+        assert_eq!(error_code, "INVALID_RESPONSE");
+        assert_eq!(message, "上游响应无效");
+        assert!(ex_code.is_none(), "InvalidResponse 不携带 exception code");
+    }
+
+    /// 验证 InvalidResponse 变体不泄露原始 detail 到响应体 message。
+    ///
+    /// 覆盖 spec H6 安全约束：to_json_body 的 message 字段为通用描述，
+    /// 不含变体 detail（如内部解析错误细节）。
+    #[test]
+    fn invalid_response_to_json_body_does_not_leak_detail() {
+        let err = GarrisonError::InvalidResponse(
+            "internal parser stack trace: serde_json::Error at line 42".to_string(),
+        );
+        let body = err.to_json_body();
+        assert_eq!(body["error_code"], "INVALID_RESPONSE");
+        assert_eq!(body["message"], "上游响应无效");
+        let message_str = body["message"].as_str().unwrap();
+        assert!(
+            !message_str.contains("internal parser stack trace"),
+            "响应体 message 不应泄露原始 detail"
+        );
+        assert!(
+            !message_str.contains("serde_json::Error"),
+            "响应体 message 不应泄露内部错误类型"
+        );
+    }
+
+    /// 验证 InvalidResponse 错误映射为 502 Bad Gateway（web-axum feature）。
+    #[cfg(feature = "web-axum")]
+    #[test]
+    fn invalid_response_error_returns_502() {
+        use axum::http::StatusCode;
+        use axum::response::IntoResponse;
+        let err = GarrisonError::InvalidResponse("response body invalid".to_string());
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+    }
+
+    // ========================================================================
     // 覆盖率补充：to_json_body / response_parts / Exception 变体
     // ========================================================================
 
@@ -1085,6 +1166,7 @@ mod tests {
             GarrisonError::Exception(crate::exception::GarrisonException::new(500, "")),
             GarrisonError::OAuth2(String::new()),
             GarrisonError::Network(String::new()),
+            GarrisonError::InvalidResponse(String::new()),
             GarrisonError::InvalidParam(String::new()),
             GarrisonError::NotImplemented(String::new()),
             GarrisonError::FirewallBlocked(String::new()),

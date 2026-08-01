@@ -14,7 +14,8 @@
 
 use crate::error::{GarrisonError, GarrisonResult};
 use crate::loc;
-use crate::protocol::social::{SocialLoginProvider, SocialProvider, SocialUserInfo};
+use crate::protocol::social::urlencoding;
+use crate::protocol::social::{provider_names, SocialLoginProvider, SocialUserInfo};
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use rsa::pkcs1::DecodeRsaPrivateKey;
@@ -40,20 +41,35 @@ const ALIPAY_GATEWAY_URL: &str = "https://openapi.alipay.com/gateway.do";
 /// SHA256withRSA（RSA2）签名。签名流程：参数按 key ASCII 升序排序 →
 /// 拼接 `key=value&...`（不含 sign/sign_type）→ RSA PKCS1v15 签名 → base64 编码。
 ///
+/// # 性能优化（diting performance MEDIUM-1 修复）
+///
+/// `new` 时预解析 PEM 为 `RsaPrivateKey` 缓存，避免每次 `sign_request` 重复解析
+/// （base64 解码 + ASN.1 DER 解析 + 大数构造，单次开销 1-5ms）。
+///
 /// # 示例
 ///
 /// ```ignore
 /// use garrison::protocol::social::alipay::AlipayProvider;
 /// use garrison::protocol::social::SocialLoginProvider;
 ///
-/// let provider = AlipayProvider::new("app_id", "private_key_pem");
+/// let provider = AlipayProvider::new("app_id", "private_key_pem")?;
 /// let url = provider.get_authorization_url("state", "https://example.com/cb").await?;
 /// ```
 pub struct AlipayProvider {
     /// 支付宝开放平台 AppID。
     app_id: String,
-    /// RSA 私钥 PEM 字符串（PKCS#1 格式，签名时解析为 RsaPrivateKey）。
+    /// RSA 私钥 PEM 字符串（PKCS#1 格式，保留用于 `Drop` 清零，防止内存残留）。
+    ///
+    /// `rsa` 0.9.x 的 `RsaPrivateKey` 未实现 `Zeroize`，无法直接清零大数，
+    /// 故保留 PEM 字符串用于 Drop 清零（与 `WechatProvider` 清零 `client_secret` 同模式）。
     private_key_pem: String,
+    /// 预构造的 RSA2 签名器（`new` 时一次性构造，`sign_request` 时直接使用）。
+    ///
+    /// 性能 MED-1 修复：缓存 `SigningKey<Sha256>` 替代每次 `sign_request` 中
+    /// `SigningKey::new(self.private_key.clone())`——消除每次签名的 `RsaPrivateKey::clone()`
+    /// （7 次 BigUint 堆分配，约 500ns-2μs）。`SigningKey<D>` 是 `Send + Sync`
+    /// （仅含 `RsaPrivateKey` + `PhantomData`），满足 `Arc<dyn SocialLoginProvider>` 线程安全。
+    signing_key: SigningKey<Sha256>,
     /// HTTP 客户端（复用连接池）。
     http: reqwest::Client,
     /// 支付宝网关 URL（默认 `https://openapi.alipay.com/gateway.do`，测试时可覆盖）。
@@ -66,17 +82,30 @@ impl AlipayProvider {
     /// # 参数
     /// - `app_id`: 支付宝开放平台 AppID
     /// - `private_key_pem`: RSA 私钥 PEM 字符串（PKCS#1 格式，用于请求签名）
-    pub fn new(app_id: &str, private_key_pem: &str) -> Self {
-        Self {
+    ///
+    /// # 错误
+    /// - `GarrisonError::Config`: RSA 私钥 PEM 解析失败（无效格式/编码）
+    pub fn new(app_id: &str, private_key_pem: &str) -> GarrisonResult<Self> {
+        let private_key = RsaPrivateKey::from_pkcs1_pem(private_key_pem).map_err(|e| {
+            GarrisonError::Config(loc!(
+                "alipay-rsa-key-parse-failed",
+                format!("alipay rsa key parse failed: {}", e),
+                ("detail", &e.to_string())
+            ))
+        })?;
+        // 性能 MED-1 修复：一次性构造 SigningKey，避免每次 sign_request 重复 clone RsaPrivateKey
+        let signing_key = SigningKey::<Sha256>::new(private_key);
+        Ok(Self {
             app_id: app_id.to_string(),
             private_key_pem: private_key_pem.to_string(),
+            signing_key,
             http: reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(30))
                 .connect_timeout(std::time::Duration::from_secs(10))
                 .build()
                 .expect("reqwest client build with timeout should succeed"),
             gateway_url: ALIPAY_GATEWAY_URL.to_string(),
-        }
+        })
     }
 
     /// 覆盖支付宝网关 URL（用于测试时指向 mock server）。
@@ -120,20 +149,11 @@ impl AlipayProvider {
             .collect::<Vec<_>>()
             .join("&");
 
-        // 3. 解析 RSA 私钥 PEM（PKCS#1 格式）
-        let private_key = RsaPrivateKey::from_pkcs1_pem(&self.private_key_pem).map_err(|e| {
-            GarrisonError::Config(loc!(
-                "alipay-rsa-key-parse-failed",
-                format!("alipay rsa key parse failed: {}", e),
-                ("detail", &e.to_string())
-            ))
-        })?;
+        // 3. RSA2 签名（SHA256withRSA, PKCS1v15 padding）
+        // 直接用 `new` 时预构造的 SigningKey 签名，无需每次 clone RsaPrivateKey（性能 MED-1 修复）
+        let signature = self.signing_key.sign(data_to_sign.as_bytes());
 
-        // 4. RSA2 签名（SHA256withRSA, PKCS1v15 padding）—— 用 rsa re-export 的 sha2 0.10
-        let signing_key = SigningKey::<Sha256>::new(private_key);
-        let signature = signing_key.sign(data_to_sign.as_bytes());
-
-        // 5. base64 编码
+        // 4. base64 编码
         Ok(STANDARD.encode(signature.to_bytes()))
     }
 }
@@ -157,17 +177,25 @@ impl SocialLoginProvider for AlipayProvider {
         ))
     }
 
-    /// 用授权码换取用户信息。
+    /// 用授权码换取完整用户信息。
     ///
     /// 调用支付宝 `alipay.system.oauth.token` 接口，用授权码换取 access_token + user_id，
-    /// 返回 `SocialUserInfo`（nickname/avatar 为 None，需调用 `get_user_info` 获取）。
+    /// 然后内部调用 `get_user_info(access_token)` 获取完整用户信息（nickname/avatar）。
+    ///
+    /// 与 `HuaweiProvider::exchange_token` 行为一致：返回完整 `SocialUserInfo`，
+    /// 消费方无需再单独调用 `get_user_info`。
     ///
     /// # 流程
     /// 1. 构造公共参数（app_id/method/charset/sign_type/timestamp/version）+ 业务参数（grant_type/code）
     /// 2. 用 RSA2 签名所有参数
     /// 3. POST 到支付宝网关（form-encoded body）
     /// 4. 解析响应 JSON，检查 error_response
-    /// 5. 提取 user_id 返回 SocialUserInfo
+    /// 5. 提取 access_token + user_id
+    /// 6. 调用 `get_user_info(access_token)` 获取完整用户信息
+    ///
+    /// # 错误
+    /// - token 端点失败：返回 `GarrisonError::Network`（含支付宝错误码）
+    /// - get_user_info 失败：返回 `GarrisonError::Network`（code 已被消耗，用户需重新授权）
     async fn exchange_token(&self, code: &str, _state: &str) -> GarrisonResult<SocialUserInfo> {
         let timestamp = chrono::Utc::now()
             .with_timezone(&chrono::FixedOffset::east_opt(8 * 3600).expect("8*3600 valid"))
@@ -242,27 +270,30 @@ impl SocialLoginProvider for AlipayProvider {
             )));
         }
 
-        // 提取 user_id
-        let user_id = raw
+        // 提取 access_token + user_id
+        let token_resp = raw
             .get("alipay_system_oauth_token_response")
-            .and_then(|v| v.get("user_id"))
+            .ok_or_else(|| {
+                GarrisonError::Network(loc!(
+                    "alipay-response-missing-oauth-token-response",
+                    "alipay response missing alipay_system_oauth_token_response field".to_string()
+                ))
+            })?;
+
+        let access_token = token_resp
+            .get("access_token")
             .and_then(|v| v.as_str())
             .ok_or_else(|| {
                 GarrisonError::Network(loc!(
-                    "alipay-response-missing-user-id",
-                    "alipay response missing user_id field".to_string()
+                    "alipay-response-missing-access-token",
+                    "alipay response missing access_token field".to_string()
                 ))
             })?
             .to_string();
 
-        Ok(SocialUserInfo {
-            provider: SocialProvider::Alipay,
-            provider_user_id: user_id,
-            nickname: None,
-            avatar: None,
-            union_id: None,
-            raw,
-        })
+        // 调用 get_user_info 获取完整用户信息（对齐 HuaweiProvider 模式）
+        // code 已被支付宝消耗，get_user_info 失败时用户需重新发起授权
+        self.get_user_info(&access_token).await
     }
 
     /// 用 access_token 获取用户信息。
@@ -371,7 +402,7 @@ impl SocialLoginProvider for AlipayProvider {
             .map(String::from);
 
         Ok(SocialUserInfo {
-            provider: SocialProvider::Alipay,
+            provider: provider_names::ALIPAY.to_string(),
             provider_user_id: user_id,
             nickname,
             avatar,
@@ -381,20 +412,22 @@ impl SocialLoginProvider for AlipayProvider {
     }
 }
 
-/// 简单的 URL 编码工具（与 `protocol::oauth2::urlencoding` 同实现，避免跨模块耦合）。
+/// Drop 时清零 RSA 私钥 PEM 字符串，防止内存残留泄露
+/// （对齐 `WechatProvider`/`WechatMiniAppProvider` 清零敏感数据模式）。
 ///
-/// 对查询参数值进行百分号编码，保留字母、数字、`-`、`_`、`.`、`~`。
-mod urlencoding {
-    pub fn encode(s: &str) -> String {
-        let mut out = String::with_capacity(s.len());
-        for b in s.bytes() {
-            if b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.' || b == b'~' {
-                out.push(b as char);
-            } else {
-                out.push_str(&format!("%{:02X}", b));
-            }
-        }
-        out
+/// RSA 私钥 PEM 泄露后可伪造任意支付宝请求签名，危害远超 `client_secret`。
+///
+/// # 限制
+///
+/// `rsa` 0.9.x 的 `RsaPrivateKey` 未实现 `Zeroize` trait，故无法直接清零预解析的
+/// `RsaPrivateKey` 大数。本 impl 清零 PEM 字符串（可重建私钥的源数据），
+/// `RsaPrivateKey` 在 `AlipayProvider` drop 时自动释放（Rust drop 机制），但大数
+/// 内存不会被 zeroize。如需更强保证，可升级 `rsa` 到支持 `zeroize` 的版本。
+#[cfg(feature = "protocol-zeroize")]
+impl Drop for AlipayProvider {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        self.private_key_pem.zeroize();
     }
 }
 
@@ -403,7 +436,7 @@ mod tests {
     use super::*;
     use rand::rngs::OsRng;
     use rsa::pkcs1::EncodeRsaPrivateKey;
-    use wiremock::matchers::{method, path};
+    use wiremock::matchers::{body_string_contains, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     /// 生成测试用 RSA 私钥并返回 PKCS#1 PEM 字符串。
@@ -425,7 +458,8 @@ mod tests {
     /// Green 阶段（T104）：定义 struct + impl 后测试通过。
     #[tokio::test]
     async fn alipay_provider_get_authorization_url_returns_correct_format() {
-        let provider = AlipayProvider::new("app_id", "private_key_pem");
+        let pem = generate_test_rsa_pem();
+        let provider = AlipayProvider::new("app_id", &pem).expect("PEM 应解析成功");
         let url = provider
             .get_authorization_url("state", "https://example.com/cb")
             .await
@@ -443,24 +477,25 @@ mod tests {
         );
     }
 
-    /// T006 Red: 验证 `AlipayProvider::exchange_token` 解析支付宝 oauth.token 响应中的 user_id
-    ///
-    /// Red 阶段：`exchange_token` 为 `todo!()` → panic。
-    /// Green 阶段（T007）：实现 RSA2 签名 + HTTP 调用后测试通过。
+    /// T006 Red: 验证 `AlipayProvider::exchange_token` 调用 token 端点换 access_token 后，
+    /// 内部调用 `get_user_info` 获取完整用户信息（对齐 HuaweiProvider 模式）。
     ///
     /// # 测试流程
     /// 1. 生成测试 RSA 私钥（PKCS#1 PEM）
-    /// 2. wiremock 模拟 `POST /gateway.do` 返回 `alipay_system_oauth_token_response`
-    /// 3. 构造 `AlipayProvider::new("app_id", &pem).with_gateway_url(server.uri() + "/gateway.do")`
-    /// 4. 调用 `exchange_token("auth_code", "state")`
-    /// 5. 断言返回 `SocialUserInfo { provider: Alipay, provider_user_id: "user123" }`
+    /// 2. wiremock 模拟两个 `POST /gateway.do` 请求：
+    ///    - body 含 `alipay.system.oauth.token` → 返回 `alipay_system_oauth_token_response`
+    ///    - body 含 `alipay.user.info.share` → 返回 `alipay_user_info_share_response`
+    /// 3. 调用 `exchange_token("auth_code", "state")`
+    /// 4. 断言返回完整 `SocialUserInfo`（user_id + nickname + avatar）
     #[tokio::test]
     async fn alipay_provider_exchange_token_parses_user_id_from_response() {
         let pem = generate_test_rsa_pem();
 
         let server = MockServer::start().await;
+        // token 端点：body 含 method=alipay.system.oauth.token
         Mock::given(method("POST"))
             .and(path("/gateway.do"))
+            .and(body_string_contains("alipay.system.oauth.token"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "alipay_system_oauth_token_response": {
                     "access_token": "tok123",
@@ -471,32 +506,46 @@ mod tests {
             })))
             .mount(&server)
             .await;
+        // userinfo 端点：body 含 method=alipay.user.info.share
+        Mock::given(method("POST"))
+            .and(path("/gateway.do"))
+            .and(body_string_contains("alipay.user.info.share"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "alipay_user_info_share_response": {
+                    "user_id": "user123",
+                    "nick": "Bob",
+                    "avatar": "https://img.example.com/b.png"
+                }
+            })))
+            .mount(&server)
+            .await;
 
         let provider = AlipayProvider::new("app_id", &pem)
+            .expect("PEM 应解析成功")
             .with_gateway_url(format!("{}/gateway.do", server.uri()));
         let user_info = provider
             .exchange_token("auth_code", "state")
             .await
             .expect("exchange_token 应返回 Ok");
 
-        assert_eq!(user_info.provider, SocialProvider::Alipay);
+        assert_eq!(user_info.provider, provider_names::ALIPAY);
         assert_eq!(user_info.provider_user_id, "user123");
+        assert_eq!(user_info.nickname.as_deref(), Some("Bob"));
+        assert_eq!(
+            user_info.avatar.as_deref(),
+            Some("https://img.example.com/b.png")
+        );
     }
 
-    /// T006 Red: 验证 `AlipayProvider::exchange_token` 在私钥 PEM 无效时返回 `Err(Config)`
-    /// 而非 panic（Rule 12 失败显性化）。
+    /// 验证 `AlipayProvider::new` 在私钥 PEM 无效时返回 `Err(Config)` 而非 panic（Rule 12 失败显性化）。
     ///
-    /// Red 阶段：`exchange_token` 为 `todo!()` → panic（不满足 Rule 12）。
-    /// Green 阶段（T007）：签名时解析 PEM 失败 → 返回 `GarrisonError::Config`。
-    #[tokio::test]
-    async fn alipay_provider_exchange_token_returns_error_on_invalid_signature() {
-        let provider = AlipayProvider::new("app_id", "invalid_pem");
-        let result = provider.exchange_token("auth_code", "state").await;
+    /// PEM 在 `new` 时预解析为 `RsaPrivateKey` 缓存，无效 PEM → `GarrisonError::Config`。
+    #[test]
+    fn alipay_provider_new_returns_error_on_invalid_pem() {
+        let result = AlipayProvider::new("app_id", "invalid_pem");
 
-        assert!(result.is_err(), "无效私钥应返回 Err，实际: {:?}", result);
-        let err = result.unwrap_err();
-        match err {
-            GarrisonError::Config(msg) => {
+        match result {
+            Err(GarrisonError::Config(msg)) => {
                 assert!(
                     msg.contains("rsa key parse failed")
                         || msg.contains("RSA 私钥解析失败")
@@ -505,7 +554,8 @@ mod tests {
                     msg
                 );
             },
-            other => panic!("应为 GarrisonError::Config，实际: {:?}", other),
+            Err(other) => panic!("应为 GarrisonError::Config，实际: {:?}", other),
+            Ok(_) => panic!("无效 PEM 不应返回 Ok"),
         }
     }
 
@@ -541,13 +591,14 @@ mod tests {
             .await;
 
         let provider = AlipayProvider::new("app_id", &pem)
+            .expect("PEM 应解析成功")
             .with_gateway_url(format!("{}/gateway.do", server.uri()));
         let user_info = provider
             .get_user_info("valid_access_token")
             .await
             .expect("get_user_info 应返回 Ok");
 
-        assert_eq!(user_info.provider, SocialProvider::Alipay);
+        assert_eq!(user_info.provider, provider_names::ALIPAY);
         assert_eq!(user_info.provider_user_id, "user123");
         assert_eq!(user_info.nickname.as_deref(), Some("Bob"));
         assert_eq!(
@@ -557,51 +608,14 @@ mod tests {
     }
 
     // ========================================================================
-    // urlencoding::encode 单元测试
-    // ========================================================================
-
-    /// urlencoding::encode 对纯字母数字不编码。
-    #[test]
-    fn urlencoding_encode_alphanumeric_no_change() {
-        assert_eq!(urlencoding::encode("abc123"), "abc123");
-    }
-
-    /// urlencoding::encode 对保留字符 -.~ 不编码。
-    #[test]
-    fn urlencoding_encode_reserved_chars_no_change() {
-        assert_eq!(urlencoding::encode("a-b_c.d~e"), "a-b_c.d~e");
-    }
-
-    /// urlencoding::encode 对空格编码为 %20。
-    #[test]
-    fn urlencoding_encode_space_to_percent_20() {
-        assert_eq!(urlencoding::encode("a b"), "a%20b");
-    }
-
-    /// urlencoding::encode 对空字符串返回空字符串。
-    #[test]
-    fn urlencoding_encode_empty_string_returns_empty() {
-        assert_eq!(urlencoding::encode(""), "");
-    }
-
-    /// urlencoding::encode 对特殊字符 &=?# 编码。
-    #[test]
-    fn urlencoding_encode_special_chars_encoded() {
-        let encoded = urlencoding::encode("a&b=c?d#e");
-        assert!(!encoded.contains('&'), "& 应被编码");
-        assert!(!encoded.contains('='), "= 应被编码");
-        assert!(!encoded.contains('?'), "? 应被编码");
-        assert!(!encoded.contains('#'), "# 应被编码");
-    }
-
-    // ========================================================================
     // AlipayProvider 构造与 builder 测试
     // ========================================================================
 
     /// AlipayProvider::new 正确设置 app_id。
     #[tokio::test]
     async fn alipay_provider_new_sets_app_id() {
-        let provider = AlipayProvider::new("my_app_id", "private_key_pem");
+        let pem = generate_test_rsa_pem();
+        let provider = AlipayProvider::new("my_app_id", &pem).expect("PEM 应解析成功");
         let url = provider
             .get_authorization_url("state", "https://example.com/cb")
             .await
@@ -617,8 +631,9 @@ mod tests {
     #[tokio::test]
     async fn alipay_provider_with_gateway_url_returns_self_for_chaining() {
         let pem = generate_test_rsa_pem();
-        let provider =
-            AlipayProvider::new("app_id", &pem).with_gateway_url("https://custom.gateway.url");
+        let provider = AlipayProvider::new("app_id", &pem)
+            .expect("PEM 应解析成功")
+            .with_gateway_url("https://custom.gateway.url");
         // 验证链式调用后 provider 仍可用
         let url = provider
             .get_authorization_url("s", "r")
@@ -630,7 +645,8 @@ mod tests {
     /// get_authorization_url 对含特殊字符的 state 和 redirect_uri 进行 URL 编码。
     #[tokio::test]
     async fn alipay_provider_get_authorization_url_encodes_special_chars() {
-        let provider = AlipayProvider::new("app_id", "private_key_pem");
+        let pem = generate_test_rsa_pem();
+        let provider = AlipayProvider::new("app_id", &pem).expect("PEM 应解析成功");
         let url = provider
             .get_authorization_url("state with space", "https://example.com/cb?foo=bar")
             .await
@@ -651,7 +667,7 @@ mod tests {
     #[test]
     fn sign_request_valid_pem_returns_signature() {
         let pem = generate_test_rsa_pem();
-        let provider = AlipayProvider::new("app_id", &pem);
+        let provider = AlipayProvider::new("app_id", &pem).expect("PEM 应解析成功");
         let params = vec![
             ("app_id".to_string(), "test_app".to_string()),
             ("method".to_string(), "test.method".to_string()),
@@ -665,25 +681,11 @@ mod tests {
         assert!(decoded.is_ok(), "签名应为有效 base64: {:?}", decoded.err());
     }
 
-    /// sign_request 用无效 PEM 返回 Config 错误。
-    #[test]
-    fn sign_request_invalid_pem_returns_config_error() {
-        let provider = AlipayProvider::new("app_id", "invalid_pem");
-        let params = vec![("key".to_string(), "value".to_string())];
-        let result = provider.sign_request(&params);
-        assert!(result.is_err(), "无效 PEM 应返回 Err");
-        match result {
-            Err(GarrisonError::Config(_)) => {},
-            Err(other) => panic!("期望 Config 错误，实际: {:?}", other),
-            Ok(_) => unreachable!("无效 PEM 不应返回 Ok"),
-        }
-    }
-
     /// sign_request 对相同参数返回相同签名（确定性）。
     #[test]
     fn sign_request_deterministic_same_params_same_signature() {
         let pem = generate_test_rsa_pem();
-        let provider = AlipayProvider::new("app_id", &pem);
+        let provider = AlipayProvider::new("app_id", &pem).expect("PEM 应解析成功");
         let params = vec![
             ("app_id".to_string(), "test".to_string()),
             ("method".to_string(), "test.method".to_string()),
@@ -702,7 +704,7 @@ mod tests {
     #[test]
     fn sign_request_sorts_params_before_signing() {
         let pem = generate_test_rsa_pem();
-        let provider = AlipayProvider::new("app_id", &pem);
+        let provider = AlipayProvider::new("app_id", &pem).expect("PEM 应解析成功");
         // 逆序参数
         let params_reverse = vec![
             ("z_param".to_string(), "z".to_string()),
@@ -731,7 +733,7 @@ mod tests {
     #[test]
     fn sign_request_empty_params_returns_signature() {
         let pem = generate_test_rsa_pem();
-        let provider = AlipayProvider::new("app_id", &pem);
+        let provider = AlipayProvider::new("app_id", &pem).expect("PEM 应解析成功");
         let params: Vec<(String, String)> = vec![];
         let result = provider.sign_request(&params);
         assert!(result.is_ok(), "空参数 sign_request 应返回 Ok");
@@ -755,6 +757,7 @@ mod tests {
             .await;
 
         let provider = AlipayProvider::new("app_id", &pem)
+            .expect("PEM 应解析成功")
             .with_gateway_url(format!("{}/gateway.do", server.uri()));
         let result = provider.exchange_token("auth_code", "state").await;
 
@@ -783,6 +786,7 @@ mod tests {
             .await;
 
         let provider = AlipayProvider::new("app_id", &pem)
+            .expect("PEM 应解析成功")
             .with_gateway_url(format!("{}/gateway.do", server.uri()));
         let result = provider.exchange_token("auth_code", "state").await;
 
@@ -794,16 +798,20 @@ mod tests {
         }
     }
 
-    /// exchange_token 在响应缺少 user_id 字段时返回 Network 错误。
+    /// exchange_token 在响应缺少 access_token 字段时返回 Network 错误。
+    ///
+    /// exchange_token 先提取 access_token 再调用 get_user_info，缺少 access_token 时
+    /// 在 token 解析阶段就失败，不会到达 get_user_info。
     #[tokio::test]
-    async fn alipay_provider_exchange_token_missing_user_id_returns_error() {
+    async fn alipay_provider_exchange_token_missing_access_token_returns_error() {
         let pem = generate_test_rsa_pem();
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/gateway.do"))
+            .and(body_string_contains("alipay.system.oauth.token"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "alipay_system_oauth_token_response": {
-                    "access_token": "tok123",
+                    "user_id": "user123",
                     "expires_in": 3600
                 }
             })))
@@ -811,14 +819,15 @@ mod tests {
             .await;
 
         let provider = AlipayProvider::new("app_id", &pem)
+            .expect("PEM 应解析成功")
             .with_gateway_url(format!("{}/gateway.do", server.uri()));
         let result = provider.exchange_token("auth_code", "state").await;
 
-        assert!(result.is_err(), "缺少 user_id 应返回 Err");
+        assert!(result.is_err(), "缺少 access_token 应返回 Err");
         match result {
             Err(GarrisonError::Network(_)) => {},
             Err(other) => panic!("期望 Network 错误，实际: {:?}", other),
-            Ok(_) => unreachable!("缺少 user_id 不应返回 Ok"),
+            Ok(_) => unreachable!("缺少 access_token 不应返回 Ok"),
         }
     }
 
@@ -836,6 +845,7 @@ mod tests {
             .await;
 
         let provider = AlipayProvider::new("app_id", &pem)
+            .expect("PEM 应解析成功")
             .with_gateway_url(format!("{}/gateway.do", server.uri()));
         let result = provider.exchange_token("auth_code", "state").await;
 
@@ -858,6 +868,7 @@ mod tests {
             .await;
 
         let provider = AlipayProvider::new("app_id", &pem)
+            .expect("PEM 应解析成功")
             .with_gateway_url(format!("{}/gateway.do", server.uri()));
         let result = provider.get_user_info("access_token").await;
 
@@ -886,6 +897,7 @@ mod tests {
             .await;
 
         let provider = AlipayProvider::new("app_id", &pem)
+            .expect("PEM 应解析成功")
             .with_gateway_url(format!("{}/gateway.do", server.uri()));
         let result = provider.get_user_info("access_token").await;
 
@@ -911,6 +923,7 @@ mod tests {
             .await;
 
         let provider = AlipayProvider::new("app_id", &pem)
+            .expect("PEM 应解析成功")
             .with_gateway_url(format!("{}/gateway.do", server.uri()));
         let result = provider.get_user_info("access_token").await;
 
@@ -939,6 +952,7 @@ mod tests {
             .await;
 
         let provider = AlipayProvider::new("app_id", &pem)
+            .expect("PEM 应解析成功")
             .with_gateway_url(format!("{}/gateway.do", server.uri()));
         let result = provider.get_user_info("access_token").await;
 
@@ -966,6 +980,7 @@ mod tests {
             .await;
 
         let provider = AlipayProvider::new("app_id", &pem)
+            .expect("PEM 应解析成功")
             .with_gateway_url(format!("{}/gateway.do", server.uri()));
         let user_info = provider
             .get_user_info("access_token")

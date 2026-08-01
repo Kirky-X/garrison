@@ -3269,9 +3269,7 @@ mod tests {
     mod t017 {
         use super::*;
         use crate::error::GarrisonError;
-        use crate::protocol::social::{
-            SocialLoginProvider, SocialProvider as SocialProviderEnum, SocialUserInfo,
-        };
+        use crate::protocol::social::{provider_names, SocialLoginProvider, SocialUserInfo};
         use crate::protocol::sso::SsoServer;
         use std::collections::HashMap;
         use std::sync::atomic::{AtomicUsize, Ordering};
@@ -3323,7 +3321,7 @@ mod tests {
                     ));
                 }
                 Ok(SocialUserInfo {
-                    provider: SocialProviderEnum::Wechat,
+                    provider: provider_names::WECHAT.to_string(),
                     provider_user_id: self.provider_user_id.clone(),
                     nickname: None,
                     avatar: None,
@@ -3334,7 +3332,7 @@ mod tests {
 
             async fn get_user_info(&self, _access_token: &str) -> GarrisonResult<SocialUserInfo> {
                 Ok(SocialUserInfo {
-                    provider: SocialProviderEnum::Wechat,
+                    provider: provider_names::WECHAT.to_string(),
                     provider_user_id: self.provider_user_id.clone(),
                     nickname: None,
                     avatar: None,

@@ -19,6 +19,7 @@ annotation = 注解错误: {$detail}
 context = 上下文错误: {$detail}
 oauth2 = OAuth2 错误: {$detail}
 network = 网络错误: {$detail}
+invalid-response = 上游响应无效: {$detail}
 invalid-param = 参数无效: {$detail}
 not-implemented = 未实现: {$detail}
 exception = 业务异常[{$code}]: {$detail}
@@ -83,6 +84,17 @@ keycloak-public-client-requires-pkce = public client（client_secret=None）必�
 keycloak-exchange-code-request-failed = exchange_code 请求失败: {$detail}
 keycloak-exchange-code-status-not-2xx = exchange_code 响应状态码非 2xx: {$detail}
 keycloak-exchange-code-response-parse-failed = exchange_code 响应解析失败: {$detail}
+
+# --- 华为 Account Kit（huawei，sinnan 自定义 provider）---
+huawei-token-request-failed = 华为 token 请求失败: {$detail}
+huawei-token-response-parse-failed = 华为 token 响应解析失败: {$detail}
+huawei-error-response = 华为错误响应: {$detail}
+huawei-token-response-missing-access-token = 华为 token 响应缺少 access_token 字段
+huawei-get-user-info-failed-after-token-exchange = 华为 token 交换后获取用户信息失败（code 已消耗，请重新发起授权）: {$detail}
+huawei-userinfo-request-failed = 华为用户信息请求失败: {$detail}
+huawei-userinfo-response-parse-failed = 华为用户信息响应解析失败: {$detail}
+huawei-userinfo-business-error = 华为用户信息业务错误: {$detail}
+huawei-userinfo-response-missing-openID = 华为用户信息响应缺少 openID 字段
 
 # ============================================================================
 # DAO 错误（i18n 改造）

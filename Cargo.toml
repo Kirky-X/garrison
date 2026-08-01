@@ -198,6 +198,8 @@ protocol-sign = ["dep:sha2", "hmac", "dep:base64", "dep:hkdf"]
 protocol-apikey = ["dep:sha2", "secure-ct-eq", "dao-key-index"]
 protocol-temp = []
 # protocol-zeroize：协议层密钥零化（Drop 时清零 secret 字段，防止内存残留）
+# 启用 rsa/zeroize 让 RsaPrivateKey 实现 Zeroize（AlipayProvider Drop 清零 RSA 私钥大数）
+# NOTE: rsa 0.9.10 没有 zeroize feature，暂时移除以解除编译阻塞
 protocol-zeroize = ["zeroize"]
 # OIDC 扩展（id_token 签发/验证 + discovery endpoint），依赖 protocol-jwt + protocol-oauth2
 protocol-oidc = ["protocol-jwt", "protocol-oauth2", "dep:subtle"]

@@ -8,7 +8,7 @@
 //! 供 `protocol::social::tests` 验证 trait 契约测试复用。
 
 use crate::error::GarrisonResult;
-use crate::protocol::social::{SocialLoginProvider, SocialProvider, SocialUserInfo};
+use crate::protocol::social::{provider_names, SocialLoginProvider, SocialUserInfo};
 use async_trait::async_trait;
 
 /// 测试用 Mock 社交登录 Provider，实现 `SocialLoginProvider` trait 的三个方法。
@@ -26,7 +26,7 @@ impl SocialLoginProvider for MockSocialProvider {
 
     async fn exchange_token(&self, _code: &str, _state: &str) -> GarrisonResult<SocialUserInfo> {
         Ok(SocialUserInfo {
-            provider: SocialProvider::Wechat,
+            provider: provider_names::WECHAT.to_string(),
             provider_user_id: "mock_openid".into(),
             nickname: None,
             avatar: None,
@@ -37,7 +37,7 @@ impl SocialLoginProvider for MockSocialProvider {
 
     async fn get_user_info(&self, _access_token: &str) -> GarrisonResult<SocialUserInfo> {
         Ok(SocialUserInfo {
-            provider: SocialProvider::Wechat,
+            provider: provider_names::WECHAT.to_string(),
             provider_user_id: "mock_openid".into(),
             nickname: Some("MockUser".into()),
             avatar: Some("https://example.com/avatar.png".into()),

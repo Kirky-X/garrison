@@ -38,9 +38,14 @@ pub mod temp;
 
 /// 社交登录协议插件模块。
 ///
-/// 启用 `social-wechat` 或 `social-alipay` feature 时编译。提供 `SocialLoginProvider` trait
-/// 抽象与 `WechatProvider` / `AlipayProvider` 实现。
-#[cfg(any(feature = "social-wechat", feature = "social-alipay"))]
+/// 核心类型（`SocialLoginProvider` trait / `SocialUserInfo` / `SocialLoginService` 注册中心 /
+/// `provider_names` 常量 / `validation` 校验 / `urlencoding` 工具）无 feature 门控，始终编译
+/// （架构 MED-002 修复：扩展点契约类型始终可用，外部 crate 无需启用 social-wechat/social-alipay
+/// 即可注册自定义 provider）。
+///
+/// 内置 provider 实现（`wechat` / `alipay` 子模块）仍需对应 feature：
+/// - `social-wechat`：启用 `WechatProvider` / `WechatMiniAppProvider`
+/// - `social-alipay`：启用 `AlipayProvider`
 pub mod social;
 
 // ============================================================================

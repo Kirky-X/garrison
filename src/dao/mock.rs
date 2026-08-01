@@ -194,6 +194,40 @@ impl GarrisonDao for MockDao {
         }
     }
 
+    /// set_if_absent 用 Mutex 保护原子性（进程内原子）。
+    ///
+    /// 在单个 `lock()` 作用域内完成 get → set，保证进程内原子：
+    /// 并发调用同一 key 时仅第一个返回 `true`。TTL 语义与 `set` 一致。
+    async fn set_if_absent(
+        &self,
+        key: &str,
+        value: &str,
+        ttl_seconds: u64,
+    ) -> GarrisonResult<bool> {
+        let mut store = self.store.lock();
+        let now = Instant::now();
+        // 检查 key 是否存在（含过期清理）
+        let exists = match store.get(key) {
+            Some((_, Some(deadline))) if *deadline <= now => {
+                // 已过期，视为不存在
+                store.remove(key);
+                false
+            },
+            Some(_) => true,
+            None => false,
+        };
+        if exists {
+            return Ok(false);
+        }
+        let expire_at = if ttl_seconds == 0 {
+            None
+        } else {
+            Some(Instant::now() + Duration::from_secs(ttl_seconds))
+        };
+        store.insert(key.to_string(), (value.to_string(), expire_at));
+        Ok(true)
+    }
+
     /// incr 用 Mutex 保护原子性（进程内原子）。
     ///
     /// 在单个 lock() 作用域内完成 get → parse → update/set，保证进程内原子。

@@ -1,15 +1,13 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! `SocialLoginProvider` / `SocialUserInfo` / `SocialProvider` 单元测试。
+//! `SocialLoginProvider` / `SocialUserInfo` / `provider_names` 单元测试。
 
-#[cfg(feature = "db-sqlite")]
-use super::service::provider_to_str;
 use super::*;
 
 /// 验证 `SocialLoginProvider` trait 可被 mock 实现并调用三个方法
 ///
-/// Red 阶段：`SocialLoginProvider` / `SocialUserInfo` / `SocialProvider` 类型不存在 → 编译失败。
+/// Red 阶段：`SocialLoginProvider` / `SocialUserInfo` 类型不存在 → 编译失败。
 /// Green 阶段（T098）：定义完整类型后测试通过。
 #[tokio::test]
 async fn social_login_provider_trait_defines_three_methods() {
@@ -29,7 +27,7 @@ async fn social_login_provider_trait_defines_three_methods() {
         .exchange_token("code456", "state123")
         .await
         .expect("exchange_token 应返回 Ok");
-    assert_eq!(user_info.provider, SocialProvider::Wechat);
+    assert_eq!(user_info.provider, provider_names::WECHAT);
     assert_eq!(user_info.provider_user_id, "mock_openid");
     assert_eq!(user_info.union_id.as_deref(), Some("mock_unionid"));
 
@@ -45,19 +43,17 @@ async fn social_login_provider_trait_defines_three_methods() {
     );
 }
 
-/// 验证 `SocialProvider` enum 含三个变体
+/// 验证 `provider_names` 常量与字符串值一一对应
 #[test]
-fn social_provider_enum_has_three_variants() {
-    use super::*;
+fn provider_names_constants_match_expected_strings() {
+    assert_eq!(provider_names::WECHAT, "wechat");
+    assert_eq!(provider_names::ALIPAY, "alipay");
+    assert_eq!(provider_names::WECHAT_MINI_APP, "wechat_mini_app");
 
-    let wechat = SocialProvider::Wechat;
-    let alipay = SocialProvider::Alipay;
-    let mini_app = SocialProvider::WechatMiniApp;
-
-    // 验证三个变体互不相等
-    assert_ne!(wechat, alipay);
-    assert_ne!(wechat, mini_app);
-    assert_ne!(alipay, mini_app);
+    // 验证三个常量互不相等
+    assert_ne!(provider_names::WECHAT, provider_names::ALIPAY);
+    assert_ne!(provider_names::WECHAT, provider_names::WECHAT_MINI_APP);
+    assert_ne!(provider_names::ALIPAY, provider_names::WECHAT_MINI_APP);
 }
 
 // ========================================================================
@@ -168,7 +164,7 @@ async fn social_binding_service_find_or_create_creates_new_binding() {
 
     // 3. 构造 SocialUserInfo（模拟微信登录返回）
     let user = SocialUserInfo {
-        provider: SocialProvider::Wechat,
+        provider: provider_names::WECHAT.to_string(),
         provider_user_id: "openid1".into(),
         nickname: None,
         avatar: None,
@@ -314,14 +310,14 @@ fn loc_i18n_alipay_rsa_key_parse_failed_en() {
 }
 
 // ========================================================================
-// SocialUserInfo / SocialProvider trait 行为测试
+// SocialUserInfo trait 行为测试
 // ========================================================================
 
 /// SocialUserInfo Debug trait 输出字段名与值。
 #[test]
 fn social_user_info_debug_trait_outputs_fields() {
     let user = SocialUserInfo {
-        provider: SocialProvider::Wechat,
+        provider: provider_names::WECHAT.to_string(),
         provider_user_id: "openid123".to_string(),
         nickname: Some("Alice".to_string()),
         avatar: Some("https://img.example.com/a.png".to_string()),
@@ -330,7 +326,7 @@ fn social_user_info_debug_trait_outputs_fields() {
     };
     let debug_str = format!("{:?}", user);
     assert!(debug_str.contains("SocialUserInfo"));
-    assert!(debug_str.contains("Wechat"));
+    assert!(debug_str.contains("wechat"));
     assert!(debug_str.contains("openid123"));
     assert!(debug_str.contains("Alice"));
     assert!(debug_str.contains("union456"));
@@ -340,7 +336,7 @@ fn social_user_info_debug_trait_outputs_fields() {
 #[test]
 fn social_user_info_clone_creates_independent_copy() {
     let original = SocialUserInfo {
-        provider: SocialProvider::Alipay,
+        provider: provider_names::ALIPAY.to_string(),
         provider_user_id: "uid789".to_string(),
         nickname: Some("Bob".to_string()),
         avatar: None,
@@ -359,7 +355,7 @@ fn social_user_info_clone_creates_independent_copy() {
 #[test]
 fn social_user_info_with_all_none_options() {
     let user = SocialUserInfo {
-        provider: SocialProvider::WechatMiniApp,
+        provider: provider_names::WECHAT_MINI_APP.to_string(),
         provider_user_id: "mini_openid".to_string(),
         nickname: None,
         avatar: None,
@@ -369,48 +365,4 @@ fn social_user_info_with_all_none_options() {
     assert!(user.nickname.is_none());
     assert!(user.avatar.is_none());
     assert!(user.union_id.is_none());
-}
-
-/// SocialProvider Clone trait 正确工作。
-#[test]
-fn social_provider_clone_works() {
-    let wechat = SocialProvider::Wechat;
-    let cloned = wechat.clone();
-    assert_eq!(wechat, cloned);
-}
-
-/// SocialProvider Debug trait 输出变体名。
-#[test]
-fn social_provider_debug_outputs_variant_name() {
-    let debug_wechat = format!("{:?}", SocialProvider::Wechat);
-    assert!(debug_wechat.contains("Wechat"));
-
-    let debug_alipay = format!("{:?}", SocialProvider::Alipay);
-    assert!(debug_alipay.contains("Alipay"));
-
-    let debug_mini = format!("{:?}", SocialProvider::WechatMiniApp);
-    assert!(debug_mini.contains("WechatMiniApp"));
-}
-
-/// SocialProvider PartialEq 对相同和不同变体行为正确。
-#[test]
-fn social_provider_partial_eq_correct() {
-    assert_eq!(SocialProvider::Wechat, SocialProvider::Wechat);
-    assert_eq!(SocialProvider::Alipay, SocialProvider::Alipay);
-    assert_eq!(SocialProvider::WechatMiniApp, SocialProvider::WechatMiniApp);
-    assert_ne!(SocialProvider::Wechat, SocialProvider::Alipay);
-    assert_ne!(SocialProvider::Wechat, SocialProvider::WechatMiniApp);
-    assert_ne!(SocialProvider::Alipay, SocialProvider::WechatMiniApp);
-}
-
-/// provider_to_str 对所有 SocialProvider 变体返回正确字符串。
-#[cfg(feature = "db-sqlite")]
-#[test]
-fn provider_to_str_all_variants_correct() {
-    assert_eq!(provider_to_str(&SocialProvider::Wechat), "wechat");
-    assert_eq!(provider_to_str(&SocialProvider::Alipay), "alipay");
-    assert_eq!(
-        provider_to_str(&SocialProvider::WechatMiniApp),
-        "wechat_mini_app"
-    );
 }

@@ -14,9 +14,28 @@
 
 use crate::error::{GarrisonError, GarrisonResult};
 use crate::loc;
-use crate::protocol::social::{SocialLoginProvider, SocialProvider, SocialUserInfo};
+use crate::protocol::social::urlencoding;
+use crate::protocol::social::{provider_names, SocialLoginProvider, SocialUserInfo};
 use async_trait::async_trait;
 use serde_json::Value;
+
+/// 对 reqwest HTTP 错误脱敏。
+///
+/// 微信端点用 GET 方法传递 `secret`/`access_token`（query string），
+/// `reqwest::Error` 的 `Display` 实现包含完整 URL（含 query），
+/// 直接 `to_string()` 会把密钥写入 `loc!` 消息 → `tracing::warn!` 日志。
+/// 此函数仅保留错误类别，不暴露 URL。
+fn sanitize_http_error(e: &reqwest::Error) -> String {
+    if e.is_connect() {
+        "connection error".to_string()
+    } else if e.is_timeout() {
+        "request timeout".to_string()
+    } else if e.is_request() {
+        "request error".to_string()
+    } else {
+        "network error".to_string()
+    }
+}
 
 /// 微信扫码登录授权页端点。
 const WECHAT_AUTH_URL: &str = "https://open.weixin.qq.com/connect/qrconnect";
@@ -92,14 +111,23 @@ impl WechatProvider {
 impl SocialLoginProvider for WechatProvider {
     /// 拼接微信扫码登录授权页 URL。
     ///
-    /// URL 格式：`https://open.weixin.qq.com/connect/qrconnect?appid={client_id}&redirect_uri={redirect_uri}&state={state}`
+    /// 严格遵循微信开放平台《网站应用微信登录》官方文档规范，URL 格式：
+    /// `https://open.weixin.qq.com/connect/qrconnect?appid=APPID&redirect_uri=REDIRECT_URI&response_type=code&scope=snsapi_login&state=STATE#wechat_redirect`
+    ///
+    /// # 参数说明
+    /// - `response_type=code`：固定值（OAuth2 authorization_code 模式）
+    /// - `scope=snsapi_login`：网站应用唯一支持的 scope（用于扫码登录获取用户 openid/unionid）
+    /// - `#wechat_redirect`：必须携带的锚点（微信强匹配校验）
+    ///
+    /// # 参考
+    /// 微信开放平台官方文档：<https://developers.weixin.qq.com/doc/oplatform/Website_App/WeChat_Login/WeChat_Login.html>
     async fn get_authorization_url(
         &self,
         state: &str,
         redirect_uri: &str,
     ) -> GarrisonResult<String> {
         Ok(format!(
-            "{}?appid={}&redirect_uri={}&state={}",
+            "{}?appid={}&redirect_uri={}&response_type=code&scope=snsapi_login&state={}#wechat_redirect",
             WECHAT_AUTH_URL,
             urlencoding::encode(&self.client_id),
             urlencoding::encode(redirect_uri),
@@ -109,27 +137,32 @@ impl SocialLoginProvider for WechatProvider {
 
     /// 用授权码换取用户信息。
     ///
-    /// 调用微信 `sns/oauth2/access_token` 端点，用授权码换取 access_token + openid + unionid，
-    /// 返回 `SocialUserInfo`（nickname/avatar 为 None，需调用 `get_user_info` 获取）。
+    /// 严格遵循微信开放平台官方文档：通过 `GET /sns/oauth2/access_token` 端点，
+    /// 将 `appid`/`secret`/`code`/`grant_type` 作为 query 参数传递（非 POST form body）。
+    /// 用授权码换取 access_token + openid + unionid，返回 `SocialUserInfo`
+    /// （nickname/avatar 为 None，需调用 `get_user_info` 获取）。
+    ///
+    /// # 官方文档
+    ///
+    /// - HTTP 方法：GET
+    /// - URL：`https://api.weixin.qq.com/sns/oauth2/access_token?appid=APPID&secret=SECRET&code=CODE&grant_type=authorization_code`
+    /// - code 有效期 10 分钟，仅可使用一次
     async fn exchange_token(&self, code: &str, _state: &str) -> GarrisonResult<SocialUserInfo> {
-        let resp = self
-            .http
-            .post(&self.token_url)
-            .form(&[
-                ("appid", self.client_id.as_str()),
-                ("secret", self.client_secret.as_str()),
-                ("code", code),
-                ("grant_type", "authorization_code"),
-            ])
-            .send()
-            .await
-            .map_err(|e| {
-                GarrisonError::Network(loc!(
-                    "wechat-token-request-failed",
-                    format!("wechat token request failed: {}", e),
-                    ("detail", &e.to_string())
-                ))
-            })?;
+        let url = format!(
+            "{}?appid={}&secret={}&code={}&grant_type=authorization_code",
+            self.token_url,
+            urlencoding::encode(&self.client_id),
+            urlencoding::encode(&self.client_secret),
+            urlencoding::encode(code),
+        );
+        let resp = self.http.get(&url).send().await.map_err(|e| {
+            let detail = sanitize_http_error(&e);
+            GarrisonError::Network(loc!(
+                "wechat-token-request-failed",
+                format!("wechat token request failed: {}", detail),
+                ("detail", &detail)
+            ))
+        })?;
 
         if !resp.status().is_success() {
             return Err(GarrisonError::Network(loc!(
@@ -180,7 +213,7 @@ impl SocialLoginProvider for WechatProvider {
             .map(String::from);
 
         Ok(SocialUserInfo {
-            provider: SocialProvider::Wechat,
+            provider: provider_names::WECHAT.to_string(),
             provider_user_id,
             nickname: None,
             avatar: None,
@@ -218,10 +251,11 @@ impl SocialLoginProvider for WechatProvider {
             urlencoding::encode(openid),
         );
         let resp = self.http.get(&url).send().await.map_err(|e| {
+            let detail = sanitize_http_error(&e);
             GarrisonError::Network(loc!(
                 "wechat-userinfo-request-failed",
-                format!("wechat userinfo request failed: {}", e),
-                ("detail", &e.to_string())
+                format!("wechat userinfo request failed: {}", detail),
+                ("detail", &detail)
             ))
         })?;
 
@@ -284,7 +318,7 @@ impl SocialLoginProvider for WechatProvider {
             .map(String::from);
 
         Ok(SocialUserInfo {
-            provider: SocialProvider::Wechat,
+            provider: provider_names::WECHAT.to_string(),
             provider_user_id,
             nickname,
             avatar,
@@ -299,23 +333,6 @@ impl Drop for WechatProvider {
     fn drop(&mut self) {
         use zeroize::Zeroize;
         self.client_secret.zeroize();
-    }
-}
-
-/// 简单的 URL 编码工具（与 `protocol::oauth2::urlencoding` 同实现，避免跨模块耦合）。
-///
-/// 对查询参数值进行百分号编码，保留字母、数字、`-`、`_`、`.`、`~`。
-mod urlencoding {
-    pub fn encode(s: &str) -> String {
-        let mut out = String::with_capacity(s.len());
-        for b in s.bytes() {
-            if b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.' || b == b'~' {
-                out.push(b as char);
-            } else {
-                out.push_str(&format!("%{:02X}", b));
-            }
-        }
-        out
     }
 }
 
@@ -430,10 +447,11 @@ impl SocialLoginProvider for WechatMiniAppProvider {
         );
 
         let resp = self.http.get(&url).send().await.map_err(|e| {
+            let detail = sanitize_http_error(&e);
             GarrisonError::Network(loc!(
                 "wechat-mini-app-jscode2session-request-failed",
-                format!("wechat mini-app jscode2session request failed: {}", e),
-                ("detail", &e.to_string())
+                format!("wechat mini-app jscode2session request failed: {}", detail),
+                ("detail", &detail)
             ))
         })?;
 
@@ -492,7 +510,7 @@ impl SocialLoginProvider for WechatMiniAppProvider {
             .map(String::from);
 
         Ok(SocialUserInfo {
-            provider: SocialProvider::WechatMiniApp,
+            provider: provider_names::WECHAT_MINI_APP.to_string(),
             provider_user_id,
             nickname: None,
             avatar: None,
@@ -516,6 +534,9 @@ mod tests {
 
     /// 验证 `WechatProvider::get_authorization_url` 返回符合微信扫码登录规范的 URL
     ///
+    /// 严格遵循微信开放平台《网站应用微信登录》官方文档：
+    /// `https://open.weixin.qq.com/connect/qrconnect?appid=APPID&redirect_uri=REDIRECT_URI&response_type=code&scope=snsapi_login&state=STATE#wechat_redirect`
+    ///
     /// Red 阶段：`WechatProvider` 类型不存在 → 编译失败。
     /// Green 阶段（T100）：定义 struct + impl 后测试通过。
     #[tokio::test]
@@ -537,29 +558,45 @@ mod tests {
             url
         );
         assert!(
+            url.contains("response_type=code"),
+            "URL 应含 response_type=code 参数（OAuth2 authorization_code 模式），实际: {}",
+            url
+        );
+        assert!(
+            url.contains("scope=snsapi_login"),
+            "URL 应含 scope=snsapi_login 参数（网站应用扫码登录专用 scope），实际: {}",
+            url
+        );
+        assert!(
             url.contains("state=state123"),
             "URL 应含 state 参数，实际: {}",
+            url
+        );
+        assert!(
+            url.ends_with("#wechat_redirect"),
+            "URL 应以 #wechat_redirect 锚点结尾（微信强匹配校验），实际: {}",
             url
         );
     }
 
     /// 验证 `WechatProvider::exchange_token` 解析微信 access_token 响应
     ///
-    /// Red 阶段：`with_token_url` 方法不存在 → 编译失败。
+    /// 官方文档指定 GET 方法 + query 参数（非 POST form body），测试用 query_param 匹配。
+    ///
     /// Green 阶段（T102）：实现 exchange_token 后测试通过。
     #[tokio::test]
     async fn wechat_provider_exchange_token_parses_access_token_from_response() {
-        use wiremock::matchers::{body_string_contains, method, path};
+        use wiremock::matchers::{method, path, query_param};
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
         let server = MockServer::start().await;
 
-        Mock::given(method("POST"))
+        Mock::given(method("GET"))
             .and(path("/sns/oauth2/access_token"))
-            .and(body_string_contains("appid=wx_appid"))
-            .and(body_string_contains("secret=wx_secret"))
-            .and(body_string_contains("code=code"))
-            .and(body_string_contains("grant_type=authorization_code"))
+            .and(query_param("appid", "wx_appid"))
+            .and(query_param("secret", "wx_secret"))
+            .and(query_param("code", "code"))
+            .and(query_param("grant_type", "authorization_code"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "access_token": "tok123",
                 "openid": "openid456",
@@ -617,7 +654,7 @@ mod tests {
             .await
             .expect("get_user_info 应返回 Ok");
 
-        assert_eq!(user_info.provider, SocialProvider::Wechat);
+        assert_eq!(user_info.provider, provider_names::WECHAT);
         assert_eq!(user_info.provider_user_id, "openid1");
         assert_eq!(user_info.nickname.as_deref(), Some("Alice"));
         assert_eq!(
@@ -697,7 +734,7 @@ mod tests {
             .await
             .expect("get_user_info 应返回 Ok");
 
-        assert_eq!(user_info.provider, SocialProvider::WechatMiniApp);
+        assert_eq!(user_info.provider, provider_names::WECHAT_MINI_APP);
         assert_eq!(user_info.provider_user_id, "openid_mini_1");
         assert_eq!(user_info.union_id.as_deref(), Some("union_mini_1"));
     }
@@ -800,53 +837,6 @@ mod tests {
     }
 
     // ========================================================================
-    // urlencoding::encode 单元测试
-    // ========================================================================
-
-    /// urlencoding::encode 对纯字母数字不编码。
-    #[test]
-    fn urlencoding_encode_alphanumeric_no_change() {
-        assert_eq!(urlencoding::encode("abc123"), "abc123");
-    }
-
-    /// urlencoding::encode 对保留字符 -.~ 不编码。
-    #[test]
-    fn urlencoding_encode_reserved_chars_no_change() {
-        assert_eq!(urlencoding::encode("a-b_c.d~e"), "a-b_c.d~e");
-    }
-
-    /// urlencoding::encode 对空格编码为 %20。
-    #[test]
-    fn urlencoding_encode_space_to_percent_20() {
-        assert_eq!(urlencoding::encode("a b"), "a%20b");
-    }
-
-    /// urlencoding::encode 对特殊字符 &=?# 编码。
-    #[test]
-    fn urlencoding_encode_special_chars_encoded() {
-        let encoded = urlencoding::encode("a&b=c?d#e");
-        assert!(!encoded.contains('&'), " & 应被编码");
-        assert!(!encoded.contains('='), "= 应被编码");
-        assert!(!encoded.contains('?'), "? 应被编码");
-        assert!(!encoded.contains('#'), "# 应被编码");
-    }
-
-    /// urlencoding::encode 对空字符串返回空字符串。
-    #[test]
-    fn urlencoding_encode_empty_string_returns_empty() {
-        assert_eq!(urlencoding::encode(""), "");
-    }
-
-    /// urlencoding::encode 对中文字符按 UTF-8 字节编码。
-    #[test]
-    fn urlencoding_encode_chinese_chars_encoded() {
-        let encoded = urlencoding::encode("微信");
-        // 中文字符应全部被编码（每个字节为 %XX）
-        assert!(encoded.starts_with('%'), "中文字符应被百分号编码");
-        assert!(!encoded.contains('微'), "不应包含原始中文字符");
-    }
-
-    // ========================================================================
     // WechatProvider 构造与 builder 测试
     // ========================================================================
 
@@ -906,7 +896,7 @@ mod tests {
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
         let server = MockServer::start().await;
-        Mock::given(method("POST"))
+        Mock::given(method("GET"))
             .and(path("/sns/oauth2/access_token"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "errcode": 40029,
@@ -934,7 +924,7 @@ mod tests {
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
         let server = MockServer::start().await;
-        Mock::given(method("POST"))
+        Mock::given(method("GET"))
             .and(path("/sns/oauth2/access_token"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "access_token": "tok123",
@@ -962,7 +952,7 @@ mod tests {
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
         let server = MockServer::start().await;
-        Mock::given(method("POST"))
+        Mock::given(method("GET"))
             .and(path("/sns/oauth2/access_token"))
             .respond_with(ResponseTemplate::new(500))
             .mount(&server)
@@ -987,7 +977,7 @@ mod tests {
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
         let server = MockServer::start().await;
-        Mock::given(method("POST"))
+        Mock::given(method("GET"))
             .and(path("/sns/oauth2/access_token"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "access_token": "tok123",
@@ -1189,7 +1179,7 @@ mod tests {
             .expect("exchange_token 应返回 Ok");
 
         assert_eq!(user_info.provider_user_id, "openid_via_exchange");
-        assert_eq!(user_info.provider, SocialProvider::WechatMiniApp);
+        assert_eq!(user_info.provider, provider_names::WECHAT_MINI_APP);
     }
 
     /// WechatMiniAppProvider::get_user_info 响应缺少 openid 时返回错误。
@@ -1275,7 +1265,7 @@ mod tests {
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
         let server = MockServer::start().await;
-        Mock::given(method("POST"))
+        Mock::given(method("GET"))
             .and(path("/sns/oauth2/access_token"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "errcode": 0,

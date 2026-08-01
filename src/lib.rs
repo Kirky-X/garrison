@@ -527,22 +527,31 @@ pub use listener::audit::AuditLogListener;
 // 业务方可通过 `use garrison::{SocialLoginProvider, SocialUserInfo, ...}` 直接使用，
 // 无需写完整路径 `garrison::protocol::social::SocialLoginProvider`。
 //
-// - `SocialLoginProvider` / `SocialUserInfo` / `SocialProvider`：公共 trait/结构，无 feature 依赖
+// - `SocialLoginProvider` / `SocialUserInfo` / `provider_names`：公共 trait/结构，无 feature 依赖
+// - `SocialLoginService`：注册中心，允许外部 crate 注册自定义 provider（如华为 Account Kit）
 // - `WechatProvider`：需 `social-wechat` feature（微信扫码登录）
 // - `AlipayProvider`：需 `social-alipay` feature（支付宝授权登录）
-// - `SocialBindingService`：需 `db-sqlite` feature（依赖 DbPool 查 social_bindings 表）
+// - `SocialBindingService`：需 `db-sqlite`/`db-postgres`/`db-mysql` 任一 feature（依赖 DbPool 查 social_bindings 表）
 
 /// 社交登录服务提供方 trait（get_authorization_url / exchange_token / get_user_info）。
-#[cfg(any(feature = "social-wechat", feature = "social-alipay"))]
 pub use protocol::social::SocialLoginProvider;
 
 /// 社交用户信息（provider + provider_user_id + union_id + raw JSON）。
-#[cfg(any(feature = "social-wechat", feature = "social-alipay"))]
 pub use protocol::social::SocialUserInfo;
 
-/// 社交登录平台标识（Wechat / Alipay / WechatMiniApp）。
-#[cfg(any(feature = "social-wechat", feature = "social-alipay"))]
-pub use protocol::social::SocialProvider;
+/// 内置社交登录平台名称常量模块（WECHAT / ALIPAY / WECHAT_MINI_APP）。
+///
+/// 外部 crate 自定义 provider 应使用自己的常量（如 `pub const HUAWEI: &str = "huawei"`），
+/// 避免与内置 provider 冲突。
+pub use protocol::social::provider_names;
+
+/// 社交登录注册中心（register / unregister / get / list + 委托调用 + SocialProviderResolver 实现）。
+///
+/// 允许外部 crate 注册自定义 `SocialLoginProvider` 实现（如华为 Account Kit），
+/// 实现 OCP 扩展点架构。扩展点契约类型（`SocialLoginProvider` / `SocialUserInfo` /
+/// `SocialLoginService` / `provider_names`）无 feature 门控，始终可用（架构 MED-002 修复）。
+/// 内置 provider 实现（`WechatProvider` / `AlipayProvider`）仍需对应 feature。
+pub use protocol::social::registry::SocialLoginService;
 
 /// 微信扫码登录 provider（需 `social-wechat` feature）。
 #[cfg(feature = "social-wechat")]
@@ -556,9 +565,10 @@ pub use protocol::social::wechat::WechatMiniAppProvider;
 #[cfg(feature = "social-alipay")]
 pub use protocol::social::alipay::AlipayProvider;
 
-/// 社交账号绑定服务（find_or_create，需 `db-sqlite` + `social-wechat`/`social-alipay` feature）。
+/// 社交账号绑定服务（find_or_create，需 `db-sqlite`/`db-postgres`/`db-mysql` 任一 +
+/// `social-wechat`/`social-alipay` 任一 feature）。
 #[cfg(all(
-    feature = "db-sqlite",
+    any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"),
     any(feature = "social-wechat", feature = "social-alipay")
 ))]
 pub use protocol::social::SocialBindingService;

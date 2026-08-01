@@ -23,14 +23,12 @@ CREATE TABLE IF NOT EXISTS social_bindings (
     UNIQUE(tenant_id, provider, provider_user_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_social_bindings_tenant_provider
-    ON social_bindings (tenant_id, provider);
-
+-- idx_social_bindings_login_id：按 login_id 反查绑定关系（如解绑场景）。
+-- (tenant_id, provider) 查询由 UNIQUE 索引前缀覆盖，无需单独建索引。
 CREATE INDEX IF NOT EXISTS idx_social_bindings_login_id
     ON social_bindings (login_id);
 
 -- DOWN:
 
 DROP INDEX IF EXISTS idx_social_bindings_login_id;
-DROP INDEX IF EXISTS idx_social_bindings_tenant_provider;
 DROP TABLE IF EXISTS social_bindings;
