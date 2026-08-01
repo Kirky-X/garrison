@@ -313,14 +313,9 @@ pub mod secure;
 pub mod account;
 
 /// 协议层模块，包含各协议插件子模块。
-#[cfg(any(
-    feature = "protocol-oauth2",
-    feature = "protocol-sso",
-    feature = "protocol-jwt",
-    feature = "protocol-sign",
-    feature = "protocol-apikey",
-    feature = "protocol-temp",
-))]
+///
+/// 各重依赖子模块（oauth2/sso/jwt/sign/apikey/temp）在 `protocol/mod.rs` 内自行按 feature 门控；
+/// `protocol::social`（扩展点契约类型，MED-002）无 feature 依赖，始终编译。
 pub mod protocol;
 
 /// 认证后端抽象模块，提供 AuthBackend trait + BackendEmbedded + BackendRemote。

@@ -3,7 +3,7 @@
 
 //! 社交登录 provider 名称校验工具。
 //!
-//! 提供 [`is_valid_provider_name`] 函数，校验 provider 标识符格式合法性。
+//! 提供 [`crate::protocol::social::validation::is_valid_provider_name`] 函数，校验 provider 标识符格式合法性。
 //! 供 garrison 内部与外部 crate（如 sinnan）共用，确保 provider 名称校验规则
 //! 单一来源（DIP：校验规则由社交登录域定义，消费方复用）。
 

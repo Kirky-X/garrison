@@ -641,7 +641,6 @@ impl AuditLogListener {
             login_id,
             reason,
             detail,
-            timestamp: _,
             ..
         } = event
         {
@@ -664,7 +663,7 @@ impl AuditLogListener {
             };
         }
         // HIGH-1 (CWE-532): token 列截断（前 8 字符 + "…"），live session token 不得原样落审计
-        entry.token = entry.token.take().map(mask_audit_token);
+        entry.token = entry.token.take().as_deref().map(mask_audit_token);
         // 对 metadata 进行字段掩码（如 password → ***），含 BUILTIN 黑名单兜底（HIGH-2/LOW-1）
         entry.metadata = entry.metadata.map(|m| self.mask_metadata(&m));
         // T004: 从 event.request_context 提取 ip/user_agent 填充 audit entry
@@ -704,6 +703,13 @@ impl AuditLogListener {
         fields
     }
 
+    /// 对 metadata JSON 字符串进行字段掩码（T074 Green）。
+    ///
+    /// 按 `AuditConfig.audit_mask_mode` 执行脱敏：
+    /// - `Full`：递归掩码所有值
+    /// - `Partial`：仅掩码 operator `mask_fields` ∪ 内置黑名单命中的字段
+    ///
+    /// 非法 JSON 原样返回（不落日志告警，避免审计链路失败）。
     pub fn mask_metadata(&self, metadata: &str) -> String {
         if metadata.is_empty() {
             return metadata.to_string();
