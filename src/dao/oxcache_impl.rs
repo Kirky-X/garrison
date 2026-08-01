@@ -14,7 +14,7 @@ use oxcache::Cache;
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
-/// 原子操作状态追踪器（配合 `tokio::sync::Mutex` 使用）。
+/// 原子操作状态追踪器（配合 `parking_lot::Mutex` 使用）。
 ///
 /// **设计动机**：`moka::future::Cache::insert().await` 将写操作入 channel，
 /// housekeeper 线程异步消费后才提交到底层 HashMap。跨线程 `get().await` 在
@@ -22,7 +22,7 @@ use std::time::Duration;
 /// `invalidate().await` 不受此影响（同步删除，已由 `oxcache_get_and_delete_concurrent`
 /// 测试验证通过）。
 ///
-/// **解决方案**：`AtomicTracker` 在 `tokio::sync::Mutex` 保护下提供同步立即可见的
+/// **解决方案**：`AtomicTracker` 在 `parking_lot::Mutex` 保护下提供同步立即可见的
 /// 权威状态，绕过 Moka channel 延迟。`claims` 跟踪 `set_if_absent` 已声明的 key，
 /// `counters` 维护 `incr` 的权威计数值。
 #[derive(Default)]
@@ -466,15 +466,16 @@ impl GarrisonDao for GarrisonDaoOxcache {
             }
         }
 
-        // 阶段 2：缓存检查（同步，绕过 Moka channel 延迟；处理 set() 写入的 key）
+        // 阶段 2：缓存检查（仅需存在性判断，用 exists_sync 避免 value 反序列化/拷贝；
+        // 同步绕过 Moka channel 延迟，处理 set() 写入的 key）
         if self
             .cache
-            .get_sync(&actual_key)
-            .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-get-sync::{}", e)))?
-            .is_some()
+            .exists_sync(&actual_key)
+            .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-exists-sync::{}", e)))?
         {
-            // 缓存命中：同步到 claims，后续 set_if_absent 走阶段 1 快速路径
-            guard.claims.insert(actual_key.clone());
+            // 缓存命中：同步到 claims，后续 set_if_absent 走阶段 1 快速路径。
+            // 阶段 2 命中后直接 return，actual_key 不再需要，用 move 避免 clone。
+            guard.claims.insert(actual_key);
             return Ok(false);
         }
 
@@ -794,19 +795,22 @@ impl GarrisonDao for GarrisonDaoOxcache {
         let mut result = Vec::new();
         let mut expired_keys = Vec::new();
 
-        {
+        // 阶段 1：读锁内仅收集匹配 pattern 的 key（无 I/O，避免阻塞写锁）
+        let matched_keys: Vec<String> = {
             let index = self.key_index.read();
-            for key in index.iter() {
-                if matches_pattern(key, &actual_pattern) {
-                    // 检查 key 是否仍然存在（TTL 可能已过期）
-                    if self.cache.exists_sync(key).unwrap_or(false) {
-                        // 去除 prefix 返回原始 key
-                        let raw_key = strip_prefix(key);
-                        result.push(raw_key);
-                    } else {
-                        expired_keys.push(key.clone());
-                    }
-                }
+            index
+                .iter()
+                .filter(|key| matches_pattern(key, &actual_pattern))
+                .cloned()
+                .collect()
+        };
+
+        // 阶段 2：无锁检查存在性 + 分类（exists_sync 是无锁读，不阻塞写锁）
+        for key in &matched_keys {
+            if self.cache.exists_sync(key).unwrap_or(false) {
+                result.push(strip_prefix(key));
+            } else {
+                expired_keys.push(key.clone());
             }
         }
 
