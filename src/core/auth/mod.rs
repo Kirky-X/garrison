@@ -224,6 +224,13 @@ pub struct AuthLogicDefault {
     /// 内存清理：renew 流程结束时检查 `Arc::strong_count`，若 == 1（无其他等待者）
     /// 则从 DashMap 移除 entry，避免攻击者用大量不同随机 token 灌满 HashMap 导致 OOM
     ///（CWE-770 / HIGH-1 修复）。
+    ///
+    /// # 已知限制（Issue 44）
+    ///
+    /// `strong_count` 检查与 `remove` 之间存在 TOCTOU 窗口：若另一并发任务在检查后、
+    /// 移除前获取 Arc clone，entry 将被错误移除，该任务持有的 Mutex 仍有效但 DashMap
+    /// 中无对应 entry。实际影响有限——该任务下次 renew 时会重新创建 entry，不会导致
+    /// 数据损坏或安全漏洞。若需严格清理，可改用 entry guard 模式持锁至移除完成。
     renew_locks: Arc<DashMap<String, Arc<tokio::sync::Mutex<()>>>>,
 }
 

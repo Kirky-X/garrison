@@ -28,6 +28,20 @@ pub(crate) use macros::dao_session;
 /// - `get_timeout` 查询剩余 TTL（默认返回 `NotImplemented`，需后端重写）
 /// - `keys` 按 glob pattern 扫描 key（默认返回 `NotImplemented`；`MockDao` 已实现；`GarrisonDaoOxcache` 在 `dao-key-index` feature 启用时通过维护 key 索引实现，由 `protocol-apikey` / `anomalous-detector-dual` 传递启用）
 /// - `rename` 重命名 key（默认 get→set→delete 三步，非原子）
+///
+/// # ⚠️ 默认实现非原子性警告（Issues 51-54）
+///
+/// 以下方法的**默认实现**存在 TOCTOU 竞态，仅供开发/测试使用：
+///
+/// | 方法 | 竞态描述 |
+/// |------|----------|
+/// | `rename` | get→set_permanent→delete 三步，TTL 丢失且非原子 |
+/// | `set_if_absent` | get→set 两步，并发可重复插入 |
+/// | `get_and_delete` | get→delete 两步，并发可重复消费（SSO ticket 回放风险） |
+/// | `incr` / `decr` | get→parse→update 三步，并发丢失更新 |
+///
+/// **生产后端必须重写这些方法**，使用数据库事务或 CAS 操作保证原子性。
+/// 默认实现已标注 `/// 默认实现：非原子`，但不会在运行时检测或警告。
 #[async_trait]
 pub trait GarrisonDao: Send + Sync {
     /// 获取指定键的值。

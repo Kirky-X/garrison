@@ -115,6 +115,13 @@ impl UserRepository for DbnexusUserRepository {
         Ok(())
     }
 
+    /// 分页查询租户下的用户列表。
+    ///
+    /// # ⚠️ 安全说明（Issue 67）
+    ///
+    /// 返回的 `UserRow` 包含 `password_hash` 字段。此方法应用于管理后台展示用户列表，
+    /// **禁止**将 `password_hash` 直接序列化到 API 响应或日志中。
+    /// 若仅需用户元数据（不含密码哈希），应在上层投影时排除 `password_hash` 字段。
     async fn list(&self, tenant_id: i64, offset: i64, limit: i64) -> GarrisonResult<Vec<UserRow>> {
         dao_session!(self.pool, "dao-app-user-list", session, conn);
         let sql = "SELECT id, username, password_hash, status, tenant_id, created_at, updated_at, last_login_at \

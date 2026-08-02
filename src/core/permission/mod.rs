@@ -140,11 +140,22 @@ pub trait PermissionChecker: Send + Sync {
     /// 批量校验权限：任一满足即返回 true。
     ///
     /// 内部调用 `has_permission`，遇到错误时该权限视为不满足。
+    ///
+    /// # 错误处理说明（Issue 48）
+    ///
+    /// 返回类型为 `bool` 而非 `GarrisonResult<bool>`，底层 `has_permission` 的错误
+    /// （如 DAO 不可达、超时）被静默吞并（`unwrap_or(false)`）。调用方无法区分
+    /// “确实无权限”与“校验过程出错”。若需错误可观测性，请使用 `authorize()` 方法
+    /// （返回 `GarrisonResult<Decision>`，包含完整错误信息）。
     async fn has_any_permission(&self, login_id: &str, perms: &[&str]) -> bool;
 
     /// 批量校验权限：全部满足才返回 true。
     ///
     /// 内部调用 `has_permission`，遇到错误时该权限视为不满足。
+    ///
+    /// # 错误处理说明（Issue 48）
+    ///
+    /// 同 `has_any_permission`，底层错误被静默吞并。需要错误可观测性时使用 `authorize()`。
     async fn has_all_permissions(&self, login_id: &str, perms: &[&str]) -> bool;
 }
 

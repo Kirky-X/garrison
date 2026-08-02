@@ -103,6 +103,13 @@ pub struct SimpleTokenStyle {
     ///
     /// 仅在启用 `secure-simple-token` feature 时由 `Token` impl 读取；
     /// 未启用 feature 时为 dead code，此处 allow 以避免 feature-gated 警告。
+    ///
+    /// # 安全说明（Issue 49）
+    ///
+    /// 当前使用 `String` 存储密钥，`String::drop` 不会清零底层内存缓冲区，
+    /// 密钥可能残留在堆内存中增加侧信道泄露风险。生产环境若对此有严格要求，
+    /// 应启用 `protocol-zeroize` feature 使密钥类型切换为 `Zeroizing<String>`
+    ///（Drop 时自动清零），或使用 `Vec<u8>` + 手动 `explicit_zero`。
     #[allow(dead_code)]
     secret: String,
 }
