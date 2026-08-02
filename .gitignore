@@ -126,6 +126,9 @@ pids/
 !.env.example
 !.env.sample
 
+# Open Code Review (OCR) 本地配置（可能含 API 密钥）
+.opencodereview/
+
 # 密钥与证书
 *.pem
 *.key
