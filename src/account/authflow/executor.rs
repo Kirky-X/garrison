@@ -691,7 +691,9 @@ impl AuthExecutor {
             let session_token = self.logic.login(&user_id, &LoginParams::default()).await?;
             // 记录登录成功（重置失败计数）
             if let Some(lockout) = &self.lockout {
-                let _ = lockout.record_success(&user_id).await;
+                if let Err(e) = lockout.record_success(&user_id).await {
+                    tracing::warn!(user_id = %user_id, error = %e, "lockout record_success failed");
+                }
             }
             Ok(StepOutcome::Success {
                 token: Some(session_token),
@@ -699,7 +701,9 @@ impl AuthExecutor {
         } else {
             // 记录登录失败（增加失败计数）
             if let Some(lockout) = &self.lockout {
-                let _ = lockout.record_failure(&user_id).await;
+                if let Err(e) = lockout.record_failure(&user_id).await {
+                    tracing::warn!(user_id = %user_id, error = %e, "lockout record_failure failed");
+                }
             }
             Ok(StepOutcome::Failed(loc!(
                 "authflow-credential-verify-failed",

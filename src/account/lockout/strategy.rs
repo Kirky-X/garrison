@@ -49,14 +49,21 @@ pub(super) fn now_timestamp() -> i64 {
 ///
 /// N 为当前临时锁定次数（调用前已自增，N >= 1）。n=0 时按 N=1 计算防御性兜底。
 fn calculate_lock_seconds(strategy: &WaitStrategy, n: u32) -> u64 {
-    // 防御性编程：n=0 时 `pow(n - 1)` 会下溢 panic，按 N=1 兜底（规则 12 显性化）
+    // 防御性编程：n=0 时 `pow(n - 1)` 会下溢 panic，按 N=1 兖底（规则 12 显性化）
     let n = n.max(1);
     match strategy {
         WaitStrategy::Multiple {
             base_seconds,
             multiplier,
-        } => *base_seconds * (*multiplier as u64).pow(n - 1),
-        WaitStrategy::Linear { base_seconds } => *base_seconds * n as u64,
+        } => {
+            // Issue 19/22: 使用饱和算术防止整数溢出
+            let factor = (*multiplier as u64).saturating_pow(n - 1);
+            base_seconds.saturating_mul(factor)
+        },
+        WaitStrategy::Linear { base_seconds } => {
+            // Issue 19/22: 使用饱和算术防止整数溢出
+            base_seconds.saturating_mul(n as u64)
+        },
     }
 }
 
@@ -159,13 +166,17 @@ impl UserLockoutStrategy {
         self.set_state(user_id, &state).await
     }
 
-    /// 记录登录成功，重置失败计数。
+    /// 记录登录成功，重置失败计数和临时锁定状态。
     ///
-    /// 仅重置 failure_count 和 first_failure_at，不修改 temporary_lockout_count/permanent_locked/locked_until。
+    /// 重置 failure_count、first_failure_at、temporary_lockout_count 和 locked_until，
+    /// 不修改 permanent_locked（永久锁定不可通过登录成功解除）。
     pub async fn record_success(&self, user_id: &str) -> GarrisonResult<()> {
         let mut state = self.get_state(user_id).await?;
         state.failure_count = 0;
         state.first_failure_at = None;
+        // Issue 23: 登录成功时清除临时锁定状态，避免下次失败立即触发更长锁定
+        state.temporary_lockout_count = 0;
+        state.locked_until = 0;
         self.set_state(user_id, &state).await
     }
 
