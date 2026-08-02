@@ -73,8 +73,15 @@ impl AccountMetrics {
     /// 若指标已注册（如多次调用 `new`），返回注册错误。生产环境建议使用 [`Self::register_to`]
     /// 注册到自定义 registry。
     pub fn new() -> Self {
-        Self::register_to(prometheus::default_registry())
-            .expect("AccountMetrics 注册到 default registry 失败：可能已注册")
+        // Issue 25/112: 避免 panic，使用 once_cell 确保只注册一次
+        use std::sync::OnceLock;
+        static INSTANCE: OnceLock<AccountMetrics> = OnceLock::new();
+        INSTANCE
+            .get_or_init(|| {
+                Self::register_to(prometheus::default_registry())
+                    .expect("AccountMetrics 注册到 default registry 失败：可能已注册")
+            })
+            .clone()
     }
 
     /// 创建并注册到指定 registry（用于自定义 registry 场景，测试隔离）。

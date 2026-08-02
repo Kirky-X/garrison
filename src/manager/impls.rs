@@ -109,7 +109,8 @@ impl GarrisonManager {
     /// - `true`: 已通过 `builder().build()` 初始化且全局单例持有 `GarrisonLogicDefault`。
     /// - `false`: 未初始化或已 `reset_for_test`。
     pub fn is_initialized() -> bool {
-        GARRISON_MANAGER.logic.load().is_some()
+        // Issue 90: 同时检查 logic 和 strategy 是否都已初始化
+        GARRISON_MANAGER.logic.load().is_some() && GARRISON_MANAGER.strategy.load().is_some()
     }
 
     /// 重置管理器（仅供测试用，业务代码不应调用）。

@@ -191,10 +191,9 @@ impl AuthLogic for AuthLogicDefault {
             .await?
             .is_none()
         {
-            return Err(GarrisonError::InvalidParam(format!(
-                "core-auth-target-login-id-not-found::{}",
-                target_login_id
-            )));
+            return Err(GarrisonError::InvalidParam(
+                "core-auth-target-login-id-not-found".to_string(),
+            ));
         }
 
         // 执行权限校验（guard 默认 DenyAllSwitchToGuard，fail-closed）

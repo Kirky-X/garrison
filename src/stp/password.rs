@@ -13,11 +13,7 @@
 use super::GarrisonLogicDefault;
 #[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
 use super::LoginParams;
-#[cfg(all(
-    feature = "listener",
-    feature = "account-credential",
-    feature = "db-sqlite"
-))]
+#[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
 use crate::constants::EventReason;
 use crate::error::{GarrisonError, GarrisonResult};
 #[cfg(all(

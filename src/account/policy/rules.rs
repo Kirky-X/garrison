@@ -73,7 +73,8 @@ impl PasswordPolicyRule for LengthRule {
     }
 
     fn validate(&self, _ctx: &PolicyContext, password: &str) -> Result<(), PolicyError> {
-        let len = password.len() as u32;
+        // Issue 114: 使用 chars().count() 计算字符数而非字节数
+        let len = password.chars().count() as u32;
         if len < self.min {
             return Err(PolicyError::new(
                 "length",
@@ -815,7 +816,8 @@ impl PasswordPolicyRule for NistComplianceRule {
     }
 
     fn validate(&self, _ctx: &PolicyContext, password: &str) -> Result<(), PolicyError> {
-        let len = password.len() as u32;
+        // Issue 114: 使用 chars().count() 计算字符数而非字节数
+        let len = password.chars().count() as u32;
         if len < self.min_length {
             return Err(PolicyError::new(
                 "nist_compliance",

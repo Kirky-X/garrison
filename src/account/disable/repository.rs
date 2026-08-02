@@ -184,7 +184,16 @@ impl DisableRepository for DefaultDisableRepository {
     async fn is_disable(&self, login_id: &str, service: &str) -> GarrisonResult<bool> {
         let key = Self::disable_key(service, login_id)?;
         match self.dao.get(&key).await? {
-            Some(_) => Ok(true),
+            Some(json) => {
+                // Issue 20: 检查 until 字段是否已过期，而非仅检查 key 是否存在
+                let entry: DisableEntry = serde_json::from_str(&json).map_err(|e| {
+                    GarrisonError::Dao(format!("account-disable-deserialize::{}", e))
+                })?;
+                match entry.until {
+                    Some(until) => Ok(Utc::now() < until),
+                    None => Ok(true), // 永久封禁
+                }
+            },
             None => Ok(false),
         }
     }

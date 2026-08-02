@@ -247,28 +247,41 @@ fn parse_keyed_detail(s: &str) -> Option<(&'static str, Vec<(&'static str, Strin
     }
     let mut parts = s.splitn(3, "::");
     let key = parts.next()?;
-    // key 必须以字母开头且为合法 kebab-case（避免误命中文串）
+    // key 必须以字母开头且为合法 kebab-case（避免误判中文串）
     if key.is_empty() || !key.chars().next().unwrap().is_ascii_alphabetic() {
         return None;
     }
     if key.chars().any(|c| !c.is_ascii_lowercase() && c != '-') {
         return None;
     }
+    // Issue 79: 使用全局缓存避免重复 Box::leak 内存泄漏
+    let static_key = intern_string(key);
     let a0 = parts.next();
     let a1 = parts.next();
     match (a0, a1) {
-        (None, None) | (None, Some(_)) => {
-            Some((Box::leak(key.to_string().into_boxed_str()), vec![]))
-        },
-        (Some(x), None) => Some((
-            Box::leak(key.to_string().into_boxed_str()),
-            vec![("arg0", x.to_string())],
-        )),
+        (None, None) | (None, Some(_)) => Some((static_key, vec![])),
+        (Some(x), None) => Some((static_key, vec![("arg0", x.to_string())])),
         (Some(x), Some(y)) => Some((
-            Box::leak(key.to_string().into_boxed_str()),
+            static_key,
             vec![("arg0", x.to_string()), ("arg1", y.to_string())],
         )),
     }
+}
+
+/// Issue 79: 全局字符串缓存，避免 parse_keyed_detail 每次调用都 Box::leak。
+/// 相同 key 只泄漏一次，后续复用已缓存的 &'static str。
+fn intern_string(s: &str) -> &'static str {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    static CACHE: Mutex<Option<HashMap<String, &'static str>>> = Mutex::new(None);
+    let mut guard = CACHE.lock().unwrap();
+    let map = guard.get_or_insert_with(HashMap::new);
+    if let Some(&cached) = map.get(s) {
+        return cached;
+    }
+    let leaked: &'static str = Box::leak(s.to_string().into_boxed_str());
+    map.insert(s.to_string(), leaked);
+    leaked
 }
 
 /// 将单个 `String` 错误字段映射为 (key, args)。
