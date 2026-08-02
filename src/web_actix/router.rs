@@ -8,6 +8,7 @@
 
 use crate::annotation::Annotation;
 use crate::config::GarrisonConfig;
+use crate::context::tenant::{HeaderTenantResolver, TenantResolver};
 use crate::router::{DefaultGarrisonInterceptor, GarrisonInterceptor};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -21,12 +22,42 @@ impl GarrisonRouter {
             rules: HashMap::new(),
             interceptor: Arc::new(DefaultGarrisonInterceptor),
             config,
+            tenant_resolver: None,
         }
     }
 
     /// 设置自定义拦截器。
     pub fn with_interceptor<I: GarrisonInterceptor + 'static>(mut self, interceptor: I) -> Self {
         self.interceptor = Arc::new(interceptor);
+        self
+    }
+
+    /// 设置租户解析器（多租户场景）。
+    ///
+    /// 配置后 middleware 在每个请求前调用 `resolver.resolve(&headers)` 解析租户上下文，
+    /// 进入 `TENANT.scope` 后执行鉴权；解析失败时拒绝请求（fail-closed）。
+    /// 未配置时行为与旧版一致（不提取租户）。
+    ///
+    /// # 示例
+    ///
+    /// ```ignore
+    /// use garrison::web_actix::GarrisonRouter;
+    /// use garrison::context::tenant::HeaderTenantResolver;
+    ///
+    /// let router = GarrisonRouter::new(config)
+    ///     .with_tenant_resolver(HeaderTenantResolver)
+    ///     .route_protected("/api/data", Annotation::CheckPermission("data:read".into()));
+    /// ```
+    pub fn with_tenant_resolver<T: TenantResolver + 'static>(mut self, resolver: T) -> Self {
+        self.tenant_resolver = Some(Arc::new(resolver));
+        self
+    }
+
+    /// 便捷方法：使用 `HeaderTenantResolver`（从 `X-Tenant-Id` 请求头解析租户）。
+    ///
+    /// 等价于 `with_tenant_resolver(HeaderTenantResolver)`。
+    pub fn with_header_tenant(mut self) -> Self {
+        self.tenant_resolver = Some(Arc::new(HeaderTenantResolver));
         self
     }
 
@@ -45,6 +76,7 @@ impl GarrisonRouter {
             rules: Arc::new(self.rules),
             interceptor: self.interceptor,
             config: self.config,
+            tenant_resolver: self.tenant_resolver,
         }
     }
 }

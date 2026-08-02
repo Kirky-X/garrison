@@ -12,6 +12,7 @@
 //! 引用计数为 2，路由层 `match_info_mut()` 触发 panic。修复方案：先鉴权通过后
 //! 才 `inner.call(req)`，失败则 `req.into_response(resp)`（无需 clone HttpRequest）。
 
+use crate::context::tenant::TENANT;
 use crate::context::token_extract::extract_token_from_headers;
 use crate::error::GarrisonError;
 use crate::stp::with_current_token;
@@ -23,6 +24,27 @@ use std::pin::Pin;
 use std::rc::Rc;
 
 use super::{GarrisonMiddleware, GarrisonMiddlewareService};
+
+/// 将 actix 的 `HeaderMap` 桥接为框架无关的 `http::HeaderMap`（`TenantResolver::resolve` 输入）。
+///
+/// 仅保留值可见 ASCII 的 header（`to_str()` 成功的项）；非法值跳过（不 panic）。
+/// actix-web 4.x 使用 actix-http 的 `HeaderMap`（独立类型），`TenantResolver`
+/// trait 统一接收 `http::HeaderMap`（v1），此处做一次值拷贝桥接。
+fn actix_headers_to_http(headers: &actix_web::http::header::HeaderMap) -> http::HeaderMap {
+    let mut out = http::HeaderMap::new();
+    for (name, value) in headers.iter() {
+        let Ok(value_str) = value.to_str() else {
+            continue;
+        };
+        let Ok(name) = http::HeaderName::from_bytes(name.as_str().as_bytes()) else {
+            continue;
+        };
+        if let Ok(value) = http::HeaderValue::from_str(value_str) {
+            out.append(name, value);
+        }
+    }
+    out
+}
 
 impl<S, B> Transform<S, ServiceRequest> for GarrisonMiddleware
 where
@@ -42,6 +64,7 @@ where
             rules: self.rules.clone(),
             interceptor: self.interceptor.clone(),
             config: self.config.clone(),
+            tenant_resolver: self.tenant_resolver.clone(),
         }))
     }
 }
@@ -66,6 +89,7 @@ where
         let token = extract_token_from_headers(&headers, &self.config)
             .ok()
             .flatten();
+        let tenant_resolver = self.tenant_resolver.clone();
         // clone Rc<S>（无需 S: Clone），以便在 async block 中先鉴权通过后才调用 inner.call
         // 不 clone HttpRequest（原 BUG #8 修复：避免 Rc 引用计数问题）
         let inner = self.inner.clone();
@@ -78,10 +102,30 @@ where
                 Ok::<_, GarrisonError>(())
             };
 
-            let auth_result = match token {
-                Some(t) => with_current_token(t, auth_check).await,
-                None => auth_check.await,
-            };
+            // 配置了 TenantResolver 时，先解析租户并进入 TENANT.scope 再执行鉴权，
+            // 使 tenant-isolation 下 check_permission/check_role 获得租户上下文；
+            // resolve 失败透传 GarrisonError（fail-closed，映射为错误响应）。
+            // 未配置时保持旧行为（不提取租户）。
+            let auth_result: Result<(), GarrisonError> = async {
+                let tenant_ctx = match &tenant_resolver {
+                    Some(resolver) => {
+                        let http_headers = actix_headers_to_http(&headers);
+                        Some(resolver.resolve(&http_headers).await?)
+                    },
+                    None => None,
+                };
+                match (tenant_ctx, token) {
+                    (Some(ctx), Some(t)) => {
+                        TENANT
+                            .scope(ctx, async move { with_current_token(t, auth_check).await })
+                            .await
+                    },
+                    (Some(ctx), None) => TENANT.scope(ctx, auth_check).await,
+                    (None, Some(t)) => with_current_token(t, auth_check).await,
+                    (None, None) => auth_check.await,
+                }
+            }
+            .await;
 
             match auth_result {
                 Ok(()) => {

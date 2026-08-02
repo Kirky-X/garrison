@@ -46,6 +46,7 @@
 
 use crate::annotation::Annotation;
 use crate::config::GarrisonConfig;
+use crate::context::tenant::TenantResolver;
 use crate::router::GarrisonInterceptor;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -79,17 +80,25 @@ pub struct GarrisonRouter {
     rules: HashMap<String, Annotation>,
     interceptor: Arc<dyn GarrisonInterceptor>,
     config: Arc<GarrisonConfig>,
+    /// 租户解析器（None 时不启用租户提取，行为与旧版一致）。
+    tenant_resolver: Option<Arc<dyn TenantResolver>>,
 }
 
 // ============================================================================
 // GarrisonMiddleware struct 声明（impl Transform/Service 见 middleware.rs）
 // ============================================================================
 
-/// actix-web middleware，提取 token + 调用 interceptor + 设置 task_local。
+/// actix-web middleware，提取 token + 解析租户 + 调用 interceptor + 设置 task_local。
+///
+/// 配置了 [`TenantResolver`]（见 [`super::GarrisonRouter::with_tenant_resolver`]）时，
+/// 请求处理前先从请求头解析 `TenantContext` 并进入 `TENANT.scope`，使
+/// `tenant-isolation` 下的 `check_permission` / `check_role` 获得租户上下文
+/// （fail-closed 的 `ctx-tenant-context-missing` 不再触发）。未配置时行为不变。
 pub struct GarrisonMiddleware {
     rules: Arc<HashMap<String, Annotation>>,
     interceptor: Arc<dyn GarrisonInterceptor>,
     config: Arc<GarrisonConfig>,
+    tenant_resolver: Option<Arc<dyn TenantResolver>>,
 }
 
 /// middleware service（Transform 生成的中间层）。
@@ -102,6 +111,8 @@ pub struct GarrisonMiddlewareService<S> {
     pub interceptor: Arc<dyn GarrisonInterceptor>,
     /// 配置
     pub config: Arc<GarrisonConfig>,
+    /// 租户解析器（None 时不启用租户提取）。
+    pub tenant_resolver: Option<Arc<dyn TenantResolver>>,
 }
 
 // ============================================================================
