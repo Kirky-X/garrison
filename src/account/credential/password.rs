@@ -190,8 +190,10 @@ impl BcryptHasher {
     /// 自定义 cost 参数。
     ///
     /// # 参数
-    /// - `cost`: cost 参数（4-31，建议 10-14）。
+    /// - `cost`: cost 参数（4-31，建议 10-14）。超出范围自动钳制到 4。
     pub fn with_cost(cost: u32) -> Self {
+        // Issue 9: 验证 bcrypt cost 范围（bcrypt 规范要求 4-31）
+        let cost = cost.clamp(4, 31);
         Self { cost }
     }
 }

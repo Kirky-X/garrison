@@ -19,9 +19,11 @@
 /// 密码哈希子模块（v0.6.0 从 secure/password/ 迁移）。
 ///
 /// 提供 `PasswordHasher` trait + `Argon2Hasher` / `BcryptHasher` + `PasswordVerifier`。
+#[cfg(feature = "account-credential")]
 pub mod password;
 
 // 模块重导出：通过 mod 路径访问子模块类型（避免外部代码引用具体文件路径）
+#[cfg(feature = "account-credential")]
 pub use password::{Argon2Hasher, PasswordHasher, PasswordVerifier};
 
 /// TOTP 凭证子模块（复用 `secure::totp::TotpHandler`）。

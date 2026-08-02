@@ -42,15 +42,16 @@ impl DaoCredentialRepository {
 impl CredentialRepository for DaoCredentialRepository {
     async fn create(&self, credential: CredentialModel) -> GarrisonResult<()> {
         let key = Self::make_key(&credential.user_id, &credential.id);
-        // 检查重复（trait 契约：已存在返回 InvalidParam）
-        if self.dao.get(&key).await?.is_some() {
+        let json = Self::serialize_credential(&credential)?;
+        // Issue 10: 使用 set_if_absent 原子操作替代 get-then-set，消除 TOCTOU 竞态
+        let inserted = self.dao.set_if_absent(&key, &json, 0).await?;
+        if !inserted {
             return Err(GarrisonError::InvalidParam(format!(
                 "credential already exists: {}",
                 credential.id
             )));
         }
-        let json = Self::serialize_credential(&credential)?;
-        self.dao.set_permanent(&key, &json).await
+        Ok(())
     }
 
     async fn find_by_user(

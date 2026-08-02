@@ -50,6 +50,12 @@ impl TotpSecretData {
 
     /// 构造 `TotpHandler`。
     fn to_handler(&self) -> GarrisonResult<TotpHandler> {
+        // Issue 108: 验证 step > 0，防止除零错误
+        if self.step == 0 {
+            return Err(GarrisonError::InvalidParam(
+                "TOTP step must be > 0".to_string(),
+            ));
+        }
         let secret_bytes = TotpHandler::secret_from_base32(&self.secret)?;
         TotpHandler::new(secret_bytes, self.step, self.digits)
     }
@@ -149,6 +155,8 @@ impl Credential for TotpCredential {
     }
 
     async fn verify(&self, input: &str) -> GarrisonResult<bool> {
+        // Issue 17/107: Credential::verify 不提供 replay 保护（trait 签名无 login_id/dao 参数）。
+        // 生产环境应使用 verify_with_replay_check() 代替。
         let data = TotpSecretData::from_json(&self.model.secret_data)?;
         let handler = data.to_handler()?;
         let now = chrono::Utc::now().timestamp();
