@@ -67,9 +67,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = Arc::new(GarrisonConfig::default_config());
     let interface: Arc<dyn GarrisonInterface> = Arc::new(MyInterface);
 
-    // 3. 初始化全局管理器（同步函数，覆盖式注入 dao / config / interface）
+    // 3. 初始化全局管理器（覆盖式注入 dao / config / interface）
     //    必须在所有 GarrisonUtil 静态方法调用前完成
-    GarrisonManager::init(dao, config, interface)?;
+    GarrisonManager::builder()
+    .dao(dao)
+    .config(config)
+    .interface(interface)
+    .build()
+    .await?;
 
     // 4. 在 task_local 上下文中执行登录
     //    login / check_login 依赖 task_local 中的当前 token
@@ -97,7 +102,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## 关键约束
 
-- `GarrisonManager::init` 是同步函数（非 async），必须在所有 `GarrisonUtil` API 调用前完成，否则返回未初始化错误。
+- `GarrisonManager::builder().build().await` 是 async 函数，必须在所有 `GarrisonUtil` API 调用前完成，否则返回未初始化错误。
 - `login` / `check_login` 依赖 `task_local` 中的当前 token，需通过 web 中间件（如 `garrison_middleware`）或在测试中通过 `with_current_token()` 包装注入。
 - 首次启动需调用 `GarrisonMigration::new(pool).run_all()` 完成数据库建表（幂等）。
 

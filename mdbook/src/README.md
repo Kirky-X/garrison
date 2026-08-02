@@ -14,7 +14,7 @@ Garrison 是一个面向 Rust 生态的身份认证鉴权框架，目标是提�
 
 ## 框架定位
 
-Garrison 是一个 **库（crate）**，不直接产出可执行二进制。业务方将其作为依赖集成到 axum / actix-web / warp 服务中，通过 `GarrisonManager::init()` 注入依赖即可获得完整的认证鉴权能力。核心模块（core / stp / config / dao / session 等）总是编译，协议层与安全模块通过 Cargo feature 按需启用。
+Garrison 是一个 **库（crate）**，不直接产出可执行二进制。业务方将其作为依赖集成到 axum / actix-web / warp 服务中，通过 `GarrisonManager::builder().build().await` 注入依赖即可获得完整的认证鉴权能力。核心模块（core / stp / config / dao / session 等）总是编译，协议层与安全模块通过 Cargo feature 按需启用。
 
 ## 核心特性（13 个功能域）
 

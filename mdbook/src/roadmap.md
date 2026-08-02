@@ -50,7 +50,7 @@
 
 ## v0.2.1 稳定性优化（已完成）
 
-- ✅ auto-wire gap 修复：`GarrisonManager::init` 自动注入 PluginManager / ListenerManager / AuthLogic / PermissionChecker
+- ✅ auto-wire gap 修复：`GarrisonManager::builder().build().await` 自动注入 PluginManager / ListenerManager / AuthLogic / PermissionChecker
 - ✅ `GarrisonLogicDefault` 新增 4 个 builder 方法
 - ✅ 协议层边界场景测试（6 模块 20 测试）
 - ✅ examples 工程化重组（workspace member + 独立测试）

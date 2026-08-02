@@ -41,7 +41,12 @@ async fn create_user(
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    GarrisonManager::init(dao, config, interface)?;
+    GarrisonManager::builder()
+    .dao(dao)
+    .config(config)
+    .interface(interface)
+    .build()
+    .await?;
 
     let router = GarrisonRouter::new(Arc::new(GarrisonConfig::default_config()))
         .route_protected("/api/profile", profile, Annotation::CheckLogin)

@@ -29,7 +29,12 @@ use tonic::transport::Server;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    GarrisonManager::init(dao, config, interface)?;
+    GarrisonManager::builder()
+    .dao(dao)
+    .config(config)
+    .interface(interface)
+    .build()
+    .await?;
 
     // 健康检查服务须注册到独立 Server（无 interceptor），避免探针缺 Authorization 被拒
     let health = health_service().await;
@@ -93,5 +98,5 @@ gRPC 拦截器仅做 token 格式校验，业务方在 service handler 内调用
 
 - 拦截器仅校验 token 格式，**不执行实际鉴权**（async check_login 须在 handler 内调用）
 - `tonic::Interceptor` 是同步 trait，无法调用异步 API；高 QPS 场景建议使用 `tower::Layer` middleware
-- 需在 `GarrisonManager::init` 之后使用，否则 handler 内 `check_login` 返回未初始化错误
+- 需在 `GarrisonManager::builder().build().await` 之后使用，否则 handler 内 `check_login` 返回未初始化错误
 - `health_service()` 须注册到独立的 tonic Server（无 interceptor），避免探针因缺 Authorization 被拒

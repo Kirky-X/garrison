@@ -35,7 +35,12 @@ async fn profile() -> &'static str { "ok" }
 
 #[tokio::main]
 async fn main() {
-    GarrisonManager::init(dao, config, interface).ok();
+    GarrisonManager::builder()
+    .dao(dao)
+    .config(config)
+    .interface(interface)
+    .build()
+    .await.ok();
 
     let config = Arc::new(GarrisonConfig::default_config());
 

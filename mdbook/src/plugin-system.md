@@ -64,7 +64,7 @@ inventory::submit! {
 
 ## GarrisonPluginManager
 
-- `GarrisonManager::init` 自动注入 `PluginManager`（0.2.1 auto-wire 修复）
+- `GarrisonManager::builder().build().await` 自动注入 `PluginManager`（0.2.1 auto-wire 修复）
 - 也可通过 `GarrisonLogicDefault::with_plugin_manager` 手动注入
 - 钩子按注册顺序调用；任一插件返回 `Err` 仅记录 `warn`，不中断后续插件与主流程
 

@@ -25,7 +25,12 @@ Garrison 采用 **双抽象层 + 全局单例** 架构，采用双抽象层设�
 
 `GarrisonManager` 持有全局 `Arc<GarrisonLogicDefault>`（基于 `parking_lot::RwLock`），支持覆盖式 `init`：
 
-- 业务方启动时调用 `GarrisonManager::init(dao, config, interface)` 注入依赖
+- 业务方启动时调用 `GarrisonManager::builder()
+    .dao(dao)
+    .config(config)
+    .interface(interface)
+    .build()
+    .await` 注入依赖
 - `GarrisonUtil::login` / `GarrisonUtil::check_login` 等静态方法委托到全局单例
 - `init` 自动注入 `PluginManager` / `ListenerManager` / `AuthLogic` / `PermissionChecker`（0.2.1 auto-wire 修复）
 

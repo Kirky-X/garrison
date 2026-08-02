@@ -9,7 +9,7 @@
 Garrison 是库（crate），不产出二进制。业务方将其作为依赖集成到 axum / actix-web / warp 服务中：
 
 1. 添加依赖并选择 feature
-2. 服务启动时调用 `GarrisonManager::init()`（同步函数）
+2. 服务启动时调用 `GarrisonManager::builder().dao(dao).config(config).interface(interface).build().await`（async 函数）
 3. 调用 `GarrisonMigration::new(pool).run_all()` 自动建表
 4. 注册路由中间件（如 `GarrisonLayer`）
 5. `cargo build --release --features production` 构建产物
@@ -145,8 +145,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = Arc::new(GarrisonConfig::default_config());
     let interface: Arc<dyn GarrisonInterface> = Arc::new(MyInterface);
 
-    // 3. 初始化管理器（同步函数，必须在所有 API 调用前）
-    GarrisonManager::init(dao, config, interface)?;
+    // 3. 初始化管理器（async，必须在所有 GarrisonUtil API 调用前完成）
+    GarrisonManager::builder()
+    .dao(dao)
+    .config(config)
+    .interface(interface)
+    .build()
+    .await?;
 
     // 4. 启动 web 服务（注册 GarrisonLayer）
     // ...
