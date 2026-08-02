@@ -216,14 +216,14 @@ pub struct GarrisonLogicDefault {
     /// 权限策略（pub(crate) 供测试验证）。
     pub(crate) firewall: Arc<dyn GarrisonPermissionStrategy>,
     /// 插件管理器（可选，注入后 login/logout 触发插件钩子）。
-    plugin_manager: Option<Arc<GarrisonPluginManager>>,
+    pub(crate) plugin_manager: Option<Arc<GarrisonPluginManager>>,
     /// 监听器管理器（可选，注入后 login/logout/kickout 广播事件）。
     #[cfg(feature = "listener")]
-    listener_manager: Option<Arc<GarrisonListenerManager>>,
+    pub(crate) listener_manager: Option<Arc<GarrisonListenerManager>>,
     /// 认证逻辑（可选，注入后 login_by_token 优先委托此实现）。
     pub(crate) auth_logic: Option<Arc<dyn AuthLogic>>,
     /// 权限校验器（可选，注入后 check_permission/check_role 可委托此实现）。
-    permission_checker: Option<Arc<dyn PermissionChecker>>,
+    pub(crate) permission_checker: Option<Arc<dyn PermissionChecker>>,
     /// Prometheus 指标采集器（可选，注入后 login/check_login/check_permission/check_role emit 指标）。
     #[cfg(feature = "metrics-prometheus")]
     metrics: Option<Arc<crate::observability::GarrisonMetrics>>,
@@ -286,6 +286,11 @@ pub struct GarrisonLogicDefault {
     /// 缓存失效失败只 `tracing::warn!` 不中断 logout 主流程。
     #[cfg(feature = "three-tier-cache")]
     pub(crate) user_cache_service: Option<Arc<crate::cache::UserCacheService>>,
+    /// 标记字段（可选，`with_marker` 注入）。
+    ///
+    /// 用于测试 / 工厂扩展点标记 logic 来源（如自定义 factory 构造的实例），
+    /// 默认 `None`，不影响运行时行为。
+    pub(crate) marker: Option<&'static str>,
 }
 
 mod default_impl;

@@ -164,7 +164,7 @@ pub enum JwtMode {
 ///
 /// # 使用前提
 ///
-/// 调用前必须先执行 `GarrisonManager::init(dao, config, interface)`，
+/// 调用前必须先执行 `GarrisonManager::builder().dao(dao).config(config).interface(interface).build().await`，
 /// 否则返回 `GarrisonError::Session("GarrisonManager 未初始化")`。
 pub struct GarrisonUtil;
 

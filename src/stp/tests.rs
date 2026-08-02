@@ -2,6 +2,11 @@
 //! See LICENSE for full license text.
 
 //! Stp 集成测试。
+
+// jwt_secret 的 `.into()` 是跨 feature 兼容的必要转换：protocol-zeroize 下字段
+// 类型为 Zeroizing<String>，feature 关闭时退化为 String，被 clippy 误报。
+#![allow(clippy::useless_conversion)]
+
 #[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
 use super::mock::MockUserRepository;
 use super::mock::{
@@ -101,7 +106,7 @@ async fn with_token<R>(token: &str, f: impl std::future::Future<Output = R>) -> 
 }
 
 /// 初始化全局 GarrisonManager（用于 GarrisonUtil 静态方法测试）。
-fn init_global_manager(throw_on_not_login: bool) {
+async fn init_global_manager(throw_on_not_login: bool) {
     GarrisonManager::reset_for_test();
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     let mut config = GarrisonConfig::default_config();
@@ -109,7 +114,13 @@ fn init_global_manager(throw_on_not_login: bool) {
     config.active_timeout = -1;
     config.throw_on_not_login = throw_on_not_login;
     let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface);
-    GarrisonManager::init(dao, Arc::new(config), interface).unwrap();
+    GarrisonManager::builder()
+        .dao(dao)
+        .config(Arc::new(config))
+        .interface(interface)
+        .build()
+        .await
+        .unwrap();
 }
 
 /// 初始化全局 GarrisonManager 并返回 MockDao 引用（用于 API Key 测试等需共享 DAO 的场景）。
@@ -117,7 +128,7 @@ fn init_global_manager(throw_on_not_login: bool) {
 /// 返回的 `Arc<MockDao>` 与 GarrisonManager 内部 session 持有同一 DAO 实例，
 /// 测试可用它构造 `ApiKeyHandler` 生成/校验 API Key。
 #[cfg(feature = "protocol-apikey")]
-fn init_global_manager_with_dao(throw_on_not_login: bool) -> Arc<MockDao> {
+async fn init_global_manager_with_dao(throw_on_not_login: bool) -> Arc<MockDao> {
     GarrisonManager::reset_for_test();
     let dao = Arc::new(MockDao::new());
     let mut config = GarrisonConfig::default_config();
@@ -125,17 +136,18 @@ fn init_global_manager_with_dao(throw_on_not_login: bool) -> Arc<MockDao> {
     config.active_timeout = -1;
     config.throw_on_not_login = throw_on_not_login;
     let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface);
-    GarrisonManager::init(
-        dao.clone() as Arc<dyn GarrisonDao>,
-        Arc::new(config),
-        interface,
-    )
-    .unwrap();
+    GarrisonManager::builder()
+        .dao(dao.clone() as Arc<dyn GarrisonDao>)
+        .config(Arc::new(config))
+        .interface(interface)
+        .build()
+        .await
+        .unwrap();
     dao
 }
 
 /// 初始化全局 GarrisonManager 并注入预设权限/角色列表（用于 has_permission/has_role 返回 true 的测试）。
-fn init_global_manager_with_perms(
+async fn init_global_manager_with_perms(
     throw_on_not_login: bool,
     permissions: Vec<String>,
     roles: Vec<String>,
@@ -148,7 +160,13 @@ fn init_global_manager_with_perms(
     config.throw_on_not_login = throw_on_not_login;
     let interface: Arc<dyn GarrisonInterface> =
         Arc::new(MockInterfaceWithPerms { permissions, roles });
-    GarrisonManager::init(dao, Arc::new(config), interface).unwrap();
+    GarrisonManager::builder()
+        .dao(dao)
+        .config(Arc::new(config))
+        .interface(interface)
+        .build()
+        .await
+        .unwrap();
 }
 
 // ------------------------------------------------------------------------
@@ -873,7 +891,8 @@ async fn util_has_permission_returns_true_when_granted() {
         false,
         vec!["user:read".to_string()],
         vec!["admin".to_string()],
-    );
+    )
+    .await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
     let result = with_token(
         &token,
@@ -887,7 +906,7 @@ async fn util_has_permission_returns_true_when_granted() {
 #[tokio::test]
 #[serial]
 async fn util_has_permission_returns_false_when_not_granted() {
-    init_global_manager_with_perms(false, vec![], vec![]);
+    init_global_manager_with_perms(false, vec![], vec![]).await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
     let result = with_token(
         &token,
@@ -901,7 +920,7 @@ async fn util_has_permission_returns_false_when_not_granted() {
 #[tokio::test]
 #[serial]
 async fn util_has_permission_returns_false_when_not_logged_in() {
-    init_global_manager(false);
+    init_global_manager(false).await;
     // 不调用 login，直接 has_permission（无 task_local token）
     let result = GarrisonUtil::has_permission("user:read").await;
     assert!(!result.unwrap(), "未登录应返回 false");
@@ -915,7 +934,8 @@ async fn util_has_role_returns_true_when_granted() {
         false,
         vec!["user:read".to_string()],
         vec!["admin".to_string()],
-    );
+    )
+    .await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
     let result = with_token(&token, GarrisonUtil::has_role("admin")).await;
     assert!(result.unwrap(), "持有角色应返回 true");
@@ -925,7 +945,7 @@ async fn util_has_role_returns_true_when_granted() {
 #[tokio::test]
 #[serial]
 async fn util_has_role_returns_false_when_not_granted() {
-    init_global_manager_with_perms(false, vec![], vec![]);
+    init_global_manager_with_perms(false, vec![], vec![]).await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
     let result = with_token(&token, GarrisonUtil::has_role("admin")).await;
     assert!(!result.unwrap(), "未持有角色应返回 false");
@@ -935,7 +955,7 @@ async fn util_has_role_returns_false_when_not_granted() {
 #[tokio::test]
 #[serial]
 async fn util_has_role_returns_false_when_not_logged_in() {
-    init_global_manager(false);
+    init_global_manager(false).await;
     let result = GarrisonUtil::has_role("admin").await;
     assert!(!result.unwrap(), "未登录应返回 false");
 }
@@ -976,7 +996,8 @@ async fn util_get_permission_list_returns_permissions_when_granted() {
         false,
         vec!["user:read".to_string(), "user:write".to_string()],
         vec!["admin".to_string()],
-    );
+    )
+    .await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
     let result = with_token(&token, GarrisonUtil::get_permission_list()).await;
     let perms = result.unwrap();
@@ -992,7 +1013,7 @@ async fn util_get_permission_list_returns_permissions_when_granted() {
 #[tokio::test]
 #[serial]
 async fn util_get_permission_list_returns_empty_when_no_permissions() {
-    init_global_manager_with_perms(false, vec![], vec![]);
+    init_global_manager_with_perms(false, vec![], vec![]).await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
     let result = with_token(&token, GarrisonUtil::get_permission_list()).await;
     assert!(result.unwrap().is_empty(), "无权限时应返回空 vec");
@@ -1002,7 +1023,7 @@ async fn util_get_permission_list_returns_empty_when_no_permissions() {
 #[tokio::test]
 #[serial]
 async fn util_get_permission_list_returns_empty_when_not_logged_in() {
-    init_global_manager(false);
+    init_global_manager(false).await;
     let result = GarrisonUtil::get_permission_list().await;
     assert!(result.unwrap().is_empty(), "未登录应返回空 vec");
 }
@@ -1015,7 +1036,8 @@ async fn util_get_role_list_returns_roles_when_granted() {
         false,
         vec!["user:read".to_string()],
         vec!["admin".to_string(), "user".to_string()],
-    );
+    )
+    .await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
     let result = with_token(&token, GarrisonUtil::get_role_list()).await;
     let roles = result.unwrap();
@@ -1028,7 +1050,7 @@ async fn util_get_role_list_returns_roles_when_granted() {
 #[tokio::test]
 #[serial]
 async fn util_get_role_list_returns_empty_when_no_roles() {
-    init_global_manager_with_perms(false, vec![], vec![]);
+    init_global_manager_with_perms(false, vec![], vec![]).await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
     let result = with_token(&token, GarrisonUtil::get_role_list()).await;
     assert!(result.unwrap().is_empty(), "无角色时应返回空 vec");
@@ -1038,7 +1060,7 @@ async fn util_get_role_list_returns_empty_when_no_roles() {
 #[tokio::test]
 #[serial]
 async fn util_get_role_list_returns_empty_when_not_logged_in() {
-    init_global_manager(false);
+    init_global_manager(false).await;
     let result = GarrisonUtil::get_role_list().await;
     assert!(result.unwrap().is_empty(), "未登录应返回空 vec");
 }
@@ -1051,7 +1073,7 @@ async fn util_get_role_list_returns_empty_when_not_logged_in() {
 #[tokio::test]
 #[serial]
 async fn util_logout_by_login_id_succeeds() {
-    init_global_manager(false);
+    init_global_manager(false).await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
     assert!(!token.is_empty());
 
@@ -1070,7 +1092,7 @@ async fn util_logout_by_login_id_succeeds() {
 #[tokio::test]
 #[serial]
 async fn util_kickout_succeeds() {
-    init_global_manager(false);
+    init_global_manager(false).await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     GarrisonUtil::kickout("1001").await.unwrap();
@@ -1087,7 +1109,7 @@ async fn util_kickout_succeeds() {
 #[tokio::test]
 #[serial]
 async fn util_kickout_by_token_succeeds() {
-    init_global_manager(false);
+    init_global_manager(false).await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     GarrisonUtil::kickout_by_token(&token).await.unwrap();
@@ -1104,7 +1126,7 @@ async fn util_kickout_by_token_succeeds() {
 #[tokio::test]
 #[serial]
 async fn util_get_login_id_returns_current_id() {
-    init_global_manager(false);
+    init_global_manager(false).await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     let login_id = with_token(&token, async { GarrisonUtil::get_login_id().await })
@@ -1127,7 +1149,7 @@ async fn util_get_login_id_returns_current_id() {
 #[tokio::test]
 #[serial]
 async fn util_check_safe_returns_ok_by_default() {
-    init_global_manager(false);
+    init_global_manager(false).await;
     let _ = GarrisonUtil::login_simple("1001").await.unwrap();
 
     let result = GarrisonUtil::check_safe().await;
@@ -1158,7 +1180,7 @@ async fn util_check_safe_returns_ok_by_default() {
 #[tokio::test]
 #[serial]
 async fn util_check_disable_returns_ok_by_default() {
-    init_global_manager(false);
+    init_global_manager(false).await;
     let _ = GarrisonUtil::login_simple("1001").await.unwrap();
 
     // 默认实现（未覆写 check_disable）应返回 Ok
@@ -1319,7 +1341,13 @@ async fn util_verify_token_returns_login_id() {
     // A11: 设置非空 jwt_secret，与 SimpleTokenStyle 生成 token 用的 secret 一致
     config.jwt_secret = test_jwt_secret(STP_SIMPLE_TEST_SECRET);
     let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface);
-    GarrisonManager::init(dao, Arc::new(config), interface).unwrap();
+    GarrisonManager::builder()
+        .dao(dao)
+        .config(Arc::new(config))
+        .interface(interface)
+        .build()
+        .await
+        .unwrap();
 
     // A11: 用 SimpleTokenStyle 生成合法 HMAC token
     let style = crate::core::token::SimpleTokenStyle::new(STP_SIMPLE_TEST_SECRET.to_string());
@@ -1340,7 +1368,13 @@ async fn util_refresh_token_returns_not_implemented_without_jwt() {
     config.timeout = 3600;
     config.active_timeout = -1;
     let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface);
-    GarrisonManager::init(dao, Arc::new(config), interface).unwrap();
+    GarrisonManager::builder()
+        .dao(dao)
+        .config(Arc::new(config))
+        .interface(interface)
+        .build()
+        .await
+        .unwrap();
 
     let result = GarrisonUtil::refresh_token("any-token").await;
     assert!(
@@ -2538,7 +2572,7 @@ async fn check_role_logged_in_emits_metric() {
 #[tokio::test]
 #[serial]
 async fn util_revoke_token_destroys_session() {
-    init_global_manager(false);
+    init_global_manager(false).await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     // revoke_token 应成功
@@ -2558,7 +2592,7 @@ async fn util_revoke_token_destroys_session() {
 #[tokio::test]
 #[serial]
 async fn util_login_by_token_delegates_to_logic_after_init() {
-    init_global_manager(false);
+    init_global_manager(false).await;
     // uuid style token → verify_token 返回 InvalidToken
     let result = GarrisonUtil::login_by_token("any-token").await;
     assert!(
@@ -2612,7 +2646,7 @@ async fn check_temp_token_not_logged_in_returns_not_login() {
 #[tokio::test]
 #[serial]
 async fn util_check_access_token_delegates_to_logic() {
-    init_global_manager(false);
+    init_global_manager(false).await;
     let result = GarrisonUtil::check_access_token().await;
     assert!(result.is_err());
 }
@@ -2621,7 +2655,7 @@ async fn util_check_access_token_delegates_to_logic() {
 #[tokio::test]
 #[serial]
 async fn util_check_client_token_delegates_to_logic() {
-    init_global_manager(false);
+    init_global_manager(false).await;
     let result = GarrisonUtil::check_client_token().await;
     assert!(result.is_err());
 }
@@ -2630,7 +2664,7 @@ async fn util_check_client_token_delegates_to_logic() {
 #[tokio::test]
 #[serial]
 async fn util_check_temp_token_delegates_to_logic() {
-    init_global_manager(false);
+    init_global_manager(false).await;
     let result = GarrisonUtil::check_temp_token().await;
     assert!(result.is_err());
 }
@@ -2660,7 +2694,7 @@ async fn util_check_temp_token_delegates_to_logic() {
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn sync_check_login_works_in_runtime() {
-    init_global_manager(false);
+    init_global_manager(false).await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     with_current_token(token, async {
@@ -2681,7 +2715,7 @@ async fn sync_check_login_works_in_runtime() {
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn sync_check_login_returns_false_when_not_logged_in() {
-    init_global_manager(false);
+    init_global_manager(false).await;
     // 未设置 task_local，check_login_sync 应返回 Ok(false)
     let result = GarrisonUtil::check_login_sync();
     assert!(
@@ -2705,7 +2739,8 @@ async fn sync_check_permission_held_returns_ok() {
         false,
         vec!["user:read".to_string()],
         vec!["admin".to_string()],
-    );
+    )
+    .await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     with_current_token(token, async {
@@ -2732,7 +2767,8 @@ async fn sync_check_role_held_returns_ok() {
         false,
         vec!["user:read".to_string()],
         vec!["admin".to_string()],
-    );
+    )
+    .await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     with_current_token(token, async {
@@ -2752,7 +2788,7 @@ async fn sync_check_role_held_returns_ok() {
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn sync_check_access_token_returns_ok_when_logged_in() {
-    init_global_manager(false);
+    init_global_manager(false).await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     with_current_token(token, async {
@@ -2772,7 +2808,7 @@ async fn sync_check_access_token_returns_ok_when_logged_in() {
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn sync_check_client_token_returns_ok_when_logged_in() {
-    init_global_manager(false);
+    init_global_manager(false).await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     with_current_token(token, async {
@@ -2792,7 +2828,7 @@ async fn sync_check_client_token_returns_ok_when_logged_in() {
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn sync_check_temp_token_returns_ok_when_logged_in() {
-    init_global_manager(false);
+    init_global_manager(false).await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     with_current_token(token, async {
@@ -2817,7 +2853,7 @@ async fn sync_check_temp_token_returns_ok_when_logged_in() {
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn sync_check_api_key_executes_without_panic() {
-    init_global_manager(false);
+    init_global_manager(false).await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     with_current_token(token, async {
@@ -2956,7 +2992,7 @@ mod check_api_key_tests {
     #[tokio::test]
     #[serial]
     async fn check_api_key_valid_key_correct_namespace_succeeds() {
-        let dao = init_global_manager_with_dao(false);
+        let dao = init_global_manager_with_dao(false).await;
         let handler = ApiKeyHandler::new(dao.clone() as Arc<dyn GarrisonDao>);
         let key = handler
             .generate_with_namespace("user1", "ns1", vec![], 3600)
@@ -2973,7 +3009,7 @@ mod check_api_key_tests {
     #[tokio::test]
     #[serial]
     async fn check_api_key_nonexistent_key_fails() {
-        init_global_manager_with_dao(false);
+        init_global_manager_with_dao(false).await;
 
         let result = with_token(
             "nonexistent-key-12345",
@@ -2993,7 +3029,7 @@ mod check_api_key_tests {
     #[tokio::test]
     #[serial]
     async fn check_api_key_without_token_context_fails() {
-        init_global_manager_with_dao(false);
+        init_global_manager_with_dao(false).await;
 
         // 不调用 with_token，直接调用 check_api_key
         let result = GarrisonUtil::check_api_key("default").await;
@@ -3015,7 +3051,7 @@ mod check_api_key_tests {
     #[tokio::test]
     #[serial]
     async fn check_api_key_namespace_isolation() {
-        let dao = init_global_manager_with_dao(false);
+        let dao = init_global_manager_with_dao(false).await;
         let handler = ApiKeyHandler::new(dao.clone() as Arc<dyn GarrisonDao>);
         let key_ns1 = handler
             .generate_with_namespace("user1", "ns1", vec![], 3600)
@@ -3045,7 +3081,7 @@ mod check_api_key_tests {
     #[tokio::test]
     #[serial]
     async fn check_api_key_default_namespace() {
-        let dao = init_global_manager_with_dao(false);
+        let dao = init_global_manager_with_dao(false).await;
         let handler = ApiKeyHandler::new(dao.clone() as Arc<dyn GarrisonDao>);
         let key = handler.generate("user1", vec![], 3600).await.unwrap();
 

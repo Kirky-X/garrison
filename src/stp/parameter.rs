@@ -290,7 +290,7 @@ mod tests {
     }
 
     /// 初始化全局 GarrisonManager，注入可配置权限/角色数据的 MockInterface。
-    fn init_manager_with_perms(
+    async fn init_manager_with_perms(
         throw_on_not_login: bool,
         permissions: HashMap<String, Vec<String>>,
         roles: HashMap<String, Vec<String>>,
@@ -303,7 +303,13 @@ mod tests {
         config.throw_on_not_login = throw_on_not_login;
         let interface: Arc<dyn GarrisonInterface> =
             Arc::new(MockInterfaceWithPerms { permissions, roles });
-        GarrisonManager::init(dao, Arc::new(config), interface).unwrap();
+        GarrisonManager::builder()
+            .dao(dao)
+            .config(Arc::new(config))
+            .interface(interface)
+            .build()
+            .await
+            .unwrap();
     }
 
     // ------------------------------------------------------------------------
@@ -385,7 +391,7 @@ mod tests {
     async fn check_permission_with_login_id_succeeds_when_authorized() {
         let mut perms = HashMap::new();
         perms.insert("1001".to_string(), vec!["user:create".to_string()]);
-        init_manager_with_perms(false, perms, HashMap::new());
+        init_manager_with_perms(false, perms, HashMap::new()).await;
 
         let result = with_default_tenant(async {
             ParameterQueryBuilder::new()
@@ -405,7 +411,7 @@ mod tests {
     #[serial]
     async fn check_permission_with_login_id_returns_not_permission_when_denied() {
         let perms: HashMap<String, Vec<String>> = HashMap::new();
-        init_manager_with_perms(false, perms, HashMap::new());
+        init_manager_with_perms(false, perms, HashMap::new()).await;
 
         let result = with_default_tenant(async {
             ParameterQueryBuilder::new()
@@ -430,7 +436,7 @@ mod tests {
     async fn check_permission_with_token_succeeds() {
         let mut perms = HashMap::new();
         perms.insert("1001".to_string(), vec!["user:read".to_string()]);
-        init_manager_with_perms(false, perms, HashMap::new());
+        init_manager_with_perms(false, perms, HashMap::new()).await;
 
         // 先 login 获取有效 token
         let token = GarrisonUtil::login_simple("1001").await.unwrap();
@@ -457,7 +463,7 @@ mod tests {
     #[serial]
     async fn check_permission_with_token_returns_not_permission_when_denied() {
         let perms: HashMap<String, Vec<String>> = HashMap::new();
-        init_manager_with_perms(false, perms, HashMap::new());
+        init_manager_with_perms(false, perms, HashMap::new()).await;
 
         let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
@@ -501,7 +507,7 @@ mod tests {
     async fn check_role_with_login_id_succeeds_when_authorized() {
         let mut roles = HashMap::new();
         roles.insert("1001".to_string(), vec!["admin".to_string()]);
-        init_manager_with_perms(false, HashMap::new(), roles);
+        init_manager_with_perms(false, HashMap::new(), roles).await;
 
         let result = ParameterQueryBuilder::new()
             .with_login_id("1001".to_string())
@@ -517,7 +523,7 @@ mod tests {
     #[serial]
     async fn check_role_with_login_id_returns_not_role_when_denied() {
         let roles: HashMap<String, Vec<String>> = HashMap::new();
-        init_manager_with_perms(false, HashMap::new(), roles);
+        init_manager_with_perms(false, HashMap::new(), roles).await;
 
         let result = ParameterQueryBuilder::new()
             .with_login_id("1001".to_string())
@@ -538,7 +544,7 @@ mod tests {
     async fn check_role_with_token_succeeds() {
         let mut roles = HashMap::new();
         roles.insert("1001".to_string(), vec!["admin".to_string()]);
-        init_manager_with_perms(false, HashMap::new(), roles);
+        init_manager_with_perms(false, HashMap::new(), roles).await;
 
         let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
@@ -560,7 +566,7 @@ mod tests {
     #[serial]
     async fn check_role_with_token_returns_not_role_when_denied() {
         let roles: HashMap<String, Vec<String>> = HashMap::new();
-        init_manager_with_perms(false, HashMap::new(), roles);
+        init_manager_with_perms(false, HashMap::new(), roles).await;
 
         let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
@@ -587,7 +593,7 @@ mod tests {
     async fn async_check_permission_works() {
         let mut perms = HashMap::new();
         perms.insert("2002".to_string(), vec!["user:read".to_string()]);
-        init_manager_with_perms(false, perms, HashMap::new());
+        init_manager_with_perms(false, perms, HashMap::new()).await;
 
         // async 调用并 await
         let result = with_default_tenant(async {

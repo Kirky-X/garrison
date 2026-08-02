@@ -50,6 +50,7 @@ impl GarrisonLogicDefault {
             disable_repository: None,
             #[cfg(feature = "three-tier-cache")]
             user_cache_service: None,
+            marker: None,
         }
     }
 
@@ -254,6 +255,15 @@ impl GarrisonLogicDefault {
     #[cfg(feature = "three-tier-cache")]
     pub fn with_user_cache_service(mut self, service: Arc<crate::cache::UserCacheService>) -> Self {
         self.user_cache_service = Some(service);
+        self
+    }
+
+    /// 设置标记字段（builder 模式）。
+    ///
+    /// 用于测试 / 工厂扩展点标记 logic 来源（如自定义 factory 构造的实例），
+    /// 默认 `None`，不影响运行时行为。
+    pub fn with_marker(mut self, marker: &'static str) -> Self {
+        self.marker = Some(marker);
         self
     }
 
