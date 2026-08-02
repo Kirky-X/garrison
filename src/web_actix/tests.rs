@@ -245,7 +245,7 @@ fn make_config() -> GarrisonConfig {
 }
 
 /// 初始化 GarrisonManager（带权限/角色数据）。
-fn init_manager(permissions: &[(&str, &[&str])], roles: &[(&str, &[&str])]) {
+async fn init_manager(permissions: &[(&str, &[&str])], roles: &[(&str, &[&str])]) {
     GarrisonManager::reset_for_test();
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     let config = Arc::new(make_config());
@@ -257,7 +257,13 @@ fn init_manager(permissions: &[(&str, &[&str])], roles: &[(&str, &[&str])]) {
         interface = interface.with_role(id, roles);
     }
     let interface: Arc<dyn GarrisonInterface> = Arc::new(interface);
-    GarrisonManager::init(dao, config, interface).unwrap();
+    GarrisonManager::builder()
+        .dao(dao)
+        .config(config)
+        .interface(interface)
+        .build()
+        .await
+        .unwrap();
 }
 
 // ----------------------------------------------------------------
@@ -316,7 +322,7 @@ async fn make_middleware_service(
 #[tokio::test]
 #[serial]
 async fn middleware_allows_unprotected_path() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
     let service = make_middleware_service(&[("/protected", Annotation::CheckLogin)]).await;
 
     let req = test::TestRequest::get()
@@ -334,7 +340,7 @@ async fn middleware_allows_unprotected_path() {
 #[tokio::test]
 #[serial]
 async fn middleware_blocks_protected_path_without_token() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
     let service = make_middleware_service(&[("/protected", Annotation::CheckLogin)]).await;
 
     let req = test::TestRequest::get().uri("/protected").to_srv_request();
@@ -351,7 +357,7 @@ async fn middleware_blocks_protected_path_without_token() {
 #[tokio::test]
 #[serial]
 async fn middleware_allows_protected_path_with_valid_token() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
     let service = make_middleware_service(&[("/protected", Annotation::CheckLogin)]).await;
 
@@ -371,7 +377,7 @@ async fn middleware_allows_protected_path_with_valid_token() {
 #[tokio::test]
 #[serial]
 async fn middleware_blocks_permission_denied() {
-    init_manager(&[], &[]); // 无权限数据
+    init_manager(&[], &[]).await; // 无权限数据
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
     let service = make_middleware_service(&[(
         "/admin",
@@ -395,7 +401,7 @@ async fn middleware_blocks_permission_denied() {
 #[tokio::test]
 #[serial]
 async fn middleware_allows_ignore_path_without_token() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
     let service = make_middleware_service(&[("/public", Annotation::Ignore)]).await;
 
     let req = test::TestRequest::get().uri("/public").to_srv_request();
@@ -411,7 +417,7 @@ async fn middleware_allows_ignore_path_without_token() {
 #[tokio::test]
 #[serial]
 async fn new_transform_returns_service() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
     let service = make_middleware_service(&[("/x", Annotation::CheckLogin)]).await;
     // 验证 service 持有规则（rules 非空）
     assert_eq!(service.rules.len(), 1);
@@ -427,7 +433,7 @@ async fn new_transform_returns_service() {
 #[tokio::test]
 #[serial]
 async fn middleware_works_in_real_app_chain() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
     let config = Arc::new(make_config());
     let router =
@@ -458,6 +464,153 @@ async fn middleware_works_in_real_app_chain() {
 }
 
 // ----------------------------------------------------------------
+// 租户解析中间件测试（tenant-isolation 生产场景缺口修复）
+// ----------------------------------------------------------------
+
+/// 构建启用 `HeaderTenantResolver`（X-Tenant-Id）的 `GarrisonMiddlewareService<OkService>`。
+#[cfg(feature = "tenant-isolation")]
+async fn make_middleware_service_with_header_tenant(
+    rules: &[(&str, Annotation)],
+) -> GarrisonMiddlewareService<OkService> {
+    let mut router = GarrisonRouter::new(Arc::new(make_config())).with_header_tenant();
+    for (path, ann) in rules {
+        router = router.route_protected(path, ann.clone());
+    }
+    let middleware = router.into_middleware();
+    <GarrisonMiddleware as Transform<OkService, ServiceRequest>>::new_transform(
+        &middleware,
+        OkService,
+    )
+    .await
+    .unwrap()
+}
+
+/// 验证未配置 TenantResolver 时，tenant-isolation 下 `CheckPermission` 鉴权 fail-closed（500）。
+///
+/// 覆盖修复前的生产缺口：中间件无租户上下文，`check_permission` 返回
+/// `ctx-tenant-context-missing` → 500。这是安全默认（fail-closed）。
+#[cfg(feature = "tenant-isolation")]
+#[tokio::test]
+#[serial]
+async fn middleware_without_tenant_resolver_fails_closed_on_permission() {
+    init_manager(&[("1001", &["data:read"])], &[]).await;
+    let token = GarrisonUtil::login_simple("1001").await.unwrap();
+    let service = make_middleware_service(&[(
+        "/data",
+        Annotation::CheckPermission("data:read".to_string()),
+    )])
+    .await;
+
+    let req = test::TestRequest::get()
+        .uri("/data")
+        .insert_header(("Authorization", format!("Bearer {}", token)))
+        .to_srv_request();
+    let resp = service.call(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+    GarrisonManager::reset_for_test();
+}
+
+/// 验证配置 `HeaderTenantResolver` 后，带 `X-Tenant-Id` 的鉴权请求通过（200）。
+///
+/// 覆盖生产场景修复主路径：中间件从请求头解析租户并进入 `TENANT.scope`，
+/// `check_permission` 获得租户上下文后正常鉴权。
+#[cfg(feature = "tenant-isolation")]
+#[tokio::test]
+#[serial]
+async fn middleware_with_header_tenant_allows_permission_with_tenant_header() {
+    init_manager(&[("1001", &["data:read"])], &[]).await;
+    let token = GarrisonUtil::login_simple("1001").await.unwrap();
+    let service = make_middleware_service_with_header_tenant(&[(
+        "/data",
+        Annotation::CheckPermission("data:read".to_string()),
+    )])
+    .await;
+
+    let req = test::TestRequest::get()
+        .uri("/data")
+        .insert_header(("Authorization", format!("Bearer {}", token)))
+        .insert_header(("X-Tenant-Id", "42"))
+        .to_srv_request();
+    let resp = service.call(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    GarrisonManager::reset_for_test();
+}
+
+/// 验证配置 `HeaderTenantResolver` 后，缺失 `X-Tenant-Id` 的请求被拒绝（fail-closed）。
+///
+/// 覆盖租户解析失败路径：`HeaderTenantResolver` 缺失 header 时返回 `Config` 错误，
+/// 中间件透传为错误响应（500），不静默默认 0（Rule 12 失败显性化）。
+#[cfg(feature = "tenant-isolation")]
+#[tokio::test]
+#[serial]
+async fn middleware_with_header_tenant_rejects_missing_tenant_header() {
+    init_manager(&[("1001", &["data:read"])], &[]).await;
+    let token = GarrisonUtil::login_simple("1001").await.unwrap();
+    let service = make_middleware_service_with_header_tenant(&[(
+        "/data",
+        Annotation::CheckPermission("data:read".to_string()),
+    )])
+    .await;
+
+    let req = test::TestRequest::get()
+        .uri("/data")
+        .insert_header(("Authorization", format!("Bearer {}", token)))
+        .to_srv_request();
+    let resp = service.call(req).await.unwrap();
+    assert_ne!(resp.status(), StatusCode::OK);
+
+    GarrisonManager::reset_for_test();
+}
+
+/// 验证配置 `HeaderTenantResolver` 后，非法 `X-Tenant-Id`（非 i64）的请求被拒绝。
+#[cfg(feature = "tenant-isolation")]
+#[tokio::test]
+#[serial]
+async fn middleware_with_header_tenant_rejects_invalid_tenant_header() {
+    init_manager(&[("1001", &["data:read"])], &[]).await;
+    let token = GarrisonUtil::login_simple("1001").await.unwrap();
+    let service = make_middleware_service_with_header_tenant(&[(
+        "/data",
+        Annotation::CheckPermission("data:read".to_string()),
+    )])
+    .await;
+
+    let req = test::TestRequest::get()
+        .uri("/data")
+        .insert_header(("Authorization", format!("Bearer {}", token)))
+        .insert_header(("X-Tenant-Id", "not-a-number"))
+        .to_srv_request();
+    let resp = service.call(req).await.unwrap();
+    assert_ne!(resp.status(), StatusCode::OK);
+
+    GarrisonManager::reset_for_test();
+}
+
+/// 验证配置 `HeaderTenantResolver` 后，租户上下文传播到 `CheckLogin` 注解路径
+/// 的鉴权（`check_login` 不校验租户但 scope 不报错，登录请求正常通过）。
+#[cfg(feature = "tenant-isolation")]
+#[tokio::test]
+#[serial]
+async fn middleware_with_header_tenant_allows_check_login() {
+    init_manager(&[], &[]).await;
+    let token = GarrisonUtil::login_simple("1001").await.unwrap();
+    let service =
+        make_middleware_service_with_header_tenant(&[("/protected", Annotation::CheckLogin)]).await;
+
+    let req = test::TestRequest::get()
+        .uri("/protected")
+        .insert_header(("Authorization", format!("Bearer {}", token)))
+        .insert_header(("X-Tenant-Id", "42"))
+        .to_srv_request();
+    let resp = service.call(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    GarrisonManager::reset_for_test();
+}
+
+// ----------------------------------------------------------------
 // CheckLogin / CheckRole / CheckPermission FromRequest 测试
 // ----------------------------------------------------------------
 
@@ -467,7 +620,7 @@ async fn middleware_works_in_real_app_chain() {
 #[tokio::test]
 #[serial]
 async fn extractor_check_login_returns_401_without_token() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
     let config = Arc::new(make_config());
     let app = test::init_service(
         App::new()
@@ -489,7 +642,7 @@ async fn extractor_check_login_returns_401_without_token() {
 #[tokio::test]
 #[serial]
 async fn extractor_check_login_passes_with_valid_token() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
     let config = Arc::new(make_config());
     let app = test::init_service(
@@ -515,7 +668,7 @@ async fn extractor_check_login_passes_with_valid_token() {
 #[tokio::test]
 #[serial]
 async fn extractor_check_login_uses_default_config_without_app_data() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
     let app =
         test::init_service(App::new().route("/login", web::get().to(check_login_handler))).await;
 
@@ -532,7 +685,7 @@ async fn extractor_check_login_uses_default_config_without_app_data() {
 #[tokio::test]
 #[serial]
 async fn extractor_check_role_returns_401_without_token() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
     let config = Arc::new(make_config());
     let app = test::init_service(
         App::new()
@@ -554,7 +707,7 @@ async fn extractor_check_role_returns_401_without_token() {
 #[tokio::test]
 #[serial]
 async fn extractor_check_role_returns_403_without_role() {
-    init_manager(&[], &[]); // 无角色数据
+    init_manager(&[], &[]).await; // 无角色数据
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
     let config = Arc::new(make_config());
     let app = test::init_service(
@@ -581,7 +734,7 @@ async fn extractor_check_role_returns_403_without_role() {
 #[tokio::test]
 #[serial]
 async fn extractor_check_role_reads_role_from_query_param() {
-    init_manager(&[], &[("1001", &["admin"])]); // 注入 admin 角色
+    init_manager(&[], &[("1001", &["admin"])]).await; // 注入 admin 角色
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
     let config = Arc::new(make_config());
     let app = test::init_service(
@@ -607,7 +760,7 @@ async fn extractor_check_role_reads_role_from_query_param() {
 #[tokio::test]
 #[serial]
 async fn extractor_check_permission_returns_401_without_token() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
     let config = Arc::new(make_config());
     let app = test::init_service(
         App::new()
@@ -629,7 +782,7 @@ async fn extractor_check_permission_returns_401_without_token() {
 #[tokio::test]
 #[serial]
 async fn extractor_check_permission_returns_403_without_permission() {
-    init_manager(&[], &[]); // 无权限数据
+    init_manager(&[], &[]).await; // 无权限数据
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
     let config = Arc::new(make_config());
     let app = test::init_service(
@@ -656,7 +809,7 @@ async fn extractor_check_permission_returns_403_without_permission() {
 #[tokio::test]
 #[serial]
 async fn extractor_check_permission_reads_from_query_param() {
-    init_manager(&[("1001", &["user:read"])], &[]); // 注入权限
+    init_manager(&[("1001", &["user:read"])], &[]).await; // 注入权限
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
     let config = Arc::new(make_config());
     let app = test::init_service(
