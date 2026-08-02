@@ -29,9 +29,9 @@ tokio = { version = "1", features = ["full"] }
 | 安全模块 | `secure-totp` / `secure-sign` / `secure-httpbasic` / `secure-httpdigest` | TOTP / 签名 / Basic / Digest |
 | 可观测性 | `listener` / `tracing-log` / `metrics-prometheus` / `observability-otlp` | 事件 / 日志 / 指标 / 追踪 |
 | 生态 | `grpc` / `i18n-icu` | gRPC 拦截器 / ICU4X 增强层（复数 + 日期/数字本地化） |
-| 聚合 | `all-defaults` / `full` / `production` / `development` | 一键启用一组特性 |
+| 聚合 | `full` / `production` / `development` | 一键启用一组特性 |
 
-`all-defaults` = `cache-memory` + `db-sqlite` + `web-axum`；`full` 启用全部能力。
+`development` = `cache-memory` + `db-sqlite` + `web-axum`（替代已移除的 `all-defaults`）；`full` 启用全部能力。
 
 ## 最小示例
 

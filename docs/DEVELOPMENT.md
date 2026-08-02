@@ -498,7 +498,6 @@ cargo doc --no-deps --features full --open
 | Feature | 说明 |
 |---------|------|
 | `default` | `backend-embedded`（仅启用进程内认证后端，作为最小可启动配置） |
-| `all-defaults` | 等价于 `cache-memory + db-sqlite + web-axum` |
 | `full` | 启用全部特性（开发首选） |
 | `production` | 生产推荐组合（cache-redis + db-postgres + web-axum + 协议/安全子集 + 可观测性 + 多租户隔离 + auth-server + abac + firewall-waf + 三层缓存等，详见 Cargo.toml `[features]` production 段） |
 | `development` | 开发推荐组合（cache-memory + db-sqlite + web-axum） |

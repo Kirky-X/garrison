@@ -112,7 +112,6 @@ Garrison 提供三种聚合 feature 与自定义 feature 组合：
 |---------|---------|-----------|
 | `production` | 生产环境 | `cache-redis` + `db-postgres` + `web-axum` + `protocol-jwt` + `protocol-sign` + `secure-sign` + `listener` + `tracing-log` + `metrics-prometheus` + `audit-inklog` + `tenant-isolation` + `security-alert` + `device-binding` + `safe-defaults` + `firewall-waf` + `three-tier-cache` + `sms-rate-limit` + `backend-embedded` + `backend-kit` + `auth-server` + `auth-server-sdforge` + `abac` |
 | `development` | 开发环境 | `cache-memory` + `db-sqlite` + `web-axum` |
-| `all-defaults` | 快速启用默认后端 | `cache-memory` + `db-sqlite` + `web-axum` |
 | `full` | 全部特性（开发首选） | 全部特性 |
 
 ### 2.2 选择建议

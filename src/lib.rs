@@ -44,7 +44,7 @@
 //!
 //! | 类别 | Feature | 说明 |
 //! |:---|:---|:---|
-//! | 默认 | `default` | 空（按需启用所需 feature；`all-defaults` 可一键启用常用组合） |
+//! | 默认 | `default` | 空（按需启用所需 feature；`development` 可一键启用常用组合） |
 //! | 缓存 | `cache-memory` / `cache-redis` | 基于 oxcache 0.3 的 L1(内存) + L2(redis)，均启用 oxcache（语义别名） |
 //! | 数据库 | `db-sqlite` | 基于 dbnexus 0.2 + auto-migrate |
 //! | Web 框架 | `web-axum` / `web-actix` / `web-warp` | 路由拦截器与 extractor 适配 |
@@ -118,7 +118,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! garrison = { version = "0.7", features = ["web-axum", "protocol-jwt"] }
+//! garrison = { version = "0.8", features = ["web-axum", "protocol-jwt"] }
 //! ```
 //!
 //! ```rust
@@ -418,7 +418,7 @@ pub use state::UserStatus;
 // ============================================================================
 //
 // `RoleHierarchyRecord` 为 always compiled（无 feature gate）。
-// `RoleHierarchyService` 需 `db-sqlite` feature（依赖 DbPool 查 SQL）。
+// `RoleHierarchyService` 需任一 db 后端 feature（`db-sqlite` / `db-postgres` / `db-mysql`，依赖 DbPool 查 SQL）。
 //
 // 业务方可通过 `use garrison::{RoleHierarchyRecord, RoleHierarchyService}` 直接使用，
 // 无需写完整路径 `garrison::dao::repository::role_hierarchy::RoleHierarchyService`。
@@ -426,8 +426,8 @@ pub use state::UserStatus;
 /// 角色层级表行结构（child_role → parent_role + tenant_id）。
 pub use dao::repository::role_hierarchy::RoleHierarchyRecord;
 
-/// 角色层级服务（TC 预计算 + 缓存 + 增量失效，需 `db-sqlite` feature）。
-#[cfg(feature = "db-sqlite")]
+/// 角色层级服务（TC 预计算 + 缓存 + 增量失效，需任一 db 后端 feature）。
+#[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
 pub use dao::repository::role_hierarchy::RoleHierarchyService;
 
 // ============================================================================

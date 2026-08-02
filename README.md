@@ -374,6 +374,9 @@ async fn main() -> GarrisonResult<()> {
 | `tracing-log`                 |  ❌  |  0.1.0   | tracing 日志桥接                                                                                                                                                                                                                 |
 | `metrics-prometheus`          |  ❌  |  0.3.0   | Prometheus 指标                                                                                                                                                                                                                  |
 | `observability-otlp`          |  ❌  |  0.3.0   | OpenTelemetry OTLP 分布式追踪                                                                                                                                                                                                    |
+
+> **可观测性 no-op 契约**：`metrics-prometheus` / `observability-otlp` / `tracing-log` 均未启用时，
+> `observability` 模块仍可导入但所有 API 为 no-op（`None` 短路 / 零开销），避免用户误以为指标或追踪已启用。
 | `audit-inklog`                |  ❌  |  0.7.0   | inklog 结构化审计日志                                                                                                                                                                                                            |
 | `grpc`                        |  ❌  |  0.3.0   | gRPC 鉴权拦截器（tonic::Interceptor）                                                                                                                                                                                            |
 | `annotation-macros`           |  ❌  |  0.4.2   | 10 个属性宏：`#[check_login]` / `#[check_permission]` / `#[check_role]` / `#[check_access_token]` / `#[check_client_token]` / `#[check_temp_token]` / `#[check_api_key]` / `#[check_mfa]` / `#[check_abac]` / `#[check_disable]` |

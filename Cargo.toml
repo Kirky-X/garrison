@@ -157,9 +157,9 @@ tenant-isolation = []
 safe-defaults = []
 
 # === 聚合特性：等价于原 default，方便快速启用全部默认后端 ===
-# DEPRECATED：与 `development` 聚合特性完全重复（均 = `["cache-memory", "db-sqlite", "web-axum"]`）。
-# 0.8.0 将删除，请改用 `development`。
-all-defaults = ["cache-memory", "db-sqlite", "web-axum"]
+# `all-defaults` 已于 v0.8.2 移除（ARCH-01/DEP-03 修复）：
+# 与 `development` 聚合特性完全重复（均 = `["cache-memory", "db-sqlite", "web-axum"]`）。
+# 请改用 `development`。
 
 # === 缓存后端（通过 oxcache） ===
 cache-memory = ["oxcache/memory", "oxcache/serialization"]
