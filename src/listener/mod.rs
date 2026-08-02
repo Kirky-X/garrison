@@ -323,7 +323,7 @@ inventory::collect!(GarrisonListenerEntry);
 
 /// 监听器管理器，收集并管理所有已注册监听器。
 ///
-/// 在 `GarrisonManager::init` 时通过 `inventory::iter` 收集所有已注册监听器。
+/// 在 `GarrisonManager::builder()` 时通过 `inventory::iter` 收集所有已注册监听器。
 /// `broadcast` 方法同步遍历所有监听器调用 `on_event`，
 /// 单个监听器失败时仅记录 `tracing::warn!` 日志，不中断广播。
 pub struct GarrisonListenerManager {

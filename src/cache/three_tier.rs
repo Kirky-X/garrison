@@ -996,7 +996,7 @@ mod tests {
 
     /// I1: 登出后缓存失效 — invalidate 后再次查询走 L3。
     ///
-    /// 注：logout 集成到 stp/session.rs 需修改 GarrisonManager::init，
+    /// 注：logout 集成到 stp/session.rs 需修改 GarrisonManager::builder()，
     /// 留到 Phase 6 统一接线。此处验证 invalidate 的行为。
     #[tokio::test]
     async fn logout_invalidates_cache() {

@@ -271,13 +271,19 @@ mod tests {
         config
     }
 
-    fn init_manager() {
+    async fn init_manager() {
         GarrisonManager::reset_for_test();
         let dao: std::sync::Arc<dyn GarrisonDao> = std::sync::Arc::new(MockDao::new());
         let config = std::sync::Arc::new(make_config());
         let interface: std::sync::Arc<dyn GarrisonInterface> =
             std::sync::Arc::new(MockInterface::new());
-        GarrisonManager::init(dao, config, interface).unwrap();
+        GarrisonManager::builder()
+            .dao(dao)
+            .config(config)
+            .interface(interface)
+            .build()
+            .await
+            .unwrap();
     }
 
     // ----------------------------------------------------------------
@@ -291,7 +297,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn garrison_principal_extracted_from_actix_request() {
-        init_manager();
+        init_manager().await;
         let login_id = "1001";
         let token = GarrisonUtil::login_simple(login_id).await.unwrap();
 
@@ -316,7 +322,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn garrison_principal_returns_err_without_token() {
-        init_manager();
+        init_manager().await;
 
         let req = test::TestRequest::get().uri("/api/test").to_http_request();
         let mut payload = actix_web::dev::Payload::None;
@@ -337,7 +343,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn garrison_principal_returns_err_with_invalid_token() {
-        init_manager();
+        init_manager().await;
 
         let req = test::TestRequest::get()
             .uri("/api/test")

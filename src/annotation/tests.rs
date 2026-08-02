@@ -48,7 +48,7 @@ fn make_config(throw_on_not_login: bool) -> crate::config::GarrisonConfig {
 }
 
 /// 初始化 GarrisonManager（带权限/角色数据）。
-fn init_manager(
+async fn init_manager(
     throw_on_not_login: bool,
     permissions: &[(&str, &[&str])],
     roles: &[(&str, &[&str])],
@@ -64,7 +64,13 @@ fn init_manager(
         interface = interface.with_role(id, roles);
     }
     let interface: Arc<dyn GarrisonInterface> = Arc::new(interface);
-    GarrisonManager::init(dao, config, interface).unwrap();
+    GarrisonManager::builder()
+        .dao(dao)
+        .config(config)
+        .interface(interface)
+        .build()
+        .await
+        .unwrap();
 }
 
 /// 构建空的 axum Parts（无 header）。
@@ -121,7 +127,7 @@ fn make_parts_with_cookie_token(token: &str) -> axum::http::request::Parts {
 #[tokio::test]
 #[serial]
 async fn check_login_logged_in_returns_ok() {
-    init_manager(false, &[], &[]);
+    init_manager(false, &[], &[]).await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     let mut parts = make_parts();
@@ -138,7 +144,7 @@ async fn check_login_logged_in_returns_ok() {
 #[tokio::test]
 #[serial]
 async fn check_login_not_logged_in_returns_not_login() {
-    init_manager(false, &[], &[]);
+    init_manager(false, &[], &[]).await;
     // 不调用 login，直接 extractor（无 token）
     let mut parts = make_parts();
     let result = CheckLogin::from_request_parts(&mut parts, &()).await;
@@ -154,7 +160,7 @@ async fn check_login_not_logged_in_returns_not_login() {
 #[tokio::test]
 #[serial]
 async fn check_login_not_logged_in_returns_session() {
-    init_manager(true, &[], &[]);
+    init_manager(true, &[], &[]).await;
     let mut parts = make_parts();
     let result = CheckLogin::from_request_parts(&mut parts, &()).await;
     assert!(
@@ -173,7 +179,7 @@ async fn check_login_not_logged_in_returns_session() {
 #[tokio::test]
 #[serial]
 async fn check_role_held_returns_ok() {
-    init_manager(true, &[], &[("1001", &["admin"])]);
+    init_manager(true, &[], &[("1001", &["admin"])]).await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     let mut parts = make_parts();
@@ -190,7 +196,7 @@ async fn check_role_held_returns_ok() {
 #[tokio::test]
 #[serial]
 async fn check_role_not_held_returns_not_role() {
-    init_manager(true, &[], &[]); // 无角色数据
+    init_manager(true, &[], &[]).await; // 无角色数据
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     let mut parts = make_parts();
@@ -214,7 +220,7 @@ async fn check_role_not_held_returns_not_role() {
 #[tokio::test]
 #[serial]
 async fn check_permission_held_returns_ok() {
-    init_manager(true, &[("1001", &["user:read"])], &[]);
+    init_manager(true, &[("1001", &["user:read"])], &[]).await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     let mut parts = make_parts();
@@ -234,7 +240,7 @@ async fn check_permission_held_returns_ok() {
 #[tokio::test]
 #[serial]
 async fn check_permission_not_held_returns_not_permission() {
-    init_manager(true, &[], &[]); // 无权限数据
+    init_manager(true, &[], &[]).await; // 无权限数据
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     let mut parts = make_parts();
@@ -261,7 +267,7 @@ async fn check_permission_not_held_returns_not_permission() {
 #[tokio::test]
 #[serial]
 async fn ignore_always_returns_ok() {
-    init_manager(false, &[], &[]);
+    init_manager(false, &[], &[]).await;
     // 未登录状态下 Ignore 仍返回 Ok
     let mut parts = make_parts();
     let result = Ignore::from_request_parts(&mut parts, &()).await;
@@ -278,7 +284,7 @@ async fn ignore_always_returns_ok() {
 #[tokio::test]
 #[serial]
 async fn mode_strict_not_logged_in_throws_not_login() {
-    init_manager(false, &[], &[]); // throw_on_not_login=false
+    init_manager(false, &[], &[]).await; // throw_on_not_login=false
     let mut parts = make_parts();
     let result = Mode::<Strict>::from_request_parts(&mut parts, &()).await;
     assert!(
@@ -293,7 +299,7 @@ async fn mode_strict_not_logged_in_throws_not_login() {
 #[tokio::test]
 #[serial]
 async fn mode_loose_not_logged_in_returns_ok() {
-    init_manager(false, &[], &[]);
+    init_manager(false, &[], &[]).await;
     let mut parts = make_parts();
     let result = Mode::<Loose>::from_request_parts(&mut parts, &()).await;
     assert!(result.is_ok(), "Mode<Loose> 未登录应返回 Ok");
@@ -556,7 +562,7 @@ fn display_matches_name_for_all_unit_variants() {
 #[tokio::test]
 #[serial]
 async fn check_login_extracts_token_from_bearer_header() {
-    init_manager(false, &[], &[]);
+    init_manager(false, &[], &[]).await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     let mut parts = make_parts_with_bearer(&token);
@@ -570,7 +576,7 @@ async fn check_login_extracts_token_from_bearer_header() {
 #[tokio::test]
 #[serial]
 async fn check_login_extracts_token_from_garrison_header() {
-    init_manager(false, &[], &[]);
+    init_manager(false, &[], &[]).await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     let mut parts = make_parts_with_garrison_header(&token);
@@ -587,7 +593,7 @@ async fn check_login_extracts_token_from_garrison_header() {
 #[tokio::test]
 #[serial]
 async fn check_login_extracts_token_from_cookie() {
-    init_manager(false, &[], &[]);
+    init_manager(false, &[], &[]).await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     let mut parts = make_parts_with_cookie_token(&token);
@@ -605,7 +611,7 @@ async fn check_login_extracts_token_from_cookie() {
 #[tokio::test]
 #[serial]
 async fn check_role_extracts_token_from_header() {
-    init_manager(true, &[], &[("1001", &["admin"])]);
+    init_manager(true, &[], &[("1001", &["admin"])]).await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     let mut parts = make_parts_with_bearer(&token);
@@ -619,7 +625,7 @@ async fn check_role_extracts_token_from_header() {
 #[tokio::test]
 #[serial]
 async fn check_permission_extracts_token_from_header() {
-    init_manager(true, &[("1001", &["user:read"])], &[]);
+    init_manager(true, &[("1001", &["user:read"])], &[]).await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     let mut parts = make_parts_with_bearer(&token);
@@ -636,7 +642,7 @@ async fn check_permission_extracts_token_from_header() {
 #[tokio::test]
 #[serial]
 async fn mode_strict_extracts_token_from_header() {
-    init_manager(false, &[], &[]);
+    init_manager(false, &[], &[]).await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     let mut parts = make_parts_with_bearer(&token);
@@ -653,7 +659,7 @@ async fn mode_strict_extracts_token_from_header() {
 #[tokio::test]
 #[serial]
 async fn mode_loose_logged_in_with_header() {
-    init_manager(false, &[], &[]);
+    init_manager(false, &[], &[]).await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     let mut parts = make_parts_with_bearer(&token);
@@ -674,7 +680,7 @@ async fn mode_loose_logged_in_with_header() {
 #[tokio::test]
 #[serial]
 async fn garrison_principal_extracts_login_id_from_bearer_header() {
-    init_manager(false, &[], &[]);
+    init_manager(false, &[], &[]).await;
     let login_id = "1001";
     let token = GarrisonUtil::login_simple(login_id).await.unwrap();
 
@@ -694,7 +700,7 @@ async fn garrison_principal_extracts_login_id_from_bearer_header() {
 #[tokio::test]
 #[serial]
 async fn garrison_principal_returns_err_without_token() {
-    init_manager(false, &[], &[]);
+    init_manager(false, &[], &[]).await;
 
     let mut parts = make_parts();
     let result = crate::context::GarrisonPrincipal::from_request_parts(&mut parts, &()).await;
@@ -713,7 +719,7 @@ async fn garrison_principal_returns_err_without_token() {
 #[tokio::test]
 #[serial]
 async fn garrison_principal_returns_err_with_invalid_token() {
-    init_manager(false, &[], &[]);
+    init_manager(false, &[], &[]).await;
 
     let mut parts = make_parts_with_bearer("invalid_token_xyz");
     let result = crate::context::GarrisonPrincipal::from_request_parts(&mut parts, &()).await;
@@ -734,7 +740,7 @@ async fn garrison_principal_returns_err_with_invalid_token() {
 #[tokio::test]
 #[serial]
 async fn garrison_principal_returns_err_when_token_logout() {
-    init_manager(false, &[], &[]);
+    init_manager(false, &[], &[]).await;
     let login_id = "1001";
     let token = GarrisonUtil::login_simple(login_id).await.unwrap();
 

@@ -269,7 +269,7 @@ fn make_config() -> GarrisonConfig {
 }
 
 /// 初始化 GarrisonManager（带权限/角色数据）。
-fn init_manager(permissions: &[(&str, &[&str])], roles: &[(&str, &[&str])]) {
+async fn init_manager(permissions: &[(&str, &[&str])], roles: &[(&str, &[&str])]) {
     GarrisonManager::reset_for_test();
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     let config = Arc::new(make_config());
@@ -281,7 +281,13 @@ fn init_manager(permissions: &[(&str, &[&str])], roles: &[(&str, &[&str])]) {
         interface = interface.with_role(id, roles);
     }
     let interface: Arc<dyn GarrisonInterface> = Arc::new(interface);
-    GarrisonManager::init(dao, config, interface).unwrap();
+    GarrisonManager::builder()
+        .dao(dao)
+        .config(config)
+        .interface(interface)
+        .build()
+        .await
+        .unwrap();
 }
 
 // ----------------------------------------------------------------
@@ -292,7 +298,7 @@ fn init_manager(permissions: &[(&str, &[&str])], roles: &[(&str, &[&str])]) {
 #[tokio::test]
 #[serial]
 async fn into_filter_allows_unprotected_path() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
     let router = GarrisonRouter::new(Arc::new(make_config()))
         .route_protected("/protected", Annotation::CheckLogin);
     let filter = router.into_filter();
@@ -310,7 +316,7 @@ async fn into_filter_allows_unprotected_path() {
 #[tokio::test]
 #[serial]
 async fn into_filter_blocks_protected_path_without_token() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
     let router = GarrisonRouter::new(Arc::new(make_config()))
         .route_protected("/protected", Annotation::CheckLogin);
     let filter = router.into_filter();
@@ -330,7 +336,7 @@ async fn into_filter_blocks_protected_path_without_token() {
 #[tokio::test]
 #[serial]
 async fn into_filter_allows_protected_path_with_valid_token() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
     let router = GarrisonRouter::new(Arc::new(make_config()))
         .route_protected("/protected", Annotation::CheckLogin);
@@ -350,7 +356,7 @@ async fn into_filter_allows_protected_path_with_valid_token() {
 #[tokio::test]
 #[serial]
 async fn into_filter_blocks_permission_denied() {
-    init_manager(&[], &[]); // 无权限数据
+    init_manager(&[], &[]).await; // 无权限数据
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
     let router = GarrisonRouter::new(Arc::new(make_config())).route_protected(
         "/admin",
@@ -377,7 +383,7 @@ async fn into_filter_blocks_permission_denied() {
 #[tokio::test]
 #[serial]
 async fn into_filter_allows_ignore_path_without_token() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
     let router =
         GarrisonRouter::new(Arc::new(make_config())).route_protected("/public", Annotation::Ignore);
     let filter = router.into_filter();
@@ -396,7 +402,7 @@ async fn into_filter_allows_ignore_path_without_token() {
 #[tokio::test]
 #[serial]
 async fn check_login_filter_rejects_without_token() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
     let filter = check_login(Arc::new(make_config()));
 
     let result = warp::test::request().filter(&filter).await;
@@ -411,7 +417,7 @@ async fn check_login_filter_rejects_without_token() {
 #[tokio::test]
 #[serial]
 async fn check_login_filter_passes_with_valid_token() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
     let filter = check_login(Arc::new(make_config()));
 
@@ -432,7 +438,7 @@ async fn check_login_filter_passes_with_valid_token() {
 #[tokio::test]
 #[serial]
 async fn check_role_filter_rejects_without_token() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
     let filter = check_role(Arc::new(make_config()), "admin".to_string());
 
     let result = warp::test::request().filter(&filter).await;
@@ -446,7 +452,7 @@ async fn check_role_filter_rejects_without_token() {
 #[tokio::test]
 #[serial]
 async fn check_role_filter_rejects_without_role() {
-    init_manager(&[], &[]); // 无角色数据
+    init_manager(&[], &[]).await; // 无角色数据
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
     let filter = check_role(Arc::new(make_config()), "admin".to_string());
 
@@ -464,7 +470,7 @@ async fn check_role_filter_rejects_without_role() {
 #[tokio::test]
 #[serial]
 async fn check_role_filter_passes_with_valid_role() {
-    init_manager(&[], &[("1001", &["admin"])]); // 注入 admin 角色
+    init_manager(&[], &[("1001", &["admin"])]).await; // 注入 admin 角色
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
     let filter = check_role(Arc::new(make_config()), "admin".to_string());
 
@@ -485,7 +491,7 @@ async fn check_role_filter_passes_with_valid_role() {
 #[tokio::test]
 #[serial]
 async fn check_permission_filter_rejects_without_token() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
     let filter = check_permission(Arc::new(make_config()), "user:read".to_string());
 
     let result = warp::test::request().filter(&filter).await;
@@ -499,7 +505,7 @@ async fn check_permission_filter_rejects_without_token() {
 #[tokio::test]
 #[serial]
 async fn check_permission_filter_rejects_without_permission() {
-    init_manager(&[], &[]); // 无权限数据
+    init_manager(&[], &[]).await; // 无权限数据
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
     let filter = check_permission(Arc::new(make_config()), "user:read".to_string());
 
@@ -517,7 +523,7 @@ async fn check_permission_filter_rejects_without_permission() {
 #[tokio::test]
 #[serial]
 async fn check_permission_filter_passes_with_valid_permission() {
-    init_manager(&[("1001", &["user:read"])], &[]); // 注入权限
+    init_manager(&[("1001", &["user:read"])], &[]).await; // 注入权限
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
     let filter = check_permission(Arc::new(make_config()), "user:read".to_string());
 

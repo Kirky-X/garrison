@@ -38,7 +38,7 @@ pub struct BackendEmbedded;
 impl BackendEmbedded {
     /// 创建 BackendEmbedded 实例。
     ///
-    /// GarrisonManager 必须已通过 `GarrisonManager::init()` 初始化，
+    /// GarrisonManager 必须已通过 `GarrisonManager::builder().build().await` 初始化，
     /// 否则所有方法调用返回 `GarrisonError::Session`。
     pub fn new() -> Self {
         Self
@@ -184,7 +184,7 @@ mod tests {
     use std::sync::Arc;
 
     /// 初始化全局 GarrisonManager，返回 BackendEmbedded 实例。
-    fn setup_backend() -> BackendEmbedded {
+    async fn setup_backend() -> BackendEmbedded {
         GarrisonManager::reset_for_test();
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let mut config = GarrisonConfig::default_config();
@@ -192,14 +192,20 @@ mod tests {
         config.active_timeout = -1;
         config.throw_on_not_login = false;
         let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface);
-        GarrisonManager::init(dao, Arc::new(config), interface).unwrap();
+        GarrisonManager::builder()
+            .dao(dao)
+            .config(Arc::new(config))
+            .interface(interface)
+            .build()
+            .await
+            .unwrap();
         BackendEmbedded::new()
     }
 
     #[tokio::test]
     #[serial]
     async fn test_login_returns_token() {
-        let backend = setup_backend();
+        let backend = setup_backend().await;
         let token = backend
             .login("user1", &LoginParams::default())
             .await
@@ -210,7 +216,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_check_login_valid_token() {
-        let backend = setup_backend();
+        let backend = setup_backend().await;
         let token = backend
             .login("user1", &LoginParams::default())
             .await
@@ -221,14 +227,14 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_check_login_invalid_token() {
-        let backend = setup_backend();
+        let backend = setup_backend().await;
         assert!(!backend.check_login("invalid-token").await.unwrap());
     }
 
     #[tokio::test]
     #[serial]
     async fn test_logout_invalidates_token() {
-        let backend = setup_backend();
+        let backend = setup_backend().await;
         let token = backend
             .login("user1", &LoginParams::default())
             .await
@@ -240,7 +246,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_kickout_invalidates_all_sessions() {
-        let backend = setup_backend();
+        let backend = setup_backend().await;
         let t1 = backend
             .login("user1", &LoginParams::default())
             .await
@@ -257,7 +263,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_get_token_info() {
-        let backend = setup_backend();
+        let backend = setup_backend().await;
         let token = backend
             .login("user1", &LoginParams::default())
             .await
@@ -271,7 +277,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_get_token_info_invalid_token() {
-        let backend = setup_backend();
+        let backend = setup_backend().await;
         let result = backend.get_token_info("invalid").await;
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -283,7 +289,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_get_session() {
-        let backend = setup_backend();
+        let backend = setup_backend().await;
         let token = backend
             .login("user1", &LoginParams::default())
             .await
@@ -296,7 +302,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_get_session_invalid_token() {
-        let backend = setup_backend();
+        let backend = setup_backend().await;
         let result = backend.get_session("invalid").await;
         assert!(result.is_err());
     }
@@ -305,7 +311,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_check_safe_default_returns_false() {
-        let backend = setup_backend();
+        let backend = setup_backend().await;
         let token = backend
             .login("user1", &LoginParams::default())
             .await
@@ -317,7 +323,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_check_disable_default_returns_false() {
-        let backend = setup_backend();
+        let backend = setup_backend().await;
         let token = backend
             .login("user1", &LoginParams::default())
             .await
@@ -329,7 +335,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_switch_to_default_guard_denies() {
-        let backend = setup_backend();
+        let backend = setup_backend().await;
         let token = backend
             .login("user1", &LoginParams::default())
             .await
@@ -351,7 +357,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_renew_to_equivalent_returns_new_token() {
-        let backend = setup_backend();
+        let backend = setup_backend().await;
         let old_token = backend
             .login("user1", &LoginParams::default())
             .await
@@ -367,7 +373,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_check_permission_invalid_token() {
-        let backend = setup_backend();
+        let backend = setup_backend().await;
         let result = backend.check_permission("invalid", "user:read").await;
         assert!(result.is_err());
     }
@@ -375,7 +381,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_dyn_dispatch_with_backend_embedded() {
-        let backend: Arc<dyn AuthBackend> = Arc::new(setup_backend());
+        let backend: Arc<dyn AuthBackend> = Arc::new(setup_backend().await);
         let token = backend
             .login("dyn-user", &LoginParams::default())
             .await
@@ -418,7 +424,7 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     #[serial]
     async fn test_login_creates_tracing_span() {
-        let backend = setup_backend();
+        let backend = setup_backend().await;
         let names = Arc::new(Mutex::new(Vec::new()));
         let _guard = tracing::subscriber::set_default(SpanNameCollector {
             names: names.clone(),
@@ -434,7 +440,7 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     #[serial]
     async fn test_logout_creates_tracing_span() {
-        let backend = setup_backend();
+        let backend = setup_backend().await;
         let token = backend
             .login("span-user", &LoginParams::default())
             .await
@@ -454,7 +460,7 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     #[serial]
     async fn test_check_login_creates_tracing_span() {
-        let backend = setup_backend();
+        let backend = setup_backend().await;
         let token = backend
             .login("span-user", &LoginParams::default())
             .await

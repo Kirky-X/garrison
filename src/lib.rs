@@ -21,7 +21,12 @@
 //! let interface: Arc<dyn GarrisonInterface> = Arc::new(MyInterface);
 //!
 //! // 2. 初始化全局管理器（覆盖式注入 dao / config / interface）
-//! GarrisonManager::init(dao, config, interface).unwrap();
+//! GarrisonManager::builder()
+//!     .dao(dao)
+//!     .config(config)
+//!     .interface(interface)
+//!     .build()
+//!     .await.unwrap();
 //!
 //! // 3. 执行登录：生成 token 并写入会话
 //! //    注意：login / check_login 依赖 task_local 上下文中的当前 token，
@@ -99,8 +104,8 @@
 //!   - `dbnexus`：数据库抽象层（SQLite / PostgreSQL / MySQL），由 [`GarrisonDao`] trait 屏蔽后端差异
 //!   - `oxcache`：缓存抽象层（L1 内存 + L2 redis），承载 Token-Session 与 Account-Session
 //! - **GarrisonManager 单例模式**
-//!   - [`GarrisonManager`] 持有全局 `Arc<GarrisonLogicDefault>`（基于 `parking_lot::RwLock`，支持覆盖式 `init`）
-//!   - 业务方启动时调用 [`GarrisonManager::init`] 注入 dao / config / interface 依赖
+//!   - [`GarrisonManager`] 持有全局 `Arc<GarrisonLogicDefault>`（基于 `parking_lot::RwLock`，支持覆盖式重建）
+//!   - 业务方启动时通过 [`GarrisonManager::builder`] 链式注入 dao / config / interface 依赖
 //!   - `GarrisonLogicFactory` 通过 `inventory::submit!` 在编译期注册，运行时由 `inventory::iter` 选取
 //!   - [`GarrisonUtil::login`] / [`GarrisonUtil::check_login`] 等静态方法委托到全局单例
 //!

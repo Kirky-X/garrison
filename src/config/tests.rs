@@ -3,6 +3,11 @@
 
 //! config 模块测试（从 mod.rs 迁移，Rule 25 合规）。
 
+// jwt_secret 的 `.into()` 是跨 feature 兼容的必要转换：protocol-zeroize 下字段
+// 类型为 Zeroizing<String>（String→Zeroizing<String>），feature 关闭时退化为
+// String，被 clippy 误报 useless_conversion。
+#![allow(clippy::useless_conversion)]
+
 use super::*;
 use crate::error::GarrisonError;
 use serial_test::serial;

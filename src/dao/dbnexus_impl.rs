@@ -659,7 +659,7 @@ mod embedded_migrations_tests {
             .expect("migrations/postgres/core 必须被嵌入");
         let sql_files: Vec<_> = core_dir
             .files()
-            .filter(|f| f.path().extension().map_or(false, |ext| ext == "sql"))
+            .filter(|f| f.path().extension().is_some_and(|ext| ext == "sql"))
             .collect();
         assert_eq!(
             sql_files.len(),

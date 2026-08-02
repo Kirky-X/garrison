@@ -62,7 +62,7 @@ inventory::collect!(GarrisonPluginEntry);
 
 /// 插件管理器，收集并管理所有已注册插件。
 ///
-/// 在 `GarrisonManager::init` 时通过 `inventory::iter` 收集所有已注册插件。
+/// 在 `GarrisonManager::builder()` 时通过 `inventory::iter` 收集所有已注册插件。
 /// 插件方法返回 `Err` 时仅记录 `tracing::warn!` 日志，不中断主流程。
 pub struct GarrisonPluginManager {
     /// 已注册的插件列表。

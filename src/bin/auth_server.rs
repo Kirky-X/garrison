@@ -86,7 +86,7 @@ async fn main() -> GarrisonResult<()> {
     }
 
     // 创建 BackendEmbedded 作为后端
-    // 注意：GarrisonManager 需要在使用前通过 GarrisonManager::init() 初始化
+    // 注意：GarrisonManager 需要在使用前通过 GarrisonManager::builder().build().await 初始化
     // 这里仅创建 BackendEmbedded 实例，实际部署时需确保 Manager 已初始化
     let backend: Arc<dyn AuthBackend> = Arc::new(BackendEmbedded::new());
 

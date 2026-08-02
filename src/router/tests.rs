@@ -34,7 +34,7 @@ fn make_config() -> GarrisonConfig {
 }
 
 /// 初始化 GarrisonManager（带权限/角色数据）。
-fn init_manager(permissions: &[(&str, &[&str])], roles: &[(&str, &[&str])]) {
+async fn init_manager(permissions: &[(&str, &[&str])], roles: &[(&str, &[&str])]) {
     GarrisonManager::reset_for_test();
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     let config = Arc::new(make_config());
@@ -46,17 +46,29 @@ fn init_manager(permissions: &[(&str, &[&str])], roles: &[(&str, &[&str])]) {
         interface = interface.with_role(id, roles);
     }
     let interface: Arc<dyn GarrisonInterface> = Arc::new(interface);
-    GarrisonManager::init(dao, config, interface).unwrap();
+    GarrisonManager::builder()
+        .dao(dao)
+        .config(config)
+        .interface(interface)
+        .build()
+        .await
+        .unwrap();
 }
 
 /// 初始化 GarrisonManager 并返回 MockDao 引用（用于 API Key 测试等需共享 DAO 的场景）。
 #[cfg_attr(not(feature = "protocol-apikey"), allow(dead_code))]
-fn init_manager_with_dao() -> Arc<MockDao> {
+async fn init_manager_with_dao() -> Arc<MockDao> {
     GarrisonManager::reset_for_test();
     let dao = Arc::new(MockDao::new());
     let config = Arc::new(make_config());
     let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface::new());
-    GarrisonManager::init(dao.clone() as Arc<dyn GarrisonDao>, config, interface).unwrap();
+    GarrisonManager::builder()
+        .dao(dao.clone() as Arc<dyn GarrisonDao>)
+        .config(config)
+        .interface(interface)
+        .build()
+        .await
+        .unwrap();
     dao
 }
 
@@ -94,7 +106,7 @@ fn make_router() -> GarrisonRouter {
 #[tokio::test]
 #[serial]
 async fn route_protected_build_handles_request() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     let app = make_router().build();
@@ -115,7 +127,7 @@ async fn route_protected_build_handles_request() {
 #[tokio::test]
 #[serial]
 async fn protected_without_token_returns_401() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
 
     let app = make_router().build();
     let response = app.oneshot(make_request("/protected", None)).await.unwrap();
@@ -128,7 +140,7 @@ async fn protected_without_token_returns_401() {
 #[tokio::test]
 #[serial]
 async fn protected_with_valid_token_returns_200() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     let app = make_router().build();
@@ -145,7 +157,7 @@ async fn protected_with_valid_token_returns_200() {
 #[tokio::test]
 #[serial]
 async fn protected_with_invalid_token_returns_401() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
 
     let app = make_router().build();
     let response = app
@@ -165,7 +177,7 @@ async fn protected_with_invalid_token_returns_401() {
 #[tokio::test]
 #[serial]
 async fn permission_denied_returns_403() {
-    init_manager(&[], &[]); // 无权限数据
+    init_manager(&[], &[]).await; // 无权限数据
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     let app = make_router().build();
@@ -184,7 +196,7 @@ async fn permission_denied_returns_403() {
 #[tokio::test]
 #[serial]
 async fn permission_granted_returns_200() {
-    init_manager(&[("1001", &["user:read"])], &[]);
+    init_manager(&[("1001", &["user:read"])], &[]).await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     let app = make_router().build();
@@ -203,7 +215,7 @@ async fn permission_granted_returns_200() {
 #[tokio::test]
 #[serial]
 async fn role_denied_returns_403() {
-    init_manager(&[], &[]); // 无角色数据
+    init_manager(&[], &[]).await; // 无角色数据
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     let app = make_router().build();
@@ -220,7 +232,7 @@ async fn role_denied_returns_403() {
 #[tokio::test]
 #[serial]
 async fn role_granted_returns_200() {
-    init_manager(&[], &[("1001", &["admin"])]);
+    init_manager(&[], &[("1001", &["admin"])]).await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     let app = make_router().build();
@@ -241,7 +253,7 @@ async fn role_granted_returns_200() {
 #[tokio::test]
 #[serial]
 async fn ignore_allows_anonymous_access() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
 
     let app = make_router().build();
     let response = app.oneshot(make_request("/public", None)).await.unwrap();
@@ -258,7 +270,7 @@ async fn ignore_allows_anonymous_access() {
 #[tokio::test]
 #[serial]
 async fn middleware_extracts_token_from_bearer_header() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     let app = make_router().build();
@@ -279,7 +291,7 @@ async fn middleware_extracts_token_from_bearer_header() {
 #[tokio::test]
 #[serial]
 async fn middleware_extracts_token_from_custom_header() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     let req = Request::builder()
@@ -304,7 +316,7 @@ async fn middleware_extracts_token_from_custom_header() {
 #[tokio::test]
 #[serial]
 async fn middleware_extracts_token_from_cookie() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     let req = Request::builder()
@@ -333,7 +345,7 @@ async fn middleware_extracts_token_from_cookie() {
 #[tokio::test]
 #[serial]
 async fn default_interceptor_check_login_logged_in_ok() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     let interceptor = DefaultGarrisonInterceptor;
@@ -351,7 +363,7 @@ async fn default_interceptor_check_login_logged_in_ok() {
 #[tokio::test]
 #[serial]
 async fn default_interceptor_check_login_not_logged_in_err() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
     let interceptor = DefaultGarrisonInterceptor;
     let result = interceptor.pre_handle("/x", &Annotation::CheckLogin).await;
     assert!(
@@ -366,7 +378,7 @@ async fn default_interceptor_check_login_not_logged_in_err() {
 #[tokio::test]
 #[serial]
 async fn default_interceptor_check_role_held_ok() {
-    init_manager(&[], &[("1001", &["admin"])]);
+    init_manager(&[], &[("1001", &["admin"])]).await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     let interceptor = DefaultGarrisonInterceptor;
@@ -384,7 +396,7 @@ async fn default_interceptor_check_role_held_ok() {
 #[tokio::test]
 #[serial]
 async fn default_interceptor_check_permission_not_held_err() {
-    init_manager(&[], &[]); // 无权限
+    init_manager(&[], &[]).await; // 无权限
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     let interceptor = DefaultGarrisonInterceptor;
@@ -409,7 +421,7 @@ async fn default_interceptor_check_permission_not_held_err() {
 #[tokio::test]
 #[serial]
 async fn default_interceptor_ignore_returns_ok() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
     let interceptor = DefaultGarrisonInterceptor;
     let result = interceptor.pre_handle("/x", &Annotation::Ignore).await;
     assert!(result.is_ok(), "pre_handle(Ignore) 应返回 Ok");
@@ -428,7 +440,7 @@ async fn default_interceptor_ignore_returns_ok() {
 #[tokio::test]
 #[serial]
 async fn default_interceptor_logical_combinator_annotations_returns_ok() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
     let interceptor = DefaultGarrisonInterceptor;
     let combinators = [
         Annotation::CheckOr,
@@ -458,7 +470,7 @@ async fn default_interceptor_logical_combinator_annotations_returns_ok() {
 #[tokio::test]
 #[serial]
 async fn default_interceptor_check_safe_returns_ok_by_default() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
     let interceptor = DefaultGarrisonInterceptor;
     let result = interceptor.pre_handle("/x", &Annotation::CheckSafe).await;
 
@@ -486,7 +498,7 @@ async fn default_interceptor_check_safe_returns_ok_by_default() {
 #[tokio::test]
 #[serial]
 async fn default_interceptor_check_disable_returns_ok_by_default() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
     let interceptor = DefaultGarrisonInterceptor;
     let result = interceptor
         .pre_handle("/x", &Annotation::CheckDisable)
@@ -499,7 +511,7 @@ async fn default_interceptor_check_disable_returns_ok_by_default() {
 #[tokio::test]
 #[serial]
 async fn default_interceptor_check_basic_auth_returns_not_implemented() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
     let interceptor = DefaultGarrisonInterceptor;
     let result = interceptor
         .pre_handle("/x", &Annotation::CheckBasicAuth)
@@ -515,7 +527,7 @@ async fn default_interceptor_check_basic_auth_returns_not_implemented() {
 #[tokio::test]
 #[serial]
 async fn default_interceptor_check_digest_auth_returns_not_implemented() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
     let interceptor = DefaultGarrisonInterceptor;
     let result = interceptor
         .pre_handle("/x", &Annotation::CheckDigestAuth)
@@ -531,7 +543,7 @@ async fn default_interceptor_check_digest_auth_returns_not_implemented() {
 #[tokio::test]
 #[serial]
 async fn default_interceptor_check_sign_returns_not_implemented() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
     let interceptor = DefaultGarrisonInterceptor;
     let result = interceptor.pre_handle("/x", &Annotation::CheckSign).await;
     assert!(
@@ -545,7 +557,7 @@ async fn default_interceptor_check_sign_returns_not_implemented() {
 #[tokio::test]
 #[serial]
 async fn default_interceptor_check_basic_auth_error_message_contains_guidance() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
     let interceptor = DefaultGarrisonInterceptor;
     let result = interceptor
         .pre_handle("/x", &Annotation::CheckBasicAuth)
@@ -565,7 +577,7 @@ async fn default_interceptor_check_basic_auth_error_message_contains_guidance() 
 #[tokio::test]
 #[serial]
 async fn default_interceptor_check_access_token_returns_not_implemented() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
     let interceptor = DefaultGarrisonInterceptor;
     let result = interceptor
         .pre_handle("/x", &Annotation::CheckAccessToken)
@@ -583,7 +595,7 @@ async fn default_interceptor_check_access_token_returns_not_implemented() {
 #[tokio::test]
 #[serial]
 async fn default_interceptor_check_client_token_returns_not_implemented() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
     let interceptor = DefaultGarrisonInterceptor;
     let result = interceptor
         .pre_handle("/x", &Annotation::CheckClientToken)
@@ -600,7 +612,7 @@ async fn default_interceptor_check_client_token_returns_not_implemented() {
 #[tokio::test]
 #[serial]
 async fn default_interceptor_check_access_token_error_contains_guidance() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
     let interceptor = DefaultGarrisonInterceptor;
     let result = interceptor
         .pre_handle("/x", &Annotation::CheckAccessToken)
@@ -651,7 +663,7 @@ impl GarrisonInterceptor for CountingInterceptor {
 #[tokio::test]
 #[serial]
 async fn with_interceptor_uses_custom_interceptor() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     let interceptor = CountingInterceptor::new();
@@ -679,7 +691,7 @@ async fn with_interceptor_uses_custom_interceptor() {
 #[tokio::test]
 #[serial]
 async fn default_router_handles_request() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     let app = GarrisonRouter::default()
@@ -803,7 +815,7 @@ async fn tenant_resolution_middleware_missing_header_returns_400() {
 async fn check_api_key_with_valid_key_returns_200() {
     use crate::protocol::apikey::ApiKeyHandler;
 
-    let dao = init_manager_with_dao();
+    let dao = init_manager_with_dao().await;
     let handler = ApiKeyHandler::new(dao.clone() as Arc<dyn GarrisonDao>);
     let key = handler
         .generate_with_namespace("user1", "ns1", vec![], 3600)
@@ -835,7 +847,7 @@ async fn check_api_key_with_valid_key_returns_200() {
 #[tokio::test]
 #[serial]
 async fn check_api_key_without_key_returns_401() {
-    init_manager_with_dao();
+    init_manager_with_dao().await;
 
     let app = GarrisonRouter::new(Arc::new(make_config()))
         .route_protected(
@@ -864,7 +876,7 @@ async fn check_api_key_without_key_returns_401() {
 async fn check_api_key_namespace_mismatch_returns_401() {
     use crate::protocol::apikey::ApiKeyHandler;
 
-    let dao = init_manager_with_dao();
+    let dao = init_manager_with_dao().await;
     let handler = ApiKeyHandler::new(dao.clone() as Arc<dyn GarrisonDao>);
     // 为 ns1 生成 key
     let key = handler
@@ -900,7 +912,7 @@ async fn check_api_key_namespace_mismatch_returns_401() {
 async fn check_api_key_none_namespace_uses_default() {
     use crate::protocol::apikey::ApiKeyHandler;
 
-    let dao = init_manager_with_dao();
+    let dao = init_manager_with_dao().await;
     let handler = ApiKeyHandler::new(dao.clone() as Arc<dyn GarrisonDao>);
     // generate（不带 namespace）使用默认命名空间 "default"
     let key = handler.generate("user1", vec![], 3600).await.unwrap();
@@ -929,7 +941,7 @@ async fn check_api_key_none_namespace_uses_default() {
 async fn mode_annotation_is_noop_in_pre_handle() {
     use crate::annotation::AnnotationMode;
 
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
 
     let app = GarrisonRouter::new(Arc::new(make_config()))
         .route_protected(
@@ -959,7 +971,7 @@ async fn mode_annotation_is_noop_in_pre_handle() {
 #[tokio::test]
 #[serial]
 async fn group_applies_prefix_to_sub_routes() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     let app = GarrisonRouter::new(Arc::new(make_config()))
@@ -990,7 +1002,7 @@ async fn group_applies_prefix_to_sub_routes() {
 #[tokio::test]
 #[serial]
 async fn group_with_ignore_annotation_overrides_route_annotation() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
 
     let app = GarrisonRouter::new(Arc::new(make_config()))
         .group("/public", Annotation::Ignore, |r| {
@@ -1014,7 +1026,7 @@ async fn group_with_ignore_annotation_overrides_route_annotation() {
 #[tokio::test]
 #[serial]
 async fn group_non_ignore_annotation_preserves_route_annotation() {
-    init_manager(&[], &[]); // 无角色数据
+    init_manager(&[], &[]).await; // 无角色数据
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     let app = GarrisonRouter::new(Arc::new(make_config()))
@@ -1049,7 +1061,7 @@ async fn group_non_ignore_annotation_preserves_route_annotation() {
 #[tokio::test]
 #[serial]
 async fn group_nested_merges_prefixes() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     let app = GarrisonRouter::new(Arc::new(make_config()))
@@ -1089,7 +1101,7 @@ fn group_empty_prefix_panics() {
 #[tokio::test]
 #[serial]
 async fn group_trailing_slash_trimmed() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     // prefix = "/api/v1/" → trimmed = "/api/v1" → 完整路径 = "/api/v1/users"
@@ -1113,7 +1125,7 @@ async fn group_trailing_slash_trimmed() {
 #[tokio::test]
 #[serial]
 async fn group_chained_calls_register_separate_prefixes() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
 
     let app = GarrisonRouter::new(Arc::new(make_config()))
         .group("/api/v1", Annotation::Ignore, |r| {
@@ -1163,7 +1175,7 @@ impl GarrisonInterceptor for RenewingInterceptor {
 #[tokio::test]
 #[serial]
 async fn renewed_token_written_to_header() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
     let mut config = make_config();
     config.is_write_header = true;
     config.is_write_cookie = false;
@@ -1195,7 +1207,7 @@ async fn renewed_token_written_to_header() {
 #[tokio::test]
 #[serial]
 async fn renewed_token_written_to_cookie() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
     let mut config = make_config();
     config.is_write_header = false;
     config.is_write_cookie = true;
@@ -1228,7 +1240,7 @@ async fn renewed_token_written_to_cookie() {
 #[tokio::test]
 #[serial]
 async fn renewed_token_not_written_when_both_disabled() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
     let mut config = make_config();
     config.is_write_header = false;
     config.is_write_cookie = false;
@@ -1258,7 +1270,7 @@ async fn renewed_token_not_written_when_both_disabled() {
 #[tokio::test]
 #[serial]
 async fn renewed_token_written_to_both_header_and_cookie() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
     let mut config = make_config();
     config.is_write_header = true;
     config.is_write_cookie = true;
@@ -1298,7 +1310,7 @@ async fn renewed_token_written_to_both_header_and_cookie() {
 #[tokio::test]
 #[serial]
 async fn no_renewed_token_nothing_written() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
     let mut config = make_config();
     config.is_write_header = true;
     config.is_write_cookie = true;
@@ -1326,7 +1338,7 @@ async fn no_renewed_token_nothing_written() {
 #[tokio::test]
 #[serial]
 async fn clear_renewed_token_prevents_leak() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
     let mut config = make_config();
     config.is_write_header = true;
     config.is_write_cookie = false;
@@ -1365,7 +1377,7 @@ async fn clear_renewed_token_prevents_leak() {
 #[tokio::test]
 #[serial]
 async fn token_name_used_as_header_name() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
     let mut config = make_config();
     config.token_name = "custom_auth_token".to_string();
     config.is_write_header = true;
@@ -1398,7 +1410,7 @@ async fn token_name_used_as_header_name() {
 #[tokio::test]
 #[serial]
 async fn cookie_has_correct_attributes() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
     let mut config = make_config();
     config.is_write_header = false;
     config.is_write_cookie = true;

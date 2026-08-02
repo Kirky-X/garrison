@@ -17,7 +17,7 @@ use std::sync::Arc;
 /// Hang DAO：`get` 调用时 sleep 10s（远超 `HEALTH_PROBE_TIMEOUT` 的 2s），
 /// 模拟数据库/Redis 后端网络不可达。
 ///
-/// 其他方法返回 `Ok` 以保证 `GarrisonManager::init` 不触发非预期错误路径。
+/// 其他方法返回 `Ok` 以保证 `GarrisonManager::builder()` 不触发非预期错误路径。
 ///
 /// 仅在探测路径（db-postgres / db-mysql / cache-redis）feature 启用时编译。
 #[cfg(any(feature = "db-postgres", feature = "db-mysql", feature = "cache-redis"))]
@@ -261,7 +261,12 @@ async fn cache_health_check_returns_unhealthy_on_probe_timeout() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(HangDao);
     let config = Arc::new(GarrisonConfig::default_config());
     let interface: Arc<dyn GarrisonInterface> = Arc::new(crate::stp::mock::MockInterface);
-    GarrisonManager::init(dao, config, interface)
+    GarrisonManager::builder()
+        .dao(dao)
+        .config(config)
+        .interface(interface)
+        .build()
+        .await
         .expect("init with HangDao 应成功（init 不调用 dao.get）");
     assert!(
         GarrisonManager::is_initialized(),
@@ -347,7 +352,12 @@ async fn db_health_check_returns_unhealthy_on_probe_timeout() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(HangDao);
     let config = Arc::new(GarrisonConfig::default_config());
     let interface: Arc<dyn GarrisonInterface> = Arc::new(crate::stp::mock::MockInterface);
-    GarrisonManager::init(dao, config, interface)
+    GarrisonManager::builder()
+        .dao(dao)
+        .config(config)
+        .interface(interface)
+        .build()
+        .await
         .expect("init with HangDao 应成功（init 不调用 dao.get）");
     assert!(
         GarrisonManager::is_initialized(),

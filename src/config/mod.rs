@@ -389,7 +389,7 @@ pub struct GarrisonConfig {
     /// token map 清理间隔秒数（默认 300 = 5 分钟）。
     ///
     /// `<= 0` 表示禁用后台清理 task（与 T028 `spawn_cleanup_task` 的 `interval_secs <= 0` 行为一致）。
-    /// 由 `GarrisonManager::init` 读取后传给 `spawn_cleanup_task`。
+    /// 由 `GarrisonManager::builder()` 读取后传给 `spawn_cleanup_task`。
     pub token_map_cleanup_interval_secs: i64,
 
     /// L1 缓存（oxcache 内存层）TTL 秒数（默认 30）。
@@ -453,7 +453,7 @@ pub struct GarrisonConfig {
     /// - `loose`：新设备登录仅告警不阻断（由 `LooseBinding` 处理）
     /// - `disabled`：不启用设备绑定（默认，向后兼容）
     ///
-    /// 配置字段始终存在（非 feature-gated），策略注入由 `GarrisonManager::init` 根据
+    /// 配置字段始终存在（非 feature-gated），策略注入由 `GarrisonManager::builder()` 根据
     /// 此字段值决定（属于 T020 集成范畴）。
     pub device_binding_mode: String,
 

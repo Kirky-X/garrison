@@ -4,6 +4,7 @@
 use super::*;
 use crate::backend::types::LoginParams;
 use crate::error::GarrisonError;
+#[cfg(feature = "oauth2-server")]
 use crate::GarrisonDao;
 use crate::GarrisonResult;
 use async_trait::async_trait;

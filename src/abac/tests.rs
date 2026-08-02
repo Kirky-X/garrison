@@ -211,7 +211,7 @@ const EVAL_SCHEMA_JSON: &str = r#"{
     }"#;
 
 /// 初始化 GarrisonManager（空权限/角色，用于 get_login_id 上下文）。
-fn init_manager_for_abac() {
+async fn init_manager_for_abac() {
     use crate::dao::GarrisonDao;
     use crate::manager::GarrisonManager;
     use crate::stp::GarrisonInterface;
@@ -221,7 +221,13 @@ fn init_manager_for_abac() {
     config.active_timeout = -1;
     config.throw_on_not_login = false;
     let interface: Arc<dyn GarrisonInterface> = Arc::new(crate::stp::mock::MockInterface);
-    GarrisonManager::init(dao, Arc::new(config), interface).unwrap();
+    GarrisonManager::builder()
+        .dao(dao)
+        .config(Arc::new(config))
+        .interface(interface)
+        .build()
+        .await
+        .unwrap();
 }
 
 /// 引擎已初始化且用户已登录时，abac_expr "1 == 1" 求值 Allow → 返回 Ok。
@@ -233,7 +239,7 @@ async fn check_abac_with_policy_engine_initialized_allow() {
     use crate::stp::{with_current_token, GarrisonUtil};
     reset_abac_for_test();
     crate::manager::GarrisonManager::reset_for_test();
-    init_manager_for_abac();
+    init_manager_for_abac().await;
 
     // 初始化 ABAC 引擎
     let engine = AbacEngine::new(EVAL_SCHEMA_JSON, Arc::new(EmptyEntityLoader))
@@ -270,7 +276,7 @@ async fn check_abac_with_policy_engine_initialized_deny() {
     use crate::stp::{with_current_token, GarrisonUtil};
     reset_abac_for_test();
     crate::manager::GarrisonManager::reset_for_test();
-    init_manager_for_abac();
+    init_manager_for_abac().await;
 
     let engine = AbacEngine::new(EVAL_SCHEMA_JSON, Arc::new(EmptyEntityLoader))
         .await
@@ -310,7 +316,7 @@ async fn check_abac_with_policy_engine_initialized_deny() {
 async fn check_abac_with_policy_not_logged_in_returns_not_login() {
     reset_abac_for_test();
     crate::manager::GarrisonManager::reset_for_test();
-    init_manager_for_abac();
+    init_manager_for_abac().await;
 
     let engine = AbacEngine::new(EVAL_SCHEMA_JSON, Arc::new(EmptyEntityLoader))
         .await
@@ -355,7 +361,7 @@ async fn check_abac_with_policy_rejects_resource_injection() {
     use crate::stp::{with_current_token, GarrisonUtil};
     reset_abac_for_test();
     crate::manager::GarrisonManager::reset_for_test();
-    init_manager_for_abac();
+    init_manager_for_abac().await;
 
     let engine = AbacEngine::new(EVAL_SCHEMA_JSON, Arc::new(EmptyEntityLoader))
         .await
@@ -404,7 +410,7 @@ async fn check_abac_with_policy_accepts_legitimate_resource() {
     use crate::stp::{with_current_token, GarrisonUtil};
     reset_abac_for_test();
     crate::manager::GarrisonManager::reset_for_test();
-    init_manager_for_abac();
+    init_manager_for_abac().await;
 
     let engine = AbacEngine::new(EVAL_SCHEMA_JSON, Arc::new(EmptyEntityLoader))
         .await
