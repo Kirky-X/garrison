@@ -63,15 +63,23 @@ impl UserCacheService {
     /// # 参数
     /// - `dao`: L2 持久化缓存后端（`Arc<dyn GarrisonDao>`）。
     /// - `interface`: L3 数据源（`Arc<dyn GarrisonPermissionStrategy>`）。
-    /// - `l1_ttl_secs`: L1 内存缓存 TTL（秒，必须 > 0），用于 `set_with_ttl_sync` 的 per-entry TTL。
-    /// - `l2_ttl_secs`: L2 DAO 缓存 TTL（秒，必须 > 0）。
+    /// - `l1_ttl_secs`: L1 内存缓存 TTL（秒，必须 > 0）。若为 0，L1 条目将立即过期，缓存形同虚设。
+    /// - `l2_ttl_secs`: L2 DAO 缓存 TTL（秒，必须 > 0）。若为 0，L2 写入将使用永久 TTL，可能导致内存泄漏。
     /// - `l1_capacity`: L1 缓存最大容量（oxcache 0.3 使用默认 capacity，此参数保留向后兼容）。
     ///
     /// # 返回
     /// 已初始化的 `UserCacheService` 实例。
     ///
     /// # 错误
+    /// - `GarrisonError::Config`：`l1_ttl_secs` 或 `l2_ttl_secs` 为 0。
     /// - `GarrisonError::Internal`：oxcache L1 初始化失败。
+    ///
+    /// # 示例
+    /// ```ignore
+    /// // TTL 为 0 时将返回错误
+    /// let result = UserCacheService::new(dao, interface, 0, 300, 10000);
+    /// assert!(result.is_err());
+    /// ```
     pub fn new(
         dao: Arc<dyn GarrisonDao>,
         interface: Arc<dyn GarrisonPermissionStrategy>,
@@ -79,6 +87,17 @@ impl UserCacheService {
         l2_ttl_secs: u64,
         l1_capacity: u64,
     ) -> GarrisonResult<Self> {
+        // Issue 32: 验证 TTL 参数，防止 0 值导致缓存失效或内存泄漏
+        if l1_ttl_secs == 0 {
+            return Err(GarrisonError::Config(
+                "UserCacheService::new: l1_ttl_secs 必须 > 0".to_string(),
+            ));
+        }
+        if l2_ttl_secs == 0 {
+            return Err(GarrisonError::Config(
+                "UserCacheService::new: l2_ttl_secs 必须 > 0".to_string(),
+            ));
+        }
         let _ = l1_capacity; // oxcache 0.3 Cache::new() 使用默认 capacity（10000）
         let l1 = Cache::new();
         Ok(Self {
@@ -109,6 +128,14 @@ impl UserCacheService {
     ///
     /// 清理逻辑：先 drop guard 再 drop lock（Arc clone），使 strong_count 减到 1
     ///（只剩 DashMap 中的 entry），再 `remove_if` 移除；防止高基数 key 长期运行导致 OOM。
+    ///
+    /// # 已知限制（Issue 33）
+    ///
+    /// `drop(lock)` 与 `remove_if` 之间存在微小窗口：若另一并发任务在此期间调用
+    /// `singleflight_lock(key)` 获取 Arc clone，`strong_count` 将变为 2，`remove_if`
+    /// 条件不满足，entry 将保留在 DashMap 中。这是**可接受的保守行为**——entry 会在
+    /// 下次无等待者时被清理，不会导致内存泄漏（高基数场景下最终仍会收敛）。
+    /// 若需严格清理，可改用 `DashMap::entry` API 持锁至清理完成，但会增加锁持有时间。
     async fn with_singleflight_lock<F, R>(&self, key: &str, f: F) -> R
     where
         F: std::future::Future<Output = R>,
@@ -366,6 +393,15 @@ impl UserCacheService {
     ///
     /// # 错误
     /// - L2 DAO 删除失败：透传 `GarrisonError`。
+    ///
+    /// # 部分失败语义（Issue 34）
+    ///
+    /// 当前实现按顺序执行 L2 删除（3 个 key）→ L1 删除（3 个 key）。若中途某个 L2 删除失败，
+    /// 已执行的 L2 删除不会回滚，L1 删除也不会执行。这意味着：
+    /// - 部分 L2 缓存可能已被清除，但 L1 仍持有旧数据
+    /// - 调用方收到错误后应重试或记录日志，不应假设“全部成功”或“全部失败”
+    ///
+    /// 若需原子失效，请使用支持批量删除的 DAO 后端，或在调用方实现重试逻辑。
     pub async fn invalidate(&self, login_id: &str) -> GarrisonResult<()> {
         let perm_key = DaoKeyPrefix::PermissionCache.build_key(login_id);
         let role_key = DaoKeyPrefix::RoleCache.build_key(login_id);

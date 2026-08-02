@@ -112,6 +112,12 @@ pub trait AuthBackend: Send + Sync {
     async fn get_session(&self, token: &str) -> GarrisonResult<SessionData>;
 
     /// 踢出指定登录主体的所有会话。
+    ///
+    /// # 并发安全
+    ///
+    /// 实现必须保证对同一 `login_id` 的并发 `kickout` 调用是幂等的。
+    /// 若与 `switch_to` / `renew_to_equivalent` 并发调用同一 `login_id`，
+    /// 调用方应自行序列化，否则最终状态不确定。
     async fn kickout(&self, login_id: &str) -> GarrisonResult<()>;
 
     /// 切换登录主体（保持当前 token，切换 login_id）。
@@ -119,10 +125,21 @@ pub trait AuthBackend: Send + Sync {
     /// 将当前 token 关联的会话切换到 `target_login_id`，
     /// 保留原 token 字符串与 session attrs（device/ip/ua 等），
     /// 在 attrs["switched_from"] 记录原始 login_id。
+    ///
+    /// # 并发安全
+    ///
+    /// 对同一 `token` 的并发 `switch_to` 调用，最终 `login_id` 值不确定。
+    /// 调用方应确保对同一 token 的会话管理操作串行化。
     async fn switch_to(&self, token: &str, target_login_id: &str) -> GarrisonResult<()>;
 
     /// 续期 token 到等价的新 token。
     ///
     /// 返回续期后的新 token 字符串。
+    ///
+    /// # 安全语义
+    ///
+    /// 实现**必须**在返回新 token 后使原 token 失效（原子吊销）。
+    /// 调用方收到新 token 后应立即停止使用原 token。
+    /// 若实现无法保证原子吊销（如分布式场景），应在文档中明确说明。
     async fn renew_to_equivalent(&self, token: &str) -> GarrisonResult<String>;
 }

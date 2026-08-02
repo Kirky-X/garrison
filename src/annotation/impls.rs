@@ -18,7 +18,30 @@ impl std::fmt::Display for AnnotationMode {
 impl Annotation {
     /// 获取注解的字符串名称。
     ///
-    /// 返回对应 注解的字符串标识（用于 router 中间件配置与日志记录）。
+    /// 返回对应注解的字符串标识（用于 router 中间件配置与日志记录）。
+    ///
+    /// # 非对称性说明
+    ///
+    /// 对于携带数据的变体（`CheckPermission`、`CheckRole`、`CheckApiKey`、`Mode`），
+    /// `name()` 返回不含数据的裸名称（如 `"CheckPermission"`）。这些裸名称**无法**通过
+    /// `FromStr` 解析回原变体——`FromStr` 仅支持无数据变体的双向转换。
+    ///
+    /// 若需序列化含数据变体，请使用 `serde` 或直接访问字段。
+    ///
+    /// # 示例
+    ///
+    /// ```
+    /// use garrison::Annotation;
+    ///
+    /// // 无数据变体：name() 与 FromStr 双向一致
+    /// let a = Annotation::CheckLogin;
+    /// assert_eq!(a.name().parse::<Annotation>().unwrap(), a);
+    ///
+    /// // 含数据变体：name() 返回裸名称，FromStr 无法解析
+    /// let p = Annotation::CheckPermission(vec!["read".into()]);
+    /// assert_eq!(p.name(), "CheckPermission");
+    /// assert!("CheckPermission".parse::<Annotation>().is_err());
+    /// ```
     pub fn name(&self) -> &'static str {
         match self {
             Annotation::CheckLogin => "CheckLogin",
@@ -50,6 +73,12 @@ impl std::fmt::Display for Annotation {
 impl std::str::FromStr for Annotation {
     type Err = GarrisonError;
 
+    /// 从字符串解析注解。
+    ///
+    /// 仅支持**无数据变体**的双向转换。含数据变体（`CheckPermission`、`CheckRole`、
+    /// `CheckApiKey`、`Mode`）无法通过字符串解析，需显式构造。
+    ///
+    /// 详见 [`Annotation::name()`] 的"非对称性说明"段落。
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "CheckLogin" => Ok(Annotation::CheckLogin),

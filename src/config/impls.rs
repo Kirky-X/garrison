@@ -292,11 +292,13 @@ impl GarrisonConfig {
                 return Err(GarrisonError::Config(loc!("config-path-empty", "")));
             }
             let path_ref = Path::new(path);
+            // Issue 35: 当 file_name() 返回 None 时（如路径为 "/" 或 "/etc/"），
+            // 回退到泛型名称 "<config>" 而非完整路径，避免泄露服务器文件系统结构。
             let display_name = || {
                 path_ref
                     .file_name()
                     .and_then(|n| n.to_str())
-                    .unwrap_or(path)
+                    .unwrap_or("<config>")
             };
             if path_ref
                 .components()

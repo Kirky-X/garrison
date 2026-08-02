@@ -117,12 +117,13 @@ impl GarrisonRequest for WarpRequest {
             return Ok(None);
         }
         // 解析 Cookie: name1=value1; name2=value2
+        // Issue 41: 使用 get(1..) 防止空值 panic（如 "name="）
         for cookie in cookie_header.split(';') {
             let cookie = cookie.trim();
             if let Some(eq_pos) = cookie.find('=') {
                 let (k, v) = cookie.split_at(eq_pos);
                 if k == name {
-                    return Ok(Some(v[1..].to_string())); // 跳过 '='
+                    return Ok(Some(v.get(1..).unwrap_or("").to_string()));
                 }
             }
         }
