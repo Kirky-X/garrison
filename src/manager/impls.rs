@@ -13,6 +13,7 @@ use crate::account::disable::DisableRepository;
 use crate::error::{GarrisonError, GarrisonResult};
 use crate::stp::GarrisonLogicDefault;
 use crate::strategy::Strategy;
+use arc_swap::ArcSwapOption;
 use parking_lot::RwLock;
 use std::sync::Arc;
 
@@ -22,8 +23,8 @@ impl GarrisonManager {
     /// 创建空的管理器实例（仅用于 GARRISON_MANAGER 单例初始化）。
     pub(super) fn new() -> Self {
         Self {
-            logic: RwLock::new(None),
-            strategy: RwLock::new(None),
+            logic: ArcSwapOption::empty(),
+            strategy: ArcSwapOption::empty(),
             cleanup_task_handle: RwLock::new(None),
             #[cfg(feature = "anomalous-detector-dual")]
             anomalous_analyzer_handle: RwLock::new(None),
@@ -42,8 +43,7 @@ impl GarrisonManager {
     pub fn logic() -> GarrisonResult<Arc<GarrisonLogicDefault>> {
         GARRISON_MANAGER
             .logic
-            .read()
-            .clone()
+            .load_full()
             .ok_or_else(|| GarrisonError::Session("manager-not-init".to_string()))
     }
 
@@ -60,8 +60,7 @@ impl GarrisonManager {
     pub fn strategy() -> GarrisonResult<Arc<RwLock<Strategy>>> {
         GARRISON_MANAGER
             .strategy
-            .read()
-            .clone()
+            .load_full()
             .ok_or_else(|| GarrisonError::Session("manager-not-init".to_string()))
     }
 
@@ -100,7 +99,7 @@ impl GarrisonManager {
     /// # 返回
     /// 成功返回 `Ok(())`。
     pub fn with_strategy(strategy: Arc<RwLock<Strategy>>) -> GarrisonResult<()> {
-        *GARRISON_MANAGER.strategy.write() = Some(strategy);
+        GARRISON_MANAGER.strategy.store(Some(strategy));
         Ok(())
     }
 
@@ -110,7 +109,7 @@ impl GarrisonManager {
     /// - `true`: 已通过 `builder().build()` 初始化且全局单例持有 `GarrisonLogicDefault`。
     /// - `false`: 未初始化或已 `reset_for_test`。
     pub fn is_initialized() -> bool {
-        GARRISON_MANAGER.logic.read().is_some()
+        GARRISON_MANAGER.logic.load().is_some()
     }
 
     /// 重置管理器（仅供测试用，业务代码不应调用）。
@@ -134,8 +133,8 @@ impl GarrisonManager {
                 .write()
                 .take();
         }
-        *GARRISON_MANAGER.logic.write() = None;
-        *GARRISON_MANAGER.strategy.write() = None;
+        GARRISON_MANAGER.logic.store(None);
+        GARRISON_MANAGER.strategy.store(None);
     }
 }
 

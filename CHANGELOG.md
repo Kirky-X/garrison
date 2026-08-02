@@ -21,6 +21,7 @@
   - **DEEP-01**：`TokenLogic::check_access_token` / `check_client_token` / `check_temp_token` 三个相同默认实现 DRY 重构为共享 `ensure_valid_token_session` 辅助函数（统一 `NotLogin` 语义，不泄露 token 类型）。
   - **DEEP-02**：移除 `src/secure/sign/signer.rs::constant_time_eq_manual` 死代码（`secure-sign` 强制启用 `dep:subtle`，`not(subtle)` 分支永远不可达）。
   - **API-02**：`RoleHierarchyService` re-export 与实现扩展为 `any(db-sqlite, db-postgres, db-mysql)`（SQL 占位符/INSERT 语法按后端自适应）。
+  - **PERF-01**：`GarrisonManager` 全局单例的 `logic` / `strategy` 字段由 `parking_lot::RwLock<Option<Arc<..>>>` 迁移为 `arc_swap::ArcSwapOption`。热路径 `GarrisonManager::logic()`（`backend/embedded.rs` 每请求调用）从读锁 + clone 变为无锁原子加载，消除多核高 QPS 下的缓存行争用；公开 API 不变，新增 `singleton_arc_identity_preserved` 语义守卫测试。
 
 - **web-actix 中间件内置租户提取（tenant-isolation 生产场景修复）**：
   - `GarrisonRouter` 新增 `with_tenant_resolver(resolver)` / `with_header_tenant()` 方法，`GarrisonMiddleware` 在每个请求前调用 `TenantResolver::resolve` 解析租户并进入 `TENANT.scope` 再执行鉴权。此前 `tenant-isolation` 下 web_actix 中间件鉴权（`check_permission` / `check_role`）因无租户上下文而 fail-closed 报 `ctx-tenant-context-missing`（HTTP 500）。

@@ -8,7 +8,7 @@
 //!
 //! ## 设计
 //!
-//! - `GarrisonManager` 持有 `Arc<GarrisonLogicDefault>` 全局单例（基于 `parking_lot::RwLock` 支持重复 init）
+//! - `GarrisonManager` 持有 `Arc<GarrisonLogicDefault>` 全局单例（基于 `arc_swap::ArcSwapOption`，读路径无锁、支持重复 init）
 //! - `GarrisonLogicFactory` trait 通过 `inventory::submit!` 编译期注册
 //! - 业务方调用 `GarrisonManager::builder().dao(dao).config(config).interface(interface).build().await` 注入依赖
 //! - `GarrisonUtil::login(id)` 等静态方法委托到 `GARRISON_MANAGER` 单例
@@ -39,6 +39,7 @@
 
 use crate::stp::GarrisonLogicDefault;
 use crate::strategy::Strategy;
+use arc_swap::ArcSwapOption;
 use once_cell::sync::Lazy;
 use parking_lot::RwLock;
 use std::sync::Arc;
@@ -73,13 +74,13 @@ pub use builder::GarrisonManagerBuilder;
 /// 业务方启动时调用 `GarrisonManager::builder().dao(dao).config(config).interface(interface).build().await`
 /// 注入依赖。未初始化时调用 `GarrisonUtil::login(id)` 等返回 `GarrisonError::Session`。
 pub struct GarrisonManager {
-    /// 全局 `GarrisonLogicDefault` 引用（RwLock 支持测试时重复 init 与 reset）。
-    logic: RwLock<Option<Arc<GarrisonLogicDefault>>>,
+    /// 全局 `GarrisonLogicDefault` 引用（ArcSwapOption 支持测试时重复 init 与 reset）。
+    logic: ArcSwapOption<GarrisonLogicDefault>,
     /// 全局 Strategy 注册表引用。
     ///
-    /// 外层 `RwLock` 管理 Option（初始化/重置），内层 `Arc<RwLock<Strategy>>`
+    /// 外层 `ArcSwapOption` 管理 Option（初始化/重置），内层 `Arc<RwLock<Strategy>>`
     /// 允许运行时通过 `strategy.write().register_*()` 替换策略。
-    strategy: RwLock<Option<Arc<RwLock<Strategy>>>>,
+    strategy: ArcSwapOption<RwLock<Strategy>>,
     /// 后台 cleanup task 的 JoinHandle（T030）。
     ///
     /// `builder().build()` 时若 `config.token_map_cleanup_interval_secs > 0` 则启动 task 并保存 handle。

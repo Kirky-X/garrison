@@ -201,8 +201,8 @@ impl GarrisonManagerBuilder {
 
         // 覆盖式更新全局单例（允许重复 build，便于测试）
         let strategy = Arc::new(RwLock::new(Strategy::new(logic.clone())));
-        *GARRISON_MANAGER.logic.write() = Some(logic);
-        *GARRISON_MANAGER.strategy.write() = Some(strategy);
+        GARRISON_MANAGER.logic.store(Some(logic));
+        GARRISON_MANAGER.strategy.store(Some(strategy));
 
         // 先 abort 旧 cleanup task 再保存新 handle，避免短暂重叠窗口
         if let Some(old) = GARRISON_MANAGER.cleanup_task_handle.write().take() {

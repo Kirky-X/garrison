@@ -563,6 +563,42 @@ async fn strategy_available_after_init() {
     GarrisonManager::reset_for_test();
 }
 
+/// 语义守卫：`logic()` / `strategy()` 多次调用返回同一 Arc 实例，
+/// 且 `with_strategy()` 替换后 `strategy()` 返回新实例（PERF-01 重构锚点）。
+#[tokio::test]
+#[serial]
+async fn singleton_arc_identity_preserved() {
+    GarrisonManager::reset_for_test();
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+    let config = Arc::new(make_config());
+    let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface::new());
+    GarrisonManager::builder()
+        .dao(dao)
+        .config(config)
+        .interface(interface)
+        .build()
+        .await
+        .unwrap();
+
+    // 多次调用返回同一实例
+    let a = GarrisonManager::logic().unwrap();
+    let b = GarrisonManager::logic().unwrap();
+    assert!(Arc::ptr_eq(&a, &b), "logic() 应返回同一 Arc 实例");
+
+    let sa = GarrisonManager::strategy().unwrap();
+    let sb = GarrisonManager::strategy().unwrap();
+    assert!(Arc::ptr_eq(&sa, &sb), "strategy() 应返回同一 Arc 实例");
+
+    // with_strategy 替换后返回新实例
+    let logic = GarrisonManager::logic().unwrap();
+    let replacement = Arc::new(RwLock::new(Strategy::new(logic)));
+    GarrisonManager::with_strategy(replacement.clone()).unwrap();
+    let sc = GarrisonManager::strategy().unwrap();
+    assert!(!Arc::ptr_eq(&sa, &sc), "替换后应返回新 Arc 实例");
+
+    GarrisonManager::reset_for_test();
+}
+
 /// 验证 `with_strategy()` 整体替换 Strategy 注册表。
 #[tokio::test]
 #[serial]

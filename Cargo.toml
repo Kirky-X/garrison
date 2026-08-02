@@ -33,6 +33,7 @@ thiserror = "2.0"
 tracing = "0.1"
 async-trait = "0.1"
 parking_lot = "0.12"
+arc-swap = { version = "1.9", default-features = false }
 dashmap = { version = "6", default-features = false }
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "v7", "serde"] }
