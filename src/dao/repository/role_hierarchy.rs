@@ -10,7 +10,7 @@
 //! ## 核心抽象
 //!
 //! - [`RoleHierarchyRecord`](crate::dao::repository::role_hierarchy::RoleHierarchyRecord)：`role_hierarchy` 表行结构（child_role → parent_role + tenant_id）
-//! - [`RoleHierarchyService`](crate::dao::repository::role_hierarchy::RoleHierarchyService)：TC 预计算 + 缓存 + 增量失效（T045-T050 实现，db-sqlite gated）
+//! - [`RoleHierarchyService`](crate::dao::repository::role_hierarchy::RoleHierarchyService)：TC 预计算 + 缓存 + 增量失效（T045-T050 实现，any(db-sqlite, db-postgres, db-mysql) gated）
 //!
 //! ## 表结构
 //!
@@ -46,17 +46,18 @@ pub struct RoleHierarchyRecord {
 }
 
 // ============================================================================
-// RoleHierarchyService（T045-db-sqlite gated，需 DbPool 查 SQL）
+// RoleHierarchyService（any(db-sqlite, db-postgres, db-mysql) gated，需 DbPool 查 SQL）
 // ============================================================================
 
-#[cfg(feature = "db-sqlite")]
+#[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
 mod service {
     use super::RoleHierarchyRecord;
     use crate::constants::DaoKeyPrefix;
+    use crate::dao::repository::make_statement;
     use crate::dao::GarrisonDao;
     use crate::error::{GarrisonError, GarrisonResult};
     use dbnexus::DbPool;
-    use sea_orm::{ConnectionTrait, DbBackend, Statement, Value};
+    use sea_orm::{ConnectionTrait, DbBackend, Value};
     use std::collections::{HashMap, HashSet};
     use std::sync::Arc;
 
@@ -67,9 +68,12 @@ mod service {
     /// - T047-`get_ancestors` 先查 oxcache 未命中则 `compute_closure` 并缓存
     /// - T049-`add_edge` + `invalidate_cache` 增量失效
     ///
+    /// 自 v0.8.2 起（API-02 修复）：支持全部 db 后端
+    /// （`db-sqlite` / `db-postgres` / `db-mysql`），SQL 方言按连接后端自适应。
+    ///
     /// # 字段
     ///
-    /// - `pool`: SQLite 连接池（查 `role_hierarchy` 表）
+    /// - `pool`: 数据库连接池（查 `role_hierarchy` 表）
     /// - `dao`: 缓存层抽象（T047+ 用于 oxcache 缓存闭包结果）
     ///
     /// # Rule 7 冲突暴露
@@ -78,7 +82,7 @@ mod service {
     /// `compute_closure` 需查 SQL，GarrisonDao trait 是缓存层抽象不支持 SQL 查询。
     /// 决策：struct 同时持有 `pool: DbPool`（查 SQL）+ `dao: Arc<dyn GarrisonDao>`（查缓存）。
     pub struct RoleHierarchyService {
-        /// SQLite 连接池（查 `role_hierarchy` 表）。
+        /// 数据库连接池（查 `role_hierarchy` 表）。
         pub pool: DbPool,
         /// 缓存层抽象（T047+ 用于 oxcache 缓存闭包结果）。
         pub dao: Arc<dyn GarrisonDao>,
@@ -88,7 +92,7 @@ mod service {
         /// 创建 RoleHierarchyService 实例。
         ///
         /// # 参数
-        /// - `pool`: SQLite 连接池（用于查 `role_hierarchy` 表）
+        /// - `pool`: 数据库连接池（用于查 `role_hierarchy` 表）
         /// - `dao`: 缓存层抽象（T047+ 用于 oxcache 缓存闭包结果）
         pub fn new(pool: DbPool, dao: Arc<dyn GarrisonDao>) -> Self {
             Self { pool, dao }
@@ -108,8 +112,8 @@ mod service {
             let conn = session
                 .connection()
                 .map_err(|e| GarrisonError::Dao(format!("dao-role-hierarchy-connection::{}", e)))?;
-            let stmt = Statement::from_sql_and_values(
-                DbBackend::Sqlite,
+            let stmt = make_statement(
+                conn,
                 "SELECT child_role, parent_role FROM role_hierarchy WHERE tenant_id = ?",
                 vec![Value::BigInt(Some(tenant_id))],
             );
@@ -253,9 +257,10 @@ mod service {
             Ok(closure.get(role).cloned().unwrap_or_default())
         }
 
-        /// T050 Green: 添加角色继承边（`INSERT OR IGNORE`）并失效该租户的闭包缓存。
+        /// T050 Green: 添加角色继承边（后端自适应幂等 INSERT）并失效该租户的闭包缓存。
         ///
-        /// 幂等：若 `(tenant_id, child, parent)` 已存在，`INSERT OR IGNORE` 不报错。
+        /// 幂等：SQLite 用 `INSERT OR IGNORE`，PostgreSQL 用 `ON CONFLICT DO NOTHING`，
+        /// MySQL 用 `INSERT IGNORE`，重复插入相同边不报错。
         /// 缓存失效：插入成功后立即删除 `tenant:{tenant_id}:role_closure`，
         /// 下次 `get_ancestors` 会重新计算闭包并写入缓存。
         ///
@@ -278,9 +283,29 @@ mod service {
             let conn = session.connection().map_err(|e| {
                 GarrisonError::Dao(format!("dao-role-hierarchy-add-edge-connection::{}", e))
             })?;
-            let stmt = Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "INSERT OR IGNORE INTO role_hierarchy (tenant_id, child_role, parent_role) VALUES (?, ?, ?)",
+            // 幂等 INSERT 方言按连接后端自适应：
+            // - SQLite: INSERT OR IGNORE
+            // - PostgreSQL: ON CONFLICT (PK) DO NOTHING
+            // - MySQL: INSERT IGNORE（MySQL 不支持 ON CONFLICT 语法）
+            let backend = conn.get_database_backend();
+            let insert_sql = match backend {
+                DbBackend::Postgres => {
+                    "INSERT INTO role_hierarchy (tenant_id, child_role, parent_role) \
+                     VALUES (?, ?, ?) \
+                     ON CONFLICT (tenant_id, child_role, parent_role) DO NOTHING"
+                },
+                DbBackend::MySql => {
+                    "INSERT IGNORE INTO role_hierarchy (tenant_id, child_role, parent_role) \
+                     VALUES (?, ?, ?)"
+                },
+                _ => {
+                    "INSERT OR IGNORE INTO role_hierarchy (tenant_id, child_role, parent_role) \
+                     VALUES (?, ?, ?)"
+                },
+            };
+            let stmt = make_statement(
+                conn,
+                insert_sql,
                 vec![
                     Value::BigInt(Some(tenant_id)),
                     Value::String(Some(child.to_string())),
@@ -378,7 +403,7 @@ mod service {
     }
 }
 
-#[cfg(feature = "db-sqlite")]
+#[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
 pub use service::RoleHierarchyService;
 
 // ============================================================================
@@ -430,6 +455,23 @@ mod tests {
         assert_eq!(r1, r3);
         // Debug 可格式化
         let _debug = format!("{:?}", r1);
+    }
+
+    // ========================================================================
+    // API-02 编译期守卫：RoleHierarchyService 对全部 db 后端 feature 可见
+    // ========================================================================
+
+    /// API-02 编译期守卫：`db-postgres` / `db-mysql`（生产后端）单独启用时，
+    /// `RoleHierarchyService` 必须可解析。
+    ///
+    /// 审查发现：服务仅门控 `db-sqlite`，`db-postgres`/`db-mysql` 用户无法
+    /// `use garrison::RoleHierarchyService`。此测试在任一非 sqlite db feature
+    /// 启用时编译，强制 `role_hierarchy.rs` 的 service 模块对全部 db 后端可见
+    /// （Red：当前 gate 为 `db-sqlite`，本测试无法编译）。
+    #[cfg(all(test, any(feature = "db-postgres", feature = "db-mysql")))]
+    #[test]
+    fn role_hierarchy_service_compiles_under_postgres_and_mysql() {
+        let _: Option<RoleHierarchyService> = None;
     }
 }
 
