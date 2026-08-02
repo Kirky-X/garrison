@@ -248,7 +248,12 @@ async fn main() -> GarrisonResult<()> {
     let interface: Arc<dyn GarrisonInterface> = Arc::new(MyInterface);
 
     // 3. Initialize global manager (injects dao / config / interface)
-    GarrisonManager::init(dao, config, interface)?;
+    GarrisonManager::builder()
+    .dao(dao)
+    .config(config)
+    .interface(interface)
+    .build()
+    .await?;
 
     // 4. Execute login in task_local context
     let token = garrison::stp::with_current_token(

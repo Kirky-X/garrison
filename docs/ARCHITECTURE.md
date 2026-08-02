@@ -26,7 +26,7 @@ Garrison 采用 **双抽象层 + 全局单例** 架构，核心设计目标：
 
 ### 1.2 全局单例
 
-- `GarrisonManager` 通过 `parking_lot::RwLock` 持有 `Arc<GarrisonLogicDefault>`（v0.5.2 起 `GarrisonLogic` trait 拆分为 `GarrisonCore` base trait + 5 个子 trait：`SessionLogic` / `PermissionLogic` / `TokenLogic` / `MfaLogic` / `PasswordLogic`），启动时调用 `GarrisonManager::init()` 一次性注入 dao / config / interface。
+- `GarrisonManager` 通过 `parking_lot::RwLock` 持有 `Arc<GarrisonLogicDefault>`（v0.5.2 起 `GarrisonLogic` trait 拆分为 `GarrisonCore` base trait + 5 个子 trait：`SessionLogic` / `PermissionLogic` / `TokenLogic` / `MfaLogic` / `PasswordLogic`），启动时调用 `GarrisonManager::builder().build().await` 一次性注入 dao / config / interface。
 - `GarrisonLogicFactoryEntry` 通过 `inventory::submit!` 在编译期注册，运行时由 `inventory::iter` 选取默认实现。
 - `GarrisonUtil` 暴露静态方法（`login` / `check_login` / `logout` 等），内部全部委托 `GARRISON_MANAGER` 单例，业务侧零状态调用。
 
@@ -316,7 +316,7 @@ sequenceDiagram
 **方案**：
 
 - 使用 `inventory::submit!` 宏在编译期把 `GarrisonLogicFactoryEntry` 注册到全局 link list。
-- `GarrisonManager::init()` 启动时遍历 `inventory::iter::<GarrisonLogicFactoryEntry>()`，按 `name` 选定默认实现。
+- `GarrisonManager::builder().build().await` 启动时遍历 `inventory::iter::<GarrisonLogicFactoryEntry>()`，按 `name` 选定默认实现。
 - 优点：**无反射、无运行时开销、跨 crate 注册**，与 feature flag 配合实现按需启用。
 
 ### 2. 为什么用 task_local 上下文？
@@ -337,7 +337,7 @@ sequenceDiagram
 **方案**：
 
 - 所有核心抽象（`GarrisonCore` + 5 个子 trait / `GarrisonDao` / `GarrisonContext` / `GarrisonPermissionStrategy` / `GarrisonListener`）均以 trait 定义。
-- 框架提供默认实现，业务方实现 trait 后通过 `GarrisonManager::init()` 注入即可覆盖。
+- 框架提供默认实现，业务方实现 trait 后通过 `GarrisonManager::builder().build().await` 注入即可覆盖。
 - 优点：扩展点清晰，符合 Rust 的零成本抽象哲学。
 
 ### 4. 为什么用双抽象层（DAO + 缓存）？
@@ -378,7 +378,7 @@ impl GarrisonDao for MyDao {
 }
 ```
 
-通过 `GarrisonManager::init()` 注入即可，上层业务代码零改动。
+通过 `GarrisonManager::builder().build().await` 注入即可，上层业务代码零改动。
 
 ### 2. 自定义 GarrisonLogicFactoryEntry
 

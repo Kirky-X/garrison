@@ -261,7 +261,12 @@ mod tests {
     #[serial]
     async fn test_manager_init() {
         // 修改全局单例，必须串行
-        GarrisonManager::init(dao, config, interface).unwrap();
+        GarrisonManager::builder()
+    .dao(dao)
+    .config(config)
+    .interface(interface)
+    .build()
+    .await.unwrap();
         assert!(GarrisonManager::is_initialized());
     }
 
@@ -275,7 +280,7 @@ mod tests {
 }
 ```
 
-> **经验法则**：只要测试中调用 `GarrisonManager::init()`、`std::env::set_var()`、或修改 `once_cell` 全局变量，就必须加 `#[serial]`。
+> **经验法则**：只要测试中调用 `GarrisonManager::builder().build().await`、`std::env::set_var()`、或修改 `once_cell` 全局变量，就必须加 `#[serial]`。
 
 ### 4.2 测试命名规范
 

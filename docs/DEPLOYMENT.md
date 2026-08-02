@@ -33,7 +33,7 @@ Garrison 主要作为库（crate）集成到业务方的 axum / actix-web 服务
 ### 1.1 标准部署流程
 
 1. **添加依赖**：在业务方 `Cargo.toml` 中添加 Garrison 依赖并选择 feature。
-2. **编写初始化代码**：在服务启动时调用 `GarrisonManager::init()`。
+2. **编写初始化代码**：在服务启动时调用 `GarrisonManager::builder().build().await`。
 3. **执行数据库迁移**：通过 `GarrisonMigration::new(pool).run_all()` 自动建表。
 4. **注册路由中间件**：通过 `GarrisonRouter::new(config).build()` 构建 axum Router（自动注入 `GarrisonLayer` middleware）。
 5. **构建生产产物**：`cargo build --release --features production`。
@@ -60,8 +60,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = Arc::new(GarrisonConfig::default_config());
     let interface: Arc<dyn GarrisonInterface> = Arc::new(MyInterface);
 
-    // 4. 初始化 GarrisonManager（同步函数，必须在所有 API 调用前）
-    GarrisonManager::init(dao, config.clone(), interface)?;
+    // 4. 初始化 GarrisonManager（async，必须在所有 GarrisonUtil API 调用前完成）
+    GarrisonManager::builder()
+    .dao(dao)
+    .config(config.clone())
+    .interface(interface)
+    .build()
+    .await?;
 
     // 5. 启动 axum 服务（GarrisonRouter::build 自动应用 GarrisonLayer middleware）
     let app = GarrisonRouter::new(config)

@@ -122,7 +122,7 @@ PATCH 版本，聚焦于 0.2.0 的 bug 修复与协议层稳定性优化，不�
 
 #### 修复
 
-- ✅ auto-wire gap 修复：`GarrisonManager::init` 现自动注入 PluginManager / ListenerManager / AuthLogic / PermissionChecker 到 `GarrisonLogicDefault`
+- ✅ auto-wire gap 修复：`GarrisonManager::builder().build().await` 现自动注入 PluginManager / ListenerManager / AuthLogic / PermissionChecker 到 `GarrisonLogicDefault`
 - ✅ `GarrisonLogicDefault` 新增 4 个 builder 方法（`with_plugin_manager` / `with_listener_manager` / `with_auth_logic` / `with_permission_checker`）
 - ✅ `GarrisonLogicFactoryFn` 签名扩展，新增 `GarrisonLogicFactoryContext` 支持 factory 注入 manager
 

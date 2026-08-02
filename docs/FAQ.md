@@ -59,7 +59,12 @@ config.token_style = "uuid".to_string();        // 32 位 UUID
 // config.token_style = "random_64".to_string(); // 64 位随机串
 // config.token_style = "jwt".to_string();       // JWT（需启用 protocol-jwt feature）
 // 初始化时需注入 dao 与 interface（参见下文「如何自定义权限数据源」）
-GarrisonManager::init(dao, Arc::new(config), interface)?;
+GarrisonManager::builder()
+    .dao(dao)
+    .config(Arc::new(config))
+    .interface(interface)
+    .build()
+    .await?;
 ```
 
 需要注意：
@@ -107,7 +112,7 @@ async fn handler() -> &'static str {
 
 ### Q: 如何自定义权限数据源（如从 RPC 服务、文件、自研权限中心加载）？
 
-A: 实现 `GarrisonInterface` trait 并在 `GarrisonManager::init` 时注入：
+A: 实现 `GarrisonInterface` trait 并在 `GarrisonManager::builder().build().await` 时注入：
 
 ```rust
 struct MyAuthSource;
@@ -124,7 +129,12 @@ impl GarrisonInterface for MyAuthSource {
 
 let config = Arc::new(GarrisonConfig::default_config());
 let interface: Arc<dyn GarrisonInterface> = Arc::new(MyAuthSource);
-GarrisonManager::init(dao, config, interface)?;
+GarrisonManager::builder()
+    .dao(dao)
+    .config(config)
+    .interface(interface)
+    .build()
+    .await?;
 ```
 
 `GarrisonInterface` 提供 Default 实现（返回空集合），你只需覆写关心的方法。该 trait 对所有方法都返回 `GarrisonResult`，便于把外部错误统一收敛进 `GarrisonError`。
@@ -155,7 +165,12 @@ mod tests {
         GarrisonManager::reset_for_test();
         // 重新 init 你的测试 config（注入测试 dao / interface）
         let config = Arc::new(GarrisonConfig::default_config());
-        GarrisonManager::init(test_dao(), config, test_interface()).unwrap();
+        GarrisonManager::builder()
+    .dao(test_dao())
+    .config(config)
+    .interface(test_interface())
+    .build()
+    .await.unwrap();
     }
 
     #[test]
@@ -253,7 +268,12 @@ A: 启用 `listener` 与 `metrics-prometheus` feature：
 ```rust
 // Cargo.toml: features = ["listener", "metrics-prometheus"]
 let config = Arc::new(GarrisonConfig::default_config());
-GarrisonManager::init(dao, config, interface)?;
+GarrisonManager::builder()
+    .dao(dao)
+    .config(config)
+    .interface(interface)
+    .build()
+    .await?;
 ```
 
 随后：

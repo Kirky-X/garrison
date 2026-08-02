@@ -238,7 +238,12 @@ async fn main() -> GarrisonResult<()> {
     let interface: Arc<dyn GarrisonInterface> = Arc::new(MyInterface);
 
     // 3. 初始化全局管理器（覆盖式注入 dao / config / interface）
-    GarrisonManager::init(dao, config, interface)?;
+    GarrisonManager::builder()
+    .dao(dao)
+    .config(config)
+    .interface(interface)
+    .build()
+    .await?;
 
     // 4. 在 task_local 上下文中执行登录
     let token = garrison::stp::with_current_token(

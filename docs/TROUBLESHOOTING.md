@@ -137,7 +137,7 @@ cargo clippy --features full --lib --tests -- -D warnings
 
 ### Q2.1 调用 Garrison API 时 panic：`GarrisonManager not initialized`
 
-**原因**：未在服务启动时调用 `GarrisonManager::init()`。
+**原因**：未在服务启动时调用 `GarrisonManager::builder().build().await`。
 
 **解决**：在服务初始化阶段（建立数据库连接后、监听端口前）调用初始化：
 
@@ -148,7 +148,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 2. 执行迁移
     // 3. 初始化 GarrisonManager（必须在所有 API 调用前，同步 API）
     let config = Arc::new(GarrisonConfig::default_config());
-    GarrisonManager::init(dao, config, interface)?;
+    GarrisonManager::builder()
+    .dao(dao)
+    .config(config)
+    .interface(interface)
+    .build()
+    .await?;
 
     // 4. 启动 axum 服务
     let app = Router::new()
@@ -255,7 +260,12 @@ use serial_test::serial;
 async fn test_init_manager() {
     GarrisonManager::reset_for_test();
     // init 为同步 API，注入 dao / config / interface 三参数
-    GarrisonManager::init(dao, config, interface).unwrap();  // 修改全局单例
+    GarrisonManager::builder()
+    .dao(dao)
+    .config(config)
+    .interface(interface)
+    .build()
+    .await.unwrap();  // 修改全局单例
     assert!(GarrisonManager::is_initialized());
 }
 
@@ -268,7 +278,7 @@ fn test_env_var_override() {
 }
 ```
 
-> **经验法则**：只要测试中调用 `GarrisonManager::init()`、`std::env::set_var()`、或修改 `once_cell` 全局变量，就必须加 `#[serial]`。
+> **经验法则**：只要测试中调用 `GarrisonManager::builder().build().await`、`std::env::set_var()`、或修改 `once_cell` 全局变量，就必须加 `#[serial]`。
 
 ---
 
