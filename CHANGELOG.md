@@ -7,6 +7,12 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **web-actix 中间件内置租户提取（tenant-isolation 生产场景修复）**：
+  - `GarrisonRouter` 新增 `with_tenant_resolver(resolver)` / `with_header_tenant()` 方法，`GarrisonMiddleware` 在每个请求前调用 `TenantResolver::resolve` 解析租户并进入 `TENANT.scope` 再执行鉴权。此前 `tenant-isolation` 下 web_actix 中间件鉴权（`check_permission` / `check_role`）因无租户上下文而 fail-closed 报 `ctx-tenant-context-missing`（HTTP 500）。
+  - 未配置 resolver 时行为与旧版完全一致（不提取租户）；`TenantResolver`（Header / Subdomain / Claim）复用既有 trait，无新增依赖。
+
 ## [0.8.1] - 2026-07-24
 
 ### Security

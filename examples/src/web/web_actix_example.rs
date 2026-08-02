@@ -203,7 +203,13 @@ pub async fn setup() -> (Arc<GarrisonConfig>, String) {
     config.throw_on_not_login = false;
     let config = Arc::new(config);
     let interface: Arc<dyn GarrisonInterface> = Arc::new(MyInterface::new());
-    GarrisonManager::init(dao, config.clone(), interface).expect("GarrisonManager 初始化失败");
+    GarrisonManager::builder()
+        .dao(dao)
+        .config(config.clone())
+        .interface(interface)
+        .build()
+        .await
+        .expect("GarrisonManager 初始化失败");
 
     let token = GarrisonUtil::login_simple("1001")
         .await
@@ -211,16 +217,21 @@ pub async fn setup() -> (Arc<GarrisonConfig>, String) {
     (config, token)
 }
 
-/// 创建 GarrisonMiddleware（注册路由规则 + 自定义拦截器）。
+/// 创建 GarrisonMiddleware（注册路由规则 + 自定义拦截器 + 内置租户解析）。
 ///
 /// 注册的路由规则：
 /// - `/api/protected` → `CheckLogin`
 /// - `/api/admin` → `CheckRole("admin")`
 /// - `/api/data` → `CheckPermission("data:read")`
 /// - `/public` → `Ignore`（无鉴权）
+///
+/// 通过 [`GarrisonRouter::with_header_tenant`] 内置租户解析：每个请求从
+/// `X-Tenant-Id` 请求头解析租户并进入 `TENANT.scope`，使 `tenant-isolation`
+/// 下 `check_permission` 获得租户上下文（否则 fail-closed 报 `ctx-tenant-context-missing`）。
 pub fn create_middleware(config: Arc<GarrisonConfig>) -> GarrisonMiddleware {
     GarrisonRouter::new(config)
         .with_interceptor(LoggingInterceptor)
+        .with_header_tenant()
         .route_protected("/api/protected", Annotation::CheckLogin)
         .route_protected("/api/admin", Annotation::CheckRole("admin".to_string()))
         .route_protected(
@@ -259,13 +270,13 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!();
 
     println!("[启动] HttpServer 监听 127.0.0.1:3001");
-    println!("    测试命令:");
+    println!("    测试命令（中间件内置租户解析，需带 X-Tenant-Id 请求头）:");
     println!(
-        "    curl -H 'Authorization: Bearer {}' http://127.0.0.1:3001/api/protected",
+        "    curl -H 'Authorization: Bearer {}' -H 'X-Tenant-Id: 42' http://127.0.0.1:3001/api/protected",
         token
     );
     println!(
-        "    curl -H 'Authorization: Bearer {}' http://127.0.0.1:3001/api/admin",
+        "    curl -H 'Authorization: Bearer {}' -H 'X-Tenant-Id: 42' http://127.0.0.1:3001/api/admin",
         token
     );
     println!("    curl http://127.0.0.1:3001/public\n");

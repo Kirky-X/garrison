@@ -17,6 +17,10 @@
 use garrison_examples::web::web_actix_example;
 use serial_test::serial;
 
+// 中间件通过 with_header_tenant() 内置租户解析：每个请求需带 X-Tenant-Id 请求头，
+// 否则 HeaderTenantResolver fail-closed（缺失/非法 → 500）。
+const TENANT_HEADER: &str = "42";
+
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn test_middleware_protection() {
@@ -37,13 +41,19 @@ async fn test_middleware_protection() {
     )
     .await;
 
-    // 公开路径 - 无需 token → 200
-    let req = test::TestRequest::get().uri("/public").to_request();
+    // 公开路径 - 带租户头、无 token → 200
+    let req = test::TestRequest::get()
+        .uri("/public")
+        .insert_header(("X-Tenant-Id", TENANT_HEADER))
+        .to_request();
     let resp = test::call_service(&app, req).await;
     assert_eq!(resp.status(), StatusCode::OK);
 
     // 受保护路径 - 无 token → 401
-    let req = test::TestRequest::get().uri("/api/protected").to_request();
+    let req = test::TestRequest::get()
+        .uri("/api/protected")
+        .insert_header(("X-Tenant-Id", TENANT_HEADER))
+        .to_request();
     let resp = test::call_service(&app, req).await;
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 
@@ -51,6 +61,7 @@ async fn test_middleware_protection() {
     let req = test::TestRequest::get()
         .uri("/api/protected")
         .insert_header(("Authorization", format!("Bearer {}", token)))
+        .insert_header(("X-Tenant-Id", TENANT_HEADER))
         .to_request();
     let resp = test::call_service(&app, req).await;
     assert_eq!(resp.status(), StatusCode::OK);
@@ -59,6 +70,7 @@ async fn test_middleware_protection() {
     let req = test::TestRequest::get()
         .uri("/api/admin")
         .insert_header(("Authorization", format!("Bearer {}", token)))
+        .insert_header(("X-Tenant-Id", TENANT_HEADER))
         .to_request();
     let resp = test::call_service(&app, req).await;
     assert_eq!(resp.status(), StatusCode::OK);
@@ -67,6 +79,7 @@ async fn test_middleware_protection() {
     let req = test::TestRequest::get()
         .uri("/api/data")
         .insert_header(("Authorization", format!("Bearer {}", token)))
+        .insert_header(("X-Tenant-Id", TENANT_HEADER))
         .to_request();
     let resp = test::call_service(&app, req).await;
     assert_eq!(resp.status(), StatusCode::OK);

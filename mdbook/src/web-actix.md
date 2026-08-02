@@ -36,7 +36,12 @@ async fn index() -> &'static str { "ok" }
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    GarrisonManager::init(dao, config, interface).ok();
+    GarrisonManager::builder()
+    .dao(dao)
+    .config(config)
+    .interface(interface)
+    .build()
+    .await.ok();
 
     let mw = GarrisonRouter::new(config)
         .route_protected("/api/index", Annotation::CheckLogin)
@@ -52,6 +57,31 @@ async fn main() -> std::io::Result<()> {
     .await
 }
 ```
+
+## 多租户支持
+
+中间件内置租户解析（`tenant-isolation` 生产场景）：配置 `TenantResolver` 后，
+每个请求先解析租户并进入 `TENANT.scope` 再执行鉴权，使 `check_permission` /
+`check_role` 获得租户上下文（否则 fail-closed 报 `ctx-tenant-context-missing`）。
+
+```rust
+use garrison::web_actix::GarrisonRouter;
+use garrison::context::tenant::HeaderTenantResolver;
+
+// 便捷方式：从 X-Tenant-Id 请求头解析租户（缺失/非法 → 拒绝请求，fail-closed）
+let mw = GarrisonRouter::new(config)
+    .with_header_tenant()
+    .route_protected("/api/data", Annotation::CheckPermission("data:read".into()))
+    .into_middleware();
+
+// 自定义 resolver（如 SubdomainTenantResolver / ClaimTenantResolver）
+let mw = GarrisonRouter::new(config)
+    .with_tenant_resolver(HeaderTenantResolver)
+    .into_middleware();
+```
+
+未配置 resolver 时行为与旧版一致（不提取租户）。注意：配置后所有经过中间件的请求
+（含 `Ignore` 公开路径）都会触发租户解析，需带租户标识请求头。
 
 ## Extractor 用法（FromRequest）
 
@@ -83,3 +113,4 @@ extractor 实现 `FromRequest`，从请求提取 token 并调用 `GarrisonUtil` 
 
 - actix-web 4 的 `Transform`/`Service` 模型要求中间件 `Clone`，`GarrisonMiddleware` 已实现
 - task_local 上下文由 `GarrisonMiddlewareService` 在 `call` 前设置，未 wrap 中间件的路由无法使用 `GarrisonUtil`
+- 多租户场景通过 `with_header_tenant()` / `with_tenant_resolver(resolver)` 启用中间件内置租户解析
