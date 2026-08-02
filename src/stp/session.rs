@@ -22,6 +22,8 @@ use crate::config::ReplacedLoginExitMode;
 use crate::error::{GarrisonError, GarrisonResult};
 #[cfg(feature = "listener")]
 use crate::listener::GarrisonEvent;
+#[cfg(feature = "listener")]
+use crate::loc;
 use crate::stp::core::GarrisonCore;
 use crate::stp::token::TokenLogic;
 // FirewallLoginContext 来自 hooks 模块，依赖 limiteron（匹配 lib.rs 的 limiteron cfg）
@@ -406,7 +408,7 @@ impl SessionLogic for GarrisonLogicDefault {
             lm.broadcast(&GarrisonEvent::Kickout {
                 login_id: login_id.to_string(),
                 token: String::new(),
-                reason: "管理员强制下线".to_string(),
+                reason: loc!("session-kickout-admin", ""),
                 request_context: None,
             })
             .await;
@@ -942,7 +944,7 @@ impl GarrisonLogicDefault {
                         lm.broadcast(&GarrisonEvent::Kickout {
                             login_id: login_id.to_string(),
                             token: token.clone(),
-                            reason: "超过最大登录数限制".to_string(),
+                            reason: loc!("session-overflow-kickout", ""),
                             request_context: None,
                         })
                         .await;
@@ -951,7 +953,7 @@ impl GarrisonLogicDefault {
                         lm.broadcast(&GarrisonEvent::Replaced {
                             login_id: login_id.to_string(),
                             token: token.clone(),
-                            reason: "超过最大登录数限制，被新会话顶替".to_string(),
+                            reason: loc!("session-overflow-replaced", ""),
                             request_context: None,
                         })
                         .await;

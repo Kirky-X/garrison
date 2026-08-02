@@ -38,6 +38,7 @@ use crate::account::credential::{Credential, CredentialModel, CredentialReposito
 use crate::account::lockout::UserLockoutStrategy;
 use crate::account::policy::PasswordPolicyEngine;
 use crate::error::GarrisonResult;
+use crate::loc;
 use crate::stp::{GarrisonLogicDefault, LoginParams, MfaLogic, SessionLogic};
 use crate::strategy::firewall::{FirewallContext, GarrisonFirewallStrategy};
 use async_trait::async_trait;
@@ -630,7 +631,12 @@ impl AuthExecutor {
             if let Some(user_id) = &ctx.user_id {
                 let fw_ctx = FirewallContext::new(&ctx.ip).with_login_id(user_id.clone());
                 if let Err(e) = lockout.check(&fw_ctx).await {
-                    return Ok(StepOutcome::Failed(format!("用户已被锁定: {}", e)));
+                    let err_str = e.to_string();
+                    return Ok(StepOutcome::Failed(loc!(
+                        "authflow-user-locked",
+                        "",
+                        ("arg0", &err_str)
+                    )));
                 }
             }
         }
@@ -639,9 +645,10 @@ impl AuthExecutor {
         let builder = match builder {
             Some(b) => b,
             None => {
-                return Ok(StepOutcome::Failed(
-                    "Login 步骤需要 CredentialBuilder，请使用 execute_with_builder".to_string(),
-                ));
+                return Ok(StepOutcome::Failed(loc!(
+                    "authflow-login-needs-builder",
+                    ""
+                )));
             },
         };
 
@@ -649,7 +656,10 @@ impl AuthExecutor {
         let user_id = match &ctx.user_id {
             Some(id) => id.clone(),
             None => {
-                return Ok(StepOutcome::Failed("Login 步骤需要 user_id".to_string()));
+                return Ok(StepOutcome::Failed(loc!(
+                    "authflow-login-needs-user-id",
+                    ""
+                )));
             },
         };
 
@@ -659,9 +669,10 @@ impl AuthExecutor {
             .find_by_user_and_type(&user_id, credential_type)
             .await?;
         if creds.is_empty() {
-            return Ok(StepOutcome::Failed(format!(
-                "未找到 {} 类型的凭证",
-                credential_type
+            return Ok(StepOutcome::Failed(loc!(
+                "authflow-credential-not-found",
+                "",
+                ("arg0", credential_type)
             )));
         }
 
@@ -690,7 +701,10 @@ impl AuthExecutor {
             if let Some(lockout) = &self.lockout {
                 let _ = lockout.record_failure(&user_id).await;
             }
-            Ok(StepOutcome::Failed("凭证校验失败".to_string()))
+            Ok(StepOutcome::Failed(loc!(
+                "authflow-credential-verify-failed",
+                ""
+            )))
         }
     }
 
@@ -718,7 +732,11 @@ impl AuthExecutor {
                 if ctx.input.is_empty() {
                     return Ok(StepOutcome::ChallengeRequired {
                         challenge_type: cred_type.clone(),
-                        message: format!("请输入 {} 验证码", cred_type),
+                        message: loc!(
+                            "authflow-enter-verification-code",
+                            "",
+                            ("arg0", &**cred_type)
+                        ),
                     });
                 }
 
@@ -726,10 +744,7 @@ impl AuthExecutor {
                 let builder = match builder {
                     Some(b) => b,
                     None => {
-                        return Ok(StepOutcome::Failed(
-                            "Mfa(Some) 步骤需要 CredentialBuilder，请使用 execute_with_builder"
-                                .to_string(),
-                        ));
+                        return Ok(StepOutcome::Failed(loc!("authflow-mfa-needs-builder", "")));
                     },
                 };
 
@@ -737,7 +752,7 @@ impl AuthExecutor {
                 let user_id = match &ctx.user_id {
                     Some(id) => id.clone(),
                     None => {
-                        return Ok(StepOutcome::Failed("Mfa 步骤需要 user_id".to_string()));
+                        return Ok(StepOutcome::Failed(loc!("authflow-mfa-needs-user-id", "")));
                     },
                 };
 
@@ -747,9 +762,10 @@ impl AuthExecutor {
                     .find_by_user_and_type(&user_id, cred_type)
                     .await?;
                 if creds.is_empty() {
-                    return Ok(StepOutcome::Failed(format!(
-                        "未找到 {} 类型的凭证",
-                        cred_type
+                    return Ok(StepOutcome::Failed(loc!(
+                        "authflow-credential-not-found",
+                        "",
+                        ("arg0", &**cred_type)
                     )));
                 }
 
@@ -766,7 +782,11 @@ impl AuthExecutor {
                 if verified {
                     Ok(StepOutcome::Success { token: None })
                 } else {
-                    Ok(StepOutcome::Failed(format!("{} 校验失败", cred_type)))
+                    Ok(StepOutcome::Failed(loc!(
+                        "authflow-verify-failed",
+                        "",
+                        ("arg0", &**cred_type)
+                    )))
                 }
             },
         }
@@ -787,16 +807,22 @@ impl AuthExecutor {
     ) -> GarrisonResult<StepOutcome> {
         // 递归深度检查：防止循环引用导致栈溢出
         if depth >= MAX_FLOW_DEPTH {
-            return Ok(StepOutcome::Failed(format!(
-                "AuthenticationFlow 嵌套深度超过 {} 层上限，疑似循环引用",
-                MAX_FLOW_DEPTH
+            let depth_str = MAX_FLOW_DEPTH.to_string();
+            return Ok(StepOutcome::Failed(loc!(
+                "authflow-max-depth-exceeded",
+                "",
+                ("arg0", depth_str.as_str())
             )));
         }
 
         let sub_flow = match self.registry.get(flow_name) {
             Some(f) => f,
             None => {
-                return Ok(StepOutcome::Failed(format!("未找到子流程: {}", flow_name)));
+                return Ok(StepOutcome::Failed(loc!(
+                    "authflow-subflow-not-found",
+                    "",
+                    ("arg0", flow_name)
+                )));
             },
         };
 
@@ -815,13 +841,19 @@ impl AuthExecutor {
 
         match result {
             AuthResult::Success { .. } => Ok(StepOutcome::Success { token: None }),
-            AuthResult::Failed { reason, .. } => Ok(StepOutcome::Failed(format!(
-                "子流程 {} 失败: {}",
-                flow_name, reason
-            ))),
-            AuthResult::Pending { .. } => Ok(StepOutcome::Failed(format!(
-                "子流程 {} 返回 Pending，v0.6.0 不支持嵌套 Pending 传播",
-                flow_name
+            AuthResult::Failed { reason, .. } => {
+                let reason_str = reason;
+                Ok(StepOutcome::Failed(loc!(
+                    "authflow-subflow-failed",
+                    "",
+                    ("arg0", flow_name),
+                    ("arg1", &reason_str)
+                )))
+            },
+            AuthResult::Pending { .. } => Ok(StepOutcome::Failed(loc!(
+                "authflow-subflow-pending",
+                "",
+                ("arg0", flow_name)
             ))),
             AuthResult::ChallengeRequired {
                 challenge_type,
@@ -851,10 +883,10 @@ impl AuthExecutor {
         let resolver = match social_resolver {
             Some(r) => r,
             None => {
-                return Ok(StepOutcome::Failed(
-                    "SocialProvider 步骤需要 SocialProviderResolver，请使用 execute_with_full"
-                        .to_string(),
-                ));
+                return Ok(StepOutcome::Failed(loc!(
+                    "authflow-social-needs-resolver",
+                    ""
+                )));
             },
         };
 
@@ -862,7 +894,7 @@ impl AuthExecutor {
         if ctx.input.is_empty() {
             return Ok(StepOutcome::ChallengeRequired {
                 challenge_type: format!("social:{}", provider),
-                message: format!("请完成 {} 社交登录授权", provider),
+                message: loc!("authflow-complete-social-auth", "", ("arg0", provider)),
             });
         }
 
@@ -876,9 +908,12 @@ impl AuthExecutor {
         {
             Ok(id) => id,
             Err(e) => {
-                return Ok(StepOutcome::Failed(format!(
-                    "社交登录 {} 失败: {}",
-                    provider, e
+                let err_str = e.to_string();
+                return Ok(StepOutcome::Failed(loc!(
+                    "authflow-social-login-failed",
+                    "",
+                    ("arg0", provider),
+                    ("arg1", &err_str)
                 )));
             },
         };
@@ -911,9 +946,7 @@ impl AuthExecutor {
         let resolver = match sso_resolver {
             Some(r) => r,
             None => {
-                return Ok(StepOutcome::Failed(
-                    "SsoServer 步骤需要 SsoServerResolver，请使用 execute_with_full".to_string(),
-                ));
+                return Ok(StepOutcome::Failed(loc!("authflow-sso-needs-resolver", "")));
             },
         };
 
@@ -921,7 +954,7 @@ impl AuthExecutor {
         if ctx.input.is_empty() {
             return Ok(StepOutcome::ChallengeRequired {
                 challenge_type: format!("sso:{}", server_id),
-                message: format!("请完成 SSO 登录: {}", server_id),
+                message: loc!("authflow-complete-sso-auth", "", ("arg0", server_id)),
             });
         }
 
@@ -939,7 +972,12 @@ impl AuthExecutor {
         {
             Ok(id) => id,
             Err(e) => {
-                return Ok(StepOutcome::Failed(format!("SSO 票据校验失败: {}", e)));
+                let err_str = e.to_string();
+                return Ok(StepOutcome::Failed(loc!(
+                    "authflow-sso-verify-failed",
+                    "",
+                    ("arg0", &err_str)
+                )));
             },
         };
 
@@ -992,16 +1030,26 @@ impl AuthExecutor {
     /// 生成下一步骤的挑战提示信息（内部方法）。
     fn step_challenge(&self, step: &AuthStep) -> String {
         match step {
-            AuthStep::Login { credential_type } => format!("请输入 {}", credential_type),
-            AuthStep::Mfa { credential_type } => match credential_type {
-                Some(ct) => format!("请输入 {} 验证码", ct),
-                None => "请完成 MFA 校验".to_string(),
+            AuthStep::Login { credential_type } => {
+                loc!("authflow-step-enter", "", ("arg0", &**credential_type))
             },
-            AuthStep::SocialProvider { provider } => format!("请完成 {} 社交登录", provider),
-            AuthStep::SsoServer { server_id } => format!("请完成 SSO 登录: {}", server_id),
-            AuthStep::RequiredAction { action } => format!("请完成必需动作: {}", action),
-            AuthStep::Conditional { .. } => "请完成条件分支".to_string(),
-            AuthStep::SubFlow { flow_name } => format!("请完成子流程: {}", flow_name),
+            AuthStep::Mfa { credential_type } => match credential_type {
+                Some(ct) => loc!("authflow-step-enter-code", "", ("arg0", &**ct)),
+                None => loc!("authflow-step-complete-mfa", "").to_string(),
+            },
+            AuthStep::SocialProvider { provider } => {
+                loc!("authflow-step-complete-social", "", ("arg0", &**provider))
+            },
+            AuthStep::SsoServer { server_id } => {
+                loc!("authflow-step-complete-sso", "", ("arg0", server_id))
+            },
+            AuthStep::RequiredAction { action } => {
+                loc!("authflow-step-complete-action", "", ("arg0", &**action))
+            },
+            AuthStep::Conditional { .. } => loc!("authflow-step-complete-condition", ""),
+            AuthStep::SubFlow { flow_name } => {
+                loc!("authflow-step-complete-subflow", "", ("arg0", &**flow_name))
+            },
         }
     }
 }

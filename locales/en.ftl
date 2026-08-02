@@ -35,6 +35,10 @@ sms-verify-max-attempts = SMS verification max attempts exceeded
 sms-code-not-found = SMS verification code not found
 sms-channel-recycled = SMS channel recycled
 
+# 0.6.1 missing base keys (I18N-KEY-01 / I18N-KEY-02)
+token-revoked = Token revoked: {$detail}
+firewall-blocked = Firewall blocked: {$detail}
+
 # ============================================================================
 # Social login exception messages (0.6.0, per T021)
 # ============================================================================
@@ -688,6 +692,59 @@ stp-mock-login-detection-failed = mock login detection failed
 stp-mock-check-login-detection-failed = mock check_login detection failed
 
 # ============================================================================
+# Authflow executor errors (i18n migration)
+# ============================================================================
+authflow-user-locked = User has been locked: {$arg0}
+authflow-login-needs-builder = Login step requires CredentialBuilder, use execute_with_builder
+authflow-login-needs-user-id = Login step requires user_id
+authflow-credential-not-found = Credential of type {$arg0} not found
+authflow-credential-verify-failed = Credential verification failed
+authflow-enter-verification-code = Please enter {$arg0} verification code
+authflow-mfa-needs-builder = MFA step requires CredentialBuilder, use execute_with_builder
+authflow-mfa-needs-user-id = MFA step requires user_id
+authflow-verify-failed = {$arg0} verification failed
+authflow-max-depth-exceeded = AuthenticationFlow nesting exceeds {$arg0} level limit, possible circular reference
+authflow-subflow-not-found = Sub-flow not found: {$arg0}
+authflow-subflow-failed = Sub-flow {$arg0} failed: {$arg1}
+authflow-subflow-pending = Sub-flow {$arg0} returned Pending, v0.6.0 does not support nested Pending propagation
+authflow-social-needs-resolver = SocialProvider step requires SocialProviderResolver, use execute_with_full
+authflow-complete-social-auth = Please complete {$arg0} social login authorization
+authflow-social-login-failed = Social login {$arg0} failed: {$arg1}
+authflow-sso-needs-resolver = SsoServer step requires SsoServerResolver, use execute_with_full
+authflow-complete-sso-auth = Please complete SSO login: {$arg0}
+authflow-sso-verify-failed = SSO ticket verification failed: {$arg0}
+authflow-step-enter = Please enter {$arg0}
+authflow-step-enter-code = Please enter {$arg0} verification code
+authflow-step-complete-mfa = Please complete MFA verification
+authflow-step-complete-social = Please complete {$arg0} social login
+authflow-step-complete-sso = Please complete SSO login: {$arg0}
+authflow-step-complete-action = Please complete required action: {$arg0}
+authflow-step-complete-condition = Please complete conditional branch
+authflow-step-complete-subflow = Please complete sub-flow: {$arg0}
+
+# ============================================================================
+# Config loader errors (i18n migration)
+# ============================================================================
+config-path-empty = configuration file path must not be empty
+config-path-illegal-parent = configuration file path contains illegal parent directory reference (..): {$arg0}
+config-open-failed = failed to open configuration file [{$arg0}]: {$arg1}
+config-metadata-failed = failed to read configuration file metadata [{$arg0}]: {$arg1}
+config-not-regular-file = configuration file path is not a regular file [{$arg0}]: {$arg1}
+config-too-large = configuration file too large [{$arg0}]: {$arg1} bytes, limit {$arg2} bytes
+config-read-failed = failed to read configuration file [{$arg0}]: {$arg1}
+
+# ============================================================================
+# Session event reasons / Stp hardcoded messages (i18n migration)
+# ============================================================================
+session-kickout-admin = admin forced logout
+session-overflow-kickout = exceeded maximum login count
+session-overflow-replaced = exceeded maximum login count, replaced by new session
+stp-verify-token-not-implemented = verify_token requires subclass override delegating to core-token::Token::verify
+stp-refresh-token-not-implemented = refresh_token requires protocol-jwt feature enabled
+stp-refresh-token-jwt-only = refresh_token is only available when token_style=jwt
+stp-mfa-not-passed = second factor authentication not passed
+
+# ============================================================================
 # response_parts 专用 message keys（不含 detail，用于 HTTP 响应体）
 # ============================================================================
 # These keys are used by GarrisonError::response_parts_i18n() to return a
@@ -707,6 +764,7 @@ annotation-msg = Annotation error
 context-msg = Context error
 oauth2-msg = OAuth2 error
 network-msg = Network error
+invalid-response-msg = Invalid upstream response
 invalid-param-msg = Invalid parameter
 not-implemented-msg = Not implemented
 firewall-blocked-msg = Firewall blocked

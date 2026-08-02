@@ -62,7 +62,7 @@ pub fn garrison_principal(
                     .map_err(|e| warp::reject::custom(super::GarrisonRejection(e)))?
                     .ok_or_else(|| {
                         warp::reject::custom(super::GarrisonRejection(GarrisonError::NotLogin(
-                            "未提供 token".to_string(),
+                            "web-not-login::未提供 token".to_string(),
                         )))
                     })?;
 
@@ -71,7 +71,7 @@ pub fn garrison_principal(
                     .map_err(|e| warp::reject::custom(super::GarrisonRejection(e)))?
                     .ok_or_else(|| {
                         warp::reject::custom(super::GarrisonRejection(GarrisonError::NotLogin(
-                            "token 无效或会话不存在".to_string(),
+                            "web-token-invalid::token 无效或会话不存在".to_string(),
                         )))
                     })?;
 

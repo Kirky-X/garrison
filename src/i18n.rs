@@ -741,7 +741,7 @@ mod tests {
         let _guard = set_locale(GarrisonLocale::Zh);
         let err = GarrisonError::TokenRevoked("reuse detected".to_string());
         let translated = translate_error(&err);
-        // token-revoked key 不存在于 .ftl，走 fallback_display
+        // token-revoked key 已补全，zh FTL 翻译与 fallback 一致
         assert_eq!(translated, "Token 已吊销: reuse detected");
     }
 
@@ -751,8 +751,8 @@ mod tests {
         let _guard = set_locale(GarrisonLocale::En);
         let err = GarrisonError::TokenRevoked("reuse detected".to_string());
         let translated = translate_error(&err);
-        // token-revoked key 不存在于 .ftl，走 fallback_display（中文硬编码）
-        assert_eq!(translated, "Token 已吊销: reuse detected");
+        // token-revoked key 已补全，en FTL 返回英文翻译
+        assert_eq!(translated, "Token revoked: reuse detected");
     }
 
     /// FirewallBlocked 在中文 locale 下输出翻译消息。
@@ -761,8 +761,18 @@ mod tests {
         let _guard = set_locale(GarrisonLocale::Zh);
         let err = GarrisonError::FirewallBlocked("black_path: /admin".to_string());
         let translated = translate_error(&err);
-        // firewall-blocked key 不存在于 .ftl，走 fallback_display
+        // firewall-blocked key 已补全，zh FTL 翻译与 fallback 一致
         assert_eq!(translated, "防火墙拦截: black_path: /admin");
+    }
+
+    /// FirewallBlocked 在英文 locale 下输出翻译消息。
+    #[test]
+    fn translate_error_en_firewall_blocked() {
+        let _guard = set_locale(GarrisonLocale::En);
+        let err = GarrisonError::FirewallBlocked("black_path: /admin".to_string());
+        let translated = translate_error(&err);
+        // firewall-blocked key 已补全，en FTL 返回英文翻译
+        assert_eq!(translated, "Firewall blocked: black_path: /admin");
     }
 
     /// DisableService 在中文 locale 下输出翻译消息。

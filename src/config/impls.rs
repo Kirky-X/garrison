@@ -9,6 +9,7 @@
 use super::source::TomlContentSource;
 use super::*;
 use crate::error::{GarrisonError, GarrisonResult};
+use crate::loc;
 use confers::config::ConfigBuilder;
 use std::io::Read;
 use std::path::Path;
@@ -288,7 +289,7 @@ impl GarrisonConfig {
             // 6. take(MAX+1) 限制：I/O 层强制读取字节数，双重保险
             // 7. 错误消息仅含 file_name()：避免泄露服务器文件系统结构
             if path.is_empty() {
-                return Err(GarrisonError::Config("配置文件路径不能为空".to_string()));
+                return Err(GarrisonError::Config(loc!("config-path-empty", "")));
             }
             let path_ref = Path::new(path);
             let display_name = || {
@@ -301,42 +302,62 @@ impl GarrisonConfig {
                 .components()
                 .any(|c| matches!(c, std::path::Component::ParentDir))
             {
-                return Err(GarrisonError::Config(format!(
-                    "配置文件路径包含非法的父目录引用（..）：{}",
-                    display_name()
+                return Err(GarrisonError::Config(loc!(
+                    "config-path-illegal-parent",
+                    "",
+                    ("arg0", display_name())
                 )));
             }
             let file = std::fs::File::open(path_ref).map_err(|e| {
-                GarrisonError::Config(format!("打开配置文件失败 [{}]：{}", display_name(), e))
+                let err_str = e.to_string();
+                GarrisonError::Config(loc!(
+                    "config-open-failed",
+                    "",
+                    ("arg0", display_name()),
+                    ("arg1", err_str.as_str())
+                ))
             })?;
             let metadata = file.metadata().map_err(|e| {
-                GarrisonError::Config(format!(
-                    "读取配置文件元数据失败 [{}]：{}",
-                    display_name(),
-                    e
+                let err_str = e.to_string();
+                GarrisonError::Config(loc!(
+                    "config-metadata-failed",
+                    "",
+                    ("arg0", display_name()),
+                    ("arg1", err_str.as_str())
                 ))
             })?;
             if !metadata.is_file() {
-                return Err(GarrisonError::Config(format!(
-                    "配置文件路径不是普通文件 [{}]：{:?}",
-                    display_name(),
-                    metadata.file_type()
+                let file_type_str = format!("{:?}", metadata.file_type());
+                return Err(GarrisonError::Config(loc!(
+                    "config-not-regular-file",
+                    "",
+                    ("arg0", display_name()),
+                    ("arg1", file_type_str.as_str())
                 )));
             }
             const MAX_CONFIG_FILE_SIZE: u64 = 10 * 1024 * 1024; // 10MB
             if metadata.len() > MAX_CONFIG_FILE_SIZE {
-                return Err(GarrisonError::Config(format!(
-                    "配置文件过大 [{}]：{} bytes，上限 {} bytes",
-                    display_name(),
-                    metadata.len(),
-                    MAX_CONFIG_FILE_SIZE
+                let size_str = metadata.len().to_string();
+                let limit_str = MAX_CONFIG_FILE_SIZE.to_string();
+                return Err(GarrisonError::Config(loc!(
+                    "config-too-large",
+                    "",
+                    ("arg0", display_name()),
+                    ("arg1", size_str.as_str()),
+                    ("arg2", limit_str.as_str())
                 )));
             }
             // take(MAX+1) 在 I/O 层强制限制读取字节数，防止 TOCTOU（metadata 后文件被替换为超大文件）
             let mut reader = std::io::BufReader::new(file).take(MAX_CONFIG_FILE_SIZE + 1);
             let mut content = String::with_capacity(metadata.len() as usize);
             reader.read_to_string(&mut content).map_err(|e| {
-                GarrisonError::Config(format!("读取配置文件失败 [{}]：{}", display_name(), e))
+                let err_str = e.to_string();
+                GarrisonError::Config(loc!(
+                    "config-read-failed",
+                    "",
+                    ("arg0", display_name()),
+                    ("arg1", err_str.as_str())
+                ))
             })?;
             if content.len() > MAX_CONFIG_FILE_SIZE as usize {
                 return Err(GarrisonError::Config(format!(

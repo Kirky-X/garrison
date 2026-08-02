@@ -35,6 +35,10 @@ sms-verify-max-attempts = SMS 验证码尝试次数超限
 sms-code-not-found = SMS 验证码不存在
 sms-channel-recycled = SMS 通道已回收
 
+# 0.6.1 缺失基础 key（I18N-KEY-01 / I18N-KEY-02）
+token-revoked = Token 已吊销: {$detail}
+firewall-blocked = 防火墙拦截: {$detail}
+
 # ============================================================================
 # 社交登录异常消息（0.6.0 新增，依据 T021）
 # ============================================================================
@@ -688,6 +692,59 @@ stp-mock-login-detection-failed = mock login detection 失败
 stp-mock-check-login-detection-failed = mock check_login detection 失败
 
 # ============================================================================
+# Authflow executor 错误（i18n 迁移）
+# ============================================================================
+authflow-user-locked = 用户已被锁定: {$arg0}
+authflow-login-needs-builder = Login 步骤需要 CredentialBuilder，请使用 execute_with_builder
+authflow-login-needs-user-id = Login 步骤需要 user_id
+authflow-credential-not-found = 未找到 {$arg0} 类型的凭证
+authflow-credential-verify-failed = 凭证校验失败
+authflow-enter-verification-code = 请输入 {$arg0} 验证码
+authflow-mfa-needs-builder = Mfa(Some) 步骤需要 CredentialBuilder，请使用 execute_with_builder
+authflow-mfa-needs-user-id = Mfa 步骤需要 user_id
+authflow-verify-failed = {$arg0} 校验失败
+authflow-max-depth-exceeded = AuthenticationFlow 嵌套深度超过 {$arg0} 层上限，疑似循环引用
+authflow-subflow-not-found = 未找到子流程: {$arg0}
+authflow-subflow-failed = 子流程 {$arg0} 失败: {$arg1}
+authflow-subflow-pending = 子流程 {$arg0} 返回 Pending，v0.6.0 不支持嵌套 Pending 传播
+authflow-social-needs-resolver = SocialProvider 步骤需要 SocialProviderResolver，请使用 execute_with_full
+authflow-complete-social-auth = 请完成 {$arg0} 社交登录授权
+authflow-social-login-failed = 社交登录 {$arg0} 失败: {$arg1}
+authflow-sso-needs-resolver = SsoServer 步骤需要 SsoServerResolver，请使用 execute_with_full
+authflow-complete-sso-auth = 请完成 SSO 登录: {$arg0}
+authflow-sso-verify-failed = SSO 票据校验失败: {$arg0}
+authflow-step-enter = 请输入 {$arg0}
+authflow-step-enter-code = 请输入 {$arg0} 验证码
+authflow-step-complete-mfa = 请完成 MFA 校验
+authflow-step-complete-social = 请完成 {$arg0} 社交登录
+authflow-step-complete-sso = 请完成 SSO 登录: {$arg0}
+authflow-step-complete-action = 请完成必需动作: {$arg0}
+authflow-step-complete-condition = 请完成条件分支
+authflow-step-complete-subflow = 请完成子流程: {$arg0}
+
+# ============================================================================
+# Config loader 错误（i18n 迁移）
+# ============================================================================
+config-path-empty = 配置文件路径不能为空
+config-path-illegal-parent = 配置文件路径包含非法的父目录引用（..）：{$arg0}
+config-open-failed = 打开配置文件失败 [{$arg0}]：{$arg1}
+config-metadata-failed = 读取配置文件元数据失败 [{$arg0}]：{$arg1}
+config-not-regular-file = 配置文件路径不是普通文件 [{$arg0}]：{$arg1}
+config-too-large = 配置文件过大 [{$arg0}]：{$arg1} bytes，上限 {$arg2} bytes
+config-read-failed = 读取配置文件失败 [{$arg0}]：{$arg1}
+
+# ============================================================================
+# Session 事件 reason / Stp 硬编码消息（i18n 迁移）
+# ============================================================================
+session-kickout-admin = 管理员强制下线
+session-overflow-kickout = 超过最大登录数限制
+session-overflow-replaced = 超过最大登录数限制，被新会话顶替
+stp-verify-token-not-implemented = verify_token 需子类 override 委托 core-token::Token::verify
+stp-refresh-token-not-implemented = refresh_token 需启用 protocol-jwt feature
+stp-refresh-token-jwt-only = refresh_token 仅在 token_style=jwt 时可用
+stp-mfa-not-passed = 二级认证未通过
+
+# ============================================================================
 # response_parts 专用 message keys（不含 detail，用于 HTTP 响应体）
 # ============================================================================
 # 这些 key 用于 GarrisonError::response_parts_i18n() 方法，返回不含变体 detail
@@ -706,6 +763,7 @@ annotation-msg = 注解错误
 context-msg = 上下文错误
 oauth2-msg = OAuth2 错误
 network-msg = 网络错误
+invalid-response-msg = 上游响应无效
 invalid-param-msg = 参数无效
 not-implemented-msg = 未实现
 firewall-blocked-msg = 防火墙拦截

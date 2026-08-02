@@ -4,6 +4,8 @@
 //! GarrisonUtil 静态方法入口 + JwtMode 校验模式枚举 + AuthBackend 全局桥接。
 use crate::config::GarrisonConfig;
 use crate::error::GarrisonResult;
+#[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
+use crate::loc;
 use crate::session::GarrisonSession;
 use crate::stp::core::GarrisonCore;
 use crate::stp::mfa::MfaLogic;
@@ -565,7 +567,7 @@ impl GarrisonUtil {
                     return Ok(());
                 }
                 return Err(crate::error::GarrisonError::NotSafe {
-                    reason: "二级认证未通过".to_string(),
+                    reason: loc!("stp-mfa-not-passed", ""),
                 });
             }
         }

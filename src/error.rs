@@ -985,6 +985,30 @@ mod tests {
         );
     }
 
+    /// 验证 `invalid-response-msg` key 在 En/Zh 两个 locale 下均可翻译（I18N-01）。
+    ///
+    /// 覆盖审查发现 I18N-01：`invalid-response-msg` key 曾缺失，导致
+    /// `response_parts_i18n()` 在 En locale 下回退到硬编码中文。补齐 key 后
+    /// En 应返回 "Invalid upstream response"，Zh 返回 "上游响应无效"。
+    #[test]
+    fn invalid_response_msg_key_translates_in_both_locales() {
+        let err = GarrisonError::InvalidResponse("bad upstream".to_string());
+
+        let _zh = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
+        let (_, _, zh_msg, _) = err.response_parts_i18n();
+        assert_eq!(
+            zh_msg, "上游响应无效",
+            "zh locale 下 invalid-response-msg 应翻译为中文"
+        );
+
+        let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
+        let (_, _, en_msg, _) = err.response_parts_i18n();
+        assert_eq!(
+            en_msg, "Invalid upstream response",
+            "en locale 下 invalid-response-msg 应翻译为英文（不应回退到中文 fallback）"
+        );
+    }
+
     /// 验证 InvalidResponse 错误映射为 502 Bad Gateway（web-axum feature）。
     #[cfg(feature = "web-axum")]
     #[test]
