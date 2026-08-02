@@ -261,7 +261,12 @@ pub async fn run() -> GarrisonResult<()> {
     let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await?);
     let config = Arc::new(GarrisonConfig::default_config());
     let interface: Arc<dyn GarrisonInterface> = Arc::new(MyInterface::new());
-    GarrisonManager::init(dao, config, interface)?;
+    GarrisonManager::builder()
+        .dao(dao)
+        .config(config)
+        .interface(interface)
+        .build()
+        .await?;
     println!("    GarrisonManager 初始化完成（使用 GarrisonPermissionStrategyDefault）");
     println!("    可通过 GarrisonUtil::check_permission/check_role 调用");
 

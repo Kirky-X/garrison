@@ -5,7 +5,7 @@
 //!
 //! 验证 run() 完整执行（内部已包含 session 注入与校验断言）。
 //!
-//! 注意：session_management 调用 `GarrisonManager::init` 注入全局单例，
+//! 注意：session_management 调用 `GarrisonManager::builder()` 注入全局单例，
 //! 多测试并行会竞争全局状态，必须用 #[serial] 串行执行。
 
 #![cfg(feature = "cache-memory")]

@@ -23,6 +23,7 @@ use garrison::error::{GarrisonError, GarrisonResult};
 use garrison::manager::GarrisonManager;
 use garrison::stp::parameter::{ParameterQuery, ParameterQueryBuilder};
 use garrison::stp::{GarrisonInterface, GarrisonUtil};
+use garrison::{TenantContext, TenantSource, TENANT};
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -152,15 +153,21 @@ impl GarrisonInterface for MyInterface {
 
 /// 初始化全局 GarrisonManager（注入 InMemoryDao + MyInterface）。
 ///
-/// `GarrisonManager::init` 为覆盖式更新（允许重复 init），无需先 reset。
-fn init_manager() {
+/// `GarrisonManager::builder()` 为覆盖式更新（允许重复 init），无需先 reset。
+async fn init_manager() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
     let mut config = GarrisonConfig::default_config();
     config.timeout = 3600;
     config.active_timeout = -1;
     config.throw_on_not_login = false;
     let interface: Arc<dyn GarrisonInterface> = Arc::new(MyInterface::new());
-    GarrisonManager::init(dao, Arc::new(config), interface).expect("GarrisonManager 初始化失败");
+    GarrisonManager::builder()
+        .dao(dao)
+        .config(Arc::new(config))
+        .interface(interface)
+        .build()
+        .await
+        .expect("GarrisonManager 初始化失败");
 }
 
 /// 运行 ParameterQuery 示例。
@@ -173,26 +180,40 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // ----------------------------------------------------------------
     // 1. 初始化 GarrisonManager
     // ----------------------------------------------------------------
-    init_manager();
+    init_manager().await;
     println!("[初始化] GarrisonManager 已就绪");
     println!("    账号 1001 权限: [user:create, user:read]");
     println!("    账号 1001 角色: [admin, user]\n");
+
+    // tenant-isolation 启用时 login/校验需同租户上下文（fail-closed）
+    let tenant_ctx = TenantContext {
+        tenant_id: 42,
+        resolved_from: TenantSource::Header,
+    };
 
     // ----------------------------------------------------------------
     // 2. with_login_id + check_permission（持有权限 → Ok）
     // ----------------------------------------------------------------
     println!("[login_id 上下文] check_permission:");
-    let result = ParameterQueryBuilder::new()
-        .with_login_id("1001".to_string())
-        .check_permission("user:create")
+    let result = TENANT
+        .scope(tenant_ctx.clone(), async {
+            ParameterQueryBuilder::new()
+                .with_login_id("1001".to_string())
+                .check_permission("user:create")
+                .await
+        })
         .await;
     println!("    with_login_id(1001).check_permission(\"user:create\") → Ok(()) ✓");
     assert!(result.is_ok(), "持有权限应返回 Ok，实际: {:?}", result);
 
     // 未持有权限 → NotPermission
-    let denied = ParameterQueryBuilder::new()
-        .with_login_id("1001".to_string())
-        .check_permission("user:delete")
+    let denied = TENANT
+        .scope(tenant_ctx.clone(), async {
+            ParameterQueryBuilder::new()
+                .with_login_id("1001".to_string())
+                .check_permission("user:delete")
+                .await
+        })
         .await;
     match denied {
         Err(GarrisonError::NotPermission(perm)) => {
@@ -209,23 +230,35 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // 3. with_token + check_role（先 login 获取 token）
     // ----------------------------------------------------------------
     println!("[token 上下文] check_role:");
-    let token = GarrisonUtil::login_simple("1001").await?;
+    let token = TENANT
+        .scope(tenant_ctx.clone(), async {
+            GarrisonUtil::login_simple("1001").await
+        })
+        .await?;
     println!(
         "    GarrisonUtil::login(1001) → token={}",
         &token[..16.min(token.len())]
     );
 
-    let result = ParameterQueryBuilder::new()
-        .with_token(&token)
-        .check_role("admin")
+    let result = TENANT
+        .scope(tenant_ctx.clone(), async {
+            ParameterQueryBuilder::new()
+                .with_token(&token)
+                .check_role("admin")
+                .await
+        })
         .await;
     println!("    with_token(&token).check_role(\"admin\") → Ok(()) ✓");
     assert!(result.is_ok(), "持有角色应返回 Ok，实际: {:?}", result);
 
     // 未持有角色 → NotRole
-    let denied_role = ParameterQueryBuilder::new()
-        .with_token(&token)
-        .check_role("superadmin")
+    let denied_role = TENANT
+        .scope(tenant_ctx.clone(), async {
+            ParameterQueryBuilder::new()
+                .with_token(&token)
+                .check_role("superadmin")
+                .await
+        })
         .await;
     match denied_role {
         Err(GarrisonError::NotRole(role)) => {

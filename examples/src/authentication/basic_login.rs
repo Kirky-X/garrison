@@ -23,6 +23,7 @@ use garrison::error::{GarrisonError, GarrisonResult};
 use garrison::manager::GarrisonManager;
 use garrison::prelude::*;
 use garrison::stp::{with_current_token, GarrisonInterface, GarrisonUtil};
+use garrison::{TenantContext, TenantSource, TENANT};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -94,13 +95,29 @@ pub async fn run() -> GarrisonResult<()> {
     // ----------------------------------------------------------------
     // 2. 初始化 GarrisonManager（注入全局单例）
     // ----------------------------------------------------------------
-    GarrisonManager::init(dao, config, interface)?;
+    GarrisonManager::builder()
+        .dao(dao)
+        .config(config)
+        .interface(interface)
+        .build()
+        .await?;
     println!("[1] GarrisonManager 初始化完成");
 
     // ----------------------------------------------------------------
     // 3. 执行登录：生成 token 并创建会话
     // ----------------------------------------------------------------
-    let token = GarrisonUtil::login_simple("1001").await?;
+    // 登录与后续权限/角色校验在 TENANT(42) scope 内执行：
+    // tenant-isolation feature 启用时，check_permission/check_role 强制要求
+    // 租户上下文（fail-closed），无上下文会返回 Config 错误。
+    let tenant_ctx = TenantContext {
+        tenant_id: 42,
+        resolved_from: TenantSource::Header,
+    };
+    let token = TENANT
+        .scope(tenant_ctx.clone(), async {
+            GarrisonUtil::login_simple("1001").await
+        })
+        .await?;
     println!("[2] 登录成功，login_id=1001");
     println!("    token={}\n", token);
     assert!(!token.is_empty(), "login 应返回非空 token");
@@ -110,31 +127,37 @@ pub async fn run() -> GarrisonResult<()> {
     // ----------------------------------------------------------------
     // 注意：check_login / get_login_id / logout 等方法依赖 task_local 中的 token，
     // 实际应用中由 Web 中间件（如 axum middleware）设置；此处显式调用 with_current_token。
+    // 租户上下文同理由中间件解析注入，此处用 TENANT.scope 显式模拟。
     let token_for_closure = token.clone();
-    let ctx_result: Result<(), GarrisonError> = with_current_token(token_for_closure, async {
-        // 4. 校验登录状态
-        let logged_in = GarrisonUtil::check_login().await?;
-        println!("[3] check_login 返回: {}", logged_in);
-        assert!(logged_in, "登录后 check_login 应返回 true");
+    let tenant_for_closure = tenant_ctx.clone();
+    let ctx_result: Result<(), GarrisonError> = TENANT
+        .scope(tenant_for_closure, async {
+            with_current_token(token_for_closure, async {
+                // 4. 校验登录状态
+                let logged_in = GarrisonUtil::check_login().await?;
+                println!("[3] check_login 返回: {}", logged_in);
+                assert!(logged_in, "登录后 check_login 应返回 true");
 
-        let login_id = GarrisonUtil::get_login_id().await?;
-        println!("[4] get_login_id 返回: {:?}", login_id);
-        assert_eq!(login_id, Some("1001".to_string()));
+                let login_id = GarrisonUtil::get_login_id().await?;
+                println!("[4] get_login_id 返回: {:?}", login_id);
+                assert_eq!(login_id, Some("1001".to_string()));
 
-        // 5. 权限/角色校验
-        GarrisonUtil::check_permission("user:read").await?;
-        println!("[5] check_permission(\"user:read\") 通过");
+                // 5. 权限/角色校验
+                GarrisonUtil::check_permission("user:read").await?;
+                println!("[5] check_permission(\"user:read\") 通过");
 
-        GarrisonUtil::check_role("admin").await?;
-        println!("[6] check_role(\"admin\") 通过\n");
+                GarrisonUtil::check_role("admin").await?;
+                println!("[6] check_role(\"admin\") 通过\n");
 
-        // 6. 执行登出
-        GarrisonUtil::logout().await?;
-        println!("[7] logout 完成");
+                // 6. 执行登出
+                GarrisonUtil::logout().await?;
+                println!("[7] logout 完成");
 
-        Ok::<(), GarrisonError>(())
-    })
-    .await;
+                Ok::<(), GarrisonError>(())
+            })
+            .await
+        })
+        .await;
     ctx_result?;
 
     // ----------------------------------------------------------------

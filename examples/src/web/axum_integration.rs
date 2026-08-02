@@ -149,7 +149,7 @@ pub async fn data_query_handler() -> Json<Value> {
 ///
 /// 完成以下工作：
 /// 1. 创建 oxcache DAO + 配置 + Interface
-/// 2. `GarrisonManager::init` 注入全局单例
+/// 2. `GarrisonManager::builder()` 注入全局单例
 /// 3. `GarrisonUtil::login(1001)` 生成测试 token
 /// 4. `GarrisonRouter::new` 注册 4 个受保护路由（Ignore / CheckLogin / CheckRole / CheckPermission）
 ///
@@ -174,7 +174,12 @@ pub async fn setup() -> GarrisonResult<(Router, String)> {
     let interface: Arc<dyn GarrisonInterface> = Arc::new(MyInterface::new());
 
     // --- 初始化全局 GarrisonManager ---
-    GarrisonManager::init(dao, config.clone(), interface)?;
+    GarrisonManager::builder()
+        .dao(dao)
+        .config(config.clone())
+        .interface(interface)
+        .build()
+        .await?;
 
     // --- 模拟登录获取测试 token ---
     let token = GarrisonUtil::login_simple("1001").await?;

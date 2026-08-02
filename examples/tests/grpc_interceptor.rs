@@ -66,13 +66,15 @@ async fn test_extract_token_empty_value() {
 
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
-async fn test_extract_token_bare_token() {
+async fn test_extract_token_bare_token_rejected() {
     use garrison::grpc::GarrisonGrpcInterceptor;
 
+    // 严格 Bearer 校验（RFC 7235）：裸 token 视为非 Bearer 凭证，fail-closed 拒绝
     let mut metadata = MetadataMap::new();
     metadata.insert("authorization", "raw-token-xyz".parse().unwrap());
-    let token = GarrisonGrpcInterceptor::extract_token(&metadata).unwrap();
-    assert_eq!(token, "raw-token-xyz");
+    let result = GarrisonGrpcInterceptor::extract_token(&metadata);
+    assert!(result.is_err());
+    assert_eq!(result.unwrap_err().code(), tonic::Code::Unauthenticated);
 }
 
 #[tokio::test(flavor = "multi_thread")]

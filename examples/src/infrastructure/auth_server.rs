@@ -58,7 +58,7 @@ impl GarrisonInterface for SimpleInterface {
 ///
 /// # 失败处理
 /// - `GarrisonDaoOxcache::new()` 失败：返回底层错误（内存不足等）
-/// - `GarrisonManager::init()` 失败：返回 `AlreadyInitialized` 错误（单例已初始化）
+/// - `GarrisonManager::builder().build().await` 失败：返回 `AlreadyInitialized` 错误（单例已初始化）
 ///
 /// # 返回
 /// `BackendEmbedded` 实例，委托 GarrisonManager 全局单例处理认证逻辑。
@@ -66,7 +66,12 @@ pub async fn setup_garrison_manager() -> GarrisonResult<BackendEmbedded> {
     let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await?);
     let config = Arc::new(GarrisonConfig::default_config());
     let interface: Arc<dyn GarrisonInterface> = Arc::new(SimpleInterface);
-    GarrisonManager::init(dao, config, interface)?;
+    GarrisonManager::builder()
+        .dao(dao)
+        .config(config)
+        .interface(interface)
+        .build()
+        .await?;
     Ok(BackendEmbedded::new())
 }
 

@@ -15,10 +15,26 @@
 
 #![cfg(feature = "web-warp")]
 
+use garrison::context::tenant::{TenantContext, TenantSource, TENANT};
 use garrison_examples::web::web_warp_example;
 use serial_test::serial;
 use warp::http::StatusCode;
 use warp::Filter;
+
+// tenant-isolation 启用时 check_permission 强制要求租户上下文（fail-closed）。
+// 真实场景中由 `tenant_context` filter 从 X-Tenant-Id 解析；此处测试固定 tenant_id=42。
+fn with_tenant<F, R>(f: F) -> impl std::future::Future<Output = R>
+where
+    F: std::future::Future<Output = R>,
+{
+    TENANT.scope(
+        TenantContext {
+            tenant_id: 42,
+            resolved_from: TenantSource::Header,
+        },
+        f,
+    )
+}
 
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
@@ -54,11 +70,14 @@ async fn test_guard_protection() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     // CheckPermission 路径 - 有 token 且持有 data:read 权限 → 200
-    let resp = warp::test::request()
-        .header("Authorization", format!("Bearer {}", token))
-        .path("/api/data")
-        .reply(&routes)
-        .await;
+    let resp = with_tenant(async {
+        warp::test::request()
+            .header("Authorization", format!("Bearer {}", token))
+            .path("/api/data")
+            .reply(&routes)
+            .await
+    })
+    .await;
     assert_eq!(resp.status(), StatusCode::OK);
 }
 
@@ -142,11 +161,14 @@ async fn test_check_permission_filter_accepts_with_permission() {
         .and(check_permission(config, "data:read".to_string()))
         .map(|()| "data ok");
 
-    let resp = warp::test::request()
-        .header("Authorization", format!("Bearer {}", token))
-        .path("/api/data")
-        .reply(&route)
-        .await;
+    let resp = with_tenant(async {
+        warp::test::request()
+            .header("Authorization", format!("Bearer {}", token))
+            .path("/api/data")
+            .reply(&route)
+            .await
+    })
+    .await;
     assert_eq!(resp.status(), StatusCode::OK);
 }
 

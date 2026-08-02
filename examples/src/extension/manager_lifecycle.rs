@@ -5,7 +5,7 @@
 //!
 //! 流程：
 //! 1. 准备依赖（DAO + Config + Interface）
-//! 2. GarrisonManager::init 注入全局单例
+//! 2. GarrisonManager::builder() 注入全局单例
 //! 3. GarrisonUtil 静态方法调用（login / check_login / get_login_id）
 //! 4. task_local 上下文（with_current_token）
 //! 5. 权限/角色校验（check_permission / check_role）
@@ -24,6 +24,7 @@ use garrison::error::{GarrisonError, GarrisonResult};
 use garrison::manager::GarrisonManager;
 use garrison::prelude::*;
 use garrison::stp::{with_current_token, GarrisonInterface, GarrisonUtil};
+use garrison::{TenantContext, TenantSource, TENANT};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -78,7 +79,7 @@ impl GarrisonInterface for MyInterface {
 
 /// 运行 Manager 生命周期示例。
 ///
-/// 演示 GarrisonManager::init 注入、GarrisonUtil 静态方法（login / check_login /
+/// 演示 GarrisonManager::builder() 注入、GarrisonUtil 静态方法（login / check_login /
 /// get_login_id / check_permission / check_role / kickout / logout）、
 /// task_local 上下文（with_current_token）、底层 logic 与配置访问。
 pub async fn run() -> GarrisonResult<()> {
@@ -93,15 +94,30 @@ pub async fn run() -> GarrisonResult<()> {
     println!("[1] 依赖准备完成: DAO + Config + Interface");
 
     // ----------------------------------------------------------------
-    // 2. GarrisonManager::init
+    // 2. GarrisonManager::builder()
     // ----------------------------------------------------------------
-    GarrisonManager::init(dao, config, interface)?;
-    println!("[2] GarrisonManager::init 完成（全局单例已注入）\n");
+    GarrisonManager::builder()
+        .dao(dao)
+        .config(config)
+        .interface(interface)
+        .build()
+        .await?;
+    println!("[2] GarrisonManager::builder() 完成（全局单例已注入）\n");
 
     // ----------------------------------------------------------------
     // 3. GarrisonUtil 静态方法：login
     // ----------------------------------------------------------------
-    let token = GarrisonUtil::login_simple("1001").await?;
+    // 登录与权限/角色校验在 TENANT(42) scope 内执行：tenant-isolation feature
+    // 启用时 check_permission/check_role 强制要求租户上下文（fail-closed）。
+    let tenant_ctx = TenantContext {
+        tenant_id: 42,
+        resolved_from: TenantSource::Header,
+    };
+    let token = TENANT
+        .scope(tenant_ctx.clone(), async {
+            GarrisonUtil::login_simple("1001").await
+        })
+        .await?;
     println!("[3] login(1001) → token={}...", &token[..16]);
     assert!(!token.is_empty(), "login 应返回非空 token");
     println!();
@@ -113,26 +129,30 @@ pub async fn run() -> GarrisonResult<()> {
     // 实际应用中由 Web 中间件设置；此处显式调用 with_current_token。
     println!("[4] task_local 上下文:");
     let token_clone = token.clone();
-    let ctx_result: Result<(), GarrisonError> = with_current_token(token_clone, async {
-        // 5. 校验登录状态
-        let logged_in = GarrisonUtil::check_login().await?;
-        println!("    check_login() = {}", logged_in);
-        assert!(logged_in, "登录后 check_login 应返回 true");
+    let ctx_result: Result<(), GarrisonError> = TENANT
+        .scope(tenant_ctx.clone(), async {
+            with_current_token(token_clone, async {
+                // 5. 校验登录状态
+                let logged_in = GarrisonUtil::check_login().await?;
+                println!("    check_login() = {}", logged_in);
+                assert!(logged_in, "登录后 check_login 应返回 true");
 
-        let login_id = GarrisonUtil::get_login_id().await?;
-        println!("    get_login_id() = {:?}", login_id);
-        assert_eq!(login_id, Some("1001".to_string()));
+                let login_id = GarrisonUtil::get_login_id().await?;
+                println!("    get_login_id() = {:?}", login_id);
+                assert_eq!(login_id, Some("1001".to_string()));
 
-        // 6. 权限/角色校验
-        GarrisonUtil::check_permission("user:read").await?;
-        println!("    check_permission(\"user:read\") 通过");
+                // 6. 权限/角色校验
+                GarrisonUtil::check_permission("user:read").await?;
+                println!("    check_permission(\"user:read\") 通过");
 
-        GarrisonUtil::check_role("admin").await?;
-        println!("    check_role(\"admin\") 通过");
+                GarrisonUtil::check_role("admin").await?;
+                println!("    check_role(\"admin\") 通过");
 
-        Ok::<(), GarrisonError>(())
-    })
-    .await;
+                Ok::<(), GarrisonError>(())
+            })
+            .await
+        })
+        .await;
     ctx_result?;
     println!();
 
@@ -140,14 +160,22 @@ pub async fn run() -> GarrisonResult<()> {
     // 7. 多账号登录与 kickout
     // ----------------------------------------------------------------
     println!("[5] 多账号登录与 kickout:");
-    let token2 = GarrisonUtil::login_simple("1002").await?;
+    let token2 = TENANT
+        .scope(tenant_ctx.clone(), async {
+            GarrisonUtil::login_simple("1002").await
+        })
+        .await?;
     println!("    login(1002) → token={}...", &token2[..16]);
 
     // 1002 有 user:read 权限但无 user:write
-    let perm_result = with_current_token(token2.clone(), async {
-        GarrisonUtil::check_permission("user:write").await
-    })
-    .await;
+    let perm_result = TENANT
+        .scope(tenant_ctx.clone(), async {
+            with_current_token(token2.clone(), async {
+                GarrisonUtil::check_permission("user:write").await
+            })
+            .await
+        })
+        .await;
     let perm_err = perm_result.as_ref().err().map(|e| e.to_string());
     println!(
         "    check_permission(1002, \"user:write\") → {:?}",
@@ -155,12 +183,19 @@ pub async fn run() -> GarrisonResult<()> {
     );
     assert!(perm_result.is_err(), "1002 无 user:write 权限应失败");
 
-    // kickout 1002
-    GarrisonUtil::kickout("1002").await?;
+    // kickout 1002（与登录同租户 scope，session key 带 tenant:42: 前缀）
+    TENANT
+        .scope(tenant_ctx.clone(), async {
+            GarrisonUtil::kickout("1002").await
+        })
+        .await?;
     println!("    kickout(1002) 完成");
 
-    let valid_after_kickout =
-        with_current_token(token2.clone(), async { GarrisonUtil::check_login().await }).await;
+    let valid_after_kickout = TENANT
+        .scope(tenant_ctx.clone(), async {
+            with_current_token(token2.clone(), async { GarrisonUtil::check_login().await }).await
+        })
+        .await;
     let kickout_status = valid_after_kickout
         .as_ref()
         .err()
@@ -197,12 +232,16 @@ pub async fn run() -> GarrisonResult<()> {
     // 10. 登出当前 token
     // ----------------------------------------------------------------
     let token_clone = token.clone();
-    with_current_token(token_clone, async {
-        GarrisonUtil::logout().await?;
-        println!("\n[8] logout() 完成");
-        Ok::<(), GarrisonError>(())
-    })
-    .await?;
+    TENANT
+        .scope(tenant_ctx.clone(), async {
+            with_current_token(token_clone, async {
+                GarrisonUtil::logout().await?;
+                println!("\n[8] logout() 完成");
+                Ok::<(), GarrisonError>(())
+            })
+            .await
+        })
+        .await?;
 
     println!("\n=== 示例执行完成 ===");
     Ok(())

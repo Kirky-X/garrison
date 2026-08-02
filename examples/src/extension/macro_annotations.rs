@@ -18,14 +18,14 @@
 //! **限制**：
 //! - 仅支持 async fn（同步 fn 计划 v0.5.0+ 支持）
 //! - 原 fn 返回类型需实现 `axum::response::IntoResponse`
-//! - 依赖 `GarrisonManager` 全局单例（需先 `GarrisonManager::init`）
+//! - 依赖 `GarrisonManager` 全局单例（需先 `GarrisonManager::builder()`）
 //! - task_local token 上下文由 `with_current_token` 或 axum middleware 设置
 
 use async_trait::async_trait;
 use axum::http::StatusCode;
 use garrison::{
     check_login, check_permission, check_role, GarrisonConfig, GarrisonDao, GarrisonError,
-    GarrisonInterface, GarrisonManager, GarrisonUtil,
+    GarrisonInterface, GarrisonManager, GarrisonUtil, TenantContext, TenantSource, TENANT,
 };
 use http_body_util::BodyExt;
 use parking_lot::Mutex;
@@ -198,7 +198,7 @@ async fn read_body(response: axum::response::Response) -> String {
 }
 
 /// 初始化 GarrisonManager（覆盖式更新，带权限/角色数据）。
-fn init_manager(permissions: &[(&str, &[&str])], roles: &[(&str, &[&str])]) {
+async fn init_manager(permissions: &[(&str, &[&str])], roles: &[(&str, &[&str])]) {
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     let mut config = GarrisonConfig::default_config();
     config.timeout = 3600;
@@ -213,7 +213,13 @@ fn init_manager(permissions: &[(&str, &[&str])], roles: &[(&str, &[&str])]) {
         interface = interface.with_role(id, roles);
     }
     let interface: Arc<dyn GarrisonInterface> = Arc::new(interface);
-    GarrisonManager::init(dao, config, interface).unwrap();
+    GarrisonManager::builder()
+        .dao(dao)
+        .config(config)
+        .interface(interface)
+        .build()
+        .await
+        .unwrap();
 }
 
 /// 运行过程宏注解示例。
@@ -230,13 +236,24 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     init_manager(
         &[("1001", &["user:read", "user:write"])],
         &[("1001", &["admin"])],
-    );
+    )
+    .await;
     println!("[1] GarrisonManager 初始化完成");
     println!("    用户 1001 权限: [user:read, user:write]");
     println!("    用户 1001 角色: [admin]\n");
 
     // 2. 用户 1001 登录获取 token
-    let token = GarrisonUtil::login_simple("1001").await?;
+    //    登录与后续 handler 校验在 TENANT(42) scope 内执行：tenant-isolation
+    //    feature 启用时 check_permission/check_role 强制要求租户上下文（fail-closed）。
+    let tenant_ctx = TenantContext {
+        tenant_id: 42,
+        resolved_from: TenantSource::Header,
+    };
+    let token = TENANT
+        .scope(tenant_ctx.clone(), async {
+            GarrisonUtil::login_simple("1001").await
+        })
+        .await?;
     println!(
         "[2] 用户 1001 登录获取 token: {}...",
         &token[..std::cmp::min(20, token.len())]
@@ -244,37 +261,54 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // 3. #[check_login] 已登录 → 200
     println!("\n[3] #[check_login] 已登录 → 200");
-    let response =
-        garrison::stp::with_current_token(token.clone(), async { login_handler().await }).await;
+    let response = TENANT
+        .scope(tenant_ctx.clone(), async {
+            garrison::stp::with_current_token(token.clone(), async { login_handler().await }).await
+        })
+        .await;
     println!("    状态码: {}", response.status());
     println!("    body:   {}", read_body(response).await);
     assert_eq!(StatusCode::OK, axum::http::StatusCode::OK);
 
     // 4. #[check_permission("user:read")] 持有权限 → 200
     println!("\n[4] #[check_permission(\"user:read\")] 持有权限 → 200");
-    let response =
-        garrison::stp::with_current_token(token.clone(), async { perm_handler().await }).await;
+    let response = TENANT
+        .scope(tenant_ctx.clone(), async {
+            garrison::stp::with_current_token(token.clone(), async { perm_handler().await }).await
+        })
+        .await;
     println!("    状态码: {}", response.status());
     println!("    body:   {}", read_body(response).await);
 
     // 5. #[check_permission("user:read", "user:write")] 多权限 AND → 200
     println!("\n[5] #[check_permission(\"user:read\", \"user:write\")] 多权限 AND → 200");
-    let response =
-        garrison::stp::with_current_token(token.clone(), async { perm_and_handler().await }).await;
+    let response = TENANT
+        .scope(tenant_ctx.clone(), async {
+            garrison::stp::with_current_token(token.clone(), async { perm_and_handler().await })
+                .await
+        })
+        .await;
     println!("    状态码: {}", response.status());
     println!("    body:   {}", read_body(response).await);
 
     // 6. #[check_role("admin")] 持有角色 → 200
     println!("\n[6] #[check_role(\"admin\")] 持有角色 → 200");
-    let response =
-        garrison::stp::with_current_token(token.clone(), async { role_handler().await }).await;
+    let response = TENANT
+        .scope(tenant_ctx.clone(), async {
+            garrison::stp::with_current_token(token.clone(), async { role_handler().await }).await
+        })
+        .await;
     println!("    状态码: {}", response.status());
     println!("    body:   {}", read_body(response).await);
 
     // 7. #[check_role("admin", "superadmin")] 多角色 AND → 403（缺少 superadmin）
     println!("\n[7] #[check_role(\"admin\", \"superadmin\")] 多角色 AND → 403（缺 superadmin）");
-    let response =
-        garrison::stp::with_current_token(token.clone(), async { role_and_handler().await }).await;
+    let response = TENANT
+        .scope(tenant_ctx.clone(), async {
+            garrison::stp::with_current_token(token.clone(), async { role_and_handler().await })
+                .await
+        })
+        .await;
     println!(
         "    状态码: {}（预期 403，因缺少 superadmin）",
         response.status()
@@ -283,20 +317,31 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // 8. 未登录（无效 token）→ 401
     println!("\n[8] 未登录（无效 token）→ 401");
-    let response = garrison::stp::with_current_token("invalid-token".to_string(), async {
-        login_handler().await
-    })
-    .await;
+    let response = TENANT
+        .scope(tenant_ctx.clone(), async {
+            garrison::stp::with_current_token("invalid-token".to_string(), async {
+                login_handler().await
+            })
+            .await
+        })
+        .await;
     println!("    状态码: {}（预期 401）", response.status());
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 
     // 9. 无权限 → 403
     println!("\n[9] 无权限 → 403");
     // 初始化一个无权限的用户 2002
-    init_manager(&[], &[("2002", &["admin"])]);
-    let token_2002 = GarrisonUtil::login_simple("2002").await?;
-    let response =
-        garrison::stp::with_current_token(token_2002, async { perm_handler().await }).await;
+    init_manager(&[], &[("2002", &["admin"])]).await;
+    let token_2002 = TENANT
+        .scope(tenant_ctx.clone(), async {
+            GarrisonUtil::login_simple("2002").await
+        })
+        .await?;
+    let response = TENANT
+        .scope(tenant_ctx.clone(), async {
+            garrison::stp::with_current_token(token_2002, async { perm_handler().await }).await
+        })
+        .await;
     println!(
         "    用户 2002 无 user:read 权限，状态码: {}（预期 403）",
         response.status()
@@ -314,6 +359,6 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("  1. 在 Cargo.toml 启用 annotation-macros feature");
     println!("  2. use garrison::{{check_login, check_permission, check_role}};");
     println!("  3. 标注 async fn（返回类型需实现 axum::response::IntoResponse）");
-    println!("  4. 调用前确保 GarrisonManager::init + task_local token 已设置");
+    println!("  4. 调用前确保 GarrisonManager::builder() + task_local token 已设置");
     Ok(())
 }

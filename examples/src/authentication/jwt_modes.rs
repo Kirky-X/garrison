@@ -13,6 +13,10 @@
 //! cargo run -p garrison-examples --bin jwt_modes --features "protocol-jwt cache-memory"
 //! ```
 
+// jwt_secret 的 `.into()` 是跨 feature 兼容的必要转换：protocol-zeroize 下字段
+// 类型为 Zeroizing<String>，feature 关闭时退化为 String，被 clippy 误报。
+#![allow(clippy::useless_conversion)]
+
 use async_trait::async_trait;
 use garrison::dao::{GarrisonDao, GarrisonDaoOxcache};
 use garrison::error::{GarrisonError, GarrisonResult};

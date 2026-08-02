@@ -40,7 +40,7 @@
 //!
 //! - 支持 `async fn` 和 `sync fn`（sync fn 调用 `check_*_sync()` 阻塞版本）
 //! - 仅支持 axum handler（原返回类型需实现 `axum::response::IntoResponse`）
-//! - 宏展开依赖 `GarrisonUtil` 全局单例（需先 `GarrisonManager::init`）
+//! - 宏展开依赖 `GarrisonUtil` 全局单例（需先 `GarrisonManager::builder().build().await`）
 //! - sync fn wrapper 需在 tokio multi_thread runtime 上下文内调用（`block_in_place` 要求）
 //!
 //! # 展开结构

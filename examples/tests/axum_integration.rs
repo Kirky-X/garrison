@@ -7,11 +7,11 @@
 //!
 //! setup() 完成以下工作：
 //! 1. 创建 oxcache DAO + 配置 + Interface
-//! 2. GarrisonManager::init 注入全局单例
+//! 2. GarrisonManager::builder() 注入全局单例
 //! 3. GarrisonUtil::login(1001) 生成测试 token
 //! 4. GarrisonRouter::new 注册 4 个受保护路由
 //!
-//! 注意：setup() 调用 `GarrisonManager::init` 注入全局单例，
+//! 注意：setup() 调用 `GarrisonManager::builder()` 注入全局单例，
 //! 多测试并行会竞争全局状态，必须用 #[serial] 串行执行。
 //!
 //! 不测试 run() —— run() 会绑定 127.0.0.1:3000 启动 HTTP 服务器并永远阻塞，

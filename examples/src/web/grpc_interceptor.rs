@@ -169,7 +169,13 @@ pub async fn setup() -> (Arc<GarrisonConfig>, String) {
     config.throw_on_not_login = false;
     let config = Arc::new(config);
     let interface: Arc<dyn GarrisonInterface> = Arc::new(MyInterface::new());
-    GarrisonManager::init(dao, config.clone(), interface).expect("GarrisonManager 初始化失败");
+    GarrisonManager::builder()
+        .dao(dao)
+        .config(config.clone())
+        .interface(interface)
+        .build()
+        .await
+        .expect("GarrisonManager 初始化失败");
 
     let token = GarrisonUtil::login_simple("1001")
         .await
