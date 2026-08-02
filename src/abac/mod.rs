@@ -82,7 +82,9 @@ pub trait EntityLoader: Send + Sync {
     async fn load_entities(&self) -> GarrisonResult<cedar_policy::Entities>;
 }
 
+#[cfg(feature = "abac")]
 mod init;
+#[cfg(feature = "abac")]
 pub use init::*;
 
 #[cfg(all(test, feature = "abac"))]

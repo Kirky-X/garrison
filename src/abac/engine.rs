@@ -170,12 +170,28 @@ impl AbacEngine {
             Some(&self.schema),
         )
         .map_err(|e| GarrisonError::InvalidParam(format!("abac-cedar-request-build::{}", e)))?;
-        let policies = self.policies.read().await;
+        // 在读锁范围内克隆 PolicySet，避免跨 await 持有锁
+        let policies = {
+            let guard = self.policies.read().await;
+            guard.clone()
+        };
         // 通过 EntityLoader 加载实体。若返回错误，通过 ? 传播，缓存不受污染（未到达 set）。
         let entities = self.entity_loader.load_entities().await?;
         let response = self
             .authorizer
             .is_authorized(&request, &policies, &entities);
+
+        // 记录 Cedar 诊断错误（Issue 3/91: 原代码丢弃了 diagnostics errors）
+        for error in response.diagnostics().errors() {
+            tracing::warn!(
+                principal = %principal,
+                action = %action,
+                resource = %resource,
+                error = %error,
+                "Cedar policy evaluation diagnostic error"
+            );
+        }
+
         let decision = match response.decision() {
             cedar_policy::Decision::Allow => Decision::allow(),
             cedar_policy::Decision::Deny => Decision::deny(DecisionReason::NoMatchingPermission),

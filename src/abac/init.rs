@@ -194,7 +194,15 @@ pub async fn check_abac_with_policy(
             ))
         },
     };
-    let principal = format!(r#"User::"{login_id}""#);
+    // Issue 6/8: login_id 未转义直接插入 Cedar principal 字符串，存在注入风险
+    // 修复：转义反斜杠和双引号，拒绝控制字符
+    if login_id.chars().any(|c| c.is_control()) {
+        return Err(GarrisonError::InvalidParam(
+            "abac-principal-control-char::login_id contains control characters".to_string(),
+        ));
+    }
+    let sanitized_login_id = login_id.replace('\\', "\\\\").replace('"', "\\\"");
+    let principal = format!(r#"User::"{sanitized_login_id}""#);
     let action_uid = format!(r#"Action::"{action}""#);
     let policy_src = format!(
         r#"permit(principal, action == Action::"{action}", resource) when {{ {abac_expr} }};"#
