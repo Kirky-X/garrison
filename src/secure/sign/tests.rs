@@ -225,3 +225,38 @@ fn verify_hmac_sha256_constant_time_no_early_return() {
 fn signer_implements_default() {
     let _signer: Signer = Default::default();
 }
+
+// ========================================================================
+// DEEP-02 死代码守卫：constant_time_eq_manual fallback 已移除
+// ========================================================================
+
+/// DEEP-02: 验证 signer.rs 已移除 `constant_time_eq_manual` 手动 fallback。
+///
+/// 审查发现：`verify_hmac_sha256` 中 `#[cfg(not(feature = "subtle"))]` 分支引用的
+/// `constant_time_eq_manual` 与 `secure::ct_eq::constant_time_eq` /
+/// `server::middleware::constant_time_eq` 功能重复；且因 `secure-sign` feature
+/// 强制启用 `dep:subtle`（signer 模块仅在 secure-sign 下编译），该 fallback
+/// 是**永远不可达的死代码**。
+///
+/// 源码级守卫测试（与 E3 模式一致）：过滤注释后断言真实代码不再包含
+/// `constant_time_eq_manual` 标识符与 `not(subtle)` 分支，防止回归重新引入重复实现。
+#[test]
+fn deep02_signer_has_no_manual_constant_time_fallback() {
+    let source = include_str!("signer.rs");
+    let code_only: String = source
+        .lines()
+        .filter(|line| {
+            let trimmed = line.trim_start();
+            !(trimmed.starts_with("//!") || trimmed.starts_with("///") || trimmed.starts_with("//"))
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        !code_only.contains("constant_time_eq_manual"),
+        "DEEP-02: signer.rs 不应再包含 constant_time_eq_manual 手动 fallback（死代码）"
+    );
+    assert!(
+        !code_only.contains("#[cfg(not(feature = \"subtle\"))]"),
+        "DEEP-02: signer.rs 不应再有 not(subtle) 分支（secure-sign 恒启用 subtle）"
+    );
+}
